@@ -10,6 +10,10 @@ layout(set = 0, binding = 1, std140) uniform PathTracingParameters
     uvec4 imageState; // xy=寸法、z=試料番号、w=インスタンス数
     vec4 skySunDirectionAndCosRadius;
     vec4 skyState; // x=プリエクスポージャ、y=太陽立体角、z=空有効、w=空要求
+    vec4 fogDensityHeightFalloffAndEnabled; // xyz=R3密度・基準高さ・減衰率、w=霧有効
+    vec4 fogColorAndPreExposure; // rgb=空欠落時の霧色、w=事前露出
+    vec4 fogLightDirectionAndAnisotropy; // xyz=方向光の進行方向、w=HG異方性
+    vec4 fogLightRadianceAndEnabled; // rgb=方向光放射輝度、w=散乱有効
 } parameters;
 layout(set = 0, binding = 3) uniform sampler2D previousAverage;
 layout(set = 0, binding = 4, rgba32f) uniform writeonly image2D currentAverage;
@@ -97,6 +101,137 @@ vec3 SampleSolarDirection(inout uint state)
                      bitangent * (radius * sin(phi)));
 }
 
+bool IsFiniteFloat(float value)
+{
+    return !isnan(value) && !isinf(value);
+}
+
+float FogTransmittance(float originHeight, float directionY, float distance)
+{
+    float density = max(parameters.fogDensityHeightFalloffAndEnabled.x, 0.0);
+    float baseHeight = parameters.fogDensityHeightFalloffAndEnabled.y;
+    float falloff = max(parameters.fogDensityHeightFalloffAndEnabled.z, 0.0);
+    if (density <= 0.0 || distance <= 0.0 ||
+        !IsFiniteFloat(originHeight) || !IsFiniteFloat(directionY) ||
+        !IsFiniteFloat(distance))
+    {
+        return 1.0;
+    }
+
+    float originExponent = -falloff * (originHeight - baseHeight);
+    float verticalRate = falloff * clamp(directionY, -1.0, 1.0);
+    float exponentChange = verticalRate * distance;
+    float logIntegral;
+    if (abs(verticalRate) < 1.0e-8 || abs(exponentChange) < 1.0e-4)
+    {
+        logIntegral = log(distance);
+    }
+    else
+    {
+        float logNumerator;
+        if (exponentChange > 80.0)
+        {
+            logNumerator = 0.0;
+        }
+        else if (exponentChange > 0.0)
+        {
+            logNumerator = log(max(1.0 - exp(-exponentChange), 1.0e-35));
+        }
+        else if (exponentChange < -80.0)
+        {
+            logNumerator = -exponentChange;
+        }
+        else
+        {
+            logNumerator = log(max(exp(-exponentChange) - 1.0, 1.0e-35));
+        }
+        logIntegral = logNumerator - log(abs(verticalRate));
+    }
+    float logOpticalDepth = log(density) + originExponent + logIntegral;
+    if (!IsFiniteFloat(logOpticalDepth))
+    {
+        return logOpticalDepth > 0.0 ? exp(-80.0) : 1.0;
+    }
+    if (logOpticalDepth >= log(80.0))
+    {
+        return exp(-80.0);
+    }
+    return exp(-clamp(exp(logOpticalDepth), 0.0, 80.0));
+}
+
+vec3 FogSingleScattering(vec3 origin, vec3 direction, float distance)
+{
+    if (parameters.fogLightRadianceAndEnabled.w < 0.5)
+    {
+        return vec3(0.0);
+    }
+    float anisotropy = clamp(parameters.fogLightDirectionAndAnisotropy.w,
+                             -0.95, 0.95);
+    float cosineTheta = clamp(dot(parameters.fogLightDirectionAndAnisotropy.xyz,
+                                  -direction), -1.0, 1.0);
+    float denominator = max(1.0 + anisotropy * anisotropy -
+                            2.0 * anisotropy * cosineTheta, 1.0e-4);
+    float phase = (1.0 - anisotropy * anisotropy) /
+                  (12.5663706 * pow(denominator, 1.5));
+    float stepLength = distance / 24.0;
+    vec3 lightDirection = -parameters.fogLightDirectionAndAnisotropy.xyz;
+    vec3 scattering = vec3(0.0);
+    for (int stepIndex = 0; stepIndex < 24; ++stepIndex)
+    {
+        float sampleDistance = (float(stepIndex) + 0.5) * stepLength;
+        vec3 samplePosition = origin + direction * sampleDistance;
+        float densityExponent = -parameters.fogDensityHeightFalloffAndEnabled.z *
+            (samplePosition.y - parameters.fogDensityHeightFalloffAndEnabled.y);
+        float localDensity = parameters.fogDensityHeightFalloffAndEnabled.x *
+            exp(clamp(densityExponent, -80.0, 80.0));
+        float viewTransmittance = FogTransmittance(
+            origin.y, direction.y, sampleDistance);
+        if (!IsFiniteFloat(localDensity) || !IsFiniteFloat(viewTransmittance) ||
+            localDensity <= 0.0 || viewTransmittance <= 0.0)
+        {
+            continue;
+        }
+        payload.Hit = 0u;
+        traceRayEXT(scene, gl_RayFlagsOpaqueEXT |
+                     gl_RayFlagsTerminateOnFirstHitEXT,
+                    0xffu, 0u, 0u, 0u,
+                    samplePosition, 0.001, lightDirection, 100000.0, 0);
+        if (payload.Hit == 0u)
+        {
+            scattering += parameters.fogLightRadianceAndEnabled.rgb *
+                (phase * localDensity * viewTransmittance * stepLength);
+        }
+    }
+    return min(scattering * parameters.fogColorAndPreExposure.w,
+               vec3(65504.0));
+}
+
+void ApplyFogSegment(vec3 origin, vec3 direction, vec3 surfacePosition,
+                     inout vec3 throughput, inout vec3 radiance)
+{
+    if (parameters.fogDensityHeightFalloffAndEnabled.w < 0.5)
+    {
+        return;
+    }
+    float distance = length(surfacePosition - origin);
+    if (!IsFiniteFloat(distance) || distance <= 0.0)
+    {
+        return;
+    }
+    float transmittance = FogTransmittance(origin.y, direction.y, distance);
+    vec3 fogColor = parameters.fogColorAndPreExposure.rgb;
+    if (parameters.skyState.z > 0.5)
+    {
+        fogColor = textureLod(skyRadiance, EquirectangularUV(direction), 0.0).rgb;
+    }
+    fogColor = max(fogColor, vec3(0.0)) *
+               parameters.fogColorAndPreExposure.w;
+    vec3 scattering = FogSingleScattering(origin, direction, distance);
+    radiance += throughput *
+        (fogColor * clamp(1.0 - transmittance, 0.0, 1.0) + scattering);
+    throughput *= transmittance;
+}
+
 void main()
 {
     ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
@@ -141,7 +276,9 @@ void main()
         vec3 surfacePosition = payload.Position;
         vec3 surfaceNormal = payload.Normal;
         vec3 surfaceColor = clamp(payload.BaseColor, vec3(0.0), vec3(1.0));
-        radiance += throughput * payload.Emission;
+        vec3 surfaceEmission = payload.Emission;
+        ApplyFogSegment(origin, direction, surfacePosition, throughput, radiance);
+        radiance += throughput * surfaceEmission;
         if (parameters.skyState.z > 0.5)
         {
             vec3 solarDirection = SampleSolarDirection(state);

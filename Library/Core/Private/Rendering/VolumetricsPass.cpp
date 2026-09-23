@@ -1,4 +1,5 @@
 ﻿#include "Rendering/VolumetricsPass.h"
+#include "VolumetricFogScattering.h"
 
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -32,8 +33,6 @@ namespace NorvesLib::Core::Rendering
         };
 
         static_assert(sizeof(GPUVolumetricsParams) == 704u);
-
-        constexpr float kVolumetricScatteringAnisotropy = 0.76f;
 
         RHI::DescriptorSetDesc CreateVolumetricsDescriptorSetDesc()
         {
@@ -191,7 +190,7 @@ namespace NorvesLib::Core::Rendering
                 outDirectionAndAnisotropy[0] = static_cast<float>(light.DirectionX * inverseDirectionLength);
                 outDirectionAndAnisotropy[1] = static_cast<float>(light.DirectionY * inverseDirectionLength);
                 outDirectionAndAnisotropy[2] = static_cast<float>(light.DirectionZ * inverseDirectionLength);
-                outDirectionAndAnisotropy[3] = kVolumetricScatteringAnisotropy;
+                outDirectionAndAnisotropy[3] = VolumetricFogDetail::ScatteringAnisotropy;
                 outRadianceAndEnabled[0] = static_cast<float>(std::min(radiance[0], 1.0e8));
                 outRadianceAndEnabled[1] = static_cast<float>(std::min(radiance[1], 1.0e8));
                 outRadianceAndEnabled[2] = static_cast<float>(std::min(radiance[2], 1.0e8));

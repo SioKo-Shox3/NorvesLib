@@ -49,6 +49,7 @@ namespace NorvesLib::Core::Rendering
             uint64_t CameraSignature = 0u;
             uint64_t GeometrySignature = 0u;
             uint64_t SkySignature = 0u;
+            uint64_t FogSignature = 0u;
             bool bSkyValid = false;
             RHI::TexturePtr Textures[2];
             RHI::ResourceState TextureStates[2] = {
@@ -78,6 +79,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_DeclaredCameraSignature = 0u;
         uint64_t m_DeclaredGeometrySignature = 0u;
         uint64_t m_DeclaredSkySignature = 0u;
+        uint64_t m_DeclaredFogSignature = 0u;
         bool m_bPrepared = false;
     };
 }

@@ -6,6 +6,8 @@
 #include "Rendering/SkyAtmosphere.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VolumetricFog.h"
+#include "VolumetricFogScattering.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
@@ -32,6 +34,10 @@ namespace NorvesLib::Core::Rendering
             uint32_t ImageState[4] = {};
             float SkySunDirectionAndCosRadius[4] = {};
             float SkyState[4] = {};
+            float FogDensityHeightFalloffAndEnabled[4] = {};
+            float FogColorAndPreExposure[4] = {};
+            float FogLightDirectionAndAnisotropy[4] = {};
+            float FogLightRadianceAndEnabled[4] = {};
         };
 
         struct PathTracingInstance
@@ -43,7 +49,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t Geometry[4] = {};
         };
 
-        static_assert(sizeof(PathTracingParameters) == 128u);
+        static_assert(sizeof(PathTracingParameters) == 192u);
         static_assert(sizeof(PathTracingInstance) == 64u);
 
         uint64_t HashPathBytes(uint64_t hash, const void* data, size_t size)
@@ -124,6 +130,125 @@ namespace NorvesLib::Core::Rendering
             hash = HashPathBytes(hash, &sky.GroundAlbedo.y, sizeof(float));
             hash = HashPathBytes(hash, &sky.GroundAlbedo.z, sizeof(float));
             return HashPathBytes(hash, &preExposure, sizeof(preExposure));
+        }
+
+        float SafePathPreExposure(float value)
+        {
+            return std::isfinite(value) && value > 0.0f
+                       ? std::clamp(value, 1.0e-6f, 1.0e6f)
+                       : 1.0f;
+        }
+
+        void FillPathFogParameters(const ViewRenderContext& context,
+                                   float preExposure,
+                                   PathTracingParameters& parameters)
+        {
+            const SceneProxy* scene = context.SnapshotScene;
+            const VolumetricFogParameters fog = scene
+                ? SanitizeVolumetricFogParameters(scene->VolumetricFog)
+                : MakeDefaultVolumetricFogParameters();
+            if (!fog.bEnabled || fog.DensityAtBaseHeight <= 0.0f)
+            {
+                return;
+            }
+
+            parameters.FogDensityHeightFalloffAndEnabled[0] =
+                fog.DensityAtBaseHeight;
+            parameters.FogDensityHeightFalloffAndEnabled[1] = fog.BaseHeight;
+            parameters.FogDensityHeightFalloffAndEnabled[2] =
+                fog.HeightFalloffPerUnit;
+            parameters.FogDensityHeightFalloffAndEnabled[3] = 1.0f;
+            const float color[] = {
+                scene->FogColorR, scene->FogColorG, scene->FogColorB};
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                parameters.FogColorAndPreExposure[channel] =
+                    std::isfinite(color[channel])
+                        ? std::max(color[channel], 0.0f)
+                        : 0.0f;
+            }
+            parameters.FogColorAndPreExposure[3] = preExposure;
+
+            const auto* lights = context.SnapshotLightProxies
+                ? context.SnapshotLightProxies
+                : &scene->LightProxies;
+            const LightProxy* selected = nullptr;
+            const uint64_t preferredId =
+                context.PhysicalLighting.CascadedShadow.LightId;
+            for (const LightProxy& light : *lights)
+            {
+                if (light.Type != LightType::Directional || !light.IsValid() ||
+                    !std::isfinite(light.DirectionX) ||
+                    !std::isfinite(light.DirectionY) ||
+                    !std::isfinite(light.DirectionZ) ||
+                    !std::isfinite(light.CanonicalIntensity) ||
+                    !std::isfinite(light.ColorR) ||
+                    !std::isfinite(light.ColorG) ||
+                    !std::isfinite(light.ColorB) ||
+                    light.ColorR < 0.0f || light.ColorG < 0.0f ||
+                    light.ColorB < 0.0f)
+                {
+                    continue;
+                }
+                const double length = std::sqrt(
+                    static_cast<double>(light.DirectionX) * light.DirectionX +
+                    static_cast<double>(light.DirectionY) * light.DirectionY +
+                    static_cast<double>(light.DirectionZ) * light.DirectionZ);
+                if (!std::isfinite(length) || length <= 1.0e-8)
+                {
+                    continue;
+                }
+                selected = &light;
+                if (light.LightId == preferredId)
+                {
+                    break;
+                }
+            }
+            if (!selected)
+            {
+                return;
+            }
+            const double length = std::sqrt(
+                static_cast<double>(selected->DirectionX) * selected->DirectionX +
+                static_cast<double>(selected->DirectionY) * selected->DirectionY +
+                static_cast<double>(selected->DirectionZ) * selected->DirectionZ);
+            const double inverseLength = 1.0 / length;
+            const float direction[] = {
+                selected->DirectionX, selected->DirectionY, selected->DirectionZ};
+            const float colorChannels[] = {
+                selected->ColorR, selected->ColorG, selected->ColorB};
+            const double intensity = std::min(
+                static_cast<double>(selected->CanonicalIntensity), 1.0e7);
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                parameters.FogLightDirectionAndAnisotropy[channel] =
+                    static_cast<float>(direction[channel] * inverseLength);
+                parameters.FogLightRadianceAndEnabled[channel] =
+                    static_cast<float>(std::min(
+                        static_cast<double>(colorChannels[channel]) * intensity,
+                        1.0e8));
+            }
+            parameters.FogLightDirectionAndAnisotropy[3] =
+                VolumetricFogDetail::ScatteringAnisotropy;
+            parameters.FogLightRadianceAndEnabled[3] =
+                std::max({parameters.FogLightRadianceAndEnabled[0],
+                          parameters.FogLightRadianceAndEnabled[1],
+                          parameters.FogLightRadianceAndEnabled[2]}) > 0.0f
+                    ? 1.0f
+                    : 0.0f;
+        }
+
+        uint64_t HashPathFog(const PathTracingParameters& parameters)
+        {
+            uint64_t hash = 14695981039346656037ull;
+            hash = HashPathBytes(hash, parameters.FogDensityHeightFalloffAndEnabled,
+                                 sizeof(parameters.FogDensityHeightFalloffAndEnabled));
+            hash = HashPathBytes(hash, parameters.FogColorAndPreExposure,
+                                 sizeof(parameters.FogColorAndPreExposure));
+            hash = HashPathBytes(hash, parameters.FogLightDirectionAndAnisotropy,
+                                 sizeof(parameters.FogLightDirectionAndAnisotropy));
+            return HashPathBytes(hash, parameters.FogLightRadianceAndEnabled,
+                                 sizeof(parameters.FogLightRadianceAndEnabled));
         }
 
         RHI::DescriptorSetDesc CreatePathTracingDescriptorSetDesc()
@@ -508,17 +633,17 @@ namespace NorvesLib::Core::Rendering
         const SkyAtmosphereParameters sky = SanitizeSkyAtmosphereParameters(
             context->SnapshotScene ? context->SnapshotScene->SkyAtmosphere :
                                      context->SkyAtmosphereSnapshot);
-        const float preExposure = std::isfinite(activeCamera.PreExposure) &&
-                                          activeCamera.PreExposure > 0.0f
-                                      ? std::clamp(activeCamera.PreExposure, 1.0e-6f, 1.0e6f)
-                                      : 1.0f;
+        const float preExposure = SafePathPreExposure(activeCamera.PreExposure);
+        FillPathFogParameters(*context, preExposure, parameters);
         const uint64_t skySignature = HashPathSky(sky, preExposure);
+        const uint64_t fogSignature = HashPathFog(parameters);
         const bool bReset = history->SampleCount == 0u ||
             history->SceneRevision != context->SceneRevision ||
             history->LightRevision != context->LightRevision ||
             history->CameraSignature != cameraSignature ||
             history->GeometrySignature != geometrySignature ||
             history->SkySignature != skySignature ||
+            history->FogSignature != fogSignature ||
             history->SampleCount == UINT32_MAX;
         if (bReset)
         {
@@ -566,6 +691,7 @@ namespace NorvesLib::Core::Rendering
         m_DeclaredCameraSignature = cameraSignature;
         m_DeclaredGeometrySignature = geometrySignature;
         m_DeclaredSkySignature = skySignature;
+        m_DeclaredFogSignature = fogSignature;
         m_bPrepared = true;
     }
 
@@ -663,6 +789,9 @@ namespace NorvesLib::Core::Rendering
             parameters.SkyState[2] = 1.0f;
         }
         parameters.SkyState[3] = sky.bEnabled ? 1.0f : 0.0f;
+        FillPathFogParameters(context,
+                              SafePathPreExposure(context.GetActiveCamera()->PreExposure),
+                              parameters);
         frameResources.ParametersBuffer->Update(&parameters, sizeof(parameters));
 
         RHI::DescriptorSetPtr descriptorSet = frameResources.DescriptorSet;
@@ -765,6 +894,7 @@ namespace NorvesLib::Core::Rendering
         history.CameraSignature = m_DeclaredCameraSignature;
         history.GeometrySignature = m_DeclaredGeometrySignature;
         history.SkySignature = m_DeclaredSkySignature;
+        history.FogSignature = m_DeclaredFogSignature;
         history.bSkyValid = bSkyValid;
     }
 

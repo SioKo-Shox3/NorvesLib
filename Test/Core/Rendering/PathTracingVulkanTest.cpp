@@ -9,6 +9,8 @@
 #include "Rendering/SkyAtmosphere.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VolumetricFog.h"
+#include "Rendering/VolumetricFogScattering.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "RHI/IAccelerationStructure.h"
@@ -36,7 +38,9 @@ namespace
     using namespace NorvesLib::RHI;
     using namespace NorvesLib::Test::RenderingValidation;
 
-#ifdef NORVES_PATH_TRACING_OUTDOOR_TEST
+#ifdef NORVES_PATH_TRACING_VOLUMETRIC_TEST
+    constexpr const char* TestName = "PathTracingVolumetricTest";
+#elif defined(NORVES_PATH_TRACING_OUTDOOR_TEST)
     constexpr const char* TestName = "PathTracingOutdoorVulkanTest";
 #else
     constexpr const char* TestName = "PathTracingVulkanTest";
@@ -490,6 +494,275 @@ namespace
         return bSelectedPipelineSucceeded ? 0 : 1;
     }
 
+#ifdef NORVES_PATH_TRACING_VOLUMETRIC_TEST
+    int RunVolumetricTest()
+    {
+        if (IsForcedGpuTestSkipRequested())
+        {
+            return ReportGpuTestSkip(TestName, "GPUテストが環境変数でスキップされました");
+        }
+        String reason;
+        if (!CanCreateVulkanDeviceForGpuTest(reason))
+        {
+            return ReportGpuTestSkip(TestName, reason.c_str());
+        }
+        RHIDeviceDesc desc;
+        desc.Api = GraphicsAPI::Vulkan;
+        desc.bEnableValidation = true;
+        DevicePtr device = CreateRHIDevice(desc);
+        if (!device || !device->GetCapabilities().RayTracing.bAccelerationStructure ||
+            !device->GetCapabilities().RayTracing.bRayTracingPipeline ||
+            !device->GetCapabilities().bBufferDeviceAddress)
+        {
+            return ReportGpuTestSkip(TestName, "RT pipeline/BDAを利用できません");
+        }
+        String shaderDirectory(NORVES_SOURCE_ROOT);
+        shaderDirectory += "/Assets/Shaders";
+        ShaderManager shaders;
+        if (!shaders.Initialize(device.get(), shaderDirectory))
+        {
+            return 1;
+        }
+        FramePacket packet;
+        if (!BuildScene(device, packet))
+        {
+            std::cerr << "霧検証用RT snapshotを構築できませんでした\n";
+            return 1;
+        }
+        CameraProxy camera;
+        camera.CameraId = 1u;
+        camera.PositionZ = -2.0f;
+        camera.ForwardZ = 1.0f;
+        camera.Viewport.Width = static_cast<float>(Width);
+        camera.Viewport.Height = static_cast<float>(Height);
+        camera.AspectRatio = 1.0f;
+        camera.PreExposure = 1.0f;
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.ShaderMgr = &shaders;
+        context.RenderWidth = Width;
+        context.RenderHeight = Height;
+        context.ScreenWidth = Width;
+        context.ScreenHeight = Height;
+        context.MainCamera = &camera;
+        context.SnapshotScene = &packet.Scene;
+        context.SnapshotLightProxies = &packet.Scene.LightProxies;
+        context.SnapshotRayTracingScene = &packet.RayTracingScene;
+        CommandListPtr initializationCommand = device->CreateCommandList();
+        context.CommandList = initializationCommand.get();
+        PathTracingPass pass;
+        SkyAtmospherePass skyPass;
+        if (!pass.Initialize(context) || !skyPass.Initialize(context))
+        {
+            std::cerr << "霧検証用PT/空パスを初期化できませんでした\n";
+            return 1;
+        }
+        RenderGraph graph;
+        graph.Initialize(nullptr);
+        VariableArray<float> baseline;
+        VariableArray<float> pixels;
+        const size_t center = (Height / 2u * Width + Width / 2u) * 4u;
+        if (!RunFrame(device, graph, pass, context, 1u, 1u, 1u, baseline))
+        {
+            std::cerr << "霧無効の基準画素を取得できませんでした\n";
+            return 1;
+        }
+        VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
+        fog.bEnabled = true;
+        fog.DensityAtBaseHeight = 0.15f;
+        fog.HeightFalloffPerUnit = 0.0f;
+        packet.Scene.SetVolumetricFogParameters(fog);
+        packet.Scene.FogColorR = 0.4f;
+        packet.Scene.FogColorG = 0.2f;
+        packet.Scene.FogColorB = 0.1f;
+        const float fogColor[] = {0.4f, 0.2f, 0.1f};
+        auto checkFog = [&](uint64_t frame, float tolerance)
+        {
+            if (!RunFrame(device, graph, pass, context, frame, 1u, 1u, pixels) ||
+                pass.GetAccumulatedSampleCount() != 1u)
+            {
+                return false;
+            }
+            const float transmission = ComputeHeightFogTransmittance(
+                packet.Scene.VolumetricFog, camera.PositionY, 0.0f, 2.0f);
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                const float expected = baseline[center + channel] * transmission +
+                    fogColor[channel] * (1.0f - transmission);
+                if (std::abs(pixels[center + channel] - expected) > tolerance)
+                {
+                    std::cerr << "霧透過率がR3解析値と一致しませんでした"
+                              << " channel=" << channel
+                              << " measured=" << pixels[center + channel]
+                              << " expected=" << expected << '\n';
+                    return false;
+                }
+            }
+            std::cout << "fog_density=" << packet.Scene.VolumetricFog.DensityAtBaseHeight
+                      << " fog_base_height=" << packet.Scene.VolumetricFog.BaseHeight
+                      << " fog_falloff=" << packet.Scene.VolumetricFog.HeightFalloffPerUnit
+                      << " transmittance=" << transmission << '\n';
+            return true;
+        };
+        if (!checkFog(2u, 0.01f))
+        {
+            return 1;
+        }
+        fog.DensityAtBaseHeight = 0.3f;
+        packet.Scene.SetVolumetricFogParameters(fog);
+        if (!checkFog(3u, 0.01f))
+        {
+            return 1;
+        }
+        fog.DensityAtBaseHeight = 0.15f;
+        fog.BaseHeight = 1.0f;
+        fog.HeightFalloffPerUnit = 0.25f;
+        packet.Scene.SetVolumetricFogParameters(fog);
+        if (!checkFog(4u, 0.02f))
+        {
+            return 1;
+        }
+        fog.BaseHeight = 0.0f;
+        fog.HeightFalloffPerUnit = 0.0f;
+        packet.Scene.SetVolumetricFogParameters(fog);
+        if (!checkFog(5u, 0.01f))
+        {
+            return 1;
+        }
+        const float noLight[] = {
+            pixels[center], pixels[center + 1u], pixels[center + 2u]};
+        LightProxy light;
+        light.LightId = 99u;
+        light.Type = LightType::Directional;
+        light.DirectionZ = 1.0f;
+        light.DirectionY = 0.0f;
+        light.ColorR = 1.0f;
+        light.ColorG = 0.5f;
+        light.ColorB = 0.25f;
+        light.CanonicalIntensity = 100.0f;
+        packet.Scene.LightProxies.push_back(light);
+        if (!RunFrame(device, graph, pass, context, 6u, 1u, 1u, pixels) ||
+            pass.GetAccumulatedSampleCount() != 1u)
+        {
+            std::cerr << "方向光の霧単一散乱を評価できませんでした\n";
+            return 1;
+        }
+        const float g = VolumetricFogDetail::ScatteringAnisotropy;
+        const float phase = (1.0f - g * g) /
+            (12.5663706f * std::pow(1.0f + g * g + 2.0f * g, 1.5f));
+        const float transmission = ComputeHeightFogTransmittance(
+            packet.Scene.VolumetricFog, camera.PositionY, 0.0f, 2.0f);
+        const float lightColor[] = {1.0f, 0.5f, 0.25f};
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            const float expected = 100.0f * lightColor[channel] * phase *
+                (1.0f - transmission);
+            const float measured = pixels[center + channel] - noLight[channel];
+            std::cout << "fog_scattering_channel=" << channel
+                      << " measured=" << measured << " expected=" << expected << '\n';
+            if (std::abs(measured - expected) > 0.025f)
+            {
+                std::cerr << "方向光の単一散乱がR3位相関数と一致しませんでした\n";
+                return 1;
+            }
+        }
+        packet.Scene.LightProxies[0].DirectionZ = -1.0f;
+        if (!RunFrame(device, graph, pass, context, 7u, 1u, 1u, pixels) ||
+            pass.GetAccumulatedSampleCount() != 1u)
+        {
+            std::cerr << "方向光の霧遮蔽を評価できませんでした\n";
+            return 1;
+        }
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            if (std::abs(pixels[center + channel] - noLight[channel]) > 0.0001f)
+            {
+                std::cerr << "遮蔽された方向光が霧へ散乱しました\n";
+                return 1;
+            }
+        }
+        fog.bEnabled = false;
+        packet.Scene.SetVolumetricFogParameters(fog);
+        if (!RunFrame(device, graph, pass, context, 8u, 1u, 1u, pixels) ||
+            pass.GetAccumulatedSampleCount() != 1u)
+        {
+            std::cerr << "霧無効時にPT基準へ戻れませんでした\n";
+            return 1;
+        }
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            if (std::abs(pixels[center + channel] -
+                         baseline[center + channel]) > 0.0001f)
+            {
+                std::cerr << "霧無効時の画素が基準と異なります\n";
+                return 1;
+            }
+        }
+        packet.Scene.LightProxies.clear();
+        camera.PreExposure = 1.0f / 50000.0f;
+        SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
+        sky.bEnabled = true;
+        sky.SunAltitudeDegrees = 65.0f;
+        packet.Scene.SkyAtmosphere = sky;
+        fog.bEnabled = true;
+        fog.DensityAtBaseHeight = 0.3f;
+        packet.Scene.SetVolumetricFogParameters(fog);
+        if (!RunFrame(device, graph, pass, context, 9u, 1u, 1u, pixels, &skyPass) ||
+            pass.GetAccumulatedSampleCount() != 1u ||
+            !context.SkyAtmosphere.bValid)
+        {
+            std::cerr << "空放射を使う霧を描画できませんでした\n";
+            return 1;
+        }
+        const float fogSkyCenter = pixels[center] + pixels[center + 1u] +
+                                   pixels[center + 2u];
+        const float fogSkyCorner = pixels[0u] + pixels[1u] + pixels[2u];
+        fog.bEnabled = false;
+        packet.Scene.SetVolumetricFogParameters(fog);
+        if (!RunFrame(device, graph, pass, context, 10u, 1u, 1u, pixels, &skyPass) ||
+            pass.GetAccumulatedSampleCount() != 1u ||
+            !context.SkyAtmosphere.bValid)
+        {
+            std::cerr << "霧無効時にR2空を描画できませんでした\n";
+            return 1;
+        }
+        const float clearSkyCenter = pixels[center] + pixels[center + 1u] +
+                                     pixels[center + 2u];
+        const float clearSkyCorner = pixels[0u] + pixels[1u] + pixels[2u];
+        std::cout << "fog_sky_surface_difference="
+                  << std::abs(fogSkyCenter - clearSkyCenter)
+                  << " fog_sky_miss=" << fogSkyCorner
+                  << " sky_miss_difference="
+                  << std::abs(fogSkyCorner - clearSkyCorner) << '\n';
+        if (fogSkyCorner <= 0.0f ||
+            std::abs(fogSkyCenter - clearSkyCenter) <= 0.05f ||
+            std::abs(fogSkyCorner - clearSkyCorner) > 0.0001f)
+        {
+            std::cerr << "霧と空の同時評価がR3の背景規約と一致しませんでした\n";
+            return 1;
+        }
+        packet.Scene.SkyAtmosphere.bEnabled = false;
+        if (!RunFrame(device, graph, pass, context, 11u, 1u, 1u, pixels) ||
+            pass.GetAccumulatedSampleCount() != 1u ||
+            std::abs(pixels[0u] + pixels[1u] + pixels[2u] - 0.15f) >
+                0.0001f)
+        {
+            std::cerr << "空無効時にPT環境光へ戻れませんでした\n";
+            return 1;
+        }
+        std::cout << "fog_r3_parameter_parity=true finite_transmittance=true "
+                     "single_scattering=true fog_disabled_fallback=true "
+                     "sky_disabled_fallback=true "
+                     "fog_shadow_visibility=true sky_fog_color=true\n";
+        skyPass.Shutdown();
+        pass.Shutdown();
+        graph.Shutdown();
+        shaders.Shutdown();
+        device->WaitIdle();
+        return 0;
+    }
+#endif
+
 #ifdef NORVES_PATH_TRACING_OUTDOOR_TEST
     bool MatchesSkyParameters(const SkyAtmosphereParameters& actual,
                               const SkyAtmosphereParameters& expected)
@@ -733,7 +1006,9 @@ namespace
 
 int main()
 {
-#ifdef NORVES_PATH_TRACING_OUTDOOR_TEST
+#ifdef NORVES_PATH_TRACING_VOLUMETRIC_TEST
+    return RunVolumetricTest();
+#elif defined(NORVES_PATH_TRACING_OUTDOOR_TEST)
     return RunOutdoorTest();
 #else
     return RunTest();

@@ -615,6 +615,16 @@ target_compile_definitions(PathTracingOutdoorVulkanTest PRIVATE
     NORVES_PATH_TRACING_OUTDOOR_TEST)
 set_target_properties(PathTracingOutdoorVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 register_rendering_gpu_test(PathTracingOutdoorVulkanTest PathTracingOutdoorVulkanTest)
+add_executable(PathTracingVolumetricTest PathTracingVulkanTest.cpp)
+target_link_libraries(PathTracingVolumetricTest PRIVATE Core RenderingGpuTestSupport)
+target_include_directories(PathTracingVolumetricTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private)
+target_compile_definitions(PathTracingVolumetricTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+    NORVES_PATH_TRACING_VOLUMETRIC_TEST)
+set_target_properties(PathTracingVolumetricTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(PathTracingVolumetricTest PathTracingVolumetricTest)
 add_executable(PathTracingCameraTest PathTracingCameraTest.cpp)
 target_link_libraries(PathTracingCameraTest PRIVATE Core)
 set_target_properties(PathTracingCameraTest PROPERTIES FOLDER "Test/Core/Rendering")

@@ -11,6 +11,10 @@ layout(set = 0, binding = 1, std140) uniform PathTracingParameters
     uvec4 imageState;
     vec4 skySunDirectionAndCosRadius;
     vec4 skyState;
+    vec4 fogDensityHeightFalloffAndEnabled; // xyz=R3密度・基準高さ・減衰率、w=霧有効
+    vec4 fogColorAndPreExposure; // rgb=空欠落時の霧色、w=事前露出
+    vec4 fogLightDirectionAndAnisotropy; // xyz=方向光の進行方向、w=HG異方性
+    vec4 fogLightRadianceAndEnabled; // rgb=方向光放射輝度、w=散乱有効
 } parameters;
 
 struct PathInstance
