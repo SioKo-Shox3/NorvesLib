@@ -346,6 +346,20 @@ namespace NorvesLib::Core::Rendering
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
         float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
         float EmissiveLuminanceNits = 0.0f;
+
+        /**
+         * @brief GBufferと同じ規則のinstance色（custom dataの非0成分、既定1）
+         *
+         * ラスタのアルベドはinstance色×アルベドtextureで、材質のBaseColorは使わない。
+         * パストレーサーは同じ規則で表面色を作る。
+         */
+        float ObjectColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+
+        /** @brief パストレーサーが解決する材質texture。無効なら白・平坦法線・黒・中間灰を使う。 */
+        TextureHandle AlbedoTexture;
+        TextureHandle NormalTexture;
+        TextureHandle MetallicTexture;
+        TextureHandle RoughnessTexture;
     };
 
     inline RayTracingHitMaterialSnapshot MakeRayTracingHitMaterialSnapshot(
@@ -366,6 +380,10 @@ namespace NorvesLib::Core::Rendering
             snapshot.EmissiveColor[index] = materialData->EmissiveColor[index];
         }
         snapshot.EmissiveLuminanceNits = materialData->EmissiveLuminanceNits;
+        snapshot.AlbedoTexture = materialData->AlbedoTexture;
+        snapshot.NormalTexture = materialData->NormalTexture;
+        snapshot.MetallicTexture = materialData->MetallicTexture;
+        snapshot.RoughnessTexture = materialData->RoughnessTexture;
         return snapshot;
     }
 

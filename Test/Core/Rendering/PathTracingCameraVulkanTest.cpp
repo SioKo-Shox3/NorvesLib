@@ -128,6 +128,10 @@ namespace
         snapshot.Material.BaseColor[0] = 0.8f;
         snapshot.Material.BaseColor[1] = 0.3f;
         snapshot.Material.BaseColor[2] = 0.1f;
+        // パストレーサーはGBufferと同じくinstance色×アルベドtextureを表面色にする。
+        snapshot.Material.ObjectColor[0] = 0.8f;
+        snapshot.Material.ObjectColor[1] = 0.3f;
+        snapshot.Material.ObjectColor[2] = 0.1f;
         snapshot.Material.EmissiveColor[0] = 1.0f;
         snapshot.Material.EmissiveColor[1] = 0.25f;
         snapshot.Material.EmissiveColor[2] = 0.0f;
@@ -438,6 +442,8 @@ namespace
         camera.FocusDistance = 0.3f;
         camera.Aperture = 0.7f;
         camera.ShutterSpeed = 1.0f / 60.0f;
+        // 発光はプリエクスポージャを掛けて評価するため、2 nitsの基準値をそのまま比べられるよう露出1にする。
+        camera.PreExposure = 1.0f;
         VariableArray<float> staticPixels;
         VariableArray<float> staticRepeat;
         if (!Capture(device, shaderManager, packet, camera, nullptr, staticPixels) ||

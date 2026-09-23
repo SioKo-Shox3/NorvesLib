@@ -10,6 +10,22 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    /**
+     * @brief パストレーサーの検証出力
+     *
+     * None以外では、1次命中面の材質値を放射輝度の代わりに累積画像へ書く。
+     */
+    enum class PathTracingDebugOutput : uint32_t
+    {
+        None = 0,
+        Albedo = 1,
+        ShadingNormal = 2,
+        MetallicRoughness = 3
+    };
+
+    /** @brief パストレーサーが1フレームで束ねる材質textureの上限（重複を除いた数） */
+    inline constexpr uint32_t PathTracingMaterialTextureCapacity = 256u;
+
     class PathTracingPass final : public IViewPass, public IRenderGraphPass
     {
     public:
@@ -24,6 +40,12 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetAccumulatedSampleCount() const;
         RHI::TexturePtr GetAccumulatedTexture() const;
 
+        /** @brief 検証出力を切り替える。変更すると累積履歴を捨てる。 */
+        void SetDebugOutput(PathTracingDebugOutput output) { m_DebugOutput = output; }
+
+        /** @brief 直近フレームで束ねた材質texture数（先頭の既定texture4個を含む） */
+        uint32_t GetBoundMaterialTextureCount() const { return m_BoundMaterialTextureCount; }
+
     private:
         struct FrameResources
         {
@@ -34,6 +56,8 @@ namespace NorvesLib::Core::Rendering
             uint64_t InstanceBufferCapacity = 0u;
             RHI::AccelerationStructurePtr MotionTopLevel;
             uint32_t MotionInstanceCapacity = 0u;
+            /** @brief このフレームの材質texture表。先頭4要素は既定texture。 */
+            Container::VariableArray<RHI::TexturePtr> MaterialTextures;
         };
 
         struct History
@@ -50,6 +74,7 @@ namespace NorvesLib::Core::Rendering
             uint64_t GeometrySignature = 0u;
             uint64_t SkySignature = 0u;
             uint64_t FogSignature = 0u;
+            PathTracingDebugOutput DebugOutput = PathTracingDebugOutput::None;
             bool bSkyValid = false;
             RHI::TexturePtr Textures[2];
             RHI::ResourceState TextureStates[2] = {
@@ -69,6 +94,16 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_MissShader;
         RHI::ShaderPtr m_ClosestHitShader;
         RHI::SamplerPtr m_Sampler;
+        /** @brief 材質texture用のsampler（GBufferと同じWrap・異方性） */
+        RHI::SamplerPtr m_MaterialSampler;
+        /** @brief GBufferと同じ既定texture（白アルベド・平坦法線・metallic 0・roughness中間灰） */
+        RHI::TexturePtr m_DefaultWhiteTexture;
+        RHI::TexturePtr m_DefaultFlatNormalTexture;
+        RHI::TexturePtr m_DefaultBlackTexture;
+        RHI::TexturePtr m_DefaultMidGrayTexture;
+        PathTracingDebugOutput m_DebugOutput = PathTracingDebugOutput::None;
+        uint32_t m_BoundMaterialTextureCount = 0u;
+        bool m_bMaterialTextureOverflowReported = false;
         RGTextureHandle m_OutputHandle;
         RGTextureHandle m_SkyRadianceHandle;
         RGTextureHandle m_SkyTransmittanceHandle;

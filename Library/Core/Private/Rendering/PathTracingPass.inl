@@ -3,6 +3,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/PathTracingCamera.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
@@ -38,6 +39,7 @@ namespace NorvesLib::Core::Rendering
             float FogColorAndPreExposure[4] = {};
             float FogLightDirectionAndAnisotropy[4] = {};
             float FogLightRadianceAndEnabled[4] = {};
+            float ExposureAndDebug[4] = {}; ///< x=カメラのプリエクスポージャ、y=検証出力
         };
 
         struct PathTracingInstance
@@ -47,10 +49,19 @@ namespace NorvesLib::Core::Rendering
             float BaseColor[4] = {};
             float Emission[4] = {};
             uint32_t Geometry[4] = {};
+            float ObjectColor[4] = {}; ///< GBufferと同じ規則のinstance色
+            uint32_t Textures[4] = {}; ///< アルベド・法線・metallic・roughnessの材質texture表番号
         };
 
-        static_assert(sizeof(PathTracingParameters) == 192u);
-        static_assert(sizeof(PathTracingInstance) == 64u);
+        static_assert(sizeof(PathTracingParameters) == 208u);
+        static_assert(sizeof(PathTracingInstance) == 96u);
+
+        // 材質texture表の先頭に置く既定texture。GBufferの既定値と同じ並びと値にする。
+        constexpr uint32_t PathDefaultAlbedoTextureIndex = 0u;
+        constexpr uint32_t PathDefaultNormalTextureIndex = 1u;
+        constexpr uint32_t PathDefaultMetallicTextureIndex = 2u;
+        constexpr uint32_t PathDefaultRoughnessTextureIndex = 3u;
+        constexpr uint32_t PathMaterialTextureBinding = 8u;
 
         uint64_t HashPathBytes(uint64_t hash, const void* data, size_t size)
         {
@@ -271,6 +282,12 @@ namespace NorvesLib::Core::Rendering
                 binding.stages = RHI::ShaderStage::AllRayTracing;
                 desc.bindings.push_back(binding);
             }
+            RHI::DescriptorBinding materialTextures;
+            materialTextures.binding = PathMaterialTextureBinding;
+            materialTextures.type = RHI::ResourceBindType::CombinedImageSampler;
+            materialTextures.stages = RHI::ShaderStage::AllRayTracing;
+            materialTextures.count = PathTracingMaterialTextureCapacity;
+            desc.bindings.push_back(materialTextures);
             return desc;
         }
     }
@@ -284,7 +301,8 @@ namespace NorvesLib::Core::Rendering
         if (!context.Device || !context.ShaderMgr || !context.CommandList ||
             !context.Device->GetCapabilities().RayTracing.bAccelerationStructure ||
             !context.Device->GetCapabilities().RayTracing.bRayTracingPipeline ||
-            !context.Device->GetCapabilities().bBufferDeviceAddress)
+            !context.Device->GetCapabilities().bBufferDeviceAddress ||
+            !context.Device->GetCapabilities().bSampledImageArrayNonUniformIndexing)
         {
             return false;
         }
@@ -330,7 +348,40 @@ namespace NorvesLib::Core::Rendering
         samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
         samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
         m_Sampler = context.Device->CreateSampler(samplerDesc);
-        if (!m_Pipeline || !m_Sampler)
+
+        // 材質textureはGBufferと同じsamplerと既定textureで標本化する。
+        RHI::SamplerDesc materialSamplerDesc;
+        materialSamplerDesc.filterMin = RHI::FilterMode::Anisotropic;
+        materialSamplerDesc.filterMag = RHI::FilterMode::Anisotropic;
+        materialSamplerDesc.filterMip = RHI::FilterMode::Anisotropic;
+        materialSamplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+        materialSamplerDesc.addressV = RHI::TextureAddressMode::Wrap;
+        materialSamplerDesc.addressW = RHI::TextureAddressMode::Wrap;
+        materialSamplerDesc.maxAnisotropy = 4;
+        m_MaterialSampler = context.Device->CreateSampler(materialSamplerDesc);
+        const auto createDefault1x1 = [&context](const char* debugName, uint8_t red, uint8_t green,
+                                                 uint8_t blue) -> RHI::TexturePtr
+        {
+            RHI::TextureDesc desc;
+            desc.Width = 1u;
+            desc.Height = 1u;
+            desc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+            desc.Usage = RHI::ResourceUsage::ShaderRead;
+            desc.DebugName = debugName;
+            RHI::TexturePtr texture = context.Device->CreateTexture(desc);
+            if (texture)
+            {
+                const uint8_t pixel[4] = {red, green, blue, 255u};
+                texture->Update(pixel, 4u, 4u);
+            }
+            return texture;
+        };
+        m_DefaultWhiteTexture = createDefault1x1("PathTracing.DefaultWhite", 255u, 255u, 255u);
+        m_DefaultFlatNormalTexture = createDefault1x1("PathTracing.DefaultFlatNormal", 128u, 128u, 255u);
+        m_DefaultBlackTexture = createDefault1x1("PathTracing.DefaultBlack", 0u, 0u, 0u);
+        m_DefaultMidGrayTexture = createDefault1x1("PathTracing.DefaultMidGray", 128u, 128u, 128u);
+        if (!m_Pipeline || !m_Sampler || !m_MaterialSampler || !m_DefaultWhiteTexture ||
+            !m_DefaultFlatNormalTexture || !m_DefaultBlackTexture || !m_DefaultMidGrayTexture)
         {
             Shutdown();
             return false;
@@ -347,6 +398,12 @@ namespace NorvesLib::Core::Rendering
         m_MissShader.reset();
         m_ClosestHitShader.reset();
         m_Sampler.reset();
+        m_MaterialSampler.reset();
+        m_DefaultWhiteTexture.reset();
+        m_DefaultFlatNormalTexture.reset();
+        m_DefaultBlackTexture.reset();
+        m_DefaultMidGrayTexture.reset();
+        m_BoundMaterialTextureCount = 0u;
         m_OutputHandle = {};
         m_SkyRadianceHandle = {};
         m_SkyTransmittanceHandle = {};
@@ -463,6 +520,46 @@ namespace NorvesLib::Core::Rendering
         }
         Container::VariableArray<PathTracingInstance> instances;
         instances.resize(scene.Instances.size());
+
+        // 材質texture表。先頭4要素にGBufferと同じ既定textureを置き、有効なhandleは重複を除いて追加する。
+        Container::VariableArray<RHI::TexturePtr>& textureTable = frameResources.MaterialTextures;
+        textureTable.clear();
+        textureTable.push_back(m_DefaultWhiteTexture);
+        textureTable.push_back(m_DefaultFlatNormalTexture);
+        textureTable.push_back(m_DefaultBlackTexture);
+        textureTable.push_back(m_DefaultMidGrayTexture);
+        const auto resolveTextureIndex = [&](TextureHandle handle, uint32_t defaultIndex) -> uint32_t
+        {
+            if (!handle.IsValid() || !context.Resources.Textures)
+            {
+                return defaultIndex;
+            }
+            RHI::TexturePtr texture = context.Resources.Textures->GetRHITexturePtr(handle);
+            if (!texture)
+            {
+                return defaultIndex;
+            }
+            for (uint32_t index = 0u; index < textureTable.size(); ++index)
+            {
+                if (textureTable[index] == texture)
+                {
+                    return index;
+                }
+            }
+            if (textureTable.size() >= PathTracingMaterialTextureCapacity)
+            {
+                if (!m_bMaterialTextureOverflowReported)
+                {
+                    NORVES_LOG_WARNING("PathTracingPass",
+                                       "Material texture table is full; remaining textures use defaults");
+                    m_bMaterialTextureOverflowReported = true;
+                }
+                return defaultIndex;
+            }
+            textureTable.push_back(texture);
+            return static_cast<uint32_t>(textureTable.size() - 1u);
+        };
+
         for (const RayTracingSceneInstanceSnapshot& snapshot : scene.Instances)
         {
             const uint32_t index = snapshot.Instance.customIndex;
@@ -525,6 +622,23 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
             instance.Emission[3] = snapshot.Material.EmissiveLuminanceNits;
+            for (uint32_t channel = 0u; channel < 4u; ++channel)
+            {
+                if (!std::isfinite(snapshot.Material.ObjectColor[channel]) ||
+                    snapshot.Material.ObjectColor[channel] < 0.0f)
+                {
+                    return false;
+                }
+                instance.ObjectColor[channel] = snapshot.Material.ObjectColor[channel];
+            }
+            instance.Textures[0] = resolveTextureIndex(snapshot.Material.AlbedoTexture,
+                                                       PathDefaultAlbedoTextureIndex);
+            instance.Textures[1] = resolveTextureIndex(snapshot.Material.NormalTexture,
+                                                       PathDefaultNormalTextureIndex);
+            instance.Textures[2] = resolveTextureIndex(snapshot.Material.MetallicTexture,
+                                                       PathDefaultMetallicTextureIndex);
+            instance.Textures[3] = resolveTextureIndex(snapshot.Material.RoughnessTexture,
+                                                       PathDefaultRoughnessTextureIndex);
             instance.Geometry[0] = snapshot.VertexStride;
             instance.Geometry[1] = snapshot.VertexCount;
             instance.Geometry[2] = snapshot.IndexCount;
@@ -595,6 +709,7 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+        m_BoundMaterialTextureCount = static_cast<uint32_t>(frameResources->MaterialTextures.size());
 
         const CameraViewConstants camera = CameraViewConstants::BuildForDevice(
             *context->GetActiveCamera(), context->GetActiveAspectRatio(), context->Device);
@@ -615,6 +730,9 @@ namespace NorvesLib::Core::Rendering
                                         sizeof(activeCamera.ShutterSpeed));
         cameraSignature = HashPathBytes(cameraSignature, &activeCamera.FocusDistance,
                                         sizeof(activeCamera.FocusDistance));
+        // 発光と環境はプリエクスポージャを掛けて累積するため、露出の変化でも履歴を捨てる。
+        cameraSignature = HashPathBytes(cameraSignature, &activeCamera.PreExposure,
+                                        sizeof(activeCamera.PreExposure));
         if (const CameraProxy* previousCamera = context->GetPreviousCamera())
         {
             const CameraViewConstants previous = CameraViewConstants::BuildForDevice(
@@ -644,6 +762,7 @@ namespace NorvesLib::Core::Rendering
             history->GeometrySignature != geometrySignature ||
             history->SkySignature != skySignature ||
             history->FogSignature != fogSignature ||
+            history->DebugOutput != m_DebugOutput ||
             history->SampleCount == UINT32_MAX;
         if (bReset)
         {
@@ -793,6 +912,8 @@ namespace NorvesLib::Core::Rendering
         FillPathFogParameters(context,
                               SafePathPreExposure(context.GetActiveCamera()->PreExposure),
                               parameters);
+        parameters.ExposureAndDebug[0] = SafePathPreExposure(context.GetActiveCamera()->PreExposure);
+        parameters.ExposureAndDebug[1] = static_cast<float>(static_cast<uint32_t>(m_DebugOutput));
         frameResources.ParametersBuffer->Update(&parameters, sizeof(parameters));
 
         RHI::DescriptorSetPtr descriptorSet = frameResources.DescriptorSet;
@@ -878,6 +999,19 @@ namespace NorvesLib::Core::Rendering
         {
             descriptorSet->BindSampler(binding, bSkyValid ? context.SkyAtmosphere.Sampler : m_Sampler);
         }
+        // 配列の全要素を埋める。表にない要素は既定の白textureにする。
+        for (uint32_t element = 0u; element < PathTracingMaterialTextureCapacity; ++element)
+        {
+            const RHI::TexturePtr& texture = element < frameResources.MaterialTextures.size()
+                ? frameResources.MaterialTextures[element]
+                : m_DefaultWhiteTexture;
+            if (!descriptorSet->BindTextureArrayElement(PathMaterialTextureBinding, element,
+                                                        texture, m_MaterialSampler))
+            {
+                restoreTextureStates();
+                return;
+            }
+        }
         descriptorSet->Update();
 
         context.CommandList->SetPipeline(m_Pipeline);
@@ -896,6 +1030,7 @@ namespace NorvesLib::Core::Rendering
         history.GeometrySignature = m_DeclaredGeometrySignature;
         history.SkySignature = m_DeclaredSkySignature;
         history.FogSignature = m_DeclaredFogSignature;
+        history.DebugOutput = m_DebugOutput;
         history.bSkyValid = bSkyValid;
     }
 

@@ -619,6 +619,17 @@ target_compile_definitions(PathTracingVulkanTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 set_target_properties(PathTracingVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 register_rendering_gpu_test(PathTracingVulkanTest PathTracingVulkanTest)
+add_executable(PathTracingMaterialVulkanTest
+    PathTracingMaterialVulkanTest.cpp
+)
+target_link_libraries(PathTracingMaterialVulkanTest PRIVATE Core RenderingGpuTestSupport)
+target_include_directories(PathTracingMaterialVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private)
+target_compile_definitions(PathTracingMaterialVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+set_target_properties(PathTracingMaterialVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(PathTracingMaterialVulkanTest PathTracingMaterialVulkanTest)
 add_executable(PathTracingOutdoorVulkanTest PathTracingVulkanTest.cpp)
 target_link_libraries(PathTracingOutdoorVulkanTest PRIVATE Core RenderingGpuTestSupport)
 target_include_directories(PathTracingOutdoorVulkanTest PRIVATE

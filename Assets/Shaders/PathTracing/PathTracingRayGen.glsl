@@ -3,32 +3,14 @@
 #extension GL_EXT_ray_tracing : require
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
-layout(set = 0, binding = 1, std140) uniform PathTracingParameters
-{
-    mat4 inverseViewProjection;
-    vec4 cameraPosition;
-    uvec4 imageState; // xy=寸法、z=試料番号、w=インスタンス数
-    vec4 skySunDirectionAndCosRadius;
-    vec4 skyState; // x=プリエクスポージャ、y=太陽の事前露出照度、z=空有効、w=空要求
-    vec4 fogDensityHeightFalloffAndEnabled; // xyz=R3密度・基準高さ・減衰率、w=霧有効
-    vec4 fogColorAndPreExposure; // rgb=空欠落時の霧色、w=事前露出
-    vec4 fogLightDirectionAndAnisotropy; // xyz=方向光の進行方向、w=HG異方性
-    vec4 fogLightRadianceAndEnabled; // rgb=方向光放射輝度、w=散乱有効
-} parameters;
+#include "PathTracing/PathTracingCommon.glsl"
+
 layout(set = 0, binding = 3) uniform sampler2D previousAverage;
 layout(set = 0, binding = 4, rgba32f) uniform writeonly image2D currentAverage;
 layout(set = 0, binding = 5) uniform sampler2D skyRadiance;
 layout(set = 0, binding = 6) uniform sampler2D skyTransmittance;
 layout(set = 0, binding = 7) uniform sampler2D skySunDisk;
 
-struct PathPayload
-{
-    vec3 Position;
-    vec3 Normal;
-    vec3 BaseColor;
-    vec3 Emission;
-    uint Hit;
-};
 layout(location = 0) rayPayloadEXT PathPayload payload;
 
 uint NextRandom(inout uint state)
@@ -261,6 +243,8 @@ void main()
     }
     vec3 throughput = vec3(1.0);
     vec3 radiance = vec3(0.0);
+    uint debugOutput = uint(parameters.exposureAndDebug.y + 0.5);
+    vec3 debugValue = vec3(0.0);
 
     for (uint bounce = 0u; bounce < 8u; ++bounce)
     {
@@ -274,9 +258,18 @@ void main()
         }
 
         vec3 surfacePosition = payload.Position;
-        vec3 surfaceNormal = payload.Normal;
-        vec3 surfaceColor = clamp(payload.BaseColor, vec3(0.0), vec3(1.0));
-        vec3 surfaceEmission = payload.Emission;
+        vec3 geometricNormal = payload.GeometricNormal;
+        vec3 surfaceNormal = payload.ShadingNormal;
+        vec3 surfaceColor = clamp(payload.Albedo, vec3(0.0), vec3(1.0));
+        // 発光はGBufferと同じく色×nitsの物理値に、カメラのプリエクスポージャを掛ける。
+        vec3 surfaceEmission = payload.Emission * parameters.exposureAndDebug.x;
+        if (bounce == 0u && debugOutput != PATH_DEBUG_NONE)
+        {
+            debugValue = debugOutput == PATH_DEBUG_ALBEDO ? payload.Albedo :
+                         debugOutput == PATH_DEBUG_SHADING_NORMAL ? payload.ShadingNormal :
+                         vec3(payload.Metallic, payload.Roughness, 0.0);
+            break;
+        }
         ApplyFogSegment(origin, direction, surfacePosition, throughput, radiance);
         radiance += throughput * surfaceEmission;
         if (parameters.skyState.z > 0.5)
@@ -289,7 +282,7 @@ void main()
                 traceRayEXT(scene, gl_RayFlagsOpaqueEXT |
                                  gl_RayFlagsTerminateOnFirstHitEXT,
                             0xffu, 0u, 0u, 0u,
-                            surfacePosition + surfaceNormal * 0.002,
+                            surfacePosition + geometricNormal * 0.002,
                             0.001, solarDirection, 100000.0, 0);
                 if (payload.Hit == 0u)
                 {
@@ -309,15 +302,20 @@ void main()
             }
             throughput /= survival;
         }
-        origin = surfacePosition + surfaceNormal * 0.002;
+        origin = surfacePosition + geometricNormal * 0.002;
         direction = CosineHemisphere(surfaceNormal, state);
     }
 
+    if (debugOutput != PATH_DEBUG_NONE)
+    {
+        radiance = debugValue;
+    }
     if (any(isnan(radiance)) || any(isinf(radiance)))
     {
         radiance = vec3(0.0);
     }
-    radiance = clamp(radiance, vec3(0.0), vec3(65504.0));
+    radiance = debugOutput == PATH_DEBUG_SHADING_NORMAL ? clamp(radiance, vec3(-1.0), vec3(1.0))
+                                                        : clamp(radiance, vec3(0.0), vec3(65504.0));
     vec3 average = radiance;
     if (sampleIndex > 0u)
     {

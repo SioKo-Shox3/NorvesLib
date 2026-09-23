@@ -758,6 +758,13 @@ namespace NorvesLib::Core::Rendering
                 instance.VertexStride = vertexStride;
                 instance.bGeometryOpaque = draw.MaterialBlendMode == BlendMode::Opaque;
                 instance.Material = materialSnapshot;
+                // GBufferと同じく、instance dataのObjectColorを表面色の係数として渡す。
+                if (bHasInstanceData)
+                {
+                    std::memcpy(instance.Material.ObjectColor,
+                                packet.InstanceData[dataIndex].ObjectColor,
+                                sizeof(instance.Material.ObjectColor));
+                }
                 instance.Instance.customIndex =
                     static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
                 CopyRayTracingInstanceTransform(worldTransform, instance.Instance.transform);
