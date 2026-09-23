@@ -299,8 +299,7 @@ bool IsVisible(vec3 origin, vec3 direction, float maxDistance)
 
 // 面から少し浮かせた原点から目標点までの可視性。方向と距離を浮かせた原点から測り直し、
 // 目標点まで全区間を調べる。面上の点から測った方向のままだと、浅い角度で原点のずれが
-// 光線方向へ伸び、目標の発光面を手前で横切って自分で遮る。発光面を目標にするときは、
-// 呼び出し側が目標点を発光面の法線方向へ受光側に浮かせる（原点と同じ幅）。
+// 光線方向へ伸び、目標の発光面を手前で横切って自分で遮る。点・spot光源の位置は幾何ではない。
 bool IsPointVisible(vec3 shadowOrigin, vec3 target)
 {
     vec3 toTarget = target - shadowOrigin;
@@ -385,6 +384,24 @@ vec3 EvaluatePunctualLights(PathSurface surface, vec3 position, vec3 geometricNo
     return sum * PreExposure();
 }
 
+// 発光三角形上の点の可視性。目標点の少し先まで最も近い命中を求め、それが標本化した
+// 発光三角形そのもの（instanceと三角形番号が一致）なら見える。発光面の直前にある別の遮蔽物は、
+// 距離の差がどれほど小さくても遮蔽として扱う。
+bool IsEmitterPointVisible(vec3 shadowOrigin, vec3 target, uint instanceIndex, uint primitiveIndex)
+{
+    vec3 toTarget = target - shadowOrigin;
+    float targetDistance = length(toTarget);
+    if (targetDistance <= 1.0e-6)
+    {
+        return true;
+    }
+    payload.Hit = 0u;
+    traceRayEXT(scene, gl_RayFlagsOpaqueEXT, 0xffu, 0u, 0u, 0u, shadowOrigin, 0.001,
+                toTarget / targetDistance, targetDistance * 1.001 + 0.001, 0);
+    return payload.Hit == 0u ||
+           (payload.InstanceIndex == instanceIndex && payload.PrimitiveIndex == primitiveIndex);
+}
+
 // 発光三角形の光源標本。三角形を通し番号で一様に選び、面上を一様に標本化する。
 vec3 SampleEmissiveTriangles(PathSurface surface, vec3 position, vec3 geometricNormal,
                              inout uint state)
@@ -459,11 +476,9 @@ vec3 SampleEmissiveTriangles(PathSurface surface, vec3 position, vec3 geometricN
         : PowerHeuristic(lightPdf, PathBsdfPdf(surface, L));
     vec3 emission = instance.emission.rgb * instance.emission.a * PreExposure();
     vec3 contribution = EvaluatePathBsdf(surface, L) * NdotL * emission * (weight / lightPdf);
-    // 影レイの終点は発光面から受光側へ法線方向に浮かせ、発光面そのものに当たらないようにする。
-    vec3 lightNormal = edgeCross / twiceArea;
-    vec3 shadowTarget = lightPoint + lightNormal * (dot(lightNormal, L) < 0.0 ? 0.002 : -0.002);
     if (max(contribution.r, max(contribution.g, contribution.b)) <= 0.0 ||
-        !IsPointVisible(position + geometricNormal * 0.002, shadowTarget))
+        !IsEmitterPointVisible(position + geometricNormal * 0.002, lightPoint, entry.x,
+                               triangleNumber - entry.z))
     {
         return vec3(0.0);
     }
@@ -592,11 +607,16 @@ void main()
             radiance += throughput * surfaceEmission * emissionWeight;
         }
 
-        // 視線がシェーディング法線の裏にある（法線マップや頂点法線の補間で起きる）ときは、
-        // 幾何法線をシェーディング法線に使う。評価・pdf・標本化を同じ表側の法線で行う。
-        if (dot(shadingNormal, -direction) <= 0.0)
+        // 視線がシェーディング法線の裏または接平面上にある（法線マップや頂点法線の補間で起きる）
+        // ときは、幾何法線をシェーディング法線に使う。評価・pdf・標本化を同じ表側の法線で行う。
+        // 幾何法線でも接平面上なら散乱と光源標本を打ち切る（BSDFのNdotVの下限に掛からないようにする）。
+        if (dot(shadingNormal, -direction) < 1.0e-6)
         {
             shadingNormal = geometricNormal;
+        }
+        if (dot(shadingNormal, -direction) < 1.0e-6)
+        {
+            break;
         }
         PathSurface surface = MakePathSurface(shadingNormal, -direction, surfaceAlbedo,
                                               surfaceMetallic, surfaceRoughness, bsdfMode);

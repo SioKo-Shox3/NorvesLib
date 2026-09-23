@@ -913,12 +913,12 @@ namespace
         // 10m先の点光源（z=-10）の5mm手前、カメラの後ろにある小さな遮蔽板。
         const Vec3 pointBlockerCorners[4] = {{-0.1, 0.1, -9.995}, {0.1, 0.1, -9.995},
                                              {0.1, -0.1, -9.995}, {-0.1, -0.1, -9.995}};
-        // 5m先（z=-5、カメラの後ろ）の面光源と、その2.5mm受光側にある面光源より広い遮蔽板。
-        // 距離の0.1%を未検査にする終端では約5mmを見逃す距離にする。
+        // 5m先（z=-5、カメラの後ろ）の面光源と、その0.5mm受光側にある面光源より広い遮蔽板。
+        // 終端を距離の割合や固定幅で短くする影レイでは見逃す近さにする。
         const Vec3 farLightCorners[4] = {{-2.0, -2.0, -5.0}, {2.0, -2.0, -5.0},
                                          {2.0, 2.0, -5.0}, {-2.0, 2.0, -5.0}};
-        const Vec3 areaBlockerCorners[4] = {{-3.0, -3.0, -4.9975}, {3.0, -3.0, -4.9975},
-                                            {3.0, 3.0, -4.9975}, {-3.0, 3.0, -4.9975}};
+        const Vec3 areaBlockerCorners[4] = {{-3.0, -3.0, -4.9995}, {3.0, -3.0, -4.9995},
+                                            {3.0, 3.0, -4.9995}, {-3.0, 3.0, -4.9995}};
         if (!BuildGeometry(device, sphereVertices, sphereIndices, sphere) ||
             !BuildQuad(device, facingCorners, {0.0, 0.0, -1.0}, facingPlane) ||
             !BuildQuad(device, floorCorners, {0.0, 1.0, 0.0}, floorPlane) ||
@@ -1427,6 +1427,7 @@ namespace
         glossyMaterial.MetallicTexture = metallicHandles[2];
         glossyMaterial.RoughnessTexture = roughnessHandles[2];
         glossyMaterial.NormalTexture = steepNormalHandle;
+        // 許容差1%: 修正後の実測は0.14%、裏側の視線で標本分布とpdfがずれる版は2.25%。
         if (!compareStrategies("steep_normal_area", 1024u, 0.01))
         {
             return 1;
@@ -1460,6 +1461,8 @@ namespace
         useScene(floorPacket);
         pass.SetBsdfMode(PathTracingBsdfMode::Production);
         runner.Sky = &skyPass;
+        // 許容差5%: BSDF標本だけの太陽は分布の裾が重く、修正後の実測は0.52%（4096試料・60度視野では1.5%）。
+        //            65504で切り詰める版は32%減る。
         if (!compareStrategies("sun_glossy", 1024u, 0.05))
         {
             return 1;
@@ -1509,12 +1512,20 @@ namespace
             return 1;
         }
         const float areaUnblockedMax = imageMax();
+        // 光源標本・BSDF標本・MISのどれでも遮蔽板の背後は0（戦略間で可視性が一致する）。
         useScene(areaBlockedPacket);
-        if (!runner.Accumulate(256u, pixels, "far_area_blocked"))
+        float areaBlockedMax = 0.0f;
+        for (const auto& samplingCase : samplingCases)
         {
-            return 1;
+            pass.SetLightSampling(samplingCase.Sampling);
+            if (!runner.Accumulate(256u, pixels, "far_area_blocked"))
+            {
+                return 1;
+            }
+            std::cout << "far_area_blocked_" << samplingCase.Label << "_max=" << imageMax() << '\n';
+            areaBlockedMax = std::max(areaBlockedMax, imageMax());
         }
-        const float areaBlockedMax = imageMax();
+        pass.SetLightSampling(PathTracingLightSampling::MultipleImportance);
         std::cout << "distant_point_unblocked_max=" << unblockedMax
                   << " distant_point_blocked_max=" << pointBlockedMax
                   << " far_area_unblocked_max=" << areaUnblockedMax
