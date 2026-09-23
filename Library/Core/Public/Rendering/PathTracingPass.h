@@ -3,6 +3,7 @@
 
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "RHI/DeviceCapabilities.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 
@@ -101,6 +102,14 @@ namespace NorvesLib::Core::Rendering
         void Execute(ViewRenderContext& context) override;
         void Declare(RenderGraphBuilder& builder) override;
         void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
+
+        /**
+         * @brief パストレーサーに必要なデバイス機能がそろっているか
+         *
+         * 加速構造・RT pipeline・buffer device address・shaderの64bit整数・texture配列の非一様添字。
+         * 起動時の描画方式の選択、Initialize、テストのスキップ判定で同じ条件を使う。
+         */
+        static bool IsSupported(const RHI::DeviceCapabilities& capabilities);
 
         uint32_t GetAccumulatedSampleCount() const;
         RHI::TexturePtr GetAccumulatedTexture() const;

@@ -12,6 +12,7 @@
 #include "Module/ModuleRegistry.h"
 #include "ImGuiModule/IImGuiView.h"
 #include "ImGuiModule/ImGuiModule.h"
+#include "Rendering/PathTracingPass.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/SkyAtmosphere.h"
@@ -7710,11 +7711,7 @@ int main(int argc, char** argv)
         probeDesc.Api = RHI::GraphicsAPI::Vulkan;
         probeDesc.bEnableValidation = false;
         RHI::DevicePtr probe = RHI::CreateRHIDevice(probeDesc);
-        if (!probe ||
-            !probe->GetCapabilities().RayTracing.bAccelerationStructure ||
-            !probe->GetCapabilities().RayTracing.bRayTracingPipeline ||
-            !probe->GetCapabilities().bBufferDeviceAddress ||
-            !probe->GetCapabilities().bSampledImageArrayNonUniformIndexing)
+        if (!probe || !Core::Rendering::PathTracingPass::IsSupported(probe->GetCapabilities()))
         {
             return ReportGpuTestSkip("RenderingHdrSceneCaptureTest",
                                      "path tracing capabilities are unavailable");

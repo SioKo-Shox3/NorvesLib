@@ -20,6 +20,7 @@
 #include "Rendering/FrameCaptureReadbackHelper.h"
 #include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/PathTracingPass.h"
 #include "Rendering/RayTracingSceneSubsystem.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Engine/Engine.h"
@@ -1529,15 +1530,11 @@ namespace NorvesLib::Core::Rendering
         // 12.5. メインSceneViewのパイプライン構築
         // ========================================
         // 既定はDeferred描画パス（GBuffer→Lighting→ToneMapping）。パストレーサーは起動時の設定で
-        // 明示選択し、RT pipeline・BDA・非一様texture添字に対応するデバイスでだけ有効にする。
+        // 明示選択し、PathTracingPassに必要な機能がそろうデバイスでだけ有効にする。
         m_MainViewRenderer = RenderingMainViewRenderer::Raster;
         if (settings.MainViewRenderer == RenderingMainViewRenderer::PathTracing)
         {
-            const RHI::DeviceCapabilities& capabilities = m_Device->GetCapabilities();
-            if (capabilities.RayTracing.bAccelerationStructure &&
-                capabilities.RayTracing.bRayTracingPipeline &&
-                capabilities.bBufferDeviceAddress &&
-                capabilities.bSampledImageArrayNonUniformIndexing)
+            if (PathTracingPass::IsSupported(m_Device->GetCapabilities()))
             {
                 m_MainViewRenderer = RenderingMainViewRenderer::PathTracing;
             }

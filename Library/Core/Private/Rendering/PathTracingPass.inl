@@ -417,6 +417,14 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    bool PathTracingPass::IsSupported(const RHI::DeviceCapabilities& capabilities)
+    {
+        return capabilities.RayTracing.bAccelerationStructure &&
+               capabilities.RayTracing.bRayTracingPipeline &&
+               capabilities.bBufferDeviceAddress && capabilities.bShaderInt64 &&
+               capabilities.bSampledImageArrayNonUniformIndexing;
+    }
+
     bool PathTracingPass::Initialize(ViewRenderContext& context)
     {
         if (m_bInitialized)
@@ -424,10 +432,7 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
         if (!context.Device || !context.ShaderMgr || !context.CommandList ||
-            !context.Device->GetCapabilities().RayTracing.bAccelerationStructure ||
-            !context.Device->GetCapabilities().RayTracing.bRayTracingPipeline ||
-            !context.Device->GetCapabilities().bBufferDeviceAddress ||
-            !context.Device->GetCapabilities().bSampledImageArrayNonUniformIndexing)
+            !IsSupported(context.Device->GetCapabilities()))
         {
             return false;
         }
