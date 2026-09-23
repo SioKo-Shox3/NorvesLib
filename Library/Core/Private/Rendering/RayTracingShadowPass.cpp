@@ -417,11 +417,22 @@ namespace NorvesLib::Core::Rendering
                                      sizeof(instance.IndexOffset));
                 hash = HashPathBytes(hash, &instance.IndexCount,
                                      sizeof(instance.IndexCount));
+                hash = HashPathBytes(hash, &instance.VertexOffset,
+                                     sizeof(instance.VertexOffset));
+                hash = HashPathBytes(hash, &instance.VertexCount,
+                                     sizeof(instance.VertexCount));
+                hash = HashPathBytes(hash, &instance.VertexStride,
+                                     sizeof(instance.VertexStride));
                 const uint64_t vertexAddress =
                     instance.AccelerationStructureVertexBuffer
                         ? instance.AccelerationStructureVertexBuffer->GetDeviceAddress()
                         : 0u;
+                const uint64_t indexAddress =
+                    instance.AccelerationStructureIndexBuffer
+                        ? instance.AccelerationStructureIndexBuffer->GetDeviceAddress()
+                        : 0u;
                 hash = HashPathBytes(hash, &vertexAddress, sizeof(vertexAddress));
+                hash = HashPathBytes(hash, &indexAddress, sizeof(indexAddress));
             }
             return hash;
         }
@@ -520,7 +531,6 @@ namespace NorvesLib::Core::Rendering
         m_ClosestHitShader.reset();
         m_Sampler.reset();
         m_OutputHandle = {};
-        m_PreviousHandle = {};
         m_ActiveHistoryIndex = UINT32_MAX;
         m_bPrepared = false;
         m_bInitialized = false;
@@ -535,7 +545,7 @@ namespace NorvesLib::Core::Rendering
     }
 
     PathTracingPass::History* PathTracingPass::FindOrCreateHistory(
-        ViewRenderContext& context, uint32_t width, uint32_t height)
+        const ViewRenderContext& context, uint32_t width, uint32_t height)
     {
         const uint32_t viewId = context.PhysicalLighting.ViewId;
         const uint32_t viewportId = context.PhysicalLighting.ViewportId;
@@ -597,7 +607,7 @@ namespace NorvesLib::Core::Rendering
         return history->ParametersBuffer && history->DescriptorSet ? history : nullptr;
     }
 
-    bool PathTracingPass::PrepareInstances(ViewRenderContext& context, History& history)
+    bool PathTracingPass::PrepareInstances(const ViewRenderContext& context, History& history)
     {
         const RayTracingSceneSnapshot& scene = *context.SnapshotRayTracingScene;
         if (scene.Instances.empty() ||
@@ -707,7 +717,6 @@ namespace NorvesLib::Core::Rendering
     void PathTracingPass::Declare(RenderGraphBuilder& builder)
     {
         m_OutputHandle = {};
-        m_PreviousHandle = {};
         m_ActiveHistoryIndex = UINT32_MAX;
         m_bPrepared = false;
         const ViewRenderContext* context = builder.GetContext();
@@ -725,9 +734,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ViewRenderContext& mutableContext = const_cast<ViewRenderContext&>(*context);
-        History* history = FindOrCreateHistory(mutableContext, width, height);
-        if (!history || !PrepareInstances(mutableContext, *history))
+        History* history = FindOrCreateHistory(*context, width, height);
+        if (!history || !PrepareInstances(*context, *history))
         {
             return;
         }
@@ -830,6 +838,9 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+        context.CommandList->TextureBarrier(history.Textures[m_TargetIndex],
+                                            RHI::ResourceState::RayTracingStorage,
+                                            RHI::ResourceState::ShaderResource);
         history.TextureStates[0] = RHI::ResourceState::ShaderResource;
         history.TextureStates[1] = RHI::ResourceState::ShaderResource;
         history.CurrentIndex = m_TargetIndex;
