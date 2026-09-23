@@ -299,6 +299,61 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool ReadRgbaFloatDump(const Core::Container::String& path, RgbaFloatImage& outImage,
+                           uint32_t& outSampleCount)
+    {
+        outImage = RgbaFloatImage{};
+        outSampleCount = 0u;
+        FileStream::FileStreamUniquePtr stream = FileStream::FileStream::CreateUnique(
+            path, FileStream::FileMode::Read, FileStream::FileAccess::Read);
+        if (!stream)
+        {
+            return false;
+        }
+        const int64_t size = stream->GetSize();
+        if (size <= 0 || size > (int64_t{1} << 31))
+        {
+            return false;
+        }
+        Core::Container::VariableArray<uint8_t> bytes;
+        bytes.resize(static_cast<size_t>(size));
+        if (stream->Read(bytes.data(), bytes.size()) != bytes.size())
+        {
+            return false;
+        }
+        size_t headerEnd = 0u;
+        while (headerEnd < bytes.size() && headerEnd < 96u && bytes[headerEnd] != '\n')
+        {
+            ++headerEnd;
+        }
+        if (headerEnd >= bytes.size() || bytes[headerEnd] != '\n')
+        {
+            return false;
+        }
+        char header[97] = {};
+        std::memcpy(header, bytes.data(), headerEnd);
+        unsigned int width = 0u;
+        unsigned int height = 0u;
+        unsigned int samples = 0u;
+        if (std::sscanf(header, "NLRGBA32F %u %u %u", &width, &height, &samples) != 3 ||
+            width == 0u || height == 0u || width > 16384u || height > 16384u)
+        {
+            return false;
+        }
+        const size_t valueCount = static_cast<size_t>(width) * height * RgbaChannelCount;
+        if (bytes.size() - headerEnd - 1u != valueCount * sizeof(float))
+        {
+            return false;
+        }
+        outImage.Width = width;
+        outImage.Height = height;
+        outImage.Values.resize(valueCount);
+        std::memcpy(outImage.Values.data(), bytes.data() + headerEnd + 1u,
+                    valueCount * sizeof(float));
+        outSampleCount = samples;
+        return true;
+    }
+
     NonFiniteLocation FindFirstNonFinite(const RgbaFloatImage& image)
     {
         if (image.Width == 0u)

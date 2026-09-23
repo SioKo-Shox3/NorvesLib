@@ -716,6 +716,33 @@ set_tests_properties(PathTracingRasterParityVulkanTest PROPERTIES
     RESOURCE_LOCK NorvesLibGPU
     SKIP_RETURN_CODE 125
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# R6 RTGIの静止収束SceneColorを、同じCornellシーンの自前PT参照とLDR-FLIPで比べる。
+add_executable(R6RTGIPathTracingReferenceVulkanTest
+    R6RTGIPathTracingReferenceVulkanTest.cpp
+)
+target_link_libraries(R6RTGIPathTracingReferenceVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+    RenderingFloatImageSupport
+    RenderingPerceptualDiffSupport
+)
+target_include_directories(R6RTGIPathTracingReferenceVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(R6RTGIPathTracingReferenceVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+set(R6_RTGI_PATH_TRACING_REFERENCE_ROOT
+    "${CMAKE_BINARY_DIR}/RenderingValidation/R6RTGIPathTracingReferenceRuns")
+add_test(NAME R6RTGIPathTracingReferenceVulkanTest
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/R6RTGIPathTracingReferenceTest.py
+            $<TARGET_FILE:R6RTGIPathTracingReferenceVulkanTest>
+            ${R6_RTGI_PATH_TRACING_REFERENCE_ROOT})
+set_tests_properties(R6RTGIPathTracingReferenceVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 target_link_libraries(RenderingRayTracingShadowVulkanTest PRIVATE
     RenderingValidationFixtureSupport
     RenderingGpuTestSupport

@@ -1,0 +1,57 @@
+﻿# R6 RTGIの静止収束SceneColorとPT参照（直接光のみ・拡散1バウンス・多重散乱）を取得し、比較する。
+from pathlib import Path
+import subprocess
+import sys
+
+SKIP_RETURN_CODE = 125
+# PT参照の試料数。拡散1バウンスの参照は比較の分母になるため、雑音が知覚差へ残らない数にする。
+PATH_TRACING_SAMPLES = 16384
+SAMPLES_PER_FRAME = 1024
+
+
+def run(command):
+    print("run:", " ".join(str(part) for part in command), flush=True)
+    result = subprocess.run([str(part) for part in command], stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT)
+    output = result.stdout.decode("utf-8", "replace")
+    for line in output.splitlines():
+        if ("r6_reference" in line or "yardstick" in line or "sanity" in line or
+                "_vs_" in line or "indirect_mean" in line or "skipped" in line or
+                "[ERROR]" in line):
+            print("  " + line)
+    return result.returncode
+
+
+def main():
+    sys.stdout.reconfigure(errors="replace")
+    if len(sys.argv) != 3:
+        print("usage: R6RTGIPathTracingReferenceTest.py <R6RTGIPathTracingReferenceVulkanTest> <output-root>")
+        return 2
+    executable = Path(sys.argv[1])
+    root = Path(sys.argv[2])
+    root.mkdir(parents=True, exist_ok=True)
+    for stale in root.glob("*.nlrgba"):
+        stale.unlink()
+    path_tracing = ["--renderer=path-tracing",
+                    f"--path-tracing-samples={PATH_TRACING_SAMPLES}",
+                    f"--path-tracing-samples-per-frame={SAMPLES_PER_FRAME}"]
+    captures = [
+        ("raster-rtgi", []),
+        ("pt-direct", path_tracing + ["--path-tracing-transport=direct"]),
+        ("pt-single", path_tracing + ["--path-tracing-transport=single-diffuse-bounce"]),
+        ("pt-full", path_tracing + ["--path-tracing-transport=full"]),
+    ]
+    for name, arguments in captures:
+        dump = (root / f"{name}.nlrgba").as_posix()
+        code = run([executable] + arguments + [f"--r6-reference-dump={dump}"])
+        if code == SKIP_RETURN_CODE:
+            print(f"R6RTGIPathTracingReferenceVulkanTest skipped: {name}")
+            return SKIP_RETURN_CODE
+        if code != 0:
+            print(f"{name} の取得が失敗しました exit={code}")
+            return 1
+    return run([executable, f"--compare-dumps={root.as_posix()}"])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

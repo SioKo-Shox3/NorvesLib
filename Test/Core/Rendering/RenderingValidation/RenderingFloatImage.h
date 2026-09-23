@@ -75,6 +75,9 @@ namespace NorvesLib::Test::RenderingValidation
      */
     bool WriteRgbaFloatDump(const Core::Container::String& path, const RgbaFloatImage& image,
                             uint32_t sampleCount);
+    /** @brief WriteRgbaFloatDumpの形式を読む。 */
+    bool ReadRgbaFloatDump(const Core::Container::String& path, RgbaFloatImage& outImage,
+                           uint32_t& outSampleCount);
     NonFiniteLocation FindFirstNonFinite(const RgbaFloatImage& image);
     bool IsFiniteImage(const RgbaFloatImage& image);
     RgbaFloatViolation FindFirstRgba16FloatViolation(const RgbaFloatImage& image);
