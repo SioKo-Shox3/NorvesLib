@@ -83,15 +83,17 @@
 - R7-P4はblocked。指定テストは未登録で、Cornell比較に必要なR7-P3の材質・光輸送契約も未完。
 
 - R7-P7はblocked。R7-P3/P4のPT光輸送・公開Cornell参照・SPP収束が未完で、R4/R6との同一条件self PT比較を実施できない。P1のOutdoor受入れも保留。
+- R7-O3はblocked。R7コア受入れ未完に加え、空・霧を含む3時刻のPT/raster画像比較とFLIP二段判定がない。
 
 ## Next
 
-- R7-O3: 屋外PT/rasterの3時刻相互比較と既知近似差の受入れを行う。
+- R7-O3はR7-P3/P4/P1/P7の受入れ後、空・霧込みの同一屋外シーンを3時刻captureし、FLIP pool/max-pixel閾値で再検証する。
 - R7-P3はRT材質snapshotとtexture資源・UV・DFGの契約確定後に再開する。R6 Outdoorの基準画像判断とR7-P1の受入れは保留として保持する。
 - R7-P3の契約と光輸送を実装後、R7-P4の同一seed 16/64/256 sppとCornell RGBE参照のGPU検証を登録して再開する。閾値とseedは変更しない。
 - R7-P7はP3のNEE/MIS・PT数値契約、P4の16/64/256 spp・Cornell比較、P1のOutdoor基準再検証後に再開する。同一条件のR4/R6比較を各1回行い、閾値超過時だけ該当phaseを再オープンする。
 
 ## Notes
+- R7-O3停止監査（2026-09-23）: .harness/runs/20260923-095848/verify-R7-O3-1.txt〜-5.txtを読戻し、Game Debug build exit 0、指定屋外CTest 1/1、関連R7 CTest 6/6、P3/P4専用CTest登録0件を確認した。3時刻のPT空・太陽数値はあるが、霧込みPT/raster同一シーンのFLIP値はない。Docs/RenderingValidation/R7OutdoorAcceptance.mdとblocked/R7-O3.mdに停止根拠を記録し、R7完了trailerは付けない。
 - R7-O2検証（2026-09-23）: .harness/runs/20260923-095848/verify-R7-O2-6.txtは指定Debug build EXIT_CODE=0、verify-R7-O2-7.txtはGPU CTest 2/2 passed。verify-R7-O2-8.txtでは密度0.15/0.3と高さ変更の透過率0.740818/0.548812/0.680309、方向光散乱の実測0.159891/0.0799457/0.0399729と解析期待値0.159801/0.0799007/0.0399503、霧付き表面差0.966716・空miss差0を読戻し確認した。ラスタとの遮蔽方式・二次レイ差はDocs/RenderingValidation/R7FogTransport.mdに記録した。
 - R7-O1検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-O1-3.txt`は指定Debug build EXIT_CODE=0、`verify-R7-O1-4.txt`は屋外CTest 1/1 passed。`verify-R7-O1-5.txt`で朝/昼/夕の空miss合計0.0455075/0.0734877/0.0773978、太陽面0.718427/0.351861/0.672279と解析値0.720148/0.354884/0.674271を確認した。全画素有限、空無効・LUT欠落と同一設定の復帰で履歴1試料を確認した。`verify-R7-O1-6.txt`と`-7.txt`の既存PT・R2空モデルbuild/CTestはEXIT_CODE=0、2/2 passed。
 - R7-P7受入れ監査（2026-09-23）: .harness/runs/20260923-095848/verify-R7-P7-1.txt〜-8.txtを読戻し、関連Debug build EXIT_CODE=0、CTest 7/7 passed、R1ラスタ数値40静的行/68数値行/120 capture、EXR 3枚2,099画素のfinite-scanを確認した。P3/P4専用CTestは登録0件で、同一条件self PT対R4/R6の比較値はない。Docs/RenderingValidation/R7CoreAcceptance.mdとblocked/R7-P7.mdに再検証単位を記録し、R7 trailerは付けない。
