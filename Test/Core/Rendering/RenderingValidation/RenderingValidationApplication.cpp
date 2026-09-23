@@ -161,9 +161,10 @@ namespace NorvesLib::Test::RenderingValidation
                 }
                 continue;
             }
-            if (StartsWith(argument, TEXT("--path-tracing-transport=")))
+            if (StartsWith(argument, TEXT("--path-tracing-transport=")) ||
+                StartsWith(argument, TEXT("--path-tracing-pixel-sampling=")))
             {
-                // エンジンが同じ引数で輸送範囲を設定する。
+                // エンジンが同じ引数で輸送範囲と画素内の標本位置を設定する。
                 continue;
             }
             if (StartsWith(argument, TEXT("--path-tracing-samples=")))

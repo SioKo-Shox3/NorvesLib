@@ -583,6 +583,54 @@ namespace
                 std::cerr << "正射影の比較画素が足りません\n";
                 return 1;
             }
+
+            // 画素中心の標本化では縁の画素も含めて全画素が画素中心の内外で決まり、試料を重ねても
+            // 部分被覆の値にならない（ラスタのGBufferと同じ標本位置）。
+            pass.SetPixelSampling(PathTracingPixelSampling::Center);
+            for (uint64_t frame = 31u; frame <= 34u; ++frame)
+            {
+                if (!RunFrame(device, graph, pass, context, frame, 2u, 4u, current) ||
+                    pass.GetAccumulatedSampleCount() != frame - 30u)
+                {
+                    std::cerr << "画素中心の標本化で累積できませんでした\n";
+                    return 1;
+                }
+            }
+            uint32_t edgePixels = 0u;
+            for (uint32_t y = 0u; y < Height; ++y)
+            {
+                for (uint32_t x = 0u; x < Width; ++x)
+                {
+                    const bool bInside = cornerInside((x + 0.5) / Width, (y + 0.5) / Height);
+                    uint32_t insideCorners = 0u;
+                    for (uint32_t corner = 0u; corner < 4u; ++corner)
+                    {
+                        insideCorners += cornerInside(
+                            (x + static_cast<double>(corner & 1u)) / Width,
+                            (y + static_cast<double>(corner >> 1u)) / Height) ? 1u : 0u;
+                    }
+                    edgePixels += insideCorners != 0u && insideCorners != 4u ? 1u : 0u;
+                    const float* pixel = current.data() + (static_cast<size_t>(y) * Width + x) * 4u;
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const float expected = bInside ? albedo[channel] : 0.0f;
+                        if (std::abs(pixel[channel] - expected) > 1.0e-5f)
+                        {
+                            std::cerr << "画素中心の標本化の画素が期待値と一致しません pixel=(" << x
+                                      << ',' << y << ") measured=" << pixel[channel]
+                                      << " expected=" << expected << "\n";
+                            return 1;
+                        }
+                    }
+                }
+            }
+            std::cout << "pt_pixel_center_sampling edge_pixels=" << edgePixels << "\n";
+            if (edgePixels < 20u)
+            {
+                std::cerr << "画素中心の標本化を確かめる縁の画素が足りません\n";
+                return 1;
+            }
+            pass.SetPixelSampling(PathTracingPixelSampling::Box);
         }
         camera.Projection = ProjectionType::Perspective;
         pass.SetDebugOutput(PathTracingDebugOutput::None);

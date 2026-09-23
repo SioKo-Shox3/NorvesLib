@@ -143,6 +143,10 @@ namespace NorvesLib::Core::Rendering
         void SetTransportScope(PathTracingTransportScope scope) { m_TransportScope = scope; }
         PathTracingTransportScope GetTransportScope() const { return m_TransportScope; }
 
+        /** @brief 1次光線の画素内の標本位置を切り替える。変更すると累積履歴を捨てる。 */
+        void SetPixelSampling(PathTracingPixelSampling sampling) { m_PixelSampling = sampling; }
+        PathTracingPixelSampling GetPixelSampling() const { return m_PixelSampling; }
+
         /**
          * @brief 環境マップを既定の環境光にする。Initializeで読み込み、SetEnvironmentと同じ扱いにする。
          */
@@ -268,6 +272,7 @@ namespace NorvesLib::Core::Rendering
         PathTracingBsdfMode m_BsdfMode = PathTracingBsdfMode::Production;
         PathTracingLightSampling m_LightSampling = PathTracingLightSampling::MultipleImportance;
         PathTracingTransportScope m_TransportScope = PathTracingTransportScope::Full;
+        PathTracingPixelSampling m_PixelSampling = PathTracingPixelSampling::Box;
         uint32_t m_BoundMaterialTextureCount = 0u;
         uint32_t m_PunctualLightCount = 0u;
         uint32_t m_EmissiveInstanceCount = 0u;

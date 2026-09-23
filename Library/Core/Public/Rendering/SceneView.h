@@ -224,12 +224,14 @@ namespace NorvesLib::Core::Rendering
          * @brief 明示選択時だけ独立パストレーシングパイプラインを設定する。
          * @param samplesPerFrame 1回のdispatchで累積する試料数
          * @param transportScope 追う光輸送の範囲（既定は多重散乱をすべて追う）
+         * @param pixelSampling 1次光線の画素内の標本位置（既定は画素内を一様にずらす）
          *
          * 空が無効なときの環境光は、ディファードのLightingPassと同じ環境マップ設定を使う。
          */
         void SetupPathTracingPipeline(
             uint32_t samplesPerFrame = 1u,
-            PathTracingTransportScope transportScope = PathTracingTransportScope::Full);
+            PathTracingTransportScope transportScope = PathTracingTransportScope::Full,
+            PathTracingPixelSampling pixelSampling = PathTracingPixelSampling::Box);
 
         /**
          * @brief Proxyをカリング

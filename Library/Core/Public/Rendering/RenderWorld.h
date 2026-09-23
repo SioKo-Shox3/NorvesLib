@@ -62,6 +62,7 @@ namespace NorvesLib::Core::Rendering
         RenderingMainViewRenderer MainViewRenderer = RenderingMainViewRenderer::Raster;
         uint32_t PathTracingSamplesPerFrame = 1;
         PathTracingTransportScope PathTracingTransport = PathTracingTransportScope::Full;
+        PathTracingPixelSampling PathTracingPixelSamplingMode = PathTracingPixelSampling::Box;
     };
 
     // ========================================

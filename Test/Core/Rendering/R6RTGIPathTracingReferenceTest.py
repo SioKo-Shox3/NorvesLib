@@ -32,7 +32,10 @@ def main():
     root.mkdir(parents=True, exist_ok=True)
     for stale in root.glob("*.nlrgba"):
         stale.unlink()
+    # PT参照はラスタのGBufferと同じ画素中心から1次光線を出し、縁の被覆（aliasing）の違いを
+    # 光輸送の差に数えない。
     path_tracing = ["--renderer=path-tracing",
+                    "--path-tracing-pixel-sampling=center",
                     f"--path-tracing-samples={PATH_TRACING_SAMPLES}",
                     f"--path-tracing-samples-per-frame={SAMPLES_PER_FRAME}"]
     captures = [

@@ -20,4 +20,16 @@ namespace NorvesLib::Core::Rendering
         /** @brief 直接光に、拡散葉だけで散乱した1回の間接光（命中点の発光を除く直接光と環境光）を加える */
         SingleDiffuseBounce = 2
     };
+
+    /**
+     * @brief 1次光線を画素内のどこから出すか
+     *
+     * Boxは画素内を一様にずらし、累積で画素面積の平均（縁の被覆）を求める。Centerは常に画素中心から
+     * 出し、ラスタのGBufferと同じ標本位置にする（縁のaliasingまでラスタと揃えて光輸送だけを比べる検証用）。
+     */
+    enum class PathTracingPixelSampling : uint32_t
+    {
+        Box = 0,
+        Center = 1
+    };
 } // namespace NorvesLib::Core::Rendering

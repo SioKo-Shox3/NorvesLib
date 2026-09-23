@@ -373,7 +373,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t HashPathEnvironment(const PathTracingEnvironment& environment,
                                      PathTracingBsdfMode bsdfMode,
                                      PathTracingLightSampling lightSampling,
-                                     PathTracingTransportScope transportScope)
+                                     PathTracingTransportScope transportScope,
+                                     PathTracingPixelSampling pixelSampling)
         {
             uint64_t hash = 14695981039346656037ull;
             hash = HashPathBytes(hash, &environment.Mode, sizeof(environment.Mode));
@@ -384,6 +385,7 @@ namespace NorvesLib::Core::Rendering
             hash = HashPathBytes(hash, &environment.Intensity, sizeof(environment.Intensity));
             hash = HashPathBytes(hash, &bsdfMode, sizeof(bsdfMode));
             hash = HashPathBytes(hash, &transportScope, sizeof(transportScope));
+            hash = HashPathBytes(hash, &pixelSampling, sizeof(pixelSampling));
             return HashPathBytes(hash, &lightSampling, sizeof(lightSampling));
         }
 
@@ -1074,7 +1076,7 @@ namespace NorvesLib::Core::Rendering
         const uint64_t environmentSignature =
             HashPathEnvironment(m_EffectiveEnvironment, m_EffectiveBsdfMode,
                                 ResolvePathLightSampling(m_LightSampling, m_TransportScope),
-                                m_TransportScope);
+                                m_TransportScope, m_PixelSampling);
         const bool bReset = history->SampleCount == 0u ||
             history->SceneRevision != context->SceneRevision ||
             history->LightRevision != context->LightRevision ||
@@ -1250,8 +1252,10 @@ namespace NorvesLib::Core::Rendering
         parameters.SampleState[0] = m_SamplesPerFrame;
         // 正射影は画素ごとに近平面から平行に光線を出す。検証mode 252はラスタの深度alphaと同じく
         // 幾何を1未満、背景を1にするalphaを書く。
+        // bit0=正射影、bit1=画素中心から標本化する。
         parameters.SampleState[1] =
-            opticalCamera.Projection == ProjectionType::Orthographic ? 1u : 0u;
+            (opticalCamera.Projection == ProjectionType::Orthographic ? 1u : 0u) |
+            (m_PixelSampling == PathTracingPixelSampling::Center ? 2u : 0u);
         parameters.SampleState[2] =
             static_cast<uint32_t>(context.GetActiveDebugMode()) == 252u ? 1u : 0u;
         parameters.SampleState[3] = static_cast<uint32_t>(m_TransportScope);

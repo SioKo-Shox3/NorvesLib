@@ -14,7 +14,7 @@ layout(set = 0, binding = 1, std140) uniform PathTracingParameters
     vec4 exposureAndDebug; // x=カメラのプリエクスポージャ、y=検証出力（0=放射輝度）
     uvec4 lightState; // x=点・spot・方向光の数、y=発光instance数、z=発光三角形数、w=BSDF(bit0-1)と標本化戦略(bit2-3)
     vec4 environmentRadiance; // rgb=一様環境の放射輝度または環境textureの倍率、w=環境光の種類
-    uvec4 sampleState; // x=このdispatchの試料数、y=正射影(1)、z=検証mode 252の被覆alpha(1)
+    uvec4 sampleState; // x=このdispatchの試料数、y=bit0正射影・bit1画素中心、z=検証mode 252、w=輸送範囲 // x=このdispatchの試料数、y=正射影(1)、z=検証mode 252の被覆alpha(1)
 } parameters;
 
 // 表面BSDF（PathTracingBsdfModeと同じ値）。

@@ -324,6 +324,33 @@ namespace
         return false;
     }
 
+    // --path-tracing-pixel-sampling=box|center
+    bool TryParsePathTracingPixelSamplingOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::PathTracingPixelSampling& outSampling,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--path-tracing-pixel-sampling=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("box"))
+        {
+            outSampling = NorvesLib::Core::Rendering::PathTracingPixelSampling::Box;
+            return true;
+        }
+        if (value == TEXT("center"))
+        {
+            outSampling = NorvesLib::Core::Rendering::PathTracingPixelSampling::Center;
+            return true;
+        }
+        return false;
+    }
+
     bool IsDisableBoardInstanceBatchingOption(const TCHAR* pText)
     {
         if (!pText)
@@ -432,6 +459,8 @@ namespace NorvesLib::Core::Engine
         uint32_t pathTracingSamplesPerFrame = 1u;
         Rendering::PathTracingTransportScope pathTracingTransport =
             Rendering::PathTracingTransportScope::Full;
+        Rendering::PathTracingPixelSampling pathTracingPixelSampling =
+            Rendering::PathTracingPixelSampling::Box;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -516,6 +545,18 @@ namespace NorvesLib::Core::Engine
             {
                 LOG_WARNING("ApplicationProcessor runtime option --path-tracing-transport ignored: value must be 'full', 'direct' or 'single-diffuse-bounce'");
             }
+
+            bool bMatchedPixelSampling = false;
+            if (TryParsePathTracingPixelSamplingOption(args[i], pathTracingPixelSampling,
+                                                       bMatchedPixelSampling))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_pixel_sampling=%u",
+                         static_cast<unsigned int>(pathTracingPixelSampling));
+            }
+            else if (bMatchedPixelSampling)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-pixel-sampling ignored: value must be 'box' or 'center'");
+            }
         }
 
         const Detail::ExitFrameSelection exitFrameSelection = Detail::SelectExitFrameSelection(exitFrameOptions);
@@ -585,6 +626,7 @@ namespace NorvesLib::Core::Engine
             renderSettings.MainViewRenderer = mainViewRenderer;
             renderSettings.PathTracingSamplesPerFrame = pathTracingSamplesPerFrame;
             renderSettings.PathTracingTransport = pathTracingTransport;
+            renderSettings.PathTracingPixelSamplingMode = pathTracingPixelSampling;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {

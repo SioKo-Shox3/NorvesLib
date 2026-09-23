@@ -546,7 +546,13 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
     uint state = uint(pixel.x + 1) * 0x9e3779b9u ^
                  uint(pixel.y + 1) * 0x85ebca6bu ^
                  (sampleIndex + 1u) * 0xc2b2ae35u ^ 0x6a09e667u;
-    vec2 uv = (vec2(pixel) + vec2(Random01(state), Random01(state))) / vec2(extent);
+    // 画素内のずれは画素中心の設定でも乱数を同じだけ消費し、以降の乱数列を揃える。
+    vec2 pixelOffset = vec2(Random01(state), Random01(state));
+    if ((parameters.sampleState.y & 2u) != 0u)
+    {
+        pixelOffset = vec2(0.5);
+    }
+    vec2 uv = (vec2(pixel) + pixelOffset) / vec2(extent);
     vec4 farPoint = parameters.inverseViewProjection * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
     if (isnan(farPoint.w) || isinf(farPoint.w) || abs(farPoint.w) < 0.000001)
     {
@@ -554,7 +560,7 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
     }
     vec3 origin = parameters.cameraPosition.xyz;
     vec3 direction = normalize(farPoint.xyz / farPoint.w - origin);
-    if (parameters.sampleState.y != 0u)
+    if ((parameters.sampleState.y & 1u) != 0u)
     {
         // 正射影は画素ごとに近平面上の点から視線方向へ平行に飛ばす（深度は近平面0・遠平面1）。
         vec4 nearPoint = parameters.inverseViewProjection * vec4(uv * 2.0 - 1.0, 0.0, 1.0);

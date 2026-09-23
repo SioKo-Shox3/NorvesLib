@@ -95,6 +95,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t PathTracingSamplesPerFrame = 1;
         /** @brief パストレーサーが追う光輸送の範囲（既定は多重散乱をすべて追う） */
         PathTracingTransportScope PathTracingTransport = PathTracingTransportScope::Full;
+        /** @brief パストレーサーの1次光線の画素内の標本位置（既定は画素内を一様にずらす） */
+        PathTracingPixelSampling PathTracingPixelSamplingMode = PathTracingPixelSampling::Box;
     };
 
     struct RenderingCoordinatorStatsSnapshot
