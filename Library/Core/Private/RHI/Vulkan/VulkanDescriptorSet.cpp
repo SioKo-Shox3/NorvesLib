@@ -201,9 +201,19 @@ namespace NorvesLib::RHI::Vulkan
                                                                              {vk::DescriptorType::eCombinedImageSampler, maxSets * 4},
                                                                              {vk::DescriptorType::eAccelerationStructureKHR, maxSets * 2}}};
 
+        bool bHasArrayBinding = false;
         if (bindings != nullptr)
         {
-            // 型ごとの要素数合計がmaxSets分に収まるよう、既定容量を下回らない範囲で広げる。
+            for (const DescriptorBindingDesc &binding : *bindings)
+            {
+                bHasArrayBinding = bHasArrayBinding || binding.count > 1u;
+            }
+        }
+
+        if (bHasArrayBinding)
+        {
+            // 配列を含むlayoutだけ、型ごとの要素数合計がmaxSets分に収まるよう既定容量から広げる。
+            // 配列を含まないlayoutは従来の既定容量のままにする。
             for (vk::DescriptorPoolSize &poolSize : poolSizes)
             {
                 uint64_t required = 0u;

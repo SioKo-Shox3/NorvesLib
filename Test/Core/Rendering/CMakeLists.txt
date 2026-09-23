@@ -288,6 +288,7 @@ add_executable(RHIDescriptorArrayVulkanTest
 target_link_libraries(RHIDescriptorArrayVulkanTest PRIVATE RenderingGpuTestSupport)
 target_include_directories(RHIDescriptorArrayVulkanTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
 )
 set_target_properties(RHIDescriptorArrayVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")

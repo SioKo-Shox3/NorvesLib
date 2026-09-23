@@ -62,6 +62,16 @@ namespace NorvesLib::RHI::Vulkan
         static DescriptorType ConvertResourceBindType(ResourceBindType type);
 
         /**
+         * @brief 配列bindingを含むset群がデバイスのdescriptor上限に収まるか検査する
+         *
+         * 全bindingがcount=1のset群は従来どおり検査せずtrueを返す。配列を含む場合は、
+         * stageごとの合計（sampler・sampled image・全資源）とset群全体の合計を
+         * 物理デバイスのlimitと比べる。
+         * @param sets pipeline layoutまたは単一descriptor setを構成するset群
+         */
+        bool IsWithinDescriptorArrayLimits(const VariableArray<DescriptorSetDesc> &sets) const;
+
+        /**
          * @brief VulkanDeviceのファクトリメソッド
          * @param params 初期化パラメータ
          * @return 作成されたデバイス

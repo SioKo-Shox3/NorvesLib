@@ -2212,8 +2212,99 @@ namespace NorvesLib::RHI::Vulkan
         }
     }
 
+    bool VulkanDevice::IsWithinDescriptorArrayLimits(const VariableArray<DescriptorSetDesc> &sets) const
+    {
+        bool bHasArrayBinding = false;
+        for (const DescriptorSetDesc &set : sets)
+        {
+            for (const DescriptorBinding &binding : set.bindings)
+            {
+                bHasArrayBinding = bHasArrayBinding || binding.count > 1u;
+            }
+        }
+        if (!bHasArrayBinding)
+        {
+            return true;
+        }
+
+        const vk::PhysicalDeviceLimits &limits = m_deviceProperties.limits;
+        const ShaderStage stages[] = {
+            ShaderStage::Vertex, ShaderStage::Hull, ShaderStage::Domain, ShaderStage::Geometry,
+            ShaderStage::Pixel, ShaderStage::Compute, ShaderStage::RayGen, ShaderStage::Miss,
+            ShaderStage::ClosestHit, ShaderStage::AnyHit, ShaderStage::Intersection,
+            ShaderStage::Callable};
+        uint64_t totalSamplers = 0u;
+        uint64_t totalSampledImages = 0u;
+        for (const DescriptorSetDesc &set : sets)
+        {
+            for (const DescriptorBinding &binding : set.bindings)
+            {
+                if (binding.type == ResourceBindType::CombinedImageSampler ||
+                    binding.type == ResourceBindType::Sampler)
+                {
+                    totalSamplers += binding.count;
+                }
+                if (binding.type == ResourceBindType::CombinedImageSampler ||
+                    binding.type == ResourceBindType::Texture)
+                {
+                    totalSampledImages += binding.count;
+                }
+            }
+        }
+        if (totalSamplers > limits.maxDescriptorSetSamplers ||
+            totalSampledImages > limits.maxDescriptorSetSampledImages)
+        {
+            return false;
+        }
+
+        for (ShaderStage stage : stages)
+        {
+            uint64_t stageSamplers = 0u;
+            uint64_t stageSampledImages = 0u;
+            uint64_t stageResources = 0u;
+            for (const DescriptorSetDesc &set : sets)
+            {
+                for (const DescriptorBinding &binding : set.bindings)
+                {
+                    if ((binding.stages & stage) == ShaderStage::None)
+                    {
+                        continue;
+                    }
+                    stageResources += binding.count;
+                    if (binding.type == ResourceBindType::CombinedImageSampler ||
+                        binding.type == ResourceBindType::Sampler)
+                    {
+                        stageSamplers += binding.count;
+                    }
+                    if (binding.type == ResourceBindType::CombinedImageSampler ||
+                        binding.type == ResourceBindType::Texture)
+                    {
+                        stageSampledImages += binding.count;
+                    }
+                }
+            }
+            if (stageSamplers > limits.maxPerStageDescriptorSamplers ||
+                stageSampledImages > limits.maxPerStageDescriptorSampledImages ||
+                stageResources > limits.maxPerStageResources)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     DescriptorSetPtr VulkanDevice::CreateDescriptorSet(const DescriptorSetDesc &desc)
     {
+        {
+            VariableArray<DescriptorSetDesc> sets;
+            sets.push_back(desc);
+            if (!IsWithinDescriptorArrayLimits(sets))
+            {
+                NORVES_LOG_ERROR("VulkanDevice",
+                                 "Descriptor set arrays exceed the physical device descriptor limits");
+                return nullptr;
+            }
+        }
         // DescriptorBindingをDescriptorBindingDescに変換
         VariableArray<DescriptorBindingDesc> bindingDescs;
         bindingDescs.reserve(desc.bindings.size());

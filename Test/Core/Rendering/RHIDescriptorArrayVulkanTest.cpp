@@ -1,4 +1,4 @@
-﻿// 配列combined image samplerの要素bindと非一様添字の標本化をGPUで確認する。
+﻿// 配列combined image samplerの要素bind、配列layoutのpool容量、非一様添字の標本化をGPUで確認する。
 #include "RenderingValidation/GpuTestEnvironment.h"
 
 #include "RHI/IBuffer.h"
@@ -9,7 +9,9 @@
 #include "RHI/ITexture.h"
 #include "RHI/RHIDeviceDesc.h"
 #include "RHI/RHIDeviceFactory.h"
+#include "RHI/Vulkan/VulkanDevice.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -23,22 +25,90 @@ namespace
     using namespace NorvesLib::Test::RenderingValidation;
 
     constexpr const char* TestName = "RHIDescriptorArrayVulkanTest";
-    constexpr uint32_t ArrayCount = 4u;
-    constexpr uint32_t InvocationCount = 16u;
+    // 配列を含まないlayoutの既定pool容量（combined image sampler 10 set × 4）を超える要素数にし、
+    // 配列layoutのpool拡張が働かなければ割り当てに失敗するようにする。
+    constexpr uint32_t ArrayCount = 64u;
+    constexpr uint32_t InvocationCount = 128u;
     constexpr uint64_t ResultBytes = InvocationCount * 4u * sizeof(float);
 
-    // 各要素の既知色（RGBA8）。要素ごとに全チャネルが異なる値にする。
-    constexpr uint8_t ElementColors[ArrayCount][4] = {
-        {255u, 0u, 0u, 255u},
-        {0u, 255u, 0u, 128u},
-        {0u, 0u, 255u, 64u},
-        {51u, 102u, 153u, 204u}};
+    // 各要素の既知色（RGBA8）。要素番号から全チャネルが要素ごとに異なる値を作る。
+    void MakeElementColor(uint32_t element, uint8_t (&outColor)[4])
+    {
+        outColor[0] = static_cast<uint8_t>((element * 37u) % 256u);
+        outColor[1] = static_cast<uint8_t>((element * 91u + 13u) % 256u);
+        outColor[2] = static_cast<uint8_t>((element * 53u + 101u) % 256u);
+        outColor[3] = static_cast<uint8_t>(255u - element);
+    }
+
+    uint32_t ElementForInvocation(uint32_t invocation)
+    {
+        // 29は64と互いに素なので、128呼び出しで全要素をちょうど2回ずつ参照する。
+        return (invocation * 29u + 3u) % ArrayCount;
+    }
+
+    // pool容量不足は実装によっては割り当て自体が成功するため、validationの警告とエラーを数えて検出する。
+    std::atomic<uint32_t> GValidationMessageCount{0u};
+
+    VKAPI_ATTR VkBool32 VKAPI_CALL CountValidationMessage(
+        VkDebugUtilsMessageSeverityFlagBitsEXT,
+        VkDebugUtilsMessageTypeFlagsEXT,
+        const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
+        void*)
+    {
+        GValidationMessageCount.fetch_add(1u, std::memory_order_relaxed);
+        std::cerr << "validation_message="
+                  << (callbackData && callbackData->pMessage ? callbackData->pMessage : "unknown")
+                  << '\n';
+        return VK_FALSE;
+    }
+
+    class ValidationMessenger
+    {
+    public:
+        explicit ValidationMessenger(const DevicePtr& device)
+        {
+            auto vulkanDevice = DynamicPointerCast<Vulkan::VulkanDevice>(device);
+            if (!vulkanDevice)
+            {
+                return;
+            }
+            m_Instance = static_cast<VkInstance>(vulkanDevice->GetVkInstance());
+            m_Destroy = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+                vkGetInstanceProcAddr(m_Instance, "vkDestroyDebugUtilsMessengerEXT"));
+            const auto create = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+                vkGetInstanceProcAddr(m_Instance, "vkCreateDebugUtilsMessengerEXT"));
+            VkDebugUtilsMessengerCreateInfoEXT createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+            createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                         VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+            createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
+            createInfo.pfnUserCallback = &CountValidationMessage;
+            m_bCreated = create && m_Destroy &&
+                         create(m_Instance, &createInfo, nullptr, &m_Messenger) == VK_SUCCESS;
+        }
+
+        ~ValidationMessenger()
+        {
+            if (m_bCreated)
+            {
+                m_Destroy(m_Instance, m_Messenger, nullptr);
+            }
+        }
+
+        bool IsCreated() const { return m_bCreated; }
+
+    private:
+        VkInstance m_Instance = VK_NULL_HANDLE;
+        VkDebugUtilsMessengerEXT m_Messenger = VK_NULL_HANDLE;
+        PFN_vkDestroyDebugUtilsMessengerEXT m_Destroy = nullptr;
+        bool m_bCreated = false;
+    };
 
     constexpr const char* ShaderSource = R"glsl(
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
-layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
-layout(set = 0, binding = 0) uniform sampler2D elementTextures[4];
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(set = 0, binding = 0) uniform sampler2D elementTextures[64];
 layout(set = 0, binding = 1, std430) buffer Result
 {
     vec4 values[];
@@ -47,7 +117,7 @@ void main()
 {
     uint invocation = gl_GlobalInvocationID.x;
     // 同じsubgroup内で添字が揃わないよう、呼び出し番号から要素を散らす。
-    uint element = (invocation * 3u + 1u) % 4u;
+    uint element = (invocation * 29u + 3u) % 64u;
     result.values[invocation] =
         textureLod(elementTextures[nonuniformEXT(element)], vec2(0.5), 0.0);
 }
@@ -104,7 +174,9 @@ void main()
         TexturePtr texture = device.CreateTexture(desc);
         if (texture)
         {
-            texture->Update(ElementColors[element], 4u, 4u);
+            uint8_t color[4] = {};
+            MakeElementColor(element, color);
+            texture->Update(color, 4u, 4u);
         }
         return texture;
     }
@@ -160,6 +232,17 @@ void main()
             std::cerr << "combined image sampler以外の配列bindingを受理しました\n";
             bPassed = false;
         }
+        for (uint32_t invalidCount : {0u, 1025u})
+        {
+            DescriptorSetDesc countDesc;
+            countDesc.bindings.push_back(
+                MakeBinding(0u, ResourceBindType::CombinedImageSampler, invalidCount));
+            if (device.CreateDescriptorSet(countDesc))
+            {
+                std::cerr << "要素数" << invalidCount << "の配列bindingを受理しました\n";
+                bPassed = false;
+            }
+        }
         std::cout << "descriptor_array_rejections=" << (bPassed ? "PASS" : "FAIL") << '\n';
         return bPassed;
     }
@@ -188,6 +271,12 @@ void main()
         {
             return ReportGpuTestSkip(TestName, "配列sampled imageの非一様添字が非対応です");
         }
+        ValidationMessenger messenger(device);
+        if (!messenger.IsCreated())
+        {
+            std::cerr << "validation messengerを作成できませんでした\n";
+            return 1;
+        }
 
         DescriptorSetDesc setDesc;
         setDesc.bindings.push_back(
@@ -201,12 +290,14 @@ void main()
         BufferPtr resultBuffer = device->CreateBuffer(resultDesc);
         CommandListPtr commandList = device->CreateCommandList();
         TexturePtr textures[ArrayCount];
+        bool bTexturesCreated = true;
         for (uint32_t element = 0u; element < ArrayCount; ++element)
         {
             textures[element] = CreateElementTexture(*device, element);
+            bTexturesCreated = bTexturesCreated && textures[element];
         }
         if (!pipeline || !descriptorSet || !sampler || !resultBuffer || !commandList ||
-            !textures[0] || !textures[1] || !textures[2] || !textures[3])
+            !bTexturesCreated)
         {
             std::cerr << "GPU資源を作成できませんでした\n";
             return 1;
@@ -236,7 +327,7 @@ void main()
         descriptorSet->Update();
         commandList->SetPipeline(pipeline);
         commandList->SetDescriptorSet(descriptorSet, 0u);
-        commandList->Dispatch(1u, 1u, 1u);
+        commandList->Dispatch(InvocationCount / 64u, 1u, 1u);
         commandList->End();
         commandList->Submit(true);
         device->WaitIdle();
@@ -248,22 +339,35 @@ void main()
             return 1;
         }
         double maximumError = 0.0;
+        uint32_t reportedMismatches = 0u;
         uint32_t elementHits[ArrayCount] = {};
         for (uint32_t invocation = 0u; invocation < InvocationCount; ++invocation)
         {
-            const uint32_t element = (invocation * 3u + 1u) % ArrayCount;
+            const uint32_t element = ElementForInvocation(invocation);
             ++elementHits[element];
+            uint8_t color[4] = {};
+            MakeElementColor(element, color);
             for (uint32_t channel = 0u; channel < 4u; ++channel)
             {
-                const double expected = ElementColors[element][channel] / 255.0;
+                const double expected = color[channel] / 255.0;
                 const double actual = mapped[invocation * 4u + channel];
                 const double error = std::isfinite(actual) ? std::abs(actual - expected) : 1.0e9;
+                if (error > 0.5 / 255.0 && reportedMismatches < 8u)
+                {
+                    ++reportedMismatches;
+                    std::cerr << "mismatch invocation=" << invocation << " element=" << element
+                              << " channel=" << channel << " expected=" << expected
+                              << " actual=" << actual << '\n';
+                }
                 maximumError = error > maximumError ? error : maximumError;
             }
         }
         resultBuffer->Unmap();
-        const bool bAllElementsUsed = elementHits[0] > 0u && elementHits[1] > 0u &&
-                                      elementHits[2] > 0u && elementHits[3] > 0u;
+        bool bAllElementsUsed = true;
+        for (uint32_t element = 0u; element < ArrayCount; ++element)
+        {
+            bAllElementsUsed = bAllElementsUsed && elementHits[element] == 2u;
+        }
         std::cout << "descriptor_array_nonuniform_max_error=" << maximumError
                   << " invocations=" << InvocationCount
                   << " elements=" << ArrayCount
@@ -272,6 +376,13 @@ void main()
         if (maximumError > 0.5 / 255.0 || !bAllElementsUsed)
         {
             std::cerr << "非一様添字の標本化結果が既知色と一致しません\n";
+            bPassed = false;
+        }
+        const uint32_t validationMessages = GValidationMessageCount.load(std::memory_order_relaxed);
+        std::cout << "descriptor_array_validation_messages=" << validationMessages << '\n';
+        if (validationMessages != 0u)
+        {
+            std::cerr << "Vulkan validationが警告またはエラーを報告しました\n";
             bPassed = false;
         }
         return bPassed ? 0 : 1;

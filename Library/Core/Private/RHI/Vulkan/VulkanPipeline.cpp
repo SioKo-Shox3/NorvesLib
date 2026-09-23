@@ -310,6 +310,10 @@ namespace NorvesLib::RHI::Vulkan
         // パイプラインレイアウト
         // GraphicsPipelineDescのdescriptorSetLayoutsからディスクリプタセットレイアウトを作成
         VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
+        if (!m_device->IsWithinDescriptorArrayLimits(m_desc.descriptorSetLayouts))
+        {
+            throw std::runtime_error("配列descriptorがデバイス上限を超えています");
+        }
         for (const auto &dsDesc : m_desc.descriptorSetLayouts)
         {
             // DescriptorBindingをDescriptorBindingDescに変換
@@ -407,6 +411,10 @@ namespace NorvesLib::RHI::Vulkan
 
         // ディスクリプタセットレイアウトを作成
         VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
+        if (!m_device->IsWithinDescriptorArrayLimits(m_desc.descriptorSetLayouts))
+        {
+            throw std::runtime_error("配列descriptorがデバイス上限を超えています");
+        }
         for (const auto &dsDesc : m_desc.descriptorSetLayouts)
         {
             VariableArray<DescriptorBindingDesc> bindingDescs;
@@ -491,6 +499,10 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
+        if (!m_device->IsWithinDescriptorArrayLimits(m_desc.descriptorSetLayouts))
+        {
+            throw std::runtime_error("配列descriptorがデバイス上限を超えています");
+        }
         for (const DescriptorSetDesc& setDesc : m_desc.descriptorSetLayouts)
         {
             VariableArray<DescriptorBindingDesc> bindingDescs;
