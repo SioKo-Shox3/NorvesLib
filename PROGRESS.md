@@ -68,6 +68,7 @@
 ## In progress
 - R6-P5はblocked。専用受入れは通過し、DDGI放射輝度テストの履歴分離後単体再検証も合格した。R6-GATE-OUTDOORはR1承認済みgoldenとの不一致がR2 CSM導入時から再現し、基準画像の扱いが決まるまで停止する。
 - R6-P6はblocked。R6受入れ記録は保留として作成し、完了trailerは付けていない。
+- R7-P1は共通PBR shaderとinclude展開を`0872211`でコミット済み。Indoor・R1数値・RTGI/契約テストは通過したが、R2 CSM以降の既知Outdoor golden不一致により受入れはblocked。R1承認済みbaselineと閾値は不変。モデル切替による3回目の中断は機能失敗として数えない。
 
 ## Next
 
