@@ -43,14 +43,23 @@ namespace
     constexpr uint64_t LightBaselineSettleFrames = 16u;
     constexpr float LightStartOffset = -1.0f;
     constexpr float LightMovedOffset = 1.0f;
-    // 天井の面光源（45000 nits、約1.37 m²、約19万lm）と同程度にして、点光源の移動が
-    // 間接光の色にじみへ現れるようにする。追従検証の段階だけで使う。
+    // 追従検証の段階だけ使う点光源の光束。天井の面光源（45000 nits、約1.37 m²、約19万lm）と
+    // 同程度にして、移動が間接光の色にじみへはっきり現れるようにする。
     constexpr float R6FollowLightIntensity = 200000.0f;
     constexpr uint64_t LightConvergedElapsedFrames = 24u;
     constexpr uint64_t LightObservationFrames = 32u;
     constexpr uint64_t CameraSettleRenderedFrames = 10u;
     constexpr uint64_t StopSettleRenderedFrames = 12u;
     constexpr float ObjectVisibleOffset = 0.55f;
+    // カメラ移動は横0.35と前進1.0。前進で表面までの距離が5%以上変わり、距離の基準がずれると棄却される。
+    constexpr float CameraMoveX = 0.35f;
+    constexpr float CameraMoveForward = 1.0f;
+    constexpr uint32_t ResidualSamples = 4u;
+    // 物体の影響（物体あり−参照の画素差の中央値）は、参照の前半と後半の画素差（ノイズ床）の3倍以上を要求する。
+    constexpr double ResidualSensitivityMultiple = 3.0;
+    // 停止後−参照の画素差は物体の影響の半分以下を求める。残留がなければノイズ床程度（影響の1/3以下）になる。
+    constexpr double MaximumResidualFraction = 0.5;
+    constexpr uint64_t ObjectPresentSettleFrames = 12u;
     constexpr float ObjectMovedOffset = 1.0f;
     // カメラ・物体移動時に履歴を保つべき静止領域で、最大ageを維持する画素の割合の下限。
     // 視差で露出する遮蔽物の輪郭だけが棄却されるため、大半の画素は保持される。
@@ -85,10 +94,13 @@ namespace
         R4FallbackWarmup,
         RTGIWarmup,
         StaticStability,
+        StaticIndirectReference,
         CameraMoved,
         CameraSettled,
         ObjectMoved,
+        ObjectPresentIndirect,
         MoveStopped,
+        StopIndirect,
         LightBaseline,
         LightMoved,
         Complete
@@ -248,7 +260,8 @@ namespace
     }
 
     // 赤と緑の壁からの色にじみの差（デノイズ後間接光のR平均−G平均）。点光源が片側の壁へ
-    // 寄るほど、その壁の色の一次反射が増えて値が変わる。
+    // 寄るほど、その壁の色の一次反射が増えて値が変わる。少数試料の推定は分布が偏るため中央値は
+    // 追従を遅く見せる。偏りのない平均を使い、外れ値の元になる面光源は追従検証の間だけ隠す。
     double MeasureIndirectChroma(const RgbaFloatImage& image)
     {
         double red = 0.0;
@@ -284,6 +297,14 @@ namespace
             m_bObjectMoved = false;
             m_bStopped = false;
             m_StopSample = 0u;
+            m_ReferenceIndirectSums.clear();
+            m_ReferenceFirstHalfSums.clear();
+            m_ReferenceSecondHalfSums.clear();
+            m_PresentIndirectSums.clear();
+            m_StopIndirectSums.clear();
+            m_PresentIndirectCount = 0u;
+            m_ReferenceIndirectCount = 0u;
+            m_StopIndirectCount = 0u;
             m_PreviousStageLastFrame = 0u;
             m_LightStartFrame = 0u;
             m_LightBaselineValues.fill(0.0);
@@ -440,6 +461,53 @@ namespace
                 // カメラを元へ戻し、物体移動の前に履歴ageを最大まで回復させる。
                 return true;
 
+            case CaptureStage::StaticIndirectReference:
+            case CaptureStage::ObjectPresentIndirect:
+            case CaptureStage::StopIndirect:
+            {
+                // 物体が去った領域（offset 1.0の円）のデノイズ後間接光を画素ごとに加算し、
+                // 参照（物体なし）・物体あり・停止後の3状態を比べる。
+                if (m_Stage == CaptureStage::ObjectPresentIndirect &&
+                    frame.FrameNumber - m_StageStartFrame < ObjectPresentSettleFrames)
+                {
+                    // 物体を置いたままの履歴が落ち着くまで待つ。
+                    return true;
+                }
+                const bool bReference = m_Stage == CaptureStage::StaticIndirectReference;
+                const bool bPresent = m_Stage == CaptureStage::ObjectPresentIndirect;
+                VariableArray<double>& sums = bReference ? m_ReferenceIndirectSums :
+                                              bPresent ? m_PresentIndirectSums : m_StopIndirectSums;
+                uint32_t& count = bReference ? m_ReferenceIndirectCount :
+                                  bPresent ? m_PresentIndirectCount : m_StopIndirectCount;
+                if (count >= ResidualSamples || !AccumulateVacatedIndirect(image, sums))
+                {
+                    outFailureReason = TEXT("物体が去った領域の間接光を測れません");
+                    return false;
+                }
+                if (bReference)
+                {
+                    // 参照の前半と後半を分けて持ち、ノイズ床を求める。
+                    VariableArray<double>& halfSums = count < ResidualSamples / 2u
+                        ? m_ReferenceFirstHalfSums
+                        : m_ReferenceSecondHalfSums;
+                    if (!AccumulateVacatedIndirect(image, halfSums))
+                    {
+                        outFailureReason = TEXT("物体が去った領域の間接光を測れません");
+                        return false;
+                    }
+                }
+                ++count;
+                std::cout << (bReference ? "R6_STOP_REFERENCE" :
+                              bPresent ? "R6_OBJECT_PRESENT" : "R6_STOP_RESIDUAL")
+                          << " frame=" << frame.FrameNumber
+                          << " sample=" << count << '\n';
+                if (m_Stage == CaptureStage::StopIndirect && count == ResidualSamples)
+                {
+                    return EvaluateStopResidual(outFailureReason);
+                }
+                return true;
+            }
+
             case CaptureStage::LightBaseline:
             {
                 // 開始位置へ移した後の落ち着き期間を過ぎてから、デノイズ後間接光を複数回読み、
@@ -515,6 +583,9 @@ namespace
             case CaptureStage::MoveStopped:
                 outRequest.SourceKind = FrameCaptureSourceKind::RTGIHistoryAge;
                 break;
+            case CaptureStage::StaticIndirectReference:
+            case CaptureStage::ObjectPresentIndirect:
+            case CaptureStage::StopIndirect:
             case CaptureStage::LightBaseline:
             case CaptureStage::LightMoved:
                 outRequest.SourceKind = FrameCaptureSourceKind::RTGIDiffuseIndirect;
@@ -530,15 +601,19 @@ namespace
         {
             CameraProxy camera = GetFixture().GetR4CornellCamera();
             const bool bCameraMoved = m_Stage == CaptureStage::CameraMoved;
-            camera.PositionX += bCameraMoved ? 0.35f : 0.0f;
+            camera.PositionX += bCameraMoved ? CameraMoveX : 0.0f;
+            camera.PositionZ += bCameraMoved ? CameraMoveForward : 0.0f;
             renderWorld.SetMainCamera(camera);
 
             const bool bRTGI = m_Stage == CaptureStage::RTGIWarmup ||
                                m_Stage == CaptureStage::StaticStability ||
+                               m_Stage == CaptureStage::StaticIndirectReference ||
                                m_Stage == CaptureStage::CameraMoved ||
                                m_Stage == CaptureStage::CameraSettled ||
                                m_Stage == CaptureStage::ObjectMoved ||
+                               m_Stage == CaptureStage::ObjectPresentIndirect ||
                                m_Stage == CaptureStage::MoveStopped ||
+                               m_Stage == CaptureStage::StopIndirect ||
                                m_Stage == CaptureStage::LightBaseline ||
                                m_Stage == CaptureStage::LightMoved;
             renderWorld.GetRenderingCoordinator().SetRTGIEnabled(bRTGI);
@@ -548,7 +623,9 @@ namespace
             // 既定位置（0）の球は短いブロックの後ろにほぼ隠れるため、露出の検証は
             // 移動前後とも見える位置（+0.55から+1.0）で行う。
             const float objectOffset = m_Stage == CaptureStage::CameraSettled ? ObjectVisibleOffset :
-                                       m_Stage == CaptureStage::ObjectMoved ? ObjectMovedOffset :
+                                       m_Stage == CaptureStage::ObjectMoved ||
+                                               m_Stage == CaptureStage::ObjectPresentIndirect
+                                           ? ObjectMovedOffset :
                                                                               0.0f;
             m_bStateReady = GetFixture().SetR4CornellObjectOffsetX(objectOffset) && m_bStateReady;
 
@@ -565,6 +642,9 @@ namespace
                                                         R6PointLightIntensity;
             m_bStateReady = GetFixture().SetR4CornellPointLightState(
                 lightOffset, lightIntensity) && m_bStateReady;
+            // 追従検証の間だけ天井の面光源を隠し、点光源を唯一の光源にする。面光源へ偶然当たる
+            // レイの外れ値で、移動直後の少数試料の推定が大きく揺れるのを避ける。
+            m_bStateReady = GetFixture().SetR4CornellEmitterVisible(!bFollowStage) && m_bStateReady;
         }
 
         void AdvanceCaptureStage() override
@@ -584,6 +664,21 @@ namespace
             }
             else if (m_Stage == CaptureStage::MoveStopped &&
                      m_StopLastElapsed < StopSettleRenderedFrames)
+            {
+                return;
+            }
+            else if (m_Stage == CaptureStage::StaticIndirectReference &&
+                     m_ReferenceIndirectCount < ResidualSamples)
+            {
+                return;
+            }
+            else if (m_Stage == CaptureStage::ObjectPresentIndirect &&
+                     m_PresentIndirectCount < ResidualSamples)
+            {
+                return;
+            }
+            else if (m_Stage == CaptureStage::StopIndirect &&
+                     m_StopIndirectCount < ResidualSamples)
             {
                 return;
             }
@@ -614,6 +709,10 @@ namespace
                 m_Stage = CaptureStage::StaticStability;
                 break;
             case CaptureStage::StaticStability:
+                m_Stage = CaptureStage::StaticIndirectReference;
+                m_ReferenceIndirectCount = 0u;
+                break;
+            case CaptureStage::StaticIndirectReference:
                 m_Stage = CaptureStage::CameraMoved;
                 break;
             case CaptureStage::CameraMoved:
@@ -623,11 +722,19 @@ namespace
                 m_Stage = CaptureStage::ObjectMoved;
                 break;
             case CaptureStage::ObjectMoved:
+                m_Stage = CaptureStage::ObjectPresentIndirect;
+                m_PresentIndirectCount = 0u;
+                break;
+            case CaptureStage::ObjectPresentIndirect:
                 m_Stage = CaptureStage::MoveStopped;
                 m_StopSample = 0u;
                 m_StopLastElapsed = 0u;
                 break;
             case CaptureStage::MoveStopped:
+                m_Stage = CaptureStage::StopIndirect;
+                m_StopIndirectCount = 0u;
+                break;
+            case CaptureStage::StopIndirect:
                 m_Stage = CaptureStage::LightBaseline;
                 m_LightBaselineCount = 0u;
                 break;
@@ -678,6 +785,14 @@ namespace
         bool m_bStopped = false;
         uint32_t m_StopSample = 0u;
         uint64_t m_StopLastElapsed = 0u;
+        VariableArray<double> m_ReferenceIndirectSums;
+        VariableArray<double> m_ReferenceFirstHalfSums;
+        VariableArray<double> m_ReferenceSecondHalfSums;
+        VariableArray<double> m_PresentIndirectSums;
+        VariableArray<double> m_StopIndirectSums;
+        uint32_t m_PresentIndirectCount = 0u;
+        uint32_t m_ReferenceIndirectCount = 0u;
+        uint32_t m_StopIndirectCount = 0u;
         uint64_t m_PreviousStageLastFrame = 0u;
         uint64_t m_LightStartFrame = 0u;
         FixedArray<double, LightBaselineSamples> m_LightBaselineValues{};
@@ -739,6 +854,112 @@ namespace
                                      std::hypot(topX - circle.X, topY - circle.Y));
             circle.bValid = std::isfinite(circle.Radius) && circle.Radius > 1.0;
             return circle;
+        }
+
+        /**
+         * @brief 物体が去った領域（offset 1.0の投影円の内側）の画素ごとの間接光輝度を加算する
+         *
+         * 領域と画素の並びは全段階で同じなので、段階ごとの画素平均を画素単位で比べられる。
+         */
+        bool AccumulateVacatedIndirect(const RgbaFloatImage& image, VariableArray<double>& inOutSums) const
+        {
+            const ScreenCircle vacated = ProjectCornellObject(ObjectMovedOffset, image.Width, image.Height);
+            if (!vacated.bValid)
+            {
+                return false;
+            }
+            size_t index = 0u;
+            for (uint32_t y = 0u; y < image.Height; ++y)
+            {
+                for (uint32_t x = 0u; x < image.Width; ++x)
+                {
+                    const double px = static_cast<double>(x) + 0.5 - vacated.X;
+                    const double py = static_cast<double>(y) + 0.5 - vacated.Y;
+                    if (std::hypot(px, py) > vacated.Radius - 1.5)
+                    {
+                        continue;
+                    }
+                    const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    const double luma = Luma(image.Values[offset + 0u], image.Values[offset + 1u],
+                                             image.Values[offset + 2u]);
+                    if (!std::isfinite(luma))
+                    {
+                        return false;
+                    }
+                    if (index >= inOutSums.size())
+                    {
+                        inOutSums.push_back(0.0);
+                    }
+                    inOutSums[index++] += luma;
+                }
+            }
+            return index > 0u && index == inOutSums.size();
+        }
+
+        /**
+         * @brief 2つの画素平均列の、画素ごとの絶対差の中央値
+         *
+         * 面光源へ当たったレイの外れ値に左右されないよう、平均ではなく中央値を使う。
+         */
+        static double MedianAbsoluteDifference(const VariableArray<double>& lhsSums, double lhsCount,
+                                               const VariableArray<double>& rhsSums, double rhsCount)
+        {
+            if (lhsSums.empty() || lhsSums.size() != rhsSums.size() || lhsCount <= 0.0 || rhsCount <= 0.0)
+            {
+                return std::numeric_limits<double>::quiet_NaN();
+            }
+            VariableArray<double> differences;
+            differences.reserve(lhsSums.size());
+            for (size_t index = 0u; index < lhsSums.size(); ++index)
+            {
+                differences.push_back(std::abs(lhsSums[index] / lhsCount - rhsSums[index] / rhsCount));
+            }
+            std::sort(differences.begin(), differences.end());
+            return differences[differences.size() / 2u];
+        }
+
+        /**
+         * @brief 停止後に、物体が去った領域から物体の間接光の影響が抜けたかを判定する
+         *
+         * 物体あり−参照（停止先と同じ物体なしの状態）の画素差を物体の影響とし、参照の前半と後半の
+         * 画素差をノイズ床とする。影響がノイズ床の3倍以上あることを前提に、停止後−参照の画素差が
+         * 影響の半分以下であることを求める。棄却時にageだけを戻して古い放射輝度を残す不具合なら、
+         * 停止後も物体の影響が残って落ちる。
+         */
+        bool EvaluateStopResidual(String& outFailureReason)
+        {
+            const double half = static_cast<double>(ResidualSamples / 2u);
+            const double full = static_cast<double>(ResidualSamples);
+            const double objectEffect = MedianAbsoluteDifference(
+                m_PresentIndirectSums, full, m_ReferenceIndirectSums, full);
+            const double residual = MedianAbsoluteDifference(
+                m_StopIndirectSums, full, m_ReferenceIndirectSums, full);
+            const double noise = MedianAbsoluteDifference(
+                m_ReferenceFirstHalfSums, half, m_ReferenceSecondHalfSums, half);
+            const bool bSensitive = std::isfinite(objectEffect) && std::isfinite(noise) &&
+                                    objectEffect >= ResidualSensitivityMultiple * noise &&
+                                    objectEffect > 0.0;
+            const bool bSettled = std::isfinite(residual) &&
+                                  residual <= MaximumResidualFraction * objectEffect;
+            const bool bPassed = bSensitive && bSettled;
+            std::cout << "R6_STOP_RESIDUAL_CHECK=" << (bPassed ? "PASS" : "FAIL")
+                      << " pixels=" << m_ReferenceIndirectSums.size()
+                      << " object_effect=" << objectEffect
+                      << " residual=" << residual
+                      << " noise_floor=" << noise
+                      << " residual_fraction="
+                      << (objectEffect > 0.0 ? residual / objectEffect : 0.0) << '\n';
+            if (!bSensitive)
+            {
+                outFailureReason = TEXT("物体の間接光の影響がノイズ床に埋もれ、停止後の残留を判定できません");
+                return false;
+            }
+            if (!bSettled)
+            {
+                outFailureReason = TEXT("移動後停止で物体が去った領域に物体の間接光が残っています");
+                return false;
+            }
+            return true;
         }
 
         /**

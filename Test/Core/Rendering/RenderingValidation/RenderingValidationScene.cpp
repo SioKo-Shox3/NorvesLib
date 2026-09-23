@@ -3056,6 +3056,22 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::SetR4CornellEmitterVisible(bool bVisible) const
+    {
+        if (!m_bR4CornellFixturePrepared || m_pR4CornellEmitterEntity == nullptr)
+        {
+            return false;
+        }
+        Core::Component::MeshComponent* emitterMesh =
+            m_pR4CornellEmitterEntity->GetComponent<Core::Component::MeshComponent>();
+        if (emitterMesh == nullptr)
+        {
+            return false;
+        }
+        emitterMesh->SetVisible(bVisible);
+        return true;
+    }
+
     bool RenderingValidationSceneFixture::SetR4CornellObjectOffsetX(float offsetX) const
     {
         if (!std::isfinite(offsetX) || std::abs(offsetX) > 1.0f ||
