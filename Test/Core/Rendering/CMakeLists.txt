@@ -1515,6 +1515,9 @@ target_include_directories(RenderGraphCompileTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
+target_compile_definitions(RenderGraphCompileTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
 set_target_properties(RenderGraphCompileTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderGraphCompileTest COMMAND RenderGraphCompileTest)
 

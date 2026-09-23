@@ -53,6 +53,10 @@ namespace RHI = NorvesLib::RHI;
 
 namespace
 {
+    // ShaderManagerはGLSLの#include展開のためにファイルを読むため、実在するシェーダー置き場を渡す。
+    // compilerはテスト用の偽物なので、読んだ内容から実際のバイトコードは作らない。
+    constexpr const char* TestShaderDirectory = NORVES_SOURCE_ROOT "/Assets/Shaders";
+
     void ConfigureAssertOutput()
     {
 #ifdef _MSC_VER
@@ -1718,7 +1722,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         FakeCommandList commandList;
         ViewRenderContext context;
@@ -1764,7 +1768,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         FakeCommandList commandList;
         SharedResourceRegistry sharedResources;
@@ -1861,7 +1865,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         ViewRenderContext context;
         context.Device = device.get();
@@ -1925,7 +1929,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         ViewRenderContext context;
         context.Device = device.get();
@@ -2031,7 +2035,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -2134,7 +2138,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -2308,7 +2312,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -2499,7 +2503,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         RenderResources renderResources;
         assert(renderResources.Initialize(device));
@@ -2617,7 +2621,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         FakeCommandList commandList;
         ViewRenderContext context;
@@ -2962,7 +2966,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         ViewRenderContext context;
         context.Device = device.get();
@@ -4107,7 +4111,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4353,7 +4357,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4441,7 +4445,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4494,7 +4498,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4584,7 +4588,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4651,7 +4655,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4767,7 +4771,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4853,7 +4857,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4947,7 +4951,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5045,7 +5049,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5154,7 +5158,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5264,7 +5268,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5374,7 +5378,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5490,7 +5494,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5558,7 +5562,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5617,7 +5621,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5678,7 +5682,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5738,7 +5742,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5853,7 +5857,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5920,7 +5924,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5977,7 +5981,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -6031,7 +6035,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -6119,7 +6123,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -6193,7 +6197,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -6264,7 +6268,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
