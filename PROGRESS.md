@@ -79,6 +79,8 @@
 - 物理テストABI同期: `a41190e`。R6/R7で増えたFramePacket（1152 byte）とSceneProxy（512 byte）へ物理側の境界契約を合わせ、全buildを復旧した。
 - R7-P3A: `8ac04e8` / `4500394` / `48fa18e`。RHIに配列combined image samplerと要素単位bindを追加し、Vulkan 1.2の非一様添字を対応時だけ有効化した。配列layoutだけpool容量を広げ、stage別・set全体のdescriptor上限をVulkanの計数規則で検査する。64要素のGPUテストで最大誤差2.97e-08・validation 0件、pool拡張を無効化した負の対照で失敗を確認した。RenderingValidation 50件は失敗0件。
 - R6-P5再開: `3e5c374` / `e49cf5c`。RTGIの試料を描画フレームごとに更新し、履歴棄却をNDC深度から線形距離へ変えた（遠景で露出領域の古い履歴を使っていた）。受入れは履歴ageとデノイズ後間接光の読み戻しで判定し、露出170画素の最大age 0、カメラ移動時の保持率0.994、停止後の再蓄積、ライト追従率0.84〜1.40（5回）を確認した。自己参照TSVは削除し、参照比較はR6-P5-REFへ分けた。RenderingValidation 50件は失敗0件。
+- R6-P5 2周目対応: `ab86d83` / `c4a9d93`。履歴距離の比較を前フレームのカメラ基準へ揃え（前進カメラで静止面を捨てていた）、停止後の残留を物体なし参照・物体あり・停止後の画素差で判定する。ライト追従は面光源を隠して外れ値を除き、到達率0.87〜0.98。距離基準を戻す負の対照で保持率0を確認。
+- TEST-RGC: `5e1bdfa`。R7-P1のinclude展開でShaderManagerがファイルを読むようになり、空のshader置き場で初期化するRenderGraphCompileTestが失敗していた。実在するAssets/Shadersを渡して合格。
 
 ## In progress
 - R6-P5はblocked。専用受入れは通過し、DDGI放射輝度テストの履歴分離後単体再検証も合格した。R6-GATE-OUTDOORはR1承認済みgoldenとの不一致がR2 CSM導入時から再現し、基準画像の扱いが決まるまで停止する。
@@ -97,6 +99,7 @@
 - R7-P7はP3のNEE/MIS・PT数値契約、P4の16/64/256 spp・Cornell比較、P1のOutdoor基準再検証後に再開する。同一条件のR4/R6比較を各1回行い、閾値超過時だけ該当phaseを再オープンする。
 
 ## Notes
+- R6評価（2026-09-24、2周目）: 距離基準のずれと停止後の残留検証不足でNEEDS_WORK。2周の上限に達したため、対応（`ab86d83`・`c4a9d93`・`c5765a0`）はR6-P5-REFの評価対象へ含めて確認する。SkinnedRenderPathContractTestの停止は既存問題としてTEST-SKINNEDへ登録した。
 - R7-P3A評価（2026-09-24）: 1周目で配列を含まないlayoutのpool容量変化とデバイス上限未検査、2周目でmaxPerStageResourcesの計数規則（単独sampler・加速構造を除き、fragmentのcolor attachmentを加える）が指摘された。2周の上限に達したため、最後の修正`48fa18e`はR7-P3Bの評価対象へ含めて確認する。検証ログは`.harness/runs/20260923-resume/verify-R7-P3A-*-3.txt`。
 - R6完了判定の評価（2026-09-23）: 静止参照が5値比較、ライト追従率の分母、RTGIのサンプル固定、履歴棄却の検証不足、再オープン規則の欠落でNEEDS_WORK。R6-P5を再開し、参照比較はR6-P5-REF（R7-P3D後）へ分けた。
 - R7-O3停止監査（2026-09-23）: .harness/runs/20260923-095848/verify-R7-O3-1.txt〜-5.txtを読戻し、Game Debug build exit 0、指定屋外CTest 1/1、関連R7 CTest 6/6、P3/P4専用CTest登録0件を確認した。3時刻のPT空・太陽数値はあるが、霧込みPT/raster同一シーンのFLIP値はない。Docs/RenderingValidation/R7OutdoorAcceptance.mdとblocked/R7-O3.mdに停止根拠を記録し、R7完了trailerは付けない。
