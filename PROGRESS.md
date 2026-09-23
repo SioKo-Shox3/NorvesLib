@@ -84,13 +84,14 @@
 - R7-P3B: `1cdf101` / `058aab9` / `20b1764` / `8c80695`。RT材質snapshotへinstance色とalbedo・normal・metallic・roughnessのtexture handleを加え、PTはRenderThreadで解決して重複を除いた256要素の配列descriptorへ束ねる（既定はGBufferと同じ白・平坦法線・黒・中間灰）。closest-hitはMesh3DVertexの法線・UVを補間し、ラスタと同じ余接フレームと共通の復号関数で材質値を得る。発光は色×nits×プリエクスポージャ。余接フレームの退化判定は尺度不変な共通関数にし、ラスタの常時fallbackも解消した。PathTracingMaterialVulkanTestでUV・instance色・metallic/roughness・法線マップ（伸縮UV・逆巻き・退化UV）・既定値・重複除去・handle解放時の履歴破棄・発光・stride 12・表の上限を固定し、validation 0件。RenderingValidation 51件で失敗0件（8件はskip契約）。
 - R7-P3C: `f605567` / `9128e3e` / `16f4532` / `9e0b35e`（記録 `179c3e4` / `c770ec6`）。DFG LUTの生成をラスタと共有し、PTのBSDFをラスタIBL端点と同じ多重散乱補償と(1-Ed)拡散にした（VNDF標本化、粗さ0でも有限な安定式、視線が裏なら幾何法線）。点・spot・方向光はLightingPassと同じ光源表のNEE、発光三角形と太陽円盤はpower heuristicのMIS、環境光は黒・一様・正距円筒（固定0.05を廃止）。影レイは浮かせた原点から目標点まで調べ、面光源は最も近い命中が標本化した発光三角形かで判定する。PathTracingLightingVulkanTestで白炉17行（平均相対誤差の最大0.626%）、解析照明（0.244%以内、spot円錐外0）、面光源の3戦略と解析照度（0.623%以内）、光沢金属・急な法線・太陽の3戦略の一致、光源直前の遮蔽板を固定。RenderingValidation 52件で失敗0件。
 - R7-P3D: `39a674d` / `c520c23` / `b70b412` / `c3448c8` / `8d6f7c0`、評価対応 `a1dc7e6` / `9125b04` / `1f79a37` / `19227a9` / `97890d2`。起動時の設定（`--renderer=path-tracing`、試料数/frame）でmain SceneViewをPTにでき、既定はラスタ。PTはLightingPassと同じ環境マップ読み込み、検証表示252/253/254、正射影、取得時の最小試料数とRGBA32F読み戻しに対応した。レイトレーシングシーンは影を落とさない不透明物体も含め、影・DDGI・RTGIはinstance maskで影を落とす物体だけを調べ、影を落とす物体がなければ従来どおりfallbackする。PTのシェーディング法線はラスタの法線行列と同じ退化規則に従う。カメラ標本はdispatchごとの連続した添字で引く。PathTracingRasterParityVulkanTestでR1の白炉15行と既知光度4段階をPTでも同じ評価関数に通し、ラスタとの差は白炉のマスク平均0.405%・8x8区画0.577%、既知光度のROI平均0.648%以内。RenderingValidation 53件で失敗0件（ラベル内のR6停止残留の揺らぎはTEST-R6-RESIDUAL-TIMINGへ）。
+- R6-P5-REF: `98fd290` / `6a03e1b`。PTに光輸送の範囲（多重散乱・直接光のみ・拡散1バウンス）を加え、R6受入れの静止段階と同じCornellでR6 RTGIの静止収束SceneColorを、R6の申告範囲に合わせたPT参照とLDR-FLIPで比べるテストを作った。閾値は比較前に固定（参照の間接光±20%の知覚差）。R6は平均0.701（閾値0.0816）・8×8区画最大0.965（閾値0.166）で超過し、ルール5によりR6を再オープンした。原因はラスタが発光三角形を光源として扱わず、面光源の直接光がRTGIの偶然の命中だけで入ること。陽性対照（155試料のPT）は閾値内。
 
 ## In progress
 - R6-P6はblocked。R6-P5-REF（R7-P3D後のPT参照との比較）が残る。
 
 ## Next
 
-- R6-P5-REF → R7-P4（16/64/256 spp、Cornell RGBE）→ R7-P7 → TEST-R6-RESIDUAL-TIMING → R6-P6 → R7-O3 の順に再開する。閾値とseedは変更しない。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。
+- R6-P7（RTGIで発光三角形を光源標本する）→ R7-P4（16/64/256 spp、Cornell RGBE）→ R7-P7 → TEST-R6-RESIDUAL-TIMING → R6-P6 → R7-O3 の順に再開する。閾値とseedは変更しない。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。
 - R8はM1（ACES 2.0 SDRのOCIO焼き込みLUT、DoF・動きぼけ、240 frame EXR）でTASKSを起こしてから着手する。
 
 ## Notes
