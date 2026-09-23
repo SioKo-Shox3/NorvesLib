@@ -131,6 +131,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
     Private/Rendering/DfgLut.cpp
+    Private/Rendering/EnvironmentMapSource.cpp
     Private/Rendering/RayTracingShadowPass.cpp
     Private/Rendering/ToneMappingPass.cpp
     Private/Rendering/VignettePass.cpp
