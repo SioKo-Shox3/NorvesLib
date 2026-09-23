@@ -1090,7 +1090,8 @@ void main()
             vec2 dfgCoordinate = clamp(vec2(iblNdotV, iblRoughness),
                                        vec2(0.5 / 256.0), vec2(255.5 / 256.0));
             vec2 brdf = texture(brdfLUT, dfgCoordinate).rg;
-            float ddgiAmbientAO = bDDGIAvailable ? materialSample.b : ao;
+            // DDGIとRTGIは遮蔽を光線で解くため、画面空間AOを重ねず材質AOだけを掛ける。
+            float ddgiAmbientAO = bDDGIAvailable || bRTGIAvailable ? materialSample.b : ao;
             ambient = bRTGIAvailable
                 ? EvaluateRTGIEndpoint(iblAlbedo,
                                        metallic,
@@ -1135,7 +1136,7 @@ void main()
                                                roughness,
                                                N,
                                                V,
-                                               ao,
+                                               materialSample.b,
                                                specularAO,
                                                0.0,
                                                rtgiBrdf,
