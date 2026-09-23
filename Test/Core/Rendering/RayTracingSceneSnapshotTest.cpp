@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 
 namespace
@@ -37,6 +38,16 @@ namespace
         instance.World[12] = x;
         instance.World[13] = y;
         instance.World[14] = z;
+    }
+
+    void SetPreviousInstanceTransform(GPUSceneInstanceData& instance,
+                                      float x, float y, float z)
+    {
+        std::memcpy(instance.PreviousWorld, instance.World,
+                    sizeof(instance.PreviousWorld));
+        instance.PreviousWorld[12] = x;
+        instance.PreviousWorld[13] = y;
+        instance.PreviousWorld[14] = z;
     }
 
     DrawCommand MakeMeshDraw(MeshDataHandle meshHandle)
@@ -145,6 +156,8 @@ namespace
         packet.InstanceData.resize(2);
         SetInstanceTransform(packet.InstanceData[0], 2.0f, 0.0f, 0.0f);
         SetInstanceTransform(packet.InstanceData[1], 0.0f, 3.0f, 0.0f);
+        SetPreviousInstanceTransform(packet.InstanceData[0], -2.0f, 0.0f, 0.0f);
+        SetPreviousInstanceTransform(packet.InstanceData[1], 0.0f, -3.0f, 0.0f);
         SetOpaqueRange(packet);
         if (!subsystem.BuildFrameSnapshot(&renderResources.Meshes(), packet) ||
             packet.RayTracingScene.Instances.size() != 2)
@@ -158,7 +171,10 @@ namespace
             firstInstance.IndexCount != 3 || firstInstance.VertexCount != 3 ||
             firstInstance.VertexStride != sizeof(Mesh3DVertex) ||
             !IsNear(firstInstance.Instance.transform[3], 2.0f) ||
-            !IsNear(packet.RayTracingScene.Instances[1].Instance.transform[7], 3.0f))
+            !IsNear(packet.RayTracingScene.Instances[1].Instance.transform[7], 3.0f) ||
+            !firstInstance.bHasPreviousTransform ||
+            !IsNear(firstInstance.PreviousTransform[3], -2.0f) ||
+            !IsNear(packet.RayTracingScene.Instances[1].PreviousTransform[7], -3.0f))
         {
             std::cerr << "FramePacketにgeometryまたはinstance transformが正しくコピーされませんでした\n";
             return 1;

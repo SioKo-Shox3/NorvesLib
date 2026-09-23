@@ -2,6 +2,7 @@
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/PathTracingCamera.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -60,6 +61,10 @@ namespace NorvesLib::Core::Rendering
             {
                 hash = HashPathBytes(hash, instance.Instance.transform,
                                      sizeof(instance.Instance.transform));
+                hash = HashPathBytes(hash, instance.PreviousTransform,
+                                     sizeof(instance.PreviousTransform));
+                hash = HashPathBytes(hash, &instance.bHasPreviousTransform,
+                                     sizeof(instance.bHasPreviousTransform));
                 hash = HashPathBytes(hash, &instance.Instance.customIndex,
                                      sizeof(instance.Instance.customIndex));
                 hash = HashPathBytes(hash, &instance.Instance.mask,
@@ -443,6 +448,26 @@ namespace NorvesLib::Core::Rendering
         cameraSignature = HashPathBytes(cameraSignature,
                                         parameters.CameraPosition,
                                         sizeof(parameters.CameraPosition));
+        const CameraProxy& activeCamera = *context->GetActiveCamera();
+        cameraSignature = HashPathBytes(cameraSignature, &activeCamera.Aperture,
+                                        sizeof(activeCamera.Aperture));
+        cameraSignature = HashPathBytes(cameraSignature, &activeCamera.ShutterSpeed,
+                                        sizeof(activeCamera.ShutterSpeed));
+        cameraSignature = HashPathBytes(cameraSignature, &activeCamera.FocusDistance,
+                                        sizeof(activeCamera.FocusDistance));
+        if (const CameraProxy* previousCamera = context->GetPreviousCamera())
+        {
+            const CameraViewConstants previous = CameraViewConstants::BuildForDevice(
+                *previousCamera, context->GetActiveAspectRatio(), context->Device);
+            previous.CopyShaderInverseViewProjection(parameters.InverseViewProjection);
+            previous.CopyCameraPosition(parameters.CameraPosition);
+            cameraSignature = HashPathBytes(cameraSignature,
+                                            parameters.InverseViewProjection,
+                                            sizeof(parameters.InverseViewProjection));
+            cameraSignature = HashPathBytes(cameraSignature,
+                                            parameters.CameraPosition,
+                                            sizeof(parameters.CameraPosition));
+        }
         const uint64_t geometrySignature =
             HashPathGeometry(*context->SnapshotRayTracingScene);
         const bool bReset = history->SampleCount == 0u ||
@@ -510,10 +535,44 @@ namespace NorvesLib::Core::Rendering
             history.TextureStates[1] = RHI::ResourceState::ShaderResource;
         };
         PathTracingParameters parameters;
+        const PathTracingCameraSample cameraSample = SamplePathTracingCamera(
+            *context.GetActiveCamera(), context.GetPreviousCamera(),
+            context.SnapshotDeltaTime, history.SampleCount);
+        CameraProxy opticalCamera = cameraSample.Camera;
+        if (cameraSample.bThinLens)
+        {
+            const float focalLength = PathTracingCameraDetail::FocalLength(
+                opticalCamera.FieldOfView);
+            const float filmScale = 1.0f - focalLength / opticalCamera.FocusDistance;
+            opticalCamera.FieldOfView = 360.0f / PathTracingCameraDetail::Pi *
+                std::atan(std::tan(opticalCamera.FieldOfView *
+                                   PathTracingCameraDetail::Pi / 360.0f) *
+                          filmScale);
+        }
         const CameraViewConstants camera = CameraViewConstants::BuildForDevice(
-            *context.GetActiveCamera(), context.GetActiveAspectRatio(), context.Device);
+            opticalCamera, context.GetActiveAspectRatio(), context.Device);
         camera.CopyShaderInverseViewProjection(parameters.InverseViewProjection);
         camera.CopyCameraPosition(parameters.CameraPosition);
+        if (cameraSample.bThinLens &&
+            std::isfinite(cameraSample.Camera.FarPlane) &&
+            cameraSample.Camera.FarPlane > 0.0f)
+        {
+            const float farScale = 1.0f - cameraSample.Camera.FarPlane /
+                cameraSample.Camera.FocusDistance;
+            for (uint32_t column = 0u; column < 4u; ++column)
+            {
+                const float homogeneous = parameters.InverseViewProjection[column * 4u + 3u];
+                for (uint32_t axis = 0u; axis < 3u; ++axis)
+                {
+                    parameters.InverseViewProjection[column * 4u + axis] +=
+                        cameraSample.LensOffset[axis] * farScale * homogeneous;
+                }
+            }
+            for (uint32_t axis = 0u; axis < 3u; ++axis)
+            {
+                parameters.CameraPosition[axis] += cameraSample.LensOffset[axis];
+            }
+        }
         parameters.ImageState[0] = history.Width;
         parameters.ImageState[1] = history.Height;
         parameters.ImageState[2] = history.SampleCount;
@@ -522,8 +581,67 @@ namespace NorvesLib::Core::Rendering
         frameResources.ParametersBuffer->Update(&parameters, sizeof(parameters));
 
         RHI::DescriptorSetPtr descriptorSet = frameResources.DescriptorSet;
-        if (!descriptorSet->BindAccelerationStructure(
-                0u, context.SnapshotRayTracingScene->TopLevel))
+        RHI::AccelerationStructurePtr topLevel =
+            context.SnapshotRayTracingScene->TopLevel;
+        if (cameraSample.ShutterTime < 1.0f)
+        {
+            RHI::AccelerationStructureBuildDesc motionBuild;
+            motionBuild.type = RHI::AccelerationStructureType::TopLevel;
+            bool bHasMotion = false;
+            for (const RayTracingSceneInstanceSnapshot& snapshot :
+                 context.SnapshotRayTracingScene->Instances)
+            {
+                RHI::AccelerationStructureInstanceDesc instance = snapshot.Instance;
+                if (snapshot.bHasPreviousTransform)
+                {
+                    float transform[12] = {};
+                    if (InterpolatePathTracingTransform(snapshot.PreviousTransform,
+                                                        snapshot.Instance.transform,
+                                                        cameraSample.ShutterTime,
+                                                        transform))
+                    {
+                        if (std::memcmp(transform, instance.transform,
+                                        sizeof(transform)) != 0)
+                        {
+                            bHasMotion = true;
+                        }
+                        std::memcpy(instance.transform, transform,
+                                    sizeof(transform));
+                    }
+                }
+                instance.bottomLevel = snapshot.BottomLevel;
+                motionBuild.instances.push_back(instance);
+            }
+            if (bHasMotion)
+            {
+                const uint32_t instanceCount = static_cast<uint32_t>(
+                    motionBuild.instances.size());
+                if (!frameResources.MotionTopLevel ||
+                    frameResources.MotionInstanceCapacity != instanceCount)
+                {
+                    RHI::AccelerationStructureDesc desc;
+                    desc.type = RHI::AccelerationStructureType::TopLevel;
+                    desc.maxInstanceCount = instanceCount;
+                    frameResources.MotionTopLevel =
+                        context.Device->CreateAccelerationStructure(desc);
+                    frameResources.MotionInstanceCapacity = frameResources.MotionTopLevel
+                                                                 ? instanceCount : 0u;
+                }
+                if (!frameResources.MotionTopLevel)
+                {
+                    restoreTextureStates();
+                    return;
+                }
+                motionBuild.destination = frameResources.MotionTopLevel;
+                if (!context.CommandList->BuildAccelerationStructure(motionBuild))
+                {
+                    restoreTextureStates();
+                    return;
+                }
+                topLevel = frameResources.MotionTopLevel;
+            }
+        }
+        if (!descriptorSet->BindAccelerationStructure(0u, topLevel))
         {
             restoreTextureStates();
             return;

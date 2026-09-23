@@ -71,6 +71,11 @@ namespace NorvesLib::Core::Rendering
         uint32_t VertexStride = 0;
         bool bGeometryOpaque = true;
         RHI::AccelerationStructureInstanceDesc Instance;
+        float PreviousTransform[12] = {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f};
+        bool bHasPreviousTransform = false;
         RHI::AccelerationStructurePtr BottomLevel;
         RayTracingHitMaterialSnapshot Material;
     };

@@ -500,6 +500,7 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief FramePacketが所有するRT scene snapshot */
         const RayTracingSceneSnapshot* SnapshotRayTracingScene = nullptr;
+        float SnapshotDeltaTime = 0.0f;
 
         /** @brief FramePacketから値コピーしたscene/light revision。 */
         uint64_t SceneRevision = 0;

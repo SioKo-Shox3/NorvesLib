@@ -32,6 +32,8 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr ParametersBuffer;
             RHI::BufferPtr InstanceBuffer;
             uint64_t InstanceBufferCapacity = 0u;
+            RHI::AccelerationStructurePtr MotionTopLevel;
+            uint32_t MotionInstanceCapacity = 0u;
         };
 
         struct History

@@ -712,15 +712,34 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 Math::Matrix4x4 worldTransform;
+                Math::Matrix4x4 previousWorldTransform;
+                const uint64_t dataIndex =
+                    static_cast<uint64_t>(draw.InstanceDataOffset) + instanceIndex;
+                const bool bHasInstanceData = dataIndex < packet.InstanceData.size();
                 if (draw.bInstanced)
                 {
                     const GPUSceneInstanceData& instanceData =
-                        packet.InstanceData[draw.InstanceDataOffset + instanceIndex];
+                        packet.InstanceData[dataIndex];
                     std::memcpy(worldTransform.values, instanceData.World, sizeof(instanceData.World));
+                    std::memcpy(previousWorldTransform.values, instanceData.PreviousWorld,
+                                sizeof(instanceData.PreviousWorld));
                 }
                 else
                 {
                     worldTransform = draw.WorldMatrix;
+                    if (bHasInstanceData &&
+                        std::memcmp(packet.InstanceData[dataIndex].World,
+                                    worldTransform.values,
+                                    sizeof(packet.InstanceData[dataIndex].World)) == 0)
+                    {
+                        const GPUSceneInstanceData& instanceData = packet.InstanceData[dataIndex];
+                        std::memcpy(previousWorldTransform.values, instanceData.PreviousWorld,
+                                    sizeof(instanceData.PreviousWorld));
+                    }
+                    else
+                    {
+                        previousWorldTransform = worldTransform;
+                    }
                 }
 
                 if (!IsFiniteRayTracingTransform(worldTransform))
@@ -742,6 +761,12 @@ namespace NorvesLib::Core::Rendering
                 instance.Instance.customIndex =
                     static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
                 CopyRayTracingInstanceTransform(worldTransform, instance.Instance.transform);
+                if (IsFiniteRayTracingTransform(previousWorldTransform))
+                {
+                    CopyRayTracingInstanceTransform(previousWorldTransform,
+                                                    instance.PreviousTransform);
+                    instance.bHasPreviousTransform = true;
+                }
                 packet.RayTracingScene.Instances.push_back(std::move(instance));
             }
         }
@@ -2467,6 +2492,7 @@ namespace NorvesLib::Core::Rendering
                                              : nullptr;
         viewContext.SnapshotScene = &packet->Scene;
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
+        viewContext.SnapshotDeltaTime = packet->DeltaTime;
         viewContext.SkyAtmosphereSnapshot = packet->Scene.SkyAtmosphere;
         viewContext.SnapshotDrawCommandSource = &packet->DrawCommands;
         viewContext.SnapshotDrawCommands = DrawCommandView::FromRange(packet->DrawCommands,

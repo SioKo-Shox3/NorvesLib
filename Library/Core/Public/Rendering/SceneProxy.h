@@ -338,6 +338,7 @@ namespace NorvesLib::Core::Rendering
         // 物理露出 snapshot
         float Aperture = 4.0f;
         float ShutterSpeed = 1.0f / 60.0f;
+        float FocusDistance = 0.0f; // ワールド単位m。0は従来のピンホール光線
         float ISO = 100.0f;
         float ExposureCompensation = 0.0f;
         float EV100 = 9.9068906f;
