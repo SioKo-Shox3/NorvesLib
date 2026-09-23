@@ -81,24 +81,20 @@
 - R6-P5再開: `3e5c374` / `e49cf5c`。RTGIの試料を描画フレームごとに更新し、履歴棄却をNDC深度から線形距離へ変えた（遠景で露出領域の古い履歴を使っていた）。受入れは履歴ageとデノイズ後間接光の読み戻しで判定し、露出170画素の最大age 0、カメラ移動時の保持率0.994、停止後の再蓄積、ライト追従率0.84〜1.40（5回）を確認した。自己参照TSVは削除し、参照比較はR6-P5-REFへ分けた。RenderingValidation 50件は失敗0件。
 - R6-P5 2周目対応: `ab86d83` / `c4a9d93`。履歴距離の比較を前フレームのカメラ基準へ揃え（前進カメラで静止面を捨てていた）、停止後の残留を物体なし参照・物体あり・停止後の画素差で判定する。ライト追従は面光源を隠して外れ値を除き、到達率0.87〜0.98。距離基準を戻す負の対照で保持率0を確認。
 - TEST-RGC: `5e1bdfa`。R7-P1のinclude展開でShaderManagerがファイルを読むようになり、空のshader置き場で初期化するRenderGraphCompileTestが失敗していた。実在するAssets/Shadersを渡して合格。
+- R7-P3B: `1cdf101` / `058aab9` / `20b1764` / `8c80695`。RT材質snapshotへinstance色とalbedo・normal・metallic・roughnessのtexture handleを加え、PTはRenderThreadで解決して重複を除いた256要素の配列descriptorへ束ねる（既定はGBufferと同じ白・平坦法線・黒・中間灰）。closest-hitはMesh3DVertexの法線・UVを補間し、ラスタと同じ余接フレームと共通の復号関数で材質値を得る。発光は色×nits×プリエクスポージャ。余接フレームの退化判定は尺度不変な共通関数にし、ラスタの常時fallbackも解消した。PathTracingMaterialVulkanTestでUV・instance色・metallic/roughness・法線マップ（伸縮UV・逆巻き・退化UV）・既定値・重複除去・handle解放時の履歴破棄・発光・stride 12・表の上限を固定し、validation 0件。RenderingValidation 51件で失敗0件（8件はskip契約）。
 
 ## In progress
-- R6-P5はblocked。専用受入れは通過し、DDGI放射輝度テストの履歴分離後単体再検証も合格した。R6-GATE-OUTDOORはR1承認済みgoldenとの不一致がR2 CSM導入時から再現し、基準画像の扱いが決まるまで停止する。
-- R6-P6はblocked。R6受入れ記録は保留として作成し、完了trailerは付けていない。
-- R7-P1は共通PBR shaderとinclude展開を`0872211`でコミット済み。Indoor・R1数値・RTGI/契約テストは通過したが、R2 CSM以降の既知Outdoor golden不一致により受入れはblocked。R1承認済みbaselineと閾値は不変。モデル切替による3回目の中断は機能失敗として数えない。
-- R7-P4はblocked。指定テストは未登録で、Cornell比較に必要なR7-P3の材質・光輸送契約も未完。
-
-- R7-P7はblocked。R7-P3/P4のPT光輸送・公開Cornell参照・SPP収束が未完で、R4/R6との同一条件self PT比較を実施できない。P1のOutdoor受入れも保留。
-- R7-O3はblocked。R7コア受入れ未完に加え、空・霧を含む3時刻のPT/raster画像比較とFLIP二段判定がない。
+- R7-P3C: DFG LUTの共有、LUT補償付きGGXと(1-Ed)拡散のBSDF、VNDF標本化、点・spot・方向光のNEE、発光三角形と太陽円盤のMIS、一様/正距円筒の環境光（固定0.05の廃止）を実装中。PathTracingLightingVulkanTest（白炉15行・環境の向き・解析照明・MIS一致）を作成済みで未実行。
+- R6-P6はblocked。R6-P5-REF（R7-P3D後のPT参照との比較）が残る。
 
 ## Next
 
-- R7-O3はR7-P3/P4/P1/P7の受入れ後、空・霧込みの同一屋外シーンを3時刻captureし、FLIP pool/max-pixel閾値で再検証する。
-- R7-P3はRT材質snapshotとtexture資源・UV・DFGの契約確定後に再開する。R6 Outdoorの基準画像判断とR7-P1の受入れは保留として保持する。
-- R7-P3の契約と光輸送を実装後、R7-P4の同一seed 16/64/256 sppとCornell RGBE参照のGPU検証を登録して再開する。閾値とseedは変更しない。
-- R7-P7はP3のNEE/MIS・PT数値契約、P4の16/64/256 spp・Cornell比較、P1のOutdoor基準再検証後に再開する。同一条件のR4/R6比較を各1回行い、閾値超過時だけ該当phaseを再オープンする。
+- R7-P3Cを検証・評価してコミットし、R7-P3D（起動時PT選択、LightingPassと同じ環境、raster/PT比較）へ進む。
+- R6-P5-REF → R7-P4（16/64/256 spp、Cornell RGBE）→ R7-P7 → R6-P6 → R7-O3 の順に再開する。閾値とseedは変更しない。
+- R8はM1（ACES 2.0 SDRのOCIO焼き込みLUT、DoF・動きぼけ、240 frame EXR）でTASKSを起こしてから着手する。
 
 ## Notes
+- R7-P3B評価（2026-09-24）: 1周目で接空間基底の正規化・面裏散乱・texture解決変化の履歴破棄、2周目でラスタの退化判定（画面微分の絶対値）との分岐差が指摘された。2周の上限に達したため、最後の修正`8c80695`はR7-P3Cの評価対象へ含めて確認する。太陽標本の幾何面判定のテスト不足（non-blocking）はP3Cの太陽MISで扱う。ログは`.harness/runs/20260924-r7-p3b/`。
 - R6評価（2026-09-24、2周目）: 距離基準のずれと停止後の残留検証不足でNEEDS_WORK。2周の上限に達したため、対応（`ab86d83`・`c4a9d93`・`c5765a0`）はR6-P5-REFの評価対象へ含めて確認する。SkinnedRenderPathContractTestの停止は既存問題としてTEST-SKINNEDへ登録した。
 - R7-P3A評価（2026-09-24）: 1周目で配列を含まないlayoutのpool容量変化とデバイス上限未検査、2周目でmaxPerStageResourcesの計数規則（単独sampler・加速構造を除き、fragmentのcolor attachmentを加える）が指摘された。2周の上限に達したため、最後の修正`48fa18e`はR7-P3Bの評価対象へ含めて確認する。検証ログは`.harness/runs/20260923-resume/verify-R7-P3A-*-3.txt`。
 - R6完了判定の評価（2026-09-23）: 静止参照が5値比較、ライト追従率の分母、RTGIのサンプル固定、履歴棄却の検証不足、再オープン規則の欠落でNEEDS_WORK。R6-P5を再開し、参照比較はR6-P5-REF（R7-P3D後）へ分けた。
