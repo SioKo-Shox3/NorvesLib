@@ -78,13 +78,16 @@
 - R7-P1は共通PBR shaderとinclude展開を`0872211`でコミット済み。Indoor・R1数値・RTGI/契約テストは通過したが、R2 CSM以降の既知Outdoor golden不一致により受入れはblocked。R1承認済みbaselineと閾値は不変。モデル切替による3回目の中断は機能失敗として数えない。
 - R7-P4はblocked。指定テストは未登録で、Cornell比較に必要なR7-P3の材質・光輸送契約も未完。
 
+- R7-P7はblocked。R7-P3/P4のPT光輸送・公開Cornell参照・SPP収束が未完で、R4/R6との同一条件self PT比較を実施できない。P1のOutdoor受入れも保留。
+
 ## Next
 
 - R7-P3はRT材質snapshotとtexture資源・UV・DFGの契約確定後に再開する。R6 Outdoorの基準画像判断とR7-P1の受入れは保留として保持する。
 - R7-P3の契約と光輸送を実装後、R7-P4の同一seed 16/64/256 sppとCornell RGBE参照のGPU検証を登録して再開する。閾値とseedは変更しない。
-- R7-P7のcore受入れはR7-P3/P4の光輸送・収束契約が完了してから行う。R6 Outdoor/R7-P1の既知保留は維持する。
+- R7-P7はP3のNEE/MIS・PT数値契約、P4の16/64/256 spp・Cornell比較、P1のOutdoor基準再検証後に再開する。同一条件のR4/R6比較を各1回行い、閾値超過時だけ該当phaseを再オープンする。
 
 ## Notes
+- R7-P7受入れ監査（2026-09-23）: .harness/runs/20260923-095848/verify-R7-P7-1.txt〜-8.txtを読戻し、関連Debug build EXIT_CODE=0、CTest 7/7 passed、R1ラスタ数値40静的行/68数値行/120 capture、EXR 3枚2,099画素のfinite-scanを確認した。P3/P4専用CTestは登録0件で、同一条件self PT対R4/R6の比較値はない。Docs/RenderingValidation/R7CoreAcceptance.mdとblocked/R7-P7.mdに再検証単位を記録し、R7 trailerは付けない。
 - R7-P6検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P6-10.txt`で指定build EXIT_CODE=0、`verify-R7-P6-11.txt`で指定CTest 1/1 passed・EXIT_CODE=0、`verify-R7-P6-12.txt`で固定条件2出力のbyte一致（SHA256 `9333237a36a6a8ee732fe55557a430706c5a831b71e7d0f8bef3edb80291d768`）、BGR float32/ZIP、32×32・3×17 window、有限値とNaN/Inf拒否を読戻し確認した。`verify-R7-P6-9.txt`のOpenCV独立読取と、`verify-R7-P6-13.txt`・`-14.txt`の既存カメラGPUテストもEXIT_CODE=0。MSVCのC11 atomicsは専用compile optionで有効化し、TinyEXRのJPH SIMD builtinのみ移植した。
 - R7-P5検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P5-10.txt`で指定build EXIT_CODE=0、`verify-R7-P5-11.txt`で指定CTest 2/2 passed、`verify-R7-P5-12.txt`で可変DeltaTimeの静止32試料累積と静止/移動golden・画像差0.0576274を読戻し確認した。既存RT snapshot/PT回帰は`verify-R7-P5-3.txt`・`-4.txt`で2/2 passed。線形3×3が同じ並進だけを補間し、それ以外はcurrentを使う。実際のアニメーションでpacketのcamera/geometryが変わると既存の履歴規則で累積はリセットされる。独立評価は2周目PASS。
 - R7-P4検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P4-1.txt`は未登録build targetでEXIT_CODE=1、`verify-R7-P4-2.txt`はCTest未登録でEXIT_CODE=8。既存PathTracingVulkanTestのDebug buildとGPU CTestは成功（1/1）。停止理由は`blocked/R7-P4.md`。
