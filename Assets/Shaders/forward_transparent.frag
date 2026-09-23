@@ -56,7 +56,7 @@ layout(set = 0, binding = 13) uniform sampler2D dfgLut;
 
 layout(location = 0) out vec4 outColor;
 
-const float PI = 3.14159265359;
+#include "Common/PbrMaterialEvaluation.glsl"
 
 mat3 CalculateTBN(vec3 worldNormal, vec3 worldPos, vec2 texCoord)
 {
@@ -111,39 +111,6 @@ vec2 EquirectangularUV(vec3 direction)
                    asin(clamp(-direction.y, -1.0, 1.0)));
     uv *= vec2(0.15915494, 0.31830989);
     return uv + 0.5;
-}
-
-vec3 FresnelSchlick(float cosTheta, vec3 F0)
-{
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-float DistributionGGX(vec3 N, vec3 H, float roughness)
-{
-    float alpha = roughness * roughness;
-    float alphaSquared = alpha * alpha;
-    float NdotH = max(dot(N, H), 0.0);
-    float denominator = PI * pow(NdotH * NdotH * (alphaSquared - 1.0) + 1.0, 2.0);
-    return alphaSquared / max(denominator, 0.0001);
-}
-
-float GeometrySchlickGGX(float NdotX, float roughness)
-{
-    float k = pow(roughness + 1.0, 2.0) / 8.0;
-    return NdotX / (NdotX * (1.0 - k) + k);
-}
-
-float GeometrySmithDirect(vec3 N, vec3 V, vec3 L, float roughness)
-{
-    return GeometrySchlickGGX(max(dot(N, V), 0.0), roughness) *
-           GeometrySchlickGGX(max(dot(N, L), 0.0), roughness);
-}
-
-float ComputeSpecularAO(float NdotV, float ao, float roughness)
-{
-    return clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao,
-                 0.0,
-                 1.0);
 }
 
 float CalculateInverseSquareAttenuation(float distanceToLight)
@@ -280,7 +247,6 @@ float CalculateShadow(vec3 worldPos)
 
 void main()
 {
-    vec4 texColor = texture(albedoTexture, fragTexCoord);
     vec2 texCoord = fragTexCoord;
     mat3 TBN = CalculateTBN(fragNormal, fragWorldPos, fragTexCoord);
     vec3 viewDirection = normalize(mvp.cameraPosition.xyz - fragWorldPos);
@@ -293,9 +259,11 @@ void main()
                                                 viewDirectionTS,
                                                 mvp.pomParams.x),
                        pomFade);
-        texColor = texture(albedoTexture, texCoord);
     }
 
+    PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
+        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord);
+    vec4 texColor = textureSamples.Albedo;
     vec3 baseColor = texColor.rgb * fragObjectColor.rgb;
     float alpha = texColor.a * fragObjectColor.a;
 
@@ -304,11 +272,10 @@ void main()
         discard;
     }
 
-    vec3 tangentNormal = texture(normalTexture, texCoord).rgb * 2.0 - 1.0;
-    vec3 normal = normalize(TBN * tangentNormal);
-    float metallic = clamp(texture(metallicTexture, texCoord).r, 0.0, 1.0);
-    float roughness = clamp(texture(roughnessTexture, texCoord).r, 0.04, 1.0);
-    float ao = clamp(texture(aoTexture, texCoord).r, 0.0, 1.0);
+    vec3 normal = normalize(TBN * textureSamples.TangentNormal);
+    float metallic = clamp(textureSamples.Material.r, 0.0, 1.0);
+    float roughness = clamp(textureSamples.Material.g, 0.04, 1.0);
+    float ao = clamp(textureSamples.Material.b, 0.0, 1.0);
     vec3 direct = vec3(0.0);
     float NdotV = max(dot(normal, viewDirection), 0.0);
     vec3 F0d = vec3(0.04);
@@ -346,23 +313,18 @@ void main()
             continue;
         }
         vec3 halfVector = normalize(viewDirection + lightDirection);
-        float VdotH = max(dot(viewDirection, halfVector), 0.0);
-        float distribution = DistributionGGX(normal, halfVector, roughness);
-        float geometry = GeometrySmithDirect(normal, viewDirection, lightDirection, roughness);
-        float specularTerm = distribution * geometry / (4.0 * NdotV * NdotL + 0.0001);
-        vec3 dielectricFresnel = FresnelSchlick(VdotH, F0d);
-        vec3 conductorFresnel = FresnelSchlick(VdotH, F0c);
-        vec3 dielectricBRDF = (1.0 - dielectricFresnel) * baseColor / PI +
-                              specularTerm * dielectricFresnel * compensationD;
-        vec3 conductorBRDF = specularTerm * conductorFresnel * compensationC;
-        vec3 directBRDF = (1.0 - metallic) * dielectricBRDF + metallic * conductorBRDF;
+        vec3 diffuseBRDF;
+        vec3 specularBRDF;
+        EvaluateAnalyticalDirectEndpointBRDF(
+            baseColor, metallic, roughness, normal, viewDirection, lightDirection,
+            halfVector, dfg, diffuseBRDF, specularBRDF);
         vec3 radiance = light.chromaticityAndIntensity.rgb *
                         light.chromaticityAndIntensity.w * attenuation * NdotL;
         if (lightType < 0.5 && mvp.bShadowEnabled != 0u)
         {
             radiance *= CalculateShadow(fragWorldPos);
         }
-        direct += directBRDF * radiance;
+        direct += (diffuseBRDF + specularBRDF) * radiance;
     }
 
     vec3 ambient = vec3(0.0);

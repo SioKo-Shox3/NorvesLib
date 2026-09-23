@@ -194,6 +194,10 @@ namespace
                                       const std::string& impostorVertexSource,
                                       const std::string& impostorFragmentSource)
     {
+        const std::string sharedPbrSource =
+            ReadRepositoryFile("Assets/Shaders/Common/PbrMaterialEvaluation.glsl");
+        const std::string gbufferFragmentSource =
+            ReadRepositoryFile("Assets/Shaders/gbuffer.frag");
         struct alignas(16) ExpectedTransparentForwardUBO
         {
             float view[16];
@@ -417,9 +421,18 @@ namespace
         RequirePositionAfter(forwardPassSource,
                              "bHasValidViewport && published.Matches(",
                              physicalLightingReadyPosition);
-        assert(transparentFragmentSource.find("FresnelSchlick") != std::string::npos);
-        assert(transparentFragmentSource.find("DistributionGGX") != std::string::npos);
-        assert(transparentFragmentSource.find("GeometrySmithDirect") != std::string::npos);
+        assert(transparentFragmentSource.find(
+                   "#include \"Common/PbrMaterialEvaluation.glsl\"") != std::string::npos);
+        assert(transparentFragmentSource.find("SamplePbrMaterialTextures") != std::string::npos);
+        assert(transparentFragmentSource.find("EvaluateAnalyticalDirectEndpointBRDF") !=
+               std::string::npos);
+        assert(gbufferFragmentSource.find(
+                   "#include \"Common/PbrMaterialEvaluation.glsl\"") != std::string::npos);
+        assert(gbufferFragmentSource.find("SamplePbrMaterialTextures") != std::string::npos);
+        assert(sharedPbrSource.find("vec3 FresnelSchlick") != std::string::npos);
+        assert(sharedPbrSource.find("float DistributionGGX") != std::string::npos);
+        assert(sharedPbrSource.find("float GeometrySmithDirect") != std::string::npos);
+        assert(sharedPbrSource.find("SamplePbrMaterialTextures") != std::string::npos);
         assert(transparentFragmentSource.find("compensationD") != std::string::npos);
         assert(transparentFragmentSource.find("compensationC") != std::string::npos);
         assert(transparentFragmentSource.find("lightBuffer.lights[index]") != std::string::npos);

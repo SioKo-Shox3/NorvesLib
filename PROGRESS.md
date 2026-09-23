@@ -63,6 +63,7 @@
 - R6-P4: 3x3 cross-bilateralデノイザをLightingPassへ接続した。depth/normal/material境界を棄却し、履歴confidenceをweightへ反映する。Gameと対象テストのDebug build、Vulkan 1.2 shader compile、指定CTest 4/4が成功した。RTGI GPU readbackはfinite hit radiance、miss zero、RTGI公開、disabled/TLAS不完全時のfallbackを確認した。証拠は`.harness/runs/20260923-r6-p4-review2/`に保存した。
 - R6-P5: `.harness/runs/20260923-050747/`。HDR captureでRT無効時のIBL、R4 fallback、固定8 rendered-frame warmup後のRTGI静止golden、カメラ/物体移動、履歴棄却、移動後停止、点光源移動の4 rendered-frame以内の追従を確認し、専用`R6RTGIAcceptanceVulkanTest`は1/1 passed、Game buildはEXIT_CODE=0だった。ただし指定の全体`RenderingValidation`は34 passed・8 skipped・10 failed、EXIT_CODE=8であり、TASKSの状態を`blocked`へ戻した。既定のRendering3DTest起動経路と既定シーンは変更していない。
 - R7-M1: `Docs/RenderingValidation/R7SamplingAndExrSelection.md` と `R7TechniquePlan.md` に、NEE + power heuristic MIS、TinyEXR v3.2.0 C11 API、linear RGB float/ZIP scanline、seed決定論性、R7 core/outdoor段階を固定し、P1〜P7/O1〜O3へ分割した。
+- R7-P1: `PbrMaterialEvaluation.glsl`へ共通のBRDF・texture評価をまとめ、opaque/transparent rasterとRTGI computeから参照する。shader-root相対include展開を接続した。対象build成功、R1 all-numericalは40 static rows/68 numerical rows/120 capturesで合格し、Indoor goldenも合格。Outdoor goldenは開始時と同じ`mean_flip=0.002326954`・459画素差で失敗し、R1 baselineは変更していない。
 
 ## In progress
 - R6-P5はblocked。専用受入れは通過し、DDGI放射輝度テストの履歴分離後単体再検証も合格した。R6-GATE-OUTDOORはR1承認済みgoldenとの不一致がR2 CSM導入時から再現し、基準画像の扱いが決まるまで停止する。
@@ -70,7 +71,7 @@
 
 ## Next
 
-- Roadmap上R6と並行可能なR7コアの`R7-P1`へ進む。R6 Outdoorの基準画像判断は保留として保持し、R1の承認済みbaseline/thresholdは変更しない。
+- Roadmap上R6と並行可能なR7コアの`R7-P2`へ進む。R6 Outdoorの基準画像判断は保留として保持し、R1の承認済みbaseline/thresholdは変更しない。
 
 ## Notes
 - R6-P5再開時（2026-09-23）: `cmake --build build --config Debug --target Game RTGIDiffuseIndirectVulkanTest -- /m:1` 成功、`ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R '^RTGIDiffuseIndirectVulkanTest$'` は1/1 passed。ログは`.harness/runs/20260923-r6-p5-resume/`。
@@ -131,3 +132,4 @@
 - R4-P5の後続確認: Lighting側のnormal biasとGLSLコンパイルをR4-P6のGPU受入れで確認する。
 - R4-P7最終実GPU検証（20260922-r4-p7-final3）: `build.txt` EXIT_CODE=0、Cornell static/dynamic capture EXIT_CODE=0、P4 direct EXIT_CODE=0、R4指定CTest 9/9 passed。証跡は`.harness/runs/20260922-r4-p7-final3/`に保存した。
 - R6-P1検証: `verify-R6-P1-1.txt`でGame build EXIT_CODE=0、`verify-R6-P1-2.txt`でRayTracingSceneSnapshotTest・RenderingDDGILightingContractTest・RenderGraphCompileTestの3/3 passedとEXIT_CODE=0を読戻し確認した。既存のthird-party PDBおよびlibwebsockets生成物warningは残るが、対象ゲートは成功した。
+- R7-P1検証（2026-09-23）: `verify-R7-P1-3.txt`のGame/関連target buildはEXIT_CODE=0。`verify-R7-P1-4.txt`の対象CTestは4/5 passedで、RTGI、Indoor golden、2つの契約テストがpassed、Outdoor goldenのみ開始時と同じ数値でfailed。`verify-R7-P1-5.txt`でR1 capture testを再buildし、`verify-R7-P1-6.txt`でall-numerical契約（40 static rows、68 numerical rows、120 captures、EXIT_CODE=0）を確認した。

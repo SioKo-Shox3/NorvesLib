@@ -2560,7 +2560,13 @@ namespace
             RemoveWhitespace(MaskShaderNonCode(shaderSource));
         const TestString expectedText =
             "constuint" + constantName + "=" + FormatUnsigned(expectedValue) + "u;";
-        assert(CountText(normalizedSource, expectedText) == 1);
+        const std::size_t actualCount = CountText(normalizedSource, expectedText);
+        if (actualCount != 1)
+        {
+            std::cerr << "シェーダーデバッグモード定数の照合失敗: " << expectedText.c_str()
+                      << " count=" << actualCount << '\n';
+        }
+        assert(actualCount == 1);
     }
 } // namespace
 
@@ -2615,8 +2621,27 @@ int main()
     assert(static_cast<uint8_t>(DebugViewMode::Count) == 9);
 
     const TestString shaderPath = TestString(NORVES_SHADER_DIR) + "/lighting.frag";
-    const TestString shaderSource =
+    const TestString rawShaderSource =
         ReadTextFile(std::filesystem::path(shaderPath.c_str()));
+    const TestString sharedPbrPath =
+        TestString(NORVES_SHADER_DIR) + "/Common/PbrMaterialEvaluation.glsl";
+    TestString sharedPbrSource =
+        ReadTextFile(std::filesystem::path(sharedPbrPath.c_str()));
+    if (sharedPbrSource.size() >= 3 &&
+        static_cast<unsigned char>(sharedPbrSource[0]) == 0xEF &&
+        static_cast<unsigned char>(sharedPbrSource[1]) == 0xBB &&
+        static_cast<unsigned char>(sharedPbrSource[2]) == 0xBF)
+    {
+        sharedPbrSource = sharedPbrSource.substr(3);
+    }
+    const TestString pbrIncludeDirective =
+        "#include \"Common/PbrMaterialEvaluation.glsl\"";
+    const std::size_t pbrIncludePosition = rawShaderSource.find(pbrIncludeDirective);
+    assert(pbrIncludePosition != TestString::npos);
+    TestString shaderSource = rawShaderSource.substr(0, pbrIncludePosition);
+    shaderSource += sharedPbrSource;
+    shaderSource += rawShaderSource.substr(
+        pbrIncludePosition + pbrIncludeDirective.size());
     const std::filesystem::path sourceRoot =
         std::filesystem::path(NORVES_SHADER_DIR).parent_path().parent_path();
     const TestString lightingPassSource = ReadTextFile(
@@ -2624,6 +2649,15 @@ int main()
     const TestString denoiserSource = ReadTextFile(
         std::filesystem::path(shaderPath.c_str()).parent_path() /
         "RTGI/CrossBilateralDenoise.comp");
+    const TestString rtgiSource = ReadTextFile(
+        std::filesystem::path(shaderPath.c_str()).parent_path() /
+        "RTGI/DiffuseIndirect.comp");
+    assert(rtgiSource.find(pbrIncludeDirective) != TestString::npos);
+    assert(ContainsText(rtgiSource, "EvaluateLambertDiffuseBRDF(baseColor)"));
+    assert(ContainsText(rtgiSource, "EvaluateDiffuseMaterialWeight(material.r)"));
+    assert(ContainsText(rtgiSource,
+                        "SamplePbrMaterialTextures(gbufferAlbedo, gbufferNormal, gbufferMaterial, uv)"));
+    assert(ContainsText(rtgiSource, "surfaceSamples.WorldNormal"));
     const TestString maskedShaderSource = MaskShaderNonCode(shaderSource);
     const TestString maskedLightingPassSource = MaskShaderNonCode(lightingPassSource);
     for (uint32_t binding = 0; binding <= 18; ++binding)
@@ -3523,7 +3557,9 @@ int main()
     assert(CountText(shaderSource, "ApplySceneColorPreExposure(skyColor)") == 1);
     assert(CountText(shaderSource, "ApplySceneColorPreExposure(color)") == 1);
     assert(ContainsText(shaderSource, "if (bValidationLambert)"));
-    assert(ContainsText(shaderSource, "Lo_diffuse += (albedo / PI) * radiance;"));
+    assert(ContainsText(shaderSource,
+                         "Lo_diffuse += EvaluateLambertDiffuseBRDF(albedo) * radiance;"));
+    assert(ContainsText(sharedPbrSource, "return albedo / PI;"));
     assert(ContainsText(shaderSource,
                         "else if (bValidationPBR || params.bNeuralBRDFEnabled == 0u)"));
     assert(ContainsText(shaderSource,

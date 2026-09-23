@@ -78,7 +78,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTG
     uint values[];
 };
 
-const float PI = 3.14159265358979323846;
+#include "Common/PbrMaterialEvaluation.glsl"
 const float RAY_ORIGIN_OFFSET = 0.002;
 const uint RTGI_HISTORY_MAXIMUM_AGE = 8u;
 const float RTGI_HISTORY_MAXIMUM_WEIGHT = 0.9;
@@ -356,7 +356,8 @@ vec3 ComputeDirectRadiance(vec3 worldPosition,
         {
             continue;
         }
-        radiance += (baseColor / PI) * lightRadiance * (cosine * attenuation);
+        radiance += EvaluateLambertDiffuseBRDF(baseColor) *
+                    lightRadiance * (cosine * attenuation);
     }
     return SanitizeRadiance(radiance);
 }
@@ -485,9 +486,11 @@ void main()
 
     vec2 uv = (vec2(pixel) + vec2(0.5)) / vec2(imageSize);
     float sampledDepth = texture(gbufferDepth, uv).r;
-    vec4 sampledMaterial = texture(gbufferMaterial, uv);
-    vec3 surfaceAlbedo = texture(gbufferAlbedo, uv).rgb;
-    vec3 normal = texture(gbufferNormal, uv).xyz;
+    PbrGBufferMaterialSamples surfaceSamples =
+        SamplePbrMaterialTextures(gbufferAlbedo, gbufferNormal, gbufferMaterial, uv);
+    vec4 sampledMaterial = surfaceSamples.Material;
+    vec3 surfaceAlbedo = surfaceSamples.Albedo.rgb;
+    vec3 normal = surfaceSamples.WorldNormal.xyz;
     float normalLengthSquared = dot(normal, normal);
     bool bSurfaceValid = IsFiniteScalar(sampledDepth) &&
         sampledDepth < 0.999999 && IsFiniteVector(surfaceAlbedo) &&
@@ -514,7 +517,7 @@ void main()
         }
         else
         {
-            float diffuseWeight = clamp(1.0 - material.r, 0.0, 1.0);
+            float diffuseWeight = EvaluateDiffuseMaterialWeight(material.r);
             vec3 rayDirection = CosineWeightedDirection(worldNormal, pixel);
             vec3 rayOrigin = worldPosition + worldNormal * RAY_ORIGIN_OFFSET;
 

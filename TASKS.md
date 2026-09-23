@@ -493,7 +493,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - paths: Docs/RenderingValidation/R7SamplingAndExrSelection.md, Docs/RenderingValidation/R7TechniquePlan.md, TASKS.md, PROGRESS.md
 
 ## R7-P1: ラスタとPTのBRDF・texture評価を共有する
-- status: todo
+- status: done
 - done-when: raster opaque/transparentとRT shaderが共通BRDF・texture evaluationを参照し、R1数値契約とIndoor/Outdoor goldenを維持する。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: shader compileと`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest`を確認する。

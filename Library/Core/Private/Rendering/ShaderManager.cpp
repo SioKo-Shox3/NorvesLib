@@ -3,9 +3,239 @@
 #include "RHI/IShader.h"
 #include "RHI/IShaderCompiler.h"
 #include "Logging/LogMacros.h"
+#include "FileStream/FileStream.h"
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        bool ReadShaderText(const String &path, String &source)
+        {
+            auto file = NorvesLib::FileStream::FileStream::CreateUnique(
+                path,
+                NorvesLib::FileStream::FileMode::Read,
+                NorvesLib::FileStream::FileAccess::Read);
+            if (!file)
+            {
+                return false;
+            }
+
+            source = file->ReadString();
+            if (source.size() >= 3 &&
+                static_cast<unsigned char>(source[0]) == 0xEF &&
+                static_cast<unsigned char>(source[1]) == 0xBB &&
+                static_cast<unsigned char>(source[2]) == 0xBF)
+            {
+                source = source.substr(3);
+            }
+            return true;
+        }
+
+        bool ParseShaderInclude(const String &line,
+                                bool &bIsInclude,
+                                String &includePath,
+                                String &error)
+        {
+            bIsInclude = false;
+            size_t cursor = 0;
+            while (cursor < line.size() && (line[cursor] == ' ' || line[cursor] == '\t'))
+            {
+                ++cursor;
+            }
+
+            static constexpr char IncludeToken[] = "#include";
+            if (line.find(IncludeToken, cursor, sizeof(IncludeToken) - 1) != cursor)
+            {
+                return true;
+            }
+            const size_t tokenEnd = cursor + sizeof(IncludeToken) - 1;
+            if (tokenEnd < line.size() && line[tokenEnd] != ' ' && line[tokenEnd] != '\t')
+            {
+                return true;
+            }
+
+            bIsInclude = true;
+            cursor = tokenEnd;
+            while (cursor < line.size() && (line[cursor] == ' ' || line[cursor] == '\t'))
+            {
+                ++cursor;
+            }
+            if (cursor >= line.size() || line[cursor] != '"')
+            {
+                error = "シェーダーincludeは引用符付きの相対パスで指定してください";
+                return false;
+            }
+
+            const size_t pathStart = ++cursor;
+            const size_t pathEnd = line.find('"', pathStart);
+            if (pathEnd == String::npos || pathEnd == pathStart)
+            {
+                error = "シェーダーincludeのパスが不正です";
+                return false;
+            }
+
+            includePath = line.substr(pathStart, pathEnd - pathStart);
+            cursor = pathEnd + 1;
+            while (cursor < line.size() && (line[cursor] == ' ' || line[cursor] == '\t'))
+            {
+                ++cursor;
+            }
+            if (cursor < line.size() && line.find("//", cursor, 2) != cursor)
+            {
+                error = "シェーダーincludeの後ろに不正な文字があります";
+                return false;
+            }
+
+            if (includePath[0] == '/' || includePath[0] == '\\' ||
+                includePath.find("..") != String::npos ||
+                includePath.find(':') != String::npos ||
+                includePath.find('\\') != String::npos)
+            {
+                error = "シェーダーincludeはshaderDirectory内の相対パスに限定されます";
+                return false;
+            }
+            return true;
+        }
+
+        bool ExpandShaderIncludes(const String &source,
+                                  const String &shaderDirectory,
+                                  VariableArray<String> &activeFiles,
+                                  String &expandedSource,
+                                  String &error)
+        {
+            size_t lineStart = 0;
+            while (lineStart < source.size())
+            {
+                const size_t lineEnd = source.find('\n', lineStart);
+                const size_t contentEnd = lineEnd == String::npos ? source.size() : lineEnd;
+                String line = source.substr(lineStart, contentEnd - lineStart);
+                if (!line.empty() && line.back() == '\r')
+                {
+                    line = line.substr(0, line.size() - 1);
+                }
+
+                bool bIsInclude = false;
+                String includePath;
+                if (!ParseShaderInclude(line, bIsInclude, includePath, error))
+                {
+                    return false;
+                }
+
+                if (bIsInclude)
+                {
+                    if (activeFiles.size() >= 16)
+                    {
+                        error = "シェーダーincludeの深さが上限を超えました";
+                        return false;
+                    }
+
+                    const String fullIncludePath = shaderDirectory + includePath;
+                    for (const String &activePath : activeFiles)
+                    {
+                        if (activePath == fullIncludePath)
+                        {
+                            error = "シェーダーincludeに循環参照があります: " + fullIncludePath;
+                            return false;
+                        }
+                    }
+
+                    String includeSource;
+                    if (!ReadShaderText(fullIncludePath, includeSource))
+                    {
+                        error = "シェーダーincludeを読み込めません: " + fullIncludePath;
+                        return false;
+                    }
+
+                    activeFiles.push_back(fullIncludePath);
+                    const bool bExpanded = ExpandShaderIncludes(
+                        includeSource, shaderDirectory, activeFiles, expandedSource, error);
+                    activeFiles.pop_back();
+                    if (!bExpanded)
+                    {
+                        return false;
+                    }
+
+                    if (lineEnd != String::npos &&
+                        (expandedSource.empty() || expandedSource.back() != '\n'))
+                    {
+                        expandedSource += "\n";
+                    }
+                }
+                else
+                {
+                    expandedSource += line;
+                    if (lineEnd != String::npos)
+                    {
+                        expandedSource += "\n";
+                    }
+                }
+
+                if (lineEnd == String::npos)
+                {
+                    break;
+                }
+                lineStart = lineEnd + 1;
+            }
+            return true;
+        }
+
+        RHI::ShaderCompileResult CompileShaderFile(
+            RHI::IShaderCompiler *compiler,
+            const String &fullPath,
+            const String &filename,
+            const String &shaderDirectory,
+            RHI::ShaderStage stage,
+            const String &entryPoint,
+            bool bExpandIncludes)
+        {
+            if (!bExpandIncludes)
+            {
+                return compiler->CompileFromFile(fullPath, stage, entryPoint);
+            }
+
+            RHI::ShaderCompileResult result;
+            String source;
+            if (!ReadShaderText(fullPath, source))
+            {
+                result.bSuccess = false;
+                result.ErrorMessage = "シェーダーファイルを読み込めません: " + fullPath;
+                return result;
+            }
+
+            VariableArray<String> activeFiles;
+            activeFiles.push_back(fullPath);
+            String expandedSource;
+            if (!ExpandShaderIncludes(source, shaderDirectory, activeFiles, expandedSource,
+                                      result.ErrorMessage))
+            {
+                result.bSuccess = false;
+                return result;
+            }
+
+            String sourceName = filename;
+            const size_t lastSlash = sourceName.FindLast('/');
+            const size_t lastBackslash = sourceName.FindLast('\\');
+            size_t lastSeparator = String::npos;
+            if (lastSlash != String::npos && lastBackslash != String::npos)
+            {
+                lastSeparator = lastSlash > lastBackslash ? lastSlash : lastBackslash;
+            }
+            else if (lastSlash != String::npos)
+            {
+                lastSeparator = lastSlash;
+            }
+            else if (lastBackslash != String::npos)
+            {
+                lastSeparator = lastBackslash;
+            }
+            if (lastSeparator != String::npos)
+            {
+                sourceName = filename.substr(lastSeparator + 1);
+            }
+
+            return compiler->CompileFromSource(expandedSource, stage, sourceName, entryPoint);
+        }
+    }
 
     bool ShaderManager::Initialize(RHI::IDevice *device, const String &shaderDirectory)
     {
@@ -89,7 +319,9 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
 
-        RHI::ShaderCompileResult compileResult = compiler->CompileFromFile(fullPath, stage, entryPoint);
+        RHI::ShaderCompileResult compileResult = CompileShaderFile(
+            compiler, fullPath, filename, m_ShaderDirectory, stage, entryPoint,
+            !IsSlangFile(filename));
 
         if (!compileResult.bSuccess)
         {
@@ -136,8 +368,9 @@ namespace NorvesLib::Core::Rendering
         for (auto &[key, cached] : m_Cache)
         {
             String fullPath = BuildFullPath(cached.Filename);
-            RHI::ShaderCompileResult compileResult = m_Compiler->CompileFromFile(
-                fullPath, cached.Stage, cached.EntryPoint);
+            RHI::ShaderCompileResult compileResult = CompileShaderFile(
+                m_Compiler.get(), fullPath, cached.Filename, m_ShaderDirectory,
+                cached.Stage, cached.EntryPoint, !IsSlangFile(cached.Filename));
 
             if (!compileResult.bSuccess)
             {
@@ -187,8 +420,9 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        RHI::ShaderCompileResult compileResult = compiler->CompileFromFile(
-            fullPath, cached.Stage, cached.EntryPoint);
+        RHI::ShaderCompileResult compileResult = CompileShaderFile(
+            compiler, fullPath, cached.Filename, m_ShaderDirectory,
+            cached.Stage, cached.EntryPoint, !IsSlangFile(cached.Filename));
 
         if (!compileResult.bSuccess)
         {

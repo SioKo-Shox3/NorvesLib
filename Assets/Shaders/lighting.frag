@@ -87,7 +87,7 @@ layout(location = 0) out vec4 outColor;
 // PBR関連関数
 // ========================================
 
-const float PI = 3.14159265359;
+#include "Common/PbrMaterialEvaluation.glsl"
 // 角度重みが完全なゼロになる場合を避け、probe間の補間を安定させる最小床。
 const float DDGI_WRAP_WEIGHT_FLOOR = 0.004;
 const uint DEBUG_VIEW_MODE_NORMAL = 0u;
@@ -157,53 +157,6 @@ vec3 SamplePrefilteredSpecular(vec3 direction, float roughness)
     float lod = roughness * float(params.prefilteredSpecularMipLevels - 1u);
     vec2 uv = EquirectangularUV(direction);
     return textureLod(prefilteredSpecular, uv, lod).rgb;
-}
-
-// フレネル（Schlickの近似）
-vec3 FresnelSchlick(float cosTheta, vec3 F0)
-{
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-// フレネル（Schlickの近似、ラフネス考慮版 - アンビエント/IBL用）
-// 法線分布関数（GGX/Trowbridge-Reitz）
-float DistributionGGX(vec3 N, vec3 H, float roughness)
-{
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
-
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
-    denom = PI * denom * denom;
-
-    return a2 / max(denom, 0.0001);
-}
-
-// 幾何遮蔽関数（Smith's method with Schlick-GGX）
-float GeometrySchlickGGX(float NdotV, float roughness)
-{
-    float r = (roughness + 1.0);
-    float k = (r * r) / 8.0;
-    return NdotV / (NdotV * (1.0 - k) + k);
-}
-
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
-{
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
-    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
-    return ggx1 * ggx2;
-}
-
-// ========================================
-// スペキュラオクルージョン (Lagarde 2014)
-// AO値からスペキュラ方向のオクルージョンを近似計算
-// ========================================
-float ComputeSpecularAO(float NdotV, float ao, float roughness)
-{
-    return clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
 }
 
 // ========================================
@@ -547,33 +500,6 @@ vec4 EvaluateNeuralBRDF(float NdotL, float NdotV, float NdotH, float LdotH, floa
     }
 
     return result;
-}
-
-void EvaluateAnalyticalDirectEndpointBRDF(vec3 albedo, float metallic, float roughness, vec3 N, vec3 V, vec3 L, vec3 H, vec2 dfg, out vec3 diffuseBrdf, out vec3 specularBrdf)
-{
-    vec3 F0d = vec3(0.04);
-    vec3 F0c = albedo;
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float NdotH = max(dot(N, H), 0.0);
-    float VdotH = max(dot(V, H), 0.0);
-    float D = DistributionGGX(N, H, roughness);
-    float k = ((roughness + 1.0) * (roughness + 1.0)) / 8.0;
-    float Gv = NdotV / (NdotV * (1.0 - k) + k);
-    float Gl = NdotL / (NdotL * (1.0 - k) + k);
-    float G = Gv * Gl;
-    float brdfCommon = D * G / (4.0 * NdotV * NdotL + 0.0001);
-    vec3 Fd = FresnelSchlick(VdotH, F0d);
-    vec3 Fc = FresnelSchlick(VdotH, F0c);
-    float Ess = max(dfg.x + dfg.y, 0.0001);
-    vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
-    vec3 CompC = vec3(1.0) + F0c * (1.0 - Ess) / Ess;
-    vec3 dielectricSpec = brdfCommon * Fd * CompD;
-    vec3 conductorSpec = brdfCommon * Fc * CompC;
-    vec3 diffuseEndpoint = (1.0 - Fd) * albedo / PI;
-    diffuseBrdf = (1.0 - metallic) * diffuseEndpoint;
-    specularBrdf = (1.0 - metallic) * dielectricSpec +
-                   metallic * conductorSpec;
 }
 
 bool IsRaw252ParameterInvariantValid()
@@ -1075,7 +1001,7 @@ void main()
         if (bValidationLambert)
         {
             // Validation 253: pure direct Lambert. No shadow, ambient, emissive or specular term.
-            Lo_diffuse += (albedo / PI) * radiance;
+            Lo_diffuse += EvaluateLambertDiffuseBRDF(albedo) * radiance;
         }
         else if (bValidationPBR || params.bNeuralBRDFEnabled == 0u)
         {

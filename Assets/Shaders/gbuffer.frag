@@ -30,6 +30,8 @@ layout(set = 0, binding = 4) uniform sampler2D roughnessTexture;
 layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
+#include "Common/PbrMaterialEvaluation.glsl"
+
 // GBuffer MRT出力
 layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
 layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + unused
@@ -156,21 +158,18 @@ void main()
     }
 
     // テクスチャサンプリング × オブジェクトカラー（POM補正済みUV使用）
-    vec4 texColor = texture(albedoTexture, texCoord);
-    outAlbedo = vec4(fragObjectColor * texColor.rgb, texColor.a);
+    PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
+        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord);
+    outAlbedo = vec4(fragObjectColor * textureSamples.Albedo.rgb,
+                     textureSamples.Albedo.a);
 
     // ノーマルマップ適用（POM補正済みUV使用）
-    vec3 normalMapSample = texture(normalTexture, texCoord).rgb;
-    vec3 tangentNormal = normalMapSample * 2.0 - 1.0;
     mat3 TBN_normal = CalculateTBN(fragNormal, fragWorldPos, texCoord);
-    vec3 normal = normalize(TBN_normal * tangentNormal);
+    vec3 normal = normalize(TBN_normal * textureSamples.TangentNormal);
     outNormal = vec4(normal, 0.0);
 
     // PBRマテリアルパラメータ（POM補正済みUV使用）
-    float metallic  = texture(metallicTexture, texCoord).r;
-    float roughness = texture(roughnessTexture, texCoord).r;
-    float ao        = texture(aoTexture, texCoord).r;
-    outMaterial = vec4(metallic, roughness, ao, 0.0);
+    outMaterial = vec4(textureSamples.Material, 0.0);
 
     // Emissive: Y=1 chromaticity × luminance nits → physical HDR RGB
     vec3 physicalEmissive = fragEmissiveChromaticityAndLuminanceNits.rgb *
