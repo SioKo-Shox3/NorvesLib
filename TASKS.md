@@ -509,7 +509,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
 
 ## R7-P3: NEE/MISとpoint・directional・area light輸送を実装する
-- status: todo
+- status: blocked
 - done-when: power heuristic β=2でlight/BSDF PDFを整合し、delta light、area emitter、visibilityを扱う。PT modeでR1 white-furnace・解析照明テストが通り、ラスタ/PTの同一設定が規定誤差内で一致する。
 - verify: `cmake --build build --config Debug --target Game PathTracingLightingVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(PathTracingLightingVulkanTest|LightingWhiteFurnaceTest|LightingAnalyticalPointLightTest)$"`
