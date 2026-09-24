@@ -351,6 +351,68 @@ namespace
         return false;
     }
 
+    // --path-tracing-debug-output=none|albedo|shading-normal|metallic-roughness|hit-distance
+    bool TryParsePathTracingDebugOutputOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::PathTracingDebugOutput& outOutput,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--path-tracing-debug-output=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        using NorvesLib::Core::Rendering::PathTracingDebugOutput;
+        const String value = argument.substr(prefix.size());
+        const struct
+        {
+            const TCHAR* Name;
+            PathTracingDebugOutput Output;
+        } choices[] = {{TEXT("none"), PathTracingDebugOutput::None},
+                       {TEXT("albedo"), PathTracingDebugOutput::Albedo},
+                       {TEXT("shading-normal"), PathTracingDebugOutput::ShadingNormal},
+                       {TEXT("metallic-roughness"), PathTracingDebugOutput::MetallicRoughness},
+                       {TEXT("hit-distance"), PathTracingDebugOutput::HitDistance}};
+        for (const auto& choice : choices)
+        {
+            if (value == choice.Name)
+            {
+                outOutput = choice.Output;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // --raster-direct-brdf=neural|analytic
+    bool TryParseRasterDirectBrdfOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::RasterDirectBrdf& outBrdf,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--raster-direct-brdf=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("neural"))
+        {
+            outBrdf = NorvesLib::Core::Rendering::RasterDirectBrdf::Neural;
+            return true;
+        }
+        if (value == TEXT("analytic"))
+        {
+            outBrdf = NorvesLib::Core::Rendering::RasterDirectBrdf::Analytic;
+            return true;
+        }
+        return false;
+    }
+
     bool IsDisableBoardInstanceBatchingOption(const TCHAR* pText)
     {
         if (!pText)
@@ -461,6 +523,9 @@ namespace NorvesLib::Core::Engine
             Rendering::PathTracingTransportScope::Full;
         Rendering::PathTracingPixelSampling pathTracingPixelSampling =
             Rendering::PathTracingPixelSampling::Box;
+        Rendering::PathTracingDebugOutput pathTracingDebugOutput =
+            Rendering::PathTracingDebugOutput::None;
+        Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Neural;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -557,6 +622,29 @@ namespace NorvesLib::Core::Engine
             {
                 LOG_WARNING("ApplicationProcessor runtime option --path-tracing-pixel-sampling ignored: value must be 'box' or 'center'");
             }
+
+            bool bMatchedDebugOutput = false;
+            if (TryParsePathTracingDebugOutputOption(args[i], pathTracingDebugOutput,
+                                                     bMatchedDebugOutput))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_debug_output=%u",
+                         static_cast<unsigned int>(pathTracingDebugOutput));
+            }
+            else if (bMatchedDebugOutput)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-debug-output ignored: value must be 'none', 'albedo', 'shading-normal', 'metallic-roughness' or 'hit-distance'");
+            }
+
+            bool bMatchedDirectBrdf = false;
+            if (TryParseRasterDirectBrdfOption(args[i], rasterDirectBrdf, bMatchedDirectBrdf))
+            {
+                LOG_INFO("ApplicationProcessor runtime option raster_direct_brdf=%u",
+                         static_cast<unsigned int>(rasterDirectBrdf));
+            }
+            else if (bMatchedDirectBrdf)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --raster-direct-brdf ignored: value must be 'neural' or 'analytic'");
+            }
         }
 
         const Detail::ExitFrameSelection exitFrameSelection = Detail::SelectExitFrameSelection(exitFrameOptions);
@@ -627,6 +715,8 @@ namespace NorvesLib::Core::Engine
             renderSettings.PathTracingSamplesPerFrame = pathTracingSamplesPerFrame;
             renderSettings.PathTracingTransport = pathTracingTransport;
             renderSettings.PathTracingPixelSamplingMode = pathTracingPixelSampling;
+            renderSettings.PathTracingDebug = pathTracingDebugOutput;
+            renderSettings.RasterDirectBrdfMode = rasterDirectBrdf;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {

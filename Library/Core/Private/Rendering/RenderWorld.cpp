@@ -81,6 +81,8 @@ namespace NorvesLib::Core::Rendering
         coordSettings.PathTracingSamplesPerFrame = settings.PathTracingSamplesPerFrame;
         coordSettings.PathTracingTransport = settings.PathTracingTransport;
         coordSettings.PathTracingPixelSamplingMode = settings.PathTracingPixelSamplingMode;
+        coordSettings.PathTracingDebug = settings.PathTracingDebug;
+        coordSettings.RasterDirectBrdfMode = settings.RasterDirectBrdfMode;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))
         {

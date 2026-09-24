@@ -613,7 +613,9 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
         {
             debugValue = debugOutput == PATH_DEBUG_ALBEDO ? payload.Albedo :
                          debugOutput == PATH_DEBUG_SHADING_NORMAL ? payload.ShadingNormal :
-                         vec3(payload.Metallic, payload.Roughness, 0.0);
+                         debugOutput == PATH_DEBUG_HIT_DISTANCE
+                             ? vec3(distance(origin, surfacePosition))
+                             : vec3(payload.Metallic, payload.Roughness, 0.0);
             break;
         }
         ApplyFogSegment(origin, direction, surfacePosition, throughput, radiance);

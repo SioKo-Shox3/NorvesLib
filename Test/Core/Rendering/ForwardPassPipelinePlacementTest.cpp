@@ -520,6 +520,9 @@ int main()
     assert(lightingPass != nullptr);
     assert(std::strcmp(lightingPass->GetName(), "LightingPass") == 0);
     assert(dynamic_cast<LightingPass*>(lightingPass) != nullptr);
+    // 既定の直接光は学習済みのニューラルBRDFで、その重みを読む。
+    assert(dynamic_cast<LightingPass*>(lightingPass)->GetSettings().NeuralBRDFWeightPath ==
+           NorvesLib::Core::Container::String("Data/disney.ns.bin"));
 
     IViewPass* volumetricsPassBase = sceneView.GetPassAt(7);
     assert(volumetricsPassBase != nullptr);
@@ -580,6 +583,14 @@ int main()
                                  worldBoardFragmentSource,
                                  impostorVertexSource,
                                  impostorFragmentSource);
+
+    // 解析BRDFを選ぶと、同じパス構成のままLightingPassはニューラルBRDFの重みを読まない。
+    InspectableSceneView analyticSceneView;
+    analyticSceneView.SetupDeferredPipeline(&sceneRenderer, RasterDirectBrdf::Analytic);
+    assert(analyticSceneView.GetPassCount() == sceneView.GetPassCount());
+    LightingPass* analyticLightingPass = dynamic_cast<LightingPass*>(analyticSceneView.GetPassAt(6));
+    assert(analyticLightingPass != nullptr);
+    assert(analyticLightingPass->GetSettings().NeuralBRDFWeightPath.empty());
 
     std::cout << "ForwardPassPipelinePlacementTest passed\n";
     return 0;

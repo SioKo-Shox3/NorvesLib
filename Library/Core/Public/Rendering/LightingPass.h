@@ -135,6 +135,9 @@ namespace NorvesLib::Core::Rendering
 
         const char* GetName() const override { return "LightingPass"; }
 
+        /** @brief 構築時の設定（ニューラルBRDFの重みの経路など） */
+        const LightingPassSettings& GetSettings() const { return m_Settings; }
+
         bool Initialize(ViewRenderContext& context) override;
         void Shutdown() override;
         void Setup(ViewRenderContext& context) override;

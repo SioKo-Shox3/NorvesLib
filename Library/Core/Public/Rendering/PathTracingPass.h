@@ -12,19 +12,6 @@
 
 namespace NorvesLib::Core::Rendering
 {
-    /**
-     * @brief パストレーサーの検証出力
-     *
-     * None以外では、1次命中面の材質値を放射輝度の代わりに累積画像へ書く。
-     */
-    enum class PathTracingDebugOutput : uint32_t
-    {
-        None = 0,
-        Albedo = 1,
-        ShadingNormal = 2,
-        MetallicRoughness = 3
-    };
-
     /** @brief パストレーサーが1フレームで束ねる材質textureの上限（重複を除いた数） */
     inline constexpr uint32_t PathTracingMaterialTextureCapacity = 256u;
 

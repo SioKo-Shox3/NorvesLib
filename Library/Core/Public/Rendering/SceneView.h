@@ -6,6 +6,7 @@
 #include "SceneProxy.h"
 #include "DrawCommand.h"
 #include "PathTracingTransportScope.h"
+#include "RasterDirectBrdf.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Container/UnorderedSet.h"
@@ -214,24 +215,28 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief ディファードレンダリングパイプラインをセットアップ
          * @param sceneRenderer SceneRenderer参照
+         * @param directBrdf 直接光のBRDF（既定は学習済みのニューラルBRDF）
          *
          * Shadow/GBuffer/Lightingの後に半透明ForwardPassを差し込み、
          * SSRを含むPostProcessStackの前でSceneColorへ合成します。
          */
-        void SetupDeferredPipeline(SceneRenderer *sceneRenderer);
+        void SetupDeferredPipeline(SceneRenderer *sceneRenderer,
+                                   RasterDirectBrdf directBrdf = RasterDirectBrdf::Neural);
 
         /**
          * @brief 明示選択時だけ独立パストレーシングパイプラインを設定する。
          * @param samplesPerFrame 1回のdispatchで累積する試料数
          * @param transportScope 追う光輸送の範囲（既定は多重散乱をすべて追う）
          * @param pixelSampling 1次光線の画素内の標本位置（既定は画素内を一様にずらす）
+         * @param debugOutput 検証出力（既定は放射輝度）
          *
          * 空が無効なときの環境光は、ディファードのLightingPassと同じ環境マップ設定を使う。
          */
         void SetupPathTracingPipeline(
             uint32_t samplesPerFrame = 1u,
             PathTracingTransportScope transportScope = PathTracingTransportScope::Full,
-            PathTracingPixelSampling pixelSampling = PathTracingPixelSampling::Box);
+            PathTracingPixelSampling pixelSampling = PathTracingPixelSampling::Box,
+            PathTracingDebugOutput debugOutput = PathTracingDebugOutput::None);
 
         /**
          * @brief Proxyをカリング

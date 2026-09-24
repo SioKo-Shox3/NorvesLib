@@ -633,6 +633,90 @@ namespace
             pass.SetPixelSampling(PathTracingPixelSampling::Box);
         }
         camera.Projection = ProjectionType::Perspective;
+
+        // 1次命中距離の検証出力は、透視カメラの位置から画素中心の光線が三角形と交わる点までの距離に
+        // なり、三角形の外は0になる。CPUで同じ逆ビュー射影から光線を作ってz=0平面との交点を求める。
+        pass.SetDebugOutput(PathTracingDebugOutput::HitDistance);
+        pass.SetPixelSampling(PathTracingPixelSampling::Center);
+        if (!RunFrame(device, graph, pass, context, 35u, 2u, 4u, current) ||
+            pass.GetAccumulatedSampleCount() != 1u)
+        {
+            std::cerr << "1次命中距離の検証出力を描画できませんでした\n";
+            return 1;
+        }
+        {
+            const CameraViewConstants perspectiveView =
+                CameraViewConstants::BuildForDevice(camera, 1.0f, device.get());
+            float inverseViewProjection[16] = {};
+            perspectiveView.CopyShaderInverseViewProjection(inverseViewProjection);
+            const double cameraPosition[3] = {camera.PositionX, camera.PositionY, camera.PositionZ};
+            uint32_t hitPixels = 0u;
+            uint32_t missPixels = 0u;
+            double maximumRelativeError = 0.0;
+            for (uint32_t y = 0u; y < Height; ++y)
+            {
+                for (uint32_t x = 0u; x < Width; ++x)
+                {
+                    const double ndc[4] = {(x + 0.5) / Width * 2.0 - 1.0,
+                                           (y + 0.5) / Height * 2.0 - 1.0, 1.0, 1.0};
+                    double farPoint[4] = {};
+                    for (uint32_t row = 0u; row < 4u; ++row)
+                    {
+                        for (uint32_t column = 0u; column < 4u; ++column)
+                        {
+                            farPoint[row] += inverseViewProjection[column * 4u + row] * ndc[column];
+                        }
+                    }
+                    double direction[3] = {};
+                    for (uint32_t axis = 0u; axis < 3u; ++axis)
+                    {
+                        direction[axis] = farPoint[axis] / farPoint[3] - cameraPosition[axis];
+                    }
+                    const double t = -cameraPosition[2] / direction[2];
+                    const double hitX = cameraPosition[0] + direction[0] * t -
+                                        packet.RayTracingScene.Instances[0].Instance.transform[3];
+                    const double hitY = cameraPosition[1] + direction[1] * t -
+                                        packet.RayTracingScene.Instances[0].Instance.transform[7];
+                    // 三角形の縁から離れた画素だけを比べる（縁の判定の丸めを除く）。
+                    const double margin = 0.02;
+                    const bool bInside = hitY > -1.0 + margin && 2.0 * hitX + hitY < 1.0 - margin &&
+                                         -2.0 * hitX + hitY < 1.0 - margin;
+                    const bool bOutside = hitY < -1.0 - margin || 2.0 * hitX + hitY > 1.0 + margin ||
+                                          -2.0 * hitX + hitY > 1.0 + margin;
+                    if (!bInside && !bOutside)
+                    {
+                        continue;
+                    }
+                    const float* pixel = current.data() + (static_cast<size_t>(y) * Width + x) * 4u;
+                    const double expected =
+                        bInside ? t * std::sqrt(direction[0] * direction[0] + direction[1] * direction[1] +
+                                                direction[2] * direction[2])
+                                : 0.0;
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const double error = std::abs(pixel[channel] - expected);
+                        const double relative = bInside ? error / expected : error;
+                        maximumRelativeError = std::max(maximumRelativeError, relative);
+                        if (relative > 1.0e-4)
+                        {
+                            std::cerr << "1次命中距離が期待値と一致しません pixel=(" << x << ',' << y
+                                      << ") measured=" << pixel[channel] << " expected=" << expected
+                                      << "\n";
+                            return 1;
+                        }
+                    }
+                    (bInside ? hitPixels : missPixels) += 1u;
+                }
+            }
+            std::cout << "pt_hit_distance hit_pixels=" << hitPixels << " miss_pixels=" << missPixels
+                      << " max_relative_error=" << maximumRelativeError << "\n";
+            if (hitPixels < 100u || missPixels < 100u)
+            {
+                std::cerr << "1次命中距離を確かめる画素が足りません\n";
+                return 1;
+            }
+        }
+        pass.SetPixelSampling(PathTracingPixelSampling::Box);
         pass.SetDebugOutput(PathTracingDebugOutput::None);
 
         TransientResourcePool pool;

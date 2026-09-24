@@ -1548,12 +1548,13 @@ namespace NorvesLib::Core::Rendering
         {
             m_MainSceneView->SetupPathTracingPipeline(settings.PathTracingSamplesPerFrame,
                                                       settings.PathTracingTransport,
-                                                      settings.PathTracingPixelSamplingMode);
+                                                      settings.PathTracingPixelSamplingMode,
+                                                      settings.PathTracingDebug);
             NORVES_LOG_INFO("RenderingCoordinator", "Path tracing pipeline configured on MainSceneView");
         }
         else
         {
-            m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer);
+            m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer, settings.RasterDirectBrdfMode);
             NORVES_LOG_INFO("RenderingCoordinator", "Deferred pipeline configured on MainSceneView");
         }
 

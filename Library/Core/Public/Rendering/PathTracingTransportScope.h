@@ -32,4 +32,19 @@ namespace NorvesLib::Core::Rendering
         Box = 0,
         Center = 1
     };
+
+    /**
+     * @brief パストレーサーの検証出力
+     *
+     * None以外では、1次命中面の値を放射輝度の代わりに累積画像へ書く。HitDistanceは1次光線の始点
+     * （カメラ）から1次命中点までの距離をRGBへ書き、不交差は0にする。
+     */
+    enum class PathTracingDebugOutput : uint32_t
+    {
+        None = 0,
+        Albedo = 1,
+        ShadingNormal = 2,
+        MetallicRoughness = 3,
+        HitDistance = 4
+    };
 } // namespace NorvesLib::Core::Rendering

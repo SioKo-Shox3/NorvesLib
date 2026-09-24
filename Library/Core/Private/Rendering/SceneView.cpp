@@ -620,7 +620,7 @@ namespace NorvesLib::Core::Rendering
     // パイプライン構築ヘルパー
     // ========================================
 
-    void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer)
+    void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer, RasterDirectBrdf directBrdf)
     {
         // 既存のパスをクリア
         while (GetPassCount() > 0)
@@ -681,7 +681,11 @@ namespace NorvesLib::Core::Rendering
         LightingPassSettings lightingSettings;
         lightingSettings.EnvironmentMapPath = DefaultEnvironmentMapPath;
         lightingSettings.IBLIntensity = DefaultEnvironmentIntensity;
-        lightingSettings.NeuralBRDFWeightPath = "Data/disney.ns.bin";
+        // 解析BRDFを選んだときはニューラルBRDFの重みを読まず、LightingPassは解析BRDFで直接光を評価する。
+        if (directBrdf == RasterDirectBrdf::Neural)
+        {
+            lightingSettings.NeuralBRDFWeightPath = "Data/disney.ns.bin";
+        }
         auto lightingPass = MakeUnique<LightingPass>(lightingSettings);
         lightingPass->SetSceneView(this);
         lightingPass->SetRegisterLegacyBridge(false);
@@ -753,7 +757,8 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::SetupPathTracingPipeline(uint32_t samplesPerFrame,
                                              PathTracingTransportScope transportScope,
-                                             PathTracingPixelSampling pixelSampling)
+                                             PathTracingPixelSampling pixelSampling,
+                                             PathTracingDebugOutput debugOutput)
     {
         if (m_PostProcessStack)
         {
@@ -778,6 +783,7 @@ namespace NorvesLib::Core::Rendering
         pathTracingPass->SetSamplesPerFrame(samplesPerFrame);
         pathTracingPass->SetTransportScope(transportScope);
         pathTracingPass->SetPixelSampling(pixelSampling);
+        pathTracingPass->SetDebugOutput(debugOutput);
         AddPass(std::move(pathTracingPass));
 
         auto postProcessStack = MakeUnique<PostProcessStack>();

@@ -162,9 +162,12 @@ namespace NorvesLib::Test::RenderingValidation
                 continue;
             }
             if (StartsWith(argument, TEXT("--path-tracing-transport=")) ||
-                StartsWith(argument, TEXT("--path-tracing-pixel-sampling=")))
+                StartsWith(argument, TEXT("--path-tracing-pixel-sampling=")) ||
+                StartsWith(argument, TEXT("--path-tracing-debug-output=")) ||
+                StartsWith(argument, TEXT("--raster-direct-brdf=")))
             {
-                // エンジンが同じ引数で輸送範囲と画素内の標本位置を設定する。
+                // エンジンが同じ引数で輸送範囲・画素内の標本位置・PTの検証出力・ラスタの直接光の
+                // BRDFを設定する。
                 continue;
             }
             if (StartsWith(argument, TEXT("--path-tracing-samples=")))

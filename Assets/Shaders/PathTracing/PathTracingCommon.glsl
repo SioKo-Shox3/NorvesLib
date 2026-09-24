@@ -36,11 +36,12 @@ const uint PATH_ENVIRONMENT_BLACK = 0u;
 const uint PATH_ENVIRONMENT_UNIFORM = 1u;
 const uint PATH_ENVIRONMENT_EQUIRECT = 2u;
 
-// 検証出力。1次命中面の材質値を放射輝度の代わりに書く。
+// 検証出力。1次命中面の値（材質値、または1次光線の始点からの距離）を放射輝度の代わりに書く。
 const uint PATH_DEBUG_NONE = 0u;
 const uint PATH_DEBUG_ALBEDO = 1u;
 const uint PATH_DEBUG_SHADING_NORMAL = 2u;
 const uint PATH_DEBUG_METALLIC_ROUGHNESS = 3u;
+const uint PATH_DEBUG_HIT_DISTANCE = 4u;
 
 struct PathPayload
 {
