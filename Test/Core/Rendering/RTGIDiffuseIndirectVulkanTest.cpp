@@ -1160,8 +1160,9 @@ namespace
                 bExposureLit = bExposureLit && unitValue > 0.0f;
                 bUnexposedAboveHalfMax = bUnexposedAboveHalfMax ||
                                          scaledValue * ExposureScale > 65504.0f;
-                // 半精度の丸め2段分まで許す。
-                bExposureInvariant = bExposureInvariant &&
+                // 両方が有限で、差は半精度の丸め2段分まで許す。
+                bExposureInvariant = bExposureInvariant && std::isfinite(unitValue) &&
+                                     std::isfinite(scaledValue) &&
                                      std::abs(scaledValue - unitValue) <=
                                          2.0e-3f * std::max(unitValue, scaledValue);
                 std::cout << "rtgi_exposure_invariance pixel=" << hitPixel
