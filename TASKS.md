@@ -617,12 +617,13 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - notes: R7-P3Dで発見。3x3の行列式の絶対値がFLT_EPSILON未満だと単位行列になり、回転した小さな物体の法線が回らない。R1室内の平面はこの規則を前提に頂点法線を+Zへ書き換えているため、PTも同じ規則でラスタと揃えている。
 
 ## R7-P4: SPP収束とCornell参照を固定する
-- status: todo
+- status: blocked
 - done-when: 同じseedのnested 16/64/256 spp prefixで256 spp自己収束画像に対するMSEが単調減少し、Cornell boxが固定公開参照と規定誤差内で一致する。
 - verify: `cmake --build build --config Debug --target PathTracingConvergenceVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingConvergenceVulkanTest$"`
 - stop-when: monotonic結果がseed探索だけに依存する場合、閾値を緩めずsample estimatorと測定手順を再検討する。
 - paths: Test/Core/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- blocked: 収束は合格（`944452e`、64区画すべて単調、MSE比の中央値4.374）。公開Cornellとの比較は事前固定の判定のうち赤・緑ROIの相対誤差（0.105・0.119、上限0.10）と16x16区画の90%点（1.55、上限0.20）が超過する。超過は赤・緑の壁に限られ、公開RGBEの色の符号化（公開ページに記載なし、標準のRGB換算では色の壁の彩度を再現できない）とR4 fixtureのRGB入力の違いによる。白い面・影・発光面の位置は一致する。比較の方式（色の壁を含む判定の扱い、RGB入力の出典、参照画像の選び直し）はユーザーの判断待ち（`Docs/RenderingValidation/R7CoreAcceptance.md`）。
 
 ## R7-P5: thin-lensとshutter time samplingを実装する
 - status: done
