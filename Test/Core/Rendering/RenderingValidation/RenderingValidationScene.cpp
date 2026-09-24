@@ -1,5 +1,6 @@
 ﻿#include "RenderingValidation/RenderingValidationScene.h"
 
+#include "RenderingValidation/CornellBoxData.h"
 #include "RenderingValidation/GpuTestEnvironment.h"
 #include "Component/CameraComponent.h"
 #include "Component/DirectionalLightComponent.h"
@@ -39,8 +40,6 @@ namespace NorvesLib::Test::RenderingValidation
         constexpr MeshDataHandle R4CornellGreenMeshHandle{0x52400003u};
         constexpr MeshDataHandle R4CornellEmitterMeshHandle{0x52400004u};
         constexpr float R5ShadowReceiverAlbedo[4] = {0.8f, 0.8f, 0.8f, 1.0f};
-        constexpr float R4CornellWorldScale = 0.01f;
-        constexpr float R4CornellLightColor[3] = {1.378f, 0.937f, 0.482f};
         constexpr float R4CornellPointLightPositions[4][2] = {
             {2.40f, 2.45f},
             {3.15f, 2.45f},
@@ -70,61 +69,6 @@ namespace NorvesLib::Test::RenderingValidation
         constexpr float R1ScalarZero[4] = {0.0f, 0.0f, 0.0f, 1.0f};
         constexpr float R1ScalarHalf[4] = {0.5f, 0.5f, 0.5f, 1.0f};
         constexpr float R1ScalarOne[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-
-        void AppendR4CornellQuad(
-            Core::Container::VariableArray<Core::Rendering::Mesh3DVertex>& outVertices,
-            Core::Container::VariableArray<uint32_t>& outIndices,
-            const float (&positions)[4][3])
-        {
-            const uint32_t firstVertex = static_cast<uint32_t>(outVertices.size());
-            const double edgeAX = static_cast<double>(positions[1][0] - positions[0][0]);
-            const double edgeAY = static_cast<double>(positions[1][1] - positions[0][1]);
-            const double edgeAZ = static_cast<double>(positions[1][2] - positions[0][2]);
-            const double edgeBX = static_cast<double>(positions[2][0] - positions[0][0]);
-            const double edgeBY = static_cast<double>(positions[2][1] - positions[0][1]);
-            const double edgeBZ = static_cast<double>(positions[2][2] - positions[0][2]);
-            // GBufferはFrontFace::Clockwiseで描画するため、indicesは
-            // (0,2,1)/(0,3,2)を使う。これはラスタ面の法線を外側へ向ける
-            // 順序であり、vertex normalは閉じたCornell室の内側を向けるため、
-            // ラスタ面とは反対側の幾何法線を元の頂点順序から保持する。
-            // 通常のメッシュ経路やDDGI shaderでは表裏を補正しない。
-            double normalX = edgeAY * edgeBZ - edgeAZ * edgeBY;
-            double normalY = edgeAZ * edgeBX - edgeAX * edgeBZ;
-            double normalZ = edgeAX * edgeBY - edgeAY * edgeBX;
-            const double normalLength = std::sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
-            if (normalLength > 0.0)
-            {
-                normalX /= normalLength;
-                normalY /= normalLength;
-                normalZ /= normalLength;
-            }
-            constexpr float texCoords[4][2] = {
-                {0.0f, 0.0f},
-                {1.0f, 0.0f},
-                {1.0f, 1.0f},
-                {0.0f, 1.0f}};
-            for (uint32_t vertexIndex = 0; vertexIndex < 4u; ++vertexIndex)
-            {
-                Core::Rendering::Mesh3DVertex vertex{};
-                for (uint32_t component = 0; component < 3u; ++component)
-                {
-                    vertex.Position[component] = positions[vertexIndex][component] * R4CornellWorldScale;
-                }
-                vertex.Normal[0] = static_cast<float>(normalX);
-                vertex.Normal[1] = static_cast<float>(normalY);
-                vertex.Normal[2] = static_cast<float>(normalZ);
-                vertex.TexCoord[0] = texCoords[vertexIndex][0];
-                vertex.TexCoord[1] = texCoords[vertexIndex][1];
-                outVertices.push_back(vertex);
-            }
-
-            outIndices.push_back(firstVertex);
-            outIndices.push_back(firstVertex + 2u);
-            outIndices.push_back(firstVertex + 1u);
-            outIndices.push_back(firstVertex);
-            outIndices.push_back(firstVertex + 3u);
-            outIndices.push_back(firstVertex + 2u);
-        }
 
         enum class R1TextureIndex : uint32_t
         {
@@ -2751,96 +2695,23 @@ namespace NorvesLib::Test::RenderingValidation
         Core::Container::VariableArray<uint32_t> emitterIndices;
 
         // Cornell Bowers公開データの実測寸法(mm)とLambert反射面を再構成する。
-        const float floor[4][3] = {
-            {552.8f, 0.0f, 0.0f},
-            {0.0f, 0.0f, 0.0f},
-            {0.0f, 0.0f, 559.2f},
-            {549.6f, 0.0f, 559.2f}};
-        AppendR4CornellQuad(whiteVertices, whiteIndices, floor);
-
-        const float ceilingLeft[4][3] = {
-            {213.0f, 548.8f, 0.0f},
-            {213.0f, 548.8f, 559.2f},
-            {0.0f, 548.8f, 559.2f},
-            {0.0f, 548.8f, 0.0f}};
-        const float ceilingRight[4][3] = {
-            {556.0f, 548.8f, 0.0f},
-            {556.0f, 548.8f, 559.2f},
-            {343.0f, 548.8f, 559.2f},
-            {343.0f, 548.8f, 0.0f}};
-        const float ceilingFront[4][3] = {
-            {343.0f, 548.8f, 0.0f},
-            {343.0f, 548.8f, 227.0f},
-            {213.0f, 548.8f, 227.0f},
-            {213.0f, 548.8f, 0.0f}};
-        const float ceilingBack[4][3] = {
-            {343.0f, 548.8f, 332.0f},
-            {343.0f, 548.8f, 559.2f},
-            {213.0f, 548.8f, 559.2f},
-            {213.0f, 548.8f, 332.0f}};
-        AppendR4CornellQuad(whiteVertices, whiteIndices, ceilingLeft);
-        AppendR4CornellQuad(whiteVertices, whiteIndices, ceilingRight);
-        AppendR4CornellQuad(whiteVertices, whiteIndices, ceilingFront);
-        AppendR4CornellQuad(whiteVertices, whiteIndices, ceilingBack);
-
-        const float backWall[4][3] = {
-            {549.6f, 0.0f, 559.2f},
-            {0.0f, 0.0f, 559.2f},
-            {0.0f, 548.8f, 559.2f},
-            {556.0f, 548.8f, 559.2f}};
-        AppendR4CornellQuad(whiteVertices, whiteIndices, backWall);
-
-        const float shortBlock[5][4][3] = {
-            {{130.0f, 165.0f, 65.0f}, {82.0f, 165.0f, 225.0f},
-             {240.0f, 165.0f, 272.0f}, {290.0f, 165.0f, 114.0f}},
-            {{290.0f, 0.0f, 114.0f}, {290.0f, 165.0f, 114.0f},
-             {240.0f, 165.0f, 272.0f}, {240.0f, 0.0f, 272.0f}},
-            {{130.0f, 0.0f, 65.0f}, {130.0f, 165.0f, 65.0f},
-             {290.0f, 165.0f, 114.0f}, {290.0f, 0.0f, 114.0f}},
-            {{82.0f, 0.0f, 225.0f}, {82.0f, 165.0f, 225.0f},
-             {130.0f, 165.0f, 65.0f}, {130.0f, 0.0f, 65.0f}},
-            {{240.0f, 0.0f, 272.0f}, {240.0f, 165.0f, 272.0f},
-             {82.0f, 165.0f, 225.0f}, {82.0f, 0.0f, 225.0f}}};
-        for (const float (&quad)[4][3] : shortBlock)
+        CornellBox::AppendQuad(whiteVertices, whiteIndices, CornellBox::Floor);
+        for (const CornellBox::Quad& quad : CornellBox::Ceiling)
         {
-            AppendR4CornellQuad(whiteVertices, whiteIndices, quad);
+            CornellBox::AppendQuad(whiteVertices, whiteIndices, quad);
         }
-
-        const float tallBlock[5][4][3] = {
-            {{423.0f, 330.0f, 247.0f}, {265.0f, 330.0f, 296.0f},
-             {314.0f, 330.0f, 456.0f}, {472.0f, 330.0f, 406.0f}},
-            {{423.0f, 0.0f, 247.0f}, {423.0f, 330.0f, 247.0f},
-             {472.0f, 330.0f, 406.0f}, {472.0f, 0.0f, 406.0f}},
-            {{472.0f, 0.0f, 406.0f}, {472.0f, 330.0f, 406.0f},
-             {314.0f, 330.0f, 456.0f}, {314.0f, 0.0f, 456.0f}},
-            {{314.0f, 0.0f, 456.0f}, {314.0f, 330.0f, 456.0f},
-             {265.0f, 330.0f, 296.0f}, {265.0f, 0.0f, 296.0f}},
-            {{265.0f, 0.0f, 296.0f}, {265.0f, 330.0f, 296.0f},
-             {423.0f, 330.0f, 247.0f}, {423.0f, 0.0f, 247.0f}}};
-        for (const float (&quad)[4][3] : tallBlock)
+        CornellBox::AppendQuad(whiteVertices, whiteIndices, CornellBox::BackWall);
+        for (const CornellBox::Quad& quad : CornellBox::ShortBlock)
         {
-            AppendR4CornellQuad(whiteVertices, whiteIndices, quad);
+            CornellBox::AppendQuad(whiteVertices, whiteIndices, quad);
         }
-
-        const float rightWall[4][3] = {
-            {0.0f, 0.0f, 559.2f},
-            {0.0f, 0.0f, 0.0f},
-            {0.0f, 548.8f, 0.0f},
-            {0.0f, 548.8f, 559.2f}};
-        const float leftWall[4][3] = {
-            {552.8f, 0.0f, 0.0f},
-            {549.6f, 0.0f, 559.2f},
-            {556.0f, 548.8f, 559.2f},
-            {556.0f, 548.8f, 0.0f}};
-        AppendR4CornellQuad(greenVertices, greenIndices, rightWall);
-        AppendR4CornellQuad(redVertices, redIndices, leftWall);
-
-        const float areaLight[4][3] = {
-            {343.0f, 548.8f, 227.0f},
-            {343.0f, 548.8f, 332.0f},
-            {213.0f, 548.8f, 332.0f},
-            {213.0f, 548.8f, 227.0f}};
-        AppendR4CornellQuad(emitterVertices, emitterIndices, areaLight);
+        for (const CornellBox::Quad& quad : CornellBox::TallBlock)
+        {
+            CornellBox::AppendQuad(whiteVertices, whiteIndices, quad);
+        }
+        CornellBox::AppendQuad(greenVertices, greenIndices, CornellBox::GreenWall);
+        CornellBox::AppendQuad(redVertices, redIndices, CornellBox::RedWall);
+        CornellBox::AppendQuad(emitterVertices, emitterIndices, CornellBox::AreaLight);
 
         auto registerMesh = [this](MeshDataHandle handle,
                                    const Core::Container::VariableArray<Core::Rendering::Mesh3DVertex>& vertices,
@@ -2904,17 +2775,27 @@ namespace NorvesLib::Test::RenderingValidation
             data.DebugName = debugName;
             if (bEmitter)
             {
-                data.EmissiveColor[0] = R4CornellLightColor[0];
-                data.EmissiveColor[1] = R4CornellLightColor[1];
-                data.EmissiveColor[2] = R4CornellLightColor[2];
-                data.EmissiveLuminanceNits = 45000.0f;
+                data.EmissiveColor[0] = CornellBox::LightColor[0];
+                data.EmissiveColor[1] = CornellBox::LightColor[1];
+                data.EmissiveColor[2] = CornellBox::LightColor[2];
+                data.EmissiveLuminanceNits = CornellBox::LightLuminanceNits;
             }
             return m_pResources->Materials().Create(data);
         };
-        materials[0] = createMaterial(TEXT("R4 Cornell 白色反射面"), 0.712f, 0.744f, 0.765f, false);
-        materials[1] = createMaterial(TEXT("R4 Cornell 赤色反射面"), 0.660f, 0.062f, 0.063f, false);
-        materials[2] = createMaterial(TEXT("R4 Cornell 緑色反射面"), 0.114f, 0.406f, 0.104f, false);
-        materials[3] = createMaterial(TEXT("R4 Cornell 面光源"), 0.78f, 0.78f, 0.78f, true);
+        const auto createReflectanceMaterial = [&createMaterial](const TCHAR* debugName,
+                                                                const float (&reflectance)[3],
+                                                                bool bEmitter) -> MaterialHandle
+        {
+            return createMaterial(debugName, reflectance[0], reflectance[1], reflectance[2], bEmitter);
+        };
+        materials[0] = createReflectanceMaterial(
+            TEXT("R4 Cornell 白色反射面"), CornellBox::WhiteReflectance, false);
+        materials[1] = createReflectanceMaterial(
+            TEXT("R4 Cornell 赤色反射面"), CornellBox::RedReflectance, false);
+        materials[2] = createReflectanceMaterial(
+            TEXT("R4 Cornell 緑色反射面"), CornellBox::GreenReflectance, false);
+        materials[3] = createReflectanceMaterial(
+            TEXT("R4 Cornell 面光源"), CornellBox::LightReflectance, true);
         for (MaterialHandle material : materials)
         {
             if (!material.IsValid())
@@ -2925,10 +2806,18 @@ namespace NorvesLib::Test::RenderingValidation
             m_Lease.TrackMaterial(material);
         }
 
-        constexpr float whiteObjectColor[4] = {0.712f, 0.744f, 0.765f, 1.0f};
-        constexpr float redObjectColor[4] = {0.660f, 0.062f, 0.063f, 1.0f};
-        constexpr float greenObjectColor[4] = {0.114f, 0.406f, 0.104f, 1.0f};
-        constexpr float emitterObjectColor[4] = {0.78f, 0.78f, 0.78f, 1.0f};
+        constexpr float whiteObjectColor[4] = {
+            CornellBox::WhiteReflectance[0], CornellBox::WhiteReflectance[1],
+            CornellBox::WhiteReflectance[2], 1.0f};
+        constexpr float redObjectColor[4] = {
+            CornellBox::RedReflectance[0], CornellBox::RedReflectance[1],
+            CornellBox::RedReflectance[2], 1.0f};
+        constexpr float greenObjectColor[4] = {
+            CornellBox::GreenReflectance[0], CornellBox::GreenReflectance[1],
+            CornellBox::GreenReflectance[2], 1.0f};
+        constexpr float emitterObjectColor[4] = {
+            CornellBox::LightReflectance[0], CornellBox::LightReflectance[1],
+            CornellBox::LightReflectance[2], 1.0f};
         auto spawnMesh = [this](MeshDataHandle handle,
                                 MaterialHandle material,
                                 const float (&objectColor)[4],
@@ -2996,7 +2885,7 @@ namespace NorvesLib::Test::RenderingValidation
             }
             pointLight->SetRange(9.0f);
             pointLight->SetLightColor(
-                R4CornellLightColor[0], R4CornellLightColor[1], R4CornellLightColor[2]);
+                CornellBox::LightColor[0], CornellBox::LightColor[1], CornellBox::LightColor[2]);
             pointLight->SetIntensity(0.0f);
             pointLight->SetCastShadows(true);
             pointLight->SetLightVisible(true);
@@ -3004,14 +2893,18 @@ namespace NorvesLib::Test::RenderingValidation
         }
 
         m_R4CornellCamera = BuildLookAtCamera(
-            Math::Vector3(2.78f, 2.73f, -8.0f),
-            Math::Vector3(2.78f, 2.73f, 0.0f),
-            512u,
-            512u);
+            Math::Vector3(CornellBox::CameraPosition[0],
+                          CornellBox::CameraPosition[1],
+                          CornellBox::CameraPosition[2]),
+            Math::Vector3(CornellBox::CameraTarget[0],
+                          CornellBox::CameraTarget[1],
+                          CornellBox::CameraTarget[2]),
+            CornellBox::ImageWidth,
+            CornellBox::ImageHeight);
         m_R4CornellCamera.CameraId = 4u;
-        m_R4CornellCamera.FieldOfView = 39.31f;
-        m_R4CornellCamera.NearPlane = 0.05f;
-        m_R4CornellCamera.FarPlane = 20.0f;
+        m_R4CornellCamera.FieldOfView = CornellBox::CameraFieldOfViewDegrees;
+        m_R4CornellCamera.NearPlane = CornellBox::CameraNearPlane;
+        m_R4CornellCamera.FarPlane = CornellBox::CameraFarPlane;
         if (!Core::Component::CameraComponent::TryBuildExposureSnapshot(
                 4.0f,
                 1.0f / 60.0f,
