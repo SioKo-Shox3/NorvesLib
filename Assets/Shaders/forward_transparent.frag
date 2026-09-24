@@ -320,7 +320,8 @@ void main()
             halfVector, dfg, diffuseBRDF, specularBRDF);
         vec3 radiance = light.chromaticityAndIntensity.rgb *
                         light.chromaticityAndIntensity.w * attenuation * NdotL;
-        if (lightType < 0.5 && mvp.bShadowEnabled != 0u)
+        // CSMはattenuation.z=1の方向光（CSMを選んだ灯）だけへ掛ける。
+        if (lightType < 0.5 && light.attenuation.z > 0.5 && mvp.bShadowEnabled != 0u)
         {
             radiance *= CalculateShadow(fragWorldPos);
         }

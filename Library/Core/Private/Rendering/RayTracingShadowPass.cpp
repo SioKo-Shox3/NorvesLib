@@ -2,6 +2,7 @@
 #include "Rendering/RayTracingShadowPass.h"
 
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
@@ -59,25 +60,10 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            const LightProxy* shadowLight = nullptr;
-            uint32_t directionalLightCount = 0u;
-            // Lightingは共通のシャドウ係数を全方向光へ適用するため、一灯だけRT対象にする。
-            for (const LightProxy& light : *context.SnapshotLightProxies)
-            {
-                if (!light.IsValid() || light.Type != LightType::Directional)
-                {
-                    continue;
-                }
-
-                ++directionalLightCount;
-                if (directionalLightCount > 1u || !light.bCastShadows)
-                {
-                    return false;
-                }
-                shadowLight = &light;
-            }
-
-            if (directionalLightCount != 1u || shadowLight == nullptr)
+            // LightingはCSMと同じ規則で選んだ一灯だけへRT影の係数を掛ける。
+            const LightProxy* shadowLight =
+                SelectShadowedDirectionalLight(context.SnapshotLightProxies);
+            if (shadowLight == nullptr)
             {
                 return false;
             }

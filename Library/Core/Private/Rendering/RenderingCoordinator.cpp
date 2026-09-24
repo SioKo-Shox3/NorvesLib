@@ -22,6 +22,7 @@
 #include "Rendering/IViewPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/RayTracingSceneSubsystem.h"
+#include "Rendering/SkySunLight.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
@@ -1855,6 +1856,8 @@ namespace NorvesLib::Core::Rendering
         const RHI::DeviceCapabilities& capabilities) const
     {
         packet.Scene.SkyAtmosphere = m_SkyAtmosphere;
+        // 空が有効なら空の太陽を方向光として光源表へ加える（packetの再利用でも1つだけ）。
+        ReplaceSkySunLight(packet.Scene.SkyAtmosphere, packet.Scene.LightProxies);
         packet.Scene.SetDDGIVolumeParameters(
             SanitizeDDGIVolumeParametersForRHI(
                 m_DDGIVolume,

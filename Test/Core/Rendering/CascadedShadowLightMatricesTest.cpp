@@ -1,4 +1,5 @@
 ﻿#include "Rendering/CascadedShadowLightMatrices.h"
+#include "Rendering/SkySunLight.h"
 
 #include <cmath>
 #include <cstdint>
@@ -236,6 +237,35 @@ namespace
         Expect(ResultIsFinite(invalidCountResult), "invalid cascade count returns finite data");
     }
 
+    void TestSkySunDrivesCsmBesideSceneDirectionalLight()
+    {
+        const CameraProxy camera = MakePerspectiveCamera();
+        const CascadedShadowMatrixSettings settings = MakeDefaultCascadedShadowMatrixSettings();
+
+        // シーンの方向光が2つだけならCSMは止まる（同じ影を複数の灯へ掛けない）。
+        CoreContainer::VariableArray<LightProxy> lights;
+        lights.push_back(MakeDirectionalLight(51u, 0.3f, -1.0f, 0.1f));
+        lights.push_back(MakeDirectionalLight(52u, -0.3f, -1.0f, 0.1f));
+        const CascadedShadowMatrixResult sceneOnly =
+            BuildCascadedShadowLightMatrices(&lights, camera, settings);
+        Expect(!sceneOnly.bEnabled && sceneOnly.bHasMultipleDirectionalLights,
+               "two scene directional lights keep CSM disabled");
+
+        // 空の太陽が加わるとCSMは空の太陽の方向で作る。
+        lights.push_back(MakeDirectionalLight(SkySunLightId, 0.0f, -1.0f, 0.5f));
+        const CascadedShadowMatrixResult withSun =
+            BuildCascadedShadowLightMatrices(&lights, camera, settings);
+        Expect(withSun.bEnabled && withSun.LightId == SkySunLightId &&
+                   withSun.bHasMultipleDirectionalLights,
+               "the sky sun drives CSM beside scene directional lights");
+        const float inverseLength = 1.0f / std::sqrt(1.0f + 0.25f);
+        Expect(NearlyEqual(withSun.Direction.x, 0.0f) &&
+                   NearlyEqual(withSun.Direction.y, -inverseLength) &&
+                   NearlyEqual(withSun.Direction.z, 0.5f * inverseLength),
+               "CSM uses the sky sun direction");
+        Expect(ResultIsFinite(withSun), "sky sun CSM result is finite");
+    }
+
     void TestSubtexelCameraMotionKeepsSnappedMatrices()
     {
         CoreContainer::VariableArray<LightProxy> lights;
@@ -276,6 +306,7 @@ int main()
     TestFourCascadeSplitAndMatrixContract();
     TestCasterDepthRangeAndNonFiniteBoundsAreSafe();
     TestInvalidInputsFallBackToShadowOff();
+    TestSkySunDrivesCsmBesideSceneDirectionalLight();
     TestSubtexelCameraMotionKeepsSnappedMatrices();
 
     if (g_FailureCount != 0)

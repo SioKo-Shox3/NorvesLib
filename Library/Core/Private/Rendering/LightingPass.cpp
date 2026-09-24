@@ -1,6 +1,7 @@
 ﻿#include "Rendering/LightingPass.h"
 #include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/LightingPassLightPacking.h"
+#include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SSAOPass.h"
@@ -4093,7 +4094,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         uint32_t lightCount = 0;
-        lightCount = PackLightingPassLights(lightProxies, lightArray);
+        // CSMとRT影はShadowMapPass・RayTracingShadowPassと同じ規則で選んだ一灯だけへ掛ける。
+        lightCount = PackLightingPassLights(
+            lightProxies, lightArray, SelectShadowedDirectionalLight(context.SnapshotLightProxies));
         if (!EnsureLightArrayBufferCapacity(lightCount))
         {
             return false;

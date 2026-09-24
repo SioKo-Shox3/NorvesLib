@@ -610,8 +610,8 @@ namespace NorvesLib::Core::Rendering
             CountShaderVisibleDirectionalLights(lightProxies);
         result.bHasMultipleDirectionalLights = shaderVisibleDirectionalCount > 1u;
 
-        if (shaderVisibleDirectionalCount != 1u ||
-            !ValidateCameraProjection(camera))
+        const LightProxy* selectedLight = SelectShadowedDirectionalLight(lightProxies);
+        if (selectedLight == nullptr || !ValidateCameraProjection(camera))
         {
             return result;
         }
@@ -626,12 +626,6 @@ namespace NorvesLib::Core::Rendering
 
         CameraBasis cameraBasis;
         if (!BuildCameraBasis(camera, cameraBasis))
-        {
-            return result;
-        }
-
-        const LightProxy* selectedLight = SelectDirectionalShadowLight(lightProxies);
-        if (selectedLight == nullptr)
         {
             return result;
         }

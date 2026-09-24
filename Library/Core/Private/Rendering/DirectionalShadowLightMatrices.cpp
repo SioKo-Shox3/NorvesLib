@@ -1,6 +1,7 @@
 ﻿#include "Rendering/DirectionalShadowLightMatrices.h"
 
 #include "Rendering/ShadowMapPass.h"
+#include "Rendering/SkySunLight.h"
 #include "Math/MatrixUtils.h"
 #include "Math/MathTypes.h"
 #include "Math/VectorUtils.h"
@@ -191,6 +192,29 @@ namespace NorvesLib::Core::Rendering
         }
 
         return nullptr;
+    }
+
+    const LightProxy* SelectShadowedDirectionalLight(
+        const Container::VariableArray<LightProxy>* lightProxies)
+    {
+        if (lightProxies == nullptr)
+        {
+            return nullptr;
+        }
+
+        for (const LightProxy& proxy : *lightProxies)
+        {
+            if (IsSkySunLight(proxy) && IsEligibleDirectionalShadowLight(proxy))
+            {
+                return &proxy;
+            }
+        }
+
+        if (CountShaderVisibleDirectionalLights(lightProxies) != 1u)
+        {
+            return nullptr;
+        }
+        return SelectDirectionalShadowLight(lightProxies);
     }
 
     uint32_t CountShaderVisibleDirectionalLights(

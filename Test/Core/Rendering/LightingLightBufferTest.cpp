@@ -326,6 +326,31 @@ namespace
         }
     }
 
+    // CSMとRT影を掛ける灯だけがattenuation[2]=1で詰められ、既定では全灯0のまま。
+    void TestShadowedLightIsMarkedOnlyForTheSelectedLight()
+    {
+        CoreContainer::VariableArray<LightProxy> proxies;
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            LightProxy light = MakePointLight(i);
+            light.Type = i < 2u ? LightType::Directional : LightType::Point;
+            proxies.push_back(light);
+        }
+        const CoreContainer::Span<const LightProxy> span(proxies.data(), proxies.size());
+
+        CoreContainer::VariableArray<GPULightData> packedLights;
+        assert(PackLightingPassLights(span, packedLights) == 3u);
+        for (const GPULightData& light : packedLights)
+        {
+            assert(ReadPackedLightFloat(light, 56) == 0.0f);
+        }
+
+        assert(PackLightingPassLights(span, packedLights, &proxies[1]) == 3u);
+        assert(ReadPackedLightFloat(packedLights[0], 56) == 0.0f);
+        assert(ReadPackedLightFloat(packedLights[1], 56) == 1.0f);
+        assert(ReadPackedLightFloat(packedLights[2], 56) == 0.0f);
+    }
+
     void TestEmptyInputProducesNoLights()
     {
         CoreContainer::VariableArray<LightProxy> proxies;
@@ -655,6 +680,7 @@ int main()
     TestPackTwentyValidPointLights();
     TestInvalidLightsAreSkipped();
     TestEmptyInputProducesNoLights();
+    TestShadowedLightIsMarkedOnlyForTheSelectedLight();
     TestAllInvalidInputProducesNoLights();
     TestPackWhiteAndColoredLightsUsesYOneChromaticityAndCanonicalIntensity();
     TestLocalAttenuationBoundaryLiteralTable();

@@ -29,7 +29,10 @@ namespace NorvesLib::Core::Rendering
         return window * window;
     }
 
-    inline bool PackLightingPassLight(const LightProxy& proxy, GPULightData& outLight)
+    // attenuation[2]は、CSMとRT影の係数を掛ける灯（SelectShadowedDirectionalLight）で1。
+    inline bool PackLightingPassLight(const LightProxy& proxy,
+                                      GPULightData& outLight,
+                                      bool bReceivesDirectionalShadow = false)
     {
         if (!proxy.IsValid())
         {
@@ -72,20 +75,21 @@ namespace NorvesLib::Core::Rendering
 
         outLight.attenuation[0] = proxy.Range;
         outLight.attenuation[1] = proxy.OuterConeAngle;
-        outLight.attenuation[2] = 0.0f;
+        outLight.attenuation[2] = bReceivesDirectionalShadow ? 1.0f : 0.0f;
         outLight.attenuation[3] = 0.0f;
         return true;
     }
 
     inline uint32_t PackLightingPassLights(Container::Span<const LightProxy> lightProxies,
-                                           Container::VariableArray<GPULightData>& outLights)
+                                           Container::VariableArray<GPULightData>& outLights,
+                                           const LightProxy* shadowedLight = nullptr)
     {
         outLights.clear();
 
         for (const LightProxy& proxy : lightProxies)
         {
             GPULightData light = {};
-            if (PackLightingPassLight(proxy, light))
+            if (PackLightingPassLight(proxy, light, &proxy == shadowedLight))
             {
                 outLights.push_back(light);
             }

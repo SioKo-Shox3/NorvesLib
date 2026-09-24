@@ -3566,7 +3566,7 @@ int main()
                         "if (!bValidationLambert && !bValidationPBR)"));
     assert(ContainsText(normalizedShaderSource,
                         "if((!bValidationLambert||bValidationHardShadow)&&"
-                        "lightType<0.5&&params.bShadowEnabled!=0u)"));
+                        "lightType<0.5&&light.attenuation.z>0.5&&params.bShadowEnabled!=0u)"));
     assert(ContainsText(shaderSource, "color = Lo_diffuse;"));
 
     std::cout << "LightingParamsLayoutTest passed\n";

@@ -1,5 +1,6 @@
 ﻿#include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/ShadowMapPass.h"
+#include "Rendering/SkySunLight.h"
 #include "Math/MatrixUtils.h"
 #include "Math/VectorUtils.h"
 
@@ -282,6 +283,41 @@ namespace
                "casting plus non-casting directional lights are marked multiple");
         Expect(!mixedResult.bEnabled,
                "casting plus non-casting directional lights disable the single global shadow");
+    }
+
+    void TestShadowedLightPrefersSkySun()
+    {
+        Expect(SelectShadowedDirectionalLight(nullptr) == nullptr,
+               "null input selects no shadowed light");
+
+        // 空の太陽があれば、シーンの方向光と並んでもCSMとRT影は空の太陽へ掛ける。
+        CoreContainer::VariableArray<LightProxy> skyAndScene;
+        skyAndScene.push_back(MakeDirectional(30, 1.0f, -1.0f, 0.0f, true));
+        skyAndScene.push_back(MakeDirectional(SkySunLightId, 0.0f, -1.0f, 1.0f, true));
+        skyAndScene.push_back(MakeDirectional(31, -1.0f, -1.0f, 0.0f, false));
+        Expect(SelectShadowedDirectionalLight(&skyAndScene) == &skyAndScene[1],
+               "the sky sun receives the shadow among several directional lights");
+
+        // 影を落とさない空の太陽は選ばず、従来の「ちょうど1つ」の規則へ戻る（ここでは2つなので無し）。
+        skyAndScene[1].bCastShadows = false;
+        Expect(SelectShadowedDirectionalLight(&skyAndScene) == nullptr,
+               "a non-casting sky sun falls back to the single-directional rule");
+
+        // 空の太陽がなければ、表示される方向光がちょうど1つで影ありのときだけ選ぶ。
+        CoreContainer::VariableArray<LightProxy> single;
+        single.push_back(MakePoint(40));
+        single.push_back(MakeDirectional(41, 1.0f, -1.0f, 0.0f, true));
+        Expect(SelectShadowedDirectionalLight(&single) == &single[1],
+               "a single casting directional light receives the shadow");
+        single[1].bCastShadows = false;
+        Expect(SelectShadowedDirectionalLight(&single) == nullptr,
+               "a single non-casting directional light receives no shadow");
+
+        CoreContainer::VariableArray<LightProxy> twoScene;
+        twoScene.push_back(MakeDirectional(42, 1.0f, -1.0f, 0.0f, true));
+        twoScene.push_back(MakeDirectional(43, -1.0f, -1.0f, 0.0f, true));
+        Expect(SelectShadowedDirectionalLight(&twoScene) == nullptr,
+               "two scene directional lights without a sky sun receive no shadow");
     }
 
     void TestMatrixConstruction()
@@ -666,6 +702,7 @@ int main()
     TestNoEligibleInputDisables();
     TestEligibleLightSelectionSkipsInvalidInputs();
     TestMultipleDirectionalLightsDisableShadows();
+    TestShadowedLightPrefersSkySun();
     TestMatrixConstruction();
     TestDifferentDirectionsProduceDifferentViews();
     TestFallbackUpProducesFiniteMatrices();

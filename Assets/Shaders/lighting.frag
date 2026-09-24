@@ -986,10 +986,10 @@ void main()
         vec3 H = normalize(V + L);
         float NdotL = max(dot(N, L), 0.0);
 
-        // シャドウ計算（ディレクショナルライトのみ）
+        // シャドウ計算（CSMとRT影を選んだ方向光だけ。attenuation.z=1がその灯）
         float shadow = 1.0;
         if ((!bValidationLambert || bValidationHardShadow) &&
-            lightType < 0.5 && params.bShadowEnabled != 0u)
+            lightType < 0.5 && light.attenuation.z > 0.5 && params.bShadowEnabled != 0u)
         {
             shadow = params.shadowPadding0 != 0u
                          ? texture(rayTracingShadowVisibility, fragUV).r
