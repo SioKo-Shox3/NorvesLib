@@ -755,6 +755,33 @@ set_tests_properties(R6RTGIPathTracingReferenceVulkanTest PROPERTIES
     RESOURCE_LOCK NorvesLibGPU
     SKIP_RETURN_CODE 125
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_executable(R4DDGIPathTracingReferenceVulkanTest
+    R4DDGIPathTracingReferenceVulkanTest.cpp
+)
+target_link_libraries(R4DDGIPathTracingReferenceVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+    RenderingFloatImageSupport
+)
+target_include_directories(R4DDGIPathTracingReferenceVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(R4DDGIPathTracingReferenceVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+set_target_properties(R4DDGIPathTracingReferenceVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+set(R4_DDGI_PATH_TRACING_REFERENCE_ROOT
+    "${CMAKE_BINARY_DIR}/RenderingValidation/R4DDGIPathTracingReferenceRuns")
+add_test(NAME R4DDGIPathTracingReferenceVulkanTest
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/R4DDGIPathTracingReferenceTest.py
+            $<TARGET_FILE:R4DDGIPathTracingReferenceVulkanTest>
+            ${R4_DDGI_PATH_TRACING_REFERENCE_ROOT})
+set_tests_properties(R4DDGIPathTracingReferenceVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 target_link_libraries(RenderingRayTracingShadowVulkanTest PRIVATE
     RenderingValidationFixtureSupport
     RenderingGpuTestSupport
