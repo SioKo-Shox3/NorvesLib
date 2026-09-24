@@ -8,7 +8,20 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    /** @brief 視点・光源・シーンが動いているフレームの画素ごとの履歴の年齢の上限 */
     inline constexpr uint32_t RTGIHistoryMaximumAge = 8u;
+    /**
+     * @brief 静止が続いたときの画素ごとの履歴の年齢の上限
+     *
+     * 視点・光源・シーン（レイトレーシングのinstance）が変わらないフレームがRTGIHistoryStaticWarmupFrames
+     * を超えて続くと、年齢の上限を1 frameに1ずつRTGIHistoryMaximumAgeからこの値まで上げ、静止画像を
+     * 累積平均で収束させる。何かが変わったフレームで上限はRTGIHistoryMaximumAgeへ戻る。静止の判定は
+     * 視点・露出・環境光・光源のrevision・instanceの変換と形状・材質の色と発光とtextureハンドルで行い、
+     * 同じtextureハンドルのまま内容だけを書き換えた変更は含まない。
+     */
+    inline constexpr uint32_t RTGIHistoryStaticMaximumAge = 64u;
+    /** @brief 年齢の上限を上げ始めるまでに要る連続した静止フレーム数（停止直後の追従を変えない） */
+    inline constexpr uint32_t RTGIHistoryStaticWarmupFrames = 16u;
     inline constexpr uint32_t RTGIDiffuseBounceCount = 1u;
     inline constexpr RHI::Format RTGIDiffuseIndirectRadianceFormat =
         RHI::Format::R16G16B16A16_FLOAT;
@@ -16,7 +29,9 @@ namespace NorvesLib::Core::Rendering
     inline constexpr RHI::Format RTGIHistoryConfidenceFormat = RHI::Format::R16_FLOAT;
     inline constexpr RHI::Format RTGIHistoryGBufferFormat =
         RHI::Format::R16G16B16A16_FLOAT;
-    inline constexpr float RTGIHistoryMaximumWeight = 0.9f;
+    /** @brief 時間方向の重みの上限。重みは年齢で決まる累積平均の重み 1-1/(年齢+1) */
+    inline constexpr float RTGIHistoryMaximumWeight =
+        1.0f - 1.0f / static_cast<float>(RTGIHistoryStaticMaximumAge + 1u);
     inline constexpr float RTGIHistoryLightRevisionWeightLimit = 0.25f;
     inline constexpr float RTGIHistoryInitialConfidence = 0.25f;
     inline constexpr float RTGIHistoryNormalRejectionDot = 0.9f;
@@ -147,6 +162,12 @@ namespace NorvesLib::Core::Rendering
         uint32_t Height = 0u;
         uint64_t SceneRevision = 0u;
         uint64_t LightRevision = 0u;
+        /**
+         * @brief 履歴の資源が連続して再投影されたフレーム数（RTGIHistoryMaximumAgeで飽和）
+         *
+         * 画素ごとの年齢（Ageの値。静止時はRTGIHistoryStaticMaximumAgeまで伸びる）とは別の、資源全体の
+         * 連続性の数である。
+         */
         uint32_t AgeFrames = 0u;
         bool bValid = false;
 

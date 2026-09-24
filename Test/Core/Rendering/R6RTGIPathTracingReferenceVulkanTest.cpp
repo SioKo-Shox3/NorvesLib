@@ -48,8 +48,9 @@ namespace
     constexpr const char* TestName = "R6RTGIPathTracingReferenceVulkanTest";
     // R6受入れの静止段階と同じ点光源の強さ。
     constexpr float R6PointLightIntensity = 1200.0f;
-    // RTGI履歴の最大age（8 rendered frame）の3倍待ってから取得する。
-    constexpr uint64_t RasterConvergedRenderedFrames = 24u;
+    // 静止カメラで収束させた画像を比べる。静止が16 frame続くと履歴の年齢の上限が1 frameに1ずつ64まで
+    // 上がる（計56 frame）ため、その後に上限の年齢の4倍を待ってから取得する。
+    constexpr uint64_t RasterConvergedRenderedFrames = 16u + 56u + 4u * 64u;
     // 補助の判定に使う区画の大きさ（縁のaliasingとPTの残留雑音を区画内で均した局所の差を見る）。
     constexpr uint32_t BlockSize = 8u;
     // 局所欠陥の負の対照: 参照の最も暗い1画素へ加える光漏れ（画像の平均輝度の倍率）。全体平均と
@@ -122,7 +123,13 @@ namespace
                     m_DebugView = DebugViewMode::GBufferDepth;
                     return true;
                 }
-                outFailureReason = TEXT("--r6-reference-debug-view はnormalかdepthです");
+                if (value == TEXT("direct"))
+                {
+                    // 検証表示254: 環境光・RTGIなしの解析BRDFの直接光（診断用）。
+                    m_DebugView = static_cast<DebugViewMode>(254u);
+                    return true;
+                }
+                outFailureReason = TEXT("--r6-reference-debug-view はnormal・depth・directのどれかです");
                 return false;
             }
             return RenderingValidationApplicationHandler::ParseAdditionalArgument(argument,

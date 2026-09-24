@@ -56,6 +56,24 @@ namespace NorvesLib::Core::Rendering
         {
             return pass.m_SceneColorTexture;
         }
+
+        static uint32_t GetHistoryAgeCap(const LightingPass& pass)
+        {
+            return pass.m_RTGIHistoryAgeCap;
+        }
+
+        static RHI::TexturePtr GetDenoisedTexture(const LightingPass& pass)
+        {
+            return pass.m_RTGIDenoisedTexture;
+        }
+
+        // 直近のdispatchが書いた画素ごとの履歴の年齢と、その現在の状態。
+        static RHI::TexturePtr GetWrittenHistoryAge(const LightingPass& pass,
+                                                    RHI::ResourceState& outState)
+        {
+            outState = pass.m_RTGIHistorySlotState[pass.m_RTGIHistoryWriteIndex];
+            return pass.m_RTGIHistoryTextures[pass.m_RTGIHistoryWriteIndex].Age;
+        }
     };
 }
 
@@ -1179,6 +1197,260 @@ namespace
             return 1;
         }
 
+        // 静止が続くと画素ごとの履歴の年齢の上限が8から上がり、何かが動いたフレームで8へ戻る。
+        // 連続しないフレーム番号から始めると最初のフレームは履歴なしで、2フレーム目から静止を数える。
+        // 静止がRTGIHistoryStaticWarmupFrames（16）を超えると上限は1 frameに1ずつ上がるため、
+        // 27フレーム目（静止26）の上限は8+10=18で、履歴が毎フレーム続いた画素の年齢も18になる。
+        constexpr uint64_t StaticFirstFrame = 200u;
+        constexpr uint32_t StaticFrameCount = 27u;
+        const auto readHistoryAges = [&](VariableArray<float>& outAges) -> bool
+        {
+            ResourceState ageState = ResourceState::Undefined;
+            const TexturePtr ageTexture =
+                RTGIDiffuseIndirectVulkanTestAccess::GetWrittenHistoryAge(lightingPass, ageState);
+            const uint64_t ageBytes = static_cast<uint64_t>(TestWidth) * TestHeight * sizeof(uint16_t);
+            BufferDesc ageReadbackDesc(ageBytes, ResourceUsage::TransferDst, true,
+                                       "RTGIDiffuseIndirectVulkanTest.AgeReadback");
+            BufferPtr ageReadback = device->CreateBuffer(ageReadbackDesc);
+            CommandListPtr ageCommandList = device->CreateCommandList();
+            TSharedPtr<Vulkan::VulkanCommandList> vulkanAgeCommandList =
+                DynamicPointerCast<Vulkan::VulkanCommandList>(ageCommandList);
+            if (!ageTexture || !ageReadback || !ageCommandList || !vulkanAgeCommandList ||
+                ageTexture->GetFormat() != RTGIHistoryAgeFormat)
+            {
+                return false;
+            }
+            ageCommandList->SetFrameIndex(0u);
+            ageCommandList->Begin();
+            ageCommandList->TextureBarrier(ageTexture, ageState, ResourceState::CopySource);
+            ageCommandList->BufferBarrier(ageReadback, ResourceState::Undefined,
+                                          ResourceState::CopyDest, 0u, ageBytes);
+            ageCommandList->CopyTextureToBuffer(ageTexture, ageReadback, TestWidth, TestHeight, 0u);
+            ageCommandList->TextureBarrier(ageTexture, ResourceState::CopySource, ageState);
+            const bool bBarrier = RecordHostReadBarrier(vulkanAgeCommandList, ageReadback);
+            ageCommandList->End();
+            if (!bBarrier)
+            {
+                return false;
+            }
+            ageCommandList->Submit(true);
+            const void* mappedAges = ageReadback->Map(0u, ageBytes);
+            if (!mappedAges)
+            {
+                return false;
+            }
+            uint16_t halfAges[TestWidth * TestHeight] = {};
+            std::memcpy(halfAges, mappedAges, sizeof(halfAges));
+            ageReadback->Unmap();
+            outAges.resize(TestWidth * TestHeight);
+            for (uint32_t index = 0u; index < TestWidth * TestHeight; ++index)
+            {
+                outAges[index] = HalfToFloat(halfAges[index]);
+            }
+            return true;
+        };
+        // デノイズ後の値が、画素自身の時間方向の値から同じ面の近傍（画素2）へどれだけ寄るか。年齢が
+        // 伸びた画素では近傍の重みが下がり、寄り方が小さくなる。
+        const auto readDenoised = [&](VariableArray<uint16_t>& outPixels) -> bool
+        {
+            const TexturePtr denoised = RTGIDiffuseIndirectVulkanTestAccess::GetDenoisedTexture(lightingPass);
+            const uint64_t denoisedBytes = static_cast<uint64_t>(TestWidth) * TestHeight * BytesPerPixel;
+            BufferDesc denoisedReadbackDesc(denoisedBytes, ResourceUsage::TransferDst, true,
+                                            "RTGIDiffuseIndirectVulkanTest.DenoisedReadback");
+            BufferPtr denoisedReadback = device->CreateBuffer(denoisedReadbackDesc);
+            CommandListPtr denoisedCommandList = device->CreateCommandList();
+            TSharedPtr<Vulkan::VulkanCommandList> vulkanDenoisedCommandList =
+                DynamicPointerCast<Vulkan::VulkanCommandList>(denoisedCommandList);
+            if (!denoised || !denoisedReadback || !denoisedCommandList || !vulkanDenoisedCommandList)
+            {
+                return false;
+            }
+            denoisedCommandList->SetFrameIndex(0u);
+            denoisedCommandList->Begin();
+            const bool bRecorded = RecordTextureReadback(denoisedCommandList, vulkanDenoisedCommandList,
+                                                         denoised, denoisedReadback);
+            denoisedCommandList->End();
+            if (!bRecorded)
+            {
+                return false;
+            }
+            denoisedCommandList->Submit(true);
+            const void* mappedDenoised = denoisedReadback->Map(0u, denoisedBytes);
+            if (!mappedDenoised)
+            {
+                return false;
+            }
+            outPixels.resize(TestWidth * TestHeight * 4u);
+            std::memcpy(outPixels.data(), mappedDenoised, static_cast<size_t>(denoisedBytes));
+            denoisedReadback->Unmap();
+            return true;
+        };
+        const auto neighborPull = [](const VariableArray<uint16_t>& temporal,
+                                     const VariableArray<uint16_t>& denoised) -> double
+        {
+            const double center = HalfToFloat(temporal[0u]);
+            const double neighbor = HalfToFloat(temporal[2u * 4u]);
+            const double result = HalfToFloat(denoised[0u]);
+            return std::abs(neighbor - center) > 1.0e-6 ? (result - center) / (neighbor - center) : -1.0;
+        };
+        // 年齢8（上限が上がる直前）と年齢18（最後）のフレームで比べる。
+        constexpr uint32_t ShortHistoryFrame = RTGIHistoryStaticWarmupFrames;
+        double shortHistoryPull = -1.0;
+        double longHistoryPull = -1.0;
+        for (uint32_t frame = 0u; frame < StaticFrameCount; ++frame)
+        {
+            LightingFrameObservation staticFrame;
+            if (!RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+                                  context, emitterOnlyPacket.RayTracingScene, emitterOnlyBuild,
+                                  gbuffer, rtgiOutput, true, true, true, StaticFirstFrame + frame,
+                                  staticFrame) ||
+                !staticFrame.bPublished)
+            {
+                std::cerr << "静止の続くRTGIを描けませんでした frame=" << frame << "\n";
+                return 1;
+            }
+            const uint32_t staticFrames = frame;
+            const uint32_t expectedCap =
+                staticFrames <= RTGIHistoryStaticWarmupFrames
+                    ? RTGIHistoryMaximumAge
+                    : std::min(RTGIHistoryMaximumAge + staticFrames - RTGIHistoryStaticWarmupFrames,
+                               RTGIHistoryStaticMaximumAge);
+            if (RTGIDiffuseIndirectVulkanTestAccess::GetHistoryAgeCap(lightingPass) != expectedCap)
+            {
+                std::cerr << "静止フレームの年齢の上限が期待値と一致しません frame=" << frame
+                          << " cap=" << RTGIDiffuseIndirectVulkanTestAccess::GetHistoryAgeCap(lightingPass)
+                          << " expected=" << expectedCap << "\n";
+                return 1;
+            }
+            if (frame == ShortHistoryFrame || frame + 1u == StaticFrameCount)
+            {
+                VariableArray<uint16_t> denoisedPixels;
+                if (!readDenoised(denoisedPixels))
+                {
+                    std::cerr << "RTGIのデノイズ結果を読み戻せませんでした\n";
+                    return 1;
+                }
+                (frame == ShortHistoryFrame ? shortHistoryPull : longHistoryPull) =
+                    neighborPull(staticFrame.RTGIPixels, denoisedPixels);
+            }
+        }
+        std::cout << "rtgi_denoise_neighbor_pull age8=" << shortHistoryPull
+                  << " age18=" << longHistoryPull << "\n";
+        // 近傍の重みは年齢18で8/18になり、寄り方は小さくなる（どちらも近傍側へ0〜1の割合で寄る）。
+        if (!(shortHistoryPull > 0.0 && shortHistoryPull <= 1.0) ||
+            !(longHistoryPull >= 0.0 && longHistoryPull < 0.8 * shortHistoryPull))
+        {
+            std::cerr << "静止が続いた画素でデノイズの近傍の重みが下がりません\n";
+            return 1;
+        }
+        VariableArray<float> staticAges;
+        if (!readHistoryAges(staticAges))
+        {
+            std::cerr << "RTGIの履歴の年齢を読み戻せませんでした\n";
+            return 1;
+        }
+        constexpr float ExpectedStaticAge = 18.0f;
+        std::cout << "rtgi_static_accumulation cap="
+                  << RTGIDiffuseIndirectVulkanTestAccess::GetHistoryAgeCap(lightingPass)
+                  << " age_pixel0=" << staticAges[0] << " age_pixel2=" << staticAges[2] << "\n";
+        if (staticAges[0] != ExpectedStaticAge || staticAges[2] != ExpectedStaticAge)
+        {
+            std::cerr << "静止が続いた画素の履歴の年齢が上限まで伸びません\n";
+            return 1;
+        }
+
+        // 発光面のinstanceを動かしたフレームは静止ではなく、上限と画素ごとの年齢は8へ戻る。
+        emitterOnlyPacket.RayTracingScene.Instances[0].Instance.transform[3] += 0.25f;
+        emitterOnlyBuild.instances[0].transform[3] += 0.25f;
+        LightingFrameObservation movedFrame;
+        VariableArray<float> movedAges;
+        const bool bMovedRan = RunLightingFrame(device, capabilities, rtgiCapability, lightingPass,
+                                                renderer, context, emitterOnlyPacket.RayTracingScene,
+                                                emitterOnlyBuild, gbuffer, rtgiOutput, true, true, true,
+                                                StaticFirstFrame + StaticFrameCount, movedFrame) &&
+                               movedFrame.bPublished && readHistoryAges(movedAges);
+        emitterOnlyPacket.RayTracingScene.Instances[0].Instance.transform[3] -= 0.25f;
+        emitterOnlyBuild.instances[0].transform[3] -= 0.25f;
+        if (!bMovedRan)
+        {
+            std::cerr << "instanceを動かしたRTGIを描けませんでした\n";
+            return 1;
+        }
+        std::cout << "rtgi_dynamic_frame cap="
+                  << RTGIDiffuseIndirectVulkanTestAccess::GetHistoryAgeCap(lightingPass)
+                  << " age_pixel0=" << movedAges[0] << " age_pixel2=" << movedAges[2] << "\n";
+        if (RTGIDiffuseIndirectVulkanTestAccess::GetHistoryAgeCap(lightingPass) != RTGIHistoryMaximumAge ||
+            movedAges[0] != static_cast<float>(RTGIHistoryMaximumAge) ||
+            movedAges[2] != static_cast<float>(RTGIHistoryMaximumAge))
+        {
+            std::cerr << "動いたフレームで履歴の年齢の上限が8へ戻りません\n";
+            return 1;
+        }
+
+        // 材質（instance色）とpre-exposureの変更も静止ではない。20静止フレーム（静止19、上限11）の後に
+        // 変えたフレームで上限は8へ戻る。
+        const auto runStaticThenChange = [&](uint64_t firstFrame, const char* label,
+                                             const auto& change, const auto& restore) -> bool
+        {
+            constexpr uint32_t WarmFrames = 20u;
+            for (uint32_t frame = 0u; frame < WarmFrames; ++frame)
+            {
+                LightingFrameObservation warmFrame;
+                if (!RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+                                      context, emitterOnlyPacket.RayTracingScene, emitterOnlyBuild,
+                                      gbuffer, rtgiOutput, true, true, true, firstFrame + frame,
+                                      warmFrame) ||
+                    !warmFrame.bPublished)
+                {
+                    return false;
+                }
+            }
+            const uint32_t warmCap = RTGIDiffuseIndirectVulkanTestAccess::GetHistoryAgeCap(lightingPass);
+            change();
+            LightingFrameObservation changedFrame;
+            const bool bRan = RunLightingFrame(device, capabilities, rtgiCapability, lightingPass,
+                                               renderer, context, emitterOnlyPacket.RayTracingScene,
+                                               emitterOnlyBuild, gbuffer, rtgiOutput, true, true, true,
+                                               firstFrame + WarmFrames, changedFrame) &&
+                              changedFrame.bPublished;
+            const uint32_t changedCap = RTGIDiffuseIndirectVulkanTestAccess::GetHistoryAgeCap(lightingPass);
+            restore();
+            std::cout << "rtgi_static_break " << label << " warm_cap=" << warmCap
+                      << " changed_cap=" << changedCap << "\n";
+            return bRan && warmCap == RTGIHistoryMaximumAge + 3u && changedCap == RTGIHistoryMaximumAge;
+        };
+        float& emitterObjectRed = emitterOnlyPacket.RayTracingScene.Instances[0].Material.ObjectColor[0];
+        const float originalObjectRed = emitterObjectRed;
+        if (!runStaticThenChange(
+                300u, "material",
+                [&]() { emitterObjectRed = originalObjectRed * 0.5f; },
+                [&]() { emitterObjectRed = originalObjectRed; }))
+        {
+            std::cerr << "材質の変更で静止の履歴延長が解除されません\n";
+            return 1;
+        }
+        exposureCamera.PreExposure = 1.0f;
+        exposureCamera.InvPreExposure = 1.0f;
+        context.MainCamera = &exposureCamera;
+        const bool bExposureBreaks = runStaticThenChange(
+            400u, "pre_exposure",
+            [&]()
+            {
+                exposureCamera.PreExposure = 0.5f;
+                exposureCamera.InvPreExposure = 2.0f;
+            },
+            [&]()
+            {
+                exposureCamera.PreExposure = 1.0f;
+                exposureCamera.InvPreExposure = 1.0f;
+            });
+        context.MainCamera = nullptr;
+        if (!bExposureBreaks)
+        {
+            std::cerr << "露出の変更で静止の履歴延長が解除されません\n";
+            return 1;
+        }
+
         std::cout << "rtgi_capability_usable=true tlas_complete=true output_format=R16G16B16A16_FLOAT\n";
         std::cout << "rtgi_hit_miss_readback=finite hit_positive=true miss_zero=true\n";
         std::cout << "rtgi_published=true source=RTGI fallback_disabled=Raster fallback_incomplete_tlas=Raster\n";
@@ -1187,6 +1459,9 @@ namespace
                      "rtgi_non_shadow_caster_instance_ignored=true\n";
         std::cout << "rtgi_emitter_near_occluder_blocks=true "
                      "rtgi_output_depends_on_emission_times_pre_exposure=true\n";
+        std::cout << "rtgi_static_history_extends=true rtgi_dynamic_history_cap=8 "
+                     "rtgi_denoise_spatial_weight_follows_age=true "
+                     "rtgi_material_and_exposure_changes_end_static=true\n";
 
         lightingPass.Shutdown();
         renderer.Shutdown();

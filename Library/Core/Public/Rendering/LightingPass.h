@@ -253,6 +253,7 @@ namespace NorvesLib::Core::Rendering
         bool ExecuteRTGIDenoiser(ViewRenderContext& context,
                                  const RHI::TexturePtr& temporalRadiance,
                                  const RHI::TexturePtr& confidenceTexture,
+                                 const RHI::TexturePtr& ageTexture,
                                  const RHI::TexturePtr& depthTexture,
                                  const RHI::TexturePtr& normalTexture,
                                  const RHI::TexturePtr& materialTexture);
@@ -349,6 +350,13 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_RTGIHistoryLightRevision = 0;
         RTGIRayQueryCapability m_RTGIHistoryCapability;
         uint32_t m_RTGIHistoryLightWeightLimitedFrames = 0;
+        /** @brief 視点（逆ビュー射影・位置）とレイトレーシングのinstanceの前フレームの署名 */
+        uint64_t m_RTGIStaticSignature = 0;
+        /** @brief 視点・光源・シーンが変わらなかった連続フレーム数 */
+        uint32_t m_RTGIStaticFrames = 0;
+        /** @brief 直近のdispatchで使った画素ごとの履歴の年齢の上限 */
+        uint32_t m_RTGIHistoryAgeCap = RTGIHistoryMaximumAge;
+        bool m_bRTGIStaticSignatureValid = false;
         bool m_bRTGIHistoryValid = false;
         bool m_bRTGIHistoryFrameNumberValid = false;
         bool m_bRTGIHistoryCapabilityValid = false;

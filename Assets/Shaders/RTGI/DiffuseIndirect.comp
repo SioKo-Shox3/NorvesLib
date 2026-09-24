@@ -88,8 +88,10 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTG
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/RayTracingInstanceMask.glsl"
 const float RAY_ORIGIN_OFFSET = 0.002;
-const uint RTGI_HISTORY_MAXIMUM_AGE = 8u;
-const float RTGI_HISTORY_MAXIMUM_WEIGHT = 0.9;
+// 画素ごとの履歴の年齢の上限（静止が続いたとき）。フレームごとの上限はtemporalState.wで、視点・光源・
+// シーンが動いているフレームでは8になる。重みは累積平均の 1-1/(年齢+1) で、上限は64/65。
+const uint RTGI_HISTORY_MAXIMUM_AGE = 64u;
+const float RTGI_HISTORY_MAXIMUM_WEIGHT = 64.0 / 65.0;
 const float RTGI_HISTORY_LIGHT_WEIGHT_LIMIT = 0.25;
 const float RTGI_HISTORY_INITIAL_CONFIDENCE = 0.25;
 const float RTGI_HISTORY_NORMAL_REJECTION_DOT = 0.9;

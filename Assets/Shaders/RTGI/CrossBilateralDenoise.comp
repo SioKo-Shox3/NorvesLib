@@ -9,6 +9,7 @@ layout(set = 0, binding = 2) uniform sampler2D gbufferNormal;
 layout(set = 0, binding = 3) uniform sampler2D gbufferMaterial;
 layout(set = 0, binding = 4) uniform sampler2D historyConfidence;
 layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D denoisedRadiance;
+layout(set = 0, binding = 6) uniform sampler2D historyAge;
 
 const float DEPTH_REJECTION_THRESHOLD = 0.02;
 const float NORMAL_REJECTION_DOT = 0.9;
@@ -16,6 +17,10 @@ const float MATERIAL_REJECTION_THRESHOLD = 0.05;
 // 中心の輝度が同じ面の近傍の最大のこの倍率を超えるとき、中心を外れ値として倍率の上限まで縮める。
 // 1試料/frameの推定が光源付近の明るい面へまれに当たる試料を、履歴と3x3で均し切れないため。
 const float FIREFLY_NEIGHBOR_RATIO = 4.0;
+// 中心の履歴の年齢がこの値（視点・光源・シーンが動いているときの年齢の上限）以下なら近傍を従来どおり
+// 重み付けする。静止が続いて年齢が伸びた画素では、時間方向の累積が雑音を減らすため、近傍の重みを
+// FULL_SPATIAL_AGE/年齢へ下げ、影の縁などの空間方向のぼけを減らす。
+const float FULL_SPATIAL_AGE = 8.0;
 
 float RadianceLuminance(vec3 value)
 {
@@ -71,6 +76,10 @@ void main()
     }
 
     centerNormal *= inversesqrt(centerNormalLengthSquared);
+    float centerAge = texelFetch(historyAge, pixel, 0).r;
+    float neighborScale = IsFiniteScalar(centerAge) && centerAge > FULL_SPATIAL_AGE
+        ? FULL_SPATIAL_AGE / centerAge
+        : 1.0;
     vec3 accumulatedRadiance = vec3(0.0);
     float accumulatedWeight = 0.0;
     vec3 centerRadiance = vec3(0.0);
@@ -136,8 +145,8 @@ void main()
             }
             neighborMaximumLuminance = max(neighborMaximumLuminance,
                                            RadianceLuminance(sampleRadiance));
-            accumulatedRadiance += sampleRadiance * weight;
-            accumulatedWeight += weight;
+            accumulatedRadiance += sampleRadiance * (weight * neighborScale);
+            accumulatedWeight += weight * neighborScale;
         }
     }
 

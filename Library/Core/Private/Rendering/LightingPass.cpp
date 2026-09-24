@@ -849,6 +849,29 @@ namespace NorvesLib::Core::Rendering
     static_assert(sizeof(RTGIInstanceData) == 112u);
     static_assert(sizeof(RTGIEmitterEntry) == 16u);
 
+    // RTGIの静止判定に使うFNV-1a（64bit）。
+    static uint64_t HashRTGIBytes(uint64_t hash, const void* data, size_t size)
+    {
+        const uint8_t* bytes = static_cast<const uint8_t*>(data);
+        for (size_t index = 0u; index < size; ++index)
+        {
+            hash ^= bytes[index];
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
+    // 静止が続いたフレーム数から、画素ごとの履歴の年齢の上限を決める。
+    static uint32_t ComputeRTGIHistoryAgeCap(uint32_t staticFrames)
+    {
+        if (staticFrames <= RTGIHistoryStaticWarmupFrames)
+        {
+            return RTGIHistoryMaximumAge;
+        }
+        const uint32_t extension = staticFrames - RTGIHistoryStaticWarmupFrames;
+        return std::min(RTGIHistoryMaximumAge + extension, RTGIHistoryStaticMaximumAge);
+    }
+
     static bool IsFiniteNonNegativeRTGI(float value)
     {
         return std::isfinite(value) && value >= 0.0f;
@@ -1047,8 +1070,9 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::CombinedImageSampler,
-            RHI::ResourceBindType::RWTexture};
-        for (uint32_t bindingIndex = 0u; bindingIndex < 6u; ++bindingIndex)
+            RHI::ResourceBindType::RWTexture,
+            RHI::ResourceBindType::CombinedImageSampler};
+        for (uint32_t bindingIndex = 0u; bindingIndex < 7u; ++bindingIndex)
         {
             RHI::DescriptorBinding binding;
             binding.binding = bindingIndex;
@@ -1778,6 +1802,10 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistoryLightRevision = 0u;
         m_RTGIHistoryCapability = RTGIRayQueryCapability{};
         m_RTGIHistoryLightWeightLimitedFrames = 0u;
+        m_RTGIStaticSignature = 0u;
+        m_RTGIStaticFrames = 0u;
+        m_RTGIHistoryAgeCap = RTGIHistoryMaximumAge;
+        m_bRTGIStaticSignatureValid = false;
         m_bRTGIHistoryValid = false;
         m_bRTGIHistoryFrameNumberValid = false;
         m_bRTGIHistoryCapabilityValid = false;
@@ -2814,14 +2842,21 @@ namespace NorvesLib::Core::Rendering
     bool LightingPass::ExecuteRTGIDenoiser(ViewRenderContext& context,
                                            const RHI::TexturePtr& temporalRadiance,
                                            const RHI::TexturePtr& confidenceTexture,
+                                           const RHI::TexturePtr& ageTexture,
                                            const RHI::TexturePtr& depthTexture,
                                            const RHI::TexturePtr& normalTexture,
                                            const RHI::TexturePtr& materialTexture)
     {
         if (!context.CommandList || !context.Device || !temporalRadiance ||
-            !confidenceTexture || !depthTexture || !normalTexture || !materialTexture ||
+            !confidenceTexture || !ageTexture || !depthTexture || !normalTexture ||
+            !materialTexture ||
             temporalRadiance->GetFormat() != RTGIDiffuseIndirectRadianceFormat ||
             confidenceTexture->GetFormat() != RTGIHistoryConfidenceFormat ||
+            ageTexture->GetFormat() != RTGIHistoryAgeFormat ||
+            ageTexture->GetWidth() != temporalRadiance->GetWidth() ||
+            ageTexture->GetHeight() != temporalRadiance->GetHeight() ||
+            (ageTexture->GetUsage() & RHI::ResourceUsage::ShaderRead) ==
+                RHI::ResourceUsage::None ||
             temporalRadiance->GetWidth() == 0u || temporalRadiance->GetHeight() == 0u ||
             confidenceTexture->GetWidth() != temporalRadiance->GetWidth() ||
             confidenceTexture->GetHeight() != temporalRadiance->GetHeight() ||
@@ -2876,6 +2911,8 @@ namespace NorvesLib::Core::Rendering
         m_RTGIDenoiserDescriptorSet->BindTexture(4u, confidenceTexture);
         m_RTGIDenoiserDescriptorSet->BindSampler(4u, m_GBufferSampler);
         m_RTGIDenoiserDescriptorSet->BindStorageTexture(5u, m_RTGIDenoisedTexture);
+        m_RTGIDenoiserDescriptorSet->BindTexture(6u, ageTexture);
+        m_RTGIDenoiserDescriptorSet->BindSampler(6u, m_GBufferSampler);
         m_RTGIDenoiserDescriptorSet->Update();
 
         const uint32_t groupCountX =
@@ -3018,6 +3055,10 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistoryLightRevision = 0u;
         m_RTGIHistoryLightWeightLimitedFrames = 0u;
         m_bRTGIHistoryFrameNumberValid = false;
+        m_RTGIStaticSignature = 0u;
+        m_RTGIStaticFrames = 0u;
+        m_RTGIHistoryAgeCap = RTGIHistoryMaximumAge;
+        m_bRTGIStaticSignatureValid = false;
     }
 
     bool LightingPass::ExecuteRTGI(ViewRenderContext& context,
@@ -3189,6 +3230,48 @@ namespace NorvesLib::Core::Rendering
         const uint32_t lightWeightLimitedFrames = bLightRevisionMismatch
             ? 2u
             : m_RTGIHistoryLightWeightLimitedFrames;
+        // 視点（逆ビュー射影と位置）、露出と環境光、レイトレーシングのinstance（変換・形状・材質の表と、
+        // 材質の色・発光・textureハンドル）が前フレームと同じで、光源も変わらず履歴を再投影できる
+        // フレームだけを静止として数える。静止が続くと画素ごとの履歴の年齢の上限を上げ、静止画像を
+        // 収束させる。動いたフレームの上限は従来どおり8。
+        uint64_t staticSignature = 14695981039346656037ull;
+        staticSignature = HashRTGIBytes(staticSignature, lightingParams.invViewProjection,
+                                        sizeof(lightingParams.invViewProjection));
+        staticSignature = HashRTGIBytes(staticSignature, lightingParams.cameraPosition,
+                                        sizeof(lightingParams.cameraPosition));
+        staticSignature = HashRTGIBytes(staticSignature, &lightingParams.preExposure,
+                                        sizeof(lightingParams.preExposure));
+        const float environmentIntensity =
+            context.PhysicalLighting.bIBLEnabled ? context.PhysicalLighting.IBLIntensity : -1.0f;
+        staticSignature = HashRTGIBytes(staticSignature, &environmentIntensity,
+                                        sizeof(environmentIntensity));
+        if (!instanceData.empty())
+        {
+            staticSignature = HashRTGIBytes(staticSignature, instanceData.data(),
+                                            instanceData.size() * sizeof(RTGIInstanceData));
+        }
+        for (const RayTracingSceneInstanceSnapshot& instance :
+             context.SnapshotRayTracingScene->Instances)
+        {
+            const RayTracingHitMaterialSnapshot& material = instance.Material;
+            staticSignature = HashRTGIBytes(staticSignature, material.BaseColor,
+                                            sizeof(material.BaseColor));
+            staticSignature = HashRTGIBytes(staticSignature, material.EmissiveColor,
+                                            sizeof(material.EmissiveColor));
+            staticSignature = HashRTGIBytes(staticSignature, &material.EmissiveLuminanceNits,
+                                            sizeof(material.EmissiveLuminanceNits));
+            staticSignature = HashRTGIBytes(staticSignature, material.ObjectColor,
+                                            sizeof(material.ObjectColor));
+            const uint64_t textureIds[4] = {material.AlbedoTexture.Id, material.NormalTexture.Id,
+                                            material.MetallicTexture.Id,
+                                            material.RoughnessTexture.Id};
+            staticSignature = HashRTGIBytes(staticSignature, textureIds, sizeof(textureIds));
+        }
+        const bool bStaticFrame = bHistoryReprojectionValid && !bLightRevisionMismatch &&
+                                  lightWeightLimitedFrames == 0u && m_bRTGIStaticSignatureValid &&
+                                  staticSignature == m_RTGIStaticSignature;
+        const uint32_t staticFrames = bStaticFrame ? m_RTGIStaticFrames + 1u : 0u;
+        const uint32_t historyAgeCap = ComputeRTGIHistoryAgeCap(staticFrames);
 
         const auto transitionHistorySlot = [&](RTGIHistoryTextureSet& slot,
                                                 RHI::ResourceState beforeState,
@@ -3243,7 +3326,7 @@ namespace NorvesLib::Core::Rendering
         parameters.temporalState[0] = bHistoryReprojectionValid ? 1u : 0u;
         parameters.temporalState[1] = bLightRevisionMismatch ? 1u : 0u;
         parameters.temporalState[2] = lightWeightLimitedFrames > 0u ? 1u : 0u;
-        parameters.temporalState[3] = RTGIHistoryMaximumAge;
+        parameters.temporalState[3] = historyAgeCap;
         parameters.sampleState[0] = static_cast<uint32_t>(context.FrameNumber);
         parameters.sampleState[1] = static_cast<uint32_t>(emitterEntries.size());
         parameters.sampleState[2] = emitterTriangleCount;
@@ -3357,6 +3440,7 @@ namespace NorvesLib::Core::Rendering
         if (!ExecuteRTGIDenoiser(context,
                                  rtgiDiffuseIndirectTexture,
                                  writeHistory.Confidence,
+                                 writeHistory.Age,
                                  depthTexture,
                                  normalTexture,
                                  materialTexture))
@@ -3397,6 +3481,10 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistoryLightWeightLimitedFrames = nextLightWeightLimitedFrames;
         m_bRTGIHistoryFrameNumberValid = true;
         m_bRTGIHistoryLightRevisionValid = true;
+        m_RTGIStaticSignature = staticSignature;
+        m_RTGIStaticFrames = staticFrames;
+        m_RTGIHistoryAgeCap = historyAgeCap;
+        m_bRTGIStaticSignatureValid = true;
 
         RTGIHistoryResources history;
         history.FrameNumber = context.FrameNumber;
