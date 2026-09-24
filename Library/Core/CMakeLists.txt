@@ -120,6 +120,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
     Private/Rendering/SkyAtmosphere.cpp
+    Private/Rendering/SkySunLight.cpp
     Private/Rendering/VolumetricFog.cpp
     Private/Rendering/DDGIVolume.cpp
     Private/Rendering/PathTracingExrOutput.cpp
@@ -326,6 +327,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ProceduralMeshGPUData.h
     Public/Rendering/SceneProxy.h
     Public/Rendering/SkyAtmosphere.h
+    Public/Rendering/SkySunLight.h
     Public/Rendering/VolumetricFog.h
     Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h

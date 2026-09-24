@@ -86,6 +86,51 @@ namespace NorvesLib::Core::Rendering
             return std::exp(-opticalDepth);
         }
 
+        // 透過率LUTの1層分の減衰。LUTの値を変えないよう、演算の順序をLUTの生成と揃える。
+        float ComputeLayerTransmittance(float scattering,
+                                        float scaleHeight,
+                                        float density,
+                                        float cosine)
+        {
+            const float opticalDepth = scattering * scaleHeight * density /
+                                       std::max(cosine, 0.05f);
+            return std::clamp(std::exp(-std::max(opticalDepth, 0.0f)), 0.0f, 1.0f);
+        }
+
+        Math::Vector3 ComputeAtmosphereTransmittanceFromSanitized(
+            const SkyAtmosphereParameters& sanitized,
+            float altitudeFraction,
+            float cosine)
+        {
+            const float altitude = std::isfinite(altitudeFraction)
+                ? std::clamp(altitudeFraction, 0.0f, 1.0f)
+                : 0.0f;
+            const float safeCosine = std::isfinite(cosine) ? cosine : 0.0f;
+            const float rayleighDensity =
+                std::exp(-altitude * sanitized.AtmosphereHeightMeters /
+                         sanitized.RayleighScaleHeightMeters);
+            const float mieDensity =
+                std::exp(-altitude * sanitized.AtmosphereHeightMeters /
+                         sanitized.MieScaleHeightMeters);
+            const float mie = ComputeLayerTransmittance(kMieScattering,
+                                                        sanitized.MieScaleHeightMeters,
+                                                        mieDensity,
+                                                        safeCosine);
+            return Math::Vector3(
+                ComputeLayerTransmittance(kRayleighScatteringR,
+                                          sanitized.RayleighScaleHeightMeters,
+                                          rayleighDensity,
+                                          safeCosine) * mie,
+                ComputeLayerTransmittance(kRayleighScatteringG,
+                                          sanitized.RayleighScaleHeightMeters,
+                                          rayleighDensity,
+                                          safeCosine) * mie,
+                ComputeLayerTransmittance(kRayleighScatteringB,
+                                          sanitized.RayleighScaleHeightMeters,
+                                          rayleighDensity,
+                                          safeCosine) * mie);
+        }
+
         float ComputeSunDiskIrradianceFromSanitized(
             const SkyAtmosphereParameters& sanitized)
         {
@@ -249,6 +294,45 @@ namespace NorvesLib::Core::Rendering
     {
         return ComputeSunDiskIrradianceFromSanitized(
             SanitizeSkyAtmosphereParameters(parameters));
+    }
+
+    Math::Vector3 ComputeAtmosphereTransmittance(
+        const SkyAtmosphereParameters& parameters,
+        float altitudeFraction,
+        float cosine)
+    {
+        return ComputeAtmosphereTransmittanceFromSanitized(
+            SanitizeSkyAtmosphereParameters(parameters), altitudeFraction, cosine);
+    }
+
+    Math::Vector3 ComputeSunGroundTransmittance(
+        const SkyAtmosphereParameters& parameters)
+    {
+        const SkyAtmosphereParameters sanitized =
+            SanitizeSkyAtmosphereParameters(parameters);
+        if (!sanitized.bEnabled)
+        {
+            return Math::Vector3::Zero;
+        }
+        return ComputeAtmosphereTransmittanceFromSanitized(
+            sanitized, 0.0f, MakeSunDirection(sanitized).y);
+    }
+
+    Math::Vector3 ComputeSunGroundIlluminance(
+        const SkyAtmosphereParameters& parameters)
+    {
+        const SkyAtmosphereParameters sanitized =
+            SanitizeSkyAtmosphereParameters(parameters);
+        if (!sanitized.bEnabled)
+        {
+            return Math::Vector3::Zero;
+        }
+        const Math::Vector3 transmittance = ComputeAtmosphereTransmittanceFromSanitized(
+            sanitized, 0.0f, MakeSunDirection(sanitized).y);
+        const float irradiance = ComputeSunDiskIrradianceFromSanitized(sanitized);
+        return Math::Vector3(transmittance.x * irradiance,
+                             transmittance.y * irradiance,
+                             transmittance.z * irradiance);
     }
 
     float ComputeSunDiskPreExposedLuminance(

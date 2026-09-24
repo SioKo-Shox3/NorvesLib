@@ -1,4 +1,5 @@
 ﻿#include "Rendering/SkyAtmosphere.h"
+#include "Rendering/SkySunLight.h"
 
 #include "Math/VectorUtils.h"
 
@@ -182,6 +183,114 @@ namespace
         Expect(ComputeSunDiskPreExposedLuminance(parameters, 0.0f) == 0.0f,
                "non-positive pre-exposure disables the disk value");
     }
+
+    bool SameVector(const NorvesLib::Math::Vector3& lhs, const NorvesLib::Math::Vector3& rhs)
+    {
+        return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z;
+    }
+
+    void TestSunGroundIlluminanceContract()
+    {
+        SkyAtmosphereParameters parameters = MakeDefaultSkyAtmosphereParameters();
+        parameters.bEnabled = true;
+
+        // 天頂の太陽: 地表の透過率は各散乱係数×scale heightを光学的厚さとする指数減衰。
+        parameters.SunAltitudeDegrees = 90.0f;
+        const NorvesLib::Math::Vector3 zenith = ComputeSunGroundTransmittance(parameters);
+        const float mie = std::exp(-3.996e-6f * 1200.0f);
+        Expect(NearlyEqual(zenith.x, std::exp(-5.802e-6f * 8000.0f) * mie, 1.0e-6f) &&
+                   NearlyEqual(zenith.y, std::exp(-13.558e-6f * 8000.0f) * mie, 1.0e-6f) &&
+                   NearlyEqual(zenith.z, std::exp(-33.100e-6f * 8000.0f) * mie, 1.0e-6f),
+               "zenith sun transmittance matches the analytic optical depth");
+
+        // 低い太陽は長い光路で赤く暗くなる。
+        parameters.SunAltitudeDegrees = 8.0f;
+        const NorvesLib::Math::Vector3 low = ComputeSunGroundTransmittance(parameters);
+        Expect(low.x > low.y && low.y > low.z && low.x < zenith.x && low.z > 0.0f,
+               "low sun transmittance is reddened and dimmer than the zenith sun");
+
+        // 空の参照評価が散乱源に使う太陽の透過率と同じ値。
+        const SkyRadianceSample sample = EvaluateHillaireSkyReference(
+            parameters, NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f));
+        Expect(NearlyEqual((low.x + low.y + low.z) / 3.0f, sample.MeanSunTransmittance, 1.0e-6f),
+               "ground sun transmittance equals the sky reference scattering source");
+
+        // 透過率LUTと同じ関数の地表・太陽の余弦の値。
+        const float sunCosine = MakeSunDirectionFromAltitudeAzimuth(
+            parameters.SunAltitudeDegrees, parameters.SunAzimuthDegrees).y;
+        Expect(SameVector(ComputeAtmosphereTransmittance(parameters, 0.0f, sunCosine), low),
+               "ground sun transmittance is the LUT formula at the ground altitude");
+        const NorvesLib::Math::Vector3 ground =
+            ComputeAtmosphereTransmittance(parameters, 0.0f, 0.2f);
+        const NorvesLib::Math::Vector3 top =
+            ComputeAtmosphereTransmittance(parameters, 1.0f, 0.2f);
+        Expect(top.x > ground.x && top.y > ground.y && top.z > ground.z,
+               "thinner air at altitude transmits more light");
+        ExpectFiniteVector(ComputeAtmosphereTransmittance(
+                               parameters,
+                               std::numeric_limits<float>::quiet_NaN(),
+                               std::numeric_limits<float>::infinity()),
+                           "non-finite altitude and cosine stay finite");
+
+        // 地表照度は太陽円盤の照度×透過率。
+        const NorvesLib::Math::Vector3 illuminance = ComputeSunGroundIlluminance(parameters);
+        const float disk = ComputeSunDiskIrradiance(parameters);
+        Expect(RelativeNearlyEqual(illuminance.x, disk * low.x, 1.0e-6f) &&
+                   RelativeNearlyEqual(illuminance.y, disk * low.y, 1.0e-6f) &&
+                   RelativeNearlyEqual(illuminance.z, disk * low.z, 1.0e-6f),
+               "ground illuminance is the disk irradiance times the ground transmittance");
+
+        parameters.bEnabled = false;
+        Expect(SameVector(ComputeSunGroundTransmittance(parameters),
+                          NorvesLib::Math::Vector3::Zero) &&
+                   SameVector(ComputeSunGroundIlluminance(parameters),
+                              NorvesLib::Math::Vector3::Zero),
+               "a disabled sky has no ground sun");
+    }
+
+    void TestSkySunLightContract()
+    {
+        SkyAtmosphereParameters parameters = MakeDefaultSkyAtmosphereParameters();
+        parameters.bEnabled = true;
+        parameters.SunAltitudeDegrees = 30.0f;
+        parameters.SunAzimuthDegrees = 45.0f;
+
+        LightProxy light;
+        Expect(MakeSkySunLightProxy(parameters, light), "an enabled sky builds a sun light");
+        Expect(IsSkySunLight(light) && light.LightId == SkySunLightId &&
+                   light.Type == LightType::Directional && light.bCastShadows &&
+                   light.IsValid(),
+               "the sky sun is a valid shadow-casting directional light with the reserved id");
+        const NorvesLib::Math::Vector3 sunDirection =
+            MakeSunDirectionFromAltitudeAzimuth(30.0f, 45.0f);
+        Expect(NearlyEqual(light.DirectionX, -sunDirection.x, 1.0e-6f) &&
+                   NearlyEqual(light.DirectionY, -sunDirection.y, 1.0e-6f) &&
+                   NearlyEqual(light.DirectionZ, -sunDirection.z, 1.0e-6f),
+               "the sky sun light travels away from the sun");
+        const NorvesLib::Math::Vector3 illuminance = ComputeSunGroundIlluminance(parameters);
+        Expect(RelativeNearlyEqual(light.ColorR * light.CanonicalIntensity, illuminance.x, 1.0e-5f) &&
+                   RelativeNearlyEqual(light.ColorG * light.CanonicalIntensity, illuminance.y, 1.0e-5f) &&
+                   RelativeNearlyEqual(light.ColorB * light.CanonicalIntensity, illuminance.z, 1.0e-5f),
+               "the sky sun light carries the ground illuminance");
+        Expect(NearlyEqual(0.2126f * light.ColorR + 0.7152f * light.ColorG + 0.0722f * light.ColorB,
+                           1.0f, 1.0e-5f),
+               "the sky sun light color has unit luminance");
+
+        // 差し替えはシーンの灯を残し、空の太陽を1つだけ持つ。
+        NorvesLib::Core::Container::VariableArray<LightProxy> lights;
+        LightProxy sceneLight;
+        sceneLight.LightId = 7u;
+        lights.push_back(sceneLight);
+        ReplaceSkySunLight(parameters, lights);
+        ReplaceSkySunLight(parameters, lights);
+        Expect(lights.size() == 2u && lights[0].LightId == 7u && IsSkySunLight(lights[1]),
+               "replacing the sky sun keeps scene lights and never duplicates the sun");
+        parameters.bEnabled = false;
+        Expect(!MakeSkySunLightProxy(parameters, light), "a disabled sky builds no sun light");
+        ReplaceSkySunLight(parameters, lights);
+        Expect(lights.size() == 1u && lights[0].LightId == 7u,
+               "disabling the sky removes the sky sun light");
+    }
 } // namespace
 
 int main()
@@ -190,6 +299,8 @@ int main()
     TestSanitizationKeepsSnapshotFinite();
     TestReferenceSamples();
     TestSunDiskPreExposureContract();
+    TestSunGroundIlluminanceContract();
+    TestSkySunLightContract();
 
     if (g_FailureCount != 0)
     {

@@ -18,10 +18,6 @@ namespace NorvesLib::Core::Rendering
     {
         constexpr float kPi = 3.14159265358979323846f;
         constexpr float kFp16Max = 65504.0f;
-        constexpr float kRayleighScatteringR = 5.802e-6f;
-        constexpr float kRayleighScatteringG = 13.558e-6f;
-        constexpr float kRayleighScatteringB = 33.100e-6f;
-        constexpr float kMieScattering = 3.996e-6f;
 
         uint16_t FloatToHalfRne(float value)
         {
@@ -112,16 +108,6 @@ namespace NorvesLib::Core::Rendering
             return Math::Vector3(horizontal * std::cos(longitude),
                                  -std::sin(latitude),
                                  horizontal * std::sin(longitude));
-        }
-
-        float ComputeTransmittance(float scattering,
-                                   float scaleHeight,
-                                   float density,
-                                   float cosine)
-        {
-            const float opticalDepth = scattering * scaleHeight * density /
-                                       std::max(cosine, 0.05f);
-            return std::clamp(std::exp(-std::max(opticalDepth, 0.0f)), 0.0f, 1.0f);
         }
 
         float Dot(const Math::Vector3& lhs, const Math::Vector3& rhs)
@@ -304,44 +290,17 @@ namespace NorvesLib::Core::Rendering
         {
             const float altitude = (static_cast<float>(y) + 0.5f) /
                                    static_cast<float>(height);
-            const float rayleighDensity =
-                std::exp(-altitude * parameters.AtmosphereHeightMeters /
-                         parameters.RayleighScaleHeightMeters);
-            const float mieDensity =
-                std::exp(-altitude * parameters.AtmosphereHeightMeters /
-                         parameters.MieScaleHeightMeters);
             for (uint32_t x = 0u; x < width; ++x)
             {
                 const float cosine = (static_cast<float>(x) + 0.5f) /
                                      static_cast<float>(width);
                 const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
-                data[offset + 0u] = FloatToHalfRne(
-                    ComputeTransmittance( kRayleighScatteringR,
-                                          parameters.RayleighScaleHeightMeters,
-                                          rayleighDensity,
-                                          cosine) *
-                    ComputeTransmittance(kMieScattering,
-                                         parameters.MieScaleHeightMeters,
-                                         mieDensity,
-                                         cosine));
-                data[offset + 1u] = FloatToHalfRne(
-                    ComputeTransmittance(kRayleighScatteringG,
-                                         parameters.RayleighScaleHeightMeters,
-                                         rayleighDensity,
-                                         cosine) *
-                    ComputeTransmittance(kMieScattering,
-                                         parameters.MieScaleHeightMeters,
-                                         mieDensity,
-                                         cosine));
-                data[offset + 2u] = FloatToHalfRne(
-                    ComputeTransmittance(kRayleighScatteringB,
-                                         parameters.RayleighScaleHeightMeters,
-                                         rayleighDensity,
-                                         cosine) *
-                    ComputeTransmittance(kMieScattering,
-                                         parameters.MieScaleHeightMeters,
-                                         mieDensity,
-                                         cosine));
+                // 地表の太陽の照度（ComputeSunGroundIlluminance）と同じ関数で求める。
+                const Math::Vector3 transmittance =
+                    ComputeAtmosphereTransmittance(parameters, altitude, cosine);
+                data[offset + 0u] = FloatToHalfRne(transmittance.x);
+                data[offset + 1u] = FloatToHalfRne(transmittance.y);
+                data[offset + 2u] = FloatToHalfRne(transmittance.z);
                 data[offset + 3u] = FloatToHalfRne(1.0f);
             }
         }

@@ -13,10 +13,10 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief FramePacketで渡す空と太陽のパラメータ
      *
-     * 太陽方向は空の高度・方位角から求める。方向ライトが太陽を表す場合は、
-     * 同じスナップショット上でその方向と一致させる。ここでの太陽方向は観測点
-     * から太陽へ向かう方向で、LightProxy/LightDataのDirection（光の進行方向）
-     * にはその逆ベクトルを設定する。
+     * 太陽方向は空の高度・方位角から求める。空が有効なとき、エンジンは空の太陽を
+     * 表す方向光（SkySunLight.h）を光源表へ加えるので、シーンに太陽の方向光を
+     * 別に置かない。ここでの太陽方向は観測点から太陽へ向かう方向で、
+     * LightProxy/LightDataのDirection（光の進行方向）にはその逆ベクトルを設定する。
      */
     struct SkyAtmosphereParameters
     {
@@ -76,6 +76,33 @@ namespace NorvesLib::Core::Rendering
         const Math::Vector3& viewDirection);
 
     float ComputeSunDiskIrradiance(
+        const SkyAtmosphereParameters& parameters);
+
+    /**
+     * @brief 大気を通る光の透過率（RGB）を求める
+     *
+     * 透過率LUTと同じ式で、Rayleighの波長別の散乱とMieの散乱を、高度の密度と
+     * 平行大気の光路長（天頂からの余弦、下限0.05）で指数減衰させる。
+     * altitudeFractionは0が地表、1が大気の上端で、範囲外は丸める。
+     */
+    Math::Vector3 ComputeAtmosphereTransmittance(
+        const SkyAtmosphereParameters& parameters,
+        float altitudeFraction,
+        float cosine);
+
+    /**
+     * @brief 地表から見た太陽の透過率（RGB）。空が無効なら0。
+     */
+    Math::Vector3 ComputeSunGroundTransmittance(
+        const SkyAtmosphereParameters& parameters);
+
+    /**
+     * @brief 地表での太陽の照度（lux、RGB）。太陽円盤の照度×地表の透過率。
+     *
+     * ラスタの空の太陽の方向光とPTの太陽円盤の光源標本は、この値を共有する。
+     * 空が無効なら0。
+     */
+    Math::Vector3 ComputeSunGroundIlluminance(
         const SkyAtmosphereParameters& parameters);
 
     float ComputeSunDiskPreExposedLuminance(
