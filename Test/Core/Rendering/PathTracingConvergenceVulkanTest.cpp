@@ -8,9 +8,12 @@
 // 乱数列は試料番号だけで決まるため、履歴を捨てて16試料を引き直すと同じ画像になることも確かめる。
 //
 // 公開参照: 公開データの反射面は拡散なので、純Lambert・環境光なしで4096 sppまで累積し、Cornell Bowers
-// 公開RGBE（R4と同じ）と比べる。露出はR4のdirect white ROIで1回決める。R4の影・赤・緑ROIの平均輝度の
-// 相対誤差10%以内と優勢色度の差0.05以内、発光面の画素範囲が参照の±2画素以内、16x16区画の平均輝度の
-// 相対誤差（分母の下限はdirect white ROIの参照輝度の10%）の中央値10%以内・90%点20%以内を求める。
+// 公開RGBE（R4と同じ）と比べる。露出はR4のdirect white ROIで1回決める。公開RGBEは色の符号化が
+// 公開されておらず赤・緑の壁の彩度を再現できないため、輝度は白い面・影・発光面の位置で判定し、
+// 赤・緑の壁とその反射光は優勢色度で判定する。R4の影ROIの平均輝度の相対誤差10%以内、R4の赤・緑ROIの
+// 優勢色度の差0.05以内、赤・緑の壁で優勢な成分が一致、発光面の画素範囲が参照の±2画素以内、赤・緑の
+// 壁を含まない16x16区画の平均輝度の相対誤差（分母の下限はdirect white ROIの参照輝度の10%）の
+// 中央値10%以内・90%点20%以内を求める（数値は比較の前に固定した値）。
 // --dump=<path> を渡すと、公開参照と比べた4096 sppの画像をRenderingFloatImageの形式で書き出す。
 #include "RenderingValidation/CornellBoxData.h"
 #include "RenderingValidation/GpuTestEnvironment.h"
@@ -805,9 +808,130 @@ namespace
         return bPassed;
     }
 
-    // 4096 sppの純Lambert画像を公開RGBEとR4のROI・発光面の範囲・16x16区画で比べる。
+    // 画素中心の1次光線が当たる面の分類（公開データの形状へのCPUの光線交差）。
+    enum class SurfaceClass : uint8_t
+    {
+        Miss,
+        Other,
+        RedWall,
+        GreenWall
+    };
+
+    // Möller–Trumboreの三角形交差。命中距離をoutDistanceへ返す。
+    bool IntersectTriangle(const double (&origin)[3], const double (&direction)[3],
+                           const double (&p0)[3], const double (&p1)[3], const double (&p2)[3],
+                           double& outDistance)
+    {
+        const double edge1[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+        const double edge2[3] = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
+        const double pvec[3] = {direction[1] * edge2[2] - direction[2] * edge2[1],
+                                direction[2] * edge2[0] - direction[0] * edge2[2],
+                                direction[0] * edge2[1] - direction[1] * edge2[0]};
+        const double determinant = edge1[0] * pvec[0] + edge1[1] * pvec[1] + edge1[2] * pvec[2];
+        if (std::abs(determinant) < 1.0e-12)
+        {
+            return false;
+        }
+        const double inverse = 1.0 / determinant;
+        const double tvec[3] = {origin[0] - p0[0], origin[1] - p0[1], origin[2] - p0[2]};
+        const double u = (tvec[0] * pvec[0] + tvec[1] * pvec[1] + tvec[2] * pvec[2]) * inverse;
+        if (u < 0.0 || u > 1.0)
+        {
+            return false;
+        }
+        const double qvec[3] = {tvec[1] * edge1[2] - tvec[2] * edge1[1],
+                                tvec[2] * edge1[0] - tvec[0] * edge1[2],
+                                tvec[0] * edge1[1] - tvec[1] * edge1[0]};
+        const double v = (direction[0] * qvec[0] + direction[1] * qvec[1] + direction[2] * qvec[2]) *
+                         inverse;
+        if (v < 0.0 || u + v > 1.0)
+        {
+            return false;
+        }
+        outDistance = (edge2[0] * qvec[0] + edge2[1] * qvec[1] + edge2[2] * qvec[2]) * inverse;
+        return outDistance > 0.0;
+    }
+
+    // 画素中心の1次光線（PTと同じ規約: 画面の上が+Y、左が視線の右ベクトルの逆）が最初に当たる
+    // 公開データの四角形で画素を分類する。
+    VariableArray<SurfaceClass> ClassifyPrimarySurfaces(const CameraProxy& camera)
+    {
+        struct ClassifiedQuad
+        {
+            const CornellBox::Quad* Quad;
+            SurfaceClass Class;
+        };
+        VariableArray<ClassifiedQuad> quads;
+        quads.push_back({&CornellBox::Floor, SurfaceClass::Other});
+        for (const CornellBox::Quad& quad : CornellBox::Ceiling)
+        {
+            quads.push_back({&quad, SurfaceClass::Other});
+        }
+        quads.push_back({&CornellBox::BackWall, SurfaceClass::Other});
+        for (const CornellBox::Quad& quad : CornellBox::ShortBlock)
+        {
+            quads.push_back({&quad, SurfaceClass::Other});
+        }
+        for (const CornellBox::Quad& quad : CornellBox::TallBlock)
+        {
+            quads.push_back({&quad, SurfaceClass::Other});
+        }
+        quads.push_back({&CornellBox::AreaLight, SurfaceClass::Other});
+        quads.push_back({&CornellBox::RedWall, SurfaceClass::RedWall});
+        quads.push_back({&CornellBox::GreenWall, SurfaceClass::GreenWall});
+
+        const double tanHalf = std::tan(static_cast<double>(camera.FieldOfView) * 0.5 *
+                                        3.14159265358979323846 / 180.0);
+        const double aspect = static_cast<double>(Width) / static_cast<double>(Height);
+        const double origin[3] = {camera.PositionX, camera.PositionY, camera.PositionZ};
+        VariableArray<SurfaceClass> classes(static_cast<size_t>(Width) * Height, SurfaceClass::Miss);
+        for (uint32_t y = 0u; y < Height; ++y)
+        {
+            for (uint32_t x = 0u; x < Width; ++x)
+            {
+                const double ndcX = (x + 0.5) / Width * 2.0 - 1.0;
+                const double ndcY = (y + 0.5) / Height * 2.0 - 1.0;
+                const double sx = ndcX * tanHalf * aspect;
+                const double sy = -ndcY * tanHalf;
+                const double direction[3] = {
+                    camera.ForwardX + camera.RightX * sx + camera.UpX * sy,
+                    camera.ForwardY + camera.RightY * sx + camera.UpY * sy,
+                    camera.ForwardZ + camera.RightZ * sx + camera.UpZ * sy};
+                double nearest = 1.0e30;
+                SurfaceClass nearestClass = SurfaceClass::Miss;
+                for (const ClassifiedQuad& classified : quads)
+                {
+                    double corners[4][3] = {};
+                    for (uint32_t corner = 0u; corner < 4u; ++corner)
+                    {
+                        for (uint32_t axis = 0u; axis < 3u; ++axis)
+                        {
+                            corners[corner][axis] = static_cast<double>(
+                                classified.Quad->Positions[corner][axis] * CornellBox::WorldScale);
+                        }
+                    }
+                    double distance = 0.0;
+                    if ((IntersectTriangle(origin, direction, corners[0], corners[2], corners[1], distance) ||
+                         IntersectTriangle(origin, direction, corners[0], corners[3], corners[2], distance)) &&
+                        distance < nearest)
+                    {
+                        nearest = distance;
+                        nearestClass = classified.Class;
+                    }
+                }
+                classes[static_cast<size_t>(y) * Width + x] = nearestClass;
+            }
+        }
+        return classes;
+    }
+
+    // 4096 sppの純Lambert画像を公開RGBEと比べる。公開RGBEは色の符号化（スペクトルからRGBへの換算）
+    // が公開されておらず、赤・緑の壁の彩度は標準のRGB換算のどれとも合わない。そのため輝度の判定
+    // （ROIと区画。数値は事前に固定した値）は白い面・影・発光面の位置に限り、赤・緑の壁と、その
+    // 反射光を受けるR4の赤・緑ROIは優勢色度だけを判定する（壁の画素は優勢な成分の向きを確かめる）。
     bool CheckPublicReference(const LinearImage& measured, const LinearImage& reference,
-                              const CornellRegions& regions)
+                              const CornellRegions& regions,
+                              const VariableArray<SurfaceClass>& surfaceClasses)
     {
         const LinearRgb directReference = RegionMean(reference, regions.DirectWhite);
         const LinearRgb directMeasured = RegionMean(measured, regions.DirectWhite);
@@ -820,6 +944,7 @@ namespace
         std::cout << "cornell_exposure_scale=" << exposureScale << '\n';
         bool bPassed = true;
 
+        // 影床ROIは輝度、赤・緑ROIは優勢色度だけを判定する（輝度は記録のみ）。
         const struct
         {
             const char* Label;
@@ -835,8 +960,9 @@ namespace
             const double referenceY = Luma(referenceMean);
             const double measuredY = Luma(measuredMean) * exposureScale;
             const double relativeError = std::abs(measuredY - referenceY) / referenceY;
+            const bool bChromaOnly = roi.ChromaChannel >= 0;
             double chromaDifference = 0.0;
-            if (roi.ChromaChannel >= 0)
+            if (bChromaOnly)
             {
                 const uint32_t channel = static_cast<uint32_t>(roi.ChromaChannel);
                 chromaDifference =
@@ -844,11 +970,58 @@ namespace
             }
             std::cout << "cornell_roi " << roi.Label << " reference_y=" << referenceY
                       << " measured_y=" << measuredY << " relative_error=" << relativeError
+                      << (bChromaOnly ? " (luminance_not_judged)" : "")
                       << " chroma_difference=" << chromaDifference << '\n';
-            if (!(relativeError <= MaximumRoiRelativeYError) ||
-                !(chromaDifference <= MaximumRoiChromaDifference))
+            const bool bWithin = bChromaOnly ? chromaDifference <= MaximumRoiChromaDifference
+                                             : relativeError <= MaximumRoiRelativeYError;
+            if (!bWithin)
             {
                 std::cerr << "Cornell公開参照のROI " << roi.Label << " が閾値を超えました\n";
+                bPassed = false;
+            }
+        }
+
+        // 赤・緑の壁の画素は優勢な成分の向き（赤の壁はR、緑の壁はGが最大）を両方の画像で確かめる。
+        // 色度の値そのものは符号化が不明なため記録だけにする。
+        for (const SurfaceClass wall : {SurfaceClass::RedWall, SurfaceClass::GreenWall})
+        {
+            LinearRgb referenceSum;
+            LinearRgb measuredSum;
+            uint32_t count = 0u;
+            for (uint32_t y = 0u; y < Height; ++y)
+            {
+                for (uint32_t x = 0u; x < Width; ++x)
+                {
+                    if (surfaceClasses[static_cast<size_t>(y) * Width + x] != wall)
+                    {
+                        continue;
+                    }
+                    const LinearRgb referenceColor = reference.At(x, y);
+                    const LinearRgb measuredColor = measured.At(x, y);
+                    referenceSum.Red += referenceColor.Red;
+                    referenceSum.Green += referenceColor.Green;
+                    referenceSum.Blue += referenceColor.Blue;
+                    measuredSum.Red += measuredColor.Red;
+                    measuredSum.Green += measuredColor.Green;
+                    measuredSum.Blue += measuredColor.Blue;
+                    ++count;
+                }
+            }
+            const bool bRed = wall == SurfaceClass::RedWall;
+            const auto isDominant = [bRed](const LinearRgb& color)
+            {
+                return bRed ? color.Red > color.Green && color.Red > color.Blue
+                            : color.Green > color.Red && color.Green > color.Blue;
+            };
+            const uint32_t channel = bRed ? 0u : 1u;
+            std::cout << "cornell_wall " << (bRed ? "red" : "green") << " pixels=" << count
+                      << " reference_chroma=" << Chroma(referenceSum, channel)
+                      << " measured_chroma=" << Chroma(measuredSum, channel)
+                      << " reference_dominant=" << (isDominant(referenceSum) ? 1 : 0)
+                      << " measured_dominant=" << (isDominant(measuredSum) ? 1 : 0) << '\n';
+            if (count == 0u || !isDominant(referenceSum) || !isDominant(measuredSum))
+            {
+                std::cerr << "Cornellの色の壁の優勢な成分が一致しません\n";
                 bPassed = false;
             }
         }
@@ -889,7 +1062,10 @@ namespace
                     for (uint32_t x = left; x < left + BlockSize; ++x)
                     {
                         const double referenceY = Luma(reference.At(x, y));
-                        bExcluded = bExcluded || referenceY <= 0.0 || referenceY > EmitterExclusionY;
+                        const SurfaceClass surface = surfaceClasses[static_cast<size_t>(y) * Width + x];
+                        bExcluded = bExcluded || referenceY <= 0.0 || referenceY > EmitterExclusionY ||
+                                    surface == SurfaceClass::RedWall ||
+                                    surface == SurfaceClass::GreenWall;
                         referenceSum += referenceY;
                         measuredSum += Luma(measured.At(x, y));
                     }
@@ -1129,7 +1305,9 @@ namespace
                 return 1;
             }
         }
-        bPassed = CheckPublicReference(ToLinearImage(lambertPixels), reference, regions) && bPassed;
+        bPassed = CheckPublicReference(ToLinearImage(lambertPixels), reference, regions,
+                                       ClassifyPrimarySurfaces(camera)) &&
+                  bPassed;
 
         // 3. 履歴を捨てて本番BSDFの16試料を引き直すと、1で読んだ16 sppの接頭列と同じ画像になる。
         pass.SetBsdfMode(PathTracingBsdfMode::Production);
