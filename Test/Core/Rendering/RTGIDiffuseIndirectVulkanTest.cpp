@@ -16,9 +16,12 @@
 #include "RHI/Vulkan/VulkanBuffer.h"
 #include "RHI/Vulkan/VulkanCommandList.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -372,6 +375,24 @@ namespace
     bool IsZeroHalf(uint16_t value)
     {
         return (value & 0x7FFFu) == 0u;
+    }
+
+    float HalfToFloat(uint16_t value)
+    {
+        const uint32_t exponent = (value >> 10u) & 0x1Fu;
+        const uint32_t mantissa = value & 0x3FFu;
+        const float sign = (value & 0x8000u) != 0u ? -1.0f : 1.0f;
+        if (exponent == 0u)
+        {
+            return sign * std::ldexp(static_cast<float>(mantissa), -24);
+        }
+        if (exponent == 31u)
+        {
+            return mantissa == 0u ? sign * std::numeric_limits<float>::infinity()
+                                  : std::numeric_limits<float>::quiet_NaN();
+        }
+        return sign * std::ldexp(static_cast<float>(mantissa | 0x400u),
+                                 static_cast<int>(exponent) - 25);
     }
 
     bool ValidateRTGIReadback(const LightingFrameObservation& observation)
@@ -966,12 +987,205 @@ namespace
             return 1;
         }
 
+        // 発光面（z=2）の0.5 mm手前に、発光面より広い影を落とす遮蔽板（z=1.9995）を置く。光源標本の
+        // 影の問い合わせが発光面の直前まで調べていれば、発光面の光は1次面へ届かず、遮蔽板だけの
+        // シーンとRTGIの出力が画素ごとに一致する。距離を割合で縮める判定（距離2 mの0.1%は2 mm）では
+        // 遮蔽板を見落とし、発光面の光が漏れる。
+        constexpr float NearOccluderGap = 0.0005f;
+        const auto buildNearOccluderScene = [&](bool bWithEmitter,
+                                                AccelerationStructurePtr& outTopLevel,
+                                                FramePacket& outPacket,
+                                                AccelerationStructureBuildDesc& outBuild) -> bool
+        {
+            AccelerationStructureDesc sceneTopLevelDesc;
+            sceneTopLevelDesc.type = AccelerationStructureType::TopLevel;
+            sceneTopLevelDesc.maxInstanceCount = 2u;
+            outTopLevel = device->CreateAccelerationStructure(sceneTopLevelDesc);
+            if (!outTopLevel)
+            {
+                return false;
+            }
+            PopulateRayTracingSnapshot(outTopLevel, bottomLevel, vertexBuffer, indexBuffer,
+                                       outPacket);
+            RayTracingSceneInstanceSnapshot emitter = outPacket.RayTracingScene.Instances[0];
+            emitter.Instance.customIndex = ExpectedInstanceCustomIndex + 1u;
+            emitter.Instance.transform[11] = 1.0f;
+            RayTracingSceneInstanceSnapshot& blocker = outPacket.RayTracingScene.Instances[0];
+            blocker.Instance.transform[0] = 2.0f;
+            blocker.Instance.transform[5] = 2.0f;
+            blocker.Instance.transform[11] = 1.0f - NearOccluderGap;
+            for (float& channel : blocker.Material.EmissiveColor)
+            {
+                channel = 0.0f;
+            }
+            blocker.Material.EmissiveLuminanceNits = 0.0f;
+            if (bWithEmitter)
+            {
+                outPacket.RayTracingScene.Instances.push_back(emitter);
+            }
+            outBuild.type = AccelerationStructureType::TopLevel;
+            outBuild.destination = outTopLevel;
+            for (const RayTracingSceneInstanceSnapshot& snapshot : outPacket.RayTracingScene.Instances)
+            {
+                outBuild.instances.push_back(snapshot.Instance);
+            }
+            return true;
+        };
+        AccelerationStructurePtr nearBlockedTopLevel;
+        AccelerationStructurePtr blockerOnlyTopLevel;
+        FramePacket nearBlockedPacket;
+        FramePacket blockerOnlyPacket;
+        AccelerationStructureBuildDesc nearBlockedBuild;
+        AccelerationStructureBuildDesc blockerOnlyBuild;
+        if (!buildNearOccluderScene(true, nearBlockedTopLevel, nearBlockedPacket, nearBlockedBuild) ||
+            !buildNearOccluderScene(false, blockerOnlyTopLevel, blockerOnlyPacket, blockerOnlyBuild))
+        {
+            std::cerr << "発光面の直前の遮蔽板のTLASを作成できませんでした\n";
+            return 1;
+        }
+        LightingFrameObservation nearBlocked;
+        LightingFrameObservation blockerOnly;
+        if (!RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+                              context, nearBlockedPacket.RayTracingScene, nearBlockedBuild,
+                              gbuffer, rtgiOutput, true, true, true, CasterComparisonFrame,
+                              nearBlocked) ||
+            !RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+                              context, blockerOnlyPacket.RayTracingScene, blockerOnlyBuild,
+                              gbuffer, rtgiOutput, true, true, true, CasterComparisonFrame,
+                              blockerOnly) ||
+            !nearBlocked.bPublished || !blockerOnly.bPublished ||
+            nearBlocked.RTGIPixels.size() != blockerOnly.RTGIPixels.size())
+        {
+            std::cerr << "発光面の直前の遮蔽板のRTGIを描けませんでした\n";
+            return 1;
+        }
+        bool bNearBlockedIdentical = true;
+        for (size_t index = 0u; index < nearBlocked.RTGIPixels.size(); ++index)
+        {
+            bNearBlockedIdentical = bNearBlockedIdentical &&
+                                    nearBlocked.RTGIPixels[index] == blockerOnly.RTGIPixels[index];
+        }
+        if (!bNearBlockedIdentical)
+        {
+            std::cerr << "発光面の0.5 mm手前の遮蔽板を光源標本の影の問い合わせが見落としました\n";
+            for (size_t index = 0u; index < nearBlocked.RTGIPixels.size(); ++index)
+            {
+                std::cerr << "  index=" << index << " blocked=" << nearBlocked.RTGIPixels[index]
+                          << " blocker_only=" << blockerOnly.RTGIPixels[index] << "\n";
+            }
+            return 1;
+        }
+
+        // RTGIの出力は発光の強さとpre-exposureの積だけで決まる。発光を1e5倍、pre-exposureを1e-5倍に
+        // した描画は、途中の物理単位の値が半精度の上限（65504）を超えても元の描画と一致する。途中で
+        // 上限へ切り詰めると、強い発光の描画だけが暗くなる。1次面から見て小さく近い発光三角形
+        // （一辺約0.2 m、z=2）にして、1試料の光源標本がどのframeでも同程度の値になるようにし、
+        // 同じカメラ（正射影、1次面はz=-0.5〜0.5）で両方を描く。
+        AccelerationStructureDesc smallEmitterTopLevelDesc;
+        smallEmitterTopLevelDesc.type = AccelerationStructureType::TopLevel;
+        smallEmitterTopLevelDesc.maxInstanceCount = 1u;
+        AccelerationStructurePtr smallEmitterTopLevel =
+            device->CreateAccelerationStructure(smallEmitterTopLevelDesc);
+        if (!smallEmitterTopLevel)
+        {
+            std::cerr << "小さな発光面のTLASを作成できませんでした\n";
+            return 1;
+        }
+        FramePacket smallEmitterPacket;
+        PopulateRayTracingSnapshot(smallEmitterTopLevel, bottomLevel, vertexBuffer, indexBuffer,
+                                   smallEmitterPacket);
+        RayTracingSceneInstanceSnapshot& smallEmitter = smallEmitterPacket.RayTracingScene.Instances[0];
+        smallEmitter.Instance.transform[0] = 0.001f;
+        smallEmitter.Instance.transform[5] = 0.001f;
+        smallEmitter.Instance.transform[11] = 1.0f;
+        AccelerationStructureBuildDesc smallEmitterBuild;
+        smallEmitterBuild.type = AccelerationStructureType::TopLevel;
+        smallEmitterBuild.destination = smallEmitterTopLevel;
+        smallEmitterBuild.instances.push_back(smallEmitter.Instance);
+        CameraProxy exposureCamera;
+        exposureCamera.CameraId = 7u;
+        exposureCamera.Projection = ProjectionType::Orthographic;
+        exposureCamera.PositionZ = -1.0f;
+        exposureCamera.ForwardZ = 1.0f;
+        exposureCamera.OrthoWidth = 2.0f;
+        exposureCamera.OrthoHeight = 2.0f;
+        exposureCamera.NearPlane = 0.5f;
+        exposureCamera.FarPlane = 1.5f;
+        exposureCamera.AspectRatio = 1.0f;
+        exposureCamera.Viewport.Width = static_cast<float>(TestWidth);
+        exposureCamera.Viewport.Height = static_cast<float>(TestHeight);
+        // 基準の描画は発光4000 nits相当（1次面の標本値は1〜10程度）、pre-exposure 1。
+        constexpr float UnitNitsScale = 1000.0f;
+        constexpr float ExposureScale = 1.0e5f;
+        const auto runExposureFrame = [&](float preExposure,
+                                          float nitsScale,
+                                          LightingFrameObservation& outObservation) -> bool
+        {
+            exposureCamera.PreExposure = preExposure;
+            exposureCamera.InvPreExposure = 1.0f / preExposure;
+            RayTracingHitMaterialSnapshot& emitterMaterial =
+                smallEmitterPacket.RayTracingScene.Instances[0].Material;
+            const float baseNits = emitterMaterial.EmissiveLuminanceNits;
+            emitterMaterial.EmissiveLuminanceNits = baseNits * nitsScale;
+            context.MainCamera = &exposureCamera;
+            const bool bRan = RunLightingFrame(device, capabilities, rtgiCapability, lightingPass,
+                                               renderer, context, smallEmitterPacket.RayTracingScene,
+                                               smallEmitterBuild, gbuffer, rtgiOutput, true, true,
+                                               true, CasterComparisonFrame, outObservation);
+            context.MainCamera = nullptr;
+            emitterMaterial.EmissiveLuminanceNits = baseNits;
+            return bRan && outObservation.bPublished;
+        };
+        LightingFrameObservation unitExposure;
+        LightingFrameObservation scaledExposure;
+        if (!runExposureFrame(1.0f, UnitNitsScale, unitExposure) ||
+            !runExposureFrame(1.0f / ExposureScale, UnitNitsScale * ExposureScale, scaledExposure) ||
+            unitExposure.RTGIPixels.size() != scaledExposure.RTGIPixels.size())
+        {
+            std::cerr << "露出を変えたRTGIを描けませんでした\n";
+            return 1;
+        }
+        bool bExposureLit = true;
+        bool bExposureInvariant = true;
+        // 強い発光の描画で、露出前の値（出力÷pre-exposure。アルベドと拡散の重みは1）が半精度の
+        // 上限を超える画素があること（切り詰めの有無を区別できる条件になっていること）。
+        bool bUnexposedAboveHalfMax = false;
+        for (const uint32_t hitPixel : {0u, 2u})
+        {
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                const size_t index = hitPixel * 4u + channel;
+                const float unitValue = HalfToFloat(unitExposure.RTGIPixels[index]);
+                const float scaledValue = HalfToFloat(scaledExposure.RTGIPixels[index]);
+                bExposureLit = bExposureLit && unitValue > 0.0f;
+                bUnexposedAboveHalfMax = bUnexposedAboveHalfMax ||
+                                         scaledValue * ExposureScale > 65504.0f;
+                // 半精度の丸め2段分まで許す。
+                bExposureInvariant = bExposureInvariant &&
+                                     std::abs(scaledValue - unitValue) <=
+                                         2.0e-3f * std::max(unitValue, scaledValue);
+                std::cout << "rtgi_exposure_invariance pixel=" << hitPixel
+                          << " channel=" << channel << " unit=" << unitValue
+                          << " scaled=" << scaledValue
+                          << " scaled_unexposed=" << scaledValue * ExposureScale << "\n";
+            }
+        }
+        if (!bExposureLit || !bExposureInvariant || !bUnexposedAboveHalfMax)
+        {
+            std::cerr << "RTGIの出力が発光の強さとpre-exposureの積だけで決まりません lit="
+                      << bExposureLit << " invariant=" << bExposureInvariant
+                      << " unexposed_above_half_max=" << bUnexposedAboveHalfMax << "\n";
+            return 1;
+        }
+
         std::cout << "rtgi_capability_usable=true tlas_complete=true output_format=R16G16B16A16_FLOAT\n";
         std::cout << "rtgi_hit_miss_readback=finite hit_positive=true miss_zero=true\n";
         std::cout << "rtgi_published=true source=RTGI fallback_disabled=Raster fallback_incomplete_tlas=Raster\n";
         std::cout << "scene_color_rtgi_differs_from_fallback=true disabled_and_incomplete_equal=true\n";
         std::cout << "rtgi_non_shadow_caster_only_scene_falls_back=true "
                      "rtgi_non_shadow_caster_instance_ignored=true\n";
+        std::cout << "rtgi_emitter_near_occluder_blocks=true "
+                     "rtgi_output_depends_on_emission_times_pre_exposure=true\n";
 
         lightingPass.Shutdown();
         renderer.Shutdown();

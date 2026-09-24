@@ -115,6 +115,17 @@ vec3 SanitizeRadiance(vec3 value)
     return clamp(value, vec3(0.0), vec3(65504.0));
 }
 
+// pre-exposureを掛ける前の物理単位の中間値。非有限と負を0にし、上限では切り詰めない
+// （半精度の上限は露出後の出力にだけ掛ける）。
+vec3 SanitizeUnexposedRadiance(vec3 value)
+{
+    if (!IsFiniteVector(value))
+    {
+        return vec3(0.0);
+    }
+    return max(value, vec3(0.0));
+}
+
 vec2 EquirectangularUV(vec3 direction)
 {
     vec2 uv = vec2(atan(direction.z, direction.x),
@@ -354,31 +365,47 @@ bool TryReadWorldTriangle(RTGIInstanceData instanceData,
     return IsFiniteVector(vertex0) && IsFiniteVector(vertex1) && IsFiniteVector(vertex2);
 }
 
-// 浮かせた始点から目標点の手前（距離の0.1%）までに遮蔽物があるか。方向と距離を浮かせた始点から
-// 測り直す（面上の点から測った方向のままだと、浅い角度で始点のずれが光線方向へ伸び、目標の
-// 発光面を手前で横切って自分で遮る）。
-bool IsSegmentOccluded(vec3 origin, vec3 target)
+// 浮かせた始点から発光面上の目標点までに遮蔽物があるか。方向と距離を浮かせた始点から測り直す
+// （面上の点から測った方向のままだと、浅い角度で始点のずれが光線方向へ伸び、目標の発光面を
+// 手前で横切って自分で遮る）。目標点の少し先まで最も近い命中を求め、それが標本の発光三角形
+// 自身か、目標点より先（影を落とさない発光体の奥にある面）なら遮蔽なしとする。距離を割合で
+// 縮めないので、発光面の直前にある遮蔽物も見落とさない（パストレーサーと同じ判定）。
+bool IsEmitterSegmentOccluded(vec3 origin,
+                              vec3 target,
+                              uint emitterCustomIndex,
+                              uint emitterPrimitiveIndex)
 {
     vec3 toTarget = target - origin;
     float targetDistance = length(toTarget);
-    if (!IsFiniteScalar(targetDistance) || targetDistance * 0.999 <= parameters.rayLimits.x)
+    if (!IsFiniteScalar(targetDistance) || targetDistance <= parameters.rayLimits.x)
     {
         return false;
     }
     rayQueryEXT shadowQuery;
     rayQueryInitializeEXT(shadowQuery,
                           sceneTopLevel,
-                          gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                          gl_RayFlagsOpaqueEXT,
                           RayTracingInstanceMaskShadowCaster,
                           origin,
                           parameters.rayLimits.x,
                           toTarget / targetDistance,
-                          targetDistance * 0.999);
+                          targetDistance * 1.001 + 0.001);
     while (rayQueryProceedEXT(shadowQuery))
     {
     }
-    return rayQueryGetIntersectionTypeEXT(shadowQuery, true) ==
-           gl_RayQueryCommittedIntersectionTriangleEXT;
+    if (rayQueryGetIntersectionTypeEXT(shadowQuery, true) !=
+        gl_RayQueryCommittedIntersectionTriangleEXT)
+    {
+        return false;
+    }
+    if (uint(rayQueryGetIntersectionInstanceCustomIndexEXT(shadowQuery, true)) ==
+            emitterCustomIndex &&
+        uint(rayQueryGetIntersectionPrimitiveIndexEXT(shadowQuery, true)) ==
+            emitterPrimitiveIndex)
+    {
+        return false;
+    }
+    return rayQueryGetIntersectionTEXT(shadowQuery, true) < targetDistance;
 }
 
 // 発光三角形の光源標本。三角形を通し番号で一様に選び、面上を一様に標本化した直接照度Eを、
@@ -419,10 +446,11 @@ vec3 SampleEmitterIrradiance(vec3 worldPosition, vec3 normal, uvec2 pixel, uint 
         return vec3(0.0);
     }
     RTGIInstanceData emitter = instances.values[entry.x];
+    uint emitterPrimitiveIndex = triangleNumber - entry.z;
     vec3 vertex0;
     vec3 vertex1;
     vec3 vertex2;
-    if (!TryReadWorldTriangle(emitter, triangleNumber - entry.z, vertex0, vertex1, vertex2))
+    if (!TryReadWorldTriangle(emitter, emitterPrimitiveIndex, vertex0, vertex1, vertex2))
     {
         return vec3(0.0);
     }
@@ -446,15 +474,19 @@ vec3 SampleEmitterIrradiance(vec3 worldPosition, vec3 normal, uvec2 pixel, uint 
     float surfaceCosine = dot(normal, lightDirection);
     float lightCosine = abs(dot(edgeCross / twiceArea, lightDirection));
     if (surfaceCosine <= 0.0 || lightCosine <= 1.0e-6 ||
-        IsSegmentOccluded(worldPosition + normal * RAY_ORIGIN_OFFSET, lightPoint))
+        IsEmitterSegmentOccluded(worldPosition + normal * RAY_ORIGIN_OFFSET,
+                                 lightPoint,
+                                 emitter.geometry.w,
+                                 emitterPrimitiveIndex))
     {
         return vec3(0.0);
     }
     vec3 emission = emitter.emissiveChromaticityAndLuminance.rgb *
                     emitter.emissiveChromaticityAndLuminance.a;
     // 面積の確率密度は1/(三角形数×面積)。E = Le·cosS·cosL/d²/pdf。
-    return SanitizeRadiance(emission * (surfaceCosine * lightCosine * 0.5 * twiceArea *
-                                        float(triangleTotal) / (PI * distanceSquared)));
+    return SanitizeUnexposedRadiance(emission *
+                                     (surfaceCosine * lightCosine * 0.5 * twiceArea *
+                                      float(triangleTotal) / (PI * distanceSquared)));
 }
 
 vec3 ComputeDirectRadiance(vec3 worldPosition,
@@ -533,7 +565,7 @@ vec3 ComputeDirectRadiance(vec3 worldPosition,
         radiance += EvaluateLambertDiffuseBRDF(baseColor) *
                     lightRadiance * (cosine * attenuation);
     }
-    return SanitizeRadiance(radiance);
+    return SanitizeUnexposedRadiance(radiance);
 }
 
 bool TryReadReprojectedHistory(vec2 currentUV,
@@ -757,7 +789,7 @@ void main()
             }
 
             // 1次面を照らす発光三角形の直接光（反射率を掛ける前の単位でコサイン標本に加える）。
-            incomingRadiance = SanitizeRadiance(incomingRadiance) +
+            incomingRadiance = SanitizeUnexposedRadiance(incomingRadiance) +
                                SampleEmitterIrradiance(worldPosition, worldNormal, pixel, 0u);
             float preExposure = IsFiniteScalar(parameters.rayLimits.z) &&
                                         parameters.rayLimits.z > 0.0
