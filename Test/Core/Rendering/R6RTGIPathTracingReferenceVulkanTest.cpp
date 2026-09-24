@@ -4,7 +4,9 @@
 // パストレーサー（--renderer=path-tracing、輸送範囲は--path-tracing-transport）のSceneColorを取得し、
 // --r6-reference-dumpへfloat画像として書き出す。
 // 幾何（GPU）: --r6-reference-debug-view=normal|depth でラスタのGBufferの法線・距離の検証表示を、
-// PTは--path-tracing-debug-output=shading-normal|hit-distance で1次命中の法線・距離を取得する。
+// PTは--path-tracing-debug-output=shading-normal|hit-distance で1次命中の法線・距離を取得する（PTは
+// 画素中心から出すため、累積する試料数によらず同じ交差になる）。ラスタには物体IDがないため、物体の
+// 同一性は同じ位置（距離）と向き（法線）の一致で代える（距離1%以内で同じ向きの別物体は区別しない）。
 // 比較（CPU）: --compare-dumps=<dir> でラスタ（直接光は解析BRDF）とPT参照（直接光のみ・拡散1バウンス・
 // 多重散乱）と幾何の画像を読み、R6の申告範囲（拡散1バウンス）に合わせたPT参照（pt-single）と比べる。
 // 判定は原寸のFLIP平均、原寸の画素単位FLIP最大、8x8区画平均画像のFLIP最大の三つ。画素単位最大は、
@@ -346,9 +348,23 @@ namespace
         {
             return false;
         }
-        outMeasurement.AgreeingPixelMax = agreeing.MaxFlipError;
-        outMeasurement.AgreeingPixelX = agreeing.MaxFlipX;
-        outMeasurement.AgreeingPixelY = agreeing.MaxFlipY;
+        // 置き換えた画素にも近傍から誤差が広がるため、最大は一致する画素だけで求める。一致しない
+        // 画素の誤差は0にして、以後の診断の集計からも外す。
+        outMeasurement.AgreeingPixelMax = 0.0f;
+        for (size_t index = 0u; index < outMeasurement.AgreeingErrorMap.size(); ++index)
+        {
+            if (!agreement.empty() && agreement[index] == 0u)
+            {
+                outMeasurement.AgreeingErrorMap[index] = 0.0f;
+                continue;
+            }
+            if (outMeasurement.AgreeingErrorMap[index] > outMeasurement.AgreeingPixelMax)
+            {
+                outMeasurement.AgreeingPixelMax = outMeasurement.AgreeingErrorMap[index];
+                outMeasurement.AgreeingPixelX = static_cast<uint32_t>(index % reference.Width);
+                outMeasurement.AgreeingPixelY = static_cast<uint32_t>(index / reference.Width);
+            }
+        }
         return true;
     }
 

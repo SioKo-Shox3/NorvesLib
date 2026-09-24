@@ -40,7 +40,7 @@ def main():
                     "--path-tracing-pixel-sampling=center",
                     f"--path-tracing-samples={PATH_TRACING_SAMPLES}",
                     f"--path-tracing-samples-per-frame={SAMPLES_PER_FRAME}"]
-    # 1次命中の幾何は画素中心の1試料で決まる。
+    # 1次命中の幾何は画素中心から出す光線で決まり、累積する試料数によらない（最小1試料を待つ）。
     path_tracing_geometry = ["--renderer=path-tracing",
                              "--path-tracing-pixel-sampling=center",
                              "--path-tracing-samples=1",
