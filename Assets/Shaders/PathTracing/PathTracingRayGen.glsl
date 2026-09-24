@@ -138,7 +138,7 @@ vec3 MissRadiance(vec3 direction, bool primaryRay, float bsdfPdf)
         float weight = sampling == PATH_SAMPLING_BSDF_ONLY ? 1.0 :
                        sampling == PATH_SAMPLING_LIGHT_ONLY ? 0.0 :
                        PowerHeuristic(bsdfPdf, 1.0 / SunSolidAngle());
-        sky += vec3(parameters.skyState.y / SunSolidAngle()) * weight;
+        sky += parameters.skySunIlluminance.rgb / SunSolidAngle() * weight;
     }
     return max(sky, vec3(0.0));
 }
@@ -514,6 +514,7 @@ float EmissionHitWeight(float bsdfPdf, vec3 toHit, vec3 hitNormal, float triangl
 }
 
 // 太陽円盤の光源標本。放射輝度=照度/立体角、pdf=1/立体角なので寄与はf·cos·照度·重み。
+// 照度は地表での値（大気の透過率込み）で、ラスタの空の太陽の方向光と同じ。
 vec3 SampleSun(PathSurface surface, vec3 position, vec3 geometricNormal, inout uint state)
 {
     uint sampling = SamplingMode();
@@ -530,7 +531,8 @@ vec3 SampleSun(PathSurface surface, vec3 position, vec3 geometricNormal, inout u
     float weight = sampling == PATH_SAMPLING_LIGHT_ONLY
         ? 1.0
         : PowerHeuristic(1.0 / SunSolidAngle(), PathBsdfPdf(surface, L));
-    vec3 contribution = EvaluatePathBsdf(surface, L) * NdotL * parameters.skyState.y * weight;
+    vec3 contribution = EvaluatePathBsdf(surface, L) * NdotL * parameters.skySunIlluminance.rgb *
+                        weight;
     if (max(contribution.r, max(contribution.g, contribution.b)) <= 0.0 ||
         !IsVisible(position + geometricNormal * 0.002, L, 100000.0))
     {

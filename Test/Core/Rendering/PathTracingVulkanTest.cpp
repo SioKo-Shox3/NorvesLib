@@ -1087,6 +1087,17 @@ namespace
         return maximum;
     }
 
+    // 屋外テストの面（反射率(0.8, 0.3, 0.1)の拡散面）を太陽が照らしたときのRGB和。
+    // 太陽は地表照度（大気の透過率込み、チャンネルごと）で照らす。
+    float ExpectedSolarSurface(const SkyAtmosphereParameters& sky, float preExposure)
+    {
+        const Math::Vector3 sunDirection =
+            MakeSunDirectionFromAltitudeAzimuth(sky.SunAltitudeDegrees, sky.SunAzimuthDegrees);
+        const Math::Vector3 illuminance = ComputeSunGroundIlluminance(sky);
+        return (0.8f * illuminance.x + 0.3f * illuminance.y + 0.1f * illuminance.z) *
+               preExposure * std::max(-sunDirection.z, 0.0f) / 3.14159265358979323846f;
+    }
+
     float CenterRadiance(const VariableArray<float>& pixels)
     {
         const size_t offset = (Height / 2u * Width + Width / 2u) * 4u;
@@ -1213,13 +1224,7 @@ namespace
             }
             cornerRadiance[index] = MaxCornerRadiance(pixels);
             centerRadiance[index] = CenterRadiance(pixels);
-            const Math::Vector3 sunDirection =
-                MakeSunDirectionFromAltitudeAzimuth(expected.SunAltitudeDegrees,
-                                                    expected.SunAzimuthDegrees);
-            const float expectedSurface =
-                ComputeSunDiskIrradiance(expected) * camera.PreExposure *
-                std::max(-sunDirection.z, 0.0f) * 1.2f /
-                3.14159265358979323846f;
+            const float expectedSurface = ExpectedSolarSurface(expected, camera.PreExposure);
             std::cout << cases[index].Name << "_sky=" << cornerRadiance[index]
                       << " solar_surface=" << centerRadiance[index]
                       << " expected_solar_surface=" << expectedSurface
@@ -1268,12 +1273,8 @@ namespace
         }
         const SkyAtmosphereParameters evening =
             SanitizeSkyAtmosphereParameters(packet.Scene.SkyAtmosphere);
-        const Math::Vector3 eveningSun = MakeSunDirectionFromAltitudeAzimuth(
-            evening.SunAltitudeDegrees, evening.SunAzimuthDegrees);
         const float saturatedExpectedSurface =
-            ComputeSunDiskIrradiance(evening) * camera.PreExposure *
-            std::max(-eveningSun.z, 0.0f) * 1.2f /
-            3.14159265358979323846f;
+            ExpectedSolarSurface(evening, camera.PreExposure);
         const float saturatedSurface = CenterRadiance(pixels);
         std::cout << "saturated_solar_surface=" << saturatedSurface
                   << " expected_saturated_solar_surface="

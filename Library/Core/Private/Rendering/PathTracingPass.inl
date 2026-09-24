@@ -8,6 +8,7 @@
 #include "Rendering/PathTracingCamera.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SkyAtmosphere.h"
+#include "Rendering/SkySunLight.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VolumetricFog.h"
@@ -50,6 +51,8 @@ namespace NorvesLib::Core::Rendering
             float EnvironmentRadiance[4] = {};
             /** @brief x=このdispatchで累積する試料数 */
             uint32_t SampleState[4] = {};
+            /** @brief rgb=地表での太陽の事前露出照度（大気の透過率込み） */
+            float SkySunIlluminance[4] = {};
         };
 
         struct PathTracingInstance
@@ -74,7 +77,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t Reserved = 0u;
         };
 
-        static_assert(sizeof(PathTracingParameters) == 256u);
+        static_assert(sizeof(PathTracingParameters) == 272u);
         static_assert(sizeof(PathTracingInstance) == 144u);
         static_assert(sizeof(PathTracingEmissiveInstance) == 16u);
         static_assert(sizeof(GPULightData) == 64u);
@@ -916,17 +919,26 @@ namespace NorvesLib::Core::Rendering
                                         FrameResources& frameResources)
     {
         // 点・spot・方向光はラスタのLightingPassと同じ関数で詰め、単位・減衰・spot円錐を一致させる。
-        Container::Span<const LightProxy> lightProxies;
-        if (context.SnapshotLightProxies)
+        // 空の太陽の方向光は、同じ太陽を空の円盤の光源標本で数えるので除く。
+        const Container::VariableArray<LightProxy>* sourceLights =
+            context.SnapshotLightProxies ? context.SnapshotLightProxies
+            : context.SnapshotScene      ? &context.SnapshotScene->LightProxies
+                                         : nullptr;
+        Container::VariableArray<LightProxy> punctualLights;
+        if (sourceLights)
         {
-            lightProxies = Container::Span<const LightProxy>(*context.SnapshotLightProxies);
-        }
-        else if (context.SnapshotScene)
-        {
-            lightProxies = Container::Span<const LightProxy>(context.SnapshotScene->LightProxies);
+            punctualLights.reserve(sourceLights->size());
+            for (const LightProxy& light : *sourceLights)
+            {
+                if (!IsSkySunLight(light))
+                {
+                    punctualLights.push_back(light);
+                }
+            }
         }
         Container::VariableArray<GPULightData> lights;
-        m_PunctualLightCount = PackLightingPassLights(lightProxies, lights);
+        m_PunctualLightCount = PackLightingPassLights(
+            Container::Span<const LightProxy>(punctualLights), lights);
         // light revisionが進まなくても、光源表の中身が変われば累積履歴を捨てる。
         m_DeclaredLightSignature = HashPathBytes(14695981039346656037ull, lights.data(),
                                                  lights.size() * sizeof(GPULightData));
@@ -1232,8 +1244,15 @@ namespace NorvesLib::Core::Rendering
             parameters.SkySunDirectionAndCosRadius[3] = std::cos(
                 std::sqrt(SolarDiskSolidAngleSteradians / 3.14159265358979323846f));
             parameters.SkyState[0] = context.SkyAtmosphere.PreExposure;
-            parameters.SkyState[1] = ComputeSunDiskIrradiance(sky) *
-                context.SkyAtmosphere.PreExposure;
+            // ラスタの空の太陽の方向光（SkySunLight）と同じ地表照度で太陽を数える。
+            const Math::Vector3 sunIlluminance = ComputeSunGroundIlluminance(sky);
+            const float preExposure = context.SkyAtmosphere.PreExposure;
+            parameters.SkySunIlluminance[0] = sunIlluminance.x * preExposure;
+            parameters.SkySunIlluminance[1] = sunIlluminance.y * preExposure;
+            parameters.SkySunIlluminance[2] = sunIlluminance.z * preExposure;
+            parameters.SkyState[1] = 0.2126f * parameters.SkySunIlluminance[0] +
+                                     0.7152f * parameters.SkySunIlluminance[1] +
+                                     0.0722f * parameters.SkySunIlluminance[2];
             parameters.SkyState[2] = 1.0f;
         }
         parameters.SkyState[3] = sky.bEnabled ? 1.0f : 0.0f;

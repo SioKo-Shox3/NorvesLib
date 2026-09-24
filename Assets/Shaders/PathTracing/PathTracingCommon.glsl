@@ -6,7 +6,7 @@ layout(set = 0, binding = 1, std140) uniform PathTracingParameters
     vec4 cameraPosition;
     uvec4 imageState; // xy=寸法、z=試料番号、w=インスタンス数
     vec4 skySunDirectionAndCosRadius;
-    vec4 skyState; // x=プリエクスポージャ、y=太陽の事前露出照度、z=空有効、w=空要求
+    vec4 skyState; // x=プリエクスポージャ、y=地表での太陽の事前露出照度の輝度、z=空有効、w=空要求
     vec4 fogDensityHeightFalloffAndEnabled; // xyz=R3密度・基準高さ・減衰率、w=霧有効
     vec4 fogColorAndPreExposure; // rgb=空欠落時の霧色、w=事前露出
     vec4 fogLightDirectionAndAnisotropy; // xyz=方向光の進行方向、w=HG異方性
@@ -15,6 +15,7 @@ layout(set = 0, binding = 1, std140) uniform PathTracingParameters
     uvec4 lightState; // x=点・spot・方向光の数、y=発光instance数、z=発光三角形数、w=BSDF(bit0-1)と標本化戦略(bit2-3)
     vec4 environmentRadiance; // rgb=一様環境の放射輝度または環境textureの倍率、w=環境光の種類
     uvec4 sampleState; // x=このdispatchの試料数、y=bit0正射影・bit1画素中心、z=検証mode 252、w=輸送範囲 // x=このdispatchの試料数、y=正射影(1)、z=検証mode 252の被覆alpha(1)
+    vec4 skySunIlluminance; // rgb=地表での太陽の事前露出照度（大気の透過率込み。ラスタの空の太陽の方向光と同じ値）
 } parameters;
 
 // 表面BSDF（PathTracingBsdfModeと同じ値）。
