@@ -1,4 +1,5 @@
-﻿# R6 RTGIの静止収束SceneColorとPT参照（直接光のみ・拡散1バウンス・多重散乱）を取得し、比較する。
+﻿# R6 RTGIの静止収束SceneColorとPT参照（直接光のみ・拡散1バウンス・多重散乱）、ラスタとPTの1次面の
+# 幾何（法線・距離）を取得し、比較する。
 from pathlib import Path
 import subprocess
 import sys
@@ -17,7 +18,7 @@ def run(command):
     for line in output.splitlines():
         if ("r6_reference" in line or "yardstick" in line or "sanity" in line or
                 "_vs_" in line or "indirect_mean" in line or "skipped" in line or
-                "local_leak" in line or "[ERROR]" in line):
+                "local_leak" in line or "geometry_agreement" in line or "[ERROR]" in line):
             print("  " + line)
     return result.returncode
 
@@ -38,11 +39,23 @@ def main():
                     "--path-tracing-pixel-sampling=center",
                     f"--path-tracing-samples={PATH_TRACING_SAMPLES}",
                     f"--path-tracing-samples-per-frame={SAMPLES_PER_FRAME}"]
+    # 1次命中の幾何は画素中心の1試料で決まる。
+    path_tracing_geometry = ["--renderer=path-tracing",
+                             "--path-tracing-pixel-sampling=center",
+                             "--path-tracing-samples=1",
+                             "--path-tracing-samples-per-frame=1"]
     captures = [
-        ("raster-rtgi", []),
+        # 判定するラスタは直接光をPTと同じ解析BRDFで評価し、R6の範囲外の直接光の近似差を除く。
+        ("raster-rtgi", ["--raster-direct-brdf=analytic"]),
         ("pt-direct", path_tracing + ["--path-tracing-transport=direct"]),
         ("pt-single", path_tracing + ["--path-tracing-transport=single-diffuse-bounce"]),
         ("pt-full", path_tracing + ["--path-tracing-transport=full"]),
+        # 診断: 既定のニューラルBRDFの直接光のラスタ。
+        ("raster-rtgi-neural", ["--raster-direct-brdf=neural"]),
+        ("raster-normal", ["--r6-reference-debug-view=normal"]),
+        ("raster-depth", ["--r6-reference-debug-view=depth"]),
+        ("pt-normal", path_tracing_geometry + ["--path-tracing-debug-output=shading-normal"]),
+        ("pt-depth", path_tracing_geometry + ["--path-tracing-debug-output=hit-distance"]),
     ]
     for name, arguments in captures:
         dump = (root / f"{name}.nlrgba").as_posix()

@@ -231,7 +231,8 @@ namespace NorvesLib::Test::RenderingValidation
     PerceptualDiffStatus CompareLdrFlip(
         const Rgba8Image& reference,
         const Rgba8Image& candidate,
-        PerceptualDifferenceMetrics& outMetrics)
+        PerceptualDifferenceMetrics& outMetrics,
+        Core::Container::VariableArray<float>* outErrorMap)
     {
         outMetrics = {};
         const GoldenImageStatus rawStatus = CompareRgba8(reference, candidate, outMetrics.Raw);
@@ -294,10 +295,18 @@ namespace NorvesLib::Test::RenderingValidation
             return PerceptualDiffStatus::VendorEvaluationFailed;
         }
 
+        if (outErrorMap != nullptr)
+        {
+            outErrorMap->resize(pixelCount);
+        }
         double errorSum = 0.0;
         for (size_t index = 0; index < pixelCount; ++index)
         {
             const float error = errorMap[index];
+            if (outErrorMap != nullptr)
+            {
+                (*outErrorMap)[index] = error;
+            }
             if (!std::isfinite(error) || error < 0.0f || error > 1.0f)
             {
                 delete[] errorMap;

@@ -56,10 +56,12 @@ namespace NorvesLib::Test::RenderingValidation
         ArtificialDifferenceSpec Difference;
     };
 
+    // outErrorMapがnullでなければ、画素ごとのFLIP誤差（行順、幅×高さ）を書き出す。
     PerceptualDiffStatus CompareLdrFlip(
         const Rgba8Image& reference,
         const Rgba8Image& candidate,
-        PerceptualDifferenceMetrics& outMetrics);
+        PerceptualDifferenceMetrics& outMetrics,
+        Core::Container::VariableArray<float>* outErrorMap = nullptr);
     bool MeetsVisualGoldenThresholds(
         const PerceptualDifferenceMetrics& metrics,
         const VisualGoldenThresholds& thresholds);
