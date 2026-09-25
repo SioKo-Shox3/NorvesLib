@@ -146,7 +146,13 @@ namespace
                     m_DebugView = DebugViewMode::GBufferDepth;
                     return true;
                 }
-                outFailureReason = TEXT("--r7-outdoor-debug-view はnormal・depthのどちらかです");
+                if (value == TEXT("hard-shadow"))
+                {
+                    // 検証表示246: ランバートとCSMのハード影だけの直接光（影の診断用）。
+                    m_DebugView = static_cast<DebugViewMode>(246u);
+                    return true;
+                }
+                outFailureReason = TEXT("--r7-outdoor-debug-view はnormal・depth・hard-shadowのどれかです");
                 return false;
             }
             return RenderingValidationApplicationHandler::ParseAdditionalArgument(argument,
