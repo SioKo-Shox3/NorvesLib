@@ -1,4 +1,4 @@
-﻿// 1 bounceのdiffuse indirect radianceをray queryで生成する。
+﻿// 拡散2バウンスまでのdiffuse indirect radianceをray queryで生成する。
 #version 460
 #extension GL_EXT_ray_query : require
 #extension GL_EXT_buffer_reference2 : require
@@ -168,6 +168,8 @@ void BuildOrthonormalBasis(vec3 normal, out vec3 tangent, out vec3 bitangent)
     bitangent = cross(normal, tangent);
 }
 
+vec3 CosineWeightedDirectionFromUnit(vec3 normal, vec2 xi);
+
 vec3 CosineWeightedDirection(vec3 normal, uvec2 pixel, uint frameIndex)
 {
     // 画素ごとの回転を加えたR2列を描画フレーム番号で進め、静止中も毎フレーム別の方向を引く。
@@ -177,6 +179,12 @@ vec3 CosineWeightedDirection(vec3 normal, uvec2 pixel, uint frameIndex)
     vec2 rotation = vec2(HashToUnit(Hash32(pixel)),
                          HashToUnit(Hash32(pixel.yx + uvec2(17u, 43u))));
     vec2 xi = fract(rotation + vec2(r2Phase >> 8u) * (1.0 / 16777216.0));
+    return CosineWeightedDirectionFromUnit(normal, xi);
+}
+
+// 一様乱数の組xiから、法線まわりのコサイン分布の方向を作る。
+vec3 CosineWeightedDirectionFromUnit(vec3 normal, vec2 xi)
+{
     float xi0 = max(xi.x, 1.0e-6);
     float xi1 = xi.y;
     float radius = sqrt(xi0);
@@ -685,6 +693,71 @@ void StoreTemporalSample(uvec2 pixel,
     imageStore(historyMaterialOutput, ivec2(pixel), safeMaterial);
 }
 
+// 拡散の散乱光線を1本たどり、始点へ入る放射輝度を返す。外れれば環境光、当たれば命中面の点・spot・
+// 方向光と発光三角形の直接光（コサイン標本が発光面に当たっても発光は加えない）。命中面の位置・光線側の
+// 法線・反射率を返し、呼び側がそこからさらに散乱をたどれるようにする。
+vec3 TraceDiffuseRay(vec3 rayOrigin,
+                     vec3 rayDirection,
+                     uvec2 pixel,
+                     uint emitterDimension,
+                     out bool bSurfaceHit,
+                     out vec3 hitPosition,
+                     out vec3 hitNormal,
+                     out vec3 hitBaseColor)
+{
+    bSurfaceHit = false;
+    hitPosition = vec3(0.0);
+    hitNormal = vec3(0.0);
+    hitBaseColor = vec3(0.0);
+
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query,
+                          sceneTopLevel,
+                          gl_RayFlagsOpaqueEXT,
+                          RayTracingInstanceMaskShadowCaster,
+                          rayOrigin,
+                          parameters.rayLimits.x,
+                          rayDirection,
+                          parameters.rayLimits.y);
+    while (rayQueryProceedEXT(query))
+    {
+    }
+
+    if (rayQueryGetIntersectionTypeEXT(query, true) !=
+        gl_RayQueryCommittedIntersectionTriangleEXT)
+    {
+        if (parameters.rayLimits.w > 0.0)
+        {
+            return textureLod(environmentRadiance,
+                              EquirectangularUV(rayDirection),
+                              0.0).rgb * parameters.rayLimits.w;
+        }
+        return vec3(0.0);
+    }
+
+    float hitDistance = rayQueryGetIntersectionTEXT(query, true);
+    uint customIndex = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, true));
+    uint primitiveIndex = rayQueryGetIntersectionPrimitiveIndexEXT(query, true);
+    RTGIInstanceData hitInstance;
+    vec3 triangleNormal;
+    if (!IsFiniteScalar(hitDistance) || hitDistance < 0.0 ||
+        !TryGetInstanceData(customIndex, hitInstance) ||
+        !TryGetWorldTriangleNormal(query, primitiveIndex, hitInstance, triangleNormal))
+    {
+        return vec3(0.0);
+    }
+    if (dot(triangleNormal, rayDirection) > 0.0)
+    {
+        triangleNormal = -triangleNormal;
+    }
+    bSurfaceHit = true;
+    hitPosition = rayOrigin + rayDirection * hitDistance;
+    hitNormal = triangleNormal;
+    hitBaseColor = hitInstance.baseColor.rgb;
+    return ComputeDirectRadiance(hitPosition, hitNormal, hitBaseColor) +
+           hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension);
+}
+
 void main()
 {
     uvec2 pixel = gl_GlobalInvocationID.xy;
@@ -738,56 +811,35 @@ void main()
                                                           parameters.sampleState.x);
             vec3 rayOrigin = worldPosition + worldNormal * RAY_ORIGIN_OFFSET;
 
-            rayQueryEXT query;
-            rayQueryInitializeEXT(query,
-                                  sceneTopLevel,
-                                  gl_RayFlagsOpaqueEXT,
-                                  RayTracingInstanceMaskShadowCaster,
-                                  rayOrigin,
-                                  parameters.rayLimits.x,
-                                  rayDirection,
-                                  parameters.rayLimits.y);
-            while (rayQueryProceedEXT(query))
+            // 発光三角形の光は1次面と命中点の光源標本で数えるため、コサイン標本が発光面に
+            // 当たっても発光を加えない。
+            bool bBounceHit;
+            vec3 bounceHitPosition;
+            vec3 bounceHitNormal;
+            vec3 bounceHitBaseColor;
+            vec3 incomingRadiance = TraceDiffuseRay(rayOrigin, rayDirection, pixel, 3u,
+                                                    bBounceHit, bounceHitPosition,
+                                                    bounceHitNormal, bounceHitBaseColor);
+            if (bBounceHit)
             {
-            }
-
-            vec3 incomingRadiance = vec3(0.0);
-            uint intersectionType = rayQueryGetIntersectionTypeEXT(query, true);
-            bool bHit = intersectionType == gl_RayQueryCommittedIntersectionTriangleEXT;
-            if (!bHit)
-            {
-                if (parameters.rayLimits.w > 0.0)
-                {
-                    incomingRadiance = textureLod(environmentRadiance,
-                                                  EquirectangularUV(rayDirection),
-                                                  0.0).rgb * parameters.rayLimits.w;
-                }
-            }
-            else
-            {
-                float hitDistance = rayQueryGetIntersectionTEXT(query, true);
-                uint customIndex = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, true));
-                uint primitiveIndex = rayQueryGetIntersectionPrimitiveIndexEXT(query, true);
-                RTGIInstanceData hitInstance;
-                vec3 hitNormal;
-                if (IsFiniteScalar(hitDistance) && hitDistance >= 0.0 &&
-                    TryGetInstanceData(customIndex, hitInstance) &&
-                    TryGetWorldTriangleNormal(query, primitiveIndex, hitInstance, hitNormal))
-                {
-                    if (dot(hitNormal, rayDirection) > 0.0)
-                    {
-                        hitNormal = -hitNormal;
-                    }
-                    vec3 hitPosition = rayOrigin + rayDirection * hitDistance;
-                    // 発光三角形の光は1次面と命中点の光源標本で数えるため、コサイン標本が発光面に
-                    // 当たっても発光を加えない。命中点は点・spot・方向光と発光三角形で照らす。
-                    incomingRadiance = ComputeDirectRadiance(hitPosition,
-                                                             hitNormal,
-                                                             hitInstance.baseColor.rgb) +
-                                       hitInstance.baseColor.rgb *
-                                           SampleEmitterIrradiance(hitPosition, hitNormal,
-                                                                   pixel, 3u);
-                }
+                // 2回目の拡散バウンス: 命中面が空と周りの面から受ける光（影の中の地面を照らす、物体の
+                // 下側の光など）を、命中点からもう1本のコサイン標本でたどって加える。方向の乱数は
+                // 1本目のR2列と独立にする（同じ列の位相だと画素ごとに2本の方向が固定の組になる）。
+                uint frameIndex = parameters.sampleState.x;
+                vec3 secondDirection = CosineWeightedDirectionFromUnit(
+                    bounceHitNormal,
+                    vec2(EmitterRandom(pixel, frameIndex, 9u),
+                         EmitterRandom(pixel, frameIndex, 10u)));
+                bool bSecondHit;
+                vec3 secondHitPosition;
+                vec3 secondHitNormal;
+                vec3 secondHitBaseColor;
+                vec3 secondIncoming = TraceDiffuseRay(
+                    bounceHitPosition + bounceHitNormal * RAY_ORIGIN_OFFSET,
+                    secondDirection, pixel, 6u,
+                    bSecondHit, secondHitPosition, secondHitNormal, secondHitBaseColor);
+                // 拡散面の出る放射輝度は反射率/π×照度で、コサイン標本の照度の推定はπ×入射放射輝度。
+                incomingRadiance += bounceHitBaseColor * SanitizeUnexposedRadiance(secondIncoming);
             }
 
             // 1次面を照らす発光三角形の直接光（反射率を掛ける前の単位でコサイン標本に加える）。

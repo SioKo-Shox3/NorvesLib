@@ -8,7 +8,8 @@
 // 画素中心から出すため、累積する試料数によらず同じ交差になる）。ラスタには物体IDがないため、物体の
 // 同一性は同じ位置（距離）と向き（法線）の一致で代える（距離1%以内で同じ向きの別物体は区別しない）。
 // 比較（CPU）: --compare-dumps=<dir> でラスタ（直接光は解析BRDF）とPT参照（直接光のみ・拡散1バウンス・
-// 多重散乱）と幾何の画像を読み、R6の申告範囲（拡散1バウンス）に合わせたPT参照（pt-single）と比べる。
+// 拡散2バウンス・多重散乱）と幾何の画像を読み、RTGIの申告範囲（拡散2バウンス）に合わせたPT参照（pt-two）
+// と比べる。参照の間接光の平均が拡散1バウンス < 拡散2バウンス <= 多重散乱の順に並ぶことも確かめる。
 // 判定は原寸のFLIP平均、原寸の画素単位FLIP最大、8x8区画平均画像のFLIP最大の三つ。画素単位最大は、
 // ラスタのGBufferとPTの1次命中の距離（1%以内）と法線（内積0.99以上）が一致する画素だけで判定し、
 // 一致しない画素（ラスタ化と光線交差で判定が分かれる縁など）は数と最大を記録する。ニューラルBRDFの
@@ -222,11 +223,11 @@ namespace
 
     int RunComparison(const String& directory)
     {
-        const char* names[9] = {"raster-rtgi", "pt-direct", "pt-single", "pt-full",
-                                "raster-rtgi-neural", "raster-normal", "raster-depth", "pt-normal",
-                                "pt-depth"};
-        RgbaFloatImage images[9];
-        for (uint32_t index = 0u; index < 9u; ++index)
+        const char* names[10] = {"raster-rtgi", "pt-direct", "pt-single", "pt-full",
+                                 "raster-rtgi-neural", "raster-normal", "raster-depth", "pt-normal",
+                                 "pt-depth", "pt-two"};
+        RgbaFloatImage images[10];
+        for (uint32_t index = 0u; index < 10u; ++index)
         {
             String path = directory;
             path += TEXT("/");
@@ -249,6 +250,7 @@ namespace
         const RgbaFloatImage& single = images[2];
         const RgbaFloatImage& full = images[3];
         const RgbaFloatImage& rasterNeural = images[4];
+        const RgbaFloatImage& two = images[9];
         uint32_t disagreeingPixels = 0u;
         const VariableArray<uint8_t> agreement =
             BuildGeometryAgreement(images[5], images[6], images[7], images[8], disagreeingPixels);
@@ -256,33 +258,33 @@ namespace
         std::cout << "geometry_agreement disagreeing_pixels=" << disagreeingPixels
                   << " fraction=" << static_cast<double>(disagreeingPixels) / agreement.size() << '\n';
 
-        // 閾値: 参照（拡散1バウンスのPT）の間接光を一様に±20%変えた画像の知覚差のうち小さい方。
+        // 閾値: 参照（拡散2バウンスのPT）の間接光を一様に±20%変えた画像の知覚差のうち小さい方。
         FlipMeasurement plus;
         FlipMeasurement minus;
         FlipMeasurement sanityPlus;
         FlipMeasurement sanityMinus;
         FlipMeasurement rasterMeasurement;
         FlipMeasurement fullVsRaster;
-        FlipMeasurement fullVsSingle;
+        FlipMeasurement twoVsSingle;
         FlipMeasurement localLeak;
         FlipMeasurement neuralMeasurement;
         // 閾値の物差しは従来どおり画像全体の値を使う（数値は変えない）。
-        if (!MeasureFlip(single, ScaleComponent(direct, single, 1.0 + IndirectYardstick), allPixels,
+        if (!MeasureFlip(two, ScaleComponent(direct, two, 1.0 + IndirectYardstick), allPixels,
                          BlockSize, plus) ||
-            !MeasureFlip(single, ScaleComponent(direct, single, 1.0 - IndirectYardstick), allPixels,
+            !MeasureFlip(two, ScaleComponent(direct, two, 1.0 - IndirectYardstick), allPixels,
                          BlockSize, minus) ||
-            !MeasureFlip(single, ScaleComponent(direct, single, 1.0 + IndirectSanity), allPixels,
+            !MeasureFlip(two, ScaleComponent(direct, two, 1.0 + IndirectSanity), allPixels,
                          BlockSize, sanityPlus) ||
-            !MeasureFlip(single, ScaleComponent(direct, single, 1.0 - IndirectSanity), allPixels,
+            !MeasureFlip(two, ScaleComponent(direct, two, 1.0 - IndirectSanity), allPixels,
                          BlockSize, sanityMinus) ||
-            !MeasureFlip(single, raster, agreement, BlockSize, rasterMeasurement) ||
+            !MeasureFlip(two, raster, agreement, BlockSize, rasterMeasurement) ||
             !MeasureFlip(full, raster, agreement, BlockSize, fullVsRaster) ||
-            !MeasureFlip(full, single, allPixels, BlockSize, fullVsSingle) ||
-            !MeasureFlip(single,
-                         AddLocalLeak(single, MeanLuminance(single), agreement, BlockSize,
+            !MeasureFlip(two, single, allPixels, BlockSize, twoVsSingle) ||
+            !MeasureFlip(two,
+                         AddLocalLeak(two, MeanLuminance(two), agreement, BlockSize,
                                       LeakPatchSize, LeakScale),
                          agreement, BlockSize, localLeak) ||
-            !MeasureFlip(single, rasterNeural, agreement, BlockSize, neuralMeasurement))
+            !MeasureFlip(two, rasterNeural, agreement, BlockSize, neuralMeasurement))
         {
             std::cerr << "FLIPを評価できません\n";
             return 1;
@@ -313,22 +315,27 @@ namespace
 
         const double directLuminance = MeanLuminance(direct);
         const double singleIndirect = MeanLuminance(single) - directLuminance;
+        const double twoIndirect = MeanLuminance(two) - directLuminance;
         const double rasterIndirect = MeanLuminance(raster) - directLuminance;
         const double fullIndirect = MeanLuminance(full) - directLuminance;
-        PrintFlipMeasurement("r6_vs_single_diffuse_bounce", rasterMeasurement);
+        PrintFlipMeasurement("r6_vs_two_diffuse_bounces", rasterMeasurement);
         // 画素単位の閾値を超える一致画素の数と、16画素以上離れた上位の位置（診断用）。
         PrintAgreeingPixelsOverLimit(rasterMeasurement, pixelLimit, raster.Width);
-        PrintFlipMeasurement("diagnostic_r6_neural_direct_vs_single_diffuse_bounce", neuralMeasurement);
+        PrintFlipMeasurement("diagnostic_r6_neural_direct_vs_two_diffuse_bounces", neuralMeasurement);
         PrintFlipMeasurement("info_r6_vs_full_transport", fullVsRaster);
-        PrintFlipMeasurement("info_single_diffuse_bounce_vs_full_transport", fullVsSingle);
+        PrintFlipMeasurement("info_single_diffuse_bounce_vs_two_diffuse_bounces", twoVsSingle);
         std::cout << "indirect_mean_luminance single_diffuse_bounce=" << singleIndirect
+                  << " two_diffuse_bounces=" << twoIndirect
                   << " r6_minus_pt_direct=" << rasterIndirect
                   << " full_transport=" << fullIndirect
-                  << " r6_over_single=" << (singleIndirect > 0.0 ? rasterIndirect / singleIndirect : 0.0)
-                  << " full_over_single=" << (singleIndirect > 0.0 ? fullIndirect / singleIndirect : 0.0)
+                  << " r6_over_two=" << (twoIndirect > 0.0 ? rasterIndirect / twoIndirect : 0.0)
+                  << " full_over_two=" << (twoIndirect > 0.0 ? fullIndirect / twoIndirect : 0.0)
                   << '\n';
+        // 参照の輸送範囲の順序: バウンスを増やすほど間接光が増え、多重散乱を超えない。
+        const bool bTransportOrder = singleIndirect < twoIndirect && twoIndirect <= fullIndirect;
+        std::cout << "reference_transport_order=" << (bTransportOrder ? "PASS" : "FAIL") << '\n';
 
-        const bool bPassed = bSanity && rasterMeasurement.Mean <= meanLimit &&
+        const bool bPassed = bSanity && bTransportOrder && rasterMeasurement.Mean <= meanLimit &&
                              rasterMeasurement.AgreeingPixelMax <= pixelLimit &&
                              rasterMeasurement.BlockMax <= blockLimit;
         std::cout << "r6_reference_comparison=" << (bPassed ? "PASS" : "FAIL")

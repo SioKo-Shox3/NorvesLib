@@ -50,6 +50,7 @@ def main():
         ("raster-rtgi", ["--raster-direct-brdf=analytic"]),
         ("pt-direct", path_tracing + ["--path-tracing-transport=direct"]),
         ("pt-single", path_tracing + ["--path-tracing-transport=single-diffuse-bounce"]),
+        ("pt-two", path_tracing + ["--path-tracing-transport=two-diffuse-bounces"]),
         ("pt-full", path_tracing + ["--path-tracing-transport=full"]),
         # 診断: 既定のニューラルBRDFの直接光のラスタ。
         ("raster-rtgi-neural", ["--raster-direct-brdf=neural"]),
