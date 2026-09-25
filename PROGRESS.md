@@ -99,7 +99,7 @@
 - R8-P3（2026-09-26）: PTの連番の1フレームの経路を加えた。`CameraProxy::SequenceFrame`（0は連番でない）と、GameThread側の`PathTracingSequenceCarry`（`FramePacketManager`が所有し、`RenderingCoordinator::GenerateDrawCommands`でRTスナップショット構築の直後に毎パケット適用）で、同じSequenceFrameの間は全パケットの前カメラ・instance前変換を直前フレームの最後の状態に固定する。instanceはObjectId・メッシュ・index範囲・描画内番号で対応付け、インスタンシング描画は各instanceの元の物体IDをMeshProxyとの照合で求める。`PathTracingPass`はフレーム長（DeltaTimeを使わない）でシャッター区間を決め、dispatchごとにレンズとシャッター時刻を引き直す。起動引数`--path-tracing-frame-duration/--path-tracing-shutter/--path-tracing-aperture/--path-tracing-focus-distance`。`R8PathTracingSequenceFrameVulkanTest`で動きぼけ幅の誤差最大0.33 px（閾値1 px）、CoC相対誤差0.13%（閾値2%）、先頭パケット欠落でも64 sampleの履歴継続・再実行byte一致を確認した。既存PT／R4・R6・R7参照比較は16件すべてpassed。
 
 ## In progress
-- なし。
+- R8-P4（blocked、2026-09-26）: ラスタの被写界深度のpassと比較テストは作業ツリーにある。規則で作った閾値に収まらない（FLIP平均0.02749 > 0.02604、8×8区画最大0.127 > 0.0546、画素最大は内）。差の分類と選択肢は`blocked/R8-P4.md`。ユーザーの判断待ち。
 
 ## Next
 
@@ -107,6 +107,7 @@
 - R8のM1（2026-09-26）: S8はベイクLUT（OCIOでACES 2.0 SDR 100 nit Rec.709をsRGB表示向けに65³＋log2 shaperへ焼き、display-linearで持つ。新しいトーンマップの選択肢で既定は不変）。連番は1280×720・1024 spp、PTの1フレームは前後のカメラ・変換とシャッター区間（フレーム長1/24 s、シャッター1/48 s）を固定して1 spp×1024 dispatch。DoF・動きぼけの閾値はf値／シャッターを±20%変えたPTを物差しにする規則。フィルムグレインは既定オフで入れる。連番の検査はC++の検証exe（隣接フレームのFLIPが中央値の3倍を超えたらポッピング）とScripts、CTestは8フレームの連番。
 
 ## Notes
+- R8-P4検証（2026-09-26）: `verify-R8-P4-1.txt`で指定build EXIT_CODE=0、`verify-R8-P4-2.txt`で指定CTest 2/3 passed（EXIT_CODE=8）。比較テストの失敗は3回の取得で同値（平均FLIP 0.0274903、区画最大0.126995）、±40%の健全性確認はPASS、承認済みgoldenのIndoor・OutdoorはPassed。差は、画像下端の未命中の行へ落ちる床の前ボケ（区画最大の原因）、奥の面の深度の境界での隠れた面、天井の光源の縁の漏れの3種類。背景CoCの打ち切りに許容幅を入れる試行は平均を悪化させたため採用していない。前の反復のclaudeプロセスが取り残されて検証のctestを並行して走らせていたため停止し、その結果は採用していない。
 - R8-P3検証（2026-09-26）: `.harness/runs/20260926-011446/verify-R8-P3-10.txt`で指定build EXIT_CODE=0、`verify-R8-P3-11.txt`で指定CTest 5/5 passed、`-12`でPT系13 targetの再build EXIT_CODE=0、`-13`〜`-17`でPT系・R4/R6/R7参照比較の16件すべてpassed（R7屋外参照は単独702 s）、`-18`で新規テストの直接実行値を読戻し確認した。独立評価は1周目（RenderThread側ラッチのパケット欠落・並び替え）、2周目（インスタンシング描画のバッチ先頭ObjectId）でNEEDS_WORK。2周の上限に達したため、2周目の指摘への対応（MeshProxy照合による物体IDの解決、実際のMeshBatcher経路の並び替え検査、負の対照`negative-R8-P3-instanced.txt`でEXIT_CODE=1）はR8-P4の評価対象へ含めて確認する。前の反復の取り残されたctest（修正前のbinary）は停止し、結果は採用していない。
 - R8-P1検証（2026-09-26）: `.harness/runs/20260926-011446/verify-R8-P1-1.txt`でRESULT=PASS・EXIT_CODE=0を読戻し確認した。純粋なlog2 shaper（2^-14〜2^8など）はどの範囲でもチャート最大3.1/255以上で不合格だったため、0を格子端に置くオフセット付きlog2へ変えて候補を測り、c=2^-8・上限2^8を採用した（表は記録文書）。無作為な色20万点では高彩度の色域境界で最大5.8/255（67点が2/255超、合否外の参考値）で、R8-P2のGPU一致はチャートで確かめる。この反復はPythonと生成物だけの変更のため、エンジンのbuildは開始儀式（同日、HEAD `a42c8b1`）の結果を使い再実行していない。
 - R8ループ開始儀式（2026-09-26、HEAD `a42c8b1`）: Game・ToneMappingParamsLayoutTestのDebug build BUILD_EXIT=0、CPU契約3件（ToneMappingParamsLayout・RenderingDDGILightingContract・PathTracingCamera）3/3 passed。直前の全target build後のRenderingValidationラベルは57件中0件失敗（`.harness/runs/20260925-r4-reopen/`）。
