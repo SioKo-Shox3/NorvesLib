@@ -8,6 +8,7 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkyAtmosphere.h"
+#include "Rendering/SkySunLight.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VolumetricFog.h"
@@ -1320,6 +1321,44 @@ namespace
             std::cerr << "空要求時のLUT欠落を黒へ戻せませんでした\n";
             return 1;
         }
+        // 空の太陽の方向光（予約LightId）を光源表へ加えても、PTは同じ太陽を円盤の光源標本だけで
+        // 数える（詰めた光源表が変わらないので累積履歴も続く）。同じ値の通常の方向光を加えると、
+        // 太陽が二つになって面が明るくなり、光源表の変化で履歴を捨てる。
+        packet.Scene.SkyAtmosphere.SunAltitudeDegrees = cases[1].Altitude;
+        packet.Scene.SkyAtmosphere.SunAzimuthDegrees = cases[1].Azimuth;
+        if (!RunFrame(device, graph, pathPass, context, 10u,
+                      1u, 1u, pixels, &skyPass) ||
+            pathPass.GetAccumulatedSampleCount() != 1u)
+        {
+            std::cerr << "空の太陽の方向光の比較の基準を描画できませんでした\n";
+            return 1;
+        }
+        const float withoutSunLight = CenterRadiance(pixels);
+        ReplaceSkySunLight(packet.Scene.SkyAtmosphere, packet.Scene.LightProxies);
+        if (packet.Scene.LightProxies.size() != 1u ||
+            !IsSkySunLight(packet.Scene.LightProxies[0]) ||
+            !RunFrame(device, graph, pathPass, context, 11u,
+                      1u, 1u, pixels, &skyPass) ||
+            pathPass.GetAccumulatedSampleCount() != 2u ||
+            std::abs(CenterRadiance(pixels) - withoutSunLight) > 0.03f)
+        {
+            std::cerr << "空の太陽の方向光をPTが二重に数えました\n";
+            return 1;
+        }
+        LightProxy ordinarySun = packet.Scene.LightProxies[0];
+        ordinarySun.LightId = 77u;
+        packet.Scene.LightProxies.push_back(ordinarySun);
+        if (!RunFrame(device, graph, pathPass, context, 12u,
+                      1u, 1u, pixels, &skyPass) ||
+            pathPass.GetAccumulatedSampleCount() != 1u ||
+            CenterRadiance(pixels) < withoutSunLight + 0.2f)
+        {
+            std::cerr << "通常の方向光をPTが点・spot・方向光として数えませんでした\n";
+            return 1;
+        }
+        std::cout << "sky_sun_light_excluded=true without_sun_light=" << withoutSunLight
+                  << " with_ordinary_directional=" << CenterRadiance(pixels) << '\n';
+        packet.Scene.LightProxies.clear();
         std::cout << "sky_parameter_parity=3 solar_sampling=true "
                      "sky_disabled_fallback=true sky_missing_fallback=true "
                      "sky_recovery_reset=true saturated_solar_sampling=true\n";
