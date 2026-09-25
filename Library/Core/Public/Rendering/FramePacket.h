@@ -365,6 +365,68 @@ namespace NorvesLib::Core::Rendering
         }
     };
 
+    /**
+     * @brief インスタンシング描画の各instanceの元の物体IDを、パケットのMeshProxyとの照合で求める
+     *
+     * インスタンシング描画のDrawParams::ObjectIdはバッチ先頭の物体のIDだけを持つ。連番の前の値の固定は
+     * 物体ごとに対応付けるため、各instanceを、メッシュ・材質・影の有無が同じで、現在と前の変換と
+     * カスタムデータがbit一致するMeshProxyへ対応付ける。一致が複数あるときはまだ使っていない候補を
+     * バッチへの追加順（instanceの並び）で割り当てる。そうした候補同士は描画に使う値が同じなので、
+     * 入れ替わっても像は変わらない。見つからないinstanceは0にする。
+     */
+    inline void ResolveInstancedDrawObjectIds(const FramePacket& packet, const DrawParams& draw,
+                                              Container::VariableArray<uint64_t>& outObjectIds)
+    {
+        outObjectIds.clear();
+        const uint32_t instanceCount = draw.bInstanced ? draw.InstanceCount : 1u;
+        outObjectIds.resize(instanceCount, 0u);
+        if (!draw.bInstanced ||
+            static_cast<uint64_t>(draw.InstanceDataOffset) + instanceCount > packet.InstanceData.size())
+        {
+            return;
+        }
+        Container::VariableArray<const MeshProxy*> candidates;
+        for (const MeshProxy& proxy : packet.Scene.MeshProxies)
+        {
+            if (!proxy.IsValid() || proxy.MeshHandle.Id != draw.MeshHandle.Id ||
+                proxy.bCastShadow != draw.bCastShadow)
+            {
+                continue;
+            }
+            bool bMaterialMatches = false;
+            for (uint32_t slot = 0; slot < MAX_MATERIAL_SLOTS; ++slot)
+            {
+                bMaterialMatches = bMaterialMatches || proxy.Materials[slot].Id == draw.MaterialHandle.Id;
+            }
+            if (bMaterialMatches)
+            {
+                candidates.push_back(&proxy);
+            }
+        }
+        Container::VariableArray<uint8_t> used(candidates.size(), 0u);
+        for (uint32_t instanceIndex = 0; instanceIndex < instanceCount; ++instanceIndex)
+        {
+            const GPUSceneInstanceData& data = packet.InstanceData[draw.InstanceDataOffset + instanceIndex];
+            // 並びが変わっていなければ同じ位置の候補がまず一致する。
+            for (size_t step = 0; step < candidates.size(); ++step)
+            {
+                const size_t index = (instanceIndex + step) % candidates.size();
+                const MeshProxy& proxy = *candidates[index];
+                if (used[index] ||
+                    std::memcmp(proxy.WorldTransform.values, data.World, sizeof(data.World)) != 0 ||
+                    std::memcmp(proxy.PreviousWorldTransform.values, data.PreviousWorld,
+                                sizeof(data.PreviousWorld)) != 0 ||
+                    std::memcmp(proxy.CustomData, data.CustomData, sizeof(data.CustomData)) != 0)
+                {
+                    continue;
+                }
+                used[index] = 1u;
+                outObjectIds[instanceIndex] = proxy.ObjectId;
+                break;
+            }
+        }
+    }
+
     namespace PathTracingSequenceCarryDetail
     {
         inline bool SameKey(const PathTracingSequenceCarry::InstanceState& a,

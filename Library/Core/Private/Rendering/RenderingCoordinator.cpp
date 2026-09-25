@@ -649,6 +649,8 @@ namespace NorvesLib::Core::Rendering
 
         const DrawCommandView opaqueCommands =
             DrawCommandView::FromRange(packet.DrawCommands, packet.OpaqueCommandRange);
+        const bool bResolveInstanceObjectIds =
+            packet.bHasMainCamera && packet.Scene.MainCamera.SequenceFrame != 0;
         for (const DrawCommand& command : opaqueCommands)
         {
             const DrawParams& draw = command.Draw;
@@ -706,6 +708,13 @@ namespace NorvesLib::Core::Rendering
                                                            : nullptr;
             const RayTracingHitMaterialSnapshot materialSnapshot =
                 MakeRayTracingHitMaterialSnapshot(materialData);
+            // 連番の1フレームでは前の値を物体ごとに固定するため、インスタンシング描画の各instanceの
+            // 元の物体IDをMeshProxyとの照合で求める。連番でなければ従来どおり描画の値を使う。
+            Container::VariableArray<uint64_t> instanceObjectIds;
+            if (bResolveInstanceObjectIds && draw.bInstanced)
+            {
+                ResolveInstancedDrawObjectIds(packet, draw, instanceObjectIds);
+            }
 
             for (uint32_t instanceIndex = 0; instanceIndex < instanceCount; ++instanceIndex)
             {
@@ -754,6 +763,11 @@ namespace NorvesLib::Core::Rendering
                 instance.MeshHandle = draw.MeshHandle;
                 instance.ObjectId = draw.ObjectId;
                 instance.ObjectInstanceIndex = instanceIndex;
+                if (instanceIndex < instanceObjectIds.size() && instanceObjectIds[instanceIndex] != 0)
+                {
+                    instance.ObjectId = instanceObjectIds[instanceIndex];
+                    instance.ObjectInstanceIndex = 0;
+                }
                 instance.SourceVertexBuffer = meshData->VertexBuffer;
                 instance.SourceIndexBuffer = meshData->IndexBuffer;
                 instance.IndexOffset = indexOffset;
