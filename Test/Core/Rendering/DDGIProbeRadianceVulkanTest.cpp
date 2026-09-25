@@ -213,10 +213,15 @@ namespace
             return false;
         }
 
+        // 命中面の反射率はinstance色で決まる。材質のBaseColorには別の値を置き、使われないことも確かめる。
         RayTracingHitMaterialSnapshot material;
-        material.BaseColor[0] = 0.25f;
-        material.BaseColor[1] = 0.5f;
-        material.BaseColor[2] = 0.75f;
+        material.ObjectColor[0] = 0.25f;
+        material.ObjectColor[1] = 0.5f;
+        material.ObjectColor[2] = 0.75f;
+        material.ObjectColor[3] = 1.0f;
+        material.BaseColor[0] = 0.9f;
+        material.BaseColor[1] = 0.1f;
+        material.BaseColor[2] = 0.05f;
         material.BaseColor[3] = 1.0f;
         const float emissiveInput[3] = {0.8f, 0.35f, 0.12f};
         if (!TryBuildCanonicalEmissive(emissiveInput,
@@ -663,15 +668,15 @@ namespace
             const LightProxy& light = packet.Scene.LightProxies[lightIndex];
             const double scalar = ComputeExpectedLightContribution(
                 light, hitPosition, normal, bOccluded);
-            expected[0] += static_cast<float>(material.BaseColor[0] * scalar *
+            expected[0] += static_cast<float>(material.ObjectColor[0] * scalar *
                                               (light.ColorR / (0.2126 * light.ColorR +
                                                                0.7152 * light.ColorG +
                                                                0.0722 * light.ColorB)));
-            expected[1] += static_cast<float>(material.BaseColor[1] * scalar *
+            expected[1] += static_cast<float>(material.ObjectColor[1] * scalar *
                                               (light.ColorG / (0.2126 * light.ColorR +
                                                                0.7152 * light.ColorG +
                                                                0.0722 * light.ColorB)));
-            expected[2] += static_cast<float>(material.BaseColor[2] * scalar *
+            expected[2] += static_cast<float>(material.ObjectColor[2] * scalar *
                                               (light.ColorB / (0.2126 * light.ColorR +
                                                                0.7152 * light.ColorG +
                                                                0.0722 * light.ColorB)));

@@ -933,13 +933,15 @@ namespace NorvesLib::Core::Rendering
             RTGIInstanceData instanceData;
             instanceData.VertexAddress = vertexBuffer->GetDeviceAddress() + vertexOffsetBytes;
             instanceData.IndexAddress = indexBuffer->GetDeviceAddress() + indexOffsetBytes;
+            // 命中面の反射率はGBuffer・パストレーサーと同じ規則（instance色×アルベドtexture、
+            // 材質のBaseColorは使わない）で作る。RTGIはtextureを引かないので白とみなす。
             for (uint32_t channel = 0u; channel < 4u; ++channel)
             {
-                if (!IsFiniteNonNegativeRTGI(snapshot.Material.BaseColor[channel]))
+                if (!IsFiniteNonNegativeRTGI(snapshot.Material.ObjectColor[channel]))
                 {
                     return false;
                 }
-                instanceData.BaseColor[channel] = snapshot.Material.BaseColor[channel];
+                instanceData.BaseColor[channel] = snapshot.Material.ObjectColor[channel];
             }
             for (uint32_t channel = 0u; channel < 3u; ++channel)
             {

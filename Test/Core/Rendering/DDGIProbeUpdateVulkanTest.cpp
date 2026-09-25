@@ -304,10 +304,10 @@ namespace
         RayTracingHitMaterialSnapshot planeMaterial;
         if (!bOcclusionCase)
         {
-            planeMaterial.BaseColor[0] = 1.0f;
-            planeMaterial.BaseColor[1] = 1.0f;
-            planeMaterial.BaseColor[2] = 1.0f;
-            planeMaterial.BaseColor[3] = 1.0f;
+            planeMaterial.ObjectColor[0] = 1.0f;
+            planeMaterial.ObjectColor[1] = 1.0f;
+            planeMaterial.ObjectColor[2] = 1.0f;
+            planeMaterial.ObjectColor[3] = 1.0f;
             planeMaterial.EmissiveColor[0] = 0.8f;
             planeMaterial.EmissiveColor[1] = 0.4f;
             planeMaterial.EmissiveColor[2] = 0.2f;
@@ -315,10 +315,10 @@ namespace
         }
         else
         {
-            planeMaterial.BaseColor[0] = OccluderBaseColor[0];
-            planeMaterial.BaseColor[1] = OccluderBaseColor[1];
-            planeMaterial.BaseColor[2] = OccluderBaseColor[2];
-            planeMaterial.BaseColor[3] = 1.0f;
+            planeMaterial.ObjectColor[0] = OccluderBaseColor[0];
+            planeMaterial.ObjectColor[1] = OccluderBaseColor[1];
+            planeMaterial.ObjectColor[2] = OccluderBaseColor[2];
+            planeMaterial.ObjectColor[3] = 1.0f;
         }
         AppendInstance(outPacket, outResources.Plane, EmitterCustomIndex, planeMaterial);
 
@@ -339,10 +339,10 @@ namespace
                 return false;
             }
             RayTracingHitMaterialSnapshot occluderMaterial;
-            occluderMaterial.BaseColor[0] = OccluderBaseColor[0];
-            occluderMaterial.BaseColor[1] = OccluderBaseColor[1];
-            occluderMaterial.BaseColor[2] = OccluderBaseColor[2];
-            occluderMaterial.BaseColor[3] = 1.0f;
+            occluderMaterial.ObjectColor[0] = OccluderBaseColor[0];
+            occluderMaterial.ObjectColor[1] = OccluderBaseColor[1];
+            occluderMaterial.ObjectColor[2] = OccluderBaseColor[2];
+            occluderMaterial.ObjectColor[3] = 1.0f;
             AppendInstance(outPacket,
                            outResources.Occluder,
                            OccluderCustomIndex,
