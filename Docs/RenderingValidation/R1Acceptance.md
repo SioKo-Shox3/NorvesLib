@@ -4,6 +4,7 @@ R1 baseline candidate Indoor=3845F8671194A3C55EA929503E7ECB4C777EB7A5A4D900C03E7
 R1 visual threshold candidate SHA256=19BBE1737E75796B7709DEE2DCABB66CB60DED050940F9B4E54A13BD242C7309 CodeHead=63f70dae644de0dc32a333670aed5720dde488c0 を承認する。
 R1 baseline candidate Indoor=3845F8671194A3C55EA929503E7ECB4C777EB7A5A4D900C03E75853E50D9D4EF Outdoor=9933B55851574870C9AC8586B6C0F38FDFFB5E26B925547C37E92ECFBAF3B954 CodeHead=a41190e716ff98b3d4f52344996ff50e258086ff を承認する。
 R1 baseline candidate Indoor=3845F8671194A3C55EA929503E7ECB4C777EB7A5A4D900C03E75853E50D9D4EF Outdoor=5F62BB87A2AAB054E8CFEF17A0B2AD5A50491459D99780B3DF60972F54634240 CodeHead=6d7628f3da885c09de8be7a5b2e384672fd392f4 を承認する。
+R1 baseline candidate Indoor=3845F8671194A3C55EA929503E7ECB4C777EB7A5A4D900C03E75853E50D9D4EF Outdoor=2988A805162B6F0D1EACC70AA6146D3A3B02BDC76A9A0F5736C436B323275FD4 CodeHead=49116c3975d179db49e9f69a4b6b0b8f45e8486f を承認する。
 
 ## P6b plan and procedure approval
 P6b plan SHA256=37D08DE402478F1D1EBEEEE2D0D8F134492AA0A0EDEB2A4C8FF69527721A2AE3
@@ -71,4 +72,12 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 修正の内容: 影の深度の比較に受け側の面の傾き（receiver plane depth bias）を入れ、方向光の半影の幅を遮蔽物と受け側の深度差×tan(太陽の角半径)から求める。空の太陽の方向光で朝夕を描いたとき、平らな地面が自分自身を遮蔽物と数えて約3割暗くなり、長い影が消えていた（R7-O3のラスタ対PT比較で発見）。
 - 差分の範囲: 旧baselineとの差は449画素（raw差2超は367画素、最大raw差202）で、球の自己影の境界と接地影の輪郭に限られる。影が鋭くなり、PTの太陽の半影に近づく。地面・空・非影領域は一致する。
 - 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 6d7628f3da885c09de8be7a5b2e384672fd392f4`。Indoor候補は既存baseline `3845F867…D9D4EF`と一致し、Outdoor候補は独立したstaging captureと同じ`5F62BB87…634240`である。
+- 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
+
+## 影の深度比較の余裕と直接光のAOの修正後のOutdoor再承認
+- 2026-09-25、ユーザーは次の2つの修正の後のOutdoor出力（SHA256=`2988A805162B6F0D1EACC70AA6146D3A3B02BDC76A9A0F5736C436B323275FD4`）を新しいOutdoor baselineとして承認した。上の「低い太陽の影の修正後のOutdoor再承認」の承認行は置換前の履歴として残す。
+- 修正の内容（1）: 影の深度比較の余裕の一定分を、正規化深度の0.005から影の地図の1.5 texel分の世界の長さへ換える（`d3f254a`）。深度範囲の広いカスケードで影が遮蔽物から離れて始まっていた。単独の差は球の接地部の影の縁の69画素。
+- 修正の内容（2）: 直接光のマイクロシャドウ近似に画面空間AOを掛けず、材質のAOだけを掛ける（`49116c3`）。直接光の遮蔽は影が解くため、画面空間AOを掛けると日向の地面に縞が出て接地部が暗くなりすぎていた（R7-O3のラスタ対PT比較で発見）。
+- 差分の範囲: 旧baselineとの差は33101画素（raw差2超は7383画素、最大raw差89）。日向の地面が画面空間AOの縞のない一様な明るさになり、球の周りの地面の暗さが弱まる。影の縁の差は（1）による。Indoorは変わらない。
+- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 49116c3975d179db49e9f69a4b6b0b8f45e8486f`。Indoor候補は既存baseline `3845F867…D9D4EF`と一致し、Outdoor候補は独立したstaging capture、およびユーザーに提示した比較画像の候補と同じ`2988A805…275FD4`である。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
