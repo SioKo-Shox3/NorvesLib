@@ -248,6 +248,41 @@ namespace
                "a disabled sky has no ground sun");
     }
 
+    void TestSkyViewRadianceContract()
+    {
+        SkyAtmosphereParameters parameters = MakeDefaultSkyAtmosphereParameters();
+        parameters.bEnabled = true;
+        parameters.SunAltitudeDegrees = 20.0f;
+        // 地表から見た空は、散乱光に地表からその方向への透過率を掛けた値。
+        const NorvesLib::Math::Vector3 directions[] = {
+            NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f),
+            NorvesLib::Math::VectorUtils::Normalize(NorvesLib::Math::Vector3(1.0f, 0.1f, 0.0f)),
+            NorvesLib::Math::VectorUtils::Normalize(NorvesLib::Math::Vector3(0.3f, 0.5f, -0.8f))};
+        for (const NorvesLib::Math::Vector3& direction : directions)
+        {
+            const SkyRadianceSample scattered = EvaluateHillaireSkyReference(parameters, direction);
+            const SkyRadianceSample viewed = EvaluateSkyViewRadiance(parameters, direction);
+            const NorvesLib::Math::Vector3 transmittance =
+                ComputeAtmosphereTransmittance(parameters, 0.0f, direction.y);
+            Expect(viewed.bValid == scattered.bValid &&
+                       viewed.MeanSunTransmittance == scattered.MeanSunTransmittance,
+                   "viewed sky keeps the reference validity and sun transmittance");
+            Expect(RelativeNearlyEqual(viewed.Radiance.x, scattered.Radiance.x * transmittance.x, 1.0e-6f) &&
+                       RelativeNearlyEqual(viewed.Radiance.y, scattered.Radiance.y * transmittance.y, 1.0e-6f) &&
+                       RelativeNearlyEqual(viewed.Radiance.z, scattered.Radiance.z * transmittance.z, 1.0e-6f),
+                   "viewed sky is the scattered radiance times the ground view transmittance");
+        }
+        // 地平線近くは長い光路で減衰し、散乱光より明確に暗い（青が最も減る）。
+        const SkyRadianceSample horizonScattered = EvaluateHillaireSkyReference(parameters, directions[1]);
+        const SkyRadianceSample horizonViewed = EvaluateSkyViewRadiance(parameters, directions[1]);
+        Expect(horizonViewed.Radiance.z < 0.5f * horizonScattered.Radiance.z,
+               "the horizon sky is attenuated along the long view path");
+        const SkyRadianceSample below = EvaluateSkyViewRadiance(
+            parameters, NorvesLib::Math::Vector3(0.0f, -1.0f, 0.0f));
+        Expect(below.Radiance.x == 0.0f && below.Radiance.y == 0.0f && below.Radiance.z == 0.0f,
+               "the sky below the horizon stays black");
+    }
+
     void TestSkySunLightContract()
     {
         SkyAtmosphereParameters parameters = MakeDefaultSkyAtmosphereParameters();
@@ -300,6 +335,7 @@ int main()
     TestReferenceSamples();
     TestSunDiskPreExposureContract();
     TestSunGroundIlluminanceContract();
+    TestSkyViewRadianceContract();
     TestSkySunLightContract();
 
     if (g_FailureCount != 0)

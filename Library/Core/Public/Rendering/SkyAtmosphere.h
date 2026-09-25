@@ -75,6 +75,18 @@ namespace NorvesLib::Core::Rendering
         const SkyAtmosphereParameters& parameters,
         const Math::Vector3& viewDirection);
 
+    /**
+     * @brief 地表から見た空の放射輝度（散乱光×地表からの視線方向の透過率）
+     *
+     * EvaluateHillaireSkyReferenceの散乱光に、地表からviewDirectionへの大気の透過率
+     * （ComputeAtmosphereTransmittance、高度0）を掛ける。空のradiance LUT、空由来のIBL、
+     * ラスタの背景、PTの不交差、RTGI・DDGIの不交差は、この値を同じ空として共有する。
+     * bValidとMeanSunTransmittanceはEvaluateHillaireSkyReferenceと同じ。
+     */
+    SkyRadianceSample EvaluateSkyViewRadiance(
+        const SkyAtmosphereParameters& parameters,
+        const Math::Vector3& viewDirection);
+
     float ComputeSunDiskIrradiance(
         const SkyAtmosphereParameters& parameters);
 

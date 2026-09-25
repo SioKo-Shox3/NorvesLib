@@ -378,6 +378,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_PrefilteredSpecularTexture;
         RHI::TexturePtr m_SkyAtmosphereDiffuseIrradianceTexture;
         RHI::TexturePtr m_SkyAtmospherePrefilteredSpecularTexture;
+        /** @brief 地表から見た空の環境（視線方向の透過率込み）。RTGI・DDGIの不交差へ公開する。 */
+        RHI::TexturePtr m_SkyAtmosphereEnvironmentTexture;
         RHI::TexturePtr m_ValidationRaw250EnvironmentTexture;
         RHI::TexturePtr m_ValidationRaw250DiffuseIrradianceTexture;
         RHI::TexturePtr m_ValidationRaw250Texture;

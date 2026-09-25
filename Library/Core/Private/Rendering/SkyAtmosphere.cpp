@@ -289,6 +289,24 @@ namespace NorvesLib::Core::Rendering
         return result;
     }
 
+    SkyRadianceSample EvaluateSkyViewRadiance(
+        const SkyAtmosphereParameters& parameters,
+        const Math::Vector3& viewDirection)
+    {
+        SkyRadianceSample sample = EvaluateHillaireSkyReference(parameters, viewDirection);
+        if (!sample.bValid)
+        {
+            return sample;
+        }
+        const Math::Vector3 view = NormalizeDirection(viewDirection);
+        const Math::Vector3 transmittance = ComputeAtmosphereTransmittanceFromSanitized(
+            SanitizeSkyAtmosphereParameters(parameters), 0.0f, std::max(view.y, 0.0f));
+        sample.Radiance = Math::Vector3(sample.Radiance.x * transmittance.x,
+                                        sample.Radiance.y * transmittance.y,
+                                        sample.Radiance.z * transmittance.z);
+        return sample;
+    }
+
     float ComputeSunDiskIrradiance(
         const SkyAtmosphereParameters& parameters)
     {

@@ -780,7 +780,8 @@ namespace NorvesLib::Core::Rendering
         {
             for (uint32_t x = 0u; x < width; ++x)
             {
-                const SkyRadianceSample sample = EvaluateHillaireSkyReference(
+                // 空のradiance LUTと同じ、地表から見た空（散乱光×視線方向の透過率）。
+                const SkyRadianceSample sample = EvaluateSkyViewRadiance(
                     sanitized, SkyDirectionFromEquirectangular(x, y, width, height));
                 if (!sample.bValid || !std::isfinite(sample.Radiance.x) ||
                     !std::isfinite(sample.Radiance.y) ||
@@ -1825,6 +1826,7 @@ namespace NorvesLib::Core::Rendering
         m_PrefilteredSpecularTexture.reset();
         m_SkyAtmosphereDiffuseIrradianceTexture.reset();
         m_SkyAtmospherePrefilteredSpecularTexture.reset();
+        m_SkyAtmosphereEnvironmentTexture.reset();
         m_ValidationRaw250EnvironmentTexture.reset();
         m_ValidationRaw250DiffuseIrradianceTexture.reset();
         m_ValidationRaw250Texture.reset();
@@ -3934,6 +3936,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_SkyAtmosphereDiffuseIrradianceTexture.reset();
             m_SkyAtmospherePrefilteredSpecularTexture.reset();
+            m_SkyAtmosphereEnvironmentTexture.reset();
             m_bSkyAtmosphereIblCacheValid = false;
             m_bSkyAtmosphereIblAvailable = false;
             return false;
@@ -3954,6 +3957,7 @@ namespace NorvesLib::Core::Rendering
         m_bSkyAtmosphereIblAvailable = false;
         m_SkyAtmosphereDiffuseIrradianceTexture.reset();
         m_SkyAtmospherePrefilteredSpecularTexture.reset();
+        m_SkyAtmosphereEnvironmentTexture.reset();
 
         Container::VariableArray<float> sourceData;
         if (!BuildSkyAtmosphereRadianceSource(sanitized,
@@ -3987,9 +3991,11 @@ namespace NorvesLib::Core::Rendering
 
         m_SkyAtmosphereDiffuseIrradianceTexture = generatedDiffuse;
         m_SkyAtmospherePrefilteredSpecularTexture = generatedPrefilter;
+        m_SkyAtmosphereEnvironmentTexture = generatedEnvironment;
         m_bSkyAtmosphereIblAvailable =
             m_SkyAtmosphereDiffuseIrradianceTexture &&
-            m_SkyAtmospherePrefilteredSpecularTexture;
+            m_SkyAtmospherePrefilteredSpecularTexture &&
+            m_SkyAtmosphereEnvironmentTexture;
         return m_bSkyAtmosphereIblAvailable;
     }
 
@@ -4207,12 +4213,13 @@ namespace NorvesLib::Core::Rendering
             m_LightArrayBuffer->Update(lightArray.data(), sizeof(GPULightData) * lightCount);
         }
 
+        // RTGI・DDGIの不交差は、IBLと同じ地表から見た空（視線方向の透過率込み）を引く。
         const RHI::TexturePtr& environmentRadiance =
             bValidationRaw252 && m_ValidationRaw252EnvironmentTexture ?
                 m_ValidationRaw252EnvironmentTexture :
             bValidationRaw250 && m_ValidationRaw250EnvironmentTexture ?
                 m_ValidationRaw250EnvironmentTexture :
-            bSkyAtmosphereAvailable ? context.SkyAtmosphere.RadianceTexture :
+            bSkyAtmosphereAvailable ? m_SkyAtmosphereEnvironmentTexture :
             bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_EnvironmentTexture ? m_EnvironmentTexture : m_DefaultBlackTexture;
         const RHI::SamplerPtr& environmentRadianceSampler =

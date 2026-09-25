@@ -288,8 +288,11 @@ namespace NorvesLib::Core::Rendering
 
         for (uint32_t y = 0u; y < height; ++y)
         {
-            const float altitude = (static_cast<float>(y) + 0.5f) /
-                                   static_cast<float>(height);
+            // 最下段を地表（高度0）、最上段を大気の上端にする。背景とPTはv=0（地表）を引き、
+            // 空の太陽の地表照度と空由来IBLの透過率（高度0）と揃う。
+            const float altitude = height > 1u
+                ? static_cast<float>(y) / static_cast<float>(height - 1u)
+                : 0.0f;
             for (uint32_t x = 0u; x < width; ++x)
             {
                 const float cosine = (static_cast<float>(x) + 0.5f) /
