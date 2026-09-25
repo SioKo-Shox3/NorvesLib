@@ -106,6 +106,8 @@ const uint DEBUG_VIEW_MODE_RAW250 = 250u;
 const uint DEBUG_VIEW_MODE_RAW251 = 251u;
 const uint DEBUG_VIEW_MODE_RAW252 = 252u;
 const uint DEBUG_VIEW_MODE_R5_RASTER_HARD_SHADOW = 246u;
+// 検証表示245: CSM・RT影を掛ける方向光（空の太陽）の可視（面が背を向ければ0）。露出を掛けない。
+const uint DEBUG_VIEW_MODE_R7_SUN_VISIBILITY = 245u;
 const uint DEBUG_VIEW_MODE_R5_RAY_TRACING_HARD_SHADOW = 247u;
 const uint DEBUG_VIEW_MODE_R5_RAY_TRACING_VISIBILITY = 248u;
 const uint DEBUG_VIEW_MODE_R5_RASTER_FALLBACK = 249u;
@@ -905,7 +907,8 @@ void main()
     // アルファが0の場合は天球（環境マップ）を描画
     if (albedoSample.a < 0.01)
     {
-        if (params.debugViewMode == DEBUG_VIEW_MODE_RAW251)
+        if (params.debugViewMode == DEBUG_VIEW_MODE_RAW251 ||
+            params.debugViewMode == DEBUG_VIEW_MODE_R7_SUN_VISIBILITY)
         {
             outColor = vec4(0.0, 0.0, 0.0, 1.0);
             return;
@@ -1018,6 +1021,7 @@ void main()
     // ライティング計算（ディフューズとスペキュラを分離してAOを個別適用）
     vec3 Lo_diffuse = vec3(0.0);
     vec3 Lo_specular = vec3(0.0);
+    float sunVisibility = 0.0;
 
     for (uint i = 0u; i < params.lightCount; i++)
     {
@@ -1073,6 +1077,10 @@ void main()
         }
 
         vec3 radiance = lightColor * NdotL * attenuation * shadow;
+        if (lightType < 0.5 && light.attenuation.z > 0.5)
+        {
+            sunVisibility = NdotL > 0.0 ? shadow : 0.0;
+        }
 
         if (bValidationLambert)
         {
@@ -1110,6 +1118,12 @@ void main()
             Lo_diffuse += diffuseContrib * radiance;
             Lo_specular += specularContrib * radiance;
         }
+    }
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_R7_SUN_VISIBILITY)
+    {
+        outColor = vec4(vec3(sunVisibility), 1.0);
+        return;
     }
 
     vec3 ambient = vec3(0.0);
