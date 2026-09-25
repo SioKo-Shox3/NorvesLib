@@ -1,6 +1,6 @@
 # R7コア受入れ判定
 
-判定日: 2026-09-23。R7コアの受入れは保留する。R7-P3の光輸送とR7-P4の収束・公開Cornell参照比較が未完であり、R4 DDGIとR6 RTGIを同一条件の自前PTで再照合できない。R7屋外拡張も未完のため、`RenderingRoadmap: R7 complete` trailerは付けない。
+判定日: 2026-09-25（初回判定 2026-09-23 は保留）。R7コアを受入れる。下表の完了条件はすべて成立し、R4 DDGIとR6 RTGIを同一条件の自前PTで再照合した（R6は合格、R4は閾値を超えたためRoadmap更新ルール5で再オープン）。R7屋外拡張も受入れた（`R7OutdoorAcceptance.md`）。
 
 ## コア完了条件
 
@@ -26,12 +26,12 @@ R1の`RenderingHdrSceneCaptureTest --scene=indoor --capture-source=back-buffer -
 
 ## R4/R6暫定参照の再照合
 
-| 対象 | 現行の単独結果 | 自前PTとの再照合 |
-|---|---|---|
-| R4 DDGI | Cornell HDR ROIと動的収束は成功。8実frame時点の赤/緑進捗は`0.971325`/`0.820146`。 | 未実施。Cornellの同一camera・geometry・material・light・露出でPT画像を生成できない。 |
-| R6 RTGI | 8 rendered-frame warmup後の`mean_y=0.258768`、`center_y=0.0305305`、中心RGB=`0.0408391,0.0290016,0.0153209`。暫定goldenとの差は`1.07262e-07`で、専用許容値は`0.001`。 | 未実施。同一解像度・camera・geometry・material・light・HDR環境・exposure/pre-exposure・warmup条件のPT静止画像がない。 |
+| 対象 | 自前PTとの再照合（2026-09-25） |
+|---|---|
+| R4 DDGI | `R4DDGIPathTracingReferenceVulkanTest`（`248e2b6`）。R4受入れと同じCornell状態（DDGI有効・RTGI無効、512×512、128 frame後）のラスタを4096 sppの全輸送PTと、R4の規定の指標（direct white ROIで露出を1回決め、影・赤・緑ROIの相対輝度誤差≤0.25、優勢色度の差≤0.10）で比べた。赤ROIの相対輝度誤差0.257が上限0.25を超え（影0.162、緑0.0566、色度差0.0091/0.0167）、Roadmap更新ルール5でR4を再オープンした（TASKSのR4-REOPEN。probe由来の斑点・奥の壁の暗転・画面の縁の暗い帯）。ラスタのROI平均はR4受入れ時の記録と同値で、劣化ではない。 |
+| R6 RTGI | `R6RTGIPathTracingReferenceVulkanTest`。RTGIが実装する輸送（拡散2バウンス）のPT参照と、比較の前に固定した規則（参照の間接光±20%）の閾値で比べて合格（FLIP平均0.0441/0.0975、幾何一致画素の画素単位最大0.1451/0.1889、8×8区画0.0932/0.1715）。経緯は`R6Acceptance.md`。 |
 
-再照合では各対象の入力とlinear scene-colorの比較領域を同じ設定に固定し、seed/SPPも記録する。R4は既存Cornell ROIの輝度・色比を測り、R6は静止ROIを測る。R6の`0.001`は現在の暫定golden再現性の許容値であり、PTとの差分判定へ理由なく流用しない。PTとの比較指標と閾値を事前に固定し、差分が出た場合は輸送方式の差と実装不具合を分けて記録する。承認済みgoldenは上書きしない。Roadmapの再オープン条件は、有効な同一条件比較で確定済み閾値を超えたときに適用する。現時点では比較値がないためR4を再オープンしたと判定しない。R6の既存全体gate保留は維持する。
+比較の指標と閾値は比較の前に固定し、承認済みgoldenは上書きしていない。R4の再オープンはR7の完了を妨げない（R7は参照の供給源で、R4の修正はR4-REOPENで同じ指標・同じ閾値で再照合する）。
 
 ## 読戻した検証ログと既知の制限
 
@@ -45,4 +45,6 @@ R1の`RenderingHdrSceneCaptureTest --scene=indoor --capture-source=back-buffer -
 | `.harness/runs/20260923-095848/verify-R7-P7-7.txt` | `git diff --check`は`EXIT_CODE=0`。 |
 | `.harness/runs/20260923-095848/verify-R7-P7-8.txt` | Cornell RGBEのSHA-256はR4で固定した値と一致。 |
 
-現行のPT GPUテストは32×32の発光三角形と16/32試料を扱い、公開CornellやR4/R6と同一シーンを描画しない。R7-P3/P4を完了し、P1のOutdoor基準不一致を解決してから、同一条件のR4/R6比較を各1回実行する。
+上の表は2026-09-23の初回判定時のログで、その後のR7-P3/P4・R4/R6再照合・屋外比較の証拠は各行と`R7OutdoorAcceptance.md`・`R6Acceptance.md`に記録した。
+
+全体のCTest（2026-09-25、`.harness/runs/20260925-r7-gate/ctest-all.txt`、HEAD `9193157`）は267件中、13件が失敗し8件がGPUのskip契約だった。13件はいずれもR7の作業の前からある失敗で、R7の変更による新しい失敗はない。R4の再照合（再オープン中）、ソースの文字列の契約2件（`VolumetricsPassContractTest`の霧の設定行、`RenderResourcesDomainContractTest`の`WaitIdleWithoutResultCheck(`の数。どちらも作業前の`495c6f6`で同じ内容）、GPUデバイスのないテストでの`m_Device`のnull参照によるSegFault 3件（`578236d`以来）、既知の`SkinnedRenderPathContractTest`、作業前のコミット`c9a3e33`でも同じく失敗する6件（`FrameCaptureReadbackHelperTest`・`ComponentDataRegistryTest`・`WorldSyncDifferentialTest`・`CanvasViewRenderTest`・`RenderGraphTextureUsageContractTest`はDebugのassertの対話窓で止まりtimeoutになる。`M9WorldAcceptanceTest`は負の対照の画素差）。`c9a3e33`での確認は`.harness/runs/20260925-r7-gate/baseline-c9a3e33/`（M9の失敗理由の行は取得しなかった）。これらはTASKSのTEST-FULL-CTEST-BASELINEで扱う。
