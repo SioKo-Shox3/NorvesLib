@@ -579,12 +579,15 @@ namespace NorvesLib::Core::Rendering
 
             const uint32_t atlasArrayLayerCount = std::max(
                 probeCount, DDGIProbeAtlasMinimumArrayLayerCount);
+            // 照度atlasは全体（layer [0, probe数)）と間接光だけ（layer [probe数, 2×probe数)）の2組を持つ。
+            const uint32_t irradianceArrayLayerCount = std::max(
+                probeCount * 2u, DDGIProbeAtlasMinimumArrayLayerCount);
             const bool bAtlasResourcesMatch =
                 frameResources->IrradianceAtlas && frameResources->DistanceAtlas &&
                 frameResources->HistoryIrradianceAtlas && frameResources->HistoryDistanceAtlas &&
                 frameResources->IrradianceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
                 frameResources->IrradianceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
-                frameResources->IrradianceAtlas->GetArraySize() == atlasArrayLayerCount &&
+                frameResources->IrradianceAtlas->GetArraySize() == irradianceArrayLayerCount &&
                 frameResources->IrradianceAtlas->GetFormat() == RHI::Format::R16G16B16A16_FLOAT &&
                 frameResources->DistanceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
                 frameResources->DistanceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
@@ -592,7 +595,8 @@ namespace NorvesLib::Core::Rendering
                 frameResources->DistanceAtlas->GetFormat() == RHI::Format::R16G16_FLOAT &&
                 frameResources->HistoryIrradianceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
                 frameResources->HistoryIrradianceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
-                frameResources->HistoryIrradianceAtlas->GetArraySize() == atlasArrayLayerCount &&
+                frameResources->HistoryIrradianceAtlas->GetArraySize() ==
+                    irradianceArrayLayerCount &&
                 frameResources->HistoryIrradianceAtlas->GetFormat() == RHI::Format::R16G16B16A16_FLOAT &&
                 frameResources->HistoryDistanceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
                 frameResources->HistoryDistanceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
@@ -614,7 +618,7 @@ namespace NorvesLib::Core::Rendering
                 RHI::TextureDesc irradianceAtlasDesc;
                 irradianceAtlasDesc.Width = DDGIProbeAtlasTexelCount;
                 irradianceAtlasDesc.Height = DDGIProbeAtlasTexelCount;
-                irradianceAtlasDesc.ArraySize = atlasArrayLayerCount;
+                irradianceAtlasDesc.ArraySize = irradianceArrayLayerCount;
                 irradianceAtlasDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
                 irradianceAtlasDesc.Usage = RHI::ResourceUsage::ShaderRead |
                                             RHI::ResourceUsage::ShaderWrite |

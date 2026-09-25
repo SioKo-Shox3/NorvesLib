@@ -1,4 +1,5 @@
 ﻿// DDGIプローブrayのhit材質・直接光とmiss環境からscene-linear radianceを計算する。
+// radianceのalphaは面の表に当たったrayとmissで1、面の裏に当たったrayで0（probeの分類に使う）。
 #version 460
 #extension GL_EXT_ray_query : require
 #extension GL_EXT_buffer_reference2 : require
@@ -78,7 +79,8 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Pro
 
 const float GoldenAngleRadians = 2.39996322972865332;
 const float Pi = 3.14159265358979323846;
-const float ProbeShadowOriginOffset = 0.002;
+// hit面の発光面の直接光で三角形を分ける数（辺ごと）。
+const uint HitEmitterSubdivision = 1u;
 const uint InvalidHitAttribute = 0xFFFFFFFFu;
 
 vec3 GetProbeRayDirection(uint directionIndex)
@@ -176,87 +178,7 @@ bool TryGetWorldTriangleNormal(rayQueryEXT query,
     return !any(isnan(worldNormal)) && !any(isinf(worldNormal));
 }
 
-bool TryGetLocalTriangle(ProbeRayInstanceData instanceData,
-                         uint primitiveIndex,
-                         out vec3 vertex0,
-                         out vec3 vertex1,
-                         out vec3 vertex2,
-                         out vec3 localNormal,
-                         out bool bHasLocalNormal)
-{
-    localNormal = vec3(0.0);
-    bHasLocalNormal = false;
-    uint vertexStrideBytes = instanceData.geometry.x;
-    uint vertexCount = instanceData.geometry.y;
-    uint indexCount = instanceData.geometry.z;
-    if (vertexStrideBytes < 12u || (vertexStrideBytes & 3u) != 0u ||
-        primitiveIndex >= indexCount / 3u)
-    {
-        return false;
-    }
-
-    ProbeRayIndexData indexBuffer = ProbeRayIndexData(instanceData.indexAddress);
-    uint primitiveOffset = primitiveIndex * 3u;
-    uvec3 vertexIndices = uvec3(indexBuffer.values[primitiveOffset],
-                                indexBuffer.values[primitiveOffset + 1u],
-                                indexBuffer.values[primitiveOffset + 2u]);
-    if (vertexIndices.x >= vertexCount || vertexIndices.y >= vertexCount ||
-        vertexIndices.z >= vertexCount)
-    {
-        return false;
-    }
-
-    ProbeRayVertexData vertexBuffer = ProbeRayVertexData(instanceData.vertexAddress);
-    uint stride = vertexStrideBytes / 4u;
-    uint vertex0Offset = vertexIndices.x * stride;
-    uint vertex1Offset = vertexIndices.y * stride;
-    uint vertex2Offset = vertexIndices.z * stride;
-    vertex0 = vec3(vertexBuffer.values[vertex0Offset],
-                   vertexBuffer.values[vertex0Offset + 1u],
-                   vertexBuffer.values[vertex0Offset + 2u]);
-    vertex1 = vec3(vertexBuffer.values[vertex1Offset],
-                   vertexBuffer.values[vertex1Offset + 1u],
-                   vertexBuffer.values[vertex1Offset + 2u]);
-    vertex2 = vec3(vertexBuffer.values[vertex2Offset],
-                   vertexBuffer.values[vertex2Offset + 1u],
-                   vertexBuffer.values[vertex2Offset + 2u]);
-    const bool bFinitePositions = !any(isnan(vertex0)) && !any(isinf(vertex0)) &&
-                                  !any(isnan(vertex1)) && !any(isinf(vertex1)) &&
-                                  !any(isnan(vertex2)) && !any(isinf(vertex2));
-    if (!bFinitePositions)
-    {
-        return false;
-    }
-
-    if (vertexStrideBytes >= 24u)
-    {
-        vec3 normal0 = vec3(vertexBuffer.values[vertex0Offset + 3u],
-                            vertexBuffer.values[vertex0Offset + 4u],
-                            vertexBuffer.values[vertex0Offset + 5u]);
-        vec3 normal1 = vec3(vertexBuffer.values[vertex1Offset + 3u],
-                            vertexBuffer.values[vertex1Offset + 4u],
-                            vertexBuffer.values[vertex1Offset + 5u]);
-        vec3 normal2 = vec3(vertexBuffer.values[vertex2Offset + 3u],
-                            vertexBuffer.values[vertex2Offset + 4u],
-                            vertexBuffer.values[vertex2Offset + 5u]);
-        vec3 normalSum = normal0 + normal1 + normal2;
-        float normalLengthSquared = dot(normalSum, normalSum);
-        if (!any(isnan(normalSum)) && !any(isinf(normalSum)) &&
-            normalLengthSquared > 1.0e-12)
-        {
-            localNormal = normalize(normalSum);
-            bHasLocalNormal = true;
-        }
-    }
-    return true;
-}
-
-vec3 TransformInstancePoint(ProbeRayInstanceData instanceData, vec3 point)
-{
-    return vec3(dot(instanceData.transform0.xyz, point) + instanceData.transform0.w,
-                dot(instanceData.transform1.xyz, point) + instanceData.transform1.w,
-                dot(instanceData.transform2.xyz, point) + instanceData.transform2.w);
-}
+#include "DDGI/ProbeEmitterSampling.glsl"
 
 float CalculateInverseSquareAttenuation(float distanceToLight)
 {
@@ -361,93 +283,14 @@ vec3 ComputeDirectRadiance(vec3 worldPosition,
                              light.chromaticityAndIntensity.w;
         diffuseRadiance += (baseColor / Pi) * lightRadiance * (cosine * attenuation);
     }
-    for (uint instanceIndex = 0u; instanceIndex < parameters.sceneCounts.x; ++instanceIndex)
-    {
-        ProbeRayInstanceData emitter = instances.values[instanceIndex];
-        if (emitter.geometry.w == receiverCustomIndex ||
-            emitter.emissiveChromaticityAndLuminance.w <= 0.0 ||
-            all(lessThanEqual(emitter.emissiveChromaticityAndLuminance.rgb,
-                              vec3(0.0))))
-        {
-            continue;
-        }
-
-        uint triangleCount = emitter.geometry.z / 3u;
-        for (uint triangleIndex = 0u; triangleIndex < triangleCount; ++triangleIndex)
-        {
-            vec3 localVertex0;
-            vec3 localVertex1;
-            vec3 localVertex2;
-            vec3 localNormal;
-            bool bHasLocalNormal = false;
-            if (!TryGetLocalTriangle(emitter,
-                                     triangleIndex,
-                                     localVertex0,
-                                     localVertex1,
-                                     localVertex2,
-                                     localNormal,
-                                     bHasLocalNormal))
-            {
-                continue;
-            }
-
-            vec3 vertex0 = TransformInstancePoint(emitter, localVertex0);
-            vec3 vertex1 = TransformInstancePoint(emitter, localVertex1);
-            vec3 vertex2 = TransformInstancePoint(emitter, localVertex2);
-            vec3 crossEdges = cross(vertex1 - vertex0, vertex2 - vertex0);
-            float doubleArea = length(crossEdges);
-            if (isnan(doubleArea) || isinf(doubleArea) || doubleArea <= 1.0e-6)
-            {
-                continue;
-            }
-
-            vec3 sourceNormal = crossEdges / doubleArea;
-            if (bHasLocalNormal)
-            {
-                mat3 localToWorld = mat3(
-                    vec3(emitter.transform0.x, emitter.transform1.x, emitter.transform2.x),
-                    vec3(emitter.transform0.y, emitter.transform1.y, emitter.transform2.y),
-                    vec3(emitter.transform0.z, emitter.transform1.z, emitter.transform2.z));
-                float transformDeterminant = determinant(localToWorld);
-                if (!isnan(transformDeterminant) && !isinf(transformDeterminant) &&
-                    abs(transformDeterminant) > 1.0e-8)
-                {
-                    vec3 transformedNormal = transpose(inverse(localToWorld)) * localNormal;
-                    float transformedLengthSquared = dot(transformedNormal, transformedNormal);
-                    if (!any(isnan(transformedNormal)) && !any(isinf(transformedNormal)) &&
-                        transformedLengthSquared > 1.0e-12)
-                    {
-                        sourceNormal = normalize(transformedNormal);
-                    }
-                }
-            }
-            vec3 sourcePosition = (vertex0 + vertex1 + vertex2) / 3.0;
-            vec3 toSource = sourcePosition - worldPosition;
-            float distanceSquared = dot(toSource, toSource);
-            if (isnan(distanceSquared) || isinf(distanceSquared) || distanceSquared <= 1.0e-6)
-            {
-                continue;
-            }
-            float distanceToSource = sqrt(distanceSquared);
-            vec3 lightDirection = toSource / distanceToSource;
-            float receiverCosine = max(dot(normal, lightDirection), 0.0);
-            float sourceCosine = max(dot(sourceNormal, -lightDirection), 0.0);
-            if (receiverCosine <= 0.0 || sourceCosine <= 0.0 ||
-                IsOccluded(worldPosition,
-                           normal,
-                           lightDirection,
-                           max(distanceToSource - ProbeShadowOriginOffset * 2.0, 0.0)))
-            {
-                continue;
-            }
-
-            float area = doubleArea * 0.5;
-            vec3 sourceRadiance = emitter.emissiveChromaticityAndLuminance.rgb *
-                                  emitter.emissiveChromaticityAndLuminance.a;
-            diffuseRadiance += (baseColor / Pi) * sourceRadiance *
-                               (receiverCosine * sourceCosine * area / distanceSquared);
-        }
-    }
+    // 発光面の直接光（hit面の直下の1バウンス）。三角形の重心1点で見積もる。
+    diffuseRadiance += (baseColor / Pi) *
+                       ComputeEmitterIrradiance(worldPosition,
+                                                worldPosition + normal * parameters.rayLimits.z,
+                                                normal,
+                                                receiverCustomIndex,
+                                                parameters.sceneCounts.x,
+                                                HitEmitterSubdivision);
     return diffuseRadiance;
 }
 
@@ -516,9 +359,13 @@ void main()
     uint customIndex = results.values[rayIndex].instanceCustomIndex;
     uint primitiveIndex = results.values[rayIndex].primitiveIndex;
     vec3 hitRadiance = vec3(0.0);
+    bool bBackfaceHit = false;
     if (TryGetInstanceData(customIndex, instanceData) &&
         TryGetWorldTriangleNormal(query, primitiveIndex, instanceData, worldNormal))
     {
+        // 面の表はラスタの裏面カリング（時計回りが表）と同じで、頂点順の外積の向きへ進むrayが表に当たる。
+        // 逆向きのrayは面の裏（閉じた物体の内側や壁の外）に当たる。
+        bBackfaceHit = dot(worldNormal, rayDirection) < 0.0;
         if (dot(worldNormal, rayDirection) > 0.0)
         {
             worldNormal = -worldNormal;
@@ -533,5 +380,6 @@ void main()
                                             customIndex,
                                             parameters.sceneCounts.y);
     }
-    results.values[rayIndex].radiance = vec4(max(hitRadiance, vec3(0.0)), 1.0);
+    results.values[rayIndex].radiance = vec4(max(hitRadiance, vec3(0.0)),
+                                             bBackfaceHit ? 0.0 : 1.0);
 }

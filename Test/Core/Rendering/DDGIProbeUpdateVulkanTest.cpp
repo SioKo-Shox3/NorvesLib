@@ -50,11 +50,20 @@ namespace
     constexpr uint32_t EmitterCustomIndex = 17u;
     constexpr uint32_t OccluderCustomIndex = 18u;
     constexpr uint32_t VisibilityWallCustomIndex = 19u;
+    constexpr uint32_t VisibilityWallBackCustomIndex = 20u;
+    constexpr uint32_t LeftWallCustomIndex = 21u;
+    constexpr uint32_t FloorCustomIndex = 22u;
+    constexpr uint32_t Probe1FloorCustomIndex = 23u;
     constexpr uint32_t BounceRayIndex = 55u;
     constexpr float OcclusionPlaneHitX = 0.65f;
     constexpr float Pi = 3.14159265358979323846f;
     constexpr float DDGIWrapWeightFloor = 0.004f;
-    constexpr float DistanceConeExponent = 32.0f;
+    constexpr float DistanceConeExponent = 8.0f;
+    constexpr float BackfaceRatioThreshold = 0.25f;
+    constexpr float BackfaceDistanceScale = 0.2f;
+    constexpr uint32_t ProbeEmitterSubdivision = 4u;
+    constexpr float EmitterShadowEndOffset = 0.004f;
+    constexpr float RayMinimumDistance = 0.001f;
     constexpr float AtlasHysteresis = 0.60f;
     constexpr float EmitterRadiance[3] = {8.0f, 4.0f, 2.0f};
     constexpr float OccluderBaseColor[3] = {0.5f, 0.5f, 0.5f};
@@ -95,6 +104,15 @@ namespace
         BufferPtr VertexBuffer;
         BufferPtr IndexBuffer;
         AccelerationStructurePtr BottomLevel;
+        Vertex Vertices[3] = {};
+    };
+
+    // CPUの参照計算に使う、場面の三角形（world座標）と放射。
+    struct SceneTriangle
+    {
+        Math::Vector3 Vertices[3];
+        uint32_t CustomIndex = 0u;
+        float Emission[3] = {};
     };
 
     struct SceneResources
@@ -103,12 +121,19 @@ namespace
         TriangleResources Plane;
         TriangleResources Occluder;
         TriangleResources VisibilityWall;
+        TriangleResources VisibilityWallBack;
+        TriangleResources LeftWall;
+        TriangleResources Floor;
+        TriangleResources Probe1Floor;
+        VariableArray<SceneTriangle> Triangles;
     };
 
+    // 照度atlasは全体（slot [0, AtlasArrayLayerCount)）と間接光だけ
+    // （slot [AtlasArrayLayerCount, 2×AtlasArrayLayerCount)）の2組を読む。
     struct ProbeObservation
     {
         VariableArray<DDGIProbeRayQueryResult> Rays;
-        uint16_t IrradianceBits[AtlasArrayLayerCount * AtlasTexelCount * AtlasTexelCount * 4u] = {};
+        uint16_t IrradianceBits[2u * AtlasArrayLayerCount * AtlasTexelCount * AtlasTexelCount * 4u] = {};
         uint16_t DistanceBits[AtlasArrayLayerCount * AtlasTexelCount * AtlasTexelCount * 2u] = {};
     };
 
@@ -172,6 +197,7 @@ namespace
             return false;
         }
         outResources.VertexBuffer->Update(vertices, sizeof(vertices));
+        std::memcpy(outResources.Vertices, vertices, sizeof(vertices));
         outResources.IndexBuffer->Update(indices, sizeof(indices));
 
         AccelerationStructureDesc bottomLevelDesc;
@@ -208,33 +234,46 @@ namespace
         return true;
     }
 
+    // 頂点順の外積は+Z寄りを向き、表（外積の逆側）は-Z側になる。bFrontTowardPositiveZなら頂点順を
+    // 入れ替えて表を+Z側にする。
     bool CreateTriangleResources(const DevicePtr& device,
                                  float planeZ,
                                  const char* debugName,
                                  TriangleResources& outResources,
                                  float halfExtent = 10000.0f,
-                                 float slopeX = 0.0f)
+                                 float slopeX = 0.0f,
+                                 bool bFrontTowardPositiveZ = false)
     {
-        const Vertex vertices[3] = {
+        Vertex vertices[3] = {
             {{-halfExtent, -halfExtent, planeZ - slopeX * halfExtent}},
             {{halfExtent, -halfExtent, planeZ + slopeX * halfExtent}},
             {{0.0f, halfExtent, planeZ}},
         };
+        if (bFrontTowardPositiveZ)
+        {
+            std::swap(vertices[1], vertices[2]);
+        }
         return CreateTriangleResourcesFromVertices(device, vertices, debugName, outResources);
     }
 
+    // 頂点順の外積は+Xを向き、表は-X側になる。bFrontTowardPositiveXなら表を+X側にする。
     bool CreateVerticalTriangleResources(const DevicePtr& device,
                                          float planeX,
                                          float minimumZ,
                                          float maximumZ,
                                          const char* debugName,
-                                         TriangleResources& outResources)
+                                         TriangleResources& outResources,
+                                         bool bFrontTowardPositiveX = false)
     {
-        const Vertex vertices[3] = {
+        Vertex vertices[3] = {
             {{planeX, -10000.0f, minimumZ}},
             {{planeX, 10000.0f, minimumZ}},
             {{planeX, 0.0f, maximumZ}},
         };
+        if (bFrontTowardPositiveX)
+        {
+            std::swap(vertices[1], vertices[2]);
+        }
         return CreateTriangleResourcesFromVertices(device, vertices, debugName, outResources);
     }
 
@@ -252,10 +291,27 @@ namespace
     }
 
     void AppendInstance(FramePacket& packet,
+                        SceneResources& scene,
                         const TriangleResources& triangle,
                         uint32_t customIndex,
                         const RayTracingHitMaterialSnapshot& material)
     {
+        SceneTriangle sceneTriangle;
+        for (uint32_t vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
+        {
+            sceneTriangle.Vertices[vertexIndex] = Math::Vector3(
+                triangle.Vertices[vertexIndex].Position[0],
+                triangle.Vertices[vertexIndex].Position[1],
+                triangle.Vertices[vertexIndex].Position[2]);
+        }
+        sceneTriangle.CustomIndex = customIndex;
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            sceneTriangle.Emission[channel] =
+                material.EmissiveColor[channel] * material.EmissiveLuminanceNits;
+        }
+        scene.Triangles.push_back(sceneTriangle);
+
         RayTracingSceneInstanceSnapshot snapshot;
         snapshot.SourceVertexBuffer = triangle.VertexBuffer;
         snapshot.SourceIndexBuffer = triangle.IndexBuffer;
@@ -273,14 +329,52 @@ namespace
         packet.RayTracingScene.Instances.push_back(snapshot);
     }
 
+    // probe update fixtureの場面。三角形の表（ラスタの裏面カリングと同じく頂点順の外積の逆側）は、
+    // BackfacingFloor以外ではprobeの側を向く。
+    enum class ProbeScene
+    {
+        // 上（z=+1）の発光面だけ。
+        EmitterAbove,
+        // 上の発光面、probeの間の両面の壁（x=0.98と0.981）、probe 0の左の壁（x=-0.98）、probe 1の下の
+        // 小さな床（x≧0.99、z=-0.05）。
+        VisibilitySeed,
+        // 下（z=-1）の床と斜めの遮蔽面。発光面はない。
+        Occlusion,
+        // 上の発光面と、下の小さな床（発光しない）。床は発光面に照らされる。
+        SeedFloor,
+        // 上の発光面と、表が下を向いた床。probeは床の裏を見るため無効になる。
+        BackfacingFloor,
+    };
+
+    RayTracingHitMaterialSnapshot MakeEmitterMaterial()
+    {
+        RayTracingHitMaterialSnapshot material;
+        material.ObjectColor[0] = 1.0f;
+        material.ObjectColor[1] = 1.0f;
+        material.ObjectColor[2] = 1.0f;
+        material.ObjectColor[3] = 1.0f;
+        material.EmissiveColor[0] = 0.8f;
+        material.EmissiveColor[1] = 0.4f;
+        material.EmissiveColor[2] = 0.2f;
+        material.EmissiveLuminanceNits = 10.0f;
+        return material;
+    }
+
+    RayTracingHitMaterialSnapshot MakeSurfaceMaterial()
+    {
+        RayTracingHitMaterialSnapshot material;
+        material.ObjectColor[0] = OccluderBaseColor[0];
+        material.ObjectColor[1] = OccluderBaseColor[1];
+        material.ObjectColor[2] = OccluderBaseColor[2];
+        material.ObjectColor[3] = 1.0f;
+        return material;
+    }
+
     bool CreateTestScene(const DevicePtr& device,
-                         bool bOcclusionCase,
-                         bool bVisibilitySeed,
+                         ProbeScene sceneKind,
                          FramePacket& outPacket,
                          SceneResources& outResources,
-                         uint32_t probeCount = ProbeCount,
-                         bool bEmitterBelow = false,
-                         float planeHalfExtent = 4.0f)
+                         uint32_t probeCount = ProbeCount)
     {
         DDGIVolumeParameters volume = MakeDefaultDDGIVolumeParameters();
         volume.bEnabled = true;
@@ -291,84 +385,142 @@ namespace
         volume.ProbeCountZ = 1u;
         outPacket.Scene.SetDDGIVolumeParameters(volume);
 
-        const float planeZ = bOcclusionCase || bEmitterBelow ? -1.0f : 1.0f;
-        if (!CreateTriangleResources(device,
-                                     planeZ,
-                                     "DDGIProbeUpdate.PlaneVertices",
-                                     outResources.Plane,
-                                     bOcclusionCase ? 10000.0f : planeHalfExtent))
+        if (sceneKind == ProbeScene::Occlusion)
         {
-            return false;
-        }
-
-        RayTracingHitMaterialSnapshot planeMaterial;
-        if (!bOcclusionCase)
-        {
-            planeMaterial.ObjectColor[0] = 1.0f;
-            planeMaterial.ObjectColor[1] = 1.0f;
-            planeMaterial.ObjectColor[2] = 1.0f;
-            planeMaterial.ObjectColor[3] = 1.0f;
-            planeMaterial.EmissiveColor[0] = 0.8f;
-            planeMaterial.EmissiveColor[1] = 0.4f;
-            planeMaterial.EmissiveColor[2] = 0.2f;
-            planeMaterial.EmissiveLuminanceNits = 10.0f;
-        }
-        else
-        {
-            planeMaterial.ObjectColor[0] = OccluderBaseColor[0];
-            planeMaterial.ObjectColor[1] = OccluderBaseColor[1];
-            planeMaterial.ObjectColor[2] = OccluderBaseColor[2];
-            planeMaterial.ObjectColor[3] = 1.0f;
-        }
-        AppendInstance(outPacket, outResources.Plane, EmitterCustomIndex, planeMaterial);
-
-        if (bOcclusionCase)
-        {
-            float occlusionPlaneOffset = 0.0f;
-            if (!TryGetOcclusionPlaneOffset(occlusionPlaneOffset))
+            if (!CreateTriangleResources(device,
+                                         -1.0f,
+                                         "DDGIProbeUpdate.PlaneVertices",
+                                         outResources.Plane,
+                                         10000.0f,
+                                         0.0f,
+                                         true))
             {
                 return false;
             }
-            if (!CreateTriangleResources(device,
+            AppendInstance(outPacket,
+                           outResources,
+                           outResources.Plane,
+                           EmitterCustomIndex,
+                           MakeSurfaceMaterial());
+
+            float occlusionPlaneOffset = 0.0f;
+            if (!TryGetOcclusionPlaneOffset(occlusionPlaneOffset) ||
+                !CreateTriangleResources(device,
                                          occlusionPlaneOffset,
                                          "DDGIProbeUpdate.OccluderVertices",
                                          outResources.Occluder,
                                          10000.0f,
-                                         1.0f))
+                                         1.0f,
+                                         true))
             {
                 return false;
             }
-            RayTracingHitMaterialSnapshot occluderMaterial;
-            occluderMaterial.ObjectColor[0] = OccluderBaseColor[0];
-            occluderMaterial.ObjectColor[1] = OccluderBaseColor[1];
-            occluderMaterial.ObjectColor[2] = OccluderBaseColor[2];
-            occluderMaterial.ObjectColor[3] = 1.0f;
             AppendInstance(outPacket,
+                           outResources,
                            outResources.Occluder,
                            OccluderCustomIndex,
-                           occluderMaterial);
+                           MakeSurfaceMaterial());
+        }
+        else
+        {
+            if (!CreateTriangleResources(device,
+                                         1.0f,
+                                         "DDGIProbeUpdate.PlaneVertices",
+                                         outResources.Plane,
+                                         4.0f))
+            {
+                return false;
+            }
+            AppendInstance(outPacket,
+                           outResources,
+                           outResources.Plane,
+                           EmitterCustomIndex,
+                           MakeEmitterMaterial());
         }
 
-        if (bVisibilitySeed)
+        if (sceneKind == ProbeScene::SeedFloor || sceneKind == ProbeScene::BackfacingFloor)
         {
+            const bool bBackfacing = sceneKind == ProbeScene::BackfacingFloor;
+            if (!CreateTriangleResources(device,
+                                         -1.0f,
+                                         "DDGIProbeUpdate.FloorVertices",
+                                         outResources.Floor,
+                                         bBackfacing ? 10000.0f : 0.5f,
+                                         0.0f,
+                                         !bBackfacing))
+            {
+                return false;
+            }
+            AppendInstance(outPacket,
+                           outResources,
+                           outResources.Floor,
+                           FloorCustomIndex,
+                           MakeSurfaceMaterial());
+        }
+
+        if (sceneKind == ProbeScene::VisibilitySeed)
+        {
+            // probeの間の壁は、それぞれのprobeに表を向けた2枚を1mm離して重ねる（1枚ではどちらかのprobeが
+            // 面の裏を見て無効になり、可視の重みを確かめられない）。
             if (!CreateVerticalTriangleResources(device,
                                                  0.98f,
                                                  -4.0f,
                                                  4.0f,
                                                  "DDGIProbeUpdate.VisibilityWallVertices",
-                                                 outResources.VisibilityWall))
+                                                 outResources.VisibilityWall) ||
+                !CreateVerticalTriangleResources(device,
+                                                 0.981f,
+                                                 -4.0f,
+                                                 4.0f,
+                                                 "DDGIProbeUpdate.VisibilityWallBackVertices",
+                                                 outResources.VisibilityWallBack,
+                                                 true) ||
+                !CreateVerticalTriangleResources(device,
+                                                 -0.98f,
+                                                 -4.0f,
+                                                 4.0f,
+                                                 "DDGIProbeUpdate.LeftWallVertices",
+                                                 outResources.LeftWall,
+                                                 true))
             {
                 return false;
             }
-            RayTracingHitMaterialSnapshot wallMaterial;
-            wallMaterial.BaseColor[0] = OccluderBaseColor[0];
-            wallMaterial.BaseColor[1] = OccluderBaseColor[1];
-            wallMaterial.BaseColor[2] = OccluderBaseColor[2];
-            wallMaterial.BaseColor[3] = 1.0f;
             AppendInstance(outPacket,
+                           outResources,
                            outResources.VisibilityWall,
                            VisibilityWallCustomIndex,
-                           wallMaterial);
+                           MakeSurfaceMaterial());
+            AppendInstance(outPacket,
+                           outResources,
+                           outResources.VisibilityWallBack,
+                           VisibilityWallBackCustomIndex,
+                           MakeSurfaceMaterial());
+            AppendInstance(outPacket,
+                           outResources,
+                           outResources.LeftWall,
+                           LeftWallCustomIndex,
+                           MakeSurfaceMaterial());
+
+            // probe 1の下向きのrayを近くで止め、壁の向こうの点への距離の分布を狭くする（距離のcosineの
+            // 裾に遠いmissが入ると分散が大きくなり、壁の向こうの点が見えるとみなされる）。probe 0からは
+            // 壁に隠れる。表は上（probe 1の側）。
+            const Vertex probe1FloorVertices[3] = {
+                {{0.99f, -2.0f, -0.05f}},
+                {{0.99f, 2.0f, -0.05f}},
+                {{3.0f, 0.0f, -0.05f}},
+            };
+            if (!CreateTriangleResourcesFromVertices(device,
+                                                     probe1FloorVertices,
+                                                     "DDGIProbeUpdate.Probe1FloorVertices",
+                                                     outResources.Probe1Floor))
+            {
+                return false;
+            }
+            AppendInstance(outPacket,
+                           outResources,
+                           outResources.Probe1Floor,
+                           Probe1FloorCustomIndex,
+                           MakeSurfaceMaterial());
         }
 
         AccelerationStructureDesc topLevelDesc;
@@ -522,7 +674,7 @@ namespace
             irradianceAtlas->GetWidth() != AtlasTexelCount ||
             irradianceAtlas->GetHeight() != AtlasTexelCount ||
             irradianceAtlas->GetArraySize() < AtlasArrayLayerCount ||
-            irradianceAtlas->GetArraySize() < expectedProbeCount ||
+            irradianceAtlas->GetArraySize() < 2u * expectedProbeCount ||
             irradianceAtlas->GetFormat() != Format::R16G16B16A16_FLOAT ||
             distanceAtlas->GetWidth() != AtlasTexelCount ||
             distanceAtlas->GetHeight() != AtlasTexelCount ||
@@ -540,7 +692,7 @@ namespace
             AtlasTexelCount * AtlasTexelCount * 4u * sizeof(uint16_t);
         const uint32_t distanceLayerSize =
             AtlasTexelCount * AtlasTexelCount * 2u * sizeof(uint16_t);
-        const uint32_t irradianceSize = AtlasArrayLayerCount * irradianceLayerSize;
+        const uint32_t irradianceSize = 2u * AtlasArrayLayerCount * irradianceLayerSize;
         const uint32_t distanceSize = AtlasArrayLayerCount * distanceLayerSize;
         BufferPtr resultReadback = device->CreateBuffer(BufferDesc(
             resultSize, ResourceUsage::TransferDst, true, "DDGIProbeUpdate.ResultReadback"));
@@ -606,6 +758,14 @@ namespace
                 static_cast<uint64_t>(probeIndex) * irradianceLayerSize,
                 0u,
                 probeIndex);
+            commandList->CopyTextureToBuffer(
+                irradianceAtlas,
+                irradianceReadback,
+                AtlasTexelCount,
+                AtlasTexelCount,
+                static_cast<uint64_t>(AtlasArrayLayerCount + probeIndex) * irradianceLayerSize,
+                0u,
+                expectedProbeCount + probeIndex);
             commandList->CopyTextureToBuffer(
                 distanceAtlas,
                 distanceReadback,
@@ -692,14 +852,17 @@ namespace
                                  static_cast<int>(exponent) - 15);
     }
 
+    // bIndirectなら間接光だけの組を読む。channel 3はprobeの有効（1）/無効（0）。
     float ReadIrradiance(const ProbeObservation& observation,
                          uint32_t probeIndex,
                          uint32_t x,
                          uint32_t y,
-                         uint32_t channel)
+                         uint32_t channel,
+                         bool bIndirect = false)
     {
+        const uint32_t slot = (bIndirect ? AtlasArrayLayerCount : 0u) + probeIndex;
         const uint32_t index =
-            (probeIndex * AtlasTexelCount * AtlasTexelCount + y * AtlasTexelCount + x) * 4u +
+            (slot * AtlasTexelCount * AtlasTexelCount + y * AtlasTexelCount + x) * 4u +
             channel;
         return HalfToFloat(observation.IrradianceBits[index]);
     }
@@ -724,7 +887,190 @@ namespace
         return DecodeDDGIOctahedralDirection(uv, outDirection);
     }
 
+    Math::Vector3 SubtractVector(const Math::Vector3& lhs, const Math::Vector3& rhs)
+    {
+        return Math::Vector3(lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z);
+    }
+
+    Math::Vector3 CrossVector(const Math::Vector3& lhs, const Math::Vector3& rhs)
+    {
+        return Math::Vector3(lhs.y * rhs.z - lhs.z * rhs.y,
+                             lhs.z * rhs.x - lhs.x * rhs.z,
+                             lhs.x * rhs.y - lhs.y * rhs.x);
+    }
+
+    float DotVector(const Math::Vector3& lhs, const Math::Vector3& rhs)
+    {
+        return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
+    }
+
+    // 両面の三角形とrayの交差（GPUのray queryと同じく裏面も当たる）。tは(RayMinimumDistance, maxDistance)。
+    bool IntersectsTriangle(const Math::Vector3& origin,
+                            const Math::Vector3& direction,
+                            float maxDistance,
+                            const SceneTriangle& triangle)
+    {
+        const Math::Vector3 edge1 = SubtractVector(triangle.Vertices[1], triangle.Vertices[0]);
+        const Math::Vector3 edge2 = SubtractVector(triangle.Vertices[2], triangle.Vertices[0]);
+        const Math::Vector3 pvec = CrossVector(direction, edge2);
+        const double determinant = DotVector(edge1, pvec);
+        if (std::abs(determinant) <= 1.0e-12)
+        {
+            return false;
+        }
+        const double inverseDeterminant = 1.0 / determinant;
+        const Math::Vector3 tvec = SubtractVector(origin, triangle.Vertices[0]);
+        const double u = DotVector(tvec, pvec) * inverseDeterminant;
+        if (u < 0.0 || u > 1.0)
+        {
+            return false;
+        }
+        const Math::Vector3 qvec = CrossVector(tvec, edge1);
+        const double v = DotVector(direction, qvec) * inverseDeterminant;
+        if (v < 0.0 || u + v > 1.0)
+        {
+            return false;
+        }
+        const double distance = DotVector(edge2, qvec) * inverseDeterminant;
+        return distance > RayMinimumDistance && distance < maxDistance;
+    }
+
+    bool IsSegmentOccluded(const SceneResources& scene,
+                           const Math::Vector3& origin,
+                           const Math::Vector3& direction,
+                           float maxDistance)
+    {
+        for (const SceneTriangle& triangle : scene.Triangles)
+        {
+            if (IntersectsTriangle(origin, direction, maxDistance, triangle))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool IsEmissive(const SceneTriangle& triangle)
+    {
+        return triangle.Emission[0] > 0.0f || triangle.Emission[1] > 0.0f ||
+               triangle.Emission[2] > 0.0f;
+    }
+
+    // shaderのComputeEmitterIrradiance（DDGI/ProbeEmitterSampling.glsl）と同じ見積もり。
+    void ComputeProbeEmitterIrradiance(const SceneResources& scene,
+                                       const Math::Vector3& probePosition,
+                                       const Math::Vector3& normal,
+                                       float (&outIrradiance)[3])
+    {
+        outIrradiance[0] = 0.0f;
+        outIrradiance[1] = 0.0f;
+        outIrradiance[2] = 0.0f;
+        const float subdivision = static_cast<float>(ProbeEmitterSubdivision);
+        for (const SceneTriangle& emitter : scene.Triangles)
+        {
+            if (!IsEmissive(emitter))
+            {
+                continue;
+            }
+            const Math::Vector3 edge1 = SubtractVector(emitter.Vertices[1], emitter.Vertices[0]);
+            const Math::Vector3 edge2 = SubtractVector(emitter.Vertices[2], emitter.Vertices[0]);
+            const Math::Vector3 crossEdges = CrossVector(edge1, edge2);
+            const float doubleArea = std::sqrt(DotVector(crossEdges, crossEdges));
+            if (!(doubleArea > 1.0e-6f))
+            {
+                continue;
+            }
+            // 頂点法線のない三角形は頂点順の外積の逆側が表で、表の側へ放射する。
+            const Math::Vector3 sourceNormal(-crossEdges.x / doubleArea,
+                                             -crossEdges.y / doubleArea,
+                                             -crossEdges.z / doubleArea);
+            const float sampleArea = doubleArea * 0.5f / (subdivision * subdivision);
+            const auto evaluate = [&](float u, float v)
+            {
+                const Math::Vector3 samplePosition(
+                    emitter.Vertices[0].x + edge1.x * u + edge2.x * v,
+                    emitter.Vertices[0].y + edge1.y * u + edge2.y * v,
+                    emitter.Vertices[0].z + edge1.z * u + edge2.z * v);
+                const Math::Vector3 toSource = SubtractVector(samplePosition, probePosition);
+                const float distanceSquared = DotVector(toSource, toSource);
+                if (!(distanceSquared > 1.0e-6f))
+                {
+                    return;
+                }
+                const float distance = std::sqrt(distanceSquared);
+                const Math::Vector3 direction(
+                    toSource.x / distance, toSource.y / distance, toSource.z / distance);
+                const float receiverCosine = std::max(DotVector(normal, direction), 0.0f);
+                const float sourceCosine = std::max(
+                    -DotVector(sourceNormal, direction), 0.0f);
+                if (receiverCosine <= 0.0f || sourceCosine <= 0.0f)
+                {
+                    return;
+                }
+                const float shadowDistance = std::max(distance - EmitterShadowEndOffset, 0.0f);
+                if (shadowDistance > RayMinimumDistance &&
+                    IsSegmentOccluded(scene, probePosition, direction, shadowDistance))
+                {
+                    return;
+                }
+                const float solidAngle = std::min(
+                    sourceCosine * sampleArea / distanceSquared, 2.0f * Pi);
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    outIrradiance[channel] +=
+                        emitter.Emission[channel] * receiverCosine * solidAngle;
+                }
+            };
+            for (uint32_t row = 0u; row < ProbeEmitterSubdivision; ++row)
+            {
+                for (uint32_t column = 0u; row + column < ProbeEmitterSubdivision; ++column)
+                {
+                    evaluate((static_cast<float>(row) + 1.0f / 3.0f) / subdivision,
+                             (static_cast<float>(column) + 1.0f / 3.0f) / subdivision);
+                    if (row + column + 1u < ProbeEmitterSubdivision)
+                    {
+                        evaluate((static_cast<float>(row) + 2.0f / 3.0f) / subdivision,
+                                 (static_cast<float>(column) + 2.0f / 3.0f) / subdivision);
+                    }
+                }
+            }
+        }
+    }
+
+    const SceneTriangle* FindSceneTriangle(const SceneResources& scene, uint32_t customIndex)
+    {
+        for (const SceneTriangle& triangle : scene.Triangles)
+        {
+            if (triangle.CustomIndex == customIndex)
+            {
+                return &triangle;
+            }
+        }
+        return nullptr;
+    }
+
+    bool IsBackfaceHit(const DDGIProbeRayQueryResult& ray)
+    {
+        return ray.bHit != 0u && ray.Radiance[3] < 0.5f;
+    }
+
+    bool IsProbeActive(const ProbeObservation& observation, uint32_t probeIndex)
+    {
+        uint32_t backfaceCount = 0u;
+        for (uint32_t rayIndex = 0u; rayIndex < RayCount; ++rayIndex)
+        {
+            if (IsBackfaceHit(observation.Rays[probeIndex * RayCount + rayIndex]))
+            {
+                ++backfaceCount;
+            }
+        }
+        return static_cast<float>(backfaceCount) <=
+               BackfaceRatioThreshold * static_cast<float>(RayCount);
+    }
+
+    // 現frameの間接光（面の裏に当たったrayを除き、発光面に当たったrayは放射を除く）。
     void ComputeCurrentIrradiance(const ProbeObservation& observation,
+                                  const SceneResources& scene,
                                   uint32_t probeIndex,
                                   uint32_t x,
                                   uint32_t y,
@@ -758,9 +1104,18 @@ namespace
                 continue;
             }
             const DDGIProbeRayQueryResult& ray = observation.Rays[probeIndex * RayCount + rayIndex];
+            if (IsBackfaceHit(ray))
+            {
+                continue;
+            }
+            const SceneTriangle* hitTriangle = ray.bHit != 0u
+                ? FindSceneTriangle(scene, ray.InstanceCustomIndex)
+                : nullptr;
             for (uint32_t channel = 0u; channel < 3u; ++channel)
             {
-                sums[channel] += static_cast<double>(ray.Radiance[channel]) * weight;
+                const float emission = hitTriangle != nullptr ? hitTriangle->Emission[channel] : 0.0f;
+                sums[channel] += static_cast<double>(
+                    std::max(ray.Radiance[channel] - emission, 0.0f)) * weight;
             }
             weightSum += weight;
         }
@@ -809,11 +1164,15 @@ namespace
             }
             const double weight = std::pow(cosineWeight, DistanceConeExponent);
             const DDGIProbeRayQueryResult& ray = observation.Rays[probeIndex * RayCount + rayIndex];
-            const double distance = ray.bHit != 0u
+            double distance = ray.bHit != 0u
                 ? std::clamp(static_cast<double>(ray.Distance),
                              0.0,
                              static_cast<double>(maxDistance))
                 : maxDistance;
+            if (IsBackfaceHit(ray))
+            {
+                distance *= BackfaceDistanceScale;
+            }
             firstMoment += distance * weight;
             secondMoment += distance * distance * weight;
             weightSum += weight;
@@ -851,7 +1210,8 @@ namespace
                             uint32_t probeIndex,
                             const Math::Vector2& atlasUv,
                             uint32_t channel,
-                            bool bIrradiance)
+                            bool bIrradiance,
+                            bool bIndirect = false)
     {
         const float sampleX = atlasUv.x * AtlasTexelCount - 0.5f;
         const float sampleY = atlasUv.y * AtlasTexelCount - 0.5f;
@@ -866,7 +1226,7 @@ namespace
             const uint32_t texelY = static_cast<uint32_t>(std::clamp(
                 y, 0, static_cast<int32_t>(AtlasTexelCount) - 1));
             return bIrradiance
-                ? ReadIrradiance(observation, probeIndex, texelX, texelY, channel)
+                ? ReadIrradiance(observation, probeIndex, texelX, texelY, channel, bIndirect)
                 : ReadDistanceMoment(observation, probeIndex, texelX, texelY, channel);
         };
         const float top = sample(baseX, baseY) * (1.0f - alphaX) +
@@ -880,12 +1240,17 @@ namespace
                                  uint32_t probeIndex,
                                  const Math::Vector3& direction,
                                  uint32_t channel,
-                                 bool bIrradiance)
+                                 bool bIrradiance,
+                                 bool bIndirect = false)
     {
         Math::Vector2 octahedralUv;
         EncodeDDGIOctahedralDirection(direction, octahedralUv);
-        return SampleAtlasLinear(
-            observation, probeIndex, MapOctahedralUvToAtlas(octahedralUv), channel, bIrradiance);
+        return SampleAtlasLinear(observation,
+                                 probeIndex,
+                                 MapOctahedralUvToAtlas(octahedralUv),
+                                 channel,
+                                 bIrradiance,
+                                 bIndirect);
     }
 
     float SamplePreviousVisibility(const ProbeObservation& observation,
@@ -946,6 +1311,10 @@ namespace
         for (uint32_t corner = 0u; corner < 8u; ++corner)
         {
             const uint32_t probeIndex = corner & 1u;
+            if (ReadIrradiance(previousObservation, probeIndex, 3u, 3u, 3u, true) < 0.5f)
+            {
+                continue;
+            }
             const float xWeight = probeIndex == 0u ? 1.0f - gridPositionX : gridPositionX;
             const float yWeight = ((corner >> 1u) & 1u) != 0u ? 0.001f : 1.0f;
             const float zWeight = ((corner >> 2u) & 1u) != 0u ? 0.001f : 1.0f;
@@ -984,7 +1353,7 @@ namespace
             for (uint32_t channel = 0u; channel < 3u; ++channel)
             {
                 const float irradiance = SampleAtlasAtDirection(
-                    previousObservation, probeIndex, surfaceNormal, channel, true);
+                    previousObservation, probeIndex, surfaceNormal, channel, true, true);
                 weightedIrradiance[channel] += irradiance * weight * visibility;
                 unweightedIrradiance[channel] += irradiance * weight;
             }
@@ -1049,19 +1418,23 @@ namespace
                         sourceY = AtlasTexelCount - 1u - y;
                     }
 
-                    for (uint32_t channel = 0u; channel < 4u; ++channel)
+                    for (uint32_t layerSet = 0u; layerSet < 2u; ++layerSet)
                     {
-                        const uint32_t borderIndex =
-                            (probeIndex * AtlasTexelCount * AtlasTexelCount +
-                             y * AtlasTexelCount + x) * 4u + channel;
-                        const uint32_t sourceIndex =
-                            (probeIndex * AtlasTexelCount * AtlasTexelCount +
-                             sourceY * AtlasTexelCount + sourceX) * 4u + channel;
-                        if (observation.IrradianceBits[borderIndex] !=
-                            observation.IrradianceBits[sourceIndex])
+                        const uint32_t slot = layerSet * AtlasArrayLayerCount + probeIndex;
+                        for (uint32_t channel = 0u; channel < 4u; ++channel)
                         {
-                            std::cerr << scenario << " irradiance atlasのborderが対応するocta内側texelと不一致です\n";
-                            return false;
+                            const uint32_t borderIndex =
+                                (slot * AtlasTexelCount * AtlasTexelCount +
+                                 y * AtlasTexelCount + x) * 4u + channel;
+                            const uint32_t sourceIndex =
+                                (slot * AtlasTexelCount * AtlasTexelCount +
+                                 sourceY * AtlasTexelCount + sourceX) * 4u + channel;
+                            if (observation.IrradianceBits[borderIndex] !=
+                                observation.IrradianceBits[sourceIndex])
+                            {
+                                std::cerr << scenario << " irradiance atlasのborderが対応するocta内側texelと不一致です\n";
+                                return false;
+                            }
                         }
                     }
                     for (uint32_t channel = 0u; channel < 2u; ++channel)
@@ -1087,37 +1460,69 @@ namespace
 
     bool ValidateAtlasValues(const ProbeObservation& observation,
                              const ProbeObservation* previousObservation,
+                             const SceneResources& scene,
                              const char* scenario,
-                             uint32_t probeCount = ProbeCount)
+                             uint32_t probeCount = ProbeCount,
+                             bool bExpectedActive = true)
     {
         const uint32_t sampleCount = AtlasInteriorTexelCount * AtlasInteriorTexelCount;
         for (uint32_t probeIndex = 0u; probeIndex < probeCount; ++probeIndex)
         {
+            const bool bActive = IsProbeActive(observation, probeIndex);
+            if (bActive != bExpectedActive)
+            {
+                std::cerr << scenario << " probeの有効/無効が想定と異なります probe="
+                          << probeIndex << " active=" << bActive << '\n';
+                return false;
+            }
+            const Math::Vector3 probePosition(static_cast<float>(probeIndex), 0.0f, 0.0f);
             for (uint32_t sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
             {
                 const uint32_t x = sampleIndex % AtlasInteriorTexelCount + 1u;
                 const uint32_t y = sampleIndex / AtlasInteriorTexelCount + 1u;
-                float currentIrradiance[3] = {};
+                float currentIndirect[3] = {};
+                float emitterIrradiance[3] = {};
                 float currentMoments[2] = {};
-                ComputeCurrentIrradiance(observation, probeIndex, x, y, currentIrradiance);
-                ComputeCurrentMoments(observation, probeIndex, x, y, currentMoments);
-                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                ComputeCurrentIrradiance(observation, scene, probeIndex, x, y, currentIndirect);
+                Math::Vector3 texelDirection;
+                if (bActive && TryGetTexelDirection(x, y, texelDirection))
                 {
-                    const float previous = previousObservation != nullptr
-                        ? ReadIrradiance(*previousObservation, probeIndex, x, y, channel)
-                        : currentIrradiance[channel];
-                    const float expected = previousObservation != nullptr
-                        ? currentIrradiance[channel] * (1.0f - AtlasHysteresis) +
-                              previous * AtlasHysteresis
-                        : currentIrradiance[channel];
-                    const float actual = ReadIrradiance(observation, probeIndex, x, y, channel);
-                    const float tolerance = 0.015f + std::abs(expected) * 0.015f;
-                    if (!std::isfinite(actual) || std::abs(actual - expected) > tolerance)
+                    ComputeProbeEmitterIrradiance(
+                        scene, probePosition, texelDirection, emitterIrradiance);
+                }
+                ComputeCurrentMoments(observation, probeIndex, x, y, currentMoments);
+                for (uint32_t layerSet = 0u; layerSet < 2u; ++layerSet)
+                {
+                    const bool bIndirect = layerSet == 1u;
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
                     {
-                        std::cerr << scenario << " irradiance積分値が不一致です probe="
+                        const float current = currentIndirect[channel] +
+                            (bIndirect ? 0.0f : emitterIrradiance[channel]);
+                        const float previous = previousObservation != nullptr
+                            ? ReadIrradiance(*previousObservation, probeIndex, x, y, channel, bIndirect)
+                            : current;
+                        const float expected = previousObservation != nullptr
+                            ? current * (1.0f - AtlasHysteresis) + previous * AtlasHysteresis
+                            : current;
+                        const float actual =
+                            ReadIrradiance(observation, probeIndex, x, y, channel, bIndirect);
+                        const float tolerance = 0.015f + std::abs(expected) * 0.015f;
+                        if (!std::isfinite(actual) || std::abs(actual - expected) > tolerance)
+                        {
+                            std::cerr << scenario << (bIndirect ? " 間接光の" : " 全体の")
+                                      << "irradiance積分値が不一致です probe="
+                                      << probeIndex << " texel=" << x << ',' << y
+                                      << " channel=" << channel << " expected=" << expected
+                                      << " actual=" << actual << '\n';
+                            return false;
+                        }
+                    }
+                    const float state = ReadIrradiance(observation, probeIndex, x, y, 3u, bIndirect);
+                    if (state != (bActive ? 1.0f : 0.0f))
+                    {
+                        std::cerr << scenario << " irradiance atlasのprobe状態が不一致です probe="
                                   << probeIndex << " texel=" << x << ',' << y
-                                  << " channel=" << channel << " expected=" << expected
-                                  << " actual=" << actual << '\n';
+                                  << " state=" << state << '\n';
                         return false;
                     }
                 }
@@ -1194,9 +1599,13 @@ namespace
         for (uint32_t channel = 0u; channel < 3u; ++channel)
         {
             borderExpected[channel] = SampleAtlasAtDirection(
-                previousObservation, 0u, surfaceNormal, channel, true) / Pi;
-            interiorOnly[channel] = ReadIrradiance(
-                previousObservation, 0u, lastInteriorTexel, lastInteriorTexel, channel) / Pi;
+                previousObservation, 0u, surfaceNormal, channel, true, true) / Pi;
+            interiorOnly[channel] = ReadIrradiance(previousObservation,
+                                                   0u,
+                                                   lastInteriorTexel,
+                                                   lastInteriorTexel,
+                                                   channel,
+                                                   true) / Pi;
             const float actualBounce = bounceHit.Radiance[channel] - noBounceHit.Radiance[channel];
             const float tolerance = 0.04f + std::abs(borderExpected[channel]) * 0.03f;
             if (std::abs(actualBounce - borderExpected[channel]) > tolerance)
@@ -1310,13 +1719,14 @@ namespace
                       << probePointDistance[0] << ',' << probePointDistance[1] << '\n';
             return false;
         }
+        // 3成分とも可視の重み付きの参照値に一致し、少なくとも1成分で可視の重みの有無が許容差の2倍を
+        // 超えて分かれる（発光面の色が赤に寄るため、弱い青の成分では差が小さい）。
+        bool bVisibilityDistinguishable = false;
         for (uint32_t channel = 0u; channel < 3u; ++channel)
         {
             const float tolerance = 0.04f + std::abs(expectedBounce[channel]) * 0.03f;
             if (!(hit.Radiance[channel] > 0.0f) ||
-                std::abs(hit.Radiance[channel] - expectedBounce[channel]) > tolerance ||
-                std::abs(unweightedBounce[channel] - expectedBounce[channel]) <
-                    2.0f * tolerance)
+                std::abs(hit.Radiance[channel] - expectedBounce[channel]) > tolerance)
             {
                 std::cerr << "前フレームirradianceのvisibility付き1段加算値が不一致です channel="
                           << channel << " expected=" << expectedBounce[channel]
@@ -1324,6 +1734,17 @@ namespace
                           << " actual=" << hit.Radiance[channel] << '\n';
                 return false;
             }
+            bVisibilityDistinguishable = bVisibilityDistinguishable ||
+                std::abs(unweightedBounce[channel] - expectedBounce[channel]) >=
+                    2.0f * tolerance;
+        }
+        if (!bVisibilityDistinguishable)
+        {
+            std::cerr << "可視の重みの有無で1段加算値が分かれません expected="
+                      << expectedBounce[0] << ',' << expectedBounce[1] << ','
+                      << expectedBounce[2] << " unweighted=" << unweightedBounce[0] << ','
+                      << unweightedBounce[1] << ',' << unweightedBounce[2] << '\n';
+            return false;
         }
         return true;
     }
@@ -1375,29 +1796,33 @@ namespace
         FramePacket occlusionPacket;
         FramePacket singleProbeSeedPacket;
         FramePacket singleProbeSurfacePacket;
+        FramePacket backfacingPacket;
         SceneResources planeScene;
         SceneResources visibilitySeedScene;
         SceneResources occlusionScene;
         SceneResources singleProbeSeedScene;
         SceneResources singleProbeSurfaceScene;
-        if (!CreateTestScene(device, false, false, planePacket, planeScene) ||
-            !CreateTestScene(
-                device, false, true, visibilitySeedPacket, visibilitySeedScene) ||
-            !CreateTestScene(device, true, false, occlusionPacket, occlusionScene) ||
+        SceneResources backfacingScene;
+        if (!CreateTestScene(device, ProbeScene::EmitterAbove, planePacket, planeScene) ||
             !CreateTestScene(device,
-                             false,
-                             false,
+                             ProbeScene::VisibilitySeed,
+                             visibilitySeedPacket,
+                             visibilitySeedScene) ||
+            !CreateTestScene(device, ProbeScene::Occlusion, occlusionPacket, occlusionScene) ||
+            !CreateTestScene(device,
+                             ProbeScene::SeedFloor,
                              singleProbeSeedPacket,
                              singleProbeSeedScene,
-                             1u,
-                             true,
-                             0.5f) ||
+                             1u) ||
             !CreateTestScene(device,
-                             false,
-                             false,
+                             ProbeScene::EmitterAbove,
                              singleProbeSurfacePacket,
                              singleProbeSurfaceScene,
-                             1u))
+                             1u) ||
+            !CreateTestScene(device,
+                             ProbeScene::BackfacingFloor,
+                             backfacingPacket,
+                             backfacingScene))
         {
             return 1;
         }
@@ -1427,8 +1852,11 @@ namespace
                            0u,
                            1u,
                            singleProbeSeedObservation) ||
-            !ValidateAtlasValues(
-                singleProbeSeedObservation, nullptr, "single_probe_seed", 1u))
+            !ValidateAtlasValues(singleProbeSeedObservation,
+                                 nullptr,
+                                 singleProbeSeedScene,
+                                 "single_probe_seed",
+                                 1u))
         {
             return 1;
         }
@@ -1467,6 +1895,7 @@ namespace
                                              singleProbeBounceObservation) ||
             !ValidateAtlasValues(singleProbeBounceObservation,
                                  &singleProbeSeedObservation,
+                                 singleProbeSurfaceScene,
                                  "single_probe_bounce",
                                  1u))
         {
@@ -1488,11 +1917,36 @@ namespace
                            ProbeCount,
                            planeObservation) ||
             !ValidateSinglePlane(planeObservation) ||
-            !ValidateAtlasValues(planeObservation, nullptr, "single_plane"))
+            !ValidateAtlasValues(planeObservation, nullptr, planeScene, "single_plane"))
         {
             return 1;
         }
         planeProbePass.Shutdown();
+
+        // 表が下を向いた床の上のprobeは、rayの半分が面の裏に当たるため無効になり、発光面の直接光も持たない。
+        DDGIProbePass backfacingProbePass;
+        ProbeObservation backfacingObservation;
+        if (!RunProbeFrame(device,
+                           shaderManager,
+                           backfacingProbePass,
+                           backfacingPacket,
+                           backfacingScene,
+                           lightBuffer,
+                           environmentTexture,
+                           environmentSampler,
+                           0u,
+                           ProbeCount,
+                           backfacingObservation) ||
+            !ValidateAtlasValues(backfacingObservation,
+                                 nullptr,
+                                 backfacingScene,
+                                 "backfacing_floor",
+                                 ProbeCount,
+                                 false))
+        {
+            return 1;
+        }
+        backfacingProbePass.Shutdown();
 
         ProbeObservation visibilitySeedObservation;
         if (!RunProbeFrame(device,
@@ -1506,7 +1960,10 @@ namespace
                            0u,
                            ProbeCount,
                            visibilitySeedObservation) ||
-            !ValidateAtlasValues(visibilitySeedObservation, nullptr, "visibility_seed"))
+            !ValidateAtlasValues(visibilitySeedObservation,
+                                 nullptr,
+                                 visibilitySeedScene,
+                                 "visibility_seed"))
         {
             return 1;
         }
@@ -1516,7 +1973,9 @@ namespace
              ++rayIndex)
         {
             const DDGIProbeRayQueryResult& ray = visibilitySeedObservation.Rays[rayIndex];
-            if (ray.bHit != 0u && ray.InstanceCustomIndex == VisibilityWallCustomIndex)
+            if (ray.bHit != 0u &&
+                (ray.InstanceCustomIndex == VisibilityWallCustomIndex ||
+                 ray.InstanceCustomIndex == VisibilityWallBackCustomIndex))
             {
                 ++visibilityWallRayHits;
             }
@@ -1540,8 +1999,10 @@ namespace
                            ProbeCount,
                            occlusionObservation) ||
             !ValidateOcclusionAndBounce(occlusionObservation, visibilitySeedObservation) ||
-            !ValidateAtlasValues(
-                occlusionObservation, &visibilitySeedObservation, "occlusion"))
+            !ValidateAtlasValues(occlusionObservation,
+                                 &visibilitySeedObservation,
+                                 occlusionScene,
+                                 "occlusion"))
         {
             return 1;
         }
@@ -1557,7 +2018,8 @@ namespace
         float currentMoments[2] = {};
         SampleIrradianceAtPositiveZ(visibilitySeedObservation, 0u, oldIrradiance);
         SampleIrradianceAtPositiveZ(visibilitySeedObservation, 1u, blockedIrradiance);
-        ComputeCurrentIrradiance(occlusionObservation, 0u, 3u, 3u, currentIrradiance);
+        ComputeCurrentIrradiance(
+            occlusionObservation, occlusionScene, 0u, 3u, 3u, currentIrradiance);
         ComputeExpectedBounce(visibilitySeedObservation,
                               occlusionObservation.Rays[BounceRayIndex],
                               expectedBounce,
