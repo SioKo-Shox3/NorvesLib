@@ -549,6 +549,47 @@ vec3 SampleSun(PathSurface surface, vec3 position, vec3 geometricNormal, inout u
     return contribution;
 }
 
+// 環境の鏡面反射の1標本（拡散バウンスの輸送範囲の1次命中で使う。ラスタのIBLの鏡面反射に当たる）。
+// 鏡面葉の可視法線分布から方向を引き、物体に当たらず抜けた方向だけ環境の放射輝度を数える。重みは
+// 鏡面のBRDF×cos/pdf。物体に当たる方向は0とし、周りの物体の鏡面反射は数えない。
+vec3 SampleEnvironmentSpecular(PathSurface surface, vec3 position, vec3 geometricNormal,
+                               inout uint state)
+{
+    vec2 u = vec2(Random01(state), Random01(state));
+    if (surface.Mode == PATH_BSDF_VALIDATION_LAMBERT || surface.SpecularProbability <= 0.0)
+    {
+        return vec3(0.0);
+    }
+    vec3 viewTangent = normalize(vec3(dot(surface.View, surface.Tangent),
+                                      dot(surface.View, surface.Bitangent),
+                                      max(dot(surface.View, surface.Normal), 1.0e-6)));
+    vec3 halfTangent = SampleGgxVisibleNormal(viewTangent, surface.Alpha, u);
+    vec3 H = halfTangent.x * surface.Tangent + halfTangent.y * surface.Bitangent +
+             halfTangent.z * surface.Normal;
+    vec3 L = reflect(-surface.View, H);
+    float NdotL = dot(surface.Normal, L);
+    if (NdotL <= 0.0 || dot(geometricNormal, L) <= 0.0)
+    {
+        return vec3(0.0);
+    }
+    float NdotH = max(dot(surface.Normal, H), 0.0);
+    float specularPdf =
+        PathGgxDistribution(NdotH, PathSinSquared(surface.Normal, H), surface.Alpha) *
+        PathSmithG1(surface.NdotV, surface.Alpha) / (4.0 * surface.NdotV);
+    if (!(specularPdf > 0.0))
+    {
+        return vec3(0.0);
+    }
+    vec3 weight = max(EvaluatePathBsdf(surface, L) - surface.DiffuseBrdf, vec3(0.0)) *
+                  (NdotL / specularPdf);
+    if (max(weight.r, max(weight.g, weight.b)) <= 0.0 ||
+        !IsVisible(position + geometricNormal * 0.002, L, 100000.0))
+    {
+        return vec3(0.0);
+    }
+    return weight * MissRadiance(L, false, specularPdf);
+}
+
 // 1次命中点から太陽円盤の1方向が見えるか（検証出力）。面が太陽に背を向けていれば0。
 float SunVisibility(vec3 position, vec3 geometricNormal, inout uint state)
 {
@@ -686,6 +727,11 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
         // 命中側では数えない）。
         uint transportScope = TransportScope();
         bool bDiffuseBouncesOnly = IsDiffuseBounceTransport();
+        if (bDiffuseBouncesOnly && bounce == 0u)
+        {
+            radiance += throughput * SampleEnvironmentSpecular(surface, surfacePosition,
+                                                               geometricNormal, state);
+        }
         if (transportScope == PATH_TRANSPORT_DIRECT_ONLY ||
             (transportScope == PATH_TRANSPORT_SINGLE_DIFFUSE_BOUNCE && bounce >= 1u) ||
             (transportScope == PATH_TRANSPORT_TWO_DIFFUSE_BOUNCES && bounce >= 2u))
@@ -696,9 +742,8 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
         vec3 u = vec3(Random01(state), Random01(state), Random01(state));
         vec3 nextDirection;
         float bsdfPdf;
-        // 1次命中は全BSDFで散乱する（ラスタのIBLの鏡面反射に当たる環境の鏡面反射を含む）。散乱光線の
-        // 命中面からは拡散葉だけを追う。
-        if (bDiffuseBouncesOnly && bounce >= 1u)
+        // 拡散バウンスの輸送範囲では、経路は拡散葉だけで続ける（1次命中の鏡面反射は上の環境の標本で数える）。
+        if (bDiffuseBouncesOnly)
         {
             // 拡散葉だけをコサイン分布で標本化する。重みは拡散のBRDF×π（拡散葉の方向反射率）。
             float phi = 2.0 * PI * u.y;
