@@ -94,6 +94,7 @@
 
 - R7（2026-09-25）: コアと屋外拡張を受入れ（`Docs/RenderingValidation/R7CoreAcceptance.md`・`R7OutdoorAcceptance.md`、完了コミットのtrailerは`RenderingRoadmap: R7 complete`）。R6は自前PTの拡散2バウンス（median of means）と閾値内、R4は再照合で超過し再オープン。GPU性能はDeferred。
 - R4-REOPEN（2026-09-25）: R4を再受入れ（`Docs/RenderingValidation/R4Acceptance.md`、完了コミットのtrailerは`RenderingRoadmap: R4 complete`）。probeの分類、probeでの発光面の直接照度、全体/間接光だけの2組のlayer、RTXGIの補間で、自前PTとの比較は影0.117・赤0.224・緑0.130（閾値0.25、不変）。公開Cornell参照・動的更新・golden・RenderingValidationラベル（57件中0件失敗）も通過。
+- R8-P1（2026-09-26）: `Scripts/BakeAcesOutputLut.py`でOCIO 2.5.2の組み込み`studio-config-v4.0.0_aces-v2.0_ocio-v2.5`から、`sRGB - Display`／`ACES 2.0 - SDR 100 nits (Rec.709)`を65³ RGBA16F（display-linear）の`Assets/ColorManagement/Aces20SdrRec709.lut3d`へ焼き、HDR試験チャート（256×240）とOCIO厳密変換の基準画像を`R8Aces*`に置いた。shaperは`log2(x/2^-8+1)/log2(2^16+1)`（範囲[0,256]）。`--verify`は4ファイルbyte一致、チャート最大1.577/255（閾値2/255）でEXIT_CODE=0。記録は`Docs/RenderingValidation/R8ColorManagement.md`。
 
 ## In progress
 - なし。
@@ -104,6 +105,7 @@
 - R8のM1（2026-09-26）: S8はベイクLUT（OCIOでACES 2.0 SDR 100 nit Rec.709をsRGB表示向けに65³＋log2 shaperへ焼き、display-linearで持つ。新しいトーンマップの選択肢で既定は不変）。連番は1280×720・1024 spp、PTの1フレームは前後のカメラ・変換とシャッター区間（フレーム長1/24 s、シャッター1/48 s）を固定して1 spp×1024 dispatch。DoF・動きぼけの閾値はf値／シャッターを±20%変えたPTを物差しにする規則。フィルムグレインは既定オフで入れる。連番の検査はC++の検証exe（隣接フレームのFLIPが中央値の3倍を超えたらポッピング）とScripts、CTestは8フレームの連番。
 
 ## Notes
+- R8-P1検証（2026-09-26）: `.harness/runs/20260926-011446/verify-R8-P1-1.txt`でRESULT=PASS・EXIT_CODE=0を読戻し確認した。純粋なlog2 shaper（2^-14〜2^8など）はどの範囲でもチャート最大3.1/255以上で不合格だったため、0を格子端に置くオフセット付きlog2へ変えて候補を測り、c=2^-8・上限2^8を採用した（表は記録文書）。無作為な色20万点では高彩度の色域境界で最大5.8/255（67点が2/255超、合否外の参考値）で、R8-P2のGPU一致はチャートで確かめる。この反復はPythonと生成物だけの変更のため、エンジンのbuildは開始儀式（同日、HEAD `a42c8b1`）の結果を使い再実行していない。
 - R8ループ開始儀式（2026-09-26、HEAD `a42c8b1`）: Game・ToneMappingParamsLayoutTestのDebug build BUILD_EXIT=0、CPU契約3件（ToneMappingParamsLayout・RenderingDDGILightingContract・PathTracingCamera）3/3 passed。直前の全target build後のRenderingValidationラベルは57件中0件失敗（`.harness/runs/20260925-r4-reopen/`）。
 - R7-P3D評価（2026-09-24）: 1周目で1frameに束ねた試料のカメラ標本の偏り、影を落とさない物体だけのシーンでRTGIが既存の間接光を置き換える経路、PT機能判定のshaderInt64漏れが指摘され、2周目でPASS。R7-P3Bの`8c80695`とR7-P3Cの`9e0b35e`も追加指摘なし。負の対照は`.harness/runs/20260924-r7-p3d/negative-*.txt`。
 - R7-P3C評価（2026-09-24）: 1周目でGGXの分母（粗さ0）、裏側の視線の標本化、65504の切り詰め、影レイの終端、2周目で面光源の直前（2mm以内）の遮蔽物の見逃しが指摘された。2周の上限に達したため、最後の修正`9e0b35e`はR7-P3Dの評価対象へ含めて確認する。負の対照は`.harness/runs/20260924-r7-p3c/negative-p3c-*.txt`。
