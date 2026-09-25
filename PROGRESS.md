@@ -95,6 +95,7 @@
 - R7（2026-09-25）: コアと屋外拡張を受入れ（`Docs/RenderingValidation/R7CoreAcceptance.md`・`R7OutdoorAcceptance.md`、完了コミットのtrailerは`RenderingRoadmap: R7 complete`）。R6は自前PTの拡散2バウンス（median of means）と閾値内、R4は再照合で超過し再オープン。GPU性能はDeferred。
 - R4-REOPEN（2026-09-25）: R4を再受入れ（`Docs/RenderingValidation/R4Acceptance.md`、完了コミットのtrailerは`RenderingRoadmap: R4 complete`）。probeの分類、probeでの発光面の直接照度、全体/間接光だけの2組のlayer、RTXGIの補間で、自前PTとの比較は影0.117・赤0.224・緑0.130（閾値0.25、不変）。公開Cornell参照・動的更新・golden・RenderingValidationラベル（57件中0件失敗）も通過。
 - R8-P1（2026-09-26）: `Scripts/BakeAcesOutputLut.py`でOCIO 2.5.2の組み込み`studio-config-v4.0.0_aces-v2.0_ocio-v2.5`から、`sRGB - Display`／`ACES 2.0 - SDR 100 nits (Rec.709)`を65³ RGBA16F（display-linear）の`Assets/ColorManagement/Aces20SdrRec709.lut3d`へ焼き、HDR試験チャート（256×240）とOCIO厳密変換の基準画像を`R8Aces*`に置いた。shaperは`log2(x/2^-8+1)/log2(2^16+1)`（範囲[0,256]）。`--verify`は4ファイルbyte一致、チャート最大1.577/255（閾値2/255）でEXIT_CODE=0。記録は`Docs/RenderingValidation/R8ColorManagement.md`。
+- R8-P2（2026-09-26）: `ToneMappingPass`に`Aces20Lut`演算子（operatorType 4）を加え、R8-P1の65³ LUTを3D texture（binding 2、RHIの`Texture3D`をGPUで初めて標本化）として固定のlog2 shaperと半テクセル補正で引く。LUT演算子では既定のグレーディングを掛けない。非LUT演算子は1×1×1の代替3D textureを結び、LUTの読込・作成・転送の失敗はACES Filmicへ退避する。起動引数`--tone-map=aces|aces20-lut`（既定はACES Filmicのまま）。`R8AcesLutToneMappingVulkanTest`でチャートの全61,440画素がOCIO基準画像とsRGB符号化後最大1.598/255（閾値2/255）、Filmic対照は223.96/255で不合格、作成失敗の注入時はFilmicと全画素一致、VUID_COUNT=0。Indoor/Outdoor goldenは不変。
 
 ## In progress
 - なし。

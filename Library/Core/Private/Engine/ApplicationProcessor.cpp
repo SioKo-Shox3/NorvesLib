@@ -13,6 +13,8 @@
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/PostProcessStack.h"
+#include "Rendering/ToneMappingPass.h"
 #include "Resource/FontAtlas.h"
 #include "Module/ModuleRegistry.h"
 #include "RHI/RHIDeviceFactory.h"
@@ -451,6 +453,57 @@ namespace
         return false;
     }
 
+    // --tone-map=aces|aces20-lut
+    bool TryParseToneMapOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::ToneMappingOperator& outOperator,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--tone-map=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("aces"))
+        {
+            outOperator = NorvesLib::Core::Rendering::ToneMappingOperator::ACES;
+            return true;
+        }
+        if (value == TEXT("aces20-lut"))
+        {
+            outOperator = NorvesLib::Core::Rendering::ToneMappingOperator::Aces20Lut;
+            return true;
+        }
+        return false;
+    }
+
+    // メインSceneViewのToneMappingPassへ演算子を設定する。
+    // 初期化中（最初のFramePacketがRenderThreadへ渡る前）にだけ呼ぶ。
+    bool ApplyMainViewToneMapOperator(NorvesLib::Core::Rendering::SceneView* sceneView,
+                                      NorvesLib::Core::Rendering::ToneMappingOperator toneMapOperator)
+    {
+        if (!sceneView)
+        {
+            return false;
+        }
+        NorvesLib::Core::Rendering::PostProcessStack* postProcessStack = sceneView->GetPostProcessStack();
+        if (!postProcessStack)
+        {
+            return false;
+        }
+        NorvesLib::Core::Rendering::IViewPass* pass = postProcessStack->GetPass("ToneMappingPass");
+        if (!pass)
+        {
+            return false;
+        }
+        // GetName() が "ToneMappingPass" を返すのは ToneMappingPass だけ
+        static_cast<NorvesLib::Core::Rendering::ToneMappingPass*>(pass)->SetOperator(toneMapOperator);
+        return true;
+    }
+
     bool IsDisableBoardInstanceBatchingOption(const TCHAR* pText)
     {
         if (!pText)
@@ -565,6 +618,8 @@ namespace NorvesLib::Core::Engine
         Rendering::PathTracingDebugOutput pathTracingDebugOutput =
             Rendering::PathTracingDebugOutput::None;
         Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Neural;
+        Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
+        bool bToneMapOperatorRequested = false;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -695,6 +750,18 @@ namespace NorvesLib::Core::Engine
             {
                 LOG_WARNING("ApplicationProcessor runtime option --raster-direct-brdf ignored: value must be 'neural' or 'analytic'");
             }
+
+            bool bMatchedToneMap = false;
+            if (TryParseToneMapOption(args[i], toneMapOperator, bMatchedToneMap))
+            {
+                bToneMapOperatorRequested = true;
+                LOG_INFO("ApplicationProcessor runtime option tone_map=%u",
+                         static_cast<unsigned int>(toneMapOperator));
+            }
+            else if (bMatchedToneMap)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --tone-map ignored: value must be 'aces' or 'aces20-lut'");
+            }
         }
 
         const Detail::ExitFrameSelection exitFrameSelection = Detail::SelectExitFrameSelection(exitFrameOptions);
@@ -779,6 +846,12 @@ namespace NorvesLib::Core::Engine
 
             auto &coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
             coordinator.SetBoardInstanceBatchingEnabled(bBoardInstanceBatchingEnabled);
+
+            if (bToneMapOperatorRequested &&
+                !ApplyMainViewToneMapOperator(coordinator.GetMainSceneView().get(), toneMapOperator))
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --tone-map ignored: main view has no ToneMappingPass");
+            }
 
             if (bEnableCanvasView)
             {

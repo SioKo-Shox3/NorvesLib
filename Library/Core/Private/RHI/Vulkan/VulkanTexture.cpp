@@ -24,6 +24,18 @@ namespace NorvesLib::RHI::Vulkan
         std::atomic<uint32_t> g_liveUpdateStagingBufferCount{0};
         std::atomic<uint32_t> g_liveUpdateStagingMemoryCount{0};
         std::atomic<uint32_t> g_deferredUpdateTextureResourceCount{0};
+        // テスト用: このDebugNameのテクスチャ作成を1回だけ失敗させる（静的寿命の文字列だけを渡す）
+        std::atomic<const char *> g_armedCreateFailureDebugName{nullptr};
+
+        bool ConsumeVulkanTextureCreateFailureForTesting(const char *debugName) noexcept
+        {
+            const char *armedName = g_armedCreateFailureDebugName.load(std::memory_order_acquire);
+            if (!armedName || !debugName || std::strcmp(armedName, debugName) != 0)
+            {
+                return false;
+            }
+            return g_armedCreateFailureDebugName.compare_exchange_strong(armedName, nullptr);
+        }
 
         struct DeferredTextureUpdateStagingResources
         {
@@ -247,6 +259,11 @@ namespace NorvesLib::RHI::Vulkan
         }
     }
 
+    void ArmVulkanTextureCreateFailureForTesting(const char *debugName) noexcept
+    {
+        g_armedCreateFailureDebugName.store(debugName, std::memory_order_release);
+    }
+
     void GetVulkanTextureUpdateDeferredTextureResourceCountForTesting(uint32_t &resourceCount) noexcept
     {
         resourceCount = g_deferredUpdateTextureResourceCount.load(std::memory_order_relaxed);
@@ -451,6 +468,11 @@ namespace NorvesLib::RHI::Vulkan
 
     void VulkanTexture::CreateTexture()
     {
+        if (ConsumeVulkanTextureCreateFailureForTesting(m_desc.DebugName))
+        {
+            throw std::runtime_error("テスト用に注入したテクスチャ作成の失敗です");
+        }
+
         vk::ImageCreateInfo imageInfo;
 
         // イメージタイプの設定

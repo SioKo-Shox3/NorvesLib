@@ -1,4 +1,5 @@
 ﻿#include "Rendering/ToneMappingPassGpuTypes.h"
+#include "Rendering/ToneMappingPass.h"
 
 #include <cassert>
 #include <cstddef>
@@ -136,6 +137,25 @@ int main()
     assert(std::abs(commonEntryInput - 1.0f) < 0.0001f);
     const float exposureCurve = 1.0f - std::exp(-commonEntryInput);
     assert(std::abs(exposureCurve - (1.0f - std::exp(-1.0f))) < 0.0001f);
+
+    // ACES 2.0 SDR LUT: enum の並びと operatorType 4、binding 2 の3D LUT、既定のグレーディングを外す分岐
+    assert(static_cast<unsigned>(ToneMappingOperator::Aces20Lut) == 4u);
+    RequirePosition(shaderSource, "layout(set = 0, binding = 2) uniform sampler3D colorLut;");
+    RequirePosition(shaderSource, "const uint ACES20_LUT_OPERATOR = 4u;");
+    RequirePosition(shaderSource, "const float ACES20_LUT_SHAPER_OFFSET = 0.00390625;");
+    RequirePosition(shaderSource, "const float ACES20_LUT_SHAPER_MAX = 256.0;");
+    const std::size_t lutBranchPosition =
+        RequirePosition(shaderSource, "else if (params.operatorType == ACES20_LUT_OPERATOR)");
+    const std::size_t gradingGuardPosition =
+        RequirePositionAfter(shaderSource, "if (params.operatorType != ACES20_LUT_OPERATOR)", lutBranchPosition);
+    const std::size_t contrastPosition =
+        RequirePositionAfter(shaderSource, "result = ApplyContrast(result, params.contrast);", gradingGuardPosition);
+    const std::size_t saturationPosition =
+        RequirePositionAfter(shaderSource, "result = ApplySaturation(result, params.saturation);", contrastPosition);
+    assert(lutBranchPosition < gradingGuardPosition);
+    assert(gradingGuardPosition < saturationPosition);
+    assert(toneMappingPassSource.find("colorLutBinding.binding = 2;") != std::string::npos);
+    assert(toneMappingPassSource.find("constexpr uint32_t Aces20LutOperatorType = 4u;") != std::string::npos);
 
     const std::size_t vignetteFalloffPosition =
         RequirePosition(shaderSource, "float vignette = smoothstep(radius - softness, radius, dist);");

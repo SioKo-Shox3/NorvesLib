@@ -183,6 +183,23 @@ register_rendering_gpu_test(
     RTGIDiffuseIndirectVulkanTest
     RTGIDiffuseIndirectVulkanTest
 )
+add_executable(R8AcesLutToneMappingVulkanTest
+    R8AcesLutToneMappingVulkanTest.cpp
+)
+target_link_libraries(R8AcesLutToneMappingVulkanTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(R8AcesLutToneMappingVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(R8AcesLutToneMappingVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(R8AcesLutToneMappingVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    R8AcesLutToneMappingVulkanTest
+    R8AcesLutToneMappingVulkanTest
+)
 add_executable(R6RTGIAcceptanceVulkanTest
     R6RTGIAcceptanceVulkanTest.cpp
 )

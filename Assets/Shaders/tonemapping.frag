@@ -8,7 +8,7 @@ layout(set = 0, binding = 0) uniform sampler2D sceneColor;
 // トーンマッピングパラメータ
 layout(std140, set = 0, binding = 1) uniform ToneMappingParams
 {
-    uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure
+    uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure, 4:ACES 2.0 SDR LUT
     uint bBypass;
     uint _pad0;
     // Vignette パラメータ
@@ -25,7 +25,17 @@ layout(std140, set = 0, binding = 1) uniform ToneMappingParams
     float temperature;        // 色温度シフト (-1..+1, 0=neutral)
 } params;
 
+// ACES 2.0 SDR 100 nit Rec.709 のベイク3D LUT（display-linear。x=R, y=G, z=B）
+layout(set = 0, binding = 2) uniform sampler3D colorLut;
+
 layout(location = 0) out vec4 outColor;
+
+// LUTの shaper（Scripts/BakeAcesOutputLut.py と同じ固定値）
+// u = log2(x / 2^-8 + 1) / log2(2^8 / 2^-8 + 1)、x は [0, 256] へ飽和
+const uint ACES20_LUT_OPERATOR = 4u;
+const float ACES20_LUT_SHAPER_OFFSET = 0.00390625;
+const float ACES20_LUT_SHAPER_MAX = 256.0;
+const float ACES20_LUT_SHAPER_SPAN = log2(ACES20_LUT_SHAPER_MAX / ACES20_LUT_SHAPER_OFFSET + 1.0);
 
 // ========================================
 // トーンマッピングアルゴリズム
@@ -73,6 +83,17 @@ vec3 TonemapUncharted2(vec3 color)
 vec3 TonemapExposure(vec3 color)
 {
     return vec3(1.0) - exp(-color);
+}
+
+// ACES 2.0 SDR（ベイク3D LUTを log2 shaper の座標で三線形補間）
+vec3 TonemapAces20Lut(vec3 color)
+{
+    vec3 clamped = clamp(color, vec3(0.0), vec3(ACES20_LUT_SHAPER_MAX));
+    vec3 shaped = clamp(log2(clamped / ACES20_LUT_SHAPER_OFFSET + 1.0) / ACES20_LUT_SHAPER_SPAN, 0.0, 1.0);
+    // 格子点 0 と N-1 がテクセル中心に来るよう、[0,1] を半テクセル内側へ写す
+    float lutSize = float(textureSize(colorLut, 0).x);
+    vec3 lutCoord = (shaped * (lutSize - 1.0) + 0.5) / lutSize;
+    return textureLod(colorLut, lutCoord, 0.0).rgb;
 }
 
 // ========================================
@@ -137,6 +158,10 @@ void main()
     {
         mapped = TonemapUncharted2(hdrColor);
     }
+    else if (params.operatorType == ACES20_LUT_OPERATOR)
+    {
+        mapped = TonemapAces20Lut(hdrColor);
+    }
     else
     {
         mapped = TonemapExposure(hdrColor);
@@ -147,21 +172,25 @@ void main()
 
     // ========================================
     // Color Grading（display-linear Rec.709空間で適用）
+    // ACES 2.0 SDR LUT は表示変換そのものなので、既定のグレーディングを掛けない
     // ========================================
-    // カラーフィルター
-    result *= params.colorFilter.rgb * params.colorFilter.w;
+    if (params.operatorType != ACES20_LUT_OPERATOR)
+    {
+        // カラーフィルター
+        result *= params.colorFilter.rgb * params.colorFilter.w;
 
-    // 明度
-    result += vec3(params.brightness);
+        // 明度
+        result += vec3(params.brightness);
 
-    // コントラスト
-    result = ApplyContrast(result, params.contrast);
+        // コントラスト
+        result = ApplyContrast(result, params.contrast);
 
-    // 彩度
-    result = ApplySaturation(result, params.saturation);
+        // 彩度
+        result = ApplySaturation(result, params.saturation);
 
-    // 色温度
-    result = ApplyTemperature(result, params.temperature);
+        // 色温度
+        result = ApplyTemperature(result, params.temperature);
+    }
 
     // ========================================
     // Vignette（最終段で適用）

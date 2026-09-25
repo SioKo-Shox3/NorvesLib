@@ -28,8 +28,21 @@ namespace NorvesLib::Core::Rendering
         Uncharted2,
 
         /** 露出ベースの単純なクランプ */
-        Exposure
+        Exposure,
+
+        /**
+         * ACES 2.0 SDR 100 nit Rec.709 のベイク3D LUT（display-linear へ変換）
+         *
+         * `Assets/ColorManagement/Aces20SdrRec709.lut3d` を log2 shaper で引く。
+         * 表示変換そのものなので、既定のカラーグレーディングは掛けない。
+         */
+        Aces20Lut
     };
+
+    /**
+     * @brief ACES 2.0 SDR LUT の既定のアセットパス（`Assets/` 相対）
+     */
+    inline constexpr const char* Aces20SdrLutAssetPath = "ColorManagement/Aces20SdrRec709.lut3d";
 
     /**
      * @brief トーンマッピングパス設定
@@ -96,6 +109,7 @@ namespace NorvesLib::Core::Rendering
      * - ACES Filmic: 映画品質、最もバランスが良い（デフォルト）
      * - Uncharted2: ゲームで広く使用
      * - Exposure: 露出ベースの単純なクランプ
+     * - Aces20Lut: ACES 2.0 SDR のベイク3D LUT（カラーグレーディングなし）
      */
     class ToneMappingPass : public IViewPass, public IRenderGraphPass
     {
@@ -187,6 +201,16 @@ namespace NorvesLib::Core::Rendering
                               bool bRegisterLegacyBridge);
         bool EnqueueEmptyNativePass(ViewRenderContext& context) const;
 
+        /**
+         * @brief binding 2 に結ぶ3D LUTを用意する
+         *
+         * LUT演算子のときはアセットのLUTを一度だけ読み込み、それ以外は 1×1×1 の代替を結ぶ。
+         * 読み込みに失敗したLUT演算子は ACES Filmic へ退避する。
+         * @return シェーダへ渡す演算子の番号
+         */
+        uint32_t PrepareColorLut();
+        RHI::TexturePtr LoadAces20SdrLut() const;
+
         // 設定
         ToneMappingSettings m_Settings;
 
@@ -204,6 +228,12 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_ParamsBuffer;
         RHI::DescriptorSetPtr m_ToneMappingDescriptorSet;
         RHI::SamplerPtr m_SceneColorSampler;
+
+        // 表示変換の3D LUT（binding 2）。LUT演算子以外では 1×1×1 の代替を結ぶ
+        RHI::TexturePtr m_ColorLutTexture;
+        RHI::TexturePtr m_ColorLutFallbackTexture;
+        RHI::SamplerPtr m_ColorLutSampler;
+        bool m_bColorLutLoadFailed = false;
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;
