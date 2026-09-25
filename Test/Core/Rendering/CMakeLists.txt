@@ -768,6 +768,32 @@ set_tests_properties(R6RTGIPathTracingReferenceVulkanTest PROPERTIES
     RESOURCE_LOCK NorvesLibGPU
     SKIP_RETURN_CODE 125
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# 空・霧を含む屋外シーンのラスタとPTを、R2と同じ3時刻でLDR-FLIPで比べる（R7-O3）。
+add_executable(R7OutdoorPathTracingReferenceVulkanTest
+    R7OutdoorPathTracingReferenceVulkanTest.cpp
+)
+target_link_libraries(R7OutdoorPathTracingReferenceVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+    RenderingReferenceComparisonSupport
+)
+target_include_directories(R7OutdoorPathTracingReferenceVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(R7OutdoorPathTracingReferenceVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+set(R7_OUTDOOR_PATH_TRACING_REFERENCE_ROOT
+    "${CMAKE_BINARY_DIR}/RenderingValidation/R7OutdoorPathTracingReferenceRuns")
+add_test(NAME R7OutdoorPathTracingReferenceVulkanTest
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/R7OutdoorPathTracingReferenceTest.py
+            $<TARGET_FILE:R7OutdoorPathTracingReferenceVulkanTest>
+            ${R7_OUTDOOR_PATH_TRACING_REFERENCE_ROOT})
+set_tests_properties(R7OutdoorPathTracingReferenceVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(R4DDGIPathTracingReferenceVulkanTest
     R4DDGIPathTracingReferenceVulkanTest.cpp
 )

@@ -273,6 +273,8 @@ namespace NorvesLib::Test::RenderingValidation
         bool SetR4CornellPointLightState(float offsetX, float intensity) const;
         /** @brief Cornellの天井の面光源メッシュの表示を切り替える（点光源だけの検証で使う）。 */
         bool SetR4CornellEmitterVisible(bool bVisible) const;
+        /** @brief 基本シーンの光源（屋外は方向光）を点灯・消灯する（空の太陽だけで照らす比較で使う）。 */
+        bool SetBaseLightActive(bool bActive) const;
         const Core::Rendering::CameraProxy& GetCamera() const;
         const Core::Rendering::CameraProxy& GetR3ShadowedShaftsCamera() const;
         const Core::Rendering::CameraProxy& GetR5RayTracingShadowCamera() const;

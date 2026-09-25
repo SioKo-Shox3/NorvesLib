@@ -3024,6 +3024,16 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::SetBaseLightActive(bool bActive) const
+    {
+        if (m_pP4LightEntity == nullptr)
+        {
+            return false;
+        }
+        m_pP4LightEntity->SetActive(bActive);
+        return true;
+    }
+
     const Core::Rendering::CameraProxy& RenderingValidationSceneFixture::GetCamera() const
     {
         return m_bR1PhysicalFixturePrepared ? m_R1PhysicalCamera : m_Layout.Camera;
