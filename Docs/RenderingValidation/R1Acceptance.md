@@ -3,6 +3,7 @@
 R1 baseline candidate Indoor=3845F8671194A3C55EA929503E7ECB4C777EB7A5A4D900C03E75853E50D9D4EF Outdoor=05D202193F8C304E45099EBA6557A48BB7B5BF88E694552CBABC50E898D895B6 CodeHead=2d4243395d62ace7ec0faa063fc9a78507b3bc00 を承認する。
 R1 visual threshold candidate SHA256=19BBE1737E75796B7709DEE2DCABB66CB60DED050940F9B4E54A13BD242C7309 CodeHead=63f70dae644de0dc32a333670aed5720dde488c0 を承認する。
 R1 baseline candidate Indoor=3845F8671194A3C55EA929503E7ECB4C777EB7A5A4D900C03E75853E50D9D4EF Outdoor=9933B55851574870C9AC8586B6C0F38FDFFB5E26B925547C37E92ECFBAF3B954 CodeHead=a41190e716ff98b3d4f52344996ff50e258086ff を承認する。
+R1 baseline candidate Indoor=3845F8671194A3C55EA929503E7ECB4C777EB7A5A4D900C03E75853E50D9D4EF Outdoor=5F62BB87A2AAB054E8CFEF17A0B2AD5A50491459D99780B3DF60972F54634240 CodeHead=6d7628f3da885c09de8be7a5b2e384672fd392f4 を承認する。
 
 ## P6b plan and procedure approval
 P6b plan SHA256=37D08DE402478F1D1EBEEEE2D0D8F134492AA0A0EDEB2A4C8FF69527721A2AE3
@@ -63,4 +64,11 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 2026-09-23、ユーザーはR2の4カスケードCSM導入後のOutdoor出力（SHA256=`9933B55851574870C9AC8586B6C0F38FDFFB5E26B925547C37E92ECFBAF3B954`）を新しいOutdoor baselineとして承認した。上の3行目の承認行は置換前の履歴として残す。
 - 差分の範囲: 旧baselineとの比較は平均FLIP `0.002326954`、最大FLIP `0.529430032`、459画素で、差は球の自己影の境界と接地影の輪郭に限られる。地面・空・非影領域は一致する。R2-P5で単一directional shadow matrixを4層CSMへ置き換えた意図した変化であり、CSMの境界欠落・二重化・シミー抑制はR2受入れ（`R2Acceptance.md`）で別に検証済みである。
 - 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead a41190e716ff98b3d4f52344996ff50e258086ff`。Indoor候補は既存baseline `3845F867…D9D4EF`と一致し、Outdoor候補は独立した2回のstaging captureと同じ`9933B558…F3B954`である。
+- 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
+
+## 低い太陽の影の修正後のOutdoor再承認
+- 2026-09-25、ユーザーは方向光の影の修正（`fdbc5dc`）後のOutdoor出力（SHA256=`5F62BB87A2AAB054E8CFEF17A0B2AD5A50491459D99780B3DF60972F54634240`）を新しいOutdoor baselineとして承認した。上の「R2 CSM後のOutdoor再承認」の承認行は置換前の履歴として残す。
+- 修正の内容: 影の深度の比較に受け側の面の傾き（receiver plane depth bias）を入れ、方向光の半影の幅を遮蔽物と受け側の深度差×tan(太陽の角半径)から求める。空の太陽の方向光で朝夕を描いたとき、平らな地面が自分自身を遮蔽物と数えて約3割暗くなり、長い影が消えていた（R7-O3のラスタ対PT比較で発見）。
+- 差分の範囲: 旧baselineとの差は449画素（raw差2超は367画素、最大raw差202）で、球の自己影の境界と接地影の輪郭に限られる。影が鋭くなり、PTの太陽の半影に近づく。地面・空・非影領域は一致する。
+- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 6d7628f3da885c09de8be7a5b2e384672fd392f4`。Indoor候補は既存baseline `3845F867…D9D4EF`と一致し、Outdoor候補は独立したstaging captureと同じ`5F62BB87…634240`である。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
