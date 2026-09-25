@@ -285,11 +285,16 @@ vec2 ComputeReceiverDepthGradient(vec3 normal, uint cascadeIndex)
         : vec2(0.0);
 }
 
-// 深度の比較の余裕。一定の0.005に、影の地図の1 texel分の受け側の傾き（texelの中心と受け側の点の
-// ずれ）を加える。
-float ComputeShadowCompareBias(vec2 receiverGradient, vec2 texelSize)
+// 深度の比較の余裕。影の地図の1.5 texel分の世界の長さを深度へ換えた一定の分（曲面と深度の量子化）に、
+// 1 texel分の受け側の傾き（texelの中心と受け側の点のずれ）を加える。正規化深度の一定値は
+// カスケードの深度範囲が広いほど世界の長さが大きくなり、影が遮蔽物から離れて始まる。
+float ComputeShadowCompareBias(vec2 receiverGradient, vec2 texelSize, uint cascadeIndex)
 {
-    return 0.005 + dot(abs(receiverGradient), texelSize);
+    mat4 lightProjectionMatrix = params.lightProjection[cascadeIndex];
+    float depthPerMeter = abs(lightProjectionMatrix[2][2]);
+    float uPerMeter = max(0.5 * abs(lightProjectionMatrix[0][0]), 1.0e-8);
+    float texelMeters = texelSize.x / uPerMeter;
+    return depthPerMeter * texelMeters * 1.5 + dot(abs(receiverGradient), texelSize);
 }
 
 // Phase 1: ブロッカーサーチ（平均ブロッカー深度を求める）
@@ -308,7 +313,7 @@ float FindBlockerDepth(vec2 shadowUV,
                                    0.5 * abs(lightProjectionMatrix[0][0]),
                                2.0 * texelSize.x,
                                PCSS_BLOCKER_SEARCH_RADIUS);
-    float bias = ComputeShadowCompareBias(receiverGradient, texelSize);
+    float bias = ComputeShadowCompareBias(receiverGradient, texelSize, cascadeIndex);
 
     for (int i = 0; i < 16; i++)
     {
@@ -350,7 +355,7 @@ float PCSSFilter(vec2 shadowUV,
                  uint cascadeIndex)
 {
     float shadow = 0.0;
-    float bias = ComputeShadowCompareBias(receiverGradient, texelSize);
+    float bias = ComputeShadowCompareBias(receiverGradient, texelSize, cascadeIndex);
 
     for (int i = 0; i < 16; i++)
     {
