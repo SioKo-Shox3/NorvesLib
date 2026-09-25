@@ -92,13 +92,14 @@
 - R4再照合（更新ルール5、2026-09-25）: `R4DDGIPathTracingReferenceVulkanTest`でR4受入れと同じCornell状態のDDGIを4096 sppの自前PTとR4の指標で比べ、赤ROIの相対輝度誤差0.257が閾値0.25を超えた（影0.162、緑0.057、色度差0.009/0.017）。R4を再オープンし、R4-REOPENで直す。
 - R6-P6: R6を受入れた（完了条件: R6-a単独ゲート、動的ライト追従、R7自前PTとの静止収束比較、性能はDeferred）。全体gateはtargetless build成功、RenderingValidation 56件で失敗は再オープン中のR4の再照合1件だけ。記録は`Docs/RenderingValidation/R6Acceptance.md`。
 
+- R7（2026-09-25）: コアと屋外拡張を受入れ（`Docs/RenderingValidation/R7CoreAcceptance.md`・`R7OutdoorAcceptance.md`、完了コミットのtrailerは`RenderingRoadmap: R7 complete`）。R6は自前PTの拡散2バウンス（median of means）と閾値内、R4は再照合で超過し再オープン。GPU性能はDeferred。
+
 ## In progress
-- R7-O3: ラスタ側の影・空・AO・RTGIの修正でFLIP平均は3時刻とも閾値内。局所の最大（影の縁の1画素の段差、接地部の3回目以降のバウンス、夕の緑の球の影側）が残る（TASKSのR7-O3のprogress）。
 - R4はR4-REOPENで再オープン中（probe由来の斑点と漏れ）。
 
 ## Next
 
-- R7-O3の残差の扱い → R7-P7 → R4-REOPEN → R8。閾値とseedは変更しない。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。
+- R4-REOPEN → R8。閾値とseedは変更しない。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。R7-O3の既知差はRTGI-HIT-SPECULAR・RTGI-MULTI-BOUNCE・FIX-CSM-TERMINATOR・FIX-GRAZING-IBL-SPECULARとして残す。
 - R8はM1（ACES 2.0 SDRのOCIO焼き込みLUT、DoF・動きぼけ、240 frame EXR）でTASKSを起こしてから着手する。
 
 ## Notes
