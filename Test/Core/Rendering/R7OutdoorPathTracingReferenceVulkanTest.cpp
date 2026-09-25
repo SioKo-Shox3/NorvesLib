@@ -7,7 +7,8 @@
 // 幾何（GPU）: --r7-outdoor-time=geometry は空と霧を切り、ラスタのGBufferの法線・距離の検証表示
 // （--r7-outdoor-debug-view=normal|depth）、PTの1次命中の法線・距離を取得する。
 // 比較（CPU）: --compare-dumps=<dir> で各時刻のラスタとPT（全輸送・直接光のみ）を読み、PTの全輸送を参照に
-// 比べる。閾値の物差しは、参照のうち太陽の直接光以外の成分（空の光と相互反射。PTの全輸送−直接光のみ）を
+// 比べる。PTの直接光のみは、1次光線の空と霧、1次命中の発光と光源標本（太陽円盤を含む）までを数える。
+// 閾値の物差しは、参照のうち直接光のみに入らない成分（面が受ける空の光と相互反射。PTの全輸送−直接光のみ）を
 // 一様に±20%変えた画像の知覚差のうち小さい方。判定は原寸のFLIP平均、幾何一致画素の原寸の画素単位FLIP
 // 最大、8x8区画平均のFLIP最大の三つで、3時刻すべてで閾値内なら合格。
 #include "Boot/AppLauncher.h"
@@ -65,10 +66,13 @@ namespace
     // 年齢の4倍を待つ（R6参照比較と同じ）。空由来のIBLの更新もこの間に済む。
     constexpr uint64_t RasterConvergedRenderedFrames = 16u + 56u + 4u * 64u;
     constexpr uint32_t BlockSize = 8u;
-    // 局所欠陥の負の対照（R6参照比較と同じ大きさ）。
+    // 局所欠陥の負の対照: 参照の最も暗い1画素へ、画像の平均輝度のLeakScale倍の光を足す。朝の画像は
+    // 平均輝度が低く、R6参照比較と同じ1倍では画素単位の閾値を越えない（欠陥を検出できない）ため、
+    // 全体平均と8x8区画平均では閾値内に埋もれたまま画素単位最大だけが閾値の外に出る4倍にする。
     constexpr uint32_t LeakPatchSize = 1u;
-    constexpr double LeakScale = 1.0;
-    // 閾値の物差し: 参照の太陽の直接光以外の成分を一様に±20%変えた画像と参照との知覚差。
+    constexpr double LeakScale = 4.0;
+    // 閾値の物差し: 参照のうち直接光のみに入らない成分（空の光と相互反射）を一様に±20%変えた画像と
+    // 参照との知覚差。
     constexpr double SkyAndBounceYardstick = 0.2;
     // 物差しの単調性を確かめる、閾値の外側にあるべき変化量。
     constexpr double SkyAndBounceSanity = 0.4;
@@ -321,7 +325,7 @@ namespace
 
         PrintFlipMeasurement((prefix + String("_raster_vs_pt_full")).c_str(), rasterMeasurement);
         PrintAgreeingPixelsOverLimit(rasterMeasurement, pixelLimit, raster.Width);
-        // 参考: 太陽の直接光だけの画像との差（空の光と相互反射の寄与の大きさ）。
+        // 参考: 直接光のみの画像との差（面が受ける空の光と相互反射の寄与の大きさ）。
         PrintFlipMeasurement((prefix + String("_info_pt_direct_vs_pt_full")).c_str(), directMeasurement);
         const double directLuminance = MeanLuminance(direct);
         std::cout << prefix.c_str() << "_mean_luminance raster=" << MeanLuminance(raster)
