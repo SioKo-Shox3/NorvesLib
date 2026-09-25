@@ -648,11 +648,15 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
                                                          geometricNormal, state);
         radiance += throughput * SampleSun(surface, surfacePosition, geometricNormal, state);
 
-        // 輸送範囲を限る参照: 直接光だけなら1次命中の光源標本で、拡散1バウンスなら2つ目の命中の
-        // 光源標本で打ち切る（発光三角形と太陽円盤は光源標本だけなので、散乱光線の命中側では数えない）。
+        // 輸送範囲を限る参照: 直接光だけなら1次命中の光源標本で、拡散1バウンスなら2つ目、拡散2バウンス
+        // なら3つ目の命中の光源標本で打ち切る（発光三角形と太陽円盤は光源標本だけなので、散乱光線の
+        // 命中側では数えない）。
         uint transportScope = TransportScope();
+        bool bDiffuseBouncesOnly = transportScope == PATH_TRANSPORT_SINGLE_DIFFUSE_BOUNCE ||
+                                   transportScope == PATH_TRANSPORT_TWO_DIFFUSE_BOUNCES;
         if (transportScope == PATH_TRANSPORT_DIRECT_ONLY ||
-            (transportScope == PATH_TRANSPORT_SINGLE_DIFFUSE_BOUNCE && bounce >= 1u))
+            (transportScope == PATH_TRANSPORT_SINGLE_DIFFUSE_BOUNCE && bounce >= 1u) ||
+            (transportScope == PATH_TRANSPORT_TWO_DIFFUSE_BOUNCES && bounce >= 2u))
         {
             break;
         }
@@ -660,7 +664,7 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
         vec3 u = vec3(Random01(state), Random01(state), Random01(state));
         vec3 nextDirection;
         float bsdfPdf;
-        if (transportScope == PATH_TRANSPORT_SINGLE_DIFFUSE_BOUNCE)
+        if (bDiffuseBouncesOnly)
         {
             // 拡散葉だけをコサイン分布で標本化する。重みは拡散のBRDF×π（拡散葉の方向反射率）。
             float phi = 2.0 * PI * u.y;

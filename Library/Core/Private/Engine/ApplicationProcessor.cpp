@@ -292,7 +292,7 @@ namespace
         return true;
     }
 
-    // --path-tracing-transport=full|direct|single-diffuse-bounce
+    // --path-tracing-transport=full|direct|single-diffuse-bounce|two-diffuse-bounces
     bool TryParsePathTracingTransportOption(
         const String& argument,
         NorvesLib::Core::Rendering::PathTracingTransportScope& outScope,
@@ -319,6 +319,11 @@ namespace
         if (value == TEXT("single-diffuse-bounce"))
         {
             outScope = NorvesLib::Core::Rendering::PathTracingTransportScope::SingleDiffuseBounce;
+            return true;
+        }
+        if (value == TEXT("two-diffuse-bounces"))
+        {
+            outScope = NorvesLib::Core::Rendering::PathTracingTransportScope::TwoDiffuseBounces;
             return true;
         }
         return false;
@@ -608,7 +613,7 @@ namespace NorvesLib::Core::Engine
             }
             else if (bMatchedTransport)
             {
-                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-transport ignored: value must be 'full', 'direct' or 'single-diffuse-bounce'");
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-transport ignored: value must be 'full', 'direct', 'single-diffuse-bounce' or 'two-diffuse-bounces'");
             }
 
             bool bMatchedPixelSampling = false;
