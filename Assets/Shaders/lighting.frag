@@ -1114,6 +1114,7 @@ void main()
 
     vec3 ambient = vec3(0.0);
     float specularAO = 1.0;
+    float directSpecularAO = 1.0;
 
     if (!bValidationLambert && !bValidationPBR)
     {
@@ -1156,6 +1157,7 @@ void main()
 
         // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
         specularAO = ComputeSpecularAO(NdotV, ao, roughness);
+        directSpecularAO = ComputeSpecularAO(NdotV, materialSample.b, roughness);
 
         if (params.bIBLEnabled != 0u)
         {
@@ -1238,10 +1240,11 @@ void main()
     }
 
     // 直接光へのAO適用（マイクロシャドウ近似）:
-    // 直接光はライト方向が明確なため、AOは控えめに適用（30%）
-    // アンビエント/IBLへはフルAO適用（上記で適用済み）
-    float directAO = mix(1.0, ao, 0.3);
-    float directSpecAO = mix(1.0, specularAO, 0.3);
+    // 直接光はライト方向が明確なため、材質のAOだけを控えめに適用する（30%）。画面空間AOは
+    // 物体の近くの大きな遮蔽を表し、直接光ではその遮蔽を影（CSM・RT影）が解くので掛けない
+    // （掛けると日向の面まで暗くなる）。アンビエント/IBLへはフルAO適用（上記で適用済み）
+    float directAO = mix(1.0, materialSample.b, 0.3);
+    float directSpecAO = mix(1.0, directSpecularAO, 0.3);
 
     // 最終カラー（HDR）
     vec3 color;
