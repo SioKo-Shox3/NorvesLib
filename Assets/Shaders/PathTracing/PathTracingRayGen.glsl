@@ -73,6 +73,14 @@ uint TransportScope()
     return parameters.sampleState.w;
 }
 
+// 拡散バウンスの輸送範囲（拡散1バウンス・拡散2バウンス）か。
+bool IsDiffuseBounceTransport()
+{
+    uint scope = TransportScope();
+    return scope == PATH_TRANSPORT_SINGLE_DIFFUSE_BOUNCE ||
+           scope == PATH_TRANSPORT_TWO_DIFFUSE_BOUNCES;
+}
+
 float PreExposure()
 {
     return parameters.exposureAndDebug.x;
@@ -642,7 +650,7 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
             break;
         }
         PathSurface surface = MakePathSurface(shadingNormal, -direction, surfaceAlbedo,
-                                              surfaceMetallic, surfaceRoughness, bsdfMode);
+                                              surfaceMetallic, surfaceRoughness, surfaceBsdfMode);
         radiance += throughput * EvaluatePunctualLights(surface, surfacePosition, geometricNormal);
         radiance += throughput * SampleEmissiveTriangles(surface, surfacePosition,
                                                          geometricNormal, state);
@@ -652,8 +660,7 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
         // なら3つ目の命中の光源標本で打ち切る（発光三角形と太陽円盤は光源標本だけなので、散乱光線の
         // 命中側では数えない）。
         uint transportScope = TransportScope();
-        bool bDiffuseBouncesOnly = transportScope == PATH_TRANSPORT_SINGLE_DIFFUSE_BOUNCE ||
-                                   transportScope == PATH_TRANSPORT_TWO_DIFFUSE_BOUNCES;
+        bool bDiffuseBouncesOnly = IsDiffuseBounceTransport();
         if (transportScope == PATH_TRANSPORT_DIRECT_ONLY ||
             (transportScope == PATH_TRANSPORT_SINGLE_DIFFUSE_BOUNCE && bounce >= 1u) ||
             (transportScope == PATH_TRANSPORT_TWO_DIFFUSE_BOUNCES && bounce >= 2u))
@@ -661,10 +668,17 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
             break;
         }
 
+        // 拡散バウンスの輸送範囲では、散乱光線の命中面も拡散葉（Lambert）だけで照らす。ラスタの
+        // RTGIの命中点と同じで、命中面の鏡面反射（光沢のある相互反射）は範囲に入れない。
+        uint surfaceBsdfMode = bounce >= 1u && IsDiffuseBounceTransport()
+            ? PATH_BSDF_VALIDATION_LAMBERT
+            : bsdfMode;
         vec3 u = vec3(Random01(state), Random01(state), Random01(state));
         vec3 nextDirection;
         float bsdfPdf;
-        if (bDiffuseBouncesOnly)
+        // 1次命中は全BSDFで散乱する（ラスタのIBLの鏡面反射に当たる環境の鏡面反射を含む）。散乱光線の
+        // 命中面からは拡散葉だけを追う。
+        if (bDiffuseBouncesOnly && bounce >= 1u)
         {
             // 拡散葉だけをコサイン分布で標本化する。重みは拡散のBRDF×π（拡散葉の方向反射率）。
             float phi = 2.0 * PI * u.y;

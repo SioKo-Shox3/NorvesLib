@@ -9,7 +9,9 @@ namespace NorvesLib::Core::Rendering
      *
      * Fullは多重散乱をすべて追う参照。DirectOnly・SingleDiffuseBounce・TwoDiffuseBouncesは、
      * 輸送範囲を限ったラスタの近似（直接光だけ、拡散バウンスを数えるRTGI）と同じ範囲の参照を作る
-     * 検証用で、発光三角形と太陽円盤は光源標本だけで評価する。
+     * 検証用で、発光三角形と太陽円盤は光源標本だけで評価する。拡散バウンスの範囲では、1次命中は全BSDF
+     * で散乱し（ラスタのIBLの鏡面反射に当たる環境の鏡面反射を含む）、散乱光線の命中面は拡散葉（Lambert）
+     * だけで照らして拡散葉だけで散乱する（RTGIの命中点と同じ。命中面の鏡面反射は範囲に入れない）。
      */
     enum class PathTracingTransportScope : uint32_t
     {
