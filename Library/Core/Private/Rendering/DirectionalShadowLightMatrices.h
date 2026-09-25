@@ -59,6 +59,18 @@ namespace NorvesLib::Core::Rendering
         const Container::VariableArray<SkinnedMeshProxy>* skinnedMeshProxies,
         const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies);
 
+    /**
+     * @brief 影を落とす物体のワールド境界球を集める（CSMの光源側の深度範囲に含める）
+     *
+     * カスケードの視錐台の切片より光源側にある遮蔽物は、深度範囲に含めないと影の地図の
+     * near面で切り取られ、影の一部が欠ける。
+     */
+    void CollectDirectionalShadowCasterBounds(
+        const Container::VariableArray<MeshProxy>* meshProxies,
+        const Container::VariableArray<SkinnedMeshProxy>* skinnedMeshProxies,
+        const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies,
+        Container::VariableArray<BoundingSphere>& outBounds);
+
     DirectionalShadowMatrixSettings FitDirectionalShadowMatrixSettingsToCasters(
         const DirectionalShadowMatrixSettings& baseSettings,
         const Container::VariableArray<MeshProxy>* meshProxies,

@@ -285,6 +285,25 @@ namespace
                "casting plus non-casting directional lights disable the single global shadow");
     }
 
+    void TestCollectCasterBoundsKeepsOnlyShadowCasters()
+    {
+        CoreContainer::VariableArray<MeshProxy> meshes;
+        meshes.push_back(MakeMeshCaster(1u, 1.0f, 2.0f, 3.0f, 0.5f));
+        meshes.push_back(MakeMeshCaster(2u, 4.0f, 5.0f, 6.0f, 0.5f, false));
+        meshes.push_back(MakeMeshCaster(3u, 7.0f, 8.0f, 9.0f, 0.5f, true, false));
+        CoreContainer::VariableArray<MegaGeometryProxy> megaGeometry;
+        megaGeometry.push_back(MakeMegaCaster(4u, -1.0f, 0.0f, 1.0f, 2.0f));
+        CoreContainer::VariableArray<BoundingSphere> bounds;
+        bounds.push_back(MakeBounds(0.0f, 0.0f, 0.0f, 1.0f));
+        CollectDirectionalShadowCasterBounds(&meshes, nullptr, &megaGeometry, bounds);
+        Expect(bounds.size() == 2u, "only visible shadow casters are collected and old bounds are cleared");
+        Expect(bounds.size() == 2u && NearlyEqual(bounds[0].CenterX, 1.0f) &&
+                   NearlyEqual(bounds[1].CenterX, -1.0f) && NearlyEqual(bounds[1].Radius, 2.0f),
+               "mesh and mega geometry casters keep their world bounds");
+        CollectDirectionalShadowCasterBounds(nullptr, nullptr, nullptr, bounds);
+        Expect(bounds.empty(), "null inputs collect no caster bounds");
+    }
+
     void TestShadowedLightPrefersSkySun()
     {
         Expect(SelectShadowedDirectionalLight(nullptr) == nullptr,
@@ -703,6 +722,7 @@ int main()
     TestEligibleLightSelectionSkipsInvalidInputs();
     TestMultipleDirectionalLightsDisableShadows();
     TestShadowedLightPrefersSkySun();
+    TestCollectCasterBoundsKeepsOnlyShadowCasters();
     TestMatrixConstruction();
     TestDifferentDirectionsProduceDifferentViews();
     TestFallbackUpProducesFiniteMatrices();

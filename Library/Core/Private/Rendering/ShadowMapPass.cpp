@@ -380,10 +380,18 @@ namespace NorvesLib::Core::Rendering
             MakeDefaultCascadedShadowMatrixSettings();
         cascadedSettings.ShadowMapResolution = m_Settings.Resolution;
         cascadedSettings.Directional = MakeDirectionalShadowMatrixSettings(m_Settings);
+        // カスケードの視錐台の切片より光源側の遮蔽物もnear面で切り取らないよう、影を落とす
+        // 物体の境界球を光源側の深度範囲に含める。
+        Container::VariableArray<BoundingSphere> casterBounds;
+        CollectDirectionalShadowCasterBounds(context.SnapshotMeshProxies,
+                                             context.SnapshotSkinnedMeshProxies,
+                                             context.SnapshotMegaGeometryProxies,
+                                             casterBounds);
         const CascadedShadowMatrixResult cascadedShadowMatrices =
             BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
                                              context.GetActiveCamera(),
-                                             cascadedSettings);
+                                             cascadedSettings,
+                                             &casterBounds);
 
         // 各カスケードのライトビュー・プロジェクションをGPU用データへ変換する。
         float lightViewData[PhysicalLightingShadowCascadeCount][16] = {};

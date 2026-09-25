@@ -277,6 +277,46 @@ namespace NorvesLib::Core::Rendering
         return result;
     }
 
+    void CollectDirectionalShadowCasterBounds(
+        const Container::VariableArray<MeshProxy>* meshProxies,
+        const Container::VariableArray<SkinnedMeshProxy>* skinnedMeshProxies,
+        const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies,
+        Container::VariableArray<BoundingSphere>& outBounds)
+    {
+        outBounds.clear();
+        if (meshProxies != nullptr)
+        {
+            for (const MeshProxy& proxy : *meshProxies)
+            {
+                if (IsEligibleDirectionalShadowMeshCaster(proxy))
+                {
+                    outBounds.push_back(proxy.WorldBounds);
+                }
+            }
+        }
+        if (megaGeometryProxies != nullptr)
+        {
+            for (const MegaGeometryProxy& proxy : *megaGeometryProxies)
+            {
+                if (IsEligibleDirectionalShadowMegaGeometryCaster(proxy))
+                {
+                    outBounds.push_back(proxy.WorldBounds);
+                }
+            }
+        }
+        if (skinnedMeshProxies != nullptr)
+        {
+            for (const SkinnedMeshProxy& proxy : *skinnedMeshProxies)
+            {
+                BoundingSphere worldBounds;
+                if (BuildSkinnedCasterWorldBounds(proxy, worldBounds))
+                {
+                    outBounds.push_back(worldBounds);
+                }
+            }
+        }
+    }
+
     DirectionalShadowMatrixSettings FitDirectionalShadowMatrixSettingsToCasters(
         const DirectionalShadowMatrixSettings& baseSettings,
         const Container::VariableArray<MeshProxy>* meshProxies,
