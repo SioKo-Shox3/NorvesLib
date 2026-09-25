@@ -500,13 +500,16 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
+            // 深度は光の進む向き（光源から遠ざかる向き）に測る。lightViewZ は光源側を向くので、
+            // それで測ると深度範囲が中心の周りで反転し、切片の非対称な側（カスケード0の奥）や
+            // 光源側の遮蔽物が範囲の外に出る。
             float minimumRelativeDepth = 0.0f;
             float maximumRelativeDepth = 0.0f;
             bool bHasDepth = false;
             for (uint32_t index = 0u; index < 8u; ++index)
             {
                 const float relativeDepth = Math::VectorUtils::Dot(
-                    corners[index] - snappedCenter, lightViewZ);
+                    corners[index] - snappedCenter, normalizedDirection);
                 IncludeRelativeDepth(relativeDepth, 0.0f,
                                      minimumRelativeDepth, maximumRelativeDepth, bHasDepth);
             }
@@ -521,7 +524,7 @@ namespace NorvesLib::Core::Rendering
                     }
 
                     const float relativeDepth = Math::VectorUtils::Dot(
-                        MakeBoundsCenter(bounds) - snappedCenter, lightViewZ);
+                        MakeBoundsCenter(bounds) - snappedCenter, normalizedDirection);
                     IncludeRelativeDepth(relativeDepth, bounds.Radius,
                                          minimumRelativeDepth, maximumRelativeDepth, bHasDepth);
                 }

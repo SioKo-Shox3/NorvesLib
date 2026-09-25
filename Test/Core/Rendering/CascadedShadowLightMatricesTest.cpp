@@ -207,6 +207,35 @@ namespace
         }
     }
 
+    // 切片より光源側にある遮蔽物は、深度範囲の手前側を広げて収める（範囲外だと影を落とさない）。
+    void TestCasterTowardLightFitsDepthRange()
+    {
+        CoreContainer::VariableArray<LightProxy> lights;
+        lights.push_back(MakeDirectionalLight(29u, 0.0f, -1.0f, 0.0f));
+
+        const BoundingSphere caster{0.0f, 30.0f, -5.0f, 1.0f};
+        CoreContainer::VariableArray<BoundingSphere> bounds;
+        bounds.push_back(caster);
+
+        const CameraProxy camera = MakePerspectiveCamera();
+        const CascadedShadowMatrixResult result = BuildCascadedShadowLightMatrices(
+            &lights, &camera, MakeDefaultCascadedShadowMatrixSettings(), &bounds);
+        Expect(result.bEnabled, "a caster above the camera keeps CSM enabled");
+        if (!result.bEnabled)
+        {
+            return;
+        }
+
+        const CascadedShadowCascade& cascade = result.Cascades[0];
+        const float casterDepth = NorvesLib::Math::VectorUtils::Dot(
+            NorvesLib::Math::Vector3(caster.CenterX, caster.CenterY, caster.CenterZ) - cascade.LightPosition,
+            cascade.Direction);
+        Expect(casterDepth - caster.Radius >= cascade.NearDepth,
+               "a caster toward the light starts behind the cascade near plane");
+        Expect(casterDepth + caster.Radius <= cascade.FarDepth,
+               "a caster toward the light ends before the cascade far plane");
+    }
+
     void TestInvalidInputsFallBackToShadowOff()
     {
         CoreContainer::VariableArray<LightProxy> lights;
@@ -235,6 +264,77 @@ namespace
             BuildCascadedShadowLightMatrices(&lights, validCamera, settings);
         Expect(!invalidCountResult.bEnabled, "non-four cascade count disables CSM");
         Expect(ResultIsFinite(invalidCountResult), "invalid cascade count returns finite data");
+    }
+
+    // 各カスケードは自分の視錐台の切片（隅8点）を影の地図のXYと深度の範囲に収める。範囲から外れた
+    // 受け側は影なしとして描かれ、影の一部が欠ける。屋外の検証シーンのカメラと正午の太陽で確かめる。
+    void TestEachCascadeCoversItsCameraSlice()
+    {
+        CameraProxy camera;
+        const NorvesLib::Math::Vector3 position(7.0f, 5.0f, 9.0f);
+        const NorvesLib::Math::Vector3 forward = NorvesLib::Math::VectorUtils::Normalize(position * -1.0f);
+        camera.PositionX = position.x;
+        camera.PositionY = position.y;
+        camera.PositionZ = position.z;
+        camera.ForwardX = forward.x;
+        camera.ForwardY = forward.y;
+        camera.ForwardZ = forward.z;
+        camera.UpX = 0.0f;
+        camera.UpY = 1.0f;
+        camera.UpZ = 0.0f;
+        camera.FieldOfView = 60.0f;
+        camera.AspectRatio = 1.0f;
+        camera.NearPlane = 0.1f;
+        camera.FarPlane = 100.0f;
+        camera.Projection = ProjectionType::Perspective;
+
+        CoreContainer::VariableArray<LightProxy> lights;
+        const float inverseSqrt2 = 1.0f / std::sqrt(2.0f);
+        lights.push_back(MakeDirectionalLight(SkySunLightId, -inverseSqrt2, -inverseSqrt2, 0.0f));
+        const CascadedShadowMatrixResult result = BuildCascadedShadowLightMatrices(
+            &lights, camera, MakeDefaultCascadedShadowMatrixSettings());
+        Expect(result.bEnabled, "the outdoor validation camera builds CSM");
+        if (!result.bEnabled)
+        {
+            return;
+        }
+
+        const NorvesLib::Math::Vector3 viewZ = forward * -1.0f;
+        const NorvesLib::Math::Vector3 right = NorvesLib::Math::VectorUtils::Normalize(
+            NorvesLib::Math::VectorUtils::Cross(NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f), viewZ));
+        const NorvesLib::Math::Vector3 up = NorvesLib::Math::VectorUtils::Cross(viewZ, right);
+        const float tangent = std::tan(30.0f * 3.14159265358979323846f / 180.0f);
+        float worstExtent = 0.0f;
+        for (uint32_t cascadeIndex = 0u; cascadeIndex < CSM_CASCADE_COUNT; ++cascadeIndex)
+        {
+            const CascadedShadowCascade& cascade = result.Cascades[cascadeIndex];
+            const float distances[2] = {result.SplitDistances[cascadeIndex],
+                                        result.SplitDistances[cascadeIndex + 1u]};
+            for (float distance : distances)
+            {
+                const float halfExtent = distance * tangent;
+                for (int sx = -1; sx <= 1; sx += 2)
+                {
+                    for (int sy = -1; sy <= 1; sy += 2)
+                    {
+                        const NorvesLib::Math::Vector3 corner = position + forward * distance +
+                            right * (halfExtent * static_cast<float>(sx)) +
+                            up * (halfExtent * static_cast<float>(sy));
+                        const NorvesLib::Math::Vector4 clip =
+                            cascade.Projection * (cascade.View * NorvesLib::Math::Vector4(corner, 1.0f));
+                        const float extent = std::max(std::abs(clip.x / clip.w), std::abs(clip.y / clip.w));
+                        worstExtent = std::max(worstExtent, extent);
+                        Expect(extent <= 1.0f,
+                               "every camera slice corner lies inside its cascade's shadow map");
+                        const float lightDepth = NorvesLib::Math::VectorUtils::Dot(
+                            corner - cascade.LightPosition, cascade.Direction);
+                        Expect(lightDepth >= cascade.NearDepth && lightDepth <= cascade.FarDepth,
+                               "every camera slice corner lies inside its cascade's depth range");
+                    }
+                }
+            }
+        }
+        std::cout << "csm_slice_coverage worst_ndc_extent=" << worstExtent << "\n";
     }
 
     void TestSkySunDrivesCsmBesideSceneDirectionalLight()
@@ -305,8 +405,10 @@ int main()
 {
     TestFourCascadeSplitAndMatrixContract();
     TestCasterDepthRangeAndNonFiniteBoundsAreSafe();
+    TestCasterTowardLightFitsDepthRange();
     TestInvalidInputsFallBackToShadowOff();
     TestSkySunDrivesCsmBesideSceneDirectionalLight();
+    TestEachCascadeCoversItsCameraSlice();
     TestSubtexelCameraMotionKeepsSnappedMatrices();
 
     if (g_FailureCount != 0)
