@@ -329,6 +329,38 @@ namespace
         return false;
     }
 
+    // --path-tracing-sample-batch=N（0〜255）
+    bool TryParsePathTracingSampleBatchOption(const String& argument, uint32_t& outBatch, bool& bMatched)
+    {
+        const String prefix = TEXT("--path-tracing-sample-batch=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value.empty() || value.size() > 3u)
+        {
+            return false;
+        }
+        uint32_t parsed = 0u;
+        for (const auto character : value)
+        {
+            if (character < TEXT('0') || character > TEXT('9'))
+            {
+                return false;
+            }
+            parsed = parsed * 10u + static_cast<uint32_t>(character - TEXT('0'));
+        }
+        if (parsed > 255u)
+        {
+            return false;
+        }
+        outBatch = parsed;
+        return true;
+    }
+
     // --path-tracing-pixel-sampling=box|center
     bool TryParsePathTracingPixelSamplingOption(
         const String& argument,
@@ -529,6 +561,7 @@ namespace NorvesLib::Core::Engine
             Rendering::PathTracingTransportScope::Full;
         Rendering::PathTracingPixelSampling pathTracingPixelSampling =
             Rendering::PathTracingPixelSampling::Box;
+        uint32_t pathTracingSampleBatch = 0u;
         Rendering::PathTracingDebugOutput pathTracingDebugOutput =
             Rendering::PathTracingDebugOutput::None;
         Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Neural;
@@ -615,6 +648,17 @@ namespace NorvesLib::Core::Engine
             else if (bMatchedTransport)
             {
                 LOG_WARNING("ApplicationProcessor runtime option --path-tracing-transport ignored: value must be 'full', 'direct', 'single-diffuse-bounce' or 'two-diffuse-bounces'");
+            }
+
+            bool bMatchedSampleBatch = false;
+            if (TryParsePathTracingSampleBatchOption(args[i], pathTracingSampleBatch, bMatchedSampleBatch))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_sample_batch=%u",
+                         pathTracingSampleBatch);
+            }
+            else if (bMatchedSampleBatch)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-sample-batch ignored: value must be 0-255");
             }
 
             bool bMatchedPixelSampling = false;
@@ -721,6 +765,7 @@ namespace NorvesLib::Core::Engine
             renderSettings.PathTracingSamplesPerFrame = pathTracingSamplesPerFrame;
             renderSettings.PathTracingTransport = pathTracingTransport;
             renderSettings.PathTracingPixelSamplingMode = pathTracingPixelSampling;
+            renderSettings.PathTracingSampleBatch = pathTracingSampleBatch;
             renderSettings.PathTracingDebug = pathTracingDebugOutput;
             renderSettings.RasterDirectBrdfMode = rasterDirectBrdf;
 

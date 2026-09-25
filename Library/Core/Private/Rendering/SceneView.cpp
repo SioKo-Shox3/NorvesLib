@@ -758,7 +758,8 @@ namespace NorvesLib::Core::Rendering
     void SceneView::SetupPathTracingPipeline(uint32_t samplesPerFrame,
                                              PathTracingTransportScope transportScope,
                                              PathTracingPixelSampling pixelSampling,
-                                             PathTracingDebugOutput debugOutput)
+                                             PathTracingDebugOutput debugOutput,
+                                             uint32_t sampleBatch)
     {
         if (m_PostProcessStack)
         {
@@ -784,6 +785,7 @@ namespace NorvesLib::Core::Rendering
         pathTracingPass->SetTransportScope(transportScope);
         pathTracingPass->SetPixelSampling(pixelSampling);
         pathTracingPass->SetDebugOutput(debugOutput);
+        pathTracingPass->SetSampleBatch(sampleBatch);
         AddPass(std::move(pathTracingPass));
 
         auto postProcessStack = MakeUnique<PostProcessStack>();

@@ -229,6 +229,7 @@ namespace NorvesLib::Core::Rendering
          * @param transportScope 追う光輸送の範囲（既定は多重散乱をすべて追う）
          * @param pixelSampling 1次光線の画素内の標本位置（既定は画素内を一様にずらす）
          * @param debugOutput 検証出力（既定は放射輝度）
+         * @param sampleBatch 試料の組の番号（組ごとに独立した試料の列を引く。既定は0）
          *
          * 空が無効なときの環境光は、ディファードのLightingPassと同じ環境マップ設定を使う。
          */
@@ -236,7 +237,8 @@ namespace NorvesLib::Core::Rendering
             uint32_t samplesPerFrame = 1u,
             PathTracingTransportScope transportScope = PathTracingTransportScope::Full,
             PathTracingPixelSampling pixelSampling = PathTracingPixelSampling::Box,
-            PathTracingDebugOutput debugOutput = PathTracingDebugOutput::None);
+            PathTracingDebugOutput debugOutput = PathTracingDebugOutput::None,
+            uint32_t sampleBatch = 0u);
 
         /**
          * @brief Proxyをカリング

@@ -163,6 +163,7 @@ namespace NorvesLib::Test::RenderingValidation
             }
             if (StartsWith(argument, TEXT("--path-tracing-transport=")) ||
                 StartsWith(argument, TEXT("--path-tracing-pixel-sampling=")) ||
+                StartsWith(argument, TEXT("--path-tracing-sample-batch=")) ||
                 StartsWith(argument, TEXT("--path-tracing-debug-output=")) ||
                 StartsWith(argument, TEXT("--raster-direct-brdf=")))
             {

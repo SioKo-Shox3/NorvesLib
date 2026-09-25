@@ -818,13 +818,15 @@ void main()
         return;
     }
 
-    // このdispatchでsamplesPerFrame試料を引き、前回までの平均と試料数の比で合成する。
+    // このdispatchでsamplesPerFrame試料を引き、前回までの平均と試料数の比で合成する。試料の組の番号
+    // （sampleState.yのbit8-15）ごとに試料番号を2^20ずらし、組ごとに独立した試料の列にする。
     uint baseSample = parameters.imageState.z;
+    uint batchSampleOffset = ((parameters.sampleState.y >> 8u) & 0xFFu) * 0x00100000u;
     uint samplesPerFrame = max(parameters.sampleState.x, 1u);
     vec4 sum = vec4(0.0);
     for (uint sampleOffset = 0u; sampleOffset < samplesPerFrame; ++sampleOffset)
     {
-        sum += TracePixelSample(pixel, extent, baseSample + sampleOffset);
+        sum += TracePixelSample(pixel, extent, batchSampleOffset + baseSample + sampleOffset);
     }
     vec4 average = sum / float(samplesPerFrame);
     if (baseSample > 0u)

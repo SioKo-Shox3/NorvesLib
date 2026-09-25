@@ -135,6 +135,15 @@ namespace NorvesLib::Core::Rendering
         PathTracingPixelSampling GetPixelSampling() const { return m_PixelSampling; }
 
         /**
+         * @brief 試料の組の番号（0〜255）を切り替える。変更すると累積履歴を捨てる。
+         *
+         * 組ごとに試料番号の範囲をずらし、同じ画素でも独立した試料の列を引く。参照画像を独立な組に分けて
+         * 描き、画素ごとの中央値で外れ値に強い推定にする検証で使う。
+         */
+        void SetSampleBatch(uint32_t batch) { m_SampleBatch = batch & 0xFFu; }
+        uint32_t GetSampleBatch() const { return m_SampleBatch; }
+
+        /**
          * @brief 環境マップを既定の環境光にする。Initializeで読み込み、SetEnvironmentと同じ扱いにする。
          */
         void SetEnvironmentMapSource(const PathTracingEnvironmentMapSource& source)
@@ -260,6 +269,7 @@ namespace NorvesLib::Core::Rendering
         PathTracingLightSampling m_LightSampling = PathTracingLightSampling::MultipleImportance;
         PathTracingTransportScope m_TransportScope = PathTracingTransportScope::Full;
         PathTracingPixelSampling m_PixelSampling = PathTracingPixelSampling::Box;
+        uint32_t m_SampleBatch = 0u;
         uint32_t m_BoundMaterialTextureCount = 0u;
         uint32_t m_PunctualLightCount = 0u;
         uint32_t m_EmissiveInstanceCount = 0u;

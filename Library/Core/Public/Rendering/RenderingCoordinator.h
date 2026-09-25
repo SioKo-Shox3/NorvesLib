@@ -97,6 +97,8 @@ namespace NorvesLib::Core::Rendering
         PathTracingTransportScope PathTracingTransport = PathTracingTransportScope::Full;
         /** @brief パストレーサーの1次光線の画素内の標本位置（既定は画素内を一様にずらす） */
         PathTracingPixelSampling PathTracingPixelSamplingMode = PathTracingPixelSampling::Box;
+        /** @brief パストレーサーの試料の組の番号（組ごとに独立した試料の列を引く。既定は0） */
+        uint32_t PathTracingSampleBatch = 0u;
         /** @brief パストレーサーの検証出力（既定は放射輝度） */
         PathTracingDebugOutput PathTracingDebug = PathTracingDebugOutput::None;
         /** @brief ラスタの直接光のBRDF（既定は学習済みのニューラルBRDF） */
