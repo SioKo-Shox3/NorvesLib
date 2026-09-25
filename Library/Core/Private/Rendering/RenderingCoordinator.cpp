@@ -752,6 +752,8 @@ namespace NorvesLib::Core::Rendering
 
                 RayTracingSceneInstanceSnapshot instance;
                 instance.MeshHandle = draw.MeshHandle;
+                instance.ObjectId = draw.ObjectId;
+                instance.ObjectInstanceIndex = instanceIndex;
                 instance.SourceVertexBuffer = meshData->VertexBuffer;
                 instance.SourceIndexBuffer = meshData->IndexBuffer;
                 instance.IndexOffset = indexOffset;
@@ -2119,6 +2121,8 @@ namespace NorvesLib::Core::Rendering
                 NORVES_LOG_WARNING("RayTracingSceneSubsystem",
                                    "FramePacketのレイトレーシングscene snapshotを構築できませんでした");
             }
+            // 連番の1フレームの間は、どのパケットにも同じ前のカメラ・instance変換を書く。
+            ApplyPathTracingSequenceCarry(*m_CurrentPacket, m_PacketManager.GetSequenceCarry());
             UpdateFrameRevisions(*m_CurrentPacket);
         }
 

@@ -315,8 +315,8 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 連番のフレーム番号（0は連番でない）
          *
-         * パストレーサーの連番の経路は、この値が変わった最初のパケットの前後のカメラ・変換を
-         * 同じ値の間固定して累積する。
+         * 0以外の同じ値の間、GameThreadは各パケットへ同じ前のカメラ・instance変換を書き
+         * （ApplyPathTracingSequenceCarry）、パストレーサーの連番の経路は同じフレームとして累積し続ける。
          */
         uint64_t SequenceFrame = 0;
 
