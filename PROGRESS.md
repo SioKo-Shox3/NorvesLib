@@ -100,10 +100,11 @@
 
 ## Next
 
-- R8。閾値とseedは変更しない。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。R7-O3の既知差はRTGI-HIT-SPECULAR・RTGI-MULTI-BOUNCE・FIX-CSM-TERMINATOR・FIX-GRAZING-IBL-SPECULARとして残す。
-- R8はM1（ACES 2.0 SDRのOCIO焼き込みLUT、DoF・動きぼけ、240 frame EXR）でTASKSを起こしてから着手する。
+- R8-P1〜P11（2026-09-26にユーザーが承認したR8計画。TASKS.md）。閾値とseedは変更しない。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。R7-O3の既知差はRTGI-HIT-SPECULAR・RTGI-MULTI-BOUNCE・FIX-CSM-TERMINATOR・FIX-GRAZING-IBL-SPECULARとして残す。
+- R8のM1（2026-09-26）: S8はベイクLUT（OCIOでACES 2.0 SDR 100 nit Rec.709をsRGB表示向けに65³＋log2 shaperへ焼き、display-linearで持つ。新しいトーンマップの選択肢で既定は不変）。連番は1280×720・1024 spp、PTの1フレームは前後のカメラ・変換とシャッター区間（フレーム長1/24 s、シャッター1/48 s）を固定して1 spp×1024 dispatch。DoF・動きぼけの閾値はf値／シャッターを±20%変えたPTを物差しにする規則。フィルムグレインは既定オフで入れる。連番の検査はC++の検証exe（隣接フレームのFLIPが中央値の3倍を超えたらポッピング）とScripts、CTestは8フレームの連番。
 
 ## Notes
+- R8ループ開始儀式（2026-09-26、HEAD `a42c8b1`）: Game・ToneMappingParamsLayoutTestのDebug build BUILD_EXIT=0、CPU契約3件（ToneMappingParamsLayout・RenderingDDGILightingContract・PathTracingCamera）3/3 passed。直前の全target build後のRenderingValidationラベルは57件中0件失敗（`.harness/runs/20260925-r4-reopen/`）。
 - R7-P3D評価（2026-09-24）: 1周目で1frameに束ねた試料のカメラ標本の偏り、影を落とさない物体だけのシーンでRTGIが既存の間接光を置き換える経路、PT機能判定のshaderInt64漏れが指摘され、2周目でPASS。R7-P3Bの`8c80695`とR7-P3Cの`9e0b35e`も追加指摘なし。負の対照は`.harness/runs/20260924-r7-p3d/negative-*.txt`。
 - R7-P3C評価（2026-09-24）: 1周目でGGXの分母（粗さ0）、裏側の視線の標本化、65504の切り詰め、影レイの終端、2周目で面光源の直前（2mm以内）の遮蔽物の見逃しが指摘された。2周の上限に達したため、最後の修正`9e0b35e`はR7-P3Dの評価対象へ含めて確認する。負の対照は`.harness/runs/20260924-r7-p3c/negative-p3c-*.txt`。
 - R7-P3B評価（2026-09-24）: 1周目で接空間基底の正規化・面裏散乱・texture解決変化の履歴破棄、2周目でラスタの退化判定（画面微分の絶対値）との分岐差が指摘された。2周の上限に達したため、最後の修正`8c80695`はR7-P3Cの評価対象へ含めて確認する。太陽標本の幾何面判定のテスト不足（non-blocking）はP3Cの太陽MISで扱う。ログは`.harness/runs/20260924-r7-p3b/`。
