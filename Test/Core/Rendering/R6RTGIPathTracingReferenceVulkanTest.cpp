@@ -245,7 +245,9 @@ namespace
                     path += batchSuffixes[batch];
                     path += TEXT(".nlrgba");
                     uint32_t batchSamples = 0u;
-                    bRead = ReadRgbaFloatDump(path, batches[batch], batchSamples);
+                    // 中央値は1組の非有限値を隠すため、組ごとに検査する。
+                    bRead = ReadRgbaFloatDump(path, batches[batch], batchSamples) &&
+                            FindFirstNonFinite(batches[batch]).Kind == NonFiniteKind::None;
                     samples += batchSamples;
                 }
                 if (bRead)

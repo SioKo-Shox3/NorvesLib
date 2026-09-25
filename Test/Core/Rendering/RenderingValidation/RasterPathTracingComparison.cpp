@@ -372,15 +372,21 @@ namespace NorvesLib::Test::RenderingValidation
                 const float* values = images[index]->Values.data() + pixel * 4u;
                 luminance[index] = 0.2126 * values[0] + 0.7152 * values[1] + 0.0722 * values[2];
             }
-            uint32_t median = 0u;
-            if ((luminance[1] >= luminance[0]) != (luminance[1] >= luminance[2]))
+            // 輝度の昇順に並べ替え、中央の組を選ぶ（同値を含めて中央の値になる）。
+            uint32_t order[3] = {0u, 1u, 2u};
+            if (luminance[order[1]] < luminance[order[0]])
             {
-                median = 1u;
+                std::swap(order[0], order[1]);
             }
-            else if ((luminance[2] >= luminance[0]) != (luminance[2] >= luminance[1]))
+            if (luminance[order[2]] < luminance[order[1]])
             {
-                median = 2u;
+                std::swap(order[1], order[2]);
             }
+            if (luminance[order[1]] < luminance[order[0]])
+            {
+                std::swap(order[0], order[1]);
+            }
+            const uint32_t median = order[1];
             for (uint32_t channel = 0u; channel < 4u; ++channel)
             {
                 result.Values[pixel * 4u + channel] = images[median]->Values[pixel * 4u + channel];

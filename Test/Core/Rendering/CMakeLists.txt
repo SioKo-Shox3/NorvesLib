@@ -740,6 +740,13 @@ target_include_directories(RenderingReferenceComparisonSupport PUBLIC
     ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
 )
 set_target_properties(RenderingReferenceComparisonSupport PROPERTIES FOLDER "Test/Core/Rendering")
+# 比較の部品のCPU契約（3組の中央値の選び方、太陽の可視による除外を影の縁の近くに限ること）。
+add_executable(RasterPathTracingComparisonTest
+    RasterPathTracingComparisonTest.cpp
+)
+target_link_libraries(RasterPathTracingComparisonTest PRIVATE RenderingReferenceComparisonSupport)
+set_target_properties(RasterPathTracingComparisonTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RasterPathTracingComparisonTest COMMAND RasterPathTracingComparisonTest)
 # R6 RTGIの静止収束SceneColorを、同じCornellシーンの自前PT参照とLDR-FLIPで比べる。
 add_executable(R6RTGIPathTracingReferenceVulkanTest
     R6RTGIPathTracingReferenceVulkanTest.cpp
