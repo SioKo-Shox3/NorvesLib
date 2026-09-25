@@ -369,6 +369,24 @@ float PCSSFilter(vec2 shadowUV,
     return shadow / 16.0;
 }
 
+// 点がカスケードの影の地図のUVと深度の範囲に入るか。境界のブレンドでは、次のカスケードが
+// その点を覆うときだけ混ぜる（ブレンド帯は次のカスケードの切片の手前にあり、覆わないと
+// 範囲外の「影なし」を混ぜて影が薄くなる）。
+bool IsInsideShadowCascade(vec3 worldPos, uint cascadeIndex)
+{
+    vec4 lightSpacePos = params.lightProjection[cascadeIndex] *
+                         params.lightView[cascadeIndex] * vec4(worldPos, 1.0);
+    if (!IsFiniteShadowValue(lightSpacePos.w) || abs(lightSpacePos.w) < 0.000001)
+    {
+        return false;
+    }
+    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
+    vec2 shadowUV = projCoords.xy * 0.5 + 0.5;
+    return all(greaterThanEqual(shadowUV, vec2(0.0))) &&
+           all(lessThanEqual(shadowUV, vec2(1.0))) &&
+           projCoords.z >= 0.0 && projCoords.z <= 1.0;
+}
+
 float SampleShadowCascade(vec3 worldPos, vec3 normal, uint cascadeIndex)
 {
     // ワールド座標をライトクリップ空間に変換
@@ -470,7 +488,7 @@ float CalculateShadow(vec3 worldPos, vec3 normal)
         float previousBoundary = GetShadowSplitDistance(cascadeIndex);
         float blendWidth = max((boundary - previousBoundary) * 0.1, 0.001);
         float blendStart = boundary - blendWidth;
-        if (receiverDistance > blendStart)
+        if (receiverDistance > blendStart && IsInsideShadowCascade(worldPos, cascadeIndex + 1u))
         {
             float nextShadow = SampleShadowCascade(worldPos, normal, cascadeIndex + 1u);
             float blend = smoothstep(blendStart, boundary, receiverDistance);
