@@ -1,7 +1,7 @@
 ﻿#include "Rendering/LightingPass.h"
 #include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/LightingPassLightPacking.h"
-#include "Rendering/DirectionalShadowLightMatrices.h"
+#include "Rendering/DirectionalShadowLightSelection.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SSAOPass.h"
