@@ -88,8 +88,13 @@ layout(location = 0) out vec4 outColor;
 // ========================================
 
 #include "Common/PbrMaterialEvaluation.glsl"
-// 角度重みが完全なゼロになる場合を避け、probe間の補間を安定させる最小床。
-const float DDGI_WRAP_WEIGHT_FLOOR = 0.004;
+// probeの向きの重み（wrap shading）の下限（RTXGIと同じ0.2）。面の裏側のprobeも少し使い、1つのprobeに
+// 重みが集まって斑点になるのを防ぐ。
+const float DDGI_WRAP_WEIGHT_FLOOR = 0.2;
+// 表面の偏り（surface bias）の大きさ。probe間隔の最小値に対する比で、法線の方向へずらす。
+const float DDGI_NORMAL_BIAS_FRACTION = 0.1;
+// これより弱いprobeの重みを3乗の割合で押しつぶす（RTXGIのcrush threshold）。
+const float DDGI_WEIGHT_CRUSH_THRESHOLD = 0.2;
 const uint DEBUG_VIEW_MODE_NORMAL = 0u;
 const uint DEBUG_VIEW_MODE_UNLIT = 1u;
 const uint DEBUG_VIEW_MODE_WIREFRAME = 2u;
@@ -718,12 +723,20 @@ float SampleDDGIVisibility(uint probeIndex,
         return 1.0;
     }
 
+    // 平均距離より遠い点は、分布のChebyshevの上限の3乗で弱める（RTXGIと同じ。下限は設けず、弱い重みは
+    // 呼び側で押しつぶす）。
     float delta = pointDistance - meanDistance;
     float chebyshev = variance / (variance + delta * delta);
-    chebyshev *= chebyshev * chebyshev;
-    return max(0.05, chebyshev);
+    return max(chebyshev * chebyshev * chebyshev, 0.0);
 }
 
+// DDGIの体積の照度を、周りの8つのprobeから補間して求める（RTXGIのDDGIGetVolumeIrradianceと同じ手順）。
+// 点を法線の方向へずらした点（surface bias）で格子の区画・probeからの距離・可視を求め、面の裏にあるprobeが
+// 可視の判定で外れるようにする（ずらさないと、probeから見た面の距離と面上の点の距離が等しく、可視が不安定に
+// なる）。視点の側へはずらさない（拡散の照度がカメラの位置で変わり、カメラに近い側のprobeへ補間が寄る）。
+// 向きの重み（wrap shading）は元の点から見たprobeの向きで求め、弱い重みを押しつぶし、平方根の空間で補間する
+// （暗い側の斑点を抑える）。体積の外の点は偏りの前の位置で判定してfalseを返す（体積の中へ寄せない）。
+// 壁の外や閉じた物体の内側にある無効なprobe（照度atlasのalphaが0）は使わない。
 bool TrySampleDDGIIrradiance(vec3 worldPosition,
                              vec3 surfaceNormal,
                              out vec3 irradiance)
@@ -759,8 +772,16 @@ bool TrySampleDDGIIrradiance(vec3 worldPosition,
         return false;
     }
 
-    ivec3 baseProbe = ivec3(floor(gridPosition));
-    vec3 alpha = clamp(gridPosition - vec3(baseProbe), vec3(0.0), vec3(1.0));
+    float minimumSpacing = min(params.ddgiProbeSpacing.x,
+                               min(params.ddgiProbeSpacing.y, params.ddgiProbeSpacing.z));
+    vec3 biasedPosition = worldPosition + normal * (DDGI_NORMAL_BIAS_FRACTION * minimumSpacing);
+    vec3 biasedGridPosition = clamp((biasedPosition - params.ddgiVolumeOrigin.xyz) /
+                                        params.ddgiProbeSpacing.xyz,
+                                    vec3(0.0),
+                                    gridMaximum);
+
+    ivec3 baseProbe = ivec3(floor(biasedGridPosition));
+    vec3 alpha = clamp(biasedGridPosition - vec3(baseProbe), vec3(0.0), vec3(1.0));
     vec2 irradianceUv = DDGIAtlasUv(EncodeDDGIOctahedralDirection(normal));
     vec3 accumulatedIrradiance = vec3(0.0);
     float accumulatedWeight = 0.0;
@@ -780,48 +801,67 @@ bool TrySampleDDGIIrradiance(vec3 worldPosition,
             return false;
         }
 
+        vec4 probeSample = textureLod(ddgiIrradianceAtlas,
+                                      vec3(irradianceUv, float(probeIndex)),
+                                      0.0);
+        if (any(isnan(probeSample)) || any(isinf(probeSample)))
+        {
+            return false;
+        }
+        if (probeSample.a < 0.5)
+        {
+            continue;
+        }
+
         vec3 trilinear = mix(vec3(1.0) - alpha, alpha, vec3(offset));
-        float weight = trilinear.x * trilinear.y * trilinear.z;
+        float trilinearWeight = trilinear.x * trilinear.y * trilinear.z;
+
+        vec3 probePosition = params.ddgiVolumeOrigin.xyz +
+                             params.ddgiProbeSpacing.xyz * vec3(probeCoordinates);
+        vec3 pointToProbe = probePosition - worldPosition;
+        float pointToProbeLength = length(pointToProbe);
+        vec3 pointToProbeDirection = pointToProbeLength > 1.0e-6
+            ? pointToProbe / pointToProbeLength
+            : normal;
+        float wrapShading = (dot(pointToProbeDirection, normal) + 1.0) * 0.5;
+        float weight = wrapShading * wrapShading + DDGI_WRAP_WEIGHT_FLOOR;
+
+        vec3 probeToBiasedPoint = biasedPosition - probePosition;
+        float biasedDistance = length(probeToBiasedPoint);
+        if (isnan(biasedDistance) || isinf(biasedDistance))
+        {
+            continue;
+        }
+        vec3 probeToBiasedDirection = biasedDistance > 1.0e-6
+            ? probeToBiasedPoint / biasedDistance
+            : -normal;
+        weight *= SampleDDGIVisibility(probeIndex, probeToBiasedDirection, biasedDistance);
+        weight = max(weight, 1.0e-6);
+        if (weight < DDGI_WEIGHT_CRUSH_THRESHOLD)
+        {
+            weight *= weight * weight /
+                      (DDGI_WEIGHT_CRUSH_THRESHOLD * DDGI_WEIGHT_CRUSH_THRESHOLD);
+        }
+        weight *= trilinearWeight;
         if (weight <= 0.0)
         {
             continue;
         }
 
-        vec3 probePosition = params.ddgiVolumeOrigin.xyz +
-                             params.ddgiProbeSpacing.xyz * vec3(probeCoordinates);
-        vec3 probeToPoint = worldPosition - probePosition;
-        float pointDistance = length(probeToPoint);
-        if (isnan(pointDistance) || isinf(pointDistance))
-        {
-            continue;
-        }
-        vec3 probeToPointDirection = pointDistance > 1.0e-6
-            ? probeToPoint / pointDistance
-            : normal;
-        float wrapShading = (dot(-probeToPointDirection, normal) + 1.0) * 0.5;
-        weight *= wrapShading * wrapShading + DDGI_WRAP_WEIGHT_FLOOR;
-        weight *= SampleDDGIVisibility(probeIndex,
-                                       probeToPointDirection,
-                                       pointDistance);
-
-        vec3 probeIrradiance = textureLod(ddgiIrradianceAtlas,
-                                          vec3(irradianceUv, float(probeIndex)),
-                                          0.0).rgb;
-        if (any(isnan(probeIrradiance)) || any(isinf(probeIrradiance)))
-        {
-            return false;
-        }
-        accumulatedIrradiance += probeIrradiance * weight;
+        accumulatedIrradiance += sqrt(max(probeSample.rgb, vec3(0.0))) * weight;
         accumulatedWeight += weight;
     }
 
-    if (accumulatedWeight <= 1.0e-6 ||
+    // 押しつぶした重みは極めて小さくなりうるが、正であれば正規化する（全probeが可視で外れた点も、最も
+    // 見込みのあるprobeの照度を使う）。
+    if (!(accumulatedWeight > 0.0) ||
         any(isnan(accumulatedIrradiance)) || any(isinf(accumulatedIrradiance)))
     {
         return false;
     }
 
-    irradiance = max(accumulatedIrradiance / accumulatedWeight, vec3(0.0));
+    vec3 interpolated = accumulatedIrradiance / accumulatedWeight;
+    irradiance = interpolated * interpolated;
     return true;
 }
 

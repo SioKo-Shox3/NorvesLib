@@ -269,17 +269,26 @@ namespace
         AssertContains(sample, "params.ddgiInfo.x == 0u");
         AssertContains(sample, "any(lessThan(gridPosition, vec3(0.0)))");
         AssertContains(sample, "any(greaterThan(gridPosition, gridMaximum))");
-        AssertContains(sample, "ivec3 baseProbe = ivec3(floor(gridPosition));");
+        // 体積の外の点は偏りの前の位置で外れ、体積の中へ寄せない。区画と可視は表面の偏りを加えた点で求める。
+        assert(sample.find("vec3 gridPosition = clamp") == TestString::npos);
+        AssertContains(sample,
+                       "vec3 biasedPosition = worldPosition + normal * "
+                       "(DDGI_NORMAL_BIAS_FRACTION * minimumSpacing);");
+        // 無効なprobe（壁の外や物体の内側）は照度atlasのalphaで外す。
+        AssertContains(sample, "if (probeSample.a < 0.5)");
+        AssertContains(sample, "ivec3 baseProbe = ivec3(floor(biasedGridPosition));");
         AssertContains(sample, "corner < 8u");
         AssertContains(sample, "mix(vec3(1.0) - alpha, alpha, vec3(offset))");
-        AssertContains(sample, "SampleDDGIVisibility");
-        assert(sample.find("vec3 gridPosition = clamp") == TestString::npos);
+        AssertContains(sample,
+                       "SampleDDGIVisibility(probeIndex, probeToBiasedDirection, biasedDistance)");
+        AssertContains(sample, "DDGI_WEIGHT_CRUSH_THRESHOLD");
+        AssertContains(sample, "sqrt(max(probeSample.rgb, vec3(0.0))) * weight");
 
         const TestString visibility =
             ExtractBlock(shader, "float SampleDDGIVisibility");
         AssertContains(visibility, "ddgiDistanceAtlas");
         AssertContains(visibility, "moments.y - meanDistance * meanDistance");
-        AssertContains(visibility, "return max(0.05, chebyshev);");
+        AssertContains(visibility, "return max(chebyshev * chebyshev * chebyshev, 0.0);");
 
         const TestString iblEndpoint =
             ExtractBlock(shader, "vec3 EvaluateIblEndpoint");
