@@ -703,6 +703,16 @@ target_compile_definitions(PathTracingCameraVulkanTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 set_target_properties(PathTracingCameraVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 register_rendering_gpu_test(PathTracingCameraVulkanTest PathTracingCameraVulkanTest)
+# R8: PTの連番の1フレーム（前後のカメラ・変換とシャッター区間の固定、動きぼけの幅、CoC、履歴の継続）を実GPUで検証する。
+add_executable(R8PathTracingSequenceFrameVulkanTest R8PathTracingSequenceFrameVulkanTest.cpp)
+target_link_libraries(R8PathTracingSequenceFrameVulkanTest PRIVATE Core RenderingGpuTestSupport)
+target_include_directories(R8PathTracingSequenceFrameVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private)
+target_compile_definitions(R8PathTracingSequenceFrameVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+set_target_properties(R8PathTracingSequenceFrameVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(R8PathTracingSequenceFrameVulkanTest R8PathTracingSequenceFrameVulkanTest)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(PATH_TRACING_EXR_OUTPUT_ROOT
     "${CMAKE_BINARY_DIR}/RenderingValidation/PathTracingExrOutputRuns")

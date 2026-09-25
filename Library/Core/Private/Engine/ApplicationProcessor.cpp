@@ -13,6 +13,7 @@
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/PathTracingPass.h"
 #include "Rendering/PostProcessStack.h"
 #include "Rendering/ToneMappingPass.h"
 #include "Resource/FontAtlas.h"
@@ -23,6 +24,7 @@
 #include "Thread/JobSystem.h"
 #include "Scripting/ScriptRuntime.h"
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <limits>
 
@@ -480,6 +482,122 @@ namespace
         return false;
     }
 
+    // 非負の10進数（例 2.8）か分数（例 1/24）を読む。分母は正でなければならない。
+    bool TryParseNonNegativeRatio(const String& text, float& outValue)
+    {
+        double parts[2] = {0.0, 1.0};
+        uint32_t partIndex = 0u;
+        bool bDigits = false;
+        bool bDecimal = false;
+        double decimalScale = 1.0;
+        for (const auto character : text)
+        {
+            if (character >= TEXT('0') && character <= TEXT('9'))
+            {
+                const double digit = static_cast<double>(character - TEXT('0'));
+                if (bDecimal)
+                {
+                    decimalScale *= 0.1;
+                    parts[partIndex] += decimalScale * digit;
+                }
+                else
+                {
+                    parts[partIndex] = parts[partIndex] * 10.0 + digit;
+                }
+                bDigits = true;
+            }
+            else if (character == TEXT('.') && !bDecimal && bDigits)
+            {
+                bDecimal = true;
+            }
+            else if (character == TEXT('/') && partIndex == 0u && bDigits)
+            {
+                partIndex = 1u;
+                parts[1] = 0.0;
+                bDigits = false;
+                bDecimal = false;
+                decimalScale = 1.0;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        if (!bDigits || !(parts[1] > 0.0))
+        {
+            return false;
+        }
+        const double value = parts[0] / parts[1];
+        if (!std::isfinite(value) || value > static_cast<double>(std::numeric_limits<float>::max()))
+        {
+            return false;
+        }
+        outValue = static_cast<float>(value);
+        return true;
+    }
+
+    // 連番の1フレームを描くPTの経路の引数。どれかを指定すると連番の経路を有効にする。
+    // --path-tracing-frame-duration=秒（正）、--path-tracing-shutter=秒（0以上）、
+    // --path-tracing-aperture=f値（正）、--path-tracing-focus-distance=m（0はピンホール）
+    bool TryParsePathTracingSequenceOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::PathTracingSequenceFrameSettings& settings,
+        bool& bMatched)
+    {
+        struct Choice
+        {
+            const TCHAR* Prefix;
+            float NorvesLib::Core::Rendering::PathTracingSequenceFrameSettings::*Field;
+            bool bAllowZero;
+        };
+        using NorvesLib::Core::Rendering::PathTracingSequenceFrameSettings;
+        const Choice choices[] = {
+            {TEXT("--path-tracing-frame-duration="), &PathTracingSequenceFrameSettings::FrameDuration, false},
+            {TEXT("--path-tracing-shutter="), &PathTracingSequenceFrameSettings::ShutterDuration, true},
+            {TEXT("--path-tracing-aperture="), &PathTracingSequenceFrameSettings::Aperture, false},
+            {TEXT("--path-tracing-focus-distance="), &PathTracingSequenceFrameSettings::FocusDistance, true}};
+        bMatched = false;
+        for (const Choice& choice : choices)
+        {
+            const String prefix = choice.Prefix;
+            if (argument.size() < prefix.size() || argument.substr(0, prefix.size()) != prefix)
+            {
+                continue;
+            }
+            bMatched = true;
+            float value = 0.0f;
+            if (!TryParseNonNegativeRatio(argument.substr(prefix.size()), value) ||
+                (!choice.bAllowZero && value <= 0.0f))
+            {
+                return false;
+            }
+            settings.*(choice.Field) = value;
+            settings.bEnabled = true;
+            return true;
+        }
+        return false;
+    }
+
+    // メインSceneViewのPathTracingPassへ連番の経路を設定する。
+    // 初期化中（最初のFramePacketがRenderThreadへ渡る前）にだけ呼ぶ。
+    bool ApplyMainViewPathTracingSequenceFrame(
+        NorvesLib::Core::Rendering::SceneView* sceneView,
+        const NorvesLib::Core::Rendering::PathTracingSequenceFrameSettings& settings)
+    {
+        if (!sceneView)
+        {
+            return false;
+        }
+        NorvesLib::Core::Rendering::IViewPass* pass = sceneView->FindPass("PathTracingPass");
+        if (!pass)
+        {
+            return false;
+        }
+        // GetName() が "PathTracingPass" を返すのは PathTracingPass だけ
+        static_cast<NorvesLib::Core::Rendering::PathTracingPass*>(pass)->SetSequenceFrame(settings);
+        return true;
+    }
+
     // メインSceneViewのToneMappingPassへ演算子を設定する。
     // 初期化中（最初のFramePacketがRenderThreadへ渡る前）にだけ呼ぶ。
     bool ApplyMainViewToneMapOperator(NorvesLib::Core::Rendering::SceneView* sceneView,
@@ -620,6 +738,7 @@ namespace NorvesLib::Core::Engine
         Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Neural;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
         bool bToneMapOperatorRequested = false;
+        Rendering::PathTracingSequenceFrameSettings pathTracingSequenceFrame;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -762,6 +881,21 @@ namespace NorvesLib::Core::Engine
             {
                 LOG_WARNING("ApplicationProcessor runtime option --tone-map ignored: value must be 'aces' or 'aces20-lut'");
             }
+
+            bool bMatchedSequenceFrame = false;
+            if (TryParsePathTracingSequenceOption(args[i], pathTracingSequenceFrame,
+                                                  bMatchedSequenceFrame))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_sequence_frame frame_duration=%g shutter=%g aperture=%g focus_distance=%g",
+                         static_cast<double>(pathTracingSequenceFrame.FrameDuration),
+                         static_cast<double>(pathTracingSequenceFrame.ShutterDuration),
+                         static_cast<double>(pathTracingSequenceFrame.Aperture),
+                         static_cast<double>(pathTracingSequenceFrame.FocusDistance));
+            }
+            else if (bMatchedSequenceFrame)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option ignored: --path-tracing-frame-duration and --path-tracing-aperture must be positive, --path-tracing-shutter and --path-tracing-focus-distance must be non-negative (decimal or a/b)");
+            }
         }
 
         const Detail::ExitFrameSelection exitFrameSelection = Detail::SelectExitFrameSelection(exitFrameOptions);
@@ -851,6 +985,13 @@ namespace NorvesLib::Core::Engine
                 !ApplyMainViewToneMapOperator(coordinator.GetMainSceneView().get(), toneMapOperator))
             {
                 LOG_WARNING("ApplicationProcessor runtime option --tone-map ignored: main view has no ToneMappingPass");
+            }
+
+            if (pathTracingSequenceFrame.bEnabled &&
+                !ApplyMainViewPathTracingSequenceFrame(coordinator.GetMainSceneView().get(),
+                                                       pathTracingSequenceFrame))
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-* sequence frame ignored: main view has no PathTracingPass (use --renderer=path-tracing)");
             }
 
             if (bEnableCanvasView)

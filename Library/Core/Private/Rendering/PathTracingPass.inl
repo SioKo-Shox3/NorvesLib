@@ -103,19 +103,33 @@ namespace NorvesLib::Core::Rendering
             return hash;
         }
 
-        uint64_t HashPathGeometry(const RayTracingSceneSnapshot& scene)
+        /**
+         * @brief instanceの幾何と変換の署名
+         * @param previousTransform instanceの添字から前の変換を返す（なければnullptr）。
+         * @param bSequenceLatched 連番の経路で覚えた前の値を使うか。このときはパケットの前の値を署名に入れない。
+         */
+        template <typename PreviousTransformResolver>
+        uint64_t HashPathGeometry(const RayTracingSceneSnapshot& scene,
+                                  const PreviousTransformResolver& previousTransform,
+                                  bool bSequenceLatched)
         {
             uint64_t hash = 14695981039346656037ull;
             const uint64_t count = scene.Instances.size();
             hash = HashPathBytes(hash, &count, sizeof(count));
-            for (const RayTracingSceneInstanceSnapshot& instance : scene.Instances)
+            for (size_t instanceIndex = 0u; instanceIndex < scene.Instances.size(); ++instanceIndex)
             {
+                const RayTracingSceneInstanceSnapshot& instance = scene.Instances[instanceIndex];
                 hash = HashPathBytes(hash, instance.Instance.transform,
                                      sizeof(instance.Instance.transform));
-                hash = HashPathBytes(hash, instance.PreviousTransform,
+                const float* previous = previousTransform(instanceIndex);
+                const float noPrevious[12] = {};
+                const bool bHasPrevious = previous != nullptr;
+                hash = HashPathBytes(hash,
+                                     previous ? previous
+                                              : (bSequenceLatched ? noPrevious
+                                                                  : instance.PreviousTransform),
                                      sizeof(instance.PreviousTransform));
-                hash = HashPathBytes(hash, &instance.bHasPreviousTransform,
-                                     sizeof(instance.bHasPreviousTransform));
+                hash = HashPathBytes(hash, &bHasPrevious, sizeof(bHasPrevious));
                 hash = HashPathBytes(hash, &instance.Instance.customIndex,
                                      sizeof(instance.Instance.customIndex));
                 hash = HashPathBytes(hash, &instance.Instance.mask,
@@ -626,6 +640,7 @@ namespace NorvesLib::Core::Rendering
         m_Environment = PathTracingEnvironment{};
         m_EffectiveEnvironment = PathTracingEnvironment{};
         m_EnvironmentMapTexture.reset();
+        m_SequenceLatch = SequenceLatch{};
         m_BoundMaterialTextureCount = 0u;
         m_PunctualLightCount = 0u;
         m_EmissiveInstanceCount = 0u;
@@ -1004,6 +1019,94 @@ namespace NorvesLib::Core::Rendering
                       sizeof(PathTracingEmissiveInstance), "PathTracing.EmissiveInstances");
     }
 
+    bool PathTracingPass::IsSequenceLatchActive(const ViewRenderContext& context) const
+    {
+        const CameraProxy* camera = context.GetActiveCamera();
+        return m_SequenceFrame.bEnabled && camera && camera->SequenceFrame != 0u &&
+               m_SequenceLatch.Frame == camera->SequenceFrame &&
+               context.SnapshotRayTracingScene &&
+               m_SequenceLatch.bHasPreviousTransforms.size() ==
+                   context.SnapshotRayTracingScene->Instances.size();
+    }
+
+    void PathTracingPass::UpdateSequenceLatch(const ViewRenderContext& context)
+    {
+        const CameraProxy* camera = context.GetActiveCamera();
+        if (!m_SequenceFrame.bEnabled || !camera || camera->SequenceFrame == 0u ||
+            !context.SnapshotRayTracingScene)
+        {
+            m_SequenceLatch = SequenceLatch{};
+            return;
+        }
+        const auto& instances = context.SnapshotRayTracingScene->Instances;
+        if (m_SequenceLatch.Frame == camera->SequenceFrame &&
+            m_SequenceLatch.bHasPreviousTransforms.size() == instances.size())
+        {
+            // 同じフレームの間はinstanceの並びと現在の変換が覚えたときと同じはず。違えば覚え直す。
+            bool bSameInstances = true;
+            for (size_t index = 0u; index < instances.size() && bSameInstances; ++index)
+            {
+                bSameInstances = std::memcmp(&m_SequenceLatch.CurrentTransforms[index * 12u],
+                                             instances[index].Instance.transform,
+                                             sizeof(instances[index].Instance.transform)) == 0;
+            }
+            if (bSameInstances)
+            {
+                return;
+            }
+        }
+        // SequenceFrameが変わった最初のパケットの前の値は、直前のフレームの最後の状態を指す。
+        m_SequenceLatch.Frame = camera->SequenceFrame;
+        const CameraProxy* previousCamera = context.GetPreviousCamera();
+        m_SequenceLatch.bHasPreviousCamera = previousCamera != nullptr;
+        m_SequenceLatch.PreviousCamera = previousCamera ? *previousCamera : CameraProxy{};
+        m_SequenceLatch.PreviousTransforms.assign(instances.size() * 12u, 0.0f);
+        m_SequenceLatch.CurrentTransforms.assign(instances.size() * 12u, 0.0f);
+        m_SequenceLatch.bHasPreviousTransforms.assign(instances.size(), 0u);
+        for (size_t index = 0u; index < instances.size(); ++index)
+        {
+            std::memcpy(&m_SequenceLatch.CurrentTransforms[index * 12u],
+                        instances[index].Instance.transform,
+                        sizeof(instances[index].Instance.transform));
+            if (instances[index].bHasPreviousTransform)
+            {
+                std::memcpy(&m_SequenceLatch.PreviousTransforms[index * 12u],
+                            instances[index].PreviousTransform,
+                            sizeof(instances[index].PreviousTransform));
+                m_SequenceLatch.bHasPreviousTransforms[index] = 1u;
+            }
+        }
+    }
+
+    const CameraProxy* PathTracingPass::ResolvePreviousCamera(
+        const ViewRenderContext& context) const
+    {
+        if (IsSequenceLatchActive(context))
+        {
+            return m_SequenceLatch.bHasPreviousCamera ? &m_SequenceLatch.PreviousCamera : nullptr;
+        }
+        return context.GetPreviousCamera();
+    }
+
+    const float* PathTracingPass::ResolvePreviousTransform(const ViewRenderContext& context,
+                                                           size_t instanceIndex) const
+    {
+        if (!context.SnapshotRayTracingScene ||
+            instanceIndex >= context.SnapshotRayTracingScene->Instances.size())
+        {
+            return nullptr;
+        }
+        if (IsSequenceLatchActive(context))
+        {
+            return m_SequenceLatch.bHasPreviousTransforms[instanceIndex] != 0u
+                       ? &m_SequenceLatch.PreviousTransforms[instanceIndex * 12u]
+                       : nullptr;
+        }
+        const RayTracingSceneInstanceSnapshot& snapshot =
+            context.SnapshotRayTracingScene->Instances[instanceIndex];
+        return snapshot.bHasPreviousTransform ? snapshot.PreviousTransform : nullptr;
+    }
+
     void PathTracingPass::Declare(RenderGraphBuilder& builder)
     {
         m_OutputHandle = {};
@@ -1027,6 +1130,7 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+        UpdateSequenceLatch(*context);
 
         History* history = FindOrCreateHistory(*context, width, height);
         if (!history)
@@ -1053,7 +1157,17 @@ namespace NorvesLib::Core::Rendering
         cameraSignature = HashPathBytes(cameraSignature,
                                         parameters.CameraPosition,
                                         sizeof(parameters.CameraPosition));
-        const CameraProxy& activeCamera = *context->GetActiveCamera();
+        // 連番の経路では絞り・ピント距離・シャッター時間を設定の値で置き換える。
+        const CameraProxy activeCamera =
+            ApplyPathTracingSequenceOptics(*context->GetActiveCamera(), m_SequenceFrame);
+        if (m_SequenceFrame.bEnabled)
+        {
+            // 連番のフレームが変わったら、前後の状態が同じでも新しいフレームとして累積し直す。
+            cameraSignature = HashPathBytes(cameraSignature, &m_SequenceFrame.FrameDuration,
+                                            sizeof(m_SequenceFrame.FrameDuration));
+            cameraSignature = HashPathBytes(cameraSignature, &activeCamera.SequenceFrame,
+                                            sizeof(activeCamera.SequenceFrame));
+        }
         cameraSignature = HashPathBytes(cameraSignature, &activeCamera.Aperture,
                                         sizeof(activeCamera.Aperture));
         cameraSignature = HashPathBytes(cameraSignature, &activeCamera.ShutterSpeed,
@@ -1063,7 +1177,7 @@ namespace NorvesLib::Core::Rendering
         // 発光と環境はプリエクスポージャを掛けて累積するため、露出の変化でも履歴を捨てる。
         cameraSignature = HashPathBytes(cameraSignature, &activeCamera.PreExposure,
                                         sizeof(activeCamera.PreExposure));
-        if (const CameraProxy* previousCamera = context->GetPreviousCamera())
+        if (const CameraProxy* previousCamera = ResolvePreviousCamera(*context))
         {
             const CameraViewConstants previous = CameraViewConstants::BuildForDevice(
                 *previousCamera, context->GetActiveAspectRatio(), context->Device);
@@ -1076,8 +1190,13 @@ namespace NorvesLib::Core::Rendering
                                             parameters.CameraPosition,
                                             sizeof(parameters.CameraPosition));
         }
-        const uint64_t geometrySignature =
-            HashPathGeometry(*context->SnapshotRayTracingScene);
+        const uint64_t geometrySignature = HashPathGeometry(
+            *context->SnapshotRayTracingScene,
+            [this, context](size_t instanceIndex)
+            {
+                return ResolvePreviousTransform(*context, instanceIndex);
+            },
+            IsSequenceLatchActive(*context));
         const SkyAtmosphereParameters sky = SanitizeSkyAtmosphereParameters(
             context->SnapshotScene ? context->SnapshotScene->SkyAtmosphere :
                                      context->SkyAtmosphereSnapshot);
@@ -1193,9 +1312,13 @@ namespace NorvesLib::Core::Rendering
             history.ResetAccumulation();
         }
         PathTracingParameters parameters;
+        // 連番の経路ではシャッター区間の基準を実時間のDeltaTimeではなく設定のフレーム長にし、
+        // 前のカメラは覚えた値を使う。レンズとシャッター時刻はdispatchごとに引き直す。
         const PathTracingCameraSample cameraSample = SamplePathTracingCamera(
-            *context.GetActiveCamera(), context.GetPreviousCamera(),
-            context.SnapshotDeltaTime, history.DispatchCount);
+            ApplyPathTracingSequenceOptics(*context.GetActiveCamera(), m_SequenceFrame),
+            ResolvePreviousCamera(context),
+            m_SequenceFrame.bEnabled ? m_SequenceFrame.FrameDuration : context.SnapshotDeltaTime,
+            history.DispatchCount);
         CameraProxy opticalCamera = cameraSample.Camera;
         if (cameraSample.bThinLens)
         {
@@ -1291,14 +1414,16 @@ namespace NorvesLib::Core::Rendering
             RHI::AccelerationStructureBuildDesc motionBuild;
             motionBuild.type = RHI::AccelerationStructureType::TopLevel;
             bool bHasMotion = false;
-            for (const RayTracingSceneInstanceSnapshot& snapshot :
-                 context.SnapshotRayTracingScene->Instances)
+            const auto& snapshots = context.SnapshotRayTracingScene->Instances;
+            for (size_t instanceIndex = 0u; instanceIndex < snapshots.size(); ++instanceIndex)
             {
+                const RayTracingSceneInstanceSnapshot& snapshot = snapshots[instanceIndex];
                 RHI::AccelerationStructureInstanceDesc instance = snapshot.Instance;
-                if (snapshot.bHasPreviousTransform)
+                if (const float* previousTransform =
+                        ResolvePreviousTransform(context, instanceIndex))
                 {
                     float transform[12] = {};
-                    if (InterpolatePathTracingTransform(snapshot.PreviousTransform,
+                    if (InterpolatePathTracingTransform(previousTransform,
                                                         snapshot.Instance.transform,
                                                         cameraSample.ShutterTime,
                                                         transform))

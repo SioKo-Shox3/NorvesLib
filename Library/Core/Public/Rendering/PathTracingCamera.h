@@ -18,6 +18,60 @@ namespace NorvesLib::Core::Rendering
         bool bThinLens = false;
     };
 
+    /**
+     * @brief 連番の1フレームを描くときの光学系とシャッター区間の固定値
+     *
+     * 有効なとき、シャッター区間の基準の長さは実時間のDeltaTimeではなくFrameDurationにし、
+     * カメラの絞り・ピント距離・シャッター時間をここの値で置き換える（露出は変えない）。
+     * 負の値の項目はカメラの値をそのまま使う。
+     */
+    struct PathTracingSequenceFrameSettings
+    {
+        bool bEnabled = false;
+        /** @brief シャッター区間の基準の長さ（秒）。前後の変換の間隔にあたる。 */
+        float FrameDuration = 1.0f / 24.0f;
+        /** @brief シャッター時間（秒）。0は動きぼけなし。負ならカメラのShutterSpeed。 */
+        float ShutterDuration = 1.0f / 48.0f;
+        /** @brief 絞りのf値。負ならカメラのAperture。 */
+        float Aperture = -1.0f;
+        /** @brief ピント距離（m）。0はピンホール。負ならカメラのFocusDistance。 */
+        float FocusDistance = -1.0f;
+    };
+
+    /** @brief 連番の設定が有限で、フレーム長が正か */
+    inline bool IsValidPathTracingSequenceFrameSettings(
+        const PathTracingSequenceFrameSettings& settings)
+    {
+        return std::isfinite(settings.FrameDuration) && settings.FrameDuration > 0.0f &&
+               std::isfinite(settings.ShutterDuration) &&
+               std::isfinite(settings.Aperture) && settings.Aperture != 0.0f &&
+               std::isfinite(settings.FocusDistance);
+    }
+
+    /** @brief 連番の設定の絞り・ピント距離・シャッター時間をカメラへ当てる。 */
+    inline CameraProxy ApplyPathTracingSequenceOptics(
+        const CameraProxy& camera, const PathTracingSequenceFrameSettings& settings)
+    {
+        CameraProxy result = camera;
+        if (!settings.bEnabled)
+        {
+            return result;
+        }
+        if (settings.Aperture > 0.0f)
+        {
+            result.Aperture = settings.Aperture;
+        }
+        if (settings.FocusDistance >= 0.0f)
+        {
+            result.FocusDistance = settings.FocusDistance;
+        }
+        if (settings.ShutterDuration >= 0.0f)
+        {
+            result.ShutterSpeed = settings.ShutterDuration;
+        }
+        return result;
+    }
+
     namespace PathTracingCameraDetail
     {
         constexpr float SensorHeight = 0.024f;

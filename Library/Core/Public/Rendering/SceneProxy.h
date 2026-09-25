@@ -312,6 +312,13 @@ namespace NorvesLib::Core::Rendering
     struct CameraProxy
     {
         uint64_t CameraId = 0;
+        /**
+         * @brief 連番のフレーム番号（0は連番でない）
+         *
+         * パストレーサーの連番の経路は、この値が変わった最初のパケットの前後のカメラ・変換を
+         * 同じ値の間固定して累積する。
+         */
+        uint64_t SequenceFrame = 0;
 
         // ビュー行列用
         float PositionX = 0.0f, PositionY = 0.0f, PositionZ = 0.0f;

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Rendering/IViewPass.h"
+#include "Rendering/PathTracingCamera.h"
 #include "Rendering/PathTracingTransportScope.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/DeviceCapabilities.h"
@@ -163,6 +164,25 @@ namespace NorvesLib::Core::Rendering
         }
         uint32_t GetSamplesPerFrame() const { return m_SamplesPerFrame; }
 
+        /**
+         * @brief 連番の1フレームを描く経路を設定する。変更すると累積履歴を捨てる。
+         *
+         * 有効なとき、シャッター区間の基準の長さは設定のフレーム長にし、絞り・ピント距離・シャッター時間を
+         * 設定の値で置き換える。カメラのSequenceFrameが0でなければ、その値が変わった最初のフレームの
+         * 前後のカメラ・instance変換を覚え、同じSequenceFrameの間は後続のパケットの前の値の代わりに使う。
+         * 設定が無効（非有限・フレーム長0以下）なら連番の経路を使わない。
+         */
+        void SetSequenceFrame(const PathTracingSequenceFrameSettings& settings)
+        {
+            m_SequenceFrame = settings;
+            if (!IsValidPathTracingSequenceFrameSettings(m_SequenceFrame))
+            {
+                m_SequenceFrame.bEnabled = false;
+            }
+            m_SequenceLatch = SequenceLatch{};
+        }
+        const PathTracingSequenceFrameSettings& GetSequenceFrame() const { return m_SequenceFrame; }
+
         /** @brief 直近フレームで光源表へ載せた点・spot・方向光の数 */
         uint32_t GetPunctualLightCount() const { return m_PunctualLightCount; }
 
@@ -230,6 +250,29 @@ namespace NorvesLib::Core::Rendering
             }
         };
 
+        /** @brief 連番の1フレームの間固定する前の値（カメラとinstance変換） */
+        struct SequenceLatch
+        {
+            /** @brief 覚えたSequenceFrame（0は未取得） */
+            uint64_t Frame = 0u;
+            bool bHasPreviousCamera = false;
+            CameraProxy PreviousCamera;
+            /** @brief instanceの並び順に、前の変換（行優先3x4）と有無 */
+            Container::VariableArray<float> PreviousTransforms;
+            /** @brief 覚えたときの現在の変換。並びが変わっていないことを確かめる。 */
+            Container::VariableArray<float> CurrentTransforms;
+            Container::VariableArray<uint8_t> bHasPreviousTransforms;
+        };
+
+        /** @brief 連番の経路でカメラのSequenceFrameが変わったら前の値を覚え直す。 */
+        void UpdateSequenceLatch(const ViewRenderContext& context);
+        /** @brief このフレームの前のカメラ（連番の経路では覚えた値） */
+        const CameraProxy* ResolvePreviousCamera(const ViewRenderContext& context) const;
+        /** @brief このフレームのinstanceの前の変換（連番の経路では覚えた値）。なければnullptr。 */
+        const float* ResolvePreviousTransform(const ViewRenderContext& context,
+                                              size_t instanceIndex) const;
+        bool IsSequenceLatchActive(const ViewRenderContext& context) const;
+
         History* FindOrCreateHistory(const ViewRenderContext& context, uint32_t width, uint32_t height);
         FrameResources* FindOrCreateFrameResources(const ViewRenderContext& context,
                                                   History& history);
@@ -270,6 +313,8 @@ namespace NorvesLib::Core::Rendering
         PathTracingTransportScope m_TransportScope = PathTracingTransportScope::Full;
         PathTracingPixelSampling m_PixelSampling = PathTracingPixelSampling::Box;
         uint32_t m_SampleBatch = 0u;
+        PathTracingSequenceFrameSettings m_SequenceFrame;
+        SequenceLatch m_SequenceLatch;
         uint32_t m_BoundMaterialTextureCount = 0u;
         uint32_t m_PunctualLightCount = 0u;
         uint32_t m_EmissiveInstanceCount = 0u;
