@@ -165,8 +165,13 @@ namespace NorvesLib::Test::RenderingValidation
                 StartsWith(argument, TEXT("--path-tracing-pixel-sampling=")) ||
                 StartsWith(argument, TEXT("--path-tracing-sample-batch=")) ||
                 StartsWith(argument, TEXT("--path-tracing-debug-output=")) ||
+                StartsWith(argument, TEXT("--path-tracing-frame-duration=")) ||
+                StartsWith(argument, TEXT("--path-tracing-shutter=")) ||
+                StartsWith(argument, TEXT("--path-tracing-aperture=")) ||
+                StartsWith(argument, TEXT("--path-tracing-focus-distance=")) ||
                 StartsWith(argument, TEXT("--raster-direct-brdf=")))
             {
+                // 連番の1フレームのPTの経路（R8-P3）の絞り・ピント距離・シャッターもエンジンが読む。
                 // エンジンが同じ引数で輸送範囲・画素内の標本位置・PTの検証出力・ラスタの直接光の
                 // BRDFを設定する。
                 continue;
