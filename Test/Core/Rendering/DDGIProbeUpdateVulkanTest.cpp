@@ -107,10 +107,29 @@ namespace
         Vertex Vertices[3] = {};
     };
 
+    Math::Vector3 SubtractVector(const Math::Vector3& lhs, const Math::Vector3& rhs)
+    {
+        return Math::Vector3(lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z);
+    }
+
+    Math::Vector3 CrossVector(const Math::Vector3& lhs, const Math::Vector3& rhs)
+    {
+        return Math::Vector3(lhs.y * rhs.z - lhs.z * rhs.y,
+                             lhs.z * rhs.x - lhs.x * rhs.z,
+                             lhs.x * rhs.y - lhs.y * rhs.x);
+    }
+
+    float DotVector(const Math::Vector3& lhs, const Math::Vector3& rhs)
+    {
+        return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
+    }
+
     // CPUの参照計算に使う、場面の三角形（world座標）と放射。
     struct SceneTriangle
     {
         Math::Vector3 Vertices[3];
+        // 放射する側（表）。頂点順の外積の逆側を法線の変換（逆転置）でworldへ移した向き。
+        Math::Vector3 FrontNormal;
         uint32_t CustomIndex = 0u;
         float Emission[3] = {};
     };
@@ -290,20 +309,57 @@ namespace
         return std::isfinite(outOffset);
     }
 
+    // 行優先の3x4変換（TLAS instanceと同じ並び）。
+    constexpr float IdentityTransform[12] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f};
+    // X軸で鏡映する変換（行列式が負）。
+    constexpr float MirrorXTransform[12] = {
+        -1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f};
+
     void AppendInstance(FramePacket& packet,
                         SceneResources& scene,
                         const TriangleResources& triangle,
                         uint32_t customIndex,
-                        const RayTracingHitMaterialSnapshot& material)
+                        const RayTracingHitMaterialSnapshot& material,
+                        const float (&transform)[12] = IdentityTransform)
     {
         SceneTriangle sceneTriangle;
+        Math::Vector3 localVertices[3];
         for (uint32_t vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
         {
+            const float* position = triangle.Vertices[vertexIndex].Position;
+            localVertices[vertexIndex] = Math::Vector3(position[0], position[1], position[2]);
             sceneTriangle.Vertices[vertexIndex] = Math::Vector3(
-                triangle.Vertices[vertexIndex].Position[0],
-                triangle.Vertices[vertexIndex].Position[1],
-                triangle.Vertices[vertexIndex].Position[2]);
+                transform[0] * position[0] + transform[1] * position[1] +
+                    transform[2] * position[2] + transform[3],
+                transform[4] * position[0] + transform[5] * position[1] +
+                    transform[6] * position[2] + transform[7],
+                transform[8] * position[0] + transform[9] * position[1] +
+                    transform[10] * position[2] + transform[11]);
         }
+        // 表の向き: 頂点順の外積の逆側を、線形部分の余因子行列（逆転置の行列式倍）で移して正規化する。
+        const Math::Vector3 localCross = CrossVector(
+            SubtractVector(localVertices[1], localVertices[0]),
+            SubtractVector(localVertices[2], localVertices[0]));
+        const float a = transform[0], b = transform[1], c = transform[2];
+        const float d = transform[4], e = transform[5], f = transform[6];
+        const float g = transform[8], h = transform[9], k = transform[10];
+        const float determinant = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g);
+        const Math::Vector3 cofactorRow0(e * k - f * h, f * g - d * k, d * h - e * g);
+        const Math::Vector3 cofactorRow1(c * h - b * k, a * k - c * g, b * g - a * h);
+        const Math::Vector3 cofactorRow2(b * f - c * e, c * d - a * f, a * e - b * d);
+        const Math::Vector3 transformedCross(DotVector(cofactorRow0, localCross),
+                                             DotVector(cofactorRow1, localCross),
+                                             DotVector(cofactorRow2, localCross));
+        const float crossLength = std::sqrt(DotVector(transformedCross, transformedCross));
+        const float frontScale = determinant < 0.0f ? 1.0f : -1.0f;
+        sceneTriangle.FrontNormal = Math::Vector3(frontScale * transformedCross.x / crossLength,
+                                                  frontScale * transformedCross.y / crossLength,
+                                                  frontScale * transformedCross.z / crossLength);
         sceneTriangle.CustomIndex = customIndex;
         for (uint32_t channel = 0u; channel < 3u; ++channel)
         {
@@ -324,6 +380,7 @@ namespace
         snapshot.Instance.bottomLevel = triangle.BottomLevel;
         snapshot.Instance.customIndex = customIndex;
         snapshot.Instance.disableTriangleFacingCull = true;
+        std::memcpy(snapshot.Instance.transform, transform, sizeof(snapshot.Instance.transform));
         snapshot.BottomLevel = triangle.BottomLevel;
         snapshot.Material = material;
         packet.RayTracingScene.Instances.push_back(snapshot);
@@ -340,13 +397,18 @@ namespace
         VisibilitySeed,
         // 下（z=-1）の床と斜めの遮蔽面。発光面はない。
         Occlusion,
-        // 上の発光面と、下の小さな床（発光しない）。床は発光面に照らされる。
+        // 上の発光面（4倍の明るさ）と、下の小さな床（発光しない）。床は発光面に照らされ、probeの間接光の
+        // 組の-Z方向の変化を、atlasの境界を含む補間で見分けられる大きさにする。
         SeedFloor,
+        // 上の発光面をX軸で鏡映したinstance（行列式が負）。表は法線の変換で移るため下を向いたまま。
+        MirroredEmitterAbove,
+        // probeの1 cm上の発光面。直接照度は放射輝度のπ倍を超えない。
+        NearEmitter,
         // 上の発光面と、表が下を向いた床。probeは床の裏を見るため無効になる。
         BackfacingFloor,
     };
 
-    RayTracingHitMaterialSnapshot MakeEmitterMaterial()
+    RayTracingHitMaterialSnapshot MakeEmitterMaterial(float luminanceScale = 1.0f)
     {
         RayTracingHitMaterialSnapshot material;
         material.ObjectColor[0] = 1.0f;
@@ -356,16 +418,16 @@ namespace
         material.EmissiveColor[0] = 0.8f;
         material.EmissiveColor[1] = 0.4f;
         material.EmissiveColor[2] = 0.2f;
-        material.EmissiveLuminanceNits = 10.0f;
+        material.EmissiveLuminanceNits = 10.0f * luminanceScale;
         return material;
     }
 
-    RayTracingHitMaterialSnapshot MakeSurfaceMaterial()
+    RayTracingHitMaterialSnapshot MakeSurfaceMaterial(float reflectanceScale = 1.0f)
     {
         RayTracingHitMaterialSnapshot material;
-        material.ObjectColor[0] = OccluderBaseColor[0];
-        material.ObjectColor[1] = OccluderBaseColor[1];
-        material.ObjectColor[2] = OccluderBaseColor[2];
+        material.ObjectColor[0] = OccluderBaseColor[0] * reflectanceScale;
+        material.ObjectColor[1] = OccluderBaseColor[1] * reflectanceScale;
+        material.ObjectColor[2] = OccluderBaseColor[2] * reflectanceScale;
         material.ObjectColor[3] = 1.0f;
         return material;
     }
@@ -424,7 +486,7 @@ namespace
         else
         {
             if (!CreateTriangleResources(device,
-                                         1.0f,
+                                         sceneKind == ProbeScene::NearEmitter ? 0.01f : 1.0f,
                                          "DDGIProbeUpdate.PlaneVertices",
                                          outResources.Plane,
                                          4.0f))
@@ -435,7 +497,9 @@ namespace
                            outResources,
                            outResources.Plane,
                            EmitterCustomIndex,
-                           MakeEmitterMaterial());
+                           MakeEmitterMaterial(sceneKind == ProbeScene::SeedFloor ? 4.0f : 1.0f),
+                           sceneKind == ProbeScene::MirroredEmitterAbove ? MirrorXTransform
+                                                                         : IdentityTransform);
         }
 
         if (sceneKind == ProbeScene::SeedFloor || sceneKind == ProbeScene::BackfacingFloor)
@@ -461,7 +525,8 @@ namespace
         if (sceneKind == ProbeScene::VisibilitySeed)
         {
             // probeの間の壁は、それぞれのprobeに表を向けた2枚を1mm離して重ねる（1枚ではどちらかのprobeが
-            // 面の裏を見て無効になり、可視の重みを確かめられない）。
+            // 面の裏を見て無効になり、可視の重みを確かめられない）。probe 1の側の面は暗くし（反射率0.05）、
+            // 2つのprobeの間接光を可視の重みの有無で見分けられるほど変える。
             if (!CreateVerticalTriangleResources(device,
                                                  0.98f,
                                                  -4.0f,
@@ -494,7 +559,7 @@ namespace
                            outResources,
                            outResources.VisibilityWallBack,
                            VisibilityWallBackCustomIndex,
-                           MakeSurfaceMaterial());
+                           MakeSurfaceMaterial(0.1f));
             AppendInstance(outPacket,
                            outResources,
                            outResources.LeftWall,
@@ -887,23 +952,6 @@ namespace
         return DecodeDDGIOctahedralDirection(uv, outDirection);
     }
 
-    Math::Vector3 SubtractVector(const Math::Vector3& lhs, const Math::Vector3& rhs)
-    {
-        return Math::Vector3(lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z);
-    }
-
-    Math::Vector3 CrossVector(const Math::Vector3& lhs, const Math::Vector3& rhs)
-    {
-        return Math::Vector3(lhs.y * rhs.z - lhs.z * rhs.y,
-                             lhs.z * rhs.x - lhs.x * rhs.z,
-                             lhs.x * rhs.y - lhs.y * rhs.x);
-    }
-
-    float DotVector(const Math::Vector3& lhs, const Math::Vector3& rhs)
-    {
-        return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
-    }
-
     // 両面の三角形とrayの交差（GPUのray queryと同じく裏面も当たる）。tは(RayMinimumDistance, maxDistance)。
     bool IntersectsTriangle(const Math::Vector3& origin,
                             const Math::Vector3& direction,
@@ -956,7 +1004,95 @@ namespace
                triangle.Emission[2] > 0.0f;
     }
 
-    // shaderのComputeEmitterIrradiance（DDGI/ProbeEmitterSampling.glsl）と同じ見積もり。
+    // 三角形を受け手の半球（dot(normal, x - receiver) > 0）で切り取った多角形の頂点数（最大4）。
+    uint32_t ClipTriangleToHemisphere(const Math::Vector3& receiver,
+                                      const Math::Vector3& normal,
+                                      const Math::Vector3 (&vertices)[3],
+                                      Math::Vector3 (&outPolygon)[4])
+    {
+        uint32_t count = 0u;
+        for (uint32_t index = 0u; index < 3u; ++index)
+        {
+            const Math::Vector3& current = vertices[index];
+            const Math::Vector3& next = vertices[(index + 1u) % 3u];
+            const float currentHeight = DotVector(normal, SubtractVector(current, receiver));
+            const float nextHeight = DotVector(normal, SubtractVector(next, receiver));
+            if (currentHeight > 0.0f && count < 4u)
+            {
+                outPolygon[count++] = current;
+            }
+            if ((currentHeight > 0.0f) != (nextHeight > 0.0f) && count < 4u)
+            {
+                const float t = currentHeight / (currentHeight - nextHeight);
+                outPolygon[count++] = Math::Vector3(current.x + (next.x - current.x) * t,
+                                                    current.y + (next.y - current.y) * t,
+                                                    current.z + (next.z - current.z) * t);
+            }
+        }
+        return count;
+    }
+
+    Math::Vector3 NormalizeVector(const Math::Vector3& vector)
+    {
+        const float length = std::sqrt(DotVector(vector, vector));
+        return Math::Vector3(vector.x / length, vector.y / length, vector.z / length);
+    }
+
+    // 放射輝度1の多角形から受ける照度（Lambertの式）。shaderのComputePolygonIrradianceFactorと同じ。
+    float ComputePolygonIrradianceFactor(const Math::Vector3& receiver,
+                                         const Math::Vector3& normal,
+                                         const Math::Vector3 (&polygon)[4],
+                                         uint32_t count)
+    {
+        if (count < 3u)
+        {
+            return 0.0f;
+        }
+        double vectorIrradiance[3] = {};
+        for (uint32_t index = 0u; index < count; ++index)
+        {
+            const Math::Vector3 edgeStart = NormalizeVector(SubtractVector(polygon[index], receiver));
+            const Math::Vector3 edgeEnd =
+                NormalizeVector(SubtractVector(polygon[(index + 1u) % count], receiver));
+            const Math::Vector3 edgeCross = CrossVector(edgeStart, edgeEnd);
+            const double crossLength = std::sqrt(DotVector(edgeCross, edgeCross));
+            if (!(crossLength > 1.0e-8))
+            {
+                continue;
+            }
+            const double edgeAngle = std::atan2(crossLength, DotVector(edgeStart, edgeEnd));
+            vectorIrradiance[0] += edgeAngle * edgeCross.x / crossLength;
+            vectorIrradiance[1] += edgeAngle * edgeCross.y / crossLength;
+            vectorIrradiance[2] += edgeAngle * edgeCross.z / crossLength;
+        }
+        const double factor = 0.5 * std::abs(normal.x * vectorIrradiance[0] +
+                                             normal.y * vectorIrradiance[1] +
+                                             normal.z * vectorIrradiance[2]);
+        return static_cast<float>(std::min(factor, static_cast<double>(Pi)));
+    }
+
+    bool IsEmitterSampleVisible(const SceneResources& scene,
+                                const Math::Vector3& receiver,
+                                const Math::Vector3& samplePosition)
+    {
+        const Math::Vector3 toSource = SubtractVector(samplePosition, receiver);
+        const float distance = std::sqrt(DotVector(toSource, toSource));
+        if (!(distance > 1.0e-6f))
+        {
+            return false;
+        }
+        const float shadowDistance = std::max(distance - EmitterShadowEndOffset, 0.0f);
+        return shadowDistance <= RayMinimumDistance ||
+               !IsSegmentOccluded(scene,
+                                  receiver,
+                                  Math::Vector3(toSource.x / distance,
+                                                toSource.y / distance,
+                                                toSource.z / distance),
+                                  shadowDistance);
+    }
+
+    // shaderのComputeEmitterIrradiance（DDGI/ProbeEmitterSampling.glsl）と同じ見積もり。影のない照度を
+    // 半球で切り取った三角形からLambertの式で求め、小三角形の重心への影のrayの重み付きの可視率を掛ける。
     void ComputeProbeEmitterIrradiance(const SceneResources& scene,
                                        const Math::Vector3& probePosition,
                                        const Math::Vector3& normal,
@@ -968,24 +1104,30 @@ namespace
         const float subdivision = static_cast<float>(ProbeEmitterSubdivision);
         for (const SceneTriangle& emitter : scene.Triangles)
         {
-            if (!IsEmissive(emitter))
+            if (!IsEmissive(emitter) ||
+                !(DotVector(emitter.FrontNormal,
+                            SubtractVector(probePosition, emitter.Vertices[0])) > 1.0e-6f))
             {
                 continue;
             }
+            Math::Vector3 polygon[4];
+            const uint32_t polygonCount =
+                ClipTriangleToHemisphere(probePosition, normal, emitter.Vertices, polygon);
+            const float factor =
+                ComputePolygonIrradianceFactor(probePosition, normal, polygon, polygonCount);
+            if (!(factor > 0.0f))
+            {
+                continue;
+            }
+
             const Math::Vector3 edge1 = SubtractVector(emitter.Vertices[1], emitter.Vertices[0]);
             const Math::Vector3 edge2 = SubtractVector(emitter.Vertices[2], emitter.Vertices[0]);
             const Math::Vector3 crossEdges = CrossVector(edge1, edge2);
-            const float doubleArea = std::sqrt(DotVector(crossEdges, crossEdges));
-            if (!(doubleArea > 1.0e-6f))
-            {
-                continue;
-            }
-            // 頂点法線のない三角形は頂点順の外積の逆側が表で、表の側へ放射する。
-            const Math::Vector3 sourceNormal(-crossEdges.x / doubleArea,
-                                             -crossEdges.y / doubleArea,
-                                             -crossEdges.z / doubleArea);
-            const float sampleArea = doubleArea * 0.5f / (subdivision * subdivision);
-            const auto evaluate = [&](float u, float v)
+            const float sampleArea = 0.5f * std::sqrt(DotVector(crossEdges, crossEdges)) /
+                                     (subdivision * subdivision);
+            float weightSum = 0.0f;
+            float visibleWeight = 0.0f;
+            const auto accumulate = [&](float u, float v)
             {
                 const Math::Vector3 samplePosition(
                     emitter.Vertices[0].x + edge1.x * u + edge2.x * v,
@@ -1000,39 +1142,58 @@ namespace
                 const float distance = std::sqrt(distanceSquared);
                 const Math::Vector3 direction(
                     toSource.x / distance, toSource.y / distance, toSource.z / distance);
-                const float receiverCosine = std::max(DotVector(normal, direction), 0.0f);
-                const float sourceCosine = std::max(
-                    -DotVector(sourceNormal, direction), 0.0f);
-                if (receiverCosine <= 0.0f || sourceCosine <= 0.0f)
+                const float weight = std::max(DotVector(normal, direction), 0.0f) *
+                                     std::max(-DotVector(emitter.FrontNormal, direction), 0.0f) *
+                                     std::min(sampleArea / distanceSquared, 2.0f * Pi);
+                if (!(weight > 0.0f))
                 {
                     return;
                 }
-                const float shadowDistance = std::max(distance - EmitterShadowEndOffset, 0.0f);
-                if (shadowDistance > RayMinimumDistance &&
-                    IsSegmentOccluded(scene, probePosition, direction, shadowDistance))
+                weightSum += weight;
+                if (IsEmitterSampleVisible(scene, probePosition, samplePosition))
                 {
-                    return;
-                }
-                const float solidAngle = std::min(
-                    sourceCosine * sampleArea / distanceSquared, 2.0f * Pi);
-                for (uint32_t channel = 0u; channel < 3u; ++channel)
-                {
-                    outIrradiance[channel] +=
-                        emitter.Emission[channel] * receiverCosine * solidAngle;
+                    visibleWeight += weight;
                 }
             };
             for (uint32_t row = 0u; row < ProbeEmitterSubdivision; ++row)
             {
                 for (uint32_t column = 0u; row + column < ProbeEmitterSubdivision; ++column)
                 {
-                    evaluate((static_cast<float>(row) + 1.0f / 3.0f) / subdivision,
-                             (static_cast<float>(column) + 1.0f / 3.0f) / subdivision);
+                    accumulate((static_cast<float>(row) + 1.0f / 3.0f) / subdivision,
+                               (static_cast<float>(column) + 1.0f / 3.0f) / subdivision);
                     if (row + column + 1u < ProbeEmitterSubdivision)
                     {
-                        evaluate((static_cast<float>(row) + 2.0f / 3.0f) / subdivision,
-                                 (static_cast<float>(column) + 2.0f / 3.0f) / subdivision);
+                        accumulate((static_cast<float>(row) + 2.0f / 3.0f) / subdivision,
+                                   (static_cast<float>(column) + 2.0f / 3.0f) / subdivision);
                     }
                 }
+            }
+
+            float visibility = 0.0f;
+            if (weightSum > 0.0f)
+            {
+                visibility = visibleWeight / weightSum;
+            }
+            else
+            {
+                Math::Vector3 polygonCenter(0.0f, 0.0f, 0.0f);
+                for (uint32_t index = 0u; index < polygonCount; ++index)
+                {
+                    polygonCenter = Math::Vector3(polygonCenter.x + polygon[index].x,
+                                                  polygonCenter.y + polygon[index].y,
+                                                  polygonCenter.z + polygon[index].z);
+                }
+                const float inverseCount = 1.0f / static_cast<float>(polygonCount);
+                polygonCenter = Math::Vector3(polygonCenter.x * inverseCount,
+                                              polygonCenter.y * inverseCount,
+                                              polygonCenter.z * inverseCount);
+                visibility = IsEmitterSampleVisible(scene, probePosition, polygonCenter)
+                    ? 1.0f
+                    : 0.0f;
+            }
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                outIrradiance[channel] += emitter.Emission[channel] * factor * visibility;
             }
         }
     }
@@ -1797,12 +1958,16 @@ namespace
         FramePacket singleProbeSeedPacket;
         FramePacket singleProbeSurfacePacket;
         FramePacket backfacingPacket;
+        FramePacket mirroredPacket;
+        FramePacket nearEmitterPacket;
         SceneResources planeScene;
         SceneResources visibilitySeedScene;
         SceneResources occlusionScene;
         SceneResources singleProbeSeedScene;
         SceneResources singleProbeSurfaceScene;
         SceneResources backfacingScene;
+        SceneResources mirroredScene;
+        SceneResources nearEmitterScene;
         if (!CreateTestScene(device, ProbeScene::EmitterAbove, planePacket, planeScene) ||
             !CreateTestScene(device,
                              ProbeScene::VisibilitySeed,
@@ -1822,7 +1987,16 @@ namespace
             !CreateTestScene(device,
                              ProbeScene::BackfacingFloor,
                              backfacingPacket,
-                             backfacingScene))
+                             backfacingScene) ||
+            !CreateTestScene(device,
+                             ProbeScene::MirroredEmitterAbove,
+                             mirroredPacket,
+                             mirroredScene) ||
+            !CreateTestScene(device,
+                             ProbeScene::NearEmitter,
+                             nearEmitterPacket,
+                             nearEmitterScene,
+                             1u))
         {
             return 1;
         }
@@ -1947,6 +2121,78 @@ namespace
             return 1;
         }
         backfacingProbePass.Shutdown();
+
+        // 鏡映したinstanceの発光面も、表（下）を向いたprobeには面の表として当たり、下へ放射する。
+        DDGIProbePass mirroredProbePass;
+        ProbeObservation mirroredObservation;
+        if (!RunProbeFrame(device,
+                           shaderManager,
+                           mirroredProbePass,
+                           mirroredPacket,
+                           mirroredScene,
+                           lightBuffer,
+                           environmentTexture,
+                           environmentSampler,
+                           0u,
+                           ProbeCount,
+                           mirroredObservation) ||
+            !ValidateAtlasValues(mirroredObservation,
+                                 nullptr,
+                                 mirroredScene,
+                                 "mirrored_emitter"))
+        {
+            return 1;
+        }
+        mirroredProbePass.Shutdown();
+
+        // 発光面のすぐ近くのprobeでも、発光面の直接照度は半球が一様に光る場合（放射輝度のπ倍）を
+        // 超えず、発光面を向いたtexelではその値に近づく。
+        DDGIProbePass nearEmitterProbePass;
+        ProbeObservation nearEmitterObservation;
+        if (!RunProbeFrame(device,
+                           shaderManager,
+                           nearEmitterProbePass,
+                           nearEmitterPacket,
+                           nearEmitterScene,
+                           lightBuffer,
+                           environmentTexture,
+                           environmentSampler,
+                           0u,
+                           1u,
+                           nearEmitterObservation) ||
+            !ValidateAtlasValues(nearEmitterObservation,
+                                 nullptr,
+                                 nearEmitterScene,
+                                 "near_emitter",
+                                 1u))
+        {
+            return 1;
+        }
+        float nearEmitterMaximum = 0.0f;
+        for (uint32_t y = 1u; y + 1u < AtlasTexelCount; ++y)
+        {
+            for (uint32_t x = 1u; x + 1u < AtlasTexelCount; ++x)
+            {
+                const float direct = ReadIrradiance(nearEmitterObservation, 0u, x, y, 0u) -
+                                     ReadIrradiance(nearEmitterObservation, 0u, x, y, 0u, true);
+                nearEmitterMaximum = std::max(nearEmitterMaximum, direct);
+                if (direct > Pi * EmitterRadiance[0] * 1.02f)
+                {
+                    std::cerr << "発光面の近くの直接照度が放射輝度のπ倍を超えます texel=" << x << ','
+                              << y << " direct=" << direct << '\n';
+                    return 1;
+                }
+            }
+        }
+        if (!(nearEmitterMaximum > 0.8f * Pi * EmitterRadiance[0]))
+        {
+            std::cerr << "発光面を向いたtexelの直接照度が小さすぎます maximum=" << nearEmitterMaximum
+                      << '\n';
+            return 1;
+        }
+        std::cout << "near_emitter_direct_maximum=" << nearEmitterMaximum
+                  << " bound=" << Pi * EmitterRadiance[0] << '\n';
+        nearEmitterProbePass.Shutdown();
 
         ProbeObservation visibilitySeedObservation;
         if (!RunProbeFrame(device,

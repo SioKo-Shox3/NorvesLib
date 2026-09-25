@@ -363,8 +363,9 @@ void main()
     if (TryGetInstanceData(customIndex, instanceData) &&
         TryGetWorldTriangleNormal(query, primitiveIndex, instanceData, worldNormal))
     {
-        // 面の表はラスタの裏面カリング（時計回りが表）と同じで、頂点順の外積の向きへ進むrayが表に当たる。
-        // 逆向きのrayは面の裏（閉じた物体の内側や壁の外）に当たる。
+        // 面の表は頂点順の外積の逆側で、外積を法線の変換（逆転置）でworldへ移した向きへ進むrayが表に当たる。
+        // 逆向きのrayは面の裏（閉じた物体の内側や壁の外）に当たる。鏡映のない変換ではラスタの裏面カリング
+        // （時計回りが表）と一致し、鏡映の変換でも閉じた物体の外向きを保つ。
         bBackfaceHit = dot(worldNormal, rayDirection) < 0.0;
         if (dot(worldNormal, rayDirection) > 0.0)
         {
