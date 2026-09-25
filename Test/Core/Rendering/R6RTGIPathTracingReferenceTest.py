@@ -19,6 +19,7 @@ def run(command):
         if ("r6_reference" in line or "yardstick" in line or "sanity" in line or
                 "_vs_" in line or "indirect_mean" in line or "skipped" in line or
                 "local_leak" in line or "geometry_agreement" in line or "diagnostic" in line or
+                "transport_order" in line or
                 "[ERROR]" in line):
             print("  " + line)
     return result.returncode
