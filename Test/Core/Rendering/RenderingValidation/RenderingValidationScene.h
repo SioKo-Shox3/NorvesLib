@@ -268,6 +268,8 @@ namespace NorvesLib::Test::RenderingValidation
         bool SetR5RayTracingShadowReceiverCastsShadow(bool bCastShadow) const;
         bool ApplyR4CornellFixture() const;
         bool AddR6CornellDynamicObject() const;
+        // R8の被写界深度の比較: 短い箱の上のピント面の球と、その縁へ前ボケが掛かる手前の球を置く。
+        bool AddR8DepthOfFieldObjects() const;
         bool SetR4CornellLightOffsetX(float offsetX) const;
         bool SetR4CornellObjectOffsetX(float offsetX) const;
         bool SetR4CornellPointLightState(float offsetX, float intensity) const;

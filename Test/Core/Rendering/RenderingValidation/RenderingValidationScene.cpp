@@ -2961,6 +2961,53 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::AddR8DepthOfFieldObjects() const
+    {
+        if (!m_bR4CornellFixturePrepared || m_pWorld == nullptr)
+        {
+            return false;
+        }
+        // 位置(m)・半径(m)・反射率。ピント面の球は短い箱の上面（高さ1.65 m）に載せ、手前の球はカメラから
+        // 約8.2 mの空中に、像でピント面の球の右の縁へ前ボケが重なる位置へ置く。
+        struct SphereSpec
+        {
+            float Position[3];
+            float Radius;
+            float Color[3];
+        };
+        constexpr SphereSpec spheres[2] = {
+            {{1.86f, 1.95f, 1.69f}, 0.30f, {0.70f, 0.62f, 0.30f}},
+            {{2.48f, 2.07f, 0.20f}, 0.20f, {0.30f, 0.52f, 0.72f}}};
+        for (const SphereSpec& sphere : spheres)
+        {
+            Core::Entity* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(entity);
+            entity->SetPosition(sphere.Position[0], sphere.Position[1], sphere.Position[2]);
+            entity->SetScale(sphere.Radius, sphere.Radius, sphere.Radius);
+            Core::Component::MeshComponent* mesh =
+                m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(SphereHandle);
+            mesh->SetMaterial(0u, m_NeutralMaterial);
+            mesh->SetCustomData(0u, sphere.Color[0]);
+            mesh->SetCustomData(1u, sphere.Color[1]);
+            mesh->SetCustomData(2u, sphere.Color[2]);
+            mesh->SetCustomData(3u, 1.0f);
+            mesh->SetCastShadow(true);
+            mesh->SetReceiveShadow(true);
+            mesh->SetVisible(true);
+        }
+        m_pWorld->SyncToSceneView(&m_pResources->Materials(), &m_pResources->Meshes());
+        return true;
+    }
+
     bool RenderingValidationSceneFixture::SetR4CornellLightOffsetX(float offsetX) const
     {
         if (!std::isfinite(offsetX) || std::abs(offsetX) > 0.8f ||

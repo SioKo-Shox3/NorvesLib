@@ -828,6 +828,39 @@ set_tests_properties(R7OutdoorPathTracingReferenceVulkanTest PROPERTIES
     RESOURCE_LOCK NorvesLibGPU
     SKIP_RETURN_CODE 125
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# ラスタの被写界深度（DepthOfFieldPass）を、PTのピンホール像を入力に実GPUで掛け、PTの薄レンズ参照とLDR-FLIPで比べる（R8-P4）。
+add_executable(R8DepthOfFieldPathTracingReferenceVulkanTest
+    R8DepthOfFieldPathTracingReferenceVulkanTest.cpp
+)
+target_link_libraries(R8DepthOfFieldPathTracingReferenceVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+    RenderingFloatImageSupport
+    RenderingPerceptualDiffSupport
+    RenderingReferenceComparisonSupport
+)
+target_include_directories(R8DepthOfFieldPathTracingReferenceVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(R8DepthOfFieldPathTracingReferenceVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(R8DepthOfFieldPathTracingReferenceVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+set(R8_DEPTH_OF_FIELD_PATH_TRACING_REFERENCE_ROOT
+    "${CMAKE_BINARY_DIR}/RenderingValidation/R8DepthOfFieldPathTracingReferenceRuns")
+add_test(NAME R8DepthOfFieldPathTracingReferenceVulkanTest
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/R8DepthOfFieldPathTracingReferenceTest.py
+            $<TARGET_FILE:R8DepthOfFieldPathTracingReferenceVulkanTest>
+            ${R8_DEPTH_OF_FIELD_PATH_TRACING_REFERENCE_ROOT})
+set_tests_properties(R8DepthOfFieldPathTracingReferenceVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    TIMEOUT 5400
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(R4DDGIPathTracingReferenceVulkanTest
     R4DDGIPathTracingReferenceVulkanTest.cpp
 )

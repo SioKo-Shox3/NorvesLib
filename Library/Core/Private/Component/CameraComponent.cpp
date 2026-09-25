@@ -151,6 +151,20 @@ namespace NorvesLib::Core::Component
         return true;
     }
 
+    bool CameraComponent::SetFocusDistance(float focusDistance)
+    {
+        if (!std::isfinite(focusDistance) || focusDistance < 0.0f)
+        {
+            return false;
+        }
+        if (m_FocusDistance != focusDistance)
+        {
+            m_FocusDistance = focusDistance;
+            MarkRenderStateDirty();
+        }
+        return true;
+    }
+
     bool CameraComponent::SetShutterSpeed(float shutterSpeed)
     {
         Rendering::CameraProxy validation;
@@ -247,6 +261,7 @@ namespace NorvesLib::Core::Component
         snapshot.Viewport = m_Viewport;
         snapshot.CullingMask = CullingMaskProp;
         snapshot.RenderOrder = RenderOrder;
+        snapshot.FocusDistance = m_FocusDistance;
         if (!TryBuildExposureSnapshot(
                 Aperture.Get(),
                 ShutterSpeed.Get(),

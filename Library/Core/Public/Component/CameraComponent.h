@@ -115,6 +115,13 @@ namespace NorvesLib::Core::Component
         float GetExposureCompensation() const { return ExposureCompensation; }
 
         /**
+         * @brief 被写界深度のピント距離（m）を設定します。0はピンホール（被写界深度なし）。
+         * @return 有限で0以上ならtrue。
+         */
+        bool SetFocusDistance(float focusDistance);
+        float GetFocusDistance() const { return m_FocusDistance; }
+
+        /**
          * @brief owner のワールド Transform とレンズ値を CameraProxy へ snapshot 化します。
          * @return owner が存在して snapshot を構築できた場合 true。
          *
@@ -139,6 +146,7 @@ namespace NorvesLib::Core::Component
         PROPERTY(float, ExposureCompensation)
 
         Rendering::ViewportRect m_Viewport{};
+        float m_FocusDistance = 0.0f;
 
     private:
         void SetDefaults();

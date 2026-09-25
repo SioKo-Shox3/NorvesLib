@@ -1205,3 +1205,4 @@ namespace NorvesLib::Core::Rendering
 } // namespace NorvesLib::Core::Rendering
 
 #include "PathTracingPass.inl"
+#include "DepthOfFieldPass.inl"
