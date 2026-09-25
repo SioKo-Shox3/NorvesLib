@@ -183,8 +183,9 @@ float ComputePolygonIrradianceFactor(vec3 receiverPosition,
 // Lambertの式で厳密に求め、影は三角形を辺ごとにsubdivision個へ分けた合同な小三角形（subdivisionの
 // 2乗個）の重心へ向けた影のrayの、影のない寄与の重みでの可視率を掛ける（固定の配置なのでframe間で
 // 揺らがず、影のない値を超えない）。subdivisionが1なら三角形の重心1点で可視を確かめる。
-// 放射する側（表）は頂点法線、なければ頂点順の外積の逆側を、法線の変換（逆転置）でworldへ移して
-// 決める（鏡映の変換でも閉じた物体の外向きを保つ）。
+// 放射する面の向きは三角形の幾何の法線（頂点順の外積を法線の変換（逆転置）でworldへ移した向き）で、
+// 表（放射する側）は頂点法線の平均の側、頂点法線がなければ外積の逆側にする（鏡映の変換でも閉じた物体の
+// 外向きを保ち、頂点の順の巡回で変わらない）。
 vec3 ComputeEmitterIrradiance(vec3 receiverPosition,
                               vec3 shadowOrigin,
                               vec3 normal,
@@ -237,10 +238,8 @@ vec3 ComputeEmitterIrradiance(vec3 receiverPosition,
                 continue;
             }
 
-            vec3 localFront = bHasLocalNormal
-                ? localNormal
-                : -cross(localVertex1 - localVertex0, localVertex2 - localVertex0);
-            vec3 sourceNormal = normalTransform * localFront;
+            vec3 sourceNormal = normalTransform *
+                cross(localVertex1 - localVertex0, localVertex2 - localVertex0);
             float sourceNormalLengthSquared = dot(sourceNormal, sourceNormal);
             if (isnan(sourceNormalLengthSquared) || isinf(sourceNormalLengthSquared) ||
                 sourceNormalLengthSquared <= 1.0e-12)
@@ -248,6 +247,11 @@ vec3 ComputeEmitterIrradiance(vec3 receiverPosition,
                 continue;
             }
             sourceNormal *= inversesqrt(sourceNormalLengthSquared);
+            vec3 frontHint = bHasLocalNormal ? normalTransform * localNormal : -sourceNormal;
+            if (dot(sourceNormal, frontHint) < 0.0)
+            {
+                sourceNormal = -sourceNormal;
+            }
 
             vec3 vertex0 = TransformInstancePoint(emitter, localVertex0);
             vec3 vertex1 = TransformInstancePoint(emitter, localVertex1);

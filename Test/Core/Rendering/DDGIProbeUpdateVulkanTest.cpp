@@ -99,12 +99,22 @@ namespace
         float Position[3];
     };
 
+    // 頂点法線を持つ頂点（stride 24。probe rayの発光面は頂点法線の平均の側を表とする）。
+    struct NormalVertex
+    {
+        float Position[3];
+        float Normal[3];
+    };
+
     struct TriangleResources
     {
         BufferPtr VertexBuffer;
         BufferPtr IndexBuffer;
         AccelerationStructurePtr BottomLevel;
         Vertex Vertices[3] = {};
+        float Normals[3][3] = {};
+        bool bHasNormals = false;
+        uint32_t VertexStride = sizeof(Vertex);
     };
 
     Math::Vector3 SubtractVector(const Math::Vector3& lhs, const Math::Vector3& rhs)
@@ -188,15 +198,18 @@ namespace
         return true;
     }
 
-    bool CreateTriangleResourcesFromVertices(const DevicePtr& device,
-                                             const Vertex (&vertices)[3],
-                                             const char* debugName,
-                                             TriangleResources& outResources)
+    bool CreateTriangleResourcesFromData(const DevicePtr& device,
+                                         const void* vertexData,
+                                         uint32_t vertexStride,
+                                         const char* debugName,
+                                         TriangleResources& outResources)
     {
         const uint32_t indices[3] = {0u, 1u, 2u};
+        const uint32_t vertexDataSize = vertexStride * 3u;
+        outResources.VertexStride = vertexStride;
 
         BufferDesc vertexDesc;
-        vertexDesc.Size = sizeof(vertices);
+        vertexDesc.Size = vertexDataSize;
         vertexDesc.Usage = ResourceUsage::VertexBuffer | ResourceUsage::BufferDeviceAddress;
         vertexDesc.CPUAccessible = true;
         vertexDesc.DebugName = debugName;
@@ -215,8 +228,7 @@ namespace
             std::cerr << "probe update fixtureのBDA geometry bufferを作成できません\n";
             return false;
         }
-        outResources.VertexBuffer->Update(vertices, sizeof(vertices));
-        std::memcpy(outResources.Vertices, vertices, sizeof(vertices));
+        outResources.VertexBuffer->Update(vertexData, vertexDataSize);
         outResources.IndexBuffer->Update(indices, sizeof(indices));
 
         AccelerationStructureDesc bottomLevelDesc;
@@ -235,7 +247,7 @@ namespace
         geometry.opaque = true;
         geometry.triangles.vertexBuffer = outResources.VertexBuffer;
         geometry.triangles.vertexCount = 3u;
-        geometry.triangles.vertexStride = sizeof(Vertex);
+        geometry.triangles.vertexStride = vertexStride;
         geometry.triangles.vertexFormat = Format::R32G32B32_FLOAT;
         geometry.triangles.indexBuffer = outResources.IndexBuffer;
         geometry.triangles.indexCount = 3u;
@@ -251,6 +263,36 @@ namespace
             return false;
         }
         return true;
+    }
+
+    bool CreateTriangleResourcesFromVertices(const DevicePtr& device,
+                                             const Vertex (&vertices)[3],
+                                             const char* debugName,
+                                             TriangleResources& outResources)
+    {
+        std::memcpy(outResources.Vertices, vertices, sizeof(vertices));
+        outResources.bHasNormals = false;
+        return CreateTriangleResourcesFromData(
+            device, vertices, sizeof(Vertex), debugName, outResources);
+    }
+
+    bool CreateNormalTriangleResources(const DevicePtr& device,
+                                       const NormalVertex (&vertices)[3],
+                                       const char* debugName,
+                                       TriangleResources& outResources)
+    {
+        for (uint32_t vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
+        {
+            for (uint32_t component = 0u; component < 3u; ++component)
+            {
+                outResources.Vertices[vertexIndex].Position[component] =
+                    vertices[vertexIndex].Position[component];
+                outResources.Normals[vertexIndex][component] = vertices[vertexIndex].Normal[component];
+            }
+        }
+        outResources.bHasNormals = true;
+        return CreateTriangleResourcesFromData(
+            device, vertices, sizeof(NormalVertex), debugName, outResources);
     }
 
     // 頂点順の外積は+Z寄りを向き、表（外積の逆側）は-Z側になる。bFrontTowardPositiveZなら頂点順を
@@ -341,7 +383,8 @@ namespace
                 transform[8] * position[0] + transform[9] * position[1] +
                     transform[10] * position[2] + transform[11]);
         }
-        // 表の向き: 頂点順の外積の逆側を、線形部分の余因子行列（逆転置の行列式倍）で移して正規化する。
+        // 放射する面の向き: 頂点順の外積を線形部分の余因子行列（逆転置の行列式倍）で移した幾何の法線を、
+        // 頂点法線の平均の側（頂点法線がなければ外積の逆側）へ向ける。
         const Math::Vector3 localCross = CrossVector(
             SubtractVector(localVertices[1], localVertices[0]),
             SubtractVector(localVertices[2], localVertices[0]));
@@ -356,10 +399,26 @@ namespace
                                              DotVector(cofactorRow1, localCross),
                                              DotVector(cofactorRow2, localCross));
         const float crossLength = std::sqrt(DotVector(transformedCross, transformedCross));
-        const float frontScale = determinant < 0.0f ? 1.0f : -1.0f;
-        sceneTriangle.FrontNormal = Math::Vector3(frontScale * transformedCross.x / crossLength,
-                                                  frontScale * transformedCross.y / crossLength,
-                                                  frontScale * transformedCross.z / crossLength);
+        const float determinantSign = determinant < 0.0f ? -1.0f : 1.0f;
+        Math::Vector3 geometricNormal(determinantSign * transformedCross.x / crossLength,
+                                      determinantSign * transformedCross.y / crossLength,
+                                      determinantSign * transformedCross.z / crossLength);
+        Math::Vector3 frontHint(-geometricNormal.x, -geometricNormal.y, -geometricNormal.z);
+        if (triangle.bHasNormals)
+        {
+            const Math::Vector3 localNormalSum(
+                triangle.Normals[0][0] + triangle.Normals[1][0] + triangle.Normals[2][0],
+                triangle.Normals[0][1] + triangle.Normals[1][1] + triangle.Normals[2][1],
+                triangle.Normals[0][2] + triangle.Normals[1][2] + triangle.Normals[2][2]);
+            frontHint = Math::Vector3(determinantSign * DotVector(cofactorRow0, localNormalSum),
+                                      determinantSign * DotVector(cofactorRow1, localNormalSum),
+                                      determinantSign * DotVector(cofactorRow2, localNormalSum));
+        }
+        if (DotVector(geometricNormal, frontHint) < 0.0f)
+        {
+            geometricNormal = Math::Vector3(-geometricNormal.x, -geometricNormal.y, -geometricNormal.z);
+        }
+        sceneTriangle.FrontNormal = geometricNormal;
         sceneTriangle.CustomIndex = customIndex;
         for (uint32_t channel = 0u; channel < 3u; ++channel)
         {
@@ -373,7 +432,7 @@ namespace
         snapshot.SourceIndexBuffer = triangle.IndexBuffer;
         snapshot.AccelerationStructureVertexBuffer = triangle.VertexBuffer;
         snapshot.AccelerationStructureIndexBuffer = triangle.IndexBuffer;
-        snapshot.VertexStride = sizeof(Vertex);
+        snapshot.VertexStride = triangle.VertexStride;
         snapshot.VertexCount = 3u;
         snapshot.IndexCount = 3u;
         snapshot.bGeometryOpaque = true;
@@ -404,6 +463,10 @@ namespace
         MirroredEmitterAbove,
         // probeの1 cm上の発光面。直接照度は放射輝度のπ倍を超えない。
         NearEmitter,
+        // 上の発光面に、面に垂直でない頂点法線（0.8, 0, -0.6）を持たせる。表は下（probeの側）。
+        TiltedNormalEmitter,
+        // TiltedNormalEmitterの頂点の順を巡回させたもの。probeのatlasは変わらない。
+        TiltedNormalEmitterRotated,
         // 上の発光面と、表が下を向いた床。probeは床の裏を見るため無効になる。
         BackfacingFloor,
     };
@@ -485,11 +548,31 @@ namespace
         }
         else
         {
-            if (!CreateTriangleResources(device,
-                                         sceneKind == ProbeScene::NearEmitter ? 0.01f : 1.0f,
-                                         "DDGIProbeUpdate.PlaneVertices",
-                                         outResources.Plane,
-                                         4.0f))
+            if (sceneKind == ProbeScene::TiltedNormalEmitter ||
+                sceneKind == ProbeScene::TiltedNormalEmitterRotated)
+            {
+                const NormalVertex tiltedVertices[3] = {
+                    {{-4.0f, -4.0f, 1.0f}, {0.8f, 0.0f, -0.6f}},
+                    {{4.0f, -4.0f, 1.0f}, {0.8f, 0.0f, -0.6f}},
+                    {{0.0f, 4.0f, 1.0f}, {0.8f, 0.0f, -0.6f}},
+                };
+                const uint32_t first = sceneKind == ProbeScene::TiltedNormalEmitterRotated ? 1u : 0u;
+                const NormalVertex orderedVertices[3] = {
+                    tiltedVertices[first], tiltedVertices[(first + 1u) % 3u],
+                    tiltedVertices[(first + 2u) % 3u]};
+                if (!CreateNormalTriangleResources(device,
+                                                   orderedVertices,
+                                                   "DDGIProbeUpdate.TiltedNormalVertices",
+                                                   outResources.Plane))
+                {
+                    return false;
+                }
+            }
+            else if (!CreateTriangleResources(device,
+                                              sceneKind == ProbeScene::NearEmitter ? 0.01f : 1.0f,
+                                              "DDGIProbeUpdate.PlaneVertices",
+                                              outResources.Plane,
+                                              4.0f))
             {
                 return false;
             }
@@ -1960,6 +2043,8 @@ namespace
         FramePacket backfacingPacket;
         FramePacket mirroredPacket;
         FramePacket nearEmitterPacket;
+        FramePacket tiltedPacket;
+        FramePacket tiltedRotatedPacket;
         SceneResources planeScene;
         SceneResources visibilitySeedScene;
         SceneResources occlusionScene;
@@ -1968,6 +2053,8 @@ namespace
         SceneResources backfacingScene;
         SceneResources mirroredScene;
         SceneResources nearEmitterScene;
+        SceneResources tiltedScene;
+        SceneResources tiltedRotatedScene;
         if (!CreateTestScene(device, ProbeScene::EmitterAbove, planePacket, planeScene) ||
             !CreateTestScene(device,
                              ProbeScene::VisibilitySeed,
@@ -1996,7 +2083,12 @@ namespace
                              ProbeScene::NearEmitter,
                              nearEmitterPacket,
                              nearEmitterScene,
-                             1u))
+                             1u) ||
+            !CreateTestScene(device, ProbeScene::TiltedNormalEmitter, tiltedPacket, tiltedScene) ||
+            !CreateTestScene(device,
+                             ProbeScene::TiltedNormalEmitterRotated,
+                             tiltedRotatedPacket,
+                             tiltedRotatedScene))
         {
             return 1;
         }
@@ -2193,6 +2285,72 @@ namespace
         std::cout << "near_emitter_direct_maximum=" << nearEmitterMaximum
                   << " bound=" << Pi * EmitterRadiance[0] << '\n';
         nearEmitterProbePass.Shutdown();
+
+        // 面に垂直でない頂点法線を持つ発光面も、頂点の順を巡回させて同じ直接照度になる。
+        DDGIProbePass tiltedProbePass;
+        DDGIProbePass tiltedRotatedProbePass;
+        ProbeObservation tiltedObservation;
+        ProbeObservation tiltedRotatedObservation;
+        if (!RunProbeFrame(device,
+                           shaderManager,
+                           tiltedProbePass,
+                           tiltedPacket,
+                           tiltedScene,
+                           lightBuffer,
+                           environmentTexture,
+                           environmentSampler,
+                           0u,
+                           ProbeCount,
+                           tiltedObservation) ||
+            !ValidateAtlasValues(tiltedObservation, nullptr, tiltedScene, "tilted_normal_emitter") ||
+            !RunProbeFrame(device,
+                           shaderManager,
+                           tiltedRotatedProbePass,
+                           tiltedRotatedPacket,
+                           tiltedRotatedScene,
+                           lightBuffer,
+                           environmentTexture,
+                           environmentSampler,
+                           0u,
+                           ProbeCount,
+                           tiltedRotatedObservation) ||
+            !ValidateAtlasValues(tiltedRotatedObservation,
+                                 nullptr,
+                                 tiltedRotatedScene,
+                                 "tilted_normal_emitter_rotated"))
+        {
+            return 1;
+        }
+        float tiltedMaximum = 0.0f;
+        for (uint32_t probeIndex = 0u; probeIndex < ProbeCount; ++probeIndex)
+        {
+            for (uint32_t y = 1u; y + 1u < AtlasTexelCount; ++y)
+            {
+                for (uint32_t x = 1u; x + 1u < AtlasTexelCount; ++x)
+                {
+                    const float direct = ReadIrradiance(tiltedObservation, probeIndex, x, y, 0u);
+                    const float rotatedDirect =
+                        ReadIrradiance(tiltedRotatedObservation, probeIndex, x, y, 0u);
+                    tiltedMaximum = std::max(tiltedMaximum, direct);
+                    if (std::abs(direct - rotatedDirect) > 0.01f + std::abs(direct) * 0.01f)
+                    {
+                        std::cerr << "頂点の順の巡回で発光面の直接照度が変わります probe="
+                                  << probeIndex << " texel=" << x << ',' << y
+                                  << " direct=" << direct << " rotated=" << rotatedDirect << '\n';
+                        return 1;
+                    }
+                }
+            }
+        }
+        if (!(tiltedMaximum > 1.0f))
+        {
+            std::cerr << "頂点法線を持つ発光面の直接照度がありません maximum=" << tiltedMaximum
+                      << '\n';
+            return 1;
+        }
+        std::cout << "tilted_normal_emitter_maximum=" << tiltedMaximum << '\n';
+        tiltedProbePass.Shutdown();
+        tiltedRotatedProbePass.Shutdown();
 
         ProbeObservation visibilitySeedObservation;
         if (!RunProbeFrame(device,
