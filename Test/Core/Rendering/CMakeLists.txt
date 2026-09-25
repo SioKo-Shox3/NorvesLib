@@ -728,6 +728,18 @@ set_tests_properties(PathTracingRasterParityVulkanTest PROPERTIES
     RESOURCE_LOCK NorvesLibGPU
     SKIP_RETURN_CODE 125
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# ラスタとPTの同一シーンの画像をLDR-FLIPで比べる部品（R6参照比較とR7屋外比較が共有する）。
+add_library(RenderingReferenceComparisonSupport STATIC
+    RenderingValidation/RasterPathTracingComparison.cpp
+)
+target_link_libraries(RenderingReferenceComparisonSupport PUBLIC
+    RenderingFloatImageSupport
+    RenderingPerceptualDiffSupport
+)
+target_include_directories(RenderingReferenceComparisonSupport PUBLIC
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RenderingReferenceComparisonSupport PROPERTIES FOLDER "Test/Core/Rendering")
 # R6 RTGIの静止収束SceneColorを、同じCornellシーンの自前PT参照とLDR-FLIPで比べる。
 add_executable(R6RTGIPathTracingReferenceVulkanTest
     R6RTGIPathTracingReferenceVulkanTest.cpp
@@ -737,6 +749,7 @@ target_link_libraries(R6RTGIPathTracingReferenceVulkanTest PRIVATE
     RenderingGpuTestSupport
     RenderingFloatImageSupport
     RenderingPerceptualDiffSupport
+    RenderingReferenceComparisonSupport
 )
 target_include_directories(R6RTGIPathTracingReferenceVulkanTest PRIVATE
     ${CMAKE_SOURCE_DIR}
