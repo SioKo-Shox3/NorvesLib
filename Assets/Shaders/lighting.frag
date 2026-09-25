@@ -91,8 +91,9 @@ layout(location = 0) out vec4 outColor;
 // probeの向きの重み（wrap shading）の下限（RTXGIと同じ0.2）。面の裏側のprobeも少し使い、1つのprobeに
 // 重みが集まって斑点になるのを防ぐ。
 const float DDGI_WRAP_WEIGHT_FLOOR = 0.2;
-// 表面の偏り（surface bias）の大きさ。probe間隔の最小値に対する比で、法線の方向へずらす。
-const float DDGI_NORMAL_BIAS_FRACTION = 0.1;
+// 表面の偏り（surface bias）の大きさ。probe間隔の最小値に対する比で、法線の方向へずらす。大きさは
+// Majercikらの自己遮蔽のずらし量（0.3 × 0.75 × 最小間隔）と同じで、視点の側の成分も法線の方向へ置く。
+const float DDGI_NORMAL_BIAS_FRACTION = 0.225;
 // これより弱いprobeの重みを3乗の割合で押しつぶす（RTXGIのcrush threshold）。
 const float DDGI_WEIGHT_CRUSH_THRESHOLD = 0.2;
 const uint DEBUG_VIEW_MODE_NORMAL = 0u;
@@ -813,7 +814,8 @@ bool TrySampleDDGIIrradiance(vec3 worldPosition,
             continue;
         }
 
-        vec3 trilinear = mix(vec3(1.0) - alpha, alpha, vec3(offset));
+        // 軸ごとの下限はRTXGIと同じ0.001。点がprobeの面の上にあっても隣の層のprobeを残す。
+        vec3 trilinear = max(vec3(0.001), mix(vec3(1.0) - alpha, alpha, vec3(offset)));
         float trilinearWeight = trilinear.x * trilinear.y * trilinear.z;
 
         vec3 probePosition = params.ddgiVolumeOrigin.xyz +
