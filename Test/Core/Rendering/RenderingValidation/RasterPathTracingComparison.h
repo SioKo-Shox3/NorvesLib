@@ -91,6 +91,13 @@ namespace NorvesLib::Test::RenderingValidation
 
     double MeanLuminance(const RgbaFloatImage& image);
 
+    // 独立な試料の組で描いた3枚のPT画像から、画素ごとに輝度が中央の組の値（RGBA）を選ぶ（median of
+    // means）。まれな1試料の外れ値（点光源のすぐ近くに落ちる経路など）は1組にしか入らないため、参照から
+    // 外れる。3枚の寸法が異なれば空の画像を返す。
+    RgbaFloatImage MedianOfThree(const RgbaFloatImage& first,
+                                 const RgbaFloatImage& second,
+                                 const RgbaFloatImage& third);
+
     void PrintFlipMeasurement(const char* label, const FlipMeasurement& measurement);
 
     // 画素単位の閾値を超える一致画素の数と、16画素以上離れた上位8か所の位置（診断用）を出力する。

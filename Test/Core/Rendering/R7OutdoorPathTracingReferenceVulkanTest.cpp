@@ -294,6 +294,27 @@ namespace
         return true;
     }
 
+    // PTの放射輝度の参照は、独立な3組（-b0〜-b2）の画素ごとの中央値（median of means）で読む。
+    bool LoadMedianImage(const String& directory, const String& name, RgbaFloatImage& outImage)
+    {
+        const char* batchSuffixes[3] = {"-b0", "-b1", "-b2"};
+        RgbaFloatImage batches[3];
+        for (uint32_t batch = 0u; batch < 3u; ++batch)
+        {
+            if (!LoadImage(directory, name + String(batchSuffixes[batch]), batches[batch]))
+            {
+                return false;
+            }
+        }
+        outImage = MedianOfThree(batches[0], batches[1], batches[2]);
+        if (outImage.Width == 0u)
+        {
+            std::cerr << "R7屋外比較のPT参照の組の寸法が揃いません: " << name.c_str() << '\n';
+            return false;
+        }
+        return true;
+    }
+
     // 1時刻の比較。閾値は参照（PTの拡散2バウンス）の空の光と相互反射を±20%変えた画像から求める。
     bool CompareTime(const OutdoorTime& time,
                      const RgbaFloatImage& raster,
@@ -405,9 +426,9 @@ namespace
             RgbaFloatImage pathVisibility;
             const String suffix = String("-") + String(time.Name);
             if (!LoadImage(directory, String("raster") + suffix, raster) ||
-                !LoadImage(directory, String("pt-two") + suffix, reference) ||
-                !LoadImage(directory, String("pt-full") + suffix, full) ||
-                !LoadImage(directory, String("pt-direct") + suffix, direct) ||
+                !LoadMedianImage(directory, String("pt-two") + suffix, reference) ||
+                !LoadMedianImage(directory, String("pt-full") + suffix, full) ||
+                !LoadMedianImage(directory, String("pt-direct") + suffix, direct) ||
                 !LoadImage(directory, String("raster-sun-visibility") + suffix, rasterVisibility) ||
                 !LoadImage(directory, String("pt-sun-visibility") + suffix, pathVisibility))
             {

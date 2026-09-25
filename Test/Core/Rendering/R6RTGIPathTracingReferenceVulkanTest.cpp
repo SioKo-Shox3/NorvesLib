@@ -226,15 +226,42 @@ namespace
         const char* names[10] = {"raster-rtgi", "pt-direct", "pt-single", "pt-full",
                                  "raster-rtgi-neural", "raster-normal", "raster-depth", "pt-normal",
                                  "pt-depth", "pt-two"};
+        // PTの放射輝度の参照は、独立な3組（-b0〜-b2）の画素ごとの中央値（median of means）で読む。
+        const bool bMedianOfBatches[10] = {false, true, true, true, false, false, false, false, false, true};
         RgbaFloatImage images[10];
         for (uint32_t index = 0u; index < 10u; ++index)
         {
-            String path = directory;
-            path += TEXT("/");
-            path += names[index];
-            path += TEXT(".nlrgba");
             uint32_t samples = 0u;
-            if (!ReadRgbaFloatDump(path, images[index], samples) ||
+            bool bRead = true;
+            if (bMedianOfBatches[index])
+            {
+                const char* batchSuffixes[3] = {"-b0", "-b1", "-b2"};
+                RgbaFloatImage batches[3];
+                for (uint32_t batch = 0u; batch < 3u && bRead; ++batch)
+                {
+                    String path = directory;
+                    path += TEXT("/");
+                    path += names[index];
+                    path += batchSuffixes[batch];
+                    path += TEXT(".nlrgba");
+                    uint32_t batchSamples = 0u;
+                    bRead = ReadRgbaFloatDump(path, batches[batch], batchSamples);
+                    samples += batchSamples;
+                }
+                if (bRead)
+                {
+                    images[index] = MedianOfThree(batches[0], batches[1], batches[2]);
+                }
+            }
+            else
+            {
+                String path = directory;
+                path += TEXT("/");
+                path += names[index];
+                path += TEXT(".nlrgba");
+                bRead = ReadRgbaFloatDump(path, images[index], samples);
+            }
+            if (!bRead ||
                 FindFirstNonFinite(images[index]).Kind != NonFiniteKind::None ||
                 images[index].Width != images[0].Width || images[index].Height != images[0].Height ||
                 images[index].Width % BlockSize != 0u || images[index].Height % BlockSize != 0u)

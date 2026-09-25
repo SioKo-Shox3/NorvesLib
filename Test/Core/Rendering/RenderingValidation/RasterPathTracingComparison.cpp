@@ -351,6 +351,44 @@ namespace NorvesLib::Test::RenderingValidation
         return sum / (static_cast<double>(image.Width) * image.Height);
     }
 
+    RgbaFloatImage MedianOfThree(const RgbaFloatImage& first,
+                                 const RgbaFloatImage& second,
+                                 const RgbaFloatImage& third)
+    {
+        if (first.Width != second.Width || first.Width != third.Width ||
+            first.Height != second.Height || first.Height != third.Height ||
+            first.Values.size() != second.Values.size() || first.Values.size() != third.Values.size())
+        {
+            return RgbaFloatImage{};
+        }
+        RgbaFloatImage result = first;
+        const RgbaFloatImage* images[3] = {&first, &second, &third};
+        const size_t pixelCount = static_cast<size_t>(first.Width) * first.Height;
+        for (size_t pixel = 0u; pixel < pixelCount; ++pixel)
+        {
+            double luminance[3] = {};
+            for (uint32_t index = 0u; index < 3u; ++index)
+            {
+                const float* values = images[index]->Values.data() + pixel * 4u;
+                luminance[index] = 0.2126 * values[0] + 0.7152 * values[1] + 0.0722 * values[2];
+            }
+            uint32_t median = 0u;
+            if ((luminance[1] >= luminance[0]) != (luminance[1] >= luminance[2]))
+            {
+                median = 1u;
+            }
+            else if ((luminance[2] >= luminance[0]) != (luminance[2] >= luminance[1]))
+            {
+                median = 2u;
+            }
+            for (uint32_t channel = 0u; channel < 4u; ++channel)
+            {
+                result.Values[pixel * 4u + channel] = images[median]->Values[pixel * 4u + channel];
+            }
+        }
+        return result;
+    }
+
     void PrintFlipMeasurement(const char* label, const FlipMeasurement& measurement)
     {
         std::cout << label << " mean_flip=" << measurement.Mean

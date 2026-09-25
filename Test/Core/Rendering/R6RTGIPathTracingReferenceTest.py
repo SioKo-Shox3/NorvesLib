@@ -8,6 +8,9 @@ SKIP_RETURN_CODE = 125
 # PT参照の試料数。拡散1バウンスの参照は比較の分母になるため、雑音が知覚差へ残らない数にする。
 PATH_TRACING_SAMPLES = 16384
 SAMPLES_PER_FRAME = 1024
+BATCHES = 3
+# 1組の試料数（合計がPATH_TRACING_SAMPLES以上になるよう、1 frameの試料数の倍数へ切り上げる）。
+BATCH_SAMPLES = -(-PATH_TRACING_SAMPLES // (BATCHES * SAMPLES_PER_FRAME)) * SAMPLES_PER_FRAME
 
 
 def run(command):
@@ -37,10 +40,14 @@ def main():
         stale.unlink()
     # PT参照はラスタのGBufferと同じ画素中心から1次光線を出し、縁の被覆（aliasing）の違いを
     # 光輸送の差に数えない。
-    path_tracing = ["--renderer=path-tracing",
-                    "--path-tracing-pixel-sampling=center",
-                    f"--path-tracing-samples={PATH_TRACING_SAMPLES}",
-                    f"--path-tracing-samples-per-frame={SAMPLES_PER_FRAME}"]
+    # PTの参照は独立な試料の組（--path-tracing-sample-batch）を3枚描き、比較側で画素ごとの中央値に
+    # する（median of means。まれな1試料の外れ値に強い）。合計の試料数は従来と同程度。
+    def path_tracing(batch):
+        return ["--renderer=path-tracing",
+                "--path-tracing-pixel-sampling=center",
+                f"--path-tracing-samples={BATCH_SAMPLES}",
+                f"--path-tracing-samples-per-frame={SAMPLES_PER_FRAME}",
+                f"--path-tracing-sample-batch={batch}"]
     # 1次命中の幾何は画素中心から出す光線で決まり、累積する試料数によらない（最小1試料を待つ）。
     path_tracing_geometry = ["--renderer=path-tracing",
                              "--path-tracing-pixel-sampling=center",
@@ -49,10 +56,6 @@ def main():
     captures = [
         # 判定するラスタは直接光をPTと同じ解析BRDFで評価し、R6の範囲外の直接光の近似差を除く。
         ("raster-rtgi", ["--raster-direct-brdf=analytic"]),
-        ("pt-direct", path_tracing + ["--path-tracing-transport=direct"]),
-        ("pt-single", path_tracing + ["--path-tracing-transport=single-diffuse-bounce"]),
-        ("pt-two", path_tracing + ["--path-tracing-transport=two-diffuse-bounces"]),
-        ("pt-full", path_tracing + ["--path-tracing-transport=full"]),
         # 診断: 既定のニューラルBRDFの直接光のラスタ。
         ("raster-rtgi-neural", ["--raster-direct-brdf=neural"]),
         ("raster-normal", ["--r6-reference-debug-view=normal"]),
@@ -60,6 +63,11 @@ def main():
         ("pt-normal", path_tracing_geometry + ["--path-tracing-debug-output=shading-normal"]),
         ("pt-depth", path_tracing_geometry + ["--path-tracing-debug-output=hit-distance"]),
     ]
+    for name, transport in [("pt-direct", "direct"), ("pt-single", "single-diffuse-bounce"),
+                            ("pt-two", "two-diffuse-bounces"), ("pt-full", "full")]:
+        for batch in range(BATCHES):
+            captures.append((f"{name}-b{batch}",
+                             path_tracing(batch) + [f"--path-tracing-transport={transport}"]))
     for name, arguments in captures:
         dump = (root / f"{name}.nlrgba").as_posix()
         code = run([executable] + arguments + [f"--r6-reference-dump={dump}"])
