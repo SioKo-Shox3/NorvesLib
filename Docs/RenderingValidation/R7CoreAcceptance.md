@@ -28,7 +28,7 @@ R1の`RenderingHdrSceneCaptureTest --scene=indoor --capture-source=back-buffer -
 
 | 対象 | 自前PTとの再照合（2026-09-25） |
 |---|---|
-| R4 DDGI | `R4DDGIPathTracingReferenceVulkanTest`（`248e2b6`）。R4受入れと同じCornell状態（DDGI有効・RTGI無効、512×512、128 frame後）のラスタを4096 sppの全輸送PTと、R4の規定の指標（direct white ROIで露出を1回決め、影・赤・緑ROIの相対輝度誤差≤0.25、優勢色度の差≤0.10）で比べた。赤ROIの相対輝度誤差0.257が上限0.25を超え（影0.162、緑0.0566、色度差0.0091/0.0167）、Roadmap更新ルール5でR4を再オープンした（TASKSのR4-REOPEN。probe由来の斑点・奥の壁の暗転・画面の縁の暗い帯）。ラスタのROI平均はR4受入れ時の記録と同値で、劣化ではない。 |
+| R4 DDGI | `R4DDGIPathTracingReferenceVulkanTest`（`248e2b6`）。R4受入れと同じCornell状態（DDGI有効・RTGI無効、512×512、128 frame後）のラスタを4096 sppの全輸送PTと、R4の規定の指標（direct white ROIで露出を1回決め、影・赤・緑ROIの相対輝度誤差≤0.25、優勢色度の差≤0.10）で比べた。赤ROIの相対輝度誤差0.257が上限0.25を超え（影0.162、緑0.0566、色度差0.0091/0.0167）、Roadmap更新ルール5でR4を再オープンした（TASKSのR4-REOPEN。probe由来の斑点・奥の壁の暗転・画面の縁の暗い帯）。ラスタのROI平均はR4受入れ時の記録と同値で、劣化ではない。R4-REOPENでprobeの分類・probeでの発光面の直接照度・間接光だけのlayer・補間を直し、同じ指標・同じ閾値で再照合して合格した（影0.117、赤0.224、緑0.130、色度差0.030/0.011。`R4Acceptance.md`）。 |
 | R6 RTGI | `R6RTGIPathTracingReferenceVulkanTest`。RTGIが実装する輸送（拡散2バウンス）のPT参照と、比較の前に固定した規則（参照の間接光±20%）の閾値で比べて合格（FLIP平均0.0441/0.0975、幾何一致画素の画素単位最大0.1451/0.1889、8×8区画0.0932/0.1715）。経緯は`R6Acceptance.md`。 |
 
 比較の指標と閾値は比較の前に固定し、承認済みgoldenは上書きしていない。R4の再オープンはR7の完了を妨げない（R7は参照の供給源で、R4の修正はR4-REOPENで同じ指標・同じ閾値で再照合する）。

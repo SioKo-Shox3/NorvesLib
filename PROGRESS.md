@@ -93,13 +93,14 @@
 - R6-P6: R6を受入れた（完了条件: R6-a単独ゲート、動的ライト追従、R7自前PTとの静止収束比較、性能はDeferred）。全体gateはtargetless build成功、RenderingValidation 56件で失敗は再オープン中のR4の再照合1件だけ。記録は`Docs/RenderingValidation/R6Acceptance.md`。
 
 - R7（2026-09-25）: コアと屋外拡張を受入れ（`Docs/RenderingValidation/R7CoreAcceptance.md`・`R7OutdoorAcceptance.md`、完了コミットのtrailerは`RenderingRoadmap: R7 complete`）。R6は自前PTの拡散2バウンス（median of means）と閾値内、R4は再照合で超過し再オープン。GPU性能はDeferred。
+- R4-REOPEN（2026-09-25）: R4を再受入れ（`Docs/RenderingValidation/R4Acceptance.md`、完了コミットのtrailerは`RenderingRoadmap: R4 complete`）。probeの分類、probeでの発光面の直接照度、全体/間接光だけの2組のlayer、RTXGIの補間で、自前PTとの比較は影0.117・赤0.224・緑0.130（閾値0.25、不変）。公開Cornell参照・動的更新・golden・RenderingValidationラベル（57件中0件失敗）も通過。
 
 ## In progress
-- R4はR4-REOPENで再オープン中（probe由来の斑点と漏れ）。
+- なし。
 
 ## Next
 
-- R4-REOPEN → R8。閾値とseedは変更しない。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。R7-O3の既知差はRTGI-HIT-SPECULAR・RTGI-MULTI-BOUNCE・FIX-CSM-TERMINATOR・FIX-GRAZING-IBL-SPECULARとして残す。
+- R8。閾値とseedは変更しない。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。R7-O3の既知差はRTGI-HIT-SPECULAR・RTGI-MULTI-BOUNCE・FIX-CSM-TERMINATOR・FIX-GRAZING-IBL-SPECULARとして残す。
 - R8はM1（ACES 2.0 SDRのOCIO焼き込みLUT、DoF・動きぼけ、240 frame EXR）でTASKSを起こしてから着手する。
 
 ## Notes
