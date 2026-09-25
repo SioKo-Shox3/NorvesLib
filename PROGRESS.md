@@ -93,11 +93,12 @@
 - R6-P6: R6を受入れた（完了条件: R6-a単独ゲート、動的ライト追従、R7自前PTとの静止収束比較、性能はDeferred）。全体gateはtargetless build成功、RenderingValidation 56件で失敗は再オープン中のR4の再照合1件だけ。記録は`Docs/RenderingValidation/R6Acceptance.md`。
 
 ## In progress
+- R7-O3: ラスタ側の影・空・AO・RTGIの修正でFLIP平均は3時刻とも閾値内。局所の最大（影の縁の1画素の段差、接地部の3回目以降のバウンス、夕の緑の球の影側）が残る（TASKSのR7-O3のprogress）。
 - R4はR4-REOPENで再オープン中（probe由来の斑点と漏れ）。
 
 ## Next
 
-- R6-P6 → R7-O3（空の太陽に統一: 空が有効なら空の太陽から方向光を作り、ラスタはCSM付き、PTは円盤の光源標本で数える。ユーザー決定2026-09-25） → R7-P7 → R4-REOPEN → R8。閾値とseedは変更しない。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。
+- R7-O3の残差の扱い → R7-P7 → R4-REOPEN → R8。閾値とseedは変更しない。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。
 - R8はM1（ACES 2.0 SDRのOCIO焼き込みLUT、DoF・動きぼけ、240 frame EXR）でTASKSを起こしてから着手する。
 
 ## Notes
