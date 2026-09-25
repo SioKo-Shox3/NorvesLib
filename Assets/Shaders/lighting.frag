@@ -217,8 +217,10 @@ const vec2 POISSON_DISK[16] = vec2[16](
     vec2( 0.14383161, -0.14100790)
 );
 
-// ライトサイズ（ソフトネス制御）
-const float PCSS_LIGHT_SIZE = 0.04;
+// 方向光の角半径（太陽円盤、SkyAtmosphereのSolarDiskSolidAngleSteradiansと同じ大きさ）。半影の幅は
+// 遮蔽物から受け側までの距離×tan(角半径)で決まる。
+const float DIRECTIONAL_LIGHT_TAN_ANGULAR_RADIUS = 0.00468;
+// ブロッカー探索の半径の上限（影の地図のUV）。
 const float PCSS_BLOCKER_SEARCH_RADIUS = 0.02;
 
 float GetShadowSplitDistance(uint splitIndex)
@@ -258,22 +260,62 @@ bool HasValidCascadedShadowData()
     return true;
 }
 
+// 受け側の面の、影の標本化UVに対する深度の傾き（ライト空間の法線から求める）。PCSSの探索点ごとに
+// 受け側の深度をこの傾きで補い、太陽が低いときに受け側の平らな面そのものを遮蔽物と数えない
+// （receiver plane depth bias）。法線が光とほぼ直交する面は傾きを余弦0.05で抑える。
+vec2 ComputeReceiverDepthGradient(vec3 normal, uint cascadeIndex)
+{
+    vec3 lightNormal = mat3(params.lightView[cascadeIndex]) * normal;
+    float normalDepth = abs(lightNormal.z) < 0.05
+        ? (lightNormal.z < 0.0 ? -0.05 : 0.05)
+        : lightNormal.z;
+    mat4 lightProjectionMatrix = params.lightProjection[cascadeIndex];
+    float uPerMeter = 0.5 * lightProjectionMatrix[0][0];
+    float vPerMeter = 0.5 * lightProjectionMatrix[1][1];
+    float depthPerMeter = lightProjectionMatrix[2][2];
+    if (abs(uPerMeter) < 1.0e-8 || abs(vPerMeter) < 1.0e-8 ||
+        !IsFiniteShadowValue(depthPerMeter))
+    {
+        return vec2(0.0);
+    }
+    vec2 gradient = vec2(depthPerMeter * (-lightNormal.x / normalDepth) / uPerMeter,
+                         depthPerMeter * (-lightNormal.y / normalDepth) / vPerMeter);
+    return IsFiniteShadowValue(gradient.x) && IsFiniteShadowValue(gradient.y)
+        ? gradient
+        : vec2(0.0);
+}
+
+// 深度の比較の余裕。一定の0.005に、影の地図の1 texel分の受け側の傾き（texelの中心と受け側の点の
+// ずれ）を加える。
+float ComputeShadowCompareBias(vec2 receiverGradient, vec2 texelSize)
+{
+    return 0.005 + dot(abs(receiverGradient), texelSize);
+}
+
 // Phase 1: ブロッカーサーチ（平均ブロッカー深度を求める）
 float FindBlockerDepth(vec2 shadowUV,
                        float receiverDepth,
+                       vec2 receiverGradient,
                        vec2 texelSize,
                        uint cascadeIndex)
 {
     float blockerSum = 0.0;
     int blockerCount = 0;
-    float searchRadius = PCSS_BLOCKER_SEARCH_RADIUS;
+    // カスケードの深度範囲の全体を遮蔽物の距離とした半影を覆う半径（最小2 texel）。
+    mat4 lightProjectionMatrix = params.lightProjection[cascadeIndex];
+    float depthRangeMeters = 1.0 / max(abs(lightProjectionMatrix[2][2]), 1.0e-8);
+    float searchRadius = clamp(depthRangeMeters * DIRECTIONAL_LIGHT_TAN_ANGULAR_RADIUS *
+                                   0.5 * abs(lightProjectionMatrix[0][0]),
+                               2.0 * texelSize.x,
+                               PCSS_BLOCKER_SEARCH_RADIUS);
+    float bias = ComputeShadowCompareBias(receiverGradient, texelSize);
 
     for (int i = 0; i < 16; i++)
     {
         vec2 offset = POISSON_DISK[i] * searchRadius;
         float sampleDepth = texture(shadowMap,
                                     vec3(shadowUV + offset, float(cascadeIndex))).r;
-        if (sampleDepth < receiverDepth - 0.005)
+        if (sampleDepth < receiverDepth + dot(receiverGradient, offset) - bias)
         {
             blockerSum += sampleDepth;
             blockerCount++;
@@ -288,33 +330,41 @@ float FindBlockerDepth(vec2 shadowUV,
     return blockerSum / float(blockerCount);
 }
 
-// Phase 2: ペナンブラサイズ推定
-float EstimatePenumbraSize(float receiverDepth, float blockerDepth)
+// Phase 2: ペナンブラサイズ推定（影の地図のUVでの半影の半幅）。方向光は平行投影なので、遮蔽物と
+// 受け側の深度差（m）×tan(角半径)が半影の半幅（m）になる。
+float EstimatePenumbraSize(float receiverDepth, float blockerDepth, uint cascadeIndex)
 {
-    return PCSS_LIGHT_SIZE * (receiverDepth - blockerDepth) / blockerDepth;
+    mat4 lightProjectionMatrix = params.lightProjection[cascadeIndex];
+    float depthPerMeter = max(abs(lightProjectionMatrix[2][2]), 1.0e-8);
+    float separationMeters = max(receiverDepth - blockerDepth, 0.0) / depthPerMeter;
+    return separationMeters * DIRECTIONAL_LIGHT_TAN_ANGULAR_RADIUS *
+           0.5 * abs(lightProjectionMatrix[0][0]);
 }
 
 // Phase 3: 可変カーネルPCF
 float PCSSFilter(vec2 shadowUV,
                  float receiverDepth,
+                 vec2 receiverGradient,
+                 vec2 texelSize,
                  float filterRadius,
                  uint cascadeIndex)
 {
     float shadow = 0.0;
-    float bias = 0.005;
+    float bias = ComputeShadowCompareBias(receiverGradient, texelSize);
 
     for (int i = 0; i < 16; i++)
     {
         vec2 offset = POISSON_DISK[i] * filterRadius;
         float sampleDepth = texture(shadowMap,
                                     vec3(shadowUV + offset, float(cascadeIndex))).r;
-        shadow += (receiverDepth - bias > sampleDepth) ? 0.0 : 1.0;
+        float offsetReceiverDepth = receiverDepth + dot(receiverGradient, offset);
+        shadow += (offsetReceiverDepth - bias > sampleDepth) ? 0.0 : 1.0;
     }
 
     return shadow / 16.0;
 }
 
-float SampleShadowCascade(vec3 worldPos, uint cascadeIndex)
+float SampleShadowCascade(vec3 worldPos, vec3 normal, uint cascadeIndex)
 {
     // ワールド座標をライトクリップ空間に変換
     vec4 lightSpacePos = params.lightProjection[cascadeIndex] *
@@ -349,10 +399,12 @@ float SampleShadowCascade(vec3 worldPos, uint cascadeIndex)
     }
 
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0).xy);
+    vec2 receiverGradient = ComputeReceiverDepthGradient(normal, cascadeIndex);
 
     // Phase 1: ブロッカーサーチ
     float avgBlockerDepth = FindBlockerDepth(shadowUV,
                                              currentDepth,
+                                             receiverGradient,
                                              texelSize,
                                              cascadeIndex);
 
@@ -363,16 +415,17 @@ float SampleShadowCascade(vec3 worldPos, uint cascadeIndex)
     }
 
     // Phase 2: ペナンブラサイズ推定
-    float penumbraSize = EstimatePenumbraSize(currentDepth, avgBlockerDepth);
+    float penumbraSize = EstimatePenumbraSize(currentDepth, avgBlockerDepth, cascadeIndex);
 
     // フィルタ半径をクランプ（最小=1texel, 最大=制限）
     float filterRadius = clamp(penumbraSize, texelSize.x, 0.05);
 
     // Phase 3: 可変カーネルPCF
-    return PCSSFilter(shadowUV, currentDepth, filterRadius, cascadeIndex);
+    return PCSSFilter(shadowUV, currentDepth, receiverGradient, texelSize, filterRadius,
+                      cascadeIndex);
 }
 
-float CalculateShadow(vec3 worldPos)
+float CalculateShadow(vec3 worldPos, vec3 normal)
 {
     if (!HasValidCascadedShadowData())
     {
@@ -405,7 +458,7 @@ float CalculateShadow(vec3 worldPos)
         }
     }
 
-    float shadow = SampleShadowCascade(worldPos, cascadeIndex);
+    float shadow = SampleShadowCascade(worldPos, normal, cascadeIndex);
     if (cascadeIndex < 3u)
     {
         float boundary = GetShadowSplitDistance(cascadeIndex + 1u);
@@ -414,7 +467,7 @@ float CalculateShadow(vec3 worldPos)
         float blendStart = boundary - blendWidth;
         if (receiverDistance > blendStart)
         {
-            float nextShadow = SampleShadowCascade(worldPos, cascadeIndex + 1u);
+            float nextShadow = SampleShadowCascade(worldPos, normal, cascadeIndex + 1u);
             float blend = smoothstep(blendStart, boundary, receiverDistance);
             shadow = mix(shadow, nextShadow, blend);
         }
@@ -993,7 +1046,7 @@ void main()
         {
             shadow = params.shadowPadding0 != 0u
                          ? texture(rayTracingShadowVisibility, fragUV).r
-                         : CalculateShadow(worldPos);
+                         : CalculateShadow(worldPos, N);
         }
 
         vec3 radiance = lightColor * NdotL * attenuation * shadow;
