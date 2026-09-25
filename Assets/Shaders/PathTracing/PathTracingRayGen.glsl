@@ -549,6 +549,21 @@ vec3 SampleSun(PathSurface surface, vec3 position, vec3 geometricNormal, inout u
     return contribution;
 }
 
+// 1次命中点から太陽円盤の1方向が見えるか（検証出力）。面が太陽に背を向けていれば0。
+float SunVisibility(vec3 position, vec3 geometricNormal, inout uint state)
+{
+    if (!IsSunAvailable())
+    {
+        return 0.0;
+    }
+    vec3 L = SampleSolarDirection(state);
+    if (dot(geometricNormal, L) <= 0.0)
+    {
+        return 0.0;
+    }
+    return IsVisible(position + geometricNormal * 0.002, L, 100000.0) ? 1.0 : 0.0;
+}
+
 // 1試料を追跡し、放射輝度（または検証出力）とalphaを返す。alphaは検証mode 252のときだけ
 // 1次命中で0.5（ラスタの深度alphaと同じく幾何は1未満、背景は1）、それ以外は常に1。
 vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
@@ -619,6 +634,11 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
         float triangleArea = payload.TriangleArea;
         // 発光はGBufferと同じく色×nitsの物理値に、カメラのプリエクスポージャを掛ける。
         vec3 surfaceEmission = payload.Emission * PreExposure();
+        if (bounce == 0u && debugOutput == PATH_DEBUG_SUN_VISIBILITY)
+        {
+            debugValue = vec3(SunVisibility(surfacePosition, geometricNormal, state));
+            break;
+        }
         if (bounce == 0u && debugOutput != PATH_DEBUG_NONE)
         {
             debugValue = debugOutput == PATH_DEBUG_ALBEDO ? payload.Albedo :
@@ -649,6 +669,11 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
         {
             break;
         }
+        // 拡散バウンスの輸送範囲では、散乱光線の命中面も拡散葉（Lambert）だけで照らす。ラスタの
+        // RTGIの命中点と同じで、命中面の鏡面反射（光沢のある相互反射）は範囲に入れない。
+        uint surfaceBsdfMode = bounce >= 1u && IsDiffuseBounceTransport()
+            ? PATH_BSDF_VALIDATION_LAMBERT
+            : bsdfMode;
         PathSurface surface = MakePathSurface(shadingNormal, -direction, surfaceAlbedo,
                                               surfaceMetallic, surfaceRoughness, surfaceBsdfMode);
         radiance += throughput * EvaluatePunctualLights(surface, surfacePosition, geometricNormal);
@@ -668,11 +693,6 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
             break;
         }
 
-        // 拡散バウンスの輸送範囲では、散乱光線の命中面も拡散葉（Lambert）だけで照らす。ラスタの
-        // RTGIの命中点と同じで、命中面の鏡面反射（光沢のある相互反射）は範囲に入れない。
-        uint surfaceBsdfMode = bounce >= 1u && IsDiffuseBounceTransport()
-            ? PATH_BSDF_VALIDATION_LAMBERT
-            : bsdfMode;
         vec3 u = vec3(Random01(state), Random01(state), Random01(state));
         vec3 nextDirection;
         float bsdfPdf;

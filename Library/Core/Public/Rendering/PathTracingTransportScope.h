@@ -49,6 +49,8 @@ namespace NorvesLib::Core::Rendering
         Albedo = 1,
         ShadingNormal = 2,
         MetallicRoughness = 3,
-        HitDistance = 4
+        HitDistance = 4,
+        /** @brief 1次命中点から太陽円盤の1方向が見えるか（試料の平均で可視の割合）。面が太陽に背を向ければ0 */
+        SunVisibility = 5
     };
 } // namespace NorvesLib::Core::Rendering

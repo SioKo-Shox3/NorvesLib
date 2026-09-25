@@ -356,7 +356,7 @@ namespace
         return false;
     }
 
-    // --path-tracing-debug-output=none|albedo|shading-normal|metallic-roughness|hit-distance
+    // --path-tracing-debug-output=none|albedo|shading-normal|metallic-roughness|hit-distance|sun-visibility
     bool TryParsePathTracingDebugOutputOption(
         const String& argument,
         NorvesLib::Core::Rendering::PathTracingDebugOutput& outOutput,
@@ -379,7 +379,8 @@ namespace
                        {TEXT("albedo"), PathTracingDebugOutput::Albedo},
                        {TEXT("shading-normal"), PathTracingDebugOutput::ShadingNormal},
                        {TEXT("metallic-roughness"), PathTracingDebugOutput::MetallicRoughness},
-                       {TEXT("hit-distance"), PathTracingDebugOutput::HitDistance}};
+                       {TEXT("hit-distance"), PathTracingDebugOutput::HitDistance},
+                       {TEXT("sun-visibility"), PathTracingDebugOutput::SunVisibility}};
         for (const auto& choice : choices)
         {
             if (value == choice.Name)
@@ -637,7 +638,7 @@ namespace NorvesLib::Core::Engine
             }
             else if (bMatchedDebugOutput)
             {
-                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-debug-output ignored: value must be 'none', 'albedo', 'shading-normal', 'metallic-roughness' or 'hit-distance'");
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-debug-output ignored: value must be 'none', 'albedo', 'shading-normal', 'metallic-roughness', 'hit-distance' or 'sun-visibility'");
             }
 
             bool bMatchedDirectBrdf = false;

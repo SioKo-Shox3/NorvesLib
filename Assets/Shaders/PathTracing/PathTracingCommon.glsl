@@ -44,6 +44,7 @@ const uint PATH_DEBUG_ALBEDO = 1u;
 const uint PATH_DEBUG_SHADING_NORMAL = 2u;
 const uint PATH_DEBUG_METALLIC_ROUGHNESS = 3u;
 const uint PATH_DEBUG_HIT_DISTANCE = 4u;
+const uint PATH_DEBUG_SUN_VISIBILITY = 5u;
 
 struct PathPayload
 {
