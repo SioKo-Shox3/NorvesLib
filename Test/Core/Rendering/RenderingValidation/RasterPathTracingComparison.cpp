@@ -191,6 +191,26 @@ namespace NorvesLib::Test::RenderingValidation
         return agreement;
     }
 
+    uint32_t ExcludeSunVisibilityDisagreement(const RgbaFloatImage& rasterVisibility,
+                                              const RgbaFloatImage& pathVisibility,
+                                              float tolerance,
+                                              VariableArray<uint8_t>& inOutAgreement)
+    {
+        const size_t pixelCount = static_cast<size_t>(rasterVisibility.Width) * rasterVisibility.Height;
+        uint32_t excluded = 0u;
+        for (size_t pixel = 0u; pixel < pixelCount && pixel < inOutAgreement.size(); ++pixel)
+        {
+            const float difference = std::abs(rasterVisibility.Values[pixel * 4u] -
+                                              pathVisibility.Values[pixel * 4u]);
+            if (inOutAgreement[pixel] != 0u && difference > tolerance)
+            {
+                inOutAgreement[pixel] = 0u;
+                ++excluded;
+            }
+        }
+        return excluded;
+    }
+
     RgbaFloatImage ScaleComponent(const RgbaFloatImage& base, const RgbaFloatImage& total, double scale)
     {
         RgbaFloatImage result = total;

@@ -57,6 +57,14 @@ namespace NorvesLib::Test::RenderingValidation
                                                                    const RgbaFloatImage& pathDistance,
                                                                    uint32_t& outDisagreeingPixels);
 
+    // ラスタの太陽の可視（CSM・RT影の係数、検証表示245）とPTの太陽の可視（光線、検証出力sun-visibility）
+    // の差がtoleranceを超える画素を、一致の画素から外す。影の縁で画素中心が縁のどちら側に入るかの判定の
+    // 分かれで、幾何の不一致と同じく画素単位最大から除く。新たに外した画素の数を返す。
+    uint32_t ExcludeSunVisibilityDisagreement(const RgbaFloatImage& rasterVisibility,
+                                              const RgbaFloatImage& pathVisibility,
+                                              float tolerance,
+                                              Core::Container::VariableArray<uint8_t>& inOutAgreement);
+
     // base + scale × (total - base)。閾値の物差しで、参照の一成分だけを一様に変えた画像を作る。
     RgbaFloatImage ScaleComponent(const RgbaFloatImage& base, const RgbaFloatImage& total, double scale);
 

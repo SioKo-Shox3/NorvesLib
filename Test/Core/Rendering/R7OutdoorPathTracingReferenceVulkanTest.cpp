@@ -6,11 +6,15 @@
 // 露出は晴天の屋外（f/16、1/125 s、ISO 100、EV100はおよそ15）。
 // 幾何（GPU）: --r7-outdoor-time=geometry は空と霧を切り、ラスタのGBufferの法線・距離の検証表示
 // （--r7-outdoor-debug-view=normal|depth）、PTの1次命中の法線・距離を取得する。
-// 比較（CPU）: --compare-dumps=<dir> で各時刻のラスタとPT（全輸送・直接光のみ）を読み、PTの全輸送を参照に
-// 比べる。PTの直接光のみは、1次光線の空と霧、1次命中の発光と光源標本（太陽円盤を含む）までを数える。
-// 閾値の物差しは、参照のうち直接光のみに入らない成分（面が受ける空の光と相互反射。PTの全輸送−直接光のみ）を
-// 一様に±20%変えた画像の知覚差のうち小さい方。判定は原寸のFLIP平均、幾何一致画素の原寸の画素単位FLIP
-// 最大、8x8区画平均のFLIP最大の三つで、3時刻すべてで閾値内なら合格。
+// 比較（CPU）: --compare-dumps=<dir> で各時刻のラスタとPT（拡散2バウンス・全輸送・直接光のみ）を読み、
+// ラスタが実装する輸送（R6と同じ規則。RTGIの拡散2バウンスで、散乱光線の命中面も拡散葉だけ）のPT参照
+// （pt-two）と比べる。PTの直接光のみは、1次光線の空と霧、1次命中の発光と光源標本（太陽円盤を含む）までを
+// 数える。閾値の物差しは、参照のうち直接光のみに入らない成分（面が受ける空の光と相互反射）を一様に±20%
+// 変えた画像の知覚差のうち小さい方。判定は原寸のFLIP平均、一致画素の原寸の画素単位FLIP最大、8x8区画平均の
+// FLIP最大の三つで、3時刻すべてで閾値内なら合格。画素単位最大の一致画素は、幾何（法線・距離）と太陽の可視
+// （ラスタのCSMの係数とPTの光線、--r7-outdoor-debug-view=sun-visibility と --path-tracing-debug-output=
+// sun-visibility）がともに一致する画素で、影の縁で判定が分かれる画素は数と最大を記録する。全輸送（pt-full）
+// との差は、3回目以降のバウンスと光沢のある相互反射という既知差として量を記録する。
 #include "Boot/AppLauncher.h"
 #include "Boot/BootConfig.h"
 #include "Component/CameraComponent.h"
@@ -73,6 +77,10 @@ namespace
     constexpr double LeakScale = 4.0;
     // 閾値の物差し: 参照のうち直接光のみに入らない成分（空の光と相互反射）を一様に±20%変えた画像と
     // 参照との知覚差。
+    // 太陽の可視の差がこれを超える画素を、影の縁で判定が分かれた画素として画素単位最大から除く。
+    // PTの可視は64試料の平均で、割合0.5での標準偏差は1/16。その3倍（約0.19）を超える差は標本の揺らぎ
+    // ではなく判定の分かれとみなす。
+    constexpr float SunVisibilityTolerance = 0.2f;
     constexpr double SkyAndBounceYardstick = 0.2;
     // 物差しの単調性を確かめる、閾値の外側にあるべき変化量。
     constexpr double SkyAndBounceSanity = 0.4;
@@ -152,7 +160,14 @@ namespace
                     m_DebugView = static_cast<DebugViewMode>(246u);
                     return true;
                 }
-                outFailureReason = TEXT("--r7-outdoor-debug-view はnormal・depth・hard-shadowのどれかです");
+                if (value == TEXT("sun-visibility"))
+                {
+                    // 検証表示245: 空の太陽の可視（CSMの係数。面が背を向ければ0）。
+                    m_DebugView = static_cast<DebugViewMode>(245u);
+                    return true;
+                }
+                outFailureReason =
+                    TEXT("--r7-outdoor-debug-view はnormal・depth・hard-shadow・sun-visibilityのどれかです");
                 return false;
             }
             return RenderingValidationApplicationHandler::ParseAdditionalArgument(argument,
@@ -179,7 +194,8 @@ namespace
             }
             renderWorld.SetSkyAtmosphere(sky);
             VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
-            fog.bEnabled = !m_bGeometry;
+            // 太陽の可視の検証表示は、Lighting後に霧が掛ける減衰で値が変わらないよう霧を切る。
+            fog.bEnabled = !m_bGeometry && m_DebugView != static_cast<DebugViewMode>(245u);
             fog.DensityAtBaseHeight = FogDensity;
             renderWorld.SetVolumetricFogParameters(fog);
             // 幾何の取得では、ラスタのGBufferの法線・距離の検証表示をSceneColorへ書く。
@@ -276,9 +292,10 @@ namespace
         return true;
     }
 
-    // 1時刻の比較。閾値は参照（PTの全輸送）の空の光と相互反射を±20%変えた画像から求める。
+    // 1時刻の比較。閾値は参照（PTの拡散2バウンス）の空の光と相互反射を±20%変えた画像から求める。
     bool CompareTime(const OutdoorTime& time,
                      const RgbaFloatImage& raster,
+                     const RgbaFloatImage& reference,
                      const RgbaFloatImage& full,
                      const RgbaFloatImage& direct,
                      const VariableArray<uint8_t>& agreement,
@@ -291,21 +308,25 @@ namespace
         FlipMeasurement sanityMinus;
         FlipMeasurement localLeak;
         FlipMeasurement rasterMeasurement;
+        FlipMeasurement fullMeasurement;
+        FlipMeasurement referenceVsFull;
         FlipMeasurement directMeasurement;
-        if (!MeasureFlip(full, ScaleComponent(direct, full, 1.0 + SkyAndBounceYardstick), allPixels,
-                         BlockSize, plus) ||
-            !MeasureFlip(full, ScaleComponent(direct, full, 1.0 - SkyAndBounceYardstick), allPixels,
-                         BlockSize, minus) ||
-            !MeasureFlip(full, ScaleComponent(direct, full, 1.0 + SkyAndBounceSanity), allPixels,
-                         BlockSize, sanityPlus) ||
-            !MeasureFlip(full, ScaleComponent(direct, full, 1.0 - SkyAndBounceSanity), allPixels,
-                         BlockSize, sanityMinus) ||
-            !MeasureFlip(full,
-                         AddLocalLeak(full, MeanLuminance(full), agreement, BlockSize, LeakPatchSize,
-                                      LeakScale),
+        if (!MeasureFlip(reference, ScaleComponent(direct, reference, 1.0 + SkyAndBounceYardstick),
+                         allPixels, BlockSize, plus) ||
+            !MeasureFlip(reference, ScaleComponent(direct, reference, 1.0 - SkyAndBounceYardstick),
+                         allPixels, BlockSize, minus) ||
+            !MeasureFlip(reference, ScaleComponent(direct, reference, 1.0 + SkyAndBounceSanity),
+                         allPixels, BlockSize, sanityPlus) ||
+            !MeasureFlip(reference, ScaleComponent(direct, reference, 1.0 - SkyAndBounceSanity),
+                         allPixels, BlockSize, sanityMinus) ||
+            !MeasureFlip(reference,
+                         AddLocalLeak(reference, MeanLuminance(reference), agreement, BlockSize,
+                                      LeakPatchSize, LeakScale),
                          agreement, BlockSize, localLeak) ||
-            !MeasureFlip(full, raster, agreement, BlockSize, rasterMeasurement) ||
-            !MeasureFlip(full, direct, agreement, BlockSize, directMeasurement))
+            !MeasureFlip(reference, raster, agreement, BlockSize, rasterMeasurement) ||
+            !MeasureFlip(full, raster, agreement, BlockSize, fullMeasurement) ||
+            !MeasureFlip(full, reference, agreement, BlockSize, referenceVsFull) ||
+            !MeasureFlip(reference, direct, agreement, BlockSize, directMeasurement))
         {
             std::cerr << "FLIPを評価できません: " << time.Name << '\n';
             return false;
@@ -329,15 +350,20 @@ namespace
                     sanityPlus.BlockMax > blockLimit && sanityMinus.BlockMax > blockLimit &&
                     bLeakPixelOnly;
 
-        PrintFlipMeasurement((prefix + String("_raster_vs_pt_full")).c_str(), rasterMeasurement);
+        PrintFlipMeasurement((prefix + String("_raster_vs_pt_two")).c_str(), rasterMeasurement);
         PrintAgreeingPixelsOverLimit(rasterMeasurement, pixelLimit, raster.Width);
+        // 既知差: 全輸送との差（3回目以降のバウンスと光沢のある相互反射）。判定には使わない。
+        PrintFlipMeasurement((prefix + String("_known_raster_vs_pt_full")).c_str(), fullMeasurement);
+        PrintFlipMeasurement((prefix + String("_known_pt_two_vs_pt_full")).c_str(), referenceVsFull);
         // 参考: 直接光のみの画像との差（面が受ける空の光と相互反射の寄与の大きさ）。
-        PrintFlipMeasurement((prefix + String("_info_pt_direct_vs_pt_full")).c_str(), directMeasurement);
+        PrintFlipMeasurement((prefix + String("_info_pt_direct_vs_pt_two")).c_str(), directMeasurement);
         const double directLuminance = MeanLuminance(direct);
         std::cout << prefix.c_str() << "_mean_luminance raster=" << MeanLuminance(raster)
-                  << " pt_full=" << MeanLuminance(full) << " pt_direct=" << directLuminance
+                  << " pt_two=" << MeanLuminance(reference) << " pt_full=" << MeanLuminance(full)
+                  << " pt_direct=" << directLuminance
                   << " raster_sky_bounce=" << MeanLuminance(raster) - directLuminance
-                  << " pt_sky_bounce=" << MeanLuminance(full) - directLuminance << '\n';
+                  << " pt_two_sky_bounce=" << MeanLuminance(reference) - directLuminance
+                  << " pt_full_sky_bounce=" << MeanLuminance(full) - directLuminance << '\n';
 
         const bool bPassed = outSanity && rasterMeasurement.Mean <= meanLimit &&
                              rasterMeasurement.AgreeingPixelMax <= pixelLimit &&
@@ -359,30 +385,55 @@ namespace
             }
         }
         uint32_t disagreeingPixels = 0u;
-        const VariableArray<uint8_t> agreement =
+        const VariableArray<uint8_t> geometryAgreement =
             BuildGeometryAgreement(geometry[0], geometry[1], geometry[2], geometry[3], disagreeingPixels);
         std::cout << "geometry_agreement disagreeing_pixels=" << disagreeingPixels
-                  << " fraction=" << static_cast<double>(disagreeingPixels) / agreement.size() << '\n';
+                  << " fraction=" << static_cast<double>(disagreeingPixels) / geometryAgreement.size()
+                  << '\n';
 
         bool bAllPassed = true;
         bool bAllSanity = true;
         for (const OutdoorTime& time : OutdoorTimes)
         {
             RgbaFloatImage raster;
+            RgbaFloatImage reference;
             RgbaFloatImage full;
             RgbaFloatImage direct;
+            RgbaFloatImage rasterVisibility;
+            RgbaFloatImage pathVisibility;
             const String suffix = String("-") + String(time.Name);
             if (!LoadImage(directory, String("raster") + suffix, raster) ||
+                !LoadImage(directory, String("pt-two") + suffix, reference) ||
                 !LoadImage(directory, String("pt-full") + suffix, full) ||
                 !LoadImage(directory, String("pt-direct") + suffix, direct) ||
-                raster.Width != geometry[0].Width || raster.Height != geometry[0].Height ||
-                full.Width != raster.Width || full.Height != raster.Height ||
-                direct.Width != raster.Width || direct.Height != raster.Height)
+                !LoadImage(directory, String("raster-sun-visibility") + suffix, rasterVisibility) ||
+                !LoadImage(directory, String("pt-sun-visibility") + suffix, pathVisibility))
             {
                 return 1;
             }
+            const RgbaFloatImage* sameSize[] = {&reference, &full, &direct, &rasterVisibility,
+                                                &pathVisibility};
+            if (raster.Width != geometry[0].Width || raster.Height != geometry[0].Height)
+            {
+                return 1;
+            }
+            for (const RgbaFloatImage* image : sameSize)
+            {
+                if (image->Width != raster.Width || image->Height != raster.Height)
+                {
+                    return 1;
+                }
+            }
+            // 画素単位最大の一致画素: 幾何と太陽の可視がともに一致する画素。
+            VariableArray<uint8_t> agreement = geometryAgreement;
+            const uint32_t visibilityDisagreeing = ExcludeSunVisibilityDisagreement(
+                rasterVisibility, pathVisibility, SunVisibilityTolerance, agreement);
+            std::cout << "r7_outdoor_" << time.Name
+                      << "_sun_visibility_disagreeing_pixels=" << visibilityDisagreeing
+                      << " fraction=" << static_cast<double>(visibilityDisagreeing) / agreement.size()
+                      << '\n';
             bool bSanity = false;
-            const bool bPassed = CompareTime(time, raster, full, direct, agreement, bSanity);
+            const bool bPassed = CompareTime(time, raster, reference, full, direct, agreement, bSanity);
             bAllPassed = bAllPassed && bPassed;
             bAllSanity = bAllSanity && bSanity;
         }

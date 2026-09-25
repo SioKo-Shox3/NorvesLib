@@ -43,6 +43,11 @@ def main():
                              "--path-tracing-pixel-sampling=center",
                              "--path-tracing-samples=1",
                              "--path-tracing-samples-per-frame=1"]
+    # 太陽の可視は画素中心の1次命中から太陽円盤の方向を標本し、試料の平均で可視の割合にする。
+    path_tracing_visibility = ["--renderer=path-tracing",
+                               "--path-tracing-pixel-sampling=center",
+                               "--path-tracing-samples=64",
+                               "--path-tracing-samples-per-frame=64"]
     captures = [
         ("raster-normal", ["--r7-outdoor-time=geometry", "--r7-outdoor-debug-view=normal"]),
         ("raster-depth", ["--r7-outdoor-time=geometry", "--r7-outdoor-debug-view=depth"]),
@@ -55,10 +60,18 @@ def main():
         captures += [
             # 判定するラスタは直接光をPTと同じ解析BRDFで評価し、直接光の近似差を除く。
             (f"raster-{time}", [f"--r7-outdoor-time={time}", "--raster-direct-brdf=analytic"]),
+            # 判定の参照: ラスタが実装する輸送（拡散2バウンス、命中面も拡散葉だけ）。
+            (f"pt-two-{time}", path_tracing + [f"--r7-outdoor-time={time}",
+                                               "--path-tracing-transport=two-diffuse-bounces"]),
+            # 参考: 全輸送（3回目以降のバウンスと光沢のある相互反射を含む。既知差の大きさを記録する）。
             (f"pt-full-{time}", path_tracing + [f"--r7-outdoor-time={time}",
                                                 "--path-tracing-transport=full"]),
             (f"pt-direct-{time}", path_tracing + [f"--r7-outdoor-time={time}",
                                                   "--path-tracing-transport=direct"]),
+            (f"raster-sun-visibility-{time}", [f"--r7-outdoor-time={time}",
+                                               "--r7-outdoor-debug-view=sun-visibility"]),
+            (f"pt-sun-visibility-{time}", path_tracing_visibility + [
+                f"--r7-outdoor-time={time}", "--path-tracing-debug-output=sun-visibility"]),
         ]
     for name, arguments in captures:
         dump = (root / f"{name}.nlrgba").as_posix()
