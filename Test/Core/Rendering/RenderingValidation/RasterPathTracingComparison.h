@@ -58,12 +58,24 @@ namespace NorvesLib::Test::RenderingValidation
                                                                    uint32_t& outDisagreeingPixels);
 
     // ラスタの太陽の可視（CSM・RT影の係数、検証表示245）とPTの太陽の可視（光線、検証出力sun-visibility）
-    // の差がtoleranceを超える画素を、一致の画素から外す。影の縁で画素中心が縁のどちら側に入るかの判定の
-    // 分かれで、幾何の不一致と同じく画素単位最大から除く。新たに外した画素の数を返す。
+    // の差がtoleranceを超え、かつPTの可視の縁（edgeRadius画素以内に可視0.5以上と未満の両方がある）に近い
+    // 画素を、一致の画素から外す。影の縁で画素中心が縁のどちら側に入るかの判定の分かれで、幾何の不一致と
+    // 同じく画素単位最大から除く。縁から離れた可視の食い違い（影の内側の局所欠陥）は外さない。新たに外した
+    // 画素の数を返す。
     uint32_t ExcludeSunVisibilityDisagreement(const RgbaFloatImage& rasterVisibility,
                                               const RgbaFloatImage& pathVisibility,
                                               float tolerance,
+                                              uint32_t edgeRadius,
                                               Core::Container::VariableArray<uint8_t>& inOutAgreement);
+
+    // 負の対照: PTの可視が0の一様な影の内側（縁からedgeRadius+1画素以上離れた一致画素）の1画素で、ラスタの
+    // 可視を1にした画像を作り、ExcludeSunVisibilityDisagreementがその画素を外さないことを確かめる。対象の
+    // 画素が見つからなければfalse。
+    bool SunVisibilityExclusionKeepsInteriorDefect(const RgbaFloatImage& rasterVisibility,
+                                                   const RgbaFloatImage& pathVisibility,
+                                                   float tolerance,
+                                                   uint32_t edgeRadius,
+                                                   const Core::Container::VariableArray<uint8_t>& agreement);
 
     // base + scale × (total - base)。閾値の物差しで、参照の一成分だけを一様に変えた画像を作る。
     RgbaFloatImage ScaleComponent(const RgbaFloatImage& base, const RgbaFloatImage& total, double scale);

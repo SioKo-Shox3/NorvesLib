@@ -191,24 +191,86 @@ namespace NorvesLib::Test::RenderingValidation
         return agreement;
     }
 
+    namespace
+    {
+        // PTの可視の縁か: 中心からradius画素以内に、可視0.5以上と未満の画素が両方ある。
+        bool IsNearVisibilityEdge(const RgbaFloatImage& visibility, uint32_t x, uint32_t y, uint32_t radius)
+        {
+            bool bVisible = false;
+            bool bShadowed = false;
+            const uint32_t x0 = x > radius ? x - radius : 0u;
+            const uint32_t y0 = y > radius ? y - radius : 0u;
+            const uint32_t x1 = std::min(x + radius, visibility.Width - 1u);
+            const uint32_t y1 = std::min(y + radius, visibility.Height - 1u);
+            for (uint32_t sy = y0; sy <= y1; ++sy)
+            {
+                for (uint32_t sx = x0; sx <= x1; ++sx)
+                {
+                    const float value = visibility.Values[(static_cast<size_t>(sy) * visibility.Width + sx) * 4u];
+                    bVisible = bVisible || value >= 0.5f;
+                    bShadowed = bShadowed || value < 0.5f;
+                }
+            }
+            return bVisible && bShadowed;
+        }
+    }
+
     uint32_t ExcludeSunVisibilityDisagreement(const RgbaFloatImage& rasterVisibility,
                                               const RgbaFloatImage& pathVisibility,
                                               float tolerance,
+                                              uint32_t edgeRadius,
                                               VariableArray<uint8_t>& inOutAgreement)
     {
-        const size_t pixelCount = static_cast<size_t>(rasterVisibility.Width) * rasterVisibility.Height;
         uint32_t excluded = 0u;
-        for (size_t pixel = 0u; pixel < pixelCount && pixel < inOutAgreement.size(); ++pixel)
+        for (uint32_t y = 0u; y < pathVisibility.Height; ++y)
         {
-            const float difference = std::abs(rasterVisibility.Values[pixel * 4u] -
-                                              pathVisibility.Values[pixel * 4u]);
-            if (inOutAgreement[pixel] != 0u && difference > tolerance)
+            for (uint32_t x = 0u; x < pathVisibility.Width; ++x)
             {
-                inOutAgreement[pixel] = 0u;
-                ++excluded;
+                const size_t pixel = static_cast<size_t>(y) * pathVisibility.Width + x;
+                if (pixel >= inOutAgreement.size() || inOutAgreement[pixel] == 0u)
+                {
+                    continue;
+                }
+                const float difference = std::abs(rasterVisibility.Values[pixel * 4u] -
+                                                  pathVisibility.Values[pixel * 4u]);
+                if (difference > tolerance && IsNearVisibilityEdge(pathVisibility, x, y, edgeRadius))
+                {
+                    inOutAgreement[pixel] = 0u;
+                    ++excluded;
+                }
             }
         }
         return excluded;
+    }
+
+    bool SunVisibilityExclusionKeepsInteriorDefect(const RgbaFloatImage& rasterVisibility,
+                                                   const RgbaFloatImage& pathVisibility,
+                                                   float tolerance,
+                                                   uint32_t edgeRadius,
+                                                   const VariableArray<uint8_t>& agreement)
+    {
+        for (uint32_t y = 0u; y < pathVisibility.Height; ++y)
+        {
+            for (uint32_t x = 0u; x < pathVisibility.Width; ++x)
+            {
+                const size_t pixel = static_cast<size_t>(y) * pathVisibility.Width + x;
+                if (pixel >= agreement.size() || agreement[pixel] == 0u ||
+                    pathVisibility.Values[pixel * 4u] != 0.0f ||
+                    IsNearVisibilityEdge(pathVisibility, x, y, edgeRadius + 1u))
+                {
+                    continue;
+                }
+                RgbaFloatImage defect = rasterVisibility;
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    defect.Values[pixel * 4u + channel] = 1.0f;
+                }
+                VariableArray<uint8_t> probe = agreement;
+                ExcludeSunVisibilityDisagreement(defect, pathVisibility, tolerance, edgeRadius, probe);
+                return probe[pixel] != 0u;
+            }
+        }
+        return false;
     }
 
     RgbaFloatImage ScaleComponent(const RgbaFloatImage& base, const RgbaFloatImage& total, double scale)

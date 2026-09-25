@@ -77,10 +77,12 @@ namespace
     constexpr double LeakScale = 4.0;
     // 閾値の物差し: 参照のうち直接光のみに入らない成分（空の光と相互反射）を一様に±20%変えた画像と
     // 参照との知覚差。
-    // 太陽の可視の差がこれを超える画素を、影の縁で判定が分かれた画素として画素単位最大から除く。
-    // PTの可視は64試料の平均で、割合0.5での標準偏差は1/16。その3倍（約0.19）を超える差は標本の揺らぎ
-    // ではなく判定の分かれとみなす。
+    // 太陽の可視の差がこれを超え、PTの可視の縁からSunVisibilityEdgeRadius画素以内の画素を、影の縁で判定が
+    // 分かれた画素として画素単位最大から除く。PTの可視は最低64試料の平均で、割合0.5での標準偏差の上限は
+    // 1/16。その3倍（約0.19）を超える差は標本の揺らぎではなく判定の分かれとみなす。縁からの距離は、ラスタの
+    // CSMの可視が明暗境界で広がる幅（約3画素）の半分を越える2画素。
     constexpr float SunVisibilityTolerance = 0.2f;
+    constexpr uint32_t SunVisibilityEdgeRadius = 2u;
     constexpr double SkyAndBounceYardstick = 0.2;
     // 物差しの単調性を確かめる、閾値の外側にあるべき変化量。
     constexpr double SkyAndBounceSanity = 0.4;
@@ -427,14 +429,19 @@ namespace
             // 画素単位最大の一致画素: 幾何と太陽の可視がともに一致する画素。
             VariableArray<uint8_t> agreement = geometryAgreement;
             const uint32_t visibilityDisagreeing = ExcludeSunVisibilityDisagreement(
-                rasterVisibility, pathVisibility, SunVisibilityTolerance, agreement);
+                rasterVisibility, pathVisibility, SunVisibilityTolerance, SunVisibilityEdgeRadius, agreement);
+            // 負の対照: 影の内側の1画素だけラスタが太陽を見る欠陥は、可視の除外から外れず判定に残る。
+            const bool bInteriorDefectKept = SunVisibilityExclusionKeepsInteriorDefect(
+                rasterVisibility, pathVisibility, SunVisibilityTolerance, SunVisibilityEdgeRadius,
+                geometryAgreement);
             std::cout << "r7_outdoor_" << time.Name
                       << "_sun_visibility_disagreeing_pixels=" << visibilityDisagreeing
                       << " fraction=" << static_cast<double>(visibilityDisagreeing) / agreement.size()
-                      << '\n';
+                      << " interior_defect_kept=" << (bInteriorDefectKept ? 1 : 0) << '\n';
             bool bSanity = false;
             const bool bPassed = CompareTime(time, raster, reference, full, direct, agreement, bSanity);
-            bAllPassed = bAllPassed && bPassed;
+            bSanity = bSanity && bInteriorDefectKept;
+            bAllPassed = bAllPassed && bPassed && bInteriorDefectKept;
             bAllSanity = bAllSanity && bSanity;
         }
         std::cout << "r7_outdoor_comparison=" << (bAllPassed ? "PASS" : "FAIL")
