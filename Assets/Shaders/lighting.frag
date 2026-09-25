@@ -654,6 +654,16 @@ vec3 EvaluateRTGIEndpoint(vec3 albedo,
     vec3 specular = vec3(0.0);
     if (params.bIBLEnabled != 0u)
     {
+        // RTGIは光線で空の遮蔽を解くが、IBLの鏡面反射は遮蔽を持たない。遮蔽のない空の拡散
+        // （IBLの拡散照度）に対するRTGIの拡散の輝度比を空の見え方とみなし、鏡面反射に掛ける。
+        vec3 unoccludedDiffuse = EvaluateDiffuseEndpoint(
+            textureLod(diffuseIrradiance, EquirectangularUV(N), 0.0).rgb,
+            albedo, metallic, brdf) * iblIntensity;
+        float unoccludedLuminance = dot(unoccludedDiffuse, vec3(0.2126, 0.7152, 0.0722));
+        float rtgiLuminance = dot(max(rtgiDiffuseRadiance, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
+        float skyVisibility = unoccludedLuminance > 1.0e-6
+            ? clamp(rtgiLuminance / unoccludedLuminance, 0.0, 1.0)
+            : 1.0;
         float Ess = max(brdf.x + brdf.y, 0.0001);
         vec3 F0d = vec3(0.04);
         vec3 F0c = albedo;
@@ -667,7 +677,7 @@ vec3 EvaluateRTGIEndpoint(vec3 albedo,
         vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
         specular = prefilteredColor *
                    ((1.0 - metallic) * Ed + metallic * Ec) *
-                   specularAO * iblIntensity;
+                   specularAO * skyVisibility * iblIntensity;
     }
     return diffuse + specular;
 }
