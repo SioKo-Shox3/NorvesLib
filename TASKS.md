@@ -43,7 +43,7 @@
 - notes: 自動露出（SS-AUTOEXPOSURE）が入るまでは、時刻ごとの露出は撮影スクリプトの引数か手動のEV100で合わせる。
 
 ## SS-CSM-DISTANCE: 影の分割をカメラのfarから切り離し、近くの影を細かくする
-- status: todo
+- status: done
 - done-when: CSMの分割が「影の最大距離」（既定 約80 m、設定できる）で決まり、カメラのfar（1000 m）に依存しない。起動画面の既定視点でカスケード0の1テクセルが2.5 cm以下になる（テストか起動ログで数値を示す）。撮影で球と岩の接地部の影がくっきりし、影の縁が階段状に見えない。影の最大距離より遠い物体は影を受けない（急に消えないよう最後のカスケードの端でフェードする）。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game CascadedShadowLightMatricesTest DirectionalShadowLightMatricesTest RenderingGoldenImageTest -- /m:1`

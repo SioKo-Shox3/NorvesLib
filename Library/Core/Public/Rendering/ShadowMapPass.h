@@ -35,6 +35,14 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief ライトカメラのファープレーン */
         float FarPlane = 50.0f;
+
+        /**
+         * @brief 方向光の影を受ける最大のビュー深度（m）
+         *
+         * CSMの4カスケードはカメラのnearからこの距離（カメラのfarの方が近ければfar）までを
+         * 分割する。これより遠い面は影を受けず、最後のカスケードの奥の端で影を薄めて消す。
+         */
+        float MaxShadowDistance = 80.0f;
     };
 
     /**
@@ -108,6 +116,13 @@ namespace NorvesLib::Core::Rendering
         // シャドウマップアクセス
         // ========================================
 
+        /**
+         * @brief 方向光の影を受ける最大のビュー深度（m）を設定します
+         * @param distance 0より大きい有限値。それ以外はCSMを無効にする
+         */
+        void SetMaxShadowDistance(float distance) { m_Settings.MaxShadowDistance = distance; }
+        float GetMaxShadowDistance() const { return m_Settings.MaxShadowDistance; }
+
         RHI::ITexture* GetShadowMapTexture() const { return m_ShadowMapTexture.get(); }
         RGResourceHandle GetShadowMapHandle() const { return m_ShadowMapHandle; }
 
@@ -145,6 +160,9 @@ namespace NorvesLib::Core::Rendering
         RHI::IDevice *m_Device = nullptr;
 
         bool m_bRegisterLegacyBridge = true;
+
+        // 最後に記録したCSMの分割の奥（m）。変わったときだけ分割を記録する。
+        float m_LoggedCascadeSplitFar = -1.0f;
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;

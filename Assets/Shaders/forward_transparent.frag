@@ -196,6 +196,12 @@ float CalculateShadow(vec3 worldPos)
             shadow = mix(shadow, nextShadow, blend);
         }
     }
+    else
+    {
+        // 影の最大距離の手前、最後のカスケードの奥の10%で影を薄め、境界で急に消えないようにする。
+        float fadeWidth = max((farDistance - GetShadowSplitDistance(3u)) * 0.1, 0.001);
+        shadow = mix(shadow, 1.0, smoothstep(farDistance - fadeWidth, farDistance, receiverDistance));
+    }
     return shadow;
 }
 

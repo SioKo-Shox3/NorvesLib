@@ -379,6 +379,7 @@ namespace NorvesLib::Core::Rendering
         CascadedShadowMatrixSettings cascadedSettings =
             MakeDefaultCascadedShadowMatrixSettings();
         cascadedSettings.ShadowMapResolution = m_Settings.Resolution;
+        cascadedSettings.MaxShadowDistance = m_Settings.MaxShadowDistance;
         cascadedSettings.Directional = MakeDirectionalShadowMatrixSettings(m_Settings);
         // カスケードの視錐台の切片より光源側の遮蔽物もnear面で切り取らないよう、影を落とす
         // 物体の境界球を光源側の深度範囲に含める。
@@ -426,6 +427,26 @@ namespace NorvesLib::Core::Rendering
                  ++splitIndex)
             {
                 splitDistances[splitIndex] = cascadedShadowMatrices.SplitDistances[splitIndex];
+            }
+
+            // 分割とテクセルの大きさはカメラのnear・画角・影の最大距離だけで決まるため、
+            // 分割の奥が変わったときだけ記録する。
+            const float splitFar = cascadedShadowMatrices.SplitDistances[CSM_CASCADE_COUNT];
+            if (splitFar != m_LoggedCascadeSplitFar)
+            {
+                m_LoggedCascadeSplitFar = splitFar;
+                NORVES_LOG_INFO("ShadowMapPass",
+                                "CSMの分割: csm_splits=%.3f,%.3f,%.3f,%.3f,%.3f m "
+                                "csm_texel_m=%.4f,%.4f,%.4f,%.4f",
+                                cascadedShadowMatrices.SplitDistances[0],
+                                cascadedShadowMatrices.SplitDistances[1],
+                                cascadedShadowMatrices.SplitDistances[2],
+                                cascadedShadowMatrices.SplitDistances[3],
+                                cascadedShadowMatrices.SplitDistances[4],
+                                cascadedShadowMatrices.Cascades[0].TexelSize,
+                                cascadedShadowMatrices.Cascades[1].TexelSize,
+                                cascadedShadowMatrices.Cascades[2].TexelSize,
+                                cascadedShadowMatrices.Cascades[3].TexelSize);
             }
         }
         context.PhysicalLighting.PublishCascadedShadow(

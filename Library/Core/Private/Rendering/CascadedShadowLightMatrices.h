@@ -12,13 +12,16 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief CPU側でCSMの分割とライト行列を構築する設定。
      *
-     * カメラのnear/farはCameraProxyから取得し、Directionalは方向ライトの
-     * 最小ライト距離だけを共有する。CSMは常に4カスケードで固定する。
+     * カメラのnearはCameraProxyから取得し、分割の奥は影の最大距離とカメラのfarの
+     * 近い方にする（farが遠いカメラでも近くのカスケードを粗くしない）。Directionalは
+     * 方向ライトの最小ライト距離だけを共有する。CSMは常に4カスケードで固定する。
      */
     struct CascadedShadowMatrixSettings
     {
         uint32_t CascadeCount = CSM_CASCADE_COUNT;
         float SplitLambda = 0.5f;
+        /** @brief 影を受ける最大のビュー深度（m）。これより遠い面は影を受けない。 */
+        float MaxShadowDistance = 80.0f;
         uint32_t ShadowMapResolution = 2048u;
         float DepthPadding = 1.0f;
         DirectionalShadowMatrixSettings Directional;
