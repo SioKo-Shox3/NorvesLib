@@ -104,9 +104,11 @@
 
 ## Next
 
+- 起動画面（Rendering3DTest）の描画改善をTASKS.mdの`SS-`の20項目で進める（ブランチ`feature/startup-scene-rendering`）。先頭はSS-CAPTURE（撮影経路）で、以降の見た目の証拠はその撮影で確かめる。R8までの残りの`todo`10件は`backlog`にした。
 - R8は完了（2026-09-26）。R3・R5は受入れ記録（`R3Acceptance.md`・`R5Acceptance.md`）があるが、ロードマップの表は未着手のままで完了のtrailerも無い（整理が残る）。ほかはTASKS.mdの修正・改善の項目。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。R7-O3の既知差はRTGI-HIT-SPECULAR・RTGI-MULTI-BOUNCE・FIX-CSM-TERMINATOR・FIX-GRAZING-IBL-SPECULARとして残す。
 
 ## Notes
+- 起動画面の描画改善のM1（2026-09-27）: 調査で、R2〜R8の機能（物理空・霧・RT影・DDGI・RTGI・被写界深度・動きぼけ）が起動画面ではすべて無効で、起動画面は実質R1の見た目のままと分かった。影が見えないのは静的HDRの環境光が地面の照度の約87%を占め（方向光1 lux）、影で約13%しか暗くならないため（`f3d4abb`でIBLをE/πにした後、比が約9倍悪化）。CSMはfar=1000のためカスケード0の1テクセルが約0.157 m。POMの凹凸の反転と輪郭の歪みは`8c80695`（余接フレームの退化判定）が引き金。ブルームは1回の16タップで広がり約10 px。点光源の影は未実装。ユーザー決定: 物理的な昼の屋外（物理空＋空の太陽）、点光源のキューブシャドウ、ポストは基本セット＋演出系、展示物の追加。開始儀式: `git log --oneline -10`はHEAD `163ffe5`。ビルドとテストはPCの使用の許可を待つため未実行で、最初の反復の開始儀式で行う。
 - R8のM1（2026-09-26）: S8はベイクLUT（OCIOでACES 2.0 SDR 100 nit Rec.709をsRGB表示向けに65³＋log2 shaperへ焼き、display-linearで持つ。新しいトーンマップの選択肢で既定は不変）。連番は1280×720・1024 spp、PTの1フレームは前後のカメラ・変換とシャッター区間（フレーム長1/24 s、シャッター1/48 s）を固定して1 spp×1024 dispatch。DoF・動きぼけの閾値はf値／シャッターを±20%変えたPTを物差しにする規則。フィルムグレインは既定オフで入れる。連番の検査はC++の検証exe（隣接フレームのFLIPが中央値の3倍を超えたらポッピング）とScripts、CTestは8フレームの連番。
 - R8-P4再開（2026-09-26、run-id 20260926-130732）: 取得済みダンプの`--compare-dumps`（1回4秒）でgatherの変種を比べた。深度の層（4/8/16層の前から順の合成）は傾いた面を層に割って平均0.031〜0.046へ悪化、最も手前のCoCを基準にした前景/背景の分割（幅0.25画素・奥の広がりの余裕0.35画素）が最良。最終の比較ログは`.harness/runs/20260926-130732/diag-R8-P4-compare-final.txt`、指定buildは`verify-R8-P4-1.txt`でEXIT_CODE=0、指定CTestは`verify-R8-P4-2.txt`（結果は`blocked/R8-P4.md`）。
 - R8-P3-FIX検証（2026-09-26）: `.harness/runs/20260926-130732/verify-R8-P3-FIX-3.txt`で指定build EXIT_CODE=0（`-1`はGit Bashが`/m:1`をパスに変えたため無効、`-2`は`RenderingCoordinator.obj`の破損によるLNK1163で、objを消して再build）。`-4`で新規検査の出力（`reordered_instances second_dispatch_samples=2 fixed_order_byte_identical=true all_bodies_visible=true`）、`-6`でPT系3 targetの再build EXIT_CODE=0、`-7`で指定CTest 4/4 passedを読戻し確認した。SequenceFrameを使うテストはR8だけで、R6/R7のPT参照比較は並べ替えの経路を通らない。 独立評価はPASS。非blockingの残課題として、同じ鍵（ObjectIdが0の描画が同じメッシュ・部分範囲で複数あるなど）の間の出現順の番号は描画順に依存するため、そうした物体同士が入れ替わると累積が捨てられうる。

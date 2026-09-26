@@ -1,8 +1,217 @@
 ﻿# TASKS — NorvesLib
 
-Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2SkyAtmosphereCsmPlan.md` と `Docs/Plans/RenderingRoadmap.md` を参照する。R1の完了コミットと受入れ証跡はPROGRESS.mdを基点にし、R2では空・大気とCSMを別々の検証可能な契約として閉じる。運転ファイルは描画sourceとは別の変更として扱う。
+起動画面（Rendering3DTest）の描画改善（2026-09-27、ユーザー決定）。物理空と空の太陽による昼の屋外、点光源のキューブシャドウ、自動露出・ミップチェーンのブルーム・TAA・GTAO・コンタクトシャドウ・色収差・レンズダート・グレーディングLUT・RTGIの既定化、展示物の追加、視差オクルージョンと影の不具合の修正を `SS-` の項目で進める。見た目の証拠は `Scripts/CaptureStartupScene.ps1` の撮影を開いて確かめる。起動画面の見た目を変えることはこの計画でユーザーが承認済み。検証シーン（Indoor/Outdoorのgolden、R系の受入れ）は、項目に書いた場合を除き結果を変えない。
 
-実装・評価・進捗更新の運転は現在の AGENTS.md を適用する。旧計画の担当モデル、メイン実装禁止、反復ごとの再承認は現在の合意へ置き換える。数式、閾値、サンプル数、source範囲、画像と閾値の公開承認は保持する。作業一覧などの運転ファイルは描画sourceとは別の変更として扱う。運転ファイルだけのコミットを跨ぐときは、記録した描画コミットへの祖先関係とsource同一性で基点を確認する。
+それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
+
+## SS-CAPTURE: 起動画面を撮影して数値を出す経路を作る
+- status: todo
+- done-when: `Game.exe --capture-png=<path> --startup-camera=<yaw>,<pitch>,<arm>` を付けて起動すると、アセットの読み込みが落ち着いた後の起動画面（Rendering3DTest）の最終出力をPNGに保存し、終了コード0で終わる。`Scripts/CaptureStartupScene.ps1 -OutDir <dir>` が既定・近接（球の輪郭が画面の中央付近に来る視点）・低角度（地面すれすれ）の3視点を撮り、各PNGと、平均輝度・白飛び（255）画素率・黒つぶれ（0）画素率を書いた `metrics.json` を出す。Gameの終了コードが0でない、PNGが無い、Game.logにシェーダーのコンパイル失敗（`Failed to compile shader`。Slang SDK未設定の`neural_material_decode.slang`だけは除く）がある場合はスクリプトが終了コード1を返す。撮影は ImGui とデバッグ用のボードを写さない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-CAPTURE`
+- stop-when: 既存の `RequestFrameCapture` と `--exit-after-rendered-frames` の組み合わせで最終出力を取れない理由が見つかり、RenderThreadの寿命に手を入れる必要が出たら、その理由を記録して止める。
+- paths: Library/Core/Private/Engine, Library/Core/Public/Engine, Game, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 以降の全タスクの見た目の証拠はこのスクリプトで撮り、PNGを開いて確認する。撮影物は `.harness/runs/` に置き、コミットしない。
+
+## SS-POM: 視差オクルージョンの凹凸の向きと輪郭の歪みを直し、3つのシェーダーで共通にする
+- status: todo
+- done-when: POMと余接フレームを共通のシェーダーの取り込みファイルへまとめ、`gbuffer.frag`・`forward_transparent.frag`・`megageometry.frag` が同じ関数を使う。高さマップは白=高いとして読む（`1.0 - height` で深さへ直す）。輪郭のフェードと層数は幾何法線とビュー方向の内積で決め、TBNは元のUVから一度だけ作って法線マップにも使い、接空間のビュー方向はTとBを正規化して作る。マーチ中のサンプルは分岐の前に取ったUV勾配で`textureGrad`にする。撮影の近接視点で、球の石が盛り上がり目地がへこんで見え、輪郭の付近で模様が引き伸ばされたり流れたりしていない。法線マップ（`nor_gl`）の緑の向きが凹凸と合っている（光の当たる側が明るい）ことを点光源の近くで確かめ、逆なら直す。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-POM`
+- stop-when: 余接フレームの向き（`8c80695` で正しくなった +∇u, +∇v）を戻さないと合わない場合は、戻さずに原因を記録して止める。
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Game/GameModes/Rendering3DTest, TASKS.md, PROGRESS.md
+- notes: 原因は `8c80695` で余接フレームが正しい向きになり、それまで打ち消し合っていた「高さを深さとして読む」反転だけが残ったこと。境界の歪みは、正規直交でない余接フレームで `viewDirTS.z` が N·V より大きくなり、`842070e` の輪郭フェードが効かなくなったため（`842070e` の修正自体は残っている）。`megageometry.frag` には `842070e` が入っておらず、`forward_transparent.frag`・`megageometry.frag` は古い閾値 `1e-8` のまま。
+
+## SS-DAYLIGHT-P1: 起動画面を物理空と空の太陽による昼の屋外にする
+- status: todo
+- done-when: Rendering3DTest が R2 の物理空（SkyAtmosphere）を有効にし、空の太陽（仰角約40°、カメラの既定視点から球と岩の影が地面に見える方位）が影を落とす方向光になる。シーン独自の方向光は外し、方向ライトの操作（矢印キーとImGui）は空の太陽の仰角・方位を動かす。`f90e7ea` の露出補正を外し、カメラは晴天の手動露出（EV100 約14.5〜15）にする。点光源（Lumen/Candelaの物理単位）と発光球の輝度も物理的にありうる値へ移す。IBLは空から作る（静的HDRは空が無効なときだけ使う）。撮影で、青い昼の空の下、球と岩の影が地面にはっきり見え、影の中の地面の平均輝度が日向の40%以下（PNGの領域を開いて測る）、白飛び画素率が1%未満。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-DAYLIGHT-P1`
+- stop-when: 空を有効にすると既存の検証シーン（Indoor/Outdoorのgolden）の値が変わる場合は、起動画面の側だけで有効にして原因を記録する。
+- paths: Game/GameModes/Rendering3DTest, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Component, Library/Core/Private/Component, TASKS.md, PROGRESS.md
+- notes: ユーザー決定（2026-09-27）「物理的な昼の屋外へ」。影が見えない原因は、静的HDRの環境光が地面の照度の約87%を占め（方向光1 lux）、影で約13%しか暗くならないこと（`f3d4abb` でIBLを E/π にした後、比が約9倍悪化）。空を有効にするとエンジンが空の太陽の方向光を自動で加える（SKY-SUN-P2）。起動画面の見た目を変える変更で、この変更はユーザーの承認済み。
+
+## SS-DAYLIGHT-P2: 太陽の向きを操作・指定でき、高さフォグを掛ける
+- status: todo
+- done-when: `--sun-elevation=<deg>` と `--sun-azimuth=<deg>` で起動時の太陽の向きを指定でき、撮影スクリプトの `-SunElevations` で朝（約10°）・昼（約45°）・夕（約3°）を撮れる。ImGuiに手動露出（EV100）のスライダーがある。R3の高さフォグを起動画面で有効にし、遠くの地面と空の境が霞む密度にする。撮影の3時刻とも空と地面の色が時刻らしく変わり、昼の画像で近景（球）のコントラストがフォグで落ちていない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-DAYLIGHT-P2 -SunElevations 10,45,3`
+- stop-when: 霧のパラメータの意味（R3の公開契約）を変えないと起動画面に合わない場合は、契約を変えずに記録して止める。
+- paths: Game, Library/Core/Private/Engine, Library/Core/Public/Engine, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 自動露出（SS-AUTOEXPOSURE）が入るまでは、時刻ごとの露出は撮影スクリプトの引数か手動のEV100で合わせる。
+
+## SS-CSM-DISTANCE: 影の分割をカメラのfarから切り離し、近くの影を細かくする
+- status: todo
+- done-when: CSMの分割が「影の最大距離」（既定 約80 m、設定できる）で決まり、カメラのfar（1000 m）に依存しない。起動画面の既定視点でカスケード0の1テクセルが2.5 cm以下になる（テストか起動ログで数値を示す）。撮影で球と岩の接地部の影がくっきりし、影の縁が階段状に見えない。影の最大距離より遠い物体は影を受けない（急に消えないよう最後のカスケードの端でフェードする）。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game CascadedShadowLightMatricesTest DirectionalShadowLightMatricesTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CascadedShadowLightMatricesTest|DirectionalShadowLightMatricesTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-CSM-DISTANCE`
+- stop-when: 承認済みのOutdoor goldenが変わる場合は、差の原因と物理的な妥当性を確かめて再承認を記録する（承認は任されている）。原因が説明できない差なら止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, Game/GameModes/Rendering3DTest, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（影）。評価者を通す。現状はfar=1000・λ=0.5でカスケード0が0.1〜125.5 m、1テクセル約0.157 m（R2前の単一シャドウマップの8倍粗い）。既存のFIX-CSM-TERMINATORとFIX-CSM-MEGA-CASTER-BOUNDSはbacklogに残す。
+
+## SS-SHOWCASE: 起動画面に材質見本の球の列とCottageを置き、地面を広いテクスチャ付きの材質にする
+- status: todo
+- done-when: 既存の天球・地面・球・岩・点光源はそのまま残し、材質見本の球（金属0と1の2列 × 粗さ0.1/0.3/0.5/0.7/0.9の5段、同じ色）と、`Assets/Models/Cottage_Clean` の小屋を置く。小屋のOBJは追跡外のため、標準ライブラリだけのPythonスクリプト（`Scripts/ConvertObjToGltf.py`）でglTFに変換し、変換結果を追跡する。材質に粗さ・金属のスカラー値を指定できないならMaterialCreateDataに足す。地面は約60 m四方にし、テクスチャ付きの材質（CobbleStoneFloorのタイル＋POM）にする。撮影の既定視点で、見本の球・小屋・岩・球が重ならずに見え、金属の球に空と周囲が映り込む。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-SHOWCASE`
+- stop-when: 小屋のテクスチャ（4K PNG 計約70MB）の読み込みで起動が30秒以上遅くなる場合は、縮小版を作るか遅延読み込みにするかを記録して、軽い方を採る。
+- paths: Game/GameModes/Rendering3DTest, Assets/Models/Cottage_Clean, Scripts/ConvertObjToGltf.py, Library/Core/Public/Rendering, Library/Core/Private/Rendering, TASKS.md, PROGRESS.md
+- notes: ユーザー決定（2026-09-27）「展示物を足す」。
+
+## SS-POINT-SHADOW-P1: 影を落とす点光源のキューブシャドウマップを描く
+- status: todo
+- done-when: CastShadowsの点光源（表示中のもの、最大4灯、光源からの距離が近い順）ごとに、6面の距離（光源からの線形距離）をキューブ配列の深度へ描くパスがある。キャスターは光源の範囲の球でカリングする。影の灯の選択と6面の行列はRenderThreadへFramePacketのスナップショット越しに渡る。6面の行列（Vulkanの規約での向きと上方向）をCPUのテスト `PointShadowFaceMatricesTest`（`CameraViewConstantsTest` の束へ MEMBER として足す）で確かめる。デバッグ表示でキューブの中身（距離）を確かめられる。影を落とす点光源が無いシーンでは何も描かず、既存の描画結果が変わらない。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game LightingLightBufferTest CameraViewConstantsTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(LightingLightBufferTest|PointShadowFaceMatricesTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-POINT-SHADOW-P1`
+- stop-when: RHIにキューブ配列の深度テクスチャや層ごとの描画先が無い場合は、RHIへの追加を同じタスクで行い、Rendering層からVulkanを直接includeしない。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/RHI, Library/Core/Private/RHI, Assets/Shaders, Test/Core/Rendering, Test/TestBundle, TASKS.md, PROGRESS.md
+- notes: ユーザー決定（2026-09-27）「キューブシャドウを実装」。危険地帯（RHI・RenderThread・影）。評価者を通す。新しいテストは実行ファイルを増やさず既存の束へ足す。
+
+## SS-POINT-SHADOW-P2: 点光源の影をライティングに掛け、起動画面の点光源に影を落とさせる
+- status: todo
+- done-when: `lighting.frag` と `forward_transparent.frag` が、影を落とす点光源にキューブシャドウ（PCF、法線方向のずらし）を掛ける。影を落とさない点光源の照明は変わらない。Rendering3DTest の点光源を影ありにする。夕（仰角約3°）の撮影で、点光源による球・岩の影が地面に見え、影の縁にアクネ（縞）とピーターパン（接地部の浮き）が見えない。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game LightingLightBufferTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(LightingLightBufferTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-POINT-SHADOW-P2 -SunElevations 3`
+- stop-when: 承認済みのgoldenが変わる場合は差の原因と妥当性を記録して再承認する。影なしの点光源の結果が変わるなら止めて直す。
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameModes/Rendering3DTest, Test/Core/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（ライティング・影）。評価者を通す。
+
+## SS-AUTOEXPOSURE-P1: 輝度のヒストグラムから露出を求める
+- status: todo
+- done-when: SceneColorの輝度（log2、プリエクスポージャを外した絶対輝度）のヒストグラム（256区間）をcomputeで作り、下位・上位の外れ（例 下位10%・上位2%）を除いた平均から目標のEV100を求め、明るくなる向き・暗くなる向きで別の速さで順応させる。露出補正（EV）と最小・最大のEV100を設定できる。ヒストグラム→EV100の計算とタイムステップの順応をCPUの参照実装と照合するテスト `AutoExposureMathTest`（`CameraViewConstantsTest` の束へ MEMBER として足す）がある。この段では求めたEV100をログ・デバッグ表示に出すだけで、画面の露出はまだ変えない。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game CameraViewConstantsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^AutoExposureMathTest$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-AUTOEXPOSURE-P1 -SunElevations 10,45,3`
+- stop-when: GPUの結果をCPUへ戻す遅延がRenderThreadの同期を変えないと取れない場合は止めて記録する。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, Test/TestBundle, TASKS.md, PROGRESS.md
+- notes: ユーザー決定（2026-09-27）ポスト処理「基本セット+演出系」。危険地帯（RenderThread）。評価者を通す。
+
+## SS-AUTOEXPOSURE-P2: 自動露出を画面に適用し、起動画面の既定にする
+- status: todo
+- done-when: カメラに露出の方式（手動/自動）があり、自動では前のフレームまでに求めたEV100からプリエクスポージャを決める（数フレームの遅れは許す）。検証シーン（Indoor/Outdoorのgolden、R系の受入れ）は手動のままで結果が変わらない。Rendering3DTest は自動にする。撮影の朝・昼・夕の3枚で、トーンマップ後の平均輝度がどれも0.12〜0.40に入り、白飛び画素率が2%未満。太陽の向きを急に変えたとき、露出が振動せず1〜3秒で落ち着く（連続撮影かログで示す）。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game CameraViewConstantsTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(AutoExposureMathTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-AUTOEXPOSURE-P2 -SunElevations 10,45,3`
+- stop-when: 検証シーンの結果が変わる場合は止めて直す。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Component, Library/Core/Private/Component, Assets/Shaders, Game/GameModes/Rendering3DTest, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RenderThread・露出の契約）。評価者を通す。
+
+## SS-BLOOM-MIPCHAIN: ブルームを段階的に縮小・拡大する方式に置き換える
+- status: todo
+- done-when: ブルームが、13タップの縮小（最初の段は明るい画素のちらつきを抑える重み付き平均）を約6段、3×3のテントフィルタでの拡大と加算で作られ、元の色へ一定の割合（既定 約0.04、しきい値なしでエネルギーを保つ方式を既定）で混ぜる。広がりは画面の高さの10〜20%に届く。撮影の昼と夕で、太陽の周り・発光球・金属の球の強い反射の周りに柔らかいにじみが見え、縮小の格子や輪状の模様が見えない。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-BLOOM-MIPCHAIN -SunElevations 45,3`
+- stop-when: 承認済みのgoldenが変わる場合は差の原因と妥当性を記録して再承認する（任されている）。原因が説明できない差なら止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 今のブルームは1回の16タップで、広がりは最大 約10 px（`bloom.frag`）。値の調整では広がらない。
+
+## SS-TAA-P1: ジッタと履歴の再投影でTAAを作る
+- status: todo
+- done-when: 投影行列にHalton(2,3)の8〜16点のサブピクセルのジッタを掛け、R6-aのvelocity（ジッタを除いた動き）で前のフレームの履歴を再投影し、近傍の色の分散（YCoCg）でクリップして混ぜるTAAのパスがある（位置はライティング・半透明の後、ブルームの前）。カメラが止まっているとき、ジッタで輪郭のギザギザが消える。有効/無効を切り替えられ、無効なら今の結果（FXAA）と変わらない。ジッタ列と投影のずらし量をCPUのテスト `TemporalAAJitterTest`（`CameraViewConstantsTest` の束へ MEMBER として足す）で確かめる。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game CameraViewConstantsTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(TemporalAAJitterTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-TAA-P1`
+- stop-when: 検証シーン（golden）はTAA無効のまま結果が変わらないこと。変わるなら止めて直す。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Component, Library/Core/Private/Component, Assets/Shaders, Test/Core/Rendering, Test/TestBundle, TASKS.md, PROGRESS.md
+- notes: 危険地帯（カメラ・投影・RenderThread）。評価者を通す。
+
+## SS-TAA-P2: TAAをほかのパスと整合させ、起動画面の既定にする
+- status: todo
+- done-when: UI・デバッグ描画・ImGuiはジッタの無い最終解像度に描かれる。スキニング・動く物体のvelocityが正しく、カメラの切り替え・画面サイズの変更で履歴を捨てる。解像感を戻す軽いシャープ化がある。撮影スクリプトにカメラを一定の速さで回す連続撮影（`-OrbitDegreesPerSecond`）を足し、回転中の画像で輪郭のゴースト（残像の筋）が見えない。Rendering3DTest の既定をTAAにし、FXAAは選択肢として残す。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-TAA-P2 -OrbitDegreesPerSecond 30`
+- stop-when: 検証シーンの結果が変わるなら止めて直す。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RenderThread）。評価者を通す。
+
+## SS-GTAO: SSAOをGTAOに置き換える
+- status: todo
+- done-when: 地平線ベースのAO（GTAO。画素ごとに2方向×数段、空間の雑音除去、TAAがあれば時間方向にも蓄積）が今のSSAO（半球32サンプル）を置き換え、多重反射の近似で明るい面の遮蔽を弱める。半径は世界の長さ（m）で指定する。撮影で、球・岩・小屋と地面の接地部、小屋の軒下に自然な遮蔽が見え、部屋の大きさの遮蔽で壁全体が黒くならない（Indoorの検証シーンで確かめる）。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-GTAO`
+- stop-when: 承認済みのgoldenが変わる場合は差の原因と妥当性を記録して再承認する（任されている）。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 既存のFIX-SSAO-ROOM-SCALE（backlog）はこのタスクで置き換わる見込み。閉じたら、そのタスクに結果を書き添える。
+
+## SS-CONTACT-SHADOW: 影の灯にコンタクトシャドウを足す
+- status: todo
+- done-when: 影を掛ける方向光（空の太陽）について、画面空間で光の方向へ短く（世界で約0.2〜0.5 m）レイマーチする接触影をCSMの結果と掛け合わせる。影を落とす点光源にも同じ仕組みを使えるなら使う。撮影の近接視点と低角度で、球・岩・小屋の接地部に、CSMでは出ない細い影が見え、物体の表面に自己遮蔽の縞が出ない。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-CONTACT-SHADOW`
+- stop-when: 承認済みのgoldenが変わる場合は差の原因と妥当性を記録して再承認する（任されている）。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 危険地帯（ライティング・影）。評価者を通す。
+
+## SS-POST-TUNE: SSRを粗さでなめらかに消し、グレーディングとビネットを起動画面に合わせる
+- status: todo
+- done-when: SSRが粗さのしきい値で急に切れず、粗さ約0.3〜0.7の間でなめらかに弱まる（材質の粗さを使う）。起動画面で、濡れていない石畳には弱い反射、金属の見本の球には周囲の反射が見える。起動画面のグレーディング（コントラスト・彩度・色温度）とビネットを、昼・夕の撮影で眠く見えない値にする（値と理由を記録する）。検証シーンのグレーディングは変えない。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-POST-TUNE -SunElevations 45,3`
+- stop-when: SSRの変更で承認済みのgoldenが変わる場合は差の原因と妥当性を記録して再承認する（任されている）。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game/GameModes/Rendering3DTest, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 今はテクスチャの無い地面の粗さが既定の128/255（0.502）で、SSRのcutoff 0.5を超えて棄却されている。
+
+## SS-LENS-FX: 色収差とレンズダートを足す
+- status: todo
+- done-when: 画面の端ほど強くなる放射方向の色収差（既定は弱く、R/Bのずれが画面端で約1〜2 px）と、ブルームに掛けるレンズダート（起動時に手続きで作るテクスチャ。外部の画像は使わない）がある。どちらも設定で切り替えられ、起動画面では有効、検証シーンでは無効で結果が変わらない。撮影の夕方（太陽が画面内）で、ブルームにダートの模様が乗り、画面端の輪郭に色のにじみがわずかに見える。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-LENS-FX -SunElevations 3`
+- stop-when: 検証シーンの結果が変わるなら止めて直す。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game/GameModes/Rendering3DTest, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: ユーザー決定（2026-09-27）「基本セット+演出系」。
+
+## SS-GRADING-LUT: グレーディング用の3D LUTを掛けられるようにする
+- status: todo
+- done-when: トーンマップの後に32³の3D LUTを掛けられ、恒等のLUTを掛けても結果が変わらないこと（GPUの出力の一致）をテスト `GradingLutIdentityVulkanTest`（`R8AcesLutToneMappingVulkanTest` の束へ MEMBER として足す）で確かめる。見た目のLUT（暖かみのある映画調）を作るスクリプト（`Scripts/BakeLookLut.py`、標準ライブラリとnumpyまで）と生成物を追跡し、起動画面で使う。検証シーンではLUTを使わない。撮影の昼・夕で、LUTの有無の2枚を比べて色調が変わり、階調の段差（バンディング）が出ない。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game R8AcesLutToneMappingVulkanTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GradingLutIdentityVulkanTest|R8AcesLutToneMappingVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-GRADING-LUT -SunElevations 45,3`
+- stop-when: R8のACES 2.0 LUT（`--tone-map=aces20-lut`）の経路と衝突する場合は、併用の順序を記録して、既定のACES経路にだけ掛ける。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Assets/Textures, Scripts/BakeLookLut.py, Game/GameModes/Rendering3DTest, Test/Core/Rendering, TASKS.md, PROGRESS.md
+
+## SS-RTGI-DEFAULT: TAAの上でRTGIを起動画面の既定にする
+- status: todo
+- done-when: ハードウェアのレイトレが使える環境では、起動画面でRTGIを有効にし（`30f00f8` で切った設定を戻す）、TAAと既存のデノイズで粒状の雑音が見えない。止まったカメラで16フレームを撮り、静止した地面の領域の画素の時間方向の標準偏差が、RTGI無効のときの2倍以内に収まる。レイトレが使えない環境ではIBL（空由来）に落ちて同じシーンが表示される。撮影で、小屋の軒下や球の下の地面に色のにじみ（間接光）が見える。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-RTGI-DEFAULT`
+- stop-when: 雑音の基準を満たすのにRTGIの光線数を増やしてフレーム時間が2倍を超える場合は、既定にせず、測った値を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game/GameModes/Rendering3DTest, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RTGI・RenderThread）。評価者を通す。
+
+## SS-ACCEPT: 起動画面の改善を受け入れる
+- status: todo
+- done-when: 朝・昼・夕 × 既定・近接・低角度の撮影一式と、変更前（`163ffe5`）の同じ視点の撮影を並べた記録（`Docs/RenderingValidation/StartupSceneAcceptance.md`、画像は `.harness/runs/` への参照）がある。Releaseの構成で起動画面の1フレームの時間（GPU）を測り、1280×720で16.6 ms以下であることを記録する（超える場合は内訳を記録してユーザーへ戻す）。評価者が、各項目の完了条件と撮影を開いて反証を試みる。
+- verify: `cmake --build build --config Release --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT -SunElevations 10,45,3`
+- stop-when: フレーム時間の予算を超える場合はユーザーへ戻す。
+- paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 区切り。評価者を通す。
 
 ## R1-P5: 透明描画を物理ライト・GGX・IBLへ接続する
 - status: done
@@ -590,7 +799,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - result: `Docs/RenderingValidation/R8Acceptance.md`。R8の変更の独立評価は1周目NEEDS_WORK（4件）、対応差分の2周目PASS。
 
 ## TEST-SKINNED: SkinnedRenderPathContractTestの停止を直す
-- status: todo
+- status: backlog
 - done-when: `SkinnedRenderPathContractTest`がCPU 0のまま戻らない（2026-09-24にctest 1350秒で強制終了）原因を特定し、契約を弱めずに完走させる。R5-P12時点でもpending件数assertで失敗していた既存問題として扱う。
 - verify: `cmake --build build --config Debug --target SkinnedRenderPathContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error --timeout 300 -R "^SkinnedRenderPathContractTest$"`
@@ -609,7 +818,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - result: 光源標本（`128294a`、評価対応`02eaa7e`）、RTGIへSSAOを重ねない（`81bbf24`）、デノイズの外れ値抑制（`3f4f39c`）、PTの画素中心標本（`a15c43a`）に加え、ユーザーの判断で画素単位最大を幾何が一致する画素で判定し直接光を解析BRDFで揃え（`c162366`・`f7d0b59`・`775261a`）、静止時だけRTGIの履歴を延長し年齢に応じてデノイズの近傍の重みを下げた。R6参照比較は平均0.0466・一致画素の最大0.150・区画0.100で閾値内（閾値と物差しは不変）。記録は`Docs/RenderingValidation/R6Acceptance.md`の「R6-P7の完了」。
 
 ## FIX-NEURAL-BRDF-STREAK: ニューラルBRDFの直接光が点光源の近くに作る筋を直す
-- status: todo
+- status: backlog
 - done-when: 通常表示の直接光（ニューラルBRDF）と解析BRDFの差が、Cornellの天井のように点光源に近い粗い面でも筋を作らない。原因（学習範囲外の入力、かすめ角の鏡面項など）を特定し、学習データか評価の範囲を直すか、範囲外では解析BRDFへ戻す。
 - verify: 同じCornell条件で、ニューラルBRDFの通常表示と解析BRDF（検証mode 254の直接光）の画素差を比べる専用テストを追加して通す。
 - stop-when: 学習済み重みの再生成が必要でデータがない場合は、範囲外の入力で解析BRDFへ戻す方針をユーザーへ提案する。
@@ -617,7 +826,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - notes: R6-P7で発見。点光源だけの画像でラスタにだけ2画素幅の筋が出る。
 
 ## FIX-SSAO-ROOM-SCALE: 部屋の大きさのシーンでSSAOが壁をほぼ全遮蔽にする原因を直す
-- status: todo
+- status: backlog
 - done-when: Cornell（5.5 m四方）の壁でSSAOがほぼ0になる原因（半径・bias・深度の再構成の尺度など）を特定して直し、IBL fallbackの間接光が壁で消えない。既存goldenは変えない。
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -L RenderingValidation`
 - stop-when: 承認済みgoldenが変わる場合は基準の更新を提案して止まる。
@@ -735,7 +944,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - notes: 危険地帯（RenderThread・pass寿命）。独立評価を通す。
 
 ## FIX-NORMAL-MATRIX-SCALE: 法線行列の小スケール退化判定を尺度不変にする
-- status: todo
+- status: backlog
 - done-when: `MatrixUtils::CreateNormalMatrix`が一様スケール約0.005未満の物体にも逆転置を返し（特異かどうかは尺度に対する比で判定）、R1室内フィクスチャの平面メッシュの頂点法線を幾何と一致させ、PTの閉包命中シェーダから同じ退化規則の写しを外す。R1数値検証、Indoor/Outdoor golden、`PathTracingRasterParityVulkanTest`が変わらず通る。
 - verify: `cmake --build build --config Debug --target Game RenderingHdrSceneCaptureTest PathTracingRasterParityVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -L RenderingValidation`
@@ -778,7 +987,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - paths: Docs/RenderingValidation, Test/Core/Rendering, TASKS.md, PROGRESS.md
 
 ## RTGI-HIT-SPECULAR: RTGIの命中面を光沢のある反射でも照らす
-- status: todo
+- status: backlog
 - done-when: RTGIの命中面の直接光が材質の粗さ・金属度の鏡面葉を含み、R7屋外比較の既知差（夕の緑の球の影側の面。命中点をLambertにしたPTとは一致）が全輸送との比較で縮む。R6・R7の参照比較と既存goldenが通る。
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RTGIDiffuseIndirectVulkanTest|R6RTGIPathTracingReferenceVulkanTest|R7OutdoorPathTracingReferenceVulkanTest)$"`
 - stop-when: 命中面の材質をRTのsnapshotへ持たせる方法（粗さ・金属度のtextureの扱い）に設計判断が要る場合はユーザーへ戻す。判定の参照の輸送範囲を変える場合もユーザーへ戻す。
@@ -786,7 +995,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - notes: 危険地帯（RTGI）。R7-O3の既知差2。命中面の反射率は`3c80458`でinstance色にした。
 
 ## RTGI-MULTI-BOUNCE: 接地部の3回目以降のバウンスをRTGIで扱う
-- status: todo
+- status: backlog
 - done-when: 球の下の接地部で、ラスタの間接光と全輸送のPTの差（拡散2バウンスの約1.5倍）が縮む。RTGIの光線数の増え方を記録し、R6・R7の参照比較と既存goldenが通る。
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(R6RTGIPathTracingReferenceVulkanTest|R7OutdoorPathTracingReferenceVulkanTest)$"`
 - stop-when: 光線数の増加が大きい、または方式（放射輝度の再利用・probe併用など）の選択が要る場合はユーザーへ戻す。
@@ -794,7 +1003,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - notes: 危険地帯（RTGI）。R7-O3の既知差1。
 
 ## FIX-CSM-TERMINATOR: 球の明暗境界でCSMの可視が数画素かけて下がるのを直す
-- status: todo
+- status: backlog
 - done-when: 屋外シーンの球の明暗境界で、ラスタのCSMの可視（検証表示245）がPTの可視（1画素で1→0）に近づき、R7屋外比較で影の縁として除く画素が減る。承認済みgoldenが変わる場合はユーザーの承認を得る。
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(R7OutdoorPathTracingReferenceVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - stop-when: goldenの再承認が要る場合はユーザーへ戻す。
@@ -802,7 +1011,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - notes: R7-O3の既知差3。例: 夕の緑の球で0.96→0.65→0.48→0.18（PTは1→0）。法線方向のずらし（normal offset）や比較の余裕の見直しが候補。
 
 ## FIX-GRAZING-IBL-SPECULAR: 斜めから見た地面のIBLの鏡面反射が強すぎる原因を調べる
-- status: todo
+- status: backlog
 - done-when: 昼の屋外シーンの地平線近くの地面で、ラスタのIBLの鏡面反射による間接光（全輸送の約1.5倍）の原因（split-sumの近似、地平線より下の環境、DFGの補償など）を特定し、直すか既知差として根拠を記録する。
 - verify: R7屋外比較の`_mean_luminance`と地平線近くの領域の比を開いて確認する。
 - stop-when: 承認済みgoldenが変わる場合はユーザーへ戻す。
@@ -810,7 +1019,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - notes: R7-O3の既知差4。朝・夕は1.07〜1.11倍。
 
 ## FIX-CSM-MEGA-CASTER-BOUNDS: CSMの遮蔽物の境界球にShadowMapPassが描かないMegaGeometryを含めない
-- status: todo
+- status: backlog
 - done-when: CSMの深度範囲に含める境界球が、影の地図に実際に描く物体と一致する（MegaGeometryを影に描くまでは含めない、または描くようにする）。
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(DirectionalShadowLightMatricesTest|CascadedShadowLightMatricesTest)$"`
 - stop-when: MegaGeometryを影に描くかの判断が要る場合はユーザーへ戻す。
@@ -818,7 +1027,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - notes: `382489f`の評価のnon-blocking指摘。過大収集で深度範囲とPCSSの探索半径が広がるだけで、影は欠けない。
 
 ## TEST-FULL-CTEST-BASELINE: 全体CTestの既存の失敗を直す
-- status: todo
+- status: backlog
 - done-when: 全体CTestで、R7の作業前（`c9a3e33`）から失敗している次のテストが通るか、失敗の理由と扱いが記録される: `VolumetricsPassContractTest`（霧の設定行の文字列）、`RenderResourcesDomainContractTest`（`WaitIdleWithoutResultCheck(`の数3、期待2）、`ViewportCameraIdRenderPlanTest`・`BoardComponentRoutingTest`・`SkeletalFramePacketSnapshotTest`（GPUデバイスのないテストでRenderingCoordinator::GenerateDrawCommandsが`m_Device->GetCapabilities()`をnull参照、`578236d`以来）、`FrameCaptureReadbackHelperTest`・`ComponentDataRegistryTest`・`WorldSyncDifferentialTest`（WorldTransformの777）・`CanvasViewRenderTest`・`RenderGraphTextureUsageContractTest`（ShadowMapPassの初期化失敗）（Debugのassertの対話窓で止まりtimeout）、`M9WorldAcceptanceTest`（負の対照の画素差）。
 - verify: `ctest --test-dir build -C Debug --output-on-failure --timeout 600`
 - stop-when: テストの期待を変える必要がある場合は理由を記録してユーザーへ戻す。
