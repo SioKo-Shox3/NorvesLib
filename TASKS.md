@@ -25,7 +25,7 @@
 - notes: 原因は `8c80695` で余接フレームが正しい向きになり、それまで打ち消し合っていた「高さを深さとして読む」反転だけが残ったこと。境界の歪みは、正規直交でない余接フレームで `viewDirTS.z` が N·V より大きくなり、`842070e` の輪郭フェードが効かなくなったため（`842070e` の修正自体は残っている）。`megageometry.frag` には `842070e` が入っておらず、`forward_transparent.frag`・`megageometry.frag` は古い閾値 `1e-8` のまま。
 
 ## SS-DAYLIGHT-P1: 起動画面を物理空と空の太陽による昼の屋外にする
-- status: todo
+- status: blocked
 - done-when: Rendering3DTest が R2 の物理空（SkyAtmosphere）を有効にし、空の太陽（仰角約40°、カメラの既定視点から球と岩の影が地面に見える方位）が影を落とす方向光になる。シーン独自の方向光は外し、方向ライトの操作（矢印キーとImGui）は空の太陽の仰角・方位を動かす。`f90e7ea` の露出補正を外し、カメラは晴天の手動露出（EV100 約14.5〜15）にする。点光源（Lumen/Candelaの物理単位）と発光球の輝度も物理的にありうる値へ移す。IBLは空から作る（静的HDRは空が無効なときだけ使う）。撮影で、青い昼の空の下、球と岩の影が地面にはっきり見え、影の中の地面の平均輝度が日向の40%以下（PNGの領域を開いて測る）、白飛び画素率が1%未満。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-DAYLIGHT-P1`
@@ -34,7 +34,7 @@
 - notes: ユーザー決定（2026-09-27）「物理的な昼の屋外へ」。影が見えない原因は、静的HDRの環境光が地面の照度の約87%を占め（方向光1 lux）、影で約13%しか暗くならないこと（`f3d4abb` でIBLを E/π にした後、比が約9倍悪化）。空を有効にするとエンジンが空の太陽の方向光を自動で加える（SKY-SUN-P2）。起動画面の見た目を変える変更で、この変更はユーザーの承認済み。
 
 ## SS-DAYLIGHT-P2: 太陽の向きを操作・指定でき、高さフォグを掛ける
-- status: todo
+- status: blocked
 - done-when: `--sun-elevation=<deg>` と `--sun-azimuth=<deg>` で起動時の太陽の向きを指定でき、撮影スクリプトの `-SunElevations` で朝（約10°）・昼（約45°）・夕（約3°）を撮れる。ImGuiに手動露出（EV100）のスライダーがある。R3の高さフォグを起動画面で有効にし、遠くの地面と空の境が霞む密度にする。撮影の3時刻とも空と地面の色が時刻らしく変わり、昼の画像で近景（球）のコントラストがフォグで落ちていない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-DAYLIGHT-P2 -SunElevations 10,45,3`

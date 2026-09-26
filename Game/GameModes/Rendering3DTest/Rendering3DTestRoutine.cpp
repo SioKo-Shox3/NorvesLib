@@ -47,8 +47,9 @@
 #if defined(NORVES_ENABLE_IMGUI)
 #include "Core/Public/GameMode/IGameModeController.h"  // RequestPushSubRoutine の完全定義
 #include "GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.h"
-#include "GameModes/Rendering3DTest/SkySunControl.h"
 #endif
+#include "GameModes/Rendering3DTest/SkySunControl.h"
+#include "Core/Public/Rendering/VolumetricFog.h"
 
 #include <cmath>
 #include <utility>
@@ -65,6 +66,12 @@ namespace Game::GameModes
 {
     namespace
     {
+        // 起動画面の高さフォグ（R3）。地面での密度（1/m、0で無効）と、高さ方向の減衰（1/m）。
+        // 空のモデルが地平線より下の放射輝度を0にしているため、下向きの視線ではフォグが空の色へ霞まず
+        // 地面を暗くするだけになる。空のモデルを直すまでは既定で無効にし、--height-fog-density で試す。
+        constexpr float kStartupHeightFogDensity = 0.0f;
+        constexpr float kStartupHeightFogFalloff = 0.5f;
+
         void UnregisterRendering3DInput(GameModeContext& ctx, Rendering3DTestData& data)
         {
             auto& inputRouter = ctx.EngineRef.GetInputRouter();
@@ -139,6 +146,18 @@ namespace Game::GameModes
             data.m_pCameraComponent->SetShutterSpeed(1.0f / 100.0f);
             data.m_pCameraComponent->SetISO(100.0f);
             data.m_pCameraComponent->SetExposureCompensation(0.0f);
+            // --exposure-ev100 の指定があれば、絞り・ISO を保ったままシャッター速度で合わせる。
+            data.m_ExposureEV100 = ComputeEV100(data.m_pCameraComponent->GetAperture(),
+                                                data.m_pCameraComponent->GetShutterSpeed(),
+                                                data.m_pCameraComponent->GetISO());
+            if (data.m_bHasStartupExposureEV100)
+            {
+                data.m_ExposureEV100 = data.m_StartupExposureEV100;
+                data.m_pCameraComponent->SetShutterSpeed(ComputeShutterSpeedForEV100(
+                    data.m_pCameraComponent->GetAperture(), data.m_pCameraComponent->GetISO(),
+                    data.m_ExposureEV100));
+            }
+            data.m_AppliedExposureEV100 = data.m_ExposureEV100;
             data.m_pSpringArmComponent->RefreshOwnerTransform();
 
             CameraProxy initialCamera;
@@ -767,9 +786,28 @@ namespace Game::GameModes
             data.m_SkyAtmosphere.bEnabled = true;
             data.m_SkyAtmosphere.SunAltitudeDegrees = 40.0f;
             data.m_SkyAtmosphere.SunAzimuthDegrees = 30.0f;
+            if (data.m_bHasStartupSunElevation)
+            {
+                data.m_SkyAtmosphere.SunAltitudeDegrees = data.m_StartupSunElevation;
+            }
+            if (data.m_bHasStartupSunAzimuth)
+            {
+                data.m_SkyAtmosphere.SunAzimuthDegrees = data.m_StartupSunAzimuth;
+            }
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
             LOG_INFO("Sky atmosphere enabled sun_altitude=%.1f sun_azimuth=%.1f",
                      data.m_SkyAtmosphere.SunAltitudeDegrees, data.m_SkyAtmosphere.SunAzimuthDegrees);
+
+            // R3 の高さフォグ。地面（y=-1）で最も濃く、上へ行くほど薄くする。密度が0（既定）なら無効。
+            {
+                VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
+                fog.DensityAtBaseHeight = data.m_bHasStartupHeightFogDensity ? data.m_StartupHeightFogDensity
+                                                                              : kStartupHeightFogDensity;
+                fog.bEnabled = fog.DensityAtBaseHeight > 0.0f;
+                fog.BaseHeight = -1.0f;
+                fog.HeightFalloffPerUnit = kStartupHeightFogFalloff;
+                ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(fog);
+            }
 
             // 方向ライト操作コントローラーを空の太陽の置き場へ接続し、入力ルーターへ
             // ゲーム優先度で登録する。矢印キーの角度は Tick で空の太陽の仰角・方位へ写す。
@@ -804,7 +842,7 @@ namespace Game::GameModes
             // TUniquePtr<ISubRoutine>(=std::unique_ptr<ISubRoutine>)の値引数へ暗黙 upcast move される。
 #if defined(NORVES_ENABLE_IMGUI)
             ctx.ControllerRef.RequestPushSubRoutine(
-                MakeUnique<DirectionalLightEditSubRoutine>(&data.m_LightController));
+                MakeUnique<DirectionalLightEditSubRoutine>(&data.m_LightController, &data.m_ExposureEV100));
 #endif
         }
 
@@ -1331,6 +1369,22 @@ namespace Game::GameModes
             }
         }
 
+        // ImGui で動かした手動露出（EV100）を、絞り・ISO を保ったままシャッター速度へ写す。
+        if (data.m_pCameraComponent != nullptr &&
+            std::abs(data.m_ExposureEV100 - data.m_AppliedExposureEV100) > 1.0e-4f)
+        {
+            if (data.m_pCameraComponent->SetShutterSpeed(ComputeShutterSpeedForEV100(
+                    data.m_pCameraComponent->GetAperture(), data.m_pCameraComponent->GetISO(),
+                    data.m_ExposureEV100)))
+            {
+                data.m_AppliedExposureEV100 = data.m_ExposureEV100;
+            }
+            else
+            {
+                data.m_ExposureEV100 = data.m_AppliedExposureEV100;
+            }
+        }
+
         // InputRouter で上位 controller に consume されなかった値状態だけを Maya
         // の変換層へ渡し、SpringArm を単一のカメラ姿勢正本として更新する。
         // CameraProxy は値 snapshot なので RenderThread に live Object は渡らない。
@@ -1765,6 +1819,7 @@ namespace Game::GameModes
         // 空はRenderWorldの設定なので、ほかのモードへ持ち越さないよう無効へ戻す。
         data.m_SkyAtmosphere = MakeDefaultSkyAtmosphereParameters();
         ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
+        ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
         data.m_LightController.SetTargetLight(nullptr);
         data.m_F4BoardObjects.clear();
         data.m_F4BoardComponents.clear();

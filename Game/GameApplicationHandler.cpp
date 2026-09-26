@@ -93,6 +93,51 @@ namespace Game
         constexpr const TCHAR *kStartupCameraOption = TEXT("--startup-camera=");
         bool s_bRendering3DTestHasStartupCamera = false;
         float s_Rendering3DTestStartupCamera[3] = {0.0f, 0.0f, 0.0f};
+        // --sun-elevation=<deg> / --sun-azimuth=<deg>: 起動時の空の太陽の仰角（0〜90）と方位（-180〜180）。
+        // --exposure-ev100=<ev>: 起動時の手動露出（EV100、-6〜24）。
+        constexpr const TCHAR *kSunElevationOption = TEXT("--sun-elevation=");
+        constexpr const TCHAR *kSunAzimuthOption = TEXT("--sun-azimuth=");
+        constexpr const TCHAR *kExposureEV100Option = TEXT("--exposure-ev100=");
+        // --height-fog-density=<1/m>: 起動画面の高さフォグの地面での密度（0で無効、0〜1）。見比べと調整に使う。
+        constexpr const TCHAR *kHeightFogDensityOption = TEXT("--height-fog-density=");
+        bool s_bRendering3DTestHasHeightFogDensity = false;
+        float s_Rendering3DTestHeightFogDensity = 0.0f;
+        bool s_bRendering3DTestHasSunElevation = false;
+        bool s_bRendering3DTestHasSunAzimuth = false;
+        bool s_bRendering3DTestHasExposureEV100 = false;
+        float s_Rendering3DTestSunElevation = 0.0f;
+        float s_Rendering3DTestSunAzimuth = 0.0f;
+        float s_Rendering3DTestExposureEV100 = 0.0f;
+
+        /**
+         * @brief 1つの有限の小数を読み、[minimum, maximum] に入っていれば成功とする。
+         */
+        bool TryParseBoundedFloat(const String &text, float minimum, float maximum, float &outValue)
+        {
+            char buffer[64] = {};
+            if (text.empty() || text.size() >= sizeof(buffer))
+            {
+                return false;
+            }
+            for (size_t i = 0; i < text.size(); ++i)
+            {
+                const TCHAR ch = text[i];
+                if (ch < 0x20 || ch > 0x7E)
+                {
+                    return false;
+                }
+                buffer[i] = static_cast<char>(ch);
+            }
+
+            char *pEnd = nullptr;
+            const float value = std::strtof(buffer, &pEnd);
+            if (pEnd == buffer || *pEnd != '\0' || !std::isfinite(value) || value < minimum || value > maximum)
+            {
+                return false;
+            }
+            outValue = value;
+            return true;
+        }
 
         /**
          * @brief "<yaw>,<pitch>,<arm>" を3つの有限の小数として読む。腕の長さは正でなければならない。
@@ -374,6 +419,10 @@ namespace Game
         s_bRendering3DTestLayerCompositeSmoke = false;
         s_bRendering3DTestPhysicsSmoke = false;
         s_bRendering3DTestHasStartupCamera = false;
+        s_bRendering3DTestHasSunElevation = false;
+        s_bRendering3DTestHasSunAzimuth = false;
+        s_bRendering3DTestHasExposureEV100 = false;
+        s_bRendering3DTestHasHeightFogDensity = false;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;
         bool bHasRendering3DTestImpostorSmokeCount = false;
@@ -416,6 +465,54 @@ namespace Game
                          static_cast<double>(s_Rendering3DTestStartupCamera[0]),
                          static_cast<double>(s_Rendering3DTestStartupCamera[1]),
                          static_cast<double>(s_Rendering3DTestStartupCamera[2]));
+                continue;
+            }
+
+            String sunElevationValue;
+            if (TryStripPrefix(args[i], kSunElevationOption, sunElevationValue))
+            {
+                if (!TryParseBoundedFloat(sunElevationValue, 0.0f, 90.0f, s_Rendering3DTestSunElevation))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --sun-elevation は 0〜90 の度で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasSunElevation = true;
+                continue;
+            }
+
+            String sunAzimuthValue;
+            if (TryStripPrefix(args[i], kSunAzimuthOption, sunAzimuthValue))
+            {
+                if (!TryParseBoundedFloat(sunAzimuthValue, -180.0f, 180.0f, s_Rendering3DTestSunAzimuth))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --sun-azimuth は -180〜180 の度で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasSunAzimuth = true;
+                continue;
+            }
+
+            String exposureValue;
+            if (TryStripPrefix(args[i], kExposureEV100Option, exposureValue))
+            {
+                if (!TryParseBoundedFloat(exposureValue, -6.0f, 24.0f, s_Rendering3DTestExposureEV100))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --exposure-ev100 は -6〜24 で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasExposureEV100 = true;
+                continue;
+            }
+
+            String heightFogDensityValue;
+            if (TryStripPrefix(args[i], kHeightFogDensityOption, heightFogDensityValue))
+            {
+                if (!TryParseBoundedFloat(heightFogDensityValue, 0.0f, 1.0f, s_Rendering3DTestHeightFogDensity))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --height-fog-density は 0〜1 で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasHeightFogDensity = true;
                 continue;
             }
 
@@ -1322,6 +1419,14 @@ namespace Game
                 mode->GetData().m_StartupCameraYaw = s_Rendering3DTestStartupCamera[0];
                 mode->GetData().m_StartupCameraPitch = s_Rendering3DTestStartupCamera[1];
                 mode->GetData().m_StartupCameraArmLength = s_Rendering3DTestStartupCamera[2];
+                mode->GetData().m_bHasStartupSunElevation = s_bRendering3DTestHasSunElevation;
+                mode->GetData().m_StartupSunElevation = s_Rendering3DTestSunElevation;
+                mode->GetData().m_bHasStartupSunAzimuth = s_bRendering3DTestHasSunAzimuth;
+                mode->GetData().m_StartupSunAzimuth = s_Rendering3DTestSunAzimuth;
+                mode->GetData().m_bHasStartupExposureEV100 = s_bRendering3DTestHasExposureEV100;
+                mode->GetData().m_StartupExposureEV100 = s_Rendering3DTestExposureEV100;
+                mode->GetData().m_bHasStartupHeightFogDensity = s_bRendering3DTestHasHeightFogDensity;
+                mode->GetData().m_StartupHeightFogDensity = s_Rendering3DTestHeightFogDensity;
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
                 return mode;
             });

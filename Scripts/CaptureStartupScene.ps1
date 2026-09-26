@@ -6,6 +6,11 @@
 #   crushed_black_ratio … R・G・B がすべて 0 の画素の割合
 # Game の終了コードが0でない、PNGが無い、Game.log にシェーダーのコンパイル失敗がある場合は終了コード1を返す。
 # Slang SDK 未設定の neural_material_decode.slang のコンパイル失敗だけは既知として除外する。
+#
+# -SunElevations を与えると、各視点を太陽の仰角（度）ごとに撮り、<視点>-sun<仰角>.png として保存する
+# （例: -SunElevations 10,45,3 で朝・昼・夕）。方位は -SunAzimuth（省略時は起動画面の既定）。
+# 露出は -ExposureEV100s で仰角と同じ順に与える。省略時は仰角から晴天の目安の EV100 を選ぶ
+# （自動露出が入るまでの暫定の対応表）。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -13,7 +18,12 @@ param(
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo')]
     [string]$Configuration = 'Debug',
     [ValidateRange(10, 3600)]
-    [int]$TimeoutSeconds = 300
+    [int]$TimeoutSeconds = 300,
+    # 仰角・EV100 の並びは、-File で起動しても1つの文字列で届くため「10,45,3」の形で受けて分ける。
+    [string[]]$SunElevations = @(),
+    [ValidateRange(-180.0, 180.0)]
+    [Nullable[double]]$SunAzimuth = $null,
+    [string[]]$ExposureEV100s = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,6 +40,71 @@ $views = @(
     # カメラの高さ約 -0.84（地面は y=-1）から地面すれすれに見る視点
     [pscustomobject]@{ Name = 'low'; Camera = '20,-8,6' }
 )
+
+# 「10,45,3」や配列で渡された数の並びを、範囲を確かめて double の配列にする。
+function ConvertTo-NumberList([string[]]$Values, [double]$Minimum, [double]$Maximum, [string]$Name)
+{
+    $numbers = @()
+    foreach ($item in ($Values -join ',').Split(',', [StringSplitOptions]::RemoveEmptyEntries))
+    {
+        $number = 0.0
+        if (-not [double]::TryParse($item.Trim(), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$number) -or
+            $number -lt $Minimum -or $number -gt $Maximum)
+        {
+            Write-Host "CAPTURE_STARTUP_SCENE result=fail reason=invalid_$Name value=$item（$Minimum〜$Maximum）"
+            exit 1
+        }
+        $numbers += $number
+    }
+    return ,$numbers
+}
+
+$sunElevationList = ConvertTo-NumberList $SunElevations 0.0 90.0 'sun_elevation'
+$exposureList = ConvertTo-NumberList $ExposureEV100s -6.0 24.0 'exposure_ev100'
+
+# 太陽の仰角から、晴天の手動露出（EV100）の目安を選ぶ。表の間は線形に補間する。
+function Get-DefaultExposureEV100([double]$Elevation)
+{
+    $table = @(@(0.0, 11.0), @(3.0, 11.5), @(10.0, 13.0), @(25.0, 14.0), @(45.0, 14.6), @(90.0, 15.0))
+    for ($i = 1; $i -lt $table.Count; ++$i)
+    {
+        if ($Elevation -le $table[$i][0])
+        {
+            $t = ($Elevation - $table[$i - 1][0]) / ($table[$i][0] - $table[$i - 1][0])
+            return $table[$i - 1][1] + ($table[$i][1] - $table[$i - 1][1]) * $t
+        }
+    }
+    return $table[$table.Count - 1][1]
+}
+
+if ($exposureList.Count -gt 0 -and $exposureList.Count -ne $sunElevationList.Count)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=exposure_count_mismatch（-ExposureEV100s は -SunElevations と同じ数）"
+    exit 1
+}
+
+# 撮影の一覧: 視点 × 太陽の仰角。仰角の指定が無ければ視点だけを起動時の太陽で撮る。
+$invariant = [Globalization.CultureInfo]::InvariantCulture
+$shots = @()
+foreach ($view in $views)
+{
+    if ($sunElevationList.Count -eq 0)
+    {
+        $shots += [pscustomobject]@{ Name = $view.Name; Camera = $view.Camera; SunElevation = $null; ExposureEV100 = $null }
+        continue
+    }
+    for ($i = 0; $i -lt $sunElevationList.Count; ++$i)
+    {
+        $elevation = $sunElevationList[$i]
+        $ev = if ($exposureList.Count -gt 0) { $exposureList[$i] } else { Get-DefaultExposureEV100 $elevation }
+        $shots += [pscustomobject]@{
+            Name = "$($view.Name)-sun$($elevation.ToString($invariant))"
+            Camera = $view.Camera
+            SunElevation = $elevation
+            ExposureEV100 = [math]::Round($ev, 2)
+        }
+    }
+}
 
 Add-Type -AssemblyName System.Drawing
 Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
@@ -102,7 +177,7 @@ New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 $failures = @()
 $results = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
-foreach ($view in $views)
+foreach ($view in $shots)
 {
     $pngPath = Join-Path $outRoot "$($view.Name).png"
     $viewLogPath = Join-Path $outRoot "$($view.Name).Game.log"
@@ -113,6 +188,15 @@ foreach ($view in $views)
     if ($view.Camera -ne '')
     {
         $arguments += "--startup-camera=$($view.Camera)"
+    }
+    if ($null -ne $view.SunElevation)
+    {
+        $arguments += "--sun-elevation=$($view.SunElevation.ToString($invariant))"
+        $arguments += "--exposure-ev100=$($view.ExposureEV100.ToString($invariant))"
+    }
+    if ($null -ne $SunAzimuth)
+    {
+        $arguments += "--sun-azimuth=$($SunAzimuth.Value.ToString($invariant))"
     }
 
     # アセットは作業ディレクトリからの相対パスで読むため、リポジトリのルートで起動する。
@@ -164,6 +248,8 @@ foreach ($view in $views)
     $result = [ordered]@{
         view = $view.Name
         camera = $view.Camera
+        sun_elevation = $view.SunElevation
+        exposure_ev100 = $view.ExposureEV100
         png = "$($view.Name).png"
         width = [int]$measured[0]
         height = [int]$measured[1]

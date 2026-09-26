@@ -38,9 +38,11 @@ namespace Game::GameModes
         /**
          * @brief コンストラクタ(LightController を借用)
          * @param controller 空の太陽の操作(非所有・呼び出し側が寿命を持つ)
+         * @param exposureEV100 手動露出 EV100 の置き場(非所有・呼び出し側が寿命を持つ)
          */
-        explicit DirectionalLightEditView(NorvesLib::Core::Input::LightController* controller)
-            : m_pController(controller)
+        explicit DirectionalLightEditView(NorvesLib::Core::Input::LightController* controller,
+                                          float* exposureEV100)
+            : m_pController(controller), m_pExposureEV100(exposureEV100)
         {
         }
 
@@ -60,6 +62,8 @@ namespace Game::GameModes
     private:
         // 空の太陽の操作(借用・非所有)
         NorvesLib::Core::Input::LightController* m_pController = nullptr;
+        // 手動露出 EV100 の置き場(借用・非所有)。Rendering3DTest の Tick がカメラへ写す。
+        float* m_pExposureEV100 = nullptr;
     };
 
     /**
@@ -74,9 +78,11 @@ namespace Game::GameModes
         /**
          * @brief コンストラクタ(空の太陽の操作を借用)
          * @param controller 空の太陽の操作(非所有・Rendering3DTest が所有)
+         * @param exposureEV100 手動露出 EV100 の置き場(非所有・Rendering3DTest が所有)
          */
-        explicit DirectionalLightEditSubRoutine(NorvesLib::Core::Input::LightController* controller)
-            : m_View(controller)
+        explicit DirectionalLightEditSubRoutine(NorvesLib::Core::Input::LightController* controller,
+                                                float* exposureEV100)
+            : m_View(controller, exposureEV100)
         {
         }
 

@@ -25,7 +25,7 @@ namespace Game::GameModes
         // いる)基準で決め、低解像度でも極端に小さくならないようにする。以後はユーザーの
         // リサイズ/移動を尊重する(ImGuiCond_FirstUseEver)。
         const float fontSize = ImGui::GetFontSize();
-        ImGui::SetNextWindowSize(ImVec2(fontSize * 22.0f, fontSize * 13.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(fontSize * 22.0f, fontSize * 15.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos(ImVec2(fontSize * 2.0f, fontSize * 2.0f), ImGuiCond_FirstUseEver);
 
         // ウィンドウは常に開く。Begin が false(折りたたみ等)なら End して即座に抜ける。
@@ -52,6 +52,12 @@ namespace Game::GameModes
                 ConvertSkySunToLightControllerAngles(altitude, azimuth, yaw, pitch);
                 m_pController->SetDirection(yaw, pitch);
             }
+        }
+
+        // 手動露出(EV100)。自動露出が入るまで、時刻に合わせた明るさはここで合わせる。
+        if (m_pExposureEV100 != nullptr)
+        {
+            ImGui::SliderFloat("露出 EV100", m_pExposureEV100, 6.0f, 17.0f, "%.1f");
         }
 
         ImGui::End();

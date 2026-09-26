@@ -164,6 +164,21 @@ namespace Game::GameModes
         float m_StartupCameraYaw = 0.0f;
         float m_StartupCameraPitch = 0.0f;
         float m_StartupCameraArmLength = 0.0f;
+        // --sun-elevation / --sun-azimuth で指定した起動時の空の太陽の仰角・方位（度）
+        bool m_bHasStartupSunElevation = false;
+        float m_StartupSunElevation = 0.0f;
+        bool m_bHasStartupSunAzimuth = false;
+        float m_StartupSunAzimuth = 0.0f;
+        // --exposure-ev100 で指定した起動時の手動露出
+        bool m_bHasStartupExposureEV100 = false;
+        float m_StartupExposureEV100 = 0.0f;
+        // --height-fog-density で指定した高さフォグの地面での密度（0で無効）
+        bool m_bHasStartupHeightFogDensity = false;
+        float m_StartupHeightFogDensity = 0.0f;
+
+        // 手動露出（EV100）。ImGui のスライダーが書き、Tick が絞り・ISO を保ったままシャッター速度へ写す。
+        float m_ExposureEV100 = 0.0f;
+        float m_AppliedExposureEV100 = 0.0f;
 
         // ========================================
         // glTF Model（Boulder）
