@@ -101,8 +101,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t PathTracingSampleBatch = 0u;
         /** @brief パストレーサーの検証出力（既定は放射輝度） */
         PathTracingDebugOutput PathTracingDebug = PathTracingDebugOutput::None;
-        /** @brief ラスタの直接光のBRDF（既定は学習済みのニューラルBRDF） */
-        RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Neural;
+        /** @brief ラスタの直接光のBRDF（既定は解析BRDF） */
+        RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Analytic;
     };
 
     struct RenderingCoordinatorStatsSnapshot

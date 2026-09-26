@@ -799,7 +799,7 @@ namespace NorvesLib::Core::Engine
         uint32_t pathTracingSampleBatch = 0u;
         Rendering::PathTracingDebugOutput pathTracingDebugOutput =
             Rendering::PathTracingDebugOutput::None;
-        Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Neural;
+        Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Analytic;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
         bool bToneMapOperatorRequested = false;
         float filmGrainStrength = 0.0f;

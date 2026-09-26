@@ -65,7 +65,7 @@ namespace NorvesLib::Core::Rendering
         PathTracingPixelSampling PathTracingPixelSamplingMode = PathTracingPixelSampling::Box;
         uint32_t PathTracingSampleBatch = 0u;
         PathTracingDebugOutput PathTracingDebug = PathTracingDebugOutput::None;
-        RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Neural;
+        RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Analytic;
     };
 
     // ========================================

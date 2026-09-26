@@ -221,7 +221,7 @@ namespace NorvesLib::Core::Rendering
          * SSRを含むPostProcessStackの前でSceneColorへ合成します。
          */
         void SetupDeferredPipeline(SceneRenderer *sceneRenderer,
-                                   RasterDirectBrdf directBrdf = RasterDirectBrdf::Neural);
+                                   RasterDirectBrdf directBrdf = RasterDirectBrdf::Analytic);
 
         /**
          * @brief 明示選択時だけ独立パストレーシングパイプラインを設定する。
