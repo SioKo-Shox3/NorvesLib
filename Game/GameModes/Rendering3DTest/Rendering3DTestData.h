@@ -220,6 +220,15 @@ namespace Game::GameModes
         bool m_bBoulderModelLoaded = false;
         bool m_bBoulderModelLoadPending = false;
         TSharedPtr<BoulderAsyncState> m_BoulderAsyncState; ///< 非同期ロード共有状態
+
+        // 展示物: 材質見本の球の列（金属0と1の2列 × 粗さ5段）と小屋（Cottage_Clean の glTF）
+        VariableArray<NorvesLib::Core::Rendering::MaterialHandle> m_ShowcaseMaterials;
+        VariableArray<NorvesLib::Core::Entity *> m_ShowcaseSphereObjects;
+        NorvesLib::Core::Entity *m_pCottageObject = nullptr;
+        NorvesLib::Core::Component::MegaGeometryComponent *m_pCottageMegaGeometryComponent = nullptr;
+        NorvesLib::Core::Rendering::ModelHandle m_CottageModelHandle;
+        uint32_t m_CottageLoadRequestId = 0;
+        TSharedPtr<BoulderAsyncState> m_CottageAsyncState; ///< 小屋の非同期ロード共有状態（Boulder と同じ型）
         NorvesLib::Core::Particle::ParticleEmitterHandle m_ParticleEmitter;
     };
 

@@ -130,9 +130,10 @@ namespace Game::GameModes
                 return false;
             }
 
-            data.m_pSpringArmComponent->SetArmLength(5.0f);
+            // 既定の視点は、球・岩・材質見本の球と奥の小屋がまとめて入るよう引いて浅く見下ろす。
+            data.m_pSpringArmComponent->SetArmLength(10.0f);
             data.m_pSpringArmComponent->SetYaw(0.0f);
-            data.m_pSpringArmComponent->SetPitch(30.0f);
+            data.m_pSpringArmComponent->SetPitch(20.0f);
             if (data.m_bHasStartupCamera)
             {
                 data.m_pSpringArmComponent->SetArmLength(data.m_StartupCameraArmLength);
@@ -420,10 +421,17 @@ namespace Game::GameModes
                 NORVES_LOG_ERROR("Rendering3DTest", "Failed to register sphere mesh");
             }
 
-            // 地面メッシュの生成（10x10のPlane）
+            // 地面メッシュの生成（60 m 四方の Plane）。石畳のテクスチャを 2 m ごとに繰り返すよう UV を広げる。
+            constexpr float kGroundSize = 60.0f;
+            constexpr float kGroundTileSize = 2.0f;
             VariableArray<Mesh3DVertex> groundVertices;
             VariableArray<uint32_t> groundIndices;
-            ProceduralMeshGenerator::GeneratePlane(10.0f, 10.0f, 4, 4, groundVertices, groundIndices);
+            ProceduralMeshGenerator::GeneratePlane(kGroundSize, kGroundSize, 8, 8, groundVertices, groundIndices);
+            for (Mesh3DVertex &vertex : groundVertices)
+            {
+                vertex.TexCoord[0] *= kGroundSize / kGroundTileSize;
+                vertex.TexCoord[1] *= kGroundSize / kGroundTileSize;
+            }
 
             bool bGroundOk = meshes.Register(
                 data.m_GroundMeshHandle,
@@ -586,77 +594,92 @@ namespace Game::GameModes
             }
 
             // --- CobbleStoneFloor（石畳）マテリアル（テクスチャなしで先に作成） ---
+            // 地面も同じ石畳のテクスチャを使う。読み込みは1回だけで、そろったら両方の材質へ入れる。
             {
                 MaterialCreateData cobbleMatInfo;
                 cobbleMatInfo.HeightScale = 0.05f;
                 cobbleMatInfo.DebugName = "CobbleStoneFloor";
                 data.m_CobbleStoneMaterial = materials.Create(cobbleMatInfo);
 
+                MaterialCreateData groundMatInfo;
+                groundMatInfo.DebugName = "Ground";
+                data.m_GroundMaterial = materials.Create(groundMatInfo);
+
                 auto cobbleUpdate = MakeShared<PendingMaterialUpdate>();
                 cobbleUpdate->TargetMaterial = data.m_CobbleStoneMaterial;
                 cobbleUpdate->CreateData = cobbleMatInfo;
                 cobbleUpdate->PendingTextureCount = 5;
 
+                // 地面の石畳は2 mのタイルで、球（UVの1周が約6.3 m）より1タイルが小さいため、
+                // 凹凸の深さが球と同じ程度になるよう高さのスケールを小さくする。
+                constexpr float kGroundHeightScale = 0.03f;
+                const MaterialHandle groundMaterial = data.m_GroundMaterial;
+                auto finishCobbleStone = [cobbleUpdate, groundMaterial, &materials]()
+                {
+                    if (--cobbleUpdate->PendingTextureCount != 0)
+                    {
+                        return;
+                    }
+                    materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                    MaterialCreateData groundData = cobbleUpdate->CreateData;
+                    groundData.HeightScale = kGroundHeightScale;
+                    groundData.DebugName = "Ground";
+                    materials.Update(groundMaterial, groundData);
+                    NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
+                };
+
                 textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png",
-                                                 [cobbleUpdate, &materials](TextureHandle handle)
+                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.AlbedoTexture = handle;
-                                                     if (--cobbleUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                                                     }
+                                                     finishCobbleStone();
                                                  });
                 textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_dx_4k.png",
-                                                 [cobbleUpdate, &materials](TextureHandle handle)
+                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.NormalTexture = handle;
-                                                     if (--cobbleUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                                                     }
+                                                     finishCobbleStone();
                                                  });
                 textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png",
-                                                 [cobbleUpdate, &materials](TextureHandle handle)
+                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.RoughnessTexture = handle;
-                                                     if (--cobbleUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                                                     }
+                                                     finishCobbleStone();
                                                  });
                 textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png",
-                                                 [cobbleUpdate, &materials](TextureHandle handle)
+                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.AOTexture = handle;
-                                                     if (--cobbleUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                                                     }
+                                                     finishCobbleStone();
                                                  });
                 textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
-                                                 [cobbleUpdate, &materials](TextureHandle handle)
+                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.HeightTexture = handle;
-                                                     if (--cobbleUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                                                     }
+                                                     finishCobbleStone();
                                                  });
 
                 data.m_PendingMaterialUpdates.push_back(cobbleUpdate);
                 NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material created (textures loading async)");
             }
 
-            // 地面マテリアル作成（チェッカーボードは同期で作成済み）
-            MaterialCreateData groundMatInfo;
-            groundMatInfo.AlbedoTexture = data.m_CheckerTextureHandle;
-            groundMatInfo.DebugName = "Ground";
-            data.m_GroundMaterial = materials.Create(groundMatInfo);
+            // --- 材質見本の球の材質（同じ色で、金属0と1 × 粗さ5段） ---
+            {
+                constexpr float kShowcaseMetallic[] = {0.0f, 1.0f};
+                constexpr float kShowcaseRoughness[] = {0.1f, 0.3f, 0.5f, 0.7f, 0.9f};
+                data.m_ShowcaseMaterials.clear();
+                for (float metallic : kShowcaseMetallic)
+                {
+                    for (float roughness : kShowcaseRoughness)
+                    {
+                        MaterialCreateData showcaseMatInfo;
+                        showcaseMatInfo.Metallic = metallic;
+                        showcaseMatInfo.Roughness = roughness;
+                        showcaseMatInfo.DebugName = "ShowcaseSphere";
+                        data.m_ShowcaseMaterials.push_back(materials.Create(showcaseMatInfo));
+                    }
+                }
+            }
 
             // 光源球体マテリアル作成（エミッシブ、テクスチャ不要）
             MaterialCreateData lightSphereMatInfo;
@@ -679,8 +702,8 @@ namespace Game::GameModes
             data.m_pSphereObject = world.SpawnObject<Entity>();
             ctx.ScopeRef.TrackObject(data.m_pSphereObject);
 
-            // 球体を地面の上に配置（半径1.0 + 地面Y=-1.0 → Y=0.5で浮かせる）
-            data.m_pSphereObject->SetPosition(0.0f, 0.5f, 0.0f);
+            // 球体を地面の上に置く（半径1.0、地面Y=-1.0 → 中心Y=0.0で接地）
+            data.m_pSphereObject->SetPosition(0.0f, 0.0f, 0.0f);
 
             data.m_pSphereMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pSphereObject);
             data.m_pSphereMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
@@ -739,12 +762,12 @@ namespace Game::GameModes
             data.m_pGroundMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pGroundObject);
             data.m_pGroundMeshComponent->SetMeshHandle(data.m_GroundMeshHandle);
             data.m_pGroundMeshComponent->SetCastShadow(false);
-            // オブジェクトカラー（暗い緑灰色）→ CustomData
-            data.m_pGroundMeshComponent->SetCustomData(0, 0.35f);
-            data.m_pGroundMeshComponent->SetCustomData(1, 0.45f);
-            data.m_pGroundMeshComponent->SetCustomData(2, 0.3f);
+            // オブジェクトカラー（白 = 石畳のテクスチャの色をそのまま使う）→ CustomData
+            data.m_pGroundMeshComponent->SetCustomData(0, 1.0f);
+            data.m_pGroundMeshComponent->SetCustomData(1, 1.0f);
+            data.m_pGroundMeshComponent->SetCustomData(2, 1.0f);
             data.m_pGroundMeshComponent->SetCustomData(3, 1.0f);
-            // 地面マテリアルを適用
+            // 地面マテリアル（石畳）を適用
             data.m_pGroundMeshComponent->SetMaterial(0, data.m_GroundMaterial);
 
             LOG_INFO("Ground Entity created and added to World");
@@ -777,6 +800,43 @@ namespace Game::GameModes
             data.m_pPointLightComponent->SetLightVisible(true);
             data.m_pPointLightComponent->SetCastShadows(false);
             LOG_INFO("Light sphere Entity created and added to World");
+
+            // --- 材質見本の球の列 ---
+            // 球（中心X=0）の左に、手前の列を非金属、奥の列を金属として粗さ0.1〜0.9を左から並べる。
+            // 奥の列は既定の視点で手前の列に隠れないよう間を空ける。
+            {
+                constexpr uint32_t kShowcaseColumns = 5u;
+                constexpr float kShowcaseRadius = 0.4f;
+                constexpr float kShowcaseSpacing = 1.0f;
+                constexpr float kShowcaseStartX = -6.4f;
+                constexpr float kShowcaseRowZ[] = {1.2f, -0.8f};
+                // 見本の色（リニア）。金属では反射の色になる。
+                constexpr float kShowcaseColor[3] = {0.9f, 0.7f, 0.4f};
+                data.m_ShowcaseSphereObjects.clear();
+                for (uint32_t materialIndex = 0; materialIndex < data.m_ShowcaseMaterials.size(); ++materialIndex)
+                {
+                    const uint32_t row = materialIndex / kShowcaseColumns;
+                    const uint32_t column = materialIndex % kShowcaseColumns;
+                    Entity *showcaseObject = world.SpawnObject<Entity>();
+                    ctx.ScopeRef.TrackObject(showcaseObject);
+                    showcaseObject->SetPosition(kShowcaseStartX + static_cast<float>(column) * kShowcaseSpacing,
+                                                -1.0f + kShowcaseRadius,
+                                                kShowcaseRowZ[row]);
+                    showcaseObject->SetScale(kShowcaseRadius, kShowcaseRadius, kShowcaseRadius);
+
+                    Component::MeshComponent *showcaseMeshComponent =
+                        world.CreateComponent<Component::MeshComponent>(showcaseObject);
+                    showcaseMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
+                    showcaseMeshComponent->SetCastShadow(true);
+                    showcaseMeshComponent->SetCustomData(0, kShowcaseColor[0]);
+                    showcaseMeshComponent->SetCustomData(1, kShowcaseColor[1]);
+                    showcaseMeshComponent->SetCustomData(2, kShowcaseColor[2]);
+                    showcaseMeshComponent->SetCustomData(3, 1.0f);
+                    showcaseMeshComponent->SetMaterial(0, data.m_ShowcaseMaterials[materialIndex]);
+                    data.m_ShowcaseSphereObjects.push_back(showcaseObject);
+                }
+                LOG_INFO("Rendering3DTest showcase spheres created count=%zu", data.m_ShowcaseSphereObjects.size());
+            }
 
             // --- 物理空と空の太陽 ---
             // 空を有効にすると、エンジンが空の太陽の方向光（影を落とす）を光源表へ加え、IBLも空から作る。
@@ -1245,7 +1305,7 @@ namespace Game::GameModes
             // 非同期ロード中に表示する簡易プレースホルダ
             data.m_pBoulderPlaceholderObject = world.SpawnObject<Entity>();
             ctx.ScopeRef.TrackObject(data.m_pBoulderPlaceholderObject);
-            data.m_pBoulderPlaceholderObject->SetPosition(3.0f, 0.5f, 0.0f);
+            data.m_pBoulderPlaceholderObject->SetPosition(3.0f, -0.25f, 0.0f);
             data.m_pBoulderPlaceholderObject->SetScale(0.75f, 0.75f, 0.75f);
 
             data.m_pBoulderPlaceholderMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pBoulderPlaceholderObject);
@@ -1296,6 +1356,27 @@ namespace Game::GameModes
             else
             {
                 NORVES_LOG_INFO("Rendering3DTest", "Boulder model async load started: %s", modelPath.c_str());
+            }
+
+            // 小屋（Scripts/ConvertObjToGltf.py で OBJ から変換した glTF）。cooked モデルの計測では読み込まない。
+            if (!data.m_bUseCookedModel)
+            {
+                auto cottageState = MakeShared<BoulderAsyncState>();
+                data.m_CottageAsyncState = cottageState;
+                data.m_CottageLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
+                    String("Assets/Models/Cottage_Clean/Cottage_Clean.gltf"),
+                    modelLoadContext,
+                    [cottageState](ModelHandle handle)
+                    {
+                        cottageState->m_Handle = handle;
+                        cottageState->m_bLoaded = handle.IsValid();
+                        cottageState->m_bCompleted.Store(true);
+                    });
+                if (data.m_CottageLoadRequestId == 0)
+                {
+                    data.m_CottageAsyncState.reset();
+                    NORVES_LOG_ERROR("Rendering3DTest", "小屋のモデルの非同期ロード開始に失敗しました");
+                }
             }
         }
 
@@ -1703,7 +1784,8 @@ namespace Game::GameModes
                     {
                         data.m_pBoulderObject = world.SpawnObject<Entity>();
                         ctx.ScopeRef.TrackObject(data.m_pBoulderObject);
-                        data.m_pBoulderObject->SetPosition(3.0f, 0.0f, 0.0f);
+                        // 岩のモデルの最下点はY=-0.074なので、地面（Y=-1.0）に接するよう下げる。
+                        data.m_pBoulderObject->SetPosition(3.0f, -0.93f, 0.0f);
 
                         data.m_pBoulderMegaGeometryComponent = world.CreateComponent<Component::MegaGeometryComponent>(data.m_pBoulderObject);
                         data.m_pBoulderMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
@@ -1716,6 +1798,49 @@ namespace Game::GameModes
 
                     NORVES_LOG_INFO("Rendering3DTest", "Boulder model loaded and added to World");
                 }
+            }
+        }
+
+        if (data.m_CottageAsyncState &&
+            data.m_CottageAsyncState->m_bCompleted.Load() &&
+            !data.m_CottageAsyncState->m_bCancelled.Load())
+        {
+            auto state = data.m_CottageAsyncState;
+            data.m_CottageAsyncState.reset(); // 一度だけ消費
+            data.m_CottageLoadRequestId = 0;
+
+            auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
+            bool bCottageReady = false;
+            if (state->m_bLoaded)
+            {
+                const auto megaMeshHandle = megaGeometry.GetModelMegaMeshHandle(state->m_Handle);
+                bCottageReady = megaMeshHandle.IsValid();
+                if (!bCottageReady)
+                {
+                    megaGeometry.ReleaseModel(state->m_Handle);
+                }
+            }
+            if (!bCottageReady)
+            {
+                NORVES_LOG_ERROR("Rendering3DTest", "小屋のモデルのロードに失敗しました");
+            }
+            else
+            {
+                const auto megaMeshHandle = megaGeometry.GetModelMegaMeshHandle(state->m_Handle);
+                auto &world = ctx.WorldRef;
+                data.m_CottageModelHandle = state->m_Handle;
+                // 小屋（幅約12.4 m・奥行き約14.7 m・高さ約6.8 m）は球の奥に置き、既定の視点で
+                // 手前の展示物の上に見えるようにする。モデルの最下点はY=-0.016。
+                data.m_pCottageObject = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(data.m_pCottageObject);
+                data.m_pCottageObject->SetPosition(0.0f, -0.984f, -18.0f);
+                data.m_pCottageMegaGeometryComponent =
+                    world.CreateComponent<Component::MegaGeometryComponent>(data.m_pCottageObject);
+                data.m_pCottageMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
+                data.m_pCottageMegaGeometryComponent->SetCastShadow(true);
+                // 消費したモデルはスコープに解放を委ねる。
+                ctx.ScopeRef.TrackModel(data.m_CottageModelHandle);
+                NORVES_LOG_INFO("Rendering3DTest", "Cottage model loaded and added to World");
             }
         }
 
@@ -1799,6 +1924,23 @@ namespace Game::GameModes
             data.m_BoulderLoadRequestId = 0;
         }
 
+        // 小屋の非同期ロードも岩と同じ手順で閉じる。
+        if (data.m_CottageAsyncState)
+        {
+            auto state = data.m_CottageAsyncState;
+            data.m_CottageAsyncState->m_bCancelled.Store(true);
+            data.m_CottageAsyncState.reset();
+            if (state->m_bCompleted.Load() && state->m_bLoaded && state->m_Handle.IsValid())
+            {
+                ctx.RenderResourcesRef.MegaGeometry().ReleaseModel(state->m_Handle);
+            }
+        }
+        if (data.m_CottageLoadRequestId != 0)
+        {
+            Resource::GLTFAnalyzer::CancelModelLoad(data.m_CottageLoadRequestId);
+            data.m_CottageLoadRequestId = 0;
+        }
+
         // 2) 追跡済みリソース（球体/地面/光源球体/ディレクショナル/placeholder/
         //    boulder の各オブジェクト・3 メッシュ・boulder モデル）の解放は
         //    GameModeScope::Cleanup（Leave 直後に StateMachine が呼ぶ）が
@@ -1816,6 +1958,11 @@ namespace Game::GameModes
         data.m_pBoulderPlaceholderMeshComponent = nullptr;
         data.m_pBoulderObject = nullptr;
         data.m_pBoulderMegaGeometryComponent = nullptr;
+        data.m_pCottageObject = nullptr;
+        data.m_pCottageMegaGeometryComponent = nullptr;
+        data.m_CottageModelHandle = ModelHandle::Invalid();
+        data.m_ShowcaseSphereObjects.clear();
+        data.m_ShowcaseMaterials.clear();
         // 空はRenderWorldの設定なので、ほかのモードへ持ち越さないよう無効へ戻す。
         data.m_SkyAtmosphere = MakeDefaultSkyAtmosphereParameters();
         ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);

@@ -190,6 +190,7 @@ namespace NorvesLib::Core::Rendering
         bool CreateGBufferPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr& outPipeline);
         RHI::PipelinePtr SelectGBufferPipeline(DebugViewMode mode) const;
         bool IsMaterialDescriptorCacheEnabled();
+        RHI::TexturePtr GetOrCreateConstantGrayTexture(float value);
         void EnqueueGBufferGeometryPass(ViewRenderContext& context,
                                         Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
                                         const RHI::Viewport &viewport,
@@ -304,6 +305,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 (0,0,0,255) — メタリックデフォルト
         RHI::TexturePtr m_DefaultMidGrayTexture;    // 1x1 中間灰 (128,128,128,255) — ラフネスデフォルト
         RHI::SamplerPtr m_DefaultLinearSampler;
+        // 材質のスカラー値（金属度・粗さ）を表す 1x1 の灰色テクスチャ。8bit の値ごとに初回だけ作る。
+        Container::UnorderedMap<uint32_t, RHI::TexturePtr> m_ConstantGrayTextures;
     };
 
 } // namespace NorvesLib::Core::Rendering

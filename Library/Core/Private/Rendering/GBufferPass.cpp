@@ -242,6 +242,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
         m_DefaultMidGrayTexture.reset();
+        m_ConstantGrayTextures.clear();
         m_DefaultLinearSampler.reset();
         m_UniformAllocator.Shutdown();
         m_SceneView = nullptr;
@@ -587,6 +588,8 @@ namespace NorvesLib::Core::Rendering
             TextureHandle matAO;
             TextureHandle matHeight;
             float matHeightScale = 0.05f;
+            float matMetallicValue = -1.0f;
+            float matRoughnessValue = -1.0f;
             float matEmissiveChromaticityR = 0.0f;
             float matEmissiveChromaticityG = 0.0f;
             float matEmissiveChromaticityB = 0.0f;
@@ -606,6 +609,8 @@ namespace NorvesLib::Core::Rendering
                     matAO = matData->AOTexture;
                     matHeight = matData->HeightTexture;
                     matHeightScale = matData->HeightScale;
+                    matMetallicValue = matData->Metallic;
+                    matRoughnessValue = matData->Roughness;
                     matEmissiveChromaticityR = matData->EmissiveColor[0];
                     matEmissiveChromaticityG = matData->EmissiveColor[1];
                     matEmissiveChromaticityB = matData->EmissiveColor[2];
@@ -627,8 +632,25 @@ namespace NorvesLib::Core::Rendering
 
             RHI::TexturePtr albedoTex = ResolveTexture(matAlbedo, m_DefaultWhiteTexture);
             RHI::TexturePtr normalTex = ResolveTexture(matNormal, m_DefaultFlatNormalTexture);
-            RHI::TexturePtr metallicTex = ResolveTexture(matMetallic, m_DefaultBlackTexture);
-            RHI::TexturePtr roughnessTex = ResolveTexture(matRoughness, m_DefaultMidGrayTexture);
+            // テクスチャが無く材質のスカラー値があるときは、その値の 1x1 テクスチャを既定値の代わりに使う。
+            RHI::TexturePtr metallicDefault = m_DefaultBlackTexture;
+            if (matMetallicValue >= 0.0f && !matMetallic.IsValid())
+            {
+                if (RHI::TexturePtr constantTexture = GetOrCreateConstantGrayTexture(matMetallicValue))
+                {
+                    metallicDefault = constantTexture;
+                }
+            }
+            RHI::TexturePtr roughnessDefault = m_DefaultMidGrayTexture;
+            if (matRoughnessValue >= 0.0f && !matRoughness.IsValid())
+            {
+                if (RHI::TexturePtr constantTexture = GetOrCreateConstantGrayTexture(matRoughnessValue))
+                {
+                    roughnessDefault = constantTexture;
+                }
+            }
+            RHI::TexturePtr metallicTex = ResolveTexture(matMetallic, metallicDefault);
+            RHI::TexturePtr roughnessTex = ResolveTexture(matRoughness, roughnessDefault);
             RHI::TexturePtr aoTex = ResolveTexture(matAO, m_DefaultWhiteTexture);
             RHI::TexturePtr heightTex = ResolveTexture(matHeight, m_DefaultBlackTexture);
 
@@ -718,6 +740,39 @@ namespace NorvesLib::Core::Rendering
         }
 
         EnqueueGBufferGeometryPass(context, gBufferCommands, viewport, scissor, meshes);
+    }
+
+    RHI::TexturePtr GBufferPass::GetOrCreateConstantGrayTexture(float value)
+    {
+        const float clamped = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+        const uint32_t level = static_cast<uint32_t>(clamped * 255.0f + 0.5f);
+        auto found = m_ConstantGrayTextures.find(level);
+        if (found != m_ConstantGrayTextures.end())
+        {
+            return found->second;
+        }
+        if (!m_Device)
+        {
+            return nullptr;
+        }
+
+        RHI::TextureDesc texDesc;
+        texDesc.Width = 1;
+        texDesc.Height = 1;
+        texDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        texDesc.Usage = RHI::ResourceUsage::ShaderRead;
+        texDesc.DebugName = "MaterialConstantGray1x1";
+        RHI::TexturePtr texture = m_Device->CreateTexture(texDesc);
+        if (!texture)
+        {
+            NORVES_LOG_WARNING("GBufferPass", "Failed to create constant material texture level=%u", level);
+            return nullptr;
+        }
+        const uint8_t gray = static_cast<uint8_t>(level);
+        uint8_t pixel[4] = {gray, gray, gray, 255};
+        texture->Update(pixel, 4, 4);
+        m_ConstantGrayTextures[level] = texture;
+        return texture;
     }
 
     bool GBufferPass::IsMaterialDescriptorCacheEnabled()

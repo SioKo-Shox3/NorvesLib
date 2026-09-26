@@ -297,6 +297,11 @@ namespace NorvesLib::Core::Rendering
 
         float HeightScale = 0.05f; ///< POMの高さスケール（0.0～0.1程度が自然）
 
+        /// 金属度・粗さのスカラー値（0～1）。対応するテクスチャが無いときにこの値を使う。
+        /// 負は未指定で、テクスチャが無ければ既定値（金属度0・粗さ0.5）になる。
+        float Metallic = -1.0f;
+        float Roughness = -1.0f;
+
         float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
         float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。
 
@@ -322,6 +327,9 @@ namespace NorvesLib::Core::Rendering
         TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
 
         float HeightScale = 0.05f; ///< POMの高さスケール
+
+        float Metallic = -1.0f;  ///< 金属度のスカラー値。負は未指定（MaterialCreateData::Metallic）
+        float Roughness = -1.0f; ///< 粗さのスカラー値。負は未指定（MaterialCreateData::Roughness）
 
         float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
         float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。
