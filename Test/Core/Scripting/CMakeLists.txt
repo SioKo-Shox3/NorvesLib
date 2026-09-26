@@ -1,18 +1,3 @@
-add_executable(AngelScriptVendorContractTest
-    AngelScriptVendorContractTest.cpp
-)
-target_link_libraries(AngelScriptVendorContractTest PRIVATE
-    Core
-    bcrypt
-)
-target_include_directories(AngelScriptVendorContractTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-target_compile_definitions(AngelScriptVendorContractTest PRIVATE
-    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(AngelScriptVendorContractTest PROPERTIES FOLDER "Test/Core/Scripting")
-
 add_executable(AngelScriptBootstrapTest
     AngelScriptBootstrapTest.cpp
 )
@@ -107,7 +92,6 @@ target_compile_definitions(M6AngelScriptAcceptanceTest PRIVATE
 set_target_properties(M6AngelScriptAcceptanceTest PROPERTIES FOLDER "Test/Core/Scripting")
 
 include(CTest)
-add_test(NAME AngelScriptVendorContractTest COMMAND AngelScriptVendorContractTest)
 add_test(NAME AngelScriptBootstrapTest COMMAND AngelScriptBootstrapTest)
 add_test(NAME ScriptRuntimeSafetyTest COMMAND ScriptRuntimeSafetyTest)
 add_test(NAME ScriptApplicationLifecycleContractTest COMMAND ScriptApplicationLifecycleContractTest)

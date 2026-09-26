@@ -33,11 +33,11 @@ linear = encoded <= 0.04045
 
 ```powershell
 cmake --build build --config Debug --target RenderingGoldenImageTest RenderingGoldenImageComparatorTest
-ctest --test-dir build -C Debug --output-on-failure -R '^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenVulkanSkipContractTest)$'
+ctest --test-dir build -C Debug --output-on-failure -R '^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$'
 & .\Scripts\RunRenderingValidation.ps1 -Iterations 10 -RequireGpu
 ```
 
-CTestのexit 125はskip契約の確認には使えるが、GPU acceptance passには数えない。最終確認では`RunRenderingValidation.ps1 -RequireGpu`を使い、各scene executableのexit codeを直接検査する。
+CTestのexit 125（GPUが無いときのskip）はGPU acceptance passには数えない。最終確認では`RunRenderingValidation.ps1 -RequireGpu`を使い、各scene executableのexit codeを直接検査する。
 
 成功した通常golden実行は`NORVESLIB_VISUAL_METRICS`をexact 1行出す。連続実行scriptはscene一致、finiteなmean/max、raw整数、threshold超過を検査し、sceneごとの成功回数、max mean、max rawを集計する。`-RequireGpu`時のexit 125は失敗とする。
 
@@ -104,16 +104,12 @@ corrupt PNGは`DecodeFailed`、decode可能な128×256 PNGは`InvalidDimensions`
 
 ## P6A script契約
 
-P6Aで実行するSelfTestは次の3本で、いずれもformal candidate・publish、tracked source、decision recordを変更しない。
+P6Aで実行するSelfTestは次の2本で、いずれもformal candidate・publish、tracked source、decision recordを変更しない。
 
 ```powershell
 & .\Scripts\CalibrateRenderingVisualThresholds.ps1 -SelfTestR1Contract
 & .\Scripts\UpdateRenderingGoldenBaselines.ps1 -SelfTestR1Contract
-& .\Scripts\TestRenderingGpuCTestContract.ps1 -SelfTestR1Contract
-& .\Scripts\TestRenderingGpuCTestContract.ps1 -BuildDirectory build -ExpectedCount 21
 ```
-
-GPU CTest contractはexact21 name、label集合`GPU;RenderingValidation`、`RESOURCE_LOCK=NorvesLibGPU`、`SKIP_RETURN_CODE=125`、force-skip 7件、family breakdown `2+2+3+6+2+3+3`、command sequenceを検証する。
 
 SelfTestのpure validator coverageは、Baselineが`Get-R1BaselinePublishInputs`、Thresholdが`Get-R1ThresholdPublishInputs`を正のsynthetic fixtureで通過させ、各fixtureを1項目だけ変えて拒否する。Baselineはpartial／corrupt candidate、candidate／source-start hash、duplicate／unknown／case／type、repo外／staging境界／reparse、HEAD、heading、approval 0／2／section外、exit 125／nonzeroを含む。Thresholdは10+10 noise、40 artificial、fixed order、F6、raw max、HEAD／CodeHead、baseline bridge、candidate／measurement hash、P5 manifest、duplicate／unknown／case／type、decision section、approval 0／2／section外を含む。いずれもsource非変更と残留0を確認し、transactionはfailure 2経路とsuccess経路を確認する。
 

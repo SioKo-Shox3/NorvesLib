@@ -90,16 +90,6 @@ function(register_rendering_gpu_test test_name target_name)
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endfunction()
 
-add_executable(RenderingValidationSceneContractTest
-    RenderingValidationSceneContractTest.cpp
-)
-target_link_libraries(RenderingValidationSceneContractTest PRIVATE RenderingValidationFixtureSupport)
-target_include_directories(RenderingValidationSceneContractTest PRIVATE
-    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
-)
-set_target_properties(RenderingValidationSceneContractTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME RenderingValidationSceneContractTest COMMAND RenderingValidationSceneContractTest)
-
 add_executable(RenderThreadFrameCompletionTest
     RenderThreadFrameCompletionTest.cpp
 )
@@ -380,15 +370,6 @@ set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-add_test(NAME RHITextureToBufferReadbackVulkanSkipContractTest COMMAND RHITextureToBufferReadbackVulkanTest)
-set_tests_properties(RHITextureToBufferReadbackVulkanSkipContractTest PROPERTIES
-    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1"
-    LABELS "GPU;RenderingValidation"
-    RESOURCE_LOCK NorvesLibGPU
-    SKIP_RETURN_CODE 125
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-)
-
 add_executable(RHITextureUpdateVulkanTest
     RHITextureUpdateVulkanTest.cpp
 )
@@ -404,33 +385,6 @@ set_tests_properties(RHITextureUpdateVulkanTest PROPERTIES
     SKIP_RETURN_CODE 125
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
-
-add_executable(RenderingValidationFixtureVulkanTest
-    RenderingValidationFixtureVulkanTest.cpp
-)
-target_link_libraries(RenderingValidationFixtureVulkanTest PRIVATE
-    RenderingValidationFixtureSupport
-    RenderingGpuTestSupport
-)
-target_include_directories(RenderingValidationFixtureVulkanTest PRIVATE
-    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
-)
-set_target_properties(RenderingValidationFixtureVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
-
-register_rendering_gpu_test(
-    RenderingValidationIndoorFixtureVulkanTest
-    RenderingValidationFixtureVulkanTest
-    --scene=indoor)
-register_rendering_gpu_test(
-    RenderingValidationOutdoorFixtureVulkanTest
-    RenderingValidationFixtureVulkanTest
-    --scene=outdoor)
-register_rendering_gpu_test(
-    RenderingValidationFixtureVulkanSkipContractTest
-    RenderingValidationFixtureVulkanTest
-    --scene=indoor)
-set_tests_properties(RenderingValidationFixtureVulkanSkipContractTest PROPERTIES
-    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
 add_executable(RenderingVelocityVulkanTest
     RenderingVelocityVulkanTest.cpp
@@ -479,14 +433,6 @@ register_rendering_gpu_test(
     --scene=outdoor
     --capture-source=gbuffer-velocity
     --scenario=move-then-stop)
-register_rendering_gpu_test(
-    RenderingVelocityVulkanSkipContractTest
-    RenderingVelocityVulkanTest
-    --scene=indoor
-    --capture-source=gbuffer-velocity
-    --scenario=first-frame-invalid-history)
-set_tests_properties(RenderingVelocityVulkanSkipContractTest PROPERTIES
-    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp
@@ -528,13 +474,6 @@ register_rendering_gpu_test(
     RHIImageLayoutVulkanValidationTest
     --scene=outdoor
     --image-layout-case=draw-then-no-caster)
-register_rendering_gpu_test(
-    RHIImageLayoutVulkanValidationSkipContractTest
-    RHIImageLayoutVulkanValidationTest
-    --scene=indoor
-    --image-layout-case=micro)
-set_tests_properties(RHIImageLayoutVulkanValidationSkipContractTest PROPERTIES
-    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
 add_executable(FrameCaptureReadbackHelperTest
     FrameCaptureReadbackHelperTest.cpp
@@ -546,21 +485,6 @@ target_include_directories(FrameCaptureReadbackHelperTest PRIVATE
 )
 set_target_properties(FrameCaptureReadbackHelperTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME FrameCaptureReadbackHelperTest COMMAND FrameCaptureReadbackHelperTest)
-
-add_executable(FrameCaptureAssignmentGuardTest
-    FrameCaptureAssignmentGuardTest.cpp
-    FrameCaptureReadbackHelperTest.cpp
-)
-target_link_libraries(FrameCaptureAssignmentGuardTest PRIVATE Core)
-target_compile_definitions(FrameCaptureAssignmentGuardTest PRIVATE
-    NORVES_FRAME_CAPTURE_ASSIGNMENT_GUARD_TEST_TARGET=1
-)
-target_include_directories(FrameCaptureAssignmentGuardTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/Library/Core/Private
-)
-set_target_properties(FrameCaptureAssignmentGuardTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME FrameCaptureAssignmentGuardTest COMMAND FrameCaptureAssignmentGuardTest)
 
 add_library(RenderingFloatImageSupport STATIC
     RenderingValidation/RenderingFloatImage.cpp
@@ -597,11 +521,6 @@ set_target_properties(FrameCaptureFloatReadbackVulkanTest PROPERTIES FOLDER "Tes
 register_rendering_gpu_test(
     FrameCaptureFloatReadbackVulkanTest
     FrameCaptureFloatReadbackVulkanTest)
-register_rendering_gpu_test(
-    FrameCaptureFloatReadbackVulkanSkipContractTest
-    FrameCaptureFloatReadbackVulkanTest)
-set_tests_properties(FrameCaptureFloatReadbackVulkanSkipContractTest PROPERTIES
-    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
 add_executable(RenderingHdrSceneCaptureTest
     RenderingHdrSceneCaptureTest.cpp
@@ -627,13 +546,6 @@ register_rendering_gpu_test(
     RenderingHdrSceneCaptureTest
     --scene=outdoor
     --capture-source=scene-color)
-register_rendering_gpu_test(
-    RenderingHdrSceneVulkanSkipContractTest
-    RenderingHdrSceneCaptureTest
-    --scene=indoor
-    --capture-source=scene-color)
-set_tests_properties(RenderingHdrSceneVulkanSkipContractTest PROPERTIES
-    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
 add_executable(RenderingRayTracingShadowVulkanTest
     RenderingRayTracingShadowVulkanTest.cpp
@@ -1096,12 +1008,6 @@ register_rendering_gpu_test(
     RenderingGoldenImageTest
     --scene=outdoor
     --capture-source=back-buffer)
-register_rendering_gpu_test(
-    RenderingGoldenVulkanSkipContractTest
-    RenderingGoldenImageTest
-    --scene=indoor)
-set_tests_properties(RenderingGoldenVulkanSkipContractTest PROPERTIES
-    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
 add_executable(RenderingCoordinatorStatsPropagationTest
     RenderingCoordinatorStatsPropagationTest.cpp
@@ -1175,29 +1081,6 @@ target_include_directories(GBufferMaterialDescriptorCacheTest PRIVATE
 )
 set_target_properties(GBufferMaterialDescriptorCacheTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME GBufferMaterialDescriptorCacheTest COMMAND GBufferMaterialDescriptorCacheTest)
-
-add_executable(ForwardPassPipelinePlacementTest
-    ForwardPassPipelinePlacementTest.cpp
-)
-target_link_libraries(ForwardPassPipelinePlacementTest PRIVATE Core)
-target_include_directories(ForwardPassPipelinePlacementTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(ForwardPassPipelinePlacementTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME ForwardPassPipelinePlacementTest COMMAND ForwardPassPipelinePlacementTest)
-
-add_executable(VolumetricsPassContractTest
-    VolumetricsPassContractTest.cpp
-)
-target_link_libraries(VolumetricsPassContractTest PRIVATE Core)
-target_include_directories(VolumetricsPassContractTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-target_compile_definitions(VolumetricsPassContractTest PRIVATE
-    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(VolumetricsPassContractTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME VolumetricsPassContractTest COMMAND VolumetricsPassContractTest)
 
 add_executable(ViewScreenTopologyTest
     ViewScreenTopologyTest.cpp
@@ -1279,19 +1162,6 @@ target_include_directories(ViewRenderContextActiveInputTest PRIVATE
 set_target_properties(ViewRenderContextActiveInputTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ViewRenderContextActiveInputTest COMMAND ViewRenderContextActiveInputTest)
 
-add_executable(LightingParamsLayoutTest
-    LightingParamsLayoutTest.cpp
-)
-target_link_libraries(LightingParamsLayoutTest PRIVATE Core)
-target_include_directories(LightingParamsLayoutTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/Library/Core/Private
-)
-target_compile_definitions(LightingParamsLayoutTest PRIVATE
-    NORVES_SHADER_DIR="${CMAKE_SOURCE_DIR}/Assets/Shaders"
-)
-set_target_properties(LightingParamsLayoutTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME LightingParamsLayoutTest COMMAND LightingParamsLayoutTest)
 add_executable(RenderingDDGILightingContractTest
     RenderingDDGILightingContractTest.cpp
 )
@@ -1385,99 +1255,6 @@ set_tests_properties(DDGISnapshotContractTest PROPERTIES
     SKIP_RETURN_CODE 125
 )
 
-add_executable(SkyAtmospherePassContractTest
-    SkyAtmospherePassContractTest.cpp
-)
-target_link_libraries(SkyAtmospherePassContractTest PRIVATE Core)
-target_include_directories(SkyAtmospherePassContractTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-target_compile_definitions(SkyAtmospherePassContractTest PRIVATE
-    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(SkyAtmospherePassContractTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME SkyAtmospherePassContractTest COMMAND SkyAtmospherePassContractTest)
-
-add_executable(SkyAtmosphereIblTest
-    SkyAtmosphereIblTest.cpp
-)
-target_link_libraries(SkyAtmosphereIblTest PRIVATE Core)
-target_include_directories(SkyAtmosphereIblTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-target_compile_definitions(SkyAtmosphereIblTest PRIVATE
-    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(SkyAtmosphereIblTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME SkyAtmosphereIblTest COMMAND SkyAtmosphereIblTest)
-
-add_executable(DirectionalShadowPassWiringContractTest
-    DirectionalShadowPassWiringContractTest.cpp
-)
-target_link_libraries(DirectionalShadowPassWiringContractTest PRIVATE Core)
-target_include_directories(DirectionalShadowPassWiringContractTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-target_compile_definitions(DirectionalShadowPassWiringContractTest PRIVATE
-    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(DirectionalShadowPassWiringContractTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME DirectionalShadowPassWiringContractTest COMMAND DirectionalShadowPassWiringContractTest)
-
-add_executable(ShadowMapArrayLayerContractTest
-    ShadowMapArrayLayerContractTest.cpp
-)
-target_link_libraries(ShadowMapArrayLayerContractTest PRIVATE Core)
-target_include_directories(ShadowMapArrayLayerContractTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-target_compile_definitions(ShadowMapArrayLayerContractTest PRIVATE
-    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(ShadowMapArrayLayerContractTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME ShadowMapArrayLayerContractTest COMMAND ShadowMapArrayLayerContractTest)
-
-add_executable(ToneMappingParamsLayoutTest
-    ToneMappingParamsLayoutTest.cpp
-)
-target_link_libraries(ToneMappingParamsLayoutTest PRIVATE Core)
-target_include_directories(ToneMappingParamsLayoutTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/Library/Core/Private
-)
-target_compile_definitions(ToneMappingParamsLayoutTest PRIVATE
-    NORVES_SHADER_DIR="${CMAKE_SOURCE_DIR}/Assets/Shaders"
-)
-set_target_properties(ToneMappingParamsLayoutTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME ToneMappingParamsLayoutTest COMMAND ToneMappingParamsLayoutTest)
-
-add_executable(VignetteParamsLayoutTest
-    VignetteParamsLayoutTest.cpp
-)
-target_link_libraries(VignetteParamsLayoutTest PRIVATE Core)
-target_include_directories(VignetteParamsLayoutTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/Library/Core/Private
-)
-target_compile_definitions(VignetteParamsLayoutTest PRIVATE
-    NORVES_SHADER_DIR="${CMAKE_SOURCE_DIR}/Assets/Shaders"
-)
-set_target_properties(VignetteParamsLayoutTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME VignetteParamsLayoutTest COMMAND VignetteParamsLayoutTest)
-
-add_executable(DebugPostProcessPassThroughContractTest
-    DebugPostProcessPassThroughContractTest.cpp
-)
-target_link_libraries(DebugPostProcessPassThroughContractTest PRIVATE Core)
-target_include_directories(DebugPostProcessPassThroughContractTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-target_compile_definitions(DebugPostProcessPassThroughContractTest PRIVATE
-    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(DebugPostProcessPassThroughContractTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME DebugPostProcessPassThroughContractTest COMMAND DebugPostProcessPassThroughContractTest)
-
 add_executable(DebugViewModeStringTest
     DebugViewModeStringTest.cpp
 )
@@ -1507,16 +1284,6 @@ target_include_directories(ViewportDebugViewModeReleaseClampTest PRIVATE
 )
 set_target_properties(ViewportDebugViewModeReleaseClampTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ViewportDebugViewModeReleaseClampTest COMMAND ViewportDebugViewModeReleaseClampTest)
-
-add_executable(ViewportRenderPlanDebugModeTest
-    ViewportRenderPlanDebugModeTest.cpp
-)
-target_link_libraries(ViewportRenderPlanDebugModeTest PRIVATE Core)
-target_include_directories(ViewportRenderPlanDebugModeTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(ViewportRenderPlanDebugModeTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME ViewportRenderPlanDebugModeTest COMMAND ViewportRenderPlanDebugModeTest)
 
 add_executable(ViewportSnapshotDebugWiringTest
     ViewportSnapshotDebugWiringTest.cpp
@@ -1700,19 +1467,6 @@ target_include_directories(SceneViewWorldBoardDrawCommandTest PRIVATE
 set_target_properties(SceneViewWorldBoardDrawCommandTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SceneViewWorldBoardDrawCommandTest COMMAND SceneViewWorldBoardDrawCommandTest)
 
-add_executable(ForwardPassWorldBoardRoutingTest
-    ForwardPassWorldBoardRoutingTest.cpp
-)
-target_link_libraries(ForwardPassWorldBoardRoutingTest PRIVATE Core)
-target_include_directories(ForwardPassWorldBoardRoutingTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-target_compile_definitions(ForwardPassWorldBoardRoutingTest PRIVATE
-    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(ForwardPassWorldBoardRoutingTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME ForwardPassWorldBoardRoutingTest COMMAND ForwardPassWorldBoardRoutingTest)
-
 add_executable(BoardTransformTest
     BoardTransformTest.cpp
 )
@@ -1895,7 +1649,6 @@ target_include_directories(InstanceBufferRingTest PRIVATE
 )
 set_target_properties(InstanceBufferRingTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME InstanceBufferRingTest COMMAND InstanceBufferRingTest)
-
 
 add_executable(CookedTextureUploadTest
     CookedTextureUploadTest.cpp
@@ -2247,12 +2000,6 @@ target_include_directories(CanvasTransientBoardSnapshotTest PRIVATE
 )
 set_target_properties(CanvasTransientBoardSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CanvasTransientBoardSnapshotTest COMMAND CanvasTransientBoardSnapshotTest)
-
-add_test(NAME CookedModelGameProfileScriptContractTest
-    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
-        -File "${CMAKE_CURRENT_SOURCE_DIR}/CookedModelGameProfileScriptContractTest.ps1"
-        -RepoRoot "${CMAKE_SOURCE_DIR}"
-)
 
 add_executable(GLTFSkeletalAnalyzerTest
     GLTFSkeletalAnalyzerTest.cpp

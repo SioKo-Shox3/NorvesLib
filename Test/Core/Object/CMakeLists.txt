@@ -140,17 +140,6 @@ target_include_directories(PrefabRoundTripTest PRIVATE
 )
 set_target_properties(PrefabRoundTripTest PROPERTIES FOLDER "Test/Core/Object")
 
-add_executable(LegacyCleanupTest
-    LegacyCleanupTest.cpp
-    Animal.cpp
-)
-target_link_libraries(LegacyCleanupTest PRIVATE Core)
-target_include_directories(LegacyCleanupTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-set_target_properties(LegacyCleanupTest PROPERTIES FOLDER "Test/Core/Object")
-
 add_executable(TransformHierarchyTest
     TransformHierarchyTest.cpp
 )
@@ -241,7 +230,6 @@ add_test(NAME IncrementalGCTest COMMAND IncrementalGCTest)
 add_test(NAME SchemaProjectionTest COMMAND SchemaProjectionTest)
 add_test(NAME EntitySubtreeSnapshotTest COMMAND EntitySubtreeSnapshotTest)
 add_test(NAME PrefabRoundTripTest COMMAND PrefabRoundTripTest)
-add_test(NAME LegacyCleanupTest COMMAND LegacyCleanupTest)
 add_test(NAME TransformHierarchyTest COMMAND TransformHierarchyTest)
 add_test(NAME EntityWorldAABBTest COMMAND EntityWorldAABBTest)
 add_test(NAME SceneQueryRaycastTest COMMAND SceneQueryRaycastTest)

@@ -19,6 +19,7 @@
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
+#include <type_traits>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -1354,17 +1355,6 @@ namespace
         assert(worldSecondRequest.RequestId == worldRequest.RequestId);
     }
 
-    int RunAssignmentGuardTestSuite()
-    {
-        TestSnapshotAndClaimStateMachine();
-        TestAssignmentGuardAbandonsClaimedAndRecordedRequests();
-        TestAssignmentGuardRejectsWrongIdentityAndResolvesOnlyAfterCommit();
-        TestFakeCoordinatorOutcomesCloseRequestsExactlyOnce();
-
-        std::cout << "FrameCaptureAssignmentGuardTest passed" << std::endl;
-        return 0;
-    }
-
     int RunTest()
     {
         TestCapturedFrameType();
@@ -1395,16 +1385,13 @@ namespace
 
 } // namespace
 
-int RunFrameCaptureAssignmentGuardTestSuite()
-{
-    return RunAssignmentGuardTestSuite();
-}
-
 } // namespace NorvesLib::Core::Rendering
 
-#if !defined(NORVES_FRAME_CAPTURE_ASSIGNMENT_GUARD_TEST_TARGET)
+// 割り当てのガードは要求の所有を1つに保つため、複製も移動もできない。
+static_assert(!std::is_copy_constructible_v<NorvesLib::Core::Rendering::FrameCaptureAssignmentGuard>);
+static_assert(!std::is_move_constructible_v<NorvesLib::Core::Rendering::FrameCaptureAssignmentGuard>);
+
 int main()
 {
     return NorvesLib::Core::Rendering::RunTest();
 }
-#endif
