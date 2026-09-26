@@ -1,4 +1,4 @@
-#include "Rendering/MegaGeometryResourceStore.h"
+﻿#include "Rendering/MegaGeometryResourceStore.h"
 
 #include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
 #include "Rendering/MaterialTypes.h"
@@ -6,6 +6,7 @@
 #include "RHI/IDevice.h"
 #include "Logging/LogMacros.h"
 
+#include <algorithm>
 #include <chrono>
 #include <utility>
 
@@ -233,6 +234,31 @@ namespace NorvesLib::Core::Rendering
         gpuData.TotalBounds = uploadTotalBounds;
         gpuData.Material = canonicalMaterial;
         gpuData.DebugName = createInfo.DebugName;
+        // LOD0のクラスタは統合インデックスの先頭に並ぶ。頂点の基点が全て0で先頭から隙間なく
+        // 並んでいれば、その範囲を1回の描画で描ける（点光源の影で使う）。
+        uint64_t lod0IndexCount = 0;
+        uint64_t lod0IndexSum = 0;
+        bool bLod0DrawableAsOneRange = true;
+        for (const auto &cluster : *uploadClusters)
+        {
+            if (cluster.LODLevel != 0u)
+            {
+                continue;
+            }
+            if (cluster.VertexOffset != 0)
+            {
+                bLod0DrawableAsOneRange = false;
+                break;
+            }
+            lod0IndexCount = std::max<uint64_t>(lod0IndexCount,
+                                                static_cast<uint64_t>(cluster.IndexOffset) + cluster.IndexCount);
+            lod0IndexSum += cluster.IndexCount;
+        }
+        gpuData.ShadowIndexCount =
+            bLod0DrawableAsOneRange && lod0IndexCount > 0u && lod0IndexCount == lod0IndexSum &&
+                    lod0IndexCount <= uploadIndexCount
+                ? static_cast<uint32_t>(lod0IndexCount)
+                : 0u;
 
         {
             Thread::ScopedLock lock(m_Mutex);

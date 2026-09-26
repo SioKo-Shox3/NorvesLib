@@ -4331,6 +4331,11 @@ namespace NorvesLib::Core::Rendering
                 9u,
                 bValidationConstantIblAvailable ? 1.0f : m_Settings.IBLIntensity,
                 params.bIBLEnabled != 0u);
+            // 透明物も同じキューブの番号で点光源の影を引く（光源バッファと同じフレームの配列）。
+            context.PhysicalLighting.PublishPointShadowCubes(
+                m_FramePointShadowCubeTexture ? m_FramePointShadowCubeTexture
+                                              : m_DefaultPointShadowCubeTexture,
+                m_GBufferSampler);
         }
         return true;
     }

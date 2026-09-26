@@ -90,6 +90,9 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr ShadowMapFallbackSampler;
         RHI::TexturePtr RayTracingShadowVisibilityTexture;
         bool bRayTracingShadowPublished = false;
+        /** @brief 点光源のキューブシャドウ（このフレームのキューブ配列、無ければLightingPassの既定値） */
+        RHI::TexturePtr PointShadowCubeTexture;
+        RHI::SamplerPtr PointShadowCubeSampler;
         DirectionalShadowShaderValues DirectionalShadow;
         CascadedDirectionalShadowShaderValues CascadedShadow;
 
@@ -135,6 +138,8 @@ namespace NorvesLib::Core::Rendering
             ShadowMapFallbackSampler.reset();
             RayTracingShadowVisibilityTexture.reset();
             bRayTracingShadowPublished = false;
+            PointShadowCubeTexture.reset();
+            PointShadowCubeSampler.reset();
             LightBuffer.reset();
             LogicalLightCount = 0;
             LightBufferSizeBytes = 0;
@@ -205,6 +210,14 @@ namespace NorvesLib::Core::Rendering
         {
             ShadowMapFallbackTexture = texture;
             ShadowMapFallbackSampler = sampler;
+        }
+
+        /** @brief 光源バッファのattenuation.w（キューブの番号+1）で引くキューブ配列を公開する */
+        void PublishPointShadowCubes(const RHI::TexturePtr& cubeArray,
+                                     const RHI::SamplerPtr& sampler)
+        {
+            PointShadowCubeTexture = cubeArray;
+            PointShadowCubeSampler = sampler;
         }
 
         void PublishRayTracingShadow(const RHI::TexturePtr& visibilityTexture,

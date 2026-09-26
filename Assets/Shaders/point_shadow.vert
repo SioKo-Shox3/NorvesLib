@@ -6,12 +6,15 @@
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal; // 頂点レイアウト一致のため（未使用）
 
-// 1面ぶんの行列と光源の位置・範囲の逆数（ShadowMapPassのPointShadowFaceUBOに対応）
+// 1面ぶんの行列と光源の位置・範囲の逆数（ShadowMapPassのPointShadowFaceUBOに対応）。
+// worldSource.x=1の描画（MegaGeometry）はインスタンスではなくworldの行列で置く。
 layout(set = 0, binding = 0) uniform PointShadowFace
 {
     mat4 lightView;
     mat4 lightProjection;
     vec4 lightPositionAndInvRange;
+    mat4 world;
+    vec4 worldSource;
 } pointShadowFace;
 
 struct InstanceData
@@ -32,7 +35,9 @@ layout(location = 0) out vec3 outWorldPosition;
 
 void main()
 {
-    vec4 worldPosition = instances[gl_InstanceIndex].world * vec4(inPosition, 1.0);
+    mat4 world = pointShadowFace.worldSource.x > 0.5 ? pointShadowFace.world
+                                                     : instances[gl_InstanceIndex].world;
+    vec4 worldPosition = world * vec4(inPosition, 1.0);
     outWorldPosition = worldPosition.xyz;
     gl_Position = pointShadowFace.lightProjection * pointShadowFace.lightView * worldPosition;
 }

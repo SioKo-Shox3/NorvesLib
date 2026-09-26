@@ -798,7 +798,8 @@ namespace Game::GameModes
             data.m_pPointLightComponent->SetIntensity(1600.0f);
             data.m_pPointLightComponent->SetRange(10.0f);
             data.m_pPointLightComponent->SetLightVisible(true);
-            data.m_pPointLightComponent->SetCastShadows(false);
+            // キューブシャドウで球・岩・材質見本の球の影を地面へ落とす。
+            data.m_pPointLightComponent->SetCastShadows(true);
             LOG_INFO("Light sphere Entity created and added to World");
 
             // --- 材質見本の球の列 ---

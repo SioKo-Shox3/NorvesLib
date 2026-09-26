@@ -53,11 +53,14 @@ layout(set = 0, binding = 10) uniform sampler2D environmentRadiance;
 layout(set = 0, binding = 11) uniform sampler2D diffuseIrradiance;
 layout(set = 0, binding = 12) uniform sampler2D prefilteredSpecular;
 layout(set = 0, binding = 13) uniform sampler2D dfgLut;
+// 点光源のキューブシャドウ（LightingPassと同じキューブ配列。光源バッファのattenuation.wで引く）
+layout(set = 0, binding = 14) uniform samplerCubeArray pointShadowCubes;
 
 layout(location = 0) out vec4 outColor;
 
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
+#include "Common/PointShadow.glsl"
 
 vec2 EquirectangularUV(vec3 direction)
 {
@@ -280,6 +283,16 @@ void main()
         if (lightType < 0.5 && light.attenuation.z > 0.5 && mvp.bShadowEnabled != 0u)
         {
             radiance *= CalculateShadow(fragWorldPos);
+        }
+        // 点光源のキューブシャドウはattenuation.w=キューブの番号+1の灯だけへ掛ける。
+        else if (lightType > 0.5 && lightType < 1.5 && light.attenuation.w > 0.5)
+        {
+            radiance *= SamplePointShadow(pointShadowCubes,
+                                          light.attenuation.w - 1.0,
+                                          light.position.xyz,
+                                          light.attenuation.x,
+                                          fragWorldPos,
+                                          normal);
         }
         direct += (diffuseBRDF + specularBRDF) * radiance;
     }

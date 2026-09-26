@@ -170,6 +170,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultFlatNormalTexture;
         RHI::TexturePtr m_DefaultBlackTexture;
         RHI::TexturePtr m_DefaultShadowMapArrayTexture;
+        /** @brief 点光源のキューブシャドウの既定値（距離1のキューブ配列） */
+        RHI::TexturePtr m_DefaultPointShadowCubeTexture;
         RHI::TexturePtr m_DefaultMidGrayTexture;
         RHI::SamplerPtr m_DefaultLinearSampler;
 

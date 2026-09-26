@@ -90,6 +90,7 @@ layout(location = 0) out vec4 outColor;
 // ========================================
 
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/PointShadow.glsl"
 // probeの向きの重み（wrap shading）の下限（RTXGIと同じ0.2）。面の裏側のprobeも少し使い、1つのprobeに
 // 重みが集まって斑点になるのを防ぐ。
 const float DDGI_WRAP_WEIGHT_FLOOR = 0.2;
@@ -1164,6 +1165,18 @@ void main()
             shadow = params.shadowPadding0 != 0u
                          ? texture(rayTracingShadowVisibility, fragUV).r
                          : CalculateShadow(worldPos, N);
+        }
+        // 点光源のキューブシャドウ（attenuation.w=キューブの番号+1。0の灯は影を掛けない）
+        else if ((!bValidationLambert || bValidationHardShadow) &&
+                 lightType > 0.5 && lightType < 1.5 && light.attenuation.w > 0.5 &&
+                 NdotL > 0.0)
+        {
+            shadow = SamplePointShadow(pointShadowCubes,
+                                       light.attenuation.w - 1.0,
+                                       light.position.xyz,
+                                       light.attenuation.x,
+                                       worldPos,
+                                       N);
         }
 
         vec3 radiance = lightColor * NdotL * attenuation * shadow;
