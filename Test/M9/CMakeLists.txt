@@ -6,3 +6,5 @@
         -BuildDirectory "${CMAKE_BINARY_DIR}"
 )
 set_tests_properties(M9WorldAcceptanceTest PROPERTIES TIMEOUT 300)
+# GPU・音声デバイス・Game.exe を使う受入れの確認なので、常設の段から外す。
+set_property(TEST M9WorldAcceptanceTest APPEND PROPERTY LABELS Reference)

@@ -1543,6 +1543,8 @@ if(NORVES_BRIDGE_SDK_DIR)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetManifestReloadBridgeLoopback.cmake.in"
     )
     set_tests_properties(AssetManifestReloadBridgeLoopbackTest PROPERTIES TIMEOUT 600)
+    # 外部のエディタと cargo が要るので、常設の段から外す。
+    set_property(TEST AssetManifestReloadBridgeLoopbackTest APPEND PROPERTY LABELS Reference)
 endif()
 
 add_test(NAME ModelResourcesAssetLoadProfileContractTest COMMAND TextureResourcesAssetLoadProfileContractTest --test=ModelResourcesAssetLoadProfileContractTest)
@@ -1792,7 +1794,8 @@ target_include_directories(WorldCameraSyncTest PRIVATE
 set_target_properties(WorldCameraSyncTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME WorldCameraSyncTest COMMAND WorldCameraSyncTest)
 
-# 実行に数分から1時間以上かかるPT参照比較と連番の確認。普段は回さず、節目にだけ `ctest -L Reference` で回す。
+# 普段は回さず、節目（受入れ）にだけ `ctest -L Reference` で回すテスト。実行に数分から1時間以上かかる
+# PT参照比較と連番の確認、閾値が決めごとの受入れの記録、参照比較の道具とスクリプトの自己検査。
 set(NORVES_REFERENCE_TESTS
     PathTracingConvergenceVulkanTest
     PathTracingRasterParityVulkanTest
@@ -1802,6 +1805,12 @@ set(NORVES_REFERENCE_TESTS
     R8DepthOfFieldPathTracingReferenceVulkanTest
     R8MotionBlurPathTracingReferenceVulkanTest
     R8SequenceSmokeTest
+    R6RTGIAcceptanceVulkanTest
+    RenderingDDGIVulkanTest
+    RenderingDDGIVulkanDynamicTest
+    RasterPathTracingComparisonTest
+    R8ExrSequenceValidatorTest
+    AssetLoadProfileSummaryContractTest
 )
 foreach(test_name IN LISTS NORVES_REFERENCE_TESTS)
     set_property(TEST ${test_name} APPEND PROPERTY LABELS Reference)
