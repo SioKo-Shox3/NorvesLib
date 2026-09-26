@@ -17,6 +17,7 @@
 #include "Rendering/FXAAPass.h"
 #include "Rendering/UpscalePass.h"
 #include "Rendering/SSRPass.h"
+#include "Rendering/AutoExposurePass.h"
 #include "Rendering/PostProcessStack.h"
 #include "Rendering/NeuralMaterialDecodePass.h"
 #include "Rendering/MegaGeometryPass.h"
@@ -700,7 +701,7 @@ namespace NorvesLib::Core::Rendering
         transparentForwardPass->SetRegisterOutputs(false);
         AddPass(std::move(transparentForwardPass));
 
-        // PostProcessStack: SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA
+        // PostProcessStack: SSR -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA
         auto postProcessStack = MakeUnique<PostProcessStack>();
 
         // SSR（スクリーンスペース反射、HDR空間で適用）
@@ -712,6 +713,9 @@ namespace NorvesLib::Core::Rendering
         ssrSettings.RoughnessCutoff = 0.5f;
         auto ssrPass = MakeUnique<SSRPass>(ssrSettings);
         postProcessStack->AddPass(std::move(ssrPass));
+
+        // AutoExposure（ブルーム前のHDRシーンカラーの輝度ヒストグラムから露出を測る。この段では画面を変えない）
+        postProcessStack->AddPass(MakeUnique<AutoExposurePass>());
 
         // Bloom（ToneMappingの前にHDR空間でブルーム適用）
         BloomSettings bloomSettings;
@@ -752,7 +756,7 @@ namespace NorvesLib::Core::Rendering
         SetPostProcessStack(std::move(postProcessStack));
 
         NORVES_LOG_INFO("SceneView",
-                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
+                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
     }
 
     void SceneView::SetupPathTracingPipeline(uint32_t samplesPerFrame,
@@ -1207,3 +1211,4 @@ namespace NorvesLib::Core::Rendering
 #include "PathTracingPass.inl"
 #include "DepthOfFieldPass.inl"
 #include "MotionBlurPass.inl"
+#include "AutoExposurePass.inl"
