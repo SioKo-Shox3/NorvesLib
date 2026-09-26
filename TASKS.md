@@ -518,6 +518,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - stop-when: （2026-09-26 ユーザー指示: 判断のたびに止めず、推奨の選択肢で最後まで進める）判断が要る場面では、選択肢と推奨をこのタスクのnotesへ1行で記録し、推奨の対処でそのまま進める。閾値の規則と承認済みgoldenは変えず、変えないと通らない差は測定値と分類を既知の限界として記録してタスクを完了にする。ユーザーへは戻さない。比較の入力のPTピンホール像と薄レンズ参照を画素内の一様標本（box）にそろえて取り直す（閾値の規則は不変）。それでも全画素の平均や光源の縁の区画最大がわずかに残る場合は、測定値と差の分類を既知の限界として記録してR8-P4を完了にする。
 - paths: Assets/Shaders/*DepthOfField*, Library/Core/Public/Rendering/*DepthOfField*, Library/Core/Private/Rendering/*DepthOfField*, Library/Core/Private/Rendering/SceneView.cpp, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Component/CameraComponent.h, Library/Core/Private/Component/CameraComponent.cpp, Test/Core/Rendering/R8DepthOfField*, Test/Core/Rendering/RenderingValidation/*, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
 - notes: 取得（PTの3組の中央値と±20%/±40%の変種、約20分）は1反復で1回までにし、shaderやCPU比較の変更は取得済みのダンプに対する`--compare-dumps`だけで評価する（shaderは実行時に読む）。取得をやり直すのは、pass本体やC++の変更で画像が変わるときだけ。差の分類と現状は`blocked/R8-P4.md`。
+- notes: （2026-09-26 ユーザー指示: PCが重くなるため、GPUの取得と長いビルドはユーザーが「今PCを使ってよい」と言った時にまとめて回す。ループの無人実行もしない）実装: 比較入力のbox標本（`91b774b`）と既知の限界の範囲の判定（`7ca5332`。全画素の平均と光源の縁の区画最大に記録値+5%の上限、光源の縁の矩形の外は規則の閾値）。上限の値は中心標本の測定値のままで、box標本の取得の後に測定値へ合わせる。verifyは未実行。
 
 ## R8-P5: ラスタの動きぼけをPTのシャッター参照と比べる
 - status: todo
@@ -526,6 +527,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(R8MotionBlurPathTracingReferenceVulkanTest|RenderingVelocityObjectVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - stop-when: （2026-09-26 ユーザー指示: 判断のたびに止めず、推奨の選択肢で最後まで進める）判断が要る場面では、選択肢と推奨をこのタスクのnotesへ1行で記録し、推奨の対処でそのまま進める。閾値の規則と承認済みgoldenは変えず、変えないと通らない差は測定値と分類を既知の限界として記録してタスクを完了にする。ユーザーへは戻さない。
 - paths: Assets/Shaders/*MotionBlur*, Library/Core/Public/Rendering/*MotionBlur*, Library/Core/Private/Rendering/*MotionBlur*, Library/Core/Private/Rendering/SceneView.cpp, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Test/Core/Rendering/R8MotionBlur*, Test/Core/Rendering/RenderingValidation/*, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: （2026-09-26 ユーザー指示: PCが重くなるため、GPUの取得と長いビルドはユーザーが「今PCを使ってよい」と言った時にまとめて回す。ループの無人実行もしない）実装: `1850803`（pass・比較テスト・動く球の床の影を既知の限界の範囲にする判定）。取得済みダンプ（`build/RenderingValidation/R8MotionBlurPathTracingReferenceRuns`）で平均0.0190（内）、影の矩形の内で画素0.794・区画0.1645。負の対照は画素の閾値が光源の縁で決まるため未検出で、既知の限界として記録する。verifyは未実行。
 
 ## R8-P6: フィルムグレインを既定オフで加える
 - status: todo
@@ -534,6 +536,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(R8FilmGrainVulkanTest|ToneMappingParamsLayoutTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - stop-when: （2026-09-26 ユーザー指示: 判断のたびに止めず、推奨の選択肢で最後まで進める）判断が要る場面では、選択肢と推奨をこのタスクのnotesへ1行で記録し、推奨の対処でそのまま進める。閾値の規則と承認済みgoldenは変えず、変えないと通らない差は測定値と分類を既知の限界として記録してタスクを完了にする。ユーザーへは戻さない。
 - paths: Assets/Shaders/tonemapping.frag, Library/Core/Public/Rendering/ToneMappingPass.h, Library/Core/Private/Rendering/ToneMappingPass.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Test/Core/Rendering/R8FilmGrain*, Test/Core/Rendering/ToneMappingParamsLayoutTest.cpp, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: （2026-09-26 ユーザー指示: PCが重くなるため、GPUの取得と長いビルドはユーザーが「今PCを使ってよい」と言った時にまとめて回す。ループの無人実行もしない）実装: `fce422d`。verifyは未実行。
 
 ## R8-P7: EXR連番の検証exeを作る
 - status: todo
@@ -542,6 +545,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^R8ExrSequenceValidatorTest$"`
 - stop-when: （2026-09-26 ユーザー指示: 判断のたびに止めず、推奨の選択肢で最後まで進める）判断が要る場面では、選択肢と推奨をこのタスクのnotesへ1行で記録し、推奨の対処でそのまま進める。閾値の規則と承認済みgoldenは変えず、変えないと通らない差は測定値と分類を既知の限界として記録してタスクを完了にする。ユーザーへは戻さない。
 - paths: Test/Core/Rendering/R8ExrSequence*, Test/Core/Rendering/RenderingValidation/*, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: （2026-09-26 ユーザー指示: PCが重くなるため、GPUの取得と長いビルドはユーザーが「今PCを使ってよい」と言った時にまとめて回す。ループの無人実行もしない）実装: `31d84e0`（単体テストはCPUだけで動く）。verifyは未実行。
 
 ## R8-P8: 屋内・屋外の決定論的なアニメーションとEXR連番の書き出し、8フレームのCTestを加える
 - status: todo
@@ -551,6 +555,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - stop-when: （2026-09-26 ユーザー指示: 判断のたびに止めず、推奨の選択肢で最後まで進める）判断が要る場面では、選択肢と推奨をこのタスクのnotesへ1行で記録し、推奨の対処でそのまま進める。閾値の規則と承認済みgoldenは変えず、変えないと通らない差は測定値と分類を既知の限界として記録してタスクを完了にする。ユーザーへは戻さない。
 - paths: Test/Core/Rendering/R8Sequence*, Test/Core/Rendering/RenderingValidation/*, Test/Core/Rendering/CMakeLists.txt, Library/Core/Public/Rendering/PathTracingExrOutput.h, Library/Core/Private/Rendering/PathTracingExrOutput.cpp, TASKS.md, PROGRESS.md
 - notes: GameThread→RenderThreadはFramePacket越しだけ。
+- notes: （2026-09-26 ユーザー指示: PCが重くなるため、GPUの取得と長いビルドはユーザーが「今PCを使ってよい」と言った時にまとめて回す。ループの無人実行もしない）実装: `e59e3aa`。verifyは未実行。
 
 ## R8-P9: 屋内の240フレームの連番を1280×720・1024 sppで書き出し、検査する
 - status: todo
@@ -558,6 +563,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RenderR8Sequences.ps1 -Scene indoor`
 - stop-when: （2026-09-26 ユーザー指示: 判断のたびに止めず、推奨の選択肢で最後まで進める）判断が要る場面では、選択肢と推奨をこのタスクのnotesへ1行で記録し、推奨の対処でそのまま進める。閾値の規則と承認済みgoldenは変えず、変えないと通らない差は測定値と分類を既知の限界として記録してタスクを完了にする。ユーザーへは戻さない。1反復で240フレームが書き終わらない場合は、書き出し済みの最後のフレームから続きを書く形で反復をまたいで進める。
 - paths: Scripts/RenderR8Sequences.ps1, TASKS.md, PROGRESS.md
+- notes: （2026-09-26 ユーザー指示: PCが重くなるため、GPUの取得と長いビルドはユーザーが「今PCを使ってよい」と言った時にまとめて回す。ループの無人実行もしない）実装: `4250b21`（`Scripts/RenderR8Sequences.ps1`、欠けたフレームだけを24枚ずつ描き、描画のプロセスはCPUの優先度を下げる）。verifyは未実行。
 
 ## R8-P10: 屋外の240フレームの連番を1280×720・1024 sppで書き出し、検査する
 - status: todo
@@ -565,6 +571,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RenderR8Sequences.ps1 -Scene outdoor`
 - stop-when: （2026-09-26 ユーザー指示: 判断のたびに止めず、推奨の選択肢で最後まで進める）判断が要る場面では、選択肢と推奨をこのタスクのnotesへ1行で記録し、推奨の対処でそのまま進める。閾値の規則と承認済みgoldenは変えず、変えないと通らない差は測定値と分類を既知の限界として記録してタスクを完了にする。ユーザーへは戻さない。1反復で240フレームが書き終わらない場合は、書き出し済みの最後のフレームから続きを書く形で反復をまたいで進める。
 - paths: Scripts/RenderR8Sequences.ps1, TASKS.md, PROGRESS.md
+- notes: （2026-09-26 ユーザー指示: PCが重くなるため、GPUの取得と長いビルドはユーザーが「今PCを使ってよい」と言った時にまとめて回す。ループの無人実行もしない）実装: `4250b21`（R8-P9と同じスクリプト）。verifyは未実行。
 
 ## R8-P11: R8の受入れ記録を確定する
 - status: todo

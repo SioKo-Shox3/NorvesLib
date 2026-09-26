@@ -100,7 +100,7 @@
 - R8-P3-FIX（2026-09-26）: 連番の経路（SequenceFrame≠0）では`ApplyPathTracingSequenceCarry`がRTスナップショットのinstanceを物体ID・メッシュ・描画内番号・部分範囲・出現順の鍵の順へ並べ、customIndexを並びの番号に振り直す。材質texture表・発光instance表・TLASはこの並びから作られるため、同じフレームの中で描画の並びが変わってもPTの幾何署名が変わらず累積が続く。連番でないパケットの並びは変えない。`R8PathTracingSequenceFrameVulkanTest`に、物体P・A・B（IDは並びと一致しない50・40・60）をP,A,B→P,B,Aと並べ替えた2回のdispatchで試料数1→2、固定順の画像とbyte一致を確かめる検査を加えた。
 
 ## In progress
-- R8-P4（blocked、2026-09-26、stop-whenのA→Bを実施後にユーザーへ戻す）: gatherを、中心へ届く標本のうち最も手前のCoCを基準に前景と背景の層へ分ける方式へ作り直し、PTの倍率の拡大をgatherの部分画素の位置で掛けるようにした（別の線形補間で光源の縁がにじんでいた）。比較テストは、薄レンズの光線をピンホールの深度の上でたどって隠れた面を見る画素と、未命中の画素の境界からCoC+1画素以内を、一致画素の画素単位最大と8×8区画最大から外し（21.2%）、除外の外の最も暗い1画素へ平均輝度の4倍を足した負の対照を毎回確かめる。取得済みダンプでFLIP平均0.02634（閾値0.02604、1.1%超過）、除外後の区画最大0.0763（閾値0.0546、天井の光源の縁で除外の対象外）、画素最大0.441（内）。残りは部分画素の縁の位置と、ピンホールに無い面（手前の球の照らされた縁など）。測定と選択肢は`blocked/R8-P4.md`。
+- R8-P4〜P10（2026-09-26）: 実装はコミット済み（`7ca5332` DoFの既知の限界の判定、`1850803` 動きぼけ、`fce422d` フィルムグレイン、`31d84e0` EXR連番の検証exe、`e59e3aa` 連番の書き出しと8フレームの確認、`4250b21` 240フレームのスクリプト）。ユーザーの指示で、GPUの取得と長いビルドはユーザーが「今PCを使ってよい」と言った時にまとめて回すため、ビルドとverifyは未実行。回す順: ビルド（Game・各テスト・R8SequenceRenderer・R8ExrSequenceValidator）→ CPUのテスト（R8ExrSequenceValidatorTest・ToneMappingParamsLayoutTest）→ GPUの短いテスト（R8FilmGrainVulkanTest・golden屋内/屋外・RenderingVelocityObjectVulkanTest）→ R8-P5の比較 → R8-P4の取得（約20分）→ R8SequenceSmokeTest → 240フレームの屋内・屋外。R8-P11は結果がそろってから。
 
 ## Next
 
