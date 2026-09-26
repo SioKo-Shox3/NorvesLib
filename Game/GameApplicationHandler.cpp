@@ -16,6 +16,7 @@
 #include "Core/Public/Rendering/RenderWorld.h"
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -88,6 +89,53 @@ namespace Game
         uint32_t s_Rendering3DTestInstancedMeshCount = 0;
         bool s_bRendering3DTestLayerCompositeSmoke = false;
         bool s_bRendering3DTestPhysicsSmoke = false;
+        // --startup-camera=<yaw>,<pitch>,<arm>: 起動時のカメラ（SpringArm の角度[度]と腕の長さ）。
+        constexpr const TCHAR *kStartupCameraOption = TEXT("--startup-camera=");
+        bool s_bRendering3DTestHasStartupCamera = false;
+        float s_Rendering3DTestStartupCamera[3] = {0.0f, 0.0f, 0.0f};
+
+        /**
+         * @brief "<yaw>,<pitch>,<arm>" を3つの有限の小数として読む。腕の長さは正でなければならない。
+         */
+        bool TryParseStartupCamera(const String &text, float (&outValues)[3])
+        {
+            char buffer[128] = {};
+            if (text.empty() || text.size() >= sizeof(buffer))
+            {
+                return false;
+            }
+            for (size_t i = 0; i < text.size(); ++i)
+            {
+                const TCHAR ch = text[i];
+                if (ch < 0x20 || ch > 0x7E)
+                {
+                    return false;
+                }
+                buffer[i] = static_cast<char>(ch);
+            }
+
+            const char *pCursor = buffer;
+            for (uint32_t component = 0; component < 3u; ++component)
+            {
+                char *pEnd = nullptr;
+                const float value = std::strtof(pCursor, &pEnd);
+                if (pEnd == pCursor || !std::isfinite(value))
+                {
+                    return false;
+                }
+                outValues[component] = value;
+                pCursor = pEnd;
+                if (component < 2u)
+                {
+                    if (*pCursor != ',')
+                    {
+                        return false;
+                    }
+                    ++pCursor;
+                }
+            }
+            return *pCursor == '\0' && outValues[2] > 0.0f;
+        }
 
         /**
          * @brief 文字列を符号なし 16bit ポートとして解析する。先頭末尾に空白がない 10 進数のみ
@@ -307,6 +355,7 @@ namespace Game
         s_Rendering3DTestInstancedMeshCount = 0;
         s_bRendering3DTestLayerCompositeSmoke = false;
         s_bRendering3DTestPhysicsSmoke = false;
+        s_bRendering3DTestHasStartupCamera = false;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;
         bool bHasRendering3DTestImpostorSmokeCount = false;
@@ -333,6 +382,22 @@ namespace Game
 
                 s_bRendering3DTestPhysicsSmoke = true;
                 bHasRendering3DTestPhysicsSmoke = true;
+                continue;
+            }
+
+            if (StartsWith(ToStdString(args[i]), kStartupCameraOption))
+            {
+                const String value = args[i].substr(std::basic_string<TCHAR>(kStartupCameraOption).size());
+                if (!TryParseStartupCamera(value, s_Rendering3DTestStartupCamera))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --startup-camera must be <yaw>,<pitch>,<arm> with arm > 0");
+                    return false;
+                }
+                s_bRendering3DTestHasStartupCamera = true;
+                LOG_INFO("Rendering3DTest startup camera yaw=%g pitch=%g arm=%g",
+                         static_cast<double>(s_Rendering3DTestStartupCamera[0]),
+                         static_cast<double>(s_Rendering3DTestStartupCamera[1]),
+                         static_cast<double>(s_Rendering3DTestStartupCamera[2]));
                 continue;
             }
 
@@ -1235,6 +1300,10 @@ namespace Game
                 mode->GetData().m_InstancedMeshCount = s_Rendering3DTestInstancedMeshCount;
                 mode->GetData().m_bLayerCompositeSmoke = s_bRendering3DTestLayerCompositeSmoke;
                 mode->GetData().m_bPhysicsSmoke = bPhysicsSmoke;
+                mode->GetData().m_bHasStartupCamera = s_bRendering3DTestHasStartupCamera;
+                mode->GetData().m_StartupCameraYaw = s_Rendering3DTestStartupCamera[0];
+                mode->GetData().m_StartupCameraPitch = s_Rendering3DTestStartupCamera[1];
+                mode->GetData().m_StartupCameraArmLength = s_Rendering3DTestStartupCamera[2];
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
                 return mode;
             });

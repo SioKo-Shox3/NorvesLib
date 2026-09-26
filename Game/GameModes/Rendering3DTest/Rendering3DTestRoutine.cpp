@@ -125,6 +125,12 @@ namespace Game::GameModes
             data.m_pSpringArmComponent->SetArmLength(5.0f);
             data.m_pSpringArmComponent->SetYaw(0.0f);
             data.m_pSpringArmComponent->SetPitch(30.0f);
+            if (data.m_bHasStartupCamera)
+            {
+                data.m_pSpringArmComponent->SetArmLength(data.m_StartupCameraArmLength);
+                data.m_pSpringArmComponent->SetYaw(data.m_StartupCameraYaw);
+                data.m_pSpringArmComponent->SetPitch(data.m_StartupCameraPitch);
+            }
             data.m_pCameraComponent->SetActiveCamera(true);
             // このシーンの光・発光・環境マップは、光を物理単位（lux・nits）とEV100の露出へ移す前の値で作ってある。
             // プリエクスポージャ（2^(露出補正-EV100)/1.2）が1になる露出補正を掛け、従来の明るさで表示する。

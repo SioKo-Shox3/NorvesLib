@@ -154,6 +154,11 @@ namespace Game::GameModes
         bool m_bMeshesRegistered = false;
         bool m_bCameraSmokeSyncEmitted = false;
         bool m_bCameraSmokeCompleteEmitted = false;
+        // --startup-camera で指定した起動時のカメラ（SpringArm の yaw・pitch[度]と腕の長さ）
+        bool m_bHasStartupCamera = false;
+        float m_StartupCameraYaw = 0.0f;
+        float m_StartupCameraPitch = 0.0f;
+        float m_StartupCameraArmLength = 0.0f;
 
         // ========================================
         // glTF Model（Boulder）

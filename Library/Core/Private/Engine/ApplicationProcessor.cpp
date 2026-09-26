@@ -23,6 +23,8 @@
 #include "Logging/LogMacros.h"
 #include "Thread/JobSystem.h"
 #include "Scripting/ScriptRuntime.h"
+#include "FileStream/FileStream.h"
+#include "stb_image_write.h"
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -482,6 +484,115 @@ namespace
         return false;
     }
 
+    // --capture-png=<path> を読む。値が空なら不正。
+    bool TryParseCapturePngOption(const String& argument, String& outPath, bool& bMatched)
+    {
+        const String prefix = TEXT("--capture-png=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value.empty())
+        {
+            return false;
+        }
+        outPath = value;
+        return true;
+    }
+
+    // 撮影の終了条件（アセットが落ち着いてから描いたフレーム数）の既定値。時間方向に積む効果の収束を待つ。
+    constexpr uint64_t kCapturePngDefaultSettledRenderedFrames = 60;
+    // 撮影を要求してから結果が戻るまで待つ描画フレーム数の上限。超えたら失敗として終了する。
+    constexpr uint64_t kCapturePngResultTimeoutRenderedFrames = 120;
+
+    void AppendCapturePngBytes(void* pContext, void* pData, int byteCount)
+    {
+        auto* pBytes = static_cast<VariableArray<uint8_t>*>(pContext);
+        if (!pBytes || !pData || byteCount <= 0)
+        {
+            return;
+        }
+        const uint8_t* pSource = static_cast<const uint8_t*>(pData);
+        pBytes->insert(pBytes->end(), pSource, pSource + byteCount);
+    }
+
+    // BackBuffer の取得結果（表示用に符号化済みの8bit）を不透明のRGBA8 PNGとして保存する。
+    bool SaveCapturedFramePng(const NorvesLib::Core::Rendering::CapturedFrame& frame, const String& path)
+    {
+        using NorvesLib::RHI::Format;
+        if (!frame.IsSuccess() || frame.Width == 0 || frame.Height == 0 || frame.BytesPerPixel != 4)
+        {
+            return false;
+        }
+        bool bBgra = false;
+        switch (frame.Format)
+        {
+        case Format::B8G8R8A8_UNORM:
+        case Format::B8G8R8A8_SRGB:
+            bBgra = true;
+            break;
+        case Format::R8G8B8A8_UNORM:
+        case Format::R8G8B8A8_SRGB:
+            break;
+        default:
+            return false;
+        }
+        const uint64_t tightRowPitch = static_cast<uint64_t>(frame.Width) * 4u;
+        if (frame.RowPitchBytes < tightRowPitch ||
+            frame.Pixels.size() < static_cast<size_t>(frame.RowPitchBytes) * frame.Height)
+        {
+            return false;
+        }
+
+        VariableArray<uint8_t> rgba(static_cast<size_t>(tightRowPitch) * frame.Height);
+        for (uint32_t y = 0; y < frame.Height; ++y)
+        {
+            const uint8_t* pSourceRow = frame.Pixels.data() + static_cast<size_t>(frame.RowPitchBytes) * y;
+            uint8_t* pDestRow = rgba.data() + static_cast<size_t>(tightRowPitch) * y;
+            for (uint32_t x = 0; x < frame.Width; ++x)
+            {
+                const uint8_t* pSource = pSourceRow + x * 4u;
+                uint8_t* pDest = pDestRow + x * 4u;
+                pDest[0] = bBgra ? pSource[2] : pSource[0];
+                pDest[1] = pSource[1];
+                pDest[2] = bBgra ? pSource[0] : pSource[2];
+                // スワップチェーンのアルファは表示に使われないため不透明にそろえる。
+                pDest[3] = 255u;
+            }
+        }
+
+        VariableArray<uint8_t> png;
+        const int writeResult = stbi_write_png_to_func(
+            AppendCapturePngBytes,
+            &png,
+            static_cast<int>(frame.Width),
+            static_cast<int>(frame.Height),
+            4,
+            rgba.data(),
+            static_cast<int>(tightRowPitch));
+        if (writeResult == 0 || png.empty())
+        {
+            return false;
+        }
+
+        NorvesLib::FileStream::FileStreamUniquePtr stream = NorvesLib::FileStream::FileStream::CreateUnique(
+            path, NorvesLib::FileStream::FileMode::Write, NorvesLib::FileStream::FileAccess::Write,
+            NorvesLib::FileStream::FileShare::None);
+        if (!stream)
+        {
+            return false;
+        }
+        if (stream->Write(png.data(), png.size()) != png.size())
+        {
+            return false;
+        }
+        stream->Flush();
+        return true;
+    }
+
     // 非負の10進数（例 2.8）か分数（例 1/24）を読む。分母は正でなければならない。
     bool TryParseNonNegativeRatio(const String& text, float& outValue)
     {
@@ -786,6 +897,9 @@ namespace NorvesLib::Core::Engine
         m_bWaitForAssetSettle = false;
         m_bObservedPendingAssets = false;
         m_bAssetSettleBaselineLatched = false;
+        m_CapturePngPath = {};
+        m_CaptureRequestedRenderedFrame = 0;
+        m_bCaptureRequested = false;
         Detail::ExitFrameOptionsAccumulator exitFrameOptions{};
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
         bool bEnableCanvasView = false;
@@ -975,6 +1089,34 @@ namespace NorvesLib::Core::Engine
             {
                 LOG_WARNING("ApplicationProcessor runtime option ignored: --path-tracing-frame-duration and --path-tracing-aperture must be positive, --path-tracing-shutter and --path-tracing-focus-distance must be non-negative (decimal or a/b)");
             }
+
+            bool bMatchedCapturePng = false;
+            if (TryParseCapturePngOption(args[i], m_CapturePngPath, bMatchedCapturePng))
+            {
+                LOG_INFO("ApplicationProcessor runtime option capture_png=1");
+            }
+            else if (bMatchedCapturePng)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --capture-png ignored: path must not be empty");
+            }
+        }
+
+        // 撮影はアセットの読み込みが落ち着いた後の画面を取る。描画フレーム数の指定が無ければ既定値を使う。
+        // 最終出力だけを写すため、キャンバス（画面空間のボード）は無効にし、overlay（ImGui）は描かない。
+        if (!m_CapturePngPath.empty())
+        {
+            exitFrameOptions.bWaitForAssetSettle = true;
+            if (exitFrameOptions.RenderedTarget == 0)
+            {
+                exitFrameOptions.RenderedTarget = kCapturePngDefaultSettledRenderedFrames;
+            }
+            if (bEnableCanvasView)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --enable-canvas-view ignored with --capture-png");
+                bEnableCanvasView = false;
+            }
+            LOG_INFO("ApplicationProcessor capture_png settled_rendered_frames=%llu",
+                     static_cast<unsigned long long>(exitFrameOptions.RenderedTarget));
         }
 
         const Detail::ExitFrameSelection exitFrameSelection = Detail::SelectExitFrameSelection(exitFrameOptions);
@@ -1477,10 +1619,11 @@ namespace NorvesLib::Core::Engine
 
         // 描画モジュールの overlay パスを収集(借用ポインタ・非 null のみ)。
         // RenderThread が直接 registry を読まないよう、この集合を書き込み中パケットへ焼く。
+        // 撮影時は overlay（ImGui）を最終出力へ載せない。
         Container::VariableArray<Rendering::IViewPass *> overlayPasses;
         for (Module::IRenderModule *renderModule : Module::GetModuleRegistry().GetRenderModules())
         {
-            if (!renderModule)
+            if (!renderModule || !m_CapturePngPath.empty())
             {
                 continue;
             }
@@ -1542,6 +1685,61 @@ namespace NorvesLib::Core::Engine
                     {
                         bRenderedExitReached = renderedFrameCount >= m_ExitAfterRenderedFrames;
                     }
+                }
+
+                // 撮影: 終了条件に達したフレームで最終出力（overlay後のBackBuffer）の取得を要求し、
+                // 結果を受け取ってPNGに保存してから終了する。
+                if (!m_CapturePngPath.empty())
+                {
+                    if (!m_bCaptureRequested && bRenderedExitReached)
+                    {
+                        Rendering::FrameCaptureRequest captureRequest;
+                        captureRequest.SourceKind = Rendering::FrameCaptureSourceKind::BackBuffer;
+                        if (renderWorld.RequestFrameCapture(captureRequest).IsAccepted())
+                        {
+                            m_bCaptureRequested = true;
+                            m_CaptureRequestedRenderedFrame = renderedFrameCount;
+                            LOG_INFO("ApplicationProcessor capture_png requested rendered=%llu",
+                                     static_cast<unsigned long long>(renderedFrameCount));
+                        }
+                        else
+                        {
+                            LOG_ERROR("ApplicationProcessor capture_png failed: capture request rejected");
+                            GEngine->RequestExit(1);
+                        }
+                    }
+                    else if (m_bCaptureRequested)
+                    {
+                        Rendering::CapturedFrame capturedFrame;
+                        if (renderWorld.TryConsumeCapturedFrame(capturedFrame))
+                        {
+                            if (SaveCapturedFramePng(capturedFrame, m_CapturePngPath))
+                            {
+                                LOG_INFO("ApplicationProcessor capture_png saved frame=%llu width=%u height=%u",
+                                         static_cast<unsigned long long>(capturedFrame.FrameNumber),
+                                         capturedFrame.Width,
+                                         capturedFrame.Height);
+                                GEngine->RequestExit(0);
+                            }
+                            else
+                            {
+                                LOG_ERROR("ApplicationProcessor capture_png failed: status=%u format=%u width=%u height=%u",
+                                          static_cast<unsigned int>(capturedFrame.Status),
+                                          static_cast<unsigned int>(capturedFrame.Format),
+                                          capturedFrame.Width,
+                                          capturedFrame.Height);
+                                GEngine->RequestExit(1);
+                            }
+                        }
+                        else if (renderedFrameCount - m_CaptureRequestedRenderedFrame >
+                                 kCapturePngResultTimeoutRenderedFrames)
+                        {
+                            LOG_ERROR("ApplicationProcessor capture_png failed: no result within %llu rendered frames",
+                                      static_cast<unsigned long long>(kCapturePngResultTimeoutRenderedFrames));
+                            GEngine->RequestExit(1);
+                        }
+                    }
+                    bRenderedExitReached = false;
                 }
             }
         }
