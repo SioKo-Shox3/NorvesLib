@@ -23,7 +23,7 @@ def run(command):
     for line in output.splitlines():
         if ("r8_dof" in line or "yardstick" in line or "sanity" in line or "_vs_" in line or
                 "coc_diameter" in line or "engaged" in line or "VUID_COUNT" in line or
-                "over_limit" in line or "skipped" in line or "[ERROR]" in line):
+                "over_limit" in line or "negative" in line or "skipped" in line or "[ERROR]" in line):
             print("  " + line)
     return result.returncode
 
