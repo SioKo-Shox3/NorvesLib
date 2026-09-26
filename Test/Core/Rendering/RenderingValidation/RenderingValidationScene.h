@@ -270,6 +270,9 @@ namespace NorvesLib::Test::RenderingValidation
         bool AddR6CornellDynamicObject() const;
         // R8の被写界深度の比較: 短い箱の上のピント面の球と、その縁へ前ボケが掛かる手前の球を置く。
         bool AddR8DepthOfFieldObjects() const;
+        // R8の屋外の連番: 地面の上を動く球を1つ足し、中心の位置を変える（屋外のシーンだけ）。
+        bool AddR8OutdoorMovingSphere() const;
+        bool SetR8OutdoorMovingSpherePosition(float x, float y, float z) const;
         bool SetR4CornellLightOffsetX(float offsetX) const;
         bool SetR4CornellObjectOffsetX(float offsetX) const;
         bool SetR4CornellPointLightState(float offsetX, float intensity) const;
@@ -369,6 +372,7 @@ namespace NorvesLib::Test::RenderingValidation
         mutable Core::Rendering::CameraProxy m_R4CornellCamera;
         mutable Core::Entity* m_pR4CornellEmitterEntity = nullptr;
         mutable Core::Entity* m_pR4CornellDynamicObjectEntity = nullptr;
+        mutable Core::Entity* m_pR8OutdoorMovingSphereEntity = nullptr;
         mutable Core::Container::FixedArray<Core::Entity*, 4> m_R4CornellPointLights{};
         bool m_bPublished = false;
     };

@@ -929,6 +929,35 @@ set_tests_properties(R8MotionBlurPathTracingReferenceVulkanTest PROPERTIES
     SKIP_RETURN_CODE 125
     TIMEOUT 5400
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# R8: 屋内・屋外の決定論的なアニメーションをPTの連番の経路でEXR連番へ書き出すexeと、8フレームの書き出し・検査。
+add_executable(R8SequenceRenderer R8SequenceRenderer.cpp)
+target_link_libraries(R8SequenceRenderer PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+    RenderingFloatImageSupport
+)
+target_include_directories(R8SequenceRenderer PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(R8SequenceRenderer PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(R8SequenceRenderer PROPERTIES FOLDER "Test/Core/Rendering")
+set(R8_SEQUENCE_SMOKE_ROOT "${CMAKE_BINARY_DIR}/RenderingValidation/R8SequenceSmokeRuns")
+add_test(NAME R8SequenceSmokeTest
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/R8SequenceSmokeTest.py
+            $<TARGET_FILE:R8SequenceRenderer>
+            $<TARGET_FILE:R8ExrSequenceValidator>
+            ${R8_SEQUENCE_SMOKE_ROOT})
+set_tests_properties(R8SequenceSmokeTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    TIMEOUT 1800
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(R4DDGIPathTracingReferenceVulkanTest
     R4DDGIPathTracingReferenceVulkanTest.cpp
 )

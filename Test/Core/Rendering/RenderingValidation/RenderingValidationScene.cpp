@@ -942,6 +942,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_R4CornellCamera = {};
         m_pR4CornellEmitterEntity = nullptr;
         m_pR4CornellDynamicObjectEntity = nullptr;
+        m_pR8OutdoorMovingSphereEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
 
         state.pWorld = nullptr;
@@ -1022,6 +1023,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_R4CornellCamera = {};
         m_pR4CornellEmitterEntity = nullptr;
         m_pR4CornellDynamicObjectEntity = nullptr;
+        m_pR8OutdoorMovingSphereEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
         m_bPublished = false;
 
@@ -3005,6 +3007,55 @@ namespace NorvesLib::Test::RenderingValidation
             mesh->SetVisible(true);
         }
         m_pWorld->SyncToSceneView(&m_pResources->Materials(), &m_pResources->Meshes());
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::AddR8OutdoorMovingSphere() const
+    {
+        if (m_pR8OutdoorMovingSphereEntity != nullptr)
+        {
+            return true;
+        }
+        if (m_SceneKind != SceneKind::Outdoor || m_pWorld == nullptr || m_pResources == nullptr)
+        {
+            return false;
+        }
+        // 半径0.5 mの白っぽい球を地面（高さ-1 m）に接して置く。位置は連番のフレームごとに設定する。
+        m_pR8OutdoorMovingSphereEntity = m_pWorld->SpawnEntity();
+        if (m_pR8OutdoorMovingSphereEntity == nullptr)
+        {
+            return false;
+        }
+        m_Objects.push_back(m_pR8OutdoorMovingSphereEntity);
+        m_pR8OutdoorMovingSphereEntity->SetPosition(0.0f, -0.5f, 1.5f);
+        m_pR8OutdoorMovingSphereEntity->SetScale(0.5f, 0.5f, 0.5f);
+        Core::Component::MeshComponent* mesh =
+            m_pWorld->CreateComponent<Core::Component::MeshComponent>(m_pR8OutdoorMovingSphereEntity);
+        if (mesh == nullptr)
+        {
+            return false;
+        }
+        mesh->SetMeshHandle(SphereHandle);
+        mesh->SetMaterial(0u, m_NeutralMaterial);
+        mesh->SetCustomData(0u, 0.80f);
+        mesh->SetCustomData(1u, 0.78f);
+        mesh->SetCustomData(2u, 0.74f);
+        mesh->SetCustomData(3u, 1.0f);
+        mesh->SetCastShadow(true);
+        mesh->SetReceiveShadow(true);
+        mesh->SetVisible(true);
+        m_pWorld->SyncToSceneView(&m_pResources->Materials(), &m_pResources->Meshes());
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::SetR8OutdoorMovingSpherePosition(float x, float y, float z) const
+    {
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || std::abs(x) > 10.0f ||
+            std::abs(y) > 10.0f || std::abs(z) > 10.0f || m_pR8OutdoorMovingSphereEntity == nullptr)
+        {
+            return false;
+        }
+        m_pR8OutdoorMovingSphereEntity->SetPosition(x, y, z);
         return true;
     }
 
