@@ -1206,3 +1206,4 @@ namespace NorvesLib::Core::Rendering
 
 #include "PathTracingPass.inl"
 #include "DepthOfFieldPass.inl"
+#include "MotionBlurPass.inl"

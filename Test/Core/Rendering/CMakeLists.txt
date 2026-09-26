@@ -861,6 +861,39 @@ set_tests_properties(R8DepthOfFieldPathTracingReferenceVulkanTest PROPERTIES
     SKIP_RETURN_CODE 125
     TIMEOUT 5400
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# ラスタの動きぼけ（MotionBlurPass）を、PTのシャッター0の像とラスタの画面velocityを入力に実GPUで掛け、PTのシャッター参照とLDR-FLIPで比べる（R8-P5）。
+add_executable(R8MotionBlurPathTracingReferenceVulkanTest
+    R8MotionBlurPathTracingReferenceVulkanTest.cpp
+)
+target_link_libraries(R8MotionBlurPathTracingReferenceVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+    RenderingFloatImageSupport
+    RenderingPerceptualDiffSupport
+    RenderingReferenceComparisonSupport
+)
+target_include_directories(R8MotionBlurPathTracingReferenceVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(R8MotionBlurPathTracingReferenceVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(R8MotionBlurPathTracingReferenceVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+set(R8_MOTION_BLUR_PATH_TRACING_REFERENCE_ROOT
+    "${CMAKE_BINARY_DIR}/RenderingValidation/R8MotionBlurPathTracingReferenceRuns")
+add_test(NAME R8MotionBlurPathTracingReferenceVulkanTest
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/R8MotionBlurPathTracingReferenceTest.py
+            $<TARGET_FILE:R8MotionBlurPathTracingReferenceVulkanTest>
+            ${R8_MOTION_BLUR_PATH_TRACING_REFERENCE_ROOT})
+set_tests_properties(R8MotionBlurPathTracingReferenceVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    TIMEOUT 5400
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(R4DDGIPathTracingReferenceVulkanTest
     R4DDGIPathTracingReferenceVulkanTest.cpp
 )

@@ -3,6 +3,7 @@
 #include "Rendering/RenderingCoordinatorDiagnostics.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/DepthOfFieldPass.h"
+#include "Rendering/MotionBlurPass.h"
 #include "Rendering/Screen.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/View.h"
@@ -1576,6 +1577,8 @@ namespace NorvesLib::Core::Rendering
             m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer, settings.RasterDirectBrdfMode);
             // 被写界深度は半透明を合成した後のSceneColorへ掛ける。カメラのピント距離が0なら働かない。
             m_MainSceneView->AddPass(Container::MakeUnique<DepthOfFieldPass>());
+            // 動きぼけは被写界深度の後のSceneColorへ掛ける。シャッター時間が0（既定）なら働かない。
+            m_MainSceneView->AddPass(Container::MakeUnique<MotionBlurPass>());
             NORVES_LOG_INFO("RenderingCoordinator", "Deferred pipeline configured on MainSceneView");
         }
 
