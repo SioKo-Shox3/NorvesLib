@@ -101,6 +101,12 @@ namespace
     constexpr PixelRegion KnownMovingShadowRegion = {104u, 204u, 135u, 231u};
     constexpr float KnownShadowPixelMaxCeiling = 0.834f;
     constexpr float KnownShadowBlockMaxCeiling = 0.173f;
+    // 既知の限界の範囲の判定の負の対照。画素の閾値は物差しの天井の光源の縁（panで動くHDRの縁）で決まり、
+    // 1画素の局所欠陥はFLIPの空間の重みで薄まってその下に埋もれる（4倍で0.519、16倍でも0.604）。影の矩形の
+    // 外の最も暗い2×2画素へ同じ4倍の光を足し、平均と8×8区画では閾値内のまま画素単位最大だけで検出される
+    // ことを、既知の限界の範囲で合格にする条件にする。
+    constexpr double KnownLimitationLeakScale = 4.0;
+    constexpr uint32_t KnownLimitationLeakPatchSize = 2u;
 
     // CornellBoxの定数から、R4のCornell fixtureと同じ幾何のカメラを作る（注視点のx方向のずれだけ変える）。
     CameraProxy MakeCornellCamera(float targetOffsetX)
@@ -1247,6 +1253,22 @@ namespace
             return 1;
         }
         PrintFlipMeasurement("r8_raster_mb_vs_path_tracing_outside_known_limitation", rasterOutsideShadow);
+        const RgbaFloatImage knownLimitationLeak = AddLocalLeak(reference, MeanLuminance(reference), outsideShadow,
+                                                                BlockSize, KnownLimitationLeakPatchSize,
+                                                                KnownLimitationLeakScale);
+        FlipMeasurement knownLimitationLeakMeasurement;
+        if (!MeasureFlip(reference, NeutralizeExcluded(knownLimitationLeak, reference, outsideShadow), outsideShadow,
+                         BlockSize, knownLimitationLeakMeasurement))
+        {
+            std::cerr << "FLIPを評価できません\n";
+            return 1;
+        }
+        PrintFlipMeasurement("negative_known_limitation_leak", knownLimitationLeakMeasurement);
+        const bool bKnownLimitationLeakDetected = knownLimitationLeakMeasurement.Mean <= meanLimit &&
+                                                  knownLimitationLeakMeasurement.BlockMax <= blockLimit &&
+                                                  knownLimitationLeakMeasurement.AgreeingPixelMax > pixelLimit;
+        std::cout << "negative_known_limitation_leak_detected=" << (bKnownLimitationLeakDetected ? 1 : 0)
+                  << " scale=" << KnownLimitationLeakScale << " patch=" << KnownLimitationLeakPatchSize << '\n';
         PrintFlipMeasurement("negative_local_leak_excluded", leakExcluded);
         // 欠陥は平均と8×8区画では閾値内に埋もれ、一致画素の画素単位最大だけが閾値の外に出ること。
         const bool bLeakDetected = leakExcluded.Mean <= meanLimit && leakExcluded.BlockMax <= blockLimit &&
@@ -1265,7 +1287,7 @@ namespace
         const bool bCommon = bSanity && bPipelineEngaged && bClosedIdentity && validationErrors == 0u;
         const bool bRulePassed = bCommon && bLeakDetected && bWithin;
         // 規則の判定がFAILでも、差が既知の限界の範囲だけに収まっていれば合格にする（規則の判定はそのまま出力する）。
-        const bool bKnownLimitation = rasterMeasurement.Mean <= meanLimit &&
+        const bool bKnownLimitation = bKnownLimitationLeakDetected && rasterMeasurement.Mean <= meanLimit &&
                                       rasterOutsideShadow.AgreeingPixelMax <= pixelLimit &&
                                       rasterOutsideShadow.BlockMax <= blockLimit &&
                                       rasterExcluded.AgreeingPixelMax <= KnownShadowPixelMaxCeiling &&
