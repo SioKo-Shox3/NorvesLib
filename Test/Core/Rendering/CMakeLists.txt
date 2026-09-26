@@ -2310,3 +2310,18 @@ target_include_directories(WorldCameraSyncTest PRIVATE
 )
 set_target_properties(WorldCameraSyncTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME WorldCameraSyncTest COMMAND WorldCameraSyncTest)
+
+# 実行に数分から1時間以上かかるPT参照比較と連番の確認。普段は回さず、節目にだけ `ctest -L Reference` で回す。
+set(NORVES_REFERENCE_TESTS
+    PathTracingConvergenceVulkanTest
+    PathTracingRasterParityVulkanTest
+    R4DDGIPathTracingReferenceVulkanTest
+    R6RTGIPathTracingReferenceVulkanTest
+    R7OutdoorPathTracingReferenceVulkanTest
+    R8DepthOfFieldPathTracingReferenceVulkanTest
+    R8MotionBlurPathTracingReferenceVulkanTest
+    R8SequenceSmokeTest
+)
+foreach(test_name IN LISTS NORVES_REFERENCE_TESTS)
+    set_property(TEST ${test_name} APPEND PROPERTY LABELS Reference)
+endforeach()
