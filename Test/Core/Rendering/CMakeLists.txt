@@ -726,6 +726,28 @@ target_compile_definitions(R8PathTracingSequenceFrameVulkanTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 set_target_properties(R8PathTracingSequenceFrameVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 register_rendering_gpu_test(R8PathTracingSequenceFrameVulkanTest R8PathTracingSequenceFrameVulkanTest)
+# R8: EXR連番の検査（欠番・寸法・非有限の画素と、ACES 2.0 SDRのLUTで変換した隣接フレームのLDR-FLIPによるポッピング）。
+add_library(R8ExrSequenceValidationSupport STATIC R8ExrSequenceValidation.cpp)
+target_link_libraries(R8ExrSequenceValidationSupport PUBLIC
+    RenderingFloatImageSupport
+    RenderingPerceptualDiffSupport
+    NorvesThirdParty_TinyEXR)
+target_include_directories(R8ExrSequenceValidationSupport PUBLIC
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include)
+set_target_properties(R8ExrSequenceValidationSupport PROPERTIES FOLDER "Test/Core/Rendering")
+add_executable(R8ExrSequenceValidator R8ExrSequenceValidatorMain.cpp)
+target_link_libraries(R8ExrSequenceValidator PRIVATE R8ExrSequenceValidationSupport)
+target_compile_definitions(R8ExrSequenceValidator PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+set_target_properties(R8ExrSequenceValidator PROPERTIES FOLDER "Test/Core/Rendering")
+add_executable(R8ExrSequenceValidatorTest R8ExrSequenceValidatorTest.cpp)
+target_link_libraries(R8ExrSequenceValidatorTest PRIVATE R8ExrSequenceValidationSupport)
+target_compile_definitions(R8ExrSequenceValidatorTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+    NORVES_BINARY_ROOT="${CMAKE_BINARY_DIR}")
+set_target_properties(R8ExrSequenceValidatorTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME R8ExrSequenceValidatorTest COMMAND R8ExrSequenceValidatorTest)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(PATH_TRACING_EXR_OUTPUT_ROOT
     "${CMAKE_BINARY_DIR}/RenderingValidation/PathTracingExrOutputRuns")
