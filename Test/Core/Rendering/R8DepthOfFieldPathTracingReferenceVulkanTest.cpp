@@ -7,7 +7,9 @@
 // 比較（CPU＋GPU）: --compare-dumps=<dir> で、PTのピンホール像（独立な3組の画素ごとの中央値）と1次命中の
 // 距離を入力にDepthOfFieldPassを実GPUで実行し、PTの薄レンズ参照（3組の中央値）と比べる。入力をPTの
 // ピンホール像にするのは、ラスタとPTの照明の近似差を除き、被写界深度の差だけを測るため。入力と参照は
-// 同じ1次命中の幾何を持つので、画素単位最大は全画素で判定する。
+// 同じ1次命中の幾何を持つが、薄レンズはピンホールの像に無い面（手前の面の縁の後ろ、未命中の画素の側の
+// 面の縁の外側）も見る。そうした画素は一致画素の画素単位最大と8×8区画最大の判定から外して数を記録し、
+// 除外の外に置いた局所欠陥を検出できることを比較のたびに確かめる。平均は全画素で判定する。
 // 閾値は比較の前に規則で決める: PT参照と、f値を±20%変えたPTとの知覚差（FLIP平均・画素単位最大・8×8区画
 // 最大）のうち小さい方。±40%の変化が三つとも閾値の外にあることを比較のたびに確かめる。
 // 実際のラスタのパイプライン（ピント距離0と指定値）の取得は、passが働いていることの確認と参考値に使う。
@@ -49,6 +51,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -77,6 +80,10 @@ namespace
     constexpr double ApertureYardstick = 0.2;
     constexpr double ApertureSanity = 0.4;
     constexpr uint32_t BlockSize = 8u;
+    // 局所欠陥の負の対照: 除外の外で参照の最も暗い1画素へ、参照の平均輝度のLeakScale倍の光を足す。
+    // R6参照比較と同じ1倍では画素単位の閾値を越えないため、R7屋外参照比較と同じく、全体平均と8×8区画
+    // 平均では閾値内に埋もれたまま画素単位最大だけが閾値の外に出る4倍にする。
+    constexpr double LeakScale = 4.0;
 
     // CornellBoxの定数から、R4のCornell fixtureと同じ幾何のカメラを作る（露出は比較に使わない）。
     CameraProxy MakeCornellCamera()
@@ -389,6 +396,196 @@ namespace
         return true;
     }
 
+    /**
+     * @brief PTの薄レンズがピンホールの像に無い面を見る画素を、一致画素から外す
+     *
+     * 各画素でレンズの試料ごとに薄レンズの光線をたどり、ピンホールの像の上で光線の点が写る位置
+     * （画素p + レンズの向き × CoCの半径の係数 × (1/ピント距離 - 1/z)）の深度と比べる。光線が最初に
+     * ピンホールの可視面へ達した位置の深度が、直前の光線の点の深度より手前へ跳ぶなら、光線は手前の面の縁の
+     * 後ろへ回り込んで隠れた面を見る（不一致）。像の外は縁の画素の面が続くとみなす（ラスタも縁の画素を
+     * 使う）。加えて、ピンホールで未命中の画素と命中の画素の境界から、境界の命中画素のCoCの半径+1画素以内を
+     * 外す（面の縁の外側はピンホールの像に無い）。1が一致、0が除外。
+     */
+    VariableArray<uint8_t> BuildLensVisibilityAgreement(const CameraProxy& camera,
+                                                        const RgbaFloatImage& pathDistance,
+                                                        uint32_t& outLensExcluded,
+                                                        uint32_t& outMissExcluded)
+    {
+        constexpr uint32_t LensSampleCount = 32u;
+        constexpr double StepPixels = 0.25;
+        constexpr double DepthJumpTolerance = 0.03;
+        const uint32_t width = pathDistance.Width;
+        const uint32_t height = pathDistance.Height;
+        outLensExcluded = 0u;
+        outMissExcluded = 0u;
+        VariableArray<uint8_t> agreement(static_cast<size_t>(width) * height, 1u);
+        const DepthOfFieldLens lens = BuildDepthOfFieldLens(camera, height);
+        if (!lens.bEnabled)
+        {
+            return agreement;
+        }
+        // 1次命中の距離を視線方向の深度へ直す（未命中は無限遠）。
+        const double tanHalf = std::tan(static_cast<double>(camera.FieldOfView) * 3.14159265358979 / 360.0);
+        const double aspect = static_cast<double>(width) / height;
+        VariableArray<double> depth(static_cast<size_t>(width) * height,
+                                    std::numeric_limits<double>::infinity());
+        double minDepth = std::numeric_limits<double>::infinity();
+        for (uint32_t y = 0u; y < height; ++y)
+        {
+            for (uint32_t x = 0u; x < width; ++x)
+            {
+                const size_t pixel = static_cast<size_t>(y) * width + x;
+                const double distance = pathDistance.Values[pixel * 4u];
+                if (!(distance > 0.0))
+                {
+                    continue;
+                }
+                const double nx = ((x + 0.5) / width * 2.0 - 1.0) * tanHalf * aspect;
+                const double ny = ((y + 0.5) / height * 2.0 - 1.0) * tanHalf;
+                depth[pixel] = distance / std::sqrt(1.0 + nx * nx + ny * ny);
+                minDepth = std::min(minDepth, depth[pixel]);
+            }
+        }
+        if (!std::isfinite(minDepth))
+        {
+            return agreement;
+        }
+        // 入力の像の画素でのCoCの半径 = 0.5 × CocScale × FilmScale × F × |1/F - 1/z|。
+        const double coefficient = 0.5 * lens.CocScale * lens.FilmScale * lens.FocusDistance;
+        const double focusInverse = 1.0 / lens.FocusDistance;
+        const double startInverse = 1.0 / (0.95 * minDepth);
+        double lensSamples[LensSampleCount][2] = {};
+        for (uint32_t sample = 0u; sample < LensSampleCount; ++sample)
+        {
+            const double radius = std::sqrt(PathTracingCameraDetail::Halton(sample + 1u, 2u));
+            const double phase = 2.0 * 3.14159265358979 * PathTracingCameraDetail::Halton(sample + 1u, 3u);
+            lensSamples[sample][0] = radius * std::cos(phase);
+            lensSamples[sample][1] = radius * std::sin(phase);
+        }
+        const double centerX = 0.5 * width;
+        const double centerY = 0.5 * height;
+        auto depthAt = [&](double px, double py)
+        {
+            const int32_t ix = std::clamp(static_cast<int32_t>(std::floor(px)), 0, static_cast<int32_t>(width) - 1);
+            const int32_t iy = std::clamp(static_cast<int32_t>(std::floor(py)), 0, static_cast<int32_t>(height) - 1);
+            return depth[static_cast<size_t>(iy) * width + ix];
+        };
+        for (uint32_t y = 0u; y < height; ++y)
+        {
+            for (uint32_t x = 0u; x < width; ++x)
+            {
+                // 出力の画素は、ピントの倍率で拡大する前の入力の像の位置に対応する。
+                const double startX = centerX + (x + 0.5 - centerX) * lens.FilmScale;
+                const double startY = centerY + (y + 0.5 - centerY) * lens.FilmScale;
+                bool bHidden = false;
+                for (uint32_t sample = 0u; sample < LensSampleCount && !bHidden; ++sample)
+                {
+                    const double magnitude = coefficient * std::hypot(lensSamples[sample][0], lensSamples[sample][1]);
+                    if (magnitude < 1.0e-9)
+                    {
+                        continue;
+                    }
+                    const double step = StepPixels / magnitude;
+                    double previousDepth = 1.0 / startInverse;
+                    for (double inverse = startInverse;; inverse = std::max(inverse - step, 0.0))
+                    {
+                        const double offset = coefficient * (focusInverse - inverse);
+                        const double surface = depthAt(startX + lensSamples[sample][0] * offset,
+                                                       startY + lensSamples[sample][1] * offset);
+                        const double rayDepth = inverse > 0.0 ? 1.0 / inverse
+                                                              : std::numeric_limits<double>::infinity();
+                        if (rayDepth >= surface)
+                        {
+                            bHidden = surface < previousDepth * (1.0 - DepthJumpTolerance);
+                            break;
+                        }
+                        if (inverse <= 0.0)
+                        {
+                            break;
+                        }
+                        previousDepth = rayDepth;
+                    }
+                }
+                if (bHidden)
+                {
+                    agreement[static_cast<size_t>(y) * width + x] = 0u;
+                    ++outLensExcluded;
+                }
+            }
+        }
+        // 未命中と命中の境界の近傍（出力の画素で、境界の命中画素のCoCの半径+1画素以内）。
+        VariableArray<uint8_t> missNeighborhood(static_cast<size_t>(width) * height, 0u);
+        for (uint32_t y = 0u; y < height; ++y)
+        {
+            for (uint32_t x = 0u; x < width; ++x)
+            {
+                const size_t pixel = static_cast<size_t>(y) * width + x;
+                if (!std::isfinite(depth[pixel]))
+                {
+                    continue;
+                }
+                const int32_t neighbors[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+                bool bBoundary = false;
+                for (const auto& neighbor : neighbors)
+                {
+                    const int32_t nx = static_cast<int32_t>(x) + neighbor[0];
+                    const int32_t ny = static_cast<int32_t>(y) + neighbor[1];
+                    bBoundary = bBoundary ||
+                                (nx >= 0 && ny >= 0 && nx < static_cast<int32_t>(width) &&
+                                 ny < static_cast<int32_t>(height) &&
+                                 !std::isfinite(depth[static_cast<size_t>(ny) * width + nx]));
+                }
+                if (!bBoundary)
+                {
+                    continue;
+                }
+                const double radius =
+                    0.5 * ComputeDepthOfFieldCocPixels(lens, static_cast<float>(depth[pixel])) + 1.0;
+                const int32_t reach = static_cast<int32_t>(std::ceil(radius));
+                for (int32_t dy = -reach; dy <= reach; ++dy)
+                {
+                    for (int32_t dx = -reach; dx <= reach; ++dx)
+                    {
+                        const int32_t nx = static_cast<int32_t>(x) + dx;
+                        const int32_t ny = static_cast<int32_t>(y) + dy;
+                        if (nx >= 0 && ny >= 0 && nx < static_cast<int32_t>(width) &&
+                            ny < static_cast<int32_t>(height) && std::hypot(dx, dy) <= radius + 0.5)
+                        {
+                            missNeighborhood[static_cast<size_t>(ny) * width + nx] = 1u;
+                        }
+                    }
+                }
+            }
+        }
+        for (size_t pixel = 0u; pixel < agreement.size(); ++pixel)
+        {
+            if (missNeighborhood[pixel] != 0u && agreement[pixel] != 0u)
+            {
+                agreement[pixel] = 0u;
+                ++outMissExcluded;
+            }
+        }
+        return agreement;
+    }
+
+    // 除外した画素を参照の値へ置き換えた画像（一致画素の画素単位最大と8×8区画最大の判定に使う）。
+    RgbaFloatImage NeutralizeExcluded(const RgbaFloatImage& candidate, const RgbaFloatImage& reference,
+                                      const VariableArray<uint8_t>& agreement)
+    {
+        RgbaFloatImage result = candidate;
+        for (size_t pixel = 0u; pixel < agreement.size(); ++pixel)
+        {
+            if (agreement[pixel] == 0u)
+            {
+                for (uint32_t channel = 0u; channel < 4u; ++channel)
+                {
+                    result.Values[pixel * 4u + channel] = reference.Values[pixel * 4u + channel];
+                }
+            }
+        }
+        return result;
+    }
+
     bool RecordHostReadBarrier(const TSharedPtr<RHI::Vulkan::VulkanCommandList>& commandList,
                                const RHI::BufferPtr& readbackBuffer)
     {
@@ -633,8 +830,19 @@ namespace
         std::cout << "r8_dof_image name=raster-dof-on-pt-pinhole mean_luminance="
                   << MeanLuminance(raster) << '\n';
 
-        // 入力と参照は同じ1次命中の幾何を持つため、全画素を一致として扱う（空のマスク）。
+        // 閾値の物差し（PT同士）と平均は全画素で測る（空のマスク）。
         const VariableArray<uint8_t> allPixels;
+        // ラスタの一致画素の画素単位最大と8×8区画最大は、PTの薄レンズがピンホールの像に無い面を見る画素を
+        // 除いて測る（除いた画素は参照の値へ置き換える）。
+        uint32_t lensExcluded = 0u;
+        uint32_t missExcluded = 0u;
+        const VariableArray<uint8_t> agreement =
+            BuildLensVisibilityAgreement(camera, pathDistance, lensExcluded, missExcluded);
+        const double excludedFraction =
+            static_cast<double>(lensExcluded + missExcluded) / agreement.size();
+        std::cout << "r8_dof_exclusion lens_hidden_surface_pixels=" << lensExcluded
+                  << " pinhole_miss_neighborhood_pixels=" << missExcluded
+                  << " fraction=" << excludedFraction << '\n';
         FlipMeasurement yardstickPlus;
         FlipMeasurement yardstickMinus;
         FlipMeasurement checkPlus;
@@ -655,6 +863,19 @@ namespace
             std::cerr << "FLIPを評価できません\n";
             return 1;
         }
+        FlipMeasurement rasterExcluded;
+        FlipMeasurement leakExcluded;
+        // 負の対照: 除外の外（一致画素）で最も暗い1画素へ、参照の平均輝度のLeakScale倍の光を足した参照。
+        const RgbaFloatImage leaky =
+            AddLocalLeak(reference, MeanLuminance(reference), agreement, BlockSize, 1u, LeakScale);
+        if (!MeasureFlip(reference, NeutralizeExcluded(raster, reference, agreement), agreement, BlockSize,
+                         rasterExcluded) ||
+            !MeasureFlip(reference, NeutralizeExcluded(leaky, reference, agreement), agreement, BlockSize,
+                         leakExcluded))
+        {
+            std::cerr << "FLIPを評価できません\n";
+            return 1;
+        }
         const double meanLimit = std::min(yardstickPlus.Mean, yardstickMinus.Mean);
         const float pixelLimit = std::min(yardstickPlus.PixelMax, yardstickMinus.PixelMax);
         const float blockLimit = std::min(yardstickPlus.BlockMax, yardstickMinus.BlockMax);
@@ -668,8 +889,33 @@ namespace
                              checkPlus.PixelMax > pixelLimit && checkMinus.PixelMax > pixelLimit &&
                              checkPlus.BlockMax > blockLimit && checkMinus.BlockMax > blockLimit;
 
+        // 差の分類の調査に使えるよう、ラスタと物差し（+20%）の画素ごとのFLIP誤差もRへ書き出す。
+        for (const auto& [name, measurement] :
+             {std::pair<const char*, const FlipMeasurement*>{"flip-raster", &rasterMeasurement},
+              std::pair<const char*, const FlipMeasurement*>{"flip-plus20", &yardstickPlus}})
+        {
+            RgbaFloatImage errorImage;
+            errorImage.Width = reference.Width;
+            errorImage.Height = reference.Height;
+            errorImage.Values.resize(static_cast<size_t>(reference.Width) * reference.Height * 4u, 0.0f);
+            for (size_t index = 0u; index < measurement->AgreeingErrorMap.size(); ++index)
+            {
+                errorImage.Values[index * 4u] = measurement->AgreeingErrorMap[index];
+            }
+            if (!WriteRgbaFloatDump(DumpPath(directory, name), errorImage, 0u))
+            {
+                std::cerr << "FLIPの誤差の画像を書き出せません\n";
+                return 1;
+            }
+        }
         PrintFlipMeasurement("r8_raster_dof_vs_path_tracing", rasterMeasurement);
-        PrintAgreeingPixelsOverLimit(rasterMeasurement, pixelLimit, raster.Width);
+        PrintFlipMeasurement("r8_raster_dof_vs_path_tracing_excluded", rasterExcluded);
+        PrintAgreeingPixelsOverLimit(rasterExcluded, pixelLimit, raster.Width);
+        PrintFlipMeasurement("negative_local_leak_excluded", leakExcluded);
+        // 欠陥は平均と8×8区画では閾値内に埋もれ、一致画素の画素単位最大だけが閾値の外に出ること。
+        const bool bLeakDetected = leakExcluded.Mean <= meanLimit && leakExcluded.BlockMax <= blockLimit &&
+                                   leakExcluded.AgreeingPixelMax > pixelLimit;
+        std::cout << "negative_local_leak_detected=" << (bLeakDetected ? 1 : 0) << '\n';
         PrintFlipMeasurement("info_pinhole_vs_path_tracing_dof", pinholeMeasurement);
         PrintFlipMeasurement("info_raster_pipeline_dof_vs_path_tracing_dof", pipelineMeasurement);
         PrintFlipMeasurement("info_raster_pipeline_dof_vs_raster_pinhole", pipelineEngaged);
@@ -678,12 +924,16 @@ namespace
         std::cout << "raster_pipeline_dof_engaged=" << (bPipelineEngaged ? 1 : 0) << '\n';
 
         const bool bWithin = rasterMeasurement.Mean <= meanLimit &&
-                             rasterMeasurement.AgreeingPixelMax <= pixelLimit &&
-                             rasterMeasurement.BlockMax <= blockLimit;
-        const bool bPassed = bSanity && bWithin && bPipelineEngaged && validationErrors == 0u;
+                             rasterExcluded.AgreeingPixelMax <= pixelLimit &&
+                             rasterExcluded.BlockMax <= blockLimit;
+        const bool bPassed = bSanity && bLeakDetected && bWithin && bPipelineEngaged && validationErrors == 0u;
         std::cout << "r8_dof_reference_comparison=" << (bPassed ? "PASS" : "FAIL")
                   << " sanity=" << (bSanity ? "PASS" : "FAIL")
                   << " within_threshold=" << (bWithin ? 1 : 0) << '\n';
+        if (!bLeakDetected)
+        {
+            std::cerr << "除外の外に置いた局所欠陥を検出できません\n";
+        }
         if (!bSanity)
         {
             std::cerr << "f値±40%の変化が閾値の外に出ず、物差しが変化量に対して単調ではありません\n";

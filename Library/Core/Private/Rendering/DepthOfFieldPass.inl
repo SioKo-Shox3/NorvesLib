@@ -28,7 +28,7 @@ namespace NorvesLib::Core::Rendering
             float CameraPositionAndFocusDistance[4];
             // xyz: 視線方向、w: 入力画像の画素でのCoCの直径の係数（CocScale × FilmScale）
             float CameraForwardAndCocScale[4];
-            // xy: 画像の寸法、z: CoCの半径の上限（入力画像の画素）、w: 最終画像の拡大の倍率（FilmScale）
+            // xy: 画像の寸法、z: CoCの半径の上限（入力画像の画素）、w: 最終画像の拡大の倍率（FilmScale、gatherが使う）
             float ImageSizeAndLimits[4];
         };
         static_assert(sizeof(GPUDepthOfFieldParams) == 112u);
@@ -331,14 +331,15 @@ namespace NorvesLib::Core::Rendering
 
         const RHI::Viewport viewport = context.GetActiveLocalViewport();
         const RHI::ScissorRect scissor = context.GetActiveLocalScissor();
-        // 1. SceneColorと深度からぼかした色を中間textureへ書く（中間の前の内容は捨てる）。
+        // 1. SceneColorと深度から、PTと同じ倍率で拡大しながらぼかした色を中間textureへ書く
+        //    （中間の前の内容は捨てる）。
         context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::RenderTarget,
                                       RHI::ResourceState::ShaderResource);
         context.EnqueueTextureBarrier(m_GatherTexture, RHI::ResourceState::Undefined,
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_GatherRenderPass, m_GatherFramebuffer, viewport, scissor,
                                       m_GatherPipeline, m_GatherDescriptorSet);
-        // 2. PTと同じ倍率で拡大しながらSceneColorへ書き戻す。
+        // 2. SceneColorへそのまま書き戻す。
         context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::ShaderResource,
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_ResampleRenderPass, m_ResampleFramebuffer, viewport,
