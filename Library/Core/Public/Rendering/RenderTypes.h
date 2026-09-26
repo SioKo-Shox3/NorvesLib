@@ -146,6 +146,8 @@ namespace NorvesLib::Core::Rendering
         GBufferMaterial,
         GBufferDepth,
         LODLevel,
+        /** @brief 点光源のキューブシャドウに格納された距離（遮られた面は赤） */
+        PointShadowDistance,
         Count
     };
 
@@ -171,6 +173,8 @@ namespace NorvesLib::Core::Rendering
             return "GBufferDepth";
         case DebugViewMode::LODLevel:
             return "LODLevel";
+        case DebugViewMode::PointShadowDistance:
+            return "PointShadowDistance";
         case DebugViewMode::Count:
         default:
             return "Invalid";

@@ -988,6 +988,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     FOLDER "Test/Core/Rendering"
     MEMBER CameraViewConstantsTest CameraViewConstantsTest.cpp
     MEMBER OrthographicViewportMatrixTest OrthographicViewportMatrixTest.cpp
+    MEMBER PointShadowFaceMatricesTest PointShadowFaceMatricesTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
 target_include_directories(CameraViewConstantsTest PRIVATE
@@ -1021,6 +1022,7 @@ target_include_directories(ViewportCameraIdRenderPlanTest PRIVATE
 add_test(NAME ViewportCameraIdRenderPlanTest COMMAND ViewportCameraIdRenderPlanTest)
 
 add_test(NAME OrthographicViewportMatrixTest COMMAND CameraViewConstantsTest --test=OrthographicViewportMatrixTest)
+add_test(NAME PointShadowFaceMatricesTest COMMAND CameraViewConstantsTest --test=PointShadowFaceMatricesTest)
 
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp

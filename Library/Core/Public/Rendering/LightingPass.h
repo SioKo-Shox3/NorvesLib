@@ -293,6 +293,7 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_GBufferEmissiveHandle;
         RGResourceHandle m_SSAOBlurredHandle;
         RGResourceHandle m_ShadowMapHandle;
+        RGResourceHandle m_PointShadowCubeHandle;
         RGResourceHandle m_RTGIDiffuseIndirectHandle;
 
         // ライティング用リソース
@@ -388,6 +389,10 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_ValidationRaw252PrefilteredSpecularTexture;
         RHI::TexturePtr m_DefaultBlackTexture;
         RHI::TexturePtr m_DefaultShadowMapArrayTexture;
+        /** @brief 点光源のキューブシャドウが無いフレームにbinding 20へ置く1×1のキューブ配列（距離1） */
+        RHI::TexturePtr m_DefaultPointShadowCubeTexture;
+        /** @brief このフレームにShadowMapPassが描いたキューブ配列（無いフレームは空） */
+        RHI::TexturePtr m_FramePointShadowCubeTexture;
         RHI::TexturePtr m_DefaultDDGIIrradianceAtlas;
         RHI::TexturePtr m_DefaultDDGIDistanceAtlas;
         RHI::SamplerPtr m_IBLSampler;         ///< 環境放射輝度用サンプラー

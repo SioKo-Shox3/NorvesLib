@@ -43,7 +43,7 @@ struct LightData
     vec4 position;      // xyz=position, w=type (0:Dir, 1:Point, 2:Spot)
     vec4 direction;     // xyz=direction, w=innerAngle
     vec4 chromaticityAndIntensity; // xyz=Y=1 chromaticity, w=canonical lux/cd
-    vec4 attenuation;   // x=range, y=outerAngle, z=unused, w=unused
+    vec4 attenuation;   // x=range, y=outerAngle, z=CSM/RT影を掛ける灯なら1, w=キューブシャドウの番号+1（無ければ0）
 };
 
 // ライト配列
@@ -71,6 +71,8 @@ layout(set = 0, binding = 16) uniform sampler2D rayTracingShadowVisibility;
 layout(set = 0, binding = 17) uniform sampler2DArray ddgiIrradianceAtlas;
 layout(set = 0, binding = 18) uniform sampler2DArray ddgiDistanceAtlas;
 layout(set = 0, binding = 19) uniform sampler2D rtgiDiffuseIndirect;
+// 点光源のキューブシャドウ（キューブiに光源からの距離/範囲を格納。無いフレームは距離1の既定値）
+layout(set = 0, binding = 20) uniform samplerCubeArray pointShadowCubes;
 
 // SSAO (Screen-Space Ambient Occlusion)
 layout(set = 0, binding = 10) uniform sampler2D ssaoTexture;
@@ -105,7 +107,8 @@ const uint DEBUG_VIEW_MODE_GBUFFER_NORMAL = 5u;
 const uint DEBUG_VIEW_MODE_GBUFFER_MATERIAL = 6u;
 const uint DEBUG_VIEW_MODE_GBUFFER_DEPTH = 7u;
 const uint DEBUG_VIEW_MODE_LOD_LEVEL = 8u;
-const uint DEBUG_VIEW_MODE_COUNT = 9u;
+const uint DEBUG_VIEW_MODE_POINT_SHADOW_DISTANCE = 9u;
+const uint DEBUG_VIEW_MODE_COUNT = 10u;
 const uint DEBUG_VIEW_MODE_VALIDATION_LAMBERT = 253u;
 const uint DEBUG_VIEW_MODE_VALIDATION_PBR = 254u;
 const uint DEBUG_VIEW_MODE_RAW250 = 250u;
@@ -949,6 +952,45 @@ void main()
         }
         float depth01 = ComputeDebugDepth01(fragUV, depthSample);
         outColor = vec4(vec3(depth01), 1.0);
+        return;
+    }
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_POINT_SHADOW_DISTANCE)
+    {
+        // 面の位置から最初のキューブシャドウを持つ点光源への方向でキューブを引き、格納された
+        // 距離（範囲で割った値）を灰色で出す。面が格納距離より光源から遠ければ（遮られていれば）
+        // 赤を混ぜる。範囲外は暗い青、キューブシャドウを持つ灯が無ければ黒。
+        if (albedoSample.a < 0.01)
+        {
+            outColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
+        vec3 debugWorldPos = ReconstructWorldPosition(fragUV, depthSample);
+        for (uint debugLightIndex = 0u; debugLightIndex < params.lightCount; ++debugLightIndex)
+        {
+            LightData debugLight = lightBuffer.lights[debugLightIndex];
+            float cubeSlot = debugLight.attenuation.w;
+            if (cubeSlot < 0.5)
+            {
+                continue;
+            }
+            vec3 toSurface = debugWorldPos - debugLight.position.xyz;
+            float range = max(debugLight.attenuation.x, 0.0001);
+            float surfaceDistance01 = length(toSurface) / range;
+            if (surfaceDistance01 >= 1.0)
+            {
+                outColor = vec4(0.0, 0.0, 0.15, 1.0);
+                return;
+            }
+            float storedDistance01 = textureLod(pointShadowCubes,
+                                                vec4(toSurface, cubeSlot - 1.0),
+                                                0.0).r;
+            bool bOccluded = surfaceDistance01 > storedDistance01 + 0.02;
+            vec3 gray = vec3(storedDistance01);
+            outColor = vec4(bOccluded ? mix(gray, vec3(1.0, 0.0, 0.0), 0.6) : gray, 1.0);
+            return;
+        }
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
 

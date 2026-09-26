@@ -63,7 +63,7 @@
 - notes: ユーザー決定（2026-09-27）「展示物を足す」。
 
 ## SS-POINT-SHADOW-P1: 影を落とす点光源のキューブシャドウマップを描く
-- status: todo
+- status: done
 - done-when: CastShadowsの点光源（表示中のもの、最大4灯、光源からの距離が近い順）ごとに、6面の距離（光源からの線形距離）をキューブ配列の深度へ描くパスがある。キャスターは光源の範囲の球でカリングする。影の灯の選択と6面の行列はRenderThreadへFramePacketのスナップショット越しに渡る。6面の行列（Vulkanの規約での向きと上方向）をCPUのテスト `PointShadowFaceMatricesTest`（`CameraViewConstantsTest` の束へ MEMBER として足す）で確かめる。デバッグ表示でキューブの中身（距離）を確かめられる。影を落とす点光源が無いシーンでは何も描かず、既存の描画結果が変わらない。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game LightingLightBufferTest CameraViewConstantsTest RenderingGoldenImageTest -- /m:1`

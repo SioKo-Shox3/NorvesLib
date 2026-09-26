@@ -155,7 +155,7 @@ namespace NorvesLib::RHI
         RenderPassPtr renderPass;
         uint32_t width = 0;
         uint32_t height = 0;
-        /** @brief 配列デプスアタッチメントで使用する0-based layer */
+        /** @brief 配列デプスアタッチメントで使用する0-based layer（キューブ配列はキューブの番号 * 6 + 面） */
         uint32_t depthStencilArrayLayer = 0;
     };
 

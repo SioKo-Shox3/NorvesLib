@@ -317,6 +317,12 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    bool BuildSkinnedShadowCasterWorldBounds(const SkinnedMeshProxy& proxy,
+                                             BoundingSphere& outBounds)
+    {
+        return BuildSkinnedCasterWorldBounds(proxy, outBounds);
+    }
+
     DirectionalShadowMatrixSettings FitDirectionalShadowMatrixSettingsToCasters(
         const DirectionalShadowMatrixSettings& baseSettings,
         const Container::VariableArray<MeshProxy>* meshProxies,

@@ -1350,6 +1350,12 @@ namespace NorvesLib::Core::Rendering
         rtgiDiffuseIndirectBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(rtgiDiffuseIndirectBinding);
 
+        RHI::DescriptorBinding pointShadowCubeBinding;
+        pointShadowCubeBinding.binding = 20;
+        pointShadowCubeBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        pointShadowCubeBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(pointShadowCubeBinding);
+
         return dsDesc;
     }
 
@@ -1401,7 +1407,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         if (m_Device != nullptr || m_DefaultBlackTexture || m_DefaultShadowMapArrayTexture ||
-            m_BrdfLutTexture ||
+            m_DefaultPointShadowCubeTexture || m_BrdfLutTexture ||
             m_DefaultNeuralBRDFWeightBuffer)
         {
             SceneView* sceneView = m_SceneView;
@@ -1585,6 +1591,37 @@ namespace NorvesLib::Core::Rendering
                                                     layer);
         }
 
+        // samplerCubeArrayの既定値。キューブ配列のビューにするため2キューブにし、
+        // 各キューブの6面を距離1（遮るものなし）で埋める。
+        RHI::TextureDesc pointShadowFallbackDesc;
+        pointShadowFallbackDesc.Width = 1u;
+        pointShadowFallbackDesc.Height = 1u;
+        pointShadowFallbackDesc.ArraySize = 2u;
+        pointShadowFallbackDesc.IsCubemap = true;
+        pointShadowFallbackDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        pointShadowFallbackDesc.Usage = shadowMapFallbackDesc.Usage;
+        pointShadowFallbackDesc.DebugName = "LightingPointShadowCubeFallback";
+        m_DefaultPointShadowCubeTexture = m_Device->CreateTexture(pointShadowFallbackDesc);
+        if (!m_DefaultPointShadowCubeTexture)
+        {
+            NORVES_LOG_ERROR("LightingPass", "点光源の影の既定のキューブ配列を作れません");
+            return false;
+        }
+        uint8_t pointShadowFallbackFaces[6u * 4u];
+        for (uint8_t& value : pointShadowFallbackFaces)
+        {
+            value = 255u;
+        }
+        for (uint32_t cubeIndex = 0u; cubeIndex < pointShadowFallbackDesc.ArraySize; ++cubeIndex)
+        {
+            // キューブの更新は6面をまとめて転送する（slicePitchに6面分の大きさを渡す）。
+            m_DefaultPointShadowCubeTexture->Update(pointShadowFallbackFaces,
+                                                    4u,
+                                                    sizeof(pointShadowFallbackFaces),
+                                                    0u,
+                                                    cubeIndex);
+        }
+
         RHI::TextureDesc dfgFallbackDesc;
         dfgFallbackDesc.Width = 1u;
         dfgFallbackDesc.Height = 1u;
@@ -1755,7 +1792,7 @@ namespace NorvesLib::Core::Rendering
         m_DDGIProbePass.Shutdown();
         m_RayTracingShadowPass.Shutdown();
         if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
-            !m_DefaultShadowMapArrayTexture &&
+            !m_DefaultShadowMapArrayTexture && !m_DefaultPointShadowCubeTexture &&
             !m_DefaultDDGIIrradianceAtlas && !m_DefaultDDGIDistanceAtlas &&
             !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer &&
             !m_RTGIComputePipeline && !m_RTGIComputeParametersBuffer &&
@@ -1838,6 +1875,8 @@ namespace NorvesLib::Core::Rendering
         m_BrdfLutTexture.reset();
         m_DefaultBlackTexture.reset();
         m_DefaultShadowMapArrayTexture.reset();
+        m_DefaultPointShadowCubeTexture.reset();
+        m_FramePointShadowCubeTexture.reset();
         m_DefaultDDGIIrradianceAtlas.reset();
         m_DefaultDDGIDistanceAtlas.reset();
         m_bIBLAvailable = false;
@@ -2109,6 +2148,16 @@ namespace NorvesLib::Core::Rendering
             m_ShadowMapHandle = shadowMapHandle.ToResourceHandle();
         }
 
+        // 影を落とす点光源があるフレームだけShadowMapPassが公開する。
+        m_PointShadowCubeHandle = {};
+        RGTextureHandle pointShadowCubeHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::PointShadowCubeMap,
+                                   pointShadowCubeHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_PointShadowCubeHandle = pointShadowCubeHandle.ToResourceHandle();
+        }
+
         // R6 RTGIはこのパス内のcomputeが生成し、後段のLightingへ渡す。
         RGTextureHandle rtgiDiffuseIndirectHandle;
         if (builder.TryReadTexture(RenderGraphResourceNames::RTGIDiffuseIndirect,
@@ -2297,6 +2346,12 @@ namespace NorvesLib::Core::Rendering
             shadowMapTexture = context.SharedResources->GetTexturePtr("ShadowMap");
         }
 
+        m_FramePointShadowCubeTexture.reset();
+        if (m_PointShadowCubeHandle.IsValid())
+        {
+            m_FramePointShadowCubeTexture = resources.GetTexture(m_PointShadowCubeHandle);
+        }
+
         if (!PrepareLightingOutput(sceneColorTexture->GetWidth(),
                                    sceneColorTexture->GetHeight(),
                                    sceneColorTexture,
@@ -2341,6 +2396,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr emissivePtr;
         RHI::TexturePtr ssaoPtr;
         RHI::TexturePtr shadowMapPtr;
+        // 旧経路はRenderGraphを通らないため、点光源のキューブシャドウは読まない。
+        m_FramePointShadowCubeTexture.reset();
 
         if (context.SharedResources)
         {
@@ -2579,6 +2636,7 @@ namespace NorvesLib::Core::Rendering
         outDescriptorSet.reset();
         if (!m_Device || !m_LightDataBuffer || !m_LightArrayBuffer || !m_BrdfLutTexture ||
             !m_DefaultBlackTexture || !m_DefaultShadowMapArrayTexture ||
+            !m_DefaultPointShadowCubeTexture ||
             !m_DefaultDDGIIrradianceAtlas || !m_DefaultDDGIDistanceAtlas ||
             !m_DefaultNeuralBRDFWeightBuffer ||
             !m_GBufferSampler || !m_IBLSampler || !m_DiffuseIrradianceSampler ||
@@ -2635,6 +2693,8 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindSampler(18, m_DDGISampler);
         descriptorSet->BindTexture(19, m_DefaultBlackTexture);
         descriptorSet->BindSampler(19, m_GBufferSampler);
+        descriptorSet->BindTexture(20, m_DefaultPointShadowCubeTexture);
+        descriptorSet->BindSampler(20, m_GBufferSampler);
 
         outDescriptorSet = std::move(descriptorSet);
         return true;
@@ -3801,6 +3861,11 @@ namespace NorvesLib::Core::Rendering
                 ? context.PhysicalLighting.RTGI.Result.DiffuseIndirectRadiance
                 : m_DefaultBlackTexture);
         m_LightingDescriptorSet->BindSampler(19, m_GBufferSampler);
+        m_LightingDescriptorSet->BindTexture(
+            20,
+            m_FramePointShadowCubeTexture ? m_FramePointShadowCubeTexture
+                                          : m_DefaultPointShadowCubeTexture);
+        m_LightingDescriptorSet->BindSampler(20, m_GBufferSampler);
 
         if (ssaoTexture)
         {
@@ -4103,8 +4168,12 @@ namespace NorvesLib::Core::Rendering
 
         uint32_t lightCount = 0;
         // CSMとRT影はShadowMapPass・RayTracingShadowPassと同じ規則で選んだ一灯だけへ掛ける。
+        // キューブシャドウの番号は、このフレームにキューブ配列を読めるときだけ光源へ付ける。
         lightCount = PackLightingPassLights(
-            lightProxies, lightArray, SelectShadowedDirectionalLight(context.SnapshotLightProxies));
+            lightProxies,
+            lightArray,
+            SelectShadowedDirectionalLight(context.SnapshotLightProxies),
+            m_FramePointShadowCubeTexture ? context.SnapshotPointShadows : nullptr);
         if (!EnsureLightArrayBufferCapacity(lightCount))
         {
             return false;

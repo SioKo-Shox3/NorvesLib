@@ -35,6 +35,7 @@ namespace NorvesLib::Core::Rendering
     class RenderGraph;
     struct RenderGraphExecutionResult;
     struct ShadowMapPassSettings;
+    struct PointShadowSnapshot;
     struct RayTracingSceneSnapshot;
 
     struct RenderGraphDebugCapture
@@ -563,6 +564,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief MegaGeometryProxyスナップショット（FramePacket::Scene.MegaGeometryProxiesを指す） */
         const Container::VariableArray<MegaGeometryProxy> *SnapshotMegaGeometryProxies = nullptr;
+
+        /** @brief キューブシャドウを描く点光源のスナップショット（FramePacket::PointShadowsを指す） */
+        const PointShadowSnapshot* SnapshotPointShadows = nullptr;
 
         /** @brief 現在のViewportで実行済みのShadowMapPass設定（フレーム内借用） */
         const ShadowMapPassSettings* ActiveShadowMapSettings = nullptr;

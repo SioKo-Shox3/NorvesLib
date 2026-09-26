@@ -1958,6 +1958,12 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
             }
             SnapshotSceneParameters(*m_CurrentPacket, m_Device->GetCapabilities());
+            // 影を落とす点光源の選択と6面の行列は、空の太陽を加えた後の光源表とメインカメラから作る。
+            BuildPointShadowSnapshot(m_CurrentPacket->Scene.LightProxies,
+                                     m_CurrentPacket->bHasMainCamera
+                                         ? &m_CurrentPacket->Scene.MainCamera
+                                         : nullptr,
+                                     m_CurrentPacket->PointShadows);
 
             m_CurrentPacket->DrawCommands.clear();
             m_CurrentPacket->DrawCommands.reserve(m_MaxDrawCallsPerFrame);
@@ -2572,6 +2578,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotMeshProxies = &packet->Scene.MeshProxies;
         viewContext.SnapshotSkinnedMeshProxies = &packet->Scene.SkinnedMeshProxies;
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
+        viewContext.SnapshotPointShadows = &packet->PointShadows;
         viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
 
         PresentationComposer presentationComposer;
