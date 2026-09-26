@@ -9,7 +9,7 @@
 using namespace NorvesLib::Thread;
 
 // 基本的な機能テスト
-void TestBasicOperations()
+static void TestBasicOperations()
 {
     std::cout << "Running basic operations test..." << std::endl;
 
@@ -31,7 +31,7 @@ void TestBasicOperations()
 }
 
 // 初期化関数を使用するテスト
-void TestInitializer()
+static void TestInitializer()
 {
     std::cout << "Running initializer test..." << std::endl;
 
@@ -50,7 +50,7 @@ void TestInitializer()
 }
 
 // 複雑な型でのテスト
-void TestComplexType()
+static void TestComplexType()
 {
     std::cout << "Running complex type test..." << std::endl;
 
@@ -73,7 +73,7 @@ void TestComplexType()
 }
 
 // マルチスレッドテスト
-void TestMultithreaded()
+static void TestMultithreaded()
 {
     std::cout << "Running multithreaded test..." << std::endl;
 
@@ -115,7 +115,7 @@ void TestMultithreaded()
 }
 
 // スレッド間のデータ独立性テスト
-void TestIndependence()
+static void TestIndependence()
 {
     std::cout << "Running independence test..." << std::endl;
 

@@ -1,7 +1,6 @@
 ﻿#include "Thread/RingBuffer.h"
 #include "Thread/Atomic.h"
 #include <thread>
-#include <chrono>
 #include <vector>
 #include <atomic>
 #include <cassert>
@@ -10,7 +9,7 @@
 using namespace NorvesLib::Thread;
 
 // シンプルな単一スレッドのテスト
-void TestBasicOperations()
+static void TestBasicOperations()
 {
     std::cout << "Running basic operations test..." << std::endl;
 
@@ -60,7 +59,7 @@ void TestBasicOperations()
 }
 
 // マルチスレッドテスト（単一プロデューサ・単一コンシューマ）
-void TestMultithreaded()
+static void TestMultithreaded()
 {
     std::cout << "Running multithreaded test..." << std::endl;
 
@@ -121,70 +120,12 @@ void TestMultithreaded()
     std::cout << "Multithreaded test passed!" << std::endl;
 }
 
-// パフォーマンステスト
-void TestPerformance()
-{
-    std::cout << "Running performance test..." << std::endl;
-
-    constexpr size_t BUFFER_SIZE = 4096;
-    constexpr int NUM_ITEMS = 1000000;
-
-    RingBuffer<int, BUFFER_SIZE> buffer;
-    Atomic<int> consumedCount(0);
-
-    auto startTime = std::chrono::high_resolution_clock::now();
-
-    // プロデューサースレッド
-    auto producer = [&buffer]()
-    {
-        for (int i = 0; i < NUM_ITEMS; i++)
-        {
-            while (!buffer.TryWrite(i))
-            {
-                std::this_thread::yield();
-            }
-        }
-    };
-
-    // コンシューマースレッド
-    auto consumer = [&buffer, &consumedCount]()
-    {
-        while (consumedCount < NUM_ITEMS)
-        {
-            int value;
-            if (buffer.TryRead(value))
-            {
-                consumedCount++;
-            }
-            else
-            {
-                std::this_thread::yield();
-            }
-        }
-    };
-
-    // スレッドの開始
-    std::thread producerThread(producer);
-    std::thread consumerThread(consumer);
-
-    // スレッドの終了を待つ
-    producerThread.join();
-    consumerThread.join();
-
-    auto endTime = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-
-    std::cout << "Performance test completed: " << NUM_ITEMS << " items processed in "
-              << duration << " ms (" << (NUM_ITEMS * 1000.0 / duration) << " items/second)" << std::endl;
-}
-
 int main()
 {
     std::cout << "Running RingBuffer tests..." << std::endl;
 
     TestBasicOperations();
     TestMultithreaded();
-    TestPerformance();
 
     std::cout << "All RingBuffer tests passed!" << std::endl;
     return 0;

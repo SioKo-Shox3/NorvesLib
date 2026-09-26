@@ -3,6 +3,7 @@
 #include "Physics/PhysicsBroadphase.h"
 #include "Physics/IPhysicsModule.h"
 #include "Physics/PhysicsModule.h"
+#include "PhysicsModuleTestAccess.h"
 #include "Physics/ColliderComponent.h"
 #include "Engine/Engine.h"
 #include "Module/ModuleRegistry.h"
@@ -20,21 +21,6 @@ using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Module;
 using namespace NorvesLib::Core::Scene;
 using namespace NorvesLib::Modules::Physics;
-
-namespace NorvesLib::Modules::Physics
-{
-    class PhysicsModuleTestAccess
-    {
-    public:
-        static bool ShutdownAndInitialize(IPhysicsModule& module)
-        {
-            auto* concrete = dynamic_cast<PhysicsModule*>(&module);
-            assert(concrete != nullptr);
-            concrete->Shutdown();
-            return concrete->Initialize();
-        }
-    };
-} // namespace NorvesLib::Modules::Physics
 
 namespace
 {

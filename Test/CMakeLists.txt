@@ -1,6 +1,7 @@
 ﻿# NorvesLibテスト
 
 # テストサブディレクトリの追加
+add_subdirectory(TestBundle)
 add_subdirectory(Core)
 add_subdirectory(Reflection)
 add_subdirectory(Thread)

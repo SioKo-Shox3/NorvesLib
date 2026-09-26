@@ -1,260 +1,110 @@
-add_executable(ObjectReflectionTest
-    ObjectReflectionTest.cpp
-    Animal.cpp
+norves_add_test_bundle(ObjectReflectionTest
+    FOLDER "Test/Core/Object"
+    MEMBER ObjectReflectionTest ObjectReflectionTest.cpp
+    MEMBER RuntimeSchemaSnapshotTest RuntimeSchemaSnapshotTest.cpp
+    MEMBER ObjectCastTest ObjectCastTest.cpp
+    MEMBER PropertyBagTest PropertyBagTest.cpp
+    MEMBER SchemaProjectionTest SchemaProjectionTest.cpp
+    MEMBER StructPropertySerializeTest ${CMAKE_SOURCE_DIR}/Test/Reflection/StructPropertySerializeTest.cpp
+    MEMBER EnumPropertySerializeTest ${CMAKE_SOURCE_DIR}/Test/Reflection/EnumPropertySerializeTest.cpp
+    SOURCES
+        Animal.cpp
 )
 target_link_libraries(ObjectReflectionTest PRIVATE Core)
 target_include_directories(ObjectReflectionTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
-set_target_properties(ObjectReflectionTest PROPERTIES FOLDER "Test/Core/Object")
 
-add_executable(ResourceRegistryTest
-    ResourceRegistryTest.cpp
+norves_add_test_bundle(ResourceRegistryTest
+    FOLDER "Test/Core/Object"
+    MEMBER ResourceRegistryTest ResourceRegistryTest.cpp
+    MEMBER ResourceMetadataTest ResourceMetadataTest.cpp
+    MEMBER SkeletalResourceLifetimeTest SkeletalResourceLifetimeTest.cpp
 )
 target_link_libraries(ResourceRegistryTest PRIVATE Core)
 target_include_directories(ResourceRegistryTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(ResourceRegistryTest PROPERTIES FOLDER "Test/Core/Object")
 
-add_executable(RuntimeSchemaSnapshotTest
-    RuntimeSchemaSnapshotTest.cpp
-    Animal.cpp
-)
-target_link_libraries(RuntimeSchemaSnapshotTest PRIVATE Core)
-target_include_directories(RuntimeSchemaSnapshotTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-set_target_properties(RuntimeSchemaSnapshotTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(ObjectHeapTest
-    ObjectHeapTest.cpp
-    Animal.cpp
+norves_add_test_bundle(ObjectHeapTest
+    FOLDER "Test/Core/Object"
+    MEMBER ObjectHeapTest ObjectHeapTest.cpp
+    MEMBER InvocationQueueTest InvocationQueueTest.cpp
+    MEMBER ObjectGCTest ObjectGCTest.cpp
+    MEMBER IncrementalGCTest IncrementalGCTest.cpp
+    SOURCES
+        Animal.cpp
 )
 target_link_libraries(ObjectHeapTest PRIVATE Core)
 target_include_directories(ObjectHeapTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
-set_target_properties(ObjectHeapTest PROPERTIES FOLDER "Test/Core/Object")
 
-add_executable(PropertyBagTest
-    PropertyBagTest.cpp
-    Animal.cpp
-)
-target_link_libraries(PropertyBagTest PRIVATE Core)
-target_include_directories(PropertyBagTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-set_target_properties(PropertyBagTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(InvocationQueueTest
-    InvocationQueueTest.cpp
-    Animal.cpp
-)
-target_link_libraries(InvocationQueueTest PRIVATE Core)
-target_include_directories(InvocationQueueTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-set_target_properties(InvocationQueueTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(ResourceMetadataTest
-    ResourceMetadataTest.cpp
-)
-target_link_libraries(ResourceMetadataTest PRIVATE Core)
-target_include_directories(ResourceMetadataTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(ResourceMetadataTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(ObjectCastTest
-    ObjectCastTest.cpp
-    Animal.cpp
-)
-target_link_libraries(ObjectCastTest PRIVATE Core)
-target_include_directories(ObjectCastTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-set_target_properties(ObjectCastTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(LightComponentBuildProxyTest
-    LightComponentBuildProxyTest.cpp
-)
-target_link_libraries(LightComponentBuildProxyTest PRIVATE Core)
-target_include_directories(LightComponentBuildProxyTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(LightComponentBuildProxyTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(ObjectGCTest
-    ObjectGCTest.cpp
-)
-target_link_libraries(ObjectGCTest PRIVATE Core)
-target_include_directories(ObjectGCTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-set_target_properties(ObjectGCTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(IncrementalGCTest
-    IncrementalGCTest.cpp
-)
-target_link_libraries(IncrementalGCTest PRIVATE Core)
-target_include_directories(IncrementalGCTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-set_target_properties(IncrementalGCTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(SchemaProjectionTest
-    SchemaProjectionTest.cpp
-    Animal.cpp
-)
-target_link_libraries(SchemaProjectionTest PRIVATE Core)
-target_include_directories(SchemaProjectionTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-set_target_properties(SchemaProjectionTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(EntitySubtreeSnapshotTest
-    EntitySubtreeSnapshotTest.cpp
-)
-target_link_libraries(EntitySubtreeSnapshotTest PRIVATE Core)
-target_include_directories(EntitySubtreeSnapshotTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(EntitySubtreeSnapshotTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(PrefabRoundTripTest
-    PrefabRoundTripTest.cpp
-)
-target_link_libraries(PrefabRoundTripTest PRIVATE Core)
-target_include_directories(PrefabRoundTripTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(PrefabRoundTripTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(TransformHierarchyTest
-    TransformHierarchyTest.cpp
-)
-target_link_libraries(TransformHierarchyTest PRIVATE Core)
-target_include_directories(TransformHierarchyTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(TransformHierarchyTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(EntityWorldAABBTest
-    EntityWorldAABBTest.cpp
-)
-target_link_libraries(EntityWorldAABBTest PRIVATE Core)
-target_include_directories(EntityWorldAABBTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(EntityWorldAABBTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(SceneQueryRaycastTest
-    SceneQueryRaycastTest.cpp
+norves_add_test_bundle(SceneQueryRaycastTest
+    FOLDER "Test/Core/Object"
+    MEMBER SceneQueryRaycastTest SceneQueryRaycastTest.cpp
+    MEMBER SceneQueryOverlapTest SceneQueryOverlapTest.cpp
+    MEMBER SceneQueryPhysicsFacadeTest SceneQueryPhysicsFacadeTest.cpp
 )
 target_link_libraries(SceneQueryRaycastTest PRIVATE Core)
 target_include_directories(SceneQueryRaycastTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(SceneQueryRaycastTest PROPERTIES FOLDER "Test/Core/Object")
 
-add_executable(SceneQueryOverlapTest
-    SceneQueryOverlapTest.cpp
-)
-target_link_libraries(SceneQueryOverlapTest PRIVATE Core)
-target_include_directories(SceneQueryOverlapTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(SceneQueryOverlapTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(SceneQueryPhysicsFacadeTest
-    SceneQueryPhysicsFacadeTest.cpp
-)
-target_link_libraries(SceneQueryPhysicsFacadeTest PRIVATE Core)
-target_include_directories(SceneQueryPhysicsFacadeTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(SceneQueryPhysicsFacadeTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(EntityTreeTest
-    EntityTreeTest.cpp
+norves_add_test_bundle(EntityTreeTest
+    FOLDER "Test/Core/Object"
+    MEMBER EntityTreeTest EntityTreeTest.cpp
+    MEMBER LightComponentBuildProxyTest LightComponentBuildProxyTest.cpp
+    MEMBER TransformHierarchyTest TransformHierarchyTest.cpp
+    MEMBER EntityWorldAABBTest EntityWorldAABBTest.cpp
+    MEMBER SpringArmComponentTest SpringArmComponentTest.cpp
 )
 target_link_libraries(EntityTreeTest PRIVATE Core)
 target_include_directories(EntityTreeTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(EntityTreeTest PROPERTIES FOLDER "Test/Core/Object")
 
-add_executable(SceneSerializerTest
-    SceneSerializerTest.cpp
+norves_add_test_bundle(SceneSerializerTest
+    FOLDER "Test/Core/Object"
+    MEMBER SceneSerializerTest SceneSerializerTest.cpp
+    MEMBER EntitySubtreeSnapshotTest EntitySubtreeSnapshotTest.cpp
+    MEMBER PrefabRoundTripTest PrefabRoundTripTest.cpp
+    MEMBER SceneFileRoundTripTest SceneFileRoundTripTest.cpp
 )
 target_link_libraries(SceneSerializerTest PRIVATE Core)
-target_compile_definitions(SceneSerializerTest PRIVATE
-    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
-)
 target_include_directories(SceneSerializerTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(SceneSerializerTest PROPERTIES FOLDER "Test/Core/Object")
-
-add_executable(SceneFileRoundTripTest
-    SceneFileRoundTripTest.cpp
+target_compile_definitions(SceneSerializerTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
-target_link_libraries(SceneFileRoundTripTest PRIVATE Core)
-target_include_directories(SceneFileRoundTripTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(SceneFileRoundTripTest PROPERTIES FOLDER "Test/Core/Object")
 
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
-add_test(NAME RuntimeSchemaSnapshotTest COMMAND RuntimeSchemaSnapshotTest)
+add_test(NAME RuntimeSchemaSnapshotTest COMMAND ObjectReflectionTest --test=RuntimeSchemaSnapshotTest)
 add_test(NAME ObjectHeapTest COMMAND ObjectHeapTest)
-add_test(NAME ObjectCastTest COMMAND ObjectCastTest)
-add_test(NAME LightComponentBuildProxyTest COMMAND LightComponentBuildProxyTest)
-add_test(NAME PropertyBagTest COMMAND PropertyBagTest)
-add_test(NAME InvocationQueueTest COMMAND InvocationQueueTest)
-add_test(NAME ResourceMetadataTest COMMAND ResourceMetadataTest)
-add_test(NAME ObjectGCTest COMMAND ObjectGCTest)
-add_test(NAME IncrementalGCTest COMMAND IncrementalGCTest)
-add_test(NAME SchemaProjectionTest COMMAND SchemaProjectionTest)
-add_test(NAME EntitySubtreeSnapshotTest COMMAND EntitySubtreeSnapshotTest)
-add_test(NAME PrefabRoundTripTest COMMAND PrefabRoundTripTest)
-add_test(NAME TransformHierarchyTest COMMAND TransformHierarchyTest)
-add_test(NAME EntityWorldAABBTest COMMAND EntityWorldAABBTest)
+add_test(NAME ObjectCastTest COMMAND ObjectReflectionTest --test=ObjectCastTest)
+add_test(NAME LightComponentBuildProxyTest COMMAND EntityTreeTest --test=LightComponentBuildProxyTest)
+add_test(NAME PropertyBagTest COMMAND ObjectReflectionTest --test=PropertyBagTest)
+add_test(NAME InvocationQueueTest COMMAND ObjectHeapTest --test=InvocationQueueTest)
+add_test(NAME ResourceMetadataTest COMMAND ResourceRegistryTest --test=ResourceMetadataTest)
+add_test(NAME ObjectGCTest COMMAND ObjectHeapTest --test=ObjectGCTest)
+add_test(NAME IncrementalGCTest COMMAND ObjectHeapTest --test=IncrementalGCTest)
+add_test(NAME SchemaProjectionTest COMMAND ObjectReflectionTest --test=SchemaProjectionTest)
+add_test(NAME EntitySubtreeSnapshotTest COMMAND SceneSerializerTest --test=EntitySubtreeSnapshotTest)
+add_test(NAME PrefabRoundTripTest COMMAND SceneSerializerTest --test=PrefabRoundTripTest)
+add_test(NAME TransformHierarchyTest COMMAND EntityTreeTest --test=TransformHierarchyTest)
+add_test(NAME EntityWorldAABBTest COMMAND EntityTreeTest --test=EntityWorldAABBTest)
 add_test(NAME SceneQueryRaycastTest COMMAND SceneQueryRaycastTest)
-add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryOverlapTest)
-add_test(NAME SceneQueryPhysicsFacadeTest COMMAND SceneQueryPhysicsFacadeTest)
+add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryRaycastTest --test=SceneQueryOverlapTest)
+add_test(NAME SceneQueryPhysicsFacadeTest COMMAND SceneQueryRaycastTest --test=SceneQueryPhysicsFacadeTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
 add_test(NAME SceneSerializerTest COMMAND SceneSerializerTest)
-add_test(NAME SceneFileRoundTripTest COMMAND SceneFileRoundTripTest)
+add_test(NAME SceneFileRoundTripTest COMMAND SceneSerializerTest --test=SceneFileRoundTripTest)
 
-add_executable(SkeletalResourceLifetimeTest
-    SkeletalResourceLifetimeTest.cpp
-)
-target_link_libraries(SkeletalResourceLifetimeTest PRIVATE Core)
-target_include_directories(SkeletalResourceLifetimeTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(SkeletalResourceLifetimeTest PROPERTIES FOLDER "Test/Core/Object")
-add_test(NAME SkeletalResourceLifetimeTest COMMAND SkeletalResourceLifetimeTest)
+add_test(NAME SkeletalResourceLifetimeTest COMMAND ResourceRegistryTest --test=SkeletalResourceLifetimeTest)
 
-add_executable(SpringArmComponentTest
-    SpringArmComponentTest.cpp
-)
-target_link_libraries(SpringArmComponentTest PRIVATE Core)
-target_include_directories(SpringArmComponentTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(SpringArmComponentTest PROPERTIES FOLDER "Test/Core/Object")
-add_test(NAME SpringArmComponentTest COMMAND SpringArmComponentTest)
+add_test(NAME SpringArmComponentTest COMMAND EntityTreeTest --test=SpringArmComponentTest)

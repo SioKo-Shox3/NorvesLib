@@ -1,21 +1,9 @@
-﻿add_executable(AudioModuleLifecycleTest AudioModuleLifecycleTest.cpp)
-target_link_libraries(AudioModuleLifecycleTest PRIVATE Core NorvesAudioDomain)
-target_include_directories(AudioModuleLifecycleTest PRIVATE
-    ${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private
-)
-set_target_properties(AudioModuleLifecycleTest PROPERTIES FOLDER "Test/Modules/Audio")
-add_test(NAME AudioModuleLifecycleTest COMMAND AudioModuleLifecycleTest)
+﻿add_test(NAME AudioModuleLifecycleTest COMMAND AudioBackendLifetimeTest --test=AudioModuleLifecycleTest)
 
 get_target_property(audio_domain_links NorvesAudioDomain LINK_LIBRARIES)
 string(JOIN ";" audio_domain_link_text ${audio_domain_links})
 if(audio_domain_link_text MATCHES "XAudio|xaudio|NorvesAudioBackend_XAudio2|NorvesModule_Audio")
     message(FATAL_ERROR "NorvesAudioDomain must not link a platform audio backend")
-endif()
-
-get_target_property(audio_lifecycle_links AudioModuleLifecycleTest LINK_LIBRARIES)
-string(JOIN ";" audio_lifecycle_link_text ${audio_lifecycle_links})
-if(audio_lifecycle_link_text MATCHES "XAudio|xaudio|NorvesAudioBackend_XAudio2|NorvesModule_Audio")
-    message(FATAL_ERROR "AudioModuleLifecycleTest must remain fake-only")
 endif()
 
 file(GLOB_RECURSE audio_backend_neutral_sources
@@ -32,12 +20,17 @@ foreach(audio_source IN LISTS audio_backend_neutral_sources)
     endif()
 endforeach()
 
-add_executable(AudioBackendLifetimeTest AudioBackendLifetimeTest.cpp)
+
+norves_add_test_bundle(AudioBackendLifetimeTest
+    FOLDER "Test/Modules/Audio"
+    MEMBER AudioBackendLifetimeTest AudioBackendLifetimeTest.cpp
+    MEMBER AudioModuleLifecycleTest AudioModuleLifecycleTest.cpp
+    MEMBER AudioModuleRegistryTest AudioModuleRegistryTest.cpp
+)
 target_link_libraries(AudioBackendLifetimeTest PRIVATE Core NorvesAudioDomain)
 target_include_directories(AudioBackendLifetimeTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private
 )
-set_target_properties(AudioBackendLifetimeTest PROPERTIES FOLDER "Test/Modules/Audio")
 add_test(NAME AudioBackendLifetimeTest COMMAND AudioBackendLifetimeTest)
 
 get_target_property(audio_lifetime_links AudioBackendLifetimeTest LINK_LIBRARIES)
@@ -46,11 +39,5 @@ if(audio_lifetime_link_text MATCHES "XAudio|xaudio|NorvesAudioBackend_XAudio2|No
     message(FATAL_ERROR "AudioBackendLifetimeTest must remain fake-only")
 endif()
 
-add_executable(AudioModuleRegistryTest AudioModuleRegistryTest.cpp)
-target_link_libraries(AudioModuleRegistryTest PRIVATE Core NorvesAudioDomain)
-target_include_directories(AudioModuleRegistryTest PRIVATE
-    ${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private
-)
-set_target_properties(AudioModuleRegistryTest PROPERTIES FOLDER "Test/Modules/Audio")
-add_test(NAME AudioModuleRegistryTest COMMAND AudioModuleRegistryTest)
+add_test(NAME AudioModuleRegistryTest COMMAND AudioBackendLifetimeTest --test=AudioModuleRegistryTest)
 
