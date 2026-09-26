@@ -196,7 +196,8 @@ foreach ($view in $shots)
     }
     if ($null -ne $SunAzimuth)
     {
-        $arguments += "--sun-azimuth=$($SunAzimuth.Value.ToString($invariant))"
+        # [Nullable[double]] の引数は値が入ると double として渡るため、.Value を経由せず変換する。
+        $arguments += "--sun-azimuth=$(([double]$SunAzimuth).ToString($invariant))"
     }
 
     # アセットは作業ディレクトリからの相対パスで読むため、リポジトリのルートで起動する。
