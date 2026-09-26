@@ -1207,32 +1207,49 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (!m_GBufferPipeline &&
-            !CreateGBufferPipelineVariant(RHI::PolygonMode::Fill, m_GBufferPipeline))
+        // 毎フレーム呼ばれるので、実際にパイプラインを作ったときだけログを出す。
+        bool bCreated = false;
+        if (!m_GBufferPipeline)
         {
-            return false;
+            if (!CreateGBufferPipelineVariant(RHI::PolygonMode::Fill, m_GBufferPipeline))
+            {
+                return false;
+            }
+            bCreated = true;
         }
-        if (!m_SkinnedGBufferPipeline &&
-            !CreateSkinnedGBufferPipelineVariant(RHI::PolygonMode::Fill, m_SkinnedGBufferPipeline))
+        if (!m_SkinnedGBufferPipeline)
         {
-            return false;
+            if (!CreateSkinnedGBufferPipelineVariant(RHI::PolygonMode::Fill, m_SkinnedGBufferPipeline))
+            {
+                return false;
+            }
+            bCreated = true;
         }
 
 #if NORVES_BUILD_DEVELOPMENT
-        if (!m_GBufferWireframePipeline &&
-            !CreateGBufferPipelineVariant(RHI::PolygonMode::Line, m_GBufferWireframePipeline))
+        if (!m_GBufferWireframePipeline)
         {
-            return false;
+            if (!CreateGBufferPipelineVariant(RHI::PolygonMode::Line, m_GBufferWireframePipeline))
+            {
+                return false;
+            }
+            bCreated = true;
         }
-        if (!m_SkinnedGBufferWireframePipeline &&
-            !CreateSkinnedGBufferPipelineVariant(RHI::PolygonMode::Line,
-                                                 m_SkinnedGBufferWireframePipeline))
+        if (!m_SkinnedGBufferWireframePipeline)
         {
-            return false;
+            if (!CreateSkinnedGBufferPipelineVariant(RHI::PolygonMode::Line,
+                                                     m_SkinnedGBufferWireframePipeline))
+            {
+                return false;
+            }
+            bCreated = true;
         }
 #endif
 
-        NORVES_LOG_INFO("GBufferPass", "GBuffer resources created (%ux%u)", m_CurrentWidth, m_CurrentHeight);
+        if (bCreated)
+        {
+            NORVES_LOG_INFO("GBufferPass", "GBuffer pipelines created (%ux%u)", m_CurrentWidth, m_CurrentHeight);
+        }
         return true;
     }
 
