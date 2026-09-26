@@ -32,5 +32,9 @@ endif()
 # Gameアプリケーション
 add_subdirectory(Game)
 
-# テスト
-add_subdirectory(Test)
+# テスト。既定ではビルドしない（エンジンとゲームだけ）。テストを回すときは -DNORVES_BUILD_TESTS=ON で構成する。
+# 段の分け方と回し方は Docs/Testing.md。
+option(NORVES_BUILD_TESTS "Build the test executables and register the CTest tests" OFF)
+if(NORVES_BUILD_TESTS)
+    add_subdirectory(Test)
+endif()
