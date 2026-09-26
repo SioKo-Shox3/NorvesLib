@@ -157,7 +157,7 @@ int main()
     assert(coordinatorHeader.find("VolumetricFogParameters m_VolumetricFog;") !=
            std::string::npos);
     assert(coordinator.find(
-               "m_CurrentPacket->Scene.SetVolumetricFogParameters(m_VolumetricFog);") !=
+               "packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);") !=
            std::string::npos);
     assert(coordinator.find(
                "m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);") !=
