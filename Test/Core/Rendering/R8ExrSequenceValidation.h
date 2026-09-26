@@ -36,6 +36,9 @@ namespace NorvesLib::Test::RenderingValidation
         // 隣接フレームのFLIP平均が「中央値×PoppingMedianScale」と「PoppingFloor」の大きい方を超えたらポッピング。
         double PoppingMedianScale = 3.0;
         double PoppingFloor = 0.01;
+        // 期待する寸法。0なら最初に読めたフレームの寸法を連番の寸法とする。
+        uint32_t ExpectedWidth = 0u;
+        uint32_t ExpectedHeight = 0u;
     };
 
     struct ExrSequenceNonFinite

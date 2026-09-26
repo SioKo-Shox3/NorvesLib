@@ -13,7 +13,7 @@ param(
     [int]$Width = 1280,
     [ValidateRange(16, 4320)]
     [int]$Height = 720,
-    [ValidateRange(8, 1048576)]
+    [ValidateRange(8, 8192)]
     [int]$Spp = 1024,
     [ValidateRange(0, 255)]
     [int]$Seed = 0,
@@ -24,6 +24,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Spp % 8 -ne 0) {
+    throw "Spp must be a multiple of 8 (got $Spp)."
+}
 
 $repository = Split-Path -Parent $PSScriptRoot
 $buildRoot = Join-Path $repository 'build'
@@ -43,6 +46,22 @@ New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
 
 function Get-FrameFileName([int]$Frame) {
     return ('{0}_seed{1:x8}_spp{2:d6}_frame{3:d6}.exr' -f $Scene, $Seed, $Spp, $Frame)
+}
+
+# 同じscene・seed・sppで別の寸法の連番が残っていれば、完成したフレームとして使わず止める。
+foreach ($manifest in @(Get-ChildItem -LiteralPath $outputDirectory -Filter "$Scene`_manifest_frames*.txt" -File)) {
+    $fields = @{}
+    foreach ($line in Get-Content -LiteralPath $manifest.FullName) {
+        $parts = @($line -split '=', 2)
+        if ($parts.Count -eq 2) {
+            $fields[$parts[0]] = $parts[1]
+        }
+    }
+    if ($fields['spp'] -eq "$Spp" -and $fields['seed'] -eq "$Seed" -and
+        ($fields['width'] -ne "$Width" -or $fields['height'] -ne "$Height")) {
+        throw ("{0} has a {1}x{2} sequence with the same scene, seed and spp. Remove {3} before rendering {4}x{5}." -f `
+                $manifest.Name, $fields['width'], $fields['height'], $outputDirectory, $Width, $Height)
+    }
 }
 
 # 中断された書き出しの一時ファイル（完成前のEXR）を消す。
@@ -116,7 +135,9 @@ $validationArguments = @(
     "--dir=$($outputDirectory -replace '\\', '/')",
     "--scene=$Scene",
     "--frames=$Frames",
-    '--first=0')
+    '--first=0',
+    "--width=$Width",
+    "--height=$Height")
 & $validator @validationArguments 2>&1 | Tee-Object -FilePath $validationOutput | Write-Host
 $validationExit = $LASTEXITCODE
 

@@ -46,7 +46,7 @@ def main():
             print(f"{scene} の書き出しが失敗しました exit={code}")
             return 1
         code = run([validator, f"--dir={directory.as_posix()}", f"--scene={scene}", f"--frames={FRAMES}",
-                    "--first=0"])
+                    "--first=0", f"--width={WIDTH}", f"--height={HEIGHT}"])
         if code != 0:
             print(f"{scene} の連番が検査に通りません exit={code}")
             return 1

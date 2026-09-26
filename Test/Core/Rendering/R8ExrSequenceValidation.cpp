@@ -282,6 +282,11 @@ namespace NorvesLib::Test::RenderingValidation
         outReport = ExrSequenceReport{};
         outReport.FirstFrame = firstFrame;
         outReport.ExpectedFrames = expectedFrameCount;
+        if (rules.ExpectedWidth != 0u && rules.ExpectedHeight != 0u)
+        {
+            outReport.Width = rules.ExpectedWidth;
+            outReport.Height = rules.ExpectedHeight;
+        }
         if (!directory || !sceneName || expectedFrameCount == 0u || lut.Size < 2u)
         {
             return false;
@@ -348,7 +353,7 @@ namespace NorvesLib::Test::RenderingValidation
                 bHasPrevious = false;
                 continue;
             }
-            // 最初に読めたフレームの寸法を連番の寸法とする。
+            // 期待する寸法が無ければ、最初に読めたフレームの寸法を連番の寸法とする。
             if (outReport.Width == 0u)
             {
                 outReport.Width = image.Width;

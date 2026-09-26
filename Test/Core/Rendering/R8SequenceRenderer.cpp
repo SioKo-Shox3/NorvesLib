@@ -4,7 +4,8 @@
 // 周りを回り、地面の上の球が左右に往復する。書き出しの前に最初のフレームの1つ前の姿勢を1回描き、最初の
 // フレームの動きぼけの前の値にする。
 // 使い方: R8SequenceRenderer --r8-seq-scene=indoor|outdoor --r8-seq-out=<directory> [--r8-seq-first=0]
-//         [--r8-seq-count=8] [--r8-seq-width=256] [--r8-seq-height=144] [--r8-seq-spp=64] [--r8-seq-seed=0]
+//         [--r8-seq-count=8] [--r8-seq-width=256] [--r8-seq-height=144] [--r8-seq-spp=64（8の倍数、8192以下）]
+//         [--r8-seq-seed=0]
 #include "Boot/AppLauncher.h"
 #include "Boot/BootConfig.h"
 #include "Component/CameraComponent.h"
@@ -58,10 +59,12 @@ namespace
     constexpr float IndoorFocusDistance = 6.0f;
     constexpr float OutdoorAperture = 8.0f;
     constexpr float OutdoorFocusDistance = 12.0f;
-    // 1フレームの累積は8回の描画に分ける（切り替えの後の古い累積の取得を見分けるため4回以上にする）。
+    // 1フレームの累積は8回の描画に分ける。1回の描画の試料数は検証アプリの上限1024以下にするため、sppは
+    // 8の倍数で8192以下にする。
     constexpr uint32_t DrawsPerSequenceFrame = 8u;
-    // 切り替えの後、累積の描画数に加えて待つ描画数（取得の遅れの分）。
-    constexpr uint64_t SettleFrames = 2u;
+    constexpr uint32_t MaxSamplesPerPixel = DrawsPerSequenceFrame * 1024u;
+    // 切り替えの後、累積の描画数に加えて指定値ちょうどの取得を待つ描画数の上限。
+    constexpr uint64_t MaxWaitFrames = 16u;
 
     struct SequenceOptions
     {
@@ -77,8 +80,7 @@ namespace
         const char* SceneName() const { return bOutdoor ? "outdoor" : "indoor"; }
         uint32_t SamplesPerFrame() const
         {
-            const uint32_t perFrame = SamplesPerPixel / DrawsPerSequenceFrame;
-            return perFrame == 0u ? 1u : perFrame;
+            return SamplesPerPixel / DrawsPerSequenceFrame;
         }
     };
 
@@ -151,7 +153,8 @@ namespace
             }
             else if (const char* value = MatchOption(argument, "--r8-seq-spp="))
             {
-                if (!ParseUnsigned(value, DrawsPerSequenceFrame, 1u << 20u, outOptions.SamplesPerPixel))
+                if (!ParseUnsigned(value, DrawsPerSequenceFrame, MaxSamplesPerPixel, outOptions.SamplesPerPixel) ||
+                    outOptions.SamplesPerPixel % DrawsPerSequenceFrame != 0u)
                 {
                     return false;
                 }
@@ -359,18 +362,29 @@ namespace
                 outFailureReason = TEXT("R8連番のシーンの状態を設定できません");
                 return false;
             }
-            // 切り替えの途中か、切り替えの後に累積し直す描画数が過ぎる前の取得は、前のフレームの累積なので使わない。
-            const uint64_t rendered = Core::Engine::GEngine->GetRenderWorld().GetRenderedFrameCount();
-            const uint64_t accumulationFrames =
-                (g_Options.SamplesPerPixel + g_Options.SamplesPerFrame() - 1u) / g_Options.SamplesPerFrame();
-            if (m_CameraSequence != m_ObjectSequence || m_bCameraSwitchPending ||
-                rendered < m_CameraSwitchRendered + accumulationFrames + SettleFrames)
+            // 切り替えの途中の取得は、前のフレームの累積なので使わない。
+            if (m_CameraSequence != m_ObjectSequence || m_bCameraSwitchPending)
             {
                 return true;
             }
-            if (m_CameraSequence >= 2u && !WriteFrame(frame, outFailureReason))
+            if (m_CameraSequence >= 2u)
             {
-                return false;
+                // 切り替えの後はPTが累積し直し、取得は試料数が指定値に届いた最初の描画で返る。前のフレームは
+                // 指定値を超えて累積を続けているため、試料数が指定値ちょうどの取得だけを書き出す。
+                const uint64_t rendered = Core::Engine::GEngine->GetRenderWorld().GetRenderedFrameCount();
+                if (frame.PathTracingSampleCount != g_Options.SamplesPerPixel)
+                {
+                    if (rendered > m_CameraSwitchRendered + DrawsPerSequenceFrame + MaxWaitFrames)
+                    {
+                        outFailureReason = TEXT("R8連番の切り替えの後、試料数が指定値ちょうどの取得が届きません");
+                        return false;
+                    }
+                    return true;
+                }
+                if (!WriteFrame(frame, outFailureReason))
+                {
+                    return false;
+                }
             }
             if (m_WrittenFrames >= g_Options.FrameCount)
             {

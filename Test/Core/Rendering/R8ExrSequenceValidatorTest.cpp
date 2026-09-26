@@ -254,6 +254,16 @@ int main()
         Expect(report.Width == Width && report.Height == Height, "連番の寸法を読む");
         Expect(report.AdjacentMeanFlip.size() == FrameCount - 1u, "隣接の組をすべて比べる");
         Expect(report.MedianFlip > 0.0, "動く円で隣接フレームの差が出る");
+        // 期待する寸法を指定すると、別の寸法で書かれた連番は全フレームが寸法の不一致になる。
+        ExrSequenceRules largerRules;
+        largerRules.ExpectedWidth = Width * 2u;
+        largerRules.ExpectedHeight = Height * 2u;
+        ExrSequenceReport largerReport;
+        const bool bLargerRan = ValidateExrSequence(
+            NORVES_BINARY_ROOT "/RenderingValidation/R8ExrSequenceValidatorTestRuns/normal", SceneName, 0u,
+            FrameCount, lut, 1.0f, largerRules, largerReport);
+        Expect(bLargerRan && !largerReport.Passed() && largerReport.DimensionMismatchFrames.size() == FrameCount,
+               "期待する寸法と違う連番を完成として扱わない");
     }
     else
     {
