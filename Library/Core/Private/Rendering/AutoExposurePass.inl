@@ -127,6 +127,7 @@ namespace NorvesLib::Core::Rendering
         m_Device = nullptr;
         m_Adaptation = AutoExposureAdaptationState{};
         m_LatestMeasurement = AutoExposureMeasurement{};
+        m_LatestHistogram = AutoExposureHistogramReadback{};
         m_LastAdaptationTime = 0.0;
         m_ConsumedMeasurementCount = 0u;
         m_Transition = TransitionRecord{};
@@ -338,6 +339,9 @@ namespace NorvesLib::Core::Rendering
         }
         std::memcpy(bins, mapped, sizeof(bins));
         slot.ReadbackBuffer->Unmap();
+        std::memcpy(m_LatestHistogram.Bins, bins, sizeof(bins));
+        m_LatestHistogram.FrameNumber = slot.FrameNumber;
+        m_LatestHistogram.bValid = true;
 
         const AutoExposureHistogramResult result =
             ComputeAutoExposureFromHistogram(bins, AutoExposureHistogramBinCount, m_Settings);
@@ -542,6 +546,9 @@ namespace NorvesLib::Core::Rendering
                                    RHI::ResourceState::CopySource,
                                    0u, AutoExposurePassDetail::HistogramByteSize);
         commandList->CopyBuffer(m_HistogramBuffer, slot->ReadbackBuffer, AutoExposurePassDetail::HistogramByteSize);
+        // 転送の書き込みをホストの読み取りへ見せる（フェンスの待機だけでは写像した中身の可視性が保証されない）
+        commandList->BufferBarrier(slot->ReadbackBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::HostRead,
+                                   0u, AutoExposurePassDetail::HistogramByteSize);
         m_HistogramState = RHI::ResourceState::CopySource;
 
         slot->FrameNumber = context.FrameNumber;

@@ -7,6 +7,7 @@
 #include "DrawCommand.h"
 #include "PathTracingTransportScope.h"
 #include "RasterDirectBrdf.h"
+#include "Rendering/AutoExposure.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Container/UnorderedSet.h"
@@ -207,6 +208,13 @@ namespace NorvesLib::Core::Rendering
          * フォールバックします。
          */
         virtual void Render(ViewRenderContext &context) override;
+
+        /**
+         * @brief 自動露出のパスが最後に読み戻した測定を取る（RenderThread から呼ぶ）
+         * @param outMeasurement 測定の書き込み先
+         * @return 有効な自動露出のパスがあり、有効な測定があるとき true
+         */
+        bool TryGetAutoExposureMeasurement(AutoExposureMeasurement &outMeasurement) const;
 
         // ========================================
         // パイプライン構築ヘルパー

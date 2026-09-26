@@ -60,6 +60,19 @@ namespace Game::GameModes
         {
             ImGui::Checkbox("自動露出", m_pAutoExposure);
         }
+        // 自動露出の測定(RenderThread が読み戻した値)。手動のときも測定は続くので表示する。
+        if (m_pAutoExposureMeasurement != nullptr)
+        {
+            if (m_pAutoExposureMeasurement->bValid)
+            {
+                ImGui::Text("目標 EV100: %.2f", m_pAutoExposureMeasurement->TargetEV100);
+                ImGui::Text("順応後 EV100: %.2f", m_pAutoExposureMeasurement->AdaptedEV100);
+            }
+            else
+            {
+                ImGui::TextUnformatted("自動露出の測定はまだありません");
+            }
+        }
         if (m_pExposureEV100 != nullptr)
         {
             ImGui::SliderFloat("手動露出 EV100", m_pExposureEV100, 6.0f, 17.0f, "%.1f");

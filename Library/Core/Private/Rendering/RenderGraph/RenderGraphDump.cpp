@@ -94,6 +94,8 @@ namespace NorvesLib::Core::Rendering
                 return "CopyDest";
             case RHI::ResourceState::Present:
                 return "Present";
+            case RHI::ResourceState::HostRead:
+                return "HostRead";
             default:
                 return "Unknown";
             }

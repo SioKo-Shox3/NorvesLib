@@ -128,6 +128,8 @@ namespace NorvesLib::RHI::Vulkan
             return vk::AccessFlagBits::eTransferRead;
         case ResourceState::CopyDest:
             return vk::AccessFlagBits::eTransferWrite;
+        case ResourceState::HostRead:
+            return vk::AccessFlagBits::eHostRead;
         case ResourceState::Present:
             return {};
         default:
@@ -175,6 +177,8 @@ namespace NorvesLib::RHI::Vulkan
         case ResourceState::CopySource:
         case ResourceState::CopyDest:
             return vk::PipelineStageFlagBits::eTransfer;
+        case ResourceState::HostRead:
+            return vk::PipelineStageFlagBits::eHost;
         case ResourceState::Present:
             return vk::PipelineStageFlagBits::eBottomOfPipe;
         default:

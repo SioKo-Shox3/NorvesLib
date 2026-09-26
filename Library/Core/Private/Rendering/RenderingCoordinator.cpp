@@ -1119,6 +1119,7 @@ namespace NorvesLib::Core::Rendering
         m_PreviousCompletedTotalFrameTimeMs = 0.0f;
         m_LatestCompletedGPUTimeMs = 0.0f;
         m_bLatestCompletedGPUTimeValid = false;
+        m_LatestAutoExposure = AutoExposureMeasurement{};
         m_SceneRevision = 1u;
         m_LightRevision = 1u;
         m_LastSceneRevisionHash = 0u;
@@ -1610,6 +1611,7 @@ namespace NorvesLib::Core::Rendering
         m_PreviousCompletedTotalFrameTimeMs = 0.0f;
         m_LatestCompletedGPUTimeMs = 0.0f;
         m_bLatestCompletedGPUTimeValid = false;
+        m_LatestAutoExposure = AutoExposureMeasurement{};
         m_GPUTimingMailbox.Clear();
 
         if (m_Diagnostics)
@@ -2342,6 +2344,7 @@ namespace NorvesLib::Core::Rendering
             statsSnapshot.Stats = renderStats;
             statsSnapshot.GeneratedDrawCommandCount = packet->GeneratedDrawCommandCount;
             statsSnapshot.bGameThreadTimingsAvailable = bGameThreadTimingsAvailable;
+            statsSnapshot.AutoExposure = m_LatestAutoExposure;
             m_Diagnostics->PublishStatsSnapshot(statsSnapshot);
         };
 
@@ -2917,6 +2920,18 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // 自動露出の測定は最初の SceneView のものを GameThread へ渡す（View の中身は RenderThread 専用）
+        for (const auto &view : m_Views)
+        {
+            const auto *sceneView = dynamic_cast<const SceneView *>(view.get());
+            AutoExposureMeasurement measurement;
+            if (sceneView && sceneView->TryGetAutoExposureMeasurement(measurement))
+            {
+                m_LatestAutoExposure = measurement;
+                break;
+            }
+        }
+
         if (m_Diagnostics)
         {
             RenderingCoordinatorStatsSnapshot statsSnapshot;
@@ -2924,6 +2939,7 @@ namespace NorvesLib::Core::Rendering
             statsSnapshot.SkinnedShadowRecordedDraws = packet->Stats.SkinnedShadowRecordedDraws;
             statsSnapshot.Stats = renderStats;
             statsSnapshot.GeneratedDrawCommandCount = packet->GeneratedDrawCommandCount;
+            statsSnapshot.AutoExposure = m_LatestAutoExposure;
             statsSnapshot.bRenderFrameCompleted = true;
             statsSnapshot.bGameThreadTimingsAvailable = bGameThreadTimingsAvailable;
 #if NORVES_ENABLE_STATS

@@ -951,7 +951,8 @@ namespace Game::GameModes
 #if defined(NORVES_ENABLE_IMGUI)
             ctx.ControllerRef.RequestPushSubRoutine(
                 MakeUnique<DirectionalLightEditSubRoutine>(&data.m_LightController, &data.m_ExposureEV100,
-                                                          &data.m_bAutoExposure));
+                                                          &data.m_bAutoExposure,
+                                                          &data.m_AutoExposureMeasurement));
 #endif
         }
 
@@ -1516,6 +1517,10 @@ namespace Game::GameModes
                 ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
             }
         }
+
+        // RenderThread が読み戻した自動露出の目標・順応後の EV100 を、統計のスナップショットから表示用へ写す。
+        data.m_AutoExposureMeasurement =
+            ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().GetStatsSnapshot().AutoExposure;
 
         // ImGui で切り替えた自動露出の有無を、カメラの露出の方式へ写す。
         if (data.m_pCameraComponent != nullptr && data.m_bAutoExposure != data.m_bAppliedAutoExposure)

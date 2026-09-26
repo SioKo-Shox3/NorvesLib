@@ -139,6 +139,17 @@ namespace NorvesLib::Core::Rendering
         }
     } // namespace
 
+    bool SceneView::TryGetAutoExposureMeasurement(AutoExposureMeasurement &outMeasurement) const
+    {
+        const AutoExposurePass *autoExposurePass = FindAutoExposurePass(GetPostProcessStack());
+        if (!autoExposurePass || !autoExposurePass->GetLatestMeasurement().bValid)
+        {
+            return false;
+        }
+        outMeasurement = autoExposurePass->GetLatestMeasurement();
+        return true;
+    }
+
     bool SceneView::Initialize(const SceneViewSettings &settings)
     {
         // 基底クラスの初期化

@@ -286,4 +286,37 @@ namespace NorvesLib::Core::Rendering
         state.EV100 = AdaptAutoExposureEV100(state.EV100, measurement.TargetEV100, deltaSeconds, settings);
     }
 
+    /** @brief 自動露出の最新の測定（RenderThread で更新し、統計のスナップショットで GameThread へ渡す） */
+    struct AutoExposureMeasurement
+    {
+        /** @brief 測定したフレームの番号（FramePacket の FrameNumber） */
+        uint64_t FrameNumber = 0u;
+
+        /** @brief ヒストグラムの画素の総数 */
+        uint64_t PixelCount = 0u;
+
+        /** @brief 外れを除いた log2 輝度の平均（cd/m²） */
+        float AverageLog2Luminance = 0.0f;
+
+        /** @brief そのフレームのヒストグラムから求めた目標の EV100 */
+        float TargetEV100 = 0.0f;
+
+        /** @brief 順応させた後の EV100 */
+        float AdaptedEV100 = 0.0f;
+
+        bool bValid = false;
+    };
+
+    /** @brief GPU から読み戻したヒストグラム（画素数の照合の前の中身） */
+    struct AutoExposureHistogramReadback
+    {
+        /** @brief 記録したフレームの番号 */
+        uint64_t FrameNumber = 0u;
+
+        /** @brief 区間ごとの画素の数 */
+        uint32_t Bins[AutoExposureHistogramBinCount] = {};
+
+        bool bValid = false;
+    };
+
 } // namespace NorvesLib::Core::Rendering

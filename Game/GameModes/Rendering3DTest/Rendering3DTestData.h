@@ -182,6 +182,8 @@ namespace Game::GameModes
         // 自動露出（起動画面の既定）。ImGui のチェックボックスが書き、Tick がカメラの露出の方式へ写す。
         bool m_bAutoExposure = true;
         bool m_bAppliedAutoExposure = true;
+        // RenderThread が読み戻した自動露出の測定。Tick が統計のスナップショットから写し、ImGui が表示する。
+        NorvesLib::Core::Rendering::AutoExposureMeasurement m_AutoExposureMeasurement;
 
         // 環境変数 NORVES_STARTUP_SUN_STEP="<仰角>,<秒>" の指定。起動からその秒数の後に一度だけ、
         // 空の太陽の仰角を急に変える（自動露出の順応の確かめ用）。

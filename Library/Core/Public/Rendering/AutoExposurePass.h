@@ -10,31 +10,11 @@
 
 namespace NorvesLib::Core::Rendering
 {
-    /** @brief 自動露出の最新の測定（RenderThread で更新する） */
-    struct AutoExposureMeasurement
-    {
-        /** @brief 測定したフレームの番号（FramePacket の FrameNumber） */
-        uint64_t FrameNumber = 0u;
-
-        /** @brief ヒストグラムの画素の総数 */
-        uint64_t PixelCount = 0u;
-
-        /** @brief 外れを除いた log2 輝度の平均（cd/m²） */
-        float AverageLog2Luminance = 0.0f;
-
-        /** @brief そのフレームのヒストグラムから求めた目標の EV100 */
-        float TargetEV100 = 0.0f;
-
-        /** @brief 順応させた後の EV100 */
-        float AdaptedEV100 = 0.0f;
-
-        bool bValid = false;
-    };
-
     /**
      * @brief 自動露出の測定パス（ポストプロセス）
      *
      * SceneColor の絶対輝度のヒストグラムを compute で作り、フレームスロットごとの読み戻しバッファへ写す。
+     * 写した後に読み戻しバッファをホストの読み取りの状態へ移し、GPU の書き込みを CPU の写像へ見せる。
      * 同じフレームスロットが次に回ってきたとき（スワップチェーンの待機で前の提出の完了が保証される）に
      * ヒストグラムを CPU で読み、外れを除いた平均から目標の EV100 を求めて順応させる。
      * 読み戻しの遅れはフレームスロットの数だけで、RenderThread の同期は変えない。
@@ -86,6 +66,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 最後に読み戻したヒストグラムから求めた測定 */
         const AutoExposureMeasurement& GetLatestMeasurement() const { return m_LatestMeasurement; }
 
+        /** @brief 最後に読み戻したヒストグラム（画素数が合わず測定に使わなかったものも含む） */
+        const AutoExposureHistogramReadback& GetLatestHistogram() const { return m_LatestHistogram; }
+
     private:
         struct FrameSlot
         {
@@ -111,6 +94,7 @@ namespace NorvesLib::Core::Rendering
         AutoExposureSettings m_Settings;
         AutoExposureAdaptationState m_Adaptation;
         AutoExposureMeasurement m_LatestMeasurement;
+        AutoExposureHistogramReadback m_LatestHistogram;
         double m_LastAdaptationTime = 0.0;
         uint64_t m_ConsumedMeasurementCount = 0u;
 

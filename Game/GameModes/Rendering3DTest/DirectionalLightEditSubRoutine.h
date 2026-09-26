@@ -22,6 +22,7 @@
 #include "ImGuiModule/IImGuiView.h"
 #include "Core/Public/GameMode/ISubRoutine.h"
 #include "Core/Public/Input/LightController.h"
+#include "Core/Public/Rendering/AutoExposure.h"
 
 namespace Game::GameModes
 {
@@ -40,11 +41,14 @@ namespace Game::GameModes
          * @param controller 空の太陽の操作(非所有・呼び出し側が寿命を持つ)
          * @param exposureEV100 手動露出 EV100 の置き場(非所有・呼び出し側が寿命を持つ)
          * @param autoExposure 自動露出の有無の置き場(非所有・呼び出し側が寿命を持つ)
+         * @param autoExposureMeasurement 表示する自動露出の測定(非所有・呼び出し側が寿命を持つ)
          */
         explicit DirectionalLightEditView(NorvesLib::Core::Input::LightController* controller,
                                           float* exposureEV100,
-                                          bool* autoExposure)
-            : m_pController(controller), m_pExposureEV100(exposureEV100), m_pAutoExposure(autoExposure)
+                                          bool* autoExposure,
+                                          const NorvesLib::Core::Rendering::AutoExposureMeasurement* autoExposureMeasurement)
+            : m_pController(controller), m_pExposureEV100(exposureEV100), m_pAutoExposure(autoExposure),
+              m_pAutoExposureMeasurement(autoExposureMeasurement)
         {
         }
 
@@ -68,6 +72,8 @@ namespace Game::GameModes
         float* m_pExposureEV100 = nullptr;
         // 自動露出の有無の置き場(借用・非所有)。Rendering3DTest の Tick がカメラの露出の方式へ写す。
         bool* m_pAutoExposure = nullptr;
+        // 自動露出の測定(借用・非所有)。Rendering3DTest の Tick が統計のスナップショットから写す。
+        const NorvesLib::Core::Rendering::AutoExposureMeasurement* m_pAutoExposureMeasurement = nullptr;
     };
 
     /**
@@ -84,11 +90,13 @@ namespace Game::GameModes
          * @param controller 空の太陽の操作(非所有・Rendering3DTest が所有)
          * @param exposureEV100 手動露出 EV100 の置き場(非所有・Rendering3DTest が所有)
          * @param autoExposure 自動露出の有無の置き場(非所有・Rendering3DTest が所有)
+         * @param autoExposureMeasurement 表示する自動露出の測定(非所有・Rendering3DTest が所有)
          */
         explicit DirectionalLightEditSubRoutine(NorvesLib::Core::Input::LightController* controller,
                                                 float* exposureEV100,
-                                                bool* autoExposure)
-            : m_View(controller, exposureEV100, autoExposure)
+                                                bool* autoExposure,
+                                                const NorvesLib::Core::Rendering::AutoExposureMeasurement* autoExposureMeasurement)
+            : m_View(controller, exposureEV100, autoExposure, autoExposureMeasurement)
         {
         }
 

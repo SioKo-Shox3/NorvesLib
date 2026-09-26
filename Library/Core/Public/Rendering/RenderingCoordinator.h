@@ -11,6 +11,7 @@
 #include "FramePacket.h"
 #include "ViewRenderContext.h"
 #include "Rendering/DDGIVolume.h"
+#include "Rendering/AutoExposure.h"
 #include "Rendering/VolumetricFog.h"
 #include "Rendering/InstanceBufferRing.h"
 #include "Rendering/CompositePass.h"
@@ -117,6 +118,9 @@ namespace NorvesLib::Core::Rendering
         bool bRenderFrameTimingAvailable = false;
         bool bGPUTimeAvailable = false;
         bool bTotalFrameTimeAvailable = false;
+
+        // 起動画面などのデバッグ表示用。最後に読み戻せた自動露出の測定（無ければ bValid が false）
+        AutoExposureMeasurement AutoExposure;
     };
 
     struct RenderGraphDebugDumpSnapshot
@@ -612,6 +616,8 @@ namespace NorvesLib::Core::Rendering
         float m_PreviousCompletedTotalFrameTimeMs = 0.0f;
         float m_LatestCompletedGPUTimeMs = 0.0f;
         bool m_bLatestCompletedGPUTimeValid = false;
+        // RenderThread専用。SceneView の自動露出のパスから最後に取れた測定。
+        AutoExposureMeasurement m_LatestAutoExposure;
 
         // フレームタイミング
         double m_LastFrameTime = 0.0;
