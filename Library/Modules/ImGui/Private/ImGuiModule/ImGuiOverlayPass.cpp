@@ -234,10 +234,10 @@ namespace NorvesLib::Modules::Gui
         colAttr.offset = static_cast<uint32_t>(offsetof(ImDrawVert, col));
         pipelineDesc.vertexAttributes.push_back(colAttr);
 
-        // ストレートαブレンド(ImGui の頂点色は非乗算済みα。mesh2d.frag もストレート出力)。
+        // premultiplied display-linear出力(mesh2d.frag が頂点色とatlasを線形化して乗算済み)。
         RHI::BlendAttachmentDesc blend;
         blend.blendEnable = true;
-        blend.srcColorBlendFactor = RHI::BlendFactor::SrcAlpha;
+        blend.srcColorBlendFactor = RHI::BlendFactor::One;
         blend.dstColorBlendFactor = RHI::BlendFactor::InvSrcAlpha;
         blend.colorBlendOp = RHI::BlendOp::Add;
         blend.srcAlphaBlendFactor = RHI::BlendFactor::One;

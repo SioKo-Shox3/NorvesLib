@@ -1,0 +1,89 @@
+﻿// DDGIプローブ格子から64方向へray queryを実行し、hit属性を保存する。
+#version 460
+#extension GL_EXT_ray_query : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT sceneTopLevel;
+
+layout(set = 0, binding = 1, std140) uniform ProbeRayQueryParameters
+{
+    vec4 volumeOrigin;
+    vec4 probeSpacing;
+    uvec4 probeCounts;
+    vec4 rayLimits;
+} parameters;
+
+struct ProbeRayQueryResult
+{
+    float distance;
+    uint hit;
+    uint instanceCustomIndex;
+    uint primitiveIndex;
+};
+
+layout(set = 0, binding = 2, std430) buffer ProbeRayQueryResults
+{
+    ProbeRayQueryResult values[];
+} results;
+
+const float GoldenAngleRadians = 2.39996322972865332;
+const uint InvalidHitAttribute = 0xFFFFFFFFu;
+
+vec3 GetProbeRayDirection(uint directionIndex)
+{
+    float sampleValue = (float(directionIndex) + 0.5) / float(parameters.probeCounts.w);
+    float z = 1.0 - 2.0 * sampleValue;
+    float radius = sqrt(max(0.0, 1.0 - z * z));
+    float angle = GoldenAngleRadians * float(directionIndex);
+    return vec3(radius * cos(angle), radius * sin(angle), z);
+}
+
+void main()
+{
+    uint rayIndex = gl_GlobalInvocationID.x;
+    uint rayCount = parameters.probeCounts.x * parameters.probeCounts.y *
+                    parameters.probeCounts.z * parameters.probeCounts.w;
+    if (rayIndex >= rayCount)
+    {
+        return;
+    }
+
+    uint directionIndex = rayIndex % parameters.probeCounts.w;
+    uint probeIndex = rayIndex / parameters.probeCounts.w;
+    uint probePlaneSize = parameters.probeCounts.x * parameters.probeCounts.y;
+    uvec3 probeCoordinates = uvec3(
+        probeIndex % parameters.probeCounts.x,
+        (probeIndex / parameters.probeCounts.x) % parameters.probeCounts.y,
+        probeIndex / probePlaneSize);
+    vec3 rayOrigin = parameters.volumeOrigin.xyz +
+                     parameters.probeSpacing.xyz * vec3(probeCoordinates);
+    vec3 rayDirection = GetProbeRayDirection(directionIndex);
+
+    rayQueryEXT query;
+    rayQueryInitializeEXT(
+        query,
+        sceneTopLevel,
+        gl_RayFlagsOpaqueEXT,
+        0xFFu,
+        rayOrigin,
+        parameters.rayLimits.x,
+        rayDirection,
+        parameters.rayLimits.y);
+    while (rayQueryProceedEXT(query))
+    {
+    }
+
+    uint intersectionType = rayQueryGetIntersectionTypeEXT(query, true);
+    bool bHit = intersectionType == gl_RayQueryCommittedIntersectionTriangleEXT;
+    results.values[rayIndex].distance = bHit
+        ? rayQueryGetIntersectionTEXT(query, true)
+        : -1.0;
+    results.values[rayIndex].hit = bHit ? 1u : 0u;
+    results.values[rayIndex].instanceCustomIndex = bHit
+        ? uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, true))
+        : InvalidHitAttribute;
+    results.values[rayIndex].primitiveIndex = bHit
+        ? rayQueryGetIntersectionPrimitiveIndexEXT(query, true)
+        : InvalidHitAttribute;
+}

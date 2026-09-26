@@ -3,10 +3,13 @@
 #include "Math/Vector3.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
+#include "Rendering/FramePacket.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/ViewRenderPlan.h"
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Component;
@@ -156,6 +159,109 @@ namespace
 
         world.Finalize();
     }
+
+    void TestPhysicalExposureSnapshotContract()
+    {
+        World world;
+        world.Initialize();
+
+        Entity* owner = world.SpawnEntity<Entity>();
+        CameraComponent* camera = world.CreateComponent<CameraComponent>(owner);
+        assert(camera != nullptr);
+        assert(IsNearlyEqual(camera->GetAperture(), 4.0f));
+        assert(IsNearlyEqual(camera->GetShutterSpeed(), 1.0f / 60.0f));
+        assert(IsNearlyEqual(camera->GetISO(), 100.0f));
+        assert(IsNearlyEqual(camera->GetExposureCompensation(), 0.0f));
+
+        const float oldAperture = camera->GetAperture();
+        const float oldShutterSpeed = camera->GetShutterSpeed();
+        const float oldISO = camera->GetISO();
+        const float oldExposureCompensation = camera->GetExposureCompensation();
+        assert(!camera->SetAperture(0.0f));
+        assert(!camera->SetShutterSpeed(-1.0f));
+        assert(!camera->SetISO(std::numeric_limits<float>::infinity()));
+        assert(!camera->SetExposureCompensation(std::numeric_limits<float>::quiet_NaN()));
+        assert(IsNearlyEqual(camera->GetAperture(), oldAperture));
+        assert(IsNearlyEqual(camera->GetShutterSpeed(), oldShutterSpeed));
+        assert(IsNearlyEqual(camera->GetISO(), oldISO));
+        assert(IsNearlyEqual(camera->GetExposureCompensation(), oldExposureCompensation));
+
+        enum class ExposureParameter
+        {
+            Aperture,
+            ShutterSpeed,
+            ISO,
+            Compensation
+        };
+        struct FiniteOverflowCase
+        {
+            ExposureParameter Parameter;
+            float Candidate;
+        };
+        const FiniteOverflowCase overflowCases[] = {
+            {ExposureParameter::Aperture, std::numeric_limits<float>::max()},
+            {ExposureParameter::ShutterSpeed, std::numeric_limits<float>::denorm_min()},
+            {ExposureParameter::ISO, std::numeric_limits<float>::denorm_min()},
+            {ExposureParameter::Compensation, std::numeric_limits<float>::max()},
+        };
+        for (const FiniteOverflowCase& overflowCase : overflowCases)
+        {
+            bool accepted = false;
+            switch (overflowCase.Parameter)
+            {
+            case ExposureParameter::Aperture:
+                accepted = camera->SetAperture(overflowCase.Candidate);
+                break;
+            case ExposureParameter::ShutterSpeed:
+                accepted = camera->SetShutterSpeed(overflowCase.Candidate);
+                break;
+            case ExposureParameter::ISO:
+                accepted = camera->SetISO(overflowCase.Candidate);
+                break;
+            case ExposureParameter::Compensation:
+                accepted = camera->SetExposureCompensation(overflowCase.Candidate);
+                break;
+            }
+            assert(!accepted);
+            assert(IsNearlyEqual(camera->GetAperture(), oldAperture));
+            assert(IsNearlyEqual(camera->GetShutterSpeed(), oldShutterSpeed));
+            assert(IsNearlyEqual(camera->GetISO(), oldISO));
+            assert(IsNearlyEqual(camera->GetExposureCompensation(), oldExposureCompensation));
+        }
+        camera->ClearRenderStateDirty();
+        assert(camera->SetAperture(8.0f));
+        assert(camera->IsRenderStateDirty());
+
+        camera->SetAperture(4.0f);
+        camera->SetShutterSpeed(1.0f / 60.0f);
+        camera->SetISO(100.0f);
+        camera->SetExposureCompensation(0.0f);
+
+        CameraProxy proxy;
+        assert(camera->BuildCameraProxy(proxy));
+        assert(IsNearlyEqual(proxy.Aperture, 4.0f));
+        assert(IsNearlyEqual(proxy.ShutterSpeed, 1.0f / 60.0f));
+        assert(IsNearlyEqual(proxy.ISO, 100.0f));
+        assert(IsNearlyEqual(proxy.ExposureCompensation, 0.0f));
+        assert(IsNearlyEqual(proxy.EV100, 9.9068906f, 1.0e-5f));
+        assert(IsNearlyEqual(proxy.Exposure, 1.0f / 1152.0f, 1.0e-7f));
+        assert(IsNearlyEqual(proxy.PreExposure, 1.0f / 1152.0f, 1.0e-7f));
+        assert(IsNearlyEqual(proxy.InvPreExposure, 1152.0f, 1.0e-3f));
+
+        ViewRenderPlan view;
+        ViewportRenderPlan viewport;
+        viewport.Camera = proxy;
+        viewport.bHasCamera = true;
+        view.Viewports.push_back(viewport);
+
+        FramePacket packet;
+        packet.Views.push_back(view);
+        assert(IsNearlyEqual(packet.Views[0].Viewports[0].Camera.EV100, proxy.EV100, 1.0e-5f));
+        assert(IsNearlyEqual(packet.Views[0].Viewports[0].Camera.Exposure, proxy.Exposure, 1.0e-7f));
+        assert(IsNearlyEqual(packet.Views[0].Viewports[0].Camera.InvPreExposure, proxy.InvPreExposure, 1.0e-3f));
+
+        world.Finalize();
+    }
 }
 
 int main()
@@ -164,6 +270,7 @@ int main()
     TestDetachedComponentDoesNotProduceProxy();
     TestOwnerWorldTransformBecomesValueSnapshot();
     TestLensValuesAndDirtyState();
+    TestPhysicalExposureSnapshotContract();
     std::cout << "CameraComponentProxyTest passed\n";
     return 0;
 }

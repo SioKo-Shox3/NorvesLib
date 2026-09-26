@@ -49,7 +49,7 @@ namespace NorvesLib::Core::Scene
 
     struct SceneRootRecord
     {
-        uint32_t FormatVersion = 1;
+        uint32_t FormatVersion = 2;
         SubtreeSnapshotAliasId RootAlias = InvalidSubtreeSnapshotAliasId;
         Container::String RootPath;
         SceneEntityRecord Root;
@@ -60,7 +60,7 @@ namespace NorvesLib::Core::Scene
      */
     struct SceneDocument
     {
-        uint32_t FormatVersion = 1;
+        uint32_t FormatVersion = 2;
         Container::VariableArray<SceneRootRecord> Roots;
     };
 
@@ -89,7 +89,7 @@ namespace NorvesLib::Core::Scene
     class SceneSerializer
     {
     public:
-        static constexpr uint32_t SceneFileFormatVersion = 1;
+        static constexpr uint32_t SceneFileFormatVersion = 2;
 
         static SceneDocument BuildDocument(const Container::VariableArray<EntitySubtreeSnapshot>& roots);
         static Container::String ToJson(const SceneDocument& document);

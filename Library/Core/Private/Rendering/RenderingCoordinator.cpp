@@ -2,6 +2,8 @@
 #include "Rendering/CanvasView.h"
 #include "Rendering/RenderingCoordinatorDiagnostics.h"
 #include "Rendering/CompositePass.h"
+#include "Rendering/DepthOfFieldPass.h"
+#include "Rendering/MotionBlurPass.h"
 #include "Rendering/Screen.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/View.h"
@@ -16,8 +18,14 @@
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderFrameExecutor.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
+#include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/PathTracingPass.h"
+#include "Rendering/RayTracingSceneSubsystem.h"
+#include "Rendering/SkySunLight.h"
+#include "Rendering/ProceduralMeshGenerator.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
 #include "RHI/ISampler.h"
@@ -39,12 +47,237 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        constexpr uint64_t RevisionHashOffset = 1469598103934665603ull;
+        constexpr uint64_t RevisionHashPrime = 1099511628211ull;
+        constexpr uint64_t MeshProxyRevisionTag = 0x4D45534850524F58ull;
+        constexpr uint64_t SkinnedMeshProxyRevisionTag = 0x534B494E50524F58ull;
+
+        uint64_t HashRevisionBytes(uint64_t hash, const void* data, size_t size)
+        {
+            const auto* bytes = static_cast<const uint8_t*>(data);
+            for (size_t index = 0; index < size; ++index)
+            {
+                hash ^= bytes[index];
+                hash *= RevisionHashPrime;
+            }
+            return hash;
+        }
+
+        template<typename T>
+        uint64_t HashRevisionValue(uint64_t hash, const T& value)
+        {
+            return HashRevisionBytes(hash, &value, sizeof(value));
+        }
+
+        uint64_t HashRevisionFloatArray(uint64_t hash,
+                                        const float* values,
+                                        uint32_t count)
+        {
+            for (uint32_t index = 0; index < count; ++index)
+            {
+                hash = HashRevisionValue(hash, values[index]);
+            }
+            return hash;
+        }
+
+        uint64_t MixRevisionValue(uint64_t value)
+        {
+            value += 0x9E3779B97F4A7C15ull;
+            value = (value ^ (value >> 30u)) * 0xBF58476D1CE4E5B9ull;
+            value = (value ^ (value >> 27u)) * 0x94D049BB133111EBull;
+            return value ^ (value >> 31u);
+        }
+
+        struct RevisionSetAccumulator
+        {
+            uint64_t Count = 0u;
+            uint64_t Xor = 0u;
+            uint64_t Sum = 0u;
+
+            void Add(uint64_t value)
+            {
+                const uint64_t mixed = MixRevisionValue(value);
+                ++Count;
+                Xor ^= mixed;
+                Sum += mixed;
+            }
+
+            uint64_t Finish(uint64_t hash) const
+            {
+                hash = HashRevisionValue(hash, Count);
+                hash = HashRevisionValue(hash, Xor);
+                hash = HashRevisionValue(hash, Sum);
+                return hash;
+            }
+        };
+
+        uint64_t HashMeshProxyRevision(const MeshProxy& proxy)
+        {
+            uint64_t hash = RevisionHashOffset ^ MeshProxyRevisionTag;
+            hash = HashRevisionValue(hash, proxy.ObjectId);
+            hash = HashRevisionValue(hash, proxy.ComponentId);
+            hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
+            hash = HashRevisionValue(hash, proxy.LODLevel);
+            hash = HashRevisionValue(hash, proxy.SubMeshCount);
+            const uint32_t subMeshCount =
+                proxy.SubMeshCount < MAX_MATERIAL_SLOTS ? proxy.SubMeshCount : MAX_MATERIAL_SLOTS;
+            for (uint32_t index = 0u; index < subMeshCount; ++index)
+            {
+                const SubMeshRange& subMesh = proxy.SubMeshes[index];
+                hash = HashRevisionValue(hash, subMesh.IndexStart);
+                hash = HashRevisionValue(hash, subMesh.IndexCount);
+                hash = HashRevisionValue(hash, subMesh.VertexStart);
+                hash = HashRevisionValue(hash, subMesh.MaterialIndex);
+            }
+
+            hash = HashRevisionValue(hash, proxy.MaterialCount);
+            const uint32_t materialCount =
+                proxy.MaterialCount < MAX_MATERIAL_SLOTS ? proxy.MaterialCount : MAX_MATERIAL_SLOTS;
+            for (uint32_t index = 0u; index < materialCount; ++index)
+            {
+                hash = HashRevisionValue(hash, proxy.Materials[index].Id);
+                hash = HashRevisionValue(hash,
+                                        static_cast<uint8_t>(proxy.MaterialBlendModes[index]));
+            }
+            hash = HashRevisionValue(hash, proxy.bHasMaterialOverrides);
+            hash = HashRevisionValue(hash, proxy.bVisible);
+            hash = HashRevisionValue(hash, proxy.bCastShadow);
+            hash = HashRevisionValue(hash, proxy.bReceiveShadow);
+            hash = HashRevisionValue(hash, proxy.bAffectDynamicIndirectLighting);
+            hash = HashRevisionValue(hash, proxy.bAffectDistanceFieldLighting);
+            hash = HashRevisionValue(hash, static_cast<uint32_t>(proxy.LayerMask));
+            return HashRevisionFloatArray(hash, proxy.CustomData, 4u);
+        }
+
+        uint64_t HashSkinnedMeshProxyRevision(const SkinnedMeshProxy& proxy)
+        {
+            uint64_t hash = RevisionHashOffset ^ SkinnedMeshProxyRevisionTag;
+            hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
+            hash = HashRevisionValue(hash, proxy.MeshHandle.Generation);
+            hash = HashRevisionValue(hash, proxy.Material.Id);
+            hash = HashRevisionValue(hash, proxy.ObjectId);
+            hash = HashRevisionValue(hash, proxy.ComponentId);
+            hash = HashRevisionValue(hash, proxy.bCastShadow);
+            hash = HashRevisionValue(hash, proxy.bHasAnimatedBounds);
+            return HashRevisionValue(hash, proxy.bVisible);
+        }
+
+        /**
+         * @brief シーン構成revisionを計算する
+         *
+         * 物体とUIの変換はR6-aのvelocityと深度・法線棄却で扱うため、全画面履歴を
+         * 無効化する構成revisionへ含めません。proxy集合のメッシュ・材質・環境だけを
+         * 追跡し、構成変更時の履歴不採用を判定できる値にします。
+         */
+        uint64_t HashSceneRevisionInternal(const FramePacket& packet)
+        {
+            uint64_t hash = RevisionHashOffset;
+            RevisionSetAccumulator meshProxies;
+            for (const MeshProxy& proxy : packet.Scene.MeshProxies)
+            {
+                meshProxies.Add(HashMeshProxyRevision(proxy));
+            }
+            hash = meshProxies.Finish(hash);
+
+            RevisionSetAccumulator skinnedMeshProxies;
+            for (const SkinnedMeshProxy& proxy : packet.Scene.SkinnedMeshProxies)
+            {
+                skinnedMeshProxies.Add(HashSkinnedMeshProxyRevision(proxy));
+            }
+            hash = skinnedMeshProxies.Finish(hash);
+
+            hash = HashRevisionValue(hash, packet.Scene.AmbientColorR);
+            hash = HashRevisionValue(hash, packet.Scene.AmbientColorG);
+            hash = HashRevisionValue(hash, packet.Scene.AmbientColorB);
+            hash = HashRevisionValue(hash, packet.Scene.AmbientIntensity);
+
+            const SkyAtmosphereParameters& sky = packet.Scene.SkyAtmosphere;
+            hash = HashRevisionValue(hash, sky.bEnabled);
+            hash = HashRevisionValue(hash, sky.SunAltitudeDegrees);
+            hash = HashRevisionValue(hash, sky.SunAzimuthDegrees);
+            hash = HashRevisionValue(hash, sky.SunLuminanceNits);
+            hash = HashRevisionValue(hash, sky.PlanetRadiusMeters);
+            hash = HashRevisionValue(hash, sky.AtmosphereHeightMeters);
+            hash = HashRevisionValue(hash, sky.RayleighScaleHeightMeters);
+            hash = HashRevisionValue(hash, sky.MieScaleHeightMeters);
+            hash = HashRevisionValue(hash, sky.MieAnisotropy);
+            hash = HashRevisionValue(hash, sky.GroundAlbedo.x);
+            hash = HashRevisionValue(hash, sky.GroundAlbedo.y);
+            hash = HashRevisionValue(hash, sky.GroundAlbedo.z);
+
+            const DDGIVolumeParameters& ddgi = packet.Scene.DDGIVolume;
+            hash = HashRevisionValue(hash, ddgi.bEnabled);
+            hash = HashRevisionValue(hash, ddgi.Origin.x);
+            hash = HashRevisionValue(hash, ddgi.Origin.y);
+            hash = HashRevisionValue(hash, ddgi.Origin.z);
+            hash = HashRevisionValue(hash, ddgi.ProbeSpacing.x);
+            hash = HashRevisionValue(hash, ddgi.ProbeSpacing.y);
+            hash = HashRevisionValue(hash, ddgi.ProbeSpacing.z);
+            hash = HashRevisionValue(hash, ddgi.ProbeCountX);
+            hash = HashRevisionValue(hash, ddgi.ProbeCountY);
+            hash = HashRevisionValue(hash, ddgi.ProbeCountZ);
+
+            const VolumetricFogParameters& fog = packet.Scene.VolumetricFog;
+            hash = HashRevisionValue(hash, fog.bEnabled);
+            hash = HashRevisionValue(hash, fog.DensityAtBaseHeight);
+            hash = HashRevisionValue(hash, fog.BaseHeight);
+            hash = HashRevisionValue(hash, fog.HeightFalloffPerUnit);
+            hash = HashRevisionValue(hash, packet.Scene.bFogEnabled);
+            hash = HashRevisionValue(hash, packet.Scene.FogColorR);
+            hash = HashRevisionValue(hash, packet.Scene.FogColorG);
+            hash = HashRevisionValue(hash, packet.Scene.FogColorB);
+            hash = HashRevisionValue(hash, packet.Scene.FogDensity);
+            hash = HashRevisionValue(hash, packet.Scene.FogStart);
+            hash = HashRevisionValue(hash, packet.Scene.FogEnd);
+            return hash;
+        }
+
+        uint64_t HashLightRevision(const FramePacket& packet)
+        {
+            uint64_t hash = RevisionHashOffset;
+            hash = HashRevisionValue(hash, packet.Scene.LightProxies.size());
+            for (const LightProxy& light : packet.Scene.LightProxies)
+            {
+                hash = HashRevisionValue(hash, light.LightId);
+                hash = HashRevisionValue(hash, static_cast<uint8_t>(light.Type));
+                hash = HashRevisionValue(hash, light.PositionX);
+                hash = HashRevisionValue(hash, light.PositionY);
+                hash = HashRevisionValue(hash, light.PositionZ);
+                hash = HashRevisionValue(hash, light.DirectionX);
+                hash = HashRevisionValue(hash, light.DirectionY);
+                hash = HashRevisionValue(hash, light.DirectionZ);
+                hash = HashRevisionValue(hash, light.ColorR);
+                hash = HashRevisionValue(hash, light.ColorG);
+                hash = HashRevisionValue(hash, light.ColorB);
+                hash = HashRevisionValue(hash, light.CanonicalIntensity);
+                hash = HashRevisionValue(hash, light.Range);
+                hash = HashRevisionValue(hash, light.AttenuationConstant);
+                hash = HashRevisionValue(hash, light.AttenuationLinear);
+                hash = HashRevisionValue(hash, light.AttenuationQuadratic);
+                hash = HashRevisionValue(hash, light.InnerConeAngle);
+                hash = HashRevisionValue(hash, light.OuterConeAngle);
+                hash = HashRevisionValue(hash, light.bCastShadows);
+                hash = HashRevisionValue(hash, light.ShadowBias);
+                hash = HashRevisionValue(hash, light.ShadowMapResolution);
+                hash = HashRevisionValue(hash, light.bVisible);
+                hash = HashRevisionValue(hash, static_cast<uint32_t>(light.AffectedLayers));
+            }
+            return hash;
+        }
+
+        uint64_t AdvanceRevision(uint64_t revision)
+        {
+            ++revision;
+            return revision == 0u ? 1u : revision;
+        }
+
         [[noreturn]] void ThrowSwapChainBeginFrameError(RHI::SwapChainBeginFrameStatus status)
         {
             if (status == RHI::SwapChainBeginFrameStatus::Fatal)
@@ -73,6 +306,31 @@ namespace NorvesLib::Core::Rendering
             }
             throw std::runtime_error("SwapChain EndFrame failed with an unknown status");
         }
+
+        class ScopedGPUTimestampFrameRecording
+        {
+        public:
+            ScopedGPUTimestampFrameRecording(RHI::ICommandList* commandList,
+                                             uint32_t frameSlotIndex)
+                : m_CommandList(commandList), m_FrameSlotIndex(frameSlotIndex)
+            {
+            }
+
+            ~ScopedGPUTimestampFrameRecording()
+            {
+                if (m_CommandList)
+                {
+                    m_CommandList->AbortGPUTimestampFrame(m_FrameSlotIndex);
+                }
+            }
+
+            ScopedGPUTimestampFrameRecording(const ScopedGPUTimestampFrameRecording&) = delete;
+            ScopedGPUTimestampFrameRecording& operator=(const ScopedGPUTimestampFrameRecording&) = delete;
+
+        private:
+            RHI::ICommandList* m_CommandList = nullptr;
+            uint32_t m_FrameSlotIndex = 0u;
+        };
 
         template<typename CameraResolver>
         ViewportRenderPlan BuildViewportRenderPlan(const Viewport &viewport,
@@ -296,7 +554,481 @@ namespace NorvesLib::Core::Rendering
             return frameIndex;
         }
 
+        RHI::BufferPtr CreateAddressableMeshBuffer(RHI::IDevice& device,
+                                                   const RHI::BufferPtr& source,
+                                                   RHI::ResourceUsage usage,
+                                                   const char* debugName)
+        {
+            if (!source || source->GetSize() == 0)
+            {
+                return {};
+            }
+
+            const RHI::ResourceUsage sourceUsage = source->GetUsage();
+            if ((sourceUsage & RHI::ResourceUsage::BufferDeviceAddress) ==
+                    RHI::ResourceUsage::BufferDeviceAddress &&
+                source->GetDeviceAddress() != 0)
+            {
+                return source;
+            }
+
+            RHI::BufferDesc desc;
+            desc.Size = source->GetSize();
+            desc.Usage = usage | RHI::ResourceUsage::BufferDeviceAddress;
+            desc.CPUAccessible = true;
+            desc.DebugName = debugName;
+            RHI::BufferPtr addressable = device.CreateBuffer(desc);
+            if (!addressable || addressable->GetDeviceAddress() == 0)
+            {
+                return {};
+            }
+
+            void* sourceData = source->Map(0, source->GetSize());
+            if (!sourceData)
+            {
+                return {};
+            }
+
+            addressable->Update(sourceData, source->GetSize());
+            source->Unmap();
+            return addressable;
+        }
+
+        bool IsFiniteRayTracingTransform(const Math::Matrix4x4& transform)
+        {
+            for (float value : transform.values)
+            {
+                if (!std::isfinite(value))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        void CopyRayTracingInstanceTransform(const Math::Matrix4x4& worldTransform,
+                                             float outTransform[12])
+        {
+            for (uint32_t row = 0; row < 3; ++row)
+            {
+                for (uint32_t column = 0; column < 4; ++column)
+                {
+                    outTransform[row * 4 + column] = worldTransform.m[column][row];
+                }
+            }
+        }
+
     } // namespace
+
+    uint64_t ComputeSceneRevisionHash(const FramePacket& packet)
+    {
+        return HashSceneRevisionInternal(packet);
+    }
+
+    RayTracingSceneSubsystem::~RayTracingSceneSubsystem()
+    {
+        Shutdown();
+    }
+
+    void RayTracingSceneSubsystem::Shutdown()
+    {
+        m_BottomLevelCache.clear();
+        for (TopLevelCacheEntry& topLevel : m_TopLevelCache)
+        {
+            topLevel = TopLevelCacheEntry{};
+        }
+    }
+
+    bool RayTracingSceneSubsystem::BuildFrameSnapshot(const MeshResources* meshResources,
+                                                       FramePacket& packet,
+                                                       const MaterialResources* materialResources)
+    {
+        packet.RayTracingScene.Clear();
+        if (!meshResources)
+        {
+            return true;
+        }
+
+        const DrawCommandView opaqueCommands =
+            DrawCommandView::FromRange(packet.DrawCommands, packet.OpaqueCommandRange);
+        const bool bResolveInstanceObjectIds =
+            packet.bHasMainCamera && packet.Scene.MainCamera.SequenceFrame != 0;
+        for (const DrawCommand& command : opaqueCommands)
+        {
+            const DrawParams& draw = command.Draw;
+            // 影を落とさない物体もパストレーサーの主光線・散乱光線には見えるため含める。
+            // 影・DDGI・RTGIはinstance maskで影を落とす物体だけを調べる。
+            if ((command.Type != DrawCommandType::DrawIndexed &&
+                 command.Type != DrawCommandType::DrawIndexedInstanced) ||
+                draw.PayloadKind != DrawPayloadKind::Mesh ||
+                !draw.MeshHandle.IsValid() ||
+                (draw.MaterialBlendMode != BlendMode::Opaque &&
+                 draw.MaterialBlendMode != BlendMode::Masked))
+            {
+                continue;
+            }
+
+            const MeshResources::MeshGPUData* meshData = meshResources->GetGPUData(draw.MeshHandle);
+            if (!meshData || !meshData->VertexBuffer || !meshData->IndexBuffer)
+            {
+                continue;
+            }
+
+            const uint32_t indexOffset = draw.IndexCount > 0 ? draw.IndexOffset : 0u;
+            const uint32_t indexCount = draw.IndexCount > 0 ? draw.IndexCount : meshData->IndexCount;
+            if (indexCount < 3 || indexCount % 3 != 0 ||
+                indexOffset > meshData->IndexCount ||
+                indexCount > meshData->IndexCount - indexOffset)
+            {
+                continue;
+            }
+
+            constexpr uint32_t vertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+            const uint64_t vertexOffset = static_cast<uint64_t>(draw.VertexOffset) * vertexStride;
+            if (vertexOffset >= meshData->VertexBuffer->GetSize() ||
+                (meshData->VertexBuffer->GetSize() - vertexOffset) % vertexStride != 0)
+            {
+                continue;
+            }
+            const uint64_t vertexCount64 =
+                (meshData->VertexBuffer->GetSize() - vertexOffset) / vertexStride;
+            if (vertexCount64 < 3 || vertexCount64 > std::numeric_limits<uint32_t>::max())
+            {
+                continue;
+            }
+
+            const uint32_t instanceCount = draw.bInstanced ? draw.InstanceCount : 1u;
+            if (instanceCount == 0 ||
+                (draw.bInstanced &&
+                 static_cast<uint64_t>(draw.InstanceDataOffset) + instanceCount > packet.InstanceData.size()))
+            {
+                continue;
+            }
+
+            const MaterialResourceData* materialData = materialResources
+                                                           ? materialResources->GetData(draw.MaterialHandle)
+                                                           : nullptr;
+            const RayTracingHitMaterialSnapshot materialSnapshot =
+                MakeRayTracingHitMaterialSnapshot(materialData);
+            // 連番の1フレームでは前の値を物体ごとに固定するため、インスタンシング描画の各instanceの
+            // 元の物体IDをMeshProxyとの照合で求める。連番でなければ従来どおり描画の値を使う。
+            Container::VariableArray<uint64_t> instanceObjectIds;
+            if (bResolveInstanceObjectIds && draw.bInstanced)
+            {
+                ResolveInstancedDrawObjectIds(packet, draw, instanceObjectIds);
+            }
+
+            for (uint32_t instanceIndex = 0; instanceIndex < instanceCount; ++instanceIndex)
+            {
+                if (packet.RayTracingScene.Instances.size() > 0x00FFFFFFu)
+                {
+                    break;
+                }
+
+                Math::Matrix4x4 worldTransform;
+                Math::Matrix4x4 previousWorldTransform;
+                const uint64_t dataIndex =
+                    static_cast<uint64_t>(draw.InstanceDataOffset) + instanceIndex;
+                const bool bHasInstanceData = dataIndex < packet.InstanceData.size();
+                if (draw.bInstanced)
+                {
+                    const GPUSceneInstanceData& instanceData =
+                        packet.InstanceData[dataIndex];
+                    std::memcpy(worldTransform.values, instanceData.World, sizeof(instanceData.World));
+                    std::memcpy(previousWorldTransform.values, instanceData.PreviousWorld,
+                                sizeof(instanceData.PreviousWorld));
+                }
+                else
+                {
+                    worldTransform = draw.WorldMatrix;
+                    if (bHasInstanceData &&
+                        std::memcmp(packet.InstanceData[dataIndex].World,
+                                    worldTransform.values,
+                                    sizeof(packet.InstanceData[dataIndex].World)) == 0)
+                    {
+                        const GPUSceneInstanceData& instanceData = packet.InstanceData[dataIndex];
+                        std::memcpy(previousWorldTransform.values, instanceData.PreviousWorld,
+                                    sizeof(instanceData.PreviousWorld));
+                    }
+                    else
+                    {
+                        previousWorldTransform = worldTransform;
+                    }
+                }
+
+                if (!IsFiniteRayTracingTransform(worldTransform))
+                {
+                    continue;
+                }
+
+                RayTracingSceneInstanceSnapshot instance;
+                instance.MeshHandle = draw.MeshHandle;
+                instance.ObjectId = draw.ObjectId;
+                instance.ObjectInstanceIndex = instanceIndex;
+                if (instanceIndex < instanceObjectIds.size() && instanceObjectIds[instanceIndex] != 0)
+                {
+                    instance.ObjectId = instanceObjectIds[instanceIndex];
+                    instance.ObjectInstanceIndex = 0;
+                }
+                instance.SourceVertexBuffer = meshData->VertexBuffer;
+                instance.SourceIndexBuffer = meshData->IndexBuffer;
+                instance.IndexOffset = indexOffset;
+                instance.IndexCount = indexCount;
+                instance.VertexOffset = draw.VertexOffset;
+                instance.VertexCount = static_cast<uint32_t>(vertexCount64);
+                instance.VertexStride = vertexStride;
+                instance.bGeometryOpaque = draw.MaterialBlendMode == BlendMode::Opaque;
+                instance.Material = materialSnapshot;
+                // GBufferと同じく、instance dataのObjectColorを表面色の係数として渡す。
+                if (bHasInstanceData)
+                {
+                    std::memcpy(instance.Material.ObjectColor,
+                                packet.InstanceData[dataIndex].ObjectColor,
+                                sizeof(instance.Material.ObjectColor));
+                }
+                instance.Instance.customIndex =
+                    static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
+                instance.Instance.mask = draw.bCastShadow ? RayTracingInstanceMaskShadowCaster
+                                                          : RayTracingInstanceMaskNonShadowCaster;
+                CopyRayTracingInstanceTransform(worldTransform, instance.Instance.transform);
+                if (IsFiniteRayTracingTransform(previousWorldTransform))
+                {
+                    CopyRayTracingInstanceTransform(previousWorldTransform,
+                                                    instance.PreviousTransform);
+                    instance.bHasPreviousTransform = true;
+                }
+                packet.RayTracingScene.Instances.push_back(std::move(instance));
+            }
+        }
+
+        return true;
+    }
+
+    bool RayTracingSceneSubsystem::BuildAccelerationStructures(RHI::DevicePtr device,
+                                                                RHI::ICommandList& commandList,
+                                                                uint32_t frameSlot,
+                                                                FramePacket& packet)
+    {
+        auto clearPacketAccelerationStructures = [&packet]()
+        {
+            packet.RayTracingScene.TopLevel.reset();
+            for (RayTracingSceneInstanceSnapshot& instance : packet.RayTracingScene.Instances)
+            {
+                instance.BottomLevel.reset();
+                instance.AccelerationStructureVertexBuffer.reset();
+                instance.AccelerationStructureIndexBuffer.reset();
+            }
+        };
+
+        if (!device || !device->GetCapabilities().RayTracing.bAccelerationStructure)
+        {
+            clearPacketAccelerationStructures();
+            m_BottomLevelCache.clear();
+            for (TopLevelCacheEntry& topLevel : m_TopLevelCache)
+            {
+                topLevel = TopLevelCacheEntry{};
+            }
+            return true;
+        }
+
+        if (frameSlot >= FRAME_PACKET_BUFFER_COUNT)
+        {
+            clearPacketAccelerationStructures();
+            return false;
+        }
+
+        if (packet.RayTracingScene.Instances.empty())
+        {
+            clearPacketAccelerationStructures();
+            m_BottomLevelCache.clear();
+            for (TopLevelCacheEntry& topLevel : m_TopLevelCache)
+            {
+                topLevel = TopLevelCacheEntry{};
+            }
+            return true;
+        }
+
+        Container::VariableArray<BottomLevelCacheEntry> activeBottomLevels;
+        Container::VariableArray<RHI::AccelerationStructureInstanceDesc> tlasInstances;
+        for (RayTracingSceneInstanceSnapshot& instance : packet.RayTracingScene.Instances)
+        {
+            if (!instance.SourceVertexBuffer || !instance.SourceIndexBuffer ||
+                instance.IndexCount < 3 || instance.IndexCount % 3 != 0 ||
+                instance.VertexCount < 3 || instance.VertexStride < sizeof(float) * 3u)
+            {
+                clearPacketAccelerationStructures();
+                return false;
+            }
+
+            auto matchesGeometry = [&instance](const BottomLevelCacheEntry& candidate)
+            {
+                return candidate.MeshHandle == instance.MeshHandle &&
+                       candidate.SourceVertexBuffer == instance.SourceVertexBuffer &&
+                       candidate.SourceIndexBuffer == instance.SourceIndexBuffer &&
+                       candidate.IndexOffset == instance.IndexOffset &&
+                       candidate.IndexCount == instance.IndexCount &&
+                       candidate.VertexOffset == instance.VertexOffset &&
+                       candidate.VertexCount == instance.VertexCount &&
+                       candidate.VertexStride == instance.VertexStride &&
+                       candidate.bGeometryOpaque == instance.bGeometryOpaque;
+            };
+
+            BottomLevelCacheEntry* bottomLevel = nullptr;
+            for (BottomLevelCacheEntry& candidate : activeBottomLevels)
+            {
+                if (matchesGeometry(candidate))
+                {
+                    bottomLevel = &candidate;
+                    break;
+                }
+            }
+            if (!bottomLevel)
+            {
+                for (const BottomLevelCacheEntry& candidate : m_BottomLevelCache)
+                {
+                    if (matchesGeometry(candidate))
+                    {
+                        activeBottomLevels.push_back(candidate);
+                        bottomLevel = &activeBottomLevels.back();
+                        break;
+                    }
+                }
+            }
+
+            if (!bottomLevel)
+            {
+                BottomLevelCacheEntry entry;
+                entry.MeshHandle = instance.MeshHandle;
+                entry.SourceVertexBuffer = instance.SourceVertexBuffer;
+                entry.SourceIndexBuffer = instance.SourceIndexBuffer;
+                entry.IndexOffset = instance.IndexOffset;
+                entry.IndexCount = instance.IndexCount;
+                entry.VertexOffset = instance.VertexOffset;
+                entry.VertexCount = instance.VertexCount;
+                entry.VertexStride = instance.VertexStride;
+                entry.bGeometryOpaque = instance.bGeometryOpaque;
+                entry.VertexBuffer = CreateAddressableMeshBuffer(
+                    *device,
+                    instance.SourceVertexBuffer,
+                    RHI::ResourceUsage::VertexBuffer,
+                    "RayTracingScene.VertexInput");
+                entry.IndexBuffer = CreateAddressableMeshBuffer(
+                    *device,
+                    instance.SourceIndexBuffer,
+                    RHI::ResourceUsage::IndexBuffer,
+                    "RayTracingScene.IndexInput");
+                if (!entry.VertexBuffer || !entry.IndexBuffer)
+                {
+                    clearPacketAccelerationStructures();
+                    return false;
+                }
+
+                const uint32_t primitiveCount = instance.IndexCount / 3u;
+                RHI::AccelerationStructureDesc blasDesc;
+                blasDesc.type = RHI::AccelerationStructureType::BottomLevel;
+                blasDesc.geometryCapacities.push_back(
+                    {RHI::AccelerationStructureGeometryType::Triangles,
+                     primitiveCount,
+                     instance.bGeometryOpaque});
+                entry.Structure = device->CreateAccelerationStructure(blasDesc);
+                if (!entry.Structure)
+                {
+                    clearPacketAccelerationStructures();
+                    return false;
+                }
+
+                RHI::AccelerationStructureGeometryDesc geometry;
+                geometry.type = RHI::AccelerationStructureGeometryType::Triangles;
+                geometry.opaque = instance.bGeometryOpaque;
+                geometry.triangles.vertexBuffer = entry.VertexBuffer;
+                geometry.triangles.vertexOffset =
+                    static_cast<uint64_t>(instance.VertexOffset) * instance.VertexStride;
+                geometry.triangles.vertexCount = instance.VertexCount;
+                geometry.triangles.vertexStride = instance.VertexStride;
+                geometry.triangles.vertexFormat = RHI::Format::R32G32B32_FLOAT;
+                geometry.triangles.indexBuffer = entry.IndexBuffer;
+                geometry.triangles.indexOffset =
+                    static_cast<uint64_t>(instance.IndexOffset) * sizeof(uint32_t);
+                geometry.triangles.indexCount = instance.IndexCount;
+                geometry.triangles.indexFormat = RHI::IndexType::Uint32;
+
+                RHI::AccelerationStructureBuildDesc blasBuild;
+                blasBuild.type = RHI::AccelerationStructureType::BottomLevel;
+                blasBuild.destination = entry.Structure;
+                blasBuild.geometries.push_back(geometry);
+                // ICommandListのBuildはTLAS用。BLASは加速構造リソースから同期構築する。
+                if (!entry.Structure->Build(blasBuild))
+                {
+                    clearPacketAccelerationStructures();
+                    return false;
+                }
+
+                activeBottomLevels.push_back(std::move(entry));
+                bottomLevel = &activeBottomLevels.back();
+            }
+
+            instance.BottomLevel = bottomLevel->Structure;
+            instance.AccelerationStructureVertexBuffer = bottomLevel->VertexBuffer;
+            instance.AccelerationStructureIndexBuffer = bottomLevel->IndexBuffer;
+            RHI::AccelerationStructureInstanceDesc tlasInstance = instance.Instance;
+            tlasInstance.bottomLevel = bottomLevel->Structure;
+            tlasInstances.push_back(std::move(tlasInstance));
+        }
+
+        m_BottomLevelCache = std::move(activeBottomLevels);
+        if (tlasInstances.empty())
+        {
+            m_TopLevelCache[frameSlot] = TopLevelCacheEntry{};
+            return true;
+        }
+
+        TopLevelCacheEntry& cachedTopLevel = m_TopLevelCache[frameSlot];
+        const uint32_t instanceCount = static_cast<uint32_t>(tlasInstances.size());
+        RHI::AccelerationStructurePtr topLevel;
+        if (cachedTopLevel.Structure && cachedTopLevel.InstanceCount == instanceCount)
+        {
+            RHI::AccelerationStructureBuildDesc tlasUpdate;
+            tlasUpdate.type = RHI::AccelerationStructureType::TopLevel;
+            tlasUpdate.mode = RHI::AccelerationStructureBuildMode::Update;
+            tlasUpdate.destination = cachedTopLevel.Structure;
+            tlasUpdate.source = cachedTopLevel.Structure;
+            tlasUpdate.instances = tlasInstances;
+            if (commandList.UpdateAccelerationStructure(tlasUpdate))
+            {
+                topLevel = cachedTopLevel.Structure;
+            }
+        }
+
+        if (!topLevel)
+        {
+            RHI::AccelerationStructureDesc tlasDesc;
+            tlasDesc.type = RHI::AccelerationStructureType::TopLevel;
+            tlasDesc.maxInstanceCount = instanceCount;
+            tlasDesc.allowUpdate = true;
+            topLevel = device->CreateAccelerationStructure(tlasDesc);
+            if (!topLevel)
+            {
+                clearPacketAccelerationStructures();
+                return false;
+            }
+
+            RHI::AccelerationStructureBuildDesc tlasBuild;
+            tlasBuild.type = RHI::AccelerationStructureType::TopLevel;
+            tlasBuild.destination = topLevel;
+            tlasBuild.instances = std::move(tlasInstances);
+            if (!commandList.BuildAccelerationStructure(tlasBuild))
+            {
+                clearPacketAccelerationStructures();
+                return false;
+            }
+
+            cachedTopLevel.Structure = topLevel;
+            cachedTopLevel.InstanceCount = instanceCount;
+        }
+
+        packet.RayTracingScene.TopLevel = topLevel;
+        return true;
+    }
 
     // ========================================
     // RenderingCoordinator
@@ -335,6 +1067,46 @@ namespace NorvesLib::Core::Rendering
                m_Diagnostics->TryGetRenderGraphDebugDumpSnapshot(knownPublicationSequence, outSnapshot);
     }
 
+    bool RenderingCoordinator::TryConsumeCompletedGPUTimings(
+        Container::VariableArray<RenderPassGPUTiming>& outTimings,
+        uint64_t& outDroppedFrameCount)
+    {
+        return m_GPUTimingMailbox.Consume(outTimings, outDroppedFrameCount);
+    }
+
+    bool RenderingCoordinator::SupportsGPUTimings() const
+    {
+        return m_CommandList && m_CommandList->SupportsGPUTimestamps();
+    }
+
+    void RenderingCoordinator::PublishCompletedGPUTimestampResults()
+    {
+        if (!m_CommandList)
+        {
+            return;
+        }
+
+        Container::VariableArray<RHI::GPUTimestampResult> results;
+        m_CommandList->ConsumeCompletedGPUTimestampResults(results);
+        if (results.empty())
+        {
+            return;
+        }
+
+        Container::VariableArray<RenderPassGPUTiming> timings;
+        timings.reserve(results.size());
+        for (const RHI::GPUTimestampResult& result : results)
+        {
+            RenderPassGPUTiming timing;
+            timing.FrameNumber = result.FrameNumber;
+            timing.PassName = result.ScopeName;
+            timing.DurationMs = result.DurationMs;
+            timing.bValid = result.bValid;
+            timings.push_back(timing);
+        }
+        m_GPUTimingMailbox.Append(timings);
+    }
+
     bool RenderingCoordinator::Initialize(const RenderingCoordinatorSettings &settings)
     {
         if (m_bInitialized)
@@ -347,6 +1119,13 @@ namespace NorvesLib::Core::Rendering
         m_PreviousCompletedTotalFrameTimeMs = 0.0f;
         m_LatestCompletedGPUTimeMs = 0.0f;
         m_bLatestCompletedGPUTimeValid = false;
+        m_SceneRevision = 1u;
+        m_LightRevision = 1u;
+        m_LastSceneRevisionHash = 0u;
+        m_LastLightRevisionHash = 0u;
+        m_bSceneRevisionHashValid = false;
+        m_bLightRevisionHashValid = false;
+        m_GPUTimingMailbox.Clear();
 
         if (m_Diagnostics)
         {
@@ -372,6 +1151,13 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("RenderingCoordinator", "RHI Device is null");
             return false;
         }
+
+        const RHI::RayTracingCapabilities& rayTracingCapabilities =
+            m_Device->GetCapabilities().RayTracing;
+        m_DDGIVolume = SanitizeDDGIVolumeParametersForRHI(
+            m_DDGIVolume,
+            rayTracingCapabilities.bAccelerationStructure,
+            rayTracingCapabilities.bRayQuery);
 
         // ========================================
         // 2. Screenの初期化（SwapChain作成を含む）
@@ -407,6 +1193,22 @@ namespace NorvesLib::Core::Rendering
         if (!swapChain)
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Screen SwapChain is null");
+            return false;
+        }
+
+        const RHI::PresentationSurfaceDesc presentationSurface =
+            swapChain->GetPresentationSurfaceDesc();
+        const RHI::PresentationEncodePath presentationEncodePath =
+            RHI::GetPresentationEncodePath(swapChain->GetFormat());
+        if (presentationSurface.ColorSpace != RHI::PresentationColorSpace::Rec709D65 ||
+            presentationSurface.Transfer != RHI::PresentationTransfer::SRGB ||
+            presentationEncodePath == RHI::PresentationEncodePath::Unsupported)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator",
+                             "Unsupported presentation surface: format=%u colorSpace=%u transfer=%u",
+                             static_cast<unsigned int>(swapChain->GetFormat()),
+                             static_cast<unsigned int>(presentationSurface.ColorSpace),
+                             static_cast<unsigned int>(presentationSurface.Transfer));
             return false;
         }
 
@@ -509,6 +1311,7 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create graph presentation load render pass");
             return false;
         }
+
         m_SwapChainFormat = swapChain->GetFormat();
 
         // ========================================
@@ -579,13 +1382,19 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            // Blitディスクリプタセット（binding 0: CombinedImageSampler）
+            // Blitディスクリプタセット（binding 0: CombinedImageSampler、binding 1: encode params）
             RHI::DescriptorSetDesc blitDsDesc;
             RHI::DescriptorBinding texBinding;
             texBinding.binding = 0;
             texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             texBinding.stages = RHI::ShaderStage::Pixel;
             blitDsDesc.bindings.push_back(texBinding);
+
+            RHI::DescriptorBinding encodeBinding;
+            encodeBinding.binding = 1;
+            encodeBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            encodeBinding.stages = RHI::ShaderStage::Pixel;
+            blitDsDesc.bindings.push_back(encodeBinding);
 
             m_BlitDescriptorSet = m_Device->CreateDescriptorSet(blitDsDesc);
             if (!m_BlitDescriptorSet)
@@ -596,6 +1405,25 @@ namespace NorvesLib::Core::Rendering
 
             // サンプラーを事前バインド（CombinedImageSamplerに必要）
             m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
+
+            RHI::PresentationEncodeParams presentationParams;
+            presentationParams.EncodePath =
+                presentationEncodePath == RHI::PresentationEncodePath::ShaderOETF ? 1u : 0u;
+            RHI::BufferDesc presentationParamsDesc(sizeof(RHI::PresentationEncodeParams),
+                                                    RHI::ResourceUsage::ConstantBuffer,
+                                                    true,
+                                                    "PresentationEncodeParams");
+            RHI::BufferPtr presentationParamsBuffer = m_Device->CreateBuffer(presentationParamsDesc);
+            if (!presentationParamsBuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create presentation encode buffer");
+                return false;
+            }
+            presentationParamsBuffer->Update(&presentationParams, sizeof(presentationParams));
+            m_BlitDescriptorSet->BindConstantBuffer(1,
+                                                     presentationParamsBuffer,
+                                                     0,
+                                                     sizeof(presentationParams));
 
             // Blitパイプライン
             RHI::GraphicsPipelineDesc blitPipelineDesc;
@@ -718,11 +1546,41 @@ namespace NorvesLib::Core::Rendering
         // m_SceneRenderer.SetDefaultPipeline(m_TrianglePipeline);
 
         // ========================================
-        // 12.5. ディファードパイプラインの構築
+        // 12.5. メインSceneViewのパイプライン構築
         // ========================================
-        // SceneViewにDeferred描画パス（GBuffer→Lighting→ToneMapping）を登録
-        m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer);
-        NORVES_LOG_INFO("RenderingCoordinator", "Deferred pipeline configured on MainSceneView");
+        // 既定はDeferred描画パス（GBuffer→Lighting→ToneMapping）。パストレーサーは起動時の設定で
+        // 明示選択し、PathTracingPassに必要な機能がそろうデバイスでだけ有効にする。
+        m_MainViewRenderer = RenderingMainViewRenderer::Raster;
+        if (settings.MainViewRenderer == RenderingMainViewRenderer::PathTracing)
+        {
+            if (PathTracingPass::IsSupported(m_Device->GetCapabilities()))
+            {
+                m_MainViewRenderer = RenderingMainViewRenderer::PathTracing;
+            }
+            else
+            {
+                NORVES_LOG_WARNING("RenderingCoordinator",
+                                   "Path tracing was requested but the device lacks ray tracing support; using the deferred pipeline");
+            }
+        }
+        if (m_MainViewRenderer == RenderingMainViewRenderer::PathTracing)
+        {
+            m_MainSceneView->SetupPathTracingPipeline(settings.PathTracingSamplesPerFrame,
+                                                      settings.PathTracingTransport,
+                                                      settings.PathTracingPixelSamplingMode,
+                                                      settings.PathTracingDebug,
+                                                      settings.PathTracingSampleBatch);
+            NORVES_LOG_INFO("RenderingCoordinator", "Path tracing pipeline configured on MainSceneView");
+        }
+        else
+        {
+            m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer, settings.RasterDirectBrdfMode);
+            // 被写界深度は半透明を合成した後のSceneColorへ掛ける。カメラのピント距離が0なら働かない。
+            m_MainSceneView->AddPass(Container::MakeUnique<DepthOfFieldPass>());
+            // 動きぼけは被写界深度の後のSceneColorへ掛ける。シャッター時間が0（既定）なら働かない。
+            m_MainSceneView->AddPass(Container::MakeUnique<MotionBlurPass>());
+            NORVES_LOG_INFO("RenderingCoordinator", "Deferred pipeline configured on MainSceneView");
+        }
 
         // ========================================
         // 13. MeshProxyはWorldから自動登録される
@@ -752,6 +1610,7 @@ namespace NorvesLib::Core::Rendering
         m_PreviousCompletedTotalFrameTimeMs = 0.0f;
         m_LatestCompletedGPUTimeMs = 0.0f;
         m_bLatestCompletedGPUTimeValid = false;
+        m_GPUTimingMailbox.Clear();
 
         if (m_Diagnostics)
         {
@@ -779,6 +1638,9 @@ namespace NorvesLib::Core::Rendering
             m_Device->WaitIdle();
         }
 
+        // デバイス所有参照を解放する前に、レイトレーシングsceneの資源を破棄する
+        NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().Shutdown();
+
         if (m_FrameCaptureReadbackHelper)
         {
             m_FrameCaptureReadbackHelper->Shutdown();
@@ -796,6 +1658,7 @@ namespace NorvesLib::Core::Rendering
         m_CompositePass.SetRequest(CompositePassRequest{});
         m_CompositePass.ReleaseRetainedResources();
         m_PresentationPass.SetRequest(PresentationPassRequest{});
+        m_PresentationPass.InvalidateOverlayResources();
 
         // Viewの破棄
         for (auto &view : m_Views)
@@ -817,6 +1680,8 @@ namespace NorvesLib::Core::Rendering
         m_CanvasCameraId = 0;
         m_NextCameraId = 1;
         m_bCanvasCameraSyncPending.Store(false);
+        m_PreviousMainCamera = CameraProxy{};
+        m_bPreviousMainCameraValid = false;
 
         // SceneRendererの終了
         m_SceneRenderer.Shutdown();
@@ -1009,6 +1874,52 @@ namespace NorvesLib::Core::Rendering
         NORVES_STAT_TIME_END(collection, m_GameThreadStats.CollectionTimeMs);
     }
 
+    void RenderingCoordinator::SnapshotSceneParameters(
+        FramePacket& packet,
+        const RHI::DeviceCapabilities& capabilities) const
+    {
+        packet.Scene.SkyAtmosphere = m_SkyAtmosphere;
+        // 空が有効なら空の太陽を方向光として光源表へ加える（packetの再利用でも1つだけ）。
+        ReplaceSkySunLight(packet.Scene.SkyAtmosphere, packet.Scene.LightProxies);
+        packet.Scene.SetDDGIVolumeParameters(
+            SanitizeDDGIVolumeParametersForRHI(
+                m_DDGIVolume,
+                capabilities.RayTracing.bAccelerationStructure,
+                capabilities.RayTracing.bRayQuery));
+        packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.bRTGIEnabled = m_bRTGIEnabled;
+    }
+
+    void RenderingCoordinator::UpdateFrameRevisions(FramePacket& packet)
+    {
+        const uint64_t sceneHash = ComputeSceneRevisionHash(packet);
+        if (!m_bSceneRevisionHashValid)
+        {
+            m_LastSceneRevisionHash = sceneHash;
+            m_bSceneRevisionHashValid = true;
+        }
+        else if (m_LastSceneRevisionHash != sceneHash)
+        {
+            m_LastSceneRevisionHash = sceneHash;
+            m_SceneRevision = AdvanceRevision(m_SceneRevision);
+        }
+
+        const uint64_t lightHash = HashLightRevision(packet);
+        if (!m_bLightRevisionHashValid)
+        {
+            m_LastLightRevisionHash = lightHash;
+            m_bLightRevisionHashValid = true;
+        }
+        else if (m_LastLightRevisionHash != lightHash)
+        {
+            m_LastLightRevisionHash = lightHash;
+            m_LightRevision = AdvanceRevision(m_LightRevision);
+        }
+
+        packet.SceneRevision = m_SceneRevision;
+        packet.LightRevision = m_LightRevision;
+    }
+
     void RenderingCoordinator::GenerateDrawCommands()
     {
         if (!m_bInitialized)
@@ -1021,6 +1932,11 @@ namespace NorvesLib::Core::Rendering
         if (m_CurrentPacket)
         {
             m_CurrentPacket->bHasMainCamera = false;
+            m_CurrentPacket->bHasPreviousMainCamera = m_bPreviousMainCameraValid;
+            if (m_bPreviousMainCameraValid)
+            {
+                m_CurrentPacket->PreviousMainCamera = m_PreviousMainCamera;
+            }
             if (m_bCameraSet)
             {
                 auto mainCamera = m_MainCamera;
@@ -1041,6 +1957,7 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
                 m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
             }
+            SnapshotSceneParameters(*m_CurrentPacket, m_Device->GetCapabilities());
 
             m_CurrentPacket->DrawCommands.clear();
             m_CurrentPacket->DrawCommands.reserve(m_MaxDrawCallsPerFrame);
@@ -1211,6 +2128,22 @@ namespace NorvesLib::Core::Rendering
         {
             m_CurrentPacket->GeneratedDrawCommandCount =
                 static_cast<uint32_t>(m_CurrentPacket->DrawCommands.size());
+
+            const MeshResources* meshResources =
+                m_RenderResources ? &m_RenderResources->Meshes() : nullptr;
+            const MaterialResources* materialResources =
+                m_RenderResources ? &m_RenderResources->Materials() : nullptr;
+            if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildFrameSnapshot(
+                    meshResources,
+                    *m_CurrentPacket,
+                    materialResources))
+            {
+                NORVES_LOG_WARNING("RayTracingSceneSubsystem",
+                                   "FramePacketのレイトレーシングscene snapshotを構築できませんでした");
+            }
+            // 連番の1フレームの間は、どのパケットにも同じ前のカメラ・instance変換を書く。
+            ApplyPathTracingSequenceCarry(*m_CurrentPacket, m_PacketManager.GetSequenceCarry());
+            UpdateFrameRevisions(*m_CurrentPacket);
         }
 
         NORVES_STAT_TIME_END(cmdGen, m_GameThreadStats.CommandGenerationTimeMs);
@@ -1227,6 +2160,12 @@ namespace NorvesLib::Core::Rendering
         // 書き込み完了をマーク（Writing→Ready）
         // Screen.EndFrame（submit/present）はRenderFrame内で実行するため、ここでは行わない。
         FramePacket* finishedPacket = m_CurrentPacket;
+        CameraProxy finishedCamera;
+        const bool bFinishedCameraValid = m_CurrentPacket && m_CurrentPacket->bHasMainCamera;
+        if (bFinishedCameraValid)
+        {
+            finishedCamera = m_CurrentPacket->Scene.MainCamera;
+        }
         if (m_CurrentPacket)
         {
             m_CurrentPacket->Stats.GameThreadStats = m_GameThreadStats;
@@ -1234,8 +2173,25 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->Stats.bGameThreadTimingsAvailable =
                 NorvesLib::Debug::StatsManager::Get().IsTraceActive();
 #endif
+            if (m_FrameCaptureReadbackHelper)
+            {
+                m_FrameCaptureReadbackHelper->TrySnapshotPendingRequest(
+                    m_CurrentPacket->CaptureRequest);
+            }
             m_PacketManager.FinishWrite(m_CurrentPacket);
             m_CurrentPacket = nullptr;
+        }
+
+        if (bFinishedCameraValid)
+        {
+            m_PreviousMainCamera = finishedCamera;
+            m_bPreviousMainCameraValid = true;
+        }
+        else
+        {
+            // カメラを公開しなかったフレームをまたいで履歴を再利用しない。
+            m_PreviousMainCamera = CameraProxy{};
+            m_bPreviousMainCameraValid = false;
         }
 
         m_GameThreadStats.FrameNumber++;
@@ -1273,12 +2229,18 @@ namespace NorvesLib::Core::Rendering
 
     FrameCaptureRequestResult RenderingCoordinator::RequestFrameCapture()
     {
+        return RequestFrameCapture(FrameCaptureRequest{});
+    }
+
+    FrameCaptureRequestResult RenderingCoordinator::RequestFrameCapture(
+        const FrameCaptureRequest& request)
+    {
         if (!m_bInitialized || !m_FrameCaptureReadbackHelper)
         {
             return {};
         }
 
-        return m_FrameCaptureReadbackHelper->RequestFrameCapture();
+        return m_FrameCaptureReadbackHelper->RequestFrameCapture(request);
     }
 
     bool RenderingCoordinator::TryConsumeCapturedFrame(CapturedFrame& outFrame)
@@ -1319,6 +2281,19 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+
+        FrameCaptureRequestSnapshot claimedCaptureRequest;
+        if (m_FrameCaptureReadbackHelper)
+        {
+            m_FrameCaptureReadbackHelper->TryClaimPendingRequest(
+                packet->CaptureRequest,
+                claimedCaptureRequest);
+        }
+        FrameCaptureAssignmentGuard captureAssignment(
+            m_FrameCaptureReadbackHelper.get(),
+            claimedCaptureRequest,
+            packet->FrameNumber);
+        FrameCaptureRecordStatus captureRecordStatus = FrameCaptureRecordStatus::NoRequest;
 
         Debug::RenderingStats renderStats = packet->Stats.GameThreadStats;
         renderStats.VisibleObjects = packet->Stats.VisibleObjects;
@@ -1426,6 +2401,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         const uint32_t frameIndex = ResolveFrameIndex(*swapChain);
+        m_CommandList->NotifyGPUTimestampFrameSlotCompleted(
+            frameIndex,
+            swapChain->GetCompletedSubmissionSerial());
         if (m_RenderResources)
         {
             m_RenderResources->SkinnedMeshes().BeginFrame(
@@ -1452,6 +2430,7 @@ namespace NorvesLib::Core::Rendering
                               m_GraphPresentationLoadFramebuffers.size());
             m_CommandList->SetFrameIndex(frameIndex);
             m_CommandList->BeginRecording();
+            PublishCompletedGPUTimestampResults();
             m_CommandList->End();
             const RHI::SwapChainEndFrameResult endFrameResult = m_Screen.EndFrame(m_CommandList);
             if (m_RenderResources)
@@ -1486,6 +2465,20 @@ namespace NorvesLib::Core::Rendering
 
         // コマンド録画開始
         m_CommandList->BeginRecording();
+        PublishCompletedGPUTimestampResults();
+        ScopedGPUTimestampFrameRecording gpuTimestampFrameGuard(
+            m_CommandList.get(),
+            frameIndex);
+
+        if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(
+                m_Device,
+                *m_CommandList,
+                m_PacketManager.GetSlotIndex(packet),
+                *packet))
+        {
+            NORVES_LOG_WARNING("RayTracingSceneSubsystem",
+                               "FramePacketのレイトレーシング加速構造を構築できませんでした");
+        }
 
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
@@ -1506,6 +2499,7 @@ namespace NorvesLib::Core::Rendering
 
             if (m_CommandList->SupportsGPUTimestamps())
             {
+                m_CommandList->BeginGPUTimestampFrame(packet->FrameNumber);
                 m_CommandList->BeginGPUTimestamp("FrameGPU");
             }
         }
@@ -1528,6 +2522,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.CurrentFramebuffer = m_SwapChainFramebuffers[imageIndex].get();
         viewContext.bRenderPassActive = false; // Deferredパスは独自のレンダーパスを使用
         viewContext.FrameIndex = frameIndex;
+        viewContext.FrameNumber = packet->FrameNumber;
         viewContext.ScreenWidth = swapChain->GetWidth();
         viewContext.ScreenHeight = swapChain->GetHeight();
         viewContext.RenderWidth = m_RenderWidth;
@@ -1548,9 +2543,23 @@ namespace NorvesLib::Core::Rendering
         viewContext.Renderer = &m_SceneRenderer;
         viewContext.PendingFrameCommands = &pendingFrameCommands;
         viewContext.Graph = &m_RenderGraph;
+        viewContext.SceneRevision = packet->SceneRevision;
+        viewContext.LightRevision = packet->LightRevision;
+        viewContext.bRTGIEnabled = packet->bRTGIEnabled;
+        // RTGIの光線は影を落とす物体だけを調べる。影を落とす物体がなければ従来どおりfallbackする。
+        viewContext.bRTGITLASAvailable = packet->HasCompleteRayTracingScene() &&
+                                         packet->RayTracingScene.HasShadowCasters();
+        viewContext.RTGICapability = MakeRTGIRayQueryCapability(m_Device->GetCapabilities());
 
         // フレームパケットからスナップショットを設定（RenderThread読み取り専用）
         viewContext.MainCamera = packet->bHasMainCamera ? &packet->Scene.MainCamera : nullptr;
+        viewContext.PreviousMainCamera = packet->bHasPreviousMainCamera
+                                             ? &packet->PreviousMainCamera
+                                             : nullptr;
+        viewContext.SnapshotScene = &packet->Scene;
+        viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
+        viewContext.SnapshotDeltaTime = packet->DeltaTime;
+        viewContext.SkyAtmosphereSnapshot = packet->Scene.SkyAtmosphere;
         viewContext.SnapshotDrawCommandSource = &packet->DrawCommands;
         viewContext.SnapshotDrawCommands = DrawCommandView::FromRange(packet->DrawCommands,
                                                                       packet->DrawCommandRange);
@@ -1579,6 +2588,15 @@ namespace NorvesLib::Core::Rendering
         presentationRequest.BlitDescriptorSet = m_BlitDescriptorSet;
         presentationRequest.BlitSampler = m_BlitSampler;
 
+        PresentationComposeRequest deferredLegacyRequest = presentationRequest;
+        deferredLegacyRequest.ClearRenderPass.reset();
+        deferredLegacyRequest.LoadRenderPass.reset();
+        deferredLegacyRequest.ClearFramebuffer.reset();
+        deferredLegacyRequest.LoadFramebuffer.reset();
+        deferredLegacyRequest.BlitPipeline.reset();
+        deferredLegacyRequest.BlitDescriptorSet.reset();
+        deferredLegacyRequest.BlitSampler.reset();
+
         PresentationPassRequest graphPresentationRequest;
         graphPresentationRequest.BackBufferTexture = swapChain->GetBackBuffer(imageIndex);
         graphPresentationRequest.ClearRenderPass = m_GraphPresentationClearRenderPass;
@@ -1604,7 +2622,7 @@ namespace NorvesLib::Core::Rendering
         executionRequest.CommandList = m_CommandList.get();
         executionRequest.PendingFrameCommands = &pendingFrameCommands;
         executionRequest.Presentation = &presentationComposer;
-        executionRequest.PresentationRequest = presentationRequest;
+        executionRequest.PresentationRequest = deferredLegacyRequest;
         executionRequest.PresentationGraphPass = &m_PresentationPass;
         executionRequest.GraphPresentationRequest = graphPresentationRequest;
         executionRequest.CompositeGraphPass = &m_CompositePass;
@@ -1614,6 +2632,7 @@ namespace NorvesLib::Core::Rendering
                                               ? &debugDumpCapture
                                               : nullptr;
 
+        m_PresentationPass.SetDeferBlit(true);
         RenderFrameExecutor frameExecutor;
         RenderFrameExecutionResult executionResult = frameExecutor.Execute(executionRequest);
 
@@ -1641,74 +2660,170 @@ namespace NorvesLib::Core::Rendering
         renderStats.RenderGraphBarrierCount = m_RenderGraph.GetLastCompiledBarrierCount();
         renderStats.RenderGraphTransientAcquireCount = m_RenderGraph.GetLastTransientAcquireCount();
 
-        if (m_FrameCaptureReadbackHelper)
+        RHI::TexturePtr finalPresentationTexture;
+        if (executionResult.bComposite)
         {
-            FrameCaptureSource captureSource;
-            if (executionResult.bHasFrameCaptureSource)
+            m_RenderGraph.TryGetLastOutputTexture(RenderGraphResourceNames::CompositeColor,
+                                                  finalPresentationTexture);
+        }
+        if (!finalPresentationTexture)
+        {
+            finalPresentationTexture = m_PresentationPass.GetLastResult().InputTexture;
+        }
+        if (!finalPresentationTexture && viewContext.SharedResources)
+        {
+            finalPresentationTexture = viewContext.SharedResources->GetTexturePtr(
+                RenderGraphResourceNames::PresentationColor);
+            if (!finalPresentationTexture)
             {
-                captureSource = executionResult.CaptureSource;
+                finalPresentationTexture = viewContext.SharedResources->GetTexturePtr(
+                    RenderGraphResourceNames::ToneMappedColor);
+            }
+        }
+
+        // ========================================
+        // overlay seam（OETF前のRGBA16F PresentationColorへ描画）
+        // ========================================
+        RHI::RenderPassPtr overlayRenderPass;
+        RHI::FramebufferPtr overlayFramebuffer;
+        if (packet && !packet->OverlayPasses.empty() &&
+            finalPresentationTexture &&
+            finalPresentationTexture->GetFormat() == RHI::Format::R16G16B16A16_FLOAT)
+        {
+            overlayFramebuffer = m_PresentationPass.AcquireOverlayFramebuffer(
+                m_Device,
+                swapChain->GetCurrentFrameIndex(),
+                swapChain->GetMaxFramesInFlight(),
+                finalPresentationTexture);
+            overlayRenderPass = m_PresentationPass.GetOverlayRenderPass();
+        }
+
+        if (packet && !packet->OverlayPasses.empty())
+        {
+            if (!overlayRenderPass || !overlayFramebuffer)
+            {
+                LOG_WARNING("RenderingCoordinator", "Overlay skipped: RGBA16F PresentationColor target unavailable");
             }
             else
             {
-                captureSource.FrameNumber = packet->FrameNumber;
-            }
+                viewContext.OverlayPacketSlotIndex = m_PacketManager.GetSlotIndex(packet);
+                viewContext.OverlayLoadRenderPass = overlayRenderPass.get();
+                viewContext.OverlayLoadFramebuffer = overlayFramebuffer.get();
 
-            m_FrameCaptureReadbackHelper->TryRecordCopy(frameIndex, m_CommandList.get(), captureSource);
-            executionResult.CaptureSource = FrameCaptureSource{};
-            executionResult.bHasFrameCaptureSource = false;
-        }
-
-        // ========================================
-        // overlay seam(モジュール描画の最終段。録画窓内・executor 外側)
-        // ========================================
-        // packet->OverlayPasses が空のとき(=モジュール未登録/overlay 0 件)は
-        // ループに入らず完全 no-op になり、F1 描画 baseline が byte-for-byte 不変。
-        if (packet && !packet->OverlayPasses.empty())
-        {
-            // 描画先 presentation load family は経路依存(legacy / composite=graph)。
-            // executor が一次判定した bComposite を採用し二重判定を避ける。
-            const bool bComposite = executionResult.bComposite;
-            viewContext.bOverlayComposite = bComposite;
-            // 処理中パケットのスロット index を seam が設定する。overlay パスはこの index で
-            // per-slot スナップショットを読む。GameThread の書込みスロット（OnAssignedToPacket）
-            // と同一スロットへの時間窓はプール排他で重ならないため安全。
-            viewContext.OverlayPacketSlotIndex = m_PacketManager.GetSlotIndex(packet);
-            viewContext.OverlayLoadRenderPass = bComposite
-                                                    ? m_GraphPresentationLoadRenderPass.get()
-                                                    : m_PresentationLoadRenderPass.get();
-            viewContext.OverlayLoadFramebuffer = bComposite
-                                                     ? m_GraphPresentationLoadFramebuffers[imageIndex].get()
-                                                     : m_PresentationLoadFramebuffers[imageIndex].get();
-
-            for (IViewPass *overlayPass : packet->OverlayPasses)
-            {
-                if (!overlayPass || !overlayPass->IsEnabled())
+                for (IViewPass *overlayPass : packet->OverlayPasses)
                 {
-                    continue;
-                }
-
-                // 録画窓内の遅延初期化(IViewPass::Initialize は bool 返し)。失敗時は
-                // 当該 overlay を恒久無効化して描画素通り。成功時に m_bInitialized を
-                // 立てる責務は派生側にある(IsInitialized 契約)。
-                if (!overlayPass->IsInitialized())
-                {
-                    if (!overlayPass->Initialize(viewContext))
+                    if (!overlayPass || !overlayPass->IsEnabled())
                     {
-                        overlayPass->SetEnabled(false);
                         continue;
                     }
-                }
 
-                overlayPass->Setup(viewContext);
-                overlayPass->Execute(viewContext);
+                    if (!overlayPass->IsInitialized())
+                    {
+                        if (!overlayPass->Initialize(viewContext))
+                        {
+                            overlayPass->SetEnabled(false);
+                            continue;
+                        }
+                    }
+
+                    overlayPass->Setup(viewContext);
+                    overlayPass->Execute(viewContext);
+                }
             }
         }
+
+        bool bPresentationBlitRecorded = m_PresentationPass.RecordDeferredBlit(viewContext);
+        if (!bPresentationBlitRecorded &&
+            finalPresentationTexture &&
+            presentationRequest.ClearRenderPass &&
+            presentationRequest.ClearFramebuffer &&
+            m_BlitPipeline &&
+            m_BlitDescriptorSet &&
+            m_BlitSampler)
+        {
+            m_BlitDescriptorSet->BindTexture(0, finalPresentationTexture);
+            m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
+            m_BlitDescriptorSet->Update();
+            viewContext.EnqueueFullscreenPass(presentationRequest.ClearRenderPass,
+                                              presentationRequest.ClearFramebuffer,
+                                              viewContext.GetActiveOutputViewport(),
+                                              viewContext.GetActiveOutputScissor(),
+                                              m_BlitPipeline,
+                                              m_BlitDescriptorSet);
+            bPresentationBlitRecorded = true;
+        }
+        m_PresentationPass.SetDeferBlit(false);
+
+        if (bPresentationBlitRecorded)
+        {
+            executionResult.PresentationBlitCount = 1;
+        }
+
+        if (!pendingFrameCommands.empty())
+        {
+            m_SceneRenderer.ExecuteFrameCommands(pendingFrameCommands, m_CommandList.get());
+            pendingFrameCommands.clear();
+        }
+
+        // Presentation surfaceのtransfer責務をcapture metadataへ記録する。
+        const RHI::PresentationSurfaceDesc presentationSurface =
+            swapChain->GetPresentationSurfaceDesc();
+        const RHI::PresentationEncodePath presentationEncodePath =
+            RHI::GetPresentationEncodePath(swapChain->GetFormat());
+        if (bPresentationBlitRecorded &&
+            claimedCaptureRequest.SourceKind == FrameCaptureSourceKind::PresentationColor)
+        {
+            FrameCaptureSource& presentationSource = executionResult.CaptureSources.PresentationColor;
+            presentationSource.Texture = finalPresentationTexture;
+            presentationSource.CurrentState = RHI::ResourceState::ShaderResource;
+            presentationSource.RestoreState = RHI::ResourceState::ShaderResource;
+            presentationSource.FrameNumber = packet->FrameNumber;
+            presentationSource.ColorSpace = presentationSurface.ColorSpace;
+            presentationSource.Transfer = presentationSurface.Transfer;
+            presentationSource.bHardwareSrgbEncode =
+                presentationEncodePath == RHI::PresentationEncodePath::HardwareSRGB;
+            presentationSource.bShaderSrgbEncode =
+                presentationEncodePath == RHI::PresentationEncodePath::ShaderOETF;
+        }
+
+        // BackBuffer は PresentationPass と全 overlay の後、command list 終了直前に取得する。
+        if (bPresentationBlitRecorded &&
+            claimedCaptureRequest.SourceKind == FrameCaptureSourceKind::BackBuffer)
+        {
+            FrameCaptureSource& backBufferSource = executionResult.CaptureSources.BackBuffer;
+            backBufferSource.Texture = swapChain->GetCurrentBackBuffer();
+            backBufferSource.CurrentState = RHI::ResourceState::Present;
+            backBufferSource.RestoreState = RHI::ResourceState::Present;
+            backBufferSource.FrameNumber = packet->FrameNumber;
+            backBufferSource.ColorSpace = presentationSurface.ColorSpace;
+            backBufferSource.Transfer = presentationSurface.Transfer;
+            backBufferSource.bHardwareSrgbEncode =
+                presentationEncodePath == RHI::PresentationEncodePath::HardwareSRGB;
+            backBufferSource.bShaderSrgbEncode =
+                presentationEncodePath == RHI::PresentationEncodePath::ShaderOETF;
+        }
+
+        if (m_FrameCaptureReadbackHelper)
+        {
+            captureRecordStatus = m_FrameCaptureReadbackHelper->TryRecordCopy(
+                frameIndex,
+                m_CommandList.get(),
+                claimedCaptureRequest,
+                executionResult.CaptureSources);
+            if (captureRecordStatus == FrameCaptureRecordStatus::PublishedFailure ||
+                captureRecordStatus == FrameCaptureRecordStatus::Deferred)
+            {
+                captureAssignment.MarkResolved();
+            }
+        }
+        executionResult.CaptureSources.Reset();
 
         // コマンド録画終了
 #if NORVES_ENABLE_STATS
         if (bTraceActive && m_CommandList->SupportsGPUTimestamps())
         {
             m_CommandList->EndGPUTimestamp();
+            m_CommandList->EndGPUTimestampFrame();
         }
 #endif
         m_CommandList->End();
@@ -1726,6 +2841,13 @@ namespace NorvesLib::Core::Rendering
 
         // コマンドリストをサブミット＆Present（旧EndFrame経路から移動）
         const RHI::SwapChainEndFrameResult endFrameResult = m_Screen.EndFrame(m_CommandList);
+        if (captureRecordStatus == FrameCaptureRecordStatus::Recorded &&
+            endFrameResult.SubmissionSerial != 0 &&
+            m_FrameCaptureReadbackHelper &&
+            m_FrameCaptureReadbackHelper->CommitRecordedCopy(claimedCaptureRequest))
+        {
+            captureAssignment.MarkResolved();
+        }
         if (m_RenderResources)
         {
             if (endFrameResult.SubmissionSerial != 0)
@@ -2022,6 +3144,37 @@ namespace NorvesLib::Core::Rendering
         m_bCameraSet = true;
     }
 
+    void RenderingCoordinator::SetSkyAtmosphere(const SkyAtmosphereParameters& parameters)
+    {
+        m_SkyAtmosphere = parameters;
+    }
+
+    void RenderingCoordinator::SetDDGIVolumeParameters(
+        const DDGIVolumeParameters& parameters)
+    {
+        m_DDGIVolume = SanitizeDDGIVolumeParameters(parameters);
+        if (m_Device)
+        {
+            const RHI::RayTracingCapabilities& rayTracingCapabilities =
+                m_Device->GetCapabilities().RayTracing;
+            m_DDGIVolume = SanitizeDDGIVolumeParametersForRHI(
+                m_DDGIVolume,
+                rayTracingCapabilities.bAccelerationStructure,
+                rayTracingCapabilities.bRayQuery);
+        }
+    }
+
+    void RenderingCoordinator::SetRTGIEnabled(bool bEnabled)
+    {
+        m_bRTGIEnabled = bEnabled;
+    }
+
+    void RenderingCoordinator::SetVolumetricFogParameters(
+        const VolumetricFogParameters& parameters)
+    {
+        m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
+    }
+
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)
     {
         const uint64_t cameraId = m_NextCameraId++;
@@ -2080,6 +3233,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_Device->WaitIdle();
         }
+        m_PresentationPass.InvalidateOverlayResources();
 
         // リサイズ前にWriting中のパケットをキャンセル
         // （新しいフレームバッファが確保されるまでGTの書き込みを止める）
@@ -2387,6 +3541,22 @@ namespace NorvesLib::Core::Rendering
         }
         m_SwapChainFormat = swapChain->GetFormat();
 
+        const RHI::PresentationSurfaceDesc presentationSurface =
+            swapChain->GetPresentationSurfaceDesc();
+        const RHI::PresentationEncodePath presentationEncodePath =
+            RHI::GetPresentationEncodePath(m_SwapChainFormat);
+        if (presentationSurface.ColorSpace != RHI::PresentationColorSpace::Rec709D65 ||
+            presentationSurface.Transfer != RHI::PresentationTransfer::SRGB ||
+            presentationEncodePath == RHI::PresentationEncodePath::Unsupported)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator",
+                             "Unsupported presentation surface after recreation: format=%u colorSpace=%u transfer=%u",
+                             static_cast<unsigned int>(m_SwapChainFormat),
+                             static_cast<unsigned int>(presentationSurface.ColorSpace),
+                             static_cast<unsigned int>(presentationSurface.Transfer));
+            return false;
+        }
+
         if (m_BlitVertexShader && m_BlitFragmentShader && m_BlitDescriptorSet)
         {
             RHI::DescriptorSetDesc blitDsDesc;
@@ -2395,6 +3565,31 @@ namespace NorvesLib::Core::Rendering
             texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             texBinding.stages = RHI::ShaderStage::Pixel;
             blitDsDesc.bindings.push_back(texBinding);
+
+            RHI::DescriptorBinding encodeBinding;
+            encodeBinding.binding = 1;
+            encodeBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            encodeBinding.stages = RHI::ShaderStage::Pixel;
+            blitDsDesc.bindings.push_back(encodeBinding);
+
+            RHI::PresentationEncodeParams presentationParams;
+            presentationParams.EncodePath =
+                presentationEncodePath == RHI::PresentationEncodePath::ShaderOETF ? 1u : 0u;
+            RHI::BufferDesc presentationParamsDesc(sizeof(RHI::PresentationEncodeParams),
+                                                    RHI::ResourceUsage::ConstantBuffer,
+                                                    true,
+                                                    "PresentationEncodeParams");
+            RHI::BufferPtr presentationParamsBuffer = m_Device->CreateBuffer(presentationParamsDesc);
+            if (!presentationParamsBuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to recreate presentation encode buffer");
+                return false;
+            }
+            presentationParamsBuffer->Update(&presentationParams, sizeof(presentationParams));
+            m_BlitDescriptorSet->BindConstantBuffer(1,
+                                                     presentationParamsBuffer,
+                                                     0,
+                                                     sizeof(presentationParams));
 
             RHI::GraphicsPipelineDesc blitPipelineDesc;
             blitPipelineDesc.vertexShader = m_BlitVertexShader;

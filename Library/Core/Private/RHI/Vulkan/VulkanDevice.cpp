@@ -1,11 +1,13 @@
 ﻿#include "VulkanDevice.h"
 #include "VulkanBuffer.h"
+#include "VulkanAccelerationStructure.h"
 #include "VulkanTexture.h"
 #include "VulkanSampler.h"
 #include "VulkanShader.h"
 #include "VulkanShaderCompiler.h"
 #include "VulkanSlangCompiler.h"
 #include "VulkanPipeline.h"
+#include "VulkanRayTracingPipeline.h"
 #include "VulkanRenderPass.h"
 #include "VulkanFramebuffer.h"
 #include "VulkanDescriptorSet.h"
@@ -16,15 +18,380 @@
 #include "Math/MatrixUtils.h"
 #include <iostream>
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <limits>
 #include "Container/Containers.h"
+#include "Thread/Mutex.h"
 
 // Dynamic dispatcherの定義
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 namespace NorvesLib::RHI::Vulkan
 {
+    namespace
+    {
+        enum class SingleTimeCommandFailurePointForTesting : uint32_t
+        {
+            None,
+            End,
+            Submit,
+            Wait,
+            WaitAndFallback
+        };
+
+        struct DeferredSingleTimeCommandBuffer
+        {
+            vk::Device device;
+            vk::CommandPool commandPool;
+            vk::CommandBuffer commandBuffer;
+        };
+
+        thread_local VulkanDevice *g_testFailureDevice = nullptr;
+        thread_local SingleTimeCommandFailurePointForTesting g_testFailurePoint =
+            SingleTimeCommandFailurePointForTesting::None;
+        thread_local VulkanDevice *g_lastTestFailureDevice = nullptr;
+        thread_local uint32_t g_testFailureHitCount = 0;
+        thread_local VulkanDevice *g_waitIdleFailureDevice = nullptr;
+        thread_local uint32_t g_waitIdleFailuresRemaining = 0;
+        thread_local VulkanDevice *g_lastWaitIdleFailureDevice = nullptr;
+        thread_local uint32_t g_waitIdleFailureHitCount = 0;
+        std::atomic<bool> g_validationErrorCaptureActive{false};
+        std::atomic<uint32_t> g_validationErrorCaptureHitCount{0};
+        std::atomic<uint32_t> g_safeDeviceTeardownLeakCount{0};
+        thread_local vk::Device g_textureUpdateSyncScopeDevice{};
+        thread_local vk::Device g_registeredTextureUpdateStagingDevice{};
+        thread_local vk::Buffer g_registeredTextureUpdateStagingBuffer{};
+        thread_local vk::DeviceMemory g_registeredTextureUpdateStagingMemory{};
+        thread_local bool g_textureUpdateLayoutRollbackRequested = false;
+        thread_local bool g_textureUpdateStagingDeferralRequested = false;
+
+        ::NorvesLib::Thread::Mutex g_deferredCommandBufferMutex;
+        ::NorvesLib::Core::Container::VariableArray<DeferredSingleTimeCommandBuffer> g_deferredCommandBuffers;
+        size_t g_reservedDeferredCommandBufferSlots = 0;
+        struct RegisteredVulkanDeviceOwner
+        {
+            VulkanDevice *device = nullptr;
+            TWeakPtr<VulkanDevice> owner;
+        };
+        ::NorvesLib::Thread::Mutex g_vulkanDeviceOwnerMutex;
+        VariableArray<RegisteredVulkanDeviceOwner> g_vulkanDeviceOwners;
+
+        void RegisterVulkanDeviceOwner(const TSharedPtr<VulkanDevice> &owner)
+        {
+            if (!owner)
+            {
+                return;
+            }
+
+            ::NorvesLib::Thread::ScopedLock lock(g_vulkanDeviceOwnerMutex);
+            for (RegisteredVulkanDeviceOwner &record : g_vulkanDeviceOwners)
+            {
+                if (record.device == owner.get())
+                {
+                    record.owner = owner;
+                    return;
+                }
+            }
+            g_vulkanDeviceOwners.push_back({owner.get(), owner});
+        }
+
+        void UnregisterVulkanDeviceOwner(VulkanDevice *device) noexcept
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_vulkanDeviceOwnerMutex);
+            for (size_t index = 0; index < g_vulkanDeviceOwners.size();)
+            {
+                if (g_vulkanDeviceOwners[index].device == device)
+                {
+                    g_vulkanDeviceOwners.erase(g_vulkanDeviceOwners.begin() + index);
+                }
+                else
+                {
+                    ++index;
+                }
+            }
+        }
+
+        TSharedPtr<VulkanDevice> FindVulkanDeviceOwner(VulkanDevice *device) noexcept
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_vulkanDeviceOwnerMutex);
+            for (const RegisteredVulkanDeviceOwner &record : g_vulkanDeviceOwners)
+            {
+                if (record.device == device)
+                {
+                    return record.owner.lock();
+                }
+            }
+            return {};
+        }
+
+        void ArmVulkanSingleTimeCommandFailureForTesting(
+            IDevice *device,
+            SingleTimeCommandFailurePointForTesting failurePoint) noexcept
+        {
+            g_testFailureDevice = dynamic_cast<VulkanDevice *>(device);
+            g_testFailurePoint = failurePoint;
+        }
+
+        void ReserveDeferredCommandBufferSlot()
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_deferredCommandBufferMutex);
+            g_deferredCommandBuffers.reserve(
+                g_deferredCommandBuffers.size() + g_reservedDeferredCommandBufferSlots + 1);
+            ++g_reservedDeferredCommandBufferSlots;
+        }
+
+        void CancelDeferredCommandBufferSlot() noexcept
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_deferredCommandBufferMutex);
+            if (g_reservedDeferredCommandBufferSlots > 0)
+            {
+                --g_reservedDeferredCommandBufferSlots;
+            }
+        }
+
+        void DeferSingleTimeCommandBuffer(
+            vk::Device device,
+            vk::CommandPool commandPool,
+            vk::CommandBuffer commandBuffer) noexcept
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_deferredCommandBufferMutex);
+            if (g_reservedDeferredCommandBufferSlots > 0)
+            {
+                --g_reservedDeferredCommandBufferSlots;
+            }
+            g_deferredCommandBuffers.push_back({device, commandPool, commandBuffer});
+        }
+
+        void ReleaseDeferredSingleTimeCommandBuffers(vk::Device device) noexcept
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_deferredCommandBufferMutex);
+            for (size_t index = 0; index < g_deferredCommandBuffers.size();)
+            {
+                const DeferredSingleTimeCommandBuffer &record = g_deferredCommandBuffers[index];
+                if (record.device != device)
+                {
+                    ++index;
+                    continue;
+                }
+
+                device.freeCommandBuffers(record.commandPool, 1, &record.commandBuffer);
+                g_deferredCommandBuffers.erase(g_deferredCommandBuffers.begin() + index);
+            }
+        }
+
+    }
+
+    void ReleaseDeferredVulkanTextureUpdateStagingResourcesForDevice(vk::Device device) noexcept;
+
+    void InjectVulkanSingleTimeCommandEndFailureForTesting(IDevice *device) noexcept
+    {
+        ArmVulkanSingleTimeCommandFailureForTesting(
+            device, SingleTimeCommandFailurePointForTesting::End);
+    }
+
+    void InjectVulkanSingleTimeCommandSubmitFailureForTesting(IDevice *device) noexcept
+    {
+        ArmVulkanSingleTimeCommandFailureForTesting(
+            device, SingleTimeCommandFailurePointForTesting::Submit);
+    }
+
+    void InjectVulkanSingleTimeCommandWaitFailureForTesting(IDevice *device) noexcept
+    {
+        ArmVulkanSingleTimeCommandFailureForTesting(
+            device, SingleTimeCommandFailurePointForTesting::Wait);
+    }
+
+    void InjectVulkanSingleTimeCommandWaitAndFallbackFailureForTesting(IDevice *device) noexcept
+    {
+        ArmVulkanSingleTimeCommandFailureForTesting(
+            device, SingleTimeCommandFailurePointForTesting::WaitAndFallback);
+    }
+
+    void ClearVulkanSingleTimeCommandFailureForTesting(IDevice *device) noexcept
+    {
+        VulkanDevice *vulkanDevice = dynamic_cast<VulkanDevice *>(device);
+        if (g_testFailureDevice == vulkanDevice)
+        {
+            g_testFailureDevice = nullptr;
+            g_testFailurePoint = SingleTimeCommandFailurePointForTesting::None;
+        }
+    }
+
+    uint32_t GetVulkanSingleTimeCommandFailureHitCountForTesting(IDevice *device) noexcept
+    {
+        const VulkanDevice *vulkanDevice = dynamic_cast<VulkanDevice *>(device);
+        return g_lastTestFailureDevice == vulkanDevice ? g_testFailureHitCount : 0;
+    }
+
+    void InjectVulkanDeviceWaitIdleFailuresForTesting(IDevice *device, uint32_t failureCount) noexcept
+    {
+        g_waitIdleFailureDevice = dynamic_cast<VulkanDevice *>(device);
+        g_waitIdleFailuresRemaining = failureCount;
+        g_lastWaitIdleFailureDevice = g_waitIdleFailureDevice;
+        g_waitIdleFailureHitCount = 0;
+    }
+
+    uint32_t GetVulkanDeviceWaitIdleFailureHitCountForTesting(IDevice *device) noexcept
+    {
+        const VulkanDevice *vulkanDevice = dynamic_cast<VulkanDevice *>(device);
+        return g_lastWaitIdleFailureDevice == vulkanDevice ? g_waitIdleFailureHitCount : 0;
+    }
+
+    TSharedPtr<VulkanDevice> AcquireVulkanDeviceOwnerForDeferredTextureUpdate(VulkanDevice *device) noexcept
+    {
+        return FindVulkanDeviceOwner(device);
+    }
+
+    void BeginVulkanValidationErrorCaptureForTesting() noexcept
+    {
+        g_validationErrorCaptureHitCount.store(0, std::memory_order_relaxed);
+        g_validationErrorCaptureActive.store(true, std::memory_order_release);
+    }
+
+    void EndVulkanValidationErrorCaptureForTesting() noexcept
+    {
+        g_validationErrorCaptureActive.store(false, std::memory_order_release);
+    }
+
+    void ResetVulkanValidationErrorCaptureForTesting() noexcept
+    {
+        g_validationErrorCaptureHitCount.store(0, std::memory_order_relaxed);
+    }
+
+    uint32_t GetVulkanValidationErrorCaptureHitCountForTesting() noexcept
+    {
+        return g_validationErrorCaptureHitCount.load(std::memory_order_relaxed);
+    }
+
+    uint32_t GetVulkanSafeDeviceTeardownLeakCountForTesting() noexcept
+    {
+        return g_safeDeviceTeardownLeakCount.load(std::memory_order_relaxed);
+    }
+
+    bool TriggerVulkanDeviceTeardownWaitFailureForTesting(::NorvesLib::RHI::DevicePtr &device) noexcept
+    {
+        VulkanDevice *vulkanDevice = dynamic_cast<VulkanDevice *>(device.get());
+        if (vulkanDevice == nullptr)
+        {
+            return false;
+        }
+
+        const uint32_t failureHitCountBefore = g_testFailureHitCount;
+        vk::CommandBuffer commandBuffer;
+        try
+        {
+            commandBuffer = vulkanDevice->BeginSingleTimeCommands();
+        }
+        catch (...)
+        {
+            return false;
+        }
+
+        InjectVulkanSingleTimeCommandWaitAndFallbackFailureForTesting(device.get());
+        bool bEndThrew = false;
+        try
+        {
+            vulkanDevice->EndSingleTimeCommands(commandBuffer);
+        }
+        catch (...)
+        {
+            bEndThrew = true;
+        }
+        ClearVulkanSingleTimeCommandFailureForTesting(device.get());
+        if (!bEndThrew)
+        {
+            std::cerr << "teardown test setup failed: EndSingleTimeCommands did not throw\n";
+            return false;
+        }
+        if (g_lastTestFailureDevice != vulkanDevice || g_testFailureHitCount != failureHitCountBefore + 1)
+        {
+            std::cerr << "teardown test setup failed: wait-failure hook count before=" << failureHitCountBefore
+                      << " after=" << g_testFailureHitCount << '\n';
+            return false;
+        }
+
+        const uint32_t protectedTeardownCountBefore = GetVulkanSafeDeviceTeardownLeakCountForTesting();
+        InjectVulkanDeviceWaitIdleFailuresForTesting(device.get(), 1);
+        device.reset();
+        const uint32_t protectedTeardownCountAfter = GetVulkanSafeDeviceTeardownLeakCountForTesting();
+        if (device || protectedTeardownCountAfter != protectedTeardownCountBefore + 1)
+        {
+            std::cerr << "teardown test failed: protected-count before=" << protectedTeardownCountBefore
+                      << " after=" << protectedTeardownCountAfter << '\n';
+            return false;
+        }
+        return true;
+    }
+
+    bool SubmitVulkanValidationErrorForTesting(IDevice *device) noexcept
+    {
+        VulkanDevice *vulkanDevice = dynamic_cast<VulkanDevice *>(device);
+        if (vulkanDevice == nullptr || !vulkanDevice->GetVkInstance())
+        {
+            return false;
+        }
+
+        const auto submitMessage = VULKAN_HPP_DEFAULT_DISPATCHER.vkSubmitDebugUtilsMessageEXT;
+        if (submitMessage == nullptr)
+        {
+            return false;
+        }
+
+        VkDebugUtilsMessengerCallbackDataEXT callbackData{};
+        callbackData.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CALLBACK_DATA_EXT;
+        callbackData.pMessageIdName = "RHITextureUpdateVulkanTest";
+        callbackData.messageIdNumber = 13;
+        callbackData.pMessage = "検証コールバック捕捉の自己検査";
+        submitMessage(
+            static_cast<VkInstance>(vulkanDevice->GetVkInstance()),
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
+            &callbackData);
+        return true;
+    }
+
+    void BeginVulkanTextureUpdateSyncScopeForTesting(vk::Device device) noexcept
+    {
+        g_textureUpdateSyncScopeDevice = device;
+        g_textureUpdateLayoutRollbackRequested = false;
+        g_textureUpdateStagingDeferralRequested = false;
+    }
+
+    void RegisterVulkanTextureUpdateStagingResourcesForTesting(
+        vk::Device device,
+        vk::Buffer buffer,
+        vk::DeviceMemory memory) noexcept
+    {
+        g_registeredTextureUpdateStagingDevice = device;
+        g_registeredTextureUpdateStagingBuffer = buffer;
+        g_registeredTextureUpdateStagingMemory = memory;
+    }
+
+    bool ConsumeVulkanTextureUpdateLayoutRollbackForTesting() noexcept
+    {
+        const bool bRequested = g_textureUpdateLayoutRollbackRequested;
+        g_textureUpdateLayoutRollbackRequested = false;
+        return bRequested;
+    }
+
+    bool ConsumeVulkanTextureUpdateStagingDeferralForTesting() noexcept
+    {
+        const bool bRequested = g_textureUpdateStagingDeferralRequested;
+        g_textureUpdateStagingDeferralRequested = false;
+        return bRequested;
+    }
+
+    void EndVulkanTextureUpdateSyncScopeForTesting() noexcept
+    {
+        g_textureUpdateSyncScopeDevice = nullptr;
+        g_registeredTextureUpdateStagingDevice = nullptr;
+        g_registeredTextureUpdateStagingBuffer = nullptr;
+        g_registeredTextureUpdateStagingMemory = nullptr;
+        g_textureUpdateLayoutRollbackRequested = false;
+        g_textureUpdateStagingDeferralRequested = false;
+    }
+
     // 明示的なusing宣言（グローバル名前空間から参照）
     using ::NorvesLib::Core::Container::DynamicPointerCast;
     using ::NorvesLib::Core::Container::FixedArray;
@@ -54,6 +421,345 @@ namespace NorvesLib::RHI::Vulkan
             }
             return result;
         }
+
+        vk::BuildAccelerationStructureFlagsKHR ToVkAccelerationStructureBuildFlags(
+            const AccelerationStructureDesc& desc)
+        {
+            vk::BuildAccelerationStructureFlagsKHR flags =
+                vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+            if (desc.allowUpdate)
+            {
+                flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate;
+            }
+            if (desc.allowCompaction)
+            {
+                flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowCompaction;
+            }
+            return flags;
+        }
+
+        vk::AccelerationStructureGeometryKHR MakeAccelerationStructureCapacityGeometry(
+            const AccelerationStructureGeometryCapacityDesc& capacity)
+        {
+            vk::AccelerationStructureGeometryKHR geometry{};
+            if (capacity.type == AccelerationStructureGeometryType::Triangles)
+            {
+                vk::AccelerationStructureGeometryTrianglesDataKHR triangles{};
+                triangles.vertexFormat = vk::Format::eR32G32B32Sfloat;
+                triangles.vertexStride = 12;
+                const uint64_t maxVertex = static_cast<uint64_t>(capacity.maxPrimitiveCount) * 3u - 1u;
+                triangles.maxVertex = static_cast<uint32_t>(
+                    std::min<uint64_t>(maxVertex, std::numeric_limits<uint32_t>::max()));
+                triangles.indexType = vk::IndexType::eUint32;
+                geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+                geometry.geometry.triangles = triangles;
+            }
+            else
+            {
+                vk::AccelerationStructureGeometryAabbsDataKHR aabbs{};
+                aabbs.stride = 24;
+                geometry.geometryType = vk::GeometryTypeKHR::eAabbs;
+                geometry.geometry.aabbs = aabbs;
+            }
+
+            if (capacity.opaque)
+            {
+                geometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+            }
+            return geometry;
+        }
+    }
+
+    VulkanAccelerationStructure::VulkanAccelerationStructure(
+        TSharedPtr<VulkanDevice> device,
+        const AccelerationStructureDesc& desc)
+        : m_device(device), m_desc(desc)
+    {
+        if (!m_device || !m_device->GetCapabilities().RayTracing.bAccelerationStructure ||
+            !m_device->GetCapabilities().bBufferDeviceAddress || !IsValidAccelerationStructureDesc(m_desc))
+        {
+            throw std::invalid_argument("Vulkan加速構造の記述子またはデバイス能力が無効です");
+        }
+
+        VariableArray<vk::AccelerationStructureGeometryKHR> capacityGeometries;
+        VariableArray<uint32_t> maxPrimitiveCounts;
+        if (m_desc.type == AccelerationStructureType::BottomLevel)
+        {
+            for (const AccelerationStructureGeometryCapacityDesc& capacity : m_desc.geometryCapacities)
+            {
+                capacityGeometries.push_back(MakeAccelerationStructureCapacityGeometry(capacity));
+                maxPrimitiveCounts.push_back(capacity.maxPrimitiveCount);
+            }
+        }
+        else
+        {
+            vk::AccelerationStructureGeometryKHR instancesGeometry{};
+            vk::AccelerationStructureGeometryInstancesDataKHR instancesData{};
+            instancesData.arrayOfPointers = VK_FALSE;
+            instancesGeometry.geometryType = vk::GeometryTypeKHR::eInstances;
+            instancesGeometry.geometry.instances = instancesData;
+            capacityGeometries.push_back(instancesGeometry);
+            maxPrimitiveCounts.push_back(m_desc.maxInstanceCount);
+        }
+
+        vk::AccelerationStructureBuildGeometryInfoKHR buildInfo{};
+        buildInfo.type = m_desc.type == AccelerationStructureType::BottomLevel
+            ? vk::AccelerationStructureTypeKHR::eBottomLevel
+            : vk::AccelerationStructureTypeKHR::eTopLevel;
+        buildInfo.flags = ToVkAccelerationStructureBuildFlags(m_desc);
+        buildInfo.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        buildInfo.geometryCount = static_cast<uint32_t>(capacityGeometries.size());
+        buildInfo.pGeometries = capacityGeometries.data();
+
+        vk::AccelerationStructureBuildSizesInfoKHR buildSizes{};
+        m_device->GetVkDevice().getAccelerationStructureBuildSizesKHR(
+            vk::AccelerationStructureBuildTypeKHR::eDevice,
+            &buildInfo,
+            maxPrimitiveCounts.data(),
+            &buildSizes);
+        if (buildSizes.accelerationStructureSize == 0 || buildSizes.buildScratchSize == 0)
+        {
+            throw std::runtime_error("Vulkan加速構造の容量を計算できませんでした");
+        }
+
+        m_size = buildSizes.accelerationStructureSize;
+        m_buildScratchSize = buildSizes.buildScratchSize;
+        BufferDesc storageDesc;
+        storageDesc.Size = m_size;
+        storageDesc.Usage = ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress;
+        storageDesc.DebugName = m_desc.type == AccelerationStructureType::BottomLevel
+            ? "VulkanAccelerationStructure.BLAS.Storage"
+            : "VulkanAccelerationStructure.TLAS.Storage";
+        m_storageBuffer = MakeShared<VulkanBuffer>(
+            m_device,
+            storageDesc,
+            vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR);
+
+        vk::AccelerationStructureCreateInfoKHR createInfo{};
+        createInfo.buffer = m_storageBuffer->GetVkBuffer();
+        createInfo.size = m_size;
+        createInfo.type = buildInfo.type;
+        auto createResult = m_device->GetVkDevice().createAccelerationStructureKHR(createInfo);
+        if (createResult.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("Vulkan加速構造リソースを作成できませんでした");
+        }
+        m_accelerationStructure = createResult.value;
+
+        vk::AccelerationStructureDeviceAddressInfoKHR addressInfo{};
+        addressInfo.accelerationStructure = m_accelerationStructure;
+        m_deviceAddress = m_device->GetVkDevice().getAccelerationStructureAddressKHR(addressInfo);
+        if (m_deviceAddress == 0)
+        {
+            m_device->GetVkDevice().destroyAccelerationStructureKHR(m_accelerationStructure);
+            m_accelerationStructure = nullptr;
+            throw std::runtime_error("Vulkan加速構造のdevice addressを取得できませんでした");
+        }
+    }
+
+    VulkanAccelerationStructure::~VulkanAccelerationStructure()
+    {
+        if (m_device && m_accelerationStructure)
+        {
+            m_device->GetVkDevice().destroyAccelerationStructureKHR(m_accelerationStructure);
+        }
+    }
+
+    bool VulkanAccelerationStructure::Build(const AccelerationStructureBuildDesc& desc)
+    {
+        if (desc.destination.get() != this || desc.mode != AccelerationStructureBuildMode::Build ||
+            !IsValidAccelerationStructureBuildDesc(desc) || desc.type != m_desc.type)
+        {
+            return false;
+        }
+
+        try
+        {
+            VariableArray<vk::AccelerationStructureGeometryKHR> geometries;
+            VariableArray<vk::AccelerationStructureBuildRangeInfoKHR> buildRanges;
+            TSharedPtr<VulkanBuffer> instanceBuffer;
+            uint32_t builtInstanceCount = 0;
+            if (desc.type == AccelerationStructureType::BottomLevel)
+            {
+                for (const AccelerationStructureGeometryDesc& geometryDesc : desc.geometries)
+                {
+                    vk::AccelerationStructureGeometryKHR geometry{};
+                    if (geometryDesc.opaque)
+                    {
+                        geometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+                    }
+                    vk::AccelerationStructureBuildRangeInfoKHR buildRange{};
+                    if (geometryDesc.type == AccelerationStructureGeometryType::Triangles)
+                    {
+                        const AccelerationStructureTriangleGeometryDesc& triangles = geometryDesc.triangles;
+                        TSharedPtr<VulkanBuffer> vertexBuffer = DynamicPointerCast<VulkanBuffer>(triangles.vertexBuffer);
+                        TSharedPtr<VulkanBuffer> indexBuffer = DynamicPointerCast<VulkanBuffer>(triangles.indexBuffer);
+                        if (!vertexBuffer || vertexBuffer->m_device.get() != m_device.get() ||
+                            (triangles.indexBuffer &&
+                             (!indexBuffer || indexBuffer->m_device.get() != m_device.get())))
+                        {
+                            return false;
+                        }
+
+                        vk::AccelerationStructureGeometryTrianglesDataKHR triangleData{};
+                        triangleData.vertexFormat = triangles.vertexFormat == Format::R32G32B32_FLOAT
+                            ? vk::Format::eR32G32B32Sfloat
+                            : vk::Format::eR32G32B32A32Sfloat;
+                        triangleData.vertexData.deviceAddress =
+                            vertexBuffer->GetDeviceAddress() + triangles.vertexOffset;
+                        triangleData.vertexStride = triangles.vertexStride;
+                        triangleData.maxVertex = triangles.vertexCount - 1u;
+                        triangleData.indexType = vk::IndexType::eNoneKHR;
+                        if (indexBuffer)
+                        {
+                            triangleData.indexType = triangles.indexFormat == IndexType::Uint16
+                                ? vk::IndexType::eUint16
+                                : vk::IndexType::eUint32;
+                            triangleData.indexData.deviceAddress =
+                                indexBuffer->GetDeviceAddress() + triangles.indexOffset;
+                        }
+                        geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+                        geometry.geometry.triangles = triangleData;
+                        buildRange.primitiveCount = indexBuffer
+                            ? triangles.indexCount / 3u
+                            : triangles.vertexCount / 3u;
+                    }
+                    else
+                    {
+                        const AccelerationStructureAabbGeometryDesc& aabbs = geometryDesc.aabbs;
+                        TSharedPtr<VulkanBuffer> inputBuffer = DynamicPointerCast<VulkanBuffer>(aabbs.buffer);
+                        if (!inputBuffer || inputBuffer->m_device.get() != m_device.get())
+                        {
+                            return false;
+                        }
+                        vk::AccelerationStructureGeometryAabbsDataKHR aabbData{};
+                        aabbData.data.deviceAddress = inputBuffer->GetDeviceAddress() + aabbs.offset;
+                        aabbData.stride = aabbs.stride;
+                        geometry.geometryType = vk::GeometryTypeKHR::eAabbs;
+                        geometry.geometry.aabbs = aabbData;
+                        buildRange.primitiveCount = aabbs.primitiveCount;
+                    }
+                    geometries.push_back(geometry);
+                    buildRanges.push_back(buildRange);
+                }
+            }
+            else
+            {
+                VariableArray<vk::AccelerationStructureInstanceKHR> instances;
+                for (const AccelerationStructureInstanceDesc& instanceDesc : desc.instances)
+                {
+                    TSharedPtr<VulkanAccelerationStructure> bottomLevel =
+                        DynamicPointerCast<VulkanAccelerationStructure>(instanceDesc.bottomLevel);
+                    if (!bottomLevel || bottomLevel->m_device.get() != m_device.get() ||
+                        bottomLevel->GetDesc().type != AccelerationStructureType::BottomLevel)
+                    {
+                        return false;
+                    }
+
+                    vk::AccelerationStructureInstanceKHR instance{};
+                    for (uint32_t row = 0; row < 3; ++row)
+                    {
+                        for (uint32_t column = 0; column < 4; ++column)
+                        {
+                            instance.transform.matrix[row][column] = instanceDesc.transform[row * 4u + column];
+                        }
+                    }
+                    instance.instanceCustomIndex = instanceDesc.customIndex;
+                    instance.mask = instanceDesc.mask;
+                    instance.instanceShaderBindingTableRecordOffset = instanceDesc.shaderBindingTableRecordOffset;
+                    if (instanceDesc.disableTriangleFacingCull)
+                    {
+                        instance.flags = static_cast<VkGeometryInstanceFlagsKHR>(
+                            vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable);
+                    }
+                    instance.accelerationStructureReference = bottomLevel->GetDeviceAddress();
+                    instances.push_back(instance);
+                }
+
+                BufferDesc instanceBufferDesc;
+                instanceBufferDesc.Size = static_cast<uint64_t>(instances.size()) * sizeof(vk::AccelerationStructureInstanceKHR);
+                instanceBufferDesc.Usage = ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress;
+                instanceBufferDesc.CPUAccessible = true;
+                instanceBufferDesc.DebugName = "VulkanAccelerationStructure.Build.Instances";
+                instanceBuffer = MakeShared<VulkanBuffer>(
+                    m_device,
+                    instanceBufferDesc,
+                    vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR);
+                instanceBuffer->Update(instances.data(), instanceBufferDesc.Size);
+
+                vk::AccelerationStructureGeometryInstancesDataKHR instancesData{};
+                instancesData.arrayOfPointers = VK_FALSE;
+                instancesData.data.deviceAddress = instanceBuffer->GetDeviceAddress();
+                vk::AccelerationStructureGeometryKHR instancesGeometry{};
+                instancesGeometry.geometryType = vk::GeometryTypeKHR::eInstances;
+                instancesGeometry.geometry.instances = instancesData;
+                geometries.push_back(instancesGeometry);
+
+                vk::AccelerationStructureBuildRangeInfoKHR buildRange{};
+                buildRange.primitiveCount = static_cast<uint32_t>(instances.size());
+                builtInstanceCount = buildRange.primitiveCount;
+                buildRanges.push_back(buildRange);
+            }
+
+            vk::PhysicalDeviceAccelerationStructurePropertiesKHR accelerationStructureProperties{};
+            vk::PhysicalDeviceProperties2 properties{};
+            properties.pNext = &accelerationStructureProperties;
+            m_device->GetVkPhysicalDevice().getProperties2(&properties);
+            const uint64_t scratchAlignment = std::max<uint64_t>(
+                accelerationStructureProperties.minAccelerationStructureScratchOffsetAlignment,
+                1u);
+
+            BufferDesc scratchDesc;
+            scratchDesc.Size = m_buildScratchSize + scratchAlignment - 1u;
+            scratchDesc.Usage = ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress;
+            scratchDesc.DebugName = "VulkanAccelerationStructure.Build.Scratch";
+            TSharedPtr<VulkanBuffer> scratchBuffer = MakeShared<VulkanBuffer>(m_device, scratchDesc);
+            const uint64_t scratchAddress = scratchBuffer->GetDeviceAddress();
+            const uint64_t scratchRemainder = scratchAddress % scratchAlignment;
+            const uint64_t alignedScratchAddress = scratchAddress +
+                (scratchRemainder == 0 ? 0 : scratchAlignment - scratchRemainder);
+
+            vk::AccelerationStructureBuildGeometryInfoKHR buildInfo{};
+            buildInfo.type = desc.type == AccelerationStructureType::BottomLevel
+                ? vk::AccelerationStructureTypeKHR::eBottomLevel
+                : vk::AccelerationStructureTypeKHR::eTopLevel;
+            buildInfo.flags = ToVkAccelerationStructureBuildFlags(m_desc);
+            buildInfo.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+            buildInfo.dstAccelerationStructure = m_accelerationStructure;
+            buildInfo.geometryCount = static_cast<uint32_t>(geometries.size());
+            buildInfo.pGeometries = geometries.data();
+            buildInfo.scratchData.deviceAddress = alignedScratchAddress;
+
+            const vk::AccelerationStructureBuildRangeInfoKHR* buildRangeInfos = buildRanges.data();
+            const vk::AccelerationStructureBuildRangeInfoKHR* buildRangeInfoArrays[] = {buildRangeInfos};
+            vk::CommandBuffer commandBuffer = m_device->BeginSingleTimeCommands();
+            commandBuffer.buildAccelerationStructuresKHR(1, &buildInfo, buildRangeInfoArrays);
+
+            vk::MemoryBarrier accelerationStructureBarrier{};
+            accelerationStructureBarrier.srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR;
+            accelerationStructureBarrier.dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR;
+            commandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR | vk::PipelineStageFlagBits::eComputeShader,
+                {},
+                1,
+                &accelerationStructureBarrier,
+                0,
+                nullptr,
+                0,
+                nullptr);
+            m_device->EndSingleTimeCommands(commandBuffer);
+            if (desc.type == AccelerationStructureType::TopLevel)
+            {
+                m_lastBuiltInstanceCount = builtInstanceCount;
+            }
+            return true;
+        }
+        catch (const std::exception& error)
+        {
+            NORVES_LOG_ERROR("VulkanAccelerationStructure", "加速構造の構築に失敗しました: %s", error.what());
+            return false;
+        }
     }
 
     // バリデーションレイヤー名
@@ -67,7 +773,9 @@ namespace NorvesLib::RHI::Vulkan
     // ファクトリメソッド
     DevicePtr VulkanDevice::Create(const VulkanInitParams &params)
     {
-        return MakeShared<VulkanDevice>(params.bEnableValidation);
+        TSharedPtr<VulkanDevice> device = MakeShared<VulkanDevice>(params.bEnableValidation);
+        RegisterVulkanDeviceOwner(device);
+        return StaticPointerCast<IDevice>(device);
     }
 
     // コンストラクタ
@@ -105,9 +813,35 @@ namespace NorvesLib::RHI::Vulkan
     // デストラクタ
     VulkanDevice::~VulkanDevice()
     {
+        UnregisterVulkanDeviceOwner(this);
+        VkResult waitResult = VK_SUCCESS;
         if (m_device)
         {
-            WaitIdle();
+            waitResult = WaitIdleInternal();
+        }
+
+        if (m_device && waitResult != VK_SUCCESS && waitResult != VK_ERROR_DEVICE_LOST)
+        {
+            NORVES_LOG_ERROR(
+                "VulkanDevice",
+                "Device teardown deferred after vkDeviceWaitIdle failure result=%d",
+                static_cast<int32_t>(waitResult));
+#if defined(VK_EXT_device_address_binding_report)
+            ShutdownAddressBindingDiagnostics();
+            if (m_addressBindingDebugMessenger)
+            {
+                m_instance.destroyDebugUtilsMessengerEXT(m_addressBindingDebugMessenger);
+            }
+#endif
+            if (m_debugMessenger)
+            {
+                m_instance.destroyDebugUtilsMessengerEXT(m_debugMessenger);
+            }
+
+            // 待機を確認できないため、GPUが参照し得る資源群を意図的に保持する。
+            m_ResourceAllocator.release();
+            g_safeDeviceTeardownLeakCount.fetch_add(1, std::memory_order_relaxed);
+            return;
         }
 
         m_ResourceAllocator.reset();
@@ -192,6 +926,7 @@ namespace NorvesLib::RHI::Vulkan
                 vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
                 vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
             debugCreateInfo.pfnUserCallback = reinterpret_cast<vk::PFN_DebugUtilsMessengerCallbackEXT>(DebugCallback);
+            debugCreateInfo.pUserData = this;
 
             createInfo.pNext = &debugCreateInfo;
         }
@@ -325,6 +1060,8 @@ namespace NorvesLib::RHI::Vulkan
         features2.features.fillModeNonSolid = VK_TRUE; // ワイヤーフレームなどのサポート
         features2.features.drawIndirectFirstInstance =
             physicalFeatures.drawIndirectFirstInstance == VK_TRUE ? VK_TRUE : VK_FALSE;
+        features2.features.shaderInt64 =
+            physicalFeatures.shaderInt64 == VK_TRUE ? VK_TRUE : VK_FALSE;
         m_enabledDeviceFeatures = features2.features;
 
         // Vulkan 1.2 機能: 対応している場合のみ drawIndirectCount を有効化
@@ -336,10 +1073,117 @@ namespace NorvesLib::RHI::Vulkan
         m_vulkan12Features = vk::PhysicalDeviceVulkan12Features{};
         m_vulkan12Features.drawIndirectCount =
             vulkan12Query.drawIndirectCount == VK_TRUE ? VK_TRUE : VK_FALSE;
+        m_vulkan12Features.bufferDeviceAddress =
+            vulkan12Query.bufferDeviceAddress == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // 配列sampled imageの非一様添字は、PTの材質texture配列が対応時だけ使う。
+        m_vulkan12Features.shaderSampledImageArrayNonUniformIndexing =
+            vulkan12Query.shaderSampledImageArrayNonUniformIndexing == VK_TRUE ? VK_TRUE : VK_FALSE;
         features2.pNext = &m_vulkan12Features;
 
-        // Optional device extensions are selected before their feature queries.
+        // 任意のデバイス拡張は機能照会より先に選定する。
         auto extensions = GetDeviceExtensions();
+
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeaturesQuery{};
+        vk::PhysicalDeviceRayQueryFeaturesKHR rayQueryFeaturesQuery{};
+        vk::PhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeaturesQuery{};
+        const auto availableDeviceExtensionsResult = m_physicalDevice.enumerateDeviceExtensionProperties();
+        // Vulkan 1.2のBDAとdeferred host operationsが揃う場合だけRT拡張を照会する。
+        bool bAccelerationStructureExtensionAvailable = false;
+        bool bDeferredHostOperationsExtensionAvailable = false;
+        bool bRayQueryExtensionAvailable = false;
+        bool bRayTracingPipelineExtensionAvailable = false;
+        if (availableDeviceExtensionsResult.result == vk::Result::eSuccess &&
+            m_deviceProperties.apiVersion >= VK_API_VERSION_1_2)
+        {
+            const auto& availableDeviceExtensions = availableDeviceExtensionsResult.value;
+            auto hasDeviceExtension = [&availableDeviceExtensions](const char* name) -> bool
+            {
+                for (const auto& extension : availableDeviceExtensions)
+                {
+                    if (String(extension.extensionName.data()) == String(name))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            bAccelerationStructureExtensionAvailable =
+                hasDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+            bDeferredHostOperationsExtensionAvailable =
+                hasDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+            const bool bAccelerationStructureDependencyAvailable =
+                bAccelerationStructureExtensionAvailable &&
+                bDeferredHostOperationsExtensionAvailable;
+
+            if (bAccelerationStructureDependencyAvailable)
+            {
+                vk::PhysicalDeviceFeatures2 accelerationStructureFeatures2Query{};
+                accelerationStructureFeatures2Query.pNext = &accelerationStructureFeaturesQuery;
+                m_physicalDevice.getFeatures2(&accelerationStructureFeatures2Query);
+            }
+
+            bRayQueryExtensionAvailable =
+                bAccelerationStructureDependencyAvailable &&
+                hasDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+            if (bRayQueryExtensionAvailable)
+            {
+                vk::PhysicalDeviceFeatures2 rayQueryFeatures2Query{};
+                rayQueryFeatures2Query.pNext = &rayQueryFeaturesQuery;
+                m_physicalDevice.getFeatures2(&rayQueryFeatures2Query);
+            }
+
+            bRayTracingPipelineExtensionAvailable =
+                bAccelerationStructureDependencyAvailable &&
+                hasDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+            if (bRayTracingPipelineExtensionAvailable)
+            {
+                vk::PhysicalDeviceFeatures2 rayTracingPipelineFeatures2Query{};
+                rayTracingPipelineFeatures2Query.pNext = &rayTracingPipelineFeaturesQuery;
+                m_physicalDevice.getFeatures2(&rayTracingPipelineFeatures2Query);
+            }
+        }
+
+        RayTracingFeatureAvailability rayTracingAvailability;
+        rayTracingAvailability.bAccelerationStructureExtension =
+            bAccelerationStructureExtensionAvailable;
+        rayTracingAvailability.bDeferredHostOperationsExtension =
+            bDeferredHostOperationsExtensionAvailable;
+        rayTracingAvailability.bBufferDeviceAddress =
+            m_vulkan12Features.bufferDeviceAddress == VK_TRUE;
+        rayTracingAvailability.bAccelerationStructureFeature =
+            accelerationStructureFeaturesQuery.accelerationStructure == VK_TRUE;
+        rayTracingAvailability.bRayQueryExtension = bRayQueryExtensionAvailable;
+        rayTracingAvailability.bRayQueryFeature = rayQueryFeaturesQuery.rayQuery == VK_TRUE;
+        rayTracingAvailability.bRayTracingPipelineExtension =
+            bRayTracingPipelineExtensionAvailable;
+        rayTracingAvailability.bRayTracingPipelineFeature =
+            rayTracingPipelineFeaturesQuery.rayTracingPipeline == VK_TRUE;
+
+        const RayTracingCapabilities rayTracingCapabilities =
+            ResolveRayTracingCapabilities(rayTracingAvailability);
+        m_accelerationStructureFeatures = vk::PhysicalDeviceAccelerationStructureFeaturesKHR{};
+        m_accelerationStructureFeatures.accelerationStructure =
+            rayTracingCapabilities.bAccelerationStructure ? VK_TRUE : VK_FALSE;
+        m_rayQueryFeatures = vk::PhysicalDeviceRayQueryFeaturesKHR{};
+        m_rayQueryFeatures.rayQuery = rayTracingCapabilities.bRayQuery ? VK_TRUE : VK_FALSE;
+        m_rayTracingPipelineFeatures = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR{};
+        m_rayTracingPipelineFeatures.rayTracingPipeline =
+            rayTracingCapabilities.bRayTracingPipeline ? VK_TRUE : VK_FALSE;
+
+        if (rayTracingCapabilities.bAccelerationStructure)
+        {
+            extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+            extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        }
+        if (rayTracingCapabilities.bRayQuery)
+        {
+            extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        }
+        if (rayTracingCapabilities.bRayTracingPipeline)
+        {
+            extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        }
 
         bool bDeviceFaultRequested = false;
         bool bCooperativeVectorRequested = false;
@@ -419,6 +1263,24 @@ namespace NorvesLib::RHI::Vulkan
 
             *featuresTail = &m_cooperativeVectorFeatures;
             featuresTail = &m_cooperativeVectorFeatures.pNext;
+        }
+
+        if (rayTracingCapabilities.bAccelerationStructure)
+        {
+            *featuresTail = &m_accelerationStructureFeatures;
+            featuresTail = &m_accelerationStructureFeatures.pNext;
+        }
+
+        if (rayTracingCapabilities.bRayQuery)
+        {
+            *featuresTail = &m_rayQueryFeatures;
+            featuresTail = &m_rayQueryFeatures.pNext;
+        }
+
+        if (rayTracingCapabilities.bRayTracingPipeline)
+        {
+            *featuresTail = &m_rayTracingPipelineFeatures;
+            featuresTail = &m_rayTracingPipelineFeatures.pNext;
         }
 
 #if defined(VK_EXT_device_address_binding_report)
@@ -769,20 +1631,120 @@ namespace NorvesLib::RHI::Vulkan
     // 単発コマンドバッファ終了
     void VulkanDevice::EndSingleTimeCommands(vk::CommandBuffer commandBuffer)
     {
-        commandBuffer.end();
+        uint32_t failurePoint = 0;
+        if (g_testFailureDevice == this)
+        {
+            failurePoint = static_cast<uint32_t>(g_testFailurePoint);
+            g_testFailureDevice = nullptr;
+            g_testFailurePoint = SingleTimeCommandFailurePointForTesting::None;
+            g_lastTestFailureDevice = this;
+            ++g_testFailureHitCount;
+        }
+
+        const bool bIsTextureUpdate = g_textureUpdateSyncScopeDevice == m_device;
+        const bool bHasTextureUpdateStagingResources =
+            g_registeredTextureUpdateStagingDevice == m_device &&
+            g_registeredTextureUpdateStagingBuffer &&
+            g_registeredTextureUpdateStagingMemory;
+        if (g_registeredTextureUpdateStagingDevice == m_device)
+        {
+            g_registeredTextureUpdateStagingDevice = nullptr;
+            g_registeredTextureUpdateStagingBuffer = nullptr;
+            g_registeredTextureUpdateStagingMemory = nullptr;
+        }
+
+        const vk::Result endResult = failurePoint ==
+                static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::End)
+            ? vk::Result::eErrorUnknown
+            : commandBuffer.end();
+        if (endResult != vk::Result::eSuccess)
+        {
+            if (bIsTextureUpdate)
+            {
+                g_textureUpdateLayoutRollbackRequested = true;
+            }
+            m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+            throw std::runtime_error("単発コマンドバッファの終了に失敗しました");
+        }
+
+        try
+        {
+            ReserveDeferredCommandBufferSlot();
+        }
+        catch (...)
+        {
+            if (bIsTextureUpdate)
+            {
+                g_textureUpdateLayoutRollbackRequested = true;
+            }
+            m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+            throw;
+        }
 
         vk::SubmitInfo submitInfo{};
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffer;
 
-        auto submitResult = m_graphicsQueue.submit(1, &submitInfo, nullptr);
+        const vk::Result submitResult = failurePoint ==
+                static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::Submit)
+            ? vk::Result::eErrorUnknown
+            : m_graphicsQueue.submit(1, &submitInfo, nullptr);
         if (submitResult != vk::Result::eSuccess)
         {
+            CancelDeferredCommandBufferSlot();
+            if (bIsTextureUpdate && submitResult != vk::Result::eErrorDeviceLost)
+            {
+                g_textureUpdateLayoutRollbackRequested = true;
+            }
+            if (submitResult == vk::Result::eErrorDeviceLost)
+            {
+                ReportDeviceFaultOnce();
+            }
+            m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
             throw std::runtime_error("キューへの送信に失敗しました");
         }
 
-        m_graphicsQueue.waitIdle();
+        const bool bInjectWaitFailure =
+            failurePoint == static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::Wait) ||
+            failurePoint == static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::WaitAndFallback);
+        const vk::Result queueWaitResult = bInjectWaitFailure
+            ? vk::Result::eErrorOutOfHostMemory
+            : m_graphicsQueue.waitIdle();
+        if (queueWaitResult != vk::Result::eSuccess)
+        {
+            if (queueWaitResult == vk::Result::eErrorDeviceLost)
+            {
+                CancelDeferredCommandBufferSlot();
+                m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+                ReportDeviceFaultOnce();
+                throw std::runtime_error("キューの完了待機に失敗しました");
+            }
 
+            const VkResult deviceWaitResult =
+                failurePoint == static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::WaitAndFallback)
+                    ? VK_ERROR_OUT_OF_HOST_MEMORY
+                    : WaitIdleWithoutResultCheck(m_device, "EndSingleTimeCommands fallback");
+            if (deviceWaitResult == VK_SUCCESS || deviceWaitResult == VK_ERROR_DEVICE_LOST)
+            {
+                CancelDeferredCommandBufferSlot();
+                m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+                if (deviceWaitResult == VK_ERROR_DEVICE_LOST)
+                {
+                    ReportDeviceFaultOnce();
+                }
+            }
+            else
+            {
+                DeferSingleTimeCommandBuffer(m_device, m_commandPool, commandBuffer);
+                if (bIsTextureUpdate && bHasTextureUpdateStagingResources)
+                {
+                    g_textureUpdateStagingDeferralRequested = true;
+                }
+            }
+            throw std::runtime_error("キューの完了待機に失敗しました");
+        }
+
+        CancelDeferredCommandBufferSlot();
         m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
     }
 
@@ -949,7 +1911,7 @@ namespace NorvesLib::RHI::Vulkan
             return;
         }
 
-        m_addressBindingDiagnosticsSink->WriteString("schema=vulkan_device_address_binding_v1\n");
+        m_addressBindingDiagnosticsSink->WriteString("schema=vulkan_device_address_binding_v1\r\n");
         m_addressBindingDiagnosticsSink->Flush();
 #else
         NORVES_LOG_WARNING("VulkanDevice", "Address binding diagnostics disabled: NORVES_ASSET_DIR is unavailable");
@@ -1035,7 +1997,7 @@ namespace NorvesLib::RHI::Vulkan
             }
         }
 
-        line.Append("\n");
+        line.Append("\r\n");
         m_addressBindingDiagnosticsSink->WriteString(line.ToString());
         m_addressBindingDiagnosticsSink->Flush();
     }
@@ -1077,6 +2039,13 @@ namespace NorvesLib::RHI::Vulkan
     {
         try
         {
+            if ((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0 &&
+                pUserData != nullptr &&
+                g_validationErrorCaptureActive.load(std::memory_order_acquire))
+            {
+                g_validationErrorCaptureHitCount.fetch_add(1, std::memory_order_relaxed);
+            }
+
             if (pCallbackData != nullptr &&
                 messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
             {
@@ -1125,6 +2094,20 @@ namespace NorvesLib::RHI::Vulkan
         auto buffer = MakeShared<VulkanBuffer>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
         return StaticPointerCast<IBuffer>(buffer);
+    }
+
+    AccelerationStructurePtr VulkanDevice::CreateAccelerationStructure(const AccelerationStructureDesc& desc)
+    {
+        if (!m_Capabilities.RayTracing.bAccelerationStructure ||
+            !m_Capabilities.bBufferDeviceAddress || !IsValidAccelerationStructureDesc(desc))
+        {
+            return {};
+        }
+
+        auto accelerationStructure = MakeShared<VulkanAccelerationStructure>(
+            TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}),
+            desc);
+        return StaticPointerCast<IAccelerationStructure>(accelerationStructure);
     }
 
     TexturePtr VulkanDevice::CreateTexture(const TextureDesc &desc)
@@ -1190,6 +2173,19 @@ namespace NorvesLib::RHI::Vulkan
         return StaticPointerCast<IPipeline>(pipeline);
     }
 
+    PipelinePtr VulkanDevice::CreateRayTracingPipeline(const RayTracingPipelineDesc& desc)
+    {
+        if (!m_Capabilities.RayTracing.bRayTracingPipeline ||
+            !m_Capabilities.bBufferDeviceAddress || !IsValidRayTracingPipelineDesc(desc))
+        {
+            return {};
+        }
+
+        auto pipeline = MakeShared<VulkanRayTracingPipeline>(
+            TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+        return StaticPointerCast<IPipeline>(pipeline);
+    }
+
     // ResourceBindTypeからDescriptorTypeへの変換ヘルパー
     DescriptorType VulkanDevice::ConvertResourceBindType(ResourceBindType type)
     {
@@ -1209,13 +2205,112 @@ namespace NorvesLib::RHI::Vulkan
             return DescriptorType::StorageBuffer;
         case ResourceBindType::StructuredBuffer:
             return DescriptorType::StorageBuffer;
+        case ResourceBindType::AccelerationStructure:
+            return DescriptorType::AccelerationStructure;
         default:
             return DescriptorType::UniformBuffer;
         }
     }
 
+    bool VulkanDevice::IsWithinDescriptorArrayLimits(const VariableArray<DescriptorSetDesc> &sets,
+                                                     uint32_t fragmentColorAttachmentCount) const
+    {
+        bool bHasArrayBinding = false;
+        for (const DescriptorSetDesc &set : sets)
+        {
+            for (const DescriptorBinding &binding : set.bindings)
+            {
+                bHasArrayBinding = bHasArrayBinding || binding.count > 1u;
+            }
+        }
+        if (!bHasArrayBinding)
+        {
+            return true;
+        }
+
+        const vk::PhysicalDeviceLimits &limits = m_deviceProperties.limits;
+        const ShaderStage stages[] = {
+            ShaderStage::Vertex, ShaderStage::Hull, ShaderStage::Domain, ShaderStage::Geometry,
+            ShaderStage::Pixel, ShaderStage::Compute, ShaderStage::RayGen, ShaderStage::Miss,
+            ShaderStage::ClosestHit, ShaderStage::AnyHit, ShaderStage::Intersection,
+            ShaderStage::Callable};
+        uint64_t totalSamplers = 0u;
+        uint64_t totalSampledImages = 0u;
+        for (const DescriptorSetDesc &set : sets)
+        {
+            for (const DescriptorBinding &binding : set.bindings)
+            {
+                if (binding.type == ResourceBindType::CombinedImageSampler ||
+                    binding.type == ResourceBindType::Sampler)
+                {
+                    totalSamplers += binding.count;
+                }
+                if (binding.type == ResourceBindType::CombinedImageSampler ||
+                    binding.type == ResourceBindType::Texture)
+                {
+                    totalSampledImages += binding.count;
+                }
+            }
+        }
+        if (totalSamplers > limits.maxDescriptorSetSamplers ||
+            totalSampledImages > limits.maxDescriptorSetSampledImages)
+        {
+            return false;
+        }
+
+        for (ShaderStage stage : stages)
+        {
+            uint64_t stageSamplers = 0u;
+            uint64_t stageSampledImages = 0u;
+            // maxPerStageResourcesは単独samplerと加速構造を数えず、fragmentのcolor attachmentを数える。
+            uint64_t stageResources = stage == ShaderStage::Pixel ? fragmentColorAttachmentCount : 0u;
+            for (const DescriptorSetDesc &set : sets)
+            {
+                for (const DescriptorBinding &binding : set.bindings)
+                {
+                    if ((binding.stages & stage) == ShaderStage::None)
+                    {
+                        continue;
+                    }
+                    if (binding.type != ResourceBindType::Sampler &&
+                        binding.type != ResourceBindType::AccelerationStructure)
+                    {
+                        stageResources += binding.count;
+                    }
+                    if (binding.type == ResourceBindType::CombinedImageSampler ||
+                        binding.type == ResourceBindType::Sampler)
+                    {
+                        stageSamplers += binding.count;
+                    }
+                    if (binding.type == ResourceBindType::CombinedImageSampler ||
+                        binding.type == ResourceBindType::Texture)
+                    {
+                        stageSampledImages += binding.count;
+                    }
+                }
+            }
+            if (stageSamplers > limits.maxPerStageDescriptorSamplers ||
+                stageSampledImages > limits.maxPerStageDescriptorSampledImages ||
+                stageResources > limits.maxPerStageResources)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     DescriptorSetPtr VulkanDevice::CreateDescriptorSet(const DescriptorSetDesc &desc)
     {
+        {
+            VariableArray<DescriptorSetDesc> sets;
+            sets.push_back(desc);
+            if (!IsWithinDescriptorArrayLimits(sets))
+            {
+                NORVES_LOG_ERROR("VulkanDevice",
+                                 "Descriptor set arrays exceed the physical device descriptor limits");
+                return nullptr;
+            }
+        }
         // DescriptorBindingをDescriptorBindingDescに変換
         VariableArray<DescriptorBindingDesc> bindingDescs;
         bindingDescs.reserve(desc.bindings.size());
@@ -1225,7 +2320,15 @@ namespace NorvesLib::RHI::Vulkan
             bindingDesc.binding = binding.binding;
             bindingDesc.type = ConvertResourceBindType(binding.type);
             bindingDesc.stages = binding.stages;
-            bindingDesc.count = 1;
+            bindingDesc.count = binding.count;
+            if (!IsSupportedDescriptorBindingCount(binding))
+            {
+                NORVES_LOG_ERROR("VulkanDevice",
+                                 "Descriptor binding %u has an unsupported array count %u",
+                                 binding.binding,
+                                 binding.count);
+                return nullptr;
+            }
             bindingDescs.push_back(bindingDesc);
         }
 
@@ -1234,10 +2337,11 @@ namespace NorvesLib::RHI::Vulkan
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}),
             bindingDescs);
 
-        // ディスクリプタプールの作成
+        // ディスクリプタプールの作成（配列bindingは要素数ぶんの容量を確保する）
         auto pool = MakeShared<VulkanDescriptorPool>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}),
-            10); // 10セット分のプールを作成
+            10, // 10セット分のプールを作成
+            bindingDescs);
 
         // VulkanDescriptorSetの作成
         auto descriptorSet = MakeShared<VulkanDescriptorSet>(
@@ -1250,11 +2354,40 @@ namespace NorvesLib::RHI::Vulkan
 
     void VulkanDevice::WaitIdle()
     {
-        const VkResult result = WaitIdleWithoutResultCheck(m_device, "VulkanDevice::WaitIdle");
+        // 遅延資源の解放中に最後の参照が消えても、この呼び出しが戻るまではデバイスを保持する。
+        TSharedPtr<VulkanDevice> deviceLifetimeGuard = FindVulkanDeviceOwner(this);
+        (void)deviceLifetimeGuard;
+
+        (void)WaitIdleInternal();
+    }
+
+    VkResult VulkanDevice::WaitIdleInternal() noexcept
+    {
+        VkResult result = VK_SUCCESS;
+        if (g_waitIdleFailureDevice == this && g_waitIdleFailuresRemaining > 0)
+        {
+            --g_waitIdleFailuresRemaining;
+            ++g_waitIdleFailureHitCount;
+            result = VK_ERROR_OUT_OF_HOST_MEMORY;
+            if (g_waitIdleFailuresRemaining == 0)
+            {
+                g_waitIdleFailureDevice = nullptr;
+            }
+        }
+        else
+        {
+            result = WaitIdleWithoutResultCheck(m_device, "VulkanDevice::WaitIdle");
+        }
+        if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST)
+        {
+            ReleaseDeferredSingleTimeCommandBuffers(m_device);
+            ReleaseDeferredVulkanTextureUpdateStagingResourcesForDevice(m_device);
+        }
         if (result == VK_ERROR_DEVICE_LOST)
         {
             ReportDeviceFaultOnce();
         }
+        return result;
     }
 
     void VulkanDevice::ReportDeviceFaultOnce()
@@ -1451,11 +2584,23 @@ namespace NorvesLib::RHI::Vulkan
             availableExtensions.contains(String("VK_NV_cluster_acceleration_structure")) &&
             m_Capabilities.MegaGeometry.bAccelerationStructureSupported;
 
+        m_Capabilities.RayTracing.bAccelerationStructure =
+            m_accelerationStructureFeatures.accelerationStructure == VK_TRUE;
+        m_Capabilities.RayTracing.bRayQuery = m_rayQueryFeatures.rayQuery == VK_TRUE;
+        m_Capabilities.RayTracing.bRayTracingPipeline =
+            m_rayTracingPipelineFeatures.rayTracingPipeline == VK_TRUE;
+
         // ========================================
         // Draw Indirect (論理デバイスで有効化済みのコア機能)
         // ========================================
         {
             m_Capabilities.bDrawIndirectCount = (m_vulkan12Features.drawIndirectCount == VK_TRUE);
+            m_Capabilities.bBufferDeviceAddress =
+                m_vulkan12Features.bufferDeviceAddress == VK_TRUE;
+            m_Capabilities.bShaderInt64 =
+                m_enabledDeviceFeatures.shaderInt64 == VK_TRUE;
+            m_Capabilities.bSampledImageArrayNonUniformIndexing =
+                m_vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE;
             m_Capabilities.bDrawIndirectFirstInstance =
                 (m_enabledDeviceFeatures.drawIndirectFirstInstance == VK_TRUE);
 
@@ -1473,11 +2618,15 @@ namespace NorvesLib::RHI::Vulkan
         // サマリーログ
         const char *deviceName = m_Capabilities.DeviceName;
         NORVES_LOG_INFO("VulkanDevice", "Device Capabilities: GPU=%s, NVIDIA=%s, "
-                                        "NeuralShaders=%s, MegaGeometry=%s, DrawIndirectCount=%s, DrawIndirectFirstInstance=%s",
+                                        "NeuralShaders=%s, MegaGeometry=%s, AccelerationStructure=%s, "
+                                        "RayQuery=%s, RayTracingPipeline=%s, DrawIndirectCount=%s, DrawIndirectFirstInstance=%s",
                         deviceName,
                         m_Capabilities.bIsNvidia ? "Yes" : "No",
                         m_Capabilities.NeuralShaders.bSupported ? "Yes" : "No",
                         m_Capabilities.MegaGeometry.bSupported ? "Yes" : "No",
+                        m_Capabilities.RayTracing.bAccelerationStructure ? "Yes" : "No",
+                        m_Capabilities.RayTracing.bRayQuery ? "Yes" : "No",
+                        m_Capabilities.RayTracing.bRayTracingPipeline ? "Yes" : "No",
                         m_Capabilities.bDrawIndirectCount ? "Yes" : "No",
                         m_Capabilities.bDrawIndirectFirstInstance ? "Yes" : "No");
     }

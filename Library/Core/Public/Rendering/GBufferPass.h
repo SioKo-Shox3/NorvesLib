@@ -41,6 +41,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief エミッシブバッファのフォーマット（HDR発光色） */
         RHI::Format EmissiveFormat = RHI::Format::R16G16B16A16_FLOAT;
 
+        /** @brief 画面velocityバッファのフォーマット（currentUV - previousUV） */
+        RHI::Format VelocityFormat = RHI::Format::R16G16_FLOAT;
+
         /** @brief Depthバッファのフォーマット */
         RHI::Format DepthFormat = RHI::Format::D32_FLOAT;
     };
@@ -56,6 +59,7 @@ namespace NorvesLib::Core::Rendering
      * - RT1: WorldNormal (R16G16B16A16_FLOAT)
      * - RT2: Metallic/Roughness/AO (R8G8B8A8_UNORM)
      * - RT3: Emissive (R16G16B16A16_FLOAT)
+     * - RT4: Velocity (R16G16_FLOAT, currentUV - previousUV)
      * - DS:  Depth (D32_FLOAT)
      *
      * 標準経路では RenderGraph named resource として公開され、後続のLightingPassが参照します。
@@ -66,6 +70,7 @@ namespace NorvesLib::Core::Rendering
      * - "GBuffer_Normal"
      * - "GBuffer_Material"
      * - "GBuffer_Emissive"
+     * - "GBuffer_Velocity"
      * - "GBuffer_Depth"
      */
     class GBufferPass : public IViewPass, public IRenderGraphPass
@@ -135,12 +140,15 @@ namespace NorvesLib::Core::Rendering
         RHI::ITexture* GetNormalTexture() const { return m_NormalTexture.get(); }
         RHI::ITexture* GetMaterialTexture() const { return m_MaterialTexture.get(); }
         RHI::ITexture* GetEmissiveTexture() const { return m_EmissiveTexture.get(); }
+        RHI::ITexture* GetVelocityTexture() const { return m_VelocityTexture.get(); }
+        const RHI::TexturePtr& GetVelocityTexturePtr() const { return m_VelocityTexture; }
         RHI::ITexture* GetDepthTexture() const { return m_DepthTexture.get(); }
 
         RGResourceHandle GetAlbedoHandle() const { return m_AlbedoHandle.ToResourceHandle(); }
         RGResourceHandle GetNormalHandle() const { return m_NormalHandle.ToResourceHandle(); }
         RGResourceHandle GetMaterialHandle() const { return m_MaterialHandle.ToResourceHandle(); }
         RGResourceHandle GetEmissiveHandle() const { return m_EmissiveHandle.ToResourceHandle(); }
+        RGResourceHandle GetVelocityHandle() const { return m_VelocityHandle.ToResourceHandle(); }
         RGResourceHandle GetDepthHandle() const { return m_DepthHandle.ToResourceHandle(); }
         friend struct SkinnedRenderPathContractTestAccess;
 
@@ -162,6 +170,7 @@ namespace NorvesLib::Core::Rendering
                                        const RHI::TexturePtr& normal,
                                        const RHI::TexturePtr& material,
                                        const RHI::TexturePtr& emissive,
+                                       const RHI::TexturePtr& velocity,
                                        const RHI::TexturePtr& depth,
                                        bool bUseRenderGraphInitialStates);
         bool EnsureGBufferFramebuffer(uint32_t width,
@@ -170,6 +179,7 @@ namespace NorvesLib::Core::Rendering
                                       const RHI::TexturePtr& normal,
                                       const RHI::TexturePtr& material,
                                       const RHI::TexturePtr& emissive,
+                                      const RHI::TexturePtr& velocity,
                                       const RHI::TexturePtr& depth);
         bool CreateSkinnedGBufferPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr& outPipeline);
         bool EnsureGBufferPipeline();
@@ -210,6 +220,7 @@ namespace NorvesLib::Core::Rendering
             AttachmentSignature Normal;
             AttachmentSignature Material;
             AttachmentSignature Emissive;
+            AttachmentSignature Velocity;
             AttachmentSignature Depth;
             bool bValid = false;
         };
@@ -225,6 +236,7 @@ namespace NorvesLib::Core::Rendering
                                                              const RHI::TexturePtr& normal,
                                                              const RHI::TexturePtr& material,
                                                              const RHI::TexturePtr& emissive,
+                                                             const RHI::TexturePtr& velocity,
                                                              const RHI::TexturePtr& depth,
                                                              bool bUseRenderGraphInitialStates) const;
 
@@ -240,12 +252,14 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_NormalTexture;
         RHI::TexturePtr m_MaterialTexture;
         RHI::TexturePtr m_EmissiveTexture;
+        RHI::TexturePtr m_VelocityTexture;
         RHI::TexturePtr m_DepthTexture;
 
         RGTextureHandle m_AlbedoHandle;
         RGTextureHandle m_NormalHandle;
         RGTextureHandle m_MaterialHandle;
         RGTextureHandle m_EmissiveHandle;
+        RGTextureHandle m_VelocityHandle;
         RGTextureHandle m_DepthHandle;
 
         // GBuffer用レンダーパス・フレームバッファ
@@ -274,6 +288,7 @@ namespace NorvesLib::Core::Rendering
         RHI::ITexture* m_FramebufferNormalTexture = nullptr;
         RHI::ITexture* m_FramebufferMaterialTexture = nullptr;
         RHI::ITexture* m_FramebufferEmissiveTexture = nullptr;
+        RHI::ITexture* m_FramebufferVelocityTexture = nullptr;
         RHI::ITexture* m_FramebufferDepthTexture = nullptr;
         uint32_t m_FramebufferWidth = 0;
         uint32_t m_FramebufferHeight = 0;

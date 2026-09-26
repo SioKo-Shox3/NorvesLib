@@ -32,6 +32,8 @@ namespace NorvesLib::Core::Rendering
      *
      * 半透明専用モードではLightingPassの後、SSRより前に実行され、
      * "SceneColor" へLoad合成した結果がSSR入力にも反映されます。
+     * 透明メッシュは、当該フレーム・ビューポートのLightingPassが公開した物理ライト、
+     * 方向影、radiometric IBL/DFGリソースを必須入力とし、不完全な公開値では描画しません。
      *
      * 入力:
      * - SceneViewのDrawCommand（Opaque/Transparent）
@@ -167,6 +169,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultWhiteTexture;
         RHI::TexturePtr m_DefaultFlatNormalTexture;
         RHI::TexturePtr m_DefaultBlackTexture;
+        RHI::TexturePtr m_DefaultShadowMapArrayTexture;
         RHI::TexturePtr m_DefaultMidGrayTexture;
         RHI::SamplerPtr m_DefaultLinearSampler;
 

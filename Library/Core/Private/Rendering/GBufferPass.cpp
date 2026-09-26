@@ -88,8 +88,8 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBOレイアウト: view(64) + projection(64) + cameraPos(16) + emissiveColor(16) + pomParams(16) = 176 bytes
-            constexpr uint32_t UBO_SIZE = 176;
+            // UBOレイアウト: current/previous view-projection(256) + cameraPos/emissive/POM/velocity(64) = 320 bytes
+            constexpr uint32_t UBO_SIZE = 320;
             constexpr uint32_t MAX_OBJECTS = 256; // 1フレームあたりの最大オブジェクト数
 
             RHI::DescriptorSetDesc uboDescSetDesc;
@@ -221,11 +221,13 @@ namespace NorvesLib::Core::Rendering
         m_NormalTexture.reset();
         m_MaterialTexture.reset();
         m_EmissiveTexture.reset();
+        m_VelocityTexture.reset();
         m_DepthTexture.reset();
         m_AlbedoHandle = {};
         m_NormalHandle = {};
         m_MaterialHandle = {};
         m_EmissiveHandle = {};
+        m_VelocityHandle = {};
         m_DepthHandle = {};
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
@@ -253,6 +255,7 @@ namespace NorvesLib::Core::Rendering
         m_FramebufferNormalTexture = nullptr;
         m_FramebufferMaterialTexture = nullptr;
         m_FramebufferEmissiveTexture = nullptr;
+        m_FramebufferVelocityTexture = nullptr;
         m_FramebufferDepthTexture = nullptr;
         m_FramebufferWidth = 0;
         m_FramebufferHeight = 0;
@@ -288,6 +291,7 @@ namespace NorvesLib::Core::Rendering
             !m_NormalTexture ||
             !m_MaterialTexture ||
             !m_EmissiveTexture ||
+            !m_VelocityTexture ||
             !m_DepthTexture ||
             !m_GBufferRenderPass ||
             !m_GBufferFramebuffer ||
@@ -355,6 +359,21 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
+        RGTextureDesc velocityDesc = RGTextureDesc::RenderTarget(
+            width,
+            height,
+            m_Settings.VelocityFormat,
+            "GBuffer_Velocity");
+        velocityDesc.Usage = velocityDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        m_VelocityHandle = builder.WriteTextureAttachment(
+            RenderGraphResourceNames::GBufferVelocity,
+            velocityDesc,
+            RGAttachmentKind::Color,
+            RHI::AttachmentLoadOp::Clear,
+            RHI::AttachmentStoreOp::Store,
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
+
         m_DepthHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferDepth,
             RGTextureDesc::DepthStencil(width, height, m_Settings.DepthFormat, "GBuffer_Depth"),
@@ -382,9 +401,10 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr normal = resources.GetTexture(m_NormalHandle);
         RHI::TexturePtr material = resources.GetTexture(m_MaterialHandle);
         RHI::TexturePtr emissive = resources.GetTexture(m_EmissiveHandle);
+        RHI::TexturePtr velocity = resources.GetTexture(m_VelocityHandle);
         RHI::TexturePtr depth = resources.GetTexture(m_DepthHandle);
 
-        if (!albedo || !normal || !material || !emissive || !depth)
+        if (!albedo || !normal || !material || !emissive || !velocity || !depth)
         {
             NORVES_LOG_ERROR("GBufferPass", "Failed to resolve native GBuffer textures");
             return;
@@ -396,6 +416,7 @@ namespace NorvesLib::Core::Rendering
                                        normal,
                                        material,
                                        emissive,
+                                       velocity,
                                        depth,
                                        true))
         {
@@ -433,6 +454,7 @@ namespace NorvesLib::Core::Rendering
             context.SharedResources->RegisterTexturePtr("GBuffer_Normal", m_NormalTexture);
             context.SharedResources->RegisterTexturePtr("GBuffer_Material", m_MaterialTexture);
             context.SharedResources->RegisterTexturePtr("GBuffer_Emissive", m_EmissiveTexture);
+            context.SharedResources->RegisterTexturePtr("GBuffer_Velocity", m_VelocityTexture);
             context.SharedResources->RegisterTexturePtr("GBuffer_Depth", m_DepthTexture);
         }
 
@@ -482,21 +504,39 @@ namespace NorvesLib::Core::Rendering
             cameraConstants.CopyCameraPosition(cameraPos);
         }
 
+        const CameraProxy *previousCamera = context.GetPreviousCamera();
+        const bool bHasPreviousCamera = activeCamera != nullptr && previousCamera != nullptr;
+        CameraViewConstants previousCameraConstants = cameraConstants;
+        if (bHasPreviousCamera)
+        {
+            previousCameraConstants =
+                CameraViewConstants::BuildForDevice(*previousCamera,
+                                                    context.GetActiveAspectRatio(),
+                                                    context.Device);
+        }
+
         // UBOデータ構造体（std140レイアウト）
         struct PerObjectUBO
         {
             float view[16];
             float projection[16];
+            float previousView[16];
+            float previousProjection[16];
             float cameraPosition[4];
-            float emissiveColor[4]; // rgb=エミッシブカラー, a=エミッシブ強度
+            float emissiveChromaticityAndLuminanceNits[4];
             float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=unused, w=unused
+            float velocityParams[4]; // x=前フレームカメラ履歴の有効フラグ
         };
 
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
         float projData[16];
+        float previousViewData[16];
+        float previousProjData[16];
         cameraConstants.CopyShaderView(viewData);
         cameraConstants.CopyShaderProjection(projData);
+        previousCameraConstants.CopyShaderView(previousViewData);
+        previousCameraConstants.CopyShaderProjection(previousProjData);
 
         // フレーム開始時にアロケータリセット
         m_UniformAllocator.Reset();
@@ -504,7 +544,10 @@ namespace NorvesLib::Core::Rendering
         PerObjectUBO frameTemplate{};
         std::memcpy(frameTemplate.view, viewData, sizeof(viewData));
         std::memcpy(frameTemplate.projection, projData, sizeof(projData));
+        std::memcpy(frameTemplate.previousView, previousViewData, sizeof(previousViewData));
+        std::memcpy(frameTemplate.previousProjection, previousProjData, sizeof(previousProjData));
         std::memcpy(frameTemplate.cameraPosition, cameraPos, sizeof(cameraPos));
+        frameTemplate.velocityParams[0] = bHasPreviousCamera ? 1.0f : 0.0f;
 
         auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 
@@ -544,8 +587,10 @@ namespace NorvesLib::Core::Rendering
             TextureHandle matAO;
             TextureHandle matHeight;
             float matHeightScale = 0.05f;
-            float matEmissiveR = 0.0f, matEmissiveG = 0.0f, matEmissiveB = 0.0f;
-            float matEmissiveStrength = 0.0f;
+            float matEmissiveChromaticityR = 0.0f;
+            float matEmissiveChromaticityG = 0.0f;
+            float matEmissiveChromaticityB = 0.0f;
+            float matEmissiveLuminanceNits = 0.0f;
 
             MaterialHandle materialHandle;
             materialHandle.Id = materialKey;
@@ -561,17 +606,17 @@ namespace NorvesLib::Core::Rendering
                     matAO = matData->AOTexture;
                     matHeight = matData->HeightTexture;
                     matHeightScale = matData->HeightScale;
-                    matEmissiveR = matData->EmissiveColor[0];
-                    matEmissiveG = matData->EmissiveColor[1];
-                    matEmissiveB = matData->EmissiveColor[2];
-                    matEmissiveStrength = matData->EmissiveStrength;
+                    matEmissiveChromaticityR = matData->EmissiveColor[0];
+                    matEmissiveChromaticityG = matData->EmissiveColor[1];
+                    matEmissiveChromaticityB = matData->EmissiveColor[2];
+                    matEmissiveLuminanceNits = matData->EmissiveLuminanceNits;
                 }
             }
 
-            uboData.emissiveColor[0] = matEmissiveR;
-            uboData.emissiveColor[1] = matEmissiveG;
-            uboData.emissiveColor[2] = matEmissiveB;
-            uboData.emissiveColor[3] = matEmissiveStrength;
+            uboData.emissiveChromaticityAndLuminanceNits[0] = matEmissiveChromaticityR;
+            uboData.emissiveChromaticityAndLuminanceNits[1] = matEmissiveChromaticityG;
+            uboData.emissiveChromaticityAndLuminanceNits[2] = matEmissiveChromaticityB;
+            uboData.emissiveChromaticityAndLuminanceNits[3] = matEmissiveLuminanceNits;
 
             uboData.pomParams[0] = matHeightScale;
             uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
@@ -759,10 +804,15 @@ namespace NorvesLib::Core::Rendering
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"));
         m_EmissiveTexture = m_Device->CreateTexture(
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive"));
+        RHI::TextureDesc velocityDesc =
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.VelocityFormat, "GBuffer_Velocity");
+        velocityDesc.Usage = velocityDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        m_VelocityTexture = m_Device->CreateTexture(velocityDesc);
         m_DepthTexture = m_Device->CreateTexture(
             RHI::TextureDesc::DepthStencil(width, height, m_Settings.DepthFormat, "GBuffer_Depth"));
 
-        if (!m_AlbedoTexture || !m_NormalTexture || !m_MaterialTexture || !m_EmissiveTexture || !m_DepthTexture)
+        if (!m_AlbedoTexture || !m_NormalTexture || !m_MaterialTexture || !m_EmissiveTexture ||
+            !m_VelocityTexture || !m_DepthTexture)
         {
             NORVES_LOG_ERROR("GBufferPass", "Failed to create GBuffer textures");
             return false;
@@ -774,6 +824,7 @@ namespace NorvesLib::Core::Rendering
                                          m_NormalTexture,
                                          m_MaterialTexture,
                                          m_EmissiveTexture,
+                                         m_VelocityTexture,
                                          m_DepthTexture,
                                          false);
     }
@@ -794,6 +845,7 @@ namespace NorvesLib::Core::Rendering
                                                 const RHI::TexturePtr& normal,
                                                 const RHI::TexturePtr& material,
                                                 const RHI::TexturePtr& emissive,
+                                                const RHI::TexturePtr& velocity,
                                                 const RHI::TexturePtr& depth,
                                                 bool bUseRenderGraphInitialStates)
     {
@@ -802,7 +854,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (!albedo || !normal || !material || !emissive || !depth)
+        if (!albedo || !normal || !material || !emissive || !velocity || !depth)
         {
             NORVES_LOG_ERROR("GBufferPass", "GBuffer attachment textures are incomplete");
             return false;
@@ -812,6 +864,7 @@ namespace NorvesLib::Core::Rendering
         m_NormalTexture = normal;
         m_MaterialTexture = material;
         m_EmissiveTexture = emissive;
+        m_VelocityTexture = velocity;
         m_DepthTexture = depth;
         m_CurrentWidth = width;
         m_CurrentHeight = height;
@@ -823,6 +876,7 @@ namespace NorvesLib::Core::Rendering
                                                                                normal,
                                                                                material,
                                                                                emissive,
+                                                                               velocity,
                                                                                depth,
                                                                                bUseRenderGraphInitialStates);
 
@@ -831,7 +885,14 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (!EnsureGBufferFramebuffer(width, height, albedo, normal, material, emissive, depth))
+        if (!EnsureGBufferFramebuffer(width,
+                                      height,
+                                      albedo,
+                                      normal,
+                                      material,
+                                      emissive,
+                                      velocity,
+                                      depth))
         {
             return false;
         }
@@ -862,6 +923,7 @@ namespace NorvesLib::Core::Rendering
                AttachmentSignatureEquals(lhs.Normal, rhs.Normal) &&
                AttachmentSignatureEquals(lhs.Material, rhs.Material) &&
                AttachmentSignatureEquals(lhs.Emissive, rhs.Emissive) &&
+               AttachmentSignatureEquals(lhs.Velocity, rhs.Velocity) &&
                AttachmentSignatureEquals(lhs.Depth, rhs.Depth);
     }
 
@@ -872,6 +934,7 @@ namespace NorvesLib::Core::Rendering
         const RHI::TexturePtr& normal,
         const RHI::TexturePtr& material,
         const RHI::TexturePtr& emissive,
+        const RHI::TexturePtr& velocity,
         const RHI::TexturePtr& depth,
         bool bUseRenderGraphInitialStates) const
     {
@@ -921,6 +984,16 @@ namespace NorvesLib::Core::Rendering
                               colorInitialState,
                               RHI::ResourceState::ShaderResource,
                               emissive.get(),
+                            width,
+                            height,
+                            false};
+        signature.Velocity = {RGAttachmentKind::Color,
+                              velocity ? velocity->GetFormat() : m_Settings.VelocityFormat,
+                              RHI::AttachmentLoadOp::Clear,
+                              RHI::AttachmentStoreOp::Store,
+                              colorInitialState,
+                              RHI::ResourceState::ShaderResource,
+                              velocity.get(),
                               width,
                               height,
                               false};
@@ -960,13 +1033,14 @@ namespace NorvesLib::Core::Rendering
         m_FramebufferNormalTexture = nullptr;
         m_FramebufferMaterialTexture = nullptr;
         m_FramebufferEmissiveTexture = nullptr;
+        m_FramebufferVelocityTexture = nullptr;
         m_FramebufferDepthTexture = nullptr;
         m_FramebufferWidth = 0;
         m_FramebufferHeight = 0;
         m_RenderPassSignature = {};
 
         // ========================================
-        // MRT対応レンダーパス作成（4カラー + 1デプス）
+        // MRT対応レンダーパス作成（5カラー + 1デプス）
         // ========================================
         RHI::RenderPassDesc rpDesc;
 
@@ -1030,6 +1104,21 @@ namespace NorvesLib::Core::Rendering
         emissiveAttach.finalState = signature.Emissive.FinalState;
         rpDesc.colorAttachments.push_back(emissiveAttach);
 
+        // Velocity アタッチメント
+        RHI::AttachmentDesc velocityAttach;
+        velocityAttach.format = signature.Velocity.Format;
+        velocityAttach.isDepthStencil = false;
+        velocityAttach.clear = true;
+        velocityAttach.clearColor[0] = 0.0f;
+        velocityAttach.clearColor[1] = 0.0f;
+        velocityAttach.clearColor[2] = 0.0f;
+        velocityAttach.clearColor[3] = 0.0f;
+        velocityAttach.loadOp = signature.Velocity.LoadOp;
+        velocityAttach.storeOp = signature.Velocity.StoreOp;
+        velocityAttach.initialState = signature.Velocity.InitialState;
+        velocityAttach.finalState = signature.Velocity.FinalState;
+        rpDesc.colorAttachments.push_back(velocityAttach);
+
         // Depth アタッチメント
         rpDesc.hasDepthStencil = true;
         rpDesc.depthStencilAttachment.format = signature.Depth.Format;
@@ -1062,6 +1151,7 @@ namespace NorvesLib::Core::Rendering
                                                const RHI::TexturePtr& normal,
                                                const RHI::TexturePtr& material,
                                                const RHI::TexturePtr& emissive,
+                                               const RHI::TexturePtr& velocity,
                                                const RHI::TexturePtr& depth)
     {
         if (m_GBufferFramebuffer &&
@@ -1071,6 +1161,7 @@ namespace NorvesLib::Core::Rendering
             m_FramebufferNormalTexture == normal.get() &&
             m_FramebufferMaterialTexture == material.get() &&
             m_FramebufferEmissiveTexture == emissive.get() &&
+            m_FramebufferVelocityTexture == velocity.get() &&
             m_FramebufferDepthTexture == depth.get())
         {
             return true;
@@ -1085,6 +1176,7 @@ namespace NorvesLib::Core::Rendering
         fbDesc.colorTargets.push_back(m_NormalTexture);
         fbDesc.colorTargets.push_back(m_MaterialTexture);
         fbDesc.colorTargets.push_back(m_EmissiveTexture);
+        fbDesc.colorTargets.push_back(m_VelocityTexture);
         fbDesc.depthStencilTarget = m_DepthTexture;
         fbDesc.width = width;
         fbDesc.height = height;
@@ -1100,6 +1192,7 @@ namespace NorvesLib::Core::Rendering
         m_FramebufferNormalTexture = normal.get();
         m_FramebufferMaterialTexture = material.get();
         m_FramebufferEmissiveTexture = emissive.get();
+        m_FramebufferVelocityTexture = velocity.get();
         m_FramebufferDepthTexture = depth.get();
         m_FramebufferWidth = width;
         m_FramebufferHeight = height;
@@ -1200,8 +1293,8 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.depthStencilState.depthWriteEnable = true;
         pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
 
-        // MRT用ブレンドステート（4カラーアタッチメント分）
-        for (int i = 0; i < 4; ++i)
+        // MRT用ブレンドステート（5カラーアタッチメント分）
+        for (int i = 0; i < 5; ++i)
         {
             RHI::BlendAttachmentDesc blendAttachment;
             blendAttachment.blendEnable = false;
@@ -1303,7 +1396,7 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.depthStencilState.depthTestEnable = true;
         pipelineDesc.depthStencilState.depthWriteEnable = true;
         pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
-        for (int attachmentIndex = 0; attachmentIndex < 4; ++attachmentIndex)
+        for (int attachmentIndex = 0; attachmentIndex < 5; ++attachmentIndex)
         {
             RHI::BlendAttachmentDesc blendAttachment;
             blendAttachment.blendEnable = false;

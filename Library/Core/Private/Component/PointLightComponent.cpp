@@ -1,6 +1,8 @@
 ﻿#include "Component/PointLightComponent.h"
 #include "Object/Entity.h"
 #include "Logging/LogMacros.h"
+#include "Math/MathTypes.h"
+#include <cmath>
 
 namespace NorvesLib::Core::Component
 {
@@ -10,6 +12,7 @@ namespace NorvesLib::Core::Component
         : LightComponent()
     {
         LightTypeProp = Rendering::LightType::Point;
+        IntensityUnit = LightIntensityUnit::Candela;
         Range = 10.0f;
         AttenuationConstant = 1.0f;
         AttenuationLinear = 0.09f;
@@ -20,6 +23,7 @@ namespace NorvesLib::Core::Component
         : LightComponent(initializer)
     {
         LightTypeProp = Rendering::LightType::Point;
+        IntensityUnit = LightIntensityUnit::Candela;
         Range = 10.0f;
         AttenuationConstant = 1.0f;
         AttenuationLinear = 0.09f;
@@ -30,6 +34,7 @@ namespace NorvesLib::Core::Component
         : LightComponent(sourceObject)
     {
         LightTypeProp = Rendering::LightType::Point;
+        IntensityUnit = LightIntensityUnit::Candela;
         Range = 10.0f;
         AttenuationConstant = 1.0f;
         AttenuationLinear = 0.09f;
@@ -70,6 +75,11 @@ namespace NorvesLib::Core::Component
         outProxy.AttenuationConstant = AttenuationConstant;
         outProxy.AttenuationLinear = AttenuationLinear;
         outProxy.AttenuationQuadratic = AttenuationQuadratic;
+
+        if (IntensityUnit == LightIntensityUnit::Lumen)
+        {
+            outProxy.CanonicalIntensity = Intensity / (4.0f * Math::Constants::PI);
+        }
 
         // オーナーのEntityから位置を取得
         const Entity* owner = GetOwner();

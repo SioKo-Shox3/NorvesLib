@@ -28,8 +28,21 @@ namespace NorvesLib::Core::Rendering
         Uncharted2,
 
         /** 露出ベースの単純なクランプ */
-        Exposure
+        Exposure,
+
+        /**
+         * ACES 2.0 SDR 100 nit Rec.709 のベイク3D LUT（display-linear へ変換）
+         *
+         * `Assets/ColorManagement/Aces20SdrRec709.lut3d` を log2 shaper で引く。
+         * 表示変換そのものなので、既定のカラーグレーディングは掛けない。
+         */
+        Aces20Lut
     };
+
+    /**
+     * @brief ACES 2.0 SDR LUT の既定のアセットパス（`Assets/` 相対）
+     */
+    inline constexpr const char* Aces20SdrLutAssetPath = "ColorManagement/Aces20SdrRec709.lut3d";
 
     /**
      * @brief トーンマッピングパス設定
@@ -38,15 +51,6 @@ namespace NorvesLib::Core::Rendering
     {
         /** @brief 使用するトーンマッピングアルゴリズム */
         ToneMappingOperator Operator = ToneMappingOperator::ACES;
-
-        /** @brief 露出値（Exposureモード/共通パラメータ） */
-        float Exposure = 1.0f;
-
-        /** @brief ガンマ補正値 */
-        float Gamma = 2.2f;
-
-        /** @brief 出力フォーマット（LDR） */
-        RHI::Format OutputFormat = RHI::Format::R8G8B8A8_UNORM;
 
         // ========================================
         // Vignette（周辺減光）
@@ -82,12 +86,18 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 色温度シフト（-1〜+1、0=ニュートラル） */
         float Temperature = 0.0f;
+
+        /** @brief フィルムグレインの強さ（sRGBの符号化値での標準偏差。0でオフ） */
+        float FilmGrainStrength = 0.0f;
+
+        /** @brief フィルムグレインの模様のseed（フレーム番号と合わせてフレームごとの模様を決める） */
+        uint32_t FilmGrainSeed = 0u;
     };
 
     /**
      * @brief トーンマッピングパス（ポストプロセス）
      *
-     * HDRシーンカラーをLDRに変換し、ガンマ補正を適用します。
+     * HDRシーンカラーをdisplay-linear Rec.709へ変換します。
      * PostProcessStackに追加して使用するポストプロセスパスです。
      *
      * 標準経路では RenderGraph named resource から入力を読み取り、
@@ -98,13 +108,14 @@ namespace NorvesLib::Core::Rendering
      * - "SceneColor" : HDRライティング結果 (R16G16B16A16_FLOAT)
      *
      * 出力:
-     * - "ToneMappedColor" : LDR変換後のカラー (R8G8B8A8_UNORM)
+     * - "ToneMappedColor" : display-linear変換後のカラー (R16G16B16A16_FLOAT)
      *
      * サポートするトーンマッピングアルゴリズム:
      * - Reinhard: シンプルで高速
      * - ACES Filmic: 映画品質、最もバランスが良い（デフォルト）
      * - Uncharted2: ゲームで広く使用
      * - Exposure: 露出ベースの単純なクランプ
+     * - Aces20Lut: ACES 2.0 SDR のベイク3D LUT（カラーグレーディングなし）
      */
     class ToneMappingPass : public IViewPass, public IRenderGraphPass
     {
@@ -153,16 +164,15 @@ namespace NorvesLib::Core::Rendering
         void SetOperator(ToneMappingOperator op) { m_Settings.Operator = op; }
 
         /**
-         * @brief 露出値を設定
-         * @param exposure 露出値
+         * @brief フィルムグレインを設定（出力変換の後、display空間で足す）
+         * @param strength sRGBの符号化値での標準偏差（0でオフ）
+         * @param seed 模様のseed
          */
-        void SetExposure(float exposure) { m_Settings.Exposure = exposure; }
-
-        /**
-         * @brief ガンマ値を設定
-         * @param gamma ガンマ値
-         */
-        void SetGamma(float gamma) { m_Settings.Gamma = gamma; }
+        void SetFilmGrain(float strength, uint32_t seed)
+        {
+            m_Settings.FilmGrainStrength = strength;
+            m_Settings.FilmGrainSeed = seed;
+        }
 
         /**
          * @brief 現在の設定を取得
@@ -208,6 +218,16 @@ namespace NorvesLib::Core::Rendering
                               bool bRegisterLegacyBridge);
         bool EnqueueEmptyNativePass(ViewRenderContext& context) const;
 
+        /**
+         * @brief binding 2 に結ぶ3D LUTを用意する
+         *
+         * LUT演算子のときはアセットのLUTを一度だけ読み込み、それ以外は 1×1×1 の代替を結ぶ。
+         * 読み込みに失敗したLUT演算子は ACES Filmic へ退避する。
+         * @return シェーダへ渡す演算子の番号
+         */
+        uint32_t PrepareColorLut();
+        RHI::TexturePtr LoadAces20SdrLut() const;
+
         // 設定
         ToneMappingSettings m_Settings;
 
@@ -225,6 +245,12 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_ParamsBuffer;
         RHI::DescriptorSetPtr m_ToneMappingDescriptorSet;
         RHI::SamplerPtr m_SceneColorSampler;
+
+        // 表示変換の3D LUT（binding 2）。LUT演算子以外では 1×1×1 の代替を結ぶ
+        RHI::TexturePtr m_ColorLutTexture;
+        RHI::TexturePtr m_ColorLutFallbackTexture;
+        RHI::SamplerPtr m_ColorLutSampler;
+        bool m_bColorLutLoadFailed = false;
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;

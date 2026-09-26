@@ -139,7 +139,10 @@ namespace NorvesLib::Core::Rendering
         if (bNeedsOutputTexture)
         {
             m_OutputTexture = m_Device->CreateTexture(
-                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "VignetteOutput"));
+                RHI::TextureDesc::RenderTarget(width,
+                                               height,
+                                               RHI::Format::R16G16B16A16_FLOAT,
+                                               "VignetteOutput"));
 
             if (!m_OutputTexture)
             {
@@ -351,7 +354,10 @@ namespace NorvesLib::Core::Rendering
 
         RGTextureHandle outputHandle = builder.WriteTexture(
             RenderGraphResourceNames::ToneMappedColor,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "VignetteOutput"),
+            RGTextureDesc::RenderTarget(width,
+                                        height,
+                                        RHI::Format::R16G16B16A16_FLOAT,
+                                        "VignetteOutput"),
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
         m_OutputTextureHandle = outputHandle;

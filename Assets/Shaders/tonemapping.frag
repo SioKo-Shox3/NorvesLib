@@ -8,15 +8,15 @@ layout(set = 0, binding = 0) uniform sampler2D sceneColor;
 // トーンマッピングパラメータ
 layout(std140, set = 0, binding = 1) uniform ToneMappingParams
 {
-    float exposure;
-    float gamma;
-    uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure
+    uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure, 4:ACES 2.0 SDR LUT
     uint bBypass;
+    uint filmGrainSeed;       // フィルムグレインのフレームごとのseed
     // Vignette パラメータ
     float vignetteIntensity;  // 0.0 = off, ~0.3 = subtle
     float vignetteRadius;     // 内側半径 ~0.8
     float vignetteSoftness;   // フォールオフの柔らかさ ~0.5
-    float _pad1;
+    float filmGrainStrength;  // フィルムグレインの強さ（sRGBの符号化値での標準偏差。0でオフ）
+    float _pad2;
     // Color Grading パラメータ
     vec4 colorFilter;         // カラーフィルター (rgb * intensity in w)
     float contrast;           // コントラスト (1.0 = default)
@@ -25,7 +25,17 @@ layout(std140, set = 0, binding = 1) uniform ToneMappingParams
     float temperature;        // 色温度シフト (-1..+1, 0=neutral)
 } params;
 
+// ACES 2.0 SDR 100 nit Rec.709 のベイク3D LUT（display-linear。x=R, y=G, z=B）
+layout(set = 0, binding = 2) uniform sampler3D colorLut;
+
 layout(location = 0) out vec4 outColor;
+
+// LUTの shaper（Scripts/BakeAcesOutputLut.py と同じ固定値）
+// u = log2(x / 2^-8 + 1) / log2(2^8 / 2^-8 + 1)、x は [0, 256] へ飽和
+const uint ACES20_LUT_OPERATOR = 4u;
+const float ACES20_LUT_SHAPER_OFFSET = 0.00390625;
+const float ACES20_LUT_SHAPER_MAX = 256.0;
+const float ACES20_LUT_SHAPER_SPAN = log2(ACES20_LUT_SHAPER_MAX / ACES20_LUT_SHAPER_OFFSET + 1.0);
 
 // ========================================
 // トーンマッピングアルゴリズム
@@ -70,9 +80,20 @@ vec3 TonemapUncharted2(vec3 color)
 }
 
 // 露出ベース（単純なクランプ）
-vec3 TonemapExposure(vec3 color, float exposure)
+vec3 TonemapExposure(vec3 color)
 {
-    return vec3(1.0) - exp(-color * exposure);
+    return vec3(1.0) - exp(-color);
+}
+
+// ACES 2.0 SDR（ベイク3D LUTを log2 shaper の座標で三線形補間）
+vec3 TonemapAces20Lut(vec3 color)
+{
+    vec3 clamped = clamp(color, vec3(0.0), vec3(ACES20_LUT_SHAPER_MAX));
+    vec3 shaped = clamp(log2(clamped / ACES20_LUT_SHAPER_OFFSET + 1.0) / ACES20_LUT_SHAPER_SPAN, 0.0, 1.0);
+    // 格子点 0 と N-1 がテクセル中心に来るよう、[0,1] を半テクセル内側へ写す
+    float lutSize = float(textureSize(colorLut, 0).x);
+    vec3 lutCoord = (shaped * (lutSize - 1.0) + 0.5) / lutSize;
+    return textureLod(colorLut, lutCoord, 0.0).rgb;
 }
 
 // ========================================
@@ -112,6 +133,46 @@ vec3 ApplySaturation(vec3 color, float saturation)
     return clamp(mix(vec3(luma), color, saturation), 0.0, 1.0);
 }
 
+// フィルムグレイン: 画素・フレームごとのseedから決まる、平均0・分散1の三角分布の雑音（PCGのhash）。
+uint FilmGrainHash(uint value)
+{
+    uint state = value * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float FilmGrainNoise(uvec2 pixel, uint frameSeed)
+{
+    uint first = FilmGrainHash(pixel.x ^ FilmGrainHash(pixel.y ^ frameSeed));
+    uint second = FilmGrainHash(first);
+    float u0 = float(first >> 8u) * (1.0 / 16777216.0);
+    float u1 = float(second >> 8u) * (1.0 / 16777216.0);
+    // 2つの一様乱数の和から1を引くと平均0・分散1/6の三角分布になる
+    return (u0 + u1 - 1.0) * sqrt(6.0);
+}
+
+vec3 EncodeSrgb(vec3 linearColor)
+{
+    vec3 low = linearColor * 12.92;
+    vec3 high = 1.055 * pow(linearColor, vec3(1.0 / 2.4)) - 0.055;
+    return mix(high, low, lessThanEqual(linearColor, vec3(0.0031308)));
+}
+
+vec3 DecodeSrgb(vec3 encodedColor)
+{
+    vec3 low = encodedColor / 12.92;
+    vec3 high = pow((encodedColor + 0.055) / 1.055, vec3(2.4));
+    return mix(high, low, lessThanEqual(encodedColor, vec3(0.04045)));
+}
+
+// sRGBの符号化値へ強さ（標準偏差）の雑音を足してdisplay-linearへ戻す。表示の符号化の上で平均を変えない。
+vec3 ApplyFilmGrain(vec3 displayLinear, uvec2 pixel, uint frameSeed, float strength)
+{
+    float noise = FilmGrainNoise(pixel, frameSeed) * strength;
+    vec3 encoded = EncodeSrgb(clamp(displayLinear, vec3(0.0), vec3(1.0)));
+    return DecodeSrgb(clamp(encoded + vec3(noise), vec3(0.0), vec3(1.0)));
+}
+
 void main()
 {
     if (params.bBypass != 0u)
@@ -122,9 +183,6 @@ void main()
 
     // HDRシーンカラーをサンプリング
     vec3 hdrColor = texture(sceneColor, fragUV).rgb;
-
-    // 露出補正
-    hdrColor *= params.exposure;
 
     // トーンマッピング適用
     vec3 mapped;
@@ -140,37 +198,53 @@ void main()
     {
         mapped = TonemapUncharted2(hdrColor);
     }
+    else if (params.operatorType == ACES20_LUT_OPERATOR)
+    {
+        mapped = TonemapAces20Lut(hdrColor);
+    }
     else
     {
-        mapped = TonemapExposure(hdrColor, params.exposure);
+        mapped = TonemapExposure(hdrColor);
     }
 
-    // ガンマ補正
-    vec3 result = pow(mapped, vec3(1.0 / params.gamma));
+    // ToneMappedColor は display-linear のまま presentation へ渡す
+    vec3 result = mapped;
 
     // ========================================
-    // Color Grading（LDR空間で適用）
+    // Color Grading（display-linear Rec.709空間で適用）
+    // ACES 2.0 SDR LUT は表示変換そのものなので、既定のグレーディングを掛けない
     // ========================================
-    // カラーフィルター
-    result *= params.colorFilter.rgb * params.colorFilter.w;
+    if (params.operatorType != ACES20_LUT_OPERATOR)
+    {
+        // カラーフィルター
+        result *= params.colorFilter.rgb * params.colorFilter.w;
 
-    // 明度
-    result += vec3(params.brightness);
+        // 明度
+        result += vec3(params.brightness);
 
-    // コントラスト
-    result = ApplyContrast(result, params.contrast);
+        // コントラスト
+        result = ApplyContrast(result, params.contrast);
 
-    // 彩度
-    result = ApplySaturation(result, params.saturation);
+        // 彩度
+        result = ApplySaturation(result, params.saturation);
 
-    // 色温度
-    result = ApplyTemperature(result, params.temperature);
+        // 色温度
+        result = ApplyTemperature(result, params.temperature);
+    }
 
     // ========================================
     // Vignette（最終段で適用）
     // ========================================
     float vignette = ComputeVignette(fragUV, params.vignetteIntensity, params.vignetteRadius, params.vignetteSoftness);
     result *= vignette;
+
+    // ========================================
+    // フィルムグレイン（出力変換の後、display空間。既定はオフ）
+    // ========================================
+    if (params.filmGrainStrength > 0.0)
+    {
+        result = ApplyFilmGrain(result, uvec2(gl_FragCoord.xy), params.filmGrainSeed, params.filmGrainStrength);
+    }
 
     outColor = vec4(result, 1.0);
 }

@@ -8,9 +8,12 @@ layout(set = 0, binding = 0) uniform MVPData
 {
     mat4 view;
     mat4 projection;
+    mat4 previousView;
+    mat4 previousProjection;
     vec4 cameraPosition;
-    vec4 emissiveColor;
+    vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;
+    vec4 velocityParams;
 } mvp;
 
 layout(std430, set = 0, binding = 8) readonly buffer SkinningMatrices
@@ -28,9 +31,11 @@ layout(std430, set = 0, binding = 9) readonly buffer SkinVertexWords
 layout(location = 0) out vec3 fragWorldPos;
 layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragObjectColor;
-layout(location = 3) out vec4 fragEmissiveColor;
+layout(location = 3) out vec4 fragEmissiveChromaticityAndLuminanceNits;
 layout(location = 4) out vec2 fragTexCoord;
 layout(location = 5) out vec3 fragViewDir;
+layout(location = 6) out vec4 fragCurrentClip;
+layout(location = 7) out vec4 fragPreviousClip;
 
 struct SkinnedVertex
 {
@@ -93,8 +98,11 @@ void main()
     vec3 worldNormal = mat3(skinning.worldNormal) * skinned.normal;
     fragNormal = dot(worldNormal, worldNormal) > 0.000001 ? normalize(worldNormal) : vec3(0.0);
     fragObjectColor = vec3(1.0);
-    fragEmissiveColor = mvp.emissiveColor;
+    fragEmissiveChromaticityAndLuminanceNits = mvp.emissiveChromaticityAndLuminanceNits;
     fragTexCoord = inTexCoord;
     fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);
-    gl_Position = mvp.projection * mvp.view * worldPos;
+    fragCurrentClip = mvp.projection * mvp.view * worldPos;
+    // Skinned履歴はR6-aの対象外。現在位置を複製してvelocityをゼロにする。
+    fragPreviousClip = fragCurrentClip;
+    gl_Position = fragCurrentClip;
 }

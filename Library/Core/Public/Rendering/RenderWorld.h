@@ -2,6 +2,9 @@
 
 #include "RenderTypes.h"
 #include "FrameCaptureTypes.h"
+#include "DDGIVolume.h"
+#include "SkyAtmosphere.h"
+#include "VolumetricFog.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
 #include "RenderResources.h"
@@ -54,6 +57,15 @@ namespace NorvesLib::Core::Rendering
         bool bEnableValidation = false;
         bool bEnableGPUDebug = false;
         RGDumpOptions RenderGraphDumpOptions;
+
+        // メインSceneViewの描画方式（起動時にだけ選ぶ。既定はラスタ）
+        RenderingMainViewRenderer MainViewRenderer = RenderingMainViewRenderer::Raster;
+        uint32_t PathTracingSamplesPerFrame = 1;
+        PathTracingTransportScope PathTracingTransport = PathTracingTransportScope::Full;
+        PathTracingPixelSampling PathTracingPixelSamplingMode = PathTracingPixelSampling::Box;
+        uint32_t PathTracingSampleBatch = 0u;
+        PathTracingDebugOutput PathTracingDebug = PathTracingDebugOutput::None;
+        RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Neural;
     };
 
     // ========================================
@@ -145,6 +157,24 @@ namespace NorvesLib::Core::Rendering
         void SetMainCamera(const CameraProxy &camera);
 
         /**
+         * @brief 空パラメータを設定（GameThread）
+         * @param parameters 次のFramePacketへコピーする空スナップショット
+         */
+        void SetSkyAtmosphere(const SkyAtmosphereParameters& parameters);
+
+        /**
+         * @brief DDGIプローブボリュームを設定（GameThread）
+         * @param parameters 次のFramePacketへ値コピーするプローブボリューム
+         */
+        void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters);
+
+        /**
+         * @brief 高さフォグ設定を次のFramePacketへ公開する（GameThread）
+         * @param parameters GameThread側で保持し、FramePacketへ値コピーする設定
+         */
+        void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
+
+        /**
          * @brief フレーム終了（GameThread）
          *
          * FramePacketを完了状態にし、RenderThreadに通知します。
@@ -167,7 +197,12 @@ namespace NorvesLib::Core::Rendering
         [[nodiscard]] uint64_t GetRenderedFrameCount() const;
 
         FrameCaptureRequestResult RequestFrameCapture();
+        FrameCaptureRequestResult RequestFrameCapture(const FrameCaptureRequest& request);
         bool TryConsumeCapturedFrame(CapturedFrame& outFrame);
+        bool TryConsumeCompletedGPUTimings(
+            Container::VariableArray<RenderPassGPUTiming>& outTimings,
+            uint64_t& outDroppedFrameCount);
+        bool SupportsGPUTimings() const;
 
         // ========================================
         // pre-device-teardown フック

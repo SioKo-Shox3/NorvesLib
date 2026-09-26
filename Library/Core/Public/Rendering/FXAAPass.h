@@ -30,14 +30,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief FXAA有効/無効 */
         bool bEnabled = true;
 
-        /** @brief 出力フォーマット */
-        RHI::Format OutputFormat = RHI::Format::R8G8B8A8_UNORM;
     };
 
     /**
      * @brief FXAA 3.11ポストプロセスパス
      *
-     * ToneMappingPassの後に配置し、LDR画像に対してアンチエイリアシングを適用する。
+     * ToneMappingPassの後に配置し、display-linear画像に対してアンチエイリアシングを適用する。
      * 標準経路では "ToneMappedColor" named resource を読み取り、graph output として
      * "ToneMappedColor" を更新する。SharedResourceRegistry は legacy/fallback bridge の
      * 互換経路でのみ使用する。

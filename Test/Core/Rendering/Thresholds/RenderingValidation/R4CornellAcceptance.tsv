@@ -1,0 +1,32 @@
+# Cornell Bowers公開データ: https://bowers.cornell.edu/computer-graphics/data
+# RGBE SHA-256: D94EF786F6BBC70AF81CE700765A598F8AFF73157234B2F50EE5A42C3F9C9F22
+# ROIは左上を原点、right/bottomを含まない。chromaはR/G/(R+G+B)。
+width	512
+height	512
+max_relative_y_error	0.25
+max_chroma_difference	0.10
+disabled_mean_delta_max	0.002
+disabled_max_delta_max	0.01
+enabled_mean_delta_min	0.001
+minimum_dynamic_change	0.002
+minimum_dynamic_progress	0.80
+maximum_dynamic_progress_step	1.02
+light_offset_x	0.55
+disabled_warmup_frames	12
+dynamic_frame_limit	10
+direct_white_left	226
+direct_white_top	90
+direct_white_right	286
+direct_white_bottom	106
+shadow_floor_left	266
+shadow_floor_top	480
+shadow_floor_right	300
+shadow_floor_bottom	508
+red_bounce_left	144
+red_bounce_top	270
+red_bounce_right	156
+red_bounce_bottom	390
+green_bounce_left	380
+green_bounce_top	350
+green_bounce_right	392
+green_bounce_bottom	430

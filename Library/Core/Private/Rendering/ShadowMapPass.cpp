@@ -1,5 +1,6 @@
 ﻿#include "Rendering/ShadowMapPass.h"
 #include "Rendering/DirectionalShadowLightMatrices.h"
+#include "Rendering/CascadedShadowLightMatrices.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/RenderResources.h"
@@ -41,10 +42,16 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        const auto failInitialize = [this]()
+        {
+            Shutdown();
+            return false;
+        };
+
         if (!context.Device)
         {
             NORVES_LOG_ERROR("ShadowMapPass", "Device is null");
-            return false;
+            return failInitialize();
         }
 
         m_Device = context.Device;
@@ -55,14 +62,14 @@ namespace NorvesLib::Core::Rendering
         if (!context.ShaderMgr)
         {
             NORVES_LOG_ERROR("ShadowMapPass", "ShaderManager is null");
-            return false;
+            return failInitialize();
         }
 
         m_ShadowVertexShader = context.ShaderMgr->LoadShader("shadow.vert", RHI::ShaderStage::Vertex);
         if (!m_ShadowVertexShader)
         {
             NORVES_LOG_ERROR("ShadowMapPass", "Failed to create shadow vertex shader");
-            return false;
+            return failInitialize();
         }
 
         m_SkinnedShadowVertexShader =
@@ -70,27 +77,43 @@ namespace NorvesLib::Core::Rendering
         if (!m_SkinnedShadowVertexShader)
         {
             NORVES_LOG_ERROR("ShadowMapPass", "Failed to create skinned shadow vertex shader");
-            return false;
+            return failInitialize();
         }
         m_ShadowFragmentShader = context.ShaderMgr->LoadShader("shadow.frag", RHI::ShaderStage::Pixel);
         if (!m_ShadowFragmentShader)
         {
             NORVES_LOG_ERROR("ShadowMapPass", "Failed to create shadow fragment shader");
-            return false;
+            return failInitialize();
         }
 
         // ========================================
         // シャドウマップ深度テクスチャ作成
         // ========================================
-        m_ShadowMapTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::DepthStencil(
-                m_Settings.Resolution, m_Settings.Resolution,
-                m_Settings.DepthFormat, "ShadowMap"));
+        RHI::TextureDesc shadowMapDesc = RHI::TextureDesc::DepthStencil(
+            m_Settings.Resolution, m_Settings.Resolution,
+            m_Settings.DepthFormat, "ShadowMap");
+        shadowMapDesc.ArraySize = CSM_CASCADE_COUNT;
+        shadowMapDesc.Dimension = RHI::TextureDimension::Texture2D;
+        m_ShadowMapTexture = m_Device->CreateTexture(shadowMapDesc);
 
         if (!m_ShadowMapTexture)
         {
             NORVES_LOG_ERROR("ShadowMapPass", "Failed to create shadow map texture");
-            return false;
+            return failInitialize();
+        }
+
+        RHI::SamplerDesc shadowSamplerDesc;
+        shadowSamplerDesc.filterMin = RHI::FilterMode::Linear;
+        shadowSamplerDesc.filterMag = RHI::FilterMode::Linear;
+        shadowSamplerDesc.filterMip = RHI::FilterMode::Point;
+        shadowSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        shadowSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        shadowSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_ShadowSampler = m_Device->CreateSampler(shadowSamplerDesc);
+        if (!m_ShadowSampler)
+        {
+            NORVES_LOG_ERROR("ShadowMapPass", "Failed to create shadow sampler");
+            return failInitialize();
         }
 
         // ========================================
@@ -112,7 +135,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_ShadowRenderPass)
         {
             NORVES_LOG_ERROR("ShadowMapPass", "Failed to create shadow render pass");
-            return false;
+            return failInitialize();
         }
 
         // ========================================
@@ -124,11 +147,18 @@ namespace NorvesLib::Core::Rendering
         fbDesc.width = m_Settings.Resolution;
         fbDesc.height = m_Settings.Resolution;
 
-        m_ShadowFramebuffer = m_Device->CreateFramebuffer(fbDesc);
-        if (!m_ShadowFramebuffer)
+        m_ShadowFramebuffers.clear();
+        m_ShadowFramebuffers.reserve(CSM_CASCADE_COUNT);
+        for (uint32_t cascadeIndex = 0; cascadeIndex < CSM_CASCADE_COUNT; ++cascadeIndex)
         {
-            NORVES_LOG_ERROR("ShadowMapPass", "Failed to create shadow framebuffer");
-            return false;
+            fbDesc.depthStencilArrayLayer = cascadeIndex;
+            RHI::FramebufferPtr framebuffer = m_Device->CreateFramebuffer(fbDesc);
+            if (!framebuffer)
+            {
+                NORVES_LOG_ERROR("ShadowMapPass", "Failed to create shadow framebuffer for cascade %u", cascadeIndex);
+                return failInitialize();
+            }
+            m_ShadowFramebuffers.push_back(framebuffer);
         }
 
         // ========================================
@@ -137,7 +167,7 @@ namespace NorvesLib::Core::Rendering
         {
             // UBO: lightView(64) + lightProjection(64) = 128 bytes
             constexpr uint32_t UBO_SIZE = 128;
-            constexpr uint32_t MAX_OBJECTS = 256;
+            constexpr uint32_t MAX_OBJECTS = 256 * CSM_CASCADE_COUNT;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -163,7 +193,7 @@ namespace NorvesLib::Core::Rendering
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
             {
                 NORVES_LOG_ERROR("ShadowMapPass", "Failed to initialize DynamicUniformAllocator");
-                return false;
+                return failInitialize();
             }
         }
 
@@ -200,7 +230,9 @@ namespace NorvesLib::Core::Rendering
 
         // ラスタライザ
         pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-        pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
+        // Shadow casters are allowed to face away from the light; the fixture and
+        // two-sided materials must still contribute to the depth map.
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
         pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
         pipelineDesc.rasterState.lineWidth = 1.0f;
 
@@ -241,7 +273,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_ShadowPipeline)
         {
             NORVES_LOG_ERROR("ShadowMapPass", "Failed to create shadow pipeline");
-            return false;
+            return failInitialize();
         }
 
         RHI::GraphicsPipelineDesc skinnedPipelineDesc = pipelineDesc;
@@ -266,7 +298,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_SkinnedShadowPipeline)
         {
             NORVES_LOG_ERROR("ShadowMapPass", "Failed to create skinned shadow pipeline");
-            return false;
+            return failInitialize();
         }
         m_bInitialized = true;
         NORVES_LOG_INFO("ShadowMapPass", "ShadowMapPass initialized");
@@ -275,16 +307,12 @@ namespace NorvesLib::Core::Rendering
 
     void ShadowMapPass::Shutdown()
     {
-        if (!m_bInitialized)
-        {
-            return;
-        }
-
         m_ShadowMapTexture.reset();
+        m_ShadowSampler.reset();
         m_ShadowMapHandle = {};
         m_ShadowRenderPass.reset();
         m_SkinnedShadowPipeline.reset();
-        m_ShadowFramebuffer.reset();
+        m_ShadowFramebuffers.clear();
         m_SkinnedShadowVertexShader.reset();
         m_ShadowPipeline.reset();
         m_ShadowVertexShader.reset();
@@ -306,7 +334,9 @@ namespace NorvesLib::Core::Rendering
     void ShadowMapPass::Declare(RenderGraphBuilder &builder)
     {
         m_ShadowMapHandle = {};
-        if (m_ShadowMapTexture)
+        if (m_bInitialized &&
+            m_ShadowMapTexture &&
+            m_ShadowFramebuffers.size() == CSM_CASCADE_COUNT)
         {
             m_ShadowMapHandle = builder.ImportTexture(m_ShadowMapTexture,
                                                       RHI::ResourceState::DepthWrite,
@@ -337,7 +367,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!m_ShadowRenderPass || !m_ShadowFramebuffer ||
+        if (!m_ShadowRenderPass ||
+            m_ShadowFramebuffers.size() != CSM_CASCADE_COUNT ||
             !m_ShadowPipeline || !m_SkinnedShadowPipeline)
         {
             NORVES_LOG_WARNING("ShadowMapPass", "Shadow resources not ready, skipping");
@@ -345,32 +376,78 @@ namespace NorvesLib::Core::Rendering
         }
 
         context.ActiveShadowMapSettings = &m_Settings;
-        const DirectionalShadowMatrixSettings shadowSettings = MakeDirectionalShadowMatrixSettings(m_Settings);
-        const DirectionalShadowMatrixResult shadowMatrices =
-            BuildFittedDirectionalShadowLightMatrices(context.SnapshotLightProxies,
-                                                     context.SnapshotMeshProxies,
-                                                     context.SnapshotSkinnedMeshProxies,
-                                                     context.SnapshotMegaGeometryProxies,
-                                                     shadowSettings);
+        CascadedShadowMatrixSettings cascadedSettings =
+            MakeDefaultCascadedShadowMatrixSettings();
+        cascadedSettings.ShadowMapResolution = m_Settings.Resolution;
+        cascadedSettings.Directional = MakeDirectionalShadowMatrixSettings(m_Settings);
+        // カスケードの視錐台の切片より光源側の遮蔽物もnear面で切り取らないよう、影を落とす
+        // 物体の境界球を光源側の深度範囲に含める。
+        Container::VariableArray<BoundingSphere> casterBounds;
+        CollectDirectionalShadowCasterBounds(context.SnapshotMeshProxies,
+                                             context.SnapshotSkinnedMeshProxies,
+                                             context.SnapshotMegaGeometryProxies,
+                                             casterBounds);
+        const CascadedShadowMatrixResult cascadedShadowMatrices =
+            BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
+                                             context.GetActiveCamera(),
+                                             cascadedSettings,
+                                             &casterBounds);
 
-        Math::Matrix4x4 lightProjMat =
-            context.Device->AdjustProjectionForClipSpace(shadowMatrices.Projection, false);
-
-        // ライトビュー・プロジェクションをGPU用データに変換
-        float lightViewData[16];
-        float lightProjData[16];
-        CopyShadowMatrixToShaderData(shadowMatrices.View, lightViewData);
-        CopyShadowMatrixToShaderData(lightProjMat, lightProjData);
+        // 各カスケードのライトビュー・プロジェクションをGPU用データへ変換する。
+        float lightViewData[PhysicalLightingShadowCascadeCount][16] = {};
+        float lightProjData[PhysicalLightingShadowCascadeCount][16] = {};
+        float splitDistances[PhysicalLightingShadowSplitCount] = {};
+        for (uint32_t cascadeIndex = 0;
+             cascadeIndex < PhysicalLightingShadowCascadeCount;
+             ++cascadeIndex)
+        {
+            if (cascadedShadowMatrices.bEnabled)
+            {
+                const Math::Matrix4x4 lightProjMat =
+                    context.Device->AdjustProjectionForClipSpace(
+                        cascadedShadowMatrices.Cascades[cascadeIndex].Projection,
+                        false);
+                CopyShadowMatrixToShaderData(
+                    cascadedShadowMatrices.Cascades[cascadeIndex].View,
+                    lightViewData[cascadeIndex]);
+                CopyShadowMatrixToShaderData(lightProjMat, lightProjData[cascadeIndex]);
+            }
+            else
+            {
+                CopyIdentityShadowMatricesToShaderData(
+                    lightViewData[cascadeIndex],
+                    lightProjData[cascadeIndex]);
+            }
+        }
+        if (cascadedShadowMatrices.bEnabled)
+        {
+            for (uint32_t splitIndex = 0;
+                 splitIndex < PhysicalLightingShadowSplitCount;
+                 ++splitIndex)
+            {
+                splitDistances[splitIndex] = cascadedShadowMatrices.SplitDistances[splitIndex];
+            }
+        }
+        context.PhysicalLighting.PublishCascadedShadow(
+            &lightViewData[0][0],
+            &lightProjData[0][0],
+            splitDistances,
+            cascadedShadowMatrices.bEnabled ? cascadedShadowMatrices.CascadeCount : 0u,
+            cascadedShadowMatrices.LightId,
+            cascadedShadowMatrices.bEnabled);
+        // R1の単一行列利用者にはcascade 0を公開し、P6移行まで互換性を保つ。
+        context.PhysicalLighting.PublishDirectionalShadow(
+            lightViewData[0],
+            lightProjData[0],
+            cascadedShadowMatrices.LightId,
+            cascadedShadowMatrices.bEnabled,
+            m_ShadowMapTexture,
+            m_ShadowSampler);
 
         // SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ公開する。
         if (m_bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("ShadowMap", m_ShadowMapTexture);
-        }
-
-        if (!shadowMatrices.bEnabled)
-        {
-            return;
         }
 
         RHI::Viewport viewport;
@@ -392,106 +469,119 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         const DrawCommandView drawCommands = context.GetActiveDrawCommands();
         auto *meshes = context.Resources.Meshes;
-        if (m_SceneRenderer && (meshes || context.SkinnedMeshes))
+        const bool bCanBuildShadowCommands =
+            cascadedShadowMatrices.bEnabled &&
+            m_SceneRenderer &&
+            (meshes || context.SkinnedMeshes) &&
+            !drawCommands.empty();
+
+        const uint64_t instanceDataSize64 = context.InstanceDataBuffer
+                                                ? context.InstanceDataBuffer->GetSize()
+                                                : 0;
+        const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
+                                              ? 0xFFFFFFFFu
+                                              : static_cast<uint32_t>(instanceDataSize64);
+
+        // UBOデータ構造体（shadow.vertのShadowMVPに対応）
+        struct ShadowPerObjectUBO
         {
-            if (drawCommands.empty())
-            {
-                return;
-            }
+            float lightView[16];
+            float lightProjection[16];
+        };
 
-            const uint64_t instanceDataSize64 = context.InstanceDataBuffer
-                                                    ? context.InstanceDataBuffer->GetSize()
-                                                    : 0;
-
-            const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
-                                                  ? 0xFFFFFFFFu
-                                                  : static_cast<uint32_t>(instanceDataSize64);
-
-            // UBOデータ構造体（shadow.vertのShadowMVPに対応）
-            struct ShadowPerObjectUBO
-            {
-                float lightView[16];
-                float lightProjection[16];
-            };
-
-            // フレーム開始時にアロケータリセット
+        if (bCanBuildShadowCommands)
+        {
+            // 4つのFramebufferで同じキャスターを記録するため、カスケードごとに
+            // 別のUBOスロットを使用する。
             m_UniformAllocator.Reset();
+        }
 
+        for (uint32_t cascadeIndex = 0;
+             cascadeIndex < PhysicalLightingShadowCascadeCount;
+             ++cascadeIndex)
+        {
             auto shadowCommands = MakeShared<Container::VariableArray<DrawCommand>>();
-
-            // DrawCommand配列を取得し、影を落とすコマンドのみ描画
-            for (const auto &cmd : drawCommands)
+            if (bCanBuildShadowCommands)
             {
-                if (!cmd.Draw.bCastShadow)
+                // DrawCommand配列を取得し、影を落とすコマンドのみ描画
+                for (const auto &cmd : drawCommands)
                 {
-                    continue;
-                }
-
-                DrawCommand drawCommand = cmd;
-                const bool bSkinned = cmd.Draw.PayloadKind == DrawPayloadKind::Skinned;
-                if (bSkinned)
-                {
-                    if (!TryPrepareSkinnedCommand(context, cmd, drawCommand))
+                    if (!cmd.Draw.bCastShadow)
                     {
                         continue;
                     }
-                }
-                else if (!context.InstanceDataBuffer || instanceDataSize == 0)
-                {
-                    continue;
-                }
-                // UBOスロット確保
-                auto allocation = m_UniformAllocator.Allocate();
-                if (!allocation.UniformBuffer)
-                {
-                    NORVES_LOG_WARNING("ShadowMapPass", "UBO allocation failed, skipping remaining objects");
-                    break;
-                }
 
-                // UBOデータ構築
-                ShadowPerObjectUBO uboData;
-                std::memcpy(uboData.lightView, lightViewData, sizeof(lightViewData));
-                std::memcpy(uboData.lightProjection, lightProjData, sizeof(lightProjData));
+                    DrawCommand drawCommand = cmd;
+                    const bool bSkinned = cmd.Draw.PayloadKind == DrawPayloadKind::Skinned;
+                    if (bSkinned)
+                    {
+                        if (!TryPrepareSkinnedCommand(context, cmd, drawCommand))
+                        {
+                            continue;
+                        }
+                    }
+                    else if (!context.InstanceDataBuffer || instanceDataSize == 0)
+                    {
+                        continue;
+                    }
+                    // UBOスロット確保
+                    auto allocation = m_UniformAllocator.Allocate();
+                    if (!allocation.UniformBuffer)
+                    {
+                        NORVES_LOG_WARNING("ShadowMapPass", "UBO allocation failed, skipping remaining objects");
+                        break;
+                    }
 
-                // UBO更新
-                allocation.UniformBuffer->Update(&uboData, sizeof(ShadowPerObjectUBO));
-                if (bSkinned)
-                {
-                    allocation.DescriptorSet->BindStorageBuffer(
-                        8,
-                        drawCommand.Skinned.Prepared.PaletteBuffer,
-                        0,
-                        static_cast<uint32_t>(drawCommand.Skinned.Prepared.PaletteBuffer->GetSize()));
-                    allocation.DescriptorSet->BindStorageBuffer(
-                        9,
-                        drawCommand.Skinned.Prepared.VertexBuffer,
-                        0,
-                        static_cast<uint32_t>(drawCommand.Skinned.Prepared.VertexBuffer->GetSize()));
-                }
-                else
-                {
-                    allocation.DescriptorSet->BindStorageBuffer(7,
-                                                                context.InstanceDataBuffer,
-                                                                0,
-                                                                instanceDataSize);
-                }
-                allocation.DescriptorSet->Update();
+                    // UBOデータ構築
+                    ShadowPerObjectUBO uboData;
+                    std::memcpy(uboData.lightView,
+                                lightViewData[cascadeIndex],
+                                sizeof(uboData.lightView));
+                    std::memcpy(uboData.lightProjection,
+                                lightProjData[cascadeIndex],
+                                sizeof(uboData.lightProjection));
 
-                if (!bSkinned)
-                {
-                    drawCommand.Pipeline = m_ShadowPipeline;
+                    // UBO更新
+                    allocation.UniformBuffer->Update(&uboData, sizeof(ShadowPerObjectUBO));
+                    if (bSkinned)
+                    {
+                        allocation.DescriptorSet->BindStorageBuffer(
+                            8,
+                            drawCommand.Skinned.Prepared.PaletteBuffer,
+                            0,
+                            static_cast<uint32_t>(drawCommand.Skinned.Prepared.PaletteBuffer->GetSize()));
+                        allocation.DescriptorSet->BindStorageBuffer(
+                            9,
+                            drawCommand.Skinned.Prepared.VertexBuffer,
+                            0,
+                            static_cast<uint32_t>(drawCommand.Skinned.Prepared.VertexBuffer->GetSize()));
+                    }
+                    else
+                    {
+                        allocation.DescriptorSet->BindStorageBuffer(7,
+                                                                    context.InstanceDataBuffer,
+                                                                    0,
+                                                                    instanceDataSize);
+                    }
+                    allocation.DescriptorSet->Update();
+
+                    if (!bSkinned)
+                    {
+                        drawCommand.Pipeline = m_ShadowPipeline;
+                    }
+                    drawCommand.DescriptorSet = allocation.DescriptorSet;
+                    drawCommand.DescriptorSetSlot = 0;
+                    shadowCommands->push_back(drawCommand);
                 }
-                drawCommand.DescriptorSet = allocation.DescriptorSet;
-                drawCommand.DescriptorSetSlot = 0;
-                shadowCommands->push_back(drawCommand);
             }
 
-            context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_ShadowRenderPass,
-                                                                         m_ShadowFramebuffer,
-                                                                         shadowCommands,
-                                                                         viewport,
-                                                                         scissor,
-                                                                         meshes));
+            context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(
+                m_ShadowRenderPass,
+                m_ShadowFramebuffers[cascadeIndex],
+                shadowCommands,
+                viewport,
+                scissor,
+                meshes));
         }
     }
 

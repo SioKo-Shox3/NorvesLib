@@ -1,8 +1,13 @@
 ﻿#include "Rendering/PresentationComposer.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/FramePacket.h"
+#include "Rendering/IViewPass.h"
+#include "Rendering/RenderFrameExecutor.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/View.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -13,19 +18,58 @@
 #include "RHI/ISampler.h"
 #include "RHI/ITexture.h"
 #include <cassert>
+#include <cmath>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 #include <iostream>
 
 using namespace NorvesLib::Core::Rendering;
+namespace Container = NorvesLib::Core::Container;
 namespace RHI = NorvesLib::RHI;
 
 namespace
 {
+    void ConfigureAssertOutput()
+    {
+#ifdef _MSC_VER
+        _set_error_mode(_OUT_TO_STDERR);
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+    }
+
+    class EmptyGraphViewPass final : public IViewPass, public IRenderGraphPass
+    {
+    public:
+        const char* GetName() const override { return "EmptyGraphViewPass"; }
+
+        bool Initialize(ViewRenderContext& context) override
+        {
+            (void)context;
+            m_bInitialized = true;
+            return true;
+        }
+
+        void Shutdown() override { m_bInitialized = false; }
+        void Setup(ViewRenderContext& context) override { (void)context; }
+        void Execute(ViewRenderContext& context) override { (void)context; }
+        void Declare(RenderGraphBuilder& builder) override { (void)builder; }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+    };
+
     class FakeTexture final : public RHI::ITexture
     {
     public:
-        explicit FakeTexture(const char* name)
+        explicit FakeTexture(const char* name,
+                             RHI::Format format = RHI::Format::R8G8B8A8_UNORM)
         {
-            m_Desc = RHI::TextureDesc::RenderTarget(64, 32, RHI::Format::R8G8B8A8_UNORM, name);
+            m_Desc = RHI::TextureDesc::RenderTarget(64, 32, format, name);
         }
 
         uint32_t GetWidth() const override { return m_Desc.Width; }
@@ -443,10 +487,98 @@ namespace
         result.TextureOutputs[name] = output;
     }
 
+    struct PresentationLinearInputNumericRow
+    {
+        float HardwareSrgbShaderInput = 0.0f;
+        float UnormShaderInputBeforeOetf = 0.0f;
+        float UnormShaderOetfOutput = 0.0f;
+    };
+
+    PresentationLinearInputNumericRow EvaluatePresentationLinearInputNumericRow()
+    {
+        const float linearInput = 0.5f;
+        const float shaderOetfOutput =
+            1.055f * std::pow(linearInput, 1.0f / 2.4f) - 0.055f;
+        return {linearInput, linearInput, shaderOetfOutput};
+    }
+
+    void TestExecutorSkipsEmptyComposer()
+    {
+        ComposerFixture fixture;
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        graph.BeginFrame(0);
+
+        auto view = Container::MakeShared<View>();
+        ViewSettings settings;
+        assert(view->Initialize(settings));
+        view->AddPass(Container::MakeUnique<EmptyGraphViewPass>());
+
+        Container::VariableArray<Container::TSharedPtr<View>> views;
+        views.push_back(view);
+
+        FramePacket packet;
+        packet.FrameNumber = 1;
+        ViewRenderPlan viewPlan;
+        viewPlan.ViewId = 0;
+        viewPlan.ViewType = static_cast<uint8_t>(ViewType::Scene);
+        ViewportRenderPlan viewportPlan;
+        viewportPlan.ViewId = 0;
+        viewportPlan.RenderWidth = 64;
+        viewportPlan.RenderHeight = 32;
+        viewportPlan.PixelRect.Width = 64.0f;
+        viewportPlan.PixelRect.Height = 32.0f;
+        viewportPlan.Scissor.Right = 64;
+        viewportPlan.Scissor.Bottom = 32;
+        viewPlan.Viewports.push_back(viewportPlan);
+        packet.Views.push_back(viewPlan);
+
+        fixture.Context.Graph = &graph;
+        fixture.Context.CommandList = &fixture.CommandList;
+        fixture.Context.PendingFrameCommands = nullptr;
+        fixture.Context.Renderer = &fixture.Renderer;
+        fixture.Context.RenderWidth = 64;
+        fixture.Context.RenderHeight = 32;
+        fixture.Context.ScreenWidth = 64;
+        fixture.Context.ScreenHeight = 32;
+
+        PresentationComposeRequest presentationRequest;
+        presentationRequest.Context = &fixture.Context;
+        presentationRequest.Renderer = &fixture.Renderer;
+        presentationRequest.CommandList = &fixture.CommandList;
+        presentationRequest.ClearRenderPass = fixture.RenderPass;
+        presentationRequest.LoadRenderPass = fixture.RenderPass;
+        presentationRequest.ClearFramebuffer = fixture.Framebuffer;
+        presentationRequest.LoadFramebuffer = fixture.Framebuffer;
+        presentationRequest.BlitPipeline = fixture.BlitPipeline;
+        presentationRequest.BlitDescriptorSet = fixture.BlitDescriptorSet;
+        presentationRequest.BlitSampler = fixture.BlitSampler;
+
+        RenderFrameExecutionRequest executionRequest;
+        executionRequest.Packet = &packet;
+        executionRequest.Views = &views;
+        executionRequest.FallbackView = view.get();
+        executionRequest.Context = &fixture.Context;
+        executionRequest.Renderer = &fixture.Renderer;
+        executionRequest.CommandList = &fixture.CommandList;
+        executionRequest.Presentation = &fixture.Composer;
+        executionRequest.PresentationRequest = presentationRequest;
+
+        RenderFrameExecutor executor;
+        const RenderFrameExecutionResult result = executor.Execute(executionRequest);
+
+        assert(result.bRenderedAnyViewport);
+        assert(result.RenderedViewportCount == 1);
+        assert(result.PresentationBlitCount == 0);
+        assert(!result.CaptureSources.PresentationColor.Texture);
+        std::cout << "TestExecutorSkipsEmptyComposer passed\n";
+    }
+
     void TestGraphPresentationColorOverridesRegistry()
     {
         ComposerFixture fixture;
-        RHI::TexturePtr graphTexture = RHI::MakeShared<FakeTexture>("GraphPresentationColor");
+        RHI::TexturePtr graphTexture =
+            RHI::MakeShared<FakeTexture>("GraphPresentationColor", RHI::Format::R8G8B8A8_SRGB);
         RHI::TexturePtr registryTexture = RHI::MakeShared<FakeTexture>("RegistryPresentationColor");
         fixture.SharedResources.RegisterTexturePtr(RenderGraphResourceNames::PresentationColor, registryTexture);
 
@@ -464,6 +596,20 @@ namespace
         assert(source.RestoreState == RHI::ResourceState::ShaderResource);
         assert(fixture.CommandList.SetDescriptorSetCount == 1);
         assert(fixture.CommandList.DrawCallCount == 1);
+
+        const auto numericRow = EvaluatePresentationLinearInputNumericRow();
+        assert(source.Texture->GetFormat() == RHI::Format::R8G8B8A8_SRGB);
+        assert(RHI::GetPresentationEncodePath(RHI::Format::R8G8B8A8_SRGB) ==
+               RHI::PresentationEncodePath::HardwareSRGB);
+        assert(RHI::GetPresentationEncodePath(RHI::Format::R8G8B8A8_UNORM) ==
+               RHI::PresentationEncodePath::ShaderOETF);
+        assert(RHI::DescribePresentationSurface(RHI::Format::R8G8B8A8_SRGB).ColorSpace ==
+               RHI::PresentationColorSpace::Rec709D65);
+        assert(RHI::DescribePresentationSurface(RHI::Format::R8G8B8A8_SRGB).Transfer ==
+               RHI::PresentationTransfer::SRGB);
+        assert(numericRow.HardwareSrgbShaderInput == 0.5f);
+        assert(numericRow.UnormShaderInputBeforeOetf == 0.5f);
+        assert(std::abs(numericRow.UnormShaderOetfOutput - 0.73535698f) < 1.0e-6f);
         std::cout << "TestGraphPresentationColorOverridesRegistry passed\n";
     }
 
@@ -560,6 +706,7 @@ namespace
 
 int main()
 {
+    ConfigureAssertOutput();
     std::cout << "PresentationComposerTest start\n";
 
     TestGraphPresentationColorOverridesRegistry();
@@ -567,6 +714,7 @@ int main()
     TestNullGraphResultFallsBackToRegistryPresentation();
     TestFailedGraphResultFallsBackToRegistryPresentation();
     TestMissingGraphOutputsFallBackToRegistryPresentation();
+    TestExecutorSkipsEmptyComposer();
     TestMissingAllPresentationInputsUsesFullscreenFallback();
 
     std::cout << "PresentationComposerTest passed\n";

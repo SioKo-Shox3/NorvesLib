@@ -1,0 +1,520 @@
+﻿// 前フレームのDDGI照度をhit面へ一度だけ加え、probe別octahedral atlasを更新する。
+// 面の裏に当たったrayの割合が閾値を超えるprobe（壁の外や閉じた物体の内側）は無効とし、照度atlasの
+// alphaを0にする（RTXGIのprobe分類）。有効なprobeのalphaは1。
+// 照度atlasは2組のlayerを持つ。layer [0, probe数) は面の照度の全体（発光面の直接光 + 間接光）で、
+// LightingPassが読む。layer [probe数, 2×probe数) は間接光だけで、probe rayのhit面へ前フレームの照度を
+// 加える段が読む（hit面は発光面の直接光を自分で数えるため、全体を使うと直接光が二重になる）。
+// 発光面の直接光は、rayが発光面に当たった放射ではなく、probeから発光面の小片へ向けた影のrayで求める
+// （64本の固定rayでは小さな発光面に当たるrayが0〜2本になり、probeごとの照度が大きく揺れるため）。
+#version 460
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+#include "Common/RayTracingInstanceMask.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT sceneTopLevel;
+
+layout(set = 0, binding = 1, std140) uniform ProbeIrradianceUpdateParameters
+{
+    vec4 volumeOrigin;
+    vec4 probeSpacing;
+    uvec4 probeCounts;
+    uvec4 atlasInfo;
+    vec4 rayLimits;
+    uvec4 passInfo;
+} parameters;
+
+struct ProbeRayQueryResult
+{
+    float distance;
+    uint hit;
+    uint instanceCustomIndex;
+    uint primitiveIndex;
+    vec4 radiance;
+};
+
+struct ProbeRayInstanceData
+{
+    uint64_t vertexAddress;
+    uint64_t indexAddress;
+    vec4 baseColor;
+    vec4 emissiveChromaticityAndLuminance;
+    uvec4 geometry;
+    vec4 transform0;
+    vec4 transform1;
+    vec4 transform2;
+};
+
+layout(set = 0, binding = 2, std430) buffer ProbeRayQueryResults
+{
+    ProbeRayQueryResult values[];
+} results;
+
+layout(set = 0, binding = 3, std430) readonly buffer ProbeRayInstances
+{
+    ProbeRayInstanceData values[];
+} instances;
+
+layout(set = 0, binding = 4) uniform sampler2DArray previousIrradianceAtlas;
+layout(set = 0, binding = 5) uniform sampler2DArray previousDistanceAtlas;
+layout(set = 0, binding = 6, rgba16f) writeonly uniform image2DArray irradianceAtlas;
+layout(set = 0, binding = 7, rg16f) writeonly uniform image2DArray distanceAtlas;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer ProbeRayVertexData
+{
+    float values[];
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer ProbeRayIndexData
+{
+    uint values[];
+};
+
+const float GoldenAngleRadians = 2.39996322972865332;
+const float Pi = 3.14159265358979323846;
+// 距離のモーメントを集めるcosineの指数。64本の固定rayでは鋭くすると1本のrayの距離だけになり、面の角で
+// 可視の判定が途切れる。
+const float DistanceConeExponent = 8.0;
+// 角度重みが完全なゼロになる場合を避け、既存の一段加算契約を維持する最小床。
+const float WrapWeightFloor = 0.004;
+// probeでの発光面の直接光で三角形を分ける数（辺ごと）。小三角形はこの2乗個。
+const uint ProbeEmitterSubdivision = 4u;
+// 面の裏に当たったrayの割合がこれを超えるprobeを無効にする（RTXGIと同じ0.25）。
+const float BackfaceRatioThreshold = 0.25;
+// 面の裏に当たったrayの距離を縮める比。probeから見てその向きを近くで遮られたものとして扱う（RTXGIと同じ）。
+const float BackfaceDistanceScale = 0.2;
+// 動的な面光源更新を8 frame以内に追従させる履歴重み。
+const float AtlasHysteresis = 0.60;
+const uint InvalidHitAttribute = 0xFFFFFFFFu;
+
+float SignNotZero(float value)
+{
+    return value < 0.0 ? -1.0 : 1.0;
+}
+
+vec3 GetProbeRayDirection(uint directionIndex)
+{
+    float sampleValue = (float(directionIndex) + 0.5) / float(parameters.atlasInfo.w);
+    float z = 1.0 - 2.0 * sampleValue;
+    float radius = sqrt(max(0.0, 1.0 - z * z));
+    float angle = GoldenAngleRadians * float(directionIndex);
+    return vec3(radius * cos(angle), radius * sin(angle), z);
+}
+
+vec2 EncodeOctahedralDirection(vec3 direction)
+{
+    float denominator = abs(direction.x) + abs(direction.y) + abs(direction.z);
+    vec2 encoded = direction.xy / max(denominator, 1.0e-8);
+    if (direction.z < 0.0)
+    {
+        encoded = (1.0 - abs(encoded.yx)) * vec2(SignNotZero(encoded.x), SignNotZero(encoded.y));
+    }
+    return encoded * 0.5 + 0.5;
+}
+
+vec3 DecodeOctahedralDirection(vec2 uv)
+{
+    vec2 encoded = uv * 2.0 - 1.0;
+    vec3 direction = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
+    if (direction.z < 0.0)
+    {
+        vec2 folded = (1.0 - abs(direction.yx)) *
+                      vec2(SignNotZero(direction.x), SignNotZero(direction.y));
+        direction.xy = folded;
+    }
+    return normalize(direction);
+}
+
+vec2 AtlasUv(vec2 octahedralUv)
+{
+    vec2 pixelCenter = octahedralUv * float(parameters.atlasInfo.y) + 1.0;
+    return pixelCenter / float(parameters.atlasInfo.x);
+}
+
+bool TryGetInstanceData(uint customIndex, out ProbeRayInstanceData instanceData)
+{
+    uint low = 0u;
+    uint high = parameters.passInfo.w;
+    while (low < high)
+    {
+        uint middle = low + (high - low) / 2u;
+        uint candidateIndex = instances.values[middle].geometry.w;
+        if (candidateIndex < customIndex)
+        {
+            low = middle + 1u;
+        }
+        else
+        {
+            high = middle;
+        }
+    }
+
+    if (low >= parameters.passInfo.w || instances.values[low].geometry.w != customIndex)
+    {
+        return false;
+    }
+    instanceData = instances.values[low];
+    return true;
+}
+
+bool TryGetWorldTriangleNormal(uint primitiveIndex,
+                               ProbeRayInstanceData instanceData,
+                               rayQueryEXT query,
+                               out vec3 worldNormal)
+{
+    uint vertexStrideBytes = instanceData.geometry.x;
+    uint vertexCount = instanceData.geometry.y;
+    uint indexCount = instanceData.geometry.z;
+    if (vertexStrideBytes < 12u || (vertexStrideBytes & 3u) != 0u ||
+        primitiveIndex >= indexCount / 3u)
+    {
+        return false;
+    }
+
+    ProbeRayIndexData indexBuffer = ProbeRayIndexData(instanceData.indexAddress);
+    uint primitiveOffset = primitiveIndex * 3u;
+    uvec3 vertexIndices = uvec3(indexBuffer.values[primitiveOffset],
+                                indexBuffer.values[primitiveOffset + 1u],
+                                indexBuffer.values[primitiveOffset + 2u]);
+    if (vertexIndices.x >= vertexCount || vertexIndices.y >= vertexCount ||
+        vertexIndices.z >= vertexCount)
+    {
+        return false;
+    }
+
+    ProbeRayVertexData vertexBuffer = ProbeRayVertexData(instanceData.vertexAddress);
+    uint stride = vertexStrideBytes / 4u;
+    uint vertex0Offset = vertexIndices.x * stride;
+    uint vertex1Offset = vertexIndices.y * stride;
+    uint vertex2Offset = vertexIndices.z * stride;
+    vec3 vertex0 = vec3(vertexBuffer.values[vertex0Offset],
+                        vertexBuffer.values[vertex0Offset + 1u],
+                        vertexBuffer.values[vertex0Offset + 2u]);
+    vec3 vertex1 = vec3(vertexBuffer.values[vertex1Offset],
+                        vertexBuffer.values[vertex1Offset + 1u],
+                        vertexBuffer.values[vertex1Offset + 2u]);
+    vec3 vertex2 = vec3(vertexBuffer.values[vertex2Offset],
+                        vertexBuffer.values[vertex2Offset + 1u],
+                        vertexBuffer.values[vertex2Offset + 2u]);
+    vec3 objectNormal = cross(vertex1 - vertex0, vertex2 - vertex0);
+    float normalLengthSquared = dot(objectNormal, objectNormal);
+    if (isnan(normalLengthSquared) || isinf(normalLengthSquared) ||
+        normalLengthSquared <= 1.0e-12)
+    {
+        return false;
+    }
+
+    mat4x3 worldToObject = rayQueryGetIntersectionWorldToObjectEXT(query, true);
+    worldNormal = normalize(transpose(mat3(worldToObject)) * normalize(objectNormal));
+    return !any(isnan(worldNormal)) && !any(isinf(worldNormal));
+}
+
+#include "DDGI/ProbeEmitterSampling.glsl"
+
+// probeIndexの間接光だけの照度を置くlayer。
+uint GetIndirectLayer(uint probeIndex)
+{
+    return probeIndex + parameters.atlasInfo.z;
+}
+
+// rayが発光するinstanceに当たったときの放射（照度へ入れない分）。
+vec3 GetHitEmission(ProbeRayQueryResult ray)
+{
+    ProbeRayInstanceData instanceData;
+    if (ray.hit == 0u || !TryGetInstanceData(ray.instanceCustomIndex, instanceData) ||
+        instanceData.emissiveChromaticityAndLuminance.w <= 0.0)
+    {
+        return vec3(0.0);
+    }
+    return max(instanceData.emissiveChromaticityAndLuminance.rgb, vec3(0.0)) *
+           instanceData.emissiveChromaticityAndLuminance.a;
+}
+
+float SamplePreviousVisibility(uint probeIndex, vec3 probeToPoint, float pointDistance)
+{
+    vec2 octahedralUv = EncodeOctahedralDirection(normalize(probeToPoint));
+    vec2 atlasUv = AtlasUv(octahedralUv);
+    vec2 moments = textureLod(previousDistanceAtlas,
+                              vec3(atlasUv, float(probeIndex)),
+                              0.0).rg;
+    float meanDistance = max(moments.x, 0.0);
+    float variance = max(moments.y - meanDistance * meanDistance, 1.0e-4);
+    if (pointDistance <= meanDistance)
+    {
+        return 1.0;
+    }
+
+    float delta = pointDistance - meanDistance;
+    float chebyshev = variance / (variance + delta * delta);
+    chebyshev *= chebyshev * chebyshev;
+    return max(0.05, chebyshev);
+}
+
+vec3 SamplePreviousIrradiance(vec3 worldPosition, vec3 surfaceNormal, vec3 baseColor)
+{
+    vec3 gridMaximum = vec3(parameters.probeCounts.xyz - uvec3(1u));
+    vec3 gridPosition = clamp((worldPosition - parameters.volumeOrigin.xyz) /
+                              parameters.probeSpacing.xyz,
+                              vec3(0.0),
+                              gridMaximum);
+
+    ivec3 baseProbe = ivec3(floor(gridPosition));
+    vec3 alpha = gridPosition - vec3(baseProbe);
+    vec3 accumulatedIrradiance = vec3(0.0);
+    float accumulatedWeight = 0.0;
+    for (uint corner = 0u; corner < 8u; ++corner)
+    {
+        uvec3 offset = uvec3(corner & 1u, (corner >> 1u) & 1u, (corner >> 2u) & 1u);
+        uvec3 probeCoordinates = min(uvec3(baseProbe) + offset, parameters.probeCounts.xyz - uvec3(1u));
+        uint probeIndex = probeCoordinates.x +
+                          probeCoordinates.y * parameters.probeCounts.x +
+                          probeCoordinates.z * parameters.probeCounts.x * parameters.probeCounts.y;
+        vec2 irradianceUv = AtlasUv(EncodeOctahedralDirection(surfaceNormal));
+        vec4 probeSample = textureLod(previousIrradianceAtlas,
+                                      vec3(irradianceUv, float(GetIndirectLayer(probeIndex))),
+                                      0.0);
+        if (probeSample.a < 0.5)
+        {
+            continue;
+        }
+        vec3 trilinear = max(vec3(0.001), mix(vec3(1.0) - alpha, alpha, vec3(offset)));
+        float weight = trilinear.x * trilinear.y * trilinear.z;
+
+        vec3 probePosition = parameters.volumeOrigin.xyz +
+                             parameters.probeSpacing.xyz * vec3(probeCoordinates);
+        vec3 probeToPoint = worldPosition - probePosition;
+        float pointDistance = length(probeToPoint);
+        if (pointDistance <= 1.0e-6)
+        {
+            probeToPoint = surfaceNormal;
+            pointDistance = 0.0;
+        }
+        vec3 pointToProbeDirection = -normalize(probeToPoint);
+        float wrapShading = (dot(pointToProbeDirection, surfaceNormal) + 1.0) * 0.5;
+        weight *= wrapShading * wrapShading + WrapWeightFloor;
+        weight *= SamplePreviousVisibility(probeIndex, probeToPoint, pointDistance);
+
+        accumulatedIrradiance += probeSample.rgb * weight;
+        accumulatedWeight += weight;
+    }
+
+    if (accumulatedWeight <= 1.0e-6)
+    {
+        return vec3(0.0);
+    }
+    return max(baseColor, vec3(0.0)) *
+           (accumulatedIrradiance / accumulatedWeight) / Pi;
+}
+
+void AddPreviousIrradiance(uint rayIndex)
+{
+    if (parameters.passInfo.y == 0u || rayIndex >= parameters.passInfo.z)
+    {
+        return;
+    }
+
+    ProbeRayQueryResult result = results.values[rayIndex];
+    if (result.hit == 0u || result.radiance.a < 0.5 ||
+        result.instanceCustomIndex == InvalidHitAttribute ||
+        result.primitiveIndex == InvalidHitAttribute)
+    {
+        return;
+    }
+
+    uint directionIndex = rayIndex % parameters.atlasInfo.w;
+    uint probeIndex = rayIndex / parameters.atlasInfo.w;
+    uint probePlaneSize = parameters.probeCounts.x * parameters.probeCounts.y;
+    uvec3 probeCoordinates = uvec3(
+        probeIndex % parameters.probeCounts.x,
+        (probeIndex / parameters.probeCounts.x) % parameters.probeCounts.y,
+        probeIndex / probePlaneSize);
+    vec3 rayOrigin = parameters.volumeOrigin.xyz +
+                     parameters.probeSpacing.xyz * vec3(probeCoordinates);
+    vec3 rayDirection = GetProbeRayDirection(directionIndex);
+
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query,
+                          sceneTopLevel,
+                          gl_RayFlagsOpaqueEXT,
+                          RayTracingInstanceMaskShadowCaster,
+                          rayOrigin,
+                          parameters.rayLimits.x,
+                          rayDirection,
+                          parameters.rayLimits.y);
+    while (rayQueryProceedEXT(query))
+    {
+    }
+    if (rayQueryGetIntersectionTypeEXT(query, true) !=
+        gl_RayQueryCommittedIntersectionTriangleEXT)
+    {
+        return;
+    }
+
+    uint customIndex = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, true));
+    uint primitiveIndex = rayQueryGetIntersectionPrimitiveIndexEXT(query, true);
+    if (customIndex != result.instanceCustomIndex || primitiveIndex != result.primitiveIndex)
+    {
+        return;
+    }
+
+    ProbeRayInstanceData instanceData;
+    vec3 worldNormal;
+    if (!TryGetInstanceData(customIndex, instanceData) ||
+        !TryGetWorldTriangleNormal(primitiveIndex, instanceData, query, worldNormal))
+    {
+        return;
+    }
+    if (dot(worldNormal, rayDirection) > 0.0)
+    {
+        worldNormal = -worldNormal;
+    }
+
+    vec3 hitPosition = rayOrigin + rayDirection * result.distance;
+    vec3 biasedHitPosition = hitPosition + worldNormal * parameters.rayLimits.z;
+    vec3 indirectRadiance = SamplePreviousIrradiance(
+        biasedHitPosition, worldNormal, instanceData.baseColor.rgb);
+    results.values[rayIndex].radiance.rgb += indirectRadiance;
+}
+
+ivec2 GetInteriorTexel(ivec2 texel)
+{
+    int lastTexel = int(parameters.atlasInfo.x) - 1;
+    int interiorLast = int(parameters.atlasInfo.x) - 2;
+    bool horizontalBorder = texel.x == 0 || texel.x == lastTexel;
+    bool verticalBorder = texel.y == 0 || texel.y == lastTexel;
+    if (horizontalBorder && verticalBorder)
+    {
+        return ivec2(texel.x == 0 ? interiorLast : 1,
+                     texel.y == 0 ? interiorLast : 1);
+    }
+    if (verticalBorder)
+    {
+        return ivec2(lastTexel - texel.x, texel.y == 0 ? 1 : interiorLast);
+    }
+    if (horizontalBorder)
+    {
+        return ivec2(texel.x == 0 ? 1 : interiorLast, lastTexel - texel.y);
+    }
+    return texel;
+}
+
+void UpdateAtlasTexel(uint invocationIndex)
+{
+    uint atlasTexelCount = parameters.atlasInfo.x * parameters.atlasInfo.x;
+    uint probeIndex = invocationIndex / atlasTexelCount;
+    if (probeIndex >= parameters.atlasInfo.z)
+    {
+        return;
+    }
+
+    uint localIndex = invocationIndex % atlasTexelCount;
+    ivec2 outputTexel = ivec2(int(localIndex % parameters.atlasInfo.x),
+                              int(localIndex / parameters.atlasInfo.x));
+    ivec2 sampleTexel = GetInteriorTexel(outputTexel);
+    vec2 octahedralUv = (vec2(sampleTexel - ivec2(1)) + 0.5) /
+                        float(parameters.atlasInfo.y);
+    vec3 targetDirection = DecodeOctahedralDirection(octahedralUv);
+
+    vec3 irradianceSum = vec3(0.0);
+    float irradianceWeightSum = 0.0;
+    float distanceSum = 0.0;
+    float distanceSquaredSum = 0.0;
+    float distanceWeightSum = 0.0;
+    uint backfaceCount = 0u;
+    uint firstRay = probeIndex * parameters.atlasInfo.w;
+    for (uint rayOffset = 0u; rayOffset < parameters.atlasInfo.w; ++rayOffset)
+    {
+        ProbeRayQueryResult ray = results.values[firstRay + rayOffset];
+        bool bBackfaceHit = ray.hit != 0u && ray.radiance.a < 0.5;
+        backfaceCount += bBackfaceHit ? 1u : 0u;
+        vec3 rayDirection = GetProbeRayDirection(rayOffset);
+        float cosineWeight = max(dot(targetDirection, rayDirection), 0.0);
+        if (cosineWeight <= 0.0)
+        {
+            continue;
+        }
+
+        // 面の裏に当たったrayは照度に入れない。発光面の放射は直接光として別に数えるため除く。
+        if (!bBackfaceHit)
+        {
+            irradianceSum += max(ray.radiance.rgb - GetHitEmission(ray), vec3(0.0)) *
+                             cosineWeight;
+            irradianceWeightSum += cosineWeight;
+        }
+
+        float distanceWeight = pow(cosineWeight, DistanceConeExponent);
+        float sampleDistance = ray.hit != 0u
+            ? clamp(ray.distance, 0.0, parameters.rayLimits.w)
+            : parameters.rayLimits.w;
+        if (bBackfaceHit)
+        {
+            sampleDistance *= BackfaceDistanceScale;
+        }
+        distanceSum += sampleDistance * distanceWeight;
+        distanceSquaredSum += sampleDistance * sampleDistance * distanceWeight;
+        distanceWeightSum += distanceWeight;
+    }
+
+    bool bProbeActive = float(backfaceCount) <=
+                        BackfaceRatioThreshold * float(parameters.atlasInfo.w);
+    vec3 currentIndirect = Pi * irradianceSum / max(irradianceWeightSum, 1.0e-6);
+    vec3 currentIrradiance = currentIndirect;
+    if (bProbeActive)
+    {
+        uint probePlaneSize = parameters.probeCounts.x * parameters.probeCounts.y;
+        uvec3 probeCoordinates = uvec3(
+            probeIndex % parameters.probeCounts.x,
+            (probeIndex / parameters.probeCounts.x) % parameters.probeCounts.y,
+            probeIndex / probePlaneSize);
+        vec3 probePosition = parameters.volumeOrigin.xyz +
+                             parameters.probeSpacing.xyz * vec3(probeCoordinates);
+        currentIrradiance += ComputeEmitterIrradiance(probePosition,
+                                                      probePosition,
+                                                      targetDirection,
+                                                      InvalidHitAttribute,
+                                                      parameters.passInfo.w,
+                                                      ProbeEmitterSubdivision);
+    }
+    vec2 currentMoments = vec2(distanceSum, distanceSquaredSum) /
+                          max(distanceWeightSum, 1.0e-6);
+    vec3 blendedIrradiance = currentIrradiance;
+    vec3 blendedIndirect = currentIndirect;
+    vec2 blendedMoments = currentMoments;
+    if (parameters.passInfo.y != 0u)
+    {
+        ivec3 previousCoord = ivec3(sampleTexel, int(probeIndex));
+        ivec3 previousIndirectCoord = ivec3(sampleTexel, int(GetIndirectLayer(probeIndex)));
+        vec3 previousIrradiance = texelFetch(previousIrradianceAtlas, previousCoord, 0).rgb;
+        vec3 previousIndirect =
+            texelFetch(previousIrradianceAtlas, previousIndirectCoord, 0).rgb;
+        vec2 previousMoments = texelFetch(previousDistanceAtlas, previousCoord, 0).rg;
+        blendedIrradiance = mix(currentIrradiance, previousIrradiance, AtlasHysteresis);
+        blendedIndirect = mix(currentIndirect, previousIndirect, AtlasHysteresis);
+        blendedMoments = mix(currentMoments, previousMoments, AtlasHysteresis);
+    }
+
+    float probeState = bProbeActive ? 1.0 : 0.0;
+    imageStore(irradianceAtlas,
+               ivec3(outputTexel, int(probeIndex)),
+               vec4(max(blendedIrradiance, vec3(0.0)), probeState));
+    imageStore(irradianceAtlas,
+               ivec3(outputTexel, int(GetIndirectLayer(probeIndex))),
+               vec4(max(blendedIndirect, vec3(0.0)), probeState));
+    imageStore(distanceAtlas,
+               ivec3(outputTexel, int(probeIndex)),
+               vec4(max(blendedMoments, vec2(0.0)), 0.0, 1.0));
+}
+
+void main()
+{
+    uint invocationIndex = gl_GlobalInvocationID.x;
+    if (parameters.passInfo.x == 0u)
+    {
+        AddPreviousIrradiance(invocationIndex);
+        return;
+    }
+    UpdateAtlasTexel(invocationIndex);
+}

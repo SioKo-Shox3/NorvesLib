@@ -9,9 +9,12 @@
 
 namespace NorvesLib::RHI::Vulkan
 {
+    class VulkanAccelerationStructure;
+
 
     // グローバル名前空間から絶対パスで指定
     using ::NorvesLib::Core::Container::DynamicPointerCast;
+    using ::NorvesLib::Core::Container::FixedArray;
     using ::NorvesLib::Core::Container::MakeShared;
     using ::NorvesLib::Core::Container::StaticPointerCast;
     using ::NorvesLib::Core::Container::String;
@@ -19,6 +22,274 @@ namespace NorvesLib::RHI::Vulkan
     using ::NorvesLib::Core::Container::TWeakPtr;
     using ::NorvesLib::Core::Container::UnorderedMap;
     using ::NorvesLib::Core::Container::VariableArray;
+
+    namespace Detail
+    {
+        enum class GPUTimestampFrameState : uint8_t
+        {
+            Empty,
+            Recording,
+            Recorded,
+            Submitted,
+            Completed
+        };
+
+        struct GPUTimestampScopeRecord
+        {
+            String Name;
+            bool bClosed = false;
+            bool bLegacy = false;
+        };
+
+        struct GPUTimestampFrameBatch
+        {
+            GPUTimestampFrameState State = GPUTimestampFrameState::Empty;
+            uint64_t FrameNumber = 0u;
+            uint64_t SubmissionSerial = 0u;
+            uint32_t FrameSlotIndex = UINT32_MAX;
+            uint32_t ScopeCount = 0u;
+            uint32_t ClosedScopeCount = 0u;
+            bool bQueriesReset = false;
+            FixedArray<GPUTimestampScopeRecord, MaximumGPUTimestampScopesPerFrame> Scopes;
+        };
+
+        inline void ClearGPUTimestampFrameBatch(GPUTimestampFrameBatch& batch) noexcept
+        {
+            batch.State = GPUTimestampFrameState::Empty;
+            batch.FrameNumber = 0u;
+            batch.SubmissionSerial = 0u;
+            batch.FrameSlotIndex = UINT32_MAX;
+            batch.ScopeCount = 0u;
+            batch.ClosedScopeCount = 0u;
+            batch.bQueriesReset = false;
+            for (GPUTimestampScopeRecord& scope : batch.Scopes)
+            {
+                scope.Name.clear();
+                scope.bClosed = false;
+                scope.bLegacy = false;
+            }
+        }
+
+        inline bool TryBeginGPUTimestampFrame(GPUTimestampFrameBatch& batch,
+                                              uint64_t frameNumber,
+                                              bool bQueriesReset)
+        {
+            if (batch.State != GPUTimestampFrameState::Empty || !bQueriesReset)
+            {
+                return false;
+            }
+            batch.FrameNumber = frameNumber;
+            batch.SubmissionSerial = 0u;
+            batch.ScopeCount = 0u;
+            batch.ClosedScopeCount = 0u;
+            batch.FrameSlotIndex = UINT32_MAX;
+            batch.bQueriesReset = true;
+            batch.State = GPUTimestampFrameState::Recording;
+            return true;
+        }
+
+        inline bool TryBeginGPUTimestampScope(GPUTimestampFrameBatch& batch,
+                                              uint32_t frameSlotIndex,
+                                              const char* scopeName,
+                                              GPUTimestampScopeHandle& outHandle)
+        {
+            outHandle = {};
+            if (batch.State != GPUTimestampFrameState::Recording ||
+                !batch.bQueriesReset ||
+                batch.ScopeCount >= MaximumGPUTimestampScopesPerFrame)
+            {
+                return false;
+            }
+
+            const uint32_t scopeIndex = batch.ScopeCount++;
+            if (batch.FrameSlotIndex == UINT32_MAX)
+            {
+                batch.FrameSlotIndex = frameSlotIndex;
+            }
+            if (batch.FrameSlotIndex != frameSlotIndex)
+            {
+                --batch.ScopeCount;
+                return false;
+            }
+            GPUTimestampScopeRecord& scope = batch.Scopes[scopeIndex];
+            scope.Name = scopeName ? scopeName : "GPU Scope";
+            scope.bClosed = false;
+            scope.bLegacy = false;
+            outHandle.FrameSlotIndex = frameSlotIndex;
+            outHandle.ScopeIndex = scopeIndex;
+            outHandle.FrameNumber = batch.FrameNumber;
+            return true;
+        }
+
+        inline bool TryEndGPUTimestampScope(GPUTimestampFrameBatch& batch,
+                                            GPUTimestampScopeHandle handle)
+        {
+            if (batch.State != GPUTimestampFrameState::Recording ||
+                !handle.IsValid() ||
+                handle.FrameSlotIndex != batch.FrameSlotIndex ||
+                handle.FrameNumber != batch.FrameNumber ||
+                handle.ScopeIndex >= batch.ScopeCount)
+            {
+                return false;
+            }
+
+            GPUTimestampScopeRecord& scope = batch.Scopes[handle.ScopeIndex];
+            if (scope.bClosed)
+            {
+                return false;
+            }
+            scope.bClosed = true;
+            ++batch.ClosedScopeCount;
+            return true;
+        }
+
+        inline bool TryEndGPUTimestampFrame(GPUTimestampFrameBatch& batch)
+        {
+            if (batch.State != GPUTimestampFrameState::Recording ||
+                batch.ClosedScopeCount != batch.ScopeCount)
+            {
+                return false;
+            }
+            batch.State = GPUTimestampFrameState::Recorded;
+            return true;
+        }
+
+        inline bool TryCommitGPUTimestampSubmission(GPUTimestampFrameBatch& batch,
+                                                    uint64_t submissionSerial)
+        {
+            if (batch.State != GPUTimestampFrameState::Recorded || submissionSerial == 0u)
+            {
+                return false;
+            }
+            batch.SubmissionSerial = submissionSerial;
+            batch.State = GPUTimestampFrameState::Submitted;
+            return true;
+        }
+
+        inline bool TryNotifyGPUTimestampFrameCompleted(GPUTimestampFrameBatch& batch,
+                                                        uint64_t completedSubmissionSerial)
+        {
+            if (batch.State != GPUTimestampFrameState::Submitted ||
+                batch.SubmissionSerial == 0u ||
+                completedSubmissionSerial < batch.SubmissionSerial)
+            {
+                return false;
+            }
+            batch.State = GPUTimestampFrameState::Completed;
+            return true;
+        }
+
+        inline void AbortGPUTimestampFrameBatch(GPUTimestampFrameBatch& batch) noexcept
+        {
+            if (batch.State == GPUTimestampFrameState::Recording ||
+                batch.State == GPUTimestampFrameState::Recorded)
+            {
+                ClearGPUTimestampFrameBatch(batch);
+            }
+        }
+
+        inline uint64_t CalculateGPUTimestampTicks(uint64_t begin,
+                                                   uint64_t end,
+                                                   uint32_t validBits)
+        {
+            if (validBits == 0u || validBits > 64u)
+            {
+                return 0u;
+            }
+            const uint64_t mask = validBits == 64u
+                                      ? UINT64_MAX
+                                      : ((uint64_t{1} << validBits) - 1u);
+            return ((end & mask) - (begin & mask)) & mask;
+        }
+
+        inline bool ShouldCarryGPUTimestampBatch(vk::Result result,
+                                                 bool bAllQueriesAvailable)
+        {
+            return result == vk::Result::eNotReady ||
+                   (result == vk::Result::eSuccess && !bAllQueriesAvailable);
+        }
+
+        class GPUTimestampSubmissionGuard final
+        {
+        public:
+            GPUTimestampSubmissionGuard(ICommandList* commandList,
+                                        uint32_t frameSlotIndex) noexcept
+                : m_CommandList(commandList), m_FrameSlotIndex(frameSlotIndex)
+            {
+            }
+
+            ~GPUTimestampSubmissionGuard() noexcept
+            {
+                if (m_CommandList && m_bArmed)
+                {
+                    m_CommandList->AbortGPUTimestampFrame(m_FrameSlotIndex);
+                }
+            }
+
+            void Commit(uint64_t submissionSerial)
+            {
+                if (m_CommandList)
+                {
+                    m_CommandList->CommitGPUTimestampSubmission(
+                        m_FrameSlotIndex,
+                        submissionSerial);
+                }
+                m_bArmed = false;
+            }
+
+            GPUTimestampSubmissionGuard(const GPUTimestampSubmissionGuard&) = delete;
+            GPUTimestampSubmissionGuard& operator=(const GPUTimestampSubmissionGuard&) = delete;
+            GPUTimestampSubmissionGuard(GPUTimestampSubmissionGuard&&) = delete;
+            GPUTimestampSubmissionGuard& operator=(GPUTimestampSubmissionGuard&&) = delete;
+
+        private:
+            ICommandList* m_CommandList = nullptr;
+            uint32_t m_FrameSlotIndex = 0u;
+            bool m_bArmed = true;
+        };
+
+        enum class GPUTimestampSubmissionSequenceStatus : uint8_t
+        {
+            Success,
+            SerialAllocationFailed,
+            FenceResetFailed,
+            QueueSubmitFailed
+        };
+
+        template <typename AllocateSubmissionSerialCallable,
+                  typename ResetFenceCallable,
+                  typename QueueSubmitCallable>
+        GPUTimestampSubmissionSequenceStatus ExecuteGPUTimestampSubmissionSequence(
+            ICommandList* commandList,
+            uint32_t frameSlotIndex,
+            bool bResetFence,
+            AllocateSubmissionSerialCallable&& allocateSubmissionSerial,
+            ResetFenceCallable&& resetFence,
+            QueueSubmitCallable&& queueSubmit,
+            uint64_t& outSubmittedSerial)
+        {
+            outSubmittedSerial = 0u;
+            GPUTimestampSubmissionGuard guard(commandList, frameSlotIndex);
+
+            uint64_t submittedSerial = 0u;
+            if (!allocateSubmissionSerial(submittedSerial) || submittedSerial == 0u)
+            {
+                return GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed;
+            }
+            if (bResetFence && !resetFence())
+            {
+                return GPUTimestampSubmissionSequenceStatus::FenceResetFailed;
+            }
+            if (!queueSubmit())
+            {
+                return GPUTimestampSubmissionSequenceStatus::QueueSubmitFailed;
+            }
+
+            guard.Commit(submittedSerial);
+            outSubmittedSerial = submittedSerial;
+            return GPUTimestampSubmissionSequenceStatus::Success;
+        }
+    } // namespace Detail
 
     // Vulkanハンドル用カスタムハッシュ
     struct VkBufferHash
@@ -75,7 +346,9 @@ namespace NorvesLib::RHI::Vulkan
         vk::AccessFlags ResourceStateToAccessFlags(ResourceState state) const;
 
         // リソース状態からパイプラインステージフラグに変換
-        vk::PipelineStageFlags ResourceStateToPipelineStageFlags(ResourceState state) const;
+        vk::PipelineStageFlags ResourceStateToPipelineStageFlags(
+            ResourceState state,
+            bool bRayTracingPipelineEnabled) const;
 
         // リソース状態からイメージレイアウトに変換
         vk::ImageLayout ResourceStateToImageLayout(ResourceState state) const;
@@ -208,6 +481,19 @@ namespace NorvesLib::RHI::Vulkan
         void SetFrameIndex(uint32_t frameIndex) override;
         void End() override;
         bool SupportsGPUTimestamps() const override;
+        uint32_t GetMaximumGPUTimestampScopesPerFrame() const override;
+        void BeginGPUTimestampFrame(uint64_t frameNumber) override;
+        GPUTimestampScopeHandle BeginGPUTimestampScope(const char* scopeName) override;
+        void EndGPUTimestampScope(GPUTimestampScopeHandle handle) override;
+        void EndGPUTimestampFrame() override;
+        void CommitGPUTimestampSubmission(uint32_t frameSlotIndex,
+                                          uint64_t submissionSerial) override;
+        void AbortGPUTimestampFrame(uint32_t frameSlotIndex) noexcept override;
+        void NotifyGPUTimestampFrameSlotCompleted(
+            uint32_t frameSlotIndex,
+            uint64_t completedSubmissionSerial) override;
+        void ConsumeCompletedGPUTimestampResults(
+            VariableArray<GPUTimestampResult>& outResults) override;
         void BeginGPUTimestamp(const char* markerName = nullptr) override;
         void EndGPUTimestamp() override;
         float GetLastGPUTimestampDurationMs() const override;
@@ -242,6 +528,9 @@ namespace NorvesLib::RHI::Vulkan
                                       uint32_t maxDrawCount, uint32_t stride) override;
         void FillBuffer(BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value) override;
         void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) override;
+        bool BuildAccelerationStructure(const AccelerationStructureBuildDesc& desc) override;
+        bool UpdateAccelerationStructure(const AccelerationStructureBuildDesc& desc) override;
+        bool TraceRays(uint32_t width, uint32_t height, uint32_t depth) override;
 
         void CopyBuffer(BufferPtr src, BufferPtr dst, uint64_t size = 0,
                         uint64_t srcOffset = 0, uint64_t dstOffset = 0) override;
@@ -315,6 +604,25 @@ namespace NorvesLib::RHI::Vulkan
         void ResetResourceBarriers();
 
     private:
+        struct PendingAccelerationStructureBuild
+        {
+            TSharedPtr<VulkanAccelerationStructure> destination;
+            uint32_t instanceCount = 0;
+        };
+
+        struct FrameResourceLease
+        {
+            VariableArray<TSharedPtr<void>> temporaryResources;
+            VariableArray<PendingAccelerationStructureBuild> pendingAccelerationStructureBuilds;
+        };
+
+        bool RecordTopLevelAccelerationStructureBuild(
+            const AccelerationStructureBuildDesc& desc,
+            AccelerationStructureBuildMode mode);
+        vk::PipelineStageFlags ResolvePipelineStageFlags(ResourceState state) const;
+        uint32_t GetLatestBuiltInstanceCount(const VulkanAccelerationStructure& resource) const;
+        void CommitPendingAccelerationStructureBuilds(uint32_t frameSlotIndex);
+
         TSharedPtr<VulkanDevice> m_device;
         vk::CommandBuffer m_commandBuffer;                 ///< 現在のフレームのコマンドバッファ（m_commandBuffersの要素を参照）
         VariableArray<vk::CommandBuffer> m_commandBuffers; ///< フレームごとのコマンドバッファ
@@ -350,8 +658,8 @@ namespace NorvesLib::RHI::Vulkan
         // パイプラインステートキャッシュ
         PipelineStateCache m_pipelineStateCache;
 
-        // 一時リソース保存用（リソース解放を防ぐため）
-        VariableArray<TSharedPtr<void>> m_temporaryResources;
+        // フレームスロットのGPU処理が完了するまで一時リソースを保持する
+        FixedArray<FrameResourceLease, MAX_COMMAND_BUFFERS> m_frameResourceLeases = {};
 
         // ディスクリプタセット管理
         struct DescriptorSetInfo
@@ -377,15 +685,18 @@ namespace NorvesLib::RHI::Vulkan
 #if NORVES_ENABLE_STATS
         void CreateTimestampQueryPool();
         void DestroyTimestampQueryPool();
-        void ResolveGPUTimestampResult();
-        uint32_t GetTimestampQueryBaseIndex() const;
+        void ResolveGPUTimestampResultsForCurrentSlot();
+        void PrepareGPUTimestampSlotForRecording();
+        uint32_t GetTimestampQueryBaseIndex(uint32_t frameSlotIndex,
+                                            uint32_t scopeIndex = 0u) const;
 #endif
 
         // リソース参照の追加（リソース解放防止用）
         template <typename T>
         void AddTemporaryResource(TSharedPtr<T> resource)
         {
-            m_temporaryResources.push_back(StaticPointerCast<void>(resource));
+            m_frameResourceLeases[m_currentFrameIndex].temporaryResources.push_back(
+                StaticPointerCast<void>(resource));
         }
 
         // シェーダーステージをVkPipelineStageに変換
@@ -399,10 +710,18 @@ namespace NorvesLib::RHI::Vulkan
 #if NORVES_ENABLE_STATS
         vk::QueryPool m_timestampQueryPool;
         bool m_bTimestampSupported = false;
-        bool m_bTimestampQueryPending[MAX_COMMAND_BUFFERS] = {};
-        bool m_bTimestampQueryActive = false;
+        FixedArray<Detail::GPUTimestampFrameBatch, MAX_COMMAND_BUFFERS> m_TimestampFrameBatches;
+        VariableArray<GPUTimestampResult> m_CompletedGPUTimestampResults;
+        GPUTimestampScopeHandle m_LegacyGPUTimestampScope;
+        FixedArray<uint64_t, MAX_COMMAND_BUFFERS> m_DirectFrameSlotSubmissionSerials = {};
+        uint64_t m_DirectNextSubmissionSerial = 0u;
+        uint64_t m_InvalidGPUTimestampOperationCount = 0u;
+        uint64_t m_GPUTimestampResolveErrorCount = 0u;
+        bool m_bTimestampFrameActive = false;
+        bool m_bLegacyPrivateTimestampFrame = false;
         float m_lastGPUTimestampDurationMs = 0.0f;
         float m_timestampPeriodNs = 0.0f;
+        uint32_t m_TimestampValidBits = 0u;
 #endif
     };
 

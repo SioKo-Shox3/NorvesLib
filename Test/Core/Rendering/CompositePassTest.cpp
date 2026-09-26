@@ -15,6 +15,7 @@
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include <cassert>
+#include <cmath>
 #include <iostream>
 
 using namespace NorvesLib::Core::Rendering;
@@ -632,6 +633,26 @@ namespace
         assert(!bAttachment);
     }
 
+    struct NumericColor
+    {
+        float R = 0.0f;
+        float G = 0.0f;
+        float B = 0.0f;
+        float A = 0.0f;
+    };
+
+    NumericColor EvaluatePremultipliedHalfAlphaNumericRow()
+    {
+        const NumericColor premultipliedCanvas{0.4f, 0.2f, 0.1f, 0.5f};
+        const NumericColor scene{0.1f, 0.2f, 0.3f, 0.75f};
+        const float inverseCanvasAlpha = 1.0f - premultipliedCanvas.A;
+        return {
+            premultipliedCanvas.R + inverseCanvasAlpha * scene.R,
+            premultipliedCanvas.G + inverseCanvasAlpha * scene.G,
+            premultipliedCanvas.B + inverseCanvasAlpha * scene.B,
+            premultipliedCanvas.A + inverseCanvasAlpha * scene.A};
+    }
+
     void TestResourceNamesIncludeCanvasAndComposite()
     {
         assert(RenderGraphResourceNames::CanvasColor.IsValid());
@@ -743,6 +764,7 @@ namespace
         assert(outputTexture.get() != sceneTexture.get());
         assert(outputTexture->GetWidth() == sceneTexture->GetWidth());
         assert(outputTexture->GetHeight() == sceneTexture->GetHeight());
+        assert(outputTexture->GetFormat() == RHI::Format::R16G16B16A16_FLOAT);
 
         const CompositePassResult& passResult = pass.GetLastResult();
         assert(passResult.bPublishedComposite);
@@ -758,6 +780,17 @@ namespace
         assert(fixture.Device.CreateRenderPassCount == 1);
         assert(fixture.Device.CreateFramebufferCount == 1);
         assert(fixture.Device.CreateGraphicsPipelineCount == 1);
+        assert(fixture.Device.LastPipelineDesc.blendState.attachments.size() == 1);
+        assert(fixture.Device.LastPipelineDesc.blendState.attachments[0].srcColorBlendFactor ==
+               RHI::BlendFactor::One);
+        assert(fixture.Device.LastPipelineDesc.blendState.attachments[0].dstColorBlendFactor ==
+               RHI::BlendFactor::InvSrcAlpha);
+
+        const auto numericRow = EvaluatePremultipliedHalfAlphaNumericRow();
+        assert(std::abs(numericRow.R - 0.45f) < 1.0e-6f);
+        assert(std::abs(numericRow.G - 0.30f) < 1.0e-6f);
+        assert(std::abs(numericRow.B - 0.25f) < 1.0e-6f);
+        assert(std::abs(numericRow.A - 0.875f) < 1.0e-6f);
 
         auto fakeDescriptorSet = static_cast<FakeDescriptorSet*>(descriptorSet.get());
         assert(fakeDescriptorSet->SceneTexture.get() == sceneTexture.get());

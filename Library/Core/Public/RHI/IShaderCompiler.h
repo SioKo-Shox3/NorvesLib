@@ -50,7 +50,7 @@ namespace NorvesLib::RHI
         /**
          * @brief ソースコードからシェーダーをコンパイル
          * @param source シェーダーソースコード
-         * @param stage シェーダーステージ
+         * @param stage シェーダーステージ（RayGen/Miss/ClosestHit/AnyHit/Intersection/Callableを含む）
          * @param filename デバッグ用ファイル名
          * @param entryPoint エントリーポイント名
          * @return コンパイル結果
@@ -64,7 +64,7 @@ namespace NorvesLib::RHI
         /**
          * @brief ファイルからシェーダーを読み込みコンパイル
          * @param filePath シェーダーファイルパス
-         * @param stage シェーダーステージ
+         * @param stage シェーダーステージ（RayGen/Miss/ClosestHit/AnyHit/Intersection/Callableを含む）
          * @param entryPoint エントリーポイント名
          * @return コンパイル結果
          */

@@ -13,6 +13,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <vector>
 #if defined(_MSC_VER)
 #include <crtdbg.h>
@@ -273,6 +274,94 @@ namespace
         assert(!handle.IsValid());
         assert(device->CreatedBufferDescs.empty());
         assert(manager.GetResourceStats().BufferCount == 0);
+    }
+
+    struct InvalidMegaEmissiveRow
+    {
+        const char *Name;
+        float Red;
+        float Green;
+        float Blue;
+        float LuminanceNits;
+    };
+
+    const InvalidMegaEmissiveRow InvalidMegaEmissiveRows[] = {
+        {"nan rgb", std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f, 1.0f},
+        {"inf rgb", 0.0f, std::numeric_limits<float>::infinity(), 0.0f, 1.0f},
+        {"nan nits", 0.0f, 0.0f, 0.0f, std::numeric_limits<float>::quiet_NaN()},
+        {"inf nits", 0.0f, 0.0f, 0.0f, std::numeric_limits<float>::infinity()},
+        {"negative rgb", -0.25f, 0.0f, 0.0f, 1.0f},
+        {"negative nits", 0.25f, 0.25f, 0.25f, -1.0f},
+        {"positive nits with tiny Y", 0.000001f, 0.0f, 0.0f, 1.0f},
+        {"rgba16f product overflow", 1.0f, 0.0f, 0.0f, 20000.0f},
+    };
+
+    void SetInvalidMegaEmissive(MegaGeometry::MegaMeshCreateInfo &createInfo,
+                                const InvalidMegaEmissiveRow &row)
+    {
+        createInfo.Material.EmissiveColor[0] = row.Red;
+        createInfo.Material.EmissiveColor[1] = row.Green;
+        createInfo.Material.EmissiveColor[2] = row.Blue;
+        createInfo.Material.EmissiveLuminanceNits = row.LuminanceNits;
+    }
+
+    void TestMegaEmissiveCanonicalContractRejectsInvalidWithoutSideEffects()
+    {
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(manager.Initialize(device));
+
+        MeshFixture mesh("MegaEmissiveBaseline");
+        const auto zeroHandle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
+        assert(zeroHandle.IsValid());
+        const auto *zeroData = manager.MegaGeometry().GetMegaMeshGPUData(zeroHandle);
+        assert(zeroData != nullptr);
+        assert(zeroData->Material.EmissiveColor[0] == 0.0f);
+        assert(zeroData->Material.EmissiveColor[1] == 0.0f);
+        assert(zeroData->Material.EmissiveColor[2] == 0.0f);
+        assert(zeroData->Material.EmissiveLuminanceNits == 0.0f);
+
+        const ResourceStats statsBefore = manager.GetResourceStats();
+        const size_t bufferDescCountBefore = device->CreatedBufferDescs.size();
+        const size_t bufferCountBefore = device->CreatedBuffers.size();
+
+        for (const InvalidMegaEmissiveRow &row : InvalidMegaEmissiveRows)
+        {
+            MegaGeometry::MegaMeshCreateInfo invalid = mesh.CreateInfo;
+            SetInvalidMegaEmissive(invalid, row);
+
+            const auto rejectedHandle = manager.MegaGeometry().CreateMegaMesh(invalid);
+            assert(!rejectedHandle.IsValid());
+            assert(manager.MegaGeometry().GetMegaMeshGPUData(zeroHandle) == zeroData);
+            assert(device->CreatedBufferDescs.size() == bufferDescCountBefore);
+            assert(device->CreatedBuffers.size() == bufferCountBefore);
+
+            const ResourceStats statsAfter = manager.GetResourceStats();
+            assert(statsAfter.BufferCount == statsBefore.BufferCount);
+            assert(statsAfter.TextureCount == statsBefore.TextureCount);
+            assert(statsAfter.ShaderCount == statsBefore.ShaderCount);
+            assert(statsAfter.SamplerCount == statsBefore.SamplerCount);
+            assert(statsAfter.TotalBufferMemory == statsBefore.TotalBufferMemory);
+            assert(statsAfter.TotalTextureMemory == statsBefore.TotalTextureMemory);
+        }
+
+        MegaGeometry::MegaMeshCreateInfo positive = mesh.CreateInfo;
+        positive.Material.EmissiveColor[0] = 1.0f;
+        positive.Material.EmissiveColor[1] = 0.0f;
+        positive.Material.EmissiveColor[2] = 0.0f;
+        positive.Material.EmissiveLuminanceNits = 2.0f;
+        const auto positiveHandle = manager.MegaGeometry().CreateMegaMesh(positive);
+        assert(positiveHandle.IsValid());
+        assert(positiveHandle.Id == zeroHandle.Id + 1);
+
+        const auto *positiveData = manager.MegaGeometry().GetMegaMeshGPUData(positiveHandle);
+        assert(positiveData != nullptr);
+        const float expectedCanonicalRed = 1.0f / 0.2126f;
+        assert(std::isfinite(positiveData->Material.EmissiveColor[0]));
+        assert(std::abs(positiveData->Material.EmissiveColor[0] - expectedCanonicalRed) < 0.00001f);
+        assert(positiveData->Material.EmissiveColor[1] == 0.0f);
+        assert(positiveData->Material.EmissiveColor[2] == 0.0f);
+        assert(positiveData->Material.EmissiveLuminanceNits == 2.0f);
     }
 
     void TestSuccessfulNoLodUpload()
@@ -662,6 +751,7 @@ int main()
 
     TestCreateBeforeInitialize();
     TestInvalidCreateInfoCreatesNoBuffers();
+    TestMegaEmissiveCanonicalContractRejectsInvalidWithoutSideEffects();
     TestSuccessfulNoLodUpload();
     TestSharedHandleCounter();
     TestCreateFailureDoesNotRegister(1);

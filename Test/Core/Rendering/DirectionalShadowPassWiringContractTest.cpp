@@ -118,33 +118,33 @@ namespace
                           "pass does not call SceneView mega geometry proxy getters");
     }
 
-    void AssertFittedShadowMatrixCall(const std::string& source, const char* message)
+    void AssertCascadedShadowMatrixCall(const std::string& source, const char* message)
     {
         const std::string callBlock =
             ExtractBlock(source,
-                         "BuildFittedDirectionalShadowLightMatrices",
-                         "BuildFittedDirectionalShadowLightMatrices",
+                         "BuildCascadedShadowLightMatrices",
+                         "BuildCascadedShadowLightMatrices",
                          ");",
                          ");");
         ExpectContains(callBlock,
-                       "BuildFittedDirectionalShadowLightMatrices",
+                       "BuildCascadedShadowLightMatrices",
                        message);
         ExpectContains(callBlock,
                        "context.SnapshotLightProxies",
-                       "fitted shadow call uses snapshot light proxies");
+                       "cascaded shadow call uses snapshot light proxies");
         ExpectContains(callBlock,
-                       "context.SnapshotMeshProxies",
-                       "fitted shadow call uses snapshot mesh proxies");
-        ExpectContains(callBlock,
-                       "context.SnapshotMegaGeometryProxies",
-                       "fitted shadow call uses snapshot mega geometry proxies");
+                       "context.GetActiveCamera()",
+                       "cascaded shadow call uses the active camera snapshot");
     }
 
     void AssertClipSpaceShadowCopyContract(const std::string& source)
     {
         ExpectContains(source,
-                       "context.Device->AdjustProjectionForClipSpace(shadowMatrices.Projection, false)",
-                       "pass adjusts shadow projection for clip space with non-reversed depth");
+                       "context.Device->AdjustProjectionForClipSpace(",
+                       "pass adjusts shadow projection for clip space");
+        ExpectContains(source,
+                       "cascadedShadowMatrices.Cascades[cascadeIndex].Projection",
+                       "pass adjusts every cascade projection for clip space");
         ExpectContains(source,
                        "CopyShadowMatrixToShaderData(lightProjMat",
                        "pass copies adjusted shadow projection to shader data");
@@ -161,6 +161,30 @@ namespace
         ExpectContains(source,
                        "ActiveShadowMapSettings",
                        "ViewRenderContext tracks active ShadowMapPass settings");
+        ExpectContains(source,
+                       "struct PhysicalLightingResources",
+                       "ViewRenderContext owns the physical-lighting publication aggregate");
+        ExpectContains(source,
+                       "PhysicalLightingResources PhysicalLighting;",
+                       "ViewRenderContext exposes physical-lighting resources");
+        ExpectContains(source,
+                       "CascadedDirectionalShadowShaderValues",
+                       "ViewRenderContext exposes cascaded shadow shader values");
+        ExpectContains(source,
+                       "PhysicalLightingShadowCascadeCount = 4u",
+                       "ViewRenderContext fixes the four-cascade publication count");
+        ExpectContains(source,
+                       "void PublishCascadedShadow",
+                       "physical-lighting aggregate publishes cascaded shadow data");
+        ExpectContains(source,
+                       "void PublishDirectionalShadow",
+                       "physical-lighting aggregate publishes directional shadow data");
+        ExpectContains(source,
+                       "void PublishLighting",
+                       "physical-lighting aggregate publishes light and IBL data");
+        ExpectContains(source,
+                       "bool Matches(uint64_t frameNumber, uint32_t viewId, uint32_t viewportId)",
+                       "physical-lighting aggregate validates frame and viewport identity");
     }
 
     void AssertRenderingCoordinatorContract(const std::string& source)
@@ -188,34 +212,60 @@ namespace
     void AssertShadowMapPassContract(const std::string& source)
     {
         ExpectContains(source,
-                       "#include \"Rendering/DirectionalShadowLightMatrices.h\"",
-                       "ShadowMapPass includes DirectionalShadowLightMatrices helper");
+                       "#include \"Rendering/CascadedShadowLightMatrices.h\"",
+                       "ShadowMapPass includes the cascaded shadow helper");
         ExpectContains(source,
                        "context.ActiveShadowMapSettings = &m_Settings;",
                        "ShadowMapPass records active settings in ViewRenderContext");
         ExpectContains(source,
                        "MakeDirectionalShadowMatrixSettings(m_Settings)",
                        "ShadowMapPass converts its settings through helper");
-        AssertFittedShadowMatrixCall(source,
-                                     "ShadowMapPass builds fitted matrices from snapshot proxies and settings");
+        ExpectContains(source,
+                       "MakeDefaultCascadedShadowMatrixSettings()",
+                       "ShadowMapPass initializes the cascaded settings");
+        AssertCascadedShadowMatrixCall(source,
+                                       "ShadowMapPass builds four cascaded matrices from snapshots and camera");
+        ExpectContains(source,
+                       "CSM_CASCADE_COUNT",
+                       "ShadowMapPass keeps the fixed four-cascade count");
+        ExpectContains(source,
+                       "m_ShadowFramebuffers[cascadeIndex]",
+                       "ShadowMapPass selects the framebuffer for each cascade");
+        ExpectContains(source,
+                       "for (uint32_t cascadeIndex",
+                       "ShadowMapPass records each cascade independently");
         ExpectContains(source,
                        "CopyShadowMatrixToShaderData",
-                       "ShadowMapPass copies shadow matrices through helper");
+                       "ShadowMapPass copies cascaded matrices through helper");
+        ExpectContains(source,
+                       "context.PhysicalLighting.PublishCascadedShadow",
+                       "ShadowMapPass publishes all cascaded matrices");
+        ExpectContains(source,
+                       "context.PhysicalLighting.PublishDirectionalShadow",
+                       "ShadowMapPass preserves the single-shadow compatibility publication");
+        ExpectContains(source,
+                       "m_ShadowSampler",
+                       "ShadowMapPass publishes a shadow sampler");
         AssertClipSpaceShadowCopyContract(source);
         ExpectContains(source,
                        "RegisterTexturePtr(\"ShadowMap\", m_ShadowMapTexture)",
                        "ShadowMapPass preserves legacy ShadowMap bridge registration");
         ExpectContains(source,
-                       "if (!shadowMatrices.bEnabled)",
-                       "ShadowMapPass has disabled-shadow early return marker");
+                       "const bool bCanBuildShadowCommands =",
+                       "ShadowMapPass limits shadow command population to enabled shadows");
+        ExpectContains(source,
+                       "cascadedShadowMatrices.bEnabled &&",
+                       "ShadowMapPass gates command population on cascaded matrices");
+        ExpectContains(source,
+                       "context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass",
+                       "ShadowMapPass enqueues geometry passes to establish every layer layout");
         ExpectTextBefore(source,
-                         "RegisterTexturePtr(\"ShadowMap\", m_ShadowMapTexture)",
-                         "if (!shadowMatrices.bEnabled)",
-                         "ShadowMapPass registers legacy ShadowMap before disabled return");
-        ExpectTextBefore(source,
-                         "if (!shadowMatrices.bEnabled)",
-                         "FrameCommand::CreateGeometryPass",
-                         "ShadowMapPass disabled return precedes geometry enqueue");
+                         "const bool bCanBuildShadowCommands =",
+                         "context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass",
+                         "ShadowMapPass populates shadow commands before unconditionally enqueueing the pass");
+        ExpectNotContains(source,
+                          "if (!cascadedShadowMatrices.bEnabled)",
+                          "ShadowMapPass does not return before enqueueing the empty depth pass");
         ExpectContains(source,
                        "if (!cmd.Draw.bCastShadow)",
                        "ShadowMapPass keeps DrawCommand shadow-caster filtering");
@@ -227,43 +277,46 @@ namespace
 
     void AssertLightingPassContract(const std::string& source)
     {
+        ExpectNotContains(source,
+                          "#include \"Rendering/DirectionalShadowLightMatrices.h\"",
+                          "LightingPass does not recompute directional shadow matrices");
+        ExpectNotContains(source,
+                          "MakeDirectionalShadowMatrixSettings",
+                          "LightingPass does not call the directional shadow helper");
         ExpectContains(source,
-                       "#include \"Rendering/DirectionalShadowLightMatrices.h\"",
-                       "LightingPass includes DirectionalShadowLightMatrices helper");
+                       "context.PhysicalLighting.CascadedShadow.View",
+                       "LightingPass consumes the published cascaded shadow view matrices");
         ExpectContains(source,
-                       "context.ActiveShadowMapSettings",
-                       "LightingPass reads active ShadowMapPass settings");
+                       "context.PhysicalLighting.CascadedShadow.Projection",
+                       "LightingPass consumes the published cascaded shadow projection matrices");
         ExpectContains(source,
-                       "MakeDirectionalShadowMatrixSettings(*context.ActiveShadowMapSettings)",
-                       "LightingPass converts active ShadowMapPass settings through helper");
-        AssertFittedShadowMatrixCall(source,
-                                     "LightingPass builds fitted matrices from snapshot proxies and active/default settings");
+                       "context.PhysicalLighting.CascadedShadow.SplitDistances",
+                       "LightingPass consumes the published cascaded split distances");
         ExpectContains(source,
-                       "CopyIdentityShadowMatricesToShaderData(params.lightView, params.lightProjection)",
-                       "LightingPass writes identity matrices through helper on disabled path");
+                       "context.PhysicalLighting.PublishLighting(",
+                       "LightingPass publishes the light SSBO and IBL resources");
         ExpectContains(source,
-                       "CopyShadowMatrixToShaderData(shadowMatrices.View, params.lightView)",
-                       "LightingPass copies enabled shadow view through helper");
+                       "m_LightArrayBuffer",
+                       "LightingPass publishes the physical light SSBO");
         ExpectContains(source,
-                       "CopyShadowMatrixToShaderData(lightProjMat, params.lightProjection)",
-                       "LightingPass copies enabled shadow projection through helper");
-        AssertClipSpaceShadowCopyContract(source);
+                       "m_EnvironmentTexture",
+                       "LightingPass publishes environment radiance");
         ExpectContains(source,
-                       "params.bShadowEnabled = 1",
-                       "LightingPass enables shadow flag on enabled helper path");
+                       "m_DiffuseIrradianceTexture",
+                       "LightingPass publishes diffuse irradiance");
         ExpectContains(source,
-                       "params.bShadowEnabled = 0",
-                       "LightingPass disables shadow flag on disabled helper path");
-
-        const std::string shadowMatrixBlock =
-            ExtractBlock(source,
-                         "// シャドウマップ用ライトビュー・プロジェクション行列",
-                         "if (bShadowAvailable)",
-                         "// SceneViewのLightProxyからライト配列を構築",
-                         "uint32_t lightCount = 0;");
-        ExpectNotContains(shadowMatrixBlock,
-                          "-0.577f",
-                          "LightingPass shadow-matrix block no longer contains hardcoded direction");
+                       "m_PrefilteredSpecularTexture",
+                       "LightingPass publishes prefiltered specular radiance");
+        ExpectContains(source,
+                       "m_BrdfLutTexture",
+                       "LightingPass publishes the DFG LUT");
+        ExpectContains(source,
+                       "descriptorSet->BindStorageBuffer(5",
+                       "LightingPass binds the physical light SSBO at binding five");
+        ExpectTextBefore(source,
+                         "UpdateLightBuffer(context, false, false)",
+                         "CreateLightingDescriptorSet(initialDescriptorSet)",
+                         "initial light publication precedes the mandatory descriptor binding");
         AssertNoLiveSceneViewProxyReads(source);
     }
 } // namespace

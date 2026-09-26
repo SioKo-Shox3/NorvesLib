@@ -13,6 +13,9 @@
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/PathTracingPass.h"
+#include "Rendering/PostProcessStack.h"
+#include "Rendering/ToneMappingPass.h"
 #include "Resource/FontAtlas.h"
 #include "Module/ModuleRegistry.h"
 #include "RHI/RHIDeviceFactory.h"
@@ -21,6 +24,7 @@
 #include "Thread/JobSystem.h"
 #include "Scripting/ScriptRuntime.h"
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <limits>
 
@@ -233,6 +237,455 @@ namespace
         }
     }
 
+    // --renderer=raster|path-tracing。一致したがbMatchedだけ真で値が不正なら偽を返す。
+    bool TryParseRendererOption(const String& argument,
+                                NorvesLib::Core::Rendering::RenderingMainViewRenderer& outRenderer,
+                                bool& bMatched)
+    {
+        const String prefix = TEXT("--renderer=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("raster"))
+        {
+            outRenderer = NorvesLib::Core::Rendering::RenderingMainViewRenderer::Raster;
+            return true;
+        }
+        if (value == TEXT("path-tracing"))
+        {
+            outRenderer = NorvesLib::Core::Rendering::RenderingMainViewRenderer::PathTracing;
+            return true;
+        }
+        return false;
+    }
+
+    // --path-tracing-samples-per-frame=N（1〜1024）
+    bool TryParsePathTracingSamplesPerFrameOption(const String& argument, uint32_t& outSamples,
+                                                  bool& bMatched)
+    {
+        const String prefix = TEXT("--path-tracing-samples-per-frame=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value.empty() || value.size() > 4u)
+        {
+            return false;
+        }
+        uint32_t parsed = 0u;
+        for (const auto character : value)
+        {
+            if (character < TEXT('0') || character > TEXT('9'))
+            {
+                return false;
+            }
+            parsed = parsed * 10u + static_cast<uint32_t>(character - TEXT('0'));
+        }
+        if (parsed == 0u || parsed > 1024u)
+        {
+            return false;
+        }
+        outSamples = parsed;
+        return true;
+    }
+
+    // --path-tracing-transport=full|direct|single-diffuse-bounce|two-diffuse-bounces
+    bool TryParsePathTracingTransportOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::PathTracingTransportScope& outScope,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--path-tracing-transport=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("full"))
+        {
+            outScope = NorvesLib::Core::Rendering::PathTracingTransportScope::Full;
+            return true;
+        }
+        if (value == TEXT("direct"))
+        {
+            outScope = NorvesLib::Core::Rendering::PathTracingTransportScope::DirectOnly;
+            return true;
+        }
+        if (value == TEXT("single-diffuse-bounce"))
+        {
+            outScope = NorvesLib::Core::Rendering::PathTracingTransportScope::SingleDiffuseBounce;
+            return true;
+        }
+        if (value == TEXT("two-diffuse-bounces"))
+        {
+            outScope = NorvesLib::Core::Rendering::PathTracingTransportScope::TwoDiffuseBounces;
+            return true;
+        }
+        return false;
+    }
+
+    // --path-tracing-sample-batch=N（0〜255）
+    bool TryParsePathTracingSampleBatchOption(const String& argument, uint32_t& outBatch, bool& bMatched)
+    {
+        const String prefix = TEXT("--path-tracing-sample-batch=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value.empty() || value.size() > 3u)
+        {
+            return false;
+        }
+        uint32_t parsed = 0u;
+        for (const auto character : value)
+        {
+            if (character < TEXT('0') || character > TEXT('9'))
+            {
+                return false;
+            }
+            parsed = parsed * 10u + static_cast<uint32_t>(character - TEXT('0'));
+        }
+        if (parsed > 255u)
+        {
+            return false;
+        }
+        outBatch = parsed;
+        return true;
+    }
+
+    // --path-tracing-pixel-sampling=box|center
+    bool TryParsePathTracingPixelSamplingOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::PathTracingPixelSampling& outSampling,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--path-tracing-pixel-sampling=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("box"))
+        {
+            outSampling = NorvesLib::Core::Rendering::PathTracingPixelSampling::Box;
+            return true;
+        }
+        if (value == TEXT("center"))
+        {
+            outSampling = NorvesLib::Core::Rendering::PathTracingPixelSampling::Center;
+            return true;
+        }
+        return false;
+    }
+
+    // --path-tracing-debug-output=none|albedo|shading-normal|metallic-roughness|hit-distance|sun-visibility
+    bool TryParsePathTracingDebugOutputOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::PathTracingDebugOutput& outOutput,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--path-tracing-debug-output=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        using NorvesLib::Core::Rendering::PathTracingDebugOutput;
+        const String value = argument.substr(prefix.size());
+        const struct
+        {
+            const TCHAR* Name;
+            PathTracingDebugOutput Output;
+        } choices[] = {{TEXT("none"), PathTracingDebugOutput::None},
+                       {TEXT("albedo"), PathTracingDebugOutput::Albedo},
+                       {TEXT("shading-normal"), PathTracingDebugOutput::ShadingNormal},
+                       {TEXT("metallic-roughness"), PathTracingDebugOutput::MetallicRoughness},
+                       {TEXT("hit-distance"), PathTracingDebugOutput::HitDistance},
+                       {TEXT("sun-visibility"), PathTracingDebugOutput::SunVisibility}};
+        for (const auto& choice : choices)
+        {
+            if (value == choice.Name)
+            {
+                outOutput = choice.Output;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // --raster-direct-brdf=neural|analytic
+    bool TryParseRasterDirectBrdfOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::RasterDirectBrdf& outBrdf,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--raster-direct-brdf=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("neural"))
+        {
+            outBrdf = NorvesLib::Core::Rendering::RasterDirectBrdf::Neural;
+            return true;
+        }
+        if (value == TEXT("analytic"))
+        {
+            outBrdf = NorvesLib::Core::Rendering::RasterDirectBrdf::Analytic;
+            return true;
+        }
+        return false;
+    }
+
+    // --tone-map=aces|aces20-lut
+    bool TryParseToneMapOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::ToneMappingOperator& outOperator,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--tone-map=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("aces"))
+        {
+            outOperator = NorvesLib::Core::Rendering::ToneMappingOperator::ACES;
+            return true;
+        }
+        if (value == TEXT("aces20-lut"))
+        {
+            outOperator = NorvesLib::Core::Rendering::ToneMappingOperator::Aces20Lut;
+            return true;
+        }
+        return false;
+    }
+
+    // 非負の10進数（例 2.8）か分数（例 1/24）を読む。分母は正でなければならない。
+    bool TryParseNonNegativeRatio(const String& text, float& outValue)
+    {
+        double parts[2] = {0.0, 1.0};
+        uint32_t partIndex = 0u;
+        bool bDigits = false;
+        bool bDecimal = false;
+        double decimalScale = 1.0;
+        for (const auto character : text)
+        {
+            if (character >= TEXT('0') && character <= TEXT('9'))
+            {
+                const double digit = static_cast<double>(character - TEXT('0'));
+                if (bDecimal)
+                {
+                    decimalScale *= 0.1;
+                    parts[partIndex] += decimalScale * digit;
+                }
+                else
+                {
+                    parts[partIndex] = parts[partIndex] * 10.0 + digit;
+                }
+                bDigits = true;
+            }
+            else if (character == TEXT('.') && !bDecimal && bDigits)
+            {
+                bDecimal = true;
+            }
+            else if (character == TEXT('/') && partIndex == 0u && bDigits)
+            {
+                partIndex = 1u;
+                parts[1] = 0.0;
+                bDigits = false;
+                bDecimal = false;
+                decimalScale = 1.0;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        if (!bDigits || !(parts[1] > 0.0))
+        {
+            return false;
+        }
+        const double value = parts[0] / parts[1];
+        if (!std::isfinite(value) || value > static_cast<double>(std::numeric_limits<float>::max()))
+        {
+            return false;
+        }
+        outValue = static_cast<float>(value);
+        return true;
+    }
+
+    // --film-grain=強さ（sRGBの符号化値での標準偏差、0〜1。0でオフ）、--film-grain-seed=N（32 bit）
+    bool TryParseFilmGrainOption(const String& argument, float& outStrength, uint32_t& outSeed, bool& bMatched)
+    {
+        const String seedPrefix = TEXT("--film-grain-seed=");
+        if (argument.size() >= seedPrefix.size() && argument.substr(0, seedPrefix.size()) == seedPrefix)
+        {
+            bMatched = true;
+            const String value = argument.substr(seedPrefix.size());
+            if (value.empty() || value.size() > 10u)
+            {
+                return false;
+            }
+            uint64_t parsed = 0u;
+            for (const auto character : value)
+            {
+                if (character < TEXT('0') || character > TEXT('9'))
+                {
+                    return false;
+                }
+                parsed = parsed * 10u + static_cast<uint64_t>(character - TEXT('0'));
+            }
+            if (parsed > UINT32_MAX)
+            {
+                return false;
+            }
+            outSeed = static_cast<uint32_t>(parsed);
+            return true;
+        }
+        const String strengthPrefix = TEXT("--film-grain=");
+        bMatched = argument.size() >= strengthPrefix.size() &&
+                   argument.substr(0, strengthPrefix.size()) == strengthPrefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        float strength = 0.0f;
+        if (!TryParseNonNegativeRatio(argument.substr(strengthPrefix.size()), strength) || strength > 1.0f)
+        {
+            return false;
+        }
+        outStrength = strength;
+        return true;
+    }
+
+    // 連番の1フレームを描くPTの経路の引数。どれかを指定すると連番の経路を有効にする。
+    // --path-tracing-frame-duration=秒（正）、--path-tracing-shutter=秒（0以上）、
+    // --path-tracing-aperture=f値（正）、--path-tracing-focus-distance=m（0はピンホール）
+    bool TryParsePathTracingSequenceOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::PathTracingSequenceFrameSettings& settings,
+        bool& bMatched)
+    {
+        struct Choice
+        {
+            const TCHAR* Prefix;
+            float NorvesLib::Core::Rendering::PathTracingSequenceFrameSettings::*Field;
+            bool bAllowZero;
+        };
+        using NorvesLib::Core::Rendering::PathTracingSequenceFrameSettings;
+        const Choice choices[] = {
+            {TEXT("--path-tracing-frame-duration="), &PathTracingSequenceFrameSettings::FrameDuration, false},
+            {TEXT("--path-tracing-shutter="), &PathTracingSequenceFrameSettings::ShutterDuration, true},
+            {TEXT("--path-tracing-aperture="), &PathTracingSequenceFrameSettings::Aperture, false},
+            {TEXT("--path-tracing-focus-distance="), &PathTracingSequenceFrameSettings::FocusDistance, true}};
+        bMatched = false;
+        for (const Choice& choice : choices)
+        {
+            const String prefix = choice.Prefix;
+            if (argument.size() < prefix.size() || argument.substr(0, prefix.size()) != prefix)
+            {
+                continue;
+            }
+            bMatched = true;
+            float value = 0.0f;
+            if (!TryParseNonNegativeRatio(argument.substr(prefix.size()), value) ||
+                (!choice.bAllowZero && value <= 0.0f))
+            {
+                return false;
+            }
+            settings.*(choice.Field) = value;
+            settings.bEnabled = true;
+            return true;
+        }
+        return false;
+    }
+
+    // メインSceneViewのPathTracingPassへ連番の経路を設定する。
+    // 初期化中（最初のFramePacketがRenderThreadへ渡る前）にだけ呼ぶ。
+    bool ApplyMainViewPathTracingSequenceFrame(
+        NorvesLib::Core::Rendering::SceneView* sceneView,
+        const NorvesLib::Core::Rendering::PathTracingSequenceFrameSettings& settings)
+    {
+        if (!sceneView)
+        {
+            return false;
+        }
+        NorvesLib::Core::Rendering::IViewPass* pass = sceneView->FindPass("PathTracingPass");
+        if (!pass)
+        {
+            return false;
+        }
+        // GetName() が "PathTracingPass" を返すのは PathTracingPass だけ
+        static_cast<NorvesLib::Core::Rendering::PathTracingPass*>(pass)->SetSequenceFrame(settings);
+        return true;
+    }
+
+    // メインSceneViewのToneMappingPass。無ければnullptr。
+    NorvesLib::Core::Rendering::ToneMappingPass* FindMainViewToneMappingPass(
+        NorvesLib::Core::Rendering::SceneView* sceneView)
+    {
+        if (!sceneView)
+        {
+            return nullptr;
+        }
+        NorvesLib::Core::Rendering::PostProcessStack* postProcessStack = sceneView->GetPostProcessStack();
+        if (!postProcessStack)
+        {
+            return nullptr;
+        }
+        NorvesLib::Core::Rendering::IViewPass* pass = postProcessStack->GetPass("ToneMappingPass");
+        // GetName() が "ToneMappingPass" を返すのは ToneMappingPass だけ
+        return pass ? static_cast<NorvesLib::Core::Rendering::ToneMappingPass*>(pass) : nullptr;
+    }
+
+    // メインSceneViewのToneMappingPassへ演算子を設定する。
+    // 初期化中（最初のFramePacketがRenderThreadへ渡る前）にだけ呼ぶ。
+    bool ApplyMainViewToneMapOperator(NorvesLib::Core::Rendering::SceneView* sceneView,
+                                      NorvesLib::Core::Rendering::ToneMappingOperator toneMapOperator)
+    {
+        NorvesLib::Core::Rendering::ToneMappingPass* pass = FindMainViewToneMappingPass(sceneView);
+        if (!pass)
+        {
+            return false;
+        }
+        pass->SetOperator(toneMapOperator);
+        return true;
+    }
+
+    // メインSceneViewのToneMappingPassへフィルムグレインを設定する。初期化中にだけ呼ぶ。
+    bool ApplyMainViewFilmGrain(NorvesLib::Core::Rendering::SceneView* sceneView, float strength, uint32_t seed)
+    {
+        NorvesLib::Core::Rendering::ToneMappingPass* pass = FindMainViewToneMappingPass(sceneView);
+        if (!pass)
+        {
+            return false;
+        }
+        pass->SetFilmGrain(strength, seed);
+        return true;
+    }
+
     bool IsDisableBoardInstanceBatchingOption(const TCHAR* pText)
     {
         if (!pText)
@@ -337,6 +790,22 @@ namespace NorvesLib::Core::Engine
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
         bool bEnableCanvasView = false;
         bool bBoardInstanceBatchingEnabled = true;
+        Rendering::RenderingMainViewRenderer mainViewRenderer = Rendering::RenderingMainViewRenderer::Raster;
+        uint32_t pathTracingSamplesPerFrame = 1u;
+        Rendering::PathTracingTransportScope pathTracingTransport =
+            Rendering::PathTracingTransportScope::Full;
+        Rendering::PathTracingPixelSampling pathTracingPixelSampling =
+            Rendering::PathTracingPixelSampling::Box;
+        uint32_t pathTracingSampleBatch = 0u;
+        Rendering::PathTracingDebugOutput pathTracingDebugOutput =
+            Rendering::PathTracingDebugOutput::None;
+        Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Neural;
+        Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
+        bool bToneMapOperatorRequested = false;
+        float filmGrainStrength = 0.0f;
+        uint32_t filmGrainSeed = 0u;
+        bool bFilmGrainRequested = false;
+        Rendering::PathTracingSequenceFrameSettings pathTracingSequenceFrame;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -385,6 +854,126 @@ namespace NorvesLib::Core::Engine
             {
                 bBoardInstanceBatchingEnabled = false;
                 LOG_INFO("ApplicationProcessor runtime option board_instance_batching=false");
+            }
+
+            bool bMatchedRenderer = false;
+            if (TryParseRendererOption(args[i], mainViewRenderer, bMatchedRenderer))
+            {
+                LOG_INFO("ApplicationProcessor runtime option renderer=%s",
+                         mainViewRenderer == Rendering::RenderingMainViewRenderer::PathTracing
+                             ? "path-tracing" : "raster");
+            }
+            else if (bMatchedRenderer)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --renderer ignored: value must be 'raster' or 'path-tracing'");
+            }
+
+            bool bMatchedSamples = false;
+            if (TryParsePathTracingSamplesPerFrameOption(args[i], pathTracingSamplesPerFrame,
+                                                         bMatchedSamples))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_samples_per_frame=%u",
+                         pathTracingSamplesPerFrame);
+            }
+            else if (bMatchedSamples)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-samples-per-frame ignored: value must be 1-1024");
+            }
+
+            bool bMatchedTransport = false;
+            if (TryParsePathTracingTransportOption(args[i], pathTracingTransport, bMatchedTransport))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_transport=%u",
+                         static_cast<unsigned int>(pathTracingTransport));
+            }
+            else if (bMatchedTransport)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-transport ignored: value must be 'full', 'direct', 'single-diffuse-bounce' or 'two-diffuse-bounces'");
+            }
+
+            bool bMatchedSampleBatch = false;
+            if (TryParsePathTracingSampleBatchOption(args[i], pathTracingSampleBatch, bMatchedSampleBatch))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_sample_batch=%u",
+                         pathTracingSampleBatch);
+            }
+            else if (bMatchedSampleBatch)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-sample-batch ignored: value must be 0-255");
+            }
+
+            bool bMatchedPixelSampling = false;
+            if (TryParsePathTracingPixelSamplingOption(args[i], pathTracingPixelSampling,
+                                                       bMatchedPixelSampling))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_pixel_sampling=%u",
+                         static_cast<unsigned int>(pathTracingPixelSampling));
+            }
+            else if (bMatchedPixelSampling)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-pixel-sampling ignored: value must be 'box' or 'center'");
+            }
+
+            bool bMatchedDebugOutput = false;
+            if (TryParsePathTracingDebugOutputOption(args[i], pathTracingDebugOutput,
+                                                     bMatchedDebugOutput))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_debug_output=%u",
+                         static_cast<unsigned int>(pathTracingDebugOutput));
+            }
+            else if (bMatchedDebugOutput)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-debug-output ignored: value must be 'none', 'albedo', 'shading-normal', 'metallic-roughness', 'hit-distance' or 'sun-visibility'");
+            }
+
+            bool bMatchedDirectBrdf = false;
+            if (TryParseRasterDirectBrdfOption(args[i], rasterDirectBrdf, bMatchedDirectBrdf))
+            {
+                LOG_INFO("ApplicationProcessor runtime option raster_direct_brdf=%u",
+                         static_cast<unsigned int>(rasterDirectBrdf));
+            }
+            else if (bMatchedDirectBrdf)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --raster-direct-brdf ignored: value must be 'neural' or 'analytic'");
+            }
+
+            bool bMatchedToneMap = false;
+            if (TryParseToneMapOption(args[i], toneMapOperator, bMatchedToneMap))
+            {
+                bToneMapOperatorRequested = true;
+                LOG_INFO("ApplicationProcessor runtime option tone_map=%u",
+                         static_cast<unsigned int>(toneMapOperator));
+            }
+            else if (bMatchedToneMap)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --tone-map ignored: value must be 'aces' or 'aces20-lut'");
+            }
+
+            bool bMatchedFilmGrain = false;
+            if (TryParseFilmGrainOption(args[i], filmGrainStrength, filmGrainSeed, bMatchedFilmGrain))
+            {
+                bFilmGrainRequested = true;
+                LOG_INFO("ApplicationProcessor runtime option film_grain strength=%g seed=%u",
+                         static_cast<double>(filmGrainStrength), static_cast<unsigned int>(filmGrainSeed));
+            }
+            else if (bMatchedFilmGrain)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --film-grain ignored: strength must be 0-1 and seed a 32-bit integer");
+            }
+
+            bool bMatchedSequenceFrame = false;
+            if (TryParsePathTracingSequenceOption(args[i], pathTracingSequenceFrame,
+                                                  bMatchedSequenceFrame))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_sequence_frame frame_duration=%g shutter=%g aperture=%g focus_distance=%g",
+                         static_cast<double>(pathTracingSequenceFrame.FrameDuration),
+                         static_cast<double>(pathTracingSequenceFrame.ShutterDuration),
+                         static_cast<double>(pathTracingSequenceFrame.Aperture),
+                         static_cast<double>(pathTracingSequenceFrame.FocusDistance));
+            }
+            else if (bMatchedSequenceFrame)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option ignored: --path-tracing-frame-duration and --path-tracing-aperture must be positive, --path-tracing-shutter and --path-tracing-focus-distance must be non-negative (decimal or a/b)");
             }
         }
 
@@ -452,6 +1041,13 @@ namespace NorvesLib::Core::Engine
             renderSettings.bVSync = true;
             renderSettings.bEnableMultiThreadedRendering = bEnableMultiThreadedRendering;
             renderSettings.bEnableValidation = config.bEnableRHIValidation;
+            renderSettings.MainViewRenderer = mainViewRenderer;
+            renderSettings.PathTracingSamplesPerFrame = pathTracingSamplesPerFrame;
+            renderSettings.PathTracingTransport = pathTracingTransport;
+            renderSettings.PathTracingPixelSamplingMode = pathTracingPixelSampling;
+            renderSettings.PathTracingSampleBatch = pathTracingSampleBatch;
+            renderSettings.PathTracingDebug = pathTracingDebugOutput;
+            renderSettings.RasterDirectBrdfMode = rasterDirectBrdf;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {
@@ -463,6 +1059,25 @@ namespace NorvesLib::Core::Engine
 
             auto &coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
             coordinator.SetBoardInstanceBatchingEnabled(bBoardInstanceBatchingEnabled);
+
+            if (bToneMapOperatorRequested &&
+                !ApplyMainViewToneMapOperator(coordinator.GetMainSceneView().get(), toneMapOperator))
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --tone-map ignored: main view has no ToneMappingPass");
+            }
+
+            if (bFilmGrainRequested &&
+                !ApplyMainViewFilmGrain(coordinator.GetMainSceneView().get(), filmGrainStrength, filmGrainSeed))
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --film-grain ignored: main view has no ToneMappingPass");
+            }
+
+            if (pathTracingSequenceFrame.bEnabled &&
+                !ApplyMainViewPathTracingSequenceFrame(coordinator.GetMainSceneView().get(),
+                                                       pathTracingSequenceFrame))
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-* sequence frame ignored: main view has no PathTracingPass (use --renderer=path-tracing)");
+            }
 
             if (bEnableCanvasView)
             {

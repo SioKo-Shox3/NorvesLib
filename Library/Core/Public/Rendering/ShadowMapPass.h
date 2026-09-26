@@ -48,7 +48,7 @@ namespace NorvesLib::Core::Rendering
      * SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ使用します。
      *
      * legacy bridge出力:
-     * - "ShadowMap" : 深度テクスチャ (D32_FLOAT)
+     * - "ShadowMap" : 4層の深度配列テクスチャ (D32_FLOAT)
      */
     class ShadowMapPass : public IViewPass, public IRenderGraphPass
     {
@@ -127,11 +127,12 @@ namespace NorvesLib::Core::Rendering
 
         // シャドウマップ深度テクスチャ
         RHI::TexturePtr m_ShadowMapTexture;
+        RHI::SamplerPtr m_ShadowSampler;
         RGResourceHandle m_ShadowMapHandle;
 
         // レンダーパス・フレームバッファ
         RHI::RenderPassPtr m_ShadowRenderPass;
-        RHI::FramebufferPtr m_ShadowFramebuffer;
+        Container::VariableArray<RHI::FramebufferPtr> m_ShadowFramebuffers;
 
         RHI::PipelinePtr m_SkinnedShadowPipeline;
         // パイプライン・シェーダー

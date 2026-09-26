@@ -53,6 +53,10 @@ namespace RHI = NorvesLib::RHI;
 
 namespace
 {
+    // ShaderManagerはGLSLの#include展開のためにファイルを読むため、実在するシェーダー置き場を渡す。
+    // compilerはテスト用の偽物なので、読んだ内容から実際のバイトコードは作らない。
+    constexpr const char* TestShaderDirectory = NORVES_SOURCE_ROOT "/Assets/Shaders";
+
     void ConfigureAssertOutput()
     {
 #ifdef _MSC_VER
@@ -239,6 +243,7 @@ namespace
         void Unmap() override {}
         void Update(const void* data, uint64_t size, uint64_t offset = 0) override
         {
+            ++UpdateCallCount;
             LastUpdateOffset = offset;
             LastUpdateSize = size;
             LastUpdateBytes.resize(static_cast<size_t>(size));
@@ -265,6 +270,7 @@ namespace
 
         uint64_t LastUpdateOffset = 0;
         uint64_t LastUpdateSize = 0;
+        uint32_t UpdateCallCount = 0;
         Container::VariableArray<uint8_t> LastUpdateBytes;
 
     private:
@@ -1716,7 +1722,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         FakeCommandList commandList;
         ViewRenderContext context;
@@ -1762,7 +1768,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         FakeCommandList commandList;
         SharedResourceRegistry sharedResources;
@@ -1859,7 +1865,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         ViewRenderContext context;
         context.Device = device.get();
@@ -1923,7 +1929,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         ViewRenderContext context;
         context.Device = device.get();
@@ -2029,7 +2035,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -2132,7 +2138,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -2306,7 +2312,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -2497,7 +2503,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         RenderResources renderResources;
         assert(renderResources.Initialize(device));
@@ -2615,7 +2621,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         FakeCommandList commandList;
         ViewRenderContext context;
@@ -2657,11 +2663,12 @@ namespace
         assert(pass.GetNormalHandle().IsValid());
         assert(pass.GetMaterialHandle().IsValid());
         assert(pass.GetEmissiveHandle().IsValid());
+        assert(pass.GetVelocityHandle().IsValid());
         assert(pass.GetDepthHandle().IsValid());
 
         const auto& barriers = graph.GetCompiledBarriers();
-        assert(barriers.size() == 5);
-        for (uint32_t i = 0; i < 4; ++i)
+        assert(barriers.size() == 6);
+        for (uint32_t i = 0; i < 5; ++i)
         {
             assert(barriers[i].Kind == RGBarrierKind::Texture);
             assert(barriers[i].BeforeState == RHI::ResourceState::Undefined);
@@ -2669,11 +2676,11 @@ namespace
             assert(barriers[i].PassIndex == 0);
             assert(barriers[i].CompiledOrderIndex == 0);
         }
-        assert(barriers[4].Kind == RGBarrierKind::Texture);
-        assert(barriers[4].BeforeState == RHI::ResourceState::Undefined);
-        assert(barriers[4].AfterState == RHI::ResourceState::DepthWrite);
-        assert(barriers[4].PassIndex == 0);
-        assert(barriers[4].CompiledOrderIndex == 0);
+        assert(barriers[5].Kind == RGBarrierKind::Texture);
+        assert(barriers[5].BeforeState == RHI::ResourceState::Undefined);
+        assert(barriers[5].AfterState == RHI::ResourceState::DepthWrite);
+        assert(barriers[5].PassIndex == 0);
+        assert(barriers[5].CompiledOrderIndex == 0);
     }
 
     void TestGBufferSSAONativeDeclareDependencies()
@@ -2738,8 +2745,8 @@ namespace
         assert(order[1] == ssaoPassIndex);
 
         const auto& barriers = graph.GetCompiledBarriers();
-        assert(barriers.size() == 7);
-        for (uint32_t i = 0; i < 4; ++i)
+        assert(barriers.size() == 8);
+        for (uint32_t i = 0; i < 5; ++i)
         {
             assert(barriers[i].Kind == RGBarrierKind::Texture);
             assert(barriers[i].BeforeState == RHI::ResourceState::Undefined);
@@ -2747,22 +2754,22 @@ namespace
             assert(barriers[i].PassIndex == gbufferPassIndex);
             assert(barriers[i].CompiledOrderIndex == 0);
         }
-        assert(barriers[4].Kind == RGBarrierKind::Texture);
-        assert(barriers[4].BeforeState == RHI::ResourceState::Undefined);
-        assert(barriers[4].AfterState == RHI::ResourceState::DepthWrite);
-        assert(barriers[4].PassIndex == gbufferPassIndex);
-        assert(barriers[4].CompiledOrderIndex == 0);
-
         assert(barriers[5].Kind == RGBarrierKind::Texture);
         assert(barriers[5].BeforeState == RHI::ResourceState::Undefined);
-        assert(barriers[5].AfterState == RHI::ResourceState::RenderTarget);
-        assert(barriers[5].PassIndex == ssaoPassIndex);
-        assert(barriers[5].CompiledOrderIndex == 1);
+        assert(barriers[5].AfterState == RHI::ResourceState::DepthWrite);
+        assert(barriers[5].PassIndex == gbufferPassIndex);
+        assert(barriers[5].CompiledOrderIndex == 0);
+
         assert(barriers[6].Kind == RGBarrierKind::Texture);
         assert(barriers[6].BeforeState == RHI::ResourceState::Undefined);
         assert(barriers[6].AfterState == RHI::ResourceState::RenderTarget);
         assert(barriers[6].PassIndex == ssaoPassIndex);
         assert(barriers[6].CompiledOrderIndex == 1);
+        assert(barriers[7].Kind == RGBarrierKind::Texture);
+        assert(barriers[7].BeforeState == RHI::ResourceState::Undefined);
+        assert(barriers[7].AfterState == RHI::ResourceState::RenderTarget);
+        assert(barriers[7].PassIndex == ssaoPassIndex);
+        assert(barriers[7].CompiledOrderIndex == 1);
     }
 
     void TestGBufferSSAOLightingNativeDeclareDependencies()
@@ -2787,7 +2794,7 @@ namespace
 
         assert(graph.Compile(context));
         assert(lightingPass.GetSceneColorHandle().IsValid());
-        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 7);
+        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 9);
 
         bool bHasAlbedoRead = false;
         bool bHasNormalRead = false;
@@ -2875,12 +2882,17 @@ namespace
         assert(order[2] == lightingPassIndex);
 
         const auto& barriers = graph.GetCompiledBarriers();
-        assert(barriers.size() == 8);
-        assert(barriers[7].Kind == RGBarrierKind::Texture);
-        assert(barriers[7].BeforeState == RHI::ResourceState::Undefined);
-        assert(barriers[7].AfterState == RHI::ResourceState::RenderTarget);
-        assert(barriers[7].PassIndex == lightingPassIndex);
-        assert(barriers[7].CompiledOrderIndex == 2);
+        assert(barriers.size() == 10);
+        assert(barriers[8].Kind == RGBarrierKind::Texture);
+        assert(barriers[8].BeforeState == RHI::ResourceState::Undefined);
+        assert(barriers[8].AfterState == RHI::ResourceState::UnorderedAccess);
+        assert(barriers[8].PassIndex == lightingPassIndex);
+        assert(barriers[8].CompiledOrderIndex == 2);
+        assert(barriers[9].Kind == RGBarrierKind::Texture);
+        assert(barriers[9].BeforeState == RHI::ResourceState::Undefined);
+        assert(barriers[9].AfterState == RHI::ResourceState::RenderTarget);
+        assert(barriers[9].PassIndex == lightingPassIndex);
+        assert(barriers[9].CompiledOrderIndex == 2);
     }
 
     void TestGBufferSSAOLightingNativeDeclareUsesNamedResourcesWithoutPassPointers()
@@ -2906,7 +2918,7 @@ namespace
         assert(ssaoPass.GetSSAOBlurredHandle().IsValid());
         assert(lightingPass.GetSceneColorHandle().IsValid());
         assert(graph.GetDeclaredPassAccessCount(ssaoPassIndex) == 4);
-        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 7);
+        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 9);
 
         auto hasShaderReadAccess = [&graph](uint32_t passIndex, RGResourceHandle expected) -> bool
         {
@@ -2954,7 +2966,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         ViewRenderContext context;
         context.Device = device.get();
@@ -2976,7 +2988,7 @@ namespace
         const uint32_t lightingPassIndex = graph.AddPass(&lightingPass);
 
         assert(graph.Compile(context));
-        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 8);
+        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 10);
 
         bool bHasShadowMapRead = false;
         for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(lightingPassIndex); ++accessIndex)
@@ -3128,19 +3140,19 @@ namespace
         assert(order[3] == forwardPassIndex);
 
         const auto& barriers = graph.GetCompiledBarriers();
-        assert(barriers.size() == 10);
-        assert(barriers[8].Kind == RGBarrierKind::Texture);
-        assert(barriers[8].Resource == lightingPass.GetSceneColorHandle());
-        assert(barriers[8].BeforeState == RHI::ResourceState::ShaderResource);
-        assert(barriers[8].AfterState == RHI::ResourceState::RenderTarget);
-        assert(barriers[8].PassIndex == forwardPassIndex);
-        assert(barriers[8].CompiledOrderIndex == 3);
-        assert(barriers[9].Kind == RGBarrierKind::Texture);
-        assert(barriers[9].Resource == gbufferPass.GetDepthHandle());
-        assert(barriers[9].BeforeState == RHI::ResourceState::ShaderResource);
-        assert(barriers[9].AfterState == RHI::ResourceState::DepthRead);
-        assert(barriers[9].PassIndex == forwardPassIndex);
-        assert(barriers[9].CompiledOrderIndex == 3);
+        assert(barriers.size() == 12);
+        assert(barriers[10].Kind == RGBarrierKind::Texture);
+        assert(barriers[10].Resource == lightingPass.GetSceneColorHandle());
+        assert(barriers[10].BeforeState == RHI::ResourceState::ShaderResource);
+        assert(barriers[10].AfterState == RHI::ResourceState::RenderTarget);
+        assert(barriers[10].PassIndex == forwardPassIndex);
+        assert(barriers[10].CompiledOrderIndex == 3);
+        assert(barriers[11].Kind == RGBarrierKind::Texture);
+        assert(barriers[11].Resource == gbufferPass.GetDepthHandle());
+        assert(barriers[11].BeforeState == RHI::ResourceState::ShaderResource);
+        assert(barriers[11].AfterState == RHI::ResourceState::DepthRead);
+        assert(barriers[11].PassIndex == forwardPassIndex);
+        assert(barriers[11].CompiledOrderIndex == 3);
     }
 
     void TestSSRNativeDeclareDependencies()
@@ -4099,7 +4111,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4151,13 +4163,14 @@ namespace
         RHI::TexturePtr sceneColorTexture = graphResources.GetTexture(lightingPass.GetSceneColorHandle());
         assert(sceneColorTexture);
         assert(graph.GetLastExecutedPassCount() == 3);
-        assert(result.TextureOutputs.empty());
+        assert(result.TextureOutputs.size() == 1);
         RHI::TexturePtr exportedTexture;
-        assert(!result.TryGetTexture(RenderGraphResourceNames::SceneColor, exportedTexture));
-        assert(exportedTexture == nullptr);
+        assert(result.TryGetTexture(RenderGraphResourceNames::SceneColor, exportedTexture));
+        assert(exportedTexture.get() == sceneColorTexture.get());
+        exportedTexture.reset();
         assert(!result.TryGetTexture(RenderGraphResourceNames::SceneDepth, exportedTexture));
         assert(exportedTexture == nullptr);
-        assert(commandList.Barriers.size() == 8);
+        assert(commandList.Barriers.size() == 10);
         assert(commandList.BeginRenderPassCount == 4);
         assert(commandList.EndRenderPassCount == 4);
         assert(commandList.DrawCallCount == 3);
@@ -4187,9 +4200,9 @@ namespace
         proxy.DirectionZ = -0.3f;
         proxy.InnerConeAngle = 0.81f;
         proxy.OuterConeAngle = 0.62f;
-        proxy.ColorR = 0.25f + static_cast<float>(index);
-        proxy.ColorG = 0.5f + static_cast<float>(index);
-        proxy.ColorB = 0.75f + static_cast<float>(index);
+        proxy.ColorR = 1.0f;
+        proxy.ColorG = 1.0f;
+        proxy.ColorB = 1.0f;
         proxy.Intensity = 2.0f + static_cast<float>(index);
         proxy.Range = 25.0f + static_cast<float>(index);
         proxy.bVisible = true;
@@ -4268,6 +4281,20 @@ namespace
         std::memcpy(&outParams, GLastDescriptorBinding4UpdateBytes.data(), sizeof(GPULightingParams));
     }
 
+    float ReadPackedLightFloat(const GPULightData& light, size_t byteOffset)
+    {
+        float value = 0.0f;
+        const auto* bytes = reinterpret_cast<const uint8_t*>(&light);
+        std::memcpy(&value, bytes + byteOffset, sizeof(value));
+        return value;
+    }
+
+    FakeBuffer& GetBoundLightArrayBuffer()
+    {
+        assert(GLastDescriptorBinding5Buffer != nullptr);
+        return *static_cast<FakeBuffer*>(GLastDescriptorBinding5Buffer);
+    }
+
     GPULightData DecodeLightDataAt(uint32_t index)
     {
         const size_t offset = static_cast<size_t>(index) * sizeof(GPULightData);
@@ -4330,7 +4357,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4377,6 +4404,8 @@ namespace
         GPULightingParams params = {};
         DecodeLightingParams(params);
         assert(params.lightCount == 20);
+        assert(params.ddgi.info[0] == 0u);
+        assert(params.ddgi.probeCounts[3] == 0u);
 
         const GPULightData first = DecodeLightDataAt(0);
         const GPULightData last = DecodeLightDataAt(19);
@@ -4385,13 +4414,13 @@ namespace
         assert(first.position[2] == lightProxies[0].PositionZ);
         assert(first.position[3] == static_cast<float>(static_cast<int>(LightType::Point)));
         assert(first.direction[3] == lightProxies[0].InnerConeAngle);
-        assert(first.color[3] == lightProxies[0].Intensity);
-        assert(first.attenuation[0] == lightProxies[0].Range);
-        assert(first.attenuation[1] == lightProxies[0].OuterConeAngle);
+        assert(ReadPackedLightFloat(first, 44) == lightProxies[0].Intensity);
+        assert(ReadPackedLightFloat(first, 48) == lightProxies[0].Range);
+        assert(ReadPackedLightFloat(first, 52) == lightProxies[0].OuterConeAngle);
         assert(last.position[0] == lightProxies[19].PositionX);
-        assert(last.color[0] == lightProxies[19].ColorR);
-        assert(last.color[3] == lightProxies[19].Intensity);
-        assert(last.attenuation[0] == lightProxies[19].Range);
+        assert(ReadPackedLightFloat(last, 32) == 1.0f);
+        assert(ReadPackedLightFloat(last, 44) == lightProxies[19].Intensity);
+        assert(ReadPackedLightFloat(last, 48) == lightProxies[19].Range);
 
         const uint32_t ssboUpdateIndex = FindRenderEventIndex(FakeRenderEvent::LightSsboUpdate);
         const uint32_t bindStorageIndex = FindRenderEventIndex(FakeRenderEvent::BindStorageBuffer5);
@@ -4411,12 +4440,65 @@ namespace
         shaderManager.Shutdown();
     }
 
+    void TestLightingNativeExecuteZeroLightsKeepsLogicalCountZeroAndSkipsSsboUpdate()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        LightingPass lightingPass;
+        Container::VariableArray<LightProxy> lightProxies;
+        FakeCommandList commandList;
+        ExecuteLightingGraphWithLights(*device,
+                                       shaderManager,
+                                       pool,
+                                       renderResources,
+                                       renderer,
+                                       lightingPass,
+                                       lightProxies,
+                                       commandList,
+                                       0);
+
+        GPULightingParams params = {};
+        DecodeLightingParams(params);
+        assert(params.lightCount == 0);
+
+        assert(GLastDescriptorBinding5Buffer != nullptr);
+        assert(GLastDescriptorBinding5Size >= sizeof(GPULightData));
+        const FakeBuffer& lightBuffer = GetBoundLightArrayBuffer();
+        assert(lightBuffer.GetSize() >= sizeof(GPULightData));
+        assert(lightBuffer.UpdateCallCount == 0);
+        assert(GLastDescriptorBinding5UpdateBytes.empty());
+        assert(!HasRenderEvent(FakeRenderEvent::LightSsboUpdate));
+        assert(commandList.DrawCallCount > 0);
+        assert(HasRenderEvent(FakeRenderEvent::Draw));
+
+        lightingPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
     void TestLightingLightBufferGrowthRetainsRetiredBuffersAndReusesCapacity()
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4506,7 +4588,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4573,7 +4655,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4689,7 +4771,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4749,7 +4831,7 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 4);
-        assert(commandList.Barriers.size() == 10);
+        assert(commandList.Barriers.size() == 12);
         assert(commandList.BeginRenderPassCount == 5);
         assert(commandList.EndRenderPassCount == 5);
         assert(commandList.DrawCallCount == 3);
@@ -4775,7 +4857,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4841,7 +4923,7 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 5);
-        assert(commandList.Barriers.size() == 12);
+        assert(commandList.Barriers.size() == 14);
         assert(commandList.BeginRenderPassCount == 6);
         assert(commandList.EndRenderPassCount == 6);
         assert(commandList.DrawCallCount == 4);
@@ -4869,7 +4951,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -4967,7 +5049,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5076,7 +5158,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5186,7 +5268,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5296,7 +5378,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5412,7 +5494,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5480,7 +5562,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5539,7 +5621,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5600,7 +5682,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5660,7 +5742,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5775,7 +5857,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5842,7 +5924,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5899,7 +5981,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5934,7 +6016,7 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 1);
-        assert(commandList.Barriers.size() == 1);
+        assert(commandList.Barriers.size() == 2);
         assert(commandList.BeginRenderPassCount == 1);
         assert(commandList.EndRenderPassCount == 1);
         assert(commandList.DrawCallCount == 0);
@@ -5953,7 +6035,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -5968,6 +6050,7 @@ namespace
 
         RHI::TextureDesc namedShadowDesc =
             RHI::TextureDesc::DepthStencil(128, 128, RHI::Format::D32_FLOAT, "NamedShadowMap");
+        namedShadowDesc.ArraySize = PhysicalLightingShadowCascadeCount;
         RHI::TextureDesc legacyShadowDesc =
             RHI::TextureDesc::DepthStencil(128, 128, RHI::Format::D32_FLOAT, "LegacyShadowMap");
         RHI::TexturePtr namedShadowMap = device->CreateTexture(namedShadowDesc);
@@ -6040,7 +6123,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -6093,7 +6176,7 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 1);
-        assert(commandList.Barriers.size() == 1);
+        assert(commandList.Barriers.size() == 2);
         assert(commandList.BeginRenderPassCount == 1);
         assert(commandList.EndRenderPassCount == 1);
         assert(commandList.DrawCallCount == 0);
@@ -6114,7 +6197,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -6159,7 +6242,7 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 1);
-        assert(commandList.Barriers.size() == 5);
+        assert(commandList.Barriers.size() == 6);
         assert(commandList.BeginRenderPassCount == 1);
         assert(commandList.EndRenderPassCount == 1);
         assert(commandList.DrawCallCount == 0);
@@ -6168,6 +6251,7 @@ namespace
         assert(sharedResources.HasTexture("GBuffer_Normal"));
         assert(sharedResources.HasTexture("GBuffer_Material"));
         assert(sharedResources.HasTexture("GBuffer_Emissive"));
+        assert(sharedResources.HasTexture("GBuffer_Velocity"));
         assert(sharedResources.HasTexture("GBuffer_Depth"));
 
         pass.Shutdown();
@@ -6184,7 +6268,7 @@ namespace
         auto device = RHI::MakeShared<FakeDevice>();
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
 
         MockAllocator allocator;
         RHI::TransientResourcePool pool;
@@ -6345,6 +6429,7 @@ int main()
     TestSSAONativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
     TestGBufferSSAOLightingNativeExecuteWithoutSharedResources();
     TestLightingNativeExecuteBindsExpandedLightStorageBuffer();
+    TestLightingNativeExecuteZeroLightsKeepsLogicalCountZeroAndSkipsSsboUpdate();
     TestLightingLightBufferGrowthRetainsRetiredBuffersAndReusesCapacity();
     TestLightingLightBufferGrowthFailureSkipsDescriptorUpdateAndDraw();
     TestProductionDeferredNativeExecuteSkipsLegacyBridge();

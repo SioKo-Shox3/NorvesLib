@@ -17,6 +17,9 @@
 #include <cassert>
 #include <cstring>
 #include <iostream>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 
 using namespace NorvesLib::Core::Rendering;
 namespace Container = NorvesLib::Core::Container;
@@ -24,6 +27,16 @@ namespace RHI = NorvesLib::RHI;
 
 namespace
 {
+    void ConfigureAssertOutput()
+    {
+#ifdef _MSC_VER
+        _set_error_mode(_OUT_TO_STDERR);
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+    }
+
     struct BarrierEvent
     {
         RHI::ITexture* Texture = nullptr;
@@ -500,6 +513,7 @@ namespace
                                                                         "PublishedPresentationInput"),
                                             RHI::ResourceState::RenderTarget,
                                             RHI::ResourceState::ShaderResource);
+            builder.ExportTexture(m_Name, m_Handle);
         }
 
         void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
@@ -745,6 +759,57 @@ namespace
         std::cout << "TestCompositeColorPreferredOverPresentationAndToneMappedColor passed\n";
     }
 
+    void TestDeferredCompositeOutputSurvivesPresentationResetForFinalBlit()
+    {
+        PresentationFixture fixture;
+        PublishedTexturePass toneMappedPass(RenderGraphResourceNames::ToneMappedColor);
+        PublishedTexturePass presentationPassProducer(RenderGraphResourceNames::PresentationColor);
+        PublishedTexturePass compositePassProducer(RenderGraphResourceNames::CompositeColor);
+        PresentationPass presentationPass;
+        presentationPass.SetDeferBlit(true);
+        presentationPass.SetRequest(fixture.MakeRequest());
+
+        fixture.Graph.AddPass(&toneMappedPass);
+        fixture.Graph.AddPass(&presentationPassProducer);
+        fixture.Graph.AddPass(&compositePassProducer);
+        fixture.Graph.AddPass(&presentationPass);
+
+        assert(fixture.Graph.Compile(fixture.Context));
+        assert(fixture.Graph.Execute(fixture.Context));
+
+        RenderGraphResources resources(&fixture.Graph);
+        RHI::TexturePtr expectedTexture = resources.GetTexture(compositePassProducer.GetHandle());
+        RHI::TexturePtr fallbackTexture = RHI::MakeShared<FakeTexture>("FallbackPresentationColor");
+        assert(expectedTexture);
+        assert(presentationPass.WasPresented());
+        assert(!presentationPass.WasBlitRecorded());
+        assert(fixture.PendingCommands.empty());
+
+        // ExecutorのStage2 request clear後も、Graph last outputが最終入力の正本になる。
+        presentationPass.SetRequest(PresentationPassRequest{});
+        RHI::TexturePtr selectedTexture;
+        assert(fixture.Graph.TryGetLastOutputTexture(RenderGraphResourceNames::CompositeColor,
+                                                      selectedTexture));
+        assert(selectedTexture.get() == expectedTexture.get());
+        assert(selectedTexture.get() != fallbackTexture.get());
+
+        fixture.GetDescriptorSet()->BindTexture(0, selectedTexture);
+        fixture.GetDescriptorSet()->BindSampler(0, fixture.BlitSampler);
+        fixture.GetDescriptorSet()->Update();
+        fixture.Context.EnqueueFullscreenPass(fixture.ClearRenderPass,
+                                              fixture.ClearFramebuffer,
+                                              fixture.Context.GetActiveOutputViewport(),
+                                              fixture.Context.GetActiveOutputScissor(),
+                                              fixture.BlitPipeline,
+                                              fixture.BlitDescriptorSet);
+
+        assert(fixture.PendingCommands.size() == 1);
+        const FullscreenPassCommand& command = fixture.PendingCommands[0].FullscreenPass;
+        assert(command.DescriptorSet.get() == fixture.BlitDescriptorSet.get());
+        assert(fixture.GetDescriptorSet()->BoundTexture.get() == expectedTexture.get());
+        std::cout << "TestDeferredCompositeOutputSurvivesPresentationResetForFinalBlit passed\n";
+    }
+
     void TestToneMappedColorUsedWhenPresentationColorMissing()
     {
         PresentationFixture fixture;
@@ -942,10 +1007,12 @@ namespace
 
 int main()
 {
+    ConfigureAssertOutput();
     std::cout << "RenderGraphPresentationPassTest start\n";
 
     TestPresentationColorPreferredOverToneMappedColor();
     TestCompositeColorPreferredOverPresentationAndToneMappedColor();
+    TestDeferredCompositeOutputSurvivesPresentationResetForFinalBlit();
     TestToneMappedColorUsedWhenPresentationColorMissing();
     TestImportedBackBufferUsesUndefinedToRenderTargetAndFinalPresent();
     TestLoadPresentationUsesPresentInitialStateAndLoadResources();

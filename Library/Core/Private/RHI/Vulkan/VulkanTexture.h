@@ -58,6 +58,13 @@ namespace NorvesLib::RHI::Vulkan
         uint64_t GetMipImageViewHandle(uint32_t mipLevel) const override;
         vk::ImageView GetMipImageView(uint32_t mipLevel) const;
 
+        /**
+         * @brief 配列テクスチャの指定layerだけを参照するImageViewを取得
+         * @param arrayLayer 0-based配列layer
+         * @return 指定layerのImageView。範囲外または非2D配列なら無効値
+         */
+        vk::ImageView GetArrayLayerImageView(uint32_t arrayLayer) const;
+
         // Vulkan固有のメソッド (vulkan.hpp型)
         vk::Image GetVkImage() const { return m_image; }
         vk::ImageView GetVkImageView() const { return m_imageView; }
@@ -101,6 +108,7 @@ namespace NorvesLib::RHI::Vulkan
         vk::DeviceMemory m_memory;
         vk::ImageView m_imageView;
         mutable NorvesLib::Core::Container::VariableArray<vk::ImageView> m_mipImageViews;
+        mutable NorvesLib::Core::Container::VariableArray<vk::ImageView> m_arrayLayerImageViews;
         NorvesLib::Core::Container::VariableArray<vk::ImageLayout> m_subresourceLayouts;
         vk::ImageLayout m_currentLayout = vk::ImageLayout::eUndefined;
         bool m_bOwnsImage = true;

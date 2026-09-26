@@ -159,9 +159,9 @@ namespace NorvesLib::Core
         void SetEmissiveColor(float r, float g, float b);
         void GetEmissiveColor(float &r, float &g, float &b) const;
 
-        /** @brief エミッシブ強度を設定 */
-        void SetEmissiveStrength(float strength) { m_EmissiveStrength = strength; }
-        float GetEmissiveStrength() const { return m_EmissiveStrength; }
+        /** @brief エミッシブ輝度(nits)を設定 */
+        void SetEmissiveLuminanceNits(float luminanceNits) { m_EmissiveLuminanceNits = luminanceNits; }
+        float GetEmissiveLuminanceNits() const { return m_EmissiveLuminanceNits; }
 
         // ========================================
         // マテリアルプロパティ
@@ -243,7 +243,7 @@ namespace NorvesLib::Core
 
         // エミッシブ
         float m_EmissiveColor[3] = {0.0f, 0.0f, 0.0f}; ///< エミッシブカラー
-        float m_EmissiveStrength = 0.0f;               ///< エミッシブ強度
+        float m_EmissiveLuminanceNits = 0.0f;          ///< エミッシブ輝度(nits)
 
         // マテリアルプロパティ
         Rendering::BlendMode m_BlendMode = Rendering::BlendMode::Opaque;

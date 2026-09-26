@@ -7,11 +7,13 @@ layout(set = 0, binding = 0) uniform WorldBoardForwardData
     vec4 cameraPosition;
     vec4 cameraRight;
     vec4 cameraUp;
+    vec4 sceneColorParams;
 } worldBoard;
 
 struct InstanceData
 {
     mat4 world;
+    mat4 previousWorld;
     vec4 normalRows[3];
     vec4 objectColor;
     vec4 customData;

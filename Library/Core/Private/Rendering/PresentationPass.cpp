@@ -2,6 +2,7 @@
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/IDescriptorSet.h"
+#include "RHI/IDevice.h"
 
 namespace NorvesLib::Core::Rendering
 {
@@ -123,12 +124,16 @@ namespace NorvesLib::Core::Rendering
         m_Request.BlitDescriptorSet->BindSampler(0, m_Request.BlitSampler);
         m_Request.BlitDescriptorSet->Update();
 
-        context.EnqueueFullscreenPass(renderPass,
-                                      framebuffer,
-                                      viewport,
-                                      scissor,
-                                      m_Request.BlitPipeline,
-                                      m_Request.BlitDescriptorSet);
+        if (!m_bDeferBlit)
+        {
+            context.EnqueueFullscreenPass(renderPass,
+                                          framebuffer,
+                                          viewport,
+                                          scissor,
+                                          m_Request.BlitPipeline,
+                                          m_Request.BlitDescriptorSet);
+            m_Result.bBlitRecorded = true;
+        }
 
         m_Result.bPresented = true;
         m_Result.InputName = m_InputName;
@@ -142,6 +147,114 @@ namespace NorvesLib::Core::Rendering
                               ? RHI::AttachmentLoadOp::Clear
                               : RHI::AttachmentLoadOp::Load;
         context.bPresentationGraphPassHandled = true;
+    }
+
+    bool PresentationPass::RecordDeferredBlit(ViewRenderContext& context)
+    {
+        if (!m_Result.bPresented ||
+            m_Result.bBlitRecorded ||
+            !m_Result.RenderPass ||
+            !m_Result.Framebuffer ||
+            !m_Request.BlitPipeline ||
+            !m_Request.BlitDescriptorSet ||
+            !m_Request.BlitSampler)
+        {
+            return m_Result.bBlitRecorded;
+        }
+
+        m_Request.BlitDescriptorSet->BindTexture(0, m_Result.InputTexture);
+        m_Request.BlitDescriptorSet->BindSampler(0, m_Request.BlitSampler);
+        m_Request.BlitDescriptorSet->Update();
+        context.EnqueueFullscreenPass(m_Result.RenderPass,
+                                      m_Result.Framebuffer,
+                                      m_Result.Viewport,
+                                      m_Result.Scissor,
+                                      m_Request.BlitPipeline,
+                                      m_Request.BlitDescriptorSet);
+        m_Result.bBlitRecorded = true;
+        return true;
+    }
+
+    RHI::FramebufferPtr PresentationPass::AcquireOverlayFramebuffer(
+        const RHI::DevicePtr& device,
+        uint32_t frameSlotIndex,
+        uint32_t frameSlotCount,
+        const RHI::TexturePtr& targetTexture)
+    {
+        if (!device || !targetTexture ||
+            targetTexture->GetFormat() != RHI::Format::R16G16B16A16_FLOAT ||
+            frameSlotCount == 0 ||
+            frameSlotIndex >= frameSlotCount)
+        {
+            return {};
+        }
+
+        if (!m_OverlayDevice)
+        {
+            m_OverlayDevice = device;
+            m_OverlayFramebufferRing.resize(frameSlotCount);
+        }
+        else if (m_OverlayDevice.get() != device.get() ||
+                 m_OverlayFramebufferRing.size() != frameSlotCount)
+        {
+            return {};
+        }
+
+        if (!m_OverlayRenderPass)
+        {
+            RHI::AttachmentDesc overlayColorAttachment;
+            overlayColorAttachment.format = RHI::Format::R16G16B16A16_FLOAT;
+            overlayColorAttachment.isDepthStencil = false;
+            overlayColorAttachment.clear = false;
+            overlayColorAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+            overlayColorAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+            overlayColorAttachment.initialState = RHI::ResourceState::ShaderResource;
+            overlayColorAttachment.finalState = RHI::ResourceState::ShaderResource;
+
+            RHI::RenderPassDesc overlayRenderPassDesc;
+            overlayRenderPassDesc.colorAttachments.push_back(overlayColorAttachment);
+            m_OverlayRenderPass = device->CreateRenderPass(overlayRenderPassDesc);
+            if (!m_OverlayRenderPass)
+            {
+                InvalidateOverlayResources();
+                return {};
+            }
+        }
+
+        OverlayFramebufferEntry& entry = m_OverlayFramebufferRing[frameSlotIndex];
+        if (entry.Framebuffer &&
+            entry.Texture.get() == targetTexture.get() &&
+            entry.Width == targetTexture->GetWidth() &&
+            entry.Height == targetTexture->GetHeight() &&
+            entry.Format == targetTexture->GetFormat())
+        {
+            return entry.Framebuffer;
+        }
+
+        RHI::FramebufferDesc framebufferDesc;
+        framebufferDesc.renderPass = m_OverlayRenderPass;
+        framebufferDesc.colorTargets.push_back(targetTexture);
+        framebufferDesc.width = targetTexture->GetWidth();
+        framebufferDesc.height = targetTexture->GetHeight();
+        RHI::FramebufferPtr framebuffer = device->CreateFramebuffer(framebufferDesc);
+        if (!framebuffer)
+        {
+            return {};
+        }
+
+        entry.Texture = targetTexture;
+        entry.Framebuffer = framebuffer;
+        entry.Width = targetTexture->GetWidth();
+        entry.Height = targetTexture->GetHeight();
+        entry.Format = targetTexture->GetFormat();
+        return framebuffer;
+    }
+
+    void PresentationPass::InvalidateOverlayResources()
+    {
+        m_OverlayFramebufferRing.clear();
+        m_OverlayRenderPass.reset();
+        m_OverlayDevice.reset();
     }
 
 } // namespace NorvesLib::Core::Rendering

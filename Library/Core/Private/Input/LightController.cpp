@@ -203,7 +203,7 @@ namespace NorvesLib::Core::Input
         }
         if (m_TargetLight != nullptr)
         {
-            return m_TargetLight->Intensity;
+            return m_TargetLight->CanonicalIntensity;
         }
         return 0.0f;
     }
@@ -217,7 +217,7 @@ namespace NorvesLib::Core::Input
         }
         if (m_TargetLight != nullptr)
         {
-            m_TargetLight->Intensity = intensity;
+            m_TargetLight->CanonicalIntensity = intensity;
         }
     }
 

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "FrameCaptureTypes.h"
+#include "RenderGPUTimingTypes.h"
 #include "Screen.h"
 #include "View.h"
 #include "CanvasView.h"
@@ -9,6 +10,8 @@
 #include "DrawCommand.h"
 #include "FramePacket.h"
 #include "ViewRenderContext.h"
+#include "Rendering/DDGIVolume.h"
+#include "Rendering/VolumetricFog.h"
 #include "Rendering/InstanceBufferRing.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/PresentationPass.h"
@@ -38,12 +41,30 @@ namespace NorvesLib::RHI
     class ITexture;
     class IDescriptorSet;
     class ISampler;
+    struct DeviceCapabilities;
 }
 
 namespace NorvesLib::Core::Rendering
 {
     // 前方宣言
     class FrameCaptureReadbackHelper;
+
+    /**
+     * @brief カリングと描画順に依存しないシーン構成ハッシュを計算する
+     *
+     * FramePacketが所有する全MeshProxy/SkinnedMeshProxyと材質・環境設定だけを
+     * 入力にし、カメラ依存の描画結果や物体の変換履歴は入力にしません。
+     */
+    uint64_t ComputeSceneRevisionHash(const FramePacket& packet);
+
+    /**
+     * @brief メインSceneViewの描画方式。起動時にだけ選ぶ。
+     */
+    enum class RenderingMainViewRenderer : uint8_t
+    {
+        Raster,
+        PathTracing
+    };
 
     /**
      * @brief レンダリング調整設定
@@ -63,6 +84,25 @@ namespace NorvesLib::Core::Rendering
         uint32_t MaxDrawCallsPerFrame = 10000;
         bool bEnableValidation = false;
         RGDumpOptions RenderGraphDumpOptions;
+        /**
+         * @brief メインSceneViewの描画方式（既定はラスタ）。
+         *
+         * PathTracingはRT pipeline・BDA・非一様texture添字に対応するデバイスだけで有効になり、
+         * 非対応ならラスタへ戻して警告する。
+         */
+        RenderingMainViewRenderer MainViewRenderer = RenderingMainViewRenderer::Raster;
+        /** @brief パストレーサーが1フレームで累積する試料数 */
+        uint32_t PathTracingSamplesPerFrame = 1;
+        /** @brief パストレーサーが追う光輸送の範囲（既定は多重散乱をすべて追う） */
+        PathTracingTransportScope PathTracingTransport = PathTracingTransportScope::Full;
+        /** @brief パストレーサーの1次光線の画素内の標本位置（既定は画素内を一様にずらす） */
+        PathTracingPixelSampling PathTracingPixelSamplingMode = PathTracingPixelSampling::Box;
+        /** @brief パストレーサーの試料の組の番号（組ごとに独立した試料の列を引く。既定は0） */
+        uint32_t PathTracingSampleBatch = 0u;
+        /** @brief パストレーサーの検証出力（既定は放射輝度） */
+        PathTracingDebugOutput PathTracingDebug = PathTracingDebugOutput::None;
+        /** @brief ラスタの直接光のBRDF（既定は学習済みのニューラルBRDF） */
+        RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Neural;
     };
 
     struct RenderingCoordinatorStatsSnapshot
@@ -193,7 +233,12 @@ namespace NorvesLib::Core::Rendering
         void SetOverlayPassesForNextFrame(Container::Span<IViewPass *> passes);
 
         FrameCaptureRequestResult RequestFrameCapture();
+        FrameCaptureRequestResult RequestFrameCapture(const FrameCaptureRequest& request);
         bool TryConsumeCapturedFrame(CapturedFrame& outFrame);
+        bool TryConsumeCompletedGPUTimings(
+            Container::VariableArray<RenderPassGPUTiming>& outTimings,
+            uint64_t& outDroppedFrameCount);
+        bool SupportsGPUTimings() const;
 
         // ========================================
         // レンダリング実行（RenderThread）
@@ -270,6 +315,28 @@ namespace NorvesLib::Core::Rendering
         void SetMainCamera(const CameraProxy &camera);
 
         /**
+         * @brief 空パラメータを次のFramePacketへ公開する
+         * @param parameters GameThread側で設定する空スナップショット
+         */
+        void SetSkyAtmosphere(const SkyAtmosphereParameters& parameters);
+
+        /**
+         * @brief DDGIプローブボリュームを次のFramePacketへ公開する
+         */
+        void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters);
+        DDGIVolumeParameters GetDDGIVolumeParameters() const { return m_DDGIVolume; }
+
+        /** @brief RTGIを次のFramePacketへ明示的に有効化または無効化する。 */
+        void SetRTGIEnabled(bool bEnabled);
+        bool IsRTGIEnabled() const { return m_bRTGIEnabled; }
+
+        /**
+         * @brief 高さフォグ設定を次のFramePacketへ公開する
+         * @param parameters GameThread側で保持する高さフォグ設定
+         */
+        void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
+
+        /**
          * @brief メインカメラを取得
          */
         const CameraProxy &GetMainCamera() const { return m_MainCamera; }
@@ -297,6 +364,9 @@ namespace NorvesLib::Core::Rendering
          * @brief メインSceneViewを取得
          */
         Container::TSharedPtr<SceneView> GetMainSceneView() const { return m_MainSceneView; }
+
+        /** @brief 初期化で実際に選んだメインSceneViewの描画方式 */
+        RenderingMainViewRenderer GetMainViewRenderer() const { return m_MainViewRenderer; }
 
         /**
          * @brief CanvasViewを取得
@@ -395,6 +465,12 @@ namespace NorvesLib::Core::Rendering
                                                  RenderGraphDebugDumpSnapshot &outSnapshot) const;
 
     private:
+        friend struct DDGISnapshotContractTestAccess;
+
+        void SnapshotSceneParameters(FramePacket& packet,
+                                     const RHI::DeviceCapabilities& capabilities) const;
+        void UpdateFrameRevisions(FramePacket& packet);
+
         // ========================================
         // 内部ヘルパー
         // ========================================
@@ -454,12 +530,24 @@ namespace NorvesLib::Core::Rendering
 
         // メインカメラ（GameThreadから設定される）
         CameraProxy m_MainCamera;
+        CameraProxy m_PreviousMainCamera;
+        SkyAtmosphereParameters m_SkyAtmosphere;
+        DDGIVolumeParameters m_DDGIVolume;
+        VolumetricFogParameters m_VolumetricFog;
+        bool m_bRTGIEnabled = true;
+        uint64_t m_SceneRevision = 1u;
+        uint64_t m_LightRevision = 1u;
+        uint64_t m_LastSceneRevisionHash = 0u;
+        uint64_t m_LastLightRevisionHash = 0u;
+        bool m_bSceneRevisionHashValid = false;
+        bool m_bLightRevisionHashValid = false;
         Container::UnorderedMap<uint64_t, CameraProxy> m_Cameras;
         uint64_t m_NextCameraId = 1;
         uint64_t m_MainCameraId = 0;
         uint64_t m_CanvasCameraId = 0;
         Thread::Atomic<bool> m_bCanvasCameraSyncPending{false};
         bool m_bCameraSet = false;
+        bool m_bPreviousMainCameraValid = false;
 
         // Screen（最終出力先 - SwapChain所有）
         Screen m_Screen;
@@ -485,6 +573,7 @@ namespace NorvesLib::Core::Rendering
 
         // View管理
         Container::TSharedPtr<SceneView> m_MainSceneView;
+        RenderingMainViewRenderer m_MainViewRenderer = RenderingMainViewRenderer::Raster;
         Container::TSharedPtr<CanvasView> m_CanvasView;
         Container::VariableArray<Container::TSharedPtr<View>> m_Views;
 
@@ -500,6 +589,7 @@ namespace NorvesLib::Core::Rendering
 
         // 同期
         Thread::Mutex m_Mutex;
+        Detail::GPUTimingMailbox m_GPUTimingMailbox;
 
         // 設定
         uint32_t m_Width = 1280;
@@ -535,6 +625,7 @@ namespace NorvesLib::Core::Rendering
         void RequestCanvasCameraSync();
         void ConsumePendingCanvasCameraSync();
         void UpdateCanvasCameraForRenderResolution();
+        void PublishCompletedGPUTimestampResults();
     };
 
 } // namespace NorvesLib::Core::Rendering

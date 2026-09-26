@@ -5,6 +5,9 @@
 #include "MaterialTypes.h"
 #include "SkinnedMeshTypes.h"
 #include "MegaGeometry/MegaGeometryTypes.h"
+#include "DDGIVolume.h"
+#include "SkyAtmosphere.h"
+#include "VolumetricFog.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
 #include "Math/MatrixUtils.h"
@@ -268,7 +271,11 @@ namespace NorvesLib::Core::Rendering
 
         // 色と強度
         float ColorR = 1.0f, ColorG = 1.0f, ColorB = 1.0f;
-        float Intensity = 1.0f;
+        union
+        {
+            float CanonicalIntensity = 1.0f;
+            float Intensity;
+        };
 
         // 減衰
         float Range = 10.0f;
@@ -291,7 +298,7 @@ namespace NorvesLib::Core::Rendering
 
         bool IsValid() const
         {
-            return bVisible && Intensity > 0.0f;
+            return bVisible && CanonicalIntensity > 0.0f;
         }
     };
 
@@ -305,6 +312,13 @@ namespace NorvesLib::Core::Rendering
     struct CameraProxy
     {
         uint64_t CameraId = 0;
+        /**
+         * @brief 連番のフレーム番号（0は連番でない）
+         *
+         * 0以外の同じ値の間、GameThreadは各パケットへ同じ前のカメラ・instance変換を書き
+         * （ApplyPathTracingSequenceCarry）、パストレーサーの連番の経路は同じフレームとして累積し続ける。
+         */
+        uint64_t SequenceFrame = 0;
 
         // ビュー行列用
         float PositionX = 0.0f, PositionY = 0.0f, PositionZ = 0.0f;
@@ -327,6 +341,17 @@ namespace NorvesLib::Core::Rendering
         // レンダリング設定
         RenderLayer CullingMask = RenderLayer::All;
         uint8_t RenderOrder = 0; // 複数カメラの描画順序
+
+        // 物理露出 snapshot
+        float Aperture = 4.0f;
+        float ShutterSpeed = 1.0f / 60.0f;
+        float FocusDistance = 0.0f; // ワールド単位m。0は従来のピンホール光線
+        float ISO = 100.0f;
+        float ExposureCompensation = 0.0f;
+        float EV100 = 9.9068906f;
+        float Exposure = 1.0f / 1152.0f;
+        float PreExposure = 1.0f / 1152.0f;
+        float InvPreExposure = 1152.0f;
 
         // ポストプロセス設定（ハンドル参照）
         // PostProcessHandle PostProcess;
@@ -369,6 +394,8 @@ namespace NorvesLib::Core::Rendering
         // 環境設定
         float AmbientColorR = 0.1f, AmbientColorG = 0.1f, AmbientColorB = 0.1f;
         float AmbientIntensity = 1.0f;
+        SkyAtmosphereParameters SkyAtmosphere;
+        VolumetricFogParameters VolumetricFog;
 
         // フォグ設定
         bool bFogEnabled = false;
@@ -376,6 +403,7 @@ namespace NorvesLib::Core::Rendering
         float FogDensity = 0.01f;
         float FogStart = 10.0f;
         float FogEnd = 100.0f;
+        DDGIVolumeParameters DDGIVolume;
 
         /**
          * @brief シーンをクリア
@@ -387,6 +415,19 @@ namespace NorvesLib::Core::Rendering
             MegaGeometryProxies.clear();
             LightProxies.clear();
             AdditionalCameras.clear();
+            DDGIVolume = MakeDefaultDDGIVolumeParameters();
+            SkyAtmosphere = SkyAtmosphereParameters{};
+            VolumetricFog = MakeDefaultVolumetricFogParameters();
+        }
+
+        void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)
+        {
+            DDGIVolume = SanitizeDDGIVolumeParameters(parameters);
+        }
+
+        void SetVolumetricFogParameters(const VolumetricFogParameters& parameters)
+        {
+            VolumetricFog = SanitizeVolumetricFogParameters(parameters);
         }
 
         /**

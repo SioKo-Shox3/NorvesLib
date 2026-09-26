@@ -1,0 +1,898 @@
+﻿// 拡散2バウンスまでのdiffuse indirect radianceをray queryで生成する。
+#version 460
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT sceneTopLevel;
+
+layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
+{
+    mat4 invViewProjection;
+    vec4 cameraPosition;
+    uvec4 imageAndSceneCounts; // xy=画像寸法、z=インスタンス数、w=ライト数
+    vec4 rayLimits; // x=最小距離、y=最大距離、z=pre-exposure、w=環境強度
+    uvec4 temporalState; // x=履歴有効、y=ライトrevision差、z=weight制限、w=age上限
+    uvec4 sampleState; // x=描画フレーム番号（試料系列の番号）、y=発光instance数、z=発光三角形数
+    vec4 previousCameraPosition; // xyz=履歴を書いた前フレームのカメラ位置
+} parameters;
+
+layout(set = 0, binding = 2) uniform sampler2D gbufferNormal;
+layout(set = 0, binding = 3) uniform sampler2D gbufferDepth;
+layout(set = 0, binding = 4) uniform sampler2D gbufferAlbedo;
+layout(set = 0, binding = 5) uniform sampler2D gbufferMaterial;
+layout(set = 0, binding = 6, rgba16f) uniform writeonly image2D diffuseIndirect;
+
+struct RTGIInstanceData
+{
+    uint64_t vertexAddress;
+    uint64_t indexAddress;
+    vec4 baseColor;
+    vec4 emissiveChromaticityAndLuminance;
+    uvec4 geometry; // x=stride、y=vertex count、z=index count、w=custom index
+    vec4 transform0;
+    vec4 transform1;
+    vec4 transform2;
+};
+
+struct LightData
+{
+    vec4 position;
+    vec4 direction;
+    vec4 chromaticityAndIntensity;
+    vec4 attenuation;
+};
+
+layout(set = 0, binding = 7, std430) readonly buffer RTGIInstances
+{
+    RTGIInstanceData values[];
+} instances;
+
+layout(set = 0, binding = 8, std430) readonly buffer RTGILights
+{
+    LightData values[];
+} lights;
+
+layout(set = 0, binding = 9) uniform sampler2D environmentRadiance;
+layout(set = 0, binding = 10) uniform sampler2D gbufferVelocity;
+layout(set = 0, binding = 11) uniform sampler2D historyRadiance;
+layout(set = 0, binding = 12) uniform sampler2D historyAge;
+layout(set = 0, binding = 13) uniform sampler2D historyConfidence;
+layout(set = 0, binding = 14) uniform sampler2D historyDepth;
+layout(set = 0, binding = 15) uniform sampler2D historyNormal;
+layout(set = 0, binding = 16) uniform sampler2D historyMaterial;
+layout(set = 0, binding = 17, rgba16f) uniform writeonly image2D historyRadianceOutput;
+layout(set = 0, binding = 18, r16f) uniform writeonly image2D historyAgeOutput;
+layout(set = 0, binding = 19, r16f) uniform writeonly image2D historyConfidenceOutput;
+layout(set = 0, binding = 20, rgba16f) uniform writeonly image2D historyDepthOutput;
+layout(set = 0, binding = 21, rgba16f) uniform writeonly image2D historyNormalOutput;
+layout(set = 0, binding = 22, rgba16f) uniform writeonly image2D historyMaterialOutput;
+// 発光instanceの表。x=instance表の番号、y=三角形数、z=先頭の通し番号。
+layout(set = 0, binding = 23, std430) readonly buffer RTGIEmitters
+{
+    uvec4 values[];
+} emitters;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTGIVertexData
+{
+    float values[];
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTGIIndexData
+{
+    uint values[];
+};
+
+#include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/RayTracingInstanceMask.glsl"
+const float RAY_ORIGIN_OFFSET = 0.002;
+// 画素ごとの履歴の年齢の上限（静止が続いたとき）。フレームごとの上限はtemporalState.wで、視点・光源・
+// シーンが動いているフレームでは8になる。重みは累積平均の 1-1/(年齢+1) で、上限は64/65。
+const uint RTGI_HISTORY_MAXIMUM_AGE = 64u;
+const float RTGI_HISTORY_MAXIMUM_WEIGHT = 64.0 / 65.0;
+const float RTGI_HISTORY_LIGHT_WEIGHT_LIMIT = 0.25;
+const float RTGI_HISTORY_INITIAL_CONFIDENCE = 0.25;
+const float RTGI_HISTORY_NORMAL_REJECTION_DOT = 0.9;
+const float RTGI_HISTORY_DEPTH_REJECTION_THRESHOLD = 0.02;
+const float RTGI_HISTORY_MATERIAL_REJECTION_THRESHOLD = 0.05;
+
+bool IsFiniteVector(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+bool IsFiniteScalar(float value)
+{
+    return !isnan(value) && !isinf(value);
+}
+
+vec3 SanitizeRadiance(vec3 value)
+{
+    if (!IsFiniteVector(value))
+    {
+        return vec3(0.0);
+    }
+    return clamp(value, vec3(0.0), vec3(65504.0));
+}
+
+// pre-exposureを掛ける前の物理単位の中間値。非有限と負を0にし、上限では切り詰めない
+// （半精度の上限は露出後の出力にだけ掛ける）。
+vec3 SanitizeUnexposedRadiance(vec3 value)
+{
+    if (!IsFiniteVector(value))
+    {
+        return vec3(0.0);
+    }
+    return max(value, vec3(0.0));
+}
+
+vec2 EquirectangularUV(vec3 direction)
+{
+    vec2 uv = vec2(atan(direction.z, direction.x),
+                   asin(clamp(-direction.y, -1.0, 1.0)));
+    return uv * vec2(0.15915494, 0.31830989) + 0.5;
+}
+
+vec3 ReconstructWorldPosition(vec2 uv, float depth)
+{
+    vec4 clipPosition = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 worldPosition = parameters.invViewProjection * clipPosition;
+    if (!IsFiniteVector(worldPosition.xyz) ||
+        !IsFiniteScalar(worldPosition.w) || abs(worldPosition.w) <= 1.0e-8)
+    {
+        return vec3(0.0);
+    }
+    return worldPosition.xyz / worldPosition.w;
+}
+
+uint Hash32(uvec2 value)
+{
+    uint result = value.x * 1664525u + value.y * 1013904223u + 374761393u;
+    result = (result ^ (result >> 16u)) * 2246822519u;
+    result = (result ^ (result >> 13u)) * 3266489917u;
+    return result ^ (result >> 16u);
+}
+
+float HashToUnit(uint value)
+{
+    return (float(value & 0x00FFFFFFu) + 0.5) / 16777216.0;
+}
+
+void BuildOrthonormalBasis(vec3 normal, out vec3 tangent, out vec3 bitangent)
+{
+    vec3 helper = abs(normal.z) < 0.999 ? vec3(0.0, 0.0, 1.0)
+                                       : vec3(0.0, 1.0, 0.0);
+    tangent = normalize(cross(helper, normal));
+    bitangent = cross(normal, tangent);
+}
+
+vec3 CosineWeightedDirectionFromUnit(vec3 normal, vec2 xi);
+
+vec3 CosineWeightedDirection(vec3 normal, uvec2 pixel, uint frameIndex)
+{
+    // 画素ごとの回転を加えたR2列を描画フレーム番号で進め、静止中も毎フレーム別の方向を引く。
+    // 同じ画素・同じフレーム番号からは常に同じ方向になる。R2の刻みは0.32固定小数点で
+    // 整数のまま進め、大きなフレーム番号でもfloatの桁落ちを起こさない。
+    uvec2 r2Phase = uvec2(frameIndex * 3242174889u, frameIndex * 2447445414u);
+    vec2 rotation = vec2(HashToUnit(Hash32(pixel)),
+                         HashToUnit(Hash32(pixel.yx + uvec2(17u, 43u))));
+    vec2 xi = fract(rotation + vec2(r2Phase >> 8u) * (1.0 / 16777216.0));
+    return CosineWeightedDirectionFromUnit(normal, xi);
+}
+
+// 一様乱数の組xiから、法線まわりのコサイン分布の方向を作る。
+vec3 CosineWeightedDirectionFromUnit(vec3 normal, vec2 xi)
+{
+    float xi0 = max(xi.x, 1.0e-6);
+    float xi1 = xi.y;
+    float radius = sqrt(xi0);
+    float angle = 2.0 * PI * xi1;
+    vec3 tangent;
+    vec3 bitangent;
+    BuildOrthonormalBasis(normal, tangent, bitangent);
+    return normalize(tangent * (radius * cos(angle)) +
+                     bitangent * (radius * sin(angle)) +
+                     normal * sqrt(max(0.0, 1.0 - xi0)));
+}
+
+bool TryGetInstanceData(uint customIndex, out RTGIInstanceData instanceData)
+{
+    uint low = 0u;
+    uint high = parameters.imageAndSceneCounts.z;
+    while (low < high)
+    {
+        uint middle = low + (high - low) / 2u;
+        uint candidateIndex = instances.values[middle].geometry.w;
+        if (candidateIndex < customIndex)
+        {
+            low = middle + 1u;
+        }
+        else
+        {
+            high = middle;
+        }
+    }
+
+    if (low >= parameters.imageAndSceneCounts.z ||
+        instances.values[low].geometry.w != customIndex)
+    {
+        return false;
+    }
+    instanceData = instances.values[low];
+    return true;
+}
+
+bool TryGetWorldTriangleNormal(rayQueryEXT query,
+                               uint primitiveIndex,
+                               RTGIInstanceData instanceData,
+                               out vec3 worldNormal)
+{
+    uint vertexStrideBytes = instanceData.geometry.x;
+    uint vertexCount = instanceData.geometry.y;
+    uint indexCount = instanceData.geometry.z;
+    if (vertexStrideBytes < 12u || (vertexStrideBytes & 3u) != 0u ||
+        primitiveIndex >= indexCount / 3u)
+    {
+        return false;
+    }
+
+    RTGIIndexData indexBuffer = RTGIIndexData(instanceData.indexAddress);
+    uint primitiveOffset = primitiveIndex * 3u;
+    uvec3 vertexIndices = uvec3(indexBuffer.values[primitiveOffset],
+                                indexBuffer.values[primitiveOffset + 1u],
+                                indexBuffer.values[primitiveOffset + 2u]);
+    if (vertexIndices.x >= vertexCount || vertexIndices.y >= vertexCount ||
+        vertexIndices.z >= vertexCount)
+    {
+        return false;
+    }
+
+    RTGIVertexData vertexBuffer = RTGIVertexData(instanceData.vertexAddress);
+    uint stride = vertexStrideBytes / 4u;
+    uint vertex0Offset = vertexIndices.x * stride;
+    uint vertex1Offset = vertexIndices.y * stride;
+    uint vertex2Offset = vertexIndices.z * stride;
+    vec3 vertex0 = vec3(vertexBuffer.values[vertex0Offset],
+                        vertexBuffer.values[vertex0Offset + 1u],
+                        vertexBuffer.values[vertex0Offset + 2u]);
+    vec3 vertex1 = vec3(vertexBuffer.values[vertex1Offset],
+                        vertexBuffer.values[vertex1Offset + 1u],
+                        vertexBuffer.values[vertex1Offset + 2u]);
+    vec3 vertex2 = vec3(vertexBuffer.values[vertex2Offset],
+                        vertexBuffer.values[vertex2Offset + 1u],
+                        vertexBuffer.values[vertex2Offset + 2u]);
+    if (!IsFiniteVector(vertex0) || !IsFiniteVector(vertex1) ||
+        !IsFiniteVector(vertex2))
+    {
+        return false;
+    }
+
+    vec3 objectNormal = cross(vertex1 - vertex0, vertex2 - vertex0);
+    float normalLengthSquared = dot(objectNormal, objectNormal);
+    if (!IsFiniteScalar(normalLengthSquared) || normalLengthSquared <= 1.0e-12)
+    {
+        return false;
+    }
+
+    mat4x3 worldToObject = rayQueryGetIntersectionWorldToObjectEXT(query, true);
+    worldNormal = normalize(transpose(mat3(worldToObject)) * normalize(objectNormal));
+    return IsFiniteVector(worldNormal);
+}
+
+float CalculateInverseSquareAttenuation(float distanceToLight)
+{
+    return 1.0 / max(distanceToLight * distanceToLight, 0.0001);
+}
+
+float CalculateRangeWindow(float distanceToLight, float range)
+{
+    float safeRange = max(range, 0.0001);
+    float window = max(1.0 - pow(distanceToLight / safeRange, 4.0), 0.0);
+    return window * window;
+}
+
+bool IsOccluded(vec3 worldPosition,
+                vec3 normal,
+                vec3 lightDirection,
+                float maximumDistance)
+{
+    if (maximumDistance <= parameters.rayLimits.x)
+    {
+        return false;
+    }
+
+    rayQueryEXT shadowQuery;
+    rayQueryInitializeEXT(shadowQuery,
+                          sceneTopLevel,
+                          gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                          RayTracingInstanceMaskShadowCaster,
+                          worldPosition + normal * RAY_ORIGIN_OFFSET,
+                          parameters.rayLimits.x,
+                          lightDirection,
+                          maximumDistance);
+    while (rayQueryProceedEXT(shadowQuery))
+    {
+    }
+    return rayQueryGetIntersectionTypeEXT(shadowQuery, true) ==
+           gl_RayQueryCommittedIntersectionTriangleEXT;
+}
+
+// 光源標本の乱数。画素・描画フレーム番号・次元ごとに独立した値を引く。
+float EmitterRandom(uvec2 pixel, uint frameIndex, uint dimension)
+{
+    return HashToUnit(Hash32(uvec2(Hash32(pixel + uvec2(dimension * 7919u, dimension * 104729u)),
+                                   frameIndex)));
+}
+
+// instanceの三角形のワールド座標の頂点。変換はinstance表の物体→ワールド行列（行優先3x4）。
+bool TryReadWorldTriangle(RTGIInstanceData instanceData,
+                          uint primitiveIndex,
+                          out vec3 vertex0,
+                          out vec3 vertex1,
+                          out vec3 vertex2)
+{
+    vertex0 = vec3(0.0);
+    vertex1 = vec3(0.0);
+    vertex2 = vec3(0.0);
+    uint vertexStrideBytes = instanceData.geometry.x;
+    uint vertexCount = instanceData.geometry.y;
+    uint indexCount = instanceData.geometry.z;
+    if (vertexStrideBytes < 12u || (vertexStrideBytes & 3u) != 0u ||
+        primitiveIndex >= indexCount / 3u)
+    {
+        return false;
+    }
+    RTGIIndexData indexBuffer = RTGIIndexData(instanceData.indexAddress);
+    uvec3 vertexIndices = uvec3(indexBuffer.values[primitiveIndex * 3u],
+                                indexBuffer.values[primitiveIndex * 3u + 1u],
+                                indexBuffer.values[primitiveIndex * 3u + 2u]);
+    if (vertexIndices.x >= vertexCount || vertexIndices.y >= vertexCount ||
+        vertexIndices.z >= vertexCount)
+    {
+        return false;
+    }
+    RTGIVertexData vertexBuffer = RTGIVertexData(instanceData.vertexAddress);
+    uint stride = vertexStrideBytes / 4u;
+    vec3 objectVertices[3];
+    for (uint corner = 0u; corner < 3u; ++corner)
+    {
+        uint offset = vertexIndices[corner] * stride;
+        objectVertices[corner] = vec3(vertexBuffer.values[offset],
+                                      vertexBuffer.values[offset + 1u],
+                                      vertexBuffer.values[offset + 2u]);
+    }
+    vertex0 = vec3(dot(instanceData.transform0, vec4(objectVertices[0], 1.0)),
+                   dot(instanceData.transform1, vec4(objectVertices[0], 1.0)),
+                   dot(instanceData.transform2, vec4(objectVertices[0], 1.0)));
+    vertex1 = vec3(dot(instanceData.transform0, vec4(objectVertices[1], 1.0)),
+                   dot(instanceData.transform1, vec4(objectVertices[1], 1.0)),
+                   dot(instanceData.transform2, vec4(objectVertices[1], 1.0)));
+    vertex2 = vec3(dot(instanceData.transform0, vec4(objectVertices[2], 1.0)),
+                   dot(instanceData.transform1, vec4(objectVertices[2], 1.0)),
+                   dot(instanceData.transform2, vec4(objectVertices[2], 1.0)));
+    return IsFiniteVector(vertex0) && IsFiniteVector(vertex1) && IsFiniteVector(vertex2);
+}
+
+// 浮かせた始点から発光面上の目標点までに遮蔽物があるか。方向と距離を浮かせた始点から測り直す
+// （面上の点から測った方向のままだと、浅い角度で始点のずれが光線方向へ伸び、目標の発光面を
+// 手前で横切って自分で遮る）。目標点の少し先まで最も近い命中を求め、それが標本の発光三角形
+// 自身か、目標点より先（影を落とさない発光体の奥にある面）なら遮蔽なしとする。距離を割合で
+// 縮めないので、発光面の直前にある遮蔽物も見落とさない（パストレーサーと同じ判定）。
+bool IsEmitterSegmentOccluded(vec3 origin,
+                              vec3 target,
+                              uint emitterCustomIndex,
+                              uint emitterPrimitiveIndex)
+{
+    vec3 toTarget = target - origin;
+    float targetDistance = length(toTarget);
+    if (!IsFiniteScalar(targetDistance) || targetDistance <= parameters.rayLimits.x)
+    {
+        return false;
+    }
+    rayQueryEXT shadowQuery;
+    rayQueryInitializeEXT(shadowQuery,
+                          sceneTopLevel,
+                          gl_RayFlagsOpaqueEXT,
+                          RayTracingInstanceMaskShadowCaster,
+                          origin,
+                          parameters.rayLimits.x,
+                          toTarget / targetDistance,
+                          targetDistance * 1.001 + 0.001);
+    while (rayQueryProceedEXT(shadowQuery))
+    {
+    }
+    if (rayQueryGetIntersectionTypeEXT(shadowQuery, true) !=
+        gl_RayQueryCommittedIntersectionTriangleEXT)
+    {
+        return false;
+    }
+    if (uint(rayQueryGetIntersectionInstanceCustomIndexEXT(shadowQuery, true)) ==
+            emitterCustomIndex &&
+        uint(rayQueryGetIntersectionPrimitiveIndexEXT(shadowQuery, true)) ==
+            emitterPrimitiveIndex)
+    {
+        return false;
+    }
+    return rayQueryGetIntersectionTEXT(shadowQuery, true) < targetDistance;
+}
+
+// 発光三角形の光源標本。三角形を通し番号で一様に選び、面上を一様に標本化した直接照度Eを、
+// コサイン標本の1本と同じ単位（反射率を掛ける前の入射放射輝度の推定 E/π）で返す。
+// 発光は両面（パストレーサーと同じ）。
+vec3 SampleEmitterIrradiance(vec3 worldPosition, vec3 normal, uvec2 pixel, uint dimension)
+{
+    uint entryCount = parameters.sampleState.y;
+    uint triangleTotal = parameters.sampleState.z;
+    if (entryCount == 0u || triangleTotal == 0u)
+    {
+        return vec3(0.0);
+    }
+    uint frameIndex = parameters.sampleState.x;
+    float u0 = EmitterRandom(pixel, frameIndex, dimension);
+    float u1 = EmitterRandom(pixel, frameIndex, dimension + 1u);
+    float u2 = EmitterRandom(pixel, frameIndex, dimension + 2u);
+    uint triangleNumber = min(uint(u0 * float(triangleTotal)), triangleTotal - 1u);
+    // 先頭の通し番号がtriangleNumber以下の最後の行を探す。
+    uint low = 0u;
+    uint high = entryCount - 1u;
+    while (low < high)
+    {
+        uint middle = (low + high + 1u) / 2u;
+        if (emitters.values[middle].z <= triangleNumber)
+        {
+            low = middle;
+        }
+        else
+        {
+            high = middle - 1u;
+        }
+    }
+    uvec4 entry = emitters.values[low];
+    if (entry.x >= parameters.imageAndSceneCounts.z || triangleNumber < entry.z ||
+        triangleNumber - entry.z >= entry.y)
+    {
+        return vec3(0.0);
+    }
+    RTGIInstanceData emitter = instances.values[entry.x];
+    uint emitterPrimitiveIndex = triangleNumber - entry.z;
+    vec3 vertex0;
+    vec3 vertex1;
+    vec3 vertex2;
+    if (!TryReadWorldTriangle(emitter, emitterPrimitiveIndex, vertex0, vertex1, vertex2))
+    {
+        return vec3(0.0);
+    }
+    vec3 edgeCross = cross(vertex1 - vertex0, vertex2 - vertex0);
+    float twiceArea = length(edgeCross);
+    if (!IsFiniteScalar(twiceArea) || twiceArea <= 1.0e-12)
+    {
+        return vec3(0.0);
+    }
+    float squareRoot = sqrt(u1);
+    vec3 lightPoint = vertex0 * (1.0 - squareRoot) + vertex1 * (squareRoot * (1.0 - u2)) +
+                      vertex2 * (squareRoot * u2);
+    vec3 toLight = lightPoint - worldPosition;
+    float distanceSquared = dot(toLight, toLight);
+    if (!IsFiniteScalar(distanceSquared) || distanceSquared <= 1.0e-12)
+    {
+        return vec3(0.0);
+    }
+    float distanceToLight = sqrt(distanceSquared);
+    vec3 lightDirection = toLight / distanceToLight;
+    float surfaceCosine = dot(normal, lightDirection);
+    float lightCosine = abs(dot(edgeCross / twiceArea, lightDirection));
+    if (surfaceCosine <= 0.0 || lightCosine <= 1.0e-6 ||
+        IsEmitterSegmentOccluded(worldPosition + normal * RAY_ORIGIN_OFFSET,
+                                 lightPoint,
+                                 emitter.geometry.w,
+                                 emitterPrimitiveIndex))
+    {
+        return vec3(0.0);
+    }
+    vec3 emission = emitter.emissiveChromaticityAndLuminance.rgb *
+                    emitter.emissiveChromaticityAndLuminance.a;
+    // 面積の確率密度は1/(三角形数×面積)。E = Le·cosS·cosL/d²/pdf。
+    return SanitizeUnexposedRadiance(emission *
+                                     (surfaceCosine * lightCosine * 0.5 * twiceArea *
+                                      float(triangleTotal) / (PI * distanceSquared)));
+}
+
+vec3 ComputeDirectRadiance(vec3 worldPosition,
+                           vec3 normal,
+                           vec3 baseColor)
+{
+    vec3 radiance = vec3(0.0);
+    for (uint lightIndex = 0u;
+         lightIndex < parameters.imageAndSceneCounts.w;
+         ++lightIndex)
+    {
+        LightData light = lights.values[lightIndex];
+        float lightType = light.position.w;
+        vec3 lightDirection;
+        float attenuation = 1.0;
+        float shadowDistance = parameters.rayLimits.y;
+
+        if (lightType < 0.5)
+        {
+            float directionLengthSquared = dot(light.direction.xyz,
+                                               light.direction.xyz);
+            if (!IsFiniteScalar(directionLengthSquared) || directionLengthSquared <= 1.0e-12)
+            {
+                continue;
+            }
+            lightDirection = -light.direction.xyz * inversesqrt(directionLengthSquared);
+        }
+        else if (lightType < 2.5)
+        {
+            vec3 toLight = light.position.xyz - worldPosition;
+            float distanceToLight = length(toLight);
+            if (!IsFiniteScalar(distanceToLight) || distanceToLight <= 1.0e-6)
+            {
+                continue;
+            }
+            lightDirection = toLight / distanceToLight;
+            attenuation = CalculateInverseSquareAttenuation(distanceToLight) *
+                          CalculateRangeWindow(distanceToLight, light.attenuation.x);
+            shadowDistance = max(distanceToLight - RAY_ORIGIN_OFFSET * 2.0, 0.0);
+            if (lightType >= 1.5)
+            {
+                float spotDirectionLengthSquared = dot(light.direction.xyz,
+                                                       light.direction.xyz);
+                if (!IsFiniteScalar(spotDirectionLengthSquared) ||
+                    spotDirectionLengthSquared <= 1.0e-12)
+                {
+                    continue;
+                }
+                vec3 lightToSurfaceDirection =
+                    -light.direction.xyz * inversesqrt(spotDirectionLengthSquared);
+                float theta = dot(lightDirection, lightToSurfaceDirection);
+                float coneWidth = max(light.direction.w - light.attenuation.y, 0.001);
+                attenuation *= clamp((theta - light.attenuation.y) / coneWidth,
+                                     0.0,
+                                     1.0);
+            }
+        }
+        else
+        {
+            continue;
+        }
+
+        float cosine = max(dot(normal, lightDirection), 0.0);
+        if (cosine <= 0.0 || attenuation <= 0.0 ||
+            IsOccluded(worldPosition, normal, lightDirection, shadowDistance))
+        {
+            continue;
+        }
+
+        vec3 lightRadiance = light.chromaticityAndIntensity.rgb *
+                             light.chromaticityAndIntensity.w;
+        if (!IsFiniteVector(lightRadiance))
+        {
+            continue;
+        }
+        radiance += EvaluateLambertDiffuseBRDF(baseColor) *
+                    lightRadiance * (cosine * attenuation);
+    }
+    return SanitizeUnexposedRadiance(radiance);
+}
+
+bool TryReadReprojectedHistory(vec2 currentUV,
+                               float currentDistance,
+                               vec3 currentNormal,
+                               vec3 currentMaterial,
+                               out vec3 previousRadiance,
+                               out float previousAge,
+                               out float previousConfidence)
+{
+    if (parameters.temporalState.x == 0u)
+    {
+        return false;
+    }
+
+    vec2 velocity = texture(gbufferVelocity, currentUV).rg;
+    if (!IsFiniteVector(vec3(velocity, 0.0)))
+    {
+        return false;
+    }
+
+    vec2 previousUV = currentUV - velocity;
+    if (!IsFiniteVector(vec3(previousUV, 0.0)) ||
+        any(lessThan(previousUV, vec2(0.0))) ||
+        any(greaterThanEqual(previousUV, vec2(1.0))))
+    {
+        return false;
+    }
+
+    // 履歴には前フレームのカメラから表面までの線形距離を保存している。
+    float sampledDistance = texture(historyDepth, previousUV).r;
+    vec3 sampledNormal = texture(historyNormal, previousUV).xyz;
+    vec3 sampledMaterial = texture(historyMaterial, previousUV).rgb;
+    previousRadiance = texture(historyRadiance, previousUV).rgb;
+    previousAge = texture(historyAge, previousUV).r;
+    previousConfidence = texture(historyConfidence, previousUV).r;
+    if (!IsFiniteScalar(sampledDistance) || !IsFiniteVector(sampledNormal) ||
+        !IsFiniteVector(sampledMaterial) || !IsFiniteVector(previousRadiance) ||
+        !IsFiniteScalar(previousAge) || !IsFiniteScalar(previousConfidence))
+    {
+        return false;
+    }
+
+    float sampledNormalLengthSquared = dot(sampledNormal, sampledNormal);
+    if (!IsFiniteScalar(sampledNormalLengthSquared) ||
+        sampledNormalLengthSquared <= 1.0e-8)
+    {
+        return false;
+    }
+    sampledNormal *= inversesqrt(sampledNormalLengthSquared);
+    // 非線形なNDC深度は遠景で差が潰れるため、線形距離の相対差で遮蔽の入れ替わりを棄却する。
+    float depthThreshold = max(RTGI_HISTORY_DEPTH_REJECTION_THRESHOLD,
+                               0.05 * max(currentDistance, sampledDistance));
+    if (abs(currentDistance - sampledDistance) > depthThreshold ||
+        dot(currentNormal, sampledNormal) < RTGI_HISTORY_NORMAL_REJECTION_DOT)
+    {
+        return false;
+    }
+
+    vec3 materialDelta = abs(currentMaterial - sampledMaterial);
+    if (max(materialDelta.x, max(materialDelta.y, materialDelta.z)) >
+        RTGI_HISTORY_MATERIAL_REJECTION_THRESHOLD)
+    {
+        return false;
+    }
+
+    previousAge = clamp(previousAge,
+                        0.0,
+                        min(float(parameters.temporalState.w),
+                            float(RTGI_HISTORY_MAXIMUM_AGE)));
+    previousConfidence = clamp(previousConfidence, 0.0, 1.0);
+    previousRadiance = SanitizeRadiance(previousRadiance);
+    return true;
+}
+
+void StoreTemporalSample(uvec2 pixel,
+                         vec3 radiance,
+                         float age,
+                         float confidence,
+                         float viewDistance,
+                         vec3 normal,
+                         vec4 material)
+{
+    vec3 safeRadiance = SanitizeRadiance(radiance);
+    float safeAge = IsFiniteScalar(age)
+        ? clamp(age,
+                0.0,
+                min(float(parameters.temporalState.w),
+                    float(RTGI_HISTORY_MAXIMUM_AGE)))
+        : 0.0;
+    float safeConfidence = IsFiniteScalar(confidence)
+        ? clamp(confidence, 0.0, 1.0)
+        : 0.0;
+    float safeDistance = IsFiniteScalar(viewDistance) ? clamp(viewDistance, 0.0, 65504.0) : 0.0;
+    vec3 safeNormal = IsFiniteVector(normal) ? normal : vec3(0.0);
+    vec4 safeMaterial = material;
+    if (!IsFiniteVector(safeMaterial.rgb))
+    {
+        safeMaterial = vec4(0.0);
+    }
+    safeMaterial = clamp(safeMaterial, vec4(0.0), vec4(1.0));
+
+    imageStore(diffuseIndirect, ivec2(pixel), vec4(safeRadiance, 1.0));
+    imageStore(historyRadianceOutput, ivec2(pixel), vec4(safeRadiance, 1.0));
+    imageStore(historyAgeOutput, ivec2(pixel), vec4(safeAge, 0.0, 0.0, 0.0));
+    imageStore(historyConfidenceOutput,
+               ivec2(pixel),
+               vec4(safeConfidence, 0.0, 0.0, 0.0));
+    imageStore(historyDepthOutput,
+               ivec2(pixel),
+               vec4(safeDistance, 0.0, 0.0, 0.0));
+    imageStore(historyNormalOutput,
+               ivec2(pixel),
+               vec4(safeNormal, 1.0));
+    imageStore(historyMaterialOutput, ivec2(pixel), safeMaterial);
+}
+
+// 拡散の散乱光線を1本たどり、始点へ入る放射輝度を返す。外れれば環境光、当たれば命中面の点・spot・
+// 方向光と発光三角形の直接光（コサイン標本が発光面に当たっても発光は加えない）。命中面の位置・光線側の
+// 法線・反射率を返し、呼び側がそこからさらに散乱をたどれるようにする。
+vec3 TraceDiffuseRay(vec3 rayOrigin,
+                     vec3 rayDirection,
+                     uvec2 pixel,
+                     uint emitterDimension,
+                     out bool bSurfaceHit,
+                     out vec3 hitPosition,
+                     out vec3 hitNormal,
+                     out vec3 hitBaseColor)
+{
+    bSurfaceHit = false;
+    hitPosition = vec3(0.0);
+    hitNormal = vec3(0.0);
+    hitBaseColor = vec3(0.0);
+
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query,
+                          sceneTopLevel,
+                          gl_RayFlagsOpaqueEXT,
+                          RayTracingInstanceMaskShadowCaster,
+                          rayOrigin,
+                          parameters.rayLimits.x,
+                          rayDirection,
+                          parameters.rayLimits.y);
+    while (rayQueryProceedEXT(query))
+    {
+    }
+
+    if (rayQueryGetIntersectionTypeEXT(query, true) !=
+        gl_RayQueryCommittedIntersectionTriangleEXT)
+    {
+        if (parameters.rayLimits.w > 0.0)
+        {
+            return textureLod(environmentRadiance,
+                              EquirectangularUV(rayDirection),
+                              0.0).rgb * parameters.rayLimits.w;
+        }
+        return vec3(0.0);
+    }
+
+    float hitDistance = rayQueryGetIntersectionTEXT(query, true);
+    uint customIndex = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, true));
+    uint primitiveIndex = rayQueryGetIntersectionPrimitiveIndexEXT(query, true);
+    RTGIInstanceData hitInstance;
+    vec3 triangleNormal;
+    if (!IsFiniteScalar(hitDistance) || hitDistance < 0.0 ||
+        !TryGetInstanceData(customIndex, hitInstance) ||
+        !TryGetWorldTriangleNormal(query, primitiveIndex, hitInstance, triangleNormal))
+    {
+        return vec3(0.0);
+    }
+    if (dot(triangleNormal, rayDirection) > 0.0)
+    {
+        triangleNormal = -triangleNormal;
+    }
+    bSurfaceHit = true;
+    hitPosition = rayOrigin + rayDirection * hitDistance;
+    hitNormal = triangleNormal;
+    hitBaseColor = hitInstance.baseColor.rgb;
+    return ComputeDirectRadiance(hitPosition, hitNormal, hitBaseColor) +
+           hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension);
+}
+
+void main()
+{
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    uvec2 imageSize = parameters.imageAndSceneCounts.xy;
+    if (pixel.x >= imageSize.x || pixel.y >= imageSize.y)
+    {
+        return;
+    }
+
+    vec2 uv = (vec2(pixel) + vec2(0.5)) / vec2(imageSize);
+    float sampledDepth = texture(gbufferDepth, uv).r;
+    PbrGBufferMaterialSamples surfaceSamples =
+        SamplePbrMaterialTextures(gbufferAlbedo, gbufferNormal, gbufferMaterial, uv);
+    vec4 sampledMaterial = surfaceSamples.Material;
+    vec3 surfaceAlbedo = surfaceSamples.Albedo.rgb;
+    vec3 normal = surfaceSamples.WorldNormal.xyz;
+    float normalLengthSquared = dot(normal, normal);
+    bool bSurfaceValid = IsFiniteScalar(sampledDepth) &&
+        sampledDepth < 0.999999 && IsFiniteVector(surfaceAlbedo) &&
+        IsFiniteVector(sampledMaterial.rgb) && IsFiniteVector(normal) &&
+        IsFiniteScalar(normalLengthSquared) && normalLengthSquared > 1.0e-8;
+
+    float depth = bSurfaceValid ? clamp(sampledDepth, 0.0, 1.0) : 1.0;
+    vec4 material = bSurfaceValid ? clamp(sampledMaterial, vec4(0.0), vec4(1.0))
+                                  : vec4(0.0);
+    vec3 worldNormal = bSurfaceValid ? normal * inversesqrt(normalLengthSquared)
+                                     : vec3(0.0);
+    vec3 outputRadiance = vec3(0.0);
+    // 履歴の棄却判定に使う線形距離。保存するのは現在のカメラから、比べるのは前フレームのカメラから
+    // 同じ表面点までの距離で、履歴側と同じカメラを基準にする。無効画素は0とする。
+    float previousViewDistance = 0.0;
+    float viewDistance = 0.0;
+
+    if (bSurfaceValid)
+    {
+        surfaceAlbedo = clamp(surfaceAlbedo, vec3(0.0), vec3(65504.0));
+        vec3 worldPosition = ReconstructWorldPosition(uv, depth);
+        if (!IsFiniteVector(worldPosition))
+        {
+            bSurfaceValid = false;
+            depth = 1.0;
+            material = vec4(0.0);
+            worldNormal = vec3(0.0);
+        }
+        else
+        {
+            viewDistance = length(worldPosition - parameters.cameraPosition.xyz);
+            previousViewDistance = length(worldPosition - parameters.previousCameraPosition.xyz);
+            float diffuseWeight = EvaluateDiffuseMaterialWeight(material.r);
+            vec3 rayDirection = CosineWeightedDirection(worldNormal, pixel,
+                                                          parameters.sampleState.x);
+            vec3 rayOrigin = worldPosition + worldNormal * RAY_ORIGIN_OFFSET;
+
+            // 発光三角形の光は1次面と命中点の光源標本で数えるため、コサイン標本が発光面に
+            // 当たっても発光を加えない。
+            bool bBounceHit;
+            vec3 bounceHitPosition;
+            vec3 bounceHitNormal;
+            vec3 bounceHitBaseColor;
+            vec3 incomingRadiance = TraceDiffuseRay(rayOrigin, rayDirection, pixel, 3u,
+                                                    bBounceHit, bounceHitPosition,
+                                                    bounceHitNormal, bounceHitBaseColor);
+            if (bBounceHit)
+            {
+                // 2回目の拡散バウンス: 命中面が空と周りの面から受ける光（影の中の地面を照らす、物体の
+                // 下側の光など）を、命中点からもう1本のコサイン標本でたどって加える。方向の乱数は
+                // 1本目のR2列と独立にする（同じ列の位相だと画素ごとに2本の方向が固定の組になる）。
+                uint frameIndex = parameters.sampleState.x;
+                vec3 secondDirection = CosineWeightedDirectionFromUnit(
+                    bounceHitNormal,
+                    vec2(EmitterRandom(pixel, frameIndex, 9u),
+                         EmitterRandom(pixel, frameIndex, 10u)));
+                bool bSecondHit;
+                vec3 secondHitPosition;
+                vec3 secondHitNormal;
+                vec3 secondHitBaseColor;
+                vec3 secondIncoming = TraceDiffuseRay(
+                    bounceHitPosition + bounceHitNormal * RAY_ORIGIN_OFFSET,
+                    secondDirection, pixel, 6u,
+                    bSecondHit, secondHitPosition, secondHitNormal, secondHitBaseColor);
+                // 拡散面の出る放射輝度は反射率/π×照度で、コサイン標本の照度の推定はπ×入射放射輝度。
+                incomingRadiance += bounceHitBaseColor * SanitizeUnexposedRadiance(secondIncoming);
+            }
+
+            // 1次面を照らす発光三角形の直接光（反射率を掛ける前の単位でコサイン標本に加える）。
+            incomingRadiance = SanitizeUnexposedRadiance(incomingRadiance) +
+                               SampleEmitterIrradiance(worldPosition, worldNormal, pixel, 0u);
+            float preExposure = IsFiniteScalar(parameters.rayLimits.z) &&
+                                        parameters.rayLimits.z > 0.0
+                                    ? clamp(parameters.rayLimits.z, 1.0e-6, 1.0e6)
+                                    : 1.0;
+            outputRadiance = SanitizeRadiance(incomingRadiance *
+                                               surfaceAlbedo *
+                                               diffuseWeight *
+                                               preExposure);
+        }
+    }
+
+    vec3 previousRadiance = vec3(0.0);
+    float previousAge = 0.0;
+    float previousConfidence = 0.0;
+    bool bHistoryAccepted = bSurfaceValid &&
+        TryReadReprojectedHistory(uv,
+                                  previousViewDistance,
+                                  worldNormal,
+                                  material.rgb,
+                                  previousRadiance,
+                                  previousAge,
+                                  previousConfidence);
+    float historyWeight = 0.0;
+    float outputAge = 0.0;
+    float outputConfidence = bSurfaceValid ? RTGI_HISTORY_INITIAL_CONFIDENCE : 0.0;
+    if (bHistoryAccepted)
+    {
+        historyWeight = clamp(1.0 - 1.0 / (previousAge + 1.0),
+                              0.0,
+                              RTGI_HISTORY_MAXIMUM_WEIGHT);
+        historyWeight *= previousConfidence;
+        if (parameters.temporalState.y != 0u || parameters.temporalState.z != 0u)
+        {
+            historyWeight = min(historyWeight, RTGI_HISTORY_LIGHT_WEIGHT_LIMIT);
+        }
+        historyWeight = clamp(historyWeight, 0.0, RTGI_HISTORY_MAXIMUM_WEIGHT);
+        outputRadiance = mix(outputRadiance, previousRadiance, historyWeight);
+        outputAge = min(previousAge + 1.0,
+                        min(float(parameters.temporalState.w),
+                            float(RTGI_HISTORY_MAXIMUM_AGE)));
+        outputConfidence = clamp(previousConfidence + 0.125, 0.0, 1.0);
+    }
+
+    StoreTemporalSample(pixel,
+                        outputRadiance,
+                        outputAge,
+                        outputConfidence,
+                        viewDistance,
+                        worldNormal,
+                        material);
+}

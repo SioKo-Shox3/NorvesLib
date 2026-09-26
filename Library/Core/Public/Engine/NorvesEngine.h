@@ -12,6 +12,7 @@
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/RenderThread.h"
 #include "Rendering/DebugDrawQueue.h"
+#include "Rendering/RayTracingSceneSubsystem.h"
 
 namespace NorvesLib::Core
 {
@@ -163,6 +164,13 @@ namespace NorvesLib::Core
         const Rendering::DebugDrawQueue& GetDebugDraw() const { return m_DebugDraw; }
 
         /**
+         * @brief レイトレーシングシーンのサブシステムを取得
+         * @return サブシステムへの参照
+         */
+        Rendering::RayTracingSceneSubsystem& GetRayTracingSceneSubsystem() { return m_RayTracingSceneSubsystem; }
+        const Rendering::RayTracingSceneSubsystem& GetRayTracingSceneSubsystem() const { return m_RayTracingSceneSubsystem; }
+
+        /**
          * @brief Component data registryを取得
          * @return Component data registryへの参照
          */
@@ -190,6 +198,7 @@ namespace NorvesLib::Core
         Rendering::RenderingCoordinator m_RenderingCoordinator; ///< 描画フロー管理
         Rendering::RenderThread m_RenderThread;                 ///< レンダースレッド
         Rendering::DebugDrawQueue m_DebugDraw;                  ///< デバッグ描画キュー
+        Rendering::RayTracingSceneSubsystem m_RayTracingSceneSubsystem; ///< レイトレーシングシーン管理
     };
 
     /**

@@ -9,6 +9,7 @@
 #include "RHI/IFramebuffer.h"
 
 #include <cassert>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -22,6 +23,27 @@ constexpr uint32_t TextureWidth = 3;
 constexpr uint32_t TextureHeight = 2;
 constexpr uint32_t BytesPerPixel = 4;
 constexpr uint64_t ReadbackBytes = TextureWidth * TextureHeight * BytesPerPixel;
+constexpr int GpuTestSkipReturnCode = 125;
+
+bool IsGpuTestSkipForced()
+{
+    char* forceSkip = nullptr;
+    size_t forceSkipLength = 0;
+    if (_dupenv_s(&forceSkip, &forceSkipLength, "NORVESLIB_FORCE_GPU_TEST_SKIP") != 0 || forceSkip == nullptr)
+    {
+        return false;
+    }
+
+    const bool bForceSkip = std::strcmp(forceSkip, "1") == 0;
+    free(forceSkip);
+    return bForceSkip;
+}
+
+int SkipGpuTest(const char* reason)
+{
+    std::cout << "RHITextureToBufferReadbackVulkanTest skipped: " << reason << std::endl;
+    return GpuTestSkipReturnCode;
+}
 
 RHI::TextureDesc MakeColorTextureDesc()
 {
@@ -99,6 +121,11 @@ bool VerifyPixels(const uint8_t* pixels)
 
 int RunTest()
 {
+    if (IsGpuTestSkipForced())
+    {
+        return SkipGpuTest("NORVESLIB_FORCE_GPU_TEST_SKIP=1 was set.");
+    }
+
     RHI::RHIDeviceDesc desc;
     desc.Api = RHI::GraphicsAPI::Vulkan;
     desc.bEnableValidation = false;
@@ -106,8 +133,7 @@ int RunTest()
     RHI::DevicePtr device = RHI::CreateRHIDevice(desc);
     if (!IsValid(device))
     {
-        std::cerr << "Failed to create Vulkan RHI device for texture readback test." << std::endl;
-        return 1;
+        return SkipGpuTest("no Vulkan device is available for the texture readback test.");
     }
 
     assert(device->GetAPI() == RHI::API::Vulkan);

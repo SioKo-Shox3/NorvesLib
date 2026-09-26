@@ -3,10 +3,17 @@
 #include "Component.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/RenderTypes.h"
+#include "Math/Vector3.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Component
 {
+    enum class LightIntensityUnit : uint8_t
+    {
+        Lux,
+        Candela,
+        Lumen
+    };
 
     // ========================================
     // LightComponent
@@ -99,6 +106,9 @@ namespace NorvesLib::Core::Component
          */
         float GetIntensity() const { return Intensity; }
 
+        bool SetIntensityUnit(LightIntensityUnit unit);
+        LightIntensityUnit GetIntensityUnit() const { return IntensityUnit; }
+
         /**
          * @brief シャドウキャスト設定
          */
@@ -184,7 +194,7 @@ namespace NorvesLib::Core::Component
          * @brief 共通のLightProxyフィールドを設定するヘルパー
          * @param outProxy 出力先
          */
-        void FillCommonLightProxy(Rendering::LightProxy &outProxy) const;
+        bool FillCommonLightProxy(Rendering::LightProxy &outProxy) const;
 
         // ========================================
         // リフレクションプロパティ
@@ -192,6 +202,8 @@ namespace NorvesLib::Core::Component
 
         PROPERTY(Rendering::LightType, LightTypeProp)
         PROPERTY(float, Intensity)
+        PROPERTY(LightIntensityUnit, IntensityUnit)
+        PROPERTY(Math::Vector3, LightColor)
         PROPERTY(bool, bCastShadows)
         PROPERTY(bool, bLightVisible)
         PROPERTY(float, ShadowBias)
@@ -202,7 +214,6 @@ namespace NorvesLib::Core::Component
         // 内部キャッシュ（リフレクション対象外）
         // ========================================
 
-        float m_LightColor[3] = {1.0f, 1.0f, 1.0f};
         float m_LightDirection[3] = {0.0f, -1.0f, 0.0f};
     };
 

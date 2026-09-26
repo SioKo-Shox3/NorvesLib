@@ -14,16 +14,27 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     mat4 invViewProjection;
     vec4 cameraPosition;    // xyz=position, w=unused
     vec4 ambientColor;      // xyz=color, w=intensity
-    mat4 lightView;         // シャドウマップ用ライトビュー行列
-    mat4 lightProjection;   // シャドウマップ用ライトプロジェクション行列
+    mat4 lightView[4];      // 4カスケードのライトビュー行列
+    mat4 lightProjection[4];// 4カスケードのライトプロジェクション行列
+    vec4 shadowSplitDistances[2]; // x/y/z/w = split 0..3, split 4 in [1].x
+    uint cascadeCount;       // 完全なCSM公開値の場合だけ4
     uint lightCount;
     uint bShadowEnabled;    // シャドウマップ有効フラグ
-    uint envMapMipLevels;   // 環境マップミップレベル数
+    uint prefilteredSpecularMipLevels; // prefiltered specular mip level count
     uint bIBLEnabled;       // IBL有効フラグ
     uint bSSAOEnabled;      // SSAO有効フラグ
     uint bNeuralBRDFEnabled; // Neural BRDF有効フラグ
     uint debugViewMode;
-    uint _pad2;
+    float preExposure;
+    uint shadowPadding0;
+    uint shadowPadding1;
+    uint shadowPadding2;
+    vec4 skySunDirectionAndCosRadius; // xyz=太陽方向, w=cos(太陽ディスク角半径)
+    vec4 cameraForward; // xyz=CSM分割に使うカメラ前方単位ベクトル
+    vec4 ddgiVolumeOrigin; // xyz=DDGI volume原点
+    vec4 ddgiProbeSpacing; // xyz=DDGI probe間隔
+    uvec4 ddgiProbeCounts; // xyz=格子数, w=probe総数
+    uvec4 ddgiInfo; // x=DDGI有効フラグ
 } params;
 
 // ライトデータ構造
@@ -31,7 +42,7 @@ struct LightData
 {
     vec4 position;      // xyz=position, w=type (0:Dir, 1:Point, 2:Spot)
     vec4 direction;     // xyz=direction, w=innerAngle
-    vec4 color;         // xyz=color, w=intensity
+    vec4 chromaticityAndIntensity; // xyz=Y=1 chromaticity, w=canonical lux/cd
     vec4 attenuation;   // x=range, y=outerAngle, z=unused, w=unused
 };
 
@@ -41,8 +52,8 @@ layout(std430, set = 0, binding = 5) readonly buffer LightBuffer
     LightData lights[];
 } lightBuffer;
 
-// シャドウマップ
-layout(set = 0, binding = 6) uniform sampler2D shadowMap;
+// 4層CSMシャドウマップ
+layout(set = 0, binding = 6) uniform sampler2DArray shadowMap;
 
 // GBufferエミッシブ
 layout(set = 0, binding = 7) uniform sampler2D gbufferEmissive;
@@ -50,6 +61,16 @@ layout(set = 0, binding = 7) uniform sampler2D gbufferEmissive;
 // IBL (Image-Based Lighting)
 layout(set = 0, binding = 8) uniform sampler2D envMap;    // HDR環境マップ（equirectangular）
 layout(set = 0, binding = 9) uniform sampler2D brdfLUT;   // BRDF LUT（split-sum近似）
+
+// Diffuse irradiance and GGX prefiltered specular resources
+layout(set = 0, binding = 12) uniform sampler2D diffuseIrradiance;
+layout(set = 0, binding = 13) uniform sampler2D prefilteredSpecular;
+layout(set = 0, binding = 14) uniform sampler2D skySunDisk;
+layout(set = 0, binding = 15) uniform sampler2D skyTransmittance;
+layout(set = 0, binding = 16) uniform sampler2D rayTracingShadowVisibility;
+layout(set = 0, binding = 17) uniform sampler2DArray ddgiIrradianceAtlas;
+layout(set = 0, binding = 18) uniform sampler2DArray ddgiDistanceAtlas;
+layout(set = 0, binding = 19) uniform sampler2D rtgiDiffuseIndirect;
 
 // SSAO (Screen-Space Ambient Occlusion)
 layout(set = 0, binding = 10) uniform sampler2D ssaoTexture;
@@ -66,7 +87,15 @@ layout(location = 0) out vec4 outColor;
 // PBR関連関数
 // ========================================
 
-const float PI = 3.14159265359;
+#include "Common/PbrMaterialEvaluation.glsl"
+// probeの向きの重み（wrap shading）の下限（RTXGIと同じ0.2）。面の裏側のprobeも少し使い、1つのprobeに
+// 重みが集まって斑点になるのを防ぐ。
+const float DDGI_WRAP_WEIGHT_FLOOR = 0.2;
+// 表面の偏り（surface bias）の大きさ。probe間隔の最小値に対する比で、法線の方向へずらす。大きさは
+// Majercikらの自己遮蔽のずらし量（0.3 × 0.75 × 最小間隔）と同じで、視点の側の成分も法線の方向へ置く。
+const float DDGI_NORMAL_BIAS_FRACTION = 0.225;
+// これより弱いprobeの重みを3乗の割合で押しつぶす（RTXGIのcrush threshold）。
+const float DDGI_WEIGHT_CRUSH_THRESHOLD = 0.2;
 const uint DEBUG_VIEW_MODE_NORMAL = 0u;
 const uint DEBUG_VIEW_MODE_UNLIT = 1u;
 const uint DEBUG_VIEW_MODE_WIREFRAME = 2u;
@@ -77,6 +106,45 @@ const uint DEBUG_VIEW_MODE_GBUFFER_MATERIAL = 6u;
 const uint DEBUG_VIEW_MODE_GBUFFER_DEPTH = 7u;
 const uint DEBUG_VIEW_MODE_LOD_LEVEL = 8u;
 const uint DEBUG_VIEW_MODE_COUNT = 9u;
+const uint DEBUG_VIEW_MODE_VALIDATION_LAMBERT = 253u;
+const uint DEBUG_VIEW_MODE_VALIDATION_PBR = 254u;
+const uint DEBUG_VIEW_MODE_RAW250 = 250u;
+const uint DEBUG_VIEW_MODE_RAW251 = 251u;
+const uint DEBUG_VIEW_MODE_RAW252 = 252u;
+const uint DEBUG_VIEW_MODE_R5_RASTER_HARD_SHADOW = 246u;
+// 検証表示245: CSM・RT影を掛ける方向光（空の太陽）の可視（面が背を向ければ0）。露出を掛けない。
+const uint DEBUG_VIEW_MODE_R7_SUN_VISIBILITY = 245u;
+const uint DEBUG_VIEW_MODE_R5_RAY_TRACING_HARD_SHADOW = 247u;
+const uint DEBUG_VIEW_MODE_R5_RAY_TRACING_VISIBILITY = 248u;
+const uint DEBUG_VIEW_MODE_R5_RASTER_FALLBACK = 249u;
+
+bool IsR5HardShadowValidationMode()
+{
+    return params.debugViewMode == DEBUG_VIEW_MODE_R5_RASTER_HARD_SHADOW ||
+           params.debugViewMode == DEBUG_VIEW_MODE_R5_RAY_TRACING_HARD_SHADOW ||
+           params.debugViewMode == DEBUG_VIEW_MODE_R5_RASTER_FALLBACK;
+}
+
+bool ShouldApplySceneColorPreExposure()
+{
+    return params.debugViewMode == DEBUG_VIEW_MODE_NORMAL ||
+           params.debugViewMode == DEBUG_VIEW_MODE_RAW252 ||
+           params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_LAMBERT ||
+           params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_PBR ||
+           params.debugViewMode == DEBUG_VIEW_MODE_R5_RASTER_HARD_SHADOW ||
+           params.debugViewMode == DEBUG_VIEW_MODE_R5_RAY_TRACING_HARD_SHADOW ||
+           params.debugViewMode == DEBUG_VIEW_MODE_R5_RASTER_FALLBACK;
+}
+
+vec3 ApplySceneColorPreExposure(vec3 sceneColor)
+{
+    if (ShouldApplySceneColorPreExposure())
+    {
+        return sceneColor * params.preExposure;
+    }
+
+    return sceneColor;
+}
 
 // ========================================
 // Equirectangular UV from direction vector
@@ -92,56 +160,11 @@ vec2 EquirectangularUV(vec3 dir)
     return uv;
 }
 
-// フレネル（Schlickの近似）
-vec3 FresnelSchlick(float cosTheta, vec3 F0)
+vec3 SamplePrefilteredSpecular(vec3 direction, float roughness)
 {
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-// フレネル（Schlickの近似、ラフネス考慮版 - アンビエント/IBL用）
-vec3 FresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
-{
-    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-// 法線分布関数（GGX/Trowbridge-Reitz）
-float DistributionGGX(vec3 N, vec3 H, float roughness)
-{
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
-
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
-    denom = PI * denom * denom;
-
-    return a2 / max(denom, 0.0001);
-}
-
-// 幾何遮蔽関数（Smith's method with Schlick-GGX）
-float GeometrySchlickGGX(float NdotV, float roughness)
-{
-    float r = (roughness + 1.0);
-    float k = (r * r) / 8.0;
-    return NdotV / (NdotV * (1.0 - k) + k);
-}
-
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
-{
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
-    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
-    return ggx1 * ggx2;
-}
-
-// ========================================
-// スペキュラオクルージョン (Lagarde 2014)
-// AO値からスペキュラ方向のオクルージョンを近似計算
-// ========================================
-float ComputeSpecularAO(float NdotV, float ao, float roughness)
-{
-    return clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+    float lod = roughness * float(params.prefilteredSpecularMipLevels - 1u);
+    vec2 uv = EquirectangularUV(direction);
+    return textureLod(prefilteredSpecular, uv, lod).rgb;
 }
 
 // ========================================
@@ -166,12 +189,15 @@ float ComputeDebugDepth01(vec2 uv, float depth)
 // ========================================
 // ライト減衰計算
 // ========================================
-float CalculateAttenuation(float distance, float range)
+float CalculateInverseSquareAttenuation(float distance)
 {
-    // 距離ベースの減衰（スムーズな減衰カーブ）
-    float attenuation = 1.0 / (distance * distance + 1.0);
-    float factor = clamp(1.0 - pow(distance / max(range, 0.001), 4.0), 0.0, 1.0);
-    return attenuation * factor * factor;
+    return 1.0 / max(distance * distance, 0.01 * 0.01);
+}
+
+float CalculateRangeWindow(float distance, float range)
+{
+    float factor = max(1.0 - pow(distance / max(range, 0.0001), 4.0), 0.0);
+    return factor * factor;
 }
 
 // ========================================
@@ -199,22 +225,110 @@ const vec2 POISSON_DISK[16] = vec2[16](
     vec2( 0.14383161, -0.14100790)
 );
 
-// ライトサイズ（ソフトネス制御）
-const float PCSS_LIGHT_SIZE = 0.04;
+// 方向光の角半径（太陽円盤、SkyAtmosphereのSolarDiskSolidAngleSteradiansと同じ大きさ）。半影の幅は
+// 遮蔽物から受け側までの距離×tan(角半径)で決まる。
+const float DIRECTIONAL_LIGHT_TAN_ANGULAR_RADIUS = 0.00468;
+// ブロッカー探索の半径の上限（影の地図のUV）。
 const float PCSS_BLOCKER_SEARCH_RADIUS = 0.02;
 
+float GetShadowSplitDistance(uint splitIndex)
+{
+    return splitIndex < 4u
+               ? params.shadowSplitDistances[0][splitIndex]
+               : params.shadowSplitDistances[1][splitIndex - 4u];
+}
+
+bool IsFiniteShadowValue(float value)
+{
+    return !isnan(value) && !isinf(value);
+}
+
+bool HasValidCascadedShadowData()
+{
+    if (params.bShadowEnabled == 0u ||
+        params.cascadeCount != 4u)
+    {
+        return false;
+    }
+
+    float previousSplit = GetShadowSplitDistance(0u);
+    if (!IsFiniteShadowValue(previousSplit))
+    {
+        return false;
+    }
+    for (uint splitIndex = 1u; splitIndex < 5u; ++splitIndex)
+    {
+        float split = GetShadowSplitDistance(splitIndex);
+        if (!IsFiniteShadowValue(split) || split <= previousSplit)
+        {
+            return false;
+        }
+        previousSplit = split;
+    }
+    return true;
+}
+
+// 受け側の面の、影の標本化UVに対する深度の傾き（ライト空間の法線から求める）。PCSSの探索点ごとに
+// 受け側の深度をこの傾きで補い、太陽が低いときに受け側の平らな面そのものを遮蔽物と数えない
+// （receiver plane depth bias）。法線が光とほぼ直交する面は傾きを余弦0.05で抑える。
+vec2 ComputeReceiverDepthGradient(vec3 normal, uint cascadeIndex)
+{
+    vec3 lightNormal = mat3(params.lightView[cascadeIndex]) * normal;
+    float normalDepth = abs(lightNormal.z) < 0.05
+        ? (lightNormal.z < 0.0 ? -0.05 : 0.05)
+        : lightNormal.z;
+    mat4 lightProjectionMatrix = params.lightProjection[cascadeIndex];
+    float uPerMeter = 0.5 * lightProjectionMatrix[0][0];
+    float vPerMeter = 0.5 * lightProjectionMatrix[1][1];
+    float depthPerMeter = lightProjectionMatrix[2][2];
+    if (abs(uPerMeter) < 1.0e-8 || abs(vPerMeter) < 1.0e-8 ||
+        !IsFiniteShadowValue(depthPerMeter))
+    {
+        return vec2(0.0);
+    }
+    vec2 gradient = vec2(depthPerMeter * (-lightNormal.x / normalDepth) / uPerMeter,
+                         depthPerMeter * (-lightNormal.y / normalDepth) / vPerMeter);
+    return IsFiniteShadowValue(gradient.x) && IsFiniteShadowValue(gradient.y)
+        ? gradient
+        : vec2(0.0);
+}
+
+// 深度の比較の余裕。影の地図の1.5 texel分の世界の長さを深度へ換えた一定の分（曲面と深度の量子化）に、
+// 1 texel分の受け側の傾き（texelの中心と受け側の点のずれ）を加える。正規化深度の一定値は
+// カスケードの深度範囲が広いほど世界の長さが大きくなり、影が遮蔽物から離れて始まる。
+float ComputeShadowCompareBias(vec2 receiverGradient, vec2 texelSize, uint cascadeIndex)
+{
+    mat4 lightProjectionMatrix = params.lightProjection[cascadeIndex];
+    float depthPerMeter = abs(lightProjectionMatrix[2][2]);
+    float uPerMeter = max(0.5 * abs(lightProjectionMatrix[0][0]), 1.0e-8);
+    float texelMeters = texelSize.x / uPerMeter;
+    return depthPerMeter * texelMeters * 1.5 + dot(abs(receiverGradient), texelSize);
+}
+
 // Phase 1: ブロッカーサーチ（平均ブロッカー深度を求める）
-float FindBlockerDepth(vec2 shadowUV, float receiverDepth, vec2 texelSize)
+float FindBlockerDepth(vec2 shadowUV,
+                       float receiverDepth,
+                       vec2 receiverGradient,
+                       vec2 texelSize,
+                       uint cascadeIndex)
 {
     float blockerSum = 0.0;
     int blockerCount = 0;
-    float searchRadius = PCSS_BLOCKER_SEARCH_RADIUS;
+    // カスケードの深度範囲の全体を遮蔽物の距離とした半影を覆う半径（最小2 texel）。
+    mat4 lightProjectionMatrix = params.lightProjection[cascadeIndex];
+    float depthRangeMeters = 1.0 / max(abs(lightProjectionMatrix[2][2]), 1.0e-8);
+    float searchRadius = clamp(depthRangeMeters * DIRECTIONAL_LIGHT_TAN_ANGULAR_RADIUS *
+                                   0.5 * abs(lightProjectionMatrix[0][0]),
+                               2.0 * texelSize.x,
+                               PCSS_BLOCKER_SEARCH_RADIUS);
+    float bias = ComputeShadowCompareBias(receiverGradient, texelSize, cascadeIndex);
 
     for (int i = 0; i < 16; i++)
     {
         vec2 offset = POISSON_DISK[i] * searchRadius;
-        float sampleDepth = texture(shadowMap, shadowUV + offset).r;
-        if (sampleDepth < receiverDepth - 0.005)
+        float sampleDepth = texture(shadowMap,
+                                    vec3(shadowUV + offset, float(cascadeIndex))).r;
+        if (sampleDepth < receiverDepth + dot(receiverGradient, offset) - bias)
         {
             blockerSum += sampleDepth;
             blockerCount++;
@@ -229,32 +343,67 @@ float FindBlockerDepth(vec2 shadowUV, float receiverDepth, vec2 texelSize)
     return blockerSum / float(blockerCount);
 }
 
-// Phase 2: ペナンブラサイズ推定
-float EstimatePenumbraSize(float receiverDepth, float blockerDepth)
+// Phase 2: ペナンブラサイズ推定（影の地図のUVでの半影の半幅）。方向光は平行投影なので、遮蔽物と
+// 受け側の深度差（m）×tan(角半径)が半影の半幅（m）になる。
+float EstimatePenumbraSize(float receiverDepth, float blockerDepth, uint cascadeIndex)
 {
-    return PCSS_LIGHT_SIZE * (receiverDepth - blockerDepth) / blockerDepth;
+    mat4 lightProjectionMatrix = params.lightProjection[cascadeIndex];
+    float depthPerMeter = max(abs(lightProjectionMatrix[2][2]), 1.0e-8);
+    float separationMeters = max(receiverDepth - blockerDepth, 0.0) / depthPerMeter;
+    return separationMeters * DIRECTIONAL_LIGHT_TAN_ANGULAR_RADIUS *
+           0.5 * abs(lightProjectionMatrix[0][0]);
 }
 
 // Phase 3: 可変カーネルPCF
-float PCSSFilter(vec2 shadowUV, float receiverDepth, float filterRadius)
+float PCSSFilter(vec2 shadowUV,
+                 float receiverDepth,
+                 vec2 receiverGradient,
+                 vec2 texelSize,
+                 float filterRadius,
+                 uint cascadeIndex)
 {
     float shadow = 0.0;
-    float bias = 0.005;
+    float bias = ComputeShadowCompareBias(receiverGradient, texelSize, cascadeIndex);
 
     for (int i = 0; i < 16; i++)
     {
         vec2 offset = POISSON_DISK[i] * filterRadius;
-        float sampleDepth = texture(shadowMap, shadowUV + offset).r;
-        shadow += (receiverDepth - bias > sampleDepth) ? 0.0 : 1.0;
+        float sampleDepth = texture(shadowMap,
+                                    vec3(shadowUV + offset, float(cascadeIndex))).r;
+        float offsetReceiverDepth = receiverDepth + dot(receiverGradient, offset);
+        shadow += (offsetReceiverDepth - bias > sampleDepth) ? 0.0 : 1.0;
     }
 
     return shadow / 16.0;
 }
 
-float CalculateShadow(vec3 worldPos)
+// 点がカスケードの影の地図のUVと深度の範囲に入るか。境界のブレンドでは、次のカスケードが
+// その点を覆うときだけ混ぜる（ブレンド帯は次のカスケードの切片の手前にあり、覆わないと
+// 範囲外の「影なし」を混ぜて影が薄くなる）。
+bool IsInsideShadowCascade(vec3 worldPos, uint cascadeIndex)
+{
+    vec4 lightSpacePos = params.lightProjection[cascadeIndex] *
+                         params.lightView[cascadeIndex] * vec4(worldPos, 1.0);
+    if (!IsFiniteShadowValue(lightSpacePos.w) || abs(lightSpacePos.w) < 0.000001)
+    {
+        return false;
+    }
+    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
+    vec2 shadowUV = projCoords.xy * 0.5 + 0.5;
+    return all(greaterThanEqual(shadowUV, vec2(0.0))) &&
+           all(lessThanEqual(shadowUV, vec2(1.0))) &&
+           projCoords.z >= 0.0 && projCoords.z <= 1.0;
+}
+
+float SampleShadowCascade(vec3 worldPos, vec3 normal, uint cascadeIndex)
 {
     // ワールド座標をライトクリップ空間に変換
-    vec4 lightSpacePos = params.lightProjection * params.lightView * vec4(worldPos, 1.0);
+    vec4 lightSpacePos = params.lightProjection[cascadeIndex] *
+                         params.lightView[cascadeIndex] * vec4(worldPos, 1.0);
+    if (!IsFiniteShadowValue(lightSpacePos.w) || abs(lightSpacePos.w) < 0.000001)
+    {
+        return 1.0;
+    }
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
 
     // クリップ空間[-1,1] → UV座標[0,1]に変換
@@ -273,10 +422,22 @@ float CalculateShadow(vec3 worldPos)
         return 1.0;
     }
 
-    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    if (IsR5HardShadowValidationMode())
+    {
+        float sampleDepth = texture(shadowMap,
+                                    vec3(shadowUV, float(cascadeIndex))).r;
+        return currentDepth - 0.005 > sampleDepth ? 0.0 : 1.0;
+    }
+
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0).xy);
+    vec2 receiverGradient = ComputeReceiverDepthGradient(normal, cascadeIndex);
 
     // Phase 1: ブロッカーサーチ
-    float avgBlockerDepth = FindBlockerDepth(shadowUV, currentDepth, texelSize);
+    float avgBlockerDepth = FindBlockerDepth(shadowUV,
+                                             currentDepth,
+                                             receiverGradient,
+                                             texelSize,
+                                             cascadeIndex);
 
     // ブロッカーなし → 完全にライトが当たっている
     if (avgBlockerDepth < 0.0)
@@ -285,13 +446,64 @@ float CalculateShadow(vec3 worldPos)
     }
 
     // Phase 2: ペナンブラサイズ推定
-    float penumbraSize = EstimatePenumbraSize(currentDepth, avgBlockerDepth);
+    float penumbraSize = EstimatePenumbraSize(currentDepth, avgBlockerDepth, cascadeIndex);
 
     // フィルタ半径をクランプ（最小=1texel, 最大=制限）
     float filterRadius = clamp(penumbraSize, texelSize.x, 0.05);
 
     // Phase 3: 可変カーネルPCF
-    return PCSSFilter(shadowUV, currentDepth, filterRadius);
+    return PCSSFilter(shadowUV, currentDepth, receiverGradient, texelSize, filterRadius,
+                      cascadeIndex);
+}
+
+float CalculateShadow(vec3 worldPos, vec3 normal)
+{
+    if (!HasValidCascadedShadowData())
+    {
+        return 1.0;
+    }
+
+    vec3 viewForward = params.cameraForward.xyz;
+    float forwardLength = length(viewForward);
+    if (!IsFiniteShadowValue(forwardLength) || forwardLength <= 0.00001)
+    {
+        return 1.0;
+    }
+    viewForward /= forwardLength;
+    float receiverDistance = dot(worldPos - params.cameraPosition.xyz, viewForward);
+    float nearDistance = GetShadowSplitDistance(0u);
+    float farDistance = GetShadowSplitDistance(4u);
+    if (!IsFiniteShadowValue(receiverDistance) ||
+        receiverDistance < nearDistance || receiverDistance > farDistance)
+    {
+        return 1.0;
+    }
+
+    uint cascadeIndex = 3u;
+    for (uint candidate = 0u; candidate < 3u; ++candidate)
+    {
+        if (receiverDistance < GetShadowSplitDistance(candidate + 1u))
+        {
+            cascadeIndex = candidate;
+            break;
+        }
+    }
+
+    float shadow = SampleShadowCascade(worldPos, normal, cascadeIndex);
+    if (cascadeIndex < 3u)
+    {
+        float boundary = GetShadowSplitDistance(cascadeIndex + 1u);
+        float previousBoundary = GetShadowSplitDistance(cascadeIndex);
+        float blendWidth = max((boundary - previousBoundary) * 0.1, 0.001);
+        float blendStart = boundary - blendWidth;
+        if (receiverDistance > blendStart && IsInsideShadowCascade(worldPos, cascadeIndex + 1u))
+        {
+            float nextShadow = SampleShadowCascade(worldPos, normal, cascadeIndex + 1u);
+            float blend = smoothstep(blendStart, boundary, receiverDistance);
+            shadow = mix(shadow, nextShadow, blend);
+        }
+    }
+    return shadow;
 }
 
 // ========================================
@@ -374,6 +586,287 @@ vec4 EvaluateNeuralBRDF(float NdotL, float NdotV, float NdotH, float LdotH, floa
     return result;
 }
 
+bool IsRaw252ParameterInvariantValid()
+{
+    return params.bIBLEnabled != 0u &&
+           params.bSSAOEnabled == 0u &&
+           params.bNeuralBRDFEnabled == 0u &&
+           params.lightCount == 0u &&
+           abs(params.ambientColor.w - 1.0) <= 0.0001;
+}
+
+vec3 EvaluateDiffuseEndpoint(vec3 irradiance,
+                             vec3 albedo,
+                             float metallic,
+                             vec2 brdf)
+{
+    float Ess = max(brdf.x + brdf.y, 0.0001);
+    vec3 F0d = vec3(0.04);
+    vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
+    vec3 Ed = clamp((F0d * brdf.x + brdf.y) * CompD,
+                    vec3(0.0), vec3(1.0));
+    return irradiance * (albedo / PI) *
+           (1.0 - metallic) * (vec3(1.0) - Ed);
+}
+
+vec3 EvaluateIblEndpoint(vec3 albedo,
+                         float metallic,
+                         float roughness,
+                         vec3 N,
+                         vec3 V,
+                         float ao,
+                         float specularAO,
+                         float iblIntensity,
+                         vec2 brdf,
+                         bool bUseDDGI,
+                         vec3 ddgiIrradiance)
+{
+    float Ess = max(brdf.x + brdf.y, 0.0001);
+    vec3 F0d = vec3(0.04);
+    vec3 F0c = albedo;
+    vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
+    vec3 CompC = vec3(1.0) + F0c * (1.0 - Ess) / Ess;
+    vec3 Ed = clamp((F0d * brdf.x + brdf.y) * CompD,
+                    vec3(0.0), vec3(1.0));
+    vec3 Ec = clamp((F0c * brdf.x + brdf.y) * CompC,
+                    vec3(0.0), vec3(1.0));
+
+    vec3 irradiance = bUseDDGI
+        ? ddgiIrradiance
+        : textureLod(diffuseIrradiance, EquirectangularUV(N), 0.0).rgb;
+    vec3 diffuseIBL = EvaluateDiffuseEndpoint(irradiance, albedo, metallic, brdf);
+
+    vec3 R = reflect(-V, N);
+    vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
+    vec3 specularIBL = prefilteredColor *
+                       ((1.0 - metallic) * Ed + metallic * Ec);
+    if (bUseDDGI)
+    {
+        return diffuseIBL * ao + specularIBL * specularAO * iblIntensity;
+    }
+    return (diffuseIBL * ao + specularIBL * specularAO) * iblIntensity;
+}
+
+vec3 EvaluateRTGIEndpoint(vec3 albedo,
+                          float metallic,
+                          float roughness,
+                          vec3 N,
+                          vec3 V,
+                          float ao,
+                          float specularAO,
+                          float iblIntensity,
+                          vec2 brdf,
+                          vec3 rtgiDiffuseRadiance)
+{
+    vec3 diffuse = max(rtgiDiffuseRadiance, vec3(0.0)) * ao;
+    vec3 specular = vec3(0.0);
+    if (params.bIBLEnabled != 0u)
+    {
+        float Ess = max(brdf.x + brdf.y, 0.0001);
+        vec3 F0d = vec3(0.04);
+        vec3 F0c = albedo;
+        vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
+        vec3 CompC = vec3(1.0) + F0c * (1.0 - Ess) / Ess;
+        vec3 Ed = clamp((F0d * brdf.x + brdf.y) * CompD,
+                        vec3(0.0), vec3(1.0));
+        vec3 Ec = clamp((F0c * brdf.x + brdf.y) * CompC,
+                        vec3(0.0), vec3(1.0));
+        vec3 R = reflect(-V, N);
+        vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
+        specular = prefilteredColor *
+                   ((1.0 - metallic) * Ed + metallic * Ec) *
+                   specularAO * iblIntensity;
+    }
+    return diffuse + specular;
+}
+
+float SignNotZero(float value)
+{
+    return value < 0.0 ? -1.0 : 1.0;
+}
+
+vec2 EncodeDDGIOctahedralDirection(vec3 direction)
+{
+    float denominator = abs(direction.x) + abs(direction.y) + abs(direction.z);
+    vec2 encoded = direction.xy / max(denominator, 1.0e-8);
+    if (direction.z < 0.0)
+    {
+        encoded = (1.0 - abs(encoded.yx)) *
+                  vec2(SignNotZero(encoded.x), SignNotZero(encoded.y));
+    }
+    return encoded * 0.5 + 0.5;
+}
+
+vec2 DDGIAtlasUv(vec2 octahedralUv)
+{
+    vec2 pixelCenter = octahedralUv * 6.0 + 1.0;
+    return pixelCenter / 8.0;
+}
+
+float SampleDDGIVisibility(uint probeIndex,
+                           vec3 probeToPointDirection,
+                           float pointDistance)
+{
+    vec2 moments = textureLod(ddgiDistanceAtlas,
+                              vec3(DDGIAtlasUv(EncodeDDGIOctahedralDirection(
+                                  probeToPointDirection)),
+                                   float(probeIndex)),
+                              0.0).rg;
+    if (any(isnan(moments)) || any(isinf(moments)))
+    {
+        return 0.05;
+    }
+
+    float meanDistance = max(moments.x, 0.0);
+    float variance = max(moments.y - meanDistance * meanDistance, 1.0e-4);
+    if (pointDistance <= meanDistance)
+    {
+        return 1.0;
+    }
+
+    // 平均距離より遠い点は、分布のChebyshevの上限の3乗で弱める（RTXGIと同じ。下限は設けず、弱い重みは
+    // 呼び側で押しつぶす）。
+    float delta = pointDistance - meanDistance;
+    float chebyshev = variance / (variance + delta * delta);
+    return max(chebyshev * chebyshev * chebyshev, 0.0);
+}
+
+// DDGIの体積の照度を、周りの8つのprobeから補間して求める（RTXGIのDDGIGetVolumeIrradianceと同じ手順）。
+// 点を法線の方向へずらした点（surface bias）で格子の区画・probeからの距離・可視を求め、面の裏にあるprobeが
+// 可視の判定で外れるようにする（ずらさないと、probeから見た面の距離と面上の点の距離が等しく、可視が不安定に
+// なる）。視点の側へはずらさない（拡散の照度がカメラの位置で変わり、カメラに近い側のprobeへ補間が寄る）。
+// 向きの重み（wrap shading）は元の点から見たprobeの向きで求め、弱い重みを押しつぶし、平方根の空間で補間する
+// （暗い側の斑点を抑える）。体積の外の点は偏りの前の位置で判定してfalseを返す（体積の中へ寄せない）。
+// 壁の外や閉じた物体の内側にある無効なprobe（照度atlasのalphaが0）は使わない。
+bool TrySampleDDGIIrradiance(vec3 worldPosition,
+                             vec3 surfaceNormal,
+                             out vec3 irradiance)
+{
+    irradiance = vec3(0.0);
+    if (params.ddgiInfo.x == 0u || params.ddgiProbeCounts.w == 0u ||
+        any(equal(params.ddgiProbeCounts.xyz, uvec3(0u))) ||
+        any(isnan(params.ddgiVolumeOrigin.xyz)) ||
+        any(isinf(params.ddgiVolumeOrigin.xyz)) ||
+        any(isnan(params.ddgiProbeSpacing.xyz)) ||
+        any(isinf(params.ddgiProbeSpacing.xyz)) ||
+        any(lessThanEqual(params.ddgiProbeSpacing.xyz, vec3(0.0))) ||
+        any(isnan(worldPosition)) || any(isinf(worldPosition)) ||
+        any(isnan(surfaceNormal)) || any(isinf(surfaceNormal)))
+    {
+        return false;
+    }
+
+    float normalLengthSquared = dot(surfaceNormal, surfaceNormal);
+    if (normalLengthSquared <= 1.0e-8 || isnan(normalLengthSquared) ||
+        isinf(normalLengthSquared))
+    {
+        return false;
+    }
+    vec3 normal = surfaceNormal * inversesqrt(normalLengthSquared);
+    vec3 gridMaximum = vec3(params.ddgiProbeCounts.xyz - uvec3(1u));
+    vec3 gridPosition = (worldPosition - params.ddgiVolumeOrigin.xyz) /
+                        params.ddgiProbeSpacing.xyz;
+    if (any(isnan(gridPosition)) || any(isinf(gridPosition)) ||
+        any(lessThan(gridPosition, vec3(0.0))) ||
+        any(greaterThan(gridPosition, gridMaximum)))
+    {
+        return false;
+    }
+
+    float minimumSpacing = min(params.ddgiProbeSpacing.x,
+                               min(params.ddgiProbeSpacing.y, params.ddgiProbeSpacing.z));
+    vec3 biasedPosition = worldPosition + normal * (DDGI_NORMAL_BIAS_FRACTION * minimumSpacing);
+    vec3 biasedGridPosition = clamp((biasedPosition - params.ddgiVolumeOrigin.xyz) /
+                                        params.ddgiProbeSpacing.xyz,
+                                    vec3(0.0),
+                                    gridMaximum);
+
+    ivec3 baseProbe = ivec3(floor(biasedGridPosition));
+    vec3 alpha = clamp(biasedGridPosition - vec3(baseProbe), vec3(0.0), vec3(1.0));
+    vec2 irradianceUv = DDGIAtlasUv(EncodeDDGIOctahedralDirection(normal));
+    vec3 accumulatedIrradiance = vec3(0.0);
+    float accumulatedWeight = 0.0;
+    for (uint corner = 0u; corner < 8u; ++corner)
+    {
+        uvec3 offset = uvec3(corner & 1u,
+                             (corner >> 1u) & 1u,
+                             (corner >> 2u) & 1u);
+        uvec3 probeCoordinates = min(uvec3(baseProbe) + offset,
+                                     params.ddgiProbeCounts.xyz - uvec3(1u));
+        uint probeIndex = probeCoordinates.x +
+                          probeCoordinates.y * params.ddgiProbeCounts.x +
+                          probeCoordinates.z * params.ddgiProbeCounts.x *
+                              params.ddgiProbeCounts.y;
+        if (probeIndex >= params.ddgiProbeCounts.w)
+        {
+            return false;
+        }
+
+        vec4 probeSample = textureLod(ddgiIrradianceAtlas,
+                                      vec3(irradianceUv, float(probeIndex)),
+                                      0.0);
+        if (any(isnan(probeSample)) || any(isinf(probeSample)))
+        {
+            return false;
+        }
+        if (probeSample.a < 0.5)
+        {
+            continue;
+        }
+
+        // 軸ごとの下限はRTXGIと同じ0.001。点がprobeの面の上にあっても隣の層のprobeを残す。
+        vec3 trilinear = max(vec3(0.001), mix(vec3(1.0) - alpha, alpha, vec3(offset)));
+        float trilinearWeight = trilinear.x * trilinear.y * trilinear.z;
+
+        vec3 probePosition = params.ddgiVolumeOrigin.xyz +
+                             params.ddgiProbeSpacing.xyz * vec3(probeCoordinates);
+        vec3 pointToProbe = probePosition - worldPosition;
+        float pointToProbeLength = length(pointToProbe);
+        vec3 pointToProbeDirection = pointToProbeLength > 1.0e-6
+            ? pointToProbe / pointToProbeLength
+            : normal;
+        float wrapShading = (dot(pointToProbeDirection, normal) + 1.0) * 0.5;
+        float weight = wrapShading * wrapShading + DDGI_WRAP_WEIGHT_FLOOR;
+
+        vec3 probeToBiasedPoint = biasedPosition - probePosition;
+        float biasedDistance = length(probeToBiasedPoint);
+        if (isnan(biasedDistance) || isinf(biasedDistance))
+        {
+            continue;
+        }
+        vec3 probeToBiasedDirection = biasedDistance > 1.0e-6
+            ? probeToBiasedPoint / biasedDistance
+            : -normal;
+        weight *= SampleDDGIVisibility(probeIndex, probeToBiasedDirection, biasedDistance);
+        weight = max(weight, 1.0e-6);
+        if (weight < DDGI_WEIGHT_CRUSH_THRESHOLD)
+        {
+            weight *= weight * weight /
+                      (DDGI_WEIGHT_CRUSH_THRESHOLD * DDGI_WEIGHT_CRUSH_THRESHOLD);
+        }
+        weight *= trilinearWeight;
+        if (weight <= 0.0)
+        {
+            continue;
+        }
+
+        accumulatedIrradiance += sqrt(max(probeSample.rgb, vec3(0.0))) * weight;
+        accumulatedWeight += weight;
+    }
+
+    // 押しつぶした重みは極めて小さくなりうるが、正であれば正規化する（全probeが可視で外れた点も、最も
+    // 見込みのあるprobeの照度を使う）。
+    if (!(accumulatedWeight > 0.0) ||
+        any(isnan(accumulatedIrradiance)) || any(isinf(accumulatedIrradiance)))
+    {
+        return false;
+    }
+
+    vec3 interpolated = accumulatedIrradiance / accumulatedWeight;
+    irradiance = interpolated * interpolated;
+    return true;
+}
+
 void main()
 {
     // GBufferからデータを取得
@@ -381,6 +874,41 @@ void main()
     vec4 normalSample = texture(gbufferNormal, fragUV);
     vec4 materialSample = texture(gbufferMaterial, fragUV);
     float depthSample = texture(gbufferDepth, fragUV).r;
+
+    bool bRayTracingShadowValidationMode =
+        params.debugViewMode == DEBUG_VIEW_MODE_R5_RAY_TRACING_HARD_SHADOW ||
+        params.debugViewMode == DEBUG_VIEW_MODE_R5_RAY_TRACING_VISIBILITY;
+    if (bRayTracingShadowValidationMode && params.shadowPadding0 == 0u)
+    {
+        outColor = vec4(1.0, 0.0, 1.0, 1.0);
+        return;
+    }
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_R5_RAY_TRACING_VISIBILITY)
+    {
+        float visibility = texture(rayTracingShadowVisibility, fragUV).r;
+        outColor = vec4(vec3(visibility), 1.0);
+        return;
+    }
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_RAW250)
+    {
+        float band = min(floor(clamp(fragUV.y, 0.0, 0.999999) * 5.0), 4.0);
+        float localV = fragUV.y * 5.0 - band;
+        float rawRoughness = band == 0.0 ? 0.0 :
+                              band == 1.0 ? 0.05 :
+                              band == 2.0 ? 0.25 :
+                              band == 3.0 ? 0.50 : 1.0;
+        float phi = 2.0 * PI * (fragUV.x - 0.5);
+        float theta = PI * localV;
+        vec3 rawDirection = vec3(sin(theta) * cos(phi),
+                                 cos(theta),
+                                 sin(theta) * sin(phi));
+        vec3 rawColor = SamplePrefilteredSpecular(rawDirection, rawRoughness);
+        float rawAlpha = albedoSample.a < 0.01 ? 1.0 : ComputeDebugDepth01(fragUV, depthSample);
+        outColor = vec4(rawColor, rawAlpha);
+        return;
+    }
 
     if (params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_ALBEDO)
     {
@@ -390,6 +918,11 @@ void main()
 
     if (params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_NORMAL)
     {
+        if (albedoSample.a < 0.01)
+        {
+            outColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
         vec3 debugNormal = normalize(normalSample.xyz) * 0.5 + 0.5;
         outColor = vec4(debugNormal, 1.0);
         return;
@@ -403,6 +936,11 @@ void main()
 
     if (params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_DEPTH)
     {
+        if (albedoSample.a < 0.01)
+        {
+            outColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
         float depth01 = ComputeDebugDepth01(fragUV, depthSample);
         outColor = vec4(vec3(depth01), 1.0);
         return;
@@ -411,6 +949,18 @@ void main()
     // アルファが0の場合は天球（環境マップ）を描画
     if (albedoSample.a < 0.01)
     {
+        if (params.debugViewMode == DEBUG_VIEW_MODE_RAW251 ||
+            params.debugViewMode == DEBUG_VIEW_MODE_R7_SUN_VISIBILITY)
+        {
+            outColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
+        if (params.debugViewMode == DEBUG_VIEW_MODE_RAW252 &&
+            !IsRaw252ParameterInvariantValid())
+        {
+            outColor = vec4(vec3(65504.0), 1.0);
+            return;
+        }
         if (params.bIBLEnabled != 0u)
         {
             // スクリーンUVからワールド方向を復元（far planeのdepth=1.0を使用）
@@ -421,9 +971,24 @@ void main()
 
             // equirectangular環境マップをサンプリング（LOD 0 = 最高解像度）
             vec2 envUV = EquirectangularUV(rayDir);
-            vec3 skyColor = textureLod(envMap, envUV, 0.0).rgb;
+            vec4 skySample = textureLod(envMap, envUV, 0.0);
+            vec3 skyColor = skySample.rgb;
+            vec4 sunDiskSample = textureLod(skySunDisk, vec2(0.5), 0.0);
+            if (sunDiskSample.a > 0.5)
+            {
+                vec3 transmittance = textureLod(skyTransmittance,
+                                                vec2(clamp(rayDir.y, 0.0, 1.0), 0.0),
+                                                0.0).rgb;
+                skyColor *= clamp(transmittance, vec3(0.0), vec3(1.0));
+            }
+            vec3 sunDirection = normalize(params.skySunDirectionAndCosRadius.xyz);
+            float sunDiskMask = step(params.skySunDirectionAndCosRadius.w,
+                                     dot(rayDir, sunDirection));
+            vec3 preExposedSkyColor = ApplySceneColorPreExposure(skyColor);
+            preExposedSkyColor += sunDiskSample.rgb * sunDiskMask;
+            preExposedSkyColor = max(preExposedSkyColor, vec3(0.0));
 
-            outColor = vec4(skyColor, 1.0);
+            outColor = vec4(preExposedSkyColor, 1.0);
         }
         else
         {
@@ -440,6 +1005,11 @@ void main()
         outColor = vec4(albedoSample.rgb, 1.0);
         return;
     }
+
+    bool bValidationHardShadow = IsR5HardShadowValidationMode();
+    bool bValidationLambert = params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_LAMBERT ||
+                              bValidationHardShadow;
+    bool bValidationPBR = params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_PBR;
 
     // データ展開
     vec3 albedo = albedoSample.rgb;
@@ -461,19 +1031,45 @@ void main()
     // カメラからの視線ベクトル
     vec3 V = normalize(params.cameraPosition.xyz - worldPos);
 
-    // 基本反射率（非金属: 0.04、金属: アルベドカラー）
-    vec3 F0 = vec3(0.04);
-    F0 = mix(F0, albedo, metallic);
+    float validationNdotV = max(dot(N, V), 0.0);
+    vec2 dfgForValidation = vec2(0.0);
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_RAW251)
+    {
+        vec2 dfgCoordinate = clamp(vec2(materialSample.r, materialSample.g),
+                                    vec2(0.5 / 256.0), vec2(255.5 / 256.0));
+        dfgForValidation = texture(brdfLUT, dfgCoordinate).rg;
+        outColor = vec4(vec3(dfgForValidation.x, dfgForValidation.y,
+                             dfgForValidation.x + dfgForValidation.y),
+                        ComputeDebugDepth01(fragUV, depthSample));
+        return;
+    }
+
+    bool bValidationRaw252 = params.debugViewMode == DEBUG_VIEW_MODE_RAW252;
+    vec3 emissive = vec3(0.0);
+    if (bValidationRaw252)
+    {
+        emissive = texture(gbufferEmissive, fragUV).rgb;
+    }
+    if (bValidationRaw252 &&
+        (!IsRaw252ParameterInvariantValid() ||
+         abs(ao - 1.0) > 0.0001 ||
+         any(greaterThan(abs(emissive), vec3(0.0001)))))
+    {
+        outColor = vec4(vec3(65504.0), ComputeDebugDepth01(fragUV, depthSample));
+        return;
+    }
 
     // ライティング計算（ディフューズとスペキュラを分離してAOを個別適用）
     vec3 Lo_diffuse = vec3(0.0);
     vec3 Lo_specular = vec3(0.0);
+    float sunVisibility = 0.0;
 
     for (uint i = 0u; i < params.lightCount; i++)
     {
         LightData light = lightBuffer.lights[i];
         float lightType = light.position.w;
-        vec3 lightColor = light.color.rgb * light.color.w; // color * intensity
+        vec3 lightColor = light.chromaticityAndIntensity.rgb * light.chromaticityAndIntensity.w;
 
         vec3 L;
         float attenuation = 1.0;
@@ -489,7 +1085,7 @@ void main()
             vec3 toLight = light.position.xyz - worldPos;
             float distance = length(toLight);
             L = normalize(toLight);
-            attenuation = CalculateAttenuation(distance, light.attenuation.x);
+            attenuation = CalculateInverseSquareAttenuation(distance) * CalculateRangeWindow(distance, light.attenuation.x);
         }
         else
         {
@@ -497,7 +1093,7 @@ void main()
             vec3 toLight = light.position.xyz - worldPos;
             float distance = length(toLight);
             L = normalize(toLight);
-            attenuation = CalculateAttenuation(distance, light.attenuation.x);
+            attenuation = CalculateInverseSquareAttenuation(distance) * CalculateRangeWindow(distance, light.attenuation.x);
 
             // スポットライトのコーン減衰
             float theta = dot(L, normalize(-light.direction.xyz));
@@ -512,16 +1108,41 @@ void main()
         vec3 H = normalize(V + L);
         float NdotL = max(dot(N, L), 0.0);
 
-        // シャドウ計算（ディレクショナルライトのみ）
+        // シャドウ計算（CSMとRT影を選んだ方向光だけ。attenuation.z=1がその灯）
         float shadow = 1.0;
-        if (lightType < 0.5 && params.bShadowEnabled != 0u)
+        if ((!bValidationLambert || bValidationHardShadow) &&
+            lightType < 0.5 && light.attenuation.z > 0.5 && params.bShadowEnabled != 0u)
         {
-            shadow = CalculateShadow(worldPos);
+            shadow = params.shadowPadding0 != 0u
+                         ? texture(rayTracingShadowVisibility, fragUV).r
+                         : CalculateShadow(worldPos, N);
         }
 
         vec3 radiance = lightColor * NdotL * attenuation * shadow;
+        if (lightType < 0.5 && light.attenuation.z > 0.5)
+        {
+            sunVisibility = NdotL > 0.0 ? shadow : 0.0;
+        }
 
-        if (params.bNeuralBRDFEnabled != 0u)
+        if (bValidationLambert)
+        {
+            // Validation 253: pure direct Lambert. No shadow, ambient, emissive or specular term.
+            Lo_diffuse += EvaluateLambertDiffuseBRDF(albedo) * radiance;
+        }
+        else if (bValidationPBR || params.bNeuralBRDFEnabled == 0u)
+        {
+            vec2 dfgCoordinate = clamp(vec2(validationNdotV, roughness),
+                                       vec2(0.5 / 256.0), vec2(255.5 / 256.0));
+            dfgForValidation = texture(brdfLUT, dfgCoordinate).rg;
+            vec3 diffuseBrdf;
+            vec3 specularBrdf;
+            EvaluateAnalyticalDirectEndpointBRDF(
+                albedo, metallic, roughness, N, V, L, H, dfgForValidation,
+                diffuseBrdf, specularBrdf);
+            Lo_diffuse += diffuseBrdf * radiance;
+            Lo_specular += specularBrdf * radiance;
+        }
+        else
         {
             // Neural Disney BRDFによる評価
             // 出力: x=diffuse_scale, y=specular_GD, z=fresnel, w=clearcoat
@@ -539,96 +1160,159 @@ void main()
             Lo_diffuse += diffuseContrib * radiance;
             Lo_specular += specularContrib * radiance;
         }
+    }
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_R7_SUN_VISIBILITY)
+    {
+        outColor = vec4(vec3(sunVisibility), 1.0);
+        return;
+    }
+
+    vec3 ambient = vec3(0.0);
+    float specularAO = 1.0;
+    float directSpecularAO = 1.0;
+
+    if (!bValidationLambert && !bValidationPBR)
+    {
+        // ========================================
+        // アンビエント / IBL計算
+        // ========================================
+        float NdotV = max(dot(N, V), 0.0);
+        bool bRaw252PrivateTarget = bValidationRaw252 &&
+                                     metallic >= 0.9999 &&
+                                     all(greaterThan(albedo, vec3(0.25))) &&
+                                     all(lessThan(albedo, vec3(0.75)));
+        vec3 iblAlbedo = bRaw252PrivateTarget ? vec3(0.5) : albedo;
+        float iblNdotV = bRaw252PrivateTarget ? 0.25 : NdotV;
+        float iblRoughness = bRaw252PrivateTarget ? (64.0 / 255.0) : roughness;
+        vec3 F0d = vec3(0.04);
+        vec3 F0c = iblAlbedo;
+        vec3 F_ambient = FresnelSchlick(NdotV, (1.0 - metallic) * F0d + metallic * F0c);
+        vec3 ddgiIrradiance = vec3(0.0);
+        bool bDDGIValidationMode = params.debugViewMode >= 246u &&
+                                   params.debugViewMode <= 255u;
+        bool bDDGIAvailable = !bDDGIValidationMode &&
+            TrySampleDDGIIrradiance(worldPos, N, ddgiIrradiance);
+        bool bRTGIAvailable = !bDDGIValidationMode && params.ddgiInfo.y != 0u;
+        vec3 rtgiDiffuseRadiance = vec3(0.0);
+        if (bRTGIAvailable)
+        {
+            rtgiDiffuseRadiance = texture(rtgiDiffuseIndirect, fragUV).rgb /
+                                  max(params.preExposure, 1.0e-6);
+            if (any(isnan(rtgiDiffuseRadiance)) || any(isinf(rtgiDiffuseRadiance)))
+            {
+                bRTGIAvailable = false;
+                rtgiDiffuseRadiance = vec3(0.0);
+            }
+            else
+            {
+                rtgiDiffuseRadiance = min(max(rtgiDiffuseRadiance, vec3(0.0)),
+                                          vec3(65504.0));
+            }
+        }
+
+        // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
+        specularAO = ComputeSpecularAO(NdotV, ao, roughness);
+        directSpecularAO = ComputeSpecularAO(NdotV, materialSample.b, roughness);
+
+        if (params.bIBLEnabled != 0u)
+        {
+            // ========================================
+            // IBL (Image-Based Lighting)
+            // ========================================
+            float iblIntensity = params.ambientColor.w; // IBL有効時はambientColor.wがIBL強度
+            vec2 dfgCoordinate = clamp(vec2(iblNdotV, iblRoughness),
+                                       vec2(0.5 / 256.0), vec2(255.5 / 256.0));
+            vec2 brdf = texture(brdfLUT, dfgCoordinate).rg;
+            // DDGIとRTGIは遮蔽を光線で解くため、画面空間AOを重ねず材質AOだけを掛ける。
+            float ddgiAmbientAO = bDDGIAvailable || bRTGIAvailable ? materialSample.b : ao;
+            ambient = bRTGIAvailable
+                ? EvaluateRTGIEndpoint(iblAlbedo,
+                                       metallic,
+                                       iblRoughness,
+                                       N,
+                                       V,
+                                       ddgiAmbientAO,
+                                       specularAO,
+                                       iblIntensity,
+                                       brdf,
+                                       rtgiDiffuseRadiance)
+                : EvaluateIblEndpoint(iblAlbedo,
+                                       metallic,
+                                       iblRoughness,
+                                       N,
+                                       V,
+                                       ddgiAmbientAO,
+                                       specularAO,
+                                       iblIntensity,
+                                       brdf,
+                                       bDDGIAvailable,
+                                       ddgiIrradiance);
+        }
         else
         {
-            // Analytical Cook-Torrance BRDF
-            float D = DistributionGGX(N, H, roughness);
-            float G = GeometrySmith(N, V, L, roughness);
-            vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-
-            vec3 numerator = D * G * F;
-            float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;
-            vec3 specular = numerator / denominator;
-
-            // エネルギー保存
-            vec3 kS = F;
-            vec3 kD = vec3(1.0) - kS;
-            kD *= 1.0 - metallic; // 金属はディフューズなし
-
-            Lo_diffuse += (kD * albedo / PI) * radiance;
-            Lo_specular += specular * radiance;
+            // ========================================
+            // フォールバック: フラットアンビエントライト
+            // ========================================
+            vec3 ambientLight = params.ambientColor.rgb * params.ambientColor.w;
+            vec3 kD_ambient = (vec3(1.0) - F_ambient) * (1.0 - metallic);
+            vec3 diffuseAmbient = kD_ambient * ambientLight * albedo;
+            vec3 specularAmbient = F_ambient * ambientLight * (1.0 - roughness * 0.5);
+            ambient = diffuseAmbient * ao + specularAmbient * specularAO;
+            if (bRTGIAvailable)
+            {
+                vec2 rtgiDfgCoordinate = clamp(vec2(NdotV, roughness),
+                                                vec2(0.5 / 256.0),
+                                                vec2(255.5 / 256.0));
+                vec2 rtgiBrdf = texture(brdfLUT, rtgiDfgCoordinate).rg;
+                ambient = EvaluateRTGIEndpoint(iblAlbedo,
+                                               metallic,
+                                               roughness,
+                                               N,
+                                               V,
+                                               materialSample.b,
+                                               specularAO,
+                                               0.0,
+                                               rtgiBrdf,
+                                               rtgiDiffuseRadiance);
+            }
+            else if (bDDGIAvailable)
+            {
+                vec2 ddgiDfgCoordinate = clamp(vec2(NdotV, roughness),
+                                               vec2(0.5 / 256.0),
+                                               vec2(255.5 / 256.0));
+                vec2 ddgiBrdf = texture(brdfLUT, ddgiDfgCoordinate).rg;
+                ambient += EvaluateDiffuseEndpoint(ddgiIrradiance,
+                                                   albedo,
+                                                   metallic,
+                                                   ddgiBrdf) * materialSample.b;
+            }
         }
-    }
-
-    // エミッシブ（自発光）をGBufferから取得
-    vec3 emissive = texture(gbufferEmissive, fragUV).rgb;
-
-    // ========================================
-    // アンビエント / IBL計算
-    // ========================================
-    float NdotV = max(dot(N, V), 0.0);
-    vec3 F_ambient = FresnelSchlickRoughness(NdotV, F0, roughness);
-    vec3 kS_ambient = F_ambient;
-    vec3 kD_ambient = (1.0 - kS_ambient) * (1.0 - metallic);
-
-    // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
-    float specularAO = ComputeSpecularAO(NdotV, ao, roughness);
-
-    vec3 ambient;
-
-    if (params.bIBLEnabled != 0u)
-    {
-        // ========================================
-        // IBL (Image-Based Lighting)
-        // ========================================
-        float maxLod = float(params.envMapMipLevels - 1u);
-        float iblIntensity = params.ambientColor.w; // IBL有効時はambientColor.wがIBL強度
-
-        // ---- Diffuse IBL (Irradiance) ----
-        // 法線方向で環境マップの高LOD（ブラー済み）をサンプリング → 拡散放射照度近似
-        vec2 irradianceUV = EquirectangularUV(N);
-        vec3 irradiance = textureLod(envMap, irradianceUV, maxLod * 0.7).rgb;
-        // HDR値を露出補正してからトーンマップ（高輝度を適切に圧縮）
-        float iblExposure = 0.15;
-        irradiance = vec3(1.0) - exp(-irradiance * iblExposure);
-        vec3 diffuseIBL = kD_ambient * irradiance * albedo;
-
-        // ---- Specular IBL (Pre-filtered Environment) ----
-        // 反射ベクトル方向でラフネスに応じたLODをサンプリング
-        vec3 R = reflect(-V, N);
-        vec2 specularUV = EquirectangularUV(R);
-        float lod = roughness * maxLod;
-        vec3 prefilteredColor = textureLod(envMap, specularUV, lod).rgb;
-        // HDR値を露出補正してからトーンマップ
-        prefilteredColor = vec3(1.0) - exp(-prefilteredColor * iblExposure);
-
-        // BRDF LUT参照（split-sum近似の第2項）
-        vec2 brdf = texture(brdfLUT, vec2(NdotV, roughness)).rg;
-
-        // スペキュラIBL = プリフィルタ環境色 × (F × scale + bias)
-        vec3 specularIBL = prefilteredColor * (F_ambient * brdf.x + brdf.y);
-
-        // AO適用: ディフューズ→AO直接、スペキュラ→スペキュラAO（Lagarde法）
-        ambient = (diffuseIBL * ao + specularIBL * specularAO) * iblIntensity;
-    }
-    else
-    {
-        // ========================================
-        // フォールバック: フラットアンビエントライト
-        // ========================================
-        vec3 ambientLight = params.ambientColor.rgb * params.ambientColor.w;
-        vec3 diffuseAmbient = kD_ambient * ambientLight * albedo;
-        vec3 specularAmbient = F_ambient * ambientLight * (1.0 - roughness * 0.5);
-        ambient = diffuseAmbient * ao + specularAmbient * specularAO;
+        if (!bValidationRaw252)
+        {
+            emissive = texture(gbufferEmissive, fragUV).rgb;
+        }
+        ambient += emissive;
     }
 
     // 直接光へのAO適用（マイクロシャドウ近似）:
-    // 直接光はライト方向が明確なため、AOは控えめに適用（30%）
-    // アンビエント/IBLへはフルAO適用（上記で適用済み）
-    float directAO = mix(1.0, ao, 0.3);
-    float directSpecAO = mix(1.0, specularAO, 0.3);
+    // 直接光はライト方向が明確なため、材質のAOだけを控えめに適用する（30%）。画面空間AOは
+    // 物体の近くの大きな遮蔽を表し、直接光ではその遮蔽を影（CSM・RT影）が解くので掛けない
+    // （掛けると日向の面まで暗くなる）。アンビエント/IBLへはフルAO適用（上記で適用済み）
+    float directAO = mix(1.0, materialSample.b, 0.3);
+    float directSpecAO = mix(1.0, directSpecularAO, 0.3);
 
     // 最終カラー（HDR）
-    vec3 color = ambient + Lo_diffuse * directAO + Lo_specular * directSpecAO + emissive;
-    outColor = vec4(color, 1.0);
+    vec3 color;
+    if (bValidationLambert)
+    {
+        color = Lo_diffuse;
+    }
+    else
+    {
+        color = ambient + Lo_diffuse * directAO + Lo_specular * directSpecAO;
+    }
+
+    float outputAlpha = bValidationRaw252 ? ComputeDebugDepth01(fragUV, depthSample) : 1.0;
+    outColor = vec4(ApplySceneColorPreExposure(color), outputAlpha);
 }

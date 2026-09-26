@@ -27,6 +27,18 @@ namespace NorvesLib::RHI::Vulkan
             return shaderc_tess_evaluation_shader;
         case ShaderStage::Compute:
             return shaderc_compute_shader;
+        case ShaderStage::RayGen:
+            return shaderc_raygen_shader;
+        case ShaderStage::Miss:
+            return shaderc_miss_shader;
+        case ShaderStage::ClosestHit:
+            return shaderc_closesthit_shader;
+        case ShaderStage::AnyHit:
+            return shaderc_anyhit_shader;
+        case ShaderStage::Intersection:
+            return shaderc_intersection_shader;
+        case ShaderStage::Callable:
+            return shaderc_callable_shader;
         default:
             return shaderc_glsl_infer_from_source;
         }

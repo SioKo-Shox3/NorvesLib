@@ -107,7 +107,10 @@ namespace NorvesLib::Core::Rendering
         if (bNeedsOutputTexture)
         {
             RHI::TextureDesc outputDesc =
-                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "PresentationColor");
+                RHI::TextureDesc::RenderTarget(width,
+                                               height,
+                                               RHI::Format::R16G16B16A16_FLOAT,
+                                               "PresentationColor");
             outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
             m_OutputTexture = m_Device->CreateTexture(outputDesc);
             if (!m_OutputTexture)
@@ -324,7 +327,7 @@ namespace NorvesLib::Core::Rendering
 
         RGTextureDesc outputDesc = RGTextureDesc::RenderTarget(screenWidth,
                                                                screenHeight,
-                                                               m_Settings.OutputFormat,
+                                                               RHI::Format::R16G16B16A16_FLOAT,
                                                                "PresentationColor");
         outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
 

@@ -61,6 +61,18 @@ namespace NorvesLib::RHI
          * @return フォーマット
          */
         virtual Format GetFormat() const = 0;
+
+        /**
+         * @brief presentation surface の color space / transfer を取得
+         *
+         * 既存の swapchain 実装とテスト用実装を壊さないため、format から導出可能な
+         * Rec.709 D65 / sRGB の最小記述子を既定値として返します。
+         */
+        virtual PresentationSurfaceDesc GetPresentationSurfaceDesc() const
+        {
+            return DescribePresentationSurface(GetFormat());
+        }
+
         virtual bool ConsumePresentationDirty() = 0;
 
         /**

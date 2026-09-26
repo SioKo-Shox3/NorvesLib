@@ -4,7 +4,10 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/PathTracingPass.h"
+#include "Rendering/VolumetricsPass.h"
 #include "Rendering/ForwardPass.h"
 #include "Rendering/BloomPass.h"
 #include "Rendering/ToneMappingPass.h"
@@ -27,6 +30,10 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        // ディファードのLightingPassとパストレーサーが共有する環境マップの設定。
+        constexpr const char* DefaultEnvironmentMapPath = "Textures/Atmosphere/grasslands_sunset_4k.hdr";
+        constexpr float DefaultEnvironmentIntensity = 1.0f;
+
         float NormalizeBoardFlipFlag(bool bFlip)
         {
             return bFlip ? 1.0f : 0.0f;
@@ -36,6 +43,7 @@ namespace NorvesLib::Core::Rendering
                                         GPUSceneInstanceData &outData)
         {
             Math::MatrixUtils::CopyToShaderData(proxy.WorldTransform, outData.World);
+            Math::MatrixUtils::CopyToShaderData(proxy.PreviousWorldTransform, outData.PreviousWorld);
 
             for (float &value : outData.NormalMatrix)
             {
@@ -570,6 +578,21 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::Render(ViewRenderContext &context)
     {
+        const uint32_t viewId = context.CurrentViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
+        const uint32_t viewportId = context.CurrentViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
+        context.PhysicalLighting.Begin(context.FrameNumber, viewId, viewportId);
+        context.PhysicalLighting.ConfigureRTGI(context.RTGICapability,
+                                               context.bRTGIEnabled,
+                                               context.bRTGITLASAvailable,
+                                               context.SceneRevision,
+                                               context.LightRevision);
+        context.SkyAtmosphere.Reset();
+        struct PhysicalLightingScope final
+        {
+            ViewRenderContext& Context;
+            ~PhysicalLightingScope() { Context.PhysicalLighting.Invalidate(); }
+        } physicalLightingScope{context};
+
         if (!m_bEnabled || !m_bInitialized)
         {
             return;
@@ -597,7 +620,7 @@ namespace NorvesLib::Core::Rendering
     // パイプライン構築ヘルパー
     // ========================================
 
-    void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer)
+    void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer, RasterDirectBrdf directBrdf)
     {
         // 既存のパスをクリア
         while (GetPassCount() > 0)
@@ -650,15 +673,26 @@ namespace NorvesLib::Core::Rendering
         auto ssaoPass = MakeUnique<SSAOPass>(ssaoSettings);
         AddPass(std::move(ssaoPass));
 
+        // SkyAtmospherePass: 同一空スナップショットからLUTと太陽ディスクを生成
+        auto skyAtmospherePass = MakeUnique<SkyAtmospherePass>();
+        AddPass(std::move(skyAtmospherePass));
+
         // LightingPass: GBuffer→HDRシーンカラー
         LightingPassSettings lightingSettings;
-        lightingSettings.EnvironmentMapPath = "Textures/Atmosphere/grasslands_sunset_4k.hdr";
-        lightingSettings.IBLIntensity = 1.0f;
-        lightingSettings.NeuralBRDFWeightPath = "Data/disney.ns.bin";
+        lightingSettings.EnvironmentMapPath = DefaultEnvironmentMapPath;
+        lightingSettings.IBLIntensity = DefaultEnvironmentIntensity;
+        // 解析BRDFを選んだときはニューラルBRDFの重みを読まず、LightingPassは解析BRDFで直接光を評価する。
+        if (directBrdf == RasterDirectBrdf::Neural)
+        {
+            lightingSettings.NeuralBRDFWeightPath = "Data/disney.ns.bin";
+        }
         auto lightingPass = MakeUnique<LightingPass>(lightingSettings);
         lightingPass->SetSceneView(this);
         lightingPass->SetRegisterLegacyBridge(false);
         AddPass(std::move(lightingPass));
+
+        // VolumetricsPass: Lighting後のSceneColorを解析高さフォグで合成
+        AddPass(MakeUnique<VolumetricsPass>());
 
         // ForwardPass(TransparentOnly): Lighting後のSceneColorへ半透明をLoad合成
         auto transparentForwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
@@ -688,19 +722,19 @@ namespace NorvesLib::Core::Rendering
         auto bloomPass = MakeUnique<BloomPass>(bloomSettings);
         postProcessStack->AddPass(std::move(bloomPass));
 
-        // ToneMapping（HDR→LDR変換 + Color Grading）
+        // ToneMapping（HDR→display-linear Rec.709変換 + Color Grading）
         ToneMappingSettings toneMappingSettings;
         toneMappingSettings.Operator = ToneMappingOperator::ACES;
-        // Standalone VignettePass owns default SceneView vignette while ToneMapping ABI remains intact.
+        // Standalone VignettePass owns default SceneView vignette.
         toneMappingSettings.VignetteIntensity = 0.0f;
         auto toneMappingPass = MakeUnique<ToneMappingPass>(toneMappingSettings);
         postProcessStack->AddPass(std::move(toneMappingPass));
 
-        // Vignette（ToneMapping後のLDR色へ適用）
+        // Vignette（ToneMapping後のdisplay-linear色へ適用）
         auto vignettePass = MakeUnique<VignettePass>();
         postProcessStack->AddPass(std::move(vignettePass));
 
-        // DebugDraw（ToneMapping後のLDR色へ、SceneDepthで深度遮蔽）
+        // DebugDraw（ToneMapping後のdisplay-linear色へ、SceneDepthで深度遮蔽）
         auto debugDrawPass = MakeUnique<DebugDrawPass>();
         postProcessStack->AddPass(std::move(debugDrawPass));
 
@@ -718,41 +752,48 @@ namespace NorvesLib::Core::Rendering
         SetPostProcessStack(std::move(postProcessStack));
 
         NORVES_LOG_INFO("SceneView",
-                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
+                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
     }
 
-    void SceneView::SetupForwardPipeline(SceneRenderer *sceneRenderer)
+    void SceneView::SetupPathTracingPipeline(uint32_t samplesPerFrame,
+                                             PathTracingTransportScope transportScope,
+                                             PathTracingPixelSampling pixelSampling,
+                                             PathTracingDebugOutput debugOutput,
+                                             uint32_t sampleBatch)
     {
-        // 既存のパスをクリア
-        while (GetPassCount() > 0)
+        if (m_PostProcessStack)
         {
-            auto &passes = m_Passes;
-            if (!passes.empty())
+            m_PostProcessStack->Shutdown();
+            m_PostProcessStack.reset();
+        }
+        for (auto& pass : m_Passes)
+        {
+            if (pass && pass->IsInitialized())
             {
-                if (passes.back() && passes.back()->IsInitialized())
-                {
-                    passes.back()->Shutdown();
-                }
-                passes.pop_back();
+                pass->Shutdown();
             }
         }
+        m_Passes.clear();
+        AddPass(MakeUnique<SkyAtmospherePass>());
+        auto pathTracingPass = MakeUnique<PathTracingPass>();
+        PathTracingEnvironmentMapSource environmentMap;
+        environmentMap.Path = DefaultEnvironmentMapPath;
+        environmentMap.LuminanceScaleNits = LightingPassSettings{}.EnvironmentLuminanceScaleNits;
+        environmentMap.Intensity = DefaultEnvironmentIntensity;
+        pathTracingPass->SetEnvironmentMapSource(environmentMap);
+        pathTracingPass->SetSamplesPerFrame(samplesPerFrame);
+        pathTracingPass->SetTransportScope(transportScope);
+        pathTracingPass->SetPixelSampling(pixelSampling);
+        pathTracingPass->SetDebugOutput(debugOutput);
+        pathTracingPass->SetSampleBatch(sampleBatch);
+        AddPass(std::move(pathTracingPass));
 
-        // ForwardPass: 従来のフォワード描画
-        auto forwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
-        AddPass(std::move(forwardPass));
-
-        // PostProcessStack: ToneMapping -> Vignette -> Upscale
         auto postProcessStack = MakeUnique<PostProcessStack>();
         ToneMappingSettings toneMappingSettings;
         toneMappingSettings.Operator = ToneMappingOperator::ACES;
-        // Standalone VignettePass owns default SceneView vignette while ToneMapping ABI remains intact.
         toneMappingSettings.VignetteIntensity = 0.0f;
         postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
-        postProcessStack->AddPass(MakeUnique<VignettePass>());
-        postProcessStack->AddPass(MakeUnique<UpscalePass>());
         SetPostProcessStack(std::move(postProcessStack));
-
-        NORVES_LOG_INFO("SceneView", "Forward pipeline configured: Forward -> ToneMapping -> Vignette -> Upscale");
     }
 
     void SceneView::CullProxies(Viewport *viewport)
@@ -1162,3 +1203,7 @@ namespace NorvesLib::Core::Rendering
     }
 
 } // namespace NorvesLib::Core::Rendering
+
+#include "PathTracingPass.inl"
+#include "DepthOfFieldPass.inl"
+#include "MotionBlurPass.inl"

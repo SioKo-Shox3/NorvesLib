@@ -4,29 +4,44 @@
 #include "Rendering/SceneProxy.h"
 #include "Container/Containers.h"
 
+#include <cmath>
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
 {
 
-    inline GPULightData MakeDefaultLightingPassLight()
+    inline double ComputeLocalInverseSquare(double distance)
     {
-        GPULightData light = {};
-        light.position[3] = static_cast<float>(static_cast<int>(LightType::Directional));
-        light.direction[0] = -0.577f;
-        light.direction[1] = -0.577f;
-        light.direction[2] = -0.577f;
-        light.color[0] = 1.0f;
-        light.color[1] = 1.0f;
-        light.color[2] = 1.0f;
-        light.color[3] = 1.0f;
-        light.attenuation[0] = 100.0f;
-        return light;
+        const double distanceSquared = distance * distance;
+        const double minimumDistanceSquared = 0.01 * 0.01;
+        const double clampedDistanceSquared = distanceSquared > minimumDistanceSquared
+                                                   ? distanceSquared
+                                                   : minimumDistanceSquared;
+        return 1.0 / clampedDistanceSquared;
     }
 
-    inline bool PackLightingPassLight(const LightProxy& proxy, GPULightData& outLight)
+    inline double ComputeRangeWindow(double distance, double range)
+    {
+        const double safeRange = range > 0.0001 ? range : 0.0001;
+        const double ratio = distance / safeRange;
+        const double unclampedWindow = 1.0 - ratio * ratio * ratio * ratio;
+        const double window = unclampedWindow > 0.0 ? unclampedWindow : 0.0;
+        return window * window;
+    }
+
+    // attenuation[2]は、CSMとRT影の係数を掛ける灯（SelectShadowedDirectionalLight）で1。
+    inline bool PackLightingPassLight(const LightProxy& proxy,
+                                      GPULightData& outLight,
+                                      bool bReceivesDirectionalShadow = false)
     {
         if (!proxy.IsValid())
+        {
+            return false;
+        }
+
+        if (!std::isfinite(proxy.ColorR) || !std::isfinite(proxy.ColorG) ||
+            !std::isfinite(proxy.ColorB) || proxy.ColorR < 0.0f ||
+            proxy.ColorG < 0.0f || proxy.ColorB < 0.0f)
         {
             return false;
         }
@@ -42,35 +57,42 @@ namespace NorvesLib::Core::Rendering
         outLight.direction[2] = proxy.DirectionZ;
         outLight.direction[3] = proxy.InnerConeAngle;
 
-        outLight.color[0] = proxy.ColorR;
-        outLight.color[1] = proxy.ColorG;
-        outLight.color[2] = proxy.ColorB;
-        outLight.color[3] = proxy.Intensity;
+        const double luminance = 0.2126 * static_cast<double>(proxy.ColorR) +
+                                 0.7152 * static_cast<double>(proxy.ColorG) +
+                                 0.0722 * static_cast<double>(proxy.ColorB);
+        if (luminance <= 1.0e-6)
+        {
+            return false;
+        }
+
+        outLight.chromaticityAndIntensity[0] =
+            static_cast<float>(static_cast<double>(proxy.ColorR) / luminance);
+        outLight.chromaticityAndIntensity[1] =
+            static_cast<float>(static_cast<double>(proxy.ColorG) / luminance);
+        outLight.chromaticityAndIntensity[2] =
+            static_cast<float>(static_cast<double>(proxy.ColorB) / luminance);
+        outLight.chromaticityAndIntensity[3] = proxy.CanonicalIntensity;
 
         outLight.attenuation[0] = proxy.Range;
         outLight.attenuation[1] = proxy.OuterConeAngle;
-        outLight.attenuation[2] = 0.0f;
+        outLight.attenuation[2] = bReceivesDirectionalShadow ? 1.0f : 0.0f;
         outLight.attenuation[3] = 0.0f;
         return true;
     }
 
     inline uint32_t PackLightingPassLights(Container::Span<const LightProxy> lightProxies,
-                                           Container::VariableArray<GPULightData>& outLights)
+                                           Container::VariableArray<GPULightData>& outLights,
+                                           const LightProxy* shadowedLight = nullptr)
     {
         outLights.clear();
 
         for (const LightProxy& proxy : lightProxies)
         {
             GPULightData light = {};
-            if (PackLightingPassLight(proxy, light))
+            if (PackLightingPassLight(proxy, light, &proxy == shadowedLight))
             {
                 outLights.push_back(light);
             }
-        }
-
-        if (outLights.empty())
-        {
-            outLights.push_back(MakeDefaultLightingPassLight());
         }
 
         return static_cast<uint32_t>(outLights.size());

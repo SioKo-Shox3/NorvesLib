@@ -48,6 +48,88 @@ namespace NorvesLib::RHI
     };
 
     /**
+     * @brief presentation surface の working color space
+     */
+    enum class PresentationColorSpace : uint8_t
+    {
+        Unknown,
+        Rec709D65
+    };
+
+    /**
+     * @brief presentation surface の transfer function
+     */
+    enum class PresentationTransfer : uint8_t
+    {
+        Unknown,
+        SRGB
+    };
+
+    /**
+     * @brief presentation surface の最小記述子
+     */
+    struct PresentationSurfaceDesc
+    {
+        PresentationColorSpace ColorSpace = PresentationColorSpace::Unknown;
+        PresentationTransfer Transfer = PresentationTransfer::Unknown;
+    };
+
+    /**
+     * @brief swapchain format による sRGB encode の責務
+     */
+    enum class PresentationEncodePath : uint8_t
+    {
+        Unsupported,
+        HardwareSRGB,
+        ShaderOETF
+    };
+
+    inline bool IsPresentationSrgbFormat(Format format)
+    {
+        return format == Format::R8G8B8A8_SRGB || format == Format::B8G8R8A8_SRGB;
+    }
+
+    inline bool IsPresentationUnormFormat(Format format)
+    {
+        return format == Format::R8G8B8A8_UNORM || format == Format::B8G8R8A8_UNORM;
+    }
+
+    inline PresentationEncodePath GetPresentationEncodePath(Format format)
+    {
+        if (IsPresentationSrgbFormat(format))
+        {
+            return PresentationEncodePath::HardwareSRGB;
+        }
+        if (IsPresentationUnormFormat(format))
+        {
+            return PresentationEncodePath::ShaderOETF;
+        }
+        return PresentationEncodePath::Unsupported;
+    }
+
+    inline PresentationSurfaceDesc DescribePresentationSurface(Format format)
+    {
+        if (GetPresentationEncodePath(format) == PresentationEncodePath::Unsupported)
+        {
+            return {};
+        }
+        return {PresentationColorSpace::Rec709D65, PresentationTransfer::SRGB};
+    }
+
+    /**
+     * @brief blit shader の presentation encode パラメータ
+     *
+     * std140 の 16 byte slot に合わせる。
+     */
+    struct PresentationEncodeParams
+    {
+        uint32_t EncodePath = 0;
+        uint32_t _pad0 = 0;
+        uint32_t _pad1 = 0;
+        uint32_t _pad2 = 0;
+    };
+
+    /**
      * @brief テクスチャ次元の種類
      */
     enum class TextureDimension
@@ -74,6 +156,7 @@ namespace NorvesLib::RHI
         ConstantBuffer = 1 << 8,
         StorageBuffer = 1 << 9,       // ストレージバッファ（SSBO）
         IndirectBuffer = 1 << 10,     // 間接描画引数バッファ
+        BufferDeviceAddress = 1 << 11, // バッファのdevice addressを要求
         ShaderResource = ShaderRead,  // エイリアス: 互換性のため
         UnorderedAccess = ShaderWrite // エイリアス: 互換性のため
     };
@@ -100,6 +183,14 @@ namespace NorvesLib::RHI
         Geometry = 1 << 3,
         Pixel = 1 << 4,
         Compute = 1 << 5,
+        RayGen = 1 << 6,
+        Miss = 1 << 7,
+        ClosestHit = 1 << 8,
+        AnyHit = 1 << 9,
+        Intersection = 1 << 10,
+        Callable = 1 << 11,
+        AllRayTracing = RayGen | Miss | ClosestHit | AnyHit | Intersection | Callable,
+        // Allは既存のラスタ・計算ステージ集合を維持する。
         All = Vertex | Hull | Domain | Geometry | Pixel | Compute
     };
 
@@ -314,7 +405,8 @@ namespace NorvesLib::RHI
         ResolveDest,
         ResolveSource,
         Present,
-        GenericRead
+        GenericRead,
+        RayTracingStorage
     };
 
     /**
@@ -329,7 +421,8 @@ namespace NorvesLib::RHI
         StorageImage,
         UniformTexelBuffer,
         StorageTexelBuffer,
-        CombinedImageSampler
+        CombinedImageSampler,
+        AccelerationStructure
     };
 
     /**
@@ -364,7 +457,8 @@ namespace NorvesLib::RHI
     enum class PipelineType
     {
         Graphics,
-        Compute
+        Compute,
+        RayTracing
     };
 
     /**
@@ -488,6 +582,7 @@ namespace NorvesLib::RHI
     class IDevice;
     class ICommandList;
     class IBuffer;
+    class IAccelerationStructure;
     class ITexture;
     class ISampler;
     class IRenderPass;
@@ -502,6 +597,7 @@ namespace NorvesLib::RHI
     using DevicePtr = TSharedPtr<IDevice>;
     using CommandListPtr = TSharedPtr<ICommandList>;
     using BufferPtr = TSharedPtr<IBuffer>;
+    using AccelerationStructurePtr = TSharedPtr<IAccelerationStructure>;
     using TexturePtr = TSharedPtr<ITexture>;
     using SamplerPtr = TSharedPtr<ISampler>;
     using RenderPassPtr = TSharedPtr<IRenderPass>;

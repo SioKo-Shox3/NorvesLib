@@ -11,11 +11,26 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 emissiveColor;
     vec4 pomParams;
+    vec4 sceneColorParams;
+    mat4 lightView[4];
+    mat4 lightProjection[4];
+    vec4 shadowSplitDistances[2];
+    uint cascadeCount;
+    uint lightCount;
+    uint bShadowEnabled;
+    uint bIBLEnabled;
+    uint prefilteredSpecularMipLevels;
+    float iblIntensity;
+    uint padding0;
+    uint padding1;
+    uint padding2;
+    vec4 cameraForward;
 } mvp;
 
 struct InstanceData
 {
     mat4 world;
+    mat4 previousWorld;
     vec4 normalRows[3];
     vec4 objectColor;
     vec4 customData;

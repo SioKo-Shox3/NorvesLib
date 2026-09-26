@@ -1,14 +1,20 @@
-﻿#include "VulkanCommandList.h"
-#include "VulkanDevice.h"
+﻿#include "VulkanDevice.h"
+#include "VulkanCommandList.h"
 #include "VulkanBuffer.h"
 #include "VulkanTexture.h"
 #include "VulkanSampler.h"
 #include "VulkanPipeline.h"
+#include "VulkanRayTracingPipeline.h"
 #include "VulkanRenderPass.h"
 #include "VulkanFramebuffer.h"
 #include "VulkanDescriptorSet.h"
+#include "VulkanAccelerationStructure.h"
+#include "RHI/SubmissionSerialAllocator.h"
+#include "Logging/LogMacros.h"
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <cstring>
 
@@ -19,6 +25,59 @@ namespace NorvesLib::RHI::Vulkan
 
     namespace
     {
+        vk::BuildAccelerationStructureFlagsKHR GetAccelerationStructureBuildFlags(
+            const AccelerationStructureDesc& desc)
+        {
+            vk::BuildAccelerationStructureFlagsKHR flags =
+                vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+            if (desc.allowUpdate)
+            {
+                flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate;
+            }
+            if (desc.allowCompaction)
+            {
+                flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowCompaction;
+            }
+            return flags;
+        }
+
+        void AddAccelerationStructureBuildBarrier(vk::CommandBuffer commandBuffer)
+        {
+            vk::MemoryBarrier barrier{};
+            barrier.srcAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR |
+                                    vk::AccessFlagBits::eAccelerationStructureWriteKHR;
+            barrier.dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR |
+                                    vk::AccessFlagBits::eAccelerationStructureWriteKHR;
+            commandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eAllCommands,
+                vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                {},
+                1,
+                &barrier,
+                0,
+                nullptr,
+                0,
+                nullptr);
+        }
+
+        void AddAccelerationStructureWriteBarrier(vk::CommandBuffer commandBuffer)
+        {
+            vk::MemoryBarrier barrier{};
+            barrier.srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR;
+            barrier.dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR |
+                                    vk::AccessFlagBits::eAccelerationStructureWriteKHR;
+            commandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                vk::PipelineStageFlagBits::eAllCommands,
+                {},
+                1,
+                &barrier,
+                0,
+                nullptr,
+                0,
+                nullptr);
+        }
+
         vk::ImageAspectFlags GetBarrierAspectMask(const VulkanTexture& texture)
         {
             if ((texture.GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None)
@@ -61,6 +120,8 @@ namespace NorvesLib::RHI::Vulkan
             return vk::AccessFlagBits::eShaderRead;
         case ResourceState::UnorderedAccess:
             return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+        case ResourceState::RayTracingStorage:
+            return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
         case ResourceState::IndirectArgument:
             return vk::AccessFlagBits::eIndirectCommandRead;
         case ResourceState::CopySource:
@@ -74,7 +135,9 @@ namespace NorvesLib::RHI::Vulkan
         }
     }
 
-    vk::PipelineStageFlags ResourceBarrierTracker::ResourceStateToPipelineStageFlags(ResourceState state) const
+    vk::PipelineStageFlags ResourceBarrierTracker::ResourceStateToPipelineStageFlags(
+        ResourceState state,
+        bool bRayTracingPipelineEnabled) const
     {
         switch (state)
         {
@@ -91,9 +154,22 @@ namespace NorvesLib::RHI::Vulkan
         case ResourceState::DepthRead:
             return vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests;
         case ResourceState::ShaderResource:
-            return vk::PipelineStageFlagBits::eFragmentShader;
+        {
+            vk::PipelineStageFlags stageFlags =
+                vk::PipelineStageFlagBits::eFragmentShader |
+                vk::PipelineStageFlagBits::eComputeShader;
+            if (bRayTracingPipelineEnabled)
+            {
+                stageFlags |= vk::PipelineStageFlagBits::eRayTracingShaderKHR;
+            }
+            return stageFlags;
+        }
         case ResourceState::UnorderedAccess:
             return vk::PipelineStageFlagBits::eComputeShader;
+        case ResourceState::RayTracingStorage:
+            return bRayTracingPipelineEnabled
+                       ? vk::PipelineStageFlagBits::eRayTracingShaderKHR
+                       : vk::PipelineStageFlagBits::eAllCommands;
         case ResourceState::IndirectArgument:
             return vk::PipelineStageFlagBits::eDrawIndirect;
         case ResourceState::CopySource:
@@ -121,6 +197,7 @@ namespace NorvesLib::RHI::Vulkan
         case ResourceState::ShaderResource:
             return vk::ImageLayout::eShaderReadOnlyOptimal;
         case ResourceState::UnorderedAccess:
+        case ResourceState::RayTracingStorage:
             return vk::ImageLayout::eGeneral;
         case ResourceState::CopySource:
             return vk::ImageLayout::eTransferSrcOptimal;
@@ -222,6 +299,16 @@ namespace NorvesLib::RHI::Vulkan
 #endif
     }
 
+    vk::PipelineStageFlags VulkanCommandList::ResolvePipelineStageFlags(
+        ResourceState state) const
+    {
+        const bool bRayTracingPipelineEnabled =
+            m_device != nullptr &&
+            m_device->GetCapabilities().RayTracing.bRayTracingPipeline;
+        return m_barrierTracker.ResourceStateToPipelineStageFlags(
+            state, bRayTracingPipelineEnabled);
+    }
+
     VulkanCommandList::~VulkanCommandList()
     {
         m_device->WaitIdle();
@@ -249,12 +336,25 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::Begin()
     {
         // フェンスを待機
-        (void)m_device->GetVkDevice().waitForFences(1, &m_fence, vk::True, UINT64_MAX);
-        (void)m_device->GetVkDevice().resetFences(1, &m_fence);
+        const vk::Result waitResult = m_device->GetVkDevice().waitForFences(
+            1, &m_fence, vk::True, UINT64_MAX);
+        if (waitResult != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("コマンドフェンスの待機に失敗しました");
+        }
 
 #if NORVES_ENABLE_STATS
-        ResolveGPUTimestampResult();
+        NotifyGPUTimestampFrameSlotCompleted(
+            m_currentFrameIndex,
+            m_DirectFrameSlotSubmissionSerials[m_currentFrameIndex]);
+        ResolveGPUTimestampResultsForCurrentSlot();
 #endif
+
+        const vk::Result resetFenceResult = m_device->GetVkDevice().resetFences(1, &m_fence);
+        if (resetFenceResult != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("コマンドフェンスのリセットに失敗しました");
+        }
 
         Reset();
 
@@ -268,13 +368,16 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_bIsRecording = true;
+#if NORVES_ENABLE_STATS
+        PrepareGPUTimestampSlotForRecording();
+#endif
     }
 
     void VulkanCommandList::BeginRecording()
     {
         // 現在のフレームのコマンドバッファを使用（SetFrameIndexで設定済み）
 #if NORVES_ENABLE_STATS
-        ResolveGPUTimestampResult();
+        ResolveGPUTimestampResultsForCurrentSlot();
 #endif
 
         Reset();
@@ -289,6 +392,9 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_bIsRecording = true;
+#if NORVES_ENABLE_STATS
+        PrepareGPUTimestampSlotForRecording();
+#endif
     }
 
     void VulkanCommandList::SetFrameIndex(uint32_t frameIndex)
@@ -310,7 +416,7 @@ namespace NorvesLib::RHI::Vulkan
         }
 
 #if NORVES_ENABLE_STATS
-        if (m_bTimestampQueryActive)
+        if (m_LegacyGPUTimestampScope.IsValid())
         {
             EndGPUTimestamp();
         }
@@ -334,24 +440,209 @@ namespace NorvesLib::RHI::Vulkan
 #endif
     }
 
-    void VulkanCommandList::BeginGPUTimestamp(const char* markerName)
+    uint32_t VulkanCommandList::GetMaximumGPUTimestampScopesPerFrame() const
+    {
+        return SupportsGPUTimestamps() ? MaximumGPUTimestampScopesPerFrame : 0u;
+    }
+
+    void VulkanCommandList::BeginGPUTimestampFrame(uint64_t frameNumber)
     {
 #if NORVES_ENABLE_STATS
-        (void)markerName;
-
-        if (!m_bTimestampSupported || !m_bIsRecording || m_bTimestampQueryActive)
+        if (!m_bTimestampSupported || !m_bIsRecording || m_bTimestampFrameActive)
         {
+            ++m_InvalidGPUTimestampOperationCount;
             return;
         }
 
-        const uint32_t queryBaseIndex = GetTimestampQueryBaseIndex();
-        m_commandBuffer.resetQueryPool(m_timestampQueryPool, queryBaseIndex, 2);
-        m_commandBuffer.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe,
-                                       m_timestampQueryPool,
-                                       queryBaseIndex);
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[m_currentFrameIndex];
+        if (!Detail::TryBeginGPUTimestampFrame(batch, frameNumber, batch.bQueriesReset))
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+        m_bTimestampFrameActive = true;
+#else
+        (void)frameNumber;
+#endif
+    }
 
-        m_bTimestampQueryPending[m_currentFrameIndex] = false;
-        m_bTimestampQueryActive = true;
+    GPUTimestampScopeHandle VulkanCommandList::BeginGPUTimestampScope(const char* scopeName)
+    {
+#if NORVES_ENABLE_STATS
+        GPUTimestampScopeHandle handle;
+        if (!m_bTimestampSupported || !m_bIsRecording || !m_bTimestampFrameActive)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return handle;
+        }
+
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[m_currentFrameIndex];
+        if (!Detail::TryBeginGPUTimestampScope(
+                batch,
+                m_currentFrameIndex,
+                scopeName,
+                handle))
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return {};
+        }
+
+        m_commandBuffer.writeTimestamp(
+            vk::PipelineStageFlagBits::eTopOfPipe,
+            m_timestampQueryPool,
+            GetTimestampQueryBaseIndex(handle.FrameSlotIndex, handle.ScopeIndex));
+        return handle;
+#else
+        (void)scopeName;
+        return {};
+#endif
+    }
+
+    void VulkanCommandList::EndGPUTimestampScope(GPUTimestampScopeHandle handle)
+    {
+#if NORVES_ENABLE_STATS
+        if (!m_bTimestampSupported || !m_bIsRecording || !m_bTimestampFrameActive ||
+            handle.FrameSlotIndex != m_currentFrameIndex)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[m_currentFrameIndex];
+        if (!Detail::TryEndGPUTimestampScope(batch, handle))
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+
+        m_commandBuffer.writeTimestamp(
+            vk::PipelineStageFlagBits::eBottomOfPipe,
+            m_timestampQueryPool,
+            GetTimestampQueryBaseIndex(handle.FrameSlotIndex, handle.ScopeIndex) + 1u);
+#else
+        (void)handle;
+#endif
+    }
+
+    void VulkanCommandList::EndGPUTimestampFrame()
+    {
+#if NORVES_ENABLE_STATS
+        if (!m_bTimestampSupported || !m_bTimestampFrameActive)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+        if (!Detail::TryEndGPUTimestampFrame(m_TimestampFrameBatches[m_currentFrameIndex]))
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+        m_bTimestampFrameActive = false;
+        m_bLegacyPrivateTimestampFrame = false;
+#endif
+    }
+
+    void VulkanCommandList::CommitGPUTimestampSubmission(uint32_t frameSlotIndex,
+                                                         uint64_t submissionSerial)
+    {
+        if (submissionSerial != 0u)
+        {
+            CommitPendingAccelerationStructureBuilds(frameSlotIndex);
+        }
+
+#if NORVES_ENABLE_STATS
+        if (frameSlotIndex >= MAX_COMMAND_BUFFERS)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[frameSlotIndex];
+        if (batch.State == Detail::GPUTimestampFrameState::Empty)
+        {
+            return;
+        }
+        if (!Detail::TryCommitGPUTimestampSubmission(batch, submissionSerial))
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            AbortGPUTimestampFrame(frameSlotIndex);
+        }
+#else
+        (void)frameSlotIndex;
+        (void)submissionSerial;
+#endif
+    }
+
+    void VulkanCommandList::AbortGPUTimestampFrame(uint32_t frameSlotIndex) noexcept
+    {
+#if NORVES_ENABLE_STATS
+        if (frameSlotIndex >= MAX_COMMAND_BUFFERS)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+        Detail::AbortGPUTimestampFrameBatch(m_TimestampFrameBatches[frameSlotIndex]);
+        if (frameSlotIndex == m_currentFrameIndex)
+        {
+            m_bTimestampFrameActive = false;
+            m_bLegacyPrivateTimestampFrame = false;
+            m_LegacyGPUTimestampScope = {};
+        }
+#else
+        (void)frameSlotIndex;
+#endif
+    }
+
+    void VulkanCommandList::NotifyGPUTimestampFrameSlotCompleted(
+        uint32_t frameSlotIndex,
+        uint64_t completedSubmissionSerial)
+    {
+#if NORVES_ENABLE_STATS
+        if (frameSlotIndex >= MAX_COMMAND_BUFFERS)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+        (void)Detail::TryNotifyGPUTimestampFrameCompleted(
+            m_TimestampFrameBatches[frameSlotIndex],
+            completedSubmissionSerial);
+#else
+        (void)frameSlotIndex;
+        (void)completedSubmissionSerial;
+#endif
+    }
+
+    void VulkanCommandList::ConsumeCompletedGPUTimestampResults(
+        VariableArray<GPUTimestampResult>& outResults)
+    {
+#if NORVES_ENABLE_STATS
+        outResults = m_CompletedGPUTimestampResults;
+        m_CompletedGPUTimestampResults.clear();
+#else
+        outResults.clear();
+#endif
+    }
+
+    void VulkanCommandList::BeginGPUTimestamp(const char* markerName)
+    {
+#if NORVES_ENABLE_STATS
+        if (!m_bTimestampSupported || !m_bIsRecording || m_LegacyGPUTimestampScope.IsValid())
+        {
+            return;
+        }
+        if (!m_bTimestampFrameActive)
+        {
+            BeginGPUTimestampFrame(0u);
+            m_bLegacyPrivateTimestampFrame = m_bTimestampFrameActive;
+        }
+        m_LegacyGPUTimestampScope = BeginGPUTimestampScope(
+            markerName ? markerName : "FrameGPU");
+        if (m_LegacyGPUTimestampScope.IsValid())
+        {
+            m_TimestampFrameBatches[m_currentFrameIndex]
+                .Scopes[m_LegacyGPUTimestampScope.ScopeIndex]
+                .bLegacy = true;
+        }
 #else
         (void)markerName;
 #endif
@@ -360,18 +651,17 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::EndGPUTimestamp()
     {
 #if NORVES_ENABLE_STATS
-        if (!m_bTimestampSupported || !m_bIsRecording || !m_bTimestampQueryActive)
+        if (!m_bTimestampSupported || !m_LegacyGPUTimestampScope.IsValid())
         {
             return;
         }
-
-        const uint32_t queryBaseIndex = GetTimestampQueryBaseIndex();
-        m_commandBuffer.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
-                                       m_timestampQueryPool,
-                                       queryBaseIndex + 1);
-
-        m_bTimestampQueryPending[m_currentFrameIndex] = true;
-        m_bTimestampQueryActive = false;
+        const bool bFinalizePrivateFrame = m_bLegacyPrivateTimestampFrame;
+        EndGPUTimestampScope(m_LegacyGPUTimestampScope);
+        m_LegacyGPUTimestampScope = {};
+        if (bFinalizePrivateFrame)
+        {
+            EndGPUTimestampFrame();
+        }
 #endif
     }
 
@@ -423,15 +713,60 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.pCommandBuffers = &m_commandBuffer;
 
         vk::Queue queue = m_device->GetGraphicsQueue();
+#if NORVES_ENABLE_STATS
+        uint64_t submittedSerial = 0u;
+        const Detail::GPUTimestampSubmissionSequenceStatus submissionStatus =
+            Detail::ExecuteGPUTimestampSubmissionSequence(
+                this,
+                m_currentFrameIndex,
+                false,
+                [&](uint64_t& outSerial)
+                {
+                    return RHI::Detail::TryAllocateSubmissionSerial(
+                        m_DirectNextSubmissionSerial,
+                        outSerial);
+                },
+                []() noexcept
+                {
+                    return true;
+                },
+                [&]()
+                {
+                    return queue.submit(1, &submitInfo, m_fence) == vk::Result::eSuccess;
+                },
+                submittedSerial);
+        if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed)
+        {
+            throw std::runtime_error("コマンド送信serialが枯渇しました");
+        }
+        if (submissionStatus != Detail::GPUTimestampSubmissionSequenceStatus::Success)
+        {
+            throw std::runtime_error("コマンドの送信に失敗しました");
+        }
+
+        m_DirectNextSubmissionSerial = submittedSerial;
+        m_DirectFrameSlotSubmissionSerials[m_currentFrameIndex] = submittedSerial;
+#else
         auto result = queue.submit(1, &submitInfo, m_fence);
         if (result != vk::Result::eSuccess)
         {
             throw std::runtime_error("コマンドの送信に失敗しました");
         }
+#endif
+
+        CommitPendingAccelerationStructureBuilds(m_currentFrameIndex);
 
         if (bWaitForCompletion)
         {
-            (void)m_device->GetVkDevice().waitForFences(1, &m_fence, vk::True, UINT64_MAX);
+            const vk::Result waitResult = m_device->GetVkDevice().waitForFences(
+                1, &m_fence, vk::True, UINT64_MAX);
+            if (waitResult != vk::Result::eSuccess)
+            {
+                throw std::runtime_error("コマンド送信完了の待機に失敗しました");
+            }
+#if NORVES_ENABLE_STATS
+            NotifyGPUTimestampFrameSlotCompleted(m_currentFrameIndex, submittedSerial);
+#endif
         }
     }
 
@@ -574,7 +909,15 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("無効なパイプラインです");
         }
 
-        vk::PipelineBindPoint bindPoint = vkPipeline->IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
+        vk::PipelineBindPoint bindPoint = vk::PipelineBindPoint::eGraphics;
+        if (vkPipeline->IsCompute())
+        {
+            bindPoint = vk::PipelineBindPoint::eCompute;
+        }
+        else if (vkPipeline->IsRayTracing())
+        {
+            bindPoint = vk::PipelineBindPoint::eRayTracingKHR;
+        }
 
         m_commandBuffer.bindPipeline(bindPoint, vkPipeline->GetVkPipeline());
         m_currentPipeline = pipeline;
@@ -659,7 +1002,15 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("パイプラインが設定されていません");
         }
 
-        vk::PipelineBindPoint bindPoint = vkPipeline->IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
+        vk::PipelineBindPoint bindPoint = vk::PipelineBindPoint::eGraphics;
+        if (vkPipeline->IsCompute())
+        {
+            bindPoint = vk::PipelineBindPoint::eCompute;
+        }
+        else if (vkPipeline->IsRayTracing())
+        {
+            bindPoint = vk::PipelineBindPoint::eRayTracingKHR;
+        }
 
         vk::DescriptorSet descSet = vkDescSet->GetVkDescriptorSet();
         m_commandBuffer.bindDescriptorSets(
@@ -741,6 +1092,303 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ)
     {
         m_commandBuffer.dispatch(threadGroupCountX, threadGroupCountY, threadGroupCountZ);
+    }
+
+    bool VulkanCommandList::BuildAccelerationStructure(const AccelerationStructureBuildDesc& desc)
+    {
+        return RecordTopLevelAccelerationStructureBuild(desc, AccelerationStructureBuildMode::Build);
+    }
+
+    bool VulkanCommandList::UpdateAccelerationStructure(const AccelerationStructureBuildDesc& desc)
+    {
+        return RecordTopLevelAccelerationStructureBuild(desc, AccelerationStructureBuildMode::Update);
+    }
+
+    bool VulkanCommandList::TraceRays(uint32_t width, uint32_t height, uint32_t depth)
+    {
+        if (!m_bIsRecording || m_bInRenderPass || width == 0 || height == 0 || depth == 0)
+        {
+            return false;
+        }
+
+        auto rayTracingPipeline = DynamicPointerCast<VulkanRayTracingPipeline>(m_currentPipeline);
+        if (!rayTracingPipeline)
+        {
+            return false;
+        }
+
+        const uint64_t maxInvocationCount = rayTracingPipeline->GetMaxRayDispatchInvocationCount();
+        if (maxInvocationCount == 0 || width > rayTracingPipeline->GetMaxRayDispatchDimension(0) ||
+            height > rayTracingPipeline->GetMaxRayDispatchDimension(1) ||
+            depth > rayTracingPipeline->GetMaxRayDispatchDimension(2) || width > maxInvocationCount ||
+            height > maxInvocationCount || depth > maxInvocationCount)
+        {
+            return false;
+        }
+
+        const uint64_t widthHeight = static_cast<uint64_t>(width) * height;
+        if (widthHeight > maxInvocationCount || depth > maxInvocationCount / widthHeight)
+        {
+            return false;
+        }
+
+        const vk::StridedDeviceAddressRegionKHR& rayGenerationRegion =
+            rayTracingPipeline->GetRayGenerationRegion();
+        if (rayGenerationRegion.deviceAddress == 0 || rayGenerationRegion.size == 0 ||
+            rayGenerationRegion.stride == 0)
+        {
+            return false;
+        }
+
+        m_commandBuffer.traceRaysKHR(
+            rayGenerationRegion,
+            rayTracingPipeline->GetMissRegion(),
+            rayTracingPipeline->GetHitRegion(),
+            rayTracingPipeline->GetCallableRegion(),
+            width,
+            height,
+            depth);
+        return true;
+    }
+
+    bool VulkanCommandList::RecordTopLevelAccelerationStructureBuild(
+        const AccelerationStructureBuildDesc& desc,
+        AccelerationStructureBuildMode mode)
+    {
+        if (desc.type != AccelerationStructureType::TopLevel || desc.mode != mode ||
+            !IsValidAccelerationStructureBuildDesc(desc, mode))
+        {
+            return false;
+        }
+
+        auto destination = DynamicPointerCast<VulkanAccelerationStructure>(desc.destination);
+        if (!m_device || !destination || destination->m_device.get() != m_device.get() ||
+            destination->GetDesc().type != AccelerationStructureType::TopLevel)
+        {
+            return false;
+        }
+
+        TSharedPtr<VulkanAccelerationStructure> source;
+        bool rebuildDestination = mode == AccelerationStructureBuildMode::Build;
+        if (mode == AccelerationStructureBuildMode::Update)
+        {
+            source = DynamicPointerCast<VulkanAccelerationStructure>(desc.source);
+            if (!source || source->m_device.get() != m_device.get() ||
+                source->GetDesc().type != AccelerationStructureType::TopLevel ||
+                GetAccelerationStructureBuildFlags(source->GetDesc()) !=
+                    GetAccelerationStructureBuildFlags(destination->GetDesc()))
+            {
+                return false;
+            }
+
+            const uint32_t sourceInstanceCount = GetLatestBuiltInstanceCount(*source);
+            if (sourceInstanceCount == 0)
+            {
+                // Build履歴がないsourceはUpdate条件を確認できないため、フルBuildで置き換える
+                rebuildDestination = true;
+                source.reset();
+            }
+            else if (desc.instances.size() != sourceInstanceCount)
+            {
+                return false;
+            }
+        }
+
+        if (!m_bIsRecording || m_bInRenderPass)
+        {
+            return false;
+        }
+
+        try
+        {
+            VariableArray<vk::AccelerationStructureInstanceKHR> instances;
+            for (const AccelerationStructureInstanceDesc& instanceDesc : desc.instances)
+            {
+                auto bottomLevel = DynamicPointerCast<VulkanAccelerationStructure>(instanceDesc.bottomLevel);
+                if (!bottomLevel || bottomLevel->m_device.get() != m_device.get() ||
+                    bottomLevel->GetDesc().type != AccelerationStructureType::BottomLevel)
+                {
+                    return false;
+                }
+
+                vk::AccelerationStructureInstanceKHR instance{};
+                for (uint32_t row = 0; row < 3; ++row)
+                {
+                    for (uint32_t column = 0; column < 4; ++column)
+                    {
+                        instance.transform.matrix[row][column] = instanceDesc.transform[row * 4u + column];
+                    }
+                }
+                instance.instanceCustomIndex = instanceDesc.customIndex;
+                instance.mask = instanceDesc.mask;
+                instance.instanceShaderBindingTableRecordOffset = instanceDesc.shaderBindingTableRecordOffset;
+                if (instanceDesc.disableTriangleFacingCull)
+                {
+                    instance.flags = static_cast<VkGeometryInstanceFlagsKHR>(
+                        vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable);
+                }
+                instance.accelerationStructureReference = bottomLevel->GetDeviceAddress();
+                instances.push_back(instance);
+            }
+
+            BufferDesc instanceBufferDesc;
+            instanceBufferDesc.Size = static_cast<uint64_t>(instances.size()) * sizeof(vk::AccelerationStructureInstanceKHR);
+            instanceBufferDesc.Usage = ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress;
+            instanceBufferDesc.CPUAccessible = true;
+            instanceBufferDesc.DebugName = "VulkanAccelerationStructure.TLAS.Instances";
+            TSharedPtr<VulkanBuffer> instanceBuffer = MakeShared<VulkanBuffer>(
+                m_device,
+                instanceBufferDesc,
+                vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR);
+            if (!instanceBuffer || instanceBuffer->GetDeviceAddress() == 0)
+            {
+                return false;
+            }
+            instanceBuffer->Update(instances.data(), instanceBufferDesc.Size);
+
+            vk::AccelerationStructureGeometryInstancesDataKHR instanceData{};
+            instanceData.arrayOfPointers = VK_FALSE;
+            instanceData.data.deviceAddress = instanceBuffer->GetDeviceAddress();
+            vk::AccelerationStructureGeometryKHR geometry{};
+            geometry.geometryType = vk::GeometryTypeKHR::eInstances;
+            geometry.geometry.instances = instanceData;
+
+            vk::AccelerationStructureBuildGeometryInfoKHR sizeInfo{};
+            sizeInfo.type = vk::AccelerationStructureTypeKHR::eTopLevel;
+            sizeInfo.flags = GetAccelerationStructureBuildFlags(destination->GetDesc());
+            sizeInfo.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+            sizeInfo.geometryCount = 1;
+            sizeInfo.pGeometries = &geometry;
+            const uint32_t instanceCount = static_cast<uint32_t>(instances.size());
+            vk::AccelerationStructureBuildSizesInfoKHR buildSizes{};
+            m_device->GetVkDevice().getAccelerationStructureBuildSizesKHR(
+                vk::AccelerationStructureBuildTypeKHR::eDevice,
+                &sizeInfo,
+                &instanceCount,
+                &buildSizes);
+
+            vk::PhysicalDeviceAccelerationStructurePropertiesKHR accelerationStructureProperties{};
+            vk::PhysicalDeviceProperties2 physicalDeviceProperties{};
+            physicalDeviceProperties.pNext = &accelerationStructureProperties;
+            m_device->GetVkPhysicalDevice().getProperties2(&physicalDeviceProperties);
+            const uint64_t scratchAlignment = std::max<uint64_t>(
+                accelerationStructureProperties.minAccelerationStructureScratchOffsetAlignment,
+                1u);
+            const uint64_t requiredScratchSize = rebuildDestination
+                ? buildSizes.buildScratchSize
+                : buildSizes.updateScratchSize;
+            if (requiredScratchSize == 0 ||
+                requiredScratchSize > std::numeric_limits<uint64_t>::max() - (scratchAlignment - 1u))
+            {
+                return false;
+            }
+
+            BufferDesc scratchDesc;
+            scratchDesc.Size = requiredScratchSize + scratchAlignment - 1u;
+            scratchDesc.Usage = ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress;
+            scratchDesc.DebugName = rebuildDestination
+                ? "VulkanAccelerationStructure.TLAS.BuildScratch"
+                : "VulkanAccelerationStructure.TLAS.UpdateScratch";
+            TSharedPtr<VulkanBuffer> scratchBuffer = MakeShared<VulkanBuffer>(m_device, scratchDesc);
+            const uint64_t scratchAddress = scratchBuffer->GetDeviceAddress();
+            if (scratchAddress == 0)
+            {
+                return false;
+            }
+            const uint64_t scratchRemainder = scratchAddress % scratchAlignment;
+            const uint64_t alignedScratchAddress = scratchAddress +
+                (scratchRemainder == 0 ? 0 : scratchAlignment - scratchRemainder);
+
+            vk::AccelerationStructureBuildGeometryInfoKHR buildInfo = sizeInfo;
+            buildInfo.mode = rebuildDestination
+                ? vk::BuildAccelerationStructureModeKHR::eBuild
+                : vk::BuildAccelerationStructureModeKHR::eUpdate;
+            buildInfo.srcAccelerationStructure = !rebuildDestination && source
+                ? source->GetVkAccelerationStructure()
+                : vk::AccelerationStructureKHR{};
+            buildInfo.dstAccelerationStructure = destination->GetVkAccelerationStructure();
+            buildInfo.scratchData.deviceAddress = alignedScratchAddress;
+            vk::AccelerationStructureBuildRangeInfoKHR buildRange{};
+            buildRange.primitiveCount = instanceCount;
+            const vk::AccelerationStructureBuildRangeInfoKHR* buildRangeInfo = &buildRange;
+
+            AddAccelerationStructureBuildBarrier(m_commandBuffer);
+            vk::BufferMemoryBarrier instanceInputBarrier{};
+            instanceInputBarrier.srcAccessMask = vk::AccessFlagBits::eHostWrite;
+            instanceInputBarrier.dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR;
+            instanceInputBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            instanceInputBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            instanceInputBarrier.buffer = instanceBuffer->GetVkBuffer();
+            instanceInputBarrier.offset = 0;
+            instanceInputBarrier.size = instanceBufferDesc.Size;
+            m_commandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eHost,
+                vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                {},
+                0,
+                nullptr,
+                1,
+                &instanceInputBarrier,
+                0,
+                nullptr);
+
+            AddTemporaryResource(destination);
+            if (source)
+            {
+                AddTemporaryResource(source);
+            }
+            for (const AccelerationStructureInstanceDesc& instanceDesc : desc.instances)
+            {
+                AddTemporaryResource(instanceDesc.bottomLevel);
+            }
+            AddTemporaryResource(instanceBuffer);
+            AddTemporaryResource(scratchBuffer);
+            m_frameResourceLeases[m_currentFrameIndex].pendingAccelerationStructureBuilds.push_back(
+                {destination, instanceCount});
+
+            m_commandBuffer.buildAccelerationStructuresKHR(1, &buildInfo, &buildRangeInfo);
+            AddAccelerationStructureWriteBarrier(m_commandBuffer);
+            return true;
+        }
+        catch (const std::exception& error)
+        {
+            NORVES_LOG_ERROR("VulkanCommandList", "TLASのBuild/Update記録に失敗しました: %s", error.what());
+            return false;
+        }
+    }
+
+    uint32_t VulkanCommandList::GetLatestBuiltInstanceCount(
+        const VulkanAccelerationStructure& resource) const
+    {
+        const FrameResourceLease& lease = m_frameResourceLeases[m_currentFrameIndex];
+        for (size_t index = lease.pendingAccelerationStructureBuilds.size(); index > 0; --index)
+        {
+            const PendingAccelerationStructureBuild& pending =
+                lease.pendingAccelerationStructureBuilds[index - 1u];
+            if (pending.destination.get() == &resource)
+            {
+                return pending.instanceCount;
+            }
+        }
+        return resource.m_lastBuiltInstanceCount;
+    }
+
+    void VulkanCommandList::CommitPendingAccelerationStructureBuilds(uint32_t frameSlotIndex)
+    {
+        if (frameSlotIndex >= MAX_COMMAND_BUFFERS)
+        {
+            return;
+        }
+
+        FrameResourceLease& lease = m_frameResourceLeases[frameSlotIndex];
+        for (const PendingAccelerationStructureBuild& pending : lease.pendingAccelerationStructureBuilds)
+        {
+            if (pending.destination)
+            {
+                pending.destination->m_lastBuiltInstanceCount = pending.instanceCount;
+            }
+        }
+        lease.pendingAccelerationStructureBuilds.clear();
     }
 
     void VulkanCommandList::CopyBuffer(BufferPtr src, BufferPtr dst, uint64_t size,
@@ -1022,8 +1670,8 @@ namespace NorvesLib::RHI::Vulkan
         barrier.size = size == 0 ? VK_WHOLE_SIZE : size;
 
         m_commandBuffer.pipelineBarrier(
-            m_barrierTracker.ResourceStateToPipelineStageFlags(beforeState),
-            m_barrierTracker.ResourceStateToPipelineStageFlags(afterState),
+            ResolvePipelineStageFlags(beforeState),
+            ResolvePipelineStageFlags(afterState),
             {},
             0, nullptr,
             1, &barrier,
@@ -1044,6 +1692,36 @@ namespace NorvesLib::RHI::Vulkan
         barrier.dstAccessMask = m_barrierTracker.ResourceStateToAccessFlags(afterState);
         barrier.oldLayout = m_barrierTracker.ResourceStateToImageLayout(beforeState);
         barrier.newLayout = m_barrierTracker.ResourceStateToImageLayout(afterState);
+
+        const uint32_t totalMipLevels = vkTexture->GetMipLevels();
+        const uint32_t totalArrayLayers =
+            vkTexture->GetArraySize() * (vkTexture->IsCubemap() ? 6u : 1u);
+        const uint32_t resolvedMipCount =
+            mipCount == 0 && mipLevel <= totalMipLevels
+                ? totalMipLevels - mipLevel
+                : mipCount;
+        const uint32_t resolvedArrayCount =
+            arrayCount == 0 && arrayIndex <= totalArrayLayers
+                ? totalArrayLayers - arrayIndex
+                : arrayCount;
+        const bool bCoversWholeTexture =
+            mipLevel == 0u &&
+            arrayIndex == 0u &&
+            resolvedMipCount == totalMipLevels &&
+            resolvedArrayCount == totalArrayLayers;
+        const bool bPreserveGeneralLayout =
+            !bCoversWholeTexture &&
+            (beforeState == ResourceState::UnorderedAccess ||
+             beforeState == ResourceState::RayTracingStorage) &&
+            afterState == ResourceState::ShaderResource &&
+            (vkTexture->GetUsage() & ResourceUsage::UnorderedAccess) != ResourceUsage::None &&
+            vkTexture->GetVkImageLayout() == vk::ImageLayout::eGeneral;
+        if (bPreserveGeneralLayout)
+        {
+            barrier.oldLayout = vk::ImageLayout::eGeneral;
+            barrier.newLayout = vk::ImageLayout::eGeneral;
+        }
+
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = vkTexture->GetVkImage();
@@ -1053,13 +1731,21 @@ namespace NorvesLib::RHI::Vulkan
         barrier.subresourceRange.baseArrayLayer = arrayIndex;
         barrier.subresourceRange.layerCount = arrayCount == 0 ? VK_REMAINING_ARRAY_LAYERS : arrayCount;
 
+        const vk::PipelineStageFlags sourceStage = ResolvePipelineStageFlags(beforeState);
+        const vk::PipelineStageFlags destinationStage = ResolvePipelineStageFlags(afterState);
+
         m_commandBuffer.pipelineBarrier(
-            m_barrierTracker.ResourceStateToPipelineStageFlags(beforeState),
-            m_barrierTracker.ResourceStateToPipelineStageFlags(afterState),
+            sourceStage,
+            destinationStage,
             {},
             0, nullptr,
             0, nullptr,
             1, &barrier);
+
+        if (bCoversWholeTexture)
+        {
+            vkTexture->SetVkImageLayout(barrier.newLayout);
+        }
     }
 
     void VulkanCommandList::OptimizedBufferBarrier(VulkanBuffer *buffer, ResourceState newState, uint64_t offset, uint64_t size)
@@ -1076,7 +1762,7 @@ namespace NorvesLib::RHI::Vulkan
 
         m_commandBuffer.pipelineBarrier(
             vk::PipelineStageFlagBits::eAllCommands,
-            m_barrierTracker.ResourceStateToPipelineStageFlags(newState),
+            ResolvePipelineStageFlags(newState),
             {},
             0, nullptr,
             1, &barrier,
@@ -1097,7 +1783,7 @@ namespace NorvesLib::RHI::Vulkan
 
         m_commandBuffer.pipelineBarrier(
             vk::PipelineStageFlagBits::eAllCommands,
-            m_barrierTracker.ResourceStateToPipelineStageFlags(newState),
+            ResolvePipelineStageFlags(newState),
             {},
             0, nullptr,
             0, nullptr,
@@ -1160,9 +1846,12 @@ namespace NorvesLib::RHI::Vulkan
 
         auto deviceProperties = m_device->GetVkPhysicalDevice().getProperties();
         m_timestampPeriodNs = deviceProperties.limits.timestampPeriod;
+        m_TimestampValidBits = queueFamilies[graphicsQueueFamilyIndex].timestampValidBits;
         m_bTimestampSupported =
-            queueFamilies[graphicsQueueFamilyIndex].timestampValidBits > 0 &&
-            m_timestampPeriodNs > 0.0f;
+            m_TimestampValidBits > 0u &&
+            m_TimestampValidBits <= 64u &&
+            m_timestampPeriodNs > 0.0f &&
+            std::isfinite(m_timestampPeriodNs);
 
         if (!m_bTimestampSupported)
         {
@@ -1171,7 +1860,8 @@ namespace NorvesLib::RHI::Vulkan
 
         vk::QueryPoolCreateInfo queryPoolInfo;
         queryPoolInfo.queryType = vk::QueryType::eTimestamp;
-        queryPoolInfo.queryCount = MAX_COMMAND_BUFFERS * 2;
+        queryPoolInfo.queryCount =
+            MAX_COMMAND_BUFFERS * MaximumGPUTimestampScopesPerFrame * 2u;
 
         auto result = m_device->GetVkDevice().createQueryPool(queryPoolInfo);
         if (result.result != vk::Result::eSuccess)
@@ -1192,44 +1882,133 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_bTimestampSupported = false;
-        m_bTimestampQueryActive = false;
-        std::fill(m_bTimestampQueryPending,
-                  m_bTimestampQueryPending + MAX_COMMAND_BUFFERS,
-                  false);
+        m_bTimestampFrameActive = false;
+        m_bLegacyPrivateTimestampFrame = false;
+        m_LegacyGPUTimestampScope = {};
+        m_CompletedGPUTimestampResults.clear();
+        for (Detail::GPUTimestampFrameBatch& batch : m_TimestampFrameBatches)
+        {
+            Detail::ClearGPUTimestampFrameBatch(batch);
+        }
     }
 
-    void VulkanCommandList::ResolveGPUTimestampResult()
+    void VulkanCommandList::ResolveGPUTimestampResultsForCurrentSlot()
     {
-        if (!m_bTimestampSupported || !m_bTimestampQueryPending[m_currentFrameIndex])
+        if (!m_bTimestampSupported)
         {
             return;
         }
 
-        std::array<uint64_t, 2> timestamps = {};
-        const uint32_t queryBaseIndex = GetTimestampQueryBaseIndex();
-        auto result = m_device->GetVkDevice().getQueryPoolResults(
-            m_timestampQueryPool,
-            queryBaseIndex,
-            static_cast<uint32_t>(timestamps.size()),
-            sizeof(uint64_t) * timestamps.size(),
-            timestamps.data(),
-            sizeof(uint64_t),
-            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
-
-        if (result == vk::Result::eSuccess && timestamps[1] >= timestamps[0])
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[m_currentFrameIndex];
+        if (batch.State != Detail::GPUTimestampFrameState::Completed)
         {
-            const double elapsedNs =
-                static_cast<double>(timestamps[1] - timestamps[0]) *
-                static_cast<double>(m_timestampPeriodNs);
-            m_lastGPUTimestampDurationMs = static_cast<float>(elapsedNs / 1000000.0);
+            return;
         }
 
-        m_bTimestampQueryPending[m_currentFrameIndex] = false;
+        if (batch.ScopeCount == 0u)
+        {
+            Detail::ClearGPUTimestampFrameBatch(batch);
+            return;
+        }
+
+        struct TimestampQueryReadback
+        {
+            uint64_t Value = 0u;
+            uint64_t Availability = 0u;
+        };
+        FixedArray<TimestampQueryReadback, MaximumGPUTimestampScopesPerFrame * 2u> timestamps = {};
+        const uint32_t queryCount = batch.ScopeCount * 2u;
+        const vk::Result result = m_device->GetVkDevice().getQueryPoolResults(
+            m_timestampQueryPool,
+            GetTimestampQueryBaseIndex(m_currentFrameIndex),
+            queryCount,
+            sizeof(TimestampQueryReadback) * queryCount,
+            timestamps.data(),
+            sizeof(TimestampQueryReadback),
+            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWithAvailability);
+
+        bool bAllQueriesAvailable = result == vk::Result::eSuccess;
+        if (bAllQueriesAvailable)
+        {
+            for (uint32_t queryIndex = 0u; queryIndex < queryCount; ++queryIndex)
+            {
+                if (timestamps[queryIndex].Availability == 0u)
+                {
+                    bAllQueriesAvailable = false;
+                    break;
+                }
+            }
+        }
+
+        if (Detail::ShouldCarryGPUTimestampBatch(result, bAllQueriesAvailable))
+        {
+            return;
+        }
+
+        if (result != vk::Result::eSuccess)
+        {
+            ++m_GPUTimestampResolveErrorCount;
+            NORVES_LOG_WARNING("Vulkan", "GPU timestamp query resolve failed (%d)", static_cast<int>(result));
+        }
+
+        for (uint32_t scopeIndex = 0u; scopeIndex < batch.ScopeCount; ++scopeIndex)
+        {
+            const Detail::GPUTimestampScopeRecord& scope = batch.Scopes[scopeIndex];
+            const TimestampQueryReadback& begin = timestamps[scopeIndex * 2u];
+            const TimestampQueryReadback& end = timestamps[scopeIndex * 2u + 1u];
+            GPUTimestampResult completed;
+            completed.FrameNumber = batch.FrameNumber;
+            completed.ScopeName = scope.Name;
+
+            const bool bAvailable = result == vk::Result::eSuccess &&
+                                    begin.Availability != 0u &&
+                                    end.Availability != 0u;
+            if (scope.bClosed && bAvailable)
+            {
+                const uint64_t ticks = Detail::CalculateGPUTimestampTicks(
+                    begin.Value,
+                    end.Value,
+                    m_TimestampValidBits);
+                const double durationMs =
+                    static_cast<double>(ticks) * static_cast<double>(m_timestampPeriodNs) /
+                    1000000.0;
+                completed.DurationMs = static_cast<float>(durationMs);
+                completed.bValid = std::isfinite(durationMs) &&
+                                   std::isfinite(completed.DurationMs);
+            }
+            if (scope.bLegacy && completed.bValid)
+            {
+                m_lastGPUTimestampDurationMs = completed.DurationMs;
+            }
+            m_CompletedGPUTimestampResults.push_back(completed);
+        }
+
+        Detail::ClearGPUTimestampFrameBatch(batch);
     }
 
-    uint32_t VulkanCommandList::GetTimestampQueryBaseIndex() const
+    void VulkanCommandList::PrepareGPUTimestampSlotForRecording()
     {
-        return m_currentFrameIndex * 2;
+        if (!m_bTimestampSupported)
+        {
+            return;
+        }
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[m_currentFrameIndex];
+        if (batch.State != Detail::GPUTimestampFrameState::Empty)
+        {
+            return;
+        }
+        m_commandBuffer.resetQueryPool(
+            m_timestampQueryPool,
+            GetTimestampQueryBaseIndex(m_currentFrameIndex),
+            MaximumGPUTimestampScopesPerFrame * 2u);
+        batch.bQueriesReset = true;
+    }
+
+    uint32_t VulkanCommandList::GetTimestampQueryBaseIndex(uint32_t frameSlotIndex,
+                                                           uint32_t scopeIndex) const
+    {
+        return frameSlotIndex * MaximumGPUTimestampScopesPerFrame * 2u +
+               scopeIndex * 2u;
     }
 #endif
 
@@ -1240,15 +2019,13 @@ namespace NorvesLib::RHI::Vulkan
         m_currentVertexBufferOffsets.clear();
         m_currentIndexBuffer = nullptr;
         m_currentIndexBufferOffset = 0;
-        m_temporaryResources.clear();
+        FrameResourceLease& frameResourceLease = m_frameResourceLeases[m_currentFrameIndex];
+        frameResourceLease.pendingAccelerationStructureBuilds.clear();
+        frameResourceLease.temporaryResources.clear();
         m_bindingResources.clear();
         m_descriptorSetCache.clear();
         m_activeRenderPass.reset();
         m_activeFramebuffer.reset();
-
-#if NORVES_ENABLE_STATS
-        m_bTimestampQueryActive = false;
-#endif
 
         m_commandBuffer.reset({});
     }

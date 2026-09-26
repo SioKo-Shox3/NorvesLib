@@ -1,7 +1,10 @@
-#include "Rendering/RenderFrameExecutor.h"
+﻿#include "Rendering/RenderFrameExecutor.h"
 #include "Rendering/CanvasView.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/GBufferPass.h"
+#include "Rendering/LightingPass.h"
+#include "Rendering/PathTracingPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/View.h"
@@ -13,7 +16,7 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        void SetFrameCaptureSource(RenderFrameExecutionResult& result,
+        void SetFrameCaptureSource(FrameCaptureSource& source,
                                    const RHI::TexturePtr& texture,
                                    uint64_t frameNumber)
         {
@@ -22,11 +25,82 @@ namespace NorvesLib::Core::Rendering
                 return;
             }
 
-            result.CaptureSource.Texture = texture;
-            result.CaptureSource.CurrentState = RHI::ResourceState::ShaderResource;
-            result.CaptureSource.RestoreState = RHI::ResourceState::ShaderResource;
-            result.CaptureSource.FrameNumber = frameNumber;
-            result.bHasFrameCaptureSource = true;
+            source.Texture = texture;
+            source.CurrentState = RHI::ResourceState::ShaderResource;
+            source.RestoreState = RHI::ResourceState::ShaderResource;
+            source.FrameNumber = frameNumber;
+        }
+
+        void SetPrimarySceneFrameCaptureSource(
+            const RenderFrameExecutionRequest& request,
+            RenderFrameExecutionResult& result)
+        {
+            if (!request.Packet || !request.Views)
+            {
+                return;
+            }
+
+            const ViewportRenderPlan* primarySceneViewport =
+                RenderFrameExecutor::FindPrimarySceneViewportRenderPlan(*request.Packet);
+            if (!primarySceneViewport || primarySceneViewport->ViewId >= request.Views->size())
+            {
+                return;
+            }
+
+            const Container::TSharedPtr<View>& primarySceneView =
+                (*request.Views)[primarySceneViewport->ViewId];
+            if (!primarySceneView)
+            {
+                return;
+            }
+
+            SetFrameCaptureSource(
+                result.CaptureSources.SceneColor,
+                primarySceneView->GetFrameSceneColorTexture(),
+                request.Packet->FrameNumber);
+            if (auto* pathTracingPass = dynamic_cast<PathTracingPass*>(
+                    primarySceneView->FindPass("PathTracingPass")))
+            {
+                result.CaptureSources.PathTracingSampleCount =
+                    pathTracingPass->GetAccumulatedSampleCount();
+            }
+
+            if (request.Packet->CaptureRequest.SourceKind == FrameCaptureSourceKind::GBufferVelocity)
+            {
+                auto* gbufferPass = dynamic_cast<GBufferPass*>(
+                    primarySceneView->FindPass("GBufferPass"));
+                if (gbufferPass)
+                {
+                    SetFrameCaptureSource(
+                        result.CaptureSources.GBufferVelocity,
+                        gbufferPass->GetVelocityTexturePtr(),
+                        request.Packet->FrameNumber);
+                }
+            }
+
+            const FrameCaptureSourceKind captureKind = request.Packet->CaptureRequest.SourceKind;
+            if (captureKind == FrameCaptureSourceKind::RTGIDiffuseIndirect ||
+                captureKind == FrameCaptureSourceKind::RTGIHistoryAge)
+            {
+                // RTGIの検証captureは、そのフレームで成功したLightingPassの資源だけを対象にする。
+                auto* lightingPass = dynamic_cast<LightingPass*>(
+                    primarySceneView->FindPass("LightingPass"));
+                RHI::TexturePtr texture;
+                RHI::ResourceState state = RHI::ResourceState::Undefined;
+                if (lightingPass &&
+                    lightingPass->TryGetRTGICaptureTexture(
+                        captureKind, request.Packet->FrameNumber, texture, state))
+                {
+                    FrameCaptureSource& source =
+                        captureKind == FrameCaptureSourceKind::RTGIDiffuseIndirect
+                            ? result.CaptureSources.RTGIDiffuseIndirect
+                            : result.CaptureSources.RTGIHistoryAge;
+                    source.Texture = texture;
+                    source.CurrentState = state;
+                    source.RestoreState = state;
+                    source.FrameNumber = request.Packet->FrameNumber;
+                }
+            }
         }
     } // namespace
 
@@ -52,10 +126,14 @@ namespace NorvesLib::Core::Rendering
         ResetFrameOutputs(request);
         if (ShouldCompose(*request.Packet, *request.Views))
         {
-            return ExecuteCompositePath(request);
+            result = ExecuteCompositePath(request);
         }
-
-        return ExecuteLegacyPath(request);
+        else
+        {
+            result = ExecuteLegacyPath(request);
+        }
+        SetPrimarySceneFrameCaptureSource(request, result);
+        return result;
     }
 
     RenderFrameExecutionResult RenderFrameExecutor::ExecuteLegacyPath(const RenderFrameExecutionRequest &request)
@@ -96,8 +174,9 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 FlushPendingFrameCommands(request);
-                bool bPresented = WasPresentationHandledByGraph(request);
-                if (bPresented)
+                const bool bGraphPresented = WasPresentationHandledByGraph(request);
+                bool bPresented = bGraphPresented;
+                if (bGraphPresented)
                 {
                     TryExportGraphCaptureSource(request, result);
                 }
@@ -105,7 +184,10 @@ namespace NorvesLib::Core::Rendering
                 {
                     bPresented = ComposeLegacyPresentationFallback(request, bClearPresentation, result);
                 }
-                if (bPresented)
+                if (bPresented &&
+                    (!bGraphPresented ||
+                     !request.PresentationGraphPass ||
+                     request.PresentationGraphPass->WasBlitRecorded()))
                 {
                     ++result.PresentationBlitCount;
                 }
@@ -124,8 +206,9 @@ namespace NorvesLib::Core::Rendering
                 ++result.RenderedViewportCount;
             }
             FlushPendingFrameCommands(request);
-            bool bPresented = WasPresentationHandledByGraph(request);
-            if (bPresented)
+            const bool bGraphPresented = WasPresentationHandledByGraph(request);
+            bool bPresented = bGraphPresented;
+            if (bGraphPresented)
             {
                 TryExportGraphCaptureSource(request, result);
             }
@@ -133,7 +216,10 @@ namespace NorvesLib::Core::Rendering
             {
                 bPresented = ComposeLegacyPresentationFallback(request, bClearPresentation, result);
             }
-            if (bPresented)
+            if (bPresented &&
+                (!bGraphPresented ||
+                 !request.PresentationGraphPass ||
+                 request.PresentationGraphPass->WasBlitRecorded()))
             {
                 ++result.PresentationBlitCount;
             }
@@ -266,7 +352,10 @@ namespace NorvesLib::Core::Rendering
                 if (WasPresentationHandledByGraph(request))
                 {
                     TryExportGraphCaptureSource(request, result);
-                    ++result.PresentationBlitCount;
+                    if (request.PresentationGraphPass->WasBlitRecorded())
+                    {
+                        ++result.PresentationBlitCount;
+                    }
                 }
             }
         }
@@ -548,12 +637,17 @@ namespace NorvesLib::Core::Rendering
         }
 
         const PresentationPassResult& presentationResult = request.PresentationGraphPass->GetLastResult();
-        if (!presentationResult.bPresented || !presentationResult.InputTexture)
+        if (!presentationResult.bPresented ||
+            !presentationResult.bBlitRecorded ||
+            !presentationResult.InputTexture)
         {
             return false;
         }
 
-        SetFrameCaptureSource(result, presentationResult.InputTexture, request.Packet->FrameNumber);
+        SetFrameCaptureSource(
+            result.CaptureSources.PresentationColor,
+            presentationResult.InputTexture,
+            request.Packet->FrameNumber);
         return true;
     }
 
@@ -577,15 +671,15 @@ namespace NorvesLib::Core::Rendering
         if (bComposed && captureSource.Texture)
         {
             captureSource.FrameNumber = request.Packet->FrameNumber;
-            result.CaptureSource = captureSource;
-            result.bHasFrameCaptureSource = true;
+            result.CaptureSources.PresentationColor = captureSource;
+            return true;
         }
-        else if (bComposed)
+
+        if (bComposed)
         {
-            result.CaptureSource = FrameCaptureSource{};
-            result.bHasFrameCaptureSource = false;
+            result.CaptureSources.PresentationColor = FrameCaptureSource{};
         }
-        return bComposed;
+        return false;
     }
 
 } // namespace NorvesLib::Core::Rendering

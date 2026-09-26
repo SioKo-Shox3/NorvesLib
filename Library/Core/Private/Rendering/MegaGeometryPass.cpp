@@ -925,7 +925,7 @@ namespace NorvesLib::Core::Rendering
                 float Projection[16];
                 float CameraPosition[4];
                 float ObjectColor[4];
-                float EmissiveColor[4];
+                float EmissiveChromaticityAndLuminanceNits[4];
                 float PomParams[4];
             };
 
@@ -941,10 +941,10 @@ namespace NorvesLib::Core::Rendering
             perObject.ObjectColor[1] = mat.BaseColor[1];
             perObject.ObjectColor[2] = mat.BaseColor[2];
             perObject.ObjectColor[3] = mat.BaseColor[3];
-            perObject.EmissiveColor[0] = mat.EmissiveColor[0];
-            perObject.EmissiveColor[1] = mat.EmissiveColor[1];
-            perObject.EmissiveColor[2] = mat.EmissiveColor[2];
-            perObject.EmissiveColor[3] = mat.EmissiveColor[3];
+            perObject.EmissiveChromaticityAndLuminanceNits[0] = mat.EmissiveColor[0];
+            perObject.EmissiveChromaticityAndLuminanceNits[1] = mat.EmissiveColor[1];
+            perObject.EmissiveChromaticityAndLuminanceNits[2] = mat.EmissiveColor[2];
+            perObject.EmissiveChromaticityAndLuminanceNits[3] = mat.EmissiveLuminanceNits;
             perObject.PomParams[0] = mat.HeightScale;
             perObject.PomParams[1] = mat.bHasHeightMap ? 1.0f : 0.0f;
             perObject.PomParams[2] = static_cast<float>(static_cast<uint8_t>(command.DebugMode));

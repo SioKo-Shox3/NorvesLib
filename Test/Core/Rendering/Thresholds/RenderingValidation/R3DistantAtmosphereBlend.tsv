@@ -1,0 +1,6 @@
+schema=NorvesLib.RenderingValidation.R3DistantAtmosphereBlend.v1
+sun_altitude_degrees=45.000000 sun_azimuth_degrees=90.000000 sun_luminance_nits=100000000.000000
+sky_delta_luma_min=1.000000 horizon_delta_luma_min=1.000000
+sky_roi_y_percent=8,28 horizon_roi_y_percent=43,49
+horizon_delta_luma_max=160.000000 maximum_saturated_rgb_pixels=0
+maximum_back_buffer_luma=245.000000 sky_preservation_delta_luma_max=2.000000

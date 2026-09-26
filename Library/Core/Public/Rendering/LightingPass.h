@@ -2,7 +2,12 @@
 
 #include "IViewPass.h"
 #include "NeuralBRDFData.h"
+#include "Rendering/DDGIProbePass.h"
+#include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "Rendering/RayTracingShadowPass.h"
+#include "Rendering/RTGIContract.h"
+#include "Rendering/SkyAtmosphere.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -12,6 +17,7 @@ using namespace NorvesLib::Core::Container;
 
 namespace NorvesLib::Core::Rendering
 {
+    struct GPULightingParams;
 
     /**
      * @brief ライティングパス設定
@@ -32,6 +38,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief IBL強度 */
         float IBLIntensity = 0.2f;
+
+        /** @brief 環境放射輝度のスケール [cd/m²] */
+        float EnvironmentLuminanceScaleNits = 1.0f;
 
         /** @brief Neural BRDFウェイトファイルパス（空の場合は解析的BRDFを使用） */
         Container::String NeuralBRDFWeightPath;
@@ -104,6 +113,18 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
+         * @brief 検証captureへ渡す直近フレームのRTGI資源を取得する
+         *
+         * 指定フレームでRTGIが成功した場合だけ、デノイズ後の間接光
+         * （RTGIDiffuseIndirect）または書き込み済みの履歴age（RTGIHistoryAge）と、
+         * その資源の現在の状態を返す。
+         */
+        bool TryGetRTGICaptureTexture(FrameCaptureSourceKind kind,
+                                      uint64_t frameNumber,
+                                      RHI::TexturePtr& outTexture,
+                                      RHI::ResourceState& outState) const;
+
+        /**
          * @brief デストラクタ
          */
         ~LightingPass() override;
@@ -113,6 +134,9 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         const char* GetName() const override { return "LightingPass"; }
+
+        /** @brief 構築時の設定（ニューラルBRDFの重みの経路など） */
+        const LightingPassSettings& GetSettings() const { return m_Settings; }
 
         bool Initialize(ViewRenderContext& context) override;
         void Shutdown() override;
@@ -137,13 +161,24 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle GetSceneColorHandle() const { return m_SceneColorHandle.ToResourceHandle(); }
 
     private:
+        friend struct DDGIProbeRayQueryVulkanTestAccess;
+        friend struct RTGIDiffuseIndirectVulkanTestAccess;
+
         /**
-         * @brief ライト情報をGPUバッファにパック
+         * @brief ライト情報をGPUバッファ向けに構築
+         *
+         * 更新に成功したフレームは、同じViewRenderContextへ物理ライトSSBO・方向影・
+         * IBLリソースを公開します。ForwardPassはこの公開値だけを使用します。
+         * outParamsが有効な場合はGPU定数を返し、GPUバッファの更新を呼出元へ委ねます。
          * @param context 描画コンテキスト
          * @param bShadowAvailable シャドウマップが利用可能か
          * @param bSSAOAvailable SSAOテクスチャが利用可能か
+         * @param outParams GPU定数の出力先。nullptrの場合はGPUバッファへ直接反映します。
          */
-        bool UpdateLightBuffer(ViewRenderContext& context, bool bShadowAvailable, bool bSSAOAvailable);
+        bool UpdateLightBuffer(ViewRenderContext& context,
+                               bool bShadowAvailable,
+                               bool bSSAOAvailable,
+                               GPULightingParams* outParams = nullptr);
         bool EnsureLightArrayBufferCapacity(uint32_t requiredLightCount);
         uint32_t GetLightArrayBufferSizeBytes() const;
 
@@ -187,6 +222,7 @@ namespace NorvesLib::Core::Rendering
         bool EnsureLightingFramebuffer(uint32_t width,
                                        uint32_t height,
                                        const RHI::TexturePtr& sceneColorTexture);
+        bool CreateLightingDescriptorSet(RHI::DescriptorSetPtr& outDescriptorSet);
         bool EnsureLightingDescriptorSet();
         bool EnsureLightingPipeline();
         void ExecuteWithInputs(ViewRenderContext& context,
@@ -194,10 +230,33 @@ namespace NorvesLib::Core::Rendering
                                const RHI::TexturePtr& normalTexture,
                                const RHI::TexturePtr& materialTexture,
                                const RHI::TexturePtr& depthTexture,
+                               const RHI::TexturePtr& velocityTexture,
                                const RHI::TexturePtr& emissiveTexture,
                                const RHI::TexturePtr& ssaoTexture,
                                const RHI::TexturePtr& shadowMapTexture,
+                               const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
                                bool bRegisterLegacyOutputs);
+        bool EnsureRTGIComputePipeline(ViewRenderContext& context);
+        bool EnsureRTGIDenoiserResources(ViewRenderContext& context,
+                                          uint32_t width,
+                                          uint32_t height);
+        bool EnsureRTGIHistoryTextures(uint32_t width, uint32_t height);
+        void InvalidateRTGIHistory();
+        bool ExecuteRTGI(ViewRenderContext& context,
+                         const RHI::TexturePtr& albedoTexture,
+                         const RHI::TexturePtr& normalTexture,
+                         const RHI::TexturePtr& materialTexture,
+                         const RHI::TexturePtr& depthTexture,
+                         const RHI::TexturePtr& velocityTexture,
+                         const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
+                         const GPULightingParams& lightingParams);
+        bool ExecuteRTGIDenoiser(ViewRenderContext& context,
+                                 const RHI::TexturePtr& temporalRadiance,
+                                 const RHI::TexturePtr& confidenceTexture,
+                                 const RHI::TexturePtr& ageTexture,
+                                 const RHI::TexturePtr& depthTexture,
+                                 const RHI::TexturePtr& normalTexture,
+                                 const RHI::TexturePtr& materialTexture);
         void RegisterOutputs(ViewRenderContext& context,
                              const RHI::TexturePtr& sceneColorTexture,
                              const RHI::TexturePtr& depthTexture) const;
@@ -209,6 +268,10 @@ namespace NorvesLib::Core::Rendering
          * @return ロード成功時true
          */
         bool LoadEnvironmentMap(const Container::String& path);
+        bool GenerateValidationSnapshots();
+        bool EnsureSkyAtmosphereIbl(const SkyAtmosphereParameters& parameters,
+                                    uint32_t radianceWidth,
+                                    uint32_t radianceHeight);
 
         /**
          * @brief BRDF LUTをCPUで生成（split-sum近似）
@@ -226,9 +289,11 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_GBufferNormalHandle;
         RGResourceHandle m_GBufferMaterialHandle;
         RGResourceHandle m_GBufferDepthHandle;
+        RGResourceHandle m_GBufferVelocityHandle;
         RGResourceHandle m_GBufferEmissiveHandle;
         RGResourceHandle m_SSAOBlurredHandle;
         RGResourceHandle m_ShadowMapHandle;
+        RGResourceHandle m_RTGIDiffuseIndirectHandle;
 
         // ライティング用リソース
         RHI::RenderPassPtr m_LightingRenderPass;
@@ -236,6 +301,70 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_LightingPipeline;
         RHI::ShaderPtr m_LightingVertexShader;
         RHI::ShaderPtr m_LightingFragmentShader;
+        RHI::ShaderPtr m_RTGIComputeShader;
+        RHI::PipelinePtr m_RTGIComputePipeline;
+        RHI::DescriptorSetPtr m_RTGIComputeDescriptorSet;
+        RHI::ShaderPtr m_RTGIDenoiserShader;
+        RHI::PipelinePtr m_RTGIDenoiserPipeline;
+        RHI::DescriptorSetPtr m_RTGIDenoiserDescriptorSet;
+        RHI::TexturePtr m_RTGIDenoisedTexture;
+        RHI::ResourceState m_RTGIDenoisedTextureState = RHI::ResourceState::Undefined;
+        uint32_t m_RTGIDenoisedWidth = 0u;
+        uint32_t m_RTGIDenoisedHeight = 0u;
+        RHI::BufferPtr m_RTGIComputeParametersBuffer;
+        RHI::BufferPtr m_RTGIComputeInstanceDataBuffer;
+        /** @brief RTGIが光源標本する発光instanceの表 */
+        RHI::BufferPtr m_RTGIComputeEmitterBuffer;
+        Container::VariableArray<RHI::BufferPtr> m_RTGIGeometryBuffers;
+        struct RTGIHistoryTextureSet
+        {
+            RHI::TexturePtr Radiance;
+            RHI::TexturePtr Age;
+            RHI::TexturePtr Confidence;
+            RHI::TexturePtr Depth;
+            RHI::TexturePtr Normal;
+            RHI::TexturePtr Material;
+
+            void Clear()
+            {
+                Radiance.reset();
+                Age.reset();
+                Confidence.reset();
+                Depth.reset();
+                Normal.reset();
+                Material.reset();
+            }
+        };
+        RTGIHistoryTextureSet m_RTGIHistoryTextures[2];
+        RHI::ResourceState m_RTGIHistorySlotState[2] = {
+            RHI::ResourceState::Undefined,
+            RHI::ResourceState::Undefined};
+        uint64_t m_RTGIComputeInstanceDataCapacity = 0;
+        uint64_t m_RTGIComputeEmitterCapacity = 0;
+        uint32_t m_RTGIHistoryWidth = 0;
+        uint32_t m_RTGIHistoryHeight = 0;
+        uint32_t m_RTGIHistoryWriteIndex = 0;
+        uint32_t m_RTGIHistoryAgeFrames = 0;
+        uint64_t m_RTGIHistoryFrameNumber = 0;
+        uint64_t m_RTGIHistorySceneRevision = 0;
+        uint64_t m_RTGIHistoryLightRevision = 0;
+        RTGIRayQueryCapability m_RTGIHistoryCapability;
+        uint32_t m_RTGIHistoryLightWeightLimitedFrames = 0;
+        /** @brief 視点（逆ビュー射影・位置）とレイトレーシングのinstanceの前フレームの署名 */
+        uint64_t m_RTGIStaticSignature = 0;
+        /** @brief 視点・光源・シーンが変わらなかった連続フレーム数 */
+        uint32_t m_RTGIStaticFrames = 0;
+        /** @brief 直近のdispatchで使った画素ごとの履歴の年齢の上限 */
+        uint32_t m_RTGIHistoryAgeCap = RTGIHistoryMaximumAge;
+        bool m_bRTGIStaticSignatureValid = false;
+        bool m_bRTGIHistoryValid = false;
+        bool m_bRTGIHistoryFrameNumberValid = false;
+        bool m_bRTGIHistoryCapabilityValid = false;
+        bool m_bRTGIHistoryLightRevisionValid = false;
+        bool m_bRTGIComputeUnavailable = false;
+        bool m_bRTGIDenoiserUnavailable = false;
+        DDGIProbePass m_DDGIProbePass;
+        RayTracingShadowPass m_RayTracingShadowPass;
         RHI::BufferPtr m_LightDataBuffer;
         RHI::BufferPtr m_LightArrayBuffer;
         Container::VariableArray<RHI::BufferPtr> m_RetiredLightArrayBuffers;
@@ -245,13 +374,39 @@ namespace NorvesLib::Core::Rendering
         // IBL (Image-Based Lighting) リソース
         RHI::TexturePtr m_EnvironmentTexture; ///< HDR環境マップ（equirectangular）
         RHI::TexturePtr m_BrdfLutTexture;     ///< BRDF LUT（split-sum近似）
-        RHI::SamplerPtr m_IBLSampler;         ///< IBL用サンプラー（Linear + ミップマップ）
+        RHI::TexturePtr m_DiffuseIrradianceTexture;
+        RHI::TexturePtr m_PrefilteredSpecularTexture;
+        RHI::TexturePtr m_SkyAtmosphereDiffuseIrradianceTexture;
+        RHI::TexturePtr m_SkyAtmospherePrefilteredSpecularTexture;
+        /** @brief 地表から見た空の環境（視線方向の透過率込み）。RTGI・DDGIの不交差へ公開する。 */
+        RHI::TexturePtr m_SkyAtmosphereEnvironmentTexture;
+        RHI::TexturePtr m_ValidationRaw250EnvironmentTexture;
+        RHI::TexturePtr m_ValidationRaw250DiffuseIrradianceTexture;
+        RHI::TexturePtr m_ValidationRaw250Texture;
+        RHI::TexturePtr m_ValidationRaw252EnvironmentTexture;
+        RHI::TexturePtr m_ValidationRaw252DiffuseIrradianceTexture;
+        RHI::TexturePtr m_ValidationRaw252PrefilteredSpecularTexture;
+        RHI::TexturePtr m_DefaultBlackTexture;
+        RHI::TexturePtr m_DefaultShadowMapArrayTexture;
+        RHI::TexturePtr m_DefaultDDGIIrradianceAtlas;
+        RHI::TexturePtr m_DefaultDDGIDistanceAtlas;
+        RHI::SamplerPtr m_IBLSampler;         ///< 環境放射輝度用サンプラー
+        RHI::SamplerPtr m_DiffuseIrradianceSampler;
+        RHI::SamplerPtr m_PrefilteredSpecularSampler;
+        RHI::SamplerPtr m_DfgSampler;
+        RHI::SamplerPtr m_DDGISampler;
         uint32_t m_EnvironmentMipLevels = 1;  ///< 環境マップのミップレベル数
         bool m_bIBLAvailable = false;         ///< IBLリソースが利用可能か
+        SkyAtmosphereParameters m_SkyAtmosphereIblParameters;
+        uint32_t m_SkyAtmosphereIblRadianceWidth = 0;
+        uint32_t m_SkyAtmosphereIblRadianceHeight = 0;
+        bool m_bSkyAtmosphereIblCacheValid = false;
+        bool m_bSkyAtmosphereIblAvailable = false;
 
         // Neural BRDF リソース
         NeuralBRDFData m_NeuralBRDFData;         ///< 学習済みBRDFデータ
         RHI::BufferPtr m_NeuralBRDFWeightBuffer; ///< GPU側重みStorageBuffer
+        RHI::BufferPtr m_DefaultNeuralBRDFWeightBuffer;
         bool m_bNeuralBRDFAvailable = false;     ///< Neural BRDFが利用可能か
 
         // デバイス参照

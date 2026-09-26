@@ -119,9 +119,21 @@ set(PRIVATE_SOURCES
     Private/Rendering/DynamicUniformAllocator.cpp
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
+    Private/Rendering/SkyAtmosphere.cpp
+    Private/Rendering/SkySunLight.cpp
+    Private/Rendering/VolumetricFog.cpp
+    Private/Rendering/DDGIVolume.cpp
+    Private/Rendering/PathTracingExrOutput.cpp
+    Private/Rendering/DDGIProbePass.cpp
+    Private/Rendering/VolumetricsPass.cpp
+    Private/Rendering/SkyAtmospherePass.cpp
     Private/Rendering/DirectionalShadowLightMatrices.cpp
+    Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
+    Private/Rendering/DfgLut.cpp
+    Private/Rendering/EnvironmentMapSource.cpp
+    Private/Rendering/RayTracingShadowPass.cpp
     Private/Rendering/ToneMappingPass.cpp
     Private/Rendering/VignettePass.cpp
     Private/Rendering/BloomPass.cpp
@@ -314,6 +326,10 @@ set(PUBLIC_HEADERS
     Public/Rendering/ITextureHandleRegistrar.h
     Public/Rendering/ProceduralMeshGPUData.h
     Public/Rendering/SceneProxy.h
+    Public/Rendering/SkyAtmosphere.h
+    Public/Rendering/SkySunLight.h
+    Public/Rendering/VolumetricFog.h
+    Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h
     Public/Rendering/FrameCaptureTypes.h
     Public/Rendering/FrameCaptureThumbnailEncoder.h
@@ -359,8 +375,11 @@ set(PUBLIC_HEADERS
     Public/Rendering/SharedResourceRegistry.h
     Public/Rendering/PostProcessStack.h
     Public/Rendering/GBufferPass.h
+    Public/Rendering/SkyAtmospherePass.h
+    Public/Rendering/DDGIProbePass.h
     Public/Rendering/ShadowMapPass.h
     Public/Rendering/LightingPass.h
+    Public/Rendering/RayTracingShadowPass.h
     Public/Rendering/ToneMappingPass.h
     Public/Rendering/VignettePass.h
     Public/Rendering/BloomPass.h
@@ -504,7 +523,25 @@ set(PUBLIC_HEADERS
     Public/Input/IInputDevice.h
     Public/Input/MayaCameraController.h
     Public/Input/LightController.h
+    Public/Rendering/PathTracingExrOutput.h
 )
+
+# TinyEXR v3.2.0 の C API を独立した静的ライブラリに閉じ込める。
+file(GLOB TINYEXR_V3_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/src/*.c")
+add_library(NorvesThirdParty_TinyEXR STATIC
+    ${TINYEXR_V3_SOURCES}
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/deps/zstd/tinyexr_zstd.c)
+target_include_directories(NorvesThirdParty_TinyEXR PRIVATE
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/src
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/deps/zstd)
+set_target_properties(NorvesThirdParty_TinyEXR PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON
+    FOLDER "Library/ThirdParty")
+if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(NorvesThirdParty_TinyEXR PRIVATE /experimental:c11atomics)
+endif()
 
 # ライブラリの作成
 add_library(${MODULE_NAME} STATIC ${PRIVATE_SOURCES} ${PUBLIC_HEADERS})
@@ -517,6 +554,7 @@ target_include_directories(${MODULE_NAME}
     PRIVATE 
         Private
         ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb  # stb_image.h
+        ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
 )
 
 target_compile_definitions(${MODULE_NAME}
@@ -557,6 +595,7 @@ target_link_libraries(${MODULE_NAME}
         Vulkan::Vulkan
     PRIVATE
         NorvesThirdParty_AngelScript
+        NorvesThirdParty_TinyEXR
         $<$<CONFIG:Debug>:${SHADERC_LIB_DEBUG}>
         $<$<NOT:$<CONFIG:Debug>>:${SHADERC_LIB_RELEASE}>
 )

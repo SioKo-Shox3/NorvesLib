@@ -5,10 +5,16 @@
 #include "DrawCommand.h"
 #include "Rendering/DebugDrawQueue.h"
 #include "ViewportSnapshot.h"
+#include "Rendering/FrameCaptureTypes.h"
+#include "Rendering/RTGIContract.h"
 #include "Debug/Stats.h"
 #include "Container/Containers.h"
 #include "Thread/Atomic.h"
+#include "RHI/IAccelerationStructure.h"
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
+#include <utility>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -49,6 +55,96 @@ namespace NorvesLib::Core::Rendering
         bool bGameThreadTimingsAvailable = false;
     };
 
+    /// 影を落とす不透明物体のinstance mask。影・DDGI・RTGIの光線はこのbitだけを調べる。
+    /// Assets/Shaders/Common/RayTracingInstanceMask.glslと一致させる。
+    inline constexpr uint8_t RayTracingInstanceMaskShadowCaster = 0x01u;
+    /// 影を落とさない不透明物体のinstance mask。全bitで調べるパストレーサーだけが当たる。
+    inline constexpr uint8_t RayTracingInstanceMaskNonShadowCaster = 0x02u;
+
+    /**
+     * @brief レイトレーシング用シーンのフレームスナップショット
+     *
+     * BLAS参照とTLASをFramePacketへ格納し、RenderThreadへ値として渡します。
+     * 不透明・マスクの描画をすべて含め、影を落とすかどうかはinstance maskで区別します。
+     */
+    struct RayTracingSceneInstanceSnapshot
+    {
+        MeshDataHandle MeshHandle;
+        /** @brief 元の描画のObjectIdと、その描画の中のinstance番号。フレームをまたぐ対応付けに使う。 */
+        uint64_t ObjectId = 0;
+        uint32_t ObjectInstanceIndex = 0;
+        RHI::BufferPtr SourceVertexBuffer;
+        RHI::BufferPtr SourceIndexBuffer;
+        RHI::BufferPtr AccelerationStructureVertexBuffer;
+        RHI::BufferPtr AccelerationStructureIndexBuffer;
+        uint32_t IndexOffset = 0;
+        uint32_t IndexCount = 0;
+        uint32_t VertexOffset = 0;
+        uint32_t VertexCount = 0;
+        uint32_t VertexStride = 0;
+        bool bGeometryOpaque = true;
+        RHI::AccelerationStructureInstanceDesc Instance;
+        float PreviousTransform[12] = {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f};
+        bool bHasPreviousTransform = false;
+        RHI::AccelerationStructurePtr BottomLevel;
+        RayTracingHitMaterialSnapshot Material;
+    };
+
+    struct RayTracingSceneSnapshot
+    {
+        Container::VariableArray<RayTracingSceneInstanceSnapshot> Instances;
+        RHI::AccelerationStructurePtr TopLevel;
+
+        /**
+         * @brief TLASと全インスタンスのray query入力が揃っているか判定
+         *
+         * R5のresource所有権は変更せず、FramePacketに保持された参照だけを検査する。
+         */
+        bool IsComplete() const
+        {
+            if (!TopLevel || Instances.empty())
+            {
+                return false;
+            }
+
+            for (const RayTracingSceneInstanceSnapshot& instance : Instances)
+            {
+                if (!instance.BottomLevel || !instance.AccelerationStructureVertexBuffer ||
+                    !instance.AccelerationStructureIndexBuffer)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * @brief 影を落とす物体（影・DDGI・RTGIの光線が当たる物体）があるか
+         *
+         * 影を落とさない物体だけのシーンでは、影・DDGI・RTGIは従来の空のシーンと同じくfallbackする。
+         */
+        bool HasShadowCasters() const
+        {
+            for (const RayTracingSceneInstanceSnapshot& instance : Instances)
+            {
+                if ((instance.Instance.mask & RayTracingInstanceMaskShadowCaster) != 0u)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void Clear()
+        {
+            TopLevel.reset();
+            Instances.clear();
+        }
+    };
+
     /**
      * @brief フレームパケット
      *
@@ -66,12 +162,37 @@ namespace NorvesLib::Core::Rendering
         float DeltaTime = 0.0f;   // 前フレームからの経過時間
         double TotalTime = 0.0;   // アプリケーション開始からの経過時間
 
+        /** @brief RTGIの明示的な有効化。資源が不完全ならfallbackへ戻る。 */
+        bool bRTGIEnabled = true;
+
+        /** @brief シーン構成・ジオメトリ・環境のFramePacket値revision。 */
+        uint64_t SceneRevision = 0;
+
+        /** @brief ライト配列のFramePacket値revision。 */
+        uint64_t LightRevision = 0;
+
+        /** @brief GameThread が非破壊 snapshot した capture request 値。 */
+        FrameCaptureRequestSnapshot CaptureRequest;
+
         // ========================================
         // シーンデータ
         // ========================================
 
         bool bHasMainCamera = false;
+        bool bHasPreviousMainCamera = false;
+        CameraProxy PreviousMainCamera;
         SceneProxy Scene;
+        RayTracingSceneSnapshot RayTracingScene;
+
+        /**
+         * @brief TLAS snapshotがray query入力として完全か判定
+         *
+         * R5の所有権とresource寿命は変更せず、FramePacket内の参照だけを判定する。
+         */
+        bool HasCompleteRayTracingScene() const
+        {
+            return RayTracingScene.IsComplete();
+        }
 
         // ========================================
         // DrawCommandスナップショット（GameThreadで生成、RenderThreadで読み取り専用）
@@ -142,8 +263,15 @@ namespace NorvesLib::Core::Rendering
             FrameNumber = 0;
             DeltaTime = 0.0f;
             TotalTime = 0.0;
+            bRTGIEnabled = true;
+            SceneRevision = 0;
+            LightRevision = 0;
+            CaptureRequest = FrameCaptureRequestSnapshot{};
             bHasMainCamera = false;
+            bHasPreviousMainCamera = false;
+            PreviousMainCamera = CameraProxy{};
             Scene.Clear();
+            RayTracingScene.Clear();
             DrawCommands.clear();
             DrawCommandRange = CommandRange{};
             OpaqueCommandRange = CommandRange{};
@@ -188,6 +316,316 @@ namespace NorvesLib::Core::Rendering
     };
 
     // ========================================
+    // 連番の1フレームの前の値の固定
+    // ========================================
+
+    /**
+     * @brief 連番の1フレームの間、各パケットへ同じ前の値を書くためのGameThread側の状態
+     *
+     * パストレーサーの連番の1フレームは複数のパケットにわたって累積する。RenderThreadはパケットを
+     * 取りこぼすことがあるため、前後のカメラ・instance変換はGameThreadがパケットを書くたびに
+     * 同じ値を入れ、どのパケットを描いても同じ前の値になるようにする。
+     */
+    struct PathTracingSequenceCarry
+    {
+        /** @brief フレームをまたいでinstanceを対応付ける鍵と変換（行優先3x4） */
+        struct InstanceState
+        {
+            uint64_t ObjectId = 0;
+            uint64_t MeshId = 0;
+            uint32_t ObjectInstanceIndex = 0;
+            uint32_t IndexOffset = 0;
+            uint32_t IndexCount = 0;
+            uint32_t VertexOffset = 0;
+            /** @brief 同じ鍵が並んだときの出現順 */
+            uint32_t Ordinal = 0;
+            bool bHasTransform = false;
+            float Transform[12] = {};
+        };
+
+        /** @brief 前の値を固定している連番のフレーム（0はなし） */
+        uint64_t Frame = 0;
+        bool bHasPreviousCamera = false;
+        CameraProxy PreviousCamera;
+        Container::VariableArray<InstanceState> PreviousInstances;
+
+        /** @brief 直近に書いた連番のパケットの現在の状態（次の連番のフレームの前の値になる） */
+        uint64_t LastFrame = 0;
+        CameraProxy LastCamera;
+        Container::VariableArray<InstanceState> LastInstances;
+
+        void Reset()
+        {
+            Frame = 0;
+            bHasPreviousCamera = false;
+            PreviousCamera = CameraProxy{};
+            PreviousInstances.clear();
+            LastFrame = 0;
+            LastCamera = CameraProxy{};
+            LastInstances.clear();
+        }
+    };
+
+    /**
+     * @brief インスタンシング描画の各instanceの元の物体IDを、パケットのMeshProxyとの照合で求める
+     *
+     * インスタンシング描画のDrawParams::ObjectIdはバッチ先頭の物体のIDだけを持つ。連番の前の値の固定は
+     * 物体ごとに対応付けるため、各instanceを、メッシュ・材質・影の有無が同じで、現在と前の変換と
+     * カスタムデータがbit一致するMeshProxyへ対応付ける。一致が複数あるときはまだ使っていない候補を
+     * バッチへの追加順（instanceの並び）で割り当てる。そうした候補同士は描画に使う値が同じなので、
+     * 入れ替わっても像は変わらない。見つからないinstanceは0にする。
+     */
+    inline void ResolveInstancedDrawObjectIds(const FramePacket& packet, const DrawParams& draw,
+                                              Container::VariableArray<uint64_t>& outObjectIds)
+    {
+        outObjectIds.clear();
+        const uint32_t instanceCount = draw.bInstanced ? draw.InstanceCount : 1u;
+        outObjectIds.resize(instanceCount, 0u);
+        if (!draw.bInstanced ||
+            static_cast<uint64_t>(draw.InstanceDataOffset) + instanceCount > packet.InstanceData.size())
+        {
+            return;
+        }
+        Container::VariableArray<const MeshProxy*> candidates;
+        for (const MeshProxy& proxy : packet.Scene.MeshProxies)
+        {
+            if (!proxy.IsValid() || proxy.MeshHandle.Id != draw.MeshHandle.Id ||
+                proxy.bCastShadow != draw.bCastShadow)
+            {
+                continue;
+            }
+            bool bMaterialMatches = false;
+            for (uint32_t slot = 0; slot < MAX_MATERIAL_SLOTS; ++slot)
+            {
+                bMaterialMatches = bMaterialMatches || proxy.Materials[slot].Id == draw.MaterialHandle.Id;
+            }
+            if (bMaterialMatches)
+            {
+                candidates.push_back(&proxy);
+            }
+        }
+        Container::VariableArray<uint8_t> used(candidates.size(), 0u);
+        for (uint32_t instanceIndex = 0; instanceIndex < instanceCount; ++instanceIndex)
+        {
+            const GPUSceneInstanceData& data = packet.InstanceData[draw.InstanceDataOffset + instanceIndex];
+            // 並びが変わっていなければ同じ位置の候補がまず一致する。
+            for (size_t step = 0; step < candidates.size(); ++step)
+            {
+                const size_t index = (instanceIndex + step) % candidates.size();
+                const MeshProxy& proxy = *candidates[index];
+                if (used[index] ||
+                    std::memcmp(proxy.WorldTransform.values, data.World, sizeof(data.World)) != 0 ||
+                    std::memcmp(proxy.PreviousWorldTransform.values, data.PreviousWorld,
+                                sizeof(data.PreviousWorld)) != 0 ||
+                    std::memcmp(proxy.CustomData, data.CustomData, sizeof(data.CustomData)) != 0)
+                {
+                    continue;
+                }
+                used[index] = 1u;
+                outObjectIds[instanceIndex] = proxy.ObjectId;
+                break;
+            }
+        }
+    }
+
+    namespace PathTracingSequenceCarryDetail
+    {
+        inline bool SameKey(const PathTracingSequenceCarry::InstanceState& a,
+                            const PathTracingSequenceCarry::InstanceState& b)
+        {
+            return a.ObjectId == b.ObjectId && a.MeshId == b.MeshId &&
+                   a.ObjectInstanceIndex == b.ObjectInstanceIndex &&
+                   a.IndexOffset == b.IndexOffset && a.IndexCount == b.IndexCount &&
+                   a.VertexOffset == b.VertexOffset && a.Ordinal == b.Ordinal;
+        }
+
+        /** @brief パケットのinstanceの並びから鍵を作る。同じ鍵には出現順を振る。 */
+        inline void MakeKeys(const RayTracingSceneSnapshot& scene,
+                             Container::VariableArray<PathTracingSequenceCarry::InstanceState>& outStates)
+        {
+            outStates.clear();
+            outStates.reserve(scene.Instances.size());
+            for (const RayTracingSceneInstanceSnapshot& instance : scene.Instances)
+            {
+                PathTracingSequenceCarry::InstanceState state;
+                state.ObjectId = instance.ObjectId;
+                state.MeshId = instance.MeshHandle.Id;
+                state.ObjectInstanceIndex = instance.ObjectInstanceIndex;
+                state.IndexOffset = instance.IndexOffset;
+                state.IndexCount = instance.IndexCount;
+                state.VertexOffset = instance.VertexOffset;
+                for (const PathTracingSequenceCarry::InstanceState& earlier : outStates)
+                {
+                    if (SameKey(earlier, state))
+                    {
+                        ++state.Ordinal;
+                    }
+                }
+                outStates.push_back(state);
+            }
+        }
+
+        /** @brief 鍵の全順序（物体ID・メッシュ・描画内番号・部分範囲・出現順の辞書順） */
+        inline bool KeyLess(const PathTracingSequenceCarry::InstanceState& a,
+                            const PathTracingSequenceCarry::InstanceState& b)
+        {
+            if (a.ObjectId != b.ObjectId) return a.ObjectId < b.ObjectId;
+            if (a.MeshId != b.MeshId) return a.MeshId < b.MeshId;
+            if (a.ObjectInstanceIndex != b.ObjectInstanceIndex)
+                return a.ObjectInstanceIndex < b.ObjectInstanceIndex;
+            if (a.IndexOffset != b.IndexOffset) return a.IndexOffset < b.IndexOffset;
+            if (a.IndexCount != b.IndexCount) return a.IndexCount < b.IndexCount;
+            if (a.VertexOffset != b.VertexOffset) return a.VertexOffset < b.VertexOffset;
+            return a.Ordinal < b.Ordinal;
+        }
+
+        /**
+         * @brief snapshotのinstanceを鍵の順へ並べ替え、customIndexを並びの番号に振り直す。
+         *
+         * 材質texture表・発光instance表・TLASはsnapshotの並びとcustomIndexから作られるため、
+         * 物体ごとの状態が同じなら描画の並びが変わっても同じsnapshotになり、PTの累積が続く。
+         */
+        inline void SortByKey(RayTracingSceneSnapshot& scene,
+                              Container::VariableArray<PathTracingSequenceCarry::InstanceState>& keys)
+        {
+            const size_t count = keys.size();
+            Container::VariableArray<uint32_t> order(count);
+            for (size_t index = 0; index < count; ++index)
+            {
+                order[index] = static_cast<uint32_t>(index);
+            }
+            // 鍵は出現順で一意にしてあるので、並べ替え後の順は元の並びに依らない。
+            std::sort(order.begin(), order.end(), [&keys](uint32_t a, uint32_t b)
+                      { return KeyLess(keys[a], keys[b]); });
+            Container::VariableArray<RayTracingSceneInstanceSnapshot> sortedInstances;
+            Container::VariableArray<PathTracingSequenceCarry::InstanceState> sortedKeys;
+            sortedInstances.reserve(count);
+            sortedKeys.reserve(count);
+            for (size_t index = 0; index < count; ++index)
+            {
+                sortedInstances.push_back(std::move(scene.Instances[order[index]]));
+                sortedInstances.back().Instance.customIndex = static_cast<uint32_t>(index);
+                sortedKeys.push_back(keys[order[index]]);
+            }
+            scene.Instances = std::move(sortedInstances);
+            keys = std::move(sortedKeys);
+        }
+
+        inline const PathTracingSequenceCarry::InstanceState* Find(
+            const Container::VariableArray<PathTracingSequenceCarry::InstanceState>& states,
+            const PathTracingSequenceCarry::InstanceState& key)
+        {
+            for (const PathTracingSequenceCarry::InstanceState& state : states)
+            {
+                if (SameKey(state, key))
+                {
+                    return &state;
+                }
+            }
+            return nullptr;
+        }
+    }
+
+    /**
+     * @brief 連番の1フレームの前の値をパケットへ書く（GameThreadでパケットを書き終える直前に呼ぶ）
+     *
+     * メインカメラのSequenceFrameが0なら何もせず状態を捨てる。SequenceFrameが変わった最初のパケットで
+     * 前の値を決めて覚える。直前に連番のパケットを書いていれば、その現在の状態（直前のフレームの最後の
+     * 状態）を前の値にし、なければこのパケットの前の値を使う。同じSequenceFrameの間は、覚えた前の値で
+     * パケットの前のカメラ・instance変換を上書きする。instanceは物体ID・メッシュ・部分範囲・描画内の
+     * instance番号（同じ鍵は出現順）で対応付け、覚えた値にないinstanceは前の変換なし（動かない）にする。
+     * 同じフレームの中で描画の並びが変わっても累積を捨てないよう、snapshotのinstanceを鍵の順へ並べ、
+     * customIndexを並びの番号に振り直す。
+     */
+    inline void ApplyPathTracingSequenceCarry(FramePacket& packet, PathTracingSequenceCarry& carry)
+    {
+        using namespace PathTracingSequenceCarryDetail;
+        const CameraProxy& camera = packet.Scene.MainCamera;
+        if (!packet.bHasMainCamera || camera.SequenceFrame == 0)
+        {
+            carry.Reset();
+            return;
+        }
+        Container::VariableArray<PathTracingSequenceCarry::InstanceState> current;
+        MakeKeys(packet.RayTracingScene, current);
+        SortByKey(packet.RayTracingScene, current);
+        for (size_t index = 0; index < current.size(); ++index)
+        {
+            std::memcpy(current[index].Transform,
+                        packet.RayTracingScene.Instances[index].Instance.transform,
+                        sizeof(current[index].Transform));
+            current[index].bHasTransform = true;
+        }
+
+        if (carry.Frame != camera.SequenceFrame)
+        {
+            const bool bFromLast = carry.LastFrame != 0 &&
+                                   carry.LastCamera.CameraId == camera.CameraId;
+            carry.Frame = camera.SequenceFrame;
+            if (bFromLast)
+            {
+                carry.bHasPreviousCamera = true;
+                carry.PreviousCamera = carry.LastCamera;
+            }
+            else
+            {
+                carry.bHasPreviousCamera = packet.bHasPreviousMainCamera &&
+                                           packet.PreviousMainCamera.CameraId == camera.CameraId;
+                carry.PreviousCamera = carry.bHasPreviousCamera ? packet.PreviousMainCamera
+                                                                : CameraProxy{};
+            }
+            carry.PreviousInstances = current;
+            for (size_t index = 0; index < current.size(); ++index)
+            {
+                PathTracingSequenceCarry::InstanceState& previous = carry.PreviousInstances[index];
+                const RayTracingSceneInstanceSnapshot& instance =
+                    packet.RayTracingScene.Instances[index];
+                const PathTracingSequenceCarry::InstanceState* last =
+                    bFromLast ? Find(carry.LastInstances, previous) : nullptr;
+                if (last)
+                {
+                    std::memcpy(previous.Transform, last->Transform, sizeof(previous.Transform));
+                    previous.bHasTransform = true;
+                }
+                else if (!bFromLast && instance.bHasPreviousTransform)
+                {
+                    std::memcpy(previous.Transform, instance.PreviousTransform,
+                                sizeof(previous.Transform));
+                    previous.bHasTransform = true;
+                }
+                else
+                {
+                    previous.bHasTransform = false;
+                }
+            }
+        }
+
+        packet.bHasPreviousMainCamera = carry.bHasPreviousCamera;
+        packet.PreviousMainCamera = carry.PreviousCamera;
+        for (size_t index = 0; index < current.size(); ++index)
+        {
+            RayTracingSceneInstanceSnapshot& instance = packet.RayTracingScene.Instances[index];
+            const PathTracingSequenceCarry::InstanceState* previous =
+                Find(carry.PreviousInstances, current[index]);
+            if (previous && previous->bHasTransform)
+            {
+                std::memcpy(instance.PreviousTransform, previous->Transform,
+                            sizeof(instance.PreviousTransform));
+                instance.bHasPreviousTransform = true;
+            }
+            else
+            {
+                std::memcpy(instance.PreviousTransform, instance.Instance.transform,
+                            sizeof(instance.PreviousTransform));
+                instance.bHasPreviousTransform = false;
+            }
+        }
+        carry.LastFrame = camera.SequenceFrame;
+        carry.LastCamera = camera;
+        carry.LastInstances = std::move(current);
+    }
+
+    // ========================================
     // FramePacketManager
     // ========================================
 
@@ -226,6 +664,7 @@ namespace NorvesLib::Core::Rendering
             m_WriteIndex.Store(0, std::memory_order_release);
             m_ReadIndex.Store(0, std::memory_order_release);
             m_CurrentFrameNumber.Store(0, std::memory_order_release);
+            m_SequenceCarry.Reset();
         }
 
         /**
@@ -555,8 +994,12 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        /** @brief 連番の1フレームの前の値の固定状態（GameThreadでパケットを書くときだけ触る） */
+        PathTracingSequenceCarry& GetSequenceCarry() { return m_SequenceCarry; }
+
     private:
         Container::FixedArray<FramePacket, FRAME_PACKET_BUFFER_COUNT> m_Packets;
+        PathTracingSequenceCarry m_SequenceCarry;
         Thread::Atomic<uint32_t> m_WriteIndex{0};
         Thread::Atomic<uint32_t> m_ReadIndex{0};
         Thread::Atomic<uint64_t> m_CurrentFrameNumber{0};

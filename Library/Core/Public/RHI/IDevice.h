@@ -4,6 +4,8 @@
 #include "DeviceCapabilities.h"
 #include "IGPUResourceAllocator.h"
 #include "IDescriptorSet.h"
+#include "IPipeline.h"
+#include "IAccelerationStructure.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
 #include "Platform/NativeWindowHandle.h"
@@ -153,6 +155,8 @@ namespace NorvesLib::RHI
         RenderPassPtr renderPass;
         uint32_t width = 0;
         uint32_t height = 0;
+        /** @brief 配列デプスアタッチメントで使用する0-based layer */
+        uint32_t depthStencilArrayLayer = 0;
     };
 
     /**
@@ -169,6 +173,15 @@ namespace NorvesLib::RHI
          * @return 作成されたバッファオブジェクト
          */
         virtual BufferPtr CreateBuffer(const BufferDesc &desc) = 0;
+
+        /**
+         * @brief 加速構造リソースを作成
+         * @return 基底の未対応実装はnullptrを返す。対応バックエンドはoverrideする。
+         */
+        virtual AccelerationStructurePtr CreateAccelerationStructure(const AccelerationStructureDesc &)
+        {
+            return {};
+        }
 
         /**
          * @brief テクスチャを作成
@@ -231,6 +244,15 @@ namespace NorvesLib::RHI
          * @return 作成されたパイプラインオブジェクト
          */
         virtual PipelinePtr CreateComputePipeline(const ComputePipelineDesc &desc) = 0;
+
+        /**
+         * @brief レイトレーシングパイプラインを作成
+         * @return 未対応の描画バックエンドではnullptrを返す
+         */
+        virtual PipelinePtr CreateRayTracingPipeline(const RayTracingPipelineDesc&)
+        {
+            return {};
+        }
 
         /**
          * @brief ディスクリプタセットを作成

@@ -1,47 +1,16 @@
 ﻿#include "Component/SpotLightComponent.h"
 #include "Object/Entity.h"
 #include "Math/MathTypes.h"
+#include "Logging/LogMacros.h"
 #include <cmath>
+#include <limits>
 
 namespace
 {
-    constexpr float MinConeAngleGapDegrees = 0.01f;
-    constexpr float MaxConeAngleDegrees = 179.0f;
-
-    float ClampConeAngleDegrees(float degrees)
+    double DegreesToCos(double degrees)
     {
-        if (degrees < 0.0f)
-        {
-            return 0.0f;
-        }
-
-        if (degrees > MaxConeAngleDegrees)
-        {
-            return MaxConeAngleDegrees;
-        }
-
-        return degrees;
-    }
-
-    void NormalizeConeAngles(float& innerDegrees, float& outerDegrees)
-    {
-        innerDegrees = ClampConeAngleDegrees(innerDegrees);
-        outerDegrees = ClampConeAngleDegrees(outerDegrees);
-
-        if (outerDegrees <= innerDegrees)
-        {
-            outerDegrees = innerDegrees + MinConeAngleGapDegrees;
-            if (outerDegrees > MaxConeAngleDegrees)
-            {
-                outerDegrees = MaxConeAngleDegrees;
-                innerDegrees = MaxConeAngleDegrees - MinConeAngleGapDegrees;
-            }
-        }
-    }
-
-    float DegreesToCos(float degrees)
-    {
-        return cosf(degrees * NorvesLib::Math::Constants::PI / 180.0f);
+        return std::cos(
+            degrees * static_cast<double>(NorvesLib::Math::Constants::PI) / 180.0);
     }
 }
 
@@ -53,6 +22,7 @@ namespace NorvesLib::Core::Component
         : LightComponent()
     {
         LightTypeProp = Rendering::LightType::Spot;
+        IntensityUnit = LightIntensityUnit::Candela;
         Range = 10.0f;
         AttenuationConstant = 1.0f;
         AttenuationLinear = 0.09f;
@@ -65,6 +35,7 @@ namespace NorvesLib::Core::Component
         : LightComponent(initializer)
     {
         LightTypeProp = Rendering::LightType::Spot;
+        IntensityUnit = LightIntensityUnit::Candela;
         Range = 10.0f;
         AttenuationConstant = 1.0f;
         AttenuationLinear = 0.09f;
@@ -77,6 +48,7 @@ namespace NorvesLib::Core::Component
         : LightComponent(sourceObject)
     {
         LightTypeProp = Rendering::LightType::Spot;
+        IntensityUnit = LightIntensityUnit::Candela;
         Range = 10.0f;
         AttenuationConstant = 1.0f;
         AttenuationLinear = 0.09f;
@@ -101,47 +73,72 @@ namespace NorvesLib::Core::Component
         // Tick内での特別な処理は不要
     }
 
-    void SpotLightComponent::EnsureConeAngleOrder()
-    {
-        NormalizeConeAngles(InnerConeAngle, OuterConeAngle);
-    }
-
     // ========================================
     // LightProxy構築
     // ========================================
 
     bool SpotLightComponent::BuildLightProxy(Rendering::LightProxy& outProxy) const
     {
+        Rendering::LightProxy snapshot = outProxy;
+
         // 基底クラスの共通チェックとフィールド設定
-        if (!LightComponent::BuildLightProxy(outProxy))
+        if (!LightComponent::BuildLightProxy(snapshot))
         {
             return false;
         }
 
         // スポットライト固有
-        outProxy.Type = Rendering::LightType::Spot;
-        outProxy.Range = Range;
-        outProxy.AttenuationConstant = AttenuationConstant;
-        outProxy.AttenuationLinear = AttenuationLinear;
-        outProxy.AttenuationQuadratic = AttenuationQuadratic;
+        snapshot.Type = Rendering::LightType::Spot;
+        snapshot.Range = Range;
+        snapshot.AttenuationConstant = AttenuationConstant;
+        snapshot.AttenuationLinear = AttenuationLinear;
+        snapshot.AttenuationQuadratic = AttenuationQuadratic;
+
+        const float innerConeAngle = InnerConeAngle.Get();
+        const float outerConeAngle = OuterConeAngle.Get();
+        if (!std::isfinite(innerConeAngle) || !std::isfinite(outerConeAngle) ||
+            innerConeAngle < 0.0f || outerConeAngle <= innerConeAngle ||
+            outerConeAngle > 179.0f)
+        {
+            NORVES_LOG_WARNING("Light", "Rejected invalid spot light cone angles");
+            return false;
+        }
+
+        const double innerCosine = DegreesToCos(static_cast<double>(innerConeAngle));
+        const double outerCosine = DegreesToCos(static_cast<double>(outerConeAngle));
+        const double omega = 2.0 * static_cast<double>(Math::Constants::PI) *
+                             (1.0 - (innerCosine + outerCosine) / 2.0);
+        if (!std::isfinite(omega) || omega <= 0.0f)
+        {
+            NORVES_LOG_WARNING("Light", "Rejected degenerate spot light cone solid angle");
+            return false;
+        }
+        if (IntensityUnit.Get() == LightIntensityUnit::Lumen)
+        {
+            const double canonicalIntensity = static_cast<double>(Intensity.Get()) / omega;
+            if (!std::isfinite(canonicalIntensity) || canonicalIntensity < 0.0 ||
+                canonicalIntensity > static_cast<double>(std::numeric_limits<float>::max()))
+            {
+                NORVES_LOG_WARNING("Light", "Rejected non-representable spot light canonical intensity");
+                return false;
+            }
+            snapshot.CanonicalIntensity = static_cast<float>(canonicalIntensity);
+        }
 
         // オーナーのEntityから位置を取得
         const Entity* owner = GetOwner();
         if (owner)
         {
             const auto& pos = owner->GetPosition();
-            outProxy.PositionX = pos.x;
-            outProxy.PositionY = pos.y;
-            outProxy.PositionZ = pos.z;
+            snapshot.PositionX = pos.x;
+            snapshot.PositionY = pos.y;
+            snapshot.PositionZ = pos.z;
         }
 
-        float innerDegrees = InnerConeAngle;
-        float outerDegrees = OuterConeAngle;
-        NormalizeConeAngles(innerDegrees, outerDegrees);
+        snapshot.InnerConeAngle = static_cast<float>(innerCosine);
+        snapshot.OuterConeAngle = static_cast<float>(outerCosine);
 
-        outProxy.InnerConeAngle = DegreesToCos(innerDegrees);
-        outProxy.OuterConeAngle = DegreesToCos(outerDegrees);
-
+        outProxy = snapshot;
         return true;
     }
 

@@ -28,6 +28,7 @@ namespace NorvesLib::RHI::Vulkan
     using ::NorvesLib::Core::Container::VariableArray;
 
     class VulkanBuffer;
+    class VulkanAccelerationStructure;
     class VulkanCommandList;
     class VulkanTexture;
     class VulkanSampler;
@@ -61,6 +62,19 @@ namespace NorvesLib::RHI::Vulkan
         static DescriptorType ConvertResourceBindType(ResourceBindType type);
 
         /**
+         * @brief 配列bindingを含むset群がデバイスのdescriptor上限に収まるか検査する
+         *
+         * 全bindingがcount=1のset群は従来どおり検査せずtrueを返す。配列を含む場合は、
+         * stageごとの合計（sampler・sampled image・maxPerStageResources対象資源）とset群全体の合計を
+         * 物理デバイスのlimitと比べる。maxPerStageResourcesは単独samplerと加速構造を数えず、
+         * fragment段ではcolor attachment数を加える。
+         * @param sets pipeline layoutまたは単一descriptor setを構成するset群
+         * @param fragmentColorAttachmentCount graphics pipelineのcolor attachment数（他は0）
+         */
+        bool IsWithinDescriptorArrayLimits(const VariableArray<DescriptorSetDesc> &sets,
+                                           uint32_t fragmentColorAttachmentCount = 0u) const;
+
+        /**
          * @brief VulkanDeviceのファクトリメソッド
          * @param params 初期化パラメータ
          * @return 作成されたデバイス
@@ -80,6 +94,7 @@ namespace NorvesLib::RHI::Vulkan
 
         // IDeviceインターフェース実装
         BufferPtr CreateBuffer(const BufferDesc &desc) override;
+        AccelerationStructurePtr CreateAccelerationStructure(const AccelerationStructureDesc &desc) override;
         TexturePtr CreateTexture(const TextureDesc &desc) override;
         SamplerPtr CreateSampler(const SamplerDesc &desc) override;
         ShaderPtr CreateShader(const ShaderDesc &desc) override;
@@ -89,10 +104,12 @@ namespace NorvesLib::RHI::Vulkan
         FramebufferPtr CreateFramebuffer(const FramebufferDesc &desc) override;
         PipelinePtr CreateGraphicsPipeline(const GraphicsPipelineDesc &desc) override;
         PipelinePtr CreateComputePipeline(const ComputePipelineDesc &desc) override;
+        PipelinePtr CreateRayTracingPipeline(const RayTracingPipelineDesc& desc) override;
         DescriptorSetPtr CreateDescriptorSet(const DescriptorSetDesc &desc) override;
         ShaderCompilerPtr CreateShaderCompiler() override;
         ShaderCompilerPtr CreateSlangShaderCompiler() override;
         IGPUResourceAllocator* GetResourceAllocator() override;
+        // 同一デバイスのコマンド送信・コマンドプール操作と呼出側で直列化する。
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
         const DeviceCapabilities &GetCapabilities() const override { return m_Capabilities; }
@@ -178,6 +195,11 @@ namespace NorvesLib::RHI::Vulkan
         // Vulkan 1.2 機能構造体（Features2チェーン用）
         vk::PhysicalDeviceVulkan12Features m_vulkan12Features{};
 
+        // RT機能構造体（照会結果と論理デバイス有効化に使用）
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR m_accelerationStructureFeatures{};
+        vk::PhysicalDeviceRayQueryFeaturesKHR m_rayQueryFeatures{};
+        vk::PhysicalDeviceRayTracingPipelineFeaturesKHR m_rayTracingPipelineFeatures{};
+
         // キューファミリー
         uint32_t m_graphicsQueueFamilyIndex = UINT32_MAX;
         uint32_t m_computeQueueFamilyIndex = UINT32_MAX;
@@ -222,6 +244,7 @@ namespace NorvesLib::RHI::Vulkan
         VariableArray<const char *> GetDeviceExtensions();
         void FindQueueFamilies(vk::PhysicalDevice device);
         void ReportDeviceFaultOnce();
+        VkResult WaitIdleInternal() noexcept;
 
 #if defined(VK_EXT_device_address_binding_report)
         void SetupAddressBindingDebugMessenger();

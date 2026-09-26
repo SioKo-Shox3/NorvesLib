@@ -1,6 +1,9 @@
 ﻿#pragma once
 
+#include "GPUTimestamp.h"
 #include "RHITypes.h"
+#include "IAccelerationStructure.h"
+#include "Container/VariableArray.h"
 #include <array>
 
 namespace NorvesLib::RHI
@@ -84,6 +87,57 @@ namespace NorvesLib::RHI
         virtual bool SupportsGPUTimestamps() const
         {
             return false;
+        }
+
+        virtual uint32_t GetMaximumGPUTimestampScopesPerFrame() const
+        {
+            return 0u;
+        }
+
+        virtual void BeginGPUTimestampFrame(uint64_t frameNumber)
+        {
+            (void)frameNumber;
+        }
+
+        virtual GPUTimestampScopeHandle BeginGPUTimestampScope(const char* scopeName)
+        {
+            (void)scopeName;
+            return {};
+        }
+
+        virtual void EndGPUTimestampScope(GPUTimestampScopeHandle handle)
+        {
+            (void)handle;
+        }
+
+        virtual void EndGPUTimestampFrame()
+        {
+        }
+
+        virtual void CommitGPUTimestampSubmission(uint32_t frameSlotIndex,
+                                                  uint64_t submissionSerial)
+        {
+            (void)frameSlotIndex;
+            (void)submissionSerial;
+        }
+
+        virtual void AbortGPUTimestampFrame(uint32_t frameSlotIndex) noexcept
+        {
+            (void)frameSlotIndex;
+        }
+
+        virtual void NotifyGPUTimestampFrameSlotCompleted(
+            uint32_t frameSlotIndex,
+            uint64_t completedSubmissionSerial)
+        {
+            (void)frameSlotIndex;
+            (void)completedSubmissionSerial;
+        }
+
+        virtual void ConsumeCompletedGPUTimestampResults(
+            Core::Container::VariableArray<GPUTimestampResult>& outResults)
+        {
+            outResults.clear();
         }
 
         /**
@@ -293,6 +347,43 @@ namespace NorvesLib::RHI
          * @param threadGroupCountZ Zスレッドグループ数
          */
         virtual void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) = 0;
+
+        /**
+         * @brief TLASのBuildコマンドを記録
+         * @param desc 構築内容
+         * @return RT未対応、入力不正、または記録失敗時はfalse
+         */
+        virtual bool BuildAccelerationStructure(const AccelerationStructureBuildDesc& desc)
+        {
+            (void)desc;
+            return false;
+        }
+
+        /**
+         * @brief TLASのUpdateコマンドを記録。sourceのBuild数が不明な場合はdestinationを再Buildすることがあります
+         * @param desc 更新内容
+         * @return RT未対応、入力不正、または記録失敗時はfalse
+         */
+        virtual bool UpdateAccelerationStructure(const AccelerationStructureBuildDesc& desc)
+        {
+            (void)desc;
+            return false;
+        }
+
+        /**
+         * @brief ray tracing pipelineを実行
+         * @param width trace領域の幅
+         * @param height trace領域の高さ
+         * @param depth trace領域の深さ
+         * @return traceを記録できた場合true
+         */
+        virtual bool TraceRays(uint32_t width, uint32_t height, uint32_t depth)
+        {
+            (void)width;
+            (void)height;
+            (void)depth;
+            return false;
+        }
 
         /**
          * @brief バッファコピー

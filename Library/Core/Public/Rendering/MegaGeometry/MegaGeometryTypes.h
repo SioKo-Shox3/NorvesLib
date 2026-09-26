@@ -173,7 +173,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     struct MegaMeshMaterial
     {
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};     // ベースカラー RGBA
-        float EmissiveColor[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // エミッシブ RGB + 強度
+        float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};       // Y=1 chromaticity
+        float EmissiveLuminanceNits = 0.0f;                 // 輝度(nits)
 
         // PBRテクスチャ（nullptrの場合はデフォルトテクスチャを使用）
         RHI::TexturePtr AlbedoTexture;

@@ -13,8 +13,6 @@ namespace NorvesLib::Core::Rendering
      */
     struct UpscaleSettings
     {
-        /** @brief 出力フォーマット */
-        RHI::Format OutputFormat = RHI::Format::R8G8B8A8_UNORM;
     };
 
     /**

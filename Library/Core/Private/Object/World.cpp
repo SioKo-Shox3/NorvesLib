@@ -1089,13 +1089,14 @@ namespace NorvesLib::Core
                 if (!bNeedsSync)
                 {
                     liveMeshComponentIds.insert(meshComp->GetComponentId());
-                    if (componentDataRegistry)
+                    Rendering::MeshProxy meshProxy;
+                    if (meshComp->BuildMeshProxy(meshProxy, materials, meshes))
                     {
-                        Rendering::MeshProxy meshProxy;
-                        if (meshComp->BuildMeshProxy(meshProxy, materials, meshes))
+                        meshProxy.ObjectId = entity.GetObjectId();
+                        meshProxy.ComponentId = meshComp->GetComponentId();
+                        m_SceneView->UpdateMeshProxy(meshProxy);
+                        if (componentDataRegistry)
                         {
-                            meshProxy.ObjectId = entity.GetObjectId();
-                            meshProxy.ComponentId = meshComp->GetComponentId();
                             componentDataRegistry->PublishMeshProxy(entity, meshProxy);
                         }
                     }
@@ -1120,6 +1121,7 @@ namespace NorvesLib::Core
                     meshComp->ClearRenderStateDirty();
                     meshComp->SetLastSyncedTransformVersion(ownerVersion);
                 }
+                meshComp->CommitRenderTransformHistory();
             }
 
             if (m_SceneView && megaComp)

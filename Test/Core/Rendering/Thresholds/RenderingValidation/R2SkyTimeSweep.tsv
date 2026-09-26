@@ -1,0 +1,5 @@
+schema=NorvesLib.RenderingValidation.R2SkyTimeSweep.v1
+case=morning altitude_degrees=8.000000 azimuth_degrees=-35.000000 zenith_relative_error_max=0.050000 sun_disk_finite=1
+case=noon altitude_degrees=45.000000 azimuth_degrees=0.000000 zenith_reference=(463.600000,944.800000,1808.200000) sun_near_reference=(3283.900000,3989.000000,5179.000000) relative_error_max=0.050000 sun_disk_finite=1
+case=evening altitude_degrees=15.000000 azimuth_degrees=35.000000 zenith_relative_error_max=0.050000 sun_disk_finite=1
+sun_disk_pre_exposure=0.000025431 threshold_fp16_safety=0.900000

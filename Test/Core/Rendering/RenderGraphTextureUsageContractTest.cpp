@@ -1,10 +1,13 @@
 ﻿#include "Rendering/CompositePass.h"
 #define private public
 #include "Rendering/FXAAPass.h"
+#include "Rendering/LightingPass.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
+#include "Rendering/ShadowMapPass.h"
+#include "Rendering/ShaderManager.h"
 #include "Rendering/ToneMappingPass.h"
 #include "Rendering/UpscalePass.h"
 #undef private
@@ -19,6 +22,7 @@
 #include "RHI/IRenderPass.h"
 #include "RHI/ISampler.h"
 #include "RHI/IShader.h"
+#include "RHI/IShaderCompiler.h"
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include <cassert>
@@ -453,6 +457,44 @@ namespace
         uint32_t UpdateCount = 0;
     };
 
+    class FakeShaderCompiler final : public RHI::IShaderCompiler
+    {
+    public:
+        RHI::ShaderCompileResult CompileFromSource(const Container::String& source,
+                                                   RHI::ShaderStage stage,
+                                                   const Container::String& filename = "shader",
+                                                   const Container::String& entryPoint = "main") override
+        {
+            (void)source;
+            (void)stage;
+            (void)filename;
+            (void)entryPoint;
+            return MakeResult();
+        }
+
+        RHI::ShaderCompileResult CompileFromFile(const Container::String& filePath,
+                                                 RHI::ShaderStage stage,
+                                                 const Container::String& entryPoint = "main") override
+        {
+            (void)filePath;
+            (void)stage;
+            (void)entryPoint;
+            return MakeResult();
+        }
+
+    private:
+        RHI::ShaderCompileResult MakeResult() const
+        {
+            RHI::ShaderCompileResult result;
+            result.bSuccess = true;
+            result.ByteCode.push_back(0x03);
+            result.ByteCode.push_back(0x02);
+            result.ByteCode.push_back(0x23);
+            result.ByteCode.push_back(0x07);
+            return result;
+        }
+    };
+
     class FakeDevice final : public RHI::IDevice
     {
     public:
@@ -497,6 +539,11 @@ namespace
 
         RHI::FramebufferPtr CreateFramebuffer(const RHI::FramebufferDesc& desc) override
         {
+            ++CreatedFramebufferCount;
+            if (desc.depthStencilTarget)
+            {
+                CreatedFramebufferDescs.push_back(desc);
+            }
             return RHI::MakeShared<FakeFramebuffer>(desc);
         }
 
@@ -520,13 +567,15 @@ namespace
 
         RHI::ShaderCompilerPtr CreateShaderCompiler() override
         {
-            return nullptr;
+            return RHI::MakeShared<FakeShaderCompiler>();
         }
 
         RHI::IGPUResourceAllocator* GetResourceAllocator() override
         {
             return &Allocator;
         }
+
+        uint32_t CreatedFramebufferCount = 0;
 
         void WaitIdle() override
         {
@@ -553,6 +602,7 @@ namespace
         FakeAllocator Allocator;
         RHI::DeviceCapabilities Capabilities;
         Container::VariableArray<RHI::TextureDesc> CreatedTextureDescs;
+        Container::VariableArray<RHI::FramebufferDesc> CreatedFramebufferDescs;
     };
 
     class FakeCommandList final : public RHI::ICommandList
@@ -889,12 +939,61 @@ namespace
         return nullptr;
     }
 
+    void TestShadowMapGraphImportsFourLayerArrayAndPerLayerFramebuffers()
+    {
+        GraphFixture fixture;
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(&fixture.Device, ""));
+        fixture.Context.ShaderMgr = &shaderManager;
+
+        ShadowMapPass pass;
+        assert(pass.Initialize(fixture.Context));
+        assert(pass.GetShadowMapTexture());
+        assert(pass.GetShadowMapTexture()->GetArraySize() == 4);
+        assert(pass.GetShadowMapTexture()->GetFormat() == RHI::Format::D32_FLOAT);
+        assert(HasUsage(pass.GetShadowMapTexture()->GetUsage(),
+                        RHI::ResourceUsage::DepthStencil));
+        assert(HasUsage(pass.GetShadowMapTexture()->GetUsage(),
+                        RHI::ResourceUsage::ShaderResource));
+
+        assert(fixture.Device.CreatedFramebufferDescs.size() == 4);
+        for (uint32_t cascadeIndex = 0; cascadeIndex < 4; ++cascadeIndex)
+        {
+            const RHI::FramebufferDesc& desc = fixture.Device.CreatedFramebufferDescs[cascadeIndex];
+            assert(desc.depthStencilTarget.get() == pass.GetShadowMapTexture());
+            assert(desc.depthStencilArrayLayer == cascadeIndex);
+            assert(desc.width == 2048);
+            assert(desc.height == 2048);
+        }
+
+        fixture.Graph.AddPass(&pass);
+        assert(fixture.Graph.Compile(fixture.Context));
+        assert(pass.GetShadowMapHandle().IsValid());
+        RenderGraphResources resources(&fixture.Graph);
+        RHI::TexturePtr importedShadowMap = resources.GetTexture(pass.GetShadowMapHandle());
+        assert(importedShadowMap.get() == pass.GetShadowMapTexture());
+        assert(importedShadowMap->GetArraySize() == 4);
+
+        pass.Shutdown();
+        shaderManager.Shutdown();
+        std::cout << "TestShadowMapGraphImportsFourLayerArrayAndPerLayerFramebuffers passed\n";
+    }
+
     class TestFXAAPass final : public FXAAPass
     {
     public:
         void SetTestDevice(RHI::IDevice* device)
         {
             m_Device = device;
+        }
+    };
+
+    class TestLightingPass final : public LightingPass
+    {
+    public:
+        void MarkInitializedForGraphTest()
+        {
+            m_bInitialized = true;
         }
     };
 
@@ -920,6 +1019,40 @@ namespace
         RHI::TexturePtr outputTexture = resources.GetTexture(pass.GetToneMappedColorHandle());
         AssertTextureHasTransferSrc(outputTexture);
         std::cout << "TestToneMappingGraphOutputIncludesTransferSrc passed\n";
+    }
+
+    void TestLightingSceneColorIncludesTransferSrcAndIsExported()
+    {
+        GraphFixture fixture;
+        TestLightingPass pass;
+        pass.MarkInitializedForGraphTest();
+        fixture.Graph.AddPass(&pass);
+
+        assert(fixture.Graph.Compile(fixture.Context));
+
+        RenderGraphResources resources(&fixture.Graph);
+        RHI::TexturePtr sceneColorTexture = resources.GetTexture(pass.GetSceneColorHandle());
+        AssertTextureHasTransferSrc(sceneColorTexture);
+
+        const RenderGraphExecutionResult result = fixture.Graph.ExecuteWithResult(fixture.Context);
+        assert(result.bSuccess);
+        RHI::TexturePtr exportedSceneColor;
+        assert(result.TryGetTexture(RenderGraphResourceNames::SceneColor, exportedSceneColor));
+        assert(exportedSceneColor.get() == sceneColorTexture.get());
+        std::cout << "TestLightingSceneColorIncludesTransferSrcAndIsExported passed\n";
+    }
+
+    void TestLightingPersistentSceneColorIncludesTransferSrc()
+    {
+        GraphFixture fixture;
+        LightingPass pass;
+        pass.m_Device = &fixture.Device;
+        pass.Setup(fixture.Context);
+
+        const RHI::TextureDesc* desc = FindCreatedTextureDesc(fixture.Device, "SceneColor");
+        assert(desc);
+        assert(HasUsage(desc->Usage, RHI::ResourceUsage::TransferSrc));
+        std::cout << "TestLightingPersistentSceneColorIncludesTransferSrc passed\n";
     }
 
     void TestToneMappingPersistentOutputIncludesTransferSrc()
@@ -1072,6 +1205,66 @@ namespace
         assert(descriptorSet->BoundTexture.get() == sceneTexture.get());
         std::cout << "TestCompositePassthroughPresentationKeepsImportedSceneWithoutTransferSrc passed\n";
     }
+
+    void TestPresentationOverlayFramebufferRingOwnsAndReusesByFrameSlotKey()
+    {
+        RHI::DevicePtr device = RHI::MakeShared<FakeDevice>();
+        auto* fakeDevice = static_cast<FakeDevice*>(device.get());
+
+        RHI::TextureDesc overlayDesc =
+            RHI::TextureDesc::RenderTarget(64,
+                                           32,
+                                           RHI::Format::R16G16B16A16_FLOAT,
+                                           "OverlayPresentationColor");
+        RHI::TexturePtr firstTarget = RHI::MakeShared<FakeTexture>(overlayDesc);
+        RHI::TexturePtr replacementTarget = RHI::MakeShared<FakeTexture>(overlayDesc);
+
+        PresentationPass presentationPass;
+        RHI::FramebufferPtr firstSlot =
+            presentationPass.AcquireOverlayFramebuffer(device, 0, 2, firstTarget);
+        assert(firstSlot);
+        RHI::RenderPassPtr overlayRenderPass = presentationPass.GetOverlayRenderPass();
+        assert(overlayRenderPass);
+        auto* fakeOverlayRenderPass = static_cast<FakeRenderPass*>(overlayRenderPass.get());
+        assert(fakeOverlayRenderPass->GetColorAttachmentCount() == 1);
+        assert(fakeOverlayRenderPass->GetColorAttachmentFormat(0) == RHI::Format::R16G16B16A16_FLOAT);
+        assert(fakeOverlayRenderPass->Desc.colorAttachments[0].loadOp == RHI::AttachmentLoadOp::Load);
+        assert(fakeOverlayRenderPass->Desc.colorAttachments[0].storeOp == RHI::AttachmentStoreOp::Store);
+        assert(!fakeOverlayRenderPass->Desc.colorAttachments[0].clear);
+        assert(fakeDevice->CreatedFramebufferCount == 1);
+
+        RHI::FramebufferPtr sameKey =
+            presentationPass.AcquireOverlayFramebuffer(device, 0, 2, firstTarget);
+        assert(sameKey.get() == firstSlot.get());
+        assert(fakeDevice->CreatedFramebufferCount == 1);
+
+        RHI::FramebufferPtr otherSlot =
+            presentationPass.AcquireOverlayFramebuffer(device, 1, 2, firstTarget);
+        assert(otherSlot);
+        assert(otherSlot.get() != firstSlot.get());
+        assert(fakeDevice->CreatedFramebufferCount == 2);
+
+        Container::TWeakPtr<RHI::IFramebuffer> replacedWeak = firstSlot;
+        RHI::FramebufferPtr replacement =
+            presentationPass.AcquireOverlayFramebuffer(device, 0, 2, replacementTarget);
+        assert(replacement);
+        assert(replacement.get() != firstSlot.get());
+        assert(fakeDevice->CreatedFramebufferCount == 3);
+        firstSlot.reset();
+        sameKey.reset();
+        assert(replacedWeak.expired());
+
+        Container::TWeakPtr<RHI::IRenderPass> renderPassWeak =
+            presentationPass.GetOverlayRenderPass();
+        overlayRenderPass.reset();
+        presentationPass.InvalidateOverlayResources();
+        assert(!presentationPass.GetOverlayRenderPass());
+        replacement.reset();
+        otherSlot.reset();
+        assert(renderPassWeak.expired());
+
+        std::cout << "TestPresentationOverlayFramebufferRingOwnsAndReusesByFrameSlotKey passed\n";
+    }
 } // namespace
 
 int main()
@@ -1079,7 +1272,10 @@ int main()
     std::cout << "RenderGraphTextureUsageContractTest start\n";
 
     TestRenderTargetDescDoesNotIncludeTransferSrc();
+    TestShadowMapGraphImportsFourLayerArrayAndPerLayerFramebuffers();
     TestToneMappingGraphOutputIncludesTransferSrc();
+    TestLightingSceneColorIncludesTransferSrcAndIsExported();
+    TestLightingPersistentSceneColorIncludesTransferSrc();
     TestToneMappingPersistentOutputIncludesTransferSrc();
     TestFXAAGraphOutputIncludesTransferSrc();
     TestFXAAPersistentOutputIncludesTransferSrc();
@@ -1087,6 +1283,7 @@ int main()
     TestUpscalePersistentOutputIncludesTransferSrc();
     TestCompositeAlphaOverFreshColorIncludesTransferSrc();
     TestCompositePassthroughPresentationKeepsImportedSceneWithoutTransferSrc();
+    TestPresentationOverlayFramebufferRingOwnsAndReusesByFrameSlotKey();
 
     std::cout << "RenderGraphTextureUsageContractTest passed\n";
     return 0;

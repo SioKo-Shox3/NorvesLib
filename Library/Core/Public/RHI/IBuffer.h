@@ -49,6 +49,12 @@ public:
      * @return バッファの使用用途
      */
     virtual ResourceUsage GetUsage() const = 0;
+
+    /**
+     * @brief バッファのdevice addressを取得
+     * @return 要求されていないか未対応の場合は0
+     */
+    virtual uint64_t GetDeviceAddress() const { return 0; }
 };
 
 } // namespace NorvesLib::RHI

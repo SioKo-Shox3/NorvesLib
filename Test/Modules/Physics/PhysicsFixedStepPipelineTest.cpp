@@ -256,10 +256,10 @@ namespace
     // sizeof/alignof は ABI 変更を検出するが、末尾パディングだけの変更は検出できない。
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
-    static_assert(sizeof(FramePacketType) == 720);
-    static_assert(alignof(FramePacketType) == 8);
-    static_assert(sizeof(SceneProxyType) == 320);
-    static_assert(alignof(SceneProxyType) == 8);
+    static_assert(sizeof(FramePacketType) == 1152);
+    static_assert(alignof(FramePacketType) == 16);
+    static_assert(sizeof(SceneProxyType) == 512);
+    static_assert(alignof(SceneProxyType) == 16);
 
     constexpr uint32_t kCaseCount = 8;
     constexpr uint32_t kRepetitionsPerCase = 8;
@@ -792,8 +792,8 @@ namespace
     bool TestFramePacketBoundaryHasNoLivePhysicsPointers()
     {
         return !std::is_standard_layout_v<FramePacketType> && !std::is_standard_layout_v<SceneProxyType>
-            && sizeof(FramePacketType) == 720 && alignof(FramePacketType) == 8
-            && sizeof(SceneProxyType) == 320 && alignof(SceneProxyType) == 8;
+            && sizeof(FramePacketType) == 1152 && alignof(FramePacketType) == 16
+            && sizeof(SceneProxyType) == 512 && alignof(SceneProxyType) == 16;
     }
 
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)

@@ -51,6 +51,7 @@ namespace NorvesLib::RHI::Vulkan
         TexturePtr GetDepthStencilAttachment() const override { return m_desc.depthStencilTarget; }
         uint32_t GetColorAttachmentCount() const override { return static_cast<uint32_t>(m_desc.colorTargets.size()); }
         bool HasDepthStencilAttachment() const override { return m_desc.depthStencilTarget != nullptr; }
+        uint32_t GetDepthStencilArrayLayer() const override { return m_desc.depthStencilArrayLayer; }
 
         // Vulkan固有のメソッド
         vk::Framebuffer GetVkFramebuffer() const { return m_framebuffer; }
@@ -65,7 +66,9 @@ namespace NorvesLib::RHI::Vulkan
 
         // ヘルパーメソッド
         void CreateFramebuffer(TSharedPtr<VulkanRenderPass> renderPass);
-        vk::ImageView GetImageViewFromTexture(const TexturePtr &texture);
+        vk::ImageView GetImageViewFromTexture(const TexturePtr &texture,
+                                              uint32_t arrayLayer,
+                                              bool bUseArrayLayer);
     };
 
 } // namespace NorvesLib::RHI::Vulkan

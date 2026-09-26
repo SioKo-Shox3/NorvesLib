@@ -1,6 +1,7 @@
 #include "Rendering/FramePacket.h"
 #include <cassert>
 #include <iostream>
+#include <type_traits>
 
 using namespace NorvesLib::Core::Rendering;
 
@@ -16,6 +17,7 @@ int main()
     assert(packet != nullptr);
     assert(packet->GetState() == FramePacketState::Writing);
     packet->FrameNumber = 42;
+    packet->CaptureRequest = {42u, FrameCaptureSourceKind::SceneColor};
     manager.FinishWrite(packet);
     assert(packet->GetState() == FramePacketState::Ready);
     assert(manager.GetReadyPacketCount() == 1);
@@ -23,6 +25,9 @@ int main()
     FramePacket *readPacket = manager.AcquireForRead();
     assert(readPacket == packet);
     assert(readPacket->GetState() == FramePacketState::Reading);
+    static_assert(std::is_same_v<decltype(readPacket->CaptureRequest), FrameCaptureRequestSnapshot>);
+    assert(readPacket->CaptureRequest.RequestId == 42u);
+    assert(readPacket->CaptureRequest.SourceKind == FrameCaptureSourceKind::SceneColor);
     manager.FinishRead(readPacket);
     assert(manager.IsEmpty());
 
@@ -51,6 +56,7 @@ int main()
         standalonePacket.OpaqueCommandRange = {0, 2};
         standalonePacket.TransparentCommandRange = {2, 1};
         standalonePacket.DrawCommandRange = {0, 3};
+        standalonePacket.CaptureRequest = {42u, FrameCaptureSourceKind::SceneColor};
 
         DrawCommandView allCommands =
             DrawCommandView::FromRange(standalonePacket.DrawCommands, standalonePacket.DrawCommandRange);
@@ -72,6 +78,7 @@ int main()
         assert(standalonePacket.DrawCommandRange.IsEmpty());
         assert(standalonePacket.OpaqueCommandRange.IsEmpty());
         assert(standalonePacket.TransparentCommandRange.IsEmpty());
+        assert(!standalonePacket.CaptureRequest.IsValid());
     }
 
     packet = manager.AcquireForWrite();
@@ -84,9 +91,12 @@ int main()
     assert(packet != nullptr);
     manager.FinishWrite(packet);
     assert(packet->CompareExchangeState(FramePacketState::Ready, FramePacketState::Queued));
+    packet->CaptureRequest = {77u, FrameCaptureSourceKind::SceneColor};
     assert(manager.DrainUnconsumedPackets() == 0);
     assert(packet->GetState() == FramePacketState::Queued);
     assert(packet->CompareExchangeState(FramePacketState::Queued, FramePacketState::Reading));
+    assert(packet->CaptureRequest.RequestId == 77u);
+    assert(packet->CaptureRequest.SourceKind == FrameCaptureSourceKind::SceneColor);
     manager.FinishRead(packet);
     assert(manager.IsEmpty());
 

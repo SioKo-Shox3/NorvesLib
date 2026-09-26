@@ -1,0 +1,5 @@
+schema=NorvesLib.RenderingValidation.R3DensitySweep.v1
+density_values=0.002500,0.005000,0.010000
+minimum_step_luma=0.250000 maximum_side_delta_luma=64.000000
+maximum_back_buffer_luma=245.000000 maximum_saturated_rgb_pixels=0
+golden_mean_flip_max=0.020000 golden_max_channel_delta=8

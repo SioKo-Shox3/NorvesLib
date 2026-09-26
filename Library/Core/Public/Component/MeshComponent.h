@@ -219,6 +219,11 @@ namespace NorvesLib::Core::Component
          */
         void RefreshRenderTransformCache();
 
+        /**
+         * @brief RenderThreadへproxyを渡した後に前フレーム変換履歴を確定
+         */
+        void CommitRenderTransformHistory();
+
         // ========================================
         // SceneProxy生成
         // ========================================

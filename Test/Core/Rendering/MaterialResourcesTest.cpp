@@ -1,14 +1,17 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/ITextureHandleRegistrar.h"
 #include "Rendering/NeuralMaterialResource.h"
+#include "Resource/MaterialResource.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "RHI/ITexture.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstring>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <vector>
 #if defined(_MSC_VER)
 #include <crtdbg.h>
@@ -222,10 +225,10 @@ namespace
         createInfo.AOTexture = MakeTextureHandle(baseTextureId + 5);
         createInfo.HeightTexture = MakeTextureHandle(baseTextureId + 6);
         createInfo.HeightScale = 0.08f;
-        createInfo.EmissiveColor[0] = 0.25f;
-        createInfo.EmissiveColor[1] = 0.5f;
-        createInfo.EmissiveColor[2] = 0.75f;
-        createInfo.EmissiveStrength = 2.0f;
+        createInfo.EmissiveColor[0] = 1.0f;
+        createInfo.EmissiveColor[1] = 1.0f;
+        createInfo.EmissiveColor[2] = 1.0f;
+        createInfo.EmissiveLuminanceNits = 2.0f;
         createInfo.Blend = BlendMode::Translucent;
         createInfo.Shading = ShadingModel::Unlit;
         createInfo.bTwoSided = true;
@@ -247,13 +250,223 @@ namespace
         assert(data->EmissiveColor[0] == expected.EmissiveColor[0]);
         assert(data->EmissiveColor[1] == expected.EmissiveColor[1]);
         assert(data->EmissiveColor[2] == expected.EmissiveColor[2]);
-        assert(data->EmissiveStrength == expected.EmissiveStrength);
+        assert(data->EmissiveLuminanceNits == expected.EmissiveLuminanceNits);
         assert(data->Blend == expected.Blend);
         assert(data->Shading == expected.Shading);
         assert(data->bTwoSided == expected.bTwoSided);
         assert(data->bCastShadows == expected.bCastShadows);
         assert(data->RefCount == 1);
         assert(data->DebugName == expected.DebugName);
+    }
+
+    struct InvalidEmissiveRow
+    {
+        const char *Name;
+        float Red;
+        float Green;
+        float Blue;
+        float LuminanceNits;
+    };
+
+    const InvalidEmissiveRow InvalidEmissiveRows[] = {
+        {"nan rgb", std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f, 1.0f},
+        {"inf rgb", 0.0f, std::numeric_limits<float>::infinity(), 0.0f, 1.0f},
+        {"nan nits", 0.0f, 0.0f, 0.0f, std::numeric_limits<float>::quiet_NaN()},
+        {"inf nits", 0.0f, 0.0f, 0.0f, std::numeric_limits<float>::infinity()},
+        {"negative rgb", -0.25f, 0.0f, 0.0f, 1.0f},
+        {"negative nits", 0.25f, 0.25f, 0.25f, -1.0f},
+        {"positive nits with tiny Y", 0.000001f, 0.0f, 0.0f, 1.0f},
+        {"rgba16f product overflow", 1.0f, 0.0f, 0.0f, 20000.0f},
+    };
+
+    void SetInvalidEmissive(MaterialCreateData &createInfo, const InvalidEmissiveRow &row)
+    {
+        createInfo.EmissiveColor[0] = row.Red;
+        createInfo.EmissiveColor[1] = row.Green;
+        createInfo.EmissiveColor[2] = row.Blue;
+        createInfo.EmissiveLuminanceNits = row.LuminanceNits;
+    }
+
+    void TestMaterialCreateRejectsInvalidEmissiveWithoutSideEffects()
+    {
+        auto device = MakeShared<FakeDevice>();
+        RenderResources manager;
+        assert(manager.Initialize(device));
+
+        MaterialCreateData validZero = MakeMaterialCreateData("ValidZero", 100);
+        validZero.EmissiveColor[0] = 0.0f;
+        validZero.EmissiveColor[1] = 0.0f;
+        validZero.EmissiveColor[2] = 0.0f;
+        validZero.EmissiveLuminanceNits = 0.0f;
+
+        const MaterialHandle firstHandle = manager.Materials().Create(validZero);
+        assert(firstHandle.IsValid());
+        const MaterialResourceData *firstData = manager.Materials().GetData(firstHandle);
+        AssertMaterialDataMatches(firstData, validZero);
+
+        const ResourceStats statsBefore = manager.GetResourceStats();
+        const size_t createdBufferCountBefore = device->CreatedBufferDescs.size();
+        const size_t createdTextureCountBefore = device->CreatedTextureDescs.size();
+
+        for (const InvalidEmissiveRow &row : InvalidEmissiveRows)
+        {
+            MaterialCreateData invalid = validZero;
+            SetInvalidEmissive(invalid, row);
+
+            const MaterialHandle rejectedHandle = manager.Materials().Create(invalid);
+            assert(!rejectedHandle.IsValid());
+            assert(manager.Materials().GetData(rejectedHandle) == nullptr);
+            assert(manager.Materials().GetData(firstHandle) == firstData);
+            AssertMaterialDataMatches(manager.Materials().GetData(firstHandle), validZero);
+
+            const ResourceStats statsAfter = manager.GetResourceStats();
+            assert(statsAfter.BufferCount == statsBefore.BufferCount);
+            assert(statsAfter.TextureCount == statsBefore.TextureCount);
+            assert(statsAfter.ShaderCount == statsBefore.ShaderCount);
+            assert(statsAfter.SamplerCount == statsBefore.SamplerCount);
+            assert(statsAfter.TotalBufferMemory == statsBefore.TotalBufferMemory);
+            assert(statsAfter.TotalTextureMemory == statsBefore.TotalTextureMemory);
+            assert(device->CreatedBufferDescs.size() == createdBufferCountBefore);
+            assert(device->CreatedTextureDescs.size() == createdTextureCountBefore);
+        }
+
+        const MaterialHandle nextHandle = manager.Materials().Create(validZero);
+        assert(nextHandle.IsValid());
+        assert(nextHandle.Id == firstHandle.Id + 1);
+    }
+
+    void TestMaterialUpdateRejectsInvalidEmissiveWithoutSideEffects()
+    {
+        auto device = MakeShared<FakeDevice>();
+        RenderResources manager;
+        assert(manager.Initialize(device));
+
+        MaterialCreateData validZero = MakeMaterialCreateData("UpdateBaseline", 200);
+        validZero.EmissiveColor[0] = 0.0f;
+        validZero.EmissiveColor[1] = 0.0f;
+        validZero.EmissiveColor[2] = 0.0f;
+        validZero.EmissiveLuminanceNits = 0.0f;
+
+        const MaterialHandle handle = manager.Materials().Create(validZero);
+        assert(handle.IsValid());
+        const MaterialResourceData *beforeData = manager.Materials().GetData(handle);
+        AssertMaterialDataMatches(beforeData, validZero);
+
+        const ResourceStats statsBefore = manager.GetResourceStats();
+        const size_t createdBufferCountBefore = device->CreatedBufferDescs.size();
+        const size_t createdTextureCountBefore = device->CreatedTextureDescs.size();
+
+        for (const InvalidEmissiveRow &row : InvalidEmissiveRows)
+        {
+            MaterialCreateData invalid = validZero;
+            SetInvalidEmissive(invalid, row);
+
+            assert(!manager.Materials().Update(handle, invalid));
+            assert(manager.Materials().GetData(handle) == beforeData);
+            AssertMaterialDataMatches(manager.Materials().GetData(handle), validZero);
+
+            const ResourceStats statsAfter = manager.GetResourceStats();
+            assert(statsAfter.BufferCount == statsBefore.BufferCount);
+            assert(statsAfter.TextureCount == statsBefore.TextureCount);
+            assert(statsAfter.ShaderCount == statsBefore.ShaderCount);
+            assert(statsAfter.SamplerCount == statsBefore.SamplerCount);
+            assert(statsAfter.TotalBufferMemory == statsBefore.TotalBufferMemory);
+            assert(statsAfter.TotalTextureMemory == statsBefore.TotalTextureMemory);
+            assert(device->CreatedBufferDescs.size() == createdBufferCountBefore);
+            assert(device->CreatedTextureDescs.size() == createdTextureCountBefore);
+        }
+
+        MaterialCreateData positive = validZero;
+        positive.EmissiveColor[0] = 1.0f;
+        positive.EmissiveColor[1] = 0.0f;
+        positive.EmissiveColor[2] = 0.0f;
+        positive.EmissiveLuminanceNits = 2.0f;
+        assert(manager.Materials().Update(handle, positive));
+
+        const MaterialResourceData *updatedData = manager.Materials().GetData(handle);
+        assert(updatedData != nullptr);
+        const float expectedCanonicalRed = 4.7036686f;
+        assert(std::isfinite(updatedData->EmissiveColor[0]));
+        assert(std::abs(updatedData->EmissiveColor[0] - expectedCanonicalRed) < 0.00001f);
+        assert(updatedData->EmissiveColor[1] == 0.0f);
+        assert(updatedData->EmissiveColor[2] == 0.0f);
+        assert(updatedData->EmissiveLuminanceNits == 2.0f);
+    }
+
+    void TestMaterialCreateCanonicalizesPositiveEmissive()
+    {
+        RenderResources manager;
+
+        MaterialCreateData createInfo = MakeMaterialCreateData("CanonicalCreate", 300);
+        createInfo.EmissiveColor[0] = 1.0f;
+        createInfo.EmissiveColor[1] = 0.0f;
+        createInfo.EmissiveColor[2] = 0.0f;
+        createInfo.EmissiveLuminanceNits = 2.0f;
+
+        const MaterialHandle handle = manager.Materials().Create(createInfo);
+        assert(handle.IsValid());
+        const MaterialResourceData *data = manager.Materials().GetData(handle);
+        assert(data != nullptr);
+
+        const float expectedCanonicalRed = 4.7036686f;
+        assert(std::isfinite(data->EmissiveColor[0]));
+        assert(std::abs(data->EmissiveColor[0] - expectedCanonicalRed) < 0.00001f);
+        assert(data->EmissiveColor[1] == 0.0f);
+        assert(data->EmissiveColor[2] == 0.0f);
+        assert(data->EmissiveLuminanceNits == 2.0f);
+    }
+
+    void TestMaterialResourceLoadRejectsInvalidEmissiveWithoutSideEffects()
+    {
+        for (const InvalidEmissiveRow &row : InvalidEmissiveRows)
+        {
+            NorvesLib::Core::MaterialResource resource;
+            resource.Initialize();
+            resource.SetEmissiveColor(row.Red, row.Green, row.Blue);
+            resource.SetEmissiveLuminanceNits(row.LuminanceNits);
+
+            const NorvesLib::Core::ResourceState stateBefore = resource.GetResourceState();
+            float redBefore = 0.0f;
+            float greenBefore = 0.0f;
+            float blueBefore = 0.0f;
+            resource.GetEmissiveColor(redBefore, greenBefore, blueBefore);
+            const float nitsBefore = resource.GetEmissiveLuminanceNits();
+
+            assert(!resource.Load());
+            assert(resource.GetResourceState() == stateBefore);
+
+            float redAfter = 0.0f;
+            float greenAfter = 0.0f;
+            float blueAfter = 0.0f;
+            resource.GetEmissiveColor(redAfter, greenAfter, blueAfter);
+            assert((std::isnan(redBefore) && std::isnan(redAfter)) || redAfter == redBefore);
+            assert((std::isnan(greenBefore) && std::isnan(greenAfter)) || greenAfter == greenBefore);
+            assert((std::isnan(blueBefore) && std::isnan(blueAfter)) || blueAfter == blueBefore);
+            assert((std::isnan(nitsBefore) && std::isnan(resource.GetEmissiveLuminanceNits())) ||
+                   resource.GetEmissiveLuminanceNits() == nitsBefore);
+        }
+    }
+
+    void TestMaterialResourceLoadCanonicalizesPositiveEmissive()
+    {
+        NorvesLib::Core::MaterialResource resource;
+        resource.Initialize();
+        resource.SetEmissiveColor(1.0f, 0.0f, 0.0f);
+        resource.SetEmissiveLuminanceNits(2.0f);
+
+        assert(resource.Load());
+        assert(resource.IsLoaded());
+
+        float red = 0.0f;
+        float green = 0.0f;
+        float blue = 0.0f;
+        resource.GetEmissiveColor(red, green, blue);
+        const float expectedCanonicalRed = 4.7036686f;
+        assert(std::isfinite(red));
+        assert(std::abs(red - expectedCanonicalRed) < 0.00001f);
+        assert(green == 0.0f);
+        assert(blue == 0.0f);
+        assert(resource.GetEmissiveLuminanceNits() == 2.0f);
     }
 
     void TestNeuralMaterialPartialRegistrationFailure()
@@ -295,6 +508,11 @@ int main()
     std::cout << "MaterialResourcesTest start\n";
 
     TestNeuralMaterialPartialRegistrationFailure();
+    TestMaterialCreateRejectsInvalidEmissiveWithoutSideEffects();
+    TestMaterialUpdateRejectsInvalidEmissiveWithoutSideEffects();
+    TestMaterialCreateCanonicalizesPositiveEmissive();
+    TestMaterialResourceLoadRejectsInvalidEmissiveWithoutSideEffects();
+    TestMaterialResourceLoadCanonicalizesPositiveEmissive();
 
     RenderResources manager;
 

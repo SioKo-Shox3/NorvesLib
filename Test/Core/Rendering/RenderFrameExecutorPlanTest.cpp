@@ -19,6 +19,9 @@
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include <cassert>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -31,6 +34,16 @@ namespace RHI = NorvesLib::RHI;
 
 namespace
 {
+    void ConfigureAssertOutput()
+    {
+#ifdef _MSC_VER
+        _set_error_mode(_OUT_TO_STDERR);
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+    }
+
     ViewportRenderPlan MakeViewportPlan(uint32_t viewId, uint32_t viewportId);
     ViewRenderPlan MakeViewPlan(uint32_t viewId, ViewType type);
 
@@ -178,6 +191,60 @@ namespace
             ExtractBraceBlock(diagnostics, "RenderGraphDebugDumpRequestClaim::~RenderGraphDebugDumpRequestClaim()");
         assert(claimDestructor.find("if (m_Owner && m_bRestoreRequest)") != std::string::npos);
         assert(claimDestructor.find("m_Owner->RestoreRenderGraphDebugDumpRequest();") != std::string::npos);
+    }
+
+    void AssertDeferredCompositePresentationSelectionContract()
+    {
+        const std::filesystem::path sourceRoot = FindSourceRoot();
+        const std::string coordinator =
+            ReadTextFile(sourceRoot / "Library/Core/Private/Rendering/RenderingCoordinator.cpp");
+        const std::string renderBlock = ExtractBraceBlock(coordinator,
+                                                          "void RenderingCoordinator::RenderFrame(");
+        const std::size_t selectionDeclaration = renderBlock.find(
+            "RHI::TexturePtr finalPresentationTexture;");
+        const std::size_t deferBlitEnable = renderBlock.find(
+            "m_PresentationPass.SetDeferBlit(true)");
+        const std::size_t executorExecute = renderBlock.find(
+            "frameExecutor.Execute(executionRequest)");
+        const std::size_t compositeBranch = renderBlock.find("if (executionResult.bComposite)",
+                                                              selectionDeclaration);
+        const std::size_t compositeOutput = renderBlock.find(
+            "m_RenderGraph.TryGetLastOutputTexture(RenderGraphResourceNames::CompositeColor",
+            compositeBranch);
+        const std::size_t presentationResultFallback = renderBlock.find(
+            "m_PresentationPass.GetLastResult().InputTexture",
+            compositeOutput);
+        const std::size_t sharedResourceFallback = renderBlock.find(
+            "RenderGraphResourceNames::PresentationColor",
+            presentationResultFallback);
+        const std::size_t finalBlitInput = renderBlock.find(
+            "BindTexture(0, finalPresentationTexture)",
+            sharedResourceFallback);
+        const std::size_t duplicateFinalBlitInput = renderBlock.find(
+            "BindTexture(0, finalPresentationTexture)",
+            finalBlitInput == std::string::npos ? 0 : finalBlitInput + 1);
+        const std::size_t blitCount = renderBlock.find(
+            "executionResult.PresentationBlitCount = 1",
+            finalBlitInput);
+
+        assert(selectionDeclaration != std::string::npos);
+        assert(deferBlitEnable != std::string::npos);
+        assert(executorExecute != std::string::npos);
+        assert(compositeBranch != std::string::npos);
+        assert(compositeOutput != std::string::npos);
+        assert(presentationResultFallback != std::string::npos);
+        assert(sharedResourceFallback != std::string::npos);
+        assert(finalBlitInput != std::string::npos);
+        assert(duplicateFinalBlitInput == std::string::npos);
+        assert(blitCount != std::string::npos);
+        assert(selectionDeclaration < compositeBranch);
+        assert(deferBlitEnable < executorExecute);
+        assert(executorExecute < selectionDeclaration);
+        assert(compositeBranch < compositeOutput);
+        assert(compositeOutput < presentationResultFallback);
+        assert(presentationResultFallback < sharedResourceFallback);
+        assert(sharedResourceFallback < finalBlitInput);
+        assert(finalBlitInput < blitCount);
     }
 
     class FakeTexture final : public RHI::ITexture
@@ -657,6 +724,57 @@ namespace
         RGTextureHandle m_Handle;
     };
 
+    class PublishedSceneAndPresentationViewPass final : public IViewPass, public IRenderGraphPass
+    {
+    public:
+        const char* GetName() const override { return "PublishedSceneAndPresentationViewPass"; }
+        bool Initialize(ViewRenderContext& context) override
+        {
+            (void)context;
+            m_bInitialized = true;
+            return true;
+        }
+        void Shutdown() override { m_bInitialized = false; }
+        void Setup(ViewRenderContext& context) override { (void)context; }
+        void Execute(ViewRenderContext& context) override { (void)context; }
+
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            RGTextureDesc sceneColorDesc = RGTextureDesc::RenderTarget(
+                64,
+                32,
+                RHI::Format::R16G16B16A16_FLOAT,
+                "ExecutorSceneColor");
+            sceneColorDesc.Usage = sceneColorDesc.Usage | RHI::ResourceUsage::TransferSrc;
+            m_SceneColorHandle = builder.WriteTexture(
+                RenderGraphResourceNames::SceneColor,
+                sceneColorDesc,
+                RHI::ResourceState::RenderTarget,
+                RHI::ResourceState::ShaderResource);
+            m_PresentationHandle = builder.WriteTexture(
+                RenderGraphResourceNames::ToneMappedColor,
+                RGTextureDesc::RenderTarget(
+                    64,
+                    32,
+                    RHI::Format::R8G8B8A8_UNORM,
+                    "ExecutorToneMappedColorWithScene"),
+                RHI::ResourceState::RenderTarget,
+                RHI::ResourceState::ShaderResource);
+            builder.ExportTexture(RenderGraphResourceNames::SceneColor, m_SceneColorHandle);
+            builder.ExportTexture(RenderGraphResourceNames::ToneMappedColor, m_PresentationHandle);
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+    private:
+        RGTextureHandle m_SceneColorHandle;
+        RGTextureHandle m_PresentationHandle;
+    };
+
     class EmptyGraphViewPass final : public IViewPass, public IRenderGraphPass
     {
     public:
@@ -896,6 +1014,7 @@ namespace
 
 int main()
 {
+    ConfigureAssertOutput();
     std::cout.setf(std::ios::unitbuf);
     std::cout << "RenderFrameExecutorPlanTest start\n";
 
@@ -1014,8 +1133,10 @@ int main()
         RHI::TexturePtr output = RHI::MakeShared<FakeTexture>("ViewFrameOutput");
         view.SetFrameOutputTexture(output);
         assert(view.GetFrameOutputTexture().get() == output.get());
+        assert(!view.GetFrameSceneColorTexture());
         view.ResetFrameOutput();
         assert(!view.GetFrameOutputTexture());
+        assert(!view.GetFrameSceneColorTexture());
         view.SetFrameOutputTexture(output);
         view.Shutdown();
         assert(!view.GetFrameOutputTexture());
@@ -1027,7 +1148,7 @@ int main()
         auto view = Container::MakeShared<View>();
         ViewSettings settings;
         assert(view->Initialize(settings));
-        view->AddPass(Container::MakeUnique<PublishedTextureViewPass>());
+        view->AddPass(Container::MakeUnique<PublishedSceneAndPresentationViewPass>());
         fixture.Views.push_back(view);
 
         RenderFrameExecutor executor;
@@ -1045,13 +1166,17 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
-        assert(result.bHasFrameCaptureSource);
-        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
-        assert(result.CaptureSource.Texture);
-        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
-        assert(result.CaptureSource.Texture.get() == fixture.GraphPresentationPass.GetLastResult().InputTexture.get());
-        assert(result.CaptureSource.CurrentState == RHI::ResourceState::ShaderResource);
-        assert(result.CaptureSource.RestoreState == RHI::ResourceState::ShaderResource);
+        assert(result.CaptureSources.PresentationColor.Texture);
+        assert(result.CaptureSources.PresentationColor.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSources.PresentationColor.Texture.get() != fixture.BackBuffer.get());
+        assert(result.CaptureSources.PresentationColor.Texture.get() == fixture.GraphPresentationPass.GetLastResult().InputTexture.get());
+        assert(result.CaptureSources.PresentationColor.CurrentState == RHI::ResourceState::ShaderResource);
+        assert(result.CaptureSources.PresentationColor.RestoreState == RHI::ResourceState::ShaderResource);
+        assert(result.CaptureSources.SceneColor.Texture);
+        assert(result.CaptureSources.SceneColor.Texture.get() == view->GetFrameSceneColorTexture().get());
+        assert(result.CaptureSources.SceneColor.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSources.SceneColor.CurrentState == RHI::ResourceState::ShaderResource);
+        assert(result.CaptureSources.SceneColor.RestoreState == RHI::ResourceState::ShaderResource);
         std::cout << "TestGraphPresentationHandledWithoutComposerSkipsFallbackCompose passed\n";
     }
 
@@ -1061,6 +1186,7 @@ int main()
         ViewSettings settings;
         assert(view->Initialize(settings));
         view->AddPass(Container::MakeUnique<EmptyGraphViewPass>());
+        fixture.SharedResources.Clear();
         fixture.Views.push_back(view);
 
         RenderFrameExecutor executor;
@@ -1068,7 +1194,7 @@ int main()
 
         assert(result.bRenderedAnyViewport);
         assert(result.RenderedViewportCount == 1);
-        assert(result.PresentationBlitCount == 1);
+        assert(result.PresentationBlitCount == 0);
         assert(!fixture.GraphPresentationPass.WasPresented());
         assert(!fixture.Context.bPresentationGraphPassHandled);
         assert(fixture.PendingFrameCommands.empty());
@@ -1076,13 +1202,10 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
-        assert(result.bHasFrameCaptureSource);
-        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
-        assert(result.CaptureSource.Texture.get() == fixture.FallbackTexture.get());
-        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
-        assert(result.CaptureSource.CurrentState == RHI::ResourceState::ShaderResource);
-        assert(result.CaptureSource.RestoreState == RHI::ResourceState::ShaderResource);
-        std::cout << "TestMissingGraphPresentationInputFallsBackToComposer passed\n";
+        assert(!result.CaptureSources.PresentationColor.Texture);
+        assert(result.CaptureSources.PresentationColor.FrameNumber == 0);
+        assert(!result.CaptureSources.SceneColor.Texture);
+        std::cout << "TestMissingGraphPresentationInputSkipsEmptyComposer passed\n";
     }
 
     {
@@ -1102,11 +1225,11 @@ int main()
         RenderFrameExecutionResult result = executor.Execute(fixture.MakeExecutionRequest());
 
         assert(result.RenderedViewportCount == 2);
-        assert(result.PresentationBlitCount == 2);
+        assert(result.PresentationBlitCount == 1);
         assert(fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
-        assert(!result.bHasFrameCaptureSource);
-        assert(!result.CaptureSource.Texture);
+        assert(!result.CaptureSources.PresentationColor.Texture);
+        assert(!result.CaptureSources.SceneColor.Texture);
         std::cout << "TestLaterSourceUnavailableFallbackClearsPreviousCaptureSource passed\n";
     }
 
@@ -1134,9 +1257,9 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
-        assert(result.bHasFrameCaptureSource);
-        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
-        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
+        assert(result.CaptureSources.PresentationColor.Texture);
+        assert(result.CaptureSources.PresentationColor.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSources.PresentationColor.Texture.get() != fixture.BackBuffer.get());
         std::cout << "TestMissingGraphPresentationResourceFallsBackToComposer passed\n";
     }
 
@@ -1164,8 +1287,8 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
-        assert(!result.bHasFrameCaptureSource);
-        assert(!result.CaptureSource.Texture);
+        assert(!result.CaptureSources.PresentationColor.Texture);
+        assert(!result.CaptureSources.SceneColor.Texture);
         std::cout << "TestMissingGraphPresentationInputWithoutComposerSkipsFallback passed\n";
     }
 
@@ -1176,8 +1299,8 @@ int main()
         ViewSettings settings;
         assert(firstSceneView->Initialize(settings));
         assert(secondSceneView->Initialize(settings));
-        firstSceneView->AddPass(Container::MakeUnique<PublishedTextureViewPass>());
-        secondSceneView->AddPass(Container::MakeUnique<PublishedTextureViewPass>());
+        firstSceneView->AddPass(Container::MakeUnique<PublishedSceneAndPresentationViewPass>());
+        secondSceneView->AddPass(Container::MakeUnique<PublishedSceneAndPresentationViewPass>());
         fixture.Views.push_back(firstSceneView);
         fixture.Views.push_back(secondSceneView);
         fixture.Packet.Views.push_back(MakeViewPlan(1, ViewType::Scene));
@@ -1197,11 +1320,15 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
         assert(!fixture.GraphCompositePass.GetLastResult().bPublishedComposite);
-        assert(result.bHasFrameCaptureSource);
-        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
-        assert(result.CaptureSource.Texture);
-        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
-        assert(result.CaptureSource.Texture.get() == fixture.GraphPresentationPass.GetLastResult().InputTexture.get());
+        assert(result.CaptureSources.PresentationColor.Texture);
+        assert(result.CaptureSources.PresentationColor.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSources.PresentationColor.Texture.get() != fixture.BackBuffer.get());
+        assert(result.CaptureSources.PresentationColor.Texture.get() == fixture.GraphPresentationPass.GetLastResult().InputTexture.get());
+        assert(result.CaptureSources.SceneColor.Texture.get() == firstSceneView->GetFrameSceneColorTexture().get());
+        assert(result.CaptureSources.SceneColor.Texture.get() != secondSceneView->GetFrameSceneColorTexture().get());
+        assert(result.CaptureSources.SceneColor.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSources.SceneColor.CurrentState == RHI::ResourceState::ShaderResource);
+        assert(result.CaptureSources.SceneColor.RestoreState == RHI::ResourceState::ShaderResource);
         std::cout << "TestTwoSceneViewsWithoutCanvasStayOnLegacyExecutorPath passed\n";
     }
 
@@ -1240,10 +1367,9 @@ int main()
         assert(!fixture.Context.PresentationGraphPass);
         assert(!fixture.Context.bPresentationGraphPassHandled);
         assert(!fixture.GraphCompositePass.GetLastResult().bPublishedComposite);
-        assert(result.bHasFrameCaptureSource);
-        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
-        assert(result.CaptureSource.Texture);
-        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
+        assert(result.CaptureSources.PresentationColor.Texture);
+        assert(result.CaptureSources.PresentationColor.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSources.PresentationColor.Texture.get() != fixture.BackBuffer.get());
         std::cout << "TestZeroViewportCanvasRendersDirectlyAndPresentsOnce passed\n";
     }
 
@@ -1275,10 +1401,9 @@ int main()
         assert(fixture.PendingFrameCommands.empty());
         assert(fixture.CommandList.HasRenderPass(fixture.GraphClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
-        assert(result.bHasFrameCaptureSource);
-        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
-        assert(result.CaptureSource.Texture);
-        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
+        assert(result.CaptureSources.PresentationColor.Texture);
+        assert(result.CaptureSources.PresentationColor.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSources.PresentationColor.Texture.get() != fixture.BackBuffer.get());
         assert(!fixture.Context.PresentationGraphPass);
         assert(!fixture.Context.bPresentationGraphPassHandled);
         std::cout << "TestOneViewportCanvasRendersStage1AndCompositePresentation passed\n";
@@ -1313,10 +1438,9 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
-        assert(result.bHasFrameCaptureSource);
-        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
-        assert(result.CaptureSource.Texture);
-        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
+        assert(result.CaptureSources.PresentationColor.Texture);
+        assert(result.CaptureSources.PresentationColor.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSources.PresentationColor.Texture.get() != fixture.BackBuffer.get());
         std::cout << "TestUnpresentedViewportDoesNotConsumeClearPresentation passed\n";
     }
 
@@ -1418,6 +1542,8 @@ int main()
 
     AssertDebugDumpCaptureSourceContract();
     std::cout << "TestDebugDumpCaptureSourceContract passed\n";
+    AssertDeferredCompositePresentationSelectionContract();
+    std::cout << "TestDeferredCompositePresentationSelectionContract passed\n";
 
     std::cout << "RenderFrameExecutorPlanTest passed\n";
     return 0;

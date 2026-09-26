@@ -77,6 +77,13 @@ namespace NorvesLib::Core::Rendering
         coordSettings.MaxDrawCallsPerFrame = settings.MaxDrawCallsPerFrame;
         coordSettings.bEnableValidation = settings.bEnableValidation;
         coordSettings.RenderGraphDumpOptions = settings.RenderGraphDumpOptions;
+        coordSettings.MainViewRenderer = settings.MainViewRenderer;
+        coordSettings.PathTracingSamplesPerFrame = settings.PathTracingSamplesPerFrame;
+        coordSettings.PathTracingTransport = settings.PathTracingTransport;
+        coordSettings.PathTracingPixelSamplingMode = settings.PathTracingPixelSamplingMode;
+        coordSettings.PathTracingSampleBatch = settings.PathTracingSampleBatch;
+        coordSettings.PathTracingDebug = settings.PathTracingDebug;
+        coordSettings.RasterDirectBrdfMode = settings.RasterDirectBrdfMode;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))
         {
@@ -290,6 +297,21 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetMainCamera(camera);
     }
 
+    void RenderWorld::SetSkyAtmosphere(const SkyAtmosphereParameters& parameters)
+    {
+        m_RenderingCoordinator.SetSkyAtmosphere(parameters);
+    }
+
+    void RenderWorld::SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)
+    {
+        m_RenderingCoordinator.SetDDGIVolumeParameters(parameters);
+    }
+
+    void RenderWorld::SetVolumetricFogParameters(const VolumetricFogParameters& parameters)
+    {
+        m_RenderingCoordinator.SetVolumetricFogParameters(parameters);
+    }
+
     void RenderWorld::EndFrame()
     {
         if (!m_bInitialized)
@@ -371,12 +393,18 @@ namespace NorvesLib::Core::Rendering
 
     FrameCaptureRequestResult RenderWorld::RequestFrameCapture()
     {
+        return RequestFrameCapture(FrameCaptureRequest{});
+    }
+
+    FrameCaptureRequestResult RenderWorld::RequestFrameCapture(
+        const FrameCaptureRequest& request)
+    {
         if (!m_bInitialized)
         {
             return {};
         }
 
-        return m_RenderingCoordinator.RequestFrameCapture();
+        return m_RenderingCoordinator.RequestFrameCapture(request);
     }
 
     bool RenderWorld::TryConsumeCapturedFrame(CapturedFrame& outFrame)
@@ -388,6 +416,27 @@ namespace NorvesLib::Core::Rendering
         }
 
         return m_RenderingCoordinator.TryConsumeCapturedFrame(outFrame);
+    }
+
+    bool RenderWorld::TryConsumeCompletedGPUTimings(
+        Container::VariableArray<RenderPassGPUTiming>& outTimings,
+        uint64_t& outDroppedFrameCount)
+    {
+        if (!m_bInitialized)
+        {
+            outTimings.clear();
+            outDroppedFrameCount = 0u;
+            return false;
+        }
+
+        return m_RenderingCoordinator.TryConsumeCompletedGPUTimings(
+            outTimings,
+            outDroppedFrameCount);
+    }
+
+    bool RenderWorld::SupportsGPUTimings() const
+    {
+        return m_bInitialized && m_RenderingCoordinator.SupportsGPUTimings();
     }
 
     void RenderWorld::Resize(uint32_t width, uint32_t height)

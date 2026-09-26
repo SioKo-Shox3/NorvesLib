@@ -1,6 +1,7 @@
 ﻿#include "Rendering/DirectionalShadowLightMatrices.h"
 
 #include "Rendering/ShadowMapPass.h"
+#include "Rendering/SkySunLight.h"
 #include "Math/MatrixUtils.h"
 #include "Math/MathTypes.h"
 #include "Math/VectorUtils.h"
@@ -193,6 +194,29 @@ namespace NorvesLib::Core::Rendering
         return nullptr;
     }
 
+    const LightProxy* SelectShadowedDirectionalLight(
+        const Container::VariableArray<LightProxy>* lightProxies)
+    {
+        if (lightProxies == nullptr)
+        {
+            return nullptr;
+        }
+
+        for (const LightProxy& proxy : *lightProxies)
+        {
+            if (IsSkySunLight(proxy) && IsEligibleDirectionalShadowLight(proxy))
+            {
+                return &proxy;
+            }
+        }
+
+        if (CountShaderVisibleDirectionalLights(lightProxies) != 1u)
+        {
+            return nullptr;
+        }
+        return SelectDirectionalShadowLight(lightProxies);
+    }
+
     uint32_t CountShaderVisibleDirectionalLights(
         const Container::VariableArray<LightProxy>* lightProxies)
     {
@@ -251,6 +275,46 @@ namespace NorvesLib::Core::Rendering
             settings.FarPlane);
 
         return result;
+    }
+
+    void CollectDirectionalShadowCasterBounds(
+        const Container::VariableArray<MeshProxy>* meshProxies,
+        const Container::VariableArray<SkinnedMeshProxy>* skinnedMeshProxies,
+        const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies,
+        Container::VariableArray<BoundingSphere>& outBounds)
+    {
+        outBounds.clear();
+        if (meshProxies != nullptr)
+        {
+            for (const MeshProxy& proxy : *meshProxies)
+            {
+                if (IsEligibleDirectionalShadowMeshCaster(proxy))
+                {
+                    outBounds.push_back(proxy.WorldBounds);
+                }
+            }
+        }
+        if (megaGeometryProxies != nullptr)
+        {
+            for (const MegaGeometryProxy& proxy : *megaGeometryProxies)
+            {
+                if (IsEligibleDirectionalShadowMegaGeometryCaster(proxy))
+                {
+                    outBounds.push_back(proxy.WorldBounds);
+                }
+            }
+        }
+        if (skinnedMeshProxies != nullptr)
+        {
+            for (const SkinnedMeshProxy& proxy : *skinnedMeshProxies)
+            {
+                BoundingSphere worldBounds;
+                if (BuildSkinnedCasterWorldBounds(proxy, worldBounds))
+                {
+                    outBounds.push_back(worldBounds);
+                }
+            }
+        }
     }
 
     DirectionalShadowMatrixSettings FitDirectionalShadowMatrixSettingsToCasters(

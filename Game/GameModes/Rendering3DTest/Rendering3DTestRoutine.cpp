@@ -1,7 +1,6 @@
 ﻿#include "Rendering3DTestRoutine.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Engine/Engine.h"
-#include "Rendering3DTestDebugDraw.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Component/BoardComponent.h"
@@ -629,7 +628,7 @@ namespace Game::GameModes
             lightSphereMatInfo.EmissiveColor[0] = 1.0f;
             lightSphereMatInfo.EmissiveColor[1] = 0.9f;
             lightSphereMatInfo.EmissiveColor[2] = 0.3f;
-            lightSphereMatInfo.EmissiveStrength = 8.0f;
+            lightSphereMatInfo.EmissiveLuminanceNits = 8.0f;
             lightSphereMatInfo.DebugName = "LightSphere";
             data.m_LightSphereMaterial = materials.Create(lightSphereMatInfo);
         }
@@ -1330,7 +1329,6 @@ namespace Game::GameModes
             }
         }
 
-        SubmitRendering3DTestDebugDraw();
         data.m_PickingController.DrawSelection();
 
         data.m_ElapsedTime += deltaTime;

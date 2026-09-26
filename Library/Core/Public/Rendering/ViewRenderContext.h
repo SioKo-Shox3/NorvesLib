@@ -6,11 +6,13 @@
 #include "Rendering/DebugDrawQueue.h"
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/RenderGraph/RenderGraphDump.h"
+#include "Rendering/RTGIContract.h"
 #include "FrameCommand.h"
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
 #include "SceneProxy.h"
 #include "Container/Containers.h"
+#include <cmath>
 #include <cstdint>
 
 // 前方宣言
@@ -33,6 +35,7 @@ namespace NorvesLib::Core::Rendering
     class RenderGraph;
     struct RenderGraphExecutionResult;
     struct ShadowMapPassSettings;
+    struct RayTracingSceneSnapshot;
 
     struct RenderGraphDebugCapture
     {
@@ -41,6 +44,396 @@ namespace NorvesLib::Core::Rendering
         Container::String Text;
         bool bCaptured = false;
         bool bAttempted = false;
+    };
+
+    struct DirectionalShadowShaderValues
+    {
+        float View[16] = {1.0f, 0.0f, 0.0f, 0.0f,
+                          0.0f, 1.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 1.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f, 1.0f};
+        float Projection[16] = {1.0f, 0.0f, 0.0f, 0.0f,
+                                0.0f, 1.0f, 0.0f, 0.0f,
+                                0.0f, 0.0f, 1.0f, 0.0f,
+                                0.0f, 0.0f, 0.0f, 1.0f};
+        uint64_t LightId = 0;
+        bool bEnabled = false;
+    };
+
+    inline constexpr uint32_t PhysicalLightingShadowCascadeCount = 4u;
+    inline constexpr uint32_t PhysicalLightingShadowSplitCount =
+        PhysicalLightingShadowCascadeCount + 1u;
+
+    struct CascadedDirectionalShadowShaderValues
+    {
+        float View[PhysicalLightingShadowCascadeCount][16] = {};
+        float Projection[PhysicalLightingShadowCascadeCount][16] = {};
+        float SplitDistances[PhysicalLightingShadowSplitCount] = {};
+        uint32_t CascadeCount = 0;
+        uint64_t LightId = 0;
+        bool bEnabled = false;
+    };
+
+    struct PhysicalLightingResources
+    {
+        uint64_t FrameNumber = 0;
+        uint32_t ViewId = UINT32_MAX;
+        uint32_t ViewportId = UINT32_MAX;
+        bool bActive = false;
+        bool bShadowPublished = false;
+        bool bLightingPublished = false;
+
+        RHI::TexturePtr ShadowMapTexture;
+        RHI::SamplerPtr ShadowSampler;
+        RHI::TexturePtr ShadowMapFallbackTexture;
+        RHI::SamplerPtr ShadowMapFallbackSampler;
+        RHI::TexturePtr RayTracingShadowVisibilityTexture;
+        bool bRayTracingShadowPublished = false;
+        DirectionalShadowShaderValues DirectionalShadow;
+        CascadedDirectionalShadowShaderValues CascadedShadow;
+
+        RHI::BufferPtr LightBuffer;
+        uint32_t LogicalLightCount = 0;
+        uint32_t LightBufferSizeBytes = 0;
+
+        RHI::TexturePtr EnvironmentRadianceTexture;
+        RHI::SamplerPtr EnvironmentRadianceSampler;
+        RHI::TexturePtr DiffuseIrradianceTexture;
+        RHI::SamplerPtr DiffuseIrradianceSampler;
+        RHI::TexturePtr PrefilteredSpecularTexture;
+        RHI::SamplerPtr PrefilteredSpecularSampler;
+        RHI::TexturePtr DfgLutTexture;
+        RHI::SamplerPtr DfgLutSampler;
+        uint32_t PrefilteredSpecularMipLevels = 0;
+        float IBLIntensity = 0.0f;
+        bool bIBLEnabled = false;
+
+        RHI::TexturePtr DDGIIrradianceAtlas;
+        RHI::TexturePtr DDGIDistanceAtlas;
+        uint32_t DDGIProbeCount = 0;
+        bool bDDGIAtlasPublished = false;
+
+        /** @brief R6 RTGIの能力・結果・current/history履歴の公開値。 */
+        RTGIResourcePublication RTGI;
+        RTGIIndirectLightingSource IndirectLightingSource =
+            RTGIIndirectLightingSource::Raster;
+        RTGIFallbackReason IndirectLightingFallbackReason =
+            RTGIFallbackReason::Disabled;
+
+        void Begin(uint64_t frameNumber, uint32_t viewId, uint32_t viewportId)
+        {
+            FrameNumber = 0;
+            ViewId = UINT32_MAX;
+            ViewportId = UINT32_MAX;
+            bActive = false;
+            bShadowPublished = false;
+            bLightingPublished = false;
+            ShadowMapTexture.reset();
+            ShadowSampler.reset();
+            ShadowMapFallbackTexture.reset();
+            ShadowMapFallbackSampler.reset();
+            RayTracingShadowVisibilityTexture.reset();
+            bRayTracingShadowPublished = false;
+            LightBuffer.reset();
+            LogicalLightCount = 0;
+            LightBufferSizeBytes = 0;
+            EnvironmentRadianceTexture.reset();
+            EnvironmentRadianceSampler.reset();
+            DiffuseIrradianceTexture.reset();
+            DiffuseIrradianceSampler.reset();
+            PrefilteredSpecularTexture.reset();
+            PrefilteredSpecularSampler.reset();
+            DfgLutTexture.reset();
+            DfgLutSampler.reset();
+            PrefilteredSpecularMipLevels = 0;
+            IBLIntensity = 0.0f;
+            bIBLEnabled = false;
+            DDGIIrradianceAtlas.reset();
+            DDGIDistanceAtlas.reset();
+            DDGIProbeCount = 0;
+            bDDGIAtlasPublished = false;
+            RTGI.Clear();
+            IndirectLightingSource = RTGIIndirectLightingSource::Raster;
+            IndirectLightingFallbackReason = RTGIFallbackReason::Disabled;
+            CascadedShadow = CascadedDirectionalShadowShaderValues{};
+            for (uint32_t index = 0; index < 16; ++index)
+            {
+                DirectionalShadow.View[index] = 0.0f;
+                DirectionalShadow.Projection[index] = 0.0f;
+            }
+            DirectionalShadow.View[0] = 1.0f;
+            DirectionalShadow.View[5] = 1.0f;
+            DirectionalShadow.View[10] = 1.0f;
+            DirectionalShadow.View[15] = 1.0f;
+            DirectionalShadow.Projection[0] = 1.0f;
+            DirectionalShadow.Projection[5] = 1.0f;
+            DirectionalShadow.Projection[10] = 1.0f;
+            DirectionalShadow.Projection[15] = 1.0f;
+            DirectionalShadow.LightId = 0;
+            DirectionalShadow.bEnabled = false;
+            FrameNumber = frameNumber;
+            ViewId = viewId;
+            ViewportId = viewportId;
+            bActive = true;
+        }
+
+        void PublishDirectionalShadow(const float* view,
+                                      const float* projection,
+                                      uint64_t lightId,
+                                      bool bEnabledValue,
+                                      const RHI::TexturePtr& shadowMap,
+                                      const RHI::SamplerPtr& shadowSampler)
+        {
+            if (view != nullptr && projection != nullptr)
+            {
+                for (uint32_t index = 0; index < 16; ++index)
+                {
+                    DirectionalShadow.View[index] = view[index];
+                    DirectionalShadow.Projection[index] = projection[index];
+                }
+            }
+            DirectionalShadow.LightId = lightId;
+            DirectionalShadow.bEnabled = bEnabledValue;
+            ShadowMapTexture = shadowMap;
+            ShadowSampler = shadowSampler;
+            bShadowPublished = true;
+        }
+
+        void PublishShadowMapFallback(const RHI::TexturePtr& texture,
+                                      const RHI::SamplerPtr& sampler)
+        {
+            ShadowMapFallbackTexture = texture;
+            ShadowMapFallbackSampler = sampler;
+        }
+
+        void PublishRayTracingShadow(const RHI::TexturePtr& visibilityTexture,
+                                     bool bEnabled)
+        {
+            RayTracingShadowVisibilityTexture = visibilityTexture;
+            bRayTracingShadowPublished = bEnabled && static_cast<bool>(visibilityTexture);
+        }
+
+        void PublishCascadedShadow(const float* views,
+                                   const float* projections,
+                                   const float* splitDistances,
+                                   uint32_t cascadeCount,
+                                   uint64_t lightId,
+                                   bool bEnabledValue)
+        {
+            CascadedShadow = CascadedDirectionalShadowShaderValues{};
+            if (views == nullptr || projections == nullptr || splitDistances == nullptr ||
+                cascadeCount != PhysicalLightingShadowCascadeCount)
+            {
+                return;
+            }
+
+            for (uint32_t cascadeIndex = 0;
+                 cascadeIndex < PhysicalLightingShadowCascadeCount;
+                 ++cascadeIndex)
+            {
+                for (uint32_t matrixIndex = 0; matrixIndex < 16; ++matrixIndex)
+                {
+                    if (!std::isfinite(views[cascadeIndex * 16u + matrixIndex]) ||
+                        !std::isfinite(projections[cascadeIndex * 16u + matrixIndex]))
+                    {
+                        return;
+                    }
+                }
+            }
+            for (uint32_t splitIndex = 0;
+                 splitIndex < PhysicalLightingShadowSplitCount;
+                 ++splitIndex)
+            {
+                if (!std::isfinite(splitDistances[splitIndex]) ||
+                    (splitIndex > 0u &&
+                     splitDistances[splitIndex] <= splitDistances[splitIndex - 1u]))
+                {
+                    return;
+                }
+            }
+
+            for (uint32_t cascadeIndex = 0;
+                 cascadeIndex < PhysicalLightingShadowCascadeCount;
+                 ++cascadeIndex)
+            {
+                for (uint32_t matrixIndex = 0; matrixIndex < 16; ++matrixIndex)
+                {
+                    CascadedShadow.View[cascadeIndex][matrixIndex] =
+                        views[cascadeIndex * 16u + matrixIndex];
+                    CascadedShadow.Projection[cascadeIndex][matrixIndex] =
+                        projections[cascadeIndex * 16u + matrixIndex];
+                }
+            }
+            for (uint32_t splitIndex = 0;
+                 splitIndex < PhysicalLightingShadowSplitCount;
+                 ++splitIndex)
+            {
+                CascadedShadow.SplitDistances[splitIndex] = splitDistances[splitIndex];
+            }
+            CascadedShadow.CascadeCount = cascadeCount;
+            CascadedShadow.LightId = lightId;
+            CascadedShadow.bEnabled = bEnabledValue &&
+                cascadeCount == PhysicalLightingShadowCascadeCount;
+        }
+
+        bool HasCompleteCascadedShadow() const
+        {
+            return bActive && bShadowPublished && ShadowMapTexture && ShadowSampler &&
+                   CascadedShadow.bEnabled &&
+                   CascadedShadow.CascadeCount == PhysicalLightingShadowCascadeCount;
+        }
+
+        void PublishLighting(const RHI::BufferPtr& lightBuffer,
+                             uint32_t logicalLightCount,
+                             uint32_t lightBufferSizeBytes,
+                             const RHI::TexturePtr& environmentRadiance,
+                             const RHI::SamplerPtr& environmentRadianceSampler,
+                             const RHI::TexturePtr& diffuseIrradiance,
+                             const RHI::SamplerPtr& diffuseIrradianceSampler,
+                             const RHI::TexturePtr& prefilteredSpecular,
+                             const RHI::SamplerPtr& prefilteredSpecularSampler,
+                             const RHI::TexturePtr& dfgLut,
+                             const RHI::SamplerPtr& dfgLutSampler,
+                             uint32_t prefilteredSpecularMipLevels,
+                             float iblIntensity,
+                             bool bIBLEnabledValue)
+        {
+            LightBuffer = lightBuffer;
+            LogicalLightCount = logicalLightCount;
+            LightBufferSizeBytes = lightBufferSizeBytes;
+            EnvironmentRadianceTexture = environmentRadiance;
+            EnvironmentRadianceSampler = environmentRadianceSampler;
+            DiffuseIrradianceTexture = diffuseIrradiance;
+            DiffuseIrradianceSampler = diffuseIrradianceSampler;
+            PrefilteredSpecularTexture = prefilteredSpecular;
+            PrefilteredSpecularSampler = prefilteredSpecularSampler;
+            DfgLutTexture = dfgLut;
+            DfgLutSampler = dfgLutSampler;
+            PrefilteredSpecularMipLevels = prefilteredSpecularMipLevels;
+            IBLIntensity = iblIntensity;
+            bIBLEnabled = bIBLEnabledValue;
+            bLightingPublished = true;
+            RefreshIndirectLightingSource();
+        }
+
+        void PublishDDGIAtlas(const RHI::TexturePtr& irradianceAtlas,
+                              const RHI::TexturePtr& distanceAtlas,
+                              uint32_t probeCount,
+                              bool bEnabledValue)
+        {
+            DDGIIrradianceAtlas.reset();
+            DDGIDistanceAtlas.reset();
+            DDGIProbeCount = 0u;
+            bDDGIAtlasPublished = false;
+            if (!bActive || !bLightingPublished || !bEnabledValue ||
+                !irradianceAtlas || !distanceAtlas || probeCount == 0u)
+            {
+                RefreshIndirectLightingSource();
+                return;
+            }
+
+            DDGIIrradianceAtlas = irradianceAtlas;
+            DDGIDistanceAtlas = distanceAtlas;
+            DDGIProbeCount = probeCount;
+            bDDGIAtlasPublished = true;
+            RefreshIndirectLightingSource();
+        }
+
+        void ConfigureRTGI(const RTGIRayQueryCapability& capability,
+                           bool bEnabledValue,
+                           bool bTLASAvailable,
+                           uint64_t sceneRevision,
+                           uint64_t lightRevision)
+        {
+            RTGI.Configure(capability,
+                           bEnabledValue,
+                           bTLASAvailable,
+                           FrameNumber,
+                           sceneRevision,
+                           lightRevision);
+            RefreshIndirectLightingSource();
+        }
+
+        void PublishRTGI(const RTGIResult& result,
+                         const RTGIHistoryResources& history)
+        {
+            RTGI.PublishResult(result, history);
+            RefreshIndirectLightingSource();
+        }
+
+        RTGIFallbackDecision ResolveIndirectLighting() const
+        {
+            return RTGI.Resolve(bDDGIAtlasPublished, bIBLEnabled);
+        }
+
+        bool Matches(uint64_t frameNumber, uint32_t viewId, uint32_t viewportId) const
+        {
+            return bActive && FrameNumber == frameNumber && ViewId == viewId &&
+                   ViewportId == viewportId;
+        }
+
+        void Invalidate()
+        {
+            *this = PhysicalLightingResources{};
+        }
+
+    private:
+        void RefreshIndirectLightingSource()
+        {
+            const RTGIFallbackDecision decision = ResolveIndirectLighting();
+            IndirectLightingSource = decision.Source;
+            IndirectLightingFallbackReason = decision.Reason;
+        }
+    };
+
+    struct SkyAtmosphereRenderResources
+    {
+        SkyAtmosphereParameters Parameters;
+        RHI::TexturePtr TransmittanceTexture;
+        RHI::TexturePtr RadianceTexture;
+        RHI::TexturePtr SunDiskTexture;
+        RHI::SamplerPtr Sampler;
+        float PreExposure = 1.0f;
+        float SunDiskPreExposedLuminance = 0.0f;
+        bool bSnapshotEnabled = false;
+        bool bValid = false;
+        bool bSunDiskSaturated = false;
+
+        void Reset()
+        {
+            Parameters = SkyAtmosphereParameters{};
+            TransmittanceTexture.reset();
+            RadianceTexture.reset();
+            SunDiskTexture.reset();
+            Sampler.reset();
+            PreExposure = 1.0f;
+            SunDiskPreExposedLuminance = 0.0f;
+            bSnapshotEnabled = false;
+            bValid = false;
+            bSunDiskSaturated = false;
+        }
+
+        void Publish(const SkyAtmosphereParameters& parameters,
+                     const RHI::TexturePtr& transmittance,
+                     const RHI::TexturePtr& radiance,
+                     const RHI::TexturePtr& sunDisk,
+                     const RHI::SamplerPtr& sampler,
+                     float preExposureValue,
+                     float sunDiskValue,
+                     bool bSunDiskSaturatedValue,
+                     bool bValidValue)
+        {
+            Parameters = parameters;
+            TransmittanceTexture = transmittance;
+            RadianceTexture = radiance;
+            SunDiskTexture = sunDisk;
+            Sampler = sampler;
+            PreExposure = preExposureValue;
+            SunDiskPreExposedLuminance = sunDiskValue;
+            bSnapshotEnabled = parameters.bEnabled;
+            bValid = bValidValue;
+            bSunDiskSaturated = bSunDiskSaturatedValue;
+        }
     };
 
     /**
@@ -58,6 +451,9 @@ namespace NorvesLib::Core::Rendering
      */
     struct ViewRenderContext
     {
+        PhysicalLightingResources PhysicalLighting;
+        SkyAtmosphereRenderResources SkyAtmosphere;
+
         // ========================================
         // RHIリソース
         // ========================================
@@ -95,6 +491,28 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief メインカメラ情報（ビュー/プロジェクション行列計算用） */
         const CameraProxy *MainCamera = nullptr;
+
+        /** @brief 前フレームのメインカメラ履歴（FramePacket所有、velocity用） */
+        const CameraProxy *PreviousMainCamera = nullptr;
+
+        /** @brief FramePacketが所有する空パラメータのスナップショット（未接続時は無効） */
+        const SceneProxy *SnapshotScene = nullptr;
+
+        /** @brief FramePacketが所有するRT scene snapshot */
+        const RayTracingSceneSnapshot* SnapshotRayTracingScene = nullptr;
+        float SnapshotDeltaTime = 0.0f;
+
+        /** @brief FramePacketから値コピーしたscene/light revision。 */
+        uint64_t SceneRevision = 0;
+        uint64_t LightRevision = 0;
+
+        /** @brief FramePacketのRTGI有効化とTLAS完全性。 */
+        bool bRTGIEnabled = true;
+        bool bRTGITLASAvailable = false;
+        RTGIRayQueryCapability RTGICapability;
+
+        /** @brief SnapshotScene未接続時に使用する空パラメータ値 */
+        SkyAtmosphereParameters SkyAtmosphereSnapshot;
 
         /** @brief 現在描画中のViewportスナップショット（新描画フロー用） */
         const ViewportRenderPlan *CurrentViewport = nullptr;
@@ -177,6 +595,15 @@ namespace NorvesLib::Core::Rendering
         const CameraProxy *GetActiveCamera() const
         {
             return CurrentCamera ? CurrentCamera : MainCamera;
+        }
+
+        const CameraProxy *GetPreviousCamera() const
+        {
+            const CameraProxy *activeCamera = GetActiveCamera();
+            return activeCamera && PreviousMainCamera &&
+                           activeCamera->CameraId == PreviousMainCamera->CameraId
+                       ? PreviousMainCamera
+                       : nullptr;
         }
 
         DrawCommandView GetActiveDrawCommands() const
@@ -417,6 +844,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 現在のフレームインデックス（ダブル/トリプルバッファリング用） */
         uint32_t FrameIndex = 0;
+
+        /** @brief FramePacketの単調なフレーム番号 */
+        uint64_t FrameNumber = 0;
 
         /** @brief スクリーン幅 */
         uint32_t ScreenWidth = 0;

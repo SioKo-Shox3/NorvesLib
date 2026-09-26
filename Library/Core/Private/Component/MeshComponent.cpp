@@ -180,6 +180,11 @@ namespace NorvesLib::Core::Component
         UpdateWorldTransform();
     }
 
+    void MeshComponent::CommitRenderTransformHistory()
+    {
+        m_PreviousWorldTransform = m_WorldTransform;
+    }
+
     // ========================================
     // SceneProxy生成
     // ========================================

@@ -1,0 +1,168 @@
+﻿#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// 入力と出力はテンポラル結果の放射輝度をそのまま保持し、ここでは露出変換を行わない。
+layout(set = 0, binding = 0) uniform sampler2D temporalRadiance;
+layout(set = 0, binding = 1) uniform sampler2D gbufferDepth;
+layout(set = 0, binding = 2) uniform sampler2D gbufferNormal;
+layout(set = 0, binding = 3) uniform sampler2D gbufferMaterial;
+layout(set = 0, binding = 4) uniform sampler2D historyConfidence;
+layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D denoisedRadiance;
+layout(set = 0, binding = 6) uniform sampler2D historyAge;
+
+const float DEPTH_REJECTION_THRESHOLD = 0.02;
+const float NORMAL_REJECTION_DOT = 0.9;
+const float MATERIAL_REJECTION_THRESHOLD = 0.05;
+// 中心の輝度が同じ面の近傍の最大のこの倍率を超えるとき、中心を外れ値として倍率の上限まで縮める。
+// 1試料/frameの推定が光源付近の明るい面へまれに当たる試料を、履歴と3x3で均し切れないため。
+const float FIREFLY_NEIGHBOR_RATIO = 4.0;
+// 中心の履歴の年齢がこの値（視点・光源・シーンが動いているときの年齢の上限）以下なら近傍を従来どおり
+// 重み付けする。静止が続いて年齢が伸びた画素では、時間方向の累積が雑音を減らすため、近傍の重みを
+// FULL_SPATIAL_AGE/年齢へ下げ、影の縁などの空間方向のぼけを減らす。
+const float FULL_SPATIAL_AGE = 8.0;
+
+float RadianceLuminance(vec3 value)
+{
+    return dot(value, vec3(0.2126, 0.7152, 0.0722));
+}
+
+bool IsFiniteScalar(float value)
+{
+    return !isnan(value) && !isinf(value);
+}
+
+bool IsFiniteVector(vec3 value)
+{
+    return all(equal(value, value)) &&
+           !any(isinf(value));
+}
+
+vec3 SanitizeRadiance(vec3 value)
+{
+    if (!IsFiniteVector(value))
+    {
+        return vec3(0.0);
+    }
+    return clamp(value, vec3(0.0), vec3(65504.0));
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 imageSize = textureSize(temporalRadiance, 0);
+    if (any(greaterThanEqual(pixel, imageSize)))
+    {
+        return;
+    }
+
+    float centerDepth = texelFetch(gbufferDepth, pixel, 0).r;
+    vec3 centerNormal = texelFetch(gbufferNormal, pixel, 0).xyz;
+    vec3 centerMaterial = texelFetch(gbufferMaterial, pixel, 0).rgb;
+    float centerConfidence = texelFetch(historyConfidence, pixel, 0).r;
+    float centerNormalLengthSquared = dot(centerNormal, centerNormal);
+    bool bCenterValid = IsFiniteScalar(centerDepth) &&
+        centerDepth < 0.999999 &&
+        IsFiniteVector(centerNormal) &&
+        IsFiniteScalar(centerNormalLengthSquared) &&
+        centerNormalLengthSquared > 1.0e-8 &&
+        IsFiniteScalar(centerConfidence) &&
+        centerConfidence > 0.0 &&
+        IsFiniteVector(centerMaterial);
+    if (!bCenterValid)
+    {
+        imageStore(denoisedRadiance, pixel, vec4(0.0));
+        return;
+    }
+
+    centerNormal *= inversesqrt(centerNormalLengthSquared);
+    float centerAge = texelFetch(historyAge, pixel, 0).r;
+    float neighborScale = IsFiniteScalar(centerAge) && centerAge > FULL_SPATIAL_AGE
+        ? FULL_SPATIAL_AGE / centerAge
+        : 1.0;
+    vec3 accumulatedRadiance = vec3(0.0);
+    float accumulatedWeight = 0.0;
+    vec3 centerRadiance = vec3(0.0);
+    float centerWeight = 0.0;
+    float neighborMaximumLuminance = -1.0;
+    for (int offsetY = -1; offsetY <= 1; ++offsetY)
+    {
+        for (int offsetX = -1; offsetX <= 1; ++offsetX)
+        {
+            ivec2 samplePixel = clamp(pixel + ivec2(offsetX, offsetY),
+                                       ivec2(0),
+                                       imageSize - ivec2(1));
+            float sampleDepth = texelFetch(gbufferDepth, samplePixel, 0).r;
+            vec3 sampleNormal = texelFetch(gbufferNormal, samplePixel, 0).xyz;
+            vec3 sampleMaterial = texelFetch(gbufferMaterial, samplePixel, 0).rgb;
+            float sampleConfidence = texelFetch(historyConfidence, samplePixel, 0).r;
+            float sampleNormalLengthSquared = dot(sampleNormal, sampleNormal);
+            if (!IsFiniteScalar(sampleDepth) || sampleDepth >= 0.999999 ||
+                !IsFiniteVector(sampleNormal) ||
+                !IsFiniteScalar(sampleNormalLengthSquared) ||
+                sampleNormalLengthSquared <= 1.0e-8 ||
+                !IsFiniteScalar(sampleConfidence) || sampleConfidence <= 0.0 ||
+                !IsFiniteVector(sampleMaterial))
+            {
+                continue;
+            }
+
+            sampleNormal *= inversesqrt(sampleNormalLengthSquared);
+            sampleConfidence = clamp(sampleConfidence, 0.0, 1.0);
+            float depthDifference = abs(centerDepth - sampleDepth);
+            float depthThreshold = max(DEPTH_REJECTION_THRESHOLD,
+                                       0.05 * max(centerDepth, sampleDepth));
+            float normalDot = dot(centerNormal, sampleNormal);
+            vec3 materialDelta = abs(centerMaterial - sampleMaterial);
+            float materialDifference = max(materialDelta.x,
+                                           max(materialDelta.y, materialDelta.z));
+            if (!IsFiniteScalar(depthDifference) || depthDifference > depthThreshold ||
+                !IsFiniteScalar(normalDot) || normalDot < NORMAL_REJECTION_DOT ||
+                !IsFiniteScalar(materialDifference) ||
+                materialDifference > MATERIAL_REJECTION_THRESHOLD)
+            {
+                continue;
+            }
+
+            vec3 sampleRadiance = SanitizeRadiance(
+                texelFetch(temporalRadiance, samplePixel, 0).rgb);
+            float spatialWeight = (offsetX == 0 ? 2.0 : 1.0) *
+                                  (offsetY == 0 ? 2.0 : 1.0);
+            float weight = spatialWeight *
+                           exp(-depthDifference / DEPTH_REJECTION_THRESHOLD) *
+                           pow(max(normalDot, 0.0), 8.0) *
+                           exp(-materialDifference / MATERIAL_REJECTION_THRESHOLD) *
+                           sampleConfidence;
+            if (!IsFiniteScalar(weight) || weight <= 0.0)
+            {
+                continue;
+            }
+            if (offsetX == 0 && offsetY == 0)
+            {
+                centerRadiance = sampleRadiance;
+                centerWeight = weight;
+                continue;
+            }
+            neighborMaximumLuminance = max(neighborMaximumLuminance,
+                                           RadianceLuminance(sampleRadiance));
+            accumulatedRadiance += sampleRadiance * (weight * neighborScale);
+            accumulatedWeight += weight * neighborScale;
+        }
+    }
+
+    // 同じ面の近傍があるときだけ、中心の外れ値を近傍の最大の倍率までに縮める。
+    float centerLuminance = RadianceLuminance(centerRadiance);
+    if (neighborMaximumLuminance >= 0.0 &&
+        centerLuminance > FIREFLY_NEIGHBOR_RATIO * neighborMaximumLuminance)
+    {
+        centerRadiance *= FIREFLY_NEIGHBOR_RATIO * neighborMaximumLuminance /
+                          max(centerLuminance, 1.0e-12);
+    }
+    accumulatedRadiance += centerRadiance * centerWeight;
+    accumulatedWeight += centerWeight;
+
+    vec3 result = accumulatedWeight > 0.0
+        ? accumulatedRadiance / accumulatedWeight
+        : SanitizeRadiance(texelFetch(temporalRadiance, pixel, 0).rgb);
+    imageStore(denoisedRadiance, pixel, vec4(SanitizeRadiance(result), 1.0));
+}

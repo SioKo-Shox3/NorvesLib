@@ -238,6 +238,9 @@ namespace NorvesLib::Core::Rendering
          */
         RHI::TexturePtr GetFrameOutputTexture() const { return m_FrameOutputTexture; }
 
+        /** @brief RenderThread-only executor seam for the exported SceneColor texture. */
+        const RHI::TexturePtr& GetFrameSceneColorTexture() const;
+
         // ========================================
         // 設定
         // ========================================
@@ -284,6 +287,7 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::IRenderTarget> m_OutputRenderTarget;
         Container::TSharedPtr<RHI::ITexture2D> m_OutputTexture;
         RHI::TexturePtr m_FrameOutputTexture;
+        RHI::TexturePtr m_FrameSceneColorTexture;
 
         // 設定
         ViewType m_ViewType = ViewType::Scene;

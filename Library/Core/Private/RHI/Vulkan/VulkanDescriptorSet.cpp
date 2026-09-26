@@ -3,10 +3,34 @@
 #include "VulkanBuffer.h"
 #include "VulkanTexture.h"
 #include "VulkanSampler.h"
+#include "VulkanAccelerationStructure.h"
 #include <stdexcept>
 
 namespace NorvesLib::RHI::Vulkan
 {
+
+    namespace
+    {
+        vk::ImageLayout ResolveDescriptorImageLayout(
+            vk::DescriptorType descriptorType,
+            vk::ImageLayout trackedLayout)
+        {
+            switch (descriptorType)
+            {
+            case vk::DescriptorType::eStorageImage:
+                return vk::ImageLayout::eGeneral;
+            case vk::DescriptorType::eSampledImage:
+            case vk::DescriptorType::eCombinedImageSampler:
+                return trackedLayout == vk::ImageLayout::eGeneral
+                           ? vk::ImageLayout::eGeneral
+                           : vk::ImageLayout::eShaderReadOnlyOptimal;
+            case vk::DescriptorType::eSampler:
+                return vk::ImageLayout::eUndefined;
+            default:
+                return trackedLayout;
+            }
+        }
+    } // namespace
 
     //===========================================================================================
     // VulkanDescriptorSetLayoutの実装
@@ -17,8 +41,7 @@ namespace NorvesLib::RHI::Vulkan
         const NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc> &bindings)
         : m_device(device), m_bindings(bindings)
     {
-        NorvesLib::Core::Container::VariableArray<vk::DescriptorSetLayoutBinding> layoutBindings;
-        layoutBindings.reserve(bindings.size());
+        m_vkBindings.reserve(bindings.size());
 
         for (const auto &binding : bindings)
         {
@@ -29,12 +52,12 @@ namespace NorvesLib::RHI::Vulkan
             layoutBinding.stageFlags = ToVkShaderStageFlags(binding.stages);
             layoutBinding.pImmutableSamplers = nullptr;
 
-            layoutBindings.push_back(layoutBinding);
+            m_vkBindings.push_back(layoutBinding);
         }
 
         vk::DescriptorSetLayoutCreateInfo layoutInfo;
-        layoutInfo.bindingCount = static_cast<uint32_t>(layoutBindings.size());
-        layoutInfo.pBindings = layoutBindings.data();
+        layoutInfo.bindingCount = static_cast<uint32_t>(m_vkBindings.size());
+        layoutInfo.pBindings = m_vkBindings.data();
 
         auto result = m_device->GetVkDevice().createDescriptorSetLayout(layoutInfo);
         if (result.result != vk::Result::eSuccess)
@@ -73,6 +96,8 @@ namespace NorvesLib::RHI::Vulkan
             return vk::DescriptorType::eStorageTexelBuffer;
         case DescriptorType::CombinedImageSampler:
             return vk::DescriptorType::eCombinedImageSampler;
+        case DescriptorType::AccelerationStructure:
+            return vk::DescriptorType::eAccelerationStructureKHR;
         default:
             throw std::runtime_error("未サポートのディスクリプタタイプです");
         }
@@ -80,7 +105,7 @@ namespace NorvesLib::RHI::Vulkan
 
     vk::ShaderStageFlags VulkanDescriptorSetLayout::ToVkShaderStageFlags(ShaderStage stage) const
     {
-        vk::ShaderStageFlags flags;
+        vk::ShaderStageFlags flags{};
 
         if ((stage & ShaderStage::Vertex) != ShaderStage::None)
         {
@@ -112,6 +137,36 @@ namespace NorvesLib::RHI::Vulkan
             flags |= vk::ShaderStageFlagBits::eTessellationEvaluation;
         }
 
+        if ((stage & ShaderStage::RayGen) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eRaygenKHR;
+        }
+
+        if ((stage & ShaderStage::Miss) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eMissKHR;
+        }
+
+        if ((stage & ShaderStage::ClosestHit) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eClosestHitKHR;
+        }
+
+        if ((stage & ShaderStage::AnyHit) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eAnyHitKHR;
+        }
+
+        if ((stage & ShaderStage::Intersection) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eIntersectionKHR;
+        }
+
+        if ((stage & ShaderStage::Callable) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eCallableKHR;
+        }
+
         return flags;
     }
 
@@ -122,15 +177,78 @@ namespace NorvesLib::RHI::Vulkan
     VulkanDescriptorPool::VulkanDescriptorPool(TSharedPtr<VulkanDevice> device, uint32_t maxSets)
         : m_device(device)
     {
-        Core::Container::FixedArray<vk::DescriptorPoolSize, 6> poolSizes = {{{vk::DescriptorType::eUniformBuffer, maxSets * 4},
+        CreatePool(maxSets, nullptr);
+    }
+
+    VulkanDescriptorPool::VulkanDescriptorPool(
+        TSharedPtr<VulkanDevice> device,
+        uint32_t maxSets,
+        const VariableArray<DescriptorBindingDesc> &bindings)
+        : m_device(device)
+    {
+        CreatePool(maxSets, &bindings);
+    }
+
+    void VulkanDescriptorPool::CreatePool(
+        uint32_t maxSets,
+        const VariableArray<DescriptorBindingDesc> *bindings)
+    {
+        Core::Container::FixedArray<vk::DescriptorPoolSize, 7> poolSizes = {{{vk::DescriptorType::eUniformBuffer, maxSets * 4},
                                                                              {vk::DescriptorType::eSampledImage, maxSets * 8},
                                                                              {vk::DescriptorType::eSampler, maxSets * 4},
                                                                              {vk::DescriptorType::eStorageBuffer, maxSets * 2},
                                                                              {vk::DescriptorType::eStorageImage, maxSets * 2},
-                                                                             {vk::DescriptorType::eCombinedImageSampler, maxSets * 4}}};
+                                                                             {vk::DescriptorType::eCombinedImageSampler, maxSets * 4},
+                                                                             {vk::DescriptorType::eAccelerationStructureKHR, maxSets * 2}}};
+
+        bool bHasArrayBinding = false;
+        if (bindings != nullptr)
+        {
+            for (const DescriptorBindingDesc &binding : *bindings)
+            {
+                bHasArrayBinding = bHasArrayBinding || binding.count > 1u;
+            }
+        }
+
+        if (bHasArrayBinding)
+        {
+            // 配列を含むlayoutだけ、型ごとの要素数合計がmaxSets分に収まるよう既定容量から広げる。
+            // 配列を含まないlayoutは従来の既定容量のままにする。
+            for (vk::DescriptorPoolSize &poolSize : poolSizes)
+            {
+                uint64_t required = 0u;
+                for (const DescriptorBindingDesc &binding : *bindings)
+                {
+                    vk::DescriptorType bindingType;
+                    switch (binding.type)
+                    {
+                    case DescriptorType::UniformBuffer: bindingType = vk::DescriptorType::eUniformBuffer; break;
+                    case DescriptorType::SampledImage: bindingType = vk::DescriptorType::eSampledImage; break;
+                    case DescriptorType::Sampler: bindingType = vk::DescriptorType::eSampler; break;
+                    case DescriptorType::StorageBuffer: bindingType = vk::DescriptorType::eStorageBuffer; break;
+                    case DescriptorType::StorageImage: bindingType = vk::DescriptorType::eStorageImage; break;
+                    case DescriptorType::CombinedImageSampler: bindingType = vk::DescriptorType::eCombinedImageSampler; break;
+                    case DescriptorType::AccelerationStructure: bindingType = vk::DescriptorType::eAccelerationStructureKHR; break;
+                    default: continue;
+                    }
+                    if (bindingType == poolSize.type)
+                    {
+                        required += static_cast<uint64_t>(binding.count) * maxSets;
+                    }
+                }
+                if (required > poolSize.descriptorCount && required <= UINT32_MAX)
+                {
+                    poolSize.descriptorCount = static_cast<uint32_t>(required);
+                }
+            }
+        }
 
         vk::DescriptorPoolCreateInfo poolInfo;
         poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+        if (!m_device->GetCapabilities().RayTracing.bAccelerationStructure)
+        {
+            --poolInfo.poolSizeCount;
+        }
         poolInfo.pPoolSizes = poolSizes.data();
         poolInfo.maxSets = maxSets;
         poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
@@ -221,6 +339,38 @@ namespace NorvesLib::RHI::Vulkan
         m_bNeedsUpdate = true;
     }
 
+    bool VulkanDescriptorSet::BindAccelerationStructure(
+        uint32_t binding,
+        AccelerationStructurePtr accelerationStructure)
+    {
+        bool expectsAccelerationStructure = false;
+        for (const DescriptorBinding& bindingDesc : m_desc.bindings)
+        {
+            if (bindingDesc.binding == binding)
+            {
+                expectsAccelerationStructure = bindingDesc.type == ResourceBindType::AccelerationStructure;
+                break;
+            }
+        }
+
+        auto vkAccelerationStructure = DynamicPointerCast<VulkanAccelerationStructure>(accelerationStructure);
+        if (!expectsAccelerationStructure || !m_device || !vkAccelerationStructure ||
+            vkAccelerationStructure->m_device.get() != m_device.get() ||
+            vkAccelerationStructure->GetDesc().type != AccelerationStructureType::TopLevel ||
+            !vkAccelerationStructure->GetVkAccelerationStructure())
+        {
+            return false;
+        }
+
+        BindingInfo info;
+        info.type = BindingInfo::ResourceType::AccelerationStructure;
+        info.accelerationStructure = accelerationStructure;
+
+        m_bindings[binding] = info;
+        m_bNeedsUpdate = true;
+        return true;
+    }
+
     void VulkanDescriptorSet::BindTexture(uint32_t binding, TexturePtr texture)
     {
         // CombinedImageSamplerの場合、既存のサンプラーを保持してマージする
@@ -238,6 +388,29 @@ namespace NorvesLib::RHI::Vulkan
             m_bindings[binding] = info;
         }
         m_bNeedsUpdate = true;
+    }
+
+    bool VulkanDescriptorSet::BindTextureArrayElement(uint32_t binding,
+                                                      uint32_t arrayElement,
+                                                      TexturePtr texture,
+                                                      SamplerPtr sampler)
+    {
+        const uint32_t count = GetDescriptorCount(binding);
+        if (count < 2u || arrayElement >= count ||
+            GetVkDescriptorType(binding) != vk::DescriptorType::eCombinedImageSampler ||
+            !DynamicPointerCast<VulkanTexture>(texture) ||
+            !DynamicPointerCast<VulkanSampler>(sampler))
+        {
+            return false;
+        }
+
+        BindingInfo info;
+        info.type = BindingInfo::ResourceType::Texture;
+        info.texture = texture;
+        info.sampler = sampler;
+        m_arrayElementBindings[(static_cast<uint64_t>(binding) << 32u) | arrayElement] = info;
+        m_bNeedsUpdate = true;
+        return true;
     }
 
     void VulkanDescriptorSet::BindStorageTexture(uint32_t binding, TexturePtr texture)
@@ -289,9 +462,15 @@ namespace NorvesLib::RHI::Vulkan
         NorvesLib::Core::Container::VariableArray<vk::WriteDescriptorSet> descriptorWrites;
         NorvesLib::Core::Container::VariableArray<vk::DescriptorBufferInfo> bufferInfos;
         NorvesLib::Core::Container::VariableArray<vk::DescriptorImageInfo> imageInfos;
+        NorvesLib::Core::Container::VariableArray<vk::WriteDescriptorSetAccelerationStructureKHR>
+            accelerationStructureInfos;
+        NorvesLib::Core::Container::VariableArray<vk::AccelerationStructureKHR> accelerationStructureHandles;
 
+        // pImageInfo等は要素アドレスを保持するため、配列要素分も含めて先に容量を確保する。
         bufferInfos.reserve(m_bindings.size());
-        imageInfos.reserve(m_bindings.size());
+        imageInfos.reserve(m_bindings.size() + m_arrayElementBindings.size());
+        accelerationStructureInfos.reserve(m_bindings.size());
+        accelerationStructureHandles.reserve(m_bindings.size());
 
         for (const auto &[binding, info] : m_bindings)
         {
@@ -327,7 +506,9 @@ namespace NorvesLib::RHI::Vulkan
                 }
 
                 vk::DescriptorImageInfo imageInfo;
-                imageInfo.imageLayout = vkTexture->GetVkImageLayout();
+                imageInfo.imageLayout = ResolveDescriptorImageLayout(
+                    writeDesc.descriptorType,
+                    vkTexture->GetVkImageLayout());
 
                 // per-mip ImageView指定がある場合はそちらを使用
                 if (info.mipLevel >= 0)
@@ -376,7 +557,53 @@ namespace NorvesLib::RHI::Vulkan
                 imageInfos.push_back(imageInfo);
                 writeDesc.pImageInfo = &imageInfos.back();
             }
+            else if (info.type == BindingInfo::ResourceType::AccelerationStructure)
+            {
+                auto vkAccelerationStructure =
+                    DynamicPointerCast<VulkanAccelerationStructure>(info.accelerationStructure);
+                if (!vkAccelerationStructure || !vkAccelerationStructure->GetVkAccelerationStructure())
+                {
+                    throw std::runtime_error("無効な加速構造です");
+                }
 
+                accelerationStructureHandles.push_back(
+                    vkAccelerationStructure->GetVkAccelerationStructure());
+                vk::WriteDescriptorSetAccelerationStructureKHR accelerationStructureInfo{};
+                accelerationStructureInfo.accelerationStructureCount = 1;
+                accelerationStructureInfo.pAccelerationStructures = &accelerationStructureHandles.back();
+                accelerationStructureInfos.push_back(accelerationStructureInfo);
+                writeDesc.pNext = &accelerationStructureInfos.back();
+            }
+
+            descriptorWrites.push_back(writeDesc);
+        }
+
+        for (const auto &[key, info] : m_arrayElementBindings)
+        {
+            const uint32_t binding = static_cast<uint32_t>(key >> 32u);
+            const uint32_t arrayElement = static_cast<uint32_t>(key & 0xFFFFFFFFu);
+            auto vkTexture = DynamicPointerCast<VulkanTexture>(info.texture);
+            auto vkSampler = DynamicPointerCast<VulkanSampler>(info.sampler);
+            if (!vkTexture || !vkSampler)
+            {
+                throw std::runtime_error("無効な配列テクスチャ要素です");
+            }
+
+            vk::WriteDescriptorSet writeDesc;
+            writeDesc.dstSet = m_descriptorSet;
+            writeDesc.dstBinding = binding;
+            writeDesc.dstArrayElement = arrayElement;
+            writeDesc.descriptorCount = 1;
+            writeDesc.descriptorType = GetVkDescriptorType(binding);
+
+            vk::DescriptorImageInfo imageInfo;
+            imageInfo.imageLayout = ResolveDescriptorImageLayout(
+                writeDesc.descriptorType,
+                vkTexture->GetVkImageLayout());
+            imageInfo.imageView = vkTexture->GetVkImageView();
+            imageInfo.sampler = vkSampler->GetVkSampler();
+            imageInfos.push_back(imageInfo);
+            writeDesc.pImageInfo = &imageInfos.back();
             descriptorWrites.push_back(writeDesc);
         }
 
@@ -431,6 +658,18 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         throw std::runtime_error("指定されたバインディングに対するディスクリプタタイプが見つかりません");
+    }
+
+    uint32_t VulkanDescriptorSet::GetDescriptorCount(uint32_t binding) const
+    {
+        for (const auto &bindingDesc : m_layout->GetBindings())
+        {
+            if (bindingDesc.binding == binding)
+            {
+                return bindingDesc.count;
+            }
+        }
+        return 0u;
     }
 
 } // namespace NorvesLib::RHI::Vulkan

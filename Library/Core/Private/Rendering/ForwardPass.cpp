@@ -2,6 +2,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -20,20 +21,89 @@
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include "Logging/LogMacros.h"
+#include <cmath>
+#include <cstddef>
 #include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        struct TransparentForwardUBO
+        struct alignas(16) TransparentForwardUBO
         {
             float view[16];
             float projection[16];
             float cameraPosition[4];
             float emissiveColor[4];
             float pomParams[4];
+            float sceneColorParams[4];
+            float lightView[4][16];
+            float lightProjection[4][16];
+            float shadowSplitDistances[8];
+            uint32_t cascadeCount;
+            uint32_t lightCount;
+            uint32_t bShadowEnabled;
+            uint32_t bIBLEnabled;
+            uint32_t prefilteredSpecularMipLevels;
+            float iblIntensity;
+            uint32_t padding0;
+            uint32_t padding1;
+            uint32_t padding2;
+            alignas(16) float cameraForward[4];
         };
+
+        static_assert(alignof(TransparentForwardUBO) == 16);
+        static_assert(offsetof(TransparentForwardUBO, view) == 0);
+        static_assert(offsetof(TransparentForwardUBO, projection) == 64);
+        static_assert(offsetof(TransparentForwardUBO, cameraPosition) == 128);
+        static_assert(offsetof(TransparentForwardUBO, emissiveColor) == 144);
+        static_assert(offsetof(TransparentForwardUBO, pomParams) == 160);
+        static_assert(offsetof(TransparentForwardUBO, sceneColorParams) == 176);
+        static_assert(offsetof(TransparentForwardUBO, lightView) == 192);
+        static_assert(offsetof(TransparentForwardUBO, lightProjection) == 448);
+        static_assert(offsetof(TransparentForwardUBO, shadowSplitDistances) == 704);
+        static_assert(offsetof(TransparentForwardUBO, cascadeCount) == 736);
+        static_assert(offsetof(TransparentForwardUBO, lightCount) == 740);
+        static_assert(offsetof(TransparentForwardUBO, bShadowEnabled) == 744);
+        static_assert(offsetof(TransparentForwardUBO, bIBLEnabled) == 748);
+        static_assert(offsetof(TransparentForwardUBO, prefilteredSpecularMipLevels) == 752);
+        static_assert(offsetof(TransparentForwardUBO, iblIntensity) == 756);
+        static_assert(offsetof(TransparentForwardUBO, padding0) == 760);
+        static_assert(offsetof(TransparentForwardUBO, padding1) == 764);
+        static_assert(offsetof(TransparentForwardUBO, padding2) == 768);
+        static_assert(offsetof(TransparentForwardUBO, cameraForward) == 784);
+        static_assert(sizeof(TransparentForwardUBO) == 800);
+
+        static void InitializeSafeTransparentShadowParams(TransparentForwardUBO& ubo)
+        {
+            for (uint32_t cascadeIndex = 0u;
+                 cascadeIndex < PhysicalLightingShadowCascadeCount;
+                 ++cascadeIndex)
+            {
+                for (uint32_t matrixIndex = 0u; matrixIndex < 16u; ++matrixIndex)
+                {
+                    ubo.lightView[cascadeIndex][matrixIndex] = 0.0f;
+                    ubo.lightProjection[cascadeIndex][matrixIndex] = 0.0f;
+                }
+                ubo.lightView[cascadeIndex][0] = 1.0f;
+                ubo.lightView[cascadeIndex][5] = 1.0f;
+                ubo.lightView[cascadeIndex][10] = 1.0f;
+                ubo.lightView[cascadeIndex][15] = 1.0f;
+                ubo.lightProjection[cascadeIndex][0] = 1.0f;
+                ubo.lightProjection[cascadeIndex][5] = 1.0f;
+                ubo.lightProjection[cascadeIndex][10] = 1.0f;
+                ubo.lightProjection[cascadeIndex][15] = 1.0f;
+            }
+            ubo.shadowSplitDistances[0] = 0.0f;
+            ubo.shadowSplitDistances[1] = 1.0f;
+            ubo.shadowSplitDistances[2] = 2.0f;
+            ubo.shadowSplitDistances[3] = 3.0f;
+            ubo.shadowSplitDistances[4] = 4.0f;
+            ubo.shadowSplitDistances[5] = 0.0f;
+            ubo.shadowSplitDistances[6] = 0.0f;
+            ubo.shadowSplitDistances[7] = 0.0f;
+            ubo.cascadeCount = 0u;
+        }
 
         struct WorldBoardForwardUBO
         {
@@ -42,6 +112,7 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float cameraRight[4];
             float cameraUp[4];
+            float sceneColorParams[4];
         };
     } // namespace
 
@@ -155,6 +226,21 @@ namespace NorvesLib::Core::Rendering
             instanceBinding.stages = RHI::ShaderStage::Vertex;
             descriptorSetDesc.bindings.push_back(instanceBinding);
 
+            RHI::DescriptorBinding lightBufferBinding;
+            lightBufferBinding.binding = 8;
+            lightBufferBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            lightBufferBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(lightBufferBinding);
+
+            for (uint32_t binding = 9; binding <= 13; ++binding)
+            {
+                RHI::DescriptorBinding lightingTextureBinding;
+                lightingTextureBinding.binding = binding;
+                lightingTextureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+                lightingTextureBinding.stages = RHI::ShaderStage::Pixel;
+                descriptorSetDesc.bindings.push_back(lightingTextureBinding);
+            }
+
             constexpr uint32_t UBO_SIZE = sizeof(TransparentForwardUBO);
             constexpr uint32_t MAX_OBJECTS = 256;
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, descriptorSetDesc))
@@ -221,10 +307,35 @@ namespace NorvesLib::Core::Rendering
             m_DefaultBlackTexture = createDefault1x1Texture("ForwardDefaultBlack1x1", 0, 0, 0, 255);
             m_DefaultMidGrayTexture = createDefault1x1Texture("ForwardDefaultMidGray1x1", 128, 128, 128, 255);
 
+            RHI::TextureDesc shadowMapFallbackDesc;
+            shadowMapFallbackDesc.Width = 1u;
+            shadowMapFallbackDesc.Height = 1u;
+            shadowMapFallbackDesc.ArraySize = PhysicalLightingShadowCascadeCount;
+            shadowMapFallbackDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+            shadowMapFallbackDesc.Usage = RHI::ResourceUsage::ShaderRead |
+                                          RHI::ResourceUsage::TransferDst;
+            shadowMapFallbackDesc.DebugName = "ForwardShadowMapArrayFallback";
+            m_DefaultShadowMapArrayTexture = m_Device->CreateTexture(shadowMapFallbackDesc);
+            if (m_DefaultShadowMapArrayTexture)
+            {
+                const uint8_t shadowMapFallbackPixel[4] = {255u, 255u, 255u, 255u};
+                for (uint32_t layer = 0u;
+                     layer < PhysicalLightingShadowCascadeCount;
+                     ++layer)
+                {
+                    m_DefaultShadowMapArrayTexture->Update(shadowMapFallbackPixel,
+                                                           sizeof(shadowMapFallbackPixel),
+                                                           sizeof(shadowMapFallbackPixel),
+                                                           0u,
+                                                           layer);
+                }
+            }
+
             if (!m_DefaultWhiteTexture ||
                 !m_DefaultFlatNormalTexture ||
                 !m_DefaultBlackTexture ||
-                !m_DefaultMidGrayTexture)
+                !m_DefaultMidGrayTexture ||
+                !m_DefaultShadowMapArrayTexture)
             {
                 NORVES_LOG_ERROR("ForwardPass", "Failed to create transparent forward fallback textures");
                 return false;
@@ -277,6 +388,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
+        m_DefaultShadowMapArrayTexture.reset();
         m_DefaultMidGrayTexture.reset();
         m_DefaultLinearSampler.reset();
         m_UniformAllocator.Shutdown();
@@ -627,7 +739,7 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.vertexAttributes.push_back(texCoordAttribute);
 
         pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-        pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
         pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
         pipelineDesc.rasterState.lineWidth = 1.0f;
 
@@ -670,6 +782,21 @@ namespace NorvesLib::Core::Rendering
         instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
         instanceBinding.stages = RHI::ShaderStage::Vertex;
         descriptorSetDesc.bindings.push_back(instanceBinding);
+
+        RHI::DescriptorBinding lightBufferBinding;
+        lightBufferBinding.binding = 8;
+        lightBufferBinding.type = RHI::ResourceBindType::StructuredBuffer;
+        lightBufferBinding.stages = RHI::ShaderStage::Pixel;
+        descriptorSetDesc.bindings.push_back(lightBufferBinding);
+
+        for (uint32_t binding = 9; binding <= 13; ++binding)
+        {
+            RHI::DescriptorBinding lightingTextureBinding;
+            lightingTextureBinding.binding = binding;
+            lightingTextureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            lightingTextureBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(lightingTextureBinding);
+        }
 
         pipelineDesc.descriptorSetLayouts.push_back(descriptorSetDesc);
 
@@ -882,12 +1009,88 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        bool bHasPhysicalMeshCommand = false;
+        for (const DrawCommand& command : activeTransparentCommands)
+        {
+            if (command.Draw.PayloadKind != DrawPayloadKind::Board)
+            {
+                bHasPhysicalMeshCommand = true;
+                break;
+            }
+        }
+        PhysicalLightingResources physicalLighting;
+        bool bShadowSamplingReady = false;
+        if (bHasPhysicalMeshCommand)
+        {
+            const PhysicalLightingResources& published = context.PhysicalLighting;
+            const uint64_t requiredLightBytes =
+                static_cast<uint64_t>(published.LogicalLightCount) * sizeof(GPULightData);
+            bool bCascadedMatricesFinite = true;
+            for (uint32_t cascadeIndex = 0u;
+                 cascadeIndex < PhysicalLightingShadowCascadeCount;
+                 ++cascadeIndex)
+            {
+                for (uint32_t matrixIndex = 0u; matrixIndex < 16u; ++matrixIndex)
+                {
+                    bCascadedMatricesFinite = bCascadedMatricesFinite &&
+                        std::isfinite(published.CascadedShadow.View[cascadeIndex][matrixIndex]) &&
+                        std::isfinite(published.CascadedShadow.Projection[cascadeIndex][matrixIndex]);
+                }
+            }
+            bool bCascadedSplitsValid = true;
+            for (uint32_t splitIndex = 0u;
+                 splitIndex < PhysicalLightingShadowSplitCount;
+                 ++splitIndex)
+            {
+                bCascadedSplitsValid = bCascadedSplitsValid &&
+                    std::isfinite(published.CascadedShadow.SplitDistances[splitIndex]) &&
+                    (splitIndex == 0u ||
+                     published.CascadedShadow.SplitDistances[splitIndex] >
+                         published.CascadedShadow.SplitDistances[splitIndex - 1u]);
+            }
+            const bool bHasValidViewport =
+                context.CurrentViewport != nullptr && context.CurrentViewport->HasDrawableExtent() &&
+                context.CurrentViewport->ViewId != UINT32_MAX &&
+                context.CurrentViewport->ViewportId != UINT32_MAX;
+            const uint32_t viewId = bHasValidViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
+            const uint32_t viewportId = bHasValidViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
+            bShadowSamplingReady =
+                published.bShadowPublished && published.ShadowMapTexture &&
+                published.ShadowSampler &&
+                published.ShadowMapTexture->GetArraySize() == PhysicalLightingShadowCascadeCount &&
+                published.CascadedShadow.bEnabled &&
+                published.CascadedShadow.CascadeCount == PhysicalLightingShadowCascadeCount &&
+                bCascadedMatricesFinite && bCascadedSplitsValid;
+            const bool bPhysicalLightingReady =
+                bHasValidViewport && published.Matches(context.FrameNumber, viewId, viewportId) &&
+                published.bLightingPublished && published.LightBuffer &&
+                published.EnvironmentRadianceTexture && published.EnvironmentRadianceSampler &&
+                published.DiffuseIrradianceTexture && published.DiffuseIrradianceSampler &&
+                published.PrefilteredSpecularTexture && published.PrefilteredSpecularSampler &&
+                published.DfgLutTexture && published.DfgLutSampler &&
+                published.PrefilteredSpecularMipLevels > 0u &&
+                std::isfinite(published.IBLIntensity) && published.IBLIntensity >= 0.0f &&
+                requiredLightBytes <= static_cast<uint64_t>(published.LightBufferSizeBytes);
+            if (!bPhysicalLightingReady)
+            {
+                NORVES_LOG_ERROR("ForwardPass",
+                                 "Physical transparent lighting publication is incomplete");
+                if (bUseRenderGraphManagedStates)
+                {
+                    EnqueueEmptyTransparentPass(context);
+                }
+                return;
+            }
+            physicalLighting = published;
+        }
+
         auto* materials = context.Resources.Materials;
         auto* textures = context.Resources.Textures;
         auto* meshes = context.Resources.Meshes;
 
         CameraViewConstants cameraConstants;
         float cameraPosition[4] = {0.0f, 1.5f, 4.0f, 1.0f};
+        float cameraForward[4] = {0.0f, 0.0f, -1.0f, 0.0f};
         float cameraRight[4] = {1.0f, 0.0f, 0.0f, 0.0f};
         float cameraUp[4] = {0.0f, 1.0f, 0.0f, 0.0f};
 
@@ -897,6 +1100,20 @@ namespace NorvesLib::Core::Rendering
             cameraConstants =
                 CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
             cameraConstants.CopyCameraPosition(cameraPosition);
+            const float forwardLengthSquared =
+                activeCamera->ForwardX * activeCamera->ForwardX +
+                activeCamera->ForwardY * activeCamera->ForwardY +
+                activeCamera->ForwardZ * activeCamera->ForwardZ;
+            if (std::isfinite(forwardLengthSquared) && forwardLengthSquared > 1.0e-10f)
+            {
+                const float inverseForwardLength = 1.0f / std::sqrt(forwardLengthSquared);
+                if (std::isfinite(inverseForwardLength))
+                {
+                    cameraForward[0] = activeCamera->ForwardX * inverseForwardLength;
+                    cameraForward[1] = activeCamera->ForwardY * inverseForwardLength;
+                    cameraForward[2] = activeCamera->ForwardZ * inverseForwardLength;
+                }
+            }
             cameraRight[0] = activeCamera->RightX;
             cameraRight[1] = activeCamera->RightY;
             cameraRight[2] = activeCamera->RightZ;
@@ -914,6 +1131,16 @@ namespace NorvesLib::Core::Rendering
                                               ? 0xFFFFFFFFu
                                               : static_cast<uint32_t>(instanceDataSize64);
 
+        const DebugViewMode activeDebugMode = context.GetActiveDebugMode();
+        const uint32_t activeDebugModeValue = static_cast<uint32_t>(activeDebugMode);
+        const bool bApplySceneColorPreExposure =
+            activeDebugMode == DebugViewMode::Normal ||
+            activeDebugModeValue == 252u ||
+            activeDebugModeValue == 253u ||
+            activeDebugModeValue == 254u;
+        const float sceneColorPreExposure =
+            activeCamera && bApplySceneColorPreExposure ? activeCamera->PreExposure : 1.0f;
+
         m_UniformAllocator.Reset();
         m_WorldBoardUniformAllocator.Reset();
 
@@ -923,11 +1150,33 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(worldBoardFrameUBO.cameraPosition, cameraPosition, sizeof(cameraPosition));
         std::memcpy(worldBoardFrameUBO.cameraRight, cameraRight, sizeof(cameraRight));
         std::memcpy(worldBoardFrameUBO.cameraUp, cameraUp, sizeof(cameraUp));
+        worldBoardFrameUBO.sceneColorParams[0] = sceneColorPreExposure;
 
         TransparentForwardUBO transparentFrameTemplate{};
+        InitializeSafeTransparentShadowParams(transparentFrameTemplate);
         std::memcpy(transparentFrameTemplate.view, viewData, sizeof(viewData));
         std::memcpy(transparentFrameTemplate.projection, projectionData, sizeof(projectionData));
         std::memcpy(transparentFrameTemplate.cameraPosition, cameraPosition, sizeof(cameraPosition));
+        std::memcpy(transparentFrameTemplate.cameraForward, cameraForward, sizeof(cameraForward));
+        transparentFrameTemplate.sceneColorParams[0] = sceneColorPreExposure;
+        std::memcpy(transparentFrameTemplate.lightView,
+                    physicalLighting.CascadedShadow.View,
+                    sizeof(transparentFrameTemplate.lightView));
+        std::memcpy(transparentFrameTemplate.lightProjection,
+                    physicalLighting.CascadedShadow.Projection,
+                    sizeof(transparentFrameTemplate.lightProjection));
+        std::memcpy(transparentFrameTemplate.shadowSplitDistances,
+                    physicalLighting.CascadedShadow.SplitDistances,
+                    sizeof(float) * PhysicalLightingShadowSplitCount);
+        transparentFrameTemplate.cascadeCount =
+            bShadowSamplingReady ? PhysicalLightingShadowCascadeCount : 0u;
+        transparentFrameTemplate.lightCount = physicalLighting.LogicalLightCount;
+        transparentFrameTemplate.bShadowEnabled =
+            bShadowSamplingReady ? 1u : 0u;
+        transparentFrameTemplate.bIBLEnabled = physicalLighting.bIBLEnabled ? 1u : 0u;
+        transparentFrameTemplate.prefilteredSpecularMipLevels =
+            physicalLighting.PrefilteredSpecularMipLevels;
+        transparentFrameTemplate.iblIntensity = physicalLighting.IBLIntensity;
 
         auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         transparentCommands->reserve(activeTransparentCommands.size());
@@ -998,7 +1247,7 @@ namespace NorvesLib::Core::Rendering
 
             if (cmd.Draw.MaterialHandle.IsValid())
             {
-                const auto* materialData = materials->GetData(cmd.Draw.MaterialHandle);
+                const MaterialResourceData* materialData = materials->GetData(cmd.Draw.MaterialHandle);
                 if (materialData)
                 {
                     matAlbedo = materialData->AlbedoTexture;
@@ -1007,8 +1256,14 @@ namespace NorvesLib::Core::Rendering
                     matRoughness = materialData->RoughnessTexture;
                     matAO = materialData->AOTexture;
                     matHeight = materialData->HeightTexture;
+                    uboData.emissiveColor[0] = materialData->EmissiveColor[0];
+                    uboData.emissiveColor[1] = materialData->EmissiveColor[1];
+                    uboData.emissiveColor[2] = materialData->EmissiveColor[2];
+                    uboData.emissiveColor[3] = materialData->EmissiveLuminanceNits;
+                    uboData.pomParams[0] = materialData->HeightScale;
                 }
             }
+            uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
 
             allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
 
@@ -1042,6 +1297,30 @@ namespace NorvesLib::Core::Rendering
                                                         context.InstanceDataBuffer,
                                                         0,
                                                         instanceDataSize);
+            allocation.DescriptorSet->BindStorageBuffer(8,
+                                                        physicalLighting.LightBuffer,
+                                                        0,
+                                                        physicalLighting.LightBufferSizeBytes);
+            const bool bShadowTextureIsArray =
+                physicalLighting.ShadowMapTexture &&
+                physicalLighting.ShadowMapTexture->GetArraySize() ==
+                    PhysicalLightingShadowCascadeCount;
+            allocation.DescriptorSet->BindTexture(
+                9,
+                bShadowTextureIsArray ? physicalLighting.ShadowMapTexture :
+                                        m_DefaultShadowMapArrayTexture);
+            allocation.DescriptorSet->BindSampler(
+                9,
+                bShadowTextureIsArray && physicalLighting.ShadowSampler ?
+                    physicalLighting.ShadowSampler : m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(10, physicalLighting.EnvironmentRadianceTexture);
+            allocation.DescriptorSet->BindSampler(10, physicalLighting.EnvironmentRadianceSampler);
+            allocation.DescriptorSet->BindTexture(11, physicalLighting.DiffuseIrradianceTexture);
+            allocation.DescriptorSet->BindSampler(11, physicalLighting.DiffuseIrradianceSampler);
+            allocation.DescriptorSet->BindTexture(12, physicalLighting.PrefilteredSpecularTexture);
+            allocation.DescriptorSet->BindSampler(12, physicalLighting.PrefilteredSpecularSampler);
+            allocation.DescriptorSet->BindTexture(13, physicalLighting.DfgLutTexture);
+            allocation.DescriptorSet->BindSampler(13, physicalLighting.DfgLutSampler);
             allocation.DescriptorSet->Update();
 
             DrawCommand drawCommand = cmd;

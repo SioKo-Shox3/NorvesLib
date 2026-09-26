@@ -259,17 +259,19 @@ namespace NorvesLib::Core::Rendering
     struct alignas(16) GPUSceneInstanceData
     {
         float World[16];
+        float PreviousWorld[16];
         float NormalMatrix[12];
         float ObjectColor[4];
         float CustomData[4];
     };
 
     static_assert(alignof(GPUSceneInstanceData) == 16);
-    static_assert(sizeof(GPUSceneInstanceData) == sizeof(float) * 36);
+    static_assert(sizeof(GPUSceneInstanceData) == sizeof(float) * 52);
     static_assert(sizeof(GPUSceneInstanceData) % 16 == 0);
     static_assert(offsetof(GPUSceneInstanceData, World) == 0);
-    static_assert(offsetof(GPUSceneInstanceData, NormalMatrix) == 64);
-    static_assert(offsetof(GPUSceneInstanceData, ObjectColor) == 112);
-    static_assert(offsetof(GPUSceneInstanceData, CustomData) == 128);
+    static_assert(offsetof(GPUSceneInstanceData, PreviousWorld) == 64);
+    static_assert(offsetof(GPUSceneInstanceData, NormalMatrix) == 128);
+    static_assert(offsetof(GPUSceneInstanceData, ObjectColor) == 176);
+    static_assert(offsetof(GPUSceneInstanceData, CustomData) == 192);
 
 } // namespace NorvesLib::Core::Rendering
