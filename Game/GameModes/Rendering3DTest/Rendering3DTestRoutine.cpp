@@ -126,6 +126,14 @@ namespace Game::GameModes
             data.m_pSpringArmComponent->SetYaw(0.0f);
             data.m_pSpringArmComponent->SetPitch(30.0f);
             data.m_pCameraComponent->SetActiveCamera(true);
+            // このシーンの光・発光・環境マップは、光を物理単位（lux・nits）とEV100の露出へ移す前の値で作ってある。
+            // プリエクスポージャ（2^(露出補正-EV100)/1.2）が1になる露出補正を掛け、従来の明るさで表示する。
+            {
+                const float aperture = data.m_pCameraComponent->GetAperture();
+                const float ev100 = std::log2(aperture * aperture / data.m_pCameraComponent->GetShutterSpeed() *
+                                              (100.0f / data.m_pCameraComponent->GetISO()));
+                data.m_pCameraComponent->SetExposureCompensation(ev100 + std::log2(1.2f));
+            }
             data.m_pSpringArmComponent->RefreshOwnerTransform();
 
             CameraProxy initialCamera;
