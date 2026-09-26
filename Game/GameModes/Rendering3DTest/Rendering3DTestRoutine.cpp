@@ -47,6 +47,7 @@
 #if defined(NORVES_ENABLE_IMGUI)
 #include "Core/Public/GameMode/IGameModeController.h"  // RequestPushSubRoutine の完全定義
 #include "GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.h"
+#include "GameModes/Rendering3DTest/SkySunControl.h"
 #endif
 
 #include <cmath>
@@ -132,14 +133,12 @@ namespace Game::GameModes
                 data.m_pSpringArmComponent->SetPitch(data.m_StartupCameraPitch);
             }
             data.m_pCameraComponent->SetActiveCamera(true);
-            // このシーンの光・発光・環境マップは、光を物理単位（lux・nits）とEV100の露出へ移す前の値で作ってある。
-            // プリエクスポージャ（2^(露出補正-EV100)/1.2）が1になる露出補正を掛け、従来の明るさで表示する。
-            {
-                const float aperture = data.m_pCameraComponent->GetAperture();
-                const float ev100 = std::log2(aperture * aperture / data.m_pCameraComponent->GetShutterSpeed() *
-                                              (100.0f / data.m_pCameraComponent->GetISO()));
-                data.m_pCameraComponent->SetExposureCompensation(ev100 + std::log2(1.2f));
-            }
+            // 晴天の昼の手動露出（f/16・1/100 s・ISO 100、EV100 約14.6）。光・発光・空は物理単位の値で、
+            // 露出補正は掛けない。
+            data.m_pCameraComponent->SetAperture(16.0f);
+            data.m_pCameraComponent->SetShutterSpeed(1.0f / 100.0f);
+            data.m_pCameraComponent->SetISO(100.0f);
+            data.m_pCameraComponent->SetExposureCompensation(0.0f);
             data.m_pSpringArmComponent->RefreshOwnerTransform();
 
             CameraProxy initialCamera;
@@ -645,7 +644,8 @@ namespace Game::GameModes
             lightSphereMatInfo.EmissiveColor[0] = 1.0f;
             lightSphereMatInfo.EmissiveColor[1] = 0.9f;
             lightSphereMatInfo.EmissiveColor[2] = 0.3f;
-            lightSphereMatInfo.EmissiveLuminanceNits = 8.0f;
+            // 点光源（1600 lm）が半径0.15 mの球の表面から一様に出るときの輝度 Φ/(π·4πr²) ≈ 1800 nits。
+            lightSphereMatInfo.EmissiveLuminanceNits = 1800.0f;
             lightSphereMatInfo.DebugName = "LightSphere";
             data.m_LightSphereMaterial = materials.Create(lightSphereMatInfo);
         }
@@ -751,32 +751,42 @@ namespace Game::GameModes
             // PointLightComponentの追加（SceneViewへのLightProxy登録はWorld::SyncToSceneView()で自動化）
             data.m_pPointLightComponent = world.CreateComponent<Component::PointLightComponent>(data.m_pLightSphereObject);
             data.m_pPointLightComponent->SetLightColor(1.0f, 0.9f, 0.3f);
-            data.m_pPointLightComponent->SetIntensity(2.0f);
+            // 100 W 形の電球相当の光束（1600 lm）。
+            data.m_pPointLightComponent->SetIntensityUnit(Component::LightIntensityUnit::Lumen);
+            data.m_pPointLightComponent->SetIntensity(1600.0f);
             data.m_pPointLightComponent->SetRange(10.0f);
             data.m_pPointLightComponent->SetLightVisible(true);
             data.m_pPointLightComponent->SetCastShadows(false);
             LOG_INFO("Light sphere Entity created and added to World");
 
-            // --- ディレクショナルライト（シャドウ方向と一致） ---
-            data.m_pDirectionalLightObject = world.SpawnObject<Entity>();
-            ctx.ScopeRef.TrackObject(data.m_pDirectionalLightObject);
-            data.m_pDirectionalLightObject->SetPosition(0.0f, 0.0f, 0.0f);
+            // --- 物理空と空の太陽 ---
+            // 空を有効にすると、エンジンが空の太陽の方向光（影を落とす）を光源表へ加え、IBLも空から作る。
+            // 太陽は仰角40°・方位30°（+X寄り・カメラ側の上空）に置き、既定の視点から球と岩の影が
+            // 左奥の地面へ落ちるようにする。
+            data.m_SkyAtmosphere = MakeDefaultSkyAtmosphereParameters();
+            data.m_SkyAtmosphere.bEnabled = true;
+            data.m_SkyAtmosphere.SunAltitudeDegrees = 40.0f;
+            data.m_SkyAtmosphere.SunAzimuthDegrees = 30.0f;
+            ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
+            LOG_INFO("Sky atmosphere enabled sun_altitude=%.1f sun_azimuth=%.1f",
+                     data.m_SkyAtmosphere.SunAltitudeDegrees, data.m_SkyAtmosphere.SunAzimuthDegrees);
 
-            data.m_pDirectionalLightComponent = world.CreateComponent<Component::LightComponent>(data.m_pDirectionalLightObject);
-            // LightComponentはデフォルトでDirectional型
-            data.m_pDirectionalLightComponent->SetLightColor(1.0f, 1.0f, 1.0f);
-            data.m_pDirectionalLightComponent->SetIntensity(1.0f);
-            data.m_pDirectionalLightComponent->SetLightDirection(-0.577f, -0.577f, -0.577f);
-            data.m_pDirectionalLightComponent->SetLightVisible(true);
-            data.m_pDirectionalLightComponent->SetCastShadows(true);
-            LOG_INFO("Directional light created and added to World");
-
-            // 方向ライト操作コントローラーを方向ライトへ接続し、入力ルーターへ
-            // ゲーム優先度で登録する。SetTargetComponent が現在方向/強度から
-            // 内部 Yaw/Pitch を seed するため初回入力でのジャンプは起きない。
+            // 方向ライト操作コントローラーを空の太陽の置き場へ接続し、入力ルーターへ
+            // ゲーム優先度で登録する。矢印キーの角度は Tick で空の太陽の仰角・方位へ写す。
+            // 空の太陽の明るさは空が決めるので、+/- の強度操作は使わない（速度0）。
             // 自バインドキー（矢印・+/-・Shift）のみ consume し他は透過するため、
             // 同優先度の debug コントローラと共存する。
-            data.m_LightController.SetTargetComponent(data.m_pDirectionalLightComponent);
+            {
+                float yaw = 0.0f;
+                float pitch = 0.0f;
+                ConvertSkySunToLightControllerAngles(data.m_SkyAtmosphere.SunAltitudeDegrees,
+                                                     data.m_SkyAtmosphere.SunAzimuthDegrees, yaw, pitch);
+                data.m_SkySunControlLight = LightProxy{};
+                data.m_LightController.SetTargetComponent(nullptr);
+                data.m_LightController.SetTargetLight(&data.m_SkySunControlLight);
+                data.m_LightController.SetIntensitySpeed(0.0f);
+                data.m_LightController.SetDirection(yaw, pitch);
+            }
             ctx.EngineRef.GetInputRouter().RegisterController(
                 &data.m_LightController,
                 NorvesLib::Core::Input::InputRouter::PriorityGame);
@@ -788,13 +798,13 @@ namespace Game::GameModes
                 &data.m_DebugInput,
                 NorvesLib::Core::Input::InputRouter::PriorityGame);
 
-            // ImGui 有効時のみ、方向ライト編集 view を本段(Rendering3DTest)へ併走 push する。
+            // ImGui 有効時のみ、空の太陽の編集 view を本段(Rendering3DTest)へ併走 push する。
             // push は遅延適用され同一ドレイン内で現在の top 段へ積まれ Enter(=RegisterImGuiView)される。
             // MakeUnique<派生>(=std::make_unique)の prvalue は ISubRoutine の仮想デストラクタにより
             // TUniquePtr<ISubRoutine>(=std::unique_ptr<ISubRoutine>)の値引数へ暗黙 upcast move される。
 #if defined(NORVES_ENABLE_IMGUI)
             ctx.ControllerRef.RequestPushSubRoutine(
-                MakeUnique<DirectionalLightEditSubRoutine>(data.m_pDirectionalLightComponent));
+                MakeUnique<DirectionalLightEditSubRoutine>(&data.m_LightController));
 #endif
         }
 
@@ -1294,10 +1304,32 @@ namespace Game::GameModes
             data.m_M8MinimalPhysicsSmoke.Update(ctx);
         }
 
-        // 方向ライトの連続 hold 適用。held フラグは LightController::OnKey が
+        // 空の太陽の操作の連続 hold 適用。held フラグは LightController::OnKey が
         // InputRouter 経由で更新する。ImGui がキーボードを掴んでいる間は
         // 上位で consume されるため held は積まれず、ここでも動かない（排他）。
         data.m_LightController.Update(deltaTime);
+
+        // 操作の角度（矢印キー・ImGui）を空の太陽の仰角・方位へ写す。太陽は地平線より下へ
+        // 行かせない（光が上向きに進む角度は水平へ戻す）。変わったときだけ空へ渡し、
+        // 空由来のIBLの作り直しを角度が動いたフレームに限る。
+        if (data.m_SkyAtmosphere.bEnabled)
+        {
+            if (data.m_LightController.GetPitch() > 0.0f)
+            {
+                data.m_LightController.SetDirection(data.m_LightController.GetYaw(), 0.0f);
+            }
+            float altitude = 0.0f;
+            float azimuth = 0.0f;
+            ConvertLightControllerAnglesToSkySun(data.m_LightController.GetYaw(),
+                                                 data.m_LightController.GetPitch(), altitude, azimuth);
+            if (std::abs(altitude - data.m_SkyAtmosphere.SunAltitudeDegrees) > 1.0e-3f ||
+                std::abs(azimuth - data.m_SkyAtmosphere.SunAzimuthDegrees) > 1.0e-3f)
+            {
+                data.m_SkyAtmosphere.SunAltitudeDegrees = altitude;
+                data.m_SkyAtmosphere.SunAzimuthDegrees = azimuth;
+                ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
+            }
+        }
 
         // InputRouter で上位 controller に consume されなかった値状態だけを Maya
         // の変換層へ渡し、SpringArm を単一のカメラ姿勢正本として更新する。
@@ -1730,8 +1762,10 @@ namespace Game::GameModes
         data.m_pBoulderPlaceholderMeshComponent = nullptr;
         data.m_pBoulderObject = nullptr;
         data.m_pBoulderMegaGeometryComponent = nullptr;
-        data.m_pDirectionalLightObject = nullptr;
-        data.m_pDirectionalLightComponent = nullptr;
+        // 空はRenderWorldの設定なので、ほかのモードへ持ち越さないよう無効へ戻す。
+        data.m_SkyAtmosphere = MakeDefaultSkyAtmosphereParameters();
+        ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
+        data.m_LightController.SetTargetLight(nullptr);
         data.m_F4BoardObjects.clear();
         data.m_F4BoardComponents.clear();
         data.m_F9BillboardObjects.clear();

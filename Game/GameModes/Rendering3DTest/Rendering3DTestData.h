@@ -9,6 +9,7 @@
 #include "Core/Public/Object/Entity.h"
 #include "GameModes/Rendering3DTest/Rendering3DTestDebugInput.h"
 #include "Core/Public/Rendering/MaterialTypes.h"
+#include "Core/Public/Rendering/SkyAtmosphere.h"
 #include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Core/Public/Rendering/RenderTypes.h"
 #include "Core/Public/Thread/Atomic.h"
@@ -117,11 +118,15 @@ namespace Game::GameModes
         NorvesLib::Core::Component::MegaGeometryComponent *m_pBoulderMegaGeometryComponent = nullptr;
 
         // LightComponent参照（Entityが所有）
-        NorvesLib::Core::Component::LightComponent *m_pDirectionalLightComponent = nullptr;
         NorvesLib::Core::Component::PointLightComponent *m_pPointLightComponent = nullptr;
 
-        // ディレクショナルライト用Entity（位置は不要だがComponentホスト用）
-        NorvesLib::Core::Entity *m_pDirectionalLightObject = nullptr;
+        // 物理空（R2 SkyAtmosphere）の設定。空が有効なとき、エンジンが空の太陽の方向光を光源表へ加え、
+        // IBLも空から作る。シーン独自の方向光は置かない。
+        NorvesLib::Core::Rendering::SkyAtmosphereParameters m_SkyAtmosphere;
+
+        // 方向ライト操作（LightController）が書き込む進行方向の置き場。光源表へは登録せず、
+        // Tick で操作の角度を空の太陽の仰角・方位へ写す。
+        NorvesLib::Core::Rendering::LightProxy m_SkySunControlLight;
 
         // World 所有の pivot/camera Entity と、その camera Entity が Inner 所有する Component。
         NorvesLib::Core::Entity *m_pCameraPivotObject = nullptr;
@@ -144,7 +149,7 @@ namespace Game::GameModes
         // 左クリック選択コントローラー（シーン所有・イベント駆動）
         Game::Input::PickingController m_PickingController;
 
-        // 方向ライト操作コントローラー（矢印/+-、シーン所有・イベント駆動）
+        // 空の太陽の仰角・方位を動かす操作コントローラー（矢印、シーン所有・イベント駆動）
         NorvesLib::Core::Input::LightController m_LightController;
 
         // F1-F5 デバッグビュー切替コントローラー（シーン所有・イベント駆動）

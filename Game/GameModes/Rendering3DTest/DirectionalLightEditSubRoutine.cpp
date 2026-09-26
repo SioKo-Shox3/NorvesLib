@@ -1,4 +1,4 @@
-﻿// DirectionalLightEditSubRoutine 実装(Piece 3)。
+﻿// DirectionalLightEditSubRoutine 実装。
 //
 // 本ファイル全体を NORVES_ENABLE_IMGUI で囲む。Game は GLOB_RECURSE で本ファイルを無条件
 // 収集するため、OFF 時は空 TU 化して素ビルドを byte-for-byte 不変に保つ。imgui.h は OFF 時
@@ -12,6 +12,7 @@
 #if defined(NORVES_ENABLE_IMGUI)
 
 #include "DirectionalLightEditSubRoutine.h"
+#include "SkySunControl.h"
 
 #include "imgui.h"
 
@@ -28,36 +29,28 @@ namespace Game::GameModes
         ImGui::SetNextWindowPos(ImVec2(fontSize * 2.0f, fontSize * 2.0f), ImGuiCond_FirstUseEver);
 
         // ウィンドウは常に開く。Begin が false(折りたたみ等)なら End して即座に抜ける。
-        if (!ImGui::Begin("方向ライト"))
+        if (!ImGui::Begin("空の太陽"))
         {
             ImGui::End();
             return;
         }
 
-        // ライトが借用解除済み(null)なら操作 UI は出さない(ウィンドウ枠のみ)。
-        if (m_pLight != nullptr)
+        // 操作が借用解除済み(null)なら操作 UI は出さない(ウィンドウ枠のみ)。
+        if (m_pController != nullptr)
         {
-            // 色(RGB)
-            float col[3] = {1.0f, 1.0f, 1.0f};
-            m_pLight->GetLightColor(col[0], col[1], col[2]);
-            if (ImGui::ColorEdit3("色", col))
+            // 仰角・方位(度)。矢印キーと同じ操作の角度へ書く。
+            float altitude = 0.0f;
+            float azimuth = 0.0f;
+            ConvertLightControllerAnglesToSkySun(m_pController->GetYaw(), m_pController->GetPitch(),
+                                                 altitude, azimuth);
+            const bool bAltitudeChanged = ImGui::SliderFloat("仰角 (度)", &altitude, 0.0f, 90.0f);
+            const bool bAzimuthChanged = ImGui::SliderFloat("方位 (度)", &azimuth, -180.0f, 180.0f);
+            if (bAltitudeChanged || bAzimuthChanged)
             {
-                m_pLight->SetLightColor(col[0], col[1], col[2]);
-            }
-
-            // 照度 (lux)
-            float intensity = m_pLight->GetIntensity();
-            if (ImGui::SliderFloat("照度 (lux)", &intensity, 0.0f, 10.0f))
-            {
-                m_pLight->SetIntensity(intensity);
-            }
-
-            // 方向(XYZ)
-            float dir[3] = {0.0f, -1.0f, 0.0f};
-            m_pLight->GetLightDirection(dir[0], dir[1], dir[2]);
-            if (ImGui::SliderFloat3("方向", dir, -1.0f, 1.0f))
-            {
-                m_pLight->SetLightDirection(dir[0], dir[1], dir[2]);
+                float yaw = 0.0f;
+                float pitch = 0.0f;
+                ConvertSkySunToLightControllerAngles(altitude, azimuth, yaw, pitch);
+                m_pController->SetDirection(yaw, pitch);
             }
         }
 

@@ -104,12 +104,16 @@
 
 ## In progress
 
+- SS-DAYLIGHT-P1（2026-09-27、blocked）: 起動画面の側を実装した。R2の空を有効にし（仰角40°・方位30°）、シーン独自の方向光を外して、矢印キーとImGui（「空の太陽」ウィンドウ）の角度を`SkySunControl.h`で空の太陽の仰角・方位へ写す（太陽は地平線より下へ行かない。Leaveで空を無効へ戻す）。`f90e7ea`の露出補正を外してf/16・1/100 s・ISO 100（EV100 約14.6）、点光源は1600 lm、発光球は1800 nits。影は地面にくっきり落ちるが、空のモデル（`EvaluateHillaireSkyReference`）が暗く（天頂732 nits、水平面の空の照度は全体の5.7%）、地平線の付近が橙、地平線より下が黒のため、「青い昼の空」を満たさない。空のモデルを直すとR2の空のgoldenとPT参照が変わるので、判断を`blocked/SS-DAYLIGHT-P1.md`に書いて止めた（推奨はSS-SKY-MODELを先に行う）。
+- SS-POMの評価の指摘（点光源の近くで法線の緑の向きを確かめる）は未対応。昼の屋外では向きの分かる空の太陽で、太陽側の石の斜面が明るいことを`nor_gl`/`nor_dx`で比べて確かめられる。
+
 ## Next
 
 - 起動画面（Rendering3DTest）の描画改善をTASKS.mdの`SS-`の20項目で進める（ブランチ`feature/startup-scene-rendering`）。先頭はSS-CAPTURE（撮影経路）で、以降の見た目の証拠はその撮影で確かめる。R8までの残りの`todo`10件は`backlog`にした。
 - R8は完了（2026-09-26）。R3・R5は受入れ記録（`R3Acceptance.md`・`R5Acceptance.md`）があるが、ロードマップの表は未着手のままで完了のtrailerも無い（整理が残る）。ほかはTASKS.mdの修正・改善の項目。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。R7-O3の既知差はRTGI-HIT-SPECULAR・RTGI-MULTI-BOUNCE・FIX-CSM-TERMINATOR・FIX-GRAZING-IBL-SPECULARとして残す。
 
 ## Notes
+- SS-DAYLIGHT-P1検証（2026-09-27）: `.harness/runs/20260927-041058/verify-SS-DAYLIGHT-P1-1.txt`でGame build EXIT_CODE=0、`-2`で撮影EXIT_CODE=0（平均輝度 既定56.8・近接63.8・低角度49.9、白飛び率0、黒つぶれ率 既定0.443・近接0.228・低角度0.168）。既定のPNGで球の影の中の地面は輝度0、日向は44〜157（8bit）。Rendering3DTestRoutine.cppは行末が混在しており、編集後に元の行末へ戻した（行末だけの変更0行を確認。`git diff --numstat`と`--ignore-cr-at-eol`の1行の差は差分の対応付けの違い）。
 - SS-CAPTURE検証（2026-09-27）: `.harness/runs/20260927-041058/verify-SS-CAPTURE-1.txt`でGame build EXIT_CODE=0、`verify-SS-CAPTURE-2.txt`で撮影スクリプトEXIT_CODE=0。平均輝度は既定143.7・近接167.4・低角度182.4、白飛び率は0〜0.000003、黒つぶれ率は0.00016〜0.0069（1280×720）。3枚のPNGを開き、起動画面が写りImGui・ボードが無いことを確かめた。Game.logはリポジトリのルートに書かれるため、スクリプトは視点ごとに消してから起動し、終了後に出力先へ写す。撮影1回は読み込み待ちを含めて約25秒。
 - 起動画面の描画改善のM1（2026-09-27）: 調査で、R2〜R8の機能（物理空・霧・RT影・DDGI・RTGI・被写界深度・動きぼけ）が起動画面ではすべて無効で、起動画面は実質R1の見た目のままと分かった。影が見えないのは静的HDRの環境光が地面の照度の約87%を占め（方向光1 lux）、影で約13%しか暗くならないため（`f3d4abb`でIBLをE/πにした後、比が約9倍悪化）。CSMはfar=1000のためカスケード0の1テクセルが約0.157 m。POMの凹凸の反転と輪郭の歪みは`8c80695`（余接フレームの退化判定）が引き金。ブルームは1回の16タップで広がり約10 px。点光源の影は未実装。ユーザー決定: 物理的な昼の屋外（物理空＋空の太陽）、点光源のキューブシャドウ、ポストは基本セット＋演出系、展示物の追加。開始儀式: `git log --oneline -10`はHEAD `163ffe5`。ビルドとテストはPCの使用の許可を待つため未実行で、最初の反復の開始儀式で行う。
 - SS-POM検証（2026-09-27）: `.harness/runs/20260927-041058/verify-SS-POM-1.txt`でconfigure EXIT_CODE=0、`-2`でGame・RenderingGoldenImageTestのbuild EXIT_CODE=0、`-3`でIndoor/Outdoor golden 2/2 passed、`-4`で撮影EXIT_CODE=0（平均輝度 既定143.8・近接167.4・低角度182.4）。近接視点で石が盛り上がり目地がへこみ、輪郭の最外周で模様が流れないことを前後の拡大（`startup-capture/SS-POM/near-edge-before-after.png`）で確かめた。石の視点側の側面に引き伸ばされたテクセルが見えるのはPOMの側面表示で、凹凸の向きと合う。起動画面の点光源は球から遠く照明はIBLが支配的なため、法線マップの緑の向きは高さマップの勾配との相関で判定した（`-5`: nor_gl の緑は-0.933、nor_dx は+0.933）。
