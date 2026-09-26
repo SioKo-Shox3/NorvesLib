@@ -221,6 +221,24 @@ namespace Game
                    value.compare(0, prefixString.size(), prefixString) == 0;
         }
 
+        /**
+         * @brief argument が prefix で始まるとき、残りを outRest へ入れて true を返す。
+         */
+        bool TryStripPrefix(const String &argument, const TCHAR *prefix, String &outRest)
+        {
+            size_t prefixLength = 0;
+            while (prefix[prefixLength] != 0)
+            {
+                if (prefixLength >= argument.size() || argument[prefixLength] != prefix[prefixLength])
+                {
+                    return false;
+                }
+                ++prefixLength;
+            }
+            outRest = argument.substr(prefixLength);
+            return true;
+        }
+
         bool IsCommandLineOption(const String &argument)
         {
             return StartsWith(ToStdString(argument), TEXT("--"));
@@ -385,12 +403,12 @@ namespace Game
                 continue;
             }
 
-            if (StartsWith(ToStdString(args[i]), kStartupCameraOption))
+            String startupCameraValue;
+            if (TryStripPrefix(args[i], kStartupCameraOption, startupCameraValue))
             {
-                const String value = args[i].substr(std::basic_string<TCHAR>(kStartupCameraOption).size());
-                if (!TryParseStartupCamera(value, s_Rendering3DTestStartupCamera))
+                if (!TryParseStartupCamera(startupCameraValue, s_Rendering3DTestStartupCamera))
                 {
-                    LOG_ERROR("Rendering3DTest command line parse failed: --startup-camera must be <yaw>,<pitch>,<arm> with arm > 0");
+                    LOG_ERROR("Rendering3DTest command line parse failed: --startup-camera は <yaw>,<pitch>,<arm>（arm > 0）で指定する");
                     return false;
                 }
                 s_bRendering3DTestHasStartupCamera = true;

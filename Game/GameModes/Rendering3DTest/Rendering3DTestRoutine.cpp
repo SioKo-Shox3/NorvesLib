@@ -589,7 +589,7 @@ namespace Game::GameModes
                                                          NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
                                                      }
                                                  });
-                textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_gl_4k.png",
+                textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_dx_4k.png",
                                                  [cobbleUpdate, &materials](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.NormalTexture = handle;

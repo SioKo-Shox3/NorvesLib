@@ -80,6 +80,13 @@ public static class StartupCaptureMetrics
 }
 '@
 
+# Slang SDK を組み込んでいないビルドで neural_material_decode.slang が読めない場合だけを許す。
+# 同じシェーダーでも別の理由の失敗や、ほかのシェーダーの失敗は検出する。
+function Test-AllowedShaderFailure([string]$Line)
+{
+    return $Line -match 'Failed to compile shader \[neural_material_decode\.slang\]: Slang SDK not available\.'
+}
+
 function Stop-OwnedProcessTree([int]$ProcessId)
 {
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
@@ -120,7 +127,7 @@ foreach ($view in $views)
     else
     {
         Stop-OwnedProcessTree $process.Id
-        $failures += "$($view.Name): timeout after $TimeoutSeconds s"
+        $failures += "$($view.Name): timeout（$TimeoutSeconds 秒で終わらなかった）"
     }
 
     if (Test-Path -LiteralPath $gameLogPath)
@@ -130,13 +137,13 @@ foreach ($view in $views)
 
     if ($null -ne $exitCode -and $exitCode -ne 0)
     {
-        $failures += "$($view.Name): Game exit code $exitCode"
+        $failures += "$($view.Name): Game の終了コードが $exitCode"
     }
 
     if (Test-Path -LiteralPath $viewLogPath)
     {
         $shaderFailures = @(Select-String -LiteralPath $viewLogPath -Pattern 'Failed to compile shader' -SimpleMatch |
-            Where-Object { $_.Line -notmatch 'neural_material_decode\.slang' })
+            Where-Object { -not (Test-AllowedShaderFailure $_.Line) })
         foreach ($line in $shaderFailures)
         {
             $failures += "$($view.Name): $($line.Line.Trim())"
@@ -144,12 +151,12 @@ foreach ($view in $views)
     }
     else
     {
-        $failures += "$($view.Name): Game.log missing"
+        $failures += "$($view.Name): Game.log が無い"
     }
 
     if (-not (Test-Path -LiteralPath $pngPath))
     {
-        $failures += "$($view.Name): PNG missing"
+        $failures += "$($view.Name): PNG が無い"
         continue
     }
 

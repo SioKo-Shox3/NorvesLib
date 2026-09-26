@@ -57,53 +57,7 @@ layout(set = 0, binding = 13) uniform sampler2D dfgLut;
 layout(location = 0) out vec4 outColor;
 
 #include "Common/PbrMaterialEvaluation.glsl"
-
-mat3 CalculateTBN(vec3 worldNormal, vec3 worldPos, vec2 texCoord)
-{
-    vec3 dp1 = dFdx(worldPos);
-    vec3 dp2 = -dFdy(worldPos);
-    vec2 duv1 = dFdx(texCoord);
-    vec2 duv2 = -dFdy(texCoord);
-
-    vec3 N = normalize(worldNormal);
-    vec3 dp2perp = cross(dp2, N);
-    vec3 dp1perp = cross(N, dp1);
-    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
-    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
-    float maxLen2 = max(dot(T, T), dot(B, B));
-    if (maxLen2 < 1e-8)
-    {
-        vec3 up = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-        T = normalize(cross(up, N));
-        B = cross(N, T);
-        return mat3(T, B, N);
-    }
-    return mat3(T * inversesqrt(maxLen2), B * inversesqrt(maxLen2), N);
-}
-
-vec2 ParallaxOcclusionMapping(vec2 texCoord, vec3 viewDirTS, float heightScale)
-{
-    const float minLayers = 8.0;
-    const float maxLayers = 32.0;
-    float layerCount = mix(maxLayers, minLayers, clamp(abs(viewDirTS.z), 0.0, 1.0));
-    float layerDepth = 1.0 / layerCount;
-    float currentLayerDepth = 0.0;
-    vec2 deltaTexCoords = viewDirTS.xy * heightScale / layerCount;
-    vec2 currentTexCoords = texCoord;
-    float currentDepth = texture(heightTexture, currentTexCoords).r;
-    for (int layer = 0; layer < 32 && currentLayerDepth < currentDepth; ++layer)
-    {
-        currentTexCoords -= deltaTexCoords;
-        currentDepth = texture(heightTexture, currentTexCoords).r;
-        currentLayerDepth += layerDepth;
-    }
-    vec2 previousTexCoords = currentTexCoords + deltaTexCoords;
-    float afterDepth = currentDepth - currentLayerDepth;
-    float beforeDepth = texture(heightTexture, previousTexCoords).r -
-                        currentLayerDepth + layerDepth;
-    float weight = afterDepth / max(afterDepth - beforeDepth, 1e-5);
-    return mix(currentTexCoords, previousTexCoords, clamp(weight, 0.0, 1.0));
-}
+#include "Common/ParallaxOcclusionMapping.glsl"
 
 vec2 EquirectangularUV(vec3 direction)
 {
@@ -248,17 +202,13 @@ float CalculateShadow(vec3 worldPos)
 void main()
 {
     vec2 texCoord = fragTexCoord;
-    mat3 TBN = CalculateTBN(fragNormal, fragWorldPos, fragTexCoord);
+    // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
+    mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
     vec3 viewDirection = normalize(mvp.cameraPosition.xyz - fragWorldPos);
-    vec3 viewDirectionTS = normalize(transpose(TBN) * viewDirection);
     if (mvp.pomParams.y > 0.5)
     {
-        float pomFade = smoothstep(0.1, 0.3, clamp(viewDirectionTS.z, 0.0, 1.0));
-        texCoord = mix(fragTexCoord,
-                       ParallaxOcclusionMapping(fragTexCoord,
-                                                viewDirectionTS,
-                                                mvp.pomParams.x),
-                       pomFade);
+        texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, viewDirection,
+                                                 mvp.pomParams.x);
     }
 
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
@@ -272,7 +222,7 @@ void main()
         discard;
     }
 
-    vec3 normal = normalize(TBN * textureSamples.TangentNormal);
+    vec3 normal = ApplyTangentSpaceNormal(TBN, textureSamples.TangentNormal);
     float metallic = clamp(textureSamples.Material.r, 0.0, 1.0);
     float roughness = clamp(textureSamples.Material.g, 0.04, 1.0);
     float ao = clamp(textureSamples.Material.b, 0.0, 1.0);

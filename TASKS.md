@@ -14,7 +14,7 @@
 - notes: 以降の全タスクの見た目の証拠はこのスクリプトで撮り、PNGを開いて確認する。撮影物は `.harness/runs/` に置き、コミットしない。
 
 ## SS-POM: 視差オクルージョンの凹凸の向きと輪郭の歪みを直し、3つのシェーダーで共通にする
-- status: todo
+- status: done
 - done-when: POMと余接フレームを共通のシェーダーの取り込みファイルへまとめ、`gbuffer.frag`・`forward_transparent.frag`・`megageometry.frag` が同じ関数を使う。高さマップは白=高いとして読む（`1.0 - height` で深さへ直す）。輪郭のフェードと層数は幾何法線とビュー方向の内積で決め、TBNは元のUVから一度だけ作って法線マップにも使い、接空間のビュー方向はTとBを正規化して作る。マーチ中のサンプルは分岐の前に取ったUV勾配で`textureGrad`にする。撮影の近接視点で、球の石が盛り上がり目地がへこんで見え、輪郭の付近で模様が引き伸ばされたり流れたりしていない。法線マップ（`nor_gl`）の緑の向きが凹凸と合っている（光の当たる側が明るい）ことを点光源の近くで確かめ、逆なら直す。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`

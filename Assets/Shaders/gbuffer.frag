@@ -31,6 +31,7 @@ layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/ParallaxOcclusionMapping.glsl"
 
 // GBuffer MRT出力
 layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
@@ -39,125 +40,20 @@ layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) /
 layout(location = 3) out vec4 outEmissive;  // RT3: Emissive (RGB, HDR) + unused
 layout(location = 4) out vec2 outVelocity;  // RT4: currentUV - previousUV
 
-/**
- * @brief スクリーンスペース微分からTBN行列を計算（Cotangent Frame法）
- *
- * Christian Schüler "Normal Mapping Without Precomputed Tangents" に基づく。
- * dFdx/dFdyを使用して接線空間を導出するため、
- * 頂点データにTangent属性が不要です。
- *
- * Vulkan補正: dFdyはOpenGLと符号が逆（Vulkanのスクリーン座標Y軸は下向き）のため、
- * dFdyの結果を反転してOpenGL規約に揃えてからTBN行列を構築します。
- */
-mat3 CalculateTBN(vec3 worldNormal, vec3 worldPos, vec2 texCoord)
-{
-    vec3 dp1 = dFdx(worldPos);
-    vec3 dp2 = -dFdy(worldPos);   // Vulkan Y-flip補正（OpenGL規約に合わせる）
-    vec2 duv1 = dFdx(texCoord);
-    vec2 duv2 = -dFdy(texCoord);  // Vulkan Y-flip補正
-
-    vec3 N = normalize(worldNormal);
-    vec3 dp2perp = cross(dp2, N);
-    vec3 dp1perp = cross(N, dp1);
-
-    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
-    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
-
-    // 退化チェック: UV微分が零の場合（UVシームや極付近）。画素あたりの微分は解像度で
-    // 小さくなるため、絶対値ではなく位置微分とUV微分の大きさに対する比で判定する。
-    float maxLen2 = max(dot(T, T), dot(B, B));
-    float positionScale = max(dot(dp1, dp1), dot(dp2, dp2));
-    float uvScale = max(dot(duv1, duv1), dot(duv2, duv2));
-    if (IsCotangentFrameDegenerate(maxLen2, positionScale, uvScale))
-    {
-        // フォールバック: 任意の接線フレームを構築
-        vec3 up = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-        T = normalize(cross(up, N));
-        B = cross(N, T);
-        return mat3(T, B, N);
-    }
-
-    float invmax = inversesqrt(maxLen2);
-    return mat3(T * invmax, B * invmax, N);
-}
-
-/**
- * @brief Parallax Occlusion Mapping (POM)
- *
- * ハイトマップに基づいてUV座標をオフセットし、
- * 表面に凹凸があるかのような錯覚を生み出す。
- * 急勾配のレイマーチでおおまかな交差を求め、
- * 2サンプル間の線形補間で精度を上げる。
- */
-vec2 ParallaxOcclusionMapping(vec2 texCoord, vec3 viewDirTS, float heightScale)
-{
-    // レイヤー数: 視線が浅い（grazing angle）ほど多く
-    const float minLayers = 8.0;
-    const float maxLayers = 32.0;
-    float numLayers = mix(maxLayers, minLayers, abs(viewDirTS.z));
-
-    float layerDepth = 1.0 / numLayers;
-    float currentLayerDepth = 0.0;
-
-    // 接線空間のビュー方向からUVオフセット方向を算出
-    // offset limiting: /viewDirTS.z を行わない。grazing angle（円周/シルエット付近）で
-    // viewDirTS.z→0 のとき従来は P が発散しUVマーチが暴走していた。z で割らないことで
-    // P を有界（最大 |viewDirTS.xy|*heightScale ≈ heightScale）に保ち、輪郭の歪みを防ぐ。
-    vec2 P = viewDirTS.xy * heightScale;
-    vec2 deltaTexCoords = P / numLayers;
-
-    vec2 currentTexCoords = texCoord;
-    float currentDepthMapValue = texture(heightTexture, currentTexCoords).r;
-
-    // 急勾配レイマーチ: レイヤーがハイトマップより深くなるまで進む
-    while (currentLayerDepth < currentDepthMapValue)
-    {
-        currentTexCoords -= deltaTexCoords;
-        currentDepthMapValue = texture(heightTexture, currentTexCoords).r;
-        currentLayerDepth += layerDepth;
-    }
-
-    // 前後2サンプル間で線形補間（オクルージョン補間）
-    vec2 prevTexCoords = currentTexCoords + deltaTexCoords;
-    float afterDepth  = currentDepthMapValue - currentLayerDepth;
-    float beforeDepth = texture(heightTexture, prevTexCoords).r - currentLayerDepth + layerDepth;
-    float weight = afterDepth / (afterDepth - beforeDepth);
-    vec2 finalTexCoords = prevTexCoords * weight + currentTexCoords * (1.0 - weight);
-
-    return finalTexCoords;
-}
-
 void main()
 {
     // POMパラメータ取得
     float heightScale = mvp.pomParams.x;
     float hasHeightMap = mvp.pomParams.y;
 
+    // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
+    mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
+
     // POM適用: ハイトマップがある場合のみUVオフセット
     vec2 texCoord = fragTexCoord;
     if (hasHeightMap > 0.5)
     {
-        // TBN行列を構築して、ビュー方向を接線空間に変換
-        mat3 TBN = CalculateTBN(fragNormal, fragWorldPos, fragTexCoord);
-        mat3 TBN_inv = transpose(TBN);  // 正規直交基底なので転置=逆行列
-        vec3 viewDirTS = normalize(TBN_inv * fragViewDir);
-
-        // grazing angle フェード: 円周/シルエット付近では N・V（=viewDirTS.z）→0 となり、
-        // POM のレイマーチが不安定化して輪郭が歪む（回転でテクセルが流れ「引っ張られて」見える）。
-        // viewDirTS.z で素のUVへフェードし、輪郭での歪み・スイムを抑える。
-        // 背面寄り（z<0）は clamp で 0 に落ちフェード 0（=POM無効）になる。
-        float nDotV = clamp(viewDirTS.z, 0.0, 1.0);
-        float pomFade = smoothstep(0.1, 0.3, nDotV);
-        if (pomFade > 0.0)
-        {
-            // フェードが効く領域のみレイマーチを実行（輪郭では暴走前にスキップ）
-            vec2 pomTexCoord = ParallaxOcclusionMapping(fragTexCoord, viewDirTS, heightScale);
-            texCoord = mix(fragTexCoord, pomTexCoord, pomFade);
-        }
-
-        // UV範囲外チェック（タイリングテクスチャなら不要だが念のため）
-        // if (texCoord.x > 1.0 || texCoord.y > 1.0 || texCoord.x < 0.0 || texCoord.y < 0.0)
-        //     discard;
+        texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, fragViewDir, heightScale);
     }
 
     // テクスチャサンプリング × オブジェクトカラー（POM補正済みUV使用）
@@ -166,9 +62,8 @@ void main()
     outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
                      textureSamples.Albedo.a);
 
-    // ノーマルマップ適用（POM補正済みUV使用）
-    mat3 TBN_normal = CalculateTBN(fragNormal, fragWorldPos, texCoord);
-    vec3 normal = ApplyTangentSpaceNormal(TBN_normal, textureSamples.TangentNormal);
+    // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
+    vec3 normal = ApplyTangentSpaceNormal(TBN, textureSamples.TangentNormal);
     outNormal = vec4(normal, 0.0);
 
     // PBRマテリアルパラメータ（POM補正済みUV使用）
