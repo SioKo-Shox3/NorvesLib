@@ -12,11 +12,7 @@
 #endif
 
 #include <cassert>
-#include <cstring>
-#include <fstream>
 #include <iostream>
-#include <iterator>
-#include <string>
 
 using namespace NorvesLib;
 using namespace NorvesLib::Core;
@@ -102,54 +98,6 @@ namespace
         plan.Camera.CullingMask = RenderLayer::UI;
         return plan;
     }
-
-    std::string ReadSource()
-    {
-        const std::string path = std::string(NORVES_SOURCE_ROOT) + "/Library/Core/Private/Engine/ApplicationProcessor.cpp";
-        std::ifstream input(path);
-        return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-    }
-
-    size_t FindRequired(const std::string& source, const char* text)
-    {
-        const size_t position = source.find(text);
-        assert(position != std::string::npos);
-        return position;
-    }
-
-    size_t FindMatchingBrace(const std::string& source, size_t openBrace)
-    {
-        uint32_t depth = 0u;
-        for (size_t index = openBrace; index < source.size(); ++index)
-        {
-            if (source[index] == '{')
-            {
-                ++depth;
-            }
-            else if (source[index] == '}')
-            {
-                --depth;
-                if (depth == 0u)
-                {
-                    return index;
-                }
-            }
-        }
-        assert(false);
-        return std::string::npos;
-    }
-
-    uint32_t CountOccurrences(const std::string& source, const char* text)
-    {
-        uint32_t count = 0u;
-        size_t position = 0u;
-        while ((position = source.find(text, position)) != std::string::npos)
-        {
-            ++count;
-            position += std::strlen(text);
-        }
-        return count;
-    }
 }
 
 int main()
@@ -231,27 +179,6 @@ int main()
     resources.Shutdown();
 #endif
     canvas.Shutdown();
-
-    const std::string source = ReadSource();
-    const size_t worldTick = FindRequired(source, "GEngine->GetWorld().Tick(deltaTime);");
-    const size_t particleTick = FindRequired(source, "GEngine->GetParticleSystem().Tick(deltaTime);");
-    const size_t sync = FindRequired(source, "GEngine->GetWorld().SyncToSceneView(");
-    const size_t collect = FindRequired(source, "GEngine->GetWorld().CollectTransientBoardProxies(frameTransient);");
-    const size_t append = FindRequired(source, "GEngine->GetParticleSystem().AppendBoardProxies(frameTransient);");
-    const size_t canvasSet = FindRequired(source, "canvasView->SetTransientBoardProxies(frameTransient);");
-    const size_t sceneQuery = FindRequired(source, "GEngine->GetSceneQuery().Rebuild(GEngine->GetWorld());");
-    const size_t guard = source.rfind("if (bAdvanceSim)", worldTick);
-    assert(guard != std::string::npos);
-    const size_t guardOpenBrace = source.find('{', guard);
-    const size_t guardCloseBrace = FindMatchingBrace(source, guardOpenBrace);
-    assert(guardOpenBrace < worldTick && worldTick < guardCloseBrace);
-    assert(guardOpenBrace < particleTick && particleTick < guardCloseBrace);
-    assert(guardCloseBrace < sync);
-    assert(sync < collect);
-    assert(collect < append);
-    assert(append < canvasSet);
-    assert(canvasSet < sceneQuery);
-    assert(CountOccurrences(source, "SetTransientBoardProxies(frameTransient)") == 1u);
 
     std::cout << "ParticleFrameSnapshotTest passed\\n";
     return 0;

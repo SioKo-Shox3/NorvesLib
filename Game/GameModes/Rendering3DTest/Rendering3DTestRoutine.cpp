@@ -145,6 +145,9 @@ namespace Game::GameModes
             }
 
             ctx.EngineRef.GetRenderWorld().SetMainCamera(initialCamera);
+            // 起動画面はRTGIを使わず、従来どおり環境光（IBL）で間接光を表す（RTGIの少ない光線数の雑音が
+            // 物体と地面に粒状に残るため）。
+            ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGIEnabled(false);
             data.m_PickingController.SetFallbackSelectionDepth(
                 data.m_pSpringArmComponent->GetArmLength());
             LOG_INFO("CAMERA_COMPONENT_SMOKE stage=registered");

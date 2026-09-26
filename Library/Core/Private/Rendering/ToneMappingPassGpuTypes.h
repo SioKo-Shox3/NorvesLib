@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -23,6 +24,22 @@ namespace NorvesLib::Core::Rendering
         float brightness;
         float temperature;
     };
+
+    // tonemapping.frag の uniform ブロック（std140）と同じ配置でなければならない。
+    static_assert(sizeof(GPUToneMappingParams) == 64);
+    static_assert(offsetof(GPUToneMappingParams, operatorType) == 0);
+    static_assert(offsetof(GPUToneMappingParams, bBypass) == 4);
+    static_assert(offsetof(GPUToneMappingParams, filmGrainSeed) == 8);
+    static_assert(offsetof(GPUToneMappingParams, vignetteIntensity) == 12);
+    static_assert(offsetof(GPUToneMappingParams, vignetteRadius) == 16);
+    static_assert(offsetof(GPUToneMappingParams, vignetteSoftness) == 20);
+    static_assert(offsetof(GPUToneMappingParams, filmGrainStrength) == 24);
+    static_assert(offsetof(GPUToneMappingParams, _pad2) == 28);
+    static_assert(offsetof(GPUToneMappingParams, colorFilter) == 32);
+    static_assert(offsetof(GPUToneMappingParams, contrast) == 48);
+    static_assert(offsetof(GPUToneMappingParams, saturation) == 52);
+    static_assert(offsetof(GPUToneMappingParams, brightness) == 56);
+    static_assert(offsetof(GPUToneMappingParams, temperature) == 60);
 
 } // namespace NorvesLib::Core::Rendering
 

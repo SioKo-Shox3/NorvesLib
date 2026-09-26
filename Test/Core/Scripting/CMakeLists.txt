@@ -1,20 +1,7 @@
-add_executable(AngelScriptVendorContractTest
-    AngelScriptVendorContractTest.cpp
-)
-target_link_libraries(AngelScriptVendorContractTest PRIVATE
-    Core
-    bcrypt
-)
-target_include_directories(AngelScriptVendorContractTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-target_compile_definitions(AngelScriptVendorContractTest PRIVATE
-    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(AngelScriptVendorContractTest PROPERTIES FOLDER "Test/Core/Scripting")
-
-add_executable(AngelScriptBootstrapTest
-    AngelScriptBootstrapTest.cpp
+norves_add_test_bundle(AngelScriptBootstrapTest
+    FOLDER "Test/Core/Scripting"
+    MEMBER AngelScriptBootstrapTest AngelScriptBootstrapTest.cpp
+    MEMBER ScriptRuntimeSafetyTest ScriptRuntimeSafetyTest.cpp
 )
 target_link_libraries(AngelScriptBootstrapTest PRIVATE Core)
 target_include_directories(AngelScriptBootstrapTest PRIVATE
@@ -22,21 +9,9 @@ target_include_directories(AngelScriptBootstrapTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/angelscript/upstream/sdk/angelscript/include
 )
-set_target_properties(AngelScriptBootstrapTest PROPERTIES FOLDER "Test/Core/Scripting")
-
-add_executable(ScriptRuntimeSafetyTest
-    ScriptRuntimeSafetyTest.cpp
-)
-target_link_libraries(ScriptRuntimeSafetyTest PRIVATE Core)
-target_include_directories(ScriptRuntimeSafetyTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/Library/Core/Private
-    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/angelscript/upstream/sdk/angelscript/include
-)
-target_compile_definitions(ScriptRuntimeSafetyTest PRIVATE
+target_compile_definitions(AngelScriptBootstrapTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
-set_target_properties(ScriptRuntimeSafetyTest PROPERTIES FOLDER "Test/Core/Scripting")
 
 add_executable(ScriptApplicationLifecycleContractTest
     ScriptApplicationLifecycleContractTest.cpp
@@ -50,35 +25,21 @@ target_compile_definitions(ScriptApplicationLifecycleContractTest PRIVATE
 )
 set_target_properties(ScriptApplicationLifecycleContractTest PROPERTIES FOLDER "Test/Core/Scripting")
 
-add_executable(ScriptComponentTickTest
-    ScriptComponentTickTest.cpp
+
+norves_add_test_bundle(ScriptComponentTickTest
+    FOLDER "Test/Core/Scripting"
+    MEMBER ScriptComponentTickTest ScriptComponentTickTest.cpp
+    MEMBER ScriptComponentSceneRoundTripTest ScriptComponentSceneRoundTripTest.cpp
+    MEMBER ScriptPathResolutionTest ScriptPathResolutionTest.cpp
+    MEMBER M6AngelScriptAcceptanceTest M6AngelScriptAcceptanceTest.cpp
 )
 target_link_libraries(ScriptComponentTickTest PRIVATE Core)
 target_include_directories(ScriptComponentTickTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(ScriptComponentTickTest PROPERTIES FOLDER "Test/Core/Scripting")
-
-add_executable(ScriptComponentSceneRoundTripTest
-    ScriptComponentSceneRoundTripTest.cpp
-)
-target_link_libraries(ScriptComponentSceneRoundTripTest PRIVATE Core)
-target_include_directories(ScriptComponentSceneRoundTripTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-set_target_properties(ScriptComponentSceneRoundTripTest PROPERTIES FOLDER "Test/Core/Scripting")
-
-add_executable(ScriptPathResolutionTest
-    ScriptPathResolutionTest.cpp
-)
-target_link_libraries(ScriptPathResolutionTest PRIVATE Core)
-target_include_directories(ScriptPathResolutionTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-target_compile_definitions(ScriptPathResolutionTest PRIVATE
+target_compile_definitions(ScriptComponentTickTest PRIVATE
     NORVES_ASSET_DIR="${CMAKE_SOURCE_DIR}/Assets"
 )
-set_target_properties(ScriptPathResolutionTest PROPERTIES FOLDER "Test/Core/Scripting")
 
 add_executable(ScriptHotReloadTest
     ScriptHotReloadTest.cpp
@@ -94,22 +55,9 @@ target_compile_definitions(ScriptHotReloadTest PRIVATE
 )
 set_target_properties(ScriptHotReloadTest PROPERTIES FOLDER "Test/Core/Scripting")
 
-add_executable(M6AngelScriptAcceptanceTest
-    M6AngelScriptAcceptanceTest.cpp
-)
-target_link_libraries(M6AngelScriptAcceptanceTest PRIVATE Core)
-target_include_directories(M6AngelScriptAcceptanceTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-)
-target_compile_definitions(M6AngelScriptAcceptanceTest PRIVATE
-    NORVES_ASSET_DIR="${CMAKE_SOURCE_DIR}/Assets"
-)
-set_target_properties(M6AngelScriptAcceptanceTest PROPERTIES FOLDER "Test/Core/Scripting")
-
 include(CTest)
-add_test(NAME AngelScriptVendorContractTest COMMAND AngelScriptVendorContractTest)
 add_test(NAME AngelScriptBootstrapTest COMMAND AngelScriptBootstrapTest)
-add_test(NAME ScriptRuntimeSafetyTest COMMAND ScriptRuntimeSafetyTest)
+add_test(NAME ScriptRuntimeSafetyTest COMMAND AngelScriptBootstrapTest --test=ScriptRuntimeSafetyTest)
 add_test(NAME ScriptApplicationLifecycleContractTest COMMAND ScriptApplicationLifecycleContractTest)
 set_tests_properties(
     ScriptRuntimeSafetyTest
@@ -117,11 +65,11 @@ set_tests_properties(
     PROPERTIES TIMEOUT 300
 )
 add_test(NAME ScriptComponentTickTest COMMAND ScriptComponentTickTest)
-add_test(NAME ScriptComponentSceneRoundTripTest COMMAND ScriptComponentSceneRoundTripTest)
-add_test(NAME ScriptPathResolutionTest COMMAND ScriptPathResolutionTest)
+add_test(NAME ScriptComponentSceneRoundTripTest COMMAND ScriptComponentTickTest --test=ScriptComponentSceneRoundTripTest)
+add_test(NAME ScriptPathResolutionTest COMMAND ScriptComponentTickTest --test=ScriptPathResolutionTest)
 add_test(NAME ScriptHotReloadTest COMMAND ScriptHotReloadTest)
 add_test(NAME ScriptSourceTrackerContractTest COMMAND ScriptHotReloadTest --tracker-contract)
-add_test(NAME M6AngelScriptAcceptanceTest COMMAND M6AngelScriptAcceptanceTest)
+add_test(NAME M6AngelScriptAcceptanceTest COMMAND ScriptComponentTickTest --test=M6AngelScriptAcceptanceTest)
 set_tests_properties(
     ScriptHotReloadTest
     ScriptSourceTrackerContractTest

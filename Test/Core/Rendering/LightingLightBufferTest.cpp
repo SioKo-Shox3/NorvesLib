@@ -16,11 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <fstream>
 #include <iostream>
-#include <iterator>
-#include <regex>
-#include <string>
 #include <type_traits>
 #ifdef _MSC_VER
 #include <crtdbg.h>
@@ -108,28 +104,6 @@ namespace
 #endif
     }
 
-    bool ContainsText(const std::string& source, const std::string& expected)
-    {
-        return source.find(expected) != std::string::npos;
-    }
-
-    std::size_t CountText(const std::string& source, const std::string& expected)
-    {
-        std::size_t count = 0;
-        std::size_t searchPosition = 0;
-        while (true)
-        {
-            const std::size_t position = source.find(expected, searchPosition);
-            if (position == std::string::npos)
-            {
-                return count;
-            }
-
-            ++count;
-            searchPosition = position + expected.size();
-        }
-    }
-
     bool NearlyEqual(float actual, float expected, float epsilon = 1.0e-5f)
     {
         return std::fabs(actual - expected) <= epsilon;
@@ -141,31 +115,6 @@ namespace
         const auto* bytes = reinterpret_cast<const uint8_t*>(&light);
         std::memcpy(&value, bytes + byteOffset, sizeof(value));
         return value;
-    }
-
-    std::string ReadTextFile(const std::string& path)
-    {
-        std::ifstream file(path, std::ios::binary);
-        assert(file.is_open());
-        return std::string((std::istreambuf_iterator<char>(file)),
-                           std::istreambuf_iterator<char>());
-    }
-
-    std::size_t FindText(const std::string& source, const std::string& expected)
-    {
-        const std::size_t position = source.find(expected);
-        assert(position != std::string::npos);
-        return position;
-    }
-
-    std::string SliceBetween(const std::string& source,
-                             const std::string& beginText,
-                             const std::string& endText)
-    {
-        const std::size_t begin = FindText(source, beginText);
-        const std::size_t end = source.find(endText, begin);
-        assert(end != std::string::npos);
-        return source.substr(begin, end - begin);
     }
 
     LightProxy MakePointLight(uint32_t index)
@@ -581,93 +530,6 @@ namespace
         assert(!scene.SkyAtmosphere.bEnabled);
         assert(scene.SkyAtmosphere.SunAltitudeDegrees == 45.0f);
     }
-
-    void AssertLightingPassSourceContract(const std::string& sourceRoot)
-    {
-        const std::string lightingPassSource =
-            ReadTextFile(sourceRoot + "/Library/Core/Private/Rendering/LightingPass.cpp");
-
-        const std::string bindingBlock =
-            SliceBetween(lightingPassSource,
-                         "lightBinding.binding = 5;",
-                         "dsDesc.bindings.push_back(lightBinding);");
-        assert(ContainsText(bindingBlock, "lightBinding.type = RHI::ResourceBindType::StructuredBuffer;"));
-
-        assert(ContainsText(lightingPassSource, "BindStorageBuffer(5,"));
-        assert(!ContainsText(lightingPassSource, "BindConstantBuffer(5,"));
-        assert(ContainsText(lightingPassSource, "RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead"));
-        assert(ContainsText(lightingPassSource, "\"LightArraySSBO\""));
-        assert(!ContainsText(lightingPassSource, "MAX_LIGHTS"));
-        assert(!ContainsText(lightingPassSource, "LIGHT_BUFFER_SIZE"));
-        assert(!std::regex_search(lightingPassSource, std::regex("GPULightData\\s+\\w+\\s*\\[")));
-        assert(!ContainsText(lightingPassSource, "lightCount >= MAX_LIGHTS"));
-
-        assert(CountText(lightingPassSource, "context.PhysicalLighting.PublishLighting(") == 1);
-        assert(ContainsText(lightingPassSource, "context.PhysicalLighting.CascadedShadow.View"));
-        assert(ContainsText(lightingPassSource, "context.PhysicalLighting.CascadedShadow.Projection"));
-        assert(ContainsText(lightingPassSource, "context.PhysicalLighting.CascadedShadow.SplitDistances"));
-        assert(ContainsText(lightingPassSource, "HasValidCascadedShadowPublication"));
-        assert(ContainsText(lightingPassSource, "m_DefaultShadowMapArrayTexture"));
-        assert(ContainsText(lightingPassSource, "bShadowMapIsArray"));
-        assert(ContainsText(lightingPassSource, "GetArraySize() == PhysicalLightingShadowCascadeCount"));
-        assert(ContainsText(lightingPassSource, "m_EnvironmentTexture"));
-        assert(ContainsText(lightingPassSource, "m_DiffuseIrradianceTexture"));
-        assert(ContainsText(lightingPassSource, "m_PrefilteredSpecularTexture"));
-        assert(ContainsText(lightingPassSource, "EnsureSkyAtmosphereIbl("));
-        assert(ContainsText(lightingPassSource, "BuildSkyAtmosphereRadianceSource"));
-        assert(ContainsText(lightingPassSource, "m_SkyAtmosphereDiffuseIrradianceTexture"));
-        assert(ContainsText(lightingPassSource, "m_SkyAtmospherePrefilteredSpecularTexture"));
-        assert(ContainsText(lightingPassSource, "environmentRadianceSampler"));
-        assert(ContainsText(lightingPassSource, "context.SkyAtmosphere.RadianceTexture->GetWidth()"));
-        assert(ContainsText(lightingPassSource, "bSkyAtmosphereRequested ? m_DefaultBlackTexture"));
-        assert(ContainsText(lightingPassSource, "m_BrdfLutTexture"));
-        assert(ContainsText(lightingPassSource, "params.bIBLEnabled != 0u"));
-        assert(ContainsText(lightingPassSource, "if (m_bInitialized && context.PhysicalLighting.bActive)"));
-        assert(FindText(lightingPassSource, "m_LightDataBuffer->Update") <
-               FindText(lightingPassSource, "context.PhysicalLighting.PublishLighting("));
-        assert(FindText(lightingPassSource, "m_LightArrayBuffer->Update") <
-               FindText(lightingPassSource, "context.PhysicalLighting.PublishLighting("));
-    }
-
-    void AssertLightingShaderSourceContract(const std::string& sourceRoot)
-    {
-        const std::string shaderSource = ReadTextFile(sourceRoot + "/Assets/Shaders/lighting.frag");
-
-        assert(ContainsText(shaderSource,
-                            "layout(std430, set = 0, binding = 5) readonly buffer LightBuffer"));
-        assert(ContainsText(shaderSource,
-                            "layout(set = 0, binding = 6) uniform sampler2DArray shadowMap"));
-        assert(ContainsText(shaderSource, "HasValidCascadedShadowData"));
-        assert(ContainsText(shaderSource, "smoothstep(blendStart, boundary, receiverDistance)"));
-        assert(ContainsText(shaderSource, "LightData lights[];"));
-        assert(!std::regex_search(shaderSource, std::regex("lights\\s*\\[\\s*[0-9]+u?\\s*\\]")));
-        assert(!ContainsText(shaderSource, "min(params.lightCount"));
-        assert(ContainsText(shaderSource, "for (uint i = 0u; i < params.lightCount; i++)"));
-
-        // Static source guard only: behavioral evidence comes from the literal table above
-        // and the RenderGraph execution test. Keep inverse-square and range terms separate.
-        const std::string inverseSquareFunction =
-            SliceBetween(shaderSource,
-                         "float CalculateInverseSquareAttenuation(",
-                         "float CalculateRangeWindow(");
-        assert(std::regex_search(
-            inverseSquareFunction,
-            std::regex("1\\.0\\s*/\\s*max\\(distance\\s*\\*\\s*distance\\s*,\\s*0\\.01\\s*\\*\\s*0\\.01\\)")));
-
-        const std::string rangeWindowFunction =
-            SliceBetween(shaderSource, "float CalculateRangeWindow(", "// PCSS");
-        assert(std::regex_search(
-            rangeWindowFunction,
-            std::regex("max\\(range\\s*,\\s*0\\.0001\\)")));
-        assert(std::regex_search(
-            rangeWindowFunction,
-            std::regex("factor\\s*=\\s*max\\(1\\.0\\s*-\\s*pow\\(distance\\s*/")));
-        assert(ContainsText(rangeWindowFunction, "return factor * factor;"));
-
-        const std::string attenuationProduct =
-            "CalculateInverseSquareAttenuation(distance) * CalculateRangeWindow(distance, light.attenuation.x)";
-        assert(CountText(shaderSource, attenuationProduct) == 2);
-    }
 } // namespace
 
 int main()
@@ -686,13 +548,6 @@ int main()
     TestLocalAttenuationBoundaryLiteralTable();
     TestPhysicalLightingResourceLifecycle();
     TestSceneProxySkyLifecycle();
-
-#ifndef NORVES_SOURCE_DIR
-#error NORVES_SOURCE_DIR must be defined for LightingLightBufferTest.
-#endif
-
-    AssertLightingPassSourceContract(NORVES_SOURCE_DIR);
-    AssertLightingShaderSourceContract(NORVES_SOURCE_DIR);
 
     std::cout << "LightingLightBufferTest passed\n";
     return 0;

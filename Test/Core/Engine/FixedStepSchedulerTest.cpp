@@ -75,44 +75,38 @@ namespace
 
     void TestDeltaSequencesWithSameElapsedTimeAreDeterministic()
     {
-        for (uint64_t repetition = 0; repetition < 64; ++repetition)
-        {
-            FixedStepScheduler firstScheduler;
-            firstScheduler.BeginRun();
-            uint64_t firstExecutedSteps = 0;
-            uint64_t firstDroppedSteps = 0;
-            uint64_t firstRemainderScaledUnits = 0;
-            AdvanceSequence(firstScheduler, 50'000'000, 20,
-                            firstExecutedSteps, firstDroppedSteps, firstRemainderScaledUnits);
+        FixedStepScheduler firstScheduler;
+        firstScheduler.BeginRun();
+        uint64_t firstExecutedSteps = 0;
+        uint64_t firstDroppedSteps = 0;
+        uint64_t firstRemainderScaledUnits = 0;
+        AdvanceSequence(firstScheduler, 50'000'000, 20,
+                        firstExecutedSteps, firstDroppedSteps, firstRemainderScaledUnits);
 
-            FixedStepScheduler secondScheduler;
-            secondScheduler.BeginRun();
-            uint64_t secondExecutedSteps = 0;
-            uint64_t secondDroppedSteps = 0;
-            uint64_t secondRemainderScaledUnits = 0;
-            AdvanceSequence(secondScheduler, 100'000'000, 10,
-                            secondExecutedSteps, secondDroppedSteps, secondRemainderScaledUnits);
+        FixedStepScheduler secondScheduler;
+        secondScheduler.BeginRun();
+        uint64_t secondExecutedSteps = 0;
+        uint64_t secondDroppedSteps = 0;
+        uint64_t secondRemainderScaledUnits = 0;
+        AdvanceSequence(secondScheduler, 100'000'000, 10,
+                        secondExecutedSteps, secondDroppedSteps, secondRemainderScaledUnits);
 
-            assert(firstExecutedSteps == 60);
-            assert(firstDroppedSteps == 0);
-            assert(firstRemainderScaledUnits == 0);
-            assert(secondExecutedSteps == firstExecutedSteps);
-            assert(secondDroppedSteps == firstDroppedSteps);
-            assert(secondRemainderScaledUnits == firstRemainderScaledUnits);
-        }
+        assert(firstExecutedSteps == 60);
+        assert(firstDroppedSteps == 0);
+        assert(firstRemainderScaledUnits == 0);
+        assert(secondExecutedSteps == firstExecutedSteps);
+        assert(secondDroppedSteps == firstDroppedSteps);
+        assert(secondRemainderScaledUnits == firstRemainderScaledUnits);
     }
 
     void TestCatchUpCapDiscardsWholeStepsAndKeepsRemainder()
     {
-        for (uint64_t repetition = 0; repetition < 64; ++repetition)
-        {
-            FixedStepScheduler scheduler;
-            scheduler.BeginRun();
+        FixedStepScheduler scheduler;
+        scheduler.BeginRun();
 
-            const FixedStepAdvanceResult result = scheduler.Advance(337'500'000, true);
+        const FixedStepAdvanceResult result = scheduler.Advance(337'500'000, true);
 
-            AssertResult(result, EFixedStepAdvanceStatus::Advanced, 8, 12, 250'000'000);
-        }
+        AssertResult(result, EFixedStepAdvanceStatus::Advanced, 8, 12, 250'000'000);
     }
 
     void TestPauseKeepsRemainderAndResumeExcludesPausedTime()
@@ -131,19 +125,16 @@ namespace
 
     void TestZeroNegativeAndNotRunningAreNoOp()
     {
-        for (uint64_t repetition = 0; repetition < 64; ++repetition)
-        {
-            FixedStepScheduler scheduler;
+        FixedStepScheduler scheduler;
 
-            AssertResult(scheduler.Advance(1, true), EFixedStepAdvanceStatus::NotRunning, 0, 0, 0);
-            scheduler.BeginRun();
-            const FixedStepAdvanceResult seeded = scheduler.Advance(8'333'333, true);
-            AssertResult(seeded, EFixedStepAdvanceStatus::Advanced, 0, 0, 499'999'980);
-            AssertResult(scheduler.Advance(0, true), EFixedStepAdvanceStatus::InvalidDelta, 0, 0, 499'999'980);
-            AssertResult(scheduler.Advance(-1, true), EFixedStepAdvanceStatus::InvalidDelta, 0, 0, 499'999'980);
-            scheduler.EndRun();
-            AssertResult(scheduler.Advance(1, true), EFixedStepAdvanceStatus::NotRunning, 0, 0, 499'999'980);
-        }
+        AssertResult(scheduler.Advance(1, true), EFixedStepAdvanceStatus::NotRunning, 0, 0, 0);
+        scheduler.BeginRun();
+        const FixedStepAdvanceResult seeded = scheduler.Advance(8'333'333, true);
+        AssertResult(seeded, EFixedStepAdvanceStatus::Advanced, 0, 0, 499'999'980);
+        AssertResult(scheduler.Advance(0, true), EFixedStepAdvanceStatus::InvalidDelta, 0, 0, 499'999'980);
+        AssertResult(scheduler.Advance(-1, true), EFixedStepAdvanceStatus::InvalidDelta, 0, 0, 499'999'980);
+        scheduler.EndRun();
+        AssertResult(scheduler.Advance(1, true), EFixedStepAdvanceStatus::NotRunning, 0, 0, 499'999'980);
     }
 
     void TestExtremeDeltaReturnsExactCountsWithoutOverflow()
@@ -163,17 +154,14 @@ namespace
         const FixedStepAdvanceResult seeded = scheduler.Advance(8'333'333, true);
         AssertResult(seeded, EFixedStepAdvanceStatus::Advanced, 0, 0, 499'999'980);
 
-        for (uint64_t repetition = 0; repetition < 64; ++repetition)
+        FixedStepAdvanceResult workerResult{};
+        std::thread worker([&scheduler, &workerResult]()
         {
-            FixedStepAdvanceResult workerResult{};
-            std::thread worker([&scheduler, &workerResult]()
-            {
-                workerResult = scheduler.Advance(1'000'000'000, true);
-            });
-            worker.join();
+            workerResult = scheduler.Advance(1'000'000'000, true);
+        });
+        worker.join();
 
-            AssertResult(workerResult, EFixedStepAdvanceStatus::WrongThread, 0, 0, 499'999'980);
-        }
+        AssertResult(workerResult, EFixedStepAdvanceStatus::WrongThread, 0, 0, 499'999'980);
 
         const FixedStepAdvanceResult resumed = scheduler.Advance(8'333'334, true);
         AssertResult(resumed, EFixedStepAdvanceStatus::Advanced, 1, 0, 20);

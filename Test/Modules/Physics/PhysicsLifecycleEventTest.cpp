@@ -3,6 +3,7 @@
 #include "Physics/IPhysicsModule.h"
 #include "Physics/ColliderComponent.h"
 #include "Physics/PhysicsModule.h"
+#include "PhysicsModuleTestAccess.h"
 #include "Physics/RigidBodyComponent.h"
 #include "Engine/Engine.h"
 #include "Module/ModuleRegistry.h"
@@ -20,43 +21,6 @@ using namespace NorvesLib;
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Module;
 using namespace NorvesLib::Modules::Physics;
-
-namespace NorvesLib::Modules::Physics
-{
-    class PhysicsModuleTestAccess
-    {
-    public:
-        static Math::Vector3 GetPendingImpulse(const IPhysicsModule& module, Core::Scene::BodyHandle handle)
-        {
-            const PhysicsModule& concrete = GetConcrete(module);
-            assert(handle.IsValid() && handle.Index < concrete.m_BodySlots.size());
-            return concrete.m_BodySlots[handle.Index].PendingImpulse;
-        }
-
-        static uint32_t GetPreviousPairCount(const IPhysicsModule& module)
-        {
-            return static_cast<uint32_t>(GetConcrete(module).m_PreviousTriggerPairs.size());
-        }
-
-        static uint32_t GetDispatchedEventCount(const IPhysicsModule& module)
-        {
-            return GetConcrete(module).m_DispatchedEventCount;
-        }
-
-        static uint32_t GetPendingEventCount(const IPhysicsModule& module)
-        {
-            return GetConcrete(module).m_PendingEventCount;
-        }
-
-    private:
-        static const PhysicsModule& GetConcrete(const IPhysicsModule& module)
-        {
-            const auto* concrete = dynamic_cast<const PhysicsModule*>(&module);
-            assert(concrete != nullptr);
-            return *concrete;
-        }
-    };
-} // namespace NorvesLib::Modules::Physics
 
 namespace
 {

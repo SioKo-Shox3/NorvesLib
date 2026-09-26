@@ -43,79 +43,33 @@ if(publicMutationHasPrivatePhysicsLink)
     message(FATAL_ERROR "PUBLIC Physics link incorrectly satisfied PRIVATE direct-link contract")
 endif()
 
-add_executable(PhysicsModuleLinkTest
-    PhysicsModuleLinkTest.cpp
-)
-target_link_libraries(PhysicsModuleLinkTest PRIVATE Core NorvesModule_Physics)
-target_include_directories(PhysicsModuleLinkTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
-)
-target_compile_definitions(PhysicsModuleLinkTest PRIVATE
-    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(PhysicsModuleLinkTest PROPERTIES FOLDER "Test/Modules/Physics")
-
 include(CTest)
-add_test(NAME PhysicsModuleLinkTest COMMAND PhysicsModuleLinkTest)
+add_test(NAME PhysicsModuleLinkTest COMMAND PhysicsDynamicsTest --test=PhysicsModuleLinkTest)
 
-add_executable(PhysicsBroadphaseQueryTest
-    PhysicsBroadphaseQueryTest.cpp
-)
-target_link_libraries(PhysicsBroadphaseQueryTest PRIVATE Core NorvesModule_Physics)
-target_include_directories(PhysicsBroadphaseQueryTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
-)
-set_target_properties(PhysicsBroadphaseQueryTest PROPERTIES FOLDER "Test/Modules/Physics")
-add_test(NAME PhysicsBroadphaseQueryTest COMMAND PhysicsBroadphaseQueryTest)
+add_test(NAME PhysicsBroadphaseQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsBroadphaseQueryTest)
 
-add_executable(PhysicsDynamicsTest
-    PhysicsDynamicsTest.cpp
+
+norves_add_test_bundle(PhysicsDynamicsTest
+    FOLDER "Test/Modules/Physics"
+    MEMBER PhysicsDynamicsTest PhysicsDynamicsTest.cpp
+    MEMBER PhysicsModuleLinkTest PhysicsModuleLinkTest.cpp
+    MEMBER PhysicsBroadphaseQueryTest PhysicsBroadphaseQueryTest.cpp
+    MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
+    MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
 )
 target_link_libraries(PhysicsDynamicsTest PRIVATE Core NorvesModule_Physics)
 target_include_directories(PhysicsDynamicsTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
-)
-set_target_properties(PhysicsDynamicsTest PROPERTIES FOLDER "Test/Modules/Physics")
-add_test(NAME PhysicsDynamicsTest COMMAND PhysicsDynamicsTest)
-
-add_executable(PhysicsLifecycleEventTest
-    PhysicsLifecycleEventTest.cpp
-)
-target_link_libraries(PhysicsLifecycleEventTest PRIVATE Core NorvesModule_Physics)
-target_include_directories(PhysicsLifecycleEventTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
-)
-set_target_properties(PhysicsLifecycleEventTest PROPERTIES FOLDER "Test/Modules/Physics")
-add_test(NAME PhysicsLifecycleEventTest COMMAND PhysicsLifecycleEventTest)
-
-add_executable(PhysicsFixedStepPipelineTest
-    PhysicsFixedStepPipelineTest.cpp
-)
-target_link_libraries(PhysicsFixedStepPipelineTest PRIVATE Core NorvesModule_Physics)
-target_include_directories(PhysicsFixedStepPipelineTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
-    ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
 )
-set_target_properties(PhysicsFixedStepPipelineTest PROPERTIES FOLDER "Test/Modules/Physics")
-add_test(NAME PhysicsFixedStepPipelineTest COMMAND PhysicsFixedStepPipelineTest)
-set_tests_properties(PhysicsFixedStepPipelineTest PROPERTIES TIMEOUT 90)
-
-add_executable(PhysicsArchitectureContractTest
-    PhysicsArchitectureContractTest.cpp
-)
-target_link_libraries(PhysicsArchitectureContractTest PRIVATE Core NorvesModule_Physics)
-target_include_directories(PhysicsArchitectureContractTest PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/Library/Core/Private
-    ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
-)
-target_compile_definitions(PhysicsArchitectureContractTest PRIVATE
+target_compile_definitions(PhysicsDynamicsTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
-set_target_properties(PhysicsArchitectureContractTest PROPERTIES FOLDER "Test/Modules/Physics")
-add_test(NAME PhysicsArchitectureContractTest COMMAND PhysicsArchitectureContractTest)
+add_test(NAME PhysicsDynamicsTest COMMAND PhysicsDynamicsTest)
+
+add_test(NAME PhysicsLifecycleEventTest COMMAND PhysicsDynamicsTest --test=PhysicsLifecycleEventTest)
+
+add_test(NAME PhysicsFixedStepPipelineTest COMMAND PhysicsDynamicsTest --test=PhysicsFixedStepPipelineTest)
+set_tests_properties(PhysicsFixedStepPipelineTest PROPERTIES TIMEOUT 90)
+

@@ -1,10 +1,10 @@
 ﻿# NorvesLibテスト
 
 # テストサブディレクトリの追加
+add_subdirectory(TestBundle)
 add_subdirectory(Core)
 add_subdirectory(Reflection)
 add_subdirectory(Thread)
-add_subdirectory(Modules/Dummy)
 add_subdirectory(Modules/Physics)
 add_subdirectory(Modules/Audio)
 add_subdirectory(M9)
