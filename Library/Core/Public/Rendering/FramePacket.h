@@ -11,6 +11,7 @@
 #include "Container/Containers.h"
 #include "Thread/Atomic.h"
 #include "RHI/IAccelerationStructure.h"
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <utility>
@@ -464,6 +465,52 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        /** @brief 鍵の全順序（物体ID・メッシュ・描画内番号・部分範囲・出現順の辞書順） */
+        inline bool KeyLess(const PathTracingSequenceCarry::InstanceState& a,
+                            const PathTracingSequenceCarry::InstanceState& b)
+        {
+            if (a.ObjectId != b.ObjectId) return a.ObjectId < b.ObjectId;
+            if (a.MeshId != b.MeshId) return a.MeshId < b.MeshId;
+            if (a.ObjectInstanceIndex != b.ObjectInstanceIndex)
+                return a.ObjectInstanceIndex < b.ObjectInstanceIndex;
+            if (a.IndexOffset != b.IndexOffset) return a.IndexOffset < b.IndexOffset;
+            if (a.IndexCount != b.IndexCount) return a.IndexCount < b.IndexCount;
+            if (a.VertexOffset != b.VertexOffset) return a.VertexOffset < b.VertexOffset;
+            return a.Ordinal < b.Ordinal;
+        }
+
+        /**
+         * @brief snapshotのinstanceを鍵の順へ並べ替え、customIndexを並びの番号に振り直す。
+         *
+         * 材質texture表・発光instance表・TLASはsnapshotの並びとcustomIndexから作られるため、
+         * 物体ごとの状態が同じなら描画の並びが変わっても同じsnapshotになり、PTの累積が続く。
+         */
+        inline void SortByKey(RayTracingSceneSnapshot& scene,
+                              Container::VariableArray<PathTracingSequenceCarry::InstanceState>& keys)
+        {
+            const size_t count = keys.size();
+            Container::VariableArray<uint32_t> order(count);
+            for (size_t index = 0; index < count; ++index)
+            {
+                order[index] = static_cast<uint32_t>(index);
+            }
+            // 鍵は出現順で一意にしてあるので、並べ替え後の順は元の並びに依らない。
+            std::sort(order.begin(), order.end(), [&keys](uint32_t a, uint32_t b)
+                      { return KeyLess(keys[a], keys[b]); });
+            Container::VariableArray<RayTracingSceneInstanceSnapshot> sortedInstances;
+            Container::VariableArray<PathTracingSequenceCarry::InstanceState> sortedKeys;
+            sortedInstances.reserve(count);
+            sortedKeys.reserve(count);
+            for (size_t index = 0; index < count; ++index)
+            {
+                sortedInstances.push_back(std::move(scene.Instances[order[index]]));
+                sortedInstances.back().Instance.customIndex = static_cast<uint32_t>(index);
+                sortedKeys.push_back(keys[order[index]]);
+            }
+            scene.Instances = std::move(sortedInstances);
+            keys = std::move(sortedKeys);
+        }
+
         inline const PathTracingSequenceCarry::InstanceState* Find(
             const Container::VariableArray<PathTracingSequenceCarry::InstanceState>& states,
             const PathTracingSequenceCarry::InstanceState& key)
@@ -487,6 +534,8 @@ namespace NorvesLib::Core::Rendering
      * 状態）を前の値にし、なければこのパケットの前の値を使う。同じSequenceFrameの間は、覚えた前の値で
      * パケットの前のカメラ・instance変換を上書きする。instanceは物体ID・メッシュ・部分範囲・描画内の
      * instance番号（同じ鍵は出現順）で対応付け、覚えた値にないinstanceは前の変換なし（動かない）にする。
+     * 同じフレームの中で描画の並びが変わっても累積を捨てないよう、snapshotのinstanceを鍵の順へ並べ、
+     * customIndexを並びの番号に振り直す。
      */
     inline void ApplyPathTracingSequenceCarry(FramePacket& packet, PathTracingSequenceCarry& carry)
     {
@@ -499,6 +548,7 @@ namespace NorvesLib::Core::Rendering
         }
         Container::VariableArray<PathTracingSequenceCarry::InstanceState> current;
         MakeKeys(packet.RayTracingScene, current);
+        SortByKey(packet.RayTracingScene, current);
         for (size_t index = 0; index < current.size(); ++index)
         {
             std::memcpy(current[index].Transform,

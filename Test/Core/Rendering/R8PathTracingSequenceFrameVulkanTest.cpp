@@ -24,6 +24,7 @@
 #include "RHI/Vulkan/VulkanBuffer.h"
 #include "RHI/Vulkan/VulkanCommandList.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -727,14 +728,23 @@ namespace
                 std::cerr << "連番の前の値が物体の対応で固定されません write=" << write << '\n';
                 return false;
             }
+            // 描画の並びに依らず、snapshotは物体IDの順に並び、customIndexは並びの番号になる。
+            if (first.ObjectId != 10u || second.ObjectId != 20u ||
+                first.Instance.customIndex != 0u || second.Instance.customIndex != 1u)
+            {
+                std::cerr << "連番のsnapshotが物体の鍵の順に揃いません write=" << write << '\n';
+                return false;
+            }
         }
 
         // 同じフレームの途中で現れた物体（ID 30）は前の値なし（動かない）にする。
         packet.RayTracingScene.Instances.push_back(makeInstance(30u, 4.0f));
         setRawPrevious(packet.RayTracingScene.Instances[2], 0.0f);
         ApplyPathTracingSequenceCarry(packet, carry);
-        if (packet.RayTracingScene.Instances[2].bHasPreviousTransform ||
-            packet.RayTracingScene.Instances[0].PreviousTransform[3] != 2.0f)
+        if (packet.RayTracingScene.Instances[2].ObjectId != 30u ||
+            packet.RayTracingScene.Instances[2].bHasPreviousTransform ||
+            packet.RayTracingScene.Instances[1].ObjectId != 20u ||
+            packet.RayTracingScene.Instances[1].PreviousTransform[3] != 2.0f)
         {
             std::cerr << "途中で現れた物体に前の値が付きました\n";
             return false;
@@ -1027,6 +1037,166 @@ namespace
         return true;
     }
 
+    /**
+     * @brief 同じ連番のフレームの中でinstanceの並びが変わっても、累積が続き固定順と同じ画像になるか
+     *
+     * 発光色で区別した物体P・A・B（物体IDはP=50、A=40、B=60）を置き、AとBはフレーム6から7へ動く。
+     * フレーム7の1回目のdispatchはP・A・Bの順、2回目はP・B・Aの順に並べる。各物体の前後の変換と
+     * SequenceFrameは両dispatchで同じなので、試料数は1→2と続き、2回ともP・A・Bの順で描いた画像と
+     * byte一致しなければならない。TLASはRenderThreadと同じく前の値の固定の後のsnapshotの並びで作る。
+     */
+    bool CheckReorderedInstanceAccumulation(const DevicePtr& device, ShaderManager& shaderManager,
+                                            const FramePacket& sourcePacket)
+    {
+        const RayTracingSceneInstanceSnapshot& source = sourcePacket.RayTracingScene.Instances[0];
+        AccelerationStructureDesc topDesc;
+        topDesc.type = AccelerationStructureType::TopLevel;
+        topDesc.maxInstanceCount = 3u;
+        AccelerationStructurePtr top = device->CreateAccelerationStructure(topDesc);
+        if (!top)
+        {
+            std::cerr << "並び替えの検査用TLASを作れません\n";
+            return false;
+        }
+
+        struct Body
+        {
+            uint64_t ObjectId;
+            float Emission[3];
+            float Frame6X;
+            float Frame7X;
+        };
+        const Body bodyP{50u, {1.0f, 0.0f, 0.0f}, -0.9f, -0.9f};
+        const Body bodyA{40u, {0.0f, 1.0f, 0.0f}, -0.1f, 0.1f};
+        const Body bodyB{60u, {0.0f, 0.0f, 1.0f}, 0.5f, 0.9f};
+        const auto makeInstance = [&](const Body& body, float x, const float* rawPreviousX)
+        {
+            RayTracingSceneInstanceSnapshot instance = source;
+            instance.ObjectId = body.ObjectId;
+            std::memset(instance.Instance.transform, 0, sizeof(instance.Instance.transform));
+            instance.Instance.transform[0] = 0.3f;
+            instance.Instance.transform[3] = x;
+            instance.Instance.transform[5] = 0.3f;
+            instance.Instance.transform[10] = 1.0f;
+            std::memcpy(instance.PreviousTransform, instance.Instance.transform,
+                        sizeof(instance.PreviousTransform));
+            instance.bHasPreviousTransform = rawPreviousX != nullptr;
+            if (rawPreviousX)
+            {
+                instance.PreviousTransform[3] = *rawPreviousX;
+            }
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                instance.Material.EmissiveColor[channel] = body.Emission[channel];
+            }
+            return instance;
+        };
+
+        CameraProxy previousCamera = MakeCamera(60.0f);
+        previousCamera.SequenceFrame = 6u;
+        CameraProxy currentCamera = previousCamera;
+        currentCamera.SequenceFrame = 7u;
+        PathTracingSequenceFrameSettings settings;
+        settings.bEnabled = true;
+        settings.FocusDistance = 0.0f;
+        FramePacket packet;
+        packet.RayTracingScene.TopLevel = top;
+        PathTracingSequenceCarry carry;
+        bool bSceneReady = true;
+
+        // GameThreadの1パケット分: 描画の並びでsnapshotを置き、前の値を固定してからTLASを作る。
+        const auto writePacket = [&](const CameraProxy& camera, const Body* const* order,
+                                     bool bFrame7, bool bRawPreviousIsFrame6,
+                                     PathTracingSequenceCarry* activeCarry)
+        {
+            packet.RayTracingScene.Instances.clear();
+            for (uint32_t slot = 0u; slot < 3u; ++slot)
+            {
+                const Body& body = *order[slot];
+                const float x = bFrame7 ? body.Frame7X : body.Frame6X;
+                const float rawPrevious = bRawPreviousIsFrame6 ? body.Frame6X : x;
+                packet.RayTracingScene.Instances.push_back(
+                    makeInstance(body, x, bFrame7 ? &rawPrevious : nullptr));
+                packet.RayTracingScene.Instances.back().Instance.customIndex = slot;
+            }
+            packet.bHasMainCamera = true;
+            packet.Scene.MainCamera = camera;
+            packet.bHasPreviousMainCamera = bFrame7;
+            packet.PreviousMainCamera = bFrame7 ? previousCamera : CameraProxy{};
+            if (activeCarry)
+            {
+                ApplyPathTracingSequenceCarry(packet, *activeCarry);
+            }
+            AccelerationStructureBuildDesc build;
+            build.type = AccelerationStructureType::TopLevel;
+            build.destination = top;
+            for (const RayTracingSceneInstanceSnapshot& instance : packet.RayTracingScene.Instances)
+            {
+                build.instances.push_back(instance.Instance);
+            }
+            bSceneReady = top->Build(build) && packet.HasCompleteRayTracingScene() && bSceneReady;
+        };
+
+        const Body* const orderPAB[3] = {&bodyP, &bodyA, &bodyB};
+        const Body* const orderPBA[3] = {&bodyP, &bodyB, &bodyA};
+        const auto makePrepare = [&](const Body* const* secondOrder)
+        {
+            return [&, secondOrder](uint32_t dispatch, ViewRenderContext& context)
+            {
+                if (dispatch == 0u)
+                {
+                    carry.Reset();
+                    writePacket(previousCamera, orderPAB, false, false, &carry);
+                    writePacket(currentCamera, orderPAB, true, true, &carry);
+                }
+                else
+                {
+                    // 2つ目以降のパケットの生の前の値は現在と同じ。前の値の固定がフレーム6の位置へ戻す。
+                    writePacket(currentCamera, secondOrder, true, false, &carry);
+                }
+                BindPacket(packet, context);
+            };
+        };
+
+        constexpr uint32_t Dispatches = 2u;
+        VariableArray<float> reordered;
+        VariableArray<float> fixedOrder;
+        VariableArray<uint32_t> reorderedCounts;
+        VariableArray<uint32_t> fixedCounts;
+        if (!Accumulate(device, shaderManager, packet, settings, Dispatches, makePrepare(orderPBA),
+                        reordered, reorderedCounts) ||
+            !Accumulate(device, shaderManager, packet, settings, Dispatches, makePrepare(orderPAB),
+                        fixedOrder, fixedCounts) ||
+            !bSceneReady)
+        {
+            std::cerr << "並び替えの検査で累積を実行できません\n";
+            return false;
+        }
+        const bool bContinuous = IsContinuous(reorderedCounts) && IsContinuous(fixedCounts);
+        const bool bByteIdentical =
+            std::memcmp(reordered.data(), fixedOrder.data(), ReadbackBytes) == 0;
+        bool bAllBodiesVisible = true;
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            float maximum = 0.0f;
+            for (uint32_t pixel = 0u; pixel < Width * Height; ++pixel)
+            {
+                maximum = std::max(maximum, reordered[pixel * 4u + channel]);
+            }
+            bAllBodiesVisible = bAllBodiesVisible && maximum > 0.0f;
+        }
+        std::cout << "reordered_instances second_dispatch_samples="
+                  << (reorderedCounts.size() == Dispatches ? reorderedCounts[1] : 0u)
+                  << " fixed_order_byte_identical=" << (bByteIdentical ? "true" : "false")
+                  << " all_bodies_visible=" << (bAllBodiesVisible ? "true" : "false") << '\n';
+        if (!bContinuous || !bByteIdentical || !bAllBodiesVisible)
+        {
+            std::cerr << "同じ連番のフレームでinstanceの並びが変わると累積が続かないか、固定順と一致しません\n";
+            return false;
+        }
+        return true;
+    }
+
     int RunTest()
     {
         // GameThread側の前の値の固定はGPUなしで確かめる。
@@ -1068,7 +1238,8 @@ namespace
         if (!BuildScene(device, packet) ||
             !CheckMotionBlurWidth(device, shaderManager, packet) ||
             !CheckCircleOfConfusion(device, shaderManager, packet) ||
-            !CheckLatchedHistory(device, shaderManager, packet))
+            !CheckLatchedHistory(device, shaderManager, packet) ||
+            !CheckReorderedInstanceAccumulation(device, shaderManager, packet))
         {
             shaderManager.Shutdown();
             device->WaitIdle();
