@@ -86,6 +86,12 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 色温度シフト（-1〜+1、0=ニュートラル） */
         float Temperature = 0.0f;
+
+        /** @brief フィルムグレインの強さ（sRGBの符号化値での標準偏差。0でオフ） */
+        float FilmGrainStrength = 0.0f;
+
+        /** @brief フィルムグレインの模様のseed（フレーム番号と合わせてフレームごとの模様を決める） */
+        uint32_t FilmGrainSeed = 0u;
     };
 
     /**
@@ -156,6 +162,17 @@ namespace NorvesLib::Core::Rendering
          * @param op 新しいアルゴリズム
          */
         void SetOperator(ToneMappingOperator op) { m_Settings.Operator = op; }
+
+        /**
+         * @brief フィルムグレインを設定（出力変換の後、display空間で足す）
+         * @param strength sRGBの符号化値での標準偏差（0でオフ）
+         * @param seed 模様のseed
+         */
+        void SetFilmGrain(float strength, uint32_t seed)
+        {
+            m_Settings.FilmGrainStrength = strength;
+            m_Settings.FilmGrainSeed = seed;
+        }
 
         /**
          * @brief 現在の設定を取得

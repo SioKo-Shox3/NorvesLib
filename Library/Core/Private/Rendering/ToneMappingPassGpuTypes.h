@@ -9,11 +9,13 @@ namespace NorvesLib::Core::Rendering
     {
         uint32_t operatorType;
         uint32_t bBypass;
-        uint32_t _pad0;
+        // フィルムグレインのフレームごとのseed（seedとフレーム番号から決まる）
+        uint32_t filmGrainSeed;
         float vignetteIntensity;
         float vignetteRadius;
         float vignetteSoftness;
-        float _pad1;
+        // フィルムグレインの強さ（sRGBの符号化値での標準偏差。0でオフ）
+        float filmGrainStrength;
         float _pad2;
         float colorFilter[4];
         float contrast;

@@ -68,11 +68,11 @@ int main()
 
     assert(offsetof(GPUToneMappingParams, operatorType) == 0);
     assert(offsetof(GPUToneMappingParams, bBypass) == 4);
-    assert(offsetof(GPUToneMappingParams, _pad0) == 8);
+    assert(offsetof(GPUToneMappingParams, filmGrainSeed) == 8);
     assert(offsetof(GPUToneMappingParams, vignetteIntensity) == 12);
     assert(offsetof(GPUToneMappingParams, vignetteRadius) == 16);
     assert(offsetof(GPUToneMappingParams, vignetteSoftness) == 20);
-    assert(offsetof(GPUToneMappingParams, _pad1) == 24);
+    assert(offsetof(GPUToneMappingParams, filmGrainStrength) == 24);
     assert(offsetof(GPUToneMappingParams, _pad2) == 28);
     assert(offsetof(GPUToneMappingParams, colorFilter) == 32);
     assert(offsetof(GPUToneMappingParams, contrast) == 48);
@@ -156,6 +156,22 @@ int main()
     assert(gradingGuardPosition < saturationPosition);
     assert(toneMappingPassSource.find("colorLutBinding.binding = 2;") != std::string::npos);
     assert(toneMappingPassSource.find("constexpr uint32_t Aces20LutOperatorType = 4u;") != std::string::npos);
+
+    // フィルムグレイン: UBOの位置、既定オフの分岐、vignetteの後（出力変換の後）で足すこと
+    const std::size_t grainSeedFieldPosition = RequirePosition(shaderSource, "uint filmGrainSeed;");
+    const std::size_t grainStrengthFieldPosition = RequirePosition(shaderSource, "float filmGrainStrength;");
+    assert(bypassFieldPosition < grainSeedFieldPosition);
+    assert(grainSeedFieldPosition < vignettePosition);
+    assert(vignettePosition < grainStrengthFieldPosition);
+    assert(grainStrengthFieldPosition < pad2Position);
+    const std::size_t vignetteApplyPosition = RequirePosition(shaderSource, "result *= vignette;");
+    const std::size_t grainBranchPosition =
+        RequirePositionAfter(shaderSource, "if (params.filmGrainStrength > 0.0)", vignetteApplyPosition);
+    RequirePositionAfter(shaderSource, "result = ApplyFilmGrain(result, uvec2(gl_FragCoord.xy), params.filmGrainSeed,",
+                         grainBranchPosition);
+    assert(ToneMappingSettings{}.FilmGrainStrength == 0.0f);
+    assert(toneMappingPassSource.find("MakeFilmGrainFrameSeed(m_Settings.FilmGrainSeed, context.FrameNumber)") !=
+           std::string::npos);
 
     const std::size_t vignetteFalloffPosition =
         RequirePosition(shaderSource, "float vignette = smoothstep(radius - softness, radius, dist);");

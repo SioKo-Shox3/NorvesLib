@@ -82,6 +82,16 @@ namespace NorvesLib::Core::Rendering
 
     static constexpr uint32_t TONEMAPPING_PARAMS_SIZE = sizeof(GPUToneMappingParams);
 
+    // フィルムグレインのフレームごとのseed。seedとフレーム番号をsplitmix64で混ぜ、同じフレームなら同じ模様にする。
+    static uint32_t MakeFilmGrainFrameSeed(uint32_t seed, uint64_t frameNumber)
+    {
+        uint64_t state = (static_cast<uint64_t>(seed) << 32u) ^ frameNumber;
+        state += 0x9E3779B97F4A7C15ull;
+        state = (state ^ (state >> 30u)) * 0xBF58476D1CE4E5B9ull;
+        state = (state ^ (state >> 27u)) * 0x94D049BB133111EBull;
+        return static_cast<uint32_t>(state ^ (state >> 31u));
+    }
+
     ToneMappingPass::ToneMappingPass(const ToneMappingSettings& settings)
         : m_Settings(settings)
     {
@@ -629,12 +639,14 @@ namespace NorvesLib::Core::Rendering
         const bool bDebugPostProcessBypass =
             IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
         params.bBypass = bDebugPostProcessBypass ? 1u : 0u;
-        params._pad0 = 0u;
+        params.filmGrainSeed = m_Settings.FilmGrainStrength > 0.0f
+                                   ? MakeFilmGrainFrameSeed(m_Settings.FilmGrainSeed, context.FrameNumber)
+                                   : 0u;
         // Vignette
         params.vignetteIntensity = m_Settings.VignetteIntensity;
         params.vignetteRadius = m_Settings.VignetteRadius;
         params.vignetteSoftness = m_Settings.VignetteSoftness;
-        params._pad1 = 0.0f;
+        params.filmGrainStrength = m_Settings.FilmGrainStrength > 0.0f ? m_Settings.FilmGrainStrength : 0.0f;
         params._pad2 = 0.0f;
         // Color Grading
         params.colorFilter[0] = m_Settings.ColorFilter[0];

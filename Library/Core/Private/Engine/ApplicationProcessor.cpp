@@ -536,6 +536,50 @@ namespace
         return true;
     }
 
+    // --film-grain=強さ（sRGBの符号化値での標準偏差、0〜1。0でオフ）、--film-grain-seed=N（32 bit）
+    bool TryParseFilmGrainOption(const String& argument, float& outStrength, uint32_t& outSeed, bool& bMatched)
+    {
+        const String seedPrefix = TEXT("--film-grain-seed=");
+        if (argument.size() >= seedPrefix.size() && argument.substr(0, seedPrefix.size()) == seedPrefix)
+        {
+            bMatched = true;
+            const String value = argument.substr(seedPrefix.size());
+            if (value.empty() || value.size() > 10u)
+            {
+                return false;
+            }
+            uint64_t parsed = 0u;
+            for (const auto character : value)
+            {
+                if (character < TEXT('0') || character > TEXT('9'))
+                {
+                    return false;
+                }
+                parsed = parsed * 10u + static_cast<uint64_t>(character - TEXT('0'));
+            }
+            if (parsed > UINT32_MAX)
+            {
+                return false;
+            }
+            outSeed = static_cast<uint32_t>(parsed);
+            return true;
+        }
+        const String strengthPrefix = TEXT("--film-grain=");
+        bMatched = argument.size() >= strengthPrefix.size() &&
+                   argument.substr(0, strengthPrefix.size()) == strengthPrefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        float strength = 0.0f;
+        if (!TryParseNonNegativeRatio(argument.substr(strengthPrefix.size()), strength) || strength > 1.0f)
+        {
+            return false;
+        }
+        outStrength = strength;
+        return true;
+    }
+
     // 連番の1フレームを描くPTの経路の引数。どれかを指定すると連番の経路を有効にする。
     // --path-tracing-frame-duration=秒（正）、--path-tracing-shutter=秒（0以上）、
     // --path-tracing-aperture=f値（正）、--path-tracing-focus-distance=m（0はピンホール）
@@ -598,27 +642,47 @@ namespace
         return true;
     }
 
+    // メインSceneViewのToneMappingPass。無ければnullptr。
+    NorvesLib::Core::Rendering::ToneMappingPass* FindMainViewToneMappingPass(
+        NorvesLib::Core::Rendering::SceneView* sceneView)
+    {
+        if (!sceneView)
+        {
+            return nullptr;
+        }
+        NorvesLib::Core::Rendering::PostProcessStack* postProcessStack = sceneView->GetPostProcessStack();
+        if (!postProcessStack)
+        {
+            return nullptr;
+        }
+        NorvesLib::Core::Rendering::IViewPass* pass = postProcessStack->GetPass("ToneMappingPass");
+        // GetName() が "ToneMappingPass" を返すのは ToneMappingPass だけ
+        return pass ? static_cast<NorvesLib::Core::Rendering::ToneMappingPass*>(pass) : nullptr;
+    }
+
     // メインSceneViewのToneMappingPassへ演算子を設定する。
     // 初期化中（最初のFramePacketがRenderThreadへ渡る前）にだけ呼ぶ。
     bool ApplyMainViewToneMapOperator(NorvesLib::Core::Rendering::SceneView* sceneView,
                                       NorvesLib::Core::Rendering::ToneMappingOperator toneMapOperator)
     {
-        if (!sceneView)
-        {
-            return false;
-        }
-        NorvesLib::Core::Rendering::PostProcessStack* postProcessStack = sceneView->GetPostProcessStack();
-        if (!postProcessStack)
-        {
-            return false;
-        }
-        NorvesLib::Core::Rendering::IViewPass* pass = postProcessStack->GetPass("ToneMappingPass");
+        NorvesLib::Core::Rendering::ToneMappingPass* pass = FindMainViewToneMappingPass(sceneView);
         if (!pass)
         {
             return false;
         }
-        // GetName() が "ToneMappingPass" を返すのは ToneMappingPass だけ
-        static_cast<NorvesLib::Core::Rendering::ToneMappingPass*>(pass)->SetOperator(toneMapOperator);
+        pass->SetOperator(toneMapOperator);
+        return true;
+    }
+
+    // メインSceneViewのToneMappingPassへフィルムグレインを設定する。初期化中にだけ呼ぶ。
+    bool ApplyMainViewFilmGrain(NorvesLib::Core::Rendering::SceneView* sceneView, float strength, uint32_t seed)
+    {
+        NorvesLib::Core::Rendering::ToneMappingPass* pass = FindMainViewToneMappingPass(sceneView);
+        if (!pass)
+        {
+            return false;
+        }
+        pass->SetFilmGrain(strength, seed);
         return true;
     }
 
@@ -738,6 +802,9 @@ namespace NorvesLib::Core::Engine
         Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Neural;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
         bool bToneMapOperatorRequested = false;
+        float filmGrainStrength = 0.0f;
+        uint32_t filmGrainSeed = 0u;
+        bool bFilmGrainRequested = false;
         Rendering::PathTracingSequenceFrameSettings pathTracingSequenceFrame;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
@@ -882,6 +949,18 @@ namespace NorvesLib::Core::Engine
                 LOG_WARNING("ApplicationProcessor runtime option --tone-map ignored: value must be 'aces' or 'aces20-lut'");
             }
 
+            bool bMatchedFilmGrain = false;
+            if (TryParseFilmGrainOption(args[i], filmGrainStrength, filmGrainSeed, bMatchedFilmGrain))
+            {
+                bFilmGrainRequested = true;
+                LOG_INFO("ApplicationProcessor runtime option film_grain strength=%g seed=%u",
+                         static_cast<double>(filmGrainStrength), static_cast<unsigned int>(filmGrainSeed));
+            }
+            else if (bMatchedFilmGrain)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --film-grain ignored: strength must be 0-1 and seed a 32-bit integer");
+            }
+
             bool bMatchedSequenceFrame = false;
             if (TryParsePathTracingSequenceOption(args[i], pathTracingSequenceFrame,
                                                   bMatchedSequenceFrame))
@@ -985,6 +1064,12 @@ namespace NorvesLib::Core::Engine
                 !ApplyMainViewToneMapOperator(coordinator.GetMainSceneView().get(), toneMapOperator))
             {
                 LOG_WARNING("ApplicationProcessor runtime option --tone-map ignored: main view has no ToneMappingPass");
+            }
+
+            if (bFilmGrainRequested &&
+                !ApplyMainViewFilmGrain(coordinator.GetMainSceneView().get(), filmGrainStrength, filmGrainSeed))
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --film-grain ignored: main view has no ToneMappingPass");
             }
 
             if (pathTracingSequenceFrame.bEnabled &&

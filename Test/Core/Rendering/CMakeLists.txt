@@ -200,6 +200,19 @@ register_rendering_gpu_test(
     R8AcesLutToneMappingVulkanTest
     R8AcesLutToneMappingVulkanTest
 )
+# R8: フィルムグレイン（既定オフ、強さ0で従来と一致、統計・フレームごとの模様・再実行の一致）を実GPUで確かめる。
+add_executable(R8FilmGrainVulkanTest R8FilmGrainVulkanTest.cpp)
+target_link_libraries(R8FilmGrainVulkanTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(R8FilmGrainVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(R8FilmGrainVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(R8FilmGrainVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(R8FilmGrainVulkanTest R8FilmGrainVulkanTest)
 add_executable(R6RTGIAcceptanceVulkanTest
     R6RTGIAcceptanceVulkanTest.cpp
 )

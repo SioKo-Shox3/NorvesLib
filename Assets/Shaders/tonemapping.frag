@@ -10,12 +10,12 @@ layout(std140, set = 0, binding = 1) uniform ToneMappingParams
 {
     uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure, 4:ACES 2.0 SDR LUT
     uint bBypass;
-    uint _pad0;
+    uint filmGrainSeed;       // フィルムグレインのフレームごとのseed
     // Vignette パラメータ
     float vignetteIntensity;  // 0.0 = off, ~0.3 = subtle
     float vignetteRadius;     // 内側半径 ~0.8
     float vignetteSoftness;   // フォールオフの柔らかさ ~0.5
-    float _pad1;
+    float filmGrainStrength;  // フィルムグレインの強さ（sRGBの符号化値での標準偏差。0でオフ）
     float _pad2;
     // Color Grading パラメータ
     vec4 colorFilter;         // カラーフィルター (rgb * intensity in w)
@@ -133,6 +133,46 @@ vec3 ApplySaturation(vec3 color, float saturation)
     return clamp(mix(vec3(luma), color, saturation), 0.0, 1.0);
 }
 
+// フィルムグレイン: 画素・フレームごとのseedから決まる、平均0・分散1の三角分布の雑音（PCGのhash）。
+uint FilmGrainHash(uint value)
+{
+    uint state = value * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float FilmGrainNoise(uvec2 pixel, uint frameSeed)
+{
+    uint first = FilmGrainHash(pixel.x ^ FilmGrainHash(pixel.y ^ frameSeed));
+    uint second = FilmGrainHash(first);
+    float u0 = float(first >> 8u) * (1.0 / 16777216.0);
+    float u1 = float(second >> 8u) * (1.0 / 16777216.0);
+    // 2つの一様乱数の和から1を引くと平均0・分散1/6の三角分布になる
+    return (u0 + u1 - 1.0) * sqrt(6.0);
+}
+
+vec3 EncodeSrgb(vec3 linearColor)
+{
+    vec3 low = linearColor * 12.92;
+    vec3 high = 1.055 * pow(linearColor, vec3(1.0 / 2.4)) - 0.055;
+    return mix(high, low, lessThanEqual(linearColor, vec3(0.0031308)));
+}
+
+vec3 DecodeSrgb(vec3 encodedColor)
+{
+    vec3 low = encodedColor / 12.92;
+    vec3 high = pow((encodedColor + 0.055) / 1.055, vec3(2.4));
+    return mix(high, low, lessThanEqual(encodedColor, vec3(0.04045)));
+}
+
+// sRGBの符号化値へ強さ（標準偏差）の雑音を足してdisplay-linearへ戻す。表示の符号化の上で平均を変えない。
+vec3 ApplyFilmGrain(vec3 displayLinear, uvec2 pixel, uint frameSeed, float strength)
+{
+    float noise = FilmGrainNoise(pixel, frameSeed) * strength;
+    vec3 encoded = EncodeSrgb(clamp(displayLinear, vec3(0.0), vec3(1.0)));
+    return DecodeSrgb(clamp(encoded + vec3(noise), vec3(0.0), vec3(1.0)));
+}
+
 void main()
 {
     if (params.bBypass != 0u)
@@ -197,6 +237,14 @@ void main()
     // ========================================
     float vignette = ComputeVignette(fragUV, params.vignetteIntensity, params.vignetteRadius, params.vignetteSoftness);
     result *= vignette;
+
+    // ========================================
+    // フィルムグレイン（出力変換の後、display空間。既定はオフ）
+    // ========================================
+    if (params.filmGrainStrength > 0.0)
+    {
+        result = ApplyFilmGrain(result, uvec2(gl_FragCoord.xy), params.filmGrainSeed, params.filmGrainStrength);
+    }
 
     outColor = vec4(result, 1.0);
 }
