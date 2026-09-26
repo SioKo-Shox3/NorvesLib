@@ -39,11 +39,11 @@ def main():
     for stale in root.glob("*.nlrgba"):
         stale.unlink()
 
-    # PTはラスタと同じ画素中心から1次光線を出し（縁の被覆の違いを数えない）、R8-P3の連番の1フレームの
-    # 経路（シャッター0の静止）で累積する。独立な試料の組を3枚描き、比較側で画素ごとの中央値にする。
+    # PTのピンホール像と薄レンズ参照は、どちらも画素内の一様標本（box）で1次光線を出し、縁の位置を画素の平均として
+    # 入力へ持たせる。R8-P3の連番の1フレームの経路（シャッター0の静止）で累積する。独立な試料の組を3枚描き、比較側で画素ごとの中央値にする。
     def path_tracing(samples, samples_per_frame, batch, aperture, focus_distance):
         arguments = ["--renderer=path-tracing",
-                     "--path-tracing-pixel-sampling=center",
+                     "--path-tracing-pixel-sampling=box",
                      "--path-tracing-transport=direct",
                      f"--path-tracing-samples={samples}",
                      f"--path-tracing-samples-per-frame={samples_per_frame}",
@@ -57,6 +57,7 @@ def main():
         return arguments
 
     captures = [
+        # 深度は画素中心の1次命中の距離（縁で前後の面を混ぜない）。
         ("pt-distance", ["--renderer=path-tracing",
                          "--path-tracing-pixel-sampling=center",
                          "--path-tracing-samples=1",
