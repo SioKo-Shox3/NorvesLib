@@ -163,6 +163,45 @@ namespace NorvesLib::Modules::Physics
             return static_cast<uint32_t>(GetConcrete(module).m_PreviousTriggerPairs.size());
         }
 
+        static bool IsColliderActive(const IPhysicsModule& module, Core::Scene::ColliderHandle handle)
+        {
+            const PhysicsModule& concrete = GetConcrete(module);
+            return handle.IsValid() && handle.Index < concrete.m_ColliderSlots.size()
+                && concrete.m_ColliderSlots[handle.Index].bOccupied
+                && concrete.m_ColliderSlots[handle.Index].Generation == handle.Generation
+                && concrete.m_ColliderSlots[handle.Index].bActive;
+        }
+
+        static Math::Vector3 GetPreStepPosition(const IPhysicsModule& module, Core::Scene::BodyHandle handle)
+        {
+            return GetConcrete(module).m_BodySlots[handle.Index].PreStepPosition;
+        }
+
+        static bool HasPreStepSnapshot(const IPhysicsModule& module, Core::Scene::BodyHandle handle)
+        {
+            return GetConcrete(module).m_BodySlots[handle.Index].bHadPreStepSnapshot;
+        }
+
+        static uint32_t GetColliderGeneration(const IPhysicsModule& module, Core::Scene::ColliderHandle handle)
+        {
+            return GetConcrete(module).m_ColliderSlots[handle.Index].Generation;
+        }
+
+        static uint32_t GetBodyGeneration(const IPhysicsModule& module, Core::Scene::BodyHandle handle)
+        {
+            return GetConcrete(module).m_BodySlots[handle.Index].Generation;
+        }
+
+        static uint32_t GetCurrentPairCount(const IPhysicsModule& module)
+        {
+            return static_cast<uint32_t>(GetConcrete(module).m_CurrentTriggerPairs.size());
+        }
+
+        static bool HasPublishedSnapshot(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_bHasPublishedSnapshot;
+        }
+
         static bool ShutdownAndInitialize(IPhysicsModule& module)
         {
             PhysicsModule& concrete = GetConcrete(module);

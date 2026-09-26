@@ -12,6 +12,7 @@
 #include "Physics/ColliderComponent.h"
 #include "Physics/IPhysicsModule.h"
 #include "Physics/PhysicsModule.h"
+#include "PhysicsModuleTestAccess.h"
 #include "Physics/RigidBodyComponent.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/SceneView.h"
@@ -61,101 +62,6 @@ namespace NorvesLib::Core::Engine
         }
     };
 } // namespace NorvesLib::Core::Engine
-
-namespace NorvesLib::Modules::Physics
-{
-    class PhysicsModuleTestAccess
-    {
-    public:
-        static bool IsColliderActive(const IPhysicsModule& module, Core::Scene::ColliderHandle handle)
-        {
-            const PhysicsModule& concrete = GetConcrete(module);
-            return handle.IsValid() && handle.Index < concrete.m_ColliderSlots.size()
-                && concrete.m_ColliderSlots[handle.Index].bOccupied
-                && concrete.m_ColliderSlots[handle.Index].Generation == handle.Generation
-                && concrete.m_ColliderSlots[handle.Index].bActive;
-        }
-
-        static bool IsColliderAlive(const IPhysicsModule& module, Core::Scene::ColliderHandle handle)
-        {
-            const PhysicsModule& concrete = GetConcrete(module);
-            return handle.IsValid() && handle.Index < concrete.m_ColliderSlots.size()
-                && concrete.m_ColliderSlots[handle.Index].bOccupied
-                && concrete.m_ColliderSlots[handle.Index].Generation == handle.Generation;
-        }
-
-        static bool IsBodyActive(const IPhysicsModule& module, Core::Scene::BodyHandle handle)
-        {
-            const PhysicsModule& concrete = GetConcrete(module);
-            return handle.IsValid() && handle.Index < concrete.m_BodySlots.size()
-                && concrete.m_BodySlots[handle.Index].bOccupied
-                && concrete.m_BodySlots[handle.Index].Generation == handle.Generation
-                && concrete.m_BodySlots[handle.Index].bActive;
-        }
-
-        static Math::Vector3 GetPreStepPosition(const IPhysicsModule& module, Core::Scene::BodyHandle handle)
-        {
-            const PhysicsModule& concrete = GetConcrete(module);
-            return concrete.m_BodySlots[handle.Index].PreStepPosition;
-        }
-
-        static Math::Vector3 GetPendingImpulse(const IPhysicsModule& module, Core::Scene::BodyHandle handle)
-        {
-            const PhysicsModule& concrete = GetConcrete(module);
-            return concrete.m_BodySlots[handle.Index].PendingImpulse;
-        }
-
-        static bool HasPreStepSnapshot(const IPhysicsModule& module, Core::Scene::BodyHandle handle)
-        {
-            const PhysicsModule& concrete = GetConcrete(module);
-            return concrete.m_BodySlots[handle.Index].bHadPreStepSnapshot;
-        }
-
-        static uint32_t GetColliderGeneration(const IPhysicsModule& module, Core::Scene::ColliderHandle handle)
-        {
-            const PhysicsModule& concrete = GetConcrete(module);
-            return concrete.m_ColliderSlots[handle.Index].Generation;
-        }
-
-        static uint32_t GetBodyGeneration(const IPhysicsModule& module, Core::Scene::BodyHandle handle)
-        {
-            const PhysicsModule& concrete = GetConcrete(module);
-            return concrete.m_BodySlots[handle.Index].Generation;
-        }
-
-        static uint32_t GetPreviousPairCount(const IPhysicsModule& module)
-        {
-            return static_cast<uint32_t>(GetConcrete(module).m_PreviousTriggerPairs.size());
-        }
-
-        static uint32_t GetCurrentPairCount(const IPhysicsModule& module)
-        {
-            return static_cast<uint32_t>(GetConcrete(module).m_CurrentTriggerPairs.size());
-        }
-
-        static uint32_t GetDispatchedEventCount(const IPhysicsModule& module)
-        {
-            return GetConcrete(module).m_DispatchedEventCount;
-        }
-
-        static uint32_t GetPendingEventCount(const IPhysicsModule& module)
-        {
-            return GetConcrete(module).m_PendingEventCount;
-        }
-
-        static bool HasPublishedSnapshot(const IPhysicsModule& module)
-        {
-            return GetConcrete(module).m_bHasPublishedSnapshot;
-        }
-
-    private:
-        static const PhysicsModule& GetConcrete(const IPhysicsModule& module)
-        {
-            const PhysicsModule* concrete = dynamic_cast<const PhysicsModule*>(&module);
-            return *concrete;
-        }
-    };
-} // namespace NorvesLib::Modules::Physics
 
 namespace
 {
