@@ -20,16 +20,109 @@ namespace NorvesLib::Core::Rendering
     // GPU側パラメータ構造体（シェーダーのUBOレイアウトに対応）
     // ========================================
 
-    /** @brief ブルームパラメータUBO（std140アライメント） */
+    /** @brief 合成パラメータUBO（std140アライメント、bloom.frag の BloomCompositeParams） */
     struct GPUBloomParams
     {
-        float threshold;
         float intensity;
         float radius;
+        float thresholdMode;
+        float inverseMipCount;
+    };
+
+    /** @brief 縮小パラメータUBO（bloom_downsample.frag の BloomDownsampleParams） */
+    struct GPUBloomDownsampleParams
+    {
+        float firstLevel;
+        float threshold;
         float softKnee;
+        float _pad0;
+    };
+
+    /** @brief 拡大パラメータUBO（bloom_upsample.frag の BloomUpsampleParams） */
+    struct GPUBloomUpsampleParams
+    {
+        float radius;
+        float _pad0;
+        float _pad1;
+        float _pad2;
     };
 
     static constexpr uint32_t BLOOM_PARAMS_SIZE = sizeof(GPUBloomParams);
+    static constexpr uint32_t BLOOM_DOWNSAMPLE_PARAMS_SIZE = sizeof(GPUBloomDownsampleParams);
+    static constexpr uint32_t BLOOM_UPSAMPLE_PARAMS_SIZE = sizeof(GPUBloomUpsampleParams);
+
+    namespace
+    {
+        RHI::DescriptorSetDesc MakeSamplerParamsLayout(uint32_t samplerCount)
+        {
+            RHI::DescriptorSetDesc dsDesc;
+            for (uint32_t binding = 0; binding < samplerCount; ++binding)
+            {
+                RHI::DescriptorBinding samplerBinding;
+                samplerBinding.binding = binding;
+                samplerBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+                samplerBinding.stages = RHI::ShaderStage::Pixel;
+                dsDesc.bindings.push_back(samplerBinding);
+            }
+
+            RHI::DescriptorBinding paramsBinding;
+            paramsBinding.binding = samplerCount;
+            paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            paramsBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(paramsBinding);
+            return dsDesc;
+        }
+
+        RHI::PipelinePtr CreateFullscreenPipeline(RHI::IDevice *device,
+                                                  const RHI::ShaderPtr &vertexShader,
+                                                  const RHI::ShaderPtr &pixelShader,
+                                                  const RHI::RenderPassPtr &renderPass,
+                                                  const RHI::DescriptorSetDesc &layout)
+        {
+            RHI::GraphicsPipelineDesc pipelineDesc;
+            pipelineDesc.vertexShader = vertexShader;
+            pipelineDesc.pixelShader = pixelShader;
+            pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+            pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+            pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+            pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+            pipelineDesc.rasterState.lineWidth = 1.0f;
+            pipelineDesc.depthStencilState.depthTestEnable = false;
+            pipelineDesc.depthStencilState.depthWriteEnable = false;
+
+            // ブレンド無効（加算はシェーダー内で行う）
+            RHI::BlendAttachmentDesc blendAttachment;
+            blendAttachment.blendEnable = false;
+            blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+            pipelineDesc.blendState.attachments.push_back(blendAttachment);
+
+            pipelineDesc.renderPass = renderPass;
+            pipelineDesc.descriptorSetLayouts.push_back(layout);
+            return device->CreateGraphicsPipeline(pipelineDesc);
+        }
+
+        RHI::Viewport MakeMipViewport(uint32_t width, uint32_t height)
+        {
+            RHI::Viewport viewport;
+            viewport.x = 0.0f;
+            viewport.y = 0.0f;
+            viewport.width = static_cast<float>(width);
+            viewport.height = static_cast<float>(height);
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+            return viewport;
+        }
+
+        RHI::ScissorRect MakeMipScissor(uint32_t width, uint32_t height)
+        {
+            RHI::ScissorRect scissor;
+            scissor.left = 0;
+            scissor.top = 0;
+            scissor.right = static_cast<int32_t>(width);
+            scissor.bottom = static_cast<int32_t>(height);
+            return scissor;
+        }
+    }
 
     BloomPass::BloomPass(const BloomSettings &settings)
         : m_Settings(settings)
@@ -82,6 +175,14 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        m_DownsampleFragmentShader = context.ShaderMgr->LoadShader("bloom_downsample.frag", RHI::ShaderStage::Pixel);
+        m_UpsampleFragmentShader = context.ShaderMgr->LoadShader("bloom_upsample.frag", RHI::ShaderStage::Pixel);
+        if (!m_DownsampleFragmentShader || !m_UpsampleFragmentShader)
+        {
+            NORVES_LOG_ERROR("BloomPass", "Failed to create bloom downsample/upsample fragment shaders");
+            return false;
+        }
+
         // ========================================
         // SceneColorサンプラー作成（リニアフィルタ）
         // ========================================
@@ -124,6 +225,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        ReleaseMipChain();
+        m_DownsampleFragmentShader.reset();
+        m_UpsampleFragmentShader.reset();
         m_OutputTexture.reset();
         m_BloomRenderPass.reset();
         m_BloomFramebuffer.reset();
@@ -203,6 +307,11 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        if (!EnsureMipChain(width, height))
+        {
+            return false;
+        }
+
         const bool bResourcesChanged =
             width != m_CurrentWidth ||
             height != m_CurrentHeight ||
@@ -270,20 +379,9 @@ namespace NorvesLib::Core::Rendering
         // ディスクリプタセット作成
         // ========================================
         // binding 0: SceneColor（combined image sampler）
-        // binding 1: BloomParams UBO
-        RHI::DescriptorSetDesc dsDesc;
-
-        RHI::DescriptorBinding sceneColorBinding;
-        sceneColorBinding.binding = 0;
-        sceneColorBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        sceneColorBinding.stages = RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(sceneColorBinding);
-
-        RHI::DescriptorBinding paramsBinding;
-        paramsBinding.binding = 1;
-        paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        paramsBinding.stages = RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(paramsBinding);
+        // binding 1: 積み上げたブルーム（combined image sampler）
+        // binding 2: BloomCompositeParams UBO
+        const RHI::DescriptorSetDesc dsDesc = MakeSamplerParamsLayout(2);
 
         m_BloomDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
         if (!m_BloomDescriptorSet)
@@ -293,38 +391,13 @@ namespace NorvesLib::Core::Rendering
         }
 
         // UBOバインド（テクスチャはExecute時にバインド）
-        m_BloomDescriptorSet->BindConstantBuffer(1, m_ParamsBuffer, 0, BLOOM_PARAMS_SIZE);
+        m_BloomDescriptorSet->BindConstantBuffer(2, m_ParamsBuffer, 0, BLOOM_PARAMS_SIZE);
 
         // ========================================
         // パイプライン作成（フルスクリーン描画）
         // ========================================
-        RHI::GraphicsPipelineDesc pipelineDesc;
-        pipelineDesc.vertexShader = m_BloomVertexShader;
-        pipelineDesc.pixelShader = m_BloomFragmentShader;
-        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
-
-        // 頂点入力なし
-
-        // ラスタライザ
-        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
-        pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
-        pipelineDesc.rasterState.lineWidth = 1.0f;
-
-        // デプステスト無効
-        pipelineDesc.depthStencilState.depthTestEnable = false;
-        pipelineDesc.depthStencilState.depthWriteEnable = false;
-
-        // ブレンド無効（シェーダー内で元色+ブルームの合成を行う）
-        RHI::BlendAttachmentDesc blendAttachment;
-        blendAttachment.blendEnable = false;
-        blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
-        pipelineDesc.blendState.attachments.push_back(blendAttachment);
-
-        pipelineDesc.renderPass = m_BloomRenderPass;
-        pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
-
-        m_BloomPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        m_BloomPipeline = CreateFullscreenPipeline(
+            m_Device, m_BloomVertexShader, m_BloomFragmentShader, m_BloomRenderPass, dsDesc);
         if (!m_BloomPipeline)
         {
             NORVES_LOG_ERROR("BloomPass", "Failed to create bloom pipeline");
@@ -468,25 +541,35 @@ namespace NorvesLib::Core::Rendering
                                      const RHI::TexturePtr& sceneColorPtr,
                                      bool bRegisterLegacyBridge)
     {
-        if (!m_BloomRenderPass || !m_BloomFramebuffer || !m_BloomPipeline || !m_BloomDescriptorSet)
+        if (!m_BloomRenderPass || !m_BloomFramebuffer || !m_BloomPipeline || !m_BloomDescriptorSet ||
+            m_MipLevels.empty())
         {
             NORVES_LOG_WARNING("BloomPass", "Bloom resources not ready, skipping");
             return;
         }
 
-        // パラメータバッファ更新
+        // 縮小・拡大の段を積む（合成が読む最上段のテクスチャを毎フレーム書き直す）
+        EnqueueMipChain(context, sceneColorPtr);
+
+        // 合成パラメータ更新
         GPUBloomParams params = {};
-        params.threshold = m_Settings.Threshold;
         const bool bDebugPostProcessBypass =
             IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
         params.intensity = bDebugPostProcessBypass ? 0.0f : m_Settings.Intensity;
         params.radius = m_Settings.Radius;
-        params.softKnee = m_Settings.SoftKnee;
+        params.thresholdMode = m_Settings.Threshold > 0.0f ? 1.0f : 0.0f;
+        params.inverseMipCount = 1.0f / static_cast<float>(m_MipLevels.size());
         m_ParamsBuffer->Update(&params, sizeof(GPUBloomParams));
 
-        // SceneColorテクスチャをディスクリプタセットにバインド
+        // 最上段の拡大結果（1段だけのときは縮小結果）を合成で読む
+        const BloomMipLevel &topLevel = m_MipLevels[0];
+        const RHI::TexturePtr &bloomTexture =
+            topLevel.UpTexture ? topLevel.UpTexture : topLevel.DownTexture;
+
         m_BloomDescriptorSet->BindTexture(0, sceneColorPtr);
         m_BloomDescriptorSet->BindSampler(0, m_SceneColorSampler);
+        m_BloomDescriptorSet->BindTexture(1, bloomTexture);
+        m_BloomDescriptorSet->BindSampler(1, m_SceneColorSampler);
         m_BloomDescriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();
@@ -504,6 +587,223 @@ namespace NorvesLib::Core::Rendering
         if (bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("SceneColor", m_OutputTexture);
+        }
+    }
+
+    bool BloomPass::EnsureMipChain(uint32_t width, uint32_t height)
+    {
+        const uint32_t requestedCount =
+            m_Settings.MipCount < 1u ? 1u
+                                     : (m_Settings.MipCount > MaxBloomMipCount ? MaxBloomMipCount
+                                                                               : m_Settings.MipCount);
+
+        if (!m_MipLevels.empty() &&
+            m_MipChainWidth == width &&
+            m_MipChainHeight == height &&
+            m_MipChainRequestedCount == requestedCount)
+        {
+            return true;
+        }
+
+        ReleaseMipChain();
+
+        if (!m_Device || !m_BloomVertexShader || !m_DownsampleFragmentShader || !m_UpsampleFragmentShader ||
+            width == 0 || height == 0)
+        {
+            return false;
+        }
+
+        // 段の寸法を決める（縦横とも1画素まで。1×1に達したらそれ以上は縮小しない）
+        VariableArray<BloomMipLevel> levels;
+        uint32_t levelWidth = width;
+        uint32_t levelHeight = height;
+        for (uint32_t level = 0; level < requestedCount; ++level)
+        {
+            if (levelWidth <= 1 && levelHeight <= 1)
+            {
+                break;
+            }
+            levelWidth = levelWidth > 1 ? levelWidth / 2 : 1;
+            levelHeight = levelHeight > 1 ? levelHeight / 2 : 1;
+
+            BloomMipLevel mip;
+            mip.Width = levelWidth;
+            mip.Height = levelHeight;
+            levels.push_back(mip);
+        }
+
+        if (levels.empty())
+        {
+            return false;
+        }
+
+        // 段の書き込み用レンダーパス（前の内容は捨て、書いた後はシェーダーから読む）
+        RHI::RenderPassDesc rpDesc;
+        RHI::AttachmentDesc colorAttach;
+        colorAttach.format = m_Settings.OutputFormat;
+        colorAttach.isDepthStencil = false;
+        colorAttach.clear = false;
+        colorAttach.loadOp = RHI::AttachmentLoadOp::DontCare;
+        colorAttach.storeOp = RHI::AttachmentStoreOp::Store;
+        colorAttach.initialState = RHI::ResourceState::Undefined;
+        colorAttach.finalState = RHI::ResourceState::ShaderResource;
+        rpDesc.colorAttachments.push_back(colorAttach);
+        rpDesc.hasDepthStencil = false;
+
+        m_MipRenderPass = m_Device->CreateRenderPass(rpDesc);
+        if (!m_MipRenderPass)
+        {
+            NORVES_LOG_ERROR("BloomPass", "Failed to create bloom mip render pass");
+            return false;
+        }
+
+        const RHI::DescriptorSetDesc downLayout = MakeSamplerParamsLayout(1);
+        const RHI::DescriptorSetDesc upLayout = MakeSamplerParamsLayout(2);
+
+        m_DownsamplePipeline = CreateFullscreenPipeline(
+            m_Device, m_BloomVertexShader, m_DownsampleFragmentShader, m_MipRenderPass, downLayout);
+        m_UpsamplePipeline = CreateFullscreenPipeline(
+            m_Device, m_BloomVertexShader, m_UpsampleFragmentShader, m_MipRenderPass, upLayout);
+        if (!m_DownsamplePipeline || !m_UpsamplePipeline)
+        {
+            NORVES_LOG_ERROR("BloomPass", "Failed to create bloom mip pipelines");
+            ReleaseMipChain();
+            return false;
+        }
+
+        const size_t levelCount = levels.size();
+        for (size_t level = 0; level < levelCount; ++level)
+        {
+            BloomMipLevel &mip = levels[level];
+
+            mip.DownTexture = m_Device->CreateTexture(
+                RHI::TextureDesc::RenderTarget(mip.Width, mip.Height, m_Settings.OutputFormat, "BloomDownsample"));
+            mip.DownParamsBuffer = m_Device->CreateBuffer(RHI::BufferDesc(
+                BLOOM_DOWNSAMPLE_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "BloomDownsampleParamsUBO"));
+            mip.DownDescriptorSet = m_Device->CreateDescriptorSet(downLayout);
+            if (!mip.DownTexture || !mip.DownParamsBuffer || !mip.DownDescriptorSet)
+            {
+                NORVES_LOG_ERROR("BloomPass", "Failed to create bloom downsample level %zu", level);
+                ReleaseMipChain();
+                return false;
+            }
+
+            RHI::FramebufferDesc downFbDesc;
+            downFbDesc.renderPass = m_MipRenderPass;
+            downFbDesc.colorTargets.push_back(mip.DownTexture);
+            downFbDesc.width = mip.Width;
+            downFbDesc.height = mip.Height;
+            mip.DownFramebuffer = m_Device->CreateFramebuffer(downFbDesc);
+            if (!mip.DownFramebuffer)
+            {
+                NORVES_LOG_ERROR("BloomPass", "Failed to create bloom downsample framebuffer %zu", level);
+                ReleaseMipChain();
+                return false;
+            }
+            mip.DownDescriptorSet->BindConstantBuffer(1, mip.DownParamsBuffer, 0, BLOOM_DOWNSAMPLE_PARAMS_SIZE);
+
+            // 最下段は拡大の元になるだけなので拡大結果を持たない
+            if (level + 1 >= levelCount)
+            {
+                continue;
+            }
+
+            mip.UpTexture = m_Device->CreateTexture(
+                RHI::TextureDesc::RenderTarget(mip.Width, mip.Height, m_Settings.OutputFormat, "BloomUpsample"));
+            mip.UpParamsBuffer = m_Device->CreateBuffer(RHI::BufferDesc(
+                BLOOM_UPSAMPLE_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "BloomUpsampleParamsUBO"));
+            mip.UpDescriptorSet = m_Device->CreateDescriptorSet(upLayout);
+            if (!mip.UpTexture || !mip.UpParamsBuffer || !mip.UpDescriptorSet)
+            {
+                NORVES_LOG_ERROR("BloomPass", "Failed to create bloom upsample level %zu", level);
+                ReleaseMipChain();
+                return false;
+            }
+
+            RHI::FramebufferDesc upFbDesc;
+            upFbDesc.renderPass = m_MipRenderPass;
+            upFbDesc.colorTargets.push_back(mip.UpTexture);
+            upFbDesc.width = mip.Width;
+            upFbDesc.height = mip.Height;
+            mip.UpFramebuffer = m_Device->CreateFramebuffer(upFbDesc);
+            if (!mip.UpFramebuffer)
+            {
+                NORVES_LOG_ERROR("BloomPass", "Failed to create bloom upsample framebuffer %zu", level);
+                ReleaseMipChain();
+                return false;
+            }
+            mip.UpDescriptorSet->BindConstantBuffer(2, mip.UpParamsBuffer, 0, BLOOM_UPSAMPLE_PARAMS_SIZE);
+        }
+
+        m_MipLevels = std::move(levels);
+        m_MipChainWidth = width;
+        m_MipChainHeight = height;
+        m_MipChainRequestedCount = requestedCount;
+        return true;
+    }
+
+    void BloomPass::ReleaseMipChain()
+    {
+        m_MipLevels.clear();
+        m_DownsamplePipeline.reset();
+        m_UpsamplePipeline.reset();
+        m_MipRenderPass.reset();
+        m_MipChainWidth = 0;
+        m_MipChainHeight = 0;
+        m_MipChainRequestedCount = 0;
+    }
+
+    void BloomPass::EnqueueMipChain(ViewRenderContext &context, const RHI::TexturePtr& sceneColorPtr)
+    {
+        const size_t levelCount = m_MipLevels.size();
+
+        // 縮小: SceneColor → 段0 → 段1 → …
+        for (size_t level = 0; level < levelCount; ++level)
+        {
+            BloomMipLevel &mip = m_MipLevels[level];
+
+            GPUBloomDownsampleParams downParams = {};
+            downParams.firstLevel = level == 0 ? 1.0f : 0.0f;
+            downParams.threshold = m_Settings.Threshold;
+            downParams.softKnee = m_Settings.SoftKnee;
+            mip.DownParamsBuffer->Update(&downParams, sizeof(GPUBloomDownsampleParams));
+
+            const RHI::TexturePtr &source = level == 0 ? sceneColorPtr : m_MipLevels[level - 1].DownTexture;
+            mip.DownDescriptorSet->BindTexture(0, source);
+            mip.DownDescriptorSet->BindSampler(0, m_SceneColorSampler);
+            mip.DownDescriptorSet->Update();
+
+            context.EnqueueFullscreenPass(m_MipRenderPass,
+                                          mip.DownFramebuffer,
+                                          MakeMipViewport(mip.Width, mip.Height),
+                                          MakeMipScissor(mip.Width, mip.Height),
+                                          m_DownsamplePipeline,
+                                          mip.DownDescriptorSet);
+        }
+
+        // 拡大: 最下段から上へ、下の段をテントで広げてこの段の縮小結果へ加える
+        for (size_t level = levelCount - 1; level-- > 0;)
+        {
+            BloomMipLevel &mip = m_MipLevels[level];
+            const BloomMipLevel &lower = m_MipLevels[level + 1];
+
+            GPUBloomUpsampleParams upParams = {};
+            upParams.radius = m_Settings.Radius;
+            mip.UpParamsBuffer->Update(&upParams, sizeof(GPUBloomUpsampleParams));
+
+            const RHI::TexturePtr &lowerTexture = lower.UpTexture ? lower.UpTexture : lower.DownTexture;
+            mip.UpDescriptorSet->BindTexture(0, lowerTexture);
+            mip.UpDescriptorSet->BindSampler(0, m_SceneColorSampler);
+            mip.UpDescriptorSet->BindTexture(1, mip.DownTexture);
+            mip.UpDescriptorSet->BindSampler(1, m_SceneColorSampler);
+            mip.UpDescriptorSet->Update();
+
+            context.EnqueueFullscreenPass(m_MipRenderPass,
+                                          mip.UpFramebuffer,
+                                          MakeMipViewport(mip.Width, mip.Height),
+                                          MakeMipScissor(mip.Width, mip.Height),
+                                          m_UpsamplePipeline,
+                                          mip.UpDescriptorSet);
         }
     }
 

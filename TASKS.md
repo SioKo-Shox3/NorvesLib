@@ -116,7 +116,7 @@
 - notes: SS-AUTOEXPOSURE-P1の評価の指摘1・3。P2の範囲（RHIを含まない）で直せないため分けた。危険地帯（RHI/Vulkan・RenderThread）。評価者を通す。
 
 ## SS-BLOOM-MIPCHAIN: ブルームを段階的に縮小・拡大する方式に置き換える
-- status: todo
+- status: done
 - done-when: ブルームが、13タップの縮小（最初の段は明るい画素のちらつきを抑える重み付き平均）を約6段、3×3のテントフィルタでの拡大と加算で作られ、元の色へ一定の割合（既定 約0.04、しきい値なしでエネルギーを保つ方式を既定）で混ぜる。広がりは画面の高さの10〜20%に届く。撮影の昼と夕で、太陽の周り・発光球・金属の球の強い反射の周りに柔らかいにじみが見え、縮小の格子や輪状の模様が見えない。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
@@ -125,6 +125,23 @@
 - stop-when: 承認済みのgoldenが変わる場合は差の原因と妥当性を記録して再承認する（任されている）。原因が説明できない差なら止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 今のブルームは1回の16タップで、広がりは最大 約10 px（`bloom.frag`）。値の調整では広がらない。
+
+## SS-EMISSIVE-GLOW: 起動画面の発光球をブルームでにじむ明るさにする
+- status: todo
+- done-when: 起動画面の発光球の輝度（今は1800 nits）を、昼・夕の自動露出で画面の平均輝度に対して十分に明るく（目安: 撮影の夕で周りの背景の30倍以上）なる物理的な値にし、撮影の昼と夕で発光球の周りに柔らかいにじみが見える。ブルームの既定（しきい値なし・0.04）は変えない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-EMISSIVE-GLOW -SunElevations 45,3`
+- stop-when: 発光球が白飛びの割合の基準（2%）を超える、または露出が発光球に引っ張られて画面が暗くなる場合は止めて記録する。
+- paths: Game/GameModes/Rendering3DTest, TASKS.md, PROGRESS.md
+- notes: SS-BLOOM-MIPCHAINで分かった。夕の自動露出（EV100 約11.1）では発光球はプリエクスポージャ後 約0.7で画面の平均の約4倍しかなく、しきい値なし0.04の補間ではにじみが縁の外5 pxで数%にとどまり見えない。
+
+## FIX-CAPTURE-SUN-AZIMUTH: 撮影スクリプトの -SunAzimuth が null のメソッド呼び出しで落ちる
+- status: todo
+- done-when: `Scripts/CaptureStartupScene.ps1 -SunAzimuth <度>`が太陽の方位を渡して撮影でき、太陽を画角に入れる視点（例: 低角度の視点で方位 -120°）を撮れる。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/FIX-CAPTURE-SUN-AZIMUTH -SunElevations 3 -SunAzimuth -120`
+- stop-when: なし。
+- paths: Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: `[Nullable[double]]`の引数は値が入ると`double`になるため`$SunAzimuth.Value`がnullになる（199行目）。SS-BLOOM-MIPCHAINではGame.exeを同じ引数で直接起動して撮った。
 
 ## SS-TAA-P1: ジッタと履歴の再投影でTAAを作る
 - status: todo

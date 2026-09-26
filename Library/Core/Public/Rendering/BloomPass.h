@@ -18,17 +18,26 @@ namespace NorvesLib::Core::Rendering
      */
     struct BloomSettings
     {
-        /** @brief 輝度閾値（この値以上がブルームの対象） */
-        float Threshold = 1.0f;
+        /**
+         * @brief 輝度閾値（プリエクスポージャ後の値）
+         *
+         * 0以下（既定）はしきい値なしで、元の色とブルームを Intensity の割合で線形補間し、
+         * 画面全体のエネルギーを保つ。正の値では、この値以上の明るい部分だけを取り出し、
+         * Intensity 倍して元の色へ加える。
+         */
+        float Threshold = 0.0f;
 
-        /** @brief ブルーム強度（加算合成の乗数） */
-        float Intensity = 1.5f;
+        /** @brief ブルーム強度（しきい値なしでは補間の割合、ありでは加算の乗数） */
+        float Intensity = 0.04f;
 
-        /** @brief ブラー半径（ピクセル単位） */
-        float Radius = 3.0f;
+        /** @brief 拡大のテントフィルタの半径（1つ下の段のテクセル単位） */
+        float Radius = 1.0f;
 
-        /** @brief ソフト閾値の膝（0-1、閾値付近のフォールオフ制御） */
+        /** @brief ソフト閾値の膝（0-1、閾値付近のフォールオフ制御。しきい値ありのときだけ使う） */
         float SoftKnee = 0.5f;
+
+        /** @brief 縮小の段数（1段ごとに縦横半分。1〜MaxBloomMipCount） */
+        uint32_t MipCount = 6;
 
         /** @brief 出力フォーマット（HDR、ToneMappingの前にかかるため） */
         RHI::Format OutputFormat = RHI::Format::R16G16B16A16_FLOAT;
@@ -37,8 +46,9 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief ブルームポストプロセスパス
      *
-     * HDRシーンカラーから高輝度部分を抽出し、ガウスぼかしを適用して
-     * 元のシーンカラーに加算合成します。
+     * HDRシーンカラーを13タップのフィルタで段階的に縮小し（最初の段はKaris平均）、
+     * 3×3のテントフィルタで下の段から拡大して各段へ加えたものを、元のシーンカラーへ混ぜます。
+     * 縮小の各段は自前のテクスチャで、パス内で閉じています。
      *
      * PostProcessStackに追加して使用するポストプロセスパスです。
      * ToneMappingPassの前に配置してください。
@@ -107,8 +117,8 @@ namespace NorvesLib::Core::Rendering
         void SetIntensity(float intensity) { m_Settings.Intensity = intensity; }
 
         /**
-         * @brief ブラー半径を設定
-         * @param radius 半径（ピクセル単位）
+         * @brief 拡大のテントフィルタの半径を設定
+         * @param radius 半径（1つ下の段のテクセル単位）
          */
         void SetRadius(float radius) { m_Settings.Radius = radius; }
 
@@ -124,7 +134,34 @@ namespace NorvesLib::Core::Rendering
          */
         const BloomSettings &GetSettings() const { return m_Settings; }
 
+        /** @brief 縮小の段数の上限 */
+        static constexpr uint32_t MaxBloomMipCount = 8;
+
+        /**
+         * @brief 今の縮小の段数を取得（資源を作った後の実際の段数。未作成なら0）
+         */
+        uint32_t GetActiveMipCount() const { return static_cast<uint32_t>(m_MipLevels.size()); }
+
     private:
+        /** @brief 縮小・拡大の1段分の資源 */
+        struct BloomMipLevel
+        {
+            uint32_t Width = 0;
+            uint32_t Height = 0;
+            RHI::TexturePtr DownTexture;
+            RHI::FramebufferPtr DownFramebuffer;
+            RHI::DescriptorSetPtr DownDescriptorSet;
+            RHI::BufferPtr DownParamsBuffer;
+            // 拡大の結果（最下段では作らない）
+            RHI::TexturePtr UpTexture;
+            RHI::FramebufferPtr UpFramebuffer;
+            RHI::DescriptorSetPtr UpDescriptorSet;
+            RHI::BufferPtr UpParamsBuffer;
+        };
+
+        bool EnsureMipChain(uint32_t width, uint32_t height);
+        void ReleaseMipChain();
+        void EnqueueMipChain(ViewRenderContext &context, const RHI::TexturePtr& sceneColorPtr);
         bool PrepareResources(uint32_t width,
                               uint32_t height,
                               const RHI::TexturePtr& outputTexture,
@@ -151,6 +188,17 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_ParamsBuffer;
         RHI::DescriptorSetPtr m_BloomDescriptorSet;
         RHI::SamplerPtr m_SceneColorSampler;
+
+        // 縮小・拡大の段（パス内で閉じた自前のテクスチャ）
+        RHI::ShaderPtr m_DownsampleFragmentShader;
+        RHI::ShaderPtr m_UpsampleFragmentShader;
+        RHI::RenderPassPtr m_MipRenderPass;
+        RHI::PipelinePtr m_DownsamplePipeline;
+        RHI::PipelinePtr m_UpsamplePipeline;
+        VariableArray<BloomMipLevel> m_MipLevels;
+        uint32_t m_MipChainWidth = 0;
+        uint32_t m_MipChainHeight = 0;
+        uint32_t m_MipChainRequestedCount = 0;
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;

@@ -800,12 +800,12 @@ namespace NorvesLib::Core::Rendering
         // AutoExposure（ブルーム前のHDRシーンカラーの輝度ヒストグラムから露出を測る。露出の方式が Auto のカメラは、この値で次のフレームの露出を決める）
         postProcessStack->AddPass(MakeUnique<AutoExposurePass>());
 
-        // Bloom（ToneMappingの前にHDR空間でブルーム適用）
+        // Bloom（ToneMappingの前にHDR空間でブルーム適用。6段の縮小・拡大を、しきい値なしで元の色へ4%混ぜる）
         BloomSettings bloomSettings;
-        bloomSettings.Threshold = 1.15f;
-        bloomSettings.Intensity = 0.85f;
-        bloomSettings.Radius = 2.5f;
-        bloomSettings.SoftKnee = 0.35f;
+        bloomSettings.Threshold = 0.0f;
+        bloomSettings.Intensity = 0.04f;
+        bloomSettings.Radius = 1.0f;
+        bloomSettings.MipCount = 6;
         auto bloomPass = MakeUnique<BloomPass>(bloomSettings);
         postProcessStack->AddPass(std::move(bloomPass));
 
