@@ -725,8 +725,11 @@ namespace Game::GameModes
             lightSphereMatInfo.EmissiveColor[0] = 1.0f;
             lightSphereMatInfo.EmissiveColor[1] = 0.9f;
             lightSphereMatInfo.EmissiveColor[2] = 0.3f;
-            // 点光源（1600 lm）が半径0.15 mの球の表面から一様に出るときの輝度 Φ/(π·4πr²) ≈ 1800 nits。
-            lightSphereMatInfo.EmissiveLuminanceNits = 1800.0f;
+            // 点光源（1600 lm）を実際の100 W 形電球の大きさ（半径約3 cm）の球の表面から一様に出したときの輝度
+            // Φ/(π·4πr²) ≈ 45000 nits。見える球（半径0.15 m）の面で割った値（約1800 nits）では夕の自動露出で
+            // 背景の数倍にしかならずブルームでにじまないため、電球そのものの明るさで描く。照明は点光源の光束のまま。
+            // GBufferの発光（RGBA16F、上限65504）に赤のチャンネル（輝度1あたり約1.14）が収まる値にとどめる。
+            lightSphereMatInfo.EmissiveLuminanceNits = 45000.0f;
             lightSphereMatInfo.DebugName = "LightSphere";
             data.m_LightSphereMaterial = materials.Create(lightSphereMatInfo);
         }
