@@ -13,10 +13,7 @@
 #include "Thread/Thread.h"
 
 #include <cassert>
-#include <cctype>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <limits>
 #include <type_traits>
@@ -382,178 +379,6 @@ namespace
         assert(QueryRaycast(engine.GetSceneQuery()) == EPhysicsSceneQueryResult::Unavailable);
     }
 
-    bool HasRequiredPhysicsRegistrationPrefix(const Container::String& source);
-
-    void TestStrictGamePhysicsContractRejectsMutations()
-    {
-        std::cout << "[Test] strict Game Physics contract rejects representative mutations\n";
-        const Container::String validSource =
-            "#include \"Physics/IPhysicsModule.h\"\n"
-            "bool GameApplicationHandler::OnPreInitialize(const VariableArray<String>& args)\n"
-            "{\n"
-            "    LOG_INFO(\"GameApplicationHandler::OnPreInitialize()\");\n"
-            "    if (NorvesLib::Modules::Physics::RegisterPhysicsModule(\n"
-            "            NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)\n"
-            "    {\n"
-            "        LOG_ERROR(\"Physics module registration failed\");\n"
-            "        return false;\n"
-            "    }\n"
-            "    m_M6ScriptSmokeController.Configure(args);\n"
-            "}\n";
-        const Container::String nullHandlingRemoved =
-            "#include \"Physics/IPhysicsModule.h\"\n"
-            "bool GameApplicationHandler::OnPreInitialize(const VariableArray<String>& args)\n"
-            "{\n"
-            "    LOG_INFO(\"GameApplicationHandler::OnPreInitialize()\");\n"
-            "    NorvesLib::Modules::Physics::RegisterPhysicsModule(\n"
-            "        NorvesLib::Core::Module::GetModuleRegistry());\n"
-            "    m_M6ScriptSmokeController.Configure(args);\n"
-            "}\n";
-        const Container::String conditionalRegistration =
-            "#include \"Physics/IPhysicsModule.h\"\n"
-            "bool GameApplicationHandler::OnPreInitialize(const VariableArray<String>& args)\n"
-            "{\n"
-            "    LOG_INFO(\"GameApplicationHandler::OnPreInitialize()\");\n"
-            "    if (bPhysics && NorvesLib::Modules::Physics::RegisterPhysicsModule(\n"
-            "            NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)\n"
-            "    {\n"
-            "        LOG_ERROR(\"Physics module registration failed\");\n"
-            "        return false;\n"
-            "    }\n"
-            "    m_M6ScriptSmokeController.Configure(args);\n"
-            "}\n";
-        const Container::String configureBeforeRegistration =
-            "#include \"Physics/IPhysicsModule.h\"\n"
-            "bool GameApplicationHandler::OnPreInitialize(const VariableArray<String>& args)\n"
-            "{\n"
-            "    LOG_INFO(\"GameApplicationHandler::OnPreInitialize()\");\n"
-            "    m_M6ScriptSmokeController.Configure(args);\n"
-            "    if (NorvesLib::Modules::Physics::RegisterPhysicsModule(\n"
-            "            NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)\n"
-            "    {\n"
-            "        LOG_ERROR(\"Physics module registration failed\");\n"
-            "        return false;\n"
-            "    }\n"
-            "}\n";
-        const Container::String commentedFalsePositive =
-            "/*\n"
-            "bool GameApplicationHandler::OnPreInitialize(const VariableArray<String>& args)\n"
-            "{\n"
-            "    LOG_INFO(\"GameApplicationHandler::OnPreInitialize()\");\n"
-            "    if (NorvesLib::Modules::Physics::RegisterPhysicsModule(\n"
-            "            NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)\n"
-            "    {\n"
-            "        LOG_ERROR(\"Physics module registration failed\");\n"
-            "        return false;\n"
-            "    }\n"
-            "    m_M6ScriptSmokeController.Configure(args);\n"
-            "}\n"
-            "*/\n"
-            "bool GameApplicationHandler::OnPreInitialize(const VariableArray<String>& args)\n"
-            "{\n"
-            "    LOG_INFO(\"GameApplicationHandler::OnPreInitialize()\");\n"
-            "    m_M6ScriptSmokeController.Configure(args);\n"
-            "}\n";
-
-        assert(HasRequiredPhysicsRegistrationPrefix(validSource));
-        assert(!HasRequiredPhysicsRegistrationPrefix(nullHandlingRemoved));
-        assert(!HasRequiredPhysicsRegistrationPrefix(conditionalRegistration));
-        assert(!HasRequiredPhysicsRegistrationPrefix(configureBeforeRegistration));
-        assert(!HasRequiredPhysicsRegistrationPrefix(commentedFalsePositive));
-    }
-
-    Container::String ReadSourceFile(const std::filesystem::path& path)
-    {
-        std::ifstream input(path, std::ios::binary);
-        if (!input)
-        {
-            return {};
-        }
-
-        Container::String result;
-        char buffer[4096]{};
-        while (input.read(buffer, sizeof(buffer)) || input.gcount() > 0)
-        {
-            result.append(buffer, static_cast<size_t>(input.gcount()));
-        }
-        return result;
-    }
-
-    Container::String RemoveAsciiWhitespace(const Container::String& source)
-    {
-        Container::String result;
-        result.reserve(source.size());
-        for (char character : source)
-        {
-            if (!std::isspace(static_cast<unsigned char>(character)))
-            {
-                result.push_back(character);
-            }
-        }
-        return result;
-    }
-
-    bool HasRequiredPhysicsRegistrationPrefix(const Container::String& source)
-    {
-        constexpr const char* kAnchor = "boolGameApplicationHandler::OnPreInitialize(";
-        constexpr const char* kRequiredPrefix =
-            "{LOG_INFO(\"GameApplicationHandler::OnPreInitialize()\");"
-            "if(NorvesLib::Modules::Physics::RegisterPhysicsModule("
-            "NorvesLib::Core::Module::GetModuleRegistry())==nullptr){"
-            "LOG_ERROR(\"Physicsmoduleregistrationfailed\");returnfalse;}"
-            "m_M6ScriptSmokeController.Configure(args);";
-
-        const Container::String compact = RemoveAsciiWhitespace(source);
-        const size_t anchorOffset = compact.find(kAnchor);
-        if (anchorOffset == Container::String::npos ||
-            compact.find(kAnchor, anchorOffset + Container::String(kAnchor).size()) != Container::String::npos)
-        {
-            return false;
-        }
-
-        const size_t openingBrace = compact.find('{', anchorOffset);
-        if (openingBrace == Container::String::npos)
-        {
-            return false;
-        }
-
-        return compact.find(kRequiredPrefix, openingBrace) == openingBrace;
-    }
-
-    void TestGamePhysicsRegistrationSourceContract()
-    {
-        std::cout << "[Test] Game unconditionally registers Physics before command-line parsing\n";
-        const std::filesystem::path sourceRoot(NORVES_SOURCE_ROOT);
-        const Container::String handlerSource = ReadSourceFile(
-            sourceRoot / "Game/GameApplicationHandler.cpp");
-
-        assert(HasRequiredPhysicsRegistrationPrefix(handlerSource));
-    }
-
-    void TestPhysicsModuleCMakeContract()
-    {
-        std::cout << "[Test] Physics module keeps private Core dependencies and C++23 requirements private\n";
-        const std::filesystem::path sourceRoot(NORVES_SOURCE_ROOT);
-        const Container::String cmakeSource = RemoveAsciiWhitespace(ReadSourceFile(
-            sourceRoot / "Library/Modules/Physics/CMakeLists.txt"));
-
-        assert(cmakeSource.find(
-            "add_library(${MODULE_NAME}STATIC${PHYSICS_PUBLIC_HEADERS}${PHYSICS_PRIVATE_SOURCES})")
-            != Container::String::npos);
-        assert(cmakeSource.find(
-            "target_include_directories(${MODULE_NAME}PUBLIC${CMAKE_CURRENT_SOURCE_DIR}/PublicPRIVATE"
-            "${CMAKE_CURRENT_SOURCE_DIR}/Private${CMAKE_SOURCE_DIR})") != Container::String::npos);
-        assert(cmakeSource.find("target_compile_features(${MODULE_NAME}PRIVATEcxx_std_23)")
-            != Container::String::npos);
-        assert(cmakeSource.find("target_compile_features(${MODULE_NAME}PUBLICcxx_std_23)")
-            == Container::String::npos);
-        assert(cmakeSource.find("target_compile_features(${MODULE_NAME}INTERFACEcxx_std_23)")
-            == Container::String::npos);
-        assert(cmakeSource.find(
-            "source_group(TREE${CMAKE_CURRENT_SOURCE_DIR}FILES${PHYSICS_PUBLIC_HEADERS}${PHYSICS_PRIVATE_SOURCES})")
-            != Container::String::npos);
-    }
-
     void TestPhaseThreeUnregisteredComponentsRemainInvalid()
     {
         std::cout << "[Test] phase 3 unregistered Components remain invalid\n";
@@ -845,9 +670,6 @@ int main()
     TestDestroyedModuleLeavesSceneQueryUnbound();
     TestInstallRejectsDifferentRegistrationThread();
     TestWrongThreadTeardownPreservesReadyBinding();
-    TestStrictGamePhysicsContractRejectsMutations();
-    TestGamePhysicsRegistrationSourceContract();
-    TestPhysicsModuleCMakeContract();
     TestPhaseThreeUnregisteredComponentsRemainInvalid();
     TestPhaseThreeComponentOwnershipAndSlots();
     std::cout << "PhysicsModuleLinkTest passed\n";

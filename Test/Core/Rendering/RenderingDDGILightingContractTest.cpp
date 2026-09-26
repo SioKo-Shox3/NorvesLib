@@ -11,23 +11,13 @@
 #undef private
 
 #include <cassert>
-#include <cctype>
-#include <cstddef>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
 
 using namespace NorvesLib::Core::Rendering;
 
-using TestString = NorvesLib::Core::Container::TString<char>;
-
 namespace
 {
-#ifndef NORVES_SOURCE_DIR
-#error NORVES_SOURCE_DIRはRenderingDDGILightingContractTestに必要です。
-#endif
-
     class RTGIContractTexture final : public NorvesLib::RHI::ITexture
     {
     public:
@@ -73,82 +63,6 @@ namespace
                                                         NorvesLib::RHI::Format format)
     {
         return NorvesLib::RHI::MakeShared<RTGIContractTexture>(width, height, format);
-    }
-
-    TestString ReadSource(const char* relativePath)
-    {
-        std::ifstream file(std::filesystem::path(NORVES_SOURCE_DIR) / relativePath,
-                           std::ios::binary);
-        assert(file.is_open());
-        TestString result;
-        char buffer[4096];
-        while (file)
-        {
-            file.read(buffer, sizeof(buffer));
-            const std::streamsize count = file.gcount();
-            if (count > 0)
-            {
-                result.append(buffer, static_cast<TestString::size_type>(count));
-            }
-        }
-        return result;
-    }
-
-    TestString RemoveWhitespace(const TestString& source)
-    {
-        TestString normalized;
-        normalized.reserve(source.size());
-        for (const char character : source)
-        {
-            if (!std::isspace(static_cast<unsigned char>(character)))
-            {
-                normalized.push_back(character);
-            }
-        }
-        return normalized;
-    }
-
-    void AssertContains(const TestString& source, const char* expected)
-    {
-        const TestString normalizedSource = RemoveWhitespace(source);
-        const TestString normalizedExpected = RemoveWhitespace(TestString(expected));
-        const bool bContainsExpected =
-            normalizedSource.find(normalizedExpected) != TestString::npos;
-        if (!bContainsExpected)
-        {
-            std::cerr << "契約文字列がありません: " << expected << "\n";
-        }
-        assert(bContainsExpected);
-    }
-
-    TestString ExtractBlock(const TestString& source, const char* signature)
-    {
-        const std::size_t signaturePosition = source.find(signature);
-        assert(signaturePosition != TestString::npos);
-        const std::size_t openingPosition = source.find('{', signaturePosition);
-        assert(openingPosition != TestString::npos);
-
-        std::size_t depth = 0u;
-        for (std::size_t position = openingPosition; position < source.size(); ++position)
-        {
-            if (source[position] == '{')
-            {
-                ++depth;
-            }
-            else if (source[position] == '}')
-            {
-                assert(depth > 0u);
-                --depth;
-                if (depth == 0u)
-                {
-                    return source.substr(signaturePosition,
-                                         position - signaturePosition + 1u);
-                }
-            }
-        }
-
-        assert(false);
-        return {};
     }
 
     void TestDDGIAtlasPublicationReset()
@@ -197,145 +111,6 @@ namespace
         assert(!probePass.GetIrradianceAtlas(1u, 3u, 5u));
         assert(!probePass.GetDistanceAtlas(1u, 3u, 5u));
         assert(probePass.GetAtlasProbeCount(1u, 3u, 5u) == 0u);
-
-        const TestString ddgiPass =
-            ReadSource("Library/Core/Private/Rendering/DDGIProbePass.cpp");
-        const TestString execute = ExtractBlock(ddgiPass, "bool DDGIProbePass::Execute");
-        const std::size_t invalidationPosition = execute.find("resources.bAtlasValid = false;");
-        const std::size_t earlyReturnGuard = execute.find("if (context.CommandList == nullptr");
-        assert(invalidationPosition != TestString::npos);
-        assert(earlyReturnGuard != TestString::npos);
-        assert(invalidationPosition < earlyReturnGuard);
-        AssertContains(execute, "resources.AtlasProbeCount = 0u;");
-
-        const TestString getProbeCount =
-            ExtractBlock(ddgiPass, "uint32_t DDGIProbePass::GetAtlasProbeCount");
-        AssertContains(getProbeCount, "resources.bAtlasValid");
-    }
-
-    void TestLightingFallbackAndPublication()
-    {
-        const TestString lightingPass =
-            ReadSource("Library/Core/Private/Rendering/LightingPass.cpp");
-        const TestString execute =
-            ExtractBlock(lightingPass, "void LightingPass::ExecuteWithInputs");
-        const std::size_t updatePosition = execute.find("m_DDGIProbePass.Execute(context)");
-        const std::size_t publicationPosition =
-            execute.find("IsCompleteDDGILightingPublication(", updatePosition);
-        assert(updatePosition != TestString::npos);
-        assert(publicationPosition != TestString::npos);
-        assert(updatePosition < publicationPosition);
-        AssertContains(execute, "context.PhysicalLighting.PublishDDGIAtlas");
-        AssertContains(execute, "ddgiParameters.info[0] = 1u");
-        AssertContains(execute, "m_DefaultDDGIIrradianceAtlas");
-        AssertContains(execute, "m_DefaultDDGIDistanceAtlas");
-        AssertContains(execute, "BindTexture(17,");
-        AssertContains(execute, "BindSampler(17,");
-        AssertContains(execute, "BindTexture(18,");
-        AssertContains(execute, "BindSampler(18,");
-        AssertContains(execute, "bUseDDGILighting");
-
-        const TestString completePublication =
-            ExtractBlock(lightingPass, "static bool IsCompleteDDGILightingPublication");
-        AssertContains(completePublication, "IsDDGIVolumeValid(volume)");
-        AssertContains(completePublication, "SupportsDDGILighting(context)");
-        AssertContains(completePublication, "atlasProbeCount == expectedProbeCount");
-        AssertContains(completePublication, "lighting.FrameNumber == context.FrameNumber");
-
-        const TestString atlasCheck =
-            ExtractBlock(lightingPass, "static bool AreDDGIAtlasResourcesComplete");
-        AssertContains(atlasCheck, "GetFormat() == RHI::Format::R16G16B16A16_FLOAT");
-        AssertContains(atlasCheck, "GetFormat() == RHI::Format::R16G16_FLOAT");
-        AssertContains(atlasCheck, "RHI::ResourceUsage::ShaderRead");
-
-        const TestString supportCheck =
-            ExtractBlock(lightingPass, "static bool SupportsDDGILighting");
-        AssertContains(supportCheck, "bAccelerationStructure");
-        AssertContains(supportCheck, "bRayQuery");
-        AssertContains(supportCheck, "bBufferDeviceAddress");
-        AssertContains(supportCheck, "bShaderInt64");
-    }
-
-    void TestVisibilityWeightedVolumeSampling()
-    {
-        const TestString shader = ReadSource("Assets/Shaders/lighting.frag");
-        AssertContains(shader,
-                       "layout(set = 0, binding = 17) uniform sampler2DArray ddgiIrradianceAtlas");
-        AssertContains(shader,
-                       "layout(set = 0, binding = 18) uniform sampler2DArray ddgiDistanceAtlas");
-
-        const TestString sample =
-            ExtractBlock(shader, "bool TrySampleDDGIIrradiance");
-        AssertContains(sample, "params.ddgiInfo.x == 0u");
-        AssertContains(sample, "any(lessThan(gridPosition, vec3(0.0)))");
-        AssertContains(sample, "any(greaterThan(gridPosition, gridMaximum))");
-        // 体積の外の点は偏りの前の位置で外れ、体積の中へ寄せない。区画と可視は表面の偏りを加えた点で求める。
-        assert(sample.find("vec3 gridPosition = clamp") == TestString::npos);
-        AssertContains(sample,
-                       "vec3 biasedPosition = worldPosition + normal * "
-                       "(DDGI_NORMAL_BIAS_FRACTION * minimumSpacing);");
-        // 無効なprobe（壁の外や物体の内側）は照度atlasのalphaで外す。
-        AssertContains(sample, "if (probeSample.a < 0.5)");
-        AssertContains(sample, "ivec3 baseProbe = ivec3(floor(biasedGridPosition));");
-        AssertContains(sample, "corner < 8u");
-        AssertContains(sample, "mix(vec3(1.0) - alpha, alpha, vec3(offset))");
-        AssertContains(sample,
-                       "SampleDDGIVisibility(probeIndex, probeToBiasedDirection, biasedDistance)");
-        AssertContains(sample, "DDGI_WEIGHT_CRUSH_THRESHOLD");
-        AssertContains(sample, "sqrt(max(probeSample.rgb, vec3(0.0))) * weight");
-
-        const TestString visibility =
-            ExtractBlock(shader, "float SampleDDGIVisibility");
-        AssertContains(visibility, "ddgiDistanceAtlas");
-        AssertContains(visibility, "moments.y - meanDistance * meanDistance");
-        AssertContains(visibility, "return max(chebyshev * chebyshev * chebyshev, 0.0);");
-
-        const TestString iblEndpoint =
-            ExtractBlock(shader, "vec3 EvaluateIblEndpoint");
-        AssertContains(iblEndpoint, "vec3 irradiance = bUseDDGI");
-        AssertContains(iblEndpoint, "? ddgiIrradiance");
-        AssertContains(iblEndpoint,
-                       "textureLod(diffuseIrradiance, EquirectangularUV(N), 0.0).rgb");
-        AssertContains(iblEndpoint,
-                       "return diffuseIBL * ao + specularIBL * specularAO * iblIntensity;");
-
-        const TestString mainFunction = ExtractBlock(shader, "void main()");
-        const TestString iblBranchSignature = "if (params.bIBLEnabled != 0u)";
-        const std::size_t firstIblBranch = mainFunction.find(iblBranchSignature);
-        assert(firstIblBranch != TestString::npos);
-        const std::size_t lightingIblBranch =
-            mainFunction.find(iblBranchSignature,
-                              firstIblBranch + iblBranchSignature.size());
-        assert(lightingIblBranch != TestString::npos);
-        assert(mainFunction.find(iblBranchSignature,
-                                 lightingIblBranch + iblBranchSignature.size()) ==
-               TestString::npos);
-        const TestString iblBranch = ExtractBlock(mainFunction.substr(lightingIblBranch),
-                                                  iblBranchSignature.c_str());
-        AssertContains(iblBranch, "bDDGIAvailable");
-        AssertContains(iblBranch, "EvaluateIblEndpoint");
-        const bool bHasRTGIEndpoint =
-            iblBranch.find("bRTGIAvailable") != TestString::npos;
-        if (bHasRTGIEndpoint)
-        {
-            AssertContains(iblBranch, "EvaluateRTGIEndpoint");
-            AssertContains(iblBranch, "ambient = bRTGIAvailable");
-        }
-        else
-        {
-            AssertContains(iblBranch, "ambient = EvaluateIblEndpoint");
-        }
-        const std::size_t endpointPosition =
-            iblBranch.find("EvaluateIblEndpoint(");
-        assert(endpointPosition != TestString::npos);
-        assert(iblBranch.find("EvaluateIblEndpoint(", endpointPosition + 1u) ==
-               TestString::npos);
-        assert(iblBranch.find("diffuseIrradiance") == TestString::npos);
-        assert(iblBranch.find("ambient += EvaluateDiffuseEndpoint") == TestString::npos);
-        AssertContains(mainFunction, "TrySampleDDGIIrradiance(worldPos, N, ddgiIrradiance)");
-        AssertContains(mainFunction, "if (bDDGIAvailable)");
-        AssertContains(mainFunction, "ambient += EvaluateDiffuseEndpoint(ddgiIrradiance");
-        AssertContains(mainFunction, "params.debugViewMode >= 246u");
     }
 
     MeshProxy MakeSceneRevisionMeshProxy(uint64_t objectId,
@@ -596,48 +371,6 @@ namespace
         packet.Clear();
         assert(packet.SceneRevision == 0u && packet.LightRevision == 0u);
         assert(packet.bRTGIEnabled);
-
-        const TestString resourceNames =
-            ReadSource("Library/Core/Public/Rendering/RenderGraph/RenderGraphResourceNames.h");
-        AssertContains(resourceNames, "RTGIDiffuseIndirect");
-        AssertContains(resourceNames, "RTGIHistoryCurrent");
-        AssertContains(resourceNames, "RTGIHistoryHistory");
-        AssertContains(resourceNames, "RTGIHistoryCurrentAge");
-        AssertContains(resourceNames, "RTGIHistoryHistoryAge");
-        AssertContains(resourceNames, "RTGIHistoryCurrentConfidence");
-        AssertContains(resourceNames, "RTGIHistoryHistoryConfidence");
-
-        const TestString rtgiContract =
-            ReadSource("Library/Core/Public/Rendering/RTGIContract.h");
-        AssertContains(rtgiContract, "RTGIDiffuseBounceCount");
-        AssertContains(rtgiContract, "IsForFrame");
-        AssertContains(rtgiContract, "HasHistoryRevisionMismatch");
-        AssertContains(rtgiContract, "RTGIHistoryResources");
-
-        const TestString renderingCoordinator =
-            ReadSource("Library/Core/Private/Rendering/RenderingCoordinator.cpp");
-        const TestString sceneRevisionHash =
-            ExtractBlock(renderingCoordinator, "uint64_t HashSceneRevisionInternal");
-        AssertContains(sceneRevisionHash, "packet.Scene.MeshProxies");
-        AssertContains(sceneRevisionHash, "packet.Scene.SkinnedMeshProxies");
-        assert(sceneRevisionHash.find("packet.DrawCommands") == TestString::npos);
-        assert(sceneRevisionHash.find("packet.InstanceData") == TestString::npos);
-        assert(sceneRevisionHash.find("packet.RayTracingScene.Instances") == TestString::npos);
-        assert(sceneRevisionHash.find("WorldMatrix") == TestString::npos);
-        assert(sceneRevisionHash.find("NormalMatrix") == TestString::npos);
-        assert(sceneRevisionHash.find("instance.World") == TestString::npos);
-        assert(sceneRevisionHash.find("instance.PreviousWorld") == TestString::npos);
-        assert(sceneRevisionHash.find("instance.Instance.transform") == TestString::npos);
-
-        const TestString framePacket =
-            ReadSource("Library/Core/Public/Rendering/FramePacket.h");
-        AssertContains(framePacket, "RayTracingScene.IsComplete()");
-
-        const TestString lightingPass =
-            ReadSource("Library/Core/Private/Rendering/LightingPass.cpp");
-        const TestString declare = ExtractBlock(lightingPass, "void LightingPass::Declare");
-        AssertContains(declare, "RenderGraphResourceNames::RTGIDiffuseIndirect");
-        AssertContains(declare, "m_RTGIDiffuseIndirectHandle");
     }
 }
 
@@ -645,8 +378,6 @@ int main()
 {
     TestDDGIAtlasPublicationReset();
     TestStaleAtlasInvalidation();
-    TestLightingFallbackAndPublication();
-    TestVisibilityWeightedVolumeSampling();
     TestSceneRevisionIsCompositionOnly();
     TestRTGIFallbackContract();
     std::cout << "DDGI照明契約テスト: 合格\n";

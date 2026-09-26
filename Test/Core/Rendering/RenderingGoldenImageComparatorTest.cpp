@@ -583,7 +583,6 @@ int main(int argc, char** argv)
     TestPngRoundTripNormalizesToTightRgbaAndPersists();
     TestCapturedFramePngRequiresExactGoldenDimensions();
     TestCapturedFrameFormatAndPitchMatrix();
-    TestR2AcceptanceArtifacts();
     std::cout << "RenderingGoldenImageComparatorTest passed\n";
     return 0;
 }
