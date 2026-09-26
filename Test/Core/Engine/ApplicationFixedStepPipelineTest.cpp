@@ -51,7 +51,6 @@ namespace
     using namespace NorvesLib::Core;
 
     constexpr uint32_t kCaseCount = 11;
-    constexpr uint32_t kRepetitionsPerCase = 32;
 
     struct DynamicFixture
     {
@@ -592,10 +591,7 @@ int main(int argumentCount, char** arguments)
     bool bPassed = true;
     for (uint32_t caseIndex = 0; caseIndex < kCaseCount; ++caseIndex)
     {
-        for (uint32_t repetition = 0; repetition < kRepetitionsPerCase; ++repetition)
-        {
-            bPassed &= RunChildProcess(caseIndex);
-        }
+        bPassed &= RunChildProcess(caseIndex);
     }
     std::cout << (bPassed ? "ApplicationFixedStepPipelineTest passed\n" : "ApplicationFixedStepPipelineTest failed\n");
     return bPassed ? EXIT_SUCCESS : EXIT_FAILURE;

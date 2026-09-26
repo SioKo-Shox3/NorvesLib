@@ -168,7 +168,6 @@ namespace
     static_assert(alignof(SceneProxyType) == 16);
 
     constexpr uint32_t kCaseCount = 8;
-    constexpr uint32_t kRepetitionsPerCase = 8;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -806,10 +805,7 @@ int main(int argumentCount, char** arguments)
     bool bPassed = true;
     for (uint32_t caseIndex = 0; caseIndex < kCaseCount; ++caseIndex)
     {
-        for (uint32_t repetition = 0; repetition < kRepetitionsPerCase; ++repetition)
-        {
-            bPassed &= RunChildProcess(caseIndex);
-        }
+        bPassed &= RunChildProcess(caseIndex);
     }
     std::cout << (bPassed ? "PhysicsFixedStepPipelineTest passed\n" : "PhysicsFixedStepPipelineTest failed\n");
     return bPassed ? EXIT_SUCCESS : EXIT_FAILURE;

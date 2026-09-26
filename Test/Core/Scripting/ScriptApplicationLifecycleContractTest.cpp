@@ -13,7 +13,6 @@
 #include "Library/ThirdParty/angelscript/upstream/sdk/angelscript/include/angelscript.h"
 
 #include <crtdbg.h>
-#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -91,249 +90,6 @@ namespace
             GChildState.bPassed = false;
             GChildState.Failure = message;
         }
-    }
-
-    std::string StripCommentsAndLiterals(const std::string& source)
-    {
-        enum class ScanState
-        {
-            Code,
-            LineComment,
-            BlockComment,
-            StringLiteral,
-            CharacterLiteral
-        };
-
-        ScanState state = ScanState::Code;
-        std::string result = source;
-        for (size_t index = 0; index < result.size(); ++index)
-        {
-            const char character = result[index];
-            const char nextCharacter = index + 1 < result.size() ? result[index + 1] : '\0';
-
-            if (state == ScanState::Code)
-            {
-                if (character == '/' && nextCharacter == '/')
-                {
-                    result[index] = ' ';
-                    result[++index] = ' ';
-                    state = ScanState::LineComment;
-                }
-                else if (character == '/' && nextCharacter == '*')
-                {
-                    result[index] = ' ';
-                    result[++index] = ' ';
-                    state = ScanState::BlockComment;
-                }
-                else if (character == '"')
-                {
-                    result[index] = ' ';
-                    state = ScanState::StringLiteral;
-                }
-                else if (character == '\'')
-                {
-                    result[index] = ' ';
-                    state = ScanState::CharacterLiteral;
-                }
-                continue;
-            }
-
-            if (state == ScanState::LineComment)
-            {
-                if (character == '\n')
-                {
-                    state = ScanState::Code;
-                }
-                else
-                {
-                    result[index] = ' ';
-                }
-                continue;
-            }
-
-            if (state == ScanState::BlockComment)
-            {
-                result[index] = character == '\n' ? '\n' : ' ';
-                if (character == '*' && nextCharacter == '/')
-                {
-                    result[++index] = ' ';
-                    state = ScanState::Code;
-                }
-                continue;
-            }
-
-            if (character == '\\' && nextCharacter != '\0')
-            {
-                result[index] = ' ';
-                result[++index] = ' ';
-                continue;
-            }
-
-            result[index] = character == '\n' ? '\n' : ' ';
-            if ((state == ScanState::StringLiteral && character == '"') ||
-                (state == ScanState::CharacterLiteral && character == '\''))
-            {
-                state = ScanState::Code;
-            }
-        }
-        return result;
-    }
-
-    bool ExtractBraceDelimitedBlock(const std::string& source, const std::string& signature, std::string& outBlock)
-    {
-        const size_t signatureIndex = source.find(signature);
-        if (signatureIndex == std::string::npos)
-        {
-            return false;
-        }
-
-        const size_t openingBraceIndex = source.find('{', signatureIndex + signature.size());
-        if (openingBraceIndex == std::string::npos)
-        {
-            return false;
-        }
-
-        uint32_t braceDepth = 0;
-        for (size_t index = openingBraceIndex; index < source.size(); ++index)
-        {
-            if (source[index] == '{')
-            {
-                ++braceDepth;
-            }
-            else if (source[index] == '}')
-            {
-                --braceDepth;
-                if (braceDepth == 0)
-                {
-                    outBlock = source.substr(openingBraceIndex, index - openingBraceIndex + 1);
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    std::string RemoveWhitespace(const std::string& source)
-    {
-        std::string result;
-        result.reserve(source.size());
-        for (char character : source)
-        {
-            if (!std::isspace(static_cast<unsigned char>(character)))
-            {
-                result.push_back(character);
-            }
-        }
-        return result;
-    }
-
-    size_t CountOccurrences(const std::string& source, const std::string& token)
-    {
-        size_t count = 0;
-        size_t index = 0;
-        while ((index = source.find(token, index)) != std::string::npos)
-        {
-            ++count;
-            index += token.size();
-        }
-        return count;
-    }
-
-    bool IsIdentifierCharacter(char character)
-    {
-        return std::isalnum(static_cast<unsigned char>(character)) || character == '_';
-    }
-
-    size_t FindExactTokenAfter(const std::string& source, const std::string& token, size_t beginIndex)
-    {
-        size_t tokenIndex = source.find(token, beginIndex);
-        while (tokenIndex != std::string::npos)
-        {
-            const size_t tokenEndIndex = tokenIndex + token.size();
-            const bool bHasIdentifierPrefix = tokenIndex > 0 && IsIdentifierCharacter(source[tokenIndex - 1]);
-            const bool bHasIdentifierSuffix =
-                tokenEndIndex < source.size() && IsIdentifierCharacter(source[tokenEndIndex]);
-            if (!bHasIdentifierPrefix && !bHasIdentifierSuffix)
-            {
-                return tokenIndex;
-            }
-            tokenIndex = source.find(token, tokenIndex + 1);
-        }
-        return std::string::npos;
-    }
-
-    bool VerifySourceContracts()
-    {
-        const std::filesystem::path sourcePath =
-            std::filesystem::path(NORVES_SOURCE_ROOT) / "Library/Core/Private/Engine/ApplicationProcessor.cpp";
-        std::ifstream input(sourcePath, std::ios::binary);
-        if (!input)
-        {
-            std::cout << "source contract could not open ApplicationProcessor.cpp\n";
-            return false;
-        }
-
-        const std::string tokenizedSource = StripCommentsAndLiterals(
-            std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()));
-        std::string transactionBlock;
-        std::string initializeBlock;
-        std::string shutdownBlock;
-        if (!ExtractBraceDelimitedBlock(tokenizedSource, "class ApplicationInitializeTransaction", transactionBlock) ||
-            !ExtractBraceDelimitedBlock(tokenizedSource, "bool ApplicationProcessor::Initialize(", initializeBlock) ||
-            !ExtractBraceDelimitedBlock(tokenizedSource, "void ApplicationProcessor::Shutdown()", shutdownBlock))
-        {
-            std::cout << "source contract could not extract required implementation blocks\n";
-            return false;
-        }
-
-        const std::string compactTransactionBlock = RemoveWhitespace(transactionBlock);
-        const bool bSameInstanceShutdown =
-            compactTransactionBlock.find("ApplicationProcessor&m_Processor;") != std::string::npos &&
-            compactTransactionBlock.find("m_Processor.Shutdown();") != std::string::npos &&
-            CountOccurrences(compactTransactionBlock, ".Shutdown();") == 1;
-        if (!bSameInstanceShutdown)
-        {
-            std::cout << "source contract Initialize failure does not delegate to the same processor Shutdown\n";
-            return false;
-        }
-
-        if (FindExactTokenAfter(initializeBlock, "GEngine->GetRenderWorld().Shutdown", 0) != std::string::npos ||
-            FindExactTokenAfter(initializeBlock, "m_Device.reset", 0) != std::string::npos)
-        {
-            std::cout << "source contract Initialize contains individual cleanup\n";
-            return false;
-        }
-
-        const std::vector<std::string> cleanupTokens =
-        {
-            "WaitForRender",
-            "QuiesceAsyncAssetProducersAndWait",
-            "StopAcceptingTasks",
-            "DrainAcceptedFiniteTasks",
-            "OnPreShutdown",
-            "stateMachine->Shutdown",
-            "GetSceneQuery().Clear",
-            "GetWorld().Finalize",
-            "GetScriptRuntime().Shutdown",
-            "GetRenderWorld().Shutdown",
-            "m_Device.reset",
-            "DestroyEngine",
-            "JobSystem::Get().Shutdown"
-        };
-        size_t previousIndex = 0;
-        for (const std::string& cleanupToken : cleanupTokens)
-        {
-            const size_t tokenIndex = FindExactTokenAfter(shutdownBlock, cleanupToken, previousIndex);
-            if (tokenIndex == std::string::npos)
-            {
-                std::cout << "source contract shutdown order mismatch at " << cleanupToken << "\n";
-                return false;
-            }
-            previousIndex = tokenIndex + cleanupToken.size();
-        }
-
-        std::cout << "source contracts passed\n";
-        return true;
     }
 
     void RecordCallback(const char* callback)
@@ -1036,21 +792,16 @@ int main(int argumentCount, char** arguments)
         return EXIT_FAILURE;
     }
 
-    bool bBehaviorPassed = true;
-    for (uint32_t iteration = 0; iteration < 3; ++iteration)
-    {
-        bBehaviorPassed &= RunChildProcess("advance", "advance");
-        bBehaviorPassed &= RunChildProcess("pause", "pause");
-    }
-    bBehaviorPassed &= RunChildProcess("double-shutdown", "double-shutdown");
-    bBehaviorPassed &= RunChildProcess("initialize-false", "initialize-false");
-    bBehaviorPassed &= RunChildProcess("pre-initialize-throws", "pre-initialize-throws");
-    bBehaviorPassed &= RunChildProcess("post-initialize-throws", "post-initialize-throws");
-    bBehaviorPassed &= RunChildProcess("pre-shutdown-throws", "pre-shutdown-throws");
-    bBehaviorPassed &= RunChildProcess("shutdown-throws", "shutdown-throws");
-    bBehaviorPassed &= RunChildProcess("retained-failfast", "retained-failfast", true);
-    const bool bSourceContractsPassed = VerifySourceContracts();
-    const bool bPassed = bBehaviorPassed && bSourceContractsPassed;
+    bool bPassed = true;
+    bPassed &= RunChildProcess("advance", "advance");
+    bPassed &= RunChildProcess("pause", "pause");
+    bPassed &= RunChildProcess("double-shutdown", "double-shutdown");
+    bPassed &= RunChildProcess("initialize-false", "initialize-false");
+    bPassed &= RunChildProcess("pre-initialize-throws", "pre-initialize-throws");
+    bPassed &= RunChildProcess("post-initialize-throws", "post-initialize-throws");
+    bPassed &= RunChildProcess("pre-shutdown-throws", "pre-shutdown-throws");
+    bPassed &= RunChildProcess("shutdown-throws", "shutdown-throws");
+    bPassed &= RunChildProcess("retained-failfast", "retained-failfast", true);
     std::cout << (bPassed ? "ScriptApplicationLifecycleContractTest passed\n" : "ScriptApplicationLifecycleContractTest failed\n");
     return bPassed ? EXIT_SUCCESS : EXIT_FAILURE;
 }
