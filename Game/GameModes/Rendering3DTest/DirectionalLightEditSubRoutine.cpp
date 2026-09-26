@@ -54,10 +54,15 @@ namespace Game::GameModes
             }
         }
 
-        // 手動露出(EV100)。自動露出が入るまで、時刻に合わせた明るさはここで合わせる。
+        // 自動露出。切ると下の手動露出(EV100)で明るさを合わせる。手動露出の値は、自動のときも
+        // 最初の測定が出るまでの露出に使われる。
+        if (m_pAutoExposure != nullptr)
+        {
+            ImGui::Checkbox("自動露出", m_pAutoExposure);
+        }
         if (m_pExposureEV100 != nullptr)
         {
-            ImGui::SliderFloat("露出 EV100", m_pExposureEV100, 6.0f, 17.0f, "%.1f");
+            ImGui::SliderFloat("手動露出 EV100", m_pExposureEV100, 6.0f, 17.0f, "%.1f");
         }
 
         ImGui::End();

@@ -179,6 +179,17 @@ namespace Game::GameModes
         // 手動露出（EV100）。ImGui のスライダーが書き、Tick が絞り・ISO を保ったままシャッター速度へ写す。
         float m_ExposureEV100 = 0.0f;
         float m_AppliedExposureEV100 = 0.0f;
+        // 自動露出（起動画面の既定）。ImGui のチェックボックスが書き、Tick がカメラの露出の方式へ写す。
+        bool m_bAutoExposure = true;
+        bool m_bAppliedAutoExposure = true;
+
+        // 環境変数 NORVES_STARTUP_SUN_STEP="<仰角>,<秒>" の指定。起動からその秒数の後に一度だけ、
+        // 空の太陽の仰角を急に変える（自動露出の順応の確かめ用）。
+        bool m_bHasSunStep = false;
+        bool m_bSunStepApplied = false;
+        float m_SunStepElevation = 0.0f;
+        float m_SunStepDelaySeconds = 0.0f;
+        double m_SunStepElapsedSeconds = 0.0;
 
         // ========================================
         // glTF Model（Boulder）

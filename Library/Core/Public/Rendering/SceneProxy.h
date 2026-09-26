@@ -307,6 +307,19 @@ namespace NorvesLib::Core::Rendering
     // ========================================
 
     /**
+     * @brief カメラの露出の決め方
+     *
+     * Manual は絞り・シャッター速度・ISO・露出補正から露出を決める。
+     * Auto は RenderThread が前のフレームまでの SceneColor の輝度から求めた EV100 で露出を決める
+     * （測定が無い間は Manual と同じ値を使う）。
+     */
+    enum class CameraExposureMode : uint8_t
+    {
+        Manual,
+        Auto
+    };
+
+    /**
      * @brief 描画用カメラプロキシ
      */
     struct CameraProxy
@@ -352,6 +365,7 @@ namespace NorvesLib::Core::Rendering
         float Exposure = 1.0f / 1152.0f;
         float PreExposure = 1.0f / 1152.0f;
         float InvPreExposure = 1152.0f;
+        CameraExposureMode ExposureMode = CameraExposureMode::Manual;
 
         // ポストプロセス設定（ハンドル参照）
         // PostProcessHandle PostProcess;

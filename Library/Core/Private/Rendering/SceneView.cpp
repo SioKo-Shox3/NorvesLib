@@ -96,6 +96,47 @@ namespace NorvesLib::Core::Rendering
             return proxy.RenderSubtype == BoardRenderSubtype::Impostor &&
                    proxy.SourceMeshComponentId != 0;
         }
+
+        AutoExposurePass *FindAutoExposurePass(const PostProcessStack *postProcessStack)
+        {
+            if (!postProcessStack)
+            {
+                return nullptr;
+            }
+            for (const auto &pass : postProcessStack->GetPasses())
+            {
+                if (auto *autoExposurePass = dynamic_cast<AutoExposurePass *>(pass.get()))
+                {
+                    return autoExposurePass->IsEnabled() ? autoExposurePass : nullptr;
+                }
+            }
+            return nullptr;
+        }
+
+        // 露出の方式が Auto のカメラへ、前のフレームまでに順応させた EV100 の露出を写す。
+        // 写した露出はこの View の全パス（ライティング・空・フォグ・測定）で同じ値として使われる。
+        bool TryApplyAutoExposure(AutoExposurePass &autoExposurePass,
+                                  const CameraProxy &camera,
+                                  CameraProxy &outCamera)
+        {
+            autoExposurePass.SetExposureCompensation(camera.ExposureCompensation);
+            float adaptedEV100 = 0.0f;
+            if (!autoExposurePass.TryGetAdaptedEV100(adaptedEV100))
+            {
+                return false;
+            }
+            const float exposure = AutoExposurePreExposureFromEV100(adaptedEV100);
+            if (!(exposure > 0.0f))
+            {
+                return false;
+            }
+            outCamera = camera;
+            outCamera.EV100 = adaptedEV100;
+            outCamera.Exposure = exposure;
+            outCamera.PreExposure = exposure;
+            outCamera.InvPreExposure = 1.0f / exposure;
+            return true;
+        }
     } // namespace
 
     bool SceneView::Initialize(const SceneViewSettings &settings)
@@ -603,6 +644,37 @@ namespace NorvesLib::Core::Rendering
         m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size());
         m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size());
 
+        // 自動露出のカメラは、この View を描く間だけ露出を写したカメラの複製へ差し替える
+        // （FramePacket のカメラは書き換えない）
+        CameraProxy autoExposedCamera;
+        struct CameraOverrideScope final
+        {
+            ViewRenderContext &Context;
+            const CameraProxy *SavedMainCamera;
+            const CameraProxy *SavedCurrentCamera;
+            ~CameraOverrideScope()
+            {
+                Context.MainCamera = SavedMainCamera;
+                Context.CurrentCamera = SavedCurrentCamera;
+            }
+        } cameraOverrideScope{context, context.MainCamera, context.CurrentCamera};
+        if (const CameraProxy *activeCamera = context.GetActiveCamera();
+            activeCamera && activeCamera->ExposureMode == CameraExposureMode::Auto)
+        {
+            AutoExposurePass *autoExposurePass = FindAutoExposurePass(GetPostProcessStack());
+            if (autoExposurePass && TryApplyAutoExposure(*autoExposurePass, *activeCamera, autoExposedCamera))
+            {
+                if (context.CurrentCamera)
+                {
+                    context.CurrentCamera = &autoExposedCamera;
+                }
+                else
+                {
+                    context.MainCamera = &autoExposedCamera;
+                }
+            }
+        }
+
         // パスチェーンが存在すれば基底クラスのパスベース描画を実行
         if (GetPassCount() > 0)
         {
@@ -714,7 +786,7 @@ namespace NorvesLib::Core::Rendering
         auto ssrPass = MakeUnique<SSRPass>(ssrSettings);
         postProcessStack->AddPass(std::move(ssrPass));
 
-        // AutoExposure（ブルーム前のHDRシーンカラーの輝度ヒストグラムから露出を測る。この段では画面を変えない）
+        // AutoExposure（ブルーム前のHDRシーンカラーの輝度ヒストグラムから露出を測る。露出の方式が Auto のカメラは、この値で次のフレームの露出を決める）
         postProcessStack->AddPass(MakeUnique<AutoExposurePass>());
 
         // Bloom（ToneMappingの前にHDR空間でブルーム適用）

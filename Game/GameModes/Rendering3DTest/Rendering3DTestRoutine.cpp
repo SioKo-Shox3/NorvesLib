@@ -52,6 +52,7 @@
 #include "Core/Public/Rendering/VolumetricFog.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <utility>
 
 using namespace NorvesLib::Core::Container;
@@ -66,6 +67,39 @@ namespace Game::GameModes
 {
     namespace
     {
+        // 環境変数 NORVES_STARTUP_SUN_STEP="<仰角(度)>,<秒>" を読む。形式が違うときは false。
+        bool TryReadStartupSunStep(float& outElevation, float& outDelaySeconds)
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_STARTUP_SUN_STEP");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            if (value == nullptr || value[0] == '\0')
+            {
+                return false;
+            }
+            char* end = nullptr;
+            const float elevation = std::strtof(value, &end);
+            if (end == value || *end != ',')
+            {
+                return false;
+            }
+            const char* delayText = end + 1;
+            const float delaySeconds = std::strtof(delayText, &end);
+            if (end == delayText || *end != '\0' || !std::isfinite(elevation) || !std::isfinite(delaySeconds) ||
+                elevation < 0.0f || elevation > 90.0f || delaySeconds < 0.0f)
+            {
+                return false;
+            }
+            outElevation = elevation;
+            outDelaySeconds = delaySeconds;
+            return true;
+        }
+
         // 起動画面の高さフォグ（R3）。地面での密度（1/m、0で無効）と、高さ方向の減衰（1/m）。
         // 空のモデルが地平線より下の放射輝度を0にしているため、下向きの視線ではフォグが空の色へ霞まず
         // 地面を暗くするだけになる。空のモデルを直すまでは既定で無効にし、--height-fog-density で試す。
@@ -159,6 +193,11 @@ namespace Game::GameModes
                     data.m_ExposureEV100));
             }
             data.m_AppliedExposureEV100 = data.m_ExposureEV100;
+            // 起動画面は自動露出にする。上の手動露出は、最初の測定が出るまでの露出と、ImGui で自動を
+            // 切ったときの露出になる。
+            data.m_bAutoExposure = true;
+            data.m_bAppliedAutoExposure = true;
+            data.m_pCameraComponent->SetExposureMode(CameraExposureMode::Auto);
             data.m_pSpringArmComponent->RefreshOwnerTransform();
 
             CameraProxy initialCamera;
@@ -858,6 +897,14 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
             LOG_INFO("Sky atmosphere enabled sun_altitude=%.1f sun_azimuth=%.1f",
                      data.m_SkyAtmosphere.SunAltitudeDegrees, data.m_SkyAtmosphere.SunAzimuthDegrees);
+            data.m_bSunStepApplied = false;
+            data.m_SunStepElapsedSeconds = 0.0;
+            data.m_bHasSunStep = TryReadStartupSunStep(data.m_SunStepElevation, data.m_SunStepDelaySeconds);
+            if (data.m_bHasSunStep)
+            {
+                LOG_INFO("Sun step scheduled elevation=%.1f delay_s=%.2f", data.m_SunStepElevation,
+                         data.m_SunStepDelaySeconds);
+            }
 
             // R3 の高さフォグ。地面（y=-1）で最も濃く、上へ行くほど薄くする。密度が0（既定）なら無効。
             {
@@ -903,7 +950,8 @@ namespace Game::GameModes
             // TUniquePtr<ISubRoutine>(=std::unique_ptr<ISubRoutine>)の値引数へ暗黙 upcast move される。
 #if defined(NORVES_ENABLE_IMGUI)
             ctx.ControllerRef.RequestPushSubRoutine(
-                MakeUnique<DirectionalLightEditSubRoutine>(&data.m_LightController, &data.m_ExposureEV100));
+                MakeUnique<DirectionalLightEditSubRoutine>(&data.m_LightController, &data.m_ExposureEV100,
+                                                          &data.m_bAutoExposure));
 #endif
         }
 
@@ -1429,6 +1477,24 @@ namespace Game::GameModes
         // 上位で consume されるため held は積まれず、ここでも動かない（排他）。
         data.m_LightController.Update(deltaTime);
 
+        // NORVES_STARTUP_SUN_STEP の指定があれば、起動からその秒数の後に一度だけ太陽の仰角を急に変える。
+        // 操作の角度へ書くので、下の空への写しで同じフレームに空へ渡る。
+        if (data.m_bHasSunStep && !data.m_bSunStepApplied && data.m_SkyAtmosphere.bEnabled)
+        {
+            data.m_SunStepElapsedSeconds += static_cast<double>(deltaTime);
+            if (data.m_SunStepElapsedSeconds >= static_cast<double>(data.m_SunStepDelaySeconds))
+            {
+                float yaw = 0.0f;
+                float pitch = 0.0f;
+                ConvertSkySunToLightControllerAngles(data.m_SunStepElevation,
+                                                     data.m_SkyAtmosphere.SunAzimuthDegrees, yaw, pitch);
+                data.m_LightController.SetDirection(yaw, pitch);
+                data.m_bSunStepApplied = true;
+                LOG_INFO("Sun step applied elevation=%.1f elapsed_s=%.3f", data.m_SunStepElevation,
+                         data.m_SunStepElapsedSeconds);
+            }
+        }
+
         // 操作の角度（矢印キー・ImGui）を空の太陽の仰角・方位へ写す。太陽は地平線より下へ
         // 行かせない（光が上向きに進む角度は水平へ戻す）。変わったときだけ空へ渡し、
         // 空由来のIBLの作り直しを角度が動いたフレームに限る。
@@ -1449,6 +1515,14 @@ namespace Game::GameModes
                 data.m_SkyAtmosphere.SunAzimuthDegrees = azimuth;
                 ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
             }
+        }
+
+        // ImGui で切り替えた自動露出の有無を、カメラの露出の方式へ写す。
+        if (data.m_pCameraComponent != nullptr && data.m_bAutoExposure != data.m_bAppliedAutoExposure)
+        {
+            data.m_pCameraComponent->SetExposureMode(data.m_bAutoExposure ? CameraExposureMode::Auto
+                                                                          : CameraExposureMode::Manual);
+            data.m_bAppliedAutoExposure = data.m_bAutoExposure;
         }
 
         // ImGui で動かした手動露出（EV100）を、絞り・ISO を保ったままシャッター速度へ写す。

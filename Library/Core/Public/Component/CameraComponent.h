@@ -115,6 +115,15 @@ namespace NorvesLib::Core::Component
         float GetExposureCompensation() const { return ExposureCompensation; }
 
         /**
+         * @brief 露出の決め方（手動/自動）を設定します。
+         *
+         * 自動では露出補正が自動露出の補正になり、絞り・シャッター速度・ISO の露出は
+         * 最初の測定が出るまでの値として使われます。
+         */
+        void SetExposureMode(Rendering::CameraExposureMode exposureMode);
+        Rendering::CameraExposureMode GetExposureMode() const { return m_ExposureMode; }
+
+        /**
          * @brief 被写界深度のピント距離（m）を設定します。0はピンホール（被写界深度なし）。
          * @return 有限で0以上ならtrue。
          */
@@ -147,6 +156,7 @@ namespace NorvesLib::Core::Component
 
         Rendering::ViewportRect m_Viewport{};
         float m_FocusDistance = 0.0f;
+        Rendering::CameraExposureMode m_ExposureMode = Rendering::CameraExposureMode::Manual;
 
     private:
         void SetDefaults();

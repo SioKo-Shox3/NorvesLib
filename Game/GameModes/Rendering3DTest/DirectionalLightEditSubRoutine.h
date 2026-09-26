@@ -39,10 +39,12 @@ namespace Game::GameModes
          * @brief コンストラクタ(LightController を借用)
          * @param controller 空の太陽の操作(非所有・呼び出し側が寿命を持つ)
          * @param exposureEV100 手動露出 EV100 の置き場(非所有・呼び出し側が寿命を持つ)
+         * @param autoExposure 自動露出の有無の置き場(非所有・呼び出し側が寿命を持つ)
          */
         explicit DirectionalLightEditView(NorvesLib::Core::Input::LightController* controller,
-                                          float* exposureEV100)
-            : m_pController(controller), m_pExposureEV100(exposureEV100)
+                                          float* exposureEV100,
+                                          bool* autoExposure)
+            : m_pController(controller), m_pExposureEV100(exposureEV100), m_pAutoExposure(autoExposure)
         {
         }
 
@@ -64,6 +66,8 @@ namespace Game::GameModes
         NorvesLib::Core::Input::LightController* m_pController = nullptr;
         // 手動露出 EV100 の置き場(借用・非所有)。Rendering3DTest の Tick がカメラへ写す。
         float* m_pExposureEV100 = nullptr;
+        // 自動露出の有無の置き場(借用・非所有)。Rendering3DTest の Tick がカメラの露出の方式へ写す。
+        bool* m_pAutoExposure = nullptr;
     };
 
     /**
@@ -79,10 +83,12 @@ namespace Game::GameModes
          * @brief コンストラクタ(空の太陽の操作を借用)
          * @param controller 空の太陽の操作(非所有・Rendering3DTest が所有)
          * @param exposureEV100 手動露出 EV100 の置き場(非所有・Rendering3DTest が所有)
+         * @param autoExposure 自動露出の有無の置き場(非所有・Rendering3DTest が所有)
          */
         explicit DirectionalLightEditSubRoutine(NorvesLib::Core::Input::LightController* controller,
-                                                float* exposureEV100)
-            : m_View(controller, exposureEV100)
+                                                float* exposureEV100,
+                                                bool* autoExposure)
+            : m_View(controller, exposureEV100, autoExposure)
         {
         }
 

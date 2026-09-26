@@ -165,6 +165,15 @@ namespace NorvesLib::Core::Component
         return true;
     }
 
+    void CameraComponent::SetExposureMode(Rendering::CameraExposureMode exposureMode)
+    {
+        if (m_ExposureMode != exposureMode)
+        {
+            m_ExposureMode = exposureMode;
+            MarkRenderStateDirty();
+        }
+    }
+
     bool CameraComponent::SetShutterSpeed(float shutterSpeed)
     {
         Rendering::CameraProxy validation;
@@ -262,6 +271,7 @@ namespace NorvesLib::Core::Component
         snapshot.CullingMask = CullingMaskProp;
         snapshot.RenderOrder = RenderOrder;
         snapshot.FocusDistance = m_FocusDistance;
+        snapshot.ExposureMode = m_ExposureMode;
         if (!TryBuildExposureSnapshot(
                 Aperture.Get(),
                 ShutterSpeed.Get(),

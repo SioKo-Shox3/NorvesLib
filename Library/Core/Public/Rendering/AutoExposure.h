@@ -50,8 +50,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief 目標の EV100 の上限 */
         float MaxEV100 = 18.0f;
 
-        /** @brief 明るくなる向きの順応の速さ（1/秒。差が e 分の1になるまでの時間の逆数） */
-        float SpeedBrighten = 1.0f;
+        /**
+         * @brief 明るくなる向きの順応の速さ（1/秒。差が e 分の1になるまでの時間の逆数）
+         *
+         * 2/秒で、夕方と昼の差（約5 EV）が 0.1 EV まで縮むのに約2秒かかる。
+         */
+        float SpeedBrighten = 2.0f;
 
         /** @brief 暗くなる向きの順応の速さ（1/秒） */
         float SpeedDarken = 3.0f;
@@ -213,6 +217,22 @@ namespace NorvesLib::Core::Rendering
         result.TargetEV100 = AutoExposureTargetEV100FromAverageLog2Luminance(result.AverageLog2Luminance, settings);
         result.bValid = true;
         return result;
+    }
+
+    /**
+     * @brief EV100 から露出（シーンカラーに掛けるプリエクスポージャ）を求める
+     *
+     * CameraComponent の手動露出と同じ式 2^(-EV100) / 1.2（飽和に基づく感度の式）。
+     * EV100 が非有限のときは 0 を返す（呼び出し側は手動の露出を使い続ける）。
+     */
+    inline float AutoExposurePreExposureFromEV100(float ev100)
+    {
+        if (!std::isfinite(ev100))
+        {
+            return 0.0f;
+        }
+        const double exposure = std::exp2(-static_cast<double>(ev100)) / 1.2;
+        return static_cast<float>(std::clamp(exposure, 1.0e-6, 1.0e6));
     }
 
     /**

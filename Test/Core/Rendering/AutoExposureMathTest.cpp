@@ -362,12 +362,193 @@ namespace
         second.bValid = true;
         second.TargetEV100 = 7.0f;
         UpdateAutoExposureAdaptation(state, second, 0.25f, settings);
-        const double expected = 7.0 + (13.0 - 7.0) * std::exp(-1.0 * 0.25);
+        const double expected = 7.0 + (13.0 - 7.0) * std::exp(-static_cast<double>(settings.SpeedBrighten) * 0.25);
         Check(IsNear(state.EV100, expected, 1.0e-4), "2回目からは順応の式で進む");
 
         const float before = state.EV100;
         UpdateAutoExposureAdaptation(state, invalid, 0.25f, settings);
         Check(state.EV100 == before, "無効な測定では前の露出を保つ");
+    }
+
+    void TestPreExposureFromEV100()
+    {
+        // 手動露出（CameraComponent）と同じ式 2^(-EV100) / 1.2
+        for (float ev100 : {-4.0f, 0.0f, 9.9068906f, 14.6f, 18.0f})
+        {
+            const double expected = std::exp2(-static_cast<double>(ev100)) / 1.2;
+            Check(IsNear(AutoExposurePreExposureFromEV100(ev100) / expected, 1.0, 1.0e-6),
+                  "EV100 から露出への式が手動露出と同じ");
+        }
+        Check(AutoExposurePreExposureFromEV100(std::numeric_limits<float>::quiet_NaN()) == 0.0f,
+              "NaN の EV100 では露出 0（手動の露出を使い続ける）");
+
+        // 一様な輝度の画面では、目標の露出を掛けた値が 1 / (1.2 × 8) ≒ 0.104 になる（中間の灰）
+        AutoExposureSettings settings;
+        const float luminance = 3000.0f;
+        const float averageLog2 = AutoExposureBinCenterLog2Luminance(AutoExposureLuminanceToBin(luminance));
+        const float target = AutoExposureTargetEV100FromAverageLog2Luminance(averageLog2, settings);
+        const double exposed = std::exp2(static_cast<double>(averageLog2)) *
+                               static_cast<double>(AutoExposurePreExposureFromEV100(target));
+        std::printf("一様な画面の露出後の値=%.5f\n", exposed);
+        Check(IsNear(exposed, 1.0 / 9.6, 1.0e-4), "一様な画面は露出後に中間の灰（約0.104）になる");
+    }
+
+    // 閉ループの模擬: 露出は前のフレームまでに順応させた EV100 から決め、各フレームの SceneColor
+    // （絶対輝度 × そのフレームの露出）のヒストグラムを、そのフレームの露出で割ってから数える。
+    // 測定は delayFrames フレーム後に読み戻して順応へ使う（フレームスロットの読み戻しの遅れ）。
+    struct ClosedLoopResult
+    {
+        double SettleSeconds = -1.0;
+        double MaxOvershootEV = 0.0;
+        uint32_t Reversals = 0u;
+        float FinalEV100 = 0.0f;
+        float FinalTargetEV100 = 0.0f;
+    };
+
+    ClosedLoopResult SimulateClosedLoop(float startScale,
+                                        float stepScale,
+                                        double stepTime,
+                                        double frameSeconds,
+                                        uint32_t delayFrames,
+                                        const AutoExposureSettings& settings)
+    {
+        // 空・日向・日陰・暗部の混ざった画面（相対輝度）
+        const float relative[] = {0.02f, 0.05f, 0.1f, 0.2f, 0.35f, 0.5f, 0.8f, 1.0f, 1.5f, 3.0f, 6.0f, 40.0f};
+        constexpr uint32_t pixelsPerValue = 1000u;
+
+        struct PendingMeasurement
+        {
+            uint32_t Bins[AutoExposureHistogramBinCount] = {};
+            double Time = 0.0;
+        };
+        constexpr uint32_t maxDelay = 8u;
+        PendingMeasurement ring[maxDelay] = {};
+        const uint32_t delay = std::min(std::max(delayFrames, 1u), maxDelay);
+
+        AutoExposureAdaptationState state;
+        double lastAdaptationTime = 0.0;
+        // 最初の測定までの手動露出
+        const float manualEV100 = 12.0f;
+
+        // 急変の後の露出の記録（落ち着くまでの時間と目標を越えた量を、最後の目標に対して後で求める）
+        constexpr uint32_t maxHistory = 2048u;
+        double historyTime[maxHistory] = {};
+        float historyEV100[maxHistory] = {};
+        uint32_t historyCount = 0u;
+
+        ClosedLoopResult result;
+        float lastStep = 0.0f;
+        bool bAfterStep = false;
+        double direction = 0.0;
+        const double totalSeconds = stepTime + 6.0;
+        const uint32_t frameCount = static_cast<uint32_t>(totalSeconds / frameSeconds);
+        for (uint32_t frame = 0u; frame < frameCount; ++frame)
+        {
+            const double time = static_cast<double>(frame) * frameSeconds;
+            PendingMeasurement& slot = ring[frame % delay];
+            // このスロットの前の測定（delay フレーム前）を読み、順応させる
+            if (frame >= delay)
+            {
+                const AutoExposureHistogramResult measured =
+                    ComputeAutoExposureFromHistogram(slot.Bins, AutoExposureHistogramBinCount, settings);
+                const bool bHadState = state.bValid;
+                const float before = state.EV100;
+                const float deltaSeconds = bHadState ? static_cast<float>(slot.Time - lastAdaptationTime) : 0.0f;
+                UpdateAutoExposureAdaptation(state, measured, deltaSeconds, settings);
+                lastAdaptationTime = slot.Time;
+                if (bAfterStep && bHadState)
+                {
+                    const float step = state.EV100 - before;
+                    if (std::fabs(step) >= 1.0e-4f)
+                    {
+                        if (lastStep != 0.0f && (step > 0.0f) != (lastStep > 0.0f))
+                        {
+                            ++result.Reversals;
+                        }
+                        lastStep = step;
+                    }
+                    if (historyCount < maxHistory)
+                    {
+                        historyTime[historyCount] = time;
+                        historyEV100[historyCount] = state.EV100;
+                        ++historyCount;
+                    }
+                }
+                result.FinalTargetEV100 = measured.TargetEV100;
+            }
+            const float appliedEV100 = state.bValid ? state.EV100 : manualEV100;
+
+            // このフレームの露出で描き、同じ露出で割って数える
+            const float exposure = AutoExposurePreExposureFromEV100(appliedEV100);
+            const bool bStepped = time >= stepTime;
+            if (bStepped && !bAfterStep)
+            {
+                bAfterStep = true;
+                direction = stepScale > startScale ? 1.0 : -1.0;
+            }
+            const float scale = bStepped ? stepScale : startScale;
+            std::fill(std::begin(slot.Bins), std::end(slot.Bins), 0u);
+            for (float value : relative)
+            {
+                const float sceneColor = value * scale * exposure;
+                const float absolute = sceneColor * (1.0f / exposure);
+                slot.Bins[AutoExposureLuminanceToBin(absolute)] += pixelsPerValue;
+            }
+            slot.Time = time;
+        }
+        result.FinalEV100 = state.EV100;
+
+        // 最後に 0.1 EV より離れていた時刻の次の測定を、落ち着いた時刻とする
+        double lastFarTime = stepTime;
+        for (uint32_t index = 0u; index < historyCount; ++index)
+        {
+            const double distance = static_cast<double>(historyEV100[index]) - static_cast<double>(result.FinalTargetEV100);
+            result.MaxOvershootEV = std::max(result.MaxOvershootEV, distance * direction);
+            if (std::fabs(distance) >= 0.1)
+            {
+                lastFarTime = historyTime[index];
+            }
+        }
+        result.SettleSeconds = lastFarTime + frameSeconds - stepTime;
+        return result;
+    }
+
+    void TestClosedLoopSunStep()
+    {
+        const AutoExposureSettings settings;
+        // 昼（明るい）→夕（約4.6 EV 暗い）と、その逆。30 fps・60 fps、読み戻しの遅れ 2〜3 フレーム。
+        const float noon = 20000.0f;
+        const float dusk = noon * static_cast<float>(std::exp2(-4.6));
+        struct Case
+        {
+            const char* Name;
+            float From;
+            float To;
+            double FrameSeconds;
+            uint32_t Delay;
+        };
+        const Case cases[] = {
+            {"昼→夕 30fps 遅れ3", noon, dusk, 1.0 / 30.0, 3u},
+            {"昼→夕 60fps 遅れ2", noon, dusk, 1.0 / 60.0, 2u},
+            {"夕→昼 30fps 遅れ3", dusk, noon, 1.0 / 30.0, 3u},
+            {"夕→昼 60fps 遅れ2", dusk, noon, 1.0 / 60.0, 2u},
+        };
+        for (const Case& testCase : cases)
+        {
+            const ClosedLoopResult result =
+                SimulateClosedLoop(testCase.From, testCase.To, 2.0, testCase.FrameSeconds, testCase.Delay, settings);
+            std::printf("%s settle_s=%.3f max_overshoot_ev=%.4f reversals=%u final_ev100=%.3f target_ev100=%.3f\n",
+                        testCase.Name,
+                        result.SettleSeconds,
+                        result.MaxOvershootEV,
+                        result.Reversals,
+                        result.FinalEV100,
+                        result.FinalTargetEV100);
+            Check(result.SettleSeconds >= 1.0 && result.SettleSeconds <= 3.0, "太陽の急変から1秒以上3秒以内で落ち着く");
+            Check(result.MaxOvershootEV <= 1.0e-3, "目標を越えない");
+            Check(result.Reversals == 0u, "順応の向きが反転しない（振動しない）");
+            Check(IsNear(result.FinalEV100, result.FinalTargetEV100, 1.0e-3), "最後は目標に一致する");
+        }
     }
 } // namespace
 
@@ -379,6 +560,8 @@ int main()
     TestUniformSceneAndSettings();
     TestAdaptationMatchesReference();
     TestAdaptationState();
+    TestPreExposureFromEV100();
+    TestClosedLoopSunStep();
 
     if (GFailureCount != 0)
     {

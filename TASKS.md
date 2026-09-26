@@ -96,7 +96,7 @@
 - notes: ユーザー決定（2026-09-27）ポスト処理「基本セット+演出系」。危険地帯（RenderThread）。評価者を通す。
 
 ## SS-AUTOEXPOSURE-P2: 自動露出を画面に適用し、起動画面の既定にする
-- status: todo
+- status: done
 - done-when: カメラに露出の方式（手動/自動）があり、自動では前のフレームまでに求めたEV100からプリエクスポージャを決める（数フレームの遅れは許す）。検証シーン（Indoor/Outdoorのgolden、R系の受入れ）は手動のままで結果が変わらない。Rendering3DTest は自動にする。撮影の朝・昼・夕の3枚で、トーンマップ後の平均輝度がどれも0.12〜0.40に入り、白飛び画素率が2%未満。太陽の向きを急に変えたとき、露出が振動せず1〜3秒で落ち着く（連続撮影かログで示す）。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game CameraViewConstantsTest RenderingGoldenImageTest -- /m:1`
@@ -105,6 +105,15 @@
 - stop-when: 検証シーンの結果が変わる場合は止めて直す。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Component, Library/Core/Private/Component, Assets/Shaders, Game/GameModes/Rendering3DTest, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 危険地帯（RenderThread・露出の契約）。評価者を通す。
+
+## FIX-AUTOEXPOSURE-READBACK: 自動露出の読み戻しのホスト可視性とEV100のデバッグ表示
+- status: todo
+- done-when: ヒストグラムの読み戻し先へのコピーの後に、転送の書き込み→ホストの読み取りの依存（Vulkanの`VK_ACCESS_HOST_READ_BIT`・`VK_PIPELINE_STAGE_HOST_BIT`）をRHI経由で記録する（RHIにホスト読み取りの状態か同等の手段を足す）。既知のヒストグラムをGPUで作って読み戻した各区間が一致する検査がある。目標と順応後のEV100を、RenderThreadからGameThreadへスナップショットで渡し、起動画面のImGui（「空の太陽」ウィンドウ）に表示する。
+- verify: `cmake --build build --config Debug --target Game CameraViewConstantsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^AutoExposureMathTest$"`
+- stop-when: RHIの状態の追加が既存のバリアの割り当て（`ResourceBarrierTracker`）を変える場合は止めて記録する。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game/GameModes/Rendering3DTest, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: SS-AUTOEXPOSURE-P1の評価の指摘1・3。P2の範囲（RHIを含まない）で直せないため分けた。危険地帯（RHI/Vulkan・RenderThread）。評価者を通す。
 
 ## SS-BLOOM-MIPCHAIN: ブルームを段階的に縮小・拡大する方式に置き換える
 - status: todo

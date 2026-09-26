@@ -37,6 +37,16 @@ namespace NorvesLib::Core::Rendering
             static_cast<uint64_t>(AutoExposureHistogramBinCount) * sizeof(uint32_t);
         // 最初の測定と、その後この数ごとにログへ出す
         constexpr uint64_t LogIntervalMeasurements = 30u;
+        // 目標とこれより離れたら順応の途中として記録を始め、これより近づいたら落ち着いたとみなす（EV）
+        constexpr float TransitionStartDistanceEV = 0.5f;
+        constexpr float TransitionSettledDistanceEV = 0.1f;
+        // 順応の途中の測定をログへ出す間隔（秒）
+        constexpr double TransitionLogIntervalSeconds = 0.25;
+        // 順応の向きの反転として数える1測定あたりの動きの下限（EV）
+        constexpr float ReversalMinStepEV = 0.01f;
+        // 1測定で進める順応の時間の上限（秒）。描画が止まった後（読み込み・空の作り直しなど）に、
+        // 止まっていた時間の分だけ露出が一度に飛ばないようにし、再開後の数フレームかけて順応させる。
+        constexpr double MaxAdaptationStepSeconds = 0.1;
 
         RHI::DescriptorSetDesc CreateHistogramDescriptorSetDesc()
         {
@@ -119,6 +129,7 @@ namespace NorvesLib::Core::Rendering
         m_LatestMeasurement = AutoExposureMeasurement{};
         m_LastAdaptationTime = 0.0;
         m_ConsumedMeasurementCount = 0u;
+        m_Transition = TransitionRecord{};
         m_bUnavailable = false;
         m_bInitialized = false;
     }
@@ -341,11 +352,19 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        const float deltaSeconds = m_Adaptation.bValid
-                                       ? static_cast<float>(slot.TotalTime - m_LastAdaptationTime)
-                                       : 0.0f;
+        const bool bHadAdaptation = m_Adaptation.bValid;
+        const float previousEV100 = m_Adaptation.EV100;
+        const float deltaSeconds =
+            bHadAdaptation
+                ? static_cast<float>(std::min(slot.TotalTime - m_LastAdaptationTime,
+                                              AutoExposurePassDetail::MaxAdaptationStepSeconds))
+                : 0.0f;
         UpdateAutoExposureAdaptation(m_Adaptation, result, deltaSeconds, m_Settings);
         m_LastAdaptationTime = slot.TotalTime;
+        if (bHadAdaptation)
+        {
+            TrackTransition(previousEV100, result.TargetEV100, slot.TotalTime, deltaSeconds, slot.FrameNumber);
+        }
 
         m_LatestMeasurement.FrameNumber = slot.FrameNumber;
         m_LatestMeasurement.PixelCount = result.TotalCount;
@@ -367,6 +386,80 @@ namespace NorvesLib::Core::Rendering
         ++m_ConsumedMeasurementCount;
     }
 
+    void AutoExposurePass::TrackTransition(float previousEV100,
+                                           float targetEV100,
+                                           double totalTime,
+                                           float adaptationSeconds,
+                                           uint64_t frameNumber)
+    {
+        const float adaptedEV100 = m_Adaptation.EV100;
+        const float distance = targetEV100 - adaptedEV100;
+        TransitionRecord& transition = m_Transition;
+        if (!transition.bActive)
+        {
+            if (std::abs(distance) <= AutoExposurePassDetail::TransitionStartDistanceEV)
+            {
+                return;
+            }
+            transition = TransitionRecord{};
+            transition.bActive = true;
+            transition.StartTime = totalTime;
+            transition.LastLogTime = totalTime;
+            transition.StartEV100 = previousEV100;
+            transition.Direction = distance > 0.0f ? 1.0f : -1.0f;
+            NORVES_LOG_INFO("AutoExposurePass",
+                            "自動露出の順応を始めます frame=%llu t=%.3f start_ev100=%.3f target_ev100=%.3f",
+                            static_cast<unsigned long long>(frameNumber),
+                            totalTime,
+                            previousEV100,
+                            targetEV100);
+        }
+
+        transition.AdaptedSeconds += static_cast<double>(adaptationSeconds);
+
+        // 目標を越えた量（順応の向きに対して）と、1測定ごとの動きの向きの反転を数える
+        const float overshoot = (adaptedEV100 - targetEV100) * transition.Direction;
+        transition.MaxOvershoot = std::max(transition.MaxOvershoot, overshoot);
+        const float step = adaptedEV100 - previousEV100;
+        if (std::abs(step) >= AutoExposurePassDetail::ReversalMinStepEV)
+        {
+            if (transition.LastStep != 0.0f && (step > 0.0f) != (transition.LastStep > 0.0f))
+            {
+                ++transition.Reversals;
+            }
+            transition.LastStep = step;
+        }
+
+        if (std::abs(distance) < AutoExposurePassDetail::TransitionSettledDistanceEV)
+        {
+            NORVES_LOG_INFO("AutoExposurePass",
+                            "自動露出が落ち着きました frame=%llu elapsed_s=%.3f adapted_s=%.3f start_ev100=%.3f "
+                            "adapted_ev100=%.3f target_ev100=%.3f max_overshoot_ev=%.3f reversals=%u",
+                            static_cast<unsigned long long>(frameNumber),
+                            totalTime - transition.StartTime,
+                            transition.AdaptedSeconds,
+                            transition.StartEV100,
+                            adaptedEV100,
+                            targetEV100,
+                            transition.MaxOvershoot,
+                            transition.Reversals);
+            transition = TransitionRecord{};
+            return;
+        }
+
+        if (totalTime - transition.LastLogTime >= AutoExposurePassDetail::TransitionLogIntervalSeconds)
+        {
+            transition.LastLogTime = totalTime;
+            NORVES_LOG_INFO("AutoExposurePass",
+                            "自動露出の順応中 frame=%llu elapsed_s=%.3f adapted_s=%.3f adapted_ev100=%.3f target_ev100=%.3f",
+                            static_cast<unsigned long long>(frameNumber),
+                            totalTime - transition.StartTime,
+                            transition.AdaptedSeconds,
+                            adaptedEV100,
+                            targetEV100);
+        }
+    }
+
     void AutoExposurePass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
         if (!m_bInitialized && !Initialize(context))
@@ -380,6 +473,12 @@ namespace NorvesLib::Core::Rendering
 
         FrameSlot* slot = EnsureFrameSlot(context.FrameIndex);
         if (slot == nullptr)
+        {
+            return;
+        }
+        // 同じフレームの2つ目以降の Viewport では測らない（このフレームの記録はまだ提出されておらず、
+        // 読むと未完了の中身を使い、定数・DescriptorSet の上書きで先の記録も壊すため）
+        if (slot->bPending && slot->FrameNumber == context.FrameNumber)
         {
             return;
         }
