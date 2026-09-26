@@ -91,6 +91,21 @@ namespace NorvesLib::Test::RenderingValidation
 
     double MeanLuminance(const RgbaFloatImage& image);
 
+    // 受入れ記録に既知の限界として残した画素の矩形（両端を含む）。
+    struct PixelRegion
+    {
+        uint32_t MinX = 0u;
+        uint32_t MinY = 0u;
+        uint32_t MaxX = 0u;
+        uint32_t MaxY = 0u;
+    };
+
+    // agreementのうちregionの内側を不一致（0）にした写し。agreementが空なら全画素を一致として扱う。
+    Core::Container::VariableArray<uint8_t> ExcludeRegion(const Core::Container::VariableArray<uint8_t>& agreement,
+                                                          const PixelRegion& region,
+                                                          uint32_t width,
+                                                          uint32_t height);
+
     // 独立な試料の組で描いた3枚のPT画像から、画素ごとに輝度が中央の組の値（RGBA）を選ぶ（median of
     // means）。まれな1試料の外れ値（点光源のすぐ近くに落ちる経路など）は1組にしか入らないため、参照から
     // 外れる。3枚の寸法が異なれば空の画像を返す。

@@ -351,6 +351,27 @@ namespace NorvesLib::Test::RenderingValidation
         return sum / (static_cast<double>(image.Width) * image.Height);
     }
 
+    VariableArray<uint8_t> ExcludeRegion(const VariableArray<uint8_t>& agreement,
+                                         const PixelRegion& region,
+                                         uint32_t width,
+                                         uint32_t height)
+    {
+        VariableArray<uint8_t> result;
+        result.resize(static_cast<size_t>(width) * height, 1u);
+        for (size_t pixel = 0u; pixel < agreement.size() && pixel < result.size(); ++pixel)
+        {
+            result[pixel] = agreement[pixel];
+        }
+        for (uint32_t y = region.MinY; y <= region.MaxY && y < height; ++y)
+        {
+            for (uint32_t x = region.MinX; x <= region.MaxX && x < width; ++x)
+            {
+                result[static_cast<size_t>(y) * width + x] = 0u;
+            }
+        }
+        return result;
+    }
+
     RgbaFloatImage MedianOfThree(const RgbaFloatImage& first,
                                  const RgbaFloatImage& second,
                                  const RgbaFloatImage& third)
