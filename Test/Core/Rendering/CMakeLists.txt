@@ -993,6 +993,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER OrthographicViewportMatrixTest OrthographicViewportMatrixTest.cpp
     MEMBER PointShadowFaceMatricesTest PointShadowFaceMatricesTest.cpp
     MEMBER AutoExposureMathTest AutoExposureMathTest.cpp
+    MEMBER TemporalAAJitterTest TemporalAAJitterTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
 target_include_directories(CameraViewConstantsTest PRIVATE
@@ -1028,6 +1029,7 @@ add_test(NAME ViewportCameraIdRenderPlanTest COMMAND ViewportCameraIdRenderPlanT
 add_test(NAME OrthographicViewportMatrixTest COMMAND CameraViewConstantsTest --test=OrthographicViewportMatrixTest)
 add_test(NAME PointShadowFaceMatricesTest COMMAND CameraViewConstantsTest --test=PointShadowFaceMatricesTest)
 add_test(NAME AutoExposureMathTest COMMAND CameraViewConstantsTest --test=AutoExposureMathTest)
+add_test(NAME TemporalAAJitterTest COMMAND CameraViewConstantsTest --test=TemporalAAJitterTest)
 
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp

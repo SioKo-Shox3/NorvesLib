@@ -320,6 +320,18 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief カメラのアンチエイリアスの方式
+     *
+     * FXAA はトーンマップ後の画像の輪郭をぼかす（既定）。TemporalAA は投影へサブピクセルのジッタを掛け、
+     * 前のフレームの履歴を velocity で再投影して混ぜる（TAA のパスを持つ View だけで働き、そのとき FXAA は外す）。
+     */
+    enum class CameraAntiAliasingMode : uint8_t
+    {
+        FXAA,
+        TemporalAA
+    };
+
+    /**
      * @brief 描画用カメラプロキシ
      */
     struct CameraProxy
@@ -366,6 +378,13 @@ namespace NorvesLib::Core::Rendering
         float PreExposure = 1.0f / 1152.0f;
         float InvPreExposure = 1152.0f;
         CameraExposureMode ExposureMode = CameraExposureMode::Manual;
+
+        // アンチエイリアス
+        CameraAntiAliasingMode AntiAliasing = CameraAntiAliasingMode::FXAA;
+        // 投影後の NDC のずらし量（TAA のジッタ）。RenderThread が TAA を掛ける View の描画の間だけ、
+        // カメラの複製へ書く。GameThread のカメラでは常に0。
+        float ProjectionJitterNdcX = 0.0f;
+        float ProjectionJitterNdcY = 0.0f;
 
         // ポストプロセス設定（ハンドル参照）
         // PostProcessHandle PostProcess;

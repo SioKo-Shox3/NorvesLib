@@ -124,6 +124,14 @@ namespace NorvesLib::Core::Component
         Rendering::CameraExposureMode GetExposureMode() const { return m_ExposureMode; }
 
         /**
+         * @brief アンチエイリアスの方式（FXAA/TAA）を設定します。
+         *
+         * TAA は TAA のパスを持つ View（ディファードの SceneView）だけで働き、そのとき FXAA は外れます。
+         */
+        void SetAntiAliasingMode(Rendering::CameraAntiAliasingMode antiAliasingMode);
+        Rendering::CameraAntiAliasingMode GetAntiAliasingMode() const { return m_AntiAliasingMode; }
+
+        /**
          * @brief 被写界深度のピント距離（m）を設定します。0はピンホール（被写界深度なし）。
          * @return 有限で0以上ならtrue。
          */
@@ -157,6 +165,7 @@ namespace NorvesLib::Core::Component
         Rendering::ViewportRect m_Viewport{};
         float m_FocusDistance = 0.0f;
         Rendering::CameraExposureMode m_ExposureMode = Rendering::CameraExposureMode::Manual;
+        Rendering::CameraAntiAliasingMode m_AntiAliasingMode = Rendering::CameraAntiAliasingMode::FXAA;
 
     private:
         void SetDefaults();

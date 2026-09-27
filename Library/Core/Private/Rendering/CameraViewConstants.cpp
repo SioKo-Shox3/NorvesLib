@@ -1,4 +1,5 @@
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/TemporalAA.h"
 #include "RHI/IDevice.h"
 #include "Math/MatrixUtils.h"
 #include <algorithm>
@@ -70,18 +71,24 @@ namespace NorvesLib::Core::Rendering
 
         if (camera.Projection == ProjectionType::Orthographic)
         {
-            return Math::MatrixUtils::CreateOrthographic(
-                camera.OrthoWidth,
-                camera.OrthoHeight,
-                camera.NearPlane,
-                camera.FarPlane);
+            return ApplyTemporalAAProjectionJitter(
+                Math::MatrixUtils::CreateOrthographic(
+                    camera.OrthoWidth,
+                    camera.OrthoHeight,
+                    camera.NearPlane,
+                    camera.FarPlane),
+                camera.ProjectionJitterNdcX,
+                camera.ProjectionJitterNdcY);
         }
 
-        return Math::MatrixUtils::CreatePerspectiveFieldOfView(
-            camera.FieldOfView * (PI / 180.0f),
-            aspectRatio,
-            camera.NearPlane,
-            camera.FarPlane);
+        return ApplyTemporalAAProjectionJitter(
+            Math::MatrixUtils::CreatePerspectiveFieldOfView(
+                camera.FieldOfView * (PI / 180.0f),
+                aspectRatio,
+                camera.NearPlane,
+                camera.FarPlane),
+            camera.ProjectionJitterNdcX,
+            camera.ProjectionJitterNdcY);
     }
 
     Math::Matrix4x4 CameraViewConstants::BuildCullingViewProjectionMatrix(const CameraProxy &camera, float aspectRatio)

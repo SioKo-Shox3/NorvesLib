@@ -174,6 +174,15 @@ namespace NorvesLib::Core::Component
         }
     }
 
+    void CameraComponent::SetAntiAliasingMode(Rendering::CameraAntiAliasingMode antiAliasingMode)
+    {
+        if (m_AntiAliasingMode != antiAliasingMode)
+        {
+            m_AntiAliasingMode = antiAliasingMode;
+            MarkRenderStateDirty();
+        }
+    }
+
     bool CameraComponent::SetShutterSpeed(float shutterSpeed)
     {
         Rendering::CameraProxy validation;
@@ -272,6 +281,7 @@ namespace NorvesLib::Core::Component
         snapshot.RenderOrder = RenderOrder;
         snapshot.FocusDistance = m_FocusDistance;
         snapshot.ExposureMode = m_ExposureMode;
+        snapshot.AntiAliasing = m_AntiAliasingMode;
         if (!TryBuildExposureSnapshot(
                 Aperture.Get(),
                 ShutterSpeed.Get(),
