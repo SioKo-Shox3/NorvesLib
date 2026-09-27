@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -74,6 +74,9 @@ namespace NorvesLib::Core::Rendering
         MegaGeometryResources* MegaGeometry = nullptr;
         CameraProxy MainCamera;
         bool bHasMainCamera = false;
+        // velocity 用の前のカメラ（MainCamera と同じジッタを掛けたもの）
+        CameraProxy PreviousCamera;
+        bool bHasPreviousCamera = false;
         RHI::Viewport Viewport;
         RHI::ScissorRect Scissor;
         DebugViewMode DebugMode = DebugViewMode::Normal;

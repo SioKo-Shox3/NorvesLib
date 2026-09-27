@@ -60,6 +60,11 @@ namespace Game::GameModes
         {
             ImGui::Checkbox("自動露出", m_pAutoExposure);
         }
+        // アンチエイリアシング。切ると FXAA になる。
+        if (m_pTemporalAA != nullptr)
+        {
+            ImGui::Checkbox("TAA（切ると FXAA）", m_pTemporalAA);
+        }
         // 自動露出の測定(RenderThread が読み戻した値)。手動のときも測定は続くので表示する。
         if (m_pAutoExposureMeasurement != nullptr)
         {

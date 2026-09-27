@@ -186,6 +186,8 @@ namespace NorvesLib::Core::Rendering
         MegaGeometry::MegaMeshHandle MegaMeshHandle;
 
         Math::Matrix4x4 WorldTransform;
+        // 直前のゲームのフレームの変換（velocity 用）。無ければ WorldTransform と同じ。
+        Math::Matrix4x4 PreviousWorldTransform;
         BoundingSphere WorldBounds;
 
         bool bVisible = true;

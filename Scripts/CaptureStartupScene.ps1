@@ -11,6 +11,10 @@
 # （例: -SunElevations 10,45,3 で朝・昼・夕）。方位は -SunAzimuth（省略時は起動画面の既定）。
 # 露出は -ExposureEV100s で仰角と同じ順に与える。省略時は仰角から晴天の目安の EV100 を選ぶ
 # （自動露出が入るまでの暫定の対応表）。
+#
+# -OrbitDegreesPerSecond を与えると、起動からカメラを一定の速さ（度/秒）で軸の周りに回し続け、回っている
+# 途中の画面を撮る（動くカメラでの TAA の残像の確認用）。-AntiAliasing FXAA で起動画面の既定の TAA の
+# 代わりに FXAA で撮る（見比べ用）。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -23,7 +27,11 @@ param(
     [string[]]$SunElevations = @(),
     [ValidateRange(-180.0, 180.0)]
     [Nullable[double]]$SunAzimuth = $null,
-    [string[]]$ExposureEV100s = @()
+    [string[]]$ExposureEV100s = @(),
+    [ValidateRange(-360.0, 360.0)]
+    [double]$OrbitDegreesPerSecond = 0.0,
+    [ValidateSet('TAA', 'FXAA')]
+    [string]$AntiAliasing = 'TAA'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -199,6 +207,11 @@ foreach ($view in $shots)
         # [Nullable[double]] の引数は値が入ると double として渡るため、.Value を経由せず変換する。
         $arguments += "--sun-azimuth=$(([double]$SunAzimuth).ToString($invariant))"
     }
+    if ($OrbitDegreesPerSecond -ne 0.0)
+    {
+        $arguments += "--orbit-degrees-per-second=$($OrbitDegreesPerSecond.ToString($invariant))"
+    }
+    $arguments += "--anti-aliasing=$($AntiAliasing.ToLowerInvariant())"
 
     # アセットは作業ディレクトリからの相対パスで読むため、リポジトリのルートで起動する。
     $process = Start-Process -FilePath $gamePath -ArgumentList $arguments -WorkingDirectory $repoRoot -PassThru
@@ -266,6 +279,8 @@ foreach ($view in $shots)
 $metricsPath = Join-Path $outRoot 'metrics.json'
 $metrics = [ordered]@{
     configuration = $Configuration
+    orbit_degrees_per_second = $OrbitDegreesPerSecond
+    anti_aliasing = $AntiAliasing
     views = $results
     failures = $failures
 }

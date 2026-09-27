@@ -175,6 +175,11 @@ namespace Game::GameModes
         // --height-fog-density で指定した高さフォグの地面での密度（0で無効）
         bool m_bHasStartupHeightFogDensity = false;
         float m_StartupHeightFogDensity = 0.0f;
+        // --orbit-degrees-per-second で指定したカメラの周回の速さ（度/秒、0で止まったまま）。撮影で
+        // 動くカメラの TAA の残像を確かめるのに使う。
+        float m_OrbitDegreesPerSecond = 0.0f;
+        // --anti-aliasing=fxaa の指定で false にする（既定は TAA）。
+        bool m_bStartupTemporalAA = true;
 
         // 手動露出（EV100）。ImGui のスライダーが書き、Tick が絞り・ISO を保ったままシャッター速度へ写す。
         float m_ExposureEV100 = 0.0f;
@@ -182,6 +187,10 @@ namespace Game::GameModes
         // 自動露出（起動画面の既定）。ImGui のチェックボックスが書き、Tick がカメラの露出の方式へ写す。
         bool m_bAutoExposure = true;
         bool m_bAppliedAutoExposure = true;
+        // アンチエイリアシング（起動画面の既定は TAA、切ると FXAA）。ImGui のチェックボックスが書き、
+        // Tick がカメラのアンチエイリアシングの方式へ写す。
+        bool m_bTemporalAA = true;
+        bool m_bAppliedTemporalAA = true;
         // RenderThread が読み戻した自動露出の測定。Tick が統計のスナップショットから写し、ImGui が表示する。
         NorvesLib::Core::Rendering::AutoExposureMeasurement m_AutoExposureMeasurement;
 

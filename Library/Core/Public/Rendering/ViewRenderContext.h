@@ -779,13 +779,19 @@ namespace NorvesLib::Core::Rendering
         void EnqueueMegaGeometryPass(MegaGeometryPass* pass)
         {
             const CameraProxy *activeCamera = GetActiveCamera();
-            EnqueueFrameCommand(FrameCommand::CreateMegaGeometryPass(pass,
-                                                                   Resources.MegaGeometry,
-                                                                   activeCamera ? *activeCamera : CameraProxy{},
-                                                                   activeCamera != nullptr,
-                                                                   GetActiveLocalViewport(),
-                                                                   GetActiveLocalScissor(),
-                                                                   GetActiveDebugMode()));
+            FrameCommand command = FrameCommand::CreateMegaGeometryPass(pass,
+                                                                        Resources.MegaGeometry,
+                                                                        activeCamera ? *activeCamera : CameraProxy{},
+                                                                        activeCamera != nullptr,
+                                                                        GetActiveLocalViewport(),
+                                                                        GetActiveLocalScissor(),
+                                                                        GetActiveDebugMode());
+            if (const CameraProxy *previousCamera = GetPreviousCamera())
+            {
+                command.MegaGeometry.PreviousCamera = *previousCamera;
+                command.MegaGeometry.bHasPreviousCamera = true;
+            }
+            EnqueueFrameCommand(command);
         }
 
         // ========================================

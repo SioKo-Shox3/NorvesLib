@@ -325,11 +325,13 @@ namespace NorvesLib::Core::Rendering
         m_MaterialTexture.reset();
         m_EmissiveTexture.reset();
         m_DepthTexture.reset();
+        m_VelocityTexture.reset();
         m_GBufferAlbedoHandle = {};
         m_GBufferNormalHandle = {};
         m_GBufferMaterialHandle = {};
         m_GBufferEmissiveHandle = {};
         m_GBufferDepthHandle = {};
+        m_GBufferVelocityHandle = {};
 
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
@@ -375,6 +377,7 @@ namespace NorvesLib::Core::Rendering
                 MegaMeshInstance instance;
                 instance.Handle = proxy.MegaMeshHandle;
                 std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
+                std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
                 m_Instances.push_back(instance);
             }
         }
@@ -393,6 +396,7 @@ namespace NorvesLib::Core::Rendering
             m_MaterialTexture.reset();
             m_EmissiveTexture.reset();
             m_DepthTexture.reset();
+            m_VelocityTexture.reset();
         }
 
         // Legacy bridge fallback: named resource が不足している場合だけSharedResourcesから補完する。
@@ -418,6 +422,10 @@ namespace NorvesLib::Core::Rendering
             {
                 m_DepthTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Depth"));
             }
+            if (!m_VelocityTexture)
+            {
+                m_VelocityTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Velocity"));
+            }
         }
 
         // GBufferテクスチャが利用可能か確認
@@ -425,7 +433,8 @@ namespace NorvesLib::Core::Rendering
             !m_NormalTexture ||
             !m_MaterialTexture ||
             !m_EmissiveTexture ||
-            !m_DepthTexture)
+            !m_DepthTexture ||
+            !m_VelocityTexture)
         {
             return;
         }
@@ -443,6 +452,7 @@ namespace NorvesLib::Core::Rendering
                 m_GBufferFramebuffer->GetColorAttachment(1).get() != m_NormalTexture.get() ||
                 m_GBufferFramebuffer->GetColorAttachment(2).get() != m_MaterialTexture.get() ||
                 m_GBufferFramebuffer->GetColorAttachment(3).get() != m_EmissiveTexture.get() ||
+                m_GBufferFramebuffer->GetColorAttachment(4).get() != m_VelocityTexture.get() ||
                 m_GBufferFramebuffer->GetDepthStencilAttachment().get() != m_DepthTexture.get();
         }
 
@@ -491,6 +501,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferMaterialHandle = {};
         m_GBufferEmissiveHandle = {};
         m_GBufferDepthHandle = {};
+        m_GBufferVelocityHandle = {};
 
         if (m_IndirectDrawBuffer)
         {
@@ -523,12 +534,14 @@ namespace NorvesLib::Core::Rendering
         RGTextureHandle materialProbe;
         RGTextureHandle emissiveProbe;
         RGTextureHandle depthProbe;
+        RGTextureHandle velocityProbe;
         const bool bHasAllNamedGBufferAttachments =
             builder.TryGetTexture(RenderGraphResourceNames::GBufferAlbedo, albedoProbe) &&
             builder.TryGetTexture(RenderGraphResourceNames::GBufferNormal, normalProbe) &&
             builder.TryGetTexture(RenderGraphResourceNames::GBufferMaterial, materialProbe) &&
             builder.TryGetTexture(RenderGraphResourceNames::GBufferEmissive, emissiveProbe) &&
-            builder.TryGetTexture(RenderGraphResourceNames::GBufferDepth, depthProbe);
+            builder.TryGetTexture(RenderGraphResourceNames::GBufferDepth, depthProbe) &&
+            builder.TryGetTexture(RenderGraphResourceNames::GBufferVelocity, velocityProbe);
 
         if (bHasAllNamedGBufferAttachments)
         {
@@ -576,6 +589,18 @@ namespace NorvesLib::Core::Rendering
                 m_GBufferEmissiveHandle = emissiveHandle.ToResourceHandle();
             }
 
+            // velocity: MegaGeometry の画素の動き（GBufferPass と同じ currentUV - previousUV）を書く。
+            RGTextureHandle velocityHandle;
+            if (builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::GBufferVelocity,
+                                                    velocityHandle,
+                                                    RHI::AttachmentLoadOp::Load,
+                                                    RHI::AttachmentStoreOp::Store,
+                                                    RHI::ResourceState::RenderTarget,
+                                                    RHI::ResourceState::ShaderResource))
+            {
+                m_GBufferVelocityHandle = velocityHandle.ToResourceHandle();
+            }
+
             RGTextureHandle depthHandle;
             if (builder.TryUseAttachment(RenderGraphResourceNames::GBufferDepth,
                                          depthHandle,
@@ -614,13 +639,17 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr graphDepthTexture = m_GBufferDepthHandle.IsValid()
                                                 ? resources.GetTexture(m_GBufferDepthHandle)
                                                 : nullptr;
+        RHI::TexturePtr graphVelocityTexture = m_GBufferVelocityHandle.IsValid()
+                                                   ? resources.GetTexture(m_GBufferVelocityHandle)
+                                                   : nullptr;
 
         const bool bHasAllRenderGraphGBufferResources =
             graphAlbedoTexture &&
             graphNormalTexture &&
             graphMaterialTexture &&
             graphEmissiveTexture &&
-            graphDepthTexture;
+            graphDepthTexture &&
+            graphVelocityTexture;
 
         m_bPreferRenderGraphGBufferResources = bHasAllRenderGraphGBufferResources;
         if (m_bPreferRenderGraphGBufferResources)
@@ -630,6 +659,7 @@ namespace NorvesLib::Core::Rendering
             m_MaterialTexture = graphMaterialTexture;
             m_EmissiveTexture = graphEmissiveTexture;
             m_DepthTexture = graphDepthTexture;
+            m_VelocityTexture = graphVelocityTexture;
         }
         else
         {
@@ -638,6 +668,7 @@ namespace NorvesLib::Core::Rendering
             m_MaterialTexture.reset();
             m_EmissiveTexture.reset();
             m_DepthTexture.reset();
+            m_VelocityTexture.reset();
         }
 
         Setup(context);
@@ -739,6 +770,9 @@ namespace NorvesLib::Core::Rendering
                                       : 1.0f;
         const CameraViewConstants cameraConstants =
             CameraViewConstants::BuildForDevice(cam, aspectRatio, m_Device);
+        // velocity は前のカメラが無ければ0（GBufferPass と同じ）。
+        const CameraViewConstants previousCameraConstants = CameraViewConstants::BuildForDevice(
+            command.bHasPreviousCamera ? command.PreviousCamera : cam, aspectRatio, m_Device);
         const auto &caps = m_Device->GetCapabilities();
         const bool bMegaGeometryDebugPayloadRequested =
             IsMegaGeometryDebugPayloadMode(command.DebugMode);
@@ -927,13 +961,22 @@ namespace NorvesLib::Core::Rendering
                 float ObjectColor[4];
                 float EmissiveChromaticityAndLuminanceNits[4];
                 float PomParams[4];
+                float PreviousWorld[16];
+                float PreviousView[16];
+                float PreviousProjection[16];
+                float VelocityParams[4]; // x=前のカメラがあるか（1/0）
             };
+            static_assert(sizeof(PerObjectUBO) <= 512u);
 
             PerObjectUBO perObject{};
             std::memcpy(perObject.World, instance.WorldMatrix, sizeof(float) * 16);
             cameraConstants.CopyShaderView(perObject.View);
             cameraConstants.CopyShaderProjection(perObject.Projection);
             cameraConstants.CopyCameraPosition(perObject.CameraPosition);
+            std::memcpy(perObject.PreviousWorld, instance.PreviousWorldMatrix, sizeof(float) * 16);
+            previousCameraConstants.CopyShaderView(perObject.PreviousView);
+            previousCameraConstants.CopyShaderProjection(perObject.PreviousProjection);
+            perObject.VelocityParams[0] = command.bHasPreviousCamera ? 1.0f : 0.0f;
 
             // マテリアル値を設定
             const auto &mat = gpuData->Material;
@@ -1180,6 +1223,17 @@ namespace NorvesLib::Core::Rendering
         emissiveAttach.finalState = RHI::ResourceState::ShaderResource;
         rpDesc.colorAttachments.push_back(emissiveAttach);
 
+        // Velocity: Load
+        RHI::AttachmentDesc velocityAttach;
+        velocityAttach.format = m_VelocityTexture ? m_VelocityTexture->GetFormat() : RHI::Format::R16G16_FLOAT;
+        velocityAttach.isDepthStencil = false;
+        velocityAttach.clear = false;
+        velocityAttach.loadOp = RHI::AttachmentLoadOp::Load;
+        velocityAttach.storeOp = RHI::AttachmentStoreOp::Store;
+        velocityAttach.initialState = colorInitialState;
+        velocityAttach.finalState = RHI::ResourceState::ShaderResource;
+        rpDesc.colorAttachments.push_back(velocityAttach);
+
         // Depth: Load + DepthTest
         rpDesc.hasDepthStencil = true;
         rpDesc.depthStencilAttachment.format = RHI::Format::D32_FLOAT;
@@ -1204,6 +1258,7 @@ namespace NorvesLib::Core::Rendering
         fbDesc.colorTargets.push_back(m_NormalTexture);
         fbDesc.colorTargets.push_back(m_MaterialTexture);
         fbDesc.colorTargets.push_back(m_EmissiveTexture);
+        fbDesc.colorTargets.push_back(m_VelocityTexture);
         fbDesc.depthStencilTarget = m_DepthTexture;
         fbDesc.width = m_CurrentWidth;
         fbDesc.height = m_CurrentHeight;
@@ -1304,8 +1359,8 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.depthStencilState.depthWriteEnable = true;
         pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
 
-        // MRT用ブレンドステート（4カラーアタッチメント分）
-        for (int i = 0; i < 4; ++i)
+        // MRT用ブレンドステート（Albedo・Normal・Material・Emissive・Velocity の5カラーアタッチメント分）
+        for (int i = 0; i < 5; ++i)
         {
             RHI::BlendAttachmentDesc blendAttachment;
             blendAttachment.blendEnable = false;
@@ -1463,7 +1518,7 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            constexpr uint32_t PER_OBJECT_UBO_SIZE = 256;
+            constexpr uint32_t PER_OBJECT_UBO_SIZE = 512;
             RHI::BufferDesc drawUboDesc(
                 PER_OBJECT_UBO_SIZE,
                 RHI::ResourceUsage::ConstantBuffer,

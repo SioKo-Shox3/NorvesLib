@@ -100,6 +100,12 @@ namespace Game
         constexpr const TCHAR *kExposureEV100Option = TEXT("--exposure-ev100=");
         // --height-fog-density=<1/m>: 起動画面の高さフォグの地面での密度（0で無効、0〜1）。見比べと調整に使う。
         constexpr const TCHAR *kHeightFogDensityOption = TEXT("--height-fog-density=");
+        // --orbit-degrees-per-second=<deg/s>: カメラを一定の速さで回す（-360〜360、撮影で動くカメラを確かめる）。
+        constexpr const TCHAR *kOrbitDegreesPerSecondOption = TEXT("--orbit-degrees-per-second=");
+        float s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
+        // --anti-aliasing=<taa|fxaa>: 起動画面のアンチエイリアシング（既定は taa）。
+        constexpr const TCHAR *kAntiAliasingOption = TEXT("--anti-aliasing=");
+        bool s_bRendering3DTestTemporalAA = true;
         bool s_bRendering3DTestHasHeightFogDensity = false;
         float s_Rendering3DTestHeightFogDensity = 0.0f;
         bool s_bRendering3DTestHasSunElevation = false;
@@ -423,6 +429,8 @@ namespace Game
         s_bRendering3DTestHasSunAzimuth = false;
         s_bRendering3DTestHasExposureEV100 = false;
         s_bRendering3DTestHasHeightFogDensity = false;
+        s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
+        s_bRendering3DTestTemporalAA = true;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;
         bool bHasRendering3DTestImpostorSmokeCount = false;
@@ -501,6 +509,36 @@ namespace Game
                     return false;
                 }
                 s_bRendering3DTestHasExposureEV100 = true;
+                continue;
+            }
+
+            String orbitValue;
+            if (TryStripPrefix(args[i], kOrbitDegreesPerSecondOption, orbitValue))
+            {
+                if (!TryParseBoundedFloat(orbitValue, -360.0f, 360.0f, s_Rendering3DTestOrbitDegreesPerSecond))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --orbit-degrees-per-second は -360〜360 の度/秒で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String antiAliasingValue;
+            if (TryStripPrefix(args[i], kAntiAliasingOption, antiAliasingValue))
+            {
+                if (antiAliasingValue == String(TEXT("taa")))
+                {
+                    s_bRendering3DTestTemporalAA = true;
+                }
+                else if (antiAliasingValue == String(TEXT("fxaa")))
+                {
+                    s_bRendering3DTestTemporalAA = false;
+                }
+                else
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --anti-aliasing は taa か fxaa で指定する");
+                    return false;
+                }
                 continue;
             }
 
@@ -1427,6 +1465,8 @@ namespace Game
                 mode->GetData().m_StartupExposureEV100 = s_Rendering3DTestExposureEV100;
                 mode->GetData().m_bHasStartupHeightFogDensity = s_bRendering3DTestHasHeightFogDensity;
                 mode->GetData().m_StartupHeightFogDensity = s_Rendering3DTestHeightFogDensity;
+                mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
+                mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
                 return mode;
             });

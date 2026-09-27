@@ -66,6 +66,10 @@ namespace NorvesLib::Core::Rendering
         SkinnedMeshPassKind PassKind = SkinnedMeshPassKind::None;
         Container::TSharedPtr<const SkinnedMeshFrameLease> FrameLease;
         Container::VariableArray<Math::Matrix4x4> BonePalette;
+        // 直前のゲームのフレームの変換とパレット（velocity 用）。bHasPrevious が false なら現在と同じとみなす。
+        Math::Matrix4x4 PreviousWorldMatrix;
+        Container::VariableArray<Math::Matrix4x4> PreviousBonePalette;
+        bool bHasPrevious = false;
         SkinnedMeshPreparedDraw Prepared;
     };
 

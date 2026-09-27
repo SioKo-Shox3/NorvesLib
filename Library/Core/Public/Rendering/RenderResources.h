@@ -186,7 +186,9 @@ namespace NorvesLib::Core::Rendering
         bool PrepareDraw(const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease,
                          const Container::VariableArray<Math::Matrix4x4>& bonePalette,
                          const Math::Matrix4x4& worldTransform,
-                         SkinnedMeshPreparedDraw& outPrepared);
+                         SkinnedMeshPreparedDraw& outPrepared,
+                         const Container::VariableArray<Math::Matrix4x4>* previousBonePalette = nullptr,
+                         const Math::Matrix4x4* previousWorldTransform = nullptr);
         bool MarkLastUse(const SkinnedMeshPreparedDraw& prepared,
                          const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease);
         bool CommitSubmittedFrame(uint64_t submissionSerial);

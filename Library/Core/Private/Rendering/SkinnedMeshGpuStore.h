@@ -19,10 +19,17 @@ namespace NorvesLib::Core::Rendering
         explicit SkinnedMeshGpuStore(Container::TSharedPtr<RHI::IDevice> device);
 
         void BeginFrame(uint64_t completedSubmissionSerial);
+        /**
+         * previousBonePalette・previousWorldTransform を与えると、直前のフレームの変換と骨ごとの位置の行列
+         * （velocity 用）を別のバッファ（PreviousPaletteBuffer）に載せる。骨の数は bonePalette と同じでなければ
+         * ならない。
+         */
         bool PrepareDraw(const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease,
                          const Container::VariableArray<Math::Matrix4x4>& bonePalette,
                          const Math::Matrix4x4& worldTransform,
-                         SkinnedMeshPreparedDraw& outPrepared);
+                         SkinnedMeshPreparedDraw& outPrepared,
+                         const Container::VariableArray<Math::Matrix4x4>* previousBonePalette = nullptr,
+                         const Math::Matrix4x4* previousWorldTransform = nullptr);
         bool MarkLastUse(const SkinnedMeshPreparedDraw& prepared,
                          const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease);
         bool CommitSubmittedFrame(uint64_t submissionSerial);
@@ -36,6 +43,8 @@ namespace NorvesLib::Core::Rendering
         struct PaletteUse
         {
             RHI::BufferPtr Buffer;
+            // 直前のフレームの変換とパレット（無ければ空）。Buffer と同じ寿命で保つ。
+            RHI::BufferPtr PreviousBuffer;
             Container::TWeakPtr<const SkinnedMeshFrameLease> FrameLease;
             uint64_t LastSubmittedSerial = 0;
         };

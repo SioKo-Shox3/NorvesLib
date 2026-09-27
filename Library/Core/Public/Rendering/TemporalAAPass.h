@@ -95,6 +95,13 @@ namespace NorvesLib::Core::Rendering
         bool m_bHistoryValid = false;
         uint64_t m_HistoryCameraId = 0u;
         float m_HistoryPreExposure = 0.0f;
+        // 履歴を書いたフレームの番号と Viewport。パケットの前のカメラ・前の変換は直前のゲームのフレームの
+        // ものなので、履歴は直前のフレームで同じ Viewport が書いたときだけ使う。
+        uint64_t m_HistoryFrameNumber = 0u;
+        uint32_t m_HistoryViewportId = UINT32_MAX;
+        // 履歴を使ったフレーム数と、フレームの途切れで捨てたフレーム数（終了時にログへ出す）。
+        uint64_t m_HistoryReusedFrameCount = 0u;
+        uint64_t m_HistoryGapFrameCount = 0u;
 
         // BeginFrame が決めたこのフレームのジッタと、それを受け取った Viewport。
         uint64_t m_JitterIndex = 0u;

@@ -781,10 +781,8 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-        if (bApplied && !temporalAAPass->IsEnabled())
-        {
-            temporalAAPass->InvalidateHistory();
-        }
+        // 有効・無効は Viewport ごとに切り替わる（同じフレームの2つ目以降の Viewport では無効）。履歴を
+        // 使えるかはパスが履歴を書いたフレームの番号と Viewport で決めるので、ここでは履歴を捨てない。
         temporalAAPass->SetEnabled(bApplied);
 
         IViewPass *fxaaPass = postProcessStack->GetPass("FXAAPass");
@@ -908,7 +906,7 @@ namespace NorvesLib::Core::Rendering
         m_bFXAASuppressedByTemporalAA = false;
         if (m_bTemporalAAForced)
         {
-            NORVES_LOG_INFO("SceneView", "NORVES_TEMPORAL_AA=1: TemporalAA is applied to every camera");
+            NORVES_LOG_INFO("SceneView", "NORVES_TEMPORAL_AA=1: すべてのカメラに TAA を掛ける");
         }
 
         // AutoExposure（ブルーム前のHDRシーンカラーの輝度ヒストグラムから露出を測る。露出の方式が Auto のカメラは、この値で次のフレームの露出を決める）

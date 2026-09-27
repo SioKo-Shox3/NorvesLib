@@ -263,8 +263,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // デバッグの線は TAA の後に描くので、投影のサブピクセルのジッタを外したカメラで描く（線が揺れない）。
+        CameraProxy lineCamera = *activeCamera;
+        lineCamera.ProjectionJitterNdcX = 0.0f;
+        lineCamera.ProjectionJitterNdcY = 0.0f;
         CameraViewConstants cameraConstants =
-            CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
+            CameraViewConstants::BuildForDevice(lineCamera, context.GetActiveAspectRatio(), context.Device);
 
         DebugLineCameraUBO uboData{};
         cameraConstants.CopyShaderView(uboData.view);

@@ -7,6 +7,8 @@ layout(location = 3) in vec4 fragEmissiveColor;
 layout(location = 4) in vec2 fragTexCoord;
 layout(location = 5) in vec3 fragViewDir;
 layout(location = 6) flat in uint fragDebugPayload;
+layout(location = 7) in vec4 fragCurrentClip;
+layout(location = 8) in vec4 fragPreviousClip;
 
 // UBOからPOMパラメータを参照
 layout(set = 0, binding = 0) uniform MVPData
@@ -18,6 +20,10 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 objectColor;
     vec4 emissiveColor;
     vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=debugMode, w=debugPayloadSupported
+    mat4 previousWorld;
+    mat4 previousView;
+    mat4 previousProjection;
+    vec4 velocityParams; // x=前のカメラがあるか（1/0）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -36,6 +42,7 @@ layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
 layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + unused
 layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) / AO(B) / unused(A)
 layout(location = 3) out vec4 outEmissive;  // RT3: Emissive (RGB, HDR) + unused
+layout(location = 4) out vec2 outVelocity;  // RT4: currentUV - previousUV（gbuffer.frag と同じ）
 
 const float DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS = 3.0;
 const float DEBUG_VIEW_MODE_LOD_LEVEL = 8.0;
@@ -73,12 +80,32 @@ vec3 LODLevelDebugColor(uint lodLevel)
     return palette[min(lodLevel, 7u)];
 }
 
+// gbuffer.frag と同じ式で、現在と直前のフレームのクリップ座標から画面上の動きを求める。
+vec2 ComputeVelocity()
+{
+    if (mvp.velocityParams.x > 0.5 &&
+        abs(fragCurrentClip.w) > 1e-6 &&
+        abs(fragPreviousClip.w) > 1e-6)
+    {
+        vec2 currentNdc = fragCurrentClip.xy / fragCurrentClip.w;
+        vec2 previousNdc = fragPreviousClip.xy / fragPreviousClip.w;
+        vec2 velocity = (currentNdc - previousNdc) * 0.5;
+        if (all(equal(velocity, velocity)) &&
+            dot(velocity, velocity) < 1.0e6)
+        {
+            return velocity;
+        }
+    }
+    return vec2(0.0);
+}
+
 void WriteDebugGBuffer(vec3 albedo)
 {
     outAlbedo = vec4(albedo, 1.0);
     outNormal = vec4(normalize(fragNormal), 0.0);
     outMaterial = vec4(0.0, 1.0, 1.0, 0.0);
     outEmissive = vec4(0.0, 0.0, 0.0, 1.0);
+    outVelocity = ComputeVelocity();
 }
 
 void main()
@@ -133,4 +160,5 @@ void main()
 
     // Emissive: エミッシブカラー × 強度 → HDR値
     outEmissive = vec4(fragEmissiveColor.rgb * fragEmissiveColor.a, 1.0);
+    outVelocity = ComputeVelocity();
 }

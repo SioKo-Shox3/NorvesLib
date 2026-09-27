@@ -28,6 +28,13 @@ layout(std430, set = 0, binding = 9) readonly buffer SkinVertexWords
     uint words[];
 } skinVertices;
 
+// 直前のフレームの変換と骨ごとの位置の行列（velocity 用、骨の数は paletteMatrices と同じ）
+layout(std430, set = 0, binding = 10) readonly buffer PreviousSkinningMatrices
+{
+    mat4 world;
+    mat4 paletteMatrices[];
+} previousSkinning;
+
 layout(location = 0) out vec3 fragWorldPos;
 layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragObjectColor;
@@ -90,6 +97,35 @@ SkinnedVertex SkinVertex()
     return result;
 }
 
+// SkinVertex と同じ重みで、直前のフレームの骨の行列から頂点の位置を求める。
+vec3 SkinPreviousPosition()
+{
+    uint wordOffset = uint(gl_VertexIndex) * 16u;
+    uvec4 boneIndices = uvec4(skinVertices.words[wordOffset + 8u],
+                              skinVertices.words[wordOffset + 9u],
+                              skinVertices.words[wordOffset + 10u],
+                              skinVertices.words[wordOffset + 11u]);
+    vec4 boneWeights = vec4(uintBitsToFloat(skinVertices.words[wordOffset + 12u]),
+                            uintBitsToFloat(skinVertices.words[wordOffset + 13u]),
+                            uintBitsToFloat(skinVertices.words[wordOffset + 14u]),
+                            uintBitsToFloat(skinVertices.words[wordOffset + 15u]));
+    vec3 position = vec3(0.0);
+    float totalWeight = 0.0;
+    uint boneCount = uint(previousSkinning.paletteMatrices.length());
+    for (uint influenceIndex = 0u; influenceIndex < 4u; ++influenceIndex)
+    {
+        uint boneIndex = boneIndices[influenceIndex];
+        float weight = boneWeights[influenceIndex];
+        if (weight <= 0.0 || boneIndex >= boneCount)
+        {
+            continue;
+        }
+        position += (previousSkinning.paletteMatrices[boneIndex] * vec4(inPosition, 1.0)).xyz * weight;
+        totalWeight += weight;
+    }
+    return totalWeight <= 0.000001 ? inPosition : position / totalWeight;
+}
+
 void main()
 {
     SkinnedVertex skinned = SkinVertex();
@@ -102,7 +138,8 @@ void main()
     fragTexCoord = inTexCoord;
     fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);
     fragCurrentClip = mvp.projection * mvp.view * worldPos;
-    // Skinned履歴はR6-aの対象外。現在位置を複製してvelocityをゼロにする。
-    fragPreviousClip = fragCurrentClip;
+    // 直前のフレームの骨と変換で同じ頂点を動かし、前のカメラで投影する（gbuffer.frag が velocity にする）。
+    vec4 previousWorldPos = previousSkinning.world * vec4(SkinPreviousPosition(), 1.0);
+    fragPreviousClip = mvp.previousProjection * mvp.previousView * previousWorldPos;
     gl_Position = fragCurrentClip;
 }

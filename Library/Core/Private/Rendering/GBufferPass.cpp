@@ -127,6 +127,13 @@ namespace NorvesLib::Core::Rendering
             skinVertexBinding.stages = RHI::ShaderStage::Vertex;
             uboDescSetDesc.bindings.push_back(skinVertexBinding);
 
+            // スキニングの直前のフレームの変換とパレット（velocity 用）
+            RHI::DescriptorBinding previousPaletteBinding;
+            previousPaletteBinding.binding = 10;
+            previousPaletteBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            previousPaletteBinding.stages = RHI::ShaderStage::Vertex;
+            uboDescSetDesc.bindings.push_back(previousPaletteBinding);
+
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
             {
                 NORVES_LOG_ERROR("GBufferPass", "Failed to initialize DynamicUniformAllocator");
@@ -676,6 +683,10 @@ namespace NorvesLib::Core::Rendering
                                                             command.Skinned.Prepared.VertexBuffer,
                                                             0,
                                                             static_cast<uint32_t>(command.Skinned.Prepared.VertexBuffer->GetSize()));
+                allocation.DescriptorSet->BindStorageBuffer(10,
+                                                            command.Skinned.Prepared.PreviousPaletteBuffer,
+                                                            0,
+                                                            static_cast<uint32_t>(command.Skinned.Prepared.PreviousPaletteBuffer->GetSize()));
             }
             else if (context.InstanceDataBuffer && instanceDataSize > 0)
             {
@@ -1550,11 +1561,19 @@ namespace NorvesLib::Core::Rendering
 
         const auto& frameLease =
             (*context.SnapshotSkinnedMeshFrameLeases)[source.Skinned.FrameLeaseIndex];
+        // velocity 用に直前のフレームの変換とパレットも載せる（無ければ現在と同じにして、物体の動きを0にする）。
+        const bool bHasPrevious = source.Skinned.bHasPrevious &&
+                                  source.Skinned.PreviousBonePalette.size() == source.Skinned.BonePalette.size();
         SkinnedMeshPreparedDraw prepared;
         if (!context.SkinnedMeshes->PrepareDraw(frameLease,
                                                 source.Skinned.BonePalette,
                                                 source.Draw.WorldMatrix,
-                                                prepared))
+                                                prepared,
+                                                bHasPrevious ? &source.Skinned.PreviousBonePalette
+                                                             : &source.Skinned.BonePalette,
+                                                bHasPrevious ? &source.Skinned.PreviousWorldMatrix
+                                                             : &source.Draw.WorldMatrix) ||
+            !prepared.PreviousPaletteBuffer)
         {
             return false;
         }

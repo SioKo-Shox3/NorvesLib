@@ -32,10 +32,13 @@ namespace NorvesLib::Core::Rendering
         const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease,
         const Container::VariableArray<Math::Matrix4x4>& bonePalette,
         const Math::Matrix4x4& worldTransform,
-        SkinnedMeshPreparedDraw& outPrepared)
+        SkinnedMeshPreparedDraw& outPrepared,
+        const Container::VariableArray<Math::Matrix4x4>* previousBonePalette,
+        const Math::Matrix4x4* previousWorldTransform)
     {
         outPrepared = SkinnedMeshPreparedDraw{};
-        if (!m_Device || !m_bFrameOpen || !frameLease || !frameLease->IsValid() || bonePalette.empty())
+        if (!m_Device || !m_bFrameOpen || !frameLease || !frameLease->IsValid() || bonePalette.empty() ||
+            (previousBonePalette && previousBonePalette->size() != bonePalette.size()))
         {
             return false;
         }
@@ -73,9 +76,36 @@ namespace NorvesLib::Core::Rendering
         }
         paletteBuffer->Update(uploadMatrices.data(), paletteDesc.Size, 0);
 
+        // 直前のフレームの変換と骨ごとの位置の行列（velocity 用。法線の行列は要らない）。
+        RHI::BufferPtr previousPaletteBuffer;
+        if (previousBonePalette || previousWorldTransform)
+        {
+            const Container::VariableArray<Math::Matrix4x4>& previousPalette =
+                previousBonePalette ? *previousBonePalette : bonePalette;
+            Container::VariableArray<float> previousMatrices;
+            previousMatrices.resize((1 + previousPalette.size()) * 16);
+            Math::MatrixUtils::CopyToShaderData(previousWorldTransform ? *previousWorldTransform : worldTransform,
+                                                previousMatrices.data());
+            for (size_t matrixIndex = 0; matrixIndex < previousPalette.size(); ++matrixIndex)
+            {
+                Math::MatrixUtils::CopyToShaderData(previousPalette[matrixIndex],
+                                                    previousMatrices.data() + (1 + matrixIndex) * 16);
+            }
+            RHI::BufferDesc previousDesc = paletteDesc;
+            previousDesc.Size = static_cast<uint64_t>(previousMatrices.size() * sizeof(float));
+            previousDesc.DebugName = "SkinnedPreviousPalette";
+            previousPaletteBuffer = m_Device->CreateBuffer(previousDesc);
+            if (!previousPaletteBuffer)
+            {
+                return false;
+            }
+            previousPaletteBuffer->Update(previousMatrices.data(), previousDesc.Size, 0);
+        }
+
         TrackFrameLease(*entry, frameLease);
         PaletteUse paletteUse;
         paletteUse.Buffer = paletteBuffer;
+        paletteUse.PreviousBuffer = previousPaletteBuffer;
         paletteUse.FrameLease = frameLease;
         entry->PaletteUses.push_back(paletteUse);
 
@@ -83,6 +113,7 @@ namespace NorvesLib::Core::Rendering
         outPrepared.VertexBuffer = entry->VertexBuffer;
         outPrepared.IndexBuffer = entry->IndexBuffer;
         outPrepared.PaletteBuffer = paletteBuffer;
+        outPrepared.PreviousPaletteBuffer = previousPaletteBuffer;
         outPrepared.IndexCount = entry->IndexCount;
         return true;
     }

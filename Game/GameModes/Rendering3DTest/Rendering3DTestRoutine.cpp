@@ -198,6 +198,11 @@ namespace Game::GameModes
             data.m_bAutoExposure = true;
             data.m_bAppliedAutoExposure = true;
             data.m_pCameraComponent->SetExposureMode(CameraExposureMode::Auto);
+            // 起動画面のアンチエイリアシングは TAA（--anti-aliasing=fxaa と ImGui で FXAA を選べる）。
+            data.m_bTemporalAA = data.m_bStartupTemporalAA;
+            data.m_bAppliedTemporalAA = data.m_bTemporalAA;
+            data.m_pCameraComponent->SetAntiAliasingMode(data.m_bTemporalAA ? CameraAntiAliasingMode::TemporalAA
+                                                                            : CameraAntiAliasingMode::FXAA);
             data.m_pSpringArmComponent->RefreshOwnerTransform();
 
             CameraProxy initialCamera;
@@ -955,7 +960,8 @@ namespace Game::GameModes
             ctx.ControllerRef.RequestPushSubRoutine(
                 MakeUnique<DirectionalLightEditSubRoutine>(&data.m_LightController, &data.m_ExposureEV100,
                                                           &data.m_bAutoExposure,
-                                                          &data.m_AutoExposureMeasurement));
+                                                          &data.m_AutoExposureMeasurement,
+                                                          &data.m_bTemporalAA));
 #endif
         }
 
@@ -1533,6 +1539,14 @@ namespace Game::GameModes
             data.m_bAppliedAutoExposure = data.m_bAutoExposure;
         }
 
+        // ImGui で切り替えたアンチエイリアシング（TAA/FXAA）を、カメラの方式へ写す。
+        if (data.m_pCameraComponent != nullptr && data.m_bTemporalAA != data.m_bAppliedTemporalAA)
+        {
+            data.m_pCameraComponent->SetAntiAliasingMode(data.m_bTemporalAA ? CameraAntiAliasingMode::TemporalAA
+                                                                            : CameraAntiAliasingMode::FXAA);
+            data.m_bAppliedTemporalAA = data.m_bTemporalAA;
+        }
+
         // ImGui で動かした手動露出（EV100）を、絞り・ISO を保ったままシャッター速度へ写す。
         if (data.m_pCameraComponent != nullptr &&
             std::abs(data.m_ExposureEV100 - data.m_AppliedExposureEV100) > 1.0e-4f)
@@ -1561,6 +1575,13 @@ namespace Game::GameModes
                 deltaTime,
                 data.m_pSpringArmComponent->GetArmLength());
             data.m_pSpringArmComponent->ApplyIntent(intent);
+            // --orbit-degrees-per-second の指定があれば、経過時間に比例してカメラを軸の周りに回す。
+            if (data.m_OrbitDegreesPerSecond != 0.0f)
+            {
+                float yaw = data.m_pSpringArmComponent->GetYaw() + data.m_OrbitDegreesPerSecond * deltaTime;
+                yaw = std::fmod(yaw, 360.0f);
+                data.m_pSpringArmComponent->SetYaw(yaw);
+            }
             data.m_CameraInputCollector.ResetFrame();
             data.m_pSpringArmComponent->RefreshOwnerTransform();
             data.m_PickingController.SetFallbackSelectionDepth(

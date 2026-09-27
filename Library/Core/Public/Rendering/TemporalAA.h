@@ -19,6 +19,14 @@ namespace NorvesLib::Core::Rendering
     inline constexpr float TemporalAAVarianceClipGamma = 1.0f;
 
     /**
+     * @brief 書き戻すときのシャープ化の強さ（上下左右4画素の平均との差を足す割合）。
+     *
+     * 履歴を混ぜると細かな模様が柔らかくなるので、SceneColor へ書き戻す色だけを少し鋭くする
+     * （履歴には鋭くする前の色を残す）。
+     */
+    inline constexpr float TemporalAASharpenStrength = 0.25f;
+
+    /**
      * @brief 1つのフレームのジッタ
      *
      * Pixel は画素単位のずらし量（-0.5〜0.5）、Ndc は投影後の NDC でのずらし量（2 × 画素 / 寸法）。

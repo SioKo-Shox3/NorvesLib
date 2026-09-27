@@ -30,7 +30,8 @@ namespace NorvesLib::Core::Rendering
             float CameraPositionAndHistory[4];
             // xy: 画像の寸法、zw: その逆数
             float ImageSize[4];
-            // x: 現在の色の割合、y: 履歴へ掛ける露出の比、z: クリップの箱の半幅（標準偏差の倍数）
+            // x: 現在の色の割合、y: 履歴へ掛ける露出の比、z: クリップの箱の半幅（標準偏差の倍数）、
+            // w: 書き戻すときのシャープ化の強さ
             float Blend[4];
             // xy: このフレームのジッタ（画素）
             float Jitter[4];
@@ -154,7 +155,7 @@ namespace NorvesLib::Core::Rendering
         }
         if (!context.Device || !context.ShaderMgr)
         {
-            NORVES_LOG_ERROR("TemporalAAPass", "Device or ShaderManager is null");
+            NORVES_LOG_ERROR("TemporalAAPass", "Device または ShaderManager が無い");
             return false;
         }
         m_Device = context.Device;
@@ -173,7 +174,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_ParamsBuffer || !m_PointSampler || !m_LinearSampler || !m_ResolveDescriptorSet ||
             !m_CopyDescriptorSet)
         {
-            NORVES_LOG_ERROR("TemporalAAPass", "Failed to create shaders, samplers or descriptor sets");
+            NORVES_LOG_ERROR("TemporalAAPass", "シェーダー・サンプラー・ディスクリプタセットの作成に失敗");
             Shutdown();
             return false;
         }
@@ -204,6 +205,14 @@ namespace NorvesLib::Core::Rendering
 
     void TemporalAAPass::Shutdown()
     {
+        if (m_HistoryReusedFrameCount > 0u || m_HistoryGapFrameCount > 0u)
+        {
+            NORVES_LOG_INFO("TemporalAAPass", "history_reused_frames=%llu history_gap_frames=%llu",
+                            static_cast<unsigned long long>(m_HistoryReusedFrameCount),
+                            static_cast<unsigned long long>(m_HistoryGapFrameCount));
+            m_HistoryReusedFrameCount = 0u;
+            m_HistoryGapFrameCount = 0u;
+        }
         ReleaseSizedResources();
         m_CopyDescriptorSet.reset();
         m_ResolveDescriptorSet.reset();
@@ -269,7 +278,8 @@ namespace NorvesLib::Core::Rendering
         const ViewRenderContext* context = builder.GetContext();
         if (!context || !IsActiveFor(*context))
         {
-            m_bHistoryValid = false;
+            // TAA を掛けない Viewport（同じフレームの2つ目以降など）では履歴に触れない。履歴が途切れたかは
+            // 次に働くフレームで、履歴を書いたフレームの番号と比べて決める。
             return;
         }
         RGTextureHandle sceneDepthHandle;
@@ -338,12 +348,25 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 前のフレームの履歴は、同じカメラで、露出が有限なときだけ使う。
+        // 前のフレームの履歴は、直前のゲームのフレームで同じ Viewport が書き、同じカメラで、露出が有限な
+        // ときだけ使う。パケットの前のカメラ・前の変換は直前のゲームのフレームのものなので、RenderThread が
+        // パケットを飛ばした（履歴が2フレーム以上前の）ときに使うと、velocity が履歴の位置を指さない。
         const CameraProxy* previousCamera = context.GetPreviousCamera();
-        const bool bUseHistory = m_bHistoryValid && previousCamera != nullptr &&
+        const uint32_t viewportId = GetViewportId(context);
+        const bool bHistoryContinuous = m_bHistoryValid && m_HistoryViewportId == viewportId &&
+                                        context.FrameNumber == m_HistoryFrameNumber + 1u;
+        if (m_bHistoryValid && !bHistoryContinuous)
+        {
+            ++m_HistoryGapFrameCount;
+        }
+        const bool bUseHistory = bHistoryContinuous && previousCamera != nullptr &&
                                  camera->CameraId == m_HistoryCameraId &&
                                  std::isfinite(m_HistoryPreExposure) && m_HistoryPreExposure > 0.0f &&
                                  std::isfinite(camera->PreExposure) && camera->PreExposure > 0.0f;
+        if (bUseHistory)
+        {
+            ++m_HistoryReusedFrameCount;
+        }
 
         GPUTemporalAAParams params{};
         const float aspect = context.GetActiveAspectRatio();
@@ -363,6 +386,7 @@ namespace NorvesLib::Core::Rendering
         params.Blend[0] = TemporalAACurrentFrameWeight;
         params.Blend[1] = bUseHistory ? camera->PreExposure / m_HistoryPreExposure : 1.0f;
         params.Blend[2] = TemporalAAVarianceClipGamma;
+        params.Blend[3] = TemporalAASharpenStrength;
         params.Jitter[0] = m_FrameJitter.PixelX;
         params.Jitter[1] = m_FrameJitter.PixelY;
         m_ParamsBuffer->Update(&params, sizeof(params));
@@ -393,7 +417,7 @@ namespace NorvesLib::Core::Rendering
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_HistoryRenderPass, m_HistoryFramebuffers[writeIndex], viewport, scissor,
                                       m_ResolvePipeline, m_ResolveDescriptorSet);
-        // 2. SceneColor へそのまま書き戻す。
+        // 2. SceneColor へ、軽くシャープ化して書き戻す（履歴はシャープ化の前の色のまま）。
         context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::ShaderResource,
                                       RHI::ResourceState::RenderTarget);
         context.EnqueueFullscreenPass(m_CopyRenderPass, m_CopyFramebuffer, viewport, scissor,
@@ -403,6 +427,8 @@ namespace NorvesLib::Core::Rendering
         m_bHistoryValid = true;
         m_HistoryCameraId = camera->CameraId;
         m_HistoryPreExposure = camera->PreExposure;
+        m_HistoryFrameNumber = context.FrameNumber;
+        m_HistoryViewportId = viewportId;
     }
 
     bool TemporalAAPass::PrepareResources(const RHI::TexturePtr& sceneColor)
@@ -445,7 +471,7 @@ namespace NorvesLib::Core::Rendering
                                  : RHI::PipelinePtr{};
             if (!m_ResolvePipeline || !m_CopyPipeline)
             {
-                NORVES_LOG_ERROR("TemporalAAPass", "Failed to create history textures, framebuffers or pipelines");
+                NORVES_LOG_ERROR("TemporalAAPass", "履歴のテクスチャ・フレームバッファ・パイプラインの作成に失敗");
                 ReleaseSizedResources();
                 return false;
             }
@@ -460,7 +486,7 @@ namespace NorvesLib::Core::Rendering
             m_FramebufferSceneColorTexture = m_CopyFramebuffer ? sceneColor.get() : nullptr;
             if (!m_CopyFramebuffer)
             {
-                NORVES_LOG_ERROR("TemporalAAPass", "Failed to create scene color framebuffer");
+                NORVES_LOG_ERROR("TemporalAAPass", "SceneColor のフレームバッファの作成に失敗");
                 return false;
             }
         }

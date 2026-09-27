@@ -13,6 +13,10 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 objectColor;
     vec4 emissiveColor;  // rgb=エミッシブカラー, a=エミッシブ強度
     vec4 pomParams;      // x=heightScale, y=hasHeightMap, z=debugMode, w=debugPayloadSupported
+    mat4 previousWorld;  // 直前のフレームの変換（velocity 用）
+    mat4 previousView;
+    mat4 previousProjection;
+    vec4 velocityParams; // x=前のカメラがあるか（1/0）
 } mvp;
 
 layout(location = 0) out vec3 fragWorldPos;
@@ -22,6 +26,8 @@ layout(location = 3) out vec4 fragEmissiveColor;
 layout(location = 4) out vec2 fragTexCoord;
 layout(location = 5) out vec3 fragViewDir;  // ワールド空間でのカメラ方向
 layout(location = 6) flat out uint fragDebugPayload;
+layout(location = 7) out vec4 fragCurrentClip;
+layout(location = 8) out vec4 fragPreviousClip;
 
 void main()
 {
@@ -38,4 +44,6 @@ void main()
     fragDebugPayload = gl_InstanceIndex;
 
     gl_Position = mvp.projection * mvp.view * worldPos;
+    fragCurrentClip = gl_Position;
+    fragPreviousClip = mvp.previousProjection * mvp.previousView * mvp.previousWorld * vec4(inPosition, 1.0);
 }
