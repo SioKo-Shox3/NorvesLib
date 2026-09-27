@@ -1,4 +1,4 @@
-﻿# TASKS — NorvesLib
+# TASKS — NorvesLib
 
 起動画面（Rendering3DTest）の描画改善（2026-09-27、ユーザー決定）。物理空と空の太陽による昼の屋外、点光源のキューブシャドウ、自動露出・ミップチェーンのブルーム・TAA・GTAO・コンタクトシャドウ・色収差・レンズダート・グレーディングLUT・RTGIの既定化、展示物の追加、視差オクルージョンと影の不具合の修正を `SS-` の項目で進める。見た目の証拠は `Scripts/CaptureStartupScene.ps1` の撮影を開いて確かめる。起動画面の見た目を変えることはこの計画でユーザーが承認済み。検証シーン（Indoor/Outdoorのgolden、R系の受入れ）は、項目に書いた場合を除き結果を変えない。
 
@@ -145,7 +145,7 @@
 - notes: `[Nullable[double]]`の引数は値が入ると`double`になるため`$SunAzimuth.Value`がnullになる（199行目）。SS-BLOOM-MIPCHAINではGame.exeを同じ引数で直接起動して撮った。
 
 ## SS-TAA-P1: ジッタと履歴の再投影でTAAを作る
-- status: done
+- status: doing
 - done-when: 投影行列にHalton(2,3)の8〜16点のサブピクセルのジッタを掛け、R6-aのvelocity（ジッタを除いた動き）で前のフレームの履歴を再投影し、近傍の色の分散（YCoCg）でクリップして混ぜるTAAのパスがある（位置はライティング・半透明の後、ブルームの前）。カメラが止まっているとき、ジッタで輪郭のギザギザが消える。有効/無効を切り替えられ、無効なら今の結果（FXAA）と変わらない。ジッタ列と投影のずらし量をCPUのテスト `TemporalAAJitterTest`（`CameraViewConstantsTest` の束へ MEMBER として足す）で確かめる。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game CameraViewConstantsTest RenderingGoldenImageTest -- /m:1`
