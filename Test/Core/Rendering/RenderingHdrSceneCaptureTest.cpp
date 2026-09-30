@@ -842,15 +842,17 @@ namespace
                       << " finite=" << (std::isfinite(sunDisk) ? 1 : 0)
                       << " passed=" << (bCasePassed ? 1 : 0) << "\n";
 
+            // 球殻の大気の多重散乱のモデル（SS-SKY-MODEL-P1）の昼の回帰アンカー。天頂の輝度は約2400 nitsで
+            // B > G > R、太陽の周りは前方のMie散乱で天頂の10倍以上になる。
             if (timeCase.SunAltitudeDegrees == 45.0f)
             {
                 bPassed = bPassed &&
-                          IsR2RelativeNear(zenith.Radiance.x, 463.6f, 0.05f) &&
-                          IsR2RelativeNear(zenith.Radiance.y, 944.8f, 0.05f) &&
-                          IsR2RelativeNear(zenith.Radiance.z, 1808.2f, 0.05f) &&
-                          IsR2RelativeNear(sunNear.Radiance.x, 3283.9f, 0.05f) &&
-                          IsR2RelativeNear(sunNear.Radiance.y, 3989.0f, 0.05f) &&
-                          IsR2RelativeNear(sunNear.Radiance.z, 5179.0f, 0.05f);
+                          IsR2RelativeNear(zenith.Radiance.x, 1798.9f, 0.05f) &&
+                          IsR2RelativeNear(zenith.Radiance.y, 2416.1f, 0.05f) &&
+                          IsR2RelativeNear(zenith.Radiance.z, 4064.7f, 0.05f) &&
+                          IsR2RelativeNear(sunNear.Radiance.x, 48920.9f, 0.05f) &&
+                          IsR2RelativeNear(sunNear.Radiance.y, 44979.5f, 0.05f) &&
+                          IsR2RelativeNear(sunNear.Radiance.z, 40593.4f, 0.05f);
             }
             bPassed = bPassed && !IsSunDiskWithinFp16SafetyRange(
                                     parameters, R2SkyEv14PreExposure) &&
