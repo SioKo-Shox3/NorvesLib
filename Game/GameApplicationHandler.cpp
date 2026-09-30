@@ -103,9 +103,9 @@ namespace Game
         // --orbit-degrees-per-second=<deg/s>: カメラを一定の速さで回す（-360〜360、撮影で動くカメラを確かめる）。
         constexpr const TCHAR *kOrbitDegreesPerSecondOption = TEXT("--orbit-degrees-per-second=");
         float s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
-        // --anti-aliasing=<taa|fxaa>: 起動画面のアンチエイリアシング（既定は taa）。
+        // --anti-aliasing=<taa|fxaa>: 起動画面のアンチエイリアシング（既定は fxaa）。
         constexpr const TCHAR *kAntiAliasingOption = TEXT("--anti-aliasing=");
-        bool s_bRendering3DTestTemporalAA = true;
+        bool s_bRendering3DTestTemporalAA = false;
         bool s_bRendering3DTestHasHeightFogDensity = false;
         float s_Rendering3DTestHeightFogDensity = 0.0f;
         bool s_bRendering3DTestHasSunElevation = false;
@@ -430,7 +430,7 @@ namespace Game
         s_bRendering3DTestHasExposureEV100 = false;
         s_bRendering3DTestHasHeightFogDensity = false;
         s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
-        s_bRendering3DTestTemporalAA = true;
+        s_bRendering3DTestTemporalAA = false;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;
         bool bHasRendering3DTestImpostorSmokeCount = false;

@@ -1937,8 +1937,13 @@ namespace NorvesLib::Core::Rendering
         if (m_CurrentPacket)
         {
             m_CurrentPacket->bHasMainCamera = false;
-            m_CurrentPacket->bHasPreviousMainCamera = m_bPreviousMainCameraValid;
-            if (m_bPreviousMainCameraValid)
+            // 前のカメラは直前のゲームのフレームのパケットのものだけを渡す（velocity と TAA の履歴の基準を
+            // 「このパケットの1つ前のフレーム」にそろえる。前の変換も同じ規約）。
+            const bool bPreviousMainCameraContinuous =
+                m_bPreviousMainCameraValid &&
+                m_PreviousMainCameraFrameNumber + 1u == m_CurrentPacket->FrameNumber;
+            m_CurrentPacket->bHasPreviousMainCamera = bPreviousMainCameraContinuous;
+            if (bPreviousMainCameraContinuous)
             {
                 m_CurrentPacket->PreviousMainCamera = m_PreviousMainCamera;
             }
@@ -2233,10 +2238,12 @@ namespace NorvesLib::Core::Rendering
         // Screen.EndFrame（submit/present）はRenderFrame内で実行するため、ここでは行わない。
         FramePacket* finishedPacket = m_CurrentPacket;
         CameraProxy finishedCamera;
+        uint64_t finishedFrameNumber = 0u;
         const bool bFinishedCameraValid = m_CurrentPacket && m_CurrentPacket->bHasMainCamera;
         if (bFinishedCameraValid)
         {
             finishedCamera = m_CurrentPacket->Scene.MainCamera;
+            finishedFrameNumber = m_CurrentPacket->FrameNumber;
         }
         if (m_CurrentPacket)
         {
@@ -2257,6 +2264,7 @@ namespace NorvesLib::Core::Rendering
         if (bFinishedCameraValid)
         {
             m_PreviousMainCamera = finishedCamera;
+            m_PreviousMainCameraFrameNumber = finishedFrameNumber;
             m_bPreviousMainCameraValid = true;
         }
         else

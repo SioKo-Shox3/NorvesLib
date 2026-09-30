@@ -757,7 +757,7 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
-        SetTemporalAAApplied(bApplyTemporalAA);
+        SetTemporalAAApplied(bApplyTemporalAA, viewportId);
 
         // パスチェーンが存在すれば基底クラスのパスベース描画を実行
         if (GetPassCount() > 0)
@@ -773,7 +773,7 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void SceneView::SetTemporalAAApplied(bool bApplied)
+    void SceneView::SetTemporalAAApplied(bool bApplied, uint32_t viewportId)
     {
         PostProcessStack *postProcessStack = GetPostProcessStack();
         TemporalAAPass *temporalAAPass = FindTemporalAAPass(postProcessStack);
@@ -781,9 +781,9 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-        // 有効・無効は Viewport ごとに切り替わる（同じフレームの2つ目以降の Viewport では無効）。履歴を
-        // 使えるかはパスが履歴を書いたフレームの番号と Viewport で決めるので、ここでは履歴を捨てない。
-        temporalAAPass->SetEnabled(bApplied);
+        // 有効・無効は Viewport ごとに切り替わる（同じフレームの2つ目以降の Viewport では無効）。履歴は
+        // それを書いた Viewport を TAA 無しで描いたときだけ捨てる。
+        temporalAAPass->NotifyViewportRendered(viewportId, bApplied);
 
         IViewPass *fxaaPass = postProcessStack->GetPass("FXAAPass");
         if (!fxaaPass)

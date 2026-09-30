@@ -35,8 +35,13 @@ namespace NorvesLib::Core::Rendering
             float Blend[4];
             // xy: このフレームのジッタ（画素）
             float Jitter[4];
+            // 履歴を書いたフレームのカメラ（今のフレームと同じジッタを掛けたもの）。カメラの動きはこれから求める。
+            float HistoryView[16];
+            float HistoryProjection[16];
+            // x: 物体自身の動きを履歴からの経過時間へ伸ばす比（連続したフレームでは1）
+            float Motion[4];
         };
-        static_assert(sizeof(GPUTemporalAAParams) == 256u);
+        static_assert(sizeof(GPUTemporalAAParams) == 400u);
 
         constexpr uint32_t ParamsBinding = 4u;
 
@@ -200,18 +205,21 @@ namespace NorvesLib::Core::Rendering
         m_CurrentWidth = 0u;
         m_CurrentHeight = 0u;
         m_CurrentFormat = RHI::Format::UNKNOWN;
-        m_bHistoryValid = false;
+        m_History.Invalidate();
     }
 
     void TemporalAAPass::Shutdown()
     {
-        if (m_HistoryReusedFrameCount > 0u || m_HistoryGapFrameCount > 0u)
+        if (m_HistoryReusedFrameCount > 0u || m_HistoryRejectedFrameCount > 0u)
         {
-            NORVES_LOG_INFO("TemporalAAPass", "history_reused_frames=%llu history_gap_frames=%llu",
+            NORVES_LOG_INFO("TemporalAAPass",
+                            "history_reused_frames=%llu history_rebased_frames=%llu history_rejected_frames=%llu",
                             static_cast<unsigned long long>(m_HistoryReusedFrameCount),
-                            static_cast<unsigned long long>(m_HistoryGapFrameCount));
+                            static_cast<unsigned long long>(m_HistoryRebasedFrameCount),
+                            static_cast<unsigned long long>(m_HistoryRejectedFrameCount));
             m_HistoryReusedFrameCount = 0u;
-            m_HistoryGapFrameCount = 0u;
+            m_HistoryRebasedFrameCount = 0u;
+            m_HistoryRejectedFrameCount = 0u;
         }
         ReleaseSizedResources();
         m_CopyDescriptorSet.reset();
@@ -289,7 +297,7 @@ namespace NorvesLib::Core::Rendering
             !builder.TryReadTexture(RenderGraphResourceNames::GBufferVelocity, velocityHandle,
                                     RHI::ResourceState::ShaderResource))
         {
-            m_bHistoryValid = false;
+            m_History.Invalidate();
             return;
         }
         RGTextureHandle sceneColorHandle;
@@ -308,7 +316,7 @@ namespace NorvesLib::Core::Rendering
                                                 RHI::ResourceState::ShaderResource);
         if (!bHasSceneColor)
         {
-            m_bHistoryValid = false;
+            m_History.Invalidate();
             return;
         }
         m_SceneDepthHandle = sceneDepthHandle.ToResourceHandle();
@@ -329,7 +337,7 @@ namespace NorvesLib::Core::Rendering
         const RHI::TexturePtr velocity = resources.GetTexture(m_VelocityHandle);
         if (!sceneColor)
         {
-            m_bHistoryValid = false;
+            m_History.Invalidate();
             return;
         }
         const auto sameSize = [&](const RHI::TexturePtr& texture)
@@ -342,30 +350,43 @@ namespace NorvesLib::Core::Rendering
             !sameSize(velocity) || !PrepareResources(sceneColor))
         {
             // 働けないフレームは SceneColor を変えずに渡し、履歴を捨てる。
-            m_bHistoryValid = false;
+            m_History.Invalidate();
             context.EnqueueTextureBarrier(sceneColor, RHI::ResourceState::RenderTarget,
                                           RHI::ResourceState::ShaderResource);
             return;
         }
 
-        // 前のフレームの履歴は、直前のゲームのフレームで同じ Viewport が書き、同じカメラで、露出が有限な
-        // ときだけ使う。パケットの前のカメラ・前の変換は直前のゲームのフレームのものなので、RenderThread が
-        // パケットを飛ばした（履歴が2フレーム以上前の）ときに使うと、velocity が履歴の位置を指さない。
+        // 履歴は、同じ Viewport が前に描いたフレームで書き、同じカメラで、露出が有限なときだけ使う。
+        // パケットの前のカメラ・前の変換は直前のゲームのフレームのものだが、RenderThread はパケットを
+        // 飛ばすことがあるので、カメラの動きは履歴を書いたフレームのカメラから求め直し、物体自身の動きは
+        // 経過時間の比で伸ばす（TemporalAAHistoryTracker）。
         const CameraProxy* previousCamera = context.GetPreviousCamera();
-        const uint32_t viewportId = GetViewportId(context);
-        const bool bHistoryContinuous = m_bHistoryValid && m_HistoryViewportId == viewportId &&
-                                        context.FrameNumber == m_HistoryFrameNumber + 1u;
-        if (m_bHistoryValid && !bHistoryContinuous)
-        {
-            ++m_HistoryGapFrameCount;
-        }
-        const bool bUseHistory = bHistoryContinuous && previousCamera != nullptr &&
-                                 camera->CameraId == m_HistoryCameraId &&
-                                 std::isfinite(m_HistoryPreExposure) && m_HistoryPreExposure > 0.0f &&
-                                 std::isfinite(camera->PreExposure) && camera->PreExposure > 0.0f;
+        TemporalAAHistoryQuery historyQuery;
+        historyQuery.FrameNumber = context.FrameNumber;
+        historyQuery.TotalTime = context.TotalTime;
+        historyQuery.ViewportId = GetViewportId(context);
+        historyQuery.CameraId = camera->CameraId;
+        historyQuery.PreExposure = camera->PreExposure;
+        historyQuery.bHasPreviousCamera = previousCamera != nullptr;
+        const TemporalAAHistoryDecision historyDecision = m_History.Evaluate(historyQuery);
+        const bool bUseHistory = historyDecision == TemporalAAHistoryDecision::Reuse;
+        const bool bHistoryContiguous = bUseHistory && m_History.IsContiguous(historyQuery);
         if (bUseHistory)
         {
             ++m_HistoryReusedFrameCount;
+            m_HistoryRebasedFrameCount += bHistoryContiguous ? 0u : 1u;
+        }
+        else if (historyDecision != TemporalAAHistoryDecision::NoHistory)
+        {
+            ++m_HistoryRejectedFrameCount;
+        }
+        // 履歴のカメラへ今のフレームのジッタを掛け、再投影からジッタを除く（前のカメラと同じ扱い）。
+        CameraProxy historyCamera = bUseHistory ? m_History.GetCamera() : (previousCamera ? *previousCamera : *camera);
+        ApplyTemporalAAJitter(historyCamera, m_FrameJitter);
+        if (bHistoryContiguous && previousCamera)
+        {
+            // 連続したフレームでは、履歴のカメラはパケットの前のカメラと同じものを使う（velocity と一致させる）。
+            historyCamera = *previousCamera;
         }
 
         GPUTemporalAAParams params{};
@@ -384,11 +405,16 @@ namespace NorvesLib::Core::Rendering
         params.ImageSize[2] = 1.0f / params.ImageSize[0];
         params.ImageSize[3] = 1.0f / params.ImageSize[1];
         params.Blend[0] = TemporalAACurrentFrameWeight;
-        params.Blend[1] = bUseHistory ? camera->PreExposure / m_HistoryPreExposure : 1.0f;
+        params.Blend[1] = bUseHistory ? camera->PreExposure / m_History.GetPreExposure() : 1.0f;
         params.Blend[2] = TemporalAAVarianceClipGamma;
         params.Blend[3] = TemporalAASharpenStrength;
         params.Jitter[0] = m_FrameJitter.PixelX;
         params.Jitter[1] = m_FrameJitter.PixelY;
+        const CameraViewConstants historyConstants = CameraViewConstants::BuildForDevice(historyCamera, aspect, context.Device);
+        historyConstants.CopyShaderView(params.HistoryView);
+        historyConstants.CopyShaderProjection(params.HistoryProjection);
+        params.Motion[0] =
+            bUseHistory ? m_History.ComputeObjectMotionScale(historyQuery, context.SnapshotDeltaTime) : 1.0f;
         m_ParamsBuffer->Update(&params, sizeof(params));
 
         const uint32_t writeIndex = m_HistoryWriteIndex;
@@ -424,11 +450,7 @@ namespace NorvesLib::Core::Rendering
                                       m_CopyPipeline, m_CopyDescriptorSet);
 
         m_HistoryWriteIndex = readIndex;
-        m_bHistoryValid = true;
-        m_HistoryCameraId = camera->CameraId;
-        m_HistoryPreExposure = camera->PreExposure;
-        m_HistoryFrameNumber = context.FrameNumber;
-        m_HistoryViewportId = viewportId;
+        m_History.Record(historyQuery, *camera);
     }
 
     bool TemporalAAPass::PrepareResources(const RHI::TexturePtr& sceneColor)

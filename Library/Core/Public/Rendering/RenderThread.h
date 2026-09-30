@@ -182,6 +182,15 @@ namespace NorvesLib::Core::Rendering
 
         // テスト専用: RenderFrame 呼び出し直前の同期シーム。Start 前に設定し、Shutdown 後に解除する。
         void (*m_RenderFrameTestHook)(FramePacket*) = nullptr;
+
+        // 確認用: 環境変数 NORVES_DEBUG_DROP_RENDER_FRAME_INTERVAL=<k>（2以上）で、ゲームのフレーム番号が
+        // k の倍数のパケットを描かずに捨てる（撮影要求を持つパケットは捨てない）。描画がゲームのフレームを
+        // 飛ばしたときの TAA の履歴の扱いを確かめるのに使う。0 なら捨てない。
+        uint32_t m_DebugDropRenderFrameInterval = 0;
+        uint64_t m_DebugDroppedRenderFrameCount = 0;
+
+        /** @brief 確認用の指定で捨てるパケットなら、描かずに再利用へ戻して true を返す。 */
+        bool TryDropPacketForDebug(FramePacket* packet);
     };
 
 } // namespace NorvesLib::Core::Rendering

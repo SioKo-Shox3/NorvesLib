@@ -19,10 +19,13 @@ namespace NorvesLib::Core::Rendering
      * ライティング・半透明までを描く。前のカメラにも同じジッタを掛けるので、velocity と空の再投影には
      * ジッタが入らない。このパスは:
      * 1. SceneColor（SSR の後の色、無ければ Scene.Color）の3×3の近傍から YCoCg の平均と分散を求める。
-     * 2. 近傍で最も手前の画素の velocity（空はカメラの動きから求める）で前のフレームの履歴を再投影し、
-     *    平均 ± 標準偏差の箱へクリップする。露出が変わったら履歴を今の露出へ合わせる。
+     * 2. 近傍で最も手前の画素について、カメラの動きを履歴を書いたフレームのカメラから深度で求め、
+     *    物体自身の動き（velocity からパケットの前のカメラによる動きを引いた分）を履歴からの経過時間へ
+     *    伸ばして足し、履歴を再投影する（RenderThread がパケットを飛ばしても履歴の位置を指す。連続した
+     *    フレームでは velocity での再投影と同じ）。平均 ± 標準偏差の箱へクリップし、露出が変わったら
+     *    履歴を今の露出へ合わせる。
      * 3. 現在の色と輝度で重み付けして混ぜ、結果を次のフレームの履歴に残して SceneColor へ書き戻す。
-     * 履歴が無い（最初のフレーム・カメラの切り替え・寸法の変更・前のフレームで働かなかった）ときや、
+     * 履歴が無い（最初のフレーム・カメラの切り替え・寸法の変更・その Viewport を TAA 無しで描いた後）ときや、
      * 再投影が画面の外に出た画素は現在の色だけを使う。無効（既定）のときは何もしない。
      */
     class TemporalAAPass : public IViewPass, public IRenderGraphPass
@@ -52,11 +55,25 @@ namespace NorvesLib::Core::Rendering
                         uint32_t height,
                         TemporalAAJitter& outJitter);
 
+        /**
+         * @brief Viewport を描く前に、その Viewport へ TAA を掛けるかを知らせる
+         *
+         * 掛けないなら無効にし、履歴を書いた Viewport なら履歴を捨てる（別の Viewport の履歴には触れない）。
+         */
+        void NotifyViewportRendered(uint32_t viewportId, bool bApplied)
+        {
+            SetEnabled(bApplied);
+            if (!bApplied)
+            {
+                m_History.NotifyViewportWithoutTemporalAA(viewportId);
+            }
+        }
+
         /** @brief 履歴を捨てる（次に働くフレームは現在の色だけを使う）。 */
-        void InvalidateHistory() { m_bHistoryValid = false; }
+        void InvalidateHistory() { m_History.Invalidate(); }
 
         /** @brief 次のフレームに使える履歴があるか。 */
-        bool HasValidHistory() const { return m_bHistoryValid; }
+        bool HasValidHistory() const { return m_History.IsValid(); }
 
     private:
         bool PrepareResources(const RHI::TexturePtr& sceneColor);
@@ -92,16 +109,13 @@ namespace NorvesLib::Core::Rendering
         RHI::Format m_CurrentFormat = RHI::Format::UNKNOWN;
 
         uint32_t m_HistoryWriteIndex = 0u;
-        bool m_bHistoryValid = false;
-        uint64_t m_HistoryCameraId = 0u;
-        float m_HistoryPreExposure = 0.0f;
-        // 履歴を書いたフレームの番号と Viewport。パケットの前のカメラ・前の変換は直前のゲームのフレームの
-        // ものなので、履歴は直前のフレームで同じ Viewport が書いたときだけ使う。
-        uint64_t m_HistoryFrameNumber = 0u;
-        uint32_t m_HistoryViewportId = UINT32_MAX;
-        // 履歴を使ったフレーム数と、フレームの途切れで捨てたフレーム数（終了時にログへ出す）。
+        // 履歴を書いたフレームの番号・時刻・Viewport・カメラ・露出。
+        TemporalAAHistoryTracker m_History;
+        // 履歴を使ったフレーム数、そのうちパケットが飛んだ（カメラを履歴のフレームから求め直した）フレーム数、
+        // 履歴があったのに使わなかったフレーム数（終了時にログへ出す）。
         uint64_t m_HistoryReusedFrameCount = 0u;
-        uint64_t m_HistoryGapFrameCount = 0u;
+        uint64_t m_HistoryRebasedFrameCount = 0u;
+        uint64_t m_HistoryRejectedFrameCount = 0u;
 
         // BeginFrame が決めたこのフレームのジッタと、それを受け取った Viewport。
         uint64_t m_JitterIndex = 0u;

@@ -13,8 +13,8 @@
 # （自動露出が入るまでの暫定の対応表）。
 #
 # -OrbitDegreesPerSecond を与えると、起動からカメラを一定の速さ（度/秒）で軸の周りに回し続け、回っている
-# 途中の画面を撮る（動くカメラでの TAA の残像の確認用）。-AntiAliasing FXAA で起動画面の既定の TAA の
-# 代わりに FXAA で撮る（見比べ用）。
+# 途中の画面を撮る（動くカメラでの TAA の残像の確認用）。-AntiAliasing TAA で起動画面の既定の FXAA の
+# 代わりに TAA で撮る（見比べ用）。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -31,7 +31,7 @@ param(
     [ValidateRange(-360.0, 360.0)]
     [double]$OrbitDegreesPerSecond = 0.0,
     [ValidateSet('TAA', 'FXAA')]
-    [string]$AntiAliasing = 'TAA'
+    [string]$AntiAliasing = 'FXAA'
 )
 
 $ErrorActionPreference = 'Stop'

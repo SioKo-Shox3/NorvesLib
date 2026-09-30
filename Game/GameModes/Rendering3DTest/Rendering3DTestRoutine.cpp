@@ -198,7 +198,7 @@ namespace Game::GameModes
             data.m_bAutoExposure = true;
             data.m_bAppliedAutoExposure = true;
             data.m_pCameraComponent->SetExposureMode(CameraExposureMode::Auto);
-            // 起動画面のアンチエイリアシングは TAA（--anti-aliasing=fxaa と ImGui で FXAA を選べる）。
+            // 起動画面のアンチエイリアシングは FXAA（--anti-aliasing=taa と ImGui で TAA を選べる）。
             data.m_bTemporalAA = data.m_bStartupTemporalAA;
             data.m_bAppliedTemporalAA = data.m_bTemporalAA;
             data.m_pCameraComponent->SetAntiAliasingMode(data.m_bTemporalAA ? CameraAntiAliasingMode::TemporalAA

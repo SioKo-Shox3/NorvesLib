@@ -552,6 +552,8 @@ namespace NorvesLib::Core::Rendering
         Thread::Atomic<bool> m_bCanvasCameraSyncPending{false};
         bool m_bCameraSet = false;
         bool m_bPreviousMainCameraValid = false;
+        // m_PreviousMainCamera を書いたパケットのゲームのフレーム番号
+        uint64_t m_PreviousMainCameraFrameNumber = 0;
 
         // 直前のゲームのフレームのパケットに書いた MegaGeometry の変換と、スキニングの変換・パレット
         // （ComponentId ごと）。次のパケットの前の値（velocity 用）にする。

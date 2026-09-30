@@ -4,6 +4,10 @@
 // - 列: 1〜8番目の基数2・3の radical inverse、8フレームで一巡、各点が画素内（-0.5〜0.5）で互いに異なる。
 // - 投影: 透視・正射影で、どの深度の点も NDC が同じ量（2 × 画素 / 寸法）だけずれ、z と w は変わらない。
 // - velocity: 現在と前のカメラに同じジッタを掛けると、2つの NDC の差はジッタを掛けないときと同じになる。
+// - 履歴: 同じ Viewport・同じカメラが前に描いたフレームの履歴を使う。描画がフレームを飛ばしても（10 を描いて
+//   11 を飛ばし 12 を描く）履歴は使い、カメラの動きは履歴のカメラから求め直し、物体の動きは経過時間の比で伸ばす。
+//   このとき静止した点・等速で動く点が履歴の位置へ戻ること、パケットの velocity だけではずれること（対照）を確かめる。
+//   TAA を掛けない2つ目の Viewport は1つ目の履歴を途切れさせず、履歴を書いた Viewport を TAA 無しで描いたら捨てる。
 #include "Rendering/TemporalAA.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Math/MatrixUtils.h"
@@ -224,6 +228,198 @@ namespace
         Check(IsNear(currentOnlyVelocityX - plainVelocityX, jitter.PixelX, 2.0e-3),
               "現在のカメラだけにジッタを掛けると velocity にジッタが入る（比べる対照）");
     }
+
+    // ゲームのフレーム番号 frame（時刻は frame × 10 ms）の問い合わせ。
+    TemporalAAHistoryQuery MakeHistoryQuery(uint64_t frameNumber, uint32_t viewportId)
+    {
+        TemporalAAHistoryQuery query;
+        query.FrameNumber = frameNumber;
+        query.TotalTime = static_cast<double>(frameNumber) * 0.01;
+        query.ViewportId = viewportId;
+        query.CameraId = 7u;
+        query.PreExposure = 1.0e-4f;
+        query.bHasPreviousCamera = true;
+        return query;
+    }
+
+    void TestHistoryDecision()
+    {
+        const CameraProxy camera = MakeCamera(ProjectionType::Perspective);
+        TemporalAAHistoryTracker history;
+        Check(history.Evaluate(MakeHistoryQuery(10u, 0u)) == TemporalAAHistoryDecision::NoHistory, "最初は履歴が無い");
+
+        CameraProxy jitteredCamera = camera;
+        ApplyTemporalAAJitter(jitteredCamera, ComputeTemporalAAJitter(3u, Width, Height));
+        history.Record(MakeHistoryQuery(10u, 0u), jitteredCamera);
+        Check(history.GetCamera().ProjectionJitterNdcX == 0.0f && history.GetCamera().ProjectionJitterNdcY == 0.0f,
+              "履歴のカメラはジッタを外して覚える");
+        Check(history.Evaluate(MakeHistoryQuery(11u, 0u)) == TemporalAAHistoryDecision::Reuse,
+              "直前のフレームに同じ Viewport が書いた履歴は使う");
+        Check(history.IsContiguous(MakeHistoryQuery(11u, 0u)), "直前のフレームなら連続");
+        Check(history.ComputeObjectMotionScale(MakeHistoryQuery(11u, 0u), 0.01f) == 1.0f, "連続なら物体の動きの比は1");
+        // 描画が 11 を飛ばして 12 を描く: 履歴は使い、カメラは履歴のカメラから求め直し、物体の動きは2倍に伸ばす。
+        Check(history.Evaluate(MakeHistoryQuery(12u, 0u)) == TemporalAAHistoryDecision::Reuse,
+              "フレームが飛んでも履歴は使う");
+        Check(!history.IsContiguous(MakeHistoryQuery(12u, 0u)), "飛んだフレームは連続でない");
+        Check(IsNear(history.ComputeObjectMotionScale(MakeHistoryQuery(12u, 0u), 0.01f), 2.0, 1.0e-5),
+              "飛んだフレームの物体の動きの比は経過時間 / パケットの経過時間");
+        Check(history.ComputeObjectMotionScale(MakeHistoryQuery(12u, 0u), 0.0f) == 1.0f,
+              "パケットの経過時間が0なら比は1");
+        Check(history.Evaluate(MakeHistoryQuery(10u, 0u)) == TemporalAAHistoryDecision::FrameNotAdvanced,
+              "同じフレームをもう一度描くときは使わない");
+        Check(history.Evaluate(MakeHistoryQuery(11u, 1u)) == TemporalAAHistoryDecision::ViewportChanged,
+              "別の Viewport の履歴は使わない");
+
+        TemporalAAHistoryQuery query = MakeHistoryQuery(11u, 0u);
+        query.CameraId = 8u;
+        Check(history.Evaluate(query) == TemporalAAHistoryDecision::CameraChanged, "カメラが替わったら使わない");
+        query = MakeHistoryQuery(11u, 0u);
+        query.bHasPreviousCamera = false;
+        Check(history.Evaluate(query) == TemporalAAHistoryDecision::PreviousCameraMissing,
+              "前のカメラが無ければ使わない");
+        query = MakeHistoryQuery(11u, 0u);
+        query.PreExposure = 0.0f;
+        Check(history.Evaluate(query) == TemporalAAHistoryDecision::InvalidExposure, "露出が0なら使わない");
+        query.PreExposure = std::nanf("");
+        Check(history.Evaluate(query) == TemporalAAHistoryDecision::InvalidExposure, "露出が NaN なら使わない");
+        query.PreExposure = INFINITY;
+        Check(history.Evaluate(query) == TemporalAAHistoryDecision::InvalidExposure, "露出が無限なら使わない");
+
+        // 同じフレームの2つ目の Viewport（TAA を掛けない）は、1つ目の履歴を捨てない。
+        history.NotifyViewportWithoutTemporalAA(1u);
+        Check(history.Evaluate(MakeHistoryQuery(11u, 0u)) == TemporalAAHistoryDecision::Reuse,
+              "TAA を掛けない別の Viewport は履歴を途切れさせない");
+        // 履歴を書いた Viewport を TAA 無しで描いたら、その間の画像が履歴に入らないので捨てる。
+        history.NotifyViewportWithoutTemporalAA(0u);
+        Check(history.Evaluate(MakeHistoryQuery(11u, 0u)) == TemporalAAHistoryDecision::NoHistory,
+              "履歴を書いた Viewport を TAA 無しで描いたら捨てる");
+
+        history.Record(MakeHistoryQuery(11u, 0u), camera);
+        history.Invalidate();
+        Check(history.Evaluate(MakeHistoryQuery(12u, 0u)) == TemporalAAHistoryDecision::NoHistory,
+              "捨てた後は履歴が無い");
+    }
+
+    void TestHistoryWithDroppedFrames()
+    {
+        // ゲームのフレーム 1〜30 のうち、RenderThread が 5・9・10・20 を描かずに捨てる。各フレームは
+        // Viewport 0（TAA を掛ける）と Viewport 1（同じフレームの2つ目。TAA を掛けない）を描く。
+        // TemporalAAPass と同じく、使えるかを決めてから、働いたフレームで履歴を書く。
+        const auto isDropped = [](uint64_t frame) { return frame == 5u || frame == 9u || frame == 10u || frame == 20u; };
+        const CameraProxy camera = MakeCamera(ProjectionType::Perspective);
+        TemporalAAHistoryTracker history;
+        uint32_t renderedCount = 0u;
+        uint32_t reusedCount = 0u;
+        uint32_t rebasedCount = 0u;
+        bool bScalesMatch = true;
+        for (uint64_t frame = 1u; frame <= 30u; ++frame)
+        {
+            if (isDropped(frame))
+            {
+                continue;
+            }
+            ++renderedCount;
+            const TemporalAAHistoryQuery query = MakeHistoryQuery(frame, 0u);
+            if (history.Evaluate(query) == TemporalAAHistoryDecision::Reuse)
+            {
+                ++reusedCount;
+                const bool bContiguous = history.IsContiguous(query);
+                rebasedCount += bContiguous ? 0u : 1u;
+                Check(bContiguous == !isDropped(frame - 1u), "直前のフレームが捨てられたときだけ連続でない");
+                // 捨てた数 + 1 フレーム分の時間が経っている（6 は 4 から 2、11 は 8 から 3、21 は 19 から 2）。
+                const double expectedScale = frame == 11u ? 3.0 : (bContiguous ? 1.0 : 2.0);
+                bScalesMatch = bScalesMatch && IsNear(history.ComputeObjectMotionScale(query, 0.01f), expectedScale, 1.0e-4);
+            }
+            history.Record(query, camera);
+            // Viewport 1 は TAA を掛けない。
+            history.NotifyViewportWithoutTemporalAA(1u);
+        }
+        std::printf("history rendered=%u reused=%u rebased=%u\n", renderedCount, reusedCount, rebasedCount);
+        Check(renderedCount == 26u, "30 フレームのうち 26 を描く");
+        Check(reusedCount == 25u, "最初の1回のほかは、捨てたフレームをまたいでも履歴を使う");
+        Check(rebasedCount == 3u, "捨てた並びの直後（6・11・21）の3回は履歴のカメラから求め直す");
+        Check(bScalesMatch, "物体の動きの比は履歴からの経過フレーム数");
+    }
+
+    // 点が view・projection の other カメラから current カメラへ動いた量（画素、currentUV - otherUV に同じ）。
+    // TAA のシェーダーの CameraMotion と velocity の定義（(currentNdc - previousNdc) × 0.5）に合わせる。
+    struct PixelMotion
+    {
+        double X = 0.0;
+        double Y = 0.0;
+    };
+
+    PixelMotion MotionPx(const CameraProxy& current, const Math::Vector3& currentPoint,
+                         const CameraProxy& other, const Math::Vector3& otherPoint)
+    {
+        const Projected a = Project(current, currentPoint);
+        const Projected b = Project(other, otherPoint);
+        return {(a.NdcX - b.NdcX) * 0.5 * Width, (a.NdcY - b.NdcY) * 0.5 * Height};
+    }
+
+    void TestHistoryReprojectionAcrossDroppedFrame()
+    {
+        // 履歴はフレーム 10、パケット 11 は捨てられ、12 を描く。カメラは毎フレーム右へ 0.2 m 動き、
+        // 物体は毎フレーム +x へ 0.05 m 等速で動く。パケットの velocity は 11→12 の動き。
+        CameraProxy camera10 = MakeCamera(ProjectionType::Perspective);
+        CameraProxy camera11 = camera10;
+        CameraProxy camera12 = camera10;
+        camera11.PositionX += 0.2f;
+        camera12.PositionX += 0.4f;
+        const TemporalAAJitter jitter = ComputeTemporalAAJitter(6u, Width, Height);
+        // 今のフレームのジッタを、今・パケットの前・履歴のカメラの3つへ掛ける（TemporalAAPass と同じ）。
+        ApplyTemporalAAJitter(camera12, jitter);
+        ApplyTemporalAAJitter(camera11, jitter);
+        TemporalAAHistoryTracker history;
+        history.Record(MakeHistoryQuery(10u, 0u), camera10);
+        CameraProxy historyCamera = history.GetCamera();
+        ApplyTemporalAAJitter(historyCamera, jitter);
+        const TemporalAAHistoryQuery query = MakeHistoryQuery(12u, 0u);
+        const float scale = history.ComputeObjectMotionScale(query, 0.01f);
+
+        // 静止した点: カメラの動きだけ。
+        const Math::Vector3 still(1.0f, 0.5f, -12.0f);
+        const PixelMotion truth = MotionPx(camera12, still, historyCamera, still);
+        const PixelMotion velocity = MotionPx(camera12, still, camera11, still);
+        const PixelMotion packetCamera = MotionPx(camera12, still, camera11, still);
+        const PixelMotion historyCameraMotion = MotionPx(camera12, still, historyCamera, still);
+        const PixelMotion composed{historyCameraMotion.X + (velocity.X - packetCamera.X) * scale,
+                                   historyCameraMotion.Y + (velocity.Y - packetCamera.Y) * scale};
+        std::printf("still_px truth=(%+.4f, %+.4f) composed=(%+.4f, %+.4f) packet_velocity=(%+.4f, %+.4f)\n",
+                    truth.X, truth.Y, composed.X, composed.Y, velocity.X, velocity.Y);
+        Check(IsNear(composed.X, truth.X, 1.0e-3) && IsNear(composed.Y, truth.Y, 1.0e-3),
+              "静止した点は、フレームが飛んでも履歴の位置へ戻る");
+        Check(std::fabs(velocity.X - truth.X) > 1.0, "パケットの velocity だけでは履歴の位置から1画素以上ずれる（比べる対照）");
+
+        // 等速で動く点: 物体の動きを経過時間の比で伸ばす。
+        const Math::Vector3 moving10(-1.0f, 0.5f, -10.0f);
+        const Math::Vector3 moving11(-0.95f, 0.5f, -10.0f);
+        const Math::Vector3 moving12(-0.9f, 0.5f, -10.0f);
+        const PixelMotion movingTruth = MotionPx(camera12, moving12, historyCamera, moving10);
+        const PixelMotion movingVelocity = MotionPx(camera12, moving12, camera11, moving11);
+        const PixelMotion movingPacketCamera = MotionPx(camera12, moving12, camera11, moving12);
+        const PixelMotion movingHistoryCamera = MotionPx(camera12, moving12, historyCamera, moving12);
+        const PixelMotion movingComposed{
+            movingHistoryCamera.X + (movingVelocity.X - movingPacketCamera.X) * scale,
+            movingHistoryCamera.Y + (movingVelocity.Y - movingPacketCamera.Y) * scale};
+        std::printf("moving_px truth=(%+.4f, %+.4f) composed=(%+.4f, %+.4f) packet_velocity=(%+.4f, %+.4f)\n",
+                    movingTruth.X, movingTruth.Y, movingComposed.X, movingComposed.Y, movingVelocity.X, movingVelocity.Y);
+        Check(IsNear(movingComposed.X, movingTruth.X, 0.05) && IsNear(movingComposed.Y, movingTruth.Y, 0.05),
+              "等速で動く点は、フレームが飛んでも履歴の位置の 0.05 画素以内へ戻る");
+        Check(std::fabs(movingVelocity.X - movingTruth.X) > 1.0,
+              "動く点もパケットの velocity だけでは1画素以上ずれる（比べる対照）");
+
+        // 連続したフレームでは、履歴のカメラはパケットの前のカメラで比は1なので、velocity そのものになる。
+        TemporalAAHistoryTracker contiguous;
+        contiguous.Record(MakeHistoryQuery(11u, 0u), camera11);
+        const float contiguousScale = contiguous.ComputeObjectMotionScale(query, 0.01f);
+        const PixelMotion contiguousComposed{
+            movingPacketCamera.X + (movingVelocity.X - movingPacketCamera.X) * contiguousScale,
+            movingPacketCamera.Y + (movingVelocity.Y - movingPacketCamera.Y) * contiguousScale};
+        Check(IsNear(contiguousComposed.X, movingVelocity.X, 1.0e-9) &&
+                  IsNear(contiguousComposed.Y, movingVelocity.Y, 1.0e-9),
+              "連続したフレームでは velocity での再投影と同じ");
+    }
 } // namespace
 
 int main()
@@ -233,6 +429,9 @@ int main()
     TestProjectionShift();
     TestZeroJitterKeepsProjection();
     TestVelocityExcludesJitter();
+    TestHistoryDecision();
+    TestHistoryWithDroppedFrames();
+    TestHistoryReprojectionAcrossDroppedFrame();
 
     if (GFailureCount != 0)
     {

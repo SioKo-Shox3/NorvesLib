@@ -178,8 +178,8 @@ namespace Game::GameModes
         // --orbit-degrees-per-second で指定したカメラの周回の速さ（度/秒、0で止まったまま）。撮影で
         // 動くカメラの TAA の残像を確かめるのに使う。
         float m_OrbitDegreesPerSecond = 0.0f;
-        // --anti-aliasing=fxaa の指定で false にする（既定は TAA）。
-        bool m_bStartupTemporalAA = true;
+        // --anti-aliasing=taa の指定で true にする（既定は FXAA）。
+        bool m_bStartupTemporalAA = false;
 
         // 手動露出（EV100）。ImGui のスライダーが書き、Tick が絞り・ISO を保ったままシャッター速度へ写す。
         float m_ExposureEV100 = 0.0f;
@@ -187,10 +187,10 @@ namespace Game::GameModes
         // 自動露出（起動画面の既定）。ImGui のチェックボックスが書き、Tick がカメラの露出の方式へ写す。
         bool m_bAutoExposure = true;
         bool m_bAppliedAutoExposure = true;
-        // アンチエイリアシング（起動画面の既定は TAA、切ると FXAA）。ImGui のチェックボックスが書き、
+        // アンチエイリアシング（起動画面の既定は FXAA、入れると TAA）。ImGui のチェックボックスが書き、
         // Tick がカメラのアンチエイリアシングの方式へ写す。
-        bool m_bTemporalAA = true;
-        bool m_bAppliedTemporalAA = true;
+        bool m_bTemporalAA = false;
+        bool m_bAppliedTemporalAA = false;
         // RenderThread が読み戻した自動露出の測定。Tick が統計のスナップショットから写し、ImGui が表示する。
         NorvesLib::Core::Rendering::AutoExposureMeasurement m_AutoExposureMeasurement;
 

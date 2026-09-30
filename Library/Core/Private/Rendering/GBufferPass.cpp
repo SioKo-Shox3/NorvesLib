@@ -1411,7 +1411,8 @@ namespace NorvesLib::Core::Rendering
         instanceBinding.stages = RHI::ShaderStage::Vertex;
         dsDesc.bindings.push_back(instanceBinding);
 
-        for (uint32_t bindingIndex = 8; bindingIndex <= 9; ++bindingIndex)
+        // binding 8-10: スキニングの現在のパレット・頂点・直前のフレームのパレット（DynamicUniformAllocator の配置と同じ）
+        for (uint32_t bindingIndex = 8; bindingIndex <= 10; ++bindingIndex)
         {
             RHI::DescriptorBinding storageBinding;
             storageBinding.binding = bindingIndex;
@@ -1507,7 +1508,8 @@ namespace NorvesLib::Core::Rendering
         instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
         instanceBinding.stages = RHI::ShaderStage::Vertex;
         descriptorSet.bindings.push_back(instanceBinding);
-        for (uint32_t bindingIndex = 8; bindingIndex <= 9; ++bindingIndex)
+        // binding 8-10: スキニングの現在のパレット・頂点・直前のフレームのパレット（DynamicUniformAllocator の配置と同じ）
+        for (uint32_t bindingIndex = 8; bindingIndex <= 10; ++bindingIndex)
         {
             RHI::DescriptorBinding storageBinding;
             storageBinding.binding = bindingIndex;

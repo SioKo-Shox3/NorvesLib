@@ -428,9 +428,10 @@ namespace NorvesLib::Core::Rendering
          * @brief このフレームの Viewport に TAA を掛けるかでパスの有効・無効を切り替える
          *
          * 掛けるときは TAA のパスを有効にして FXAA を外し、掛けないときは TAA のパスを無効にして
-         * 外した FXAA を戻す。無効から有効へ変わったときは TAA の履歴を捨てる。
+         * 外した FXAA を戻す。履歴を書いた Viewport を TAA 無しで描くときは TAA の履歴を捨てる
+         * （同じフレームの2つ目以降の Viewport は履歴に触れない）。
          */
-        void SetTemporalAAApplied(bool bApplied);
+        void SetTemporalAAApplied(bool bApplied, uint32_t viewportId);
 
     private:
         // MeshProxy（WorldからSceneViewに直接渡される）
