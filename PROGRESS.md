@@ -1,4 +1,4 @@
-# PROGRESS — NorvesLib
+﻿# PROGRESS — NorvesLib
 
 ## Done
 
@@ -114,6 +114,7 @@
 
 ## In progress
 
+- 再開（2026-09-30）: 2026-09-27の引き継ぎ後の進捗は`a8588cc`（PROGRESS.md・TASKS.mdのBOMの除去とSS-TAA-P1をdoingへ戻す変更）だけで、コードの変更は無かった。BOMを戻した。SS-TAA-P1は`7461c3e`（未検証の途中保存）から続ける。下の止めていた4項目は各`blocked/<ID>.md`の推奨の選択肢で再開し、TASKS.mdにSS-SKY-MODEL-P1・P2とSS-EMISSIVE-PREEXPOSEを足した（ユーザーの方針: 細かな判断で止めず推奨で完走する）。
 - SS-DAYLIGHT-P1（2026-09-27、blocked）: 起動画面の側を実装した。R2の空を有効にし（仰角40°・方位30°）、シーン独自の方向光を外して、矢印キーとImGui（「空の太陽」ウィンドウ）の角度を`SkySunControl.h`で空の太陽の仰角・方位へ写す（太陽は地平線より下へ行かない。Leaveで空を無効へ戻す）。`f90e7ea`の露出補正を外してf/16・1/100 s・ISO 100（EV100 約14.6）、点光源は1600 lm、発光球は1800 nits。影は地面にくっきり落ちるが、空のモデル（`EvaluateHillaireSkyReference`）が暗く（天頂732 nits、水平面の空の照度は全体の5.7%）、地平線の付近が橙、地平線より下が黒のため、「青い昼の空」を満たさない。空のモデルを直すとR2の空のgoldenとPT参照が変わるので、判断を`blocked/SS-DAYLIGHT-P1.md`に書いて止めた（推奨はSS-SKY-MODELを先に行う）。
 - SS-POMの評価の指摘（点光源の近くで法線の緑の向きを確かめる）は未対応。昼の屋外では向きの分かる空の太陽で、太陽側の石の斜面が明るいことを`nor_gl`/`nor_dx`で比べて確かめられる。
 
@@ -124,7 +125,7 @@
 ## Next
 
 - SS-BLOOM-MIPCHAINの評価指摘2（仰角45°の太陽を画角に入れた撮影）は`-SunAzimuth`で撮れるようになった。
-- 起動画面（Rendering3DTest）の描画改善をTASKS.mdの`SS-`の20項目で進める（ブランチ`feature/startup-scene-rendering`）。先頭はSS-CAPTURE（撮影経路）で、以降の見た目の証拠はその撮影で確かめる。R8までの残りの`todo`10件は`backlog`にした。
+- 起動画面（Rendering3DTest）の描画改善をTASKS.mdの`SS-`の項目で進める（ブランチ`feature/startup-scene-rendering`）。見た目の証拠は`Scripts/CaptureStartupScene.ps1`の撮影で確かめる。R8までの残りの`todo`10件は`backlog`にした。順序はSS-TAA-P1 → SS-SKY-MODEL-P1・P2 → SS-DAYLIGHT-P1・P2 → SS-POINT-SHADOW-P2（夜）→ SS-EMISSIVE-PREEXPOSE → SS-EMISSIVE-GLOW → SS-TAA-P2以降。
 - R8は完了（2026-09-26）。R3・R5は受入れ記録（`R3Acceptance.md`・`R5Acceptance.md`）があるが、ロードマップの表は未着手のままで完了のtrailerも無い（整理が残る）。ほかはTASKS.mdの修正・改善の項目。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。R7-O3の既知差はRTGI-HIT-SPECULAR・RTGI-MULTI-BOUNCE・FIX-CSM-TERMINATOR・FIX-GRAZING-IBL-SPECULARとして残す。
 
 ## Notes
