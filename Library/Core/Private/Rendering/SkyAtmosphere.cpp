@@ -525,8 +525,13 @@ namespace NorvesLib::Core::Rendering
                         sunTransmittanceChannels[channel] +
                     scattering * multipleScatteringChannels[channel];
                 // 区間の中で媒質を一定とみなした (1 - e^(-σt·Δt)) / σt の積分。
-                const double stepTransmittance = std::exp(-extinction * segment);
-                const double integral = (1.0 - stepTransmittance) / extinction;
+                // 光学的厚さが極小の区間（密度が0へ落ちた上空を含む）では、0/0と桁落ちを避けて
+                // Δt·(1 - σt·Δt/2) の展開を使う。
+                const double opticalStep = extinction * segment;
+                const double stepTransmittance = std::exp(-opticalStep);
+                const double integral = opticalStep > 1.0e-6
+                    ? (1.0 - stepTransmittance) / extinction
+                    : segment * (1.0 - 0.5 * opticalStep);
                 inscattering[channel] += throughput[channel] * source * integral;
                 transfer[channel] += throughput[channel] * scattering * integral;
                 throughput[channel] *= stepTransmittance;

@@ -333,7 +333,9 @@ namespace
                                               sunTransmittance[channel] +
                                           (rayleigh + mie) * psi[channel];
                     const double stepTransmittance = std::exp(-extinction * segment);
-                    const double integral = (1.0 - stepTransmittance) / extinction;
+                    const double integral = extinction > 0.0
+                        ? -std::expm1(-extinction * segment) / extinction
+                        : segment;
                     outInscattering[channel] += outThroughput[channel] * source * integral;
                     outTransfer[channel] += outThroughput[channel] * (rayleigh + mie) * integral;
                     outThroughput[channel] *= stepTransmittance;
@@ -742,6 +744,46 @@ namespace
                "低い太陽の透過光は赤い");
     }
 
+    // 許される最小の尺度高さでは上空の密度が0へ落ち、消散係数0の区間ができる。
+    // その区間でも積分が0/0にならず、天頂・真下・地表の照度が有限で有効なままであること。
+    void TestZeroExtinctionSegmentsStayFinite()
+    {
+        SkyAtmosphereParameters parameters = MakeDefaultSkyAtmosphereParameters();
+        parameters.bEnabled = true;
+        parameters.SunAltitudeDegrees = 40.0f;
+        parameters.RayleighScaleHeightMeters = 100.0f;
+        parameters.MieScaleHeightMeters = 100.0f;
+        const SkyAtmosphereParameters sanitized = SanitizeSkyAtmosphereParameters(parameters);
+        Expect(sanitized.RayleighScaleHeightMeters == 100.0f &&
+                   sanitized.MieScaleHeightMeters == 100.0f,
+               "尺度高さ100 mは許される範囲に入る");
+
+        const SkyAtmosphereModel model(parameters);
+        const SkyRadianceSample zenith =
+            model.EvaluateViewRadiance(NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f));
+        ExpectFiniteVector(zenith.Radiance, "小さな尺度高さでも天頂は有限");
+        Expect(zenith.bValid, "小さな尺度高さでも天頂は有効");
+
+        const SkyRadianceSample nadir =
+            model.EvaluateViewRadiance(NorvesLib::Math::Vector3(0.0f, -1.0f, 0.0f));
+        ExpectFiniteVector(nadir.Radiance, "小さな尺度高さでも真下は有限");
+        Expect(nadir.bValid && nadir.Radiance.x > 0.0f && nadir.Radiance.y > 0.0f &&
+                   nadir.Radiance.z > 0.0f,
+               "小さな尺度高さでも真下は0でない地面を返す");
+
+        const NorvesLib::Math::Vector3 groundSky = model.GetGroundSkyIlluminance();
+        ExpectFiniteVector(groundSky, "小さな尺度高さでも地表の空の照度は有限");
+        Expect(groundSky.x >= 0.0f && groundSky.y >= 0.0f && groundSky.z >= 0.0f,
+               "小さな尺度高さでも地表の空の照度は負にならない");
+        ExpectFiniteVector(ComputeSunGroundIlluminance(parameters),
+                           "小さな尺度高さでも太陽の地表照度は有限");
+        const SkyRadianceSample reference = EvaluateHillaireSkyReference(
+            parameters, NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f));
+        Expect(reference.bValid, "小さな尺度高さでも参照の入口は有効");
+        PrintVector("scale100 zenith", zenith.Radiance);
+        PrintVector("scale100 nadir", nadir.Radiance);
+    }
+
     void TestSunDiskPreExposureContract()
     {
         SkyAtmosphereParameters parameters = MakeDefaultSkyAtmosphereParameters();
@@ -915,7 +957,7 @@ namespace
             const SkyRadianceSample batched = model.EvaluateViewRadiance(direction);
             Expect(viewed.bValid && reference.bValid && batched.bValid &&
                        viewed.MeanSunTransmittance == reference.MeanSunTransmittance,
-                   "viewed sky keeps the reference validity and sun transmittance");
+                   "地表から見た空は参照と同じ有効性と太陽の透過率を持つ");
             Expect(SameVector(viewed.Radiance, reference.Radiance) &&
                        SameVector(batched.Radiance, reference.Radiance),
                    "地表から見た空・参照の入口・評価器が同じ値を返す");
@@ -979,6 +1021,7 @@ int main()
     TestSkyViewTableMatchesDirectEvaluation();
     TestClearSkyPhysicalRanges();
     TestLowSunIsOrange();
+    TestZeroExtinctionSegmentsStayFinite();
     TestSunDiskPreExposureContract();
     TestSunGroundIlluminanceContract();
     TestSkyViewRadianceContract();
