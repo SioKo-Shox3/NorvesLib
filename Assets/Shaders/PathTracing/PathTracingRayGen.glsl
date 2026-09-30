@@ -123,14 +123,9 @@ vec3 MissRadiance(vec3 direction, bool primaryRay, float bsdfPdf)
         return parameters.skyState.w > 0.5 ? vec3(0.0)
                                             : EnvironmentRadiance(direction) * PreExposure();
     }
+    // 空のradiance LUTは視線の透過率と地平線より下の地面を含むので、そのまま使う。
     vec3 sky = textureLod(skyRadiance, EquirectangularUV(direction), 0.0).rgb;
     vec4 disk = textureLod(skySunDisk, vec2(0.5), 0.0);
-    if (disk.a > 0.5)
-    {
-        sky *= clamp(textureLod(skyTransmittance,
-                                vec2(clamp(direction.y, 0.0, 1.0), 0.0),
-                                0.0).rgb, vec3(0.0), vec3(1.0));
-    }
     sky *= parameters.skyState.x;
     bool bInsideSun = dot(direction, parameters.skySunDirectionAndCosRadius.xyz) >=
                       parameters.skySunDirectionAndCosRadius.w;

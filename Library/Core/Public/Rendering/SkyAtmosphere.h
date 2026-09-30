@@ -1,6 +1,9 @@
 ﻿#pragma once
 
+#include "Container/VariableArray.h"
 #include "Math/Vector3.h"
+
+#include <cstdint>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -30,13 +33,14 @@ namespace NorvesLib::Core::Rendering
         float RayleighScaleHeightMeters = 8000.0f;
         float MieScaleHeightMeters = 1200.0f;
         float MieAnisotropy = 0.8f;
-        Math::Vector3 GroundAlbedo = Math::Vector3(0.1f, 0.1f, 0.1f);
+        Math::Vector3 GroundAlbedo = Math::Vector3(0.3f, 0.3f, 0.3f);
     };
 
     /**
-     * @brief 空の参照評価結果
+     * @brief 空の評価結果
      *
-     * R2-P1ではCPUの数値契約に使う。LUTとGPUの接続は後続タスクが担当する。
+     * Radianceは観測点から見た放射輝度（cd/m^2、RGB）。MeanSunTransmittanceは地表での
+     * 太陽の透過率（ComputeSunGroundTransmittance）のRGBの平均。
      */
     struct SkyRadianceSample
     {
@@ -59,29 +63,135 @@ namespace NorvesLib::Core::Rendering
                                                        float azimuthDegrees);
 
     /**
-     * @brief Hillaire 2020系の空実装へ突き合わせるCPU参照サンプルを評価する
+     * @brief 2組の空のパラメータが全項目で等しいか
      *
-     * R2-P1では数値契約を安定させるための平行大気・単一散乱参照経路とする。
-     * SunLuminanceNitsは可視太陽ディスクの放射輝度として扱い、固定した太陽
-     * ディスク立体角で積分した等価照度を散乱源に使う。後続LUTも同じ単位・
-     * sanitize済み入力・float精度の参照条件で突き合わせる。
-     * 球殻の有限曲率、多重散乱、地表からの反射はこの参照の適用範囲外であり、
-     * 視線経路の減光、オゾン吸収、Mie消散、球殻の有限曲率、多重散乱、地表から
-     * の反射はこの参照の適用範囲外であり、PlanetRadiusMeters/AtmosphereHeightMeters/
-     * GroundAlbedoは後続LUT用に保持・正規化するが、P1の平行大気評価では使用しない。
-     * ここで固定する値はP1のCPU回帰アンカーであり、P2 LUTの受入れ目標値ではない。
+     * LUT・空由来のIBLを作り直すかどうかの判定に使う（sanitize済みの値どうしで比べる）。
+     */
+    bool AreSkyAtmosphereParametersEqual(const SkyAtmosphereParameters& lhs,
+                                         const SkyAtmosphereParameters& rhs);
+
+    /**
+     * @brief 空のパラメータ1組に対する前計算を持つ、球殻の大気の評価器
+     *
+     * 惑星（PlanetRadiusMeters）と大気（AtmosphereHeightMeters）を同心球とし、Rayleigh・Mieの
+     * 散乱係数×高度の指数密度とオゾンの吸収の媒質を視線に沿ってレイマーチする（Hillaire 2020）。各点で
+     * 太陽への透過率（同じ密度の光学的深さの積分）と位相関数で単一散乱を求め、2次以降の散乱は
+     * 等方の多重散乱 Ψ_ms = L_2nd / (1 - f_ms) の表で足す。視線の透過率は区間ごとの
+     * (1 - e^(-τ)) で積分するので、地平線の付近は飽和して白っぽくなる。地平線より下の視線は
+     * 地面（GroundAlbedoのランバート面を透過した太陽と空の照度で照らしたもの）に、そこまでの
+     * 透過率を掛けた値と、そこまでの散乱を返す。
+     *
+     * 前計算（太陽への透過率の表・多重散乱の表・地表の空の照度）は構築時に1回だけ行う。
+     * LUT・空由来のIBLのように多くの方向を評価する側は、1つ作って使い回す。
+     */
+    class SkyAtmosphereModel
+    {
+    public:
+        explicit SkyAtmosphereModel(const SkyAtmosphereParameters& parameters);
+
+        /** sanitize済みのパラメータ */
+        const SkyAtmosphereParameters& GetParameters() const { return m_Parameters; }
+
+        /**
+         * @brief 観測点（地表から ObserverAltitudeMeters の高さ）からviewDirectionを見た放射輝度
+         *
+         * 空が無効、または方向が0・非有限ならbValid=falseで放射輝度0。
+         */
+        SkyRadianceSample EvaluateViewRadiance(const Math::Vector3& viewDirection) const;
+
+        /**
+         * @brief 仰角×太陽からの方位差の表（sky-view）を作る
+         *
+         * 空の放射輝度は太陽を含む鉛直面について対称なので、正距円筒のLUT・空由来のIBLのように
+         * 多くの方向を評価する側は、この表を1回作ってSampleSkyViewで補間する（直接の評価より
+         * レイマーチの回数が1桁少ない）。仰角は観測点の地平線（わずかに下向き）を境に両側へ、
+         * 方位差は太陽の側を細かくする。
+         */
+        void BuildSkyViewTable();
+
+        /** BuildSkyViewTableの表を補間した放射輝度。表が無ければEvaluateViewRadianceと同じ。 */
+        SkyRadianceSample SampleSkyView(const Math::Vector3& viewDirection) const;
+
+        /** 地表での太陽の透過率（RGB）。ComputeSunGroundTransmittanceと同じ値。 */
+        const Math::Vector3& GetSunGroundTransmittance() const
+        {
+            return m_SunGroundTransmittance;
+        }
+
+        /**
+         * @brief 前計算した表から引く大気の透過率（RGB）
+         *
+         * ComputeAtmosphereTransmittanceと同じ積分の表を、光学的深さで補間する。透過率LUTを
+         * 埋めるときのように多くの点を引く側が使う。空が無効なら0。
+         */
+        Math::Vector3 GetTransmittance(float altitudeFraction, float cosine) const;
+
+        /** 地表の水平面に届く空の照度（太陽円盤を除く、lux、RGB） */
+        Math::Vector3 GetGroundSkyIlluminance() const;
+
+        /** 空の放射輝度を評価する観測点の地表からの高さ（m） */
+        static constexpr float ObserverAltitudeMeters = 100.0f;
+
+    private:
+        struct Rgb
+        {
+            float r = 0.0f;
+            float g = 0.0f;
+            float b = 0.0f;
+        };
+
+        struct MarchResult
+        {
+            Rgb Inscattering;
+            Rgb Throughput;
+            Rgb Transfer;
+            bool bHitGround = false;
+            double GroundNormal[3] = {0.0, 0.0, 0.0};
+        };
+
+        void BuildTransmittanceTable();
+        void BuildMultipleScatteringTable();
+        void BuildGroundSkyIrradiance();
+
+        Rgb LookupTransmittance(double radius, double cosine) const;
+        Rgb LookupMultipleScattering(double radius, double sunCosine) const;
+        MarchResult March(const double origin[3],
+                          const double direction[3],
+                          const double sunDirection[3],
+                          uint32_t stepCount,
+                          bool bIsotropicSingleScattering,
+                          bool bIncludeMultipleScattering) const;
+
+        double SkyViewRowToElevation(uint32_t row) const;
+
+        SkyAtmosphereParameters m_Parameters;
+        double m_SunDirection[3] = {0.0, 1.0, 0.0};
+        double m_SunAzimuth = 0.0;
+        double m_HorizonElevation = 0.0;
+        float m_SunDiskIrradiance = 0.0f;
+        Math::Vector3 m_SunGroundTransmittance = Math::Vector3::Zero;
+        Rgb m_GroundSkyIrradiance;
+        Container::VariableArray<float> m_TransmittanceTable;
+        Container::VariableArray<float> m_MultipleScatteringTable;
+        Container::VariableArray<float> m_SkyViewTable;
+    };
+
+    /**
+     * @brief 観測点から見た空の放射輝度をSkyAtmosphereModelで評価する
+     *
+     * 1方向だけ評価する入口で、呼ぶたびに前計算を作る。多くの方向を評価するときは
+     * SkyAtmosphereModelを1つ作って使う。SunLuminanceNitsは可視太陽ディスクの放射輝度として
+     * 扱い、固定した太陽ディスク立体角で積分した照度を散乱源に使う。
      */
     SkyRadianceSample EvaluateHillaireSkyReference(
         const SkyAtmosphereParameters& parameters,
         const Math::Vector3& viewDirection);
 
     /**
-     * @brief 地表から見た空の放射輝度（散乱光×地表からの視線方向の透過率）
+     * @brief 地表の観測点から見た空の放射輝度（EvaluateHillaireSkyReferenceと同じ値）
      *
-     * EvaluateHillaireSkyReferenceの散乱光に、地表からviewDirectionへの大気の透過率
-     * （ComputeAtmosphereTransmittance、高度0）を掛ける。空のradiance LUT、空由来のIBL、
-     * ラスタの背景、PTの不交差、RTGI・DDGIの不交差は、この値を同じ空として共有する。
-     * bValidとMeanSunTransmittanceはEvaluateHillaireSkyReferenceと同じ。
+     * 視線の透過率はレイマーチの中で積分済みなので、別に透過率を掛けない。空のradiance LUT、
+     * 空由来のIBL、ラスタの背景、PTの不交差、RTGI・DDGIの不交差は、この値を同じ空として共有する。
      */
     SkyRadianceSample EvaluateSkyViewRadiance(
         const SkyAtmosphereParameters& parameters,
@@ -93,8 +203,10 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief 大気を通る光の透過率（RGB）を求める
      *
-     * 透過率LUTと同じ式で、Rayleighの波長別の散乱とMieの散乱を、高度の密度と
-     * 平行大気の光路長（天頂からの余弦、下限0.05）で指数減衰させる。
+     * 高度 altitudeFraction×AtmosphereHeightMeters の点から天頂との余弦 cosine の向きに、
+     * 大気の上端まで Rayleigh・Mie の消散係数とオゾンの吸収係数×高度の密度を数値積分した
+     * 光学的深さの指数減衰。
+     * 光路が惑星に当たるなら0。透過率LUT・空の太陽の地表照度・空の評価はこの積分を共有する。
      * altitudeFractionは0が地表、1が大気の上端で、範囲外は丸める。
      */
     Math::Vector3 ComputeAtmosphereTransmittance(

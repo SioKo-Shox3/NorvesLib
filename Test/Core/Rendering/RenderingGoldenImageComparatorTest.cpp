@@ -98,6 +98,8 @@ namespace
         const float sunDiskCosine = std::cos(R2GoldenSunDiskRadius);
         const float sunDisk = ComputeSunDiskPreExposedLuminance(
             parameters, R2GoldenPreExposure);
+        // 前計算を1回だけ作り、全画素で使い回す。
+        const SkyAtmosphereModel skyModel(parameters);
 
         constexpr float tangentHalfFov = 0.5773502691896258f;
         for (uint32_t y = 0u; y < image.Height; ++y)
@@ -112,8 +114,7 @@ namespace
                     screenX * tangentHalfFov,
                     screenY * tangentHalfFov,
                     1.0f));
-                const SkyRadianceSample sample = EvaluateHillaireSkyReference(
-                    parameters, viewDirection);
+                const SkyRadianceSample sample = skyModel.EvaluateViewRadiance(viewDirection);
                 float red = std::max(0.0f, sample.Radiance.x * R2GoldenPreExposure);
                 float green = std::max(0.0f, sample.Radiance.y * R2GoldenPreExposure);
                 float blue = std::max(0.0f, sample.Radiance.z * R2GoldenPreExposure);

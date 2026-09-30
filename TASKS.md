@@ -27,7 +27,7 @@
 - notes: 原因は `8c80695` で余接フレームが正しい向きになり、それまで打ち消し合っていた「高さを深さとして読む」反転だけが残ったこと。境界の歪みは、正規直交でない余接フレームで `viewDirTS.z` が N·V より大きくなり、`842070e` の輪郭フェードが効かなくなったため（`842070e` の修正自体は残っている）。`megageometry.frag` には `842070e` が入っておらず、`forward_transparent.frag`・`megageometry.frag` は古い閾値 `1e-8` のまま。
 
 ## SS-SKY-MODEL-P1: 空のモデルを球殻の大気のレイマーチと多重散乱の近似にし、地平線より下を地面として返す
-- status: todo
+- status: done
 - done-when: `SkyAtmosphere.cpp` の `EvaluateHillaireSkyReference` を、平行平板の τ·e^(-τ) の近似から、球の惑星（`PlanetRadiusMeters`・`AtmosphereHeightMeters`）の大気を視線に沿ってレイマーチする形へ置き換える。各点で Rayleigh・Mie の散乱係数×高度の密度、太陽への透過率（同じ密度の光学的深さの積分）、位相関数で単一散乱を積分し、Hillaire 2020 の等方の多重散乱（2次以降の散乱を ψ_ms と 1/(1−f_ms) の等比級数で近似。前計算の小さな表か解析近似）を足す。視線の透過率は (1−e^(−τ)) の飽和で扱われ、地平線の付近が橙でなく白っぽくなる。地平線より下の視線は0を返さず、地面（`GroundAlbedo` のランバート面を太陽の透過光と空の照度で照らしたもの）の反射に透過率を掛けた値と、そこまでの散乱を返す。透過率LUT・空の太陽の地表照度（`ComputeSunGroundIlluminance`）・`EvaluateSkyViewRadiance` も同じ密度の積分に揃える（空の太陽の方向光と空の背景・空由来のIBLの間で太陽の透過率が食い違わない）。CPUのテスト `SkyAtmosphereModelTest` のアンカーを、テスト側に置いた細かい刻みの独立な数値積分と次の物理量の範囲で置き換える：太陽仰角40°で天頂が青（B > G > R）、天頂の輝度 約2000〜8000 nits、水平面の空の照度が太陽を含む全天の照度の10〜30%、太陽と反対側の地平線の R/B が0.5〜1.2、地平線より下が0でなく有限、仰角3°で太陽の周りが橙。空の放射輝度LUT・透過率LUTの生成は空のパラメータ（太陽の向きを含む）が変わったときだけ走り、1回の生成時間をログに出す（起動画面の解像度で1回 150 ms を超えるなら刻み・解像度を減らすか、生成をGPUへ移す）。撮影の昼（45°）の低角度で空が上ほど濃い青・地平線が白っぽく明るく、既定視点で地面の外（遠景）が黒くない。夕（3°）で太陽側の地平線が橙になる。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game SkyAtmosphereModelTest RenderingGoldenImageTest -- /m:1`

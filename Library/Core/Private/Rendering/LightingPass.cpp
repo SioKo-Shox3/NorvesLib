@@ -709,23 +709,6 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    static bool AreSkyAtmosphereParametersEqual(const SkyAtmosphereParameters& lhs,
-                                                const SkyAtmosphereParameters& rhs)
-    {
-        return lhs.bEnabled == rhs.bEnabled &&
-               lhs.SunAltitudeDegrees == rhs.SunAltitudeDegrees &&
-               lhs.SunAzimuthDegrees == rhs.SunAzimuthDegrees &&
-               lhs.SunLuminanceNits == rhs.SunLuminanceNits &&
-               lhs.PlanetRadiusMeters == rhs.PlanetRadiusMeters &&
-               lhs.AtmosphereHeightMeters == rhs.AtmosphereHeightMeters &&
-               lhs.RayleighScaleHeightMeters == rhs.RayleighScaleHeightMeters &&
-               lhs.MieScaleHeightMeters == rhs.MieScaleHeightMeters &&
-               lhs.MieAnisotropy == rhs.MieAnisotropy &&
-               lhs.GroundAlbedo.x == rhs.GroundAlbedo.x &&
-               lhs.GroundAlbedo.y == rhs.GroundAlbedo.y &&
-               lhs.GroundAlbedo.z == rhs.GroundAlbedo.z;
-    }
-
     static float ClampSkyRadianceForFp16(float value)
     {
         constexpr float kFp16SafeMax = 65504.0f * 0.9f;
@@ -776,13 +759,15 @@ namespace NorvesLib::Core::Rendering
         }
 
         outSource.resize(pixelCount * 4u, 0.0f);
+        SkyAtmosphereModel model(sanitized);
+        model.BuildSkyViewTable();
         for (uint32_t y = 0u; y < height; ++y)
         {
             for (uint32_t x = 0u; x < width; ++x)
             {
-                // 空のradiance LUTと同じ、地表から見た空（散乱光×視線方向の透過率）。
-                const SkyRadianceSample sample = EvaluateSkyViewRadiance(
-                    sanitized, SkyDirectionFromEquirectangular(x, y, width, height));
+                // 空のradiance LUTと同じ、観測点から見た空（視線の透過率と地面を含む）。
+                const SkyRadianceSample sample = model.SampleSkyView(
+                    SkyDirectionFromEquirectangular(x, y, width, height));
                 if (!sample.bValid || !std::isfinite(sample.Radiance.x) ||
                     !std::isfinite(sample.Radiance.y) ||
                     !std::isfinite(sample.Radiance.z))

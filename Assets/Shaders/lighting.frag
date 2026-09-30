@@ -1020,16 +1020,10 @@ void main()
 
             // equirectangular環境マップをサンプリング（LOD 0 = 最高解像度）
             vec2 envUV = EquirectangularUV(rayDir);
+            // 空のradiance LUTは視線の透過率と地平線より下の地面を含むので、そのまま使う。
             vec4 skySample = textureLod(envMap, envUV, 0.0);
             vec3 skyColor = skySample.rgb;
             vec4 sunDiskSample = textureLod(skySunDisk, vec2(0.5), 0.0);
-            if (sunDiskSample.a > 0.5)
-            {
-                vec3 transmittance = textureLod(skyTransmittance,
-                                                vec2(clamp(rayDir.y, 0.0, 1.0), 0.0),
-                                                0.0).rgb;
-                skyColor *= clamp(transmittance, vec3(0.0), vec3(1.0));
-            }
             vec3 sunDirection = normalize(params.skySunDirectionAndCosRadius.xyz);
             float sunDiskMask = step(params.skySunDirectionAndCosRadius.w,
                                      dot(rayDir, sunDirection));
