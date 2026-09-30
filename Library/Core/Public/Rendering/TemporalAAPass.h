@@ -19,11 +19,11 @@ namespace NorvesLib::Core::Rendering
      * ライティング・半透明までを描く。前のカメラにも同じジッタを掛けるので、velocity と空の再投影には
      * ジッタが入らない。このパスは:
      * 1. SceneColor（SSR の後の色、無ければ Scene.Color）の3×3の近傍から YCoCg の平均と分散を求める。
-     * 2. 近傍で最も手前の画素について、カメラの動きを履歴を書いたフレームのカメラから深度で求め、
-     *    物体自身の動き（velocity からパケットの前のカメラによる動きを引いた分）を履歴からの経過時間へ
-     *    伸ばして足し、履歴を再投影する（RenderThread がパケットを飛ばしても履歴の位置を指す。連続した
-     *    フレームでは velocity での再投影と同じ）。平均 ± 標準偏差の箱へクリップし、露出が変わったら
-     *    履歴を今の露出へ合わせる。
+     * 2. 近傍で最も手前の画素の velocity（空は前のカメラからのカメラの動き）で履歴を再投影し、
+     *    平均 ± 標準偏差の箱へクリップし、露出が変わったら履歴を今の露出へ合わせる。velocity の基準は
+     *    履歴を書いたフレームに揃える（描画がゲームのフレームを飛ばしたときは、物体の前の変換を
+     *    RenderingCoordinator が、前のカメラを SceneView が履歴のフレームのものへ付け替える）。揃わない
+     *    フレームでは履歴を使わない。
      * 3. 現在の色と輝度で重み付けして混ぜ、結果を次のフレームの履歴に残して SceneColor へ書き戻す。
      * 履歴が無い（最初のフレーム・カメラの切り替え・寸法の変更・その Viewport を TAA 無しで描いた後）ときや、
      * 再投影が画面の外に出た画素は現在の色だけを使う。無効（既定）のときは何もしない。
@@ -69,6 +69,12 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        /** @brief 描画がフレームを飛ばしたときに前のカメラにする、履歴を書いたフレームのカメラ（無ければ null）。 */
+        const CameraProxy* FindReprojectionCamera(uint32_t viewportId, uint64_t cameraId, uint64_t frameNumber) const
+        {
+            return m_History.FindReprojectionCamera(viewportId, cameraId, frameNumber);
+        }
+
         /** @brief 履歴を捨てる（次に働くフレームは現在の色だけを使う）。 */
         void InvalidateHistory() { m_History.Invalidate(); }
 
@@ -109,13 +115,15 @@ namespace NorvesLib::Core::Rendering
         RHI::Format m_CurrentFormat = RHI::Format::UNKNOWN;
 
         uint32_t m_HistoryWriteIndex = 0u;
-        // 履歴を書いたフレームの番号・時刻・Viewport・カメラ・露出。
+        // 履歴を書いたフレームの番号・Viewport・カメラ・露出。
         TemporalAAHistoryTracker m_History;
-        // 履歴を使ったフレーム数、そのうちパケットが飛んだ（カメラを履歴のフレームから求め直した）フレーム数、
-        // 履歴があったのに使わなかったフレーム数（終了時にログへ出す）。
+        // 履歴を使ったフレーム数、そのうち描画がゲームのフレームを飛ばした（velocity の基準を履歴のフレームへ
+        // 付け替えた）フレーム数、履歴があったのに使わなかったフレーム数と、そのうち velocity の物体の基準が
+        // 揃わなかったフレーム数（終了時にログへ出す）。
         uint64_t m_HistoryReusedFrameCount = 0u;
         uint64_t m_HistoryRebasedFrameCount = 0u;
         uint64_t m_HistoryRejectedFrameCount = 0u;
+        uint64_t m_HistoryObjectStateMismatchCount = 0u;
 
         // BeginFrame が決めたこのフレームのジッタと、それを受け取った Viewport。
         uint64_t m_JitterIndex = 0u;

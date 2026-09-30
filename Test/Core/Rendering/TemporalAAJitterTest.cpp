@@ -4,17 +4,21 @@
 // - 列: 1〜8番目の基数2・3の radical inverse、8フレームで一巡、各点が画素内（-0.5〜0.5）で互いに異なる。
 // - 投影: 透視・正射影で、どの深度の点も NDC が同じ量（2 × 画素 / 寸法）だけずれ、z と w は変わらない。
 // - velocity: 現在と前のカメラに同じジッタを掛けると、2つの NDC の差はジッタを掛けないときと同じになる。
-// - 履歴: 同じ Viewport・同じカメラが前に描いたフレームの履歴を使う。描画がフレームを飛ばしても（10 を描いて
-//   11 を飛ばし 12 を描く）履歴は使い、カメラの動きは履歴のカメラから求め直し、物体の動きは経過時間の比で伸ばす。
-//   このとき静止した点・等速で動く点が履歴の位置へ戻ること、パケットの velocity だけではずれること（対照）を確かめる。
+// - 履歴: 同じ Viewport・同じカメラが前に描いたフレームの履歴を、velocity の基準（物体の前の変換）が履歴の
+//   フレームを指すときだけ使う。描画がフレームを飛ばしたとき（10 を描いて 11 を飛ばし 12 を描く）は、
+//   RenderedObjectHistory がパケットの前の変換を 10 へ付け替え、前のカメラは履歴のカメラにする。動いて止まる・
+//   動いて戻る・等速の物体と、カメラも動く場合で、velocity が履歴の位置へ戻ること、パケットの velocity のまま
+//   ではずれること（対照）、付け替えなければ基準が食い違って履歴を使わないこと（対照）を確かめる。
 //   TAA を掛けない2つ目の Viewport は1つ目の履歴を途切れさせず、履歴を書いた Viewport を TAA 無しで描いたら捨てる。
 #include "Rendering/TemporalAA.h"
+#include "Rendering/RenderedObjectHistory.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Math/MatrixUtils.h"
 
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 using namespace NorvesLib::Core::Rendering;
 namespace Math = NorvesLib::Math;
@@ -229,17 +233,40 @@ namespace
               "現在のカメラだけにジッタを掛けると velocity にジッタが入る（比べる対照）");
     }
 
-    // ゲームのフレーム番号 frame（時刻は frame × 10 ms）の問い合わせ。
-    TemporalAAHistoryQuery MakeHistoryQuery(uint64_t frameNumber, uint32_t viewportId)
+    // 点が view・projection の other カメラから current カメラへ動いた量（画素、currentUV - otherUV に同じ）。
+    // TAA のシェーダーの CameraMotion と velocity の定義（(currentNdc - previousNdc) × 0.5）に合わせる。
+    struct PixelMotion
+    {
+        double X = 0.0;
+        double Y = 0.0;
+    };
+
+    PixelMotion MotionPx(const CameraProxy& current, const Math::Vector3& currentPoint,
+                         const CameraProxy& other, const Math::Vector3& otherPoint)
+    {
+        const Projected a = Project(current, currentPoint);
+        const Projected b = Project(other, otherPoint);
+        return {(a.NdcX - b.NdcX) * 0.5 * Width, (a.NdcY - b.NdcY) * 0.5 * Height};
+    }
+
+    // ゲームのフレーム番号 frameNumber の問い合わせ。velocity の物体の前の変換は previousObjectFrame を指す。
+    TemporalAAHistoryQuery MakeHistoryQuery(uint64_t frameNumber, uint32_t viewportId, uint64_t previousObjectFrame)
     {
         TemporalAAHistoryQuery query;
         query.FrameNumber = frameNumber;
-        query.TotalTime = static_cast<double>(frameNumber) * 0.01;
         query.ViewportId = viewportId;
         query.CameraId = 7u;
         query.PreExposure = 1.0e-4f;
         query.bHasPreviousCamera = true;
+        query.PreviousObjectStateFrameNumber = previousObjectFrame;
+        query.bPreviousObjectStateComplete = true;
         return query;
+    }
+
+    // 直前のフレームの変換を指す（連続したフレームの）問い合わせ。
+    TemporalAAHistoryQuery MakeHistoryQuery(uint64_t frameNumber, uint32_t viewportId)
+    {
+        return MakeHistoryQuery(frameNumber, viewportId, frameNumber - 1u);
     }
 
     void TestHistoryDecision()
@@ -256,15 +283,25 @@ namespace
         Check(history.Evaluate(MakeHistoryQuery(11u, 0u)) == TemporalAAHistoryDecision::Reuse,
               "直前のフレームに同じ Viewport が書いた履歴は使う");
         Check(history.IsContiguous(MakeHistoryQuery(11u, 0u)), "直前のフレームなら連続");
-        Check(history.ComputeObjectMotionScale(MakeHistoryQuery(11u, 0u), 0.01f) == 1.0f, "連続なら物体の動きの比は1");
-        // 描画が 11 を飛ばして 12 を描く: 履歴は使い、カメラは履歴のカメラから求め直し、物体の動きは2倍に伸ばす。
-        Check(history.Evaluate(MakeHistoryQuery(12u, 0u)) == TemporalAAHistoryDecision::Reuse,
-              "フレームが飛んでも履歴は使う");
-        Check(!history.IsContiguous(MakeHistoryQuery(12u, 0u)), "飛んだフレームは連続でない");
-        Check(IsNear(history.ComputeObjectMotionScale(MakeHistoryQuery(12u, 0u), 0.01f), 2.0, 1.0e-5),
-              "飛んだフレームの物体の動きの比は経過時間 / パケットの経過時間");
-        Check(history.ComputeObjectMotionScale(MakeHistoryQuery(12u, 0u), 0.0f) == 1.0f,
-              "パケットの経過時間が0なら比は1");
+        Check(history.FindReprojectionCamera(0u, 7u, 11u) == nullptr,
+              "連続したフレームではパケットの前のカメラをそのまま使う");
+
+        // 描画が 11 を飛ばして 12 を描く: 物体の前の変換が履歴のフレーム 10 を指すときだけ使う。
+        Check(history.Evaluate(MakeHistoryQuery(12u, 0u, 10u)) == TemporalAAHistoryDecision::Reuse,
+              "フレームが飛んでも、物体の前の変換を履歴のフレームへ付け替えてあれば使う");
+        Check(!history.IsContiguous(MakeHistoryQuery(12u, 0u, 10u)), "飛んだフレームは連続でない");
+        Check(history.Evaluate(MakeHistoryQuery(12u, 0u, 11u)) == TemporalAAHistoryDecision::ObjectStateMismatch,
+              "物体の前の変換が飛ばしたフレーム 11 のままなら使わない");
+        TemporalAAHistoryQuery incomplete = MakeHistoryQuery(12u, 0u, 10u);
+        incomplete.bPreviousObjectStateComplete = false;
+        Check(history.Evaluate(incomplete) == TemporalAAHistoryDecision::ObjectStateMismatch,
+              "付け替えきれなかった物体があれば使わない");
+        const CameraProxy* reprojectionCamera = history.FindReprojectionCamera(0u, 7u, 12u);
+        Check(reprojectionCamera != nullptr && reprojectionCamera->PositionX == camera.PositionX &&
+                  reprojectionCamera->ProjectionJitterNdcX == 0.0f,
+              "飛んだフレームの前のカメラは、履歴を書いたフレームのカメラ（ジッタなし）");
+        Check(history.FindReprojectionCamera(1u, 7u, 12u) == nullptr, "別の Viewport には履歴のカメラを渡さない");
+
         Check(history.Evaluate(MakeHistoryQuery(10u, 0u)) == TemporalAAHistoryDecision::FrameNotAdvanced,
               "同じフレームをもう一度描くときは使わない");
         Check(history.Evaluate(MakeHistoryQuery(11u, 1u)) == TemporalAAHistoryDecision::ViewportChanged,
@@ -273,6 +310,7 @@ namespace
         TemporalAAHistoryQuery query = MakeHistoryQuery(11u, 0u);
         query.CameraId = 8u;
         Check(history.Evaluate(query) == TemporalAAHistoryDecision::CameraChanged, "カメラが替わったら使わない");
+        Check(history.FindReprojectionCamera(0u, 8u, 12u) == nullptr, "替わったカメラには履歴のカメラを渡さない");
         query = MakeHistoryQuery(11u, 0u);
         query.bHasPreviousCamera = false;
         Check(history.Evaluate(query) == TemporalAAHistoryDecision::PreviousCameraMissing,
@@ -300,18 +338,230 @@ namespace
               "捨てた後は履歴が無い");
     }
 
-    void TestHistoryWithDroppedFrames()
+    // ===== パケットの物体の前の変換の付け替え（RenderedObjectHistory） =====
+
+    // 物体の x 座標ごとの World（y = 0.5、z = -10）。行列のビット列で x を引き戻せるように表で持つ。
+    struct PlacedWorld
+    {
+        float X = 0.0f;
+        Math::Matrix4x4 World;
+    };
+
+    Math::Matrix4x4 WorldAt(float x)
+    {
+        return Math::MatrixUtils::CreateTranslation(x, 0.5f, -10.0f);
+    }
+
+    // 行列 values が表のどの x の World か（無ければ NaN）。
+    float PositionXOf(const float (&values)[16], const float* candidates, size_t candidateCount)
+    {
+        for (size_t index = 0; index < candidateCount; ++index)
+        {
+            const Math::Matrix4x4 world = WorldAt(candidates[index]);
+            if (std::memcmp(world.values, values, sizeof(world.values)) == 0)
+            {
+                return candidates[index];
+            }
+        }
+        return std::nanf("");
+    }
+
+    // GameThread と同じ形のパケット: 物体 A（非インスタンシング、ComponentId 101）と、同じメッシュの
+    // 物体 B・C（インスタンシング2個、ComponentId 201・202）。PreviousWorld は直前のゲームのフレームの変換。
+    struct ObjectTrack
+    {
+        float Current = 0.0f;
+        float Previous = 0.0f;
+    };
+
+    void BuildPacket(FramePacket& packet, uint64_t frameNumber, ObjectTrack a, ObjectTrack b, ObjectTrack c)
+    {
+        packet.FrameNumber = frameNumber;
+        packet.Scene.MeshProxies.clear();
+        packet.DrawCommands.clear();
+        packet.InstanceData.clear();
+        const auto addProxy = [&](uint64_t objectId, uint64_t componentId, uint64_t meshId, ObjectTrack track)
+        {
+            MeshProxy proxy;
+            proxy.ObjectId = objectId;
+            proxy.ComponentId = componentId;
+            proxy.MeshHandle.Id = meshId;
+            proxy.WorldTransform = WorldAt(track.Current);
+            proxy.PreviousWorldTransform = WorldAt(track.Previous);
+            packet.Scene.MeshProxies.push_back(proxy);
+            GPUSceneInstanceData data{};
+            std::memcpy(data.World, proxy.WorldTransform.values, sizeof(data.World));
+            std::memcpy(data.PreviousWorld, proxy.PreviousWorldTransform.values, sizeof(data.PreviousWorld));
+            packet.InstanceData.push_back(data);
+        };
+        addProxy(1u, 101u, 5u, a);
+        addProxy(2u, 201u, 6u, b);
+        addProxy(3u, 202u, 6u, c);
+
+        DrawCommand single;
+        single.Draw.MeshHandle.Id = 5u;
+        single.Draw.ObjectId = 1u;
+        single.Draw.InstanceDataOffset = 0u;
+        single.Draw.WorldMatrix = WorldAt(a.Current);
+        packet.DrawCommands.push_back(single);
+        DrawCommand instanced;
+        instanced.Draw.MeshHandle.Id = 6u;
+        instanced.Draw.ObjectId = 2u;
+        instanced.Draw.bInstanced = true;
+        instanced.Draw.InstanceCount = 2u;
+        instanced.Draw.InstanceDataOffset = 1u;
+        packet.DrawCommands.push_back(instanced);
+    }
+
+    void TestObjectHistoryAcrossDroppedFrame()
+    {
+        // 評価の再現: カメラは止まり、フレーム 10・11・12 で物体の点が動く。10 を描き、11 を飛ばして 12 を描く。
+        // 物体 A は動いて止まる（-1.0 → -0.9 → -0.9）、B は動いて戻る（2.0 → 2.1 → 2.0）、C は等速（0.0 → 0.1 → 0.2）。
+        // 止まった物体は GameThread のパケットでは velocity が0になり、履歴の位置（10）から外れる。
+        const float positions[] = {-1.0f, -0.9f, 2.0f, 2.1f, 0.0f, 0.1f, 0.2f};
+        const size_t positionCount = sizeof(positions) / sizeof(positions[0]);
+        const CameraProxy camera = MakeCamera(ProjectionType::Perspective);
+        const float x10[3] = {-1.0f, 2.0f, 0.0f};
+        const float x11[3] = {-0.9f, 2.1f, 0.1f};
+        const float x12[3] = {-0.9f, 2.0f, 0.2f};
+
+        RenderedObjectHistory objectHistory;
+        FramePacket packet10;
+        BuildPacket(packet10, 10u, {x10[0], x10[0]}, {x10[1], x10[1]}, {x10[2], x10[2]});
+        const RenderedObjectHistoryResult first = objectHistory.Apply(packet10, true);
+        Check(!first.bRebased && first.PreviousFrameNumber == 9u, "最初のパケットは付け替えず、直前のフレームを指す");
+
+        FramePacket packet12;
+        BuildPacket(packet12, 12u, {x12[0], x11[0]}, {x12[1], x11[1]}, {x12[2], x11[2]});
+        FramePacket unrebased;
+        BuildPacket(unrebased, 12u, {x12[0], x11[0]}, {x12[1], x11[1]}, {x12[2], x11[2]});
+        const RenderedObjectHistoryResult result = objectHistory.Apply(packet12, true);
+        Check(result.bRebased && result.PreviousFrameNumber == 10u && result.bComplete &&
+                  result.UnresolvedInstanceCount == 0u,
+              "11 を飛ばした 12 は、物体の前の変換を最後に描いた 10 へ付け替える");
+
+        const char* labels[3] = {"moved_then_stopped", "moved_then_returned", "constant_speed"};
+        for (uint32_t index = 0; index < 3u; ++index)
+        {
+            const Math::Vector3 current(x12[index], 0.5f, -10.0f);
+            const float rebasedPrevious =
+                PositionXOf(packet12.InstanceData[index].PreviousWorld, positions, positionCount);
+            const float packetPrevious =
+                PositionXOf(unrebased.InstanceData[index].PreviousWorld, positions, positionCount);
+            // velocity（画素）= 今の点の投影 − 前の変換の点の投影。履歴の位置へ戻すには 10 の点との差が要る。
+            const PixelMotion truth = MotionPx(camera, current, camera, Math::Vector3(x10[index], 0.5f, -10.0f));
+            const PixelMotion rebased =
+                MotionPx(camera, current, camera, Math::Vector3(rebasedPrevious, 0.5f, -10.0f));
+            const PixelMotion packetVelocity =
+                MotionPx(camera, current, camera, Math::Vector3(packetPrevious, 0.5f, -10.0f));
+            std::printf("%s velocity_px truth=%+.4f rebased=%+.4f packet=%+.4f\n",
+                        labels[index], truth.X, rebased.X, packetVelocity.X);
+            Check(rebasedPrevious == x10[index], "前の変換は最後に描いたフレーム 10 の変換");
+            Check(IsNear(rebased.X, truth.X, 1.0e-6) && IsNear(rebased.Y, truth.Y, 1.0e-6),
+                  "付け替えた velocity は履歴の位置へ戻す");
+            Check(std::fabs(packetVelocity.X - truth.X) > 1.0,
+                  "パケットの velocity のままでは履歴の位置から1画素以上ずれる（比べる対照）");
+        }
+        Check(PositionXOf(packet12.Scene.MeshProxies[0].PreviousWorldTransform.values, positions, positionCount) ==
+                  x10[0],
+              "MeshProxy の前の変換も 10 へ付け替える");
+
+        // 13 は 12 の直後: 付け替えず、パケットの前の変換（12）をそのまま使う。
+        FramePacket packet13;
+        BuildPacket(packet13, 13u, {x12[0], x12[0]}, {x12[1], x12[1]}, {0.3f, x12[2]});
+        const RenderedObjectHistoryResult contiguous = objectHistory.Apply(packet13, true);
+        Check(!contiguous.bRebased && contiguous.PreviousFrameNumber == 12u, "連続したフレームは付け替えない");
+
+        // TAA を選ばないカメラ（bRewriteOnGap = false）では、飛んでもパケットを変えず、直前のフレームを指す。
+        FramePacket packet15;
+        BuildPacket(packet15, 15u, {x12[0], x11[0]}, {x12[1], x11[1]}, {x12[2], x11[2]});
+        const RenderedObjectHistoryResult untouched = objectHistory.Apply(packet15, false);
+        Check(!untouched.bRebased && untouched.PreviousFrameNumber == 14u, "TAA を選ばなければ付け替えない");
+        Check(PositionXOf(packet15.InstanceData[0].PreviousWorld, positions, positionCount) == x11[0],
+              "TAA を選ばなければ前の変換はパケットのまま");
+
+        // MeshProxy と照合できないインスタンスがあれば、付け替えきれなかったとして TAA に履歴を捨てさせる。
+        FramePacket packet17;
+        BuildPacket(packet17, 17u, {x12[0], x11[0]}, {x12[1], x11[1]}, {x12[2], x11[2]});
+        std::memcpy(packet17.InstanceData[2].World, WorldAt(9.0f).values, sizeof(packet17.InstanceData[2].World));
+        const RenderedObjectHistoryResult unresolved = objectHistory.Apply(packet17, true);
+        Check(unresolved.bRebased && !unresolved.bComplete && unresolved.UnresolvedInstanceCount == 1u,
+              "照合できないインスタンスがあれば付け替えきれなかったとする");
+    }
+
+    void TestObjectAndCameraHistoryAcrossDroppedFrame()
+    {
+        // カメラも物体も動く: 履歴 10、11 を飛ばして 12。カメラは毎フレーム右へ 0.2 m、物体 A は 11 で動いて止まる。
+        // 前のカメラは履歴のカメラ（SceneView が FindReprojectionCamera で差し替える）、物体の前の変換は
+        // RenderedObjectHistory が 10 へ付け替えたもの。velocity は履歴の位置へ正確に戻る。
+        const float positions[] = {-1.0f, -0.9f, 2.0f, 2.1f, 0.0f, 0.1f, 0.2f};
+        const size_t positionCount = sizeof(positions) / sizeof(positions[0]);
+        CameraProxy camera10 = MakeCamera(ProjectionType::Perspective);
+        CameraProxy camera11 = camera10;
+        CameraProxy camera12 = camera10;
+        camera11.PositionX += 0.2f;
+        camera12.PositionX += 0.4f;
+        const TemporalAAJitter jitter = ComputeTemporalAAJitter(6u, Width, Height);
+
+        TemporalAAHistoryTracker history;
+        RenderedObjectHistory objectHistory;
+        FramePacket packet10;
+        BuildPacket(packet10, 10u, {-1.0f, -1.0f}, {2.0f, 2.0f}, {0.0f, 0.0f});
+        const RenderedObjectHistoryResult first = objectHistory.Apply(packet10, true);
+        history.Record(MakeHistoryQuery(10u, 0u, first.PreviousFrameNumber), camera10);
+
+        FramePacket packet12;
+        BuildPacket(packet12, 12u, {-0.9f, -0.9f}, {2.0f, 2.1f}, {0.2f, 0.1f});
+        const RenderedObjectHistoryResult result = objectHistory.Apply(packet12, true);
+        const TemporalAAHistoryQuery query = MakeHistoryQuery(12u, 0u, result.PreviousFrameNumber);
+        Check(history.Evaluate(query) == TemporalAAHistoryDecision::Reuse, "付け替えた 12 は 10 の履歴を使う");
+
+        // 今のカメラと前のカメラ（履歴のカメラ）に同じジッタを掛ける（SceneView と同じ）。
+        const CameraProxy* reprojectionCamera = history.FindReprojectionCamera(0u, 7u, 12u);
+        Check(reprojectionCamera != nullptr, "飛んだフレームでは履歴のカメラを前のカメラにする");
+        if (!reprojectionCamera)
+        {
+            return;
+        }
+        CameraProxy previousCamera = *reprojectionCamera;
+        ApplyTemporalAAJitter(previousCamera, jitter);
+        CameraProxy jitteredCamera12 = camera12;
+        ApplyTemporalAAJitter(jitteredCamera12, jitter);
+        CameraProxy jitteredCamera10 = camera10;
+        ApplyTemporalAAJitter(jitteredCamera10, jitter);
+        CameraProxy jitteredCamera11 = camera11;
+        ApplyTemporalAAJitter(jitteredCamera11, jitter);
+
+        const Math::Vector3 current(-0.9f, 0.5f, -10.0f);
+        const float rebasedPrevious = PositionXOf(packet12.InstanceData[0].PreviousWorld, positions, positionCount);
+        const PixelMotion truth =
+            MotionPx(jitteredCamera12, current, jitteredCamera10, Math::Vector3(-1.0f, 0.5f, -10.0f));
+        const PixelMotion velocity =
+            MotionPx(jitteredCamera12, current, previousCamera, Math::Vector3(rebasedPrevious, 0.5f, -10.0f));
+        const PixelMotion packetVelocity =
+            MotionPx(jitteredCamera12, current, jitteredCamera11, Math::Vector3(-0.9f, 0.5f, -10.0f));
+        std::printf("camera_and_object velocity_px truth=(%+.4f, %+.4f) rebased=(%+.4f, %+.4f) packet=(%+.4f, %+.4f)\n",
+                    truth.X, truth.Y, velocity.X, velocity.Y, packetVelocity.X, packetVelocity.Y);
+        Check(IsNear(velocity.X, truth.X, 1.0e-3) && IsNear(velocity.Y, truth.Y, 1.0e-3),
+              "カメラと物体が動いても、付け替えた velocity は履歴の位置へ戻す");
+        Check(std::fabs(packetVelocity.X - truth.X) > 1.0,
+              "パケットの前のカメラと前の変換のままでは1画素以上ずれる（比べる対照）");
+    }
+
+    void TestHistoryWithDroppedFrames(bool bRewriteOnGap)
     {
         // ゲームのフレーム 1〜30 のうち、RenderThread が 5・9・10・20 を描かずに捨てる。各フレームは
         // Viewport 0（TAA を掛ける）と Viewport 1（同じフレームの2つ目。TAA を掛けない）を描く。
-        // TemporalAAPass と同じく、使えるかを決めてから、働いたフレームで履歴を書く。
+        // RenderingCoordinator と TemporalAAPass と同じく、パケットの前の変換を付け替えてから履歴を使えるかを決め、
+        // 働いたフレームで履歴を書く。物体 C は毎フレーム 0.1 m 動く。
         const auto isDropped = [](uint64_t frame) { return frame == 5u || frame == 9u || frame == 10u || frame == 20u; };
         const CameraProxy camera = MakeCamera(ProjectionType::Perspective);
         TemporalAAHistoryTracker history;
+        RenderedObjectHistory objectHistory;
         uint32_t renderedCount = 0u;
         uint32_t reusedCount = 0u;
         uint32_t rebasedCount = 0u;
-        bool bScalesMatch = true;
+        uint32_t mismatchCount = 0u;
         for (uint64_t frame = 1u; frame <= 30u; ++frame)
         {
             if (isDropped(frame))
@@ -319,106 +569,38 @@ namespace
                 continue;
             }
             ++renderedCount;
-            const TemporalAAHistoryQuery query = MakeHistoryQuery(frame, 0u);
-            if (history.Evaluate(query) == TemporalAAHistoryDecision::Reuse)
+            FramePacket packet;
+            const float x = 0.1f * static_cast<float>(frame);
+            BuildPacket(packet, frame, {-1.0f, -1.0f}, {2.0f, 2.0f}, {x, x - 0.1f});
+            const RenderedObjectHistoryResult objectState = objectHistory.Apply(packet, bRewriteOnGap);
+            const TemporalAAHistoryQuery query = MakeHistoryQuery(frame, 0u, objectState.PreviousFrameNumber);
+            const TemporalAAHistoryDecision decision = history.Evaluate(query);
+            if (decision == TemporalAAHistoryDecision::Reuse)
             {
                 ++reusedCount;
                 const bool bContiguous = history.IsContiguous(query);
                 rebasedCount += bContiguous ? 0u : 1u;
                 Check(bContiguous == !isDropped(frame - 1u), "直前のフレームが捨てられたときだけ連続でない");
-                // 捨てた数 + 1 フレーム分の時間が経っている（6 は 4 から 2、11 は 8 から 3、21 は 19 から 2）。
-                const double expectedScale = frame == 11u ? 3.0 : (bContiguous ? 1.0 : 2.0);
-                bScalesMatch = bScalesMatch && IsNear(history.ComputeObjectMotionScale(query, 0.01f), expectedScale, 1.0e-4);
             }
+            mismatchCount += decision == TemporalAAHistoryDecision::ObjectStateMismatch ? 1u : 0u;
             history.Record(query, camera);
             // Viewport 1 は TAA を掛けない。
             history.NotifyViewportWithoutTemporalAA(1u);
         }
-        std::printf("history rendered=%u reused=%u rebased=%u\n", renderedCount, reusedCount, rebasedCount);
+        std::printf("history rewrite=%d rendered=%u reused=%u rebased=%u object_state_mismatch=%u\n",
+                    bRewriteOnGap ? 1 : 0, renderedCount, reusedCount, rebasedCount, mismatchCount);
         Check(renderedCount == 26u, "30 フレームのうち 26 を描く");
-        Check(reusedCount == 25u, "最初の1回のほかは、捨てたフレームをまたいでも履歴を使う");
-        Check(rebasedCount == 3u, "捨てた並びの直後（6・11・21）の3回は履歴のカメラから求め直す");
-        Check(bScalesMatch, "物体の動きの比は履歴からの経過フレーム数");
-    }
-
-    // 点が view・projection の other カメラから current カメラへ動いた量（画素、currentUV - otherUV に同じ）。
-    // TAA のシェーダーの CameraMotion と velocity の定義（(currentNdc - previousNdc) × 0.5）に合わせる。
-    struct PixelMotion
-    {
-        double X = 0.0;
-        double Y = 0.0;
-    };
-
-    PixelMotion MotionPx(const CameraProxy& current, const Math::Vector3& currentPoint,
-                         const CameraProxy& other, const Math::Vector3& otherPoint)
-    {
-        const Projected a = Project(current, currentPoint);
-        const Projected b = Project(other, otherPoint);
-        return {(a.NdcX - b.NdcX) * 0.5 * Width, (a.NdcY - b.NdcY) * 0.5 * Height};
-    }
-
-    void TestHistoryReprojectionAcrossDroppedFrame()
-    {
-        // 履歴はフレーム 10、パケット 11 は捨てられ、12 を描く。カメラは毎フレーム右へ 0.2 m 動き、
-        // 物体は毎フレーム +x へ 0.05 m 等速で動く。パケットの velocity は 11→12 の動き。
-        CameraProxy camera10 = MakeCamera(ProjectionType::Perspective);
-        CameraProxy camera11 = camera10;
-        CameraProxy camera12 = camera10;
-        camera11.PositionX += 0.2f;
-        camera12.PositionX += 0.4f;
-        const TemporalAAJitter jitter = ComputeTemporalAAJitter(6u, Width, Height);
-        // 今のフレームのジッタを、今・パケットの前・履歴のカメラの3つへ掛ける（TemporalAAPass と同じ）。
-        ApplyTemporalAAJitter(camera12, jitter);
-        ApplyTemporalAAJitter(camera11, jitter);
-        TemporalAAHistoryTracker history;
-        history.Record(MakeHistoryQuery(10u, 0u), camera10);
-        CameraProxy historyCamera = history.GetCamera();
-        ApplyTemporalAAJitter(historyCamera, jitter);
-        const TemporalAAHistoryQuery query = MakeHistoryQuery(12u, 0u);
-        const float scale = history.ComputeObjectMotionScale(query, 0.01f);
-
-        // 静止した点: カメラの動きだけ。
-        const Math::Vector3 still(1.0f, 0.5f, -12.0f);
-        const PixelMotion truth = MotionPx(camera12, still, historyCamera, still);
-        const PixelMotion velocity = MotionPx(camera12, still, camera11, still);
-        const PixelMotion packetCamera = MotionPx(camera12, still, camera11, still);
-        const PixelMotion historyCameraMotion = MotionPx(camera12, still, historyCamera, still);
-        const PixelMotion composed{historyCameraMotion.X + (velocity.X - packetCamera.X) * scale,
-                                   historyCameraMotion.Y + (velocity.Y - packetCamera.Y) * scale};
-        std::printf("still_px truth=(%+.4f, %+.4f) composed=(%+.4f, %+.4f) packet_velocity=(%+.4f, %+.4f)\n",
-                    truth.X, truth.Y, composed.X, composed.Y, velocity.X, velocity.Y);
-        Check(IsNear(composed.X, truth.X, 1.0e-3) && IsNear(composed.Y, truth.Y, 1.0e-3),
-              "静止した点は、フレームが飛んでも履歴の位置へ戻る");
-        Check(std::fabs(velocity.X - truth.X) > 1.0, "パケットの velocity だけでは履歴の位置から1画素以上ずれる（比べる対照）");
-
-        // 等速で動く点: 物体の動きを経過時間の比で伸ばす。
-        const Math::Vector3 moving10(-1.0f, 0.5f, -10.0f);
-        const Math::Vector3 moving11(-0.95f, 0.5f, -10.0f);
-        const Math::Vector3 moving12(-0.9f, 0.5f, -10.0f);
-        const PixelMotion movingTruth = MotionPx(camera12, moving12, historyCamera, moving10);
-        const PixelMotion movingVelocity = MotionPx(camera12, moving12, camera11, moving11);
-        const PixelMotion movingPacketCamera = MotionPx(camera12, moving12, camera11, moving12);
-        const PixelMotion movingHistoryCamera = MotionPx(camera12, moving12, historyCamera, moving12);
-        const PixelMotion movingComposed{
-            movingHistoryCamera.X + (movingVelocity.X - movingPacketCamera.X) * scale,
-            movingHistoryCamera.Y + (movingVelocity.Y - movingPacketCamera.Y) * scale};
-        std::printf("moving_px truth=(%+.4f, %+.4f) composed=(%+.4f, %+.4f) packet_velocity=(%+.4f, %+.4f)\n",
-                    movingTruth.X, movingTruth.Y, movingComposed.X, movingComposed.Y, movingVelocity.X, movingVelocity.Y);
-        Check(IsNear(movingComposed.X, movingTruth.X, 0.05) && IsNear(movingComposed.Y, movingTruth.Y, 0.05),
-              "等速で動く点は、フレームが飛んでも履歴の位置の 0.05 画素以内へ戻る");
-        Check(std::fabs(movingVelocity.X - movingTruth.X) > 1.0,
-              "動く点もパケットの velocity だけでは1画素以上ずれる（比べる対照）");
-
-        // 連続したフレームでは、履歴のカメラはパケットの前のカメラで比は1なので、velocity そのものになる。
-        TemporalAAHistoryTracker contiguous;
-        contiguous.Record(MakeHistoryQuery(11u, 0u), camera11);
-        const float contiguousScale = contiguous.ComputeObjectMotionScale(query, 0.01f);
-        const PixelMotion contiguousComposed{
-            movingPacketCamera.X + (movingVelocity.X - movingPacketCamera.X) * contiguousScale,
-            movingPacketCamera.Y + (movingVelocity.Y - movingPacketCamera.Y) * contiguousScale};
-        Check(IsNear(contiguousComposed.X, movingVelocity.X, 1.0e-9) &&
-                  IsNear(contiguousComposed.Y, movingVelocity.Y, 1.0e-9),
-              "連続したフレームでは velocity での再投影と同じ");
+        if (bRewriteOnGap)
+        {
+            Check(reusedCount == 25u, "最初の1回のほかは、捨てたフレームをまたいでも履歴を使う");
+            Check(rebasedCount == 3u, "捨てた並びの直後（6・11・21）の3回は前の変換を付け替えて使う");
+            Check(mismatchCount == 0u, "付け替えたので基準の食い違いは無い");
+        }
+        else
+        {
+            Check(reusedCount == 22u, "付け替えなければ捨てた並びの直後の3回は履歴を使わない（比べる対照）");
+            Check(mismatchCount == 3u, "付け替えなければ基準が食い違う（比べる対照）");
+        }
     }
 } // namespace
 
@@ -430,8 +612,10 @@ int main()
     TestZeroJitterKeepsProjection();
     TestVelocityExcludesJitter();
     TestHistoryDecision();
-    TestHistoryWithDroppedFrames();
-    TestHistoryReprojectionAcrossDroppedFrame();
+    TestObjectHistoryAcrossDroppedFrame();
+    TestObjectAndCameraHistoryAcrossDroppedFrame();
+    TestHistoryWithDroppedFrames(true);
+    TestHistoryWithDroppedFrames(false);
 
     if (GFailureCount != 0)
     {

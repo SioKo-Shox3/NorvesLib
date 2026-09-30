@@ -1687,6 +1687,16 @@ namespace NorvesLib::Core::Rendering
         m_PreviousMegaGeometryWorlds.clear();
         m_PreviousSkinnedStates.clear();
         m_bPreviousObjectStateValid = false;
+        if (m_RenderedObjectRebasedFrameCount > 0u)
+        {
+            NORVES_LOG_INFO("RenderingCoordinator",
+                            "stage=rendered_object_history rebased_frames=%llu incomplete_frames=%llu",
+                            static_cast<unsigned long long>(m_RenderedObjectRebasedFrameCount),
+                            static_cast<unsigned long long>(m_RenderedObjectIncompleteFrameCount));
+        }
+        m_RenderedObjectHistory.Reset();
+        m_RenderedObjectRebasedFrameCount = 0u;
+        m_RenderedObjectIncompleteFrameCount = 0u;
 
         // SceneRendererの終了
         m_SceneRenderer.Shutdown();
@@ -2536,6 +2546,20 @@ namespace NorvesLib::Core::Rendering
 
         m_TransientPool.BeginFrame(frameIndex);
         m_RenderGraph.BeginFrame(frameIndex);
+        // TAA の履歴は最後に描いたフレームで書くので、描画がゲームのフレームを飛ばしたときは、velocity の基準
+        // （物体の前の変換）もそのフレームのものへ付け替える。TAA を選んだカメラのときだけで、それ以外の
+        // 描画は変えない。
+        const bool bTemporalAARequested =
+            (m_MainSceneView && m_MainSceneView->IsTemporalAAForced()) ||
+            (packet->bHasMainCamera &&
+             packet->Scene.MainCamera.AntiAliasing == CameraAntiAliasingMode::TemporalAA);
+        const RenderedObjectHistoryResult renderedObjectHistory =
+            m_RenderedObjectHistory.Apply(*packet, bTemporalAARequested);
+        if (renderedObjectHistory.bRebased)
+        {
+            ++m_RenderedObjectRebasedFrameCount;
+            m_RenderedObjectIncompleteFrameCount += renderedObjectHistory.bComplete ? 0u : 1u;
+        }
         RHI::BufferPtr instanceDataBuffer = m_InstanceBufferRing.Upload(frameIndex, packet->InstanceData);
 
         // フレーム別コマンドバッファを選択（ダブルバッファリングでの同期問題を回避）
@@ -2640,6 +2664,8 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotScene = &packet->Scene;
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
+        viewContext.PreviousObjectStateFrameNumber = renderedObjectHistory.PreviousFrameNumber;
+        viewContext.bPreviousObjectStateComplete = renderedObjectHistory.bComplete;
         viewContext.SkyAtmosphereSnapshot = packet->Scene.SkyAtmosphere;
         viewContext.SnapshotDrawCommandSource = &packet->DrawCommands;
         viewContext.SnapshotDrawCommands = DrawCommandView::FromRange(packet->DrawCommands,

@@ -156,17 +156,6 @@ namespace NorvesLib::Core::Rendering
             }
             return nullptr;
         }
-
-        // 環境変数 NORVES_TEMPORAL_AA が "1" なら、カメラの選択にかかわらず TAA を掛ける。
-        bool IsTemporalAAForcedByEnvironment()
-        {
-            char *value = nullptr;
-            size_t length = 0;
-            const bool bForced =
-                _dupenv_s(&value, &length, "NORVES_TEMPORAL_AA") == 0 && value && std::strcmp(value, "1") == 0;
-            std::free(value);
-            return bForced;
-        }
     } // namespace
 
     bool SceneView::TryGetAutoExposureMeasurement(AutoExposureMeasurement &outMeasurement) const
@@ -738,7 +727,12 @@ namespace NorvesLib::Core::Rendering
                                                           jitter);
             if (bApplyTemporalAA)
             {
-                const CameraProxy *previousCamera = context.GetPreviousCamera();
+                // 描画がゲームのフレームを飛ばしたときは、前のカメラを TAA の履歴を書いたフレームのカメラにする
+                // （物体の前の変換も RenderingCoordinator がそのフレームへ付け替える）。
+                const CameraProxy *reprojectionCamera = temporalAAPass->FindReprojectionCamera(
+                    viewportId, activeCamera->CameraId, context.FrameNumber);
+                const CameraProxy *previousCamera =
+                    reprojectionCamera ? reprojectionCamera : context.GetPreviousCamera();
                 jitteredCamera = *activeCamera;
                 ApplyTemporalAAJitter(jitteredCamera, jitter);
                 if (context.CurrentCamera)

@@ -3,13 +3,12 @@
 // TAA の解決。ジッタを掛けて描いた SceneColor の画素に、前のフレームの履歴を混ぜる。
 // 1. 3×3 の近傍の色（YCoCg）から平均と標準偏差を求め、最も手前の画素を探す。
 // 2. その画素の動きで履歴を再投影し、平均 ± gamma × 標準偏差の箱の中心へ向けてクリップする
-//    （箱の外の履歴はゴーストとみなす）。動きは、カメラの動きを履歴を書いたフレームのカメラから深度で求め、
-//    物体自身の動き（velocity からパケットの前のカメラによる動きを引いた分）を経過時間の比で伸ばして足す。
-//    RenderThread がパケットを飛ばすと velocity は履歴より新しいフレームからの動きになるため。連続した
-//    フレームでは2つのカメラが同じで比は1なので、velocity（currentUV - previousUV）そのものになる。
+//    （箱の外の履歴はゴーストとみなす）。動きは velocity（currentUV - previousUV）で、空は前のカメラからの
+//    カメラの動きを深度で求める。velocity と前のカメラの基準は、描画がゲームのフレームを飛ばしたときも
+//    履歴を書いたフレームに揃えてある（揃わないフレームでは履歴を使わない）。
 // 3. 現在の色と履歴を 1/(1 + 輝度) の重みで混ぜ、明るい画素のちらつきを抑える。
 // 履歴が無いときと、再投影が画面の外に出たときは現在の色をそのまま使う。
-// ジッタは前のカメラと履歴のカメラにも同じ量を掛けてあるので、velocity と再投影にはジッタが入らない。
+// ジッタは前のカメラにも同じ量を掛けてあるので、velocity と再投影にはジッタが入らない。
 
 layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
@@ -28,9 +27,6 @@ layout(std140, set = 0, binding = 4) uniform TemporalAAParams
     vec4 imageSize;                  // xy: 寸法、zw: 逆数
     vec4 blend;                      // x: 現在の色の割合、y: 履歴へ掛ける露出の比、z: クリップの箱の半幅
     vec4 jitter;                     // xy: ジッタ（画素）
-    mat4 historyView;                // 履歴を書いたフレームのカメラ（今のフレームと同じジッタ）
-    mat4 historyProjection;
-    vec4 motion;                     // x: 物体自身の動きを履歴からの経過時間へ伸ばす比
 } params;
 
 // RGBA16F の上限。非有限値や溢れた値が履歴へ残り続けないように切る。
@@ -92,9 +88,9 @@ vec3 SampleHistoryCatmullRom(vec2 uv)
     return result / max(weight, 1.0e-4);
 }
 
-// 画素が view・projection のカメラから今のカメラへ動いた量（currentUV - previousUV）。深度から位置を
-// 戻して投影する。空（深度1）は無限遠の方向を投影する。投影できなければ0。
-vec2 CameraMotion(ivec2 texel, float depth, mat4 view, mat4 projection)
+// 画素が前のカメラから今のカメラへ動いた量（currentUV - previousUV）。深度から位置を戻して投影する。
+// 空（深度1）は無限遠の方向を投影する。投影できなければ0。
+vec2 CameraMotion(ivec2 texel, float depth)
 {
     vec2 ndc = (vec2(texel) + 0.5) * params.imageSize.zw * 2.0 - 1.0;
     bool bSky = depth >= 1.0;
@@ -105,7 +101,7 @@ vec2 CameraMotion(ivec2 texel, float depth, mat4 view, mat4 projection)
     }
     vec3 position = world.xyz / world.w;
     vec4 target = bSky ? vec4(position - params.cameraPositionAndHistory.xyz, 0.0) : vec4(position, 1.0);
-    vec4 previousClip = projection * view * target;
+    vec4 previousClip = params.previousProjection * params.previousView * target;
     if (previousClip.w <= 1.0e-6)
     {
         return vec2(0.0);
@@ -118,18 +114,14 @@ vec2 SanitizeMotion(vec2 motion)
     return dot(motion, motion) < 1.0e12 ? motion : vec2(0.0);
 }
 
-// 画素を履歴の位置へ戻す動き（currentUV - historyUV）。
+// 画素を履歴の位置へ戻す動き（currentUV - historyUV）。空は velocity を書かないのでカメラの動きから求める。
 vec2 PixelHistoryMotion(ivec2 texel, float depth)
 {
-    vec2 historyCameraMotion = SanitizeMotion(CameraMotion(texel, depth, params.historyView, params.historyProjection));
     if (depth >= 1.0)
     {
-        return historyCameraMotion;
+        return SanitizeMotion(CameraMotion(texel, depth));
     }
-    // velocity はパケットの前のカメラ・前の変換からの動き。そこからカメラの分を引くと物体自身の動きが残る。
-    vec2 velocity = SanitizeMotion(texelFetch(velocityTexture, texel, 0).xy);
-    vec2 packetCameraMotion = SanitizeMotion(CameraMotion(texel, depth, params.previousView, params.previousProjection));
-    return SanitizeMotion(historyCameraMotion + (velocity - packetCameraMotion) * params.motion.x);
+    return SanitizeMotion(texelFetch(velocityTexture, texel, 0).xy);
 }
 
 void main()

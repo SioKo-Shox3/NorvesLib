@@ -6,6 +6,8 @@
 #include "Math/MatrixUtils.h"
 
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -95,6 +97,17 @@ namespace NorvesLib::Core::Rendering
         return Math::MatrixUtils::CreateTranslation(ndcX, ndcY, 0.0f) * projection;
     }
 
+    /** @brief 環境変数 NORVES_TEMPORAL_AA が "1" なら、カメラの選択にかかわらず TAA を掛ける（撮影の確認用）。 */
+    inline bool IsTemporalAAForcedByEnvironment()
+    {
+        char* value = nullptr;
+        size_t length = 0;
+        const bool bForced =
+            _dupenv_s(&value, &length, "NORVES_TEMPORAL_AA") == 0 && value && std::strcmp(value, "1") == 0;
+        std::free(value);
+        return bForced;
+    }
+
     /** @brief カメラへジッタを写す（投影を作るとき CameraViewConstants が掛ける）。 */
     inline void ApplyTemporalAAJitter(CameraProxy& camera, const TemporalAAJitter& jitter)
     {
@@ -110,32 +123,37 @@ namespace NorvesLib::Core::Rendering
         ViewportChanged,       // 履歴を書いたのは別の Viewport
         FrameNotAdvanced,      // 履歴を書いたフレームより前か同じフレームを描く
         CameraChanged,         // カメラが切り替わった
-        PreviousCameraMissing, // velocity の基準にするパケットの前のカメラが無い
-        InvalidExposure        // 履歴か現在の露出が有限の正でない
+        PreviousCameraMissing, // velocity の基準にする前のカメラが無い
+        InvalidExposure,       // 履歴か現在の露出が有限の正でない
+        ObjectStateMismatch    // velocity の物体の前の変換が、履歴を書いたフレームのものでない
     };
 
     /** @brief 履歴を使えるかを決めるための、今のフレームの値。 */
     struct TemporalAAHistoryQuery
     {
-        // FramePacket のゲームのフレーム番号と、その時刻（アプリケーション開始からの秒）
+        // FramePacket のゲームのフレーム番号
         uint64_t FrameNumber = 0u;
-        double TotalTime = 0.0;
         uint32_t ViewportId = 0u;
         uint64_t CameraId = 0u;
         float PreExposure = 0.0f;
-        // パケットに前のカメラ（直前のゲームのフレームのカメラ）があるか
+        // velocity の基準にする前のカメラがあるか
         bool bHasPreviousCamera = false;
+        // velocity の物体の前の変換が指すゲームのフレーム番号と、描いた物体がすべてそのフレームを指すか
+        // （RenderedObjectHistory が決める）
+        uint64_t PreviousObjectStateFrameNumber = 0u;
+        bool bPreviousObjectStateComplete = false;
     };
 
     /**
-     * @brief TAA の履歴を書いたフレーム・時刻・Viewport・カメラ・露出を覚え、次に描くフレームで使えるかを決める
+     * @brief TAA の履歴を書いたフレーム・Viewport・カメラ・露出を覚え、次に描くフレームで使えるかを決める
      *
-     * パケットの velocity は直前のゲームのフレームからの動きだが、RenderThread は未描画のパケットを新しい
-     * パケットで置き換えるので、履歴は2つ以上前のゲームのフレームのことがある（例: 10 を描いた後 11 を飛ばして
-     * 12 を描く）。そのため履歴の再投影は、カメラの動きを履歴を書いたフレームのカメラ（GetCamera）から深度で
-     * 求め直し、物体自身の動き（velocity からパケットの前のカメラによる動きを引いた分）だけを経過時間の比
-     * （ComputeObjectMotionScale）で伸ばして足す。連続したフレームでは2つのカメラが同じで比は1なので、
-     * velocity でそのまま再投影するのと同じになる。
+     * RenderThread は未描画のパケットを新しいパケットで置き換えるので、履歴は2つ以上前のゲームのフレームの
+     * ことがある（例: 10 を描いた後 11 を飛ばして 12 を描く）。履歴は velocity で再投影するので、velocity の
+     * 基準が履歴を書いたフレームと一致するときだけ使う。
+     * - 物体: RenderedObjectHistory がパケットの前の変換を最後に描いたフレームのものへ付け替え、その番号を
+     *   PreviousObjectStateFrameNumber に入れる。履歴のフレームと違う、または付け替えきれなかったら使わない。
+     * - カメラ: 飛んだフレームでは、SceneView が前のカメラを履歴を書いたフレームのカメラ
+     *   （FindReprojectionCamera）へ差し替える。連続したフレームではパケットの前のカメラが同じものになる。
      *
      * TAA を掛けない Viewport（同じフレームの2つ目以降）はこの状態に触れないので、1つの SceneView に
      * 2つの Viewport があっても、TAA を掛ける Viewport の履歴は途切れない。履歴を書いた Viewport を TAA 無しで
@@ -171,34 +189,33 @@ namespace NorvesLib::Core::Rendering
             {
                 return TemporalAAHistoryDecision::InvalidExposure;
             }
+            if (query.PreviousObjectStateFrameNumber != m_FrameNumber || !query.bPreviousObjectStateComplete)
+            {
+                return TemporalAAHistoryDecision::ObjectStateMismatch;
+            }
             return TemporalAAHistoryDecision::Reuse;
         }
 
-        /** @brief 履歴が直前のゲームのフレームのものか（パケットの前のカメラ・前の変換と同じフレームか）。 */
+        /** @brief 履歴が直前のゲームのフレームのものか。 */
         bool IsContiguous(const TemporalAAHistoryQuery& query) const
         {
             return m_bValid && query.FrameNumber == m_FrameNumber + 1u;
         }
 
         /**
-         * @brief 物体自身の動きを、パケットの1フレーム分から履歴を書いたフレームからの分へ伸ばす比
+         * @brief 飛んだフレームで velocity の前のカメラにする、履歴を書いたフレームのカメラ
          *
-         * 連続したフレームでは1。飛んだフレームでは（今の時刻 − 履歴の時刻）/ パケットの経過時間で、
-         * 物体が履歴の時刻から同じ速さで動いたとみなす。経過時間が正の有限でなければ1。
+         * 同じ Viewport・同じカメラの履歴があり、frameNumber が履歴の直後より後のときだけ返す（ジッタなし）。
+         * それ以外（連続したフレームを含む）は null で、パケットの前のカメラをそのまま使う。
          */
-        float ComputeObjectMotionScale(const TemporalAAHistoryQuery& query, float packetDeltaTime) const
+        const CameraProxy* FindReprojectionCamera(uint32_t viewportId, uint64_t cameraId, uint64_t frameNumber) const
         {
-            if (IsContiguous(query))
+            if (!m_bValid || viewportId != m_ViewportId || cameraId != m_CameraId ||
+                frameNumber <= m_FrameNumber + 1u)
             {
-                return 1.0f;
+                return nullptr;
             }
-            const double elapsed = query.TotalTime - m_TotalTime;
-            const double scale = elapsed / static_cast<double>(packetDeltaTime);
-            if (!(packetDeltaTime > 0.0f) || !(elapsed > 0.0) || !(scale > 0.0) || !(scale < 1.0e6))
-            {
-                return 1.0f;
-            }
-            return static_cast<float>(scale);
+            return &m_Camera;
         }
 
         /** @brief query のフレームで履歴を書いたことを覚える。camera はジッタを外したそのフレームのカメラ。 */
@@ -206,7 +223,6 @@ namespace NorvesLib::Core::Rendering
         {
             m_bValid = true;
             m_FrameNumber = query.FrameNumber;
-            m_TotalTime = query.TotalTime;
             m_ViewportId = query.ViewportId;
             m_CameraId = query.CameraId;
             m_PreExposure = query.PreExposure;
@@ -229,6 +245,9 @@ namespace NorvesLib::Core::Rendering
 
         bool IsValid() const { return m_bValid; }
 
+        /** @brief 履歴を書いたフレームの番号。 */
+        uint64_t GetFrameNumber() const { return m_FrameNumber; }
+
         /** @brief 履歴を書いたフレームのプリエクスポージャ（露出の比を求めるのに使う）。 */
         float GetPreExposure() const { return m_PreExposure; }
 
@@ -244,7 +263,6 @@ namespace NorvesLib::Core::Rendering
 
         bool m_bValid = false;
         uint64_t m_FrameNumber = 0u;
-        double m_TotalTime = 0.0;
         uint32_t m_ViewportId = 0u;
         uint64_t m_CameraId = 0u;
         float m_PreExposure = 0.0f;

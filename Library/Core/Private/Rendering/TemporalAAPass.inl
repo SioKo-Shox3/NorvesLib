@@ -35,13 +35,8 @@ namespace NorvesLib::Core::Rendering
             float Blend[4];
             // xy: このフレームのジッタ（画素）
             float Jitter[4];
-            // 履歴を書いたフレームのカメラ（今のフレームと同じジッタを掛けたもの）。カメラの動きはこれから求める。
-            float HistoryView[16];
-            float HistoryProjection[16];
-            // x: 物体自身の動きを履歴からの経過時間へ伸ばす比（連続したフレームでは1）
-            float Motion[4];
         };
-        static_assert(sizeof(GPUTemporalAAParams) == 400u);
+        static_assert(sizeof(GPUTemporalAAParams) == 256u);
 
         constexpr uint32_t ParamsBinding = 4u;
 
@@ -213,13 +208,16 @@ namespace NorvesLib::Core::Rendering
         if (m_HistoryReusedFrameCount > 0u || m_HistoryRejectedFrameCount > 0u)
         {
             NORVES_LOG_INFO("TemporalAAPass",
-                            "history_reused_frames=%llu history_rebased_frames=%llu history_rejected_frames=%llu",
+                            "history_reused_frames=%llu history_rebased_frames=%llu history_rejected_frames=%llu "
+                            "history_object_state_mismatch_frames=%llu",
                             static_cast<unsigned long long>(m_HistoryReusedFrameCount),
                             static_cast<unsigned long long>(m_HistoryRebasedFrameCount),
-                            static_cast<unsigned long long>(m_HistoryRejectedFrameCount));
+                            static_cast<unsigned long long>(m_HistoryRejectedFrameCount),
+                            static_cast<unsigned long long>(m_HistoryObjectStateMismatchCount));
             m_HistoryReusedFrameCount = 0u;
             m_HistoryRebasedFrameCount = 0u;
             m_HistoryRejectedFrameCount = 0u;
+            m_HistoryObjectStateMismatchCount = 0u;
         }
         ReleaseSizedResources();
         m_CopyDescriptorSet.reset();
@@ -356,37 +354,31 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 履歴は、同じ Viewport が前に描いたフレームで書き、同じカメラで、露出が有限なときだけ使う。
-        // パケットの前のカメラ・前の変換は直前のゲームのフレームのものだが、RenderThread はパケットを
-        // 飛ばすことがあるので、カメラの動きは履歴を書いたフレームのカメラから求め直し、物体自身の動きは
-        // 経過時間の比で伸ばす（TemporalAAHistoryTracker）。
+        // 履歴は、同じ Viewport が前に描いたフレームで書き、同じカメラで、露出が有限で、velocity の基準
+        // （物体の前の変換と前のカメラ）が履歴を書いたフレームのときだけ使う。描画がゲームのフレームを
+        // 飛ばしたときは、RenderingCoordinator が物体の前の変換を、SceneView が前のカメラを、最後に描いた
+        // （履歴を書いた）フレームのものへ付け替えている。
         const CameraProxy* previousCamera = context.GetPreviousCamera();
         TemporalAAHistoryQuery historyQuery;
         historyQuery.FrameNumber = context.FrameNumber;
-        historyQuery.TotalTime = context.TotalTime;
         historyQuery.ViewportId = GetViewportId(context);
         historyQuery.CameraId = camera->CameraId;
         historyQuery.PreExposure = camera->PreExposure;
         historyQuery.bHasPreviousCamera = previousCamera != nullptr;
+        historyQuery.PreviousObjectStateFrameNumber = context.PreviousObjectStateFrameNumber;
+        historyQuery.bPreviousObjectStateComplete = context.bPreviousObjectStateComplete;
         const TemporalAAHistoryDecision historyDecision = m_History.Evaluate(historyQuery);
         const bool bUseHistory = historyDecision == TemporalAAHistoryDecision::Reuse;
-        const bool bHistoryContiguous = bUseHistory && m_History.IsContiguous(historyQuery);
         if (bUseHistory)
         {
             ++m_HistoryReusedFrameCount;
-            m_HistoryRebasedFrameCount += bHistoryContiguous ? 0u : 1u;
+            m_HistoryRebasedFrameCount += m_History.IsContiguous(historyQuery) ? 0u : 1u;
         }
         else if (historyDecision != TemporalAAHistoryDecision::NoHistory)
         {
             ++m_HistoryRejectedFrameCount;
-        }
-        // 履歴のカメラへ今のフレームのジッタを掛け、再投影からジッタを除く（前のカメラと同じ扱い）。
-        CameraProxy historyCamera = bUseHistory ? m_History.GetCamera() : (previousCamera ? *previousCamera : *camera);
-        ApplyTemporalAAJitter(historyCamera, m_FrameJitter);
-        if (bHistoryContiguous && previousCamera)
-        {
-            // 連続したフレームでは、履歴のカメラはパケットの前のカメラと同じものを使う（velocity と一致させる）。
-            historyCamera = *previousCamera;
+            m_HistoryObjectStateMismatchCount +=
+                historyDecision == TemporalAAHistoryDecision::ObjectStateMismatch ? 1u : 0u;
         }
 
         GPUTemporalAAParams params{};
@@ -410,11 +402,6 @@ namespace NorvesLib::Core::Rendering
         params.Blend[3] = TemporalAASharpenStrength;
         params.Jitter[0] = m_FrameJitter.PixelX;
         params.Jitter[1] = m_FrameJitter.PixelY;
-        const CameraViewConstants historyConstants = CameraViewConstants::BuildForDevice(historyCamera, aspect, context.Device);
-        historyConstants.CopyShaderView(params.HistoryView);
-        historyConstants.CopyShaderProjection(params.HistoryProjection);
-        params.Motion[0] =
-            bUseHistory ? m_History.ComputeObjectMotionScale(historyQuery, context.SnapshotDeltaTime) : 1.0f;
         m_ParamsBuffer->Update(&params, sizeof(params));
 
         const uint32_t writeIndex = m_HistoryWriteIndex;

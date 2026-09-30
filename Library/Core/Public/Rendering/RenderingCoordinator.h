@@ -14,6 +14,7 @@
 #include "Rendering/AutoExposure.h"
 #include "Rendering/VolumetricFog.h"
 #include "Rendering/InstanceBufferRing.h"
+#include "Rendering/RenderedObjectHistory.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
@@ -566,6 +567,13 @@ namespace NorvesLib::Core::Rendering
         Container::UnorderedMap<uint64_t, PreviousSkinnedState> m_PreviousSkinnedStates;
         uint64_t m_PreviousObjectStateFrameNumber = 0;
         bool m_bPreviousObjectStateValid = false;
+
+        // RenderThread が最後に描いたフレームの物体の変換。描画がゲームのフレームを飛ばしたとき、TAA を選んだ
+        // カメラなら、パケットの前の変換（velocity の基準）をそのフレームのものへ付け替える。
+        RenderedObjectHistory m_RenderedObjectHistory;
+        // 付け替えたフレーム数と、そのうち照合できないインスタンスがあったフレーム数（終了時にログへ出す）
+        uint64_t m_RenderedObjectRebasedFrameCount = 0;
+        uint64_t m_RenderedObjectIncompleteFrameCount = 0;
 
         /** @brief パケットの MegaGeometry・スキニングへ前の値を書き、このパケットの値を次の前の値として覚える。 */
         void ApplyPreviousObjectStates(FramePacket& packet);

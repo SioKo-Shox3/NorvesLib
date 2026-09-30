@@ -516,6 +516,15 @@ namespace NorvesLib::Core::Rendering
         const RayTracingSceneSnapshot* SnapshotRayTracingScene = nullptr;
         float SnapshotDeltaTime = 0.0f;
 
+        /**
+         * @brief velocity の物体の前の変換が指すゲームのフレーム番号と、描いた物体がすべてそのフレームを指すか
+         *
+         * 描画がゲームのフレームを飛ばしたとき、RenderThread が最後に描いたフレームへ付け替えた結果
+         * （RenderedObjectHistory）。TAA は履歴を書いたフレームと一致するときだけ履歴を使う。
+         */
+        uint64_t PreviousObjectStateFrameNumber = 0;
+        bool bPreviousObjectStateComplete = false;
+
         /** @brief FramePacketから値コピーしたscene/light revision。 */
         uint64_t SceneRevision = 0;
         uint64_t LightRevision = 0;
