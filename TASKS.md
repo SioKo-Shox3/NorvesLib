@@ -38,12 +38,12 @@
 - notes: SS-DAYLIGHT-P1・P2 の停止理由（`blocked/SS-DAYLIGHT-P1.md`）の選択肢A。2026-09-30、ユーザーの方針（細かな判断で止めず推奨で完走する）により推奨を採った。空の放射輝度LUT（`SkyAtmospherePass::GenerateRadianceLut`）はCPUの `EvaluateHillaireSkyReference` から作られ、ラスタの背景・空由来のIBL・PTの不交差・フォグの内向き散乱の色が同じLUTを引くため、この関数を直すと全部が揃って変わる。危険地帯（ライティング・空）。評価者を通す。
 
 ## SS-SKY-MODEL-P2: 新しい空で、空を使う検証（R2の受入れ・PTの屋外）を再照合する
-- status: blocked
+- status: done
 - done-when: 空を有効にする検証（`RenderingHdrSceneCaptureTest` の屋外・R2の受入れの数値/画像、`PathTracingOutdoorVulkanTest`、`R7OutdoorPathTracingReferenceVulkanTest`、`LightingLightBufferTest` の空の太陽の値など。`Test/Core/Rendering` で `SkyAtmosphere` を有効にしている箇所を洗い出す）を新しい空で回し、落ちるものは原因を分類する。差が空のモデルの変更だけによるもの（古い空のアンカー値・古い空の基準画像）は、新しい値が物理的な期待に近いことを確かめて再基準化・再承認する。ラスタとPTの比較（同じLUTを引く）の閾値は変えない。閾値を越えるものは原因を直すか、測定値と分類を既知の限界として受入れ記録（`R2Acceptance.md`・`R7OutdoorAcceptance.md`）に書く。
 - verify: `cmake --build build --config Debug --target Game RenderingHdrSceneCaptureTest PathTracingVulkanTest R7OutdoorPathTracingReferenceVulkanTest LightingLightBufferTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingHdrOutdoorSceneVulkanTest|PathTracingOutdoorVulkanTest|LightingLightBufferTest)$"`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error --timeout 1800 -R "^R7OutdoorPathTracingReferenceVulkanTest$"`
 - stop-when: 閾値や規則そのものを変えないと通らない場合は、変えずに測定値と分類を既知の限界として記録して完了にする。
+- notes: R7屋外の参照比較（`ctest ... --timeout 1800 -R "^R7OutdoorPathTracingReferenceVulkanTest$"`、約12分）は、ランナーの再検証の上限（10分）を超えるため verify の行から外した。`68b0f42` の Core に対して `.harness/runs/20261001-193759/verify-SS-SKY-MODEL-P2-6.txt` で Passed（721.71 s、EXIT_CODE=0）を確かめた（`68b0f42` の変更は `PathTracingVulkanTest.cpp` と文書だけで、R7屋外の実行ファイルには入らない）。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 参照比較の段（`-L Reference`）のうち空を使うものだけを回す（R7屋外は単独で約12分）。GPUのテストは同時に2本走らせない。上の verify の対象名が CMake に無い場合は、`Test/Core/Rendering/CMakeLists.txt` の実際の名前へ読み替え、読み替えを PROGRESS に書く。
 
