@@ -42,7 +42,7 @@ build\Test\Core\Rendering\Debug\RenderingHdrSceneCaptureTest.exe --self-test-r2-
 build\Test\Core\Rendering\Debug\RenderingHdrSceneCaptureTest.exe --scene=outdoor --capture-source=back-buffer --r2-scenario=sky-time-sweep
 ```
 
-昼の参照値は天頂 `(463.567047, 944.840820, 1808.168945)`、太陽近傍 `(3283.929199, 3988.980225, 5179.038574)` で、設計アンカーに対して相対誤差5%以内である。朝・昼・夕の太陽ディスク値は有限であり、CSM は4カスケード、欠落0、二重化0、最大影差分0.003438（閾値0.005000）、サブテクセル影エッジ変化率0.000000（256サンプル）を記録する。実GPU取得では3ケースすべてが `R2_GPU_CAPTURE ... passed=1`、ケース間平均RGB差分も noon 34.4486、evening 7.52983となり、最終行が `R2_SKY_TIME_SWEEP=PASS ... gpu_capture=1` になった。
+（以下はR2-P7時点の古い空のモデルの記録。空のモデルの置き換え後の値は下の「新しい空での再照合」。）昼の参照値は天頂 `(463.567047, 944.840820, 1808.168945)`、太陽近傍 `(3283.929199, 3988.980225, 5179.038574)` で、設計アンカーに対して相対誤差5%以内である。朝・昼・夕の太陽ディスク値は有限であり、CSM は4カスケード、欠落0、二重化0、最大影差分0.003438（閾値0.005000）、サブテクセル影エッジ変化率0.000000（256サンプル）を記録する。実GPU取得では3ケースすべてが `R2_GPU_CAPTURE ... passed=1`、ケース間平均RGB差分も noon 34.4486、evening 7.52983となり、最終行が `R2_SKY_TIME_SWEEP=PASS ... gpu_capture=1` になった。
 
 ## Golden と閾値
 
@@ -117,6 +117,31 @@ R2-P1の平行大気・単一散乱の近似（光学的深さ τ×e^(-τ)、地
 昼（45°）は空が上ほど濃い青で地平線が淡く明るく、太陽の側に白い光冠が出る。既定視点の地面の外（地平線より下の遠景）は黒くなく、霞んだ灰褐色になる。影の中は空の光で青みを帯び、黒くつぶれない。夕（3°）は太陽側の地平線が橙〜黄に光り、上空はオゾンの吸収で青紫に残る。LUTの生成は起動画面の解像度（radiance 256×128、transmittance 128×32）で1回 106〜145 ms（Debug、`verify-SS-SKY-MODEL-P1-21.txt` の撮影9回、各 `Game.log` の `Sky LUT generated`）。同じビルドでも機械の負荷で約40 msばらつく。
 
 空を使う検証（R2の空のgolden、PTの屋外、R7屋外の参照比較）は空の値が変わるため、新しい空で再照合する（SS-SKY-MODEL-P2）。空を使わない Indoor/Outdoor の golden は変わらない（`verify-SS-SKY-MODEL-P1-7.txt`）。
+
+## 新しい空での再照合（2026-10-01）
+
+空を有効にする検証を新しい空で回し、落ちたものを分類した。証拠は `.harness/runs/20261001-193759/verify-SS-SKY-MODEL-P2-*.txt`。ラスタとPTの比較（同じradiance LUTを引く）の閾値と規則は変えていない。
+
+| 検証 | 結果 | 分類と対応 |
+|---|---|---|
+| R2の昼の数値アンカー（`RenderingHdrSceneCaptureTest`・`R2SkyTimeSweep.tsv`） | 古い値（天頂 (463.6, 944.8, 1808.2) nits）から外れた | 空のモデルの変更だけによる。新しい値へ再基準化した（下） |
+| R2の空のgolden（`R2SkyMorning/Noon/Evening.png`、`RenderingGoldenImageComparatorTest`） | 古い画像と一致しない | 空のモデルの変更だけによる（CPUのモデルから作る画像）。新しいモデルから作り直して再承認した |
+| `PathTracingOutdoorVulkanTest` の空と地面からの間接光（今回足した比較） | 期待の58%で不合格 | テスト側の誤り。面の画素を直接光の明るさ（中央の99%以上）で選んでいたため、面より明るい新しい空の背景の画素（0.30〜0.39、面は0.273）を面として平均していた。面の画素を画素中心の1次命中距離の検証出力で選ぶよう直した。面の画素だけなら、散乱光線の不交差を一時的に定数1にした確認で差は1.2003（反射率の和1.2）、修正後は 0.146013 対 期待 0.146141（差0.09%） |
+| `RenderingHdrOutdoorSceneVulkanTest`・`LightingLightBufferTest`・`PathTracingMaterialVulkanTest`・`PathTracingLightingVulkanTest`・`R8PathTracingSequenceFrameVulkanTest`・`RenderingDDGILightingContractTest`・`SkyAtmosphereModelTest` | 合格 | 変更なし |
+| `R7OutdoorPathTracingReferenceVulkanTest` | 合格（3時刻とも閾値内） | 数値は `R7OutdoorAcceptance.md` の「新しい空での再照合」 |
+
+### 再基準化したアンカー（昼: 太陽 仰角45°・方位0°）
+
+| 項目 | 古い空 | 新しい空 |
+|---|---|---|
+| 天頂 | (463.6, 944.8, 1808.2) nits | (1798.9, 2416.1, 4064.7) nits、輝度 約2404 nits |
+| 太陽の近く | (3283.9, 3989.0, 5179.0) nits | (48920.9, 44979.5, 40593.4) nits |
+
+新しい値は物理的な期待に近い: 天頂は B > G > R の青で、輝度は晴天の天頂の実測の範囲（約2000〜8000 nits、`SkyAtmosphereModelTest` の基準と同じ）に入る。古い値は輝度約905 nitsで暗かった。太陽の近くは前方のMie散乱（g=0.8）の光冠で天頂の約19倍（輝度比）になり、透過した太陽光の色でわずかに暖色（R > G > B）になる。古い値は青が最大で、光冠は天頂の約4.3倍と弱かった。許容差（相対5%）は変えていない。GPUの読み戻し（`--r2-scenario=sky-time-sweep` の `R2_FLOAT_READBACK`）も同じ値を返す（`verify-SS-SKY-MODEL-P2-8.txt`）。朝（8°）の天頂は (492.2, 660.6, 1161.8) nits、夕（15°）は (708.8, 1009.7, 1833.0) nits。
+
+作り直したgoldenは、昼が上ほど濃い青で地平線が淡く、地平線より下が灰色の地面、夕は太陽の側の地平線が暖色に光る（画像を開いて確かめた）。
+
+R2の実GPU取得（`R2_GPU_CAPTURE`）は3ケースとも `passed=1` で、ケース間の平均RGB差は昼 23.87・夕 9.34。取得は屋外の検証シーンの露出（10 klxの方向光向け、プリエクスポージャ 0.000868）のままで空の太陽（水平面で数万 lx。仰角40°で47.2 klx、上の数値の根拠の表）で照らすため、平均RGBは (233〜248) と白に近い。このシナリオの判定は「空でない・一様でない・前のケースから変わる」だけで、露出の妥当性は判定しない（既知の限界）。
 
 ## 非対象と後続
 

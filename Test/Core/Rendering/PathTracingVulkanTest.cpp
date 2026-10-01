@@ -1375,11 +1375,25 @@ namespace
         }
         const VariableArray<float> directPixels = pixels;
         const float directCenter = CenterRadiance(directPixels);
+        // 面の画素は画素中心の1次命中距離（三角形の外は0）で選ぶ。新しい空は面より明るい方向があり、
+        // 直接光の明るさでは背景の空の画素と面を区別できない。
+        pathPass.SetDebugOutput(PathTracingDebugOutput::HitDistance);
+        pathPass.SetPixelSampling(PathTracingPixelSampling::Center);
+        if (!RunFrame(device, graph, pathPass, context, 14u,
+                      1u, 1u, pixels, &skyPass) ||
+            pathPass.GetAccumulatedSampleCount() != 1u)
+        {
+            std::cerr << "空の間接光の比較の面の範囲を描画できませんでした\n";
+            return 1;
+        }
+        const VariableArray<float> hitDistancePixels = pixels;
+        pathPass.SetDebugOutput(PathTracingDebugOutput::None);
+        pathPass.SetPixelSampling(PathTracingPixelSampling::Box);
         constexpr uint32_t SkyIndirectFrames = 16u;
         pathPass.SetTransportScope(PathTracingTransportScope::Full);
         for (uint32_t frame = 0u; frame < SkyIndirectFrames; ++frame)
         {
-            if (!RunFrame(device, graph, pathPass, context, 14u + frame,
+            if (!RunFrame(device, graph, pathPass, context, 15u + frame,
                           1u, 1u, pixels, &skyPass) ||
                 pathPass.GetAccumulatedSampleCount() != frame + 1u)
             {
@@ -1392,8 +1406,7 @@ namespace
         const auto isLitSurface = [&](uint32_t x, uint32_t y)
         {
             const size_t offset = (static_cast<size_t>(y) * Width + x) * 4u;
-            return directPixels[offset] + directPixels[offset + 1u] +
-                       directPixels[offset + 2u] >= directCenter * 0.99f;
+            return hitDistancePixels[offset] > 0.0f;
         };
         double indirectTotal = 0.0;
         uint32_t surfacePixelCount = 0u;
