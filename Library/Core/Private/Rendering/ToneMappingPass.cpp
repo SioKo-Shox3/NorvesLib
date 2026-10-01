@@ -15,6 +15,7 @@
 #include "RHI/TransientResourcePool.h"
 #include "Logging/LogMacros.h"
 
+#include <cmath>
 #include <cstring>
 #include <exception>
 #include <fstream>
@@ -653,7 +654,12 @@ namespace NorvesLib::Core::Rendering
         params.colorFilter[1] = m_Settings.ColorFilter[1];
         params.colorFilter[2] = m_Settings.ColorFilter[2];
         params.colorFilter[3] = m_Settings.ColorFilterIntensity;
-        params.contrast = m_Settings.Contrast;
+        // カメラがコントラストを指定していればそれを使う（起動画面など、検証シーンの既定を変えずに切り替える）。
+        const CameraProxy* activeCamera = context.GetActiveCamera();
+        params.contrast = activeCamera != nullptr && std::isfinite(activeCamera->GradingContrast) &&
+                                  activeCamera->GradingContrast >= 0.0f
+                              ? activeCamera->GradingContrast
+                              : m_Settings.Contrast;
         params.saturation = m_Settings.Saturation;
         params.brightness = m_Settings.Brightness;
         params.temperature = m_Settings.Temperature;

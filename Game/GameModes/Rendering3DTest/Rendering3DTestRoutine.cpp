@@ -198,6 +198,9 @@ namespace Game::GameModes
             data.m_bAutoExposure = true;
             data.m_bAppliedAutoExposure = true;
             data.m_pCameraComponent->SetExposureMode(CameraExposureMode::Auto);
+            // 既定のコントラスト（1.05）は表示のリニア値 0.024 未満（sRGB で約 43/255 以下）を黒へ切り、晴天の
+            // 影の中の地面（空の光だけで日向の約 2 割）が真っ黒になるため、起動画面ではコントラストを掛けない。
+            data.m_pCameraComponent->SetGradingContrast(1.0f);
             // 起動画面のアンチエイリアシングは FXAA（--anti-aliasing=taa と ImGui で TAA を選べる）。
             data.m_bTemporalAA = data.m_bStartupTemporalAA;
             data.m_bAppliedTemporalAA = data.m_bTemporalAA;

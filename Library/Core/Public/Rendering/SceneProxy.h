@@ -388,6 +388,9 @@ namespace NorvesLib::Core::Rendering
         float ProjectionJitterNdcX = 0.0f;
         float ProjectionJitterNdcY = 0.0f;
 
+        // トーンマップ後のグレーディングのコントラスト。負は View のトーンマップ設定の値を使う。
+        float GradingContrast = -1.0f;
+
         // ポストプロセス設定（ハンドル参照）
         // PostProcessHandle PostProcess;
 

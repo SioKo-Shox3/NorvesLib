@@ -183,6 +183,22 @@ namespace NorvesLib::Core::Component
         }
     }
 
+    bool CameraComponent::SetGradingContrast(float contrast)
+    {
+        if (!std::isfinite(contrast))
+        {
+            return false;
+        }
+        // 負はすべて「View の設定を使う」として同じ値にそろえる。
+        const float normalized = contrast < 0.0f ? -1.0f : contrast;
+        if (m_GradingContrast != normalized)
+        {
+            m_GradingContrast = normalized;
+            MarkRenderStateDirty();
+        }
+        return true;
+    }
+
     bool CameraComponent::SetShutterSpeed(float shutterSpeed)
     {
         Rendering::CameraProxy validation;
@@ -282,6 +298,7 @@ namespace NorvesLib::Core::Component
         snapshot.FocusDistance = m_FocusDistance;
         snapshot.ExposureMode = m_ExposureMode;
         snapshot.AntiAliasing = m_AntiAliasingMode;
+        snapshot.GradingContrast = m_GradingContrast;
         if (!TryBuildExposureSnapshot(
                 Aperture.Get(),
                 ShutterSpeed.Get(),
