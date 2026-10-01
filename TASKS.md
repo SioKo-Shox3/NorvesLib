@@ -48,14 +48,15 @@
 - notes: 参照比較の段（`-L Reference`）のうち空を使うものだけを回す（R7屋外は単独で約12分）。GPUのテストは同時に2本走らせない。上の verify の対象名が CMake に無い場合は、`Test/Core/Rendering/CMakeLists.txt` の実際の名前へ読み替え、読み替えを PROGRESS に書く。
 
 ## SS-DAYLIGHT-P1: 起動画面を物理空と空の太陽による昼の屋外にする
-- status: done
-- done-when: Rendering3DTest が R2 の物理空（SkyAtmosphere）を有効にし、空の太陽（仰角約40°、カメラの既定視点から球と岩の影が地面に見える方位）が影を落とす方向光になる。シーン独自の方向光は外し、方向ライトの操作（矢印キーとImGui）は空の太陽の仰角・方位を動かす。`f90e7ea` の露出補正を外す（露出は SS-AUTOEXPOSURE-P2 の自動露出）。点光源（Lumen/Candelaの物理単位）と発光球の輝度も物理的にありうる値へ移す。IBLは空から作る（静的HDRは空が無効なときだけ使う）。撮影で、青い昼の空の下、球と岩の影が地面にはっきり見え、影の中の地面の平均輝度が日向の15〜40%（黒くつぶれず、影と分かる。PNGの領域を開いて測る）、白飛び画素率が1%未満。昼の撮影の近接視点で、石畳の球の石の太陽側の斜面が明るく反対側が暗い（法線マップ `nor_gl` の緑の向きが凹凸と合う。逆なら直す）。
+- status: doing
+- done-when: Rendering3DTest が R2 の物理空（SkyAtmosphere）を有効にし、空の太陽（仰角約40°、カメラの既定視点から球と岩の影が地面に見える方位）が影を落とす方向光になる。シーン独自の方向光は外し、方向ライトの操作（矢印キーとImGui）は空の太陽の仰角・方位を動かす。`f90e7ea` の露出補正を外す（露出は SS-AUTOEXPOSURE-P2 の自動露出）。点光源（Lumen/Candelaの物理単位）と発光球の輝度も物理的にありうる値へ移す。IBLは空から作る（静的HDRは空が無効なときだけ使う）。撮影で、青い昼の空の下、球と岩の影が地面にはっきり見え、影の中の地面の平均輝度が日向の15〜40%（黒くつぶれず、影の中の石畳の模様が見える。PNGの領域の画素をsRGBからリニアへ戻し、Rec.709の重みで求めた輝度の平均の比で測る。8ビットの符号値の比ではない）、白飛び画素率が1%未満。昼の撮影の近接視点で、石畳の球の石の太陽側の斜面が明るく反対側が暗い（法線マップ `nor_gl` の緑の向きが凹凸と合う。逆なら直す）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-DAYLIGHT-P1 -SunElevations 45`
 - stop-when: 影の中の比が範囲に入らない原因が空のモデル（SS-SKY-MODEL-P1）の側にある場合は、そちらへ差し戻さず、測った値と原因を記録してこのタスクで直せる範囲（起動画面の値）で閉じる。
 - paths: Game/GameModes/Rendering3DTest, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Component, Library/Core/Private/Component, Assets/Shaders, Assets/Textures, TASKS.md, PROGRESS.md
 - notes: ユーザー決定（2026-09-27）「物理的な昼の屋外へ」。影が見えない原因は、静的HDRの環境光が地面の照度の約87%を占め（方向光1 lux）、影で約13%しか暗くならないこと（`f3d4abb` でIBLを E/π にした後、比が約9倍悪化）。空を有効にするとエンジンが空の太陽の方向光を自動で加える（SKY-SUN-P2）。起動画面の見た目を変える変更で、この変更はユーザーの承認済み。
 - notes: 起動画面の側は `ad6729a` で実装済み。空のモデルが暗く橙で地平線より下が黒いため止めていた（`blocked/SS-DAYLIGHT-P1.md`）。SS-SKY-MODEL-P1 の後に撮り直し、完了条件を確かめる。法線マップの向きの確認は SS-POM の評価の指摘の残り。
+- notes: 2026-10-02 評価1周目（`153c02c`）は NEEDS_WORK（`NEXT_FINDINGS.md`）。ライティングの出力では影の中は日向の約2割あるが、トーンマップ（ACESの足元）で表示のリニア値の比が約10%へ縮み、影の芯がほぼ黒になる。直す場所は起動画面のカメラの表示側（自動露出の露出補正・トーンマップの足元・グレーディング）で、検証シーンのカメラの既定は変えない。
 
 ## SS-DAYLIGHT-P2: 太陽の向きを操作・指定でき、高さフォグを掛ける
 - status: todo
