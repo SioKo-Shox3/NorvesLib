@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <span>
 #include "Input/InputBindingSet.h"
 #include "Input/InputActionRuntime.h"
 #include "Input/IInputController.h"
@@ -30,6 +31,8 @@ namespace NorvesLib::Core::Input
         bool Configure(const InputBindingSet& settings);
         // 設定と初期contextを候補で構築し、一括反映する。不明contextでは旧状態を維持。
         bool ConfigureWithContext(const InputBindingSet& settings, Identity initialContext);
+        // 現context stackをIDで維持する。消えるcontextがあれば旧設定/操作を変更しない。
+        bool ConfigurePreservingContexts(const InputBindingSet& settings);
         // 同じRouterへの再Attachは冪等。優先度変更は配送外でDetach→Attachする。
         void Attach(InputRouter& router, int32_t priority = 0);
         void Detach();
@@ -71,7 +74,7 @@ namespace NorvesLib::Core::Input
             ECursorMode CursorMode = ECursorMode::Normal;
             Container::VariableArray<Action> Actions;
         };
-        bool ConfigureImpl(const InputBindingSet& settings, Identity initialContext);
+        bool ConfigureImpl(const InputBindingSet& settings, std::span<const Identity> initialContexts);
         Context* Top();
         const Context* Top() const;
         void SyncActiveButtons();

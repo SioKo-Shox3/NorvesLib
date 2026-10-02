@@ -181,3 +181,6 @@ Locked中も絶対位置はUIへ配送するが、絶対deltaは0にする。mod
 Win32根拠: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-clipcursor 、 https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setcursor 、 https://learn.microsoft.com/en-us/windows/win32/menurc/wm-setcursor 。
 
 shared clipはGetClipCursorで保存矩形と照合し、外部変更時は所有を放棄して他者の矩形を解除しない。再適用は実GetFocus/GetForegroundWindowも確認する。WM_SETCURSORはtarget HWNDが自windowの時だけ処理し、childから転送された通知を上書きしない。Win32には所有tokenがないため同processのcursor操作はGameThreadへ直列化する。
+
+## リバインド設定の明示反映
+GameInputSettings::ApplyActionBindingsはCurrentの候補を作り、Mapperのcontext stackをIdentity順に維持して再構築した後だけ保存対象へ反映する。成功時は旧held/fixedPress等を取消し、unknown/invalidやstackのcontext不足では両方を変更しない。空bindingsは明示unbind。内部設定から借用したbinding配列を渡しても安全だが、更新成功後の借用viewは失効する。ResetActionBindingsは対象のbindingだけ、ResetAllToDefaultsは感度等も含むCurrent全体を戻す。startup UserStatus/Reportは読込履歴であり、runtime更新の状態として再利用しない。変更や復帰だけでは保存せず、Saveを明示呼出しする。

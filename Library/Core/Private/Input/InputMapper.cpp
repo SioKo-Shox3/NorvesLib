@@ -19,9 +19,16 @@ namespace NorvesLib::Core::Input
     }
     bool InputMapper::ConfigureWithContext(const InputBindingSet& settings, Identity initialContext)
     {
-        return initialContext.IsValid() && ConfigureImpl(settings, initialContext);
+        return initialContext.IsValid() && ConfigureImpl(settings, {&initialContext,1});
     }
-    bool InputMapper::ConfigureImpl(const InputBindingSet& settings, Identity initialContext)
+    bool InputMapper::ConfigurePreservingContexts(const InputBindingSet& settings)
+    {
+        Container::VariableArray<Identity> ids;
+        ids.reserve(m_Stack.size());
+        for(const auto index:m_Stack) ids.push_back(m_Contexts[index].Id);
+        return ConfigureImpl(settings,{ids.data(),ids.size()});
+    }
+    bool InputMapper::ConfigureImpl(const InputBindingSet& settings, std::span<const Identity> initialContexts)
     {
         Container::VariableArray<Context> compiled;
         compiled.reserve(settings.GetContexts().size());
@@ -46,11 +53,15 @@ namespace NorvesLib::Core::Input
             compiled.push_back(std::move(context));
         }
         Container::VariableArray<size_t> stack;
-        if (initialContext.IsValid())
+        stack.reserve(initialContexts.size());
+        for(const auto id:initialContexts)
         {
-            for (size_t i=0; i<compiled.size(); ++i)
-                if (compiled[i].Id == initialContext) { stack.push_back(i); break; }
-            if (stack.empty()) return false;
+            if(!id.IsValid()) return false;
+            size_t found=compiled.size();
+            for(size_t i=0;i<compiled.size();++i) if(compiled[i].Id==id) { found=i;break; }
+            if(found==compiled.size()) return false;
+            for(const auto existing:stack) if(existing==found) return false;
+            stack.push_back(found);
         }
         CancelAll();
         m_Contexts = std::move(compiled);

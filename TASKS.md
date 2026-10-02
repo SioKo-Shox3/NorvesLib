@@ -1398,3 +1398,11 @@
 - stop-when: 非focus要求をNormalで上書き、ShowCursor counter変更、他window上のcursor形状上書き、locked絶対deltaの漏れ、mode切替で逆delta、native失敗を成功報告、blocking未解消。
 - paths: Library/Core/Public/Application/IWindow.h, Library/Core/Private/Platform/Windows/WindowsWindow.h, Library/Core/Private/Platform/Windows/WindowsWindow.cpp, Library/Core/Public/Input/InputState.h, Library/Core/Private/Input/InputState.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Private/Input/InputSystem.cpp, Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Library/Core/Public/Engine/ApplicationProcessor.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Test/Core/Input/AbsoluteMouseTrackingTest.cpp, Test/Core/Input/InputRoutingExtensionTest.cpp, Test/Core/Input/InputActionMapTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Test/Core/Engine/InputFocusPipelineTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: IWindow GetCursorModeは最後に成功したmode。OS失敗時はfalseを扱い再試行する。入力取消やRaw/wheelの取消を絶対mouse基準化に混ぜない。既定Debug/Normalの表示は維持する。
+
+## G1-GR03-P7A: リバインド設定をcontext stack維持で反映する
+- status: done
+- done-when: Mapperのcontext stackをIdentity順に維持して設定を一括再構築するAPIと、GameInputSettingsのaction bindings変更/個別既定復帰/全設定既定復帰を追加。成功時は旧操作を取消し、失敗時はMapperと保存対象Currentを両方維持。変更だけでStoreへ書き込まない。
+- verify: Mapperのstack順/unknown context失敗/held取消とGameの更新/empty-unbind/alias/invalid/明示Save/既定復帰を既存bundle試験へ追加。所有/例外保証を独立レビュー、Windows依存未実行を明示。
+- stop-when: 設定変更でMenuの下のGameplayを失う、失敗時の部分反映、借用binding参照を長期保存、暗黙保存、blocking未解消。
+- paths: Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Game/Input/GameInputSettings.h, Game/Input/GameInputSettings.cpp, Test/Core/Input/InputActionMapTest.cpp, Test/Core/Input/GameInputSettingsTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: captureは次段でこの更新口へ接続する。全既定復帰はbindingsだけでなく感度等のCurrent設定全体をDefaultsへ戻す。個別復帰はbindingsだけ。Storeのstartup UserStatusは読込履歴のまま。

@@ -217,6 +217,33 @@ int main()
     // destructorは借用Routerより先に解除する。
     { InputMapper scoped(system.GetState());scoped.Attach(router); }
     router.DispatchKey({KeyCode::W,InputAction::Pressed});
+    {
+        InputSystem source;InputRouter route;source.SetRouter(&route);InputMapper target(source.GetState());target.Attach(route);
+        auto original=Definitions();assert(target.ConfigureWithContext(original,"Gameplay"_id));assert(target.PushContext("Menu"_id));
+        source.InjectKeyEvent(KeyCode::Enter,InputAction::Pressed);
+        assert(target.GetAction("Confirm"_id).Button.Held);
+        InputBindingSet missing;assert(missing.AddContext("Menu"_id,ECursorMode::Normal));
+        assert(!target.ConfigurePreservingContexts(missing));
+        assert(target.GetActiveContext()=="Menu"_id && target.GetAction("Confirm"_id).Button.Held);
+        // 定義の配列順が変わってもstackをindexでなくIdentityで引き直す。
+        InputBindingSet reordered;
+        for(auto it=original.GetContexts().rbegin();it!=original.GetContexts().rend();++it)
+        {
+            assert(reordered.AddContext(it->Id,it->CursorMode));
+            for(const auto& action:it->Actions) assert(reordered.AddAction(it->Id,action));
+        }
+        assert(target.ConfigurePreservingContexts(reordered));
+        assert(target.GetActiveContext()=="Menu"_id && !target.GetAction("Confirm"_id).Button.Held && !target.ConsumeFixedPress("Confirm"_id));
+        assert(target.PopContext() && target.GetActiveContext()=="Gameplay"_id);
+        assert(reordered.SetBindings("Gameplay"_id,"Jump"_id,{Key(KeyCode::Q)}));
+        source.InjectKeyEvent(KeyCode::Space,InputAction::Pressed);assert(target.GetAction("Jump"_id).Button.Held);
+        assert(target.ConfigurePreservingContexts(reordered));assert(!target.GetAction("Jump"_id).Button.Held);
+        source.InjectKeyEvent(KeyCode::Q,InputAction::Pressed);assert(target.GetAction("Jump"_id).Button.Held);
+        target.SetFocused(false);assert(target.ConfigurePreservingContexts(original));
+        assert(!target.IsFocused() && target.GetRequestedCursorMode()==ECursorMode::Locked);
+        target.ClearContexts();assert(target.ConfigurePreservingContexts(original));assert(!target.GetActiveContext().IsValid());
+        target.Detach();source.SetRouter(nullptr);
+    }
     std::cout << "InputActionMapTest passed\n";
     return 0;
 }

@@ -327,3 +327,6 @@
 
 - G1-GR03-P6D: Mapperのfocus非依存cursor要求をmessage前/Tick後にWindowへ同期し、requestedと最後に成功したeffectiveを分離。Windowsはclient screen RECTへClip、WM_SETCURSORで非表示、非focus/非表示/minimizedとRun終了/例外/Disconnect/DestroyでNormalを要求。move/size/DPI/display時の再適用、失敗のfalse返却/再試行を追加。Lockedの絶対mouseは位置だけを配送しdelta0、基準化はRaw/wheel/buttonsを保持。第1周でshared clip所有の実状態不一致とchild cursor上書きを検出し、GetClipCursor照合＋実focus/foreground判定＋対象HWND確認へ修正、第2周レビューPASS。実absolute追跡通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundleとRaw/ReleaseAll/runtime回帰成功。Mapper/Router/Engine統合試験を拡充したがWindows依存で未実行、native clip/表示も未確認。
 - Next: GR03のリバインド捕捉と設定への明示適用を実装する。GR04の実pad供給/hapticsは未完。
+
+- G1-GR03-P7A: Mapperのcontext stackをIdentity順に維持する設定再構築と、GameInputSettingsのaction bindings変更/個別既定復帰/全設定既定復帰を追加。候補copy/検証/compile完了後に旧操作取消とnoexcept moveで反映し、unknown/invalid/欠落contextでは両方を維持する。alias配列と空unbindを扱い、変更だけでは保存しない。独立所有/例外保証/試験の静的レビューPASS。既存portable runtime/Delegate回帰は成功、追加Mapper/Game統合試験とstatic_assertの実compileはWindows.h依存で未確認。
+- Next: GR03の物理入力捕捉と中止/解除待ちを実装し、この明示設定反映口へ接続する。

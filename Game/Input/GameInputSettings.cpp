@@ -1,6 +1,7 @@
 ﻿#include "GameInputSettings.h"
 #include "GameInputActions.h"
 #include <utility>
+#include <type_traits>
 
 namespace Game::Input
 {
@@ -41,6 +42,43 @@ namespace Game::Input
         m_Configuration=std::move(candidate);m_Store=std::move(store);m_Ready=true;m_LastError.clear();
         return true;
     }
+    bool GameInputSettings::ApplyCandidate(CoreInput::InputMapper& mapper,CoreInput::InputBindingSet candidate)
+    {
+        // Mapper成功後のCurrent反映は例外を出さず、両所有者を食い違わせない。
+        static_assert(std::is_nothrow_move_assignable_v<CoreInput::InputBindingSet>);
+        if(!m_Ready) { m_LastError="入力設定が未初期化です";return false; }
+        if(!mapper.ConfigurePreservingContexts(candidate))
+        {
+            m_LastError="現在のcontextを維持したまま入力設定を反映できません";return false;
+        }
+        m_Configuration.Current=std::move(candidate);m_LastError.clear();return true;
+    }
+    bool GameInputSettings::ApplyActionBindings(CoreInput::InputMapper& mapper,
+        NorvesLib::Core::Identity context,NorvesLib::Core::Identity action,
+        const Container::VariableArray<CoreInput::InputBinding>& bindings)
+    {
+        if(!m_Ready) { m_LastError="入力設定が未初期化です";return false; }
+        auto candidate=m_Configuration.Current;
+        if(!candidate.SetBindings(context,action,bindings))
+        {
+            m_LastError="対象actionまたはbindingが不正です";return false;
+        }
+        return ApplyCandidate(mapper,std::move(candidate));
+    }
+    bool GameInputSettings::ResetActionBindings(CoreInput::InputMapper& mapper,
+        NorvesLib::Core::Identity context,NorvesLib::Core::Identity action)
+    {
+        if(!m_Ready) { m_LastError="入力設定が未初期化です";return false; }
+        const auto* defaults=m_Configuration.Defaults.FindAction(context,action);
+        if(!defaults) { m_LastError="既定設定に対象actionがありません";return false; }
+        return ApplyActionBindings(mapper,context,action,defaults->Bindings);
+    }
+    bool GameInputSettings::ResetAllToDefaults(CoreInput::InputMapper& mapper)
+    {
+        if(!m_Ready) { m_LastError="入力設定が未初期化です";return false; }
+        return ApplyCandidate(mapper,m_Configuration.Defaults);
+    }
+
     CoreInput::InputBindingStoreSaveResult GameInputSettings::Save() const
     {
         if(!m_Ready || !m_Store)
