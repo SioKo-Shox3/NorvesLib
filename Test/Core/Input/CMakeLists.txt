@@ -28,3 +28,4 @@ add_test(NAME InputDebugOverlayStateTest COMMAND LoggerSinkTest --test=InputDebu
 add_test(NAME InputDebugOverlayControllerTest COMMAND LoggerSinkTest --test=InputDebugOverlayControllerTest)
 add_test(NAME GamepadStateNormalizeTest COMMAND LoggerSinkTest --test=GamepadStateNormalizeTest)
 add_test(NAME XInputDevicePollingTest COMMAND LoggerSinkTest --test=XInputDevicePollingTest)
+add_test(NAME XInputDeviceIntegrationTest COMMAND LoggerSinkTest --test=XInputDeviceIntegrationTest)

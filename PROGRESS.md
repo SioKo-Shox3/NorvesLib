@@ -354,3 +354,6 @@
 
 - G1-GR04-P3: SDK非依存IXInputApiとXInputPollingStateを追加。4slotの接続済み毎frame/未接続1秒以上のround-robin探索、同packet配送、error中のneutral退避とhealth保持、Background/復帰Baseline、sink拒否/例外後の再配送を実装。有限非負単調clockを検証し、同回二重読取や長時間経過のcatch-upを防止する。実InputState sinkによる通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle試験成功。独立レビューPASS、追加の複数error/拒否時の公平性/1000回探索/例外再試行も実行成功。Windows API・Engine接続・実機入力・振動はこの段では未実行。
 - Next: GR04のnative adapterとEngine所有デバイスの寿命/ポーリングを接続し、その後hapticsとdevice種別通知へ進む。
+
+- G1-GR04-P4: Platform::CreateGamepadDeviceとWindowsXInputApiを追加し、native成功packetの全fieldを明示変換。失敗時のraw非変更、slot検証、Xinputリンクを接続。XInputDeviceはAPIを独占所有しpoll stateを内包、null生成/コピー/移動を拒否。System参照は同期sinkだけが借用する。IInputDeviceの旧poll互換を保ち、時刻付きbool poll/focus/provider識別を追加。実device.cppと公開headerのcompile、統合試験のMEMBER object compileは成功。試験main改名時のreturn欠落を実compileで修正し再確認、独立レビューPASS。P3の通常/ASan・UBSan回帰成功。実System/Routerを含むリンクはWindows.h依存で停止し、統合実行/native SDK compile/実機は未検証。
+- Next: GR04のdeviceをEngineで所有して初期化/終了/例外/Run再開とfocus-message後のframe pollingへ接続する。振動は後続。

@@ -50,6 +50,9 @@ set(PRIVATE_SOURCES
     Private/Platform/Windows/XInputStateConversion.h
     Private/Platform/Windows/IXInputApi.h
     Private/Platform/Windows/XInputPollingState.h
+    Private/Platform/Windows/XInputDevice.h
+    Private/Platform/Windows/XInputDevice.cpp
+    Private/Platform/Windows/WindowsXInputApi.cpp
     Private/Platform/Windows/WindowsPlatformApplicationFactory.cpp
     Private/Platform/Windows/WindowsWindow.cpp
     Private/Platform/Windows/WindowsEntryPoint.cpp
@@ -288,6 +291,7 @@ set(PUBLIC_HEADERS
     Public/Platform/NativeWindowHandle.h
     Public/Platform/PlatformGraphics.h
     Public/Platform/PlatformApplicationFactory.h
+    Public/Platform/PlatformInputDevices.h
     Public/Platform/PlatformProcess.h
     Public/Platform/PlatformConsole.h
     Public/Boot/AppLauncher.h
@@ -663,6 +667,7 @@ target_compile_features(${MODULE_NAME} PUBLIC cxx_std_23)
 
 # Windows固有の設定
 if(WIN32)
+    target_link_libraries(${MODULE_NAME} PRIVATE Xinput)
     target_compile_definitions(${MODULE_NAME} PRIVATE
         NOMINMAX
         WIN32_LEAN_AND_MEAN

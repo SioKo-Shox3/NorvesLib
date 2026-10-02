@@ -20,6 +20,7 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER GamepadInputStateTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/GamepadInputStateTest.cpp
     MEMBER GamepadStateNormalizeTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/GamepadStateNormalizeTest.cpp
     MEMBER XInputDevicePollingTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/XInputDevicePollingTest.cpp
+    MEMBER XInputDeviceIntegrationTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/XInputDeviceIntegrationTest.cpp
     MEMBER InputActionSettingsTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputActionSettingsTest.cpp
     MEMBER AbsoluteMouseTrackingTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/AbsoluteMouseTrackingTest.cpp
     MEMBER RawInputStateTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/RawInputStateTest.cpp

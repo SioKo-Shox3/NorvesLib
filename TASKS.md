@@ -1470,3 +1470,11 @@
 - stop-when: 同frame二重poll、欠番slotの放置、未接続の高頻度poll、背景Live注入、復帰held再押下、拒否を配送済み扱い、clock不正で状態更新、blocking未解消。
 - paths: Library/Core/Private/Platform/Windows/IXInputApi.h, Library/Core/Private/Platform/Windows/XInputPollingState.h, Library/Core/CMakeLists.txt, Test/Core/Input/XInputDevicePollingTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: この段は入力読取り状態。native adapter/Engine接続と振動は後続。sinkは呼出中だけ、APIはstateより長命で使う。
+
+## G1-GR04-P4: XInputデバイスを実APIと入力正本へ接続する
+- status: done
+- done-when: Windows APIを明示field変換するadapterと、APIを所有するXInputDeviceを実装。null APIを拒否し、Initialize/Shutdown/焦点/時刻付きpollをIInputDeviceへ接続、InputSystem注入は同期間の借用だけ。Platform factoryは未初期化deviceを返す。
+- verify: 公開/非SDK header syntax、P3 portable回帰、実Systemでfake APIの所有/拒否/再初期化/背景/復帰試験を既存bundleへ追加。Windows APIと統合実行の限界を記録し独立レビュー。
+- stop-when: null参照、APIより長い借用、copy/moveで参照破壊、入力systemの長期保持、失敗packet使用、既存IInputDevice実装の破壊、blocking未解消。
+- paths: Library/Core/Public/Input/IInputDevice.h, Library/Core/Public/Platform/PlatformInputDevices.h, Library/Core/Private/Platform/Windows/XInputDevice.h, Library/Core/Private/Platform/Windows/XInputDevice.cpp, Library/Core/Private/Platform/Windows/WindowsXInputApi.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/XInputDeviceIntegrationTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: Engine登録/frame呼出しは次段。読み取り専用で、振動出力はhaptics接続時に追加する。

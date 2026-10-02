@@ -42,6 +42,27 @@ namespace NorvesLib::Core::Input
          * InputSystemのInject*メソッドに変換して渡します。
          */
         virtual void PollEvents(InputSystem &system) = 0;
+
+        // GameThreadの非scaled単調秒。旧実装は従来のpollへ委譲する。
+        // 時刻付き/旧pollを同一初期化期間で混用しない。falseは入力源の未回復errorを示す。
+        virtual bool PollEvents(InputSystem& system, double unscaledTimeSeconds)
+        {
+            (void)unscaledTimeSeconds;
+            PollEvents(system);
+            return true;
+        }
+
+        // ownerはfocus喪失時のMapper取消/正本resetも別途実施する。
+        virtual void SetFocused(bool focused) noexcept
+        {
+            (void)focused;
+        }
+
+        // trueのdeviceは全gamepad slotを供給する。ownerは同時に1つだけ登録する。
+        virtual bool ProvidesGamepadState() const noexcept
+        {
+            return false;
+        }
     };
 
 } // namespace NorvesLib::Core::Input
