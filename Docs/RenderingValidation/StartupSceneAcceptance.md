@@ -10,7 +10,7 @@
 | 朝・昼・夕 × 既定・近接・低角度の撮影 | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT -SunElevations 10,45,3` | 9枚、result=pass（シェーダーのコンパイル失敗なし、終了コード0） |
 | 夜の撮影 | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT-night -Night` | 3枚、result=pass |
 | SS-LOOK-BALANCE の数値の範囲 | `check_look_balance.py`（下記） | 全項目 PASS（下の表） |
-| GPU のフレーム時間（1280×720） | `Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -GpuTimingFrames 600`（昼夕朝・夜） | 2回の計測とも全12視点で95パーセンタイルが16.6 ms以下（最大 15.01 ms） |
+| GPU のフレーム時間（1280×720） | `Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -GpuTimingFrames 600`（昼夕朝・夜） | 未完。RelWithDebInfo の2回の計測では全12視点で95パーセンタイルが16.6 ms以下（最大 15.01 ms）だが、1フレームの値は既定の夜で540中6フレーム（最大18.16 ms）、既定の朝で1フレーム（16.87 ms）が予算を超える。Release の構成での計測・加速構造の更新を含む区間・パスごとの内訳は未取得（下記） |
 
 撮影はすべて TAA・RTGI 有効（`indirect_lighting=rtgi`）の起動画面の既定のまま、Debug の構成の Game で撮った。GPU は NVIDIA GeForce RTX 4080。
 
@@ -25,6 +25,17 @@
 - 低角度: `.harness/runs/startup-capture/SS-ACCEPT-compare/compare-low.png`
 
 個々の画像は `SS-ACCEPT/<視点>-sun<高度>.png`・`SS-ACCEPT-night/<視点>-night.png`（数値は各ディレクトリの `metrics.json`）。
+
+### 同じカメラの条件での比較
+
+既定視点は、変更前と変更後で起動時のカメラが違う（SpringArm の yaw・pitch・腕の長さが 変更前 `0,30,5`、変更後 `0,20,10`。回転の中心はどちらも原点）。上の `compare-default.png` は各版の既定のカメラのままなので構図が違う。同じカメラの条件で比べるため、変更後を変更前の既定のカメラ（`-DefaultCamera 0,30,5`）で撮り直して並べた。
+
+- 既定（同じカメラ `0,30,5`）: `.harness/runs/startup-capture/SS-ACCEPT-compare/compare-default-samecam.png`（左上から 変更前・朝10°・昼45°・夕3°・夜）
+- 撮影: `SS-ACCEPT-oldcam/default-sun<高度>.png`・`SS-ACCEPT-oldcam-night/default-night.png`（`verify-SS-ACCEPT-20.txt`・`-21.txt`。Game.log に `Rendering3DTest startup camera yaw=0 pitch=30 arm=5`）
+
+画面の平均輝度は 朝112.5・昼118.0・夕82.6・夜71.7（変更前 143.7）。光源の球・岩・大きな球が画面のほぼ同じ位置に来る。大きな球の中心の高さは変更後に 0.5 → 0 へ下げたため、球は少し低く写る（シーンの変更で、カメラの違いではない）。
+
+近接・低角度は、変更前と変更後の撮影スクリプトが同じカメラ（近接 `0,5,2.5`、低角度 `20,-8,6`）を渡しているので、`compare-near.png`・`compare-low.png` はそのまま同じカメラの条件の比較になる。
 
 見た目の主な違い:
 
@@ -90,14 +101,31 @@ SS-LOOK-BALANCE の完了条件の判定（`.harness/runs/20261002-185756/check_
 | 近接 夜 | 4.21 | 6.50 | 8.03 | 3.23 | 4.71 | 6.07 |
 | 低角度 夜 | 4.05 | 5.59 | 7.24 | 3.14 | 6.51 | 9.36 |
 
-2回の計測とも、全12視点で95パーセンタイルが16.6 ms以下で予算に収まる。パスごとの内訳は予算を超えないため取っていない。
+2回の計測とも、全12視点で95パーセンタイルは16.6 ms以下だが、1フレームの値が予算を超えるフレームがある（撮影スクリプトと同じ窓で数えた。`.harness/runs/20261002-185756/count_over_budget.py`、出力 `verify-SS-ACCEPT-23.txt`）。
+
+| 計測 | 視点 | 予算を超えたフレーム | 値（ms） |
+|---|---|---|---|
+| 計測1 | 既定 夜 | 540中6 | 17.60・18.16・16.75・17.37・17.18・17.01 |
+| 計測2 | 既定 朝10° | 540中1 | 16.87 |
+
+ほかの22の計測（視点 × 条件 × 計測）は予算を超えたフレームが0。完了条件の「16.6 ms以下」を1フレームごとの値で読むと、既定の夜と既定の朝は予算を超える。その場合に要るパスごとの内訳は、今のトレースに GPU のパスごとの時間が出ない（RenderGraph のパスごとのタイムスタンプは取っているが、`--trace-file` へ書かない）ため取れていない。
+
+### 未取得の項目と理由
+
+次の3つは、測る仕組みがエンジン側（`Library/Core`）に要り、このタスクの変更の範囲（`Docs/RenderingValidation`・`Scripts/CaptureStartupScene.ps1`）の外になる。
+
+1. Release の構成での GPU 時間。Release は `NORVES_ENABLE_STATS=0`（`Library/Core/CMakeLists.txt`）で、GPU のタイムスタンプとトレースが無効。
+2. 加速構造の構築・更新を含む区間。`RenderingCoordinator.cpp` は `RayTracingSceneSubsystem::BuildAccelerationStructures` を記録した後に `FrameGPU` のタイムスタンプを始める。
+3. 予算を超えたフレームのパスごとの内訳。パスごとの GPU 時間をトレースへ書く経路が無い。
+
+外部のプロファイラも試したが使えなかった。Nsight Systems 2021.1.3（`nsys profile -t vulkan --vulkan-gpu-workload=true`）は Release の Game を起動できたが、記録できたイベントは5件で Vulkan の GPU の作業は取れず、Game は終了時にアクセス違反（`-1073741819`）で落ちた（`.harness/runs/startup-capture/SS-ACCEPT-nsys-try/`）。FrameView SDK 同梱の PresentMon 1.8（フレームごとの GPU の作業時間を出せる）と WPR の GPU の記録は ETW のカーネルの記録に管理者の権限が要り、この環境では起動できなかった。
 
 ### 既知の限界
 
 - 計測ごとの揺れが大きい。同じ視点の中央値が計測ごとに2倍近く変わる（既定の夜 9.48 → 4.09 ms）。GPU のクロックの状態や、同じ GPU で動くほかの画面の描画の影響と見られる。95パーセンタイルの最大は既定の夜の15.01 msで、予算までの余裕は1.6 ms。
 - 1フレームだけの最大値は予算を超えることがある（計測1の既定の夜 18.16 ms、計測2の既定の朝 16.87 ms）。
 - 加速構造の更新は区間に含まない（上記）。
-- Release の構成そのものの GPU 時間は測れない（統計が無効）。シェーダーと記録する描画のコマンドは RelWithDebInfo と同じで、統計が有効な構成ではパスごとのタイムスタンプの書き込みが加わるだけなので、RelWithDebInfo の値は Release の GPU 時間を下回らない側の見積もりになる。
+- Release の構成そのものの GPU 時間は測れていない（統計が無効。上記）。
 
 ## 撮影の注意
 

@@ -35,6 +35,7 @@
 # gpu_timing として metrics.json へ書く。
 # タイムスタンプは統計が有効な構成（Debug・RelWithDebInfo）だけで取れるため、Release とは併用しない。
 # 予算（-GpuFrameBudgetMs、既定 16.6 ms）を超えても失敗にはせず within_budget=false と書く。
+# -DefaultCamera で既定視点のカメラを替え（例: 変更前の版の既定 0,30,5）、-ViewNames で撮る視点を絞る（例: default）。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -81,7 +82,11 @@ param(
     [int]$GpuTimingFrames = 0,
     # GPU のフレーム時間の予算（ms）。超えても失敗にはせず、metrics.json に within_budget として書く。
     [ValidateRange(0.1, 1000.0)]
-    [double]$GpuFrameBudgetMs = 16.6
+    [double]$GpuFrameBudgetMs = 16.6,
+    # 既定視点のカメラ（「yaw,pitch,arm」）。省略時は起動時の既定のカメラ。変更前の版と同じ視点で撮り比べる用。
+    [string]$DefaultCamera = '',
+    # 撮る視点の名前（「default,near」の形）。省略時は3視点すべて。
+    [string[]]$ViewNames = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -125,6 +130,22 @@ function ConvertTo-NumberList([string[]]$Values, [double]$Minimum, [double]$Maxi
         $numbers += $number
     }
     return ,$numbers
+}
+
+if ($DefaultCamera -ne '')
+{
+    $views[0].Camera = $DefaultCamera
+}
+$viewNameList = @(($ViewNames -join ',').Split(',', [StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
+if ($viewNameList.Count -gt 0)
+{
+    $unknownViews = @($viewNameList | Where-Object { $_ -notin $views.Name })
+    if ($unknownViews.Count -gt 0)
+    {
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low）"
+        exit 1
+    }
+    $views = @($views | Where-Object { $_.Name -in $viewNameList })
 }
 
 $sunElevationList = ConvertTo-NumberList $SunElevations 0.0 90.0 'sun_elevation'

@@ -302,7 +302,7 @@
 - notes: SS-RTGI-DEFAULT の完了時（2026-10-02）の測定: 判定の帯（0.80〜0.98）は既定1.27倍・近接0.86倍・低角度1.70倍で合格だが、年齢上限128の撮影（`startup-capture/SS-RTGI-DEFAULT-it1-age128-On` と `-it1-base-Off`）で既定の0.33〜0.42の帯は2.03倍（標準偏差1/255超の画素 26.6%、無効時1.6%）、低角度の0.65〜0.80の帯は2.29倍（15.3%、無効時0.5%）。前回の切り分け（`SS-RTGI-DEFAULT-exp-norej`、年齢上限64で法線・材質・深度の棄却を外した撮影）ではこの2つの帯が1.59倍・1.76倍だったので、履歴の棄却が主な原因と見られる。危険地帯（RTGI）。評価者を通す。
 
 ## SS-ACCEPT: 起動画面の改善を受け入れる
-- status: done
+- status: doing
 - done-when: 朝・昼・夕 × 既定・近接・低角度の撮影一式と、変更前（`163ffe5`）の同じ視点の撮影を並べた記録（`Docs/RenderingValidation/StartupSceneAcceptance.md`、画像は `.harness/runs/` への参照）がある。Releaseの構成で起動画面の1フレームの時間（GPU）を測り、1280×720で16.6 ms以下であることを記録する（超える場合はパスごとの内訳と、どれを軽くすれば収まるかを記録する）。夜（`-Night`）の撮影も並べる。評価者が、各項目の完了条件と撮影を開いて反証を試みる。
 - verify: `cmake --build build --config Release --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT -SunElevations 10,45,3`
