@@ -1,5 +1,6 @@
 ﻿#include "Input/InputState.h"
 #include <cstring>
+#include <bit>
 
 namespace NorvesLib::Core::Input
 {
@@ -102,6 +103,13 @@ namespace NorvesLib::Core::Input
         std::memset(m_KeyReleasedByReset, 0, sizeof(m_KeyReleasedByReset));
         std::memset(m_MouseReleasedByReset, 0, sizeof(m_MouseReleasedByReset));
 
+        for (uint8_t slot = 0; slot < GamepadSlotCount; ++slot)
+        {
+            m_PrevGamepadStates[slot] = m_GamepadStates[slot];
+            m_GamepadPressed[slot] = 0;
+            m_GamepadReleased[slot] = 0;
+        }
+
         // フレーム間累積値をリセット
         ResetFrameAccumulators();
     }
@@ -120,6 +128,14 @@ namespace NorvesLib::Core::Input
             m_MouseReleasedByReset[index] = m_MouseReleasedByReset[index] || m_MouseButtonStates[index];
             m_MouseButtonStates[index] = false;
         }
+        for (uint8_t slot = 0; slot < GamepadSlotCount; ++slot)
+        {
+            GamepadState neutral;
+            neutral.Connected = m_GamepadStates[slot].Connected;
+            neutral.PacketNumber = m_GamepadStates[slot].PacketNumber;
+            (void)SetGamepadState(slot, neutral);
+            m_GamepadPressed[slot] = 0;
+        }
         ResetFrameAccumulators();
         m_bFirstMouseUpdate = true;
     }
@@ -134,6 +150,64 @@ namespace NorvesLib::Core::Input
     {
         const auto index = static_cast<uint32_t>(button);
         return index < MOUSE_BUTTON_COUNT ? m_MouseReleaseSerial[index] : 0;
+    }
+
+    bool InputState::SetGamepadState(uint8_t slot, const GamepadState& state)
+    {
+        if (slot >= GamepadSlotCount || !IsValidGamepadState(state)) return false;
+        const uint16_t oldButtons = m_GamepadStates[slot].Buttons;
+        const uint16_t pressed = static_cast<uint16_t>(state.Buttons & ~oldButtons);
+        const uint16_t released = static_cast<uint16_t>(oldButtons & ~state.Buttons);
+        m_GamepadPressed[slot] |= pressed;
+        m_GamepadReleased[slot] |= released;
+        for (uint32_t bit = 0; bit < 16; ++bit)
+            if ((released & (1u << bit)) != 0) ++m_GamepadReleaseSerial[slot][bit];
+        m_GamepadStates[slot] = state;
+        if (!state.Connected) m_GamepadPressed[slot] = 0;
+        return true;
+    }
+
+    GamepadState InputState::GetGamepadState(uint8_t slot) const
+    {
+        return slot < GamepadSlotCount ? m_GamepadStates[slot] : GamepadState{};
+    }
+    GamepadState InputState::GetPreviousGamepadState(uint8_t slot) const
+    {
+        return slot < GamepadSlotCount ? m_PrevGamepadStates[slot] : GamepadState{};
+    }
+    bool InputState::IsGamepadButtonDown(uint8_t slot, GamepadButton button) const
+    {
+        const auto code = static_cast<uint16_t>(button);
+        return slot < GamepadSlotCount && IsValidGamepadButton(code) && m_GamepadStates[slot].Connected &&
+            (m_GamepadStates[slot].Buttons & code) != 0;
+    }
+    bool InputState::IsGamepadButtonPressed(uint8_t slot, GamepadButton button) const
+    {
+        const auto code = static_cast<uint16_t>(button);
+        return slot < GamepadSlotCount && IsValidGamepadButton(code) && (m_GamepadPressed[slot] & code) != 0;
+    }
+    bool InputState::IsGamepadButtonReleased(uint8_t slot, GamepadButton button) const
+    {
+        const auto code = static_cast<uint16_t>(button);
+        return slot < GamepadSlotCount && IsValidGamepadButton(code) && (m_GamepadReleased[slot] & code) != 0;
+    }
+    uint64_t InputState::GetGamepadButtonReleaseSerial(uint8_t slot, GamepadButton button) const
+    {
+        const auto code = static_cast<uint16_t>(button);
+        return slot < GamepadSlotCount && IsValidGamepadButton(code)
+            ? m_GamepadReleaseSerial[slot][std::countr_zero(code)] : 0;
+    }
+    float InputState::GetGamepadAxis(uint8_t slot, GamepadAxis axis) const
+    {
+        const auto index = static_cast<uint8_t>(axis);
+        return slot < GamepadSlotCount && index < static_cast<uint8_t>(GamepadAxis::Count) &&
+            m_GamepadStates[slot].Connected ? m_GamepadStates[slot].Axes[index] : 0.0f;
+    }
+    float InputState::GetGamepadTrigger(uint8_t slot, GamepadTrigger trigger) const
+    {
+        const auto index = static_cast<uint8_t>(trigger);
+        return slot < GamepadSlotCount && index < static_cast<uint8_t>(GamepadTrigger::Count) &&
+            m_GamepadStates[slot].Connected ? m_GamepadStates[slot].Triggers[index] : 0.0f;
     }
 
     void InputState::SetKeyState(KeyCode code, bool bDown)

@@ -285,3 +285,6 @@
 
 - G1-GR03-P4B: SDK非依存GamepadStateとphysical source/binding型を定義。4slot、単独button codeとstate用mask、axis/trigger範囲、target XY、modifiers、出力Normalized/FrameDeltaを検証する。変位sourceをNormalized軸へ暗黙clampしない。全16bit code/slot境界/型組合せ/数値異常を実headerの通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）で検証し、独立評価PASS。threshold 0/1と隣接範囲外も恒久試験へ追加して再実行成功。JSON代入前のwide整数検証は後続の責務。XInput/Mapper接続は未実装。
 - Next: パッド入力の正本と解除履歴をInputState/armedへ接続し、Mapperが全sourceを読める形にする。
+
+- G1-GR03-P4C: InputStateへ4slot Pad snapshot/前state、frame edge、release serialを接続し、Pad armedにも到達Pressedと世代一致を適用。更新は検証後一括、切断/ReleaseAllでPressedを取消し、ReleaseAllは物理接続/packetを保って入力をneutral化する。実InputStateの通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）と既存KBM/type回帰に成功。独立評価は全button/index、不正更新の非変更、12,000履歴遷移等の30,646,619チェックを通常/O2-NDEBUG/ASan・UBSanで通しPASS。InputSystem配送/XInput/haptics/実機は未接続・未検証。
+- Next: Identityが所有するcontext/action/binding設定とcompile境界を作り、Mapperへ接続する。

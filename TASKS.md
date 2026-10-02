@@ -1279,3 +1279,11 @@
 - stop-when: WindowsSDK依存、不正値accept、既存名衝突、backend動作済み扱い、blocking未解消。
 - paths: Library/Core/Public/Input/GamepadTypes.h, Library/Core/Public/Input/InputBindingTypes.h, Library/Core/CMakeLists.txt, Test/Core/Input/InputBindingTypesTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: XInput adapter/Mapper/JSONは未接続。4slot選定はS5=a承認に基づく。
+
+## G1-GR03-P4C: パッド入力の正本と解除履歴を入力状態へ接続する
+- status: done
+- done-when: Pad snapshotを検証後一括適用、frame edge/解除serial/neutralと接続維持を実装し、armedのUI消費/Repeat失効をPadへ拡張する。
+- verify: g++ -std=c++20 -I Library/Core/Public Test/Core/Input/GamepadInputStateTest.cpp Library/Core/Private/Input/InputState.cpp -o /tmp/pad-state && /tmp/pad-state
+- stop-when: 半端な更新、切断後down/armed、KBM回帰、SDK依存、blocking未解消。
+- paths: Library/Core/Public/Input/GamepadTypes.h, Library/Core/Public/Input/InputState.h, Library/Core/Public/Input/InputArmedState.h, Library/Core/Private/Input/InputState.cpp, Test/Core/Input/GamepadInputStateTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: XInput polling/振動/InputSystem配送は未接続。Mapper用の正本契約を先に満たす。

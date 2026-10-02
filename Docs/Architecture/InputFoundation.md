@@ -45,7 +45,7 @@
 - Shift/Ctrl/Altも左右それぞれのrouted許可を用いる。物理的にdownなだけの修飾キーからchordを成立させない。
 - Resetはfocus/context/binding変更用に全許可を忘れる。heldのまま戻ってもRepeatでは復活せず、新しい到達Pressedを待つ。Reconcileは失効済みの記録を掃除するが、呼ぶ前でも照会は正本/serialを照合する。
 - 配送済みイベントの処理を後から最終InputStateだけで再現する口ではない。Mapperは即時callbackで許可と順序を保持し、短いpress/releaseもボタンkernelへ渡す。
-- この段階はKeyboard/Mouseのkernelで、Router接着とGamepad側の同等契約は後続。Linux試験は実InputStateと実armed処理へcallback欠落を与える試験で、ImGuiの実機操作を検証したものではない。
+- Keyboard/Mouseから始めたkernelをPadにも拡張したが、Router/Mapperへの接着は後続。Linux試験は実InputStateと実armed処理へcallback欠落を与える試験で、ImGuiの実機操作を検証したものではない。
 
 - 同じInputState正本を継続して使うことが前提。別正本への差替え/再初期化時はResetする。serialは正本内の履歴であり、別instanceを識別するIDではない。
 
@@ -58,3 +58,12 @@
 - InputBindingはtarget X/Y、finite scale、invert、Shift/Ctrl/Altの修飾mask、[0,1]のbutton thresholdを持つ。Axis1D/Buttonではtarget Xだけ、Axis2DではX/Yを許す。scale 0は無寄与、負scaleとinvertは符号指定。
 - Button/Axis1D/Axis2Dは既存のInputAction（Pressed/Released/Repeat）とは別の型。軸の出力はNormalizedまたはFrameDeltaで、MouseDelta/WheelをNormalizedへ暗黙に丸めない。Buttonの変位sourceは後続で瞬間impulseとして扱う。
 - 値型の宣言/検証は実deviceの実装を意味しない。XInput、Mapper、JSONへの接続はまだ行っていない。
+
+## パッド入力の正本
+
+- InputStateはslotごとの現/前frameのGamepadStateを値として返す。SetGamepadStateはslotと全値を検証してから一括更新し、invalidではsnapshot/edge/serialを何も変えない。
+- PadのPressed/Releasedはframe内の遷移をラッチする。同frame短押下/解除でも両方trueになる。BeginFrameは前stateを保存してedgeだけを消す。
+- 切断はneutralなsnapshotだけを受け付け、Pressedを取り消してReleasedを残す。ReleaseAllもPressedを取り消し、物理接続フラグとpacketは保持してbutton/axis/triggerだけneutral化する。
+- buttonごとのrelease serialはdown→upで進み、frame/切断/再接続を跨いで維持する。Padのarmedも到達Pressedと現在down/serial一致で判定し、Repeatでは再許可しない。ResetGamepadは指定slotだけを忘れる。
+- invalid slot/button/axis/triggerの照会は空値/false/0。snapshotは値返しで、可変内部配列の参照を外へ保持させない。
+- InputSystemでのpad event配送、XInput polling、振動、UIと実機の接続は未実装。この段階は実InputStateにsnapshotを供給する純ロジック試験まで。

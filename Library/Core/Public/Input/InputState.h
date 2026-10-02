@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "InputTypes.h"
+#include "GamepadTypes.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Input
@@ -102,6 +103,18 @@ namespace NorvesLib::Core::Input
         uint64_t GetKeyReleaseSerial(KeyCode code) const;
         uint64_t GetMouseButtonReleaseSerial(MouseButton button) const;
 
+        // 検証してからsnapshotを一括更新する。invalid時はedge/serialも変更しない。
+        bool SetGamepadState(uint8_t slot, const GamepadState& state);
+        GamepadState GetGamepadState(uint8_t slot) const;
+        GamepadState GetPreviousGamepadState(uint8_t slot) const;
+        bool IsGamepadButtonDown(uint8_t slot, GamepadButton button) const;
+        // Pad edgeはframe内の遷移をラッチし、同frame短押下/解除も両方返す。
+        bool IsGamepadButtonPressed(uint8_t slot, GamepadButton button) const;
+        bool IsGamepadButtonReleased(uint8_t slot, GamepadButton button) const;
+        uint64_t GetGamepadButtonReleaseSerial(uint8_t slot, GamepadButton button) const;
+        float GetGamepadAxis(uint8_t slot, GamepadAxis axis) const;
+        float GetGamepadTrigger(uint8_t slot, GamepadTrigger trigger) const;
+
         /**
          * @brief キー状態を更新
          */
@@ -147,6 +160,12 @@ namespace NorvesLib::Core::Input
         uint64_t m_MouseReleaseSerial[MOUSE_BUTTON_COUNT]{};
         bool m_KeyReleasedByReset[KEY_COUNT]{};
         bool m_MouseReleasedByReset[MOUSE_BUTTON_COUNT]{};
+
+        GamepadState m_GamepadStates[GamepadSlotCount]{};
+        GamepadState m_PrevGamepadStates[GamepadSlotCount]{};
+        uint16_t m_GamepadPressed[GamepadSlotCount]{};
+        uint16_t m_GamepadReleased[GamepadSlotCount]{};
+        uint64_t m_GamepadReleaseSerial[GamepadSlotCount][16]{};
 
         // マウス状態
         MouseState m_MouseState;

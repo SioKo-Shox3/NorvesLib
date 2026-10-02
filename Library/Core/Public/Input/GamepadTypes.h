@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Input/InputTypes.h"
 #include <cmath>
 #include <cstdint>
 
@@ -9,6 +10,7 @@ namespace NorvesLib::Core::Input
 
     enum class GamepadButton : uint16_t
     {
+        None=0,
         DpadUp=0x0001, DpadDown=0x0002, DpadLeft=0x0004, DpadRight=0x0008,
         Start=0x0010, Back=0x0020, LeftThumb=0x0040, RightThumb=0x0080,
         LeftShoulder=0x0100, RightShoulder=0x0200,
@@ -16,6 +18,17 @@ namespace NorvesLib::Core::Input
     };
     enum class GamepadAxis : uint8_t { LeftX, LeftY, RightX, RightY, Count };
     enum class GamepadTrigger : uint8_t { Left, Right, Count };
+    struct GamepadButtonEvent
+    {
+        uint8_t Slot = 0;
+        GamepadButton Button = GamepadButton::None;
+        InputAction Action = InputAction::Pressed;
+    };
+    struct GamepadConnectionEvent
+    {
+        uint8_t Slot = 0;
+        bool Connected = false;
+    };
     inline constexpr uint16_t AllGamepadButtons = 0xF3FF;
 
     inline constexpr bool IsValidGamepadButton(uint16_t code)

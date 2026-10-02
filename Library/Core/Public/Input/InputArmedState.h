@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Input/InputState.h"
+#include <bit>
 
 namespace NorvesLib::Core::Input
 {
@@ -38,6 +39,29 @@ namespace NorvesLib::Core::Input
             }
         }
 
+        void OnGamepadButton(const GamepadButtonEvent& event, const InputState& raw)
+        {
+            const auto code = static_cast<uint16_t>(event.Button);
+            if (event.Slot >= GamepadSlotCount || !IsValidGamepadButton(code)) return;
+            auto& entry = m_Gamepad[event.Slot][std::countr_zero(code)];
+            if (event.Action == InputAction::Pressed)
+                entry = {raw.IsGamepadButtonDown(event.Slot, event.Button), raw.GetGamepadButtonReleaseSerial(event.Slot, event.Button)};
+            else if (event.Action == InputAction::Released) entry.Armed = false;
+        }
+        bool IsGamepadButtonArmed(uint8_t slot, GamepadButton button, const InputState& raw) const
+        {
+            const auto code = static_cast<uint16_t>(button);
+            if (slot >= GamepadSlotCount || !IsValidGamepadButton(code)) return false;
+            const auto& entry = m_Gamepad[slot][std::countr_zero(code)];
+            return entry.Armed && raw.IsGamepadButtonDown(slot, button) &&
+                entry.ReleaseSerial == raw.GetGamepadButtonReleaseSerial(slot, button);
+        }
+        void ResetGamepad(uint8_t slot)
+        {
+            if (slot < GamepadSlotCount)
+                for (auto& entry : m_Gamepad[slot]) entry = {};
+        }
+
         bool IsKeyArmed(KeyCode code, const InputState& raw) const
         {
             const auto index = static_cast<uint32_t>(code);
@@ -69,11 +93,15 @@ namespace NorvesLib::Core::Input
                 if (!IsKeyArmed(static_cast<KeyCode>(index), raw)) m_Keys[index].Armed = false;
             for (uint32_t index = 0; index < MouseCount; ++index)
                 if (!IsMouseButtonArmed(static_cast<MouseButton>(index), raw)) m_Mouse[index].Armed = false;
+            for (uint8_t slot = 0; slot < GamepadSlotCount; ++slot)
+                for (uint32_t bit = 0; bit < 16; ++bit)
+                    if (!IsGamepadButtonArmed(slot, static_cast<GamepadButton>(1u << bit), raw)) m_Gamepad[slot][bit].Armed = false;
         }
         void Reset()
         {
             for (auto& entry : m_Keys) entry = {};
             for (auto& entry : m_Mouse) entry = {};
+            for (uint8_t slot = 0; slot < GamepadSlotCount; ++slot) ResetGamepad(slot);
         }
 
     private:
@@ -82,5 +110,6 @@ namespace NorvesLib::Core::Input
         static constexpr uint32_t MouseCount = static_cast<uint32_t>(MouseButton::Count);
         Entry m_Keys[KeyCount]{};
         Entry m_Mouse[MouseCount]{};
+        Entry m_Gamepad[GamepadSlotCount][16]{};
     };
 } // namespace NorvesLib::Core::Input
