@@ -131,10 +131,12 @@
 
 - SS-POINT-SHADOW-P2の差し戻しの対応（2026-10-02）: 評価1周目の指摘（`--night` の判定で `std::basic_string<TCHAR>` を新しく使っていた）に対応し、`GameApplicationHandler.cpp` の判定を独自の `String` の比較 `args[i] == kNightOption` に置き換えた。
 
+- SS-EMISSIVE-GLOW（2026-10-02、未完・blocked）: 起動画面の発光球を45000 → 150000 nits（内面つや消し電球の表面 約15 cd/cm²）にした。`.harness/runs/20261002-084328/verify-SS-EMISSIVE-GLOW-1.txt`・`-3`でGame build EXIT_CODE=0、`-2`で撮影result=pass（平均輝度 45°: 178.5・174.9・178.8、3°: 173.6・169.6・173.7、白飛び率 最大0.00034）。45000 nitsの撮影（`startup-capture/SS-EMISSIVE-PREEXPOSE/`）と比べ、自動露出の平均（avg_log2 12.718・8.219）と目標EV100（13.718・9.219）は同じで、露出は発光球に引っ張られない。夕は発光球が場面の幾何平均の約500倍になり、縁の外66 pxまでにじむ（`-4`、`startup-capture/SS-EMISSIVE-GLOW/before-after-default-sun3-x3.png`）。昼は約22倍で、にじみは縁の外6 px・背景の+6%にとどまり見えない（`before-after-default-sun45-x3.png`）。試しに600000 nitsにしても昼は縁の外26 px・+25%の淡い輪だけだった（`startup-capture/SS-EMISSIVE-GLOW-600k/45k-150k-600k-default-sun45-x3.png`）。物理的な輝度・ブルームの既定を変えない・昼のにじみの3条件が両立しないため、`blocked/SS-EMISSIVE-GLOW.md`に選択肢を記録した。
+
 ## Next
 
 - SS-BLOOM-MIPCHAINの評価指摘2（仰角45°の太陽を画角に入れた撮影）は`-SunAzimuth`で撮れるようになった。
-- SS-EMISSIVE-PREEXPOSEで発光の上限（GBufferのRGBA16Fと材質の65504）を外した。次はSS-EMISSIVE-GLOWで発光球を 約1〜1.5×10^5 nits へ上げて昼・夕を撮り直す。
+- SS-EMISSIVE-GLOWは昼のにじみの扱い（`blocked/SS-EMISSIVE-GLOW.md`）をユーザーが決めるまで止める。夕は150000 nitsでにじむ。
 - 起動画面（Rendering3DTest）の描画改善をTASKS.mdの`SS-`の項目で進める（ブランチ`feature/startup-scene-rendering`）。見た目の証拠は`Scripts/CaptureStartupScene.ps1`の撮影で確かめる。R8までの残りの`todo`10件は`backlog`にした。順序はSS-TAA-P1 → SS-SKY-MODEL-P1・P2 → SS-DAYLIGHT-P1・P2 → SS-POINT-SHADOW-P2（夜）→ SS-EMISSIVE-PREEXPOSE → SS-EMISSIVE-GLOW → SS-TAA-P2以降。
 - 夜（`--night`）は自動露出が画面を中間調へ合わせるため、夜でも昼のような明るさに写る（自動露出の目標EV100 約-2.8に+2 EVの補正が掛かる）。夜らしい暗さ（露出の下げ・青み）は SS-POST-TUNE などで扱う。光源の球の発光の大きなにじみは SS-EMISSIVE-PREEXPOSE・SS-EMISSIVE-GLOW で扱う。
 - R8は完了（2026-09-26）。R3・R5は受入れ記録（`R3Acceptance.md`・`R5Acceptance.md`）があるが、ロードマップの表は未着手のままで完了のtrailerも無い（整理が残る）。ほかはTASKS.mdの修正・改善の項目。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。R7-O3の既知差はRTGI-HIT-SPECULAR・RTGI-MULTI-BOUNCE・FIX-CSM-TERMINATOR・FIX-GRAZING-IBL-SPECULARとして残す。
