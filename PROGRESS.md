@@ -333,3 +333,6 @@
 
 - G1-GR03-P7B: InputStateに最後のprovider pad sample/受理serialを追加し、ReleaseAllのneutral化と分離。成功注入は同値でも既存connection/button edge後にsample Delegate→Routerを配送し、invalid/Resetではsampleを作らない。callback前に注入引数をcopyして呼出元可変値の変更にもsnapshotを保つ。実GamepadInputState通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compileとReleaseAll/runtime/raw/camera-reset回帰成功。独立公開API/配送/所有レビューPASS、routing統合はWindows依存で未実行。capture側が物理neutralを取り違えず判定できる供給口を整えた。
 - Next: GR03の物理入力capture kernelと解除待ち、そのEngine/Router接続へ進む。
+
+- G1-GR03-P7C: 値状態の物理入力captureを追加。source mask/修飾chord/単独修飾/初期held除外/接続基準化/analog hysteresis/方向/中止/neutral待ちを実装。候補生成をRouter到達eventだけに限定し、pad履歴は人工的resetと区別する。相対入力の静止判定は正本の非zero受理serialで補い、UI消費と±相殺でも早期終了しない。第1周の静止判定指摘を修正して第2周レビューPASS。実InputStateを使うcapture/Raw試験は通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compile成功、pad/armed/reset回帰成功。Windows/Engine/Router接続はこのkernelの検証範囲外で未実行。
+- Next: GR03のcapture managerをRouter/Mapper/Engineへ接続し、捕捉中の操作とcursor要求を停止、終了時の設定反映へ進む。GR03全体は継続中。

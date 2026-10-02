@@ -21,3 +21,4 @@ add_test(NAME GameInputSettingsTest COMMAND LoggerSinkTest --test=GameInputSetti
 add_test(NAME CameraInputResetTest COMMAND LoggerSinkTest --test=CameraInputResetTest)
 add_test(NAME LegacyInputResetTest COMMAND LoggerSinkTest --test=LegacyInputResetTest)
 add_test(NAME AbsoluteMouseTrackingTest COMMAND LoggerSinkTest --test=AbsoluteMouseTrackingTest)
+add_test(NAME InputRebindCaptureStateTest COMMAND LoggerSinkTest --test=InputRebindCaptureStateTest)

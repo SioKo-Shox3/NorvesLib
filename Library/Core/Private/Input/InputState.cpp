@@ -296,13 +296,29 @@ namespace NorvesLib::Core::Input
     }
     bool InputState::AddMouseScrollAxes(float vertical, float horizontal)
     {
-        return TryAccumulatePair(m_MouseState.ScrollDelta, m_MouseState.HorizontalScrollDelta,
-            vertical, horizontal, m_MouseState.ScrollDelta, m_MouseState.HorizontalScrollDelta);
+        if (!TryAccumulatePair(m_MouseState.ScrollDelta, m_MouseState.HorizontalScrollDelta,
+            vertical, horizontal, m_MouseState.ScrollDelta, m_MouseState.HorizontalScrollDelta))
+        {
+            return false;
+        }
+        if (vertical != 0 || horizontal != 0)
+        {
+            ++m_MouseScrollActivitySerial;
+        }
+        return true;
     }
     bool InputState::AddRawMouseDelta(float x, float y)
     {
-        return TryAccumulatePair(m_MouseState.RawDeltaX, m_MouseState.RawDeltaY,
-            x, y, m_MouseState.RawDeltaX, m_MouseState.RawDeltaY);
+        if (!TryAccumulatePair(m_MouseState.RawDeltaX, m_MouseState.RawDeltaY,
+            x, y, m_MouseState.RawDeltaX, m_MouseState.RawDeltaY))
+        {
+            return false;
+        }
+        if (x != 0 || y != 0)
+        {
+            ++m_RawMouseActivitySerial;
+        }
+        return true;
     }
 
     void InputState::ResetFrameAccumulators()

@@ -528,6 +528,7 @@ set(PUBLIC_HEADERS
     Public/Input/InputAxisMath.h
     Public/Input/InputButtonState.h
     Public/Input/InputArmedState.h
+    Public/Input/InputRebindCaptureState.h
     Public/Input/GamepadTypes.h
     Public/Input/InputBindingTypes.h
     Public/Input/InputActionSettings.h

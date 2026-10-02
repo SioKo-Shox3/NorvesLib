@@ -1414,3 +1414,11 @@
 - stop-when: Resetを物理releaseとして通知、invalidで履歴変更、同値provider sampleを省略、callbackへ借用stateを長期保持、blocking未解消。
 - paths: Library/Core/Public/Input/GamepadTypes.h, Library/Core/Public/Input/InputState.h, Library/Core/Private/Input/InputState.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Private/Input/InputSystem.cpp, Library/Core/Public/Input/IInputController.h, Library/Core/Public/Input/InputRouter.h, Library/Core/Private/Input/InputRouter.cpp, Test/Core/Input/GamepadInputStateTest.cpp, Test/Core/Input/InputRoutingExtensionTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: 最後のsampleは過去の受理値であって現在操作状態ではない。gameplayは従来の正本/Mapperを使う。GR04のproviderもこの注入口を利用する。capture本体は後続。
+
+## G1-GR03-P7C: 物理入力captureと解除待ちを純kernel化する
+- status: done
+- done-when: source mask、key/mouse/pad/axis/trigger/relative入力、修飾chord、Escape中止、物理neutral/relative静止待ちを値状態で実装。開始時のheldや接続直後sampleを捕捉せず、UIが消費した入力や古いsampleから候補を作らない。結果はsource/modifiers/directionの値で返す。
+- verify: 実InputStateとkernelのdigital/chord/initial-held/UIconsume/sample freshness/analog hysteresis/disconnect/quiet-frame/invalid/再利用を通常/O2/ASanUBSanとbundle compileで検証し独立レビュー。
+- stop-when: 初期heldの誤捕捉、Escapeをbinding化、解除前にfinished、Resetを物理neutralと誤認、入力消費をpollingで迂回、invalidで状態破壊、blocking未解消。
+- paths: Library/Core/Public/Input/InputRebindCaptureState.h, Library/Core/Public/Input/InputState.h, Library/Core/Private/Input/InputState.cpp, Test/Core/Input/RawInputStateTest.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/InputRebindCaptureStateTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: kernelはIdentity/Router/Store/OSを所有せず、同じ正本を各feed/Advanceへ渡す。Managerと設定反映は次段。符号やscaleの最終binding policyはsource結果を利用する側が決める。

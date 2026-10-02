@@ -142,6 +142,16 @@ namespace NorvesLib::Core::Input
         // 両成分を検証後に一括加算。非finite/float範囲外では正本を変えない。
         bool AddMouseScrollAxes(float vertical, float horizontal);
         bool AddRawMouseDelta(float x, float y);
+        // 有効な非zero入力を受理するたびに増える。frame内相殺/Resetでも活動を失わない。
+        // 静止確認用の履歴であって、消費済みイベントを再配送するための値ではない。
+        uint64_t GetRawMouseActivitySerial() const
+        {
+            return m_RawMouseActivitySerial;
+        }
+        uint64_t GetMouseScrollActivitySerial() const
+        {
+            return m_MouseScrollActivitySerial;
+        }
 
         /**
          * @brief スクロールデルタをリセット
@@ -180,6 +190,8 @@ namespace NorvesLib::Core::Input
 
         // マウス状態
         MouseState m_MouseState;
+        uint64_t m_RawMouseActivitySerial = 0;
+        uint64_t m_MouseScrollActivitySerial = 0;
 
         // 前フレームのマウス位置（デルタ計算用）
         float m_PrevMouseX;
