@@ -301,8 +301,30 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: SS-RTGI-DEFAULT の完了時（2026-10-02）の測定: 判定の帯（0.80〜0.98）は既定1.27倍・近接0.86倍・低角度1.70倍で合格だが、年齢上限128の撮影（`startup-capture/SS-RTGI-DEFAULT-it1-age128-On` と `-it1-base-Off`）で既定の0.33〜0.42の帯は2.03倍（標準偏差1/255超の画素 26.6%、無効時1.6%）、低角度の0.65〜0.80の帯は2.29倍（15.3%、無効時0.5%）。前回の切り分け（`SS-RTGI-DEFAULT-exp-norej`、年齢上限64で法線・材質・深度の棄却を外した撮影）ではこの2つの帯が1.59倍・1.76倍だったので、履歴の棄却が主な原因と見られる。危険地帯（RTGI）。評価者を通す。
 
+## SS-NIGHT-POLISH: 夜の点光源の色とレンズダートの映り方を整える
+- status: todo
+- done-when: 起動画面の点光源の色を白熱電球の色温度（黒体 約2700〜3000 K をリニアのRGBへ直した値。根拠をコミット本文に書く）にし、夜の撮影の既定視点で光だまりの地面の平均色が橙〜黄（R > G > B、G/R が0.6〜0.85）で、黄緑（G/R > 0.9）に寄らない。夜の撮影でレンズダートの模様が光源の周りの淡い斑にとどまり、光源より大きな色付きの円（ゴースト）が目立たない（強さを下げる、または明るい光源の周りでの掛かり方を見直す。昼・夕のダートの見え方が消えない程度）。昼・夕の撮影の SS-LOOK-BALANCE の数値の範囲は保つ。変更前と変更後の夜の既定視点を並べた画像を残す。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-NIGHT-POLISH-night -Night`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-NIGHT-POLISH -SunElevations 45,3`
+- stop-when: ダートを弱めると昼・夕のダートが見えなくなる場合は、夜の見え方を優先せず、両立する値と測定を記録して閉じる。
+- paths: Game/GameModes/Rendering3DTest, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-02 の親の確認（`startup-capture/SS-ACCEPT-night/default-night.png`）で分かった。点光源の色は `Rendering3DTestRoutine.cpp` の `SetLightColor(1.0f, 0.9f, 0.3f)` で、石畳が黄緑がかる。レンズダートは `kStartupLensDirtIntensity = 2.0f`。
+
+## SS-GPU-PROFILE: Releaseでも加速構造の更新を含むGPUの時間とパスごとの内訳をトレースへ書けるようにする
+- status: todo
+- done-when: (a) フレームのGPUの区間（`FrameGPU`）が加速構造の更新（`RenderingCoordinator.cpp` の `BuildAccelerationStructures`）を含み、加速構造の更新も別の区間として取れる。(b) RenderGraph のパスごとのGPUの時間が `--trace-file` のトレースに行として出る。(c) CMake の選択肢（例 `NORVES_ENABLE_GPU_TIMING_IN_RELEASE`、既定 OFF）で、Release でもGPUのタイムスタンプとトレースが有効になる。既定（OFF）では Release の挙動と出力が変わらない。選択肢を ON にした Release の Game で起動画面を数百フレーム走らせ、フレームごとのGPUの時間・加速構造の更新・パスごとの内訳がトレースに出ることを、トレースを開いて確かめる（PROGRESS に数行の抜粋）。計測のあと `build` のキャッシュは OFF へ戻す。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON -DNORVES_ENABLE_GPU_TIMING_IN_RELEASE=ON`
+- verify: `cmake --build build --config Release --target Game -- /m:1`
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON -DNORVES_ENABLE_GPU_TIMING_IN_RELEASE=OFF`
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RenderGraphCompileTest$"`
+- stop-when: GPUのタイムスタンプを加速構造の記録の前へ動かすとコマンドの記録の順序（RenderThread の同期）を変える必要がある場合は、変えずに、加速構造の更新を別の区間として取るだけにして記録する。
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Boot, Library/Core/Public/Boot, Library/Core/Private/Debug, Library/Core/Public/Debug, Library/Core/Private/RHI, Library/Core/Public/RHI, Library/Core/CMakeLists.txt, CMakeLists.txt, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: SS-ACCEPT の停止理由（`blocked/SS-ACCEPT.md`）の推奨1。2026-10-02 に採った。Release は `NORVES_ENABLE_STATS=0`（`Library/Core/CMakeLists.txt:567`）でGPUのタイムスタンプもトレースも無効、加速構造の更新は `FrameGPU` の開始より前、パスごとのタイムスタンプはトレースへ書く経路が無い。外部のプロファイラは使えなかった（Nsight Systems 2021.1.3 は Vulkan のGPUの作業を記録できず、PresentMon・WPR は管理者の権限が要る）。危険地帯（RenderThread・RHI）。評価者を通す。
+
 ## SS-ACCEPT: 起動画面の改善を受け入れる
-- status: blocked
+- status: todo
 - done-when: 朝・昼・夕 × 既定・近接・低角度の撮影一式と、変更前（`163ffe5`）の同じ視点の撮影を並べた記録（`Docs/RenderingValidation/StartupSceneAcceptance.md`、画像は `.harness/runs/` への参照）がある。Releaseの構成で起動画面の1フレームの時間（GPU）を測り、1280×720で16.6 ms以下であることを記録する（超える場合はパスごとの内訳と、どれを軽くすれば収まるかを記録する）。夜（`-Night`）の撮影も並べる。評価者が、各項目の完了条件と撮影を開いて反証を試みる。
 - verify: `cmake --build build --config Release --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT -SunElevations 10,45,3`
@@ -311,6 +333,7 @@
 - notes: 受け入れの撮影は、SS-LOOK-BALANCE の数値の範囲（画面の平均・白飛び・黒つぶれ・影の比・空の青・夕の色・夜の背景）も満たしているかを並べて記録する。
 - paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 区切り。評価者を通す。
+- notes: 2026-10-02 再開。評価1周目の指摘3（既定視点の変更前後のカメラ）は `51a22e7` で対応済み。指摘1・2（Release のGPU時間・加速構造の更新を含む区間・予算を超えたフレームのパスごとの内訳と軽くする案）は SS-GPU-PROFILE の後に、選択肢を ON にした Release で測り直して記録する（測り終えたら `build` のキャッシュを OFF へ戻す）。RelWithDebInfo の既存のトレースでは夜の既定視点で540フレーム中6が16.6 msを超え、最大18.16 ms。
 
 ## R1-P5: 透明描画を物理ライト・GGX・IBLへ接続する
 - status: done
