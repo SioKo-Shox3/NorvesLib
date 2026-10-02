@@ -11,6 +11,7 @@ namespace NorvesLib::Core::Input
 {
 
     class InputRouter;
+    class InputRebindCaptureManager;
 
     /**
      * @brief 入力システム
@@ -173,6 +174,7 @@ namespace NorvesLib::Core::Input
         void SetRouter(InputRouter *router);
 
     private:
+        friend class InputRebindCaptureManager;
         // 入力状態
         InputState m_State;
 

@@ -16,6 +16,8 @@ namespace NorvesLib::Core::Engine
         static void Flush(ApplicationProcessor& p) { p.DispatchInputFocusEvents(); }
         static bool Cursor(ApplicationProcessor& p) { return p.SynchronizeInputCursorMode(); }
         static bool Pump(ApplicationProcessor& p) { return p.ProcessPlatformMessages(); }
+        static bool Begin(ApplicationProcessor& p, int64_t time) { return p.BeginInputFrame(time); }
+        static bool Update(ApplicationProcessor& p, int64_t time) { return p.UpdateInputFrame(time, 10'000'000); }
     };
 }
 using namespace NorvesLib;
@@ -106,6 +108,8 @@ namespace
         FocusWindow* Window=nullptr;
         FocusHandler* Handler=nullptr;
         bool InPump=false,ThrowOnPump=false,ExitAfterPump=false;
+        bool BeginCapture=false;
+        uint64_t StartedCapture=0;
         bool Initialize(const Container::VariableArray<Container::String>&) override { return true; }
         void Shutdown() override {}
         IWindow* GetMainWindow() override { return Window; }
@@ -114,6 +118,11 @@ namespace
         void PumpMessages() override
         {
             if(ThrowOnPump) throw 88;
+            if(BeginCapture)
+            {
+                StartedCapture=Eng::GEngine->GetInputRebindCapture().Begin();
+                assert(StartedCapture!=0);
+            }
             InPump=true;const auto count=Handler->Events.size();
             Window->Emit(false);Window->Emit(true);
             assert(Handler->Events.size()==count);
@@ -190,15 +199,34 @@ int main()
         assert(second->OnInputFocusChanged().GetSize()==1);
     }
     assert(second->OnInputFocusChanged().IsEmpty() && !second->RawEnabled);
-    // 実Runの例外と通常終了の両方でカーソル要求をNormalへ戻す。
     second->Emit(true);Eng::ApplicationInputFocusTestAccess::Connect(processor,second);
+    // 実Processorのframe接続でcapture完了とcursor復帰を確かめる。
+    auto& capture=engine->GetInputRebindCapture();
+    assert(Eng::ApplicationInputFocusTestAccess::Begin(processor, 1'000'000'000));
+    const auto captureId=capture.Begin();assert(captureId);
+    assert(Eng::ApplicationInputFocusTestAccess::Cursor(processor));
+    assert(second->Requested==ECursorMode::Normal);
+    system.InjectKeyEvent(KeyCode::A,InputAction::Pressed);
+    system.InjectKeyEvent(KeyCode::A,InputAction::Released);
+    assert(Eng::ApplicationInputFocusTestAccess::Update(processor,1'000'000'000));
+    InputRebindCaptureResult captureResult;
+    assert(capture.TryGetResult(captureId,captureResult) && captureResult.Outcome==EInputRebindOutcome::Captured);
+    assert(Eng::ApplicationInputFocusTestAccess::Cursor(processor));
+    assert(second->Requested==ECursorMode::Locked);
+    // 実Runの例外と通常終了でcaptureも中止し、停止後に結果を読める。
+
     auto runPlatform=Container::MakeUnique<FocusPlatform>();auto* runProbe=runPlatform.get();
     runProbe->Window=second.get();runProbe->Handler=handler.get();runProbe->ThrowOnPump=true;
     handler->InPump=&runProbe->InPump;engine->SetPlatformApp(std::move(runPlatform));engine->SetRunning(true);
+    const auto abortId=capture.Begin();assert(abortId);
     caught=false;try { (void)processor.Run(); } catch(int value) { caught=value==88; }
     assert(caught && second->Requested==ECursorMode::Normal && second->Effective==ECursorMode::Normal);
-    runProbe->ThrowOnPump=false;runProbe->ExitAfterPump=true;
+    assert(capture.TryGetResult(abortId,captureResult) && captureResult.Outcome==EInputRebindOutcome::Cancelled);
+    assert(!capture.IsCapturing());
+    runProbe->ThrowOnPump=false;runProbe->ExitAfterPump=true;runProbe->BeginCapture=true;
     assert(processor.Run()==0 && second->Requested==ECursorMode::Normal);
+    assert(runProbe->StartedCapture!=0 && !capture.IsCapturing());
+    assert(capture.TryGetResult(runProbe->StartedCapture,captureResult) && captureResult.Outcome==EInputRebindOutcome::Cancelled);
     Eng::ApplicationInputFocusTestAccess::Disconnect(processor);
     engine->GetInputRouter().UnregisterController(&observer);
     engine->SetApplicationHandler({});engine->SetPlatformApp({});engine->SetMainWindow({});engine.reset();Eng::GEngine=previous;

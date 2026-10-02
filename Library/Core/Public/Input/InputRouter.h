@@ -29,6 +29,8 @@ namespace NorvesLib::Core::Input
     public:
         /// オーバーレイ UI 向けの標準優先度。ゲームより上位。
         static constexpr int32_t PriorityOverlay = 1000;
+        // capture manager専用の予約順位。他controllerをこの順位へ登録しない。
+        static constexpr int32_t PriorityInputCapture = 0x7fffffff;
         /// ゲームロジック（カメラ等）向けの標準優先度。
         static constexpr int32_t PriorityGame = 0;
 

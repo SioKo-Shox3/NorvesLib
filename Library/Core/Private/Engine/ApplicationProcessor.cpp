@@ -1349,6 +1349,7 @@ namespace NorvesLib::Core::Engine
                 // PumpMessages/OnUpdate例外でもheld/fixedPressを残さない。
                 if (GEngine)
                 {
+                    GEngine->GetInputRebindCapture().Detach();
                     GEngine->GetInputMapper().CancelAll();
                     if(auto window=GEngine->GetMainWindowShared()) (void)window->SetCursorMode(ECursorMode::Normal);
                 }
@@ -1359,7 +1360,15 @@ namespace NorvesLib::Core::Engine
 
         m_LastFrameTimeNanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        if (GEngine) GEngine->GetInputMapper().CancelAll();
+        if (GEngine)
+        {
+            GEngine->GetInputMapper().CancelAll();
+            if (!GEngine->GetInputRebindCapture().Attach())
+            {
+                LOG_ERROR("入力captureの配線が一致しないためRunを開始できません");
+                return -1;
+            }
+        }
         m_FixedStepScheduler->BeginRun();
 
         while (GEngine && GEngine->IsRunning() && !GEngine->IsExitRequested())
@@ -1406,6 +1415,7 @@ namespace NorvesLib::Core::Engine
         if (GEngine && lifecycle.bEngine)
         {
             // Handler/World/windowの破棄より先に入力操作とRouter登録を解除する。
+            GEngine->GetInputRebindCapture().Detach();
             GEngine->GetInputMapper().Detach();
             auto *handler = GEngine->GetApplicationHandler();
 
@@ -1818,6 +1828,10 @@ namespace NorvesLib::Core::Engine
 
     void ApplicationProcessor::DisconnectInputWindow()
     {
+        if (GEngine && GEngine == m_InputEngine)
+        {
+            GEngine->GetInputRebindCapture().Abort();
+        }
         if(m_InputWindow)
         {
             (void)m_InputWindow->SetCursorMode(ECursorMode::Normal);
@@ -1932,6 +1946,7 @@ namespace NorvesLib::Core::Engine
         if (!GEngine->GetInputMapper().BeginFrame(time)) return false;
         // Mapperの時刻検証成功後、message配送前に正本の前frame保存/累積解除も行う。
         GEngine->GetInputSystem().BeginFrame();
+        GEngine->GetInputRebindCapture().BeginFrame();
         return true;
     }
     bool ApplicationProcessor::UpdateInputFrame(int64_t timeNanoseconds, int64_t rawDeltaNanoseconds)
@@ -1940,6 +1955,7 @@ namespace NorvesLib::Core::Engine
         const double time = static_cast<double>(timeNanoseconds) / 1'000'000'000.0;
         const double dt = rawDeltaNanoseconds > 0
             ? static_cast<double>(rawDeltaNanoseconds) / 1'000'000'000.0 : 0.0;
+        GEngine->GetInputRebindCapture().Advance();
         return GEngine->GetInputMapper().Update(time, dt);
     }
 

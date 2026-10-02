@@ -22,3 +22,4 @@ add_test(NAME CameraInputResetTest COMMAND LoggerSinkTest --test=CameraInputRese
 add_test(NAME LegacyInputResetTest COMMAND LoggerSinkTest --test=LegacyInputResetTest)
 add_test(NAME AbsoluteMouseTrackingTest COMMAND LoggerSinkTest --test=AbsoluteMouseTrackingTest)
 add_test(NAME InputRebindCaptureStateTest COMMAND LoggerSinkTest --test=InputRebindCaptureStateTest)
+add_test(NAME InputRebindCaptureManagerTest COMMAND LoggerSinkTest --test=InputRebindCaptureManagerTest)

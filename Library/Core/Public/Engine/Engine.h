@@ -10,6 +10,7 @@
 #include "Input/InputSystem.h"
 #include "Input/InputRouter.h"
 #include "Input/InputMapper.h"
+#include "Input/InputRebindCaptureManager.h"
 #include "Particle/ParticleSystem.h"
 #include "Thread/Atomic.h"
 
@@ -391,6 +392,8 @@ namespace NorvesLib::Core::Engine
         }
         Input::InputMapper& GetInputMapper() { return m_InputMapper; }
         const Input::InputMapper& GetInputMapper() const { return m_InputMapper; }
+        Input::InputRebindCaptureManager& GetInputRebindCapture() { return m_InputRebindCapture; }
+        const Input::InputRebindCaptureManager& GetInputRebindCapture() const { return m_InputRebindCapture; }
 
     private:
         static constexpr uint64_t ExitRequestedMask = uint64_t{1} << 63;
@@ -438,6 +441,7 @@ namespace NorvesLib::Core::Engine
         Input::InputRouter m_InputRouter;
         // 借用先の正本/Routerより後に宣言し、先に破棄する。
         Input::InputMapper m_InputMapper;
+        Input::InputRebindCaptureManager m_InputRebindCapture;
 
         // 実行状態
         bool m_bIsRunning = false;

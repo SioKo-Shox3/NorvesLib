@@ -222,6 +222,7 @@ set(PRIVATE_SOURCES
     Private/Input/InputBindingPersistence.cpp
     Private/Input/WorkingDirectoryInputBindingStore.cpp
     Private/Input/InputMapper.cpp
+    Private/Input/InputRebindCaptureManager.cpp
     Private/Input/InputSystem.cpp
     Private/Input/InputRouter.cpp
     Private/Input/MayaCameraController.cpp
@@ -539,6 +540,7 @@ set(PUBLIC_HEADERS
     Public/Input/IInputBindingStore.h
     Public/Input/InputBindingPersistence.h
     Public/Input/InputMapper.h
+    Public/Input/InputRebindCaptureManager.h
     Public/Input/InputState.h
     Public/Input/InputSystem.h
     Public/Input/IInputController.h

@@ -336,3 +336,6 @@
 
 - G1-GR03-P7C: 値状態の物理入力captureを追加。source mask/修飾chord/単独修飾/初期held除外/接続基準化/analog hysteresis/方向/中止/neutral待ちを実装。候補生成をRouter到達eventだけに限定し、pad履歴は人工的resetと区別する。相対入力の静止判定は正本の非zero受理serialで補い、UI消費と±相殺でも早期終了しない。第1周の静止判定指摘を修正して第2周レビューPASS。実InputStateを使うcapture/Raw試験は通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compile成功、pad/armed/reset回帰成功。Windows/Engine/Router接続はこのkernelの検証範囲外で未実行。
 - Next: GR03のcapture managerをRouter/Mapper/Engineへ接続し、捕捉中の操作とcursor要求を停止、終了時の設定反映へ進む。GR03全体は継続中。
+
+- G1-GR03-P7D: InputRebindCaptureManagerを同じSystem/Router/Mapperの単一ownerとして予約最高優先度へ接続。request ID付き開始/中止/結果取得、全通常eventの遮断、Mapperのevent/polling/fixedPress/Active/cursor抑止、外部reset/focus喪失での中止を実装。Advanceで残留入力をresetしてから抑止を解除し結果を公開する。EngineでMapperより先にDetach、Run終了/例外も通知なしに正本を中立化してDetachし、次Runで再Attach。独立静的レビューPASS、通常終了の再Attach/取消も試験sourceへ補強。新規manager公開headerの実syntax検査とkernel/Raw/pad/armedのportable回帰成功。実System/Router/Mapper/Engineの統合試験を既存bundleへ登録したが、String.h/Containers.hのWindows.h依存によりcompile/実行は未検証。代替stubは使っていない。
+- Next: GR03のGame側action/slot/revisionとcapture結果を結び、古い設定への誤適用を防ぎながらP7Aの明示反映へ接続する。GR03/GR04全体は継続中。

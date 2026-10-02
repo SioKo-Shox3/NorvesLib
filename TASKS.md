@@ -1422,3 +1422,11 @@
 - stop-when: 初期heldの誤捕捉、Escapeをbinding化、解除前にfinished、Resetを物理neutralと誤認、入力消費をpollingで迂回、invalidで状態破壊、blocking未解消。
 - paths: Library/Core/Public/Input/InputRebindCaptureState.h, Library/Core/Public/Input/InputState.h, Library/Core/Private/Input/InputState.cpp, Test/Core/Input/RawInputStateTest.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/InputRebindCaptureStateTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: kernelはIdentity/Router/Store/OSを所有せず、同じ正本を各feed/Advanceへ渡す。Managerと設定反映は次段。符号やscaleの最終binding policyはsource結果を利用する側が決める。
+
+## G1-GR03-P7D: capture managerを入力実行経路へ接続する
+- status: done
+- done-when: 同じSystem/Router/Mapperに単一ownerで常設登録し、request ID付きBegin/Cancel/resultを提供。capture中は全通常eventとMapper polling/fixedPress/cursor要求を抑止し、外部reset/focus lossで中止。配送外Advanceのreset後に解除して結果を公開。Engineの所有/寿命とProcessorのframe/終了へ接続する。
+- verify: 実System/Router/Mapperの停止/復帰/古いrequest/owner/不正配線/初期held/analog/focus/reset試験を既存bundleへ追加。portable kernel/state回帰と独立レビュー、Windows統合未実行を明記。
+- stop-when: capture中のgameplay漏れ、登録寿命不整合、reset再入、解除前の結果公開、古いrequestによる中止、blocking未解消。
+- paths: Library/Core/Public/Input/InputRebindCaptureManager.h, Library/Core/Private/Input/InputRebindCaptureManager.cpp, Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Public/Input/InputRouter.h, Library/Core/Public/Engine/Engine.h, Library/Core/Private/Engine/Engine.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/InputRebindCaptureManagerTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Test/Core/Engine/InputFocusPipelineTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: Game側の対象action/slotと設定revision付き適用は別段。request結果だけで設定を暗黙変更/保存しない。Detachは所有終了時に配送外で呼び、借用先の寿命を超えない。

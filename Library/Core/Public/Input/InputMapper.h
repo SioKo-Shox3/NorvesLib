@@ -7,6 +7,7 @@
 namespace NorvesLib::Core::Input
 {
     class InputRouter;
+    class InputRebindCaptureManager;
     struct InputMappedAction
     {
         bool Valid = false;
@@ -62,6 +63,8 @@ namespace NorvesLib::Core::Input
         void OnInputReset() override { CancelAll(); }
         const char* DebugName() const override { return "InputMapper"; }
     private:
+        friend class InputRebindCaptureManager;
+        void SetCaptureSuppressed(bool suppressed);
         struct Action
         {
             Identity Id;
@@ -86,5 +89,7 @@ namespace NorvesLib::Core::Input
         InputArmedState m_Armed;
         double m_Time = 0;
         bool m_Focused = true;
+        InputRebindCaptureManager* m_CaptureOwner = nullptr;
+        bool m_bCaptureSuppressed = false;
     };
 }
