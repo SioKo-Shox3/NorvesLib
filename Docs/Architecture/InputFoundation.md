@@ -67,3 +67,15 @@
 - buttonごとのrelease serialはdown→upで進み、frame/切断/再接続を跨いで維持する。Padのarmedも到達Pressedと現在down/serial一致で判定し、Repeatでは再許可しない。ResetGamepadは指定slotだけを忘れる。
 - invalid slot/button/axis/triggerの照会は空値/false/0。snapshotは値返しで、可変内部配列の参照を外へ保持させない。
 - InputSystemでのpad event配送、XInput polling、振動、UIと実機の接続は未実装。この段階は実InputStateにsnapshotを供給する純ロジック試験まで。
+
+## 設定の所有と変更
+
+- InputBindingSetはIdentityをキーとしてcontext/action/binding配列を所有する。同context内の重複actionと重複contextを拒否し、contextが違えば同じaction名を別定義できる。
+- Add/Replace/SetBindings/SetContextCursorModeは既知対象と全値を検証してから変更する。不正設定・未知対象では既存設定を維持する。空bindingsは明示unbindであり有効。
+- InputActionSettingsは型/出力、axis response、button timing、mouse/rate感度を持つ。全settingsを検証し、未使用型の設定でも非finiteや不正範囲を受け付けない。
+- Find/Getは借用viewで、次の変更/破棄で失効するものとして扱う。Mapperは長期pointerを保持せず、設定をcompile/copyしてruntimeを所有する。SetBindings/ReplaceActionは内部viewを入力に渡した場合も先にcopyしてから置き換える。
+- 設定全体のcopyは配列をdeep copyする。Identity文字列は既存pool/literalの寿命契約を使う。JSON文字列からはinternしたIdentityを作り、parserのborrowed viewを設定内に保存しない。
+- CursorModeはNormal/Hidden/Confined/Lockedの値型だけを追加した段階で、IWindowやOS状態を変更していない。
+- Settings/cursorの純検証はLinuxで実行。InputBindingSetの所有/copy試験は既存bundleへ追加したが、Identity→StringのWindows.h依存でコンパイル・実行は未検証。純検証の合格を所有/Mapper統合の合格とは扱わない。
+
+- 所有APIのboolはvalidation拒否を表し、allocation失敗は例外として伝播する。copy assignmentの強い例外保証は約束しない。JSON等の全体更新は候補を構築・検証し、成功時だけmoveで入れ替える。

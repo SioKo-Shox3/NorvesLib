@@ -1287,3 +1287,12 @@
 - stop-when: 半端な更新、切断後down/armed、KBM回帰、SDK依存、blocking未解消。
 - paths: Library/Core/Public/Input/GamepadTypes.h, Library/Core/Public/Input/InputState.h, Library/Core/Public/Input/InputArmedState.h, Library/Core/Private/Input/InputState.cpp, Test/Core/Input/GamepadInputStateTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: XInput polling/振動/InputSystem配送は未接続。Mapper用の正本契約を先に満たす。
+
+## G1-GR03-P4D: アクションとコンテキストの設定をIdentityで所有する
+- status: done
+- done-when: 純settings検証とIdentity設定所有を実装し、不正/重複/unknownの非変更、deep copy、空unbind、借用viewの寿命を契約化する。
+- verify: g++ -std=c++20 -I Library/Core/Public Test/Core/Input/InputActionSettingsTest.cpp -o /tmp/input-settings && /tmp/input-settings
+- verify: InputBindingSetTestはWindowsのLoggerSinkTest bundleで実行（現環境では未実行）。
+- stop-when: 無効変更の部分適用、長期pointer、String key、OS設定変更混入、blocking未解消。
+- paths: Library/Core/Public/Application/CursorMode.h, Library/Core/Public/Input/InputActionSettings.h, Library/Core/Public/Input/InputBindingSet.h, Library/Core/Private/Input/InputBindingSet.cpp, Library/Core/CMakeLists.txt, Test/Core/Input, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: Mapper/JSON/OSカーソルは未接続。

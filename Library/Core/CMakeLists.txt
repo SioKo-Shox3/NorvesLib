@@ -217,6 +217,7 @@ set(PRIVATE_SOURCES
     Private/Memory/ThreadLocalCache.cpp
     # Input
     Private/Input/InputState.cpp
+    Private/Input/InputBindingSet.cpp
     Private/Input/InputSystem.cpp
     Private/Input/InputRouter.cpp
     Private/Input/MayaCameraController.cpp
@@ -284,6 +285,7 @@ set(PUBLIC_HEADERS
     Public/Boot/BootConfig.h
     Public/Boot/EntryPoint.h
     Public/Application/IApplicationHandler.h
+    Public/Application/CursorMode.h
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
@@ -524,6 +526,8 @@ set(PUBLIC_HEADERS
     Public/Input/InputArmedState.h
     Public/Input/GamepadTypes.h
     Public/Input/InputBindingTypes.h
+    Public/Input/InputActionSettings.h
+    Public/Input/InputBindingSet.h
     Public/Input/InputState.h
     Public/Input/InputSystem.h
     Public/Input/IInputController.h

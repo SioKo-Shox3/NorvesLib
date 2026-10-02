@@ -6,3 +6,5 @@ add_test(NAME InputButtonStateTest COMMAND LoggerSinkTest --test=InputButtonStat
 add_test(NAME InputArmedStateTest COMMAND LoggerSinkTest --test=InputArmedStateTest)
 add_test(NAME InputBindingTypesTest COMMAND LoggerSinkTest --test=InputBindingTypesTest)
 add_test(NAME GamepadInputStateTest COMMAND LoggerSinkTest --test=GamepadInputStateTest)
+add_test(NAME InputActionSettingsTest COMMAND LoggerSinkTest --test=InputActionSettingsTest)
+add_test(NAME InputBindingSetTest COMMAND LoggerSinkTest --test=InputBindingSetTest)

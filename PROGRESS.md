@@ -288,3 +288,6 @@
 
 - G1-GR03-P4C: InputStateへ4slot Pad snapshot/前state、frame edge、release serialを接続し、Pad armedにも到達Pressedと世代一致を適用。更新は検証後一括、切断/ReleaseAllでPressedを取消し、ReleaseAllは物理接続/packetを保って入力をneutral化する。実InputStateの通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）と既存KBM/type回帰に成功。独立評価は全button/index、不正更新の非変更、12,000履歴遷移等の30,646,619チェックを通常/O2-NDEBUG/ASan・UBSanで通しPASS。InputSystem配送/XInput/haptics/実機は未接続・未検証。
 - Next: Identityが所有するcontext/action/binding設定とcompile境界を作り、Mapperへ接続する。
+
+- G1-GR03-P4D: CursorMode値型、InputActionSettings純検証、Identityでcontext/action/bindingsを所有するInputBindingSetを追加。重複/unknown/invalidを拒否し、空unbind、deep copy、alias置換、借用viewの寿命を定義した。純settingsは通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）とbundle相当compileがPASS、所有/APIは独立静的レビューPASS。Identity→StringのWindows.h依存でInputBindingSet.cpp/所有試験のcompile・実行は未検証。boolの拒否とallocation例外を区別し、後続JSONの全体更新は候補構築後のmoveとする。Mapper/JSON/OSカーソルは未接続。
+- Next: binding spanと正本/armedから実action値を作るportable runtime、それをIdentity設定・Routerへ接続するMapper。
