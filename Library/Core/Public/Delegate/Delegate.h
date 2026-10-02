@@ -1,319 +1,150 @@
 ﻿#pragma once
 
 #include <concepts>
+#include <cstdint>
 #include <functional>
-#include <memory>
+#include <limits>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include "Thread/Atomic.h"
 
 namespace NorvesLib::Core
 {
-
     /**
-     * @brief 単一の関数を登録して呼び出すためのデリゲートクラス
-     * @tparam RetType 戻り値の型
-     * @tparam Args 引数の型...
+     * @brief 単一の呼出先と登録識別を所有するデリゲート。
+     * free functionは関数値、memberは同じ型のinstance/methodで比較する。
+     * functorは登録ごとに識別を作り、Delegateのcopyだけが同じ識別を引き継ぐ。
+     * memberのinstanceは非所有。呼出しが終わり解除するまで利用者が寿命を保つ。
+     * 空同士は等しい。null instance/methodは空、move元も空になる。
+     * Bind/copy代入の失敗時は以前の呼出先と識別を維持する。
      */
     template <typename RetType, typename... Args>
     class Delegate
     {
-    private:
-        // 内部で関数を保持するための型
         using FunctionType = std::function<RetType(Args...)>;
+        using FunctionPointer = RetType (*)(Args...);
+        using NoexceptFunctionPointer = RetType (*)(Args...) noexcept;
+        using MemberComparer = bool (*)(const FunctionType&, const FunctionType&);
 
-        // 関数ポインタ
+        template <typename T, typename Method>
+        struct MemberBinding
+        {
+            T* Instance;
+            Method MethodPointer;
+            RetType operator()(Args... args) const
+            {
+                if constexpr(std::is_void_v<RetType>)
+                    (Instance->*MethodPointer)(std::forward<Args>(args)...);
+                else
+                    return (Instance->*MethodPointer)(std::forward<Args>(args)...);
+            }
+        };
+        template <typename T, typename Method>
+        static bool CompareMember(const FunctionType& left, const FunctionType& right)
+        {
+            const auto* a=left.template target<MemberBinding<T,Method>>();
+            const auto* b=right.template target<MemberBinding<T,Method>>();
+            return a && b && a->Instance==b->Instance && a->MethodPointer==b->MethodPointer;
+        }
+        static std::uint64_t NewIdentity()
+        {
+            // 同一signature内で再利用しない。上限到達後もwrapさせない。
+            static NorvesLib::Thread::Atomic<std::uint64_t> next{1};
+            auto value=next.Load(std::memory_order_relaxed);
+            for(;;)
+            {
+                if(value==std::numeric_limits<std::uint64_t>::max())
+                    throw std::overflow_error("Delegate registration identity exhausted");
+                if(next.CompareExchangeWeak(value,value+1,std::memory_order_relaxed,std::memory_order_relaxed))
+                    return value;
+            }
+        }
+        void SetFunction(FunctionType function)
+        {
+            Delegate candidate;
+            if(function)
+            {
+                // noexcept付き関数も通常の関数ポインタと同じ呼出先として扱う。
+                if(const auto* noThrow=function.template target<NoexceptFunctionPointer>())
+                    function=static_cast<FunctionPointer>(*noThrow);
+                if(!function.template target<FunctionPointer>()) candidate.m_Identity=NewIdentity();
+                candidate.m_Function.swap(function);
+            }
+            Swap(candidate);
+        }
+        void Swap(Delegate& other) noexcept
+        {
+            m_Function.swap(other.m_Function);
+            std::swap(m_MemberComparer,other.m_MemberComparer);
+            std::swap(m_Identity,other.m_Identity);
+        }
         FunctionType m_Function;
+        MemberComparer m_MemberComparer=nullptr;
+        std::uint64_t m_Identity=0;
 
     public:
-        /**
-         * @brief デフォルトコンストラクタ - 空のデリゲートを作成
-         */
         Delegate() = default;
-
         ~Delegate() = default;
-        Delegate(const Delegate &) = default;
-        Delegate(Delegate &&) noexcept = default;
-        Delegate &operator=(const Delegate &) = default;
-        Delegate &operator=(Delegate &&) noexcept = default;
-
-        /**
-         * @brief 関数ポインタからデリゲートを作成
-         * @param function 登録する関数ポインタ
-         */
-        Delegate(RetType (*function)(Args...))
-            : m_Function(function)
+        Delegate(const Delegate&) = default;
+        Delegate(Delegate&& other) noexcept { Swap(other); }
+        Delegate& operator=(const Delegate& other)
         {
+            if(this!=&other) { Delegate candidate(other);Swap(candidate); }
+            return *this;
         }
-
-        /**
-         * @brief std::functionからデリゲートを作成
-         * @param function 登録するstd::function
-         */
-        Delegate(const FunctionType &function)
-            : m_Function(function)
+        Delegate& operator=(Delegate&& other) noexcept
         {
+            if(this!=&other) { Delegate candidate(std::move(other));Swap(candidate); }
+            return *this;
         }
-
-        /**
-         * @brief 関数オブジェクトからデリゲートを作成
-         * @tparam F 関数オブジェクトの型
-         * @param functor 登録する関数オブジェクト
-         */
+        Delegate(FunctionPointer function) { Bind(function); }
+        Delegate(const FunctionType& function) { Bind(function); }
         template <typename F>
         requires (!std::same_as<std::decay_t<F>, Delegate<RetType, Args...>>)
-        Delegate(F &&functor)
-            : m_Function(std::forward<F>(functor))
-        {
-        }
-
-        /**
-         * @brief メソッドとオブジェクトからデリゲートを作成
-         * @tparam T オブジェクトの型
-         * @tparam Method メソッドの型
-         * @param instance オブジェクトのポインタ
-         * @param method メソッドのポインタ
-         */
+        Delegate(F&& functor) { Bind(std::forward<F>(functor)); }
         template <typename T, typename Method>
-        Delegate(T *instance, Method method)
-        {
-            m_Function = [instance, method](Args... args) -> RetType
-            {
-                return (instance->*method)(std::forward<Args>(args)...);
-            };
-        }
+        Delegate(T* instance, Method method) { Bind(instance,method); }
 
-        /**
-         * @brief デリゲートをクリア
-         */
-        void Clear()
-        {
-            m_Function = nullptr;
-        }
-
-        /**
-         * @brief デリゲートが有効か（関数が登録されているか）を確認
-         * @return デリゲートが有効な場合true
-         */
-        bool IsBound() const
-        {
-            return static_cast<bool>(m_Function);
-        }
-
-        /**
-         * @brief 関数ポインタをデリゲートに設定
-         * @param function 設定する関数ポインタ
-         */
-        void Bind(RetType (*function)(Args...))
-        {
-            m_Function = function;
-        }
-
-        /**
-         * @brief std::functionをデリゲートに設定
-         * @param function 設定するstd::function
-         */
-        void Bind(const FunctionType &function)
-        {
-            m_Function = function;
-        }
-
-        /**
-         * @brief 関数オブジェクトをデリゲートに設定
-         * @tparam F 関数オブジェクトの型
-         * @param functor 設定する関数オブジェクト
-         */
+        void Clear() noexcept { Delegate empty;Swap(empty); }
+        bool IsBound() const noexcept { return static_cast<bool>(m_Function); }
+        void Bind(FunctionPointer function) { SetFunction(FunctionType(function)); }
+        void Bind(const FunctionType& function) { SetFunction(function); }
         template <typename F>
         requires (!std::same_as<std::decay_t<F>, Delegate<RetType, Args...>>)
-        void Bind(F &&functor)
-        {
-            m_Function = std::forward<F>(functor);
-        }
-
-        /**
-         * @brief メソッドとオブジェクトをデリゲートに設定
-         * @tparam T オブジェクトの型
-         * @tparam Method メソッドの型
-         * @param instance オブジェクトのポインタ
-         * @param method メソッドのポインタ
-         */
+        void Bind(F&& functor) { SetFunction(FunctionType(std::forward<F>(functor))); }
         template <typename T, typename Method>
-        void Bind(T *instance, Method method)
+        void Bind(T* instance, Method method)
         {
-            m_Function = [instance, method](Args... args) -> RetType
-            {
-                return (instance->*method)(std::forward<Args>(args)...);
-            };
+            static_assert(std::is_member_function_pointer_v<Method>);
+            if(!instance || !method) { Clear();return; }
+            Delegate candidate;
+            candidate.m_Function=MemberBinding<T,Method>{instance,method};
+            candidate.m_MemberComparer=&CompareMember<T,Method>;
+            Swap(candidate);
         }
-
-        /**
-         * @brief デリゲートを実行
-         * @param args 関数に渡す引数
-         * @return 関数の戻り値
-         */
         RetType Invoke(Args... args) const
         {
-            if (!IsBound())
-            {
-                throw std::runtime_error("Delegate is not bound to a function");
-            }
+            if(!IsBound()) throw std::runtime_error("Delegate is not bound to a function");
             return m_Function(std::forward<Args>(args)...);
         }
-
-        /**
-         * @brief デリゲートを関数呼び出し演算子で実行
-         * @param args 関数に渡す引数
-         * @return 関数の戻り値
-         */
-        RetType operator()(Args... args) const
-        {
-            return Invoke(std::forward<Args>(args)...);
-        }
-
-        /**
-         * @brief デリゲートが有効であれば実行し、無効であれば何もしない
-         * @param args 関数に渡す引数
-         * @return デリゲートが有効である場合は関数の戻り値、無効ならデフォルト値
-         */
+        RetType operator()(Args... args) const { return Invoke(std::forward<Args>(args)...); }
         RetType InvokeIfBound(Args... args) const
         {
-            if (IsBound())
-            {
-                return m_Function(std::forward<Args>(args)...);
-            }
-            // デフォルト値を返す（クラス型ならnullptr、数値型なら0、bool型ならfalseなど）
-            return RetType{};
+            if(IsBound()) return m_Function(std::forward<Args>(args)...);
+            if constexpr(!std::is_void_v<RetType>) return RetType{};
         }
-
-        /**
-         * @brief 比較演算子のオーバーロード
-         */
-        bool operator==(const Delegate &other) const
+        bool operator==(const Delegate& other) const noexcept
         {
-            // std::functionの比較は難しいため、ポインタとtarget_typeの比較で代用
-            return (m_Function.template target<RetType (*)(Args...)>() ==
-                    other.m_Function.template target<RetType (*)(Args...)>()) &&
-                   (m_Function.target_type() == other.m_Function.target_type());
+            if(!IsBound() || !other.IsBound()) return IsBound()==other.IsBound();
+            const auto* a=m_Function.template target<FunctionPointer>();
+            const auto* b=other.m_Function.template target<FunctionPointer>();
+            if(a || b) return a && b && *a==*b;
+            if(m_MemberComparer || other.m_MemberComparer)
+                return m_MemberComparer && m_MemberComparer==other.m_MemberComparer && m_MemberComparer(m_Function,other.m_Function);
+            return m_Identity!=0 && m_Identity==other.m_Identity;
         }
-
-        bool operator!=(const Delegate &other) const
-        {
-            return !(*this == other);
-        }
-    };
-
-    // 戻り値がvoidの場合の特殊化
-    template <typename... Args>
-    class Delegate<void, Args...>
-    {
-    private:
-        using FunctionType = std::function<void(Args...)>;
-        FunctionType m_Function;
-
-    public:
-        Delegate() = default;
-
-        ~Delegate() = default;
-        Delegate(const Delegate &) = default;
-        Delegate(Delegate &&) noexcept = default;
-        Delegate &operator=(const Delegate &) = default;
-        Delegate &operator=(Delegate &&) noexcept = default;
-
-        Delegate(void (*function)(Args...))
-            : m_Function(function)
-        {
-        }
-
-        Delegate(const FunctionType &function)
-            : m_Function(function)
-        {
-        }
-
-        template <typename F>
-        requires (!std::same_as<std::decay_t<F>, Delegate<void, Args...>>)
-        Delegate(F &&functor)
-            : m_Function(std::forward<F>(functor))
-        {
-        }
-
-        template <typename T, typename Method>
-        Delegate(T *instance, Method method)
-        {
-            m_Function = [instance, method](Args... args)
-            {
-                (instance->*method)(std::forward<Args>(args)...);
-            };
-        }
-
-        void Clear()
-        {
-            m_Function = nullptr;
-        }
-
-        bool IsBound() const
-        {
-            return static_cast<bool>(m_Function);
-        }
-
-        void Bind(void (*function)(Args...))
-        {
-            m_Function = function;
-        }
-
-        void Bind(const FunctionType &function)
-        {
-            m_Function = function;
-        }
-
-        template <typename F>
-        requires (!std::same_as<std::decay_t<F>, Delegate<void, Args...>>)
-        void Bind(F &&functor)
-        {
-            m_Function = std::forward<F>(functor);
-        }
-
-        template <typename T, typename Method>
-        void Bind(T *instance, Method method)
-        {
-            m_Function = [instance, method](Args... args)
-            {
-                (instance->*method)(std::forward<Args>(args)...);
-            };
-        }
-
-        void Invoke(Args... args) const
-        {
-            if (!IsBound())
-            {
-                throw std::runtime_error("Delegate is not bound to a function");
-            }
-            m_Function(std::forward<Args>(args)...);
-        }
-
-        void operator()(Args... args) const
-        {
-            Invoke(std::forward<Args>(args)...);
-        }
-
-        void InvokeIfBound(Args... args) const
-        {
-            if (IsBound())
-            {
-                m_Function(std::forward<Args>(args)...);
-            }
-        }
-
-        bool operator==(const Delegate &other) const
-        {
-            return (m_Function.template target<void (*)(Args...)>() ==
-                    other.m_Function.template target<void (*)(Args...)>()) &&
-                   (m_Function.target_type() == other.m_Function.target_type());
-        }
-
-        bool operator!=(const Delegate &other) const
-        {
-            return !(*this == other);
-        }
+        bool operator!=(const Delegate& other) const noexcept { return !(*this==other); }
     };
 
     // デリゲート作成のヘルパー関数

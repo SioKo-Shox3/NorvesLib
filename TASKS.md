@@ -1338,11 +1338,13 @@
 - notes: FileStoreとGame load/save/rebind UI捕捉は次段。schemaはbindings.v1、識別子は文字列。JSON textは1MiB/深さ64以内。
 
 ## CORE-DELEGATE-IDENTITY: Delegateの解除対象を正しく識別する
-- status: todo
+- status: done
 - done-when: member/lambdaの同closure型誤一致とfree function保存領域pointer比較を修正し、登録/複製/個別解除の反証試験を通す。
 - verify: Delegate/MulticastDelegateの実コードで別instance/別method/copy/free functionを検証する。公開APIと寿命の独立レビュー必須。
 - notes: GR03の設定保存を先に進め、focus等のevent基盤を増やす前に独立Taskとして処理。現在のMapperはRouter pointer解除、Camera slotはClearで回避している。
 
+- stop-when: callableと比較情報の例外時不整合、別instance/別method誤一致、copyで解除handle消失、blocking未解消。
+- paths: Library/Core/Public/Delegate/Delegate.h, Library/Core/Public/Delegate/MulticastDelegate.h, Test/Core/Delegate/DelegateIdentityTest.cpp, Test/Core/Delegate/DelegateCopyTest.cpp, Test/Core/Delegate/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, TASKS.md, PROGRESS.md
 ## CORE-JSON-SURROGATE: JSONの非BMP文字列を整合させる
 - status: todo
 - done-when: JsonDocumentのsurrogate pairを単一Unicode scalarへ合成し、生UTF-8/escape表現が同じ名前になることを検証する。

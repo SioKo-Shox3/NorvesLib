@@ -312,3 +312,6 @@
 
 - G1-GR03-P5C: GameInputActionsと4 context/11 actionの既定Assetを追加し、GameInputSettingsが起動時に既定＋user差分をロードしてMapperへ反映する。ConfigureWithContextは設定と初期stackを一括反映し、失敗時は旧設定を維持。Debug/Normalで既存camera経路を保ち、保存は明示APIのみ。独立静的レビューPASS。実JSON dataから生成したportable binding/runtime検証は成功。GameInputSettingsTestとMapper回帰を既存bundleへ登録したが、Windows依存の実JsonDocumentロード/Game起動/統合試験は未実行。
 - Next: event基盤を拡張する前に既存Delegateの解除対象誤識別を独立修正し、GR03のrebind捕捉とOS入力供給を接続する。
+
+- CORE-DELEGATE-IDENTITY（G1-GR03イベント基盤の前提）: free functionの保存領域pointer比較を関数値比較へ、memberの同closure型誤一致を型付きinstance/method比較へ修正。functorは登録tokenで識別しDelegate copyで維持、別Bindは別登録。候補swapで例外時の呼出先/識別の整合、move元空、null member空を保証。void統合時のnonvoid member結果破棄の互換性を恒久回帰付きで修復し第2周レビューPASS。実Delegate試験は通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compile成功。Multicast個別解除/同登録一括解除の実試験を追加しsyntax/bundle compile成功、実allocatorリンクはWindows.h依存で未実行。
+- Next: GR03の入力取消を既存camera/drag/UIへ伝え、OSのfocus/cursor/raw供給とリバインドを接続する。

@@ -5,6 +5,7 @@ norves_add_test_bundle(LoggerSinkTest
     FOLDER "Test/Core/Logging"
     MEMBER LoggerSinkTest LoggerSinkTest.cpp
     MEMBER StatsManagerTest ${CMAKE_SOURCE_DIR}/Test/Core/Debug/StatsManagerTest.cpp
+    MEMBER DelegateIdentityTest ${CMAKE_SOURCE_DIR}/Test/Core/Delegate/DelegateIdentityTest.cpp
     MEMBER DelegateCopyTest ${CMAKE_SOURCE_DIR}/Test/Core/Delegate/DelegateCopyTest.cpp
     MEMBER InputRouterTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputRouterTest.cpp
     MEMBER InputStateReleaseTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputStateReleaseTest.cpp
