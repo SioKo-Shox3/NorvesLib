@@ -189,6 +189,81 @@ namespace
         World World;
     };
 
+    void TestPublishedQueryBatch()
+    {
+        PhysicsFixture fixture;
+        SceneQuery& scene = fixture.Engine.GetSceneQuery();
+        PhysicsQueryDesc queries[6];
+        queries[0].Kind = EPhysicsQueryKind::RaycastAll;
+        queries[0].Ray = Math::Ray(Math::Vector3(-5,0,0),Math::Vector3::UnitX);
+        queries[0].MaxDistance = 20;
+        queries[0].MaxHits = 2;
+        queries[1] = queries[0];
+        queries[1].Filter.LayerMask = 0;
+        queries[2] = queries[0];
+        queries[2].MaxHits = 0;
+        queries[3] = queries[0];
+        queries[3].Kind = EPhysicsQueryKind::SweepSphere;
+        queries[3].Sphere = Math::Sphere(Math::Vector3(-5,0,0),.5f);
+        queries[3].Direction = Math::Vector3::UnitX;
+        queries[3].MaxHits = 1;
+        queries[4] = queries[0];
+        queries[4].Filter.LayerMask = 4;
+        queries[5].Kind = EPhysicsQueryKind::OverlapSphere;
+        queries[5].Sphere = Math::Sphere(Math::Vector3(8,0,0),.2f);
+        Core::Container::VariableArray<PhysicsQueryHit> hits;
+        Core::Container::VariableArray<PhysicsQueryBatchResult> results;
+        hits.emplace_back(); results.emplace_back();
+        assert(scene.ExecuteBatch(queries,hits,results) == EPhysicsSceneQueryResult::NotReady);
+        assert(hits.empty() && results.empty());
+        auto* first = fixture.CreateSphere(Math::Transform(Math::Vector3()),1)->GetComponent<ColliderComponent>();
+        auto* second = fixture.CreateSphere(Math::Transform(Math::Vector3(4,0,0)),1)->GetComponent<ColliderComponent>();
+        auto* third = fixture.CreateSphere(Math::Transform(Math::Vector3(8,0,0)),1)->GetComponent<ColliderComponent>();
+        assert(first->SetCollisionLayer(2) == EPhysicsResult::Success);
+        assert(second->SetCollisionLayer(4) == EPhysicsResult::Success);
+        assert(third->SetCollisionLayer(2) == EPhysicsResult::Success);
+        assert(first->SetUserData(111) == EPhysicsResult::Success);
+        assert(second->SetUserData(222) == EPhysicsResult::Success);
+        assert(third->SetUserData(333) == EPhysicsResult::Success);
+        fixture.Physics->FixedTick(1.f/60);
+        uint64_t before = 0, after = 0;
+        assert(scene.GetPublishedSnapshotSequence(before) == EPhysicsSceneQueryResult::Success);
+        assert(first->SetUserData(444) == EPhysicsResult::Success);
+        assert(scene.ExecuteBatch(queries,hits,results) == EPhysicsSceneQueryResult::Success);
+        assert(results.size() == 6 && hits.size() == 5);
+        const size_t offsets[]{0,2,2,2,3,4};
+        const size_t counts[]{2,0,0,1,1,1};
+        Core::Container::VariableArray<PhysicsQueryHit> single;
+        for (size_t index = 0; index < 6; ++index)
+        {
+            assert(results[index].FirstHit == offsets[index] && results[index].HitCount == counts[index]);
+            const auto result = scene.ExecuteQuery(queries[index],single);
+            assert(result == results[index].Result && single.size() == results[index].HitCount);
+            for (size_t hit = 0; hit < single.size(); ++hit)
+            {
+                const auto& batched = hits[results[index].FirstHit+hit];
+                assert(single[hit].Collider == batched.Collider && single[hit].UserData == batched.UserData);
+                assert(single[hit].Distance == batched.Distance && single[hit].Normal == batched.Normal);
+                assert(single[hit].Body == batched.Body && single[hit].Entity == batched.Entity);
+                assert(single[hit].bHasEntity == batched.bHasEntity && single[hit].Point == batched.Point);
+                assert(single[hit].Depth == batched.Depth && single[hit].bStartPenetrating == batched.bStartPenetrating);
+            }
+        }
+        assert(results[1].Result == EPhysicsSceneQueryResult::NoHit);
+        assert(results[2].Result == EPhysicsSceneQueryResult::InvalidArgument);
+        assert(hits[0].UserData == 111 && hits[1].UserData == 222 && hits[2].UserData == 111);
+        assert(hits[3].UserData == 222 && hits[4].UserData == 333);
+        assert(scene.GetPublishedSnapshotSequence(after) == EPhysicsSceneQueryResult::Success && before == after);
+        assert(scene.ExecuteBatch({},hits,results) == EPhysicsSceneQueryResult::Success);
+        assert(hits.empty() && results.empty());
+        assert(scene.ExecuteBatch(Core::Container::Span<const PhysicsQueryDesc>(nullptr,1),hits,results)
+            == EPhysicsSceneQueryResult::InvalidArgument);
+        assert(hits.empty() && results.empty());
+        fixture.Physics->FixedTick(1.f/60);
+        assert(scene.ExecuteBatch(queries,hits,results) == EPhysicsSceneQueryResult::Success);
+        assert(hits[0].UserData == 444 && hits[2].UserData == 444);
+    }
+
     void TestUnifiedPublishedQuery()
     {
         PhysicsFixture fixture;
@@ -545,6 +620,7 @@ int main()
     TestSnapshotScaleAndRayContract();
     TestColliderMetadataSnapshot();
     TestUnifiedPublishedQuery();
+    TestPublishedQueryBatch();
     std::cout << "PhysicsBroadphaseQueryTest passed\n";
     return 0;
 }

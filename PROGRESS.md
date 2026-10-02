@@ -393,3 +393,6 @@
 
 - G1-GR08-P4A: SceneQuery::ExecuteQueryを非pureのprovider拡張へ接続。未対応providerはUnavailableでsource互換を維持し、GameThread/接続確認後に全descriptorを渡す。非Success/例外で出力を空にし例外は再送出。PhysicsModuleはreadiness後に公開Broadphaseを読み、filter付きray複数hit/overlap/sphere・capsule sweepを公開する。旧APIの数値契約やsnapshot時点を変更しない。独立静的レビューPASS、同じ3球・7種・filter/ignore/trigger/MaxHits/UserData期待を実proxyコードでRelease/ASan・UBSan実行成功。fake/実Module統合試験を既存bundleへ追加し、全shape fieldの転送比較も補強。統合compile/実行はWindows.h依存で未確認。
 - Next: G1／GR08のExecuteBatchで要求順の連続hit/resultとreadiness確認の集約を追加する。候補訪問の最適化、solver mask、明示refreshは継続。
+
+- G1-GR08-P4B: SceneQuery/provider/PhysicsModuleへExecuteBatchを追加。owner/接続/準備をbatch単位に確認し、同一公開Broadphaseへの要求を順次処理してResult/FirstHit/HitCountと連続hitを返す。個別NoHit/InvalidArgument等は0hitで継続、全体失敗/例外は両出力を空にする。候補配列への組立、size上限確認、noexcept swapで部分公開を防止。準備済み空batchはSuccess、暗黙refresh/sequence更新なし。独立静的レビューPASS、既存実proxy回帰Release/ASan・UBSan成功。新batchのfake/実Module試験に混在offset・全hit field単発一致・metadata/sequenceを追加したが、Windows.h依存で新経路のcompile/実行は未確認。
+- Next: G1／GR08のsolverとbroadphaseへ対称のLayer/Mask判定を反映する。候補訪問の最適化とS9=aの明示snapshot更新も続ける。

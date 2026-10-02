@@ -30,6 +30,16 @@ namespace NorvesLib::Core::Scene
             return EPhysicsSceneQueryResult::Unavailable;
         }
 
+        // Successはbatch成立。個別成否はoutResultsで返す。未対応providerは空/Unavailable。
+        virtual EPhysicsSceneQueryResult ExecuteBatch(Container::Span<const PhysicsQueryDesc>,
+            Container::VariableArray<PhysicsQueryHit>& outHits,
+            Container::VariableArray<PhysicsQueryBatchResult>& outResults) const
+        {
+            outHits.clear();
+            outResults.clear();
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
         virtual EPhysicsSceneQueryResult Raycast(
             const Math::Ray& ray,
             float maxDistance,
@@ -90,6 +100,12 @@ namespace NorvesLib::Core::Scene
         // 例外は出力をclearして再送出。入力/出力の格納領域は重ならないこと。
         EPhysicsSceneQueryResult ExecuteQuery(const PhysicsQueryDesc& query,
             Container::VariableArray<PhysicsQueryHit>& outHits) const;
+
+        // 要求順のResult/FirstHit/HitCount。個別失敗は0hitで継続、全体失敗/例外は両出力をclear。
+        // 準備済み空batchはSuccess。入力と出力の格納領域は重ならず、同期呼出し中有効なこと。
+        EPhysicsSceneQueryResult ExecuteBatch(Container::Span<const PhysicsQueryDesc> queries,
+            Container::VariableArray<PhysicsQueryHit>& outHits,
+            Container::VariableArray<PhysicsQueryBatchResult>& outResults) const;
 
         EPhysicsSceneQueryResult BindPhysicsProvider(IPhysicsSceneQueryProvider& provider);
         EPhysicsSceneQueryResult UnbindPhysicsProvider(IPhysicsSceneQueryProvider& provider);

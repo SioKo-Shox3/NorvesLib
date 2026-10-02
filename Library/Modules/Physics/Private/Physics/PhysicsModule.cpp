@@ -9,6 +9,7 @@
 #include "Math/VectorUtils.h"
 
 #include <cmath>
+#include <stdexcept>
 
 namespace NorvesLib::Modules::Physics
 {
@@ -235,6 +236,48 @@ namespace NorvesLib::Modules::Physics
         m_bBound = false;
         ResetTransientState();
         m_bInitialized = false;
+    }
+
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::ExecuteBatch(Core::Container::Span<const Core::Scene::PhysicsQueryDesc> queries,
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits,
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryBatchResult>& outResults) const
+    {
+        using Result = Core::Scene::EPhysicsSceneQueryResult;
+        outHits.clear();
+        outResults.clear();
+        const auto readiness = GetReadinessResult();
+        if (readiness != Result::Success)
+        {
+            return readiness;
+        }
+        if (queries.size() != 0 && queries.data() == nullptr)
+        {
+            return Result::InvalidArgument;
+        }
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryHit> hits, itemHits;
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryBatchResult> results;
+        results.reserve(queries.size());
+        // 確保/評価が途中で失敗しても、呼出元へ部分結果を公開しない。
+        for (size_t index = 0; index < queries.size(); ++index)
+        {
+            const auto& query = queries[index];
+            const auto result = m_PublishedBroadphase.ExecuteQuery(query, itemHits);
+            const size_t first = hits.size();
+            const size_t count = result == Result::Success ? itemHits.size() : 0;
+            if (count > hits.max_size() - first)
+            {
+                throw std::length_error("物理query batchのhit数が上限を超えました");
+            }
+            if (count != 0)
+            {
+                hits.insert(hits.end(), itemHits.begin(), itemHits.end());
+            }
+            results.push_back(Core::Scene::PhysicsQueryBatchResult{result, first, count});
+        }
+        static_assert(noexcept(outHits.swap(hits)) && noexcept(outResults.swap(results)));
+        outHits.swap(hits);
+        outResults.swap(results);
+        return Result::Success;
     }
 
     Core::Scene::EPhysicsSceneQueryResult PhysicsModule::ExecuteQuery(const Core::Scene::PhysicsQueryDesc& query,

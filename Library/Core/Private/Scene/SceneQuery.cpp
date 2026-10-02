@@ -152,6 +152,42 @@ namespace NorvesLib::Core::Scene
         return EPhysicsSceneQueryResult::Success;
     }
 
+    EPhysicsSceneQueryResult SceneQuery::ExecuteBatch(Container::Span<const PhysicsQueryDesc> queries,
+        Container::VariableArray<PhysicsQueryHit>& outHits,
+        Container::VariableArray<PhysicsQueryBatchResult>& outResults) const
+    {
+        outHits.clear();
+        outResults.clear();
+        if (!IsOwnerThread())
+        {
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+        if (!m_PhysicsProvider)
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+        if (queries.size() != 0 && queries.data() == nullptr)
+        {
+            return EPhysicsSceneQueryResult::InvalidArgument;
+        }
+        try
+        {
+            const auto result = m_PhysicsProvider->ExecuteBatch(queries, outHits, outResults);
+            if (result != EPhysicsSceneQueryResult::Success)
+            {
+                outHits.clear();
+                outResults.clear();
+            }
+            return result;
+        }
+        catch (...)
+        {
+            outHits.clear();
+            outResults.clear();
+            throw;
+        }
+    }
+
     EPhysicsSceneQueryResult SceneQuery::ExecuteQuery(const PhysicsQueryDesc& query,
         Container::VariableArray<PhysicsQueryHit>& outHits) const
     {

@@ -291,6 +291,110 @@ namespace
         assert(provider.Calls == calls);
     }
 
+    class BatchQueryProvider final : public FakePhysicsSceneQueryProvider
+    {
+    public:
+        mutable uint32_t Calls = 0;
+        mutable size_t LastCount = 0;
+        mutable PhysicsQueryDesc First, Last;
+        bool bThrow = false;
+        EPhysicsSceneQueryResult ExecuteBatch(Container::Span<const PhysicsQueryDesc> queries,
+            Container::VariableArray<PhysicsQueryHit>& outHits,
+            Container::VariableArray<PhysicsQueryBatchResult>& outResults) const override
+        {
+            ++Calls;
+            LastCount = queries.size();
+            if (queries.size() != 0)
+            {
+                First = queries[0];
+                Last = queries[queries.size()-1];
+                PhysicsQueryHit hit;
+                hit.UserData = 42;
+                outHits.push_back(hit);
+                for (size_t index = 0; index < queries.size(); ++index)
+                {
+                    outResults.push_back({index == 0 ? EPhysicsSceneQueryResult::Success : EPhysicsSceneQueryResult::NoHit,
+                        index == 0 ? size_t{0} : size_t{1}, index == 0 ? size_t{1} : size_t{0}});
+                }
+            }
+            if (bThrow)
+            {
+                throw std::runtime_error("batch検証例外");
+            }
+            return Result;
+        }
+    };
+
+    void TestBatchQueryFacade()
+    {
+        SceneQuery scene;
+        FakePhysicsSceneQueryProvider legacy;
+        BatchQueryProvider provider;
+        PhysicsQueryDesc queries[2];
+        queries[0].Kind = EPhysicsQueryKind::RaycastAll;
+        queries[0].Filter.LayerMask = 0x80000000u;
+        queries[1].Kind = EPhysicsQueryKind::SweepCapsule;
+        queries[1].MaxHits = 3;
+        Container::VariableArray<PhysicsQueryHit> hits;
+        Container::VariableArray<PhysicsQueryBatchResult> results;
+        auto fill = [&]() { hits.emplace_back(); results.emplace_back(); };
+        fill();
+        assert(scene.ExecuteBatch(queries,hits,results) == EPhysicsSceneQueryResult::Unavailable);
+        assert(hits.empty() && results.empty());
+        assert(scene.BindPhysicsProvider(legacy) == EPhysicsSceneQueryResult::Success);
+        fill();
+        assert(scene.ExecuteBatch(queries,hits,results) == EPhysicsSceneQueryResult::Unavailable);
+        assert(hits.empty() && results.empty());
+        assert(scene.UnbindPhysicsProvider(legacy) == EPhysicsSceneQueryResult::Success);
+        assert(scene.BindPhysicsProvider(provider) == EPhysicsSceneQueryResult::Success);
+        fill();
+        assert(scene.ExecuteBatch(queries,hits,results) == EPhysicsSceneQueryResult::Success);
+        assert(provider.Calls == 1 && provider.LastCount == 2);
+        assert(provider.First.Kind == queries[0].Kind && provider.First.Filter.LayerMask == queries[0].Filter.LayerMask);
+        assert(provider.Last.Kind == queries[1].Kind && provider.Last.MaxHits == 3);
+        assert(provider.RaycastCallCount == 0 && provider.PublishedSnapshotSequenceCallCount == 0);
+        assert(hits.size() == 1 && hits[0].UserData == 42 && results.size() == 2);
+        assert(results[0].Result == EPhysicsSceneQueryResult::Success && results[0].FirstHit == 0 && results[0].HitCount == 1);
+        assert(results[1].Result == EPhysicsSceneQueryResult::NoHit && results[1].FirstHit == 1 && results[1].HitCount == 0);
+        for (auto failure : {EPhysicsSceneQueryResult::NoHit,EPhysicsSceneQueryResult::Unavailable,
+            EPhysicsSceneQueryResult::NotReady,EPhysicsSceneQueryResult::InvalidArgument,
+            EPhysicsSceneQueryResult::WrongThread,EPhysicsSceneQueryResult::AlreadyBound,
+            EPhysicsSceneQueryResult::ProviderMismatch,EPhysicsSceneQueryResult::IterationLimit})
+        {
+            provider.Result = failure;
+            fill();
+            assert(scene.ExecuteBatch(queries,hits,results) == failure);
+            assert(hits.empty() && results.empty());
+        }
+        provider.Result = EPhysicsSceneQueryResult::Success;
+        provider.bThrow = true;
+        bool caught = false;
+        try
+        {
+            (void)scene.ExecuteBatch(queries,hits,results);
+        }
+        catch (const std::runtime_error&)
+        {
+            caught = true;
+        }
+        assert(caught && hits.empty() && results.empty());
+        provider.bThrow = false;
+        const auto calls = provider.Calls;
+        fill();
+        assert(scene.ExecuteBatch(Container::Span<const PhysicsQueryDesc>(nullptr,1),hits,results)
+            == EPhysicsSceneQueryResult::InvalidArgument);
+        assert(hits.empty() && results.empty() && provider.Calls == calls);
+        fill();
+        EPhysicsSceneQueryResult result{};
+        Thread::Thread worker([&]() { result = scene.ExecuteBatch(queries,hits,results); });
+        worker.Join();
+        assert(result == EPhysicsSceneQueryResult::WrongThread);
+        assert(hits.empty() && results.empty() && provider.Calls == calls);
+        assert(scene.ExecuteBatch({},hits,results) == EPhysicsSceneQueryResult::Success);
+        assert(hits.empty() && results.empty() && provider.LastCount == 0 && provider.Calls == calls+1);
+        assert(scene.UnbindPhysicsProvider(provider) == EPhysicsSceneQueryResult::Success);
+    }
+
     void SetSentinel(PhysicsRaycastHit& hit)
     {
         hit = CreateRaycastHit();
@@ -578,6 +682,7 @@ int main()
 {
     ConfigureFailureReporting();
     TestUnifiedQueryFacade();
+    TestBatchQueryFacade();
 
     std::cout << "SceneQueryPhysicsFacadeTest start\n";
 

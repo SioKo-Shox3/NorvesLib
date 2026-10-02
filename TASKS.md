@@ -1646,3 +1646,11 @@
 - stop-when: CoreがPhysics moduleへ依存、wrong thread/未bindでprovider呼出し、非Success/例外で残留hit、公開snapshot以外への暗黙refresh、blocking未解消。
 - paths: Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.h, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Core/Object/SceneQueryPhysicsFacadeTest.cpp, Test/Modules/Physics/PhysicsBroadphaseQueryTest.cpp, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
 - notes: generic descriptorでfilter付き7種を公開する。batch/訪問関数最適化/solver mask/refreshは後続。既存APIへ新しい数値制限を強制する経路差替は行わない。Windows依存の統合実行は未検証と区別する。
+
+## G1-GR08-P4B: 同じ公開snapshotへの問い合わせをバッチ化する
+- status: done
+- done-when: SceneQuery/provider/PhysicsModuleへExecuteBatchを追加し、準備/owner確認をbatch単位にして順次実行する。要求順のResult/FirstHit/HitCountと連続hitを返す。個別失敗は0hitで他要求を継続、全体の非Success/例外は両出力を空にする。準備済み空batchはSuccess。
+- verify: fake providerの既定未対応/1回委譲/全体失敗/例外/不正span/wrong threadと、実ModuleのSuccess/NoHit/InvalidArgument混在/offset/MaxHits/空/未準備/単発結果一致/snapshotsequence不変を既存bundleへ追加。実compile試行、CPU回帰、独立レビュー。
+- stop-when: itemごとにreadiness再確認、異なるsnapshotへの暗黙更新、失敗itemのhit混入、offset/size overflow、全体失敗/例外で部分出力、blocking未解消。
+- paths: Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.h, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Core/Object/SceneQueryPhysicsFacadeTest.cpp, Test/Modules/Physics/PhysicsBroadphaseQueryTest.cpp, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
+- notes: 戻り値Successはbatch処理成立で、各要求成否はoutResultsを見る。failure itemのFirstHitはその時点の連続hit末尾、HitCount0。入力span/両出力は非aliasかつ同期呼出し中有効。未対応providerの既定はUnavailable。batch自体の結果と個別結果を混同しない。
