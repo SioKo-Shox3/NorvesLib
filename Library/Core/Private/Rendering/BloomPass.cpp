@@ -13,6 +13,8 @@
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/TransientResourcePool.h"
 #include "Logging/LogMacros.h"
+#include <algorithm>
+#include <cmath>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -27,6 +29,10 @@ namespace NorvesLib::Core::Rendering
         float radius;
         float thresholdMode;
         float inverseMipCount;
+        float lensDirtIntensity;
+        float lensDirtThreshold;
+        float _pad0;
+        float _pad1;
     };
 
     /** @brief 縮小パラメータUBO（bloom_downsample.frag の BloomDownsampleParams） */
@@ -53,6 +59,101 @@ namespace NorvesLib::Core::Rendering
 
     namespace
     {
+        constexpr uint32_t kLensDirtTextureSize = 512;
+
+        // 決まった種から同じ列を返す乱数（xorshift32）。ダートの模様を起動ごとに変えない。
+        class LensDirtRandom
+        {
+        public:
+            explicit LensDirtRandom(uint32_t seed) : m_State(seed != 0u ? seed : 1u) {}
+
+            float Next01()
+            {
+                m_State ^= m_State << 13;
+                m_State ^= m_State >> 17;
+                m_State ^= m_State << 5;
+                return static_cast<float>(m_State >> 8) * (1.0f / 16777216.0f);
+            }
+
+            float Range(float minValue, float maxValue) { return minValue + (maxValue - minValue) * Next01(); }
+
+        private:
+            uint32_t m_State;
+        };
+
+        // レンズの前玉に付いた汚れの模様を作る（RGBA8、リニアな値）。
+        // 大小の丸いしみ（縁がやわらかく、一部は縁がわずかに明るい）と、薄く広いくもりを重ねる。
+        // 値は加算して1で頭打ちにし、色はしみごとに暖色・寒色へわずかに寄せる。
+        void GenerateLensDirtPixels(uint32_t size, VariableArray<uint8_t> &outPixels)
+        {
+            VariableArray<float> accum(static_cast<size_t>(size) * size * 3u, 0.0f);
+            LensDirtRandom random(0x9E3779B9u);
+
+            auto addSpot = [&](float centerX, float centerY, float radius, float edgeWidth, float brightness, float rim,
+                               float tintR, float tintB) {
+                const int minX = std::max(0, static_cast<int>(std::floor(centerX - radius)));
+                const int maxX = std::min(static_cast<int>(size) - 1, static_cast<int>(std::ceil(centerX + radius)));
+                const int minY = std::max(0, static_cast<int>(std::floor(centerY - radius)));
+                const int maxY = std::min(static_cast<int>(size) - 1, static_cast<int>(std::ceil(centerY + radius)));
+                for (int y = minY; y <= maxY; ++y)
+                {
+                    for (int x = minX; x <= maxX; ++x)
+                    {
+                        const float dx = (static_cast<float>(x) + 0.5f - centerX) / radius;
+                        const float dy = (static_cast<float>(y) + 0.5f - centerY) / radius;
+                        const float distance = std::sqrt(dx * dx + dy * dy);
+                        if (distance >= 1.0f)
+                        {
+                            continue;
+                        }
+                        // 外側の edgeWidth の割合でなめらかに0へ落とし、縁の近くだけ rim の割合で明るくする。
+                        const float edge = std::clamp((1.0f - distance) / edgeWidth, 0.0f, 1.0f);
+                        const float falloff = edge * edge * (3.0f - 2.0f * edge);
+                        const float rimWeight = std::exp(-std::pow((distance - 0.85f) / 0.08f, 2.0f));
+                        const float value = brightness * falloff * (1.0f + rim * rimWeight);
+                        float *pixel = &accum[(static_cast<size_t>(y) * size + static_cast<size_t>(x)) * 3u];
+                        pixel[0] += value * tintR;
+                        pixel[1] += value;
+                        pixel[2] += value * tintB;
+                    }
+                }
+            };
+
+            const float extent = static_cast<float>(size);
+            // 薄く広いくもり
+            for (int i = 0; i < 14; ++i)
+            {
+                const float tint = random.Range(-0.08f, 0.08f);
+                addSpot(random.Range(0.0f, extent), random.Range(0.0f, extent), extent * random.Range(0.12f, 0.28f), 1.0f,
+                        random.Range(0.02f, 0.05f), 0.0f, 1.0f + tint, 1.0f - tint);
+            }
+            // 中くらいのしみ
+            for (int i = 0; i < 70; ++i)
+            {
+                const float tint = random.Range(-0.12f, 0.12f);
+                addSpot(random.Range(0.0f, extent), random.Range(0.0f, extent), extent * random.Range(0.02f, 0.07f), 0.3f,
+                        random.Range(0.25f, 0.6f), random.Range(0.2f, 0.8f), 1.0f + tint, 1.0f - tint);
+            }
+            // 小さな粒
+            for (int i = 0; i < 260; ++i)
+            {
+                const float tint = random.Range(-0.1f, 0.1f);
+                addSpot(random.Range(0.0f, extent), random.Range(0.0f, extent), extent * random.Range(0.004f, 0.012f), 0.5f,
+                        random.Range(0.3f, 0.8f), 0.0f, 1.0f + tint, 1.0f - tint);
+            }
+
+            outPixels.resize(static_cast<size_t>(size) * size * 4u);
+            for (size_t i = 0; i < static_cast<size_t>(size) * size; ++i)
+            {
+                for (size_t channel = 0; channel < 3u; ++channel)
+                {
+                    const float value = std::clamp(accum[i * 3u + channel], 0.0f, 1.0f);
+                    outPixels[i * 4u + channel] = static_cast<uint8_t>(std::lround(value * 255.0f));
+                }
+                outPixels[i * 4u + 3u] = 255u;
+            }
+        }
+
         RHI::DescriptorSetDesc MakeSamplerParamsLayout(uint32_t samplerCount)
         {
             RHI::DescriptorSetDesc dsDesc;
@@ -213,6 +314,27 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // ========================================
+        // レンズダートの模様（手続きで作り、合成で常にバインドする。強さ0なら読まれても寄与しない）
+        // ========================================
+        RHI::TextureDesc lensDirtDesc;
+        lensDirtDesc.Width = kLensDirtTextureSize;
+        lensDirtDesc.Height = kLensDirtTextureSize;
+        lensDirtDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        lensDirtDesc.Usage = RHI::ResourceUsage::ShaderRead;
+        lensDirtDesc.DebugName = "BloomLensDirt";
+        m_LensDirtTexture = m_Device->CreateTexture(lensDirtDesc);
+        if (!m_LensDirtTexture)
+        {
+            NORVES_LOG_ERROR("BloomPass", "Failed to create lens dirt texture");
+            return false;
+        }
+        VariableArray<uint8_t> lensDirtPixels;
+        GenerateLensDirtPixels(kLensDirtTextureSize, lensDirtPixels);
+        m_LensDirtTexture->Update(lensDirtPixels.data(),
+                                  kLensDirtTextureSize * 4u,
+                                  kLensDirtTextureSize * kLensDirtTextureSize * 4u);
+
         m_bInitialized = true;
         NORVES_LOG_INFO("BloomPass", "BloomPass initialized");
         return true;
@@ -237,6 +359,7 @@ namespace NorvesLib::Core::Rendering
         m_ParamsBuffer.reset();
         m_BloomDescriptorSet.reset();
         m_SceneColorSampler.reset();
+        m_LensDirtTexture.reset();
         m_Device = nullptr;
         m_OutputHandle = {};
         m_bRenderPassUsesRenderGraphInitialState = false;
@@ -380,8 +503,9 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // binding 0: SceneColor（combined image sampler）
         // binding 1: 積み上げたブルーム（combined image sampler）
-        // binding 2: BloomCompositeParams UBO
-        const RHI::DescriptorSetDesc dsDesc = MakeSamplerParamsLayout(2);
+        // binding 2: レンズダートの模様（combined image sampler）
+        // binding 3: BloomCompositeParams UBO
+        const RHI::DescriptorSetDesc dsDesc = MakeSamplerParamsLayout(3);
 
         m_BloomDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
         if (!m_BloomDescriptorSet)
@@ -391,7 +515,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // UBOバインド（テクスチャはExecute時にバインド）
-        m_BloomDescriptorSet->BindConstantBuffer(2, m_ParamsBuffer, 0, BLOOM_PARAMS_SIZE);
+        m_BloomDescriptorSet->BindConstantBuffer(3, m_ParamsBuffer, 0, BLOOM_PARAMS_SIZE);
 
         // ========================================
         // パイプライン作成（フルスクリーン描画）
@@ -559,6 +683,17 @@ namespace NorvesLib::Core::Rendering
         params.radius = m_Settings.Radius;
         params.thresholdMode = m_Settings.Threshold > 0.0f ? 1.0f : 0.0f;
         params.inverseMipCount = 1.0f / static_cast<float>(m_MipLevels.size());
+        // レンズダートはカメラのレンズ効果の値が正ならそれを、無ければ View の設定を使う（有限でない値・負は0）。
+        float lensDirtIntensity = m_Settings.LensDirtIntensity;
+        const CameraProxy *activeCamera = context.GetActiveCamera();
+        if (activeCamera != nullptr && activeCamera->LensEffects.LensDirtIntensity > 0.0f)
+        {
+            lensDirtIntensity = activeCamera->LensEffects.LensDirtIntensity;
+        }
+        params.lensDirtIntensity =
+            (bDebugPostProcessBypass || !std::isfinite(lensDirtIntensity)) ? 0.0f : std::max(lensDirtIntensity, 0.0f);
+        params.lensDirtThreshold =
+            std::isfinite(m_Settings.LensDirtThreshold) ? std::max(m_Settings.LensDirtThreshold, 0.0f) : 0.0f;
         m_ParamsBuffer->Update(&params, sizeof(GPUBloomParams));
 
         // 最上段の拡大結果（1段だけのときは縮小結果）を合成で読む
@@ -570,6 +705,8 @@ namespace NorvesLib::Core::Rendering
         m_BloomDescriptorSet->BindSampler(0, m_SceneColorSampler);
         m_BloomDescriptorSet->BindTexture(1, bloomTexture);
         m_BloomDescriptorSet->BindSampler(1, m_SceneColorSampler);
+        m_BloomDescriptorSet->BindTexture(2, m_LensDirtTexture);
+        m_BloomDescriptorSet->BindSampler(2, m_SceneColorSampler);
         m_BloomDescriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();

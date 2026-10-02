@@ -361,6 +361,24 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief カメラごとのレンズの効果（色収差とレンズダート）
+     *
+     * 既定はどちらも0で無効。起動画面のように演出を足したいカメラだけが値を入れ、検証シーンのカメラは
+     * 既定のまま結果を変えない。
+     */
+    struct CameraLensEffects
+    {
+        /**
+         * @brief 放射方向の色収差の量（画面の左右の端での R・B のずれ、描画解像度の画素数。0で無効）
+         *
+         * ずれは画面中心からの距離に比例し、R は外へ・B は内へずれる。上限は16画素。
+         */
+        float ChromaticAberrationPixels = 0.0f;
+        /** @brief ブルームに掛けるレンズダートの強さ（0で無効。ブルームのダートのしきい値を超えた分に掛かる） */
+        float LensDirtIntensity = 0.0f;
+    };
+
+    /**
      * @brief 描画用カメラプロキシ
      */
     struct CameraProxy
@@ -427,6 +445,9 @@ namespace NorvesLib::Core::Rendering
 
         // トーンマップ後のグレーディングとビネットの差し替え。有効なときは GradingContrast より優先する。
         CameraGradingOverride GradingOverride;
+
+        // 色収差とレンズダート（既定は無効）
+        CameraLensEffects LensEffects;
 
         // ポストプロセス設定（ハンドル参照）
         // PostProcessHandle PostProcess;

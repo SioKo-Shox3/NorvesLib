@@ -54,6 +54,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <utility>
 
 using namespace NorvesLib::Core::Container;
@@ -101,6 +102,20 @@ namespace Game::GameModes
             return true;
         }
 
+        // 環境変数 NORVES_STARTUP_LENS_EFFECTS が "0" なら false（起動画面のレンズの効果を切って撮り比べる用）。
+        bool ReadStartupLensEffectsEnabled()
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_STARTUP_LENS_EFFECTS");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            return value == nullptr || std::strcmp(value, "0") != 0;
+        }
+
         // 起動画面の高さフォグ（R3）。地面での密度（1/m、0で無効）と、高さ方向の減衰（1/m）。
         // 減衰を上限の 1/m にして地面すれすれの薄い層にし、遠くの地面へ向かう浅い視線だけが厚く霞む
         // ようにする。密度は太陽 45° の撮り比べ（0.02〜0.1）で、地面すれすれの低角度視点でも近くの各球の
@@ -124,6 +139,13 @@ namespace Game::GameModes
             return bAutoExposure ? kStartupAutoExposureCompensationEV : 0.0f;
         }
 
+        // 起動画面のレンズの効果。色収差は画面の左右の端で R・B が 1.5 画素ずれる弱さにとどめ、輪郭の色の
+        // にじみがわずかに見える程度にする。レンズダートは、ブルームのうちプリエクスポージャ後で1を超えた
+        // 明るいにじみ（太陽・発光球の周り）にだけ模様を浮かせる。強さ2は夕（仰角3°）に太陽のにじみの中で
+        // しみの丸が見え、昼（45°）の空には模様が出ない値（しきい値0.3では昼の空にもしみが浮いた）。
+        constexpr float kStartupChromaticAberrationPixels = 1.5f;
+        constexpr float kStartupLensDirtIntensity = 2.0f;
+
         // 起動画面のトーンマップ後のグレーディングとビネット（検証シーンのカメラは View の既定のまま）。
         // 自動露出（+2 EV の補正）で画面の中央値が表示のリニア値で約 0.47〜0.50 と明るく、ACES の肩で中間が
         // 平らになって眠く見えるため、地面の明るさ（0.5）を軸に、黒と白を動かさない S 字のコントラスト 1.25 で
@@ -132,8 +154,10 @@ namespace Game::GameModes
         // 色温度は +0.1（R・B を ±1%）で日なたをわずかに暖かくする程度にとどめ、昼の空の青を残す。
         // ビネットは強さ 0.25・半径 0.85・幅 0.6 で、画面の隅を約 0.78 倍にする（View の既定 0.3・0.8・0.5 の
         // 約 0.72 倍より弱め、明るい地面の隅が濁らないようにする）。
-        void ApplyStartupGrading(CameraProxy& camera)
+        void ApplyStartupGrading(CameraProxy& camera, bool bLensEffects)
         {
+            camera.LensEffects.ChromaticAberrationPixels = bLensEffects ? kStartupChromaticAberrationPixels : 0.0f;
+            camera.LensEffects.LensDirtIntensity = bLensEffects ? kStartupLensDirtIntensity : 0.0f;
             camera.GradingOverride.bEnabled = true;
             camera.GradingOverride.Contrast = 1.25f;
             camera.GradingOverride.ContrastPivot = 0.5f;
@@ -256,7 +280,8 @@ namespace Game::GameModes
                 return false;
             }
 
-            ApplyStartupGrading(initialCamera);
+            data.m_bLensEffects = ReadStartupLensEffectsEnabled();
+            ApplyStartupGrading(initialCamera, data.m_bLensEffects);
             ctx.EngineRef.GetRenderWorld().SetMainCamera(initialCamera);
             // 起動画面はRTGIを使わず、従来どおり環境光（IBL）で間接光を表す（RTGIの少ない光線数の雑音が
             // 物体と地面に粒状に残るため）。
@@ -1029,7 +1054,8 @@ namespace Game::GameModes
                 MakeUnique<DirectionalLightEditSubRoutine>(&data.m_LightController, &data.m_ExposureEV100,
                                                           &data.m_bAutoExposure,
                                                           &data.m_AutoExposureMeasurement,
-                                                          &data.m_bTemporalAA));
+                                                          &data.m_bTemporalAA,
+                                                          &data.m_bLensEffects));
 #endif
         }
 
@@ -1676,7 +1702,7 @@ namespace Game::GameModes
             CameraProxy cameraProxy;
             if (data.m_pCameraComponent->BuildCameraProxy(cameraProxy))
             {
-                ApplyStartupGrading(cameraProxy);
+                ApplyStartupGrading(cameraProxy, data.m_bLensEffects);
                 ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
                 if (!data.m_bCameraSmokeSyncEmitted)
                 {

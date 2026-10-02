@@ -7,6 +7,8 @@
 // 積み上げた結果は各段の和なので、段数で割って平均にする。
 // しきい値なし（既定）: 元の色と平均を一定の割合で線形補間し、全体のエネルギーを保つ。
 // しきい値あり: 取り出した明るい部分を強度倍して元の色へ加える。
+// レンズダート（強さが正のとき）: ブルームのうちしきい値を超えた明るい部分へダートの模様を掛けて加える。
+// 模様は縦横の画素の比を保って画面へ貼る（横長の画面では模様の縦の中央部を使う）。
 // 入力: SceneColor (HDR R16G16B16A16_FLOAT)
 // 出力: Bloomed SceneColor (HDR R16G16B16A16_FLOAT)
 
@@ -19,14 +21,20 @@ layout(set = 0, binding = 0) uniform sampler2D sceneColor;
 // binding 1: 積み上げたブルーム（最上段の拡大結果）
 layout(set = 0, binding = 1) uniform sampler2D bloomTexture;
 
-// binding 2: 合成パラメータ UBO (std140)
-layout(set = 0, binding = 2) uniform BloomCompositeParams
+// binding 2: レンズダートの模様（RGBA8、リニアな値）
+layout(set = 0, binding = 2) uniform sampler2D lensDirtTexture;
+
+// binding 3: 合成パラメータ UBO (std140)
+layout(set = 0, binding = 3) uniform BloomCompositeParams
 {
     // x = 強度（しきい値なしでは補間の割合、ありでは加算の乗数）
     // y = テントの半径（ブルームのテクセル単位）
     // z = しきい値ありなら1
     // w = 1 / 段数
     vec4 params;
+    // x = レンズダートの強さ（0で無効）
+    // y = レンズダートが乗り始めるブルームの明るさ（プリエクスポージャ後）
+    vec4 dirtParams;
 };
 
 vec3 SampleTent(sampler2D source, vec2 uv, float radius)
@@ -61,6 +69,16 @@ void main()
     vec3 result = params.z > 0.5
                       ? originalColor + bloom * intensity
                       : mix(originalColor, bloom, intensity);
+
+    if (dirtParams.x > 0.0)
+    {
+        vec2 sceneSize = vec2(textureSize(sceneColor, 0));
+        float aspect = sceneSize.x / max(sceneSize.y, 1.0);
+        vec2 dirtScale = aspect >= 1.0 ? vec2(1.0, 1.0 / aspect) : vec2(aspect, 1.0);
+        vec3 dirt = texture(lensDirtTexture, (fragUV - 0.5) * dirtScale + 0.5).rgb;
+        vec3 brightBloom = max(bloom - vec3(dirtParams.y), vec3(0.0));
+        result += brightBloom * dirt * dirtParams.x;
+    }
 
     outColor = vec4(result, 1.0);
 }

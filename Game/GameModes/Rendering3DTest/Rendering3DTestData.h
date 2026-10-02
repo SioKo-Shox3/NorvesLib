@@ -201,6 +201,9 @@ namespace Game::GameModes
         // Tick がカメラのアンチエイリアシングの方式へ写す。
         bool m_bTemporalAA = true;
         bool m_bAppliedTemporalAA = true;
+        // レンズの効果（色収差とレンズダート。起動画面の既定は有効、環境変数 NORVES_STARTUP_LENS_EFFECTS=0 で
+        // 無効で起動する）。ImGui のチェックボックスが書き、Tick がカメラのレンズ効果へ写す。
+        bool m_bLensEffects = true;
         // RenderThread が読み戻した自動露出の測定。Tick が統計のスナップショットから写し、ImGui が表示する。
         NorvesLib::Core::Rendering::AutoExposureMeasurement m_AutoExposureMeasurement;
 
