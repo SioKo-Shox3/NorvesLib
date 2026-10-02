@@ -19,7 +19,17 @@ namespace
         }
         ~FakeApi() override
         {
+            if (ExpectNeutralAtDestruction)
+            {
+                assert(LastMotors.Low == 0 && LastMotors.High == 0);
+            }
             ++Destroyed;
+        }
+        XInputWriteResult WriteVibration(uint8_t, const XInputMotorState& motors) noexcept override
+        {
+            ++Writes;
+            LastMotors = motors;
+            return {!FailWrite, FailWrite ? uint32_t{5} : uint32_t{0}};
         }
         XInputReadResult ReadState(uint8_t slot, XInputRawGamepadState& raw) noexcept override
         {
@@ -33,6 +43,9 @@ namespace
         }
         int& Destroyed;
         int Calls = 0;
+        int Writes = 0;
+        bool FailWrite = false, ExpectNeutralAtDestruction = false;
+        XInputMotorState LastMotors;
         XInputRawGamepadState Value{};
         XInputReadResult Result{EXInputReadStatus::Connected, 0};
     };
@@ -91,8 +104,12 @@ int main()
     assert(system.GetState().IsGamepadButtonPressed(0, GamepadButton::A));
 
     // 実ownerはMapper取消も先に実施する。ここでは正本と配送modeの接続を検証する。
+    assert(device->SetVibration(0, 1, .5f));
+    assert(observer->Writes == 1);
     system.ReleaseAll();
     device->SetFocused(false);
+    assert(observer->Writes == 2 && observer->LastMotors.Low == 0 && observer->LastMotors.High == 0);
+    assert(!device->SetVibration(0, 1, 1));
     assert(device->PollEvents(system, .3));
     assert(!system.GetState().IsGamepadButtonDown(0, GamepadButton::A));
     assert(system.GetState().GetLastGamepadSample(0).Buttons != 0);
@@ -116,6 +133,29 @@ int main()
     assert(device->PollEvents(system, 0));
     assert(!system.GetState().IsGamepadButtonDown(0, GamepadButton::A));
     assert(system.GetState().GetLastGamepadSample(0).Buttons != 0);
+    device->SetFocused(true);
+    assert(device->SetVibration(0, .8f, .8f));
+    observer->FailWrite = true;
+    assert(!device->SetVibration(0, .9f, .9f));
+    const int writesBeforeInvalidClock = observer->Writes;
+    const int readsBeforeInvalidClock = observer->Calls;
+    assert(!device->PollEvents(system, -1));
+    assert(observer->Writes == writesBeforeInvalidClock && observer->Calls == readsBeforeInvalidClock);
+    assert(!device->PollEvents(system, .1));
+    assert(observer->Writes == writesBeforeInvalidClock + 1 && observer->Calls > readsBeforeInvalidClock);
+    observer->FailWrite = false;
+    assert(device->PollEvents(system, .2));
+    assert(observer->Writes == writesBeforeInvalidClock + 2);
+    assert(observer->LastMotors.Low == 0 && observer->LastMotors.High == 0);
+    assert(device->SetVibration(0, 1, 1));
+    observer->FailWrite = true;
+    assert(!device->TryShutdown());
+    assert(!device->Initialize());
+    observer->FailWrite = false;
+    assert(device->TryShutdown());
+    assert(device->Initialize());
+    assert(device->SetVibration(0, 1, 1));
+    observer->ExpectNeutralAtDestruction = true;
     device.reset();
     assert(destroyed == 1);
     std::cout << "XInputDeviceIntegrationTest passed\n";

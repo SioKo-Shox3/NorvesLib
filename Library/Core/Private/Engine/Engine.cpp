@@ -173,12 +173,11 @@ namespace NorvesLib::Core::Engine
             {
                 continue;
             }
-            try
+            if (entry.Device->TryShutdown())
             {
-                entry.Device->Shutdown();
                 entry.bNeedsShutdown = false;
             }
-            catch (...)
+            else
             {
                 // 残りを止め、失敗deviceの終了義務は次の呼出しまで保持する。
                 success = false;

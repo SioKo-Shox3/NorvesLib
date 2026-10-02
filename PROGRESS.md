@@ -369,3 +369,6 @@
 
 - GAME-VFX-REGISTER（GR130〜GR137）: 作者提供の初期3文書とVFX追加原文をDocs/Plansへ全量配置し、8要件をロードマップ/要件書へ追記。G7/G8/G10配属案と未着手を登録、G1進行中と完了ゲート未通過を区別。原文の作者判断・提案・完了条件案を保持し、GR57資産形式、GR137→GR126→G7/G8の循環、後段renderer、Bridge/Editor/SDK境界を選定待ちへ記録。初版スナップショットと追加原文は不変保持、計画文書は非追跡のまま。TASKSへGAME-GR130-VFX〜GAME-GR137-VFXを追加。エフェクトの実装は未着手。
 - Next: 現在のG1/GR04を継続。VFX追加は前提GRと選定事項が整った段階で着手する。
+
+- G1-GR04-P7: IInputDeviceのbool SetVibration/TryShutdownとXInputSetState adapterを接続。float範囲検証/量子化後の左右WORDだけ送信しERROR_SUCCESSをACKとする。SDK非依存stateで非zero試行の潜在作動・失敗停止義務を保持し、focus喪失/Shutdownは全対象を停止、失敗後のnonzeroはzero先行、停止後再Initializeも残留zero回収を必須にした。EngineはTryShutdown=falseを保持し再試行する。deviceの有効clock pollで保留停止を再送、失敗でも入力継続。実state通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER object、既存poll回帰、device.cpp/統合試験object compile成功。統合試験に有効clockのstop失敗下で入力継続/回復を補強。独立静的レビューPASS。API callback再入はP3同様に明記禁止で、native callback経路は追加していない。Engine/実Systemリンク/WindowsSDK/実機振動は未検証。destructorの最後の停止試行も失敗する場合、物理的停止成功は保証できない。
+- Next: GR04のHapticsServiceへ効果定義・voice所有・実時間更新・pause/focus停止・設定/JSONを接続する。

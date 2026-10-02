@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include <cstdint>
+
 namespace NorvesLib::Core::Input
 {
 
@@ -37,6 +39,29 @@ namespace NorvesLib::Core::Input
          * @brief デバイスの終了処理
          */
         virtual void Shutdown() = 0;
+
+        // 終了結果を返すowner用入口。旧Shutdown実装の例外も失敗として保持する。
+        virtual bool TryShutdown() noexcept
+        {
+            try
+            {
+                Shutdown();
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        // 左右低/高周波motorの0..1。trueは今回の送信受理、未対応の既定実装はfalse。
+        virtual bool SetVibration(uint8_t slot, float low, float high) noexcept
+        {
+            (void)slot;
+            (void)low;
+            (void)high;
+            return false;
+        }
 
         /**
          * @brief 入力イベントをポーリングしてInputSystemに注入

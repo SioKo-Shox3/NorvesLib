@@ -282,3 +282,10 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - HapticsOutputStateは送信成功ACKだけを更新する。左右どちらかの変化が1/255以上なら送るが、各motorの非zero→zeroは微小差でも必ず送る。未ACK/失敗後は再試行。同値成功ACKの不要再送は省略する。
 - 失敗した非zero試行も作動した可能性として追跡し、成功zero ACKまでMayBeActiveを保持。失敗を成功扱いせず、値状態は実APIの停止保証ではない。ownerは停止義務が残る間に状態を破棄しない。
 - この段は純評価/混合/ACK判定。voice所有、実motor送信、haptics.v1、focus/pause/Engine接続は後続。HapticsMixerTestは実コードを通常/O2/ASan・UBSanとbundle objectで検証している。
+
+### XInputの振動送信と停止義務（GR04）
+- IInputDevice::SetVibrationは0..1の低/高周波値を受け、今回の送信受理をboolで返す。未対応はfalse。XInput adapterは量子化済み左右WORDをXINPUT_VIBRATIONへcopyし、XInputSetStateのERROR_SUCCESSだけを成功とする。
+- XInputVibrationStateは非zero試行をAPI呼出し前に潜在作動として記録。送信失敗は停止義務を保持し、次のnonzeroより先にzeroを送る。focus喪失/終了は所有slotを全て止め、1slot失敗でも他slotを処理する。成功zeroまで義務を捨てず、停止後の再Initializeは残留停止を回収できない限り拒否する。
+- XInputDeviceは有効clockのpoll時に保留zeroを再試行し、停止失敗でも入力pollを継続してhealth=false。不正clock/停止中は入力も出力も呼ばない。非focusのnonzeroは拒否する。差分1/255の間引きはservice側の責務で、backendは有効な送信要求を間引かない。
+- EngineはTryShutdownのboolで終了義務を保持する。既存deviceは既定TryShutdownが旧Shutdownの例外をfalseへ変換。XInputの旧Shutdown入口は停止失敗時に例外で通知、destructorはnoexceptのTryShutdownを最後に試みる。API/デバイス切断でzeroに失敗した場合、実機停止が成功したとは保証できない。
+- 実出力stateの通常/O2/ASan・UBSan/bundleと既存poll回帰、device/統合試験のobject compileを検証。Windows native API/Engine統合/実機振動は未検証。pause、効果voice、JSONとserviceの接続は後続。

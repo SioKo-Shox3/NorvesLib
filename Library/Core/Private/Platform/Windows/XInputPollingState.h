@@ -72,13 +72,18 @@ namespace NorvesLib::Core::Input
         {
             return slot < GamepadSlotCount ? m_Slots[slot].LastRead : XInputReadResult{};
         }
+        // deviceは副作用のある出力再試行より先にも、このclock検証を使う。
+        bool CanPoll(double unscaledTimeSeconds) const noexcept
+        {
+            return m_bInitialized && std::isfinite(unscaledTimeSeconds) && unscaledTimeSeconds >= 0 &&
+                (!m_bHasTime || unscaledTimeSeconds >= m_LastTime);
+        }
         // falseは不正clock/停止中、または未回復のAPI error/sink拒否があることを示す。
         // 他slotの正常処理は継続する。finite非負単調clockを使い、invalidでは呼出しも更新もしない。
         // sink例外は呼出側へ伝播し、その回の後続slotは処理しない。配送再試行状態は保持する。
         bool Poll(double unscaledTimeSeconds, IGamepadSampleSink& sink)
         {
-            if (!m_bInitialized || !std::isfinite(unscaledTimeSeconds) || unscaledTimeSeconds < 0 ||
-                (m_bHasTime && unscaledTimeSeconds < m_LastTime))
+            if (!CanPoll(unscaledTimeSeconds))
             {
                 return false;
             }

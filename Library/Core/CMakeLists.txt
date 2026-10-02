@@ -50,6 +50,7 @@ set(PRIVATE_SOURCES
     Private/Platform/Windows/XInputStateConversion.h
     Private/Platform/Windows/IXInputApi.h
     Private/Platform/Windows/XInputPollingState.h
+    Private/Platform/Windows/XInputVibrationState.h
     Private/Platform/Windows/XInputDevice.h
     Private/Platform/Windows/XInputDevice.cpp
     Private/Platform/Windows/WindowsXInputApi.cpp

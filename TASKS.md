@@ -1582,3 +1582,11 @@
 - dependencies: GR136（エフェクトの資産がリフレクションで公開されていること）、GR78、GR96、GR02、GR126。
 - stage-proposal: G7（GR136 と一緒）。エフェクト以外の資産にも使えるので、早く欲しければ前倒しできる。
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
+
+## G1-GR04-P7: XInputの振動出力と失敗時の停止再試行を接続する
+- status: done
+- done-when: float0..1を検証/量子化して実XInputSetStateへ送り、成功だけACKとして返す。非zero試行の所有/不確実性を保持し、focus喪失/Shutdownで0、失敗は再試行、未停止状態から再Initializeを拒否する。EngineはTryShutdownの結果で終了義務を保持する。
+- verify: SDK非依存実出力stateとfake APIで全slot/不正非変更/失敗非zero/停止失敗/再試行/背景拒否/再初期化を通常/O2/ASanUBSan/bundle。device/既存入力回帰、公開API/寿命/停止の独立レビュー。実nativeとEngine統合未実行を明示。
+- stop-when: failed writeを成功扱い、停止義務の消失、背景nonzero、invalid clock/valueでAPI送信、未停止再開始、実装によるcallback中owner再入、blocking未解消。
+- paths: Library/Core/Public/Input/IInputDevice.h, Library/Core/Private/Platform/Windows/IXInputApi.h, Library/Core/Private/Platform/Windows/XInputVibrationState.h, Library/Core/Private/Platform/Windows/XInputPollingState.h, Library/Core/Private/Platform/Windows/XInputDevice.h, Library/Core/Private/Platform/Windows/XInputDevice.cpp, Library/Core/Private/Platform/Windows/WindowsXInputApi.cpp, Library/Core/Private/Engine/Engine.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/XInputVibrationStateTest.cpp, Test/Core/Input/XInputDeviceIntegrationTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: serviceのvoice/包絡線/ポーズとの接続とJSONは次段。native停止失敗の物理的成功は保証しない。stop pendingはAPI所有者の寿命内で保持する。

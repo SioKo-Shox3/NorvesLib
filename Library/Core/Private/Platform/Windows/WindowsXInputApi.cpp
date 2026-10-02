@@ -11,6 +11,18 @@ namespace NorvesLib::Core::Input
         class WindowsXInputApi final : public IXInputApi
         {
         public:
+            XInputWriteResult WriteVibration(uint8_t slot, const XInputMotorState& motors) noexcept override
+            {
+                if (slot >= GamepadSlotCount)
+                {
+                    return {false, ERROR_BAD_ARGUMENTS};
+                }
+                XINPUT_VIBRATION native{};
+                native.wLeftMotorSpeed = motors.Low;
+                native.wRightMotorSpeed = motors.High;
+                const DWORD result = ::XInputSetState(slot, &native);
+                return {result == ERROR_SUCCESS, result};
+            }
             XInputReadResult ReadState(uint8_t slot, XInputRawGamepadState& raw) noexcept override
             {
                 if (slot >= GamepadSlotCount)

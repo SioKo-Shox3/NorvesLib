@@ -30,7 +30,13 @@ namespace NorvesLib::Core::Input
 
     bool XInputDevice::PollEvents(InputSystem& system, double unscaledTimeSeconds)
     {
+        if (!m_State.CanPoll(unscaledTimeSeconds))
+        {
+            return false;
+        }
+        const bool stopped = m_Vibration.RetryPendingStops();
         InputSystemGamepadSink sink(system);
-        return m_State.Poll(unscaledTimeSeconds, sink);
+        const bool inputHealthy = m_State.Poll(unscaledTimeSeconds, sink);
+        return stopped && inputHealthy;
     }
 } // namespace NorvesLib::Core::Input
