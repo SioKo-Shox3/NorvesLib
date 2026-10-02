@@ -86,6 +86,7 @@ namespace NorvesLib::Core::Engine
         void DisconnectInputWindow();
         void OnWindowInputFocusChanged(bool focused);
         void DispatchInputFocusEvents();
+        bool SynchronizeInputCursorMode();
 
         /**
          * @brief 1フレームの処理を実行
@@ -144,6 +145,7 @@ namespace NorvesLib::Core::Engine
         bool m_HasInputFocus = false;
         bool m_InputFocused = false;
         bool m_DispatchingInputFocus = false;
+        bool m_CursorFailureWarned = false;
         uint64_t m_InputFocusConnectionSerial = 0;
         Container::TUniquePtr<FixedStepScheduler> m_FixedStepScheduler;
         int64_t m_LastFrameTimeNanoseconds = 0;

@@ -83,7 +83,7 @@ int main()
     assert(mapper.GetAction("Jump"_id).Valid && !mapper.GetAction("Jump"_id).Active);
     assert(mapper.GetCursorMode()==ECursorMode::Normal);
     mapper.Attach(router);mapper.Attach(router);
-    assert(mapper.GetCursorMode()==ECursorMode::Locked);
+    assert(mapper.GetCursorMode()==ECursorMode::Locked && mapper.GetRequestedCursorMode()==ECursorMode::Locked);
     Begin(system,mapper,0);
     ui.Consume=true;system.InjectKeyEvent(KeyCode::W,InputAction::Pressed);
     assert(mapper.Update(0,0));assert(!mapper.GetAction("Jump"_id).Button.Held);
@@ -130,6 +130,7 @@ int main()
     system.ReleaseAll();Begin(system,mapper,1);
     system.InjectKeyEvent(KeyCode::W,InputAction::Pressed);
     mapper.SetFocused(false);
+    assert(mapper.GetRequestedCursorMode()==ECursorMode::Locked);
     assert(!mapper.GetAction("Jump"_id).Active && mapper.GetAction("Jump"_id).Button.Released);
     assert(!mapper.ConsumeFixedPress("Jump"_id) && mapper.GetCursorMode()==ECursorMode::Normal);
     system.ReleaseAll();system.InjectKeyEvent(KeyCode::W,InputAction::Pressed);
@@ -166,7 +167,7 @@ int main()
     system.ReleaseAll();Begin(system,mapper,7);
     pad.Buttons=0;pad.Axes[0]=0.5f;assert(system.InjectGamepadState(0,pad));
     assert(mapper.Update(7,1));assert(mapper.GetAction("Move"_id).Axis.x==0.5f);
-    mapper.Detach();assert(!mapper.GetAction("Move"_id).Active && mapper.GetCursorMode()==ECursorMode::Normal);
+    mapper.Detach();assert(!mapper.GetAction("Move"_id).Active && mapper.GetCursorMode()==ECursorMode::Normal && mapper.GetRequestedCursorMode()==ECursorMode::Normal);
     assert(mapper.Update(7,0));assert(mapper.GetAction("Move"_id).Axis.x==0);
     system.InjectKeyEvent(KeyCode::W,InputAction::Pressed);assert(!mapper.GetAction("Jump"_id).Button.Held);
     mapper.Attach(router);system.ReleaseAll();Begin(system,mapper,8);

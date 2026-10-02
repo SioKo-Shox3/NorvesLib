@@ -128,7 +128,9 @@ namespace NorvesLib::Core::Input
         /**
          * @brief マウス位置を更新
          */
-        void SetMousePosition(float x, float y);
+        void SetMousePosition(float x, float y, bool accumulateDelta = true);
+        /// absolute位置の次回差分を再seedする。Raw/wheel/buttonsは保持する。
+        void ResetAbsoluteMouseTracking();
 
         /**
          * @brief マウススクロールを加算

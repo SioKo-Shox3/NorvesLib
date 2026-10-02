@@ -124,7 +124,9 @@ namespace NorvesLib::Core::Input
          * @param x クライアントX座標
          * @param y クライアントY座標
          */
-        void InjectMouseMove(float x, float y);
+        void InjectMouseMove(float x, float y, bool accumulateDelta = true);
+        // absolute基準化だけ。通常イベントや取消通知を合成しない。
+        void ResetAbsoluteMouseTracking() { m_State.ResetAbsoluteMouseTracking(); }
 
         /**
          * @brief マウススクロールイベントを注入

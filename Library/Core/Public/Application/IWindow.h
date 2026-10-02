@@ -2,6 +2,7 @@
 
 #include "Container/String.h"
 #include "Platform/NativeWindowHandle.h"
+#include "Application/CursorMode.h"
 #include "Delegate/MulticastDelegate.h"
 
 namespace NorvesLib {
@@ -70,6 +71,13 @@ public:
     /// disableはOS解除の成否によらず論理配送を止め、解除失敗なら所有情報を再試行まで残す。
     virtual bool SetRawMouseEnabled(bool enabled) noexcept { return !enabled; }
     virtual bool IsRawMouseEnabled() const noexcept { return false; }
+    /// GameThread専用。他の同processのcursor操作も直列化する。
+    /// 対応するvalid要求を保持し、環境に応じた有効modeを適用する。
+    /// native失敗や非対応要求はfalse。非focus中も要求は保持する。
+    virtual bool SetCursorMode(ECursorMode mode) noexcept { return mode==ECursorMode::Normal; }
+    virtual ECursorMode GetRequestedCursorMode() const noexcept { return ECursorMode::Normal; }
+    /// 最後に適用成功したmode。SetCursorModeがfalseなら新しい要求の成功を意味しない。
+    virtual ECursorMode GetCursorMode() const noexcept { return ECursorMode::Normal; }
     /// OS処理内の通知。購読側はwindow表示/activation/破棄、Engine破棄、
     /// 購読変更、再入配送、例外送出を行わない。一般処理はApplicationHandlerへ遅延する。
     Core::MulticastDelegate<bool>& OnInputFocusChanged() { return m_InputFocusChanged; }

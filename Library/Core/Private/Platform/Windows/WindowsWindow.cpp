@@ -92,6 +92,7 @@ namespace NorvesLib
                     if(pThis)
                     {
                         pThis->SetInputFocused(false);
+                        (void)pThis->SetCursorMode(ECursorMode::Normal);
                         (void)pThis->SetRawMouseEnabled(false);
                         pThis->m_isActive=false;pThis->m_hWnd=nullptr;
                         SetWindowLongPtr(hWnd,GWLP_USERDATA,0);
@@ -102,6 +103,20 @@ namespace NorvesLib
                     // ウィンドウの破棄
                     PostQuitMessage(0);
                     return 0;
+
+                case WM_SETCURSOR:
+                    if(pThis && reinterpret_cast<HWND>(wParam)==hWnd && pThis->HasNativeInputFocus() && LOWORD(lParam)==HTCLIENT &&
+                        (pThis->m_EffectiveCursorMode==ECursorMode::Hidden || pThis->m_EffectiveCursorMode==ECursorMode::Locked))
+                    {
+                        SetCursor(nullptr);return TRUE;
+                    }
+                    break;
+                case WM_MOVE:
+                case WM_SIZE:
+                case WM_DPICHANGED:
+                case WM_DISPLAYCHANGE:
+                    if(pThis) (void)pThis->ApplyCursorMode(true);
+                    break;
 
                 case WM_INPUT:
                     if(inputSystem && pThis && pThis->m_InputFocused && pThis->m_RawMouseEnabled)
@@ -243,7 +258,7 @@ namespace NorvesLib
                     {
                         float mx = static_cast<float>(GET_X_LPARAM(lParam));
                         float my = static_cast<float>(GET_Y_LPARAM(lParam));
-                        inputSystem->InjectMouseMove(mx, my);
+                        inputSystem->InjectMouseMove(mx, my, pThis->m_EffectiveCursorMode!=ECursorMode::Locked);
                     }
                     break;
 
@@ -266,6 +281,82 @@ namespace NorvesLib
 
                 // 標準のウィンドウプロシージャを呼び出す
                 return DefWindowProc(hWnd, message, wParam, lParam);
+            }
+
+            bool WindowsWindow::SetCursorMode(ECursorMode mode) noexcept
+            {
+                if(!IsValidCursorMode(mode)) return false;
+                m_RequestedCursorMode=mode;
+                return ApplyCursorMode();
+            }
+
+            bool WindowsWindow::HasNativeInputFocus() const noexcept
+            {
+                return m_hWnd && m_InputFocused && GetFocus()==m_hWnd && GetForegroundWindow()==m_hWnd;
+            }
+
+            bool WindowsWindow::ApplyCursorMode(bool forceClip) noexcept
+            {
+                // Clipは共有resource。外部変更された矩形を自分のものとして解除しない。
+                if(m_OwnsCursorClip)
+                {
+                    RECT current{};
+                    if(!GetClipCursor(&current)) return false;
+                    if(!EqualRect(&current,&m_LastCursorClip)) m_OwnsCursorClip=false;
+                }
+                // message処理前の同期でも、別applicationが既にforegroundなら再獲得しない。
+                auto mode=HasNativeInputFocus() && IsWindowVisible(m_hWnd) && !IsIconic(m_hWnd)
+                    ? m_RequestedCursorMode : ECursorMode::Normal;
+                RECT clip{};
+                bool confine=mode==ECursorMode::Confined || mode==ECursorMode::Locked;
+                if(confine)
+                {
+                    if(!GetClientRect(m_hWnd,&clip)) return false;
+                    if(clip.right<=clip.left || clip.bottom<=clip.top) { mode=ECursorMode::Normal;confine=false; }
+                    else
+                    {
+                        POINT topLeft{clip.left,clip.top},bottomRight{clip.right,clip.bottom};
+                        if(!ClientToScreen(m_hWnd,&topLeft) || !ClientToScreen(m_hWnd,&bottomRight)) return false;
+                        clip={topLeft.x,topLeft.y,bottomRight.x,bottomRight.y};
+                    }
+                }
+                const bool geometryChanged=confine && (forceClip || !m_OwnsCursorClip || !EqualRect(&clip,&m_LastCursorClip));
+                if(confine)
+                {
+                    if(geometryChanged && !ClipCursor(&clip)) return false;
+                    m_OwnsCursorClip=true;m_LastCursorClip=clip;
+                }
+                else if(m_OwnsCursorClip)
+                {
+                    if(!ClipCursor(nullptr)) return false;
+                    m_OwnsCursorClip=false;
+                }
+                const bool modeChanged=m_EffectiveCursorMode!=mode;
+                m_EffectiveCursorMode=mode;
+                if(modeChanged || geometryChanged)
+                {
+                    // Clipによる自動移動を次のlegacy入力で物理移動として扱わない。
+                    if(Engine::GEngine && Engine::GEngine->GetMainWindow()==this)
+                        Engine::GEngine->GetInputSystem().ResetAbsoluteMouseTracking();
+                    UpdateCursorAppearance();
+                }
+                return true;
+            }
+
+            void WindowsWindow::UpdateCursorAppearance() noexcept
+            {
+                POINT screen{};
+                if(!m_hWnd || !GetCursorPos(&screen) || WindowFromPoint(screen)!=m_hWnd) return;
+                POINT client=screen;RECT bounds{};
+                if(!ScreenToClient(m_hWnd,&client) || !GetClientRect(m_hWnd,&bounds) || !PtInRect(&bounds,client)) return;
+                if(HasNativeInputFocus() && (m_EffectiveCursorMode==ECursorMode::Hidden || m_EffectiveCursorMode==ECursorMode::Locked))
+                    SetCursor(nullptr);
+                else
+                {
+                    auto cursor=reinterpret_cast<HCURSOR>(GetClassLongPtr(m_hWnd,GCLP_HCURSOR));
+                    if(!cursor) cursor=LoadCursor(nullptr,IDC_ARROW);
+                    SetCursor(cursor);
+                }
             }
 
             bool WindowsWindow::SetRawMouseEnabled(bool enabled) noexcept
@@ -352,6 +443,7 @@ namespace NorvesLib
                 m_InputFocused=focused;
                 m_KeyRepeatGate.Clear();
                 m_RawMouseTracker.Clear();
+                (void)ApplyCursorMode();
                 try { NotifyInputFocusChanged(focused); }
                 catch(...)
                 {
@@ -462,6 +554,7 @@ namespace NorvesLib
             void WindowsWindow::Destroy()
             {
                 SetInputFocused(false);
+                (void)SetCursorMode(ECursorMode::Normal);
                 (void)SetRawMouseEnabled(false);
                 // ウィンドウが存在する場合のみ
                 if (m_hWnd)

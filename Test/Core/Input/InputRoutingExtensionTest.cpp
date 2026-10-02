@@ -14,6 +14,7 @@ namespace
     {
     public:
         bool Consume=false;
+        int MoveCount=0;
         int RawCount=0,WheelCount=0,MouseButtonCount=0,PadCount=0,ConnectionCount=0,ResetCount=0,OrderCount=0;
         int Order[128]{};
         MouseRawMoveEvent Raw;
@@ -30,7 +31,7 @@ namespace
         }
         bool OnMouseScroll(const MouseScrollEvent& event) override { ++WheelCount;Wheel=event;return Consume; }
         bool OnMouseButton(const MouseButtonEvent&) override { ++MouseButtonCount;return Consume; }
-        bool OnMouseMove(const MouseMoveEvent& event) override { Move=event;return Consume; }
+        bool OnMouseMove(const MouseMoveEvent& event) override { ++MoveCount;Move=event;return Consume; }
         bool OnGamepadButton(const GamepadButtonEvent& event) override
         {
             assert(PadCount<32);Pad[PadCount++]=event;
@@ -123,6 +124,20 @@ int main()
     router.UnregisterController(&game);
     assert(system.InjectRawMouseDelta(1,1));assert(game.RawCount==1);
     router.UnregisterController(&ui);system.SetRouter(nullptr);
+    {
+        InputSystem absolute;InputRouter route;Receiver receiver;receiver.System=&absolute;
+        absolute.SetRouter(&route);route.RegisterController(&receiver,0);
+        absolute.InjectMouseMove(10,20);absolute.InjectMouseMove(13,24);
+        assert(receiver.Move.DeltaX==3 && receiver.Move.DeltaY==4);
+        assert(absolute.InjectRawMouseDelta(2,3));
+        absolute.InjectMouseMove(1000,2000,false);
+        assert(receiver.Move.PositionX==1000 && receiver.Move.DeltaX==0 && receiver.Move.DeltaY==0);
+        assert(absolute.GetState().GetMouseState().DeltaX==0 && absolute.GetState().GetMouseState().RawDeltaX==2);
+        const auto count=receiver.MoveCount;absolute.ResetAbsoluteMouseTracking();assert(receiver.MoveCount==count);
+        absolute.InjectMouseMove(1500,2500);assert(receiver.Move.DeltaX==0 && receiver.Move.DeltaY==0);
+        absolute.InjectMouseMove(1501,2502);assert(receiver.Move.DeltaX==1 && receiver.Move.DeltaY==2);
+        route.UnregisterController(&receiver);absolute.SetRouter(nullptr);
+    }
     std::cout << "InputRoutingExtensionTest passed\n";
     return 0;
 }

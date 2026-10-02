@@ -1390,3 +1390,11 @@
 - stop-when: 他のRaw登録を奪う/解除、二重button/wheel、absolute初回jump、focus前のdelta残留、DefWindowProc cleanup欠落、blocking未解消。
 - paths: Test/Core/Engine/InputFocusPipelineTest.cpp, Library/Core/Private/Platform/Windows/RawMouseMotionTracker.h, Library/Core/Private/Platform/Windows/WindowsWindow.h, Library/Core/Private/Platform/Windows/WindowsWindow.cpp, Library/Core/Public/Application/IWindow.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Test/Core/Engine/RawMouseMotionTrackerTest.cpp, Test/Core/Engine/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: Raw機能を利用できないときは初期化を警告しlegacy起動を維持。cursorの要求/有効modeとLocked時absolute delta抑止は次段で接続する。
+
+## G1-GR03-P6D: カーソルmodeと絶対mouseの基準化を接続する
+- status: done
+- done-when: requested/effective cursor modeを分離してMapper→Processor→Windowへ同期。Windowsはfocus/visibility/minimizeに応じてClipと非表示を適用/解除し、move/size/DPIで矩形を更新。native失敗はfalseで返し成功扱いしない。Lockedでは絶対位置だけを供給しdeltaを抑止、mode/clip変更を再seed。Run終了/例外/Shutdown/DestroyでNormalを要求する。
+- verify: 実InputStateの非累積/再seed/Raw・wheel・buttons維持をportable試験。Mapperのfocus非依存要求とProcessor同期/解除を既存統合試験へ追加。Windows native clip/表示は未検証として独立レビュー。
+- stop-when: 非focus要求をNormalで上書き、ShowCursor counter変更、他window上のcursor形状上書き、locked絶対deltaの漏れ、mode切替で逆delta、native失敗を成功報告、blocking未解消。
+- paths: Library/Core/Public/Application/IWindow.h, Library/Core/Private/Platform/Windows/WindowsWindow.h, Library/Core/Private/Platform/Windows/WindowsWindow.cpp, Library/Core/Public/Input/InputState.h, Library/Core/Private/Input/InputState.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Private/Input/InputSystem.cpp, Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Library/Core/Public/Engine/ApplicationProcessor.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Test/Core/Input/AbsoluteMouseTrackingTest.cpp, Test/Core/Input/InputRoutingExtensionTest.cpp, Test/Core/Input/InputActionMapTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Test/Core/Engine/InputFocusPipelineTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: IWindow GetCursorModeは最後に成功したmode。OS失敗時はfalseを扱い再試行する。入力取消やRaw/wheelの取消を絶対mouse基準化に混ぜない。既定Debug/Normalの表示は維持する。

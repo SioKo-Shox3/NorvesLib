@@ -324,3 +324,6 @@
 
 - G1-GR03-P6C: Windows main windowの明示Raw mouse登録/解除とWM_INPUT motion laneを接続。自然alignmentの固定RAWINPUT bufferでサイズ/typeを検証し、foreground cleanupをDefWindowProcへ残す。button/wheelはlegacyだけ、X1/X2/横wheelとsigned座標を追加。device別absolute履歴は初回/focus/geometry/mode/remove/evictionで再seedする。第1周でPAGEONLY競合の見逃しとdisable失敗時の配送残留を検出し、page-wide/exact照合分離とlogical delivery/native ownership分離へ修正、第2周レビューPASS。実tracker通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compileとRaw state/repeat回帰成功。Engine接続試験に登録寿命の検証を追加、Windows native/登録API/実mouse/RDPは未実行。
 - Next: GR03の要求/有効カーソルmode、Clip/非表示とLocked時の絶対delta抑止を接続する。
+
+- G1-GR03-P6D: Mapperのfocus非依存cursor要求をmessage前/Tick後にWindowへ同期し、requestedと最後に成功したeffectiveを分離。Windowsはclient screen RECTへClip、WM_SETCURSORで非表示、非focus/非表示/minimizedとRun終了/例外/Disconnect/DestroyでNormalを要求。move/size/DPI/display時の再適用、失敗のfalse返却/再試行を追加。Lockedの絶対mouseは位置だけを配送しdelta0、基準化はRaw/wheel/buttonsを保持。第1周でshared clip所有の実状態不一致とchild cursor上書きを検出し、GetClipCursor照合＋実focus/foreground判定＋対象HWND確認へ修正、第2周レビューPASS。実absolute追跡通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundleとRaw/ReleaseAll/runtime回帰成功。Mapper/Router/Engine統合試験を拡充したがWindows依存で未実行、native clip/表示も未確認。
+- Next: GR03のリバインド捕捉と設定への明示適用を実装する。GR04の実pad供給/hapticsは未完。

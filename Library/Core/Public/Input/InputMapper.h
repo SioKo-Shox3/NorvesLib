@@ -38,6 +38,8 @@ namespace NorvesLib::Core::Input
         void ClearContexts();
         Identity GetActiveContext() const;
         ECursorMode GetCursorMode() const;
+        // focus停止中もcontextの要求を保持する。Window側が有効modeを決定する。
+        ECursorMode GetRequestedCursorMode() const;
         void SetFocused(bool focused);
         bool IsFocused() const { return m_Focused; }
         bool BeginFrame(double time);

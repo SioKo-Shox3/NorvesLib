@@ -14,6 +14,7 @@ namespace NorvesLib::Core::Engine
         static void Connect(ApplicationProcessor& p,Container::TSharedPtr<IWindow> w) { p.ConnectInputWindow(std::move(w)); }
         static void Disconnect(ApplicationProcessor& p) { p.DisconnectInputWindow(); }
         static void Flush(ApplicationProcessor& p) { p.DispatchInputFocusEvents(); }
+        static bool Cursor(ApplicationProcessor& p) { return p.SynchronizeInputCursorMode(); }
         static bool Pump(ApplicationProcessor& p) { return p.ProcessPlatformMessages(); }
     };
 }
@@ -27,7 +28,16 @@ namespace
     class FocusWindow final : public IWindow
     {
     public:
-        bool Focused=true;
+        bool Focused=true,CursorFail=false;
+        ECursorMode Requested=ECursorMode::Normal,Effective=ECursorMode::Normal;
+        bool SetCursorMode(ECursorMode mode) noexcept override
+        {
+            if(!IsValidCursorMode(mode)) return false;
+            Requested=mode;if(CursorFail) return false;
+            Effective=Focused ? mode : ECursorMode::Normal;return true;
+        }
+        ECursorMode GetRequestedCursorMode() const noexcept override { return Requested; }
+        ECursorMode GetCursorMode() const noexcept override { return Effective; }
         bool RawEnabled=false;
         int RawEnables=0,RawDisables=0;
         bool SetRawMouseEnabled(bool enabled) noexcept override
@@ -35,7 +45,7 @@ namespace
             RawEnabled=enabled;if(enabled) ++RawEnables;else ++RawDisables;return true;
         }
         bool IsRawMouseEnabled() const noexcept override { return RawEnabled; }
-        void Emit(bool value) { Focused=value;NotifyInputFocusChanged(value); }
+        void Emit(bool value) { Focused=value;Effective=Focused ? Requested : ECursorMode::Normal;NotifyInputFocusChanged(value); }
         bool Create(const Container::String&,int,int) override { return true; }
         void Destroy() override {}
         void Show() override {}
@@ -95,7 +105,7 @@ namespace
     public:
         FocusWindow* Window=nullptr;
         FocusHandler* Handler=nullptr;
-        bool InPump=false;
+        bool InPump=false,ThrowOnPump=false,ExitAfterPump=false;
         bool Initialize(const Container::VariableArray<Container::String>&) override { return true; }
         void Shutdown() override {}
         IWindow* GetMainWindow() override { return Window; }
@@ -103,12 +113,13 @@ namespace
         void UnregisterWindow(Container::TSharedPtr<IWindow>) override {}
         void PumpMessages() override
         {
+            if(ThrowOnPump) throw 88;
             InPump=true;const auto count=Handler->Events.size();
             Window->Emit(false);Window->Emit(true);
             assert(Handler->Events.size()==count);
             InPump=false;
         }
-        bool IsExitRequested() const override { return false; }
+        bool IsExitRequested() const override { return ExitAfterPump; }
         int GetExitCode() const override { return 0; }
     };
 }
@@ -128,6 +139,10 @@ int main()
     Eng::ApplicationInputFocusTestAccess::Connect(processor,window);
     assert(window->OnInputFocusChanged().GetSize()==1 && handler->Events.empty());
     assert(window->RawEnabled && window->RawEnables==1);
+    assert(Eng::ApplicationInputFocusTestAccess::Cursor(processor));
+    assert(window->Requested==ECursorMode::Locked && window->Effective==ECursorMode::Locked);
+    window->CursorFail=true;assert(!Eng::ApplicationInputFocusTestAccess::Cursor(processor));
+    window->CursorFail=false;assert(Eng::ApplicationInputFocusTestAccess::Cursor(processor));
     Eng::ApplicationInputFocusTestAccess::Flush(processor);
     assert(handler->Events.size()==1 && handler->Events[0] && observer.Focus.size()==1);
     system.InjectKeyEvent(KeyCode::Space,InputAction::Pressed);
@@ -137,6 +152,8 @@ int main()
     assert(observer.Resets==1 && observer.Focus.size()==2 && !observer.Focus[1]);
     assert(!system.GetState().IsKeyDown(KeyCode::Space) && !mapper.IsFocused() && mapper.GetCursorMode()==ECursorMode::Normal);
     assert(handler->Events.size()==1);
+    assert(Eng::ApplicationInputFocusTestAccess::Cursor(processor));
+    assert(window->Requested==ECursorMode::Locked && window->Effective==ECursorMode::Normal);
     window->Emit(true);assert(mapper.IsFocused() && !mapper.GetAction("Jump"_id).Button.Held);
     Eng::ApplicationInputFocusTestAccess::Flush(processor);
     assert(handler->Events.size()==3 && !handler->Events[1] && handler->Events[2]);
@@ -162,7 +179,7 @@ int main()
     auto second=Container::MakeShared<FocusWindow>();engine->SetMainWindow(second);
     Eng::ApplicationInputFocusTestAccess::Connect(processor,second);
     assert(window->OnInputFocusChanged().IsEmpty() && second->OnInputFocusChanged().GetSize()==1);
-    assert(!window->RawEnabled && second->RawEnabled);
+    assert(!window->RawEnabled && second->RawEnabled && window->Requested==ECursorMode::Normal);
     window->Emit(false);assert(mapper.IsFocused());
     Eng::ApplicationInputFocusTestAccess::Flush(processor);assert(handler->Events.size()==oldCount+1);
     Eng::ApplicationInputFocusTestAccess::Disconnect(processor);
@@ -173,6 +190,16 @@ int main()
         assert(second->OnInputFocusChanged().GetSize()==1);
     }
     assert(second->OnInputFocusChanged().IsEmpty() && !second->RawEnabled);
+    // 実Runの例外と通常終了の両方でカーソル要求をNormalへ戻す。
+    second->Emit(true);Eng::ApplicationInputFocusTestAccess::Connect(processor,second);
+    auto runPlatform=Container::MakeUnique<FocusPlatform>();auto* runProbe=runPlatform.get();
+    runProbe->Window=second.get();runProbe->Handler=handler.get();runProbe->ThrowOnPump=true;
+    handler->InPump=&runProbe->InPump;engine->SetPlatformApp(std::move(runPlatform));engine->SetRunning(true);
+    caught=false;try { (void)processor.Run(); } catch(int value) { caught=value==88; }
+    assert(caught && second->Requested==ECursorMode::Normal && second->Effective==ECursorMode::Normal);
+    runProbe->ThrowOnPump=false;runProbe->ExitAfterPump=true;
+    assert(processor.Run()==0 && second->Requested==ECursorMode::Normal);
+    Eng::ApplicationInputFocusTestAccess::Disconnect(processor);
     engine->GetInputRouter().UnregisterController(&observer);
     engine->SetApplicationHandler({});engine->SetPlatformApp({});engine->SetMainWindow({});engine.reset();Eng::GEngine=previous;
     std::cout << "InputFocusPipelineTest passed\n";

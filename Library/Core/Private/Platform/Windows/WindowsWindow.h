@@ -51,6 +51,9 @@ namespace NorvesLib
                 bool IsInputFocused() const override { return m_InputFocused; }
                 bool SetRawMouseEnabled(bool enabled) noexcept override;
                 bool IsRawMouseEnabled() const noexcept override { return m_RawMouseEnabled; }
+                bool SetCursorMode(ECursorMode mode) noexcept override;
+                ECursorMode GetRequestedCursorMode() const noexcept override { return m_RequestedCursorMode; }
+                ECursorMode GetCursorMode() const noexcept override { return m_EffectiveCursorMode; }
                 virtual NativeWindowHandle GetNativeHandle() const override;
 
                 /**
@@ -73,6 +76,9 @@ namespace NorvesLib
                 bool RegisterWindowClass();
                 void SetInputFocused(bool focused) noexcept;
                 void HandleRawMouseInput(HRAWINPUT handle,Input::InputSystem& input);
+                bool HasNativeInputFocus() const noexcept;
+                bool ApplyCursorMode(bool forceClip = false) noexcept;
+                void UpdateCursorAppearance() noexcept;
 
                 /**
                  * @brief ウィンドウクラス名を取得
@@ -98,6 +104,10 @@ namespace NorvesLib
                 bool m_RawMouseEnabled = false;
                 bool m_OwnsRawMouseRegistration = false;
                 RawMouseMotionTracker m_RawMouseTracker;
+                ECursorMode m_RequestedCursorMode=ECursorMode::Normal;
+                ECursorMode m_EffectiveCursorMode=ECursorMode::Normal;
+                bool m_OwnsCursorClip=false;
+                RECT m_LastCursorClip{};
                 bool m_isActive;               // アクティブ状態フラグ
                 Container::String m_title;     // ウィンドウタイトル
                 int m_width;                   // ウィンドウ幅

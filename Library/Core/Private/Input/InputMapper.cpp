@@ -109,10 +109,14 @@ namespace NorvesLib::Core::Input
         const auto* context = Top();
         return context ? context->Id : Identity{};
     }
-    ECursorMode InputMapper::GetCursorMode() const
+    ECursorMode InputMapper::GetRequestedCursorMode() const
     {
         const auto* context = Top();
-        return m_Router && m_Focused && context ? context->CursorMode : ECursorMode::Normal;
+        return m_Router && context ? context->CursorMode : ECursorMode::Normal;
+    }
+    ECursorMode InputMapper::GetCursorMode() const
+    {
+        return m_Focused ? GetRequestedCursorMode() : ECursorMode::Normal;
     }
     void InputMapper::SetFocused(bool focused)
     {

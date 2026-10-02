@@ -87,21 +87,21 @@ namespace NorvesLib::Core::Input
         }
     }
 
-    void InputSystem::InjectMouseMove(float x, float y)
+    void InputSystem::InjectMouseMove(float x, float y, bool accumulateDelta)
     {
         if (!std::isfinite(x) || !std::isfinite(y)) return;
         // 正本の初回再基準化と同じdeltaを通知する。
         const auto previous = m_State.GetMouseState();
 
         // 状態を更新
-        m_State.SetMousePosition(x, y);
+        m_State.SetMousePosition(x, y, accumulateDelta);
 
         // イベントを発火
         MouseMoveEvent event;
         event.PositionX = x;
         event.PositionY = y;
-        event.DeltaX = m_State.GetMouseState().DeltaX - previous.DeltaX;
-        event.DeltaY = m_State.GetMouseState().DeltaY - previous.DeltaY;
+        event.DeltaX = accumulateDelta ? m_State.GetMouseState().DeltaX - previous.DeltaX : 0;
+        event.DeltaY = accumulateDelta ? m_State.GetMouseState().DeltaY - previous.DeltaY : 0;
         m_OnMouseMoveEvent.Broadcast(event);
 
         // 優先度付きルーターへ配送（登録 Controller がいなければ空振り）

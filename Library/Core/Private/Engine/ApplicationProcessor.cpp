@@ -1347,7 +1347,11 @@ namespace NorvesLib::Core::Engine
             ~RunCleanup()
             {
                 // PumpMessages/OnUpdate例外でもheld/fixedPressを残さない。
-                if (GEngine) GEngine->GetInputMapper().CancelAll();
+                if (GEngine)
+                {
+                    GEngine->GetInputMapper().CancelAll();
+                    if(auto window=GEngine->GetMainWindowShared()) (void)window->SetCursorMode(ECursorMode::Normal);
+                }
                 Scheduler.EndRun();
             }
         } cleanup{*m_FixedStepScheduler};
@@ -1371,6 +1375,7 @@ namespace NorvesLib::Core::Engine
                 LOG_WARNING("入力frameの開始時刻が不正なため操作を取り消しました");
             }
 
+            (void)SynchronizeInputCursorMode();
             // プラットフォームメッセージ処理
             if (!ProcessPlatformMessages())
             {
@@ -1379,6 +1384,7 @@ namespace NorvesLib::Core::Engine
 
             // 1フレームの処理
             Tick();
+            (void)SynchronizeInputCursorMode();
         }
 
         LOG_INFO("ApplicationProcessor::Run() - Main loop ended");
@@ -1814,6 +1820,7 @@ namespace NorvesLib::Core::Engine
     {
         if(m_InputWindow)
         {
+            (void)m_InputWindow->SetCursorMode(ECursorMode::Normal);
             (void)m_InputWindow->SetRawMouseEnabled(false);
             m_InputWindow->OnInputFocusChanged().Remove(m_InputFocusSubscription);
         }
@@ -1832,6 +1839,17 @@ namespace NorvesLib::Core::Engine
         if(!focused) GEngine->GetInputSystem().ReleaseAll();
         GEngine->GetInputRouter().NotifyInputFocusChanged(focused);
         m_PendingInputFocus.push_back(focused);
+    }
+
+    bool ApplicationProcessor::SynchronizeInputCursorMode()
+    {
+        if(!GEngine) return false;
+        const auto window=GEngine->GetMainWindowShared();
+        if(!window) return true;
+        const bool success=window->SetCursorMode(GEngine->GetInputMapper().GetRequestedCursorMode());
+        if(!success && !m_CursorFailureWarned) LOG_WARNING("カーソルmodeを適用できません。次frameで再試行します");
+        m_CursorFailureWarned=!success;
+        return success;
     }
 
     void ApplicationProcessor::DispatchInputFocusEvents()

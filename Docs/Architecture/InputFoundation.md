@@ -174,3 +174,10 @@ absolute motionはdeviceごとに初回をseedし、focus/geometry/device remova
 Win32根拠: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-input 、 https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerrawinputdevices 、 https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawmouse 。
 
 Raw登録の競合にはGeneric Desktop page全体のPAGEONLY登録も含める。disableはnative解除の失敗時も論理配送を即座に止め、別のownership情報を保持して破棄時等に解除を再試行する。foreign page-wide登録と自分のexact mouse登録の検索は分離し、解除時にforeignへ触れない。
+
+## カーソル要求と有効mode
+Mapperのcontext要求はfocus停止中も保持し、Processorがmessage前とTick後にWindowへ同期する。Windowは非focus/非表示/minimized時にNormalへ退避し、要求自体は保持する。Confined/Lockedはscreen座標のclient RECTへClipCursor、Hidden/Lockedは自client上のWM_SETCURSORでSetCursor(nullptr)を使い、ShowCursor counterは変更しない。move/size/DPI/display変化でclipを再適用する。適用失敗はfalseで返し、GetCursorModeは最後に成功した状態を返す。Processorは次frameで再試行し、失敗開始時だけ警告する。Run終了/例外/Disconnect/DestroyではNormalを要求する。
+Locked中も絶対位置はUIへ配送するが、絶対deltaは0にする。mode/clip変更ではabsolute基準だけを再seedし、Raw/wheel/buttonsは保持する。非累積配送のevent deltaを明示0にし、累積deltaのクリアが逆向きイベントにならないようにする。Windows nativeの表示/clip成功は実機確認と区別する。
+Win32根拠: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-clipcursor 、 https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setcursor 、 https://learn.microsoft.com/en-us/windows/win32/menurc/wm-setcursor 。
+
+shared clipはGetClipCursorで保存矩形と照合し、外部変更時は所有を放棄して他者の矩形を解除しない。再適用は実GetFocus/GetForegroundWindowも確認する。WM_SETCURSORはtarget HWNDが自windowの時だけ処理し、childから転送された通知を上書きしない。Win32には所有tokenがないため同processのcursor操作はGameThreadへ直列化する。

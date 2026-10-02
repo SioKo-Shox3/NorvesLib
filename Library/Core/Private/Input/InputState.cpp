@@ -232,8 +232,21 @@ namespace NorvesLib::Core::Input
         }
     }
 
-    void InputState::SetMousePosition(float x, float y)
+    void InputState::ResetAbsoluteMouseTracking()
     {
+        m_MouseState.DeltaX=0;m_MouseState.DeltaY=0;m_bFirstMouseUpdate=true;
+    }
+
+    void InputState::SetMousePosition(float x, float y, bool accumulateDelta)
+    {
+        if(!std::isfinite(x) || !std::isfinite(y)) return;
+        if(!accumulateDelta)
+        {
+            ResetAbsoluteMouseTracking();
+            m_MouseState.PositionX=x;m_MouseState.PositionY=y;
+            m_PrevMouseX=x;m_PrevMouseY=y;
+            return;
+        }
         if (m_bFirstMouseUpdate)
         {
             m_PrevMouseX = x;
