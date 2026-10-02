@@ -103,6 +103,10 @@ int main()
     assert(mapper.GetAction("Jump"_id).Button.Held && !mapper.GetAction("Jump"_id).Button.Released);
     assert(mapper.Update(0.7,0.6));assert(mapper.GetAction("Jump"_id).Button.Hold);
     const auto saved=mapper.GetAction("Jump"_id);
+    auto replacement=Definitions();
+    assert(!mapper.ConfigureWithContext(replacement,"Missing"_id));
+    assert(!mapper.ConfigureWithContext(replacement,{}));
+    assert(mapper.GetActiveContext()=="Gameplay"_id && mapper.GetAction("Jump"_id).Button.Held);
     assert(mapper.PushContext("Menu"_id));
     assert(!mapper.GetAction("Jump"_id).Valid && mapper.GetCursorMode()==ECursorMode::Normal);
     jump=mapper.GetAction("Gameplay"_id,"Jump"_id);
@@ -205,6 +209,9 @@ int main()
     assert(mapper.GetAction("Jump"_id).Button.Held && mapper.ConsumeFixedPress("Jump"_id));
     assert(mapper.Update(8,0));
     mapper.ClearContexts();assert(!mapper.GetAction("Jump"_id).Valid && !mapper.PopContext());
+    assert(mapper.ConfigureWithContext(replacement,"Menu"_id));
+    assert(mapper.GetActiveContext()=="Menu"_id && mapper.GetAction("Confirm"_id).Valid);
+    assert(mapper.Configure(replacement));assert(!mapper.GetActiveContext().IsValid());
     mapper.Detach();mapper.Detach();router.UnregisterController(&ui);system.SetRouter(nullptr);
     // destructorは借用Routerより先に解除する。
     { InputMapper scoped(system.GetState());scoped.Attach(router); }

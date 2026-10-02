@@ -28,6 +28,8 @@ namespace NorvesLib::Core::Input
 
         // 設定をcopyしてcompile。成功時はstackを空にし旧入力を取り消す。
         bool Configure(const InputBindingSet& settings);
+        // 設定と初期contextを候補で構築し、一括反映する。不明contextでは旧状態を維持。
+        bool ConfigureWithContext(const InputBindingSet& settings, Identity initialContext);
         // 同じRouterへの再Attachは冪等。優先度変更は配送外でDetach→Attachする。
         void Attach(InputRouter& router, int32_t priority = 0);
         void Detach();
@@ -67,6 +69,7 @@ namespace NorvesLib::Core::Input
             ECursorMode CursorMode = ECursorMode::Normal;
             Container::VariableArray<Action> Actions;
         };
+        bool ConfigureImpl(const InputBindingSet& settings, Identity initialContext);
         Context* Top();
         const Context* Top() const;
         void SyncActiveButtons();

@@ -149,3 +149,12 @@
 - Loadは読取＋delete共有で開き、1MiB上限・全read・終端を確認する。Saveは同directoryのCREATE_NEW tempを確保し、全write→FlushFileBuffers→close後に置換する。targetを先にtruncateせず、自分が作成できたtempだけをRAIIで後始末する。処理はGameThread専用、複数process同時保存では最後に成功した内容を採用する。
 - native APIの根拠: [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers)、[MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[GetFullPathNameW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfullpathnamew)。MOVEFILE_COPY_ALLOWEDは使わず、同directory内の置換に限定する。
 - 個人設定とtempはgitignoreへ追加。PersistenceのFakeStore試験とWindows temp-directory内だけのnative IO試験を既存bundleへ登録する。現在のLinuxではString→Windows.h依存でcompile/実行未確認であり、file IO成功を実測した扱いにはしない。Gameの既定Asset JSON/初期化配線は次段。
+
+## Game起動時の設定ロード
+
+- Game/Input/GameInputActions.hはGame側の暫定参照IDだけを定義し、型/キー/Pad binding/感度はAssets/Config/DefaultInputBindings.jsonへ置く。CoreはGame固有のaction名を持たない。
+- GameInputSettingsはGameHandlerに所有され、AssetFileReaderのcompiled rootからConfig/DefaultInputBindings.jsonを読む。既定検証→user差分読込→Mapper設定/初期contextの順で反映し、起動中に保存しない。userの破損/読取失敗は既定へ退避して警告、既定自体の失敗は旧mapperを保ちlegacy起動を継続する。
+- 起動contextはDebug/Normalで、Move/Lookの値を公開する。Gameplay/LockedのMove/Look/Sprint/Bite/Swing/Jump/Sniff、Menu/NormalのConfirm/Cancel、Cutscene/Normal空は後続game用の暫定data。実際のゲーム操作体系は確定仕様として固定しない。Rendering3DTestのMaya経路へはイベントを透過する。
+- ConfigureWithContextはcompiled設定と初期stackを候補で確保してから一括反映する。無効/未知contextやvalidation失敗で旧runtime/stackを変更しない。従来Configureは初期stackを空にする契約を維持する。
+- GameInputSettingsは一度の初期化だけを受け付け、Mapper参照を保持しない。GetConfigurationはconst借用、Saveは明示呼出しだけ。GR68のUI/hot reloadをこの段階で自動追加しない。
+- GameInputSettingsTestはFakeStoreを注入し、実ユーザーの設定に触らず実default Asset/差分/fallback/初期context/明示Saveを検証する形で既存bundleへ登録。現LinuxではWindows依存で統合compile/実行未確認。JSON syntax/ID整合と、JSONから取り出した全bindingの実portable型/名前/runtime検証は実施する（実JsonDocumentロードの実行とは区別）。

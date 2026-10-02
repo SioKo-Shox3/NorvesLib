@@ -1356,3 +1356,11 @@
 - stop-when: 既存targetを先にtruncate、unknown temp削除、CWD変更で保存先移動、既定不正でuser単独採用、startup自動上書き、blocking未解消。
 - paths: Library/Core/Public/Input/IInputBindingStore.h, Library/Core/Public/Input/InputBindingPersistence.h, Library/Core/Private/Input/InputBindingPersistence.cpp, Library/Core/Private/Input/WorkingDirectoryInputBindingStore.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/InputBindingPersistenceTest.cpp, Test/Core/Input/WorkingDirectoryInputBindingStoreTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, .gitignore, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: S8承認済み。GameのAsset JSON/初期化配線は次のP5Cで行い、起動時は読込だけにする。GR76ではStoreだけ差し替える。
+
+## G1-GR03-P5C: Gameの既定入力設定を起動時にロードする
+- status: done
+- done-when: GameInputActions IDとAssets/Config/DefaultInputBindings.jsonを用意し、GameInputSettingsがAssetReader→Store差分→Mapperを接続。初期Debug contextはNormalで既存camera経路を維持。起動読込で自動保存しない。設定と初期contextはMapperへ一括反映する。
+- verify: GameInputSettingsTestを既存bundleへ追加し、実default Asset/注入FakeStore/mapperで既定ロード/override/fallback/初期context/明示保存/失敗非変更を検証（Windows依存未実行なら静的レビューを明示）。JSON syntax/dataはPython確認、portable binding/runtime回帰。
+- stop-when: Game-specific actionをCoreへ固定、起動時Locked化、既定/userファイルの勝手な書戻し、context設定の部分反映、blocking未解消。
+- paths: Game/Input/GameInputActions.h, Game/Input/GameInputSettings.h, Game/Input/GameInputSettings.cpp, Assets/Config/DefaultInputBindings.json, Game/GameApplicationHandler.h, Game/GameApplicationHandler.cpp, Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Test/Core/Input/GameInputSettingsTest.cpp, Test/Core/Input/InputActionMapTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: defaultsは暫定data。Gameplayは後の実game用、Rendering3DTest起動はDebug/Normal。rebind捕捉/OS供給は後続。

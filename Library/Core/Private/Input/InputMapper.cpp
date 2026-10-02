@@ -15,6 +15,14 @@ namespace NorvesLib::Core::Input
     InputMapper::~InputMapper() { Detach(); }
     bool InputMapper::Configure(const InputBindingSet& settings)
     {
+        return ConfigureImpl(settings, {});
+    }
+    bool InputMapper::ConfigureWithContext(const InputBindingSet& settings, Identity initialContext)
+    {
+        return initialContext.IsValid() && ConfigureImpl(settings, initialContext);
+    }
+    bool InputMapper::ConfigureImpl(const InputBindingSet& settings, Identity initialContext)
+    {
         Container::VariableArray<Context> compiled;
         compiled.reserve(settings.GetContexts().size());
         for (const auto& definition : settings.GetContexts())
@@ -37,9 +45,16 @@ namespace NorvesLib::Core::Input
             }
             compiled.push_back(std::move(context));
         }
+        Container::VariableArray<size_t> stack;
+        if (initialContext.IsValid())
+        {
+            for (size_t i=0; i<compiled.size(); ++i)
+                if (compiled[i].Id == initialContext) { stack.push_back(i); break; }
+            if (stack.empty()) return false;
+        }
         CancelAll();
         m_Contexts = std::move(compiled);
-        m_Stack.clear();
+        m_Stack = std::move(stack);
         return true;
     }
     void InputMapper::Attach(InputRouter& router, int32_t priority)

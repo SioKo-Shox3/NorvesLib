@@ -1,0 +1,256 @@
+{
+  "schema": "bindings.v1",
+  "contexts": [
+    {
+      "id": "Debug",
+      "cursor": "normal",
+      "actions": [
+        {
+          "id": "Move",
+          "type": "axis2d",
+          "deadzone": 0.15,
+          "bindings": [
+            {
+              "source": "key",
+              "code": "W",
+              "component": "y"
+            },
+            {
+              "source": "key",
+              "code": "S",
+              "component": "y",
+              "scale": -1
+            },
+            {
+              "source": "key",
+              "code": "A",
+              "scale": -1
+            },
+            {
+              "source": "key",
+              "code": "D"
+            },
+            {
+              "source": "gamepad_axis",
+              "code": "left_x"
+            },
+            {
+              "source": "gamepad_axis",
+              "code": "left_y",
+              "component": "y"
+            }
+          ]
+        },
+        {
+          "id": "Look",
+          "type": "axis2d",
+          "output": "frame_delta",
+          "deadzone": 0.1,
+          "mouse_sensitivity": 0.15,
+          "rate_sensitivity": 180,
+          "bindings": [
+            {
+              "source": "mouse_delta",
+              "code": "x"
+            },
+            {
+              "source": "mouse_delta",
+              "code": "y",
+              "component": "y",
+              "invert": true
+            },
+            {
+              "source": "gamepad_axis",
+              "code": "right_x"
+            },
+            {
+              "source": "gamepad_axis",
+              "code": "right_y",
+              "component": "y"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "Gameplay",
+      "cursor": "locked",
+      "actions": [
+        {
+          "id": "Move",
+          "type": "axis2d",
+          "deadzone": 0.15,
+          "bindings": [
+            {
+              "source": "key",
+              "code": "W",
+              "component": "y"
+            },
+            {
+              "source": "key",
+              "code": "S",
+              "component": "y",
+              "scale": -1
+            },
+            {
+              "source": "key",
+              "code": "A",
+              "scale": -1
+            },
+            {
+              "source": "key",
+              "code": "D"
+            },
+            {
+              "source": "gamepad_axis",
+              "code": "left_x"
+            },
+            {
+              "source": "gamepad_axis",
+              "code": "left_y",
+              "component": "y"
+            }
+          ]
+        },
+        {
+          "id": "Look",
+          "type": "axis2d",
+          "output": "frame_delta",
+          "deadzone": 0.1,
+          "mouse_sensitivity": 0.15,
+          "rate_sensitivity": 180,
+          "bindings": [
+            {
+              "source": "mouse_delta",
+              "code": "x"
+            },
+            {
+              "source": "mouse_delta",
+              "code": "y",
+              "component": "y",
+              "invert": true
+            },
+            {
+              "source": "gamepad_axis",
+              "code": "right_x"
+            },
+            {
+              "source": "gamepad_axis",
+              "code": "right_y",
+              "component": "y"
+            }
+          ]
+        },
+        {
+          "id": "Sprint",
+          "type": "button",
+          "bindings": [
+            {
+              "source": "key",
+              "code": "LeftShift"
+            },
+            {
+              "source": "gamepad_button",
+              "code": "left_thumb"
+            }
+          ]
+        },
+        {
+          "id": "Bite",
+          "type": "button",
+          "bindings": [
+            {
+              "source": "mouse_button",
+              "code": "left"
+            },
+            {
+              "source": "gamepad_trigger",
+              "code": "right"
+            }
+          ]
+        },
+        {
+          "id": "Swing",
+          "type": "button",
+          "bindings": [
+            {
+              "source": "mouse_button",
+              "code": "right"
+            },
+            {
+              "source": "gamepad_trigger",
+              "code": "left"
+            }
+          ]
+        },
+        {
+          "id": "Jump",
+          "type": "button",
+          "bindings": [
+            {
+              "source": "key",
+              "code": "Space"
+            },
+            {
+              "source": "gamepad_button",
+              "code": "a"
+            }
+          ]
+        },
+        {
+          "id": "Sniff",
+          "type": "button",
+          "bindings": [
+            {
+              "source": "key",
+              "code": "E"
+            },
+            {
+              "source": "gamepad_button",
+              "code": "y"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "Menu",
+      "cursor": "normal",
+      "actions": [
+        {
+          "id": "Confirm",
+          "type": "button",
+          "bindings": [
+            {
+              "source": "key",
+              "code": "Enter"
+            },
+            {
+              "source": "gamepad_button",
+              "code": "a"
+            }
+          ]
+        },
+        {
+          "id": "Cancel",
+          "type": "button",
+          "bindings": [
+            {
+              "source": "key",
+              "code": "Escape"
+            },
+            {
+              "source": "gamepad_button",
+              "code": "b"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "Cutscene",
+      "cursor": "normal",
+      "actions": []
+    }
+  ]
+}

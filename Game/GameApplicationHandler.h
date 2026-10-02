@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include "CameraLateUpdate.h"
+#include "Input/GameInputSettings.h"
 
 #include "Core/Public/Application/ApplicationHandlerBase.h"
 
@@ -95,6 +96,8 @@ namespace Game
         bool ReloadConfiguredAssetManifest();
 
         bool PrepareM9WorldAssets();
+        Game::Input::GameInputSettings& GetInputSettings() { return m_InputSettings; }
+        const Game::Input::GameInputSettings& GetInputSettings() const { return m_InputSettings; }
 
         /**
          * @brief Bridge 読み取り用の immutable asset snapshot を取得する。
@@ -105,6 +108,7 @@ namespace Game
         GetAssetSystemSnapshot() const;
 
     private:
+        Game::Input::GameInputSettings m_InputSettings;
         NorvesLib::Core::Container::TSharedPtr<CameraLateUpdateSlot> m_CameraLateUpdateSlot =
             NorvesLib::Core::Container::MakeShared<CameraLateUpdateSlot>();
         /**

@@ -309,3 +309,6 @@
 
 - G1-GR03-P5B: IInputBindingStore値返し結果とLoadInputBindingConfiguration/SaveInputBindingOverridesを接続し、Missing/Invalid/ReadErrorを区別して既定へ退避。Windows暫定Storeは生成時に絶対W pathを固定、上限1MiB＋全read/EOF、同directoryのCREATE_NEW tempへ全write/flush/close後に置換する。自分のtempだけ後始末し、元targetを先にtruncateしない。個人設定をgitignoreへ追加。独立IO/寿命/Win API静的レビューPASS、portable名前/settings回帰PASS。FakeStore/native temp-directory試験をbundleへ追加したがWindows.h依存でcompile/実行未確認。任意指摘の1MiBちょうど成功と無関係temp保持の試験も追加した。起動時の自動上書きは行わない。
 - Next: P5CでGameのDefaultInputBindings.jsonと初期化ロードへ接続する。ユーザーへの報告はG1/GR03を冒頭に明記する。
+
+- G1-GR03-P5C: GameInputActionsと4 context/11 actionの既定Assetを追加し、GameInputSettingsが起動時に既定＋user差分をロードしてMapperへ反映する。ConfigureWithContextは設定と初期stackを一括反映し、失敗時は旧設定を維持。Debug/Normalで既存camera経路を保ち、保存は明示APIのみ。独立静的レビューPASS。実JSON dataから生成したportable binding/runtime検証は成功。GameInputSettingsTestとMapper回帰を既存bundleへ登録したが、Windows依存の実JsonDocumentロード/Game起動/統合試験は未実行。
+- Next: event基盤を拡張する前に既存Delegateの解除対象誤識別を独立修正し、GR03のrebind捕捉とOS入力供給を接続する。

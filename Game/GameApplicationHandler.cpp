@@ -1016,6 +1016,29 @@ namespace Game
     {
         LOG_INFO("GameApplicationHandler::OnInitialize()");
 
+        if (auto* engine = NorvesLib::Core::Engine::GEngine)
+        {
+            if (!m_InputSettings.Initialize(engine->GetInputMapper()))
+            {
+                const auto& error = m_InputSettings.GetLastError();
+                LOG_WARNING_F("入力設定を適用できません。既存camera操作で続行します: %s", error.empty() ? "" : error.c_str());
+            }
+            else
+            {
+                const auto& configuration = m_InputSettings.GetConfiguration();
+                if (configuration.UserStatus == NorvesLib::Core::Input::EInputBindingUserStatus::Invalid)
+                {
+                    const auto& error = configuration.UserReport.Error;
+                    LOG_WARNING_F("user入力設定が不正なため既定を使います: %s", error.empty() ? "" : error.c_str());
+                }
+                else if (configuration.UserStatus == NorvesLib::Core::Input::EInputBindingUserStatus::ReadError)
+                {
+                    const auto& error = configuration.StoreError;
+                    LOG_WARNING_F("user入力設定を読めないため既定を使います: %s", error.empty() ? "" : error.c_str());
+                }
+            }
+        }
+
         // ========================================
         // ライトコントローラーの初期化
         // ========================================
