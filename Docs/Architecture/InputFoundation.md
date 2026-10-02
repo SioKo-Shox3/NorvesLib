@@ -315,3 +315,10 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - 強度/onoffはruntime APIとJSONで扱える。user設定の保存先とUIはGR76/GR68へ接続し、この段で暗黙の保存先や自動保存は追加しない。
 - 既定assetは実Pythonで型/範囲/curve/ID/上限を確認。実JSON codec/roundtrip/拒否/旧値保持/Game適用の試験は既存bundleへ追加したが、Windows.h依存でcompile/実行は未確認。既存pure hapticsの回帰は実行可能。
 - 名前のIdentity化後に元のJSON名とのbyte一致を検査し、既存poolの別名hash衝突を黙って採用しない。Parseの診断は読了後に公開するため入力がreport.Error自身でも先に消さない。通常のI/O/validation失敗は起動継続、確保例外は上位へ伝播して起動失敗になり得る。1MiBはJSON解析前の制限で、既存AssetFileReaderによる全file確保より前の制限ではない。
+
+### 使用中の入力種別を選ぶ値状態（GR04）
+- ActiveDeviceKindStateは表示用KeyboardMouse/Gamepadのみを選び、操作正本の値/deadzoneは変更しない。既定はKeyboardMouse、最初の別種別への有効入力は即時、以後の切替は既定0.3秒以上。抑制された活動は予約しない。
+- 有限非負・非減少の非scaled時刻をBeginFrameで渡す。未設定時/非focusは活動を採用せず、focus変更で種別は保持して累積移動だけ捨てる。設定の全検証成功後だけ更新し、種別/clock/直前切替は維持する。
+- 新しいkey/mouse button押下、有効文字、非zero wheelを活動とする。repeat/held/releaseは活動にしない。mouseはframe内の経路長2px以上、Rawとabsoluteを別に累積しmaxで判定して同一移動を二重加算しない。
+- padはLiveの新buttonまたは有意なanalog変位だけを採用。Baseline/Backgroundは基準同期のみ、切断は基準破棄。stick半径とtrigger閾値でnoiseを除外し、slotごとの最後の有意な位置からの変位で緩やかな操作も拾う。活動を検出した位置は切替cooldown中でも更新し、静止heldで後から奪い返さない。
+- 純状態の通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle MEMBER objectを検証。InputSystemの公開Get/通知とEngineの時刻・focus接続は後続で、この状態単体ではUIを切り替えない。

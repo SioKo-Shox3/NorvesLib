@@ -34,3 +34,4 @@ add_test(NAME XInputVibrationStateTest COMMAND LoggerSinkTest --test=XInputVibra
 add_test(NAME HapticsPlaybackTimeTest COMMAND LoggerSinkTest --test=HapticsPlaybackTimeTest)
 add_test(NAME HapticsServiceTest COMMAND LoggerSinkTest --test=HapticsServiceTest)
 add_test(NAME HapticsJsonTest COMMAND LoggerSinkTest --test=HapticsJsonTest)
+add_test(NAME ActiveDeviceKindTest COMMAND LoggerSinkTest --test=ActiveDeviceKindTest)

@@ -542,6 +542,7 @@ set(PUBLIC_HEADERS
     Public/Input/InputArmedState.h
     Public/Input/InputRebindCaptureState.h
     Public/Input/GamepadTypes.h
+    Public/Input/ActiveDeviceKind.h
     Public/Input/InputBindingTypes.h
     Public/Input/InputActionSettings.h
     Public/Input/InputActionRuntime.h

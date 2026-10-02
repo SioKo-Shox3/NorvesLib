@@ -1614,3 +1614,11 @@
 - stop-when: invalidの部分反映、設定の暗黙保存/自動再生、JSON解析のbyte/depth上限無視、未知fieldの誤採用、起動画面の変更、blocking未解消。
 - paths: Library/Core/Public/Input/HapticsJson.h, Library/Core/Private/Input/HapticsJson.cpp, Library/Core/Public/Input/HapticsService.h, Library/Core/Private/Input/HapticsService.cpp, Library/Core/CMakeLists.txt, Game/Input/GameHapticsSettings.h, Game/Input/GameHapticsSettings.cpp, Game/GameApplicationHandler.cpp, Assets/Config/HapticsEffects.json, Test/Core/Input/HapticsJsonTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: 強度/onoffはruntime APIとJSONで表現し、user設定の保存先/UIはGR76/GR68へ接続する。既定の見た目/手触り値は仮、実機調整は未確認。既存AssetFileReaderは全file読込み後にJSON上限を検査し、確保前の個別上限は別課題。
+
+## G1-GR04-P11: 入力方式の活動判定と切替ヒステリシスを実装する
+- status: done
+- done-when: KeyboardMouse/Gamepadを値状態で識別し、有効clockと活動時だけ切替、最短間隔0.3秒を既定にする。key/button新規押下、mouse移動閾値/scroll/char、Live padの新規button・deadzone外の意味ある変化を判定。背景/基準sample/同値/無効値で切替えず、focus復帰で旧kindを維持する。
+- verify: 純状態の全source/境界/noise/同値/clock拒否/最初の切替/cooldown/設定非変更/focus/相対と絶対の二重計上回避を通常/O2/ASanUBSan/bundleで実行し独立レビュー。
+- stop-when: analog drift/repeat/背景入力で切替、単調clock違反の状態更新、cooldown無視、mouse2lane二重加算、無効設定の部分反映、blocking未解消。
+- paths: Library/Core/Public/Input/ActiveDeviceKind.h, Library/Core/CMakeLists.txt, Test/Core/Input/ActiveDeviceKindTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: この段は純検出state。InputSystem/GetActiveDeviceKind/DelegateとEngine時刻・focus接続は次段。閾値は表示用の活動判定で、Mapperの操作値には適用しない。

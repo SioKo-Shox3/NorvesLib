@@ -381,3 +381,6 @@
 
 - G1-GR04-P10: haptics.v1 codecを追加。effect/key/任意settingsの既知field型・重複・有限値・範囲・名前/curveと1MiB/深さ64/effect256/key256/name128byte上限、未知field警告を実装。Parse/Writeは候補完成後に反映、service Configure overloadで効果/設定を一括反映する。レビューの入力/report aliasをlocal診断の退出時公開で修正し、既存Identity pool別名衝突は元名とのbyte一致検査で拒否。Game起動は既定Footstep/Hit/BiteHold assetを読み、通常I/O/validation失敗なら旧設定で継続、自動再生/保存なし。実asset1539byte/3効果のPython検証、pure時間/mix/output回帰成功、独立静的レビューPASS。実codec/Game/追加testはWindows.h依存でcompile/実行未確認。既存AssetFileReaderは全file確保後にJSON上限を検査し、確保例外は伝播して起動失敗になり得る。永続化/UIはGR76/GR68へ接続する。
 - Next: GR04のActiveDeviceKind検出・ノイズ除外・切替ヒステリシス・Delegate通知を実装する。
+
+- G1-GR04-P11: KeyboardMouse/Gamepadの純活動判定stateを追加。新規押下/有効文字/wheel、Raw・absolute別累積の移動閾値、Live padの新buttonとslot別analog累積変位で選択し、既定0.3秒の最短切替間隔を守る。背景/基準sample、repeat、静止held、noise、人工resetで表示を奪い返さない。設定/clock/sampleの全検証後だけ更新し、focusはkindを維持して累積基準を破棄。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle MEMBER object成功、独立レビューも追加の跨frame trigger/無効非変更/held再奪取試験を実行してPASS。
+- Next: GR04のInputSystem GetActiveDeviceKind/DelegateとEngineのframe clock/focusへ接続する。純状態の合格は実System/Engine/Windows受入れを意味しない。
