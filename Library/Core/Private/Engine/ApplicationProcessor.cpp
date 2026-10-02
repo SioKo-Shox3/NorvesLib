@@ -1806,12 +1806,17 @@ namespace NorvesLib::Core::Engine
         window->OnInputFocusChanged().Add(m_InputFocusSubscription);
         m_InputWindow=std::move(window);m_InputEngine=GEngine;
         OnWindowInputFocusChanged(m_InputWindow->IsInputFocused());
+        if(!m_InputWindow->SetRawMouseEnabled(true))
+            LOG_WARNING("Raw mouseを登録できないためlegacy入力で起動します");
     }
 
     void ApplicationProcessor::DisconnectInputWindow()
     {
         if(m_InputWindow)
+        {
+            (void)m_InputWindow->SetRawMouseEnabled(false);
             m_InputWindow->OnInputFocusChanged().Remove(m_InputFocusSubscription);
+        }
         m_InputFocusSubscription.Clear();
         m_InputWindow.reset();m_InputEngine=nullptr;m_PendingInputFocus.clear();m_HasInputFocus=false;
         ++m_InputFocusConnectionSerial;

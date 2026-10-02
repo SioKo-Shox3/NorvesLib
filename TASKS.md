@@ -1382,3 +1382,11 @@
 - stop-when: WM_KILLFOCUS内でGame handlerを呼ぶ、旧window購読残留、focus loss後held/analog継続、イベント順序喪失、callback例外が新focus処理からOSへ漏れる、blocking未解消。
 - paths: Library/Core/Private/Platform/Windows/WindowsApplication.cpp, Library/Core/Private/Platform/Windows/WindowsKeyRepeatGate.h, Test/Core/Engine/WindowsKeyRepeatGateTest.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Public/Application/IWindow.h, Library/Core/Private/Platform/Windows/WindowsWindow.h, Library/Core/Private/Platform/Windows/WindowsWindow.cpp, Library/Core/Public/Engine/ApplicationProcessor.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Input/IInputController.h, Library/Core/Public/Input/InputRouter.h, Library/Core/Private/Input/InputRouter.cpp, Library/Modules/ImGui/Private/ImGuiModule/ImGuiModule.cpp, Test/Core/Engine/InputFocusPipelineTest.cpp, Test/Core/Engine/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: Raw Input/カーソル制御/rebindは後続。既存IsActiveとkeyboard input focusを分ける。Game handler通知はboot完了後だけ購読し、shutdown時に先行解除する。
+
+## G1-GR03-P6C: WindowsからRaw mouseと拡張ボタンを供給する
+- status: done
+- done-when: main windowが明示的にRaw mouseを登録/解除し、他のprocess内登録を上書きしない。WM_INPUTの相対/絶対motionを専用laneへ供給し、初回/device/focus/geometry変化を再seed。legacy button/wheelを二重注入せずX1/X2と水平wheel、signed座標を供給する。foreground WM_INPUTはDefWindowProc cleanupを保つ。
+- verify: 実RawMouseMotionTrackerのrelative/absolute/multi-device/invalid/geometry/reset/bounded evictionを通常/O2/ASanUBSan、native Windows配線と登録所有の独立レビュー。Windows実行未確認を明示。
+- stop-when: 他のRaw登録を奪う/解除、二重button/wheel、absolute初回jump、focus前のdelta残留、DefWindowProc cleanup欠落、blocking未解消。
+- paths: Test/Core/Engine/InputFocusPipelineTest.cpp, Library/Core/Private/Platform/Windows/RawMouseMotionTracker.h, Library/Core/Private/Platform/Windows/WindowsWindow.h, Library/Core/Private/Platform/Windows/WindowsWindow.cpp, Library/Core/Public/Application/IWindow.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Test/Core/Engine/RawMouseMotionTrackerTest.cpp, Test/Core/Engine/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: Raw機能を利用できないときは初期化を警告しlegacy起動を維持。cursorの要求/有効modeとLocked時absolute delta抑止は次段で接続する。

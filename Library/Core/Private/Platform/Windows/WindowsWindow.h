@@ -2,6 +2,7 @@
 
 #include "Application/IWindow.h"
 #include "Platform/Windows/WindowsKeyRepeatGate.h"
+#include "Platform/Windows/RawMouseMotionTracker.h"
 #include "Platform/NativeWindowHandle.h"
 #include "Container/String.h"
 #include "Container/PointerTypes.h"
@@ -10,6 +11,8 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+
+namespace NorvesLib::Core::Input { class InputSystem; }
 
 namespace NorvesLib
 {
@@ -46,6 +49,8 @@ namespace NorvesLib
                 virtual void Resize(int width, int height) override;
                 virtual bool IsActive() const override;
                 bool IsInputFocused() const override { return m_InputFocused; }
+                bool SetRawMouseEnabled(bool enabled) noexcept override;
+                bool IsRawMouseEnabled() const noexcept override { return m_RawMouseEnabled; }
                 virtual NativeWindowHandle GetNativeHandle() const override;
 
                 /**
@@ -67,6 +72,7 @@ namespace NorvesLib
                  */
                 bool RegisterWindowClass();
                 void SetInputFocused(bool focused) noexcept;
+                void HandleRawMouseInput(HRAWINPUT handle,Input::InputSystem& input);
 
                 /**
                  * @brief ウィンドウクラス名を取得
@@ -89,6 +95,9 @@ namespace NorvesLib
                 HINSTANCE m_hInstance;         // アプリケーションインスタンスハンドル
                 bool m_InputFocused = false;
                 WindowsKeyRepeatGate m_KeyRepeatGate;
+                bool m_RawMouseEnabled = false;
+                bool m_OwnsRawMouseRegistration = false;
+                RawMouseMotionTracker m_RawMouseTracker;
                 bool m_isActive;               // アクティブ状態フラグ
                 Container::String m_title;     // ウィンドウタイトル
                 int m_width;                   // ウィンドウ幅

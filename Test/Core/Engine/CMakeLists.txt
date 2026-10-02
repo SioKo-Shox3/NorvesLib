@@ -6,6 +6,7 @@ norves_add_test_bundle(ApplicationFixedStepPipelineTest
     FOLDER "Test/Core/Engine"
     MEMBER ApplicationFixedStepPipelineTest ApplicationFixedStepPipelineTest.cpp
     MEMBER FixedStepSchedulerTest FixedStepSchedulerTest.cpp
+    MEMBER RawMouseMotionTrackerTest RawMouseMotionTrackerTest.cpp
     MEMBER WindowsKeyRepeatGateTest WindowsKeyRepeatGateTest.cpp
     MEMBER InputFocusPipelineTest InputFocusPipelineTest.cpp
     MEMBER InputFramePipelineTest InputFramePipelineTest.cpp
@@ -23,3 +24,4 @@ add_test(NAME ApplicationFixedStepPipelineTest COMMAND ApplicationFixedStepPipel
 add_test(NAME InputFramePipelineTest COMMAND ApplicationFixedStepPipelineTest --test=InputFramePipelineTest)
 add_test(NAME InputFocusPipelineTest COMMAND ApplicationFixedStepPipelineTest --test=InputFocusPipelineTest)
 add_test(NAME WindowsKeyRepeatGateTest COMMAND ApplicationFixedStepPipelineTest --test=WindowsKeyRepeatGateTest)
+add_test(NAME RawMouseMotionTrackerTest COMMAND ApplicationFixedStepPipelineTest --test=RawMouseMotionTrackerTest)

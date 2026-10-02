@@ -28,6 +28,13 @@ namespace
     {
     public:
         bool Focused=true;
+        bool RawEnabled=false;
+        int RawEnables=0,RawDisables=0;
+        bool SetRawMouseEnabled(bool enabled) noexcept override
+        {
+            RawEnabled=enabled;if(enabled) ++RawEnables;else ++RawDisables;return true;
+        }
+        bool IsRawMouseEnabled() const noexcept override { return RawEnabled; }
         void Emit(bool value) { Focused=value;NotifyInputFocusChanged(value); }
         bool Create(const Container::String&,int,int) override { return true; }
         void Destroy() override {}
@@ -120,6 +127,7 @@ int main()
     assert(definitions.AddAction("Gameplay"_id,action));assert(mapper.ConfigureWithContext(definitions,"Gameplay"_id));
     Eng::ApplicationInputFocusTestAccess::Connect(processor,window);
     assert(window->OnInputFocusChanged().GetSize()==1 && handler->Events.empty());
+    assert(window->RawEnabled && window->RawEnables==1);
     Eng::ApplicationInputFocusTestAccess::Flush(processor);
     assert(handler->Events.size()==1 && handler->Events[0] && observer.Focus.size()==1);
     system.InjectKeyEvent(KeyCode::Space,InputAction::Pressed);
@@ -154,16 +162,17 @@ int main()
     auto second=Container::MakeShared<FocusWindow>();engine->SetMainWindow(second);
     Eng::ApplicationInputFocusTestAccess::Connect(processor,second);
     assert(window->OnInputFocusChanged().IsEmpty() && second->OnInputFocusChanged().GetSize()==1);
+    assert(!window->RawEnabled && second->RawEnabled);
     window->Emit(false);assert(mapper.IsFocused());
     Eng::ApplicationInputFocusTestAccess::Flush(processor);assert(handler->Events.size()==oldCount+1);
     Eng::ApplicationInputFocusTestAccess::Disconnect(processor);
-    assert(second->OnInputFocusChanged().IsEmpty());second->Emit(false);assert(mapper.IsFocused());
+    assert(second->OnInputFocusChanged().IsEmpty() && !second->RawEnabled);second->Emit(false);assert(mapper.IsFocused());
     {
         Eng::ApplicationProcessor temporary;
         Eng::ApplicationInputFocusTestAccess::Connect(temporary,second);
         assert(second->OnInputFocusChanged().GetSize()==1);
     }
-    assert(second->OnInputFocusChanged().IsEmpty());
+    assert(second->OnInputFocusChanged().IsEmpty() && !second->RawEnabled);
     engine->GetInputRouter().UnregisterController(&observer);
     engine->SetApplicationHandler({});engine->SetPlatformApp({});engine->SetMainWindow({});engine.reset();Eng::GEngine=previous;
     std::cout << "InputFocusPipelineTest passed\n";

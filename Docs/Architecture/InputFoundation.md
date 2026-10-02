@@ -167,3 +167,10 @@ IWindowのkeyboard input focusはactivationと区別し、WindowsのWM_ACTIVATE/
 Win32の根拠: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-killfocus 、 https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-activate 、 https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-setfocus 。
 
 キーrepeatの抑止はWndProcだけでなくTranslateMessageの前にも行う。WindowsKeyRepeatGateはエンジンのKeyCodeへ変換されないIME/OEMキーもnative VKで追跡し、focus後の新しいkeydownが無いrepeatを文字生成へ渡さない。WM_CHARによる確定文字の既存経路自体は維持する。
+
+## Windows Raw mouse供給
+Processorがmain windowにRaw mouseを明示enableし、disconnectでdisableする。同processのmouse usage classが既に他の登録で使用されている場合は上書きせず失敗する。失敗時は警告してlegacy入力で起動する。解除は自分のtarget/flagsが残っている時だけ行う。legacy button/wheelを残し、Rawからはmotionだけを注入して二重操作を防ぐ。WM_INPUTのforeground cleanupはDefWindowProcへ渡す。X1/X2、横wheel、signed client座標もlegacy経路へ供給する。
+absolute motionはdeviceごとに初回をseedし、focus/geometry/device removal/mode変更で古い基準を再利用しない。履歴は最大16deviceで、追い出したdeviceは次回seed扱いとなる。絶対座標0..65535はdesktopの0..(size-1)pixelへ換算する。RDP/実mouse/native登録の実行確認はWindows環境で行う。
+Win32根拠: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-input 、 https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerrawinputdevices 、 https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawmouse 。
+
+Raw登録の競合にはGeneric Desktop page全体のPAGEONLY登録も含める。disableはnative解除の失敗時も論理配送を即座に止め、別のownership情報を保持して破棄時等に解除を再試行する。foreign page-wide登録と自分のexact mouse登録の検索は分離し、解除時にforeignへ触れない。

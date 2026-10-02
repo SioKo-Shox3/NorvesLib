@@ -321,3 +321,6 @@
 
 - G1-GR03-P6B: IWindowの入力focus DelegateとWindows activation/keyboard focusを接続。Processorがshared window＋保存Delegate購読を所有し、loss時Mapper停止/ReleaseAll/全controller focus通知、Game handlerはPump後へ順序配送する。再入は次batch、旧購読batchはserialで停止、handlerによるplatform破棄後の借用pointerアクセスを防止。非focus legacy入力を抑止。第1周で旧repeatがTranslateMessage経由で文字だけ漏れる問題を検出し、native VK履歴により翻訳前も抑止するよう修正。即時observerのOS callback制約を公開APIへ明記し第2周レビューPASS。実WindowsKeyRepeatGateTestは通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compile成功、Delegate/ReleaseAll回帰成功。Windows native/IME実機/新旧Engine統合は未実行。
 - Next: GR03のRaw Input供給とカーソル要求/有効モードを接続する。リバインド捕捉、GR04のXInput/hapticsは継続。
+
+- G1-GR03-P6C: Windows main windowの明示Raw mouse登録/解除とWM_INPUT motion laneを接続。自然alignmentの固定RAWINPUT bufferでサイズ/typeを検証し、foreground cleanupをDefWindowProcへ残す。button/wheelはlegacyだけ、X1/X2/横wheelとsigned座標を追加。device別absolute履歴は初回/focus/geometry/mode/remove/evictionで再seedする。第1周でPAGEONLY競合の見逃しとdisable失敗時の配送残留を検出し、page-wide/exact照合分離とlogical delivery/native ownership分離へ修正、第2周レビューPASS。実tracker通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compileとRaw state/repeat回帰成功。Engine接続試験に登録寿命の検証を追加、Windows native/登録API/実mouse/RDPは未実行。
+- Next: GR03の要求/有効カーソルmode、Clip/非表示とLocked時の絶対delta抑止を接続する。
