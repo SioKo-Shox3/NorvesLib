@@ -15,6 +15,8 @@ namespace NorvesLib::Modules::Physics
             float Coordinate = 0.0f;
             Core::Scene::ColliderHandle Collider;
             bool bIsMin = false;
+            Core::Scene::PhysicsCollisionMask Layer = Core::Scene::DefaultPhysicsLayer;
+            Core::Scene::PhysicsCollisionMask Mask = Core::Scene::AllPhysicsLayers;
         };
 
         bool IsHandleLess(const Core::Scene::ColliderHandle& left, const Core::Scene::ColliderHandle& right)
@@ -817,8 +819,8 @@ namespace NorvesLib::Modules::Physics
         endpoints.reserve(m_Proxies.size() * 2);
         for (const PhysicsShapeProxy& proxy : m_Proxies)
         {
-            endpoints.push_back(SweepEndpoint{proxy.Bounds.Min.x, proxy.Collider, true});
-            endpoints.push_back(SweepEndpoint{proxy.Bounds.Max.x, proxy.Collider, false});
+            endpoints.push_back(SweepEndpoint{proxy.Bounds.Min.x, proxy.Collider, true, proxy.Layer, proxy.Mask});
+            endpoints.push_back(SweepEndpoint{proxy.Bounds.Max.x, proxy.Collider, false, proxy.Layer, proxy.Mask});
         }
 
         for (size_t index = 1; index < endpoints.size(); ++index)
@@ -834,16 +836,20 @@ namespace NorvesLib::Modules::Physics
         }
 
         m_CandidatePairs.clear();
-        Core::Container::VariableArray<Core::Scene::ColliderHandle> active;
+        Core::Container::VariableArray<SweepEndpoint> active;
         for (const SweepEndpoint& endpoint : endpoints)
         {
             if (endpoint.bIsMin)
             {
-                for (const Core::Scene::ColliderHandle& other : active)
+                for (const SweepEndpoint& other : active)
                 {
+                    if (!Core::Scene::CanPhysicsLayersInteract(endpoint.Layer, endpoint.Mask, other.Layer, other.Mask))
+                    {
+                        continue;
+                    }
                     PhysicsCandidatePair pair;
-                    pair.First = IsHandleLess(endpoint.Collider, other) ? endpoint.Collider : other;
-                    pair.Second = IsHandleLess(endpoint.Collider, other) ? other : endpoint.Collider;
+                    pair.First = IsHandleLess(endpoint.Collider, other.Collider) ? endpoint.Collider : other.Collider;
+                    pair.Second = IsHandleLess(endpoint.Collider, other.Collider) ? other.Collider : endpoint.Collider;
                     bool bDuplicate = false;
                     for (const PhysicsCandidatePair& existing : m_CandidatePairs)
                     {
@@ -858,13 +864,13 @@ namespace NorvesLib::Modules::Physics
                         m_CandidatePairs.push_back(pair);
                     }
                 }
-                active.push_back(endpoint.Collider);
+                active.push_back(endpoint);
                 continue;
             }
 
             for (size_t index = 0; index < active.size(); ++index)
             {
-                if (active[index] == endpoint.Collider)
+                if (active[index].Collider == endpoint.Collider)
                 {
                     active[index] = active.back();
                     active.pop_back();

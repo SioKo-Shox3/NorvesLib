@@ -5,6 +5,7 @@
 #include "Physics/PhysicsModule.h"
 #include "PhysicsModuleTestAccess.h"
 #include "Physics/ColliderComponent.h"
+#include "Physics/RigidBodyComponent.h"
 #include "Engine/Engine.h"
 #include "Module/ModuleRegistry.h"
 #include "Object/World.h"
@@ -108,6 +109,50 @@ namespace
         assert(broadphase.GetCandidatePairs().empty());
     }
 
+    void TestLayerMaskCandidatePairs()
+    {
+        auto first = MakeSphereProxy(1,0,1), second = MakeSphereProxy(2,2,1);
+        first.Layer = 1;
+        first.Mask = 0x80000000u;
+        second.Layer = 0x80000000u;
+        second.Mask = 1;
+        PhysicsBroadphase broadphase;
+        auto set = [&]()
+        {
+            Core::Container::VariableArray<PhysicsShapeProxy> proxies;
+            proxies.push_back(second);
+            proxies.push_back(first);
+            broadphase.SetProxies(std::move(proxies));
+        };
+        set();
+        assert(broadphase.GetCandidatePairs().size() == 1);
+        AssertCanonicalPair(broadphase.GetCandidatePairs()[0],1,2);
+        first.Mask = 0;
+        set();
+        assert(broadphase.GetCandidatePairs().empty());
+        first.Mask = 0x80000000u;
+        second.Mask = 0;
+        set();
+        assert(broadphase.GetCandidatePairs().empty());
+        first.Layer = 3;
+        second.Mask = 2;
+        set();
+        assert(broadphase.GetCandidatePairs().size() == 1);
+        second.Mask = 4;
+        set();
+        assert(broadphase.GetCandidatePairs().empty());
+        second.Mask = AllPhysicsLayers;
+        first.Layer = 0;
+        set();
+        assert(broadphase.GetCandidatePairs().empty());
+        first.Layer = DefaultPhysicsLayer;
+        first.Mask = AllPhysicsLayers;
+        second.Layer = DefaultPhysicsLayer;
+        set();
+        assert(broadphase.GetCandidatePairs().size() == 1);
+        AssertCanonicalPair(broadphase.GetCandidatePairs()[0],1,2);
+    }
+
     void TestValueOverlapAllShapes()
     {
         std::cout << "[Test] value overlap returns all shapes in handle order\n";
@@ -188,6 +233,64 @@ namespace
         IPhysicsModule* Physics = nullptr;
         World World;
     };
+
+    void TestLayerMaskContactsAndEvents()
+    {
+        PhysicsFixture fixture;
+        auto* firstEntity = fixture.CreateSphere(Math::Transform(Math::Vector3()),1);
+        auto* secondEntity = fixture.CreateSphere(Math::Transform(Math::Vector3(1.5f,0,0)),1);
+        auto* first = firstEntity->GetComponent<ColliderComponent>();
+        auto* second = secondEntity->GetComponent<ColliderComponent>();
+        auto* body = fixture.World.CreateComponent<RigidBodyComponent>(secondEntity);
+        assert(body != nullptr);
+        assert(body->SetBodyType(EPhysicsBodyType::Dynamic) == EPhysicsResult::Success);
+        assert(body->SetGravityScale(0) == EPhysicsResult::Success);
+        assert(first->SetCollisionLayer(1) == EPhysicsResult::Success);
+        assert(first->SetCollisionMask(2) == EPhysicsResult::Success);
+        assert(second->SetCollisionLayer(2) == EPhysicsResult::Success);
+        assert(second->SetCollisionMask(1) == EPhysicsResult::Success);
+        assert(first->SetTrigger(true) == EPhysicsResult::Success);
+        int begin = 0, end = 0, hit = 0;
+        PhysicsCallbackHandle beginHandle, endHandle, hitHandle;
+        assert(first->AddOnOverlapBegin(Core::Delegate<void,const PhysicsContactEvent&>(
+            [&](const PhysicsContactEvent&) { ++begin; }),beginHandle) == EPhysicsResult::Success);
+        assert(first->AddOnOverlapEnd(Core::Delegate<void,const PhysicsContactEvent&>(
+            [&](const PhysicsContactEvent&) { ++end; }),endHandle) == EPhysicsResult::Success);
+        assert(second->AddOnHit(Core::Delegate<void,const PhysicsContactEvent&>(
+            [&](const PhysicsContactEvent&) { ++hit; }),hitHandle) == EPhysicsResult::Success);
+        fixture.Physics->FixedTick(1.f/60);
+        assert(begin == 1 && end == 0 && hit == 0);
+        assert(secondEntity->GetLocalTransform().position.x == 1.5f);
+        assert(second->SetCollisionMask(0) == EPhysicsResult::Success);
+        fixture.Physics->FixedTick(1.f/60);
+        assert(begin == 1 && end == 1 && hit == 0);
+        assert(secondEntity->GetLocalTransform().position.x == 1.5f);
+        assert(second->SetCollisionMask(1) == EPhysicsResult::Success);
+        fixture.Physics->FixedTick(1.f/60);
+        assert(begin == 2 && end == 1 && hit == 0);
+        assert(first->SetTrigger(false) == EPhysicsResult::Success);
+        assert(body->SetLinearVelocity(Math::Vector3(-1,0,0)) == EPhysicsResult::Success);
+        fixture.Physics->FixedTick(1.f/60);
+        assert(end == 2 && hit == 1);
+        assert(secondEntity->GetLocalTransform().position.x > 1.5f);
+        secondEntity->SetLocalPosition(1.5f,0,0);
+        assert(body->SetLinearVelocity(Math::Vector3(-1,0,0)) == EPhysicsResult::Success);
+        assert(first->SetCollisionMask(0) == EPhysicsResult::Success);
+        fixture.Physics->FixedTick(1.f/60);
+        assert(begin == 2 && end == 2 && hit == 1);
+        assert(NearlyEqual(secondEntity->GetLocalTransform().position.x,1.5f-1.f/60));
+        assert(body->GetLinearVelocity() == Math::Vector3(-1,0,0));
+        // 空間検索のLayerMaskは相互作用Maskではない。maskで非衝突でもquery対象にはなる。
+        PhysicsQueryDesc query;
+        query.Kind = EPhysicsQueryKind::OverlapSphere;
+        query.Sphere = Math::Sphere(Math::Vector3(),10);
+        Core::Container::VariableArray<PhysicsQueryHit> hits;
+        assert(fixture.Engine.GetSceneQuery().ExecuteQuery(query,hits) == EPhysicsSceneQueryResult::Success);
+        assert(hits.size() == 2);
+        assert(first->RemoveOnOverlapBegin(beginHandle) == EPhysicsResult::Success);
+        assert(first->RemoveOnOverlapEnd(endHandle) == EPhysicsResult::Success);
+        assert(second->RemoveOnHit(hitHandle) == EPhysicsResult::Success);
+    }
 
     void TestPublishedQueryBatch()
     {
@@ -621,6 +724,8 @@ int main()
     TestColliderMetadataSnapshot();
     TestUnifiedPublishedQuery();
     TestPublishedQueryBatch();
+    TestLayerMaskCandidatePairs();
+    TestLayerMaskContactsAndEvents();
     std::cout << "PhysicsBroadphaseQueryTest passed\n";
     return 0;
 }

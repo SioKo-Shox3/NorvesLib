@@ -99,6 +99,19 @@ int main()
             }
         }
     }
+    for (uint32_t firstBit = 0; firstBit < 32; ++firstBit)
+    {
+        for (uint32_t secondBit = 0; secondBit < 32; ++secondBit)
+        {
+            const uint32_t a = uint32_t{1} << firstBit, b = uint32_t{1} << secondBit;
+            assert(CanPhysicsLayersInteract(a,b,b,a));
+            assert(CanPhysicsLayersInteract(b,a,a,b));
+            assert(!CanPhysicsLayersInteract(a,0,b,a));
+            assert(!CanPhysicsLayersInteract(a,b,b,0));
+            assert(!CanPhysicsLayersInteract(0,b,b,a));
+            assert(CanPhysicsLayersInteract(a|b,AllPhysicsLayers,b|a,AllPhysicsLayers));
+        }
+    }
     assert(CanPhysicsLayersInteract(DefaultPhysicsLayer, AllPhysicsLayers, DefaultPhysicsLayer, AllPhysicsLayers));
     PhysicsQueryDesc desc;
     assert(desc.Kind == EPhysicsQueryKind::RaycastClosest && desc.bReportStartOverlap);

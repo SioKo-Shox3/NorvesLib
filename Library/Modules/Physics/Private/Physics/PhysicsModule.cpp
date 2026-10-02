@@ -952,6 +952,11 @@ namespace NorvesLib::Modules::Physics
             {
                 continue;
             }
+            // 候補生成の実装が差し替わっても、接触/trigger生成前に対称規則を守る。
+            if (!Core::Scene::CanPhysicsLayersInteract(firstProxy->Layer, firstProxy->Mask, secondProxy->Layer, secondProxy->Mask))
+            {
+                continue;
+            }
 
             Math::GeometryContact contact;
             if (!PhysicsBroadphase::ComputeContact(*firstProxy, *secondProxy, contact))

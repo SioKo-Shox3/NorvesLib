@@ -1654,3 +1654,11 @@
 - stop-when: itemごとにreadiness再確認、異なるsnapshotへの暗黙更新、失敗itemのhit混入、offset/size overflow、全体失敗/例外で部分出力、blocking未解消。
 - paths: Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.h, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Core/Object/SceneQueryPhysicsFacadeTest.cpp, Test/Modules/Physics/PhysicsBroadphaseQueryTest.cpp, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
 - notes: 戻り値Successはbatch処理成立で、各要求成否はoutResultsを見る。failure itemのFirstHitはその時点の連続hit末尾、HitCount0。入力span/両出力は非aliasかつ同期呼出し中有効。未対応providerの既定はUnavailable。batch自体の結果と個別結果を混同しない。
+
+## G1-GR08-P5A: 衝突候補とsolverへ対称レイヤーマスクを適用する
+- status: done
+- done-when: broadphase候補生成前とResolveContactsの接触/trigger判定前に(A.Layer & B.Mask)&&(B.Layer & A.Mask)を適用する。既定は従来通り、0/高bit/複数bitを扱い、許可切替でtrigger Begin/Endが次stepに整合する。queryのLayerMaskと相互作用Maskを混同しない。
+- verify: 純bit判定の全32bit/両方向/4096真理値表と実proxy回帰を通常/O2/sanitizer/MEMBERで実行。実broadphaseの順序/接触端点/一方向拒否、実Worldのtrigger通知/solid押出し有無を既存Physics bundleへ追加してcompile試行、独立レビュー。
+- stop-when: 片側許可だけで衝突、拒否pairの押出し/Hit/Begin、旧既定の候補順序変更、queryへMaskを誤適用、blocking未解消。
+- paths: Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Modules/Physics/PhysicsBroadphaseQueryTest.cpp, Test/Core/Object/PhysicsQueryTypesTest.cpp, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
+- notes: Layer/Maskはworking snapshotの値で評価し、callback中の設定は次stepに反映。既存trigger終了通知は許可撤回時にも配信する。実Windows/Core統合は未検証と区別する。

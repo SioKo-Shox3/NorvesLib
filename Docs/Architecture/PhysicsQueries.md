@@ -22,3 +22,9 @@
 - SceneQueryはowner thread/接続/非空null spanを確認しproviderへ1回委譲する。未対応providerの既定はUnavailable。全体の非Successと例外は両出力を空にし、例外は再送出する。入力/両出力は非aliasで、同期実行中に有効なこと
 - PhysicsModuleはreadinessを1回確認して同じ公開Broadphaseを逐次問い合わせ、ローカル候補へ詰める。全処理成功後にnoexcept swapで両出力を公開する。hitサイズの加算上限を確認し、確保例外で部分出力を公開しない。準備済み空batchはSuccess/空。暗黙refreshやsnapshotsequence変更はない
 - fake providerの1回委譲/各全体失敗/例外/不正span/wrong threadと実Moduleの混在結果/offset/MaxHits/単発一致/空/未準備/sequence不変の試験を追加。実統合のcompile/実行はWindows.h依存で未確認
+
+## 相互作用Layer/Mask（P5A）
+- broadphaseのSweepEndpointに所属Layer/Maskを値コピーし、候補ペア追加前に双方の許可を要求する。端点同位置のmin優先、canonical handle順、重複除去は維持する。既定Layer1/Mask全bitなら従来と同じ候補になる
+- ResolveContactsもworking proxyの同じ対称規則を接触計算より前に確認する。拒否pairはsolid押出し/Hit/trigger Beginを作らない。既存triggerの許可を撤回した場合、次stepで既存経路のEndを出す。callback中の変更は次stepのsnapshotに反映する
+- クエリのLayerMaskは検索対象の所属Layerを選ぶもので、相互作用Maskではない。衝突を無効化してもLayerが検索対象なら空間クエリに返る
+- 全32bitの両方向/片側拒否と4096真理値表をCPU実行する。実候補の高bit/0/複数bit/接触端点と実Worldの通知/押出しの試験は既存Physics bundleへ追加し、Windows依存の統合実行は未確認と区別する

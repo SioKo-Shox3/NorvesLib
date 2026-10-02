@@ -396,3 +396,6 @@
 
 - G1-GR08-P4B: SceneQuery/provider/PhysicsModuleへExecuteBatchを追加。owner/接続/準備をbatch単位に確認し、同一公開Broadphaseへの要求を順次処理してResult/FirstHit/HitCountと連続hitを返す。個別NoHit/InvalidArgument等は0hitで継続、全体失敗/例外は両出力を空にする。候補配列への組立、size上限確認、noexcept swapで部分公開を防止。準備済み空batchはSuccess、暗黙refresh/sequence更新なし。独立静的レビューPASS、既存実proxy回帰Release/ASan・UBSan成功。新batchのfake/実Module試験に混在offset・全hit field単発一致・metadata/sequenceを追加したが、Windows.h依存で新経路のcompile/実行は未確認。
 - Next: G1／GR08のsolverとbroadphaseへ対称のLayer/Mask判定を反映する。候補訪問の最適化とS9=aの明示snapshot更新も続ける。
+
+- G1-GR08-P5A: broadphase端点にLayer/Maskをコピーし候補追加前に対称規則を適用、solverもworking proxyの同じ規則を接触/trigger/solid処理前に確認する。既定候補順/接触端点/重複除去を維持し、queryのLayerMaskとは分離。全32bitの許可/片側拒否/複数bitと4096真理値表、実proxy回帰を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBERで実行成功。独立第1周でHit期待に接近速度がない点を指摘され、許可時に接近→Hit/押出し、拒否時に自由積分/速度保持/Hitなしへ修正し第2周静的レビューPASS。実候補/Worldのtrigger Begin/Endとsolid検証は既存bundleへ追加済みだが、Windows.h依存で統合compile/実行は未確認。
+- Next: G1／GR08の承認済みS9=a、明示RefreshDynamicSnapshotを追加する。fixed-step sequenceとsimulation stateは保ったままquery snapshotだけを更新する。候補訪問/掃引AABB最適化も継続。
