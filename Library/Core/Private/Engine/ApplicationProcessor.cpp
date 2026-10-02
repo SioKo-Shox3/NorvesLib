@@ -1339,10 +1339,21 @@ namespace NorvesLib::Core::Engine
 
     int ApplicationProcessor::Run()
     {
+        struct RunCleanup
+        {
+            FixedStepScheduler& Scheduler;
+            ~RunCleanup()
+            {
+                // PumpMessages/OnUpdate例外でもheld/fixedPressを残さない。
+                if (GEngine) GEngine->GetInputMapper().CancelAll();
+                Scheduler.EndRun();
+            }
+        } cleanup{*m_FixedStepScheduler};
         LOG_INFO("ApplicationProcessor::Run() - Starting main loop");
 
         m_LastFrameTimeNanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (GEngine) GEngine->GetInputMapper().CancelAll();
         m_FixedStepScheduler->BeginRun();
 
         while (GEngine && GEngine->IsRunning() && !GEngine->IsExitRequested())
@@ -1350,7 +1361,13 @@ namespace NorvesLib::Core::Engine
             // 入力システムのフレーム開始（前フレーム状態保存、累積値リセット）
             // ※ProcessPlatformMessagesの前に呼ぶこと。
             //   メッセージ処理中にInjectされた入力をOnUpdateで参照するため。
-            GEngine->GetInputSystem().BeginFrame();
+            const int64_t inputFrameTime = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (!BeginInputFrame(inputFrameTime))
+            {
+                GEngine->GetInputMapper().CancelAll();
+                LOG_WARNING("入力frameの開始時刻が不正なため操作を取り消しました");
+            }
 
             // プラットフォームメッセージ処理
             if (!ProcessPlatformMessages())
@@ -1362,7 +1379,6 @@ namespace NorvesLib::Core::Engine
             Tick();
         }
 
-        m_FixedStepScheduler->EndRun();
         LOG_INFO("ApplicationProcessor::Run() - Main loop ended");
 
         return GEngine ? GEngine->GetExitCode() : 0;
@@ -1380,6 +1396,8 @@ namespace NorvesLib::Core::Engine
 
         if (GEngine && lifecycle.bEngine)
         {
+            // Handler/World/windowの破棄より先に入力操作とRouter登録を解除する。
+            GEngine->GetInputMapper().Detach();
             auto *handler = GEngine->GetApplicationHandler();
 
             if (lifecycle.bRunning)
@@ -1549,6 +1567,12 @@ namespace NorvesLib::Core::Engine
         const int64_t rawDeltaNanoseconds = CalculateRawDeltaTimeNanoseconds();
         const float deltaTime = ClampVariableDeltaTime(rawDeltaNanoseconds);
         GEngine->SetDeltaTime(deltaTime);
+        // 入力はゲーム用100ms clampの前の実dtで評価し、OnUpdateから同frame値を読める。
+        if (!UpdateInputFrame(m_LastFrameTimeNanoseconds, rawDeltaNanoseconds))
+        {
+            GEngine->GetInputMapper().CancelAll();
+            LOG_WARNING("入力actionの評価に失敗したため操作を取り消しました");
+        }
 
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
@@ -1811,6 +1835,24 @@ namespace NorvesLib::Core::Engine
             }
         }
         return result;
+    }
+
+    bool ApplicationProcessor::BeginInputFrame(int64_t timeNanoseconds)
+    {
+        if (!GEngine || timeNanoseconds < 0) return false;
+        const double time = static_cast<double>(timeNanoseconds) / 1'000'000'000.0;
+        if (!GEngine->GetInputMapper().BeginFrame(time)) return false;
+        // Mapperの時刻検証成功後、message配送前に正本の前frame保存/累積解除も行う。
+        GEngine->GetInputSystem().BeginFrame();
+        return true;
+    }
+    bool ApplicationProcessor::UpdateInputFrame(int64_t timeNanoseconds, int64_t rawDeltaNanoseconds)
+    {
+        if (!GEngine || timeNanoseconds < 0) return false;
+        const double time = static_cast<double>(timeNanoseconds) / 1'000'000'000.0;
+        const double dt = rawDeltaNanoseconds > 0
+            ? static_cast<double>(rawDeltaNanoseconds) / 1'000'000'000.0 : 0.0;
+        return GEngine->GetInputMapper().Update(time, dt);
     }
 
     int64_t ApplicationProcessor::CalculateRawDeltaTimeNanoseconds()

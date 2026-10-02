@@ -1320,3 +1320,11 @@
 - stop-when: borrowed設定pointer保持、UI consumed押下の復活、context越しheld継続、解放後Router pointer、blocking未解消。
 - paths: Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/InputActionMapTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: Engine/ApplicationProcessorとOS、JSON/rebind captureは後続。既存camera controllerへイベントを透過する。
+
+## G1-GR03-P4H: Engineとフレーム処理へMapperを配線する
+- status: done
+- done-when: Engineが正本/Routerより短い寿命でMapperを所有し、message前BeginFrameとOnUpdate前Update、Run終了取消とShutdown先行Detachを接続する。入力時間はsteady_clock、dtはgame clamp前を使う。
+- verify: InputFramePipelineTestを既存ApplicationFixedStepPipelineTest束へ追加し、所有/配送/実時間/固定press/終了取消を検証。現在Windows依存で未実行なら静的確認と明示。portable入力群/FixedStepScheduler回帰をg++で実行。
+- stop-when: 入力更新がOnUpdateより後、clamped dt使用、正本/Router破棄後のMapper参照、起動画面変更、blocking未解消。
+- paths: Library/Core/Public/Engine/Engine.h, Library/Core/Private/Engine/Engine.cpp, Library/Core/Public/Engine/ApplicationProcessor.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Test/Core/Engine/InputFramePipelineTest.cpp, Test/Core/Engine/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: Game既定JSON、rebindとOS供給/cursor/focus通知は次段。Mapper未設定の旧camera経路を維持。

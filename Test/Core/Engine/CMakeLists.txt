@@ -6,6 +6,7 @@ norves_add_test_bundle(ApplicationFixedStepPipelineTest
     FOLDER "Test/Core/Engine"
     MEMBER ApplicationFixedStepPipelineTest ApplicationFixedStepPipelineTest.cpp
     MEMBER FixedStepSchedulerTest FixedStepSchedulerTest.cpp
+    MEMBER InputFramePipelineTest InputFramePipelineTest.cpp
 )
 target_link_libraries(ApplicationFixedStepPipelineTest PRIVATE Core)
 target_include_directories(ApplicationFixedStepPipelineTest PRIVATE
@@ -17,3 +18,4 @@ target_compile_definitions(ApplicationFixedStepPipelineTest PRIVATE
 )
 
 add_test(NAME ApplicationFixedStepPipelineTest COMMAND ApplicationFixedStepPipelineTest)
+add_test(NAME InputFramePipelineTest COMMAND ApplicationFixedStepPipelineTest --test=InputFramePipelineTest)

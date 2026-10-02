@@ -300,3 +300,6 @@
 
 - G1-GR03-P4G: InputMapperがIdentity context/action/bindingsとruntimeを所有copyし、正本とRouterを借用してAttach/Detach。top contextだけを評価し、切替/focus/resetでCancel/armed Reset、同frame短tap/fixed消費/相対入力を接続。Pad断線は別bindingのheldを保ち、それ以外を通常TapではなくCancel。GetActionは値snapshot、未接続/非focusではanalogも停止。独立所有/寿命/公開API/統合試験の静的レビューPASS、実portable state/runtime5件回帰PASS。InputActionMapTestとMapperのcompileはIdentity→String→Windows.h依存で停止し未実行。任意改善のmouse/modifier/別Router再Attach試験と配送中設定変更禁止のheader記載を追加。Engine/App/OS/JSON/rebindは未完。
 - Next: EngineがMapperを所有し、Runのmessage前BeginFrame→TickのOnUpdate前Updateへ単調な実時間で配線する。
+
+- G1-GR03-P4H: Engineが正本/Routerより後にMapperを所有して自動Attachし、Runのmessage前BeginFrameとTickのOnUpdate前Updateへsteady_clock絶対時刻＋clamp前raw dtを配線。Run開始/終了で取消、Shutdown/destructorは先行Detach。独立評価でRun例外時に末尾CancelAll/EndRunが飛ぶ欠陥を検出し、scope-exitに修正。実Runを通る偽platformのPump例外/OnUpdate例外/通常終了、legacy透過、所有/時間/fixed latchの試験を既存Engine bundleへ追加し第2周静的レビューPASS。実InputActionRuntime/InputButtonState回帰PASS。新Engine試験と既存FixedStepSchedulerTestはWindows.h依存でcompile停止、統合実行/起動画面は未確認。Game JSON/context設定、rebind、OS供給/cursor/focus通知は後続。
+- Next: bindings.v1の名前付きcode・設定JSON/既定とユーザー差分の重ね合わせ、IInputBindingStoreによる保存、リバインド捕捉を実装する。

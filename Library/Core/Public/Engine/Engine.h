@@ -9,6 +9,7 @@
 #include "Scene/SceneQuery.h"
 #include "Input/InputSystem.h"
 #include "Input/InputRouter.h"
+#include "Input/InputMapper.h"
 #include "Particle/ParticleSystem.h"
 #include "Thread/Atomic.h"
 
@@ -388,6 +389,8 @@ namespace NorvesLib::Core::Engine
         {
             return m_InputRouter;
         }
+        Input::InputMapper& GetInputMapper() { return m_InputMapper; }
+        const Input::InputMapper& GetInputMapper() const { return m_InputMapper; }
 
     private:
         static constexpr uint64_t ExitRequestedMask = uint64_t{1} << 63;
@@ -433,6 +436,8 @@ namespace NorvesLib::Core::Engine
 
         // 入力ルーター（GEngine配下で実体保持・InputSystem からの配送先）
         Input::InputRouter m_InputRouter;
+        // 借用先の正本/Routerより後に宣言し、先に破棄する。
+        Input::InputMapper m_InputMapper;
 
         // 実行状態
         bool m_bIsRunning = false;

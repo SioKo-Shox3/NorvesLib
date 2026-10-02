@@ -22,6 +22,7 @@ namespace NorvesLib::Core::Engine
     class FixedStepScheduler;
     struct FixedStepAdvanceResult;
     struct ApplicationFixedStepTestAccess;
+    struct ApplicationInputFrameTestAccess;
 
     /**
      * @brief アプリケーション処理クラス
@@ -74,6 +75,7 @@ namespace NorvesLib::Core::Engine
 
     private:
         friend struct ApplicationFixedStepTestAccess;
+        friend struct ApplicationInputFrameTestAccess;
 
         /**
          * @brief 1フレームの処理を実行
@@ -89,6 +91,8 @@ namespace NorvesLib::Core::Engine
         // handlerは呼出元が全フレーム中保持する借用参照。描画/OS処理を含まない。
         FixedStepAdvanceResult TickSimulation(int64_t rawDeltaNanoseconds, float deltaTime,
             bool bAdvanceSimulation, Application::IApplicationHandler* handler);
+        bool BeginInputFrame(int64_t timeNanoseconds);
+        bool UpdateInputFrame(int64_t timeNanoseconds, int64_t rawDeltaNanoseconds);
         int64_t CalculateRawDeltaTimeNanoseconds();
         float ClampVariableDeltaTime(int64_t rawDeltaNanoseconds) const;
         FixedStepAdvanceResult AdvanceFixedSimulation(
