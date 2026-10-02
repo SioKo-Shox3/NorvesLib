@@ -527,6 +527,7 @@ set(PUBLIC_HEADERS
     Public/Input/GamepadTypes.h
     Public/Input/InputBindingTypes.h
     Public/Input/InputActionSettings.h
+    Public/Input/InputActionRuntime.h
     Public/Input/InputBindingSet.h
     Public/Input/InputState.h
     Public/Input/InputSystem.h

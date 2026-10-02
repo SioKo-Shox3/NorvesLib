@@ -291,3 +291,6 @@
 
 - G1-GR03-P4D: CursorMode値型、InputActionSettings純検証、Identityでcontext/action/bindingsを所有するInputBindingSetを追加。重複/unknown/invalidを拒否し、空unbind、deep copy、alias置換、借用viewの寿命を定義した。純settingsは通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）とbundle相当compileがPASS、所有/APIは独立静的レビューPASS。Identity→StringのWindows.h依存でInputBindingSet.cpp/所有試験のcompile・実行は未検証。boolの拒否とallocation例外を区別し、後続JSONの全体更新は候補構築後のmoveとする。Mapper/JSON/OSカーソルは未接続。
 - Next: binding spanと正本/armedから実action値を作るportable runtime、それをIdentity設定・Routerへ接続するMapper。
+
+- G1-GR03-P4E: binding span＋正本/armedからButton OR/短tap/固定stepラッチ、1D/2D curve、event時modifier判定付き相対変位とrate×実dtの混合を評価するInputActionRuntimeを追加。借用spanを保持せずinvalid/overflowは非変更。独立評価でcurve前float化の数理欠陥（巨大Gammaで飽和2Dが0、微小値がcurve前に消失）を検出し、double集約のままcurveまで通すWide APIへ修正、恒久回帰を追加。通常/NDEBUG-O2/ASan・UBSan（LeakSanitizer除外）、bundle相当compile、既存7件回帰が成功、第2周レビューPASS。Router/Identity/OS/Gameの実統合とは区別する。
+- Next: Raw/Pad/resetの配送口とInputMapperを既存Routerへ接続し、context maskと設定所有を統合する。

@@ -79,3 +79,17 @@
 - Settings/cursorの純検証はLinuxで実行。InputBindingSetの所有/copy試験は既存bundleへ追加したが、Identity→StringのWindows.h依存でコンパイル・実行は未検証。純検証の合格を所有/Mapper統合の合格とは扱わない。
 
 - 所有APIのboolはvalidation拒否を表し、allocation失敗は例外として伝播する。copy assignmentの強い例外保証は約束しない。JSON等の全体更新は候補を構築・検証し、成功時だけmoveで入れ替える。
+
+## アクション評価核
+
+- InputActionRuntimeはsettings/ボタン時間状態/軸/相対変位だけを所有する。binding span・InputState・armedは呼出中だけ借用し、保持しない。Configure後は同じcompile済みbindingsを渡し続け、再設定時は外側でCancel/armedのResetを行う。
+- Configureは成功時に全入力状態を初期化し、単調時刻だけ維持する。不正settingsは非変更。旧Releasedを通知したい場合はConfigure前にCancelの結果を読む。
+- BeginFrameは単調な実時刻でedge/変位/軸を初期化する。SyncButtonsをRouter到達イベント直後に呼び、全persistent bindingのORを反映して同frame短tapを保持する。相対sourceのButtonは到達時にpress/release impulseを作る。
+- modifierにもarmedを使う。相対変位は到達イベント時の修飾条件で加算し、frame末のmodifier状態で遡って削除しない。正本のglobal mouse累積を読んでUIを迂回しない。
+- persistent laneはscale→invert後に合計し、1D clamp/2D長さ制限とdeadzone/curveを一度適用する。FrameDeltaだけが相対変位×mouse感度＋正規化lane×rate感度×unscaled dtを出す。相対laneへcurve/dtは掛けない。
+- Buttonは変換後valueが正かつthreshold以上でdownになる。複数bindingのORと持続中の相対impulseは不要なreleaseを出さない。Pad axis/triggerは正本のpolling値で、context/focusの遮断は外側Mapperの責務。
+- Updateは現在frame時刻でbuttonを同期した後、指定時刻まで進める。eventの精度は呼出側のframe時刻粒度。invalid/計算overflowはfalseで既存結果/時刻/蓄積を保持し、再評価やCancelが可能。外側は失敗を無視せず安全にCancelすること。
+- Cancelは通常release完了と区別し、Tap/DoubleTap/Hold/固定step待ち押下/軸/変位を消す。focus/context切替時はarmedもResetして押しっぱなしを再許可しない。
+- このkernelはOS/Router/Identityから独立して実行検証する。InputMapper・JSON・Engine・Raw Input・XInputの接続と実機受入は引き続き別段階。
+
+- 軸の合計はcurveまでdoubleで保ち、最後だけfloatへ変換する。先に正規化したfloatの半径を再評価すると、巨大Gammaで長さ1の入力が0へ落ちたり、微小入力がcurve前に消えるため禁止する。

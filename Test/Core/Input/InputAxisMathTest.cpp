@@ -120,6 +120,20 @@ int main()
     assert(!TryComputeLookDelta(1,1.1f,1,1,1,scalar) && scalar==0);
     assert(!TryComputeLookDelta(nan,0,1,1,1,scalar) && scalar==0);
     assert(!TryComputeLookDelta(1,0,-1,1,1,scalar) && scalar==0);
+    assert(TryComputeLookDeltaWide(static_cast<double>(max)*2,0,0.25f,0,0,scalar) && scalar==max*0.5f);
+    assert(TryComputeLookDeltaWide(static_cast<double>(max)*2,-1,1,max,2,scalar) && scalar==0);
+    assert(!TryComputeLookDeltaWide(std::numeric_limits<double>::infinity(),0,0,0,0,scalar) && scalar==0);
+    assert(!TryComputeLookDeltaWide(std::numeric_limits<double>::max(),0,max,0,0,scalar) && scalar==0);
+    response={};response.Curve=EInputResponseCurve::Power;response.Gamma=max;
+    assert(TryApplyRadialAxisResponseWide(1,1,response,result));
+    assert(Near(result.x,std::sqrt(0.5)) && Near(result.y,std::sqrt(0.5)));
+    response.Gamma=0.01f;
+    assert(TryApplyAxisResponseWide(1e-46,response,scalar));
+    assert(Near(scalar,std::pow(1e-46,static_cast<double>(response.Gamma))));
+    response={};
+    assert(TryApplyRadialAxisResponseWide(std::numeric_limits<double>::max(),std::numeric_limits<double>::max(),response,result));
+    assert(Near(result.x,std::sqrt(0.5)) && Near(result.y,std::sqrt(0.5)));
+    assert(!TryApplyRadialAxisResponseWide(std::numeric_limits<double>::infinity(),0,response,result) && Length(result)==0);
     std::cout << "InputAxisMathTest passed\n";
     return 0;
 }

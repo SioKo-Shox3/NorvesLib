@@ -29,7 +29,7 @@ namespace NorvesLib::Core::Input
 
     namespace Detail
     {
-        // 引数は検証済み、長さは[0,1]。deadzone後の長さへ曲線を適用する。
+        // 引数は検証済み、長さは非負。上限1とdeadzoneの処理後に曲線を適用する。
         inline double ShapeAxisMagnitude(double length, const InputAxisResponse& response)
         {
             if (length <= response.DeadZone) return 0.0;
@@ -43,35 +43,47 @@ namespace NorvesLib::Core::Input
         }
     }
 
-    // 正規化軸専用。失敗はfalseと0。mouseのフレーム変位には適用しない。
-    inline bool TryApplyAxisResponse(float input, const InputAxisResponse& response, float& outValue)
+    // 集約値はcurve適用までdoubleを保つ。失敗はfalseと0。mouse変位には適用しない。
+    inline bool TryApplyAxisResponseWide(double input, const InputAxisResponse& response, float& outValue)
     {
         outValue = 0.0f;
         if (!std::isfinite(input) || !IsValidAxisResponse(response)) return false;
-        const double magnitude = Detail::ShapeAxisMagnitude(std::fabs(static_cast<double>(input)), response);
-        outValue = static_cast<float>(input < 0.0f ? -magnitude : magnitude);
+        const double magnitude = Detail::ShapeAxisMagnitude(std::fabs(input), response);
+        outValue = static_cast<float>(input < 0.0 ? -magnitude : magnitude);
         return true;
     }
+    inline bool TryApplyAxisResponse(float input, const InputAxisResponse& response, float& outValue)
+    {
+        return TryApplyAxisResponseWide(input, response, outValue);
+    }
 
-    // 放射状deadzoneと長さのcurveにより方向を維持する。有限の過大入力も長さ1へ制限。
+    // 半径を丸めて再評価せず、元の集約半径へcurveを一度適用する。
+    inline bool TryApplyRadialAxisResponseWide(double x, double y, const InputAxisResponse& response,
+        Math::Vector2& outValue)
+    {
+        outValue = Math::Vector2(0.0f, 0.0f);
+        if (!std::isfinite(x) || !std::isfinite(y) || !IsValidAxisResponse(response)) return false;
+        const double scale = std::max(std::fabs(x), std::fabs(y));
+        if (scale == 0.0) return true;
+        const double nx = x / scale, ny = y / scale;
+        const double unitLength = std::hypot(nx, ny);
+        // 正規化済み方向を先に作り、double最大値付近のhypot overflowも避ける。
+        const double length = scale >= 1.0 ? 1.0 : std::min(scale * unitLength, 1.0);
+        const double magnitude = Detail::ShapeAxisMagnitude(length, response);
+        outValue = Math::Vector2(static_cast<float>((nx / unitLength) * magnitude),
+            static_cast<float>((ny / unitLength) * magnitude));
+        return true;
+    }
     inline bool TryApplyRadialAxisResponse(const Math::Vector2& input, const InputAxisResponse& response,
         Math::Vector2& outValue)
     {
-        // 入出力aliasを許すため、先に値を保存する。
-        const double x = input.x, y = input.y;
-        outValue = Math::Vector2(0.0f, 0.0f);
-        if (!std::isfinite(x) || !std::isfinite(y) || !IsValidAxisResponse(response)) return false;
-        const double length = std::hypot(x, y);
-        if (length == 0.0) return true;
-        const double magnitude = Detail::ShapeAxisMagnitude(length, response);
-        outValue = Math::Vector2(static_cast<float>((x / length) * magnitude),
-            static_cast<float>((y / length) * magnitude));
-        return true;
+        // 値引数に写してから出力を消すため入出力aliasも安全。
+        return TryApplyRadialAxisResponseWide(input.x, input.y, response, outValue);
     }
 
     // 視点の単位を度/frameへ合わせる。mouseは変位なのでdtを掛けず、stickだけ実時間を掛ける。
     // stickはresponse適用後の[-1,1]。反転は呼出側が入力符号へ適用する。
-    inline bool TryComputeLookDelta(float mouseDisplacement, float normalizedStick,
+    inline bool TryComputeLookDeltaWide(double mouseDisplacement, float normalizedStick,
         float mouseDegreesPerUnit, float stickDegreesPerSecond, double unscaledDeltaSeconds, float& outDegrees)
     {
         outDegrees = 0.0f;
@@ -84,5 +96,12 @@ namespace NorvesLib::Core::Input
         if (!std::isfinite(delta) || std::fabs(delta) > std::numeric_limits<float>::max()) return false;
         outDegrees = static_cast<float>(delta);
         return true;
+    }
+    // 既存のfloat APIを維持し、複数bindingの大きな累積はWide版で扱う。
+    inline bool TryComputeLookDelta(float mouseDisplacement, float normalizedStick,
+        float mouseDegreesPerUnit, float stickDegreesPerSecond, double unscaledDeltaSeconds, float& outDegrees)
+    {
+        return TryComputeLookDeltaWide(mouseDisplacement, normalizedStick, mouseDegreesPerUnit,
+            stickDegreesPerSecond, unscaledDeltaSeconds, outDegrees);
     }
 } // namespace NorvesLib::Core::Input

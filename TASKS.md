@@ -1296,3 +1296,11 @@
 - stop-when: 無効変更の部分適用、長期pointer、String key、OS設定変更混入、blocking未解消。
 - paths: Library/Core/Public/Application/CursorMode.h, Library/Core/Public/Input/InputActionSettings.h, Library/Core/Public/Input/InputBindingSet.h, Library/Core/Private/Input/InputBindingSet.cpp, Library/Core/CMakeLists.txt, Test/Core/Input, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: Mapper/JSON/OSカーソルは未接続。
+
+## G1-GR03-P4E: バインドからボタンと軸のアクション値を評価する
+- status: done
+- done-when: 到達入力/armedとbindingからOR button、curve軸、相対変位とrate時間単位を評価し、span非保持、cancel/fixed latch、不正入力非変更を守る。
+- verify: g++ -std=c++20 -I Library/Core/Public Test/Core/Input/InputActionRuntimeTest.cpp Library/Core/Private/Input/InputState.cpp -o /tmp/input-runtime && /tmp/input-runtime
+- stop-when: UI迂回、span長期保持、dt混同、部分適用、blocking未解消。
+- paths: Library/Core/Public/Input/InputActionRuntime.h, Library/Core/Public/Input/InputAxisMath.h, Library/Core/CMakeLists.txt, Test/Core/Input/InputActionRuntimeTest.cpp, Test/Core/Input/InputAxisMathTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: Identity/Router/Engineの接着は後続Mapper。
