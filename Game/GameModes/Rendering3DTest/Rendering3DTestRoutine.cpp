@@ -107,6 +107,17 @@ namespace Game::GameModes
         constexpr float kStartupHeightFogDensity = 0.04f;
         constexpr float kStartupHeightFogFalloff = 1.0f;
 
+        // 起動画面の自動露出の露出補正（EV）。自動露出は画面の log2 輝度の平均を中間調へ合わせるため、
+        // 明るい空が画面の多くを占める昼の屋外では地面が暗く写り、ACES の足元が暗部を縮めて、空の光だけの
+        // 影の中（ライティングの出力で日向の約 2 割）が表示のリニア値で約 1 割の黒い芯になる。写真の
+        // 逆光補正と同じく露出を上げ、影の中を足元の外へ出す。手動露出には掛けない。
+        constexpr float kStartupAutoExposureCompensationEV = 2.0f;
+
+        float StartupExposureCompensationEV(bool bAutoExposure)
+        {
+            return bAutoExposure ? kStartupAutoExposureCompensationEV : 0.0f;
+        }
+
         void UnregisterRendering3DInput(GameModeContext& ctx, Rendering3DTestData& data)
         {
             auto& inputRouter = ctx.EngineRef.GetInputRouter();
@@ -199,6 +210,7 @@ namespace Game::GameModes
             data.m_bAutoExposure = true;
             data.m_bAppliedAutoExposure = true;
             data.m_pCameraComponent->SetExposureMode(CameraExposureMode::Auto);
+            data.m_pCameraComponent->SetExposureCompensation(StartupExposureCompensationEV(data.m_bAutoExposure));
             // 既定のコントラスト（1.05）は表示のリニア値 0.024 未満（sRGB で約 43/255 以下）を黒へ切り、晴天の
             // 影の中の地面（空の光だけで日向の約 2 割）が真っ黒になるため、起動画面ではコントラストを掛けない。
             data.m_pCameraComponent->SetGradingContrast(1.0f);
@@ -1541,6 +1553,7 @@ namespace Game::GameModes
         {
             data.m_pCameraComponent->SetExposureMode(data.m_bAutoExposure ? CameraExposureMode::Auto
                                                                           : CameraExposureMode::Manual);
+            data.m_pCameraComponent->SetExposureCompensation(StartupExposureCompensationEV(data.m_bAutoExposure));
             data.m_bAppliedAutoExposure = data.m_bAutoExposure;
         }
 
