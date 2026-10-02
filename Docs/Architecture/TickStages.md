@@ -16,7 +16,7 @@
 
 ## 段階への割当とポーズ（接続時の契約）
 
-- 既存ComponentはDefaultのまま。EntityのTickもDefaultで実行する。
+- 明示割当のないComponentはDefaultのまま。例外を含む型別の正本は後掲のComponent割当表。EntityのTickもDefaultで実行する。
 - SkinnedMeshComponentはAnimationで時刻更新、PoseFinalizeで姿勢確定する。
 - SpringArmComponentはCameraで固定ステップ後の位置を読む。
 - 後半の群、Module LateTick、Application OnLateUpdateを含め、シミュレーションが停止したフレームは進めない。
@@ -72,3 +72,49 @@
 - Module Late後のchild pivot/cameraを扱うため、World変換確定→SpringArm refresh→World変換確定→proxy生成とする。追加のO(Entity数)走査2回はGR41でdirty世代による最適化の対象とする。
 - late送信成功時のTICK_STAGE_SMOKE markerを追加したが、ログを実機で観測したわけではない。CameraWorld/M9、既定・近接・低角度の見た目は未検証。
 - 既存SpringArmComponentTestへ全constructor群、固定0/1/2後の群単独追従、child変換、無効化/実削除、one-shot/上書き/weak寿命/再入のケースを追加。Windows.hでコンパイルが止まるため、静的レビューのみで実行合格ではない。
+
+## G1のComponent割当表（現在の実装）
+
+| 群 | 現在のComponent | 担当する処理 |
+|---|---|---|
+| Input | 明示割当なし | 後続の型を登録する枠 |
+| Movement | 明示割当なし | 後続の型を登録する枠 |
+| Default | MeshComponent、MegaGeometryComponent、BoardComponent、BillboardComponent、ImpostorComponent、TextComponent、LightComponent、DirectionalLightComponent、PointLightComponent、SpotLightComponent、CameraComponent、ScriptComponent、ColliderComponent、RigidBodyComponent | 既定の可変Tick。Entity::Tickもこの群 |
+| Animation | SkinnedMeshComponent | 再生時刻更新 |
+| PoseFinalize | SkinnedMeshComponent | EvaluatePoseによる姿勢確定 |
+| PostPhysics | 明示割当なし | 固定処理後の利用者を登録する枠 |
+| Camera | SpringArmComponent | 固定更新後のTransformから追従姿勢を更新 |
+| PreRender | 明示割当なし | World Lateの最後。Module/HandlerのLateはこの群外 |
+
+- 全型の現在の優先度は0。CameraComponentの可変Tickはno-opで、名前だけを理由にCamera群へ変更しない。Collider/RigidBodyも可変Tickは継承no-op、物理更新本体はPhysicsModuleのPreFixedTick/FixedTickにある
+- 根拠はComponent/TickGroup.hの既定値、SkinnedMeshComponent全constructorとOnTickGroup、SpringArmComponent全constructor。主群/優先度による順序は可変群だけに適用し、FixedTickは収集されたEntity深さ優先・Component登録順のまま
+- 今後Componentを追加・群変更するときは、この表に型名、群、処理、通常/ポーズ時の分類を同じ変更で登録する。複数群では実行責務と二重更新防止を明記し、依存はDelegateで通知する。名前やModule登録順から依存グラフを暗黙生成しない
+
+## Bridge進行とポーズの3分類
+
+現時点ではGameApplicationHandler::ShouldAdvanceSimulationによる共通gateが1つだけある。Bridge無効なら進行、有効時はEdit/Playingで進行しPaused/Stoppedで停止する。SimulationPauseState、bTickWhenPaused、World::TickWhenPausedは未実装であり、次表の将来欄を現在の機能として使ってはならない。
+
+| 分類 | G1の現行動作 | GR119で拡張するときの契約 |
+|---|---|---|
+| Bridgeの進行に従う | GameModeは共通gateで更新 | GameModeの進行判断はBridgeに残し、ゲーム内pause状態と混同しない |
+| 非ポーズ時のsimulation | World全群、Particle、固定step、Module Late、Handler Lateも同じgateで更新 | Bridge進行 AND ゲーム内非pauseの条件で実行 |
+| ポーズ中も更新する印付き対象 | 未実装、該当する印付きComponentなし | bTickWhenPaused等の明示指定を持つ対象だけ、実時間dtで更新。上表と合わせて割当を登録 |
+
+Handler OnUpdateとBridge DrainInbound、入力評価/メンテナンス、描画同期後の通常Module TickAll、OnPreRenderは現在もsimulation gateの外にある。これは将来の印付きComponent更新とは別物。停止中はfixed schedulerの累積値を保持し、前半/後半だけを勝手に動かさない。振動は既存のsimulation/focus通知でvoiceを取り消し、自動再開しない。
+
+## 最終カメラとG14/G16の受渡し
+
+現行フレームの主要な更新順は次のとおり（振動はHandler Late後・描画同期前にgate外で更新する）。
+
+1. 入力評価 → Handler OnUpdate → Script BeginFrameMaintenance
+2. 進行gate内：GameMode → World Tick（Input〜PoseFinalize）→ Particle
+3. 進行gate内：固定stepを0〜8回。各回はTransform → Module PreFixedTick → Component FixedTick → Module FixedTick → Transform → cleanup
+4. 進行gate内：World Late（PostPhysics → Camera → PreRender）→ Module Late → Handler OnLateUpdate
+5. gate外：World描画同期 → SceneQueryの通常world-AABB再構築 → Script EndFrameMaintenance → Module TickAll → Handler OnPreRender → 描画
+
+通常world-AABBの再構築と、GR08の物理公開snapshot/明示RefreshDynamicSnapshotは別の更新である。物理snapshotがここで暗黙refreshされると読んではならない。
+
+- 承認済みS3に従い、現在のGameカメラ最終proxyはGameApplicationHandler::OnLateUpdateのslotから確定する。Module Lateは全World群より後だが、その最終確定より前である。「Module Late=Camera群」「Module Lateで最終カメラ確定」というロードマップ上の記述は現実装に適用しない
+- G14 CameraDirectorの配置自体は未決のG14-S3に残す。どこに所有しても、候補/intentの評価と最終commitを分け、当フレームの最終結果はGame OnLateUpdateの確定境界で一度だけ反映する。Module Lateで準備する案は可能だが、描画同期後の通常Module Tickから別のcameraを上書きする方式にはしない
+- G16 listenerはこの最終commit後の同じフレームのcamera snapshotを読む。現在の順序なら、その後の通常Module Tickか将来追加する明示的な確定通知が候補になる。Module Lateを最終cameraの読取点にしてはならない。停止中のlistener/Audio方針はGR119/GR73で定め、今のAudioServiceModuleにlistener連携があるとは扱わない
+- 根拠：ApplicationProcessor::Tick/TickSimulation/AdvanceFixedSimulation、World::Tick/LateTick/FixedTick、GameApplicationHandler::OnLateUpdate/ShouldAdvanceSimulation、Game/CameraLateUpdate.h。これらの文書化は更新順や描画実装の変更ではない

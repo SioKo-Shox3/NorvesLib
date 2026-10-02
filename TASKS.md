@@ -1697,7 +1697,7 @@
 - notes: 原文Roadmapの段階横断注意G1/GR03・GR04。入力API/GR119・GR121の再利用規約も文書に明記する。
 
 ## G1-GR01-CONTRACT: 更新群とpauseと最終cameraの共有契約を明文化する
-- status: todo
+- status: done
 - done-when: 更新群ごとのComponent割当、Bridge進行/非pause/将来bTickWhenPausedの3分類、新Component登録規約、G14 CameraDirector/G16 listenerの参照順を現コードと承認S3に合わせて文書化する。
 - verify: TickStages/Processor/World/Module/Gameの実順序を照合し、未実装のbTickWhenPausedや将来hookを既存機能と誤記しない。独立文書レビュー。
 - stop-when: IModule::LateTickより後のGame::OnLateUpdate確定を隠す、未承認の更新順/pausingの実装変更。
@@ -1731,3 +1731,10 @@
 - notes: 新旧とも有効な正規直交OBB/共通数値安全域を条件とし、範囲外はInvalidArgumentへ統一。旧有限検査で通っても数学的に無効なOBBやfloat計算保証外の巨大形状は互換保証に含めない。直接BroadphaseのOverlap追記契約は維持、Module/Sceneの失敗出力は空。
 
 - notes: 第1周でLayer0の旧無filter契約を確認。旧adapterだけ内部kernelのfilter適用を無効にし、新APIのbitmask条件は維持。4種類の旧hit/新NoHitを回帰へ追加する。
+
+## G1-GR01-TRANSFORM-BOUNDARY: 群境界で子階層のworld姿勢を確定する
+- status: todo
+- done-when: Roadmap G1リスクの段階境界確定に従い、Movement等で親が動いた後のDefault/Animation/PoseFinalize、Camera後のPreRenderから子world姿勢を同frameで読む。既存群順/収集/削除/Fixed規則を維持する。
+- verify: 実WorldTickGroupTestへ親子階層の各群境界・同群の非暗黙確定・追加翌frame・Late境界の回帰を追加。可能なportable群/dispatch回帰と実統合compile試行、独立レビュー。Windows.h阻害は未実行と記録する。
+- stop-when: callbackごとの全走査、同群順序/寿命の破壊、未承認scheduler変更、Windows統合の偽装。
+- notes: G1最終照合で、現DispatchTickGroupsは前半5群を一括走査し変換確定をLate境界だけに行う点を発見。Entity::GetWorldTransformは親ありdirtyでcached値を返すため、先の群で変更した親への追従が不足する。

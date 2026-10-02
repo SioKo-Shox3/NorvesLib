@@ -420,3 +420,6 @@
 
 - G1-GR03-CURVES: Math/Curves.hへ有限・単調key検証、区分線形、Linear/Power/Expo/SmoothStepを追加。InputAxisMathとHapticsEnvelopeMathが同じ数理を再利用し、JSON/既定値/所有型/独自失敗出力/振動duration規則は維持。第1周の極大floatから小値へのkey端点桁落ちをstd::lerpと±FLT_MAX/内部key/nextafter回帰で修正し第2周PASS。Curves/InputAxis/HapticsMixer/PlaybackTimeの4試験を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で実行、Curves MEMBER compileも成功。後続GR119/GR121の入口/閾値と曲線の再利用契約を文書化。Windows/全bundle統合は未検証。
 - Next: G1／GR01のComponent割当・Bridge進行と将来pauseの区別・最終camera境界を文書で確定し、G1検証範囲を一覧化する。
+
+- G1-GR01-CONTRACT: 全Componentの群割当、可変とFixedの順序差、現Bridge gateと将来pauseの3分類、新Component登録規約を文書化。最終cameraは承認S3のGame OnLateUpdateで、Module Lateより後/通常Module Tickより前と明記し、G14未決配置とG16読取契約を区別。独立source照合PASS、コード変更なし。無視対象Roadmapへ矛盾を上書きする補足を保存。
+- Next: G1最終照合で群境界の子Transform鮮度不足が判明。GR01-TRANSFORM-BOUNDARYとして修正し、その後に検証一覧を確定する。
