@@ -232,7 +232,8 @@ namespace NorvesLib::Core::Input
         }
         void OnGamepadSample(const GamepadSampleEvent& event, const InputState& raw)
         {
-            if (!IsBlocking() || event.Slot >= GamepadSlotCount || !IsValidGamepadState(event.State))
+            if (!IsBlocking() || event.Slot >= GamepadSlotCount || !IsValidGamepadSampleMode(event.Mode) ||
+                !IsValidGamepadState(event.State))
             {
                 return;
             }
@@ -246,7 +247,8 @@ namespace NorvesLib::Core::Input
 
             const bool skippedSample = event.Serial - pad.Serial != 1;
             pad.Serial = event.Serial;
-            if (skippedSample || pad.AwaitingSample || (!pad.Sample.Connected && event.State.Connected))
+            if (event.Mode != EGamepadSampleMode::Live || skippedSample || pad.AwaitingSample ||
+                (!pad.Sample.Connected && event.State.Connected))
             {
                 BaselinePad(pad, event.State);
                 return;

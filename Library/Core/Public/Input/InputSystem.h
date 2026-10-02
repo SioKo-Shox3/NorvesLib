@@ -140,7 +140,9 @@ namespace NorvesLib::Core::Input
         bool InjectMouseScrollAxes(float vertical, float horizontal);
         bool InjectRawMouseDelta(float x, float y);
         // 成功時は同値でも最後にsampleイベントを配送する。ReleaseAllはsampleを合成しない。
-        bool InjectGamepadState(uint8_t slot, const GamepadState& state);
+        // 非Liveはconnection/物理sampleだけを通知し、通常button eventは配送しない。
+        // focus喪失時のMapper停止/ReleaseAllは、この同期modeとは別に先行させる。
+        bool InjectGamepadState(uint8_t slot, const GamepadState& state, EGamepadSampleMode mode = EGamepadSampleMode::Live);
         // 通常Releasedを合成せず、全controllerへ取消通知を届ける。
         // OS callback内でも呼ばれる。購読Delegate/Router observerはwindow表示/activation、
         // window/Engineの破棄、登録変更、再入配送、例外送出を行わない。

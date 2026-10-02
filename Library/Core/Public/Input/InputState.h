@@ -104,7 +104,9 @@ namespace NorvesLib::Core::Input
         uint64_t GetMouseButtonReleaseSerial(MouseButton button) const;
 
         // 検証してからsnapshotを一括更新する。invalid時はedge/serialも変更しない。
-        bool SetGamepadState(uint8_t slot, const GamepadState& state);
+        // 非LiveはPressedラッチを消す。Baselineは操作正本も実値へ同期、Backgroundは操作のみneutral。
+        // 物理sample/serialは全modeで実値を保持する。focusの操作Cancelは別途行う。
+        bool SetGamepadState(uint8_t slot, const GamepadState& state, EGamepadSampleMode mode = EGamepadSampleMode::Live);
         GamepadState GetGamepadState(uint8_t slot) const;
         GamepadState GetPreviousGamepadState(uint8_t slot) const;
         // 最後のprovider受理値（現在の操作状態ではない）。ReleaseAllでは消さない。

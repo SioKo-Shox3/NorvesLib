@@ -244,6 +244,41 @@ int main()
         target.ClearContexts();assert(target.ConfigurePreservingContexts(original));assert(!target.GetActiveContext().IsValid());
         target.Detach();source.SetRouter(nullptr);
     }
+    {
+        InputSystem source;
+        InputRouter route;
+        source.SetRouter(&route);
+        InputMapper target(source.GetState());
+        target.Attach(route);
+        assert(target.ConfigureWithContext(Definitions(), "Gameplay"_id));
+        GamepadState held;
+        held.Connected = true;
+        held.Buttons = static_cast<uint16_t>(GamepadButton::A);
+        held.Axes[0] = 1;
+        assert(source.InjectGamepadState(0, held));
+        assert(target.GetAction("Jump"_id).Button.Held);
+        target.SetFocused(false);
+        source.ReleaseAll();
+        assert(source.InjectGamepadState(0, held, EGamepadSampleMode::Background));
+        assert(target.Update(0, 0.01));
+        assert(!target.GetAction("Jump"_id).Active && !target.GetAction("Jump"_id).Button.Held);
+        assert(!target.GetAction("Jump"_id).Button.Tap && target.GetAction("Move"_id).Axis.x == 0);
+        assert(source.GetState().GetLastGamepadSample(0).Buttons == held.Buttons);
+        target.SetFocused(true);
+        assert(source.InjectGamepadState(0, held, EGamepadSampleMode::Baseline));
+        assert(target.Update(0, 0.01));
+        assert(!target.GetAction("Jump"_id).Button.Held && !target.ConsumeFixedPress("Jump"_id));
+        assert(target.GetAction("Move"_id).Axis.x == 1); // analogは復帰後の連続値として評価する。
+        assert(source.InjectGamepadState(0, held));
+        assert(target.Update(0, 0.01) && !target.GetAction("Jump"_id).Button.Held);
+        auto released = held;
+        released.Buttons = 0;
+        assert(source.InjectGamepadState(0, released));
+        assert(source.InjectGamepadState(0, held));
+        assert(target.GetAction("Jump"_id).Button.Held && target.ConsumeFixedPress("Jump"_id));
+        target.Detach();
+        source.SetRouter(nullptr);
+    }
     std::cout << "InputActionMapTest passed\n";
     return 0;
 }

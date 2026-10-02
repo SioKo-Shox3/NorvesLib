@@ -1454,3 +1454,11 @@
 - stop-when: -32768のoverflow/符号反転、範囲外出力、予約bit混入、deadzone二重適用、invalidの部分反映、blocking未解消。
 - paths: Library/Core/Private/Platform/Windows/XInputStateConversion.h, Library/Core/CMakeLists.txt, Test/Core/Input/GamepadStateNormalizeTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: native API/polling/接続/非focus配送とhaptics serviceは後続。API定義はMicrosoft一次資料を確認済み。
+
+## G1-GR04-P2: 背景と復帰時のpad sampleを通常入力から分離する
+- status: done
+- done-when: Live/Baseline/Backgroundを導入し、実sample履歴を保持したまま非Liveの通常button通知/Pressedを抑止。Backgroundの操作正本はneutral、Baselineは物理状態へ同期。captureは非Liveを基準化だけに使い、初回heldを誤捕捉しない。invalid mode/stateで部分更新しない。
+- verify: 実InputStateとkernelのmode・held・解除世代・sample履歴・invalid非変更を通常/O2/ASanUBSan/bundle。実System/Router/Mapperの通知/復帰held試験を既存bundleへ追加し独立レビュー、Windows統合未実行を明記。
+- stop-when: 背景で操作値が残る、物理sampleを偽neutral化、Baselineから新規Pressed/captureが出る、invalidの部分更新、既定Live回帰、blocking未解消。
+- paths: Library/Core/Public/Input/GamepadTypes.h, Library/Core/Public/Input/InputState.h, Library/Core/Private/Input/InputState.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Private/Input/InputSystem.cpp, Library/Core/Public/Input/InputRebindCaptureState.h, Test/Core/Input/GamepadInputStateTest.cpp, Test/Core/Input/InputRebindCaptureStateTest.cpp, Test/Core/Input/InputRoutingExtensionTest.cpp, Test/Core/Input/InputActionMapTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: 非Live配送はfocus Cancelの代用ではない。実providerとEngineのfocus/ポーリング接続は後続で行う。

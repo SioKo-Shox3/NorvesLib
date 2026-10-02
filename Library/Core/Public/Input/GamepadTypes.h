@@ -46,12 +46,23 @@ namespace NorvesLib::Core::Input
         uint32_t PacketNumber = 0;
     };
 
-    // providerから受理した値のsnapshot。操作取消によるneutral化とは区別する。
+    enum class EGamepadSampleMode : uint8_t
+    {
+        Live, Baseline, Background
+    };
+    inline constexpr bool IsValidGamepadSampleMode(EGamepadSampleMode mode)
+    {
+        return mode == EGamepadSampleMode::Live || mode == EGamepadSampleMode::Baseline || mode == EGamepadSampleMode::Background;
+    }
+
+    // providerから受理した物理値のsnapshot。操作取消によるneutral化とは区別する。
+    // 非Liveは捕捉候補/通常button操作を生成しない同期用sample。
     struct GamepadSampleEvent
     {
         uint8_t Slot=0;
         GamepadState State;
         uint64_t Serial=0;
+        EGamepadSampleMode Mode = EGamepadSampleMode::Live;
     };
 
     inline bool IsValidGamepadState(const GamepadState& state)

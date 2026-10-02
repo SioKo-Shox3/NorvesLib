@@ -181,6 +181,44 @@ int main()
         assert(!overlay.Sample.State.Connected && overlay.Sample.Serial==4);
         route.UnregisterController(&overlay);route.UnregisterController(&receiver);sampled.SetRouter(nullptr);
     }
+    {
+        InputSystem sampled;
+        InputRouter route;
+        Receiver receiver;
+        receiver.System = &sampled;
+        sampled.SetRouter(&route);
+        route.RegisterController(&receiver, InputRouter::PriorityGame);
+        int buttonEvents = 0, samples = 0;
+        GamepadSampleEvent delivered;
+        sampled.OnGamepadButtonEvent().Add([&](const GamepadButtonEvent&) { ++buttonEvents; });
+        sampled.OnGamepadSampleEvent().Add([&](const GamepadSampleEvent& event) { ++samples; delivered = event; });
+        GamepadState held;
+        held.Connected = true;
+        held.Buttons = static_cast<uint16_t>(GamepadButton::A);
+        held.Axes[0] = 1;
+        assert(sampled.InjectGamepadState(0, held, EGamepadSampleMode::Background));
+        assert(receiver.ConnectionCount == 1 && receiver.PadCount == 0 && buttonEvents == 0);
+        assert(samples == 1 && receiver.SampleCount == 1 && delivered.Mode == EGamepadSampleMode::Background);
+        assert(delivered.State.Buttons == held.Buttons && delivered.State.Axes[0] == 1);
+        assert(sampled.GetState().GetGamepadState(0).Buttons == 0 && sampled.GetState().GetGamepadAxis(0, GamepadAxis::LeftX) == 0);
+        assert(sampled.InjectGamepadState(0, held, EGamepadSampleMode::Baseline));
+        assert(samples == 2 && delivered.Mode == EGamepadSampleMode::Baseline && buttonEvents == 0);
+        assert(sampled.GetState().IsGamepadButtonDown(0, GamepadButton::A));
+        assert(!sampled.GetState().IsGamepadButtonPressed(0, GamepadButton::A));
+        assert(sampled.InjectGamepadState(0, held));
+        assert(samples == 3 && delivered.Mode == EGamepadSampleMode::Live && buttonEvents == 0);
+        auto released = held;
+        released.Buttons = 0;
+        assert(sampled.InjectGamepadState(0, released));
+        assert(sampled.InjectGamepadState(0, held));
+        assert(buttonEvents == 2 && receiver.PadCount == 2 && samples == 5);
+        assert(!sampled.InjectGamepadState(0, held, static_cast<EGamepadSampleMode>(255)));
+        assert(buttonEvents == 2 && samples == 5 && sampled.GetState().GetGamepadSampleSerial(0) == 5);
+        assert(sampled.InjectGamepadState(0, {}, EGamepadSampleMode::Background));
+        assert(receiver.ConnectionCount == 2 && buttonEvents == 2 && samples == 6);
+        route.UnregisterController(&receiver);
+        sampled.SetRouter(nullptr);
+    }
     std::cout << "InputRoutingExtensionTest passed\n";
     return 0;
 }

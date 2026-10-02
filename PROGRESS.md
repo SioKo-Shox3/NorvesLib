@@ -348,3 +348,6 @@
 
 - G1-GR04-P1: XInputの成功packetを独自GamepadStateへ変換するOS非依存境界を追加。signed16軸の負/正側を別の除数で±1へ、triggerを255分率へ正規化し、未定義button bitを除去、packetを保持する。deadzoneはMapperへ残す。左右motorは有限0..1を検証後にuint16へ一括量子化し、invalidで旧出力を保持。Microsoft一次資料で範囲/bit/左右motorの意味を照合。軸65536値、trigger256値、全channel/mask/packet/実InputState受理、motor量子化/invalidを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundleで確認。独立レビューも実再実行PASS。native API呼出し、Windows統合bundle、実機はこの境界の範囲外。
 - Next: GR04のBackground/Baseline配送を操作正本と実sample履歴に分け、focus復帰直後のheldを誤捕捉しないようにする。その上でXInput provider/polling/Engineへ接続する。
+
+- G1-GR04-P2: Live/Baseline/Backgroundのpad配送modeを追加。既定Liveは旧順序/通常button通知を維持し、非LiveはPressedラッチと通常button通知を抑止、connection/物理sample通知は維持する。Backgroundは操作正本だけneutral、Baselineは実値へ同期し、物理sample/serialは両者とも実値を保持。captureは非Liveを基準化だけに使い初回heldを誤捕捉しない。全検証は更新前、invalidで状態/serial/通知非変更。実State/kernelの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundleとarmed/runtime/reset回帰成功。invalid modeの試験を新serial高analog→同serial Liveの捕捉へ補強。独立静的レビューPASS。System/Router/Mapperのmode伝搬・非focus取消・復帰held非armed試験を追加したが、Windows依存の実統合は未実行。modeだけでfocus Cancelは代替せず、lossのMapper停止/ReleaseAllを先行させる。
+- Next: GR04の差替XInput APIとポーリング状態を実装し、接続済み毎frame/未接続低頻度、Background/Baseline選択、停止時のmotor zeroへ接続する。

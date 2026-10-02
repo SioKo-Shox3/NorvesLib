@@ -242,3 +242,12 @@ Engine/Shutdown/Run終了はcapture→debug→mapperの順に解除する。debu
 XInputStateConversionはWindowsヘッダに依存しない整数packetを受け、API成功時の入力だけをGamepadStateへ変換する。軸は負側32768/正側32767で除して端点を±1へ合わせ、triggerは255分率、未定義button bitは除去する。packet番号を保持し、deadzone/曲線はMapperへ残す。motorは有限な0..1を両channel検証してから0..65535へ丸め、失敗時は出力を変えない。native API呼出しと接続状態の判定はこの値変換の外側で扱う。
 
 入力構造体の仕様: https://learn.microsoft.com/en-us/windows/win32/api/xinput/ns-xinput-xinput_gamepad 。出力仕様: https://learn.microsoft.com/en-us/windows/win32/api/xinput/ns-xinput-xinput_vibration 。整数raw型をnative構造体へreinterpretせず、backend adapterで各fieldを明示転記する。
+
+
+### padの通常・復帰基準・背景sample（GR04）
+
+InjectGamepadState/SetGamepadStateの既定Liveは従来の通知を維持する。Baselineは操作正本を実値へ同期するがPressedラッチと通常buttonイベントを生成しない。BackgroundはConnected/Packetだけを操作正本に残してneutral化し、Pressedも消す。全modeで最後の物理sampleと受理serialは実値を保持するため、操作取消を物理解除と取り違えない。Released/解除世代は操作正本のdown→upを記録する。
+
+Connectionと値sampleは非Liveでも通知し、GamepadSampleEvent.Modeで配送意図を伝える。capture kernelは非Liveを基準化にだけ使い、focus復帰直後のheld/analogを候補にしない。背景で正本がneutralでも物理sampleがheldなら解除待ちを続ける。invalid slot/state/modeでは正本・履歴・serial・通知を変更しない。
+
+これらは全体focus制御の代用ではない。focus loss時にはMapper.SetFocused(false)とSystem.ReleaseAllで操作を先にCancelし、復帰時の最初のsampleをBaselineにする。既に持っているdigital押下を新規armedにせず、release後の新しいLive押下で再開する。analogは復帰後の連続値としてMapperの曲線/deadzoneへ戻す。

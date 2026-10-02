@@ -135,11 +135,14 @@ namespace NorvesLib::Core::Input
         if (m_Router) m_Router->DispatchMouseRawMove(event);
         return true;
     }
-    bool InputSystem::InjectGamepadState(uint8_t slot, const GamepadState& state)
+    bool InputSystem::InjectGamepadState(uint8_t slot, const GamepadState& state, EGamepadSampleMode mode)
     {
         const GamepadState accepted=state; // callbackが呼出元のstateを変更してもsnapshotを保つ。
         const auto previous = m_State.GetGamepadState(slot);
-        if (!m_State.SetGamepadState(slot, accepted)) return false;
+        if (!m_State.SetGamepadState(slot, accepted, mode))
+        {
+            return false;
+        }
         if (previous.Connected != accepted.Connected)
         {
             // 切断取消しは通常release（tap完了）より先に必ず届く。
@@ -147,21 +150,24 @@ namespace NorvesLib::Core::Input
             m_OnGamepadConnectionEvent.Broadcast(event);
             if (m_Router) m_Router->NotifyGamepadConnection(event);
         }
-        const uint16_t pressed = static_cast<uint16_t>(accepted.Buttons & ~previous.Buttons);
-        const uint16_t released = static_cast<uint16_t>(previous.Buttons & ~accepted.Buttons);
-        // A→B持替えで同じactionを離した扱いにしないため、新押下を先に配送。
-        for (const auto action : {InputAction::Pressed, InputAction::Released})
+        if (mode == EGamepadSampleMode::Live)
         {
-            const uint16_t mask = action == InputAction::Pressed ? pressed : released;
-            for (uint32_t bit=0; bit<16; ++bit)
+            const uint16_t pressed = static_cast<uint16_t>(accepted.Buttons & ~previous.Buttons);
+            const uint16_t released = static_cast<uint16_t>(previous.Buttons & ~accepted.Buttons);
+            // A→B持替えで同じactionを離した扱いにしないため、新押下を先に配送。
+            for (const auto action : {InputAction::Pressed, InputAction::Released})
             {
-                if ((mask & (1u << bit)) == 0) continue;
-                GamepadButtonEvent event{slot, static_cast<GamepadButton>(1u << bit), action};
-                m_OnGamepadButtonEvent.Broadcast(event);
-                if (m_Router) m_Router->DispatchGamepadButton(event);
+                const uint16_t mask = action == InputAction::Pressed ? pressed : released;
+                for (uint32_t bit=0; bit<16; ++bit)
+                {
+                    if ((mask & (1u << bit)) == 0) continue;
+                    GamepadButtonEvent event{slot, static_cast<GamepadButton>(1u << bit), action};
+                    m_OnGamepadButtonEvent.Broadcast(event);
+                    if (m_Router) m_Router->DispatchGamepadButton(event);
+                }
             }
         }
-        GamepadSampleEvent sample{slot,accepted,m_State.GetGamepadSampleSerial(slot)};
+        GamepadSampleEvent sample{slot,accepted,m_State.GetGamepadSampleSerial(slot),mode};
         m_OnGamepadSampleEvent.Broadcast(sample);
         if (m_Router)
         {

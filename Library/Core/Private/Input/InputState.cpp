@@ -154,11 +154,27 @@ namespace NorvesLib::Core::Input
         return index < MOUSE_BUTTON_COUNT ? m_MouseReleaseSerial[index] : 0;
     }
 
-    bool InputState::SetGamepadState(uint8_t slot, const GamepadState& state)
+    bool InputState::SetGamepadState(uint8_t slot, const GamepadState& state, EGamepadSampleMode mode)
     {
-        if (slot >= GamepadSlotCount || !IsValidGamepadState(state)) return false;
-        m_LastGamepadSamples[slot]=state;++m_GamepadSampleSerial[slot];
-        ApplyGamepadState(slot,state);return true;
+        if (slot >= GamepadSlotCount || !IsValidGamepadSampleMode(mode) || !IsValidGamepadState(state))
+        {
+            return false;
+        }
+        GamepadState operation = state;
+        if (mode == EGamepadSampleMode::Background)
+        {
+            operation = {};
+            operation.Connected = state.Connected;
+            operation.PacketNumber = state.PacketNumber;
+        }
+        m_LastGamepadSamples[slot] = state;
+        ++m_GamepadSampleSerial[slot];
+        ApplyGamepadState(slot, operation);
+        if (mode != EGamepadSampleMode::Live)
+        {
+            m_GamepadPressed[slot] = 0;
+        }
+        return true;
     }
     void InputState::ApplyGamepadState(uint8_t slot, const GamepadState& state)
     {

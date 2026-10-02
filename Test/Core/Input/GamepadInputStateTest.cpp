@@ -153,6 +153,50 @@ int main()
             assert(!sampled.GetLastGamepadSample(static_cast<uint8_t>(slot)).Connected);
         }
     }
+    {
+        InputState sampled;
+        GamepadState physical;
+        physical.Connected = true;
+        physical.Buttons = static_cast<uint16_t>(GamepadButton::A);
+        physical.Axes[0] = -0.75f;
+        physical.Triggers[1] = 0.8f;
+        physical.PacketNumber = 91;
+        assert(sampled.SetGamepadState(0, physical));
+        const auto release = sampled.GetGamepadButtonReleaseSerial(0, GamepadButton::A);
+        assert(sampled.SetGamepadState(0, physical, EGamepadSampleMode::Background));
+        const auto neutral = sampled.GetGamepadState(0);
+        assert(neutral.Connected && neutral.PacketNumber == 91 && neutral.Buttons == 0);
+        assert(neutral.Axes[0] == 0 && neutral.Triggers[1] == 0);
+        assert(!sampled.IsGamepadButtonPressed(0, GamepadButton::A));
+        assert(sampled.IsGamepadButtonReleased(0, GamepadButton::A));
+        assert(sampled.GetGamepadButtonReleaseSerial(0, GamepadButton::A) == release + 1);
+        const auto actual = sampled.GetLastGamepadSample(0);
+        assert(actual.Buttons == physical.Buttons && actual.Axes[0] == -0.75f && actual.Triggers[1] == 0.8f);
+        assert(sampled.GetGamepadSampleSerial(0) == 2);
+        sampled.BeginFrame();
+        assert(sampled.SetGamepadState(0, physical, EGamepadSampleMode::Baseline));
+        assert(sampled.IsGamepadButtonDown(0, GamepadButton::A));
+        assert(!sampled.IsGamepadButtonPressed(0, GamepadButton::A) && !sampled.IsGamepadButtonReleased(0, GamepadButton::A));
+        assert(sampled.GetGamepadAxis(0, GamepadAxis::LeftX) == -0.75f);
+        assert(sampled.SetGamepadState(0, physical));
+        assert(!sampled.IsGamepadButtonPressed(0, GamepadButton::A));
+        auto released = physical;
+        released.Buttons = 0;
+        assert(sampled.SetGamepadState(0, released));
+        assert(sampled.SetGamepadState(0, physical));
+        assert(sampled.IsGamepadButtonPressed(0, GamepadButton::A));
+        const auto serial = sampled.GetGamepadSampleSerial(0);
+        const auto buttonSerial = sampled.GetGamepadButtonReleaseSerial(0, GamepadButton::A);
+        assert(!sampled.SetGamepadState(0, released, static_cast<EGamepadSampleMode>(255)));
+        auto bad = physical;
+        bad.Axes[0] = std::numeric_limits<float>::quiet_NaN();
+        assert(!sampled.SetGamepadState(0, bad, EGamepadSampleMode::Background));
+        assert(sampled.GetGamepadSampleSerial(0) == serial && sampled.GetLastGamepadSample(0).Buttons == physical.Buttons);
+        assert(sampled.GetGamepadState(0).Buttons == physical.Buttons && sampled.IsGamepadButtonPressed(0, GamepadButton::A));
+        assert(sampled.GetGamepadButtonReleaseSerial(0, GamepadButton::A) == buttonSerial);
+        assert(sampled.SetGamepadState(0, {}, EGamepadSampleMode::Background));
+        assert(!sampled.GetGamepadState(0).Connected && !sampled.GetLastGamepadSample(0).Connected);
+    }
     std::cout << "GamepadInputStateTest passed\n";
     return 0;
 }

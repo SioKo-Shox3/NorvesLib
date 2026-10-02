@@ -35,10 +35,10 @@ namespace
                 Capture.OnMouseButton({button, action}, Raw);
             }
         }
-        void Pad(uint8_t slot, const GamepadState& state, bool deliver = true)
+        void Pad(uint8_t slot, const GamepadState& state, bool deliver = true, EGamepadSampleMode mode = EGamepadSampleMode::Live)
         {
             const auto old = Raw.GetGamepadState(slot);
-            assert(Raw.SetGamepadState(slot, state));
+            assert(Raw.SetGamepadState(slot, state, mode));
             if (old.Connected != state.Connected)
             {
                 Capture.OnGamepadConnection({slot, state.Connected});
@@ -49,23 +49,26 @@ namespace
                 return;
             }
 
-            for (uint16_t bit = 1; bit != 0; bit = static_cast<uint16_t>(bit << 1))
+            if (mode == EGamepadSampleMode::Live)
             {
-                if ((state.Buttons & bit) && !(old.Buttons & bit))
+                for (uint16_t bit = 1; bit != 0; bit = static_cast<uint16_t>(bit << 1))
                 {
-                    Capture.OnGamepadButton({slot, static_cast<GamepadButton>(bit), InputAction::Pressed}, Raw);
+                    if ((state.Buttons & bit) && !(old.Buttons & bit))
+                    {
+                        Capture.OnGamepadButton({slot, static_cast<GamepadButton>(bit), InputAction::Pressed}, Raw);
+                    }
                 }
-            }
 
-            for (uint16_t bit = 1; bit != 0; bit = static_cast<uint16_t>(bit << 1))
-            {
-                if ((old.Buttons & bit) && !(state.Buttons & bit))
+                for (uint16_t bit = 1; bit != 0; bit = static_cast<uint16_t>(bit << 1))
                 {
-                    Capture.OnGamepadButton({slot, static_cast<GamepadButton>(bit), InputAction::Released}, Raw);
+                    if ((old.Buttons & bit) && !(state.Buttons & bit))
+                    {
+                        Capture.OnGamepadButton({slot, static_cast<GamepadButton>(bit), InputAction::Released}, Raw);
+                    }
                 }
-            }
 
-            Capture.OnGamepadSample({slot, state, Raw.GetGamepadSampleSerial(slot)}, Raw);
+            }
+            Capture.OnGamepadSample({slot, state, Raw.GetGamepadSampleSerial(slot), mode}, Raw);
         }
         void Advance()
         {
@@ -258,10 +261,57 @@ namespace
         f.Start(); f.Key(KeyCode::A, InputAction::Pressed); f.Key(KeyCode::A, InputAction::Released);
         f.Capture.OnMouseRawMove({9, 9}, f.Raw); f.Advance(); f.Finished();
     }
+    void BackgroundAndBaselineCapture()
+    {
+        Fixture f;
+        GamepadState pad;
+        pad.Connected = true;
+        assert(f.Raw.SetGamepadState(0, pad));
+        f.Start();
+        pad.Buttons = static_cast<uint16_t>(GamepadButton::A);
+        pad.Axes[0] = 0.9f;
+        f.Pad(0, pad, true, EGamepadSampleMode::Baseline);
+        f.Capturing();
+        assert(!f.Raw.IsGamepadButtonPressed(0, GamepadButton::A));
+        f.Pad(0, pad); f.Capturing(); // 復帰時heldは次のLive sampleでも再捕捉しない。
+        pad.Buttons = 0; pad.Axes[0] = 0;
+        f.Pad(0, pad); f.Capturing();
+        pad.Axes[0] = -0.9f;
+        f.Pad(0, pad);
+        f.Control(EInputBindingSource::GamepadAxis, 0, -1);
+        f.Advance(); f.Waiting();
+        f.Pad(0, pad, true, EGamepadSampleMode::Background);
+        assert(f.Raw.GetGamepadAxis(0, GamepadAxis::LeftX) == 0);
+        f.Advance(); f.Waiting(); // 正本neutralでも実sampleが非neutralなら解除待ちを続ける。
+        pad.Axes[0] = 0;
+        f.Pad(0, pad, true, EGamepadSampleMode::Background);
+        f.Advance(); f.Finished();
+
+        pad.Buttons = static_cast<uint16_t>(GamepadButton::A);
+        assert(f.Raw.SetGamepadState(0, pad, EGamepadSampleMode::Background));
+        f.Start();
+        f.Key(KeyCode::Q, InputAction::Pressed);
+        f.Key(KeyCode::Q, InputAction::Released);
+        f.Advance(); f.Waiting(); // 開始時のbackground実heldも待つ。
+        pad.Buttons = 0;
+        f.Pad(0, pad, true, EGamepadSampleMode::Background);
+        f.Advance(); f.Finished();
+        f.Start();
+        pad.Axes[0] = 0.9f;
+        assert(f.Raw.SetGamepadState(0, pad));
+        auto invalid = GamepadSampleEvent{0, pad, f.Raw.GetGamepadSampleSerial(0), static_cast<EGamepadSampleMode>(255)};
+        f.Capture.OnGamepadSample(invalid, f.Raw);
+        f.Capturing();
+        invalid.Mode = EGamepadSampleMode::Live;
+        f.Capture.OnGamepadSample(invalid, f.Raw); // invalid modeではこの新serialも消費していない。
+        f.Control(EInputBindingSource::GamepadAxis, 0);
+        f.Waiting();
+    }
 }
 int main()
 {
     DigitalAndReset(); Modifiers(); CancellationAndValidation(); AnalogAndConnections(); ConsumedAndStaleSamples(); RelativeInputs();
+    BackgroundAndBaselineCapture();
     std::puts("InputRebindCaptureStateTest passed");
     return 0;
 }
