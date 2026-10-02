@@ -269,3 +269,7 @@
 
 - G1-GR01-P5: SpringArmをCamera群へ移し、Rendering3DTestの後段カメラをGameHandler OnLateUpdateのone-shot Delegateで確定。Enterで一回作るData所有bindingをweakで予約し、Leave/handler破棄/途中Entity・Component削除を安全に拒否する。初期camera同期は維持、child pivot/cameraは前後の変換確定で対応。既存SpringArmComponentTestへ群/0・1・2固定step/child/削除/disabled/weak/上書き/再入の試験を追加した。静的レビュー第2周PASS、行末差分と初期同期保持の静的検査成功。Windows.h依存で実試験/CameraWorld/M9/画像比較は未実行。TICK_STAGE_SMOKEは実装済みだが実ログ未観測。GR01受入れ全完了やG1 completeは宣言しない。
 - Next: G1のGR03入力抽象化。S4 Raw Input、S5 XInput、S8暫定保存先は作者へ確認中。選定依存の実装は保留し、依存しない純ロジック等の計画・実装を進める。
+
+- G1選定更新（2026-10-02）: 作者がS4=a（Raw Input＋cursor固定/非表示）、S5=a（XInput）、S8=a（暫定working directory＋store抽象）を承認した。方式選定の待機は解除する。
+- G1-GR03-P1: InputState::ReleaseAllを追加し、同frame押下後もReleasedを次のBeginFrameまで保持、押下/累積を解除、復帰最初の絶対座標を再基準化する。既存Pressedはcurrent/previous比較のまま。同frame再押下ではDownとReleasedが同時にtrueになり得ることを明記した。実InputState.cppのg++通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）とbundle相当compile、既存遷移基準線は成功。独立レビューでも実行PASS。OSフォーカス/InputSystemイベントdelta/controller解除は後続で未接続。
+- Next: GR03入力軸のdeadzone/曲線/変位と速度の時間単位を分離した純ロジック。

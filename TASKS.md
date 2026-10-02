@@ -1239,3 +1239,11 @@
 - stop-when: callback寿命未解消、mode停止時の誤更新、初期同期破壊、blockingが残る場合。
 - paths: Library/Core/Private/Component/SpringArmComponent.cpp, Game/CameraLateUpdate.h, Game/GameApplicationHandler.h, Game/GameApplicationHandler.cpp, Game/GameModes/Rendering3DTest/Rendering3DTestData.h, Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp, Test/Core/Object/SpringArmComponentTest.cpp, Docs/Architecture/TickStages.md, TASKS.md, PROGRESS.md
 - notes: Game専用single camera slotを使い、Coreのstate-machineや依存graphは広げない。
+
+## G1-GR03-P1: 入力状態の一括解除と復帰時の座標基準を追加する
+- status: done
+- done-when: 全キー/ボタン解除、同frame押下後もReleasedを一frame保持、累積クリア、次の絶対位置の再基準化、通常遷移の維持。
+- verify: g++ -std=c++20 -I Library/Core/Public Test/Core/Input/InputStateReleaseTest.cpp Library/Core/Private/Input/InputState.cpp -o /tmp/input-release && /tmp/input-release
+- stop-when: 通常入力回帰、release永続、OS依存の持込み、blocking未解消。
+- paths: Library/Core/Public/Input/InputState.h, Library/Core/Private/Input/InputState.cpp, Test/Core/Input/InputStateReleaseTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: Window/InputSystemへのfocus配線は後続。S4=a/S5=a/S8=aは作者承認済み。

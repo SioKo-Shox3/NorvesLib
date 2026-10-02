@@ -40,7 +40,7 @@ namespace NorvesLib::Core::Input
         {
             return false;
         }
-        return !m_KeyStates[index] && m_PrevKeyStates[index];
+        return m_KeyReleasedByReset[index] || (!m_KeyStates[index] && m_PrevKeyStates[index]);
     }
 
     bool InputState::IsMouseButtonDown(MouseButton button) const
@@ -70,7 +70,7 @@ namespace NorvesLib::Core::Input
         {
             return false;
         }
-        return !m_MouseButtonStates[index] && m_PrevMouseButtonStates[index];
+        return m_MouseReleasedByReset[index] || (!m_MouseButtonStates[index] && m_PrevMouseButtonStates[index]);
     }
 
     const MouseState &InputState::GetMouseState() const
@@ -99,8 +99,27 @@ namespace NorvesLib::Core::Input
         std::memcpy(m_PrevKeyStates, m_KeyStates, sizeof(m_KeyStates));
         std::memcpy(m_PrevMouseButtonStates, m_MouseButtonStates, sizeof(m_MouseButtonStates));
 
+        std::memset(m_KeyReleasedByReset, 0, sizeof(m_KeyReleasedByReset));
+        std::memset(m_MouseReleasedByReset, 0, sizeof(m_MouseReleasedByReset));
+
         // フレーム間累積値をリセット
         ResetFrameAccumulators();
+    }
+
+    void InputState::ReleaseAll()
+    {
+        for (uint32_t index = 0; index < KEY_COUNT; ++index)
+        {
+            m_KeyReleasedByReset[index] = m_KeyReleasedByReset[index] || m_KeyStates[index];
+            m_KeyStates[index] = false;
+        }
+        for (uint32_t index = 0; index < MOUSE_BUTTON_COUNT; ++index)
+        {
+            m_MouseReleasedByReset[index] = m_MouseReleasedByReset[index] || m_MouseButtonStates[index];
+            m_MouseButtonStates[index] = false;
+        }
+        ResetFrameAccumulators();
+        m_bFirstMouseUpdate = true;
     }
 
     void InputState::SetKeyState(KeyCode code, bool bDown)

@@ -7,6 +7,7 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER StatsManagerTest ${CMAKE_SOURCE_DIR}/Test/Core/Debug/StatsManagerTest.cpp
     MEMBER DelegateCopyTest ${CMAKE_SOURCE_DIR}/Test/Core/Delegate/DelegateCopyTest.cpp
     MEMBER InputRouterTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputRouterTest.cpp
+    MEMBER InputStateReleaseTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputStateReleaseTest.cpp
     MEMBER ModuleRegistryTest ${CMAKE_SOURCE_DIR}/Test/Core/Module/ModuleRegistryTest.cpp
     MEMBER IdentityLiteralTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/IdentityLiteralTest.cpp
     MEMBER JsonWriterTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonWriterTest.cpp

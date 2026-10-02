@@ -92,6 +92,12 @@ namespace NorvesLib::Core::Input
          */
         void BeginFrame();
 
+        // 全押下とframe累積を解除し、次の絶対マウス位置を新基準にする。
+        // Releasedは同frame押下も含めて次のBeginFrameまでラッチする。
+        // 同frame再押下時はDownとReleasedが共にtrueになり得る。
+        // Pressedは従来のcurrent/previous比較を維持する。
+        void ReleaseAll();
+
         /**
          * @brief キー状態を更新
          */
@@ -132,6 +138,9 @@ namespace NorvesLib::Core::Input
 
         // 前フレームのマウスボタン状態
         bool m_PrevMouseButtonStates[MOUSE_BUTTON_COUNT];
+
+        bool m_KeyReleasedByReset[KEY_COUNT]{};
+        bool m_MouseReleasedByReset[MOUSE_BUTTON_COUNT]{};
 
         // マウス状態
         MouseState m_MouseState;
