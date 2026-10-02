@@ -302,7 +302,7 @@
 - notes: SS-RTGI-DEFAULT の完了時（2026-10-02）の測定: 判定の帯（0.80〜0.98）は既定1.27倍・近接0.86倍・低角度1.70倍で合格だが、年齢上限128の撮影（`startup-capture/SS-RTGI-DEFAULT-it1-age128-On` と `-it1-base-Off`）で既定の0.33〜0.42の帯は2.03倍（標準偏差1/255超の画素 26.6%、無効時1.6%）、低角度の0.65〜0.80の帯は2.29倍（15.3%、無効時0.5%）。前回の切り分け（`SS-RTGI-DEFAULT-exp-norej`、年齢上限64で法線・材質・深度の棄却を外した撮影）ではこの2つの帯が1.59倍・1.76倍だったので、履歴の棄却が主な原因と見られる。危険地帯（RTGI）。評価者を通す。
 
 ## SS-NIGHT-POLISH: 夜の点光源の色とレンズダートの映り方を整える
-- status: doing
+- status: done
 - done-when: 起動画面の点光源の色を白熱電球の色温度（黒体 約2700〜3000 K をリニアのRGBへ直した値。根拠をコミット本文に書く）にし、夜の撮影の既定視点で光だまりの地面の平均色が橙〜黄（R > G > B、G/R が0.6〜0.85）で、黄緑（G/R > 0.9）に寄らない。夜の撮影でレンズダートの模様が光源の周りの淡い斑にとどまり、光源より大きな色付きの円（ゴースト）が目立たない（強さを下げる、または明るい光源の周りでの掛かり方を見直す。昼・夕のダートの見え方が消えない程度）。昼・夕の撮影の SS-LOOK-BALANCE の数値の範囲は保つ。変更前と変更後の夜の既定視点を並べた画像を残す。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-NIGHT-POLISH-night -Night`
