@@ -19,7 +19,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=unused, w=unused
-    vec4 velocityParams; // x=前フレームカメラ履歴の有効フラグ
+    vec4 frameParams; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -32,12 +32,13 @@ layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
+#include "Common/PreExposedEmissive.glsl"
 
 // GBuffer MRT出力
 layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
 layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + unused
 layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) / AO(B) / unused(A)
-layout(location = 3) out vec4 outEmissive;  // RT3: Emissive (RGB, HDR) + unused
+layout(location = 3) out vec4 outEmissive;  // RT3: プリエクスポージャ後の発光（RGB） + 未使用
 layout(location = 4) out vec2 outVelocity;  // RT4: currentUV - previousUV
 
 void main()
@@ -69,13 +70,14 @@ void main()
     // PBRマテリアルパラメータ（POM補正済みUV使用）
     outMaterial = vec4(textureSamples.Material, 0.0);
 
-    // Emissive: Y=1 chromaticity × luminance nits → physical HDR RGB
-    vec3 physicalEmissive = fragEmissiveChromaticityAndLuminanceNits.rgb *
-                            fragEmissiveChromaticityAndLuminanceNits.a;
-    outEmissive = vec4(physicalEmissive, 1.0);
+    // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（Lighting は露出を掛けずに足す）
+    outEmissive = vec4(ComputePreExposedEmissive(fragEmissiveChromaticityAndLuminanceNits.rgb,
+                                                 fragEmissiveChromaticityAndLuminanceNits.a,
+                                                 mvp.frameParams.y),
+                       1.0);
 
     outVelocity = vec2(0.0);
-    if (mvp.velocityParams.x > 0.5 &&
+    if (mvp.frameParams.x > 0.5 &&
         abs(fragCurrentClip.w) > 1e-6 &&
         abs(fragPreviousClip.w) > 1e-6)
     {

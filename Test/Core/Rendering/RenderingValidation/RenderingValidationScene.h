@@ -280,6 +280,11 @@ namespace NorvesLib::Test::RenderingValidation
         bool SetR4CornellEmitterVisible(bool bVisible) const;
         /** @brief 基本シーンの光源（屋外は方向光）を点灯・消灯する（空の太陽だけで照らす比較で使う）。 */
         bool SetBaseLightActive(bool bActive) const;
+        /**
+         * @brief 基本シーンの平面を、指定の色・輝度（nits）の発光の材質にする
+         * （明るい発光がGBuffer・SceneColorで溢れないことの検証で使う）。
+         */
+        bool ApplyBaseEmissivePlaneFixture(const float (&emissiveColor)[3], float luminanceNits) const;
         const Core::Rendering::CameraProxy& GetCamera() const;
         const Core::Rendering::CameraProxy& GetR3ShadowedShaftsCamera() const;
         const Core::Rendering::CameraProxy& GetR5RayTracingShadowCamera() const;

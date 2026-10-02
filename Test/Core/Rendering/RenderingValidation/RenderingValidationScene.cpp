@@ -3132,6 +3132,31 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::ApplyBaseEmissivePlaneFixture(const float (&emissiveColor)[3],
+                                                                       float luminanceNits) const
+    {
+        if (m_pResources == nullptr || !ApplyBaseValidationFixture())
+        {
+            return false;
+        }
+        Core::Rendering::MaterialCreateData materialData;
+        materialData.DebugName = TEXT("RenderingValidationBrightEmissivePlane");
+        materialData.bTwoSided = true;
+        materialData.bCastShadows = false;
+        materialData.EmissiveColor[0] = emissiveColor[0];
+        materialData.EmissiveColor[1] = emissiveColor[1];
+        materialData.EmissiveColor[2] = emissiveColor[2];
+        materialData.EmissiveLuminanceNits = luminanceNits;
+        const MaterialHandle material = m_pResources->Materials().Create(materialData);
+        if (!material.IsValid())
+        {
+            return false;
+        }
+        m_Lease.TrackMaterial(material);
+        m_pP4PlaneMesh->SetMaterial(0u, material);
+        return true;
+    }
+
     const Core::Rendering::CameraProxy& RenderingValidationSceneFixture::GetCamera() const
     {
         return m_bR1PhysicalFixturePrepared ? m_R1PhysicalCamera : m_Layout.Camera;

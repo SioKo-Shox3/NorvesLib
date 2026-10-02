@@ -56,7 +56,7 @@ layout(std430, set = 0, binding = 5) readonly buffer LightBuffer
 layout(set = 0, binding = 6) uniform sampler2DArray shadowMap;
 
 // GBufferエミッシブ
-layout(set = 0, binding = 7) uniform sampler2D gbufferEmissive;
+layout(set = 0, binding = 7) uniform sampler2D gbufferEmissive; // プリエクスポージャ後の発光
 
 // IBL (Image-Based Lighting)
 layout(set = 0, binding = 8) uniform sampler2D envMap;    // HDR環境マップ（equirectangular）
@@ -148,6 +148,18 @@ vec3 ApplySceneColorPreExposure(vec3 sceneColor)
     }
 
     return sceneColor;
+}
+
+// GBufferの発光は書き込み時に同じフレームのプリエクスポージャ（params.preExposure と同じ値）を
+// 掛けてある。露出を掛ける表示ではそのまま足し、掛けない表示では物理の値へ戻す。
+vec3 ResolveGBufferEmissiveSceneColor(vec3 preExposedEmissive)
+{
+    if (ShouldApplySceneColorPreExposure())
+    {
+        return preExposedEmissive;
+    }
+
+    return preExposedEmissive / max(params.preExposure, 1.0e-6);
 }
 
 // ========================================
@@ -1348,7 +1360,7 @@ void main()
         {
             emissive = texture(gbufferEmissive, fragUV).rgb;
         }
-        ambient += emissive;
+        // 発光は露出を掛けた後で足す（下の outColor）。
     }
 
     // 直接光へのAO適用（マイクロシャドウ近似）:
@@ -1370,5 +1382,8 @@ void main()
     }
 
     float outputAlpha = bValidationRaw252 ? ComputeDebugDepth01(fragUV, depthSample) : 1.0;
-    outColor = vec4(ApplySceneColorPreExposure(color), outputAlpha);
+    // GBufferの発光はプリエクスポージャ後の値なので、露出を掛けた後の色へ足す。
+    // 発光を読まない表示（純Lambert・直接PBRの検証）では emissive は0のまま。
+    outColor = vec4(ApplySceneColorPreExposure(color) + ResolveGBufferEmissiveSceneColor(emissive),
+                    outputAlpha);
 }

@@ -488,6 +488,14 @@ register_rendering_gpu_test(
     RenderingHdrSceneCaptureTest
     --scene=outdoor
     --capture-source=scene-color)
+# 昼の露出（EV100 約14.6）で 1,000,000 nits の発光面が SceneColor で有限であることを確かめる
+# （GBufferへプリエクスポージャ後の発光を書く規約の検証）。
+register_rendering_gpu_test(
+    RenderingHdrEmissiveDaylightVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=indoor
+    --capture-source=scene-color
+    --emissive-scenario=daylight-1m-nits)
 
 add_executable(RenderingRayTracingShadowVulkanTest
     RenderingRayTracingShadowVulkanTest.cpp

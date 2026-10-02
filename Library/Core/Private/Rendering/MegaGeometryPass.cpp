@@ -964,7 +964,7 @@ namespace NorvesLib::Core::Rendering
                 float PreviousWorld[16];
                 float PreviousView[16];
                 float PreviousProjection[16];
-                float VelocityParams[4]; // x=前のカメラがあるか（1/0）
+                float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ
             };
             static_assert(sizeof(PerObjectUBO) <= 512u);
 
@@ -976,7 +976,9 @@ namespace NorvesLib::Core::Rendering
             std::memcpy(perObject.PreviousWorld, instance.PreviousWorldMatrix, sizeof(float) * 16);
             previousCameraConstants.CopyShaderView(perObject.PreviousView);
             previousCameraConstants.CopyShaderProjection(perObject.PreviousProjection);
-            perObject.VelocityParams[0] = command.bHasPreviousCamera ? 1.0f : 0.0f;
+            perObject.FrameParams[0] = command.bHasPreviousCamera ? 1.0f : 0.0f;
+            // 発光はプリエクスポージャ後の値で GBuffer_Emissive へ書く（GBufferPass・LightingPass と同じ値）。
+            perObject.FrameParams[1] = ResolveSceneColorPreExposure(&cam);
 
             // マテリアル値を設定
             const auto &mat = gpuData->Material;

@@ -13,6 +13,8 @@
 #include "Math/MatrixUtils.h"
 #include "Math/Vector2.h"
 #include "Math/Vector4.h"
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -399,6 +401,21 @@ namespace NorvesLib::Core::Rendering
             return Viewport.Width > 0.0f && Viewport.Height > 0.0f;
         }
     };
+
+    /**
+     * @brief シーンカラーへ掛けるプリエクスポージャを、描画パスで共通の範囲へ収めて返す。
+     *
+     * GBufferの発光の書き込みとLightingは、同じViewのカメラからこの値を求めて同じ倍率を使う。
+     * カメラが無い・値が有限の正でないときは1。
+     */
+    inline float ResolveSceneColorPreExposure(const CameraProxy *camera)
+    {
+        if (camera == nullptr || !std::isfinite(camera->PreExposure) || camera->PreExposure <= 0.0f)
+        {
+            return 1.0f;
+        }
+        return std::clamp(camera->PreExposure, 1.0e-6f, 1.0e6f);
+    }
 
     // ========================================
     // SceneProxy

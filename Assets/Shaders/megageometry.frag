@@ -23,7 +23,7 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousWorld;
     mat4 previousView;
     mat4 previousProjection;
-    vec4 velocityParams; // x=前のカメラがあるか（1/0）
+    vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -36,12 +36,13 @@ layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
+#include "Common/PreExposedEmissive.glsl"
 
 // GBuffer MRT出力
 layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
 layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + unused
 layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) / AO(B) / unused(A)
-layout(location = 3) out vec4 outEmissive;  // RT3: Emissive (RGB, HDR) + unused
+layout(location = 3) out vec4 outEmissive;  // RT3: プリエクスポージャ後の発光（RGB） + 未使用
 layout(location = 4) out vec2 outVelocity;  // RT4: currentUV - previousUV（gbuffer.frag と同じ）
 
 const float DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS = 3.0;
@@ -83,7 +84,7 @@ vec3 LODLevelDebugColor(uint lodLevel)
 // gbuffer.frag と同じ式で、現在と直前のフレームのクリップ座標から画面上の動きを求める。
 vec2 ComputeVelocity()
 {
-    if (mvp.velocityParams.x > 0.5 &&
+    if (mvp.frameParams.x > 0.5 &&
         abs(fragCurrentClip.w) > 1e-6 &&
         abs(fragPreviousClip.w) > 1e-6)
     {
@@ -158,7 +159,10 @@ void main()
     float ao        = texture(aoTexture, texCoord).r;
     outMaterial = vec4(metallic, roughness, ao, 0.0);
 
-    // Emissive: エミッシブカラー × 強度 → HDR値
-    outEmissive = vec4(fragEmissiveColor.rgb * fragEmissiveColor.a, 1.0);
+    // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（gbuffer.frag と同じ）
+    outEmissive = vec4(ComputePreExposedEmissive(fragEmissiveColor.rgb,
+                                                 fragEmissiveColor.a,
+                                                 mvp.frameParams.y),
+                       1.0);
     outVelocity = ComputeVelocity();
 }

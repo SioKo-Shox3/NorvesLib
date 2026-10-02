@@ -533,7 +533,7 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float emissiveChromaticityAndLuminanceNits[4];
             float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=unused, w=unused
-            float velocityParams[4]; // x=前フレームカメラ履歴の有効フラグ
+            float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ
         };
 
         // ビュー・プロジェクション行列を事前変換
@@ -555,7 +555,9 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(frameTemplate.previousView, previousViewData, sizeof(previousViewData));
         std::memcpy(frameTemplate.previousProjection, previousProjData, sizeof(previousProjData));
         std::memcpy(frameTemplate.cameraPosition, cameraPos, sizeof(cameraPos));
-        frameTemplate.velocityParams[0] = bHasPreviousCamera ? 1.0f : 0.0f;
+        frameTemplate.frameParams[0] = bHasPreviousCamera ? 1.0f : 0.0f;
+        // 発光はプリエクスポージャ後の値で GBuffer_Emissive（RGBA16F）へ書く。LightingPass は同じ値を使う。
+        frameTemplate.frameParams[1] = ResolveSceneColorPreExposure(activeCamera);
 
         auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 

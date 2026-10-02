@@ -4069,10 +4069,8 @@ namespace NorvesLib::Core::Rendering
         const CameraProxy *activeCamera = context.GetActiveCamera();
         if (activeCamera)
         {
-            params.preExposure = std::isfinite(activeCamera->PreExposure) &&
-                                         activeCamera->PreExposure > 0.0f
-                                     ? std::clamp(activeCamera->PreExposure, 1.0e-6f, 1.0e6f)
-                                     : 1.0f;
+            // GBufferPass・MegaGeometryPass が発光に掛けた値と同じ（同じViewのカメラから求める）。
+            params.preExposure = ResolveSceneColorPreExposure(activeCamera);
             const CameraViewConstants cameraConstants =
                 CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
             cameraConstants.CopyCameraPosition(params.cameraPosition);

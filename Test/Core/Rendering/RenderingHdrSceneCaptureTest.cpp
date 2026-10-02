@@ -581,6 +581,18 @@ namespace
     constexpr float R2CsmBoundaryBlendRatio = 0.1f;
     constexpr float R2CsmEdgeChangeRateLimit = 0.125f;
 
+    // 昼の露出（EV100 約14.6）で 1,000,000 nits の発光面が SceneColor（RGBA16F）で有限かの検証。
+    // 発光を物理の nits のまま GBuffer（RGBA16F）へ書くと 65504 を超えて無限大になる。
+    // 絞り16・1/97秒・ISO100で EV100 = log2(16^2 × 97) ≈ 14.600。
+    constexpr float EmissiveDaylightLuminanceNits = 1.0e6f;
+    constexpr float EmissiveDaylightColor[3] = {1.0f, 0.9f, 0.3f};
+    constexpr float EmissiveDaylightAperture = 16.0f;
+    constexpr float EmissiveDaylightShutterSpeed = 1.0f / 97.0f;
+    // 平面の画素が期待値（色度 × nits × プリエクスポージャ）に一致するとみなす相対誤差と、
+    // 一致した画素の最小の数。基本シーンの平面は検証の画面（256×256）の中央の64×64画素（4096画素）を占める。
+    constexpr double EmissiveDaylightRelativeTolerance = 0.03;
+    constexpr uint32_t EmissiveDaylightMinimumMatchedPixels = 2048u;
+
     enum class R3ScenarioKind : uint8_t
     {
         ShadowedShafts,
@@ -1952,6 +1964,18 @@ namespace
             {
                 return false;
             }
+            if (m_bEmissiveDaylightScenario)
+            {
+                if (GetRunConfig().Scene != SceneKind::Indoor ||
+                    GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::SceneColor ||
+                    !GetFixture().ApplyBaseEmissivePlaneFixture(EmissiveDaylightColor,
+                                                                EmissiveDaylightLuminanceNits))
+                {
+                    LOG_ERROR("Emissive daylight fixture preflight failed");
+                    return false;
+                }
+                return true;
+            }
             if (m_bAllNumericalScenario)
             {
                 if (GetRunConfig().Scene != SceneKind::Indoor ||
@@ -2189,6 +2213,18 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            if (argument == TEXT("--emissive-scenario=daylight-1m-nits"))
+            {
+                if (m_bEmissiveDaylightScenario || m_bR1Scenario || m_bR2Scenario || m_bR3Scenario ||
+                    m_bAllNumericalScenario || m_bKnownCdScenario || m_bP4Scenario ||
+                    m_bTransparentPhysicalLightingScenario)
+                {
+                    outFailureReason = TEXT("duplicate or conflicting emissive scenario");
+                    return false;
+                }
+                m_bEmissiveDaylightScenario = true;
+                return true;
+            }
             if (argument == TEXT("--r1-scenario=all-numerical"))
             {
                 if (m_bAllNumericalArgumentParsed ||
@@ -2367,6 +2403,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_bEmissiveDaylightScenario)
+            {
+                return EvaluateEmissiveDaylightFrame(frame, reason);
+            }
             if (m_bR3Scenario)
             {
                 return EvaluateR3ScenarioFrame(frame, reason);
@@ -2475,6 +2515,11 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_bEmissiveDaylightScenario)
+            {
+                ApplyEmissiveDaylightCamera(renderWorld);
+                return;
+            }
             if (m_bR3Scenario)
             {
                 bool bFixtureApplied = false;
@@ -6447,6 +6492,130 @@ namespace
             return true;
         }
 
+        // 昼の露出（EV100 約14.6）の手動露出のカメラにする。プリエクスポージャは EV100 から求める（補正なし）。
+        void ApplyEmissiveDaylightCamera(Core::Rendering::RenderWorld& renderWorld)
+        {
+            Core::Rendering::CameraProxy camera = GetFixture().GetCamera();
+            camera.ExposureMode = Core::Rendering::CameraExposureMode::Manual;
+            camera.Aperture = EmissiveDaylightAperture;
+            camera.ShutterSpeed = EmissiveDaylightShutterSpeed;
+            camera.ISO = 100.0f;
+            camera.ExposureCompensation = 0.0f;
+            const double ev100 = std::log2(
+                (static_cast<double>(camera.Aperture) * static_cast<double>(camera.Aperture) /
+                 static_cast<double>(camera.ShutterSpeed)) *
+                (100.0 / static_cast<double>(camera.ISO)));
+            const double exposure = std::exp2(-ev100) / 1.2;
+            camera.EV100 = static_cast<float>(ev100);
+            camera.Exposure = static_cast<float>(exposure);
+            camera.PreExposure = camera.Exposure;
+            camera.InvPreExposure = static_cast<float>(1.0 / exposure);
+            renderWorld.SetMainCamera(camera);
+            const Core::Rendering::CameraProxy& actualCamera =
+                renderWorld.GetRenderingCoordinator().GetMainCamera();
+            m_EmissiveDaylightEV100 = actualCamera.EV100;
+            m_EmissiveDaylightPreExposure = actualCamera.PreExposure;
+            m_bEmissiveDaylightCameraApplied = true;
+        }
+
+        // SceneColor が全画素で有限・RGBA16F の範囲内で、発光の平面の画素が
+        // 色度 × nits × プリエクスポージャ（消えず、頭打ちにもならない）に一致することを確かめる。
+        bool EvaluateEmissiveDaylightFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (!m_bEmissiveDaylightCameraApplied ||
+                std::abs(m_EmissiveDaylightEV100 - 14.6f) > 0.01f ||
+                !(m_EmissiveDaylightPreExposure > 0.0f))
+            {
+                reason = TEXT("emissive daylight camera was not applied");
+                return false;
+            }
+            if (frame.Format != RHI::Format::R16G16B16A16_FLOAT)
+            {
+                reason = TEXT("captured SceneColor format is not RGBA16F");
+                return false;
+            }
+            RgbaFloatImage image;
+            if (DecodeCapturedRgba16Float(frame, image) != FloatImageStatus::Success ||
+                image.Width != ValidationWidth || image.Height != ValidationHeight)
+            {
+                reason = TEXT("captured SceneColor RGBA16F decode failed");
+                return false;
+            }
+            if (!IsFiniteAndWithinRgba16Range(image))
+            {
+                const RgbaFloatViolation location = FindFirstRgba16FloatViolation(image);
+                LOG_ERROR(
+                    "Emissive daylight SceneColor contains an invalid RGBA16F value: x=%u y=%u channel=%u value=%g kind=%u",
+                    location.X,
+                    location.Y,
+                    location.Channel,
+                    location.Value,
+                    static_cast<unsigned int>(location.Kind));
+                std::cout << "EMISSIVE_DAYLIGHT_SCENE_COLOR result=fail non_finite_or_saturated=1"
+                          << " x=" << location.X << " y=" << location.Y
+                          << " channel=" << location.Channel << " value=" << location.Value << "\n";
+                reason = TEXT("emissive daylight SceneColor contains a non-finite or saturated value");
+                return false;
+            }
+
+            float canonicalColor[3] = {};
+            float canonicalNits = 0.0f;
+            if (!Core::Rendering::TryBuildCanonicalEmissive(EmissiveDaylightColor,
+                                                            EmissiveDaylightLuminanceNits,
+                                                            canonicalColor,
+                                                            canonicalNits))
+            {
+                reason = TEXT("emissive daylight material color is invalid");
+                return false;
+            }
+            double expected[3] = {};
+            for (uint32_t channel = 0; channel < 3u; ++channel)
+            {
+                expected[channel] = static_cast<double>(canonicalColor[channel]) *
+                                    static_cast<double>(canonicalNits) *
+                                    static_cast<double>(m_EmissiveDaylightPreExposure);
+            }
+
+            const uint32_t pixelCount = image.Width * image.Height;
+            uint32_t matchedPixels = 0u;
+            double maximum[3] = {};
+            for (uint32_t pixel = 0; pixel < pixelCount; ++pixel)
+            {
+                bool bMatched = true;
+                for (uint32_t channel = 0; channel < 3u; ++channel)
+                {
+                    const double value = static_cast<double>(image.Values[pixel * 4u + channel]);
+                    maximum[channel] = std::max(maximum[channel], value);
+                    bMatched = bMatched &&
+                               std::abs(value - expected[channel]) <=
+                                   expected[channel] * EmissiveDaylightRelativeTolerance;
+                }
+                matchedPixels += bMatched ? 1u : 0u;
+            }
+            const bool bPassed = matchedPixels >= EmissiveDaylightMinimumMatchedPixels;
+            std::cout << std::setprecision(9)
+                      << "EMISSIVE_DAYLIGHT_SCENE_COLOR result=" << (bPassed ? "pass" : "fail")
+                      << " ev100=" << m_EmissiveDaylightEV100
+                      << " pre_exposure=" << m_EmissiveDaylightPreExposure
+                      << " luminance_nits=" << EmissiveDaylightLuminanceNits
+                      << " physical_rgb=(" << canonicalColor[0] * canonicalNits << ","
+                      << canonicalColor[1] * canonicalNits << "," << canonicalColor[2] * canonicalNits << ")"
+                      << " expected_rgb=(" << expected[0] << "," << expected[1] << "," << expected[2] << ")"
+                      << " max_rgb=(" << maximum[0] << "," << maximum[1] << "," << maximum[2] << ")"
+                      << " matched=" << matchedPixels << "/" << pixelCount
+                      << " min_matched=" << EmissiveDaylightMinimumMatchedPixels
+                      << " tolerance=" << EmissiveDaylightRelativeTolerance << "\n"
+                      << std::setprecision(6);
+            if (!bPassed)
+            {
+                reason = TEXT("emissive daylight plane does not match the pre-exposed emissive value");
+                return false;
+            }
+            return true;
+        }
+
         bool EvaluateR3ScenarioFrame(
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason)
@@ -7184,6 +7353,10 @@ namespace
                    EncodeSrgbReference(0.0031309f) == 10u;
         }
 
+        bool m_bEmissiveDaylightScenario = false;
+        bool m_bEmissiveDaylightCameraApplied = false;
+        float m_EmissiveDaylightEV100 = 0.0f;
+        float m_EmissiveDaylightPreExposure = 0.0f;
         bool m_bR1Scenario = false;
         bool m_bR2Scenario = false;
         bool m_bR3Scenario = false;

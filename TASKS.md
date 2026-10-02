@@ -155,7 +155,7 @@
 - notes: 今のブルームは1回の16タップで、広がりは最大 約10 px（`bloom.frag`）。値の調整では広がらない。
 
 ## SS-EMISSIVE-PREEXPOSE: GBufferへ露出を掛けた発光を書き、明るい発光がRGBA16Fで溢れないようにする
-- status: todo
+- status: done
 - done-when: `gbuffer.frag`・`megageometry.frag`・スキニングのGBuffer（`GBuffer_Emissive` へ書くすべてのシェーダー）が、発光（nits）にそのフレームのプリエクスポージャを掛けてから書き、Lighting 側で GBuffer の発光に露出を掛ける箇所を外す（発光の最終的な寄与は数値的に同じ）。前向きの透明（`forward_transparent.frag`）など SceneColor へ直接書く経路の発光は、既に露出後の値で書いているかを確かめ、揃っていなければ揃える。PT・RTGI・DDGI は材質から発光を読むので変えない（GBufferから読む経路があれば同じ規約に揃える）。Indoor/Outdoor の golden が変わらない（丸めの差で変わるなら、差がこの変更だけによることを確かめて再承認）。昼の露出（EV100 約14.6）で 1,000,000 nits の発光面が SceneColor で有限で、無限大・NaN にならないことを GPU の検査（既存の束へ MEMBER として足すか、既存のGPUテストへケースを足す。新しい実行ファイルは作らない）で確かめる。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
