@@ -136,10 +136,14 @@ namespace NorvesLib::Core::Input
         bool InjectRawMouseDelta(float x, float y);
         bool InjectGamepadState(uint8_t slot, const GamepadState& state);
         // 通常Releasedを合成せず、全controllerへ取消通知を届ける。
+        // OS callback内でも呼ばれる。購読Delegate/Router observerはwindow表示/activation、
+        // window/Engineの破棄、登録変更、再入配送、例外送出を行わない。
+        // 高位のfocus処理はApplicationHandlerへ遅延される。
         void ReleaseAll();
         MulticastDelegate<const MouseRawMoveEvent&>& OnMouseRawMoveEvent() { return m_OnMouseRawMoveEvent; }
         MulticastDelegate<const GamepadButtonEvent&>& OnGamepadButtonEvent() { return m_OnGamepadButtonEvent; }
         MulticastDelegate<const GamepadConnectionEvent&>& OnGamepadConnectionEvent() { return m_OnGamepadConnectionEvent; }
+        // 上記ReleaseAllのOS callback制約に従う即時取消通知。
         MulticastDelegate<>& OnInputResetEvent() { return m_OnInputResetEvent; }
         // 全Inject/ReleaseAllとRouter登録操作はGameThread、通知callbackからの再入は禁止。
 

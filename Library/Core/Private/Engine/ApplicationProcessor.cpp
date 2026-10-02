@@ -827,7 +827,7 @@ namespace NorvesLib::Core::Engine
     {
     }
 
-    ApplicationProcessor::~ApplicationProcessor() = default;
+    ApplicationProcessor::~ApplicationProcessor() { DisconnectInputWindow(); }
 
     ApplicationProcessor &ApplicationProcessor::GetInstance()
     {
@@ -1324,6 +1324,8 @@ namespace NorvesLib::Core::Engine
             handler->OnPostInitialize();
         }
 
+        // Handler/モジュールの初期化後に購読し、通知はmessage処理外へ遅延する。
+        ConnectInputWindow(GEngine->GetMainWindowShared());
         GEngine->SetRunning(true);
         GApplicationLifecycleState.bRunning = true;
         transaction.Commit();
@@ -1387,6 +1389,7 @@ namespace NorvesLib::Core::Engine
     void ApplicationProcessor::Shutdown()
     {
         LOG_INFO("ApplicationProcessor::Shutdown() - Starting shutdown");
+        DisconnectInputWindow();
 
         ApplicationLifecycleState& lifecycle = GApplicationLifecycleState;
         if (lifecycle.Processor != this)
@@ -1795,23 +1798,85 @@ namespace NorvesLib::Core::Engine
 #endif
     }
 
+    void ApplicationProcessor::ConnectInputWindow(Container::TSharedPtr<NorvesLib::IWindow> window)
+    {
+        DisconnectInputWindow();
+        if(!GEngine || !window) return;
+        m_InputFocusSubscription.Bind(this,&ApplicationProcessor::OnWindowInputFocusChanged);
+        window->OnInputFocusChanged().Add(m_InputFocusSubscription);
+        m_InputWindow=std::move(window);m_InputEngine=GEngine;
+        OnWindowInputFocusChanged(m_InputWindow->IsInputFocused());
+    }
+
+    void ApplicationProcessor::DisconnectInputWindow()
+    {
+        if(m_InputWindow)
+            m_InputWindow->OnInputFocusChanged().Remove(m_InputFocusSubscription);
+        m_InputFocusSubscription.Clear();
+        m_InputWindow.reset();m_InputEngine=nullptr;m_PendingInputFocus.clear();m_HasInputFocus=false;
+        ++m_InputFocusConnectionSerial;
+    }
+
+    void ApplicationProcessor::OnWindowInputFocusChanged(bool focused)
+    {
+        if(!GEngine || GEngine!=m_InputEngine || !m_InputWindow ||
+            GEngine->GetMainWindow()!=m_InputWindow.get()) return;
+        if(m_HasInputFocus && m_InputFocused==focused) return;
+        m_HasInputFocus=true;m_InputFocused=focused;
+        GEngine->GetInputMapper().SetFocused(focused);
+        if(!focused) GEngine->GetInputSystem().ReleaseAll();
+        GEngine->GetInputRouter().NotifyInputFocusChanged(focused);
+        m_PendingInputFocus.push_back(focused);
+    }
+
+    void ApplicationProcessor::DispatchInputFocusEvents()
+    {
+        if(!GEngine || GEngine!=m_InputEngine || !m_InputWindow ||
+            GEngine->GetMainWindow()!=m_InputWindow.get())
+        {
+            m_PendingInputFocus.clear();return;
+        }
+        if(m_DispatchingInputFocus) return;
+        struct DispatchGuard
+        {
+            bool& Active;
+            explicit DispatchGuard(bool& active):Active(active) { Active=true; }
+            ~DispatchGuard() { Active=false; }
+        } guard(m_DispatchingInputFocus);
+        const auto sourceWindow=m_InputWindow;
+        auto* sourceEngine=m_InputEngine;
+        const auto sourceSerial=m_InputFocusConnectionSerial;
+        Container::VariableArray<bool> pending;
+        pending.swap(m_PendingInputFocus);
+        const auto handler=GEngine->GetApplicationHandlerShared();
+        for(bool focused : pending)
+        {
+            if(!handler || !GEngine || GEngine!=sourceEngine || m_InputFocusConnectionSerial!=sourceSerial ||
+                GEngine->GetMainWindow()!=sourceWindow.get()) break;
+            if(focused) handler->OnFocusGained();
+            else handler->OnFocusLost();
+        }
+    }
+
     bool ApplicationProcessor::ProcessPlatformMessages()
     {
-        auto* platformApp = GEngine ? GEngine->GetPlatformApp() : nullptr;
-        if (!platformApp)
+        auto* sourceEngine=GEngine;
+        auto* platformApp=sourceEngine ? sourceEngine->GetPlatformApp() : nullptr;
+        bool exitRequested=false;int exitCode=0;
+        if(platformApp)
         {
-            return true;
+            platformApp->PumpMessages();
+            exitRequested=platformApp->IsExitRequested();
+            if(exitRequested) exitCode=platformApp->GetExitCode();
         }
-
-        platformApp->PumpMessages();
-
-        if (platformApp->IsExitRequested())
+        // Handlerはここでwindow/platformを破棄し得るので、以後借用platformへ触れない。
+        DispatchInputFocusEvents();
+        if(!GEngine || GEngine!=sourceEngine) return false;
+        if(exitRequested)
         {
-            GEngine->RequestExit(platformApp->GetExitCode());
-            return false;
+            GEngine->RequestExit(exitCode);return false;
         }
-
-        return true;
+        return !GEngine->IsExitRequested();
     }
 
     FixedStepAdvanceResult ApplicationProcessor::TickSimulation(

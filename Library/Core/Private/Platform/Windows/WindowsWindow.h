@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Application/IWindow.h"
+#include "Platform/Windows/WindowsKeyRepeatGate.h"
 #include "Platform/NativeWindowHandle.h"
 #include "Container/String.h"
 #include "Container/PointerTypes.h"
@@ -44,6 +45,7 @@ namespace NorvesLib
                 virtual void SetTitle(const Container::String &title) override;
                 virtual void Resize(int width, int height) override;
                 virtual bool IsActive() const override;
+                bool IsInputFocused() const override { return m_InputFocused; }
                 virtual NativeWindowHandle GetNativeHandle() const override;
 
                 /**
@@ -51,6 +53,7 @@ namespace NorvesLib
                  * @return ウィンドウハンドル
                  */
                 HWND GetHWND() const;
+                bool ShouldTranslateKeyMessage(WPARAM key,LPARAM flags) const;
 
             private:
                 /**
@@ -63,6 +66,7 @@ namespace NorvesLib
                  * @return 登録の成否
                  */
                 bool RegisterWindowClass();
+                void SetInputFocused(bool focused) noexcept;
 
                 /**
                  * @brief ウィンドウクラス名を取得
@@ -83,6 +87,8 @@ namespace NorvesLib
                 static bool s_classRegistered; // ウィンドウクラス登録フラグ
                 HWND m_hWnd;                   // ウィンドウハンドル
                 HINSTANCE m_hInstance;         // アプリケーションインスタンスハンドル
+                bool m_InputFocused = false;
+                WindowsKeyRepeatGate m_KeyRepeatGate;
                 bool m_isActive;               // アクティブ状態フラグ
                 Container::String m_title;     // ウィンドウタイトル
                 int m_width;                   // ウィンドウ幅

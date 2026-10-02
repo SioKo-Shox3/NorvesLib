@@ -77,7 +77,11 @@ namespace NorvesLib::Core::Input
         virtual bool OnGamepadButton(const GamepadButtonEvent&) { return false; }
         // 解除/接続は状態整合性の通知。UIがconsumeして下位の解除を止めることはできない。
         virtual void OnGamepadConnection(const GamepadConnectionEvent&) {}
+        // reset/focus通知はOS message callback内でも届く。window表示/activation、
+        // window/Engineの破棄、Router登録変更、再入配送、例外送出は禁止。
+        // Game側の高位処理はhandler通知で行う。
         virtual void OnInputReset() {}
+        virtual void OnInputFocusChanged(bool) {}
     };
 
 } // namespace NorvesLib::Core::Input

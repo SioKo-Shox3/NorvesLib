@@ -68,6 +68,7 @@ namespace NorvesLib::Core::Input
         // 全controllerへ通知。配送中の登録/解除/再入配送は禁止。
         void NotifyGamepadConnection(const GamepadConnectionEvent& event);
         void NotifyInputReset();
+        void NotifyInputFocusChanged(bool focused);
 
     private:
         struct Entry

@@ -129,6 +129,12 @@ namespace NorvesLib::Core::Input
     {
         for (Entry& entry : m_Controllers) entry.Controller->OnGamepadConnection(event);
     }
+    void InputRouter::NotifyInputFocusChanged(bool focused)
+    {
+        for(const auto& entry : m_Controllers)
+            if(entry.Controller) entry.Controller->OnInputFocusChanged(focused);
+    }
+
     void InputRouter::NotifyInputReset()
     {
         for (Entry& entry : m_Controllers) entry.Controller->OnInputReset();

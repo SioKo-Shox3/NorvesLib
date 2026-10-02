@@ -574,6 +574,13 @@ namespace NorvesLib::Modules::Gui
                 return io.WantCaptureKeyboard;
             }
 
+            void OnInputFocusChanged(bool focused) override
+            {
+                if (m_Context == nullptr) return;
+                ::ImGui::SetCurrentContext(m_Context);
+                ::ImGui::GetIO().AddFocusEvent(focused);
+            }
+
             void OnInputReset() override
             {
                 if (m_Context == nullptr) return;

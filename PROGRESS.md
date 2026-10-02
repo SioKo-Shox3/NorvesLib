@@ -318,3 +318,6 @@
 
 - G1-GR03-P6A: CameraInputCollector/MayaCameraController/LightController/PickingController/ImGuiをOnInputResetへ接続。未完了の操作とqueue/current入力だけを取り消し、camera姿勢/light値/確定selectionを維持する。進行中sphere previewだけを消し、遅延Releasedで新たな選択を実行しない。実CameraInputResetTestの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compile成功。実InputSystem→Routerを使うLegacyInputResetTestを登録し独立静的レビューPASS、Windows依存の統合compile/実行は未検証。
 - Next: GR03のWindows focus喪失/復帰通知を接続し、handler通知をOS message処理外で行う。Raw Input/カーソル制御/リバインドは継続。
+
+- G1-GR03-P6B: IWindowの入力focus DelegateとWindows activation/keyboard focusを接続。Processorがshared window＋保存Delegate購読を所有し、loss時Mapper停止/ReleaseAll/全controller focus通知、Game handlerはPump後へ順序配送する。再入は次batch、旧購読batchはserialで停止、handlerによるplatform破棄後の借用pointerアクセスを防止。非focus legacy入力を抑止。第1周で旧repeatがTranslateMessage経由で文字だけ漏れる問題を検出し、native VK履歴により翻訳前も抑止するよう修正。即時observerのOS callback制約を公開APIへ明記し第2周レビューPASS。実WindowsKeyRepeatGateTestは通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compile成功、Delegate/ReleaseAll回帰成功。Windows native/IME実機/新旧Engine統合は未実行。
+- Next: GR03のRaw Input供給とカーソル要求/有効モードを接続する。リバインド捕捉、GR04のXInput/hapticsは継続。

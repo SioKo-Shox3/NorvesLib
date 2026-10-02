@@ -4,8 +4,11 @@
 #include "Container/String.h"
 #include "Container/VariableArray.h"
 #include "RHI/RHITypes.h"
+#include "Delegate/Delegate.h"
 
 #include <cstdint>
+
+namespace NorvesLib { class IWindow; }
 
 namespace NorvesLib::Core::Application
 {
@@ -23,6 +26,8 @@ namespace NorvesLib::Core::Engine
     struct FixedStepAdvanceResult;
     struct ApplicationFixedStepTestAccess;
     struct ApplicationInputFrameTestAccess;
+    struct ApplicationInputFocusTestAccess;
+    class Engine;
 
     /**
      * @brief アプリケーション処理クラス
@@ -76,6 +81,11 @@ namespace NorvesLib::Core::Engine
     private:
         friend struct ApplicationFixedStepTestAccess;
         friend struct ApplicationInputFrameTestAccess;
+        friend struct ApplicationInputFocusTestAccess;
+        void ConnectInputWindow(Container::TSharedPtr<NorvesLib::IWindow> window);
+        void DisconnectInputWindow();
+        void OnWindowInputFocusChanged(bool focused);
+        void DispatchInputFocusEvents();
 
         /**
          * @brief 1フレームの処理を実行
@@ -127,6 +137,14 @@ namespace NorvesLib::Core::Engine
     private:
         // ApplicationProcessor がデバイス寿命を管理。RenderWorld 終了後に解放。
         RHI::DevicePtr m_Device;
+        Container::TSharedPtr<NorvesLib::IWindow> m_InputWindow;
+        Delegate<void,bool> m_InputFocusSubscription;
+        Engine* m_InputEngine = nullptr; // GEngineとの一致確認用。非所有。
+        Container::VariableArray<bool> m_PendingInputFocus;
+        bool m_HasInputFocus = false;
+        bool m_InputFocused = false;
+        bool m_DispatchingInputFocus = false;
+        uint64_t m_InputFocusConnectionSerial = 0;
         Container::TUniquePtr<FixedStepScheduler> m_FixedStepScheduler;
         int64_t m_LastFrameTimeNanoseconds = 0;
         float m_TargetFrameTime = 1.0f / 60.0f; // デフォルト60FPS

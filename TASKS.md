@@ -1374,3 +1374,11 @@
 - stop-when: resetでclick/select実行、確定selectionやcamera姿勢を消去、UIのqueued pressが残留、blocking未解消。
 - paths: Game/Input/CameraInputCollector.h, Game/Input/PickingController.h, Game/Input/PickingController.cpp, Library/Core/Public/Input/MayaCameraController.h, Library/Core/Private/Input/MayaCameraController.cpp, Library/Core/Public/Input/LightController.h, Library/Core/Private/Input/LightController.cpp, Library/Modules/ImGui/Private/ImGuiModule/ImGuiModule.cpp, Test/Core/Input/CameraInputResetTest.cpp, Test/Core/Input/LegacyInputResetTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: OS focus通知自体は次段。既存のInputSystem::ReleaseAll→全Router controller取消に応答する。非focus解除で誤ったfocusイベントは作らない。
+
+## G1-GR03-P6B: Windowsの入力フォーカスを取消経路へ接続する
+- status: done
+- done-when: IWindowの入力focus値/Delegate通知をWindows focus/activationへ接続。Processorが購読寿命を所有し、loss時にMapper停止＋正本/全controller取消、UI focus通知、handler通知はPumpMessages後に順序を保って配送する。非focus入力と復帰後の古いrepeatは注入しない。
+- verify: 偽window＋実Engine/InputSystem/Router/Processorのloss/gain/重複/同batch復帰/handler再入/購読解除を既存Engine bundleへ追加。Windows native実行未確認を明示、公開API/寿命独立レビュー。
+- stop-when: WM_KILLFOCUS内でGame handlerを呼ぶ、旧window購読残留、focus loss後held/analog継続、イベント順序喪失、callback例外が新focus処理からOSへ漏れる、blocking未解消。
+- paths: Library/Core/Private/Platform/Windows/WindowsApplication.cpp, Library/Core/Private/Platform/Windows/WindowsKeyRepeatGate.h, Test/Core/Engine/WindowsKeyRepeatGateTest.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Public/Application/IWindow.h, Library/Core/Private/Platform/Windows/WindowsWindow.h, Library/Core/Private/Platform/Windows/WindowsWindow.cpp, Library/Core/Public/Engine/ApplicationProcessor.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Input/IInputController.h, Library/Core/Public/Input/InputRouter.h, Library/Core/Private/Input/InputRouter.cpp, Library/Modules/ImGui/Private/ImGuiModule/ImGuiModule.cpp, Test/Core/Engine/InputFocusPipelineTest.cpp, Test/Core/Engine/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: Raw Input/カーソル制御/rebindは後続。既存IsActiveとkeyboard input focusを分ける。Game handler通知はboot完了後だけ購読し、shutdown時に先行解除する。

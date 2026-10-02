@@ -161,3 +161,9 @@
 
 ## 入力取消と既存コントローラー
 InputSystem::ReleaseAllは正本のneutral化後、Routerの全controllerへOnInputResetを通知する。CameraInputCollectorは修飾/drag/累積deltaを解除、MayaCameraControllerはdrag buttonだけ、LightControllerはheld keyだけを解除し姿勢/値/感度を維持する。PickingControllerは未完了click/box/sphereを中止し、確定selectionを残す。ImGuiは未処理event queueと現在のkey/mouse状態を消去し、queued pressの復活を防ぐ。通常のReleased通知を合成しないので、取消をclick/selectとして扱わない。OS focus通知の供給は別途必要。
+
+## 入力フォーカスの配送
+IWindowのkeyboard input focusはactivationと区別し、WindowsのWM_ACTIVATE/WM_SETFOCUS/WM_KILLFOCUSで遷移通知する。非focusのlegacy入力と復帰時の古いRepeatは注入しない。ApplicationProcessorは初期化完了後に購読し、loss直後にMapper停止とReleaseAll、全controllerへのfocus通知を行う。Game handlerのOnFocusLost/Gainedは順序queueをPumpMessages後に配送し、WM_KILLFOCUS内でwindowを表示/activateする危険を避ける。handlerの共有寿命とwindow購読世代を保持し、再入通知は次batchへ送る。shutdown/destructorでは保存済みDelegateでallocationを伴わず購読解除する。ImGuiへもAddFocusEventを供給する。
+Win32の根拠: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-killfocus 、 https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-activate 、 https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-setfocus 。
+
+キーrepeatの抑止はWndProcだけでなくTranslateMessageの前にも行う。WindowsKeyRepeatGateはエンジンのKeyCodeへ変換されないIME/OEMキーもnative VKで追跡し、focus後の新しいkeydownが無いrepeatを文字生成へ渡さない。WM_CHARによる確定文字の既存経路自体は維持する。

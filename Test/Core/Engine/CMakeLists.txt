@@ -6,6 +6,8 @@ norves_add_test_bundle(ApplicationFixedStepPipelineTest
     FOLDER "Test/Core/Engine"
     MEMBER ApplicationFixedStepPipelineTest ApplicationFixedStepPipelineTest.cpp
     MEMBER FixedStepSchedulerTest FixedStepSchedulerTest.cpp
+    MEMBER WindowsKeyRepeatGateTest WindowsKeyRepeatGateTest.cpp
+    MEMBER InputFocusPipelineTest InputFocusPipelineTest.cpp
     MEMBER InputFramePipelineTest InputFramePipelineTest.cpp
 )
 target_link_libraries(ApplicationFixedStepPipelineTest PRIVATE Core)
@@ -19,3 +21,5 @@ target_compile_definitions(ApplicationFixedStepPipelineTest PRIVATE
 
 add_test(NAME ApplicationFixedStepPipelineTest COMMAND ApplicationFixedStepPipelineTest)
 add_test(NAME InputFramePipelineTest COMMAND ApplicationFixedStepPipelineTest --test=InputFramePipelineTest)
+add_test(NAME InputFocusPipelineTest COMMAND ApplicationFixedStepPipelineTest --test=InputFocusPipelineTest)
+add_test(NAME WindowsKeyRepeatGateTest COMMAND ApplicationFixedStepPipelineTest --test=WindowsKeyRepeatGateTest)

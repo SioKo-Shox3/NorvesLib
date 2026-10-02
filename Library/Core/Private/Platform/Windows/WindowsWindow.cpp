@@ -2,6 +2,7 @@
 #include "Platform/Windows/WindowsKeyMap.h"
 #include "Engine/Engine.h"
 #include "Input/InputSystem.h"
+#include "Logging/LogMacros.h"
 #include <stdexcept>
 
 using namespace NorvesLib::Core::Container;
@@ -45,6 +46,7 @@ namespace NorvesLib
                     // ウィンドウ作成時にインスタンスを設定
                     CREATESTRUCT *createStruct = reinterpret_cast<CREATESTRUCT *>(lParam);
                     pThis = static_cast<WindowsWindow *>(createStruct->lpCreateParams);
+                    pThis->m_hWnd = hWnd;
 
                     // ウィンドウにインスタンスを関連付け
                     SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pThis));
@@ -56,10 +58,11 @@ namespace NorvesLib
                 }
 
                 // InputSystemへの入力注入ヘルパー
-                auto *inputSystem = []()
+                auto *inputSystem = [pThis]()
                     -> NorvesLib::Core::Input::InputSystem *
                 {
-                    if (NorvesLib::Core::Engine::GEngine)
+                    if (NorvesLib::Core::Engine::GEngine &&
+                        NorvesLib::Core::Engine::GEngine->GetMainWindow()==pThis)
                     {
                         return &NorvesLib::Core::Engine::GEngine->GetInputSystem();
                     }
@@ -73,10 +76,25 @@ namespace NorvesLib
                     if (pThis)
                     {
                         pThis->m_isActive = (LOWORD(wParam) != WA_INACTIVE);
+                        pThis->SetInputFocused(pThis->m_isActive && HIWORD(wParam)==0 && GetFocus()==hWnd);
                     }
                     break;
 
+                case WM_SETFOCUS:
+                    if(pThis) pThis->SetInputFocused(pThis->m_isActive && !IsIconic(hWnd));
+                    return 0;
+                case WM_KILLFOCUS:
+                    if(pThis) pThis->SetInputFocused(false);
+                    return 0;
+                case WM_NCDESTROY:
+                    if(pThis)
+                    {
+                        pThis->SetInputFocused(false);pThis->m_isActive=false;pThis->m_hWnd=nullptr;
+                        SetWindowLongPtr(hWnd,GWLP_USERDATA,0);
+                    }
+                    break;
                 case WM_DESTROY:
+                    if(pThis) pThis->SetInputFocused(false);
                     // ウィンドウの破棄
                     PostQuitMessage(0);
                     return 0;
@@ -84,12 +102,15 @@ namespace NorvesLib
                 // ========== キーボード入力 ==========
                 case WM_KEYDOWN:
                 case WM_SYSKEYDOWN:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
+                        const bool bRepeat = (lParam & 0x40000000) != 0;
+                        if(wParam>=256 || !pThis->m_KeyRepeatGate.AcceptPress(static_cast<uint32_t>(wParam),bRepeat)) break;
                         auto keyCode = TranslateWindowsKeyCode(wParam);
                         if (keyCode != Input::KeyCode::None)
                         {
-                            bool bRepeat = (lParam & 0x40000000) != 0;
+                            // focus復帰後、押し続けた旧キーのrepeatだけで操作を再開しない。
+                            if(bRepeat && !inputSystem->GetState().IsKeyDown(keyCode)) break;
                             inputSystem->InjectKeyEvent(
                                 keyCode,
                                 bRepeat ? Input::InputAction::Repeat : Input::InputAction::Pressed);
@@ -99,8 +120,9 @@ namespace NorvesLib
 
                 case WM_KEYUP:
                 case WM_SYSKEYUP:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
+                        if(wParam<256) pThis->m_KeyRepeatGate.Release(static_cast<uint32_t>(wParam));
                         auto keyCode = TranslateWindowsKeyCode(wParam);
                         if (keyCode != Input::KeyCode::None)
                         {
@@ -111,7 +133,7 @@ namespace NorvesLib
 
                 // ========== 文字入力（IME 確定後の Unicode 文字） ==========
                 case WM_CHAR:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
                         // wParam は UTF-16 コードユニット。BMP 範囲はそのままコードポイント。
                         // サロゲートペア（U+10000 以上）は 2 メッセージに分割されて届くが、
@@ -128,7 +150,7 @@ namespace NorvesLib
 
                 // ========== マウスボタン入力 ==========
                 case WM_LBUTTONDOWN:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
                         float mx = static_cast<float>(LOWORD(lParam));
                         float my = static_cast<float>(HIWORD(lParam));
@@ -137,7 +159,7 @@ namespace NorvesLib
                     break;
 
                 case WM_LBUTTONUP:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
                         float mx = static_cast<float>(LOWORD(lParam));
                         float my = static_cast<float>(HIWORD(lParam));
@@ -146,7 +168,7 @@ namespace NorvesLib
                     break;
 
                 case WM_RBUTTONDOWN:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
                         float mx = static_cast<float>(LOWORD(lParam));
                         float my = static_cast<float>(HIWORD(lParam));
@@ -155,7 +177,7 @@ namespace NorvesLib
                     break;
 
                 case WM_RBUTTONUP:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
                         float mx = static_cast<float>(LOWORD(lParam));
                         float my = static_cast<float>(HIWORD(lParam));
@@ -164,7 +186,7 @@ namespace NorvesLib
                     break;
 
                 case WM_MBUTTONDOWN:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
                         float mx = static_cast<float>(LOWORD(lParam));
                         float my = static_cast<float>(HIWORD(lParam));
@@ -173,7 +195,7 @@ namespace NorvesLib
                     break;
 
                 case WM_MBUTTONUP:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
                         float mx = static_cast<float>(LOWORD(lParam));
                         float my = static_cast<float>(HIWORD(lParam));
@@ -183,7 +205,7 @@ namespace NorvesLib
 
                 // ========== マウス移動 ==========
                 case WM_MOUSEMOVE:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
                         float mx = static_cast<float>(LOWORD(lParam));
                         float my = static_cast<float>(HIWORD(lParam));
@@ -193,7 +215,7 @@ namespace NorvesLib
 
                 // ========== マウススクロール ==========
                 case WM_MOUSEWHEEL:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
                         float delta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA);
                         inputSystem->InjectMouseScroll(delta);
@@ -203,6 +225,30 @@ namespace NorvesLib
 
                 // 標準のウィンドウプロシージャを呼び出す
                 return DefWindowProc(hWnd, message, wParam, lParam);
+            }
+
+            bool WindowsWindow::ShouldTranslateKeyMessage(WPARAM key,LPARAM flags) const
+            {
+                if(!m_InputFocused || key>=256 || !Engine::GEngine || Engine::GEngine->GetMainWindow()!=this) return false;
+                const bool repeat=(flags & 0x40000000)!=0;
+                if(!m_KeyRepeatGate.CanTranslate(static_cast<uint32_t>(key),repeat)) return false;
+                const auto code=TranslateWindowsKeyCode(key);
+                return !repeat || code==Input::KeyCode::None || Engine::GEngine->GetInputSystem().GetState().IsKeyDown(code);
+            }
+
+            void WindowsWindow::SetInputFocused(bool focused) noexcept
+            {
+                if(m_InputFocused==focused) return;
+                m_InputFocused=focused;
+                m_KeyRepeatGate.Clear();
+                try { NotifyInputFocusChanged(focused); }
+                catch(...)
+                {
+                    // 新しいfocus配送の例外をWin32のcallback境界から出さない。
+                    if(Engine::GEngine) Engine::GEngine->RequestExit(1);
+                    try { NORVES_LOG_ERROR("WindowsWindow","入力focus通知に失敗したため終了を要求しました"); }
+                    catch(...) {}
+                }
             }
 
             bool WindowsWindow::RegisterWindowClass()
@@ -304,6 +350,7 @@ namespace NorvesLib
 
             void WindowsWindow::Destroy()
             {
+                SetInputFocused(false);
                 // ウィンドウが存在する場合のみ
                 if (m_hWnd)
                 {
@@ -323,6 +370,7 @@ namespace NorvesLib
 
             void WindowsWindow::Hide()
             {
+                SetInputFocused(false);
                 if (m_hWnd)
                 {
                     ShowWindow(m_hWnd, SW_HIDE);
