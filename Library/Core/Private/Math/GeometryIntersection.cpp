@@ -893,4 +893,175 @@ GeometrySeparation ComputeSeparation(const Capsule& a, const OBB& b)
     return result;
 }
 
+namespace
+{
+    bool IsFiniteSweepVector(const Vector3& value)
+    {
+        return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+    }
+
+    bool IsValidSweepShape(const Sphere& shape)
+    {
+        return IsFiniteSweepVector(shape.Center) && std::isfinite(shape.Radius) && shape.Radius >= 0.0f;
+    }
+
+    bool IsValidSweepShape(const Capsule& shape)
+    {
+        return IsFiniteSweepVector(shape.PointA) && IsFiniteSweepVector(shape.PointB)
+            && std::isfinite(shape.Radius) && shape.Radius >= 0.0f;
+    }
+
+    bool IsValidSweepShape(const OBB& shape)
+    {
+        if (!IsFiniteSweepVector(shape.Center) || !IsFiniteSweepVector(shape.HalfExtents)
+            || shape.HalfExtents.x < 0.0f || shape.HalfExtents.y < 0.0f || shape.HalfExtents.z < 0.0f)
+        {
+            return false;
+        }
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            if (!IsFiniteSweepVector(shape.Axes[axis])
+                || std::fabs(SeparationDot(shape.Axes[axis], shape.Axes[axis]) - 1.0) > 1e-4
+                || std::fabs(SeparationDot(shape.Axes[axis], shape.Axes[(axis + 1) % 3])) > 1e-4)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    float SweepCoordinateScale(const Vector3& point)
+    {
+        return std::fmax(std::fabs(point.x), std::fmax(std::fabs(point.y), std::fabs(point.z)));
+    }
+
+    GeometrySweepHit MakeSweepResult(EGeometrySweepResult status, float distance,
+        const GeometrySeparation& separation, bool bInitial = false)
+    {
+        GeometrySweepHit result;
+        result.Result = status;
+        result.Distance = distance;
+        result.Point = separation.PointB;
+        result.Normal = -1.0f * separation.NormalAToB;
+        result.Depth = std::fmax(0.0f, -separation.Distance);
+        result.bStartPenetrating = bInitial;
+        return result;
+    }
+
+    template<typename Target>
+    GeometrySweepHit SweepCapsuleImpl(const Capsule& shape, const Target& target,
+        const Vector3& direction, float maxDistance, const GeometrySweepSettings& settings)
+    {
+        GeometrySweepHit invalid;
+        invalid.Result = EGeometrySweepResult::InvalidArgument;
+        if (!IsValidSweepShape(shape) || !IsValidSweepShape(target) || !IsFiniteSweepVector(direction)
+            || !std::isfinite(maxDistance) || maxDistance < 0.0f
+            || !std::isfinite(settings.DistanceTolerance) || settings.DistanceTolerance < 0.0f
+            || !std::isfinite(settings.RelativeTolerance) || settings.RelativeTolerance < 0.0f
+            || settings.MaxIterations == 0)
+        {
+            return invalid;
+        }
+        if (maxDistance > 0.0f && SeparationDot(direction, direction) == 0.0)
+        {
+            return invalid;
+        }
+        const Vector3 unit = SeparationUnit(direction);
+        float distance = 0.0f;
+        GeometrySeparation previous;
+        float previousDistance = 0.0f;
+        for (uint32_t iteration = 0; iteration < settings.MaxIterations; ++iteration)
+        {
+            const Vector3 offset = unit * distance;
+            const Capsule moved(shape.PointA + offset, shape.PointB + offset, shape.Radius);
+            if (!IsValidSweepShape(moved))
+            {
+                return invalid;
+            }
+            const GeometrySeparation separation = ComputeSeparation(moved, target);
+            if (!std::isfinite(separation.Distance) || !IsFiniteSweepVector(separation.NormalAToB)
+                || !IsFiniteSweepVector(separation.PointA) || !IsFiniteSweepVector(separation.PointB))
+            {
+                return invalid;
+            }
+            const float scale = std::fmax(SweepCoordinateScale(separation.PointA), SweepCoordinateScale(separation.PointB));
+            const float tolerance = std::fmax(settings.DistanceTolerance, settings.RelativeTolerance * scale);
+            if (!std::isfinite(tolerance))
+            {
+                return invalid;
+            }
+            if (iteration == 0 && separation.Distance <= 0.0f)
+            {
+                return settings.bReportStartOverlap
+                    ? MakeSweepResult(EGeometrySweepResult::Hit, 0.0f, separation, true)
+                    : GeometrySweepHit{};
+            }
+            if (maxDistance == 0.0f)
+            {
+                return {};
+            }
+            if (iteration > 0 && separation.Distance < -tolerance)
+            {
+                // 並進の丸め等で侵入した場合は最後の安全位置へ戻して未確定を返す。
+                return MakeSweepResult(EGeometrySweepResult::IterationLimit, previousDistance, previous);
+            }
+            const double approach = SeparationDot(unit, separation.NormalAToB);
+            if (separation.Distance <= tolerance && (iteration > 0 || approach > 0.0))
+            {
+                return MakeSweepResult(EGeometrySweepResult::Hit, distance, separation);
+            }
+            if (distance >= maxDistance || approach <= 0.0)
+            {
+                return {};
+            }
+            const double step = separation.Distance / approach;
+            const float nextDistance = static_cast<float>(std::fmin(static_cast<double>(maxDistance), distance + step));
+            if (nextDistance <= distance || iteration + 1 == settings.MaxIterations)
+            {
+                return MakeSweepResult(EGeometrySweepResult::IterationLimit, distance, separation);
+            }
+            previous = separation;
+            previousDistance = distance;
+            distance = nextDistance;
+        }
+        return invalid;
+    }
+}
+
+GeometrySweepHit SweepCapsule(const Capsule& a, const Sphere& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsuleImpl(a, b, direction, maxDistance, settings);
+}
+
+GeometrySweepHit SweepCapsule(const Capsule& a, const OBB& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsuleImpl(a, b, direction, maxDistance, settings);
+}
+
+GeometrySweepHit SweepCapsule(const Capsule& a, const Capsule& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsuleImpl(a, b, direction, maxDistance, settings);
+}
+
+GeometrySweepHit SweepSphere(const Sphere& a, const Sphere& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsule(Capsule(a.Center, a.Center, a.Radius), b, direction, maxDistance, settings);
+}
+
+GeometrySweepHit SweepSphere(const Sphere& a, const OBB& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsule(Capsule(a.Center, a.Center, a.Radius), b, direction, maxDistance, settings);
+}
+
+GeometrySweepHit SweepSphere(const Sphere& a, const Capsule& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsule(Capsule(a.Center, a.Center, a.Radius), b, direction, maxDistance, settings);
+}
+
 } // namespace NorvesLib::Math

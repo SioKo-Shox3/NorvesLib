@@ -1166,3 +1166,11 @@
 - stop-when: 描画への変更、未承認判断、公開契約のblocking指摘が残る場合。
 - paths: Library/Core/Public/Math, Library/Core/Private/Math/GeometryIntersection.cpp, Test/Core/Math, TASKS.md, PROGRESS.md
 - notes: Windows/Core全体/CTest/GPUの検証は別。既存SS/R/FIX項目の状態と順序は変更しない。
+
+## G1-GR08-P3M: 球とカプセルの並進掃引の数学部分を追加する
+- status: done
+- done-when: 球/カプセル対球/OBB/カプセルの掃引を解析例と独立接触oracleで確認し、初期重なり・未収束・無効入力を区別する。
+- verify: g++ -std=c++23 -O2 -I Library/Core/Public Test/Core/Math/GeometrySweepTest.cpp Library/Core/Private/Math/GeometryIntersection.cpp -o /tmp/norves-sweep && /tmp/norves-sweep
+- stop-when: 未承認の意味変更、描画変更、安全側の進行または検証が成立しない場合。
+- paths: Library/Core/Public/Math, Library/Core/Private/Math/GeometryIntersection.cpp, Test/Core/Math, TASKS.md, PROGRESS.md
+- notes: P1に依存。Physics統合前のCPU数学だけを先行する。未収束を確定ヒットへ変換しない。

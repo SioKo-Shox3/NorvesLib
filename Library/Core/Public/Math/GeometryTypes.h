@@ -26,6 +26,38 @@ struct GeometrySeparation
     bool bPenetrating = false;
 };
 
+enum class EGeometrySweepResult
+{
+    NoHit,
+    Hit,
+    IterationLimit,
+    InvalidArgument
+};
+
+struct GeometrySweepSettings
+{
+    float DistanceTolerance = 1e-4f;
+    // 最近表面点の絶対ワールド座標の最大成分に掛ける。遠方ではHitの許容幅が広がる。
+    float RelativeTolerance = 1e-6f;
+    uint32_t MaxIterations = 24;
+    bool bReportStartOverlap = true;
+};
+
+/**
+ * @brief 並進掃引の結果。Distance は始点からの実距離、Normal は対象からの押し出し向き。
+ * Hit は距離許容内への到達、IterationLimit は安全側の未確定位置を示す。
+ * 接触も初期重なりとして扱う。初期重なりを無視するとその対象全体を無視する。
+ */
+struct GeometrySweepHit
+{
+    EGeometrySweepResult Result = EGeometrySweepResult::NoHit;
+    float Distance = 0.0f;
+    Vector3 Point;
+    Vector3 Normal;
+    float Depth = 0.0f;
+    bool bStartPenetrating = false;
+};
+
 struct Ray
 {
     Vector3 Origin;

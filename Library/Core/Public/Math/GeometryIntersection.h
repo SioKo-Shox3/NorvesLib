@@ -509,6 +509,25 @@ GeometrySeparation ComputeSeparation(const Capsule& a, const Sphere& b);
 GeometrySeparation ComputeSeparation(const Capsule& a, const OBB& b);
 GeometrySeparation ComputeSeparation(const Capsule& a, const Capsule& b);
 
+/**
+ * @brief カプセルを direction に maxDistance だけ並進させる。回転掃引は行わない。
+ * direction は内部で正規化する。maxDistance==0 ではゼロ方向も許し、初期重なりだけを返す。
+ * 半径・距離・許容は非負、全数値は有限、OBB軸は正規直交であること。
+ * 反復上限や数値上の停滞は IterationLimit。確定したヒットとして使わないこと。
+ */
+GeometrySweepHit SweepCapsule(const Capsule& a, const Sphere& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+GeometrySweepHit SweepCapsule(const Capsule& a, const OBB& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+GeometrySweepHit SweepCapsule(const Capsule& a, const Capsule& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+GeometrySweepHit SweepSphere(const Sphere& a, const Sphere& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+GeometrySweepHit SweepSphere(const Sphere& a, const OBB& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+GeometrySweepHit SweepSphere(const Sphere& a, const Capsule& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+
 bool ComputeContact(const Sphere& a, const Sphere& b, GeometryContact& outContact);
 bool ComputeContact(const Sphere& a, const OBB& b, GeometryContact& outContact);
 bool ComputeContact(const OBB& a, const OBB& b, GeometryContact& outContact);
