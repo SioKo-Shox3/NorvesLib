@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <cstdint>
+#include "CameraLateUpdate.h"
 
 #include "Core/Public/Application/ApplicationHandlerBase.h"
 
@@ -39,6 +40,7 @@ namespace Game
         virtual bool OnInitialize() override;
         virtual void OnPostInitialize() override;
         virtual void OnUpdate(float deltaTime) override;
+        void OnLateUpdate(float deltaTime) override;
         virtual void OnPreShutdown() override;
         virtual void OnShutdown() override;
 
@@ -103,6 +105,8 @@ namespace Game
         GetAssetSystemSnapshot() const;
 
     private:
+        NorvesLib::Core::Container::TSharedPtr<CameraLateUpdateSlot> m_CameraLateUpdateSlot =
+            NorvesLib::Core::Container::MakeShared<CameraLateUpdateSlot>();
         /**
          * @brief --bridge-port を解析する（OnPreInitialize から呼ぶ）。無効値は
          *        m_bBridgeEnabled=false のまま（Bridge 無効）にして警告ログを出すのみで、

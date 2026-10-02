@@ -123,7 +123,7 @@ namespace Game::GameModes
             data.m_pCameraObject = nullptr;
             data.m_pSpringArmComponent = nullptr;
             data.m_pCameraComponent = nullptr;
-            data.m_bCameraSmokeSyncEmitted = false;
+            data.m_LateCameraState.reset();
             data.m_bCameraSmokeCompleteEmitted = false;
         }
 
@@ -131,7 +131,7 @@ namespace Game::GameModes
         {
             data.m_CameraController.Initialize(Math::Vector3(0.0f, 0.0f, 0.0f), 5.0f, 0.0f, 30.0f);
             data.m_CameraInputCollector.ResetAll();
-            data.m_bCameraSmokeSyncEmitted = false;
+            data.m_LateCameraState.reset();
             data.m_bCameraSmokeCompleteEmitted = false;
 
             auto& inputRouter = ctx.EngineRef.GetInputRouter();
@@ -1472,11 +1472,43 @@ namespace Game::GameModes
         }
 #endif
 
+        data.m_LateCameraState = MakeShared<Game::CameraLateUpdateState>();
+        data.m_LateCameraState->OwnerId = data.m_pCameraObject->GetObjectId();
+        data.m_LateCameraState->SpringArmId = data.m_pSpringArmComponent->GetComponentId();
+        data.m_LateCameraState->CameraId = data.m_pCameraComponent->GetComponentId();
+        const TWeakPtr<Game::CameraLateUpdateState> weakState = data.m_LateCameraState;
+        auto* world = &ctx.EngineRef.GetWorld();
+        auto* renderWorld = &ctx.EngineRef.GetRenderWorld();
+        data.m_LateCameraState->Callback = Delegate<void, float>([weakState, world, renderWorld](float)
+        {
+            const auto state = weakState.lock();
+            CameraProxy cameraProxy;
+            if (!state || !state->BuildSnapshot(*world, cameraProxy)) return;
+            renderWorld->SetMainCamera(cameraProxy);
+            if (!state->bSmokeSyncEmitted)
+            {
+                LOG_INFO("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
+                EmitM9WorldSmokeMarker("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
+                LOG_INFO("TICK_STAGE_SMOKE order=ok stage=late_camera");
+                EmitM9WorldSmokeMarker("TICK_STAGE_SMOKE order=ok stage=late_camera");
+                state->bSmokeSyncEmitted = true;
+            }
+        });
         return GameModeEnterResult::Succeeded;
     }
 
     void Rendering3DTestRoutine::Tick(GameModeContext &ctx, Rendering3DTestData &data, float deltaTime)
     {
+        // Bridge等による通常Tick前の削除にも、IDから再解決して対応する。
+        data.m_pCameraObject = nullptr;
+        data.m_pSpringArmComponent = nullptr;
+        data.m_pCameraComponent = nullptr;
+        if (data.m_LateCameraState)
+        {
+            data.m_LateCameraState->Resolve(ctx.WorldRef, data.m_pCameraObject,
+                data.m_pSpringArmComponent, data.m_pCameraComponent);
+        }
+
         if (data.m_bPhysicsSmoke)
         {
             data.m_M8MinimalPhysicsSmoke.Update(ctx);
@@ -1582,8 +1614,6 @@ namespace Game::GameModes
                 yaw = std::fmod(yaw, 360.0f);
                 data.m_pSpringArmComponent->SetYaw(yaw);
             }
-            data.m_CameraInputCollector.ResetFrame();
-            data.m_pSpringArmComponent->RefreshOwnerTransform();
             data.m_PickingController.SetFallbackSelectionDepth(
                 data.m_pSpringArmComponent->GetArmLength());
 
@@ -1596,7 +1626,7 @@ namespace Game::GameModes
                     : Math::Vector3(0.0f, 0.0f, 0.0f);
                 NORVES_LOG_DEBUG(
                     "Input",
-                    "ScrollDelta={:.3f}, ArmLength={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
+                    "ScrollDelta={:.3f}, ArmLength={:.3f}, CamPosBeforeLate=({:.2f}, {:.2f}, {:.2f})",
                     scroll,
                     armLength,
                     cameraPosition.x,
@@ -1604,19 +1634,13 @@ namespace Game::GameModes
                     cameraPosition.z);
             }
 
-            CameraProxy cameraProxy;
-            if (data.m_pCameraComponent->BuildCameraProxy(cameraProxy))
+            if (auto slot = data.m_LateCameraSlot.lock())
             {
-                ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
-                if (!data.m_bCameraSmokeSyncEmitted)
-                {
-                    LOG_INFO("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
-                    EmitM9WorldSmokeMarker("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
-                    data.m_bCameraSmokeSyncEmitted = true;
-                }
+                slot->Arm(data.m_LateCameraState);
             }
         }
 
+        data.m_CameraInputCollector.ResetFrame();
         data.m_PickingController.DrawSelection();
 
         data.m_ElapsedTime += deltaTime;
@@ -1962,6 +1986,7 @@ namespace Game::GameModes
     void Rendering3DTestRoutine::Leave(GameModeContext &ctx, Rendering3DTestData &data, GameModeExitReason reason)
     {
         (void)reason;
+        data.m_LateCameraState.reset();
 
         if (data.m_bPhysicsSmoke)
         {

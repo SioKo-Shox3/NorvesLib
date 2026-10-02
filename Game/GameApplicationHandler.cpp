@@ -1354,6 +1354,7 @@ namespace Game
 
     void GameApplicationHandler::OnUpdate(float deltaTime)
     {
+        m_CameraLateUpdateSlot->Reset();
         // シーンの更新（カメラ・入力・ライト）はGameMode（Rendering3DTest）へ移動した。
         // ApplicationHandlerはアプリ全体の責務（boot/コマンドライン/テクスチャ設定/
         // レジストリ・初期モード選択/フォーカス）に集中する。
@@ -1366,6 +1367,11 @@ namespace Game
             m_BridgeHost.DrainInbound();
         }
         m_M6ScriptSmokeController.Update();
+    }
+
+    void GameApplicationHandler::OnLateUpdate(float deltaTime)
+    {
+        m_CameraLateUpdateSlot->Dispatch(deltaTime);
     }
 
     bool GameApplicationHandler::ShouldAdvanceSimulation() const
@@ -1440,11 +1446,13 @@ namespace Game
         const bool bUseCookedModel = m_bRendering3DTestUseCookedModel;
         const bool bPhysicsSmoke = s_bRendering3DTestPhysicsSmoke;
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
+        const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
         stateMachine->Registry().Register(
             Rendering3DTest,
-            [bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
+            [bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance, lateCameraSlot](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
+                mode->GetData().m_LateCameraSlot = lateCameraSlot;
                 mode->GetData().m_ModelPath = params.ModelPath;
                 mode->GetData().m_bUseCookedModel = bUseCookedModel;
                 mode->GetData().m_BoardSmokeCount = s_Rendering3DTestBoardSmokeCount;

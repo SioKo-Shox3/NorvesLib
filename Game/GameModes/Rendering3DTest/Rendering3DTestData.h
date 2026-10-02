@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "CameraLateUpdate.h"
+
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Container/PointerTypes.h"
 #include "Core/Public/Input/LightController.h"
@@ -157,7 +159,8 @@ namespace Game::GameModes
 
         // メッシュ登録済みフラグ
         bool m_bMeshesRegistered = false;
-        bool m_bCameraSmokeSyncEmitted = false;
+        TWeakPtr<Game::CameraLateUpdateSlot> m_LateCameraSlot;
+        TSharedPtr<Game::CameraLateUpdateState> m_LateCameraState;
         bool m_bCameraSmokeCompleteEmitted = false;
         // --startup-camera で指定した起動時のカメラ（SpringArm の yaw・pitch[度]と腕の長さ）
         bool m_bHasStartupCamera = false;

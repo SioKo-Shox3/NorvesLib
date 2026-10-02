@@ -24,7 +24,7 @@
 
 ## 実装状況
 
-公開群、Component設定、Worldの一回収集と群別実行・LateTick、Application/Moduleの後段配線を実装した。アニメ姿勢公開を接続済みで、カメラの群移行は後続である。
+公開群、Component設定、Worldの一回収集と群別実行・LateTick、Application/Moduleの後段配線を実装した。アニメ姿勢公開、SpringArmのCamera群、GameHandlerによる後段カメラ確定を接続済み。Windows/Gameの受入れ試験は未実行で、GR01全受入れの完了を意味しない。
 
 ## Worldの収集と破棄
 
@@ -62,3 +62,13 @@
 - SamplingTestへ追加した姿勢・serial・名前引き・資産寿命試験と既存FramePacket/M9はWindows依存で未実行。既存失敗の再現や、新しい失敗が増えていないことはこの環境では確認できていない。
 
 - Mesh差し替え時は既定のmeshNode transformも再取得する。SetMeshNodeGlobalTransformによる明示overrideは維持し、SetSkeletalAssetで既定へ戻す。
+
+## Gameカメラの後段確定
+
+- SpringArmはCamera群。Rendering3DTestの入力/intentは通常Tickで処理し、カメラproxy送信だけをGameHandlerのOnLateUpdateへ予約する。Enterの初期同期は維持する。
+- Game専用single camera slotは既存Delegateを使う。Data所有のbindingをweakでArmし、Dispatchは先にpendingを空にして一回だけ呼ぶ。同フレームの再Armは最後を採用、callback内の新予約を同じDispatchでは実行しない。
+- binding/callbackは成功Enter時に一回作り、フレームごとのDelegateコピー/確保を増やさない。OnUpdateは前frame残件を破棄する。通常Tickがないmode/ポーズでは予約されない。Leave/failedEnter/handler破棄はweak参照で失効する。
+- callbackはData/Componentをcaptureせず、weak state内のObjectId/ComponentIdからlive参照を解決する。通常Tickのcamera処理もIDから解決し、途中削除やdisabledを拒否する。
+- Module Late後のchild pivot/cameraを扱うため、World変換確定→SpringArm refresh→World変換確定→proxy生成とする。追加のO(Entity数)走査2回はGR41でdirty世代による最適化の対象とする。
+- late送信成功時のTICK_STAGE_SMOKE markerを追加したが、ログを実機で観測したわけではない。CameraWorld/M9、既定・近接・低角度の見た目は未検証。
+- 既存SpringArmComponentTestへ全constructor群、固定0/1/2後の群単独追従、child変換、無効化/実削除、one-shot/上書き/weak寿命/再入のケースを追加。Windows.hでコンパイルが止まるため、静的レビューのみで実行合格ではない。

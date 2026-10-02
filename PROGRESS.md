@@ -266,3 +266,6 @@
 
 - G1-GR01-P4: SamplerへinverseBindを含まないJointModelMatricesを追加し、SkinnedMeshをAnimation/PoseFinalizeへ配線。EvaluatePose/serial、名前引き、評価済みmodel/world行列と表現可能な正scale TRSの読み取りを公開した。旧BonePalette式は不変。資産無効/子差替えを検出し、meshNodeの既定追従と明示overrideを区別、再評価/無効化を描画dirtyへ伝播する。既存SamplingTestへ手計算・inverseBind除外・名前索引・serial・child変換確定・shear拒否・実SceneViewの停止中差替え/unloadケースを追加。独立静的レビュー第2周PASS、CRLF差分検査成功。Windows.h依存でSampling/FramePacket/M9をコンパイル・実行できず、既存失敗基準線との差も未確認。
 - Next: SpringArmのCamera群割当とRendering3DTestのカメラproxy確定をOnLateUpdateへ移す。
+
+- G1-GR01-P5: SpringArmをCamera群へ移し、Rendering3DTestの後段カメラをGameHandler OnLateUpdateのone-shot Delegateで確定。Enterで一回作るData所有bindingをweakで予約し、Leave/handler破棄/途中Entity・Component削除を安全に拒否する。初期camera同期は維持、child pivot/cameraは前後の変換確定で対応。既存SpringArmComponentTestへ群/0・1・2固定step/child/削除/disabled/weak/上書き/再入の試験を追加した。静的レビュー第2周PASS、行末差分と初期同期保持の静的検査成功。Windows.h依存で実試験/CameraWorld/M9/画像比較は未実行。TICK_STAGE_SMOKEは実装済みだが実ログ未観測。GR01受入れ全完了やG1 completeは宣言しない。
+- Next: G1のGR03入力抽象化。S4 Raw Input、S5 XInput、S8暫定保存先は作者へ確認中。選定依存の実装は保留し、依存しない純ロジック等の計画・実装を進める。

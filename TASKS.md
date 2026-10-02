@@ -1231,3 +1231,11 @@
 - stop-when: 行列規約不整合、未解決のcache寿命、資産形式変更、blockingが残る場合。
 - paths: Library/Core/Public/Animation, Library/Core/Private/Animation, Library/Core/Public/Component/SkinnedMeshComponent.h, Library/Core/Private/Component/SkinnedMeshComponent.cpp, Test/Core/Rendering/SkeletalAnimationSamplingTest.cpp, Docs/Architecture/TickStages.md, TASKS.md, PROGRESS.md
 - notes: Owner子階層は既存Worldの変換確定境界が鮮度の前提。
+
+## G1-GR01-P5: SpringArmとGameカメラを物理後へ移す
+- status: done
+- done-when: Camera群へ割当、GameHandlerのone-shot Delegateでlate proxy確定、weak寿命とID再解決で途中破棄を拒否、既存初期camera同期を保持する。
+- verify: 既存SpringArmComponentTestへ群/固定0・1・2step/child変換/途中削除/one-shot寿命ケース追加（Windows未実行）。
+- stop-when: callback寿命未解消、mode停止時の誤更新、初期同期破壊、blockingが残る場合。
+- paths: Library/Core/Private/Component/SpringArmComponent.cpp, Game/CameraLateUpdate.h, Game/GameApplicationHandler.h, Game/GameApplicationHandler.cpp, Game/GameModes/Rendering3DTest/Rendering3DTestData.h, Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp, Test/Core/Object/SpringArmComponentTest.cpp, Docs/Architecture/TickStages.md, TASKS.md, PROGRESS.md
+- notes: Game専用single camera slotを使い、Coreのstate-machineや依存graphは広げない。

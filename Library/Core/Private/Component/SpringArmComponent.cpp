@@ -34,6 +34,7 @@ namespace NorvesLib::Core::Component
     SpringArmComponent::SpringArmComponent()
         : Component()
     {
+        SetTickGroup(ETickGroup::Camera);
         PivotObjectId = 0;
         ArmLength = DefaultArmLength;
         Yaw = DefaultYaw;
@@ -48,6 +49,7 @@ namespace NorvesLib::Core::Component
     SpringArmComponent::SpringArmComponent(const FieldInitializer* initializer)
         : Component(initializer)
     {
+        SetTickGroup(ETickGroup::Camera);
         PivotObjectId = 0;
         ArmLength = DefaultArmLength;
         Yaw = DefaultYaw;
@@ -62,6 +64,7 @@ namespace NorvesLib::Core::Component
     SpringArmComponent::SpringArmComponent(const IUnknown* sourceObject)
         : Component(sourceObject)
     {
+        SetTickGroup(ETickGroup::Camera);
         PivotObjectId = 0;
         ArmLength = DefaultArmLength;
         Yaw = DefaultYaw;
