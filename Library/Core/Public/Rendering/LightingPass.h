@@ -378,6 +378,14 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_RTGIStaticFrames = 0;
         /** @brief 直近のdispatchで使った画素ごとの履歴の年齢の上限 */
         uint32_t m_RTGIHistoryAgeCap = RTGIHistoryMaximumAge;
+        /**
+         * @brief RTGIの低食い違い列の番号。描画フレーム番号が変わったdispatchごとに1ずつ進め、同じ描画フレーム番号の
+         * dispatchは同じ列の番号を使う（描画フレーム番号は1回の描画の間に不規則に複数進むことがある）。
+         */
+        uint32_t m_RTGISampleIndex = 0;
+        /** @brief m_RTGISampleIndex を最後に進めたときの描画フレーム番号 */
+        uint64_t m_RTGISampleFrameNumber = 0;
+        bool m_bRTGISampleFrameNumberValid = false;
         bool m_bRTGIStaticSignatureValid = false;
         bool m_bRTGIHistoryValid = false;
         bool m_bRTGIHistoryFrameNumberValid = false;

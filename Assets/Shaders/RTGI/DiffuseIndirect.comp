@@ -15,7 +15,7 @@ layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
     uvec4 imageAndSceneCounts; // xy=画像寸法、z=インスタンス数、w=ライト数
     vec4 rayLimits; // x=最小距離、y=最大距離、z=pre-exposure、w=環境強度
     uvec4 temporalState; // x=履歴有効、y=ライトrevision差、z=weight制限、w=age上限
-    uvec4 sampleState; // x=描画フレーム番号（試料系列の番号）、y=発光instance数、z=発光三角形数
+    uvec4 sampleState; // x=試料系列の番号（RTGIのdispatchごとに1進む）、y=発光instance数、z=発光三角形数
     vec4 previousCameraPosition; // xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比
 } parameters;
 
@@ -179,8 +179,8 @@ vec3 CosineWeightedDirectionFromUnit(vec3 normal, vec2 xi);
 
 vec3 CosineWeightedDirection(vec3 normal, uvec2 pixel, uint frameIndex)
 {
-    // 画素ごとの回転を加えたR2列を描画フレーム番号で進め、静止中も毎フレーム別の方向を引く。
-    // 同じ画素・同じフレーム番号からは常に同じ方向になる。R2の刻みは0.32固定小数点で
+    // 画素ごとの回転を加えたR2列を試料系列の番号で進め、静止中も毎フレーム別の方向を引く。
+    // 同じ画素・同じ番号からは常に同じ方向になる。R2の刻みは0.32固定小数点で
     // 整数のまま進め、大きなフレーム番号でもfloatの桁落ちを起こさない。
     uvec2 r2Phase = uvec2(frameIndex * 3242174889u, frameIndex * 2447445414u);
     vec2 rotation = vec2(HashToUnit(Hash32(pixel)),
@@ -326,7 +326,7 @@ bool IsOccluded(vec3 worldPosition,
            gl_RayQueryCommittedIntersectionTriangleEXT;
 }
 
-// 光源標本の乱数。画素・描画フレーム番号・次元ごとに独立した値を引く。
+// 光源標本の乱数。画素・試料系列の番号・次元ごとに独立した値を引く。
 float EmitterRandom(uvec2 pixel, uint frameIndex, uint dimension)
 {
     return HashToUnit(Hash32(uvec2(Hash32(pixel + uvec2(dimension * 7919u, dimension * 104729u)),

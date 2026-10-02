@@ -3440,7 +3440,16 @@ namespace NorvesLib::Core::Rendering
         parameters.temporalState[1] = bLightRevisionMismatch ? 1u : 0u;
         parameters.temporalState[2] = lightWeightLimitedFrames > 0u ? 1u : 0u;
         parameters.temporalState[3] = historyAgeCap;
-        parameters.sampleState[0] = static_cast<uint32_t>(context.FrameNumber);
+        // 方向・光源標本の低食い違い列は、描画ごとに1つずつ進めたときに最もよく散らばる。描画フレーム番号は
+        // 1回の描画の間に不規則に複数進むことがあり、列を飛び飛びに引くと静止画面の累積の収束が遅れるため、
+        // 描画フレーム番号が変わったときだけ列の番号を1進める（同じ描画フレーム番号なら同じ標本を引く）。
+        if (!m_bRTGISampleFrameNumberValid || context.FrameNumber != m_RTGISampleFrameNumber)
+        {
+            m_RTGISampleIndex += 1u;
+            m_RTGISampleFrameNumber = context.FrameNumber;
+            m_bRTGISampleFrameNumberValid = true;
+        }
+        parameters.sampleState[0] = m_RTGISampleIndex;
         parameters.sampleState[1] = static_cast<uint32_t>(emitterEntries.size());
         parameters.sampleState[2] = emitterTriangleCount;
         // 履歴の距離は前フレームのカメラから測ったものなので、現在の表面も同じカメラから測って比べる。
