@@ -16,7 +16,8 @@ namespace NorvesLib::Core::Scene
         InvalidArgument,
         WrongThread,
         AlreadyBound,
-        ProviderMismatch
+        ProviderMismatch,
+        IterationLimit
     };
 
     struct ColliderHandle
@@ -63,6 +64,26 @@ namespace NorvesLib::Core::Scene
         {
             return Index < other.Index || (Index == other.Index && Generation < other.Generation);
         }
+    };
+
+    struct PhysicsRaycastHit
+    {
+        ColliderHandle Collider;
+        BodyHandle Body;
+        EntityHandle Entity;
+        bool bHasEntity = false;
+        Math::Vector3 Point;
+        Math::Vector3 Normal;
+        float Distance = 0.0f;
+    };
+
+    struct PhysicsOverlapHit
+    {
+        ColliderHandle Collider;
+        BodyHandle Body;
+        EntityHandle Entity;
+        bool bHasEntity = false;
+        Math::GeometryContact Contact;
     };
 
     // レイヤーの名前と割当はゲーム側で管理する。エンジンは32ビットの集合だけを扱う。
@@ -152,6 +173,7 @@ namespace NorvesLib::Core::Scene
         PhysicsQueryFilter Filter;
         uint32_t MaxHits = UINT32_MAX;
         bool bReportStartOverlap = true;
+        uint32_t MaxSweepIterations = 24;
     };
 
     /**

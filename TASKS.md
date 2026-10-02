@@ -1182,3 +1182,11 @@
 - stop-when: 既存型の意味変更、循環依存、公開契約のblocking指摘が残る場合。
 - paths: Library/Core/Public/Scene, Library/Core/CMakeLists.txt, Test/Core/Object, TASKS.md, PROGRESS.md
 - notes: 実クエリ・コライダーへの接続はP2B。ゲーム固有のレイヤー名は定義しない。
+
+## G1-GR08-P2B: 単一物理プロキシへ統合クエリを追加する
+- status: done
+- done-when: 実プロキシにray/overlap/sweepを適用し、フィルタ・UserData・法線方向・無効入力・未収束の契約を検証する。
+- verify: g++ -std=c++23 -O2 -ffunction-sections -fdata-sections -I Library/Core/Public -I Library/Modules/Physics/Private Test/Modules/Physics/PhysicsProxyQueryTest.cpp Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp Library/Core/Private/Math/GeometryIntersection.cpp -Wl,--gc-sections -o /tmp/norves-proxy-query && /tmp/norves-proxy-query
+- stop-when: 描画/OS本体の変更、未承認判断、公開契約のblockingが残る場合。
+- paths: Library/Core/Public/Scene, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.h, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Test/Modules/Physics, TASKS.md, PROGRESS.md
+- notes: 単一proxyの実コードの検証。コライダー設定/複数proxy集約/SceneQuery接続は後続。

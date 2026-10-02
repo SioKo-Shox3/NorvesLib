@@ -1,8 +1,8 @@
 ﻿#pragma once
 
-#include "Container/Containers.h"
+#include "Container/VariableArray.h"
 #include "Math/GeometryTypes.h"
-#include "Scene/SceneQuery.h"
+#include "Scene/PhysicsQueryTypes.h"
 
 namespace NorvesLib::Modules::Physics
 {
@@ -24,6 +24,10 @@ namespace NorvesLib::Modules::Physics
         Math::OBB Box;
         Math::Capsule Capsule;
         Math::AABB Bounds;
+        Core::Scene::PhysicsCollisionMask Layer = Core::Scene::DefaultPhysicsLayer;
+        Core::Scene::PhysicsCollisionMask Mask = Core::Scene::AllPhysicsLayers;
+        uint64_t UserData = 0;
+        bool bTrigger = false;
     };
 
     struct PhysicsCandidatePair
@@ -50,6 +54,12 @@ namespace NorvesLib::Modules::Physics
         void OverlapCapsule(
             const Math::Capsule& capsule,
             Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const;
+
+        static bool IsValidQuery(const Core::Scene::PhysicsQueryDesc& query);
+        // 値型の1個のproxyを検査する。Success以外ではoutHitを初期状態へ戻す。
+        // 相対尺度の6乗がFLT_MAX/4096を超える入力は旧幾何のoverflow防止のためInvalidArgument。
+        static Core::Scene::EPhysicsSceneQueryResult QueryProxy(const PhysicsShapeProxy& proxy,
+            const Core::Scene::PhysicsQueryDesc& query, Core::Scene::PhysicsQueryHit& outHit);
 
         static Math::AABB CalculateBounds(const PhysicsShapeProxy& proxy);
         static bool ComputeContact(

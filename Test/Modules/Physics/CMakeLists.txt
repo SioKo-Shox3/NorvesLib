@@ -47,6 +47,7 @@ include(CTest)
 add_test(NAME PhysicsModuleLinkTest COMMAND PhysicsDynamicsTest --test=PhysicsModuleLinkTest)
 
 add_test(NAME PhysicsBroadphaseQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsBroadphaseQueryTest)
+add_test(NAME PhysicsProxyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsProxyQueryTest)
 
 
 norves_add_test_bundle(PhysicsDynamicsTest
@@ -54,6 +55,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsDynamicsTest PhysicsDynamicsTest.cpp
     MEMBER PhysicsModuleLinkTest PhysicsModuleLinkTest.cpp
     MEMBER PhysicsBroadphaseQueryTest PhysicsBroadphaseQueryTest.cpp
+    MEMBER PhysicsProxyQueryTest PhysicsProxyQueryTest.cpp
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
 )

@@ -17,26 +17,6 @@ namespace NorvesLib::Core
 
 namespace NorvesLib::Core::Scene
 {
-    struct PhysicsRaycastHit
-    {
-        ColliderHandle Collider;
-        BodyHandle Body;
-        EntityHandle Entity;
-        bool bHasEntity = false;
-        Math::Vector3 Point;
-        Math::Vector3 Normal;
-        float Distance = 0.0f;
-    };
-
-    struct PhysicsOverlapHit
-    {
-        ColliderHandle Collider;
-        BodyHandle Body;
-        EntityHandle Entity;
-        bool bHasEntity = false;
-        Math::GeometryContact Contact;
-    };
-
     class IPhysicsSceneQueryProvider
     {
     public:

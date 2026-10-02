@@ -250,3 +250,5 @@
 - G1-GR08-P3M: 球/カプセルの並進掃引のCPU数学を追加。面/辺/角、かすり、回転、初期重なり、無効入力、移動距離0、反復上限を確認した。1万配置の既存接触判定の2mm走査+二分法との比較、ASan/UBSan（LeakSanitizer除外）、分離/既存接触の回帰検証に成功。Hit/NoHit/InvalidArgument/IterationLimitを区別する。RelativeToleranceは絶対座標に依存するため遠方では許容幅が拡大する。Physicsのスナップショット・フィルタ・façadeへの統合はまだなく、GR08/G1全体は未完了。
 
 - G1-GR08-P2A: 既存の物理結果enumと世代ハンドルをOS非依存のPhysicsQueryTypesへ同じ定義で移設し、クエリ記述子・結果・バッチ範囲、32ビットのレイヤー、trigger/ignoreフィルタと対称ペア規則を追加。全32ビット、ignoreの世代一致、無効ハンドル、4096通りのペア真理値表、既定値/レイアウトを直接g++で検証。bundle相当のmain置換コンパイルとASan/UBSan（LeakSanitizer除外）も成功。実クエリへの接続はP2B以降。
+
+- G1-GR08-P2B: 単一PhysicsShapeProxyの統合クエリを追加。ray/overlap/sweepへフィルタを適用し、世代ハンドルとUserDataを返す。新Overlapは対象からの押し出し法線、失敗は出力初期化、未収束はIterationLimit。既存float幾何がoverflowする相対尺度はInvalidArgumentで拒否する。実PhysicsBroadphase.cppとMathを直接リンク（未使用関数除去、OS/メモリmockなし）し、3形状のray/sweep、overlap法線、フィルタ/無視/trigger、初期重なり、無効入力・巨大入力を検証。ASan/UBSan（LeakSanitizer除外）成功。Windows/Game/複数proxy集約/コライダー設定からの接続は未検証・未実装の範囲として残る。

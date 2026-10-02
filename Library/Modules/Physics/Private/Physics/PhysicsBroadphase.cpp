@@ -4,6 +4,7 @@
 #include "Math/VectorUtils.h"
 
 #include <cmath>
+#include <cfloat>
 
 namespace NorvesLib::Modules::Physics
 {
@@ -280,6 +281,258 @@ namespace NorvesLib::Modules::Physics
             }
         }
     } // namespace
+
+    namespace
+    {
+        bool IsFiniteQueryVector(const Math::Vector3& value)
+        {
+            return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+        }
+
+        bool IsValidQueryShape(const Math::Sphere& shape)
+        {
+            return IsFiniteQueryVector(shape.Center) && std::isfinite(shape.Radius) && shape.Radius >= 0.0f;
+        }
+
+        bool IsValidQueryShape(const Math::Capsule& shape)
+        {
+            return IsFiniteQueryVector(shape.PointA) && IsFiniteQueryVector(shape.PointB)
+                && std::isfinite(shape.Radius) && shape.Radius >= 0.0f;
+        }
+
+        bool IsValidQueryShape(const Math::OBB& shape)
+        {
+            if (!IsFiniteQueryVector(shape.Center) || !IsFiniteQueryVector(shape.HalfExtents)
+                || shape.HalfExtents.x < 0.0f || shape.HalfExtents.y < 0.0f || shape.HalfExtents.z < 0.0f)
+            {
+                return false;
+            }
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                if (!IsFiniteQueryVector(shape.Axes[axis])
+                    || std::fabs(Math::VectorUtils::Dot(shape.Axes[axis], shape.Axes[axis]) - 1.0f) > 1e-4f
+                    || std::fabs(Math::VectorUtils::Dot(shape.Axes[axis], shape.Axes[(axis + 1) % 3])) > 1e-4f)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        Math::Vector3 QueryUnit(const Math::Vector3& value)
+        {
+            const double length = std::sqrt(static_cast<double>(value.x) * value.x
+                + static_cast<double>(value.y) * value.y + static_cast<double>(value.z) * value.z);
+            return Math::Vector3(static_cast<float>(value.x / length),
+                static_cast<float>(value.y / length), static_cast<float>(value.z / length));
+        }
+
+        bool IsNonzeroQueryDirection(const Math::Vector3& value)
+        {
+            return IsFiniteQueryVector(value) && (value.x != 0.0f || value.y != 0.0f || value.z != 0.0f);
+        }
+
+        // 旧幾何のfloat中間値（カプセルrayの最大6次）をoverflowさせない。
+        // ワールド原点ではなく問い合わせ始点からの相対尺度で判定する。
+        bool HasRepresentableQueryScale(const PhysicsShapeProxy& proxy, const Core::Scene::PhysicsQueryDesc& query)
+        {
+            using Kind = Core::Scene::EPhysicsQueryKind;
+            const Math::Vector3 origin = query.Kind == Kind::RaycastClosest || query.Kind == Kind::RaycastAll ? query.Ray.Origin
+                : query.Kind == Kind::OverlapSphere || query.Kind == Kind::SweepSphere ? query.Sphere.Center
+                : query.Kind == Kind::OverlapBox ? query.Box.Center : query.Capsule.PointA;
+            double scale = 1.0;
+            bool bRepresentable = true;
+            auto includePoint = [&](const Math::Vector3& point)
+            {
+                const double coordinates[3] = {point.x, point.y, point.z};
+                const double origins[3] = {origin.x, origin.y, origin.z};
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    bRepresentable = bRepresentable && std::fabs(coordinates[axis]) <= FLT_MAX / 16.0;
+                    scale = std::fmax(scale, std::fabs(coordinates[axis] - origins[axis]));
+                }
+            };
+            auto includeSphere = [&](const Math::Sphere& shape)
+            {
+                includePoint(shape.Center);
+                scale = std::fmax(scale, shape.Radius);
+            };
+            auto includeBox = [&](const Math::OBB& shape)
+            {
+                includePoint(shape.Center);
+                scale = std::fmax(scale, std::fmax(shape.HalfExtents.x, std::fmax(shape.HalfExtents.y, shape.HalfExtents.z)));
+            };
+            auto includeCapsule = [&](const Math::Capsule& shape)
+            {
+                includePoint(shape.PointA);
+                includePoint(shape.PointB);
+                scale = std::fmax(scale, shape.Radius);
+            };
+            includePoint(origin);
+            if (query.Kind == Kind::OverlapSphere || query.Kind == Kind::SweepSphere)
+            {
+                includeSphere(query.Sphere);
+            }
+            else if (query.Kind == Kind::OverlapBox)
+            {
+                includeBox(query.Box);
+            }
+            else if (query.Kind == Kind::OverlapCapsule || query.Kind == Kind::SweepCapsule)
+            {
+                includeCapsule(query.Capsule);
+            }
+            if (proxy.Shape == EPhysicsProxyShape::Sphere)
+            {
+                includeSphere(proxy.Sphere);
+            }
+            else if (proxy.Shape == EPhysicsProxyShape::Box)
+            {
+                includeBox(proxy.Box);
+            }
+            else
+            {
+                includeCapsule(proxy.Capsule);
+            }
+            const double squared = scale * scale;
+            return bRepresentable && squared * squared * squared <= static_cast<double>(FLT_MAX) / 4096.0;
+        }
+
+        Math::GeometrySweepHit SweepProxy(const Math::Capsule& shape, const PhysicsShapeProxy& proxy,
+            const Core::Scene::PhysicsQueryDesc& query)
+        {
+            Math::GeometrySweepSettings settings;
+            settings.bReportStartOverlap = query.bReportStartOverlap;
+            settings.MaxIterations = query.MaxSweepIterations;
+            switch (proxy.Shape)
+            {
+            case EPhysicsProxyShape::Sphere:
+                return Math::SweepCapsule(shape, proxy.Sphere, query.Direction, query.MaxDistance, settings);
+            case EPhysicsProxyShape::Box:
+                return Math::SweepCapsule(shape, proxy.Box, query.Direction, query.MaxDistance, settings);
+            case EPhysicsProxyShape::Capsule:
+                return Math::SweepCapsule(shape, proxy.Capsule, query.Direction, query.MaxDistance, settings);
+            }
+            Math::GeometrySweepHit result;
+            result.Result = Math::EGeometrySweepResult::InvalidArgument;
+            return result;
+        }
+    }
+
+    bool PhysicsBroadphase::IsValidQuery(const Core::Scene::PhysicsQueryDesc& query)
+    {
+        using Kind = Core::Scene::EPhysicsQueryKind;
+        if (!query.Filter.IsValid() || query.MaxHits == 0)
+        {
+            return false;
+        }
+        switch (query.Kind)
+        {
+        case Kind::RaycastClosest:
+        case Kind::RaycastAll:
+            return IsFiniteQueryVector(query.Ray.Origin) && IsNonzeroQueryDirection(query.Ray.Direction)
+                && std::isfinite(query.MaxDistance) && query.MaxDistance >= 0.0f;
+        case Kind::OverlapSphere:
+            return IsValidQueryShape(query.Sphere);
+        case Kind::OverlapBox:
+            return IsValidQueryShape(query.Box);
+        case Kind::OverlapCapsule:
+            return IsValidQueryShape(query.Capsule);
+        case Kind::SweepSphere:
+        case Kind::SweepCapsule:
+            return (query.Kind == Kind::SweepSphere ? IsValidQueryShape(query.Sphere) : IsValidQueryShape(query.Capsule))
+                && query.MaxSweepIterations > 0
+                && IsFiniteQueryVector(query.Direction) && std::isfinite(query.MaxDistance) && query.MaxDistance >= 0.0f
+                && (query.MaxDistance == 0.0f || IsNonzeroQueryDirection(query.Direction));
+        }
+        return false;
+    }
+
+    Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::QueryProxy(const PhysicsShapeProxy& proxy,
+        const Core::Scene::PhysicsQueryDesc& query, Core::Scene::PhysicsQueryHit& outHit)
+    {
+        using Result = Core::Scene::EPhysicsSceneQueryResult;
+        using Kind = Core::Scene::EPhysicsQueryKind;
+        outHit = {};
+        if (!IsValidQuery(query))
+        {
+            return Result::InvalidArgument;
+        }
+        const bool bValidProxy = proxy.Shape == EPhysicsProxyShape::Sphere ? IsValidQueryShape(proxy.Sphere)
+            : proxy.Shape == EPhysicsProxyShape::Box ? IsValidQueryShape(proxy.Box)
+            : proxy.Shape == EPhysicsProxyShape::Capsule && IsValidQueryShape(proxy.Capsule);
+        if (!bValidProxy)
+        {
+            return Result::InvalidArgument;
+        }
+        if (!query.Filter.Accepts(proxy.Layer, proxy.bTrigger, proxy.Collider, proxy.Body))
+        {
+            return Result::NoHit;
+        }
+        if (!HasRepresentableQueryScale(proxy, query))
+        {
+            return Result::InvalidArgument;
+        }
+        Core::Scene::PhysicsQueryHit hit;
+        hit.Collider = proxy.Collider;
+        hit.Body = proxy.Body;
+        hit.Entity = proxy.Entity;
+        hit.bHasEntity = proxy.bHasEntity;
+        hit.UserData = proxy.UserData;
+        if (query.Kind == Kind::RaycastClosest || query.Kind == Kind::RaycastAll)
+        {
+            const Math::Ray ray(query.Ray.Origin, QueryUnit(query.Ray.Direction));
+            if (!RaycastProxy(ray, proxy, hit.Distance) || hit.Distance > query.MaxDistance)
+            {
+                return Result::NoHit;
+            }
+            hit.Point = ray.PointAt(hit.Distance);
+            hit.Normal = CalculateRayNormal(ray, proxy, hit.Distance);
+        }
+        else if (query.Kind == Kind::SweepSphere || query.Kind == Kind::SweepCapsule)
+        {
+            const Math::Capsule shape = query.Kind == Kind::SweepSphere
+                ? Math::Capsule(query.Sphere.Center, query.Sphere.Center, query.Sphere.Radius) : query.Capsule;
+            const auto sweep = SweepProxy(shape, proxy, query);
+            if (sweep.Result == Math::EGeometrySweepResult::InvalidArgument)
+            {
+                return Result::InvalidArgument;
+            }
+            if (sweep.Result == Math::EGeometrySweepResult::IterationLimit)
+            {
+                return Result::IterationLimit;
+            }
+            if (sweep.Result == Math::EGeometrySweepResult::NoHit)
+            {
+                return Result::NoHit;
+            }
+            hit.Distance = sweep.Distance;
+            hit.Point = sweep.Point;
+            hit.Normal = sweep.Normal;
+            hit.Depth = sweep.Depth;
+            hit.bStartPenetrating = sweep.bStartPenetrating;
+        }
+        else
+        {
+            Math::GeometryContact contact;
+            const bool bHit = query.Kind == Kind::OverlapSphere ? ComputeOverlap(query.Sphere, proxy, contact)
+                : query.Kind == Kind::OverlapBox ? ComputeOverlap(query.Box, proxy, contact)
+                : ComputeOverlap(query.Capsule, proxy, contact);
+            if (!bHit)
+            {
+                return Result::NoHit;
+            }
+            hit.Point = contact.Point;
+            hit.Normal = -1.0f * contact.Normal;
+            hit.Depth = contact.Depth;
+        }
+        if (!std::isfinite(hit.Distance) || hit.Distance < 0.0f || !std::isfinite(hit.Depth) || hit.Depth < 0.0f
+            || !IsFiniteQueryVector(hit.Point) || !IsFiniteQueryVector(hit.Normal))
+        {
+            return Result::InvalidArgument;
+        }
+        outHit = hit;
+        return Result::Success;
+    }
 
     void PhysicsBroadphase::SetProxies(Core::Container::VariableArray<PhysicsShapeProxy> proxies)
     {
