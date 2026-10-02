@@ -683,13 +683,16 @@ namespace NorvesLib::Core::Rendering
             const CameraProxy *SavedMainCamera;
             const CameraProxy *SavedCurrentCamera;
             const CameraProxy *SavedPreviousMainCamera;
+            uint64_t SavedPreviousCameraFrameNumber;
             ~CameraOverrideScope()
             {
                 Context.MainCamera = SavedMainCamera;
                 Context.CurrentCamera = SavedCurrentCamera;
                 Context.PreviousMainCamera = SavedPreviousMainCamera;
+                Context.PreviousCameraFrameNumber = SavedPreviousCameraFrameNumber;
             }
-        } cameraOverrideScope{context, context.MainCamera, context.CurrentCamera, context.PreviousMainCamera};
+        } cameraOverrideScope{context, context.MainCamera, context.CurrentCamera, context.PreviousMainCamera,
+                              context.PreviousCameraFrameNumber};
         if (const CameraProxy *activeCamera = context.GetActiveCamera();
             activeCamera && activeCamera->ExposureMode == CameraExposureMode::Auto)
         {
@@ -748,6 +751,10 @@ namespace NorvesLib::Core::Rendering
                     jitteredPreviousCamera = *previousCamera;
                     ApplyTemporalAAJitter(jitteredPreviousCamera, jitter);
                     context.PreviousMainCamera = &jitteredPreviousCamera;
+                }
+                if (reprojectionCamera)
+                {
+                    context.PreviousCameraFrameNumber = temporalAAPass->GetHistoryFrameNumber();
                 }
             }
         }

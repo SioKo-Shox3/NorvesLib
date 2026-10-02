@@ -20,6 +20,11 @@
 # （デバッグ描画が内部解像度に依らず最終解像度で描かれることの確認用）。
 # -Night で夜（--night: 空と空の太陽を消し、環境光を月明かり程度にする。露出は自動のまま）の3視点を
 # <視点>-night.png として撮る。点光源の影の確認用で、-SunElevations とは併用しない。
+# -StillRenderedFrames を与えると、カメラを止めたまま1回の起動で各描画フレーム数の時点を撮り
+# （<視点>-still-f<フレーム数>.png）、視点ごとに決めた静止した地面の領域で、画素の時間方向の標準偏差の
+# 平均を temporal_noise として metrics.json へ書く（表示の 8bit の輝度と、それを sRGB からリニアへ戻した
+# 輝度の2つ）。RTGI などの時間方向の雑音の確認用で、-OrbitDegreesPerSecond とは併用しない。
+# -Rtgi Off で起動画面の RTGI を切り（環境変数 NORVES_STARTUP_RTGI=0）、環境光（IBL）だけで撮る。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -51,7 +56,12 @@ param(
     [ValidateRange(0.0, 1.0)]
     [Nullable[double]]$HeightFogFalloff = $null,
     # 夜の条件で撮る（太陽が無いので -SunElevations・-ExposureEV100s とは併用しない）。
-    [switch]$Night
+    [switch]$Night,
+    # カメラを止めたまま撮る描画フレーム数の並び（「60,66,72」の形）。-OrbitDegreesPerSecond とは併用しない。
+    [string[]]$StillRenderedFrames = @(),
+    # 起動画面の RTGI（既定は有効）。Off で環境光（IBL）だけで撮る。
+    [ValidateSet('On', 'Off')]
+    [string]$Rtgi = 'On'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,12 +71,14 @@ $gamePath = Join-Path $repoRoot "build\Game\$Configuration\Game.exe"
 $outRoot = if ([IO.Path]::IsPathRooted($OutDir)) { [IO.Path]::GetFullPath($OutDir) } else { [IO.Path]::GetFullPath((Join-Path $repoRoot $OutDir)) }
 
 # 視点: Camera が空なら起動時の既定のカメラのまま撮る。値は --startup-camera=<yaw>,<pitch>,<arm>。
+# NoiseRegion は -StillRenderedFrames の時間方向の雑音を測る静止した地面の領域（画像の幅・高さに対する
+# 割合で 左,上,右,下）。
 $views = @(
-    [pscustomobject]@{ Name = 'default'; Camera = '' },
+    [pscustomobject]@{ Name = 'default'; Camera = ''; NoiseRegion = @(0.05, 0.80, 0.95, 0.98) },
     # 球（中心 y=0.5・半径1）へ寄り、輪郭が画面の中央の周りに来る視点
-    [pscustomobject]@{ Name = 'near'; Camera = '0,5,2.5' },
+    [pscustomobject]@{ Name = 'near'; Camera = '0,5,2.5'; NoiseRegion = @(0.05, 0.80, 0.95, 0.98) },
     # カメラの高さ約 -0.84（地面は y=-1）から地面すれすれに見る視点
-    [pscustomobject]@{ Name = 'low'; Camera = '20,-8,6' }
+    [pscustomobject]@{ Name = 'low'; Camera = '20,-8,6'; NoiseRegion = @(0.05, 0.80, 0.95, 0.98) }
 )
 
 # 「10,45,3」や配列で渡された数の並びを、範囲を確かめて double の配列にする。
@@ -98,6 +110,17 @@ if ($orbitFrameList.Count -gt 0 -and $OrbitDegreesPerSecond -eq 0.0)
 if ($OrbitDegreesPerSecond -ne 0.0 -and $orbitFrameList.Count -eq 0)
 {
     $orbitFrameList = @(60.0, 75.0, 90.0)
+}
+$stillFrameList = ConvertTo-NumberList $StillRenderedFrames 1.0 100000.0 'still_rendered_frames'
+if ($stillFrameList.Count -gt 0 -and $OrbitDegreesPerSecond -ne 0.0)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=still_frames_with_orbit（-StillRenderedFrames は -OrbitDegreesPerSecond と併用しない）"
+    exit 1
+}
+if ($stillFrameList.Count -eq 1)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=still_frames_too_few（-StillRenderedFrames は2つ以上）"
+    exit 1
 }
 
 # 太陽の仰角から、晴天の手動露出（EV100）の目安を選ぶ。表の間は線形に補間する。
@@ -135,7 +158,7 @@ foreach ($view in $views)
     if ($sunElevationList.Count -eq 0)
     {
         $shotName = if ($Night) { "$($view.Name)-night" } else { $view.Name }
-        $shots += [pscustomobject]@{ Name = $shotName; Camera = $view.Camera; SunElevation = $null; ExposureEV100 = $null }
+        $shots += [pscustomobject]@{ Name = $shotName; Camera = $view.Camera; NoiseRegion = $view.NoiseRegion; SunElevation = $null; ExposureEV100 = $null }
         continue
     }
     for ($i = 0; $i -lt $sunElevationList.Count; ++$i)
@@ -145,6 +168,7 @@ foreach ($view in $views)
         $shots += [pscustomobject]@{
             Name = "$($view.Name)-sun$($elevation.ToString($invariant))"
             Camera = $view.Camera
+            NoiseRegion = $view.NoiseRegion
             SunElevation = $elevation
             ExposureEV100 = [math]::Round($ev, 2)
         }
@@ -154,21 +178,25 @@ foreach ($view in $views)
 # カメラを回すときは、各撮影を1回の起動で撮り、回している途中の描画フレーム数ごとに画像を保存する
 # （同じ起動の中なので TAA の履歴は撮影の間つながったまま）。最後の1枚は --capture-png、それより前は
 # --capture-sequence で撮る。取得の要求は同時に1つだけなので、最後の2つの間は少なくとも8フレーム空ける。
-if ($orbitFrameList.Count -gt 0)
+# カメラを止めて撮るときも同じく1回の起動で続けて撮る（名前は <視点>-still）。
+$sequenceFrameList = if ($stillFrameList.Count -gt 0) { $stillFrameList } else { $orbitFrameList }
+$sequenceSuffix = if ($stillFrameList.Count -gt 0) { 'still' } else { 'orbit' }
+if ($sequenceFrameList.Count -gt 0)
 {
-    $sortedOrbitFrames = @($orbitFrameList | ForEach-Object { [int]$_ } | Sort-Object -Unique)
+    $sortedOrbitFrames = @($sequenceFrameList | ForEach-Object { [int]$_ } | Sort-Object -Unique)
     if ($sortedOrbitFrames.Count -gt 1 -and
         $sortedOrbitFrames[$sortedOrbitFrames.Count - 1] - $sortedOrbitFrames[$sortedOrbitFrames.Count - 2] -lt 8)
     {
-        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=orbit_frames_too_close（-OrbitRenderedFrames の最後の2つは8フレーム以上空ける）"
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=sequence_frames_too_close（-OrbitRenderedFrames・-StillRenderedFrames の最後の2つは8フレーム以上空ける）"
         exit 1
     }
     $orbitShots = @()
     foreach ($shot in $shots)
     {
         $orbitShots += [pscustomobject]@{
-            Name = "$($shot.Name)-orbit"
+            Name = "$($shot.Name)-$sequenceSuffix"
             Camera = $shot.Camera
+            NoiseRegion = $shot.NoiseRegion
             SunElevation = $shot.SunElevation
             ExposureEV100 = $shot.ExposureEV100
             OrbitFrames = $sortedOrbitFrames
@@ -223,6 +251,104 @@ public static class StartupCaptureMetrics
             }
         }
     }
+
+    // 画像を Rec.709 の重みの輝度へ読む（display=true なら 8bit の表示値 0〜255、false なら sRGB から戻したリニア 0〜1）。
+    static double[] ReadLuminance(string path, bool display, out int width, out int height)
+    {
+        using (var bitmap = new Bitmap(path))
+        {
+            width = bitmap.Width;
+            height = bitmap.Height;
+            var rect = new Rectangle(0, 0, width, height);
+            BitmapData data = bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                int stride = data.Stride;
+                byte[] bytes = new byte[stride * height];
+                Marshal.Copy(data.Scan0, bytes, 0, bytes.Length);
+                double[] result = new double[width * height];
+                for (int y = 0; y < height; ++y)
+                {
+                    for (int x = 0; x < width; ++x)
+                    {
+                        int i = y * stride + x * 4;
+                        double b = bytes[i];
+                        double g = bytes[i + 1];
+                        double r = bytes[i + 2];
+                        if (!display)
+                        {
+                            r = SrgbToLinear(r / 255.0);
+                            g = SrgbToLinear(g / 255.0);
+                            b = SrgbToLinear(b / 255.0);
+                        }
+                        result[y * width + x] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    }
+                }
+                return result;
+            }
+            finally
+            {
+                bitmap.UnlockBits(data);
+            }
+        }
+    }
+
+    static double SrgbToLinear(double c)
+    {
+        return c <= 0.04045 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
+    }
+
+    // 同じ視点の連続した画像で、領域（画素の範囲 [x0,x1)×[y0,y1)）の各画素の輝度の時間方向の標準偏差
+    // （母標準偏差）を求め、領域の平均を返す。{ 表示の8bit, リニア, リニアの平均輝度 }。
+    public static double[] TemporalNoise(string[] paths, double[] regionFractions)
+    {
+        int width = 0;
+        int height = 0;
+        double[][] display = new double[paths.Length][];
+        double[][] linear = new double[paths.Length][];
+        for (int f = 0; f < paths.Length; ++f)
+        {
+            int w;
+            int h;
+            display[f] = ReadLuminance(paths[f], true, out w, out h);
+            linear[f] = ReadLuminance(paths[f], false, out w, out h);
+            if (f == 0) { width = w; height = h; }
+            else if (w != width || h != height) { throw new ArgumentException("画像の寸法が揃っていない: " + paths[f]); }
+        }
+        int x0 = (int)Math.Floor(regionFractions[0] * width);
+        int y0 = (int)Math.Floor(regionFractions[1] * height);
+        int x1 = (int)Math.Ceiling(regionFractions[2] * width);
+        int y1 = (int)Math.Ceiling(regionFractions[3] * height);
+        double displaySum = 0.0;
+        double linearSum = 0.0;
+        double linearMeanSum = 0.0;
+        long pixels = 0;
+        int n = paths.Length;
+        for (int y = y0; y < y1; ++y)
+        {
+            for (int x = x0; x < x1; ++x)
+            {
+                int i = y * width + x;
+                double dMean = 0.0;
+                double lMean = 0.0;
+                for (int f = 0; f < n; ++f) { dMean += display[f][i]; lMean += linear[f][i]; }
+                dMean /= n;
+                lMean /= n;
+                double dVar = 0.0;
+                double lVar = 0.0;
+                for (int f = 0; f < n; ++f)
+                {
+                    dVar += (display[f][i] - dMean) * (display[f][i] - dMean);
+                    lVar += (linear[f][i] - lMean) * (linear[f][i] - lMean);
+                }
+                displaySum += Math.Sqrt(dVar / n);
+                linearSum += Math.Sqrt(lVar / n);
+                linearMeanSum += lMean;
+                ++pixels;
+            }
+        }
+        return new double[] { displaySum / pixels, linearSum / pixels, linearMeanSum / pixels, x0, y0, x1, y1 };
+    }
 }
 '@
 
@@ -247,6 +373,7 @@ New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 
 $failures = @()
 $results = @()
+$temporalNoise = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
 foreach ($view in $shots)
 {
@@ -330,8 +457,26 @@ foreach ($view in $shots)
         $arguments += '--debug-draw-test-lines'
     }
 
+    # RTGI を切るときは環境変数で起動画面へ伝える（起動した Game だけが受け継ぐよう、起動の直後に戻す）。
+    $previousRtgiSetting = $env:NORVES_STARTUP_RTGI
+    if ($Rtgi -eq 'Off')
+    {
+        $env:NORVES_STARTUP_RTGI = '0'
+    }
+    else
+    {
+        Remove-Item Env:NORVES_STARTUP_RTGI -ErrorAction SilentlyContinue
+    }
     # アセットは作業ディレクトリからの相対パスで読むため、リポジトリのルートで起動する。
-    $process = Start-Process -FilePath $gamePath -ArgumentList $arguments -WorkingDirectory $repoRoot -PassThru
+    try
+    {
+        $process = Start-Process -FilePath $gamePath -ArgumentList $arguments -WorkingDirectory $repoRoot -PassThru
+    }
+    finally
+    {
+        if ($null -eq $previousRtgiSetting) { Remove-Item Env:NORVES_STARTUP_RTGI -ErrorAction SilentlyContinue }
+        else { $env:NORVES_STARTUP_RTGI = $previousRtgiSetting }
+    }
     [void]$process.Handle
     $exitCode = $null
     if ($process.WaitForExit($TimeoutSeconds * 1000))
@@ -355,8 +500,16 @@ foreach ($view in $shots)
         $failures += "$($view.Name): Game の終了コードが $exitCode"
     }
 
+    # 間接光の出どころ（rtgi・ibl など。LightingPass が切り替わりのときだけ記録する）の最後の値。
+    $indirectLighting = $null
     if (Test-Path -LiteralPath $viewLogPath)
     {
+        $indirectSources = @(Select-String -LiteralPath $viewLogPath -Pattern 'INDIRECT_LIGHTING source=(\w+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value })
+        if ($indirectSources.Count -gt 0)
+        {
+            $indirectLighting = $indirectSources[$indirectSources.Count - 1]
+        }
         $shaderFailures = @(Select-String -LiteralPath $viewLogPath -Pattern 'Failed to compile shader' -SimpleMatch |
             Where-Object { -not (Test-AllowedShaderFailure $_.Line) })
         foreach ($line in $shaderFailures)
@@ -405,10 +558,37 @@ foreach ($view in $shots)
             mean_luminance = [math]::Round($measured[2], 3)
             clipped_white_ratio = [math]::Round($measured[3], 6)
             crushed_black_ratio = [math]::Round($measured[4], 6)
+            indirect_lighting = $indirectLighting
         }
         $results += [pscustomobject]$result
-        Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5}" -f `
-            $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio)
+        Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5} indirect_lighting={6}" -f `
+            $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio, $result.indirect_lighting)
+    }
+
+    # カメラを止めて続けて撮ったときは、静止した地面の領域で画素の時間方向の標準偏差を求める。
+    if ($stillFrameList.Count -gt 0)
+    {
+        $stillPaths = @($images | ForEach-Object { Join-Path $outRoot "$($_.Name).png" } | Where-Object { Test-Path -LiteralPath $_ })
+        if ($stillPaths.Count -ne $images.Count)
+        {
+            $failures += "$($view.Name): 時間方向の雑音を測る画像が揃っていない（$($stillPaths.Count)/$($images.Count)）"
+        }
+        else
+        {
+            $noise = [StartupCaptureMetrics]::TemporalNoise([string[]]$stillPaths, [double[]]$view.NoiseRegion)
+            $noiseResult = [ordered]@{
+                view = $view.Name
+                frames = $images.Count
+                region_pixels = @([int]$noise[3], [int]$noise[4], [int]$noise[5], [int]$noise[6])
+                temporal_std_display = [math]::Round($noise[0], 4)
+                temporal_std_linear = [math]::Round($noise[1], 6)
+                mean_linear = [math]::Round($noise[2], 6)
+            }
+            $temporalNoise += [pscustomobject]$noiseResult
+            Write-Output ("CAPTURE_STARTUP_SCENE temporal_noise view={0} frames={1} region={2} std_display={3} std_linear={4} mean_linear={5}" -f `
+                $noiseResult.view, $noiseResult.frames, ($noiseResult.region_pixels -join ','), $noiseResult.temporal_std_display,
+                $noiseResult.temporal_std_linear, $noiseResult.mean_linear)
+        }
     }
 }
 
@@ -421,7 +601,10 @@ $metrics = [ordered]@{
     render_scale = $RenderScale
     debug_draw_test_lines = [bool]$DebugDrawTestLines
     night = [bool]$Night
+    rtgi = $Rtgi
+    still_rendered_frames = $stillFrameList
     views = $results
+    temporal_noise = $temporalNoise
     failures = $failures
 }
 [IO.File]::WriteAllText($metricsPath, ($metrics | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))

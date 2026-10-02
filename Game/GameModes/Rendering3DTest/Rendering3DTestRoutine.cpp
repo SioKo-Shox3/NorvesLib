@@ -116,6 +116,20 @@ namespace Game::GameModes
             return value == nullptr || std::strcmp(value, "0") != 0;
         }
 
+        // 環境変数 NORVES_STARTUP_RTGI が "0" なら false（起動画面のRTGIを切り、IBLだけで撮り比べる用）。
+        bool ReadStartupRTGIEnabled()
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_STARTUP_RTGI");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            return value == nullptr || std::strcmp(value, "0") != 0;
+        }
+
         // 環境変数 NORVES_STARTUP_LOOK_LUT が "0" なら false（起動画面の見た目の LUT を切って撮り比べる用）。
         bool ReadStartupLookLutEnabled()
         {
@@ -304,9 +318,10 @@ namespace Game::GameModes
             data.m_bLookLut = ReadStartupLookLutEnabled();
             ApplyStartupGrading(initialCamera, data.m_bLensEffects, data.m_bLookLut);
             ctx.EngineRef.GetRenderWorld().SetMainCamera(initialCamera);
-            // 起動画面はRTGIを使わず、従来どおり環境光（IBL）で間接光を表す（RTGIの少ない光線数の雑音が
-            // 物体と地面に粒状に残るため）。
-            ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGIEnabled(false);
+            // 起動画面の間接光はRTGI（レイトレが使えない環境では環境光（IBL）へ落ちる）。
+            // 環境変数 NORVES_STARTUP_RTGI=0 で切り、IBLだけの画面と撮り比べられる。
+            ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGIEnabled(
+                ReadStartupRTGIEnabled());
             // --render-scale の指定があれば、内部解像度（画面解像度×倍率）で描いて拡大する。
             if (data.m_StartupRenderScale < 1.0f)
             {

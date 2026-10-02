@@ -806,7 +806,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t temporalState[4] = {};
         /// x=描画フレーム番号（静止中も毎フレーム別のレイを引く）、y=発光instance数、z=発光三角形数。
         uint32_t sampleState[4] = {};
-        float previousCameraPosition[4] = {}; ///< xyz=履歴を書いた前フレームのカメラ位置。
+        /// xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比（今のフレーム/履歴）。
+        float previousCameraPosition[4] = {};
     };
 
     struct RTGIInstanceData
@@ -3269,10 +3270,18 @@ namespace NorvesLib::Core::Rendering
         const uint32_t readHistoryIndex = writeHistoryIndex ^ 1u;
         RTGIHistoryTextureSet& writeHistory = m_RTGIHistoryTextures[writeHistoryIndex];
         RTGIHistoryTextureSet& readHistory = m_RTGIHistoryTextures[readHistoryIndex];
+        // 履歴はvelocityで再投影するので、velocityの基準（前のカメラと物体の前の変換）が履歴を書いた
+        // フレームを指すときだけ使う。連続したフレームなら基準は直前のフレーム。描画がゲームのフレームを
+        // 飛ばしたときは、TAAが基準を最後に描いたフレームへ付け替えた場合に限って使う。
+        const bool bVelocityBasisIsHistoryFrame =
+            context.GetPreviousCamera() != nullptr &&
+            context.PreviousCameraFrameNumber == m_RTGIHistoryFrameNumber &&
+            context.PreviousObjectStateFrameNumber == m_RTGIHistoryFrameNumber &&
+            context.bPreviousObjectStateComplete;
         const bool bPreviousFrameIsConsecutive =
             m_bRTGIHistoryFrameNumberValid &&
             context.FrameNumber > m_RTGIHistoryFrameNumber &&
-            context.FrameNumber - m_RTGIHistoryFrameNumber == 1u;
+            (context.FrameNumber - m_RTGIHistoryFrameNumber == 1u || bVelocityBasisIsHistoryFrame);
         const bool bSceneRevisionMatches =
             m_bRTGIHistoryValid && m_RTGIHistorySceneRevision == context.SceneRevision;
         const bool bHistoryReprojectionValid =
@@ -3283,25 +3292,59 @@ namespace NorvesLib::Core::Rendering
         const uint32_t lightWeightLimitedFrames = bLightRevisionMismatch
             ? 2u
             : m_RTGIHistoryLightWeightLimitedFrames;
-        // 視点（逆ビュー射影と位置）、露出と環境光、レイトレーシングのinstance（変換・形状・材質の表と、
+        // 視点（逆ビュー射影と位置）、環境光、レイトレーシングのinstance（位置・拡大率・形状・材質の表と、
         // 材質の色・発光・textureハンドル）が前フレームと同じで、光源も変わらず履歴を再投影できる
         // フレームだけを静止として数える。静止が続くと画素ごとの履歴の年齢の上限を上げ、静止画像を
         // 収束させる。動いたフレームの上限は従来どおり8。
+        // TAAのジッタはフレームごとに投影をずらすだけで視点は動かないため、ジッタを除いた逆ビュー射影で比べる。
+        // 露出は履歴を比で掛け直すので静止の判定に含めない（自動露出の小さな揺れで静止が切れないように）。
+        // instanceの変換は原点の位置と各軸の拡大率だけを比べ、原点を通る軸の周りの回転（起動画面の
+        // 自転する球など）は静止として扱う。回転で形の向きが変わる物体の間接光は、画素ごとの履歴の棄却
+        // （自身の面）と年齢の上限（周りの面）の範囲で遅れて追従する。
         uint64_t staticSignature = 14695981039346656037ull;
-        staticSignature = HashRTGIBytes(staticSignature, lightingParams.invViewProjection,
-                                        sizeof(lightingParams.invViewProjection));
+        if (const CameraProxy* activeCamera = context.GetActiveCamera())
+        {
+            CameraProxy unjitteredCamera = *activeCamera;
+            unjitteredCamera.ProjectionJitterNdcX = 0.0f;
+            unjitteredCamera.ProjectionJitterNdcY = 0.0f;
+            const CameraViewConstants unjitteredConstants = CameraViewConstants::BuildForDevice(
+                unjitteredCamera, context.GetActiveAspectRatio(), context.Device);
+            float unjitteredInverseViewProjection[16] = {};
+            unjitteredConstants.CopyShaderInverseViewProjection(unjitteredInverseViewProjection);
+            staticSignature = HashRTGIBytes(staticSignature, unjitteredInverseViewProjection,
+                                            sizeof(unjitteredInverseViewProjection));
+        }
+        else
+        {
+            staticSignature = HashRTGIBytes(staticSignature, lightingParams.invViewProjection,
+                                            sizeof(lightingParams.invViewProjection));
+        }
         staticSignature = HashRTGIBytes(staticSignature, lightingParams.cameraPosition,
                                         sizeof(lightingParams.cameraPosition));
-        staticSignature = HashRTGIBytes(staticSignature, &lightingParams.preExposure,
-                                        sizeof(lightingParams.preExposure));
         const float environmentIntensity =
             context.PhysicalLighting.bIBLEnabled ? context.PhysicalLighting.IBLIntensity : -1.0f;
         staticSignature = HashRTGIBytes(staticSignature, &environmentIntensity,
                                         sizeof(environmentIntensity));
-        if (!instanceData.empty())
+        for (const RTGIInstanceData& instance : instanceData)
         {
-            staticSignature = HashRTGIBytes(staticSignature, instanceData.data(),
-                                            instanceData.size() * sizeof(RTGIInstanceData));
+            RTGIInstanceData placement = instance;
+            // 3x4の行優先の変換。各列の長さが拡大率、各行の4番目が原点の位置。拡大率は回転の丸めで
+            // 最下位の桁が揺れるため、1/1024の刻みにそろえて比べる。
+            float placementTransform[6] = {};
+            for (uint32_t column = 0u; column < 3u; ++column)
+            {
+                const float x = instance.Transform[column];
+                const float y = instance.Transform[4u + column];
+                const float z = instance.Transform[8u + column];
+                placementTransform[column] =
+                    std::round(std::sqrt(x * x + y * y + z * z) * 1024.0f) / 1024.0f;
+            }
+            placementTransform[3] = instance.Transform[3];
+            placementTransform[4] = instance.Transform[7];
+            placementTransform[5] = instance.Transform[11];
+            std::memset(placement.Transform, 0, sizeof(placement.Transform));
+            std::memcpy(placement.Transform, placementTransform, sizeof(placementTransform));
+            staticSignature = HashRTGIBytes(staticSignature, &placement, sizeof(placement));
         }
         for (const RayTracingSceneInstanceSnapshot& instance :
              context.SnapshotRayTracingScene->Instances)
@@ -3325,6 +3368,16 @@ namespace NorvesLib::Core::Rendering
                                   staticSignature == m_RTGIStaticSignature;
         const uint32_t staticFrames = bStaticFrame ? m_RTGIStaticFrames + 1u : 0u;
         const uint32_t historyAgeCap = ComputeRTGIHistoryAgeCap(staticFrames);
+        // 静止で年齢の上限が最大に達したときと、動いて従来の上限へ戻ったときだけ記録する。
+        if (historyAgeCap != m_RTGIHistoryAgeCap &&
+            (historyAgeCap == RTGIHistoryStaticMaximumAge || historyAgeCap == RTGIHistoryMaximumAge))
+        {
+            NORVES_LOG_INFO("LightingPass",
+                            "RTGI_HISTORY age_cap=%u static_frames=%u frame=%llu",
+                            historyAgeCap,
+                            staticFrames,
+                            static_cast<unsigned long long>(context.FrameNumber));
+        }
 
         const auto transitionHistorySlot = [&](RTGIHistoryTextureSet& slot,
                                                 RHI::ResourceState beforeState,
@@ -3396,7 +3449,16 @@ namespace NorvesLib::Core::Rendering
                         lightingParams.cameraPosition,
                         sizeof(parameters.previousCameraPosition));
         }
-        parameters.previousCameraPosition[3] = 1.0f;
+        // 履歴はそれを書いたフレームのプリエクスポージャが掛かった値なので、今のフレームの露出との比で
+        // 掛け直してから混ぜる（自動露出の順応中も履歴を捨てずに使えるように）。
+        const float currentPreExposure = parameters.rayLimits[2];
+        const float historyExposureScale =
+            bHadHistory && std::isfinite(m_RTGIHistoryPreExposure) && m_RTGIHistoryPreExposure > 0.0f
+                ? currentPreExposure / m_RTGIHistoryPreExposure
+                : 1.0f;
+        parameters.previousCameraPosition[3] =
+            std::isfinite(historyExposureScale) && historyExposureScale > 0.0f ? historyExposureScale
+                                                                                : 1.0f;
         m_RTGIComputeParametersBuffer->Update(&parameters, sizeof(parameters));
         m_RTGIComputeInstanceDataBuffer->Update(
             instanceData.data(), requiredInstanceDataSize);
@@ -3532,6 +3594,7 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistorySceneRevision = context.SceneRevision;
         m_RTGIHistoryLightRevision = context.LightRevision;
         m_RTGIHistoryLightWeightLimitedFrames = nextLightWeightLimitedFrames;
+        m_RTGIHistoryPreExposure = currentPreExposure;
         m_bRTGIHistoryFrameNumberValid = true;
         m_bRTGIHistoryLightRevisionValid = true;
         m_RTGIStaticSignature = staticSignature;
@@ -3695,6 +3758,20 @@ namespace NorvesLib::Core::Rendering
             indirectLighting.Source == RTGIIndirectLightingSource::DDGI;
         const bool bUseRTGILighting =
             indirectLighting.Source == RTGIIndirectLightingSource::RTGI;
+        // 間接光の出どころ（RTGI・DDGI・IBL・ラスタ）が変わったときだけ記録する。
+        const uint8_t indirectLightingSource = static_cast<uint8_t>(indirectLighting.Source);
+        if (indirectLightingSource != m_LoggedIndirectLightingSource)
+        {
+            static constexpr const char* kIndirectLightingSourceNames[] = {"raster", "ibl", "ddgi",
+                                                                           "rtgi"};
+            NORVES_LOG_INFO("LightingPass",
+                            "INDIRECT_LIGHTING source=%s frame=%llu",
+                            indirectLightingSource < 4u
+                                ? kIndirectLightingSourceNames[indirectLightingSource]
+                                : "unknown",
+                            static_cast<unsigned long long>(context.FrameNumber));
+            m_LoggedIndirectLightingSource = indirectLightingSource;
+        }
 
         GPUDDGILightingParams ddgiParameters = {};
         if (bUseDDGILighting)

@@ -368,7 +368,11 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_RTGIHistoryLightRevision = 0;
         RTGIRayQueryCapability m_RTGIHistoryCapability;
         uint32_t m_RTGIHistoryLightWeightLimitedFrames = 0;
-        /** @brief 視点（逆ビュー射影・位置）とレイトレーシングのinstanceの前フレームの署名 */
+        /** @brief 履歴の放射輝度に掛かっているプリエクスポージャ（露出が変わったら比で掛け直す） */
+        float m_RTGIHistoryPreExposure = 1.0f;
+        /** @brief 直近に記録した間接光の出どころ（RTGIIndirectLightingSource。0xFFは未記録） */
+        uint8_t m_LoggedIndirectLightingSource = 0xFFu;
+        /** @brief 視点（ジッタを除いた逆ビュー射影・位置）とレイトレーシングのinstanceの前フレームの署名 */
         uint64_t m_RTGIStaticSignature = 0;
         /** @brief 視点・光源・シーンが変わらなかった連続フレーム数 */
         uint32_t m_RTGIStaticFrames = 0;

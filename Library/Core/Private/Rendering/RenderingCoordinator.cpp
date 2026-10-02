@@ -653,10 +653,11 @@ namespace NorvesLib::Core::Rendering
 
     bool RayTracingSceneSubsystem::BuildFrameSnapshot(const MeshResources* meshResources,
                                                        FramePacket& packet,
-                                                       const MaterialResources* materialResources)
+                                                       const MaterialResources* materialResources,
+                                                       const MegaGeometryResources* megaGeometryResources)
     {
         packet.RayTracingScene.Clear();
-        if (!meshResources)
+        if (!meshResources && !megaGeometryResources)
         {
             return true;
         }
@@ -670,7 +671,8 @@ namespace NorvesLib::Core::Rendering
             const DrawParams& draw = command.Draw;
             // 影を落とさない物体もパストレーサーの主光線・散乱光線には見えるため含める。
             // 影・DDGI・RTGIはinstance maskで影を落とす物体だけを調べる。
-            if ((command.Type != DrawCommandType::DrawIndexed &&
+            if (!meshResources ||
+                (command.Type != DrawCommandType::DrawIndexed &&
                  command.Type != DrawCommandType::DrawIndexedInstanced) ||
                 draw.PayloadKind != DrawPayloadKind::Mesh ||
                 !draw.MeshHandle.IsValid() ||
@@ -806,6 +808,74 @@ namespace NorvesLib::Core::Rendering
                 if (IsFiniteRayTracingTransform(previousWorldTransform))
                 {
                     CopyRayTracingInstanceTransform(previousWorldTransform,
+                                                    instance.PreviousTransform);
+                    instance.bHasPreviousTransform = true;
+                }
+                packet.RayTracingScene.Instances.push_back(std::move(instance));
+            }
+        }
+
+        // MegaGeometry（岩・小屋など）はGBufferではクラスタ単位でGPUが選ぶが、光線にはLOD0をそのまま
+        // 見せる（点光源の影と同じ範囲）。表面色はMegaGeometryPassのGBufferと同じく材質のBaseColorを
+        // instance色とし、textureは白とみなす。
+        if (megaGeometryResources)
+        {
+            constexpr uint32_t vertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+            for (const MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
+            {
+                if (packet.RayTracingScene.Instances.size() > 0x00FFFFFFu)
+                {
+                    break;
+                }
+                if (!proxy.IsValid())
+                {
+                    continue;
+                }
+                const MegaGeometry::MegaMeshGPUData* gpuData =
+                    megaGeometryResources->GetMegaMeshGPUData(proxy.MegaMeshHandle);
+                if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
+                    gpuData->ShadowIndexCount < 3u || gpuData->ShadowIndexCount % 3u != 0u ||
+                    gpuData->ShadowIndexCount > gpuData->IndexCount ||
+                    gpuData->VertexCount < 3u ||
+                    static_cast<uint64_t>(gpuData->VertexCount) * vertexStride >
+                        gpuData->VertexBuffer->GetSize() ||
+                    static_cast<uint64_t>(gpuData->ShadowIndexCount) * sizeof(uint32_t) >
+                        gpuData->IndexBuffer->GetSize() ||
+                    !IsFiniteRayTracingTransform(proxy.WorldTransform))
+                {
+                    continue;
+                }
+
+                RayTracingSceneInstanceSnapshot instance;
+                instance.ObjectId = proxy.ObjectId;
+                instance.ObjectInstanceIndex = 0;
+                instance.SourceVertexBuffer = gpuData->VertexBuffer;
+                instance.SourceIndexBuffer = gpuData->IndexBuffer;
+                instance.IndexOffset = 0;
+                instance.IndexCount = gpuData->ShadowIndexCount;
+                instance.VertexOffset = 0;
+                instance.VertexCount = gpuData->VertexCount;
+                instance.VertexStride = vertexStride;
+                instance.bGeometryOpaque = true;
+                const MegaGeometry::MegaMeshMaterial& material = gpuData->Material;
+                for (uint32_t channel = 0u; channel < 4u; ++channel)
+                {
+                    instance.Material.BaseColor[channel] = material.BaseColor[channel];
+                    instance.Material.ObjectColor[channel] = material.BaseColor[channel];
+                }
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    instance.Material.EmissiveColor[channel] = material.EmissiveColor[channel];
+                }
+                instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
+                instance.Instance.customIndex =
+                    static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
+                instance.Instance.mask = proxy.bCastShadow ? RayTracingInstanceMaskShadowCaster
+                                                           : RayTracingInstanceMaskNonShadowCaster;
+                CopyRayTracingInstanceTransform(proxy.WorldTransform, instance.Instance.transform);
+                if (IsFiniteRayTracingTransform(proxy.PreviousWorldTransform))
+                {
+                    CopyRayTracingInstanceTransform(proxy.PreviousWorldTransform,
                                                     instance.PreviousTransform);
                     instance.bHasPreviousTransform = true;
                 }
@@ -2177,10 +2247,13 @@ namespace NorvesLib::Core::Rendering
                 m_RenderResources ? &m_RenderResources->Meshes() : nullptr;
             const MaterialResources* materialResources =
                 m_RenderResources ? &m_RenderResources->Materials() : nullptr;
+            const MegaGeometryResources* megaGeometryResources =
+                m_RenderResources ? &m_RenderResources->MegaGeometry() : nullptr;
             if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildFrameSnapshot(
                     meshResources,
                     *m_CurrentPacket,
-                    materialResources))
+                    materialResources,
+                    megaGeometryResources))
             {
                 NORVES_LOG_WARNING("RayTracingSceneSubsystem",
                                    "FramePacketのレイトレーシングscene snapshotを構築できませんでした");
@@ -2683,6 +2756,9 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
         viewContext.PreviousObjectStateFrameNumber = renderedObjectHistory.PreviousFrameNumber;
         viewContext.bPreviousObjectStateComplete = renderedObjectHistory.bComplete;
+        viewContext.PreviousCameraFrameNumber = packet->bHasPreviousMainCamera && packet->FrameNumber > 0u
+                                                    ? packet->FrameNumber - 1u
+                                                    : UINT64_MAX;
         viewContext.SkyAtmosphereSnapshot = packet->Scene.SkyAtmosphere;
         viewContext.SnapshotDrawCommandSource = &packet->DrawCommands;
         viewContext.SnapshotDrawCommands = DrawCommandView::FromRange(packet->DrawCommands,

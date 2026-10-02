@@ -76,6 +76,9 @@ namespace NorvesLib::Core::Rendering
             return m_History.FindReprojectionCamera(viewportId, cameraId, sourceCameraId, frameNumber);
         }
 
+        /** @brief 履歴を書いたフレームの番号（FindReprojectionCamera が返すカメラのフレーム）。 */
+        uint64_t GetHistoryFrameNumber() const { return m_History.GetFrameNumber(); }
+
         /** @brief 履歴を捨てる（次に働くフレームは現在の色だけを使う）。 */
         void InvalidateHistory() { m_History.Invalidate(); }
 

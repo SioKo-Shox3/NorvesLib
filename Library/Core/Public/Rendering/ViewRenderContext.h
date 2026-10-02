@@ -525,6 +525,15 @@ namespace NorvesLib::Core::Rendering
         uint64_t PreviousObjectStateFrameNumber = 0;
         bool bPreviousObjectStateComplete = false;
 
+        /**
+         * @brief velocity の前のカメラ（PreviousMainCamera）が指すゲームのフレーム番号
+         *
+         * パケットの前のカメラは直前のゲームのフレームのもの。描画がフレームを飛ばし、TAA が前のカメラを
+         * 履歴を書いたフレームのものへ差し替えたときはそのフレーム。前のカメラが無ければ UINT64_MAX。
+         * RTGI は、これと物体の前の変換が自分の履歴のフレームを指すときだけ、飛んだフレームでも履歴を使う。
+         */
+        uint64_t PreviousCameraFrameNumber = UINT64_MAX;
+
         /** @brief FramePacketから値コピーしたscene/light revision。 */
         uint64_t SceneRevision = 0;
         uint64_t LightRevision = 0;

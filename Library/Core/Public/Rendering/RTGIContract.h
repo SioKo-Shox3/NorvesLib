@@ -16,8 +16,9 @@ namespace NorvesLib::Core::Rendering
      * 視点・光源・シーン（レイトレーシングのinstance）が変わらないフレームがRTGIHistoryStaticWarmupFrames
      * を超えて続くと、年齢の上限を1 frameに1ずつRTGIHistoryMaximumAgeからこの値まで上げ、静止画像を
      * 累積平均で収束させる。何かが変わったフレームで上限はRTGIHistoryMaximumAgeへ戻る。静止の判定は
-     * 視点・露出・環境光・光源のrevision・instanceの変換と形状・材質の色と発光とtextureハンドルで行い、
-     * 同じtextureハンドルのまま内容だけを書き換えた変更は含まない。
+     * 視点（TAAのジッタを除く）・環境光・光源のrevision・instanceの原点の位置と拡大率と形状・材質の色と
+     * 発光とtextureハンドルで行い、同じtextureハンドルのまま内容だけを書き換えた変更と、原点を通る軸の
+     * 周りの回転は含まない。露出の変化は履歴を露出の比で掛け直すので、静止の判定に含めない。
      */
     inline constexpr uint32_t RTGIHistoryStaticMaximumAge = 64u;
     /** @brief 年齢の上限を上げ始めるまでに要る連続した静止フレーム数（停止直後の追従を変えない） */

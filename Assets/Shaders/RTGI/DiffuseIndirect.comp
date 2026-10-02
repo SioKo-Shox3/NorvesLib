@@ -16,7 +16,7 @@ layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
     vec4 rayLimits; // x=最小距離、y=最大距離、z=pre-exposure、w=環境強度
     uvec4 temporalState; // x=履歴有効、y=ライトrevision差、z=weight制限、w=age上限
     uvec4 sampleState; // x=描画フレーム番号（試料系列の番号）、y=発光instance数、z=発光三角形数
-    vec4 previousCameraPosition; // xyz=履歴を書いた前フレームのカメラ位置
+    vec4 previousCameraPosition; // xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比
 } parameters;
 
 layout(set = 0, binding = 2) uniform sampler2D gbufferNormal;
@@ -97,6 +97,10 @@ const float RTGI_HISTORY_INITIAL_CONFIDENCE = 0.25;
 const float RTGI_HISTORY_NORMAL_REJECTION_DOT = 0.9;
 const float RTGI_HISTORY_DEPTH_REJECTION_THRESHOLD = 0.02;
 const float RTGI_HISTORY_MATERIAL_REJECTION_THRESHOLD = 0.05;
+// 2×2の履歴の画素のうち同じ表面と認めた画素のバイリニアの重みの和の下限。
+const float RTGI_HISTORY_MINIMUM_TAP_WEIGHT = 0.01;
+// 近傍の同じ面の法線・材質のばらつきに掛ける余裕（ジッタの位置は近傍の画素の間のどこにでも来るため）。
+const float RTGI_HISTORY_SURFACE_SPREAD_SCALE = 2.0;
 
 bool IsFiniteVector(vec3 value)
 {
@@ -578,10 +582,66 @@ vec3 ComputeDirectRadiance(vec3 worldPosition,
     return SanitizeUnexposedRadiance(radiance);
 }
 
+// 今の画素の周りの8画素のうち同じ面（カメラからの距離の相対差が履歴の棄却と同じ範囲）のものとの、
+// 法線の距離と材質の差の最大に余裕の倍率（RTGI_HISTORY_SURFACE_SPREAD_SCALE）を掛けて返す。TAAのジッタで
+// 履歴は画素の中の別の点を写しているため、法線マップや材質textureの細かな模様の上では、同じ面でもこの程度は
+// 違いうる（面の入れ替わりは距離の差で棄却する）。
+void ComputeLocalSurfaceSpread(vec2 uv,
+                               vec2 imageSize,
+                               float viewDistance,
+                               vec3 normal,
+                               vec3 material,
+                               out float normalSpread,
+                               out float materialSpread)
+{
+    normalSpread = 0.0;
+    materialSpread = 0.0;
+    for (int index = 0; index < 9; ++index)
+    {
+        vec2 offset = vec2(float(index % 3 - 1), float(index / 3 - 1));
+        if (index == 4)
+        {
+            continue;
+        }
+        vec2 neighborUV = uv + offset / imageSize;
+        if (any(lessThan(neighborUV, vec2(0.0))) || any(greaterThanEqual(neighborUV, vec2(1.0))))
+        {
+            continue;
+        }
+        float neighborDepth = texture(gbufferDepth, neighborUV).r;
+        vec3 neighborNormal = texture(gbufferNormal, neighborUV).xyz;
+        vec3 neighborMaterial = texture(gbufferMaterial, neighborUV).rgb;
+        float neighborNormalLengthSquared = dot(neighborNormal, neighborNormal);
+        if (!IsFiniteScalar(neighborDepth) || neighborDepth >= 0.999999 ||
+            !IsFiniteVector(neighborNormal) || !IsFiniteVector(neighborMaterial) ||
+            !IsFiniteScalar(neighborNormalLengthSquared) || neighborNormalLengthSquared <= 1.0e-8)
+        {
+            continue;
+        }
+        vec3 neighborPosition = ReconstructWorldPosition(neighborUV, clamp(neighborDepth, 0.0, 1.0));
+        float neighborDistance = length(neighborPosition - parameters.cameraPosition.xyz);
+        float distanceThreshold = max(RTGI_HISTORY_DEPTH_REJECTION_THRESHOLD,
+                                      0.05 * max(viewDistance, neighborDistance));
+        if (!IsFiniteVector(neighborPosition) || !IsFiniteScalar(neighborDistance) ||
+            abs(neighborDistance - viewDistance) > distanceThreshold)
+        {
+            continue;
+        }
+        neighborNormal *= inversesqrt(neighborNormalLengthSquared);
+        normalSpread = max(normalSpread, length(neighborNormal - normal));
+        vec3 materialDelta = abs(clamp(neighborMaterial, vec3(0.0), vec3(1.0)) - material);
+        materialSpread = max(materialSpread, max(materialDelta.x, max(materialDelta.y, materialDelta.z)));
+    }
+    normalSpread *= RTGI_HISTORY_SURFACE_SPREAD_SCALE;
+    materialSpread *= RTGI_HISTORY_SURFACE_SPREAD_SCALE;
+}
+
 bool TryReadReprojectedHistory(vec2 currentUV,
                                float currentDistance,
                                vec3 currentNormal,
                                vec3 currentMaterial,
+                               float normalSpread,
+                               float materialSpread,
                                out vec3 previousRadiance,
                                out float previousAge,
                                out float previousConfidence)
@@ -605,48 +665,95 @@ bool TryReadReprojectedHistory(vec2 currentUV,
         return false;
     }
 
-    // 履歴には前フレームのカメラから表面までの線形距離を保存している。
-    float sampledDistance = texture(historyDepth, previousUV).r;
-    vec3 sampledNormal = texture(historyNormal, previousUV).xyz;
-    vec3 sampledMaterial = texture(historyMaterial, previousUV).rgb;
-    previousRadiance = texture(historyRadiance, previousUV).rgb;
-    previousAge = texture(historyAge, previousUV).r;
-    previousConfidence = texture(historyConfidence, previousUV).r;
-    if (!IsFiniteScalar(sampledDistance) || !IsFiniteVector(sampledNormal) ||
-        !IsFiniteVector(sampledMaterial) || !IsFiniteVector(previousRadiance) ||
-        !IsFiniteScalar(previousAge) || !IsFiniteScalar(previousConfidence))
+    // 履歴には前フレームのカメラから表面までの線形距離を保存している。TAAのジッタで画素の中心が
+    // フレームごとにずれるため、バイリニアの2×2の画素を1つずつ同じ表面か判定し、認めた画素だけを
+    // 重みを正規化して混ぜる（石畳の目地や輪郭をまたいだ補間で、履歴全体を捨てないように）。
+    ivec2 historySize = textureSize(historyRadiance, 0);
+    vec2 texelPosition = previousUV * vec2(historySize) - vec2(0.5);
+    ivec2 baseTexel = ivec2(floor(texelPosition));
+    vec2 fraction = texelPosition - vec2(baseTexel);
+    vec3 radianceSum = vec3(0.0);
+    float ageSum = 0.0;
+    float confidenceSum = 0.0;
+    float weightSum = 0.0;
+    for (int tap = 0; tap < 4; ++tap)
     {
-        return false;
-    }
+        ivec2 offset = ivec2(tap & 1, tap >> 1);
+        ivec2 texel = baseTexel + offset;
+        if (any(lessThan(texel, ivec2(0))) || any(greaterThanEqual(texel, historySize)))
+        {
+            continue;
+        }
+        float bilinearWeight = (offset.x == 1 ? fraction.x : 1.0 - fraction.x) *
+                               (offset.y == 1 ? fraction.y : 1.0 - fraction.y);
+        if (!(bilinearWeight > 0.0))
+        {
+            continue;
+        }
 
-    float sampledNormalLengthSquared = dot(sampledNormal, sampledNormal);
-    if (!IsFiniteScalar(sampledNormalLengthSquared) ||
-        sampledNormalLengthSquared <= 1.0e-8)
-    {
-        return false;
-    }
-    sampledNormal *= inversesqrt(sampledNormalLengthSquared);
-    // 非線形なNDC深度は遠景で差が潰れるため、線形距離の相対差で遮蔽の入れ替わりを棄却する。
-    float depthThreshold = max(RTGI_HISTORY_DEPTH_REJECTION_THRESHOLD,
-                               0.05 * max(currentDistance, sampledDistance));
-    if (abs(currentDistance - sampledDistance) > depthThreshold ||
-        dot(currentNormal, sampledNormal) < RTGI_HISTORY_NORMAL_REJECTION_DOT)
-    {
-        return false;
-    }
+        float sampledDistance = texelFetch(historyDepth, texel, 0).r;
+        vec3 sampledNormal = texelFetch(historyNormal, texel, 0).xyz;
+        vec3 sampledMaterial = texelFetch(historyMaterial, texel, 0).rgb;
+        vec3 sampledRadiance = texelFetch(historyRadiance, texel, 0).rgb;
+        float sampledAge = texelFetch(historyAge, texel, 0).r;
+        float sampledConfidence = texelFetch(historyConfidence, texel, 0).r;
+        if (!IsFiniteScalar(sampledDistance) || !IsFiniteVector(sampledNormal) ||
+            !IsFiniteVector(sampledMaterial) || !IsFiniteVector(sampledRadiance) ||
+            !IsFiniteScalar(sampledAge) || !IsFiniteScalar(sampledConfidence))
+        {
+            continue;
+        }
 
-    vec3 materialDelta = abs(currentMaterial - sampledMaterial);
-    if (max(materialDelta.x, max(materialDelta.y, materialDelta.z)) >
-        RTGI_HISTORY_MATERIAL_REJECTION_THRESHOLD)
+        float sampledNormalLengthSquared = dot(sampledNormal, sampledNormal);
+        if (!IsFiniteScalar(sampledNormalLengthSquared) ||
+            sampledNormalLengthSquared <= 1.0e-8)
+        {
+            continue;
+        }
+        sampledNormal *= inversesqrt(sampledNormalLengthSquared);
+        // 非線形なNDC深度は遠景で差が潰れるため、線形距離の相対差で遮蔽の入れ替わりを棄却する。
+        float depthThreshold = max(RTGI_HISTORY_DEPTH_REJECTION_THRESHOLD,
+                                   0.05 * max(currentDistance, sampledDistance));
+        // 法線と材質は、固定の閾値か、近傍の同じ面のばらつき（ComputeLocalSurfaceSpread）の大きい方まで許す。
+        if (abs(currentDistance - sampledDistance) > depthThreshold ||
+            (dot(currentNormal, sampledNormal) < RTGI_HISTORY_NORMAL_REJECTION_DOT &&
+             length(currentNormal - sampledNormal) > normalSpread))
+        {
+            continue;
+        }
+
+        vec3 materialDelta = abs(currentMaterial - sampledMaterial);
+        if (max(materialDelta.x, max(materialDelta.y, materialDelta.z)) >
+            max(RTGI_HISTORY_MATERIAL_REJECTION_THRESHOLD, materialSpread))
+        {
+            continue;
+        }
+
+        radianceSum += sampledRadiance * bilinearWeight;
+        ageSum += sampledAge * bilinearWeight;
+        confidenceSum += sampledConfidence * bilinearWeight;
+        weightSum += bilinearWeight;
+    }
+    // 認めた画素の重みが小さすぎるときは、その画素へ寄せすぎないよう履歴を使わない。
+    if (!(weightSum >= RTGI_HISTORY_MINIMUM_TAP_WEIGHT))
     {
         return false;
     }
+    previousRadiance = radianceSum / weightSum;
+    previousAge = ageSum / weightSum;
+    previousConfidence = confidenceSum / weightSum;
 
     previousAge = clamp(previousAge,
                         0.0,
                         min(float(parameters.temporalState.w),
                             float(RTGI_HISTORY_MAXIMUM_AGE)));
     previousConfidence = clamp(previousConfidence, 0.0, 1.0);
+    // 履歴を書いたフレームの露出から今のフレームの露出へ掛け直す。
+    float historyExposureScale = parameters.previousCameraPosition.w;
+    if (IsFiniteScalar(historyExposureScale) && historyExposureScale > 0.0)
+    {
+        previousRadiance *= historyExposureScale;
+    }
     previousRadiance = SanitizeRadiance(previousRadiance);
     return true;
 }
@@ -859,11 +966,20 @@ void main()
     vec3 previousRadiance = vec3(0.0);
     float previousAge = 0.0;
     float previousConfidence = 0.0;
+    float normalSpread = 0.0;
+    float materialSpread = 0.0;
+    if (bSurfaceValid)
+    {
+        ComputeLocalSurfaceSpread(uv, vec2(imageSize), viewDistance, worldNormal, material.rgb,
+                                  normalSpread, materialSpread);
+    }
     bool bHistoryAccepted = bSurfaceValid &&
         TryReadReprojectedHistory(uv,
                                   previousViewDistance,
                                   worldNormal,
                                   material.rgb,
+                                  normalSpread,
+                                  materialSpread,
                                   previousRadiance,
                                   previousAge,
                                   previousConfidence);
