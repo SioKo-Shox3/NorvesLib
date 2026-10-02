@@ -114,6 +114,10 @@ namespace Game::GameModes
         // 逆光補正と同じく露出を上げ、影の中を足元の外へ出す。手動露出には掛けない。
         constexpr float kStartupAutoExposureCompensationEV = 2.0f;
 
+        // --night の静的HDR（grasslands_sunset_4k）の倍率。倍率1の上半球の放射輝度を余弦で積分した水平面の
+        // 照度は約 3.9 lx なので、0.08 で約 0.31 lx（満月の夜の地面の目安 0.1〜1 lx）にする。
+        constexpr float kNightStaticEnvironmentIntensityScale = 0.08f;
+
         float StartupExposureCompensationEV(bool bAutoExposure)
         {
             return bAutoExposure ? kStartupAutoExposureCompensationEV : 0.0f;
@@ -919,9 +923,25 @@ namespace Game::GameModes
             {
                 data.m_SkyAtmosphere.SunAzimuthDegrees = data.m_StartupSunAzimuth;
             }
+            // --night: 空（と空の太陽の方向光）を消し、環境光を空が無効なときの静的HDRにして月明かり程度へ
+            // 落とす。点光源（1600 lm）だけが地面を照らすので、点光源の影が目で見える。
+            if (data.m_bStartupNight)
+            {
+                data.m_SkyAtmosphere.bEnabled = false;
+            }
+            ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(
+                data.m_bStartupNight ? kNightStaticEnvironmentIntensityScale : 1.0f);
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
-            LOG_INFO("Sky atmosphere enabled sun_altitude=%.1f sun_azimuth=%.1f",
-                     data.m_SkyAtmosphere.SunAltitudeDegrees, data.m_SkyAtmosphere.SunAzimuthDegrees);
+            if (data.m_bStartupNight)
+            {
+                LOG_INFO("Rendering3DTest night enabled static_environment_scale=%.3f",
+                         kNightStaticEnvironmentIntensityScale);
+            }
+            else
+            {
+                LOG_INFO("Sky atmosphere enabled sun_altitude=%.1f sun_azimuth=%.1f",
+                         data.m_SkyAtmosphere.SunAltitudeDegrees, data.m_SkyAtmosphere.SunAzimuthDegrees);
+            }
             data.m_bSunStepApplied = false;
             data.m_SunStepElapsedSeconds = 0.0;
             data.m_bHasSunStep = TryReadStartupSunStep(data.m_SunStepElevation, data.m_SunStepDelaySeconds);
@@ -2090,6 +2110,7 @@ namespace Game::GameModes
         data.m_SkyAtmosphere = MakeDefaultSkyAtmosphereParameters();
         ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
         ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
+        ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
         data.m_LightController.SetTargetLight(nullptr);
         data.m_F4BoardObjects.clear();
         data.m_F4BoardComponents.clear();

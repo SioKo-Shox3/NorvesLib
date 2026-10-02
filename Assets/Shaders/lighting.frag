@@ -27,7 +27,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     uint debugViewMode;
     float preExposure;
     uint shadowPadding0;
-    uint shadowPadding1;
+    float staticEnvironmentScale; // 空が無効なときの静的HDRの背景に掛ける倍率（既定1。空が有効なら1）
     uint shadowPadding2;
     vec4 skySunDirectionAndCosRadius; // xyz=太陽方向, w=cos(太陽ディスク角半径)
     vec4 cameraForward; // xyz=CSM分割に使うカメラ前方単位ベクトル
@@ -1022,7 +1022,8 @@ void main()
             vec2 envUV = EquirectangularUV(rayDir);
             // 空のradiance LUTは視線の透過率と地平線より下の地面を含むので、そのまま使う。
             vec4 skySample = textureLod(envMap, envUV, 0.0);
-            vec3 skyColor = skySample.rgb;
+            // 静的HDRの背景にはシーンの倍率を掛ける（空が有効なら1）。
+            vec3 skyColor = skySample.rgb * params.staticEnvironmentScale;
             vec4 sunDiskSample = textureLod(skySunDisk, vec2(0.5), 0.0);
             vec3 sunDirection = normalize(params.skySunDirectionAndCosRadius.xyz);
             float sunDiskMask = step(params.skySunDirectionAndCosRadius.w,

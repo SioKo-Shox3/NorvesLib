@@ -342,6 +342,13 @@ namespace NorvesLib::Core::Rendering
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
         /**
+         * @brief 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率を次のFramePacketへ公開する
+         * @param scale 0以上の有限の倍率（1で従来どおり）。範囲外は1へ戻す
+         */
+        void SetStaticEnvironmentIntensityScale(float scale);
+        float GetStaticEnvironmentIntensityScale() const { return m_StaticEnvironmentIntensityScale; }
+
+        /**
          * @brief メインカメラを取得
          */
         const CameraProxy &GetMainCamera() const { return m_MainCamera; }
@@ -539,6 +546,7 @@ namespace NorvesLib::Core::Rendering
         SkyAtmosphereParameters m_SkyAtmosphere;
         DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
+        float m_StaticEnvironmentIntensityScale = 1.0f;
         bool m_bRTGIEnabled = true;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;

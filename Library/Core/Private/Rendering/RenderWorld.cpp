@@ -312,6 +312,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetVolumetricFogParameters(parameters);
     }
 
+    void RenderWorld::SetStaticEnvironmentIntensityScale(float scale)
+    {
+        m_RenderingCoordinator.SetStaticEnvironmentIntensityScale(scale);
+    }
+
     void RenderWorld::EndFrame()
     {
         if (!m_bInitialized)

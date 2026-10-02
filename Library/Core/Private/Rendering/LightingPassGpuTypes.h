@@ -32,7 +32,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t debugViewMode;
         float preExposure;
         uint32_t shadowPadding0;
-        uint32_t shadowPadding1;
+        float staticEnvironmentScale; // 空が無効なときの静的HDRの背景に掛ける倍率（既定1）
         uint32_t shadowPadding2;
         float skySunDirectionAndCosRadius[4];
         float cameraForward[4];
@@ -68,6 +68,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPULightingParams, bNeuralBRDFEnabled) == 664);
     static_assert(offsetof(GPULightingParams, debugViewMode) == 668);
     static_assert(offsetof(GPULightingParams, preExposure) == 672);
+    static_assert(offsetof(GPULightingParams, staticEnvironmentScale) == 680);
     static_assert(offsetof(GPULightingParams, skySunDirectionAndCosRadius) == 688);
     static_assert(offsetof(GPULightingParams, cameraForward) == 704);
     static_assert(offsetof(GPULightingParams, ddgi) == 720);

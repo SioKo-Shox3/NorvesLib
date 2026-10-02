@@ -197,6 +197,7 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, packet.Scene.AmbientColorG);
             hash = HashRevisionValue(hash, packet.Scene.AmbientColorB);
             hash = HashRevisionValue(hash, packet.Scene.AmbientIntensity);
+            hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentIntensityScale);
 
             const SkyAtmosphereParameters& sky = packet.Scene.SkyAtmosphere;
             hash = HashRevisionValue(hash, sky.bEnabled);
@@ -1902,6 +1903,7 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.StaticEnvironmentIntensityScale = m_StaticEnvironmentIntensityScale;
         packet.bRTGIEnabled = m_bRTGIEnabled;
     }
 
@@ -3294,6 +3296,11 @@ namespace NorvesLib::Core::Rendering
         const VolumetricFogParameters& parameters)
     {
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
+    }
+
+    void RenderingCoordinator::SetStaticEnvironmentIntensityScale(float scale)
+    {
+        m_StaticEnvironmentIntensityScale = std::isfinite(scale) && scale >= 0.0f ? scale : 1.0f;
     }
 
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)

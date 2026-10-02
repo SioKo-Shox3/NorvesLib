@@ -101,7 +101,7 @@
 - notes: ユーザー決定（2026-09-27）「キューブシャドウを実装」。危険地帯（RHI・RenderThread・影）。評価者を通す。新しいテストは実行ファイルを増やさず既存の束へ足す。
 
 ## SS-POINT-SHADOW-P2: 点光源の影をライティングに掛け、起動画面の点光源に影を落とさせる
-- status: todo
+- status: done
 - done-when: `lighting.frag` と `forward_transparent.frag` が、影を落とす点光源にキューブシャドウ（PCF、法線方向のずらし）を掛ける。影を落とさない点光源の照明は変わらない。Rendering3DTest の点光源を影ありにする。Rendering3DTest に夜の条件（起動引数 `--night`。空の太陽を消し、環境光は空が無効なときの静的HDRを月明かり程度（地面の照度 約0.1〜1 lx）へ落とす。露出は自動のまま）を足し、撮影スクリプトに `-Night` を足して夜の3視点を撮る。夜の撮影で、点光源による球・岩の影が地面に見え、影の縁にアクネ（縞）とピーターパン（接地部の浮き）が見えない。昼の既定の起動画面は変わらない。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game LightingLightBufferTest RenderingGoldenImageTest -- /m:1`

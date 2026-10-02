@@ -434,6 +434,8 @@ namespace NorvesLib::Core::Rendering
         float AmbientIntensity = 1.0f;
         SkyAtmosphereParameters SkyAtmosphere;
         VolumetricFogParameters VolumetricFog;
+        // 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率（1で従来どおり。夜の環境光などに使う）
+        float StaticEnvironmentIntensityScale = 1.0f;
 
         // フォグ設定
         bool bFogEnabled = false;
@@ -456,6 +458,7 @@ namespace NorvesLib::Core::Rendering
             DDGIVolume = MakeDefaultDDGIVolumeParameters();
             SkyAtmosphere = SkyAtmosphereParameters{};
             VolumetricFog = MakeDefaultVolumetricFogParameters();
+            StaticEnvironmentIntensityScale = 1.0f;
         }
 
         void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)

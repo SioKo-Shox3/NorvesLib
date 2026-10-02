@@ -15,6 +15,8 @@
 # -OrbitDegreesPerSecond を与えると、起動からカメラを一定の速さ（度/秒）で軸の周りに回し続け、回っている
 # 途中の画面を撮る（動くカメラでの TAA の残像の確認用）。-AntiAliasing TAA で起動画面の既定の FXAA の
 # 代わりに TAA で撮る（見比べ用）。-HeightFogDensity・-HeightFogFalloff で高さフォグの密度・減衰を起動画面の既定から替えて撮る。
+# -Night で夜（--night: 空と空の太陽を消し、環境光を月明かり程度にする。露出は自動のまま）の3視点を
+# <視点>-night.png として撮る。点光源の影の確認用で、-SunElevations とは併用しない。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -37,7 +39,9 @@ param(
     [Nullable[double]]$HeightFogDensity = $null,
     # 高さフォグの高さ方向の減衰（1/m）。省略時は起動画面の既定。
     [ValidateRange(0.0, 1.0)]
-    [Nullable[double]]$HeightFogFalloff = $null
+    [Nullable[double]]$HeightFogFalloff = $null,
+    # 夜の条件で撮る（太陽が無いので -SunElevations・-ExposureEV100s とは併用しない）。
+    [switch]$Night
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,6 +95,12 @@ function Get-DefaultExposureEV100([double]$Elevation)
     return $table[$table.Count - 1][1]
 }
 
+if ($Night -and ($sunElevationList.Count -gt 0 -or $exposureList.Count -gt 0))
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=night_with_sun（-Night は -SunElevations・-ExposureEV100s と併用しない）"
+    exit 1
+}
+
 if ($exposureList.Count -gt 0 -and $exposureList.Count -ne $sunElevationList.Count)
 {
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=exposure_count_mismatch（-ExposureEV100s は -SunElevations と同じ数）"
@@ -104,7 +114,8 @@ foreach ($view in $views)
 {
     if ($sunElevationList.Count -eq 0)
     {
-        $shots += [pscustomobject]@{ Name = $view.Name; Camera = $view.Camera; SunElevation = $null; ExposureEV100 = $null }
+        $shotName = if ($Night) { "$($view.Name)-night" } else { $view.Name }
+        $shots += [pscustomobject]@{ Name = $shotName; Camera = $view.Camera; SunElevation = $null; ExposureEV100 = $null }
         continue
     }
     for ($i = 0; $i -lt $sunElevationList.Count; ++$i)
@@ -225,6 +236,10 @@ foreach ($view in $shots)
     {
         $arguments += "--height-fog-falloff=$(([double]$HeightFogFalloff).ToString($invariant))"
     }
+    if ($Night)
+    {
+        $arguments += '--night'
+    }
     $arguments += "--anti-aliasing=$($AntiAliasing.ToLowerInvariant())"
 
     # アセットは作業ディレクトリからの相対パスで読むため、リポジトリのルートで起動する。
@@ -295,6 +310,7 @@ $metrics = [ordered]@{
     configuration = $Configuration
     orbit_degrees_per_second = $OrbitDegreesPerSecond
     anti_aliasing = $AntiAliasing
+    night = [bool]$Night
     views = $results
     failures = $failures
 }

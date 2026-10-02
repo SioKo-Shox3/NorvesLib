@@ -4251,6 +4251,26 @@ namespace NorvesLib::Core::Rendering
             params.ambientColor[3] = m_Settings.IBLIntensity;
         }
 
+        // 空が無効で静的HDRを使うフレームだけ、FramePacketの倍率を背景とIBLの強度へ掛ける
+        // （検証用の環境と空の環境には掛けない）。
+        params.staticEnvironmentScale = 1.0f;
+        if (!bSkyAtmosphereRequested && !bValidationRaw250 && !bValidationRaw251 && !bValidationRaw252 &&
+            context.SnapshotScene != nullptr)
+        {
+            const float scale = context.SnapshotScene->StaticEnvironmentIntensityScale;
+            params.staticEnvironmentScale = std::isfinite(scale) && scale >= 0.0f ? scale : 1.0f;
+        }
+        const bool bStaticEnvironmentIbl =
+            m_bIBLAvailable && !bValidationConstantIblAvailable && !bSkyAtmosphereRequested;
+        const float publishedIblIntensity =
+            bValidationConstantIblAvailable ? 1.0f
+            : bStaticEnvironmentIbl         ? m_Settings.IBLIntensity * params.staticEnvironmentScale
+                                            : m_Settings.IBLIntensity;
+        if (bStaticEnvironmentIbl)
+        {
+            params.ambientColor[3] = publishedIblIntensity;
+        }
+
         if (!m_LightDataBuffer || !m_LightArrayBuffer)
         {
             return false;
@@ -4314,7 +4334,7 @@ namespace NorvesLib::Core::Rendering
                 m_BrdfLutTexture,
                 m_DfgSampler,
                 9u,
-                bValidationConstantIblAvailable ? 1.0f : m_Settings.IBLIntensity,
+                publishedIblIntensity,
                 params.bIBLEnabled != 0u);
             // 透明物も同じキューブの番号で点光源の影を引く（光源バッファと同じフレームの配列）。
             context.PhysicalLighting.PublishPointShadowCubes(

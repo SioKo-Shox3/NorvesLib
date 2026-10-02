@@ -108,6 +108,9 @@ namespace Game
         // --anti-aliasing=<taa|fxaa>: 起動画面のアンチエイリアシング（既定は fxaa）。
         constexpr const TCHAR *kAntiAliasingOption = TEXT("--anti-aliasing=");
         bool s_bRendering3DTestTemporalAA = false;
+        // --night: 起動画面を夜にする（空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす。値を取らない）。
+        constexpr const TCHAR *kNightOption = TEXT("--night");
+        bool s_bRendering3DTestNight = false;
         bool s_bRendering3DTestHasHeightFogDensity = false;
         float s_Rendering3DTestHeightFogDensity = 0.0f;
         bool s_bRendering3DTestHasHeightFogFalloff = false;
@@ -436,6 +439,7 @@ namespace Game
         s_bRendering3DTestHasHeightFogFalloff = false;
         s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
         s_bRendering3DTestTemporalAA = false;
+        s_bRendering3DTestNight = false;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;
         bool bHasRendering3DTestImpostorSmokeCount = false;
@@ -568,6 +572,12 @@ namespace Game
                     return false;
                 }
                 s_bRendering3DTestHasHeightFogFalloff = true;
+                continue;
+            }
+
+            if (ToStdString(args[i]) == std::basic_string<TCHAR>(kNightOption))
+            {
+                s_bRendering3DTestNight = true;
                 continue;
             }
 
@@ -1486,6 +1496,7 @@ namespace Game
                 mode->GetData().m_StartupHeightFogFalloff = s_Rendering3DTestHeightFogFalloff;
                 mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
+                mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
                 return mode;
             });

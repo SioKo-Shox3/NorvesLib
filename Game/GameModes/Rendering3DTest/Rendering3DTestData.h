@@ -183,6 +183,9 @@ namespace Game::GameModes
         float m_OrbitDegreesPerSecond = 0.0f;
         // --anti-aliasing=taa の指定で true にする（既定は FXAA）。
         bool m_bStartupTemporalAA = false;
+        // --night の指定で true にする。空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす
+        // （点光源の影を見る撮影用。既定は昼）。
+        bool m_bStartupNight = false;
 
         // 手動露出（EV100）。ImGui のスライダーが書き、Tick が絞り・ISO を保ったままシャッター速度へ写す。
         float m_ExposureEV100 = 0.0f;

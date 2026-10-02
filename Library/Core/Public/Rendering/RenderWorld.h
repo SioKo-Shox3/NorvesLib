@@ -175,6 +175,12 @@ namespace NorvesLib::Core::Rendering
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
         /**
+         * @brief 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率を設定する（GameThread）
+         * @param scale 0以上の有限の倍率（1で従来どおり）。次のFramePacketへ値コピーする
+         */
+        void SetStaticEnvironmentIntensityScale(float scale);
+
+        /**
          * @brief フレーム終了（GameThread）
          *
          * FramePacketを完了状態にし、RenderThreadに通知します。
