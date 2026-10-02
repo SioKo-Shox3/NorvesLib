@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Container/Containers.h"
 #include <cstdint>
@@ -69,6 +69,10 @@ namespace NorvesLib::Core
          * @param key Member key.
          */
         bool HasMember(const char* key) const;
+        // objectの借用列挙。名前/valueはdocumentのReset/再parse/代入/破棄で失効する。
+        size_t GetObjectSize() const;
+        const Container::String& GetMemberName(size_t index) const;
+        JsonValue GetMemberValue(size_t index) const;
 
         /**
          * @brief Returns the string value.
@@ -268,6 +272,22 @@ namespace NorvesLib::Core
     inline bool JsonValue::HasMember(const char* key) const
     {
         return FindMember(key).IsValid();
+    }
+
+    inline size_t JsonValue::GetObjectSize() const
+    {
+        return IsObject() ? m_pDocument->m_Nodes[m_NodeIndex].ObjectChildren.size() : 0;
+    }
+    inline const Container::String& JsonValue::GetMemberName(size_t index) const
+    {
+        static const Container::String EmptyString;
+        if (!IsObject() || index >= GetObjectSize()) return EmptyString;
+        return m_pDocument->m_Nodes[m_NodeIndex].ObjectChildren[index].Key;
+    }
+    inline JsonValue JsonValue::GetMemberValue(size_t index) const
+    {
+        if (!IsObject() || index >= GetObjectSize()) return {};
+        return JsonValue(m_pDocument, m_pDocument->m_Nodes[m_NodeIndex].ObjectChildren[index].NodeIndex);
     }
 
     inline const Container::String& JsonValue::AsString() const

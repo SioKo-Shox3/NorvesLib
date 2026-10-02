@@ -303,3 +303,6 @@
 
 - G1-GR03-P4H: Engineが正本/Routerより後にMapperを所有して自動Attachし、Runのmessage前BeginFrameとTickのOnUpdate前Updateへsteady_clock絶対時刻＋clamp前raw dtを配線。Run開始/終了で取消、Shutdown/destructorは先行Detach。独立評価でRun例外時に末尾CancelAll/EndRunが飛ぶ欠陥を検出し、scope-exitに修正。実Runを通る偽platformのPump例外/OnUpdate例外/通常終了、legacy透過、所有/時間/fixed latchの試験を既存Engine bundleへ追加し第2周静的レビューPASS。実InputActionRuntime/InputButtonState回帰PASS。新Engine試験と既存FixedStepSchedulerTestはWindows.h依存でcompile停止、統合実行/起動画面は未確認。Game JSON/context設定、rebind、OS供給/cursor/focus通知は後続。
 - Next: bindings.v1の名前付きcode・設定JSON/既定とユーザー差分の重ね合わせ、IInputBindingStoreによる保存、リバインド捕捉を実装する。
+
+- G1-GR03-P5A: bindings.v1の物理code名/安全数値変換、既定JSON/full書出とuser差分の全体適用/差分書出を追加。Identityは名前保存、未知項目は警告/無視、既知不正はdefaults fallback、absent/empty bindings、alias、BOM、1MiB/深さ64を扱う。JsonValue借用列挙を追加し、既存数値parseをlocale非依存のfrom_chars＋全token/範囲検証へ変更。独立評価でfloat化による意味範囲外値の丸め通過と、空未知field名の独自String c_str問題を検出。double/float両方の範囲検証と空文字literal警告へ修正し、恒久試験を追加、第2周PASS。実portable名前/数値試験は通常/NDEBUG-O2/ASan・UBSan（LeakSanitizer除外）/bundle compileと既存3件回帰成功。JSON/JsonWriterの統合compile/実行はWindows.h依存で未確認。既存Delegate識別/JSON surrogate問題は独立TODOとして追跡。
+- Next: IInputBindingStoreによる一時working-directory保存/読込とGame既定JSONのロード、それからrebind捕捉とOS入力供給へ接続する。

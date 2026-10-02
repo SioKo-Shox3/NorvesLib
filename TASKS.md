@@ -1328,3 +1328,23 @@
 - stop-when: 入力更新がOnUpdateより後、clamped dt使用、正本/Router破棄後のMapper参照、起動画面変更、blocking未解消。
 - paths: Library/Core/Public/Engine/Engine.h, Library/Core/Private/Engine/Engine.cpp, Library/Core/Public/Engine/ApplicationProcessor.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Test/Core/Engine/InputFramePipelineTest.cpp, Test/Core/Engine/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: Game既定JSON、rebindとOS供給/cursor/focus通知は次段。Mapper未設定の旧camera経路を維持。
+
+## G1-GR03-P5A: bindings.v1設定JSONと差分を読み書きする
+- status: done
+- done-when: 物理source/codeの安定した名前と安全なwide数値変換、既定JSONの検証読込/書出、既定＋ユーザー差分の全体適用/差分書出を実装。未知field/actionは警告し無視、既知不正/破損/version違いは既定へ退避する。
+- verify: portable InputBindingNamesTestで全code/source往復と数値境界をg++通常/NDEBUG/ASanUBSan。InputBindingJsonTestを既存bundleへ登録しroundtrip/unknown/invalid/empty-unbind/alias-fallbackを検証（Windows依存で未実行なら静的確認を明示）。
+- stop-when: cast前の検証なし、hashをJSON number化、borrowed JSON view保存、partial override、破損設定で既定破壊、blocking未解消。
+- paths: Library/Core/Public/Input/InputBindingNames.h, Library/Core/Public/Input/InputBindingJson.h, Library/Core/Private/Input/InputBindingJson.cpp, Library/Core/Public/Text/JsonDocument.h, Library/Core/Private/Text/JsonDocument.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/InputBindingNamesTest.cpp, Test/Core/Input/InputBindingJsonTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: FileStoreとGame load/save/rebind UI捕捉は次段。schemaはbindings.v1、識別子は文字列。JSON textは1MiB/深さ64以内。
+
+## CORE-DELEGATE-IDENTITY: Delegateの解除対象を正しく識別する
+- status: todo
+- done-when: member/lambdaの同closure型誤一致とfree function保存領域pointer比較を修正し、登録/複製/個別解除の反証試験を通す。
+- verify: Delegate/MulticastDelegateの実コードで別instance/別method/copy/free functionを検証する。公開APIと寿命の独立レビュー必須。
+- notes: GR03の設定保存を先に進め、focus等のevent基盤を増やす前に独立Taskとして処理。現在のMapperはRouter pointer解除、Camera slotはClearで回避している。
+
+## CORE-JSON-SURROGATE: JSONの非BMP文字列を整合させる
+- status: todo
+- done-when: JsonDocumentのsurrogate pairを単一Unicode scalarへ合成し、生UTF-8/escape表現が同じ名前になることを検証する。
+- verify: escaped emoji/生UTF-8/孤立surrogate/文字列往復の実コード試験と独立レビュー。
+- notes: ParseUnicodeEscapeは現状4桁単位、AppendUtf8は3byteまで。P5Aとは別件。既定game action名はASCIIで進め、汎用JSON整合として後続修正する。

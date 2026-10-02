@@ -1,4 +1,5 @@
-#include "Text/JsonDocument.h"
+﻿#include "Text/JsonDocument.h"
+#include <charconv>
 
 #include <cctype>
 #include <cstdlib>
@@ -237,11 +238,14 @@ namespace NorvesLib::Core
             }
 
             Container::String numberLiteral = m_Text.substr(numberStart, m_Position - numberStart);
-            char* endPointer = nullptr;
-            double numberValue = std::strtod(numberLiteral.c_str(), &endPointer);
-            if (endPointer == numberLiteral.c_str())
+            double numberValue = 0.0;
+            const char* begin = numberLiteral.data();
+            const char* end = begin + numberLiteral.size();
+            // C localeに依存せず、overflow/underflowとtoken途中までの変換を拒否する。
+            const auto parsed = std::from_chars(begin, end, numberValue, std::chars_format::general);
+            if (parsed.ec != std::errc{} || parsed.ptr != end)
             {
-                return SetError("Failed to parse number");
+                return SetError("JSON数値がdoubleの範囲外または不正です");
             }
 
             outNodeIndex = m_Document.CreateNode(JsonType::Number);

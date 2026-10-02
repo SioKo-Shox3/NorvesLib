@@ -125,3 +125,18 @@
 - Mapperが未設定・stack空の間は既存controllerへ透過し、Rendering3DTestの既定操作と画面は切り替えない。OS Raw/XInput/cursor/focusの供給、Game既定JSONのロードとcontext選択は後続。
 
 - Run終了取消はscope-exitで保証し、PumpMessages/OnUpdateがthrowした場合もHeld/固定press/相対結果を消してFixedStepSchedulerをEndRunする。例外そのものは呼出側へ伝播し、アプリ全体のShutdownをここで代行するものではない。試験には偽platformから実Runを通るPump/OnUpdate例外と通常終了を追加する。
+
+## bindings.v1 JSON
+
+- InputBindingJsonは既存JsonDocument/JsonWriterを使い、schema="bindings.v1"、contexts→actions→bindingsを読み書きする。Identityは名前文字列で保存し、64bit hashをJSON numberへ変換しない。空/制御文字を含むidは拒否。UTF-8 BOMは受け入れる。
+- 既定はcontextのid/actionsとactionのid/type/bindingsが必須。cursorはnormal、その他はInputActionSettings/InputBindingの既定を使う。typeはbutton/axis1d/axis2d、outputはnormalized/frame_delta、curveはlinear/power/expo。
+- 感度はmouse_sensitivity/rate_sensitivity、時間はtiming.tap/double_tap_gap/hold（秒）。bindingはsource/code/slot/component/scale/invert/modifiers/threshold。modifiersはshift/ctrl/alt配列、componentはx/y。既存型検証で組合せ・範囲も確認する。
+- sourceはkey/mouse_button/mouse_delta/mouse_wheel/gamepad_button/gamepad_axis/gamepad_trigger。codeはKey enum名（W/Space等）、mouse button left/right/middle/x1/x2、delta x/y、wheel vertical/horizontal、pad axis left_x/left_y/right_x/right_y、trigger left/right、pad button a/b等の安定名を使う。code/slotの数値入力もfinite/整数/範囲を検証してから狭い型へ入れる。名前は大文字小文字を区別する。
+- ParseDefaultsは候補全体を検証して成功時だけ置換し、失敗時outを維持する。ApplyOverridesは既存context/actionだけを変更し、失敗時outをdefaults copyへ戻す。defaultsとoutのaliasも許す。allocation例外はbool失敗とは別に伝播する。
+- overrideではabsent bindingsが既定保持、[]が明示unbind。感度/曲線/時間/cursorの部分変更を許すが、actionのtype/output種別は既定と同じでなければ拒否する。未知field/context/actionは警告して無視し、既知fieldやidの重複は拒否する。未知override名はinternせず、既定name viewへ照合する。
+- WriteDefaultsは自己完結設定、WriteOverridesは変わった設定field/bindingsだけを出す。構造（context/action追加削除）やtype/outputを差分では変えない。書出失敗時はout textを維持する。
+- 読込前にtextを1MiB、入れ子を64段までに制限する。文字列内の括弧は数えない。書出textも1MiBまで。警告数は全件返すがログ出力は最初16件まで。壊れた既知overrideの途中適用はしない。
+- JsonValueへ借用object列挙APIを追加し、未知fieldを検査する。既存strtodのlocale依存/部分変換を避け、JsonDocumentの数値はfrom_charsでtoken全体とdouble範囲を検証する。範囲外のoverflow/underflowはparse失敗とする。
+- 名前/数値変換はportable実コードで全source/codeと境界を試験する。JSON/Identity統合試験は既存bundleへ追加したが、現LinuxではWindows.h依存でcompile/実行未確認。ファイル保存・Gameの設定ロード・rebind捕捉は次段。
+
+- float fieldはdoubleの意味範囲を検証してから変換し、変換後も範囲を守る。1を僅かに超えるthreshold/expoや極小負感度が丸めで有効化されることを防ぐ。空の未知field名は空C文字列へ置換して安全に警告する。
