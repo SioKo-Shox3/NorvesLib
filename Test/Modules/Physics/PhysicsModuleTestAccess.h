@@ -17,6 +17,26 @@ namespace NorvesLib::Modules::Physics
     class PhysicsModuleTestAccess
     {
     public:
+        static EPhysicsResult UnregisterColliderForTest(IPhysicsModule& module, ColliderComponent& collider)
+        {
+            return GetConcrete(module).UnregisterCollider(collider);
+        }
+
+        static bool CopyPublishedProxy(const IPhysicsModule& module, Core::Scene::ColliderHandle handle,
+            PhysicsShapeProxy& outProxy)
+        {
+            for (const auto& proxy : GetConcrete(module).m_PublishedBroadphase.GetProxies())
+            {
+                if (proxy.Collider == handle)
+                {
+                    outProxy = proxy;
+                    return true;
+                }
+            }
+            outProxy = {};
+            return false;
+        }
+
         static uint32_t GetColliderSlotCount(const IPhysicsModule& module)
         {
             return static_cast<uint32_t>(GetConcrete(module).m_ColliderSlots.size());

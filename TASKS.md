@@ -1630,3 +1630,11 @@
 - stop-when: 正本の受理前に活動を反映、人工resetを新押下扱い、frame検証失敗で正本を更新、callback中の二重通知/寿命逸脱、旧入力経路の変更、blocking未解消。
 - paths: Library/Core/Public/Input/InputSystem.h, Library/Core/Private/Input/InputSystem.cpp, Library/Core/Private/Engine/Engine.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Test/Core/Input/ActiveDeviceKindIntegrationTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: 既存BeginFrame()はsteady clockで互換を保つ。明示clockとの異なる時刻原点混用は禁止。初回frame以前の注入は従来通り正本へ受理するが種別判定対象外。変更通知callbackは入力配送外、再入frame/本体破棄/例外は不可。
+
+## G1-GR08-P2D: コライダーのレイヤーと識別値を公開snapshotへ接続する
+- status: done
+- done-when: ColliderComponentに32bit Layer/Maskとuint64 UserDataを所有させ、SetTrigger同様に登録・owner thread検証後に更新する。既定Layer1/Mask全bit/UserData0を維持し、BuildBroadphaseがtriggerも含めコピーする。旧ray/overlap hit末尾にUserDataを追加し全形状で伝搬する。
+- verify: 実proxy/query型のCPU回帰を通常/O2/ASanUBSan/MEMBERで実行。実component/snapshotの既定/設定/公開時点/旧hit/拒否非変更を既存Physics bundleへ追加しcompileを試す。独立公開契約レビュー。Windows依存は未検証と区別し代用品を作らない。
+- stop-when: ゲーム固有layer名のCoreへの流入、公開snapshotの暗黙更新、旧hit順序/normalの変更、wrong thread/未登録での部分更新、blocking未解消。
+- paths: Library/Core/Public/Scene/PhysicsQueryTypes.h, Library/Modules/Physics/Public/Physics/ColliderComponent.h, Library/Modules/Physics/Private/Physics/ColliderComponent.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.h, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Test/Modules/Physics/PhysicsBroadphaseQueryTest.cpp, Test/Modules/Physics/PhysicsProxyQueryTest.cpp, Test/Modules/Physics/PhysicsModuleTestAccess.h, Test/Core/Object/PhysicsQueryTypesTest.cpp, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
+- notes: Layerは所属bit集合で0/複数bitも許可。ゲーム側が名前/割当を所有する。Mask0も有効。solver適用と新query facadeは後続で、metadataを保存しただけで衝突挙動変更完了とはしない。

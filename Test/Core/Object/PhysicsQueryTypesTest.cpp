@@ -1,4 +1,7 @@
 ﻿#include "Scene/PhysicsQueryTypes.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstddef>
 #include <iostream>
@@ -24,6 +27,16 @@ static_assert(ColliderHandle{2, 1} < ColliderHandle{2, 2});
 
 int main()
 {
+    static_assert(std::is_trivially_copyable_v<PhysicsRaycastHit>);
+    static_assert(std::is_trivially_copyable_v<PhysicsOverlapHit>);
+    assert(PhysicsRaycastHit{}.UserData == 0);
+    assert(PhysicsOverlapHit{}.UserData == 0);
+    PhysicsRaycastHit rayHit;
+    rayHit.UserData = UINT64_MAX;
+    assert(PhysicsRaycastHit(rayHit).UserData == UINT64_MAX);
+    PhysicsOverlapHit overlapHit;
+    overlapHit.UserData = UINT64_MAX;
+    assert(PhysicsOverlapHit(overlapHit).UserData == UINT64_MAX);
     PhysicsQueryFilter filter;
     assert(filter.IsValid());
     const ColliderHandle collider{3, 1};

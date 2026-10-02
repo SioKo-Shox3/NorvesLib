@@ -75,6 +75,7 @@ namespace NorvesLib::Core::Scene
         Math::Vector3 Point;
         Math::Vector3 Normal;
         float Distance = 0.0f;
+        uint64_t UserData = 0;
     };
 
     struct PhysicsOverlapHit
@@ -84,6 +85,7 @@ namespace NorvesLib::Core::Scene
         EntityHandle Entity;
         bool bHasEntity = false;
         Math::GeometryContact Contact;
+        uint64_t UserData = 0;
     };
 
     // レイヤーの名前と割当はゲーム側で管理する。エンジンは32ビットの集合だけを扱う。

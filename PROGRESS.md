@@ -387,3 +387,6 @@
 
 - G1-GR04-P12: InputSystemへ使用中入力方式の取得/設定/変更Delegateを接続。受理正本を先に更新して活動を評価し、padは人工resetに影響されない物理履歴と比較、UI consumeから独立させた。Processorから共通非scaled frame時刻と即時focus、Engineから適用focusを供給する。不正System clockはMapper/frame更新前に拒否。kind取得は即時、通知はEndFrameで最終値だけ集約し再入二重通知を防御。公開header syntaxとP11通常/O2/ASan・UBSan回帰成功、独立静的レビューPASS。実System/Router試験は登録済みだがWindows.h依存でcompile/実行未確認。
 - Next: GR04の計画上の実装項目を一通り接続した。Windows統合bundle/実パッド/振動の受入れは未検証として残し、G1のGR08（コライダーmetadata、query façade/provider、mask、明示snapshot更新）へ進む。GR03/GR04/G1の全受入れ完了とは扱わない。
+
+- G1-GR08-P2D: ColliderComponentへ32bit所属Layer/相互作用Maskとopaque uint64 UserDataを追加。既存のowner thread/登録世代検証を通して更新し、既定1/全bit/0、0/複数bitを許可してゲーム固有名は持たせない。BuildBroadphaseでTriggerも含め値snapshotへコピーし、旧ray/overlap hit末尾にもUserDataを伝搬。setterで公開snapshotを即時更新せず、法線/順序/旧既定query挙動は維持。実query値型/実proxy集約の通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER compile成功、独立静的レビューPASS。実Collider/Moduleの全形状/公開時点/スレッド・未登録拒否試験を追加したが、Windows.h依存で統合compile/実行は未確認。
+- Next: G1／GR08の新ExecuteQueryをSceneQuery façadeとPhysics providerへ接続し、フィルタ・複数hit・sweepを実際の公開snapshotから呼べるようにする。solver maskと明示refreshは後続。

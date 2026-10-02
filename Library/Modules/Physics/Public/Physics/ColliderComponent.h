@@ -17,6 +17,13 @@ namespace NorvesLib::Modules::Physics
         EPhysicsResult SetBox(const Math::Vector3& halfExtents);
         EPhysicsResult SetCapsule(float radius, float halfHeight);
         EPhysicsResult SetTrigger(bool bTrigger);
+        // GameThread専用。bit名/割当はゲーム所有。0と複数bitも有効、公開snapshot反映は次のpublish。
+        EPhysicsResult SetCollisionLayer(Core::Scene::PhysicsCollisionMask layer);
+        EPhysicsResult SetCollisionMask(Core::Scene::PhysicsCollisionMask mask);
+        EPhysicsResult SetUserData(uint64_t userData);
+        Core::Scene::PhysicsCollisionMask GetCollisionLayer() const { return m_CollisionLayer; }
+        Core::Scene::PhysicsCollisionMask GetCollisionMask() const { return m_CollisionMask; }
+        uint64_t GetUserData() const { return m_UserData; }
         Core::Scene::ColliderHandle GetColliderHandle() const;
         EPhysicsResult AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&> callback, PhysicsCallbackHandle& outHandle);
         EPhysicsResult RemoveOnOverlapBegin(PhysicsCallbackHandle handle);
@@ -54,6 +61,9 @@ namespace NorvesLib::Modules::Physics
         EColliderShape m_Shape = EColliderShape::None;
         bool m_bHasShape = false;
         bool m_bTrigger = false;
+        Core::Scene::PhysicsCollisionMask m_CollisionLayer = Core::Scene::DefaultPhysicsLayer;
+        Core::Scene::PhysicsCollisionMask m_CollisionMask = Core::Scene::AllPhysicsLayers;
+        uint64_t m_UserData = 0;
         EPhysicsResult m_LastRegistrationResult = EPhysicsResult::NotRegistered;
         Core::Container::VariableArray<CallbackSlot> m_OverlapBeginCallbacks;
         Core::Container::VariableArray<CallbackSlot> m_OverlapEndCallbacks;

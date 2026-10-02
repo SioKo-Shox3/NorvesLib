@@ -1,5 +1,8 @@
 ﻿#include "Physics/PhysicsBroadphase.h"
 #include "Math/GeometryIntersection.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cmath>
 #include <iostream>

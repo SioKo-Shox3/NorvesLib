@@ -262,6 +262,7 @@ namespace NorvesLib::Modules::Physics
             hit.Entity = proxy.Entity;
             hit.bHasEntity = proxy.bHasEntity;
             hit.Contact = contact;
+            hit.UserData = proxy.UserData;
             outHits.push_back(hit);
         }
 
@@ -699,6 +700,7 @@ namespace NorvesLib::Modules::Physics
             outHit.Distance = distance;
             outHit.Point = ray.PointAt(distance);
             outHit.Normal = CalculateRayNormal(ray, proxy, distance);
+            outHit.UserData = proxy.UserData;
         }
         return bFound;
     }

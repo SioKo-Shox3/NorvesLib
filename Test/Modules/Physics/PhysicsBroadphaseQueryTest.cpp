@@ -10,6 +10,9 @@
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -65,7 +68,8 @@ namespace
             && !hit.bHasEntity
             && hit.Point == Math::Vector3()
             && hit.Normal == Math::Vector3()
-            && hit.Distance == 0.0f;
+            && hit.Distance == 0.0f
+            && hit.UserData == 0;
     }
 
     void TestSapTouchingPermutationAndUnregister()
@@ -184,6 +188,90 @@ namespace
         IPhysicsModule* Physics = nullptr;
         World World;
     };
+
+    void TestColliderMetadataSnapshot()
+    {
+        PhysicsFixture fixture;
+        Entity* entity = fixture.CreateSphere(Math::Transform(Math::Vector3()),1);
+        auto* collider = entity->GetComponent<ColliderComponent>();
+        assert(collider->GetCollisionLayer() == DefaultPhysicsLayer);
+        assert(collider->GetCollisionMask() == AllPhysicsLayers);
+        assert(collider->GetUserData() == 0);
+        fixture.Physics->FixedTick(1.f/60);
+        const auto handle = collider->GetColliderHandle();
+        PhysicsShapeProxy snapshot;
+        assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics,handle,snapshot));
+        assert(snapshot.Layer == DefaultPhysicsLayer && snapshot.Mask == AllPhysicsLayers);
+        assert(snapshot.UserData == 0 && !snapshot.bTrigger);
+        assert(collider->SetCollisionLayer(0x80000002u) == EPhysicsResult::Success);
+        assert(collider->SetCollisionMask(0) == EPhysicsResult::Success);
+        assert(collider->SetUserData(UINT64_MAX) == EPhysicsResult::Success);
+        assert(collider->SetTrigger(true) == EPhysicsResult::Success);
+        // setterは公開済みsnapshotをその場で変更しない。
+        assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics,handle,snapshot));
+        assert(snapshot.Layer == DefaultPhysicsLayer && snapshot.Mask == AllPhysicsLayers);
+        assert(snapshot.UserData == 0 && !snapshot.bTrigger);
+        EPhysicsResult layerResult{}, maskResult{}, dataResult{};
+        Thread::Thread worker([&]()
+        {
+            layerResult = collider->SetCollisionLayer(1);
+            maskResult = collider->SetCollisionMask(1);
+            dataResult = collider->SetUserData(1);
+        });
+        worker.Join();
+        assert(layerResult == EPhysicsResult::WrongThread);
+        assert(maskResult == EPhysicsResult::WrongThread);
+        assert(dataResult == EPhysicsResult::WrongThread);
+        assert(collider->GetCollisionLayer() == 0x80000002u);
+        assert(collider->GetCollisionMask() == 0 && collider->GetUserData() == UINT64_MAX);
+        SceneQuery& query = fixture.Engine.GetSceneQuery();
+        for (int shape = 0; shape < 3; ++shape)
+        {
+            if (shape == 1)
+            {
+                assert(collider->SetBox(Math::Vector3(1,1,1)) == EPhysicsResult::Success);
+            }
+            if (shape == 2)
+            {
+                assert(collider->SetCapsule(1,1) == EPhysicsResult::Success);
+            }
+            fixture.Physics->FixedTick(1.f/60);
+            assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics,handle,snapshot));
+            assert(snapshot.Layer == 0x80000002u && snapshot.Mask == 0);
+            assert(snapshot.UserData == UINT64_MAX && snapshot.bTrigger);
+            PhysicsRaycastHit hit;
+            assert(query.Raycast(Math::Ray(Math::Vector3(-5,0,0),Math::Vector3::UnitX),10,hit)
+                == EPhysicsSceneQueryResult::Success);
+            assert(hit.Collider == handle && hit.UserData == UINT64_MAX);
+            Core::Container::VariableArray<PhysicsOverlapHit> hits;
+            assert(query.OverlapSphere(Math::Sphere(Math::Vector3(),.5f),hits) == EPhysicsSceneQueryResult::Success);
+            assert(hits.size() == 1 && hits[0].UserData == UINT64_MAX);
+            assert(query.OverlapBox(Math::OBB(Math::Vector3(),Math::Vector3(.5f,.5f,.5f),
+                Math::Vector3::UnitX,Math::Vector3::UnitY,Math::Vector3::UnitZ),hits) == EPhysicsSceneQueryResult::Success);
+            assert(hits.size() == 1 && hits[0].UserData == UINT64_MAX);
+            assert(query.OverlapCapsule(Math::Capsule(Math::Vector3(0,-.5f,0),Math::Vector3(0,.5f,0),.5f),hits)
+                == EPhysicsSceneQueryResult::Success);
+            assert(hits.size() == 1 && hits[0].UserData == UINT64_MAX);
+            hit.UserData = UINT64_MAX;
+            assert(query.Raycast(Math::Ray(Math::Vector3(100,0,0),Math::Vector3::UnitX),10,hit)
+                == EPhysicsSceneQueryResult::NoHit);
+            assert(IsDefaultRaycastHit(hit));
+        }
+        assert(collider->SetCollisionLayer(0) == EPhysicsResult::Success);
+        assert(collider->SetCollisionMask(AllPhysicsLayers) == EPhysicsResult::Success);
+        assert(collider->SetUserData(0) == EPhysicsResult::Success);
+        assert(collider->SetTrigger(false) == EPhysicsResult::Success);
+        fixture.Physics->FixedTick(1.f/60);
+        assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics,handle,snapshot));
+        assert(snapshot.Layer == 0 && snapshot.Mask == AllPhysicsLayers);
+        assert(snapshot.UserData == 0 && !snapshot.bTrigger);
+        assert(PhysicsModuleTestAccess::UnregisterColliderForTest(*fixture.Physics,*collider) == EPhysicsResult::Success);
+        assert(collider->SetCollisionLayer(2) == EPhysicsResult::NotRegistered);
+        assert(collider->SetCollisionMask(2) == EPhysicsResult::NotRegistered);
+        assert(collider->SetUserData(2) == EPhysicsResult::NotRegistered);
+        assert(collider->GetCollisionLayer() == 0 && collider->GetCollisionMask() == AllPhysicsLayers);
+        assert(collider->GetUserData() == 0);
+    }
 
     void TestSnapshotScaleAndRayContract()
     {
@@ -388,6 +476,7 @@ int main()
     TestSapTouchingPermutationAndUnregister();
     TestValueOverlapAllShapes();
     TestSnapshotScaleAndRayContract();
+    TestColliderMetadataSnapshot();
     std::cout << "PhysicsBroadphaseQueryTest passed\n";
     return 0;
 }

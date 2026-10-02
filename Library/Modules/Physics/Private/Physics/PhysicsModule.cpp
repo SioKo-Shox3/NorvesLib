@@ -535,6 +535,39 @@ namespace NorvesLib::Modules::Physics
         return EPhysicsResult::Success;
     }
 
+    EPhysicsResult PhysicsModule::SetColliderLayer(ColliderComponent& component, Core::Scene::PhysicsCollisionMask layer)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        component.m_CollisionLayer = layer;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderMask(ColliderComponent& component, Core::Scene::PhysicsCollisionMask mask)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        component.m_CollisionMask = mask;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderUserData(ColliderComponent& component, uint64_t userData)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        component.m_UserData = userData;
+        return EPhysicsResult::Success;
+    }
+
     EPhysicsResult PhysicsModule::SetBodyType(RigidBodyComponent& component, EPhysicsBodyType bodyType)
     {
         const EPhysicsResult result = ValidateRigidBody(component);
@@ -1111,6 +1144,10 @@ namespace NorvesLib::Modules::Physics
             proxy.Body = FindBodyHandle(*slot.Owner);
             proxy.Entity = slot.Owner->GetEntityHandle();
             proxy.bHasEntity = proxy.Entity.IsValid();
+            proxy.Layer = slot.Component->m_CollisionLayer;
+            proxy.Mask = slot.Component->m_CollisionMask;
+            proxy.UserData = slot.Component->m_UserData;
+            proxy.bTrigger = slot.Component->m_bTrigger;
             if (slot.Component->m_Shape == ColliderComponent::EColliderShape::Sphere)
             {
                 proxy.Shape = EPhysicsProxyShape::Sphere;
