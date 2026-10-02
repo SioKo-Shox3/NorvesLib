@@ -61,7 +61,7 @@
 - notes: 2026-10-02 評価1周目（`153c02c`）は NEEDS_WORK（`NEXT_FINDINGS.md`）。ライティングの出力では影の中は日向の約2割あるが、トーンマップ（ACESの足元）で表示のリニア値の比が約10%へ縮み、影の芯がほぼ黒になる。直す場所は起動画面のカメラの表示側（自動露出の露出補正・トーンマップの足元・グレーディング）で、検証シーンのカメラの既定は変えない。
 
 ## SS-DAYLIGHT-P2: 太陽の向きを操作・指定でき、高さフォグを掛ける
-- status: doing
+- status: done
 - done-when: `--sun-elevation=<deg>` と `--sun-azimuth=<deg>` で起動時の太陽の向きを指定でき、撮影スクリプトの `-SunElevations` で朝（約10°）・昼（約45°）・夕（約3°）を撮れる。ImGuiに手動露出（EV100）のスライダーがある。R3の高さフォグを起動画面で有効にし（`kStartupHeightFogDensity` を0.02〜0.1の範囲で撮り比べて選ぶ）、遠くの地面と空の境が空の色へ霞む（遠くの地面の色がフォグ無しより空の地平線の色へ近づき、暗くならない）。撮影の3時刻とも空と地面の色が時刻らしく変わり、昼の画像で近景（球）のコントラストがフォグで落ちていない（球の輝度の標準偏差がフォグ無しの90%以上）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-DAYLIGHT-P2 -SunElevations 10,45,3`

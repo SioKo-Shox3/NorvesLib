@@ -102,9 +102,10 @@ namespace Game::GameModes
 
         // 起動画面の高さフォグ（R3）。地面での密度（1/m、0で無効）と、高さ方向の減衰（1/m）。
         // 減衰を上限の 1/m にして地面すれすれの薄い層にし、遠くの地面へ向かう浅い視線だけが厚く霞む
-        // ようにする。密度は太陽 45° の撮り比べ（0.02〜0.1）で、地面すれすれの低角度視点でも近くの球の
-        // 輝度の標準偏差がフォグ無しの 90% 以上に残る値を選んだ。--height-fog-density・--height-fog-falloff で替えられる。
-        constexpr float kStartupHeightFogDensity = 0.04f;
+        // ようにする。密度は太陽 45° の撮り比べ（0.02〜0.1）で、地面すれすれの低角度視点でも近くの各球の
+        // 表示のリニア輝度の標準偏差がフォグ無しの 90% 以上に残る値を選んだ（0.04 では低角度の手前の球が
+        // 約 85% まで落ちる）。--height-fog-density・--height-fog-falloff で替えられる。
+        constexpr float kStartupHeightFogDensity = 0.02f;
         constexpr float kStartupHeightFogFalloff = 1.0f;
 
         // 起動画面の自動露出の露出補正（EV）。自動露出は画面の log2 輝度の平均を中間調へ合わせるため、
