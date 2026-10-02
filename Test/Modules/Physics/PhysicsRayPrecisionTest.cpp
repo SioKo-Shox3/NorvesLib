@@ -129,6 +129,17 @@ int main()
     capsule.Capsule = Math::Capsule(Math::Vector3(1000000,-2,0),Math::Vector3(1000000,2,0),.001f);
     assert(Query(capsule,Math::Vector3(999990,0,0),Math::Vector3::UnitX,20,hit) == Result::Success);
     assert(Near(hit.Distance,9.999) && hit.Normal.x < -.999f && std::fabs(hit.Normal.y) < 1e-5f);
+    PhysicsShapeProxy box;
+    box.Shape = EPhysicsProxyShape::Box;
+    box.Box = Math::OBB(Math::Vector3(100000,0,0),Math::Vector3(1,.001f,1),
+        Math::Vector3::UnitX,Math::Vector3::UnitY,Math::Vector3::UnitZ);
+    Miss(box,Math::Vector3(),Math::Vector3(1,1e-7f,0),200000);
+    assert(Query(box,Math::Vector3(0,-.01f,0),Math::Vector3(1,1e-7f,0),200000,hit) == Result::Success);
+    assert(Near(hit.Distance,99999));
+    box.Box = Math::OBB(Math::Vector3(1000000,0,0),Math::Vector3(.001f,1,1),
+        Math::Vector3::UnitX,Math::Vector3::UnitY,Math::Vector3::UnitZ);
+    assert(Query(box,Math::Vector3(999990,0,0),Math::Vector3::UnitX,20,hit) == Result::Success);
+    assert(Near(hit.Distance,9.999) && hit.Normal.x < -.999f);
     std::cout << "PhysicsRayPrecisionTest PASS\n";
     return 0;
 }

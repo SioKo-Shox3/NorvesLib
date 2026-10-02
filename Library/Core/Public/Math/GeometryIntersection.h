@@ -509,6 +509,9 @@ GeometrySeparation ComputeSeparation(const Capsule& a, const Sphere& b);
 GeometrySeparation ComputeSeparation(const Capsule& a, const OBB& b);
 GeometrySeparation ComputeSeparation(const Capsule& a, const Capsule& b);
 
+// 掃引本体と候補検証が共有するOBB条件。Gram誤差はdoubleで1e-4以内。
+bool IsValidSweepBox(const OBB& shape);
+
 /**
  * @brief カプセルを direction に maxDistance だけ並進させる。回転掃引は行わない。
  * direction は内部で正規化する。maxDistance==0 ではゼロ方向も許し、初期重なりだけを返す。

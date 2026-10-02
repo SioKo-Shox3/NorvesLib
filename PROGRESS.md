@@ -408,3 +408,6 @@
 
 - G1-GR08-RAY: 旧float二次式の遠方球/カプセル誤hitを実再現し、doubleの直線距離・断面評価、有限円筒＋端球の最小正根へ変更。内部0/距離上限/float同距離順を維持し、微小線分/ほぼ平行も扱う。根を点の再構成までdoubleで保ち、局所double hitオフセットから法線を作る。第1周で見つかった大きいworld座標＋小radiusの法線崩れも修正して独立レビューPASS。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBERとproxy/visitor回帰成功。独立long double oracleの40,000件はhit17,229/miss22,771、誤分類/最近根逸脱0。parentでもoracleと法線再現binaryを実行確認。既存未実行facade試験のVector3単項minusを修正し実型の式syntaxを確認、Windows全体統合は未検証。
 - Next: GR08の候補訪問/掃引AABBを集約へ接続し、新旧既定queryの経路と固定seed比較を揃える。G1監査で追加判明した共通Math/Curves、更新/pause/camera契約表、Capsule辺・角/初期侵入/Depthの受入れ試験もtodoへ登録した。G1完了とはまだ扱わない。
+
+- G1-GR08-P4D: ray/形状bounds/掃引始終点AABBの訪問を集約へ接続。除外前のgeometry/filter/尺度確認、順序/MaxHits/全出力clear、巨大bounds時の全探索fallbackを維持。確定混在7,000件（各種類300件以上のhit）を全QueryProxy＋独立sortと全field照合。候補内IterationLimitは維持し、AABB非交差が証明できる対象はNoHitと確定する。比較で見つかった旧OBB rayのepsilon平行誤hitもdouble slab/局所法線へ修正。第1周でSweep OBBのfloat/double検証差を発見し、既存Mathの条件をIsValidSweepBoxへ抽出して本体/precheckで共有、第2周PASS。Pruning/Ray/Proxyの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBERとassert有効の既存GeometrySweep 1万oracle回帰成功。実Engine統合/Windowsは未検証。
+- Next: G1／GR08の旧Raycast/Overlap入口を新query kernelへ転送して互換結果/符号/順序を固定する。その後Capsule受入れ、共通曲線、更新/pause/camera契約の残りを閉じる。

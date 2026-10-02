@@ -58,6 +58,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsProxyQueryTest PhysicsProxyQueryTest.cpp
     MEMBER PhysicsProxyVisitorTest PhysicsProxyVisitorTest.cpp
     MEMBER PhysicsRayPrecisionTest PhysicsRayPrecisionTest.cpp
+    MEMBER PhysicsQueryPruningTest PhysicsQueryPruningTest.cpp
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
 )
@@ -81,3 +82,5 @@ set_tests_properties(PhysicsFixedStepPipelineTest PROPERTIES TIMEOUT 90)
 add_test(NAME PhysicsProxyVisitorTest COMMAND PhysicsDynamicsTest --test=PhysicsProxyVisitorTest)
 
 add_test(NAME PhysicsRayPrecisionTest COMMAND PhysicsDynamicsTest --test=PhysicsRayPrecisionTest)
+
+add_test(NAME PhysicsQueryPruningTest COMMAND PhysicsDynamicsTest --test=PhysicsQueryPruningTest)

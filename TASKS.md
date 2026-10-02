@@ -1709,3 +1709,15 @@
 - verify: 実GeometrySweep/SeparationとPhysicsProxyQueryのCPU試験を通常/最適化/sanitizer/MEMBERで実行し独立レビュー。
 - stop-when: 正常ケースを緩めて既存実装へ合わせる、未収束を確定hitと扱う、法線符号/深さ規約の曖昧化。
 - notes: GameFeatureHandoffとRoadmapのG1/GR08追加完了条件。既存Sphere試験や中心通過乱数試験だけでは代替しない。
+
+## G1-GR08-P4D: 統合クエリをrayと掃引AABBの候補訪問へ接続する
+- status: done
+- done-when: 既存query集約をP4C訪問へ接続し、Overlapの形状boundsとSweepの始終点を包むAABBで狭域判定を減らす。proxy検証/filter/数値安全域は除外前に確認し、順序/MaxHits/失敗時クリアを維持する。boundsを安全に構成できなければ全探索へ戻す。
+- verify: 固定seedの混在proxyと7種を、独立sortによる全QueryProxy走査と比較し、各hit field/順序/MaxHitsをCPU検証。境界OBB/初期重なり/無効遠方proxy/候補内IterationLimit/巨大掃引fallbackと既存試験を通常/O2/sanitizer/MEMBERで実行し独立レビュー。
+- stop-when: 確定hitの取りこぼし、検証失敗の隠蔽、候補内未収束をhitへ変換、出力残留、bounds overflowで不正除外、blocking未解消。
+- paths: Library/Core/Public/Math/GeometryIntersection.h, Library/Core/Private/Math/GeometryIntersection.cpp, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Test/Modules/Physics/PhysicsQueryPruningTest.cpp, Test/Modules/Physics/PhysicsRayPrecisionTest.cpp, Test/Modules/Physics/CMakeLists.txt, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
+- notes: AABBで非交差を証明できる対象には狭域反復を行わないため、旧全探索がその対象でIterationLimitだったケースをNoHitと確定できる。候補内のIterationLimitは維持。旧APIの転送と新旧既定比較は続く別タスクで統一する。
+
+- notes: 比較中、旧OBB rayのepsilon平行扱いによる明確な誤hitも実再現。物理private経路をdouble slab/厳密0判定と局所double法線へ修正し、共有Mathは変更しない。
+
+- notes: 第1周でSweep OBBのfloat/double Gram検証差を発見。既存Mathのdouble検証をIsValidSweepBoxへ抽出してSweep本体とprecheckで共有する。Mathの受理条件・計算意味は変更しない。

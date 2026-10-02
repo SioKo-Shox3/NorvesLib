@@ -51,3 +51,11 @@
 - 解析的な軸方向の球/円筒/端球、遠方のhit/miss/tangent、内部/逆向き/上限、縮退/極小/ほぼ平行/端点反転/方向倍率を実コードで確認する。G1の未実行facade試験に見つかったVector3単項minus（APIなし）も明示の負方向Vector3へ修正した
 
 - Sphere/Capsuleの法線は最終float Pointから再計算せず、形状基準の局所double hitオフセットから求める。大きいworld座標で微小形状のPointが中心へ丸まっても法線を保持する。新queryの従来の保守的な尺度上限はこの修正では広げない
+
+## クエリ集約の候補除外（P4D）
+- RaycastClosest/Allはray訪問、Overlapは形状bounds、Sweepは形状boundsの始点・終点を包むAABBで候補を選ぶ。query側の許容OBB軸にも保守的paddingを適用する。floatで終点boundsを表せない巨大移動は、安全な全探索へ戻す
+- proxy geometry/filter/数値尺度の確認はprecheckで空間除外より前に行う。無効な遠方proxyや、許容尺度外のproxyをNoHitへ隠さない。対象候補の未収束はIterationLimit、全出力clearを維持する。AABBで非交差が証明できる対象は反復しないので、旧全探索で無用なIterationLimitになった対象をNoHitと確定できる
+- 集約順/MaxHits/UserData/法線/深さ/初期重なりはQueryProxyと共通。固定seedの混在配置7,000件（各種300件以上の確定hitを含む）を、全QueryProxy結果を独立sortする参照と照合する。確定比較の掃引反復上限は128、別途上限1の候補内未収束とAABBで証明できるmissを固定する
+- 接続比較で、旧OBB rayのepsilon平行扱いが薄い箱に誤hitを出す例も確認した。物理privateのOBB rayをdouble slab/厳密0へ修正し、法線も局所double hitから決める。共有Math/描画側は変えない
+
+- Sweep用OBBのprecheckはMath::IsValidSweepBoxを本体と共有する。float検査だけなら通るdouble Gram境界を空間除外でNoHitに隠さない。既存Mathの受理条件をそのまま抽出し、非Sweepやfilter除外の既定契約は維持する

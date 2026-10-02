@@ -115,14 +115,6 @@ namespace NorvesLib::Modules::Physics
             return Math::ComputeContact(query, proxy.Capsule, outContact);
         }
 
-        bool IsPointInOBB(const Math::Vector3& point, const Math::OBB& box)
-        {
-            const Math::Vector3 offset = point - box.Center;
-            return std::fabs(Math::VectorUtils::Dot(offset, box.Axes[0])) <= box.HalfExtents.x
-                && std::fabs(Math::VectorUtils::Dot(offset, box.Axes[1])) <= box.HalfExtents.y
-                && std::fabs(Math::VectorUtils::Dot(offset, box.Axes[2])) <= box.HalfExtents.z;
-        }
-
         struct RayVectorD
         {
             double X, Y, Z;
@@ -288,6 +280,36 @@ namespace NorvesLib::Modules::Physics
             return true;
         }
 
+        bool RaycastBox(const Math::Ray& ray, const Math::OBB& box, double& outDistance)
+        {
+            const auto offset = RayDouble(ray.Origin) - RayDouble(box.Center);
+            const auto direction = RayDouble(ray.Direction);
+            const double half[3]{box.HalfExtents.x,box.HalfExtents.y,box.HalfExtents.z};
+            double near = 0, far = std::numeric_limits<double>::infinity();
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const auto basis = RayDouble(box.Axes[axis]);
+                const double origin = RayDot(offset,basis), delta = RayDot(direction,basis);
+                if (delta == 0)
+                {
+                    if (origin < -half[axis] || origin > half[axis])
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                const double first = (-half[axis]-origin)/delta, last = (half[axis]-origin)/delta;
+                near = std::fmax(near,std::fmin(first,last));
+                far = std::fmin(far,std::fmax(first,last));
+                if (near > far)
+                {
+                    return false;
+                }
+            }
+            outDistance = near;
+            return std::isfinite(near);
+        }
+
         bool RaycastProxy(const Math::Ray& ray, const PhysicsShapeProxy& proxy, double& outDistance)
         {
             if (proxy.Shape == EPhysicsProxyShape::Sphere)
@@ -296,20 +318,12 @@ namespace NorvesLib::Modules::Physics
             }
             if (proxy.Shape == EPhysicsProxyShape::Box)
             {
-                if (IsPointInOBB(ray.Origin, proxy.Box))
-                {
-                    outDistance = 0.0f;
-                    return true;
-                }
-                float distance = 0;
-                const bool bHit = Math::RayIntersectsOBB(ray, proxy.Box, distance);
-                outDistance = distance;
-                return bHit;
+                return RaycastBox(ray,proxy.Box,outDistance);
             }
             return RaycastCapsule(ray, proxy.Capsule, outDistance);
         }
 
-        Math::Vector3 CalculateRayNormal(const Math::Ray& ray, const PhysicsShapeProxy& proxy, double distance, const Math::Vector3& point)
+        Math::Vector3 CalculateRayNormal(const Math::Ray& ray, const PhysicsShapeProxy& proxy, double distance)
         {
             if (distance == 0.0f)
             {
@@ -329,14 +343,11 @@ namespace NorvesLib::Modules::Physics
                 return RayNormal(normal);
             }
 
-            const Math::Vector3 local(
-                Math::VectorUtils::Dot(point - proxy.Box.Center, proxy.Box.Axes[0]),
-                Math::VectorUtils::Dot(point - proxy.Box.Center, proxy.Box.Axes[1]),
-                Math::VectorUtils::Dot(point - proxy.Box.Center, proxy.Box.Axes[2]));
-            const float distances[3] = {
-                std::fabs(std::fabs(local.x) - proxy.Box.HalfExtents.x),
-                std::fabs(std::fabs(local.y) - proxy.Box.HalfExtents.y),
-                std::fabs(std::fabs(local.z) - proxy.Box.HalfExtents.z)};
+            const auto offset = (RayDouble(ray.Origin)-RayDouble(proxy.Box.Center))+RayDouble(ray.Direction)*distance;
+            const double local[3]{RayDot(offset,RayDouble(proxy.Box.Axes[0])),
+                RayDot(offset,RayDouble(proxy.Box.Axes[1])),RayDot(offset,RayDouble(proxy.Box.Axes[2]))};
+            const double distances[3]{std::fabs(std::fabs(local[0])-proxy.Box.HalfExtents.x),
+                std::fabs(std::fabs(local[1])-proxy.Box.HalfExtents.y),std::fabs(std::fabs(local[2])-proxy.Box.HalfExtents.z)};
             int normalAxis = 0;
             if (distances[1] < distances[normalAxis])
             {
@@ -346,8 +357,7 @@ namespace NorvesLib::Modules::Physics
             {
                 normalAxis = 2;
             }
-            const float component = normalAxis == 0 ? local.x : (normalAxis == 1 ? local.y : local.z);
-            return proxy.Box.Axes[normalAxis] * (component < 0.0f ? -1.0f : 1.0f);
+            return RayNormal(RayDouble(proxy.Box.Axes[normalAxis])*(local[normalAxis] < 0 ? -1.0 : 1.0));
         }
 
         void AppendOverlapHit(
@@ -626,6 +636,79 @@ namespace NorvesLib::Modules::Physics
             return bRepresentable && squared * squared * squared <= static_cast<double>(FLT_MAX) / 4096.0;
         }
 
+        Core::Scene::EPhysicsSceneQueryResult ValidateProxyForQuery(const PhysicsShapeProxy& proxy,
+            const Core::Scene::PhysicsQueryDesc& query)
+        {
+            using Result = Core::Scene::EPhysicsSceneQueryResult;
+            if (!IsValidProxyGeometry(proxy))
+            {
+                return Result::InvalidArgument;
+            }
+            if (!query.Filter.Accepts(proxy.Layer,proxy.bTrigger,proxy.Collider,proxy.Body))
+            {
+                return Result::NoHit;
+            }
+            if (!HasRepresentableQueryScale(proxy,query))
+            {
+                return Result::InvalidArgument;
+            }
+            const bool bSweep = query.Kind == Core::Scene::EPhysicsQueryKind::SweepSphere ||
+                query.Kind == Core::Scene::EPhysicsQueryKind::SweepCapsule;
+            if (bSweep && proxy.Shape == EPhysicsProxyShape::Box && !Math::IsValidSweepBox(proxy.Box))
+            {
+                return Result::InvalidArgument;
+            }
+            return Result::Success;
+        }
+
+        bool TryQueryBounds(const Core::Scene::PhysicsQueryDesc& query, Math::AABB& outBounds)
+        {
+            using Kind = Core::Scene::EPhysicsQueryKind;
+            PhysicsShapeProxy shape;
+            if (query.Kind == Kind::OverlapSphere || query.Kind == Kind::SweepSphere)
+            {
+                shape.Shape = EPhysicsProxyShape::Sphere;
+                shape.Sphere = query.Sphere;
+            }
+            else if (query.Kind == Kind::OverlapBox)
+            {
+                shape.Shape = EPhysicsProxyShape::Box;
+                shape.Box = query.Box;
+            }
+            else
+            {
+                shape.Shape = EPhysicsProxyShape::Capsule;
+                shape.Capsule = query.Capsule;
+            }
+            outBounds = ConservativeProxyBounds(shape);
+            if (!IsUsableQueryBounds(outBounds))
+            {
+                return false;
+            }
+            if ((query.Kind == Kind::SweepSphere || query.Kind == Kind::SweepCapsule) && query.MaxDistance > 0)
+            {
+                const auto unit = QueryUnit(query.Direction);
+                const double delta[3]{static_cast<double>(unit.x)*query.MaxDistance,
+                    static_cast<double>(unit.y)*query.MaxDistance,static_cast<double>(unit.z)*query.MaxDistance};
+                const double low[3]{outBounds.Min.x,outBounds.Min.y,outBounds.Min.z};
+                const double high[3]{outBounds.Max.x,outBounds.Max.y,outBounds.Max.z};
+                float minimum[3]{}, maximum[3]{};
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    const double first = std::fmin(low[axis],low[axis]+delta[axis]);
+                    const double last = std::fmax(high[axis],high[axis]+delta[axis]);
+                    if (!std::isfinite(first) || !std::isfinite(last) || std::fabs(first) > FLT_MAX || std::fabs(last) > FLT_MAX)
+                    {
+                        return false;
+                    }
+                    minimum[axis] = static_cast<float>(first);
+                    maximum[axis] = static_cast<float>(last);
+                }
+                outBounds = Math::AABB(Math::Vector3(minimum[0],minimum[1],minimum[2]),Math::Vector3(maximum[0],maximum[1],maximum[2]));
+            }
+            return true;
+        }
+
         Math::GeometrySweepHit SweepProxy(const Math::Capsule& shape, const PhysicsShapeProxy& proxy,
             const Core::Scene::PhysicsQueryDesc& query)
         {
@@ -712,17 +795,10 @@ namespace NorvesLib::Modules::Physics
         {
             return Result::InvalidArgument;
         }
-        if (!IsValidProxyGeometry(proxy))
+        const auto validation = ValidateProxyForQuery(proxy,query);
+        if (validation != Result::Success)
         {
-            return Result::InvalidArgument;
-        }
-        if (!query.Filter.Accepts(proxy.Layer, proxy.bTrigger, proxy.Collider, proxy.Body))
-        {
-            return Result::NoHit;
-        }
-        if (!HasRepresentableQueryScale(proxy, query))
-        {
-            return Result::InvalidArgument;
+            return validation;
         }
         Core::Scene::PhysicsQueryHit hit;
         hit.Collider = proxy.Collider;
@@ -743,7 +819,7 @@ namespace NorvesLib::Modules::Physics
             {
                 return Result::InvalidArgument;
             }
-            hit.Normal = CalculateRayNormal(ray,proxy,preciseDistance,hit.Point);
+            hit.Normal = CalculateRayNormal(ray,proxy,preciseDistance);
         }
         else if (query.Kind == Kind::SweepSphere || query.Kind == Kind::SweepCapsule)
         {
@@ -815,6 +891,48 @@ namespace NorvesLib::Modules::Physics
             // 旧最近接rayは同距離なら大きいhandle。All/Sweepは小さいhandleから返す。
             return kind == Kind::RaycastClosest ? b.Collider < a.Collider : a.Collider < b.Collider;
         }
+        struct QueryCollection
+        {
+            const Core::Scene::PhysicsQueryDesc& Query;
+            Core::Container::Span<Core::Scene::PhysicsQueryHit> Hits;
+            size_t Limit;
+            size_t Count = 0;
+        };
+        Core::Scene::EPhysicsSceneQueryResult CheckQueryCandidate(const PhysicsShapeProxy& proxy, void* context)
+        {
+            return ValidateProxyForQuery(proxy,static_cast<QueryCollection*>(context)->Query);
+        }
+        Core::Scene::EPhysicsSceneQueryResult CollectQueryCandidate(const PhysicsShapeProxy& proxy, void* context)
+        {
+            using Result = Core::Scene::EPhysicsSceneQueryResult;
+            auto& collection = *static_cast<QueryCollection*>(context);
+            Core::Scene::PhysicsQueryHit hit;
+            const auto result = PhysicsBroadphase::QueryProxy(proxy,collection.Query,hit);
+            if (result != Result::Success)
+            {
+                return result;
+            }
+            size_t position = 0;
+            while (position < collection.Count && !IsQueryHitLess(hit,collection.Hits[position],collection.Query.Kind))
+            {
+                ++position;
+            }
+            if (position >= collection.Limit)
+            {
+                return Result::Success;
+            }
+            const size_t end = collection.Count < collection.Limit ? collection.Count : collection.Limit-1;
+            for (size_t index = end; index > position; --index)
+            {
+                collection.Hits[index] = collection.Hits[index-1];
+            }
+            collection.Hits[position] = hit;
+            if (collection.Count < collection.Limit)
+            {
+                ++collection.Count;
+            }
+            return Result::Success;
+        }
     }
 
     Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::ExecuteQueryOverProxies(
@@ -823,56 +941,52 @@ namespace NorvesLib::Modules::Physics
     {
         using Result = Core::Scene::EPhysicsSceneQueryResult;
         outHitCount = 0;
+        if (outHits.size() != 0 && outHits.data() == nullptr)
+        {
+            return Result::InvalidArgument;
+        }
         for (auto& hit : outHits)
         {
             hit = {};
         }
-        if (!IsValidQuery(query))
+        if (!IsValidQuery(query) || (proxies.size() != 0 && proxies.data() == nullptr))
         {
             return Result::InvalidArgument;
         }
-        const size_t limit = QueryHitLimit(proxies.size(), query);
+        const size_t limit = QueryHitLimit(proxies.size(),query);
         if (outHits.size() < limit)
         {
             return Result::InvalidArgument;
         }
-        for (const PhysicsShapeProxy& proxy : proxies)
+        QueryCollection collection{query,outHits,limit};
+        Result result;
+        if (query.Kind == Core::Scene::EPhysicsQueryKind::RaycastClosest || query.Kind == Core::Scene::EPhysicsQueryKind::RaycastAll)
         {
-            Core::Scene::PhysicsQueryHit hit;
-            const Result result = QueryProxy(proxy, query, hit);
-            if (result == Result::NoHit)
+            result = VisitProxiesAlongRay(proxies,query.Ray,query.MaxDistance,CollectQueryCandidate,&collection,CheckQueryCandidate);
+        }
+        else
+        {
+            Math::AABB bounds;
+            if (TryQueryBounds(query,bounds))
             {
-                continue;
+                result = VisitProxiesInAabb(proxies,bounds,CollectQueryCandidate,&collection,CheckQueryCandidate);
             }
-            if (result != Result::Success)
+            else
             {
-                for (auto& output : outHits)
-                {
-                    output = {};
-                }
-                outHitCount = 0;
-                return result;
-            }
-            size_t position = 0;
-            while (position < outHitCount && !IsQueryHitLess(hit, outHits[position], query.Kind))
-            {
-                ++position;
-            }
-            if (position >= limit)
-            {
-                continue;
-            }
-            const size_t end = outHitCount < limit ? outHitCount : limit - 1;
-            for (size_t index = end; index > position; --index)
-            {
-                outHits[index] = outHits[index - 1];
-            }
-            outHits[position] = hit;
-            if (outHitCount < limit)
-            {
-                ++outHitCount;
+                // 巨大な掃引等でfloat boundsを表せないときは、検証を保った全探索へ戻す。
+                result = VisitProxyCandidates(proxies,CollectQueryCandidate,&collection,CheckQueryCandidate,
+                    [](const Math::AABB&) { return true; });
             }
         }
+        if (result != Result::Success)
+        {
+            for (auto& hit : outHits)
+            {
+                hit = {};
+            }
+            return result;
+        }
+        outHitCount = collection.Count;
         return outHitCount == 0 ? Result::NoHit : Result::Success;
     }
 
@@ -961,7 +1075,7 @@ namespace NorvesLib::Modules::Physics
             outHit.bHasEntity = proxy.bHasEntity;
             outHit.Distance = distance;
             outHit.Point = point;
-            outHit.Normal = CalculateRayNormal(ray,proxy,preciseDistance,outHit.Point);
+            outHit.Normal = CalculateRayNormal(ray,proxy,preciseDistance);
             outHit.UserData = proxy.UserData;
         }
         return bFound;

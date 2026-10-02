@@ -893,6 +893,29 @@ GeometrySeparation ComputeSeparation(const Capsule& a, const OBB& b)
     return result;
 }
 
+bool IsValidSweepBox(const OBB& shape)
+{
+    const auto finite = [](const Vector3& value)
+    {
+        return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+    };
+    if (!finite(shape.Center) || !finite(shape.HalfExtents)
+        || shape.HalfExtents.x < 0.0f || shape.HalfExtents.y < 0.0f || shape.HalfExtents.z < 0.0f)
+    {
+        return false;
+    }
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!finite(shape.Axes[axis])
+            || std::fabs(SeparationDot(shape.Axes[axis], shape.Axes[axis]) - 1.0) > 1e-4
+            || std::fabs(SeparationDot(shape.Axes[axis], shape.Axes[(axis + 1) % 3])) > 1e-4)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 namespace
 {
     bool IsFiniteSweepVector(const Vector3& value)
@@ -913,21 +936,7 @@ namespace
 
     bool IsValidSweepShape(const OBB& shape)
     {
-        if (!IsFiniteSweepVector(shape.Center) || !IsFiniteSweepVector(shape.HalfExtents)
-            || shape.HalfExtents.x < 0.0f || shape.HalfExtents.y < 0.0f || shape.HalfExtents.z < 0.0f)
-        {
-            return false;
-        }
-        for (int axis = 0; axis < 3; ++axis)
-        {
-            if (!IsFiniteSweepVector(shape.Axes[axis])
-                || std::fabs(SeparationDot(shape.Axes[axis], shape.Axes[axis]) - 1.0) > 1e-4
-                || std::fabs(SeparationDot(shape.Axes[axis], shape.Axes[(axis + 1) % 3])) > 1e-4)
-            {
-                return false;
-            }
-        }
-        return true;
+        return IsValidSweepBox(shape);
     }
 
     float SweepCoordinateScale(const Vector3& point)
