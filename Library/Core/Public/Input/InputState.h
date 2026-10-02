@@ -107,6 +107,9 @@ namespace NorvesLib::Core::Input
         bool SetGamepadState(uint8_t slot, const GamepadState& state);
         GamepadState GetGamepadState(uint8_t slot) const;
         GamepadState GetPreviousGamepadState(uint8_t slot) const;
+        // 最後のprovider受理値（現在の操作状態ではない）。ReleaseAllでは消さない。
+        GamepadState GetLastGamepadSample(uint8_t slot) const;
+        uint64_t GetGamepadSampleSerial(uint8_t slot) const;
         bool IsGamepadButtonDown(uint8_t slot, GamepadButton button) const;
         // Pad edgeはframe内の遷移をラッチし、同frame短押下/解除も両方返す。
         bool IsGamepadButtonPressed(uint8_t slot, GamepadButton button) const;
@@ -146,6 +149,7 @@ namespace NorvesLib::Core::Input
         void ResetFrameAccumulators();
 
     private:
+        void ApplyGamepadState(uint8_t slot, const GamepadState& state);
         static constexpr uint32_t KEY_COUNT = static_cast<uint32_t>(KeyCode::Count);
         static constexpr uint32_t MOUSE_BUTTON_COUNT = static_cast<uint32_t>(MouseButton::Count);
 
@@ -168,6 +172,8 @@ namespace NorvesLib::Core::Input
 
         GamepadState m_GamepadStates[GamepadSlotCount]{};
         GamepadState m_PrevGamepadStates[GamepadSlotCount]{};
+        GamepadState m_LastGamepadSamples[GamepadSlotCount]{};
+        uint64_t m_GamepadSampleSerial[GamepadSlotCount]{};
         uint16_t m_GamepadPressed[GamepadSlotCount]{};
         uint16_t m_GamepadReleased[GamepadSlotCount]{};
         uint64_t m_GamepadReleaseSerial[GamepadSlotCount][16]{};

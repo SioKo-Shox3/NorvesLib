@@ -65,6 +65,7 @@ namespace NorvesLib::Core::Input
         void DispatchChar(const CharEvent &event);
         void DispatchMouseRawMove(const MouseRawMoveEvent& event);
         void DispatchGamepadButton(const GamepadButtonEvent& event);
+        void DispatchGamepadSample(const GamepadSampleEvent& event);
         // 全controllerへ通知。配送中の登録/解除/再入配送は禁止。
         void NotifyGamepadConnection(const GamepadConnectionEvent& event);
         void NotifyInputReset();

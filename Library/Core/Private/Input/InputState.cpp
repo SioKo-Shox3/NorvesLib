@@ -135,7 +135,7 @@ namespace NorvesLib::Core::Input
             GamepadState neutral;
             neutral.Connected = m_GamepadStates[slot].Connected;
             neutral.PacketNumber = m_GamepadStates[slot].PacketNumber;
-            (void)SetGamepadState(slot, neutral);
+            ApplyGamepadState(slot, neutral);
             m_GamepadPressed[slot] = 0;
         }
         ResetFrameAccumulators();
@@ -157,6 +157,11 @@ namespace NorvesLib::Core::Input
     bool InputState::SetGamepadState(uint8_t slot, const GamepadState& state)
     {
         if (slot >= GamepadSlotCount || !IsValidGamepadState(state)) return false;
+        m_LastGamepadSamples[slot]=state;++m_GamepadSampleSerial[slot];
+        ApplyGamepadState(slot,state);return true;
+    }
+    void InputState::ApplyGamepadState(uint8_t slot, const GamepadState& state)
+    {
         const uint16_t oldButtons = m_GamepadStates[slot].Buttons;
         const uint16_t pressed = static_cast<uint16_t>(state.Buttons & ~oldButtons);
         const uint16_t released = static_cast<uint16_t>(oldButtons & ~state.Buttons);
@@ -166,7 +171,6 @@ namespace NorvesLib::Core::Input
             if ((released & (1u << bit)) != 0) ++m_GamepadReleaseSerial[slot][bit];
         m_GamepadStates[slot] = state;
         if (!state.Connected) m_GamepadPressed[slot] = 0;
-        return true;
     }
 
     GamepadState InputState::GetGamepadState(uint8_t slot) const
@@ -176,6 +180,14 @@ namespace NorvesLib::Core::Input
     GamepadState InputState::GetPreviousGamepadState(uint8_t slot) const
     {
         return slot < GamepadSlotCount ? m_PrevGamepadStates[slot] : GamepadState{};
+    }
+    GamepadState InputState::GetLastGamepadSample(uint8_t slot) const
+    {
+        return slot<GamepadSlotCount ? m_LastGamepadSamples[slot] : GamepadState{};
+    }
+    uint64_t InputState::GetGamepadSampleSerial(uint8_t slot) const
+    {
+        return slot<GamepadSlotCount ? m_GamepadSampleSerial[slot] : 0;
     }
     bool InputState::IsGamepadButtonDown(uint8_t slot, GamepadButton button) const
     {

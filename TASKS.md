@@ -1406,3 +1406,11 @@
 - stop-when: 設定変更でMenuの下のGameplayを失う、失敗時の部分反映、借用binding参照を長期保存、暗黙保存、blocking未解消。
 - paths: Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Game/Input/GameInputSettings.h, Game/Input/GameInputSettings.cpp, Test/Core/Input/InputActionMapTest.cpp, Test/Core/Input/GameInputSettingsTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: captureは次段でこの更新口へ接続する。全既定復帰はbindingsだけでなく感度等のCurrent設定全体をDefaultsへ戻す。個別復帰はbindingsだけ。Storeのstartup UserStatusは読込履歴のまま。
+
+## G1-GR03-P7B: 捕捉用の実pad sampleを取消状態と分離する
+- status: done
+- done-when: InputStateが最後に受理したprovider sampleと受理serialを保持し、ReleaseAllのneutral化で上書きしない。成功したInjectGamepadStateごとにbutton edge後のsample値イベントをDelegate/Routerへ配送し、neutral解除とanalogをcapture側が判別できる。
+- verify: 実InputStateのsample履歴/serial/invalid非変更/Reset区別/全slotをportable試験。配送の同値sample/UIconsume/順序/Reset非通知を既存bundle試験へ追加し独立レビュー。
+- stop-when: Resetを物理releaseとして通知、invalidで履歴変更、同値provider sampleを省略、callbackへ借用stateを長期保持、blocking未解消。
+- paths: Library/Core/Public/Input/GamepadTypes.h, Library/Core/Public/Input/InputState.h, Library/Core/Private/Input/InputState.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Private/Input/InputSystem.cpp, Library/Core/Public/Input/IInputController.h, Library/Core/Public/Input/InputRouter.h, Library/Core/Private/Input/InputRouter.cpp, Test/Core/Input/GamepadInputStateTest.cpp, Test/Core/Input/InputRoutingExtensionTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: 最後のsampleは過去の受理値であって現在操作状態ではない。gameplayは従来の正本/Mapperを使う。GR04のproviderもこの注入口を利用する。capture本体は後続。

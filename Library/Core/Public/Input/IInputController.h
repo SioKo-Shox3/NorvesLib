@@ -75,6 +75,7 @@ namespace NorvesLib::Core::Input
 
         virtual bool OnMouseRawMove(const MouseRawMoveEvent&) { return false; }
         virtual bool OnGamepadButton(const GamepadButtonEvent&) { return false; }
+        virtual bool OnGamepadSample(const GamepadSampleEvent&) { return false; }
         // 解除/接続は状態整合性の通知。UIがconsumeして下位の解除を止めることはできない。
         virtual void OnGamepadConnection(const GamepadConnectionEvent&) {}
         // reset/focus通知はOS message callback内でも届く。window表示/activation、

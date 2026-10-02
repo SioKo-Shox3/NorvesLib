@@ -46,6 +46,14 @@ namespace NorvesLib::Core::Input
         uint32_t PacketNumber = 0;
     };
 
+    // providerから受理した値のsnapshot。操作取消によるneutral化とは区別する。
+    struct GamepadSampleEvent
+    {
+        uint8_t Slot=0;
+        GamepadState State;
+        uint64_t Serial=0;
+    };
+
     inline bool IsValidGamepadState(const GamepadState& state)
     {
         if ((state.Buttons & ~AllGamepadButtons) != 0) return false;

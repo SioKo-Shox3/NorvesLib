@@ -136,6 +136,7 @@ namespace NorvesLib::Core::Input
         // 検証失敗時は正本/通知とも非変更。成功時は正本→Delegate→Routerの順。
         bool InjectMouseScrollAxes(float vertical, float horizontal);
         bool InjectRawMouseDelta(float x, float y);
+        // 成功時は同値でも最後にsampleイベントを配送する。ReleaseAllはsampleを合成しない。
         bool InjectGamepadState(uint8_t slot, const GamepadState& state);
         // 通常Releasedを合成せず、全controllerへ取消通知を届ける。
         // OS callback内でも呼ばれる。購読Delegate/Router observerはwindow表示/activation、
@@ -144,6 +145,7 @@ namespace NorvesLib::Core::Input
         void ReleaseAll();
         MulticastDelegate<const MouseRawMoveEvent&>& OnMouseRawMoveEvent() { return m_OnMouseRawMoveEvent; }
         MulticastDelegate<const GamepadButtonEvent&>& OnGamepadButtonEvent() { return m_OnGamepadButtonEvent; }
+        MulticastDelegate<const GamepadSampleEvent&>& OnGamepadSampleEvent() { return m_OnGamepadSampleEvent; }
         MulticastDelegate<const GamepadConnectionEvent&>& OnGamepadConnectionEvent() { return m_OnGamepadConnectionEvent; }
         // 上記ReleaseAllのOS callback制約に従う即時取消通知。
         MulticastDelegate<>& OnInputResetEvent() { return m_OnInputResetEvent; }
@@ -183,6 +185,7 @@ namespace NorvesLib::Core::Input
         MulticastDelegate<const MouseRawMoveEvent&> m_OnMouseRawMoveEvent;
         MulticastDelegate<const GamepadButtonEvent&> m_OnGamepadButtonEvent;
         MulticastDelegate<const GamepadConnectionEvent&> m_OnGamepadConnectionEvent;
+        MulticastDelegate<const GamepadSampleEvent&> m_OnGamepadSampleEvent;
         MulticastDelegate<> m_OnInputResetEvent;
 
         // イベント配送ルーター（借用ポインタ・非所有）

@@ -127,6 +127,32 @@ int main()
     assert(!raw.IsGamepadButtonDown(0,GamepadButton::A));
     raw.BeginFrame();
     assert(!raw.IsGamepadButtonPressed(0,GamepadButton::A) && !raw.IsGamepadButtonReleased(0,GamepadButton::A));
+    {
+        InputState sampled;
+        for(uint8_t slot=0;slot<GamepadSlotCount;++slot)
+        {
+            assert(sampled.GetGamepadSampleSerial(slot)==0 && !sampled.GetLastGamepadSample(slot).Connected);
+            GamepadState sample;sample.Connected=true;sample.Buttons=static_cast<uint16_t>(GamepadButton::A);
+            sample.Axes[0]=0.75f;sample.Triggers[1]=0.6f;sample.PacketNumber=42u+slot;
+            assert(sampled.SetGamepadState(slot,sample));assert(sampled.GetGamepadSampleSerial(slot)==1);
+            sampled.ReleaseAll();sampled.ReleaseAll();sampled.BeginFrame();
+            assert(sampled.GetGamepadState(slot).Buttons==0 && sampled.GetGamepadAxis(slot,GamepadAxis::LeftX)==0);
+            auto last=sampled.GetLastGamepadSample(slot);
+            assert(last.Connected && last.Buttons==sample.Buttons && last.Axes[0]==0.75f && last.Triggers[1]==0.6f && last.PacketNumber==42u+slot);
+            assert(sampled.GetGamepadSampleSerial(slot)==1);
+            last.Buttons=0;assert(sampled.GetLastGamepadSample(slot).Buttons==sample.Buttons); // 値copy。
+            auto invalid=sample;invalid.Axes[1]=std::numeric_limits<float>::quiet_NaN();
+            assert(!sampled.SetGamepadState(slot,invalid));assert(sampled.GetGamepadSampleSerial(slot)==1 && sampled.GetLastGamepadSample(slot).Axes[1]==0);
+            assert(sampled.SetGamepadState(slot,sample));assert(sampled.SetGamepadState(slot,sample));
+            assert(sampled.GetGamepadSampleSerial(slot)==3); // packet同値も実sampleとして数える。
+            assert(sampled.SetGamepadState(slot,{}));assert(sampled.GetGamepadSampleSerial(slot)==4 && !sampled.GetLastGamepadSample(slot).Connected);
+        }
+        for(uint16_t slot=GamepadSlotCount;slot<256;++slot)
+        {
+            assert(sampled.GetGamepadSampleSerial(static_cast<uint8_t>(slot))==0);
+            assert(!sampled.GetLastGamepadSample(static_cast<uint8_t>(slot)).Connected);
+        }
+    }
     std::cout << "GamepadInputStateTest passed\n";
     return 0;
 }

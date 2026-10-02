@@ -330,3 +330,6 @@
 
 - G1-GR03-P7A: Mapperのcontext stackをIdentity順に維持する設定再構築と、GameInputSettingsのaction bindings変更/個別既定復帰/全設定既定復帰を追加。候補copy/検証/compile完了後に旧操作取消とnoexcept moveで反映し、unknown/invalid/欠落contextでは両方を維持する。alias配列と空unbindを扱い、変更だけでは保存しない。独立所有/例外保証/試験の静的レビューPASS。既存portable runtime/Delegate回帰は成功、追加Mapper/Game統合試験とstatic_assertの実compileはWindows.h依存で未確認。
 - Next: GR03の物理入力捕捉と中止/解除待ちを実装し、この明示設定反映口へ接続する。
+
+- G1-GR03-P7B: InputStateに最後のprovider pad sample/受理serialを追加し、ReleaseAllのneutral化と分離。成功注入は同値でも既存connection/button edge後にsample Delegate→Routerを配送し、invalid/Resetではsampleを作らない。callback前に注入引数をcopyして呼出元可変値の変更にもsnapshotを保つ。実GamepadInputState通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compileとReleaseAll/runtime/raw/camera-reset回帰成功。独立公開API/配送/所有レビューPASS、routing統合はWindows依存で未実行。capture側が物理neutralを取り違えず判定できる供給口を整えた。
+- Next: GR03の物理入力capture kernelと解除待ち、そのEngine/Router接続へ進む。

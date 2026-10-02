@@ -125,6 +125,16 @@ namespace NorvesLib::Core::Input
     {
         for (Entry& entry : m_Controllers) if (entry.Controller->OnGamepadButton(event)) return;
     }
+    void InputRouter::DispatchGamepadSample(const GamepadSampleEvent& event)
+    {
+        for (Entry& entry : m_Controllers)
+        {
+            if (entry.Controller->OnGamepadSample(event))
+            {
+                return;
+            }
+        }
+    }
     void InputRouter::NotifyGamepadConnection(const GamepadConnectionEvent& event)
     {
         for (Entry& entry : m_Controllers) entry.Controller->OnGamepadConnection(event);
