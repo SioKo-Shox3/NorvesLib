@@ -252,3 +252,6 @@
 - G1-GR08-P2A: 既存の物理結果enumと世代ハンドルをOS非依存のPhysicsQueryTypesへ同じ定義で移設し、クエリ記述子・結果・バッチ範囲、32ビットのレイヤー、trigger/ignoreフィルタと対称ペア規則を追加。全32ビット、ignoreの世代一致、無効ハンドル、4096通りのペア真理値表、既定値/レイアウトを直接g++で検証。bundle相当のmain置換コンパイルとASan/UBSan（LeakSanitizer除外）も成功。実クエリへの接続はP2B以降。
 
 - G1-GR08-P2B: 単一PhysicsShapeProxyの統合クエリを追加。ray/overlap/sweepへフィルタを適用し、世代ハンドルとUserDataを返す。新Overlapは対象からの押し出し法線、失敗は出力初期化、未収束はIterationLimit。既存float幾何がoverflowする相対尺度はInvalidArgumentで拒否する。実PhysicsBroadphase.cppとMathを直接リンク（未使用関数除去、OS/メモリmockなし）し、3形状のray/sweep、overlap法線、フィルタ/無視/trigger、初期重なり、無効入力・巨大入力を検証。ASan/UBSan（LeakSanitizer除外）成功。Windows/Game/複数proxy集約/コライダー設定からの接続は未検証・未実装の範囲として残る。
+
+- G1-GR08-P2C: 複数proxyの結果をspanへ集約し、最近接rayは同距離の大きいhandle、All/sweepは距離とhandle昇順、overlapはhandle昇順にした。MaxHits、self-ignore後の背後命中、容量不足、空入力、途中失敗/未収束での全出力初期化を実コードで検証。入力と出力の格納領域は非aliasを必須とする。通常テストとASan/UBSan（LeakSanitizer除外）に成功。VariableArray wrapperはコンパイル確認、エンジンの実メモリシステム結合は未検証。
+- Next（2026-10-02更新）: GR08のコライダー設定/SceneQuery接続は未完のまま保持し、ロードマップ先頭のGR01更新段階へ戻る。G1-S1/S2/S3の選定待ち。描画との競合可能性だけでは順序を後ろへ回さない。

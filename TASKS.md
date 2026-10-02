@@ -1190,3 +1190,11 @@
 - stop-when: 描画/OS本体の変更、未承認判断、公開契約のblockingが残る場合。
 - paths: Library/Core/Public/Scene, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.h, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Test/Modules/Physics, TASKS.md, PROGRESS.md
 - notes: 単一proxyの実コードの検証。コライダー設定/複数proxy集約/SceneQuery接続は後続。
+
+## G1-GR08-P2C: 物理クエリの複数ヒットを集約する
+- status: done
+- done-when: RaycastClosest/All、overlap/sweepの決定的順序、MaxHits、空/失敗/未収束の出力契約を実コードで検証する。
+- verify: g++ -std=c++23 -O2 -ffunction-sections -fdata-sections -I Library/Core/Public -I Library/Modules/Physics/Private Test/Modules/Physics/PhysicsProxyQueryTest.cpp Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp Library/Core/Private/Math/GeometryIntersection.cpp -Wl,--gc-sections -o /tmp/norves-proxy-query && /tmp/norves-proxy-query
+- stop-when: 既存動作変更、描画/未承認判断、blocking指摘が残る場合。
+- paths: Library/Modules/Physics/Private/Physics/PhysicsBroadphase.h, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Test/Modules/Physics/PhysicsProxyQueryTest.cpp, TASKS.md, PROGRESS.md
+- notes: spanの実集約コードを検証。VariableArrayの実メモリシステム結合とEngine起動は未検証。

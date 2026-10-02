@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/VariableArray.h"
+#include "Container/Span.h"
 #include "Math/GeometryTypes.h"
 #include "Scene/PhysicsQueryTypes.h"
 
@@ -55,6 +56,13 @@ namespace NorvesLib::Modules::Physics
             const Math::Capsule& capsule,
             Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const;
 
+        Core::Scene::EPhysicsSceneQueryResult ExecuteQuery(const Core::Scene::PhysicsQueryDesc& query,
+            Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits) const;
+        // 出力領域はmin(MaxHits, proxy数)個必要（Closestは最大1個）。失敗時は全出力を初期化する。
+        // proxies/query/outHits/outHitCountの格納領域は互いに重ならないこと。
+        static Core::Scene::EPhysicsSceneQueryResult ExecuteQueryOverProxies(
+            Core::Container::Span<const PhysicsShapeProxy> proxies, const Core::Scene::PhysicsQueryDesc& query,
+            Core::Container::Span<Core::Scene::PhysicsQueryHit> outHits, size_t& outHitCount);
         static bool IsValidQuery(const Core::Scene::PhysicsQueryDesc& query);
         // 値型の1個のproxyを検査する。Success以外ではoutHitを初期状態へ戻す。
         // 相対尺度の6乗がFLT_MAX/4096を超える入力は旧幾何のoverflow防止のためInvalidArgument。

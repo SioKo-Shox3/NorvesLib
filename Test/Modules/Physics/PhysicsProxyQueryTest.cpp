@@ -152,6 +152,65 @@ int main()
     query.MaxDistance = 100.0f;
     assert(PhysicsBroadphase::QueryProxy(proxy, query, hit) == EPhysicsSceneQueryResult::Success);
     assert(Near(hit.Distance, 4.0f));
+    // 任意の入力順を距離順へ集約し、同距離のClosestだけ旧規則を維持する。
+    PhysicsShapeProxy proxies[3] = {MakeProxy(EPhysicsProxyShape::Sphere), MakeProxy(EPhysicsProxyShape::Sphere), MakeProxy(EPhysicsProxyShape::Sphere)};
+    proxies[0].Collider = {3, 1};
+    proxies[0].Sphere.Center.x = 8.0f;
+    proxies[1].Collider = {2, 1};
+    proxies[2].Collider = {1, 1};
+    PhysicsQueryHit results[3];
+    size_t count = 99;
+    query = {};
+    query.Kind = EPhysicsQueryKind::RaycastAll;
+    query.Ray = Ray(Vector3(0.0f), Vector3(1.0f, 0.0f, 0.0f));
+    query.MaxDistance = 10.0f;
+    assert(PhysicsBroadphase::ExecuteQueryOverProxies(proxies, query, results, count) == EPhysicsSceneQueryResult::Success);
+    assert(count == 3 && results[0].Collider.Index == 1 && results[1].Collider.Index == 2 && results[2].Collider.Index == 3);
+    query.MaxHits = 1;
+    assert(PhysicsBroadphase::ExecuteQueryOverProxies(proxies, query, results, count) == EPhysicsSceneQueryResult::Success);
+    assert(count == 1 && results[0].Collider.Index == 1);
+    CheckDefault(results[1]);
+    query.Kind = EPhysicsQueryKind::RaycastClosest;
+    assert(PhysicsBroadphase::ExecuteQueryOverProxies(proxies, query, results, count) == EPhysicsSceneQueryResult::Success);
+    assert(count == 1 && results[0].Collider.Index == 2);
+    query.Filter.IgnoreColliders[0] = proxies[1].Collider;
+    query.Filter.IgnoreColliders[1] = proxies[2].Collider;
+    assert(PhysicsBroadphase::ExecuteQueryOverProxies(proxies, query, results, count) == EPhysicsSceneQueryResult::Success);
+    assert(count == 1 && results[0].Collider.Index == 3 && Near(results[0].Distance, 7.5f));
+    query.Filter = {};
+    query.Kind = EPhysicsQueryKind::OverlapSphere;
+    query.Sphere = Sphere(Vector3(6.0f, 0.0f, 0.0f), 10.0f);
+    query.MaxHits = UINT32_MAX;
+    assert(PhysicsBroadphase::ExecuteQueryOverProxies(proxies, query, results, count) == EPhysicsSceneQueryResult::Success);
+    assert(count == 3 && results[0].Collider.Index == 1 && results[1].Collider.Index == 2 && results[2].Collider.Index == 3);
+    query.Kind = EPhysicsQueryKind::SweepSphere;
+    query.Sphere = Sphere(Vector3(0.0f), 0.5f);
+    query.Direction = Vector3(1.0f, 0.0f, 0.0f);
+    assert(PhysicsBroadphase::ExecuteQueryOverProxies(proxies, query, results, count) == EPhysicsSceneQueryResult::Success);
+    assert(count == 3 && results[0].Collider.Index == 1 && Near(results[0].Distance, 4.0f));
+    query.MaxSweepIterations = 1;
+    assert(PhysicsBroadphase::ExecuteQueryOverProxies(proxies, query, results, count) == EPhysicsSceneQueryResult::IterationLimit);
+    assert(count == 0);
+    for (const auto& result : results)
+    {
+        CheckDefault(result);
+    }
+    query.Kind = EPhysicsQueryKind::RaycastAll;
+    proxies[2].Shape = static_cast<EPhysicsProxyShape>(255);
+    assert(PhysicsBroadphase::ExecuteQueryOverProxies(proxies, query, results, count) == EPhysicsSceneQueryResult::InvalidArgument);
+    assert(count == 0);
+    for (const auto& result : results)
+    {
+        CheckDefault(result);
+    }
+    proxies[2].Shape = EPhysicsProxyShape::Sphere;
+    assert(PhysicsBroadphase::ExecuteQueryOverProxies(proxies, query,
+        NorvesLib::Core::Container::Span<PhysicsQueryHit>(results, 1), count) == EPhysicsSceneQueryResult::InvalidArgument);
+    assert(count == 0);
+    assert(PhysicsBroadphase::ExecuteQueryOverProxies({}, query, results, count) == EPhysicsSceneQueryResult::NoHit && count == 0);
+    query.MaxHits = 0;
+    assert(PhysicsBroadphase::ExecuteQueryOverProxies({}, query, results, count) == EPhysicsSceneQueryResult::InvalidArgument);
+    std::cout << "multi_hits_order_ignore_capacity_failures passed\n";
     std::cout << "initial_zero_error_clearing passed\nPhysicsProxyQueryTest passed\n";
     return 0;
 }

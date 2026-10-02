@@ -534,6 +534,110 @@ namespace NorvesLib::Modules::Physics
         return Result::Success;
     }
 
+    namespace
+    {
+        size_t QueryHitLimit(size_t proxyCount, const Core::Scene::PhysicsQueryDesc& query)
+        {
+            const size_t requested = query.Kind == Core::Scene::EPhysicsQueryKind::RaycastClosest
+                ? 1 : static_cast<size_t>(query.MaxHits);
+            return proxyCount < requested ? proxyCount : requested;
+        }
+
+        bool IsQueryHitLess(const Core::Scene::PhysicsQueryHit& a, const Core::Scene::PhysicsQueryHit& b,
+            Core::Scene::EPhysicsQueryKind kind)
+        {
+            using Kind = Core::Scene::EPhysicsQueryKind;
+            if (kind == Kind::OverlapSphere || kind == Kind::OverlapBox || kind == Kind::OverlapCapsule)
+            {
+                return a.Collider < b.Collider;
+            }
+            if (a.Distance != b.Distance)
+            {
+                return a.Distance < b.Distance;
+            }
+            // 旧最近接rayは同距離なら大きいhandle。All/Sweepは小さいhandleから返す。
+            return kind == Kind::RaycastClosest ? b.Collider < a.Collider : a.Collider < b.Collider;
+        }
+    }
+
+    Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::ExecuteQueryOverProxies(
+        Core::Container::Span<const PhysicsShapeProxy> proxies, const Core::Scene::PhysicsQueryDesc& query,
+        Core::Container::Span<Core::Scene::PhysicsQueryHit> outHits, size_t& outHitCount)
+    {
+        using Result = Core::Scene::EPhysicsSceneQueryResult;
+        outHitCount = 0;
+        for (auto& hit : outHits)
+        {
+            hit = {};
+        }
+        if (!IsValidQuery(query))
+        {
+            return Result::InvalidArgument;
+        }
+        const size_t limit = QueryHitLimit(proxies.size(), query);
+        if (outHits.size() < limit)
+        {
+            return Result::InvalidArgument;
+        }
+        for (const PhysicsShapeProxy& proxy : proxies)
+        {
+            Core::Scene::PhysicsQueryHit hit;
+            const Result result = QueryProxy(proxy, query, hit);
+            if (result == Result::NoHit)
+            {
+                continue;
+            }
+            if (result != Result::Success)
+            {
+                for (auto& output : outHits)
+                {
+                    output = {};
+                }
+                outHitCount = 0;
+                return result;
+            }
+            size_t position = 0;
+            while (position < outHitCount && !IsQueryHitLess(hit, outHits[position], query.Kind))
+            {
+                ++position;
+            }
+            if (position >= limit)
+            {
+                continue;
+            }
+            const size_t end = outHitCount < limit ? outHitCount : limit - 1;
+            for (size_t index = end; index > position; --index)
+            {
+                outHits[index] = outHits[index - 1];
+            }
+            outHits[position] = hit;
+            if (outHitCount < limit)
+            {
+                ++outHitCount;
+            }
+        }
+        return outHitCount == 0 ? Result::NoHit : Result::Success;
+    }
+
+    Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::ExecuteQuery(
+        const Core::Scene::PhysicsQueryDesc& query,
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits) const
+    {
+        using Result = Core::Scene::EPhysicsSceneQueryResult;
+        outHits.clear();
+        if (!IsValidQuery(query))
+        {
+            return Result::InvalidArgument;
+        }
+        outHits.resize(QueryHitLimit(m_Proxies.size(), query));
+        size_t count = 0;
+        const Result result = ExecuteQueryOverProxies(
+            Core::Container::Span<const PhysicsShapeProxy>(m_Proxies.data(), m_Proxies.size()), query,
+            Core::Container::Span<Core::Scene::PhysicsQueryHit>(outHits.data(), outHits.size()), count);
+        outHits.resize(result == Result::Success ? count : 0);
+        return result;
+    }
+
     void PhysicsBroadphase::SetProxies(Core::Container::VariableArray<PhysicsShapeProxy> proxies)
     {
         for (PhysicsShapeProxy& proxy : proxies)
