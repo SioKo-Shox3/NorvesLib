@@ -1312,3 +1312,11 @@
 - stop-when: 既存camera event互換性破壊、invalid入力の部分更新、UIのconsume迂回、切断取消し前のrelease、blocking未解消。
 - paths: Library/Core/Public/Input/{InputTypes.h,InputState.h,InputSystem.h,IInputController.h,InputRouter.h}, Library/Core/Private/Input/{InputState.cpp,InputSystem.cpp,InputRouter.cpp}, Test/Core/Input/{RawInputStateTest.cpp,InputRoutingExtensionTest.cpp,CMakeLists.txt}, Test/Core/Logging/CMakeLists.txt, Library/Modules/ImGui/Private/ImGuiModule/ImGuiModule.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: OS Raw/XInput供給とMapper/Engine接着は次段。新raw/pad配送は既存KBMと同じ優先度契約。
+
+## G1-GR03-P4G: アクションMapperとコンテキストをRouterへ接続する
+- status: done
+- done-when: 設定を所有してcompileするInputMapperをIInputControllerとして接続し、top contextだけ評価、切替/focus/resetでCancel、UI到達armed、fixed press消費、相対入力、Pad切断を処理する。
+- verify: InputActionMapTestをLoggerSinkTestへ登録。実portable runtime/state群はg++回帰。Identity/Router依存のMapperはWindows.hによる未実行を明記し、所有/寿命/公開APIの独立レビューを通す。
+- stop-when: borrowed設定pointer保持、UI consumed押下の復活、context越しheld継続、解放後Router pointer、blocking未解消。
+- paths: Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/InputActionMapTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: Engine/ApplicationProcessorとOS、JSON/rebind captureは後続。既存camera controllerへイベントを透過する。

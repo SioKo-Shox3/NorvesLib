@@ -11,3 +11,4 @@ add_test(NAME InputBindingSetTest COMMAND LoggerSinkTest --test=InputBindingSetT
 add_test(NAME InputActionRuntimeTest COMMAND LoggerSinkTest --test=InputActionRuntimeTest)
 add_test(NAME RawInputStateTest COMMAND LoggerSinkTest --test=RawInputStateTest)
 add_test(NAME InputRoutingExtensionTest COMMAND LoggerSinkTest --test=InputRoutingExtensionTest)
+add_test(NAME InputActionMapTest COMMAND LoggerSinkTest --test=InputActionMapTest)

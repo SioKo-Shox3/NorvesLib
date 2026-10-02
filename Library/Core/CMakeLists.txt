@@ -218,6 +218,7 @@ set(PRIVATE_SOURCES
     # Input
     Private/Input/InputState.cpp
     Private/Input/InputBindingSet.cpp
+    Private/Input/InputMapper.cpp
     Private/Input/InputSystem.cpp
     Private/Input/InputRouter.cpp
     Private/Input/MayaCameraController.cpp
@@ -529,6 +530,7 @@ set(PUBLIC_HEADERS
     Public/Input/InputActionSettings.h
     Public/Input/InputActionRuntime.h
     Public/Input/InputBindingSet.h
+    Public/Input/InputMapper.h
     Public/Input/InputState.h
     Public/Input/InputSystem.h
     Public/Input/IInputController.h

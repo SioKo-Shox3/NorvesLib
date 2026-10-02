@@ -1,0 +1,82 @@
+﻿#pragma once
+#include "Input/InputBindingSet.h"
+#include "Input/InputActionRuntime.h"
+#include "Input/IInputController.h"
+
+namespace NorvesLib::Core::Input
+{
+    class InputRouter;
+    struct InputMappedAction
+    {
+        bool Valid = false;
+        bool Active = false;
+        EInputMappingValueType Type = EInputMappingValueType::Button;
+        InputButtonSnapshot Button;
+        Math::Vector2 Axis;
+    };
+
+    // GameThread専用。正本/Routerより短い寿命で使う。配送中のAttach/Detach/Configure/stack変更は禁止。
+    class InputMapper final : public IInputController
+    {
+    public:
+        explicit InputMapper(const InputState& state) : m_State(state) {}
+        ~InputMapper() override;
+        InputMapper(const InputMapper&) = delete;
+        InputMapper& operator=(const InputMapper&) = delete;
+        InputMapper(InputMapper&&) = delete;
+        InputMapper& operator=(InputMapper&&) = delete;
+
+        // 設定をcopyしてcompile。成功時はstackを空にし旧入力を取り消す。
+        bool Configure(const InputBindingSet& settings);
+        // 同じRouterへの再Attachは冪等。優先度変更は配送外でDetach→Attachする。
+        void Attach(InputRouter& router, int32_t priority = 0);
+        void Detach();
+        bool PushContext(Identity context);
+        bool PopContext();
+        void ClearContexts();
+        Identity GetActiveContext() const;
+        ECursorMode GetCursorMode() const;
+        void SetFocused(bool focused);
+        bool IsFocused() const { return m_Focused; }
+        bool BeginFrame(double time);
+        // falseはそのactionを安全にCancelしたことを示す。正常な他actionは評価を続ける。
+        bool Update(double time, double unscaledDeltaSeconds);
+        InputMappedAction GetAction(Identity action) const;
+        InputMappedAction GetAction(Identity context, Identity action) const;
+        bool ConsumeFixedPress(Identity action);
+        void CancelAll();
+
+        bool OnKey(const KeyEvent& event) override;
+        bool OnMouseButton(const MouseButtonEvent& event) override;
+        bool OnMouseRawMove(const MouseRawMoveEvent& event) override;
+        bool OnMouseScroll(const MouseScrollEvent& event) override;
+        bool OnGamepadButton(const GamepadButtonEvent& event) override;
+        void OnGamepadConnection(const GamepadConnectionEvent& event) override;
+        void OnInputReset() override { CancelAll(); }
+        const char* DebugName() const override { return "InputMapper"; }
+    private:
+        struct Action
+        {
+            Identity Id;
+            Container::VariableArray<InputBinding> Bindings;
+            InputActionRuntime Runtime;
+        };
+        struct Context
+        {
+            Identity Id;
+            ECursorMode CursorMode = ECursorMode::Normal;
+            Container::VariableArray<Action> Actions;
+        };
+        Context* Top();
+        const Context* Top() const;
+        void SyncActiveButtons();
+        void AccumulateRelative(EInputBindingSource kind, float x, float y);
+        const InputState& m_State;
+        InputRouter* m_Router = nullptr;
+        Container::VariableArray<Context> m_Contexts;
+        Container::VariableArray<size_t> m_Stack;
+        InputArmedState m_Armed;
+        double m_Time = 0;
+        bool m_Focused = true;
+    };
+}

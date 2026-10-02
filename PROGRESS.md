@@ -297,3 +297,6 @@
 
 - G1-GR03-P4F: Raw相対mouse/縦横wheelの独立累積と検証後一括更新、InputSystem→Delegate→Router配送、Pad snapshot→consume不能接続通知→新Pressed→旧Releasedの順序、全解除の取消通知を追加。絶対mouseの初回/ReleaseAll後deltaを正本と一致させ、ImGuiのRaw捕捉/横wheel/X1/X2を接続。実InputStateの通常/NDEBUG-O2/ASan・UBSan（LeakSanitizer除外）、KBM/Pad/runtime回帰、実CameraInputCollector compileに成功。公開API/配送/統合試験は独立静的レビューPASS。RoutingExtensionTestはWindows.h依存で未実行、OS/Mapper/Engine配線は未完。任意指摘を受け、Pad/Mouse heldのReleaseAllで通常Released通知が増えない試験も追加。
 - Next: Identity設定を所有するInputMapperをRouterへ登録し、context stack/UI armed/focus cancel/固定step消費を接続する。
+
+- G1-GR03-P4G: InputMapperがIdentity context/action/bindingsとruntimeを所有copyし、正本とRouterを借用してAttach/Detach。top contextだけを評価し、切替/focus/resetでCancel/armed Reset、同frame短tap/fixed消費/相対入力を接続。Pad断線は別bindingのheldを保ち、それ以外を通常TapではなくCancel。GetActionは値snapshot、未接続/非focusではanalogも停止。独立所有/寿命/公開API/統合試験の静的レビューPASS、実portable state/runtime5件回帰PASS。InputActionMapTestとMapperのcompileはIdentity→String→Windows.h依存で停止し未実行。任意改善のmouse/modifier/別Router再Attach試験と配送中設定変更禁止のheader記載を追加。Engine/App/OS/JSON/rebindは未完。
+- Next: EngineがMapperを所有し、Runのmessage前BeginFrame→TickのOnUpdate前Updateへ単調な実時間で配線する。
