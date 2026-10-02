@@ -311,29 +311,29 @@
 - paths: Game/GameModes/Rendering3DTest, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
 - notes: 2026-10-02 の親の確認（`startup-capture/SS-ACCEPT-night/default-night.png`）で分かった。点光源の色は `Rendering3DTestRoutine.cpp` の `SetLightColor(1.0f, 0.9f, 0.3f)` で、石畳が黄緑がかる。レンズダートは `kStartupLensDirtIntensity = 2.0f`。
 
-## SS-GPU-PROFILE: Releaseでも加速構造の更新を含むGPUの時間とパスごとの内訳をトレースへ書けるようにする
+## SS-GPU-PROFILE: 計測のある構成で、加速構造の更新を含むGPUの時間とパスごとの内訳をトレースへ書けるようにする
 - status: todo
-- done-when: (a) フレームのGPUの区間（`FrameGPU`）が加速構造の更新（`RenderingCoordinator.cpp` の `BuildAccelerationStructures`）を含み、加速構造の更新も別の区間として取れる。(b) RenderGraph のパスごとのGPUの時間が `--trace-file` のトレースに行として出る。(c) CMake の選択肢（例 `NORVES_ENABLE_GPU_TIMING_IN_RELEASE`、既定 OFF）で、Release でもGPUのタイムスタンプとトレースが有効になる。既定（OFF）では Release の挙動と出力が変わらない。選択肢を ON にした Release の Game で起動画面を数百フレーム走らせ、フレームごとのGPUの時間・加速構造の更新・パスごとの内訳がトレースに出ることを、トレースを開いて確かめる（PROGRESS に数行の抜粋）。計測のあと `build` のキャッシュは OFF へ戻す。
-- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON -DNORVES_ENABLE_GPU_TIMING_IN_RELEASE=ON`
+- done-when: 計測が有効な構成（Debug・RelWithDebInfo。`NORVES_ENABLE_STATS=1`）で、(a) フレームのGPUの区間（`FrameGPU`）が加速構造の更新（`RenderingCoordinator.cpp` の `BuildAccelerationStructures`）を含み、加速構造の更新も別の区間として取れる。(b) RenderGraph のパスごとのGPUの時間が `--trace-file` のトレースに行として出る。Release の構成には計測・トレース・ログの仕組みを足さない（Release の `NORVES_ENABLE_STATS=0` と出力は変えない。Release を有効にするCMakeの選択肢も作らない）。RelWithDebInfo の Game で起動画面を数百フレーム走らせ、フレームごとのGPUの時間・加速構造の更新・パスごとの内訳がトレースに出ることを、トレースを開いて確かめる（PROGRESS に数行の抜粋）。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Release --target Game -- /m:1`
-- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON -DNORVES_ENABLE_GPU_TIMING_IN_RELEASE=OFF`
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RenderGraphCompileTest$"`
 - stop-when: GPUのタイムスタンプを加速構造の記録の前へ動かすとコマンドの記録の順序（RenderThread の同期）を変える必要がある場合は、変えずに、加速構造の更新を別の区間として取るだけにして記録する。
-- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Boot, Library/Core/Public/Boot, Library/Core/Private/Debug, Library/Core/Public/Debug, Library/Core/Private/RHI, Library/Core/Public/RHI, Library/Core/CMakeLists.txt, CMakeLists.txt, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
-- notes: SS-ACCEPT の停止理由（`blocked/SS-ACCEPT.md`）の推奨1。2026-10-02 に採った。Release は `NORVES_ENABLE_STATS=0`（`Library/Core/CMakeLists.txt:567`）でGPUのタイムスタンプもトレースも無効、加速構造の更新は `FrameGPU` の開始より前、パスごとのタイムスタンプはトレースへ書く経路が無い。外部のプロファイラは使えなかった（Nsight Systems 2021.1.3 は Vulkan のGPUの作業を記録できず、PresentMon・WPR は管理者の権限が要る）。危険地帯（RenderThread・RHI）。評価者を通す。
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Boot, Library/Core/Public/Boot, Library/Core/Private/Debug, Library/Core/Public/Debug, Library/Core/Private/RHI, Library/Core/Public/RHI, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: SS-ACCEPT の停止理由（`blocked/SS-ACCEPT.md`）から作った。加速構造の更新は `FrameGPU` の開始より前にあり、パスごとのタイムスタンプはトレースへ書く経路が無い。2026-10-02 ユーザーの指示: Release にGPUの計測やログなどのデバッグの機能を入れない。計測は最適化が有効で計測の残る RelWithDebInfo で行う。危険地帯（RenderThread・RHI）。評価者を通す。
 
 ## SS-ACCEPT: 起動画面の改善を受け入れる
 - status: todo
-- done-when: 朝・昼・夕 × 既定・近接・低角度の撮影一式と、変更前（`163ffe5`）の同じ視点の撮影を並べた記録（`Docs/RenderingValidation/StartupSceneAcceptance.md`、画像は `.harness/runs/` への参照）がある。Releaseの構成で起動画面の1フレームの時間（GPU）を測り、1280×720で16.6 ms以下であることを記録する（超える場合はパスごとの内訳と、どれを軽くすれば収まるかを記録する）。夜（`-Night`）の撮影も並べる。評価者が、各項目の完了条件と撮影を開いて反証を試みる。
+- done-when: 朝・昼・夕 × 既定・近接・低角度の撮影一式と、変更前（`163ffe5`）の同じ視点の撮影を並べた記録（`Docs/RenderingValidation/StartupSceneAcceptance.md`、画像は `.harness/runs/` への参照）がある。最適化が有効で計測の残る RelWithDebInfo の構成で、起動画面の1フレームのGPUの時間（加速構造の更新を含む）を測り、1280×720で16.6 ms以下であることを記録する（超えるフレームがあれば、そのフレームのパスごとの内訳と、どれを軽くすれば収まるかを記録する）。Release には計測の仕組みを入れないので、Release では build が通り起動画面を撮影できることだけを確かめる。夜（`-Night`）の撮影も並べる。評価者が、各項目の完了条件と撮影を開いて反証を試みる。
 - verify: `cmake --build build --config Release --target Game -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT -SunElevations 10,45,3`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT-night -Night`
 - stop-when: フレーム時間の予算を超える場合は、内訳と軽くする案を既知の限界として記録して完了にする（ユーザーへの報告に含める）。
 - notes: 受け入れの撮影は、SS-LOOK-BALANCE の数値の範囲（画面の平均・白飛び・黒つぶれ・影の比・空の青・夕の色・夜の背景）も満たしているかを並べて記録する。
 - paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 区切り。評価者を通す。
-- notes: 2026-10-02 再開。評価1周目の指摘3（既定視点の変更前後のカメラ）は `51a22e7` で対応済み。指摘1・2（Release のGPU時間・加速構造の更新を含む区間・予算を超えたフレームのパスごとの内訳と軽くする案）は SS-GPU-PROFILE の後に、選択肢を ON にした Release で測り直して記録する（測り終えたら `build` のキャッシュを OFF へ戻す）。RelWithDebInfo の既存のトレースでは夜の既定視点で540フレーム中6が16.6 msを超え、最大18.16 ms。
+- notes: 2026-10-02 再開。評価1周目の指摘3（既定視点の変更前後のカメラ）は `51a22e7` で対応済み。指摘1・2（GPU時間・加速構造の更新を含む区間・予算を超えたフレームのパスごとの内訳と軽くする案）は SS-GPU-PROFILE の後に RelWithDebInfo で測り直して記録する。完了条件の「Releaseの構成で測る」は、2026-10-02 のユーザーの指示（Release にGPUの計測やログなどのデバッグの機能を入れない）により RelWithDebInfo へ改めた。RelWithDebInfo の既存のトレースでは夜の既定視点で540フレーム中6が16.6 msを超え、最大18.16 ms。
 
 ## R1-P5: 透明描画を物理ライト・GGX・IBLへ接続する
 - status: done
