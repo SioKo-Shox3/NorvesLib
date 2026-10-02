@@ -291,7 +291,7 @@
 - notes: やり方の目安: 一律の+2 EVをやめるか小さくし、暗部を縮めにくいトーンカーブ（例: Khronos PBR Neutral や AgX をトーンマップの選択肢に足してカメラごとに選べるようにする、または既存の `Aces20Lut`）と組み合わせる。夜は自動露出が昼並みの明るさへ戻しきらないようにする（明るさに応じた露出補正、または目標の範囲）。夜の背景は昼の写真を出さない（夜の空の色にする等）。SS-POST-TUNE・SS-GRADING-LUT・高さフォグの値は、ほかの値を変えた後に撮り比べ、必要なら合わせ直す。危険地帯（トーンマップ・露出・FramePacketのカメラ）。評価者を通す。
 
 ## SS-RTGI-FAR-NOISE: 起動画面の遠い地面に残るRTGIの時間方向の雑音を減らす
-- status: todo
+- status: done
 - done-when: 止まったカメラで16フレームを撮り（`-StillRenderedFrames`）、既定視点の地平線寄りの帯（画面の高さの0.33〜0.42）と低角度視点の中ほどの帯（0.65〜0.80）でも、地面の画素の時間方向の標準偏差（表示の輝度）がRTGI無効のときの2倍以内に収まる（手前の帯 0.80〜0.98 の既存の基準も保つ）。帯ごとの値を `metrics.json` に出せるよう撮影スクリプトの測定領域を視点ごとに複数にする。止まった状態で疎らに明滅する画素（標準偏差が1/255を超える画素）の割合も記録する。
 - verify: `cmake --build build --config Debug --target Game RTGIDiffuseIndirectVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RTGIDiffuseIndirectVulkanTest$"`

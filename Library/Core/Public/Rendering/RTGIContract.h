@@ -21,7 +21,7 @@ namespace NorvesLib::Core::Rendering
      * 周りの回転は含まない。露出は履歴を露出の比で掛け直すので、1フレームで
      * RTGIHistoryStaticExposureStepEVを超えて変わったときだけ静止を切る。
      */
-    inline constexpr uint32_t RTGIHistoryStaticMaximumAge = 128u;
+    inline constexpr uint32_t RTGIHistoryStaticMaximumAge = 256u;
     /** @brief 年齢の上限を上げ始めるまでに要る連続した静止フレーム数（停止直後の追従を変えない） */
     inline constexpr uint32_t RTGIHistoryStaticWarmupFrames = 16u;
     /**
