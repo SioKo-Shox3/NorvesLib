@@ -154,6 +154,7 @@ norves_add_test_bundle(R8AcesLutToneMappingVulkanTest
     MEMBER R8AcesLutToneMappingVulkanTest R8AcesLutToneMappingVulkanTest.cpp
     MEMBER R8FilmGrainVulkanTest R8FilmGrainVulkanTest.cpp
     MEMBER AutoExposureHistogramVulkanTest AutoExposureHistogramVulkanTest.cpp
+    MEMBER GradingLutIdentityVulkanTest GradingLutIdentityVulkanTest.cpp
 )
 target_link_libraries(R8AcesLutToneMappingVulkanTest PRIVATE RenderingGpuTestSupport)
 target_include_directories(R8AcesLutToneMappingVulkanTest PRIVATE
@@ -172,6 +173,8 @@ register_rendering_gpu_test(
 register_rendering_gpu_test(R8FilmGrainVulkanTest R8AcesLutToneMappingVulkanTest --test=R8FilmGrainVulkanTest)
 # 自動露出: 既知の輝度の画素から作ったヒストグラムを実GPUで読み戻し、全区間がCPUの数え方と一致すること。
 register_rendering_gpu_test(AutoExposureHistogramVulkanTest R8AcesLutToneMappingVulkanTest --test=AutoExposureHistogramVulkanTest)
+# 見た目の3D LUT: 恒等のLUTで出力が変わらず、見た目のLUTがCPUの三線形補間と一致し、ACES 2.0 SDR LUTの演算子と読めないLUTでは掛からないことを実GPUで確かめる。
+register_rendering_gpu_test(GradingLutIdentityVulkanTest R8AcesLutToneMappingVulkanTest --test=GradingLutIdentityVulkanTest)
 add_executable(R6RTGIAcceptanceVulkanTest
     R6RTGIAcceptanceVulkanTest.cpp
 )

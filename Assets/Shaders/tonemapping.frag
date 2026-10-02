@@ -24,13 +24,16 @@ layout(std140, set = 0, binding = 1) uniform ToneMappingParams
     float brightness;         // 明度オフセット (0.0 = default)
     float temperature;        // 色温度シフト (-1..+1, 0=neutral)
     float contrastPivot;      // カメラの差し替えの式のコントラストの軸（表示のリニア値）
-    float _pad3;
+    float lookLutIntensity;   // 見た目の3D LUTの混ぜ具合（0で掛けない）
     float _pad4;
     float _pad5;
 } params;
 
 // ACES 2.0 SDR 100 nit Rec.709 のベイク3D LUT（display-linear。x=R, y=G, z=B）
 layout(set = 0, binding = 2) uniform sampler3D colorLut;
+
+// グレーディング用の見た目の3D LUT（sRGBの符号化値で引き、符号化値を返す。x=R, y=G, z=B）
+layout(set = 0, binding = 3) uniform sampler3D lookLut;
 
 layout(location = 0) out vec4 outColor;
 
@@ -198,6 +201,18 @@ vec3 ApplyFilmGrain(vec3 displayLinear, uvec2 pixel, uint frameSeed, float stren
     return DecodeSrgb(clamp(encoded + vec3(noise), vec3(0.0), vec3(1.0)));
 }
 
+// 見た目の3D LUT: 表示のリニア値をsRGBの符号化値へ写し、格子点 0 と N-1 がテクセル中心に来るよう
+// 半テクセル内側の座標で三線形補間して、返る符号化値をリニアへ戻す。恒等のLUT（格子点の座標そのもの）は
+// 符号化値の一次関数なので、補間しても入力をそのまま返す。
+vec3 ApplyLookLut(vec3 displayLinear, float intensity)
+{
+    vec3 encoded = EncodeSrgb(clamp(displayLinear, vec3(0.0), vec3(1.0)));
+    float lutSize = float(textureSize(lookLut, 0).x);
+    vec3 lutCoord = (encoded * (lutSize - 1.0) + 0.5) / lutSize;
+    vec3 looked = DecodeSrgb(clamp(textureLod(lookLut, lutCoord, 0.0).rgb, vec3(0.0), vec3(1.0)));
+    return mix(displayLinear, looked, intensity);
+}
+
 void main()
 {
     if (params.bBypass != 0u)
@@ -264,6 +279,12 @@ void main()
 
             // 色温度
             result = ApplyTemperature(result, params.temperature);
+        }
+
+        // 見た目の3D LUT（グレーディングの後、ビネットの前）
+        if (params.lookLutIntensity > 0.0)
+        {
+            result = ApplyLookLut(result, params.lookLutIntensity);
         }
     }
 

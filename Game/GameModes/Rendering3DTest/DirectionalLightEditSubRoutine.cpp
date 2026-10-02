@@ -70,6 +70,11 @@ namespace Game::GameModes
         {
             ImGui::Checkbox("レンズの効果（色収差・ダート）", m_pLensEffects);
         }
+        // 見た目の3D LUT（暖かみのある映画調）。
+        if (m_pLookLut != nullptr)
+        {
+            ImGui::Checkbox("見た目のLUT（暖かみのある映画調）", m_pLookLut);
+        }
         // 自動露出の測定(RenderThread が読み戻した値)。手動のときも測定は続くので表示する。
         if (m_pAutoExposureMeasurement != nullptr)
         {

@@ -379,6 +379,22 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief カメラごとに掛けるグレーディング用の見た目の3D LUT
+     *
+     * トーンマップとグレーディングの後、ビネットの前に、表示の値を sRGB の符号化値の座標で引き、
+     * 符号化値を返す LUT（`Scripts/BakeLookLut.py` が焼く `NLUTLK01` 形式）。既定（AssetPath が nullptr）は
+     * 無効で、検証シーンのカメラは結果を変えない。ACES 2.0 SDR LUT の演算子（表示変換そのもの）には、
+     * グレーディングと同じく掛けない。
+     */
+    struct CameraLookLut
+    {
+        /** @brief LUT ファイルの `Assets/` 相対のパス（文字列リテラルなど静的な寿命の文字列。nullptr で無効） */
+        const char* AssetPath = nullptr;
+        /** @brief LUT の結果と元の値の混ぜ具合（0〜1。0で無効、1で LUT の結果だけ） */
+        float Intensity = 1.0f;
+    };
+
+    /**
      * @brief 描画用カメラプロキシ
      */
     struct CameraProxy
@@ -448,6 +464,9 @@ namespace NorvesLib::Core::Rendering
 
         // 色収差とレンズダート（既定は無効）
         CameraLensEffects LensEffects;
+
+        // グレーディング用の見た目の3D LUT（既定は無効）
+        CameraLookLut LookLut;
 
         // ポストプロセス設定（ハンドル参照）
         // PostProcessHandle PostProcess;

@@ -116,6 +116,20 @@ namespace Game::GameModes
             return value == nullptr || std::strcmp(value, "0") != 0;
         }
 
+        // 環境変数 NORVES_STARTUP_LOOK_LUT が "0" なら false（起動画面の見た目の LUT を切って撮り比べる用）。
+        bool ReadStartupLookLutEnabled()
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_STARTUP_LOOK_LUT");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            return value == nullptr || std::strcmp(value, "0") != 0;
+        }
+
         // 起動画面の高さフォグ（R3）。地面での密度（1/m、0で無効）と、高さ方向の減衰（1/m）。
         // 減衰を上限の 1/m にして地面すれすれの薄い層にし、遠くの地面へ向かう浅い視線だけが厚く霞む
         // ようにする。密度は太陽 45° の撮り比べ（0.02〜0.1）で、地面すれすれの低角度視点でも近くの各球の
@@ -154,8 +168,14 @@ namespace Game::GameModes
         // 色温度は +0.1（R・B を ±1%）で日なたをわずかに暖かくする程度にとどめ、昼の空の青を残す。
         // ビネットは強さ 0.25・半径 0.85・幅 0.6 で、画面の隅を約 0.78 倍にする（View の既定 0.3・0.8・0.5 の
         // 約 0.72 倍より弱め、明るい地面の隅が濁らないようにする）。
-        void ApplyStartupGrading(CameraProxy& camera, bool bLensEffects)
+        // 起動画面の見た目の 3D LUT（Scripts/BakeLookLut.py が焼く暖かみのある映画調）。上のグレーディングの後に
+        // 掛かり、中間と明部を琥珀へ、暗部をわずかに青緑へ寄せ、黒をわずかに持ち上げる。
+        constexpr const char* kStartupLookLutAssetPath = "Textures/LookLuts/WarmFilm.lut3d";
+
+        void ApplyStartupGrading(CameraProxy& camera, bool bLensEffects, bool bLookLut)
         {
+            camera.LookLut.AssetPath = bLookLut ? kStartupLookLutAssetPath : nullptr;
+            camera.LookLut.Intensity = 1.0f;
             camera.LensEffects.ChromaticAberrationPixels = bLensEffects ? kStartupChromaticAberrationPixels : 0.0f;
             camera.LensEffects.LensDirtIntensity = bLensEffects ? kStartupLensDirtIntensity : 0.0f;
             camera.GradingOverride.bEnabled = true;
@@ -281,7 +301,8 @@ namespace Game::GameModes
             }
 
             data.m_bLensEffects = ReadStartupLensEffectsEnabled();
-            ApplyStartupGrading(initialCamera, data.m_bLensEffects);
+            data.m_bLookLut = ReadStartupLookLutEnabled();
+            ApplyStartupGrading(initialCamera, data.m_bLensEffects, data.m_bLookLut);
             ctx.EngineRef.GetRenderWorld().SetMainCamera(initialCamera);
             // 起動画面はRTGIを使わず、従来どおり環境光（IBL）で間接光を表す（RTGIの少ない光線数の雑音が
             // 物体と地面に粒状に残るため）。
@@ -1055,7 +1076,8 @@ namespace Game::GameModes
                                                           &data.m_bAutoExposure,
                                                           &data.m_AutoExposureMeasurement,
                                                           &data.m_bTemporalAA,
-                                                          &data.m_bLensEffects));
+                                                          &data.m_bLensEffects,
+                                                          &data.m_bLookLut));
 #endif
         }
 
@@ -1702,7 +1724,7 @@ namespace Game::GameModes
             CameraProxy cameraProxy;
             if (data.m_pCameraComponent->BuildCameraProxy(cameraProxy))
             {
-                ApplyStartupGrading(cameraProxy, data.m_bLensEffects);
+                ApplyStartupGrading(cameraProxy, data.m_bLensEffects, data.m_bLookLut);
                 ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
                 if (!data.m_bCameraSmokeSyncEmitted)
                 {

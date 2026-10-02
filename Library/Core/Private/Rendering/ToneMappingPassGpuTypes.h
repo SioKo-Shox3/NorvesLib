@@ -26,7 +26,8 @@ namespace NorvesLib::Core::Rendering
         float temperature;
         // カメラの差し替えの式のコントラストの軸（表示のリニア値）
         float contrastPivot;
-        float _pad3;
+        // グレーディング用の見た目の3D LUT（binding 3）の混ぜ具合（0で掛けない）
+        float lookLutIntensity;
         float _pad4;
         float _pad5;
     };
@@ -47,6 +48,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPUToneMappingParams, brightness) == 56);
     static_assert(offsetof(GPUToneMappingParams, temperature) == 60);
     static_assert(offsetof(GPUToneMappingParams, contrastPivot) == 64);
+    static_assert(offsetof(GPUToneMappingParams, lookLutIntensity) == 68);
 
 } // namespace NorvesLib::Core::Rendering
 
