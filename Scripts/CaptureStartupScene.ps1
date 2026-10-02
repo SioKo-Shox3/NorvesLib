@@ -29,9 +29,10 @@
 # -CompareNoiseWith に別の撮影（例: -Rtgi Off）の出力先を与えると、視点・領域ごとに表示の標準偏差の比
 # （今回/比べる側）を求め、どれかが -NoiseRatioLimit（既定2）を超えたら失敗にする。
 # -GpuTimingFrames を与えると、Game を --trace-file 付きで起動し、落ち着いてからその描画フレーム数の後に撮る。
-# トレースの各フレームの GPUFrameMs（GPU のタイムスタンプで測ったフレームの区間。加速構造の構築を除く
-# RenderGraph の全パスと表示への書き出し）のうち、最後の (-GpuTimingFrames − 60) フレーム（撮影の
-# フレームの直前2つを除く）の中央値・95 パーセンタイル・最大を gpu_timing として metrics.json へ書く。
+# トレースの描画したフレームの行（RenderFrameMs > 0）の GPUFrameMs（GPU のタイムスタンプで測ったフレームの
+# 区間。加速構造の構築・更新を除く RenderGraph の全パスと表示への書き出し）のうち、最後の
+# (-GpuTimingFrames − 60) フレーム（撮影のフレームの直前2つを除く）の中央値・95 パーセンタイル・最大を
+# gpu_timing として metrics.json へ書く。
 # タイムスタンプは統計が有効な構成（Debug・RelWithDebInfo）だけで取れるため、Release とは併用しない。
 # 予算（-GpuFrameBudgetMs、既定 16.6 ms）を超えても失敗にはせず within_budget=false と書く。
 [CmdletBinding()]
@@ -629,7 +630,21 @@ foreach ($view in $shots)
         }
         else
         {
-            $frameRows = @(Import-Csv -LiteralPath $tracePath | Where-Object { $_.Type -eq 'Frame' })
+            # Frame 行はゲームスレッドのフレームごとに書かれ、描画の無い行が大半を占める。描画した
+            # フレームの行（RenderFrameMs > 0）だけを使う。行数が多いため Import-Csv を使わず1行ずつ読む。
+            $header = @((Get-Content -LiteralPath $tracePath -TotalCount 1) -split ',')
+            $renderFrameColumn = [array]::IndexOf($header, 'RenderFrameMs')
+            $gpuFrameColumn = [array]::IndexOf($header, 'GPUFrameMs')
+            $cpuFrameColumn = [array]::IndexOf($header, 'CPUFrameMs')
+            $frameRows = New-Object System.Collections.Generic.List[object]
+            foreach ($line in [IO.File]::ReadLines($tracePath))
+            {
+                if (-not $line.StartsWith('Frame,')) { continue }
+                $fields = $line -split ','
+                if ([double]::Parse($fields[$renderFrameColumn], $invariant) -le 0.0) { continue }
+                $frameRows.Add([pscustomobject]@{ GPUFrameMs = $fields[$gpuFrameColumn]; CPUFrameMs = $fields[$cpuFrameColumn] })
+            }
+            $frameRows = $frameRows.ToArray()
             $windowCount = $GpuTimingFrames - 60
             $usableRows = if ($frameRows.Count -gt 2) { @($frameRows[0..($frameRows.Count - 3)]) } else { @() }
             $windowRows = if ($usableRows.Count -gt $windowCount) { @($usableRows[($usableRows.Count - $windowCount)..($usableRows.Count - 1)]) } else { $usableRows }
