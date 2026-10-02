@@ -22,6 +22,8 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER XInputDevicePollingTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/XInputDevicePollingTest.cpp
     MEMBER XInputVibrationStateTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/XInputVibrationStateTest.cpp
     MEMBER HapticsMixerTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/HapticsMixerTest.cpp
+    MEMBER HapticsPlaybackTimeTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/HapticsPlaybackTimeTest.cpp
+    MEMBER HapticsServiceTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/HapticsServiceTest.cpp
     MEMBER XInputDeviceIntegrationTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/XInputDeviceIntegrationTest.cpp
     MEMBER InputActionSettingsTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputActionSettingsTest.cpp
     MEMBER AbsoluteMouseTrackingTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/AbsoluteMouseTrackingTest.cpp

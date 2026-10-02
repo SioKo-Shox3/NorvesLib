@@ -372,3 +372,6 @@
 
 - G1-GR04-P7: IInputDeviceのbool SetVibration/TryShutdownとXInputSetState adapterを接続。float範囲検証/量子化後の左右WORDだけ送信しERROR_SUCCESSをACKとする。SDK非依存stateで非zero試行の潜在作動・失敗停止義務を保持し、focus喪失/Shutdownは全対象を停止、失敗後のnonzeroはzero先行、停止後再Initializeも残留zero回収を必須にした。EngineはTryShutdown=falseを保持し再試行する。deviceの有効clock pollで保留停止を再送、失敗でも入力継続。実state通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER object、既存poll回帰、device.cpp/統合試験object compile成功。統合試験に有効clockのstop失敗下で入力継続/回復を補強。独立静的レビューPASS。API callback再入はP3同様に明記禁止で、native callback経路は追加していない。Engine/実Systemリンク/WindowsSDK/実機振動は未検証。destructorの最後の停止試行も失敗する場合、物理的停止成功は保証できない。
 - Next: GR04のHapticsServiceへ効果定義・voice所有・実時間更新・pause/focus停止・設定/JSONを接続する。
+
+- G1-GR04-P8: HapticsServiceへIdentity付き効果/keyのコピー所有と最大64voice、非wrap handleのPlay/Stopを追加。全候補検証/確保成功後のConfigure交換、無効値/確保例外で旧状態保持、alias再設定を扱う。新voice初回t0/以後実dt/loop/終了、最高priority合成/gain/設定倍率、focus/pause/disabled/切断で取消、成功ACK差分とzero/失敗retryを同期sinkへ送る。同じ実backend/slot対応を寿命中維持する契約を明記。レビューの端点丸め反例を修正し、非loopの値がdurationへ丸まった場合もfinished=trueとしてvoice枠を解放。純時間kernel通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle、既存混合/出力回帰成功、独立再実行と静的レビューPASS。実serviceと所有/制御/再入の追加試験はIdentityPoolのWindows.h依存でcompile/実行未確認。制御setter/Stopの送信は次Update/Flushで、Engine即時接続とJSONは後続。
+- Next: GR04のEngine所有HapticsServiceをsimulation後の実時間更新、focus/pause/終了の即時Flushへ接続する。

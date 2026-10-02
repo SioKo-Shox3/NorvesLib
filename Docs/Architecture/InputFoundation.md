@@ -289,3 +289,12 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - XInputDeviceは有効clockのpoll時に保留zeroを再試行し、停止失敗でも入力pollを継続してhealth=false。不正clock/停止中は入力も出力も呼ばない。非focusのnonzeroは拒否する。差分1/255の間引きはservice側の責務で、backendは有効な送信要求を間引かない。
 - EngineはTryShutdownのboolで終了義務を保持する。既存deviceは既定TryShutdownが旧Shutdownの例外をfalseへ変換。XInputの旧Shutdown入口は停止失敗時に例外で通知、destructorはnoexceptのTryShutdownを最後に試みる。API/デバイス切断でzeroに失敗した場合、実機停止が成功したとは保証できない。
 - 実出力stateの通常/O2/ASan・UBSan/bundleと既存poll回帰、device/統合試験のobject compileを検証。Windows native API/Engine統合/実機振動は未検証。pause、効果voice、JSONとserviceの接続は後続。
+
+### HapticsServiceの再生所有（GR04）
+- ConfigureはIdentity付き効果/keyをコピー所有し、全検証/確保成功後に交換する。重複ID/無効値/確保例外では旧効果/voiceを保持する。成功した再設定は全voiceを取消し、出力ACKは残して次の送信で停止する。借用GetEffectsは次のConfigure/破棄まで。
+- Playは最大64voice、枠不足/無効/非focus/paused/disabledなら0、成功はprocess内で非wrapのhandle。別serviceや再構成後の古いhandleでは停止できない。既存voiceの自動追い出しは行わない。voiceは効果index/slot/gain/経過時間を値で保持する。
+- Updateは有限非負の実dtを受け、巨大dtでもoverflowしない残り時間比較/loop剰余で進める。新規voiceの最初のUpdateは時刻0を評価し、Play以前のframe dtを遡って足さない。短い効果もframeごとの標本評価であり、frame間の山の再生までは保証しない。FlushOutputsは時刻を進めない。
+- frame内の評価/混合は固定scratch配列で計算後にvoiceをcommitする。最高priority/max・add-clamp/gain/全体strength（既定0.5）を適用し、成功ACK差分で送信する。同値は省略、最終zeroと失敗は再試行。切断slotのvoiceは取消し、出力義務が残れば切断中もzeroを試みる。
+- focus喪失/pause/無効化はvoiceを取消し、復帰時に旧効果を再開しない。Stopや設定変更だけではAPIを呼ばず、次のUpdate/Flushで反映。ownerがfocus/pause/終了時に直ちにFlushする。sinkは同期借用で保持せず、sink中の公開操作再入はfalse/0で拒否、本体破棄は禁止。
+- 純時間kernelの通常/O2/ASan・UBSan/bundleと既存混合/出力回帰を実行。実serviceの所有/制御/失敗/再入試験は既存bundleへ追加しているが、IdentityPoolのWindows.h依存でcompile/実行未確認。Engine接続とhaptics.v1は後続。
+- serviceの送信ACKは同じ実backend/slot対応にだけ有効。同期sink wrapperのinstanceは変えてよいが、動的backend交換は範囲外。交換時は旧serviceをStopAll/Flushして旧deviceを停止し、新serviceを使う。外部から任意のmotor値を書き換えず、ownerの強制zeroはserviceの取消/Flushと組にする。

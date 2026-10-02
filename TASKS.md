@@ -1590,3 +1590,11 @@
 - stop-when: failed writeを成功扱い、停止義務の消失、背景nonzero、invalid clock/valueでAPI送信、未停止再開始、実装によるcallback中owner再入、blocking未解消。
 - paths: Library/Core/Public/Input/IInputDevice.h, Library/Core/Private/Platform/Windows/IXInputApi.h, Library/Core/Private/Platform/Windows/XInputVibrationState.h, Library/Core/Private/Platform/Windows/XInputPollingState.h, Library/Core/Private/Platform/Windows/XInputDevice.h, Library/Core/Private/Platform/Windows/XInputDevice.cpp, Library/Core/Private/Platform/Windows/WindowsXInputApi.cpp, Library/Core/Private/Engine/Engine.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/XInputVibrationStateTest.cpp, Test/Core/Input/XInputDeviceIntegrationTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: serviceのvoice/包絡線/ポーズとの接続とJSONは次段。native停止失敗の物理的成功は保証しない。stop pendingはAPI所有者の寿命内で保持する。
+
+## G1-GR04-P8: 振動効果と再生voiceをHapticsServiceで所有する
+- status: done
+- done-when: 効果/keyをコピー所有し、最大64voiceを非wrap handleでPlay/Stop。実dt/loop/終了とpriority合成、倍率/onoff、focus/paused取消、成功ACK差分送信/失敗retryを一時sinkへ接続。無効設定/clockは非変更、再入を拒否しowner/APIを長期借用しない。
+- verify: 実時間進行kernelの巨大dt/端点/無効非変更を通常/O2/ASanUBSan/bundle。実serviceの所有/handle/voice上限/再設定/倍率/停止/再入/failed ACKを既存bundleへ追加し独立レビュー。Windows依存の未実行を明示。
+- stop-when: borrowed effect寿命超過、handle wrap/別owner誤停止、invalid部分更新、停止zero省略、inactiveで振動、sink再入で破損、blocking未解消。
+- paths: Library/Core/Public/Input/HapticsPlaybackTime.h, Library/Core/Public/Input/HapticsService.h, Library/Core/Private/Input/HapticsService.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/HapticsPlaybackTimeTest.cpp, Test/Core/Input/HapticsServiceTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: service自体はbackend参照を保持しないが、寿命中の実backend/slot対応は同一とする。動的交換は旧service停止後に新serviceを使う。制御変更は次のUpdate/FlushOutputsで送信、Engineの即時focus/pause/終了接続とJSONは次段。
