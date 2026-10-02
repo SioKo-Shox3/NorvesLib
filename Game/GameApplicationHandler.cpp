@@ -575,7 +575,7 @@ namespace Game
                 continue;
             }
 
-            if (ToStdString(args[i]) == std::basic_string<TCHAR>(kNightOption))
+            if (args[i] == kNightOption)
             {
                 s_bRendering3DTestNight = true;
                 continue;
