@@ -238,6 +238,25 @@ namespace NorvesLib::Modules::Physics
         m_bInitialized = false;
     }
 
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::RefreshDynamicSnapshot()
+    {
+        const auto readiness = GetReadinessResult();
+        if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
+        {
+            return readiness;
+        }
+        if (m_bFixedTickInProgress)
+        {
+            return Core::Scene::EPhysicsSceneQueryResult::NotReady;
+        }
+        PhysicsBroadphase candidate;
+        BuildBroadphase(candidate, true);
+        // 確保/構築完了後だけquery公開値を交換し、simulationの作業値には触れない。
+        static_assert(noexcept(m_PublishedBroadphase = std::move(candidate)));
+        m_PublishedBroadphase = std::move(candidate);
+        return Core::Scene::EPhysicsSceneQueryResult::Success;
+    }
+
     Core::Scene::EPhysicsSceneQueryResult PhysicsModule::ExecuteBatch(Core::Container::Span<const Core::Scene::PhysicsQueryDesc> queries,
         Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits,
         Core::Container::VariableArray<Core::Scene::PhysicsQueryBatchResult>& outResults) const
@@ -833,18 +852,22 @@ namespace NorvesLib::Modules::Physics
         body.bHadPreStepSnapshot = false;
     }
 
+    bool PhysicsModule::IsColliderLifecycleActive(const ColliderSlot& collider) const
+    {
+        return collider.bOccupied && collider.Component != nullptr && collider.Owner != nullptr
+            && collider.Component->m_bHasShape
+            && collider.Component->IsActive() && collider.Owner->IsActive()
+            && !collider.Component->HasFlag(Core::OF_PendingDestroy) && !collider.Owner->IsPendingDestroy()
+            && IsFiniteTransform(GetFreshWorldTransform(*collider.Owner));
+    }
+
     void PhysicsModule::ReconcileActiveStates()
     {
         for (ColliderSlot& collider : m_ColliderSlots)
         {
             if (collider.bOccupied)
             {
-                collider.bActive = collider.Component->m_bHasShape
-                    && collider.Component->IsActive()
-                    && collider.Owner->IsActive()
-                    && !collider.Component->HasFlag(Core::OF_PendingDestroy)
-                    && !collider.Owner->IsPendingDestroy()
-                    && IsFiniteTransform(GetFreshWorldTransform(*collider.Owner));
+                collider.bActive = IsColliderLifecycleActive(collider);
             }
         }
 
@@ -1188,12 +1211,12 @@ namespace NorvesLib::Modules::Physics
         }
     }
 
-    void PhysicsModule::BuildBroadphase(PhysicsBroadphase& outBroadphase) const
+    void PhysicsModule::BuildBroadphase(PhysicsBroadphase& outBroadphase, bool bRefreshLifecycle) const
     {
         Core::Container::VariableArray<PhysicsShapeProxy> proxies;
         for (const ColliderSlot& slot : m_ColliderSlots)
         {
-            if (!slot.bOccupied || !slot.bActive)
+            if (!slot.bOccupied || (bRefreshLifecycle ? !IsColliderLifecycleActive(slot) : !slot.bActive))
             {
                 continue;
             }
@@ -1201,7 +1224,7 @@ namespace NorvesLib::Modules::Physics
             const Math::Transform transform = GetFreshWorldTransform(*slot.Owner);
             PhysicsShapeProxy proxy;
             proxy.Collider = slot.Component->m_ColliderHandle;
-            proxy.Body = FindBodyHandle(*slot.Owner);
+            proxy.Body = FindBodyHandle(*slot.Owner, bRefreshLifecycle);
             proxy.Entity = slot.Owner->GetEntityHandle();
             proxy.bHasEntity = proxy.Entity.IsValid();
             proxy.Layer = slot.Component->m_CollisionLayer;
@@ -1282,11 +1305,19 @@ namespace NorvesLib::Modules::Physics
         return GetFreshWorldTransform(*parent) * localTransform;
     }
 
-    Core::Scene::BodyHandle PhysicsModule::FindBodyHandle(const Core::Entity& owner) const
+    Core::Scene::BodyHandle PhysicsModule::FindBodyHandle(const Core::Entity& owner, bool bRefreshLifecycle) const
     {
         for (const BodySlot& slot : m_BodySlots)
         {
-            if (slot.bOccupied && slot.bActive && slot.Owner == &owner)
+            if (!slot.bOccupied || slot.Owner != &owner)
+            {
+                continue;
+            }
+            // refreshでは当該ownerの有効colliderが既に確認済み。simulation cacheは書き換えない。
+            const bool bActive = bRefreshLifecycle
+                ? IsBodyLifecycleActive(slot) && !(slot.Component->m_BodyType == EPhysicsBodyType::Dynamic && owner.GetParentEntity() != nullptr)
+                : slot.bActive;
+            if (bActive)
             {
                 return slot.Component->m_BodyHandle;
             }

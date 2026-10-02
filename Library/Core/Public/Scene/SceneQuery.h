@@ -40,6 +40,12 @@ namespace NorvesLib::Core::Scene
             return EPhysicsSceneQueryResult::Unavailable;
         }
 
+        // 明示query更新。未対応providerはUnavailable。固定更新を進めない。
+        virtual EPhysicsSceneQueryResult RefreshDynamicSnapshot()
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
         virtual EPhysicsSceneQueryResult Raycast(
             const Math::Ray& ray,
             float maxDistance,
@@ -107,6 +113,10 @@ namespace NorvesLib::Core::Scene
             Container::VariableArray<PhysicsQueryHit>& outHits,
             Container::VariableArray<PhysicsQueryBatchResult>& outResults) const;
 
+        // GameThread専用。固定step sequenceを進めずqueryだけ更新。GR09までは全proxy再構築。
+        // 同sequence内でも内容が変わるため、呼出側は自身のquery cacheを無効化すること。
+        EPhysicsSceneQueryResult RefreshDynamicSnapshot();
+
         EPhysicsSceneQueryResult BindPhysicsProvider(IPhysicsSceneQueryProvider& provider);
         EPhysicsSceneQueryResult UnbindPhysicsProvider(IPhysicsSceneQueryProvider& provider);
         EPhysicsSceneQueryResult Raycast(
@@ -125,7 +135,7 @@ namespace NorvesLib::Core::Scene
         EPhysicsSceneQueryResult IsAlive(ColliderHandle collider, bool& outAlive) const;
         EPhysicsSceneQueryResult IsAlive(BodyHandle body, bool& outAlive) const;
         /**
-         * @brief 最後に公開された physics query snapshot の単調増加 sequence を取得する。
+         * @brief 最後の固定更新で公開された physics query snapshot のsequenceを取得する（明示refreshでは増加しない）。
          * @param outSequence Success 時は 1 以上。失敗時は 0 に初期化される。
          */
         EPhysicsSceneQueryResult GetPublishedSnapshotSequence(uint64_t& outSequence) const;

@@ -399,3 +399,6 @@
 
 - G1-GR08-P5A: broadphase端点にLayer/Maskをコピーし候補追加前に対称規則を適用、solverもworking proxyの同じ規則を接触/trigger/solid処理前に確認する。既定候補順/接触端点/重複除去を維持し、queryのLayerMaskとは分離。全32bitの許可/片側拒否/複数bitと4096真理値表、実proxy回帰を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBERで実行成功。独立第1周でHit期待に接近速度がない点を指摘され、許可時に接近→Hit/押出し、拒否時に自由積分/速度保持/Hitなしへ修正し第2周静的レビューPASS。実候補/Worldのtrigger Begin/Endとsolid検証は既存bundleへ追加済みだが、Windows.h依存で統合compile/実行は未確認。
 - Next: G1／GR08の承認済みS9=a、明示RefreshDynamicSnapshotを追加する。fixed-step sequenceとsimulation stateは保ったままquery snapshotだけを更新する。候補訪問/掃引AABB最適化も継続。
+
+- G1-GR08-P5B: 承認S9=aのRefreshDynamicSnapshotをSceneQuery/providerへ追加。owner/readinessと固定処理・通知中の再入を検証し、freshなlifecycle/Transform/shape/metadata/Body対応で候補Broadphaseを作り、完成後のnoexcept moveで公開queryだけ交換する。GR09までは全proxy再構築、明示呼出しのみ。simulation active cache/working proxy/速度/impulse/PreFixed準備/イベント/固定公開sequenceを保持。同sequence内の内容変化とcaller cache無効化を文書化。独立静的レビューPASS、実Broadphaseのnoexcept move syntaxと既存proxy Release/ASan・UBSan回帰成功。実移動前後/新規/無効化・復帰/保留impulse/通知中拒否試験を追加したが、Windows.h依存で新経路の統合compile/実行は未確認。
+- Next: G1／GR08の候補訪問関数とray/swept AABBによる早期除外を実装する。無効値/未収束・順序の公開契約を保ち、CPUの全探索参照と照合する。

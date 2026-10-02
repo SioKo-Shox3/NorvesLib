@@ -292,6 +292,108 @@ namespace
         assert(second->RemoveOnHit(hitHandle) == EPhysicsResult::Success);
     }
 
+    void TestExplicitSnapshotRefresh()
+    {
+        PhysicsFixture fixture;
+        SceneQuery& scene = fixture.Engine.GetSceneQuery();
+        assert(scene.RefreshDynamicSnapshot() == EPhysicsSceneQueryResult::NotReady);
+        auto* entity = fixture.CreateSphere(Math::Transform(Math::Vector3()),1);
+        auto* collider = entity->GetComponent<ColliderComponent>();
+        auto* body = fixture.World.CreateComponent<RigidBodyComponent>(entity);
+        assert(body != nullptr);
+        assert(body->SetBodyType(EPhysicsBodyType::Dynamic) == EPhysicsResult::Success);
+        assert(body->SetGravityScale(0) == EPhysicsResult::Success);
+        fixture.Physics->FixedTick(1.f/60);
+        uint64_t sequence = 0, after = 0;
+        assert(scene.GetPublishedSnapshotSequence(sequence) == EPhysicsSceneQueryResult::Success);
+        assert(body->SetLinearVelocity(Math::Vector3(3,0,0)) == EPhysicsResult::Success);
+        assert(body->AddImpulse(Math::Vector3(2,0,0)) == EPhysicsResult::Success);
+        fixture.Physics->PreFixedTick(1.f/60);
+        const auto handle = body->GetBodyHandle();
+        const auto pending = PhysicsModuleTestAccess::GetPendingImpulse(*fixture.Physics,handle);
+        const auto preStep = PhysicsModuleTestAccess::GetPreStepPosition(*fixture.Physics,handle);
+        const auto preValid = PhysicsModuleTestAccess::HasPreStepSnapshot(*fixture.Physics,handle);
+        const auto events = PhysicsModuleTestAccess::GetDispatchedEventCount(*fixture.Physics);
+        const auto pairs = PhysicsModuleTestAccess::GetPreviousPairCount(*fixture.Physics);
+        entity->SetLocalPosition(5,0,0);
+        assert(collider->SetUserData(88) == EPhysicsResult::Success);
+        const Math::Ray ray(Math::Vector3(-5,0,0),Math::Vector3::UnitX);
+        PhysicsRaycastHit hit;
+        assert(scene.Raycast(ray,20,hit) == EPhysicsSceneQueryResult::Success && NearlyEqual(hit.Distance,4));
+        EPhysicsSceneQueryResult threadResult{};
+        Thread::Thread worker([&]() { threadResult = scene.RefreshDynamicSnapshot(); });
+        worker.Join();
+        assert(threadResult == EPhysicsSceneQueryResult::WrongThread);
+        assert(scene.Raycast(ray,20,hit) == EPhysicsSceneQueryResult::Success && NearlyEqual(hit.Distance,4));
+        assert(scene.RefreshDynamicSnapshot() == EPhysicsSceneQueryResult::Success);
+        assert(scene.Raycast(ray,20,hit) == EPhysicsSceneQueryResult::Success);
+        assert(NearlyEqual(hit.Distance,9) && hit.UserData == 88 && hit.Body == handle);
+        assert(scene.GetPublishedSnapshotSequence(after) == EPhysicsSceneQueryResult::Success && sequence == after);
+        assert(entity->GetLocalTransform().position == Math::Vector3(5,0,0));
+        assert(body->GetLinearVelocity() == Math::Vector3(3,0,0));
+        assert(PhysicsModuleTestAccess::GetPendingImpulse(*fixture.Physics,handle) == pending);
+        assert(PhysicsModuleTestAccess::GetPreStepPosition(*fixture.Physics,handle) == preStep);
+        assert(PhysicsModuleTestAccess::HasPreStepSnapshot(*fixture.Physics,handle) == preValid);
+        assert(PhysicsModuleTestAccess::GetDispatchedEventCount(*fixture.Physics) == events);
+        assert(PhysicsModuleTestAccess::GetPreviousPairCount(*fixture.Physics) == pairs);
+        auto* freshEntity = fixture.CreateSphere(Math::Transform(Math::Vector3(10,0,0)),1);
+        auto* freshCollider = freshEntity->GetComponent<ColliderComponent>();
+        auto* freshBody = fixture.World.CreateComponent<RigidBodyComponent>(freshEntity);
+        assert(freshBody != nullptr);
+        assert(freshBody->SetBodyType(EPhysicsBodyType::Kinematic) == EPhysicsResult::Success);
+        const bool wasBodyActive = PhysicsModuleTestAccess::IsBodyActive(*fixture.Physics,freshBody->GetBodyHandle());
+        const bool wasColliderActive = PhysicsModuleTestAccess::IsColliderActive(*fixture.Physics,freshCollider->GetColliderHandle());
+        entity->SetActive(false);
+        assert(scene.RefreshDynamicSnapshot() == EPhysicsSceneQueryResult::Success);
+        assert(scene.Raycast(ray,20,hit) == EPhysicsSceneQueryResult::Success);
+        assert(hit.Collider == freshCollider->GetColliderHandle() && hit.Body == freshBody->GetBodyHandle());
+        assert(PhysicsModuleTestAccess::IsBodyActive(*fixture.Physics,freshBody->GetBodyHandle()) == wasBodyActive);
+        assert(PhysicsModuleTestAccess::IsColliderActive(*fixture.Physics,freshCollider->GetColliderHandle()) == wasColliderActive);
+        entity->SetActive(true);
+        assert(scene.RefreshDynamicSnapshot() == EPhysicsSceneQueryResult::Success);
+        assert(scene.Raycast(ray,20,hit) == EPhysicsSceneQueryResult::Success);
+        assert(hit.Collider == collider->GetColliderHandle() && hit.Body == handle && NearlyEqual(hit.Distance,9));
+        assert(PhysicsModuleTestAccess::GetPendingImpulse(*fixture.Physics,handle) == pending);
+        fixture.Physics->FixedTick(1.f/60);
+        assert(body->GetLinearVelocity() == Math::Vector3(5,0,0));
+        assert(NearlyEqual(entity->GetLocalTransform().position.x,5+5.f/60));
+        assert(scene.GetPublishedSnapshotSequence(after) == EPhysicsSceneQueryResult::Success && after == sequence+1);
+    }
+
+    void TestRefreshRejectedDuringPhysicsNotification()
+    {
+        PhysicsFixture fixture;
+        SceneQuery& scene = fixture.Engine.GetSceneQuery();
+        auto* first = fixture.CreateSphere(Math::Transform(Math::Vector3()),1)->GetComponent<ColliderComponent>();
+        fixture.CreateSphere(Math::Transform(Math::Vector3(1.5f,0,0)),1);
+        assert(first->SetTrigger(true) == EPhysicsResult::Success);
+        assert(first->SetUserData(111) == EPhysicsResult::Success);
+        int calls = 0;
+        EPhysicsSceneQueryResult refreshResult{};
+        PhysicsCallbackHandle subscription;
+        assert(first->AddOnOverlapBegin(Core::Delegate<void,const PhysicsContactEvent&>([&](const PhysicsContactEvent&)
+        {
+            ++calls;
+            assert(first->SetUserData(222) == EPhysicsResult::Success);
+            refreshResult = scene.RefreshDynamicSnapshot();
+            PhysicsRaycastHit hit;
+            assert(scene.Raycast(Math::Ray(Math::Vector3(-5,0,0),Math::Vector3::UnitX),10,hit)
+                == EPhysicsSceneQueryResult::Success);
+            assert(hit.UserData == 111);
+        }),subscription) == EPhysicsResult::Success);
+        fixture.Physics->FixedTick(1.f/60);
+        assert(calls == 1 && refreshResult == EPhysicsSceneQueryResult::NotReady);
+        assert(first->RemoveOnOverlapBegin(subscription) == EPhysicsResult::Success);
+        uint64_t before = 0, after = 0;
+        assert(scene.GetPublishedSnapshotSequence(before) == EPhysicsSceneQueryResult::Success);
+        assert(scene.RefreshDynamicSnapshot() == EPhysicsSceneQueryResult::Success);
+        PhysicsRaycastHit hit;
+        assert(scene.Raycast(Math::Ray(Math::Vector3(-5,0,0),Math::Vector3::UnitX),10,hit)
+            == EPhysicsSceneQueryResult::Success && hit.UserData == 222);
+        assert(scene.GetPublishedSnapshotSequence(after) == EPhysicsSceneQueryResult::Success && before == after);
+        assert(calls == 1);
+    }
+
     void TestPublishedQueryBatch()
     {
         PhysicsFixture fixture;
@@ -726,6 +828,8 @@ int main()
     TestPublishedQueryBatch();
     TestLayerMaskCandidatePairs();
     TestLayerMaskContactsAndEvents();
+    TestExplicitSnapshotRefresh();
+    TestRefreshRejectedDuringPhysicsNotification();
     std::cout << "PhysicsBroadphaseQueryTest passed\n";
     return 0;
 }

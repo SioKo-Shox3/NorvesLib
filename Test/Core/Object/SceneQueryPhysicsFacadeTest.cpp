@@ -395,6 +395,42 @@ namespace
         assert(scene.UnbindPhysicsProvider(provider) == EPhysicsSceneQueryResult::Success);
     }
 
+    class RefreshQueryProvider final : public FakePhysicsSceneQueryProvider
+    {
+    public:
+        uint32_t Calls = 0;
+        EPhysicsSceneQueryResult RefreshDynamicSnapshot() override
+        {
+            ++Calls;
+            return Result;
+        }
+    };
+    void TestExplicitSnapshotRefreshFacade()
+    {
+        SceneQuery scene;
+        FakePhysicsSceneQueryProvider legacy;
+        RefreshQueryProvider provider;
+        assert(scene.RefreshDynamicSnapshot() == EPhysicsSceneQueryResult::Unavailable);
+        assert(scene.BindPhysicsProvider(legacy) == EPhysicsSceneQueryResult::Success);
+        assert(scene.RefreshDynamicSnapshot() == EPhysicsSceneQueryResult::Unavailable);
+        assert(scene.UnbindPhysicsProvider(legacy) == EPhysicsSceneQueryResult::Success);
+        assert(scene.BindPhysicsProvider(provider) == EPhysicsSceneQueryResult::Success);
+        for (auto result : {EPhysicsSceneQueryResult::Success,EPhysicsSceneQueryResult::NotReady,
+            EPhysicsSceneQueryResult::Unavailable,EPhysicsSceneQueryResult::InvalidArgument})
+        {
+            provider.Result = result;
+            const auto before = provider.Calls;
+            assert(scene.RefreshDynamicSnapshot() == result && provider.Calls == before+1);
+        }
+        const auto before = provider.Calls;
+        EPhysicsSceneQueryResult result{};
+        Thread::Thread worker([&]() { result = scene.RefreshDynamicSnapshot(); });
+        worker.Join();
+        assert(result == EPhysicsSceneQueryResult::WrongThread && provider.Calls == before);
+        assert(provider.PublishedSnapshotSequenceCallCount == 0);
+        assert(scene.UnbindPhysicsProvider(provider) == EPhysicsSceneQueryResult::Success);
+    }
+
     void SetSentinel(PhysicsRaycastHit& hit)
     {
         hit = CreateRaycastHit();
@@ -683,6 +719,7 @@ int main()
     ConfigureFailureReporting();
     TestUnifiedQueryFacade();
     TestBatchQueryFacade();
+    TestExplicitSnapshotRefreshFacade();
 
     std::cout << "SceneQueryPhysicsFacadeTest start\n";
 

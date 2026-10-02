@@ -1662,3 +1662,11 @@
 - stop-when: 片側許可だけで衝突、拒否pairの押出し/Hit/Begin、旧既定の候補順序変更、queryへMaskを誤適用、blocking未解消。
 - paths: Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Modules/Physics/PhysicsBroadphaseQueryTest.cpp, Test/Core/Object/PhysicsQueryTypesTest.cpp, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
 - notes: Layer/Maskはworking snapshotの値で評価し、callback中の設定は次stepに反映。既存trigger終了通知は許可撤回時にも配信する。実Windows/Core統合は未検証と区別する。
+
+## G1-GR08-P5B: simulationを進めずquery snapshotを明示更新する
+- status: done
+- done-when: SceneQuery/provider経由のRefreshDynamicSnapshotを追加し、owner/準備/physics処理中を検証してquery公開データだけ再構築する。承認S9=a通りfixed-step sequence/速度/impulse/準備位置/接触・通知状態は保持。候補完成後のnoexcept置換で旧snapshotを保護する。
+- verify: fake provider未対応/委譲/wrong threadと実Moduleの移動前後/明示更新/sequence不変/新規・無効化/metadata/Body対応/未準備/通知中拒否を既存bundleへ追加。実compile試行、Broadphaseのnoexcept移動syntax、CPU回帰、独立レビュー。
+- stop-when: refreshでsimulation進行/impulse消費/イベント発火/sequence更新、working snapshotの変更、候補失敗で公開値破壊、reentryで通知中のsnapshot変更、blocking未解消。
+- paths: Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.h, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Core/Object/SceneQueryPhysicsFacadeTest.cpp, Test/Modules/Physics/PhysicsBroadphaseQueryTest.cpp, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
+- notes: GR09の分離最適化までは全proxy再構築。明示呼出しのみで毎frame自動実行しない。現在のlifecycleをquery用に評価するがsimulationのactive cacheは更新しない。sequenceは最後の固定更新公開を示し、明示refreshで同sequence内のquery内容が変わる。

@@ -152,6 +152,19 @@ namespace NorvesLib::Core::Scene
         return EPhysicsSceneQueryResult::Success;
     }
 
+    EPhysicsSceneQueryResult SceneQuery::RefreshDynamicSnapshot()
+    {
+        if (!IsOwnerThread())
+        {
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+        if (!m_PhysicsProvider)
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+        return m_PhysicsProvider->RefreshDynamicSnapshot();
+    }
+
     EPhysicsSceneQueryResult SceneQuery::ExecuteBatch(Container::Span<const PhysicsQueryDesc> queries,
         Container::VariableArray<PhysicsQueryHit>& outHits,
         Container::VariableArray<PhysicsQueryBatchResult>& outResults) const
