@@ -56,6 +56,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsModuleLinkTest PhysicsModuleLinkTest.cpp
     MEMBER PhysicsBroadphaseQueryTest PhysicsBroadphaseQueryTest.cpp
     MEMBER PhysicsProxyQueryTest PhysicsProxyQueryTest.cpp
+    MEMBER PhysicsProxyVisitorTest PhysicsProxyVisitorTest.cpp
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
 )
@@ -75,3 +76,5 @@ add_test(NAME PhysicsLifecycleEventTest COMMAND PhysicsDynamicsTest --test=Physi
 add_test(NAME PhysicsFixedStepPipelineTest COMMAND PhysicsDynamicsTest --test=PhysicsFixedStepPipelineTest)
 set_tests_properties(PhysicsFixedStepPipelineTest PROPERTIES TIMEOUT 90)
 
+
+add_test(NAME PhysicsProxyVisitorTest COMMAND PhysicsDynamicsTest --test=PhysicsProxyVisitorTest)

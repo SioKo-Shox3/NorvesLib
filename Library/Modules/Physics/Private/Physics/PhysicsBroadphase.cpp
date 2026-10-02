@@ -335,6 +335,135 @@ namespace NorvesLib::Modules::Physics
             return IsFiniteQueryVector(value) && (value.x != 0.0f || value.y != 0.0f || value.z != 0.0f);
         }
 
+        bool IsValidProxyGeometry(const PhysicsShapeProxy& proxy)
+        {
+            return proxy.Shape == EPhysicsProxyShape::Sphere ? IsValidQueryShape(proxy.Sphere)
+                : proxy.Shape == EPhysicsProxyShape::Box ? IsValidQueryShape(proxy.Box)
+                : proxy.Shape == EPhysicsProxyShape::Capsule && IsValidQueryShape(proxy.Capsule);
+        }
+
+        bool IsUsableQueryBounds(const Math::AABB& bounds)
+        {
+            return IsFiniteQueryVector(bounds.Min) && IsFiniteQueryVector(bounds.Max)
+                && bounds.Min.x <= bounds.Max.x && bounds.Min.y <= bounds.Max.y && bounds.Min.z <= bounds.Max.z;
+        }
+
+        double BoundCoordinateScale(const Math::AABB& bounds)
+        {
+            const double coordinates[]{bounds.Min.x,bounds.Min.y,bounds.Min.z,bounds.Max.x,bounds.Max.y,bounds.Max.z};
+            double scale = 1;
+            for (double value : coordinates)
+            {
+                scale = std::fmax(scale,std::fabs(value));
+            }
+            return scale;
+        }
+
+        bool BoundsMayOverlap(const Math::AABB& first, const Math::AABB& second)
+        {
+            if (!IsUsableQueryBounds(second))
+            {
+                return true;
+            }
+            // float bounds丸めとworld座標相対のsweep許容より広く取り、狭め過ぎない。
+            const double margin = 1e-4 + 1e-5 * std::fmax(BoundCoordinateScale(first), BoundCoordinateScale(second));
+            return static_cast<double>(first.Max.x) + margin >= second.Min.x && static_cast<double>(second.Max.x) + margin >= first.Min.x
+                && static_cast<double>(first.Max.y) + margin >= second.Min.y && static_cast<double>(second.Max.y) + margin >= first.Min.y
+                && static_cast<double>(first.Max.z) + margin >= second.Min.z && static_cast<double>(second.Max.z) + margin >= first.Min.z;
+        }
+
+        bool BoundsMayMeetRay(const Math::AABB& bounds, const Math::Vector3& origin,
+            const Math::Vector3& unitDirection, float maxDistance)
+        {
+            if (!IsUsableQueryBounds(bounds))
+            {
+                return true;
+            }
+            const double low[3]{bounds.Min.x, bounds.Min.y, bounds.Min.z};
+            const double high[3]{bounds.Max.x, bounds.Max.y, bounds.Max.z};
+            const double start[3]{origin.x, origin.y, origin.z};
+            const double direction[3]{unitDirection.x, unitDirection.y, unitDirection.z};
+            double near = 0, far = maxDistance;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                // rayにはsweepの距離許容がないため、軸別の丸め余裕だけを使う。
+                const double margin = 1e-4 + 1e-5 * std::fmax(1.0,
+                    std::fmax(std::fabs(start[axis]),std::fmax(std::fabs(low[axis]),std::fabs(high[axis]))));
+                if (direction[axis] == 0)
+                {
+                    if (start[axis] < low[axis] - margin || start[axis] > high[axis] + margin)
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                const double first = (low[axis] - margin - start[axis]) / direction[axis];
+                const double last = (high[axis] + margin - start[axis]) / direction[axis];
+                near = std::fmax(near, std::fmin(first,last));
+                far = std::fmin(far, std::fmax(first,last));
+                if (near > far)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        Math::AABB ConservativeProxyBounds(const PhysicsShapeProxy& proxy)
+        {
+            auto bounds = PhysicsBroadphase::CalculateBounds(proxy);
+            if (proxy.Shape == EPhysicsProxyShape::Box)
+            {
+                // 許容Gram誤差1e-4の軸ではdotの逆写像と前向きboundsが一致しない。
+                // 3軸の誤差を見込み、最大半径長の1e-3を加えて両領域を包む。
+                const float padding = 1e-3f * std::fmax(proxy.Box.HalfExtents.x,
+                    std::fmax(proxy.Box.HalfExtents.y,proxy.Box.HalfExtents.z));
+                const Math::Vector3 expansion(padding,padding,padding);
+                bounds.Min -= expansion;
+                bounds.Max += expansion;
+            }
+            return bounds;
+        }
+
+        template<typename Predicate>
+        Core::Scene::EPhysicsSceneQueryResult VisitProxyCandidates(
+            Core::Container::Span<const PhysicsShapeProxy> proxies, PhysicsBroadphase::ProxyVisitCallback visitor,
+            void* context, PhysicsBroadphase::ProxyVisitCallback precheck, const Predicate& candidate)
+        {
+            using Result = Core::Scene::EPhysicsSceneQueryResult;
+            if (visitor == nullptr || (proxies.size() != 0 && proxies.data() == nullptr))
+            {
+                return Result::InvalidArgument;
+            }
+            for (size_t index = 0; index < proxies.size(); ++index)
+            {
+                const auto& proxy = proxies[index];
+                if (precheck)
+                {
+                    const auto result = precheck(proxy,context);
+                    if (result == Result::NoHit)
+                    {
+                        continue;
+                    }
+                    if (result != Result::Success)
+                    {
+                        return result;
+                    }
+                }
+                // 不正proxyを空間除外で隠さず、呼出側の検証へ渡す。
+                if (IsValidProxyGeometry(proxy) && !candidate(ConservativeProxyBounds(proxy)))
+                {
+                    continue;
+                }
+                const auto result = visitor(proxy,context);
+                if (result != Result::Success && result != Result::NoHit)
+                {
+                    return result;
+                }
+            }
+            return Result::Success;
+        }
+
         // 旧幾何のfloat中間値（カプセルrayの最大6次）をoverflowさせない。
         // ワールド原点ではなく問い合わせ始点からの相対尺度で判定する。
         bool HasRepresentableQueryScale(const PhysicsShapeProxy& proxy, const Core::Scene::PhysicsQueryDesc& query)
@@ -421,6 +550,32 @@ namespace NorvesLib::Modules::Physics
         }
     }
 
+    Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::VisitProxiesInAabb(
+        Core::Container::Span<const PhysicsShapeProxy> proxies, const Math::AABB& bounds,
+        ProxyVisitCallback visitor, void* context, ProxyVisitCallback precheck)
+    {
+        if (!IsUsableQueryBounds(bounds))
+        {
+            return Core::Scene::EPhysicsSceneQueryResult::InvalidArgument;
+        }
+        return VisitProxyCandidates(proxies, visitor, context, precheck,
+            [&](const Math::AABB& candidate) { return BoundsMayOverlap(bounds,candidate); });
+    }
+
+    Core::Scene::EPhysicsSceneQueryResult PhysicsBroadphase::VisitProxiesAlongRay(
+        Core::Container::Span<const PhysicsShapeProxy> proxies, const Math::Ray& ray, float maxDistance,
+        ProxyVisitCallback visitor, void* context, ProxyVisitCallback precheck)
+    {
+        if (!IsFiniteQueryVector(ray.Origin) || !IsNonzeroQueryDirection(ray.Direction) ||
+            !std::isfinite(maxDistance) || maxDistance < 0)
+        {
+            return Core::Scene::EPhysicsSceneQueryResult::InvalidArgument;
+        }
+        const auto unit = QueryUnit(ray.Direction);
+        return VisitProxyCandidates(proxies, visitor, context, precheck,
+            [&](const Math::AABB& candidate) { return BoundsMayMeetRay(candidate,ray.Origin,unit,maxDistance); });
+    }
+
     bool PhysicsBroadphase::IsValidQuery(const Core::Scene::PhysicsQueryDesc& query)
     {
         using Kind = Core::Scene::EPhysicsQueryKind;
@@ -460,10 +615,7 @@ namespace NorvesLib::Modules::Physics
         {
             return Result::InvalidArgument;
         }
-        const bool bValidProxy = proxy.Shape == EPhysicsProxyShape::Sphere ? IsValidQueryShape(proxy.Sphere)
-            : proxy.Shape == EPhysicsProxyShape::Box ? IsValidQueryShape(proxy.Box)
-            : proxy.Shape == EPhysicsProxyShape::Capsule && IsValidQueryShape(proxy.Capsule);
-        if (!bValidProxy)
+        if (!IsValidProxyGeometry(proxy))
         {
             return Result::InvalidArgument;
         }

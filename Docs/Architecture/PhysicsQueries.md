@@ -35,3 +35,11 @@
 - freshなTransform/shape/metadataと現在の有効性をquery用に評価する。新規/無効化されたcolliderと対応Bodyも反映するが、simulation側のactive cache、working Broadphase、速度、保留impulse、PreFixedの準備位置、接触履歴、通知状態を変更しない
 - GetPublishedSnapshotSequenceは最後の固定更新による公開回数を維持し、明示refreshでは増加しない。同sequence内でquery内容が変わるため、明示呼出し側は自分の検索結果cacheを無効化する。次の通常FixedTickは通常通り進行しsequenceが増える
 - 実Moduleの移動前後/metadata/Body対応/新規・無効化/impulse・準備位置保持/通知中拒否とfake providerの委譲を試験へ追加。Broadphaseの実型がnoexcept move可能であることは独立syntaxで確認。実Core/Module統合compile/実行はWindows.h依存で未確認
+
+## 空間候補の訪問境界（P4C）
+- PhysicsBroadphase::VisitProxiesInAabb / VisitProxiesAlongRayはproxy spanを入力順で同期訪問する。visitorはSuccess/NoHitで継続、その他のResultで中断する。訪問API自体のSuccessは走査完了であり幾何hitを意味しない。任意precheckは空間除外より先に呼び、NoHitで除外、その他の非Successで中断する
+- context/proxy/input spanの借用を保持せず、callback中に入力領域を書き換えない。空間boundsはproxy実形状から求め、不正geometryや計算不能boundsは黙って落とさずvisitor側へ渡す。要求側の不正bounds/ray/非空null span/visitor欠落はInvalidArgument
+- AABBはfloat丸めとsweepのworld相対許容より広い保守的余裕で比較する。rayは正規化しdouble slabを使い、軸ごとの丸め余裕を取る。directionの厳密0だけを平行扱いし、短い成分をepsilonで捨てない。有限長・距離0を扱う
+- 実Broadphase.cppの訪問処理をstack proxy/実Mathと直接リンクして検証する。allocator/OSの代用品は使わない。遠方除外/接触/OBB/capsule/極端direction/長い微小軸ray/失敗順序/不正値を通常・最適化・sanitizer・MEMBERで確認。クエリ集約への接続と全探索比較はP4D
+
+- OBBは受理可能な軸のGram誤差1e-4によりdot判定領域と前向きboundsがずれるため、最大半径長の1e-3を候補boundsへ加算する。狭いray/AABBの境界で既存の確定hitを取り落とさない

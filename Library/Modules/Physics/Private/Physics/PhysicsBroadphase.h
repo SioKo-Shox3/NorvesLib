@@ -63,6 +63,15 @@ namespace NorvesLib::Modules::Physics
         static Core::Scene::EPhysicsSceneQueryResult ExecuteQueryOverProxies(
             Core::Container::Span<const PhysicsShapeProxy> proxies, const Core::Scene::PhysicsQueryDesc& query,
             Core::Container::Span<Core::Scene::PhysicsQueryHit> outHits, size_t& outHitCount);
+        // 同期借用。callbackはSuccess/NoHitで継続、他の結果で中断する。
+        // precheckはbounds除外前に呼び、NoHitなら除外する。input/context/proxyを保持しないこと。
+        using ProxyVisitCallback = Core::Scene::EPhysicsSceneQueryResult (*)(const PhysicsShapeProxy&, void*);
+        static Core::Scene::EPhysicsSceneQueryResult VisitProxiesInAabb(
+            Core::Container::Span<const PhysicsShapeProxy> proxies, const Math::AABB& bounds,
+            ProxyVisitCallback visitor, void* context, ProxyVisitCallback precheck = nullptr);
+        static Core::Scene::EPhysicsSceneQueryResult VisitProxiesAlongRay(
+            Core::Container::Span<const PhysicsShapeProxy> proxies, const Math::Ray& ray, float maxDistance,
+            ProxyVisitCallback visitor, void* context, ProxyVisitCallback precheck = nullptr);
         static bool IsValidQuery(const Core::Scene::PhysicsQueryDesc& query);
         // 値型の1個のproxyを検査する。Success以外ではoutHitを初期状態へ戻す。
         // 相対尺度の6乗がFLT_MAX/4096を超える入力は旧幾何のoverflow防止のためInvalidArgument。

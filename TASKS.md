@@ -1670,3 +1670,11 @@
 - stop-when: refreshでsimulation進行/impulse消費/イベント発火/sequence更新、working snapshotの変更、候補失敗で公開値破壊、reentryで通知中のsnapshot変更、blocking未解消。
 - paths: Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.h, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Core/Object/SceneQueryPhysicsFacadeTest.cpp, Test/Modules/Physics/PhysicsBroadphaseQueryTest.cpp, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
 - notes: GR09の分離最適化までは全proxy再構築。明示呼出しのみで毎frame自動実行しない。現在のlifecycleをquery用に評価するがsimulationのactive cacheは更新しない。sequenceは最後の固定更新公開を示し、明示refreshで同sequence内のquery内容が変わる。
+
+## G1-GR08-P4C: 物理proxy候補のAABBとray訪問境界を追加する
+- status: done
+- done-when: span上の実proxyをAABB/有限長rayで保守的に絞り、同期callbackへ入力順で渡す訪問APIを追加。任意precheckでfilter/validationを先行でき、失敗の順序を保つ。非有限/逆転bounds等は要求拒否、proxy側の不正boundsは黙って落とさずcallbackへ渡す。
+- verify: 実Broadphase.cppを直接リンクし、遠方除外/接触/巨大・微小direction/長さ上限/0距離/順序/早期失敗/precheck拒否/不正値/不正spanを通常/O2-NDEBUG/ASanUBSan/MEMBERで検証し独立レビュー。既存proxy回帰も実行。
+- stop-when: 接触候補の取りこぼし、近zero軸をepsilonで平行扱い、callback借用の保持、validator失敗の隠蔽、proxy不正の黙殺、blocking未解消。
+- paths: Library/Modules/Physics/Private/Physics/PhysicsBroadphase.h, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Test/Modules/Physics/PhysicsProxyVisitorTest.cpp, Test/Modules/Physics/CMakeLists.txt, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
+- notes: 同期callbackはSuccess/NoHitで継続、他のResultで中断。precheckのNoHitは候補除外。callback/context/proxyの借用は呼出し中だけ。float丸めとsweep許容を見込みboundsを保守的に拡張。既存集約への接続はP4D。
