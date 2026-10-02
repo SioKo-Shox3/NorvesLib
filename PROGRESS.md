@@ -378,3 +378,6 @@
 
 - G1-GR04-P9: EngineへHapticsService値所有と固定providerの同期sinkを接続。simulation前のpause取消/即時Flush、後のclamp前実dt更新、focus喪失時のservice取消/Flushとdevice独立zero、終了時StopAll/Flush→逆順TryShutdownを実装。owner/service busy双方を検査し、最後のbackend停止結果で義務を保持する。第1周レビューでpoll中focusの拒否取りこぼしと検証不足を検出。Processorに最新focus＋喪失印の保留を追加し、raw即時中立化/安全batchのreset・Router通知、callback前snapshot/clear、Engine一致/購読serial、Run開始/message後/poll後/振動更新前後の回収を接続。false→trueでも旧voice取消を失わない。4slot、送信順、service-busy単独、実共通pause経路、sample中focus変化、適用中の後発focus、防御的observer復帰、window交換、停止再試行、実Run例外cleanup/再Runの試験sourceを追加し第2周静的レビューPASS。純時間/mix/output回帰は成功、Engine/test compileはWindows.h依存で停止し統合/native実行未確認。FlushとTryShutdownの結果を個別に逆転させる組合せ試験は未追加のnon-blocking残課題。
 - Next: GR04のhaptics.v1効果JSONと既定asset/起動読込みを接続し、その後にActiveDeviceKind通知へ進む。
+
+- G1-GR04-P10: haptics.v1 codecを追加。effect/key/任意settingsの既知field型・重複・有限値・範囲・名前/curveと1MiB/深さ64/effect256/key256/name128byte上限、未知field警告を実装。Parse/Writeは候補完成後に反映、service Configure overloadで効果/設定を一括反映する。レビューの入力/report aliasをlocal診断の退出時公開で修正し、既存Identity pool別名衝突は元名とのbyte一致検査で拒否。Game起動は既定Footstep/Hit/BiteHold assetを読み、通常I/O/validation失敗なら旧設定で継続、自動再生/保存なし。実asset1539byte/3効果のPython検証、pure時間/mix/output回帰成功、独立静的レビューPASS。実codec/Game/追加testはWindows.h依存でcompile/実行未確認。既存AssetFileReaderは全file確保後にJSON上限を検査し、確保例外は伝播して起動失敗になり得る。永続化/UIはGR76/GR68へ接続する。
+- Next: GR04のActiveDeviceKind検出・ノイズ除外・切替ヒステリシス・Delegate通知を実装する。

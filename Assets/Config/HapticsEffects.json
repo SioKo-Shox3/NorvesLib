@@ -1,0 +1,104 @@
+{
+  "schema": "haptics.v1",
+  "settings": {
+    "enabled": true,
+    "strength": 0.5,
+    "mix_mode": "maximum"
+  },
+  "effects": [
+    {
+      "name": "Footstep",
+      "duration": 0.12,
+      "loop": false,
+      "priority": 0,
+      "low": [
+        {
+          "t": 0,
+          "v": 0.12
+        },
+        {
+          "t": 0.03,
+          "v": 0.18
+        },
+        {
+          "t": 0.12,
+          "v": 0
+        }
+      ],
+      "high": [
+        {
+          "t": 0,
+          "v": 0.03
+        },
+        {
+          "t": 0.12,
+          "v": 0
+        }
+      ]
+    },
+    {
+      "name": "Hit",
+      "duration": 0.22,
+      "loop": false,
+      "priority": 10,
+      "low": [
+        {
+          "t": 0,
+          "v": 0.8
+        },
+        {
+          "t": 0.04,
+          "v": 0.6
+        },
+        {
+          "t": 0.22,
+          "v": 0
+        }
+      ],
+      "high": [
+        {
+          "t": 0,
+          "v": 0.5
+        },
+        {
+          "t": 0.08,
+          "v": 0.2
+        },
+        {
+          "t": 0.22,
+          "v": 0
+        }
+      ]
+    },
+    {
+      "name": "BiteHold",
+      "duration": 0.4,
+      "loop": true,
+      "priority": 5,
+      "low": [
+        {
+          "t": 0,
+          "v": 0.25
+        },
+        {
+          "t": 0.2,
+          "v": 0.35
+        },
+        {
+          "t": 0.4,
+          "v": 0.25
+        }
+      ],
+      "high": [
+        {
+          "t": 0,
+          "v": 0.08
+        },
+        {
+          "t": 0.4,
+          "v": 0.08
+        }
+      ]
+    }
+  ]
+}

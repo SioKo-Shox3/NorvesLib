@@ -1,4 +1,5 @@
 ﻿#include "GameApplicationHandler.h"
+#include "Input/GameHapticsSettings.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Asset/AssetSystem.h"
 #include "Core/Public/Asset/CookedAudioFormat.h"
@@ -1018,6 +1019,12 @@ namespace Game
 
         if (auto* engine = NorvesLib::Core::Engine::GEngine)
         {
+            NorvesLib::Core::Container::String hapticsError;
+            if (!Game::Input::InitializeGameHaptics(engine->GetHapticsService(), hapticsError))
+            {
+                LOG_WARNING_F("振動効果を適用できません。既存設定で続行します: %s",
+                    hapticsError.empty() ? "" : hapticsError.c_str());
+            }
             if (!m_InputSettings.Initialize(engine->GetInputMapper()))
             {
                 const auto& error = m_InputSettings.GetLastError();

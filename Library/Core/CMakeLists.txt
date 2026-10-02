@@ -233,6 +233,7 @@ set(PRIVATE_SOURCES
     Private/Input/InputDebugOverlayController.cpp
     Private/Input/InputSystem.cpp
     Private/Input/HapticsService.cpp
+    Private/Input/HapticsJson.cpp
     Private/Input/InputRouter.cpp
     Private/Input/MayaCameraController.cpp
     Private/Input/LightController.cpp
@@ -562,6 +563,7 @@ set(PUBLIC_HEADERS
     Public/Input/HapticsOutputState.h
     Public/Input/HapticsPlaybackTime.h
     Public/Input/HapticsService.h
+    Public/Input/HapticsJson.h
     Public/Input/MayaCameraController.h
     Public/Input/LightController.h
     Public/Rendering/PathTracingExrOutput.h

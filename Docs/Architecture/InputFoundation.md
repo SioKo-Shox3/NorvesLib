@@ -306,3 +306,12 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - Engine入力ownerのbusyとserviceのbusyを両方確認して登録/開始/停止/制御/更新の再入を拒否。serviceの非確保Update/Flush/取消操作はnoexceptを明示し、OS focus callbackとcleanupへ接続する。
 - fake providerによる複数slot・倍率・実2秒・pause/focus即時zero・失敗再試行・Run例外cleanup/再Runを既存Engine bundleへ追加。純時間/混合/出力回帰は実行できるが、Engine統合testのcompile/実行はString.hのWindows.h依存で未確認。効果JSONと既定assetのGame起動読込みは後続。
 - ゲームパッド/device配送や振動sinkの途中でfocus通知が来た場合は、最新要求と喪失の履歴をProcessorで保留する。raw/Mapperは即時取消、reset/Router通知は安全なbatchで行う。同一pollの喪失→復帰でもfalse取消を通し、残りslotの再注入値も再resetする。要求batchをcallback前に取り出し、新通知を上書きせず次batchへ残す。Run開始・message後・poll後・振動更新前後に回収し、window購読serial/Engine一致で古い通知を除外する。
+
+### haptics.v1と起動時の既定効果（GR04）
+- CoreのHapticsJsonはschema=haptics.v1、effects配列を必須とする。各effectのname/duration/low/highは必須、loop/priorityは省略時false/0。keyはt/vを持つ。任意settingsはenabled/strength/mix_mode（maximumまたはadd_clamp）、省略時は有効・0.5・maximum。
+- 既知field重複/不正型/非有限/範囲外/名前の制御文字/Identity重複/key時刻の重複や降順を拒否。未知fieldは警告して無視する。JSONは1MiB/深さ64、効果256、各curve256key、名前128byteを上限とし、UTF-8 BOMを受理する。数値はdouble範囲を確認してからfloat/int32へ変換する。
+- Parse/Writeは全候補成功後だけ出力を更新。HapticsServiceのConfigure overloadは効果と全体設定を一括反映し、失敗/確保例外では旧設定とvoiceを維持、成功で旧voiceを取消する。送信は次Update/Flushで行う。
+- Game起動でAssetFileReaderからConfig/HapticsEffects.jsonを読み、失敗時は警告して旧設定で起動を続ける。Footstep/Hit/BiteHoldは仮の控えめな既定効果で、読込みだけでは再生しない。実際の呼出しはGR05/戦闘/GR20の責務。Rendering3DTestの入力/画面は変えない。
+- 強度/onoffはruntime APIとJSONで扱える。user設定の保存先とUIはGR76/GR68へ接続し、この段で暗黙の保存先や自動保存は追加しない。
+- 既定assetは実Pythonで型/範囲/curve/ID/上限を確認。実JSON codec/roundtrip/拒否/旧値保持/Game適用の試験は既存bundleへ追加したが、Windows.h依存でcompile/実行は未確認。既存pure hapticsの回帰は実行可能。
+- 名前のIdentity化後に元のJSON名とのbyte一致を検査し、既存poolの別名hash衝突を黙って採用しない。Parseの診断は読了後に公開するため入力がreport.Error自身でも先に消さない。通常のI/O/validation失敗は起動継続、確保例外は上位へ伝播して起動失敗になり得る。1MiBはJSON解析前の制限で、既存AssetFileReaderによる全file確保より前の制限ではない。

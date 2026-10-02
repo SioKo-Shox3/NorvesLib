@@ -54,6 +54,8 @@ namespace NorvesLib::Core::Input
         // 無効値/重複IDは旧設定を保持。allocation例外も旧設定を保持して伝播する。
         // 成功は全voiceを取消。送信ACKは保持し、残留出力を次のFlushで止める。
         bool Configure(Container::Span<const HapticsEffectDefinition> effects);
+        // 効果と全体設定を同じcandidateとして反映する。失敗時は両方を維持する。
+        bool Configure(Container::Span<const HapticsEffectDefinition> effects, const HapticsSettings& settings);
         // 借用定義は次のConfigure/破棄まで。外部で保持する場合はコピーする。
         const Container::VariableArray<HapticsEffectDefinition>& GetEffects() const { return m_Effects; }
         uint64_t Play(Identity effect, uint8_t slot, float gain = 1);

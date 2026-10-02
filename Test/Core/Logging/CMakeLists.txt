@@ -24,6 +24,7 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER HapticsMixerTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/HapticsMixerTest.cpp
     MEMBER HapticsPlaybackTimeTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/HapticsPlaybackTimeTest.cpp
     MEMBER HapticsServiceTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/HapticsServiceTest.cpp
+    MEMBER HapticsJsonTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/HapticsJsonTest.cpp
     MEMBER XInputDeviceIntegrationTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/XInputDeviceIntegrationTest.cpp
     MEMBER InputActionSettingsTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputActionSettingsTest.cpp
     MEMBER AbsoluteMouseTrackingTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/AbsoluteMouseTrackingTest.cpp
@@ -47,6 +48,7 @@ norves_add_test_bundle(LoggerSinkTest
         ${CMAKE_SOURCE_DIR}/Game/Input/CameraInputCollector.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/GameInputSettings.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Input/GameHapticsSettings.cpp
 )
 target_link_libraries(LoggerSinkTest PRIVATE Core Threads::Threads)
 target_include_directories(LoggerSinkTest PRIVATE

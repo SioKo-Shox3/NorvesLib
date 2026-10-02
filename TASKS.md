@@ -1606,3 +1606,11 @@
 - stop-when: pause中nonzero、cleanup前にbackend破棄、scaled/clamped dt使用、古いvoice再開、callback中owner再入、停止失敗の偽成功、blocking未解消。
 - paths: Library/Core/Public/Engine/Engine.h, Library/Core/Private/Engine/Engine.cpp, Library/Core/Public/Engine/ApplicationProcessor.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Input/HapticsService.h, Library/Core/Private/Input/HapticsService.cpp, Test/Core/Engine/HapticsFramePipelineTest.cpp, Test/Core/Engine/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: serviceの効果はGame側が設定。既定asset/JSON読込みは次段。実機停止が失敗した場合は再試行義務を保持し、物理成功を保証しない。
+
+## G1-GR04-P10: 振動効果JSONと既定assetの起動読込みを接続する
+- status: done
+- done-when: haptics.v1のeffect/key/settingsを型・有限値・範囲・重複・サイズ/深さ上限付きでParse/Writeし、invalid時の旧値を保持。serviceへ効果と設定を一括反映、既定assetをGame起動で読込み、通常I/O/validation失敗時は旧設定を維持して起動継続（確保例外は伝播）。自動再生は行わない。
+- verify: JSON roundtrip/未知field/既知重複/不正型・範囲・名前・曲線・上限/旧設定保持とGame適用を既存bundleへ追加。既定assetの実Python検証、pure haptics回帰、独立レビュー。Windows依存の実parser/統合未実行を明示。
+- stop-when: invalidの部分反映、設定の暗黙保存/自動再生、JSON解析のbyte/depth上限無視、未知fieldの誤採用、起動画面の変更、blocking未解消。
+- paths: Library/Core/Public/Input/HapticsJson.h, Library/Core/Private/Input/HapticsJson.cpp, Library/Core/Public/Input/HapticsService.h, Library/Core/Private/Input/HapticsService.cpp, Library/Core/CMakeLists.txt, Game/Input/GameHapticsSettings.h, Game/Input/GameHapticsSettings.cpp, Game/GameApplicationHandler.cpp, Assets/Config/HapticsEffects.json, Test/Core/Input/HapticsJsonTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: 強度/onoffはruntime APIとJSONで表現し、user設定の保存先/UIはGR76/GR68へ接続する。既定の見た目/手触り値は仮、実機調整は未確認。既存AssetFileReaderは全file読込み後にJSON上限を検査し、確保前の個別上限は別課題。

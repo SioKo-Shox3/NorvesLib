@@ -38,7 +38,11 @@ namespace NorvesLib::Core::Input
     }
     bool HapticsService::Configure(Container::Span<const HapticsEffectDefinition> effects)
     {
-        if (m_bBusy)
+        return Configure(effects, m_Settings);
+    }
+    bool HapticsService::Configure(Container::Span<const HapticsEffectDefinition> effects, const HapticsSettings& settings)
+    {
+        if (m_bBusy || !IsValidSettings(settings))
         {
             return false;
         }
@@ -61,6 +65,7 @@ namespace NorvesLib::Core::Input
             candidate.push_back(effect);
         }
         m_Effects.swap(candidate);
+        m_Settings = settings;
         m_VoiceCount = 0;
         return true;
     }
