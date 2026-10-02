@@ -954,6 +954,13 @@ register_rendering_gpu_test(
     RenderingGoldenImageTest
     --scene=outdoor
     --capture-source=back-buffer)
+# GTAO: 部屋の大きさ（Cornell）の壁・床・天井が遮蔽で黒くならず、隅・接地部だけが暗くなること
+register_rendering_gpu_test(
+    RenderingGTAOCornellRoomVulkanTest
+    RenderingGoldenImageTest
+    --scene=indoor
+    --capture-source=back-buffer
+    --ao-scenario=cornell-room)
 
 add_test(NAME RenderingCoordinatorStatsPropagationTest COMMAND RenderingCoordinatorDiagnosticsSnapshotTest --test=RenderingCoordinatorStatsPropagationTest)
 

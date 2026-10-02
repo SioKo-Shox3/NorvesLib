@@ -148,6 +148,8 @@ namespace NorvesLib::Core::Rendering
         LODLevel,
         /** @brief 点光源のキューブシャドウに格納された距離（遮られた面は赤） */
         PointShadowDistance,
+        /** @brief 画面空間AO（GTAO）の雑音除去後の可視率（白=遮蔽なし、黒=全遮蔽） */
+        AmbientOcclusion,
         Count
     };
 
@@ -175,6 +177,8 @@ namespace NorvesLib::Core::Rendering
             return "LODLevel";
         case DebugViewMode::PointShadowDistance:
             return "PointShadowDistance";
+        case DebugViewMode::AmbientOcclusion:
+            return "AmbientOcclusion";
         case DebugViewMode::Count:
         default:
             return "Invalid";

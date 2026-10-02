@@ -10,8 +10,8 @@
 #include "RHI/ICommandList.h"
 #include "Logging/LogMacros.h"
 
+#include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <cstring>
 
 namespace NorvesLib::Core::Rendering
@@ -25,21 +25,29 @@ namespace NorvesLib::Core::Rendering
     {
         float projection[16];
         float invProjection[16];
-        float screenSize[4]; // xy=size, zw=1/size
-        float radius;
-        float bias;
-        float intensity;
-        float _pad0;
+        float view[16];
+        float screenSize[4];   // xy=寸法, zw=1/寸法
+        float radiusParams[4]; // x=半径(m), y=減衰を始める距離(m), z=減衰の幅(m), w=画面上の半径の上限(画素)
+        float noiseParams[4];  // x=スライスの向きの時間のずらし, y=段の位置の時間のずらし, z=可視率の指数
     };
 
     struct GPUBlurParams
     {
+        float invProjection[16];
         float texelSize[4]; // xy=1/width, 1/height
     };
 
+    static_assert(sizeof(GPUSSAOParams) == 240, "gtao.frag の GTAOParams と std140 の大きさが一致すること");
+    static_assert(sizeof(GPUBlurParams) == 80, "gtao_denoise.frag の DenoiseParams と std140 の大きさが一致すること");
+
     static constexpr uint32_t SSAO_PARAMS_SIZE = sizeof(GPUSSAOParams);
-    static constexpr uint32_t KERNEL_BUFFER_SIZE = 64 * 4 * sizeof(float); // vec4 * 64
     static constexpr uint32_t BLUR_PARAMS_SIZE = sizeof(GPUBlurParams);
+
+    // TAAで時間方向に蓄積するときの、フレームごとの雑音のずらし（黄金比系の低食い違い列）
+    static constexpr float TemporalSliceNoiseStep = 0.6180339887f;
+    static constexpr float TemporalStepNoiseStep = 0.7548776662f;
+    // 時間のずらしを繰り返す長さ（浮動小数の精度を保つため、フレーム番号をこの周期で丸める）
+    static constexpr uint64_t TemporalNoisePeriod = 64u;
 
     static RHI::DescriptorSetDesc CreateSSAODescriptorSetDesc()
     {
@@ -62,18 +70,6 @@ namespace NorvesLib::Core::Rendering
         paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
         paramsBinding.stages = RHI::ShaderStage::Pixel;
         desc.bindings.push_back(paramsBinding);
-
-        RHI::DescriptorBinding kernelBinding;
-        kernelBinding.binding = 3;
-        kernelBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        kernelBinding.stages = RHI::ShaderStage::Pixel;
-        desc.bindings.push_back(kernelBinding);
-
-        RHI::DescriptorBinding noiseBinding;
-        noiseBinding.binding = 4;
-        noiseBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        noiseBinding.stages = RHI::ShaderStage::Pixel;
-        desc.bindings.push_back(noiseBinding);
 
         return desc;
     }
@@ -104,126 +100,17 @@ namespace NorvesLib::Core::Rendering
     }
 
     // ========================================
-    // 簡易乱数生成（std::randベース）
-    // ========================================
-    static float RandomFloat()
-    {
-        return static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
-    }
-
-    static float Lerp(float a, float b, float t)
-    {
-        return a + t * (b - a);
-    }
-
-    // ========================================
     // コンストラクタ・デストラクタ
     // ========================================
 
     SSAOPass::SSAOPass(const SSAOSettings &settings)
         : m_Settings(settings)
     {
-        std::memset(m_KernelData, 0, sizeof(m_KernelData));
-        GenerateKernel();
     }
 
     SSAOPass::~SSAOPass()
     {
         Shutdown();
-    }
-
-    // ========================================
-    // カーネル生成
-    // ========================================
-
-    void SSAOPass::GenerateKernel()
-    {
-        std::srand(42); // 固定シード（再現性のため）
-
-        for (int i = 0; i < 64; ++i)
-        {
-            // 半球内のランダム方向
-            float x = RandomFloat() * 2.0f - 1.0f;
-            float y = RandomFloat() * 2.0f - 1.0f;
-            float z = RandomFloat(); // 法線方向（半球）
-
-            // 正規化
-            float length = std::sqrt(x * x + y * y + z * z);
-            if (length > 0.0001f)
-            {
-                x /= length;
-                y /= length;
-                z /= length;
-            }
-
-            // ランダムスケール（中心に近いサンプルを多く）
-            float scale = static_cast<float>(i) / 64.0f;
-            scale = Lerp(0.1f, 1.0f, scale * scale);
-            x *= scale;
-            y *= scale;
-            z *= scale;
-
-            m_KernelData[i * 4 + 0] = x;
-            m_KernelData[i * 4 + 1] = y;
-            m_KernelData[i * 4 + 2] = z;
-            m_KernelData[i * 4 + 3] = 0.0f;
-        }
-    }
-
-    // ========================================
-    // ノイズテクスチャ生成
-    // ========================================
-
-    void SSAOPass::GenerateNoiseTexture()
-    {
-        if (!m_Device)
-        {
-            return;
-        }
-
-        // 4x4 ランダム回転ベクトルテクスチャ (RGB8)
-        constexpr uint32_t NOISE_SIZE = 4;
-        uint8_t noiseData[NOISE_SIZE * NOISE_SIZE * 4];
-
-        std::srand(12345); // 固定シード
-        for (uint32_t i = 0; i < NOISE_SIZE * NOISE_SIZE; ++i)
-        {
-            float x = RandomFloat() * 2.0f - 1.0f;
-            float y = RandomFloat() * 2.0f - 1.0f;
-            float z = 0.0f; // Z方向は使わない（接線空間内の回転のみ）
-
-            // 正規化
-            float len = std::sqrt(x * x + y * y);
-            if (len > 0.0001f)
-            {
-                x /= len;
-                y /= len;
-            }
-
-            // [0,1]にマッピングしてRGBA8に格納
-            noiseData[i * 4 + 0] = static_cast<uint8_t>((x * 0.5f + 0.5f) * 255.0f);
-            noiseData[i * 4 + 1] = static_cast<uint8_t>((y * 0.5f + 0.5f) * 255.0f);
-            noiseData[i * 4 + 2] = static_cast<uint8_t>((z * 0.5f + 0.5f) * 255.0f);
-            noiseData[i * 4 + 3] = 255;
-        }
-
-        RHI::TextureDesc noiseDesc;
-        noiseDesc.Width = NOISE_SIZE;
-        noiseDesc.Height = NOISE_SIZE;
-        noiseDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
-        noiseDesc.Usage = RHI::ResourceUsage::ShaderRead;
-        noiseDesc.DebugName = "SSAONoise4x4";
-
-        m_NoiseTexture = m_Device->CreateTexture(noiseDesc);
-        if (m_NoiseTexture)
-        {
-            // 4x4 RGBA8 = row pitch 16 bytes
-            m_NoiseTexture->Update(noiseData, NOISE_SIZE * 4, sizeof(noiseData));
-        }
-        else
-        {
-            NORVES_LOG_ERROR("SSAOPass", "Failed to create noise texture");
-        }
     }
 
     // ========================================
@@ -259,17 +146,17 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        m_SSAOFragmentShader = context.ShaderMgr->LoadShader("ssao.frag", RHI::ShaderStage::Pixel);
+        m_SSAOFragmentShader = context.ShaderMgr->LoadShader("gtao.frag", RHI::ShaderStage::Pixel);
         if (!m_SSAOFragmentShader)
         {
-            NORVES_LOG_ERROR("SSAOPass", "Failed to load SSAO fragment shader");
+            NORVES_LOG_ERROR("SSAOPass", "Failed to load GTAO fragment shader");
             return false;
         }
 
-        m_BlurFragmentShader = context.ShaderMgr->LoadShader("ssao_blur.frag", RHI::ShaderStage::Pixel);
+        m_BlurFragmentShader = context.ShaderMgr->LoadShader("gtao_denoise.frag", RHI::ShaderStage::Pixel);
         if (!m_BlurFragmentShader)
         {
-            NORVES_LOG_ERROR("SSAOPass", "Failed to load SSAO blur fragment shader");
+            NORVES_LOG_ERROR("SSAOPass", "Failed to load GTAO denoise fragment shader");
             return false;
         }
 
@@ -284,18 +171,8 @@ namespace NorvesLib::Core::Rendering
             samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
             m_LinearClampSampler = m_Device->CreateSampler(samplerDesc);
         }
-        {
-            RHI::SamplerDesc samplerDesc;
-            samplerDesc.filterMin = RHI::FilterMode::Point;
-            samplerDesc.filterMag = RHI::FilterMode::Point;
-            samplerDesc.filterMip = RHI::FilterMode::Point;
-            samplerDesc.addressU = RHI::TextureAddressMode::Wrap;
-            samplerDesc.addressV = RHI::TextureAddressMode::Wrap;
-            samplerDesc.addressW = RHI::TextureAddressMode::Wrap;
-            m_NearestRepeatSampler = m_Device->CreateSampler(samplerDesc);
-        }
 
-        if (!m_LinearClampSampler || !m_NearestRepeatSampler)
+        if (!m_LinearClampSampler)
         {
             NORVES_LOG_ERROR("SSAOPass", "Failed to create samplers");
             return false;
@@ -306,29 +183,17 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferDesc desc(SSAO_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "SSAOParamsUBO");
             m_SSAOParamsBuffer = m_Device->CreateBuffer(desc);
         }
-        // カーネルUBO
-        {
-            RHI::BufferDesc desc(KERNEL_BUFFER_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "SSAOKernelUBO");
-            m_KernelBuffer = m_Device->CreateBuffer(desc);
-            if (m_KernelBuffer)
-            {
-                m_KernelBuffer->Update(m_KernelData, KERNEL_BUFFER_SIZE);
-            }
-        }
-        // ブラーパラメータUBO
+        // 雑音除去パラメータUBO
         {
             RHI::BufferDesc desc(BLUR_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "SSAOBlurParamsUBO");
             m_BlurParamsBuffer = m_Device->CreateBuffer(desc);
         }
 
-        if (!m_SSAOParamsBuffer || !m_KernelBuffer || !m_BlurParamsBuffer)
+        if (!m_SSAOParamsBuffer || !m_BlurParamsBuffer)
         {
             NORVES_LOG_ERROR("SSAOPass", "Failed to create UBO buffers");
             return false;
         }
-
-        // ノイズテクスチャ生成
-        GenerateNoiseTexture();
 
         m_bInitialized = true;
         NORVES_LOG_INFO("SSAOPass", "SSAOPass initialized");
@@ -349,7 +214,6 @@ namespace NorvesLib::Core::Rendering
         m_GBufferPass = nullptr;
         m_SSAORawTexture.reset();
         m_SSAOBlurredTexture.reset();
-        m_NoiseTexture.reset();
         m_SSAORawHandle = {};
         m_SSAOBlurredHandle = {};
         m_GBufferDepthHandle = {};
@@ -360,7 +224,6 @@ namespace NorvesLib::Core::Rendering
         m_SSAOVertexShader.reset();
         m_SSAOFragmentShader.reset();
         m_SSAOParamsBuffer.reset();
-        m_KernelBuffer.reset();
         m_SSAODescriptorSet.reset();
         m_BlurRenderPass.reset();
         m_BlurFramebuffer.reset();
@@ -369,7 +232,6 @@ namespace NorvesLib::Core::Rendering
         m_BlurParamsBuffer.reset();
         m_BlurDescriptorSet.reset();
         m_LinearClampSampler.reset();
-        m_NearestRepeatSampler.reset();
         m_Device = nullptr;
         m_CurrentWidth = 0;
         m_CurrentHeight = 0;
@@ -483,7 +345,7 @@ namespace NorvesLib::Core::Rendering
 
         m_SSAORawHandle = builder.WriteTexture(
             RenderGraphResourceNames::SSAORaw,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAORaw"),
+            RGTextureDesc::RenderTarget(width, height, RawFormat, "SSAORaw"),
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
@@ -592,7 +454,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::TexturePtr rawTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAORaw"));
+            RHI::TextureDesc::RenderTarget(width, height, RawFormat, "SSAORaw"));
         RHI::TexturePtr blurredTexture = m_Device->CreateTexture(
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAOBlurred"));
 
@@ -688,7 +550,7 @@ namespace NorvesLib::Core::Rendering
 
         RHI::RenderPassDesc rpDesc;
         RHI::AttachmentDesc colorAttach;
-        colorAttach.format = m_Settings.OutputFormat;
+        colorAttach.format = RawFormat;
         colorAttach.isDepthStencil = false;
         colorAttach.clear = false;
         colorAttach.loadOp = RHI::AttachmentLoadOp::DontCare;
@@ -765,12 +627,6 @@ namespace NorvesLib::Core::Rendering
             }
 
             m_SSAODescriptorSet->BindConstantBuffer(2, m_SSAOParamsBuffer, 0, SSAO_PARAMS_SIZE);
-            m_SSAODescriptorSet->BindConstantBuffer(3, m_KernelBuffer, 0, KERNEL_BUFFER_SIZE);
-            if (m_NoiseTexture)
-            {
-                m_SSAODescriptorSet->BindTexture(4, m_NoiseTexture);
-                m_SSAODescriptorSet->BindSampler(4, m_NearestRepeatSampler);
-            }
         }
 
         if (m_SSAOPipeline)
@@ -970,29 +826,52 @@ namespace NorvesLib::Core::Rendering
         }
 
         GPUSSAOParams ssaoParams = {};
+        GPUBlurParams blurParams = {};
 
         const CameraProxy *activeCamera = context.GetActiveCamera();
+        bool bTemporalAccumulation = false;
         if (activeCamera)
         {
+            // GBufferを描いたのと同じ（TAAのジッタ込みの）投影で深度を復元する
             const CameraViewConstants cameraConstants =
                 CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
-            float projData[16];
-            cameraConstants.CopyShaderProjection(projData);
-            std::memcpy(ssaoParams.projection, projData, sizeof(projData));
-
-            float invProjData[16];
-            cameraConstants.CopyShaderInverseProjection(invProjData);
-            std::memcpy(ssaoParams.invProjection, invProjData, sizeof(invProjData));
+            cameraConstants.CopyShaderProjection(ssaoParams.projection);
+            cameraConstants.CopyShaderInverseProjection(ssaoParams.invProjection);
+            cameraConstants.CopyShaderView(ssaoParams.view);
+            cameraConstants.CopyShaderInverseProjection(blurParams.invProjection);
+            // ジッタが掛かっていれば、このViewportはTAAの履歴で時間方向に蓄積される
+            bTemporalAccumulation = activeCamera->ProjectionJitterNdcX != 0.0f ||
+                                    activeCamera->ProjectionJitterNdcY != 0.0f;
         }
+
+        const float radius = std::isfinite(m_Settings.Radius) && m_Settings.Radius > 0.0f
+                                 ? m_Settings.Radius
+                                 : 0.0f;
+        const float falloffFraction = std::isfinite(m_Settings.FalloffFraction)
+                                          ? std::clamp(m_Settings.FalloffFraction, 0.0f, 1.0f)
+                                          : 0.0f;
+        const float falloffRange = radius * falloffFraction;
 
         ssaoParams.screenSize[0] = static_cast<float>(m_CurrentWidth);
         ssaoParams.screenSize[1] = static_cast<float>(m_CurrentHeight);
         ssaoParams.screenSize[2] = 1.0f / static_cast<float>(m_CurrentWidth);
         ssaoParams.screenSize[3] = 1.0f / static_cast<float>(m_CurrentHeight);
-        ssaoParams.radius = m_Settings.Radius;
-        ssaoParams.bias = m_Settings.Bias;
-        ssaoParams.intensity = m_Settings.Intensity;
-        ssaoParams._pad0 = 0.0f;
+        ssaoParams.radiusParams[0] = radius;
+        ssaoParams.radiusParams[1] = radius - falloffRange;
+        ssaoParams.radiusParams[2] = falloffRange;
+        ssaoParams.radiusParams[3] = std::isfinite(m_Settings.MaxRadiusPixels)
+                                         ? std::max(m_Settings.MaxRadiusPixels, 0.0f)
+                                         : 0.0f;
+        if (bTemporalAccumulation)
+        {
+            // 雑音の4×4の並びをフレームごとにずらし、TAAが別の向き・段の結果を混ぜるようにする
+            const float frame = static_cast<float>(context.FrameNumber % TemporalNoisePeriod);
+            ssaoParams.noiseParams[0] = frame * TemporalSliceNoiseStep - std::floor(frame * TemporalSliceNoiseStep);
+            ssaoParams.noiseParams[1] = frame * TemporalStepNoiseStep - std::floor(frame * TemporalStepNoiseStep);
+        }
+        ssaoParams.noiseParams[2] = std::isfinite(m_Settings.Intensity) && m_Settings.Intensity > 0.0f
+                                        ? m_Settings.Intensity
+                                        : 1.0f;
 
         m_SSAOParamsBuffer->Update(&ssaoParams, SSAO_PARAMS_SIZE);
 
@@ -1009,7 +888,6 @@ namespace NorvesLib::Core::Rendering
                                       m_SSAOPipeline,
                                       m_SSAODescriptorSet);
 
-        GPUBlurParams blurParams = {};
         blurParams.texelSize[0] = 1.0f / static_cast<float>(m_CurrentWidth);
         blurParams.texelSize[1] = 1.0f / static_cast<float>(m_CurrentHeight);
         blurParams.texelSize[2] = 0.0f;

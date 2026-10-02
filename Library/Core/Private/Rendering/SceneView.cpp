@@ -845,11 +845,11 @@ namespace NorvesLib::Core::Rendering
         megaGeometryPass->SetSceneRenderer(sceneRenderer);
         AddPass(std::move(megaGeometryPass));
 
-        // SSAOPass: GBufferの深度・法線からスクリーンスペースAOを計算
+        // SSAOPass: GBufferの深度・法線から画面空間AO（GTAO）を計算。半径は世界の長さ（m）で、
+        // 球・岩の接地部や軒下（数十cm〜1 m）を拾い、部屋の大きさの壁全体は遮蔽にしない。
         SSAOSettings ssaoSettings;
-        ssaoSettings.Radius = 0.5f;
-        ssaoSettings.Bias = 0.025f;
-        ssaoSettings.Intensity = 2.0f;
+        ssaoSettings.Radius = 1.0f;
+        ssaoSettings.Intensity = 1.0f;
         auto ssaoPass = MakeUnique<SSAOPass>(ssaoSettings);
         AddPass(std::move(ssaoPass));
 

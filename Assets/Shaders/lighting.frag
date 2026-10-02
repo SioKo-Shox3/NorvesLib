@@ -109,7 +109,8 @@ const uint DEBUG_VIEW_MODE_GBUFFER_MATERIAL = 6u;
 const uint DEBUG_VIEW_MODE_GBUFFER_DEPTH = 7u;
 const uint DEBUG_VIEW_MODE_LOD_LEVEL = 8u;
 const uint DEBUG_VIEW_MODE_POINT_SHADOW_DISTANCE = 9u;
-const uint DEBUG_VIEW_MODE_COUNT = 10u;
+const uint DEBUG_VIEW_MODE_AMBIENT_OCCLUSION = 10u;
+const uint DEBUG_VIEW_MODE_COUNT = 11u;
 const uint DEBUG_VIEW_MODE_VALIDATION_LAMBERT = 253u;
 const uint DEBUG_VIEW_MODE_VALIDATION_PBR = 254u;
 const uint DEBUG_VIEW_MODE_RAW250 = 250u;
@@ -617,6 +618,17 @@ bool IsRaw252ParameterInvariantValid()
            abs(params.ambientColor.w - 1.0) <= 0.0001;
 }
 
+// GTAOの多重反射の近似（Jimenez et al. 2016）。遮られた方向から来る光も周りの面で何度か反射して
+// 届くので、アルベドが高い面ほど可視率を持ち上げる（色ごと）。可視率1では1のまま。
+vec3 GTAOMultiBounce(float visibility, vec3 albedo)
+{
+    vec3 a = 2.0404 * albedo - 0.3324;
+    vec3 b = -4.7951 * albedo + 0.6417;
+    vec3 c = 2.7552 * albedo + 0.6903;
+    vec3 bounced = ((visibility * a + b) * visibility + c) * visibility;
+    return clamp(max(vec3(visibility), bounced), vec3(0.0), vec3(1.0));
+}
+
 vec3 EvaluateDiffuseEndpoint(vec3 irradiance,
                              vec3 albedo,
                              float metallic,
@@ -636,7 +648,7 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
                          float roughness,
                          vec3 N,
                          vec3 V,
-                         float ao,
+                         vec3 diffuseAO,
                          float specularAO,
                          float iblIntensity,
                          vec2 brdf,
@@ -664,9 +676,9 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
                        ((1.0 - metallic) * Ed + metallic * Ec);
     if (bUseDDGI)
     {
-        return diffuseIBL * ao + specularIBL * specularAO * iblIntensity;
+        return diffuseIBL * diffuseAO + specularIBL * specularAO * iblIntensity;
     }
-    return (diffuseIBL * ao + specularIBL * specularAO) * iblIntensity;
+    return (diffuseIBL * diffuseAO + specularIBL * specularAO) * iblIntensity;
 }
 
 vec3 EvaluateRTGIEndpoint(vec3 albedo,
@@ -1073,12 +1085,25 @@ void main()
     float metallic = materialSample.r;
     float roughness = materialSample.g;
     float ao = materialSample.b;
+    // 拡散の環境光に掛ける遮蔽（多重反射の近似で色ごとに弱める）
+    vec3 diffuseAO = vec3(ao);
 
-    // SSAO適用: マテリアルAOとSSAOを掛け合わせる
+    // 画面空間AO（GTAO）適用: マテリアルAOと掛け合わせ、拡散には多重反射の近似を掛ける
     if (params.bSSAOEnabled != 0u)
     {
         float ssao = texture(ssaoTexture, fragUV).r;
+        if (params.debugViewMode == DEBUG_VIEW_MODE_AMBIENT_OCCLUSION)
+        {
+            outColor = vec4(vec3(ssao), 1.0);
+            return;
+        }
         ao *= ssao;
+        diffuseAO = GTAOMultiBounce(ao, albedo);
+    }
+    else if (params.debugViewMode == DEBUG_VIEW_MODE_AMBIENT_OCCLUSION)
+    {
+        outColor = vec4(vec3(1.0), 1.0);
+        return;
     }
 
     // ワールド座標を復元
@@ -1294,6 +1319,7 @@ void main()
             vec2 brdf = texture(brdfLUT, dfgCoordinate).rg;
             // DDGIとRTGIは遮蔽を光線で解くため、画面空間AOを重ねず材質AOだけを掛ける。
             float ddgiAmbientAO = bDDGIAvailable || bRTGIAvailable ? materialSample.b : ao;
+            vec3 iblDiffuseAO = bDDGIAvailable || bRTGIAvailable ? vec3(materialSample.b) : diffuseAO;
             ambient = bRTGIAvailable
                 ? EvaluateRTGIEndpoint(iblAlbedo,
                                        metallic,
@@ -1310,7 +1336,7 @@ void main()
                                        iblRoughness,
                                        N,
                                        V,
-                                       ddgiAmbientAO,
+                                       iblDiffuseAO,
                                        specularAO,
                                        iblIntensity,
                                        brdf,
@@ -1326,7 +1352,7 @@ void main()
             vec3 kD_ambient = (vec3(1.0) - F_ambient) * (1.0 - metallic);
             vec3 diffuseAmbient = kD_ambient * ambientLight * albedo;
             vec3 specularAmbient = F_ambient * ambientLight * (1.0 - roughness * 0.5);
-            ambient = diffuseAmbient * ao + specularAmbient * specularAO;
+            ambient = diffuseAmbient * diffuseAO + specularAmbient * specularAO;
             if (bRTGIAvailable)
             {
                 vec2 rtgiDfgCoordinate = clamp(vec2(NdotV, roughness),
