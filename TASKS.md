@@ -1430,3 +1430,11 @@
 - stop-when: capture中のgameplay漏れ、登録寿命不整合、reset再入、解除前の結果公開、古いrequestによる中止、blocking未解消。
 - paths: Library/Core/Public/Input/InputRebindCaptureManager.h, Library/Core/Private/Input/InputRebindCaptureManager.cpp, Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Public/Input/InputRouter.h, Library/Core/Public/Engine/Engine.h, Library/Core/Private/Engine/Engine.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/InputRebindCaptureManagerTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Test/Core/Engine/InputFocusPipelineTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: Game側の対象action/slotと設定revision付き適用は別段。request結果だけで設定を暗黙変更/保存しない。Detachは所有終了時に配送外で呼び、借用先の寿命を超えない。
+
+## G1-GR03-P7E: 捕捉結果をGameの入力設定へ安全に反映する
+- status: done
+- done-when: context/action/slot/出力設定/revisionを不透明な値requestへ保持し、同じmanager要求とMapper、変更前revisionを検証してP7Aへ反映。末尾追加/置換/中止/待機/古い結果/二重適用を区別。managerや設定owner再生成でもIDを再利用せず、暗黙保存しない。
+- verify: 純helperの型/方向/modifier/invalid非変更をportable通常/O2/ASanUBSan/bundleで実行。実Game設定＋managerの追加/置換/古いrevision/別owner/中止/保存試験を既存bundleへ追加。独立レビュー、Windows統合未実行を明記。
+- stop-when: 古い/別ownerの結果を適用、失敗時にCurrent/Mapper部分反映、借用pointer長期保持、ID wrap、暗黙保存、blocking未解消。
+- paths: Game/Input/GameInputRebindTypes.h, Game/Input/GameInputSettings.h, Game/Input/GameInputSettings.cpp, Library/Core/Public/Input/InputRebindCaptureManager.h, Library/Core/Private/Input/InputRebindCaptureManager.cpp, Test/Core/Input/GameInputRebindTypesTest.cpp, Test/Core/Input/GameInputSettingsTest.cpp, Test/Core/Input/InputRebindCaptureManagerTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: 出力component/gain/反転は呼出側が明示し、既存slotの意図を勝手に変換しない。UIはGR68、保存は既存Saveのみ。

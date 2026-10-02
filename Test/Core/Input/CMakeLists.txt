@@ -23,3 +23,4 @@ add_test(NAME LegacyInputResetTest COMMAND LoggerSinkTest --test=LegacyInputRese
 add_test(NAME AbsoluteMouseTrackingTest COMMAND LoggerSinkTest --test=AbsoluteMouseTrackingTest)
 add_test(NAME InputRebindCaptureStateTest COMMAND LoggerSinkTest --test=InputRebindCaptureStateTest)
 add_test(NAME InputRebindCaptureManagerTest COMMAND LoggerSinkTest --test=InputRebindCaptureManagerTest)
+add_test(NAME GameInputRebindTypesTest COMMAND LoggerSinkTest --test=GameInputRebindTypesTest)

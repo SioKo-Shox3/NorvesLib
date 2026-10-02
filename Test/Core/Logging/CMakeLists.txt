@@ -26,6 +26,7 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER CameraInputResetTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/CameraInputResetTest.cpp
     MEMBER LegacyInputResetTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/LegacyInputResetTest.cpp
     MEMBER GameInputSettingsTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/GameInputSettingsTest.cpp
+    MEMBER GameInputRebindTypesTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/GameInputRebindTypesTest.cpp
     MEMBER InputBindingPersistenceTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputBindingPersistenceTest.cpp
     MEMBER WorkingDirectoryInputBindingStoreTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/WorkingDirectoryInputBindingStoreTest.cpp
     MEMBER InputBindingJsonTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputBindingJsonTest.cpp

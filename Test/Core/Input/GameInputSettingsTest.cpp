@@ -160,6 +160,135 @@ int main()
         assert(saved.FindAction(GameplayContext,Jump)->Bindings.size()==count);
         target.Detach();source.SetRouter(nullptr);
     }
+    {
+        using namespace Game::Input;
+        using namespace Game::InputActions;
+        using Result = EGameInputRebindApplyResult;
+        InputSystem source;
+        InputRouter route;
+        source.SetRouter(&route);
+        InputMapper target(source.GetState());
+        target.Attach(route);
+        InputRebindCaptureManager capture(source, route, target);
+        assert(capture.Attach());
+        StoreState disk;
+        GameInputSettings editing;
+        assert(editing.InitializeFromJson(target, json, Container::MakeUnique<FakeStore>(disk)));
+        assert(target.PushContext(GameplayContext));
+        GameInputRebindOutput output;
+        GameInputRebindRequest request;
+        const auto initialRevision = editing.GetRevision();
+        assert(initialRevision != 0);
+        assert(editing.BeginRebindCapture(capture, GameplayContext, Jump, 0, output, request));
+        assert(editing.ApplyRebindCapture(target, capture, request) == Result::Pending);
+        source.InjectKeyEvent(KeyCode::J, InputAction::Pressed);
+        source.InjectKeyEvent(KeyCode::J, InputAction::Released);
+        capture.Advance();
+        assert(editing.ApplyRebindCapture(target, capture, request) == Result::Applied);
+        assert(editing.GetRevision() != initialRevision && disk.Saves == 0);
+        assert(target.GetActiveContext() == GameplayContext);
+        assert(editing.GetConfiguration().Current.FindAction(GameplayContext, Jump)->Bindings[0].Source.Code == static_cast<uint16_t>(KeyCode::J));
+        assert(editing.ApplyRebindCapture(target, capture, request) == Result::Stale);
+        source.InjectKeyEvent(KeyCode::J, InputAction::Pressed);
+        assert(target.GetAction(Jump).Button.Held);
+        source.InjectKeyEvent(KeyCode::J, InputAction::Released);
+        assert(editing.Save().Success && disk.Saves == 1);
+        InputBindingSet persisted;
+        assert(InputBindingJson::ApplyOverrides(editing.GetConfiguration().Defaults, disk.Text, persisted));
+        assert(persisted.FindAction(GameplayContext, Jump)->Bindings[0].Source.Code == static_cast<uint16_t>(KeyCode::J));
+
+        const auto count = editing.GetConfiguration().Current.FindAction(GameplayContext, Jump)->Bindings.size();
+        assert(editing.BeginRebindCapture(capture, GameplayContext, Jump, count, output, request));
+        source.InjectMouseButton(MouseButton::X1, InputAction::Pressed, 0, 0);
+        source.InjectMouseButton(MouseButton::X1, InputAction::Released, 0, 0);
+        capture.Advance();
+        assert(editing.ApplyRebindCapture(target, capture, request) == Result::Applied);
+        const auto* updated = editing.GetConfiguration().Current.FindAction(GameplayContext, Jump);
+        assert(updated->Bindings.size() == count + 1);
+        assert(updated->Bindings.back().Source.Kind == EInputBindingSource::MouseButton);
+        assert(updated->Bindings.back().Source.Code == static_cast<uint16_t>(MouseButton::X1));
+        assert(disk.Saves == 1);
+
+        assert(editing.BeginRebindCapture(capture, GameplayContext, Jump, 0, output, request));
+        const auto cancelRevision = editing.GetRevision();
+        source.InjectKeyEvent(KeyCode::Escape, InputAction::Pressed);
+        source.InjectKeyEvent(KeyCode::Escape, InputAction::Released);
+        capture.Advance();
+        assert(editing.ApplyRebindCapture(target, capture, request) == Result::Cancelled);
+        assert(editing.GetRevision() == cancelRevision && disk.Saves == 1);
+        assert(editing.BeginRebindCapture(capture, GameplayContext, Jump, 0, output, request));
+        assert(editing.ResetActionBindings(target, GameplayContext, Jump));
+        source.InjectKeyEvent(KeyCode::K, InputAction::Pressed);
+        source.InjectKeyEvent(KeyCode::K, InputAction::Released);
+        capture.Advance();
+        assert(editing.ApplyRebindCapture(target, capture, request) == Result::Stale);
+        assert(editing.GetConfiguration().Current.FindAction(GameplayContext, Jump)->Bindings[0].Source.Code == static_cast<uint16_t>(KeyCode::Space));
+
+        // 別設定ownerは同じrequestを使えない。requestはpointerを保持しない。
+        assert(editing.BeginRebindCapture(capture, GameplayContext, Jump, 0, output, request));
+        GameInputSettings otherSettings;
+        assert(otherSettings.InitializeFromJson(target, json));
+        assert(otherSettings.GetRevision() != editing.GetRevision());
+        source.InjectKeyEvent(KeyCode::L, InputAction::Pressed);
+        source.InjectKeyEvent(KeyCode::L, InputAction::Released);
+        capture.Advance();
+        assert(otherSettings.ApplyRebindCapture(target, capture, request) == Result::Stale);
+        assert(editing.ApplyRebindCapture(target, capture, request) == Result::Applied);
+        assert(target.ConfigureWithContext(editing.GetConfiguration().Current, GameplayContext));
+
+        // 別managerのrequest番号は重ならず、Mapperの取り違えも拒否する。
+        assert(editing.BeginRebindCapture(capture, GameplayContext, Jump, 0, output, request));
+        source.InjectKeyEvent(KeyCode::B, InputAction::Pressed);
+        source.InjectKeyEvent(KeyCode::B, InputAction::Released);
+        capture.Advance();
+        {
+            InputSystem otherSource;
+            InputRouter otherRoute;
+            otherSource.SetRouter(&otherRoute);
+            InputMapper otherMapper(otherSource.GetState());
+            otherMapper.Attach(otherRoute);
+            InputRebindCaptureManager otherCapture(otherSource, otherRoute, otherMapper);
+            assert(otherCapture.Attach());
+            const auto otherId = otherCapture.Begin();
+            assert(otherId != 0 && otherId != request.GetCaptureRequestId());
+            assert(otherCapture.Cancel(otherId));
+            otherCapture.Advance();
+            assert(editing.ApplyRebindCapture(otherMapper, otherCapture, request) == Result::Stale);
+            assert(editing.ApplyRebindCapture(otherMapper, capture, request) == Result::Invalid);
+            otherCapture.Detach();
+            otherMapper.Detach();
+            otherSource.SetRouter(nullptr);
+        }
+        assert(editing.ApplyRebindCapture(target, capture, request) == Result::Applied);
+        const auto oldRequest = request.GetCaptureRequestId();
+        const auto revision = editing.GetRevision();
+        assert(!editing.BeginRebindCapture(capture, GameplayContext, "Missing"_id, 0, output, request));
+        assert(!editing.BeginRebindCapture(capture, GameplayContext, Jump, 1000, output, request));
+        auto invalidOutput = output;
+        invalidOutput.Component = EInputAxisComponent::Y;
+        assert(!editing.BeginRebindCapture(capture, GameplayContext, Jump, 0, invalidOutput, request));
+        InputRebindCaptureOptions wheelOnly;
+        wheelOnly.AllowedSources = InputRebindSourceBit(EInputBindingSource::MouseWheel);
+        assert(!editing.BeginRebindCapture(capture, GameplayContext, Move, 0, output, request, wheelOnly));
+        assert(request.GetCaptureRequestId() == oldRequest && editing.GetRevision() == revision && !capture.IsCapturing());
+
+        // Mapperだけにあるcontextは失敗しても捨てず、同じ値requestを修復後に再適用できる。
+        assert(editing.BeginRebindCapture(capture, GameplayContext, Jump, 0, output, request));
+        InputBindingSet foreign;
+        assert(foreign.AddContext("Foreign"_id, ECursorMode::Normal));
+        assert(target.ConfigureWithContext(foreign, "Foreign"_id));
+        source.InjectKeyEvent(KeyCode::N, InputAction::Pressed);
+        source.InjectKeyEvent(KeyCode::N, InputAction::Released);
+        capture.Advance();
+        assert(editing.ApplyRebindCapture(target, capture, request) == Result::Invalid);
+        assert(editing.GetRevision() == revision && target.GetActiveContext() == "Foreign"_id);
+        assert(target.ConfigureWithContext(editing.GetConfiguration().Current, GameplayContext));
+        assert(editing.ApplyRebindCapture(target, capture, request) == Result::Applied);
+        assert(disk.Saves == 1);
+        capture.Detach();
+        target.Detach();
+        source.SetRouter(nullptr);
+    }
     std::cout << "GameInputSettingsTest passed\n";
     return 0;
 }

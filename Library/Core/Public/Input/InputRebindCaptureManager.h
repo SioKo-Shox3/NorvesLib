@@ -33,7 +33,7 @@ namespace NorvesLib::Core::Input
         bool Attach();
         // 所有終了の解除。新たな入力通知を発火せず、進行中要求を中止する。
         void Detach();
-        // 0は拒否。既存の要求/結果を変えない。成功IDは同一instance内で再利用しない。
+        // 0は拒否。既存の要求/結果を変えない。成功IDはprocess内の別instanceとも再利用しない。
         uint64_t Begin(const InputRebindCaptureOptions& options = {});
         bool Cancel(uint64_t requestId);
         // reset/focus/Run終了用。通常eventの遮断解除と結果公開はAdvanceまで保留する。
@@ -45,6 +45,14 @@ namespace NorvesLib::Core::Input
             return m_bBlocking;
         }
         bool TryGetResult(uint64_t requestId, InputRebindCaptureResult& result) const;
+        bool IsCurrentRequest(uint64_t requestId) const
+        {
+            return requestId != 0 && requestId == m_RequestId;
+        }
+        bool UsesMapper(const InputMapper& mapper) const
+        {
+            return &m_Mapper == &mapper;
+        }
 
         bool OnKey(const KeyEvent& event) override;
         bool OnMouseButton(const MouseButtonEvent& event) override;

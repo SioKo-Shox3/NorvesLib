@@ -247,7 +247,7 @@ namespace
         assert(!f.System.GetState().IsKeyDown(KeyCode::A));
         assert(second.Attach());
         const auto other = second.Begin();
-        assert(other);
+        assert(other && other != id);
         assert(second.Cancel(other));
         second.Advance();
         second.Detach();

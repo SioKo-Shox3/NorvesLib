@@ -2,10 +2,31 @@
 #include "Input/InputMapper.h"
 #include "Input/InputRouter.h"
 #include "Input/InputSystem.h"
+#include "Thread/Atomic.h"
 #include <limits>
 
 namespace NorvesLib::Core::Input
 {
+    namespace
+    {
+        uint64_t NextCaptureRequest()
+        {
+            // 値requestを別manager/再生成instanceへ誤適用しない登録識別。wrapしない。
+            static NorvesLib::Thread::Atomic<uint64_t> next{1};
+            auto value = next.Load(std::memory_order_relaxed);
+            for (;;)
+            {
+                if (value == std::numeric_limits<uint64_t>::max())
+                {
+                    return 0;
+                }
+                if (next.CompareExchangeWeak(value, value + 1, std::memory_order_relaxed, std::memory_order_relaxed))
+                {
+                    return value;
+                }
+            }
+        }
+    }
     InputRebindCaptureManager::InputRebindCaptureManager(InputSystem& system, InputRouter& router, InputMapper& mapper)
         : m_System(system), m_Router(router), m_Mapper(mapper)
     {
@@ -59,15 +80,16 @@ namespace NorvesLib::Core::Input
     uint64_t InputRebindCaptureManager::Begin(const InputRebindCaptureOptions& options)
     {
         if (!m_bAttached || !HasMatchingWiring() || m_Mapper.m_CaptureOwner != this ||
-            !m_Mapper.IsFocused() || m_bBlocking || m_RequestId == std::numeric_limits<uint64_t>::max())
+            !m_Mapper.IsFocused() || m_bBlocking || !IsValidInputRebindCaptureOptions(options))
         {
             return 0;
         }
-        if (!m_Capture.Begin(options, m_System.GetState()))
+        const auto request = NextCaptureRequest();
+        if (request == 0 || !m_Capture.Begin(options, m_System.GetState()))
         {
             return 0;
         }
-        ++m_RequestId;
+        m_RequestId = request;
         m_bBlocking = true;
         m_Mapper.SetCaptureSuppressed(true);
         ResetOperations();

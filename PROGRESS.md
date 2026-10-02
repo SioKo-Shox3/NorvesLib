@@ -339,3 +339,6 @@
 
 - G1-GR03-P7D: InputRebindCaptureManagerを同じSystem/Router/Mapperの単一ownerとして予約最高優先度へ接続。request ID付き開始/中止/結果取得、全通常eventの遮断、Mapperのevent/polling/fixedPress/Active/cursor抑止、外部reset/focus喪失での中止を実装。Advanceで残留入力をresetしてから抑止を解除し結果を公開する。EngineでMapperより先にDetach、Run終了/例外も通知なしに正本を中立化してDetachし、次Runで再Attach。独立静的レビューPASS、通常終了の再Attach/取消も試験sourceへ補強。新規manager公開headerの実syntax検査とkernel/Raw/pad/armedのportable回帰成功。実System/Router/Mapper/Engineの統合試験を既存bundleへ登録したが、String.h/Containers.hのWindows.h依存によりcompile/実行は未検証。代替stubは使っていない。
 - Next: GR03のGame側action/slot/revisionとcapture結果を結び、古い設定への誤適用を防ぎながらP7Aの明示反映へ接続する。GR03/GR04全体は継続中。
+
+- G1-GR03-P7E: GameInputSettingsへcontext/action/slot/明示出力/revisionの不透明な値requestとApplyRebindCaptureを追加。末尾追加/置換をP7Aの一括更新へ接続し、Pending/Applied/Cancelled/Stale/Invalidを区別する。manager request IDとsettings revisionを各々process内の非wrap採番にし、別instance・古い設定・二重適用を拒否。要求はowner pointerを保持せず、成功時だけCurrent/revision更新、Saveは明示のみ。純helperのsource/modifier/方向/型/invalid非変更と実InputActionRuntimeでの負軸Button発火を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compileで確認。独立静的レビューPASS。実Game/managerの追加・置換・中止・別owner・stale・保存・失敗後再試行の試験を追加したが、Windows.h依存のcompile/実行は未検証。
+- Next: GR03の--imgui利用時のロック解除hotkeyを受入れ要件に合わせて追加する。GR04のXInput/polling/haptics/device種別とGR08の残接続は継続。
