@@ -16,13 +16,17 @@ layout(std140, set = 0, binding = 1) uniform ToneMappingParams
     float vignetteRadius;     // 内側半径 ~0.8
     float vignetteSoftness;   // フォールオフの柔らかさ ~0.5
     float filmGrainStrength;  // フィルムグレインの強さ（sRGBの符号化値での標準偏差。0でオフ）
-    float _pad2;
+    uint gradingMode;         // 0: View の設定の式、1: カメラの差し替えの式（知覚的なS字コントラスト・輝度を保つ色温度）
     // Color Grading パラメータ
     vec4 colorFilter;         // カラーフィルター (rgb * intensity in w)
     float contrast;           // コントラスト (1.0 = default)
     float saturation;         // 彩度 (1.0 = default)
     float brightness;         // 明度オフセット (0.0 = default)
     float temperature;        // 色温度シフト (-1..+1, 0=neutral)
+    float contrastPivot;      // カメラの差し替えの式のコントラストの軸（表示のリニア値）
+    float _pad3;
+    float _pad4;
+    float _pad5;
 } params;
 
 // ACES 2.0 SDR 100 nit Rec.709 のベイク3D LUT（display-linear。x=R, y=G, z=B）
@@ -133,6 +137,27 @@ vec3 ApplySaturation(vec3 color, float saturation)
     return clamp(mix(vec3(luma), color, saturation), 0.0, 1.0);
 }
 
+// 表示の知覚的な値（2.2乗の逆）の上で、軸（表示のリニア値で指定）と0・1を動かさずに軸の周りを立てる
+// S字のコントラスト。軸より下は軸へ向かう冪、上は1へ向かう冪で、0.5中心の線形のコントラストと違い、
+// 暗部を黒へ切らず、明部を白へ飛ばさない。
+vec3 ApplyContrastPerceptual(vec3 color, float contrast, float pivotLinear)
+{
+    float pivot = clamp(pow(clamp(pivotLinear, 0.0, 1.0), 1.0 / 2.2), 0.01, 0.99);
+    vec3 x = pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2));
+    vec3 lower = pivot * pow(x / pivot, vec3(contrast));
+    vec3 upper = 1.0 - (1.0 - pivot) * pow(max(1.0 - x, 0.0) / (1.0 - pivot), vec3(contrast));
+    vec3 y = mix(lower, upper, step(vec3(pivot), x));
+    return pow(clamp(y, 0.0, 1.0), vec3(2.2));
+}
+
+// 輝度を保ってR・Bの倍率を変える色温度（正で暖色。1あたりR・Bを±10%）。黒は黒のまま。
+vec3 ApplyWhiteBalance(vec3 color, float temp)
+{
+    vec3 gain = vec3(1.0 + temp * 0.1, 1.0, 1.0 - temp * 0.1);
+    gain /= dot(gain, vec3(0.2126, 0.7152, 0.0722));
+    return clamp(color * gain, 0.0, 1.0);
+}
+
 // フィルムグレイン: 画素・フレームごとのseedから決まる、平均0・分散1の三角分布の雑音（PCGのhash）。
 uint FilmGrainHash(uint value)
 {
@@ -222,14 +247,24 @@ void main()
         // 明度
         result += vec3(params.brightness);
 
-        // コントラスト
-        result = ApplyContrast(result, params.contrast);
+        if (params.gradingMode == 1u)
+        {
+            // カメラの差し替え: 知覚的なS字のコントラスト、彩度、輝度を保つ色温度
+            result = ApplyContrastPerceptual(result, params.contrast, params.contrastPivot);
+            result = ApplySaturation(result, params.saturation);
+            result = ApplyWhiteBalance(result, params.temperature);
+        }
+        else
+        {
+            // コントラスト
+            result = ApplyContrast(result, params.contrast);
 
-        // 彩度
-        result = ApplySaturation(result, params.saturation);
+            // 彩度
+            result = ApplySaturation(result, params.saturation);
 
-        // 色温度
-        result = ApplyTemperature(result, params.temperature);
+            // 色温度
+            result = ApplyTemperature(result, params.temperature);
+        }
     }
 
     // ========================================

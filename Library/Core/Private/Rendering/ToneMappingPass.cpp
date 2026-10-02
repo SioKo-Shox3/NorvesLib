@@ -15,6 +15,7 @@
 #include "RHI/TransientResourcePool.h"
 #include "Logging/LogMacros.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <exception>
@@ -648,7 +649,7 @@ namespace NorvesLib::Core::Rendering
         params.vignetteRadius = m_Settings.VignetteRadius;
         params.vignetteSoftness = m_Settings.VignetteSoftness;
         params.filmGrainStrength = m_Settings.FilmGrainStrength > 0.0f ? m_Settings.FilmGrainStrength : 0.0f;
-        params._pad2 = 0.0f;
+        params.gradingMode = 0u;
         // Color Grading
         params.colorFilter[0] = m_Settings.ColorFilter[0];
         params.colorFilter[1] = m_Settings.ColorFilter[1];
@@ -663,6 +664,23 @@ namespace NorvesLib::Core::Rendering
         params.saturation = m_Settings.Saturation;
         params.brightness = m_Settings.Brightness;
         params.temperature = m_Settings.Temperature;
+        // カメラがグレーディングを差し替えていれば、コントラスト・彩度・色温度をその値と式にする
+        // （有限でない値は差し替えない）。
+        if (activeCamera != nullptr && activeCamera->GradingOverride.bEnabled)
+        {
+            const CameraGradingOverride& grading = activeCamera->GradingOverride;
+            if (std::isfinite(grading.Contrast) && grading.Contrast > 0.0f &&
+                std::isfinite(grading.ContrastPivot) && grading.ContrastPivot > 0.0f &&
+                std::isfinite(grading.Saturation) && grading.Saturation >= 0.0f &&
+                std::isfinite(grading.Temperature))
+            {
+                params.gradingMode = 1u;
+                params.contrast = grading.Contrast;
+                params.contrastPivot = std::clamp(grading.ContrastPivot, 1.0e-4f, 1.0f);
+                params.saturation = grading.Saturation;
+                params.temperature = std::clamp(grading.Temperature, -1.0f, 1.0f);
+            }
+        }
         m_ParamsBuffer->Update(&params, sizeof(GPUToneMappingParams));
 
         // トーンマッピング結果をSharedResourceRegistryに登録

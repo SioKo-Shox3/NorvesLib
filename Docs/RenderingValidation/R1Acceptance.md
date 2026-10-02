@@ -10,6 +10,7 @@ R1 baseline candidate Indoor=120227B98BF661C31D0411DCF50FF172DC15165D2B9FDB558A0
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=42DD1F3E9DC7711A54BCC458C69B7BA14CFD040C65CF80726E13100B710FFAFC CodeHead=c644636654f168558d3f5fb5c5081caf8c52b070 を承認する。ブルームを1回の16タップ（しきい値1.15・強度0.85の加算）から、6段の13タップ縮小（最初の段はKaris平均）・3×3テント拡大をしきい値なしで元の色へ4%線形補間する方式に置き換えた。Indoorは光源の四角の周りの旧方式の縁取り（最大差100/255）が消え、平均輝度9.94→9.69。Outdoorは全体へ広いにじみが薄く混ざり、明るい地面に接する暗い四角が明るくなった（平均輝度129.43→129.37、差のある画素39135、8/255超は1681）。差分の拡大画像の同心の縞は、なめらかなにじみの8bit量子化の等高線で、画像自体には輪状の模様は無い。
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=F6ABAD4BEB4DD778BF9F55FFEB1665ACA20FB3764584112A89DECF45CDBEDB5F CodeHead=ea1318e979edc603d93086e15d6080ef7ab81113 を承認する。
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=760DAEF7F942E7A1028F5906CFF60A881939DCD854C4D5B9688133E204064A92 CodeHead=0af69587869dbe67c7656e1ccd4779aa815d84b5 を承認する。
+R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=369C71AB50B64B69AEA4598B6D5FC0E63D75979698D207FB97F3CB0BDA5D0217 CodeHead=a2811db8ff6e47fafc2ebae9a252507871135cd5 を承認する。
 
 ## P6b plan and procedure approval
 P6b plan SHA256=37D08DE402478F1D1EBEEEE2D0D8F134492AA0A0EDEB2A4C8FF69527721A2AE3
@@ -101,4 +102,12 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 差分の範囲: 旧baselineとの差は4画素で、橙の球の影の縁の1列だけ。(112,152)が暗くなり、上下の2画素はFXAAの結果が変わって少し明るくなった。平均輝度124.404→124.402。Indoorは一致する。
 - 物理的な妥当性: 場面の配置（seed `0x4E525630`の5つの球、地面y=-1、太陽の方向(-0.4,-1,-0.25)、カメラ(7,5,9)→原点・縦60°）から各画素の地面の点が太陽から遮られるかを解析的に求めた。(112,152)の画素は4×4の部分画素の50%が真の影の中にあり、旧baselineは日向の明るさだった。画素中心の点からの光線は球の3 mm外を通るので、画素中心の判定では境目にあたる。
 - 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 0af69587869dbe67c7656e1ccd4779aa815d84b5`を2回走らせ、Outdoor候補はどちらも`760DAEF7…064A92`、Indoor候補は既存baseline `D0D34A5F…5E05E7`と一致した。
+- 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
+
+## SSRの粗さのフェードと法線の読み方の修正後のOutdoor再承認
+- 2026-10-02、上の承認行のOutdoor出力（SHA256=`369C71AB50B64B69AEA4598B6D5FC0E63D75979698D207FB97F3CB0BDA5D0217`）を新しいOutdoor baselineとして承認した。承認はTASKS.mdの基準画像の再承認の扱い（差がその変更だけによるときは任される）による。
+- 修正の内容: SSRを粗さのしきい値0.5で打ち切る代わりに、粗さ0.3〜0.7の間でsmoothstepで0へ弱める（`SSRSettings::RoughnessFadeStart`・`RoughnessFadeEnd`）。斜めのフレネルの上限を粗さで下げる（`max(1 - roughness, F0)`）。GBufferの法線は符号付きのワールド法線（RGBA16F）をそのまま持つのに、SSRだけが`*2-1`で戻していたため、反射の向きが誤っていたのを直した（Lightingと同じ読み方）。当たった面が光線の方を向いていないヒットと、画面上で1画素も進まないヒットを棄却する（凸な面の輪郭で自分の隣の画素に当たる誤り）。
+- 差分の範囲: 検証シーンの粗さは`R1ScalarHalf`の128/255（0.502）で、旧しきい値0.5をわずかに超えてSSRが掛からなかった。新しいフェードでは約0.49の重みで掛かる。旧baselineとの差は282画素（8/255超は60）で、すべて球の陰になった下半分と輪郭に集まり、日の当たる緑の地面を映して明るくなった（最大差は(206,139)の(0,0,0)→(95,123,61)）。平均輝度124.402→124.424。Indoorは一致する。
+- 物理的な妥当性: 粗さ0.5の光沢のある球の下半分は、法線が地面を向くため反射方向が明るい地面に当たり、斜めの輪郭ほどフレネルで強く映る。差の色は地面の緑みの色で、球自身の色（棄却する前の候補では黄色の球の下に黄色が出た自己ヒット）ではない。
+- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead a2811db8ff6e47fafc2ebae9a252507871135cd5`を2回走らせ、Outdoor候補はどちらも`369C71AB…5D0217`、Indoor候補は既存baseline `D0D34A5F…5E05E7`と一致した。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。

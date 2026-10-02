@@ -124,6 +124,26 @@ namespace Game::GameModes
             return bAutoExposure ? kStartupAutoExposureCompensationEV : 0.0f;
         }
 
+        // 起動画面のトーンマップ後のグレーディングとビネット（検証シーンのカメラは View の既定のまま）。
+        // 自動露出（+2 EV の補正）で画面の中央値が表示のリニア値で約 0.47〜0.50 と明るく、ACES の肩で中間が
+        // 平らになって眠く見えるため、地面の明るさ（0.5）を軸に、黒と白を動かさない S 字のコントラスト 1.25 で
+        // 中間を立てる（中央値は変えず、輝度の標準偏差が約 1.15 倍。影の中の地面は日向の約 18〜21% で、
+        // SS-DAYLIGHT-P1 の下限 15% を保つ）。彩度は 1.25（View の既定 1.1 では石畳と空が灰色に寄る）。
+        // 色温度は +0.1（R・B を ±1%）で日なたをわずかに暖かくする程度にとどめ、昼の空の青を残す。
+        // ビネットは強さ 0.25・半径 0.85・幅 0.6 で、画面の隅を約 0.78 倍にする（View の既定 0.3・0.8・0.5 の
+        // 約 0.72 倍より弱め、明るい地面の隅が濁らないようにする）。
+        void ApplyStartupGrading(CameraProxy& camera)
+        {
+            camera.GradingOverride.bEnabled = true;
+            camera.GradingOverride.Contrast = 1.25f;
+            camera.GradingOverride.ContrastPivot = 0.5f;
+            camera.GradingOverride.Saturation = 1.25f;
+            camera.GradingOverride.Temperature = 0.1f;
+            camera.GradingOverride.VignetteIntensity = 0.25f;
+            camera.GradingOverride.VignetteRadius = 0.85f;
+            camera.GradingOverride.VignetteSoftness = 0.6f;
+        }
+
         void UnregisterRendering3DInput(GameModeContext& ctx, Rendering3DTestData& data)
         {
             auto& inputRouter = ctx.EngineRef.GetInputRouter();
@@ -218,7 +238,8 @@ namespace Game::GameModes
             data.m_pCameraComponent->SetExposureMode(CameraExposureMode::Auto);
             data.m_pCameraComponent->SetExposureCompensation(StartupExposureCompensationEV(data.m_bAutoExposure));
             // 既定のコントラスト（1.05）は表示のリニア値 0.024 未満（sRGB で約 43/255 以下）を黒へ切り、晴天の
-            // 影の中の地面（空の光だけで日向の約 2 割）が真っ黒になるため、起動画面ではコントラストを掛けない。
+            // 影の中の地面（空の光だけで日向の約 2 割）が真っ黒になるため、起動画面ではこの式のコントラストを
+            // 掛けない。起動画面のコントラストは、黒を切らない式で ApplyStartupGrading が差し替える。
             data.m_pCameraComponent->SetGradingContrast(1.0f);
             // 起動画面のアンチエイリアシングは TAA（--anti-aliasing=fxaa と ImGui で FXAA を選べる）。
             data.m_bTemporalAA = data.m_bStartupTemporalAA;
@@ -235,6 +256,7 @@ namespace Game::GameModes
                 return false;
             }
 
+            ApplyStartupGrading(initialCamera);
             ctx.EngineRef.GetRenderWorld().SetMainCamera(initialCamera);
             // 起動画面はRTGIを使わず、従来どおり環境光（IBL）で間接光を表す（RTGIの少ない光線数の雑音が
             // 物体と地面に粒状に残るため）。
@@ -1654,6 +1676,7 @@ namespace Game::GameModes
             CameraProxy cameraProxy;
             if (data.m_pCameraComponent->BuildCameraProxy(cameraProxy))
             {
+                ApplyStartupGrading(cameraProxy);
                 ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
                 if (!data.m_bCameraSmokeSyncEmitted)
                 {

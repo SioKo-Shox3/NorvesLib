@@ -231,7 +231,7 @@
 - notes: 危険地帯（ライティング・影）。評価者を通す。
 
 ## SS-POST-TUNE: SSRを粗さでなめらかに消し、グレーディングとビネットを起動画面に合わせる
-- status: todo
+- status: done
 - done-when: SSRが粗さのしきい値で急に切れず、粗さ約0.3〜0.7の間でなめらかに弱まる（材質の粗さを使う）。起動画面で、濡れていない石畳には弱い反射、金属の見本の球には周囲の反射が見える。起動画面のグレーディング（コントラスト・彩度・色温度）とビネットを、昼・夕の撮影で眠く見えない値にする（値と理由を記録する）。検証シーンのグレーディングは変えない。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
@@ -240,6 +240,7 @@
 - stop-when: SSRの変更で承認済みのgoldenが変わる場合は差の原因と妥当性を記録して再承認する（任されている）。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game/GameModes/Rendering3DTest, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 今はテクスチャの無い地面の粗さが既定の128/255（0.502）で、SSRのcutoff 0.5を超えて棄却されている。
+- notes: 2026-10-02 完了。地面はSS-SHOWCASEで石畳の材質（粗さのテクスチャはUNORMで中央値0.76、5%点0.715）に替わっていて、フェードの終わり0.7より粗いためSSRは掛からない（乾いた粗い石畳に鏡の反射を足さない）。石畳の弱い反射は従来どおりIBLの鏡面（斜めの空のつや）で、SSRで見えるのは金属の見本の球（粗さ0.1・0.3・0.5）の下半分の地面の映り込み。
 
 ## SS-LENS-FX: 色収差とレンズダートを足す
 - status: todo

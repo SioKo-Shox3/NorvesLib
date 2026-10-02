@@ -336,6 +336,31 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief カメラごとに View の既定から差し替えるトーンマップ後のグレーディングとビネット
+     *
+     * 起動画面のように見た目を整えたいカメラだけが有効にし、検証シーンのカメラは既定（無効）のまま
+     * View のトーンマップ・ビネットの設定を使う。値はどれも表示のリニア値（トーンマップ後）に掛かる。
+     */
+    struct CameraGradingOverride
+    {
+        bool bEnabled = false;
+        /** @brief 表示の知覚的な値（2.2乗の逆）の上で、軸と0・1を動かさないS字のコントラスト（1で変えない） */
+        float Contrast = 1.0f;
+        /** @brief コントラストの軸（表示のリニア値。この明るさは変わらず、これより暗い所は暗く、明るい所は明るくなる） */
+        float ContrastPivot = 0.18f;
+        /** @brief 彩度（Rec.709の輝度との混ぜ具合。1で変えない） */
+        float Saturation = 1.0f;
+        /** @brief 輝度を保ってR・Bの倍率を変える色温度（-1〜+1、正で暖色。1あたりR・Bを±10%） */
+        float Temperature = 0.0f;
+        /** @brief ビネットの強さ（0で無効） */
+        float VignetteIntensity = 0.0f;
+        /** @brief ビネットが最も強くなる、画面中心からの距離（UVの単位） */
+        float VignetteRadius = 0.8f;
+        /** @brief ビネットが掛かり始める位置までの幅（Radius - Softness から暗くなり始める） */
+        float VignetteSoftness = 0.5f;
+    };
+
+    /**
      * @brief 描画用カメラプロキシ
      */
     struct CameraProxy
@@ -399,6 +424,9 @@ namespace NorvesLib::Core::Rendering
 
         // トーンマップ後のグレーディングのコントラスト。負は View のトーンマップ設定の値を使う。
         float GradingContrast = -1.0f;
+
+        // トーンマップ後のグレーディングとビネットの差し替え。有効なときは GradingContrast より優先する。
+        CameraGradingOverride GradingOverride;
 
         // ポストプロセス設定（ハンドル参照）
         // PostProcessHandle PostProcess;

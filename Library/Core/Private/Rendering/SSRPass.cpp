@@ -32,10 +32,12 @@ namespace NorvesLib::Core::Rendering
         float maxSteps;
         float fadeStart;
         float fadeEnd;
-        float roughnessCutoff;
+        float roughnessFadeStart;
+        float roughnessFadeEnd;
         float intensity;
         uint32_t bEnabled;
     };
+    static_assert(sizeof(GPUSSRParams) <= SSR_PARAMS_SIZE, "SSRのUBOがパラメータの大きさより小さい");
 
     SSRPass::SSRPass(const SSRSettings &settings)
         : m_Settings(settings)
@@ -606,7 +608,11 @@ namespace NorvesLib::Core::Rendering
         params.maxSteps = m_Settings.MaxSteps;
         params.fadeStart = m_Settings.FadeStart;
         params.fadeEnd = m_Settings.FadeEnd;
-        params.roughnessCutoff = m_Settings.RoughnessCutoff;
+        // 始まりと終わりが逆・同じでも smoothstep が定義されるよう、終わりを始まりより少し大きく保つ。
+        params.roughnessFadeStart = m_Settings.RoughnessFadeStart;
+        params.roughnessFadeEnd = m_Settings.RoughnessFadeEnd > m_Settings.RoughnessFadeStart
+                                      ? m_Settings.RoughnessFadeEnd
+                                      : m_Settings.RoughnessFadeStart + 1.0e-3f;
         params.intensity = m_Settings.Intensity;
         const bool bDebugPostProcessBypass =
             IsDebugPostProcessBypassMode(context.GetActiveDebugMode());

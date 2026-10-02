@@ -29,7 +29,8 @@ layout(set = 0, binding = 4) uniform SSRParams
     float maxSteps;       // 最大ステップ数
     float fadeStart;      // フェード開始距離
     float fadeEnd;        // フェード終了距離
-    float roughnessCutoff; // ラフネスカットオフ（超えたらSSRなし）
+    float roughnessFadeStart; // 反射を粗さで弱め始める粗さ
+    float roughnessFadeEnd;   // 反射が0になる粗さ（これ以上はSSRなし）
     float intensity;      // SSR強度
     uint  bEnabled;       // SSR有効フラグ
 } params;
@@ -139,13 +140,14 @@ void main()
         return;
     }
 
-    vec3 normalWS = normalize(texture(gbufferNormal, fragUV).xyz * 2.0 - 1.0);
+    // GBufferの法線は符号付きのワールド法線（RGBA16F）をそのまま持つ（Lightingと同じ読み方）
+    vec3 normalWS = normalize(texture(gbufferNormal, fragUV).xyz);
     vec4 materialSample = texture(gbufferMaterial, fragUV);
     float metallic = materialSample.r;
     float roughness = materialSample.g;
 
-    // ラフネスカットオフ（ざらざらの面はSSR不要）
-    if (roughness > params.roughnessCutoff)
+    // 反射が0になる粗さ以上の面はレイを飛ばさない
+    if (roughness >= params.roughnessFadeEnd)
     {
         outColor = sceneColorSample;
         return;
@@ -165,6 +167,19 @@ void main()
     float hitDist;
     bool bHit = RayMarch(viewPos, reflectDir, hitUV, hitDist);
 
+    // 当たった面が反射光線の方を向いていない（裏から当たった）とき、または画面上で1画素も進まずに当たった
+    // ときは、凸な面の輪郭で自分の隣の画素に当たった誤りとして棄却する（凸な面から出た光線は自分に当たらない）。
+    if (bHit)
+    {
+        vec3 hitNormalWS = normalize(texture(gbufferNormal, hitUV).xyz);
+        vec3 hitNormalVS = normalize((params.view * vec4(hitNormalWS, 0.0)).xyz);
+        vec2 hitPixelOffset = (hitUV - fragUV) * params.screenSize.xy;
+        if (dot(hitNormalVS, reflectDir) >= 0.0 || dot(hitPixelOffset, hitPixelOffset) < 1.0)
+        {
+            bHit = false;
+        }
+    }
+
     if (bHit)
     {
         // ヒットしたUVからシーンカラーをサンプリング
@@ -173,11 +188,12 @@ void main()
         // フレネル（斜めから見るほど反射が強い）
         float NdotV = max(dot(normalVS, -viewDir), 0.0);
         float fresnel = pow(1.0 - NdotV, 5.0);
-        float reflectStrength = mix(0.04, 1.0, metallic);
-        reflectStrength = mix(reflectStrength, 1.0, fresnel);
+        // 粗い面ほど斜めのフレネルの上限を下げる（粗さを考えたSchlick。濡れていない石畳が斜めから鏡にならない）
+        float f0 = mix(0.04, 1.0, metallic);
+        float reflectStrength = mix(f0, max(1.0 - roughness, f0), fresnel);
 
-        // ラフネスによるフェード
-        float roughnessFade = 1.0 - smoothstep(0.0, params.roughnessCutoff, roughness);
+        // 粗さによるフェード（Start〜End の間でなめらかに0へ）
+        float roughnessFade = 1.0 - smoothstep(params.roughnessFadeStart, params.roughnessFadeEnd, roughness);
 
         // 距離によるフェード
         float distanceFade = 1.0 - smoothstep(params.fadeStart, params.fadeEnd, hitDist);

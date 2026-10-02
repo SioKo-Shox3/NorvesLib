@@ -889,7 +889,9 @@ namespace NorvesLib::Core::Rendering
         ssrSettings.Thickness = 0.3f;
         ssrSettings.MaxSteps = 64.0f;
         ssrSettings.Intensity = 0.8f;
-        ssrSettings.RoughnessCutoff = 0.5f;
+        // 粗さ0.3〜0.7の間でなめらかに弱める（しきい値で急に切れると、粗さの近い面の間で反射の有無が段になる）。
+        ssrSettings.RoughnessFadeStart = 0.3f;
+        ssrSettings.RoughnessFadeEnd = 0.7f;
         auto ssrPass = MakeUnique<SSRPass>(ssrSettings);
         postProcessStack->AddPass(std::move(ssrPass));
 
