@@ -1177,8 +1177,19 @@ namespace NorvesLib::Core::Rendering
 
         Container::VariableArray<RenderPassGPUTiming> timings;
         timings.reserve(results.size());
+#if NORVES_ENABLE_STATS
+        NorvesLib::Debug::StatsManager& statsManager = NorvesLib::Debug::StatsManager::Get();
+        const bool bTraceActive = statsManager.IsTraceActive();
+#endif
         for (const RHI::GPUTimestampResult& result : results)
         {
+#if NORVES_ENABLE_STATS
+            // 完了したフレームの区間（FrameGPU・加速構造の更新・RenderGraph のパス）をトレースの行へ書く。
+            if (bTraceActive && result.bValid)
+            {
+                statsManager.RecordGPUScope(result.FrameNumber, result.ScopeName.c_str(), result.DurationMs);
+            }
+#endif
             RenderPassGPUTiming timing;
             timing.FrameNumber = result.FrameNumber;
             timing.PassName = result.ScopeName;
@@ -2665,16 +2676,8 @@ namespace NorvesLib::Core::Rendering
             m_CommandList.get(),
             frameIndex);
 
-        if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(
-                m_Device,
-                *m_CommandList,
-                m_PacketManager.GetSlotIndex(packet),
-                *packet))
-        {
-            NORVES_LOG_WARNING("RayTracingSceneSubsystem",
-                               "FramePacketのレイトレーシング加速構造を構築できませんでした");
-        }
-
+        // フレームのGPUの区間（FrameGPU）は加速構造の更新の記録より前に開き、更新の費用も含める。
+        // タイムスタンプの書き込みは同じコマンドバッファへ足すだけで、記録の順序や同期は変えない。
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
         {
@@ -2699,6 +2702,33 @@ namespace NorvesLib::Core::Rendering
             }
         }
 #endif
+
+        {
+#if NORVES_ENABLE_STATS
+            // 加速構造の更新は別の区間としても取り、トレースのGPUの行に出す。
+            RHI::GPUTimestampScopeHandle accelerationStructureTimestamp;
+            if (bTraceActive && m_CommandList->SupportsGPUTimestamps())
+            {
+                accelerationStructureTimestamp =
+                    m_CommandList->BeginGPUTimestampScope("AccelerationStructureBuild");
+            }
+#endif
+            if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(
+                    m_Device,
+                    *m_CommandList,
+                    m_PacketManager.GetSlotIndex(packet),
+                    *packet))
+            {
+                NORVES_LOG_WARNING("RayTracingSceneSubsystem",
+                                   "FramePacketのレイトレーシング加速構造を構築できませんでした");
+            }
+#if NORVES_ENABLE_STATS
+            if (accelerationStructureTimestamp.IsValid())
+            {
+                m_CommandList->EndGPUTimestampScope(accelerationStructureTimestamp);
+            }
+#endif
+        }
 
         // ========================================
         // Deferredパスチェーン描画（スワップチェーンレンダーパスの外で実行）

@@ -30,9 +30,11 @@
 # （今回/比べる側）を求め、どれかが -NoiseRatioLimit（既定2）を超えたら失敗にする。
 # -GpuTimingFrames を与えると、Game を --trace-file 付きで起動し、落ち着いてからその描画フレーム数の後に撮る。
 # トレースの描画したフレームの行（RenderFrameMs > 0）の GPUFrameMs（GPU のタイムスタンプで測ったフレームの
-# 区間。加速構造の構築・更新を除く RenderGraph の全パスと表示への書き出し）のうち、最後の
+# 区間。加速構造の構築・更新、RenderGraph の全パスと表示への書き出しを含む）のうち、最後の
 # (-GpuTimingFrames − 60) フレーム（撮影のフレームの直前2つを除く）の中央値・95 パーセンタイル・最大を
 # gpu_timing として metrics.json へ書く。
+# トレースには Type=GPU の行として、フレームごとの FrameGPU・AccelerationStructureBuild（加速構造の更新）・
+# RenderGraph のパスごとの GPU の時間も出る（Frame 列は区間を記録したフレームの番号）。
 # タイムスタンプは統計が有効な構成（Debug・RelWithDebInfo）だけで取れるため、Release とは併用しない。
 # 予算（-GpuFrameBudgetMs、既定 16.6 ms）を超えても失敗にはせず within_budget=false と書く。
 # -DefaultCamera で既定視点のカメラを替え（例: 変更前の版の既定 0,30,5）、-ViewNames で撮る視点を絞る（例: default）。

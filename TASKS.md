@@ -311,6 +311,14 @@
 - paths: Game/GameModes/Rendering3DTest, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
 - notes: 2026-10-02 の親の確認（`startup-capture/SS-ACCEPT-night/default-night.png`）で分かった。点光源の色は `Rendering3DTestRoutine.cpp` の `SetLightColor(1.0f, 0.9f, 0.3f)` で、石畳が黄緑がかる。レンズダートは `kStartupLensDirtIntensity = 2.0f`。
 
+## FIX-RGCT-MEGA-VELOCITY: RenderGraphCompileTest の MegaGeometry の記録の検査の準備に GBuffer_Velocity を足す
+- status: todo
+- done-when: `RenderGraphCompileTest.cpp` の MegaGeometryPass の記録の検査（2620行目の `BeginRenderPassCount == 1`）の準備で、`SharedResourceRegistry` に `GBuffer_Velocity`（128×64 の R16G16_FLOAT のレンダーターゲット）を登録し、検査を弱めずに RenderGraphCompileTest が通る。エンジン側（MegaGeometryPass）は変えない。
+- verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RenderGraphCompileTest$"`
+- paths: Test/Core/Rendering/RenderGraphCompileTest.cpp, TASKS.md, PROGRESS.md
+- notes: SS-GPU-PROFILE（2026-10-03）の検証で見つけた。MegaGeometry に velocity を足した変更（`7461c3e`・`f63b2fd`）から、MegaGeometryPass は `GBuffer_Velocity` が無いと GBuffer のフレームバッファを作らず記録の前に戻るが、検査の準備は5枚しか登録していない。2026-10-02 の SS-GTAO の実行（`20261002-084328/verify-SS-GTAO-8.txt`）でも同じ行で落ちていた。登録を一時的に足すと 1/1 で通ることを確かめた（`20261003-034747/verify-SS-GPU-PROFILE-7.txt`）。
+
 ## SS-GPU-PROFILE: 計測のある構成で、加速構造の更新を含むGPUの時間とパスごとの内訳をトレースへ書けるようにする
 - status: todo
 - done-when: 計測が有効な構成（Debug・RelWithDebInfo。`NORVES_ENABLE_STATS=1`）で、(a) フレームのGPUの区間（`FrameGPU`）が加速構造の更新（`RenderingCoordinator.cpp` の `BuildAccelerationStructures`）を含み、加速構造の更新も別の区間として取れる。(b) RenderGraph のパスごとのGPUの時間が `--trace-file` のトレースに行として出る。Release の構成には計測・トレース・ログの仕組みを足さない（Release の `NORVES_ENABLE_STATS=0` と出力は変えない。Release を有効にするCMakeの選択肢も作らない）。RelWithDebInfo の Game で起動画面を数百フレーム走らせ、フレームごとのGPUの時間・加速構造の更新・パスごとの内訳がトレースに出ることを、トレースを開いて確かめる（PROGRESS に数行の抜粋）。
