@@ -131,6 +131,8 @@ namespace NorvesLib::Modules::Physics
         void ReleaseColliderSlot(uint32_t index);
         void ReleaseBodySlot(uint32_t index);
 
+        Core::Scene::EPhysicsSceneQueryResult ExecuteQuery(const Core::Scene::PhysicsQueryDesc& query,
+            Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits) const override;
         Core::Scene::EPhysicsSceneQueryResult Raycast(
             const Math::Ray& ray,
             float maxDistance,

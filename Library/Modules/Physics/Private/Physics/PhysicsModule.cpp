@@ -237,6 +237,18 @@ namespace NorvesLib::Modules::Physics
         m_bInitialized = false;
     }
 
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::ExecuteQuery(const Core::Scene::PhysicsQueryDesc& query,
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits) const
+    {
+        outHits.clear();
+        const auto readiness = GetReadinessResult();
+        if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
+        {
+            return readiness;
+        }
+        return m_PublishedBroadphase.ExecuteQuery(query, outHits);
+    }
+
     Core::Scene::EPhysicsSceneQueryResult PhysicsModule::Raycast(
         const Math::Ray& ray,
         float maxDistance,

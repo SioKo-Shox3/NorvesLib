@@ -22,6 +22,14 @@ namespace NorvesLib::Core::Scene
     public:
         virtual ~IPhysicsSceneQueryProvider() = default;
 
+        // 未対応の既存providerもsource互換を維持する。非Successは出力を空にする。
+        virtual EPhysicsSceneQueryResult ExecuteQuery(const PhysicsQueryDesc&,
+            Container::VariableArray<PhysicsQueryHit>& outHits) const
+        {
+            outHits.clear();
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
         virtual EPhysicsSceneQueryResult Raycast(
             const Math::Ray& ray,
             float maxDistance,
@@ -77,6 +85,11 @@ namespace NorvesLib::Core::Scene
         void OverlapBox(const Math::AABB& box, Container::VariableArray<Entity*>& outEntities) const;
         void QueryFrustum(const Math::Frustum& frustum, Container::VariableArray<Entity*>& outEntities) const;
         size_t GetEntryCount() const;
+
+        // GameThread上で同じ公開snapshotを読む。非Successとprovider例外でoutHitsを空にする。
+        // 例外は出力をclearして再送出。入力/出力の格納領域は重ならないこと。
+        EPhysicsSceneQueryResult ExecuteQuery(const PhysicsQueryDesc& query,
+            Container::VariableArray<PhysicsQueryHit>& outHits) const;
 
         EPhysicsSceneQueryResult BindPhysicsProvider(IPhysicsSceneQueryProvider& provider);
         EPhysicsSceneQueryResult UnbindPhysicsProvider(IPhysicsSceneQueryProvider& provider);

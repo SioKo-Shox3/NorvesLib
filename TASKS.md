@@ -1638,3 +1638,11 @@
 - stop-when: ゲーム固有layer名のCoreへの流入、公開snapshotの暗黙更新、旧hit順序/normalの変更、wrong thread/未登録での部分更新、blocking未解消。
 - paths: Library/Core/Public/Scene/PhysicsQueryTypes.h, Library/Modules/Physics/Public/Physics/ColliderComponent.h, Library/Modules/Physics/Private/Physics/ColliderComponent.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.h, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Test/Modules/Physics/PhysicsBroadphaseQueryTest.cpp, Test/Modules/Physics/PhysicsProxyQueryTest.cpp, Test/Modules/Physics/PhysicsModuleTestAccess.h, Test/Core/Object/PhysicsQueryTypesTest.cpp, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
 - notes: Layerは所属bit集合で0/複数bitも許可。ゲーム側が名前/割当を所有する。Mask0も有効。solver適用と新query facadeは後続で、metadataを保存しただけで衝突挙動変更完了とはしない。
+
+## G1-GR08-P4A: 統合クエリをSceneQueryと物理providerへ接続する
+- status: done
+- done-when: SceneQuery::ExecuteQueryでPhysicsQueryDescをproviderへ委譲し、PhysicsModuleがreadiness/owner thread検証後に公開snapshotの実ExecuteQueryを呼ぶ。未対応providerの既定実装はUnavailable、非Successと例外で出力を残さない。旧ray/overlap入口は互換維持する。
+- verify: fake providerの旧実装互換/完全descriptor伝搬/成功/全失敗/例外/未bind/wrong threadを既存SceneQueryPhysicsFacadeTestへ、実Moduleのray複数hit/filter/ignore/trigger/overlap/sweep/UserData/未準備を既存PhysicsBroadphaseQueryTestへ追加。実compileを試し、実proxy CPU回帰と独立レビューを実施。
+- stop-when: CoreがPhysics moduleへ依存、wrong thread/未bindでprovider呼出し、非Success/例外で残留hit、公開snapshot以外への暗黙refresh、blocking未解消。
+- paths: Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.h, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Core/Object/SceneQueryPhysicsFacadeTest.cpp, Test/Modules/Physics/PhysicsBroadphaseQueryTest.cpp, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
+- notes: generic descriptorでfilter付き7種を公開する。batch/訪問関数最適化/solver mask/refreshは後続。既存APIへ新しい数値制限を強制する経路差替は行わない。Windows依存の統合実行は未検証と区別する。

@@ -390,3 +390,6 @@
 
 - G1-GR08-P2D: ColliderComponentへ32bit所属Layer/相互作用Maskとopaque uint64 UserDataを追加。既存のowner thread/登録世代検証を通して更新し、既定1/全bit/0、0/複数bitを許可してゲーム固有名は持たせない。BuildBroadphaseでTriggerも含め値snapshotへコピーし、旧ray/overlap hit末尾にもUserDataを伝搬。setterで公開snapshotを即時更新せず、法線/順序/旧既定query挙動は維持。実query値型/実proxy集約の通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER compile成功、独立静的レビューPASS。実Collider/Moduleの全形状/公開時点/スレッド・未登録拒否試験を追加したが、Windows.h依存で統合compile/実行は未確認。
 - Next: G1／GR08の新ExecuteQueryをSceneQuery façadeとPhysics providerへ接続し、フィルタ・複数hit・sweepを実際の公開snapshotから呼べるようにする。solver maskと明示refreshは後続。
+
+- G1-GR08-P4A: SceneQuery::ExecuteQueryを非pureのprovider拡張へ接続。未対応providerはUnavailableでsource互換を維持し、GameThread/接続確認後に全descriptorを渡す。非Success/例外で出力を空にし例外は再送出。PhysicsModuleはreadiness後に公開Broadphaseを読み、filter付きray複数hit/overlap/sphere・capsule sweepを公開する。旧APIの数値契約やsnapshot時点を変更しない。独立静的レビューPASS、同じ3球・7種・filter/ignore/trigger/MaxHits/UserData期待を実proxyコードでRelease/ASan・UBSan実行成功。fake/実Module統合試験を既存bundleへ追加し、全shape fieldの転送比較も補強。統合compile/実行はWindows.h依存で未確認。
+- Next: G1／GR08のExecuteBatchで要求順の連続hit/resultとreadiness確認の集約を追加する。候補訪問の最適化、solver mask、明示refreshは継続。

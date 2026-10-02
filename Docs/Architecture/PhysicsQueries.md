@@ -10,3 +10,9 @@
 ## 検証範囲
 - query値型と実proxy集約コードはクラウド上で直接g++により通常/最適化/sanitizerを検証する。独自allocatorやOSをmockに差し替えない
 - 実Collider/Module/snapshot/旧hitの既定・高bit/0/複数bit・全uint64・全形状・反映時点・wrong thread/未登録拒否をPhysicsBroadphaseQueryTestに追加する。既存Windows.h依存の統合compile/実行は未確認として残す
+
+## 統合クエリの公開入口（P4A）
+- SceneQuery::ExecuteQueryはPhysicsQueryDescでRaycastClosest/All、OverlapSphere/Box/Capsule、SweepSphere/Capsuleを公開する。LayerMask、trigger方針、世代付きignore、MaxHitsなどはdescriptorのままproviderへ渡す
+- CoreのIPhysicsSceneQueryProviderに非pure virtualの既定入口を追加する。未対応providerは出力を空にしてUnavailableを返し、既存実装のsource互換を維持する。SceneQueryはowner thread/接続を確認し、非Successとprovider例外では出力を空にする。例外は握り潰さず再送出する
+- PhysicsModuleはreadinessを確認して公開済みBroadphaseの実ExecuteQueryへ委譲する。呼出しだけでsnapshotを更新しない。UserDataは同じsnapshotの値。旧ray/overlap入口の数値契約をこの段で変更しない
+- fake providerの全descriptor伝搬/未対応/成功/各失敗/例外/wrong thread、実Moduleの7種とmetadata/filterの試験を既存bundleへ追加する。既存Windows.h依存により統合compile/実行は未検証。バッチ、solver mask、明示refreshは後続
