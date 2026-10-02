@@ -519,6 +519,7 @@ set(PUBLIC_HEADERS
     Public/FileStream/Package.h
     # Input
     Public/Input/InputTypes.h
+    Public/Input/InputAxisMath.h
     Public/Input/InputState.h
     Public/Input/InputSystem.h
     Public/Input/IInputController.h

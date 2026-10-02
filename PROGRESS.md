@@ -273,3 +273,6 @@
 - G1選定更新（2026-10-02）: 作者がS4=a（Raw Input＋cursor固定/非表示）、S5=a（XInput）、S8=a（暫定working directory＋store抽象）を承認した。方式選定の待機は解除する。
 - G1-GR03-P1: InputState::ReleaseAllを追加し、同frame押下後もReleasedを次のBeginFrameまで保持、押下/累積を解除、復帰最初の絶対座標を再基準化する。既存Pressedはcurrent/previous比較のまま。同frame再押下ではDownとReleasedが同時にtrueになり得ることを明記した。実InputState.cppのg++通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）とbundle相当compile、既存遷移基準線は成功。独立レビューでも実行PASS。OSフォーカス/InputSystemイベントdelta/controller解除は後続で未接続。
 - Next: GR03入力軸のdeadzone/曲線/変位と速度の時間単位を分離した純ロジック。
+
+- G1-GR03-P2: 正規化1D/2D radialのdeadzoneとLinear/Power/Expoを純関数へ分離し、方向・単調性・長さ上限を保つ。視点換算ではmouse変位にdtを掛けず、stickの毎秒速度だけへ実時間を掛ける。無効値/設定/overflowはfalseかつ出力0。実headerのg++通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）、bundle相当compileに成功。独立評価の追加843,360ケースもlong double参照値と整合してPASS。Mapper/OS/Game接続の合格ではない。
+- Next: ボタンの時間遷移と固定step押下ラッチを純ロジック化し、入力Mapperへ組み込む土台を作る。

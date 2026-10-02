@@ -1247,3 +1247,11 @@
 - stop-when: 通常入力回帰、release永続、OS依存の持込み、blocking未解消。
 - paths: Library/Core/Public/Input/InputState.h, Library/Core/Private/Input/InputState.cpp, Test/Core/Input/InputStateReleaseTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: Window/InputSystemへのfocus配線は後続。S4=a/S5=a/S8=aは作者承認済み。
+
+## G1-GR03-P2: 入力軸の応答曲線と視点の時間単位を分離する
+- status: done
+- done-when: 1D/2D radial deadzoneとLinear/Power/Expo、方向/単調/長さ、mouse変位とstick速度のdt分離、無効値の安全な拒否。
+- verify: g++ -std=c++20 -I Library/Core/Public Test/Core/Input/InputAxisMathTest.cpp -o /tmp/input-axis && /tmp/input-axis
+- stop-when: 方向を曲げる成分別曲線、mouseへのdt適用、NaN漏れ、blocking未解消。
+- paths: Library/Core/Public/Input/InputAxisMath.h, Library/Core/CMakeLists.txt, Test/Core/Input/InputAxisMathTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: 後続Mapperが使用する純ロジック。EngineやOS入力との接続は未完。
