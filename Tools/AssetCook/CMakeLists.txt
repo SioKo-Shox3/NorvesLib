@@ -1,20 +1,29 @@
-add_executable(AssetCook
+# CLIと直接リンクする試験で同じcooker実装を共有する。
+add_library(AssetCookLib STATIC
     AudioCooker.cpp
     AudioCooker.h
-    Main.cpp
     MeshCooker.cpp
     MeshCooker.h
     TextureCooker.cpp
     TextureCooker.h
 )
 
-target_link_libraries(AssetCook PRIVATE Core)
+target_link_libraries(AssetCookLib PUBLIC Core)
+target_include_directories(AssetCookLib
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/Library/Core/Private
+        ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+)
+
+add_executable(AssetCook Main.cpp)
+target_link_libraries(AssetCook PRIVATE AssetCookLib)
 target_include_directories(AssetCook PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
 )
 
-set_target_properties(AssetCook PROPERTIES FOLDER "Tools")
+set_target_properties(AssetCook AssetCookLib PROPERTIES FOLDER "Tools")
 
 set(ASSET_COOK_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>")
 add_test(NAME AssetCookRawSmoke

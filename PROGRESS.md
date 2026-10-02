@@ -429,3 +429,6 @@
 
 - G1-VALIDATION: GameFoundationValidation.mdへGR01/03/04/08実装と検証範囲を保存。最終portable確認は34件実行成功/実行失敗0、FixedStepSchedulerはWindows.hでcompile blocked1件。実World/Engine/Module/Windows/native/GPU/完全bundleは未実行として区別。追加群境界実World試験も未実行を明記。代表コマンド4件を文書どおり再実行成功。G1追加Publicヘッダ29件を照合しCurves.hの明示登録漏れを補完、全件exactonce。文書と実ログの照合PASS。
 - Next: 作者承認に従いG2へ進む。AssetCookLib分離を先行し、G2-S8既存JSON/stb活用とG2-S2ソース隣サイドカーの2選定は返答待ち。それ以外の未決選定も勝手に確定しない。
+
+- G2-P0-COOK-LIB: GR77/GR78以降の共通基盤として3cookerのcpp/hをSTATIC AssetCookLibへ分離し、AssetCookはMain.cppから同libをリンク。Coreとcooker公開includeをPUBLIC伝搬、内部includeはPRIVATE。既存7実装/headerとsmoke登録blockのbyte不変、単一source所属/依存順を検証し静的レビューPASS。cmake不在とWindows.h依存のため構成/実build/smoke実行・出力バイト一致は未検証。
+- Next: G2-S8/S2返答待ちの間、GR86の現行128関節上限を共有定数へ集約する。値や受理条件は変更しない。

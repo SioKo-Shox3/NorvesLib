@@ -1744,3 +1744,28 @@
 - done-when: GR01/03/04/08の実装、実行済みportable試験、未実行統合/実機確認を区別する一覧をDocs/Architectureへ保存する。G1追加Public header29件の明示登録を揃える（監査でCurves.hのみ漏れ）。
 - verify: 実ログ/command/sourceを照合し34件成功とcompile blocked1件を別記する。Core PUBLIC_HEADERSと追加headerを照合し重複を検出する。新たなWindows/CI合格を主張しない。
 - stop-when: CPU純kernelをWorld/Engine統合の合格と扱う、未実行項目をpassにする、未承認のG2選定を確定する。
+
+## G2-P0-COOK-LIB: 既存cookerを直接リンク可能な基盤へ分離する
+- status: done
+- done-when: GR77/GR78以降の共通基盤としてAudio/Mesh/Texture cookerのcpp/hを単一STATIC AssetCookLibへ所属させ、AssetCook実行ファイルはMain.cppのみを持ち同libをリンクする。公開headerとCore依存をconsumerへ伝搬し、二重compileしない。
+- verify: target source/include/link関係と既存smoke登録のbyte不変を確認。cooker/Main.cpp内容が不変であることを照合。実AssetCook/CookedMeshTestとRaw/Texture/Mesh/Audio smokeは環境が対応する場合に実行し、できない場合は未実行と明記する。
+- stop-when: 分離のために形式/CLI/platform実装/描画の変更が必要、新規test実行ファイル、Windows依存の代替stub。
+- paths: Tools/AssetCook/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: G2実装開始は作者承認済み。G2-S1〜S8の推奨案の包括承認ではない。まず形式/既定値に依存しない分離を行う。
+
+## G2-SELECT-S8: GLBとBVHの解析方針を確定する
+- status: blocked
+- done-when: 作者の選定を記録し、GR77等へ適用する。推奨Aは既存JsonDocument/stbを利用した共有GLB処理と自前BVH、FBXはBlender経由。
+- notes: 2026-10-02 UTCに確認を依頼、返答待ち。新規外部parserの採否を暗黙に確定しない。AssetCookLib分離など非依存の作業は継続。
+
+## G2-SELECT-S2: 取り込み設定の正本を確定する
+- status: blocked
+- done-when: 作者の選定を記録し、GR78/GR96へ適用する。推奨Aはソース隣<ソース名>.import.jsonを正本にし、cook/looseへ共通適用、欠如時は恒等。
+- notes: 2026-10-02 UTCに確認を依頼、返答待ち。設定正本を実装で既成事実化しない。イベント/ソケット等のruntime定義と取り込み変換は分離する。
+
+## G2-GR86-LIMITS: 現行の関節上限を共有定数へ集約する
+- status: todo
+- done-when: glTF decoder/cooker/cooked loaderの現行128関節上限を1つの公開定数へ揃える。値・拒否条件・エラー・format/vertex ABIを変更しない。
+- verify: 対象3箇所の参照と旧128境界の意味不変を照合、公開headerのcompileとPUBLIC_HEADERS登録、可能な関連CPU回帰、実統合compile制約を明記する。
+- stop-when: 未承認の256関節化、JOINTS_1拒否変更、format v1への先行変更、既存型/描画ABIの変更。
+- notes: GR86前半の選定不要部分。G2-S4の縮約/焼き込み/Strict変更とStage Bの上限拡張は保留したまま進める。
