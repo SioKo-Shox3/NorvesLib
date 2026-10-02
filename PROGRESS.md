@@ -366,3 +366,6 @@
 
 - G1-INPUT-SPAN（GR03入力境界）: runtime/settings/names/mapper/binding setの呼出中viewをContainer::Spanへ統一。レビューで(pointer, 0)のcount/range曖昧性を検出し、既存Spanのrange constructorを末尾型制約付きにして解消、同pointer/nullptrの空rangeでは減算を避ける。配列/const/VariableArray/既存viewの変換と所有寿命を維持。実Settings/Runtime/Names/RebindTypes/Hapticsの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER object成功、独立レビューPASS。実Mapper/BindingSetのcompileはString.hのWindows.h依存で停止し統合実行は未確認。
 - Next: GR04の振動voice所有と実出力・停止制御へ進む。
+
+- GAME-VFX-REGISTER（GR130〜GR137）: 作者提供の初期3文書とVFX追加原文をDocs/Plansへ全量配置し、8要件をロードマップ/要件書へ追記。G7/G8/G10配属案と未着手を登録、G1進行中と完了ゲート未通過を区別。原文の作者判断・提案・完了条件案を保持し、GR57資産形式、GR137→GR126→G7/G8の循環、後段renderer、Bridge/Editor/SDK境界を選定待ちへ記録。初版スナップショットと追加原文は不変保持、計画文書は非追跡のまま。TASKSへGAME-GR130-VFX〜GAME-GR137-VFXを追加。エフェクトの実装は未着手。
+- Next: 現在のG1/GR04を継続。VFX追加は前提GRと選定事項が整った段階で着手する。
