@@ -282,3 +282,6 @@
 
 - G1-GR03-P4A: キー/マウスのdown→up serialを正本に追加し、Routerへ届いたPressedだけを許可するInputArmedStateを追加。UIがreleaseと同frame再pressを両方消費して最終down=trueでも旧許可を失効させる。Repeatで復活させず、modifierにも同じ許可条件を使う。正本差替え時はResetする前提を明記。実InputState＋armedの通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）とRelease回帰、独立-Wall/-Wextra/-Werror実行に成功、レビューPASS。Router/Mapper/ImGui接続は後続。
 - Next: backend非依存Gamepad/物理binding型と検証、その上のIdentity設定所有とMapperを組む。
+
+- G1-GR03-P4B: SDK非依存GamepadStateとphysical source/binding型を定義。4slot、単独button codeとstate用mask、axis/trigger範囲、target XY、modifiers、出力Normalized/FrameDeltaを検証する。変位sourceをNormalized軸へ暗黙clampしない。全16bit code/slot境界/型組合せ/数値異常を実headerの通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）で検証し、独立評価PASS。threshold 0/1と隣接範囲外も恒久試験へ追加して再実行成功。JSON代入前のwide整数検証は後続の責務。XInput/Mapper接続は未実装。
+- Next: パッド入力の正本と解除履歴をInputState/armedへ接続し、Mapperが全sourceを読める形にする。

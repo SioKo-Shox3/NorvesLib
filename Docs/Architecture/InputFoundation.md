@@ -48,3 +48,13 @@
 - この段階はKeyboard/Mouseのkernelで、Router接着とGamepad側の同等契約は後続。Linux試験は実InputStateと実armed処理へcallback欠落を与える試験で、ImGuiの実機操作を検証したものではない。
 
 - 同じInputState正本を継続して使うことが前提。別正本への差替え/再初期化時はResetする。serialは正本内の履歴であり、別instanceを識別するIDではない。
+
+## 物理入力元とbinding値型
+
+- GamepadTypesは4slot、14buttonの独自mask、4つの[-1,1]axis、2つの[0,1]trigger、接続状態とpacket番号を持つ。Windows SDK型を公開しない。未接続はbutton/axis/triggerが0で、packetは履歴値を許す。
+- GamepadButtonのbinding codeは有効な単独bitだけ。StateのButtonsはその組合せを許し、予約bitを拒否する。正規化と実device pollingは後続XInput adapterの責務。
+- InputPhysicalSourceはKey/MouseButton/MouseDelta/MouseWheel/GamepadButton/GamepadAxis/GamepadTrigger、code、slotを持つ。MouseDeltaはX=0/Y=1、Wheelはvertical=0/horizontal=1。Gamepad以外のslotは0。
+- codeは狭いenumへcastする前に範囲検証する。Key None/Count、Mouse Count、未知source、複合button code、不正slotを拒否する。
+- InputBindingはtarget X/Y、finite scale、invert、Shift/Ctrl/Altの修飾mask、[0,1]のbutton thresholdを持つ。Axis1D/Buttonではtarget Xだけ、Axis2DではX/Yを許す。scale 0は無寄与、負scaleとinvertは符号指定。
+- Button/Axis1D/Axis2Dは既存のInputAction（Pressed/Released/Repeat）とは別の型。軸の出力はNormalizedまたはFrameDeltaで、MouseDelta/WheelをNormalizedへ暗黙に丸めない。Buttonの変位sourceは後続で瞬間impulseとして扱う。
+- 値型の宣言/検証は実deviceの実装を意味しない。XInput、Mapper、JSONへの接続はまだ行っていない。

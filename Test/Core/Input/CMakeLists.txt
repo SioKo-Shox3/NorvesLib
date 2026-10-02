@@ -4,3 +4,4 @@ add_test(NAME InputStateReleaseTest COMMAND LoggerSinkTest --test=InputStateRele
 add_test(NAME InputAxisMathTest COMMAND LoggerSinkTest --test=InputAxisMathTest)
 add_test(NAME InputButtonStateTest COMMAND LoggerSinkTest --test=InputButtonStateTest)
 add_test(NAME InputArmedStateTest COMMAND LoggerSinkTest --test=InputArmedStateTest)
+add_test(NAME InputBindingTypesTest COMMAND LoggerSinkTest --test=InputBindingTypesTest)

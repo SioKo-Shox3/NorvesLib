@@ -1271,3 +1271,11 @@
 - stop-when: UI消費入力で再armed、既存state回帰、OS/Delegate購読持込み、blocking未解消。
 - paths: Library/Core/Public/Input/InputState.h, Library/Core/Public/Input/InputArmedState.h, Library/Core/Private/Input/InputState.cpp, Library/Core/CMakeLists.txt, Test/Core/Input, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: Router/Mapper接続前のkernel。実InputStateとcallback欠落を使った状態検証であり、ImGui実機の合格ではない。
+
+## G1-GR03-P4B: 入力元とアクションbindingの値型契約を定義する
+- status: done
+- done-when: backend非依存pad stateとphysical source/bindingを宣言し、code/slot/target/modifier/nonfiniteを検証、変位と正規化の暗黙混在を拒否。
+- verify: g++ -std=c++20 -I Library/Core/Public Test/Core/Input/InputBindingTypesTest.cpp -o /tmp/input-bindings && /tmp/input-bindings
+- stop-when: WindowsSDK依存、不正値accept、既存名衝突、backend動作済み扱い、blocking未解消。
+- paths: Library/Core/Public/Input/GamepadTypes.h, Library/Core/Public/Input/InputBindingTypes.h, Library/Core/CMakeLists.txt, Test/Core/Input/InputBindingTypesTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: XInput adapter/Mapper/JSONは未接続。4slot選定はS5=a承認に基づく。
