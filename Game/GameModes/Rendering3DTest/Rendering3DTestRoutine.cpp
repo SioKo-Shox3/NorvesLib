@@ -101,10 +101,11 @@ namespace Game::GameModes
         }
 
         // 起動画面の高さフォグ（R3）。地面での密度（1/m、0で無効）と、高さ方向の減衰（1/m）。
-        // 空のモデルが地平線より下の放射輝度を0にしているため、下向きの視線ではフォグが空の色へ霞まず
-        // 地面を暗くするだけになる。空のモデルを直すまでは既定で無効にし、--height-fog-density で試す。
-        constexpr float kStartupHeightFogDensity = 0.0f;
-        constexpr float kStartupHeightFogFalloff = 0.5f;
+        // 減衰を上限の 1/m にして地面すれすれの薄い層にし、遠くの地面へ向かう浅い視線だけが厚く霞む
+        // ようにする。密度は太陽 45° の撮り比べ（0.02〜0.1）で、地面すれすれの低角度視点でも近くの球の
+        // 輝度の標準偏差がフォグ無しの 90% 以上に残る値を選んだ。--height-fog-density・--height-fog-falloff で替えられる。
+        constexpr float kStartupHeightFogDensity = 0.04f;
+        constexpr float kStartupHeightFogFalloff = 1.0f;
 
         void UnregisterRendering3DInput(GameModeContext& ctx, Rendering3DTestData& data)
         {
@@ -917,14 +918,15 @@ namespace Game::GameModes
                          data.m_SunStepDelaySeconds);
             }
 
-            // R3 の高さフォグ。地面（y=-1）で最も濃く、上へ行くほど薄くする。密度が0（既定）なら無効。
+            // R3 の高さフォグ。地面（y=-1）で最も濃く、上へ行くほど薄くする。密度が0なら無効。
             {
                 VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
                 fog.DensityAtBaseHeight = data.m_bHasStartupHeightFogDensity ? data.m_StartupHeightFogDensity
                                                                               : kStartupHeightFogDensity;
                 fog.bEnabled = fog.DensityAtBaseHeight > 0.0f;
                 fog.BaseHeight = -1.0f;
-                fog.HeightFalloffPerUnit = kStartupHeightFogFalloff;
+                fog.HeightFalloffPerUnit = data.m_bHasStartupHeightFogFalloff ? data.m_StartupHeightFogFalloff
+                                                                               : kStartupHeightFogFalloff;
                 ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(fog);
             }
 

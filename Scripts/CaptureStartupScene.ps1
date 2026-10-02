@@ -14,7 +14,7 @@
 #
 # -OrbitDegreesPerSecond を与えると、起動からカメラを一定の速さ（度/秒）で軸の周りに回し続け、回っている
 # 途中の画面を撮る（動くカメラでの TAA の残像の確認用）。-AntiAliasing TAA で起動画面の既定の FXAA の
-# 代わりに TAA で撮る（見比べ用）。
+# 代わりに TAA で撮る（見比べ用）。-HeightFogDensity・-HeightFogFalloff で高さフォグの密度・減衰を起動画面の既定から替えて撮る。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -31,7 +31,13 @@ param(
     [ValidateRange(-360.0, 360.0)]
     [double]$OrbitDegreesPerSecond = 0.0,
     [ValidateSet('TAA', 'FXAA')]
-    [string]$AntiAliasing = 'FXAA'
+    [string]$AntiAliasing = 'FXAA',
+    # 高さフォグの地面での密度（1/m）。省略時は起動画面の既定、0 でフォグ無し（撮り比べ用）。
+    [ValidateRange(0.0, 1.0)]
+    [Nullable[double]]$HeightFogDensity = $null,
+    # 高さフォグの高さ方向の減衰（1/m）。省略時は起動画面の既定。
+    [ValidateRange(0.0, 1.0)]
+    [Nullable[double]]$HeightFogFalloff = $null
 )
 
 $ErrorActionPreference = 'Stop'
@@ -210,6 +216,14 @@ foreach ($view in $shots)
     if ($OrbitDegreesPerSecond -ne 0.0)
     {
         $arguments += "--orbit-degrees-per-second=$($OrbitDegreesPerSecond.ToString($invariant))"
+    }
+    if ($null -ne $HeightFogDensity)
+    {
+        $arguments += "--height-fog-density=$(([double]$HeightFogDensity).ToString($invariant))"
+    }
+    if ($null -ne $HeightFogFalloff)
+    {
+        $arguments += "--height-fog-falloff=$(([double]$HeightFogFalloff).ToString($invariant))"
     }
     $arguments += "--anti-aliasing=$($AntiAliasing.ToLowerInvariant())"
 

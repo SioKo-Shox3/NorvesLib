@@ -100,6 +100,8 @@ namespace Game
         constexpr const TCHAR *kExposureEV100Option = TEXT("--exposure-ev100=");
         // --height-fog-density=<1/m>: 起動画面の高さフォグの地面での密度（0で無効、0〜1）。見比べと調整に使う。
         constexpr const TCHAR *kHeightFogDensityOption = TEXT("--height-fog-density=");
+        // --height-fog-falloff=<1/m>: 起動画面の高さフォグの高さ方向の減衰（0〜1）。見比べと調整に使う。
+        constexpr const TCHAR *kHeightFogFalloffOption = TEXT("--height-fog-falloff=");
         // --orbit-degrees-per-second=<deg/s>: カメラを一定の速さで回す（-360〜360、撮影で動くカメラを確かめる）。
         constexpr const TCHAR *kOrbitDegreesPerSecondOption = TEXT("--orbit-degrees-per-second=");
         float s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
@@ -108,6 +110,8 @@ namespace Game
         bool s_bRendering3DTestTemporalAA = false;
         bool s_bRendering3DTestHasHeightFogDensity = false;
         float s_Rendering3DTestHeightFogDensity = 0.0f;
+        bool s_bRendering3DTestHasHeightFogFalloff = false;
+        float s_Rendering3DTestHeightFogFalloff = 0.0f;
         bool s_bRendering3DTestHasSunElevation = false;
         bool s_bRendering3DTestHasSunAzimuth = false;
         bool s_bRendering3DTestHasExposureEV100 = false;
@@ -429,6 +433,7 @@ namespace Game
         s_bRendering3DTestHasSunAzimuth = false;
         s_bRendering3DTestHasExposureEV100 = false;
         s_bRendering3DTestHasHeightFogDensity = false;
+        s_bRendering3DTestHasHeightFogFalloff = false;
         s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
         s_bRendering3DTestTemporalAA = false;
         bool bHasRendering3DTestBoardSmokeCount = false;
@@ -551,6 +556,18 @@ namespace Game
                     return false;
                 }
                 s_bRendering3DTestHasHeightFogDensity = true;
+                continue;
+            }
+
+            String heightFogFalloffValue;
+            if (TryStripPrefix(args[i], kHeightFogFalloffOption, heightFogFalloffValue))
+            {
+                if (!TryParseBoundedFloat(heightFogFalloffValue, 0.0f, 1.0f, s_Rendering3DTestHeightFogFalloff))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --height-fog-falloff は 0〜1 で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasHeightFogFalloff = true;
                 continue;
             }
 
@@ -1465,6 +1482,8 @@ namespace Game
                 mode->GetData().m_StartupExposureEV100 = s_Rendering3DTestExposureEV100;
                 mode->GetData().m_bHasStartupHeightFogDensity = s_bRendering3DTestHasHeightFogDensity;
                 mode->GetData().m_StartupHeightFogDensity = s_Rendering3DTestHeightFogDensity;
+                mode->GetData().m_bHasStartupHeightFogFalloff = s_bRendering3DTestHasHeightFogFalloff;
+                mode->GetData().m_StartupHeightFogFalloff = s_Rendering3DTestHeightFogFalloff;
                 mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;

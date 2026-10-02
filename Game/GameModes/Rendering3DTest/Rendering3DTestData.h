@@ -175,6 +175,9 @@ namespace Game::GameModes
         // --height-fog-density で指定した高さフォグの地面での密度（0で無効）
         bool m_bHasStartupHeightFogDensity = false;
         float m_StartupHeightFogDensity = 0.0f;
+        // --height-fog-falloff で指定した高さフォグの高さ方向の減衰（1/m）
+        bool m_bHasStartupHeightFogFalloff = false;
+        float m_StartupHeightFogFalloff = 0.0f;
         // --orbit-degrees-per-second で指定したカメラの周回の速さ（度/秒、0で止まったまま）。撮影で
         // 動くカメラの TAA の残像を確かめるのに使う。
         float m_OrbitDegreesPerSecond = 0.0f;
