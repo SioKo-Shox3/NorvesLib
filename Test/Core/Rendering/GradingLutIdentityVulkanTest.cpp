@@ -1,5 +1,5 @@
 ﻿// R8の試験チャートをSceneColorとしてToneMappingPassへ入れ、カメラの見た目の3D LUTを確かめる。
-// 恒等のLUTを掛けても出力が変わらないこと、見た目のLUTの出力がLUTファイルをCPUで三線形補間した値と一致すること、
+// 恒等のLUTを掛けても出力がビット単位で変わらないこと、見た目のLUTの出力がLUTファイルをCPUで三線形補間した値と一致すること、
 // ACES 2.0 SDR LUT の演算子と読めないLUTでは掛からないことを実GPUで確かめる。
 #include "Rendering/SceneProxy.h"
 #include "Rendering/SceneRenderer.h"
@@ -52,8 +52,7 @@ namespace
     constexpr const char* MissingLutAssetPath = "Textures/LookLuts/DoesNotExist.lut3d";
 
     // 合否の閾値。いずれも [0,1] へ飽和させた区分的sRGB符号化後の値で、全画素・全成分の最大差。
-    // 恒等のLUT: 8 bit の表示で同じ段に丸まる差（半段）以内。
-    constexpr double MaxIdentityEncodedDifference = 0.5 / 255.0;
+    // 恒等のLUTは閾値を持たず、読み戻したRGBA16Fの全画素がLUTなしとビット単位で一致することを求める。
     // 見た目のLUT: CPUの三線形補間との差（GPUの補間の重みの精度と半精度の出力の丸めの分）。
     constexpr double MaxLookEncodedDifference = 1.0 / 255.0;
     // 見た目のLUTが実際に掛かったこと: LUTなしとの最大差がこれ以上。
@@ -88,7 +87,7 @@ namespace
     struct HostLut
     {
         uint32_t Size = 0u;
-        VariableArray<uint16_t> Texels; // RGBA half、R が最も速く変わる順
+        VariableArray<uint16_t> Texels; // RGBA half（RGB は格子点の座標からの符号化値の差分）、R が最も速く変わる順
     };
 
     struct ComparisonResult
@@ -170,7 +169,7 @@ namespace
             std::memcpy(&format, bytes.data() + 16, sizeof(uint32_t));
         }
         const uint64_t payloadSize = static_cast<uint64_t>(size) * size * size * BytesPerPixel;
-        if (bytes.size() < LutHeaderSize || std::memcmp(bytes.data(), "NLUTLK01", 8u) != 0 || size != 32u ||
+        if (bytes.size() < LutHeaderSize || std::memcmp(bytes.data(), "NLUTLK02", 8u) != 0 || size != 32u ||
             channels != 4u || format != 1u || bytes.size() != LutHeaderSize + payloadSize)
         {
             std::cerr << "LUTの見出しが一致しません: " << assetPath << '\n';
@@ -211,20 +210,23 @@ namespace
         return clamped <= 0.04045 ? clamped / 12.92 : std::pow((clamped + 0.055) / 1.055, 2.4);
     }
 
-    // tonemapping.frag の ApplyLookLut（強さ1）をCPUで行う: 符号化値の座標で格子を三線形補間し、リニアへ戻す。
+    // tonemapping.frag の ApplyLookLut（強さ1）をCPUで行う: 符号化値の座標で格子の差分を三線形補間して符号化値へ足し、
+    // リニアへ戻したものと元の符号化値をリニアへ戻したものとの差を入力へ足す。
     void ApplyLookLutOnCpu(const HostLut& lut, const double displayLinear[3], double outLinear[3])
     {
         const uint32_t size = lut.Size;
+        double inputEncoded[3];
         double position[3];
         uint32_t base[3];
         double fraction[3];
         for (uint32_t axis = 0u; axis < 3u; ++axis)
         {
-            position[axis] = EncodeSrgbClamped(displayLinear[axis]) * static_cast<double>(size - 1u);
+            inputEncoded[axis] = EncodeSrgbClamped(displayLinear[axis]);
+            position[axis] = inputEncoded[axis] * static_cast<double>(size - 1u);
             base[axis] = std::min(static_cast<uint32_t>(std::floor(position[axis])), size - 2u);
             fraction[axis] = position[axis] - static_cast<double>(base[axis]);
         }
-        double encoded[3] = {0.0, 0.0, 0.0};
+        double offset[3] = {0.0, 0.0, 0.0};
         for (uint32_t corner = 0u; corner < 8u; ++corner)
         {
             const uint32_t dx = corner & 1u;
@@ -237,12 +239,13 @@ namespace
                 ((static_cast<size_t>(base[2] + dz) * size + (base[1] + dy)) * size + (base[0] + dx)) * 4u;
             for (uint32_t channel = 0u; channel < 3u; ++channel)
             {
-                encoded[channel] += weight * HalfToFloat(lut.Texels[index + channel]);
+                offset[channel] += weight * HalfToFloat(lut.Texels[index + channel]);
             }
         }
         for (uint32_t channel = 0u; channel < 3u; ++channel)
         {
-            outLinear[channel] = DecodeSrgbClamped(encoded[channel]);
+            outLinear[channel] = displayLinear[channel] + DecodeSrgbClamped(inputEncoded[channel] + offset[channel]) -
+                                 DecodeSrgbClamped(inputEncoded[channel]);
         }
     }
 
@@ -433,6 +436,35 @@ namespace
         return lhs.size() == rhs.size() && std::memcmp(lhs.data(), rhs.data(), lhs.size() * sizeof(uint16_t)) == 0;
     }
 
+    // 読み戻した RGBA16F のうちビットが異なる half の数（大きさが違えば多い方の全数）。
+    size_t CountDifferentHalfs(const VariableArray<uint16_t>& lhs, const VariableArray<uint16_t>& rhs)
+    {
+        if (lhs.size() != rhs.size())
+        {
+            return std::max(lhs.size(), rhs.size());
+        }
+        size_t count = 0u;
+        for (size_t index = 0u; index < lhs.size(); ++index)
+        {
+            count += lhs[index] != rhs[index] ? 1u : 0u;
+        }
+        return count;
+    }
+
+    // LUTの RGB の差分のうち 0（+0 と -0）でない half の数。
+    size_t CountNonZeroOffsets(const HostLut& lut)
+    {
+        size_t count = 0u;
+        for (size_t index = 0u; index < lut.Texels.size(); ++index)
+        {
+            if (index % 4u != 3u && (lut.Texels[index] & 0x7FFFu) != 0u)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
     int RunTest()
     {
         if (IsForcedGpuTestSkipRequested())
@@ -523,13 +555,11 @@ namespace
                 out[channel] = HalfToFloat(nonePixels[base + channel]);
             }
         };
-        // 恒等のLUT: LUTなしの出力と比べる。CPUで恒等のLUTを引いた値（ファイルの中身が恒等であることの確認）とも比べる。
+        // 恒等のLUT: 読み戻した RGBA16F をLUTなしの出力とビット単位で比べる（符号化後の差も合わせて出す）。
+        // ファイルの中身が恒等であること（差分が全て0）も確かめる。
+        const size_t identityDifferentHalfs = CountDifferentHalfs(identityPixels, nonePixels);
         const ComparisonResult identityResult = Compare(identityPixels, width, height, noneAt);
-        const ComparisonResult identityFileResult = Compare(nonePixels, width, height, [&](size_t base, double out[3]) {
-            double input[3];
-            noneAt(base, input);
-            ApplyLookLutOnCpu(identityLut, input, out);
-        });
+        const size_t identityFileNonZeroOffsets = CountNonZeroOffsets(identityLut);
         // 見た目のLUT: LUTなしの出力へCPUでLUTを引いた値と比べる。LUTなしとの差で掛かったことを確かめる。
         const ComparisonResult warmResult = Compare(warmPixels, width, height, [&](size_t base, double out[3]) {
             double input[3];
@@ -541,11 +571,12 @@ namespace
         const bool bAces20Unaffected = PixelsEqual(aces20WarmPixels, aces20NonePixels);
 
         std::cout << "pixels=" << width * height << " lut_size=" << warmLut.Size << '\n';
-        std::cout << "thresholds identity<=" << MaxIdentityEncodedDifference * 255.0
-                  << "/255 look_vs_cpu<=" << MaxLookEncodedDifference * 255.0
+        std::cout << "thresholds identity=bit_exact look_vs_cpu<=" << MaxLookEncodedDifference * 255.0
                   << "/255 look_effect>=" << MinLookEffectEncodedDifference * 255.0 << "/255\n";
         PrintComparison("identity_lut_vs_no_lut", identityResult);
-        PrintComparison("identity_lut_file_cpu_vs_no_lut", identityFileResult);
+        std::cout << "identity_lut_vs_no_lut different_halfs=" << identityDifferentHalfs << " of "
+                  << nonePixels.size() << '\n';
+        std::cout << "identity_lut_file nonzero_offsets=" << identityFileNonZeroOffsets << '\n';
         PrintComparison("warm_film_lut_vs_cpu_reference", warmResult);
         PrintComparison("warm_film_lut_vs_no_lut", warmEffect);
         std::cout << "missing_lut_matches_no_lut=" << (bMissingMatchesNone ? 1 : 0) << '\n';
@@ -558,12 +589,13 @@ namespace
         std::cout << "VUID_COUNT=" << validationErrorCount << '\n';
 
         bool bPassed = true;
-        if (identityResult.MaxDifference > MaxIdentityEncodedDifference)
+        if (identityDifferentHalfs != 0u || identityResult.MaxDifference != 0.0 ||
+            identityResult.Encoded8BitMismatches != 0u)
         {
-            std::cerr << "恒等のLUTを掛けた出力がLUTなしの出力と一致しません\n";
+            std::cerr << "恒等のLUTを掛けた出力がLUTなしの出力とビット単位で一致しません\n";
             bPassed = false;
         }
-        if (identityFileResult.MaxDifference > MaxIdentityEncodedDifference)
+        if (identityFileNonZeroOffsets != 0u)
         {
             std::cerr << "恒等のLUTファイルの中身が恒等になっていません\n";
             bPassed = false;
@@ -606,7 +638,7 @@ int main()
     }
     catch (const std::exception& exception)
     {
-        std::cerr << "GradingLutIdentityVulkanTest threw an exception: " << exception.what() << '\n';
+        std::cerr << "GradingLutIdentityVulkanTest で例外が発生しました: " << exception.what() << '\n';
         return 1;
     }
 }

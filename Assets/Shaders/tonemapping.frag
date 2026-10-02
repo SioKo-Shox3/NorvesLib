@@ -32,7 +32,7 @@ layout(std140, set = 0, binding = 1) uniform ToneMappingParams
 // ACES 2.0 SDR 100 nit Rec.709 のベイク3D LUT（display-linear。x=R, y=G, z=B）
 layout(set = 0, binding = 2) uniform sampler3D colorLut;
 
-// グレーディング用の見た目の3D LUT（sRGBの符号化値で引き、符号化値を返す。x=R, y=G, z=B）
+// グレーディング用の見た目の3D LUT（sRGBの符号化値で引き、格子点の座標からの符号化値の差分を返す。x=R, y=G, z=B）
 layout(set = 0, binding = 3) uniform sampler3D lookLut;
 
 layout(location = 0) out vec4 outColor;
@@ -202,15 +202,20 @@ vec3 ApplyFilmGrain(vec3 displayLinear, uvec2 pixel, uint frameSeed, float stren
 }
 
 // 見た目の3D LUT: 表示のリニア値をsRGBの符号化値へ写し、格子点 0 と N-1 がテクセル中心に来るよう
-// 半テクセル内側の座標で三線形補間して、返る符号化値をリニアへ戻す。恒等のLUT（格子点の座標そのもの）は
-// 符号化値の一次関数なので、補間しても入力をそのまま返す。
+// 半テクセル内側の座標で三線形補間する。LUTは格子点の座標からの差分（符号化値）を持つので、
+// 補間した差分を足した符号化値と元の符号化値をそれぞれリニアへ戻し、その差を入力へ足す。
+// 恒等のLUTは差分がすべて0なので、補間の精度に関わらず入力をビット単位でそのまま返す。
+// precise は2つの DecodeSrgb の演算の融合を揃え、差分0のときの差を厳密に0にするため。
 vec3 ApplyLookLut(vec3 displayLinear, float intensity)
 {
-    vec3 encoded = EncodeSrgb(clamp(displayLinear, vec3(0.0), vec3(1.0)));
+    vec3 encoded = clamp(EncodeSrgb(clamp(displayLinear, vec3(0.0), vec3(1.0))), vec3(0.0), vec3(1.0));
     float lutSize = float(textureSize(lookLut, 0).x);
     vec3 lutCoord = (encoded * (lutSize - 1.0) + 0.5) / lutSize;
-    vec3 looked = DecodeSrgb(clamp(textureLod(lookLut, lutCoord, 0.0).rgb, vec3(0.0), vec3(1.0)));
-    return mix(displayLinear, looked, intensity);
+    vec3 offset = textureLod(lookLut, lutCoord, 0.0).rgb;
+    precise vec3 looked = DecodeSrgb(clamp(encoded + offset, vec3(0.0), vec3(1.0)));
+    precise vec3 original = DecodeSrgb(encoded);
+    precise vec3 delta = looked - original;
+    return displayLinear + intensity * delta;
 }
 
 void main()

@@ -31,8 +31,9 @@ namespace NorvesLib::Core::Rendering
 
         // Scripts/BakeAcesOutputLut.py が書く見出し（32 byte、little-endian）
         constexpr char Aces20LutMagic[8] = {'N', 'L', 'U', 'T', '3', 'D', '0', '1'};
-        // Scripts/BakeLookLut.py が書く見た目のLUTの見出し（並びは ACES のLUTと同じで、shaper の値は使わない）
-        constexpr char LookLutMagic[8] = {'N', 'L', 'U', 'T', 'L', 'K', '0', '1'};
+        // Scripts/BakeLookLut.py が書く見た目のLUTの見出し（並びは ACES のLUTと同じで、shaper の値は使わない）。
+        // RGB は格子点の座標からの差分（sRGBの符号化値）で、恒等のLUTは全て0になる
+        constexpr char LookLutMagic[8] = {'N', 'L', 'U', 'T', 'L', 'K', '0', '2'};
         constexpr uint32_t Lut3dHeaderSize = 32u;
         constexpr uint32_t Lut3dFormatRgba16F = 1u;
         constexpr uint32_t Lut3dBytesPerTexel = 8u;
@@ -92,7 +93,7 @@ namespace NorvesLib::Core::Rendering
             std::ifstream file(path.c_str(), std::ios::binary | std::ios::ate);
             if (!file.is_open())
             {
-                NORVES_LOG_ERROR("ToneMappingPass", "Failed to open color LUT: %s", path.c_str());
+                NORVES_LOG_ERROR("ToneMappingPass", "色のLUTを開けません: %s", path.c_str());
                 return false;
             }
 
@@ -102,7 +103,7 @@ namespace NorvesLib::Core::Rendering
             if (fileSize < static_cast<std::streamoff>(Lut3dHeaderSize) ||
                 !file.read(reinterpret_cast<char*>(&outHeader), sizeof(outHeader)))
             {
-                NORVES_LOG_ERROR("ToneMappingPass", "Color LUT header is truncated: %s", path.c_str());
+                NORVES_LOG_ERROR("ToneMappingPass", "色のLUTの見出しが途中で切れています: %s", path.c_str());
                 return false;
             }
 
@@ -114,7 +115,7 @@ namespace NorvesLib::Core::Rendering
                 outHeader.Format != Lut3dFormatRgba16F ||
                 static_cast<uint64_t>(fileSize) != Lut3dHeaderSize + payloadSize)
             {
-                NORVES_LOG_ERROR("ToneMappingPass", "Color LUT header does not match the expected layout: %s",
+                NORVES_LOG_ERROR("ToneMappingPass", "色のLUTの見出しが想定の並びと一致しません: %s",
                                  path.c_str());
                 return false;
             }
@@ -122,7 +123,7 @@ namespace NorvesLib::Core::Rendering
             outTexels.resize(static_cast<size_t>(payloadSize));
             if (!file.read(reinterpret_cast<char*>(outTexels.data()), static_cast<std::streamsize>(payloadSize)))
             {
-                NORVES_LOG_ERROR("ToneMappingPass", "Failed to read color LUT texels: %s", path.c_str());
+                NORVES_LOG_ERROR("ToneMappingPass", "色のLUTのテクセルを読めません: %s", path.c_str());
                 return false;
             }
             return true;
@@ -151,14 +152,14 @@ namespace NorvesLib::Core::Rendering
                 lutTexture = device->CreateTexture(lutDesc);
                 if (!lutTexture)
                 {
-                    NORVES_LOG_ERROR("ToneMappingPass", "Failed to create color LUT texture");
+                    NORVES_LOG_ERROR("ToneMappingPass", "色のLUTのテクスチャを作成できません");
                     return nullptr;
                 }
                 lutTexture->Update(texels.data(), rowPitch, slicePitch);
             }
             catch (const std::exception& exception)
             {
-                NORVES_LOG_ERROR("ToneMappingPass", "Failed to create or upload color LUT: %s", exception.what());
+                NORVES_LOG_ERROR("ToneMappingPass", "色のLUTの作成または転送に失敗しました: %s", exception.what());
                 return nullptr;
             }
             return lutTexture;
@@ -918,7 +919,7 @@ namespace NorvesLib::Core::Rendering
             m_bLookLutLoadFailed = !m_LookLutTexture;
             if (m_bLookLutLoadFailed)
             {
-                NORVES_LOG_ERROR("ToneMappingPass", "Look LUT is unavailable; drawing without it: %s",
+                NORVES_LOG_ERROR("ToneMappingPass", "見た目のLUTを使えないため、掛けずに描画します: %s",
                                  m_LookLutPath.c_str());
             }
         }
@@ -938,7 +939,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr lutTexture = CreateLut3dTexture(m_Device, header.Size, texels, "ToneMappingLookLut");
         if (lutTexture)
         {
-            NORVES_LOG_INFO("ToneMappingPass", "Look LUT loaded (%u^3): %s", header.Size, assetPath);
+            NORVES_LOG_INFO("ToneMappingPass", "見た目のLUTを読み込みました（%u^3）: %s", header.Size, assetPath);
         }
         return lutTexture;
     }

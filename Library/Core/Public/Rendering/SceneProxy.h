@@ -382,7 +382,8 @@ namespace NorvesLib::Core::Rendering
      * @brief カメラごとに掛けるグレーディング用の見た目の3D LUT
      *
      * トーンマップとグレーディングの後、ビネットの前に、表示の値を sRGB の符号化値の座標で引き、
-     * 符号化値を返す LUT（`Scripts/BakeLookLut.py` が焼く `NLUTLK01` 形式）。既定（AssetPath が nullptr）は
+     * 格子点の座標からの符号化値の差分を返す LUT（`Scripts/BakeLookLut.py` が焼く `NLUTLK02` 形式。
+     * 恒等の LUT は差分が全て0で、出力を変えない）。既定（AssetPath が nullptr）は
      * 無効で、検証シーンのカメラは結果を変えない。ACES 2.0 SDR LUT の演算子（表示変換そのもの）には、
      * グレーディングと同じく掛けない。
      */
