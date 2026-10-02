@@ -219,6 +219,8 @@ set(PRIVATE_SOURCES
     Private/Input/InputState.cpp
     Private/Input/InputBindingSet.cpp
     Private/Input/InputBindingJson.cpp
+    Private/Input/InputBindingPersistence.cpp
+    Private/Input/WorkingDirectoryInputBindingStore.cpp
     Private/Input/InputMapper.cpp
     Private/Input/InputSystem.cpp
     Private/Input/InputRouter.cpp
@@ -533,6 +535,8 @@ set(PUBLIC_HEADERS
     Public/Input/InputBindingSet.h
     Public/Input/InputBindingNames.h
     Public/Input/InputBindingJson.h
+    Public/Input/IInputBindingStore.h
+    Public/Input/InputBindingPersistence.h
     Public/Input/InputMapper.h
     Public/Input/InputState.h
     Public/Input/InputSystem.h

@@ -14,3 +14,6 @@ add_test(NAME InputRoutingExtensionTest COMMAND LoggerSinkTest --test=InputRouti
 add_test(NAME InputActionMapTest COMMAND LoggerSinkTest --test=InputActionMapTest)
 add_test(NAME InputBindingNamesTest COMMAND LoggerSinkTest --test=InputBindingNamesTest)
 add_test(NAME InputBindingJsonTest COMMAND LoggerSinkTest --test=InputBindingJsonTest)
+add_test(NAME InputBindingPersistenceTest COMMAND LoggerSinkTest --test=InputBindingPersistenceTest)
+add_test(NAME WorkingDirectoryInputBindingStoreTest COMMAND LoggerSinkTest --test=WorkingDirectoryInputBindingStoreTest)
+set_tests_properties(WorkingDirectoryInputBindingStoreTest PROPERTIES SKIP_RETURN_CODE 125)

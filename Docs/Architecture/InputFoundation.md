@@ -140,3 +140,12 @@
 - 名前/数値変換はportable実コードで全source/codeと境界を試験する。JSON/Identity統合試験は既存bundleへ追加したが、現LinuxではWindows.h依存でcompile/実行未確認。ファイル保存・Gameの設定ロード・rebind捕捉は次段。
 
 - float fieldはdoubleの意味範囲を検証してから変換し、変換後も範囲を守る。1を僅かに超えるthreshold/expoや極小負感度が丸めで有効化されることを防ぐ。空の未知field名は空C文字列へ置換して安全に警告する。
+
+## 設定のStore境界と保存
+
+- IInputBindingStoreはLoad/Saveの結果を値で返し、読込をLoaded/Missing/Errorに分ける。LoadInputBindingConfigurationは既定JSONが正しい場合だけStoreを読む。user未保存/不正/IOエラーではCurrentを既定に保ち、状態と診断を返す。起動読込から自動保存は行わない。
+- SaveInputBindingOverridesは全差分の書出に成功してからStoreへ明示保存する。差分構造が不正ならStoreを呼ばない。IO失敗とallocation例外は区別する。
+- 暫定Windows adapterはfactory生成時にworking directoryのInputBindings.jsonを絶対pathへ一度解決して固定する。Unicode directoryはW API、長い絶対pathはextended形式で扱う。非対応platformはfactoryがnullを返し、GR76ではこのStore実装を置換する。
+- Loadは読取＋delete共有で開き、1MiB上限・全read・終端を確認する。Saveは同directoryのCREATE_NEW tempを確保し、全write→FlushFileBuffers→close後に置換する。targetを先にtruncateせず、自分が作成できたtempだけをRAIIで後始末する。処理はGameThread専用、複数process同時保存では最後に成功した内容を採用する。
+- native APIの根拠: [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers)、[MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[GetFullPathNameW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfullpathnamew)。MOVEFILE_COPY_ALLOWEDは使わず、同directory内の置換に限定する。
+- 個人設定とtempはgitignoreへ追加。PersistenceのFakeStore試験とWindows temp-directory内だけのnative IO試験を既存bundleへ登録する。現在のLinuxではString→Windows.h依存でcompile/実行未確認であり、file IO成功を実測した扱いにはしない。Gameの既定Asset JSON/初期化配線は次段。

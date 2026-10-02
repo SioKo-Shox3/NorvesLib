@@ -1348,3 +1348,11 @@
 - done-when: JsonDocumentのsurrogate pairを単一Unicode scalarへ合成し、生UTF-8/escape表現が同じ名前になることを検証する。
 - verify: escaped emoji/生UTF-8/孤立surrogate/文字列往復の実コード試験と独立レビュー。
 - notes: ParseUnicodeEscapeは現状4桁単位、AppendUtf8は3byteまで。P5Aとは別件。既定game action名はASCIIで進め、汎用JSON整合として後続修正する。
+
+## G1-GR03-P5B: 入力設定のStoreと読込保存APIを接続する
+- status: done
+- done-when: IInputBindingStoreを介してmissing/loaded/errorを分離し、defaults＋user差分の読込結果と保存APIを提供。Windowsの暫定working-directory adapterは絶対pathを一度固定し、同directoryの排他tempへ全書込/flush後に置換して元ファイルを失敗時に保つ。
+- verify: InputBindingPersistenceTestを既存bundleへ追加しFakeStoreでmissing/invalid/read error/save failure/差分roundtripを試験。WorkingDirectoryInputBindingStoreTestはWindowsの一時directory内だけでread/write/失敗時保持/cwd変更/サイズ上限を試験（現環境では未実行）。独立IO/寿命レビュー。
+- stop-when: 既存targetを先にtruncate、unknown temp削除、CWD変更で保存先移動、既定不正でuser単独採用、startup自動上書き、blocking未解消。
+- paths: Library/Core/Public/Input/IInputBindingStore.h, Library/Core/Public/Input/InputBindingPersistence.h, Library/Core/Private/Input/InputBindingPersistence.cpp, Library/Core/Private/Input/WorkingDirectoryInputBindingStore.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/InputBindingPersistenceTest.cpp, Test/Core/Input/WorkingDirectoryInputBindingStoreTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, .gitignore, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: S8承認済み。GameのAsset JSON/初期化配線は次のP5Cで行い、起動時は読込だけにする。GR76ではStoreだけ差し替える。

@@ -135,3 +135,7 @@ Docs/Plans/
 # Claude Code のマシンローカル設定（agents/hooks は追跡する。settings はテンプレートから再展開）
 .claude/settings.local.json
 .claude/worktrees/
+
+# 実行時の個人入力設定と交換用temp
+InputBindings.json
+InputBindings.json.tmp.*

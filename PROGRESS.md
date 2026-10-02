@@ -306,3 +306,6 @@
 
 - G1-GR03-P5A: bindings.v1の物理code名/安全数値変換、既定JSON/full書出とuser差分の全体適用/差分書出を追加。Identityは名前保存、未知項目は警告/無視、既知不正はdefaults fallback、absent/empty bindings、alias、BOM、1MiB/深さ64を扱う。JsonValue借用列挙を追加し、既存数値parseをlocale非依存のfrom_chars＋全token/範囲検証へ変更。独立評価でfloat化による意味範囲外値の丸め通過と、空未知field名の独自String c_str問題を検出。double/float両方の範囲検証と空文字literal警告へ修正し、恒久試験を追加、第2周PASS。実portable名前/数値試験は通常/NDEBUG-O2/ASan・UBSan（LeakSanitizer除外）/bundle compileと既存3件回帰成功。JSON/JsonWriterの統合compile/実行はWindows.h依存で未確認。既存Delegate識別/JSON surrogate問題は独立TODOとして追跡。
 - Next: IInputBindingStoreによる一時working-directory保存/読込とGame既定JSONのロード、それからrebind捕捉とOS入力供給へ接続する。
+
+- G1-GR03-P5B: IInputBindingStore値返し結果とLoadInputBindingConfiguration/SaveInputBindingOverridesを接続し、Missing/Invalid/ReadErrorを区別して既定へ退避。Windows暫定Storeは生成時に絶対W pathを固定、上限1MiB＋全read/EOF、同directoryのCREATE_NEW tempへ全write/flush/close後に置換する。自分のtempだけ後始末し、元targetを先にtruncateしない。個人設定をgitignoreへ追加。独立IO/寿命/Win API静的レビューPASS、portable名前/settings回帰PASS。FakeStore/native temp-directory試験をbundleへ追加したがWindows.h依存でcompile/実行未確認。任意指摘の1MiBちょうど成功と無関係temp保持の試験も追加した。起動時の自動上書きは行わない。
+- Next: P5CでGameのDefaultInputBindings.jsonと初期化ロードへ接続する。ユーザーへの報告はG1/GR03を冒頭に明記する。

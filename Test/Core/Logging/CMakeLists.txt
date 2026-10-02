@@ -19,6 +19,8 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER InputActionMapTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputActionMapTest.cpp
     MEMBER InputActionRuntimeTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputActionRuntimeTest.cpp
     MEMBER InputBindingNamesTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputBindingNamesTest.cpp
+    MEMBER InputBindingPersistenceTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputBindingPersistenceTest.cpp
+    MEMBER WorkingDirectoryInputBindingStoreTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/WorkingDirectoryInputBindingStoreTest.cpp
     MEMBER InputBindingJsonTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputBindingJsonTest.cpp
     MEMBER InputBindingSetTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputBindingSetTest.cpp
     MEMBER ModuleRegistryTest ${CMAKE_SOURCE_DIR}/Test/Core/Module/ModuleRegistryTest.cpp
