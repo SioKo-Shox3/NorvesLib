@@ -1206,3 +1206,12 @@
 - stop-when: 未承認方式変更、既存Tickの意味変更、公開契約のblockingが残る場合。
 - paths: Library/Core/Public/Component, Library/Core/Private/Component/Component.cpp, Library/Core/CMakeLists.txt, Test/Core/Object, Docs/Architecture/TickStages.md, TASKS.md, PROGRESS.md
 - notes: World実行順への接続は後続。個別の依存連携はDelegateで扱う。
+
+## G1-GR01-P2: Worldの段階更新と更新中の遅延破棄を接続する
+- status: done
+- done-when: 一回収集と前後段/Fixedの安全な実行、翌frame追加/設定反映、破棄前entry無効化、旧fixedstepcleanup順を保つ。
+- verify: g++ -std=c++23 -I Library/Core/Public Test/Core/Object/TickDispatchTest.cpp -o /tmp/norves-tick-dispatch && /tmp/norves-tick-dispatch
+- verify: WindowsでEntityTreeTestをビルドしWorldTickGroupTestを実行（現環境では未実行）。
+- stop-when: 寿命の未解消問題、既存fixedstepcleanup回帰、scope外変更、blockingが残る場合。
+- paths: Library/Core/Public/Component, Library/Core/Private/Component/Component.cpp, Library/Core/Public/Object/World.h, Library/Core/Public/Object/Entity.h, Library/Core/Private/Object/World.cpp, Library/Core/Private/Object/Entity.cpp, Library/Core/CMakeLists.txt, Test/Core/Object, Docs/Architecture/TickStages.md, TASKS.md, PROGRESS.md
+- notes: ApplicationのLateTick配線とカメラ移設は後続。個別依存のgraphは作らない。

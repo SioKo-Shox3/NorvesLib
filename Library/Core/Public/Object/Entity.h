@@ -141,6 +141,8 @@ namespace NorvesLib::Core
          * @brief public AddInnerからのin-world子Entity追加を拒否します
          */
         virtual bool AddInner(IUnknown* inner) override;
+        // ObjectHeapも通るdetach入口で、Worldの非所有更新参照を無効化する。
+        virtual bool RemoveInner(IUnknown* inner) override;
 
         /**
          * @brief オブジェクトIDを取得
@@ -348,6 +350,8 @@ namespace NorvesLib::Core
         EntityHandle m_EntityHandle;
 
     private:
+        friend class World;
+        void RemoveComponentImmediately(Component::Component* component);
         void MarkRenderStateDirtyRecursive();
         void SetLocalTransform(const Math::Transform& transform);
         void SyncLocalTransformFromProperties();

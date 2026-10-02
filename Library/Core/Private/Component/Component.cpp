@@ -79,7 +79,7 @@ namespace NorvesLib::Core::Component
 
     void Component::OnTickGroup(ETickGroup group, float deltaTime)
     {
-        if (group == GetTickGroup())
+        if (group == (m_bHasDispatchPrimaryGroup ? m_DispatchPrimaryGroup : GetTickGroup()))
         {
             Tick(deltaTime);
         }

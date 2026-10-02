@@ -82,6 +82,11 @@ namespace NorvesLib::Core::Component
 
         // 既定では主群の呼び出しだけを旧Tickへ渡す。複数群を使う型は上書きする。
         virtual void OnTickGroup(ETickGroup group, float deltaTime);
+        // 実破棄はWorldの安全なcleanup位置で行う。
+        void MarkForDestroy()
+        {
+            Object::Destroy();
+        }
 
         /**
          * @brief 固定ステップ更新(GameThread限定)
@@ -216,6 +221,10 @@ namespace NorvesLib::Core::Component
         uint64_t m_LastSyncedTransformVersion = 0;
 
     private:
+        friend class ::NorvesLib::Core::World;
+        ETickGroup m_DispatchPrimaryGroup = ETickGroup::Default;
+        bool m_bHasDispatchPrimaryGroup = false;
+
         // ID生成用静的カウンター
         static uint64_t s_NextComponentId;
         TickGroupConfiguration m_TickConfiguration;

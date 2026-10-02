@@ -258,3 +258,5 @@
 
 - G1-GR01-P1: 固定8更新群とComponent設定/OnTickGroupを追加。既定Default/priority0、主群bit必須、未知群/maskの非変更拒否を単体g++で確認。NDEBUG指定でも検証が省略されないテストとし、bundle相当コンパイル、ASan/UBSan（LeakSanitizer除外）も成功。既存Tick/FixedTickとWorldの実行処理は不変。実Component/Windows/Gameは未検証。後続Worldでは優先度/maskだけでなく主群も収集時に固定する。
 - Next: GR01のComponent遅延破棄とTick対象の寿命保証、続いてWorld/Applicationの群別更新へ接続する。個別依存は既存Delegateで連携する。
+
+- G1-GR01-P2: Worldの全群/Fixed対象を一回収集し、前半群とLateTickへ接続。主群/優先度/maskを収集値で固定し、既定DFSとowner先行を維持。更新中のComponent/Entity除去は予約し、既存固定step後cleanupを維持した。Entity::RemoveInnerでObjectHeap/GCを含むdetachを捕捉し、保持entryとcleanup待ち参照を無効化。callback自身がheapから消えたときの戻り処理も対象を参照しない。順序/無効化helperはg++/ASan/UBSan（LeakSanitizer除外）成功。実World/Heapの統合ケースはWorldTickGroupTestへ追加したが、Windows.h依存によりコンパイル・実行は未検証。ApplicationからLateTickへの配線、Module/Application後段、ボーン姿勢公開、カメラ移行は未完。
