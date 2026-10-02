@@ -1198,3 +1198,11 @@
 - stop-when: 既存動作変更、描画/未承認判断、blocking指摘が残る場合。
 - paths: Library/Modules/Physics/Private/Physics/PhysicsBroadphase.h, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Test/Modules/Physics/PhysicsProxyQueryTest.cpp, TASKS.md, PROGRESS.md
 - notes: spanの実集約コードを検証。VariableArrayの実メモリシステム結合とEngine起動は未検証。
+
+## G1-GR01-P1: 固定更新群とComponentの更新設定を追加する
+- status: done
+- done-when: 固定8群、既定Default/priority0、群maskの不正値拒否、Componentの既定OnTickGroup契約を確認する。
+- verify: g++ -std=c++23 -I Library/Core/Public Test/Core/Object/TickGroupConfigurationTest.cpp -o /tmp/norves-tick-group && /tmp/norves-tick-group
+- stop-when: 未承認方式変更、既存Tickの意味変更、公開契約のblockingが残る場合。
+- paths: Library/Core/Public/Component, Library/Core/Private/Component/Component.cpp, Library/Core/CMakeLists.txt, Test/Core/Object, Docs/Architecture/TickStages.md, TASKS.md, PROGRESS.md
+- notes: World実行順への接続は後続。個別の依存連携はDelegateで扱う。

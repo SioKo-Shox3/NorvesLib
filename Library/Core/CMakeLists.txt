@@ -437,6 +437,7 @@ set(PUBLIC_HEADERS
     Public/Resource/FontAtlas.h
     # Component
     Public/Component/Component.h
+    Public/Component/TickGroup.h
     Public/Component/BoardComponent.h
     Public/Component/TextComponent.h
     Public/Component/BillboardComponent.h

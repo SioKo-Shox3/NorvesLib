@@ -255,3 +255,6 @@
 
 - G1-GR08-P2C: 複数proxyの結果をspanへ集約し、最近接rayは同距離の大きいhandle、All/sweepは距離とhandle昇順、overlapはhandle昇順にした。MaxHits、self-ignore後の背後命中、容量不足、空入力、途中失敗/未収束での全出力初期化を実コードで検証。入力と出力の格納領域は非aliasを必須とする。通常テストとASan/UBSan（LeakSanitizer除外）に成功。VariableArray wrapperはコンパイル確認、エンジンの実メモリシステム結合は未検証。
 - Next（2026-10-02更新）: GR08のコライダー設定/SceneQuery接続は未完のまま保持し、ロードマップ先頭のGR01更新段階へ戻る。G1-S1/S2/S3の選定待ち。描画との競合可能性だけでは順序を後ろへ回さない。
+
+- G1-GR01-P1: 固定8更新群とComponent設定/OnTickGroupを追加。既定Default/priority0、主群bit必須、未知群/maskの非変更拒否を単体g++で確認。NDEBUG指定でも検証が省略されないテストとし、bundle相当コンパイル、ASan/UBSan（LeakSanitizer除外）も成功。既存Tick/FixedTickとWorldの実行処理は不変。実Component/Windows/Gameは未検証。後続Worldでは優先度/maskだけでなく主群も収集時に固定する。
+- Next: GR01のComponent遅延破棄とTick対象の寿命保証、続いてWorld/Applicationの群別更新へ接続する。個別依存は既存Delegateで連携する。

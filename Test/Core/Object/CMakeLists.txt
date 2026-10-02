@@ -57,6 +57,7 @@ target_include_directories(SceneQueryRaycastTest PRIVATE
 norves_add_test_bundle(EntityTreeTest
     FOLDER "Test/Core/Object"
     MEMBER EntityTreeTest EntityTreeTest.cpp
+    MEMBER TickGroupConfigurationTest TickGroupConfigurationTest.cpp
     MEMBER LightComponentBuildProxyTest LightComponentBuildProxyTest.cpp
     MEMBER TransformHierarchyTest TransformHierarchyTest.cpp
     MEMBER EntityWorldAABBTest EntityWorldAABBTest.cpp
@@ -111,3 +112,5 @@ add_test(NAME SkeletalResourceLifetimeTest COMMAND ResourceRegistryTest --test=S
 add_test(NAME SpringArmComponentTest COMMAND EntityTreeTest --test=SpringArmComponentTest)
 
 add_test(NAME PhysicsQueryTypesTest COMMAND SceneQueryRaycastTest --test=PhysicsQueryTypesTest)
+
+add_test(NAME TickGroupConfigurationTest COMMAND EntityTreeTest --test=TickGroupConfigurationTest)

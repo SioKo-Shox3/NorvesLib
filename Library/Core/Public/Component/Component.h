@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Object/Object.h"
+#include "Component/TickGroup.h"
 #include "Object/Entity.h"
 #include "Object/Reflection.h"
 #include "Container/Containers.h"
@@ -78,6 +79,9 @@ namespace NorvesLib::Core::Component
          * @param deltaTime 前フレームからの経過時間
          */
         virtual void Tick(float deltaTime);
+
+        // 既定では主群の呼び出しだけを旧Tickへ渡す。複数群を使う型は上書きする。
+        virtual void OnTickGroup(ETickGroup group, float deltaTime);
 
         /**
          * @brief 固定ステップ更新(GameThread限定)
@@ -174,6 +178,30 @@ namespace NorvesLib::Core::Component
          */
         void SetTickEnabled(bool bEnabled) { bTickEnabled = bEnabled; }
         bool IsTickEnabled() const { return bTickEnabled; }
+        ETickGroup GetTickGroup() const
+        {
+            return m_TickConfiguration.GetGroup();
+        }
+        int16_t GetTickPriority() const
+        {
+            return m_TickConfiguration.GetPriority();
+        }
+        TickGroupMask GetTickGroupMask() const
+        {
+            return m_TickConfiguration.GetMask();
+        }
+        bool SetTickGroup(ETickGroup group)
+        {
+            return m_TickConfiguration.SetGroup(group);
+        }
+        void SetTickPriority(int16_t priority)
+        {
+            m_TickConfiguration.SetPriority(priority);
+        }
+        bool SetTickGroupMask(TickGroupMask mask)
+        {
+            return m_TickConfiguration.SetMask(mask);
+        }
 
     protected:
         // ========================================
@@ -190,6 +218,7 @@ namespace NorvesLib::Core::Component
     private:
         // ID生成用静的カウンター
         static uint64_t s_NextComponentId;
+        TickGroupConfiguration m_TickConfiguration;
     };
 
     // コンポーネントへのスマートポインタ
