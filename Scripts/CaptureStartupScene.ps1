@@ -6,6 +6,7 @@
 #   crushed_black_ratio … R・G・B がすべて 0 の画素の割合
 # Game の終了コードが0でない、PNGが無い、Game.log にシェーダーのコンパイル失敗がある場合は終了コード1を返す。
 # Slang SDK 未設定の neural_material_decode.slang のコンパイル失敗だけは既知として除外する。
+# -Configuration Release はログが無効で Game.log を書かないため、ログの検査（シェーダーの失敗・間接光の出どころ）を飛ばす。
 #
 # -SunElevations を与えると、各視点を太陽の仰角（度）ごとに撮り、<視点>-sun<仰角>.png として保存する
 # （例: -SunElevations 10,45,3 で朝・昼・夕）。方位は -SunAzimuth（省略時は起動画面の既定）。
@@ -29,14 +30,15 @@
 # -CompareNoiseWith に別の撮影（例: -Rtgi Off）の出力先を与えると、視点・領域ごとに表示の標準偏差の比
 # （今回/比べる側）を求め、どれかが -NoiseRatioLimit（既定2）を超えたら失敗にする。
 # -GpuTimingFrames を与えると、Game を --trace-file 付きで起動し、落ち着いてからその描画フレーム数の後に撮る。
-# トレースの描画したフレームの行（RenderFrameMs > 0）の GPUFrameMs（GPU のタイムスタンプで測ったフレームの
-# 区間。加速構造の構築・更新、RenderGraph の全パスと表示への書き出しを含む）のうち、最後の
-# (-GpuTimingFrames − 60) フレーム（撮影のフレームの直前2つを除く）の中央値・95 パーセンタイル・最大を
-# gpu_timing として metrics.json へ書く。
-# トレースには Type=GPU の行として、フレームごとの FrameGPU・AccelerationStructureBuild（加速構造の更新）・
-# RenderGraph のパスごとの GPU の時間も出る（Frame 列は区間を記録したフレームの番号）。
+# トレースの Type=GPU の行（フレームごとの FrameGPU・AccelerationStructureBuild（加速構造の更新）・
+# RenderGraph のパスごとの GPU の時間。Frame 列は区間を記録したフレームの番号）のうち、FrameGPU（GPU の
+# タイムスタンプで測ったフレームの区間。加速構造の構築・更新、RenderGraph の全パスと表示への書き出しを含む）の
+# 最後の (-GpuTimingFrames − 60) フレーム（撮影のフレームの直前2つを除く）の中央値・95 パーセンタイル・最大と、
+# パスごとの中央値を gpu_timing として metrics.json へ書く。予算を超えたフレームはパスごとの時間と
+# 中央値からの増分を over_budget_frames に書く。
 # タイムスタンプは統計が有効な構成（Debug・RelWithDebInfo）だけで取れるため、Release とは併用しない。
-# 予算（-GpuFrameBudgetMs、既定 16.6 ms）を超えても失敗にはせず within_budget=false と書く。
+# 予算（-GpuFrameBudgetMs、既定 16.6 ms）を超えても失敗にはせず、窓のどれかのフレームが超えたら
+# within_budget=false と書く（95 パーセンタイルの判定は p95_within_budget）。
 # -DefaultCamera で既定視点のカメラを替え（例: 変更前の版の既定 0,30,5）、-ViewNames で撮る視点を絞る（例: default）。
 [CmdletBinding()]
 param(
@@ -609,10 +611,11 @@ foreach ($view in $shots)
             }
         }
     }
-    else
+    elseif ($Configuration -ne 'Release')
     {
         $failures += "$($view.Name): Game.log が無い"
     }
+    # Release はログが無効（NORVES_ENABLE_LOGGING=0）で Game.log を書かないため、ログの検査を飛ばす。
 
     foreach ($image in $images)
     {
@@ -631,7 +634,7 @@ foreach ($view in $shots)
             exposure_ev100 = $view.ExposureEV100
             rendered_frames = $image.RenderedFrames
             png = "$($image.Name).png"
-            game_log = "$($view.Name).Game.log"
+            game_log = if (Test-Path -LiteralPath $viewLogPath) { "$($view.Name).Game.log" } else { $null }
             width = [int]$measured[0]
             height = [int]$measured[1]
             mean_luminance = [math]::Round($measured[2], 3)
@@ -653,26 +656,59 @@ foreach ($view in $shots)
         }
         else
         {
-            # Frame 行はゲームスレッドのフレームごとに書かれ、描画の無い行が大半を占める。描画した
-            # フレームの行（RenderFrameMs > 0）だけを使う。行数が多いため Import-Csv を使わず1行ずつ読む。
+            # GPU の時間は Type=GPU の行（描画したフレームごとに FrameGPU・AccelerationStructureBuild・
+            # パスごとの区間。Frame 列は区間を記録したフレームの番号）から取る。CPU の時間は Frame 行のうち
+            # 描画したフレームの行（RenderFrameMs > 0）から取る。行数が多いため Import-Csv を使わず1行ずつ読む。
             $header = @((Get-Content -LiteralPath $tracePath -TotalCount 1) -split ',')
             $renderFrameColumn = [array]::IndexOf($header, 'RenderFrameMs')
-            $gpuFrameColumn = [array]::IndexOf($header, 'GPUFrameMs')
             $cpuFrameColumn = [array]::IndexOf($header, 'CPUFrameMs')
-            $frameRows = New-Object System.Collections.Generic.List[object]
+            $nameColumn = [array]::IndexOf($header, 'Name')
+            $durationColumn = [array]::IndexOf($header, 'DurationMs')
+            $cpuRows = New-Object System.Collections.Generic.List[double]
+            $gpuScopesByFrame = New-Object 'System.Collections.Generic.SortedDictionary[long,object]'
             foreach ($line in [IO.File]::ReadLines($tracePath))
             {
-                if (-not $line.StartsWith('Frame,')) { continue }
-                $fields = $line -split ','
-                if ([double]::Parse($fields[$renderFrameColumn], $invariant) -le 0.0) { continue }
-                $frameRows.Add([pscustomobject]@{ GPUFrameMs = $fields[$gpuFrameColumn]; CPUFrameMs = $fields[$cpuFrameColumn] })
+                if ($line.StartsWith('Frame,'))
+                {
+                    $fields = $line -split ','
+                    if ([double]::Parse($fields[$renderFrameColumn], $invariant) -le 0.0) { continue }
+                    $cpuRows.Add([double]::Parse($fields[$cpuFrameColumn], $invariant))
+                }
+                elseif ($line.StartsWith('GPU,'))
+                {
+                    $fields = $line -split ','
+                    $frameNumber = [long]$fields[1]
+                    if (-not $gpuScopesByFrame.ContainsKey($frameNumber))
+                    {
+                        $gpuScopesByFrame[$frameNumber] = New-Object 'System.Collections.Generic.List[object]'
+                    }
+                    $gpuScopesByFrame[$frameNumber].Add([pscustomobject]@{
+                        Name = $fields[$nameColumn].Trim('"')
+                        Ms = [double]::Parse($fields[$durationColumn], $invariant)
+                    })
+                }
             }
-            $frameRows = $frameRows.ToArray()
             $windowCount = $GpuTimingFrames - 60
-            $usableRows = if ($frameRows.Count -gt 2) { @($frameRows[0..($frameRows.Count - 3)]) } else { @() }
-            $windowRows = if ($usableRows.Count -gt $windowCount) { @($usableRows[($usableRows.Count - $windowCount)..($usableRows.Count - 1)]) } else { $usableRows }
-            $gpuSamples = @($windowRows | ForEach-Object { [double]::Parse($_.GPUFrameMs, $invariant) } | Where-Object { $_ -gt 0.0 } | Sort-Object)
-            $cpuSamples = @($windowRows | ForEach-Object { [double]::Parse($_.CPUFrameMs, $invariant) } | Where-Object { $_ -gt 0.0 } | Sort-Object)
+            $cpuArray = $cpuRows.ToArray()
+            $cpuUsable = if ($cpuArray.Count -gt 2) { @($cpuArray[0..($cpuArray.Count - 3)]) } else { @() }
+            $cpuWindow = if ($cpuUsable.Count -gt $windowCount) { @($cpuUsable[($cpuUsable.Count - $windowCount)..($cpuUsable.Count - 1)]) } else { $cpuUsable }
+            $cpuSamples = @($cpuWindow | Where-Object { $_ -gt 0.0 } | Sort-Object)
+            # FrameGPU を持つフレームを番号の順に並べ、撮影のフレームの直前2つを除いた最後の窓を使う。
+            $gpuFrames = @($gpuScopesByFrame.Keys | Where-Object { @($gpuScopesByFrame[$_] | Where-Object { $_.Name -eq 'FrameGPU' -and $_.Ms -gt 0.0 }).Count -gt 0 })
+            $gpuUsable = if ($gpuFrames.Count -gt 2) { @($gpuFrames[0..($gpuFrames.Count - 3)]) } else { @() }
+            $gpuWindow = if ($gpuUsable.Count -gt $windowCount) { @($gpuUsable[($gpuUsable.Count - $windowCount)..($gpuUsable.Count - 1)]) } else { $gpuUsable }
+            $gpuFrameMs = @{}
+            $passSamples = @{}
+            foreach ($frameNumber in $gpuWindow)
+            {
+                foreach ($scope in $gpuScopesByFrame[$frameNumber])
+                {
+                    if ($scope.Name -eq 'FrameGPU') { $gpuFrameMs[$frameNumber] = $scope.Ms; continue }
+                    if (-not $passSamples.ContainsKey($scope.Name)) { $passSamples[$scope.Name] = New-Object System.Collections.Generic.List[double] }
+                    $passSamples[$scope.Name].Add($scope.Ms)
+                }
+            }
+            $gpuSamples = @($gpuWindow | ForEach-Object { $gpuFrameMs[$_] } | Sort-Object)
             if ($gpuSamples.Count -lt [math]::Min(50, $windowCount))
             {
                 $failures += "$($view.Name): GPU のフレーム時間の標本が足りない（$($gpuSamples.Count) 件。統計が無効な構成か、GPU のタイムスタンプが使えない）"
@@ -684,6 +720,41 @@ foreach ($view in $shots)
                 $maximum = $gpuSamples[$gpuSamples.Count - 1]
                 $mean = ($gpuSamples | Measure-Object -Average).Average
                 $cpuMedian = if ($cpuSamples.Count -gt 0) { $cpuSamples[[int][math]::Floor(($cpuSamples.Count - 1) * 0.5)] } else { $null }
+                # パスごとの中央値（窓の全フレーム）。予算を超えたフレームの内訳と比べる基準にする。
+                $passMedian = @{}
+                foreach ($name in $passSamples.Keys)
+                {
+                    $sortedPass = @($passSamples[$name] | Sort-Object)
+                    $passMedian[$name] = $sortedPass[[int][math]::Floor(($sortedPass.Count - 1) * 0.5)]
+                }
+                $passMedianList = @($passMedian.GetEnumerator() | Sort-Object -Property Value -Descending | ForEach-Object {
+                    [pscustomobject][ordered]@{ pass = $_.Key; median_ms = [math]::Round($_.Value, 3) }
+                })
+                # 予算を超えたフレームごとに、パスの時間・中央値からの増分・どの区間にも入らない残りを書く。
+                $overBudgetFrames = @()
+                foreach ($frameNumber in $gpuWindow)
+                {
+                    $frameMs = $gpuFrameMs[$frameNumber]
+                    if ($frameMs -le $GpuFrameBudgetMs) { continue }
+                    $scopes = @($gpuScopesByFrame[$frameNumber] | Where-Object { $_.Name -ne 'FrameGPU' })
+                    $scopeSum = ($scopes | Measure-Object -Property Ms -Sum).Sum
+                    $passes = @($scopes | Sort-Object -Property Ms -Descending | ForEach-Object {
+                        $baseline = if ($passMedian.ContainsKey($_.Name)) { $passMedian[$_.Name] } else { 0.0 }
+                        [pscustomobject][ordered]@{
+                            pass = $_.Name
+                            ms = [math]::Round($_.Ms, 3)
+                            median_ms = [math]::Round($baseline, 3)
+                            over_median_ms = [math]::Round($_.Ms - $baseline, 3)
+                        }
+                    })
+                    $overBudgetFrames += [pscustomobject][ordered]@{
+                        frame = $frameNumber
+                        frame_gpu_ms = [math]::Round($frameMs, 3)
+                        over_budget_ms = [math]::Round($frameMs - $GpuFrameBudgetMs, 3)
+                        unattributed_ms = [math]::Round($frameMs - $scopeSum, 3)
+                        passes = $passes
+                    }
+                }
                 $timing = [ordered]@{
                     view = $view.Name
                     trace = "$($view.Name).trace.csv"
@@ -694,12 +765,25 @@ foreach ($view in $shots)
                     gpu_frame_ms_max = [math]::Round($maximum, 3)
                     cpu_frame_ms_median = if ($null -ne $cpuMedian) { [math]::Round($cpuMedian, 3) } else { $null }
                     budget_ms = $GpuFrameBudgetMs
-                    within_budget = ($p95 -le $GpuFrameBudgetMs)
+                    # 窓のすべてのフレームが予算以内か（95 パーセンタイルだけで判定しない）。
+                    within_budget = ($maximum -le $GpuFrameBudgetMs)
+                    p95_within_budget = ($p95 -le $GpuFrameBudgetMs)
+                    over_budget_count = $overBudgetFrames.Count
+                    pass_median_ms = $passMedianList
+                    over_budget_frames = $overBudgetFrames
                 }
                 $gpuTiming += [pscustomobject]$timing
-                Write-Output ("CAPTURE_STARTUP_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} budget_ms={7} within_budget={8}" -f `
+                Write-Output ("CAPTURE_STARTUP_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} budget_ms={7} within_budget={8} over_budget_count={9}" -f `
                     $timing.view, $timing.frames, $timing.gpu_frame_ms_median, $timing.gpu_frame_ms_mean, $timing.gpu_frame_ms_p95,
-                    $timing.gpu_frame_ms_max, $timing.cpu_frame_ms_median, $timing.budget_ms, $timing.within_budget)
+                    $timing.gpu_frame_ms_max, $timing.cpu_frame_ms_median, $timing.budget_ms, $timing.within_budget, $timing.over_budget_count)
+                Write-Output ("CAPTURE_STARTUP_SCENE gpu_pass_median view={0} {1}" -f $timing.view,
+                    (($passMedianList | Select-Object -First 8 | ForEach-Object { "$($_.pass)=$($_.median_ms)" }) -join ' '))
+                foreach ($over in $overBudgetFrames)
+                {
+                    Write-Output ("CAPTURE_STARTUP_SCENE gpu_over_budget view={0} frame={1} frame_gpu_ms={2} over_budget_ms={3} unattributed_ms={4} passes={5}" -f `
+                        $timing.view, $over.frame, $over.frame_gpu_ms, $over.over_budget_ms, $over.unattributed_ms,
+                        (($over.passes | Select-Object -First 6 | ForEach-Object { "{0}:{1}({2})" -f $_.pass, $_.ms, $_.over_median_ms.ToString('+0.###;-0.###;0', $invariant) }) -join ' '))
+                }
             }
         }
     }
@@ -799,7 +883,7 @@ $metrics = [ordered]@{
     gpu_timing = $gpuTiming
     failures = $failures
 }
-[IO.File]::WriteAllText($metricsPath, ($metrics | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText($metricsPath, ($metrics | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
 
 if ($failures.Count -gt 0)
 {

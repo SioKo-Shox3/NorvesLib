@@ -333,7 +333,7 @@
 - notes: 2026-10-03 実装は `053aaa3` で済み、検証の RenderGraphCompileTest が前から落ちていたため止めていた（`blocked/SS-GPU-PROFILE.md`）。FIX-RGCT-MEGA-VELOCITY で直したので、verify を回し直して done にする（実装の追加は不要）。
 
 ## SS-ACCEPT: 起動画面の改善を受け入れる
-- status: todo
+- status: done
 - done-when: 朝・昼・夕 × 既定・近接・低角度の撮影一式と、変更前（`163ffe5`）の同じ視点の撮影を並べた記録（`Docs/RenderingValidation/StartupSceneAcceptance.md`、画像は `.harness/runs/` への参照）がある。最適化が有効で計測の残る RelWithDebInfo の構成で、起動画面の1フレームのGPUの時間（加速構造の更新を含む）を測り、1280×720で16.6 ms以下であることを記録する（超えるフレームがあれば、そのフレームのパスごとの内訳と、どれを軽くすれば収まるかを記録する）。Release には計測の仕組みを入れないので、Release では build が通り起動画面を撮影できることだけを確かめる。夜（`-Night`）の撮影も並べる。評価者が、各項目の完了条件と撮影を開いて反証を試みる。
 - verify: `cmake --build build --config Release --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
