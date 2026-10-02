@@ -43,6 +43,7 @@ namespace NorvesLib::Core
     void SkeletonResource::Unload()
     {
         m_Joints.clear();
+        m_JointIndices.clear();
         SetResourceState(ResourceState::Unloaded);
     }
 
@@ -53,12 +54,27 @@ namespace NorvesLib::Core
         {
             size += joint.Name.size();
         }
+        size += m_JointIndices.size() * (sizeof(Identity) + sizeof(uint32_t));
         return size;
     }
 
     void SkeletonResource::SetJoints(Container::VariableArray<Skeletal::SkeletalJoint>&& joints)
     {
         m_Joints = std::move(joints);
+        m_JointIndices.clear();
+        for (size_t index = 0; index < m_Joints.size(); ++index)
+        {
+            if (!m_Joints[index].Name.empty())
+            {
+                m_JointIndices.emplace(Identity(m_Joints[index].Name.c_str()), static_cast<uint32_t>(index));
+            }
+        }
+    }
+
+    int32_t SkeletonResource::FindJointIndex(Identity name) const
+    {
+        const auto found = m_JointIndices.find(name);
+        return found == m_JointIndices.end() ? -1 : static_cast<int32_t>(found->second);
     }
 
     const Container::VariableArray<Skeletal::SkeletalJoint>& SkeletonResource::GetJoints() const

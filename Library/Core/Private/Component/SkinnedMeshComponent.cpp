@@ -1,6 +1,7 @@
 ﻿#include "Component/SkinnedMeshComponent.h"
 
 #include "Math/MatrixUtils.h"
+#include "Math/QuaternionUtils.h"
 #include "Object/Entity.h"
 
 #include <cmath>
@@ -21,16 +22,24 @@ namespace NorvesLib::Core::Component
 
     IMPLEMENT_CLASS(SkinnedMeshComponent, Component)
 
-    SkinnedMeshComponent::SkinnedMeshComponent() = default;
+    SkinnedMeshComponent::SkinnedMeshComponent()
+    {
+        SetTickGroup(ETickGroup::Animation);
+        SetTickGroupMask(TickGroupBit(ETickGroup::Animation) | TickGroupBit(ETickGroup::PoseFinalize));
+    }
 
     SkinnedMeshComponent::SkinnedMeshComponent(const FieldInitializer* initializer)
         : Component(initializer)
     {
+        SetTickGroup(ETickGroup::Animation);
+        SetTickGroupMask(TickGroupBit(ETickGroup::Animation) | TickGroupBit(ETickGroup::PoseFinalize));
     }
 
     SkinnedMeshComponent::SkinnedMeshComponent(const IUnknown* sourceObject)
         : Component(sourceObject)
     {
+        SetTickGroup(ETickGroup::Animation);
+        SetTickGroupMask(TickGroupBit(ETickGroup::Animation) | TickGroupBit(ETickGroup::PoseFinalize));
     }
 
     SkinnedMeshComponent::~SkinnedMeshComponent() = default;
@@ -47,6 +56,18 @@ namespace NorvesLib::Core::Component
         m_Pose.Clear();
         m_SkeletalAsset.reset();
         Component::Finalize();
+    }
+
+    void SkinnedMeshComponent::OnTickGroup(ETickGroup group, float deltaTime)
+    {
+        if (group == ETickGroup::Animation)
+        {
+            Tick(deltaTime);
+        }
+        else if (group == ETickGroup::PoseFinalize)
+        {
+            (void)EvaluatePose();
+        }
     }
 
     void SkinnedMeshComponent::Tick(float deltaTime)
@@ -82,6 +103,8 @@ namespace NorvesLib::Core::Component
     void SkinnedMeshComponent::SetSkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset)
     {
         m_SkeletalAsset = asset;
+        m_bMeshNodeTransformOverridden = false;
+        m_Pose.Clear();
         m_MeshNodeGlobalTransform = asset && asset->GetMesh()
             ? LoadMeshNodeGlobalTransform(asset->GetMesh()->GetMeshNodeGlobalTransform())
             : Math::Matrix4x4::Identity;
@@ -97,6 +120,7 @@ namespace NorvesLib::Core::Component
     void SkinnedMeshComponent::SetMeshNodeGlobalTransform(const Math::Matrix4x4& transform)
     {
         m_MeshNodeGlobalTransform = transform;
+        m_bMeshNodeTransformOverridden = true;
         m_bPoseDirty = true;
         MarkRenderStateDirty();
     }
@@ -183,7 +207,7 @@ namespace NorvesLib::Core::Component
 
     bool SkinnedMeshComponent::BuildSkinnedMeshProxy(Rendering::SkinnedMeshProxy& outProxy)
     {
-        if (!IsVisible() || !RefreshPose())
+        if (!IsVisible() || !EvaluatePose())
         {
             return false;
         }
@@ -203,17 +227,25 @@ namespace NorvesLib::Core::Component
         return outProxy.IsValid();
     }
 
-    bool SkinnedMeshComponent::RefreshPose()
+    bool SkinnedMeshComponent::EvaluatePose()
     {
-        if (!m_bPoseDirty)
+        if (!HasValidPoseResources())
         {
-            return !m_Pose.BonePalette.empty();
+            m_Pose.Clear();
+            m_bPoseDirty = true;
+            MarkRenderStateDirty();
+            return false;
+        }
+        if (HasCurrentPose())
+        {
+            return true;
         }
         m_Pose.Clear();
-        if (!m_SkeletalAsset || !m_SkeletalAsset->IsLoaded() || !m_SkeletalAsset->GetMesh() ||
-            !m_SkeletalAsset->GetSkeleton() || !m_SkeletalAsset->GetAnimationClip())
+        m_bPoseDirty = true;
+        MarkRenderStateDirty();
+        if (!m_bMeshNodeTransformOverridden)
         {
-            return false;
+            m_MeshNodeGlobalTransform = LoadMeshNodeGlobalTransform(m_SkeletalAsset->GetMesh()->GetMeshNodeGlobalTransform());
         }
         const bool bSampled = Animation::SkeletalAnimationSampler::Sample(
             *m_SkeletalAsset->GetSkeleton(),
@@ -225,8 +257,88 @@ namespace NorvesLib::Core::Component
         if (bSampled)
         {
             m_bPoseDirty = false;
+            m_EvaluatedMesh = m_SkeletalAsset->GetMesh();
+            m_EvaluatedSkeleton = m_SkeletalAsset->GetSkeleton();
+            m_EvaluatedClip = m_SkeletalAsset->GetAnimationClip();
+            ++m_PoseSerial;
         }
         return bSampled;
+    }
+
+    bool SkinnedMeshComponent::HasValidPoseResources() const
+    {
+        if (!m_SkeletalAsset || !m_SkeletalAsset->IsLoaded() || !m_SkeletalAsset->IsValid()) return false;
+        const auto& mesh = m_SkeletalAsset->GetMesh();
+        const auto& skeleton = m_SkeletalAsset->GetSkeleton();
+        const auto& clip = m_SkeletalAsset->GetAnimationClip();
+        return mesh && mesh->IsLoaded() && mesh->IsValid() && skeleton && skeleton->IsLoaded() &&
+            skeleton->IsValid() && clip && clip->IsLoaded() && clip->IsValid();
+    }
+
+    bool SkinnedMeshComponent::HasCurrentPose() const
+    {
+        return !m_bPoseDirty && HasValidPoseResources() && !m_Pose.JointModelMatrices.empty() &&
+            m_EvaluatedMesh.lock() == m_SkeletalAsset->GetMesh() &&
+            m_EvaluatedSkeleton.lock() == m_SkeletalAsset->GetSkeleton() &&
+            m_EvaluatedClip.lock() == m_SkeletalAsset->GetAnimationClip();
+    }
+
+    int32_t SkinnedMeshComponent::FindJointIndex(Identity name) const
+    {
+        return HasValidPoseResources() ? m_SkeletalAsset->GetSkeleton()->FindJointIndex(name) : -1;
+    }
+
+    bool SkinnedMeshComponent::TryGetJointModelMatrix(uint32_t index, Math::Matrix4x4& outMatrix) const
+    {
+        if (!HasCurrentPose() || index >= m_Pose.JointModelMatrices.size()) return false;
+        outMatrix = m_Pose.JointModelMatrices[index];
+        return true;
+    }
+
+    bool SkinnedMeshComponent::TryGetJointWorldMatrix(uint32_t index, Math::Matrix4x4& outMatrix) const
+    {
+        Math::Matrix4x4 model;
+        if (!GetOwner() || !TryGetJointModelMatrix(index, model)) return false;
+        const Math::Matrix4x4 world = model * BuildOwnerWorldTransform();
+        for (size_t row = 0; row < 4; ++row)
+            for (size_t column = 0; column < 4; ++column)
+                if (!std::isfinite(world.m[row][column])) return false;
+        outMatrix = world;
+        return true;
+    }
+
+    bool SkinnedMeshComponent::TryGetJointWorldTransform(uint32_t index, Math::Transform& outTransform) const
+    {
+        Math::Matrix4x4 matrix;
+        if (!TryGetJointWorldMatrix(index, matrix)) return false;
+        // EngineのCreateWorldRowVectorは列ごとのscale。Sampler局所行列の行scaleと区別する。
+        Math::Matrix4x4 rotation = Math::Matrix4x4::Identity;
+        float scales[3]{};
+        for (size_t column = 0; column < 3; ++column)
+        {
+            const double x = matrix.m[0][column], y = matrix.m[1][column], z = matrix.m[2][column];
+            scales[column] = static_cast<float>(std::sqrt(x*x + y*y + z*z));
+            if (!std::isfinite(scales[column]) || scales[column] <= Math::Constants::EPSILON) return false;
+            for (size_t row = 0; row < 3; ++row) rotation.m[row][column] = matrix.m[row][column] / scales[column];
+        }
+        const float determinant = rotation.m00 * (rotation.m11*rotation.m22 - rotation.m12*rotation.m21) -
+            rotation.m01 * (rotation.m10*rotation.m22 - rotation.m12*rotation.m20) +
+            rotation.m02 * (rotation.m10*rotation.m21 - rotation.m11*rotation.m20);
+        if (std::fabs(determinant - 1.0f) > 1e-4f) return false;
+        Math::Quaternion quaternion = Math::QuaternionUtils::FromRotationMatrix(rotation);
+        const float length = std::sqrt(quaternion.x*quaternion.x + quaternion.y*quaternion.y +
+            quaternion.z*quaternion.z + quaternion.w*quaternion.w);
+        if (!std::isfinite(length) || length <= Math::Constants::EPSILON) return false;
+        quaternion = Math::Quaternion(quaternion.x/length, quaternion.y/length, quaternion.z/length, quaternion.w/length);
+        const Math::Transform result(matrix.GetTranslationRow(), quaternion,
+            Math::Vector3(scales[0], scales[1], scales[2]));
+        const auto reconstructed = Math::MatrixUtils::CreateWorldRowVector(result.position, result.rotation, result.scale);
+        for (size_t row = 0; row < 4; ++row)
+            for (size_t column = 0; column < 4; ++column)
+                if (std::fabs(reconstructed.m[row][column] - matrix.m[row][column]) >
+                    1e-5f * std::fmax(1.0f, std::fabs(matrix.m[row][column]))) return false;
+        outTransform = result;
+        return true;
     }
 
     Math::Matrix4x4 SkinnedMeshComponent::BuildOwnerWorldTransform() const

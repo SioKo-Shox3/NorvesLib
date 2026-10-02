@@ -1223,3 +1223,11 @@
 - stop-when: 既存fixedstep/ポーズ/外側フレームの回帰、handler寿命の問題、blockingが残る場合。
 - paths: Library/Core/Public/Application, Library/Core/Public/Module, Library/Core/Private/Module/ModuleRegistry.cpp, Library/Core/Public/Engine/ApplicationProcessor.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Test/Core/Engine/ApplicationFixedStepPipelineTest.cpp, Docs/Architecture/TickStages.md, TASKS.md, PROGRESS.md
 - notes: コードの順序・gateは静的確認、実統合の合格は未主張。
+
+## G1-GR01-P4: 評価済みボーン姿勢をゲーム側へ公開する
+- status: done
+- done-when: Animation/PoseFinalizeで評価し、model/world行列と名前引き/serialを公開。旧paletteを保持し、無効資産や表現不能なTransformで成功扱いしない。
+- verify: SkeletalAnimationSamplingTestの既存bundleへreadback/cache/lookupケース追加（Windows未実行）。
+- stop-when: 行列規約不整合、未解決のcache寿命、資産形式変更、blockingが残る場合。
+- paths: Library/Core/Public/Animation, Library/Core/Private/Animation, Library/Core/Public/Component/SkinnedMeshComponent.h, Library/Core/Private/Component/SkinnedMeshComponent.cpp, Test/Core/Rendering/SkeletalAnimationSamplingTest.cpp, Docs/Architecture/TickStages.md, TASKS.md, PROGRESS.md
+- notes: Owner子階層は既存Worldの変換確定境界が鮮度の前提。

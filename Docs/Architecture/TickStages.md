@@ -24,7 +24,7 @@
 
 ## 実装状況
 
-公開群、Component設定、Worldの一回収集と群別実行・LateTick、Application/Moduleの後段配線を実装した。アニメ姿勢公開とカメラの群移行は後続である。
+公開群、Component設定、Worldの一回収集と群別実行・LateTick、Application/Moduleの後段配線を実装した。アニメ姿勢公開を接続済みで、カメラの群移行は後続である。
 
 ## Worldの収集と破棄
 
@@ -48,3 +48,17 @@
 - Module LateTickはRunningのregistryで登録順。既存TickAllの位置（描画同期後）は変えない。
 - OnUpdate/Script維持とOnPreRenderの位置は変更しない。Handlerはフレーム内で共有所有し、callbackによる差し替えでもそのフレームの対象を生存させる。
 - ApplicationFixedStepPipelineTestの既存11ケースを維持し、全8群の逆登録順、0/1/2 fixedstep、DefaultとCameraの位置読出し対照、pause/resume、空/非Running registryの6ケースを追加した。Windows依存により17ケースは未実行。実フレームの外側順序とhandler寿命は静的レビューで確認した範囲である。
+
+## 評価済みボーン姿勢
+
+- SkinnedMeshComponentはAnimationで再生時刻を進め、PoseFinalizeでEvaluatePoseを呼ぶ。非表示でもゲーム用の姿勢は評価する。
+- EvaluatePoseはdirty時だけSampleし、成功した再評価だけGetPoseSerialを増加する。描画proxyも同じキャッシュを使う。
+- JointModelMatricesはinverse bindを含まないEntity空間の行ベクトル行列。既存BonePaletteの計算式は変えない。
+- FindJointIndexはIdentity名を解決し、未発見/空名は-1。SkeletonResourceのSetJointsで索引を再構築し、重複は先頭優先、Unloadで消去する。
+- TryGetJointModelMatrix / TryGetJointWorldMatrix / TryGetJointWorldTransformは自動評価しない。未評価/dirty/資産無効/範囲外はfalseで出力を維持する。
+- ワールド行列はJointModel * OwnerWorld。読み取り時に合成するためrootの即時変更に追従する。child階層は既存WorldのUpdateWorldTransforms境界の確定値を読む。
+- TryGetJointWorldTransformはEngineのCreateWorldRowVector（列scale）で再構成できる正scaleのTRSのみ成功する。shear/反転/退化をTRSへ黙って丸めない。完全な表現にはWorldMatrixを使う。
+- 資産wrapper/子Resourceのunloadは読取りを拒否する。子Resourceの差替えはweak参照の同一性で再評価する。同じResource内のSetJoints/SetClipなどの編集は自動revision検出を行わず、SetSkeletalAssetで同じassetを再設定して姿勢を無効化する。
+- SamplingTestへ追加した姿勢・serial・名前引き・資産寿命試験と既存FramePacket/M9はWindows依存で未実行。既存失敗の再現や、新しい失敗が増えていないことはこの環境では確認できていない。
+
+- Mesh差し替え時は既定のmeshNode transformも再取得する。SetMeshNodeGlobalTransformによる明示overrideは維持し、SetSkeletalAssetで既定へ戻す。

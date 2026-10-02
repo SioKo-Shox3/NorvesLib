@@ -1,4 +1,8 @@
 ﻿#include "Animation/SkeletalAnimationSampler.h"
+#include "Component/SkinnedMeshComponent.h"
+#include "Object/ResourceRegistry.h"
+#include "Object/World.h"
+#include "Rendering/SceneView.h"
 #include "Animation/AnimationClipResource.h"
 #include "Animation/SkeletonResource.h"
 #include "Math/Matrix4x4.h"
@@ -218,6 +222,224 @@ namespace
         Container::VariableArray<uint32_t> indices = {0, 0, 0};
         mesh.SetVertices(std::move(vertices));
         mesh.SetIndices(std::move(indices));
+    }
+
+    void AssertMatrixNear(const Math::Matrix4x4& actual, const Math::Matrix4x4& expected)
+    {
+        for (size_t row = 0; row < 4; ++row)
+            for (size_t column = 0; column < 4; ++column)
+                assert(std::fabs(actual.m[row][column] - expected.m[row][column]) <= 1e-5f);
+    }
+
+    void AssertJointReadbackAndPoseStages()
+    {
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+        auto mesh = registry.CreateTransient<SkinnedMeshResource>("JointReadbackMesh");
+        auto skeleton = registry.CreateTransient<SkeletonResource>("JointReadbackSkeleton");
+        auto clip = registry.CreateTransient<AnimationClipResource>("JointReadbackClip");
+        auto asset = registry.CreateTransient<SkeletalAssetResource>("JointReadbackAsset");
+        assert(mesh && skeleton && clip && asset);
+        SeedHierarchyMesh(*mesh);
+        SeedHierarchySkeleton(*skeleton);
+        SeedHierarchyClip(*clip);
+        assert(mesh->Load());
+        asset->SetResources(mesh, skeleton, clip);
+        assert(asset->Load());
+        Rendering::SceneView sceneView;
+        Rendering::SceneViewSettings sceneSettings;
+        assert(sceneView.Initialize(sceneSettings));
+        World world;
+        world.Initialize();
+        world.SetSceneView(&sceneView);
+        Entity* owner = world.SpawnEntity<Entity>();
+        auto* component = owner ? world.CreateComponent<Component::SkinnedMeshComponent>(owner) : nullptr;
+        assert(component);
+        assert(component->GetTickGroup() == Component::ETickGroup::Animation);
+        assert(component->GetTickGroupMask() == (Component::TickGroupBit(Component::ETickGroup::Animation) |
+            Component::TickGroupBit(Component::ETickGroup::PoseFinalize)));
+        component->SetSkeletalAsset(asset);
+        component->SetMeshNodeGlobalTransform(Math::Matrix4x4::Identity);
+        component->SetPlaying(false);
+        Math::Matrix4x4 model = Math::Matrix4x4::Identity;
+        assert(!component->TryGetJointModelMatrix(1, model));
+        AssertMatrixNear(model, Math::Matrix4x4::Identity);
+        assert(component->FindJointIndex(Identity("Parent")) == 0);
+        assert(component->FindJointIndex(Identity("Child")) == 1);
+        assert(component->FindJointIndex(Identity("Missing")) == -1);
+        assert(component->FindJointIndex(Identity("")) == -1);
+        // 非表示でもゲーム用姿勢はPoseFinalizeで評価する。
+        component->SetVisible(false);
+        world.Tick(0.0f);
+        assert(component->GetPoseSerial() == 1);
+        world.LateTick(0.0f);
+        assert(component->TryGetJointModelMatrix(1, model));
+        const Math::Matrix4x4 expectedModel(
+            0, 2, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 10, 2, 0, 1);
+        AssertMatrixNear(model, expectedModel);
+        assert(component->EvaluatePose() && component->GetPoseSerial() == 1);
+        assert(!component->TryGetJointModelMatrix(2, model));
+        AssertMatrixNear(model, expectedModel);
+        owner->SetLocalPosition(3, 4, 5);
+        Math::Matrix4x4 worldMatrix;
+        assert(component->TryGetJointWorldMatrix(1, worldMatrix));
+        auto expectedWorld = expectedModel;
+        expectedWorld.SetTranslationRow(Math::Vector3(13, 6, 5));
+        AssertMatrixNear(worldMatrix, expectedWorld);
+        Math::Transform transform;
+        assert(component->TryGetJointWorldTransform(1, transform));
+        AssertMatrixNear(Math::MatrixUtils::CreateWorldRowVector(transform.position, transform.rotation, transform.scale), expectedWorld);
+        owner->SetLocalPosition(7, 8, 9);
+        assert(component->TryGetJointWorldMatrix(1, worldMatrix));
+        expectedWorld.SetTranslationRow(Math::Vector3(17, 10, 9));
+        AssertMatrixNear(worldMatrix, expectedWorld);
+        assert(component->GetPoseSerial() == 1);
+        component->SetVisible(true);
+        Rendering::SkinnedMeshProxy proxy;
+        assert(component->BuildSkinnedMeshProxy(proxy));
+        AssertMatrixNear(proxy.BonePalette[1], expectedModel);
+        assert(component->GetPoseSerial() == 1);
+        component->SetAnimationTimeSeconds(0.5f);
+        assert(!component->TryGetJointModelMatrix(1, model));
+        assert(component->EvaluatePose() && component->GetPoseSerial() == 2);
+        // 反転/退化は行列として読めるが、正scaleのTRS成功として返さない。
+        owner->SetScale(Math::Vector3(-1, 1, 1));
+        assert(component->TryGetJointWorldMatrix(1, worldMatrix));
+        assert(!component->TryGetJointWorldTransform(1, transform));
+        owner->SetScale(Math::Vector3(0, 1, 1));
+        assert(!component->TryGetJointWorldTransform(1, transform));
+        owner->SetScale(Math::Vector3::One);
+        owner->SetLocalRotation(Math::Quaternion(0, 0, 0.38268343f, 0.92387953f));
+        const Math::Transform priorTransform = transform;
+        assert(component->TryGetJointWorldMatrix(1, worldMatrix));
+        assert(!component->TryGetJointWorldTransform(1, transform));
+        assert(transform == priorTransform);
+        owner->SetLocalRotation(Math::Quaternion::Identity);
+        Entity* child = world.SpawnEntity<Entity>(owner);
+        auto* childMesh = child ? world.CreateComponent<Component::SkinnedMeshComponent>(child) : nullptr;
+        assert(childMesh);
+        child->SetLocalPosition(1, 0, 0);
+        childMesh->SetSkeletalAsset(asset);
+        childMesh->SetMeshNodeGlobalTransform(Math::Matrix4x4::Identity);
+        assert(childMesh->EvaluatePose());
+        owner->SetLocalPosition(11, 12, 13);
+        world.UpdateWorldTransforms();
+        assert(childMesh->TryGetJointWorldMatrix(1, worldMatrix));
+        expectedWorld.SetTranslationRow(Math::Vector3(22, 14, 13));
+        AssertMatrixNear(worldMatrix, expectedWorld);
+        assert(childMesh->GetPoseSerial() == 1);
+        // asset内Mesh差し替え時は既定のmeshNodeも追従し、明示overrideだけを維持する。
+        component->SetSkeletalAsset(asset);
+        assert(component->EvaluatePose());
+        auto replacementMesh = registry.CreateTransient<SkinnedMeshResource>("ReplacementReadbackMesh");
+        assert(replacementMesh);
+        SeedHierarchyMesh(*replacementMesh);
+        Container::FixedArray<float, 16> replacementMeshNode;
+        SetIdentity(replacementMeshNode);
+        replacementMeshNode[12] = 4.0f;
+        replacementMesh->SetMeshNodeGlobalTransform(replacementMeshNode);
+        assert(replacementMesh->Load());
+        world.SyncToSceneView();
+        assert(!component->IsRenderStateDirty());
+        asset->SetResources(replacementMesh, skeleton, clip);
+        assert(!component->TryGetJointModelMatrix(1, model));
+        world.Tick(0.0f);
+        world.LateTick(0.0f);
+        assert(component->IsRenderStateDirty());
+        world.SyncToSceneView();
+        bool foundReplacement = false;
+        for (const auto& synced : sceneView.GetSkinnedMeshProxies())
+        {
+            if (synced.ComponentId == component->GetComponentId())
+            {
+                foundReplacement = synced.MeshHandle == replacementMesh->GetRenderMeshHandle();
+                assert(std::fabs(synced.BonePalette[1].GetTranslationRow().x - 6.0f) <= 1e-5f);
+            }
+        }
+        assert(foundReplacement && !component->IsRenderStateDirty());
+        assert(component->EvaluatePose());
+        assert(component->TryGetJointModelMatrix(1, model));
+        auto shiftedModel = expectedModel;
+        shiftedModel.SetTranslationRow(Math::Vector3(6, 2, 0));
+        AssertMatrixNear(model, shiftedModel);
+        component->SetMeshNodeGlobalTransform(Math::Matrix4x4::Identity);
+        assert(component->EvaluatePose());
+        assert(component->TryGetJointModelMatrix(1, model));
+        AssertMatrixNear(model, expectedModel);
+        asset->SetResources(mesh, skeleton, clip);
+        assert(component->EvaluatePose());
+        assert(component->TryGetJointModelMatrix(1, model));
+        AssertMatrixNear(model, expectedModel);
+        const auto serial = component->GetPoseSerial();
+        clip->Unload();
+        assert(!component->TryGetJointModelMatrix(1, model));
+        assert(!component->EvaluatePose() && component->GetPoseSerial() == serial);
+        SeedHierarchyClip(*clip);
+        assert(component->EvaluatePose() && component->GetPoseSerial() == serial + 1);
+        auto replacementClip = registry.CreateTransient<AnimationClipResource>("ReplacementReadbackClip");
+        assert(replacementClip);
+        SeedHierarchyClip(*replacementClip);
+        asset->SetResources(mesh, skeleton, replacementClip);
+        assert(!component->TryGetJointModelMatrix(1, model));
+        assert(component->EvaluatePose() && component->GetPoseSerial() == serial + 2);
+        world.SyncToSceneView();
+        assert(!component->IsRenderStateDirty());
+        asset->Unload();
+        world.Tick(0.0f);
+        world.LateTick(0.0f);
+        assert(component->IsRenderStateDirty());
+        world.SyncToSceneView();
+        assert(sceneView.GetSkinnedMeshProxies().empty());
+        assert(!component->TryGetJointModelMatrix(1, model));
+        assert(!component->BuildSkinnedMeshProxy(proxy));
+        assert(component->GetPoseSerial() == serial + 2);
+        component->SetSkeletalAsset({});
+        assert(component->FindJointIndex(Identity("Parent")) == -1);
+        assert(!component->EvaluatePose());
+        world.Finalize();
+        asset.reset(); mesh.reset(); skeleton.reset(); clip.reset(); replacementClip.reset(); replacementMesh.reset();
+        registry.Shutdown();
+        sceneView.Shutdown();
+    }
+
+    void AssertJointModelExcludesInverseBind()
+    {
+        SkeletonResource skeleton;
+        AnimationClipResource clip;
+        SkinnedMeshResource mesh;
+        skeleton.Initialize(); clip.Initialize(); mesh.Initialize();
+        SeedSkeleton(skeleton); SeedClip(clip); SeedMesh(mesh);
+        Math::Matrix4x4 meshNode = Math::Matrix4x4::Identity;
+        meshNode.SetTranslationRow(Math::Vector3(10, 0, 0));
+        Animation::SkeletalPoseSnapshot pose;
+        assert(Animation::SkeletalAnimationSampler::Sample(skeleton, clip, mesh, 0, meshNode, pose));
+        auto model = Math::Matrix4x4::Identity;
+        model.SetTranslationRow(Math::Vector3(2, 0, 0));
+        assert(pose.JointModelMatrices.size() == 1);
+        AssertMatrixNear(pose.JointModelMatrices[0], model);
+        AssertMatrixNear(pose.BonePalette[0], Math::Matrix4x4::Identity);
+        pose.Clear();
+        assert(pose.JointModelMatrices.empty() && pose.BonePalette.empty());
+    }
+
+    void AssertJointNamesRebuild()
+    {
+        SkeletonResource skeleton;
+        skeleton.Initialize();
+        Container::VariableArray<Skeletal::SkeletalJoint> joints(3);
+        joints[0].Name = "Shared";
+        joints[1].Name = "Shared";
+        joints[2].Name = "";
+        skeleton.SetJoints(std::move(joints));
+        assert(skeleton.FindJointIndex(Identity("Shared")) == 0);
+        assert(skeleton.FindJointIndex(Identity("")) == -1);
+        Container::VariableArray<Skeletal::SkeletalJoint> replacement(1);
+        replacement[0].Name = "New";
+        skeleton.SetJoints(std::move(replacement));
+        assert(skeleton.FindJointIndex(Identity("Shared")) == -1);
+        assert(skeleton.FindJointIndex(Identity("New")) == 0);
+        skeleton.Unload();
+        assert(skeleton.FindJointIndex(Identity("New")) == -1);
     }
 
     Animation::SkeletalPoseSnapshot SampleAt(const SkeletonResource& skeleton,
@@ -587,6 +809,8 @@ int main()
             Math::Matrix4x4::Identity,
             pose));
         assert(pose.BonePalette.size() == 2);
+        assert(pose.JointModelMatrices.size() == 2);
+        AssertMatrixNear(pose.JointModelMatrices[1], pose.BonePalette[1]);
         AssertNear(pose.BonePalette[1].GetTranslationRow().x, 10.0f);
         AssertNear(pose.BonePalette[1].GetTranslationRow().y, 2.0f);
 
@@ -604,6 +828,10 @@ int main()
         AssertNear(pose.AnimatedBounds.Max.x, 9.0f);
         AssertNear(pose.AnimatedBounds.Max.y, 4.0f);
     }
+
+    AssertJointModelExcludesInverseBind();
+    AssertJointNamesRebuild();
+    AssertJointReadbackAndPoseStages();
 
     std::cout << "SkeletalAnimationSamplingTest passed\n";
     return 0;

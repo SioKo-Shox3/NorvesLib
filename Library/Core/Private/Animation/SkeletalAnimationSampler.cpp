@@ -427,11 +427,14 @@ namespace NorvesLib::Core::Animation
         }
 
         outPose.BonePalette.resize(jointCount);
+        outPose.JointModelMatrices.resize(jointCount);
         for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
         {
             outPose.BonePalette[jointIndex] =
                 inverseBindMatrices[jointIndex] * jointGlobals[jointIndex] * inverseMeshNodeGlobal;
-            if (!IsFiniteMatrix(outPose.BonePalette[jointIndex]))
+            outPose.JointModelMatrices[jointIndex] = jointGlobals[jointIndex] * inverseMeshNodeGlobal;
+            if (!IsFiniteMatrix(outPose.BonePalette[jointIndex]) ||
+                !IsFiniteMatrix(outPose.JointModelMatrices[jointIndex]))
             {
                 outPose.Clear();
                 return false;

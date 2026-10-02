@@ -263,3 +263,6 @@
 
 - G1-GR01-P3: ApplicationのシミュレーションをTickSimulationへ抽出し、固定step後にWorld LateTick→Module LateTick→Handler OnLateUpdateを描画同期前へ接続。固定0回でも後段を実行し、pauseでは止める。フレーム中のhandlerを共有所有し差し替え時の寿命を保つ。既存固定step関数の不変と外側処理の順序を静的チェック/独立レビューで確認した。既存11ケースを維持し、全8群/0・1・2step/早期とCameraの位置対照/pause/空・非Running registryの6ケースを追加。Windows統合17ケースはコンパイル・実行未検証。portableの群設定/dispatch helperは再実行成功。
 - Next: GR01の評価済みボーン姿勢公開とAnimation/PoseFinalize配線、その後SpringArmとGameカメラを後段へ移す。G1-S1/S2/S3は承認済み、依存連携はDelegateのイベント駆動を使う。
+
+- G1-GR01-P4: SamplerへinverseBindを含まないJointModelMatricesを追加し、SkinnedMeshをAnimation/PoseFinalizeへ配線。EvaluatePose/serial、名前引き、評価済みmodel/world行列と表現可能な正scale TRSの読み取りを公開した。旧BonePalette式は不変。資産無効/子差替えを検出し、meshNodeの既定追従と明示overrideを区別、再評価/無効化を描画dirtyへ伝播する。既存SamplingTestへ手計算・inverseBind除外・名前索引・serial・child変換確定・shear拒否・実SceneViewの停止中差替え/unloadケースを追加。独立静的レビュー第2周PASS、CRLF差分検査成功。Windows.h依存でSampling/FramePacket/M9をコンパイル・実行できず、既存失敗基準線との差も未確認。
+- Next: SpringArmのCamera群割当とRendering3DTestのカメラproxy確定をOnLateUpdateへ移す。
