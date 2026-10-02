@@ -787,6 +787,9 @@ namespace NorvesLib::Core::Rendering
     }
 
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
+    // 接触影の雑音を、TAAのジッタが掛かったフレームごとに黄金比でずらす（GTAOと同じ周期）
+    static constexpr float CONTACT_SHADOW_TEMPORAL_NOISE_STEP = 0.6180339887f;
+    static constexpr uint64_t CONTACT_SHADOW_TEMPORAL_NOISE_PERIOD = 64u;
     static constexpr uint32_t DDGI_ATLAS_TEXEL_COUNT = 8u;
     static constexpr uint32_t DDGI_ATLAS_MINIMUM_ARRAY_LAYER_COUNT = 2u;
     static constexpr uint32_t RTGI_COMPUTE_WORKGROUP_SIZE = 8u;
@@ -4067,6 +4070,7 @@ namespace NorvesLib::Core::Rendering
         params.cameraForward[2] = -1.0f;
         params.cameraForward[3] = 0.0f;
         const CameraProxy *activeCamera = context.GetActiveCamera();
+        bool bProjectionJittered = false;
         if (activeCamera)
         {
             // GBufferPass・MegaGeometryPass が発光に掛けた値と同じ（同じViewのカメラから求める）。
@@ -4075,6 +4079,9 @@ namespace NorvesLib::Core::Rendering
                 CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
             cameraConstants.CopyCameraPosition(params.cameraPosition);
             cameraConstants.CopyShaderInverseViewProjection(params.invViewProjection);
+            cameraConstants.CopyShaderViewProjection(params.viewProjection);
+            bProjectionJittered = activeCamera->ProjectionJitterNdcX != 0.0f ||
+                                  activeCamera->ProjectionJitterNdcY != 0.0f;
             const float forwardLengthSquared =
                 activeCamera->ForwardX * activeCamera->ForwardX +
                 activeCamera->ForwardY * activeCamera->ForwardY +
@@ -4098,6 +4105,7 @@ namespace NorvesLib::Core::Rendering
             params.cameraPosition[2] = 5.0f;
             params.cameraPosition[3] = 1.0f;
             MatrixUtils::TransposeToShaderData(Matrix4x4::Identity, params.invViewProjection);
+            MatrixUtils::TransposeToShaderData(Matrix4x4::Identity, params.viewProjection);
         }
         params.skySunDirectionAndCosRadius[0] = 0.0f;
         params.skySunDirectionAndCosRadius[1] = 1.0f;
@@ -4170,6 +4178,29 @@ namespace NorvesLib::Core::Rendering
         params.bNeuralBRDFEnabled = bValidationMode ? 0u :
                                     (m_bNeuralBRDFAvailable ? 1u : 0u);
         params.lightCount = lightCount;
+
+        // 接触影は通常の描画だけに掛ける。検証表示（245の太陽の可視と246〜255）は
+        // CSM・RT影・キューブシャドウそのものを比べるので掛けない。
+        const bool bContactShadowValidationMode = bValidationMode || params.debugViewMode == 245u;
+        const float contactShadowLength =
+            std::isfinite(m_Settings.ContactShadowLength) ? m_Settings.ContactShadowLength : 0.0f;
+        const float contactShadowThickness =
+            std::isfinite(m_Settings.ContactShadowThickness) ? m_Settings.ContactShadowThickness : 0.0f;
+        if (activeCamera && !bContactShadowValidationMode &&
+            contactShadowLength > 0.0f && contactShadowThickness > 0.0f)
+        {
+            params.contactShadowParams[0] = contactShadowLength;
+            params.contactShadowParams[2] = contactShadowThickness;
+            if (bProjectionJittered)
+            {
+                // TAAの履歴が別の段の位置の結果を混ぜるよう、雑音をフレームごとにずらす
+                const float frame =
+                    static_cast<float>(context.FrameNumber % CONTACT_SHADOW_TEMPORAL_NOISE_PERIOD);
+                params.contactShadowParams[1] =
+                    frame * CONTACT_SHADOW_TEMPORAL_NOISE_STEP -
+                    std::floor(frame * CONTACT_SHADOW_TEMPORAL_NOISE_STEP);
+            }
+        }
 
         // IBLパラメータ設定
         params.prefilteredSpecularMipLevels = 9u;

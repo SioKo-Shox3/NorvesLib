@@ -35,6 +35,8 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 ddgiProbeSpacing; // xyz=DDGI probe間隔
     uvec4 ddgiProbeCounts; // xyz=格子数, w=probe総数
     uvec4 ddgiInfo; // x=DDGI有効フラグ
+    mat4 viewProjection; // 接触影のレイを画面へ写すViewProjection（TAAのジッタ込み）
+    vec4 contactShadowParams; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
 } params;
 
 // ライトデータ構造
@@ -527,6 +529,105 @@ float CalculateShadow(vec3 worldPos, vec3 normal)
         shadow = mix(shadow, 1.0, smoothstep(farDistance - fadeWidth, farDistance, receiverDistance));
     }
     return shadow;
+}
+
+// ========================================
+// 接触影（Contact Shadow）
+// ========================================
+// 受け手から光の方向へ短く（contactShadowParams.x m）レイを進め、各段の点を画面へ写して
+// GBufferの深度と比べる。点が深度の面より奥（厚さcontactShadowParams.z以内）にあり、かつ
+// その画素の法線で決まる面の内側にあれば遮られたとみなす。CSM・キューブシャドウの解像度では
+// 出ない接地部の細い影を補い、影の結果へ掛ける。
+const uint CONTACT_SHADOW_STEP_COUNT = 12u;
+
+// 画素の位置で決まる雑音（Jimenez 2014のinterleaved gradient noise）。段の位置をずらし、
+// 段の間隔の階段状の境目をTAAで均せる細かな雑音にする。
+float InterleavedGradientNoise(vec2 pixel)
+{
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
+
+float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, float maxLength)
+{
+    float rayLength = min(params.contactShadowParams.x, maxLength);
+    float thickness = params.contactShadowParams.z;
+    if (!(rayLength > 0.0) || !(thickness > 0.0) || dot(normal, L) <= 0.0)
+    {
+        return 1.0;
+    }
+
+    vec3 cameraPos = params.cameraPosition.xyz;
+    vec3 forward = params.cameraForward.xyz;
+    if (!(dot(worldPos - cameraPos, forward) > 0.0))
+    {
+        return 1.0;
+    }
+
+    ivec2 depthSize = textureSize(gbufferDepth, 0);
+    // 受け手の位置での1画素の世界の幅（同じ深度で横に1画素ずらした点との距離）
+    vec3 neighborPos = ReconstructWorldPosition(fragUV + vec2(1.0 / float(depthSize.x), 0.0), depth);
+    float pixelWorldSize = length(neighborPos - worldPos);
+    if (!IsFiniteShadowValue(pixelWorldSize) || pixelWorldSize <= 0.0)
+    {
+        return 1.0;
+    }
+    // レイが画面上で数画素にしかならない遠くでは、段の比較が画素の粗さに負けるので効果を消していく
+    // （2画素で0、6画素で1）。
+    float resolveFade = clamp(rayLength / pixelWorldSize * 0.25 - 0.5, 0.0, 1.0);
+    if (resolveFade <= 0.0)
+    {
+        return 1.0;
+    }
+
+    // 起点は法線の方向へ0.25画素だけずらす。受け手自身の面での縞は下の面の内側の判定で防ぐ。
+    // 大きくずらすと、物体のすぐ外を通るレイが物体の端を切り、影の縁が外へ広がる。
+    vec3 origin = worldPos + normal * (pixelWorldSize * 0.25);
+    float jitter = fract(InterleavedGradientNoise(gl_FragCoord.xy) + params.contactShadowParams.y);
+    float stepLength = rayLength / float(CONTACT_SHADOW_STEP_COUNT);
+    // 遮る物体の厚さ。1段の長さと1画素の幅より薄いと、面へ入った段を見落とすので下限にする。
+    thickness = max(thickness, max(stepLength, pixelWorldSize));
+
+    for (uint stepIndex = 0u; stepIndex < CONTACT_SHADOW_STEP_COUNT; ++stepIndex)
+    {
+        float t = (float(stepIndex) + jitter) * stepLength;
+        vec3 samplePos = origin + L * t;
+        vec4 sampleClip = params.viewProjection * vec4(samplePos, 1.0);
+        if (!(sampleClip.w > 0.0))
+        {
+            break;
+        }
+        vec2 sampleUV = sampleClip.xy / sampleClip.w * 0.5 + 0.5;
+        if (any(lessThan(sampleUV, vec2(0.0))) || any(greaterThanEqual(sampleUV, vec2(1.0))))
+        {
+            break;
+        }
+        ivec2 texel = clamp(ivec2(sampleUV * vec2(depthSize)), ivec2(0), depthSize - ivec2(1));
+        float sceneDepth = texelFetch(gbufferDepth, texel, 0).r;
+        if (sceneDepth >= 1.0)
+        {
+            continue; // 空は遮らない
+        }
+        vec3 scenePos = ReconstructWorldPosition((vec2(texel) + 0.5) / vec2(depthSize), sceneDepth);
+        float behind = dot(samplePos - scenePos, forward);
+        if (behind <= 0.0 || behind >= thickness)
+        {
+            continue;
+        }
+        // 画素の面を、その画素の位置と法線の平面とみなし、段の点がその内側（半画素ぶんの余裕より
+        // 深い）にあるときだけ遮りとする。画素の中心の深度だけで比べると、物体の手前の面のすぐ外を
+        // かすめる段も、画素の中の面の傾きの差で奥と判定され、影の縁が1画素ほど外へ広がる。
+        vec3 sceneNormal = texelFetch(gbufferNormal, texel, 0).xyz;
+        float sceneNormalLength = length(sceneNormal);
+        if (!(sceneNormalLength > 0.0) ||
+            dot(samplePos - scenePos, sceneNormal / sceneNormalLength) >= -0.5 * pixelWorldSize)
+        {
+            continue;
+        }
+        // レイの終わり近くの遮りは弱め、長さで切れた影の端を柔らかくする
+        float occlusion = 1.0 - smoothstep(0.7, 1.0, t / rayLength);
+        return 1.0 - occlusion * resolveFade;
+    }
+    return 1.0;
 }
 
 // ========================================
@@ -1197,6 +1298,11 @@ void main()
             shadow = params.shadowPadding0 != 0u
                          ? texture(rayTracingShadowVisibility, fragUV).r
                          : CalculateShadow(worldPos, N);
+            // RT影は接地部も正しく遮るので、接触影はCSMの結果にだけ掛ける
+            if (params.shadowPadding0 == 0u && shadow > 0.0 && NdotL > 0.0)
+            {
+                shadow *= CalculateContactShadow(worldPos, depthSample, N, L, 1.0e30);
+            }
         }
         // 点光源のキューブシャドウ（attenuation.w=キューブの番号+1。0の灯は影を掛けない）
         else if ((!bValidationLambert || bValidationHardShadow) &&
@@ -1209,6 +1315,13 @@ void main()
                                        light.attenuation.x,
                                        worldPos,
                                        N);
+            if (shadow > 0.0 && attenuation > 0.0)
+            {
+                // 光源の手前で止める（光源の球そのものを遮りとみなさない）
+                float distanceToLight = length(light.position.xyz - worldPos);
+                shadow *= CalculateContactShadow(worldPos, depthSample, N, L,
+                                                 max(distanceToLight * 0.5, 0.0));
+            }
         }
 
         vec3 radiance = lightColor * NdotL * attenuation * shadow;

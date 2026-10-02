@@ -109,6 +109,11 @@ namespace NorvesLib::Core::Rendering
         Math::MatrixUtils::TransposeToShaderData(ProjectionMatrix, out);
     }
 
+    void CameraViewConstants::CopyShaderViewProjection(float *out) const
+    {
+        Math::MatrixUtils::TransposeToShaderData(ViewProjectionMatrix, out);
+    }
+
     void CameraViewConstants::CopyShaderInverseView(float *out) const
     {
         Math::MatrixUtils::TransposeToShaderData(InverseViewMatrix, out);

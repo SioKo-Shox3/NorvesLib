@@ -9,6 +9,7 @@ R1 baseline candidate Indoor=120227B98BF661C31D0411DCF50FF172DC15165D2B9FDB558A0
 R1 baseline candidate Indoor=120227B98BF661C31D0411DCF50FF172DC15165D2B9FDB558A01C6CE7BFB1BE9 Outdoor=7D7E392676A2014F59B4B125148C9A02EE80DCBF3DF58282B7EA9D1769D49569 CodeHead=79b0c48852dc82c94eeb6eff786acc614f7326de を承認する。CSMの分割の奥をカメラのfar（100 m）から影の最大距離（80 m）へ変え、各カスケードのテクセルが細かくなった。差は球の影の輪郭の86画素だけで、平均輝度は124.655から124.654（変化0.002）。
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=42DD1F3E9DC7711A54BCC458C69B7BA14CFD040C65CF80726E13100B710FFAFC CodeHead=c644636654f168558d3f5fb5c5081caf8c52b070 を承認する。ブルームを1回の16タップ（しきい値1.15・強度0.85の加算）から、6段の13タップ縮小（最初の段はKaris平均）・3×3テント拡大をしきい値なしで元の色へ4%線形補間する方式に置き換えた。Indoorは光源の四角の周りの旧方式の縁取り（最大差100/255）が消え、平均輝度9.94→9.69。Outdoorは全体へ広いにじみが薄く混ざり、明るい地面に接する暗い四角が明るくなった（平均輝度129.43→129.37、差のある画素39135、8/255超は1681）。差分の拡大画像の同心の縞は、なめらかなにじみの8bit量子化の等高線で、画像自体には輪状の模様は無い。
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=F6ABAD4BEB4DD778BF9F55FFEB1665ACA20FB3764584112A89DECF45CDBEDB5F CodeHead=ea1318e979edc603d93086e15d6080ef7ab81113 を承認する。
+R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=760DAEF7F942E7A1028F5906CFF60A881939DCD854C4D5B9688133E204064A92 CodeHead=0af69587869dbe67c7656e1ccd4779aa815d84b5 を承認する。
 
 ## P6b plan and procedure approval
 P6b plan SHA256=37D08DE402478F1D1EBEEEE2D0D8F134492AA0A0EDEB2A4C8FF69527721A2AE3
@@ -92,4 +93,12 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 差分の範囲: 旧baselineとの差は151画素、最大raw差1、平均FLIP `0.000252279`。差は球の周りと地面に散らばった1 LSBの丸めの違いで、145画素が明るい側（遮蔽が弱まった側）。形・影の輪郭は変わらない。Indoorは正射影で平らな面だけなので可視率1のまま一致する。
 - 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead ea1318e979edc603d93086e15d6080ef7ab81113`。Indoor候補は既存baseline `D0D34A5F…5E05E7`と一致する。
 - 部屋の大きさの確認: `RenderingGTAOCornellRoomVulkanTest`（Cornellの部屋をAOの表示で撮る）で、奥・左右の壁・天井・手前の床の中ほどの可視率が0.97〜1.00、壁の境目と箱の接地部が0.77〜0.81。
+- 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
+
+## 接触影の追加後のOutdoor再承認
+- 2026-10-02、上の承認行のOutdoor出力（SHA256=`760DAEF7F942E7A1028F5906CFF60A881939DCD854C4D5B9688133E204064A92`）を新しいOutdoor baselineとして承認した。承認はTASKS.mdの基準画像の再承認の扱い（差がその変更だけによるときは任される）による。
+- 修正の内容: 影を掛ける方向光とキューブシャドウを持つ点光源へ、画面空間の接触影（`LightingPassSettings::ContactShadowLength`、既定0.3 m、12段）を掛ける。段の点が深度の面より奥（厚さの下限0.3 m）で、かつその画素の位置と法線の平面の内側（半画素の余裕）にあるときだけ遮りとし、CSMの結果へ掛ける。検証表示（245〜255）では掛けない。
+- 差分の範囲: 旧baselineとの差は4画素で、橙の球の影の縁の1列だけ。(112,152)が暗くなり、上下の2画素はFXAAの結果が変わって少し明るくなった。平均輝度124.404→124.402。Indoorは一致する。
+- 物理的な妥当性: 場面の配置（seed `0x4E525630`の5つの球、地面y=-1、太陽の方向(-0.4,-1,-0.25)、カメラ(7,5,9)→原点・縦60°）から各画素の地面の点が太陽から遮られるかを解析的に求めた。(112,152)の画素は4×4の部分画素の50%が真の影の中にあり、旧baselineは日向の明るさだった。画素中心の点からの光線は球の3 mm外を通るので、画素中心の判定では境目にあたる。
+- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 0af69587869dbe67c7656e1ccd4779aa815d84b5`を2回走らせ、Outdoor候補はどちらも`760DAEF7…064A92`、Indoor候補は既存baseline `D0D34A5F…5E05E7`と一致した。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。

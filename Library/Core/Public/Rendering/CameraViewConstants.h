@@ -44,6 +44,7 @@ namespace NorvesLib::Core::Rendering
 
         void CopyShaderView(float *out) const;
         void CopyShaderProjection(float *out) const;
+        void CopyShaderViewProjection(float *out) const;
         void CopyShaderInverseView(float *out) const;
         void CopyShaderInverseProjection(float *out) const;
         void CopyShaderInverseViewProjection(float *out) const;

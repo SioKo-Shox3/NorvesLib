@@ -44,6 +44,23 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief Neural BRDFウェイトファイルパス（空の場合は解析的BRDFを使用） */
         Container::String NeuralBRDFWeightPath;
+
+        /**
+         * @brief 接触影のレイの長さ（m）。0以下で無効
+         *
+         * 影を掛ける方向光（空の太陽）とキューブシャドウを持つ点光源について、GBufferの深度を
+         * 光の方向へこの長さだけ画面空間で辿り、CSM・キューブシャドウの解像度では出ない接地部の
+         * 細い影を影の結果へ掛けます。
+         */
+        float ContactShadowLength = 0.3f;
+
+        /**
+         * @brief 接触影で、深度バッファの面の奥にこの厚さ（m）までの点を遮られたとみなす
+         *
+         * 実際の厚さは、この値・レイの1段の長さ・受け手の位置の1画素の世界の幅の最大です。
+         * 薄くすると、見えない側の面から物体へ入るレイ（逆光の接地部など）を見落とします。
+         */
+        float ContactShadowThickness = 0.3f;
     };
 
     /**
