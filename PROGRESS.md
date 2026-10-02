@@ -276,3 +276,6 @@
 
 - G1-GR03-P2: 正規化1D/2D radialのdeadzoneとLinear/Power/Expoを純関数へ分離し、方向・単調性・長さ上限を保つ。視点換算ではmouse変位にdtを掛けず、stickの毎秒速度だけへ実時間を掛ける。無効値/設定/overflowはfalseかつ出力0。実headerのg++通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）、bundle相当compileに成功。独立評価の追加843,360ケースもlong double参照値と整合してPASS。Mapper/OS/Game接続の合格ではない。
 - Next: ボタンの時間遷移と固定step押下ラッチを純ロジック化し、入力Mapperへ組み込む土台を作る。
+
+- G1-GR03-P3: ボタンのPressed/Held/Released、Hold/Tap/非重複DoubleTapと固定step消費までのbool押下ラッチを純kernelへ分離。Cancelはrelease以外の操作と遅延fixedPressを消す。独立評価が0.2/0.3の差分比較によるinclusive境界反転を検出し、絶対deadline比較（overflow/ゼロ経過も考慮）へ修正した。通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）、bundle相当compile、独立再現/境界probeに成功し第2周PASS。Router/Mapper/OS接続は未完。
+- Next: 入力元の型とarmedを解除する履歴、Identityのaction/binding/context、Mapperへ接続する。UIがReleasedと同frame再Pressedを両方consumeした場合にも古いarmedを残さない契約を含める。

@@ -1255,3 +1255,11 @@
 - stop-when: 方向を曲げる成分別曲線、mouseへのdt適用、NaN漏れ、blocking未解消。
 - paths: Library/Core/Public/Input/InputAxisMath.h, Library/Core/CMakeLists.txt, Test/Core/Input/InputAxisMathTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: 後続Mapperが使用する純ロジック。EngineやOS入力との接続は未完。
+
+## G1-GR03-P3: ボタンの時間遷移と固定更新用の押下保持を追加する
+- status: done
+- done-when: 単調実時間でHold/Tap/DoubleTapを判定、同frameedgeを保持、fixedPressをconsumeまで維持、Cancelで遅延発火を消す。
+- verify: g++ -std=c++20 -I Library/Core/Public Test/Core/Input/InputButtonStateTest.cpp -o /tmp/input-button && /tmp/input-button
+- stop-when: 時刻/edge不整合、不正入力で状態変更、Cancel後の発火、押下消失、blocking未解消。
+- paths: Library/Core/Public/Input/InputButtonState.h, Library/Core/CMakeLists.txt, Test/Core/Input/InputButtonStateTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: binding集約後のdownを受ける純ロジック。Mapper/OS通知への接続は後続。

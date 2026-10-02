@@ -2,3 +2,4 @@
 add_test(NAME InputRouterTest COMMAND LoggerSinkTest --test=InputRouterTest)
 add_test(NAME InputStateReleaseTest COMMAND LoggerSinkTest --test=InputStateReleaseTest)
 add_test(NAME InputAxisMathTest COMMAND LoggerSinkTest --test=InputAxisMathTest)
+add_test(NAME InputButtonStateTest COMMAND LoggerSinkTest --test=InputButtonStateTest)

@@ -22,3 +22,17 @@
 - TryComputeLookDeltaはmouse変位×度/単位 ＋ 正規化stick×度/秒×実時間秒を度/frameで返す。反転は入力符号へ適用する。移動入力値を一律この視点APIへ通さない。
 - 無効値/無効設定/結果overflowはfalseかつ出力0。radial関数は入力と出力が同一Vector2でもよい。計算途中はdoubleを使い、有限float巨大入力の正規化を壊さない。
 - この段階はMapperが使う数理で、入力注入やGame操作への接続は後続。30/60/144Hzで同じ総マウス変位/同じstick時間の結果が一致する試験を持つ。
+
+## ボタンの時間状態
+
+- InputButtonStateは、Mapperが複数bindingを集約したdownを受ける。最初のbindingの押下でPressed、最後のbindingの解除でReleasedになるよう、呼出側がORしたdownの遷移を渡す。
+- BeginFrameはPressed/Released/Tap/DoubleTap/HoldStartedなどの瞬間状態だけを消す。HeldとHoldのlevel、時刻、待機fixedPressは維持する。
+- AdvanceToはfiniteで非負・単調な絶対実時間秒を受ける。逆行や非finiteは状態を一切変えずfalse。入力イベントの時刻粒度は呼出側が決め、kernelが勝手に時刻を取得しない。
+- HeldDurationはdown中の経過時間、ReleasedHeldDurationはrelease時の経過時間をそのframeだけ保持する。HoldSecondsに達するとHold levelとHoldStarted edgeが立つ。
+- release時にduration<=TapMaxSecondsかつHold未発火ならTap。release間のgap<=DoubleTapMaxGapSecondsの2tapを非重複の組としてDoubleTapにする。3tap目は新しい組の1回目。
+- 同frameの押下→解除もPressed/Released/Tapを残す。snapshotのlevelとedgeは同時に成立し得る。各edgeの照会は消費操作ではない。
+- fixedPressはbool latchで、固定stepが0回のframeでも消えず、ConsumeFixedPressで一度だけ消える。未消費中の複数押下は1つへ合流する。全押下回数のキューではない。
+- Cancelはfocus/context喪失用。downならReleasedを残すが、Pressed/Tap/DoubleTap/HoldStarted・doubletap履歴・待機fixedPressを取り消す。通常releaseと違い、操作完了としてTapを発火させない。
+- 閾値は仮の既定値を持つ設定。Tap/gapは非負、Holdは正、全finite。SetTimingはheld中と不正設定を拒否し、受理時はdoubletap履歴を消す。ゲームの操作意味は後続bindingsデータで決める。
+- 現段階ではMapper/Router/Windowへの配線は未実装。純kernelの成功を実機入力の受入れ完了とは扱わない。
+- 時間閾値はstart＋intervalの絶対deadlineと比較する。0.2/0.3等でduration差分の丸めがinclusive境界を反転させないため。deadline加算が+Infになる場合、有限時刻ではHoldに未到達、Tap/gapの上限内として扱う。正のintervalが同じ時刻へ丸められても、0経過ではHoldにしない。
