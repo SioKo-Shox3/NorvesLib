@@ -9,9 +9,9 @@
 #ifndef NORVES_PRE_EXPOSED_EMISSIVE_GLSL
 #define NORVES_PRE_EXPOSED_EMISSIVE_GLSL
 
-// GBuffer へ書く、プリエクスポージャ後の発光の上限。半精度の上限65504の半分にし、
-// Lighting で他の項を足しても SceneColor（RGBA16F）が無限大にならない余裕を残す。
-const float GBUFFER_PRE_EXPOSED_EMISSIVE_MAX = 32768.0;
+// GBuffer へ書く、プリエクスポージャ後の発光の上限。半精度で表せる最大の有限値65504にし、
+// 表せない値（無限大になる値）だけを頭打ちにする。範囲内の値は寄与を変えない。
+const float GBUFFER_PRE_EXPOSED_EMISSIVE_MAX = 65504.0;
 
 // chromaticity: Y=1 の色度、luminanceNits: 輝度（nits）、preExposure: シーンカラーのプリエクスポージャ
 vec3 ComputePreExposedEmissive(vec3 chromaticity, float luminanceNits, float preExposure)

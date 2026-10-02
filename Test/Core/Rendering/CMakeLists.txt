@@ -496,6 +496,14 @@ register_rendering_gpu_test(
     --scene=indoor
     --capture-source=scene-color
     --emissive-scenario=daylight-1m-nits)
+# 同じ露出で、プリエクスポージャ後の発光が32768を超え65504未満のとき頭打ちにならず
+# そのまま SceneColor へ届くことを確かめる。
+register_rendering_gpu_test(
+    RenderingHdrEmissiveAboveHalfVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=indoor
+    --capture-source=scene-color
+    --emissive-scenario=daylight-above-32768)
 
 add_executable(RenderingRayTracingShadowVulkanTest
     RenderingRayTracingShadowVulkanTest.cpp
