@@ -18,3 +18,5 @@ add_test(NAME InputBindingPersistenceTest COMMAND LoggerSinkTest --test=InputBin
 add_test(NAME WorkingDirectoryInputBindingStoreTest COMMAND LoggerSinkTest --test=WorkingDirectoryInputBindingStoreTest)
 set_tests_properties(WorkingDirectoryInputBindingStoreTest PROPERTIES SKIP_RETURN_CODE 125)
 add_test(NAME GameInputSettingsTest COMMAND LoggerSinkTest --test=GameInputSettingsTest)
+add_test(NAME CameraInputResetTest COMMAND LoggerSinkTest --test=CameraInputResetTest)
+add_test(NAME LegacyInputResetTest COMMAND LoggerSinkTest --test=LegacyInputResetTest)

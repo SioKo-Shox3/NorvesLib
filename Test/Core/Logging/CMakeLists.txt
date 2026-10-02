@@ -20,6 +20,8 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER InputActionMapTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputActionMapTest.cpp
     MEMBER InputActionRuntimeTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputActionRuntimeTest.cpp
     MEMBER InputBindingNamesTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputBindingNamesTest.cpp
+    MEMBER CameraInputResetTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/CameraInputResetTest.cpp
+    MEMBER LegacyInputResetTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/LegacyInputResetTest.cpp
     MEMBER GameInputSettingsTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/GameInputSettingsTest.cpp
     MEMBER InputBindingPersistenceTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputBindingPersistenceTest.cpp
     MEMBER WorkingDirectoryInputBindingStoreTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/WorkingDirectoryInputBindingStoreTest.cpp
@@ -29,11 +31,14 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER IdentityLiteralTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/IdentityLiteralTest.cpp
     MEMBER JsonWriterTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonWriterTest.cpp
     SOURCES
+        ${CMAKE_SOURCE_DIR}/Game/Input/CameraInputCollector.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/GameInputSettings.cpp
 )
 target_link_libraries(LoggerSinkTest PRIVATE Core Threads::Threads)
 target_include_directories(LoggerSinkTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Game
 )
 
 include(CTest)

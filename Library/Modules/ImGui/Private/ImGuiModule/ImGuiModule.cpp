@@ -574,6 +574,17 @@ namespace NorvesLib::Modules::Gui
                 return io.WantCaptureKeyboard;
             }
 
+            void OnInputReset() override
+            {
+                if (m_Context == nullptr) return;
+                ::ImGui::SetCurrentContext(m_Context);
+                ImGuiIO& io = ::ImGui::GetIO();
+                // 未処理の押下も破棄し、次のNewFrameで復活させない。
+                io.ClearEventsQueue();
+                io.ClearInputKeys();
+                io.ClearInputMouse();
+            }
+
             const char *DebugName() const override
             {
                 return "ImGuiModule";

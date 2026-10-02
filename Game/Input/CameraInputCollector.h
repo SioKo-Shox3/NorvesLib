@@ -23,6 +23,7 @@ namespace Game::Input
         NorvesLib::Core::Input::InputState BuildFrameInputState() const;
         void ResetFrame();
         void ResetAll();
+        void OnInputReset() override { ResetAll(); }
 
         const char* DebugName() const override
         {

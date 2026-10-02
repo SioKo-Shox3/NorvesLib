@@ -6,6 +6,13 @@
 namespace NorvesLib::Core::Input
 {
 
+    void MayaCameraController::OnInputReset()
+    {
+        m_bLeftDown = false;
+        m_bMiddleDown = false;
+        m_bRightDown = false;
+    }
+
     MayaCameraController::MayaCameraController()
         : m_Target(Math::Vector3::Zero), m_Distance(5.0f), m_Yaw(0.0f), m_Pitch(30.0f), m_Position(Math::Vector3::Zero), m_OrbitSpeed(0.3f), m_PanSpeed(0.005f), m_DollySpeed(0.01f), m_ScrollDollySpeed(0.1f), m_MinDistance(0.1f), m_MaxDistance(10000.0f)
     {

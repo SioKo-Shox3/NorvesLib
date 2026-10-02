@@ -1366,3 +1366,11 @@
 - stop-when: Game-specific actionをCoreへ固定、起動時Locked化、既定/userファイルの勝手な書戻し、context設定の部分反映、blocking未解消。
 - paths: Game/Input/GameInputActions.h, Game/Input/GameInputSettings.h, Game/Input/GameInputSettings.cpp, Assets/Config/DefaultInputBindings.json, Game/GameApplicationHandler.h, Game/GameApplicationHandler.cpp, Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Test/Core/Input/GameInputSettingsTest.cpp, Test/Core/Input/InputActionMapTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: defaultsは暫定data。Gameplayは後の実game用、Rendering3DTest起動はDebug/Normal。rebind捕捉/OS供給は後続。
+
+## G1-GR03-P6A: 入力取消を既存操作コントローラーへ接続する
+- status: done
+- done-when: OnInputResetをCameraInputCollector/MayaCameraController/LightController/PickingController/ImGuiへ接続し、pressed/drag/modifier/queued UI入力を取り消す。camera姿勢/light値/確定selectionは維持する。
+- verify: 実CameraInputCollectorとInputStateのportable試験、既存controllerの操作再開/取消/確定selection維持のbundle試験。ImGuiはvendor APIの整合と静的レビュー。Windows未実行は区別。
+- stop-when: resetでclick/select実行、確定selectionやcamera姿勢を消去、UIのqueued pressが残留、blocking未解消。
+- paths: Game/Input/CameraInputCollector.h, Game/Input/PickingController.h, Game/Input/PickingController.cpp, Library/Core/Public/Input/MayaCameraController.h, Library/Core/Private/Input/MayaCameraController.cpp, Library/Core/Public/Input/LightController.h, Library/Core/Private/Input/LightController.cpp, Library/Modules/ImGui/Private/ImGuiModule/ImGuiModule.cpp, Test/Core/Input/CameraInputResetTest.cpp, Test/Core/Input/LegacyInputResetTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: OS focus通知自体は次段。既存のInputSystem::ReleaseAll→全Router controller取消に応答する。非focus解除で誤ったfocusイベントは作らない。
