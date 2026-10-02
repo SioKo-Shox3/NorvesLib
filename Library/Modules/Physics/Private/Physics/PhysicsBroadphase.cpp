@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cfloat>
+#include <limits>
 
 namespace NorvesLib::Modules::Physics
 {
@@ -122,79 +123,176 @@ namespace NorvesLib::Modules::Physics
                 && std::fabs(Math::VectorUtils::Dot(offset, box.Axes[2])) <= box.HalfExtents.z;
         }
 
-        bool IsPointInCapsule(const Math::Vector3& point, const Math::Capsule& capsule)
+        struct RayVectorD
         {
-            const Math::Vector3 segment = capsule.PointB - capsule.PointA;
-            const float segmentLengthSquared = Math::VectorUtils::Dot(segment, segment);
-            float parameter = 0.0f;
-            if (segmentLengthSquared > Math::Constants::EPSILON)
+            double X, Y, Z;
+            RayVectorD operator+(const RayVectorD& other) const
             {
-                parameter = Math::VectorUtils::Dot(point - capsule.PointA, segment) / segmentLengthSquared;
-                parameter = std::fmaxf(0.0f, std::fminf(parameter, 1.0f));
+                return {X+other.X,Y+other.Y,Z+other.Z};
             }
-            const Math::Vector3 closestPoint = capsule.PointA + segment * parameter;
-            return Math::VectorUtils::DistanceSquared(point, closestPoint) <= capsule.Radius * capsule.Radius;
+            RayVectorD operator-(const RayVectorD& other) const
+            {
+                return {X-other.X,Y-other.Y,Z-other.Z};
+            }
+            RayVectorD operator*(double scale) const
+            {
+                return {X*scale,Y*scale,Z*scale};
+            }
+        };
+        RayVectorD RayDouble(const Math::Vector3& value)
+        {
+            return {value.x,value.y,value.z};
         }
-
-        bool RaycastCapsule(const Math::Ray& ray, const Math::Capsule& capsule, float& outDistance)
+        double RayDot(const RayVectorD& first, const RayVectorD& second)
         {
-            if (IsPointInCapsule(ray.Origin, capsule))
-            {
-                outDistance = 0.0f;
-                return true;
-            }
-
-            const Math::Vector3 segment = capsule.PointB - capsule.PointA;
-            const Math::Vector3 originOffset = ray.Origin - capsule.PointA;
-            const float segmentLengthSquared = Math::VectorUtils::Dot(segment, segment);
-            if (segmentLengthSquared <= Math::Constants::EPSILON)
-            {
-                return Math::RayIntersectsSphere(ray, Math::Sphere(capsule.PointA, capsule.Radius), outDistance);
-            }
-
-            const float segmentDirection = Math::VectorUtils::Dot(segment, ray.Direction);
-            const float segmentOrigin = Math::VectorUtils::Dot(segment, originOffset);
-            const float rayOrigin = Math::VectorUtils::Dot(ray.Direction, originOffset);
-            const float originLengthSquared = Math::VectorUtils::Dot(originOffset, originOffset);
-            const float quadraticA = segmentLengthSquared - segmentDirection * segmentDirection;
-            const float quadraticB = segmentLengthSquared * rayOrigin - segmentOrigin * segmentDirection;
-            const float quadraticC = segmentLengthSquared * originLengthSquared - segmentOrigin * segmentOrigin
-                - capsule.Radius * capsule.Radius * segmentLengthSquared;
-            const float discriminant = quadraticB * quadraticB - quadraticA * quadraticC;
-
-            if (quadraticA > Math::Constants::EPSILON && discriminant >= 0.0f)
-            {
-                const float distance = (-quadraticB - std::sqrt(discriminant)) / quadraticA;
-                const float segmentParameter = segmentOrigin + distance * segmentDirection;
-                if (distance >= 0.0f && segmentParameter >= 0.0f && segmentParameter <= segmentLengthSquared)
-                {
-                    outDistance = distance;
-                    return true;
-                }
-            }
-
-            float firstDistance = 0.0f;
-            float secondDistance = 0.0f;
-            const bool bFirst = Math::RayIntersectsSphere(ray, Math::Sphere(capsule.PointA, capsule.Radius), firstDistance);
-            const bool bSecond = Math::RayIntersectsSphere(ray, Math::Sphere(capsule.PointB, capsule.Radius), secondDistance);
-            if (!bFirst && !bSecond)
+            return first.X*second.X + first.Y*second.Y + first.Z*second.Z;
+        }
+        RayVectorD RayCross(const RayVectorD& first, const RayVectorD& second)
+        {
+            return {first.Y*second.Z-first.Z*second.Y, first.Z*second.X-first.X*second.Z,
+                first.X*second.Y-first.Y*second.X};
+        }
+        bool RaySection(double radiusSquared, double lineDistanceSquared, double& outSection)
+        {
+            outSection = radiusSquared - lineDistanceSquared;
+            const double rounding = 32 * std::numeric_limits<double>::epsilon() *
+                std::fmax(radiusSquared,lineDistanceSquared);
+            if (!std::isfinite(outSection) || outSection < -rounding)
             {
                 return false;
             }
-            outDistance = !bSecond || (bFirst && firstDistance <= secondDistance) ? firstDistance : secondDistance;
+            outSection = std::fmax(0.0,outSection);
+            return true;
+        }
+        bool SphereRayDistance(const RayVectorD& origin, const RayVectorD& direction,
+            const Math::Sphere& sphere, double& outDistance)
+        {
+            const auto offset = origin - RayDouble(sphere.Center);
+            const double radiusSquared = static_cast<double>(sphere.Radius)*sphere.Radius;
+            if (RayDot(offset,offset) <= radiusSquared)
+            {
+                outDistance = 0;
+                return true;
+            }
+            const double a = RayDot(direction,direction);
+            if (!(a > 0) || !std::isfinite(a))
+            {
+                return false;
+            }
+            // b*b-a*cの大きな同値同士を引かず、ray直線から中心までの距離で断面を判定。
+            const auto cross = RayCross(offset,direction);
+            double section = 0;
+            if (!RaySection(radiusSquared,RayDot(cross,cross)/a,section))
+            {
+                return false;
+            }
+            const double center = -RayDot(offset,direction)/a;
+            const double half = std::sqrt(section/a);
+            const double near = center-half, far = center+half;
+            if (far < 0)
+            {
+                return false;
+            }
+            outDistance = near >= 0 ? near : far;
+            return std::isfinite(outDistance);
+        }
+        bool StoreRayDistance(double distance, float& outDistance)
+        {
+            if (!std::isfinite(distance) || distance < 0 || distance > FLT_MAX)
+            {
+                return false;
+            }
+            outDistance = static_cast<float>(distance);
+            return true;
+        }
+        bool RaycastSphere(const Math::Ray& ray, const Math::Sphere& sphere, double& outDistance)
+        {
+            return SphereRayDistance(RayDouble(ray.Origin),RayDouble(ray.Direction),sphere,outDistance);
+        }
+        bool RayPoint(const Math::Ray& ray, double distance, Math::Vector3& outPoint)
+        {
+            const double x = static_cast<double>(ray.Origin.x)+ray.Direction.x*distance;
+            const double y = static_cast<double>(ray.Origin.y)+ray.Direction.y*distance;
+            const double z = static_cast<double>(ray.Origin.z)+ray.Direction.z*distance;
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
+                std::fabs(x) > FLT_MAX || std::fabs(y) > FLT_MAX || std::fabs(z) > FLT_MAX)
+            {
+                return false;
+            }
+            outPoint = Math::Vector3(static_cast<float>(x),static_cast<float>(y),static_cast<float>(z));
+            return true;
+        }
+        Math::Vector3 RayNormal(const RayVectorD& normal)
+        {
+            const double length = std::sqrt(RayDot(normal,normal));
+            return length > 0 ? Math::Vector3(static_cast<float>(normal.X/length),
+                static_cast<float>(normal.Y/length),static_cast<float>(normal.Z/length)) : Math::Vector3();
+        }
+
+        bool RaycastCapsule(const Math::Ray& ray, const Math::Capsule& capsule, double& outDistance)
+        {
+            const auto origin = RayDouble(ray.Origin), direction = RayDouble(ray.Direction);
+            const auto segment = RayDouble(capsule.PointB) - RayDouble(capsule.PointA);
+            const auto offset = origin - RayDouble(capsule.PointA);
+            const double lengthSquared = RayDot(segment,segment);
+            if (lengthSquared == 0)
+            {
+                return RaycastSphere(ray,Math::Sphere(capsule.PointA,capsule.Radius),outDistance);
+            }
+            const double projection = RayDot(segment,offset);
+            const double parameter = std::fmax(0.0,std::fmin(1.0,projection/lengthSquared));
+            const auto closest = offset - segment*parameter;
+            const double radiusSquared = static_cast<double>(capsule.Radius)*capsule.Radius;
+            if (RayDot(closest,closest) <= radiusSquared)
+            {
+                outDistance = 0;
+                return true;
+            }
+            double best = std::numeric_limits<double>::infinity();
+            // 端球と有限円筒の和集合。全ての有効な正根から最小を選ぶ。
+            for (const auto& center : {capsule.PointA,capsule.PointB})
+            {
+                double distance = 0;
+                if (SphereRayDistance(origin,direction,Math::Sphere(center,capsule.Radius),distance))
+                {
+                    best = std::fmin(best,distance);
+                }
+            }
+            const auto perpendicularOrigin = RayCross(offset,segment);
+            const auto perpendicularDirection = RayCross(direction,segment);
+            const double a = RayDot(perpendicularDirection,perpendicularDirection);
+            if (a > 0 && std::isfinite(a))
+            {
+                const auto cross = RayCross(perpendicularOrigin,perpendicularDirection);
+                double section = 0;
+                if (RaySection(radiusSquared*lengthSquared,RayDot(cross,cross)/a,section))
+                {
+                    const double center = -RayDot(perpendicularOrigin,perpendicularDirection)/a;
+                    const double half = std::sqrt(section/a);
+                    const double alongDirection = RayDot(segment,direction);
+                    for (double distance : {center-half,center+half})
+                    {
+                        const double along = projection+distance*alongDirection;
+                        if (distance >= 0 && along >= 0 && along <= lengthSquared)
+                        {
+                            best = std::fmin(best,distance);
+                        }
+                    }
+                }
+            }
+            if (!std::isfinite(best))
+            {
+                return false;
+            }
+            outDistance = best;
             return true;
         }
 
-        bool RaycastProxy(const Math::Ray& ray, const PhysicsShapeProxy& proxy, float& outDistance)
+        bool RaycastProxy(const Math::Ray& ray, const PhysicsShapeProxy& proxy, double& outDistance)
         {
             if (proxy.Shape == EPhysicsProxyShape::Sphere)
             {
-                if (proxy.Sphere.Contains(ray.Origin))
-                {
-                    outDistance = 0.0f;
-                    return true;
-                }
-                return Math::RayIntersectsSphere(ray, proxy.Sphere, outDistance);
+                return RaycastSphere(ray, proxy.Sphere, outDistance);
             }
             if (proxy.Shape == EPhysicsProxyShape::Box)
             {
@@ -203,33 +301,32 @@ namespace NorvesLib::Modules::Physics
                     outDistance = 0.0f;
                     return true;
                 }
-                return Math::RayIntersectsOBB(ray, proxy.Box, outDistance);
+                float distance = 0;
+                const bool bHit = Math::RayIntersectsOBB(ray, proxy.Box, distance);
+                outDistance = distance;
+                return bHit;
             }
             return RaycastCapsule(ray, proxy.Capsule, outDistance);
         }
 
-        Math::Vector3 CalculateRayNormal(const Math::Ray& ray, const PhysicsShapeProxy& proxy, float distance)
+        Math::Vector3 CalculateRayNormal(const Math::Ray& ray, const PhysicsShapeProxy& proxy, double distance, const Math::Vector3& point)
         {
             if (distance == 0.0f)
             {
                 return Math::Vector3();
             }
-            const Math::Vector3 point = ray.PointAt(distance);
             if (proxy.Shape == EPhysicsProxyShape::Sphere)
             {
-                return Math::VectorUtils::Normalize(point - proxy.Sphere.Center);
+                return RayNormal((RayDouble(ray.Origin) - RayDouble(proxy.Sphere.Center)) + RayDouble(ray.Direction)*distance);
             }
             if (proxy.Shape == EPhysicsProxyShape::Capsule)
             {
-                const Math::Vector3 segment = proxy.Capsule.PointB - proxy.Capsule.PointA;
-                const float segmentLengthSquared = Math::VectorUtils::Dot(segment, segment);
-                float parameter = 0.0f;
-                if (segmentLengthSquared > Math::Constants::EPSILON)
-                {
-                    parameter = Math::VectorUtils::Dot(point - proxy.Capsule.PointA, segment) / segmentLengthSquared;
-                    parameter = std::fmaxf(0.0f, std::fminf(parameter, 1.0f));
-                }
-                return Math::VectorUtils::Normalize(point - (proxy.Capsule.PointA + segment * parameter));
+                const auto segment = RayDouble(proxy.Capsule.PointB) - RayDouble(proxy.Capsule.PointA);
+                const auto offset = (RayDouble(ray.Origin) - RayDouble(proxy.Capsule.PointA)) + RayDouble(ray.Direction)*distance;
+                const double lengthSquared = RayDot(segment,segment);
+                const double parameter = lengthSquared > 0 ? std::fmax(0.0,std::fmin(1.0,RayDot(offset,segment)/lengthSquared)) : 0;
+                const auto normal = offset - segment*parameter;
+                return RayNormal(normal);
             }
 
             const Math::Vector3 local(
@@ -464,8 +561,8 @@ namespace NorvesLib::Modules::Physics
             return Result::Success;
         }
 
-        // 旧幾何のfloat中間値（カプセルrayの最大6次）をoverflowさせない。
-        // ワールド原点ではなく問い合わせ始点からの相対尺度で判定する。
+        // 接触/分離に残るfloat幾何の保守的な尺度上限を維持する。
+        // ray内部のdouble化だけでは全queryの安全域を拡大しない。始点からの相対尺度で判定。
         bool HasRepresentableQueryScale(const PhysicsShapeProxy& proxy, const Core::Scene::PhysicsQueryDesc& query)
         {
             using Kind = Core::Scene::EPhysicsQueryKind;
@@ -636,12 +733,17 @@ namespace NorvesLib::Modules::Physics
         if (query.Kind == Kind::RaycastClosest || query.Kind == Kind::RaycastAll)
         {
             const Math::Ray ray(query.Ray.Origin, QueryUnit(query.Ray.Direction));
-            if (!RaycastProxy(ray, proxy, hit.Distance) || hit.Distance > query.MaxDistance)
+            double preciseDistance = 0;
+            if (!RaycastProxy(ray, proxy, preciseDistance) || !StoreRayDistance(preciseDistance,hit.Distance)
+                || hit.Distance > query.MaxDistance)
             {
                 return Result::NoHit;
             }
-            hit.Point = ray.PointAt(hit.Distance);
-            hit.Normal = CalculateRayNormal(ray, proxy, hit.Distance);
+            if (!RayPoint(ray,preciseDistance,hit.Point))
+            {
+                return Result::InvalidArgument;
+            }
+            hit.Normal = CalculateRayNormal(ray,proxy,preciseDistance,hit.Point);
         }
         else if (query.Kind == Kind::SweepSphere || query.Kind == Kind::SweepCapsule)
         {
@@ -836,7 +938,8 @@ namespace NorvesLib::Modules::Physics
         for (const PhysicsShapeProxy& proxy : m_Proxies)
         {
             float distance = 0.0f;
-            if (!RaycastProxy(ray, proxy, distance) || distance > maxDistance)
+            double preciseDistance = 0;
+            if (!RaycastProxy(ray, proxy, preciseDistance) || !StoreRayDistance(preciseDistance,distance) || distance > maxDistance)
             {
                 continue;
             }
@@ -845,6 +948,11 @@ namespace NorvesLib::Modules::Physics
                 continue;
             }
 
+            Math::Vector3 point;
+            if (!RayPoint(ray,preciseDistance,point))
+            {
+                continue;
+            }
             bFound = true;
             closestDistance = distance;
             outHit.Collider = proxy.Collider;
@@ -852,8 +960,8 @@ namespace NorvesLib::Modules::Physics
             outHit.Entity = proxy.Entity;
             outHit.bHasEntity = proxy.bHasEntity;
             outHit.Distance = distance;
-            outHit.Point = ray.PointAt(distance);
-            outHit.Normal = CalculateRayNormal(ray, proxy, distance);
+            outHit.Point = point;
+            outHit.Normal = CalculateRayNormal(ray,proxy,preciseDistance,outHit.Point);
             outHit.UserData = proxy.UserData;
         }
         return bFound;

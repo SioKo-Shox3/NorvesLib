@@ -1678,3 +1678,34 @@
 - stop-when: 接触候補の取りこぼし、近zero軸をepsilonで平行扱い、callback借用の保持、validator失敗の隠蔽、proxy不正の黙殺、blocking未解消。
 - paths: Library/Modules/Physics/Private/Physics/PhysicsBroadphase.h, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Test/Modules/Physics/PhysicsProxyVisitorTest.cpp, Test/Modules/Physics/CMakeLists.txt, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
 - notes: 同期callbackはSuccess/NoHitで継続、他のResultで中断。precheckのNoHitは候補除外。callback/context/proxyの借用は呼出し中だけ。float丸めとsweep許容を見込みboundsを保守的に拡張。既存集約への接続はP4D。
+
+## G1-GR08-RAY: 遠方rayと球・カプセルの桁落ち誤判定を修正する
+- status: done
+- done-when: 物理query内のray/sphere/capsule計算をdoubleの線距離・断面判定へ変更し、遠方の明確なmissをfalse hitにしない。内部始点0/最寄り正根/端球・円筒・縮退/正規化・距離上限の契約を保つ。共有Math/描画側は変更しない。
+- verify: radius1/offset2/distance10000の球とカプセルで旧Success距離10000を実再現済み。軸方向の解析解、遠方hit/miss/tangent/inside/逆向き/縮退/極小線分/向き・倍率を通常/O2-NDEBUG/ASanUBSan/MEMBERで検証し、既存proxy/visitor回帰と独立レビューを行う。
+- stop-when: 明確な非交差をhit、真の交差をmiss、非有限結果、近い正根より遠い根を選ぶ、旧inside0の破壊、描画への変更、blocking未解消。
+- paths: Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Test/Modules/Physics/PhysicsRayPrecisionTest.cpp, Test/Modules/Physics/CMakeLists.txt, Test/Core/Object/SceneQueryPhysicsFacadeTest.cpp, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
+- notes: P4D全探索比較前の既存不具合修正。旧float二次式は明確な球・円筒missにもSuccessを返す。最適化の結果を誤った全探索へ合わせない。距離/点の外部float表現自体の丸めは残る。
+
+- notes: 追加試験のcompileでVector3に単項minusが無いことを確認。P4Aで補強した未実行facade試験にも同じ式が1件あったため、明示Vector3(-1,0,0)へ修正する。
+
+## G1-GR03-CURVES: 入力と振動の最小曲線評価をMathへ共通化する
+- status: todo
+- done-when: RoadmapのG1追加指示に従いMath/Curves.hへ区分線形とイージングの最小APIを置き、入力応答と振動が同じ評価実装を再利用する。既存既定値/JSON/端点/無効値契約を維持し後続GRへ拡張口を示す。
+- verify: 曲線端点/区間/不正値/イージングと既存入力軸・振動のCPU回帰、独立レビュー。
+- stop-when: 未承認の既定値変更、二重curve適用、非有限値、既存公開契約の破壊。
+- notes: 原文Roadmapの段階横断注意G1/GR03・GR04。入力API/GR119・GR121の再利用規約も文書に明記する。
+
+## G1-GR01-CONTRACT: 更新群とpauseと最終cameraの共有契約を明文化する
+- status: todo
+- done-when: 更新群ごとのComponent割当、Bridge進行/非pause/将来bTickWhenPausedの3分類、新Component登録規約、G14 CameraDirector/G16 listenerの参照順を現コードと承認S3に合わせて文書化する。
+- verify: TickStages/Processor/World/Module/Gameの実順序を照合し、未実装のbTickWhenPausedや将来hookを既存機能と誤記しない。独立文書レビュー。
+- stop-when: IModule::LateTickより後のGame::OnLateUpdate確定を隠す、未承認の更新順/pausingの実装変更。
+- notes: 原文Roadmapの段階横断注意G1/GR01。camera最終確定は承認S3=OnLateUpdateと実順序を正確に説明する。
+
+## G1-GR08-CAPSULE-ACCEPTANCE: 後続移動処理向けのカプセル境界試験を固定する
+- status: todo
+- done-when: 縦Capsuleの箱面/辺/角、Capsule同士/回転、開始重なりDistance0/印/押出しNormal、OverlapCapsuleのDepth/Normalを解析例で固定し契約を文書化する。
+- verify: 実GeometrySweep/SeparationとPhysicsProxyQueryのCPU試験を通常/最適化/sanitizer/MEMBERで実行し独立レビュー。
+- stop-when: 正常ケースを緩めて既存実装へ合わせる、未収束を確定hitと扱う、法線符号/深さ規約の曖昧化。
+- notes: GameFeatureHandoffとRoadmapのG1/GR08追加完了条件。既存Sphere試験や中心通過乱数試験だけでは代替しない。

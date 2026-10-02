@@ -215,7 +215,7 @@ namespace
         query.Ray = Math::Ray(Math::Vector3(7,8,9),Math::Vector3(3,2,1));
         query.Sphere = Math::Sphere(Math::Vector3(9,8,7),2);
         query.Box = Math::OBB(Math::Vector3(6,5,4),Math::Vector3(1,2,3),
-            Math::Vector3::UnitZ,Math::Vector3::UnitY,-Math::Vector3::UnitX);
+            Math::Vector3::UnitZ,Math::Vector3::UnitY,Math::Vector3(-1,0,0));
         query.Capsule = Math::Capsule(Math::Vector3(1,2,3),Math::Vector3(4,5,6),.5f);
         query.Direction = Math::Vector3(0,0,2);
         query.MaxDistance = 17;

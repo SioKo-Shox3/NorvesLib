@@ -405,3 +405,6 @@
 
 - G1-GR08-P4C: span上のproxyをAABB/有限長rayで保守的に絞る同期visitorを追加。入力順/precheck先行/非Success中断、不正proxyを除外で隠さない契約を保持。rayはdouble slab・軸別余裕・厳密0のみ平行扱い。第1周で許容OBB軸の逆写像領域がboundsより広い例を発見し、最大半径長1e-3の余裕とray/点AABB再現試験で修正、第2周PASS。実訪問処理を実Broadphase/Mathへ直接リンクして通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER成功。独立再現/再ビルドもPASS。既存proxy集約の回帰成功、集約への最適化接続自体はP4D。
 - Next: 全探索比較の前に、独立レビューで発見した既存のray対球のfloat桁落ち誤hitを別タスクで修正する。center0/radius1に対しorigin(-10000,2,0),dirUnitXで旧QueryProxyが距離10000の誤hitを返す。新visitorによる正しい除外を誤って回帰扱いしないため、数値基盤を先に整える。
+
+- G1-GR08-RAY: 旧float二次式の遠方球/カプセル誤hitを実再現し、doubleの直線距離・断面評価、有限円筒＋端球の最小正根へ変更。内部0/距離上限/float同距離順を維持し、微小線分/ほぼ平行も扱う。根を点の再構成までdoubleで保ち、局所double hitオフセットから法線を作る。第1周で見つかった大きいworld座標＋小radiusの法線崩れも修正して独立レビューPASS。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBERとproxy/visitor回帰成功。独立long double oracleの40,000件はhit17,229/miss22,771、誤分類/最近根逸脱0。parentでもoracleと法線再現binaryを実行確認。既存未実行facade試験のVector3単項minusを修正し実型の式syntaxを確認、Windows全体統合は未検証。
+- Next: GR08の候補訪問/掃引AABBを集約へ接続し、新旧既定queryの経路と固定seed比較を揃える。G1監査で追加判明した共通Math/Curves、更新/pause/camera契約表、Capsule辺・角/初期侵入/Depthの受入れ試験もtodoへ登録した。G1完了とはまだ扱わない。
