@@ -329,3 +329,24 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - focusはProcessorのOS通知時に即時、Engineのdevice focus適用時にもSystemへ供給する。喪失/復帰/reset自身でkind変更を合成せず、非focus活動を無視する。復帰Baseline後の物理heldも通知を合成しない。
 - kind取得は即時更新、変更Delegateは既存EndFrameで最後の通知値との差だけまとめて通知する。同frameで元へ戻ったときは通知なし。通知値をcallback前に確定し、再入EndFrameは防御的に無視する。callbackはGameThread上、frame再入/本体破棄/例外送出は禁止で、購読変更は既存Delegate規約に従う。
 - 実System/Router統合試験を既存bundleへ追加。Windows.hへの既存依存によりcompile/実行は未確認。公開System headerのsyntaxと純活動判定の回帰を実行し、Core/Engine/Windowsの実受入れとは区別する。
+
+## G1共通曲線と後続入力機能の再利用契約
+
+- Math/Curves.hを区分線形/イージングの共通入口にする。CurveKeyframeはdouble Time/float Value、時間は非負で厳密昇順、値は有限。既存HapticsKeyframeも同じfield型を持つため、型の置換やコピーなしで同じtemplateを使う
+- IsValidPiecewiseLinearCurveとTryEvaluatePiecewiseLinearは非有限値・重複時刻・逆行・非空null spanを拒否する。空曲線は0、単一key/区間外は端点保持、有限の負の照会時間は先頭値。Try系は失敗時に出力を保持する。EvaluatePiecewiseLinearUncheckedは検証済みのkey列と有限時間が前提で、所有/キャッシュ/割当てを行わない
+- TryEvaluateEasingは[0,1]入力にLinear/Power/Expo/SmoothStepを適用する。Powerのparameterは正、Expoは[0,1]、未使用でもparameterは有限。後続GR10/GR57/GR66/GR75はここを拡張し、GR23はCatmull-Rom等を追加する。補間/時計/ループ/寿命の責務を混ぜない
+- InputAxisMathは従来のdeadzoneと半径正規化の後に共通イージングを一度適用する。EInputResponseCurve/JSONはLinear/Power/Expoのまま、SmoothStepを勝手に選択肢へ追加しない。無効入力のfalse/出力0、既定値、符号/方向は維持する
+- HapticsEnvelopeMathは共通のkey検証/区分線形評価を使い、値[0,1]・duration内・非loop終了0/loop時刻の規則は振動側に保つ。JSONや効果の所有型、既定assetは変更しない
+
+### GR119・GR121が拡張する既存入口
+
+| 責務 | G1の入口と現在の契約 |
+|---|---|
+| 入力の一括解除 | InputSystem::ReleaseAll。安全な通知時点へ保留する場合はDeferReleaseAll。操作意味の取消はMapper/Routerの既存reset経路を使う |
+| フォーカス | IApplicationHandler::OnFocusLost/OnFocusGained、InputSystem::SetInputFocused、Engine/Processorの既存通知回収。WindowsはWM_ACTIVATE/WM_SETFOCUS/WM_KILLFOCUSを共通状態へ集約する。ロードマップのWM_ACTIVATEAPPという例示名のために別系統を増やさない |
+| カーソル | IWindow::SetCursorMode/GetCursorMode。失敗時に要求を適用済みとしない。focus喪失時解除とdebug overlayの既存経路を使う |
+| device poll | IInputDevice::PollEvents(InputSystem&, double)を共通の非scaled frame時刻で呼ぶ。既存の単引数virtualは互換用 |
+| 使用中入力方式 | InputSystem::GetActiveDeviceKind、OnActiveDeviceKindChanged。受理済み入力の活動から選び、EndFrameで最終値を通知する |
+| 表示切替の閾値 | InputDeviceActivitySettingsをConfigureDeviceActivity/GetDeviceActivitySettingsで扱う。既定は最短切替0.3秒、mouse移動2、左/右stick deadzone 0.24/0.27、trigger 0.12、analog変位0.02。操作軸のdeadzoneとは別の表示判定 |
+
+GR119・GR121はこの入口と設定を拡張する。別名の解除/焦点/poll/入力方式stateや異なる既定値を新設しない。前節の段階別「未接続」は実装時点の記録であり、現在の接続状況は各後続節と本表を参照する。CPUの純数理試験とWindows/実機入力の受入れは別に扱う。

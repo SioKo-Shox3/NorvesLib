@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Math/Vector2.h"
+#include "Math/Curves.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -34,12 +35,21 @@ namespace NorvesLib::Core::Input
         {
             if (length <= response.DeadZone) return 0.0;
             const double value = (std::min(length, 1.0) - response.DeadZone) / (1.0 - response.DeadZone);
-            switch (response.Curve)
+            Math::ECurveEasing easing = Math::ECurveEasing::Linear;
+            double parameter = 1;
+            if (response.Curve == EInputResponseCurve::Power)
             {
-            case EInputResponseCurve::Power: return std::pow(value, response.Gamma);
-            case EInputResponseCurve::Expo: return value * (1.0 - response.Expo) + value*value*value * response.Expo;
-            default: return value;
+                easing = Math::ECurveEasing::Power;
+                parameter = response.Gamma;
             }
+            else if (response.Curve == EInputResponseCurve::Expo)
+            {
+                easing = Math::ECurveEasing::Expo;
+                parameter = response.Expo;
+            }
+            double result = value;
+            Math::TryEvaluateEasing(easing, value, parameter, result);
+            return result;
         }
     }
 

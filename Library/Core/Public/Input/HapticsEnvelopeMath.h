@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Span.h"
+#include "Math/Curves.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -47,19 +48,16 @@ namespace NorvesLib::Core::Input
     }
     inline bool IsValidHapticsCurve(Container::Span<const HapticsKeyframe> keys, double duration)
     {
-        if (!std::isfinite(duration) || duration <= 0)
+        if (!std::isfinite(duration) || duration <= 0 || !Math::IsValidPiecewiseLinearCurve(keys))
         {
             return false;
         }
-        double previous = -1;
         for (const auto& key : keys)
         {
-            if (!std::isfinite(key.Time) || key.Time < 0 || key.Time > duration || key.Time <= previous ||
-                !std::isfinite(key.Value) || key.Value < 0 || key.Value > 1)
+            if (key.Time > duration || key.Value < 0 || key.Value > 1)
             {
                 return false;
             }
-            previous = key.Time;
         }
         return true;
     }
@@ -73,27 +71,7 @@ namespace NorvesLib::Core::Input
         // 検証済み曲線を評価。空channelは0、最初/最後のkey外は端点を保持する。
         inline float EvaluateHapticsCurve(Container::Span<const HapticsKeyframe> keys, double time)
         {
-            if (keys.empty())
-            {
-                return 0;
-            }
-            if (time <= keys.front().Time)
-            {
-                return keys.front().Value;
-            }
-            for (size_t index = 1; index < keys.size(); ++index)
-            {
-                const auto& right = keys[index];
-                if (time <= right.Time)
-                {
-                    const auto& left = keys[index - 1];
-                    const double alpha = (time - left.Time) / (right.Time - left.Time);
-                    const double value = static_cast<double>(left.Value) +
-                        (static_cast<double>(right.Value) - left.Value) * alpha;
-                    return static_cast<float>(std::clamp(value, 0.0, 1.0));
-                }
-            }
-            return keys.back().Value;
+            return static_cast<float>(std::clamp(Math::EvaluatePiecewiseLinearUnchecked(keys, time), 0.0, 1.0));
         }
     }
     // 無効値はresultを保持。非loopはduration到達時に0、loopは境界で先頭へ戻る。

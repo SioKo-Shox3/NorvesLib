@@ -1690,7 +1690,7 @@
 - notes: 追加試験のcompileでVector3に単項minusが無いことを確認。P4Aで補強した未実行facade試験にも同じ式が1件あったため、明示Vector3(-1,0,0)へ修正する。
 
 ## G1-GR03-CURVES: 入力と振動の最小曲線評価をMathへ共通化する
-- status: todo
+- status: done
 - done-when: RoadmapのG1追加指示に従いMath/Curves.hへ区分線形とイージングの最小APIを置き、入力応答と振動が同じ評価実装を再利用する。既存既定値/JSON/端点/無効値契約を維持し後続GRへ拡張口を示す。
 - verify: 曲線端点/区間/不正値/イージングと既存入力軸・振動のCPU回帰、独立レビュー。
 - stop-when: 未承認の既定値変更、二重curve適用、非有限値、既存公開契約の破壊。

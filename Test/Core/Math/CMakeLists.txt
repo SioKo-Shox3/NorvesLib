@@ -5,6 +5,7 @@
     MEMBER GeometryContactTest GeometryContactTest.cpp
     MEMBER GeometrySeparationTest GeometrySeparationTest.cpp
     MEMBER GeometrySweepTest GeometrySweepTest.cpp
+    MEMBER CurvesTest CurvesTest.cpp
     MEMBER MatrixAbstractionTest MatrixAbstractionTest.cpp
 )
 target_link_libraries(MathGeometryTest PRIVATE Core)
@@ -22,3 +23,5 @@ add_test(NAME GeometrySeparationTest COMMAND MathGeometryTest --test=GeometrySep
 add_test(NAME GeometrySweepTest COMMAND MathGeometryTest --test=GeometrySweepTest)
 
 add_test(NAME MatrixAbstractionTest COMMAND MathGeometryTest --test=MatrixAbstractionTest)
+
+add_test(NAME CurvesTest COMMAND MathGeometryTest --test=CurvesTest)

@@ -417,3 +417,6 @@
 
 - G1-GR08-CAPSULE-ACCEPTANCE: 縦Capsule対Boxの面/辺/角、横向きCapsuleとCapsule同士を解析距離/法線で固定。初期接触0・侵入0.25・対称内部1.5のDepth/外向きNormal/Distance0/start印とignoreをMath・実query集約で確認し、新旧符号と深い重なりの近似限界を文書化。通常/O2-NDEBUG（assert有効）/ASan・UBSan（LeakSanitizer除外）/MEMBERと既存10,000件oracle成功。独立レビューPASS、45度回転/端点反転/辺角Depth/反対側押出し/直交Capsuleの追加反証も成功。production変更なし、Windows/World/Module統合未検証。
 - Next: G1／GR03・GR04の最小Math/Curves共通化とGR01更新/pause/camera契約を閉じる。
+
+- G1-GR03-CURVES: Math/Curves.hへ有限・単調key検証、区分線形、Linear/Power/Expo/SmoothStepを追加。InputAxisMathとHapticsEnvelopeMathが同じ数理を再利用し、JSON/既定値/所有型/独自失敗出力/振動duration規則は維持。第1周の極大floatから小値へのkey端点桁落ちをstd::lerpと±FLT_MAX/内部key/nextafter回帰で修正し第2周PASS。Curves/InputAxis/HapticsMixer/PlaybackTimeの4試験を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で実行、Curves MEMBER compileも成功。後続GR119/GR121の入口/閾値と曲線の再利用契約を文書化。Windows/全bundle統合は未検証。
+- Next: G1／GR01のComponent割当・Bridge進行と将来pauseの区別・最終camera境界を文書で確定し、G1検証範囲を一覧化する。
