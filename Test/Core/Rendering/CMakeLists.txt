@@ -900,6 +900,9 @@ target_compile_definitions(RenderingGoldenImageComparatorTest PRIVATE
 )
 set_target_properties(RenderingGoldenImageComparatorTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderingGoldenImageComparatorTest COMMAND RenderingGoldenImageComparatorTest)
+# R2の空のgoldenが今の空のモデルから作った画像と画素で一致することを確かめる（空のモデルを変えたら再承認が要る）。
+add_test(NAME R2SkyGoldenCurrentModelTest
+    COMMAND RenderingGoldenImageComparatorTest --compare-r2-sky-goldens)
 
 add_executable(RenderingGoldenImageTest
     RenderingGoldenImageTest.cpp

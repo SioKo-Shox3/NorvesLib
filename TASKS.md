@@ -38,14 +38,15 @@
 - notes: SS-DAYLIGHT-P1・P2 の停止理由（`blocked/SS-DAYLIGHT-P1.md`）の選択肢A。2026-09-30、ユーザーの方針（細かな判断で止めず推奨で完走する）により推奨を採った。空の放射輝度LUT（`SkyAtmospherePass::GenerateRadianceLut`）はCPUの `EvaluateHillaireSkyReference` から作られ、ラスタの背景・空由来のIBL・PTの不交差・フォグの内向き散乱の色が同じLUTを引くため、この関数を直すと全部が揃って変わる。危険地帯（ライティング・空）。評価者を通す。
 
 ## SS-SKY-MODEL-P2: 新しい空で、空を使う検証（R2の受入れ・PTの屋外）を再照合する
-- status: doing
+- status: done
 - done-when: 空を有効にする検証（`RenderingHdrSceneCaptureTest` の屋外・R2の受入れの数値/画像、`PathTracingOutdoorVulkanTest`、`R7OutdoorPathTracingReferenceVulkanTest`、`LightingLightBufferTest` の空の太陽の値など。`Test/Core/Rendering` で `SkyAtmosphere` を有効にしている箇所を洗い出す）を新しい空で回し、落ちるものは原因を分類する。差が空のモデルの変更だけによるもの（古い空のアンカー値・古い空の基準画像）は、新しい値が物理的な期待に近いことを確かめて再基準化・再承認する。ラスタとPTの比較（同じLUTを引く）の閾値は変えない。閾値を越えるものは原因を直すか、測定値と分類を既知の限界として受入れ記録（`R2Acceptance.md`・`R7OutdoorAcceptance.md`）に書く。
-- verify: `cmake --build build --config Debug --target Game RenderingHdrSceneCaptureTest PathTracingVulkanTest R7OutdoorPathTracingReferenceVulkanTest LightingLightBufferTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingHdrOutdoorSceneVulkanTest|PathTracingOutdoorVulkanTest|PathTracingVolumetricTest|LightingLightBufferTest)$"`
+- verify: `cmake --build build --config Debug --target Game RenderingHdrSceneCaptureTest PathTracingVulkanTest R7OutdoorPathTracingReferenceVulkanTest LightingLightBufferTest RenderingGoldenImageComparatorTest R8SequenceRenderer R8ExrSequenceValidator -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingHdrOutdoorSceneVulkanTest|PathTracingOutdoorVulkanTest|PathTracingVolumetricTest|LightingLightBufferTest|R2SkyGoldenCurrentModelTest|R8SequenceSmokeTest)$"`
 - stop-when: 閾値や規則そのものを変えないと通らない場合は、変えずに測定値と分類を既知の限界として記録して完了にする。
 - notes: 2026-10-02 評価1周目（`68b0f42`）は NEEDS_WORK（`NEXT_FINDINGS.md`）。空を有効にする `PathTracingVolumetricTest`・`R8SequenceSmokeTest` が未実行、R2の空の基準画像3枚を新しい空から作った候補と画素で照合した証拠が無い。`R8SequenceSmokeTest` は単独で9分を超えるなら verify の行へ入れず、反復内で回した記録（所要時間とEXIT_CODE）を PROGRESS と受入れ記録に残す。
 - notes: R7屋外の参照比較（`ctest ... --timeout 1800 -R "^R7OutdoorPathTracingReferenceVulkanTest$"`、約12分）は、ランナーの再検証の上限（10分）を超えるため verify の行から外した。`68b0f42` の Core に対して `.harness/runs/20261001-193759/verify-SS-SKY-MODEL-P2-6.txt` で Passed（721.71 s、EXIT_CODE=0）を確かめた（`68b0f42` の変更は `PathTracingVulkanTest.cpp` と文書だけで、R7屋外の実行ファイルには入らない）。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-02 評価1周目の指摘に対応した。`PathTracingVolumetricTest`（8.3 s）と `R8SequenceSmokeTest`（単独で25.8 s、EXIT_CODE=0。9分より短いので verify の行へ入れた）が合格。R2の空のgolden 3枚は今の空のモデルから作った候補と画素で完全一致し（`.harness/runs/20261002-084328/verify-SS-SKY-MODEL-P2-3.txt`・`-4.txt`）、この照合を `R2SkyGoldenCurrentModelTest` として登録した。R7屋外の参照比較は起動画面の変更の後の Core でも合格（603 s、`-7.txt`）。
 - notes: 参照比較の段（`-L Reference`）のうち空を使うものだけを回す（R7屋外は単独で約12分）。GPUのテストは同時に2本走らせない。上の verify の対象名が CMake に無い場合は、`Test/Core/Rendering/CMakeLists.txt` の実際の名前へ読み替え、読み替えを PROGRESS に書く。
 
 ## SS-DAYLIGHT-P1: 起動画面を物理空と空の太陽による昼の屋外にする
@@ -60,7 +61,7 @@
 - notes: 2026-10-02 評価1周目（`153c02c`）は NEEDS_WORK（`NEXT_FINDINGS.md`）。ライティングの出力では影の中は日向の約2割あるが、トーンマップ（ACESの足元）で表示のリニア値の比が約10%へ縮み、影の芯がほぼ黒になる。直す場所は起動画面のカメラの表示側（自動露出の露出補正・トーンマップの足元・グレーディング）で、検証シーンのカメラの既定は変えない。
 
 ## SS-DAYLIGHT-P2: 太陽の向きを操作・指定でき、高さフォグを掛ける
-- status: done
+- status: doing
 - done-when: `--sun-elevation=<deg>` と `--sun-azimuth=<deg>` で起動時の太陽の向きを指定でき、撮影スクリプトの `-SunElevations` で朝（約10°）・昼（約45°）・夕（約3°）を撮れる。ImGuiに手動露出（EV100）のスライダーがある。R3の高さフォグを起動画面で有効にし（`kStartupHeightFogDensity` を0.02〜0.1の範囲で撮り比べて選ぶ）、遠くの地面と空の境が空の色へ霞む（遠くの地面の色がフォグ無しより空の地平線の色へ近づき、暗くならない）。撮影の3時刻とも空と地面の色が時刻らしく変わり、昼の画像で近景（球）のコントラストがフォグで落ちていない（球の輝度の標準偏差がフォグ無しの90%以上）。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-DAYLIGHT-P2 -SunElevations 10,45,3`

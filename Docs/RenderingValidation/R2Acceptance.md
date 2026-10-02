@@ -120,15 +120,17 @@ R2-P1の平行大気・単一散乱の近似（光学的深さ τ×e^(-τ)、地
 
 ## 新しい空での再照合（2026-10-01）
 
-空を有効にする検証を新しい空で回し、落ちたものを分類した。証拠は `.harness/runs/20261001-193759/verify-SS-SKY-MODEL-P2-*.txt`。ラスタとPTの比較（同じradiance LUTを引く）の閾値と規則は変えていない。
+空を有効にする検証を新しい空で回し、落ちたものを分類した。証拠は `.harness/runs/20261001-193759/verify-SS-SKY-MODEL-P2-*.txt` と、空を有効にする残りのテストとgoldenの画素の照合を足した `.harness/runs/20261002-084328/verify-SS-SKY-MODEL-P2-*.txt`。ラスタとPTの比較（同じradiance LUTを引く）の閾値と規則は変えていない。
 
 | 検証 | 結果 | 分類と対応 |
 |---|---|---|
 | R2の昼の数値アンカー（`RenderingHdrSceneCaptureTest`・`R2SkyTimeSweep.tsv`） | 古い値（天頂 (463.6, 944.8, 1808.2) nits）から外れた | 空のモデルの変更だけによる。新しい値へ再基準化した（下） |
-| R2の空のgolden（`R2SkyMorning/Noon/Evening.png`、`RenderingGoldenImageComparatorTest`） | 古い画像と一致しない | 空のモデルの変更だけによる（CPUのモデルから作る画像）。新しいモデルから作り直して再承認した |
+| R2の空のgolden（`R2SkyMorning/Noon/Evening.png`、`RenderingGoldenImageComparatorTest`） | 古い画像と一致しない | 空のモデルの変更だけによる（CPUのモデルから作る画像）。新しいモデルから作り直して再承認した。再承認した3枚は、今の空のモデルから作った候補のPNGと画素で完全一致する（3枚とも異なる画素0・最大差0、PNGのバイト列も同一。古い空の基準（`67ff096`）とは全65536画素が異なり最大差86〜148。`verify-SS-SKY-MODEL-P2-3.txt`・`-4.txt`）。この照合を `R2SkyGoldenCurrentModelTest`（`RenderingGoldenImageComparatorTest --compare-r2-sky-goldens`）として登録し、空のモデルを変えてgoldenを作り直さなければ落ちるようにした |
 | `PathTracingOutdoorVulkanTest` の空と地面からの間接光（今回足した比較） | 期待の58%で不合格 | テスト側の誤り。面の画素を直接光の明るさ（中央の99%以上）で選んでいたため、面より明るい新しい空の背景の画素（0.30〜0.39、面は0.273）を面として平均していた。面の画素を画素中心の1次命中距離の検証出力で選ぶよう直した。面の画素だけなら、散乱光線の不交差を一時的に定数1にした確認で差は1.2003（反射率の和1.2）、修正後は 0.146013 対 期待 0.146141（差0.09%） |
 | `RenderingHdrOutdoorSceneVulkanTest`・`LightingLightBufferTest`・`PathTracingMaterialVulkanTest`・`PathTracingLightingVulkanTest`・`R8PathTracingSequenceFrameVulkanTest`・`RenderingDDGILightingContractTest`・`SkyAtmosphereModelTest` | 合格 | 変更なし |
-| `R7OutdoorPathTracingReferenceVulkanTest` | 合格（3時刻とも閾値内） | 数値は `R7OutdoorAcceptance.md` の「新しい空での再照合」 |
+| `PathTracingVolumetricTest`（PTの高さフォグ。空 仰角65°を有効にする） | 合格（8.3 s、`verify-SS-SKY-MODEL-P2-5.txt`） | 変更なし |
+| `R8SequenceSmokeTest`（`R8SequenceRenderer` の屋内・屋外各8フレームのEXR連番。屋外は空を有効にする） | 合格（単独で25.8 s、EXIT_CODE=0、`verify-SS-SKY-MODEL-P2-6.txt`） | 変更なし。9分より十分短いのでSS-SKY-MODEL-P2の verify の行へ入れた |
+| `R7OutdoorPathTracingReferenceVulkanTest` | 合格（3時刻とも閾値内。2026-10-02に起動画面の変更の後の Core でも合格、603 s、`verify-SS-SKY-MODEL-P2-7.txt`） | 数値は `R7OutdoorAcceptance.md` の「新しい空での再照合」 |
 
 ### 再基準化したアンカー（昼: 太陽 仰角45°・方位0°）
 
@@ -137,7 +139,7 @@ R2-P1の平行大気・単一散乱の近似（光学的深さ τ×e^(-τ)、地
 | 天頂 | (463.6, 944.8, 1808.2) nits | (1798.9, 2416.1, 4064.7) nits、輝度 約2404 nits |
 | 太陽の近く | (3283.9, 3989.0, 5179.0) nits | (48920.9, 44979.5, 40593.4) nits |
 
-新しい値は物理的な期待に近い: 天頂は B > G > R の青で、輝度は晴天の天頂の実測の範囲（約2000〜8000 nits、`SkyAtmosphereModelTest` の基準と同じ）に入る。古い値は輝度約905 nitsで暗かった。太陽の近くは前方のMie散乱（g=0.8）の光冠で天頂の約19倍（輝度比）になり、透過した太陽光の色でわずかに暖色（R > G > B）になる。古い値は青が最大で、光冠は天頂の約4.3倍と弱かった。許容差（相対5%）は変えていない。GPUの読み戻し（`--r2-scenario=sky-time-sweep` の `R2_FLOAT_READBACK`）も同じ値を返す（`verify-SS-SKY-MODEL-P2-8.txt`）。朝（8°）の天頂は (492.2, 660.6, 1161.8) nits、夕（15°）は (708.8, 1009.7, 1833.0) nits。
+新しい値は物理的な期待に近い: 天頂は B > G > R の青で、輝度は晴天の天頂の実測の範囲（約2000〜8000 nits、`SkyAtmosphereModelTest` の基準と同じ）に入る。古い値は輝度約905 nitsで暗かった。太陽の近くは前方のMie散乱（g=0.8）の光冠で天頂の約19倍（輝度比）になり、透過した太陽光の色でわずかに暖色（R > G > B）になる。古い値は青が最大で、光冠は天頂の約4.3倍と弱かった。許容差（相対5%）は変えていない。`--r2-scenario=sky-time-sweep` の `R2_FLOAT_READBACK`（GPUの読み戻しではなく、CPUの `EvaluateHillaireSkyReference` の計算結果を出す行）も同じ値を返す（`verify-SS-SKY-MODEL-P2-8.txt`）。天頂の輝度の範囲の出典は、晴天の天頂輝度の実測（11,900件）から求めた Kittler・Darula の式 L_z [kcd/m²] = (1.376 T_L − 1.81) tan γ_s + 0.38（γ_s は太陽高度、T_L はLinkeの混濁係数。Darula, Kittler, "New trends in daylight theory... 3. Zenith luminance formula verified by measurement data under cloudless skies"）。仰角40°で2000〜8000 nitsは T_L 約2.7〜7.9（澄んだ空〜かすんだ空）に当たり、仰角45°の新しい値 約2404 nitsは T_L 約2.8に当たる。朝（8°）の天頂は (492.2, 660.6, 1161.8) nits、夕（15°）は (708.8, 1009.7, 1833.0) nits。
 
 作り直したgoldenは、昼が上ほど濃い青で地平線が淡く、地平線より下が灰色の地面、夕は太陽の側の地平線が暖色に光る（画像を開いて確かめた）。
 
