@@ -1881,6 +1881,7 @@ namespace NorvesLib::Core::Engine
         if(m_HasInputFocus && m_InputFocused==focused) return;
         m_HasInputFocus=true;m_InputFocused=focused;
         GEngine->GetInputMapper().SetFocused(focused);
+        GEngine->GetInputSystem().SetInputFocused(focused);
         if (!focused)
         {
             // rawは即時中立化し、observerへの通知はfocus適用batchで一度だけ行う。
@@ -2108,9 +2109,16 @@ namespace NorvesLib::Core::Engine
     {
         if (!GEngine || timeNanoseconds < 0) return false;
         const double time = static_cast<double>(timeNanoseconds) / 1'000'000'000.0;
+        if (!GEngine->GetInputSystem().CanBeginFrame(time))
+        {
+            return false;
+        }
         if (!GEngine->GetInputMapper().BeginFrame(time)) return false;
         // Mapperの時刻検証成功後、message配送前に正本の前frame保存/累積解除も行う。
-        GEngine->GetInputSystem().BeginFrame();
+        if (!GEngine->GetInputSystem().BeginFrame(time))
+        {
+            return false;
+        }
         GEngine->GetInputRebindCapture().BeginFrame();
         return true;
     }

@@ -35,3 +35,4 @@ add_test(NAME HapticsPlaybackTimeTest COMMAND LoggerSinkTest --test=HapticsPlayb
 add_test(NAME HapticsServiceTest COMMAND LoggerSinkTest --test=HapticsServiceTest)
 add_test(NAME HapticsJsonTest COMMAND LoggerSinkTest --test=HapticsJsonTest)
 add_test(NAME ActiveDeviceKindTest COMMAND LoggerSinkTest --test=ActiveDeviceKindTest)
+add_test(NAME ActiveDeviceKindIntegrationTest COMMAND LoggerSinkTest --test=ActiveDeviceKindIntegrationTest)

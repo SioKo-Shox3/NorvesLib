@@ -1622,3 +1622,11 @@
 - stop-when: analog drift/repeat/背景入力で切替、単調clock違反の状態更新、cooldown無視、mouse2lane二重加算、無効設定の部分反映、blocking未解消。
 - paths: Library/Core/Public/Input/ActiveDeviceKind.h, Library/Core/CMakeLists.txt, Test/Core/Input/ActiveDeviceKindTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: この段は純検出state。InputSystem/GetActiveDeviceKind/DelegateとEngine時刻・focus接続は次段。閾値は表示用の活動判定で、Mapperの操作値には適用しない。
+
+## G1-GR04-P12: 使用中入力方式の取得と変更通知をフレームへ接続する
+- status: done
+- done-when: InputSystemでGetActiveDeviceKind/設定/変更Delegateを公開し、受理された入力を物理履歴からP11へ渡す。明示の非scaled frame時刻とfocusをEngineから供給し、EndFrameで最終kind変更のみ通知する。reset/held/背景/無効入力で切替を合成しない。
+- verify: 純検出回帰、実Systemの各source/通知順/集約/cooldown/物理held/reset/focus/無効clock非変更を既存bundleへ登録し実compileを試す。Engineの時刻検証/focus供給を静的確認し独立レビュー。Windows依存で実行不能なら未検証と明記しstubで代用しない。
+- stop-when: 正本の受理前に活動を反映、人工resetを新押下扱い、frame検証失敗で正本を更新、callback中の二重通知/寿命逸脱、旧入力経路の変更、blocking未解消。
+- paths: Library/Core/Public/Input/InputSystem.h, Library/Core/Private/Input/InputSystem.cpp, Library/Core/Private/Engine/Engine.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Test/Core/Input/ActiveDeviceKindIntegrationTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: 既存BeginFrame()はsteady clockで互換を保つ。明示clockとの異なる時刻原点混用は禁止。初回frame以前の注入は従来通り正本へ受理するが種別判定対象外。変更通知callbackは入力配送外、再入frame/本体破棄/例外は不可。

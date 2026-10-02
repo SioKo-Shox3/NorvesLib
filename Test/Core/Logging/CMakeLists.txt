@@ -24,6 +24,7 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER HapticsMixerTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/HapticsMixerTest.cpp
     MEMBER HapticsPlaybackTimeTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/HapticsPlaybackTimeTest.cpp
     MEMBER HapticsServiceTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/HapticsServiceTest.cpp
+    MEMBER ActiveDeviceKindIntegrationTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/ActiveDeviceKindIntegrationTest.cpp
     MEMBER ActiveDeviceKindTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/ActiveDeviceKindTest.cpp
     MEMBER HapticsJsonTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/HapticsJsonTest.cpp
     MEMBER XInputDeviceIntegrationTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/XInputDeviceIntegrationTest.cpp

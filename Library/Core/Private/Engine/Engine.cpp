@@ -187,6 +187,7 @@ namespace NorvesLib::Core::Engine
         }
         InputDeviceCallGuard guard(m_bInputDevicesBusy);
         m_bInputDevicesFocused = focused;
+        m_InputSystem.SetInputFocused(focused);
         (void)m_HapticsService.SetFocused(focused);
         const bool stopped = focused || FlushHapticsInternal();
         for (auto& entry : m_InputDevices)

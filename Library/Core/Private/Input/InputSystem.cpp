@@ -2,23 +2,47 @@
 #include "Input/InputRouter.h"
 #include "Logging/LogMacros.h"
 #include <cmath>
+#include <chrono>
 
 namespace NorvesLib::Core::Input
 {
 
     void InputSystem::BeginFrame()
     {
+        const double time = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        (void)BeginFrame(time);
+    }
+
+    bool InputSystem::BeginFrame(double unscaledTimeSeconds)
+    {
+        if (!m_ActiveDevice.BeginFrame(unscaledTimeSeconds))
+        {
+            return false;
+        }
         if (m_bDeferredInputReset)
         {
             ReleaseAll();
         }
         m_State.BeginFrame();
+        return true;
     }
 
     void InputSystem::EndFrame()
     {
-        // 現時点では予約
-        // 将来: イベントキューのクリア、入力バッファリング等
+        const auto kind = m_ActiveDevice.GetKind();
+        if (m_bNotifyingDeviceKind || kind == m_NotifiedDeviceKind)
+        {
+            return;
+        }
+        // callbackより先に確定し、callback中の新活動は次EndFrameへ残す。
+        m_NotifiedDeviceKind = kind;
+        m_bNotifyingDeviceKind = true;
+        struct NotifyGuard
+        {
+            bool& Flag;
+            ~NotifyGuard() { Flag = false; }
+        } guard{m_bNotifyingDeviceKind};
+        m_OnActiveDeviceKindChanged.Broadcast(kind);
     }
 
     const InputState &InputSystem::GetState() const
@@ -54,8 +78,10 @@ namespace NorvesLib::Core::Input
     void InputSystem::InjectKeyEvent(KeyCode code, InputAction action)
     {
         // 状態を更新
+        const bool bWasDown = m_State.IsKeyDown(code);
         bool bDown = (action == InputAction::Pressed || action == InputAction::Repeat);
         m_State.SetKeyState(code, bDown);
+        (void)m_ActiveDevice.ObserveKey(code, action, bWasDown);
 
         // イベントを発火
         KeyEvent event;
@@ -73,8 +99,10 @@ namespace NorvesLib::Core::Input
     void InputSystem::InjectMouseButton(MouseButton button, InputAction action, float x, float y)
     {
         // 状態を更新
+        const bool bWasDown = m_State.IsMouseButtonDown(button);
         bool bDown = (action == InputAction::Pressed);
         m_State.SetMouseButtonState(button, bDown);
+        (void)m_ActiveDevice.ObserveMouseButton(button, action, bWasDown);
 
         // イベントを発火
         MouseButtonEvent event;
@@ -106,6 +134,7 @@ namespace NorvesLib::Core::Input
         event.PositionY = y;
         event.DeltaX = accumulateDelta ? m_State.GetMouseState().DeltaX - previous.DeltaX : 0;
         event.DeltaY = accumulateDelta ? m_State.GetMouseState().DeltaY - previous.DeltaY : 0;
+        (void)m_ActiveDevice.ObserveMouseMove(event.DeltaX, event.DeltaY, false);
         m_OnMouseMoveEvent.Broadcast(event);
 
         // 優先度付きルーターへ配送（登録 Controller がいなければ空振り）
@@ -122,6 +151,7 @@ namespace NorvesLib::Core::Input
     bool InputSystem::InjectMouseScrollAxes(float vertical, float horizontal)
     {
         if (!m_State.AddMouseScrollAxes(vertical, horizontal)) return false;
+        (void)m_ActiveDevice.ObserveMouseScroll(vertical, horizontal);
         MouseScrollEvent event{vertical, horizontal};
         m_OnMouseScrollEvent.Broadcast(event);
         if (m_Router) m_Router->DispatchMouseScroll(event);
@@ -130,6 +160,7 @@ namespace NorvesLib::Core::Input
     bool InputSystem::InjectRawMouseDelta(float x, float y)
     {
         if (!m_State.AddRawMouseDelta(x, y)) return false;
+        (void)m_ActiveDevice.ObserveMouseMove(x, y, true);
         MouseRawMoveEvent event{x, y};
         m_OnMouseRawMoveEvent.Broadcast(event);
         if (m_Router) m_Router->DispatchMouseRawMove(event);
@@ -139,10 +170,12 @@ namespace NorvesLib::Core::Input
     {
         const GamepadState accepted=state; // callbackが呼出元のstateを変更してもsnapshotを保つ。
         const auto previous = m_State.GetGamepadState(slot);
+        const auto previousPhysical = m_State.GetLastGamepadSample(slot);
         if (!m_State.SetGamepadState(slot, accepted, mode))
         {
             return false;
         }
+        (void)m_ActiveDevice.ObserveGamepad(slot, previousPhysical, accepted, mode);
         if (previous.Connected != accepted.Connected)
         {
             // 切断取消しは通常release（tap完了）より先に必ず届く。
@@ -185,7 +218,8 @@ namespace NorvesLib::Core::Input
 
     void InputSystem::InjectCharEvent(uint32_t codepoint)
     {
-        // 文字入力は瞬間イベント（状態を持たない）。OnCharEvent を発火するのみ。
+        // 文字自体は瞬間イベント。表示用の活動判定は有効Unicodeだけ採用する。
+        (void)m_ActiveDevice.ObserveCharacter(codepoint);
         CharEvent event;
         event.Codepoint = codepoint;
         m_OnCharEvent.Broadcast(event);

@@ -2,6 +2,7 @@
 
 #include "InputTypes.h"
 #include "InputState.h"
+#include "ActiveDeviceKind.h"
 #include "Delegate/MulticastDelegate.h"
 
 // MulticastDelegateはNorvesLib::Core名前空間にある
@@ -55,11 +56,23 @@ namespace NorvesLib::Core::Input
          * ApplicationProcessor::Tick()の先頭で呼び出してください。
          */
         void BeginFrame();
+        // 有限非負・非減少の非scaled秒。失敗時は正本/活動stateとも非変更。
+        // 旧入口はsteady_clockを使う。異なる時刻原点の入口を混用しない。
+        bool CanBeginFrame(double unscaledTimeSeconds) const noexcept { return m_ActiveDevice.CanBeginFrame(unscaledTimeSeconds); }
+        bool BeginFrame(double unscaledTimeSeconds);
+        EInputDeviceKind GetActiveDeviceKind() const noexcept { return m_ActiveDevice.GetKind(); }
+        bool ConfigureDeviceActivity(const InputDeviceActivitySettings& settings) noexcept { return m_ActiveDevice.Configure(settings); }
+        InputDeviceActivitySettings GetDeviceActivitySettings() const noexcept { return m_ActiveDevice.GetSettings(); }
+        // focus変更自体はkind/通知を合成しない。OS callbackから呼べる値操作のみ。
+        void SetInputFocused(bool focused) noexcept { m_ActiveDevice.SetFocused(focused); }
+        // EndFrameで最終kindの変更だけ通知。UI消費とは独立、GameThread専用。
+        // callbackはframe再入/本体破棄/例外送出を行わない。Delegate購読変更規約に従う。
+        MulticastDelegate<EInputDeviceKind>& OnActiveDeviceKindChanged() { return m_OnActiveDeviceKindChanged; }
 
         /**
          * @brief フレーム終了処理
          *
-         * 現時点では予約。将来のバッファリング対応用。
+         * 入力配送後、最後に通知した値からkindが変わっている場合だけ通知する。
          */
         void EndFrame();
 
@@ -190,6 +203,10 @@ namespace NorvesLib::Core::Input
         friend class InputDebugOverlayController;
         // 入力状態
         InputState m_State;
+        ActiveDeviceKindState m_ActiveDevice;
+        EInputDeviceKind m_NotifiedDeviceKind = EInputDeviceKind::KeyboardMouse;
+        bool m_bNotifyingDeviceKind = false;
+        MulticastDelegate<EInputDeviceKind> m_OnActiveDeviceKindChanged;
         // controller所有終了時の通知は次の安全なAttach/frame開始まで保留する。
         bool m_bDeferredInputReset = false;
 

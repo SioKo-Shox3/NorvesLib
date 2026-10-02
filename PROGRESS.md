@@ -384,3 +384,6 @@
 
 - G1-GR04-P11: KeyboardMouse/Gamepadの純活動判定stateを追加。新規押下/有効文字/wheel、Raw・absolute別累積の移動閾値、Live padの新buttonとslot別analog累積変位で選択し、既定0.3秒の最短切替間隔を守る。背景/基準sample、repeat、静止held、noise、人工resetで表示を奪い返さない。設定/clock/sampleの全検証後だけ更新し、focusはkindを維持して累積基準を破棄。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle MEMBER object成功、独立レビューも追加の跨frame trigger/無効非変更/held再奪取試験を実行してPASS。
 - Next: GR04のInputSystem GetActiveDeviceKind/DelegateとEngineのframe clock/focusへ接続する。純状態の合格は実System/Engine/Windows受入れを意味しない。
+
+- G1-GR04-P12: InputSystemへ使用中入力方式の取得/設定/変更Delegateを接続。受理正本を先に更新して活動を評価し、padは人工resetに影響されない物理履歴と比較、UI consumeから独立させた。Processorから共通非scaled frame時刻と即時focus、Engineから適用focusを供給する。不正System clockはMapper/frame更新前に拒否。kind取得は即時、通知はEndFrameで最終値だけ集約し再入二重通知を防御。公開header syntaxとP11通常/O2/ASan・UBSan回帰成功、独立静的レビューPASS。実System/Router試験は登録済みだがWindows.h依存でcompile/実行未確認。
+- Next: GR04の計画上の実装項目を一通り接続した。Windows統合bundle/実パッド/振動の受入れは未検証として残し、G1のGR08（コライダーmetadata、query façade/provider、mask、明示snapshot更新）へ進む。GR03/GR04/G1の全受入れ完了とは扱わない。
