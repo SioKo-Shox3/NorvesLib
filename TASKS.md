@@ -321,7 +321,7 @@
 - notes: 2026-10-03 親が直した。`.harness/runs/20261003-parent/build-RGCT.txt` で build EXIT_CODE=0、`ctest-RGCT.txt` で RenderGraphCompileTest 1/1 passed。
 
 ## SS-GPU-PROFILE: 計測のある構成で、加速構造の更新を含むGPUの時間とパスごとの内訳をトレースへ書けるようにする
-- status: todo
+- status: done
 - done-when: 計測が有効な構成（Debug・RelWithDebInfo。`NORVES_ENABLE_STATS=1`）で、(a) フレームのGPUの区間（`FrameGPU`）が加速構造の更新（`RenderingCoordinator.cpp` の `BuildAccelerationStructures`）を含み、加速構造の更新も別の区間として取れる。(b) RenderGraph のパスごとのGPUの時間が `--trace-file` のトレースに行として出る。Release の構成には計測・トレース・ログの仕組みを足さない（Release の `NORVES_ENABLE_STATS=0` と出力は変えない。Release を有効にするCMakeの選択肢も作らない）。RelWithDebInfo の Game で起動画面を数百フレーム走らせ、フレームごとのGPUの時間・加速構造の更新・パスごとの内訳がトレースに出ることを、トレースを開いて確かめる（PROGRESS に数行の抜粋）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Release --target Game -- /m:1`
