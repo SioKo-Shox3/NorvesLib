@@ -187,7 +187,7 @@ namespace Game::GameModes
         // にじみがわずかに見える程度にする。レンズダートは、ブルームのうちプリエクスポージャ後で1を超えた
         // 明るいにじみ（太陽・発光球の周り）にだけ模様を浮かせる。強さ2は夕（仰角3°）に太陽のにじみの中で
         // しみの丸が見え、昼（45°）の空には模様が出ない値（しきい値0.3では昼の空にもしみが浮いた）。夜の点光源の
-        // 周りの暗い背景では、BloomSettings::LensDirtSceneRatio が加算を画素の明るさの0.25倍へ頭打ちにし、
+        // 周りの暗い背景では、BloomSettings::LensDirtSceneRatio が加算をブルーム前の画素の値の0.25倍へ頭打ちにし、
         // しみが色付きの円（ゴースト）として浮かないようにする。
         constexpr float kStartupChromaticAberrationPixels = 1.5f;
         constexpr float kStartupLensDirtIntensity = 2.0f;
