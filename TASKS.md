@@ -1733,8 +1733,14 @@
 - notes: 第1周でLayer0の旧無filter契約を確認。旧adapterだけ内部kernelのfilter適用を無効にし、新APIのbitmask条件は維持。4種類の旧hit/新NoHitを回帰へ追加する。
 
 ## G1-GR01-TRANSFORM-BOUNDARY: 群境界で子階層のworld姿勢を確定する
-- status: todo
+- status: done
 - done-when: Roadmap G1リスクの段階境界確定に従い、Movement等で親が動いた後のDefault/Animation/PoseFinalize、Camera後のPreRenderから子world姿勢を同frameで読む。既存群順/収集/削除/Fixed規則を維持する。
 - verify: 実WorldTickGroupTestへ親子階層の各群境界・同群の非暗黙確定・追加翌frame・Late境界の回帰を追加。可能なportable群/dispatch回帰と実統合compile試行、独立レビュー。Windows.h阻害は未実行と記録する。
 - stop-when: callbackごとの全走査、同群順序/寿命の破壊、未承認scheduler変更、Windows統合の偽装。
 - notes: G1最終照合で、現DispatchTickGroupsは前半5群を一括走査し変換確定をLate境界だけに行う点を発見。Entity::GetWorldTransformは親ありdirtyでcached値を返すため、先の群で変更した親への追従が不足する。
+
+## G1-VALIDATION: 実装一覧とクラウド検証範囲を確定する
+- status: todo
+- done-when: GR01/03/04/08の実装、実行済みportable試験、未実行統合/実機確認を区別する一覧をDocs/Architectureへ保存する。G1追加Public header29件の明示登録を揃える（監査でCurves.hのみ漏れ）。
+- verify: 実ログ/command/sourceを照合し34件成功とcompile blocked1件を別記する。Core PUBLIC_HEADERSと追加headerを照合し重複を検出する。新たなWindows/CI合格を主張しない。
+- stop-when: CPU純kernelをWorld/Engine統合の合格と扱う、未実行項目をpassにする、未承認のG2選定を確定する。

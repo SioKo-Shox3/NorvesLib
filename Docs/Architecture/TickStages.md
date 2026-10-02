@@ -31,7 +31,7 @@
 - World::Tickで全群とFixed対象を一回収集する。主群・mask・優先度・走査順はフレーム内で固定する。
 - EntityのDefault優先度は自分のDefault群Componentの最小値（なければ0）。Entityを先に採番し、同じownerのComponentより先に実行する。全既定0では従来の深さ優先・登録順を保つ。
 - 呼出直前にownerの所属/親のactive/pending、自身の有効状態を確認する。
-- World::LateTickは再収集せず、PostPhysics前とCamera前に変換を更新する。Fixed対象も同じフレームの収集結果を使う。Tick前の単独Fixed呼出はその呼出だけの収集結果を使う。
+- 群のdispatchは最初の群と次の群へ進む境界でWorld変換を更新する。前の群で変更した親の姿勢を次の群から子が読める。同群内のsetter直後には暗黙同期しない。World::LateTickは再収集せず、PostPhysics/Camera/PreRenderも同じ境界規則を使う。Fixed対象も同じフレームの収集結果を使う。Tick前の単独Fixed呼出はその呼出だけの収集結果を使う。
 - 更新・cleanup通知中のRemoveComponent/RemoveEntityは破棄予約へ変換する。ComponentのMarkForDestroyはpendingを設定する。
 - 既存のWorld::Tick後と各固定ステップ後のcleanup位置は維持する。実破棄前に保持entryを無効化する。
 - ObjectHeap/GCの即時削除もEntity::RemoveInnerを通して無効化する。callback自身が即時破棄された場合、Worldは戻り際に対象を触らない。即時削除した対象をcallback側でも再利用してはならない。
@@ -118,3 +118,10 @@ Handler OnUpdateとBridge DrainInbound、入力評価/メンテナンス、描�
 - G14 CameraDirectorの配置自体は未決のG14-S3に残す。どこに所有しても、候補/intentの評価と最終commitを分け、当フレームの最終結果はGame OnLateUpdateの確定境界で一度だけ反映する。Module Lateで準備する案は可能だが、描画同期後の通常Module Tickから別のcameraを上書きする方式にはしない
 - G16 listenerはこの最終commit後の同じフレームのcamera snapshotを読む。現在の順序なら、その後の通常Module Tickか将来追加する明示的な確定通知が候補になる。Module Lateを最終cameraの読取点にしてはならない。停止中のlistener/Audio方針はGR119/GR73で定め、今のAudioServiceModuleにlistener連携があるとは扱わない
 - 根拠：ApplicationProcessor::Tick/TickSimulation/AdvanceFixedSimulation、World::Tick/LateTick/FixedTick、GameApplicationHandler::OnLateUpdate/ShouldAdvanceSimulation、Game/CameraLateUpdate.h。これらの文書化は更新順や描画実装の変更ではない
+
+## 群境界のTransform鮮度
+
+- 最初のInputからPoseFinalizeまでとLateの各群に入る前にUpdateWorldTransformsを実行する。追加の群間同期はsnapshot内で次の群へ移ったときだけ行う。既存のLate入口/PostPhysics後の明示確定は、Late対象が空の場合も維持する。前半/後半の群順、同群優先度と登録順、追加翌frame/破棄無効化の規則は変えない
+- WorldTickGroupTestは親・子・孫を作り、逆順登録した全8群で親を動かし、次群が同frameの子world姿勢を読むことを確認する。同群内の遅いobserverは同期前の値を読み、群ごとの一括確定であることも固定する
+- この追加の実World試験はWindows.h依存で現環境ではcompile/実行未確認。既存の純群/dispatch helperの実行結果を、この階層試験の合格に置き換えない
+- 追加の階層走査コストは実測前。GR41でdirty世代等による最適化を行うときも、この公開境界を保つ

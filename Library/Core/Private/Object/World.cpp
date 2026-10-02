@@ -894,6 +894,7 @@ namespace NorvesLib::Core
             return;
         }
         BuildTickSnapshot();
+        UpdateWorldTransforms();
         DispatchTickGroups(Component::ETickGroup::Input, Component::ETickGroup::PoseFinalize, deltaTime);
         CleanupDestroyedObjects();
     }
@@ -999,10 +1000,21 @@ namespace NorvesLib::Core
     void World::DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime)
     {
         ScopedWorldFlag dispatch(m_bDispatchingTicks);
+        auto publishedGroup = Component::ETickGroup::Count;
         for (const TickDispatchEntry& slot : m_TickEntries)
         {
             const TickDispatchEntry entry = slot;
-            if (!entry.Owner || entry.Group < first || entry.Group > last || !CanDispatchEntity(*entry.Owner))
+            if (entry.Group < first || entry.Group > last)
+            {
+                continue;
+            }
+            if (publishedGroup != Component::ETickGroup::Count && entry.Group != publishedGroup)
+            {
+                // 前の群で変更された親の姿勢を子階層へ公開する。同群内では確定しない。
+                UpdateWorldTransforms();
+            }
+            publishedGroup = entry.Group;
+            if (!entry.Owner || !CanDispatchEntity(*entry.Owner))
             {
                 continue;
             }

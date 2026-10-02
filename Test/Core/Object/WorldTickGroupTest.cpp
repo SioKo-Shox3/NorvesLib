@@ -170,6 +170,111 @@ namespace
         return component;
     }
 
+    class TransformBoundaryComponent : public Component::Component
+    {
+    public:
+        Entity* ReadTarget = nullptr;
+        Entity* MoveTarget = nullptr;
+        float Position = 0;
+        float Observed = -999;
+        int Calls = 0;
+        void Tick(float) override
+        {
+            ++Calls;
+            if (ReadTarget)
+            {
+                Observed = ReadTarget->GetWorldTransform().position.x;
+            }
+            if (MoveTarget)
+            {
+                MoveTarget->SetPosition(Position, 0, 0);
+            }
+        }
+    };
+
+    void TestTransformPublicationAtGroupBoundaries()
+    {
+        World world;
+        world.Initialize();
+        auto* root = world.SpawnEntity<Entity>();
+        auto* child = world.SpawnEntity<Entity>(root);
+        auto* grandchild = world.SpawnEntity<Entity>(child);
+        NorvesLib::Math::Transform local = NorvesLib::Math::Transform::Identity;
+        local.position.x = 1;
+        child->SetLocalTransform(local);
+        local.position.x = 2;
+        grandchild->SetLocalTransform(local);
+        world.UpdateWorldTransforms();
+        assert(grandchild->GetWorldTransform().position.x == 3);
+        // フレーム前の変更も最初のInput群から読む。親ありdirtyは確定までは旧値。
+        root->SetPosition(7, 0, 0);
+        assert(grandchild->GetWorldTransform().position.x == 3);
+        TransformBoundaryComponent* movers[8]{};
+        TransformBoundaryComponent* observers[8]{};
+        for (int index = 7; index >= 0; --index)
+        {
+            const auto group = static_cast<ETickGroup>(index);
+            movers[index] = world.CreateComponent<TransformBoundaryComponent>(root);
+            observers[index] = world.CreateComponent<TransformBoundaryComponent>(grandchild);
+            movers[index]->SetTickGroup(group);
+            observers[index]->SetTickGroup(group);
+            observers[index]->SetTickPriority(1);
+            movers[index]->ReadTarget = grandchild;
+            movers[index]->MoveTarget = root;
+            movers[index]->Position = static_cast<float>((index+1)*10);
+            observers[index]->ReadTarget = grandchild;
+        }
+        world.Tick(0.01f);
+        for (int index = 0; index <= 4; ++index)
+        {
+            const float expected = index == 0 ? 10.0f : static_cast<float>(index*10+3);
+            assert(movers[index]->Calls == 1 && observers[index]->Calls == 1);
+            assert(movers[index]->Observed == expected && observers[index]->Observed == expected);
+        }
+        for (int index = 5; index < 8; ++index)
+        {
+            assert(movers[index]->Calls == 0 && observers[index]->Calls == 0);
+        }
+        world.LateTick(0.01f);
+        for (int index = 5; index < 8; ++index)
+        {
+            const float expected = static_cast<float>(index*10+3);
+            assert(movers[index]->Calls == 1 && observers[index]->Calls == 1);
+            assert(movers[index]->Observed == expected && observers[index]->Observed == expected);
+        }
+        // 群内のsetter直後は自動同期しない。最終群の変更は次の明示境界で公開する。
+        assert(grandchild->GetWorldTransform().position.x == 73);
+        world.UpdateWorldTransforms();
+        assert(grandchild->GetWorldTransform().position.x == 83);
+        world.Finalize();
+    }
+
+    void TestSparseTransformBoundaries()
+    {
+        World world;
+        world.Initialize();
+        auto* root = world.SpawnEntity<Entity>();
+        auto* child = world.SpawnEntity<Entity>(root);
+        auto local = NorvesLib::Math::Transform::Identity;
+        local.position.x = 2;
+        child->SetLocalTransform(local);
+        auto* mover = world.CreateComponent<TransformBoundaryComponent>(root);
+        mover->SetTickGroup(ETickGroup::Movement);
+        mover->MoveTarget = root;
+        mover->Position = 10;
+        auto* reader = world.CreateComponent<TransformBoundaryComponent>(child);
+        reader->SetTickGroup(ETickGroup::PoseFinalize);
+        reader->ReadTarget = child;
+        world.Tick(0.01f);
+        assert(reader->Observed == 12);
+        // Late対象が一つもなくても従来の明示Late境界確定は維持する。
+        root->SetPosition(20, 0, 0);
+        assert(child->GetWorldTransform().position.x == 12);
+        world.LateTick(0.01f);
+        assert(child->GetWorldTransform().position.x == 22);
+        world.Finalize();
+    }
+
     void TestOrderAndChanges()
     {
         World world;
@@ -356,6 +461,8 @@ namespace
 
 int main()
 {
+    TestTransformPublicationAtGroupBoundaries();
+    TestSparseTransformBoundaries();
     TestOrderAndChanges();
     TestAdditionAndRemoval();
     TestFixedCleanupAndInactiveParent();

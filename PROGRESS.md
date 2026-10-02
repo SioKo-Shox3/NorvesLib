@@ -423,3 +423,6 @@
 
 - G1-GR01-CONTRACT: 全Componentの群割当、可変とFixedの順序差、現Bridge gateと将来pauseの3分類、新Component登録規約を文書化。最終cameraは承認S3のGame OnLateUpdateで、Module Lateより後/通常Module Tickより前と明記し、G14未決配置とG16読取契約を区別。独立source照合PASS、コード変更なし。無視対象Roadmapへ矛盾を上書きする補足を保存。
 - Next: G1最終照合で群境界の子Transform鮮度不足が判明。GR01-TRANSFORM-BOUNDARYとして修正し、その後に検証一覧を確定する。
+
+- G1-GR01-TRANSFORM-BOUNDARY: Worldの最初の群前とsnapshot内の群遷移でWorld変換を確定し、Movementで動かした親を次のDefault/Animation/PoseFinalizeから子が同frameに読めるようにする。Camera→PreRenderも確定し、既存のLate空対象時の更新、同群内非同期、順序/収集/破棄/Fixed契約は維持。実World試験に全8群の親子孫・逆登録・同群observer・疎な群・空Lateを追加し静的レビューPASS。純TickGroup/DispatchはO2-NDEBUG/ASan・UBSan（LeakSanitizer除外）成功。実階層試験はWindows.hでcompile停止、実行未確認。追加階層走査コストは未計測。
+- Next: G1検証一覧とCurves header登録を確定し、作者のG2移行指示に従いAssetCookLib分離など選定不要のG2基盤へ進む。
