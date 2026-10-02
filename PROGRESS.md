@@ -239,3 +239,10 @@
 - R6-P1検証: `verify-R6-P1-1.txt`でGame build EXIT_CODE=0、`verify-R6-P1-2.txt`でRayTracingSceneSnapshotTest・RenderingDDGILightingContractTest・RenderGraphCompileTestの3/3 passedとEXIT_CODE=0を読戻し確認した。既存のthird-party PDBおよびlibwebsockets生成物warningは残るが、対象ゲートは成功した。
 - R7-P1検証（2026-09-23）: `verify-R7-P1-3.txt`のGame/関連target buildはEXIT_CODE=0。`verify-R7-P1-4.txt`の対象CTestは4/5 passedで、RTGI、Indoor golden、2つの契約テストがpassed、Outdoor goldenのみ開始時と同じ数値でfailed。`verify-R7-P1-5.txt`でR1 capture testを再buildし、`verify-R7-P1-6.txt`でall-numerical契約（40 static rows、68 numerical rows、120 captures、EXIT_CODE=0）を確認した。
 
+
+## G1 ゲーム基盤（2026-10-02）
+
+- Done: G1-GR08-P1。カプセル対球・箱・カプセルの符号付き分離距離、法線、表面点を追加。短い線分・近平行・微小数の回帰ケースと球解析式の固定乱数1万件をg++で実行した。ASan/UBSan（LeakSanitizerを除く）も成功。既存ComputeContactの実装は不変。
+- In progress: GR08の衝突クエリ基盤。G1全体は未完了。
+- Next: 球・カプセル掃引のCPU数学部分、続いてレイヤー/フィルタと統合クエリ。
+- Notes: Windows/Core全体/CTest/Game/GPUは未検証。既存GeometryContactTestは無条件Windows.h取り込みだけを除いた一時コピーで回帰確認した。MathGeometryTestは既存Quaternionスカラー演算子不足、PhysicsはWindows.h依存のためLinux直接ビルド不能。描画側のソースと既存SS/R/FIX項目は変更していない。

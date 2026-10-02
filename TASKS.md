@@ -1158,3 +1158,11 @@
 - verify: relevant R7 Debug build/CTestと3時刻captureの数値レポートを開いて確認する。
 - stop-when: 3時刻の一部で閾値超過、NaN/Inf、未解決のR7 core acceptanceが残る場合、完了trailerを付けない。
 - paths: Docs/RenderingValidation, Test/Core/Rendering, TASKS.md, PROGRESS.md
+
+## G1-GR08-P1: カプセルの形状間分離距離を追加する
+- status: done
+- done-when: Capsule 対 Sphere/OBB/Capsule の分離距離・法線・表面点・侵入判定を解析解で確認し、既存接触判定を維持する。
+- verify: g++ -std=c++23 -I Library/Core/Public Test/Core/Math/GeometrySeparationTest.cpp Library/Core/Private/Math/GeometryIntersection.cpp -o /tmp/norves-separation && /tmp/norves-separation
+- stop-when: 描画への変更、未承認判断、公開契約のblocking指摘が残る場合。
+- paths: Library/Core/Public/Math, Library/Core/Private/Math/GeometryIntersection.cpp, Test/Core/Math, TASKS.md, PROGRESS.md
+- notes: Windows/Core全体/CTest/GPUの検証は別。既存SS/R/FIX項目の状態と順序は変更しない。

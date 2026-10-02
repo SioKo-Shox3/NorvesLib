@@ -10,6 +10,22 @@
 namespace NorvesLib::Math
 {
 
+/**
+ * @brief 丸みのある形状間の分離結果。
+ * Distance は離隔で正、接触で0、侵入で負。bPenetrating は接触も含む。
+ * NormalAToB は A から B へ向く単位法線で、A の押し出し方向はその逆。
+ * PointA/PointB は離隔時の最近表面点。深い侵入では接触軸上の支持点となる。
+ * 深いカプセル/箱の侵入距離は既存接触判定と同じ近似である。
+ */
+struct GeometrySeparation
+{
+    float Distance = 0.0f;
+    Vector3 NormalAToB;
+    Vector3 PointA;
+    Vector3 PointB;
+    bool bPenetrating = false;
+};
+
 struct Ray
 {
     Vector3 Origin;
