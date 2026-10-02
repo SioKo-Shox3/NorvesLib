@@ -556,6 +556,8 @@ set(PUBLIC_HEADERS
     Public/Input/IInputController.h
     Public/Input/InputRouter.h
     Public/Input/IInputDevice.h
+    Public/Input/HapticsEnvelopeMath.h
+    Public/Input/HapticsOutputState.h
     Public/Input/MayaCameraController.h
     Public/Input/LightController.h
     Public/Rendering/PathTracingExrOutput.h

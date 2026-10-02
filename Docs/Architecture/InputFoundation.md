@@ -275,3 +275,10 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - frame順はBeginInputFrame→platform message/focus取消→device poll→Mapper更新/handler。focus lossではMapper停止/ReleaseAllがdevice hookより先。Background/Baselineの選択はproviderが担当する。
 - 停止時はcapture中止/Mapper取消/正本neutralを即時実施し、legacy reset通知はInputSystem::DeferReleaseAllで次の安全なBeginFrame/Attachへ保留する。Shutdown callbackから入力を通知しない契約。debug overlayの所有終了も同じ保留口を使う。
 - fake deviceで所有/順序/部分失敗/例外/再試行/単調時刻/再入拒否/Run cleanupを既存Engine bundleへ追加。Windows依存によりEngine統合実行・native実機は未検証。
+
+### 振動の包絡線/混合/出力ACK（GR04）
+- HapticsEffectViewはduration/loop/priorityと左右keyの呼出中借用。durationは有限正、keyは時間0..durationの厳密昇順・値0..1。空channelは0、最初/最後のkey外は端点値、区間は線形補間。非loopはduration到達で0、loopはfmodで先頭へ戻し巨大時間のcatch-upを避ける。invalidは出力非変更。
+- MixHapticsSamplesはslotごとに最高priorityのactive効果だけを採用し、同priorityをchannel別MaximumまたはAddClampで合成。最高priority効果が一時0でも下位を通さない。設定倍率0..1はclamp後に適用。inactiveも含め入力値を全て検証してから出力する。
+- HapticsOutputStateは送信成功ACKだけを更新する。左右どちらかの変化が1/255以上なら送るが、各motorの非zero→zeroは微小差でも必ず送る。未ACK/失敗後は再試行。同値成功ACKの不要再送は省略する。
+- 失敗した非zero試行も作動した可能性として追跡し、成功zero ACKまでMayBeActiveを保持。失敗を成功扱いせず、値状態は実APIの停止保証ではない。ownerは停止義務が残る間に状態を破棄しない。
+- この段は純評価/混合/ACK判定。voice所有、実motor送信、haptics.v1、focus/pause/Engine接続は後続。HapticsMixerTestは実コードを通常/O2/ASan・UBSanとbundle objectで検証している。

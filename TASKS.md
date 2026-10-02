@@ -1486,3 +1486,19 @@
 - stop-when: device二重pad供給、partial開始放置、callback中破棄/登録、Shutdown例外で残り未停止、焦点喪失前のLive poll、終了後held残留、blocking未解消。
 - paths: Library/Core/Public/Input/IInputDevice.h, Library/Core/Public/Engine/Engine.h, Library/Core/Private/Engine/Engine.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Private/Input/InputDebugOverlayController.cpp, Test/Core/Engine/InputDeviceLifecycleTest.cpp, Test/Core/Engine/InputFocusPipelineTest.cpp, Test/Core/Engine/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: native実機とWindows統合実行は未検証。振動serviceは後続。Shutdown失敗のdeviceは所有/再停止義務を保持し、再初期化を拒否する。
+
+## G1-GR04-P6: 振動包絡線の混合と成功ACKによる出力判定を実装する
+- status: done
+- done-when: 有限duration/昇順key/値0..1を検証し、線形補間/loop/期間終了を処理。slot内最高priorityのactive sampleだけをmaxまたはadd-clamp合成し、設定倍率を最後に適用。成功ACKだけを記録し、差分1/255未満は抑止するが最終zero/失敗再試行は省略しない。
+- verify: 実純ロジックの境界/巨大経過時間/優先度/両合成/倍率/invalid非変更、ACK/失敗/最終zeroを通常/O2/ASanUBSan/bundleで実行し独立レビュー。
+- stop-when: 非有限/範囲外出力、優先度無視、invalid部分反映、失敗ACK扱い、微小値の最終zero省略、blocking未解消。
+- paths: Library/Core/Public/Input/HapticsEnvelopeMath.h, Library/Core/Public/Input/HapticsOutputState.h, Library/Core/CMakeLists.txt, Test/Core/Input/HapticsMixerTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: この段は純評価/混合/出力記録。voice所有/実device送信/JSON/Engineのfocus・pauseは後続。定義のspanは呼出中だけ借用する。
+
+## G1-INPUT-SPAN: 入力層の借用viewを独自Spanへ統一する
+- status: todo
+- done-when: GR03の入力runtime/settings/names/mapper/binding setで使用しているstd::spanをContainer::Spanへ揃え、所有/寿命/呼出互換を維持する。
+- verify: 変更header/runtimeの関連portable試験を通常/O2/ASanUBSan/bundle、Mapper/SetはWindows依存の実行限界を明記し公開API差分を独立レビュー。
+- stop-when: view寿命の延長、空view/配列/const変換の回帰、規約を満たすための偽platform代替、blocking未解消。
+- paths: Library/Core/Public/Input/InputActionRuntime.h, Library/Core/Public/Input/InputBindingNames.h, Library/Core/Public/Input/InputMapper.h, Library/Core/Public/Input/InputActionSettings.h, Library/Core/Private/Input/InputBindingSet.cpp, Library/Core/Private/Input/InputMapper.cpp, TASKS.md, PROGRESS.md
+- notes: GR04-P6レビューで独自Span規約との不一致を確認。既存他領域の一括置換は行わず、今回の入力整備で導入した境界に限定する。

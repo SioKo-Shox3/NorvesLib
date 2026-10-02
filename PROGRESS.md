@@ -360,3 +360,6 @@
 
 - G1-GR04-P5: Engine所有device列と単一pad provider制約を接続。開始試行前に終了義務を記録し、false/例外は逆順rollback、停止例外は残りを止めた上で義務/所有を保持して再停止可能にする。busy再入拒否、finite非負単調clock、false時も他device継続を実装。handler設定後に標準pad未登録時だけ生成し、Run開始/メッセージ後poll/終了・例外/再Run/破棄へ接続。focus取消後にdevice hookを呼び、停止時はcapture中止/Mapper取消/正本neutral、legacy通知はSystem所有deferred resetへ保留。debug teardownも共用。独立静的レビューPASS。非null再入登録拒否・invalid clock後の同時刻pollも試験sourceに補強。P3 portable通常/ASan・UBSan回帰とP4 header/device.cpp/統合MEMBER object compile成功。Engineと追加bundle試験のcompileはString.hのWindows.h依存で停止し、統合実行/native実機は未検証。停止失敗時の物理停止成功は保証せず、再試行後にも失敗する場合は限界が残る。
 - Next: GR04の振動包絡線/混合/成功ACKに基づく再送・最終zero、haptics.v1設定とEngine接続へ進む。その後に入力方式切替を接続する。
+
+- G1-GR04-P6: 独自Spanによる振動包絡線viewと純評価/混合を追加。有限正duration・厳密昇順key・0..1を全検証し、端点保持/線形補間/非loop終了0/loop fmod、最高priority activeのmaxまたはadd-clamp合成/設定倍率を実装。出力は成功ACKのみ更新し、左右差分1/255、各motorの最終zero、失敗再試行/潜在作動保持を扱う。レビューで標準span規約不一致と小寄与の逐次float丸めを検出し、独自Spanとdouble蓄積・最後1回のfloat化へ修正。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle object成功、独立追加520万checkと100万微小寄与反例の解消を確認してPASS。実service/voice所有/native送信/JSON/Engine接続は後続。既存GR03のview規約不一致はG1-INPUT-SPANとして別件記録。
+- Next: 入力層の既存viewを規約に揃えた後、GR04のvoice所有と振動出力・停止制御を接続する。
