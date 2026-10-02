@@ -105,9 +105,9 @@ namespace Game
         // --orbit-degrees-per-second=<deg/s>: カメラを一定の速さで回す（-360〜360、撮影で動くカメラを確かめる）。
         constexpr const TCHAR *kOrbitDegreesPerSecondOption = TEXT("--orbit-degrees-per-second=");
         float s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
-        // --anti-aliasing=<taa|fxaa>: 起動画面のアンチエイリアシング（既定は fxaa）。
+        // --anti-aliasing=<taa|fxaa>: 起動画面のアンチエイリアシング（既定は taa）。
         constexpr const TCHAR *kAntiAliasingOption = TEXT("--anti-aliasing=");
-        bool s_bRendering3DTestTemporalAA = false;
+        bool s_bRendering3DTestTemporalAA = true;
         // --night: 起動画面を夜にする（空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす。値を取らない）。
         constexpr const TCHAR *kNightOption = TEXT("--night");
         bool s_bRendering3DTestNight = false;
@@ -438,7 +438,7 @@ namespace Game
         s_bRendering3DTestHasHeightFogDensity = false;
         s_bRendering3DTestHasHeightFogFalloff = false;
         s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
-        s_bRendering3DTestTemporalAA = false;
+        s_bRendering3DTestTemporalAA = true;
         s_bRendering3DTestNight = false;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;

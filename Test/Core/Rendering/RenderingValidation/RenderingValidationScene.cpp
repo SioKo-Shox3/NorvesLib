@@ -5,10 +5,15 @@
 #include "Component/CameraComponent.h"
 #include "Component/DirectionalLightComponent.h"
 #include "Component/MeshComponent.h"
+#include "Component/SkinnedMeshComponent.h"
 #include "Component/PointLightComponent.h"
 #include "Math/MathTypes.h"
 #include "Math/MatrixUtils.h"
 #include "Math/QuaternionUtils.h"
+#include "Animation/AnimationClipResource.h"
+#include "Animation/SkeletalAssetResource.h"
+#include "Animation/SkeletonResource.h"
+#include "Engine/NorvesEngine.h"
 #include "Math/VectorUtils.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
@@ -16,6 +21,7 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderWorld.h"
+#include "Resource/SkinnedMeshResource.h"
 
 #include <cmath>
 #include <cstdint>
@@ -943,6 +949,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR4CornellEmitterEntity = nullptr;
         m_pR4CornellDynamicObjectEntity = nullptr;
         m_pR8OutdoorMovingSphereEntity = nullptr;
+        m_pR5SkinnedQuadEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
 
         state.pWorld = nullptr;
@@ -1024,6 +1031,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_pR4CornellEmitterEntity = nullptr;
         m_pR4CornellDynamicObjectEntity = nullptr;
         m_pR8OutdoorMovingSphereEntity = nullptr;
+        m_pR5SkinnedQuadEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
         m_bPublished = false;
 
@@ -1035,6 +1043,7 @@ namespace NorvesLib::Test::RenderingValidation
             }
         }
         m_Objects.clear();
+        m_R5SkinnedQuadAsset.reset();
 
         m_Lease.Bind(releaser);
         m_Lease.Release();
@@ -3056,6 +3065,127 @@ namespace NorvesLib::Test::RenderingValidation
             return false;
         }
         m_pR8OutdoorMovingSphereEntity->SetPosition(x, y, z);
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::AddR5SkinnedQuad() const
+    {
+        if (m_pR5SkinnedQuadEntity != nullptr)
+        {
+            return true;
+        }
+        if (!m_bR5RayTracingShadowFixturePrepared || m_pWorld == nullptr || m_pResources == nullptr ||
+            !m_R5ShadowMaterial.IsValid())
+        {
+            return false;
+        }
+
+        // 1本の骨（逆バインド行列は単位行列）にすべての頂点を重み1で結ぶ。カメラ側を向く面と裏の面の両方を
+        // 張り、背面の間引きの向きにかかわらず見えるようにする（同じ深度なので velocity は変わらない）。
+        Core::Container::VariableArray<Core::Skeletal::SkeletalVertex> vertices;
+        constexpr float positions[4][2] = {{-1.0f, -1.0f}, {1.0f, -1.0f}, {-1.0f, 1.0f}, {1.0f, 1.0f}};
+        for (uint32_t index = 0u; index < 4u; ++index)
+        {
+            Core::Skeletal::SkeletalVertex vertex{};
+            vertex.Position.X = positions[index][0];
+            vertex.Position.Y = positions[index][1];
+            vertex.Position.Z = 0.0f;
+            vertex.Normal.Z = -1.0f;
+            vertex.TexCoord.U = positions[index][0] * 0.5f + 0.5f;
+            vertex.TexCoord.V = positions[index][1] * 0.5f + 0.5f;
+            vertex.JointIndices = {0u, 0u, 0u, 0u};
+            vertex.JointWeights = {1.0f, 0.0f, 0.0f, 0.0f};
+            vertices.push_back(vertex);
+        }
+        Core::Container::VariableArray<uint32_t> indices = {0u, 1u, 2u, 1u, 3u, 2u, 0u, 2u, 1u, 1u, 2u, 3u};
+
+        Core::Skeletal::SkeletalJoint joint;
+        joint.Name = TEXT("Root");
+        joint.ParentIndex = -1;
+        joint.InverseBindMatrix = {1.0f, 0.0f, 0.0f, 0.0f,
+                                   0.0f, 1.0f, 0.0f, 0.0f,
+                                   0.0f, 0.0f, 1.0f, 0.0f,
+                                   0.0f, 0.0f, 0.0f, 1.0f};
+        Core::Container::VariableArray<Core::Skeletal::SkeletalJoint> joints;
+        joints.push_back(std::move(joint));
+
+        // 骨の平行移動: 0秒で (0, 0, 0) m、1秒で (1, 0, 0) m（線形）。
+        Core::Skeletal::SkeletalAnimationChannel channel;
+        channel.JointIndex = 0u;
+        channel.Path = Core::Skeletal::SkeletalAnimationPath::Translation;
+        channel.Interpolation = Core::Skeletal::SkeletalAnimationInterpolation::Linear;
+        Core::Skeletal::SkeletalAnimationSample start;
+        start.TimeSeconds = 0.0f;
+        Core::Skeletal::SkeletalAnimationSample end;
+        end.TimeSeconds = 1.0f;
+        end.Value.X = 1.0f;
+        channel.Samples.push_back(start);
+        channel.Samples.push_back(end);
+        Core::Skeletal::SkeletalAnimationClip clip;
+        clip.Name = TEXT("SlideX");
+        clip.DurationSeconds = 1.0f;
+        clip.Channels.push_back(std::move(channel));
+
+        auto& registry = Core::GEngine.GetResourceRegistry();
+        auto mesh = registry.CreateTransient<Core::SkinnedMeshResource>(TEXT("RenderingValidationR5SkinnedQuadMesh"));
+        auto skeleton = registry.CreateTransient<Core::SkeletonResource>(TEXT("RenderingValidationR5SkinnedQuadSkeleton"));
+        auto animation = registry.CreateTransient<Core::AnimationClipResource>(TEXT("RenderingValidationR5SkinnedQuadClip"));
+        auto asset = registry.CreateTransient<Core::SkeletalAssetResource>(TEXT("RenderingValidationR5SkinnedQuadAsset"));
+        if (!mesh || !skeleton || !animation || !asset)
+        {
+            return false;
+        }
+        mesh->SetVertices(std::move(vertices));
+        mesh->SetIndices(std::move(indices));
+        skeleton->SetJoints(std::move(joints));
+        animation->SetClip(std::move(clip));
+        if (!mesh->Load() || !skeleton->Load() || !animation->Load())
+        {
+            return false;
+        }
+        asset->SetResources(mesh, skeleton, animation);
+        if (!asset->IsLoaded())
+        {
+            return false;
+        }
+
+        Core::Entity* entity = m_pWorld->SpawnEntity();
+        if (entity == nullptr)
+        {
+            return false;
+        }
+        m_Objects.push_back(entity);
+        entity->SetPosition(-3.0f, 0.0f, 10.0f);
+        auto* skinned = m_pWorld->CreateComponent<Core::Component::SkinnedMeshComponent>(entity);
+        if (skinned == nullptr)
+        {
+            return false;
+        }
+        skinned->SetSkeletalAsset(asset);
+        skinned->SetMaterial(m_R5ShadowMaterial);
+        skinned->SetPlaying(false);
+        skinned->SetLooping(false);
+        skinned->SetAnimationTimeSeconds(0.0f);
+        skinned->SetCastShadow(false);
+        skinned->SetVisible(true);
+        m_R5SkinnedQuadAsset = asset;
+        m_pR5SkinnedQuadEntity = entity;
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::SetR5SkinnedQuadAnimationTime(float timeSeconds) const
+    {
+        if (!std::isfinite(timeSeconds) || timeSeconds < 0.0f || timeSeconds > 1.0f ||
+            m_pR5SkinnedQuadEntity == nullptr)
+        {
+            return false;
+        }
+        auto* skinned = m_pR5SkinnedQuadEntity->GetComponent<Core::Component::SkinnedMeshComponent>();
+        if (skinned == nullptr)
+        {
+            return false;
+        }
+        skinned->SetAnimationTimeSeconds(timeSeconds);
         return true;
     }
 

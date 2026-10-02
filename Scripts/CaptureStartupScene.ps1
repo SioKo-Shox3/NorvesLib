@@ -13,8 +13,9 @@
 # （自動露出が入るまでの暫定の対応表）。
 #
 # -OrbitDegreesPerSecond を与えると、起動からカメラを一定の速さ（度/秒）で軸の周りに回し続け、回っている
-# 途中の画面を撮る（動くカメラでの TAA の残像の確認用）。-AntiAliasing TAA で起動画面の既定の FXAA の
-# 代わりに TAA で撮る（見比べ用）。-HeightFogDensity・-HeightFogFalloff で高さフォグの密度・減衰を起動画面の既定から替えて撮る。
+# 途中の画面を連続して撮る（動くカメラでの TAA の残像の確認用）。各視点を、アセットの読み込みが落ち着いてから
+# -OrbitRenderedFrames の描画フレーム数（既定 60,75,90）の時点で1枚ずつ撮り、<視点>-orbit-f<フレーム数>.png
+# として保存する。-AntiAliasing FXAA で起動画面の既定の TAA の代わりに FXAA で撮る（見比べ用）。-HeightFogDensity・-HeightFogFalloff で高さフォグの密度・減衰を起動画面の既定から替えて撮る。
 # -Night で夜（--night: 空と空の太陽を消し、環境光を月明かり程度にする。露出は自動のまま）の3視点を
 # <視点>-night.png として撮る。点光源の影の確認用で、-SunElevations とは併用しない。
 [CmdletBinding()]
@@ -32,8 +33,10 @@ param(
     [string[]]$ExposureEV100s = @(),
     [ValidateRange(-360.0, 360.0)]
     [double]$OrbitDegreesPerSecond = 0.0,
+    # 回している途中を撮る描画フレーム数の並び（「60,75,90」の形）。-OrbitDegreesPerSecond と併せて使う。
+    [string[]]$OrbitRenderedFrames = @(),
     [ValidateSet('TAA', 'FXAA')]
-    [string]$AntiAliasing = 'FXAA',
+    [string]$AntiAliasing = 'TAA',
     # 高さフォグの地面での密度（1/m）。省略時は起動画面の既定、0 でフォグ無し（撮り比べ用）。
     [ValidateRange(0.0, 1.0)]
     [Nullable[double]]$HeightFogDensity = $null,
@@ -79,6 +82,16 @@ function ConvertTo-NumberList([string[]]$Values, [double]$Minimum, [double]$Maxi
 
 $sunElevationList = ConvertTo-NumberList $SunElevations 0.0 90.0 'sun_elevation'
 $exposureList = ConvertTo-NumberList $ExposureEV100s -6.0 24.0 'exposure_ev100'
+$orbitFrameList = ConvertTo-NumberList $OrbitRenderedFrames 1.0 100000.0 'orbit_rendered_frames'
+if ($orbitFrameList.Count -gt 0 -and $OrbitDegreesPerSecond -eq 0.0)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=orbit_frames_without_orbit（-OrbitRenderedFrames は -OrbitDegreesPerSecond と併せて使う）"
+    exit 1
+}
+if ($OrbitDegreesPerSecond -ne 0.0 -and $orbitFrameList.Count -eq 0)
+{
+    $orbitFrameList = @(60.0, 75.0, 90.0)
+}
 
 # 太陽の仰角から、晴天の手動露出（EV100）の目安を選ぶ。表の間は線形に補間する。
 function Get-DefaultExposureEV100([double]$Elevation)
@@ -129,6 +142,26 @@ foreach ($view in $views)
             ExposureEV100 = [math]::Round($ev, 2)
         }
     }
+}
+
+# カメラを回すときは、各撮影を回している途中の描画フレーム数ごとに分ける（同じ起動条件で撮る時点だけが違う）。
+if ($orbitFrameList.Count -gt 0)
+{
+    $orbitShots = @()
+    foreach ($shot in $shots)
+    {
+        foreach ($frames in $orbitFrameList)
+        {
+            $orbitShots += [pscustomobject]@{
+                Name = "$($shot.Name)-orbit-f$([int]$frames)"
+                Camera = $shot.Camera
+                SunElevation = $shot.SunElevation
+                ExposureEV100 = $shot.ExposureEV100
+                RenderedFrames = [int]$frames
+            }
+        }
+    }
+    $shots = $orbitShots
 }
 
 Add-Type -AssemblyName System.Drawing
@@ -228,6 +261,10 @@ foreach ($view in $shots)
     {
         $arguments += "--orbit-degrees-per-second=$($OrbitDegreesPerSecond.ToString($invariant))"
     }
+    if ($null -ne $view.PSObject.Properties['RenderedFrames'])
+    {
+        $arguments += "--exit-after-rendered-frames=$($view.RenderedFrames)"
+    }
     if ($null -ne $HeightFogDensity)
     {
         $arguments += "--height-fog-density=$(([double]$HeightFogDensity).ToString($invariant))"
@@ -240,7 +277,11 @@ foreach ($view in $shots)
     {
         $arguments += '--night'
     }
-    $arguments += "--anti-aliasing=$($AntiAliasing.ToLowerInvariant())"
+    # TAA は起動画面の既定なので引数を渡さず、既定のまま撮る。
+    if ($AntiAliasing -ne 'TAA')
+    {
+        $arguments += "--anti-aliasing=$($AntiAliasing.ToLowerInvariant())"
+    }
 
     # アセットは作業ディレクトリからの相対パスで読むため、リポジトリのルートで起動する。
     $process = Start-Process -FilePath $gamePath -ArgumentList $arguments -WorkingDirectory $repoRoot -PassThru
@@ -293,6 +334,7 @@ foreach ($view in $shots)
         camera = $view.Camera
         sun_elevation = $view.SunElevation
         exposure_ev100 = $view.ExposureEV100
+        rendered_frames = if ($null -ne $view.PSObject.Properties['RenderedFrames']) { $view.RenderedFrames } else { $null }
         png = "$($view.Name).png"
         width = [int]$measured[0]
         height = [int]$measured[1]
@@ -309,6 +351,7 @@ $metricsPath = Join-Path $outRoot 'metrics.json'
 $metrics = [ordered]@{
     configuration = $Configuration
     orbit_degrees_per_second = $OrbitDegreesPerSecond
+    orbit_rendered_frames = $orbitFrameList
     anti_aliasing = $AntiAliasing
     night = [bool]$Night
     views = $results

@@ -383,6 +383,12 @@ register_rendering_gpu_test(
     --scene=outdoor
     --capture-source=gbuffer-velocity
     --scenario=move-then-stop)
+register_rendering_gpu_test(
+    RenderingVelocitySkinnedVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=skinned-motion)
 
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp

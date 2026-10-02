@@ -166,7 +166,7 @@
 - notes: SS-EMISSIVE-GLOW の停止理由（`blocked/SS-EMISSIVE-GLOW.md`）の推奨1。2026-09-30 に採った。今は発光を物理の nits のまま `GBuffer_Emissive`（R16G16B16A16_FLOAT、上限65504）へ書くため、色(1,0.9,0.3)で約57000 nitsを超えると無限大になり発光が消える。危険地帯（GBuffer・ライティング・露出）。評価者を通す。
 
 ## SS-EMISSIVE-GLOW: 起動画面の発光球をブルームでにじむ明るさにする
-- status: todo
+- status: blocked
 - done-when: 起動画面の発光球の輝度（今は1800 nits）を、昼・夕の自動露出で画面の平均輝度に対して十分に明るく（目安: 撮影の夕で周りの背景の30倍以上）なる物理的な値にし、撮影の昼と夕で発光球の周りに柔らかいにじみが見える。ブルームの既定（しきい値なし・0.04）は変えない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-EMISSIVE-GLOW -SunElevations 45,3`
@@ -197,7 +197,7 @@
 - notes: 評価1周目（`06a26a7`）は NEEDS_WORK。指摘は `NEXT_FINDINGS.md`（blocking 2件: 描画がゲームのフレームを飛ばしたときの履歴とvelocityの基準フレームの食い違い、1つのSceneViewに2つのViewportがあるときの毎フレームの履歴破棄）。`7461c3e` は反復の途中で止めた未検証の保存で、この指摘への対応（`HistoryFrameNumber` など）と SS-TAA-P2 の一部（MegaGeometry・スキニングのvelocity、`-OrbitDegreesPerSecond`、シャープ化）が混ざる。この項目では指摘への対応を仕上げてフレームの欠落を意図的に起こす検証を足し、P2 の部分はビルドが通り既定の結果を変えない状態に保つ（検証は SS-TAA-P2 で行う）。
 
 ## SS-TAA-P2: TAAをほかのパスと整合させ、起動画面の既定にする
-- status: todo
+- status: done
 - done-when: UI・デバッグ描画・ImGuiはジッタの無い最終解像度に描かれる。スキニング・動く物体のvelocityが正しく、カメラの切り替え・画面サイズの変更で履歴を捨てる。解像感を戻す軽いシャープ化がある。撮影スクリプトにカメラを一定の速さで回す連続撮影（`-OrbitDegreesPerSecond`）を足し、回転中の画像で輪郭のゴースト（残像の筋）が見えない。Rendering3DTest の既定をTAAにし、FXAAは選択肢として残す。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
