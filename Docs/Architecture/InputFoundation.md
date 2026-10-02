@@ -36,3 +36,15 @@
 - 閾値は仮の既定値を持つ設定。Tap/gapは非負、Holdは正、全finite。SetTimingはheld中と不正設定を拒否し、受理時はdoubletap履歴を消す。ゲームの操作意味は後続bindingsデータで決める。
 - 現段階ではMapper/Router/Windowへの配線は未実装。純kernelの成功を実機入力の受入れ完了とは扱わない。
 - 時間閾値はstart＋intervalの絶対deadlineと比較する。0.2/0.3等でduration差分の丸めがinclusive境界を反転させないため。deadline加算が+Infになる場合、有限時刻ではHoldに未到達、Tap/gapの上限内として扱う。正のintervalが同じ時刻へ丸められても、0経過ではHoldにしない。
+
+## UI消費後の押下許可（armed）
+
+- InputStateのキー/マウスrelease serialはdown→upごとに進む。ReleaseAllも含み、重複upでは増えず、BeginFrameでも消えない。uint64の周回比較なので2^64回を観測間に跨ぐことは保証外。
+- InputArmedStateはInputSystem正本更新後、Routerで到達したPressedを受けたときだけ許可を記録する。Repeatは新規許可しない。生のDelegateを購読してUI consumeを迂回しない。
+- 読み取りはarmedかつ正本downかつ許可時のrelease serial一致が必要。UIがreleaseと再pressを同じframeで両方消費し、正本の最終状態がdownでも旧許可は失効する。
+- Shift/Ctrl/Altも左右それぞれのrouted許可を用いる。物理的にdownなだけの修飾キーからchordを成立させない。
+- Resetはfocus/context/binding変更用に全許可を忘れる。heldのまま戻ってもRepeatでは復活せず、新しい到達Pressedを待つ。Reconcileは失効済みの記録を掃除するが、呼ぶ前でも照会は正本/serialを照合する。
+- 配送済みイベントの処理を後から最終InputStateだけで再現する口ではない。Mapperは即時callbackで許可と順序を保持し、短いpress/releaseもボタンkernelへ渡す。
+- この段階はKeyboard/Mouseのkernelで、Router接着とGamepad側の同等契約は後続。Linux試験は実InputStateと実armed処理へcallback欠落を与える試験で、ImGuiの実機操作を検証したものではない。
+
+- 同じInputState正本を継続して使うことが前提。別正本への差替え/再初期化時はResetする。serialは正本内の履歴であり、別instanceを識別するIDではない。

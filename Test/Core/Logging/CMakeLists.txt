@@ -10,6 +10,7 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER InputStateReleaseTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputStateReleaseTest.cpp
     MEMBER InputAxisMathTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputAxisMathTest.cpp
     MEMBER InputButtonStateTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputButtonStateTest.cpp
+    MEMBER InputArmedStateTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputArmedStateTest.cpp
     MEMBER ModuleRegistryTest ${CMAKE_SOURCE_DIR}/Test/Core/Module/ModuleRegistryTest.cpp
     MEMBER IdentityLiteralTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/IdentityLiteralTest.cpp
     MEMBER JsonWriterTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonWriterTest.cpp

@@ -279,3 +279,6 @@
 
 - G1-GR03-P3: ボタンのPressed/Held/Released、Hold/Tap/非重複DoubleTapと固定step消費までのbool押下ラッチを純kernelへ分離。Cancelはrelease以外の操作と遅延fixedPressを消す。独立評価が0.2/0.3の差分比較によるinclusive境界反転を検出し、絶対deadline比較（overflow/ゼロ経過も考慮）へ修正した。通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）、bundle相当compile、独立再現/境界probeに成功し第2周PASS。Router/Mapper/OS接続は未完。
 - Next: 入力元の型とarmedを解除する履歴、Identityのaction/binding/context、Mapperへ接続する。UIがReleasedと同frame再Pressedを両方consumeした場合にも古いarmedを残さない契約を含める。
+
+- G1-GR03-P4A: キー/マウスのdown→up serialを正本に追加し、Routerへ届いたPressedだけを許可するInputArmedStateを追加。UIがreleaseと同frame再pressを両方消費して最終down=trueでも旧許可を失効させる。Repeatで復活させず、modifierにも同じ許可条件を使う。正本差替え時はResetする前提を明記。実InputState＋armedの通常/NDEBUG/ASan・UBSan（LeakSanitizer除外）とRelease回帰、独立-Wall/-Wextra/-Werror実行に成功、レビューPASS。Router/Mapper/ImGui接続は後続。
+- Next: backend非依存Gamepad/物理binding型と検証、その上のIdentity設定所有とMapperを組む。

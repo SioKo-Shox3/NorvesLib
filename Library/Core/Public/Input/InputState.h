@@ -98,6 +98,10 @@ namespace NorvesLib::Core::Input
         // Pressedは従来のcurrent/previous比較を維持する。
         void ReleaseAll();
 
+        // down→upごとの世代。BeginFrameでは消さず、無効codeは0を返す。
+        uint64_t GetKeyReleaseSerial(KeyCode code) const;
+        uint64_t GetMouseButtonReleaseSerial(MouseButton button) const;
+
         /**
          * @brief キー状態を更新
          */
@@ -139,6 +143,8 @@ namespace NorvesLib::Core::Input
         // 前フレームのマウスボタン状態
         bool m_PrevMouseButtonStates[MOUSE_BUTTON_COUNT];
 
+        uint64_t m_KeyReleaseSerial[KEY_COUNT]{};
+        uint64_t m_MouseReleaseSerial[MOUSE_BUTTON_COUNT]{};
         bool m_KeyReleasedByReset[KEY_COUNT]{};
         bool m_MouseReleasedByReset[MOUSE_BUTTON_COUNT]{};
 

@@ -1263,3 +1263,11 @@
 - stop-when: 時刻/edge不整合、不正入力で状態変更、Cancel後の発火、押下消失、blocking未解消。
 - paths: Library/Core/Public/Input/InputButtonState.h, Library/Core/CMakeLists.txt, Test/Core/Input/InputButtonStateTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: binding集約後のdownを受ける純ロジック。Mapper/OS通知への接続は後続。
+
+## G1-GR03-P4A: 入力解除の世代で古い押下許可を失効させる
+- status: done
+- done-when: 到達Pressedだけarmed、release serialで消費された解除と同frame再押下を検出、Repeat/修飾/Resetを安全に扱う。
+- verify: g++ -std=c++20 -I Library/Core/Public Test/Core/Input/InputArmedStateTest.cpp Library/Core/Private/Input/InputState.cpp -o /tmp/input-armed && /tmp/input-armed
+- stop-when: UI消費入力で再armed、既存state回帰、OS/Delegate購読持込み、blocking未解消。
+- paths: Library/Core/Public/Input/InputState.h, Library/Core/Public/Input/InputArmedState.h, Library/Core/Private/Input/InputState.cpp, Library/Core/CMakeLists.txt, Test/Core/Input, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: Router/Mapper接続前のkernel。実InputStateとcallback欠落を使った状態検証であり、ImGui実機の合格ではない。

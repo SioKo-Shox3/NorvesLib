@@ -521,6 +521,7 @@ set(PUBLIC_HEADERS
     Public/Input/InputTypes.h
     Public/Input/InputAxisMath.h
     Public/Input/InputButtonState.h
+    Public/Input/InputArmedState.h
     Public/Input/InputState.h
     Public/Input/InputSystem.h
     Public/Input/IInputController.h

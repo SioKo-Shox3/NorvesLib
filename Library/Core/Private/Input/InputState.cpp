@@ -110,11 +110,13 @@ namespace NorvesLib::Core::Input
     {
         for (uint32_t index = 0; index < KEY_COUNT; ++index)
         {
+            if (m_KeyStates[index]) ++m_KeyReleaseSerial[index];
             m_KeyReleasedByReset[index] = m_KeyReleasedByReset[index] || m_KeyStates[index];
             m_KeyStates[index] = false;
         }
         for (uint32_t index = 0; index < MOUSE_BUTTON_COUNT; ++index)
         {
+            if (m_MouseButtonStates[index]) ++m_MouseReleaseSerial[index];
             m_MouseReleasedByReset[index] = m_MouseReleasedByReset[index] || m_MouseButtonStates[index];
             m_MouseButtonStates[index] = false;
         }
@@ -122,11 +124,24 @@ namespace NorvesLib::Core::Input
         m_bFirstMouseUpdate = true;
     }
 
+    uint64_t InputState::GetKeyReleaseSerial(KeyCode code) const
+    {
+        const auto index = static_cast<uint32_t>(code);
+        return index < KEY_COUNT ? m_KeyReleaseSerial[index] : 0;
+    }
+
+    uint64_t InputState::GetMouseButtonReleaseSerial(MouseButton button) const
+    {
+        const auto index = static_cast<uint32_t>(button);
+        return index < MOUSE_BUTTON_COUNT ? m_MouseReleaseSerial[index] : 0;
+    }
+
     void InputState::SetKeyState(KeyCode code, bool bDown)
     {
         uint32_t index = static_cast<uint32_t>(code);
         if (index < KEY_COUNT)
         {
+            if (m_KeyStates[index] && !bDown) ++m_KeyReleaseSerial[index];
             m_KeyStates[index] = bDown;
         }
     }
@@ -136,6 +151,7 @@ namespace NorvesLib::Core::Input
         uint32_t index = static_cast<uint32_t>(button);
         if (index < MOUSE_BUTTON_COUNT)
         {
+            if (m_MouseButtonStates[index] && !bDown) ++m_MouseReleaseSerial[index];
             m_MouseButtonStates[index] = bDown;
         }
     }
