@@ -8,6 +8,7 @@
 #include "Bridge/BridgeServerHost.h"
 #include "Bridge/NorvesLibBridgeAdapter.h"
 #include "Scripting/M6ScriptSmokeController.h"
+#include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 
 #if defined(NORVES_ENABLE_IMGUI)
@@ -39,6 +40,8 @@ namespace Game
         virtual bool OnInitialize() override;
         virtual void OnPostInitialize() override;
         virtual void OnUpdate(float deltaTime) override;
+        virtual void OnPreRender() override;
+        virtual void OnPostRender() override;
         virtual void OnPreShutdown() override;
         virtual void OnShutdown() override;
 
@@ -121,6 +124,8 @@ namespace Game
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem> m_AssetSystemSnapshot;
         NorvesLib::Core::Container::String m_Rendering3DTestModelPath;
         Game::Scripting::M6ScriptSmokeController m_M6ScriptSmokeController;
+        // --capture-sequence で、1回の起動の中の複数の描画フレームを撮る。
+        Game::Debug::SequenceFrameCapture m_SequenceFrameCapture;
         NorvesLib::Core::Container::TSharedPtr<Game::GameModes::M9WorldAcceptanceConfig> m_M9WorldAcceptance;
 
         // Bridge（NorvesEditor 連携）。adapter は host より長生きする必要があるため、

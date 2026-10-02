@@ -619,6 +619,17 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        /**
+         * @brief 登録するカメラの GameThread 側の識別子を決める
+         *
+         * SourceCameraId があればそれ（GetMainCamera の値を渡し直したときも保たれる）、無ければ渡された
+         * CameraId（CameraComponent の ID など）を使う。
+         */
+        uint64_t ResolveSourceCameraId(const CameraProxy& camera)
+        {
+            return camera.SourceCameraId != 0 ? camera.SourceCameraId : camera.CameraId;
+        }
+
     } // namespace
 
     uint64_t ComputeSceneRevisionHash(const FramePacket& packet)
@@ -2082,11 +2093,12 @@ namespace NorvesLib::Core::Rendering
                 {
                     return FindCamera(cameraId);
                 };
+                // キャンバス（UI）は内部解像度で描かず、画面解像度でそのまま描く。
                 ViewportRenderPlan viewportPlan = BuildViewportRenderPlan(*viewport,
                                                                           viewIndex,
                                                                           viewportIndex,
-                                                                          m_RenderWidth,
-                                                                          m_RenderHeight,
+                                                                          canvasView ? GetCanvasWidth() : m_RenderWidth,
+                                                                          canvasView ? GetCanvasHeight() : m_RenderHeight,
                                                                           resolveCamera,
                                                                           fallbackCamera);
 
@@ -3135,8 +3147,8 @@ namespace NorvesLib::Core::Rendering
 
         ViewSettings settings;
         settings.Type = ViewType::UI;
-        settings.Width = m_RenderWidth;
-        settings.Height = m_RenderHeight;
+        settings.Width = GetCanvasWidth();
+        settings.Height = GetCanvasHeight();
         settings.bClearColor = true;
         settings.ClearColor[0] = 0.0f;
         settings.ClearColor[1] = 0.0f;
@@ -3156,12 +3168,12 @@ namespace NorvesLib::Core::Rendering
         canvasCamera.CullingMask = RenderLayer::UI;
         canvasCamera.NearPlane = 0.0f;
         canvasCamera.FarPlane = 1.0f;
-        canvasCamera.OrthoWidth = static_cast<float>(m_RenderWidth);
-        canvasCamera.OrthoHeight = static_cast<float>(m_RenderHeight);
+        canvasCamera.OrthoWidth = static_cast<float>(GetCanvasWidth());
+        canvasCamera.OrthoHeight = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.X = 0.0f;
         canvasCamera.Viewport.Y = 0.0f;
-        canvasCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
-        canvasCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
+        canvasCamera.Viewport.Width = static_cast<float>(GetCanvasWidth());
+        canvasCamera.Viewport.Height = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.MinDepth = 0.0f;
         canvasCamera.Viewport.MaxDepth = 1.0f;
         m_CanvasCameraId = RegisterCamera(canvasCamera);
@@ -3235,6 +3247,7 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetMainCamera(const CameraProxy &camera)
     {
         m_MainCamera = camera;
+        m_MainCamera.SourceCameraId = ResolveSourceCameraId(camera);
         if (!m_MainCamera.IsValid())
         {
             m_MainCamera.Viewport.X = 0.0f;
@@ -3307,6 +3320,7 @@ namespace NorvesLib::Core::Rendering
     {
         const uint64_t cameraId = m_NextCameraId++;
         CameraProxy storedCamera = camera;
+        storedCamera.SourceCameraId = ResolveSourceCameraId(camera);
         storedCamera.CameraId = cameraId;
         m_Cameras[cameraId] = storedCamera;
         return cameraId;
@@ -3326,6 +3340,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         CameraProxy storedCamera = camera;
+        storedCamera.SourceCameraId = ResolveSourceCameraId(camera);
         storedCamera.CameraId = cameraId;
         it->second = storedCamera;
         return true;
@@ -3449,12 +3464,12 @@ namespace NorvesLib::Core::Rendering
         canvasCamera.CullingMask = RenderLayer::UI;
         canvasCamera.NearPlane = 0.0f;
         canvasCamera.FarPlane = 1.0f;
-        canvasCamera.OrthoWidth = static_cast<float>(m_RenderWidth);
-        canvasCamera.OrthoHeight = static_cast<float>(m_RenderHeight);
+        canvasCamera.OrthoWidth = static_cast<float>(GetCanvasWidth());
+        canvasCamera.OrthoHeight = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.X = 0.0f;
         canvasCamera.Viewport.Y = 0.0f;
-        canvasCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
-        canvasCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
+        canvasCamera.Viewport.Width = static_cast<float>(GetCanvasWidth());
+        canvasCamera.Viewport.Height = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.MinDepth = 0.0f;
         canvasCamera.Viewport.MaxDepth = 1.0f;
 

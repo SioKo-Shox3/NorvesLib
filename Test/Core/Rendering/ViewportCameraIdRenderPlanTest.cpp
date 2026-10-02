@@ -167,8 +167,11 @@ int main()
         assert(canvasView);
         assert(coordinator.m_CanvasCameraId == 1);
 
-        coordinator.m_RenderWidth = 640;
-        coordinator.m_RenderHeight = 480;
+        // 画面の大きさが変わった（内部解像度はその半分）。キャンバスは画面解像度へ合わせる。
+        coordinator.m_Width = 640;
+        coordinator.m_Height = 480;
+        coordinator.m_RenderWidth = 320;
+        coordinator.m_RenderHeight = 240;
         coordinator.m_bCanvasCameraSyncPending.Store(true);
 
         const CameraProxy *pendingCamera = coordinator.FindCamera(coordinator.m_CanvasCameraId);
@@ -214,22 +217,30 @@ int main()
         assert(canvasView->GetMainViewport()->GetCamera().OrthoWidth == 200.0f);
         assert(canvasView->GetMainViewport()->GetCamera().OrthoHeight == 100.0f);
 
+        // 内部解像度を半分にしても、キャンバス（UI）は画面解像度のまま描く。
         coordinator.SetRenderScale(0.5f);
+        assert(coordinator.m_RenderWidth == 100);
+        assert(coordinator.m_RenderHeight == 50);
         const CameraProxy *scaledCamera = coordinator.FindCamera(coordinator.m_CanvasCameraId);
         assert(scaledCamera);
-        assert(scaledCamera->OrthoWidth == 100.0f);
-        assert(scaledCamera->OrthoHeight == 50.0f);
-        assert(canvasView->GetMainViewport()->GetCamera().OrthoWidth == 100.0f);
-        assert(canvasView->GetMainViewport()->GetCamera().OrthoHeight == 50.0f);
+        assert(scaledCamera->OrthoWidth == 200.0f);
+        assert(scaledCamera->OrthoHeight == 100.0f);
+        assert(scaledCamera->Viewport.Width == 200.0f);
+        assert(scaledCamera->Viewport.Height == 100.0f);
+        assert(canvasView->GetMainViewport()->GetCamera().OrthoWidth == 200.0f);
+        assert(canvasView->GetMainViewport()->GetCamera().OrthoHeight == 100.0f);
 
+        // 画面の大きさの変更には追従する（内部解像度はその半分）。
         coordinator.Resize(300, 120);
+        assert(coordinator.m_RenderWidth == 150);
+        assert(coordinator.m_RenderHeight == 60);
         const CameraProxy *resizedCamera = coordinator.FindCamera(coordinator.m_CanvasCameraId);
         assert(resizedCamera);
-        assert(resizedCamera->OrthoWidth == 150.0f);
-        assert(resizedCamera->OrthoHeight == 60.0f);
-        assert(canvasView->GetMainViewport()->GetCamera().OrthoWidth == 150.0f);
-        assert(canvasView->GetMainViewport()->GetCamera().OrthoHeight == 60.0f);
-        std::cout << "TestCanvasCameraTracksRenderScaleAndResize passed\n";
+        assert(resizedCamera->OrthoWidth == 300.0f);
+        assert(resizedCamera->OrthoHeight == 120.0f);
+        assert(canvasView->GetMainViewport()->GetCamera().OrthoWidth == 300.0f);
+        assert(canvasView->GetMainViewport()->GetCamera().OrthoHeight == 120.0f);
+        std::cout << "TestCanvasCameraTracksScreenNotRenderScale passed\n";
     }
 
     {

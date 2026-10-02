@@ -13,9 +13,11 @@
 # （自動露出が入るまでの暫定の対応表）。
 #
 # -OrbitDegreesPerSecond を与えると、起動からカメラを一定の速さ（度/秒）で軸の周りに回し続け、回っている
-# 途中の画面を連続して撮る（動くカメラでの TAA の残像の確認用）。各視点を、アセットの読み込みが落ち着いてから
-# -OrbitRenderedFrames の描画フレーム数（既定 60,75,90）の時点で1枚ずつ撮り、<視点>-orbit-f<フレーム数>.png
-# として保存する。-AntiAliasing FXAA で起動画面の既定の TAA の代わりに FXAA で撮る（見比べ用）。-HeightFogDensity・-HeightFogFalloff で高さフォグの密度・減衰を起動画面の既定から替えて撮る。
+# 途中の画面を連続して撮る（動くカメラでの TAA の残像の確認用）。各視点を1回の起動で、アセットの読み込みが
+# 落ち着いてから -OrbitRenderedFrames の描画フレーム数（既定 60,75,90）の時点ごとに撮り（TAA の履歴は撮影の
+# 間つながったまま）、<視点>-orbit-f<フレーム数>.png として保存する。ログは <視点>-orbit.Game.log。-AntiAliasing FXAA で起動画面の既定の TAA の代わりに FXAA で撮る（見比べ用）。-HeightFogDensity・-HeightFogFalloff で高さフォグの密度・減衰を起動画面の既定から替えて撮る。
+# -RenderScale で内部解像度の倍率（0.5〜1）を替え、-DebugDrawTestLines で大きな球を囲む箱をデバッグの線で描いて撮る
+# （デバッグ描画が内部解像度に依らず最終解像度で描かれることの確認用）。
 # -Night で夜（--night: 空と空の太陽を消し、環境光を月明かり程度にする。露出は自動のまま）の3視点を
 # <視点>-night.png として撮る。点光源の影の確認用で、-SunElevations とは併用しない。
 [CmdletBinding()]
@@ -37,6 +39,11 @@ param(
     [string[]]$OrbitRenderedFrames = @(),
     [ValidateSet('TAA', 'FXAA')]
     [string]$AntiAliasing = 'TAA',
+    # 内部解像度の倍率（0.5〜1）。1未満なら画面解像度×倍率で描いて拡大する（--render-scale）。
+    [ValidateRange(0.5, 1.0)]
+    [double]$RenderScale = 1.0,
+    # 大きな球を囲む箱をデバッグの線で描く（--debug-draw-test-lines。最終解像度で描かれることの確認用）。
+    [switch]$DebugDrawTestLines,
     # 高さフォグの地面での密度（1/m）。省略時は起動画面の既定、0 でフォグ無し（撮り比べ用）。
     [ValidateRange(0.0, 1.0)]
     [Nullable[double]]$HeightFogDensity = $null,
@@ -144,21 +151,27 @@ foreach ($view in $views)
     }
 }
 
-# カメラを回すときは、各撮影を回している途中の描画フレーム数ごとに分ける（同じ起動条件で撮る時点だけが違う）。
+# カメラを回すときは、各撮影を1回の起動で撮り、回している途中の描画フレーム数ごとに画像を保存する
+# （同じ起動の中なので TAA の履歴は撮影の間つながったまま）。最後の1枚は --capture-png、それより前は
+# --capture-sequence で撮る。取得の要求は同時に1つだけなので、最後の2つの間は少なくとも8フレーム空ける。
 if ($orbitFrameList.Count -gt 0)
 {
+    $sortedOrbitFrames = @($orbitFrameList | ForEach-Object { [int]$_ } | Sort-Object -Unique)
+    if ($sortedOrbitFrames.Count -gt 1 -and
+        $sortedOrbitFrames[$sortedOrbitFrames.Count - 1] - $sortedOrbitFrames[$sortedOrbitFrames.Count - 2] -lt 8)
+    {
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=orbit_frames_too_close（-OrbitRenderedFrames の最後の2つは8フレーム以上空ける）"
+        exit 1
+    }
     $orbitShots = @()
     foreach ($shot in $shots)
     {
-        foreach ($frames in $orbitFrameList)
-        {
-            $orbitShots += [pscustomobject]@{
-                Name = "$($shot.Name)-orbit-f$([int]$frames)"
-                Camera = $shot.Camera
-                SunElevation = $shot.SunElevation
-                ExposureEV100 = $shot.ExposureEV100
-                RenderedFrames = [int]$frames
-            }
+        $orbitShots += [pscustomobject]@{
+            Name = "$($shot.Name)-orbit"
+            Camera = $shot.Camera
+            SunElevation = $shot.SunElevation
+            ExposureEV100 = $shot.ExposureEV100
+            OrbitFrames = $sortedOrbitFrames
         }
     }
     $shots = $orbitShots
@@ -237,9 +250,27 @@ $results = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
 foreach ($view in $shots)
 {
-    $pngPath = Join-Path $outRoot "$($view.Name).png"
+    # 保存する画像（名前と、落ち着いてからの描画フレーム数）。カメラを回すときは1回の起動で複数枚を撮る。
+    $images = @()
+    if ($null -ne $view.PSObject.Properties['OrbitFrames'])
+    {
+        foreach ($frames in $view.OrbitFrames)
+        {
+            $images += [pscustomobject]@{ Name = "$($view.Name)-f$frames"; RenderedFrames = [int]$frames }
+        }
+    }
+    else
+    {
+        $images += [pscustomobject]@{ Name = $view.Name; RenderedFrames = $null }
+    }
+    $lastImage = $images[$images.Count - 1]
+    $pngPath = Join-Path $outRoot "$($lastImage.Name).png"
     $viewLogPath = Join-Path $outRoot "$($view.Name).Game.log"
-    Remove-Item -LiteralPath $pngPath, $viewLogPath -Force -ErrorAction SilentlyContinue
+    foreach ($image in $images)
+    {
+        Remove-Item -LiteralPath (Join-Path $outRoot "$($image.Name).png") -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $viewLogPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $gameLogPath -Force -ErrorAction SilentlyContinue
 
     $arguments = @("--capture-png=`"$pngPath`"")
@@ -261,9 +292,17 @@ foreach ($view in $shots)
     {
         $arguments += "--orbit-degrees-per-second=$($OrbitDegreesPerSecond.ToString($invariant))"
     }
-    if ($null -ne $view.PSObject.Properties['RenderedFrames'])
+    if ($null -ne $lastImage.RenderedFrames)
     {
-        $arguments += "--exit-after-rendered-frames=$($view.RenderedFrames)"
+        $arguments += "--exit-after-rendered-frames=$($lastImage.RenderedFrames)"
+    }
+    if ($images.Count -gt 1)
+    {
+        # 最後より前の時点は、同じ起動の中で Game が <接頭辞><フレーム数>.png として保存する。
+        $sequencePrefix = Join-Path $outRoot "$($view.Name)-f"
+        $sequenceFrames = @($images[0..($images.Count - 2)] | ForEach-Object { $_.RenderedFrames }) -join ','
+        $arguments += "--capture-sequence=`"$sequencePrefix`""
+        $arguments += "--capture-sequence-rendered-frames=$sequenceFrames"
     }
     if ($null -ne $HeightFogDensity)
     {
@@ -281,6 +320,14 @@ foreach ($view in $shots)
     if ($AntiAliasing -ne 'TAA')
     {
         $arguments += "--anti-aliasing=$($AntiAliasing.ToLowerInvariant())"
+    }
+    if ($RenderScale -lt 1.0)
+    {
+        $arguments += "--render-scale=$($RenderScale.ToString($invariant))"
+    }
+    if ($DebugDrawTestLines)
+    {
+        $arguments += '--debug-draw-test-lines'
     }
 
     # アセットは作業ディレクトリからの相対パスで読むため、リポジトリのルートで起動する。
@@ -316,35 +363,53 @@ foreach ($view in $shots)
         {
             $failures += "$($view.Name): $($line.Line.Trim())"
         }
+        if ($images.Count -gt 1)
+        {
+            # 連続撮影の数え始め（アセットが落ち着いた描画フレーム）は --capture-png と同じでなければならない。
+            $processorBaseline = @(Select-String -LiteralPath $viewLogPath -Pattern 'asset settle baseline rendered=(\d+)' |
+                ForEach-Object { $_.Matches[0].Groups[1].Value })
+            $sequenceBaseline = @(Select-String -LiteralPath $viewLogPath -Pattern 'SEQUENCE_CAPTURE baseline rendered=(\d+)' |
+                ForEach-Object { $_.Matches[0].Groups[1].Value })
+            if ($processorBaseline.Count -eq 0 -or $sequenceBaseline.Count -eq 0 -or
+                $processorBaseline[$processorBaseline.Count - 1] -ne $sequenceBaseline[$sequenceBaseline.Count - 1])
+            {
+                $failures += "$($view.Name): 連続撮影の数え始めが --capture-png と食い違う（capture_png=$($processorBaseline -join '/') sequence=$($sequenceBaseline -join '/')）"
+            }
+        }
     }
     else
     {
         $failures += "$($view.Name): Game.log が無い"
     }
 
-    if (-not (Test-Path -LiteralPath $pngPath))
+    foreach ($image in $images)
     {
-        $failures += "$($view.Name): PNG が無い"
-        continue
-    }
+        $imagePath = Join-Path $outRoot "$($image.Name).png"
+        if (-not (Test-Path -LiteralPath $imagePath))
+        {
+            $failures += "$($image.Name): PNG が無い"
+            continue
+        }
 
-    $measured = [StartupCaptureMetrics]::Measure($pngPath)
-    $result = [ordered]@{
-        view = $view.Name
-        camera = $view.Camera
-        sun_elevation = $view.SunElevation
-        exposure_ev100 = $view.ExposureEV100
-        rendered_frames = if ($null -ne $view.PSObject.Properties['RenderedFrames']) { $view.RenderedFrames } else { $null }
-        png = "$($view.Name).png"
-        width = [int]$measured[0]
-        height = [int]$measured[1]
-        mean_luminance = [math]::Round($measured[2], 3)
-        clipped_white_ratio = [math]::Round($measured[3], 6)
-        crushed_black_ratio = [math]::Round($measured[4], 6)
+        $measured = [StartupCaptureMetrics]::Measure($imagePath)
+        $result = [ordered]@{
+            view = $image.Name
+            camera = $view.Camera
+            sun_elevation = $view.SunElevation
+            exposure_ev100 = $view.ExposureEV100
+            rendered_frames = $image.RenderedFrames
+            png = "$($image.Name).png"
+            game_log = "$($view.Name).Game.log"
+            width = [int]$measured[0]
+            height = [int]$measured[1]
+            mean_luminance = [math]::Round($measured[2], 3)
+            clipped_white_ratio = [math]::Round($measured[3], 6)
+            crushed_black_ratio = [math]::Round($measured[4], 6)
+        }
+        $results += [pscustomobject]$result
+        Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5}" -f `
+            $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio)
     }
-    $results += [pscustomobject]$result
-    Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5}" -f `
-        $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio)
 }
 
 $metricsPath = Join-Path $outRoot 'metrics.json'
@@ -353,6 +418,8 @@ $metrics = [ordered]@{
     orbit_degrees_per_second = $OrbitDegreesPerSecond
     orbit_rendered_frames = $orbitFrameList
     anti_aliasing = $AntiAliasing
+    render_scale = $RenderScale
+    debug_draw_test_lines = [bool]$DebugDrawTestLines
     night = [bool]$Night
     views = $results
     failures = $failures

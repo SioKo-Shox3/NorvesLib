@@ -342,6 +342,13 @@ namespace NorvesLib::Core::Rendering
     {
         uint64_t CameraId = 0;
         /**
+         * @brief GameThread 側でカメラを識別する値（CameraComponent の ID など。0は不明）
+         *
+         * CameraId は RenderingCoordinator の登録の枠で、SetMainCamera へ別のカメラを渡しても変わらない。
+         * TAA はこの値が替わったらカメラの切り替えとみなし、履歴を捨てる。
+         */
+        uint64_t SourceCameraId = 0;
+        /**
          * @brief 連番のフレーム番号（0は連番でない）
          *
          * 0以外の同じ値の間、GameThreadは各パケットへ同じ前のカメラ・instance変換を書き

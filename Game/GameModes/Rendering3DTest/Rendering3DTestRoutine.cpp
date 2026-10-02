@@ -41,6 +41,7 @@
 #include "Core/Public/Math/Matrix4x4.h"
 #include "Core/Public/Math/Quaternion.h"
 #include "Core/Public/Math/Vector3.h"
+#include "GameModes/Rendering3DTest/Rendering3DTestDebugDraw.h"
 
 // ImGui 有効時のみ、方向ライト編集 view を併走させる SubRoutine を引き込む。
 // OFF 時はヘッダごとガードアウトされ空 TU となり push もガードアウトされる(挙動不変)。
@@ -238,6 +239,12 @@ namespace Game::GameModes
             // 起動画面はRTGIを使わず、従来どおり環境光（IBL）で間接光を表す（RTGIの少ない光線数の雑音が
             // 物体と地面に粒状に残るため）。
             ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGIEnabled(false);
+            // --render-scale の指定があれば、内部解像度（画面解像度×倍率）で描いて拡大する。
+            if (data.m_StartupRenderScale < 1.0f)
+            {
+                ctx.EngineRef.GetRenderWorld().SetRenderScale(data.m_StartupRenderScale);
+                LOG_INFO_F("Rendering3DTest render_scale=%.3f", static_cast<double>(data.m_StartupRenderScale));
+            }
             data.m_PickingController.SetFallbackSelectionDepth(
                 data.m_pSpringArmComponent->GetArmLength());
             LOG_INFO("CAMERA_COMPONENT_SMOKE stage=registered");
@@ -1658,6 +1665,10 @@ namespace Game::GameModes
         }
 
         data.m_PickingController.DrawSelection();
+        if (data.m_bDebugDrawTestLines)
+        {
+            Game::GameModes::SubmitRendering3DTestDebugDraw();
+        }
 
         data.m_ElapsedTime += deltaTime;
 

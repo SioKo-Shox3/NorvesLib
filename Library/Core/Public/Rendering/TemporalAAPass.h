@@ -70,9 +70,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         /** @brief 描画がフレームを飛ばしたときに前のカメラにする、履歴を書いたフレームのカメラ（無ければ null）。 */
-        const CameraProxy* FindReprojectionCamera(uint32_t viewportId, uint64_t cameraId, uint64_t frameNumber) const
+        const CameraProxy* FindReprojectionCamera(uint32_t viewportId, uint64_t cameraId, uint64_t sourceCameraId,
+                                                  uint64_t frameNumber) const
         {
-            return m_History.FindReprojectionCamera(viewportId, cameraId, frameNumber);
+            return m_History.FindReprojectionCamera(viewportId, cameraId, sourceCameraId, frameNumber);
         }
 
         /** @brief 履歴を捨てる（次に働くフレームは現在の色だけを使う）。 */

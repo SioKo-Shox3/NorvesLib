@@ -15,6 +15,12 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    /**
+     * @brief デバッグの線を、Upscale の後の最終解像度の PresentationColor へ描くパス
+     *
+     * TAA のジッタを外したカメラで描き、TAA の履歴・FXAA・Upscale を通らない。遮蔽は、内部解像度の SceneDepth を
+     * シェーダで読んで深度テスト（Less）と同じ比較で行う（内部解像度と画面解像度が違っても同じ経路）。
+     */
     class DebugDrawPass : public IViewPass, public IRenderGraphPass
     {
     public:
@@ -48,23 +54,20 @@ namespace NorvesLib::Core::Rendering
 
         struct RenderPassSignature
         {
-            AttachmentSignature ToneMappedColor;
-            AttachmentSignature SceneDepth;
+            AttachmentSignature PresentationColor;
             bool bValid = false;
         };
 
         bool PrepareResources(uint32_t width,
                               uint32_t height,
-                              const RHI::TexturePtr& toneMappedColorTexture,
-                              const RHI::TexturePtr& sceneDepthTexture);
+                              const RHI::TexturePtr& presentationColorTexture);
         bool AttachmentSignatureEquals(const AttachmentSignature& lhs,
                                        const AttachmentSignature& rhs) const;
         bool RenderPassSignatureEquals(const RenderPassSignature& lhs,
                                        const RenderPassSignature& rhs) const;
         RenderPassSignature CreateRenderPassSignature(uint32_t width,
                                                       uint32_t height,
-                                                      const RHI::TexturePtr& toneMappedColorTexture,
-                                                      const RHI::TexturePtr& sceneDepthTexture) const;
+                                                      const RHI::TexturePtr& presentationColorTexture) const;
 
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_LineVertexShader;
@@ -72,11 +75,11 @@ namespace NorvesLib::Core::Rendering
         RHI::RenderPassPtr m_RenderPass;
         RHI::FramebufferPtr m_Framebuffer;
         RHI::PipelinePtr m_Pipeline;
-        RHI::TexturePtr m_ToneMappedColorTexture;
-        RHI::TexturePtr m_SceneDepthTexture;
+        RHI::SamplerPtr m_PointSampler;
+        RHI::TexturePtr m_PresentationColorTexture;
         DynamicUniformAllocator m_UniformAllocator;
         DynamicBufferRing m_VertexRing;
-        RGResourceHandle m_ToneMappedColorHandle;
+        RGResourceHandle m_PresentationColorHandle;
         RGResourceHandle m_SceneDepthHandle;
         RenderPassSignature m_RenderPassSignature;
         uint32_t m_CurrentWidth = 0;

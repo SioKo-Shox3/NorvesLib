@@ -661,6 +661,9 @@ namespace NorvesLib::Core::Rendering
         bool m_bFrameSubmissionStarted = false;
 
         void UpdateRenderResolution(uint32_t screenWidth, uint32_t screenHeight);
+        // キャンバス（UI）の描画先・正射影の大きさ。内部解像度（SetRenderScale）に依らず画面解像度。
+        uint32_t GetCanvasWidth() const { return m_Width > 0 ? m_Width : 1u; }
+        uint32_t GetCanvasHeight() const { return m_Height > 0 ? m_Height : 1u; }
         void RequestCanvasCameraSync();
         void ConsumePendingCanvasCameraSync();
         void UpdateCanvasCameraForRenderResolution();

@@ -730,7 +730,7 @@ namespace NorvesLib::Core::Rendering
                 // 描画がゲームのフレームを飛ばしたときは、前のカメラを TAA の履歴を書いたフレームのカメラにする
                 // （物体の前の変換も RenderingCoordinator がそのフレームへ付け替える）。
                 const CameraProxy *reprojectionCamera = temporalAAPass->FindReprojectionCamera(
-                    viewportId, activeCamera->CameraId, context.FrameNumber);
+                    viewportId, activeCamera->CameraId, activeCamera->SourceCameraId, context.FrameNumber);
                 const CameraProxy *previousCamera =
                     reprojectionCamera ? reprojectionCamera : context.GetPreviousCamera();
                 jitteredCamera = *activeCamera;
@@ -880,7 +880,7 @@ namespace NorvesLib::Core::Rendering
         transparentForwardPass->SetRegisterOutputs(false);
         AddPass(std::move(transparentForwardPass));
 
-        // PostProcessStack: SSR -> TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA
+        // PostProcessStack: SSR -> TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw
         auto postProcessStack = MakeUnique<PostProcessStack>();
 
         // SSR（スクリーンスペース反射、HDR空間で適用）
@@ -927,10 +927,6 @@ namespace NorvesLib::Core::Rendering
         auto vignettePass = MakeUnique<VignettePass>();
         postProcessStack->AddPass(std::move(vignettePass));
 
-        // DebugDraw（ToneMapping後のdisplay-linear色へ、SceneDepthで深度遮蔽）
-        auto debugDrawPass = MakeUnique<DebugDrawPass>();
-        postProcessStack->AddPass(std::move(debugDrawPass));
-
         // FXAA（アンチエイリアシング、最終パス）
         FXAASettings fxaaSettings;
         fxaaSettings.EdgeThreshold = 0.0312f;
@@ -942,10 +938,14 @@ namespace NorvesLib::Core::Rendering
         auto upscalePass = MakeUnique<UpscalePass>();
         postProcessStack->AddPass(std::move(upscalePass));
 
+        // DebugDraw（Upscale後の最終解像度のdisplay-linear色へ、ジッタを外したカメラで描き、SceneDepthで深度遮蔽）
+        auto debugDrawPass = MakeUnique<DebugDrawPass>();
+        postProcessStack->AddPass(std::move(debugDrawPass));
+
         SetPostProcessStack(std::move(postProcessStack));
 
         NORVES_LOG_INFO("SceneView",
-                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> TemporalAA(optional) -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
+                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> TemporalAA(optional) -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw");
     }
 
     void SceneView::SetupPathTracingPipeline(uint32_t samplesPerFrame,

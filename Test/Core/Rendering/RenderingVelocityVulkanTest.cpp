@@ -277,7 +277,7 @@ namespace
                 }
                 if (m_Scenario == Scenario::SkinnedMotion && !GetFixture().AddR5SkinnedQuad())
                 {
-                    std::cerr << "RenderingVelocityVulkanTest: skinned fixture setup failed\n";
+                    std::cerr << "RenderingVelocityVulkanTest: 骨付きの四角形を置けなかった\n";
                     return false;
                 }
             }
@@ -504,7 +504,7 @@ namespace
             if (m_Scenario == Scenario::SkinnedMotion &&
                 !GetFixture().SetR5SkinnedQuadAnimationTime(bMoved ? SkinnedMovedTimeSeconds : 0.0f))
             {
-                Fail("skinned fixture animation update failed");
+                Fail("骨付きの四角形のアニメーションの時刻を更新できなかった");
                 return;
             }
             CameraProxy camera = GetFixture().GetR5RayTracingShadowCamera();
@@ -607,7 +607,7 @@ namespace
             }
             if (std::abs(skinnedSample.ExpectedX) <= 0.002f)
             {
-                outFailureReason = TEXT("skinned motion sample is too small to tell from zero");
+                outFailureReason = TEXT("骨付きの四角形の動きの期待値が小さすぎて0と区別できない");
                 return false;
             }
 

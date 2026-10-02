@@ -181,6 +181,10 @@ namespace Game::GameModes
         // --orbit-degrees-per-second で指定したカメラの周回の速さ（度/秒、0で止まったまま）。撮影で
         // 動くカメラの TAA の残像を確かめるのに使う。
         float m_OrbitDegreesPerSecond = 0.0f;
+        // --render-scale で指定した内部解像度の倍率（0.5〜1、既定は1で画面解像度のまま描く）。
+        float m_StartupRenderScale = 1.0f;
+        // --debug-draw-test-lines の指定で true にする。大きな球を囲む箱をデバッグの線で毎フレーム描く。
+        bool m_bDebugDrawTestLines = false;
         // 起動時のアンチエイリアシングが TAA なら true（既定は TAA、--anti-aliasing=fxaa の指定で false）。
         bool m_bStartupTemporalAA = true;
         // --night の指定で true にする。空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす

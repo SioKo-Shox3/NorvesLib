@@ -108,6 +108,17 @@ namespace Game
         // --anti-aliasing=<taa|fxaa>: 起動画面のアンチエイリアシング（既定は taa）。
         constexpr const TCHAR *kAntiAliasingOption = TEXT("--anti-aliasing=");
         bool s_bRendering3DTestTemporalAA = true;
+        // --render-scale=<0.5〜1>: 起動画面を内部解像度（画面解像度×倍率）で描いて拡大する（既定は1）。
+        constexpr const TCHAR *kRenderScaleOption = TEXT("--render-scale=");
+        float s_Rendering3DTestRenderScale = 1.0f;
+        // --debug-draw-test-lines: 起動画面の大きな球を囲む箱をデバッグの線で毎フレーム描く（値を取らない）。
+        // デバッグ描画が最終解像度でジッタ無しに描かれることを撮影で確かめるのに使う。
+        constexpr const TCHAR *kDebugDrawTestLinesOption = TEXT("--debug-draw-test-lines");
+        bool s_bRendering3DTestDebugDrawTestLines = false;
+        // --capture-sequence=<接頭辞> と --capture-sequence-rendered-frames=<n1,n2,...>: 1回の起動の中で、
+        // アセットが落ち着いてから n 枚目の描画フレームの最終出力を <接頭辞><n>.png に保存する。
+        constexpr const TCHAR *kCaptureSequenceOption = TEXT("--capture-sequence=");
+        constexpr const TCHAR *kCaptureSequenceRenderedFramesOption = TEXT("--capture-sequence-rendered-frames=");
         // --night: 起動画面を夜にする（空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす。値を取らない）。
         constexpr const TCHAR *kNightOption = TEXT("--night");
         bool s_bRendering3DTestNight = false;
@@ -439,7 +450,11 @@ namespace Game
         s_bRendering3DTestHasHeightFogFalloff = false;
         s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
         s_bRendering3DTestTemporalAA = true;
+        s_Rendering3DTestRenderScale = 1.0f;
+        s_bRendering3DTestDebugDrawTestLines = false;
         s_bRendering3DTestNight = false;
+        String captureSequencePrefix;
+        VariableArray<uint64_t> captureSequenceRenderedFrames;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;
         bool bHasRendering3DTestImpostorSmokeCount = false;
@@ -578,6 +593,62 @@ namespace Game
             if (args[i] == kNightOption)
             {
                 s_bRendering3DTestNight = true;
+                continue;
+            }
+
+            String renderScaleValue;
+            if (TryStripPrefix(args[i], kRenderScaleOption, renderScaleValue))
+            {
+                if (!TryParseBoundedFloat(renderScaleValue, 0.5f, 1.0f, s_Rendering3DTestRenderScale))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --render-scale は 0.5〜1 で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            if (args[i] == kDebugDrawTestLinesOption)
+            {
+                s_bRendering3DTestDebugDrawTestLines = true;
+                continue;
+            }
+
+            String captureSequenceRenderedFramesValue;
+            if (TryStripPrefix(args[i], kCaptureSequenceRenderedFramesOption, captureSequenceRenderedFramesValue))
+            {
+                // 「60,75,90」の形。各値は1以上の描画フレーム数。
+                captureSequenceRenderedFrames.clear();
+                size_t begin = 0;
+                while (begin <= captureSequenceRenderedFramesValue.size())
+                {
+                    size_t end = begin;
+                    while (end < captureSequenceRenderedFramesValue.size() &&
+                           captureSequenceRenderedFramesValue[end] != TEXT(','))
+                    {
+                        ++end;
+                    }
+                    uint32_t frames = 0;
+                    if (!TryParseUInt32(captureSequenceRenderedFramesValue.substr(begin, end - begin), frames) ||
+                        frames == 0)
+                    {
+                        LOG_ERROR("Game command line parse failed: --capture-sequence-rendered-frames は 1 以上の整数をカンマで区切って指定する");
+                        return false;
+                    }
+                    captureSequenceRenderedFrames.push_back(frames);
+                    begin = end + 1;
+                }
+                continue;
+            }
+
+            String captureSequenceValue;
+            if (TryStripPrefix(args[i], kCaptureSequenceOption, captureSequenceValue))
+            {
+                if (captureSequenceValue.empty())
+                {
+                    LOG_ERROR("Game command line parse failed: --capture-sequence の接頭辞が空");
+                    return false;
+                }
+                captureSequencePrefix = captureSequenceValue;
                 continue;
             }
 
@@ -1036,6 +1107,17 @@ namespace Game
 #if defined(NORVES_ENABLE_IMGUI)
         m_bImGuiRequested = bImGui;
 #endif
+
+        if (captureSequencePrefix.empty() != captureSequenceRenderedFrames.empty())
+        {
+            LOG_ERROR("Game command line parse failed: --capture-sequence と --capture-sequence-rendered-frames は併せて指定する");
+            return false;
+        }
+        m_SequenceFrameCapture.Configure(captureSequencePrefix, captureSequenceRenderedFrames);
+        if (m_SequenceFrameCapture.IsEnabled())
+        {
+            LOG_INFO_F("SEQUENCE_CAPTURE configured frames=%zu", captureSequenceRenderedFrames.size());
+        }
         return true;
     }
 
@@ -1395,6 +1477,22 @@ namespace Game
         m_M6ScriptSmokeController.Update();
     }
 
+    void GameApplicationHandler::OnPreRender()
+    {
+        if (m_SequenceFrameCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_SequenceFrameCapture.OnPreRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
+        }
+    }
+
+    void GameApplicationHandler::OnPostRender()
+    {
+        if (m_SequenceFrameCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_SequenceFrameCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
+        }
+    }
+
     bool GameApplicationHandler::ShouldAdvanceSimulation() const
     {
         // Bridge 無効なら従来挙動（常に進行）。
@@ -1495,6 +1593,8 @@ namespace Game
                 mode->GetData().m_bHasStartupHeightFogFalloff = s_bRendering3DTestHasHeightFogFalloff;
                 mode->GetData().m_StartupHeightFogFalloff = s_Rendering3DTestHeightFogFalloff;
                 mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
+                mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
+                mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
