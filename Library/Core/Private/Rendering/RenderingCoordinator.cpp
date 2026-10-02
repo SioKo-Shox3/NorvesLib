@@ -1990,7 +1990,10 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
                 m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
             }
-            SnapshotSceneParameters(*m_CurrentPacket, m_Device->GetCapabilities());
+            // GPU デバイスが無いとき（契約のテスト）は、何も対応しない能力として写す。
+            const RHI::DeviceCapabilities noDeviceCapabilities{};
+            SnapshotSceneParameters(*m_CurrentPacket,
+                                    m_Device ? m_Device->GetCapabilities() : noDeviceCapabilities);
             // 影を落とす点光源の選択と6面の行列は、空の太陽を加えた後の光源表とメインカメラから作る。
             BuildPointShadowSnapshot(m_CurrentPacket->Scene.LightProxies,
                                      m_CurrentPacket->bHasMainCamera

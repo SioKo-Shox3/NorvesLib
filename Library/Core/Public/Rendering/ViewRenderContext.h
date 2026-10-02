@@ -701,35 +701,79 @@ namespace NorvesLib::Core::Rendering
             return scissor;
         }
 
+        /**
+         * @brief 内部解像度の画素から画面（スワップチェーン）の画素への倍率
+         *
+         * Viewport の画素の矩形は内部解像度（RenderWidth/Height）で決まる。SetRenderScale で内部解像度を
+         * 画面より小さくしたとき、Upscale の後の画像を画面へ写す矩形はこの倍率で広げる。内部解像度が
+         * 画面と同じか、画面の大きさが分からない（0）なら1。キャンバス（UI）のように画面解像度で
+         * 計画した Viewport（計画の RenderWidth/Height が画面と同じ）も1。
+         */
+        float GetOutputScaleX() const
+        {
+            return ComputeOutputScale(ScreenWidth, RenderWidth, CurrentViewport ? CurrentViewport->RenderWidth : 0u);
+        }
+
+        float GetOutputScaleY() const
+        {
+            return ComputeOutputScale(ScreenHeight, RenderHeight, CurrentViewport ? CurrentViewport->RenderHeight : 0u);
+        }
+
+        static float ComputeOutputScale(uint32_t screenExtent, uint32_t renderExtent, uint32_t planExtent)
+        {
+            if (screenExtent == 0 || renderExtent == 0 || renderExtent == screenExtent)
+            {
+                return 1.0f;
+            }
+            const uint32_t sourceExtent = planExtent > 0 ? planExtent : renderExtent;
+            return static_cast<float>(screenExtent) / static_cast<float>(sourceExtent);
+        }
+
+        /** @brief 画面（スワップチェーン）へ写すときの Viewport。画素の矩形を画面の画素へ広げる。 */
         RHI::Viewport GetActiveOutputViewport() const
         {
+            const float scaleX = GetOutputScaleX();
+            const float scaleY = GetOutputScaleY();
             if (!CurrentViewport || !CurrentViewport->HasDrawableExtent())
             {
-                return GetActiveLocalViewport();
+                RHI::Viewport viewport = GetActiveLocalViewport();
+                viewport.width *= scaleX;
+                viewport.height *= scaleY;
+                return viewport;
             }
 
             RHI::Viewport viewport;
-            viewport.x = CurrentViewport->PixelRect.X;
-            viewport.y = CurrentViewport->PixelRect.Y;
-            viewport.width = CurrentViewport->PixelRect.Width;
-            viewport.height = CurrentViewport->PixelRect.Height;
+            viewport.x = CurrentViewport->PixelRect.X * scaleX;
+            viewport.y = CurrentViewport->PixelRect.Y * scaleY;
+            viewport.width = CurrentViewport->PixelRect.Width * scaleX;
+            viewport.height = CurrentViewport->PixelRect.Height * scaleY;
             viewport.minDepth = CurrentViewport->PixelRect.MinDepth;
             viewport.maxDepth = CurrentViewport->PixelRect.MaxDepth;
             return viewport;
         }
 
+        /** @brief 画面（スワップチェーン）へ写すときの Scissor。画素の矩形を画面の画素へ広げる。 */
         RHI::ScissorRect GetActiveOutputScissor() const
         {
+            const float scaleX = GetOutputScaleX();
+            const float scaleY = GetOutputScaleY();
+            const auto scaleEdge = [](int32_t edge, float scale)
+            {
+                return static_cast<int32_t>(static_cast<float>(edge) * scale + 0.5f);
+            };
             if (!CurrentViewport || !CurrentViewport->HasDrawableExtent())
             {
-                return GetActiveLocalScissor();
+                RHI::ScissorRect scissor = GetActiveLocalScissor();
+                scissor.right = scaleEdge(scissor.right, scaleX);
+                scissor.bottom = scaleEdge(scissor.bottom, scaleY);
+                return scissor;
             }
 
             RHI::ScissorRect scissor;
-            scissor.left = CurrentViewport->Scissor.Left;
-            scissor.top = CurrentViewport->Scissor.Top;
-            scissor.right = CurrentViewport->Scissor.Right;
-            scissor.bottom = CurrentViewport->Scissor.Bottom;
+            scissor.left = scaleEdge(CurrentViewport->Scissor.Left, scaleX);
+            scissor.top = scaleEdge(CurrentViewport->Scissor.Top, scaleY);
+            scissor.right = scaleEdge(CurrentViewport->Scissor.Right, scaleX);
+            scissor.bottom = scaleEdge(CurrentViewport->Scissor.Bottom, scaleY);
             return scissor;
         }
 
