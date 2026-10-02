@@ -235,3 +235,10 @@ Controllerの順位はOverlayより下/Gameより上。UIにイベントを届�
 Engine/Shutdown/Run終了はcapture→debug→mapperの順に解除する。debugのDetachはmode中の正本だけを通知なしで中立化し、残るcapture ownerにはAbortを伝えて人工的なupを完了判定へ使わせない。次Runでは再Attachし、moduleのenableは維持するがUI modeは閉じて始める。既定起動画面やImGuiの描画内容は変更しない。F1のロック解除/復帰とAlt+Tabのnative挙動はWindows実機で別途確認する。
 
 自己mode適用のresetでは内部guardによりF1の押下履歴を保持し、物理Released前の重複Pressedを抑止する。外部reset/focus喪失は押下履歴を解除する。未適用enterで終了するとlegacyの解除通知がまだ無いため、DetachはMapper.CancelAllを明示し、InputSystemへ通知reset待ちを残す。次の安全なAttachまたはInputSystem.BeginFrameがReleaseAll通知を回収する。待ちはcontroller外に保持し、controllerの破棄/差し替えでも失わない。cleanup中にobserverを起動しない契約は維持する。
+
+
+### XInput値の変換境界（GR04）
+
+XInputStateConversionはWindowsヘッダに依存しない整数packetを受け、API成功時の入力だけをGamepadStateへ変換する。軸は負側32768/正側32767で除して端点を±1へ合わせ、triggerは255分率、未定義button bitは除去する。packet番号を保持し、deadzone/曲線はMapperへ残す。motorは有限な0..1を両channel検証してから0..65535へ丸め、失敗時は出力を変えない。native API呼出しと接続状態の判定はこの値変換の外側で扱う。
+
+入力構造体の仕様: https://learn.microsoft.com/en-us/windows/win32/api/xinput/ns-xinput-xinput_gamepad 。出力仕様: https://learn.microsoft.com/en-us/windows/win32/api/xinput/ns-xinput-xinput_vibration 。整数raw型をnative構造体へreinterpretせず、backend adapterで各fieldを明示転記する。

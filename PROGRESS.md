@@ -345,3 +345,6 @@
 
 - G1-GR03-P8: --imguiのInstall/UninstallとEngine所有InputDebugOverlayControllerを接続し、有効時だけF1でcursor NormalとGame入力maskを切り替える。UIへ通常eventを渡した後でGameを遮断し、Mapperの独立抑止理由をcaptureとORしてpolling/fixed/Activeも停止。context/JSON/描画内容は変更しない。Processorの配送後に要求反映/resetし、Engine/Runの所有順と再Attachを接続。第1周の自己resetによるF1押下世代消失と未適用enter終了時のlegacy残留を修正。内部guardとSystem所有deferred reset（次のAttach/BeginFrameで通知回収）を追加し第2周静的レビューPASS。純state通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundleと公開controller header syntax、capture/runtime/Raw回帰成功。Core/Engine/ImGui統合試験にrepeat/二重Pressed・UI先行・capture優先・owner・pending終了/再開を追加したが、Windows.h依存によりcompile/実行と実機cursor確認は未検証。
 - Next: GR03の計画上の実装項目は一通り接続済み。Windows実機と統合bundleの受入れは未検証として残す。GR04へ進み、XInputの実pad供給・接続/切断・振動・device種別通知を実装する。
+
+- G1-GR04-P1: XInputの成功packetを独自GamepadStateへ変換するOS非依存境界を追加。signed16軸の負/正側を別の除数で±1へ、triggerを255分率へ正規化し、未定義button bitを除去、packetを保持する。deadzoneはMapperへ残す。左右motorは有限0..1を検証後にuint16へ一括量子化し、invalidで旧出力を保持。Microsoft一次資料で範囲/bit/左右motorの意味を照合。軸65536値、trigger256値、全channel/mask/packet/実InputState受理、motor量子化/invalidを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundleで確認。独立レビューも実再実行PASS。native API呼出し、Windows統合bundle、実機はこの境界の範囲外。
+- Next: GR04のBackground/Baseline配送を操作正本と実sample履歴に分け、focus復帰直後のheldを誤捕捉しないようにする。その上でXInput provider/polling/Engineへ接続する。

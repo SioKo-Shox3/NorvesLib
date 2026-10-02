@@ -47,6 +47,7 @@ set(PRIVATE_SOURCES
     Private/Debug/Stats.cpp
     Private/EngineGlobals/MemoryOverrides.cpp
     Private/Platform/Windows/WindowsApplication.cpp
+    Private/Platform/Windows/XInputStateConversion.h
     Private/Platform/Windows/WindowsPlatformApplicationFactory.cpp
     Private/Platform/Windows/WindowsWindow.cpp
     Private/Platform/Windows/WindowsEntryPoint.cpp

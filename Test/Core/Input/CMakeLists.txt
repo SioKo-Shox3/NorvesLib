@@ -26,3 +26,4 @@ add_test(NAME InputRebindCaptureManagerTest COMMAND LoggerSinkTest --test=InputR
 add_test(NAME GameInputRebindTypesTest COMMAND LoggerSinkTest --test=GameInputRebindTypesTest)
 add_test(NAME InputDebugOverlayStateTest COMMAND LoggerSinkTest --test=InputDebugOverlayStateTest)
 add_test(NAME InputDebugOverlayControllerTest COMMAND LoggerSinkTest --test=InputDebugOverlayControllerTest)
+add_test(NAME GamepadStateNormalizeTest COMMAND LoggerSinkTest --test=GamepadStateNormalizeTest)

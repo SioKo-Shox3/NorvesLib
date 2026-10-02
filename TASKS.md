@@ -1446,3 +1446,11 @@
 - stop-when: cursor解除中のGame入力漏れ、UI自体へ入力が届かない、F1 repeatで反転、captureと抑止理由の競合、callback内の全reset/登録変更、寿命不整合、blocking未解消。
 - paths: Library/Core/Private/Input/InputSystem.cpp, Library/Core/Public/Input/InputDebugOverlayState.h, Library/Core/Public/Input/InputDebugOverlayController.h, Library/Core/Private/Input/InputDebugOverlayController.cpp, Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Public/Input/InputRouter.h, Library/Core/Public/Engine/Engine.h, Library/Core/Private/Engine/Engine.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/CMakeLists.txt, Library/Modules/ImGui/Private/ImGuiModule/ImGuiModule.cpp, Test/Core/Input/InputDebugOverlayStateTest.cpp, Test/Core/Input/InputDebugOverlayControllerTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Test/Core/Engine/InputFocusPipelineTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: input context stack/JSONは変更しない。UIの描画内容も変更しない。ImGuiはF1だけ予約透過し、controllerはOverlayより下/Gameより上の常設順位を使う。
+
+## G1-GR04-P1: XInputの入出力値を安全に正規化する
+- status: done
+- done-when: native成功packetの整数値を独自GamepadStateへ非対称軸正規化/trigger分率/定義button maskで変換し、左右motorの0..1を検証後にuint16へ一括量子化。deadzoneは適用せず、invalid motor値は出力保持。
+- verify: 全軸値65536/trigger256の範囲・単調性・端点、全channel/予約bit/packet/実InputState受理、motor誤差とinvalid非変更を通常/O2/ASanUBSan/bundleで実行して独立レビュー。
+- stop-when: -32768のoverflow/符号反転、範囲外出力、予約bit混入、deadzone二重適用、invalidの部分反映、blocking未解消。
+- paths: Library/Core/Private/Platform/Windows/XInputStateConversion.h, Library/Core/CMakeLists.txt, Test/Core/Input/GamepadStateNormalizeTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: native API/polling/接続/非focus配送とhaptics serviceは後続。API定義はMicrosoft一次資料を確認済み。
