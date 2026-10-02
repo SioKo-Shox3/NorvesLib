@@ -351,3 +351,6 @@
 
 - G1-GR04-P2: Live/Baseline/Backgroundのpad配送modeを追加。既定Liveは旧順序/通常button通知を維持し、非LiveはPressedラッチと通常button通知を抑止、connection/物理sample通知は維持する。Backgroundは操作正本だけneutral、Baselineは実値へ同期し、物理sample/serialは両者とも実値を保持。captureは非Liveを基準化だけに使い初回heldを誤捕捉しない。全検証は更新前、invalidで状態/serial/通知非変更。実State/kernelの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundleとarmed/runtime/reset回帰成功。invalid modeの試験を新serial高analog→同serial Liveの捕捉へ補強。独立静的レビューPASS。System/Router/Mapperのmode伝搬・非focus取消・復帰held非armed試験を追加したが、Windows依存の実統合は未実行。modeだけでfocus Cancelは代替せず、lossのMapper停止/ReleaseAllを先行させる。
 - Next: GR04の差替XInput APIとポーリング状態を実装し、接続済み毎frame/未接続低頻度、Background/Baseline選択、停止時のmotor zeroへ接続する。
+
+- G1-GR04-P3: SDK非依存IXInputApiとXInputPollingStateを追加。4slotの接続済み毎frame/未接続1秒以上のround-robin探索、同packet配送、error中のneutral退避とhealth保持、Background/復帰Baseline、sink拒否/例外後の再配送を実装。有限非負単調clockを検証し、同回二重読取や長時間経過のcatch-upを防止する。実InputState sinkによる通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle試験成功。独立レビューPASS、追加の複数error/拒否時の公平性/1000回探索/例外再試行も実行成功。Windows API・Engine接続・実機入力・振動はこの段では未実行。
+- Next: GR04のnative adapterとEngine所有デバイスの寿命/ポーリングを接続し、その後hapticsとdevice種別通知へ進む。

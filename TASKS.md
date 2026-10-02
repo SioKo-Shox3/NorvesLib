@@ -1462,3 +1462,11 @@
 - stop-when: 背景で操作値が残る、物理sampleを偽neutral化、Baselineから新規Pressed/captureが出る、invalidの部分更新、既定Live回帰、blocking未解消。
 - paths: Library/Core/Public/Input/GamepadTypes.h, Library/Core/Public/Input/InputState.h, Library/Core/Private/Input/InputState.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Private/Input/InputSystem.cpp, Library/Core/Public/Input/InputRebindCaptureState.h, Test/Core/Input/GamepadInputStateTest.cpp, Test/Core/Input/InputRebindCaptureStateTest.cpp, Test/Core/Input/InputRoutingExtensionTest.cpp, Test/Core/Input/InputActionMapTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: 非Live配送はfocus Cancelの代用ではない。実providerとEngineのfocus/ポーリング接続は後続で行う。
+
+## G1-GR04-P3: 差替APIでXInputのポーリング状態を実装する
+- status: done
+- done-when: SDK非依存のAPI/sink境界で4slotを読み、接続済み毎frame/未接続低頻度round-robin、同packet配送、接続/切断/error退避、background/復帰baseline、sink拒否再試行、単調clockを処理する。API参照以外を長期借用しない。
+- verify: Fake APIと実InputState sinkによる初期probe/周期/連続入力/再接続/error/拒否/Mode/invalid clock/Shutdownを通常/O2/ASanUBSan/bundleで実行し独立レビュー。
+- stop-when: 同frame二重poll、欠番slotの放置、未接続の高頻度poll、背景Live注入、復帰held再押下、拒否を配送済み扱い、clock不正で状態更新、blocking未解消。
+- paths: Library/Core/Private/Platform/Windows/IXInputApi.h, Library/Core/Private/Platform/Windows/XInputPollingState.h, Library/Core/CMakeLists.txt, Test/Core/Input/XInputDevicePollingTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: この段は入力読取り状態。native adapter/Engine接続と振動は後続。sinkは呼出中だけ、APIはstateより長命で使う。

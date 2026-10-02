@@ -48,6 +48,8 @@ set(PRIVATE_SOURCES
     Private/EngineGlobals/MemoryOverrides.cpp
     Private/Platform/Windows/WindowsApplication.cpp
     Private/Platform/Windows/XInputStateConversion.h
+    Private/Platform/Windows/IXInputApi.h
+    Private/Platform/Windows/XInputPollingState.h
     Private/Platform/Windows/WindowsPlatformApplicationFactory.cpp
     Private/Platform/Windows/WindowsWindow.cpp
     Private/Platform/Windows/WindowsEntryPoint.cpp
