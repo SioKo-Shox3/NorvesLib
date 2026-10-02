@@ -1,6 +1,8 @@
 ﻿#include "Input/InputState.h"
 #include <cstring>
 #include <bit>
+#include <cmath>
+#include <limits>
 
 namespace NorvesLib::Core::Input
 {
@@ -249,9 +251,33 @@ namespace NorvesLib::Core::Input
         m_PrevMouseY = y;
     }
 
+    namespace
+    {
+        bool TryAccumulatePair(float oldX, float oldY, float x, float y, float& outX, float& outY)
+        {
+            if (!std::isfinite(x) || !std::isfinite(y)) return false;
+            const double nextX = static_cast<double>(oldX) + x;
+            const double nextY = static_cast<double>(oldY) + y;
+            const double limit = std::numeric_limits<float>::max();
+            if (!std::isfinite(nextX) || !std::isfinite(nextY) || std::fabs(nextX)>limit || std::fabs(nextY)>limit) return false;
+            outX = static_cast<float>(nextX);
+            outY = static_cast<float>(nextY);
+            return true;
+        }
+    }
     void InputState::AddMouseScroll(float delta)
     {
-        m_MouseState.ScrollDelta += delta;
+        (void)AddMouseScrollAxes(delta, 0.0f);
+    }
+    bool InputState::AddMouseScrollAxes(float vertical, float horizontal)
+    {
+        return TryAccumulatePair(m_MouseState.ScrollDelta, m_MouseState.HorizontalScrollDelta,
+            vertical, horizontal, m_MouseState.ScrollDelta, m_MouseState.HorizontalScrollDelta);
+    }
+    bool InputState::AddRawMouseDelta(float x, float y)
+    {
+        return TryAccumulatePair(m_MouseState.RawDeltaX, m_MouseState.RawDeltaY,
+            x, y, m_MouseState.RawDeltaX, m_MouseState.RawDeltaY);
     }
 
     void InputState::ResetFrameAccumulators()
@@ -259,6 +285,9 @@ namespace NorvesLib::Core::Input
         m_MouseState.DeltaX = 0.0f;
         m_MouseState.DeltaY = 0.0f;
         m_MouseState.ScrollDelta = 0.0f;
+        m_MouseState.HorizontalScrollDelta = 0.0f;
+        m_MouseState.RawDeltaX = 0.0f;
+        m_MouseState.RawDeltaY = 0.0f;
     }
 
 } // namespace NorvesLib::Core::Input

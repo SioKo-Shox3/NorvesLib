@@ -1304,3 +1304,11 @@
 - stop-when: UI迂回、span長期保持、dt混同、部分適用、blocking未解消。
 - paths: Library/Core/Public/Input/InputActionRuntime.h, Library/Core/Public/Input/InputAxisMath.h, Library/Core/CMakeLists.txt, Test/Core/Input/InputActionRuntimeTest.cpp, Test/Core/Input/InputAxisMathTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: Identity/Router/Engineの接着は後続Mapper。
+
+## G1-GR03-P4F: Raw・パッド・解除の入力配送を接続する
+- status: done
+- done-when: raw相対移動と水平wheelを独立正本へ保持しRouterへ配送、pad snapshotを検証後更新して新Pressed→Released順、接続/全解除をconsume不能通知で届ける。絶対mouseの初回再基準化とevent deltaを一致させる。
+- verify: g++で実InputState.cppのRawInputStateTestと既存KBM/Pad/Runtime回帰。InputRoutingExtensionTestはLoggerSinkTestへ登録、Windows依存で未実行なら静的レビューとして明示。
+- stop-when: 既存camera event互換性破壊、invalid入力の部分更新、UIのconsume迂回、切断取消し前のrelease、blocking未解消。
+- paths: Library/Core/Public/Input/{InputTypes.h,InputState.h,InputSystem.h,IInputController.h,InputRouter.h}, Library/Core/Private/Input/{InputState.cpp,InputSystem.cpp,InputRouter.cpp}, Test/Core/Input/{RawInputStateTest.cpp,InputRoutingExtensionTest.cpp,CMakeLists.txt}, Test/Core/Logging/CMakeLists.txt, Library/Modules/ImGui/Private/ImGuiModule/ImGuiModule.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: OS Raw/XInput供給とMapper/Engine接着は次段。新raw/pad配送は既存KBMと同じ優先度契約。

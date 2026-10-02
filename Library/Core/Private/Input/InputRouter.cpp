@@ -117,4 +117,20 @@ namespace NorvesLib::Core::Input
         }
     }
 
+    void InputRouter::DispatchMouseRawMove(const MouseRawMoveEvent& event)
+    {
+        for (Entry& entry : m_Controllers) if (entry.Controller->OnMouseRawMove(event)) return;
+    }
+    void InputRouter::DispatchGamepadButton(const GamepadButtonEvent& event)
+    {
+        for (Entry& entry : m_Controllers) if (entry.Controller->OnGamepadButton(event)) return;
+    }
+    void InputRouter::NotifyGamepadConnection(const GamepadConnectionEvent& event)
+    {
+        for (Entry& entry : m_Controllers) entry.Controller->OnGamepadConnection(event);
+    }
+    void InputRouter::NotifyInputReset()
+    {
+        for (Entry& entry : m_Controllers) entry.Controller->OnInputReset();
+    }
 } // namespace NorvesLib::Core::Input

@@ -494,8 +494,13 @@ namespace NorvesLib::Modules::Gui
                 case Core::Input::MouseButton::Middle:
                     idx = 2;
                     break;
+                case Core::Input::MouseButton::X1:
+                    idx = 3;
+                    break;
+                case Core::Input::MouseButton::X2:
+                    idx = 4;
+                    break;
                 default:
-                    // X1/X2 等は ImGui のマウスボタン 0..2 に対応しないため供給せず伝播。
                     return false;
                 }
                 io.AddMouseButtonEvent(idx, event.Action == Core::Input::InputAction::Pressed);
@@ -514,6 +519,14 @@ namespace NorvesLib::Modules::Gui
                 return io.WantCaptureMouse;
             }
 
+            bool OnMouseRawMove(const Core::Input::MouseRawMoveEvent&) override
+            {
+                if (m_Context == nullptr) return false;
+                ::ImGui::SetCurrentContext(m_Context);
+                // ImGuiへは絶対座標を別経路で供給し、Rawは捕捉判定だけ行う。
+                return ::ImGui::GetIO().WantCaptureMouse;
+            }
+
             bool OnMouseScroll(const Core::Input::MouseScrollEvent &event) override
             {
                 if (m_Context == nullptr)
@@ -522,7 +535,7 @@ namespace NorvesLib::Modules::Gui
                 }
                 ::ImGui::SetCurrentContext(m_Context);
                 ImGuiIO &io = ::ImGui::GetIO();
-                io.AddMouseWheelEvent(0.0f, event.Delta);
+                io.AddMouseWheelEvent(event.HorizontalDelta, event.Delta);
                 return io.WantCaptureMouse;
             }
 

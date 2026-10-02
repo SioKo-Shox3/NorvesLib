@@ -2,6 +2,7 @@
 
 #include "CoreTypes.h"
 #include "Input/InputTypes.h"
+#include "Input/GamepadTypes.h"
 
 #include <cstdint>
 
@@ -62,6 +63,11 @@ namespace NorvesLib::Core::Input
         void DispatchMouseScroll(const MouseScrollEvent &event);
         void DispatchKey(const KeyEvent &event);
         void DispatchChar(const CharEvent &event);
+        void DispatchMouseRawMove(const MouseRawMoveEvent& event);
+        void DispatchGamepadButton(const GamepadButtonEvent& event);
+        // 全controllerへ通知。配送中の登録/解除/再入配送は禁止。
+        void NotifyGamepadConnection(const GamepadConnectionEvent& event);
+        void NotifyInputReset();
 
     private:
         struct Entry

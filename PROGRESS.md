@@ -294,3 +294,6 @@
 
 - G1-GR03-P4E: binding span＋正本/armedからButton OR/短tap/固定stepラッチ、1D/2D curve、event時modifier判定付き相対変位とrate×実dtの混合を評価するInputActionRuntimeを追加。借用spanを保持せずinvalid/overflowは非変更。独立評価でcurve前float化の数理欠陥（巨大Gammaで飽和2Dが0、微小値がcurve前に消失）を検出し、double集約のままcurveまで通すWide APIへ修正、恒久回帰を追加。通常/NDEBUG-O2/ASan・UBSan（LeakSanitizer除外）、bundle相当compile、既存7件回帰が成功、第2周レビューPASS。Router/Identity/OS/Gameの実統合とは区別する。
 - Next: Raw/Pad/resetの配送口とInputMapperを既存Routerへ接続し、context maskと設定所有を統合する。
+
+- G1-GR03-P4F: Raw相対mouse/縦横wheelの独立累積と検証後一括更新、InputSystem→Delegate→Router配送、Pad snapshot→consume不能接続通知→新Pressed→旧Releasedの順序、全解除の取消通知を追加。絶対mouseの初回/ReleaseAll後deltaを正本と一致させ、ImGuiのRaw捕捉/横wheel/X1/X2を接続。実InputStateの通常/NDEBUG-O2/ASan・UBSan（LeakSanitizer除外）、KBM/Pad/runtime回帰、実CameraInputCollector compileに成功。公開API/配送/統合試験は独立静的レビューPASS。RoutingExtensionTestはWindows.h依存で未実行、OS/Mapper/Engine配線は未完。任意指摘を受け、Pad/Mouse heldのReleaseAllで通常Released通知が増えない試験も追加。
+- Next: Identity設定を所有するInputMapperをRouterへ登録し、context stack/UI armed/focus cancel/固定step消費を接続する。

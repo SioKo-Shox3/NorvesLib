@@ -93,3 +93,12 @@
 - このkernelはOS/Router/Identityから独立して実行検証する。InputMapper・JSON・Engine・Raw Input・XInputの接続と実機受入は引き続き別段階。
 
 - 軸の合計はcurveまでdoubleで保ち、最後だけfloatへ変換する。先に正規化したfloatの半径を再評価すると、巨大Gammaで長さ1の入力が0へ落ちたり、微小入力がcurve前に消えるため禁止する。
+
+## Raw・Pad・全解除の配送口
+
+- MouseStateは絶対位置差分とRawDeltaXYを別に持つ。rawと縦横wheelはfinite/float範囲を検証して成分を一括加算し、BeginFrame/ReleaseAllで消す。失敗時は正本も通知も変えない。
+- InjectRawMouseDelta/InjectMouseScrollAxes/InjectGamepadStateは正本更新→Delegate→Router。Raw/Pad buttonは優先度順にconsume可能。ImGuiはRawをWantCaptureMouseで遮断し、絶対位置と二重供給しない。横wheelとX1/X2はImGuiの対応入力へ渡す。
+- Padはsnapshot全体を検証後に更新し、接続変更を全controllerへ通知してから、新Pressed→旧Releasedの順で配送する。切断通知はconsume不能なので、Mapperが通常releaseのTap完了より先にCancelできる。
+- InputSystem::ReleaseAllは正本をneutral化し、全controllerへOnInputResetを通知する。通常Releasedを合成しない。Delegateを含む通知callback内からの再入Inject/ReleaseAll、Router登録変更は禁止。
+- InjectMouseMoveのevent deltaは正本の累積前後差とし、初期化/ReleaseAll後の初回絶対座標で大きく飛ばないよう一致させる。
+- OSのRaw/XInput供給、focus喪失からReleaseAllへの呼出し、legacy各controllerのReset対応、Mapperの接続は次段。配送口の実装だけでフォーカス解除や実機入力が動いたとは扱わない。

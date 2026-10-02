@@ -131,6 +131,17 @@ namespace NorvesLib::Core::Input
          * @param delta スクロール量（正:上、負:下）
          */
         void InjectMouseScroll(float delta);
+        // 検証失敗時は正本/通知とも非変更。成功時は正本→Delegate→Routerの順。
+        bool InjectMouseScrollAxes(float vertical, float horizontal);
+        bool InjectRawMouseDelta(float x, float y);
+        bool InjectGamepadState(uint8_t slot, const GamepadState& state);
+        // 通常Releasedを合成せず、全controllerへ取消通知を届ける。
+        void ReleaseAll();
+        MulticastDelegate<const MouseRawMoveEvent&>& OnMouseRawMoveEvent() { return m_OnMouseRawMoveEvent; }
+        MulticastDelegate<const GamepadButtonEvent&>& OnGamepadButtonEvent() { return m_OnGamepadButtonEvent; }
+        MulticastDelegate<const GamepadConnectionEvent&>& OnGamepadConnectionEvent() { return m_OnGamepadConnectionEvent; }
+        MulticastDelegate<>& OnInputResetEvent() { return m_OnInputResetEvent; }
+        // 全Inject/ReleaseAllとRouter登録操作はGameThread、通知callbackからの再入は禁止。
 
         /**
          * @brief 文字入力イベントを注入（プラットフォームの WM_CHAR 相当から）
@@ -163,6 +174,10 @@ namespace NorvesLib::Core::Input
         MulticastDelegate<const MouseMoveEvent &> m_OnMouseMoveEvent;
         MulticastDelegate<const MouseScrollEvent &> m_OnMouseScrollEvent;
         MulticastDelegate<const CharEvent &> m_OnCharEvent;
+        MulticastDelegate<const MouseRawMoveEvent&> m_OnMouseRawMoveEvent;
+        MulticastDelegate<const GamepadButtonEvent&> m_OnGamepadButtonEvent;
+        MulticastDelegate<const GamepadConnectionEvent&> m_OnGamepadConnectionEvent;
+        MulticastDelegate<> m_OnInputResetEvent;
 
         // イベント配送ルーター（借用ポインタ・非所有）
         InputRouter *m_Router = nullptr;

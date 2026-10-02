@@ -1,6 +1,7 @@
 ﻿#include "Input/InputSystem.h"
 #include "Input/InputRouter.h"
 #include "Logging/LogMacros.h"
+#include <cmath>
 
 namespace NorvesLib::Core::Input
 {
@@ -88,10 +89,9 @@ namespace NorvesLib::Core::Input
 
     void InputSystem::InjectMouseMove(float x, float y)
     {
-        // 前の位置を取得（デルタ計算用）
-        const auto &prevState = m_State.GetMouseState();
-        float prevX = prevState.PositionX;
-        float prevY = prevState.PositionY;
+        if (!std::isfinite(x) || !std::isfinite(y)) return;
+        // 正本の初回再基準化と同じdeltaを通知する。
+        const auto previous = m_State.GetMouseState();
 
         // 状態を更新
         m_State.SetMousePosition(x, y);
@@ -100,8 +100,8 @@ namespace NorvesLib::Core::Input
         MouseMoveEvent event;
         event.PositionX = x;
         event.PositionY = y;
-        event.DeltaX = x - prevX;
-        event.DeltaY = y - prevY;
+        event.DeltaX = m_State.GetMouseState().DeltaX - previous.DeltaX;
+        event.DeltaY = m_State.GetMouseState().DeltaY - previous.DeltaY;
         m_OnMouseMoveEvent.Broadcast(event);
 
         // 優先度付きルーターへ配送（登録 Controller がいなければ空振り）
@@ -113,22 +113,56 @@ namespace NorvesLib::Core::Input
 
     void InputSystem::InjectMouseScroll(float delta)
     {
-        // 状態を更新
-        m_State.AddMouseScroll(delta);
-
-        float accumulatedScroll = m_State.GetMouseState().ScrollDelta;
-        NORVES_LOG_DEBUG("Input", "InjectMouseScroll: delta={:.3f}, accumulated={:.3f}", delta, accumulatedScroll);
-
-        // イベントを発火
-        MouseScrollEvent event;
-        event.Delta = delta;
+        (void)InjectMouseScrollAxes(delta, 0.0f);
+    }
+    bool InputSystem::InjectMouseScrollAxes(float vertical, float horizontal)
+    {
+        if (!m_State.AddMouseScrollAxes(vertical, horizontal)) return false;
+        MouseScrollEvent event{vertical, horizontal};
         m_OnMouseScrollEvent.Broadcast(event);
-
-        // 優先度付きルーターへ配送（登録 Controller がいなければ空振り）
-        if (m_Router)
+        if (m_Router) m_Router->DispatchMouseScroll(event);
+        return true;
+    }
+    bool InputSystem::InjectRawMouseDelta(float x, float y)
+    {
+        if (!m_State.AddRawMouseDelta(x, y)) return false;
+        MouseRawMoveEvent event{x, y};
+        m_OnMouseRawMoveEvent.Broadcast(event);
+        if (m_Router) m_Router->DispatchMouseRawMove(event);
+        return true;
+    }
+    bool InputSystem::InjectGamepadState(uint8_t slot, const GamepadState& state)
+    {
+        const auto previous = m_State.GetGamepadState(slot);
+        if (!m_State.SetGamepadState(slot, state)) return false;
+        if (previous.Connected != state.Connected)
         {
-            m_Router->DispatchMouseScroll(event);
+            // 切断取消しは通常release（tap完了）より先に必ず届く。
+            GamepadConnectionEvent event{slot, state.Connected};
+            m_OnGamepadConnectionEvent.Broadcast(event);
+            if (m_Router) m_Router->NotifyGamepadConnection(event);
         }
+        const uint16_t pressed = static_cast<uint16_t>(state.Buttons & ~previous.Buttons);
+        const uint16_t released = static_cast<uint16_t>(previous.Buttons & ~state.Buttons);
+        // A→B持替えで同じactionを離した扱いにしないため、新押下を先に配送。
+        for (const auto action : {InputAction::Pressed, InputAction::Released})
+        {
+            const uint16_t mask = action == InputAction::Pressed ? pressed : released;
+            for (uint32_t bit=0; bit<16; ++bit)
+            {
+                if ((mask & (1u << bit)) == 0) continue;
+                GamepadButtonEvent event{slot, static_cast<GamepadButton>(1u << bit), action};
+                m_OnGamepadButtonEvent.Broadcast(event);
+                if (m_Router) m_Router->DispatchGamepadButton(event);
+            }
+        }
+        return true;
+    }
+    void InputSystem::ReleaseAll()
+    {
+        m_State.ReleaseAll();
+        m_OnInputResetEvent.Broadcast();
+        if (m_Router) m_Router->NotifyInputReset();
     }
 
     void InputSystem::InjectCharEvent(uint32_t codepoint)

@@ -14,6 +14,8 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER InputBindingTypesTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputBindingTypesTest.cpp
     MEMBER GamepadInputStateTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/GamepadInputStateTest.cpp
     MEMBER InputActionSettingsTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputActionSettingsTest.cpp
+    MEMBER RawInputStateTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/RawInputStateTest.cpp
+    MEMBER InputRoutingExtensionTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputRoutingExtensionTest.cpp
     MEMBER InputActionRuntimeTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputActionRuntimeTest.cpp
     MEMBER InputBindingSetTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputBindingSetTest.cpp
     MEMBER ModuleRegistryTest ${CMAKE_SOURCE_DIR}/Test/Core/Module/ModuleRegistryTest.cpp

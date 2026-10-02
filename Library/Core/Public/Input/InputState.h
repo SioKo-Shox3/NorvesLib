@@ -134,6 +134,9 @@ namespace NorvesLib::Core::Input
          * @brief マウススクロールを加算
          */
         void AddMouseScroll(float delta);
+        // 両成分を検証後に一括加算。非finite/float範囲外では正本を変えない。
+        bool AddMouseScrollAxes(float vertical, float horizontal);
+        bool AddRawMouseDelta(float x, float y);
 
         /**
          * @brief スクロールデルタをリセット

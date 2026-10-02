@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Input/InputTypes.h"
+#include "Input/GamepadTypes.h"
 
 namespace NorvesLib::Core::Input
 {
@@ -71,6 +72,12 @@ namespace NorvesLib::Core::Input
          * @brief デバッグ用のコントローラ名
          */
         virtual const char *DebugName() const = 0;
+
+        virtual bool OnMouseRawMove(const MouseRawMoveEvent&) { return false; }
+        virtual bool OnGamepadButton(const GamepadButtonEvent&) { return false; }
+        // 解除/接続は状態整合性の通知。UIがconsumeして下位の解除を止めることはできない。
+        virtual void OnGamepadConnection(const GamepadConnectionEvent&) {}
+        virtual void OnInputReset() {}
     };
 
 } // namespace NorvesLib::Core::Input
