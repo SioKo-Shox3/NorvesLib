@@ -28,6 +28,12 @@
 # -Rtgi Off で起動画面の RTGI を切り（環境変数 NORVES_STARTUP_RTGI=0）、環境光（IBL）だけで撮る。
 # -CompareNoiseWith に別の撮影（例: -Rtgi Off）の出力先を与えると、視点・領域ごとに表示の標準偏差の比
 # （今回/比べる側）を求め、どれかが -NoiseRatioLimit（既定2）を超えたら失敗にする。
+# -GpuTimingFrames を与えると、Game を --trace-file 付きで起動し、落ち着いてからその描画フレーム数の後に撮る。
+# トレースの各フレームの GPUFrameMs（GPU のタイムスタンプで測ったフレームの区間。加速構造の構築を除く
+# RenderGraph の全パスと表示への書き出し）のうち、最後の (-GpuTimingFrames − 60) フレーム（撮影の
+# フレームの直前2つを除く）の中央値・95 パーセンタイル・最大を gpu_timing として metrics.json へ書く。
+# タイムスタンプは統計が有効な構成（Debug・RelWithDebInfo）だけで取れるため、Release とは併用しない。
+# 予算（-GpuFrameBudgetMs、既定 16.6 ms）を超えても失敗にはせず within_budget=false と書く。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -68,7 +74,13 @@ param(
     # 時間方向の雑音を比べる別の撮影の出力先（metrics.json のあるディレクトリ）。
     [string]$CompareNoiseWith = '',
     [ValidateRange(1.0, 100.0)]
-    [double]$NoiseRatioLimit = 2.0
+    [double]$NoiseRatioLimit = 2.0,
+    # GPU のフレーム時間を測るときの、落ち着いてから撮るまでの描画フレーム数（0 で測らない）。
+    [ValidateRange(0, 100000)]
+    [int]$GpuTimingFrames = 0,
+    # GPU のフレーム時間の予算（ms）。超えても失敗にはせず、metrics.json に within_budget として書く。
+    [ValidateRange(0.1, 1000.0)]
+    [double]$GpuFrameBudgetMs = 16.6
 )
 
 $ErrorActionPreference = 'Stop'
@@ -130,6 +142,21 @@ $stillFrameList = ConvertTo-NumberList $StillRenderedFrames 1.0 100000.0 'still_
 if ($stillFrameList.Count -gt 0 -and $OrbitDegreesPerSecond -ne 0.0)
 {
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=still_frames_with_orbit（-StillRenderedFrames は -OrbitDegreesPerSecond と併用しない）"
+    exit 1
+}
+if ($GpuTimingFrames -gt 0 -and ($stillFrameList.Count -gt 0 -or $OrbitDegreesPerSecond -ne 0.0))
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=gpu_timing_with_sequence（-GpuTimingFrames は -StillRenderedFrames・-OrbitDegreesPerSecond と併用しない）"
+    exit 1
+}
+if ($GpuTimingFrames -gt 0 -and $GpuTimingFrames -lt 100)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=gpu_timing_frames_too_few（-GpuTimingFrames は100以上）"
+    exit 1
+}
+if ($GpuTimingFrames -gt 0 -and $Configuration -eq 'Release')
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=gpu_timing_without_stats（Release は統計が無効で GPU のタイムスタンプを取れない。-Configuration RelWithDebInfo で測る）"
     exit 1
 }
 if ($stillFrameList.Count -eq 1)
@@ -394,6 +421,7 @@ New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 $failures = @()
 $results = @()
 $temporalNoise = @()
+$gpuTiming = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
 foreach ($view in $shots)
 {
@@ -475,6 +503,13 @@ foreach ($view in $shots)
     if ($DebugDrawTestLines)
     {
         $arguments += '--debug-draw-test-lines'
+    }
+    $tracePath = Join-Path $outRoot "$($view.Name).trace.csv"
+    if ($GpuTimingFrames -gt 0)
+    {
+        Remove-Item -LiteralPath $tracePath -Force -ErrorAction SilentlyContinue
+        $arguments += "--trace-file=`"$tracePath`""
+        $arguments += "--exit-after-rendered-frames=$GpuTimingFrames"
     }
 
     # RTGI を切るときは環境変数で起動画面へ伝える（起動した Game だけが受け継ぐよう、起動の直後に戻す）。
@@ -585,6 +620,52 @@ foreach ($view in $shots)
             $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio, $result.indirect_lighting)
     }
 
+    # トレースの最後のフレームから GPU のフレーム時間を集計する（撮影のフレームの直前2つは除く）。
+    if ($GpuTimingFrames -gt 0)
+    {
+        if (-not (Test-Path -LiteralPath $tracePath))
+        {
+            $failures += "$($view.Name): トレースが無い（$tracePath）"
+        }
+        else
+        {
+            $frameRows = @(Import-Csv -LiteralPath $tracePath | Where-Object { $_.Type -eq 'Frame' })
+            $windowCount = $GpuTimingFrames - 60
+            $usableRows = if ($frameRows.Count -gt 2) { @($frameRows[0..($frameRows.Count - 3)]) } else { @() }
+            $windowRows = if ($usableRows.Count -gt $windowCount) { @($usableRows[($usableRows.Count - $windowCount)..($usableRows.Count - 1)]) } else { $usableRows }
+            $gpuSamples = @($windowRows | ForEach-Object { [double]::Parse($_.GPUFrameMs, $invariant) } | Where-Object { $_ -gt 0.0 } | Sort-Object)
+            $cpuSamples = @($windowRows | ForEach-Object { [double]::Parse($_.CPUFrameMs, $invariant) } | Where-Object { $_ -gt 0.0 } | Sort-Object)
+            if ($gpuSamples.Count -lt [math]::Min(50, $windowCount))
+            {
+                $failures += "$($view.Name): GPU のフレーム時間の標本が足りない（$($gpuSamples.Count) 件。統計が無効な構成か、GPU のタイムスタンプが使えない）"
+            }
+            else
+            {
+                $median = $gpuSamples[[int][math]::Floor(($gpuSamples.Count - 1) * 0.5)]
+                $p95 = $gpuSamples[[int][math]::Floor(($gpuSamples.Count - 1) * 0.95)]
+                $maximum = $gpuSamples[$gpuSamples.Count - 1]
+                $mean = ($gpuSamples | Measure-Object -Average).Average
+                $cpuMedian = if ($cpuSamples.Count -gt 0) { $cpuSamples[[int][math]::Floor(($cpuSamples.Count - 1) * 0.5)] } else { $null }
+                $timing = [ordered]@{
+                    view = $view.Name
+                    trace = "$($view.Name).trace.csv"
+                    frames = $gpuSamples.Count
+                    gpu_frame_ms_median = [math]::Round($median, 3)
+                    gpu_frame_ms_mean = [math]::Round($mean, 3)
+                    gpu_frame_ms_p95 = [math]::Round($p95, 3)
+                    gpu_frame_ms_max = [math]::Round($maximum, 3)
+                    cpu_frame_ms_median = if ($null -ne $cpuMedian) { [math]::Round($cpuMedian, 3) } else { $null }
+                    budget_ms = $GpuFrameBudgetMs
+                    within_budget = ($p95 -le $GpuFrameBudgetMs)
+                }
+                $gpuTiming += [pscustomobject]$timing
+                Write-Output ("CAPTURE_STARTUP_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} budget_ms={7} within_budget={8}" -f `
+                    $timing.view, $timing.frames, $timing.gpu_frame_ms_median, $timing.gpu_frame_ms_mean, $timing.gpu_frame_ms_p95,
+                    $timing.gpu_frame_ms_max, $timing.cpu_frame_ms_median, $timing.budget_ms, $timing.within_budget)
+            }
+        }
+    }
+
     # カメラを止めて続けて撮ったときは、静止した地面の領域で画素の時間方向の標準偏差を求める。
     if ($stillFrameList.Count -gt 0)
     {
@@ -676,6 +757,8 @@ $metrics = [ordered]@{
     compare_noise_with = $CompareNoiseWith
     noise_ratio_limit = $NoiseRatioLimit
     noise_comparison = $noiseComparison
+    gpu_timing_frames = $GpuTimingFrames
+    gpu_timing = $gpuTiming
     failures = $failures
 }
 [IO.File]::WriteAllText($metricsPath, ($metrics | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
