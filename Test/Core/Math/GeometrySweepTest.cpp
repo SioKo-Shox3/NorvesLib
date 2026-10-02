@@ -1,4 +1,7 @@
 ﻿#include "Math/GeometryIntersection.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -29,6 +32,40 @@ namespace
         result.Center = center;
         result.HalfExtents = extent;
         return result;
+    }
+
+    void CheckCapsuleAcceptance()
+    {
+        const Vector3 outward(-1.0f, 0.0f, 0.0f);
+        const OBB box = BoxAt(Vector3(3.0f, 0.0f, 0.0f), Vector3(1.0f));
+        const Capsule face(Vector3(0.0f, -0.5f, 0.0f), Vector3(0.0f, 0.5f, 0.0f), 0.5f);
+        const Capsule edge(Vector3(0.0f, -0.5f, 1.3f), Vector3(0.0f, 0.5f, 1.3f), 0.5f);
+        const Capsule corner(Vector3(0.0f, 1.3f, 1.3f), Vector3(0.0f, 2.3f, 1.3f), 0.5f);
+        // 面は半径、辺/角は半径断面の直角三角形から距離と外向き法線を求める。
+        HitAt(SweepCapsule(face, box, Vector3::UnitX, 5.0f), 1.5f, outward);
+        HitAt(SweepCapsule(edge, box, Vector3::UnitX, 5.0f), 1.6f, Vector3(-0.8f, 0.0f, 0.6f));
+        const float cornerOffset = std::sqrt(0.07f);
+        HitAt(SweepCapsule(corner, box, Vector3::UnitX, 5.0f), 2.0f-cornerOffset,
+            Vector3(-2.0f*cornerOffset, 0.6f, 0.6f));
+        const Capsule horizontal(Vector3(-0.5f, 0.0f, 0.0f), Vector3(0.5f, 0.0f, 0.0f), 0.5f);
+        HitAt(SweepCapsule(horizontal, box, Vector3::UnitX, 5.0f), 1.0f, outward);
+        const Capsule target(Vector3(3.0f, -1.0f, 0.0f), Vector3(3.0f, 1.0f, 0.0f), 0.5f);
+        HitAt(SweepCapsule(face, target, Vector3::UnitX, 5.0f), 2.0f, outward);
+        // 初期接触も初期重なりとして通知する。内側中心の対称ケースは-Xを選ぶ。
+        for (const float x : {1.5f, 1.75f, 3.0f})
+        {
+            const Capsule initial(Vector3(x, -0.5f, 0.0f), Vector3(x, 0.5f, 0.0f), 0.5f);
+            const auto hit = SweepCapsule(initial, box, Vector3::UnitX, 5.0f);
+            HitAt(hit, 0.0f, outward);
+            assert(hit.bStartPenetrating && Near(hit.Depth, x-1.5f));
+            const auto stationary = SweepCapsule(initial, box, Vector3(0.0f), 0.0f);
+            HitAt(stationary, 0.0f, outward);
+            assert(stationary.bStartPenetrating && Near(stationary.Depth, hit.Depth));
+            GeometrySweepSettings ignored;
+            ignored.bReportStartOverlap = false;
+            assert(SweepCapsule(initial, box, Vector3::UnitX, 5.0f, ignored).Result == EGeometrySweepResult::NoHit);
+        }
+        std::cout << "capsule_face_edge_corner_rotation_initial passed\n";
     }
 
     template<typename Target>
@@ -119,6 +156,7 @@ namespace
 
 int main()
 {
+    CheckCapsuleAcceptance();
     const Vector3 right(1.0f, 0.0f, 0.0f);
     const Sphere sphere(Vector3(0.0f), 0.5f);
     const OBB box = BoxAt(Vector3(5.0f, 0.0f, 0.0f));

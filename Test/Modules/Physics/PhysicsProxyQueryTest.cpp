@@ -40,10 +40,64 @@ namespace
         proxy.Capsule = Capsule(Vector3(5.0f, -0.5f, 0.0f), Vector3(5.0f, 0.5f, 0.0f), 0.5f);
         return proxy;
     }
+    void CheckCapsuleDepthAcceptance()
+    {
+        PhysicsShapeProxy target;
+        target.Shape = EPhysicsProxyShape::Box;
+        target.Box = OBB(Vector3(3.0f, 0.0f, 0.0f), Vector3(1.0f), Vector3::UnitX, Vector3::UnitY, Vector3::UnitZ);
+        target.Collider = {71, 3};
+        PhysicsQueryDesc query;
+        query.Direction = Vector3::UnitX;
+        query.MaxDistance = 5.0f;
+        for (const float x : {1.5f, 1.75f, 3.0f})
+        {
+            query.Capsule = Capsule(Vector3(x, -0.5f, 0.0f), Vector3(x, 0.5f, 0.0f), 0.5f);
+            query.Kind = EPhysicsQueryKind::OverlapCapsule;
+            PhysicsQueryHit overlap;
+            assert(PhysicsBroadphase::QueryProxy(target, query, overlap) == EPhysicsSceneQueryResult::Success);
+            assert(overlap.Collider == target.Collider && Near(overlap.Depth, x-1.5f));
+            assert(Near(overlap.Normal.x, -1.0f) && Near(overlap.Normal.y, 0.0f) && Near(overlap.Normal.z, 0.0f));
+            query.Kind = EPhysicsQueryKind::SweepCapsule;
+            PhysicsQueryHit sweep;
+            assert(PhysicsBroadphase::QueryProxy(target, query, sweep) == EPhysicsSceneQueryResult::Success);
+            assert(sweep.Distance == 0.0f && sweep.bStartPenetrating && Near(sweep.Depth, overlap.Depth));
+            assert(sweep.Normal == overlap.Normal);
+            PhysicsQueryHit aggregated[1];
+            size_t count = 0;
+            assert(PhysicsBroadphase::ExecuteQueryOverProxies({&target, 1}, query, aggregated, count) == EPhysicsSceneQueryResult::Success);
+            assert(count == 1 && aggregated[0].bStartPenetrating && Near(aggregated[0].Depth, overlap.Depth));
+            query.bReportStartOverlap = false;
+            assert(PhysicsBroadphase::QueryProxy(target, query, sweep) == EPhysicsSceneQueryResult::NoHit);
+            CheckDefault(sweep);
+            query.bReportStartOverlap = true;
+        }
+        // 球とカプセルへの初期侵入でも、深さと外向き-Xの符号を個別に固定する。
+        query.Capsule = Capsule(Vector3(2.25f, -0.5f, 0.0f), Vector3(2.25f, 0.5f, 0.0f), 0.5f);
+        for (const auto shape : {EPhysicsProxyShape::Sphere, EPhysicsProxyShape::Capsule})
+        {
+            target.Shape = shape;
+            target.Sphere = Sphere(Vector3(3.0f, 0.0f, 0.0f), 0.5f);
+            target.Capsule = Capsule(Vector3(3.0f, -1.0f, 0.0f), Vector3(3.0f, 1.0f, 0.0f), 0.5f);
+            for (const auto kind : {EPhysicsQueryKind::OverlapCapsule, EPhysicsQueryKind::SweepCapsule})
+            {
+                query.Kind = kind;
+                PhysicsQueryHit hit;
+                assert(PhysicsBroadphase::QueryProxy(target, query, hit) == EPhysicsSceneQueryResult::Success);
+                assert(Near(hit.Depth, 0.25f) && Near(hit.Normal.x, -1.0f));
+                assert(Near(hit.Normal.y, 0.0f) && Near(hit.Normal.z, 0.0f));
+                if (kind == EPhysicsQueryKind::SweepCapsule)
+                {
+                    assert(hit.Distance == 0.0f && hit.bStartPenetrating);
+                }
+            }
+        }
+        std::cout << "capsule_overlap_depth_outward_initial passed\n";
+    }
 }
 
 int main()
 {
+    CheckCapsuleDepthAcceptance();
     PhysicsQueryDesc query;
     query.Ray = Ray(Vector3(0.0f), Vector3(7.0f, 0.0f, 0.0f));
     query.MaxDistance = 10.0f;

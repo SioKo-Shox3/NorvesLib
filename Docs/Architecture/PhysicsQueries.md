@@ -68,3 +68,11 @@
 - productionで使うspan版adapterをstack bufferで実行し、混在4,000件を新旧4種類の全field/順序で比較する。旧Overlapの符号・同距離・不足buffer/失敗clearも確認する。実Module/所有配列の統合試験は追加するが、Windows.h依存で実行未確認と区別する
 
 - 旧4入口は従来の無filter検索を維持し、Layer=0も返す。新APIのLayerMaskはbit集合を選ぶためLayer=0を除外する。この差は既定Layerでの新旧一致試験と分けて4種の回帰に固定する。内部kernelのfilter適用だけを切り替え、形状やproxy値は書き換えない
+
+## G1のCapsule受入れと押出しの値契約
+- SweepCapsuleは姿勢を変えずに線分＋半径を平行移動する。Boxの面・辺・角、横向きCapsule、Capsule同士の距離と外向き法線を解析値で検証する。回転中の連続衝突判定ではない
+- 新OverlapCapsuleのDepthは非負の接触深さ、Normalは対象からqueryを押し出す向き。旧OverlapCapsuleのContact.Normalは逆向きなので、旧結果からquery側へ補正を与える場合は -Contact.Normal * Depth と読む
+- Sweepの初期接触/重なりを報告するときはDistance=0、bStartPenetrating=true、Depthはその時点の接触深さ。接触だけならDepth=0でもflagはtrueになる。bReportStartOverlap=falseはその対象の初期重なりをNoHitにする。OverlapのbStartPenetratingは掃引専用flagなので設定しない
+- 垂直Capsule対Boxの面への0.25侵入、接触0、対称な内部配置1.5、および対Sphere/Capsuleの0.25侵入で深さと法線符号を固定する。対称配置は複数の押出し方向が成立し、既存規則で-Xを選ぶ
+- 特に線分がBox内部を横切る深い重なりのDepthは既存接触計算の近似を引き継ぐ。任意の姿勢/複合接触に対しNormal*Depthの一度の適用で完全分離する最小並進ベクトルは保証しない。後続GR07の移動処理は複数接触と反復補正を扱い、未収束を確定hitへ変えない
+- 純Mathと実Physics query kernelのCPU試験でこの契約を確認する。実World/Module/Windows統合の受入れとは区別する

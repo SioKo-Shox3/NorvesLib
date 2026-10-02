@@ -414,3 +414,6 @@
 
 - G1-GR08-P4E: 旧Raycast/Overlap3種のModule/Broadphase入口を共通query kernelへ統一し、旧hit識別値/Point/Depth/順序とOverlap法線反転、直接Broadphaseの成功時追記を保持。旧無filter契約ではLayer0も検索し、新APIのbitmaskとは区別する。4,000固定seed全field比較・Layer0の4種類・失敗clear/容量/同距離を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBERで実行成功、Pruning7,000件も成功。独立第2周PASS、実Module/所有配列の統合試験は追加済みだがWindows.h依存でcompile/実行未確認。
 - Next: G1／GR08のCapsule面・辺・角・回転・初期侵入とOverlap深さの明示受入れを固定し、共通曲線と更新契約へ進む。
+
+- G1-GR08-CAPSULE-ACCEPTANCE: 縦Capsule対Boxの面/辺/角、横向きCapsuleとCapsule同士を解析距離/法線で固定。初期接触0・侵入0.25・対称内部1.5のDepth/外向きNormal/Distance0/start印とignoreをMath・実query集約で確認し、新旧符号と深い重なりの近似限界を文書化。通常/O2-NDEBUG（assert有効）/ASan・UBSan（LeakSanitizer除外）/MEMBERと既存10,000件oracle成功。独立レビューPASS、45度回転/端点反転/辺角Depth/反対側押出し/直交Capsuleの追加反証も成功。production変更なし、Windows/World/Module統合未検証。
+- Next: G1／GR03・GR04の最小Math/Curves共通化とGR01更新/pause/camera契約を閉じる。

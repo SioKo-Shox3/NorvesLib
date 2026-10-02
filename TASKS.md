@@ -1704,7 +1704,7 @@
 - notes: 原文Roadmapの段階横断注意G1/GR01。camera最終確定は承認S3=OnLateUpdateと実順序を正確に説明する。
 
 ## G1-GR08-CAPSULE-ACCEPTANCE: 後続移動処理向けのカプセル境界試験を固定する
-- status: todo
+- status: done
 - done-when: 縦Capsuleの箱面/辺/角、Capsule同士/回転、開始重なりDistance0/印/押出しNormal、OverlapCapsuleのDepth/Normalを解析例で固定し契約を文書化する。
 - verify: 実GeometrySweep/SeparationとPhysicsProxyQueryのCPU試験を通常/最適化/sanitizer/MEMBERで実行し独立レビュー。
 - stop-when: 正常ケースを緩めて既存実装へ合わせる、未収束を確定hitと扱う、法線符号/深さ規約の曖昧化。
