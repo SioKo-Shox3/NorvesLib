@@ -208,7 +208,8 @@
 - notes: 危険地帯（RenderThread）。評価者を通す。
 
 ## SS-GTAO: SSAOをGTAOに置き換える
-- status: todo
+- status: done
+- result: 2026-10-02。`gtao.frag`（2スライス×片側4段、半径1 m、外側61.5%で重みを0へ、画面上の上限128画素）と`gtao_denoise.frag`（4×4の深度考慮の平均）で旧SSAO（半球32サンプル）を置き換えた。TAAのジッタがあるときは雑音の並びをフレームごとにずらして履歴で蓄積する。多重反射の近似は`lighting.frag`の拡散の環境光に掛ける。Cornellの部屋（`RenderingGTAOCornellRoomVulkanTest`）で壁・天井・床の中ほど0.97〜1.00、隅・接地部0.77〜0.81。Outdoor goldenは1 LSBの差で再承認（`R1Acceptance.md`）。起動画面の撮影は`.harness/runs/startup-capture/SS-GTAO/`。
 - done-when: 地平線ベースのAO（GTAO。画素ごとに2方向×数段、空間の雑音除去、TAAがあれば時間方向にも蓄積）が今のSSAO（半球32サンプル）を置き換え、多重反射の近似で明るい面の遮蔽を弱める。半径は世界の長さ（m）で指定する。撮影で、球・岩・小屋と地面の接地部、小屋の軒下に自然な遮蔽が見え、部屋の大きさの遮蔽で壁全体が黒くならない（Indoorの検証シーンで確かめる）。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
@@ -900,6 +901,7 @@
 - stop-when: 承認済みgoldenが変わる場合は基準の更新を提案して止まる。
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: R6-P7で発見。RTGIには`81bbf24`でSSAOを掛けないようにしたが、IBL fallbackは引き続きSSAOを掛ける。
+- result: SS-GTAO（2026-10-02）で置き換わった。原因は旧SSAOがワールド空間の法線をビュー空間の標本へそのまま使い、開けた面も遮蔽に数えていたこと。GTAOはビュー空間の地平線で余弦重みの可視率を求め、半径1 mの外の面を数えないので、Cornellの壁の中ほどの可視率は0.97〜1.00（`RenderingGTAOCornellRoomVulkanTest`）。statusは人の確認のためbacklogのまま。
 
 ## TEST-R6-RESIDUAL-TIMING: R6停止残留の判定が起動の早さで変わる原因を直す
 - status: done
@@ -1093,6 +1095,14 @@
 - stop-when: MegaGeometryを影に描くかの判断が要る場合はユーザーへ戻す。
 - paths: Library/Core/Private/Rendering, Test/Core/Rendering
 - notes: `382489f`の評価のnon-blocking指摘。過大収集で深度範囲とPCSSの探索半径が広がるだけで、影は欠けない。
+
+## FIX-MEGAGEOMETRY-RECORD-TEST: RenderGraphCompileTestのMegaGeometryの記録の検査が落ちる原因を直す
+- status: backlog
+- done-when: `RenderGraphCompileTest`の`MegaGeometryPass::RecordFrameCommand`の検査（2つのMegaMeshを1回のRenderPassで2回描く）が通り、テスト全体が最後まで走る。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RenderGraphCompileTest$"`
+- stop-when: 検査の期待値そのものを変える必要がある場合は理由を記録する。
+- paths: Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: SS-GTAOの反復（2026-10-02）で見つけた。`RenderGraphCompileTest.cpp:2620`の`BeginRenderPassCount == 1`で止まり、後ろのSSAO・Lightingの検査まで届かない。MegaGeometryの最後の変更は`f63b2fd`（SS-EMISSIVE-PREEXPOSE）で、`RecordFrameCommand`がパイプラインの未準備で早く戻っている可能性がある。
 
 ## TEST-FULL-CTEST-BASELINE: 全体CTestの既存の失敗を直す
 - status: backlog
