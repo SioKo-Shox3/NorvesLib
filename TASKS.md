@@ -166,8 +166,8 @@
 - notes: SS-EMISSIVE-GLOW の停止理由（`blocked/SS-EMISSIVE-GLOW.md`）の推奨1。2026-09-30 に採った。今は発光を物理の nits のまま `GBuffer_Emissive`（R16G16B16A16_FLOAT、上限65504）へ書くため、色(1,0.9,0.3)で約57000 nitsを超えると無限大になり発光が消える。危険地帯（GBuffer・ライティング・露出）。評価者を通す。
 
 ## SS-EMISSIVE-GLOW: 起動画面の発光球をブルームでにじむ明るさにする
-- status: blocked
-- done-when: 起動画面の発光球の輝度（今は1800 nits）を、昼・夕の自動露出で画面の平均輝度に対して十分に明るく（目安: 撮影の夕で周りの背景の30倍以上）なる物理的な値にし、撮影の昼と夕で発光球の周りに柔らかいにじみが見える。ブルームの既定（しきい値なし・0.04）は変えない。
+- status: done
+- done-when: 起動画面の発光球の輝度（今は1800 nits）を、昼・夕の自動露出で画面の平均輝度に対して十分に明るく（目安: 撮影の夕で周りの背景の30倍以上）なる物理的な値にし、撮影の夕で発光球の周りに柔らかいにじみが見える。昼は発光球が背景より明るく見え、白飛び・露出の悪化が無い（真昼の屋外では電球はほとんどにじまないので、昼のにじみは求めない）。ブルームの既定（しきい値なし・0.04）は変えない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-EMISSIVE-GLOW -SunElevations 45,3`
 - stop-when: 発光球が白飛びの割合の基準（2%）を超える、または露出が発光球に引っ張られて画面が暗くなる場合は止めて記録する。
@@ -175,6 +175,7 @@
 - notes: SS-BLOOM-MIPCHAINで分かった。夕の自動露出（EV100 約11.1）では発光球はプリエクスポージャ後 約0.7で画面の平均の約4倍しかなく、しきい値なし0.04の補間ではにじみが縁の外5 pxで数%にとどまり見えない。
 - notes: 反復15で発光球を45000 nitsにし、夕はにじむ（背景の約70倍）。昼はプリエクスポージャ後 約1.5でにじまない。GBufferの発光がRGBA16Fの物理nitsのため 約57000 nitsが上限で、昼に要る 約150000 nitsに届かない（blocked/SS-EMISSIVE-GLOW.md）。
 - notes: 2026-09-30 再開。SS-EMISSIVE-PREEXPOSE で上限を外した後、発光球を物理的にありうる輝度（つや消しの電球の表面 約1〜1.5×10^5 nits の範囲）へ上げて昼・夕を撮り直す。値と根拠をコミット本文に書く。
+- notes: 2026-10-02 完了。`85f5c6e` で150000 nits（内面つや消し電球の表面 約15 cd/cm²）。夕は場面の幾何平均の約500倍で縁の外66 pxまで柔らかくにじみ、昼は約22倍でにじみは縁の外6 px（`startup-capture/SS-EMISSIVE-GLOW/before-after-default-sun3-x3.png`・`-sun45-x3.png` を開いて確かめた）。露出は発光球に引っ張られず（平均輝度 178.6→178.5）、白飛び率は最大0.00034。昼のにじみは物理的な値とブルームの既定を保ったままでは出ないため、`blocked/SS-EMISSIVE-GLOW.md` の推奨1で完了条件から外した（600000 nitsでも昼は縁の外26 pxの淡い輪）。
 
 ## FIX-CAPTURE-SUN-AZIMUTH: 撮影スクリプトの -SunAzimuth が null のメソッド呼び出しで落ちる
 - status: done
@@ -273,13 +274,29 @@
 - stop-when: 雑音の基準を満たすのにRTGIの光線数を増やしてフレーム時間が2倍を超える場合は、既定にせず、測った値を既知の限界として記録して完了にする。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game/GameModes/Rendering3DTest, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 危険地帯（RTGI・RenderThread）。評価者を通す。
+- notes: 2026-10-02 の反復（run 20261002-084328 の#20）は60分の壁時計で止められ、途中の変更は `b40ce35`（未検証の途中保存。行末は `d3172d6` で元へ戻した）に入っている。中身: RTGIの静止判定を位置と拡大率で見る（球の自転で毎フレーム履歴が捨てられていた）、露出が変わったときに履歴へ比を掛け直す、小屋・岩（MegaGeometry）のLOD0をレイトレのシーンへ入れる、起動画面でRTGIを既定で有効（`NORVES_STARTUP_RTGI=0` で無効）、切り替わりのときだけのログ、撮影スクリプトの静止16フレームの時間方向の雑音の測定。残っていたのは、地面の領域で履歴が棄却される原因（法線・材質の比較）の切り分けと、低角度の手前の石の目地に沿った雑音。まず `b40ce35` の差分を読み、ビルドと撮影で今の状態を測ってから続ける。
+
+## SS-LOOK-BALANCE: 起動画面の露出とトーンの釣り合いを朝・昼・夕・夜で取り直す
+- status: todo
+- done-when: 起動画面のカメラだけで（検証シーンのカメラの既定のトーンマップ・露出・グレーディングは変えず、goldenは変わらない）、撮影（朝10°・昼45°・夕3°・夜 × 既定・近接・低角度）が次を満たす。(1) 画面全体の平均（`metrics.json` の平均輝度、0〜255）が 昼105〜140・朝95〜135・夕75〜120・夜25〜80。(2) 白飛び画素率1%未満（太陽・発光球を含めて）、黒つぶれ画素率は夜以外で2%未満。(3) 昼の影の中の比（SS-DAYLIGHT-P1 と同じ領域・表示のリニア輝度の比）が15〜40%。(4) 昼の画面上端の帯（y<60）の平均が青（sRGBの符号値で B − R ≥ 40）。(5) 夕の日向の地面の平均色が橙〜黄（R > G > B）で、桃・紫（B ≥ G）に寄らない。(6) 夜は背景が夜に見え（静的HDRの昼の写真がそのまま明るく写らない。画面上端の帯の平均が40/255未満）、点光源の光だまりが周りより明るく、その中で球・岩の影が見える。昼・夕・夜の既定視点で、変更前（このタスクの着手時）と変更後を並べた画像を残す。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-LOOK-BALANCE -SunElevations 10,45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-LOOK-BALANCE-night -Night`
+- stop-when: すべての範囲を同時に満たす値の組が見つからない場合は、最も近い組と各値の測定値を既知の限界として記録して完了にする。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Component, Library/Core/Private/Component, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-02 の親の確認で分かった。SS-DAYLIGHT-P1 の対応で起動画面の自動露出に一律の+2 EVの露出補正（`8b80473`）を掛けた結果、影の比は満たしたが画面全体の平均が約180/255になり、昼は白っぽく飛んで眠く、夕は桃色がかり、夜は背景の静的HDR（昼の芝生と木の写真）と地面が真っ白に写って夜に見えない（`startup-capture/SS-GRADING-LUT/default-sun45.png`・`default-sun3.png`、`SS-CONTACT-SHADOW-night/default-night.png`）。個々の項目の完了条件は満たしていたが、画面全体の釣り合いを見る条件が無かった。
+- notes: やり方の目安: 一律の+2 EVをやめるか小さくし、暗部を縮めにくいトーンカーブ（例: Khronos PBR Neutral や AgX をトーンマップの選択肢に足してカメラごとに選べるようにする、または既存の `Aces20Lut`）と組み合わせる。夜は自動露出が昼並みの明るさへ戻しきらないようにする（明るさに応じた露出補正、または目標の範囲）。夜の背景は昼の写真を出さない（夜の空の色にする等）。SS-POST-TUNE・SS-GRADING-LUT・高さフォグの値は、ほかの値を変えた後に撮り比べ、必要なら合わせ直す。危険地帯（トーンマップ・露出・FramePacketのカメラ）。評価者を通す。
 
 ## SS-ACCEPT: 起動画面の改善を受け入れる
 - status: todo
 - done-when: 朝・昼・夕 × 既定・近接・低角度の撮影一式と、変更前（`163ffe5`）の同じ視点の撮影を並べた記録（`Docs/RenderingValidation/StartupSceneAcceptance.md`、画像は `.harness/runs/` への参照）がある。Releaseの構成で起動画面の1フレームの時間（GPU）を測り、1280×720で16.6 ms以下であることを記録する（超える場合はパスごとの内訳と、どれを軽くすれば収まるかを記録する）。夜（`-Night`）の撮影も並べる。評価者が、各項目の完了条件と撮影を開いて反証を試みる。
 - verify: `cmake --build build --config Release --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT -SunElevations 10,45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT-night -Night`
 - stop-when: フレーム時間の予算を超える場合は、内訳と軽くする案を既知の限界として記録して完了にする（ユーザーへの報告に含める）。
+- notes: 受け入れの撮影は、SS-LOOK-BALANCE の数値の範囲（画面の平均・白飛び・黒つぶれ・影の比・空の青・夕の色・夜の背景）も満たしているかを並べて記録する。
 - paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 区切り。評価者を通す。
 

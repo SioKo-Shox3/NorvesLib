@@ -124,6 +124,7 @@
 ## In progress
 
 - 再開（2026-09-30）: 2026-09-27の引き継ぎ後の進捗は`a8588cc`（PROGRESS.md・TASKS.mdのBOMの除去とSS-TAA-P1をdoingへ戻す変更）だけで、コードの変更は無かった。BOMを戻した。SS-TAA-P1は`7461c3e`（未検証の途中保存）から続ける。下の止めていた4項目は各`blocked/<ID>.md`の推奨の選択肢で再開し、TASKS.mdにSS-SKY-MODEL-P1・P2とSS-EMISSIVE-PREEXPOSEを足した（ユーザーの方針: 細かな判断で止めず推奨で完走する）。
+- 親の確認（2026-10-02）: SS-EMISSIVE-GLOW は`blocked/SS-EMISSIVE-GLOW.md`の推奨1（昼のにじみを完了条件から外す）で完了にした。途中保存`64b65be`・`b40ce35`で全体が書き換わった行末を`d3172d6`で元へ戻した。最新の撮影（`startup-capture/SS-GRADING-LUT/`・`SS-CONTACT-SHADOW-night/`）で、起動画面の一律の+2 EVの露出補正（`8b80473`）により画面の平均が約180/255になり、昼は白っぽく飛び、夕は桃色がかり、夜は背景の昼の写真と地面が真っ白に写ると分かったため、SS-LOOK-BALANCE を足した（SS-RTGI-DEFAULT の後、SS-ACCEPT の前）。
 
 - SS-POINT-SHADOW-P2（2026-10-02、done）: 点光源の影の適用（`20babbe`、`Common/PointShadow.glsl`の4×4 PCFと法線方向のずらし。`lighting.frag`・`forward_transparent.frag`がキューブの番号を持つ点光源だけに掛ける）に、夜の撮影条件を足した。Rendering3DTestの起動引数`--night`は空（と空の太陽の方向光）を消し、空が無効なときの静的HDRの背景とIBLに倍率0.08を掛けて地面の照度を約0.31 lx（倍率1の上半球の余弦積分が約3.9 lx）にする。露出は自動のまま。倍率は`RenderWorld::SetStaticEnvironmentIntensityScale`→`FramePacket::Scene.StaticEnvironmentIntensityScale`でRenderThreadへ渡し、LightingPassは空が無効で検証用の環境でないフレームだけ、IBL強度（透明物へ公開する値も同じ）と背景（LightingParamsの未使用だった`shadowPadding1`を`staticEnvironmentScale`にした）に掛ける。既定は1で、昼の起動画面・goldenは変わらない。撮影スクリプトに`-Night`（`<視点>-night.png`）を足した。
 
