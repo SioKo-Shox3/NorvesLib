@@ -312,12 +312,13 @@
 - notes: 2026-10-02 の親の確認（`startup-capture/SS-ACCEPT-night/default-night.png`）で分かった。点光源の色は `Rendering3DTestRoutine.cpp` の `SetLightColor(1.0f, 0.9f, 0.3f)` で、石畳が黄緑がかる。レンズダートは `kStartupLensDirtIntensity = 2.0f`。
 
 ## FIX-RGCT-MEGA-VELOCITY: RenderGraphCompileTest の MegaGeometry の記録の検査の準備に GBuffer_Velocity を足す
-- status: todo
+- status: done
 - done-when: `RenderGraphCompileTest.cpp` の MegaGeometryPass の記録の検査（2620行目の `BeginRenderPassCount == 1`）の準備で、`SharedResourceRegistry` に `GBuffer_Velocity`（128×64 の R16G16_FLOAT のレンダーターゲット）を登録し、検査を弱めずに RenderGraphCompileTest が通る。エンジン側（MegaGeometryPass）は変えない。
 - verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RenderGraphCompileTest$"`
 - paths: Test/Core/Rendering/RenderGraphCompileTest.cpp, TASKS.md, PROGRESS.md
 - notes: SS-GPU-PROFILE（2026-10-03）の検証で見つけた。MegaGeometry に velocity を足した変更（`7461c3e`・`f63b2fd`）から、MegaGeometryPass は `GBuffer_Velocity` が無いと GBuffer のフレームバッファを作らず記録の前に戻るが、検査の準備は5枚しか登録していない。2026-10-02 の SS-GTAO の実行（`20261002-084328/verify-SS-GTAO-8.txt`）でも同じ行で落ちていた。登録を一時的に足すと 1/1 で通ることを確かめた（`20261003-034747/verify-SS-GPU-PROFILE-7.txt`）。
+- notes: 2026-10-03 親が直した。`.harness/runs/20261003-parent/build-RGCT.txt` で build EXIT_CODE=0、`ctest-RGCT.txt` で RenderGraphCompileTest 1/1 passed。
 
 ## SS-GPU-PROFILE: 計測のある構成で、加速構造の更新を含むGPUの時間とパスごとの内訳をトレースへ書けるようにする
 - status: todo
@@ -329,6 +330,7 @@
 - stop-when: GPUのタイムスタンプを加速構造の記録の前へ動かすとコマンドの記録の順序（RenderThread の同期）を変える必要がある場合は、変えずに、加速構造の更新を別の区間として取るだけにして記録する。
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Boot, Library/Core/Public/Boot, Library/Core/Private/Debug, Library/Core/Public/Debug, Library/Core/Private/RHI, Library/Core/Public/RHI, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: SS-ACCEPT の停止理由（`blocked/SS-ACCEPT.md`）から作った。加速構造の更新は `FrameGPU` の開始より前にあり、パスごとのタイムスタンプはトレースへ書く経路が無い。2026-10-02 ユーザーの指示: Release にGPUの計測やログなどのデバッグの機能を入れない。計測は最適化が有効で計測の残る RelWithDebInfo で行う。危険地帯（RenderThread・RHI）。評価者を通す。
+- notes: 2026-10-03 実装は `053aaa3` で済み、検証の RenderGraphCompileTest が前から落ちていたため止めていた（`blocked/SS-GPU-PROFILE.md`）。FIX-RGCT-MEGA-VELOCITY で直したので、verify を回し直して done にする（実装の追加は不要）。
 
 ## SS-ACCEPT: 起動画面の改善を受け入れる
 - status: todo

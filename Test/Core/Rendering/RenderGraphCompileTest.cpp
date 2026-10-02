@@ -2529,11 +2529,15 @@ namespace
             RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "RecordEmissive"));
         auto depthTexture = device->CreateTexture(
             RHI::TextureDesc::DepthStencil(128, 64, RHI::Format::D32_FLOAT, "RecordDepth"));
+        // MegaGeometryPass は velocity も GBuffer へ書くため、velocity が無いとフレームバッファを作らず記録しない
+        auto velocityTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16_FLOAT, "RecordVelocity"));
         sharedResources.RegisterTexturePtr("GBuffer_Albedo", albedoTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Normal", normalTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Material", materialTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Emissive", emissiveTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Depth", depthTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Velocity", velocityTexture);
 
         float vertices[12] = {
             0.0f, 0.0f, 0.0f, 1.0f,
