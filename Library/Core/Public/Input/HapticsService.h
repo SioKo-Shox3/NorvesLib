@@ -58,16 +58,17 @@ namespace NorvesLib::Core::Input
         const Container::VariableArray<HapticsEffectDefinition>& GetEffects() const { return m_Effects; }
         uint64_t Play(Identity effect, uint8_t slot, float gain = 1);
         bool Stop(uint64_t handle);
-        bool StopAll();
+        bool StopAll() noexcept;
         size_t GetActiveVoiceCount() const noexcept { return m_VoiceCount; }
+        bool IsBusy() const noexcept { return m_bBusy; }
         bool SetSettings(const HapticsSettings& settings);
         HapticsSettings GetSettings() const { return m_Settings; }
         // 喪失/停止で再生を取消し、復帰時に昔の単発/loopを自動再開しない。
-        bool SetFocused(bool focused);
-        bool SetPaused(bool paused);
-        bool Update(double unscaledDeltaSeconds, IHapticsOutput& output);
+        bool SetFocused(bool focused) noexcept;
+        bool SetPaused(bool paused) noexcept;
+        bool Update(double unscaledDeltaSeconds, IHapticsOutput& output) noexcept;
         // 時間を進めず現在の要求を送る。制御変更直後の即時停止にも使用する。
-        bool FlushOutputs(IHapticsOutput& output);
+        bool FlushOutputs(IHapticsOutput& output) noexcept;
 
     private:
         struct Voice
@@ -79,7 +80,7 @@ namespace NorvesLib::Core::Input
             double Elapsed = 0;
             bool New = true;
         };
-        bool Process(double delta, bool advance, IHapticsOutput& output);
+        bool Process(double delta, bool advance, IHapticsOutput& output) noexcept;
         static bool IsValidSettings(const HapticsSettings& settings);
         Container::VariableArray<HapticsEffectDefinition> m_Effects;
         Voice m_Voices[MaximumVoices]{};

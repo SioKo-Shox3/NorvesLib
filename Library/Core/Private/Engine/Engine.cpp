@@ -6,6 +6,37 @@
 
 namespace NorvesLib::Core::Engine
 {
+    // 内部同期sinkは公開guardへ再入せず、開始済みの固定providerへだけ送る。
+    class Engine::HapticsDeviceOutput final : public Input::IHapticsOutput
+    {
+    public:
+        explicit HapticsDeviceOutput(Engine& engine) : m_Engine(engine)
+        {
+        }
+        bool IsConnected(uint8_t slot) const noexcept override
+        {
+            return slot < Input::GamepadSlotCount && m_Engine.m_bInputDevicesStarted &&
+                m_Engine.HasGamepadInputDevice() && m_Engine.m_InputSystem.GetState().GetGamepadState(slot).Connected;
+        }
+        bool SetVibration(uint8_t slot, float low, float high) noexcept override
+        {
+            if (!m_Engine.m_bInputDevicesStarted || slot >= Input::GamepadSlotCount)
+            {
+                return false;
+            }
+            for (auto& entry : m_Engine.m_InputDevices)
+            {
+                if (entry.bGamepadProvider && entry.bNeedsShutdown)
+                {
+                    return entry.Device->SetVibration(slot, low, high);
+                }
+            }
+            return false;
+        }
+    private:
+        Engine& m_Engine;
+    };
+
     // グローバルエンジンインスタンスの実体
     Engine *GEngine = nullptr;
 
@@ -73,7 +104,7 @@ namespace NorvesLib::Core::Engine
     }
     bool Engine::AddInputDevice(Container::TUniquePtr<Input::IInputDevice> device)
     {
-        if (!device || m_bInputDevicesBusy || m_bInputDevicesStarted || HasPendingInputDeviceShutdown())
+        if (!device || m_bInputDevicesBusy || m_HapticsService.IsBusy() || m_bInputDevicesStarted || HasPendingInputDeviceShutdown())
         {
             return false;
         }
@@ -89,7 +120,7 @@ namespace NorvesLib::Core::Engine
     }
     bool Engine::InitializeInputDevices()
     {
-        if (m_bInputDevicesBusy)
+        if (m_bInputDevicesBusy || m_HapticsService.IsBusy())
         {
             return false;
         }
@@ -123,11 +154,13 @@ namespace NorvesLib::Core::Engine
             return false;
         }
         m_bInputDevicesStarted = true;
+        (void)m_HapticsService.SetFocused(m_bInputDevicesFocused);
+        (void)m_HapticsService.SetPaused(m_bHapticsPaused);
         return true;
     }
     bool Engine::PollInputDevices(double unscaledTimeSeconds)
     {
-        if (m_bInputDevicesBusy || !m_bInputDevicesStarted || !std::isfinite(unscaledTimeSeconds) ||
+        if (m_bInputDevicesBusy || m_HapticsService.IsBusy() || !m_bInputDevicesStarted || !std::isfinite(unscaledTimeSeconds) ||
             unscaledTimeSeconds < 0 || (m_bInputDevicesHaveTime && unscaledTimeSeconds < m_InputDeviceTime))
         {
             return false;
@@ -148,21 +181,30 @@ namespace NorvesLib::Core::Engine
     }
     bool Engine::SetInputDevicesFocused(bool focused) noexcept
     {
-        if (m_bInputDevicesBusy)
+        if (m_bInputDevicesBusy || m_HapticsService.IsBusy())
         {
             return false;
         }
         InputDeviceCallGuard guard(m_bInputDevicesBusy);
         m_bInputDevicesFocused = focused;
+        (void)m_HapticsService.SetFocused(focused);
+        const bool stopped = focused || FlushHapticsInternal();
         for (auto& entry : m_InputDevices)
         {
+            // service送信に失敗してもbackend自身の独立zeroを必ず試みる。
             entry.Device->SetFocused(focused);
         }
-        return true;
+        return stopped;
     }
     bool Engine::StopInputDevicesInternal() noexcept
     {
         const bool hadActivity = m_bInputDevicesStarted || HasPendingInputDeviceShutdown();
+        (void)m_HapticsService.StopAll();
+        if (m_bInputDevicesStarted)
+        {
+            (void)FlushHapticsInternal();
+        }
+        // 最終停止結果は全slotを停止するbackendのTryShutdownを正とする。
         m_bInputDevicesStarted = false;
         m_bInputDevicesHaveTime = false;
         bool success = true;
@@ -193,12 +235,53 @@ namespace NorvesLib::Core::Engine
     }
     bool Engine::ShutdownInputDevices() noexcept
     {
-        if (m_bInputDevicesBusy)
+        if (m_bInputDevicesBusy || m_HapticsService.IsBusy())
         {
             return false;
         }
         InputDeviceCallGuard guard(m_bInputDevicesBusy);
         return StopInputDevicesInternal();
+    }
+
+    bool Engine::FlushHapticsInternal() noexcept
+    {
+        (void)m_HapticsService.SetFocused(m_bInputDevicesFocused);
+        (void)m_HapticsService.SetPaused(m_bHapticsPaused);
+        HapticsDeviceOutput output(*this);
+        return m_HapticsService.FlushOutputs(output);
+    }
+    bool Engine::FlushHaptics() noexcept
+    {
+        if (m_bInputDevicesBusy || m_HapticsService.IsBusy())
+        {
+            return false;
+        }
+        InputDeviceCallGuard guard(m_bInputDevicesBusy);
+        return FlushHapticsInternal();
+    }
+    bool Engine::SetHapticsPaused(bool paused) noexcept
+    {
+        if (m_bInputDevicesBusy || m_HapticsService.IsBusy())
+        {
+            return false;
+        }
+        InputDeviceCallGuard guard(m_bInputDevicesBusy);
+        m_bHapticsPaused = paused;
+        (void)m_HapticsService.SetPaused(paused);
+        return !paused || FlushHapticsInternal();
+    }
+    bool Engine::UpdateHaptics(double unscaledDeltaSeconds) noexcept
+    {
+        if (m_bInputDevicesBusy || m_HapticsService.IsBusy() || !m_bInputDevicesStarted ||
+            !std::isfinite(unscaledDeltaSeconds) || unscaledDeltaSeconds < 0)
+        {
+            return false;
+        }
+        InputDeviceCallGuard guard(m_bInputDevicesBusy);
+        (void)m_HapticsService.SetFocused(m_bInputDevicesFocused);
+        (void)m_HapticsService.SetPaused(m_bHapticsPaused);
+        HapticsDeviceOutput output(*this);
+        return m_HapticsService.Update(unscaledDeltaSeconds, output);
     }
 
 } // namespace NorvesLib::Core::Engine

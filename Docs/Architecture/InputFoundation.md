@@ -298,3 +298,11 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - focus喪失/pause/無効化はvoiceを取消し、復帰時に旧効果を再開しない。Stopや設定変更だけではAPIを呼ばず、次のUpdate/Flushで反映。ownerがfocus/pause/終了時に直ちにFlushする。sinkは同期借用で保持せず、sink中の公開操作再入はfalse/0で拒否、本体破棄は禁止。
 - 純時間kernelの通常/O2/ASan・UBSan/bundleと既存混合/出力回帰を実行。実serviceの所有/制御/失敗/再入試験は既存bundleへ追加しているが、IdentityPoolのWindows.h依存でcompile/実行未確認。Engine接続とhaptics.v1は後続。
 - serviceの送信ACKは同じ実backend/slot対応にだけ有効。同期sink wrapperのinstanceは変えてよいが、動的backend交換は範囲外。交換時は旧serviceをStopAll/Flushして旧deviceを停止し、新serviceを使う。外部から任意のmotor値を書き換えず、ownerの強制zeroはserviceの取消/Flushと組にする。
+
+### Engineの振動frame/即時停止（GR04）
+- EngineがHapticsServiceを値所有し、固定のpad providerに内部同期sinkで送る。sinkは公開guardへ再入しない。開始済みproviderと入力正本のConnectedを照合し、device寿命を越える参照は持たない。効果設定/Play/StopはGetHapticsService、focus/pauseはEngine owner APIを使う。
+- ApplicationProcessorはsimulation進行gateを決めた後、TickSimulationより先にSetHapticsPausedを適用。pauseならその地点で取消/Flushする。simulation後にclamp前のrawDeltaNanosecondsを秒へ変換しUpdateする。ゲーム用deltaTimeや時間倍率を振動へ流用しない。
+- focus lossではservice取消/Flushをdevice SetFocused(false)より先に試み、service送信が失敗してもbackend自身のzeroを必ず呼ぶ。終了もStopAll/Flushを先行し、最後は全slotを扱うTryShutdownの成否で停止義務を判定する。失敗した場合は再開始を拒否し再Shutdown可能。旧voiceは再Runで復活しない。
+- Engine入力ownerのbusyとserviceのbusyを両方確認して登録/開始/停止/制御/更新の再入を拒否。serviceの非確保Update/Flush/取消操作はnoexceptを明示し、OS focus callbackとcleanupへ接続する。
+- fake providerによる複数slot・倍率・実2秒・pause/focus即時zero・失敗再試行・Run例外cleanup/再Runを既存Engine bundleへ追加。純時間/混合/出力回帰は実行できるが、Engine統合testのcompile/実行はString.hのWindows.h依存で未確認。効果JSONと既定assetのGame起動読込みは後続。
+- ゲームパッド/device配送や振動sinkの途中でfocus通知が来た場合は、最新要求と喪失の履歴をProcessorで保留する。raw/Mapperは即時取消、reset/Router通知は安全なbatchで行う。同一pollの喪失→復帰でもfalse取消を通し、残りslotの再注入値も再resetする。要求batchをcallback前に取り出し、新通知を上書きせず次batchへ残す。Run開始・message後・poll後・振動更新前後に回収し、window購読serial/Engine一致で古い通知を除外する。

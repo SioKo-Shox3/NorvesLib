@@ -1598,3 +1598,11 @@
 - stop-when: borrowed effect寿命超過、handle wrap/別owner誤停止、invalid部分更新、停止zero省略、inactiveで振動、sink再入で破損、blocking未解消。
 - paths: Library/Core/Public/Input/HapticsPlaybackTime.h, Library/Core/Public/Input/HapticsService.h, Library/Core/Private/Input/HapticsService.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/HapticsPlaybackTimeTest.cpp, Test/Core/Input/HapticsServiceTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: service自体はbackend参照を保持しないが、寿命中の実backend/slot対応は同一とする。動的交換は旧service停止後に新serviceを使う。制御変更は次のUpdate/FlushOutputsで送信、Engineの即時focus/pause/終了接続とJSONは次段。
+
+## G1-GR04-P9: 振動再生をEngineの更新と即時停止へ接続する
+- status: done
+- done-when: Engineがserviceを値所有し同一pad providerへ一時sinkで送信。simulation前にpauseを反映、後に未clamp実dt更新。focus/pause/終了で即時取消/Flushとnative停止を行い、再Runで旧voiceを再開しない。owner/service再入を拒否し、配送中focusの保留を安全地点で回収する。喪失→復帰の取消履歴と新しい通知を失わない。
+- verify: fake providerで4slot/倍率/送信順/非focus/pause/終了失敗再試行/再Run、Processorの実dtヘルパーでclamp前の時間を確認する試験を既存Engine bundleへ追加。純時間/mix/output回帰と独立レビュー、Windows統合未実行を明示。
+- stop-when: pause中nonzero、cleanup前にbackend破棄、scaled/clamped dt使用、古いvoice再開、callback中owner再入、停止失敗の偽成功、blocking未解消。
+- paths: Library/Core/Public/Engine/Engine.h, Library/Core/Private/Engine/Engine.cpp, Library/Core/Public/Engine/ApplicationProcessor.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Input/HapticsService.h, Library/Core/Private/Input/HapticsService.cpp, Test/Core/Engine/HapticsFramePipelineTest.cpp, Test/Core/Engine/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: serviceの効果はGame側が設定。既定asset/JSON読込みは次段。実機停止が失敗した場合は再試行義務を保持し、物理成功を保証しない。

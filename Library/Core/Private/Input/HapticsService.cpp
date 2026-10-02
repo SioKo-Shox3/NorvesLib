@@ -106,7 +106,7 @@ namespace NorvesLib::Core::Input
         }
         return false;
     }
-    bool HapticsService::StopAll()
+    bool HapticsService::StopAll() noexcept
     {
         if (m_bBusy)
         {
@@ -128,7 +128,7 @@ namespace NorvesLib::Core::Input
         }
         return true;
     }
-    bool HapticsService::SetFocused(bool focused)
+    bool HapticsService::SetFocused(bool focused) noexcept
     {
         if (m_bBusy)
         {
@@ -141,7 +141,7 @@ namespace NorvesLib::Core::Input
         }
         return true;
     }
-    bool HapticsService::SetPaused(bool paused)
+    bool HapticsService::SetPaused(bool paused) noexcept
     {
         if (m_bBusy)
         {
@@ -154,15 +154,15 @@ namespace NorvesLib::Core::Input
         }
         return true;
     }
-    bool HapticsService::Update(double unscaledDeltaSeconds, IHapticsOutput& output)
+    bool HapticsService::Update(double unscaledDeltaSeconds, IHapticsOutput& output) noexcept
     {
         return Process(unscaledDeltaSeconds, true, output);
     }
-    bool HapticsService::FlushOutputs(IHapticsOutput& output)
+    bool HapticsService::FlushOutputs(IHapticsOutput& output) noexcept
     {
         return Process(0, false, output);
     }
-    bool HapticsService::Process(double delta, bool advance, IHapticsOutput& output)
+    bool HapticsService::Process(double delta, bool advance, IHapticsOutput& output) noexcept
     {
         if (m_bBusy || !std::isfinite(delta) || delta < 0)
         {

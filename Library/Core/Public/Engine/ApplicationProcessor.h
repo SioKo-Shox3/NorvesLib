@@ -82,9 +82,12 @@ namespace NorvesLib::Core::Engine
         friend struct ApplicationFixedStepTestAccess;
         friend struct ApplicationInputFrameTestAccess;
         friend struct ApplicationInputFocusTestAccess;
+        friend struct ApplicationHapticsTestAccess;
         void ConnectInputWindow(Container::TSharedPtr<NorvesLib::IWindow> window);
         void DisconnectInputWindow();
         void OnWindowInputFocusChanged(bool focused);
+        void QueueInputDeviceFocus(bool focused, bool resetOperations, bool notifyRouter = false);
+        bool ApplyPendingInputDeviceFocus();
         void DispatchInputFocusEvents();
         bool SynchronizeInputCursorMode();
 
@@ -104,6 +107,9 @@ namespace NorvesLib::Core::Engine
             bool bAdvanceSimulation, Application::IApplicationHandler* handler);
         bool BeginInputFrame(int64_t timeNanoseconds);
         bool UpdateInputFrame(int64_t timeNanoseconds, int64_t rawDeltaNanoseconds);
+        bool UpdateHapticsFrame(int64_t rawDeltaNanoseconds);
+        void TickSimulationAndHaptics(int64_t rawDeltaNanoseconds, float deltaTime,
+            Application::IApplicationHandler* handler);
         int64_t CalculateRawDeltaTimeNanoseconds();
         float ClampVariableDeltaTime(int64_t rawDeltaNanoseconds) const;
         FixedStepAdvanceResult AdvanceFixedSimulation(
@@ -145,7 +151,16 @@ namespace NorvesLib::Core::Engine
         bool m_HasInputFocus = false;
         bool m_InputFocused = false;
         bool m_DispatchingInputFocus = false;
+        Engine* m_PendingInputDeviceFocusEngine = nullptr;
+        Container::VariableArray<bool> m_PendingRouterInputFocus;
+        bool m_HasPendingInputDeviceFocus = false;
+        bool m_PendingInputDeviceFocus = false;
+        bool m_PendingInputDeviceFocusLoss = false;
+        bool m_PendingInputDeviceFocusReset = false;
+        bool m_ApplyingInputDeviceFocus = false;
+        uint64_t m_PendingInputDeviceFocusSerial = 0;
         bool m_CursorFailureWarned = false;
+        bool m_HapticsFailureWarned = false;
         uint64_t m_InputFocusConnectionSerial = 0;
         Container::TUniquePtr<FixedStepScheduler> m_FixedStepScheduler;
         int64_t m_LastFrameTimeNanoseconds = 0;

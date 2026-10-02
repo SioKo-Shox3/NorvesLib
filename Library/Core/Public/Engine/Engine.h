@@ -9,6 +9,7 @@
 #include "Scene/SceneQuery.h"
 #include "Input/InputSystem.h"
 #include "Input/IInputDevice.h"
+#include "Input/HapticsService.h"
 #include "Container/VariableArray.h"
 #include "Input/InputRouter.h"
 #include "Input/InputMapper.h"
@@ -407,11 +408,23 @@ namespace NorvesLib::Core::Engine
         bool InitializeInputDevices();
         bool PollInputDevices(double unscaledTimeSeconds);
         bool SetInputDevicesFocused(bool focused) noexcept;
+        bool CanUpdateInputDeviceFocus() const noexcept
+        {
+            return !m_bInputDevicesBusy && !m_HapticsService.IsBusy();
+        }
         // 全deviceを逆順停止。失敗したdeviceは次回Shutdownで再試行し、再開始を拒否する。
         bool ShutdownInputDevices() noexcept;
         bool AreInputDevicesInitialized() const noexcept { return m_bInputDevicesStarted; }
+        // 効果設定/Play/Stopはserviceへ。Engine所有時のfocus/pauseは下記owner APIを使う。
+        Input::HapticsService& GetHapticsService() noexcept { return m_HapticsService; }
+        const Input::HapticsService& GetHapticsService() const noexcept { return m_HapticsService; }
+        bool SetHapticsPaused(bool paused) noexcept;
+        bool UpdateHaptics(double unscaledDeltaSeconds) noexcept;
+        bool FlushHaptics() noexcept;
 
     private:
+        class HapticsDeviceOutput;
+        bool FlushHapticsInternal() noexcept;
         bool StopInputDevicesInternal() noexcept;
         bool HasPendingInputDeviceShutdown() const noexcept;
         struct InputDeviceEntry
@@ -468,7 +481,9 @@ namespace NorvesLib::Core::Engine
         Input::InputDebugOverlayController m_InputDebugOverlay;
         Input::InputRebindCaptureManager m_InputRebindCapture;
         // 入力System/Mapperより先に停止・破棄する。deviceはこれらを長期借用しない。
+        Input::HapticsService m_HapticsService;
         Container::VariableArray<InputDeviceEntry> m_InputDevices;
+        bool m_bHapticsPaused = false;
         bool m_bInputDevicesStarted = false;
         bool m_bInputDevicesBusy = false;
         bool m_bInputDevicesFocused = true;

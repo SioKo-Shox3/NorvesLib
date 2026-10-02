@@ -1379,12 +1379,14 @@ namespace NorvesLib::Core::Engine
                 return -1;
             }
         }
+        (void)ApplyPendingInputDeviceFocus();
         if (GEngine && !GEngine->InitializeInputDevices())
         {
             LOG_ERROR("入力deviceの開始に失敗しました");
             return -1;
         }
         bool inputDeviceWarning = false;
+        m_HapticsFailureWarned = false;
         m_FixedStepScheduler->BeginRun();
 
         while (GEngine && GEngine->IsRunning() && !GEngine->IsExitRequested())
@@ -1411,6 +1413,7 @@ namespace NorvesLib::Core::Engine
             const double inputDeviceTime = std::chrono::duration<double>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
             const bool inputDevicesHealthy = GEngine->PollInputDevices(inputDeviceTime);
+            (void)ApplyPendingInputDeviceFocus();
             if (!inputDevicesHealthy && !inputDeviceWarning)
             {
                 LOG_WARNING("入力deviceが未回復のerrorを報告しています");
@@ -1649,11 +1652,7 @@ namespace NorvesLib::Core::Engine
             LOG_ERROR("ScriptRuntime BeginFrameMaintenance failed");
         }
 
-        // シミュレーション進行ゲート。false の間は GameMode 更新と World Tick を止める
-        // （ポーズ）。SyncToSceneView と描画は止めず、最後の画面を描き続ける。
-        const bool bAdvanceSim = (handler != nullptr) ? handler->ShouldAdvanceSimulation() : true;
-
-        TickSimulation(rawDeltaNanoseconds, deltaTime, bAdvanceSim, handler);
+        TickSimulationAndHaptics(rawDeltaNanoseconds, deltaTime, handler);
 
         // ワールドからSceneViewへProxy同期
         GEngine->GetWorld().SyncToSceneView(
@@ -1858,10 +1857,11 @@ namespace NorvesLib::Core::Engine
 
     void ApplicationProcessor::DisconnectInputWindow()
     {
+        m_PendingRouterInputFocus.clear();
         if (GEngine && GEngine == m_InputEngine)
         {
             GEngine->GetInputRebindCapture().Abort();
-            (void)GEngine->SetInputDevicesFocused(false);
+            QueueInputDeviceFocus(false, m_ApplyingInputDeviceFocus || !GEngine->CanUpdateInputDeviceFocus());
         }
         if(m_InputWindow)
         {
@@ -1881,10 +1881,109 @@ namespace NorvesLib::Core::Engine
         if(m_HasInputFocus && m_InputFocused==focused) return;
         m_HasInputFocus=true;m_InputFocused=focused;
         GEngine->GetInputMapper().SetFocused(focused);
-        if(!focused) GEngine->GetInputSystem().ReleaseAll();
-        (void)GEngine->SetInputDevicesFocused(focused);
-        GEngine->GetInputRouter().NotifyInputFocusChanged(focused);
+        if (!focused)
+        {
+            // rawは即時中立化し、observerへの通知はfocus適用batchで一度だけ行う。
+            GEngine->GetInputSystem().DeferReleaseAll();
+        }
+        // 通知callbackが次のfocusを生む場合も、要求の発生順を先に記録する。
         m_PendingInputFocus.push_back(focused);
+        QueueInputDeviceFocus(focused, !focused, true);
+    }
+
+    void ApplicationProcessor::QueueInputDeviceFocus(bool focused, bool resetOperations, bool notifyRouter)
+    {
+        if (!GEngine)
+        {
+            return;
+        }
+        if (m_PendingInputDeviceFocusEngine && m_PendingInputDeviceFocusEngine != GEngine)
+        {
+            m_PendingInputDeviceFocusLoss = false;
+            m_PendingInputDeviceFocusReset = false;
+            m_PendingRouterInputFocus.clear();
+        }
+        if (m_HasPendingInputDeviceFocus && m_PendingInputDeviceFocusSerial != m_InputFocusConnectionSerial)
+        {
+            m_PendingRouterInputFocus.clear();
+        }
+        m_PendingInputDeviceFocusEngine = GEngine;
+        m_PendingInputDeviceFocusSerial = m_InputFocusConnectionSerial;
+        if (notifyRouter)
+        {
+            m_PendingRouterInputFocus.push_back(focused);
+        }
+        m_HasPendingInputDeviceFocus = true;
+        m_PendingInputDeviceFocus = focused;
+        m_PendingInputDeviceFocusLoss = m_PendingInputDeviceFocusLoss || !focused;
+        m_PendingInputDeviceFocusReset = m_PendingInputDeviceFocusReset || resetOperations;
+        (void)ApplyPendingInputDeviceFocus();
+    }
+    bool ApplicationProcessor::ApplyPendingInputDeviceFocus()
+    {
+        if (!m_HasPendingInputDeviceFocus)
+        {
+            return true;
+        }
+        if (m_ApplyingInputDeviceFocus)
+        {
+            return false;
+        }
+        auto* engine = m_PendingInputDeviceFocusEngine;
+        if (!GEngine || GEngine != engine)
+        {
+            m_HasPendingInputDeviceFocus = false;
+            m_PendingInputDeviceFocusEngine = nullptr;
+            m_PendingInputDeviceFocusLoss = false;
+            m_PendingInputDeviceFocusReset = false;
+            m_PendingRouterInputFocus.clear();
+            return false;
+        }
+        if (!engine->CanUpdateInputDeviceFocus())
+        {
+            return false;
+        }
+        struct ApplyGuard
+        {
+            explicit ApplyGuard(bool& applying) : Applying(applying) { Applying = true; }
+            ~ApplyGuard() { Applying = false; }
+            bool& Applying;
+        } guard(m_ApplyingInputDeviceFocus);
+        // 対象batchをcallbackより先に取り出す。途中の新通知は次batchへ残す。
+        const bool lostFocus = m_PendingInputDeviceFocusLoss;
+        const bool targetFocus = m_PendingInputDeviceFocus;
+        const bool reset = m_PendingInputDeviceFocusReset;
+        const auto connectionSerial = m_PendingInputDeviceFocusSerial;
+        Container::VariableArray<bool> routerFocus;
+        routerFocus.swap(m_PendingRouterInputFocus);
+        m_HasPendingInputDeviceFocus = false;
+        m_PendingInputDeviceFocusEngine = nullptr;
+        m_PendingInputDeviceFocusLoss = false;
+        m_PendingInputDeviceFocusReset = false;
+        // 同一poll中の喪失→復帰でも、一度は取消/zero/復帰baselineを通す。
+        if (lostFocus)
+        {
+            (void)engine->SetInputDevicesFocused(false);
+        }
+        if (targetFocus || !lostFocus)
+        {
+            (void)engine->SetInputDevicesFocused(targetFocus);
+        }
+        if (reset)
+        {
+            // 喪失後に同じpollの残りslotから入った値も、安全な配送外で取り消す。
+            engine->GetInputMapper().CancelAll();
+            engine->GetInputSystem().ReleaseAll();
+        }
+        for (bool focused : routerFocus)
+        {
+            if (GEngine != engine || m_InputFocusConnectionSerial != connectionSerial)
+            {
+                break;
+            }
+            engine->GetInputRouter().NotifyInputFocusChanged(focused);
+        }
+        return !m_HasPendingInputDeviceFocus;
     }
 
     bool ApplicationProcessor::SynchronizeInputCursorMode()
@@ -1938,6 +2037,8 @@ namespace NorvesLib::Core::Engine
             exitRequested=platformApp->IsExitRequested();
             if(exitRequested) exitCode=platformApp->GetExitCode();
         }
+        // focus通知中に生まれた次batchも、Handlerへ渡す前の安全地点で適用する。
+        (void)ApplyPendingInputDeviceFocus();
         // Handlerはここでwindow/platformを破棄し得るので、以後借用platformへ触れない。
         DispatchInputFocusEvents();
         if(!GEngine || GEngine!=sourceEngine) return false;
@@ -1946,6 +2047,38 @@ namespace NorvesLib::Core::Engine
             GEngine->RequestExit(exitCode);return false;
         }
         return !GEngine->IsExitRequested();
+    }
+
+    void ApplicationProcessor::TickSimulationAndHaptics(int64_t rawDeltaNanoseconds, float deltaTime,
+        Application::IApplicationHandler* handler)
+    {
+        if (!GEngine)
+        {
+            return;
+        }
+        (void)ApplyPendingInputDeviceFocus();
+        // pause中も描画を維持する。gateは同frameで一度だけ取得する。
+        const bool bAdvanceSim = handler ? handler->ShouldAdvanceSimulation() : true;
+        // simulationが発行するPlayより前にpauseを反映し、停止はこの地点で送信する。
+        (void)GEngine->SetHapticsPaused(!bAdvanceSim);
+        TickSimulation(rawDeltaNanoseconds, deltaTime, bAdvanceSim, handler);
+        const bool hapticsHealthy = UpdateHapticsFrame(rawDeltaNanoseconds);
+        if (!hapticsHealthy && !m_HapticsFailureWarned)
+        {
+            LOG_WARNING("振動出力が未回復のerrorを報告しています");
+        }
+        m_HapticsFailureWarned = !hapticsHealthy;
+    }
+
+    bool ApplicationProcessor::UpdateHapticsFrame(int64_t rawDeltaNanoseconds)
+    {
+        if (!GEngine || rawDeltaNanoseconds < 0)
+        {
+            return false;
+        }
+        const bool healthy = GEngine->UpdateHaptics(static_cast<double>(rawDeltaNanoseconds) * 1e-9);
+        (void)ApplyPendingInputDeviceFocus();
+        return healthy;
     }
 
     FixedStepAdvanceResult ApplicationProcessor::TickSimulation(
