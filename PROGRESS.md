@@ -363,3 +363,6 @@
 
 - G1-GR04-P6: 独自Spanによる振動包絡線viewと純評価/混合を追加。有限正duration・厳密昇順key・0..1を全検証し、端点保持/線形補間/非loop終了0/loop fmod、最高priority activeのmaxまたはadd-clamp合成/設定倍率を実装。出力は成功ACKのみ更新し、左右差分1/255、各motorの最終zero、失敗再試行/潜在作動保持を扱う。レビューで標準span規約不一致と小寄与の逐次float丸めを検出し、独自Spanとdouble蓄積・最後1回のfloat化へ修正。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle object成功、独立追加520万checkと100万微小寄与反例の解消を確認してPASS。実service/voice所有/native送信/JSON/Engine接続は後続。既存GR03のview規約不一致はG1-INPUT-SPANとして別件記録。
 - Next: 入力層の既存viewを規約に揃えた後、GR04のvoice所有と振動出力・停止制御を接続する。
+
+- G1-INPUT-SPAN（GR03入力境界）: runtime/settings/names/mapper/binding setの呼出中viewをContainer::Spanへ統一。レビューで(pointer, 0)のcount/range曖昧性を検出し、既存Spanのrange constructorを末尾型制約付きにして解消、同pointer/nullptrの空rangeでは減算を避ける。配列/const/VariableArray/既存viewの変換と所有寿命を維持。実Settings/Runtime/Names/RebindTypes/Hapticsの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER object成功、独立レビューPASS。実Mapper/BindingSetのcompileはString.hのWindows.h依存で停止し統合実行は未確認。
+- Next: GR04の振動voice所有と実出力・停止制御へ進む。

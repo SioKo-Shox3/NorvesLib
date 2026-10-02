@@ -7,7 +7,7 @@ namespace NorvesLib::Core::Input
 {
     namespace
     {
-        std::span<const InputBinding> Bindings(const Container::VariableArray<InputBinding>& bindings)
+        Container::Span<const InputBinding> Bindings(const Container::VariableArray<InputBinding>& bindings)
         {
             return {bindings.data(), bindings.size()};
         }
@@ -28,7 +28,7 @@ namespace NorvesLib::Core::Input
         for(const auto index:m_Stack) ids.push_back(m_Contexts[index].Id);
         return ConfigureImpl(settings,{ids.data(),ids.size()});
     }
-    bool InputMapper::ConfigureImpl(const InputBindingSet& settings, std::span<const Identity> initialContexts)
+    bool InputMapper::ConfigureImpl(const InputBindingSet& settings, Container::Span<const Identity> initialContexts)
     {
         Container::VariableArray<Context> compiled;
         compiled.reserve(settings.GetContexts().size());
@@ -178,7 +178,7 @@ namespace NorvesLib::Core::Input
             const bool active = &context == top;
             for (auto& action : context.Actions)
             {
-                if (!action.Runtime.Update(active ? Bindings(action.Bindings) : std::span<const InputBinding>{},
+                if (!action.Runtime.Update(active ? Bindings(action.Bindings) : Container::Span<const InputBinding>{},
                     m_State, m_Armed, time, active ? unscaledDeltaSeconds : 0))
                 {
                     // overflowした結果を前frameから持ち越さず、clockも全actionで揃える。

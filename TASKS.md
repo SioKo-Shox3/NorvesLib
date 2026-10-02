@@ -1496,9 +1496,9 @@
 - notes: この段は純評価/混合/出力記録。voice所有/実device送信/JSON/Engineのfocus・pauseは後続。定義のspanは呼出中だけ借用する。
 
 ## G1-INPUT-SPAN: 入力層の借用viewを独自Spanへ統一する
-- status: todo
-- done-when: GR03の入力runtime/settings/names/mapper/binding setで使用しているstd::spanをContainer::Spanへ揃え、所有/寿命/呼出互換を維持する。
+- status: done
+- done-when: GR03の入力runtime/settings/names/mapper/binding setで使用しているstd::spanをContainer::Spanへ揃え、所有/寿命/呼出互換を維持する。独自Spanのrange constructorを末尾型制約付きにし、(pointer, 0)がcount指定として一意に解決するようにする。
 - verify: 変更header/runtimeの関連portable試験を通常/O2/ASanUBSan/bundle、Mapper/SetはWindows依存の実行限界を明記し公開API差分を独立レビュー。
 - stop-when: view寿命の延長、空view/配列/const変換の回帰、規約を満たすための偽platform代替、blocking未解消。
-- paths: Library/Core/Public/Input/InputActionRuntime.h, Library/Core/Public/Input/InputBindingNames.h, Library/Core/Public/Input/InputMapper.h, Library/Core/Public/Input/InputActionSettings.h, Library/Core/Private/Input/InputBindingSet.cpp, Library/Core/Private/Input/InputMapper.cpp, TASKS.md, PROGRESS.md
+- paths: Library/Core/Public/Container/Span.h, Test/Core/Input/InputActionRuntimeTest.cpp, Library/Core/Public/Input/InputActionRuntime.h, Library/Core/Public/Input/InputBindingNames.h, Library/Core/Public/Input/InputMapper.h, Library/Core/Public/Input/InputActionSettings.h, Library/Core/Private/Input/InputBindingSet.cpp, Library/Core/Private/Input/InputMapper.cpp, TASKS.md, PROGRESS.md
 - notes: GR04-P6レビューで独自Span規約との不一致を確認。既存他領域の一括置換は行わず、今回の入力整備で導入した境界に限定する。

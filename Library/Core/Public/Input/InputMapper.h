@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include <span>
+#include "Container/Span.h"
 #include "Input/InputBindingSet.h"
 #include "Input/InputActionRuntime.h"
 #include "Input/IInputController.h"
@@ -84,7 +84,7 @@ namespace NorvesLib::Core::Input
             ECursorMode CursorMode = ECursorMode::Normal;
             Container::VariableArray<Action> Actions;
         };
-        bool ConfigureImpl(const InputBindingSet& settings, std::span<const Identity> initialContexts);
+        bool ConfigureImpl(const InputBindingSet& settings, Container::Span<const Identity> initialContexts);
         Context* Top();
         const Context* Top() const;
         void SyncActiveButtons();

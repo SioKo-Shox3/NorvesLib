@@ -3,7 +3,7 @@
 #include "Input/InputBindingTypes.h"
 #include "Input/InputAxisMath.h"
 #include "Input/InputButtonState.h"
-#include <span>
+#include "Container/Span.h"
 
 namespace NorvesLib::Core::Input
 {
@@ -28,7 +28,7 @@ namespace NorvesLib::Core::Input
             std::isfinite(settings.RateSensitivity) && settings.RateSensitivity >= 0;
     }
 
-    inline bool IsValidInputActionBindings(const InputActionSettings& settings, std::span<const InputBinding> bindings)
+    inline bool IsValidInputActionBindings(const InputActionSettings& settings, Container::Span<const InputBinding> bindings)
     {
         if (!IsValidInputActionSettings(settings)) return false;
         for (const auto& binding : bindings)

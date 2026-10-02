@@ -25,6 +25,21 @@ namespace
 }
 int main()
 {
+    // 公開view境界のcount=0とpointer rangeを区別し、const/空を維持する。
+    InputBinding spanBindings[2]{};
+    NorvesLib::Core::Container::Span<const InputBinding> emptyCount{spanBindings, 0};
+    NorvesLib::Core::Container::Span<const InputBinding> range{spanBindings, spanBindings + 2};
+    NorvesLib::Core::Container::Span<const InputBinding> emptyRange{spanBindings, spanBindings};
+    NorvesLib::Core::Container::Span<const InputBinding> nullRange{nullptr, nullptr};
+    assert(emptyCount.empty() && emptyCount.data() == spanBindings);
+    assert(range.size() == 2 && range.data() == spanBindings);
+    assert(emptyRange.empty() && nullRange.empty());
+    InputActionRuntime emptyRuntime;
+    InputActionSettings emptySettings;
+    InputState emptyState;
+    InputArmedState emptyArmed;
+    assert(emptyRuntime.Configure(emptySettings));
+    assert(emptyRuntime.Update({spanBindings, 0}, emptyState, emptyArmed, 0, 0));
     InputState raw;
     InputArmedState armed;
     InputActionRuntime button;

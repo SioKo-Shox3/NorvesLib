@@ -1,7 +1,7 @@
 ﻿#pragma once
 #include "Input/InputBindingTypes.h"
+#include "Container/Span.h"
 #include <cstring>
-#include <span>
 #include <limits>
 
 namespace NorvesLib::Core::Input
@@ -139,7 +139,7 @@ namespace NorvesLib::Core::Input
         return text && expected && std::strlen(expected)==size && std::memcmp(text,expected,size)==0;
     }
     // 返却span/文字列は静的テーブルを借用し、process中有効。設定/Identityを所有しない。
-    inline std::span<const InputCodeName> GetInputCodeNames(EInputBindingSource source)
+    inline Container::Span<const InputCodeName> GetInputCodeNames(EInputBindingSource source)
     {
         switch(source)
         {

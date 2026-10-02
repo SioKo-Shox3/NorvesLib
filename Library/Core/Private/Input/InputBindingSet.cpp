@@ -6,7 +6,7 @@ namespace NorvesLib::Core::Input
     bool InputBindingSet::IsValidAction(const InputActionDefinition& action)
     {
         return action.Id.IsValid() && IsValidInputActionBindings(action.Settings,
-            std::span<const InputBinding>(action.Bindings.data(), action.Bindings.size()));
+            Container::Span<const InputBinding>(action.Bindings.data(), action.Bindings.size()));
     }
     bool InputBindingSet::AddContext(Identity id, ECursorMode cursorMode)
     {
@@ -44,7 +44,7 @@ namespace NorvesLib::Core::Input
     {
         auto* action = FindMutableAction(contextId, actionId);
         if (!action || !IsValidInputActionBindings(action->Settings,
-            std::span<const InputBinding>(bindings.data(), bindings.size()))) return false;
+            Container::Span<const InputBinding>(bindings.data(), bindings.size()))) return false;
         Container::VariableArray<InputBinding> replacement = bindings;
         action->Bindings = std::move(replacement);
         return true;

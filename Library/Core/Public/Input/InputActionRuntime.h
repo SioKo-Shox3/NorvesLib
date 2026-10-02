@@ -2,8 +2,8 @@
 
 #include "Input/InputActionSettings.h"
 #include "Input/InputArmedState.h"
+#include "Container/Span.h"
 #include <algorithm>
-#include <span>
 
 namespace NorvesLib::Core::Input
 {
@@ -48,7 +48,7 @@ namespace NorvesLib::Core::Input
         }
 
         // 到達した物理イベントごとに呼び、同frameのpress/release順を保持する。
-        bool SyncButtons(std::span<const InputBinding> bindings, const InputState& raw, const InputArmedState& armed)
+        bool SyncButtons(Container::Span<const InputBinding> bindings, const InputState& raw, const InputArmedState& armed)
         {
             if (!ValidBindings(bindings)) return false;
             if (m_Settings.Type == EInputMappingValueType::Button)
@@ -57,7 +57,7 @@ namespace NorvesLib::Core::Input
         }
 
         bool AccumulateRelative(EInputBindingSource kind, uint16_t code, float amount,
-            std::span<const InputBinding> bindings, const InputState& raw, const InputArmedState& armed)
+            Container::Span<const InputBinding> bindings, const InputState& raw, const InputArmedState& armed)
         {
             if (!IsDisplacementSource(kind) || code >= 2 || !std::isfinite(amount) || !ValidBindings(bindings)) return false;
             double nextX = m_RelativeX, nextY = m_RelativeY;
@@ -90,7 +90,7 @@ namespace NorvesLib::Core::Input
             return true;
         }
 
-        bool Update(std::span<const InputBinding> bindings, const InputState& raw, const InputArmedState& armed,
+        bool Update(Container::Span<const InputBinding> bindings, const InputState& raw, const InputArmedState& armed,
             double time, double unscaledDeltaSeconds)
         {
             if (!ValidBindings(bindings) || !ValidTime(time) || !std::isfinite(unscaledDeltaSeconds) || unscaledDeltaSeconds < 0) return false;
@@ -138,7 +138,7 @@ namespace NorvesLib::Core::Input
 
     private:
         bool ValidTime(double time) const { return std::isfinite(time) && time >= m_Button.GetTime(); }
-        bool ValidBindings(std::span<const InputBinding> bindings) const
+        bool ValidBindings(Container::Span<const InputBinding> bindings) const
         {
             return m_Configured && IsValidInputActionBindings(m_Settings, bindings);
         }
@@ -177,7 +177,7 @@ namespace NorvesLib::Core::Input
             }
             return Scale(value, binding);
         }
-        static bool AnyPersistentButtonDown(std::span<const InputBinding> bindings, const InputState& raw, const InputArmedState& armed)
+        static bool AnyPersistentButtonDown(Container::Span<const InputBinding> bindings, const InputState& raw, const InputArmedState& armed)
         {
             for (const auto& binding : bindings)
                 if (!IsDisplacementSource(binding.Source.Kind) && IsButtonValue(ReadPersistent(binding, raw, armed), binding)) return true;
