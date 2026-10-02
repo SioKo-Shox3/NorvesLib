@@ -248,3 +248,5 @@
 - Notes: Windows/Core全体/CTest/Game/GPUは未検証。既存GeometryContactTestは無条件Windows.h取り込みだけを除いた一時コピーで回帰確認した。MathGeometryTestは既存Quaternionスカラー演算子不足、PhysicsはWindows.h依存のためLinux直接ビルド不能。描画側のソースと既存SS/R/FIX項目は変更していない。
 
 - G1-GR08-P3M: 球/カプセルの並進掃引のCPU数学を追加。面/辺/角、かすり、回転、初期重なり、無効入力、移動距離0、反復上限を確認した。1万配置の既存接触判定の2mm走査+二分法との比較、ASan/UBSan（LeakSanitizer除外）、分離/既存接触の回帰検証に成功。Hit/NoHit/InvalidArgument/IterationLimitを区別する。RelativeToleranceは絶対座標に依存するため遠方では許容幅が拡大する。Physicsのスナップショット・フィルタ・façadeへの統合はまだなく、GR08/G1全体は未完了。
+
+- G1-GR08-P2A: 既存の物理結果enumと世代ハンドルをOS非依存のPhysicsQueryTypesへ同じ定義で移設し、クエリ記述子・結果・バッチ範囲、32ビットのレイヤー、trigger/ignoreフィルタと対称ペア規則を追加。全32ビット、ignoreの世代一致、無効ハンドル、4096通りのペア真理値表、既定値/レイアウトを直接g++で検証。bundle相当のmain置換コンパイルとASan/UBSan（LeakSanitizer除外）も成功。実クエリへの接続はP2B以降。

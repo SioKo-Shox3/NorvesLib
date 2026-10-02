@@ -47,6 +47,7 @@ norves_add_test_bundle(SceneQueryRaycastTest
     MEMBER SceneQueryRaycastTest SceneQueryRaycastTest.cpp
     MEMBER SceneQueryOverlapTest SceneQueryOverlapTest.cpp
     MEMBER SceneQueryPhysicsFacadeTest SceneQueryPhysicsFacadeTest.cpp
+    MEMBER PhysicsQueryTypesTest PhysicsQueryTypesTest.cpp
 )
 target_link_libraries(SceneQueryRaycastTest PRIVATE Core)
 target_include_directories(SceneQueryRaycastTest PRIVATE
@@ -108,3 +109,5 @@ add_test(NAME SceneFileRoundTripTest COMMAND SceneSerializerTest --test=SceneFil
 add_test(NAME SkeletalResourceLifetimeTest COMMAND ResourceRegistryTest --test=SkeletalResourceLifetimeTest)
 
 add_test(NAME SpringArmComponentTest COMMAND EntityTreeTest --test=SpringArmComponentTest)
+
+add_test(NAME PhysicsQueryTypesTest COMMAND SceneQueryRaycastTest --test=PhysicsQueryTypesTest)

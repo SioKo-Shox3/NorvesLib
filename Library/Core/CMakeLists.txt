@@ -295,6 +295,7 @@ set(PUBLIC_HEADERS
     Public/Animation/SkeletonResource.h
     # Scene
     Public/Scene/SceneQuery.h
+    Public/Scene/PhysicsQueryTypes.h
     Public/Scene/SceneSerializer.h
     # Module
     Public/Module/ModuleExport.h

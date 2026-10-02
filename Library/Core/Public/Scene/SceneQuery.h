@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Math/GeometryTypes.h"
+#include "Scene/PhysicsQueryTypes.h"
 #include "Container/Containers.h"
 #include "Container/Span.h"
 #include "Object/EntityHandle.h"
@@ -16,64 +17,6 @@ namespace NorvesLib::Core
 
 namespace NorvesLib::Core::Scene
 {
-    enum class EPhysicsSceneQueryResult : uint8_t
-    {
-        Success,
-        NoHit,
-        Unavailable,
-        NotReady,
-        InvalidArgument,
-        WrongThread,
-        AlreadyBound,
-        ProviderMismatch
-    };
-
-    struct ColliderHandle
-    {
-        static constexpr uint32_t InvalidIndex = UINT32_MAX;
-
-        uint32_t Index = InvalidIndex;
-        uint32_t Generation = 0;
-
-        constexpr bool IsValid() const
-        {
-            return Index != InvalidIndex && Generation != 0;
-        }
-
-        constexpr bool operator==(const ColliderHandle& other) const
-        {
-            return Index == other.Index && Generation == other.Generation;
-        }
-
-        constexpr bool operator<(const ColliderHandle& other) const
-        {
-            return Index < other.Index || (Index == other.Index && Generation < other.Generation);
-        }
-    };
-
-    struct BodyHandle
-    {
-        static constexpr uint32_t InvalidIndex = UINT32_MAX;
-
-        uint32_t Index = InvalidIndex;
-        uint32_t Generation = 0;
-
-        constexpr bool IsValid() const
-        {
-            return Index != InvalidIndex && Generation != 0;
-        }
-
-        constexpr bool operator==(const BodyHandle& other) const
-        {
-            return Index == other.Index && Generation == other.Generation;
-        }
-
-        constexpr bool operator<(const BodyHandle& other) const
-        {
-            return Index < other.Index || (Index == other.Index && Generation < other.Generation);
-        }
-    };
-
     struct PhysicsRaycastHit
     {
         ColliderHandle Collider;

@@ -1174,3 +1174,11 @@
 - stop-when: 未承認の意味変更、描画変更、安全側の進行または検証が成立しない場合。
 - paths: Library/Core/Public/Math, Library/Core/Private/Math/GeometryIntersection.cpp, Test/Core/Math, TASKS.md, PROGRESS.md
 - notes: P1に依存。Physics統合前のCPU数学だけを先行する。未収束を確定ヒットへ変換しない。
+
+## G1-GR08-P2A: 物理クエリの値型とフィルタ契約を用意する
+- status: done
+- done-when: 既存enum/handleを維持し、OS非依存の値型とレイヤー・trigger・ignore・ペアマスクの判定を試験する。
+- verify: g++ -std=c++23 -I Library/Core/Public Test/Core/Object/PhysicsQueryTypesTest.cpp -o /tmp/norves-query-types && /tmp/norves-query-types
+- stop-when: 既存型の意味変更、循環依存、公開契約のblocking指摘が残る場合。
+- paths: Library/Core/Public/Scene, Library/Core/CMakeLists.txt, Test/Core/Object, TASKS.md, PROGRESS.md
+- notes: 実クエリ・コライダーへの接続はP2B。ゲーム固有のレイヤー名は定義しない。
