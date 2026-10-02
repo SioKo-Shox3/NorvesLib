@@ -153,6 +153,26 @@ namespace
         AssertCanonicalPair(broadphase.GetCandidatePairs()[0],1,2);
     }
 
+    void TestLegacyAppendContract()
+    {
+        PhysicsBroadphase broadphase;
+        Core::Container::VariableArray<PhysicsShapeProxy> proxies;
+        proxies.push_back(MakeSphereProxy(1,0,1));
+        proxies[0].UserData = 123;
+        broadphase.SetProxies(std::move(proxies));
+        Core::Container::VariableArray<PhysicsOverlapHit> hits;
+        PhysicsOverlapHit sentinel;
+        sentinel.Collider = {99,1};
+        sentinel.UserData = 999;
+        hits.push_back(sentinel);
+        broadphase.OverlapSphere(Math::Sphere(Math::Vector3(),1),hits);
+        assert(hits.size() == 2 && hits[0].UserData == 999 && hits[1].UserData == 123);
+        broadphase.OverlapSphere(Math::Sphere(Math::Vector3(100,0,0),1),hits);
+        assert(hits.size() == 2);
+        broadphase.OverlapCapsule(Math::Capsule(Math::Vector3(),Math::Vector3(),-1),hits);
+        assert(hits.size() == 2 && hits[0].UserData == 999);
+    }
+
     void TestValueOverlapAllShapes()
     {
         std::cout << "[Test] value overlap returns all shapes in handle order\n";
@@ -510,15 +530,36 @@ namespace
         query.Kind = EPhysicsQueryKind::RaycastClosest;
         assert(scene.ExecuteQuery(query,hits) == EPhysicsSceneQueryResult::Success);
         assert(hits.size() == 1 && hits[0].UserData == 111);
+        PhysicsRaycastHit legacyRay;
+        assert(scene.Raycast(query.Ray,query.MaxDistance,legacyRay) == EPhysicsSceneQueryResult::Success);
+        assert(legacyRay.Collider == hits[0].Collider && legacyRay.UserData == hits[0].UserData);
+        assert(legacyRay.Distance == hits[0].Distance && legacyRay.Point == hits[0].Point && legacyRay.Normal == hits[0].Normal);
+        Core::Container::VariableArray<PhysicsOverlapHit> legacyOverlap;
+        auto compareOverlap = [&]()
+        {
+            assert(legacyOverlap.size() == hits.size());
+            for (size_t index = 0; index < hits.size(); ++index)
+            {
+                assert(legacyOverlap[index].Collider == hits[index].Collider && legacyOverlap[index].UserData == hits[index].UserData);
+                assert(legacyOverlap[index].Contact.Normal == hits[index].Normal*-1.0f);
+                assert(legacyOverlap[index].Contact.Point == hits[index].Point && legacyOverlap[index].Contact.Depth == hits[index].Depth);
+            }
+        };
         query.Kind = EPhysicsQueryKind::OverlapSphere;
         query.Sphere = Math::Sphere(Math::Vector3(),20);
         assert(scene.ExecuteQuery(query,hits) == EPhysicsSceneQueryResult::Success && hits.size() == 3);
+        assert(scene.OverlapSphere(query.Sphere,legacyOverlap) == EPhysicsSceneQueryResult::Success);
+        compareOverlap();
         query.Kind = EPhysicsQueryKind::OverlapBox;
         query.Box = Math::OBB(Math::Vector3(),Math::Vector3(20,20,20),Math::Vector3::UnitX,Math::Vector3::UnitY,Math::Vector3::UnitZ);
         assert(scene.ExecuteQuery(query,hits) == EPhysicsSceneQueryResult::Success && hits.size() == 3);
+        assert(scene.OverlapBox(query.Box,legacyOverlap) == EPhysicsSceneQueryResult::Success);
+        compareOverlap();
         query.Kind = EPhysicsQueryKind::OverlapCapsule;
         query.Capsule = Math::Capsule(Math::Vector3(),Math::Vector3(8,0,0),2);
         assert(scene.ExecuteQuery(query,hits) == EPhysicsSceneQueryResult::Success && hits.size() == 3);
+        assert(scene.OverlapCapsule(query.Capsule,legacyOverlap) == EPhysicsSceneQueryResult::Success);
+        compareOverlap();
         query.Kind = EPhysicsQueryKind::SweepSphere;
         query.Sphere = Math::Sphere(Math::Vector3(-5,0,0),.5f);
         query.Direction = Math::Vector3(2,0,0);
@@ -822,6 +863,7 @@ int main()
     std::cout << "PhysicsBroadphaseQueryTest start\n";
     TestSapTouchingPermutationAndUnregister();
     TestValueOverlapAllShapes();
+    TestLegacyAppendContract();
     TestSnapshotScaleAndRayContract();
     TestColliderMetadataSnapshot();
     TestUnifiedPublishedQuery();

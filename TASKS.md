@@ -1721,3 +1721,13 @@
 - notes: 比較中、旧OBB rayのepsilon平行扱いによる明確な誤hitも実再現。物理private経路をdouble slab/厳密0判定と局所double法線へ修正し、共有Mathは変更しない。
 
 - notes: 第1周でSweep OBBのfloat/double Gram検証差を発見。既存Mathのdouble検証をIsValidSweepBoxへ抽出してSweep本体とprecheckで共有する。Mathの受理条件・計算意味は変更しない。
+
+## G1-GR08-P4E: 旧rayとoverlapを共通query経路へ転送する
+- status: done
+- done-when: 旧署名を維持してPhysicsModule/Broadphaseのray/overlapを共通queryへ転送し、旧hit型へ値変換する。旧Overlap法線はquery→対象の向きへ戻し、Point/Depth/UserData/順序と同距離rayの大handle優先を維持する。既定filterの新旧結果を固定seedで比較する。
+- verify: productionで使うspan版旧型adapterを実Broadphase/Mathへ直接リンクし、混在shape・既定新旧4種・全field/順序・同距離・失敗clear・不十分bufferを通常/O2/sanitizer/MEMBERで検証。実Module入口試験も追加しcompile試行、独立レビュー。
+- stop-when: 法線符号/Depth/識別値欠落、順序規則変更、未対応fake providerの既存入口破壊、エラーをsuccess扱い、旧公開署名変更、blocking未解消。
+- paths: Library/Modules/Physics/Private/Physics/PhysicsBroadphase.h, Library/Modules/Physics/Private/Physics/PhysicsBroadphase.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Test/Modules/Physics/PhysicsLegacyQueryTest.cpp, Test/Modules/Physics/PhysicsBroadphaseQueryTest.cpp, Test/Modules/Physics/CMakeLists.txt, Docs/Architecture/PhysicsQueries.md, TASKS.md, PROGRESS.md
+- notes: 新旧とも有効な正規直交OBB/共通数値安全域を条件とし、範囲外はInvalidArgumentへ統一。旧有限検査で通っても数学的に無効なOBBやfloat計算保証外の巨大形状は互換保証に含めない。直接BroadphaseのOverlap追記契約は維持、Module/Sceneの失敗出力は空。
+
+- notes: 第1周でLayer0の旧無filter契約を確認。旧adapterだけ内部kernelのfilter適用を無効にし、新APIのbitmask条件は維持。4種類の旧hit/新NoHitを回帰へ追加する。

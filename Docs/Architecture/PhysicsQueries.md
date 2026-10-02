@@ -59,3 +59,12 @@
 - 接続比較で、旧OBB rayのepsilon平行扱いが薄い箱に誤hitを出す例も確認した。物理privateのOBB rayをdouble slab/厳密0へ修正し、法線も局所double hitから決める。共有Math/描画側は変えない
 
 - Sweep用OBBのprecheckはMath::IsValidSweepBoxを本体と共有する。float検査だけなら通るdouble Gram境界を空間除外でNoHitに隠さない。既存Mathの受理条件をそのまま抽出し、非Sweepやfilter除外の既定契約は維持する
+
+## 旧query入口の互換adapter（P4E）
+- SceneQuery/既存providerの署名は維持する。実PhysicsModuleのRaycast/Overlap3種と直接Broadphase入口は共通ExecuteQuery kernelへ転送する。未対応fake providerの既存virtual入口はそのまま使える
+- 旧RaycastHitは同じdistance/point/normal/識別値を返す。同距離は大きいhandleを選ぶ。旧OverlapHitはhandle昇順、Point/Depth/識別値を保持し、Contact.Normalだけ新APIから反転して従来のquery→対象向きへ戻す
+- 新旧で形状の有効条件・数値安全域を統一する。非正規直交のOBBやfloat計算の保証外の巨大形状はInvalidArgumentとして扱う。従来の有限チェックを通ったことだけで、そのような入力の数学的な結果までは保証しない
+- Module/Sceneの失敗出力は空。直接BroadphaseのOverlapは従来どおり成功時だけ追記し、既存要素を消さない。互換変換用のscratch/変換配列を使うため、新規利用では直接ExecuteQueryを推奨する
+- productionで使うspan版adapterをstack bufferで実行し、混在4,000件を新旧4種類の全field/順序で比較する。旧Overlapの符号・同距離・不足buffer/失敗clearも確認する。実Module/所有配列の統合試験は追加するが、Windows.h依存で実行未確認と区別する
+
+- 旧4入口は従来の無filter検索を維持し、Layer=0も返す。新APIのLayerMaskはbit集合を選ぶためLayer=0を除外する。この差は既定Layerでの新旧一致試験と分けて4種の回帰に固定する。内部kernelのfilter適用だけを切り替え、形状やproxy値は書き換えない

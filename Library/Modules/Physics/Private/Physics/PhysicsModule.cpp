@@ -40,49 +40,6 @@ namespace NorvesLib::Modules::Physics
                     + transform.rotation.w * transform.rotation.w > Math::Constants::EPSILON;
         }
 
-        bool IsFiniteRay(const Math::Ray& ray)
-        {
-            return IsFiniteVector(ray.Origin) && IsFiniteVector(ray.Direction);
-        }
-
-        bool NormalizeFiniteNonZeroDirection(const Math::Vector3& direction, Math::Vector3& outDirection)
-        {
-            const float maximumComponent = std::fmaxf(
-                std::fabs(direction.x),
-                std::fmaxf(std::fabs(direction.y), std::fabs(direction.z)));
-            if (maximumComponent == 0.0f)
-            {
-                return false;
-            }
-
-            const Math::Vector3 scaledDirection = direction / maximumComponent;
-            const float length = std::sqrt(Math::VectorUtils::LengthSquared(scaledDirection));
-            if (length == 0.0f)
-            {
-                return false;
-            }
-
-            outDirection = scaledDirection / length;
-            return true;
-        }
-
-        bool IsFiniteSphere(const Math::Sphere& sphere)
-        {
-            return IsFiniteVector(sphere.Center) && std::isfinite(sphere.Radius) && sphere.Radius >= 0.0f;
-        }
-
-        bool IsFiniteBox(const Math::OBB& box)
-        {
-            return IsFiniteVector(box.Center) && IsFiniteVector(box.HalfExtents)
-                && box.HalfExtents.x >= 0.0f && box.HalfExtents.y >= 0.0f && box.HalfExtents.z >= 0.0f
-                && IsFiniteVector(box.Axes[0]) && IsFiniteVector(box.Axes[1]) && IsFiniteVector(box.Axes[2]);
-        }
-
-        bool IsFiniteCapsule(const Math::Capsule& capsule)
-        {
-            return IsFiniteVector(capsule.PointA) && IsFiniteVector(capsule.PointB)
-                && std::isfinite(capsule.Radius) && capsule.Radius >= 0.0f;
-        }
     } // namespace
 
     PhysicsModule::PhysicsModule()
@@ -311,82 +268,61 @@ namespace NorvesLib::Modules::Physics
         return m_PublishedBroadphase.ExecuteQuery(query, outHits);
     }
 
-    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::Raycast(
-        const Math::Ray& ray,
-        float maxDistance,
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::Raycast(const Math::Ray& ray, float maxDistance,
         Core::Scene::PhysicsRaycastHit& outHit) const
     {
-        outHit = Core::Scene::PhysicsRaycastHit{};
-        const Core::Scene::EPhysicsSceneQueryResult readiness = GetReadinessResult();
+        outHit = {};
+        const auto readiness = GetReadinessResult();
         if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
         {
             return readiness;
         }
-        Math::Vector3 normalizedDirection;
-        if (!IsFiniteRay(ray) || !std::isfinite(maxDistance) || maxDistance < 0.0f
-            || !NormalizeFiniteNonZeroDirection(ray.Direction, normalizedDirection))
-        {
-            return Core::Scene::EPhysicsSceneQueryResult::InvalidArgument;
-        }
-
-        const Math::Ray normalizedRay(ray.Origin, normalizedDirection);
-        return m_PublishedBroadphase.Raycast(normalizedRay, maxDistance, outHit)
-            ? Core::Scene::EPhysicsSceneQueryResult::Success
-            : Core::Scene::EPhysicsSceneQueryResult::NoHit;
+        return m_PublishedBroadphase.RaycastQuery(ray,maxDistance,outHit);
     }
 
-    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapSphere(
-        const Math::Sphere& sphere,
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapSphere(const Math::Sphere& sphere,
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const
     {
         outHits.clear();
-        const Core::Scene::EPhysicsSceneQueryResult readiness = GetReadinessResult();
+        const auto readiness = GetReadinessResult();
         if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
         {
             return readiness;
         }
-        if (!IsFiniteSphere(sphere))
-        {
-            return Core::Scene::EPhysicsSceneQueryResult::InvalidArgument;
-        }
-        m_PublishedBroadphase.OverlapSphere(sphere, outHits);
-        return outHits.empty() ? Core::Scene::EPhysicsSceneQueryResult::NoHit : Core::Scene::EPhysicsSceneQueryResult::Success;
+        Core::Scene::PhysicsQueryDesc query;
+        query.Kind = Core::Scene::EPhysicsQueryKind::OverlapSphere;
+        query.Sphere = sphere;
+        return m_PublishedBroadphase.AppendOverlapQuery(query,outHits);
     }
 
-    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapBox(
-        const Math::OBB& box,
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapBox(const Math::OBB& box,
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const
     {
         outHits.clear();
-        const Core::Scene::EPhysicsSceneQueryResult readiness = GetReadinessResult();
+        const auto readiness = GetReadinessResult();
         if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
         {
             return readiness;
         }
-        if (!IsFiniteBox(box))
-        {
-            return Core::Scene::EPhysicsSceneQueryResult::InvalidArgument;
-        }
-        m_PublishedBroadphase.OverlapBox(box, outHits);
-        return outHits.empty() ? Core::Scene::EPhysicsSceneQueryResult::NoHit : Core::Scene::EPhysicsSceneQueryResult::Success;
+        Core::Scene::PhysicsQueryDesc query;
+        query.Kind = Core::Scene::EPhysicsQueryKind::OverlapBox;
+        query.Box = box;
+        return m_PublishedBroadphase.AppendOverlapQuery(query,outHits);
     }
 
-    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapCapsule(
-        const Math::Capsule& capsule,
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapCapsule(const Math::Capsule& capsule,
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const
     {
         outHits.clear();
-        const Core::Scene::EPhysicsSceneQueryResult readiness = GetReadinessResult();
+        const auto readiness = GetReadinessResult();
         if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
         {
             return readiness;
         }
-        if (!IsFiniteCapsule(capsule))
-        {
-            return Core::Scene::EPhysicsSceneQueryResult::InvalidArgument;
-        }
-        m_PublishedBroadphase.OverlapCapsule(capsule, outHits);
-        return outHits.empty() ? Core::Scene::EPhysicsSceneQueryResult::NoHit : Core::Scene::EPhysicsSceneQueryResult::Success;
+        Core::Scene::PhysicsQueryDesc query;
+        query.Kind = Core::Scene::EPhysicsQueryKind::OverlapCapsule;
+        query.Capsule = capsule;
+        return m_PublishedBroadphase.AppendOverlapQuery(query,outHits);
     }
 
     Core::Scene::EPhysicsSceneQueryResult PhysicsModule::IsAlive(

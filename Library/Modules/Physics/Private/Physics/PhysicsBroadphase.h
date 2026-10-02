@@ -56,6 +56,19 @@ namespace NorvesLib::Modules::Physics
             const Math::Capsule& capsule,
             Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const;
 
+        Core::Scene::EPhysicsSceneQueryResult RaycastQuery(const Math::Ray& ray, float maxDistance,
+            Core::Scene::PhysicsRaycastHit& outHit) const;
+        // 旧直接Overlapと同じく成功時だけ追記する。Module側は呼出し前にclearする。
+        Core::Scene::EPhysicsSceneQueryResult AppendOverlapQuery(const Core::Scene::PhysicsQueryDesc& query,
+            Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const;
+        // 旧無filter検索を保つ。Layer=0も対象。新APIのLayerMask/trigger/ignore判定とは区別する。
+        static Core::Scene::EPhysicsSceneQueryResult RaycastOverProxies(Core::Container::Span<const PhysicsShapeProxy> proxies,
+            const Math::Ray& ray, float maxDistance, Core::Scene::PhysicsRaycastHit& outHit);
+        // scratch/outHitsはmin(MaxHits,proxy数)以上。全領域は非alias。失敗時outHits/countは初期化。
+        static Core::Scene::EPhysicsSceneQueryResult OverlapOverProxies(Core::Container::Span<const PhysicsShapeProxy> proxies,
+            const Core::Scene::PhysicsQueryDesc& query, Core::Container::Span<Core::Scene::PhysicsQueryHit> scratch,
+            Core::Container::Span<Core::Scene::PhysicsOverlapHit> outHits, size_t& outHitCount);
+
         Core::Scene::EPhysicsSceneQueryResult ExecuteQuery(const Core::Scene::PhysicsQueryDesc& query,
             Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits) const;
         // 出力領域はmin(MaxHits, proxy数)個必要（Closestは最大1個）。失敗時は全出力を初期化する。

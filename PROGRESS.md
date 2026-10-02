@@ -411,3 +411,6 @@
 
 - G1-GR08-P4D: ray/形状bounds/掃引始終点AABBの訪問を集約へ接続。除外前のgeometry/filter/尺度確認、順序/MaxHits/全出力clear、巨大bounds時の全探索fallbackを維持。確定混在7,000件（各種類300件以上のhit）を全QueryProxy＋独立sortと全field照合。候補内IterationLimitは維持し、AABB非交差が証明できる対象はNoHitと確定する。比較で見つかった旧OBB rayのepsilon平行誤hitもdouble slab/局所法線へ修正。第1周でSweep OBBのfloat/double検証差を発見し、既存Mathの条件をIsValidSweepBoxへ抽出して本体/precheckで共有、第2周PASS。Pruning/Ray/Proxyの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBERとassert有効の既存GeometrySweep 1万oracle回帰成功。実Engine統合/Windowsは未検証。
 - Next: G1／GR08の旧Raycast/Overlap入口を新query kernelへ転送して互換結果/符号/順序を固定する。その後Capsule受入れ、共通曲線、更新/pause/camera契約の残りを閉じる。
+
+- G1-GR08-P4E: 旧Raycast/Overlap3種のModule/Broadphase入口を共通query kernelへ統一し、旧hit識別値/Point/Depth/順序とOverlap法線反転、直接Broadphaseの成功時追記を保持。旧無filter契約ではLayer0も検索し、新APIのbitmaskとは区別する。4,000固定seed全field比較・Layer0の4種類・失敗clear/容量/同距離を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBERで実行成功、Pruning7,000件も成功。独立第2周PASS、実Module/所有配列の統合試験は追加済みだがWindows.h依存でcompile/実行未確認。
+- Next: G1／GR08のCapsule面・辺・角・回転・初期侵入とOverlap深さの明示受入れを固定し、共通曲線と更新契約へ進む。
