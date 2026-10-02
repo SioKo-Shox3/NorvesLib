@@ -3297,7 +3297,8 @@ namespace NorvesLib::Core::Rendering
         // フレームだけを静止として数える。静止が続くと画素ごとの履歴の年齢の上限を上げ、静止画像を
         // 収束させる。動いたフレームの上限は従来どおり8。
         // TAAのジッタはフレームごとに投影をずらすだけで視点は動かないため、ジッタを除いた逆ビュー射影で比べる。
-        // 露出は履歴を比で掛け直すので静止の判定に含めない（自動露出の小さな揺れで静止が切れないように）。
+        // 露出は履歴を比で掛け直すので署名に含めない（自動露出の小さな揺れで静止が切れないように）。
+        // 1フレームでRTGIHistoryStaticExposureStepEVを超える急な変化だけ、署名とは別に静止を切る。
         // instanceの変換は原点の位置と各軸の拡大率だけを比べ、原点を通る軸の周りの回転（起動画面の
         // 自転する球など）は静止として扱う。回転で形の向きが変わる物体の間接光は、画素ごとの履歴の棄却
         // （自身の面）と年齢の上限（周りの面）の範囲で遅れて追従する。
@@ -3363,7 +3364,16 @@ namespace NorvesLib::Core::Rendering
                                             material.RoughnessTexture.Id};
             staticSignature = HashRTGIBytes(staticSignature, textureIds, sizeof(textureIds));
         }
+        const float rtgiPreExposure = std::isfinite(lightingParams.preExposure) &&
+                                              lightingParams.preExposure > 0.0f
+                                          ? std::clamp(lightingParams.preExposure, 1.0e-6f, 1.0e6f)
+                                          : 1.0f;
+        const bool bExposureStepped =
+            bHadHistory && std::isfinite(m_RTGIHistoryPreExposure) && m_RTGIHistoryPreExposure > 0.0f &&
+            std::abs(std::log2(rtgiPreExposure / m_RTGIHistoryPreExposure)) >
+                RTGIHistoryStaticExposureStepEV;
         const bool bStaticFrame = bHistoryReprojectionValid && !bLightRevisionMismatch &&
+                                  !bExposureStepped &&
                                   lightWeightLimitedFrames == 0u && m_bRTGIStaticSignatureValid &&
                                   staticSignature == m_RTGIStaticSignature;
         const uint32_t staticFrames = bStaticFrame ? m_RTGIStaticFrames + 1u : 0u;
@@ -3420,10 +3430,7 @@ namespace NorvesLib::Core::Rendering
         parameters.imageAndSceneCounts[3] = context.PhysicalLighting.LogicalLightCount;
         parameters.rayLimits[0] = RTGI_RAY_MINIMUM_DISTANCE;
         parameters.rayLimits[1] = RTGI_RAY_MAXIMUM_DISTANCE;
-        parameters.rayLimits[2] = std::isfinite(lightingParams.preExposure) &&
-                                           lightingParams.preExposure > 0.0f
-                                       ? std::clamp(lightingParams.preExposure, 1.0e-6f, 1.0e6f)
-                                       : 1.0f;
+        parameters.rayLimits[2] = rtgiPreExposure;
         parameters.rayLimits[3] = context.PhysicalLighting.bIBLEnabled &&
                                           std::isfinite(context.PhysicalLighting.IBLIntensity) &&
                                           context.PhysicalLighting.IBLIntensity > 0.0f

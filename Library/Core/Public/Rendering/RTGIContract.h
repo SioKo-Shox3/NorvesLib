@@ -18,11 +18,19 @@ namespace NorvesLib::Core::Rendering
      * 累積平均で収束させる。何かが変わったフレームで上限はRTGIHistoryMaximumAgeへ戻る。静止の判定は
      * 視点（TAAのジッタを除く）・環境光・光源のrevision・instanceの原点の位置と拡大率と形状・材質の色と
      * 発光とtextureハンドルで行い、同じtextureハンドルのまま内容だけを書き換えた変更と、原点を通る軸の
-     * 周りの回転は含まない。露出の変化は履歴を露出の比で掛け直すので、静止の判定に含めない。
+     * 周りの回転は含まない。露出は履歴を露出の比で掛け直すので、1フレームで
+     * RTGIHistoryStaticExposureStepEVを超えて変わったときだけ静止を切る。
      */
-    inline constexpr uint32_t RTGIHistoryStaticMaximumAge = 64u;
+    inline constexpr uint32_t RTGIHistoryStaticMaximumAge = 128u;
     /** @brief 年齢の上限を上げ始めるまでに要る連続した静止フレーム数（停止直後の追従を変えない） */
     inline constexpr uint32_t RTGIHistoryStaticWarmupFrames = 16u;
+    /**
+     * @brief 静止を切る1フレームあたりの露出（プリエクスポージャ）の変化の大きさ（EV）
+     *
+     * 履歴は露出の比で掛け直すので、自動露出の順応の小さな変化では静止を切らない。これを超える急な変化は
+     * 場面の切り替わりや光源の急変の兆しとして静止を切り、年齢の上限をRTGIHistoryMaximumAgeへ戻す。
+     */
+    inline constexpr float RTGIHistoryStaticExposureStepEV = 0.25f;
     inline constexpr uint32_t RTGIDiffuseBounceCount = 1u;
     inline constexpr RHI::Format RTGIDiffuseIndirectRadianceFormat =
         RHI::Format::R16G16B16A16_FLOAT;

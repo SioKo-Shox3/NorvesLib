@@ -265,7 +265,7 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Assets/Textures, Scripts/BakeLookLut.py, Game/GameModes/Rendering3DTest, Test/Core/Rendering, TASKS.md, PROGRESS.md
 
 ## SS-RTGI-DEFAULT: TAAの上でRTGIを起動画面の既定にする
-- status: todo
+- status: done
 - done-when: ハードウェアのレイトレが使える環境では、起動画面でRTGIを有効にし（`30f00f8` で切った設定を戻す）、TAAと既存のデノイズで粒状の雑音が見えない。止まったカメラで16フレームを撮り、静止した地面の領域の画素の時間方向の標準偏差が、RTGI無効のときの2倍以内に収まる。レイトレが使えない環境ではIBL（空由来）に落ちて同じシーンが表示される。撮影で、小屋の軒下や球の下の地面に色のにじみ（間接光）が見える。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
@@ -288,6 +288,17 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Component, Library/Core/Private/Component, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-02 の親の確認で分かった。SS-DAYLIGHT-P1 の対応で起動画面の自動露出に一律の+2 EVの露出補正（`8b80473`）を掛けた結果、影の比は満たしたが画面全体の平均が約180/255になり、昼は白っぽく飛んで眠く、夕は桃色がかり、夜は背景の静的HDR（昼の芝生と木の写真）と地面が真っ白に写って夜に見えない（`startup-capture/SS-GRADING-LUT/default-sun45.png`・`default-sun3.png`、`SS-CONTACT-SHADOW-night/default-night.png`）。個々の項目の完了条件は満たしていたが、画面全体の釣り合いを見る条件が無かった。
 - notes: やり方の目安: 一律の+2 EVをやめるか小さくし、暗部を縮めにくいトーンカーブ（例: Khronos PBR Neutral や AgX をトーンマップの選択肢に足してカメラごとに選べるようにする、または既存の `Aces20Lut`）と組み合わせる。夜は自動露出が昼並みの明るさへ戻しきらないようにする（明るさに応じた露出補正、または目標の範囲）。夜の背景は昼の写真を出さない（夜の空の色にする等）。SS-POST-TUNE・SS-GRADING-LUT・高さフォグの値は、ほかの値を変えた後に撮り比べ、必要なら合わせ直す。危険地帯（トーンマップ・露出・FramePacketのカメラ）。評価者を通す。
+
+## SS-RTGI-FAR-NOISE: 起動画面の遠い地面に残るRTGIの時間方向の雑音を減らす
+- status: todo
+- done-when: 止まったカメラで16フレームを撮り（`-StillRenderedFrames`）、既定視点の地平線寄りの帯（画面の高さの0.33〜0.42）と低角度視点の中ほどの帯（0.65〜0.80）でも、地面の画素の時間方向の標準偏差（表示の輝度）がRTGI無効のときの2倍以内に収まる（手前の帯 0.80〜0.98 の既存の基準も保つ）。帯ごとの値を `metrics.json` に出せるよう撮影スクリプトの測定領域を視点ごとに複数にする。止まった状態で疎らに明滅する画素（標準偏差が1/255を超える画素）の割合も記録する。
+- verify: `cmake --build build --config Debug --target Game RTGIDiffuseIndirectVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RTGIDiffuseIndirectVulkanTest$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-RTGI-FAR-NOISE-On -StillRenderedFrames 160,168,176,184,192,200,208,216,224,232,240,248,256,264,272,280 -Rtgi On`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-RTGI-FAR-NOISE-Off -StillRenderedFrames 160,168,176,184,192,200,208,216,224,232,240,248,256,264,272,280 -Rtgi Off`
+- stop-when: 原因が画素ごとの履歴の棄却ではなく、ジッタで変わるGBufferの標本そのもの（遠い画素の中の石の目地）にあり、棄却を緩めると動く物体の残像が出る場合は、帯ごとの測定値と原因を既知の限界として記録して完了にする。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: SS-RTGI-DEFAULT の完了時（2026-10-02）の測定: 判定の帯（0.80〜0.98）は既定1.27倍・近接0.86倍・低角度1.70倍で合格だが、年齢上限128の撮影（`startup-capture/SS-RTGI-DEFAULT-it1-age128-On` と `-it1-base-Off`）で既定の0.33〜0.42の帯は2.03倍（標準偏差1/255超の画素 26.6%、無効時1.6%）、低角度の0.65〜0.80の帯は2.29倍（15.3%、無効時0.5%）。前回の切り分け（`SS-RTGI-DEFAULT-exp-norej`、年齢上限64で法線・材質・深度の棄却を外した撮影）ではこの2つの帯が1.59倍・1.76倍だったので、履歴の棄却が主な原因と見られる。危険地帯（RTGI）。評価者を通す。
 
 ## SS-ACCEPT: 起動画面の改善を受け入れる
 - status: todo
