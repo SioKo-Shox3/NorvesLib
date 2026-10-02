@@ -28,6 +28,26 @@ namespace NorvesLib::Core::Rendering
     inline constexpr float AutoExposureLuminanceToEV100Log2Offset = 3.0f;
 
     /**
+     * @brief 測光した明るさ（露出補正の前の目標の EV100）に応じて足す露出補正の曲線
+     *
+     * 暗い側の点（DarkEV100, DarkCompensation）と明るい側の点（BrightEV100, BrightCompensation）の間を
+     * 線形に補間し、外側は端の値のまま延ばす。夜のような暗い場面で画面を中間調まで持ち上げきらず、
+     * 暗いまま見せるのに使う（目の暗順応が昼の明るさまで戻らないのと同じ）。既定は無効で、補正を足さない。
+     */
+    struct AutoExposureCompensationCurve
+    {
+        bool bEnabled = false;
+        /** @brief 暗い側の点の EV100（露出補正の前の目標） */
+        float DarkEV100 = 0.0f;
+        /** @brief 暗い側の点で足す露出補正（EV。負で画面を暗く保つ） */
+        float DarkCompensation = 0.0f;
+        /** @brief 明るい側の点の EV100（露出補正の前の目標） */
+        float BrightEV100 = 10.0f;
+        /** @brief 明るい側の点で足す露出補正（EV） */
+        float BrightCompensation = 0.0f;
+    };
+
+    /**
      * @brief 自動露出の設定
      *
      * 「明るくなる向き」は画面が明るくなる順応（EV100 が下がる。暗い場所へ入ったとき）、
@@ -43,6 +63,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 露出補正（EV）。正の値で画面を明るくする（目標の EV100 を下げる） */
         float ExposureCompensation = 0.0f;
+
+        /** @brief 測光した明るさに応じて ExposureCompensation へ足す露出補正（既定は無効） */
+        AutoExposureCompensationCurve CompensationCurve;
 
         /** @brief 目標の EV100 の下限 */
         float MinEV100 = -4.0f;
@@ -141,7 +164,31 @@ namespace NorvesLib::Core::Rendering
                (static_cast<float>(bin) + 0.5f) / AutoExposureHistogramBinsPerLog2;
     }
 
-    /** @brief log2 輝度の平均と露出補正・下限・上限から目標の EV100 を求める */
+    /**
+     * @brief 露出補正の前の目標の EV100 から、曲線の露出補正（EV）を求める
+     *
+     * 無効・非有限の値は0。2点の EV100 が同じ（または逆順）なら、暗い側の点より暗いときだけ暗い側の値。
+     */
+    inline float EvaluateAutoExposureCompensationCurve(const AutoExposureCompensationCurve& curve,
+                                                       float meteredEV100)
+    {
+        if (!curve.bEnabled || !std::isfinite(meteredEV100))
+        {
+            return 0.0f;
+        }
+        const float darkEV100 = AutoExposureDetail::SanitizeFinite(curve.DarkEV100, 0.0f);
+        const float brightEV100 = AutoExposureDetail::SanitizeFinite(curve.BrightEV100, 0.0f);
+        const float darkCompensation = AutoExposureDetail::SanitizeFinite(curve.DarkCompensation, 0.0f);
+        const float brightCompensation = AutoExposureDetail::SanitizeFinite(curve.BrightCompensation, 0.0f);
+        if (!(brightEV100 > darkEV100))
+        {
+            return meteredEV100 < darkEV100 ? darkCompensation : brightCompensation;
+        }
+        const float t = std::clamp((meteredEV100 - darkEV100) / (brightEV100 - darkEV100), 0.0f, 1.0f);
+        return darkCompensation + (brightCompensation - darkCompensation) * t;
+    }
+
+    /** @brief log2 輝度の平均と露出補正（曲線を含む）・下限・上限から目標の EV100 を求める */
     inline float AutoExposureTargetEV100FromAverageLog2Luminance(float averageLog2Luminance,
                                                                  const AutoExposureSettings& settings)
     {
@@ -151,8 +198,10 @@ namespace NorvesLib::Core::Rendering
         {
             std::swap(minEV100, maxEV100);
         }
-        const float compensation = AutoExposureDetail::SanitizeFinite(settings.ExposureCompensation, 0.0f);
-        const float ev100 = averageLog2Luminance + AutoExposureLuminanceToEV100Log2Offset - compensation;
+        const float meteredEV100 = averageLog2Luminance + AutoExposureLuminanceToEV100Log2Offset;
+        const float compensation = AutoExposureDetail::SanitizeFinite(settings.ExposureCompensation, 0.0f) +
+                                   EvaluateAutoExposureCompensationCurve(settings.CompensationCurve, meteredEV100);
+        const float ev100 = meteredEV100 - compensation;
         return std::clamp(ev100, minEV100, maxEV100);
     }
 

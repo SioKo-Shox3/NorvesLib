@@ -37,7 +37,15 @@ namespace NorvesLib::Core::Rendering
          * `Assets/ColorManagement/Aces20SdrRec709.lut3d` を log2 shaper で引く。
          * 表示変換そのものなので、既定のカラーグレーディングは掛けない。
          */
-        Aces20Lut
+        Aces20Lut,
+
+        /**
+         * 中間調まで線形で、明部だけを Khronos PBR Neutral と同じ式で色相を保って1へ圧縮する
+         *
+         * 参照実装の足元（暗部を2次で縮める差し引き）は使わず、最大の成分が 0.8 未満の色は入力の比のまま返す
+         * ので、ACES Filmic のように影の中を縮めない。カメラの CameraToneMapCurve::NeutralLinear でも選べる。
+         */
+        NeutralLinear
     };
 
     /**
@@ -117,6 +125,7 @@ namespace NorvesLib::Core::Rendering
      * - Uncharted2: ゲームで広く使用
      * - Exposure: 露出ベースの単純なクランプ
      * - Aces20Lut: ACES 2.0 SDR のベイク3D LUT（カラーグレーディングなし）
+     * - NeutralLinear: 中間調まで線形（Khronos PBR Neutral の明部の圧縮）
      *
      * カメラが見た目の3D LUT（CameraProxy::LookLut）を指定していれば、グレーディングの後・ビネットの前に掛ける
      * （Aces20Lut の演算子には掛けない）。

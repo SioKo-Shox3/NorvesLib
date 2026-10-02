@@ -8,6 +8,7 @@
 #include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
 #include "VolumetricFog.h"
+#include "AutoExposure.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
 #include "Math/MatrixUtils.h"
@@ -361,6 +362,19 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief カメラごとに View の既定から差し替えるトーンマップの曲線
+     *
+     * ViewDefault は View のトーンマップの設定（検証シーンの既定は ACES Filmic）を使う。
+     * NeutralLinear は中間調まで線形で、明部だけを Khronos PBR Neutral と同じ式で色相を保って1へ圧縮する
+     * （ToneMappingOperator::NeutralLinear と同じ。暗部を縮めない）。
+     */
+    enum class CameraToneMapCurve : uint8_t
+    {
+        ViewDefault,
+        NeutralLinear
+    };
+
+    /**
      * @brief カメラごとのレンズの効果（色収差とレンズダート）
      *
      * 既定はどちらも0で無効。起動画面のように演出を足したいカメラだけが値を入れ、検証シーンのカメラは
@@ -449,6 +463,8 @@ namespace NorvesLib::Core::Rendering
         float PreExposure = 1.0f / 1152.0f;
         float InvPreExposure = 1152.0f;
         CameraExposureMode ExposureMode = CameraExposureMode::Manual;
+        // 自動露出で、測光した明るさに応じて ExposureCompensation へ足す露出補正（既定は無効）
+        AutoExposureCompensationCurve AutoExposureCurve;
 
         // アンチエイリアス
         CameraAntiAliasingMode AntiAliasing = CameraAntiAliasingMode::FXAA;
@@ -456,6 +472,9 @@ namespace NorvesLib::Core::Rendering
         // カメラの複製へ書く。GameThread のカメラでは常に0。
         float ProjectionJitterNdcX = 0.0f;
         float ProjectionJitterNdcY = 0.0f;
+
+        // トーンマップの曲線の差し替え（既定は View の設定のまま）
+        CameraToneMapCurve ToneMapCurve = CameraToneMapCurve::ViewDefault;
 
         // トーンマップ後のグレーディングのコントラスト。負は View のトーンマップ設定の値を使う。
         float GradingContrast = -1.0f;

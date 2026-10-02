@@ -8,7 +8,7 @@ layout(set = 0, binding = 0) uniform sampler2D sceneColor;
 // トーンマッピングパラメータ
 layout(std140, set = 0, binding = 1) uniform ToneMappingParams
 {
-    uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure, 4:ACES 2.0 SDR LUT
+    uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure, 4:ACES 2.0 SDR LUT, 5:中間調まで線形（Khronos PBR Neutral の明部の圧縮）
     uint bBypass;
     uint filmGrainSeed;       // フィルムグレインのフレームごとのseed
     // Vignette パラメータ
@@ -40,6 +40,7 @@ layout(location = 0) out vec4 outColor;
 // LUTの shaper（Scripts/BakeAcesOutputLut.py と同じ固定値）
 // u = log2(x / 2^-8 + 1) / log2(2^8 / 2^-8 + 1)、x は [0, 256] へ飽和
 const uint ACES20_LUT_OPERATOR = 4u;
+const uint NEUTRAL_LINEAR_OPERATOR = 5u;
 const float ACES20_LUT_SHAPER_OFFSET = 0.00390625;
 const float ACES20_LUT_SHAPER_MAX = 256.0;
 const float ACES20_LUT_SHAPER_SPAN = log2(ACES20_LUT_SHAPER_MAX / ACES20_LUT_SHAPER_OFFSET + 1.0);
@@ -90,6 +91,27 @@ vec3 TonemapUncharted2(vec3 color)
 vec3 TonemapExposure(vec3 color)
 {
     return vec3(1.0) - exp(-color);
+}
+
+// 中間調まで線形で、明部だけを Khronos PBR Neutral（https://github.com/KhronosGroup/ToneMapping）と
+// 同じ式で圧縮する。参照実装の足元（最も暗い成分に応じて最大 0.04 を差し引く2次の曲線）は、空の光だけの
+// 影の中（日向の約2割）を日向の1割以下まで縮めるので使わず、暗部は入力の比のまま返す。最大の成分が
+// 0.8 未満ならそのまま返し、それより明るい色は最大の成分を1へ漸近させ（色相を保つ）、圧縮した分だけ白へ寄せる。
+vec3 TonemapNeutralLinear(vec3 color)
+{
+    const float startCompression = 0.8;
+    const float desaturation = 0.15;
+    color = max(color, vec3(0.0));
+    float peak = max(color.r, max(color.g, color.b));
+    if (peak < startCompression)
+    {
+        return color;
+    }
+    const float d = 1.0 - startCompression;
+    float newPeak = 1.0 - d * d / (peak + d - startCompression);
+    color *= newPeak / peak;
+    float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+    return mix(color, vec3(newPeak), g);
 }
 
 // ACES 2.0 SDR（ベイク3D LUTを log2 shaper の座標で三線形補間）
@@ -246,6 +268,10 @@ void main()
     else if (params.operatorType == ACES20_LUT_OPERATOR)
     {
         mapped = TonemapAces20Lut(hdrColor);
+    }
+    else if (params.operatorType == NEUTRAL_LINEAR_OPERATOR)
+    {
+        mapped = TonemapNeutralLinear(hdrColor);
     }
     else
     {

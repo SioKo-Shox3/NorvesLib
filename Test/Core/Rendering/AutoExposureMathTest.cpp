@@ -246,6 +246,46 @@ namespace
               "ヒストグラムが無いときは無効");
     }
 
+    // 測光した明るさ（補正の前の目標の EV100）に応じた露出補正の曲線。2点の間は線形、外側は端の値、
+    // 固定の露出補正と足し合わされ、無効なら目標を変えない。
+    void TestCompensationCurve()
+    {
+        AutoExposureSettings settings;
+        settings.ExposureCompensation = 1.0f;
+        settings.CompensationCurve.bEnabled = true;
+        settings.CompensationCurve.DarkEV100 = 2.0f;
+        settings.CompensationCurve.DarkCompensation = -3.0f;
+        settings.CompensationCurve.BrightEV100 = 8.0f;
+        settings.CompensationCurve.BrightCompensation = 0.5f;
+
+        // 平均の log2 輝度 a の測光値は a + 3。
+        const auto target = [&](float meteredEV100)
+        {
+            return AutoExposureTargetEV100FromAverageLog2Luminance(
+                meteredEV100 - AutoExposureLuminanceToEV100Log2Offset, settings);
+        };
+        Check(IsNear(target(13.0f), 13.0 - 1.0 - 0.5, 1.0e-5), "明るい側の点より明るい場面は明るい側の補正");
+        Check(IsNear(target(-1.0f), -1.0 - 1.0 + 3.0, 1.0e-5), "暗い側の点より暗い場面は暗い側の補正（画面を暗く保つ）");
+        Check(IsNear(target(5.0f), 5.0 - 1.0 - (-3.0 + 3.5 * 0.5), 1.0e-5), "2点の中ほどは線形に補間した補正");
+        Check(IsNear(target(1.0f) - target(-2.0f), 3.0, 1.0e-5),
+              "暗い側の点より暗い範囲では、場面が暗くなった分だけ目標も下がる");
+
+        AutoExposureSettings disabled = settings;
+        disabled.CompensationCurve.bEnabled = false;
+        Check(IsNear(AutoExposureTargetEV100FromAverageLog2Luminance(5.0f, disabled), 5.0 + 3.0 - 1.0, 1.0e-6),
+              "無効な曲線は固定の露出補正だけ");
+
+        AutoExposureSettings step = settings;
+        step.CompensationCurve.BrightEV100 = step.CompensationCurve.DarkEV100;
+        Check(IsNear(EvaluateAutoExposureCompensationCurve(step.CompensationCurve, 1.9f), -3.0, 1.0e-6) &&
+                  IsNear(EvaluateAutoExposureCompensationCurve(step.CompensationCurve, 2.0f), 0.5, 1.0e-6),
+              "2点の EV100 が同じなら暗い側の点の手前で切り替わる");
+        Check(IsNear(EvaluateAutoExposureCompensationCurve(settings.CompensationCurve,
+                                                           std::numeric_limits<float>::quiet_NaN()),
+                     0.0, 0.0),
+              "非有限の測光値には補正を足さない");
+    }
+
     // dE/dt = -speed × (E - target) を前進オイラー法で細かく積分する参照
     double IntegrateReference(double current, double target, double seconds, double speedBrighten, double speedDarken)
     {
@@ -558,6 +598,7 @@ int main()
     TestHistogramMatchesReference();
     TestFractionalCutInsideOneBin();
     TestUniformSceneAndSettings();
+    TestCompensationCurve();
     TestAdaptationMatchesReference();
     TestAdaptationState();
     TestPreExposureFromEV100();

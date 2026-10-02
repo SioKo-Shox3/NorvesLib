@@ -28,6 +28,7 @@ namespace NorvesLib::Core::Rendering
         // tonemapping.frag の operatorType と一致させる
         constexpr uint32_t Aces20LutOperatorType = 4u;
         constexpr uint32_t AcesFilmicOperatorType = 1u;
+        constexpr uint32_t NeutralLinearOperatorType = 5u;
 
         // Scripts/BakeAcesOutputLut.py が書く見出し（32 byte、little-endian）
         constexpr char Aces20LutMagic[8] = {'N', 'L', 'U', 'T', '3', 'D', '0', '1'};
@@ -720,7 +721,13 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        const uint32_t operatorType = PrepareColorLut();
+        // カメラがトーンマップの曲線を差し替えていればそれを使う（起動画面など、検証シーンの既定を変えずに切り替える）。
+        const CameraProxy* activeCamera = context.GetActiveCamera();
+        const uint32_t viewOperatorType = PrepareColorLut();
+        const uint32_t operatorType =
+            activeCamera != nullptr && activeCamera->ToneMapCurve == CameraToneMapCurve::NeutralLinear
+                ? NeutralLinearOperatorType
+                : viewOperatorType;
         const RHI::TexturePtr& colorLut =
             operatorType == Aces20LutOperatorType ? m_ColorLutTexture : m_ColorLutFallbackTexture;
         if (!colorLut)
@@ -730,7 +737,6 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 見た目のLUTはグレーディングと同じく、表示変換そのものの ACES 2.0 SDR LUT には掛けない
-        const CameraProxy* activeCamera = context.GetActiveCamera();
         RHI::TexturePtr lookLut =
             operatorType != Aces20LutOperatorType ? PrepareLookLut(activeCamera) : RHI::TexturePtr{};
         const float lookLutIntensity = lookLut ? std::clamp(activeCamera->LookLut.Intensity, 0.0f, 1.0f) : 0.0f;

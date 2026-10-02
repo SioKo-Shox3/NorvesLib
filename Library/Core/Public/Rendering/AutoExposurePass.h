@@ -51,6 +51,12 @@ namespace NorvesLib::Core::Rendering
             m_Settings.ExposureCompensation = exposureCompensation;
         }
 
+        /** @brief 測光した明るさに応じて足す露出補正の曲線だけを変える。次に読み戻す測定から効く */
+        void SetCompensationCurve(const AutoExposureCompensationCurve& curve)
+        {
+            m_Settings.CompensationCurve = curve;
+        }
+
         /** @brief 順応させた EV100。まだ有効な測定が無いときは false */
         bool TryGetAdaptedEV100(float& outEV100) const
         {

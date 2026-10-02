@@ -123,6 +123,7 @@ namespace NorvesLib::Core::Rendering
                                   CameraProxy &outCamera)
         {
             autoExposurePass.SetExposureCompensation(camera.ExposureCompensation);
+            autoExposurePass.SetCompensationCurve(camera.AutoExposureCurve);
             float adaptedEV100 = 0.0f;
             if (!autoExposurePass.TryGetAdaptedEV100(adaptedEV100))
             {

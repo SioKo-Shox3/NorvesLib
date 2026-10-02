@@ -153,10 +153,20 @@ namespace Game::GameModes
         constexpr float kStartupHeightFogFalloff = 1.0f;
 
         // 起動画面の自動露出の露出補正（EV）。自動露出は画面の log2 輝度の平均を中間調へ合わせるため、
-        // 明るい空が画面の多くを占める昼の屋外では地面が暗く写り、ACES の足元が暗部を縮めて、空の光だけの
-        // 影の中（ライティングの出力で日向の約 2 割）が表示のリニア値で約 1 割の黒い芯になる。写真の
-        // 逆光補正と同じく露出を上げ、影の中を足元の外へ出す。手動露出には掛けない。
-        constexpr float kStartupAutoExposureCompensationEV = 2.0f;
+        // 明るい空が画面の多くを占める昼の屋外では地面が暗く写る。写真の逆光補正と同じく露出を上げる。
+        // トーンマップを暗部を縮めない NeutralLinear にしたので、昼（仰角45°）の画面の平均が 0〜255 で約120に
+        // なる +1.25 EV にとどめる（以前の ACES での +2 EV は平均が約180で白っぽく飛んだ）。手動露出には掛けない。
+        constexpr float kStartupAutoExposureCompensationEV = 1.25f;
+
+        // 起動画面の自動露出で、測光した明るさ（露出補正の前の目標の EV100）に応じて足す露出補正。
+        // 自動露出だけでは夕も夜も昼と同じ中間調まで持ち上がり、夜が夜に見えない。目の暗順応が昼の明るさまで
+        // 戻らないのと同じく、14 EV（朝の仰角10°の測光値が約13.5〜13.8、昼の45°が約15.4〜15.8）より暗いほど
+        // 1 EV あたり約0.41 EV ずつ暗く保ち、0 EV で -5.7 EV にする（夕の3°の約11.4〜12.1で約 -0.8〜-1.1 EV、
+        // 夜の約2〜4で約 -4.1〜-4.9 EV）。夜は光源のにじみが画面を広く占める低角度の視点が最も明るく写るので、
+        // その画面の平均が80を超えない傾きにした。撮影で朝・昼・夕・夜の画面の平均が約115・120・90・60になる。
+        constexpr float kStartupDarkSceneEV100 = 0.0f;
+        constexpr float kStartupDarkSceneCompensationEV = -5.7f;
+        constexpr float kStartupBrightSceneEV100 = 14.0f;
 
         // --night の静的HDR（grasslands_sunset_4k）の倍率。倍率1の上半球の放射輝度を余弦で積分した水平面の
         // 照度は約 3.9 lx なので、0.08 で約 0.31 lx（満月の夜の地面の目安 0.1〜1 lx）にする。
@@ -174,13 +184,14 @@ namespace Game::GameModes
         constexpr float kStartupChromaticAberrationPixels = 1.5f;
         constexpr float kStartupLensDirtIntensity = 2.0f;
 
-        // 起動画面のトーンマップ後のグレーディングとビネット（検証シーンのカメラは View の既定のまま）。
-        // 自動露出（+2 EV の補正）で画面の中央値が表示のリニア値で約 0.47〜0.50 と明るく、ACES の肩で中間が
-        // 平らになって眠く見えるため、地面の明るさ（0.5）を軸に、黒と白を動かさない S 字のコントラスト 1.25 で
-        // 中間を立てる（中央値は変えず、輝度の標準偏差が約 1.15 倍。影の中の地面は日向の約 18〜21% で、
-        // SS-DAYLIGHT-P1 の下限 15% を保つ）。彩度は 1.25（View の既定 1.1 では石畳と空が灰色に寄る）。
-        // 色温度は +0.1（R・B を ±1%）で日なたをわずかに暖かくする程度にとどめ、昼の空の青を残す。
-        // ビネットは強さ 0.25・半径 0.85・幅 0.6 で、画面の隅を約 0.78 倍にする（View の既定 0.3・0.8・0.5 の
+        // 起動画面のトーンマップとグレーディングとビネット（検証シーンのカメラは View の既定のまま）。
+        // トーンマップは中間調まで線形の NeutralLinear（明部だけを Khronos PBR Neutral の式で圧縮する）。ACES Filmic と
+        // Khronos PBR Neutral の参照実装はどちらも足元で暗部を縮め、空の光だけの影の中（ライティングの出力で日向の
+        // 約2割）が、画面の平均を約120にする露出では表示のリニア輝度で日向の1割強まで落ちる。
+        // 線形の暗部の上に、黒と白を動かさない S 字のコントラスト 1.15（軸 0.5）で中間を立てる（影の中は日向の
+        // 約18〜21%）。彩度は 1.6: 線形の曲線は ACES のように中間の彩度を上げず、見た目の LUT が明部の彩度を
+        // 落とすため、これより低いと昼の空の上端が灰色に寄る（B − R が符号化値で40を切る）。色温度は0（暖かみは
+        // LUT が持つ）。ビネットは強さ 0.25・半径 0.85・幅 0.6 で、画面の隅を約 0.78 倍にする（View の既定 0.3・0.8・0.5 の
         // 約 0.72 倍より弱め、明るい地面の隅が濁らないようにする）。
         // 起動画面の見た目の 3D LUT（Scripts/BakeLookLut.py が焼く暖かみのある映画調）。上のグレーディングの後に
         // 掛かり、中間と明部を琥珀へ、暗部をわずかに青緑へ寄せ、黒をわずかに持ち上げる。
@@ -188,15 +199,21 @@ namespace Game::GameModes
 
         void ApplyStartupGrading(CameraProxy& camera, bool bLensEffects, bool bLookLut)
         {
+            camera.ToneMapCurve = CameraToneMapCurve::NeutralLinear;
+            camera.AutoExposureCurve.bEnabled = true;
+            camera.AutoExposureCurve.DarkEV100 = kStartupDarkSceneEV100;
+            camera.AutoExposureCurve.DarkCompensation = kStartupDarkSceneCompensationEV;
+            camera.AutoExposureCurve.BrightEV100 = kStartupBrightSceneEV100;
+            camera.AutoExposureCurve.BrightCompensation = 0.0f;
             camera.LookLut.AssetPath = bLookLut ? kStartupLookLutAssetPath : nullptr;
             camera.LookLut.Intensity = 1.0f;
             camera.LensEffects.ChromaticAberrationPixels = bLensEffects ? kStartupChromaticAberrationPixels : 0.0f;
             camera.LensEffects.LensDirtIntensity = bLensEffects ? kStartupLensDirtIntensity : 0.0f;
             camera.GradingOverride.bEnabled = true;
-            camera.GradingOverride.Contrast = 1.25f;
+            camera.GradingOverride.Contrast = 1.15f;
             camera.GradingOverride.ContrastPivot = 0.5f;
-            camera.GradingOverride.Saturation = 1.25f;
-            camera.GradingOverride.Temperature = 0.1f;
+            camera.GradingOverride.Saturation = 1.6f;
+            camera.GradingOverride.Temperature = 0.0f;
             camera.GradingOverride.VignetteIntensity = 0.25f;
             camera.GradingOverride.VignetteRadius = 0.85f;
             camera.GradingOverride.VignetteSoftness = 0.6f;
