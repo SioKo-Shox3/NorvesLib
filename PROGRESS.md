@@ -426,3 +426,6 @@
 
 - G1-GR01-TRANSFORM-BOUNDARY: Worldの最初の群前とsnapshot内の群遷移でWorld変換を確定し、Movementで動かした親を次のDefault/Animation/PoseFinalizeから子が同frameに読めるようにする。Camera→PreRenderも確定し、既存のLate空対象時の更新、同群内非同期、順序/収集/破棄/Fixed契約は維持。実World試験に全8群の親子孫・逆登録・同群observer・疎な群・空Lateを追加し静的レビューPASS。純TickGroup/DispatchはO2-NDEBUG/ASan・UBSan（LeakSanitizer除外）成功。実階層試験はWindows.hでcompile停止、実行未確認。追加階層走査コストは未計測。
 - Next: G1検証一覧とCurves header登録を確定し、作者のG2移行指示に従いAssetCookLib分離など選定不要のG2基盤へ進む。
+
+- G1-VALIDATION: GameFoundationValidation.mdへGR01/03/04/08実装と検証範囲を保存。最終portable確認は34件実行成功/実行失敗0、FixedStepSchedulerはWindows.hでcompile blocked1件。実World/Engine/Module/Windows/native/GPU/完全bundleは未実行として区別。追加群境界実World試験も未実行を明記。代表コマンド4件を文書どおり再実行成功。G1追加Publicヘッダ29件を照合しCurves.hの明示登録漏れを補完、全件exactonce。文書と実ログの照合PASS。
+- Next: 作者承認に従いG2へ進む。AssetCookLib分離を先行し、G2-S8既存JSON/stb活用とG2-S2ソース隣サイドカーの2選定は返答待ち。それ以外の未決選定も勝手に確定しない。

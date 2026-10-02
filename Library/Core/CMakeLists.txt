@@ -483,6 +483,7 @@ set(PUBLIC_HEADERS
     Public/Math/VectorUtils.h
     Public/Math/GeometryTypes.h
     Public/Math/GeometryIntersection.h
+    Public/Math/Curves.h
     # Thread
     Public/Thread/Atomic.h
     Public/Thread/ConditionVariable.h
