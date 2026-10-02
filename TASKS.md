@@ -1215,3 +1215,11 @@
 - stop-when: 寿命の未解消問題、既存fixedstepcleanup回帰、scope外変更、blockingが残る場合。
 - paths: Library/Core/Public/Component, Library/Core/Private/Component/Component.cpp, Library/Core/Public/Object/World.h, Library/Core/Public/Object/Entity.h, Library/Core/Private/Object/World.cpp, Library/Core/Private/Object/Entity.cpp, Library/Core/CMakeLists.txt, Test/Core/Object, Docs/Architecture/TickStages.md, TASKS.md, PROGRESS.md
 - notes: ApplicationのLateTick配線とカメラ移設は後続。個別依存のgraphは作らない。
+
+## G1-GR01-P3: シミュレーションの物理後更新を実フレームへ接続する
+- status: done
+- done-when: 固定0回でも後段が走り、pauseでは止まる。World→Module→Handlerの後段順をSync前に置き、既存fixedstep cleanup/外側処理を保つ。
+- verify: WindowsでApplicationFixedStepPipelineTestをビルド・実行（現環境では未実行）。
+- stop-when: 既存fixedstep/ポーズ/外側フレームの回帰、handler寿命の問題、blockingが残る場合。
+- paths: Library/Core/Public/Application, Library/Core/Public/Module, Library/Core/Private/Module/ModuleRegistry.cpp, Library/Core/Public/Engine/ApplicationProcessor.h, Library/Core/Private/Engine/ApplicationProcessor.cpp, Test/Core/Engine/ApplicationFixedStepPipelineTest.cpp, Docs/Architecture/TickStages.md, TASKS.md, PROGRESS.md
+- notes: コードの順序・gateは静的確認、実統合の合格は未主張。

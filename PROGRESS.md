@@ -260,3 +260,6 @@
 - Next: GR01のComponent遅延破棄とTick対象の寿命保証、続いてWorld/Applicationの群別更新へ接続する。個別依存は既存Delegateで連携する。
 
 - G1-GR01-P2: Worldの全群/Fixed対象を一回収集し、前半群とLateTickへ接続。主群/優先度/maskを収集値で固定し、既定DFSとowner先行を維持。更新中のComponent/Entity除去は予約し、既存固定step後cleanupを維持した。Entity::RemoveInnerでObjectHeap/GCを含むdetachを捕捉し、保持entryとcleanup待ち参照を無効化。callback自身がheapから消えたときの戻り処理も対象を参照しない。順序/無効化helperはg++/ASan/UBSan（LeakSanitizer除外）成功。実World/Heapの統合ケースはWorldTickGroupTestへ追加したが、Windows.h依存によりコンパイル・実行は未検証。ApplicationからLateTickへの配線、Module/Application後段、ボーン姿勢公開、カメラ移行は未完。
+
+- G1-GR01-P3: ApplicationのシミュレーションをTickSimulationへ抽出し、固定step後にWorld LateTick→Module LateTick→Handler OnLateUpdateを描画同期前へ接続。固定0回でも後段を実行し、pauseでは止める。フレーム中のhandlerを共有所有し差し替え時の寿命を保つ。既存固定step関数の不変と外側処理の順序を静的チェック/独立レビューで確認した。既存11ケースを維持し、全8群/0・1・2step/早期とCameraの位置対照/pause/空・非Running registryの6ケースを追加。Windows統合17ケースはコンパイル・実行未検証。portableの群設定/dispatch helperは再実行成功。
+- Next: GR01の評価済みボーン姿勢公開とAnimation/PoseFinalize配線、その後SpringArmとGameカメラを後段へ移す。G1-S1/S2/S3は承認済み、依存連携はDelegateのイベント駆動を使う。

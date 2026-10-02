@@ -1559,7 +1559,8 @@ namespace NorvesLib::Core::Engine
 
         // 注: BeginFrame()はRun()ループ内でProcessPlatformMessagesの前に呼ばれている
 
-        auto *handler = GEngine->GetApplicationHandler();
+        auto handlerOwner = GEngine->GetApplicationHandlerShared();
+        auto* handler = handlerOwner.get();
 
         // OnUpdate呼び出し
         // 注: OnUpdate はシミュレーション進行ゲートの影響を受けない。Bridge ポーズ中も
@@ -1579,20 +1580,7 @@ namespace NorvesLib::Core::Engine
         // （ポーズ）。SyncToSceneView と描画は止めず、最後の画面を描き続ける。
         const bool bAdvanceSim = (handler != nullptr) ? handler->ShouldAdvanceSimulation() : true;
 
-        // GameModeの更新
-        if (bAdvanceSim)
-        {
-            GEngine->UpdateGameModeStateMachine(deltaTime);
-        }
-
-        // ゲームワールドのTick更新
-        if (bAdvanceSim)
-        {
-            GEngine->GetWorld().Tick(deltaTime);
-            GEngine->GetParticleSystem().Tick(deltaTime);
-        }
-
-        AdvanceFixedSimulation(rawDeltaNanoseconds, bAdvanceSim);
+        TickSimulation(rawDeltaNanoseconds, deltaTime, bAdvanceSim, handler);
 
         // ワールドからSceneViewへProxy同期
         GEngine->GetWorld().SyncToSceneView(
@@ -1800,6 +1788,29 @@ namespace NorvesLib::Core::Engine
         }
 
         return true;
+    }
+
+    FixedStepAdvanceResult ApplicationProcessor::TickSimulation(
+        int64_t rawDeltaNanoseconds, float deltaTime, bool bAdvanceSimulation,
+        Application::IApplicationHandler* handler)
+    {
+        if (bAdvanceSimulation)
+        {
+            GEngine->UpdateGameModeStateMachine(deltaTime);
+            GEngine->GetWorld().Tick(deltaTime);
+            GEngine->GetParticleSystem().Tick(deltaTime);
+        }
+        const FixedStepAdvanceResult result = AdvanceFixedSimulation(rawDeltaNanoseconds, bAdvanceSimulation);
+        if (bAdvanceSimulation)
+        {
+            GEngine->GetWorld().LateTick(deltaTime);
+            Module::GetModuleRegistry().DispatchLateTick(deltaTime);
+            if (handler)
+            {
+                handler->OnLateUpdate(deltaTime);
+            }
+        }
+        return result;
     }
 
     int64_t ApplicationProcessor::CalculateRawDeltaTimeNanoseconds()

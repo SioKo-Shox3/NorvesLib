@@ -86,6 +86,9 @@ namespace NorvesLib::Core::Engine
          */
         bool ProcessPlatformMessages();
 
+        // handlerは呼出元が全フレーム中保持する借用参照。描画/OS処理を含まない。
+        FixedStepAdvanceResult TickSimulation(int64_t rawDeltaNanoseconds, float deltaTime,
+            bool bAdvanceSimulation, Application::IApplicationHandler* handler);
         int64_t CalculateRawDeltaTimeNanoseconds();
         float ClampVariableDeltaTime(int64_t rawDeltaNanoseconds) const;
         FixedStepAdvanceResult AdvanceFixedSimulation(

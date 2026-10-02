@@ -24,7 +24,7 @@
 
 ## 実装状況
 
-公開群、Component設定、Worldの一回収集と群別実行・LateTickを実装した。ApplicationからLateTickへの配線、Module/Application後段、アニメ姿勢公開、カメラの群移行は後続である。
+公開群、Component設定、Worldの一回収集と群別実行・LateTick、Application/Moduleの後段配線を実装した。アニメ姿勢公開とカメラの群移行は後続である。
 
 ## Worldの収集と破棄
 
@@ -40,3 +40,11 @@
 ## 検証範囲
 
 群・設定・順序/無効化helperのportable試験は実行した。実Worldの追加/削除、ObjectHeap連携、固定step後cleanupを対象とするWorldTickGroupTestを既存bundleへ登録しているが、Windows依存により現環境では未実行。helperの合格をWorld/Game統合の合格とは扱わない。
+
+## Application/Moduleの後段
+
+- TickSimulationはGameMode→World Tick→Particle Tick→固定step→World LateTick→Module LateTick→Handler OnLateUpdateの順に実行し、その後に描画同期を行う。
+- 固定stepが0回でも後段は1回実行する。シミュレーション停止中は前半/後段を呼ばず、schedulerの累積値を保持する。
+- Module LateTickはRunningのregistryで登録順。既存TickAllの位置（描画同期後）は変えない。
+- OnUpdate/Script維持とOnPreRenderの位置は変更しない。Handlerはフレーム内で共有所有し、callbackによる差し替えでもそのフレームの対象を生存させる。
+- ApplicationFixedStepPipelineTestの既存11ケースを維持し、全8群の逆登録順、0/1/2 fixedstep、DefaultとCameraの位置読出し対照、pause/resume、空/非Running registryの6ケースを追加した。Windows依存により17ケースは未実行。実フレームの外側順序とhandler寿命は静的レビューで確認した範囲である。
