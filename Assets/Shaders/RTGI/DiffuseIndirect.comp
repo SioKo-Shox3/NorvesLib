@@ -92,6 +92,9 @@ const float RAY_ORIGIN_OFFSET = 0.002;
 // シーンが動いているフレームでは8になる。重みは累積平均の 1-1/(年齢+1) で、上限は128/129。
 const uint RTGI_HISTORY_MAXIMUM_AGE = 128u;
 const float RTGI_HISTORY_MAXIMUM_WEIGHT = 128.0 / 129.0;
+// 視点・光源・シーンが動いているフレームの年齢の上限（RTGIHistoryMaximumAge）。temporalState.wがこれを
+// 超えるフレームは静止が続いている。
+const uint RTGI_HISTORY_DYNAMIC_MAXIMUM_AGE = 8u;
 const float RTGI_HISTORY_LIGHT_WEIGHT_LIMIT = 0.25;
 const float RTGI_HISTORY_INITIAL_CONFIDENCE = 0.25;
 const float RTGI_HISTORY_NORMAL_REJECTION_DOT = 0.9;
@@ -676,6 +679,10 @@ bool TryReadReprojectedHistory(vec2 currentUV,
     float ageSum = 0.0;
     float confidenceSum = 0.0;
     float weightSum = 0.0;
+    // 静止が続いているフレームでは、同じ表面の法線・材質の差はTAAのジッタで画素の中の標本の位置が
+    // 変わったことだけから来る（石畳の目地や法線マップの細かな模様の上では近傍のばらつきを超えうる）。
+    // そこで棄却すると年齢が0へ戻り、止まった画面で疎らに明滅するため、距離と裏返りだけで判定する。
+    bool bStaticView = parameters.temporalState.w > RTGI_HISTORY_DYNAMIC_MAXIMUM_AGE;
     for (int tap = 0; tap < 4; ++tap)
     {
         ivec2 offset = ivec2(tap & 1, tap >> 1);
@@ -714,19 +721,25 @@ bool TryReadReprojectedHistory(vec2 currentUV,
         // 非線形なNDC深度は遠景で差が潰れるため、線形距離の相対差で遮蔽の入れ替わりを棄却する。
         float depthThreshold = max(RTGI_HISTORY_DEPTH_REJECTION_THRESHOLD,
                                    0.05 * max(currentDistance, sampledDistance));
-        // 法線と材質は、固定の閾値か、近傍の同じ面のばらつき（ComputeLocalSurfaceSpread）の大きい方まで許す。
         if (abs(currentDistance - sampledDistance) > depthThreshold ||
-            (dot(currentNormal, sampledNormal) < RTGI_HISTORY_NORMAL_REJECTION_DOT &&
-             length(currentNormal - sampledNormal) > normalSpread))
+            dot(currentNormal, sampledNormal) <= 0.0)
         {
             continue;
         }
-
-        vec3 materialDelta = abs(currentMaterial - sampledMaterial);
-        if (max(materialDelta.x, max(materialDelta.y, materialDelta.z)) >
-            max(RTGI_HISTORY_MATERIAL_REJECTION_THRESHOLD, materialSpread))
+        // 法線と材質は、固定の閾値か、近傍の同じ面のばらつき（ComputeLocalSurfaceSpread）の大きい方まで許す。
+        if (!bStaticView)
         {
-            continue;
+            if (dot(currentNormal, sampledNormal) < RTGI_HISTORY_NORMAL_REJECTION_DOT &&
+                length(currentNormal - sampledNormal) > normalSpread)
+            {
+                continue;
+            }
+            vec3 materialDelta = abs(currentMaterial - sampledMaterial);
+            if (max(materialDelta.x, max(materialDelta.y, materialDelta.z)) >
+                max(RTGI_HISTORY_MATERIAL_REJECTION_THRESHOLD, materialSpread))
+            {
+                continue;
+            }
         }
 
         radianceSum += sampledRadiance * bilinearWeight;
@@ -968,7 +981,8 @@ void main()
     float previousConfidence = 0.0;
     float normalSpread = 0.0;
     float materialSpread = 0.0;
-    if (bSurfaceValid)
+    // 静止が続いているフレームの履歴は法線・材質で棄却しないため、近傍のばらつきは要らない。
+    if (bSurfaceValid && parameters.temporalState.w <= RTGI_HISTORY_DYNAMIC_MAXIMUM_AGE)
     {
         ComputeLocalSurfaceSpread(uv, vec2(imageSize), viewDistance, worldNormal, material.rgb,
                                   normalSpread, materialSpread);

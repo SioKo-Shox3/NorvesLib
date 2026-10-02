@@ -24,7 +24,10 @@
 # （<視点>-still-f<フレーム数>.png）、視点ごとに決めた静止した地面の領域で、画素の時間方向の標準偏差の
 # 平均を temporal_noise として metrics.json へ書く（表示の 8bit の輝度と、それを sRGB からリニアへ戻した
 # 輝度の2つ）。RTGI などの時間方向の雑音の確認用で、-OrbitDegreesPerSecond とは併用しない。
+# 領域は視点ごとに複数（手前・中ほど・地平線寄りの地面の帯）で、標準偏差が表示の1/255を超える画素の割合も書く。
 # -Rtgi Off で起動画面の RTGI を切り（環境変数 NORVES_STARTUP_RTGI=0）、環境光（IBL）だけで撮る。
+# -CompareNoiseWith に別の撮影（例: -Rtgi Off）の出力先を与えると、視点・領域ごとに表示の標準偏差の比
+# （今回/比べる側）を求め、どれかが -NoiseRatioLimit（既定2）を超えたら失敗にする。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -61,7 +64,11 @@ param(
     [string[]]$StillRenderedFrames = @(),
     # 起動画面の RTGI（既定は有効）。Off で環境光（IBL）だけで撮る。
     [ValidateSet('On', 'Off')]
-    [string]$Rtgi = 'On'
+    [string]$Rtgi = 'On',
+    # 時間方向の雑音を比べる別の撮影の出力先（metrics.json のあるディレクトリ）。
+    [string]$CompareNoiseWith = '',
+    [ValidateRange(1.0, 100.0)]
+    [double]$NoiseRatioLimit = 2.0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,14 +78,22 @@ $gamePath = Join-Path $repoRoot "build\Game\$Configuration\Game.exe"
 $outRoot = if ([IO.Path]::IsPathRooted($OutDir)) { [IO.Path]::GetFullPath($OutDir) } else { [IO.Path]::GetFullPath((Join-Path $repoRoot $OutDir)) }
 
 # 視点: Camera が空なら起動時の既定のカメラのまま撮る。値は --startup-camera=<yaw>,<pitch>,<arm>。
-# NoiseRegion は -StillRenderedFrames の時間方向の雑音を測る静止した地面の領域（画像の幅・高さに対する
-# 割合で 左,上,右,下）。
+# NoiseRegions は -StillRenderedFrames の時間方向の雑音を測る静止した地面の領域（名前と、画像の幅・高さに
+# 対する割合で 左,上,右,下）。物体・光源の球の写る範囲は避ける。
+$nearGroundRegion = [pscustomobject]@{ Name = 'near'; Rect = @(0.05, 0.80, 0.95, 0.98) }
 $views = @(
-    [pscustomobject]@{ Name = 'default'; Camera = ''; NoiseRegion = @(0.05, 0.80, 0.95, 0.98) },
+    [pscustomobject]@{ Name = 'default'; Camera = ''; NoiseRegions = @(
+        $nearGroundRegion,
+        [pscustomobject]@{ Name = 'middle'; Rect = @(0.05, 0.65, 0.95, 0.80) },
+        # 地平線寄り（小屋と光源の球を避けた左側）
+        [pscustomobject]@{ Name = 'far'; Rect = @(0.05, 0.33, 0.35, 0.42) }) },
     # 球（中心 y=0.5・半径1）へ寄り、輪郭が画面の中央の周りに来る視点
-    [pscustomobject]@{ Name = 'near'; Camera = '0,5,2.5'; NoiseRegion = @(0.05, 0.80, 0.95, 0.98) },
+    [pscustomobject]@{ Name = 'near'; Camera = '0,5,2.5'; NoiseRegions = @($nearGroundRegion) },
     # カメラの高さ約 -0.84（地面は y=-1）から地面すれすれに見る視点
-    [pscustomobject]@{ Name = 'low'; Camera = '20,-8,6'; NoiseRegion = @(0.05, 0.80, 0.95, 0.98) }
+    [pscustomobject]@{ Name = 'low'; Camera = '20,-8,6'; NoiseRegions = @(
+        $nearGroundRegion,
+        # 物体の接地の少し下から手前の帯まで
+        [pscustomobject]@{ Name = 'middle'; Rect = @(0.05, 0.65, 0.95, 0.80) }) }
 )
 
 # 「10,45,3」や配列で渡された数の並びを、範囲を確かめて double の配列にする。
@@ -158,7 +173,7 @@ foreach ($view in $views)
     if ($sunElevationList.Count -eq 0)
     {
         $shotName = if ($Night) { "$($view.Name)-night" } else { $view.Name }
-        $shots += [pscustomobject]@{ Name = $shotName; Camera = $view.Camera; NoiseRegion = $view.NoiseRegion; SunElevation = $null; ExposureEV100 = $null }
+        $shots += [pscustomobject]@{ Name = $shotName; Camera = $view.Camera; NoiseRegions = $view.NoiseRegions; SunElevation = $null; ExposureEV100 = $null }
         continue
     }
     for ($i = 0; $i -lt $sunElevationList.Count; ++$i)
@@ -168,7 +183,7 @@ foreach ($view in $views)
         $shots += [pscustomobject]@{
             Name = "$($view.Name)-sun$($elevation.ToString($invariant))"
             Camera = $view.Camera
-            NoiseRegion = $view.NoiseRegion
+            NoiseRegions = $view.NoiseRegions
             SunElevation = $elevation
             ExposureEV100 = [math]::Round($ev, 2)
         }
@@ -196,7 +211,7 @@ if ($sequenceFrameList.Count -gt 0)
         $orbitShots += [pscustomobject]@{
             Name = "$($shot.Name)-$sequenceSuffix"
             Camera = $shot.Camera
-            NoiseRegion = $shot.NoiseRegion
+            NoiseRegions = $shot.NoiseRegions
             SunElevation = $shot.SunElevation
             ExposureEV100 = $shot.ExposureEV100
             OrbitFrames = $sortedOrbitFrames
@@ -299,7 +314,8 @@ public static class StartupCaptureMetrics
     }
 
     // 同じ視点の連続した画像で、領域（画素の範囲 [x0,x1)×[y0,y1)）の各画素の輝度の時間方向の標準偏差
-    // （母標準偏差）を求め、領域の平均を返す。{ 表示の8bit, リニア, リニアの平均輝度 }。
+    // （母標準偏差）を求め、領域の平均を返す。{ 表示の8bit, リニア, リニアの平均輝度, x0, y0, x1, y1,
+    // 表示の標準偏差が1（8bitの1段）を超える画素の割合 }。
     public static double[] TemporalNoise(string[] paths, double[] regionFractions)
     {
         int width = 0;
@@ -323,6 +339,7 @@ public static class StartupCaptureMetrics
         double linearSum = 0.0;
         double linearMeanSum = 0.0;
         long pixels = 0;
+        long flickerPixels = 0;
         int n = paths.Length;
         for (int y = y0; y < y1; ++y)
         {
@@ -341,13 +358,16 @@ public static class StartupCaptureMetrics
                     dVar += (display[f][i] - dMean) * (display[f][i] - dMean);
                     lVar += (linear[f][i] - lMean) * (linear[f][i] - lMean);
                 }
-                displaySum += Math.Sqrt(dVar / n);
+                double dStd = Math.Sqrt(dVar / n);
+                displaySum += dStd;
                 linearSum += Math.Sqrt(lVar / n);
                 linearMeanSum += lMean;
+                if (dStd > 1.0) { ++flickerPixels; }
                 ++pixels;
             }
         }
-        return new double[] { displaySum / pixels, linearSum / pixels, linearMeanSum / pixels, x0, y0, x1, y1 };
+        return new double[] { displaySum / pixels, linearSum / pixels, linearMeanSum / pixels, x0, y0, x1, y1,
+                              (double)flickerPixels / pixels };
     }
 }
 '@
@@ -575,19 +595,67 @@ foreach ($view in $shots)
         }
         else
         {
-            $noise = [StartupCaptureMetrics]::TemporalNoise([string[]]$stillPaths, [double[]]$view.NoiseRegion)
-            $noiseResult = [ordered]@{
-                view = $view.Name
-                frames = $images.Count
-                region_pixels = @([int]$noise[3], [int]$noise[4], [int]$noise[5], [int]$noise[6])
-                temporal_std_display = [math]::Round($noise[0], 4)
-                temporal_std_linear = [math]::Round($noise[1], 6)
-                mean_linear = [math]::Round($noise[2], 6)
+            foreach ($region in $view.NoiseRegions)
+            {
+                $noise = [StartupCaptureMetrics]::TemporalNoise([string[]]$stillPaths, [double[]]$region.Rect)
+                $noiseResult = [ordered]@{
+                    view = $view.Name
+                    region = $region.Name
+                    frames = $images.Count
+                    region_pixels = @([int]$noise[3], [int]$noise[4], [int]$noise[5], [int]$noise[6])
+                    temporal_std_display = [math]::Round($noise[0], 4)
+                    temporal_std_linear = [math]::Round($noise[1], 6)
+                    mean_linear = [math]::Round($noise[2], 6)
+                    flicker_ratio = [math]::Round($noise[7], 4)
+                }
+                $temporalNoise += [pscustomobject]$noiseResult
+                Write-Output ("CAPTURE_STARTUP_SCENE temporal_noise view={0} region={1} frames={2} pixels={3} std_display={4} std_linear={5} mean_linear={6} flicker_ratio={7}" -f `
+                    $noiseResult.view, $noiseResult.region, $noiseResult.frames, ($noiseResult.region_pixels -join ','),
+                    $noiseResult.temporal_std_display, $noiseResult.temporal_std_linear, $noiseResult.mean_linear, $noiseResult.flicker_ratio)
             }
-            $temporalNoise += [pscustomobject]$noiseResult
-            Write-Output ("CAPTURE_STARTUP_SCENE temporal_noise view={0} frames={1} region={2} std_display={3} std_linear={4} mean_linear={5}" -f `
-                $noiseResult.view, $noiseResult.frames, ($noiseResult.region_pixels -join ','), $noiseResult.temporal_std_display,
-                $noiseResult.temporal_std_linear, $noiseResult.mean_linear)
+        }
+    }
+}
+
+# 別の撮影と、視点・領域ごとに時間方向の雑音（表示の標準偏差）の比を求める。
+$noiseComparison = @()
+if ($CompareNoiseWith -ne '')
+{
+    $compareRoot = if ([IO.Path]::IsPathRooted($CompareNoiseWith)) { $CompareNoiseWith } else { Join-Path $repoRoot $CompareNoiseWith }
+    $compareMetricsPath = Join-Path $compareRoot 'metrics.json'
+    if (-not (Test-Path -LiteralPath $compareMetricsPath))
+    {
+        $failures += "比べる撮影の metrics.json が無い: $compareMetricsPath"
+    }
+    else
+    {
+        $compareNoise = @((Get-Content -LiteralPath $compareMetricsPath -Raw -Encoding UTF8 | ConvertFrom-Json).temporal_noise)
+        foreach ($entry in $temporalNoise)
+        {
+            $other = $compareNoise | Where-Object { $_.view -eq $entry.view -and $_.region -eq $entry.region } | Select-Object -First 1
+            if ($null -eq $other)
+            {
+                $failures += "$($entry.view)/$($entry.region): 比べる撮影に同じ領域の測定が無い"
+                continue
+            }
+            $ratio = if ([double]$other.temporal_std_display -gt 0.0) { [double]$entry.temporal_std_display / [double]$other.temporal_std_display } else { [double]::PositiveInfinity }
+            $comparison = [ordered]@{
+                view = $entry.view
+                region = $entry.region
+                std_display = $entry.temporal_std_display
+                compare_std_display = [double]$other.temporal_std_display
+                ratio_display = [math]::Round($ratio, 3)
+                flicker_ratio = $entry.flicker_ratio
+                compare_flicker_ratio = $other.flicker_ratio
+            }
+            $noiseComparison += [pscustomobject]$comparison
+            Write-Output ("CAPTURE_STARTUP_SCENE noise_ratio view={0} region={1} std_display={2} compare_std_display={3} ratio={4} limit={5} flicker_ratio={6} compare_flicker_ratio={7}" -f `
+                $comparison.view, $comparison.region, $comparison.std_display, $comparison.compare_std_display, $comparison.ratio_display,
+                $NoiseRatioLimit, $comparison.flicker_ratio, $comparison.compare_flicker_ratio)
+            if (-not ($ratio -le $NoiseRatioLimit))
+            {
+                $failures += "$($entry.view)/$($entry.region): 時間方向の雑音が比べる撮影の $([math]::Round($ratio, 3)) 倍（上限 $NoiseRatioLimit）"
+            }
         }
     }
 }
@@ -605,6 +673,9 @@ $metrics = [ordered]@{
     still_rendered_frames = $stillFrameList
     views = $results
     temporal_noise = $temporalNoise
+    compare_noise_with = $CompareNoiseWith
+    noise_ratio_limit = $NoiseRatioLimit
+    noise_comparison = $noiseComparison
     failures = $failures
 }
 [IO.File]::WriteAllText($metricsPath, ($metrics | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))

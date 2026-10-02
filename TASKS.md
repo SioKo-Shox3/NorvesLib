@@ -275,6 +275,7 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game/GameModes/Rendering3DTest, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 危険地帯（RTGI・RenderThread）。評価者を通す。
 - notes: 2026-10-02 の反復（run 20261002-084328 の#20）は60分の壁時計で止められ、途中の変更は `b40ce35`（未検証の途中保存。行末は `d3172d6` で元へ戻した）に入っている。中身: RTGIの静止判定を位置と拡大率で見る（球の自転で毎フレーム履歴が捨てられていた）、露出が変わったときに履歴へ比を掛け直す、小屋・岩（MegaGeometry）のLOD0をレイトレのシーンへ入れる、起動画面でRTGIを既定で有効（`NORVES_STARTUP_RTGI=0` で無効）、切り替わりのときだけのログ、撮影スクリプトの静止16フレームの時間方向の雑音の測定。残っていたのは、地面の領域で履歴が棄却される原因（法線・材質の比較）の切り分けと、低角度の手前の石の目地に沿った雑音。まず `b40ce35` の差分を読み、ビルドと撮影で今の状態を測ってから続ける。
+- notes: 2026-10-02 の評価1周目の差し戻し（低角度の中ほどの地面が2.49倍）に対応した。静止が続いているフレーム（年齢の上限が8を超える）では、RTGIの履歴を法線・材質の差で棄却せず、距離と裏返りだけで判定する。止まった16フレームの雑音は `CaptureStartupScene.ps1 -StillRenderedFrames ... -Rtgi On -CompareNoiseWith <-Rtgi Off の出力先>` で視点・帯ごとにRTGI無効との比を判定する（2倍を超えると失敗）。
 
 ## SS-LOOK-BALANCE: 起動画面の露出とトーンの釣り合いを朝・昼・夕・夜で取り直す
 - status: todo
