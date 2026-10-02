@@ -31,8 +31,8 @@ namespace NorvesLib::Core::Rendering
         float inverseMipCount;
         float lensDirtIntensity;
         float lensDirtThreshold;
+        float lensDirtSceneRatio;
         float _pad0;
-        float _pad1;
     };
 
     /** @brief 縮小パラメータUBO（bloom_downsample.frag の BloomDownsampleParams） */
@@ -694,6 +694,8 @@ namespace NorvesLib::Core::Rendering
             (bDebugPostProcessBypass || !std::isfinite(lensDirtIntensity)) ? 0.0f : std::max(lensDirtIntensity, 0.0f);
         params.lensDirtThreshold =
             std::isfinite(m_Settings.LensDirtThreshold) ? std::max(m_Settings.LensDirtThreshold, 0.0f) : 0.0f;
+        params.lensDirtSceneRatio =
+            std::isfinite(m_Settings.LensDirtSceneRatio) ? std::max(m_Settings.LensDirtSceneRatio, 0.0f) : 0.0f;
         m_ParamsBuffer->Update(&params, sizeof(GPUBloomParams));
 
         // 最上段の拡大結果（1段だけのときは縮小結果）を合成で読む

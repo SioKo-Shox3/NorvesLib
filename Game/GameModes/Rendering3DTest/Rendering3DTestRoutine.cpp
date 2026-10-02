@@ -172,6 +172,12 @@ namespace Game::GameModes
         // 照度は約 3.9 lx なので、0.08 で約 0.31 lx（満月の夜の地面の目安 0.1〜1 lx）にする。
         constexpr float kNightStaticEnvironmentIntensityScale = 0.08f;
 
+        // 光源球の電球の色（リニアの sRGB、最大の成分を1にした値）。白熱電球の色温度 2850 K（100 W 形の
+        // タングステン電球、CIE 標準イルミナント A の 2856 K に近い）の黒体の色度を Kim ほかの3次式の近似で
+        // 求め（x = 0.4475、y = 0.4067）、XYZ から sRGB（D65）の行列でリニアの RGB へ直した。
+        // 照明の強さは色の輝度で割って光束（lm）に合わせるので、ここは色だけを決める。
+        constexpr float kLightBulbColor[3] = {1.0f, 0.4457f, 0.1276f};
+
         float StartupExposureCompensationEV(bool bAutoExposure)
         {
             return bAutoExposure ? kStartupAutoExposureCompensationEV : 0.0f;
@@ -180,7 +186,9 @@ namespace Game::GameModes
         // 起動画面のレンズの効果。色収差は画面の左右の端で R・B が 1.5 画素ずれる弱さにとどめ、輪郭の色の
         // にじみがわずかに見える程度にする。レンズダートは、ブルームのうちプリエクスポージャ後で1を超えた
         // 明るいにじみ（太陽・発光球の周り）にだけ模様を浮かせる。強さ2は夕（仰角3°）に太陽のにじみの中で
-        // しみの丸が見え、昼（45°）の空には模様が出ない値（しきい値0.3では昼の空にもしみが浮いた）。
+        // しみの丸が見え、昼（45°）の空には模様が出ない値（しきい値0.3では昼の空にもしみが浮いた）。夜の点光源の
+        // 周りの暗い背景では、BloomSettings::LensDirtSceneRatio が加算を画素の明るさの0.25倍へ頭打ちにし、
+        // しみが色付きの円（ゴースト）として浮かないようにする。
         constexpr float kStartupChromaticAberrationPixels = 1.5f;
         constexpr float kStartupLensDirtIntensity = 2.0f;
 
@@ -855,9 +863,9 @@ namespace Game::GameModes
 
             // 光源球体マテリアル作成（エミッシブ、テクスチャ不要）
             MaterialCreateData lightSphereMatInfo;
-            lightSphereMatInfo.EmissiveColor[0] = 1.0f;
-            lightSphereMatInfo.EmissiveColor[1] = 0.9f;
-            lightSphereMatInfo.EmissiveColor[2] = 0.3f;
+            lightSphereMatInfo.EmissiveColor[0] = kLightBulbColor[0];
+            lightSphereMatInfo.EmissiveColor[1] = kLightBulbColor[1];
+            lightSphereMatInfo.EmissiveColor[2] = kLightBulbColor[2];
             // 内面つや消しの電球の見かけの表面の輝度（約15 cd/cm² = 150000 nits）で描く。光束1600 lmを半径約3 cmの
             // 球から一様に出したときの平均（Φ/(π·4πr²) ≈ 45000 nits）より、フィラメントの光が集まる正面は明るい。
             // 見える球（半径0.15 m）の面で割った値（約1800 nits）では夕の自動露出でも背景の数倍にとどまり
@@ -958,17 +966,17 @@ namespace Game::GameModes
             data.m_pLightSphereMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pLightSphereObject);
             data.m_pLightSphereMeshComponent->SetMeshHandle(data.m_LightSphereMeshHandle);
             data.m_pLightSphereMeshComponent->SetCastShadow(false); // 光源自体は影を落とさない
-            // 明るい黄色（発光体の見た目）
-            data.m_pLightSphereMeshComponent->SetCustomData(0, 1.0f);
-            data.m_pLightSphereMeshComponent->SetCustomData(1, 0.9f);
-            data.m_pLightSphereMeshComponent->SetCustomData(2, 0.3f);
+            // 電球の色（発光体の見た目）
+            data.m_pLightSphereMeshComponent->SetCustomData(0, kLightBulbColor[0]);
+            data.m_pLightSphereMeshComponent->SetCustomData(1, kLightBulbColor[1]);
+            data.m_pLightSphereMeshComponent->SetCustomData(2, kLightBulbColor[2]);
             data.m_pLightSphereMeshComponent->SetCustomData(3, 1.0f);
             // 光源球体マテリアル（エミッシブ設定はマテリアル側に移動済み）
             data.m_pLightSphereMeshComponent->SetMaterial(0, data.m_LightSphereMaterial);
 
             // PointLightComponentの追加（SceneViewへのLightProxy登録はWorld::SyncToSceneView()で自動化）
             data.m_pPointLightComponent = world.CreateComponent<Component::PointLightComponent>(data.m_pLightSphereObject);
-            data.m_pPointLightComponent->SetLightColor(1.0f, 0.9f, 0.3f);
+            data.m_pPointLightComponent->SetLightColor(kLightBulbColor[0], kLightBulbColor[1], kLightBulbColor[2]);
             // 100 W 形の電球相当の光束（1600 lm）。
             data.m_pPointLightComponent->SetIntensityUnit(Component::LightIntensityUnit::Lumen);
             data.m_pPointLightComponent->SetIntensity(1600.0f);

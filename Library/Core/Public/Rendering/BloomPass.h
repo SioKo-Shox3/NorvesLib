@@ -55,6 +55,16 @@ namespace NorvesLib::Core::Rendering
          */
         float LensDirtThreshold = 1.0f;
 
+        /**
+         * @brief ダートの加算の輝度を、その画素の明るさ（ブルーム合成後）の何倍までに抑えるか（0で抑えない）
+         *
+         * ブルームは明るい光源の周りで画面の明るさより桁違いに大きくなるため、暗い背景（夜の点光源の周り）では
+         * しみがそのまま色付きの円として浮く。加算をこの倍率×画素の明るさへ向けてなめらかに頭打ちにし、
+         * 明るい空やにじみの中の模様は残して、暗い背景の上では淡い斑にとどめる。0.25 は起動画面の夜の点光源の
+         * 周りでしみの円がほぼ見えず、夕の太陽のにじみの中に模様が淡く残る値。
+         */
+        float LensDirtSceneRatio = 0.25f;
+
         /** @brief 出力フォーマット（HDR、ToneMappingの前にかかるため） */
         RHI::Format OutputFormat = RHI::Format::R16G16B16A16_FLOAT;
     };

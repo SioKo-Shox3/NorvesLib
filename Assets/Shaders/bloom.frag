@@ -34,6 +34,7 @@ layout(set = 0, binding = 3) uniform BloomCompositeParams
     vec4 params;
     // x = レンズダートの強さ（0で無効）
     // y = レンズダートが乗り始めるブルームの明るさ（プリエクスポージャ後）
+    // z = ダートの加算の輝度をその画素の明るさ（ブルーム合成後）の何倍までに抑えるか（0で抑えない）
     vec4 dirtParams;
 };
 
@@ -77,7 +78,18 @@ void main()
         vec2 dirtScale = aspect >= 1.0 ? vec2(1.0, 1.0 / aspect) : vec2(aspect, 1.0);
         vec3 dirt = texture(lensDirtTexture, (fragUV - 0.5) * dirtScale + 0.5).rgb;
         vec3 brightBloom = max(bloom - vec3(dirtParams.y), vec3(0.0));
-        result += brightBloom * dirt * dirtParams.x;
+        vec3 dirtLight = brightBloom * dirt * dirtParams.x;
+        // 暗い背景の上では、光源から離れた画素でもブルームがしきい値を超えると、しみが背景より桁違いに明るい
+        // 色付きの円（ゴースト）になる。加算の輝度を、その画素の明るさ L の z 倍へ向けてなめらかに頭打ちにし
+        // （a·zL/(a + zL)。a ≪ zL では a のまま）、明るい空やにじみの中の模様は残して暗い背景の上では淡い斑にとどめる。
+        if (dirtParams.z > 0.0)
+        {
+            const vec3 kLuma = vec3(0.2126, 0.7152, 0.0722);
+            float limit = dirtParams.z * dot(result, kLuma);
+            float dirtLuma = dot(dirtLight, kLuma);
+            dirtLight *= dirtLuma > 0.0 ? limit / (limit + dirtLuma) : 0.0;
+        }
+        result += dirtLight;
     }
 
     outColor = vec4(result, 1.0);
