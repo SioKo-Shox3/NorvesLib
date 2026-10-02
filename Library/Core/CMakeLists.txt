@@ -451,6 +451,7 @@ set(PUBLIC_HEADERS
     Public/Resource/MaterialResource.h
     Public/Resource/GLTFAnalyzer.h
     Public/Resource/SkeletalGltfData.h
+    Public/Resource/SkeletalLimits.h
     Public/Resource/SkinnedMeshResource.h
     Public/Resource/FontAtlas.h
     # Component

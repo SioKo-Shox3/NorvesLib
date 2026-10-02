@@ -432,3 +432,6 @@
 
 - G2-P0-COOK-LIB: GR77/GR78以降の共通基盤として3cookerのcpp/hをSTATIC AssetCookLibへ分離し、AssetCookはMain.cppから同libをリンク。Coreとcooker公開includeをPUBLIC伝搬、内部includeはPRIVATE。既存7実装/headerとsmoke登録blockのbyte不変、単一source所属/依存順を検証し静的レビューPASS。cmake不在とWindows.h依存のため構成/実build/smoke実行・出力バイト一致は未検証。
 - Next: G2-S8/S2返答待ちの間、GR86の現行128関節上限を共有定数へ集約する。値や受理条件は変更しない。
+
+- G2-GR86-LIMITS: 現glTF decoder/cooker/NVSKEL 0.x loaderの128上限をResource/SkeletalLimits.hのLegacyMaximumJointCountへ集約。値/比較演算/0件拒否/エラー/format/vertex ABIは維持し、新版の256化で旧形式を緩めない名前にした。公開headerのC++23/O2/Werror・128/129境界・0〜1024述語一致、3参照とPUBLIC_HEADERS登録/BOMCRLFを確認、独立レビューPASS。3consumerのcompileはWindows.hで停止、実資産ロードの合格ではない。
+- Next: G2のGLB共有処理とsidecar正本は作者回答待ち。GLB質問への承認をBVH/FBXまで広げない。新規外部parserや形式/既定値変更は選定前に進めない。

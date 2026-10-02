@@ -5,6 +5,7 @@
 #include "Container/FixedArray.h"
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
 #include "Resource/SkeletalGltfDecode.h"
+#include "Resource/SkeletalLimits.h"
 #include "Text/JsonDocument.h"
 
 #include <algorithm>
@@ -1755,7 +1756,7 @@ namespace NorvesLib::Tools::AssetCook
             namespace SkeletalFormat = NorvesLib::Core::Asset::CookedSkeletalFormatV0;
             namespace SkeletalHeader = SkeletalFormat::HeaderOffset;
             if (skeletal.Vertices.empty() || skeletal.Indices.empty() || skeletal.Joints.empty() ||
-                skeletal.Clips.size() != 1 || skeletal.Joints.size() > 128 ||
+                skeletal.Clips.size() != 1 || skeletal.Joints.size() > Core::Skeletal::LegacyMaximumJointCount ||
                 skeletal.Vertices.size() > UINT32_MAX || skeletal.Indices.size() > UINT32_MAX)
             {
                 error = "skeletal data exceeds the NVSKEL v0 count contract";

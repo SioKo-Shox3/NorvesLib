@@ -1756,7 +1756,7 @@
 ## G2-SELECT-S8: GLBとBVHの解析方針を確定する
 - status: blocked
 - done-when: 作者の選定を記録し、GR77等へ適用する。推奨Aは既存JsonDocument/stbを利用した共有GLB処理と自前BVH、FBXはBlender経由。
-- notes: 2026-10-02 UTCに確認を依頼、返答待ち。新規外部parserの採否を暗黙に確定しない。AssetCookLib分離など非依存の作業は継続。
+- notes: 2026-10-02 UTCにGLBの既存JSON/stb活用部分を確認依頼、返答待ち。BVH/FBX方針は質問本文に含めていないため、この返答だけで包括承認しない。新規外部parserの採否を暗黙に確定しない。非依存の作業は継続。
 
 ## G2-SELECT-S2: 取り込み設定の正本を確定する
 - status: blocked
@@ -1764,7 +1764,7 @@
 - notes: 2026-10-02 UTCに確認を依頼、返答待ち。設定正本を実装で既成事実化しない。イベント/ソケット等のruntime定義と取り込み変換は分離する。
 
 ## G2-GR86-LIMITS: 現行の関節上限を共有定数へ集約する
-- status: todo
+- status: done
 - done-when: glTF decoder/cooker/cooked loaderの現行128関節上限を1つの公開定数へ揃える。値・拒否条件・エラー・format/vertex ABIを変更しない。
 - verify: 対象3箇所の参照と旧128境界の意味不変を照合、公開headerのcompileとPUBLIC_HEADERS登録、可能な関連CPU回帰、実統合compile制約を明記する。
 - stop-when: 未承認の256関節化、JOINTS_1拒否変更、format v1への先行変更、既存型/描画ABIの変更。

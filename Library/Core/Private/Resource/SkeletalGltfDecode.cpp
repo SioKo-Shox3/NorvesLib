@@ -1,4 +1,5 @@
 ﻿#include "Resource/SkeletalGltfDecode.h"
+#include "Resource/SkeletalLimits.h"
 
 #include "FileStream/FileStream.h"
 #include "Text/JsonDocument.h"
@@ -19,7 +20,6 @@ namespace NorvesLib::Core::Skeletal
         constexpr uint32_t UnsignedShortComponent = 5123;
         constexpr uint32_t UnsignedIntComponent = 5125;
         constexpr uint32_t FloatComponent = 5126;
-        constexpr size_t MaximumJointCount = 128;
         constexpr uint64_t MaximumExactJsonInteger = 9007199254740991ull;
 
         struct AccessorInfo
@@ -921,7 +921,7 @@ namespace NorvesLib::Core::Skeletal
                 outStatus = SkeletalGltfDecodeStatus::InvalidSkeleton;
                 return false;
             }
-            if (joints.GetArraySize() > MaximumJointCount)
+            if (joints.GetArraySize() > LegacyMaximumJointCount)
             {
                 outStatus = SkeletalGltfDecodeStatus::JointLimitExceeded;
                 return false;

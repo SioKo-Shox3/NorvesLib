@@ -1,4 +1,5 @@
 ﻿#include "Asset/CookedSkeletalFormat.h"
+#include "Resource/SkeletalLimits.h"
 
 #include <cmath>
 #include <cstring>
@@ -288,7 +289,7 @@ namespace NorvesLib::Core::Asset
             !ValidateRecordSection(clipSection, clipCount, Format::ClipRecordSize) ||
             !ValidateRecordSection(channelSection, channelCount, Format::ChannelRecordSize) ||
             !ValidateRecordSection(sampleSection, sampleCount, Format::SampleRecordSize) || clipCount != 1 ||
-            vertexCount == 0 || indexCount == 0 || indexCount % 3 != 0 || jointCount == 0 || jointCount > 128 ||
+            vertexCount == 0 || indexCount == 0 || indexCount % 3 != 0 || jointCount == 0 || jointCount > Skeletal::LegacyMaximumJointCount ||
             channelCount == 0 || sampleCount == 0)
         {
             return Fail(CookedSkeletalParseStatus::InvalidRecord);
