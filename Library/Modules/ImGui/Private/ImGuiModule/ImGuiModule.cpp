@@ -236,6 +236,7 @@ namespace NorvesLib::Modules::Gui
                 // イベントは下位(カメラ=PriorityGame)へ配送されないため、ImGui 窓上の操作は
                 // カメラへ届かない。本モジュールが借用ポインタとして渡り、Uninstall で解除する。
                 engine.GetInputRouter().RegisterController(this, Core::Input::InputRouter::PriorityOverlay);
+                engine.GetInputDebugOverlay().SetEnabled(true);
                 NORVES_LOG_INFO(kLogCategory, "ImGuiModule Install");
                 return true;
             }
@@ -450,6 +451,7 @@ namespace NorvesLib::Modules::Gui
             void Uninstall(Core::Engine::Engine &engine) override
             {
                 // C3: ルーターから登録解除(冪等)。借用ポインタを破棄前に必ず外す。
+                engine.GetInputDebugOverlay().SetEnabled(false);
                 engine.GetInputRouter().UnregisterController(this);
                 NORVES_LOG_INFO(kLogCategory, "ImGuiModule Uninstall");
             }
@@ -541,6 +543,12 @@ namespace NorvesLib::Modules::Gui
 
             bool OnKey(const Core::Input::KeyEvent &event) override
             {
+                // F1はdebug cursor解除用。ImGuiへ供給せず下位の専用controllerへ渡す。
+                // リバインド捕捉はさらに上位にあり、この予約キーも捕捉できる。
+                if (event.Code == Core::Input::KeyCode::F1)
+                {
+                    return false;
+                }
                 if (m_Context == nullptr)
                 {
                     return false;

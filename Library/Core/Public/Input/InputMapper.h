@@ -8,6 +8,7 @@ namespace NorvesLib::Core::Input
 {
     class InputRouter;
     class InputRebindCaptureManager;
+    class InputDebugOverlayController;
     struct InputMappedAction
     {
         bool Valid = false;
@@ -64,7 +65,13 @@ namespace NorvesLib::Core::Input
         const char* DebugName() const override { return "InputMapper"; }
     private:
         friend class InputRebindCaptureManager;
+        friend class InputDebugOverlayController;
         void SetCaptureSuppressed(bool suppressed);
+        void SetDebugOverlaySuppressed(bool suppressed);
+        bool IsInputSuppressed() const
+        {
+            return m_bCaptureSuppressed || m_bDebugOverlaySuppressed;
+        }
         struct Action
         {
             Identity Id;
@@ -91,5 +98,7 @@ namespace NorvesLib::Core::Input
         bool m_Focused = true;
         InputRebindCaptureManager* m_CaptureOwner = nullptr;
         bool m_bCaptureSuppressed = false;
+        InputDebugOverlayController* m_DebugOverlayOwner = nullptr;
+        bool m_bDebugOverlaySuppressed = false;
     };
 }

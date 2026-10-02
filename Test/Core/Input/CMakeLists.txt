@@ -24,3 +24,5 @@ add_test(NAME AbsoluteMouseTrackingTest COMMAND LoggerSinkTest --test=AbsoluteMo
 add_test(NAME InputRebindCaptureStateTest COMMAND LoggerSinkTest --test=InputRebindCaptureStateTest)
 add_test(NAME InputRebindCaptureManagerTest COMMAND LoggerSinkTest --test=InputRebindCaptureManagerTest)
 add_test(NAME GameInputRebindTypesTest COMMAND LoggerSinkTest --test=GameInputRebindTypesTest)
+add_test(NAME InputDebugOverlayStateTest COMMAND LoggerSinkTest --test=InputDebugOverlayStateTest)
+add_test(NAME InputDebugOverlayControllerTest COMMAND LoggerSinkTest --test=InputDebugOverlayControllerTest)

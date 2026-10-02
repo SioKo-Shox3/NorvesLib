@@ -1438,3 +1438,11 @@
 - stop-when: 古い/別ownerの結果を適用、失敗時にCurrent/Mapper部分反映、借用pointer長期保持、ID wrap、暗黙保存、blocking未解消。
 - paths: Game/Input/GameInputRebindTypes.h, Game/Input/GameInputSettings.h, Game/Input/GameInputSettings.cpp, Library/Core/Public/Input/InputRebindCaptureManager.h, Library/Core/Private/Input/InputRebindCaptureManager.cpp, Test/Core/Input/GameInputRebindTypesTest.cpp, Test/Core/Input/GameInputSettingsTest.cpp, Test/Core/Input/InputRebindCaptureManagerTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: 出力component/gain/反転は呼出側が明示し、既存slotの意図を勝手に変換しない。UIはGR68、保存は既存Saveのみ。
+
+## G1-GR03-P8: ImGuiのカーソル解除とGame入力マスクを接続する
+- status: done
+- done-when: --imgui有効時だけF1でcursorをNormalへ一時解除し、UI受取後のGame Router入力とMapper polling/fixedを停止。配送外で要求反映/旧操作resetし、再F1で元context要求へ戻す。capture最優先と寿命/Run再開を保ち、既定起動画面を変えない。
+- verify: 純toggle stateのrepeat/押下世代/enable/変更待ち/Resetを実テスト。Coreのmode-mask/cursor/legacy停止/復帰/capture優先/別owner/終了・再開を既存bundleへ追加して独立レビュー。Windows/ImGui実機は未検証。
+- stop-when: cursor解除中のGame入力漏れ、UI自体へ入力が届かない、F1 repeatで反転、captureと抑止理由の競合、callback内の全reset/登録変更、寿命不整合、blocking未解消。
+- paths: Library/Core/Private/Input/InputSystem.cpp, Library/Core/Public/Input/InputDebugOverlayState.h, Library/Core/Public/Input/InputDebugOverlayController.h, Library/Core/Private/Input/InputDebugOverlayController.cpp, Library/Core/Public/Input/InputMapper.h, Library/Core/Private/Input/InputMapper.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Public/Input/InputRouter.h, Library/Core/Public/Engine/Engine.h, Library/Core/Private/Engine/Engine.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/CMakeLists.txt, Library/Modules/ImGui/Private/ImGuiModule/ImGuiModule.cpp, Test/Core/Input/InputDebugOverlayStateTest.cpp, Test/Core/Input/InputDebugOverlayControllerTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Test/Core/Engine/InputFocusPipelineTest.cpp, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: input context stack/JSONは変更しない。UIの描画内容も変更しない。ImGuiはF1だけ予約透過し、controllerはOverlayより下/Gameより上の常設順位を使う。

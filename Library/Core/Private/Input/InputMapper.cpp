@@ -123,7 +123,7 @@ namespace NorvesLib::Core::Input
     ECursorMode InputMapper::GetRequestedCursorMode() const
     {
         const auto* context = Top();
-        return m_Router && !m_bCaptureSuppressed && context ? context->CursorMode : ECursorMode::Normal;
+        return m_Router && !IsInputSuppressed() && context ? context->CursorMode : ECursorMode::Normal;
     }
     ECursorMode InputMapper::GetCursorMode() const
     {
@@ -144,6 +144,15 @@ namespace NorvesLib::Core::Input
         m_bCaptureSuppressed = suppressed;
         CancelAll();
     }
+    void InputMapper::SetDebugOverlaySuppressed(bool suppressed)
+    {
+        if (m_bDebugOverlaySuppressed == suppressed)
+        {
+            return;
+        }
+        m_bDebugOverlaySuppressed = suppressed;
+        CancelAll();
+    }
     void InputMapper::CancelAll()
     {
         m_Armed.Reset();
@@ -162,7 +171,7 @@ namespace NorvesLib::Core::Input
     {
         if (!std::isfinite(time) || time < m_Time || !std::isfinite(unscaledDeltaSeconds) || unscaledDeltaSeconds < 0) return false;
         m_Armed.Reconcile(m_State);
-        auto* top = m_Router && m_Focused && !m_bCaptureSuppressed ? Top() : nullptr;
+        auto* top = m_Router && m_Focused && !IsInputSuppressed() ? Top() : nullptr;
         bool success = true;
         for (auto& context : m_Contexts)
         {
@@ -197,7 +206,7 @@ namespace NorvesLib::Core::Input
                 if (action.Id != actionId) continue;
                 InputMappedAction value;
                 value.Valid = true;
-                value.Active = m_Router && m_Focused && !m_bCaptureSuppressed && &context == Top();
+                value.Active = m_Router && m_Focused && !IsInputSuppressed() && &context == Top();
                 value.Type = action.Runtime.GetSettings().Type;
                 value.Button = action.Runtime.GetButton();
                 value.Axis = action.Runtime.GetAxis();
@@ -208,21 +217,21 @@ namespace NorvesLib::Core::Input
     }
     bool InputMapper::ConsumeFixedPress(Identity id)
     {
-        auto* context = m_Router && m_Focused && !m_bCaptureSuppressed ? Top() : nullptr;
+        auto* context = m_Router && m_Focused && !IsInputSuppressed() ? Top() : nullptr;
         if (context) for (auto& action : context->Actions)
             if (action.Id == id) return action.Runtime.ConsumeFixedPress();
         return false;
     }
     void InputMapper::SyncActiveButtons()
     {
-        auto* context = m_Router && m_Focused && !m_bCaptureSuppressed ? Top() : nullptr;
+        auto* context = m_Router && m_Focused && !IsInputSuppressed() ? Top() : nullptr;
         if (!context) return;
         for (auto& action : context->Actions)
             if (!action.Runtime.SyncButtons(Bindings(action.Bindings), m_State, m_Armed)) action.Runtime.Cancel();
     }
     void InputMapper::AccumulateRelative(EInputBindingSource kind, float x, float y)
     {
-        auto* context = m_Router && m_Focused && !m_bCaptureSuppressed ? Top() : nullptr;
+        auto* context = m_Router && m_Focused && !IsInputSuppressed() ? Top() : nullptr;
         if (!context) return;
         for (auto& action : context->Actions)
         {
@@ -233,17 +242,17 @@ namespace NorvesLib::Core::Input
     }
     bool InputMapper::OnKey(const KeyEvent& event)
     {
-        if (m_Router && m_Focused && !m_bCaptureSuppressed && Top()) { m_Armed.OnKey(event, m_State); SyncActiveButtons(); }
+        if (m_Router && m_Focused && !IsInputSuppressed() && Top()) { m_Armed.OnKey(event, m_State); SyncActiveButtons(); }
         return false;
     }
     bool InputMapper::OnMouseButton(const MouseButtonEvent& event)
     {
-        if (m_Router && m_Focused && !m_bCaptureSuppressed && Top()) { m_Armed.OnMouseButton(event, m_State); SyncActiveButtons(); }
+        if (m_Router && m_Focused && !IsInputSuppressed() && Top()) { m_Armed.OnMouseButton(event, m_State); SyncActiveButtons(); }
         return false;
     }
     bool InputMapper::OnGamepadButton(const GamepadButtonEvent& event)
     {
-        if (m_Router && m_Focused && !m_bCaptureSuppressed && Top()) { m_Armed.OnGamepadButton(event, m_State); SyncActiveButtons(); }
+        if (m_Router && m_Focused && !IsInputSuppressed() && Top()) { m_Armed.OnGamepadButton(event, m_State); SyncActiveButtons(); }
         return false;
     }
     bool InputMapper::OnMouseRawMove(const MouseRawMoveEvent& event)

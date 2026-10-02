@@ -8,6 +8,10 @@ namespace NorvesLib::Core::Input
 
     void InputSystem::BeginFrame()
     {
+        if (m_bDeferredInputReset)
+        {
+            ReleaseAll();
+        }
         m_State.BeginFrame();
     }
 
@@ -170,6 +174,7 @@ namespace NorvesLib::Core::Input
         m_State.ReleaseAll();
         m_OnInputResetEvent.Broadcast();
         if (m_Router) m_Router->NotifyInputReset();
+        m_bDeferredInputReset = false;
     }
 
     void InputSystem::InjectCharEvent(uint32_t codepoint)

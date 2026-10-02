@@ -12,6 +12,7 @@ namespace NorvesLib::Core::Input
 
     class InputRouter;
     class InputRebindCaptureManager;
+    class InputDebugOverlayController;
 
     /**
      * @brief 入力システム
@@ -47,6 +48,7 @@ namespace NorvesLib::Core::Input
 
         /**
          * @brief フレーム開始処理
+         * 保留された操作resetがあれば、前フレーム保存の前に通知して回収する。
          *
          * 前フレームのキー/ボタン状態をprevにコピーし、
          * フレーム累積値（デルタ、スクロール）をリセットします。
@@ -175,8 +177,11 @@ namespace NorvesLib::Core::Input
 
     private:
         friend class InputRebindCaptureManager;
+        friend class InputDebugOverlayController;
         // 入力状態
         InputState m_State;
+        // controller所有終了時の通知は次の安全なAttach/frame開始まで保留する。
+        bool m_bDeferredInputReset = false;
 
         // イベントデリゲート
         MulticastDelegate<const KeyEvent &> m_OnKeyEvent;

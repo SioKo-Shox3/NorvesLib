@@ -11,6 +11,7 @@
 #include "Input/InputRouter.h"
 #include "Input/InputMapper.h"
 #include "Input/InputRebindCaptureManager.h"
+#include "Input/InputDebugOverlayController.h"
 #include "Particle/ParticleSystem.h"
 #include "Thread/Atomic.h"
 
@@ -392,6 +393,8 @@ namespace NorvesLib::Core::Engine
         }
         Input::InputMapper& GetInputMapper() { return m_InputMapper; }
         const Input::InputMapper& GetInputMapper() const { return m_InputMapper; }
+        Input::InputDebugOverlayController& GetInputDebugOverlay() { return m_InputDebugOverlay; }
+        const Input::InputDebugOverlayController& GetInputDebugOverlay() const { return m_InputDebugOverlay; }
         Input::InputRebindCaptureManager& GetInputRebindCapture() { return m_InputRebindCapture; }
         const Input::InputRebindCaptureManager& GetInputRebindCapture() const { return m_InputRebindCapture; }
 
@@ -441,6 +444,7 @@ namespace NorvesLib::Core::Engine
         Input::InputRouter m_InputRouter;
         // 借用先の正本/Routerより後に宣言し、先に破棄する。
         Input::InputMapper m_InputMapper;
+        Input::InputDebugOverlayController m_InputDebugOverlay;
         Input::InputRebindCaptureManager m_InputRebindCapture;
 
         // 実行状態

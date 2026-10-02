@@ -1350,6 +1350,7 @@ namespace NorvesLib::Core::Engine
                 if (GEngine)
                 {
                     GEngine->GetInputRebindCapture().Detach();
+                    GEngine->GetInputDebugOverlay().Detach();
                     GEngine->GetInputMapper().CancelAll();
                     if(auto window=GEngine->GetMainWindowShared()) (void)window->SetCursorMode(ECursorMode::Normal);
                 }
@@ -1363,9 +1364,9 @@ namespace NorvesLib::Core::Engine
         if (GEngine)
         {
             GEngine->GetInputMapper().CancelAll();
-            if (!GEngine->GetInputRebindCapture().Attach())
+            if (!GEngine->GetInputDebugOverlay().Attach() || !GEngine->GetInputRebindCapture().Attach())
             {
-                LOG_ERROR("入力captureの配線が一致しないためRunを開始できません");
+                LOG_ERROR("入力controllerの配線が一致しないためRunを開始できません");
                 return -1;
             }
         }
@@ -1416,6 +1417,7 @@ namespace NorvesLib::Core::Engine
         {
             // Handler/World/windowの破棄より先に入力操作とRouter登録を解除する。
             GEngine->GetInputRebindCapture().Detach();
+            GEngine->GetInputDebugOverlay().Detach();
             GEngine->GetInputMapper().Detach();
             auto *handler = GEngine->GetApplicationHandler();
 
@@ -1955,6 +1957,7 @@ namespace NorvesLib::Core::Engine
         const double time = static_cast<double>(timeNanoseconds) / 1'000'000'000.0;
         const double dt = rawDeltaNanoseconds > 0
             ? static_cast<double>(rawDeltaNanoseconds) / 1'000'000'000.0 : 0.0;
+        GEngine->GetInputDebugOverlay().Advance();
         GEngine->GetInputRebindCapture().Advance();
         return GEngine->GetInputMapper().Update(time, dt);
     }

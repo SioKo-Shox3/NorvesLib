@@ -342,3 +342,6 @@
 
 - G1-GR03-P7E: GameInputSettingsへcontext/action/slot/明示出力/revisionの不透明な値requestとApplyRebindCaptureを追加。末尾追加/置換をP7Aの一括更新へ接続し、Pending/Applied/Cancelled/Stale/Invalidを区別する。manager request IDとsettings revisionを各々process内の非wrap採番にし、別instance・古い設定・二重適用を拒否。要求はowner pointerを保持せず、成功時だけCurrent/revision更新、Saveは明示のみ。純helperのsource/modifier/方向/型/invalid非変更と実InputActionRuntimeでの負軸Button発火を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle compileで確認。独立静的レビューPASS。実Game/managerの追加・置換・中止・別owner・stale・保存・失敗後再試行の試験を追加したが、Windows.h依存のcompile/実行は未検証。
 - Next: GR03の--imgui利用時のロック解除hotkeyを受入れ要件に合わせて追加する。GR04のXInput/polling/haptics/device種別とGR08の残接続は継続。
+
+- G1-GR03-P8: --imguiのInstall/UninstallとEngine所有InputDebugOverlayControllerを接続し、有効時だけF1でcursor NormalとGame入力maskを切り替える。UIへ通常eventを渡した後でGameを遮断し、Mapperの独立抑止理由をcaptureとORしてpolling/fixed/Activeも停止。context/JSON/描画内容は変更しない。Processorの配送後に要求反映/resetし、Engine/Runの所有順と再Attachを接続。第1周の自己resetによるF1押下世代消失と未適用enter終了時のlegacy残留を修正。内部guardとSystem所有deferred reset（次のAttach/BeginFrameで通知回収）を追加し第2周静的レビューPASS。純state通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundleと公開controller header syntax、capture/runtime/Raw回帰成功。Core/Engine/ImGui統合試験にrepeat/二重Pressed・UI先行・capture優先・owner・pending終了/再開を追加したが、Windows.h依存によりcompile/実行と実機cursor確認は未検証。
+- Next: GR03の計画上の実装項目は一通り接続済み。Windows実機と統合bundleの受入れは未検証として残す。GR04へ進み、XInputの実pad供給・接続/切断・振動・device種別通知を実装する。

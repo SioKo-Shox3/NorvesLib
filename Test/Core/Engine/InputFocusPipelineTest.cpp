@@ -102,6 +102,40 @@ namespace
         void OnFocusGained() override { Record(true); }
         void OnFocusLost() override { Record(false); }
     };
+    class LegacyOperationProbe final : public IInputController
+    {
+    public:
+        bool bKeyHeld=false,bMouseHeld=false;
+        int Drags=0;
+        const char* DebugName() const override
+        {
+            return "LegacyOperationProbe";
+        }
+        bool OnKey(const KeyEvent& event) override
+        {
+            if(event.Code==KeyCode::Space)
+            {
+                bKeyHeld=event.Action!=InputAction::Released;
+            }
+            return false;
+        }
+        bool OnMouseButton(const MouseButtonEvent& event) override
+        {
+            bMouseHeld=event.Action!=InputAction::Released;return false;
+        }
+        bool OnMouseMove(const MouseMoveEvent&) override
+        {
+            if(bMouseHeld)
+            {
+                ++Drags;
+            }
+            return false;
+        }
+        void OnInputReset() override
+        {
+            bKeyHeld=false;bMouseHeld=false;
+        }
+    };
     class FocusPlatform final : public IApplication
     {
     public:
@@ -109,6 +143,7 @@ namespace
         FocusHandler* Handler=nullptr;
         bool InPump=false,ThrowOnPump=false,ExitAfterPump=false;
         bool BeginCapture=false;
+        bool PendingOverlay=false,ThrowAfterOverlay=false;
         uint64_t StartedCapture=0;
         bool Initialize(const Container::VariableArray<Container::String>&) override { return true; }
         void Shutdown() override {}
@@ -118,6 +153,20 @@ namespace
         void PumpMessages() override
         {
             if(ThrowOnPump) throw 88;
+            if(PendingOverlay)
+            {
+                auto& input=Eng::GEngine->GetInputSystem();
+                input.InjectKeyEvent(KeyCode::Space,InputAction::Pressed);
+                input.InjectMouseButton(MouseButton::Left,InputAction::Pressed,0,0);
+                input.InjectKeyEvent(KeyCode::F1,InputAction::Pressed);
+                input.InjectKeyEvent(KeyCode::Space,InputAction::Released);
+                input.InjectMouseButton(MouseButton::Left,InputAction::Released,0,0);
+                if(ThrowAfterOverlay)
+                {
+                    throw 89;
+                }
+                return;
+            }
             if(BeginCapture)
             {
                 StartedCapture=Eng::GEngine->GetInputRebindCapture().Begin();
@@ -200,6 +249,19 @@ int main()
     }
     assert(second->OnInputFocusChanged().IsEmpty() && !second->RawEnabled);
     second->Emit(true);Eng::ApplicationInputFocusTestAccess::Connect(processor,second);
+    // ImGui moduleがenableする入口を実Engineのinput frameで検証する。
+    auto& debugOverlay=engine->GetInputDebugOverlay();
+    assert(!debugOverlay.IsEnabled());observer.Consume=false;
+    debugOverlay.SetEnabled(true);
+    assert(Eng::ApplicationInputFocusTestAccess::Begin(processor,500'000'000));
+    system.InjectKeyEvent(KeyCode::F1,InputAction::Pressed);system.InjectKeyEvent(KeyCode::F1,InputAction::Released);
+    assert(Eng::ApplicationInputFocusTestAccess::Update(processor,500'000'000));
+    assert(debugOverlay.IsOverlayActive() && mapper.GetRequestedCursorMode()==ECursorMode::Normal);
+    assert(Eng::ApplicationInputFocusTestAccess::Cursor(processor) && second->Requested==ECursorMode::Normal);
+    assert(Eng::ApplicationInputFocusTestAccess::Begin(processor,750'000'000));
+    system.InjectKeyEvent(KeyCode::F1,InputAction::Pressed);system.InjectKeyEvent(KeyCode::F1,InputAction::Released);
+    assert(Eng::ApplicationInputFocusTestAccess::Update(processor,750'000'000));
+    assert(!debugOverlay.IsOverlayActive() && mapper.GetRequestedCursorMode()==ECursorMode::Locked);
     // 実Processorのframe接続でcapture完了とcursor復帰を確かめる。
     auto& capture=engine->GetInputRebindCapture();
     assert(Eng::ApplicationInputFocusTestAccess::Begin(processor, 1'000'000'000));
@@ -223,10 +285,41 @@ int main()
     assert(caught && second->Requested==ECursorMode::Normal && second->Effective==ECursorMode::Normal);
     assert(capture.TryGetResult(abortId,captureResult) && captureResult.Outcome==EInputRebindOutcome::Cancelled);
     assert(!capture.IsCapturing());
+    LegacyOperationProbe legacy;
+    engine->GetInputRouter().RegisterController(&legacy,InputRouter::PriorityGame);
+    runProbe->ThrowOnPump=false;runProbe->PendingOverlay=true;runProbe->ThrowAfterOverlay=true;
+    caught=false;try { (void)processor.Run(); } catch(int value) { caught=value==89; }
+    assert(caught && legacy.bKeyHeld && legacy.bMouseHeld);
+    assert(!mapper.GetAction("Jump"_id).Button.Held && !mapper.ConsumeFixedPress("Jump"_id));
+    // 次RunのAttachが、Pumpへ戻る前に未配送のlegacy resetを回収する。
+    runProbe->PendingOverlay=false;runProbe->ThrowOnPump=true;
+    caught=false;try { (void)processor.Run(); } catch(int value) { caught=value==88; }
+    assert(caught && !legacy.bKeyHeld && !legacy.bMouseHeld);
+    engine->GetInputRouter().UnregisterController(&legacy);
     runProbe->ThrowOnPump=false;runProbe->ExitAfterPump=true;runProbe->BeginCapture=true;
     assert(processor.Run()==0 && second->Requested==ECursorMode::Normal);
     assert(runProbe->StartedCapture!=0 && !capture.IsCapturing());
     assert(capture.TryGetResult(runProbe->StartedCapture,captureResult) && captureResult.Outcome==EInputRebindOutcome::Cancelled);
+    // 正常exitでもAdvance前のenterを回収する。別Engineでexit要求を持ち越さない。
+    {
+        auto pendingEngine=Container::MakeUnique<Eng::Engine>();
+        Eng::GEngine=pendingEngine.get();
+        Eng::ApplicationProcessor pendingProcessor;
+        LegacyOperationProbe pendingLegacy;
+        pendingEngine->GetInputRouter().RegisterController(&pendingLegacy,InputRouter::PriorityGame);
+        assert(pendingEngine->GetInputMapper().ConfigureWithContext(definitions,"Gameplay"_id));
+        pendingEngine->GetInputDebugOverlay().SetEnabled(true);
+        auto pendingPlatform=Container::MakeUnique<FocusPlatform>();
+        pendingPlatform->PendingOverlay=true;pendingPlatform->ExitAfterPump=true;
+        pendingEngine->SetPlatformApp(std::move(pendingPlatform));pendingEngine->SetRunning(true);
+        assert(pendingProcessor.Run()==0 && pendingLegacy.bKeyHeld && pendingLegacy.bMouseHeld);
+        // exit要求でloopへ入らない再Runでも、入口で通知resetは完了する。
+        assert(pendingProcessor.Run()==0 && !pendingLegacy.bKeyHeld && !pendingLegacy.bMouseHeld);
+        pendingEngine->GetInputSystem().InjectMouseMove(4,5);
+        assert(pendingLegacy.Drags==0);
+        pendingEngine->GetInputRouter().UnregisterController(&pendingLegacy);
+        pendingEngine->SetPlatformApp({});Eng::GEngine=engine.get();
+    }
     Eng::ApplicationInputFocusTestAccess::Disconnect(processor);
     engine->GetInputRouter().UnregisterController(&observer);
     engine->SetApplicationHandler({});engine->SetPlatformApp({});engine->SetMainWindow({});engine.reset();Eng::GEngine=previous;
