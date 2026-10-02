@@ -8,6 +8,8 @@
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
 #include "Input/InputSystem.h"
+#include "Input/IInputDevice.h"
+#include "Container/VariableArray.h"
 #include "Input/InputRouter.h"
 #include "Input/InputMapper.h"
 #include "Input/InputRebindCaptureManager.h"
@@ -398,7 +400,26 @@ namespace NorvesLib::Core::Engine
         Input::InputRebindCaptureManager& GetInputRebindCapture() { return m_InputRebindCapture; }
         const Input::InputRebindCaptureManager& GetInputRebindCapture() const { return m_InputRebindCapture; }
 
+        // 全操作はGameThread・input配送外。callbackから再入/Engine破棄しない。
+        // Addは未開始時だけ。失敗時も引数の所有権は呼出側へ戻さない。
+        bool AddInputDevice(Container::TUniquePtr<Input::IInputDevice> device);
+        bool HasGamepadInputDevice() const noexcept;
+        bool InitializeInputDevices();
+        bool PollInputDevices(double unscaledTimeSeconds);
+        bool SetInputDevicesFocused(bool focused) noexcept;
+        // 全deviceを逆順停止。失敗したdeviceは次回Shutdownで再試行し、再開始を拒否する。
+        bool ShutdownInputDevices() noexcept;
+        bool AreInputDevicesInitialized() const noexcept { return m_bInputDevicesStarted; }
+
     private:
+        bool StopInputDevicesInternal() noexcept;
+        bool HasPendingInputDeviceShutdown() const noexcept;
+        struct InputDeviceEntry
+        {
+            Container::TUniquePtr<Input::IInputDevice> Device;
+            bool bGamepadProvider = false;
+            bool bNeedsShutdown = false;
+        };
         static constexpr uint64_t ExitRequestedMask = uint64_t{1} << 63;
         static constexpr uint64_t ExitCodeMask = 0xFFFFFFFFull;
 
@@ -446,6 +467,13 @@ namespace NorvesLib::Core::Engine
         Input::InputMapper m_InputMapper;
         Input::InputDebugOverlayController m_InputDebugOverlay;
         Input::InputRebindCaptureManager m_InputRebindCapture;
+        // 入力System/Mapperより先に停止・破棄する。deviceはこれらを長期借用しない。
+        Container::VariableArray<InputDeviceEntry> m_InputDevices;
+        bool m_bInputDevicesStarted = false;
+        bool m_bInputDevicesBusy = false;
+        bool m_bInputDevicesFocused = true;
+        bool m_bInputDevicesHaveTime = false;
+        double m_InputDeviceTime = 0;
 
         // 実行状態
         bool m_bIsRunning = false;

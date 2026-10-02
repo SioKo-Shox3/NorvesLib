@@ -46,10 +46,9 @@ namespace NorvesLib::Core::Input
             {
                 m_Mapper.m_CaptureOwner->Abort();
             }
-            m_System.m_State.ReleaseAll();
             m_Mapper.CancelAll();
             // 未適用enterではlegacyがまだresetされていない。controller再生成でも失わない。
-            m_System.m_bDeferredInputReset = true;
+            m_System.DeferReleaseAll();
         }
         m_State.Reset();
         if (m_bAttached)

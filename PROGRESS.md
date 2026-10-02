@@ -357,3 +357,6 @@
 
 - G1-GR04-P4: Platform::CreateGamepadDeviceとWindowsXInputApiを追加し、native成功packetの全fieldを明示変換。失敗時のraw非変更、slot検証、Xinputリンクを接続。XInputDeviceはAPIを独占所有しpoll stateを内包、null生成/コピー/移動を拒否。System参照は同期sinkだけが借用する。IInputDeviceの旧poll互換を保ち、時刻付きbool poll/focus/provider識別を追加。実device.cppと公開headerのcompile、統合試験のMEMBER object compileは成功。試験main改名時のreturn欠落を実compileで修正し再確認、独立レビューPASS。P3の通常/ASan・UBSan回帰成功。実System/Routerを含むリンクはWindows.h依存で停止し、統合実行/native SDK compile/実機は未検証。
 - Next: GR04のdeviceをEngineで所有して初期化/終了/例外/Run再開とfocus-message後のframe pollingへ接続する。振動は後続。
+
+- G1-GR04-P5: Engine所有device列と単一pad provider制約を接続。開始試行前に終了義務を記録し、false/例外は逆順rollback、停止例外は残りを止めた上で義務/所有を保持して再停止可能にする。busy再入拒否、finite非負単調clock、false時も他device継続を実装。handler設定後に標準pad未登録時だけ生成し、Run開始/メッセージ後poll/終了・例外/再Run/破棄へ接続。focus取消後にdevice hookを呼び、停止時はcapture中止/Mapper取消/正本neutral、legacy通知はSystem所有deferred resetへ保留。debug teardownも共用。独立静的レビューPASS。非null再入登録拒否・invalid clock後の同時刻pollも試験sourceに補強。P3 portable通常/ASan・UBSan回帰とP4 header/device.cpp/統合MEMBER object compile成功。Engineと追加bundle試験のcompileはString.hのWindows.h依存で停止し、統合実行/native実機は未検証。停止失敗時の物理停止成功は保証せず、再試行後にも失敗する場合は限界が残る。
+- Next: GR04の振動包絡線/混合/成功ACKに基づく再送・最終zero、haptics.v1設定とEngine接続へ進む。その後に入力方式切替を接続する。

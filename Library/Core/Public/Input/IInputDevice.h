@@ -18,6 +18,10 @@ namespace NorvesLib::Core::Input
      * - LinuxInputDevice: X11/Waylandのイベントを変換してInject
      * - GamepadInputDevice: XInput/DirectInputのゲームパッド入力を変換
      */
+    // 全操作はGameThread。InputSystemはPoll中だけ借用し、後へ保持しない。
+    // Initialize/Shutdown/SetFocused/破棄から入力通知やownerへの再入を行わない。
+    // Shutdownは部分初期化後も呼べること。例外時はownerが所有を維持し再停止する。
+    // ProvidesGamepadStateの値は所有期間中不変とする。
     class IInputDevice
     {
     public:

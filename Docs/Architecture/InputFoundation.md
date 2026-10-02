@@ -267,3 +267,11 @@ sinkが拒否した接続/初回baselineは受理済みへ進めず、次frame�
 - IInputDeviceには時刻付きbool poll、focus hook、全pad slot供給の識別を追加。旧void poll実装は既定委譲で互換を保つ。時刻付き/旧pollは同じ初期化期間で混用しない。XInputの旧入口はsteady_clockを使う。
 - 全操作はGameThreadで、配送callbackから再入/自己破棄しない。停止は通知しないためowner側で操作取消を行う。API所有は停止後も維持し再初期化できる。WindowsではXinputをリンクする。
 - この境界は入力専用。Engineの登録/寿命/frame呼出しと振動は後続。実System注入を使う統合試験とXInputDevice.cppのsyntax検査は成功。実System/Routerを含むリンク試行はContainers.hのWindows.h依存で停止し、統合実行・native APIのcompile/実機確認は未実施。
+
+### Engineによる入力device所有（GR04）
+- AddInputDeviceは未開始時だけ所有権を受け取り、全pad slotを供給するdeviceは1つだけに制限する。拒否時も渡されたpointerは呼出側へ返さず破棄する。Windows標準factoryはApplicationProcessorのhandler初期化後、pad未登録時にだけ追加する。Engine生成単体はnative APIを触らない。
+- Run開始でdeviceを登録順Initialize、試行前に終了義務を記録する。false/例外は試行済み全てを逆順停止する。Shutdownがthrowしたdeviceは所有と終了義務を保持し、再Shutdown可能、再Initialize/追加は拒否。Run終了・例外・application終了・Engine破棄時にも停止する。物理device側が停止に失敗した場合、破棄時の再試行までしか保証できない。
+- 全操作はGameThread、busy中の登録/開始/停止/poll/focus変更を拒否。callbackからEngine破棄やinput再配送をしない。poll時刻はfinite非負単調秒で、invalidはdeviceを呼ばず内部時刻も維持する。deviceのfalseでも他deviceをpoll、例外はRun cleanupへ伝播する。
+- frame順はBeginInputFrame→platform message/focus取消→device poll→Mapper更新/handler。focus lossではMapper停止/ReleaseAllがdevice hookより先。Background/Baselineの選択はproviderが担当する。
+- 停止時はcapture中止/Mapper取消/正本neutralを即時実施し、legacy reset通知はInputSystem::DeferReleaseAllで次の安全なBeginFrame/Attachへ保留する。Shutdown callbackから入力を通知しない契約。debug overlayの所有終了も同じ保留口を使う。
+- fake deviceで所有/順序/部分失敗/例外/再試行/単調時刻/再入拒否/Run cleanupを既存Engine bundleへ追加。Windows依存によりEngine統合実行・native実機は未検証。

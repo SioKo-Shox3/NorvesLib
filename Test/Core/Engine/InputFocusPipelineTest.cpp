@@ -58,6 +58,28 @@ namespace
         bool IsInputFocused() const override { return Focused; }
         Platform::NativeWindowHandle GetNativeHandle() const override { return {}; }
     };
+    class FocusDevice final : public IInputDevice
+    {
+    public:
+        explicit FocusDevice(Eng::Engine& engine) : Owner(engine)
+        {
+        }
+        bool Initialize() override { return true; }
+        void Shutdown() override {}
+        void PollEvents(InputSystem&) override {}
+        void SetFocused(bool focused) noexcept override
+        {
+            Focused = focused;
+            if (CheckCancellation && !focused)
+            {
+                assert(!Owner.GetInputMapper().IsFocused());
+                assert(!Owner.GetInputSystem().GetState().IsKeyDown(KeyCode::Space));
+            }
+        }
+        Eng::Engine& Owner;
+        bool Focused = true;
+        bool CheckCancellation = false;
+    };
     class FocusObserver final : public IInputController
     {
     public:
@@ -185,6 +207,9 @@ int main()
 {
     auto* previous=Eng::GEngine;
     auto engine=Container::MakeUnique<Eng::Engine>();Eng::GEngine=engine.get();
+    auto focusDevice=Container::MakeUnique<FocusDevice>(*engine);
+    auto* focusDeviceView=focusDevice.get();
+    assert(engine->AddInputDevice(std::move(focusDevice)));
     auto window=Container::MakeShared<FocusWindow>();engine->SetMainWindow(window);
     Eng::ApplicationProcessor processor;
     auto handler=Container::MakeShared<FocusHandler>();handler->Processor=&processor;handler->Window=window.get();engine->SetApplicationHandler(handler);
@@ -206,13 +231,16 @@ int main()
     system.InjectKeyEvent(KeyCode::Space,InputAction::Pressed);
     assert(system.GetState().IsKeyDown(KeyCode::Space) && mapper.GetAction("Jump"_id).Button.Held);
     observer.Consume=true;
+    focusDeviceView->CheckCancellation=true;
     window->Emit(false);window->Emit(false);
+    assert(!focusDeviceView->Focused);
+    focusDeviceView->CheckCancellation=false;
     assert(observer.Resets==1 && observer.Focus.size()==2 && !observer.Focus[1]);
     assert(!system.GetState().IsKeyDown(KeyCode::Space) && !mapper.IsFocused() && mapper.GetCursorMode()==ECursorMode::Normal);
     assert(handler->Events.size()==1);
     assert(Eng::ApplicationInputFocusTestAccess::Cursor(processor));
     assert(window->Requested==ECursorMode::Locked && window->Effective==ECursorMode::Normal);
-    window->Emit(true);assert(mapper.IsFocused() && !mapper.GetAction("Jump"_id).Button.Held);
+    window->Emit(true);assert(focusDeviceView->Focused);assert(mapper.IsFocused() && !mapper.GetAction("Jump"_id).Button.Held);
     Eng::ApplicationInputFocusTestAccess::Flush(processor);
     assert(handler->Events.size()==3 && !handler->Events[1] && handler->Events[2]);
     auto platform=Container::MakeUnique<FocusPlatform>();platform->Window=window.get();platform->Handler=handler.get();

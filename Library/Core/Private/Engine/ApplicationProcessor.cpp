@@ -19,6 +19,7 @@
 #include "Resource/FontAtlas.h"
 #include "Module/ModuleRegistry.h"
 #include "RHI/RHIDeviceFactory.h"
+#include "Platform/PlatformInputDevices.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include "Thread/JobSystem.h"
@@ -1324,6 +1325,13 @@ namespace NorvesLib::Core::Engine
             handler->OnPostInitialize();
         }
 
+        // Handlerが差替padを登録していなければ標準backendを所有する。
+        if (!GEngine->HasGamepadInputDevice() &&
+            !GEngine->AddInputDevice(Platform::CreateGamepadDevice()))
+        {
+            LOG_ERROR("ゲームパッド入力deviceの生成に失敗しました");
+            return false;
+        }
         // Handler/モジュールの初期化後に購読し、通知はmessage処理外へ遅延する。
         ConnectInputWindow(GEngine->GetMainWindowShared());
         GEngine->SetRunning(true);
@@ -1349,6 +1357,7 @@ namespace NorvesLib::Core::Engine
                 // PumpMessages/OnUpdate例外でもheld/fixedPressを残さない。
                 if (GEngine)
                 {
+                    (void)GEngine->ShutdownInputDevices();
                     GEngine->GetInputRebindCapture().Detach();
                     GEngine->GetInputDebugOverlay().Detach();
                     GEngine->GetInputMapper().CancelAll();
@@ -1370,6 +1379,12 @@ namespace NorvesLib::Core::Engine
                 return -1;
             }
         }
+        if (GEngine && !GEngine->InitializeInputDevices())
+        {
+            LOG_ERROR("入力deviceの開始に失敗しました");
+            return -1;
+        }
+        bool inputDeviceWarning = false;
         m_FixedStepScheduler->BeginRun();
 
         while (GEngine && GEngine->IsRunning() && !GEngine->IsExitRequested())
@@ -1392,6 +1407,15 @@ namespace NorvesLib::Core::Engine
                 break;
             }
 
+            // 最新のfocus messageを反映した後、Mapper評価前に同frameのpadを供給する。
+            const double inputDeviceTime = std::chrono::duration<double>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            const bool inputDevicesHealthy = GEngine->PollInputDevices(inputDeviceTime);
+            if (!inputDevicesHealthy && !inputDeviceWarning)
+            {
+                LOG_WARNING("入力deviceが未回復のerrorを報告しています");
+            }
+            inputDeviceWarning = !inputDevicesHealthy;
             // 1フレームの処理
             Tick();
             (void)SynchronizeInputCursorMode();
@@ -1416,6 +1440,10 @@ namespace NorvesLib::Core::Engine
         if (GEngine && lifecycle.bEngine)
         {
             // Handler/World/windowの破棄より先に入力操作とRouter登録を解除する。
+            if (!GEngine->ShutdownInputDevices())
+            {
+                LOG_WARNING("入力deviceの終了に失敗し、所有者破棄時に再試行します");
+            }
             GEngine->GetInputRebindCapture().Detach();
             GEngine->GetInputDebugOverlay().Detach();
             GEngine->GetInputMapper().Detach();
@@ -1833,6 +1861,7 @@ namespace NorvesLib::Core::Engine
         if (GEngine && GEngine == m_InputEngine)
         {
             GEngine->GetInputRebindCapture().Abort();
+            (void)GEngine->SetInputDevicesFocused(false);
         }
         if(m_InputWindow)
         {
@@ -1853,6 +1882,7 @@ namespace NorvesLib::Core::Engine
         m_HasInputFocus=true;m_InputFocused=focused;
         GEngine->GetInputMapper().SetFocused(focused);
         if(!focused) GEngine->GetInputSystem().ReleaseAll();
+        (void)GEngine->SetInputDevicesFocused(focused);
         GEngine->GetInputRouter().NotifyInputFocusChanged(focused);
         m_PendingInputFocus.push_back(focused);
     }

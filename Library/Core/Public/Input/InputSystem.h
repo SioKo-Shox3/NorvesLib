@@ -148,6 +148,14 @@ namespace NorvesLib::Core::Input
         // window/Engineの破棄、登録変更、再入配送、例外送出を行わない。
         // 高位のfocus処理はApplicationHandlerへ遅延される。
         void ReleaseAll();
+
+        // 所有終了時はcallbackを呼ばず操作正本を即時中立化する。
+        // 次の安全なBeginFrame/AttachでReleaseAll通知を回収。GameThread・配送外専用。
+        void DeferReleaseAll() noexcept
+        {
+            m_State.ReleaseAll();
+            m_bDeferredInputReset = true;
+        }
         MulticastDelegate<const MouseRawMoveEvent&>& OnMouseRawMoveEvent() { return m_OnMouseRawMoveEvent; }
         MulticastDelegate<const GamepadButtonEvent&>& OnGamepadButtonEvent() { return m_OnGamepadButtonEvent; }
         MulticastDelegate<const GamepadSampleEvent&>& OnGamepadSampleEvent() { return m_OnGamepadSampleEvent; }

@@ -1478,3 +1478,11 @@
 - stop-when: null参照、APIより長い借用、copy/moveで参照破壊、入力systemの長期保持、失敗packet使用、既存IInputDevice実装の破壊、blocking未解消。
 - paths: Library/Core/Public/Input/IInputDevice.h, Library/Core/Public/Platform/PlatformInputDevices.h, Library/Core/Private/Platform/Windows/XInputDevice.h, Library/Core/Private/Platform/Windows/XInputDevice.cpp, Library/Core/Private/Platform/Windows/WindowsXInputApi.cpp, Library/Core/CMakeLists.txt, Test/Core/Input/XInputDeviceIntegrationTest.cpp, Test/Core/Input/CMakeLists.txt, Test/Core/Logging/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
 - notes: Engine登録/frame呼出しは次段。読み取り専用で、振動出力はhaptics接続時に追加する。
+
+## G1-GR04-P5: 入力デバイスの所有とフレーム寿命をEngineへ接続する
+- status: done
+- done-when: Engineがdeviceを所有し単一pad providerを保証。開始の部分失敗を逆順停止、終了/例外/再Runを扱い、失敗停止は再試行対象に残す。focus message後/Mapper更新前に単調時刻でpollし、標準padはhandler設定後に未登録時だけ生成。停止は即時操作取消と安全地点でのlegacy reset通知を行う。
+- verify: fake deviceの所有/順序/再入拒否/開始失敗/停止例外再試行/clock非変更、実Runのmessage→poll→handlerと例外cleanupを既存Engine bundleへ追加。既存P3/P4の関連回帰、静的独立レビュー。Windows依存の未実行を明示。
+- stop-when: device二重pad供給、partial開始放置、callback中破棄/登録、Shutdown例外で残り未停止、焦点喪失前のLive poll、終了後held残留、blocking未解消。
+- paths: Library/Core/Public/Input/IInputDevice.h, Library/Core/Public/Engine/Engine.h, Library/Core/Private/Engine/Engine.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Input/InputSystem.h, Library/Core/Private/Input/InputDebugOverlayController.cpp, Test/Core/Engine/InputDeviceLifecycleTest.cpp, Test/Core/Engine/InputFocusPipelineTest.cpp, Test/Core/Engine/CMakeLists.txt, Docs/Architecture/InputFoundation.md, TASKS.md, PROGRESS.md
+- notes: native実機とWindows統合実行は未検証。振動serviceは後続。Shutdown失敗のdeviceは所有/再停止義務を保持し、再初期化を拒否する。
