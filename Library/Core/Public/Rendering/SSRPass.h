@@ -53,7 +53,8 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief SSR（Screen-Space Reflections）パス
      *
-     * LightingPassの後、Bloomの前に配置。
+     * LightingPassの直後、フォグ（VolumetricsPass）・半透明（ForwardPass）の前に配置し、減衰していない照明の色の上で
+     * 置き換える。後のパスは "SSRSceneColor" があればそれへ重ねる。
      * スクリーンスペースでレイマーチングを行い、当たった画素では LightingPass が足した環境光の鏡面反射
      * （"LightingIndirectSpecular"）を、その反射率（"LightingSpecularReflectance"）を掛けた当たった先の色へ置き換える。
      * どちらかの入力が無いときは反射率0の既定のテクスチャを結び、何も足さない。

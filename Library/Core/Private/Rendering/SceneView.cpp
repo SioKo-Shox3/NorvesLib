@@ -879,19 +879,9 @@ namespace NorvesLib::Core::Rendering
         lightingPass->SetRegisterLegacyBridge(false);
         AddPass(std::move(lightingPass));
 
-        // VolumetricsPass: Lighting後のSceneColorを解析高さフォグで合成
-        AddPass(MakeUnique<VolumetricsPass>());
-
-        // ForwardPass(TransparentOnly): Lighting後のSceneColorへ半透明をLoad合成
-        auto transparentForwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
-        transparentForwardPass->SetTransparentOnly(true);
-        transparentForwardPass->SetRegisterOutputs(false);
-        AddPass(std::move(transparentForwardPass));
-
-        // PostProcessStack: SSR -> TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw
-        auto postProcessStack = MakeUnique<PostProcessStack>();
-
-        // SSR（スクリーンスペース反射、HDR空間で適用）
+        // SSR（スクリーンスペース反射、HDR空間で適用）: Lightingが足した環境光の鏡面反射を画面の反射へ置き換え、
+        // "SSR.SceneColor" に書く。フォグ・半透明より前に置き、減衰していない照明の色の上で置き換える
+        // （後のパスはSSRの出力があればそれへ重ねる）。
         SSRSettings ssrSettings;
         ssrSettings.MaxDistance = 15.0f;
         ssrSettings.Thickness = 0.3f;
@@ -900,10 +890,21 @@ namespace NorvesLib::Core::Rendering
         // 粗さ0.3〜0.7の間でなめらかに弱める（しきい値で急に切れると、粗さの近い面の間で反射の有無が段になる）。
         ssrSettings.RoughnessFadeStart = 0.3f;
         ssrSettings.RoughnessFadeEnd = 0.7f;
-        auto ssrPass = MakeUnique<SSRPass>(ssrSettings);
-        postProcessStack->AddPass(std::move(ssrPass));
+        AddPass(MakeUnique<SSRPass>(ssrSettings));
 
-        // TemporalAA（ライティング・半透明・SSRの後、ブルームの前。既定は無効で、カメラが TAA を選んだ
+        // VolumetricsPass: SSR後のシーンの色を解析高さフォグで合成
+        AddPass(MakeUnique<VolumetricsPass>());
+
+        // ForwardPass(TransparentOnly): フォグ後のシーンの色へ半透明をLoad合成
+        auto transparentForwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
+        transparentForwardPass->SetTransparentOnly(true);
+        transparentForwardPass->SetRegisterOutputs(false);
+        AddPass(std::move(transparentForwardPass));
+
+        // PostProcessStack: TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw
+        auto postProcessStack = MakeUnique<PostProcessStack>();
+
+        // TemporalAA（ライティング・SSR・半透明の後、ブルームの前。既定は無効で、カメラが TAA を選んだ
         // Viewport でだけ有効にし、そのとき FXAA を外す）
         postProcessStack->AddPass(MakeUnique<TemporalAAPass>());
         m_bTemporalAAForced = IsTemporalAAForcedByEnvironment();
@@ -955,7 +956,7 @@ namespace NorvesLib::Core::Rendering
         SetPostProcessStack(std::move(postProcessStack));
 
         NORVES_LOG_INFO("SceneView",
-                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> TemporalAA(optional) -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw");
+                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> SSR -> Volumetrics -> Forward(Transparent) -> TemporalAA(optional) -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw");
     }
 
     void SceneView::SetupPathTracingPipeline(uint32_t samplesPerFrame,

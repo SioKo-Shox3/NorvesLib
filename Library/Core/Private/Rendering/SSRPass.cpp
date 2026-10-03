@@ -139,7 +139,7 @@ namespace NorvesLib::Core::Rendering
             m_ZeroTexture = m_Device->CreateTexture(zeroDesc);
             if (!m_ZeroTexture)
             {
-                NORVES_LOG_ERROR("SSRPass", "Failed to create zero reflectance texture");
+                NORVES_LOG_ERROR("SSRPass", "反射率0の既定のテクスチャを作れませんでした");
                 return false;
             }
             const uint8_t zeroPixel[4] = {0u, 0u, 0u, 0u};

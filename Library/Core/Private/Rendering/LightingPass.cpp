@@ -2253,7 +2253,7 @@ namespace NorvesLib::Core::Rendering
         targets.SpecularReflectance = resources.GetTexture(m_SpecularReflectanceHandle);
         if (!targets.SceneColor || !targets.IndirectSpecular || !targets.SpecularReflectance)
         {
-            NORVES_LOG_ERROR("LightingPass", "Failed to resolve native lighting output textures");
+            NORVES_LOG_ERROR("LightingPass", "ライティングの出力（SceneColor・環境光の鏡面反射・反射率）のテクスチャを解決できませんでした");
             return;
         }
 
@@ -2497,7 +2497,7 @@ namespace NorvesLib::Core::Rendering
             width, height, LIGHTING_SPECULAR_REFLECTANCE_FORMAT, "LightingSpecularReflectance"));
         if (!outTargets.SceneColor || !outTargets.IndirectSpecular || !outTargets.SpecularReflectance)
         {
-            NORVES_LOG_ERROR("LightingPass", "Failed to create lighting output textures");
+            NORVES_LOG_ERROR("LightingPass", "ライティングの出力（SceneColor・環境光の鏡面反射・反射率）のテクスチャを作れませんでした");
             outTargets = {};
             return false;
         }

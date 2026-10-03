@@ -250,13 +250,22 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+        // SSRがあれば、その出力（被写界深度までを掛けた色）へ掛ける
         RGTextureHandle sceneColorHandle;
-        if (!builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::SceneColor,
-                                                 sceneColorHandle,
-                                                 RHI::AttachmentLoadOp::Load,
-                                                 RHI::AttachmentStoreOp::Store,
-                                                 RHI::ResourceState::RenderTarget,
-                                                 RHI::ResourceState::ShaderResource))
+        const bool bHasSceneColor =
+            builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::SSRSceneColor,
+                                                sceneColorHandle,
+                                                RHI::AttachmentLoadOp::Load,
+                                                RHI::AttachmentStoreOp::Store,
+                                                RHI::ResourceState::RenderTarget,
+                                                RHI::ResourceState::ShaderResource) ||
+            builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::SceneColor,
+                                                sceneColorHandle,
+                                                RHI::AttachmentLoadOp::Load,
+                                                RHI::AttachmentStoreOp::Store,
+                                                RHI::ResourceState::RenderTarget,
+                                                RHI::ResourceState::ShaderResource);
+        if (!bHasSceneColor)
         {
             return;
         }
