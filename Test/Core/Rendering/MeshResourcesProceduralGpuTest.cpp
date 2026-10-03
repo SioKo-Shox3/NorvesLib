@@ -152,7 +152,7 @@ namespace
         const uint32_t longIndices[3] = {0, 1, 2};
         assert(resources.Meshes().Register(longMeshHandle, longVertices, sizeof(longVertices), longIndices, 3));
 
-        // World が後に壊れるので、SceneView を先に宣言する
+        // World を SceneView より先に壊すため、SceneView を先に宣言する
         SceneView view;
         SceneViewSettings settings;
         assert(view.Initialize(settings));
