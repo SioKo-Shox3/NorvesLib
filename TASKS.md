@@ -1825,8 +1825,15 @@
 - notes: embedded imageは次段の所有/借用とMain packagingで接続する。既存data_uri_buffer negativeは1byteで宣言長を満たさず、受理追加後も短さで失敗する。
 
 ## G2-GR77-IMAGE-SOURCE: 画像の外部参照と埋込みbytesを共有解決する
-- status: todo
+- status: done
 - done-when: GltfImageSourceでimagesのfile URI/data URI/bufferView+mimeTypeを分類し、埋込みPNG/JPEGのbytesと寿命を明示する。URIとbufferViewの排他・既知field型/重複・buffer宣言範囲を検証し、外部画像はここでは読み込まない。
 - verify: 既存束にfile/data URI/BIN view/外部buffer view・MIME/範囲/型/所有copy-moveの契約試験を追加し、実行可能helperとWindows依存未検証を分ける。
 - stop-when: BIN全体コピー、所有bytesへの自己Span保存、壊れたdata URIや範囲外viewの受理、material色空間/format既定の変更。
 - notes: MeshCookResultへの寿命移譲、Mainのmodel+texture出力/manifest一括更新、loose staging接続は後続タスク。GR77完了とは分ける。
+
+## G2-GR77-COOK-IMAGES: 静的cookerの埋込み画像を結果へ保持する
+- status: todo
+- done-when: GltfImageSourceからPNG/JPEGを材質roleごとに解決し、決定的な仮想pathとsrgb/linear formatをNVMESH参照とEmbeddedImagesへ保存する。GLB画像は元sourceへ借用し、cookerローカルBufferSet/data URIの画像は結果側が所有する。同一画像の互換roleは重複させず、色空間衝突は明示拒否する。
+- verify: 外部imageの参照のみ経路維持、GLB/data URI/外部buffer内imageの寿命、決定path/format/重複と衝突、失敗出力不変を既存束へ登録。実行可能範囲とnative未検証を明記する。
+- stop-when: BIN全体コピー、局所所有bytesへのdangling Span、既存外部画像の無条件実読込、material既定変更、Main出力まで完了と誤認する。
+- notes: Mainのmodel+N texture package/manifest一括更新は別タスク。現行albedo/normal/ARMのみ接続し、occlusion/emissiveの描画仕様を勝手に増やさない。

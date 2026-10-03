@@ -454,3 +454,6 @@
 
 - G2-GR77-COOK-BUFFERS: 静的cookerを共有container/JSON buffer resolverへ接続し、BINをコピーせず宣言viewでmesh抽出する。元source/BOMと外部buffer余剰を含むhashを保持し、GLB/data URIを二重hashしない。102byte三角形の外部/GLB/data URI payloadと混在/BOM/余剰hash・不正/失敗出力保持を既存束へ登録。旧AA== smokeは短いbuffer拒否へ更新。material/cluster/wire/skeletalのsource不変、fixture整合、CMake参照、BOMCRLFを確認、独立レビューPASS。実container/buffer-sourceの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER成功。cooker/新試験のcompileはWindows.hで停止し、native/CMake/smoke/payload一致は未検証。
 - Next: GR77の画像source共有解決へ進み、続いてembedded imageの結果寿命とmodel+texture package/manifest接続を行う。loose/skeletalも後続で、GR77全体は未完。
+
+- G2-GR77-IMAGE-SOURCE: file URI/data URI/bufferView画像を共有解決。path/data bytesは所有、viewはbuffer index/offset/lengthだけを保持して宣言範囲へ再bindし、自己SpanとBINコピーを避ける。MIME/既知重複/排他/型/安全整数/範囲と失敗clear、copy→swapを固定。第1周で画像viewのbyteStride黙認を指摘され、値/null/重複を全拒否する存在検査と負例を追加、第2周PASS。外部URIとdata URIのcopy/move所有、BufferSet寿命を試験へ登録。実range helper通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/Werror/MEMBERとmove特性成功。40JSON fixture文法/PNGJPEG prefix既知bytes確認。JsonDocument/native試験はWindows.hでcompile停止し、画像decode/消費経路は未検証。
+- Next: GR77静的cookerのEmbeddedImagesと材質参照を接続し、GLB借用とlocal buffer由来画像の所有を区別する。その後Mainのmodel+texture packageとmanifest更新、loose/skeletalへ進む。

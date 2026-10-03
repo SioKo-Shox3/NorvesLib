@@ -87,3 +87,15 @@ CookGltfToNvmeshは共有containerでJSONとBINを分離し、JSON部分だけ�
 - StaticGltfBufferCookTestを既存CookedMeshTest束に追加し、AssetCookLibをリンクする。102byte三角形の外部/GLB/data URIのpayload一致、BOM/外部余剰/混在GLBのhash、percent path、短さ/不正padding/壊れたGLBと失敗時出力保持を検査する
 
 実cookerと新試験のcompileは既存String.hのWindows.h依存で停止しており、native実行・CMake構成・既存smoke・出力bytes一致は未検証。GLB containerとbuffer意味helperの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER回帰は実行成功。fixture JSON/既知binaryの文法・整合性照合と、skeletal/material/cluster部のsource不変確認は統合実行と区別する。
+
+## GR77: 共有画像source
+
+GltfImageSourceは画像記述の解決とbytesの所在を扱い、stbでの画像decodeやファイルI/Oは行わない。file URIはpercent後の相対ASCII pathを所有して返す。data URIはPNG/JPEGの正規Base64を復号して所有し、bufferViewはbuffer index/offset/lengthだけを保存する。GetBytesには解決時と同じ内容のBufferSetを渡し、その宣言範囲内のviewを得る。GLB BIN全体も画像領域もこの段階で複製しない。
+
+- images/uri/bufferView/mimeTypeおよび参照するbufferViewsの既知field重複・型を検証する。uriとbufferViewはどちらか一方だけ。bufferViewにはPNG/JPEG mimeTypeが必須で、offset/lengthは安全な整数と減算式で範囲検査する。画像viewのbyteStride指定は値・型にかかわらず禁止する
+- data URIはimage/pngまたはimage/jpegに限定し、宣言mimeTypeとの矛盾・空復号・壊れたpercent/Base64を拒否する。外部uriのmimeType省略はUnknownのまま後続の画像読込へ委ねる。file名だけからformatを保証せず、外部fileをこの部品で実読込しない
+- MIMEやbytesの解決成功は画像内容のdecode成功ではない。PNG/JPEGとしての実内容・寸法は後続の画像decoderが検証する。WebP/KTX2等の宣言MIMEは受理しない
+- 自己所有storageへのSpanを保持しない。data URI/file pathのcopyは独立所有、copy代入は候補copy→swap。bufferViewのcopyは所在だけを複写し、同じBufferSet内容とそのsource寿命を呼出側が維持する
+- Resolve失敗/例外は出力を空にし、確保例外は伝播する。bufferViewのGetBytesも再度範囲確認し、BufferSetが空になっていた場合は空viewを返す
+
+GltfImageRangeTestは実inline helperの範囲/空/null/size_t境界/借用を通常・O2-NDEBUG・ASan/UBSan（LeakSanitizer除外）で実行する。GltfImageSourceTestは既存束へ記述/所有copy-move/data URI/借用view/MIME/失敗clearを登録するが、実JsonDocument/所有配列の統合実行はWindows.h依存で未検証。cooker/stagingへの画像接続やtexture package出力はこの部品には含まない。

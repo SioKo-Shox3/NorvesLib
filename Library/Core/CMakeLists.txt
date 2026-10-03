@@ -177,6 +177,8 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfBufferFile.h
     Private/Resource/GltfBufferFile.cpp
     Private/Resource/GltfBufferJson.h
+    Private/Resource/GltfImageSource.h
+    Private/Resource/GltfImageSource.cpp
     Private/Resource/GltfBufferJson.cpp
     Private/Resource/SkinnedMeshResource.cpp
     Private/Resource/FontAtlas.cpp
