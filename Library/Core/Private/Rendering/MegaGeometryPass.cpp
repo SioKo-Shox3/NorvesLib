@@ -25,6 +25,8 @@
 #include "RHI/DeviceCapabilities.h"
 #include "Text/IdentityPool.h"
 #include "Logging/LogMacros.h"
+#include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
+#include <cstdlib>
 #include <cstring>
 #include <cmath>
 
@@ -72,6 +74,24 @@ namespace NorvesLib::Core::Rendering
     MegaGeometryPass::MegaGeometryPass(const MegaGeometryPassSettings &settings)
         : m_Settings(settings)
     {
+        // 撮り比べ用に、LODの段を選ぶ誤差の閾値（画素）を環境変数で替えられるようにする。
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char *value = std::getenv("NORVES_MEGA_LOD_ERROR_PX");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (value != nullptr && value[0] != '\0')
+        {
+            char *end = nullptr;
+            const float threshold = std::strtof(value, &end);
+            if (end != value && *end == '\0' && std::isfinite(threshold) && threshold > 0.0f)
+            {
+                m_Settings.LODBias = threshold;
+            }
+        }
     }
 
     MegaGeometryPass::~MegaGeometryPass()
@@ -779,8 +799,11 @@ namespace NorvesLib::Core::Rendering
         const bool bMegaGeometryDebugPayloadSupported =
             bMegaGeometryDebugPayloadRequested &&
             caps.bDrawIndirectFirstInstance;
+        // デバッグ表示でなければ、描いているクラスタのLODの段を渡す（変位した材質が段の頂点の間隔を知るため）。
+        const bool bLODLevelPayload = !bMegaGeometryDebugPayloadRequested && caps.bDrawIndirectFirstInstance;
         const uint32_t debugPayloadMode =
-            GetMegaGeometryDebugPayloadMode(command.DebugMode, bMegaGeometryDebugPayloadSupported);
+            bLODLevelPayload ? DEBUG_PAYLOAD_MODE_LOD_LEVEL
+                             : GetMegaGeometryDebugPayloadMode(command.DebugMode, bMegaGeometryDebugPayloadSupported);
 
         if (bMegaGeometryDebugPayloadRequested &&
             !caps.bDrawIndirectFirstInstance &&
@@ -900,6 +923,14 @@ namespace NorvesLib::Core::Rendering
             uniformData.DebugPayloadMode = debugPayloadMode;
 
             std::memcpy(uniformData.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
+            if (gpuData->LODBounds.IsValid())
+            {
+                uniformData.LODSphere[0] = gpuData->LODBounds.CenterX;
+                uniformData.LODSphere[1] = gpuData->LODBounds.CenterY;
+                uniformData.LODSphere[2] = gpuData->LODBounds.CenterZ;
+                uniformData.LODSphere[3] = gpuData->LODBounds.Radius;
+                LogUniformLODSelection(instance, *gpuData, uniformData);
+            }
             cullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
 
             // ----------------------------------------
@@ -964,7 +995,7 @@ namespace NorvesLib::Core::Rendering
                 float PreviousWorld[16];
                 float PreviousView[16];
                 float PreviousProjection[16];
-                float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ
+                float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
             };
             static_assert(sizeof(PerObjectUBO) <= 512u);
 
@@ -994,6 +1025,8 @@ namespace NorvesLib::Core::Rendering
             perObject.PomParams[1] = mat.bHasHeightMap ? 1.0f : 0.0f;
             perObject.PomParams[2] = static_cast<float>(static_cast<uint8_t>(command.DebugMode));
             perObject.PomParams[3] = bMegaGeometryDebugPayloadSupported ? 1.0f : 0.0f;
+            perObject.FrameParams[2] = mat.DisplacementUVSpacing > 0.0f ? mat.DisplacementUVSpacing : 0.0f;
+            perObject.FrameParams[3] = bLODLevelPayload ? 1.0f : 0.0f;
 
             drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
 
@@ -1092,6 +1125,108 @@ namespace NorvesLib::Core::Rendering
                                    RHI::ResourceState::IndirectArgument,
                                    RHI::ResourceState::Common);
         }
+    }
+
+    void MegaGeometryPass::LogUniformLODSelection(const MegaMeshInstance &instance,
+                                                  const MegaGeometry::MegaMeshGPUData &gpuData,
+                                                  const CullUniformData &uniformData)
+    {
+        if (gpuData.LevelRanges.empty())
+        {
+            return;
+        }
+
+        // ワールド行列は行ベクトル規約（並進は行3）。半径は最大の軸の伸びで広げる（cluster_cull.comp と同じ）。
+        const float *world = instance.WorldMatrix;
+        const BoundingSphere &local = gpuData.LODBounds;
+        float center[3] = {};
+        float maxScaleSquared = 0.0f;
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            center[axis] = local.CenterX * world[0 + axis] + local.CenterY * world[4 + axis] +
+                           local.CenterZ * world[8 + axis] + world[12 + axis];
+            const float lengthSquared = world[axis * 4 + 0] * world[axis * 4 + 0] +
+                                        world[axis * 4 + 1] * world[axis * 4 + 1] +
+                                        world[axis * 4 + 2] * world[axis * 4 + 2];
+            maxScaleSquared = std::max(maxScaleSquared, lengthSquared);
+        }
+        const float scale = std::sqrt(maxScaleSquared);
+        const float dx = center[0] - uniformData.CameraPosition[0];
+        const float dy = center[1] - uniformData.CameraPosition[1];
+        const float dz = center[2] - uniformData.CameraPosition[2];
+        const float centerDistance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const float radius = local.Radius * scale;
+
+        // 中心の深さと画角は、シェーダーへ渡す列優先の行列から cluster_cull.comp と同じく求める
+        // （配列の [列 * 4 + 行]。深さはクリップ座標の w を projection[2][3] で割った値）。
+        const float *view = uniformData.ViewMatrix;
+        const float *projection = uniformData.ProjectionMatrix;
+        float viewPosition[4] = {};
+        for (uint32_t row = 0; row < 4; ++row)
+        {
+            viewPosition[row] =
+                view[0 * 4 + row] * center[0] + view[1 * 4 + row] * center[1] + view[2 * 4 + row] * center[2] +
+                view[3 * 4 + row];
+        }
+        float clipW = 0.0f;
+        for (uint32_t column = 0; column < 4; ++column)
+        {
+            clipW += projection[column * 4 + 3] * viewPosition[column];
+        }
+        const float depthScale = std::abs(projection[2 * 4 + 3]);
+        const float centerDepth = depthScale > 1.0e-6f ? clipW / depthScale : 0.0f;
+        const float tanHalfFovX = 1.0f / std::max(std::abs(projection[0 * 4 + 0]), 1.0e-6f);
+        const float tanHalfFovY = 1.0f / std::max(std::abs(projection[1 * 4 + 1]), 1.0e-6f);
+        const float errorScale = MegaGeometry::ComputeLODSphereErrorPixelsPerMeter(centerDistance,
+                                                                                    centerDepth,
+                                                                                    radius,
+                                                                                    uniformData.ProjectionFactor,
+                                                                                    tanHalfFovX,
+                                                                                    tanHalfFovY) *
+                                 scale;
+        const uint32_t level = MegaGeometry::SelectCoarsestLODWithinError(gpuData.LevelRanges,
+                                                                           errorScale,
+                                                                           uniformData.LODBias);
+
+        LoggedUniformLOD *logged = nullptr;
+        for (LoggedUniformLOD &entry : m_LoggedUniformLODs)
+        {
+            if (entry.MegaMeshId == instance.Handle.Id)
+            {
+                logged = &entry;
+                break;
+            }
+        }
+        if (logged && logged->Level == level)
+        {
+            return;
+        }
+        if (!logged)
+        {
+            m_LoggedUniformLODs.push_back(LoggedUniformLOD{instance.Handle.Id, level});
+        }
+        else
+        {
+            logged->Level = level;
+        }
+
+        const MegaGeometry::MegaMeshLevelRange &range = gpuData.LevelRanges[level];
+        const bool bHasCoarser = level + 1u < gpuData.LevelRanges.size();
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "mega_lod_select mesh=\"%s\" level=%u level_triangles=%u camera_to_lod_center_m=%.3f "
+                        "lod_radius_m=%.3f center_depth_m=%.3f perspective_stretch=%.3f threshold_px=%.2f "
+                        "level_error_px=%.3f coarser_level_error_px=%.3f",
+                        gpuData.DebugName.empty() ? "" : gpuData.DebugName.c_str(),
+                        level,
+                        range.IndexCount / 3u,
+                        static_cast<double>(centerDistance),
+                        static_cast<double>(radius),
+                        static_cast<double>(centerDepth),
+                        static_cast<double>(MegaGeometry::ComputeLODSpherePerspectiveStretch(
+                            centerDistance, centerDepth, radius, tanHalfFovX, tanHalfFovY)),
+                        static_cast<double>(uniformData.LODBias),
+                        static_cast<double>(range.Error * errorScale),
+                        bHasCoarser ? static_cast<double>(gpuData.LevelRanges[level + 1u].Error * errorScale) : -1.0);
     }
 
     // ========================================

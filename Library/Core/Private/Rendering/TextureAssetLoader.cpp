@@ -1,4 +1,4 @@
-#include "Rendering/TextureAssetLoader.h"
+﻿#include "Rendering/TextureAssetLoader.h"
 
 #include "Asset/AssetFileReader.h"
 #include "Asset/AssetPackageFormat.h"
@@ -274,7 +274,6 @@ namespace NorvesLib::Core::Rendering
         bool DecodeStbiBytes(const uint8_t *bytes,
                              size_t byteCount,
                              const Container::String &debugName,
-                             bool bFullMipChain,
                              DecodedTextureMemory &outDecoded)
         {
             outDecoded = {};
@@ -312,9 +311,8 @@ namespace NorvesLib::Core::Rendering
 
             outDecoded.CreateInfo.Width = static_cast<uint32_t>(outDecoded.Width);
             outDecoded.CreateInfo.Height = static_cast<uint32_t>(outDecoded.Height);
-            outDecoded.CreateInfo.MipLevels = bFullMipChain
-                                                  ? CalculateFullMipCount(outDecoded.CreateInfo.Width, outDecoded.CreateInfo.Height)
-                                                  : 1;
+            // 同期・非同期のどの経路でも全段のミップを要求する。下の段はアップロード時に GPU で縮小して作る。
+            outDecoded.CreateInfo.MipLevels = CalculateFullMipCount(outDecoded.CreateInfo.Width, outDecoded.CreateInfo.Height);
             outDecoded.CreateInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
             outDecoded.CreateInfo.DebugName = debugName;
             outDecoded.bSuccess = true;
@@ -323,7 +321,6 @@ namespace NorvesLib::Core::Rendering
 
         bool DecodeStbiFromMemory(Asset::AssetBlob blob,
                                   const Container::String &debugName,
-                                  bool bFullMipChain,
                                   DecodedTextureMemory &outDecoded)
         {
             if (!blob.IsValid())
@@ -332,7 +329,7 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            return DecodeStbiBytes(blob.GetData(), blob.GetSize(), debugName, bFullMipChain, outDecoded);
+            return DecodeStbiBytes(blob.GetData(), blob.GetSize(), debugName, outDecoded);
         }
 
         TextureFileReadMemory ReadTextureFileBytes(const Container::String &resolvedPath)
@@ -384,7 +381,7 @@ namespace NorvesLib::Core::Rendering
             result.Source = source;
 
             DecodedTextureMemory decoded;
-            const bool bDecoded = DecodeStbiFromMemory(blob, plan.RequestPath, true, decoded);
+            const bool bDecoded = DecodeStbiFromMemory(blob, plan.RequestPath, decoded);
             const size_t pixelDataSize = decoded.Pixels.size();
             NORVES_LOG_INFO("AssetLoadProfile",
                             "stage=texture_sync_stbi_memory role=caller source=%s path=\"%s\" logical_path=\"%s\" resolved_path=\"%s\" file_bytes=%zu decode_ms=%.3f copy_ms=%.3f pixel_bytes=%zu width=%d height=%d channels=%d debug_fallback=%d success=%d",
@@ -484,7 +481,6 @@ namespace NorvesLib::Core::Rendering
                 fileRead.Bytes.data(),
                 fileRead.Bytes.size(),
                 result.Path,
-                false,
                 decoded);
             decodeMs = decoded.DecodeMs;
             copyMs = decoded.CopyMs;
@@ -528,7 +524,7 @@ namespace NorvesLib::Core::Rendering
             const size_t fileBytes = blob.GetSize();
 
             DecodedTextureMemory decoded;
-            const bool bDecoded = DecodeStbiFromMemory(blob, result.Path, false, decoded);
+            const bool bDecoded = DecodeStbiFromMemory(blob, result.Path, decoded);
             const double decodeMs = decoded.DecodeMs;
             const double copyMs = decoded.CopyMs;
             const size_t pixelBytes = decoded.Pixels.size();
@@ -839,7 +835,6 @@ namespace NorvesLib::Core::Rendering
                 fileRead.Bytes.data(),
                 fileRead.Bytes.size(),
                 path,
-                false,
                 decoded);
         }
 

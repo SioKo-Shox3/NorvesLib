@@ -1,6 +1,7 @@
 ﻿#include "Rendering/MegaGeometry/MeshClusterizer.h"
 #include "Logging/LogMacros.h"
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 
 namespace NorvesLib::Core::Rendering::MegaGeometry
@@ -64,6 +65,296 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             }
             return (static_cast<uint64_t>(v0) << 32) | static_cast<uint64_t>(v1);
         }
+
+        /**
+         * @brief 位置の比較に使う float のビット列（-0 は +0 にそろえる）
+         */
+        inline uint32_t PositionComponentBits(float value)
+        {
+            if (value == 0.0f)
+            {
+                value = 0.0f;
+            }
+            uint32_t bits = 0;
+            std::memcpy(&bits, &value, sizeof(bits));
+            return bits;
+        }
+
+        /**
+         * @brief 各頂点を、同じ位置の頂点のうち最小の番号（代表）へ写す
+         *
+         * UVの継ぎ目や法線の分かれ目で複製された頂点は位置が完全に一致するので、
+         * ビット列が一致する位置を同じ頂点として扱う。
+         */
+        VariableArray<uint32_t> BuildPositionRepresentatives(const void *vertexPositions, uint32_t vertexStride,
+                                                             uint32_t vertexCount)
+        {
+            struct PositionKey
+            {
+                uint32_t X;
+                uint32_t Y;
+                uint32_t Z;
+                uint32_t Vertex;
+            };
+
+            VariableArray<PositionKey> keys(vertexCount);
+            for (uint32_t vertex = 0; vertex < vertexCount; ++vertex)
+            {
+                float x, y, z;
+                GetVertexPosition(vertexPositions, vertexStride, vertex, x, y, z);
+                keys[vertex] = {PositionComponentBits(x), PositionComponentBits(y), PositionComponentBits(z), vertex};
+            }
+
+            std::sort(keys.begin(), keys.end(), [](const PositionKey &a, const PositionKey &b)
+                      {
+                          if (a.X != b.X)
+                              return a.X < b.X;
+                          if (a.Y != b.Y)
+                              return a.Y < b.Y;
+                          if (a.Z != b.Z)
+                              return a.Z < b.Z;
+                          return a.Vertex < b.Vertex; });
+
+            VariableArray<uint32_t> representatives(vertexCount);
+            uint32_t runRepresentative = 0;
+            for (uint32_t i = 0; i < vertexCount; ++i)
+            {
+                const PositionKey &key = keys[i];
+                if (i == 0 || key.X != keys[i - 1].X || key.Y != keys[i - 1].Y || key.Z != keys[i - 1].Z)
+                {
+                    // 同じ位置の並びの先頭が最小の番号になる
+                    runRepresentative = key.Vertex;
+                }
+                representatives[key.Vertex] = runRepresentative;
+            }
+            return representatives;
+        }
+
+        /**
+         * @brief 三角形の重心を一様格子に登録し、未割り当ての中で指定点に最も近い三角形を探す
+         *
+         * 隣接でつながらない部品（離れた板・窓枠など）をクラスタへまとめるときに使う。
+         */
+        class TriangleCentroidGrid
+        {
+        public:
+            static constexpr uint32_t NotFound = 0xFFFFFFFFu;
+
+            void Build(const VariableArray<float> &centroids, uint32_t triangleCount)
+            {
+                float minPos[3] = {3.402823466e+38f, 3.402823466e+38f, 3.402823466e+38f};
+                float maxPos[3] = {-3.402823466e+38f, -3.402823466e+38f, -3.402823466e+38f};
+                for (uint32_t tri = 0; tri < triangleCount; ++tri)
+                {
+                    for (uint32_t axis = 0; axis < 3; ++axis)
+                    {
+                        const float value = centroids[tri * 3 + axis];
+                        if (std::isfinite(value))
+                        {
+                            minPos[axis] = std::min(minPos[axis], value);
+                            maxPos[axis] = std::max(maxPos[axis], value);
+                        }
+                    }
+                }
+
+                float maxExtent = 0.0f;
+                float extent[3] = {0.0f, 0.0f, 0.0f};
+                for (uint32_t axis = 0; axis < 3; ++axis)
+                {
+                    if (minPos[axis] > maxPos[axis])
+                    {
+                        minPos[axis] = 0.0f;
+                        maxPos[axis] = 0.0f;
+                    }
+                    m_Min[axis] = minPos[axis];
+                    extent[axis] = maxPos[axis] - minPos[axis];
+                    maxExtent = std::max(maxExtent, extent[axis]);
+                }
+                if (!std::isfinite(maxExtent))
+                {
+                    // 範囲が float で表せないほど広いときは1セルで全探索する
+                    extent[0] = extent[1] = extent[2] = 0.0f;
+                    maxExtent = 0.0f;
+                }
+
+                // 1セルに三角形が平均4つ程度入る大きさにする。平らなメッシュで体積が0にならないよう各辺に下限を置く
+                m_CellSize = 1.0f;
+                if (maxExtent > 0.0f && std::isfinite(maxExtent))
+                {
+                    const float minEdge = maxExtent * 1.0e-3f;
+                    const double volume = static_cast<double>(std::max(extent[0], minEdge)) *
+                                          static_cast<double>(std::max(extent[1], minEdge)) *
+                                          static_cast<double>(std::max(extent[2], minEdge));
+                    const double targetCells = std::max(1.0, static_cast<double>(triangleCount) / 4.0);
+                    m_CellSize = static_cast<float>(std::cbrt(volume / targetCells));
+                    m_CellSize = std::max(m_CellSize, maxExtent / 1024.0f);
+                }
+
+                // セル数が三角形数に比べて多すぎるときはセルを大きくする
+                const uint64_t maxCellCount = std::max<uint64_t>(64u, static_cast<uint64_t>(triangleCount) * 8u);
+                uint64_t cellCount = 1;
+                for (;;)
+                {
+                    cellCount = 1;
+                    for (uint32_t axis = 0; axis < 3; ++axis)
+                    {
+                        m_Dim[axis] = static_cast<uint32_t>(extent[axis] / m_CellSize) + 1u;
+                        cellCount *= m_Dim[axis];
+                    }
+                    if (cellCount <= maxCellCount)
+                    {
+                        break;
+                    }
+                    m_CellSize *= 1.25f;
+                }
+
+                m_CellStart.assign(static_cast<size_t>(cellCount) + 1u, 0u);
+                m_CellRemaining.assign(static_cast<size_t>(cellCount), 0u);
+                m_TriangleCell.resize(triangleCount);
+                for (uint32_t tri = 0; tri < triangleCount; ++tri)
+                {
+                    const uint32_t cell = CellIndex(CellCoord(centroids, tri, 0), CellCoord(centroids, tri, 1),
+                                                    CellCoord(centroids, tri, 2));
+                    m_TriangleCell[tri] = cell;
+                    ++m_CellStart[cell + 1u];
+                    ++m_CellRemaining[cell];
+                }
+                for (size_t cell = 0; cell < static_cast<size_t>(cellCount); ++cell)
+                {
+                    m_CellStart[cell + 1u] += m_CellStart[cell];
+                }
+
+                VariableArray<uint32_t> cursor(m_CellStart.begin(), m_CellStart.end() - 1);
+                m_CellTriangles.resize(triangleCount);
+                for (uint32_t tri = 0; tri < triangleCount; ++tri)
+                {
+                    m_CellTriangles[cursor[m_TriangleCell[tri]]++] = tri;
+                }
+                m_Remaining = triangleCount;
+            }
+
+            void MarkAssigned(uint32_t tri)
+            {
+                --m_CellRemaining[m_TriangleCell[tri]];
+                --m_Remaining;
+            }
+
+            uint32_t FindNearestUnassigned(const VariableArray<float> &centroids, const VariableArray<bool> &assigned,
+                                           float x, float y, float z) const
+            {
+                if (m_Remaining == 0u)
+                {
+                    return NotFound;
+                }
+
+                const float query[3] = {x, y, z};
+                int32_t center[3];
+                for (uint32_t axis = 0; axis < 3; ++axis)
+                {
+                    center[axis] = static_cast<int32_t>(CoordFromValue(query[axis], axis));
+                }
+
+                const int32_t maxRing = static_cast<int32_t>(std::max({m_Dim[0], m_Dim[1], m_Dim[2]}));
+                uint32_t best = NotFound;
+                float bestDistSq = 3.402823466e+38f;
+                for (int32_t ring = 0; ring <= maxRing; ++ring)
+                {
+                    // 半径 ring のセルの殻（チェビシェフ距離がちょうど ring）だけを走査する
+                    for (int32_t dz = -ring; dz <= ring; ++dz)
+                    {
+                        const int32_t cz = center[2] + dz;
+                        if (cz < 0 || cz >= static_cast<int32_t>(m_Dim[2]))
+                        {
+                            continue;
+                        }
+                        for (int32_t dy = -ring; dy <= ring; ++dy)
+                        {
+                            const int32_t cy = center[1] + dy;
+                            if (cy < 0 || cy >= static_cast<int32_t>(m_Dim[1]))
+                            {
+                                continue;
+                            }
+                            const bool onFace = (dz == -ring || dz == ring || dy == -ring || dy == ring);
+                            const int32_t step = (onFace || ring == 0) ? 1 : 2 * ring;
+                            for (int32_t dx = -ring; dx <= ring; dx += step)
+                            {
+                                const int32_t cx = center[0] + dx;
+                                if (cx < 0 || cx >= static_cast<int32_t>(m_Dim[0]))
+                                {
+                                    continue;
+                                }
+                                const uint32_t cell = CellIndex(static_cast<uint32_t>(cx), static_cast<uint32_t>(cy),
+                                                                static_cast<uint32_t>(cz));
+                                if (m_CellRemaining[cell] == 0u)
+                                {
+                                    continue;
+                                }
+                                for (uint32_t i = m_CellStart[cell]; i < m_CellStart[cell + 1u]; ++i)
+                                {
+                                    const uint32_t tri = m_CellTriangles[i];
+                                    if (assigned[tri])
+                                    {
+                                        continue;
+                                    }
+                                    const float ex = centroids[tri * 3 + 0] - x;
+                                    const float ey = centroids[tri * 3 + 1] - y;
+                                    const float ez = centroids[tri * 3 + 2] - z;
+                                    const float distSq = ex * ex + ey * ey + ez * ez;
+                                    // 非有限の重心も最後には拾えるよう、未発見なら距離に関係なく採る
+                                    if (best == NotFound || distSq < bestDistSq)
+                                    {
+                                        best = tri;
+                                        bestDistSq = distSq;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 次の殻のセルは問い合わせ点から少なくとも ring セル分離れている
+                    const float ringDistance = static_cast<float>(ring) * m_CellSize;
+                    if (best != NotFound && bestDistSq <= ringDistance * ringDistance)
+                    {
+                        break;
+                    }
+                }
+                return best;
+            }
+
+        private:
+            uint32_t CoordFromValue(float value, uint32_t axis) const
+            {
+                const float scaled = (value - m_Min[axis]) / m_CellSize;
+                if (!(scaled > 0.0f))
+                {
+                    return 0u;
+                }
+                if (scaled >= static_cast<float>(m_Dim[axis] - 1u))
+                {
+                    return m_Dim[axis] - 1u;
+                }
+                return static_cast<uint32_t>(scaled);
+            }
+
+            uint32_t CellCoord(const VariableArray<float> &centroids, uint32_t tri, uint32_t axis) const
+            {
+                return CoordFromValue(centroids[tri * 3 + axis], axis);
+            }
+
+            uint32_t CellIndex(uint32_t cx, uint32_t cy, uint32_t cz) const
+            {
+                return (cz * m_Dim[1] + cy) * m_Dim[0] + cx;
+            }
+
+            float m_Min[3] = {0.0f, 0.0f, 0.0f};
+            float m_CellSize = 1.0f;
+            uint32_t m_Dim[3] = {1u, 1u, 1u};
+            uint32_t m_Remaining = 0u;
+            VariableArray<uint32_t> m_CellStart;
+            VariableArray<uint32_t> m_CellRemaining;
+            VariableArray<uint32_t> m_CellTriangles;
+            VariableArray<uint32_t> m_TriangleCell;
+        };
     } // anonymous namespace
 
     // ========================================
@@ -112,7 +403,17 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         }
 
         // 隣接グラフを構築
-        TriangleAdjacency adjacency = BuildAdjacencyGraph(indexData, triangleCount, vertexCount);
+        TriangleAdjacency adjacency = BuildAdjacencyGraph(vertexPositions, vertexStride, indexData, triangleCount, vertexCount);
+
+        // 隣接が尽きたときに近い三角形を探すための重心と格子
+        VariableArray<float> centroids(static_cast<size_t>(triangleCount) * 3u);
+        for (uint32_t tri = 0; tri < triangleCount; ++tri)
+        {
+            ComputeTriangleCentroid(vertexPositions, vertexStride, indexData, tri,
+                                    centroids[tri * 3 + 0], centroids[tri * 3 + 1], centroids[tri * 3 + 2]);
+        }
+        TriangleCentroidGrid centroidGrid;
+        centroidGrid.Build(centroids, triangleCount);
 
         // 貪欲法でクラスタを形成
         VariableArray<bool> assigned(triangleCount, false);
@@ -130,17 +431,48 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             // 新しいクラスタを開始
             VariableArray<uint32_t> clusterTriangles;
             clusterTriangles.reserve(MAX_TRIANGLES_PER_CLUSTER);
+            double sumX = 0.0, sumY = 0.0, sumZ = 0.0;
 
-            // BFS/貪欲成長でクラスタを拡大
-            VariableArray<uint32_t> frontier;
-            frontier.push_back(startTri);
-            assigned[startTri] = true;
-            clusterTriangles.push_back(startTri);
-
-            while (clusterTriangles.size() < MAX_TRIANGLES_PER_CLUSTER && !frontier.empty())
+            auto addTriangle = [&](uint32_t tri)
             {
-                uint32_t currentTri = frontier.front();
-                frontier.erase(frontier.begin());
+                assigned[tri] = true;
+                centroidGrid.MarkAssigned(tri);
+                clusterTriangles.push_back(tri);
+                const float cx = centroids[tri * 3 + 0];
+                const float cy = centroids[tri * 3 + 1];
+                const float cz = centroids[tri * 3 + 2];
+                if (std::isfinite(cx) && std::isfinite(cy) && std::isfinite(cz))
+                {
+                    sumX += cx;
+                    sumY += cy;
+                    sumZ += cz;
+                }
+            };
+
+            // BFS/貪欲成長でクラスタを拡大（frontier は clusterTriangles の未展開の部分）
+            addTriangle(startTri);
+            size_t frontierHead = 0;
+
+            while (clusterTriangles.size() < MAX_TRIANGLES_PER_CLUSTER)
+            {
+                if (frontierHead >= clusterTriangles.size())
+                {
+                    // 隣接でつながる三角形が尽きたら、クラスタの重心の平均に最も近い未割り当ての三角形から続ける
+                    const double invCount = 1.0 / static_cast<double>(clusterTriangles.size());
+                    const uint32_t nearestTri = centroidGrid.FindNearestUnassigned(
+                        centroids, assigned,
+                        static_cast<float>(sumX * invCount),
+                        static_cast<float>(sumY * invCount),
+                        static_cast<float>(sumZ * invCount));
+                    if (nearestTri == TriangleCentroidGrid::NotFound)
+                    {
+                        break;
+                    }
+                    addTriangle(nearestTri);
+                    continue;
+                }
+
+                const uint32_t currentTri = clusterTriangles[frontierHead++];
 
                 for (uint32_t neighborTri : adjacency.Neighbors[currentTri])
                 {
@@ -151,9 +483,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
                     if (!assigned[neighborTri])
                     {
-                        assigned[neighborTri] = true;
-                        clusterTriangles.push_back(neighborTri);
-                        frontier.push_back(neighborTri);
+                        addTriangle(neighborTri);
                     }
                 }
             }
@@ -199,6 +529,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     // ========================================
 
     MeshClusterizer::TriangleAdjacency MeshClusterizer::BuildAdjacencyGraph(
+        const void *vertexPositions,
+        uint32_t vertexStride,
         const uint32_t *indexData,
         uint32_t triangleCount,
         uint32_t vertexCount)
@@ -206,24 +538,37 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         TriangleAdjacency result;
         result.Neighbors.resize(triangleCount);
 
+        // 同じ位置の頂点を代表の番号へまとめ、UVの継ぎ目などで複製された頂点の両側をつなぐ。
+        // 範囲外の番号は代表と衝突しないよう（代表は vertexCount 未満）そのまま使う
+        const VariableArray<uint32_t> representatives =
+            BuildPositionRepresentatives(vertexPositions, vertexStride, vertexCount);
+        auto representativeOf = [&](uint32_t vertex)
+        {
+            return vertex < vertexCount ? representatives[vertex] : vertex;
+        };
+
         // エッジ→三角形のマッピングを構築
-        // key: エッジキー(v0,v1), value: このエッジを共有する三角形インデックスのリスト
+        // key: エッジキー(代表v0,代表v1), value: このエッジを共有する三角形インデックスのリスト
         UnorderedMap<uint64_t, VariableArray<uint32_t>> edgeToTriangles;
+        edgeToTriangles.reserve(static_cast<size_t>(triangleCount) * 2u);
 
         for (uint32_t triIdx = 0; triIdx < triangleCount; ++triIdx)
         {
-            uint32_t i0 = indexData[triIdx * 3 + 0];
-            uint32_t i1 = indexData[triIdx * 3 + 1];
-            uint32_t i2 = indexData[triIdx * 3 + 2];
+            const uint32_t corners[3] = {
+                representativeOf(indexData[triIdx * 3 + 0]),
+                representativeOf(indexData[triIdx * 3 + 1]),
+                representativeOf(indexData[triIdx * 3 + 2])};
 
-            // 3辺分のエッジキーを登録
-            uint64_t edge0 = MakeEdgeKey(i0, i1);
-            uint64_t edge1 = MakeEdgeKey(i1, i2);
-            uint64_t edge2 = MakeEdgeKey(i2, i0);
-
-            edgeToTriangles[edge0].push_back(triIdx);
-            edgeToTriangles[edge1].push_back(triIdx);
-            edgeToTriangles[edge2].push_back(triIdx);
+            // 3辺分のエッジキーを登録（同じ位置へ潰れた辺は隣接に使わない）
+            for (uint32_t edge = 0; edge < 3; ++edge)
+            {
+                const uint32_t a = corners[edge];
+                const uint32_t b = corners[(edge + 1) % 3];
+                if (a != b)
+                {
+                    edgeToTriangles[MakeEdgeKey(a, b)].push_back(triIdx);
+                }
+            }
         }
 
         // エッジを共有する三角形同士を隣接として登録

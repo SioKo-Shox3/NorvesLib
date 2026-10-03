@@ -16,7 +16,7 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousWorld;  // 直前のフレームの変換（velocity 用）
     mat4 previousView;
     mat4 previousProjection;
-    vec4 frameParams;    // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ
+    vec4 frameParams;    // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
 } mvp;
 
 layout(location = 0) out vec3 fragWorldPos;

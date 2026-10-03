@@ -187,6 +187,14 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         // POMパラメータ
         float HeightScale = 0.0f;
         bool bHasHeightMap = false;
+
+        /**
+         * @brief 高さの場で変位させたメッシュの、LOD0の頂点の間隔（UV単位。0以下なら変位していない）
+         *
+         * 正なら、法線マップのうち頂点の間隔より粗い傾き（形で表した分）を差し引いた細部だけを、
+         * 変位した形の法線の上に載せる（同じ凹凸の傾きを二重に掛けない）。
+         */
+        float DisplacementUVSpacing = 0.0f;
     };
 
     // ========================================
@@ -222,11 +230,37 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t MaxLODLevels = 8;           // 最大LODレベル数
         uint32_t MinTrianglesForLOD = 128;   // LOD構築終了条件
 
+        /**
+         * @brief LODの選択に使う、メッシュ全体で共通の境界球（ローカル空間）
+         *
+         * 無効（半径0）なら、各クラスタが自分の境界球の中心までの距離でLODを選ぶ（従来どおり）。
+         * 有効なら全クラスタがこの球の表面までの距離で選ぶため、どのLODも閉じたメッシュとして
+         * 作ってあれば、メッシュ全体で同じ段が選ばれて段の境目に割れ目ができない。
+         */
+        BoundingSphere LODBounds;
+
+        /** @brief 影とレイトレーシングに使うLODの段（その段のクラスタが統合インデックスで連続している必要がある） */
+        uint32_t ShadowLODLevel = 0;
+
         // マテリアル
         MegaMeshMaterial Material;
 
         // デバッグ
         String DebugName;
+    };
+
+    /**
+     * @brief MegaMeshのLODの1段を1回の描画で描くための範囲と誤差
+     *
+     * その段のクラスタが、頂点の基点が全て0で統合インデックスの中に隙間なく並んでいるときだけ
+     * IndexCount が0でない（影へ段を選んで描くのに使う）。
+     */
+    struct MegaMeshLevelRange
+    {
+        uint32_t FirstIndex = 0;
+        uint32_t IndexCount = 0;
+        /** @brief その段のLODの誤差（クラスタの LODError の最大。ローカル空間の長さ） */
+        float Error = 0.0f;
     };
 
     /**
@@ -243,10 +277,18 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
         uint32_t ClusterCount = 0;
-        /** @brief 影の描画で使う、統合インデックスの先頭からのLOD0の範囲（0なら影へ描かない） */
+        /** @brief 影とレイトレーシングで使うLODの段の、統合インデックスでの開始位置 */
+        uint32_t ShadowFirstIndex = 0;
+        /** @brief 影とレイトレーシングで使うLODの段のインデックス数（0なら影へ描かない） */
         uint32_t ShadowIndexCount = 0;
+        /** @brief 影に使う最も細かい段（MegaMeshCreateInfo::ShadowLODLevel） */
+        uint32_t ShadowLODLevel = 0;
+        /** @brief 段ごとの描画の範囲と誤差（添え字が段。影へテクセルに見合う段を選ぶのに使う） */
+        VariableArray<MegaMeshLevelRange> LevelRanges;
 
         BoundingSphere TotalBounds;
+        /** @brief LODの選択に使う共通の境界球（無効ならクラスタごとの中心で選ぶ） */
+        BoundingSphere LODBounds;
 
         MegaMeshMaterial Material;
 

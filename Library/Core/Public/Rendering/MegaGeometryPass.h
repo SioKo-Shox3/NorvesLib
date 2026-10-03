@@ -22,7 +22,14 @@ namespace NorvesLib::Core::Rendering
         /** @brief IndirectDrawバッファの最大ドローコール数 */
         uint32_t MaxDrawCount = 65536;
 
-        /** @brief LOD選択バイアス */
+        /**
+         * @brief LODの段を選ぶ誤差の閾値（画素）
+         *
+         * 段で失われる形の誤差を画面へ投影した大きさがこの値以下になる最も粗い段を描く。
+         * 環境変数 NORVES_MEGA_LOD_ERROR_PX（正の数）で替えられる（撮り比べ用）。
+         * 1 画素は起動画面の撮り比べで決めた値: 近接（2.5 m）は LOD0、低角度（6 m）は LOD1 が選ばれ、
+         * 変更前の段と同じで見た目の差が出ない。これより粗い段（低角度の LOD2）は目地の陰影が目に見えて変わる。
+         */
         float LODBias = 1.0f;
     };
 
@@ -112,6 +119,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t DebugPayloadMode; // firstInstanceへ書き込むデバッグpayload種別
             uint32_t Padding[2];    // std140でmat4を16バイト境界に揃える
             float WorldMatrix[16];
+            float LODSphere[4];     // LODの選択に使うメッシュ共通の境界球（ローカル。半径0ならクラスタごと）
         };
 
         /**
@@ -137,6 +145,13 @@ namespace NorvesLib::Core::Rendering
                                 bool bUseRenderGraphAttachmentStates = false);
         bool CreateDrawPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr &outPipeline);
         RHI::PipelinePtr SelectDrawPipeline(DebugViewMode mode) const;
+
+        /**
+         * @brief メッシュ共通のLOD球を持つメッシュの選ばれる段を、GPUと同じ式で求めて変わったときに記録する
+         */
+        void LogUniformLODSelection(const MegaMeshInstance &instance,
+                                    const MegaGeometry::MegaMeshGPUData &gpuData,
+                                    const CullUniformData &uniformData);
 
         /**
          * @brief インスタンスごとに安定した UBO / DescriptorSet を確保
@@ -231,6 +246,15 @@ namespace NorvesLib::Core::Rendering
         bool m_bPreferRenderGraphGBufferResources = false;
         bool m_bGBufferRenderPassUsesRenderGraphAttachmentStates = false;
         bool m_bMegaGeometryDebugPayloadUnsupportedWarned = false;
+
+        // メッシュ共通のLOD球を持つメッシュ（全クラスタが同じ段を選ぶ）の、最後に記録した段。
+        // 段が変わったときだけ、選んだ段と三角形数を記録する。
+        struct LoggedUniformLOD
+        {
+            uint64_t MegaMeshId = 0;
+            uint32_t Level = 0;
+        };
+        Container::VariableArray<LoggedUniformLOD> m_LoggedUniformLODs;
     };
 
 } // namespace NorvesLib::Core::Rendering

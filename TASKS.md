@@ -4,6 +4,8 @@
 
 2026-09-30 再開: 止めていた4項目（SS-DAYLIGHT-P1・P2、SS-POINT-SHADOW-P2、SS-EMISSIVE-GLOW）は各 `blocked/<ID>.md` の推奨の選択肢で再開し、空のモデル（SS-SKY-MODEL-P1・P2）と発光の露出（SS-EMISSIVE-PREEXPOSE）を足した。この3項目は、項目に書いたとおり空を使う検証（R2・R7屋外）とgoldenの結果を変えうる。
 
+2026-10-03 続き（ブランチ `feature/startup-scene-detail`）: ユーザーの指摘（石のタイルが近づくと粗い）と要望（球をMegaGeometryで高ポリに）から、FIX-ASYNC-TEXTURE-MIPS → SS-CSM-MEGA-CASTERS → SS-MEGA-SPHERE → SS-MEGA-SPHERE-DISPLACE → SS-ACCEPT-DETAIL の順に進める。
+
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## SS-CAPTURE: 起動画面を撮影して数値を出す経路を作る
@@ -344,6 +346,129 @@
 - paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 区切り。評価者を通す。
 - notes: 2026-10-02 再開。評価1周目の指摘3（既定視点の変更前後のカメラ）は `51a22e7` で対応済み。指摘1・2（GPU時間・加速構造の更新を含む区間・予算を超えたフレームのパスごとの内訳と軽くする案）は SS-GPU-PROFILE の後に RelWithDebInfo で測り直して記録する。完了条件の「Releaseの構成で測る」は、2026-10-02 のユーザーの指示（Release にGPUの計測やログなどのデバッグの機能を入れない）により RelWithDebInfo へ改めた。RelWithDebInfo の既存のトレースでは夜の既定視点で540フレーム中6が16.6 msを超え、最大18.16 ms。
+
+## FIX-ASYNC-TEXTURE-MIPS: 非同期で読み込むテクスチャにもミップマップを全段作る
+- status: done
+- done-when: 非同期の読み込みの経路（`TextureAssetLoader.cpp` の `DecodeLooseBlobWithStbiForWorker` など、ばらのPNGを stb で読む経路で `bFullMipChain=false` を渡している所）でも、同期の経路と同じくミップマップを全段（4096²なら13段）作る。ミップの生成はGPUで行い（既存の `GpuResourceStore` のミップ生成）、RenderThread の同期を変えない。法線マップ・ラフネス・高さなど色でないテクスチャもリニアのまま縮小される（sRGBの扱いが同期の経路と同じ）。起動画面の Game.log で石畳の5枚のテクスチャが `mip_levels=13` とミップ生成の成功を出し、起動から撮影までの時間の増分が2秒以内（ミップ生成の時間をログから合計して PROGRESS に書く）。昼の既定視点で遠くの地面のざらつき（ミップが無いことによるエイリアシング）が消えたことを、変更前後の遠景の拡大画像と、遠景の領域の隣り合う画素の差の平均（高周波の量）で示す。検証シーンの golden が変わる場合は、差がミップの有無だけによることを確かめて再承認する（任されている）。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/FIX-ASYNC-TEXTURE-MIPS -SunElevations 45`
+- stop-when: ミップの生成を RenderThread の外の同期なしに行えない理由が見つかった場合は、同期を変えずに済む形（読み込みのワーカーでCPUで縮小して全段を渡す等）へ切り替え、選んだ理由を記録する。
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Asset, Library/Core/Public/Asset, Test/Core/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 ユーザーの指摘（石のタイルが4Kのはずなのに近づくと粗い）から調べて分かった。`.harness/runs/startup-capture/SS-ACCEPT/near-sun45.Game.log` で `cobblestone_floor_09_diff_4k.png data_size=67108864 mip_levels=1 mipgen_ms=0.000`。同期の経路（`LoadStbiBlobForCaller`）は `true` を渡すが、非同期・メインの描画の経路の3か所は `false`。2026-06-07 の分離（`dee9822`）からこの形で、意図した記録は無い。異方性フィルタ（x4）もミップが無いと効かない。危険地帯（アセットの読み込み）。評価者を通す。
+
+## SS-CSM-MEGA-CASTERS: 太陽の影（CSM）にMegaGeometryを描く
+- status: done
+- done-when: CSM の4枚のカスケードへ MegaGeometry（岩・小屋・今後の高ポリの球）を影のキャスターとして描く。カスケードごとにテクセルの大きさに見合う細かさのLOD（クラスタのLODの切り出しか、LOD0 をそのまま）を選び、選び方と三角形数を記録する。CSM の深度範囲に含める境界球が、実際に描くキャスターと一致する（backlog の FIX-CSM-MEGA-CASTER-BOUNDS を閉じる）。撮影の昼（45°）と夕（3°）で、小屋と岩の太陽の影が地面に落ち、影の縁にアクネ（縞）とピーターパン（接地部の浮き）が見えない（変更前後の拡大画像）。MegaGeometry の自己影（岩の窪み・小屋の軒）に縞が出ない。RelWithDebInfo の起動画面の1フレームのGPUの時間が16.6 ms以下のまま（`-GpuTimingFrames 600` の計測。ShadowMapPass の増分を記録）。検証シーンの golden が変わる場合は差の原因と妥当性を確かめて再承認する（任されている）。
+- verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest CascadedShadowLightMatricesTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CascadedShadowLightMatricesTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-CSM-MEGA-CASTERS -SunElevations 45,3`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- stop-when: CSM へ MegaGeometry を描くのに RenderThread の同期やパスの順序を変える必要がある場合は、変えずに済む形（ShadowMapPass の中で LOD0 の頂点・インデックスを直接描く等、点光源の影と同じ経路）を採り、理由を記録する。
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Test/Core/Rendering, Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 親が調べて分かった。`ShadowMapPass.cpp` は点光源のキューブへは MegaGeometry の LOD0 を描く（`PointShadowMegaCaster`）が、CSM へは描かない。そのため起動画面の岩と小屋には太陽の影が無く、見えている影はコンタクトシャドウだけ。SS-MEGA-SPHERE で大きな球を MegaGeometry にする前に要る。危険地帯（影・RenderThread）。評価者を通す。
+
+## SS-MEGA-SPHERE: 大きな球を高ポリのMegaGeometryにし、テクスチャの密度を地面に揃える
+- status: done
+- done-when: 起動画面の大きな石畳の球（半径1 m、今は通常のメッシュの 32×16 の UV 球）を、手続きで作る高ポリの球（三角形 約100万〜200万。クラスタとLODの階層を持つ）の MegaGeometry に置き換える。UV は横3回・縦1.5回の繰り返しにし、テクスチャの密度（約2 mで1枚）と縦横比を地面の石畳に揃える（UVの継ぎ目で模様が切れない）。今の球が持つ機能をすべて保つ: 太陽の影（SS-CSM-MEGA-CASTERS）・点光源の影（数百万三角形を6面×灯数で描く費用が大きければ、影には粗いLODを使う）・コンタクトシャドウ・自転とTAAのvelocity・レイトレのシーン（RTGI）・材質（石畳、POM）。撮影の近接視点で球の輪郭に角（ポリゴンの折れ）が見えず、石の大きさが地面の石と同じくらいに見える（変更前後の拡大画像）。起動から撮影までの時間の増分が10秒以内（クラスタとLODの構築の時間をログに出す。超えるなら三角形数を下げる）。RelWithDebInfo の起動画面の1フレームのGPUの時間が16.6 ms以下のまま（パスごとの増分を記録）。MegaGeometry のクラスタの大きさ（1クラスタあたりの三角形数の平均）を記録し、極端に小さい（例: 平均16未満）なら原因を調べて記録する。
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-MEGA-SPHERE -SunElevations 45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-MEGA-SPHERE-night -Night`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- stop-when: 三角形数を下げても起動時間・GPUの時間の条件を満たせない場合は、満たす最大の三角形数で閉じ、測定値を既知の限界として記録する。
+- paths: Game/GameModes/Rendering3DTest, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 ユーザーの要望（球のポリゴンをスムースに。MegaGeometryの経路でポリ数を大きく上げてよい）。今の球は UV が1周（約6.3 m）で4Kを1回だけ貼るため、地面（2 mで1枚）の約1/3の密度で、石が横に引き伸ばされている。既存の MegaGeometry の岩は66122三角形が25562クラスタ（平均約2.6三角形）で、クラスタが小さすぎる疑いがある（`MAX_TRIANGLES_PER_CLUSTER = 128`）。危険地帯（MegaGeometry・RenderThread）。評価者を通す。
+
+## SS-MEGA-SPHERE-DISPLACE: 高ポリの球を石畳の高さマップで実際に凹凸させる
+- status: done
+- done-when: SS-MEGA-SPHERE の高ポリの球の頂点を、石畳の高さマップ（`cobblestone_floor_09_disp_4k.png`、起動時にCPUで読む）で法線の向きへ動かし、石の盛り上がりと目地の窪みを実際の形にする（高さの尺度は今の POM の見た目に合わせ、値と根拠を記録する）。動かした形から法線を作り直し、法線マップと向きが合う。この球の材質では POM を切る（形で凹凸を出すので二重にしない）。メッシュに穴・割れ（UVの継ぎ目・極で頂点がずれて開く所）が無く、極の付近で棘が出ない（極へ向けて変位を弱める等。方法を記録する）。撮影の近接視点と低角度で、球の輪郭が石の凹凸でガタガタして見え、影（太陽・点光源・コンタクトシャドウ）とレイトレのシーンも同じ形を使う（変更前後の拡大画像）。起動時間とGPUの時間の条件は SS-MEGA-SPHERE と同じ。
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-MEGA-SPHERE-DISPLACE -SunElevations 45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-MEGA-SPHERE-DISPLACE-night -Night`
+- stop-when: 極・継ぎ目の割れや棘を UV 球のままで消せない場合は、別の球の作り方（立方体を球へ写した形など）へ切り替え、模様の継ぎ目の見え方を変更前後の画像で比べて選んだ理由を記録する。
+- paths: Game/GameModes/Rendering3DTest, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 ユーザーの「MegaGeometryでめちゃめちゃポリ数上げてもいい」を受け、高ポリを生かして輪郭にも凹凸を出す。高さマップは16ビットのグレーのPNG。評価者を通す。
+
+## SS-ACCEPT-DETAIL: テクスチャのミップ・MegaGeometryの影・高ポリの球を受入れ記録へ足す
+- status: done
+- done-when: `Docs/RenderingValidation/StartupSceneAcceptance.md` に、FIX-ASYNC-TEXTURE-MIPS・SS-CSM-MEGA-CASTERS・SS-MEGA-SPHERE・SS-MEGA-SPHERE-DISPLACE の後の撮影（朝・昼・夕・夜 × 既定・近接・低角度）と、変更前（`b347eb7`）の同じ視点を並べた比較、SS-LOOK-BALANCE の数値の範囲の判定、RelWithDebInfo の1フレームのGPUの時間（加速構造の更新を含む。全フレームが16.6 ms以下か、超えたフレームのパスごとの内訳）、起動から撮影までの時間を足す。Release は build が通り撮影できることだけを確かめる。評価者が撮影を開いて反証を試みる。
+- verify: `cmake --build build --config Release --target Game -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT-DETAIL -SunElevations 10,45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT-DETAIL-night -Night`
+- stop-when: GPUの時間の予算を超える場合は、内訳と軽くする案を既知の限界として記録して完了にする。
+- paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 区切り。評価者を通す。
+
+## FIX-MEGA-CLUSTER-ADJACENCY: 読み込むモデルのMegaGeometryのクラスタを位置でつないで大きくする
+- status: done
+- done-when: クックの `MeshClusterizer` の三角形の隣接を、頂点の番号ではなく位置（UVの継ぎ目・法線の分かれ目で複製された頂点を同じ位置として扱う）でつなぎ、起動画面の岩（今は66122三角形が25562クラスタ、平均2.59、16未満が25001）と小屋（4281三角形が1323クラスタ、平均3.24）のLOD0の1クラスタあたりの平均三角形数を64以上にする（`stage=megamesh_cluster_stats` の行で確かめる）。描画の見た目（撮影）と影・レイトレの範囲は変わらない。
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/FIX-MEGA-CLUSTER-ADJACENCY -SunElevations 45`
+- stop-when: クック済みのアセットの作り直しが要り、その手順が決まっていない場合は、作り直しの手順と影響を blocked に書いて止める。
+- paths: Tools/AssetCook, Library/Core/Private/Rendering/MegaGeometry, Library/Core/Public/Rendering/MegaGeometry, Assets, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 SS-MEGA-SPHERE で見つけた。岩は頂点67042・三角形66122、小屋は頂点6599・三角形4281で、閉じたメッシュの目安（頂点≒三角形の半分）より頂点が多く、UVの島ごとに頂点が複製されている。`MeshClusterizer::BuildAdjacencyGraph` は頂点の番号の辺だけで隣接をつなぐため、クラスタの成長が島の境で止まる（手続きの球は頂点を共有するので平均127.8）。
+
+## SS-MEGA-LOD-PERF: 大きな球のLODを画面上の誤差で選び、CSMのMegaGeometryをカスケードに見合う段で描く
+- status: done
+- done-when: (1) 大きな球（MegaGeometry、変位あり）のクラスタのLODを、その段で失われる形の誤差（球面からのずれと変位の差の大きい方）を実際の透視投影で画素へ直した大きさ（変位の前後のクリップ座標を画素へ直した差の上限。角度の近似で過小に見積もらない。この上限を、変位の前後のクリップ座標を画素へ直して比べる契約テストで確かめる）で選び、誤差が閾値以下になる最も粗い段を使う。閾値は撮り比べで見た目の差が出ない値（1画素以下）に決め、選んだ値と各視点の段を記録する。近接視点で LOD0 が選ばれるのは、それより粗い段の誤差が閾値を超えるときで、それは受け入れる（LOD0 は近接で目に見える変位の細部を運ぶ）。段の境目に割れ目が出ない（SS-MEGA-SPHERE の LOD 球の規則を保つ）。(2) CSM の各カスケードへ描く大きな球の段を、カスケードの1テクセルの大きさに見合う誤差で選ぶ（遠いカスケードほど粗い）。点光源のキューブも同じ考えで、遠い面・小さいキューブには粗い段を使う。岩・小屋は LOD0 のまま描き（影だけの粗い段は backlog の FIX-MEGA-SHADOW-LOD-LOADED で扱う）、その三角形数と ShadowMapPass の時間を記録する。どの段を何三角形描いたかを視点・カスケードごとにログへ出す。(3) RelWithDebInfo の `-GpuTimingFrames 600` で、近接視点（昼45°）の1フレームのGPUの中央値が5 ms以下、昼の3視点の全540フレームが16.6 ms以下（MegaGeometryPass・ShadowMapPass の中央値を変更前の SS-ACCEPT-DETAIL の値と並べて記録する）。(4) 見た目が変わらない: 近接・低角度の球の輪郭と目地、地面の影の、変更前後の拡大画像で差が目に見えない（差の画像と、球の領域の平均の差を示す）。
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-MEGA-LOD-PERF -SunElevations 45,3`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-MEGA-LOD-PERF-gpu -Configuration RelWithDebInfo -GpuTimingFrames 600 -SunElevations 45`
+- stop-when: 誤差1画素で見た目に差が出る場合は、差が見えない最も粗い閾値を撮り比べで選び、選んだ値と測定を記録する。中央値5 msに届かない場合は、届いた値とパスごとの内訳を既知の限界として記録して完了にする。
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/Rendering3DTest, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 SS-ACCEPT-DETAIL の計測で分かった。近接視点のGPUの中央値が 約3.1 → 8.2〜9.3 ms に増え、増分のほぼすべてが MegaGeometryPass（0.34 → 5.4〜6.2 ms）。変位を LOD の誤差に含めた結果、近接で大きな球の LOD0（1,046,528三角形）が選ばれ、その多くが1画素より小さい。12960フレーム中2フレームが16.6 msを超えた（MegaGeometryPass と ShadowMapPass が同じフレームで跳ねた）。CSM は岩・小屋を LOD0 のまま4カスケードすべてへ描く（`csm_mega_lod=0`）。この計測は FIX-MEGA-CLUSTER-ADJACENCY（法線コーンのカリングの変更を含む）の前。2026-10-03 ユーザーの指示: 最適化を先にやってからマージ・プッシュする。危険地帯（MegaGeometry・影・RenderThread）。評価者を通す。
+- result: 2026-10-03 完了（反復2）。投影の式を、角度の変化の最大 projectionFactor·D/(D²−R²) に視線から外れた点での透視の伸び 1/cos²α の上限（視錐台の角と、中心の方向の角＋見かけの半径の小さい方）を掛けた上限に直した（`MegaGeometryLODSelection.h`・`cluster_cull.comp`）。契約テストはエンジンの view・projection（Vulkan の Z 反転と Y 反転の有無）で球の表面の点を法線方向に変位させ、前後のクリップ座標を画素へ直した差が上限以下で、上限の6割以上が実際に出ることを確かめる（角度だけの式では落ちる）。閾値は1画素のまま（撮り比べ: 1画素は近接 LOD0・低角度 LOD1 で変更前と同じ段になり、変更前との差は16超の画素0。0.5画素は低角度も LOD0 で LOD0 の参照と見分けがつかないが、変更前より細かくなる）。既定（10 m）は LOD4（0.866画素）。CSM は球 c0 LOD3・c1〜c3 LOD4、岩 LOD0 66,122・小屋 LOD0 4,281三角形をカスケードごと、ShadowMapPass 中央値 0.74〜0.80 ms。近接（昼45°）のGPUの中央値は 8.42 ms で5 msに届かず、既知の限界（MegaGeometryPass 4.62・LightingPass 1.34・ShadowMapPass 0.80 ms。LOD0 の球の1,046,528三角形が主）。3視点1620フレームの最大 14.41 ms で予算超え0。同じ版の再計測は環境の負荷で ShadowMapPass が 2.1 ms へ増えて跳ね、近接で57フレームが予算を超えた（既知の限界）。
+- notes: 2026-10-03 評価1周目（`cb84375`）は NEEDS_WORK（`NEXT_FINDINGS.md`）。反復2が `blocked/SS-MEGA-LOD-PERF.md` に書いた推奨（A: 近接の LOD0 を受け入れ、誤差の閾値だけを条件にする／D: 岩・小屋の影の粗い段は別の項目にする）を親が採り、done-when を改めた。正しい透視投影の式では近接の LOD1 は約1.8画素、中間の段を足しても約1.2画素の見込みで、1画素以下の閾値では LOD0 が残るため、中間の段は求めない。直すのは指摘3（投影の式とその契約テスト）と指摘4（閾値の撮り比べ）。上の result 行は反復1の記録で、2周目の結果で書き直す。
+
+## FIX-MEGA-LOD-SHADING: MegaGeometry の粗い段の陰影が LOD0 より暗く・柔らかくなるのを直す
+- status: backlog
+- done-when: 変位のある大きな球の LOD1〜LOD4 で、目地の陰影（法線）が LOD0 と見分けがつかない（既定・低角度の視点の拡大画像で、LOD0 の参照との球の領域の平均の差が撮り直しの雑音と同じ程度）。形の誤差の閾値（1画素）は変えない。
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 SS-MEGA-LOD-PERF の撮り比べで見つけた。形の誤差が1画素未満でも、低角度（6 m）の LOD1（0.58画素）は LOD0 より目地が柔らかく（16超の画素 0.8%）、既定（10 m）の LOD4（0.87画素）は球の平均で 6〜10/255 暗い。変更前の段の選び方でも同じ段で、起こっていた差。粗い段の頂点の法線が変位の細部を平均してしまうのが原因と見られる。
+
+## FIX-MEGA-SHADOW-LOD-LOADED: 読み込むモデルのMegaGeometryに影だけの粗い段を作る
+- status: backlog
+- done-when: 読み込むモデル（岩・小屋など）の MegaGeometry に、GBuffer のクラスタは元のまま保ったまま、影（CSM・点光源のキューブ）だけに使う粗い段を作り、カスケードの1テクセルに見合う段を選ぶ。読み込みの時間・メモリの増分を記録する。
+- paths: Library/Core/Private/Resource, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
+- notes: SS-MEGA-LOD-PERF（2026-10-03）から分けた。`ModelStaging.cpp` は `bBuildLODHierarchy = false` で、階層を作ると GBuffer のクラスタも DAG に置き換わる（`MegaGeometryResourceStore.cpp` の `uploadClusters = &lodHierarchy.AllClusters`）ため、影だけの段には別の設計が要る。近接の ShadowMapPass は 0.643 ms で、岩（66,122三角形）・小屋（4,281三角形）×4カスケードの寄与は小さい。危険地帯（アセットの読み込み・リソースの寿命）。
+
+## FIX-STRING-EMPTY-CSTR: 空の Container::String の c_str() が終端の無い値を返すのを直す
+- status: done
+- done-when: 空の `TString` の `c_str()`・`data()` が空の文字列（終端の0）を指し、`%s` で書いても余計な文字が出ない。既存の呼び出しの挙動を変えない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Container, Test/Core, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 SS-MEGA-LOD-PERF で見つけた。`String.h` の `c_str()` は空のとき `&npos`（size_t の最大値のバイト列）を返し、ログに化けた文字が出た。SS-MEGA-LOD-PERF では呼ぶ側で空なら "" を渡して避けた。
+
+## SS-ACCEPT-PERF: 最適化の後のGPUの時間と撮影を受入れ記録へ反映する
+- status: done
+- done-when: `Docs/RenderingValidation/StartupSceneAcceptance.md` の「テクスチャのミップ・MegaGeometry の影・高ポリの球」の節の GPU のフレーム時間を、FIX-MEGA-CLUSTER-ADJACENCY と SS-MEGA-LOD-PERF の後の値（RelWithDebInfo、12視点 × 2回、540フレームずつ）で更新し、予算超えのフレームの有無（あればパスごとの内訳）と、SS-ACCEPT-DETAIL の値からの変化を並べる。撮影（朝・昼・夕・夜 × 3視点）を撮り直し、SS-LOOK-BALANCE の数値の範囲の判定と、変更前（`b347eb7`）との比較画像を差し替える。既知の限界を今の状態に合わせて書き直す。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT-PERF -SunElevations 10,45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT-PERF-night -Night`
+- stop-when: 予算を超えるフレームが残る場合は、内訳と軽くする案を既知の限界として記録して完了にする。
+- paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 区切り。評価者を通す。
+- result: 2026-10-03 完了。撮影12枚 result=pass、SS-LOOK-BALANCE 全項目 PASS、変更前との比較画像は `startup-capture/SS-ACCEPT-PERF-compare/`。GPU の12視点 × 2回は別のアプリが開いた状態で測ることになり（計測の直後の5秒で GPU の使用率36〜40%。計測の最中は未記録）、12960フレーム中468フレームが16.6 msを超えた（最大 37.261 ms、ShadowMapPass・MegaGeometryPass・LightingPass が同じフレームで跳ね、変更していない軽いパスと区間に入らない残り（0.021〜3.115 ms）も伸びる。原因を GPU の共有とするのは推定）。同じコードを約25分前に測った昼の3視点（SS-MEGA-LOD-PERF、占有未記録の参考値）は予算超え 0 / 1620（変更前 1 / 3240）。内訳・軽くする案・再計測待ちを既知の限界に記録した。
+
+## SS-ACCEPT-PERF-REMEASURE: 起動画面のGPUの時間を競合なしで12視点 × 2回測り直す
+- status: backlog
+- done-when: GPU を他のアプリと共有しない状態（Game が動いていない時点の GPU の使用率が数%以下であることを計測の前後に記録する）で、RelWithDebInfo の `-GpuTimingFrames 600` を朝・昼・夕・夜 × 3視点 × 2回回し、`Docs/RenderingValidation/StartupSceneAcceptance.md` の「テクスチャのミップ・MegaGeometry の影・高ポリの球」の節の GPU の表と予算の判定（超えたフレームがあればパスごとの内訳）を置き換える。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 SS-ACCEPT-PERF の計測は、ユーザーの別のアプリ（javaw）が GPU を36〜40%使う中で回った。PC を占有する重い処理なので、ユーザーが PC を使ってよいと言ったときだけ todo に戻す。
+
+## FIX-NIGHT-SPHERE-LONG-RUN: 夜の大きな球の光源と反対側が、長く描くと明るくなるのを調べる
+- status: backlog
+- done-when: 夜の近接視点で、大きな球の光源と反対側の明るさが60描画フレーム目と600描画フレーム目で物理的に説明できる範囲でそろう（原因が RTGI の履歴なら、間接光の大きさを光源側との比で確かめる）。原因と直し方を記録する。
+- paths: Library/Core/Private/Rendering, Assets/Shaders, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 SS-ACCEPT-PERF で見つけた。近接・夜の球の反対側 / 光源側の8bit輝度は、60フレーム目の Debug・Release の撮影で 0.02〜0.03、600フレーム目の RelWithDebInfo の GPU 計測の撮影で 0.80〜0.84（`.harness/runs/20261003-181031/verify-SS-ACCEPT-PERF-14.txt`）。変更前（`b347eb7`）の `SS-ACCEPT-gpu-night` でも 0.48〜0.61 で、前からある。構成の違いかフレーム数の違いかはまだ切り分けていない。
 
 ## R1-P5: 透明描画を物理ライト・GGX・IBLへ接続する
 - status: done
@@ -1152,12 +1277,12 @@
 - notes: R7-O3の既知差4。朝・夕は1.07〜1.11倍。
 
 ## FIX-CSM-MEGA-CASTER-BOUNDS: CSMの遮蔽物の境界球にShadowMapPassが描かないMegaGeometryを含めない
-- status: backlog
+- status: done
 - done-when: CSMの深度範囲に含める境界球が、影の地図に実際に描く物体と一致する（MegaGeometryを影に描くまでは含めない、または描くようにする）。
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(DirectionalShadowLightMatricesTest|CascadedShadowLightMatricesTest)$"`
 - stop-when: MegaGeometryを影に描くかの判断が要る場合はユーザーへ戻す。
 - paths: Library/Core/Private/Rendering, Test/Core/Rendering
-- notes: `382489f`の評価のnon-blocking指摘。過大収集で深度範囲とPCSSの探索半径が広がるだけで、影は欠けない。
+- notes: `382489f`の評価のnon-blocking指摘。過大収集で深度範囲とPCSSの探索半径が広がるだけで、影は欠けない。2026-10-03 SS-CSM-MEGA-CASTERS で「描く」側で閉じた（CSMの深度範囲へ含めるMegaGeometryの境界球を、実際に描くキャスターの一覧から取る）。
 
 ## FIX-MEGAGEOMETRY-RECORD-TEST: RenderGraphCompileTestのMegaGeometryの記録の検査が落ちる原因を直す
 - status: backlog

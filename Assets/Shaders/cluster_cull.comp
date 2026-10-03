@@ -54,6 +54,7 @@ layout(set = 0, binding = 0) uniform CullUniforms
     uint padding1;
     uint padding2;
     mat4 worldMatrix;
+    vec4 lodSphere;          // LODの選択に使うメッシュ共通の境界球（ローカル。w<=0ならクラスタごとの中心で選ぶ）
 } cullData;
 
 const uint DEBUG_PAYLOAD_MODE_NONE = 0u;
@@ -106,26 +107,36 @@ bool FrustumCullSphere(vec3 center, float radius)
 /**
  * @brief 法線コーン バックフェースカリング
  *
- * クラスタの全三角形が裏向きかを判定します。
- * ConeCutoff < 0 の場合はカリング無効（常に可視）。
+ * クラスタの全三角形が裏向きかを、メッシュのローカル空間で判定します。
+ * 非一様スケールやせん断では法線の向きの広がり（コーンの半角）がワールドで変わるため、
+ * コーンをワールドへ移さず、カメラ位置をローカルへ戻して比べる。
+ * 三角形の表裏（法線と視線の内積の符号）はアフィン変換で保たれ、鏡映（行列式が負）でだけ反転する。
+ * coneCutoff は cos(コーンの半角)。半角が90°以上（coneCutoff <= 0）ならカリングしない。
  * @return true = カリング（全三角形が裏向き）
  */
-bool NormalConeCull(vec3 coneAxis, float coneCutoff, vec3 clusterCenter)
+bool NormalConeCull(vec3 localConeAxis, float coneCutoff, vec3 localCenter, float localRadius)
 {
-    if (coneCutoff <= -1.0)
+    if (coneCutoff <= 0.0)
     {
-        return false; // カリング無効
+        return false; // どこから見ても表向きの三角形を含みうる
     }
 
-    // カメラからクラスタ中心への方向
-    vec3 viewDir = normalize(clusterCenter - cullData.cameraPosition.xyz);
+    mat3 linearPart = mat3(cullData.worldMatrix);
+    float det = determinant(linearPart);
+    if (abs(det) <= 1e-12)
+    {
+        return false; // 潰れた変換ではローカルへ戻せない
+    }
 
-    // コーン軸とビュー方向の内積
-    // クラスタの全法線がconeAxis周りのconeCutoff角度内にある場合、
-    // viewDirとconeAxisの内積がconeCutoff以上なら全て裏向き
-    float dotVal = dot(coneAxis, viewDir);
+    vec3 cameraLocal = inverse(linearPart) * (cullData.cameraPosition.xyz - cullData.worldMatrix[3].xyz);
+    vec3 coneAxis = det < 0.0 ? -localConeAxis : localConeAxis;
 
-    return dotVal > coneCutoff;
+    // 法線は全てコーン軸から半角以内にあるので、視線とコーン軸のなす角が 90°−半角 未満なら
+    // 全ての三角形が裏向きになる（cos(90°−半角) = sin(半角) と比べる）。
+    // 視線はカメラから境界球内のどの点へ向かうものでも成り立つよう、半径の分だけ余裕を取る
+    float sinHalfAngle = sqrt(max(1.0 - coneCutoff * coneCutoff, 0.0));
+    vec3 toCenter = localCenter - cameraLocal;
+    return dot(toCenter, coneAxis) >= sinHalfAngle * length(toCenter) + localRadius;
 }
 
 vec3 TransformClusterCenterToWorld(vec3 localCenter)
@@ -139,36 +150,6 @@ float ComputeWorldRadiusScale()
     float scaleY = length(cullData.worldMatrix[1].xyz);
     float scaleZ = length(cullData.worldMatrix[2].xyz);
     return max(scaleX, max(scaleY, scaleZ));
-}
-
-vec3 TransformConeAxisToWorld(vec3 localAxis)
-{
-    mat3 linearPart = mat3(cullData.worldMatrix);
-    float det = determinant(linearPart);
-
-    vec3 transformedAxis = localAxis;
-    if (abs(det) > 1e-6)
-    {
-        mat3 normalMatrix = transpose(inverse(linearPart));
-        if (det < 0.0)
-        {
-            normalMatrix = -normalMatrix;
-        }
-
-        transformedAxis = normalMatrix * localAxis;
-    }
-    else
-    {
-        transformedAxis = linearPart * localAxis;
-    }
-
-    float axisLengthSq = dot(transformedAxis, transformedAxis);
-    if (axisLengthSq <= 1e-8)
-    {
-        return localAxis;
-    }
-
-    return transformedAxis * inversesqrt(axisLengthSq);
 }
 
 /**
@@ -250,12 +231,52 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
     uint parentStart = cluster.lodInfo.z;
     uint parentCount = cluster.lodInfo.w;
 
-    // カメラからの距離
-    float dist = distance(center, cullData.cameraPosition.xyz);
-    dist = max(dist, 0.001); // 0除算防止
+    // 誤差1を画面の画素へ直す倍率。メッシュ共通のLOD球があれば、全クラスタが同じ倍率で選ぶ
+    // （どの段も閉じたメッシュなら、メッシュ全体で同じ段が選ばれて段の境目に割れ目ができない）。
+    // 誤差は球の法線方向のずれなので、見える面での角度の変化の最大 projectionFactor·D/(D²−R²) に、
+    // 視線から外れた点で透視投影が横のずれを伸ばす倍率 1/cos²α の上限を掛けた値を使う
+    // （MegaGeometryLODSelection.h の ComputeLODSphereErrorPixelsPerMeter と同じ式）。
+    float errorScale;
+    if (cullData.lodSphere.w > 0.0)
+    {
+        float worldScale = ComputeWorldRadiusScale();
+        vec3 lodCenter = TransformClusterCenterToWorld(cullData.lodSphere.xyz);
+        float lodRadius = cullData.lodSphere.w * worldScale;
+        float centerDistance = distance(lodCenter, cullData.cameraPosition.xyz);
+        float denominator = max(centerDistance * centerDistance - lodRadius * lodRadius, 1e-6);
+        float angularScale = cullData.projectionFactor * centerDistance / denominator;
+
+        // 描かれる点は視錐台の中なので tan²α ≤ tan²(fovX/2) + tan²(fovY/2)。球が前方にあれば
+        // α ≤ 中心の方向の角 β + 見かけの半径 asin(R/D) でもあるので、小さい方を使う。
+        float tanHalfFovX = 1.0 / max(abs(cullData.projectionMatrix[0][0]), 1e-6);
+        float tanHalfFovY = 1.0 / max(abs(cullData.projectionMatrix[1][1]), 1e-6);
+        float stretch = 1.0 + tanHalfFovX * tanHalfFovX + tanHalfFovY * tanHalfFovY;
+        float depthScale = abs(cullData.projectionMatrix[2][3]);
+        float centerDepth = depthScale > 1e-6
+            ? (cullData.projectionMatrix * cullData.viewMatrix * vec4(lodCenter, 1.0)).w / depthScale
+            : 0.0;
+        if (centerDistance > lodRadius && centerDepth > 0.0)
+        {
+            float cosBeta = min(centerDepth / centerDistance, 1.0);
+            float sinBeta = sqrt(max(1.0 - cosBeta * cosBeta, 0.0));
+            float sinGamma = lodRadius / centerDistance;
+            float cosGamma = sqrt(max(1.0 - sinGamma * sinGamma, 0.0));
+            float cosAlpha = cosBeta * cosGamma - sinBeta * sinGamma;
+            if (cosAlpha > 0.0)
+            {
+                stretch = min(stretch, 1.0 / (cosAlpha * cosAlpha));
+            }
+        }
+        errorScale = angularScale * stretch * worldScale;
+    }
+    else
+    {
+        float dist = max(distance(center, cullData.cameraPosition.xyz), 0.001); // 0除算防止
+        errorScale = cullData.projectionFactor / dist;
+    }
 
     // このクラスタのスクリーン投影誤差（ピクセル単位）
-    float projectedError = lodError * cullData.projectionFactor / dist;
+    float projectedError = lodError * errorScale;
 
     // LOD 0: 最詳細レベル → 常に描画候補（ただし親が十分なら親に任せる）
     if (lodLevel == 0)
@@ -271,7 +292,7 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
         {
             GPUClusterData parent = clusters[parentStart + i];
             float parentError = uintBitsToFloat(parent.lodInfo.y);
-            float parentProjectedError = parentError * cullData.projectionFactor / dist;
+            float parentProjectedError = parentError * errorScale;
             if (parentProjectedError <= cullData.lodBias)
             {
                 return false; // 親で十分
@@ -298,7 +319,7 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
     {
         GPUClusterData parent = clusters[parentStart + i];
         float parentError = uintBitsToFloat(parent.lodInfo.y);
-        float parentProjectedError = parentError * cullData.projectionFactor / dist;
+        float parentProjectedError = parentError * errorScale;
         if (parentProjectedError > cullData.lodBias)
         {
             return true; // 親が粗すぎるので自身を描画
@@ -351,9 +372,7 @@ void main()
     }
 
     // バックフェースカリング（法線コーン）
-    vec3 coneAxis = TransformConeAxisToWorld(cluster.normalCone.xyz);
-    float coneCutoff = cluster.normalCone.w;
-    if (NormalConeCull(coneAxis, coneCutoff, center))
+    if (NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius))
     {
         return;
     }

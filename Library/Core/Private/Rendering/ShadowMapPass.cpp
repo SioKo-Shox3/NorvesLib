@@ -2,6 +2,7 @@
 #include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/CascadedShadowLightMatrices.h"
 #include "Rendering/PointShadowSnapshot.h"
+#include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/RenderResources.h"
@@ -23,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace NorvesLib::Core::Rendering
@@ -48,15 +50,108 @@ namespace NorvesLib::Core::Rendering
             PointShadowMaxLights * PointShadowFaceCount *
             (1u + PointShadowMaxSkinnedDrawsPerFace + PointShadowMaxMegaDrawsPerFace);
 
-        // MegaGeometryの影のキャスター（LOD0の範囲を1回で描く）
-        struct PointShadowMegaCaster
+        // CSMの1カスケード・1描画のUBO（shadow.vertのShadowMVPに対応）
+        struct ShadowPerObjectUBO
+        {
+            float lightView[16];
+            float lightProjection[16];
+            // worldSource[0]=1の描画（MegaGeometry）はインスタンスではなくこの行列で置く
+            float world[16];
+            float worldSource[4];
+        };
+        static_assert(sizeof(ShadowPerObjectUBO) == 208);
+
+        // MegaGeometryの影のキャスター（影に使う段の範囲を1回で描く。既定はLOD0）。CSMと点光源の影の両方へ描き、
+        // CSMの深度範囲にもこの境界球を含める（描く物と深度範囲に含める物を一致させる）。
+        // 粗い段を1回の範囲で持つメッシュは、影の地図のテクセルに見合う段を描くごとに選ぶ（ResolveMegaShadowRange）。
+        struct MegaShadowCaster
         {
             RHI::BufferPtr VertexBuffer;
             RHI::BufferPtr IndexBuffer;
+            uint32_t FirstIndex = 0;
             uint32_t IndexCount = 0;
             float World[16] = {};
             BoundingSphere Bounds;
+            const MegaGeometry::MegaMeshGPUData* GpuData = nullptr;
+            // ローカルの長さ（LODの誤差）をワールドへ直す倍率（行列の最大の軸の伸び）
+            float WorldScale = 1.0f;
         };
+
+        // MegaGeometryの段の誤差が、影の地図の何テクセル以下なら粗い段を使うか
+        constexpr float MegaShadowLODErrorTexels = 1.0f;
+
+        // 1回の描画の段と範囲
+        struct MegaShadowRange
+        {
+            uint32_t Level = 0;
+            uint32_t FirstIndex = 0;
+            uint32_t IndexCount = 0;
+        };
+
+        // 影の地図の1テクセルのワールドでの大きさに見合う段を選ぶ（影に指定された段より細かくはしない）。
+        MegaShadowRange ResolveMegaShadowRange(const MegaShadowCaster& caster, float texelSize)
+        {
+            MegaShadowRange range;
+            range.FirstIndex = caster.FirstIndex;
+            range.IndexCount = caster.IndexCount;
+            if (!caster.GpuData)
+            {
+                return range;
+            }
+            range.Level = caster.GpuData->ShadowLODLevel;
+            const uint32_t level = MegaGeometry::SelectShadowLODLevel(*caster.GpuData,
+                                                                      caster.WorldScale,
+                                                                      texelSize,
+                                                                      MegaShadowLODErrorTexels);
+            if (level != range.Level && level < caster.GpuData->LevelRanges.size() &&
+                caster.GpuData->LevelRanges[level].IndexCount > 0u)
+            {
+                range.Level = level;
+                range.FirstIndex = caster.GpuData->LevelRanges[level].FirstIndex;
+                range.IndexCount = caster.GpuData->LevelRanges[level].IndexCount;
+            }
+            return range;
+        }
+
+        // 記録用に「メッシュ名:段/三角形数」を足す
+        void AppendMegaShadowLevel(Container::String& out, const MegaShadowCaster& caster, const MegaShadowRange& range)
+        {
+            char text[160] = {};
+            std::snprintf(text,
+                          sizeof(text),
+                          "%s%s:%u/%u",
+                          out.empty() ? "" : ",",
+                          caster.GpuData && !caster.GpuData->DebugName.empty() ? caster.GpuData->DebugName.c_str() : "?",
+                          range.Level,
+                          range.IndexCount / 3u);
+            out += text;
+        }
+
+        // 点光源のキューブの1面（90°の正方形の視錐台）に境界球がかかるか。かからない面へは描かない。
+        bool PointShadowFaceMayContainSphere(const PointShadowLightSnapshot& light,
+                                             uint32_t faceIndex,
+                                             const BoundingSphere& bounds)
+        {
+            if (!(bounds.Radius > 0.0f) || !std::isfinite(bounds.Radius))
+            {
+                return true;
+            }
+            const PointShadowDetail::PointShadowFaceBasis& basis = PointShadowDetail::GetFaceBasis(faceIndex);
+            const float px = bounds.CenterX - light.Position.x;
+            const float py = bounds.CenterY - light.Position.y;
+            const float pz = bounds.CenterZ - light.Position.z;
+            const float forward = px * basis.Forward.x + py * basis.Forward.y + pz * basis.Forward.z;
+            const float up = px * basis.Up.x + py * basis.Up.y + pz * basis.Up.z;
+            // 面の右方向（Forward × Up）。面は軸に沿うので、残りの軸の成分で足りる。
+            const float rightX = basis.Forward.y * basis.Up.z - basis.Forward.z * basis.Up.y;
+            const float rightY = basis.Forward.z * basis.Up.x - basis.Forward.x * basis.Up.z;
+            const float rightZ = basis.Forward.x * basis.Up.y - basis.Forward.y * basis.Up.x;
+            const float right = px * rightX + py * rightY + pz * rightZ;
+            // 4つの側面（法線 (Forward ± 軸)/√2 が内向き）から球が外へ出きっていなければかかる。
+            const float margin = bounds.Radius * 1.41421356f;
+            return forward - up >= -margin && forward + up >= -margin &&
+                   forward - right >= -margin && forward + right >= -margin;
+        }
 
         // ローカルの境界球をワールド行列（行ベクトル規約、並進は行3）で写す。半径は最大の軸の伸びで広げる。
         BoundingSphere TransformMegaBounds(const BoundingSphere& local, const float* world)
@@ -78,6 +173,78 @@ namespace NorvesLib::Core::Rendering
             }
             result.Radius = local.Radius * std::sqrt(maxScaleSquared);
             return result;
+        }
+
+        // 影を落とすMegaGeometry（岩・小屋など）を集める。GBufferではクラスタ単位でGPUがLODを
+        // 選ぶが、影へはメッシュが指定した段（既定はLOD0）か、それより粗く1回の範囲で描ける段を描く（読み込んだ
+        // モデルはLOD0だけを持ち、実行時に作る階層も段ごとに頂点の基点が違ううえ簡略化に失敗した群を飛ばすため、
+        // 1段を1回の範囲で描けない。手続きで作る球は粗い段を連続した範囲として持ち、テクセルに見合う段を使う）。
+        // 行列はMegaGeometryPassと同じくプロキシの行列をそのままシェーダーへ渡す。インスタンスは
+        // 読まないが記述子のレイアウトを満たすために結ぶので、インスタンスのバッファが要る。
+        void CollectMegaShadowCasters(const ViewRenderContext& context,
+                                      uint32_t instanceDataSize,
+                                      Container::VariableArray<MegaShadowCaster>& outCasters)
+        {
+            outCasters.clear();
+            if (!context.SnapshotMegaGeometryProxies || !context.Resources.MegaGeometry ||
+                !context.InstanceDataBuffer || instanceDataSize == 0)
+            {
+                return;
+            }
+            for (const MegaGeometryProxy& proxy : *context.SnapshotMegaGeometryProxies)
+            {
+                if (!proxy.IsValid() || !proxy.bCastShadow)
+                {
+                    continue;
+                }
+                const MegaGeometry::MegaMeshGPUData* gpuData =
+                    context.Resources.MegaGeometry->GetMegaMeshGPUData(proxy.MegaMeshHandle);
+                if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
+                    gpuData->ShadowIndexCount == 0u)
+                {
+                    continue;
+                }
+                MegaShadowCaster caster;
+                caster.VertexBuffer = gpuData->VertexBuffer;
+                caster.IndexBuffer = gpuData->IndexBuffer;
+                caster.FirstIndex = gpuData->ShadowFirstIndex;
+                caster.IndexCount = gpuData->ShadowIndexCount;
+                caster.GpuData = gpuData;
+                std::memcpy(caster.World, &proxy.WorldTransform, sizeof(caster.World));
+                caster.Bounds = TransformMegaBounds(gpuData->TotalBounds, caster.World);
+                caster.WorldScale = gpuData->TotalBounds.Radius > 0.0f
+                                        ? caster.Bounds.Radius / gpuData->TotalBounds.Radius
+                                        : 1.0f;
+                if (!std::isfinite(caster.Bounds.CenterX) || !std::isfinite(caster.Bounds.CenterY) ||
+                    !std::isfinite(caster.Bounds.CenterZ) || !std::isfinite(caster.Bounds.Radius) ||
+                    !(caster.Bounds.Radius > 0.0f))
+                {
+                    continue;
+                }
+                outCasters.push_back(caster);
+            }
+        }
+
+        // MegaGeometryの影に使う段の範囲を描く深度描画のコマンドを作る（記述子セットは呼び出し側で用意する）。
+        DrawCommand MakeMegaShadowDrawCommand(const MegaShadowCaster& caster,
+                                              const MegaShadowRange& range,
+                                              const RHI::PipelinePtr& pipeline,
+                                              const RHI::DescriptorSetPtr& descriptorSet)
+        {
+            DrawCommand command;
+            command.Type = DrawCommandType::DrawIndexed;
+            command.Pipeline = pipeline;
+            command.DescriptorSet = descriptorSet;
+            command.DescriptorSetSlot = 0;
+            command.Draw.PayloadKind = DrawPayloadKind::Mesh2D;
+            command.Draw.bCastShadow = true;
+            command.Mesh2D.VertexBuffer = caster.VertexBuffer;
+            command.Mesh2D.IndexBuffer = caster.IndexBuffer;
+            command.Mesh2D.IndexCount = range.IndexCount;
+            command.Mesh2D.IndexOffset = range.FirstIndex;
+            command.Mesh2D.VertexOffset = 0;
+            command.Mesh2D.IndexType = RHI::IndexType::Uint32;
+            return command;
         }
 
         // 物体IDで引くMeshProxyの境界球
@@ -321,8 +488,8 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBO: lightView(64) + lightProjection(64) = 128 bytes
-            constexpr uint32_t UBO_SIZE = 128;
+            // UBO: lightView(64) + lightProjection(64) + world(64) + worldSource(16) = 208 bytes
+            constexpr uint32_t UBO_SIZE = sizeof(ShadowPerObjectUBO);
             constexpr uint32_t MAX_OBJECTS = 256 * CSM_CASCADE_COUNT;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
@@ -573,13 +740,28 @@ namespace NorvesLib::Core::Rendering
         cascadedSettings.ShadowMapResolution = m_Settings.Resolution;
         cascadedSettings.MaxShadowDistance = m_Settings.MaxShadowDistance;
         cascadedSettings.Directional = MakeDirectionalShadowMatrixSettings(m_Settings);
+
+        const uint64_t instanceDataSize64 = context.InstanceDataBuffer
+                                                ? context.InstanceDataBuffer->GetSize()
+                                                : 0;
+        const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
+                                              ? 0xFFFFFFFFu
+                                              : static_cast<uint32_t>(instanceDataSize64);
+
         // カスケードの視錐台の切片より光源側の遮蔽物もnear面で切り取らないよう、影を落とす
-        // 物体の境界球を光源側の深度範囲に含める。
+        // 物体の境界球を光源側の深度範囲に含める。MegaGeometryは下で実際に描くキャスターの
+        // 境界球だけを含める（描かない物で深度範囲とPCSSの探索半径を広げない）。
+        Container::VariableArray<MegaShadowCaster> megaCasters;
+        CollectMegaShadowCasters(context, instanceDataSize, megaCasters);
         Container::VariableArray<BoundingSphere> casterBounds;
         CollectDirectionalShadowCasterBounds(context.SnapshotMeshProxies,
                                              context.SnapshotSkinnedMeshProxies,
-                                             context.SnapshotMegaGeometryProxies,
+                                             nullptr,
                                              casterBounds);
+        for (const MegaShadowCaster& megaCaster : megaCasters)
+        {
+            casterBounds.push_back(megaCaster.Bounds);
+        }
         const CascadedShadowMatrixResult cascadedShadowMatrices =
             BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
                                              context.GetActiveCamera(),
@@ -687,28 +869,19 @@ namespace NorvesLib::Core::Rendering
             m_SceneRenderer &&
             (meshes || context.SkinnedMeshes) &&
             !drawCommands.empty();
+        const bool bCanDrawMegaCasters = cascadedShadowMatrices.bEnabled && !megaCasters.empty();
 
-        const uint64_t instanceDataSize64 = context.InstanceDataBuffer
-                                                ? context.InstanceDataBuffer->GetSize()
-                                                : 0;
-        const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
-                                              ? 0xFFFFFFFFu
-                                              : static_cast<uint32_t>(instanceDataSize64);
-
-        // UBOデータ構造体（shadow.vertのShadowMVPに対応）
-        struct ShadowPerObjectUBO
-        {
-            float lightView[16];
-            float lightProjection[16];
-        };
-
-        if (bCanBuildShadowCommands)
+        if (bCanBuildShadowCommands || bCanDrawMegaCasters)
         {
             // 4つのFramebufferで同じキャスターを記録するため、カスケードごとに
             // 別のUBOスロットを使用する。
             m_UniformAllocator.Reset();
         }
 
+        uint32_t megaDrawCounts[PhysicalLightingShadowCascadeCount] = {};
+        uint32_t megaTriangleCounts[PhysicalLightingShadowCascadeCount] = {};
+        // カスケードごとに描いたMegaGeometryの段（「c0=メッシュ名:段/三角形数,...」）
+        Container::String csmMegaLevels;
         for (uint32_t cascadeIndex = 0;
              cascadeIndex < PhysicalLightingShadowCascadeCount;
              ++cascadeIndex)
@@ -745,8 +918,8 @@ namespace NorvesLib::Core::Rendering
                         break;
                     }
 
-                    // UBOデータ構築
-                    ShadowPerObjectUBO uboData;
+                    // UBOデータ構築（worldSourceは0のままにしてインスタンスの行列で置く）
+                    ShadowPerObjectUBO uboData = {};
                     std::memcpy(uboData.lightView,
                                 lightViewData[cascadeIndex],
                                 sizeof(uboData.lightView));
@@ -788,6 +961,54 @@ namespace NorvesLib::Core::Rendering
                 }
             }
 
+            // MegaGeometryはカスケードの影の地図のXYにかかる物だけを描く。段は、影に指定された段を最も細かい段とし、
+            // 誤差がそのカスケードの1テクセル以下の最も粗い段を使う（遠いカスケードほどテクセルが大きく粗い段になる）。
+            if (bCanDrawMegaCasters)
+            {
+                const CascadedShadowCascade& cascade = cascadedShadowMatrices.Cascades[cascadeIndex];
+                csmMegaLevels += csmMegaLevels.empty() ? "c" : " c";
+                csmMegaLevels += static_cast<char>('0' + cascadeIndex);
+                csmMegaLevels += "=";
+                Container::String cascadeLevels;
+                for (const MegaShadowCaster& megaCaster : megaCasters)
+                {
+                    if (!CascadedShadowCascadeMayContainCaster(cascade, megaCaster.Bounds))
+                    {
+                        continue;
+                    }
+                    const MegaShadowRange range = ResolveMegaShadowRange(megaCaster, cascade.TexelSize);
+                    auto allocation = m_UniformAllocator.Allocate();
+                    if (!allocation.UniformBuffer)
+                    {
+                        NORVES_LOG_WARNING("ShadowMapPass",
+                                           "CSMのUBOが足りないためMegaGeometryの描画を省きます");
+                        break;
+                    }
+                    ShadowPerObjectUBO megaUboData = {};
+                    std::memcpy(megaUboData.lightView,
+                                lightViewData[cascadeIndex],
+                                sizeof(megaUboData.lightView));
+                    std::memcpy(megaUboData.lightProjection,
+                                lightProjData[cascadeIndex],
+                                sizeof(megaUboData.lightProjection));
+                    std::memcpy(megaUboData.world, megaCaster.World, sizeof(megaUboData.world));
+                    megaUboData.worldSource[0] = 1.0f;
+                    allocation.UniformBuffer->Update(&megaUboData, sizeof(megaUboData));
+                    // インスタンスは読まないが、レイアウトの束縛を満たすために結ぶ。
+                    allocation.DescriptorSet->BindStorageBuffer(7,
+                                                                context.InstanceDataBuffer,
+                                                                0,
+                                                                instanceDataSize);
+                    allocation.DescriptorSet->Update();
+                    shadowCommands->push_back(
+                        MakeMegaShadowDrawCommand(megaCaster, range, m_ShadowPipeline, allocation.DescriptorSet));
+                    ++megaDrawCounts[cascadeIndex];
+                    megaTriangleCounts[cascadeIndex] += range.IndexCount / 3u;
+                    AppendMegaShadowLevel(cascadeLevels, megaCaster, range);
+                }
+                csmMegaLevels += cascadeLevels;
+            }
+
             context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(
                 m_ShadowRenderPass,
                 m_ShadowFramebuffers[cascadeIndex],
@@ -795,6 +1016,38 @@ namespace NorvesLib::Core::Rendering
                 viewport,
                 scissor,
                 meshes));
+        }
+
+        // カスケードごとに描いたMegaGeometryの数と三角形数を、変わったときだけ記録する。
+        bool bMegaCountsChanged = false;
+        for (uint32_t cascadeIndex = 0; cascadeIndex < PhysicalLightingShadowCascadeCount; ++cascadeIndex)
+        {
+            bMegaCountsChanged = bMegaCountsChanged ||
+                                 megaDrawCounts[cascadeIndex] != m_LoggedCsmMegaDraws[cascadeIndex] ||
+                                 megaTriangleCounts[cascadeIndex] != m_LoggedCsmMegaTriangles[cascadeIndex];
+            m_LoggedCsmMegaDraws[cascadeIndex] = megaDrawCounts[cascadeIndex];
+            m_LoggedCsmMegaTriangles[cascadeIndex] = megaTriangleCounts[cascadeIndex];
+        }
+        if (csmMegaLevels != m_LoggedCsmMegaLevels)
+        {
+            bMegaCountsChanged = true;
+            m_LoggedCsmMegaLevels = csmMegaLevels;
+        }
+        if (bMegaCountsChanged)
+        {
+            NORVES_LOG_INFO("ShadowMapPass",
+                            "CSMへ描くMegaGeometry: csm_mega_casters=%u "
+                            "csm_mega_draws=%u,%u,%u,%u csm_mega_triangles=%u,%u,%u,%u csm_mega_levels=\"%s\"",
+                            static_cast<uint32_t>(megaCasters.size()),
+                            megaDrawCounts[0],
+                            megaDrawCounts[1],
+                            megaDrawCounts[2],
+                            megaDrawCounts[3],
+                            megaTriangleCounts[0],
+                            megaTriangleCounts[1],
+                            megaTriangleCounts[2],
+                            megaTriangleCounts[3],
+                            csmMegaLevels.empty() ? "" : csmMegaLevels.c_str());
         }
 
         ExecutePointShadows(context);
@@ -1068,34 +1321,9 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // MegaGeometry（岩・小屋など）はGBufferではクラスタ単位でGPUが選ぶが、キューブへはLOD0をそのまま描く。
-        // 行列はMegaGeometryPassと同じくプロキシの行列をそのままシェーダーへ渡す。
-        Container::VariableArray<PointShadowMegaCaster> megaCasters;
-        if (context.SnapshotMegaGeometryProxies && context.Resources.MegaGeometry &&
-            context.InstanceDataBuffer && instanceDataSize > 0)
-        {
-            for (const MegaGeometryProxy& proxy : *context.SnapshotMegaGeometryProxies)
-            {
-                if (!proxy.IsValid() || !proxy.bCastShadow)
-                {
-                    continue;
-                }
-                const MegaGeometry::MegaMeshGPUData* gpuData =
-                    context.Resources.MegaGeometry->GetMegaMeshGPUData(proxy.MegaMeshHandle);
-                if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
-                    gpuData->ShadowIndexCount == 0u)
-                {
-                    continue;
-                }
-                PointShadowMegaCaster caster;
-                caster.VertexBuffer = gpuData->VertexBuffer;
-                caster.IndexBuffer = gpuData->IndexBuffer;
-                caster.IndexCount = gpuData->ShadowIndexCount;
-                std::memcpy(caster.World, &proxy.WorldTransform, sizeof(caster.World));
-                caster.Bounds = TransformMegaBounds(gpuData->TotalBounds, caster.World);
-                megaCasters.push_back(caster);
-            }
-        }
+        // MegaGeometry（岩・小屋など）はCSMと同じ集め方で、境界球がかかる面へだけ、光源からの距離のテクセルに見合う段を描く。
+        Container::VariableArray<MegaShadowCaster> megaCasters;
+        CollectMegaShadowCasters(context, instanceDataSize, megaCasters);
 
         RHI::Viewport viewport;
         viewport.x = 0.0f;
@@ -1110,6 +1338,9 @@ namespace NorvesLib::Core::Rendering
         scissor.top = 0;
         scissor.right = static_cast<int32_t>(m_Settings.PointShadowResolution);
         scissor.bottom = static_cast<int32_t>(m_Settings.PointShadowResolution);
+
+        // 面ごとに描いたMegaGeometryの段（「l灯f面=メッシュ名:段/三角形数,...」）
+        Container::String pointMegaLevels;
 
         // 使わないキューブの面も消去だけ行い、配列の全層を読める状態にする。
         for (uint32_t cubeIndex = 0; cubeIndex < PointShadowMaxLights; ++cubeIndex)
@@ -1195,12 +1426,25 @@ namespace NorvesLib::Core::Rendering
                     }
 
                     uint32_t megaDrawCount = 0;
-                    for (const PointShadowMegaCaster& megaCaster : megaCasters)
+                    Container::String faceLevels;
+                    for (const MegaShadowCaster& megaCaster : megaCasters)
                     {
-                        if (!PointShadowCasterIntersectsLight(megaCaster.Bounds, *light))
+                        if (!PointShadowCasterIntersectsLight(megaCaster.Bounds, *light) ||
+                            !PointShadowFaceMayContainSphere(*light, faceIndex, megaCaster.Bounds))
                         {
                             continue;
                         }
+                        // 90°の面では、光源から距離 d の所の1テクセルは 2d/解像度。物の最も近い所で測る。
+                        const float dx = megaCaster.Bounds.CenterX - light->Position.x;
+                        const float dy = megaCaster.Bounds.CenterY - light->Position.y;
+                        const float dz = megaCaster.Bounds.CenterZ - light->Position.z;
+                        const float nearestDistance =
+                            std::sqrt(dx * dx + dy * dy + dz * dz) - megaCaster.Bounds.Radius;
+                        const float texelSize = nearestDistance > 0.0f
+                                                    ? 2.0f * nearestDistance /
+                                                          static_cast<float>(m_Settings.PointShadowResolution)
+                                                    : 0.0f;
+                        const MegaShadowRange range = ResolveMegaShadowRange(megaCaster, texelSize);
                         if (megaDrawCount >= PointShadowMaxMegaDrawsPerFace)
                         {
                             NORVES_LOG_WARNING("ShadowMapPass",
@@ -1225,22 +1469,22 @@ namespace NorvesLib::Core::Rendering
                                                                     0,
                                                                     instanceDataSize);
                         allocation.DescriptorSet->Update();
-
-                        DrawCommand megaCommand;
-                        megaCommand.Type = DrawCommandType::DrawIndexed;
-                        megaCommand.Pipeline = m_PointShadowPipeline;
-                        megaCommand.DescriptorSet = allocation.DescriptorSet;
-                        megaCommand.DescriptorSetSlot = 0;
-                        megaCommand.Draw.PayloadKind = DrawPayloadKind::Mesh2D;
-                        megaCommand.Draw.bCastShadow = true;
-                        megaCommand.Mesh2D.VertexBuffer = megaCaster.VertexBuffer;
-                        megaCommand.Mesh2D.IndexBuffer = megaCaster.IndexBuffer;
-                        megaCommand.Mesh2D.IndexCount = megaCaster.IndexCount;
-                        megaCommand.Mesh2D.IndexOffset = 0;
-                        megaCommand.Mesh2D.VertexOffset = 0;
-                        megaCommand.Mesh2D.IndexType = RHI::IndexType::Uint32;
-                        faceCommands->push_back(megaCommand);
+                        faceCommands->push_back(MakeMegaShadowDrawCommand(
+                            megaCaster, range, m_PointShadowPipeline, allocation.DescriptorSet));
                         ++megaDrawCount;
+                        AppendMegaShadowLevel(faceLevels, megaCaster, range);
+                    }
+                    if (!megaCasters.empty())
+                    {
+                        char faceLabel[32] = {};
+                        std::snprintf(faceLabel,
+                                      sizeof(faceLabel),
+                                      "%sl%uf%u=",
+                                      pointMegaLevels.empty() ? "" : " ",
+                                      cubeIndex,
+                                      faceIndex);
+                        pointMegaLevels += faceLabel;
+                        pointMegaLevels += faceLevels;
                     }
                 }
 
@@ -1252,6 +1496,14 @@ namespace NorvesLib::Core::Rendering
                     scissor,
                     meshes));
             }
+        }
+
+        if (pointMegaLevels != m_LoggedPointMegaLevels)
+        {
+            m_LoggedPointMegaLevels = pointMegaLevels;
+            NORVES_LOG_INFO("ShadowMapPass",
+                            "点光源のキューブへ描くMegaGeometry: point_mega_levels=\"%s\"",
+                            pointMegaLevels.empty() ? "" : pointMegaLevels.c_str());
         }
     }
 

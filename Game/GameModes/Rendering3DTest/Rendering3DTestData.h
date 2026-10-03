@@ -11,9 +11,11 @@
 #include "Core/Public/Rendering/MaterialTypes.h"
 #include "Core/Public/Rendering/SkyAtmosphere.h"
 #include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
+#include "Core/Public/Rendering/MegaGeometry/ProceduralMegaSphere.h"
 #include "Core/Public/Rendering/RenderTypes.h"
 #include "Core/Public/Thread/Atomic.h"
 #include "Core/Public/Thread/Mutex.h"
+#include "Core/Public/Thread/Task.h"
 #include "Core/Public/Particle/ParticleSystem.h"
 #include "GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
@@ -95,6 +97,13 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::MaterialHandle m_LightSphereMaterial; // 光源球体マテリアル
         // 非同期ロード用：マテリアル更新ペンディングリスト
         VariableArray<TSharedPtr<PendingMaterialUpdate>> m_PendingMaterialUpdates;
+        // 石畳の材質の読み込み状態（大きな球のMegaGeometryは、テクスチャがそろってから作る）
+        TSharedPtr<PendingMaterialUpdate> m_CobbleStoneMaterialUpdate;
+        // 大きな球の高ポリのMegaGeometry（起動時に作った頂点・クラスタ。MegaMeshを作ったら手放す）
+        TSharedPtr<NorvesLib::Core::Rendering::MegaGeometry::ProceduralMegaSphereData> m_pBigSphereMegaData;
+        // 大きな球の頂点・変位を別スレッドで作るジョブ（完了するまで m_pBigSphereMegaData の中身を読まない）
+        NorvesLib::Thread::TaskPtr m_BigSphereBuildTask;
+        NorvesLib::Core::Rendering::ModelHandle m_BigSphereModelHandle;
 
         // Entity参照（Worldが所有）
         NorvesLib::Core::Entity *m_pSphereObject = nullptr;
@@ -116,6 +125,7 @@ namespace Game::GameModes
         VariableArray<NorvesLib::Core::Component::BillboardComponent *> m_F9BillboardComponents;
         VariableArray<NorvesLib::Core::Component::ImpostorComponent *> m_F11ImpostorComponents;
         NorvesLib::Core::Component::MegaGeometryComponent *m_pBoulderMegaGeometryComponent = nullptr;
+        NorvesLib::Core::Component::MegaGeometryComponent *m_pSphereMegaGeometryComponent = nullptr;
 
         // LightComponent参照（Entityが所有）
         NorvesLib::Core::Component::PointLightComponent *m_pPointLightComponent = nullptr;

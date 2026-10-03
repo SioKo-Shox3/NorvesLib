@@ -232,33 +232,129 @@ namespace NorvesLib::Core::Rendering
         gpuData.IndexCount = uploadIndexCount;
         gpuData.ClusterCount = static_cast<uint32_t>(uploadClusters->size());
         gpuData.TotalBounds = uploadTotalBounds;
+        gpuData.LODBounds = createInfo.LODBounds.IsValid() ? createInfo.LODBounds : BoundingSphere{};
         gpuData.Material = canonicalMaterial;
         gpuData.DebugName = createInfo.DebugName;
-        // LOD0のクラスタは統合インデックスの先頭に並ぶ。頂点の基点が全て0で先頭から隙間なく
-        // 並んでいれば、その範囲を1回の描画で描ける（点光源の影で使う）。
-        uint64_t lod0IndexCount = 0;
-        uint64_t lod0IndexSum = 0;
-        bool bLod0DrawableAsOneRange = true;
+        // 影とレイトレーシングに使う段（既定はLOD0）のクラスタが、頂点の基点が全て0で統合インデックスの
+        // 中に隙間なく並んでいれば、その範囲を1回の描画で描ける（CSM・点光源の影・光線で使う）。
+        const uint32_t shadowLODLevel = createInfo.ShadowLODLevel;
+        uint64_t shadowIndexBegin = UINT64_MAX;
+        uint64_t shadowIndexEnd = 0;
+        uint64_t shadowIndexSum = 0;
+        bool bShadowLevelDrawableAsOneRange = true;
         for (const auto &cluster : *uploadClusters)
         {
-            if (cluster.LODLevel != 0u)
+            if (cluster.LODLevel != shadowLODLevel)
             {
                 continue;
             }
             if (cluster.VertexOffset != 0)
             {
-                bLod0DrawableAsOneRange = false;
+                bShadowLevelDrawableAsOneRange = false;
                 break;
             }
-            lod0IndexCount = std::max<uint64_t>(lod0IndexCount,
+            shadowIndexBegin = std::min<uint64_t>(shadowIndexBegin, cluster.IndexOffset);
+            shadowIndexEnd = std::max<uint64_t>(shadowIndexEnd,
                                                 static_cast<uint64_t>(cluster.IndexOffset) + cluster.IndexCount);
-            lod0IndexSum += cluster.IndexCount;
+            shadowIndexSum += cluster.IndexCount;
         }
+        const bool bShadowRangeValid = bShadowLevelDrawableAsOneRange && shadowIndexEnd > 0u &&
+                                       shadowIndexBegin < shadowIndexEnd &&
+                                       shadowIndexEnd - shadowIndexBegin == shadowIndexSum &&
+                                       shadowIndexEnd <= uploadIndexCount;
+        gpuData.ShadowFirstIndex = bShadowRangeValid ? static_cast<uint32_t>(shadowIndexBegin) : 0u;
         gpuData.ShadowIndexCount =
-            bLod0DrawableAsOneRange && lod0IndexCount > 0u && lod0IndexCount == lod0IndexSum &&
-                    lod0IndexCount <= uploadIndexCount
-                ? static_cast<uint32_t>(lod0IndexCount)
-                : 0u;
+            bShadowRangeValid ? static_cast<uint32_t>(shadowIndexEnd - shadowIndexBegin) : 0u;
+        gpuData.ShadowLODLevel = shadowLODLevel;
+
+        // 段ごとの範囲と誤差（影へカスケード・光源からの距離に見合う段を選ぶため）。段の範囲の決め方は
+        // 影の段と同じで、1回の範囲で描けない段は IndexCount を0にする。
+        {
+            uint32_t maxLevel = 0;
+            for (const auto &cluster : *uploadClusters)
+            {
+                maxLevel = std::max(maxLevel, cluster.LODLevel);
+            }
+            struct LevelAccumulator
+            {
+                uint64_t Begin = UINT64_MAX;
+                uint64_t End = 0;
+                uint64_t Sum = 0;
+                bool bDrawableAsOneRange = true;
+            };
+            Container::VariableArray<LevelAccumulator> accumulators(static_cast<size_t>(maxLevel) + 1u);
+            gpuData.LevelRanges.resize(static_cast<size_t>(maxLevel) + 1u);
+            for (const auto &cluster : *uploadClusters)
+            {
+                LevelAccumulator &accumulator = accumulators[cluster.LODLevel];
+                MegaGeometry::MegaMeshLevelRange &range = gpuData.LevelRanges[cluster.LODLevel];
+                range.Error = std::max(range.Error, cluster.LODError);
+                if (cluster.VertexOffset != 0)
+                {
+                    accumulator.bDrawableAsOneRange = false;
+                    continue;
+                }
+                accumulator.Begin = std::min<uint64_t>(accumulator.Begin, cluster.IndexOffset);
+                accumulator.End = std::max<uint64_t>(accumulator.End,
+                                                     static_cast<uint64_t>(cluster.IndexOffset) + cluster.IndexCount);
+                accumulator.Sum += cluster.IndexCount;
+            }
+            for (size_t level = 0; level < accumulators.size(); ++level)
+            {
+                const LevelAccumulator &accumulator = accumulators[level];
+                MegaGeometry::MegaMeshLevelRange &range = gpuData.LevelRanges[level];
+                const bool bValid = accumulator.bDrawableAsOneRange && accumulator.End > 0u &&
+                                    accumulator.Begin < accumulator.End &&
+                                    accumulator.End - accumulator.Begin == accumulator.Sum &&
+                                    accumulator.End <= uploadIndexCount;
+                range.FirstIndex = bValid ? static_cast<uint32_t>(accumulator.Begin) : 0u;
+                range.IndexCount = bValid ? static_cast<uint32_t>(accumulator.End - accumulator.Begin) : 0u;
+            }
+        }
+
+        // クラスタの大きさ（1クラスタあたりの三角形数）を段ごとに記録する。極端に小さいと
+        // カリングと間接描画の1件あたりの手間に対して描く量が少なくなる。
+        {
+            uint32_t maxLevel = 0;
+            for (const auto &cluster : *uploadClusters)
+            {
+                maxLevel = std::max(maxLevel, cluster.LODLevel);
+            }
+            uint64_t lod0Clusters = 0;
+            uint64_t lod0Triangles = 0;
+            uint64_t lod0SmallClusters = 0;
+            uint64_t allTriangles = 0;
+            for (const auto &cluster : *uploadClusters)
+            {
+                const uint64_t triangles = cluster.IndexCount / 3u;
+                allTriangles += triangles;
+                if (cluster.LODLevel == 0u)
+                {
+                    ++lod0Clusters;
+                    lod0Triangles += triangles;
+                    if (triangles < 16u)
+                    {
+                        ++lod0SmallClusters;
+                    }
+                }
+            }
+            NORVES_LOG_INFO("MegaGeometryResources",
+                            "stage=megamesh_cluster_stats debug_name=\"%s\" lod_levels=%u clusters=%u triangles=%llu "
+                            "lod0_clusters=%llu lod0_triangles=%llu lod0_avg_triangles_per_cluster=%.2f "
+                            "lod0_clusters_under16=%llu shadow_lod=%u shadow_triangles=%u uniform_lod=%d",
+                            createInfo.DebugName.c_str(),
+                            maxLevel + 1u,
+                            static_cast<uint32_t>(uploadClusters->size()),
+                            static_cast<unsigned long long>(allTriangles),
+                            static_cast<unsigned long long>(lod0Clusters),
+                            static_cast<unsigned long long>(lod0Triangles),
+                            lod0Clusters > 0u ? static_cast<double>(lod0Triangles) / static_cast<double>(lod0Clusters)
+                                              : 0.0,
+                            static_cast<unsigned long long>(lod0SmallClusters),
+                            shadowLODLevel,
+                            gpuData.ShadowIndexCount / 3u,
+                            gpuData.LODBounds.IsValid() ? 1 : 0);
+        }
 
         {
             Thread::ScopedLock lock(m_Mutex);

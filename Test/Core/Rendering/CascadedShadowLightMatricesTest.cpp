@@ -436,6 +436,158 @@ namespace
         Expect(ResultIsFinite(withSun), "sky sun CSM result is finite");
     }
 
+    // カスケードごとにキャスターを省く判定は、影の地図のXYにかかる物を省かない（省くと影が欠ける）。
+    // 光源側へ遠く離れた物は深度範囲で拾うので省かず、横に外れた物だけを省く。
+    void TestCascadeCasterCullingKeepsCastersInsideShadowMap()
+    {
+        CoreContainer::VariableArray<LightProxy> lights;
+        lights.push_back(MakeDirectionalLight(SkySunLightId, 0.35f, -0.8f, 0.25f));
+        const CameraProxy camera = MakePerspectiveCamera();
+        const CascadedShadowMatrixResult result = BuildCascadedShadowLightMatrices(
+            &lights, camera, MakeDefaultCascadedShadowMatrixSettings());
+        Expect(result.bEnabled, "キャスターを省く検査のカメラでCSMが作られる");
+        if (!result.bEnabled)
+        {
+            return;
+        }
+
+        for (const CascadedShadowCascade& cascade : result.Cascades)
+        {
+            const NorvesLib::Math::Vector3 center = cascade.SnappedCenter;
+            Expect(CascadedShadowCascadeMayContainCaster(
+                       cascade, BoundingSphere{center.x, center.y, center.z, 0.5f}),
+                   "カスケードの中心にあるキャスターは省かない");
+
+            // 影の地図の隅（NDCで±0.99）にかかる小さな物も省かない。
+            const NorvesLib::Math::Matrix4x4 inverseViewProjection =
+                NorvesLib::Math::MatrixUtils::Inverse(cascade.Projection * cascade.View);
+            const NorvesLib::Math::Vector4 cornerClip =
+                inverseViewProjection * NorvesLib::Math::Vector4(0.99f, -0.99f, 0.5f, 1.0f);
+            const NorvesLib::Math::Vector3 corner(cornerClip.x / cornerClip.w,
+                                                  cornerClip.y / cornerClip.w,
+                                                  cornerClip.z / cornerClip.w);
+            Expect(CascadedShadowCascadeMayContainCaster(
+                       cascade, BoundingSphere{corner.x, corner.y, corner.z, 0.01f}),
+                   "影の地図の隅にかかるキャスターは省かない");
+
+            const NorvesLib::Math::Vector3 towardLight = center - cascade.Direction * 500.0f;
+            Expect(CascadedShadowCascadeMayContainCaster(
+                       cascade, BoundingSphere{towardLight.x, towardLight.y, towardLight.z, 0.5f}),
+                   "カスケードの上を光源側へ遠く離れたキャスターは省かない");
+
+            const NorvesLib::Math::Vector3 side = NorvesLib::Math::VectorUtils::Normalize(
+                NorvesLib::Math::VectorUtils::Cross(cascade.Direction,
+                                                    NorvesLib::Math::Vector3(0.0f, 0.0f, 1.0f)));
+            const NorvesLib::Math::Vector3 outside = center + side * (cascade.Radius * 1.5f + 2.0f);
+            Expect(!CascadedShadowCascadeMayContainCaster(
+                       cascade, BoundingSphere{outside.x, outside.y, outside.z, 0.5f}),
+                   "カスケードの正方形の横に外れたキャスターは省く");
+            Expect(CascadedShadowCascadeMayContainCaster(
+                       cascade, BoundingSphere{outside.x, outside.y, outside.z, cascade.Radius + 2.0f}),
+                   "カスケードまで届く大きなキャスターは省かない");
+        }
+
+        CascadedShadowCascade disabled = result.Cascades[0];
+        disabled.bEnabled = false;
+        Expect(!CascadedShadowCascadeMayContainCaster(disabled, BoundingSphere{0.0f, 0.0f, 0.0f, 1.0f}),
+               "無効なカスケードにはキャスターを描かない");
+        Expect(!CascadedShadowCascadeMayContainCaster(
+                   result.Cascades[0],
+                   BoundingSphere{std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f, 1.0f}),
+               "有限でない境界球のキャスターは描かない");
+    }
+
+    // 深度範囲は描く物と同じ判定で作る。影の地図のXYにかからないキャスターは描かれないので、
+    // 光源側へ遠くても深度範囲を変えない。XYにかかるキャスターは光源側の深度範囲を広げる。
+    void TestCasterOutsideShadowMapDoesNotChangeDepthRange()
+    {
+        CoreContainer::VariableArray<LightProxy> lights;
+        lights.push_back(MakeDirectionalLight(SkySunLightId, 0.35f, -0.8f, 0.25f));
+        const CameraProxy camera = MakePerspectiveCamera();
+        const CascadedShadowMatrixSettings settings = MakeDefaultCascadedShadowMatrixSettings();
+        const CascadedShadowMatrixResult baseline =
+            BuildCascadedShadowLightMatrices(&lights, camera, settings);
+        Expect(baseline.bEnabled, "深度範囲の検査のカメラでCSMが作られる");
+        if (!baseline.bEnabled)
+        {
+            return;
+        }
+
+        uint32_t culledCascadeCount = 0u;
+        for (uint32_t cascadeIndex = 0u; cascadeIndex < CSM_CASCADE_COUNT; ++cascadeIndex)
+        {
+            const CascadedShadowCascade& cascade = baseline.Cascades[cascadeIndex];
+            const NorvesLib::Math::Vector3 side = NorvesLib::Math::VectorUtils::Normalize(
+                NorvesLib::Math::VectorUtils::Cross(cascade.Direction,
+                                                    NorvesLib::Math::Vector3(0.0f, 0.0f, 1.0f)));
+
+            // 横に外れ、光源側へ1000離れたキャスター。深度範囲に入れると近い面が大きく動く。
+            const NorvesLib::Math::Vector3 outsideCenter =
+                cascade.SnappedCenter + side * (cascade.Radius * 1.5f + 2.0f) -
+                cascade.Direction * 1000.0f;
+            const BoundingSphere outside{outsideCenter.x, outsideCenter.y, outsideCenter.z, 1.0f};
+            Expect(!CascadedShadowCascadeMayContainCaster(cascade, outside),
+                   "横に外れたキャスターはこのカスケードに描かれない");
+
+            CoreContainer::VariableArray<BoundingSphere> outsideBounds;
+            outsideBounds.push_back(outside);
+            const CascadedShadowMatrixResult withOutside =
+                BuildCascadedShadowLightMatrices(&lights, camera, settings, &outsideBounds);
+            Expect(withOutside.bEnabled, "横に外れたキャスターがあってもCSMが作られる");
+            if (!withOutside.bEnabled)
+            {
+                continue;
+            }
+
+            for (uint32_t otherIndex = 0u; otherIndex < CSM_CASCADE_COUNT; ++otherIndex)
+            {
+                const CascadedShadowCascade& base = baseline.Cascades[otherIndex];
+                const CascadedShadowCascade& actual = withOutside.Cascades[otherIndex];
+                if (CascadedShadowCascadeMayContainCaster(base, outside))
+                {
+                    continue;
+                }
+
+                ++culledCascadeCount;
+                Expect(NearlyEqual(actual.NearDepth, base.NearDepth) &&
+                           NearlyEqual(actual.FarDepth, base.FarDepth),
+                       "描かないキャスターはカスケードの深度範囲を変えない");
+                Expect(MatrixNearlyEqual(actual.View, base.View) &&
+                           MatrixNearlyEqual(actual.Projection, base.Projection),
+                       "描かないキャスターはカスケードの行列を変えない");
+            }
+
+            // 同じ距離だけ光源側にあり、XYにかかるキャスターは深度範囲を広げる。
+            const NorvesLib::Math::Vector3 insideCenter =
+                cascade.SnappedCenter - cascade.Direction * 1000.0f;
+            const BoundingSphere inside{insideCenter.x, insideCenter.y, insideCenter.z, 1.0f};
+            Expect(CascadedShadowCascadeMayContainCaster(cascade, inside),
+                   "光源側の真上のキャスターはこのカスケードに描かれる");
+            CoreContainer::VariableArray<BoundingSphere> insideBounds;
+            insideBounds.push_back(inside);
+            const CascadedShadowMatrixResult withInside =
+                BuildCascadedShadowLightMatrices(&lights, camera, settings, &insideBounds);
+            Expect(withInside.bEnabled, "光源側のキャスターがあってもCSMが作られる");
+            if (withInside.bEnabled)
+            {
+                // 光源からの奥行きで、変更前の範囲には入らず、広げた範囲には入ることを確かめる。
+                const CascadedShadowCascade& actual = withInside.Cascades[cascadeIndex];
+                const float baseDepth = NorvesLib::Math::VectorUtils::Dot(
+                    insideCenter - cascade.LightPosition, cascade.Direction);
+                const float actualDepth = NorvesLib::Math::VectorUtils::Dot(
+                    insideCenter - actual.LightPosition, actual.Direction);
+                Expect(baseDepth - inside.Radius < cascade.NearDepth,
+                       "光源側のキャスターはキャスター無しの深度範囲の外にある");
+                Expect(actualDepth - inside.Radius >= actual.NearDepth - 1.0e-3f &&
+                           actualDepth + inside.Radius <= actual.FarDepth + 1.0e-3f,
+                       "描くキャスターは光源側の深度範囲に含まれる");
+            }
+        }
+
+        Expect(culledCascadeCount >= CSM_CASCADE_COUNT,
+               "横に外れたキャスターを省くカスケードを検査した");
+    }
+
     void TestSubtexelCameraMotionKeepsSnappedMatrices()
     {
         CoreContainer::VariableArray<LightProxy> lights;
@@ -480,6 +632,8 @@ int main()
     TestInvalidInputsFallBackToShadowOff();
     TestSkySunDrivesCsmBesideSceneDirectionalLight();
     TestEachCascadeCoversItsCameraSlice();
+    TestCascadeCasterCullingKeepsCastersInsideShadowMap();
+    TestCasterOutsideShadowMapDoesNotChangeDepthRange();
     TestSubtexelCameraMotionKeepsSnappedMatrices();
 
     if (g_FailureCount != 0)

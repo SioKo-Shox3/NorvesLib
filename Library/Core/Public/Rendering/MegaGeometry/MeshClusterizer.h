@@ -15,8 +15,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      * 各クラスタは MAX_TRIANGLES_PER_CLUSTER 三角形以下で構成されます。
      *
      * アルゴリズム:
-     * 1. 三角形の隣接関係グラフを構築
-     * 2. 貪欲法（Greedy Growing）で空間局所性を維持したクラスタを生成
+     * 1. 三角形の隣接関係グラフを構築（頂点の番号ではなく位置で辺をつなぐため、
+     *    UVの継ぎ目・法線の分かれ目で複製された頂点の両側の三角形も隣接になる）
+     * 2. 貪欲法（Greedy Growing）で空間局所性を維持したクラスタを生成。隣接が尽きたら、
+     *    クラスタの重心の平均に最も近い未割り当ての三角形から成長を続ける（離れた部品も同じクラスタにまとめる）
      * 3. 各クラスタのバウンディングスフィアと法線コーンを計算
      */
     class MeshClusterizer
@@ -87,8 +89,12 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
         /**
          * @brief 三角形の隣接グラフを構築
+         *
+         * 同じ位置の頂点を1つの頂点として扱い、位置の対が一致する辺を共有する三角形を隣接とする。
          */
         static TriangleAdjacency BuildAdjacencyGraph(
+            const void *vertexPositions,
+            uint32_t vertexStride,
             const uint32_t *indexData,
             uint32_t triangleCount,
             uint32_t vertexCount);
