@@ -1,4 +1,5 @@
 #include "MeshCooker.h"
+#include "ImportCliOptions.h"
 #include "AudioCooker.h"
 #include "TextureCooker.h"
 
@@ -65,6 +66,7 @@ namespace
         std::filesystem::path InputPath;
         std::filesystem::path PackagePath;
         std::filesystem::path ManifestPath;
+        NorvesLib::Core::AssetImport::ImportSettingsFileOptions ImportSettings;
         std::string LogicalPath;
         std::string Kind;
         std::string EntryName;
@@ -1554,6 +1556,18 @@ namespace
 
         for (int index = 1; index < argc; ++index)
         {
+            const char* importError = nullptr;
+            const auto importArgument = NorvesLib::Tools::AssetCook::ParseImportArgument(
+                argc, argv, index, outOptions.ImportSettings, importError);
+            if (importArgument == NorvesLib::Tools::AssetCook::ImportArgumentResult::Rejected)
+            {
+                error = importError;
+                return false;
+            }
+            if (importArgument == NorvesLib::Tools::AssetCook::ImportArgumentResult::Accepted)
+            {
+                continue;
+            }
             std::string argument = argv[index];
             std::string value;
             const size_t equals = argument.find('=');
@@ -1666,6 +1680,12 @@ namespace
             return false;
         }
 
+        if (outOptions.Kind != "model" && NorvesLib::Tools::AssetCook::HasImportArguments(outOptions.ImportSettings))
+        {
+            error = "import settings options require --kind model";
+            return false;
+        }
+
         if (outOptions.Kind == "raw")
         {
             if (outOptions.Format != "raw.v0")
@@ -1752,7 +1772,8 @@ namespace
             << "--variant default\n"
             << "       AssetCook --input <audio.wav> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind audio --entry <entry.nvaud> --entry-type Aud0 "
-            << "--format nvaud.v0.pcm16 --variant default\n";
+            << "--format nvaud.v0.pcm16 --variant default\n"
+            << "Model import: [--import-settings <file>] [--require-sidecar] OR [--no-sidecar]\n";
     }
 
     bool CookRawAsset(const CookOptions &options, std::string &error)
@@ -2265,7 +2286,8 @@ namespace
                                                            inputPath.generic_string(),
                                                            logicalPath,
                                                            meshResult,
-                                                           meshError))
+                                                           meshError,
+                                                           &options.ImportSettings))
         {
             error = ToStdString(meshError);
             return false;
@@ -2416,7 +2438,8 @@ namespace
                                                            format,
                                                            sourcePath,
                                                            skeletalResult,
-                                                           skeletalError))
+                                                           skeletalError,
+                                                           &options.ImportSettings))
         {
             error.assign(skeletalError.data(), skeletalError.size());
             return false;

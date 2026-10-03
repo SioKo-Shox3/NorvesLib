@@ -1951,3 +1951,21 @@
 - verify: 有効sidecarをpackage/manifest出力先にしたCLI回帰で失敗と既存設定bytes保持を登録し、通常出力を妨げないことを確認する。
 - stop-when: 設定正本を出力で上書きする、途中書込後にaliasを判定する、TOCTOU完全防御と主張する。
 - notes: 静的接続で追加された新規入力sidecarの保護。通常出力pathの既存挙動は維持する。
+
+## G2-GR78-CLI-SETTINGS: CLIの設定選択を共有loaderへ接続する
+- status: done
+- done-when: --import-settings/--no-sidecar/--require-sidecarをstatic/skeletalへ渡し、相互排他/重複/空値/非model用途を明示拒否する。明示設定が自動探索より優先し、無効化は読込を省略する。
+- verify: 実option parserの引数/値/順序/失敗保持とCLI設定優先順位/拒否/設定保護を登録する。
+- stop-when: 未実装skip/inspectの受理、既存必須引数の緩和、native未実行をCLI成功扱い。
+
+## G2-GR78-CLI-SKIP: 未変更modelのcookを入力hashで省略する
+- status: todo
+- done-when: cook前に元入力/buffers/設定のhashを計算し、同じmanifest keyのsource_hash・要求format/entry/output先と実packageのcooked_hashを検証した場合だけskipped終了する。派生画像packageも欠損/破損なら省略しない。
+- verify: preflight hashとcook hash一致、設定編集/無変更/meta変更、出力欠損/破損/要求先変更/画像欠損の回帰を登録する。
+- stop-when: 本cookを実行してからskip扱い、hash一致だけでpackage実体未検査、GR96一括依存追跡への拡大。
+
+## G2-GR78-CLI-INSPECT: cookしないmodel診断を追加する
+- status: todo
+- done-when: --inspect <file>でbounds/軸長/頂点三角形数/位置溶接と成分/ゼロ法線/画像寸法・チャンネル統計/材質係数と設定叩き台を診断し、前方向の符号を勝手に決めない。
+- verify: 小型既知fixtureの幾何/画像/材質値、無出力cookと入力非変更を確認する。本人実物は入手後に別受入れ。
+- stop-when: 診断のためpackage生成/既存sidecar上書き、未知方向を確定として出す、未入手実物を合格扱い。

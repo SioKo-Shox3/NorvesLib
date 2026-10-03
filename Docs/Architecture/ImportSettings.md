@@ -1,7 +1,7 @@
 # 取り込み設定 v1
 
 GR78のソース隣設定は <source>.import.json（例: Dog.glb.import.json）を正本とし、cook/looseで共用する。
-値・JSON解析・設定file選択/読込・正規化hash・下記のgeometry変換を共有し、静的glTF/GLBのAssetCookとlooseロードへ接続する。骨格には下記の一様scale/fitを適用する。CLIの明示指定/skip/inspectは後続。
+値・JSON解析・設定file選択/読込・正規化hash・下記のgeometry変換を共有し、静的glTF/GLBのAssetCookとlooseロードへ接続する。骨格には下記の一様scale/fitを適用する。CLIの明示指定/require/disabledを共有loaderへ接続し、skip/inspectは後続。
 
 ## 共通の配置と責務
 
@@ -127,7 +127,7 @@ sidecar無しまたはdisabledは変換を一切呼ばず、旧geometryとsource
 
 CookGltfToNvmeshとprivate CPU staging入口の末尾optional optionsでoverride/disabled/requiredを渡せる。
 通常GLTFAnalyzerのsync/asyncは自動探索を使う。これらは同期呼出中にだけoptionsを借用し保持しない。
-CLIの新規フラグはまだ追加していないが、既存の静的モデルcookは自動sidecarを読む。
+既存の静的モデルcookは自動sidecarを読み、下記のCLI設定選択で上書き/必須化/無効化できる。
 cooker結果は採用path/present/settings hashを所有し、Mainはsidecar診断を出す。looseはgltf_import_settingsへ同じ情報を記録する。
 
 新しいmodel source_hashは元source/外部bufferの旧FNV stateに設定を連結する。
@@ -201,3 +201,13 @@ fit（mesh-node scaleありを含む）、不変field、拒否時出力保持を
 実SkeletalAnimationSamplerとSkinVertexで3時刻の変形結果がs倍・法線不変になる検査も登録した。
 CLI smokeには設定正本をpackage/manifestで上書きしない拒否と通常cookを追加した。
 共有primitiveは通常・最適化・sanitizerで実行成功、MEMBERではcompile成功。実decoder/pose/CLI/nativeはWindows.h等により未実行。
+
+## CLIの設定選択
+
+- model cookの `--import-settings <file>` / `--import-settings=<file>` は、source隣の自動探索より優先する。相対pathはCLIの作業directory基準。
+- `--require-sidecar` は採用設定の存在を必須にする。明示overrideとの併用は可能。
+- `--no-sidecar` は設定fileを一切読まず、従来のbytes/hashを使用する。override/requireとは相互排他。
+- 重複指定、空path、値付きboolean flag、model以外のkindでは拒否する。static/skeletalとも同じ共有loaderへ渡す。
+- 明示overrideもpackage/manifest/派生textureの出力alias保護対象。`--skip-if-unchanged` / `--inspect` はまだ未実装で、未知引数として拒否する。
+
+ImportCliOptionsTestは共有の実引数parserを独立実行する。AssetCookImportSmokeはGLBの設定優先順位、disabledのbytes/hash回帰、失敗時出力保持と明示設定の上書き拒否をnative CLIで確認する登録であり、Windows依存環境での実行は別途必要。

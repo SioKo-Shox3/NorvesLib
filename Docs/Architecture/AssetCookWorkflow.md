@@ -170,3 +170,10 @@ The runner treats missing logs/markers, skips, timeouts, nonzero exits, contract
 failures, or a non-shorter cooked median as failures and retains the evidence.
 
 Generated packages, manifests, and smoke logs are build outputs. Keep them under `build/` or other ignored output locations and do not commit them.
+
+## モデルの取込設定（GR78）
+
+source隣の `<source>.import.json` をstatic/skeletalのcookとlooseで共有します。
+設定の意味・骨格での制約・hashの互換性は [ImportSettings.md](ImportSettings.md) を参照してください。
+CLIでは `--import-settings <file>` で正本を指定し、`--require-sidecar` で不在を検出、
+`--no-sidecar` で従来の無設定経路を選べます。無効化と前二つは同時指定できません。

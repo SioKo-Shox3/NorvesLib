@@ -298,6 +298,32 @@ if(NOT import_result EQUAL 0 OR NOT import_settings_before STREQUAL import_setti
     message(FATAL_ERROR "normal skeletal sidecar cook failed: ${import_error}")
 endif()
 
+# 骨格CLIへも明示設定/無効化/必須を渡す。出力は専用の別名にする。
+set(EXPLICIT_IMPORT "${SMOKE_DIR}/Source/explicit-import.json")
+file(WRITE "${EXPLICIT_IMPORT}" "{\"version\":1,\"units\":{\"scale\":3}}")
+file(WRITE "${IMPORT_SIDECAR}" "invalid json")
+foreach(mode IN ITEMS explicit disabled)
+    if(mode STREQUAL "explicit")
+        set(import_flags --import-settings "${EXPLICIT_IMPORT}" --require-sidecar)
+    else()
+        set(import_flags --no-sidecar)
+    endif()
+    execute_process(COMMAND "${ASSET_COOK_EXE}"
+        --input "${SOURCE_GLTF}" --out "${SMOKE_DIR}/RuntimeRoot/Cooked/${mode}.nvpkg"
+        --manifest "${SMOKE_DIR}/RuntimeRoot/${mode}.json" --logical "${LOGICAL_PATH}" --kind model
+        --entry "${ENTRY_NAME}" --entry-type Skl0 --format nvskel.v0.skinned.pnujiw.u32 --variant default
+        ${import_flags} RESULT_VARIABLE result ERROR_VARIABLE error)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "skeletal ${mode} import failed: ${error}")
+    endif()
+endforeach()
+file(SHA256 "${SECOND_PACKAGE}" without_import_hash)
+file(SHA256 "${SMOKE_DIR}/RuntimeRoot/Cooked/disabled.nvpkg" disabled_hash)
+file(SHA256 "${SMOKE_DIR}/RuntimeRoot/Cooked/explicit.nvpkg" explicit_hash)
+if(NOT without_import_hash STREQUAL disabled_hash OR explicit_hash STREQUAL disabled_hash)
+    message(FATAL_ERROR "skeletal CLI did not apply explicit/disabled settings")
+endif()
+
 message(STATUS "${unit_stdout}")
 message(STATUS "${cook_stdout}")
 message(STATUS "${package_stdout}")

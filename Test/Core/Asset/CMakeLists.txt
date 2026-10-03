@@ -19,6 +19,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER ImportSettingsHashTest ImportSettingsHashTest.cpp
     MEMBER ImportSettingsFileTest ImportSettingsFileTest.cpp
     MEMBER ImportTransformTest ImportTransformTest.cpp
+    MEMBER ImportCliOptionsTest ImportCliOptionsTest.cpp
     MEMBER ImportSettingsValueTest ImportSettingsValueTest.cpp
     MEMBER ImportSettingsJsonTest ImportSettingsJsonTest.cpp
     MEMBER GltfLooseSourceTest GltfLooseSourceTest.cpp
@@ -104,3 +105,5 @@ add_test(NAME ImportSettingsHashTest COMMAND CookedMeshTest --test=ImportSetting
 add_test(NAME ImportSettingsFileTest COMMAND CookedMeshTest --test=ImportSettingsFileTest)
 
 add_test(NAME ImportStaticIntegrationTest COMMAND CookedMeshTest --test=ImportStaticIntegrationTest)
+
+add_test(NAME ImportCliOptionsTest COMMAND CookedMeshTest --test=ImportCliOptionsTest)

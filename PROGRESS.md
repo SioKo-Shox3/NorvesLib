@@ -508,3 +508,6 @@
 
 - G2-GR78-SKELETAL-SIDECAR: 共有scale/fit倍率を骨格の頂点位置・IBM平行移動・Translation sample・mesh-node平行移動へ同時適用し、raw/legacy/loose/cookへ接続。fitはmesh-node線形変換後のasset空間寸法で決定し、回転/scale/法線/UV/weight/形式は維持。設定snapshotをcookとhashで共有し、骨格非対応のaxes/origin/mesh変更は拒否する。設定出力alias guardも骨格CLIに接続。共有primitiveを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で実行成功、MEMBER compile成功。native試験に非identity Scale fixture、0/1/2秒の回転終端、raw/cookedのscale/fitと実sampler比較、設定有無/hash/失敗保持/CLI guardを登録。独立第2周PASS。実decoder/cooker/sampler/CLIはWindows.h等の環境制約で未実行、登録と実行を区別する。
 - Next: GR78-CLIの設定指定/require/no-sidecar、単体skip、inspectを進める。surface_centroidと実物描画受入れは保留を維持する。
+
+- G2-GR78-CLI-SETTINGS: --import-settings（別引数/equals）・--no-sidecar・--require-sidecarをstatic/skeletalの共有loaderへ接続。明示設定優先、排他/重複/空値/値付きbool/非model拒否、設定出力alias保護を維持。実parserの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）実行とMEMBER compile成功、独立確認PASS。GLB設定優先/無効化のbytes/hash回帰/失敗出力保持/明示正本保護と骨格override/disabledのCLI smokeを登録。Main/native CLIはWindows.h等により未実行。skip/inspectはまだ未知引数として拒否する。
+- Next: GR78-CLI-SKIPを独立反復に分離。元source/buffers/設定hashをcook前に計算し、manifestと実package/派生画像を検証してから省略する。inspect診断はその後。
