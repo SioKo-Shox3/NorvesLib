@@ -2102,7 +2102,7 @@
 - stop-when: 未接続Dropの成功黙認、既存cache鍵の予期しない変更、sparse/256の受理。
 
 ## G2-GR86-MORPH-DECODE: 明示dropを共通decodeとcookへ接続する
-- status: todo
+- status: done
 - done-when: morph targets・初期weight・weight animationの除去を明示Dropだけに限定し、base geometryとTRSを維持する。対象の構造を検査し、除去数/走査状況を報告する。既定Reject/sparse拒否/失敗出力保持を維持する。
 - verify: raw/legacy/file/GLB/cookの既定拒否/明示成功/数量/不正・sparse/他policy併用と出力保持を登録し、純部品の試験を実行する。
 - stop-when: malformedをDropで成功扱い、baseへmorphを黙って焼込、未測定数を確定と偽る。

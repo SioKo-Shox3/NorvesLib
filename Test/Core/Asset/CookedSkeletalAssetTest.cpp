@@ -1032,19 +1032,6 @@ namespace
         {
             return CookGltfToNvskel(bytes.data(),bytes.size(),format,cookPath,out,error,nullptr,&selected,&diagnostics);
         };
-        // 方針だけを先行定義したDropは、全入口で未対応として拒否する。
-        auto pendingDrop = options;
-        pendingDrop.MorphPolicy = SkeletalMorphPolicy::Drop;
-        Gltf::BufferSet rejectedSources;
-        SkeletalGltfSourceBuffers rejectedLegacy;
-        const auto rejected = DecodeSkeletalGltf(source, path, &rejectedSources, nullptr, &pendingDrop);
-        assert(rejected.Status == SkeletalGltfDecodeStatus::UnsupportedMorphTargets && rejectedSources.GetCount() == 0 && rejected.Data.Vertices.empty());
-        assert(DecodeSkeletalGltf(CoreText(text), path, &rejectedLegacy, nullptr, &pendingDrop).Status == SkeletalGltfDecodeStatus::UnsupportedMorphTargets && rejectedLegacy.empty());
-        assert(DecodeSkeletalGltf(glb, path, nullptr, nullptr, &pendingDrop).Status == SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
-        assert(Resource::GLTFAnalyzer::AnalyzeSkeletal(path, &pendingDrop).Status == SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
-        SkeletalCookResult rejectedCook;
-        rejectedCook.VertexCount = 99;
-        assert(!cook(source, pendingDrop, rejectedCook) && rejectedCook.VertexCount == 99);
         assert(cook(source,options,cooked));
         assert(FingerprintModelCookSource(source.data(),source.size(),format,cookPath,"Models/rig.gltf",fingerprint,error,nullptr,&options));
         assert(fingerprint.SourceHash==cooked.SourceHash && diagnostics.bDecodeAttempted && diagnostics.DecodeStatus==0);
@@ -1120,6 +1107,140 @@ namespace
         malformed=Container::AnsiString(malformed.substr(0,countPosition))+"\"count\": 5"+Container::AnsiString(malformed.substr(countPosition+countNeedle.size()));
         const auto badCount=DecodeSkeletalGltf(CoreText(malformed),path,nullptr,nullptr,&options);
         assert(badCount.Status==SkeletalGltfDecodeStatus::InvalidAnimation && !badCount.Report.bHasCubicBakeFailure);
+    }
+
+    void RunMorphDropContract()
+    {
+        using namespace Skeletal;
+        using namespace NorvesLib::Tools::AssetCook;
+        LooseFixture fixture;
+        const auto source = ReadFixtureJson(ToCorePath(FindFixtureRoot() / "MorphDrop.gltf"));
+        const auto replaceOnce = [](Container::AnsiString& text, Container::AnsiStringView from, Container::AnsiStringView to)
+        {
+            const size_t offset = text.find(from);
+            assert(offset != Container::AnsiString::npos && text.find(from, offset + from.size()) == Container::AnsiString::npos);
+            text = Container::AnsiString(text.substr(0, offset)) + Container::AnsiString(to) + Container::AnsiString(text.substr(offset + from.size()));
+        };
+        const auto bytes = TextBytes(source);
+        const auto path = ToCorePath(fixture.Root / "MorphDrop.gltf");
+        ByteArray binary(596, 0);
+        const auto base = BuildLooseFixtureBuffer();
+        std::memcpy(binary.data(), base.data(), base.size());
+        WriteFloat(binary, 416, .2f);
+        for (size_t vertex = 0; vertex < 3; ++vertex)
+        {
+            WriteFloat(binary, 488 + vertex * 16, 1);
+            WriteFloat(binary, 500 + vertex * 16, 1);
+        }
+        constexpr float weightKeys[6] = {0,.5f,1,0,.7f,0};
+        for (size_t index = 0; index < 6; ++index)
+        {
+            WriteFloat(binary, 572 + index * 4, weightKeys[index]);
+        }
+        WriteFixtureBytes(fixture.Root / "fixture.bin", binary);
+        WriteFixtureBytes(fixture.Root / "MorphDrop.gltf", bytes);
+        auto embeddedText = source;
+        replaceOnce(embeddedText, "\"uri\":\"fixture.bin\",", "");
+        const auto glb = MakeSkeletalGlb(embeddedText, binary);
+        assert(DecodeSkeletalGltf(bytes, path).Status == SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
+        SkeletalGltfDecodeOptions drop;
+        drop.MorphPolicy = SkeletalMorphPolicy::Drop;
+        Gltf::BufferSet sources;
+        const auto decoded = DecodeSkeletalGltf(bytes, path, &sources, nullptr, &drop);
+        assert(decoded.Succeeded() && sources.GetCount() == 1);
+        const auto checkReport = [](const SkeletalGltfDecodeReport& report)
+        {
+            assert(report.bMorphScanComplete && report.DroppedMorphTargetCount == 1 &&
+                report.DroppedMorphMeshWeightCount == 1 && report.DroppedMorphNodeWeightCount == 1 &&
+                report.DroppedMorphAnimationChannelCount == 1);
+        };
+        checkReport(decoded.Report);
+        assert(!decoded.Report.bCubicScanStarted); // weight専用Cubicは焼き込まず除去する。
+        const auto baselineText = ReadFixtureJson(ToCorePath(FindFixtureRoot() / "ValidU8Float.gltf"));
+        const auto baseline = DecodeSkeletalGltf(TextBytes(baselineText), path);
+        assert(baseline.Succeeded());
+        AssertEquivalent(baseline.Data, decoded.Data);
+        const auto noMorph = DecodeSkeletalGltf(TextBytes(baselineText), path, nullptr, nullptr, &drop);
+        assert(noMorph.Succeeded() && noMorph.Report.bMorphScanComplete && noMorph.Report.DroppedMorphTargetCount == 0);
+        SkeletalGltfSourceBuffers legacySources;
+        const auto legacy = DecodeSkeletalGltf(CoreText(source), path, &legacySources, nullptr, &drop);
+        const auto embedded = DecodeSkeletalGltf(glb, path, nullptr, nullptr, &drop);
+        const auto file = Resource::GLTFAnalyzer::AnalyzeSkeletal(path, &drop);
+        assert(legacy.Succeeded() && embedded.Succeeded() && file.Succeeded() && legacySources.size() == 1);
+        AssertEquivalent(decoded.Data, legacy.Data); AssertEquivalent(decoded.Data, embedded.Data); AssertEquivalent(decoded.Data, file.Data);
+        checkReport(legacy.Report); checkReport(embedded.Report); checkReport(file.Report);
+        const Container::AnsiString cookPath((fixture.Root / "MorphDrop.gltf").generic_string().c_str());
+        constexpr Container::AnsiStringView format = "nvskel.v0.skinned.pnujiw.u32";
+        Container::AnsiString error;
+        SkeletalCookDiagnostics diagnostics;
+        const auto cook = [&](const ByteArray& selected, const SkeletalGltfDecodeOptions& options, SkeletalCookResult& out)
+        {
+            return CookGltfToNvskel(selected.data(), selected.size(), format, cookPath, out, error, nullptr, &options, &diagnostics);
+        };
+        SkeletalCookResult cooked;
+        assert(cook(bytes, drop, cooked));
+        checkReport(cooked.DecodeReport);
+        const auto parsed = Asset::ParseCookedSkeletal(MakeBlob(cooked.NvskelBytes));
+        assert(parsed.Succeeded()); AssertEquivalent(decoded.Data, parsed.Data.Skeletal);
+        ModelCookFingerprint fingerprint;
+        assert(FingerprintModelCookSource(bytes.data(), bytes.size(), format, cookPath, "MorphDrop", fingerprint, error, nullptr, &drop));
+        assert(fingerprint.SourceHash == cooked.SourceHash);
+        fingerprint.SourceHash = 123;
+        assert(!FingerprintModelCookSource(bytes.data(), bytes.size(), format, cookPath, "MorphDrop", fingerprint, error) && fingerprint.SourceHash == 123);
+        SkeletalCookResult embeddedCook;
+        assert(cook(glb, drop, embeddedCook) && embeddedCook.NvskelBytes == cooked.NvskelBytes);
+        auto combined = drop;
+        combined.InfluencePolicy = SkeletalInfluencePolicy::ReduceToFour;
+        combined.CubicSplinePolicy = SkeletalCubicSplinePolicy::Bake;
+        const auto allPolicies = DecodeSkeletalGltf(bytes, path, nullptr, nullptr, &combined);
+        assert(allPolicies.Succeeded()); AssertEquivalent(decoded.Data, allPolicies.Data); checkReport(allPolicies.Report);
+        assert(allPolicies.Report.bCubicScanComplete && allPolicies.Report.TotalAnimationChannelCount == 3 &&
+            allPolicies.Report.ProcessedAnimationChannelCount == 3 && allPolicies.Report.BakedCubicChannelCount == 0);
+        const auto retained = cooked;
+        const auto reject = [&](const Container::AnsiString& text, const ByteArray& data)
+        {
+            WriteFixtureBytes(fixture.Root / "fixture.bin", data);
+            const auto selected = TextBytes(text);
+            const auto result = DecodeSkeletalGltf(selected, path, &sources, nullptr, &drop);
+            assert(!result.Succeeded() && result.Data.Vertices.empty() && sources.GetCount() == 0 && !result.Report.bMorphScanComplete);
+            assert(!cook(selected, drop, cooked) && cooked.NvskelBytes == retained.NvskelBytes && cooked.SourceHash == retained.SourceHash);
+        };
+        for (int invalid = 0; invalid < 12; ++invalid)
+        {
+            auto text = source;
+            switch (invalid)
+            {
+            case 0: replaceOnce(text, "\"targets\":[{\"POSITION\":13,\"NORMAL\":14,\"TANGENT\":16}]", "\"targets\":null"); break;
+            case 1: replaceOnce(text, "\"POSITION\":13", "\"POSITION\":999"); break;
+            case 2: replaceOnce(text, "\"NORMAL\":14", "\"NORMAL\":14,\"NORMAL\":14"); break;
+            case 3: replaceOnce(text, "\"weights\":[0.25]", "\"weights\":[0.25,0.5]"); break;
+            case 4: replaceOnce(text, "\"weights\":[0.5]", "\"weights\":null"); break;
+            case 5: replaceOnce(text, "\"node\":2,\"path\":\"weights\"", "\"node\":0,\"path\":\"weights\""); break;
+            case 6: replaceOnce(text, "\"name\":\"MorphWeights\",\"bufferView\":17,\"componentType\":5126,\"count\":6", "\"name\":\"MorphWeights\",\"bufferView\":17,\"componentType\":5126,\"count\":5"); break;
+            case 7: replaceOnce(text, "\"name\":\"MorphPosition\",\"bufferView\":13", "\"name\":\"MorphPosition\",\"bufferView\":13,\"sparse\":{}"); break;
+            case 8: replaceOnce(text, "\"TANGENT\":15", "\"_TANGENT\":15"); break;
+            case 9: replaceOnce(text, "\"TANGENT\":16", "\"COLOR_0\":16"); break;
+            case 10: replaceOnce(text, "\"weights\":[0.25]", "\"weights\":[0.25],\"weights\":[0.3]"); break;
+            case 11: replaceOnce(text, "\"max\":[0.2,0,0]", "\"max\":[-1,0,0]"); break;
+            }
+            reject(text, binary);
+        }
+        for (size_t offset : {size_t{416}, size_t{488}, size_t{576}})
+        {
+            auto invalid = binary;
+            WriteFloat(invalid, offset, std::numeric_limits<float>::quiet_NaN());
+            reject(source, invalid);
+        }
+        auto invalidTime = binary;
+        WriteFloat(invalidTime, 356, 0);
+        reject(source, invalidTime);
+        WriteFixtureBytes(fixture.Root / "fixture.bin", binary);
+        // mesh初期weightだけでもReject/cacheが黙認しない。
+        auto weightsOnly = baselineText;
+        replaceOnce(weightsOnly, "\"name\": \"Triangle\"", "\"name\": \"Triangle\", \"weights\": [0.5]");
+        assert(DecodeSkeletalGltf(TextBytes(weightsOnly), path).Status == SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
+        const auto weightsBytes = TextBytes(weightsOnly);
+        assert(!FingerprintModelCookSource(weightsBytes.data(), weightsBytes.size(), format, cookPath, "MorphDrop", fingerprint, error));
     }
 
     void RunUnitContract()
@@ -1603,6 +1724,7 @@ int main(int argc, char** argv)
     {
         RunInfluenceReductionContract();
         RunCubicBakeContract();
+        RunMorphDropContract();
         RunUnitContract();
     }
     else

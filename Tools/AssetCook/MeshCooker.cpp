@@ -1869,6 +1869,11 @@ namespace NorvesLib::Tools::AssetCook
             }
             if (format==SupportedSkeletalFormat)
             {
+                if (options.MorphPolicy == Core::Skeletal::SkeletalMorphPolicy::Reject && Gltf::HasMorphData(root))
+                {
+                    error = "骨格morphは既定で拒否します。除去する場合は明示Dropが必要です";
+                    return false;
+                }
                 const auto attributes=root.FindMember("meshes").GetArrayElement(0).FindMember("primitives").GetArrayElement(0).FindMember("attributes");
                 if (options.InfluencePolicy == Core::Skeletal::SkeletalInfluencePolicy::Strict)
                 {

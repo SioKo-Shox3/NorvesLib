@@ -5,9 +5,9 @@
 
 | 制約 | 既定 | 明示指定時/後段 | 現在の状態 |
 |---|---|---|---|
-| 頂点影響数 | 4本、追加セットを専用statusで拒否 | cookで上位4本へ縮約・正規化・報告 | 追加セット拒否を実装、縮約kernelあり・decode未接続 |
+| 頂点影響数 | 4本、追加セットを専用statusで拒否 | cookで上位4本へ縮約・正規化・報告 | API/CLI/JSON接続済み、native未実行 |
 | CUBICSPLINE | 拒否 | 誤差制限付きLINEAR焼込 | API/CLI接続済み、native未実行 |
-| morph | 拒否 | dropと数量報告 | 未実装 |
+| morph | 拒否 | dropと数量報告 | API接続済み、CLI/JSON未接続 |
 | sparse | 拒否 | 変更なし | 既存拒否を維持 |
 | 関節数 | 現行/0.2は128 | v1で256 | 128共有定数化済み、256はStage B |
 
@@ -242,11 +242,11 @@ Bakeを指定しても通常補間だけならbaked_channels=0、各誤差=null�
 純parser/JSON検査とnative CLI smokeを分ける。後者はglTFの3種Cubic、既定拒否・予算超過・出力保持、
 同設定cache hit・設定差cache miss、JSON単位と未測定nullを登録。Windows.h/PowerShell/CMakeが必要な統合実行は未確認。
 
-## morph Dropのpolicy/hash定義（decode接続前）
+## morph Dropのpolicy/hash定義
 
 SkeletalMorphPolicyはReject=0/Drop=1で既定Reject。Dropは明示指定でのみ有効になる。
-この段階では公開options・canonical・診断型のみ定義する。decoderはDropをUnsupportedMorphTargetsで拒否し、
-JSON serializerもDropを未接続として失敗する。CLI引数はまだ受理しない。
+公開options・canonical・診断型を定義し、decoderは下記で接続する。
+JSON serializerはDropを未接続として失敗する。CLI引数はまだ受理しない。
 
 Drop無しはStrictのSize0、ReduceのSRED25byte、BakeのSCBK66byteと既存hashをそのまま保つ。
 DropはSMDPで、MorphPolicyだけRejectへ戻した既存canonicalを包む。
@@ -259,3 +259,31 @@ inner bytes（0/25/66byte）/morph algorithm=1（u32 LE）で計17/42/83byte。
 DroppedMorphNodeWeightCount（node初期weight配列要素数）、DroppedMorphAnimationChannelCount（weight channel数）、
 bMorphScanCompleteを定義する。完了前のゼロは未測定であり、ゼロ除去として報告しない。
 除去はbase geometryへmorphを焼き付ける処理ではない。sparse拒否と128関節上限は維持する。
+
+## morph Dropの共通decode接続
+
+明示DropはPOSITION/NORMAL/TANGENTのtargetを検証して取り除き、base geometryとTRS clipを維持する。
+初期mesh/node weightsとanimationのweights channelも取り除く。初期値をbaseへ適用しない。
+現在の1mesh/1primitive/1mesh-node/1clip profileを維持し、UV/色/拡張semanticのmorphは未対応として拒否する。
+既定Rejectはtargetsだけでなく初期weights/weights channelの存在も拒否する。
+cook前fingerprintも同じ存在gateを通し、古いcacheからの無言無視を防ぐ。
+
+検査対象はtargetsの型/重複semantic/元attribute存在、float VEC3デルタ（tangent元はVEC4）と頂点count、
+buffer範囲/非有限、POSITION min/maxの3要素・有限・順序、初期weight配列長/有限値、
+weight channelの対象mesh-node/重複、samplerとSCALAR float出力count（Cubicでは3倍）、有限で単調増加する時刻。
+全glTF仕様の完全なvalidatorではなく、既存profileとこの除去経路で必要な検査を行う。
+sparseは未使用accessorを含めて従来どおり拒否する。
+
+weightだけが参照するCUBICSPLINE samplerは焼込をせず除去できる（Bake指定不要）。
+TRSと共有するsamplerは既存の補間条件を守り、未知の補間名は拒否する。
+除去した結果TRS channelが0本になるclipは現行形式に収まらないため失敗する。静止clipの自動生成はしない。
+Morphの数量は全除去対象を検証できた時だけbMorphScanCompleteとともに確定する。
+その後のTRS/geometry等で失敗した場合も、この検証済み数量とasset全体の失敗を区別する。
+Bake併用時のtotal/processed animation channelsは元のchannel順を数え、除去済みweight channelも処理済みに含む。
+
+native回帰にはraw/legacy/file/GLB/cook再parseの同値、base/TRS不変、3種類target、Cubic weight除去、
+縮約/Bake併用、数量、cache Strict gate、12種の不正metadata/重複/sparse/非有限/時刻と失敗出力保持を登録する。
+JsonDocument/decoder/cookはWindows.h依存のためこのLinux環境で実行できず、登録と静的確認に留まる。
+
+既知の検証限界: POSITION boundsのfloat32範囲/実値との一致とweight入力accessorのmin/maxまでは検査しない。
+Morph metadata/weight animationの不正は現状InvalidAccessorへまとめるため、原因分類は粗い。

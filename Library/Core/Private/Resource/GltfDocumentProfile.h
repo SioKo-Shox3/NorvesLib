@@ -8,6 +8,9 @@ namespace NorvesLib::Core
 }
 namespace NorvesLib::Core::Gltf
 {
+    // weights/targetsの存在で判定する。値の正当性はdecodeの責務。
+    // Strictとcook前fingerprintで同じgateを使い、古いcacheでの無言無視を防ぐ。
+    [[nodiscard]] bool HasMorphData(const JsonValue& root);
     enum class RequiredExtensionsStatus : uint8_t
     {
         Success, InvalidRoot, DuplicateDeclaration, InvalidDeclaration, Unsupported

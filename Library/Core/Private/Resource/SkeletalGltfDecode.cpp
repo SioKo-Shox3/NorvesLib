@@ -800,7 +800,7 @@ namespace NorvesLib::Core::Skeletal
                 outStatus = SkeletalGltfDecodeStatus::InvalidDocument;
                 return false;
             }
-            if (primitive.HasMember("targets"))
+            if (primitive.HasMember("targets") && options.MorphPolicy == SkeletalMorphPolicy::Reject)
             {
                 outStatus = SkeletalGltfDecodeStatus::UnsupportedMorphTargets;
                 return false;
@@ -888,20 +888,38 @@ namespace NorvesLib::Core::Skeletal
                 outStatus = SkeletalGltfDecodeStatus::InvalidAnimation;
                 return false;
             }
+            const bool bDrop = options.MorphPolicy == SkeletalMorphPolicy::Drop;
+            Container::VariableArray<uint8_t> samplerUsage;
+            if (bDrop)
+            {
+                samplerUsage.assign(samplers.GetArraySize(), 0);
+                for (size_t channelIndex = 0; channelIndex < channels.GetArraySize(); ++channelIndex)
+                {
+                    const auto channel = channels.GetArrayElement(channelIndex);
+                    uint32_t samplerIndex = InvalidIndex;
+                    if (!TryReadRequiredUInt32(channel, "sampler", samplerIndex) || samplerIndex >= samplers.GetArraySize())
+                    {
+                        outStatus = SkeletalGltfDecodeStatus::InvalidAnimation;
+                        return false;
+                    }
+                    samplerUsage[samplerIndex] |= channel.FindMember("target").FindMember("path").AsString() == "weights" ? 1 : 2;
+                }
+            }
             for (size_t index = 0; index < samplers.GetArraySize(); ++index)
             {
                 const Container::String& interpolation =
                     samplers.GetArrayElement(index).FindMember("interpolation").AsString();
                 const auto sampler = samplers.GetArrayElement(index);
                 const bool bBake = options.CubicSplinePolicy == SkeletalCubicSplinePolicy::Bake;
-                if (bBake && sampler.HasMember("interpolation") &&
+                const bool bOnlyDroppedWeights = bDrop && samplerUsage[index] == 1;
+                if ((bBake || bDrop) && sampler.HasMember("interpolation") &&
                     (!sampler.FindMember("interpolation").IsString() || interpolation.empty()))
                 {
                     outStatus = SkeletalGltfDecodeStatus::InvalidAnimation;
                     return false;
                 }
                 if (!interpolation.empty() && interpolation != "LINEAR" && interpolation != "STEP" &&
-                    !(bBake && interpolation == "CUBICSPLINE"))
+                    !((bBake || bOnlyDroppedWeights) && interpolation == "CUBICSPLINE"))
                 {
                     outStatus = SkeletalGltfDecodeStatus::UnsupportedInterpolation;
                     return false;
@@ -1357,6 +1375,220 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
+        bool HasDuplicateMember(const JsonValue& object, const char* name)
+        {
+            bool bFound = false;
+            for (size_t index = 0; index < object.GetObjectSize(); ++index)
+            {
+                if (object.GetMemberName(index) == name)
+                {
+                    if (bFound)
+                    {
+                        return true;
+                    }
+                    bFound = true;
+                }
+            }
+            return false;
+        }
+
+        bool ValidateMorphFloatValues(const AccessorInfo& accessor, const AccessorLayout& layout)
+        {
+            if (accessor.bNormalized || accessor.ComponentType != FloatComponent)
+            {
+                return false;
+            }
+            const size_t components = GetComponentCount(accessor.Type);
+            for (size_t index = 0; index < accessor.Count; ++index)
+            {
+                for (size_t component = 0; component < components; ++component)
+                {
+                    if (!std::isfinite(ReadFloat(layout.Data + index * layout.Stride + component * sizeof(float))))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return components != 0;
+        }
+
+        bool ValidateMorphWeights(const JsonValue& owner, uint32_t targetCount, uint64_t& count)
+        {
+            if (!owner.HasMember("weights"))
+            {
+                return true;
+            }
+            const auto weights = owner.FindMember("weights");
+            if (HasDuplicateMember(owner, "weights") || targetCount == 0 || !weights.IsArray() || weights.GetArraySize() != targetCount)
+            {
+                return false;
+            }
+            for (size_t index = 0; index < weights.GetArraySize(); ++index)
+            {
+                const auto weight = weights.GetArrayElement(index);
+                if (!weight.IsNumber() || !std::isfinite(weight.AsNumber()) || std::abs(weight.AsNumber()) > std::numeric_limits<float>::max())
+                {
+                    return false;
+                }
+            }
+            count = weights.GetArraySize();
+            return true;
+        }
+
+        bool ValidateMorphDrop(const JsonValue& root, const JsonValue& animation, const NodeContract& nodes,
+            const Container::VariableArray<AccessorInfo>& accessors, const Container::VariableArray<BufferViewInfo>& views,
+            const Gltf::BufferSet& buffers, uint32_t vertexCount, SkeletalGltfDecodeReport& report)
+        {
+            const auto mesh = root.FindMember("meshes").GetArrayElement(0);
+            const auto primitive = mesh.FindMember("primitives").GetArrayElement(0);
+            const auto attributes = primitive.FindMember("attributes");
+            const auto targets = primitive.FindMember("targets");
+            uint32_t targetCount = 0;
+            if (primitive.HasMember("targets"))
+            {
+                if (HasDuplicateMember(primitive, "targets") || !targets.IsArray() || targets.GetArraySize() == 0 || targets.GetArraySize() > UINT32_MAX)
+                {
+                    return false;
+                }
+                targetCount = static_cast<uint32_t>(targets.GetArraySize());
+            }
+            for (size_t index = 0; index < targetCount; ++index)
+            {
+                const auto target = targets.GetArrayElement(index);
+                if (!target.IsObject() || target.GetObjectSize() == 0)
+                {
+                    return false;
+                }
+                uint32_t seen = 0;
+                for (size_t member = 0; member < target.GetObjectSize(); ++member)
+                {
+                    const auto& name = target.GetMemberName(member);
+                    const char* semantic = nullptr;
+                    const char* baseType = "VEC3";
+                    uint32_t bit = 0;
+                    if (name == "POSITION")
+                    {
+                        semantic = "POSITION"; bit = 1;
+                    }
+                    else if (name == "NORMAL")
+                    {
+                        semantic = "NORMAL"; bit = 2;
+                    }
+                    else if (name == "TANGENT")
+                    {
+                        semantic = "TANGENT"; baseType = "VEC4"; bit = 4;
+                    }
+                    else
+                    {
+                        // 現profileでは拡張/色/UV等のmorphは未対応として拒否する。
+                        return false;
+                    }
+                    uint32_t targetIndex = InvalidIndex, baseIndex = InvalidIndex;
+                    const AccessorInfo* delta = nullptr;
+                    const AccessorInfo* base = nullptr;
+                    AccessorLayout deltaLayout, baseLayout;
+                    if ((seen & bit) != 0 || !TryReadUInt32(target.GetMemberValue(member), targetIndex) ||
+                        !TryReadRequiredUInt32(attributes, semantic, baseIndex) ||
+                        !GetAccessor(accessors, targetIndex, "VEC3", FloatComponent, views, buffers, delta, deltaLayout) ||
+                        !GetAccessor(accessors, baseIndex, baseType, FloatComponent, views, buffers, base, baseLayout) ||
+                        delta->Count != vertexCount || base->Count != vertexCount ||
+                        !ValidateMorphFloatValues(*delta, deltaLayout) || !ValidateMorphFloatValues(*base, baseLayout))
+                    {
+                        return false;
+                    }
+                    seen |= bit;
+                    if (bit == 1)
+                    {
+                        const auto raw = root.FindMember("accessors").GetArrayElement(targetIndex);
+                        const auto minimum = raw.FindMember("min"), maximum = raw.FindMember("max");
+                        if (!minimum.IsArray() || !maximum.IsArray() || minimum.GetArraySize() != 3 || maximum.GetArraySize() != 3)
+                        {
+                            return false;
+                        }
+                        for (size_t component = 0; component < 3; ++component)
+                        {
+                            const auto lo = minimum.GetArrayElement(component), hi = maximum.GetArrayElement(component);
+                            if (!lo.IsNumber() || !hi.IsNumber() || !std::isfinite(lo.AsNumber()) || !std::isfinite(hi.AsNumber()) || lo.AsNumber() > hi.AsNumber())
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            uint64_t meshWeights = 0, nodeWeights = 0;
+            if (!ValidateMorphWeights(mesh, targetCount, meshWeights))
+            {
+                return false;
+            }
+            const auto allNodes = root.FindMember("nodes");
+            for (size_t index = 0; index < allNodes.GetArraySize(); ++index)
+            {
+                const auto node = allNodes.GetArrayElement(index);
+                if (node.HasMember("weights"))
+                {
+                    if (index != nodes.MeshNodeIndex || !ValidateMorphWeights(node, targetCount, nodeWeights))
+                    {
+                        return false;
+                    }
+                }
+            }
+            const auto channels = animation.FindMember("channels"), samplers = animation.FindMember("samplers");
+            uint64_t weightChannels = 0;
+            for (size_t index = 0; index < channels.GetArraySize(); ++index)
+            {
+                const auto channel = channels.GetArrayElement(index);
+                const auto target = channel.FindMember("target");
+                if (target.FindMember("path").AsString() != "weights")
+                {
+                    continue;
+                }
+                uint32_t nodeIndex = InvalidIndex, samplerIndex = InvalidIndex, inputIndex = InvalidIndex, outputIndex = InvalidIndex;
+                if (weightChannels != 0 || targetCount == 0 || !TryReadRequiredUInt32(target, "node", nodeIndex) || nodeIndex != nodes.MeshNodeIndex ||
+                    !TryReadRequiredUInt32(channel, "sampler", samplerIndex) || samplerIndex >= samplers.GetArraySize())
+                {
+                    return false;
+                }
+                const auto sampler = samplers.GetArrayElement(samplerIndex);
+                const auto interpolation = sampler.FindMember("interpolation").AsString();
+                const bool bCubic = interpolation == "CUBICSPLINE";
+                const AccessorInfo* input = nullptr;
+                const AccessorInfo* output = nullptr;
+                AccessorLayout inputLayout, outputLayout;
+                if (!TryReadRequiredUInt32(sampler, "input", inputIndex) || !TryReadRequiredUInt32(sampler, "output", outputIndex) ||
+                    !GetAccessor(accessors, inputIndex, "SCALAR", FloatComponent, views, buffers, input, inputLayout) ||
+                    !GetAccessor(accessors, outputIndex, "SCALAR", FloatComponent, views, buffers, output, outputLayout) ||
+                    input->Count < (bCubic ? 2u : 1u) || !ValidateMorphFloatValues(*input, inputLayout) || !ValidateMorphFloatValues(*output, outputLayout))
+                {
+                    return false;
+                }
+                // u32同士の積をまずu64へ拡張し、triplet乗算前に出力count上限を確認する。
+                const uint64_t values = uint64_t(input->Count) * targetCount;
+                const uint32_t factor = bCubic ? 3 : 1;
+                if (values > UINT32_MAX / factor || output->Count != values * factor)
+                {
+                    return false;
+                }
+                float previous = -1;
+                for (size_t key = 0; key < input->Count; ++key)
+                {
+                    const float time = ReadFloat(inputLayout.Data + key * inputLayout.Stride);
+                    if (time < 0 || time <= previous)
+                    {
+                        return false;
+                    }
+                    previous = time;
+                }
+                ++weightChannels;
+            }
+            report.DroppedMorphTargetCount = targetCount;
+            report.DroppedMorphMeshWeightCount = meshWeights;
+            report.DroppedMorphNodeWeightCount = nodeWeights;
+            report.DroppedMorphAnimationChannelCount = weightChannels;
+            report.bMorphScanComplete = true;
+            return true;
+        }
+
         bool ExtractAnimation(const JsonValue& animation,
                               const Container::VariableArray<int32_t>& nodeToJoint,
                               const Container::VariableArray<AccessorInfo>& accessors,
@@ -1386,6 +1618,15 @@ namespace NorvesLib::Core::Skeletal
                 }
                 const JsonValue channelValue = channels.GetArrayElement(channelIndex);
                 const JsonValue target = channelValue.FindMember("target");
+                if (options.MorphPolicy == SkeletalMorphPolicy::Drop && target.FindMember("path").AsString() == "weights")
+                {
+                    if (bBake)
+                    {
+                        ++report.ProcessedAnimationChannelCount;
+                        report.FailedAnimationChannelIndex = UINT64_MAX;
+                    }
+                    continue;
+                }
                 uint32_t samplerIndex = InvalidIndex;
                 uint32_t nodeIndex = InvalidIndex;
                 if (!TryReadRequiredUInt32(channelValue, "sampler", samplerIndex) ||
@@ -1647,11 +1888,6 @@ namespace NorvesLib::Core::Skeletal
         {
             const SkeletalGltfDecodeOptions options = decodeOptions != nullptr ? *decodeOptions : SkeletalGltfDecodeOptions{};
             if (!IsValidSkeletalGltfDecodeOptions(options)) return Fail(SkeletalGltfDecodeStatus::InvalidImportOptions);
-            // 方針/hashを先行定義する段階では未接続Dropを黙って無視しない。
-            if (options.MorphPolicy == SkeletalMorphPolicy::Drop)
-            {
-                return Fail(SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
-            }
             if (!root.IsObject())
             {
                 return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
@@ -1662,6 +1898,10 @@ namespace NorvesLib::Core::Skeletal
                 return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
             }
 
+            if (options.MorphPolicy == SkeletalMorphPolicy::Reject && Gltf::HasMorphData(root))
+            {
+                return Fail(SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
+            }
             AssetImport::LoadedImportSettings discoveredImport;
             const auto* selectedImport = importSettings;
             if (selectedImport == nullptr)
@@ -1746,6 +1986,11 @@ namespace NorvesLib::Core::Skeletal
             if (!ExtractSkeleton(root, skin, nodeContract, accessors, bufferViews, buffers, data, nodeToJoint))
             {
                 return failWithReport(SkeletalGltfDecodeStatus::InvalidSkeleton);
+            }
+            if (options.MorphPolicy == SkeletalMorphPolicy::Drop &&
+                !ValidateMorphDrop(root, animation, nodeContract, accessors, bufferViews, buffers, static_cast<uint32_t>(data.Vertices.size()), report))
+            {
+                return failWithReport(SkeletalGltfDecodeStatus::InvalidAccessor);
             }
             const bool bBake = options.CubicSplinePolicy == SkeletalCubicSplinePolicy::Bake;
             double translationScale = 1;

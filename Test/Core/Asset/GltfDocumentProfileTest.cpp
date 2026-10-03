@@ -78,6 +78,22 @@ int main()
             assert(decoded.Status == Skeletal::SkeletalGltfDecodeStatus::InvalidDocument);
         }
     }
+    struct MorphFixture { const char* Json; bool Expected; };
+    const MorphFixture morphs[] = {
+        {R"({})", false},
+        {R"({"extras":{"weights":[1]}})", false},
+        {R"({"meshes":[{"primitives":[{"targets":null}]}]})", true},
+        {R"({"meshes":[{"weights":[]}]})", true},
+        {R"({"nodes":[{"weights":null}]})", true},
+        {R"({"animations":[{"channels":[{"target":{"path":"weights"}}]}]})", true},
+        {R"({"animations":[{"channels":[{"target":{"path":"translation"}}]}]})", false}
+    };
+    for (const auto& fixture : morphs)
+    {
+        JsonDocument document;
+        assert(JsonDocument::TryParse(ToString(fixture.Json), document));
+        assert(HasMorphData(document.GetRoot()) == fixture.Expected);
+    }
     assert(CheckRequiredExtensions({}) == Status::InvalidRoot);
     assert(std::strcmp(RequiredExtensionsError(Status::Success), "") == 0);
     std::cout << "GltfDocumentProfileTest PASS: required_extensions_contract\n";

@@ -574,3 +574,6 @@
 
 - G2-GR86-MORPH-POLICY: Reject/Dropと除去数量/scan完了型を定義。Drop無しのSize0/SRED25/SCBK66を保持し、DropだけSMDP(schema/policy/inner size/旧canonical/morph algorithm)17/42/83byteで包む。decoderは接続までUnsupportedMorphTargets、JSONもDropを旧Rejectと偽らず未対応とする。純policy3mode/MEMBER/public単独POD/CLI・report回帰成功、独立Python固定列・12hash照合と再実行PASS。raw/legacy/GLB/file/cook拒否native回帰を登録、Windows.hにより未実行。
 - Next: GR86-MORPH-DECODE。明示Dropだけtargets/初期weights/weight channelを検証して除去し、base/TRSを維持する。Strict/skipの無言無視も防ぐ。
+
+- G2-GR86-MORPH-DECODE: 明示DropでPOSITION/NORMAL/TANGENTのデルタと初期mesh/node weight・weight channelを検証し、base/TRSへ適用せず除去。weight専用Cubicは焼込不要、共有samplerはTRS側条件を維持。数量は検証完了後だけ確定し、Strictとpreflightは同じmorph存在gateで拒否。nativeに入口/cook往復/不正12種/sparse/非有限/出力保持を登録。第1周の試験API名とcompact JSONのURI除去を修正し第2周PASS。fixture全buffer範囲/12mutation文法/URI除去をPython確認、既存純policy/CLI回帰成功。nativeはWindows.hで未実行。完全validatorではなく、POSITION bounds実値照合・weight入力min/maxとanimation不正の細分理由は残る。LINEAR/STEP weight等の追加回帰はCLI taskで補強する。
+- Next: MORPH-CLIで明示指定、cook/skip同一設定、数量警告、JSON未測定/検証済みと失敗を接続する。

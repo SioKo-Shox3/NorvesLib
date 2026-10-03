@@ -23,6 +23,48 @@ namespace NorvesLib::Core::Gltf
         }
     } // namespace
 
+    bool HasMorphData(const JsonValue& root)
+    {
+        const auto meshes = root.FindMember("meshes");
+        for (size_t meshIndex = 0; meshIndex < meshes.GetArraySize(); ++meshIndex)
+        {
+            const auto mesh = meshes.GetArrayElement(meshIndex);
+            if (mesh.HasMember("weights"))
+            {
+                return true;
+            }
+            const auto primitives = mesh.FindMember("primitives");
+            for (size_t index = 0; index < primitives.GetArraySize(); ++index)
+            {
+                if (primitives.GetArrayElement(index).HasMember("targets"))
+                {
+                    return true;
+                }
+            }
+        }
+        const auto nodes = root.FindMember("nodes");
+        for (size_t index = 0; index < nodes.GetArraySize(); ++index)
+        {
+            if (nodes.GetArrayElement(index).HasMember("weights"))
+            {
+                return true;
+            }
+        }
+        const auto animations = root.FindMember("animations");
+        for (size_t index = 0; index < animations.GetArraySize(); ++index)
+        {
+            const auto channels = animations.GetArrayElement(index).FindMember("channels");
+            for (size_t channel = 0; channel < channels.GetArraySize(); ++channel)
+            {
+                if (channels.GetArrayElement(channel).FindMember("target").FindMember("path").AsString() == "weights")
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     RequiredExtensionsStatus CheckRequiredExtensions(const JsonValue& root)
     {
         if (!root.IsObject())
