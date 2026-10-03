@@ -1,5 +1,6 @@
-#include "Rendering/RenderResources.h"
+﻿#include "Rendering/RenderResources.h"
 #include "Rendering/MeshTypes.h"
+#include "Rendering/ProceduralMeshGenerator.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "RHI/IFramebuffer.h"
@@ -14,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <vector>
 #if defined(_MSC_VER)
 #include <crtdbg.h>
@@ -199,6 +201,28 @@ int main()
     rangeCount = 99;
     assert(!manager.Meshes().TryGetSubMeshRanges(subMeshHandle, ranges, rangeCount));
     assert(rangeCount == 0);
+
+    // ローカルのAABBは Mesh3DVertex の並びで登録したときだけ位置から求め、それ以外の大きさや非有限の位置では返さない
+    BoundingBox localBounds;
+    assert(!manager.Meshes().TryGetLocalBounds(meshHandle, localBounds));
+    const MeshDataHandle boundsHandle = MakeMeshHandle(79);
+    Mesh3DVertex boundsVertices[3] = {};
+    boundsVertices[0].Position[0] = -30.0f;
+    boundsVertices[0].Position[2] = 4.0f;
+    boundsVertices[1].Position[0] = 2.0f;
+    boundsVertices[1].Position[1] = -1.0f;
+    boundsVertices[2].Position[1] = 3.0f;
+    boundsVertices[2].Position[2] = -30.0f;
+    assert(manager.Meshes().Register(boundsHandle, boundsVertices, sizeof(boundsVertices), indicesA, 3));
+    assert(manager.Meshes().TryGetLocalBounds(boundsHandle, localBounds));
+    assert(localBounds.MinX == -30.0f && localBounds.MaxX == 2.0f);
+    assert(localBounds.MinY == -1.0f && localBounds.MaxY == 3.0f);
+    assert(localBounds.MinZ == -30.0f && localBounds.MaxZ == 4.0f);
+    boundsVertices[1].Position[1] = std::numeric_limits<float>::infinity();
+    assert(manager.Meshes().Register(boundsHandle, boundsVertices, sizeof(boundsVertices), indicesA, 3));
+    assert(!manager.Meshes().TryGetLocalBounds(boundsHandle, localBounds));
+    manager.Meshes().Unregister(boundsHandle);
+    assert(!manager.Meshes().TryGetLocalBounds(boundsHandle, localBounds));
 
     const size_t bufferCountBeforeReregister = device->CreatedBufferDescs.size();
     assert(manager.Meshes().Register(meshHandle, verticesB, sizeof(verticesB), indicesB, 6));

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Rendering/GpuResourceTypes.h"
 #include "Rendering/ITextureHandleRegistrar.h"
@@ -169,6 +169,11 @@ namespace NorvesLib::Core::Rendering
         bool TryGetSubMeshRanges(MeshDataHandle handle,
                                  Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS>& out,
                                  uint32_t& outCount) const;
+        /**
+         * @brief 登録した頂点の位置から求めたローカル空間のAABBを取得する
+         * @return 登録済みで、頂点が Mesh3DVertex の並びだったメッシュなら true
+         */
+        bool TryGetLocalBounds(MeshDataHandle handle, BoundingBox &outBounds) const;
         void Unregister(MeshDataHandle handle);
 
     private:
