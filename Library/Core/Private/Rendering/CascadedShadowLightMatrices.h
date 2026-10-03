@@ -84,7 +84,9 @@ namespace NorvesLib::Core::Rendering
      *
      * 光の向きに垂直な面で、カスケードの正方形（中心SnappedCenter・半幅Radius）の外接円と
      * 境界球の距離を比べる保守的な判定。光の向きの奥行きは見ない（深度範囲は遮蔽物の境界球を
-     * 含めて作るため）。無効なカスケードや有限でない境界球はfalse。
+     * 含めて作るため）。BuildCascadedShadowLightMatricesも同じ判定でXYにかかる遮蔽物だけを
+     * カスケードの深度範囲に含めるので、この判定で選んだ物だけを描けば深度範囲と描く物が一致する。
+     * 無効なカスケードや有限でない境界球はfalse。
      */
     bool CascadedShadowCascadeMayContainCaster(const CascadedShadowCascade& cascade,
                                                const BoundingSphere& casterBounds);

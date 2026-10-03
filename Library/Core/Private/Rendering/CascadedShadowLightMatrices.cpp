@@ -59,6 +59,20 @@ namespace NorvesLib::Core::Rendering
             return Math::Vector3(bounds.CenterX, bounds.CenterY, bounds.CenterZ);
         }
 
+        // 光の向きの成分を除いた、カスケードの中心から境界球の中心までの距離で、影の地図の
+        // 正方形（半幅radius）の外接円にかかるかを比べる。深度範囲と描画の両方がこれで判定する。
+        bool CasterReachesShadowMapSquare(const Math::Vector3& snappedCenter,
+                                          const Math::Vector3& direction,
+                                          float radius,
+                                          const BoundingSphere& bounds)
+        {
+            const Math::Vector3 offset = MakeBoundsCenter(bounds) - snappedCenter;
+            const Math::Vector3 lateral =
+                offset - direction * Math::VectorUtils::Dot(offset, direction);
+            const float reach = radius * std::sqrt(2.0f) + bounds.Radius;
+            return Math::VectorUtils::Dot(lateral, lateral) <= reach * reach;
+        }
+
         float ResolveCameraAspect(const CameraProxy& camera)
         {
             if (std::isfinite(camera.AspectRatio) && camera.AspectRatio > Math::Constants::EPSILON)
@@ -520,7 +534,10 @@ namespace NorvesLib::Core::Rendering
             {
                 for (const BoundingSphere& bounds : *casterBounds)
                 {
-                    if (!IsFiniteBounds(bounds))
+                    // 影の地図のXYにかからない物は描かれないので、深度範囲にも含めない。
+                    if (!IsFiniteBounds(bounds) ||
+                        !CasterReachesShadowMapSquare(snappedCenter, normalizedDirection,
+                                                      radius, bounds))
                     {
                         continue;
                     }
@@ -713,13 +730,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // 光の向きの成分を除いた、カスケードの中心から境界球の中心までの距離で比べる。
-        const Math::Vector3 offset =
-            Math::Vector3(casterBounds.CenterX, casterBounds.CenterY, casterBounds.CenterZ) -
-            cascade.SnappedCenter;
-        const Math::Vector3 lateral =
-            offset - cascade.Direction * Math::VectorUtils::Dot(offset, cascade.Direction);
-        const float reach = cascade.Radius * std::sqrt(2.0f) + casterBounds.Radius;
-        return Math::VectorUtils::Dot(lateral, lateral) <= reach * reach;
+        return CasterReachesShadowMapSquare(
+            cascade.SnappedCenter, cascade.Direction, cascade.Radius, casterBounds);
     }
 } // namespace NorvesLib::Core::Rendering
