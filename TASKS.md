@@ -1866,7 +1866,7 @@
 - stop-when: 未実装拡張の受理、optional extensionsUsed全体の無差別拒否、骨格/材質の未承認仕様拡張。
 
 ## G2-GR77-LOOSE-SOURCES: loose静的モデルへGLBと埋込み画像を接続する
-- status: todo
+- status: done
 - done-when: GLTFAnalyzerの静的stagingを共有container/BufferSet/ImageSourceへ接続し、GLB/data URIのgeometryとPNG/JPEG画像をCPU所有stagingにする。埋込み画像のRequestPathは空、既存外部画像の論理参照とRGBA8/ARM分解を保持する。
 - verify: 小GLB・data URI・外部入力でgeometry/5staged textures（元画像3枚）を比較し、元source破棄後の所有と必須拡張拒否を確認する登録試験。Windows/GPU未検証と区別する。
 - stop-when: BIN全体コピー、埋込み画像をcooked manifest参照へ回す、既存材質既定の変更、full static parser統合の先取り。
@@ -1877,3 +1877,17 @@
 - verify: 3頂点に対するindex=3/65535の拒否と正常0/1/2の受理を既存staging試験へ登録。純粋な共通検査も境界と空/nullを検証する。
 - stop-when: clusterizer全体改修、正常meshのwindingや材質変更、native未実行を合格扱いする。
 - notes: GLTFAnalyzer::ExtractMeshDataはindex値を未検査で返し、MeshClusterizer::ComputeNormalCone/ComputeBoundingSphereがその値で頂点を参照する。LOOSE-SOURCES前に安全化する。
+
+## G2-GR77-MIME-SIGNATURE: 埋込み画像の宣言MIMEと実形式の一致を検証する
+- status: todo
+- done-when: PNG/JPEG宣言と実signatureの矛盾を、cook packagingとlooseの同じ規則で拒否する。外部画像の従来decoder形式は狭めない。
+- verify: PNG宣言/JPEG signatureと逆の拒否、正常一致、失敗時出力保持を既存束へ登録する。
+- stop-when: 新形式追加、native未実行を合格扱い、材質や色空間既定を変更。
+- notes: 現行は対応signatureかどうかだけを判定する。GR77接続の非blocking残件として登録。
+
+## G2-GR77-NATIVE-ACCEPTANCE: 実物GLBとnative統合の受入れを記録する
+- status: blocked
+- done-when: 実物GLBと既存glTFのcooker/loose/骨格の受入れを実行し、必要な範囲でgeometry/texture/hashと寿命を確認する。
+- verify: CookedMeshTest、AssetCookGlbSmoke、実物大型GLBのcpu/cooked/表示結果を区別して記録する。
+- stop-when: pure helperやfixture構文の成功をnative統合の成功として扱う。
+- notes: 現cloudはWindows.h依存で本体compileできず、計画書が参照するDogGameの実物大型GLBも未配置。作者は非描画Windows検証を必須から外しているため、独立実装は継続する。

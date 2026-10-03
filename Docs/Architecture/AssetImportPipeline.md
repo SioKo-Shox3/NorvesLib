@@ -178,3 +178,25 @@ loose静的ロードは全index値を検査してからwinding変換・MeshClust
 空/nullのindex列と頂点数0も拒否し、CPU stagingの候補が失敗した場合は既存出力を保持する。
 純粋検査は通常・最適化・ASan/UBSan（LeakSanitizer除外）で確認した。
 実stagingのindex=3/65535回帰は登録済みだが、Windows.h依存によりnative実行は未確認。
+
+## loose静的モデルのGLB・埋込み画像接続（GR77）
+
+GLTFAnalyzerのstatic stagingは元fileを保持して共有Container/ResolveJsonBuffersを使う。
+JSONだけを文字列化し、GLBのBINは元fileから借用する。旧独立buffer parser/loaderは削除した。
+geometryのaccessor/view解析、時計回りへの変換、最初のmesh/primitive、材質既定は維持する。
+buffer URIは共有resolverの相対ASCII/canonical境界に従う。
+
+参照された画像だけImageSourceで解決する。bufferView/data URI画像はPNG/JPEGを検査して
+CPU stagingがpixelsを所有し、BuildModelStagingを抜けた後は元file/bufferに依存しない。
+Albedo/Normalは既存loose経路同様RGBA8_UNORM、ARMはRGBをAO/Roughness/MetallicのR8に分離する。
+元画像3枚ならstagingは5枚となる。埋込みのRequestPathは空に保ち、finalizerのmanifest検索へ回さない。
+外部画像の論理RequestPathと解決済みfallbackは従来同様で、相対requestの画像はfinalizeまで遅延する。
+参照された不正image/不正PNG/JPEGは失敗し、黙って既定画像へ置換しない。
+既存の材質欠如/材質index範囲外時のfallbackは維持する。
+
+GltfLooseSourceTestを既存束へ登録し、外部絶対pathの実pixels/相対pathの遅延、
+GLB、data URI buffer、data URI image、外部bufferViewのgeometryと5画像、
+不正container/image/view/必須拡張、失敗時の出力保持を検査する。
+生成した1200byte fixtureの実Container/range/stbは通常・最適化・ASan/UBSanで確認した。
+実JsonDocument/GLTFAnalyzer/staging試験はWindows.h依存でcompile停止し未実行。
+実物大型GLB・GPU描画・Windows統合の受入れは完了していない。

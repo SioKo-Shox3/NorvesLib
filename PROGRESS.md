@@ -478,3 +478,6 @@
 
 - G2-GR77-LOOSE-INDEX-RANGE: 全復号indexの頂点範囲をwinding/clusterizer前に検証し、宣言buffer内でも頂点配列外へ読む不正入力を拒否。正常geometry/材質は維持。純検査8,256組とnull/空/0頂点/UINT32_MAX、既存byte範囲5,438,750件を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で成功、MEMBER Werror compile成功。正常102byte fixtureのindex=3/65535の拒否と既存出力保持をnativeへ登録、Windows.hにより実行未確認。独立レビューPASS。
 - Next: GR77 looseへ共有container/buffer/image bytesを接続する。G2他選定とGPU/実物受入れの未検証は維持する。
+
+- G2-GR77-LOOSE-SOURCES: static looseを共有container/BufferSet/ImageSourceへ接続し、BIN借用・外部/data URI所有をscope内に保持して独立CPU pixelsへ復号。外部logical requestは従来どおりfinalize遅延、埋込みは空RequestPathでRGBA8_UNORM2枚/ARM3R8を保持。不正material imageは伝播失敗し候補を公開しない。集計metadata/read_total stageを維持。新native試験に4embedded経路と外部絶対/相対、5texture/geometry、壊れたcontainer/image/view/必須拡張/8byte PNGの失敗保持を登録。fixtureの実Container/range/stbは通常/O2-NDEBUG/ASan・UBSan成功。独立レビューで試験末尾文字列を修復し、const pointer listを明示配列化、最終PASS。nativeはWindows.hでcompile停止。実物大型GLB/GPUは未入手・未実行で別受入れへ保留。
+- Next: GR77の主要3経路の配線が揃ったため、承認済みGR78の共有sidecar/設定・変換へ進む。宣言MIMEと実signature不一致拒否は非blocking残件として登録。GR77全体のnative/実物受入れを完了とは扱わない。
