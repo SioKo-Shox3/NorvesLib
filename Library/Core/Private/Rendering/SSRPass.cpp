@@ -526,12 +526,18 @@ namespace NorvesLib::Core::Rendering
             m_bLegacyInputFallbackActive = true;
         }
 
+        // 後のフォグ・半透明・被写界深度・動きぼけ・TAAはこの出力へ重ねるので、HDRのシーンの色として書き出し、
+        // 検証のキャプチャで読み戻せるよう転送元にもする（LightingPassの "Scene.Color" と同じ扱い）。
+        RGTextureDesc outputDesc =
+            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSROutput");
+        outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
         RGTextureHandle outputHandle = builder.WriteTexture(
             RenderGraphResourceNames::SSRSceneColor,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSROutput"),
+            outputDesc,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
         m_OutputHandle = outputHandle.ToResourceHandle();
+        builder.ExportTexture(RenderGraphResourceNames::SSRSceneColor, outputHandle);
         builder.PreserveInsertionOrder();
     }
 
