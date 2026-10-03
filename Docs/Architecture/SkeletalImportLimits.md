@@ -51,7 +51,7 @@ Strictの通常4影響経路をこの修復へ無言で切り替えない。
 参考: [glTF skinned mesh attributes](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#skinned-mesh-attributes)。
 
 5本の既知値、120順列、同joint/tie/微小値、警告・失敗境界、無効値/関節/総和/aliasと出力保持を純実装で確認する。
-CUBICSPLINE/morphとcook/CLI接続は別作業。raw/legacy/file decode接続は下記を参照。
+CUBICSPLINE/morphとCLI接続は別作業。raw/legacy/file decodeとcook接続は下記を参照。
 
 ## 明示policyと診断型
 
@@ -69,7 +69,7 @@ struct paddingや文字列表現を使わず、-0を+0へ統一する。algorith
 警告閾値の変更もhashに含み、同じ入力の別policyを旧cacheと混同しない。
 
 固定bytesと独立3初期stateのFNV既知値、Strict不変、閾値/algorithm差、invalid enum/数値、ゼロの正規化を
-通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBERで検査する。cook/CLIのhashへの接続は別作業で、decode入口は下記の明示指定に対応する。
+通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBERで検査する。cook/preflightのhashとdecode入口は下記の明示指定に対応する。CLI指定は別作業。
 
 ## 複数セット記述の収集
 
@@ -101,4 +101,22 @@ Strictのreportは既定値。失敗Dataは空、source buffer出力も空のま
 FiveInfluences.gltfは3頂点中1頂点だけ5本の影響を持つ検証用fixtureで、binはnative試験が生成する。
 raw/GLB/String/fileの同値、5→4の値と測定、閾値超過、追加slotの不正joint/ゼロweight/負値、
 UNORM16のraw総和1不足とoptions不正をnative試験へ登録する。LinuxではCoreのWindows.h依存により
-この統合試験は実行できず、純kernel/policy/pair試験の実行と区別する。cook/CLIはまだStrictのみ。
+この統合試験は実行できず、純kernel/policy/pair試験の実行と区別する。CLIはまだStrictのみ。
+
+## 骨格cookと事前hash照合
+
+CookGltfToNvskelとFingerprintModelCookSourceの末尾decodeOptionsは省略時Strict。
+本cookは設定snapshotとoptionsを同じdecodeへ渡し、成功したDecodeReportをSkeletalCookResultへ所有する。
+縮約失敗は出力result全体を保持し、errorへstatus/処理済み頂点数/失敗頂点/測定できた脱落比率を返す。
+診断のために失敗資産の一部payloadを公開しない。
+
+source hashは元source/buffer bytes → 正規化import settings → 正規化skeletal policy/algorithmの順で連結する。
+Strictでは最後の連結が恒等なので、既定hashとNVSKEL bytesは従来どおり。Reduceではwarnだけの変更もhashが変わる。
+preflightはStrict追加set拒否を維持し、Reduceなら連続pair記述を検査するが、geometry読込/縮約はしない。
+よってpreflight成功はcook成功を意味せず、閾値超過や不正weightは本cookで拒否する。
+静的meshのfingerprintへdecodeOptionsを指定した場合は、既定値でも指定自体を拒否する。
+
+native回帰にraw/GLBのcook/preflight hash一致、cooked再読込値、warn/failのhash差、
+sidecarとの連結順、Strict明示値と省略値の旧hash一致、失敗out保持と診断を登録する。
+decodeの正常prefix後失敗とUNORM8/16複数setの全総和/1不足も恒久回帰へ加える。
+これらの統合試験はWindows.h依存で未実行。CLI flag/skipへの接続はまだ行わない。

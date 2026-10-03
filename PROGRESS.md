@@ -547,3 +547,6 @@
 
 - G2-GR86-REDUCE-DECODE: 明示Reduceだけraw/legacy/fileに複数set読込と縮約を接続。全slot joint範囲、型/count/layout、全整数影響の65535共通分母raw総和を縮約前検査。成功prefixの統計と失敗頂点脱落量を分離し、失敗Data/sourceを非公開。Strict/status0〜15/128関節/ABI/wire不変、16/17を末尾追加。3頂点中1頂点5影響fixtureと入口同値/閾値/不正joint/負値/UNORM/optionsをnative登録。純kernel/policy6実行成功、独立確認はpair込み9実行成功。review中にExtractAnimationの不要追加引数を復元し最終PASS。nativeはWindows.hで未実行。正常prefix後失敗と複数UNORM混在の恒久回帰強化はnonblocking追補。
 - Next: collector/decodeを公開し、GR86-REDUCE-COOKのcook/preflight/hash/診断へ接続する。CLIはその後、CUBICSPLINE/morphは別反復。
+
+- G2-GR86-REDUCE-COOK: 明示optionsを骨格cook/preflightへ伝播し、source/buffer→import settings→policy/algorithmの同順hashを共有。Strict hash/wire不変、成功DecodeReport所有、失敗out保持とerror内の頂点/脱落量を追加。preflight成功はcook可能性を意味せず、静的meshへの骨格options指定は拒否。raw/GLB再読込・hash/閾値差・sidecar・旧Strict同値・失敗保持、decoder正常prefix後失敗/混在UNORMの恒久回帰を登録。純policy3mode実行成功、独立PASS。nativeはWindows.hで未実行。
+- Next: GR86-REDUCE-CLIの明示指定とskip接続へ。共有JSON ImportReportは別taskとして保持し、stderr診断だけでGR86全体完了としない。

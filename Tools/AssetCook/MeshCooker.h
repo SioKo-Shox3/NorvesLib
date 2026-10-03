@@ -4,6 +4,7 @@
 #include "Container/StringView.h"
 #include "Container/VariableArray.h"
 #include "Container/Span.h"
+#include "Resource/SkeletalImportOptions.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -66,6 +67,7 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t IndexCount = 0;
         uint32_t JointCount = 0;
         uint32_t ClipCount = 0;
+        Core::Skeletal::SkeletalGltfDecodeReport DecodeReport;
     };
 
     struct ModelImageFingerprint
@@ -89,7 +91,8 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::AnsiStringView format, Core::Container::AnsiStringView sourcePath,
         Core::Container::AnsiStringView logicalPath, ModelCookFingerprint& outResult,
         Core::Container::AnsiString& error,
-        const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr);
+        const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr);
 
     [[nodiscard]] bool IsSupportedMeshCookFormat(Core::Container::AnsiStringView format) noexcept;
 
@@ -112,5 +115,6 @@ namespace NorvesLib::Tools::AssetCook
                                         Core::Container::AnsiStringView sourcePath,
                                         SkeletalCookResult& outResult,
                                         Core::Container::AnsiString& error,
-                                        const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr);
+                                        const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
+                                        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr);
 } // namespace NorvesLib::Tools::AssetCook

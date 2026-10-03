@@ -750,6 +750,66 @@ namespace
         {
             assert(result.Data.Vertices.empty() && result.Data.Indices.empty() && result.Data.Joints.empty() && result.Data.Clips.empty());
         };
+        // cook/preflightは同じsource/設定/policyを同じ順でhash化する。
+        using namespace NorvesLib::Tools::AssetCook;
+        const Container::AnsiString cookPath((fixture.Root / "FiveInfluences.gltf").generic_string().c_str());
+        constexpr Container::AnsiStringView format = "nvskel.v0.skinned.pnujiw.u32";
+        Container::AnsiString cookError;
+        auto cookWith = [&](const ByteArray& bytes, const SkeletalGltfDecodeOptions* policy, SkeletalCookResult& out)
+        {
+            return CookGltfToNvskel(bytes.data(), bytes.size(), format, cookPath, out, cookError, nullptr, policy);
+        };
+        auto fingerprintWith = [&](const ByteArray& bytes, const SkeletalGltfDecodeOptions* policy, ModelCookFingerprint& out)
+        {
+            return FingerprintModelCookSource(bytes.data(), bytes.size(), format, cookPath, "Models/rig.gltf", out, cookError, nullptr, policy);
+        };
+        SkeletalCookResult cooked;
+        ModelCookFingerprint fingerprint;
+        assert(cookWith(sourceBytes, &options, cooked) && fingerprintWith(sourceBytes, &options, fingerprint));
+        assert(cooked.SourceHash == fingerprint.SourceHash && !cooked.bHasImportSettings);
+        checkReport(cooked.DecodeReport);
+        auto parsedCook = Asset::ParseCookedSkeletal(MakeBlob(cooked.NvskelBytes));
+        assert(parsedCook.Succeeded()); AssertEquivalent(decoded.Data, parsedCook.Data.Skeletal);
+        SkeletalCookResult cookedGlb;
+        ModelCookFingerprint glbFingerprint;
+        assert(cookWith(glb, &options, cookedGlb) && fingerprintWith(glb, &options, glbFingerprint));
+        assert(cookedGlb.SourceHash == glbFingerprint.SourceHash && cookedGlb.NvskelBytes == cooked.NvskelBytes);
+        auto warningOnly = options; warningOnly.WarnDroppedWeight = 0.06;
+        SkeletalCookResult changedWarning;
+        ModelCookFingerprint changedFingerprint;
+        assert(cookWith(sourceBytes, &warningOnly, changedWarning) && fingerprintWith(sourceBytes, &warningOnly, changedFingerprint));
+        assert(changedWarning.SourceHash == changedFingerprint.SourceHash && changedWarning.SourceHash != cooked.SourceHash);
+        assert(changedWarning.DecodeReport.WarningVertexCount == 0 && changedWarning.NvskelBytes == cooked.NvskelBytes);
+        auto changedLimit = options; changedLimit.FailDroppedWeight = 0.2;
+        assert(fingerprintWith(sourceBytes, &changedLimit, changedFingerprint) && changedFingerprint.SourceHash != cooked.SourceHash);
+        const auto savedCook = cooked;
+        const auto savedFingerprint = fingerprint;
+        assert(!cookWith(sourceBytes, nullptr, cooked) && !fingerprintWith(sourceBytes, nullptr, fingerprint));
+        assert(cooked.SourceHash == savedCook.SourceHash && cooked.NvskelBytes == savedCook.NvskelBytes);
+        assert(fingerprint.SourceHash == savedFingerprint.SourceHash);
+        auto cookLimit = options; cookLimit.FailDroppedWeight = 0.04;
+        // fingerprint成功はcook可能性の証明ではない。値を読み縮約する本cookで拒否する。
+        assert(fingerprintWith(sourceBytes, &cookLimit, changedFingerprint));
+        assert(!cookWith(sourceBytes, &cookLimit, cooked));
+        assert(cookError.find("failed_vertex=0") != Container::AnsiString::npos &&
+            cookError.find("dropped_weight=") != Container::AnsiString::npos);
+        assert(cooked.SourceHash == savedCook.SourceHash && cooked.NvskelBytes == savedCook.NvskelBytes);
+        checkReport(cooked.DecodeReport);
+        auto badPolicy = options; badPolicy.FailDroppedWeight = -1;
+        assert(!cookWith(sourceBytes, &badPolicy, cooked) && !fingerprintWith(sourceBytes, &badPolicy, fingerprint));
+        assert(cooked.SourceHash == savedCook.SourceHash && fingerprint.SourceHash == savedFingerprint.SourceHash);
+        assert(!FingerprintModelCookSource(sourceBytes.data(), sourceBytes.size(), "nvmesh.v0.mesh3d.pnt.u32.clustered",
+            cookPath, "Models/rig.gltf", fingerprint, cookError, nullptr, &options));
+        // sidecarが有る場合もcook前照合と同じ順でpolicyを追加する。
+        WriteFixtureBytes(fixture.Root / "FiveInfluences.gltf.import.json", TextBytes("{\"version\":1,\"units\":{\"scale\":2}}"));
+        SkeletalCookResult scaledCook;
+        assert(cookWith(sourceBytes, &options, scaledCook) && fingerprintWith(sourceBytes, &options, changedFingerprint));
+        assert(scaledCook.SourceHash == changedFingerprint.SourceHash && scaledCook.SourceHash != cooked.SourceHash);
+        assert(scaledCook.bHasImportSettings && scaledCook.ImportSettingsHash == changedFingerprint.ImportSettingsHash);
+        const auto scaledParsed = Asset::ParseCookedSkeletal(MakeBlob(scaledCook.NvskelBytes));
+        assert(scaledParsed.Succeeded()); AssertScaledSkeletal(decoded.Data, scaledParsed.Data.Skeletal, 2);
+        checkReport(scaledCook.DecodeReport);
+        assert(std::filesystem::remove(fixture.Root / "FiveInfluences.gltf.import.json"));
         auto limited = options; limited.FailDroppedWeight = 0.04;
         const auto failed = DecodeSkeletalGltf({sourceBytes.data(), sourceBytes.size()}, sourcePath, &buffers, nullptr, &limited);
         assert(failed.Status == SkeletalGltfDecodeStatus::InfluenceReductionExceeded && buffers.GetCount() == 0);
@@ -764,6 +824,43 @@ namespace
         assert(Resource::GLTFAnalyzer::AnalyzeSkeletal(sourcePath, &limited).Status == failed.Status);
         auto invalidOptions = options; invalidOptions.WarnDroppedWeight = 0.5;
         assert(DecodeSkeletalGltf({sourceBytes.data(), sourceBytes.size()}, sourcePath, nullptr, nullptr, &invalidOptions).Status == SkeletalGltfDecodeStatus::InvalidImportOptions);
+        // 成功prefixの統計から失敗頂点を除外する。0番は通常成功、1番だけ脱落量超過。
+        auto laterFailure = binary;
+        std::memcpy(laterFailure.data() + 100, binary.data() + 96, 4);
+        std::memcpy(laterFailure.data() + 148, binary.data() + 132, 16);
+        std::memcpy(laterFailure.data() + 612, binary.data() + 608, 4);
+        std::memcpy(laterFailure.data() + 636, binary.data() + 620, 16);
+        std::memcpy(laterFailure.data() + 96, base.data() + 96, 4);
+        std::memcpy(laterFailure.data() + 132, base.data() + 132, 16);
+        WriteFloat(laterFailure, 620, 0);
+        WriteFixtureBytes(fixture.Root / "fixture.bin", laterFailure);
+        const auto prefixFailure = DecodeSkeletalGltf(CoreText(source), sourcePath, nullptr, nullptr, &limited);
+        assert(prefixFailure.Status == SkeletalGltfDecodeStatus::InfluenceReductionExceeded);
+        assert(prefixFailure.Report.ProcessedVertexCount == 1 && prefixFailure.Report.FailedVertexIndex == 1);
+        assert(prefixFailure.Report.ReducedVertexCount == 0 && prefixFailure.Report.WarningVertexCount == 0);
+        assert(prefixFailure.Report.MaximumDroppedWeight == 0 && prefixFailure.Report.MeanDroppedWeight == 0);
+        assert(prefixFailure.Report.bHasFailedVertexDroppedWeight && std::abs(prefixFailure.Report.FailedVertexDroppedWeight - 0.05) < 1e-7);
+        checkEmpty(prefixFailure);
+        auto mixed = binary;
+        // U8 set0の総和241、U16 set1は3598。241*257+3598=65535。
+        mixed[180] = 102; mixed[181] = 76; mixed[182] = 38; mixed[183] = 25;
+        mixed[184] = 255; mixed[188] = 255; WriteLe16(mixed, 192, 3598);
+        auto mixedSource = source;
+        const auto replaceOnce = [](Container::AnsiString& text, Container::AnsiStringView from, Container::AnsiStringView to)
+        {
+            const size_t position = text.find(from);
+            assert(position != Container::AnsiString::npos && text.find(from, position + from.size()) == Container::AnsiString::npos);
+            text = Container::AnsiString(text.substr(0, position)) + Container::AnsiString(to) + Container::AnsiString(text.substr(position + from.size()));
+        };
+        replaceOnce(mixedSource, "\"WEIGHTS_0\": 5", "\"WEIGHTS_0\": 6");
+        replaceOnce(mixedSource, "\"WEIGHTS_1\": 14", "\"WEIGHTS_1\": 7");
+        WriteFixtureBytes(fixture.Root / "fixture.bin", mixed);
+        const auto mixedDecoded = DecodeSkeletalGltf(CoreText(mixedSource), sourcePath, nullptr, nullptr, &options);
+        assert(mixedDecoded.Succeeded() && std::abs(mixedDecoded.Report.MaximumDroppedWeight - 3598.0 / 65535) < 1e-12);
+        WriteLe16(mixed, 192, 3597); WriteFixtureBytes(fixture.Root / "fixture.bin", mixed);
+        const auto mixedRejected = DecodeSkeletalGltf(CoreText(mixedSource), sourcePath, nullptr, nullptr, &options);
+        assert(mixedRejected.Status == SkeletalGltfDecodeStatus::InvalidAccessor && mixedRejected.Report.ProcessedVertexCount == 0);
+        checkEmpty(mixedRejected);
         // 捨てられる5本目もjoint範囲、負値、ゼロweight時のjointを検査する。
         binary[608] = 5; WriteFixtureBytes(fixture.Root / "fixture.bin", binary);
         const auto badJoint = DecodeSkeletalGltf(CoreText(source), sourcePath, nullptr, nullptr, &options);
@@ -908,6 +1005,13 @@ namespace
             SkeletalCookResult externalCook;
             assert(cook(external, externalCook));
             assert(externalCook.SourceHash == HashSourcePart(HashSourcePart(14695981039346656037ull, external), binary));
+            SkeletalCookResult explicitStrict;
+            Skeletal::SkeletalGltfDecodeOptions strictOptions;
+            Container::AnsiString strictError;
+            assert(NorvesLib::Tools::AssetCook::CookGltfToNvskel(external.data(), external.size(),
+                "nvskel.v0.skinned.pnujiw.u32", sourcePath, explicitStrict, strictError, nullptr, &strictOptions));
+            assert(explicitStrict.SourceHash == externalCook.SourceHash && explicitStrict.NvskelBytes == externalCook.NvskelBytes);
+
             for (const ByteArray* source : {&glb, &dataUri})
             {
                 SkeletalCookResult result;

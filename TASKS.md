@@ -2048,7 +2048,19 @@
 - stop-when: cooked wire/頂点ABI/128上限変更、未接続のcooker/CLI成功主張、捨てる影響の不正値黙認。
 
 ## G2-GR86-REDUCE-COOK: 縮約指定とhashを骨格cookへ接続する
-- status: todo
+- status: done
 - done-when: 明示optionsをcook/preflightへ伝播し、同一source/settings/policy/algorithmから同じhashを得る。Strict hashとwireは不変、失敗out保持、縮約診断を返す。
 - verify: Strict旧hash、Reduce cooked値/診断、preflight同値、warn/fail変更hash、閾値超過out保持をnativeへ登録。純hash回帰を実行する。
 - stop-when: CLI未接続なのに利用可能と主張、形式/ABI/128上限変更、設定指定の黙殺。
+
+## G2-GR86-REDUCE-CLI: 明示縮約と閾値をCLIから指定する
+- status: todo
+- done-when: --skin-influences strict|reduceとwarn/fail閾値を厳密parseし、skeletal cook/skipの両方へ同じpolicyを伝播する。既定Strict/非骨格拒否/重複・不正・無意味指定拒否と脱落量診断を維持する。
+- verify: pure parserの通常/O2/sanitizer/MEMBER、native CLI smokeで縮約成功・既定拒否・閾値失敗出力保持・policy変更でcache miss/同値でhitを登録する。
+- stop-when: 未実装のCUBICSPLINE/morph/joint-policyを受理する、skipだけStrictのまま、native未実行を成功と主張する。
+
+## G2-GR86-IMPORT-REPORT: 縮約・焼込・dropのJSON診断を共有形式へまとめる
+- status: todo
+- done-when: 実装済みpolicyの測定と失敗を版付きImportReportへまとめ、GR84の将来拡張と区別する。CLI stderr警告と同じ測定を持つ。
+- verify: JSON文法/数値/未完走査と失敗計測の分離/決定的出力、書込経路を足す場合は既存入力・出力保護。
+- stop-when: 未実装のBVH/retargetを実装済みとして報告、既存出力保護の迂回。

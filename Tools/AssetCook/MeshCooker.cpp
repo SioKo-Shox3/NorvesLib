@@ -8,6 +8,7 @@
 #include "Resource/SkeletalGltfDecode.h"
 #include "Resource/SkeletalLimits.h"
 #include "Resource/SkeletalInfluenceAttributes.h"
+#include "Resource/SkeletalImportPolicy.h"
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
 #include "Resource/GltfDocumentProfile.h"
@@ -1813,11 +1814,19 @@ namespace NorvesLib::Tools::AssetCook
         bool FingerprintModelCookSourceInternal(const uint8_t* sourceBytes, size_t sourceSize,
             AnsiStringView format, AnsiStringView sourcePath, AnsiStringView logicalPath,
             ModelCookFingerprint& outResult, AnsiString& error,
-            const AssetImport::ImportSettingsFileOptions* importOptions)
+            const AssetImport::ImportSettingsFileOptions* importOptions,
+            const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
         {
             if (format != SupportedMeshFormat && format != SupportedSkeletalFormat)
             {
                 error = "unsupported model fingerprint format";
+                return false;
+            }
+            const Core::Skeletal::SkeletalGltfDecodeOptions options = decodeOptions ? *decodeOptions : Core::Skeletal::SkeletalGltfDecodeOptions{};
+            if ((format != SupportedSkeletalFormat && decodeOptions != nullptr) ||
+                !Core::Skeletal::IsValidSkeletalGltfDecodeOptions(options))
+            {
+                error = "骨格import指定が不正、または静的meshには対応していません";
                 return false;
             }
             if (!sourceBytes || sourceSize==0)
@@ -1861,13 +1870,26 @@ namespace NorvesLib::Tools::AssetCook
             if (format==SupportedSkeletalFormat)
             {
                 const auto attributes=root.FindMember("meshes").GetArrayElement(0).FindMember("primitives").GetArrayElement(0).FindMember("attributes");
-                const auto strict=Core::Skeletal::ValidateStrictInfluenceAttributes(attributes);
-                if (strict!=Core::Skeletal::StrictInfluenceStatus::Success)
+                if (options.InfluencePolicy == Core::Skeletal::SkeletalInfluencePolicy::Strict)
                 {
-                    error="skeletal strict influences rejected: status="+FormatInteger(static_cast<int>(strict));
-                    return false;
+                    const auto strict = Core::Skeletal::ValidateStrictInfluenceAttributes(attributes);
+                    if (strict != Core::Skeletal::StrictInfluenceStatus::Success)
+                    {
+                        error = "skeletal strict influences rejected: status=" + FormatInteger(static_cast<int>(strict));
+                        return false;
+                    }
+                }
+                else
+                {
+                    VariableArray<Core::Skeletal::SkeletalInfluenceSet> sets;
+                    if (Core::Skeletal::CollectSkeletalInfluenceSets(attributes, sets) != Core::Skeletal::InfluenceSetCollectionStatus::Success)
+                    {
+                        error = "骨格のjoint/weightセット記述が不正です";
+                        return false;
+                    }
                 }
             }
+
             ModelCookFingerprint result;
             if (format==SupportedMeshFormat)
             {
@@ -1900,7 +1922,13 @@ namespace NorvesLib::Tools::AssetCook
                 error = "invalid import settings hash";
                 return false;
             }
-            result.SourceHash=hash.Value;
+            const auto policyHash = Core::Skeletal::AppendSkeletalImportPolicyHash(hash.Value, options);
+            if (!policyHash.bValid)
+            {
+                error = "骨格importのpolicy hashを生成できません";
+                return false;
+            }
+            result.SourceHash = policyHash.Value;
             result.bHasImportSettings=settings.bPresent;
             result.ImportSettingsPath=AnsiString(settings.Path.generic_string().c_str());
             if (settings.bPresent)
@@ -2363,7 +2391,8 @@ namespace NorvesLib::Tools::AssetCook
                                       AnsiStringView sourcePath,
                                       SkeletalCookResult& outResult,
                                       AnsiString& error,
-                          const Core::AssetImport::ImportSettingsFileOptions* importOptions)
+                          const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
         {
             if (format != SupportedSkeletalFormat)
             {
@@ -2373,6 +2402,12 @@ namespace NorvesLib::Tools::AssetCook
             if (sourceBytes == nullptr || sourceSize == 0)
             {
                 error = "glTF source input is empty";
+                return false;
+            }
+            const Core::Skeletal::SkeletalGltfDecodeOptions options = decodeOptions ? *decodeOptions : Core::Skeletal::SkeletalGltfDecodeOptions{};
+            if (!Core::Skeletal::IsValidSkeletalGltfDecodeOptions(options))
+            {
+                error = "骨格import指定が不正です";
                 return false;
             }
             AssetImport::LoadedImportSettings loadedImport;
@@ -2387,11 +2422,26 @@ namespace NorvesLib::Tools::AssetCook
             }
             Gltf::BufferSet sourceBuffers;
             const auto decoded = NorvesLib::Core::Skeletal::DecodeSkeletalGltf(
-                {sourceBytes, sourceSize}, ToCoreString(sourcePath), &sourceBuffers, &loadedImport);
+                {sourceBytes, sourceSize}, ToCoreString(sourcePath), &sourceBuffers, &loadedImport, &options);
             if (!decoded.Succeeded())
             {
                 error = AnsiString("skeletal glTF decode failed: status=") +
                         FormatInteger(static_cast<int>(decoded.Status));
+                if (options.InfluencePolicy == Core::Skeletal::SkeletalInfluencePolicy::ReduceToFour)
+                {
+                    error += " processed_vertices=" + FormatInteger(decoded.Report.ProcessedVertexCount);
+                    if (decoded.Report.FailedVertexIndex != UINT64_MAX)
+                        error += " failed_vertex=" + FormatInteger(decoded.Report.FailedVertexIndex);
+                    if (decoded.Report.bHasFailedVertexDroppedWeight)
+                    {
+                        char number[64] = {};
+                        const auto converted = std::to_chars(number, number + sizeof(number),
+                            decoded.Report.FailedVertexDroppedWeight, std::chars_format::general,
+                            std::numeric_limits<double>::max_digits10);
+                        if (converted.ec == std::errc{})
+                            error += " dropped_weight=" + AnsiString(AnsiStringView(number, static_cast<size_t>(converted.ptr - number)));
+                    }
+                }
                 return false;
             }
 
@@ -2418,7 +2468,14 @@ namespace NorvesLib::Tools::AssetCook
                 error = "invalid import settings hash";
                 return false;
             }
-            result.SourceHash = sourceHash.Value;
+            const auto policyHash = Core::Skeletal::AppendSkeletalImportPolicyHash(sourceHash.Value, options);
+            if (!policyHash.bValid)
+            {
+                error = "骨格importのpolicy hashを生成できません";
+                return false;
+            }
+            result.SourceHash = policyHash.Value;
+            result.DecodeReport = decoded.Report;
             result.bHasImportSettings = loadedImport.bPresent;
             result.ImportSettingsPath = AnsiString(loadedImport.Path.generic_string().c_str());
             if (loadedImport.bPresent)
@@ -2500,10 +2557,11 @@ namespace NorvesLib::Tools::AssetCook
     bool FingerprintModelCookSource(const uint8_t* sourceBytes, size_t sourceSize,
         Core::Container::AnsiStringView format, Core::Container::AnsiStringView sourcePath,
         Core::Container::AnsiStringView logicalPath, ModelCookFingerprint& outResult,
-        Core::Container::AnsiString& error, const Core::AssetImport::ImportSettingsFileOptions* importOptions)
+        Core::Container::AnsiString& error, const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
     {
         return FingerprintModelCookSourceInternal(sourceBytes,sourceSize,format,sourcePath,logicalPath,
-            outResult,error,importOptions);
+            outResult,error,importOptions,decodeOptions);
     }
 
     bool IsSupportedMeshCookFormat(NorvesLib::Core::Container::AnsiStringView format) noexcept
@@ -2538,10 +2596,11 @@ namespace NorvesLib::Tools::AssetCook
                           NorvesLib::Core::Container::AnsiStringView sourcePath,
                           SkeletalCookResult& outResult,
                           NorvesLib::Core::Container::AnsiString& error,
-                          const Core::AssetImport::ImportSettingsFileOptions* importOptions)
+                          const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
     {
         AnsiString internalError;
-        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError, importOptions))
+        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError, importOptions, decodeOptions))
         {
             error = internalError;
             return false;
