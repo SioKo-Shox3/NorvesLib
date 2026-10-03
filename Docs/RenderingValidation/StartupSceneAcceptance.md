@@ -153,7 +153,7 @@ Release の構成はログを書かない（`NORVES_ENABLE_LOGGING=0`）ため�
 | 朝・昼・夕 × 既定・近接・低角度の撮影 | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT-PERF -SunElevations 10,45,3` | 9枚、result=pass（`-PERF-2`） |
 | 夜の撮影 | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT-PERF-night -Night` | 3枚、result=pass（`-PERF-3`） |
 | SS-LOOK-BALANCE の数値の範囲 | `check_look_balance.py`（`.harness/runs/20261002-185756/`） | 全項目 PASS（`-PERF-8`） |
-| GPU のフレーム時間（1280×720） | `-Configuration RelWithDebInfo -GpuTimingFrames 600`（昼夕朝・夜、2回） | 12視点 × 2回の計12960フレームのうち468フレームが16.6 msを超えた（最大 37.261 ms）。計測の間、別のアプリが GPU を約4割使っていた（`-PERF-12`）。同じコードを競合なしで測った昼の3視点は予算超え0（下） |
+| GPU のフレーム時間（1280×720） | `-Configuration RelWithDebInfo -GpuTimingFrames 600`（昼夕朝・夜、2回） | 12視点 × 2回の計12960フレームのうち468フレームが16.6 msを超えた（最大 37.261 ms）。計測の直後、Game が止まった時点で GPU の使用率が36〜40%あった（`-PERF-12`。計測の最中は未記録）。同じコードを約25分前に測った昼の3視点は予算超え0（GPU の占有は未記録の参考値。下） |
 | Release の構成のビルドと撮影 | `-Configuration Release`（最初の受入れの回） | EXIT_CODE=0、12枚 result=pass（`-DETAIL-1`・`-9`・`-10`） |
 | 起動から撮影まで | Game.log の最初の行から `capture_png saved` まで | 最初の受入れの回で変更前との差は −1.1〜+1.5 s。撮り直しの回は機械全体が遅かった（下） |
 
@@ -213,15 +213,15 @@ Release の構成はログを書かない（`NORVES_ENABLE_LOGGING=0`）ため�
 
 測り方は上の節の「測り方」と同じ（RelWithDebInfo、`FrameGPU` は加速構造の更新を含む区間、600描画フレームのうち最後の540フレーム、1フレームでも16.6 msを超えたら予算超え）。計測1: `SS-ACCEPT-PERF-gpu/`・`SS-ACCEPT-PERF-gpu-night/`（`-PERF-4`・`-5`）。計測2: `SS-ACCEPT-PERF-gpu2/`・`SS-ACCEPT-PERF-gpu2-night/`（`-PERF-6`・`-7`）。表は `verify-SS-ACCEPT-PERF-9.txt`（`gpu_table.py`）。単位は ms。
 
-**計測の条件:** この2回の計測の間、別のアプリ（`javaw`）が開いていて、Game が動いていない時点でも GPU の使用率が 36〜40%（グラフィックスのクロック 1380〜1680 MHz、約52 W）あった（`verify-SS-ACCEPT-PERF-12.txt`）。GPU を時分割で共有した分だけ各パスの時間が伸び、同じ視点・同じコードの2回で中央値が2倍違う（近接 夕3° 16.144 / 7.922 ms）。最適化そのものの効果は、同じコード（`da1ee8f` のビルド）を約20分前に競合なしで測った SS-MEGA-LOD-PERF の計測（`SS-MEGA-LOD-PERF-gpu/`、`.harness/runs/20261003-181031/verify-SS-MEGA-LOD-PERF-5.txt`）で読む。
+**計測の条件:** 2回の計測（19:44〜19:49）の直後、Game が動いていない時点（19:49:57〜19:50:01 の5秒）で GPU の使用率が 36〜40%（グラフィックスのクロック 1380〜1455 MHz、51.3〜52.0 W）あり、別のアプリ（`javaw`、14:55 起動）の窓が開いていた（`verify-SS-ACCEPT-PERF-12.txt`）。計測の最中の使用率は記録していない。同じ視点・同じコードの2回で中央値が2倍違う（近接 夕3° 16.144 / 7.922 ms）ことと合わせ、GPU を別のアプリと時分割で共有した分だけ各パスの時間が伸びたと見る（推定）。最適化の効果の参考として、同じコード（`da1ee8f` のビルド）を約25分前（19:20）に測った SS-MEGA-LOD-PERF の計測（`SS-MEGA-LOD-PERF-gpu/`、`.harness/runs/20261003-181031/verify-SS-MEGA-LOD-PERF-5.txt`）を並べる。この計測は描画時間だけの記録で、その時点の GPU の占有は記録しておらず（`javaw` はすでに起動していた）、競合の状況を確かめていない参考値である。最適化の前の SS-ACCEPT-DETAIL の計測（15:10〜15:15）も同じく占有は未記録（時刻は `verify-SS-ACCEPT-PERF-15.txt`）。
 
-| 視点（昼45°、競合なし） | 中央値 | p95 | 最大 | 予算超え | MegaGeometryPass | ShadowMapPass | LightingPass |
+| 視点（昼45°、SS-MEGA-LOD-PERF、占有未記録の参考値） | 中央値 | p95 | 最大 | 予算超え | MegaGeometryPass | ShadowMapPass | LightingPass |
 |---|---|---|---|---|---|---|---|
 | 既定 | 3.655 | 5.593 | 7.584 | 0 / 540 | 0.606 | 0.743 | 0.899 |
 | 近接 | 8.423 | 10.683 | 14.412 | 0 / 540 | 4.616 | 0.802 | 1.335 |
 | 低角度 | 4.467 | 6.858 | 7.771 | 0 / 540 | 1.586 | 0.785 | 0.562 |
 
-12視点 × 2回（競合あり）:
+12視点 × 2回（計測の直後に GPU の使用率 36〜40%）:
 
 | 視点 | 計測1 中央値 | 計測1 p95 | 計測1 最大 | 計測2 中央値 | 計測2 p95 | 計測2 最大 | 予算超え（1 / 2） | MegaGeometryPass 中央値（1 / 2） | ShadowMapPass 中央値（1 / 2） |
 |---|---|---|---|---|---|---|---|---|---|
@@ -249,29 +249,29 @@ SS-ACCEPT-DETAIL（最適化の前、同じ測り方の2回）からの変化:
 | 低角度 朝・昼・夕 | 4.19〜4.68 → 4.52〜7.16 | 1.27〜1.58 → 0.94〜1.83 | 0.79〜0.87 → 1.22〜2.27 | 9.94〜13.23 → 11.54〜16.66 |
 | 夜 3視点 | 3.48〜9.03 → 3.45〜8.13 | 0.59〜6.16 → 0.15〜4.09 | 0.75〜1.08 → 1.13〜1.41 | 8.94〜15.51 → 8.58〜15.89 |
 
-- 競合なしの昼の計測（SS-MEGA-LOD-PERF）では、最適化の前（SS-ACCEPT-DETAIL の昼）より 既定 3.88〜5.22 → 3.66・近接 9.04〜9.28 → 8.42 ms と下がり、ShadowMapPass は 0.80〜1.50 → 0.74〜0.80 ms、3視点1620フレームの予算超えは 2 → 0 になった。近接の MegaGeometryPass は 5.69〜5.97 → 4.62 ms（近接は最適化の前と同じ LOD0 で、減ったのは FIX-MEGA-CLUSTER-ADJACENCY のクラスタの大きさと法線コーンのカリングによると見る。推定）。
-- 競合ありの今回の計測でも、変わらない側の傾向は読める。既定の MegaGeometryPass は計測2で 0.147 ms（LOD4。最適化の前 0.55〜0.62）、夜の近接の MegaGeometryPass は 5.57〜6.16 → 4.03〜4.09 ms で、夜（太陽の CSM が無い）の3視点は2回とも予算超え0、中央値は最適化の前の2回の範囲の中か、それより下だった。
-- 昼・夕・朝の ShadowMapPass は2回の間で 1.19〜4.25 ms と揺れ、競合なしの 0.74〜0.80 ms の1.5〜5倍だった。描く三角形数は最適化の前より少ない（上の「太陽の影」）ため、増えたのは GPU の共有による（推定。パスの中の内訳は取っていない）。夜の ShadowMapPass（点光源のキューブだけ）も2回とも 0.75〜1.08 → 1.13〜1.41 ms と高いが、夜は競合なしの計測が無く、共有の影響と切り分けられていない。
+- SS-MEGA-LOD-PERF の昼の計測（占有未記録の参考値）では、最適化の前（SS-ACCEPT-DETAIL の昼、2回）より 既定 3.88〜5.22 → 3.66・近接 9.04〜9.28 → 8.42 ms と下がり、ShadowMapPass は 0.80〜1.50 → 0.74〜0.80 ms。昼3視点の予算超えは、変更前 1 / 3240（2回 × 3視点 × 540。計測1は 0 / 1620、計測2は近接 昼45°の 1 / 1620）→ 変更後 0 / 1620（1回 × 3視点 × 540）だった（`verify-SS-ACCEPT-PERF-15.txt`）。変更前のもう1件の予算超えは計測2の近接 朝10°。近接の MegaGeometryPass は 5.69〜5.97 → 4.62 ms（近接は最適化の前と同じ LOD0 で、減ったのは FIX-MEGA-CLUSTER-ADJACENCY のクラスタの大きさと法線コーンのカリングによると見る。推定）。
+- 今回の計測でも、変わらない側の傾向は読める。既定の MegaGeometryPass は計測2で 0.147 ms（LOD4。最適化の前 0.55〜0.62）、夜の近接の MegaGeometryPass は 5.57〜6.16 → 4.03〜4.09 ms で、夜（太陽の CSM が無い）の3視点は2回とも予算超え0、中央値は最適化の前の2回の範囲の中か、それより下だった。
+- 昼・夕・朝の ShadowMapPass は2回の間で 1.19〜4.25 ms と揺れ、SS-MEGA-LOD-PERF の 0.74〜0.80 ms の1.5〜5倍だった。描く三角形数は最適化の前より少ない（上の「太陽の影」）ため、増えたのは GPU の共有による（推定。計測の最中の占有とパスの中の内訳は取っていない）。夜の ShadowMapPass（点光源のキューブだけ）も2回とも 0.75〜1.08 → 1.13〜1.41 ms と高いが、夜は SS-MEGA-LOD-PERF の計測が無く、共有の影響と切り分けられていない。
 
 予算を超えたフレームの内訳（`metrics.json` の `over_budget_frames` を `over_budget_summary.py` でまとめた。`verify-SS-ACCEPT-PERF-13.txt`。括弧は窓の中央値からの増分の平均）:
 
-| 視点（計測） | 超えたフレーム | 増分の大きいパス | 最も遅いフレーム |
-|---|---|---|---|
-| 既定 朝10°（1） | 1 | ShadowMapPass +11.14・MegaGeometryPass +1.60 | 18.250（ShadowMapPass 13.432） |
-| 既定 昼45°（1） | 2 | ShadowMapPass +10.46・LightingPass +1.57・MegaGeometryPass +1.01 | 18.506（ShadowMapPass 13.711、GBufferPass 1.589 は中央値の8.4倍） |
-| 既定 夕3°（2） | 6 | ShadowMapPass +8.03・MegaGeometryPass +2.14・LightingPass +1.99 | 21.109（ShadowMapPass 15.248） |
-| 近接 朝10°（1 / 2） | 35 / 99 | ShadowMapPass +4.65 / +3.75・MegaGeometryPass +3.67 / +3.16・LightingPass +1.73 / +1.70 | 31.871（MegaGeometryPass 13.609・ShadowMapPass 8.824・LightingPass 6.860） |
-| 近接 昼45°（1 / 2） | 83 / 2 | ShadowMapPass +5.06 / +6.59・MegaGeometryPass +2.82 / +2.52・LightingPass +1.62 / +1.10 | 37.261（ShadowMapPass 14.726・MegaGeometryPass 12.553・LightingPass 6.005・VignettePass 3.247） |
-| 近接 夕3°（1） | 239 | ShadowMapPass +4.42・MegaGeometryPass +0.88・LightingPass +0.75 | 28.334（MegaGeometryPass 12.929・ShadowMapPass 8.901） |
-| 低角度 昼45°（1） | 1 | ShadowMapPass +7.96・MegaGeometryPass +2.57 | 16.662（ShadowMapPass 9.454） |
+| 視点（計測） | 超えたフレーム | 増分の大きいパス | 最も遅いフレーム | 区間に入らない残り（範囲） |
+|---|---|---|---|---|
+| 既定 朝10°（1） | 1 | ShadowMapPass +11.14・MegaGeometryPass +1.60 | 18.250（ShadowMapPass 13.432） | 0.025 |
+| 既定 昼45°（1） | 2 | ShadowMapPass +10.46・LightingPass +1.57・MegaGeometryPass +1.01 | 18.506（ShadowMapPass 13.711、GBufferPass 1.589 は中央値の8.4倍） | 0.022〜0.032 |
+| 既定 夕3°（2） | 6 | ShadowMapPass +8.03・MegaGeometryPass +2.14・LightingPass +1.99 | 21.109（ShadowMapPass 15.248） | 0.024〜0.029 |
+| 近接 朝10°（1 / 2） | 35 / 99 | ShadowMapPass +4.65 / +3.75・MegaGeometryPass +3.67 / +3.16・LightingPass +1.73 / +1.70 | 31.871（MegaGeometryPass 13.609・ShadowMapPass 8.824・LightingPass 6.860） | 0.021〜0.714 / 0.023〜1.636 |
+| 近接 昼45°（1 / 2） | 83 / 2 | ShadowMapPass +5.06 / +6.59・MegaGeometryPass +2.82 / +2.52・LightingPass +1.62 / +1.10 | 37.261（ShadowMapPass 14.726・MegaGeometryPass 12.553・LightingPass 6.005・VignettePass 3.247） | 0.021〜3.115 / 0.027〜0.283 |
+| 近接 夕3°（1） | 239 | ShadowMapPass +4.42・MegaGeometryPass +0.88・LightingPass +0.75 | 28.334（MegaGeometryPass 12.929・ShadowMapPass 8.901） | 0.023〜3.100 |
+| 低角度 昼45°（1） | 1 | ShadowMapPass +7.96・MegaGeometryPass +2.57 | 16.662（ShadowMapPass 9.454） | 0.024 |
 
-超えたフレームでは ShadowMapPass・MegaGeometryPass・LightingPass が同じフレームで数倍になり、変更していない軽いパス（VignettePass 0.012 → 3.247 ms、GBufferPass 0.19 → 1.59 ms、VolumetricsPass）まで跳ねるフレームがある。区間に入らない残りは 0.02〜0.28 ms。同じ視点の別の計測では超えない・数フレームだけ（近接 夕3° は 239 / 0、近接 昼45° は 83 / 2）で、競合なしの昼の3視点は0だった。
+超えたフレームでは ShadowMapPass・MegaGeometryPass・LightingPass が同じフレームで数倍になり、変更していない軽いパス（VignettePass 0.012 → 3.247 ms、GBufferPass 0.19 → 1.59 ms、VolumetricsPass）まで跳ねるフレームがある。区間に入らない残り（`unattributed_ms`。`FrameGPU` からパスの区間の合計を引いた分）は468フレームで 0.021〜3.115 ms（中央値 0.029 ms）、0.28 msを超えるのが95フレーム、1 msを超えるのが17フレームで、大きいのは近接だけ（計測1の昼45° フレーム279652 で 19.958 ms のうち 3.115 ms、夕3° で最大 3.100 ms、計測2の朝10° で最大 1.636 ms。`verify-SS-ACCEPT-PERF-15.txt`）。どのパスにも入らない時間まで伸びる点も、パスの中の重さより GPU の共有を示すと見る（推定）。同じ視点の別の計測では超えない・数フレームだけ（近接 夕3° は 239 / 0、近接 昼45° は 83 / 2）で、SS-MEGA-LOD-PERF の昼の3視点（占有未記録）は0だった。
 
 軽くする案（効く見込みの大きい順）:
 
 1. 近接の大きな球の LOD0（1,046,528 三角形、MegaGeometryPass 4.6 ms）を軽くする。LOD0 と LOD1 の間の段を足しても誤差は約1.2画素の見込みで閾値1画素を超える（SS-MEGA-LOD-PERF の記録）ため、クラスタごとに段を選ぶ（DAG の切り口）か、近接で変位の細部を法線マップへ移して粗い段を使う。
 2. ShadowMapPass の跳ねには、岩・小屋の影だけの粗い段（backlog の FIX-MEGA-SHADOW-LOD-LOADED。今は LOD0 を4カスケードすべてへ描く）と、遠いカスケードの更新を数フレームおきにする。
-3. 計測を GPU を他のアプリと共有しない状態で回す（予算の判定の前提）。
+3. 計測を GPU を他のアプリと共有しない状態で回し、計測の最中の GPU の使用率を記録する（予算の判定の前提）。
 
 ### 起動から撮影まで
 
@@ -285,12 +285,12 @@ Game.log の最初の行から `capture_png saved` の行まで（秒、Debug）
 | 変更後 `SS-ACCEPT-DETAIL-run2` | `b632987` | 43.02〜46.85 / 40.80〜43.59 | 21.75〜23.14 |
 | 変更後 `SS-ACCEPT-PERF` | `dd3e4e5` | 48.05〜60.20 / 54.18〜62.90 | 24.07〜35.15 |
 
-同じコード（`b632987` のコミットの後、14:41）の `SS-MEGA-SPHERE-DISPLACE` の撮影では、視点ごとの変更前との差は −1.08〜+1.53 s（昼/夕で 既定 +0.67/+0.53、近接 −0.34/+0.07、低角度 +0.71/+0.40、夜は 既定 −1.08・近接 +1.27・低角度 +1.53）。受入れの2回と撮り直しの回では起動から撮影までが 40〜63 s に伸びたが、変更と関係しない「起動から IBL まで」も同じ割合（約1.2〜1.9倍）で遅い。どの区間も一様に遅い形で、撮影した時点の機械の負荷によると見る（撮り直しの回は上の GPU の競合と同じ時間帯）。大きな球の高さマップの読み込みとクラスタ・LOD の構築は別のスレッドの仕事で 2.47 s（Debug、`stage=big_sphere_cluster_lod_build`）、テクスチャがそろった時点で終わっていて待ちは無い（`big_sphere_build_wait wait_ms=0.0`）。
+同じコード（`b632987` のコミットの後、14:41）の `SS-MEGA-SPHERE-DISPLACE` の撮影では、視点ごとの変更前との差は −1.08〜+1.53 s（昼/夕で 既定 +0.67/+0.53、近接 −0.34/+0.07、低角度 +0.71/+0.40、夜は 既定 −1.08・近接 +1.27・低角度 +1.53）。受入れの2回と撮り直しの回では起動から撮影までが 40〜63 s に伸びたが、変更と関係しない「起動から IBL まで」も同じ割合（約1.2〜1.9倍）で遅い。どの区間も一様に遅い形で、撮影した時点の機械の負荷によると見る（撮り直しの回は上の GPU 計測と同じ時間帯で、`javaw` が開いていた）。大きな球の高さマップの読み込みとクラスタ・LOD の構築は別のスレッドの仕事で 2.47 s（Debug、`stage=big_sphere_cluster_lod_build`）、テクスチャがそろった時点で終わっていて待ちは無い（`big_sphere_build_wait wait_ms=0.0`）。
 
 ### 既知の限界
 
-- GPU のフレーム時間の12視点 × 2回は、別のアプリが GPU を共有した状態の値で、12960フレーム中468フレームが16.6 msを超えた（内訳は上）。競合なしで測った昼の3視点（1620フレーム）は予算超え0・最大 14.41 ms。朝・夕・夜を含む12視点を競合なしで2回測り直すまで、全視点の予算の判定は保留する（再計測待ち）。
-- 近接視点の中央値は競合なしでも 8.42 ms で、予算の半分を超える（大きな球の LOD0 の MegaGeometryPass 4.6 ms が主）。軽くする案は上の1・2。
+- GPU のフレーム時間の12視点 × 2回は、別のアプリ（`javaw`）が開いた状態の値で、12960フレーム中468フレームが16.6 msを超えた（内訳は上）。超えた原因を GPU の共有とするのは推定で、計測の最中の占有は記録していない（記録したのは計測の直後の5秒の 36〜40%）。SS-MEGA-LOD-PERF の昼の3視点（1620フレーム）は予算超え0・最大 14.41 ms だが、その時点の占有も記録しておらず、競合が無かったとは言えない参考値である。朝・夕・夜を含む12視点を、別のアプリを閉じ、計測の最中の GPU の使用率を記録しながら2回測り直すまで、全視点の予算の判定は保留する（再計測待ち）。
+- 近接視点の中央値は SS-MEGA-LOD-PERF の計測でも 8.42 ms で、予算の半分を超える（大きな球の LOD0 の MegaGeometryPass 4.6 ms が主）。軽くする案は上の1・2。
 - 夜の近接（低角度も目で見て同じ）で、大きな球の光源と反対側の明るさが撮るフレームで大きく違う。60フレーム目で撮る Debug・Release の撮影では反対側が暗い（近接で反対側 / 光源側の8bit輝度 0.02〜0.03）が、600フレーム目で撮る RelWithDebInfo の GPU 計測の撮影では反対側が明るい（0.80〜0.84）。変更前（`b347eb7`）の GPU 計測の撮影（`SS-ACCEPT-gpu-night`）でも 0.48〜0.61 で、この節の変更より前からある（`verify-SS-ACCEPT-PERF-14.txt`）。履歴が長く積もる RTGI の間接光と見られるが、原因は確かめていない（TASKS.md の FIX-NIGHT-SPHERE-LONG-RUN）。SS-LOOK-BALANCE の判定は60フレーム目の撮影で行っている。
 - 既定視点の大きな球（LOD4）は LOD0 より陰影がわずかに暗く柔らかい（backlog の FIX-MEGA-LOD-SHADING）。
 - Release の撮影の画面の平均が Debug より最大8.1低い（最初の受入れの回。昼の既定 Release 111.5・Debug 119.6）。画像の差は画面全体で一様（`SS-ACCEPT-DETAIL-compare/debug-vs-release-default-sun45.png`）で、物の欠けではなく露出の差。Release の既定・昼を撮るフレームを変えると 60フレーム目 112.3・240フレーム目 122.8・600フレーム目 124.2（`SS-ACCEPT-DETAIL-release-settle/`、`-DETAIL-17`）と上がる。撮影は落ち着いてから60描画フレーム目で、Release はフレームが速いぶん自動露出が収束しきる前に撮る。12枚とも SS-LOOK-BALANCE の (1) の範囲の中（朝・昼 107.0〜118.0、夕 80.2〜91.3、夜 51.1〜63.0）。撮り直しの回では Release を撮っていない。

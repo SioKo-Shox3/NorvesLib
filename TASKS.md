@@ -455,7 +455,7 @@
 - stop-when: 予算を超えるフレームが残る場合は、内訳と軽くする案を既知の限界として記録して完了にする。
 - paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 区切り。評価者を通す。
-- result: 2026-10-03 完了。撮影12枚 result=pass、SS-LOOK-BALANCE 全項目 PASS、変更前との比較画像は `startup-capture/SS-ACCEPT-PERF-compare/`。GPU の12視点 × 2回は別のアプリが GPU を約4割使う状態で測ることになり、12960フレーム中468フレームが16.6 msを超えた（最大 37.261 ms、ShadowMapPass・MegaGeometryPass・LightingPass が同じフレームで跳ね、変更していない軽いパスも跳ねる）。同じコードを競合なしで測った昼の3視点（SS-MEGA-LOD-PERF）は予算超え0。内訳・軽くする案・再計測待ちを既知の限界に記録した。
+- result: 2026-10-03 完了。撮影12枚 result=pass、SS-LOOK-BALANCE 全項目 PASS、変更前との比較画像は `startup-capture/SS-ACCEPT-PERF-compare/`。GPU の12視点 × 2回は別のアプリが開いた状態で測ることになり（計測の直後の5秒で GPU の使用率36〜40%。計測の最中は未記録）、12960フレーム中468フレームが16.6 msを超えた（最大 37.261 ms、ShadowMapPass・MegaGeometryPass・LightingPass が同じフレームで跳ね、変更していない軽いパスと区間に入らない残り（0.021〜3.115 ms）も伸びる。原因を GPU の共有とするのは推定）。同じコードを約25分前に測った昼の3視点（SS-MEGA-LOD-PERF、占有未記録の参考値）は予算超え 0 / 1620（変更前 1 / 3240）。内訳・軽くする案・再計測待ちを既知の限界に記録した。
 
 ## SS-ACCEPT-PERF-REMEASURE: 起動画面のGPUの時間を競合なしで12視点 × 2回測り直す
 - status: backlog
