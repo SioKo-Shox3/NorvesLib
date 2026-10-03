@@ -481,3 +481,6 @@
 
 - G2-GR77-LOOSE-SOURCES: static looseを共有container/BufferSet/ImageSourceへ接続し、BIN借用・外部/data URI所有をscope内に保持して独立CPU pixelsへ復号。外部logical requestは従来どおりfinalize遅延、埋込みは空RequestPathでRGBA8_UNORM2枚/ARM3R8を保持。不正material imageは伝播失敗し候補を公開しない。集計metadata/read_total stageを維持。新native試験に4embedded経路と外部絶対/相対、5texture/geometry、壊れたcontainer/image/view/必須拡張/8byte PNGの失敗保持を登録。fixtureの実Container/range/stbは通常/O2-NDEBUG/ASan・UBSan成功。独立レビューで試験末尾文字列を修復し、const pointer listを明示配列化、最終PASS。nativeはWindows.hでcompile停止。実物大型GLB/GPUは未入手・未実行で別受入れへ保留。
 - Next: GR77の主要3経路の配線が揃ったため、承認済みGR78の共有sidecar/設定・変換へ進む。宣言MIMEと実signature不一致拒否は非blocking残件として登録。GR77全体のnative/実物受入れを完了とは扱わない。
+
+- G2-GR78-SETTINGS: cook/loose共用のv1取り込み設定をCore privateへ追加。units/fit/符号付きaxes/mirror/origin/UV/windingの値・型・有限性・矛盾とJSON未知/重複を検証し、metaはhashから除外、未実装予約blockは空objectのみ。成功時だけ出力置換。固定52byteのLE/binary64/-0統一で正規化し、sidecar無しは呼出側で別扱い。純値/軸36組/既知bytes/各field変更を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER-Werrorで成功。43JSON fixture文法確認、実JsonDocument source/testはWindows.hでcompile停止。独立レビューPASS。file探索/変換適用/hash/CLIはまだ未接続。
+- Next: GR78の軸/scale/fit/原点/法線/UV/winding共有変換を実装し、その後sidecarを既存ロードとcookへ接続する。既存モデルはsidecar無しなら恒等・現行hash不変を維持する。

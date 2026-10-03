@@ -1891,3 +1891,28 @@
 - verify: CookedMeshTest、AssetCookGlbSmoke、実物大型GLBのcpu/cooked/表示結果を区別して記録する。
 - stop-when: pure helperやfixture構文の成功をnative統合の成功として扱う。
 - notes: 現cloudはWindows.h依存で本体compileできず、計画書が参照するDogGameの実物大型GLBも未配置。作者は非描画Windows検証を必須から外しているため、独立実装は継続する。
+
+## G2-GR78-SETTINGS: 共有取り込み設定の値とJSONスキーマを定義する
+- status: done
+- done-when: Core privateにcook/loose共用のv1設定を置き、units/axes/origin/meshとmeta・将来予約blockを厳格解析する。未知/重複/非有限/矛盾を拒否し、出力は成功時だけ更新。固定順LE正規化bytesはmeta/JSON書式に依存しない。
+- verify: 純粋な値検証/固定bytesを通常・最適化・sanitizerとMEMBERで検証。実JsonDocument試験は既存束へ登録し、Windows依存による未実行を明記する。
+- stop-when: sidecar無しの現行挙動変更、未実装repair/lod/material/collision/clipの非空指定を受理、未承認材質既定やモデル形式の更新。
+- notes: S2承認済み。CoreからToolsへ依存させないため解析もCore privateへ配置し、AssetCookLibとlooseが共有する。file探索・変換適用・hash連結・CLIは別反復。
+
+## G2-GR78-TRANSFORM: 取り込み変換の共有演算を実装する
+- status: todo
+- done-when: 軸正規化・一様scale/fit・mirrorX・原点・法線/UV/windingをdoubleで合成し、float表現可能性を検証して静的geometryへ適用する。骨格は一様scaleのみの制約を保持する。
+- verify: 軸写像、fit、各原点、鏡像、法線、UV、極端値/縮退/失敗出力を検証する。
+- stop-when: 骨格への未承認軸/原点変更、描画既定/形式変更、非有限やoverflowの黙認。
+
+## G2-GR78-SIDECAR: ソース隣の設定読込と変換・hashを接続する
+- status: todo
+- done-when: <source>.import.jsonをcook/looseで読み、無しは既存bytes/hash不変、有りは共有変換と正規化設定hashを適用。骨格の位置/IBM/translation/mesh-nodeを同時scaleする。
+- verify: sidecar無し回帰、有無/値変更/書式とmeta変更、失敗保持、static/skeletal/cook/looseの一貫性を既存束へ登録する。
+- stop-when: cook/looseの設定解釈差、未承認形式更新、実native未実行の隠蔽。
+
+## G2-GR78-CLI: 設定指定・require・skipと診断の入口を追加する
+- status: todo
+- done-when: import-settings/no-sidecar/require-sidecar、hashとpackage実体一致を条件にしたskip、inspect診断を追加する。既存必須CLIとsidecar無し出力は維持する。
+- verify: 設定優先順位/相互排他/失敗、skip時非更新、package欠如/破損時再cook、inspectをsmokeへ登録する。
+- stop-when: GR96一括cook/依存追跡の先取り、誤ったskip、未実装オプションの受理。
