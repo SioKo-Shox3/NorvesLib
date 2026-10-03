@@ -1989,7 +1989,17 @@
 - stop-when: 16bit画像を無言で8bit化する、巨大decodeを上限なしで始める、source画像を編集する。
 
 ## G2-GR78-VALIDATION: 実装範囲と検証状態を整理する
-- status: todo
+- status: done
 - done-when: GR78の承認済み実装とsurface保留、純実装の実行結果とnative/実物の未検証を分けて記録する。
 - verify: 各task/commit/実log/CMake登録を照合し、次のG2選定を承認済み扱いにしない。
 - stop-when: Windows/native/実物を未実行のままPASSとする、surfaceを実装済みへ含める。
+
+## G2-SELECT-S4: GR86の縮約/焼込/Strict方針を確定する
+- status: blocked
+- done-when: 作者の回答を記録し、その範囲内で後続taskを作る。
+- notes: 2026-10-03に推奨A（上位4本縮約、CUBICSPLINE焼込、morph明示drop、Strict余剰拒否、v1時256）を確認中。未回答。
+
+## G2-SELECT-S1: NVSKELの版と骨格識別方針を確定する
+- status: blocked
+- done-when: 作者の回答を記録し、GR32/GR82の形式を同じ定義へ揃える。
+- notes: 2026-10-03に推奨A（0.2へsubmesh/複数clip統一、材質仕様後v1、SkeletonIdにrest poseを含めず骨長差はGR85）を確認中。S7のmesh数条件は別未確定。

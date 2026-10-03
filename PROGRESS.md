@@ -526,3 +526,6 @@
 
 - G2-GR78-CLI-INSPECT: --inspect <file>/equalsを独立modeとして接続。単一mesh/primitiveの現行static profileを既存accessor検証で読み、mesh-local変換前の幾何と全画像の整数統計、core材質係数/規定値と任意emissive strengthを診断する。sidecar/cook/cluster/書込を通らず、成功後だけstdoutへ表示。+Y仮定の水平軸候補と符号manual、恒等設定叩き台はstdoutのみ。実引数parserの3mode/MEMBER成功、native API/CLI試験に値・不正入力・出力保持/外部画像・無書込を登録。独立PASS。nativeはWindows.hで未実行、実物4本は未入手。必須拡張の具体的診断理由保持とCLI再入力差の回帰はnonblocking追補候補。
 - Next: GR78の実装/検証/保留をまとめる。GR86(S4)とGR32/GR82(S1)の推奨案は作者へ確認し、回答までは変更を適用しない。
+
+- G2-GR78-VALIDATION: Docs/Architecture/GR78ImportValidation.mdへ承認済み実装・18実行成功（6純実装×3mode）・MEMBER compile・native/実物の未実行・surface保留を分離して記録。CMake登録と実logを最終照合し、CI空statusを成功扱いしない。次のS4/S1確認待ちをtaskへ明記し、GR78承認を他選定へ拡張しない。
+- Next: inspect/検証記録を公開し、S4/S1の回答に応じてG2を継続する。未承認の形式/Strict/描画既定は変更しない。
