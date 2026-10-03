@@ -1,5 +1,6 @@
 #include "MeshCooker.h"
 #include "ImportCliOptions.h"
+#include "ModelCookCache.h"
 #include "AudioCooker.h"
 #include "TextureCooker.h"
 
@@ -67,6 +68,7 @@ namespace
         std::filesystem::path PackagePath;
         std::filesystem::path ManifestPath;
         NorvesLib::Core::AssetImport::ImportSettingsFileOptions ImportSettings;
+        bool bSkipIfUnchanged = false;
         std::string LogicalPath;
         std::string Kind;
         std::string EntryName;
@@ -1568,6 +1570,17 @@ namespace
             {
                 continue;
             }
+            const auto skipArgument = NorvesLib::Tools::AssetCook::ParseSkipArgument(
+                argv[index], outOptions.bSkipIfUnchanged, importError);
+            if (skipArgument == NorvesLib::Tools::AssetCook::ImportArgumentResult::Rejected)
+            {
+                error = importError;
+                return false;
+            }
+            if (skipArgument == NorvesLib::Tools::AssetCook::ImportArgumentResult::Accepted)
+            {
+                continue;
+            }
             std::string argument = argv[index];
             std::string value;
             const size_t equals = argument.find('=');
@@ -1680,7 +1693,7 @@ namespace
             return false;
         }
 
-        if (outOptions.Kind != "model" && NorvesLib::Tools::AssetCook::HasImportArguments(outOptions.ImportSettings))
+        if (outOptions.Kind != "model" && (outOptions.bSkipIfUnchanged || NorvesLib::Tools::AssetCook::HasImportArguments(outOptions.ImportSettings)))
         {
             error = "import settings options require --kind model";
             return false;
@@ -1773,7 +1786,7 @@ namespace
             << "       AssetCook --input <audio.wav> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind audio --entry <entry.nvaud> --entry-type Aud0 "
             << "--format nvaud.v0.pcm16 --variant default\n"
-            << "Model import: [--import-settings <file>] [--require-sidecar] OR [--no-sidecar]\n";
+            << "Model import: [--import-settings <file>] [--require-sidecar] OR [--no-sidecar] [--skip-if-unchanged]\n";
     }
 
     bool CookRawAsset(const CookOptions &options, std::string &error)
@@ -2238,6 +2251,45 @@ namespace
         return true;
     }
 
+    bool TrySkipModelCook(const CookOptions& options, const std::filesystem::path& inputPath,
+        const std::filesystem::path& packagePath, const std::filesystem::path& manifestPath,
+        NorvesLib::Core::Container::Span<const uint8_t> source,
+        NorvesLib::Core::Container::AnsiStringView logicalPath,
+        NorvesLib::Core::Container::AnsiStringView entryName, bool& bSkipped, auto& error)
+    {
+        bSkipped=false;
+        if (!options.bSkipIfUnchanged)
+        {
+            return true;
+        }
+        NorvesLib::Tools::AssetCook::ModelCookFingerprint fingerprint;
+        NorvesLib::Core::Container::AnsiString fingerprintError;
+        const NorvesLib::Core::Container::AnsiString sourcePath(inputPath.generic_string().c_str());
+        if (!NorvesLib::Tools::AssetCook::FingerprintModelCookSource(source.data(),source.size(),
+            options.Format.c_str(),sourcePath,logicalPath,fingerprint,fingerprintError,&options.ImportSettings))
+        {
+            error.assign(fingerprintError.data(),fingerprintError.size());
+            return false;
+        }
+        if (fingerprint.bHasImportSettings)
+        {
+            const std::filesystem::path sidecar(fingerprint.ImportSettingsPath.begin(),fingerprint.ImportSettingsPath.end());
+            if (!GuardImportSettingsOutput(packagePath,sidecar,error) || !GuardImportSettingsOutput(manifestPath,sidecar,error))
+            {
+                return false;
+            }
+        }
+        bSkipped=NorvesLib::Tools::AssetCook::IsModelCookCacheCurrent(manifestPath,packagePath,
+            logicalPath,options.Variant.c_str(),options.Format.c_str(),entryName,fingerprint);
+        if (bSkipped)
+        {
+            std::cout << "sidecar: " << (fingerprint.bHasImportSettings ? ToStdString(fingerprint.ImportSettingsPath) : "none")
+                << " settings_hash=" << ToStdString(FormatAssetHashHex(fingerprint.ImportSettingsHash)) << "\n";
+            std::cout << "AssetCook skipped unchanged model source_hash=" << ToStdString(FormatAssetHashHex(fingerprint.SourceHash)) << "\n";
+        }
+        return true;
+    }
+
     bool CookModelAsset(const CookOptions& options, std::string& error)
     {
         std::filesystem::path inputPath;
@@ -2276,6 +2328,17 @@ namespace
         {
             error = "--kind model requires --entry-type Msh0";
             return false;
+        }
+
+        bool bSkipped=false;
+        if (!TrySkipModelCook(options,inputPath,packagePath,manifestPath,{inputBytes.data(),inputBytes.size()},
+            logicalPath,entryName,bSkipped,error))
+        {
+            return false;
+        }
+        if (bSkipped)
+        {
+            return true;
         }
 
         NorvesLib::Tools::AssetCook::MeshCookResult meshResult;
@@ -2429,6 +2492,17 @@ namespace
             return false;
         }
         const AssetPackageFourCC entryType = NorvesLib::Core::Asset::CookedSkeletalFormatV0::EntryType;
+
+        bool bSkipped=false;
+        if (!TrySkipModelCook(options,inputPath,packagePath,manifestPath,{inputBytes.data(),inputBytes.size()},
+            logicalPath,entryName,bSkipped,error))
+        {
+            return false;
+        }
+        if (bSkipped)
+        {
+            return true;
+        }
 
         NorvesLib::Tools::AssetCook::SkeletalCookResult skeletalResult;
         NorvesLib::Core::Container::AnsiString skeletalError;

@@ -324,6 +324,33 @@ if(NOT without_import_hash STREQUAL disabled_hash OR explicit_hash STREQUAL disa
     message(FATAL_ERROR "skeletal CLI did not apply explicit/disabled settings")
 endif()
 
+# 骨格もcook前にcacheを照合し、破損/元buffer変更では省略しない。
+function(expect_skeletal_skip expected)
+    execute_process(COMMAND "${ASSET_COOK_EXE}"
+        --input "${SOURCE_GLTF}" --out "${SMOKE_DIR}/RuntimeRoot/Cooked/disabled.nvpkg"
+        --manifest "${SMOKE_DIR}/RuntimeRoot/disabled.json" --logical "${LOGICAL_PATH}" --kind model
+        --entry "${ENTRY_NAME}" --entry-type Skl0 --format nvskel.v0.skinned.pnujiw.u32 --variant default
+        --no-sidecar --skip-if-unchanged
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    string(FIND "${output}" "AssetCook skipped unchanged model" skipped)
+    if(NOT result EQUAL 0 OR (expected AND skipped EQUAL -1) OR (NOT expected AND NOT skipped EQUAL -1))
+        message(FATAL_ERROR "unexpected skeletal skip result: ${result} ${output} ${error}")
+    endif()
+endfunction()
+file(TIMESTAMP "${SMOKE_DIR}/RuntimeRoot/Cooked/disabled.nvpkg" skeletal_time_before UTC)
+execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 2)
+expect_skeletal_skip(TRUE)
+file(TIMESTAMP "${SMOKE_DIR}/RuntimeRoot/Cooked/disabled.nvpkg" skeletal_time_after UTC)
+if(NOT skeletal_time_before STREQUAL skeletal_time_after)
+    message(FATAL_ERROR "skeletal skip rewrote package")
+endif()
+file(APPEND "${SMOKE_DIR}/RuntimeRoot/Cooked/disabled.nvpkg" "corrupt")
+expect_skeletal_skip(FALSE)
+expect_skeletal_skip(TRUE)
+file(APPEND "${SOURCE_BIN}" "extra")
+expect_skeletal_skip(FALSE)
+expect_skeletal_skip(TRUE)
+
 message(STATUS "${unit_stdout}")
 message(STATUS "${cook_stdout}")
 message(STATUS "${package_stdout}")

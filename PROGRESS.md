@@ -514,3 +514,6 @@
 
 - G2-GR78-SOURCE-PREFLIGHT: FingerprintModelCookSourceを追加し、geometry変換/cluster/画像decode/package生成前に本cookと同じsource/buffers/正規化設定hashとowned embedded画像metadataを取得する。設定file helperをstatic/skeletal/cook前照合で共有。返却に借用bytesを含めず、成功末尾だけ公開する。既存native束へ各入力形態/設定/骨格/hash同値/画像metadata/失敗保持と巨大scaleでの照合成功・cook失敗の区別を登録。既存純設定hashの3mode再実行成功、今回のnativecompileはWindows.hで停止し実行未確認。独立レビューPASS。非blockingのrequired不在時preflight単独assert強化はnative受入れ時の追補候補として保持。
 - Next: GR78-CLI-SKIPへ接続し、manifest key/source hash/要求format・出力先とmodelおよび派生画像package実体を検証してからcookを省略する。
+
+- G2-GR78-CLI-SKIP: --skip-if-unchangedをcook前fingerprintへ接続。manifest key/source hash/format/entry/type/version/要求出力先と実NVPACK entry・payload hash・NVMESH/NVSKEL構造を照合し、全embedded画像のmanifest/package/NVTEX/colorspaceも検査したhitだけ早期return。入力未変更でも欠損・破損・要求変更なら通常cookへ戻す。実flag parserを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）実行とMEMBER compile成功。native smokeに全出力timestamp非更新、設定/meta、model/画像欠損・破損、有効表記のhash不一致/format/entry/variant/output変更、骨格buffer変更を登録。独立PASS。cache本体/Main/native smokeはWindows.h等のため未実行。競合変更に対するatomic性やFNVの認証用途は保証しない。
+- Next: preflightとskipをまとめて2コミット公開後、GR78-CLI-INSPECTのcookしない診断に進む。実物4本は未入手のため手動照合は保留。

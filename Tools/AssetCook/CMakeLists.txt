@@ -4,6 +4,8 @@ add_library(AssetCookLib STATIC
     AudioCooker.h
     MeshCooker.cpp
     MeshCooker.h
+    ModelCookCache.cpp
+    ModelCookCache.h
     TextureCooker.cpp
     TextureCooker.h
 )

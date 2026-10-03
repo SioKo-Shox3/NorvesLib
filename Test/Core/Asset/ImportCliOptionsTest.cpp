@@ -57,6 +57,19 @@ int main()
     options={};
     assert(ParseImportArgument(1,unknown,index,options,error)==ImportArgumentResult::Unhandled);
     assert(index==0 && error==nullptr && !HasImportArguments(options));
+    bool bSkip=false;
+    assert(ParseSkipArgument("--skip-if-unchanged",bSkip,error)==ImportArgumentResult::Accepted && bSkip);
+    assert(ParseSkipArgument("--skip-if-unchanged",bSkip,error)==ImportArgumentResult::Rejected && bSkip);
+    for (const char* argument : {"--skip-if-unchanged=", "--skip-if-unchanged=true", "--skip-if-unchanged=false"})
+    {
+        bSkip=false;
+        assert(ParseSkipArgument(argument,bSkip,error)==ImportArgumentResult::Rejected && !bSkip);
+    }
+    for (const char* argument : {"", "--skip", "--skip-if-unchange", "--skip-if-unchanged-later", "--input"})
+    {
+        bSkip=false;
+        assert(ParseSkipArgument(argument,bSkip,error)==ImportArgumentResult::Unhandled && !bSkip);
+    }
     std::cout << "ImportCliOptionsTest PASS: paths_flags_conflicts_duplicates_failure_preservation\n";
     return 0;
 }

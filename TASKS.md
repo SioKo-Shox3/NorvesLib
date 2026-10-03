@@ -1914,7 +1914,7 @@
 - stop-when: cook/looseの設定解釈差、未承認形式更新、実native未実行の隠蔽。
 
 ## G2-GR78-CLI: 設定指定・require・skipと診断の入口を追加する
-- status: todo
+- status: doing
 - done-when: import-settings/no-sidecar/require-sidecar、hashとpackage実体一致を条件にしたskip、inspect診断を追加する。既存必須CLIとsidecar無し出力は維持する。
 - verify: 設定優先順位/相互排他/失敗、skip時非更新、package欠如/破損時再cook、inspectをsmokeへ登録する。
 - stop-when: GR96一括cook/依存追跡の先取り、誤ったskip、未実装オプションの受理。
@@ -1959,7 +1959,7 @@
 - stop-when: 未実装skip/inspectの受理、既存必須引数の緩和、native未実行をCLI成功扱い。
 
 ## G2-GR78-CLI-SKIP: 未変更modelのcookを入力hashで省略する
-- status: todo
+- status: done
 - done-when: cook前に元入力/buffers/設定のhashを計算し、同じmanifest keyのsource_hash・要求format/entry/output先と実packageのcooked_hashを検証した場合だけskipped終了する。派生画像packageも欠損/破損なら省略しない。
 - verify: preflight hashとcook hash一致、設定編集/無変更/meta変更、出力欠損/破損/要求先変更/画像欠損の回帰を登録する。
 - stop-when: 本cookを実行してからskip扱い、hash一致だけでpackage実体未検査、GR96一括依存追跡への拡大。

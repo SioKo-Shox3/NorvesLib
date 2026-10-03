@@ -64,6 +64,27 @@ namespace NorvesLib::Tools::AssetCook
         return ImportArgumentResult::Accepted;
     }
 
+    inline ImportArgumentResult ParseSkipArgument(const char* argument, bool& bSkip, const char*& error)
+    {
+        constexpr char option[]="--skip-if-unchanged";
+        if (std::strcmp(argument,option)==0)
+        {
+            if (bSkip)
+            {
+                error="duplicate --skip-if-unchanged";
+                return ImportArgumentResult::Rejected;
+            }
+            bSkip=true;
+            return ImportArgumentResult::Accepted;
+        }
+        if (std::strncmp(argument,option,sizeof(option)-1)==0 && argument[sizeof(option)-1]=='=')
+        {
+            error="--skip-if-unchanged does not accept a value";
+            return ImportArgumentResult::Rejected;
+        }
+        return ImportArgumentResult::Unhandled;
+    }
+
     inline bool HasImportArguments(const Core::AssetImport::ImportSettingsFileOptions& options)
     {
         return options.bDisabled || options.bRequired || !options.OverridePath.empty();

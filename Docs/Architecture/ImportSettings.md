@@ -1,7 +1,7 @@
 # 取り込み設定 v1
 
 GR78のソース隣設定は <source>.import.json（例: Dog.glb.import.json）を正本とし、cook/looseで共用する。
-値・JSON解析・設定file選択/読込・正規化hash・下記のgeometry変換を共有し、静的glTF/GLBのAssetCookとlooseロードへ接続する。骨格には下記の一様scale/fitを適用する。CLIの明示指定/require/disabledを共有loaderへ接続し、skip/inspectは後続。
+値・JSON解析・設定file選択/読込・正規化hash・下記のgeometry変換を共有し、静的glTF/GLBのAssetCookとlooseロードへ接続する。骨格には下記の一様scale/fitを適用する。CLIの明示指定/require/disabledを共有loaderへ接続し、skipはcook前照合へ接続し、inspectは後続。
 
 ## 共通の配置と責務
 
@@ -208,7 +208,7 @@ CLI smokeには設定正本をpackage/manifestで上書きしない拒否と通�
 - `--require-sidecar` は採用設定の存在を必須にする。明示overrideとの併用は可能。
 - `--no-sidecar` は設定fileを一切読まず、従来のbytes/hashを使用する。override/requireとは相互排他。
 - 重複指定、空path、値付きboolean flag、model以外のkindでは拒否する。static/skeletalとも同じ共有loaderへ渡す。
-- 明示overrideもpackage/manifest/派生textureの出力alias保護対象。`--skip-if-unchanged` / `--inspect` はまだ未実装で、未知引数として拒否する。
+- 明示overrideもpackage/manifest/派生textureの出力alias保護対象。`--skip-if-unchanged` は下記のcook前照合を使用する。`--inspect` はまだ未実装で、未知引数として拒否する。
 
 ImportCliOptionsTestは共有の実引数parserを独立実行する。AssetCookImportSmokeはGLBの設定優先順位、disabledのbytes/hash回帰、失敗時出力保持と明示設定の上書き拒否をnative CLIで確認する登録であり、Windows依存環境での実行は別途必要。
 
@@ -224,4 +224,22 @@ geometryの展開・変換・cluster化・画像decode・package生成は行わ�
 
 既存native束へglTF/GLB/data URI・設定有無/変更/meta/disabled・外部buffer余剰・骨格・
 embedded画像のcook結果との照合と失敗保持を追加する。これらはWindows依存により未実行で、
-後続のCLI skip判断はまだ未接続。
+native実行でのhash同値確認は別途必要。
+
+## 未変更モデルの再cook省略
+
+modelの `--skip-if-unchanged` は上記preflightの後、既存manifestの同じlogical_path/kind/variantを照合する。
+source hashだけでなくformat・entry name/type・cooked version・要求package pathも一致が必要。
+実packageを全量読み、NVPACK構造/entry hash/実payload hashとNVMESH/NVSKELの内部構造を確認する。
+embedded画像は期待される全画像のmanifest/source hash/format/default variant/派生package pathを同様に検査し、
+NVTEX内部構造とRGBA8/colorspaceも確認する。画像やmodelが欠損/破損していればmissとして通常cookへ戻す。
+外部画像はもともとmodel cookの生成対象ではないため、この単体cache照合には含めない。
+
+hit時だけ `AssetCook skipped unchanged model` を表示して終了コード0を返す。
+geometry cook/cluster/画像decode/package書込/manifest書込は行わず、更新時刻も維持する。
+miss時の既存manifest保護や出力path衝突規約は従来のcookへ引き継ぐ。
+FNV64と安定したfilesystemを前提とするcache照合であり、競合変更/攻撃的hash衝突への認証機構ではない。
+
+実引数parserのskip flagを通常/O2-NDEBUG/ASan・UBSanで確認。native smokeへ非更新、metaのみ変更、
+設定値変更、model/画像欠損・破損、manifest hash/format/出力先/entry/variant変更と骨格外部buffer変更を登録。
+cache本体とCLIはWindows依存により未実行。
