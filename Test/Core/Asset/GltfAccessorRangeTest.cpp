@@ -11,6 +11,23 @@ using NorvesLib::Core::Gltf::ComputeAccessorByteRange;
 
 int main()
 {
+    const uint32_t validIndices[] = {0, 1, 2};
+    const uint32_t edgeIndices[] = {0, 1, 3};
+    const uint32_t maximumIndex[] = {UINT32_MAX};
+    assert(NorvesLib::Core::Gltf::ValidateVertexIndices(validIndices, 3));
+    assert(!NorvesLib::Core::Gltf::ValidateVertexIndices(edgeIndices, 3));
+    assert(!NorvesLib::Core::Gltf::ValidateVertexIndices(maximumIndex, UINT32_MAX));
+    assert(!NorvesLib::Core::Gltf::ValidateVertexIndices(validIndices, 0));
+    assert(!NorvesLib::Core::Gltf::ValidateVertexIndices({}, 3));
+    assert(!NorvesLib::Core::Gltf::ValidateVertexIndices({nullptr, 3}, 3));
+    for (uint32_t vertexCount = 1; vertexCount <= 64; ++vertexCount)
+    {
+        for (uint32_t index = 0; index <= 128; ++index)
+        {
+            const uint32_t indices[] = {0, index, vertexCount - 1};
+            assert(NorvesLib::Core::Gltf::ValidateVertexIndices(indices, vertexCount) == (index < vertexCount));
+        }
+    }
     constexpr auto packed = ComputeAccessorByteRange(102, 102, 0, 36, 0, 3, 12, 12);
     static_assert(packed.bValid && packed.StartOffset == 0 && packed.RequiredBytes == 36);
     constexpr auto strided = ComputeAccessorByteRange(128, 120, 8, 80, 4, 3, 12, 24);

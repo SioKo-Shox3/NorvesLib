@@ -79,6 +79,19 @@ int main()
         assert(!Staging::BuildModelStagingFromLooseGltf(path, path, staging, "test", 0));
         assert(staging.Vertices.data() == oldVertices && staging.Vertices.size() == 3);
     }
+    // 宣言byte範囲内でもindex値が頂点数を超える入力はクラスタ生成前に拒否する。
+    Write(file, variants[0], std::strlen(variants[0]));
+    for (const uint16_t invalidIndex : {uint16_t{3}, uint16_t{65535}})
+    {
+        uint8_t invalidBinary[sizeof(binary)];
+        std::memcpy(invalidBinary, binary, sizeof(binary));
+        invalidBinary[100] = static_cast<uint8_t>(invalidIndex);
+        invalidBinary[101] = static_cast<uint8_t>(invalidIndex >> 8);
+        Write(directory.Path / "triangle.bin", invalidBinary, sizeof(invalidBinary));
+        assert(!Staging::BuildModelStagingFromLooseGltf(path, path, staging, "test", 0));
+        assert(staging.Vertices.data() == oldVertices && staging.Vertices.size() == 3);
+    }
+    Write(directory.Path / "triangle.bin", binary, sizeof(binary));
     // 正常なgeometryへ必須拡張だけを追加し、拒否と既存出力保持を確認する。
     for (const char* extension : {"KHR_draco_mesh_compression", "EXT_meshopt_compression",
         "KHR_mesh_quantization", "KHR_texture_transform"})

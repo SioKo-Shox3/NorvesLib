@@ -1872,7 +1872,7 @@
 - stop-when: BIN全体コピー、埋込み画像をcooked manifest参照へ回す、既存材質既定の変更、full static parser統合の先取り。
 
 ## G2-GR77-LOOSE-INDEX-RANGE: クラスタ生成前に頂点インデックスを検査する
-- status: todo
+- status: done
 - done-when: loose geometryの全indexがvertices範囲内であることを、MeshClusterizerへ渡す前に検査する。不正入力は失敗し既存出力を保持する。
 - verify: 3頂点に対するindex=3/65535の拒否と正常0/1/2の受理を既存staging試験へ登録。純粋な共通検査も境界と空/nullを検証する。
 - stop-when: clusterizer全体改修、正常meshのwindingや材質変更、native未実行を合格扱いする。

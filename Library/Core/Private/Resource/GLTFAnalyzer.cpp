@@ -725,7 +725,13 @@ namespace NorvesLib::Core::Resource
                 return false;
             }
 
-            // Match the engine's clockwise front-face convention.
+            if (!Gltf::ValidateVertexIndices(outIndices, outVertices.size()))
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Mesh index exceeds vertex count");
+                return false;
+            }
+
+            // エンジンの時計回りfront-face規則に合わせる。
             for (uint32_t index = 0; index + 2 < outIndices.size(); index += 3)
             {
                 std::swap(outIndices[index + 1], outIndices[index + 2]);

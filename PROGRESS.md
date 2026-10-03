@@ -475,3 +475,6 @@
 
 - G2-GR77-DOCUMENT-PROFILE: 必須拡張の型/field重複/非対応を共通判定へ集約し、静的cooker・loose・骨格でbuffer/geometry前に拒否。空requiredとoptional usedは維持、cooker通常診断/骨格InvalidDocumentを保持。22共通fixture、実正常骨格の4拒否/2成功とString/bytes/source clear、loose正常geometryへの4必須拡張拒否を登録。ヘッダC++23/Werror・fixture JSON構文・CMake登録/BOMCRLF/diff成功、独立レビューPASS。実JsonDocument/consumer/testはWindows.hでcompile停止、native実行未確認。
 - Next: loose接続前に発見したindex値の頂点範囲検査を補う。既存clusterizerはindexを信頼して頂点を参照するため、GLTFAnalyzer側で拒否してからGLB/buffer/image接続へ進む。
+
+- G2-GR77-LOOSE-INDEX-RANGE: 全復号indexの頂点範囲をwinding/clusterizer前に検証し、宣言buffer内でも頂点配列外へ読む不正入力を拒否。正常geometry/材質は維持。純検査8,256組とnull/空/0頂点/UINT32_MAX、既存byte範囲5,438,750件を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で成功、MEMBER Werror compile成功。正常102byte fixtureのindex=3/65535の拒否と既存出力保持をnativeへ登録、Windows.hにより実行未確認。独立レビューPASS。
+- Next: GR77 looseへ共有container/buffer/image bytesを接続する。G2他選定とGPU/実物受入れの未検証は維持する。

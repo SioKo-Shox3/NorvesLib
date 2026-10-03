@@ -170,3 +170,11 @@ optionalなextensionsUsedの宣言だけでは拒否しない。これは全glTF
 判定はbuffer読込やgeometry抽出より前。GltfDocumentProfileTestに共通判定と
 cooker/骨格入口、GltfAccessorStagingTestに正常geometryへ必須拡張を付けた拒否を登録。
 Linux環境では実JsonDocument/consumerがWindows.hへ依存するため、登録試験のnative実行は未確認。
+
+### loose頂点indexの境界（GR77）
+
+accessorのbyte範囲が正しくても、復号したindex値が頂点数以上なら不正である。
+loose静的ロードは全index値を検査してからwinding変換・MeshClusterizerへ渡す。
+空/nullのindex列と頂点数0も拒否し、CPU stagingの候補が失敗した場合は既存出力を保持する。
+純粋検査は通常・最適化・ASan/UBSan（LeakSanitizer除外）で確認した。
+実stagingのindex=3/65535回帰は登録済みだが、Windows.h依存によりnative実行は未確認。
