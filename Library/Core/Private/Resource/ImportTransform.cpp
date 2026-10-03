@@ -79,107 +79,6 @@ namespace NorvesLib::Core::AssetImport
                 }
             }
         }
-        // 誤差展開で和を保持する。相殺前の巨大項で小さな面積/重心を失わない。
-        // binary64全指数域より余裕のある固定容量とし、容量/非有限は書込前の失敗にする。
-        struct AccurateSum
-        {
-            double Components[64];
-            size_t Count = 0;
-            bool Add(double value)
-            {
-                if (!std::isfinite(value))
-                {
-                    return false;
-                }
-                double next[64];
-                size_t nextCount = 0;
-                double q = value;
-                for (size_t index = 0; index < Count; ++index)
-                {
-                    const double sum = q + Components[index];
-                    if (!std::isfinite(sum))
-                    {
-                        return false;
-                    }
-                    const double virtualPart = sum - q;
-                    const double error = (q - (sum - virtualPart)) + (Components[index] - virtualPart);
-                    if (error != 0.0)
-                    {
-                        if (nextCount == 64)
-                        {
-                            return false;
-                        }
-                        next[nextCount++] = error;
-                    }
-                    q = sum;
-                }
-                if (q != 0.0 || nextCount == 0)
-                {
-                    if (nextCount == 64)
-                        {
-                            return false;
-                        }
-                    next[nextCount++] = q;
-                }
-                Count = nextCount;
-                std::memcpy(Components, next, Count * sizeof(double));
-                return true;
-            }
-            bool AddProduct(double left, double right)
-            {
-                const double product = left * right;
-                if (!std::isfinite(product))
-                {
-                    return false;
-                }
-                // 先に丸めたproductの低位分も加え、巨大な正負momentの相殺後に残す。
-                return Add(product) && Add(std::fma(left, right, -product));
-            }
-            double Value() const
-            {
-                double result = 0.0;
-                for (size_t index = 0; index < Count; ++index)
-                {
-                    result += Components[index];
-                }
-                return result;
-            }
-        };
-        double SumSix(const double (&terms)[6])
-        {
-            AccurateSum sum;
-            for (const double term : terms)
-            {
-                if (!sum.Add(term))
-                {
-                    return std::numeric_limits<double>::quiet_NaN();
-                }
-            }
-            return sum.Value();
-        }
-        bool PositionLess(const double (&left)[3], const double (&right)[3])
-        {
-            for (size_t axis = 0; axis < 3; ++axis)
-            {
-                if (left[axis] != right[axis])
-                {
-                    return left[axis] < right[axis];
-                }
-            }
-            return false;
-        }
-        double SurfaceArea(const double (&a)[3], const double (&b)[3], const double (&c)[3])
-        {
-            double cross[3];
-            for (size_t axis = 0; axis < 3; ++axis)
-            {
-                const size_t y = (axis + 1) % 3, z = (axis + 2) % 3;
-                const double terms[] = {a[y] * b[z], -a[z] * b[y], b[y] * c[z],
-                    -b[z] * c[y], c[y] * a[z], -c[z] * a[y]};
-                cross[axis] = SumSix(terms);
-            }
-            return std::hypot(cross[0], cross[1], cross[2]);
-        }
         bool AsFloat(double value, float& out, bool bRejectUnderflow = false)
         {
             if (!std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max())
@@ -246,7 +145,12 @@ namespace NorvesLib::Core::AssetImport
             outcome.Result = result;
             return outcome;
         };
-        if (ValidateSettings(settings) != SettingsResult::Success)
+        const auto validation = ValidateSettings(settings);
+        if (validation == SettingsResult::UnsupportedFeature)
+        {
+            return fail(TransformResult::UnsupportedOrigin);
+        }
+        if (validation != SettingsResult::Success)
         {
             return fail(TransformResult::InvalidSettings);
         }
@@ -326,58 +230,6 @@ namespace NorvesLib::Core::AssetImport
             if (settings.Origin == OriginMode::BoundsBottomCenter)
             {
                 plan.Pivot[1] = minimum[1];
-            }
-        }
-        else if (settings.Origin == OriginMode::SurfaceCentroid)
-        {
-            AccurateSum areas;
-            AccurateSum moments[3];
-            for (size_t triangle = 0; triangle < indices.size(); triangle += 3)
-            {
-                double a[3], b[3], c[3];
-                ReadRotatedPosition(vertices.data() + indices[triangle] * layout.Stride, layout.PositionOffset, plan, a);
-                ReadRotatedPosition(vertices.data() + indices[triangle + 1] * layout.Stride, layout.PositionOffset, plan, b);
-                ReadRotatedPosition(vertices.data() + indices[triangle + 2] * layout.Stride, layout.PositionOffset, plan, c);
-                // 面積/重心は巻きに依存しない。循環index順でも同じ演算順に固定する。
-                if (PositionLess(b, a))
-                {
-                    std::swap(a, b);
-                }
-                if (PositionLess(c, b))
-                {
-                    std::swap(b, c);
-                }
-                if (PositionLess(b, a))
-                {
-                    std::swap(a, b);
-                }
-                const double area = SurfaceArea(a, b, c);
-                if (area == 0.0)
-                {
-                    continue;
-                }
-                if (!areas.Add(area))
-                {
-                    return fail(TransformResult::Unrepresentable);
-                }
-                for (size_t axis = 0; axis < 3; ++axis)
-                {
-                    // 三角形中心を先に丸めず、3頂点それぞれの面積重みを展開へ加える。
-                    if (!moments[axis].AddProduct(a[axis], area) || !moments[axis].AddProduct(b[axis], area) ||
-                        !moments[axis].AddProduct(c[axis], area))
-                    {
-                        return fail(TransformResult::Unrepresentable);
-                    }
-                }
-            }
-            const double totalArea = areas.Value();
-            if (totalArea == 0.0)
-            {
-                return fail(TransformResult::DegenerateSurface);
-            }
-            for (size_t axis = 0; axis < 3; ++axis)
-            {
-                plan.Pivot[axis] = moments[axis].Value() / (3.0 * totalArea);
             }
         }
         else if (settings.Origin == OriginMode::Custom)

@@ -496,3 +496,6 @@
 
 - CORE-MEMORY-HEADER-UTILITY（G2検証基盤）: MemoryOverrides.hへstd::forwardを宣言するutilityを1行追加。実header単独の追加前compile失敗を再現し、追加後はC++23/Werror syntaxとNew<Probe>(int&&)の実object compile成功。独立確認でもPASS。BOM/CRLFと他bytesを保持し、allocator/runtime/API意味は変更しない。MemorySystemのWindows依存解消や実allocator実行とは区別する。
 - Next: G2／GR78の表面重心を後回しにして他変換を接続する案は作者回答待ち。G2の未確定形式選定も維持し、承認無しに保留変換やNVSKEL形式を適用しない。
+
+- G2-GR78-TRANSFORM（縮小scope）: 2026-10-03の作者承認でsurface_centroidを未対応として明示拒否し、keep/bounds中心/足元/custom・scale/fit・axes/mirror・UV/windingを先行。候補の表面面積/重心コードをactive実装から除き、値/JSONはUnsupportedFeature、変換はUnsupportedOrigin、canonicalはSize0、失敗出力保持を固定。48方向を含む変換/値の通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）6実行とMEMBER compile成功。44JSON fixture文法確認、nativeJSON未実行。新scope独立レビューPASS。SurfaceCentroidは別保留へ分離し、他変換の接続を再開できる状態。
+- Next: GR78-STATIC-SIDECARとして静的cook/looseへ共有file設定と変換/hashを接続し、その後骨格の一様scaleを別反復で接続する。

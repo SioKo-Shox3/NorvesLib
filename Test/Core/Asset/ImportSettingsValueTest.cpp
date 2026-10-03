@@ -66,6 +66,9 @@ int main()
     assert(ValidateSettings(settings) == SettingsResult::InvalidValue);
     settings = {}; settings.Origin = OriginMode::Custom; settings.OriginOffset[1] = std::numeric_limits<double>::quiet_NaN();
     assert(ValidateSettings(settings) == SettingsResult::InvalidValue);
+    settings = {}; settings.Origin = OriginMode::SurfaceCentroid;
+    assert(ValidateSettings(settings) == SettingsResult::UnsupportedFeature);
+    assert(EncodeCanonicalSettings(settings).Size == 0);
     settings = {}; settings.OriginOffset[0] = -0.0;
     assert(Same(identity, EncodeCanonicalSettings(settings)));
 

@@ -30,6 +30,10 @@ namespace NorvesLib::Core::AssetImport
                 return SettingsResult::InvalidValue;
             }
         }
+        if (settings.Origin == OriginMode::SurfaceCentroid)
+        {
+            return SettingsResult::UnsupportedFeature;
+        }
         return SettingsResult::Success;
     }
 

@@ -1,7 +1,7 @@
 # 取り込み設定 v1
 
 GR78のソース隣設定は <source>.import.json（例: Dog.glb.import.json）を正本とし、cook/looseで共用する。
-現段階は値・JSON解析・正規化bytesの基盤のみ。file探索、geometryへの適用、source_hash連結、CLIは後続であり、まだ設定fileを置くだけではロードへ反映されない。
+値・JSON解析・設定file選択/読込・正規化hash・下記のgeometry変換を共通基盤として用意する。実cooker/loose/CLIへの接続は後続であり、現時点では設定fileを置くだけではロードへ反映されない。
 
 ## 共通の配置と責務
 
@@ -23,7 +23,7 @@ rootはobject、version: 1が必須。省略時にv1と推測しない。
 - axes: up/forwardは +X/-X/+Y/-Y/+Z/-Z、既定+Y/+Z
   - 同じ座標軸の組合せは符号が違っても不可
   - mirrorXはbool、既定false
-- origin: modeはkeep/bounds_center/bounds_bottom_center/surface_centroid/custom、既定keep
+- origin: modeはkeep/bounds_center/bounds_bottom_center/custom、既定keep。surface_centroidは名前を予約するが、現在はUnsupportedFeatureで明示拒否する
   - offsetは有限number3要素、既定[0,0,0]
   - custom以外の非ゼロoffsetは拒否する
 - mesh: windingはkeep/flip/auto、既定keep。flipU/flipVはbool、既定false
@@ -48,7 +48,7 @@ typed値ではfit未使用時のFitMetersは1、fit使用時のScaleは1に固�
 | 21 | Up: +X=0 / -X=1 / +Y=2 / -Y=3 / +Z=4 / -Z=5 | 1 |
 | 22 | Forward（同じaxis番号） | 1 |
 | 23 | mirrorX 0/1 | 1 |
-| 24 | Origin: Keep=0 / BoundsCenter=1 / BoundsBottomCenter=2 / SurfaceCentroid=3 / Custom=4 | 1 |
+| 24 | Origin: Keep=0 / BoundsCenter=1 / BoundsBottomCenter=2 / SurfaceCentroid=3（予約・拒否） / Custom=4 | 1 |
 | 25 | OriginOffset X/Y/Z binary64 | 24 |
 | 49 | Winding: Keep=0 / Flip=1 / Auto=2 | 1 |
 | 50 | flipU 0/1 | 1 |
@@ -62,7 +62,7 @@ cook algorithm versionと長さ前置きのhash連結は後続の接続層で行
 
 ImportSettingsValueTestは固定bytesの既知値、全軸組合せ、非有限/非正値、列挙範囲外、矛盾、-0と各field変更を検査する。
 通常・最適化・ASan/UBSan（LeakSanitizer除外）およびMEMBERのWerror compileを実行済み。
-ImportSettingsJsonTestは43のJSON fixtureを登録。fixture自体のJSON文法は別途確認した。
+ImportSettingsJsonTestは44のJSON fixtureを登録。fixture自体のJSON文法は別途確認した。
 実JsonDocumentを含むsource/testはWindows.h依存でcompile停止しており、native解析試験は未実行。
 file探索・変換・cook/loose統合が通ったという意味ではない。
 
@@ -73,7 +73,7 @@ strideとfield offsetでlayoutを渡し、他のfieldやpaddingは変更しな�
 
 - up/forwardをtargetの+Y/+Zへ写す右手直交基底を作り、mirrorXはtarget Xへ別に掛ける
 - units.fitは軸変換後boundsのup=Y、forward=Z、longest=最大extentでmetersへ合わせる。選択軸のextentが0なら失敗
-- bounds_centerはbounds中心、bounds_bottom_centerはXZ中心とminY、surface_centroidは三角形面積重みの中心を原点へ移す。零面積triangleは寄与せず、全て零面積なら失敗
+- bounds_centerはbounds中心、bounds_bottom_centerはXZ中心とminYを原点へ移す。surface_centroidは未対応で、ParseSettingsではUnsupportedFeature、変換入口ではUnsupportedOriginとして拒否する
 - custom.offsetは軸/scale適用後に加える平行移動量。ソース内のpivot指定ではない
 - 演算はdouble。P' = (R×P − Pivot) × Scale + Offset と評価し、巨大な中間平行移動行列を作らない。floatへは最後に一度だけ変換する
 - 法線は正の一様scaleで逆転置のscale成分が正規化時に消えるため、直交rotation/mirrorを適用して単位化する。ゼロ/非有限法線は拒否
@@ -81,21 +81,13 @@ strideとfield offsetでlayoutを渡し、他のfieldやpaddingは変更しな�
 - 全layout/index/位置/変換後のfloat表現可能性を検証してから書込passへ進む。失敗時は頂点もindexも非変更。位置の非ゼロ値が乗算またはfloat変換で0へunderflowする場合も拒否する
 - 非整列byte storageはmemcpyで読み書きする
 
-実ImportTransformTestは48の軸/鏡像組合せの体積符号、3種類fit、bounds/足元/面積重み原点、custom移動、
+実ImportTransformTestは48の軸/鏡像組合せの体積符号、3種類fit、bounds/足元原点、custom移動、
 法線/UV、layout・index・NaN/inf/overflow/underflowと失敗時非変更、非整列storageと未指定field保持を確認する。
 通常・最適化・ASan/UBSan（LeakSanitizer除外）を実行済み。
 骨格のIBM/animation等の一様scaleと、実cooker/looseへの挿入は後続。現時点でロード結果はまだ変わらない。
 
-SurfaceCentroidは辺の大きな数同士の減算を避け、float32座標の積をbinary64で保持して外積の6項を誤差展開で加算する。
-三角形頂点の演算順も座標順へ正規化し、中心と面積重みmoment・総面積を補償付き和で保持する。
-巨大な正負座標と小さい座標の混在、三角形の循環index、複数面の列挙順による重心消失を回帰試験へ追加した。
-
-### 変換の保留範囲
-
-SurfaceCentroidの極端値では面積と三角形中心の途中丸めによる相殺が見つかった。
-最新修正は三角形中心へ一度丸めず、各頂点×面積の積とfma残差をmoment展開へ足し、最後に3×総面積で割る。
-M=2^100、t=2^-100の等面積2面を含む追加回帰は通常・最適化・sanitizerで成功したが、この最終修正の独立確認はまだ完了していない。
-変換APIは未接続のまま保留し、実ロード/cookerへ適用する前に確認を必要とする。
+表面重心は作者承認により後段へ分離した。極端値の精度確認が完了するまでは名前を認識して明示拒否し、
+bounds_center等へ無言で置き換えない。候補実装は履歴に残るが、現在の変換処理からは除外している。
 
 ## 設定file選択とsource_hash連結の基盤
 
@@ -117,7 +109,7 @@ sidecar無しでは設定やalgorithm versionに依らず既存hashをそのま�
 ImportSettingsHashTestの3つの既知state/期待値、無し不変、値・algorithm変更、-0、無効設定を通常・最適化・sanitizerで確認した。
 hash試験とfile試験のMEMBER compileはWerrorで成功。
 実file loaderはJsonDocument→Windows.hに依存しており、本体compile/実file試験は未実行。
-これらはまだcook/loose/CLIへ接続していない独立APIであり、保留中のgeometry変換を有効化しない。
+これらはまだcook/loose/CLIへ接続していない独立APIであり、実ロードのgeometry変換をまだ有効化しない。
 
 Windowsの自動不在判定はraw system errorのFILE_NOT_FOUND/PATH_NOT_FOUNDだけを許可する。
 MSVCのfile_type::not_found/errc写像は不正名やnetwork path障害も含むため、それだけでは設定無しと判断しない。

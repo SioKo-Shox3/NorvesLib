@@ -1900,10 +1900,12 @@
 - notes: S2承認済み。CoreからToolsへ依存させないため解析もCore privateへ配置し、AssetCookLibとlooseが共有する。file探索・変換適用・hash連結・CLIは別反復。
 
 ## G2-GR78-TRANSFORM: 取り込み変換の共有演算を実装する
-- status: blocked
-- done-when: 軸正規化・一様scale/fit・mirrorX・原点・法線/UV/windingをdoubleで合成し、float表現可能性を検証して静的geometryへ適用する。骨格は一様scaleのみの制約を保持する。
+- status: done
+- done-when: 軸正規化・一様scale/fit・mirrorX・keep/bounds中心/足元/custom原点・法線/UV/windingをdoubleで合成し、float表現可能性を検証して静的geometryへ適用する。骨格は一様scaleのみの制約を保持する。
 - verify: 軸写像、fit、各原点、鏡像、法線、UV、極端値/縮退/失敗出力を検証する。
 - stop-when: 骨格への未承認軸/原点変更、描画既定/形式変更、非有限やoverflowの黙認。
+
+- notes: 2026-10-03作者承認によりsurface_centroidを未対応として明示拒否し、他変換を先行する縮小scopeで再開。表面重心は別保留へ分離。
 
 ## G2-GR78-SIDECAR: ソース隣の設定読込と変換・hashを接続する
 - status: todo
@@ -1923,3 +1925,22 @@
 - verify: absent/invalid/required/override/conflict/出力保持をnative登録し、純hashの既知値/無し不変/値変更とバージョン変更を実行する。
 - stop-when: 保留中ImportTransformを未確認でロードへ接続、file不在以外のI/O失敗を無し扱い、meta/書式差でhash変更。
 - notes: GR78-TRANSFORMの独立確認保留中に先行できるSIDECARの部分作業。
+
+## G2-GR78-SURFACE-CENTROID: 表面重心の極端値精度を確認する
+- status: blocked
+- done-when: 面積重み原点の極端値相殺と循環/面列挙順依存を解消し、独立確認後にsurface_centroidを有効化する。
+- verify: 2^100/2^-100の等面積2面、巨大正負座標/微小残差、面積/重心/実頂点結果を独立反証する。
+- stop-when: 未確認実装をロードへ接続する、他の原点選択へ無言fallbackする。
+- notes: 2026-10-03作者は他変換を先行し、この機能は未対応として明示拒否する方針を承認。以前の候補はa6391b2の履歴に保持、active実装からは除く。
+
+## G2-GR78-STATIC-SIDECAR: 静的cookとlooseへ設定を適用する
+- status: todo
+- done-when: 共有loaderと承認済み変換を静的meshのcluster/bounds前へ挿入し、無しなら旧bytes/hashを保ち、有りなら正規化設定hashを連結する。override/disabled/requiredを内部APIへ渡せ、採用設定を診断可能にする。
+- verify: sidecar無し/disabledのpayload同値、scale/fit/origin/UV/windingのcook-loose同値、meta/書式hash不変と値変更、surface拒否と出力保持を既存束へ登録する。
+- stop-when: surface_centroidの再有効化、骨格への無言適用、未実装オプションの黙認、native未実行を成功扱い。
+
+## G2-GR78-SKELETAL-SIDECAR: 骨格へ一様scaleと設定hashを適用する
+- status: todo
+- done-when: 頂点位置/IBMの平行移動/animation Translation/mesh-node平行移動を同じ正の一様scaleで変換し、cook/loose/legacyで共有する。軸・鏡像・原点やmesh変更は未対応として拒否する。
+- verify: sidecar無し同値、scale前後のskinning結果、fit倍率、回転/scaleチャンネル不変、範囲外と拒否時出力保持を既存束へ登録する。
+- stop-when: 未承認NVSKEL形式変更、骨格の軸/原点変換、native未実行を実skinning成功扱い。

@@ -15,7 +15,7 @@ namespace NorvesLib::Core::AssetImport
     enum class TransformResult : uint8_t
     {
         Success, InvalidSettings, InvalidLayout, InvalidIndices, InvalidVertex,
-        DegenerateFit, DegenerateSurface, Unrepresentable
+        DegenerateFit, DegenerateSurface, Unrepresentable, UnsupportedOrigin
     };
     struct ImportTransformOutcome
     {

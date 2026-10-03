@@ -90,83 +90,6 @@ int main()
     result=ApplyImportTransform(Bytes(vertices),3,Layout,indices,settings);
     assert(result.Result==TransformResult::Success && result.Pivot[0]==1 && result.Pivot[1]==2);
     assert(vertices[0].Position[0]==-1 && vertices[0].Position[1]==-2);
-    Triangle(vertices); settings={}; settings.Origin=OriginMode::SurfaceCentroid;
-    result=ApplyImportTransform(Bytes(vertices),3,Layout,indices,settings);
-    assert(result.Result==TransformResult::Success && Near(result.Pivot[0],2.0/3) && Near(result.Pivot[1],4.0/3));
-
-    Vertex weighted[6];
-    weighted[1].Position[0]=2; weighted[2].Position[1]=1;
-    weighted[3].Position[0]=10; weighted[4].Position[0]=14; weighted[5].Position[0]=10; weighted[5].Position[1]=2;
-    uint32_t weightedIndices[]={0,1,2,3,4,5,0,0,0};
-    result=ApplyImportTransform(Bytes(weighted),6,Layout,weightedIndices,settings);
-    assert(result.Result==TransformResult::Success && Near(result.Pivot[0],9.2) && Near(result.Pivot[1],0.6));
-
-    // 巨大な共通成分の相殺で非縮退面が0にならず、循環index順にも依存しない。
-    for (bool symmetric : {false,true})
-    {
-        double referencePivot[3] = {};
-        for (uint32_t rotation=0;rotation<3;++rotation)
-        {
-            Vertex extreme[3];
-            extreme[0].Position[0]=1e20f; extreme[0].Position[1]=1e20f;
-            if (symmetric)
-            {
-                extreme[1].Position[0]=-1e20f; extreme[1].Position[1]=-1e20f;
-            }
-            extreme[2].Position[0]=1; extreme[2].Position[1]=2;
-            uint32_t cycle[]={rotation,(rotation+1)%3,(rotation+2)%3};
-            result=ApplyImportTransform(Bytes(extreme),3,Layout,cycle,settings);
-            assert(result.Result==TransformResult::Success);
-            if(rotation==0) { std::memcpy(referencePivot,result.Pivot,sizeof(referencePivot)); }
-            else { assert(std::memcmp(referencePivot,result.Pivot,sizeof(referencePivot))==0); }
-            if(symmetric) { assert(Near(result.Pivot[0],1.0/3) && Near(result.Pivot[1],2.0/3)); }
-        }
-    }
-    for (uint32_t rotation=0;rotation<3;++rotation)
-    {
-        Vertex extreme[3];
-        extreme[0].Position[0]=1e20f; extreme[1].Position[0]=-1e20f;
-        extreme[2].Position[0]=1; extreme[2].Position[1]=3;
-        uint32_t cycle[]={rotation,(rotation+1)%3,(rotation+2)%3};
-        result=ApplyImportTransform(Bytes(extreme),3,Layout,cycle,settings);
-        assert(result.Result==TransformResult::Success && Near(result.Pivot[0],1.0/3));
-        assert(Near(extreme[2].Position[0],2.0/3));
-    }
-    // 面の列挙順による累積momentの相殺も同じ結果にする。
-    const uint32_t permutations[][3]={{0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}};
-    for(const auto& permutation:permutations)
-    {
-        Vertex surfaces[9];
-        const float x[]={1e20f,-1e20f,1};
-        uint32_t surfaceIndices[9];
-        for(size_t triangle=0;triangle<3;++triangle)
-        {
-            for(size_t vertex=0;vertex<3;++vertex)
-            {
-                surfaces[triangle*3+vertex].Position[0]=x[triangle];
-                surfaceIndices[triangle*3+vertex]=permutation[triangle]*3+static_cast<uint32_t>(vertex);
-            }
-            surfaces[triangle*3+1].Position[1]=1;
-            surfaces[triangle*3+2].Position[2]=1;
-        }
-        result=ApplyImportTransform(Bytes(surfaces),9,Layout,surfaceIndices,settings);
-        assert(result.Result==TransformResult::Success && Near(result.Pivot[0],1.0/3));
-        assert(Near(surfaces[6].Position[0],2.0/3));
-    }
-    // 各面の中心へ丸める前の+1が、巨大な正負中心を合算した後にも残ること。
-    for(bool reverse:{false,true})
-    {
-        Vertex extreme[6];
-        const float magnitude=std::ldexp(1.0f,100), tiny=std::ldexp(1.0f,-100);
-        extreme[0].Position[0]=magnitude; extreme[3].Position[0]=-magnitude;
-        extreme[2].Position[0]=1; extreme[2].Position[1]=tiny;
-        extreme[5].Position[0]=1; extreme[5].Position[1]=tiny;
-        uint32_t faces[]={0,1,2,3,4,5};
-        if(reverse) { for(size_t i=0;i<3;++i) { std::swap(faces[i],faces[i+3]); } }
-        result=ApplyImportTransform(Bytes(extreme),6,Layout,faces,settings);
-        assert(result.Result==TransformResult::Success && Near(result.Pivot[0],1.0/3));
-        assert(Near(extreme[2].Position[0],2.0/3) && Near(extreme[5].Position[0],2.0/3));
-    }
     Triangle(vertices); settings={}; settings.Scale=2; settings.Origin=OriginMode::Custom;
     settings.OriginOffset[0]=3; settings.OriginOffset[1]=-4; settings.OriginOffset[2]=5;
     settings.bFlipU=settings.bFlipV=true;
@@ -241,8 +164,8 @@ int main()
     Triangle(vertices); vertices[1].Position[0]=0.125f; vertices[2].Position[1]=0.25f;
     UnchangedFailure(vertices,indices,settings,TransformResult::Unrepresentable);
     Triangle(vertices);
-    settings={}; settings.Origin=OriginMode::SurfaceCentroid; vertices[2].Position[1]=0;
-    UnchangedFailure(vertices,indices,settings,TransformResult::DegenerateSurface);
+    settings={}; settings.Origin=OriginMode::SurfaceCentroid;
+    UnchangedFailure(vertices,indices,settings,TransformResult::UnsupportedOrigin);
     Triangle(vertices); settings={};
     assert(ApplyImportTransform({Bytes(vertices).data(),sizeof(vertices)-1},3,Layout,indices,settings).Result==TransformResult::InvalidLayout);
     assert(ApplyImportTransform(Bytes(vertices),0,Layout,indices,settings).Result==TransformResult::InvalidLayout);
