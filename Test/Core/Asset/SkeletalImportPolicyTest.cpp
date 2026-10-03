@@ -54,6 +54,71 @@ int main()
     SkeletalGltfDecodeReport report;
     assert(report.TotalVertexCount==0 && report.ProcessedVertexCount==0 && !report.bInfluenceScanComplete &&
         report.FailedVertexIndex==std::numeric_limits<uint64_t>::max() && report.MeanDroppedWeight==0);
-    std::cout << "SkeletalImportPolicyTest PASS: strict_identity_reduce_canonical_golden_hash_zero_invalid\n";
+    // SCBKはPython struct.packと独立FNVで作った固定値に合わせる。
+    options={}; options.CubicSplinePolicy=SkeletalCubicSplinePolicy::Bake;
+    assert(IsValidSkeletalGltfDecodeOptions(options));
+    const uint8_t bakeExpected[]={0x53,0x43,0x42,0x4b,0x01,0x00,0x00,0x00,0x00,0x7b,0x14,0xae,0x47,0xe1,0x7a,0x84,0x3f,0x00,0x00,0x00,0x00,0x00,0x00,0xd0,0x3f,0x01,0xfc,0xa9,0xf1,0xd2,0x4d,0x62,0x50,0x3f,0xf5,0x61,0xb7,0x03,0x71,0x98,0x5c,0x3f,0xfc,0xa9,0xf1,0xd2,0x4d,0x62,0x50,0x3f,0x14,0x00,0x00,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x10,0x00,0x01,0x00,0x00,0x00};
+    const auto bakeCanonical=EncodeSkeletalImportPolicy(options);
+    assert(bakeCanonical.bValid && bakeCanonical.Size==sizeof(bakeExpected) && std::memcmp(bakeCanonical.Bytes,bakeExpected,sizeof(bakeExpected))==0);
+    assert(AppendSkeletalImportPolicyHash(0,options).Value==0x416f9c95032b3ba1ull);
+    assert(AppendSkeletalImportPolicyHash(14695981039346656037ull,options).Value==0x3d87564da183137cull);
+    assert(AppendSkeletalImportPolicyHash(0x123456789abcdef0ull,options).Value==0xb150b18b1dc91f31ull);
+    const auto bakeHash=AppendSkeletalImportPolicyHash(0,options).Value;
+    const auto different=[&](const SkeletalGltfDecodeOptions& changed)
+    {
+        const auto hash=AppendSkeletalImportPolicyHash(0,changed);
+        assert(hash.bValid && hash.Value!=bakeHash);
+    };
+    auto changed=options; changed.CubicTranslationToleranceMeters=0.002; different(changed);
+    changed=options; changed.CubicRotationToleranceRadians=0.003; different(changed);
+    changed=options; changed.CubicScaleTolerance=0.002; different(changed);
+    changed=options; changed.CubicMaximumDepth=19; different(changed);
+    changed=options; changed.CubicMaximumSamplesPerChannel=100; different(changed);
+    changed=options; changed.CubicMaximumSamplesPerAsset=50; different(changed);
+    changed=options; changed.InfluencePolicy=SkeletalInfluencePolicy::ReduceToFour; different(changed);
+    assert(AppendSkeletalImportPolicyHash(0,options,2).Value!=bakeHash);
+    for(double invalid:{0.0,-1.0,CubicVectorNumericErrorFloor,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()})
+    {
+        changed=options; changed.CubicTranslationToleranceMeters=invalid;
+        assert(!IsValidSkeletalGltfDecodeOptions(changed) && !EncodeSkeletalImportPolicy(changed).bValid);
+        changed=options; changed.CubicScaleTolerance=invalid;
+        assert(!IsValidSkeletalGltfDecodeOptions(changed));
+    }
+    for(double invalid:{0.0,CubicRotationNumericErrorBudget,3.2,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()})
+    {
+        changed=options; changed.CubicRotationToleranceRadians=invalid;
+        assert(!IsValidSkeletalGltfDecodeOptions(changed));
+    }
+    changed=options; changed.CubicMaximumDepth=MaximumCubicSubdivisionDepth+1;
+    assert(!IsValidSkeletalGltfDecodeOptions(changed));
+    changed=options; changed.CubicMaximumSamplesPerChannel=1;
+    assert(!IsValidSkeletalGltfDecodeOptions(changed));
+    changed=options; changed.CubicMaximumSamplesPerChannel=MaximumCubicSamplesPerChannel+1;
+    assert(!IsValidSkeletalGltfDecodeOptions(changed));
+    changed=options; changed.CubicMaximumSamplesPerAsset=1;
+    assert(!IsValidSkeletalGltfDecodeOptions(changed));
+    changed=options; changed.CubicMaximumSamplesPerAsset=MaximumCubicSamplesPerAsset+1;
+    assert(!IsValidSkeletalGltfDecodeOptions(changed));
+    changed=options; changed.CubicMaximumDepth=0; changed.CubicMaximumSamplesPerAsset=2;
+    assert(IsValidSkeletalGltfDecodeOptions(changed));
+    changed=options; changed.CubicSplinePolicy=static_cast<SkeletalCubicSplinePolicy>(255);
+    assert(!IsValidSkeletalGltfDecodeOptions(changed));
+    for(size_t field=0;field<6;++field)
+    {
+        changed={};
+        switch(field)
+        {
+        case 0: changed.CubicTranslationToleranceMeters=0.002; break;
+        case 1: changed.CubicRotationToleranceRadians=0.002; break;
+        case 2: changed.CubicScaleTolerance=0.002; break;
+        case 3: changed.CubicMaximumDepth=19; break;
+        case 4: changed.CubicMaximumSamplesPerChannel=100; break;
+        case 5: changed.CubicMaximumSamplesPerAsset=100; break;
+        }
+        assert(!IsValidSkeletalGltfDecodeOptions(changed));
+    }
+    assert(!report.bCubicScanStarted && !report.bCubicScanComplete && report.BakedCubicChannelCount==0 &&
+        report.FailedAnimationChannelIndex==UINT64_MAX && !report.bHasCubicBakeFailure);
+    std::cout << "SkeletalImportPolicyTest PASS: strict_identity_reduce_legacy_cubic_canonical_golden_hash_limits_invalid\n";
     return 0;
 }

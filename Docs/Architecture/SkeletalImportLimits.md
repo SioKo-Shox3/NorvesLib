@@ -162,3 +162,26 @@ CUBICSPLINE/morphは実装時に同じskinセクションへ追加する。GR84�
 pure serializerの3mode/MEMBERとPython独立JSON解析で構文/数値/状態を検査する。
 native回帰には成功/閾値失敗/古い診断の消去・CLI JSON/警告有無/cache未測定を登録し、
 CoreとMainのWindows.h依存のため未実行として区別する。
+
+## CUBICSPLINE policy/hash定義（decode接続前）
+
+SkeletalCubicSplinePolicyはReject(既定)/Bake。許容はtranslation=0.001m、
+rotation=0.0017453292519943296rad（0.1度）、scale=0.001（無次元）が既定。
+Bakeでは有限かつvector数値予算の下限64ε、rotationの下限256εを厳密に超える値を要求し、
+rotationはpi以下とする。Rejectでは使用しない許容/予算の非既定指定を拒否する。
+
+既定depth=20（最大24）、channel sample=65536（最大1048576）、asset sample=1048576（最大4194304）。
+sample上限は各2以上、assetはchannel上限より小さく設定してもよい（両方の制約を適用する）。
+診断型にanimationの総数/正常prefix、bakeしたchannel/input/output key数、単位別上界、
+失敗channel/status、scan開始/完了を追加する。
+
+Bake無しのStrictはSize0、Reduceは従来SREDの25byteとhashを完全に維持する。
+BakeのcanonicalはSCBK、schemaLE32、influenceU8、warn/fail各binary64LE、cubicU8、
+translation/rotation/scale許容各binary64LE、depth/channel/asset各u32LE、cubic algorithm u32LEの66byte。
+最後のalgorithm初期値は1。外側のlength+canonical+reduction algorithm連結は従来どおりで、
+どの許容/予算/アルゴリズムも別cache鍵となる。構造体のpaddingをhashに含めない。
+
+この段階は型とhashだけ。新しいBake指定をdecoderが黙って無視しないよう、
+raw/legacy/file/cookの実decodeではUnsupportedInterpolationで明示拒否する。
+実読込/最終メートル倍率/JSON/CLI接続は次段階であり、CUBICSPLINE対応済みとはしない。
+Python独立66byteと3初期state hashのgolden、legacy25byte/hash不変、全閾値/予算/無意味指定をpureで確認する。

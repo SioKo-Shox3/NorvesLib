@@ -10,9 +10,9 @@ namespace NorvesLib::Core::Skeletal
 {
     namespace
     {
-        constexpr uint32_t DepthLimit = 24;
+        constexpr uint32_t DepthLimit = MaximumCubicSubdivisionDepth;
         constexpr double Epsilon = std::numeric_limits<float>::epsilon();
-        constexpr double RotationNumericBudget = 256 * Epsilon;
+        constexpr double RotationNumericBudget = CubicRotationNumericErrorBudget;
         static_assert(Math::Constants::EPSILON == std::numeric_limits<float>::epsilon());
         struct Region
         {
@@ -137,7 +137,8 @@ namespace NorvesLib::Core::Skeletal
         const bool bRotation = options.Kind == CubicBakeKind::Rotation;
         if ((options.Kind != CubicBakeKind::Vector3 && !bRotation) || !std::isfinite(options.Tolerance) ||
             options.Tolerance <= 0 || !std::isfinite(options.ValueScale) || options.ValueScale <= 0 ||
-            (bRotation && options.ValueScale != 1) || options.MaximumDepth > DepthLimit || options.MaximumSamples < 2)
+            (bRotation && options.ValueScale != 1) || options.MaximumDepth > DepthLimit || options.MaximumSamples < 2 ||
+            options.MaximumSamples > MaximumCubicSamplesPerChannel)
         {
             return {CubicBakeStatus::InvalidOptions};
         }
@@ -170,7 +171,7 @@ namespace NorvesLib::Core::Skeletal
         {
             return {CubicBakeStatus::UnsupportedArithmetic};
         }
-        if (options.Tolerance <= (bRotation ? RotationNumericBudget : 64 * Epsilon))
+        if (options.Tolerance <= (bRotation ? RotationNumericBudget : CubicVectorNumericErrorFloor))
         {
             return {CubicBakeStatus::NumericBudgetExceeded};
         }

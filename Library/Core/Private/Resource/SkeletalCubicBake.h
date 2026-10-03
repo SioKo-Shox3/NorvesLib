@@ -2,6 +2,7 @@
 
 #include "Container/Span.h"
 #include "Resource/SkeletalCubicBounds.h"
+#include "Resource/SkeletalImportOptions.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Skeletal
@@ -28,8 +29,8 @@ namespace NorvesLib::Core::Skeletal
         CubicBakeKind Kind = CubicBakeKind::Vector3;
         double Tolerance = 0.001;
         double ValueScale = 1;
-        uint32_t MaximumDepth = 20;
-        uint32_t MaximumSamples = 65536;
+        uint32_t MaximumDepth = DefaultCubicMaximumDepth;
+        uint32_t MaximumSamples = DefaultCubicMaximumSamplesPerChannel;
     };
     enum class CubicBakeStatus
     {

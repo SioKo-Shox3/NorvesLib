@@ -934,6 +934,14 @@ namespace
             AssertEquivalent(loose.Data, retainedResult.Data.Skeletal);
             const Container::AnsiString text = ReadFixtureJson(fixture.Path());
             const ByteArray external = TextBytes(text);
+            // 型/hashを先行定義したBake指定は、decode接続までは黙って無視しない。
+            Skeletal::SkeletalGltfDecodeOptions pendingBake;
+            pendingBake.CubicSplinePolicy=Skeletal::SkeletalCubicSplinePolicy::Bake;
+            Gltf::BufferSet pendingSources;
+            assert(Skeletal::DecodeSkeletalGltf(external,fixture.Path(),&pendingSources).Succeeded());
+            const auto notConnected=Skeletal::DecodeSkeletalGltf(external,fixture.Path(),&pendingSources,nullptr,&pendingBake);
+            assert(notConnected.Status==Skeletal::SkeletalGltfDecodeStatus::UnsupportedInterpolation && pendingSources.GetCount()==0 && notConnected.Data.Vertices.empty());
+
             const ByteArray binary = BuildLooseFixtureBuffer();
             const Container::AnsiString withoutUri = ChangeBufferUri(text, "");
             const ByteArray glb = MakeSkeletalGlb(withoutUri, binary);

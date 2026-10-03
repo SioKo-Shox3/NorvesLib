@@ -2078,7 +2078,7 @@
 - stop-when: 任意epsilonだけで形式的runtime保証とする、未認証区間を成功公開、元cubic符号変更、変換後メートル誤差を無視する。
 
 ## G2-GR86-CUBIC-POLICY: 焼込指定・許容・診断・hashを定義する
-- status: todo
+- status: done
 - done-when: Reject既定/Bake明示、translationメートル/rotationラジアン/scale無次元の許容、depth/channel/asset sample予算と診断を定義。未使用指定を拒否し、Bake無しの既存Strict/Reduce canonical/hashを維持する。Bake時だけ全設定/algorithmをhashへ追加する。
 - verify: pure validation/canonical/hash golden、既存Strict/Reduce無変更、数値下限/不正/上限/無意味指定の拒否。
 - stop-when: 未接続decoderがBakeを黙って無視して成功する、既存hash回帰、未実装morph/256を受理。

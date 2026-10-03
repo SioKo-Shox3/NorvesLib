@@ -562,3 +562,6 @@
 
 - G2-GR86-CUBIC-RUNTIME: 保存float時刻の差/分割比を外向き区間に入れ、ValueScale適用後の数学上界と条件付きfloat予算で適応LINEAR列を生成。回転はnorm[.99,1.01]/dot下限>.9996を認証し実NLERP枝へ限定、256epsilon rad予算、vectorは64epsilon*端点L1規模。短dt/時刻衝突/zeroq/深さ24/sample容量を拒否し全out保持。元samplerのNormalize/Slerp/alpha式をportable private helperへ式不変で移し本物Math型と共有。pure3mode/Werror MEMBER/旧bounds回帰成功、第2周PASS。独立反証は成功534曲線・6,503,462 queryで上界違反なし。oracle hをlong doubleのまま保ち2^-60→1時刻差を追加。Core/pose/Windows全体はWindows.hにより未実行、別targetのFP条件は未確認と明記。Cubic decode受理はまだ拒否。
 - Next: Cubic policy/hashを定義し、最終メートル倍率のdecode接続とCLI/JSONへ順に進む。
+
+- G2-GR86-CUBIC-POLICY: Reject/Bake、メートル/ラジアン/無次元の許容、depth/channel/asset予算、prefix/失敗診断を定義。Bake無しStrictSize0/ReduceSRED25byteと旧hashを維持し、Bake時だけSCBK66byteへ全設定/cubic algorithmを格納。未使用指定・不正数値/enum/予算を拒否し、bakerも公開sample上限を共有。decoder接続前のBakeはUnsupportedInterpolationで明示拒否。純policy3mode/MEMBER・header独立POD・CLI/report/bake回帰成功、独立PASS（65,536 enum組合せ/256設定golden等も成功）。native raw拒否回帰は登録のみでWindows.h未実行。境界受理の恒久assert強化はnonblocking追補。
+- Next: GR86-CUBIC-DECODEへ接続し、fitを含む最終translation倍率をbakerへ渡して二重scaleを避ける。

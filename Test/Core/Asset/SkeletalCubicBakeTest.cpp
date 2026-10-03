@@ -159,6 +159,8 @@ int main()
     assert(BakeCubicChannel(input,options,workspace,{output,SIZE_MAX}).Status==Status::InvalidInput); unchanged();
     limited=options; limited.Tolerance=1e-8;
     assert(BakeCubicChannel(input,limited,workspace,output).Status==Status::NumericBudgetExceeded); unchanged();
+    limited=options; limited.MaximumSamples=MaximumCubicSamplesPerChannel+1;
+    assert(BakeCubicChannel(input,limited,workspace,output).Status==Status::InvalidOptions); unchanged();
     limited=options; limited.ValueScale=2;
     assert(BakeCubicChannel(input,limited,workspace,output).Status==Status::InvalidOptions); unchanged();
     input[0].Incoming.Values[2]=std::numeric_limits<float>::infinity();

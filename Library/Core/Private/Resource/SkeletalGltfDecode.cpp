@@ -1506,6 +1506,11 @@ namespace NorvesLib::Core::Skeletal
         {
             const SkeletalGltfDecodeOptions options = decodeOptions != nullptr ? *decodeOptions : SkeletalGltfDecodeOptions{};
             if (!IsValidSkeletalGltfDecodeOptions(options)) return Fail(SkeletalGltfDecodeStatus::InvalidImportOptions);
+            // Bakeの設定/hash契約を先に定義した段階。実decode接続までは明示的に拒否する。
+            if (options.CubicSplinePolicy != SkeletalCubicSplinePolicy::Reject)
+            {
+                return Fail(SkeletalGltfDecodeStatus::UnsupportedInterpolation);
+            }
             if (!root.IsObject())
             {
                 return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
