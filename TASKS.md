@@ -1779,8 +1779,15 @@
 - notes: GR77最初の部品。buffers[0]/byteLength/padding、data URI/base64、画像、cooker/loose/骨格への接続は後続タスク。G2-S8のGLB部分だけを承認済みとして使う。
 
 ## G2-GR77-BASE64: 埋め込みdata URI向けの厳密base64を共有化する
-- status: todo
+- status: done
 - done-when: Span入力/出力の無割当primitiveでRFC4648標準alphabet・padding・末尾未使用bitを検証し必要長と復号を提供する。容量/入出力重なりを拒否し、失敗時は出力bytes不変/長さ0。
 - verify: RFC既知例、全1/2byte入力と固定seed3byte、非正規padding/無効文字/空白/切断、容量/alias/出力tail保持を通常/O2/sanitizer/MEMBERで実行する。
 - stop-when: padding不正の黙認、部分書込み、入力越境/overflow、data URI/JSON/ファイル接続を完了扱いする。
 - notes: GltfBufferSet/画像のdata URI解決が使う下層部品。URIの構文・percent decode・MIMEは別層で扱う。
+
+## G2-GR77-BUFFER-SEMANTICS: data URIとGLB BINの意味境界を検証する
+- status: todo
+- done-when: 共有の無割当helperでdata URIの対応MIME/base64形式/parameter/percent escapeを扱い、GLB buffer0の宣言長と0〜3byteのゼロpaddingを検証する。失敗時の出力非変更/空viewと借用寿命を明示する。
+- verify: 既知data URI、大小文字/parameter/percent、壊れたescape、対応外MIME/encoding、BIN index/長さ/padding/欠落を実helperで通常/O2/sanitizer/MEMBER確認。ファイルI/O/JSON/ownedBufferSetは後続と区別する。
+- stop-when: 非base64や対応外画像の黙認、percent後のNUL/経路を無条件に安全と扱う、出力部分書込み、BINコピー。
+- notes: GR77のGltfBufferSet/画像が使う意味検証を先行し、cooker/loose/skeletalは後続で接続する。

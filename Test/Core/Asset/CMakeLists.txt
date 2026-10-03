@@ -16,6 +16,7 @@ norves_add_test_bundle(CookedMeshTest
     FOLDER "Test/Core/Asset"
     MEMBER CookedMeshTest CookedMeshTest.cpp
     MEMBER GltfContainerTest GltfContainerTest.cpp
+    MEMBER Base64DecodeTest Base64DecodeTest.cpp
     MEMBER CookedTextureTest CookedTextureTest.cpp
     MEMBER AudioCookedAssetTest AudioCookedAssetTest.cpp
     MEMBER CookedSkeletalAssetTest CookedSkeletalAssetTest.cpp
@@ -53,3 +54,4 @@ add_test(NAME CookedSkeletalAssetTest
 set_property(TEST CookedSkeletalAssetTest APPEND PROPERTY ENVIRONMENT "NORVES_TEST_BUNDLE_MEMBER=CookedSkeletalAssetTest")
 
 add_test(NAME GltfContainerTest COMMAND CookedMeshTest --test=GltfContainerTest)
+add_test(NAME Base64DecodeTest COMMAND CookedMeshTest --test=Base64DecodeTest)

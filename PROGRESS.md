@@ -439,3 +439,6 @@
 - G2選定: 2026-10-03 UTCにS8のGLB共有解析（既存JsonDocument/stb）とS2のsource隣sidecar/cook-loose共用を作者承認。BVH/FBXと他の未決選定には拡張しない。
 - G2-GR77-CONTAINER: 無割当/借用SpanのGLB構造parserを追加。magic/v2/全長/整列/範囲/JSON先頭・BIN第2/既知重複を検証し未知chunkは無視、非GLBはBOM除去JSON view、失敗時clear。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/Werror/MEMBERと4,000固定seed破損入力成功。独立66,470ケース反証と寿命/非整列/巨大境界も成功しPASS。JSON意味/padding照合や3消費経路の配線は未実装で、GLB資産の取り込み完了とは扱わない。
 - Next: GR77のdata URI向け厳密Base64 primitive、続いて共有buffer解決へ進む。
+
+- G2-GR77-BASE64: 無割当Span版の厳密base64検証/必要長/復号を追加。標準alphabet、末尾padding、canonical pad bits、容量/全span非交差を検査し、失敗時output非変更・成功tail保持。第1周のサイズ参照alias問題をBase64DecodeOutcomeの値返却へ変更し解消。RFC例、全256単byte/65,536二byte/4,096三byteを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/Werror/MEMBERで成功。独立multi-quartet8,256/overlap39,576/padding24,576反証も成功、第2周PASS。data URI構文/percent/JSON/3経路接続は未実装。
+- Next: GR77のdata URI/BIN意味検証、共有buffer所有と3経路への接続へ進む。旧.gltfのsource hashはBOMと外部buffer余剰byteも保持し、新しい埋込みbytesを二重hashしない。

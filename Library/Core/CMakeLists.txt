@@ -40,6 +40,8 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
     Private/Text/JsonDocument.cpp
+    Private/Text/Base64.h
+    Private/Text/Base64.cpp
     Private/Text/JsonWriter.cpp
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
