@@ -556,3 +556,6 @@
 
 - G2-GR86-IMPORT-REPORT: version1共通envelope/skinの所有JSONを追加。payload_ready（package書込前）/failed/cache_hitを区別し、cook独立診断出力で失敗resultを保持しつつstatus/prefix/失敗頂点を返す。CLIはAPI結果とcacheにstderr1行JSONを出し新file書込なし。第1周の未測定0混同を修正し、Strict/cache/総数不明はscan=null、prefix0のmax/mean=null、失敗頂点測定は独立保持。第2周PASS。pure3mode/Werror MEMBER/Python独立JSON解析成功、native診断/CLI JSON・警告閾値回帰はWindows.hにより未実行。Cubic/morph/GR84測定は将来拡張として明記。
 - Next: ImportReport公開後、GR86 CUBICSPLINEの保守的誤差付きLINEAR焼込へ。実samplerの短区間処理とfloat丸めを評価し、保証不能は拒否する。
+
+- G2-GR86-CUBIC-KERNEL: Hermite→外向き区間Bezier、deCasteljau評価/分割、保存float端点に対する理想LINEARの全区間L2/SO(3)上界を追加。quaternion符号を変えずE<mで非ゼロを認証し、角度上界4E/m+d²を保守的に計算。失敗out保持、左右alias拒否、入力片側alias許可。IEEE最近接/subnormal/精密FPを仮定しunsafe算術検出時拒否。純3mode/Werror MEMBER成功、3781認証ランダム曲線×201点の独立回転反証も違反なし。内部zero回帰を追加し規約の波括弧整形後、第2周PASS。binary64参照式の丸め偽陽性をtest専用予算で区別し、double参照版も成功（ULP級厳密包絡/Windows成功ではない）。実samplerのfloat/短区間/sidecar単位・decode/cook受理は次taskであり現段階CUBICSPLINE拒否を維持。
+- Next: GR86-CUBIC-RUNTIME。全回転区間を数学dot下限>0.9996へ分割して実NLERP分岐を認証し、256*float epsilon radの保守的数値予算を条件付きで加える。保存float時刻の区間長/分割比も外向き区間で扱い、短dt/深さ/sample不足は拒否する。

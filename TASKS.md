@@ -2066,7 +2066,13 @@
 - stop-when: 未実装のBVH/retargetを実装済みとして報告、既存出力保護の迂回。
 
 ## G2-GR86-CUBIC-KERNEL: CUBICSPLINEの評価と保守的誤差境界を実装する
-- status: todo
-- done-when: double Hermite/Bezier評価と全区間のLINEAR近似誤差上界を定義し、移動/scale/回転の単位を区別する。実samplerの短区間・半球/NLERP分岐、float出力丸め、有限性を考慮し、保証できない入力は拒否する。
+- status: done
+- done-when: double Hermite/Bezierの区間包絡・評価・分割と理想LINEAR近似の全区間誤差上界を定義する。float保存端点との差を含め、vector長さと回転角の単位を区別する。実samplerの数値丸め認証/短区間は次taskで扱い、このkernelだけでruntime保証としない。
 - verify: 公式式の既知値、非単位時間、S字中点相殺、回転正規化/ゼロ/半球と実sampler条件、誤差境界を純kernelで反証する。
 - stop-when: 中点標本だけで全区間保証とする、tangent符号の暗黙変更、誤差のメートル/角度混同、未接続decode受理。
+
+## G2-GR86-CUBIC-RUNTIME: 実sampler条件で焼込誤差を認証する
+- status: todo
+- done-when: 数学kernel上界に保存float時刻/値と実runtime数値条件を合わせ、短duration/半球/NLERPを扱う。保証対象・数値仮定・許容の下限を明記し、深さ/sample予算内で全区間が認証できた場合だけ所有LINEAR列を返す。
+- verify: 中点相殺/巨大tangent/非単位dt/float時刻衝突/近ゼロquaternion/短duration/予算超過、最終キーと全区間境界。
+- stop-when: 任意epsilonだけで形式的runtime保証とする、未認証区間を成功公開、元cubic符号変更、変換後メートル誤差を無視する。

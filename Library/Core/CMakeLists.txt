@@ -174,6 +174,8 @@ set(PRIVATE_SOURCES
     Private/Resource/SkeletalInfluenceReduction.cpp
     Private/Resource/SkeletalImportPolicy.h
     Private/Resource/SkeletalImportPolicy.cpp
+    Private/Resource/SkeletalCubicBounds.h
+    Private/Resource/SkeletalCubicBounds.cpp
     Private/Resource/GltfAccessorRange.h
     Private/Resource/ImportTransform.h
     Private/Resource/ImportTransform.cpp
