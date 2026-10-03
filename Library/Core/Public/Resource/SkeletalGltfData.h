@@ -111,7 +111,8 @@ namespace NorvesLib::Core::Skeletal
         UnsupportedSparseAccessor,
         InfluenceLimitExceeded,
         InvalidImportOptions,
-        InfluenceReductionExceeded
+        InfluenceReductionExceeded,
+        CubicBakeFailed
     };
 
     struct SkeletalGltfDecodeResult

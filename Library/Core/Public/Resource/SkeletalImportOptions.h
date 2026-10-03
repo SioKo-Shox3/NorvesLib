@@ -58,6 +58,9 @@ namespace NorvesLib::Core::Skeletal
         uint64_t TotalAnimationChannelCount = 0;
         uint64_t ProcessedAnimationChannelCount = 0;
         uint64_t BakedCubicChannelCount = 0;
+        uint64_t BakedCubicTranslationChannelCount = 0;
+        uint64_t BakedCubicRotationChannelCount = 0;
+        uint64_t BakedCubicScaleChannelCount = 0;
         uint64_t CubicInputKeyCount = 0;
         uint64_t CubicOutputKeyCount = 0;
         double MaximumCubicTranslationErrorMeters = 0;

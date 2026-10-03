@@ -2,7 +2,7 @@
 
 ## 現段階の範囲
 
-GR86の明示bake用の数学部品。decode/cook/CLIはまだCUBICSPLINEを拒否する。
+GR86の明示bake用の数学部品。raw/legacy/file/cookの明示Bakeへ接続し、CLI指定は別段階とする。
 SkeletalCubicBoundsはdouble入力を実数とみなしたHermite曲線を外向き区間で包み、
 保存float端点を数学的に補間したLINEARとの全区間上界を返す。
 実runtimeのfloat時刻/演算やlibmの誤差、sidecar変換後の再認証、キー列生成は別段階。
@@ -103,4 +103,4 @@ alpha差<=4uと3段のfloat Lerp演算を含めたL1誤差より十分大きい�
 これは個別値の実測誤差でなく上界であり、予算が許容以上なら保守的に拒否する。
 
 ここまでの境界はlocal TRS値まで。行列生成、親変換、skinningの誤差は含まない。
-現段階はbake kernelであり、decoder/cook/CLIのCUBICSPLINE受理はまだ有効化しない。
+raw/legacy/file/cookで明示Bakeを受理する接続がある。CLI指定はまだ有効化しない。

@@ -163,7 +163,7 @@ pure serializerの3mode/MEMBERとPython独立JSON解析で構文/数値/状態�
 native回帰には成功/閾値失敗/古い診断の消去・CLI JSON/警告有無/cache未測定を登録し、
 CoreとMainのWindows.h依存のため未実行として区別する。
 
-## CUBICSPLINE policy/hash定義（decode接続前）
+## CUBICSPLINE policy/hash定義
 
 SkeletalCubicSplinePolicyはReject(既定)/Bake。許容はtranslation=0.001m、
 rotation=0.0017453292519943296rad（0.1度）、scale=0.001（無次元）が既定。
@@ -181,7 +181,30 @@ translation/rotation/scale許容各binary64LE、depth/channel/asset各u32LE、cu
 最後のalgorithm初期値は1。外側のlength+canonical+reduction algorithm連結は従来どおりで、
 どの許容/予算/アルゴリズムも別cache鍵となる。構造体のpaddingをhashに含めない。
 
-この段階は型とhashだけ。新しいBake指定をdecoderが黙って無視しないよう、
-raw/legacy/file/cookの実decodeではUnsupportedInterpolationで明示拒否する。
-実読込/最終メートル倍率/JSON/CLI接続は次段階であり、CUBICSPLINE対応済みとはしない。
+raw/legacy/file/cookの明示Bake指定は下記の共通decoderへ接続する。
+Reject既定はUnsupportedInterpolationを維持し、JSON/CLI指定は別段階とする。
 Python独立66byteと3初期state hashのgolden、legacy25byte/hash不変、全閾値/予算/無意味指定をpureで確認する。
+
+## CUBICSPLINEの共通decode接続
+
+ParseAnimationContractは明示Bake時だけCUBICSPLINEを受け付け、
+output.count=3*input.count、2入力キー以上、型/layout/rangeを検査する。
+各in/value/out tripletをそのままbakerへ渡し、最終倍率でtranslationをメートル化してから認証する。
+rotationとscaleの許容は単位を変えない。全元キー・時刻順・LINEAR出力の契約は共有bakerが守る。
+
+fitを含むuniform倍率は未変換のmesh-node線形変換後のextentから一度だけ解決する。
+Bake modeでは通常LINEAR/STEP translationも同じ倍率で変換し、最後のgeometry/IBM/mesh-node適用では
+animationの再scaleを省く。Reject modeは従来の抽出後scale順を維持する。
+
+statusは既存0〜17を保ちCubicBakeFailed=18を末尾追加。triplet/count等の構造不正はInvalidAnimation、
+bakerの数値/容量/深さ等の拒否はCubicBakeFailedと具体的なFailedCubicBakeStatusへ分ける。
+Reportは全animation channelの正常prefixと失敗channel、成功したCubicのinput/outputキー数・単位別上界を返す。
+Translation/Rotation/Scaleごとの焼込channel数も分け、未処理の種類を誤差ゼロ測定と混同しない。
+1channel途中の未認証キー列を公開しない。失敗Data/sourceは空で、cook resultは以前の成功値を保持する。
+channel/asset双方のsample予算を割当前に適用し、現在の単一clipに含まれるCubic出力の合計を制限する。
+
+CubicChannels.gltfはTranslation/Rotation/Scaleの正しいtripletを持つfixture（binaryはnative試験で生成）。
+raw/legacy/file/GLB/cook再parse、明示Bakeでも通常LINEAR/STEP不変、設定scale/fitで二重scaleなし、
+既定拒否・channel/asset予算・内部zero回転・非有限tangent・triplet count不正とprefix診断をnativeへ登録する。
+独立Hermite式と実共有sampler helperでbaked channel値も確認する試験だが、Core/decoder/cookの実行は
+Windows.h依存によりこの環境では未確認。純baker/policyの実行とは区別する。CLI引数とJSONのCubic項目は未接続。

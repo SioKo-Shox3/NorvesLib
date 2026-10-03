@@ -565,3 +565,6 @@
 
 - G2-GR86-CUBIC-POLICY: Reject/Bake、メートル/ラジアン/無次元の許容、depth/channel/asset予算、prefix/失敗診断を定義。Bake無しStrictSize0/ReduceSRED25byteと旧hashを維持し、Bake時だけSCBK66byteへ全設定/cubic algorithmを格納。未使用指定・不正数値/enum/予算を拒否し、bakerも公開sample上限を共有。decoder接続前のBakeはUnsupportedInterpolationで明示拒否。純policy3mode/MEMBER・header独立POD・CLI/report/bake回帰成功、独立PASS（65,536 enum組合せ/256設定golden等も成功）。native raw拒否回帰は登録のみでWindows.h未実行。境界受理の恒久assert強化はnonblocking追補。
 - Next: GR86-CUBIC-DECODEへ接続し、fitを含む最終translation倍率をbakerへ渡して二重scaleを避ける。
+
+- G2-GR86-CUBIC-DECODE: 明示Bakeだけtriplet/count/型/rangeを共有bakerへ接続。channel/asset予算を割当前に制限し、正常prefix/種類別counter/失敗詳細/単位別上界を返す。fit倍率を未変換meshから一度だけ解決し、Bakeでは通常translationも早期scale、最後animation再scaleを省いて二重変換を防ぐ。既定Reject順は維持、status18を末尾追加。3種Cubic fixtureとraw/legacy/file/GLB/cook再parse、scale/fit、通常LINEAR/STEP同値、累積予算/zeroq/非有限/count不正をnative登録。第1周のnative試験namespace不整合を既存Reduce試験分も含めて修正し第2周PASS。実bakerによるfixture数値検証と純policy/bake各3mode成功。native decoder/cookはWindows.hで未実行。
+- Next: policy/decodeを公開し、CUBIC-CLIの明示指定・単位別許容・JSON診断へ接続する。

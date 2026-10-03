@@ -5,6 +5,8 @@
 #include "Rendering/VertexLayout.h"
 #include "Resource/GLTFAnalyzer.h"
 #include "Resource/SkeletalGltfDecode.h"
+#include "Resource/SkeletalCubicBake.h"
+#include "Animation/SkeletalSamplingMath.h"
 #include "Resource/GltfBufferSet.h"
 #include "Resource/ImportSettingsFile.h"
 #include "Animation/SkeletonResource.h"
@@ -43,7 +45,8 @@ namespace Asset = NorvesLib::Core::Asset;
 namespace Container = NorvesLib::Core::Container;
 namespace FileStream = NorvesLib::FileStream;
 namespace Rendering = NorvesLib::Core::Rendering;
-namespace Gltf = NorvesLib::Core::Resource;
+namespace Gltf = NorvesLib::Core::Gltf;
+namespace Resource = NorvesLib::Core::Resource;
 namespace Skeletal = NorvesLib::Core::Skeletal;
 namespace Math = NorvesLib::Math;
 namespace Animation = NorvesLib::Core::Animation;
@@ -887,6 +890,225 @@ namespace
         assert(badSum.Report.ProcessedVertexCount == 0 && badSum.Report.FailedVertexIndex == 0);
     }
 
+    ByteArray BuildCubicFixtureBuffer()
+    {
+        ByteArray bytes=BuildLooseFixtureBuffer(); bytes.resize(656,0);
+        constexpr float translation[18]={0,0,0, 0,1,0, 0,6,0, 0,6,0, 0,3,0, 0,0,0};
+        constexpr float rotation[24]={0,0,0,0, 0,0,0,1, 0,0,0.5f,-0.5f, 0,0,0.5f,-0.5f, 0,0,1,0, 0,0,0,0};
+        constexpr float scale[18]={0,0,0, 1,1,1, 0,0,0, 0,0,0, 2,2,2, 0,0,0};
+        for(size_t index=0;index<18;++index)
+        {
+            WriteFloat(bytes,416+index*4,translation[index]);
+            WriteFloat(bytes,584+index*4,scale[index]);
+        }
+        for(size_t index=0;index<24;++index)
+        {
+            WriteFloat(bytes,488+index*4,rotation[index]);
+        }
+        return bytes;
+    }
+
+    Skeletal::SkeletalValue SampleBakedChannel(const Skeletal::SkeletalAnimationChannel& channel,float time)
+    {
+        const auto& samples=channel.Samples;
+        assert(!samples.empty());
+        if(time<=samples.front().TimeSeconds)
+        {
+            return samples.front().Value;
+        }
+        if(time>=samples.back().TimeSeconds)
+        {
+            return samples.back().Value;
+        }
+        for(size_t index=1;index<samples.size();++index)
+        {
+            if(time>samples[index].TimeSeconds)
+            {
+                continue;
+            }
+            const auto& a=samples[index-1]; const auto& z=samples[index];
+            const float alpha=Animation::Detail::ComputeLinearAlpha(a.TimeSeconds,z.TimeSeconds,time);
+            if(channel.Path==Skeletal::SkeletalAnimationPath::Rotation)
+            {
+                const auto value=Animation::Detail::Slerp({a.Value.X,a.Value.Y,a.Value.Z,a.Value.W},
+                    {z.Value.X,z.Value.Y,z.Value.Z,z.Value.W},alpha);
+                return {value.x,value.y,value.z,value.w};
+            }
+            return {a.Value.X+(z.Value.X-a.Value.X)*alpha,a.Value.Y+(z.Value.Y-a.Value.Y)*alpha,
+                a.Value.Z+(z.Value.Z-a.Value.Z)*alpha,a.Value.W+(z.Value.W-a.Value.W)*alpha};
+        }
+        assert(false); return {};
+    }
+
+    void AssertCubicFixture(const Skeletal::SkeletalGltfData& data,const Skeletal::SkeletalGltfDecodeReport& report,
+        const Skeletal::SkeletalGltfDecodeOptions& options,double factor)
+    {
+        using namespace Skeletal;
+        assert(data.Clips.size()==1 && data.Clips[0].Channels.size()==3 && data.Clips[0].DurationSeconds==2);
+        assert(report.bCubicScanStarted && report.bCubicScanComplete && report.TotalAnimationChannelCount==3 &&
+            report.ProcessedAnimationChannelCount==3 && report.BakedCubicChannelCount==3 && report.CubicInputKeyCount==6);
+        assert(report.FailedAnimationChannelIndex==UINT64_MAX && !report.bHasCubicBakeFailure);
+        assert(report.BakedCubicTranslationChannelCount==1 && report.BakedCubicRotationChannelCount==1 && report.BakedCubicScaleChannelCount==1);
+        assert(report.MaximumCubicTranslationErrorMeters<=options.CubicTranslationToleranceMeters &&
+            report.MaximumCubicRotationErrorRadians<=options.CubicRotationToleranceRadians &&
+            report.MaximumCubicScaleError<=options.CubicScaleTolerance);
+        assert(std::abs(data.Vertices[1].Position.X-factor)<1e-6 &&
+            std::abs(data.Joints[1].InverseBindMatrix[13]+factor)<1e-6 &&
+            std::abs(data.MeshNodeGlobalTransform[12]-5*factor)<1e-6);
+        size_t keyCount=0;
+        for(const auto& channel:data.Clips[0].Channels)
+        {
+            assert(channel.Interpolation==SkeletalAnimationInterpolation::Linear && channel.Samples.size()>2);
+            assert(channel.Samples.front().TimeSeconds==0 && channel.Samples.back().TimeSeconds==2);
+            keyCount+=channel.Samples.size();
+            for(size_t index=1;index<channel.Samples.size();++index)
+            {
+                assert(channel.Samples[index].TimeSeconds>channel.Samples[index-1].TimeSeconds);
+            }
+            for(size_t step=0;step<=128;++step)
+            {
+                const float time=static_cast<float>(step)/64;
+                const long double u=static_cast<long double>(time)/2;
+                const auto value=SampleBakedChannel(channel,time);
+                if(channel.Path==SkeletalAnimationPath::Translation)
+                {
+                    const long double expected=((2*u*u*u-3*u*u+1)+3*(-2*u*u*u+3*u*u)+12*(2*u*u*u-3*u*u+u))*factor;
+                    const long double squared=value.X*value.X+(expected-value.Y)*(expected-value.Y)+value.Z*value.Z;
+                    assert(std::sqrt(squared)<=options.CubicTranslationToleranceMeters);
+                }
+                else if(channel.Path==SkeletalAnimationPath::Rotation)
+                {
+                    const long double idealNorm=std::sqrt(u*u+(1-u)*(1-u));
+                    const long double actualNorm=std::sqrt(static_cast<long double>(value.X)*value.X+static_cast<long double>(value.Y)*value.Y+
+                        static_cast<long double>(value.Z)*value.Z+static_cast<long double>(value.W)*value.W);
+                    const long double dot=(u*value.Z+(1-u)*value.W)/(idealNorm*actualNorm);
+                    assert(2*std::acos(std::clamp(std::abs(dot),0.0L,1.0L))<=options.CubicRotationToleranceRadians);
+                }
+                else
+                {
+                    assert(channel.Path==SkeletalAnimationPath::Scale);
+                    const long double expected=1+3*u*u-2*u*u*u;
+                    assert(std::sqrt((expected-value.X)*(expected-value.X)+(expected-value.Y)*(expected-value.Y)+
+                        (expected-value.Z)*(expected-value.Z))<=options.CubicScaleTolerance);
+                }
+            }
+        }
+        assert(keyCount==report.CubicOutputKeyCount && keyCount<=options.CubicMaximumSamplesPerAsset);
+    }
+
+    void RunCubicBakeContract()
+    {
+        using namespace Skeletal;
+        using namespace NorvesLib::Tools::AssetCook;
+        LooseFixture fixture;
+        const auto text=ReadFixtureJson(ToCorePath(FindFixtureRoot()/"CubicChannels.gltf"));
+        const auto source=TextBytes(text);
+        const auto path=ToCorePath(fixture.Root/"CubicChannels.gltf");
+        auto binary=BuildCubicFixtureBuffer();
+        WriteFixtureBytes(fixture.Root/"CubicChannels.gltf",source);
+        WriteFixtureBytes(fixture.Root/"fixture.bin",binary);
+        const auto glb=MakeSkeletalGlb(ChangeBufferUri(text,""),binary);
+        SkeletalGltfDecodeOptions options; options.CubicSplinePolicy=SkeletalCubicSplinePolicy::Bake;
+        assert(DecodeSkeletalGltf(source,path).Status==SkeletalGltfDecodeStatus::UnsupportedInterpolation);
+        Gltf::BufferSet sources;
+        const auto decoded=DecodeSkeletalGltf(source,path,&sources,nullptr,&options);
+        assert(decoded.Succeeded() && sources.GetCount()==1);
+        AssertCubicFixture(decoded.Data,decoded.Report,options,1);
+        SkeletalGltfSourceBuffers legacySources;
+        const auto legacy=DecodeSkeletalGltf(CoreText(text),path,&legacySources,nullptr,&options);
+        const auto embedded=DecodeSkeletalGltf(glb,path,nullptr,nullptr,&options);
+        const auto file=Resource::GLTFAnalyzer::AnalyzeSkeletal(path,&options);
+        assert(legacy.Succeeded() && embedded.Succeeded() && file.Succeeded() && legacySources.size()==1);
+        AssertEquivalent(decoded.Data,legacy.Data); AssertEquivalent(decoded.Data,embedded.Data); AssertEquivalent(decoded.Data,file.Data);
+        AssertCubicFixture(legacy.Data,legacy.Report,options,1); AssertCubicFixture(embedded.Data,embedded.Report,options,1);
+        AssertCubicFixture(file.Data,file.Report,options,1);
+        const Container::AnsiString cookPath((fixture.Root/"CubicChannels.gltf").generic_string().c_str());
+        constexpr Container::AnsiStringView format="nvskel.v0.skinned.pnujiw.u32";
+        Container::AnsiString error;
+        SkeletalCookResult cooked;
+        SkeletalCookDiagnostics diagnostics;
+        ModelCookFingerprint fingerprint;
+        const auto cook=[&](const ByteArray& bytes,const SkeletalGltfDecodeOptions& selected,SkeletalCookResult& out)
+        {
+            return CookGltfToNvskel(bytes.data(),bytes.size(),format,cookPath,out,error,nullptr,&selected,&diagnostics);
+        };
+        assert(cook(source,options,cooked));
+        assert(FingerprintModelCookSource(source.data(),source.size(),format,cookPath,"Models/rig.gltf",fingerprint,error,nullptr,&options));
+        assert(fingerprint.SourceHash==cooked.SourceHash && diagnostics.bDecodeAttempted && diagnostics.DecodeStatus==0);
+        const auto parsed=Asset::ParseCookedSkeletal(MakeBlob(cooked.NvskelBytes));
+        assert(parsed.Succeeded()); AssertEquivalent(decoded.Data,parsed.Data.Skeletal);
+        AssertCubicFixture(parsed.Data.Skeletal,cooked.DecodeReport,options,1);
+        SkeletalCookResult embeddedCook; assert(cook(glb,options,embeddedCook) && embeddedCook.NvskelBytes==cooked.NvskelBytes);
+        for(bool fit:{false,true})
+        {
+            WriteFixtureBytes(fixture.Root/"CubicChannels.gltf.import.json",TextBytes(fit ?
+                "{\"version\":1,\"units\":{\"fit\":{\"axis\":\"up\",\"meters\":0.6}}}" : "{\"version\":1,\"units\":{\"scale\":2}}"));
+            const double factor=fit ? 0.6 : 2;
+            const auto scaled=DecodeSkeletalGltf(source,path,nullptr,nullptr,&options);
+            assert(scaled.Succeeded()); AssertCubicFixture(scaled.Data,scaled.Report,options,factor);
+            SkeletalCookResult scaledCook; assert(cook(source,options,scaledCook));
+            const auto scaledParsed=Asset::ParseCookedSkeletal(MakeBlob(scaledCook.NvskelBytes));
+            assert(scaledParsed.Succeeded()); AssertEquivalent(scaled.Data,scaledParsed.Data.Skeletal);
+            AssertCubicFixture(scaledParsed.Data.Skeletal,scaledCook.DecodeReport,options,factor);
+        }
+        assert(std::filesystem::remove(fixture.Root/"CubicChannels.gltf.import.json"));
+        const auto retained=cooked;
+        auto limited=options; limited.CubicMaximumSamplesPerChannel=2;
+        const auto failure=DecodeSkeletalGltf(source,path,&sources,nullptr,&limited);
+        assert(failure.Status==SkeletalGltfDecodeStatus::CubicBakeFailed && sources.GetCount()==0 && failure.Data.Vertices.empty());
+        assert(failure.Report.bCubicScanStarted && !failure.Report.bCubicScanComplete && failure.Report.ProcessedAnimationChannelCount==0 &&
+            failure.Report.FailedAnimationChannelIndex==0 && failure.Report.bHasCubicBakeFailure &&
+            failure.Report.FailedCubicBakeStatus==static_cast<uint32_t>(CubicBakeStatus::SampleLimitExceeded));
+        assert(DecodeSkeletalGltf(CoreText(text),path,&legacySources,nullptr,&limited).Status==failure.Status && legacySources.empty());
+        assert(Resource::GLTFAnalyzer::AnalyzeSkeletal(path,&limited).Status==failure.Status);
+        assert(!cook(source,limited,cooked) && diagnostics.DecodeStatus==static_cast<uint32_t>(failure.Status));
+        assert(cooked.NvskelBytes==retained.NvskelBytes && cooked.SourceHash==retained.SourceHash);
+        limited=options; limited.CubicMaximumSamplesPerAsset=2;
+        assert(DecodeSkeletalGltf(source,path,nullptr,nullptr,&limited).Status==SkeletalGltfDecodeStatus::CubicBakeFailed);
+        limited=options;
+        limited.CubicMaximumSamplesPerAsset=static_cast<uint32_t>(decoded.Data.Clips[0].Channels[0].Samples.size()+1);
+        const auto exhausted=DecodeSkeletalGltf(source,path,nullptr,nullptr,&limited);
+        assert(exhausted.Status==SkeletalGltfDecodeStatus::CubicBakeFailed && exhausted.Report.ProcessedAnimationChannelCount==1 &&
+            exhausted.Report.FailedAnimationChannelIndex==1 && exhausted.Report.BakedCubicTranslationChannelCount==1 &&
+            exhausted.Report.BakedCubicRotationChannelCount==0 && exhausted.Report.BakedCubicScaleChannelCount==0 &&
+            exhausted.Report.CubicOutputKeyCount==decoded.Data.Clips[0].Channels[0].Samples.size());
+        // 通常LINEAR/STEPをBake modeで読む場合も、scale/fitは既存経路と同値。
+        for(bool fit:{false,true})
+        {
+            WriteFixtureBytes(fixture.Root/"ValidU8Float.gltf.import.json",TextBytes(fit ?
+                "{\"version\":1,\"units\":{\"fit\":{\"axis\":\"up\",\"meters\":0.6}}}" : "{\"version\":1,\"units\":{\"scale\":2}}"));
+            const auto oldLinear=Resource::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
+            const auto bakedLinear=Resource::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path(),&options);
+            assert(oldLinear.Succeeded() && bakedLinear.Succeeded());
+            AssertEquivalent(oldLinear.Data,bakedLinear.Data);
+            assert(bakedLinear.Report.bCubicScanComplete && bakedLinear.Report.BakedCubicChannelCount==0);
+        }
+        assert(std::filesystem::remove(fixture.Root/"ValidU8Float.gltf.import.json"));
+        // Translation完了後、Rotationの内部zeroで失敗した場合も正常prefixだけを診断する。
+        for(size_t index=0;index<24;++index)
+        {
+            WriteFloat(binary,488+index*4,0);
+        }
+        WriteFloat(binary,488+7*4,1); WriteFloat(binary,488+11*4,-2);
+        WriteFloat(binary,488+15*4,2); WriteFloat(binary,488+19*4,1);
+        WriteFixtureBytes(fixture.Root/"fixture.bin",binary);
+        const auto zero=DecodeSkeletalGltf(source,path,nullptr,nullptr,&options);
+        assert(zero.Status==SkeletalGltfDecodeStatus::CubicBakeFailed && zero.Data.Clips.empty());
+        assert(zero.Report.ProcessedAnimationChannelCount==1 && zero.Report.BakedCubicChannelCount==1 &&
+            zero.Report.CubicInputKeyCount==2 && zero.Report.FailedAnimationChannelIndex==1);
+        binary=BuildCubicFixtureBuffer(); WriteFloat(binary,444,std::numeric_limits<float>::quiet_NaN());
+        WriteFixtureBytes(fixture.Root/"fixture.bin",binary);
+        const auto nonfinite=DecodeSkeletalGltf(source,path,nullptr,nullptr,&options);
+        assert(nonfinite.Status==SkeletalGltfDecodeStatus::CubicBakeFailed && nonfinite.Report.FailedCubicBakeStatus==static_cast<uint32_t>(CubicBakeStatus::InvalidInput));
+        WriteFixtureBytes(fixture.Root/"fixture.bin",BuildCubicFixtureBuffer());
+        auto malformed=text;
+        const Container::AnsiStringView countNeedle="\"count\": 6";
+        const auto countPosition=malformed.find(countNeedle); assert(countPosition!=Container::AnsiString::npos);
+        malformed=Container::AnsiString(malformed.substr(0,countPosition))+"\"count\": 5"+Container::AnsiString(malformed.substr(countPosition+countNeedle.size()));
+        const auto badCount=DecodeSkeletalGltf(CoreText(malformed),path,nullptr,nullptr,&options);
+        assert(badCount.Status==SkeletalGltfDecodeStatus::InvalidAnimation && !badCount.Report.bHasCubicBakeFailure);
+    }
+
     void RunUnitContract()
     {
         AssertSkinnedVertexAbi();
@@ -929,19 +1151,17 @@ namespace
 
         {
             LooseFixture fixture;
-            const Skeletal::SkeletalGltfDecodeResult loose = Gltf::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
+            const Skeletal::SkeletalGltfDecodeResult loose = Resource::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
             assert(loose.Succeeded());
             AssertEquivalent(loose.Data, retainedResult.Data.Skeletal);
             const Container::AnsiString text = ReadFixtureJson(fixture.Path());
             const ByteArray external = TextBytes(text);
-            // 型/hashを先行定義したBake指定は、decode接続までは黙って無視しない。
-            Skeletal::SkeletalGltfDecodeOptions pendingBake;
-            pendingBake.CubicSplinePolicy=Skeletal::SkeletalCubicSplinePolicy::Bake;
-            Gltf::BufferSet pendingSources;
-            assert(Skeletal::DecodeSkeletalGltf(external,fixture.Path(),&pendingSources).Succeeded());
-            const auto notConnected=Skeletal::DecodeSkeletalGltf(external,fixture.Path(),&pendingSources,nullptr,&pendingBake);
-            assert(notConnected.Status==Skeletal::SkeletalGltfDecodeStatus::UnsupportedInterpolation && pendingSources.GetCount()==0 && notConnected.Data.Vertices.empty());
-
+            // Bake指定でもCUBICSPLINEが無い既存LINEAR/STEP資産の値は変わらない。
+            Skeletal::SkeletalGltfDecodeOptions noCubicBake;
+            noCubicBake.CubicSplinePolicy=Skeletal::SkeletalCubicSplinePolicy::Bake;
+            const auto noCubic=Skeletal::DecodeSkeletalGltf(external,fixture.Path(),nullptr,nullptr,&noCubicBake);
+            assert(noCubic.Succeeded() && noCubic.Report.bCubicScanComplete && noCubic.Report.BakedCubicChannelCount==0);
+            AssertEquivalent(loose.Data,noCubic.Data);
             const ByteArray binary = BuildLooseFixtureBuffer();
             const Container::AnsiString withoutUri = ChangeBufferUri(text, "");
             const ByteArray glb = MakeSkeletalGlb(withoutUri, binary);
@@ -989,7 +1209,7 @@ namespace
             }
             const auto glbPath = fixture.Root / "embedded.glb";
             WriteFixtureBytes(glbPath, glb);
-            const auto looseGlb = Gltf::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(glbPath));
+            const auto looseGlb = Resource::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(glbPath));
             assert(looseGlb.Succeeded());
             AssertEquivalent(looseGlb.Data, loose.Data);
 
@@ -1084,7 +1304,7 @@ namespace
             AssertScaledSample(loose.Data,scaled.Data,2.0f);
             const auto scaledLegacy = Skeletal::DecodeSkeletalGltf(CoreText(text),fixture.Path());
             assert(scaledLegacy.Succeeded()); AssertEquivalent(scaled.Data,scaledLegacy.Data);
-            const auto scaledLoose = Gltf::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
+            const auto scaledLoose = Resource::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
             assert(scaledLoose.Succeeded()); AssertEquivalent(scaled.Data,scaledLoose.Data);
             SkeletalCookResult scaledCook;
             assert(cook(external,scaledCook) && scaledCook.bHasImportSettings && scaledCook.SourceHash!=externalCook.SourceHash);
@@ -1097,7 +1317,7 @@ namespace
             // .glbも同じデータ/設定を適用し、BINを別途hashしない。
             auto glbSidecar=glbPath; glbSidecar+=".import.json";
             WriteFixtureBytes(glbSidecar,TextBytes("{\"version\":1,\"units\":{\"scale\":2}}"));
-            const auto scaledGlb=Gltf::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(glbPath));
+            const auto scaledGlb=Resource::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(glbPath));
             assert(scaledGlb.Succeeded()); AssertEquivalent(scaled.Data,scaledGlb.Data);
 
             NorvesLib::Core::AssetImport::ImportSettingsFileOptions disabledImport;
@@ -1352,7 +1572,7 @@ namespace
         AssertLiteralCookedData(cooked.Data);
 
         const Skeletal::SkeletalGltfDecodeResult loose =
-            Gltf::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(std::filesystem::path(gltfPath)));
+            Resource::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(std::filesystem::path(gltfPath)));
         assert(loose.Succeeded());
         AssertEquivalent(loose.Data, cooked.Data.Skeletal);
     }
@@ -1369,6 +1589,7 @@ int main(int argc, char** argv)
     if (argc == 1)
     {
         RunInfluenceReductionContract();
+        RunCubicBakeContract();
         RunUnitContract();
     }
     else

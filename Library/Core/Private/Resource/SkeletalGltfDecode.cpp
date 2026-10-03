@@ -3,6 +3,7 @@
 #include "Resource/SkeletalInfluenceAttributes.h"
 #include "Resource/SkeletalInfluenceReduction.h"
 #include "Resource/SkeletalImportPolicy.h"
+#include "Resource/SkeletalCubicBake.h"
 
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
@@ -869,7 +870,8 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
-        bool ParseAnimationContract(const JsonValue& root, JsonValue& outAnimation, SkeletalGltfDecodeStatus& outStatus)
+        bool ParseAnimationContract(const JsonValue& root, JsonValue& outAnimation, SkeletalGltfDecodeStatus& outStatus,
+            const SkeletalGltfDecodeOptions& options)
         {
             const JsonValue animations = root.FindMember("animations");
             if (!animations.IsArray() || animations.GetArraySize() != 1)
@@ -890,7 +892,16 @@ namespace NorvesLib::Core::Skeletal
             {
                 const Container::String& interpolation =
                     samplers.GetArrayElement(index).FindMember("interpolation").AsString();
-                if (!interpolation.empty() && interpolation != "LINEAR" && interpolation != "STEP")
+                const auto sampler = samplers.GetArrayElement(index);
+                const bool bBake = options.CubicSplinePolicy == SkeletalCubicSplinePolicy::Bake;
+                if (bBake && sampler.HasMember("interpolation") &&
+                    (!sampler.FindMember("interpolation").IsString() || interpolation.empty()))
+                {
+                    outStatus = SkeletalGltfDecodeStatus::InvalidAnimation;
+                    return false;
+                }
+                if (!interpolation.empty() && interpolation != "LINEAR" && interpolation != "STEP" &&
+                    !(bBake && interpolation == "CUBICSPLINE"))
                 {
                     outStatus = SkeletalGltfDecodeStatus::UnsupportedInterpolation;
                     return false;
@@ -1270,15 +1281,98 @@ namespace NorvesLib::Core::Skeletal
             return rootCount == 1;
         }
 
+        bool FailCubicBake(CubicBakeStatus reason, SkeletalGltfDecodeReport& report, SkeletalGltfDecodeStatus& status)
+        {
+            report.bHasCubicBakeFailure = true;
+            report.FailedCubicBakeStatus = static_cast<uint32_t>(reason);
+            status = SkeletalGltfDecodeStatus::CubicBakeFailed;
+            return false;
+        }
+
+        bool ExtractCubicChannel(const AccessorInfo& input, const AccessorLayout& inputLayout,
+            const AccessorInfo& output, const AccessorLayout& outputLayout, size_t components,
+            const SkeletalGltfDecodeOptions& options, double translationScale,
+            SkeletalAnimationChannel& channel, SkeletalGltfDecodeReport& report, SkeletalGltfDecodeStatus& status)
+        {
+            if (input.Count < 2 || input.Count > UINT32_MAX / 3 || output.Count != input.Count * 3)
+            {
+                return false;
+            }
+            if (report.CubicOutputKeyCount > options.CubicMaximumSamplesPerAsset)
+            {
+                return FailCubicBake(CubicBakeStatus::SampleLimitExceeded, report, status);
+            }
+            const uint64_t remaining = options.CubicMaximumSamplesPerAsset - report.CubicOutputKeyCount;
+            const uint32_t maximum = static_cast<uint32_t>(std::min(uint64_t(options.CubicMaximumSamplesPerChannel), remaining));
+            if (input.Count > maximum || maximum < 2)
+            {
+                return FailCubicBake(CubicBakeStatus::SampleLimitExceeded, report, status);
+            }
+            Container::VariableArray<CubicBakeInputKey> keys(input.Count);
+            for (size_t index = 0; index < input.Count; ++index)
+            {
+                auto& key = keys[index];
+                key.Time = ReadFloat(inputLayout.Data + index * inputLayout.Stride);
+                CubicFloatPoint* triplet[] = {&key.Incoming, &key.Value, &key.Outgoing};
+                for (size_t part = 0; part < 3; ++part)
+                {
+                    const uint8_t* bytes = outputLayout.Data + (index * 3 + part) * outputLayout.Stride;
+                    for (size_t component = 0; component < components; ++component)
+                    {
+                        triplet[part]->Values[component] = ReadFloat(bytes + component * sizeof(float));
+                    }
+                }
+            }
+            CubicBakeOptions bake;
+            bake.Kind = channel.Path == SkeletalAnimationPath::Rotation ? CubicBakeKind::Rotation : CubicBakeKind::Vector3;
+            bake.Tolerance = channel.Path == SkeletalAnimationPath::Translation ? options.CubicTranslationToleranceMeters :
+                channel.Path == SkeletalAnimationPath::Rotation ? options.CubicRotationToleranceRadians : options.CubicScaleTolerance;
+            bake.ValueScale = channel.Path == SkeletalAnimationPath::Translation ? translationScale : 1;
+            bake.MaximumDepth = options.CubicMaximumDepth;
+            bake.MaximumSamples = maximum;
+            Container::VariableArray<CubicBakeKey> workspace(maximum), baked(maximum);
+            const auto result = BakeCubicChannel({keys.data(), keys.size()}, bake,
+                {workspace.data(), workspace.size()}, {baked.data(), baked.size()});
+            if (result.Status != CubicBakeStatus::Success)
+            {
+                return FailCubicBake(result.Status, report, status);
+            }
+            channel.Samples.resize(result.SampleCount);
+            for (size_t index = 0; index < result.SampleCount; ++index)
+            {
+                const auto& key = baked[index];
+                channel.Samples[index].TimeSeconds = key.Time;
+                channel.Samples[index].Value = {key.Value.Values[0], key.Value.Values[1], key.Value.Values[2], key.Value.Values[3]};
+            }
+            ++report.BakedCubicChannelCount;
+            uint64_t* kindCount = channel.Path == SkeletalAnimationPath::Translation ? &report.BakedCubicTranslationChannelCount :
+                channel.Path == SkeletalAnimationPath::Rotation ? &report.BakedCubicRotationChannelCount : &report.BakedCubicScaleChannelCount;
+            ++*kindCount;
+
+            report.CubicInputKeyCount += input.Count;
+            report.CubicOutputKeyCount += result.SampleCount;
+            double* maximumError = channel.Path == SkeletalAnimationPath::Translation ? &report.MaximumCubicTranslationErrorMeters :
+                channel.Path == SkeletalAnimationPath::Rotation ? &report.MaximumCubicRotationErrorRadians : &report.MaximumCubicScaleError;
+            *maximumError = std::max(*maximumError, result.MaximumAcceptedErrorUpper);
+            return true;
+        }
+
         bool ExtractAnimation(const JsonValue& animation,
                               const Container::VariableArray<int32_t>& nodeToJoint,
                               const Container::VariableArray<AccessorInfo>& accessors,
                               const Container::VariableArray<BufferViewInfo>& bufferViews,
                               const Gltf::BufferSet& buffers,
-                              SkeletalGltfData& outData)
+                              SkeletalGltfData& outData, const SkeletalGltfDecodeOptions& options,
+                              double translationScale, SkeletalGltfDecodeReport& report, SkeletalGltfDecodeStatus& status)
         {
             const JsonValue samplers = animation.FindMember("samplers");
             const JsonValue channels = animation.FindMember("channels");
+            const bool bBake = options.CubicSplinePolicy == SkeletalCubicSplinePolicy::Bake;
+            if (bBake)
+            {
+                report.TotalAnimationChannelCount = channels.GetArraySize();
+                report.bCubicScanStarted = true;
+            }
             SkeletalAnimationClip clip;
             clip.Name = animation.FindMember("name").AsString();
             clip.Channels.reserve(channels.GetArraySize());
@@ -1286,6 +1380,10 @@ namespace NorvesLib::Core::Skeletal
 
             for (size_t channelIndex = 0; channelIndex < channels.GetArraySize(); ++channelIndex)
             {
+                if (bBake)
+                {
+                    report.FailedAnimationChannelIndex = channelIndex;
+                }
                 const JsonValue channelValue = channels.GetArrayElement(channelIndex);
                 const JsonValue target = channelValue.FindMember("target");
                 uint32_t samplerIndex = InvalidIndex;
@@ -1355,45 +1453,78 @@ namespace NorvesLib::Core::Skeletal
                 AccessorLayout outputLayout;
                 if (!GetAccessor(accessors, outputIndex, outputType, FloatComponent, bufferViews, buffers,
                                  output, outputLayout) ||
-                    input->Count == 0 || output->Count != input->Count)
+                    input->Count == 0)
                 {
                     return false;
                 }
 
-                channel.Samples.resize(input->Count);
-                for (size_t sampleIndex = 0; sampleIndex < input->Count; ++sampleIndex)
+                if (interpolation == "CUBICSPLINE")
                 {
-                    SkeletalAnimationSample& sample = channel.Samples[sampleIndex];
-                    sample.TimeSeconds = ReadFloat(inputLayout.Data + sampleIndex * inputLayout.Stride);
-                    const uint8_t* valueData = outputLayout.Data + sampleIndex * outputLayout.Stride;
-                    sample.Value.X = ReadFloat(valueData);
-                    if (valueComponentCount > 1)
-                    {
-                        sample.Value.Y = ReadFloat(valueData + 4);
-                    }
-                    if (valueComponentCount > 2)
-                    {
-                        sample.Value.Z = ReadFloat(valueData + 8);
-                    }
-                    if (valueComponentCount > 3)
-                    {
-                        sample.Value.W = ReadFloat(valueData + 12);
-                    }
-                    if (!std::isfinite(sample.TimeSeconds) || sample.TimeSeconds < 0.0f ||
-                        (sampleIndex > 0 && sample.TimeSeconds <= channel.Samples[sampleIndex - 1].TimeSeconds) ||
-                        !std::isfinite(sample.Value.X) || !std::isfinite(sample.Value.Y) ||
-                        !std::isfinite(sample.Value.Z) || !std::isfinite(sample.Value.W))
+                    if (!bBake || !ExtractCubicChannel(*input, inputLayout, *output, outputLayout, valueComponentCount,
+                        options, translationScale, channel, report, status))
                     {
                         return false;
                     }
-                    clip.DurationSeconds = std::max(clip.DurationSeconds, sample.TimeSeconds);
+                    clip.DurationSeconds = std::max(clip.DurationSeconds, channel.Samples.back().TimeSeconds);
+                }
+                else
+                {
+                    if (output->Count != input->Count)
+                    {
+                        return false;
+                    }
+                    channel.Samples.resize(input->Count);
+                    for (size_t sampleIndex = 0; sampleIndex < input->Count; ++sampleIndex)
+                    {
+                        SkeletalAnimationSample& sample = channel.Samples[sampleIndex];
+                        sample.TimeSeconds = ReadFloat(inputLayout.Data + sampleIndex * inputLayout.Stride);
+                        const uint8_t* valueData = outputLayout.Data + sampleIndex * outputLayout.Stride;
+                        sample.Value.X = ReadFloat(valueData);
+                        if (valueComponentCount > 1)
+                        {
+                            sample.Value.Y = ReadFloat(valueData + 4);
+                        }
+                        if (valueComponentCount > 2)
+                        {
+                            sample.Value.Z = ReadFloat(valueData + 8);
+                        }
+                        if (valueComponentCount > 3)
+                        {
+                            sample.Value.W = ReadFloat(valueData + 12);
+                        }
+                        if (bBake && channel.Path == SkeletalAnimationPath::Translation &&
+                            (!AssetImport::TryScaleImportValue(sample.Value.X, translationScale, sample.Value.X) ||
+                             !AssetImport::TryScaleImportValue(sample.Value.Y, translationScale, sample.Value.Y) ||
+                             !AssetImport::TryScaleImportValue(sample.Value.Z, translationScale, sample.Value.Z)))
+                        {
+                            status = SkeletalGltfDecodeStatus::InvalidDocument;
+                            return false;
+                        }
+                        if (!std::isfinite(sample.TimeSeconds) || sample.TimeSeconds < 0.0f ||
+                            (sampleIndex > 0 && sample.TimeSeconds <= channel.Samples[sampleIndex - 1].TimeSeconds) ||
+                            !std::isfinite(sample.Value.X) || !std::isfinite(sample.Value.Y) ||
+                            !std::isfinite(sample.Value.Z) || !std::isfinite(sample.Value.W))
+                        {
+                            return false;
+                        }
+                        clip.DurationSeconds = std::max(clip.DurationSeconds, sample.TimeSeconds);
+                    }
                 }
                 clip.Channels.push_back(std::move(channel));
+                if (bBake)
+                {
+                    ++report.ProcessedAnimationChannelCount;
+                    report.FailedAnimationChannelIndex = UINT64_MAX;
+                }
             }
 
             if (clip.Channels.empty() || !std::isfinite(clip.DurationSeconds))
             {
                 return false;
+            }
+            if (bBake)
+            {
+                report.bCubicScanComplete = true;
             }
             outData.Clips.push_back(std::move(clip));
             return true;
@@ -1409,7 +1540,7 @@ namespace NorvesLib::Core::Skeletal
 
     namespace
     {
-        bool ApplySkeletalImport(SkeletalGltfData& data, const AssetImport::ImportSettings& settings)
+        bool ResolveSkeletalImportScale(const SkeletalGltfData& data, const AssetImport::ImportSettings& settings, double& outScale)
         {
             using namespace AssetImport;
             if (!SupportsSkeletalScaleImport(settings) || data.Vertices.empty())
@@ -1450,9 +1581,16 @@ namespace NorvesLib::Core::Skeletal
             {
                 return false;
             }
+            outScale = resolved.Value;
+            return true;
+        }
+
+        bool ApplyResolvedSkeletalImport(SkeletalGltfData& data, double factor, bool bScaleAnimation)
+        {
+            using namespace AssetImport;
             const auto scale = [&](float& value)
             {
-                return TryScaleImportValue(value, resolved.Value, value);
+                return TryScaleImportValue(value, factor, value);
             };
             // dataはdecoder内の未公開candidate。途中失敗時も外部へ部分適用を返さない。
             for (auto& vertex : data.Vertices)
@@ -1472,19 +1610,22 @@ namespace NorvesLib::Core::Skeletal
                     }
                 }
             }
-            for (auto& clip : data.Clips)
+            if (bScaleAnimation)
             {
-                for (auto& channel : clip.Channels)
+                for (auto& clip : data.Clips)
                 {
-                    if (channel.Path != SkeletalAnimationPath::Translation)
+                    for (auto& channel : clip.Channels)
                     {
-                        continue;
-                    }
-                    for (auto& sample : channel.Samples)
-                    {
-                        if (!scale(sample.Value.X) || !scale(sample.Value.Y) || !scale(sample.Value.Z))
+                        if (channel.Path != SkeletalAnimationPath::Translation)
                         {
-                            return false;
+                            continue;
+                        }
+                        for (auto& sample : channel.Samples)
+                        {
+                            if (!scale(sample.Value.X) || !scale(sample.Value.Y) || !scale(sample.Value.Z))
+                            {
+                                return false;
+                            }
                         }
                     }
                 }
@@ -1506,11 +1647,6 @@ namespace NorvesLib::Core::Skeletal
         {
             const SkeletalGltfDecodeOptions options = decodeOptions != nullptr ? *decodeOptions : SkeletalGltfDecodeOptions{};
             if (!IsValidSkeletalGltfDecodeOptions(options)) return Fail(SkeletalGltfDecodeStatus::InvalidImportOptions);
-            // Bakeの設定/hash契約を先に定義した段階。実decode接続までは明示的に拒否する。
-            if (options.CubicSplinePolicy != SkeletalCubicSplinePolicy::Reject)
-            {
-                return Fail(SkeletalGltfDecodeStatus::UnsupportedInterpolation);
-            }
             if (!root.IsObject())
             {
                 return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
@@ -1548,7 +1684,7 @@ namespace NorvesLib::Core::Skeletal
             }
 
             JsonValue animation;
-            if (!ParseAnimationContract(root, animation, status))
+            if (!ParseAnimationContract(root, animation, status, options))
             {
                 return Fail(status);
             }
@@ -1606,14 +1742,26 @@ namespace NorvesLib::Core::Skeletal
             {
                 return failWithReport(SkeletalGltfDecodeStatus::InvalidSkeleton);
             }
-            if (!ExtractAnimation(animation, nodeToJoint, accessors, bufferViews, buffers, data))
-            {
-                return failWithReport(SkeletalGltfDecodeStatus::InvalidAnimation);
-            }
-
-            if (selectedImport->bPresent && !ApplySkeletalImport(data, selectedImport->Settings))
+            const bool bBake = options.CubicSplinePolicy == SkeletalCubicSplinePolicy::Bake;
+            double translationScale = 1;
+            if (bBake && selectedImport->bPresent && !ResolveSkeletalImportScale(data, selectedImport->Settings, translationScale))
             {
                 return failWithReport(SkeletalGltfDecodeStatus::InvalidDocument);
+            }
+            status = SkeletalGltfDecodeStatus::InvalidAnimation;
+            if (!ExtractAnimation(animation, nodeToJoint, accessors, bufferViews, buffers, data,
+                options, translationScale, report, status))
+            {
+                return failWithReport(status);
+            }
+
+            if (selectedImport->bPresent)
+            {
+                if ((!bBake && !ResolveSkeletalImportScale(data, selectedImport->Settings, translationScale)) ||
+                    !ApplyResolvedSkeletalImport(data, translationScale, !bBake))
+                {
+                    return failWithReport(SkeletalGltfDecodeStatus::InvalidDocument);
+                }
             }
 
             SkeletalGltfDecodeResult result;

@@ -2084,7 +2084,7 @@
 - stop-when: 未接続decoderがBakeを黙って無視して成功する、既存hash回帰、未実装morph/256を受理。
 
 ## G2-GR86-CUBIC-DECODE: 明示焼込を骨格decodeへ接続する
-- status: todo
+- status: done
 - done-when: CUBICSPLINE triplet/count/有限時刻を検査して共通bakerへ渡す。fitを含む最終translation倍率のメートル空間で認証し二重scaleしない。raw/legacy/file/cookを同じ経路にし、prefix診断と失敗Data/source非公開を維持する。既定Rejectの挙動を維持する。
 - verify: Translation/Rotation/Scaleの既知曲線、glTF/GLB、source triplet不正・zeroq・容量/閾値超過、sidecar scale/fitと実helper/parse往復。native未実行は区別する。
 - stop-when: 元cubicの符号変更、scale後の許容超過黙認、partial成功、native/GPU実行済みと偽る。
