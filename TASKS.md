@@ -1800,7 +1800,7 @@
 - notes: 3経路はまだ接続しない。外部URIはpercent後の相対path検証と実filesystem containmentを通す。data URIの受理追加はGR77の意図的仕様変更として旧拒否smokeを更新する。
 
 ## G2-GR77-BUFFER-JSON: JSONのbuffer記述を共有resolverへ変換する
-- status: todo
+- status: done
 - done-when: 既存JsonDocumentのbuffersから型/正の安全整数byteLength/uriの有無/ASCII文字列/重複既知fieldを検証し、借用descriptorの寿命を保ってBufferSetへ渡す。3consumerのJSON読取りを共有できる入口を用意する。
 - verify: 既存CookedMeshTest束へJSON記述の正常/欠落/型違い/重複/数値境界/BIN/data URIを追加。実型の宣言・呼出を照合し、Windows依存でcompileできない範囲と純helper回帰を区別する。
 - stop-when: null uriを省略と誤認、doubleからsizeへの範囲外cast、移動したURI配列へのSpan、未承認の形式/既定値変更。
@@ -1816,3 +1816,10 @@
 - done-when: MemoryOverrides.h単体でstd::forwardの宣言不足にならないよう必要includeを明示し、動作を変更しない。
 - verify: 実header単体のsyntax確認。MemorySystem全体のWindows依存解消とは扱わない。
 - notes: G2 BufferSetの実allocator接続compileで既存不足を検出。G2の取り込み実装とは別の小修正候補として保存。
+
+## G2-GR77-COOK-BUFFERS: 静的cookerへ共有GLBとbufferを接続する
+- status: todo
+- done-when: CookGltfToNvmeshが共有container/JSON buffer resolverを使い、GLB BINとdata URI bufferを読める。既存geometry/material/default/formatを維持し、旧.gltf hashはBOMと外部buffer全量を保存、新embedded内容を二重hashしない。
+- verify: 既存静的cooker fixtureをJSON+external/GLB/data URIで比較する登録試験とsmoke更新を追加。payload一致/metadata/hash変化/不正の拒否を固定し、Windows統合未実行を明記する。
+- stop-when: BINのコピー、既存material色空間/既定の変更、既存.gltf外部画像の新規実読込、自前parserへ未承認切替、3経路全完了の誤認。
+- notes: embedded imageは次段の所有/借用とMain packagingで接続する。既存data_uri_buffer negativeは1byteで宣言長を満たさず、受理追加後も短さで失敗する。

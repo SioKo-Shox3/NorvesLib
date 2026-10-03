@@ -448,3 +448,6 @@
 
 - G2-GR77-BUFFER-SET: 外部/data URIの所有bytesと借用BINを共有し、宣言viewとhash用全sourceを分離。標準readerはpercent後の相対ASCII pathとcanonical component境界/通常fileを検査。第1周のcopy assignment例外によるmetadata/bytes不整合をcandidate copy→Swapへ修復し第2周PASS。実source/testのsyntax-Werror、move特性、MEMBER object compile成功。実URI predicateをsection GCで直接リンクして通常/O2/ASan・UBSan成功。所有/実I/O/確保失敗試験は未実行で、実allocator接続は既存utility不足、その先のMemorySystemはWindows.h依存で停止。代替allocatorなし。JSON/3consumerは未接続。
 - Next: GR77のJSON buffer adapter、次いでcooker/画像/骨格/looseへ接続する。検出したloose accessor overflowとMemoryOverrides include不足は別タスクへ保存。
+
+- G2-GR77-BUFFER-JSON: JsonDocumentのbuffers記述を共有resolverへ接続。既知field重複、型、正の安全整数、uri省略/null/ASCIIを区別し、所有URI配列を固定して呼出中Span寿命を保持。数値helperは通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/Werror/MEMBERで成功、独立レビューPASS。25個のfixture JSON文法も別途確認。JsonDocumentを含むsource/testはWindows.h依存でcompile/実行未確認、数値試験で代用しない。
+- Next: GR77静的cookerへcontainer/bufferを接続する。外部imageは旧どおりpath参照だけで、embedded imageの所有/packagingは後続へ分ける。

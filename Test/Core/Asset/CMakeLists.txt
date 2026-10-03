@@ -18,6 +18,8 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER GltfContainerTest GltfContainerTest.cpp
     MEMBER GltfBufferSourceTest GltfBufferSourceTest.cpp
     MEMBER GltfBufferSetTest GltfBufferSetTest.cpp
+    MEMBER GltfBufferJsonTest GltfBufferJsonTest.cpp
+    MEMBER GltfBufferNumberTest GltfBufferNumberTest.cpp
     MEMBER GltfBufferUriTest GltfBufferUriTest.cpp
     MEMBER Base64DecodeTest Base64DecodeTest.cpp
     MEMBER CookedTextureTest CookedTextureTest.cpp
@@ -61,3 +63,5 @@ add_test(NAME Base64DecodeTest COMMAND CookedMeshTest --test=Base64DecodeTest)
 add_test(NAME GltfBufferSourceTest COMMAND CookedMeshTest --test=GltfBufferSourceTest)
 add_test(NAME GltfBufferSetTest COMMAND CookedMeshTest --test=GltfBufferSetTest)
 add_test(NAME GltfBufferUriTest COMMAND CookedMeshTest --test=GltfBufferUriTest)
+add_test(NAME GltfBufferJsonTest COMMAND CookedMeshTest --test=GltfBufferJsonTest)
+add_test(NAME GltfBufferNumberTest COMMAND CookedMeshTest --test=GltfBufferNumberTest)
