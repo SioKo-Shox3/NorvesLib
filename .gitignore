@@ -135,3 +135,6 @@ Docs/Plans/
 # Claude Code のマシンローカル設定（agents/hooks は追跡する。settings はテンプレートから再展開）
 .claude/settings.local.json
 .claude/worktrees/
+
+# Scripts/FetchPolyHavenTextures.ps1 が落とす Poly Haven のテクスチャ（git に入れない）
+/Assets/Textures/PolyHaven/
