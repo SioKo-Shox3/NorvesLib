@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Span.h"
+#include "Container/VariableArray.h"
 #include <cstdint>
 #include <limits>
 
@@ -63,6 +64,49 @@ namespace NorvesLib::Core::Skeletal
         }
         return {bJoints ? InfluenceAttributeKind::Joints : InfluenceAttributeKind::Weights,index};
     }
+    struct InfluenceAttributeAccessor
+    {
+        InfluenceAttributeKind Kind = InfluenceAttributeKind::Other;
+        uint32_t SetIndex = 0;
+        uint32_t AccessorIndex = 0;
+    };
+    struct SkeletalInfluenceSet
+    {
+        uint32_t JointsAccessor = 0;
+        uint32_t WeightsAccessor = 0;
+    };
+    struct InfluenceSetPairCheck
+    {
+        bool bValid = false;
+        size_t SetCount = 0;
+    };
+    // SetIndex/Kindで並べた記述を検査する。0始まり連続でjoint/weight各1つが必要。
+    [[nodiscard]] inline InfluenceSetPairCheck CheckSortedInfluenceSetPairs(Container::Span<const InfluenceAttributeAccessor> entries) noexcept
+    {
+        if (!entries.data() || entries.empty() || entries.size()%2!=0 ||
+            entries.size()/2>std::numeric_limits<uint32_t>::max() ||
+            entries.size()>std::numeric_limits<size_t>::max()/sizeof(InfluenceAttributeAccessor))
+        {
+            return {};
+        }
+        for (size_t pair=0;pair<entries.size()/2;++pair)
+        {
+            const auto& joints=entries[pair*2];
+            const auto& weights=entries[pair*2+1];
+            if (joints.Kind!=InfluenceAttributeKind::Joints || weights.Kind!=InfluenceAttributeKind::Weights ||
+                joints.SetIndex!=pair || weights.SetIndex!=pair)
+            {
+                return {};
+            }
+        }
+        return {true,entries.size()/2};
+    }
+    enum class InfluenceSetCollectionStatus { Success, InvalidAttributes, InvalidAccessorIndex, InvalidSetPairs };
+    // 属性名/番号を所有記述へ集める。accessorの実型/count/buffer/weight値はここでは読まない。
+    // 失敗時outを保持。Strictはこのcollectorではなく既存の専用gateを使う。
+    [[nodiscard]] InfluenceSetCollectionStatus CollectSkeletalInfluenceSets(const JsonValue& attributes,
+        Container::VariableArray<SkeletalInfluenceSet>& outSets);
+
     enum class StrictInfluenceStatus { Success, AdditionalSet, InvalidAttribute };
     // decodeとcook前cache照合は同じStrict gateを使う。追加セットの値は黙認しない。
     [[nodiscard]] StrictInfluenceStatus ValidateStrictInfluenceAttributes(const JsonValue& attributes);

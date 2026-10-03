@@ -70,3 +70,15 @@ struct paddingや文字列表現を使わず、-0を+0へ統一する。algorith
 
 固定bytesと独立3初期stateのFNV既知値、Strict不変、閾値/algorithm差、invalid enum/数値、ゼロの正規化を
 通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBERで検査する。これは型/hashの実装であり、decode/CLIは未接続。
+
+## 複数セット記述の収集（Reduce接続前）
+
+CollectSkeletalInfluenceSetsはJOINTS_n/WEIGHTS_nの属性名とaccessor番号を収集し、JSON内の並びに依らず
+set番号/joint→weight順へ正準化する。0始まり連続・各setのjoint/weight各1つを必須にし、
+片側欠落、番号飛び、重複名、非正準名、不正な整数accessor番号を拒否する。
+成功結果はset0..N-1順の所有配列で、失敗時は以前の結果を保持する。
+
+ここではaccessorの存在/型/count/bufferやweight数値は検査しない。Reduceのdecode接続時にそれらを追加する。
+既定Strictは引き続き専用gateで追加セット自体を拒否し、このcollectorを使って受理へ緩めない。
+正準pair検査と既存属性名分類を通常/O2-NDEBUG/ASan・UBSanで実行し、JsonDocument経由の収集/失敗保持試験は
+native束へ登録する。実JSON試験はWindows.h依存で未実行として区別する。

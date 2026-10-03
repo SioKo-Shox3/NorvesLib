@@ -2036,7 +2036,13 @@
 - stop-when: 未実装Morph/Cubic optionの受理、未接続をCLI完了扱い、struct paddingでhashが変わる。
 
 ## G2-GR86-INFLUENCE-SETS: 複数joint/weightセットの記述を検証する
-- status: todo
+- status: done
 - done-when: Reduce用にJOINTS_n/WEIGHTS_nを正準順へ集め、0始まり連続・同数pair・重複なし・accessor番号の型/範囲を検証して所有結果を返す。Strict gateは変更しない。
 - verify: 順序違い/複数pair/欠損/非連続/重複/不正名/不正番号と失敗出力保持をpure/nativeに分けて検証する。
 - stop-when: raw整数weight総和やjoint範囲検査を省くdecode接続、未検証のReduce受理、Strict既定の緩和。
+
+## G2-GR86-REDUCE-DECODE: 明示Reduceを骨格decodeへ接続する
+- status: todo
+- done-when: options指定時だけ全joint/weightセットの型/count/range/整数raw総和を検査し、共有kernelで4本へ縮約する。reportは正常prefixと失敗頂点の測定を区別し、raw/legacy/file入口で一致する。既定Strictは不変。
+- verify: 5影響fixture、raw/GLB/legacy/fileの一致、閾値超過/負値/追加セット内の不正joint/UNORM総和/不正options、失敗Data/sourcebufferの非公開を登録する。
+- stop-when: cooked wire/頂点ABI/128上限変更、未接続のcooker/CLI成功主張、捨てる影響の不正値黙認。

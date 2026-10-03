@@ -541,3 +541,6 @@
 
 - G2-GR86-OPTIONS-HASH: 独立Public型へStrict/ReduceToFour・warn/failと走査prefixを明示するreportを定義。Strictは既定閾値のみ受理しhash不変、ReduceはSRED/schema/policy/warn/failの25byte LE/-0正規化と長さ/algorithmを既存FNVへ連結。公開header登録とkernel初期値の定数共有を実施。Python独立固定bytes/3state goldenと実policy・kernelの計6mode実行、MEMBER/public単独include/layout/trivial-copy確認に成功、独立PASS。decode/CLI/形式/statusは未変更。
 - Next: 0始まり連続のJOINTS_n/WEIGHTS_n pairを収集・検証する部品を作り、Reduce指定のdecode接続へ進む。
+
+- G2-GR86-INFLUENCE-SETS: JSON内順序に依らずJOINTS_n/WEIGHTS_nを正準順へ収集する所有collectorとpair検査を追加。0始まり連続/各1個/同数pair/整数u32番号を検査し、失敗時結果保持。Strict専用gateは変更せず、accessor型/count/buffer/weightは後段責務と明記。pure pairと既存分類の6mode実行/MEMBER成功、native16JSON fixtureは文法確認と登録のみ（Windows.hで未実行）。独立PASS。
+- Next: Reduceをraw/legacy/file decodeへ明示optionsとして接続し、全影響のjoint範囲とUNORM raw総和を落とす前に検査する。
