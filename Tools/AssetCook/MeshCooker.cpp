@@ -2445,6 +2445,18 @@ namespace NorvesLib::Tools::AssetCook
                             error += " dropped_weight=" + AnsiString(AnsiStringView(number, static_cast<size_t>(converted.ptr - number)));
                     }
                 }
+                if (options.CubicSplinePolicy == Core::Skeletal::SkeletalCubicSplinePolicy::Bake && decoded.Report.bCubicScanStarted)
+                {
+                    error += " processed_channels=" + FormatInteger(decoded.Report.ProcessedAnimationChannelCount);
+                    if (decoded.Report.FailedAnimationChannelIndex != UINT64_MAX)
+                    {
+                        error += " failed_channel=" + FormatInteger(decoded.Report.FailedAnimationChannelIndex);
+                    }
+                    if (decoded.Report.bHasCubicBakeFailure)
+                    {
+                        error += " cubic_bake_status=" + FormatInteger(decoded.Report.FailedCubicBakeStatus);
+                    }
+                }
                 return false;
             }
 

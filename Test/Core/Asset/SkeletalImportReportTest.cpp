@@ -84,6 +84,81 @@ int main()
     input.Diagnostics.Report.ProcessedVertexCount = UINT64_MAX - 1;
     input.Diagnostics.Report.FailedVertexIndex = UINT64_MAX - 1;
     assert(BuildSkeletalImportReport(input).bValid);
+    input = {};
+    input.Options.CubicSplinePolicy = SkeletalCubicSplinePolicy::Bake;
+    Print(input);
+    assert(std::strstr(BuildSkeletalImportReport(input).Bytes, "\"cubic_scan\":null"));
+    input.Diagnostics.bDecodeAttempted = true;
+    input.Diagnostics.Report.bCubicScanStarted = true;
+    input.Diagnostics.Report.TotalAnimationChannelCount = 3;
+    input.Diagnostics.Report.FailedAnimationChannelIndex = 0;
+    input.Diagnostics.Report.bHasCubicBakeFailure = true;
+    input.Diagnostics.Report.FailedCubicBakeStatus = 9;
+    input.Diagnostics.DecodeStatus = 18;
+    Print(input);
+    const auto noKeys = BuildSkeletalImportReport(input);
+    assert(std::strstr(noKeys.Bytes, "\"max_translation_error_m\":null"));
+    assert(std::strstr(noKeys.Bytes, "\"max_rotation_error_rad\":null"));
+    assert(std::strstr(noKeys.Bytes, "\"max_scale_error\":null"));
+    input.Diagnostics.Report.ProcessedAnimationChannelCount = 1;
+    input.Diagnostics.Report.BakedCubicChannelCount = 1;
+    input.Diagnostics.Report.BakedCubicTranslationChannelCount = 1;
+    input.Diagnostics.Report.CubicInputKeyCount = 2;
+    input.Diagnostics.Report.CubicOutputKeyCount = 101;
+    input.Diagnostics.Report.MaximumCubicTranslationErrorMeters = .0009;
+    input.Diagnostics.Report.FailedAnimationChannelIndex = 1;
+    Print(input);
+    const auto prefix = input;
+    input.Outcome = SkeletalImportOutcome::PayloadReady;
+    input.Diagnostics.DecodeStatus = 0;
+    input.Diagnostics.Report.ProcessedAnimationChannelCount = 3;
+    input.Diagnostics.Report.BakedCubicChannelCount = 3;
+    input.Diagnostics.Report.BakedCubicRotationChannelCount = 1;
+    input.Diagnostics.Report.BakedCubicScaleChannelCount = 1;
+    input.Diagnostics.Report.CubicInputKeyCount = 6;
+    input.Diagnostics.Report.CubicOutputKeyCount = 231;
+    input.Diagnostics.Report.MaximumCubicRotationErrorRadians = .001;
+    input.Diagnostics.Report.MaximumCubicScaleError = .0008;
+    input.Diagnostics.Report.bCubicScanComplete = true;
+    input.Diagnostics.Report.bHasCubicBakeFailure = false;
+    input.Diagnostics.Report.FailedCubicBakeStatus = 0;
+    input.Diagnostics.Report.FailedAnimationChannelIndex = UINT64_MAX;
+    Print(input);
+    const auto complete = input;
+    input.Outcome = SkeletalImportOutcome::CacheHit;
+    input.Diagnostics = {};
+    Print(input);
+    assert(std::strstr(BuildSkeletalImportReport(input).Bytes, "\"cubic_scan\":null"));
+    input = complete;
+    input.Diagnostics.Report = {};
+    input.Diagnostics.Report.bCubicScanStarted = true;
+    input.Diagnostics.Report.bCubicScanComplete = true;
+    input.Diagnostics.Report.TotalAnimationChannelCount = 3;
+    input.Diagnostics.Report.ProcessedAnimationChannelCount = 3;
+    Print(input); // 通常LINEARだけなら焼込の誤差は未測定。
+    for (int invalid = 0; invalid < 15; ++invalid)
+    {
+        input = prefix;
+        switch (invalid)
+        {
+        case 0: input.Diagnostics.Report.ProcessedAnimationChannelCount = 4; break;
+        case 1: input.Diagnostics.Report.BakedCubicChannelCount = 2; break;
+        case 2: input.Diagnostics.Report.BakedCubicTranslationChannelCount = UINT64_MAX; break;
+        case 3: input.Diagnostics.Report.CubicInputKeyCount = 1; break;
+        case 4: input.Diagnostics.Report.CubicOutputKeyCount = 1; break;
+        case 5: input.Diagnostics.Report.CubicOutputKeyCount = UINT64_MAX; break;
+        case 6: input.Diagnostics.Report.MaximumCubicTranslationErrorMeters = .002; break;
+        case 7: input.Diagnostics.Report.MaximumCubicRotationErrorRadians = .0001; break;
+        case 8: input.Diagnostics.Report.MaximumCubicTranslationErrorMeters = std::numeric_limits<double>::quiet_NaN(); break;
+        case 9: input.Diagnostics.Report.bCubicScanComplete = true; break;
+        case 10: input.Diagnostics.Report.FailedAnimationChannelIndex = 2; break;
+        case 11: input.Diagnostics.Report.FailedCubicBakeStatus = 0; break;
+        case 12: input.Diagnostics.Report.bCubicScanStarted = false; break;
+        case 13: input.Diagnostics.bDecodeAttempted = false; break;
+        case 14: input.Outcome = SkeletalImportOutcome::PayloadReady; input.Diagnostics.DecodeStatus = 0; break;
+        }
+        assert(!BuildSkeletalImportReport(input).bValid);
+    }
     std::cout << "SkeletalImportReportTest PASS: json_stages_measurements_prefix_failure_finite_bounds\n";
     return 0;
 }

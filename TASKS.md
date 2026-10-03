@@ -2090,7 +2090,25 @@
 - stop-when: 元cubicの符号変更、scale後の許容超過黙認、partial成功、native/GPU実行済みと偽る。
 
 ## G2-GR86-CUBIC-CLI: 焼込CLIとJSON診断を接続する
-- status: todo
+- status: done
 - done-when: --cubicspline reject|bakeと許容指定をstrict parseし、cook/skipへ同じpolicyを渡す。焼込channels/keys/単位別上界/失敗をImportReportへ格納し、未走査はnullとする。
 - verify: pure parser/JSON、nativeCLI成功・既定拒否・失敗保持・設定差cache鍵、診断単位。
 - stop-when: 未実装morph/256指定を受理、cacheと本cookの設定不一致、未測定をゼロと偽る。
+
+## G2-GR86-MORPH-POLICY: 明示dropの方針・数量診断・hashを定義する
+- status: todo
+- done-when: Reject既定/Drop明示を公開optionsへ定義し、既存Strict/Reduce/Bakeのみのhashを維持する。Dropはalgorithmを含む別canonicalで区別し、未接続段階で指定を黙って無視しない。
+- verify: enum/旧hash golden/Dropの全既存policy組合せと型単独includeを純試験で検査する。
+- stop-when: 未接続Dropの成功黙認、既存cache鍵の予期しない変更、sparse/256の受理。
+
+## G2-GR86-MORPH-DECODE: 明示dropを共通decodeとcookへ接続する
+- status: todo
+- done-when: morph targets・初期weight・weight animationの除去を明示Dropだけに限定し、base geometryとTRSを維持する。対象の構造を検査し、除去数/走査状況を報告する。既定Reject/sparse拒否/失敗出力保持を維持する。
+- verify: raw/legacy/file/GLB/cookの既定拒否/明示成功/数量/不正・sparse/他policy併用と出力保持を登録し、純部品の試験を実行する。
+- stop-when: malformedをDropで成功扱い、baseへmorphを黙って焼込、未測定数を確定と偽る。
+
+## G2-GR86-MORPH-CLI: 明示dropをCLIとJSONへ接続する
+- status: todo
+- done-when: --morph reject|dropを厳密parseしcook/skipへ同じpolicyを渡す。除去数・警告・未走査nullをJSONへ格納し、既定は拒否する。
+- verify: pure parser/JSONとnativeCLI既定拒否/明示成功/出力保持/設定差cache鍵を検査または登録する。
+- stop-when: 指定無しの無言drop、sparse/256受理、native未実行を成功と主張。

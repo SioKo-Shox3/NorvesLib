@@ -6,7 +6,7 @@
 | 制約 | 既定 | 明示指定時/後段 | 現在の状態 |
 |---|---|---|---|
 | 頂点影響数 | 4本、追加セットを専用statusで拒否 | cookで上位4本へ縮約・正規化・報告 | 追加セット拒否を実装、縮約kernelあり・decode未接続 |
-| CUBICSPLINE | 拒否 | 誤差制限付きLINEAR焼込 | 未実装 |
+| CUBICSPLINE | 拒否 | 誤差制限付きLINEAR焼込 | API/CLI接続済み、native未実行 |
 | morph | 拒否 | dropと数量報告 | 未実装 |
 | sparse | 拒否 | 変更なし | 既存拒否を維持 |
 | 関節数 | 現行/0.2は128 | v1で256 | 128共有定数化済み、256はStage B |
@@ -51,13 +51,13 @@ Strictの通常4影響経路をこの修復へ無言で切り替えない。
 参考: [glTF skinned mesh attributes](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#skinned-mesh-attributes)。
 
 5本の既知値、120順列、同joint/tie/微小値、警告・失敗境界、無効値/関節/総和/aliasと出力保持を純実装で確認する。
-CUBICSPLINE/morphは別作業。raw/legacy/file decodeとcook接続は下記を参照。
+CUBICSPLINEは下記で接続、morphは別作業。raw/legacy/file decodeとcook接続は下記を参照。
 
 ## 明示policyと診断型
 
 SkeletalGltfDecodeOptionsはInfluencePolicy=Strict(0)/ReduceToFour(1)とWarnDroppedWeight/FailDroppedWeightを持つ。
 既定はStrict、閾値は0.01/0.25。閾値は有限で0<=warn<=fail<=1。Strictでは未使用の非既定閾値を拒否し、
-無視した指定を成功にしない。CUBICSPLINE/morphの指定はまだこの型にもCLIにも追加しない。
+無視した指定を成功にしない。CUBICSPLINE指定は後述のBakeで拡張し、morph指定は未実装。
 
 SkeletalGltfDecodeReportは総頂点数/処理済みprefix数、縮約/同joint合算/再正規化/警告の頂点数、
 脱落比率の最大/平均、失敗頂点index、影響走査完了flagを分ける。未走査の頂点を含む全体平均と誤認しない。
@@ -127,7 +127,7 @@ decodeの正常prefix後失敗とUNORM8/16複数setの全総和/1不足も恒久
 --skin-fail-dropped-weight 0..1をNVSKEL model cookに限り受け付ける。別引数とequalsを両方扱う。
 閾値の既定は0.01/0.25で0<=warn<=fail<=1。閾値指定にはreduceの明示指定が必要。
 重複/空値/非有限/範囲外/末尾ゴミ/非骨格への指定は書込前に拒否する。
---cubicspline/--morph/--joint-policyは未実装のため受理しない。
+--cubicsplineは後述の明示Bakeに対応する。--morph/--joint-policyは未実装のため受理しない。
 
 本cookと--skip-if-unchangedのfingerprintへ同じpolicyを渡すため、Strictとの混同や
 閾値変更時のcache誤使用を防ぐ。cache hitは縮約を再実行せず既存のskip通知を返す。
@@ -157,7 +157,7 @@ Reduceでも総頂点数がまだ不明な失敗はinfluence_scan=null。総数�
 最大/平均はnullとして数値0の測定と区別する。失敗頂点で測れた脱落量は別欄に残す。
 Reduceの測定はprocessed prefixの最大/平均と失敗頂点脱落量を分離する。
 
-CUBICSPLINE/morphは実装時に同じskinセクションへ追加する。GR84のBVH/retarget測定はまだ存在せず、
+CUBICSPLINEは後述のskin拡張へ追加し、morphは未実装。GR84のBVH/retarget測定はまだ存在せず、
 将来はこの版付きenvelopeへ別セクションを足す。BVH受理やretargetの実装済みを意味しない。
 pure serializerの3mode/MEMBERとPython独立JSON解析で構文/数値/状態を検査する。
 native回帰には成功/閾値失敗/古い診断の消去・CLI JSON/警告有無/cache未測定を登録し、
@@ -182,7 +182,7 @@ translation/rotation/scale許容各binary64LE、depth/channel/asset各u32LE、cu
 どの許容/予算/アルゴリズムも別cache鍵となる。構造体のpaddingをhashに含めない。
 
 raw/legacy/file/cookの明示Bake指定は下記の共通decoderへ接続する。
-Reject既定はUnsupportedInterpolationを維持し、JSON/CLI指定は別段階とする。
+Reject既定はUnsupportedInterpolationを維持し、JSON/CLI指定は下記で接続する。
 Python独立66byteと3初期state hashのgolden、legacy25byte/hash不変、全閾値/予算/無意味指定をpureで確認する。
 
 ## CUBICSPLINEの共通decode接続
@@ -207,4 +207,37 @@ CubicChannels.gltfはTranslation/Rotation/Scaleの正しいtripletを持つfixtu
 raw/legacy/file/GLB/cook再parse、明示Bakeでも通常LINEAR/STEP不変、設定scale/fitで二重scaleなし、
 既定拒否・channel/asset予算・内部zero回転・非有限tangent・triplet count不正とprefix診断をnativeへ登録する。
 独立Hermite式と実共有sampler helperでbaked channel値も確認する試験だが、Core/decoder/cookの実行は
-Windows.h依存によりこの環境では未確認。純baker/policyの実行とは区別する。CLI引数とJSONのCubic項目は未接続。
+Windows.h依存によりこの環境では未確認。純baker/policyの実行とは区別する。CLI引数とJSONのCubic項目は下記で接続する。
+
+## CUBICSPLINEのCLI・JSON診断
+
+NVSKEL model cookで --cubicspline reject|bake を指定する（既定reject）。
+Bake時だけ以下の設定を受理する。別引数とequals形式の両方に対応し、重複・空値・不正数・未使用設定は拒否する。
+
+- --cubic-translation-tolerance: 最終単位変換後のメートル。既定0.001
+- --cubic-rotation-tolerance-deg: 度。既定0.1度相当。API/hash/JSONへはラジアンに変換
+- --cubic-scale-tolerance: 無次元。既定0.001
+- --cubic-max-depth: 0〜24。既定20
+- --cubic-max-channel-samples: 2〜1048576。既定65536
+- --cubic-max-asset-samples: 2〜4194304。既定1048576
+
+並進/scale許容は64*float epsilonより大きい有限値、回転は256*float epsilon radより大きく180度以下。
+これは入力設定の下限であり、すべての曲線が焼込可能になる保証ではない。値の大きさや短時間隔等で拒否し得る。
+cookとskipには同じDecode optionsを渡すため、許容/予算の変更もsource hashとcache判定へ反映される。
+成功時はstderrに焼込channel数・入力/出力key数・種類別上界と変換警告を出す。
+
+ImportReport version 1はBake時だけskin内へ以下を追加する。Reject時の旧JSONは不変。
+
+- cubic_policy: bake
+- cubic_settings: translation_tolerance_m / rotation_tolerance_rad / scale_tolerance / max_depth / max_channel_samples / max_asset_samples
+- cubic_scan: 未開始またはcache hitではnull。開始後はtotal_channels / processed_channelsとbaked_channels、baked_translation_channels / baked_rotation_channels / baked_scale_channels、input_keys / output_keysを持つ
+- scan内のmax_translation_error_m / max_rotation_error_rad / max_scale_errorは成功した焼込channelだけの最大上界。該当種類が未測定ならnull（通常LINEAR/STEPも未測定）
+- scan_complete、failed_channel（全channel中の0始まり番号またはnull）、failure_status（CubicBakeStatus数値またはnull）で完走/失敗を区別する
+
+途中失敗は成功prefixの計測だけを保持する。失敗channelの未認証誤差を成功した最大誤差へ混ぜない。
+failure_statusは0=成功以外を報告する。1入力不正/2設定不正/3算術未対応/4容量不足/5領域重複/6短区間/
+7時刻衝突/8深さ超過/9sample予算超過/10保存値表現不可/11quaternion不正/12数値予算不足/13認証不能。
+Bakeを指定しても通常補間だけならbaked_channels=0、各誤差=nullで、変換警告も出ない。
+
+純parser/JSON検査とnative CLI smokeを分ける。後者はglTFの3種Cubic、既定拒否・予算超過・出力保持、
+同設定cache hit・設定差cache miss、JSON単位と未測定nullを登録。Windows.h/PowerShell/CMakeが必要な統合実行は未確認。

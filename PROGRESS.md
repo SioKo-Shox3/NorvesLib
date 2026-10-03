@@ -568,3 +568,6 @@
 
 - G2-GR86-CUBIC-DECODE: 明示Bakeだけtriplet/count/型/rangeを共有bakerへ接続。channel/asset予算を割当前に制限し、正常prefix/種類別counter/失敗詳細/単位別上界を返す。fit倍率を未変換meshから一度だけ解決し、Bakeでは通常translationも早期scale、最後animation再scaleを省いて二重変換を防ぐ。既定Reject順は維持、status18を末尾追加。3種Cubic fixtureとraw/legacy/file/GLB/cook再parse、scale/fit、通常LINEAR/STEP同値、累積予算/zeroq/非有限/count不正をnative登録。第1周のnative試験namespace不整合を既存Reduce試験分も含めて修正し第2周PASS。実bakerによるfixture数値検証と純policy/bake各3mode成功。native decoder/cookはWindows.hで未実行。
 - Next: policy/decodeを公開し、CUBIC-CLIの明示指定・単位別許容・JSON診断へ接続する。
+
+- G2-GR86-CUBIC-CLI: --cubicspline reject|bakeと最終メートル/度/scale許容・depth/channel/asset予算を厳密parseし、既存のcook/skip共通optionsへ接続。JSON version1はBake時だけ単位付き設定/成功prefix/種類別上界/失敗channelと理由を追加し、未開始/cache/該当種類未測定はnull。旧Reject JSON不変、変換警告も追加。純parser/report各3mode・MEMBER・独立JSON11件解析成功、独立PASS。実bakerでsmoke fixtureの101/85/45key・sample予算失敗も照合。Main/nativeCLI/CMake/PowerShellはWindows.h等により未実行。既定拒否/失敗出力保持/設定差cache/JSONをnative登録。
+- Next: 明示morph Dropのpolicy/hash・decode・CLI診断へ進む。sparse拒否と128関節を維持し、256はv1まで保留。

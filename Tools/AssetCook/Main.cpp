@@ -1808,7 +1808,9 @@ namespace
             << "--logical <path> --kind audio --entry <entry.nvaud> --entry-type Aud0 "
             << "--format nvaud.v0.pcm16 --variant default\n"
             << "Model import: [--import-settings <file>] [--require-sidecar] OR [--no-sidecar] [--skip-if-unchanged]\n"
-            << "Skeletal import: [--skin-influences strict|reduce] [--skin-warn-dropped-weight 0..1] [--skin-fail-dropped-weight 0..1]\n";
+            << "Skeletal import: [--skin-influences strict|reduce] [--skin-warn-dropped-weight 0..1] [--skin-fail-dropped-weight 0..1]\n"
+            << "Cubic bake: [--cubicspline reject|bake] [--cubic-translation-tolerance meters] [--cubic-rotation-tolerance-deg degrees] [--cubic-scale-tolerance value]\n"
+            << "Bake budgets: [--cubic-max-depth 0..24] [--cubic-max-channel-samples 2..1048576] [--cubic-max-asset-samples 2..4194304]\n";
     }
 
     bool CookRawAsset(const CookOptions &options, std::string &error)
@@ -2749,6 +2751,30 @@ namespace
                 << " mean_dropped_weight=" << report.MeanDroppedWeight << "\n";
             if (report.WarningVertexCount != 0)
                 std::cerr << "警告: 脱落weightが指定の警告閾値を超えた頂点があります\n";
+        }
+        if (options.SkeletalImport.Decode.CubicSplinePolicy == NorvesLib::Core::Skeletal::SkeletalCubicSplinePolicy::Bake)
+        {
+            const auto& report = skeletalResult.DecodeReport;
+            std::cerr << std::setprecision(std::numeric_limits<double>::max_digits10)
+                << "cubicspline=bake baked_channels=" << report.BakedCubicChannelCount
+                << " input_keys=" << report.CubicInputKeyCount << " output_keys=" << report.CubicOutputKeyCount;
+            if (report.BakedCubicTranslationChannelCount != 0)
+            {
+                std::cerr << " max_translation_error_m=" << report.MaximumCubicTranslationErrorMeters;
+            }
+            if (report.BakedCubicRotationChannelCount != 0)
+            {
+                std::cerr << " max_rotation_error_rad=" << report.MaximumCubicRotationErrorRadians;
+            }
+            if (report.BakedCubicScaleChannelCount != 0)
+            {
+                std::cerr << " max_scale_error=" << report.MaximumCubicScaleError;
+            }
+            std::cerr << "\n";
+            if (report.BakedCubicChannelCount != 0)
+            {
+                std::cerr << "警告: CUBICSPLINEを許容誤差内のLINEAR列へ変換しました\n";
+            }
         }
         std::cerr << "AssetCook wrote skeletal model package=\"" << packagePath.generic_string()
                   << "\" manifest=\"" << manifestPath.generic_string()
