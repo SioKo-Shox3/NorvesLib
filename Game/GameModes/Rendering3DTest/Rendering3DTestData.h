@@ -15,6 +15,7 @@
 #include "Core/Public/Rendering/RenderTypes.h"
 #include "Core/Public/Thread/Atomic.h"
 #include "Core/Public/Thread/Mutex.h"
+#include "Core/Public/Thread/Task.h"
 #include "Core/Public/Particle/ParticleSystem.h"
 #include "GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
@@ -100,6 +101,8 @@ namespace Game::GameModes
         TSharedPtr<PendingMaterialUpdate> m_CobbleStoneMaterialUpdate;
         // 大きな球の高ポリのMegaGeometry（起動時に作った頂点・クラスタ。MegaMeshを作ったら手放す）
         TSharedPtr<NorvesLib::Core::Rendering::MegaGeometry::ProceduralMegaSphereData> m_pBigSphereMegaData;
+        // 大きな球の頂点・変位を別スレッドで作るジョブ（完了するまで m_pBigSphereMegaData の中身を読まない）
+        NorvesLib::Thread::TaskPtr m_BigSphereBuildTask;
         NorvesLib::Core::Rendering::ModelHandle m_BigSphereModelHandle;
 
         // Entity参照（Worldが所有）

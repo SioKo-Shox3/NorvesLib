@@ -5,11 +5,140 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Container/Containers.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering::MegaGeometry
 {
+    /**
+     * @brief 球の変位に使う高さの場（0〜1、1が高い）
+     *
+     * 元の画像（辺 SourceSize 画素の正方形で、縦横とも継ぎ目なく繰り返す）のミップを、FirstMip 段目から
+     * 粗い方へ Levels に持つ。Levels[i] の辺は SourceSize >> (FirstMip + i) 画素で、行が v・列が u。
+     */
+    struct ProceduralMegaSphereHeightField
+    {
+        Container::VariableArray<Container::VariableArray<float>> Levels;
+        uint32_t SourceSize = 0;
+        uint32_t FirstMip = 0;
+    };
+
+    /**
+     * @brief 16ビットのグレーの高さの画像から、FirstMip 段目以降のミップを箱型の平均で作る
+     *
+     * 球の頂点の間隔は元の画像の数画素以上あるため、細かい段は持たない（FirstMip 段目を直接平均で作る）。
+     *
+     * @return 画像が2の累乗の正方形でない、または FirstMip 段目が1画素未満なら false
+     */
+    inline bool BuildProceduralMegaSphereHeightField(const uint16_t *pixels,
+                                                     uint32_t size,
+                                                     uint32_t firstMip,
+                                                     ProceduralMegaSphereHeightField &outField)
+    {
+        outField = ProceduralMegaSphereHeightField{};
+        if (!pixels || size == 0u || (size & (size - 1u)) != 0u || firstMip >= 31u || (size >> firstMip) == 0u)
+        {
+            return false;
+        }
+
+        const uint32_t firstSize = size >> firstMip;
+        const uint32_t block = 1u << firstMip;
+        const double scale = 1.0 / (65535.0 * static_cast<double>(block) * static_cast<double>(block));
+        outField.SourceSize = size;
+        outField.FirstMip = firstMip;
+
+        Container::VariableArray<float> first(static_cast<size_t>(firstSize) * firstSize);
+        for (uint32_t y = 0; y < firstSize; ++y)
+        {
+            for (uint32_t x = 0; x < firstSize; ++x)
+            {
+                uint64_t sum = 0;
+                for (uint32_t by = 0; by < block; ++by)
+                {
+                    const uint16_t *row = pixels + static_cast<size_t>(y * block + by) * size + x * block;
+                    for (uint32_t bx = 0; bx < block; ++bx)
+                    {
+                        sum += row[bx];
+                    }
+                }
+                first[static_cast<size_t>(y) * firstSize + x] = static_cast<float>(static_cast<double>(sum) * scale);
+            }
+        }
+        outField.Levels.push_back(std::move(first));
+
+        for (uint32_t levelSize = firstSize; levelSize > 1u; levelSize >>= 1u)
+        {
+            const Container::VariableArray<float> &fine = outField.Levels.back();
+            const uint32_t coarseSize = levelSize >> 1u;
+            Container::VariableArray<float> coarse(static_cast<size_t>(coarseSize) * coarseSize);
+            for (uint32_t y = 0; y < coarseSize; ++y)
+            {
+                for (uint32_t x = 0; x < coarseSize; ++x)
+                {
+                    const size_t base = static_cast<size_t>(2u * y) * levelSize + 2u * x;
+                    coarse[static_cast<size_t>(y) * coarseSize + x] =
+                        0.25f * (fine[base] + fine[base + 1u] + fine[base + levelSize] + fine[base + levelSize + 1u]);
+                }
+            }
+            outField.Levels.push_back(std::move(coarse));
+        }
+        return true;
+    }
+
+    /**
+     * @brief 高さの場を、繰り返しの座標(u, v)と元の画像でのミップの段（小数）で3線形に引く
+     *
+     * 縦横とも繰り返す（u・v の整数部は無視する）。段は持っている範囲に収める。
+     */
+    inline float SampleProceduralMegaSphereHeightField(const ProceduralMegaSphereHeightField &field,
+                                                       double u,
+                                                       double v,
+                                                       double mip)
+    {
+        if (field.Levels.empty())
+        {
+            return 1.0f;
+        }
+        const double lastLevel = static_cast<double>(field.Levels.size() - 1u);
+        const double levelPosition = std::clamp(mip - static_cast<double>(field.FirstMip), 0.0, lastLevel);
+        const uint32_t level0 = static_cast<uint32_t>(levelPosition);
+        const uint32_t level1 = std::min<uint32_t>(level0 + 1u, static_cast<uint32_t>(field.Levels.size() - 1u));
+        const double levelWeight = levelPosition - static_cast<double>(level0);
+
+        auto sampleLevel = [&](uint32_t level) -> double
+        {
+            const int64_t levelSize = static_cast<int64_t>((field.SourceSize >> field.FirstMip) >> level);
+            const Container::VariableArray<float> &texels = field.Levels[level];
+            // 画素の中心を (i + 0.5) / size に置く
+            const double x = u * static_cast<double>(levelSize) - 0.5;
+            const double y = v * static_cast<double>(levelSize) - 0.5;
+            const double fx = std::floor(x);
+            const double fy = std::floor(y);
+            const double tx = x - fx;
+            const double ty = y - fy;
+            auto wrap = [levelSize](int64_t i) -> size_t
+            {
+                const int64_t m = i % levelSize;
+                return static_cast<size_t>(m < 0 ? m + levelSize : m);
+            };
+            const size_t x0 = wrap(static_cast<int64_t>(fx));
+            const size_t x1 = wrap(static_cast<int64_t>(fx) + 1);
+            const size_t y0 = wrap(static_cast<int64_t>(fy)) * static_cast<size_t>(levelSize);
+            const size_t y1 = wrap(static_cast<int64_t>(fy) + 1) * static_cast<size_t>(levelSize);
+            const double top = texels[y0 + x0] + (texels[y0 + x1] - texels[y0 + x0]) * tx;
+            const double bottom = texels[y1 + x0] + (texels[y1 + x1] - texels[y1 + x0]) * tx;
+            return top + (bottom - top) * ty;
+        };
+
+        const double h0 = sampleLevel(level0);
+        if (level1 == level0 || levelWeight <= 0.0)
+        {
+            return static_cast<float>(h0);
+        }
+        return static_cast<float>(h0 + (sampleLevel(level1) - h0) * levelWeight);
+    }
+
     /**
      * @brief 手続きで作るMegaGeometryの球の設定
      *
@@ -30,6 +159,24 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float TexCoordRepeatU = 3.0f;
         /** @brief 緯度方向（極から極）のテクスチャの繰り返し回数 */
         float TexCoordRepeatV = 1.5f;
+
+        /**
+         * @brief 変位に使う高さの場（nullptr なら変位しない）
+         *
+         * 各頂点を、そのUVで引いた高さ h により半径方向へ −(1−h)×DisplacementDepth 動かす（h=1 は元の球面に
+         * 残り、窪みは内側へ入るので境界球は変わらない）。高さは段ごとの頂点の間隔に合ったミップで引く。
+         */
+        const ProceduralMegaSphereHeightField *HeightField = nullptr;
+        /** @brief 高さ0の点を球面から内側へ動かす距離（m） */
+        float DisplacementDepth = 0.0f;
+        /**
+         * @brief 変位を極へ向けて弱める範囲（sin(極からの角度)＝回転軸からの距離/半径）
+         *
+         * 極の近くはテクスチャが経度方向へ縮み、変位の傾きが 1/sin で急になって棘になるため、
+         * sin が PoleFadeEndSin 以上で全量、PoleFadeStartSin 以下で0にし、間を smoothstep でつなぐ。
+         */
+        float PoleFadeStartSin = 0.15f;
+        float PoleFadeEndSin = 0.5f;
     };
 
     /**
@@ -49,6 +196,22 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         Container::VariableArray<uint32_t> LevelClusterCounts;
         /** @brief 段ごとのLODの誤差（LOD0の面からのずれの上限。LOD0は0） */
         Container::VariableArray<float> LevelErrors;
+        /** @brief 段ごとの変位の誤差（LOD0の変位した面との半径方向のずれの最大。LevelErrors に含まれる） */
+        Container::VariableArray<float> LevelDisplacementErrors;
+        /** @brief 変位で最も内側へ動いた量（m。変位しなければ0） */
+        float MaxDisplacementDepth = 0.0f;
+        /** @brief 作り直した法線が退化・裏返りのため元の球の法線に戻った頂点の数 */
+        uint32_t NormalFallbackCount = 0;
+        /** @brief 変位したときのLOD0の頂点の間隔（UV単位。MegaMeshMaterial::DisplacementUVSpacing へ渡す。変位しなければ0） */
+        float DisplacementUVSpacing = 0.0f;
+        /**
+         * @brief LOD0の作り直した法線と元の球の法線との角度の最大（度）
+         *
+         * 変位が全量の帯（sin(極からの角度) ≥ PoleFadeEndSin）と、極へ向けて弱める帯に分けて持つ。
+         * 弱める帯の値が全量の帯を大きく超えなければ、極の付近に棘が無い。
+         */
+        float MaxNormalTiltFullDegrees = 0.0f;
+        float MaxNormalTiltPoleFadeDegrees = 0.0f;
         BoundingSphere Bounds;
     };
 
@@ -60,6 +223,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      * R(1−cos ρ)）に、LOD0自身のずれを足したもの。メッシュ全体で共通のLOD球（MegaMeshCreateInfo::
      * LODBounds）と組み合わせると、全クラスタが同じ段を選ぶため段の境目に割れ目ができない。
      * 三角形の巻き方と法線・UVの向きは ProceduralMeshGenerator::GenerateUVSphere と同じ。
+     *
+     * 高さの場があれば各段の頂点を変位させ、法線を変位した格子の隣の頂点の差から作り直す。経度の継ぎ目の
+     * 列は経度0の列の位置・法線をそのまま写し、極の頂点は動かさない（極の付近は変位が0なので、極の頂点を
+     * 列ごとに分けても位置が揃う）。変位した段のLODの誤差には、LOD0の変位した面との半径方向のずれの最大を足す。
      *
      * @return 設定が不正（分割数が段数で割り切れない等）なら false
      */
@@ -81,9 +248,27 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         {
             return false;
         }
+        const ProceduralMegaSphereHeightField *heightField = settings.HeightField;
+        if (heightField &&
+            (heightField->Levels.empty() || heightField->SourceSize == 0u ||
+             !(settings.DisplacementDepth >= 0.0f) || !(settings.DisplacementDepth < settings.Radius) ||
+             !(settings.PoleFadeStartSin >= 0.0f) || !(settings.PoleFadeEndSin > settings.PoleFadeStartSin)))
+        {
+            return false;
+        }
 
         constexpr double kPi = 3.14159265358979323846;
         const float radius = settings.Radius;
+
+        // 極からの角度の sin に対する変位の重み（極の付近で0、PoleFadeEndSin 以上で1）
+        auto poleFadeWeight = [&](double sinPhi) -> double
+        {
+            const double t = std::clamp((sinPhi - static_cast<double>(settings.PoleFadeStartSin)) /
+                                            static_cast<double>(settings.PoleFadeEndSin - settings.PoleFadeStartSin),
+                                        0.0,
+                                        1.0);
+            return t * t * (3.0 - 2.0 * t);
+        };
 
         // 段ごとの頂点数・三角形数を先に数え、配列を一度に確保する。
         // 頂点の並び: 行0（北極）は列ごとに1つ（S個）、行1〜R-1 は S+1 個（経度0と1周の継ぎ目を重ねる）、
@@ -110,6 +295,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         outData.LevelTriangleCounts.resize(levelCount);
         outData.LevelClusterCounts.resize(levelCount);
         outData.LevelErrors.resize(levelCount);
+        outData.LevelDisplacementErrors.resize(levelCount, 0.0f);
 
         Mesh3DVertex *vertices = outData.Vertices.data();
         uint32_t *indices = outData.Indices.data();
@@ -130,12 +316,25 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         Container::VariableArray<float> sinTheta;
         Container::VariableArray<float> cosTheta;
         Container::VariableArray<uint32_t> levelClusterStart(levelCount + 1u, 0u);
+        Container::VariableArray<uint32_t> levelVertexBase(levelCount, 0u);
 
         for (uint32_t level = 0; level < levelCount; ++level)
         {
             const uint32_t segments = settings.Segments >> level;
             const uint32_t rings = settings.Rings >> level;
             const uint32_t rowStride = segments + 1u;
+            levelVertexBase[level] = vertexBase;
+
+            // この段の頂点の間隔（元の画像の画素数）に合ったミップで高さを引く
+            double heightMip = 0.0;
+            if (heightField)
+            {
+                const double texelsPerColumn = static_cast<double>(heightField->SourceSize) *
+                                               static_cast<double>(settings.TexCoordRepeatU) / segments;
+                const double texelsPerRow = static_cast<double>(heightField->SourceSize) *
+                                            static_cast<double>(settings.TexCoordRepeatV) / rings;
+                heightMip = std::log2(std::max(std::max(texelsPerColumn, texelsPerRow), 1.0));
+            }
 
             // 行 r・列 c の頂点の通し番号
             auto vertexIndex = [&](uint32_t row, uint32_t column) -> uint32_t
@@ -194,6 +393,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                 const float sinPhi = static_cast<float>(std::sin(phi));
                 const float cosPhi = static_cast<float>(std::cos(phi));
                 const float v = static_cast<float>(row) / static_cast<float>(rings) * settings.TexCoordRepeatV;
+                const double fadeWeight = heightField ? poleFadeWeight(std::sin(phi)) : 0.0;
+                const double heightV = static_cast<double>(row) / rings * settings.TexCoordRepeatV;
                 Mesh3DVertex *rowVertices = vertices + vertexIndex(row, 0u);
                 for (uint32_t column = 0; column <= segments; ++column)
                 {
@@ -201,15 +402,85 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                     const float ny = cosPhi;
                     const float nz = sinPhi * sinTheta[column];
                     Mesh3DVertex &vertex = rowVertices[column];
-                    vertex.Position[0] = radius * nx;
-                    vertex.Position[1] = radius * ny;
-                    vertex.Position[2] = radius * nz;
+                    float displacedRadius = radius;
+                    if (fadeWeight > 0.0 && column < segments)
+                    {
+                        const double heightU = static_cast<double>(column) / segments * settings.TexCoordRepeatU;
+                        const double height = SampleProceduralMegaSphereHeightField(*heightField, heightU, heightV, heightMip);
+                        const double depth = (1.0 - std::clamp(height, 0.0, 1.0)) * settings.DisplacementDepth * fadeWeight;
+                        displacedRadius = static_cast<float>(static_cast<double>(radius) - depth);
+                        outData.MaxDisplacementDepth = std::max(outData.MaxDisplacementDepth, static_cast<float>(depth));
+                    }
+                    vertex.Position[0] = displacedRadius * nx;
+                    vertex.Position[1] = displacedRadius * ny;
+                    vertex.Position[2] = displacedRadius * nz;
+                    if (fadeWeight > 0.0 && column == segments)
+                    {
+                        // 継ぎ目の列は経度0の列の位置を写す（ビット単位で一致して割れ目ができない）
+                        vertex.Position[0] = rowVertices[0].Position[0];
+                        vertex.Position[1] = rowVertices[0].Position[1];
+                        vertex.Position[2] = rowVertices[0].Position[2];
+                    }
                     vertex.Normal[0] = nx;
                     vertex.Normal[1] = ny;
                     vertex.Normal[2] = nz;
                     vertex.TexCoord[0] = static_cast<float>(column) / static_cast<float>(segments) *
                                          settings.TexCoordRepeatU;
                     vertex.TexCoord[1] = v;
+                }
+            }
+
+            // --- 変位した形からの法線 ---
+            // 隣の列・行の頂点の差（経度方向は継ぎ目をまたいで回り込み、緯度方向の端は極の頂点）の外積。
+            // 継ぎ目の列は経度0の列の法線を写す。退化・裏返りは元の球の法線に戻して数える。
+            if (heightField)
+            {
+                for (uint32_t row = 1; row < rings; ++row)
+                {
+                    Mesh3DVertex *rowVertices = vertices + vertexIndex(row, 0u);
+                    for (uint32_t column = 0; column < segments; ++column)
+                    {
+                        const uint32_t left = column == 0u ? segments - 1u : column - 1u;
+                        const float *pl = vertices[vertexIndex(row, left)].Position;
+                        const float *pr = vertices[vertexIndex(row, column + 1u)].Position;
+                        const float *pu = vertices[vertexIndex(row - 1u, column)].Position;
+                        const float *pd = vertices[vertexIndex(row + 1u, column)].Position;
+                        const double alongColumn[3] = {static_cast<double>(pr[0]) - pl[0],
+                                                       static_cast<double>(pr[1]) - pl[1],
+                                                       static_cast<double>(pr[2]) - pl[2]};
+                        const double alongRow[3] = {static_cast<double>(pd[0]) - pu[0],
+                                                    static_cast<double>(pd[1]) - pu[1],
+                                                    static_cast<double>(pd[2]) - pu[2]};
+                        // 経度方向 × 緯度方向（南向き）が外向き
+                        double n[3] = {alongColumn[1] * alongRow[2] - alongColumn[2] * alongRow[1],
+                                       alongColumn[2] * alongRow[0] - alongColumn[0] * alongRow[2],
+                                       alongColumn[0] * alongRow[1] - alongColumn[1] * alongRow[0]};
+                        const double length = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                        Mesh3DVertex &vertex = rowVertices[column];
+                        const double facing = length > 0.0 ? (n[0] * vertex.Normal[0] + n[1] * vertex.Normal[1] +
+                                                              n[2] * vertex.Normal[2]) / length
+                                                           : 0.0;
+                        if (!(length > 1.0e-12) || !(facing > 0.0))
+                        {
+                            ++outData.NormalFallbackCount;
+                            continue;
+                        }
+                        if (level == 0u)
+                        {
+                            const double tiltDegrees = std::acos(std::min(facing, 1.0)) * 180.0 / kPi;
+                            const double sinPhi = std::sin(kPi * static_cast<double>(row) / static_cast<double>(rings));
+                            float &maxTilt = sinPhi >= static_cast<double>(settings.PoleFadeEndSin)
+                                                 ? outData.MaxNormalTiltFullDegrees
+                                                 : outData.MaxNormalTiltPoleFadeDegrees;
+                            maxTilt = std::max(maxTilt, static_cast<float>(tiltDegrees));
+                        }
+                        vertex.Normal[0] = static_cast<float>(n[0] / length);
+                        vertex.Normal[1] = static_cast<float>(n[1] / length);
+                        vertex.Normal[2] = static_cast<float>(n[2] / length);
+                    }
+                    rowVertices[segments].Normal[0] = rowVertices[0].Normal[0];
+                    rowVertices[segments].Normal[1] = rowVertices[0].Normal[1];
+                    rowVertices[segments].Normal[2] = rowVertices[0].Normal[2];
                 }
             }
 
@@ -284,6 +555,59 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         }
         levelClusterStart[levelCount] = static_cast<uint32_t>(outData.Clusters.size());
 
+        // 変位した段のLODの誤差: LOD0の各頂点で、段kの格子の半径方向の変位を双線形に補間した値との差の最大を、
+        // 平面の三角形と球面とのずれに足す（粗い段で失われる凹凸の高さ。これが無いと近くでも粗い段が選ばれる）。
+        if (heightField && levelCount > 1u)
+        {
+            auto radialOffset = [&](uint32_t level, uint32_t row, uint32_t column) -> double
+            {
+                const uint32_t segments = settings.Segments >> level;
+                const uint32_t rings = settings.Rings >> level;
+                if (row == 0u || row >= rings)
+                {
+                    return 0.0;
+                }
+                const Mesh3DVertex &vertex =
+                    vertices[levelVertexBase[level] + segments + (row - 1u) * (segments + 1u) + column];
+                const double length = std::sqrt(static_cast<double>(vertex.Position[0]) * vertex.Position[0] +
+                                                static_cast<double>(vertex.Position[1]) * vertex.Position[1] +
+                                                static_cast<double>(vertex.Position[2]) * vertex.Position[2]);
+                return length - static_cast<double>(radius);
+            };
+
+            for (uint32_t level = 1; level < levelCount; ++level)
+            {
+                const uint32_t step = 1u << level;
+                double maxDifference = 0.0;
+                for (uint32_t row = 1; row < settings.Rings; ++row)
+                {
+                    const uint32_t coarseRow = row / step;
+                    const double rowWeight = static_cast<double>(row % step) / step;
+                    for (uint32_t column = 0; column < settings.Segments; ++column)
+                    {
+                        const uint32_t coarseColumn = column / step;
+                        const double columnWeight = static_cast<double>(column % step) / step;
+                        const double top = radialOffset(level, coarseRow, coarseColumn) +
+                                           (radialOffset(level, coarseRow, coarseColumn + 1u) -
+                                            radialOffset(level, coarseRow, coarseColumn)) * columnWeight;
+                        const double bottom = radialOffset(level, coarseRow + 1u, coarseColumn) +
+                                              (radialOffset(level, coarseRow + 1u, coarseColumn + 1u) -
+                                               radialOffset(level, coarseRow + 1u, coarseColumn)) * columnWeight;
+                        const double coarse = top + (bottom - top) * rowWeight;
+                        maxDifference = std::max(maxDifference, std::abs(radialOffset(0u, row, column) - coarse));
+                    }
+                }
+                outData.LevelDisplacementErrors[level] = static_cast<float>(maxDifference);
+                // 粗い段ほど誤差が大きい順を保つ（カリングは親の誤差が子以上であることを前提にする）
+                outData.LevelErrors[level] = std::max(outData.LevelErrors[level] + static_cast<float>(maxDifference),
+                                                      outData.LevelErrors[level - 1u]);
+            }
+            for (MeshCluster &cluster : outData.Clusters)
+            {
+                cluster.LODError = outData.LevelErrors[cluster.LODLevel];
+            }
+        }
+
         // 親のリンク: 段kのパッチ(行pr, 列pc)は、段k+1のパッチ(pr/2, pc/2)と同じ範囲に含まれる。
         for (uint32_t level = 0; level + 1u < levelCount; ++level)
         {
@@ -303,11 +627,68 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             }
         }
 
+        if (heightField)
+        {
+            outData.DisplacementUVSpacing =
+                std::max(settings.TexCoordRepeatU / static_cast<float>(settings.Segments),
+                         settings.TexCoordRepeatV / static_cast<float>(settings.Rings));
+        }
+        // 変位は内側へだけ動かすので、元の球が境界球のまま
         outData.Bounds.CenterX = 0.0f;
         outData.Bounds.CenterY = 0.0f;
         outData.Bounds.CenterZ = 0.0f;
         outData.Bounds.Radius = radius;
         return indexCursor == outData.Indices.size() && vertexBase == outData.Vertices.size();
+    }
+
+    /**
+     * @brief 同じ位置に重なるはずの頂点（経度の継ぎ目の列と経度0の列、極の列ごとの頂点）の食い違いを数える
+     *
+     * 格子の三角形は球を隙間なく覆うので、重なる頂点の位置がビット単位で一致すればメッシュに穴・割れは無い。
+     * 位置か法線のどちらかが一致しない頂点を1つと数える（法線の食い違いは陰影の継ぎ目になる）。
+     */
+    inline uint32_t CountProceduralMegaSphereSeamMismatches(const ProceduralMegaSphereSettings &settings,
+                                                            const ProceduralMegaSphereData &data)
+    {
+        auto differs = [](const Mesh3DVertex &a, const Mesh3DVertex &b)
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                if (a.Position[i] != b.Position[i] || a.Normal[i] != b.Normal[i])
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        uint32_t mismatches = 0;
+        size_t vertexBase = 0;
+        for (uint32_t level = 0; level < settings.LODLevelCount; ++level)
+        {
+            const uint32_t segments = settings.Segments >> level;
+            const uint32_t rings = settings.Rings >> level;
+            const size_t levelVertexCount = 2u * static_cast<size_t>(segments) +
+                                            static_cast<size_t>(rings - 1u) * (segments + 1u);
+            if (vertexBase + levelVertexCount > data.Vertices.size())
+            {
+                return UINT32_MAX;
+            }
+            const Mesh3DVertex *north = data.Vertices.data() + vertexBase;
+            const Mesh3DVertex *south = north + segments + static_cast<size_t>(rings - 1u) * (segments + 1u);
+            for (uint32_t column = 1; column < segments; ++column)
+            {
+                mismatches += differs(north[column], north[0]) ? 1u : 0u;
+                mismatches += differs(south[column], south[0]) ? 1u : 0u;
+            }
+            for (uint32_t row = 1; row < rings; ++row)
+            {
+                const Mesh3DVertex *rowVertices = north + segments + static_cast<size_t>(row - 1u) * (segments + 1u);
+                mismatches += differs(rowVertices[segments], rowVertices[0]) ? 1u : 0u;
+            }
+            vertexBase += levelVertexCount;
+        }
+        return mismatches;
     }
 
 } // namespace NorvesLib::Core::Rendering::MegaGeometry

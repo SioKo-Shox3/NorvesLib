@@ -23,7 +23,7 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousWorld;
     mat4 previousView;
     mat4 previousProjection;
-    vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ
+    vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV。0なら変位なし）, w=fragDebugPayload がLODの段か（1/0）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -100,6 +100,20 @@ vec2 ComputeVelocity()
     return vec2(0.0);
 }
 
+// 高さの場で変位させたメッシュでは、頂点の間隔より粗い凹凸の傾きは形（作り直した頂点の法線）が持つ。
+// 法線マップの傾き（xy/z）から、描いている段の頂点の間隔のミップ（画面の画素がそれより粗ければその画素の
+// ミップ）で引いた粗い傾きを差し引き、残りの細部だけを接空間の法線にする（同じ傾きを二重に掛けない）。
+// 段の頂点の間隔は LOD0 の間隔 × 2^段（描画の番号が段を持たない環境では LOD0 とみなす）。
+vec3 RemoveDisplacedNormalSlope(vec3 tangentNormal, vec2 texCoord, float displacementUVSpacing)
+{
+    float lodLevel = mvp.frameParams.w > 0.5 ? float(fragDebugPayload) : 0.0;
+    float vertexMip = log2(max(displacementUVSpacing * float(textureSize(normalTexture, 0).x), 1.0)) + lodLevel;
+    float coarseMip = max(vertexMip, textureQueryLod(normalTexture, texCoord).y);
+    vec3 coarseNormal = textureLod(normalTexture, texCoord, coarseMip).rgb * 2.0 - 1.0;
+    vec2 detailSlope = tangentNormal.xy / max(tangentNormal.z, 0.1) - coarseNormal.xy / max(coarseNormal.z, 0.1);
+    return normalize(vec3(detailSlope, 1.0));
+}
+
 void WriteDebugGBuffer(vec3 albedo)
 {
     outAlbedo = vec4(albedo, 1.0);
@@ -150,6 +164,11 @@ void main()
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
     vec3 normalMapSample = texture(normalTexture, texCoord).rgb;
     vec3 tangentNormal = normalMapSample * 2.0 - 1.0;
+    float displacementUVSpacing = mvp.frameParams.z;
+    if (displacementUVSpacing > 0.0)
+    {
+        tangentNormal = RemoveDisplacedNormalSlope(tangentNormal, texCoord, displacementUVSpacing);
+    }
     vec3 normal = ApplyTangentSpaceNormal(TBN, tangentNormal);
     outNormal = vec4(normal, 0.0);
 

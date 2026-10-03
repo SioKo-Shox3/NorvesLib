@@ -187,6 +187,14 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         // POMパラメータ
         float HeightScale = 0.0f;
         bool bHasHeightMap = false;
+
+        /**
+         * @brief 高さの場で変位させたメッシュの、LOD0の頂点の間隔（UV単位。0以下なら変位していない）
+         *
+         * 正なら、法線マップのうち頂点の間隔より粗い傾き（形で表した分）を差し引いた細部だけを、
+         * 変位した形の法線の上に載せる（同じ凹凸の傾きを二重に掛けない）。
+         */
+        float DisplacementUVSpacing = 0.0f;
     };
 
     // ========================================

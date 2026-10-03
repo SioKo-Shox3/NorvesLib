@@ -51,6 +51,11 @@
 #endif
 #include "GameModes/Rendering3DTest/SkySunControl.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
+#include "Core/Public/Asset/AssetFileReader.h"
+#include "Core/Public/Thread/JobSystem.h"
+#include "Core/Public/Thread/Task.h"
+
+#include "stb_image.h"
 
 #include <chrono>
 #include <cmath>
@@ -70,15 +75,123 @@ namespace Game::GameModes
 {
     namespace
     {
-        // 大きな球の高ポリのMegaGeometryの影・光線に使う段（160×80 の格子、約2.5万三角形）。
-        // 球面とのずれは約0.4 mmで、影の地図・光線の命中では見分けられない。
-        constexpr uint32_t kBigSphereShadowLODLevel = 3u;
-        // 大きな球の石畳の視差の深さ。テクスチャの密度（約2 mで1枚）を地面にそろえたので、地面と同じ値にする。
+        // 大きな球の高ポリのMegaGeometryの影・光線に使う段（320×160 の格子、約10万三角形、頂点の間隔約2 cm）。
+        // 変位した石の盛り上がり（石1つが約10〜15 cm）を形として持ち、影・光線も同じ凹凸の形を使う。
+        constexpr uint32_t kBigSphereShadowLODLevel = 2u;
+        // 大きな球の石畳の視差の深さ（高さマップを読めず変位しないときだけPOMで使う）。地面と同じ値。
         constexpr float kBigSphereHeightScale = 0.03f;
+        // 大きな球の変位の深さ（高さ0の点を球面から内側へ動かす距離）。石畳の法線マップの傾きが高さマップの
+        // 勾配×深さと最小二乗で一致する深さ（1枚約2.09 mで横2.95 cm・縦3.07 cm）にし、作り直した法線と法線マップの
+        // 傾きの大きさをそろえる。今のPOM（高さの尺度0.03×1枚2.09 m＝真上から見て6.3 cm、オフセットを抑える
+        // 近似のため45°で4.4 cm・60°で3.1 cm相当）の見た目の範囲にも入る。
+        constexpr float kBigSphereDisplacementDepth = 0.03f;
+        // 高さマップのミップを作り始める段（4096画素なら512画素。LOD0の頂点の間隔は約12画素でミップ3.58）
+        constexpr uint32_t kBigSphereHeightFieldFirstMip = 3u;
+        // LOD0の格子（経度×緯度）。頂点の間隔は約6.1 mmで、変位の凹凸（石1つ約10〜15 cm、目地の幅約1〜3 cm）を形に持つ。
+        // 近接視点ではLOD0が選ばれ、1280×640（約164万三角形）では三角形が約1.3画素と細かすぎて MegaGeometryPass が
+        // 中央値 6〜7 ms になり、1フレームのGPUの時間が予算16.6 msに近づくため1段下げる。
+        constexpr uint32_t kBigSphereSegments = 1024u;
+        constexpr uint32_t kBigSphereRings = 512u;
+        constexpr const char *kBigSphereHeightMapRelativePath = "Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png";
 
         double ElapsedMilliseconds(std::chrono::steady_clock::time_point startTime)
         {
             return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime).count();
+        }
+
+        // 大きな球の高ポリのMegaGeometry（緯度経度の格子で LOD0 は 1024×512、約105万三角形。8×8セルのクラスタと、
+        // 縦横半分ずつ粗くした5段のLOD）の頂点とクラスタを作り、石畳の高さマップ（16ビットのグレーのPNG）で
+        // 石の盛り上がりと目地の窪みを形にする。UVは横3回・縦1.5回の繰り返しで、1枚が約2.1 m四方。
+        // 別スレッドで走る。高さマップを読めなければ変位しない球を作り、球を作れなければ outData を空にする。
+        void BuildBigSphereMegaData(ProceduralMegaSphereData &outData)
+        {
+            const auto buildStartTime = std::chrono::steady_clock::now();
+
+            const AnsiString assetRoot = Asset::AssetFileReader::GetCompiledDefaultAssetRoot();
+            const String heightMapPath = assetRoot.empty()
+                                             ? String("Assets/") + kBigSphereHeightMapRelativePath
+                                             : String(assetRoot.c_str()) + "/" + kBigSphereHeightMapRelativePath;
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            stbi_us *pixels = stbi_load_16(heightMapPath.c_str(), &width, &height, &channels, 1);
+            const double decodeMs = ElapsedMilliseconds(buildStartTime);
+
+            const auto heightFieldStartTime = std::chrono::steady_clock::now();
+            ProceduralMegaSphereHeightField heightField;
+            const bool bHeightFieldOk =
+                pixels && width > 0 && width == height &&
+                BuildProceduralMegaSphereHeightField(pixels, static_cast<uint32_t>(width), kBigSphereHeightFieldFirstMip,
+                                                     heightField);
+            stbi_image_free(pixels);
+            const double heightFieldMs = ElapsedMilliseconds(heightFieldStartTime);
+            if (!bHeightFieldOk)
+            {
+                NORVES_LOG_WARNING("Rendering3DTest",
+                                   "大きな球の高さマップを読めませんでした（変位なしの球にします）: %s (%dx%d)",
+                                   heightMapPath.c_str(),
+                                   width,
+                                   height);
+            }
+
+            const auto meshStartTime = std::chrono::steady_clock::now();
+            ProceduralMegaSphereSettings sphereSettings{};
+            sphereSettings.Segments = kBigSphereSegments;
+            sphereSettings.Rings = kBigSphereRings;
+            if (bHeightFieldOk)
+            {
+                sphereSettings.HeightField = &heightField;
+                sphereSettings.DisplacementDepth = kBigSphereDisplacementDepth;
+            }
+            if (!BuildProceduralMegaSphere(sphereSettings, outData))
+            {
+                outData = ProceduralMegaSphereData{};
+                NORVES_LOG_ERROR("Rendering3DTest", "大きな球の高ポリのMegaGeometryを作れませんでした（通常のメッシュの球のまま）");
+                return;
+            }
+            const double meshMs = ElapsedMilliseconds(meshStartTime);
+
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=big_sphere_cluster_lod_build build_ms=%.1f heightmap_decode_ms=%.1f heightfield_ms=%.1f "
+                            "mesh_ms=%.1f vertices=%u triangles=%u clusters=%u levels=%u",
+                            ElapsedMilliseconds(buildStartTime),
+                            decodeMs,
+                            heightFieldMs,
+                            meshMs,
+                            static_cast<uint32_t>(outData.Vertices.size()),
+                            static_cast<uint32_t>(outData.Indices.size() / 3u),
+                            static_cast<uint32_t>(outData.Clusters.size()),
+                            static_cast<uint32_t>(outData.LevelTriangleCounts.size()));
+            NORVES_LOG_INFO("Rendering3DTest",
+                            "big_sphere_displacement displaced=%d depth_m=%.4f max_depth_m=%.4f pole_fade_sin=%.2f..%.2f "
+                            "uv_spacing=%.6f normal_fallbacks=%u seam_pole_mismatches=%u max_normal_tilt_deg_full=%.1f "
+                            "max_normal_tilt_deg_pole_fade=%.1f heightmap=%dx%d channels=%d",
+                            bHeightFieldOk ? 1 : 0,
+                            bHeightFieldOk ? static_cast<double>(kBigSphereDisplacementDepth) : 0.0,
+                            static_cast<double>(outData.MaxDisplacementDepth),
+                            static_cast<double>(sphereSettings.PoleFadeStartSin),
+                            static_cast<double>(sphereSettings.PoleFadeEndSin),
+                            static_cast<double>(outData.DisplacementUVSpacing),
+                            outData.NormalFallbackCount,
+                            CountProceduralMegaSphereSeamMismatches(sphereSettings, outData),
+                            static_cast<double>(outData.MaxNormalTiltFullDegrees),
+                            static_cast<double>(outData.MaxNormalTiltPoleFadeDegrees),
+                            width,
+                            height,
+                            channels);
+            for (uint32_t level = 0; level < outData.LevelTriangleCounts.size(); ++level)
+            {
+                NORVES_LOG_INFO("Rendering3DTest",
+                                "big_sphere_lod level=%u triangles=%u clusters=%u avg_triangles_per_cluster=%.1f "
+                                "lod_error_m=%.3g displacement_error_m=%.3g",
+                                level,
+                                outData.LevelTriangleCounts[level],
+                                outData.LevelClusterCounts[level],
+                                static_cast<double>(outData.LevelTriangleCounts[level]) /
+                                    static_cast<double>(outData.LevelClusterCounts[level]),
+                                static_cast<double>(outData.LevelErrors[level]),
+                                static_cast<double>(outData.LevelDisplacementErrors[level]));
+            }
         }
 
         // 起動時に作った大きな球の頂点・クラスタから、石畳の材質を付けたMegaMeshを作り、仮に置いていた
@@ -87,7 +200,7 @@ namespace Game::GameModes
         {
             TSharedPtr<ProceduralMegaSphereData> sphereData = data.m_pBigSphereMegaData;
             data.m_pBigSphereMegaData.reset();
-            if (!sphereData || !data.m_CobbleStoneMaterialUpdate)
+            if (!sphereData || sphereData->Vertices.empty() || !data.m_CobbleStoneMaterialUpdate)
             {
                 return;
             }
@@ -114,9 +227,17 @@ namespace Game::GameModes
             createInfo.Material.NormalTexture = textures.GetRHITexturePtr(cobble.NormalTexture);
             createInfo.Material.RoughnessTexture = textures.GetRHITexturePtr(cobble.RoughnessTexture);
             createInfo.Material.AOTexture = textures.GetRHITexturePtr(cobble.AOTexture);
-            createInfo.Material.HeightTexture = textures.GetRHITexturePtr(cobble.HeightTexture);
-            createInfo.Material.HeightScale = kBigSphereHeightScale;
-            createInfo.Material.bHasHeightMap = static_cast<bool>(createInfo.Material.HeightTexture);
+            if (sphereData->DisplacementUVSpacing > 0.0f)
+            {
+                // 凹凸は形（変位）で出すので POM は切る。法線マップは形が持つ粗い傾きを差し引いて細部だけ載せる。
+                createInfo.Material.DisplacementUVSpacing = sphereData->DisplacementUVSpacing;
+            }
+            else
+            {
+                createInfo.Material.HeightTexture = textures.GetRHITexturePtr(cobble.HeightTexture);
+                createInfo.Material.HeightScale = kBigSphereHeightScale;
+                createInfo.Material.bHasHeightMap = static_cast<bool>(createInfo.Material.HeightTexture);
+            }
             createInfo.DebugName = "BigCobbleSphere";
 
             const MegaMeshHandle megaMeshHandle = megaGeometry.CreateMegaMesh(createInfo);
@@ -726,39 +847,21 @@ namespace Game::GameModes
 
             data.m_bMeshesRegistered = bSphereOk && bGroundOk;
 
-            // 大きな球の高ポリのMegaGeometry（緯度経度の格子で LOD0 は 1280×640、約164万三角形。
-            // 8×8セルのクラスタと、縦横半分ずつ粗くした5段のLOD）の頂点とクラスタをここで作っておき、
+            // 大きな球の高ポリのMegaGeometry（BuildBigSphereMegaData）の頂点・変位・クラスタを別スレッドで作り始め、
             // 石畳のテクスチャがそろったら MegaMesh にして、上の通常のメッシュの球（仮の球）と差し替える。
-            // UVは横3回・縦1.5回の繰り返しで、1枚が約2.1 m四方（地面の石畳の2 mとほぼ同じ密度・縦横比）。
+            // ジョブを投げられなければここで作る。
             {
-                const auto buildStartTime = std::chrono::steady_clock::now();
                 auto sphereData = MakeShared<ProceduralMegaSphereData>();
-                const ProceduralMegaSphereSettings sphereSettings{};
-                if (BuildProceduralMegaSphere(sphereSettings, *sphereData))
+                data.m_pBigSphereMegaData = sphereData;
+                NorvesLib::Thread::TaskPtr buildTask =
+                    NorvesLib::Thread::Task::Create([sphereData]() { BuildBigSphereMegaData(*sphereData); });
+                if (buildTask && NorvesLib::Thread::JobSystem::Get().SubmitTask(buildTask))
                 {
-                    NORVES_LOG_INFO("AssetLoadProfile",
-                                    "stage=big_sphere_cluster_lod_build build_ms=%.1f vertices=%u triangles=%u clusters=%u levels=%u",
-                                    ElapsedMilliseconds(buildStartTime),
-                                    static_cast<uint32_t>(sphereData->Vertices.size()),
-                                    static_cast<uint32_t>(sphereData->Indices.size() / 3u),
-                                    static_cast<uint32_t>(sphereData->Clusters.size()),
-                                    static_cast<uint32_t>(sphereData->LevelTriangleCounts.size()));
-                    for (uint32_t level = 0; level < sphereData->LevelTriangleCounts.size(); ++level)
-                    {
-                        NORVES_LOG_INFO("Rendering3DTest",
-                                        "big_sphere_lod level=%u triangles=%u clusters=%u avg_triangles_per_cluster=%.1f lod_error_m=%.3g",
-                                        level,
-                                        sphereData->LevelTriangleCounts[level],
-                                        sphereData->LevelClusterCounts[level],
-                                        static_cast<double>(sphereData->LevelTriangleCounts[level]) /
-                                            static_cast<double>(sphereData->LevelClusterCounts[level]),
-                                        static_cast<double>(sphereData->LevelErrors[level]));
-                    }
-                    data.m_pBigSphereMegaData = sphereData;
+                    data.m_BigSphereBuildTask = buildTask;
                 }
                 else
                 {
-                    NORVES_LOG_ERROR("Rendering3DTest", "大きな球の高ポリのMegaGeometryを作れませんでした（通常のメッシュの球のまま）");
+                    BuildBigSphereMegaData(*sphereData);
                 }
             }
 
@@ -2244,6 +2347,21 @@ namespace Game::GameModes
         if (data.m_pBigSphereMegaData && data.m_CobbleStoneMaterialUpdate &&
             data.m_CobbleStoneMaterialUpdate->PendingTextureCount == 0)
         {
+            // 頂点を作るジョブがまだなら待つ（テクスチャがそろった直後に差し替え、撮影の数え始めと揃える）。
+            if (data.m_BigSphereBuildTask)
+            {
+                const auto waitStartTime = std::chrono::steady_clock::now();
+                const bool bWasCompleted = data.m_BigSphereBuildTask->IsCompleted();
+                if (!bWasCompleted)
+                {
+                    data.m_BigSphereBuildTask->Wait();
+                }
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=big_sphere_build_wait completed_before_wait=%d wait_ms=%.1f",
+                                bWasCompleted ? 1 : 0,
+                                ElapsedMilliseconds(waitStartTime));
+                data.m_BigSphereBuildTask.reset();
+            }
             CreateBigSphereMegaGeometry(ctx, data);
         }
 
@@ -2354,6 +2472,8 @@ namespace Game::GameModes
         data.m_pSphereMeshComponent = nullptr;
         data.m_pSphereMegaGeometryComponent = nullptr;
         data.m_pBigSphereMegaData.reset();
+        // 走行中のジョブは自分の参照で球のデータを持ち続けるので、ここでは待たずに手放す。
+        data.m_BigSphereBuildTask.reset();
         data.m_CobbleStoneMaterialUpdate.reset();
         data.m_BigSphereModelHandle = ModelHandle::Invalid();
         data.m_pGroundObject = nullptr;

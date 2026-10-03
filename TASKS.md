@@ -383,7 +383,7 @@
 - notes: 2026-10-03 ユーザーの要望（球のポリゴンをスムースに。MegaGeometryの経路でポリ数を大きく上げてよい）。今の球は UV が1周（約6.3 m）で4Kを1回だけ貼るため、地面（2 mで1枚）の約1/3の密度で、石が横に引き伸ばされている。既存の MegaGeometry の岩は66122三角形が25562クラスタ（平均約2.6三角形）で、クラスタが小さすぎる疑いがある（`MAX_TRIANGLES_PER_CLUSTER = 128`）。危険地帯（MegaGeometry・RenderThread）。評価者を通す。
 
 ## SS-MEGA-SPHERE-DISPLACE: 高ポリの球を石畳の高さマップで実際に凹凸させる
-- status: todo
+- status: done
 - done-when: SS-MEGA-SPHERE の高ポリの球の頂点を、石畳の高さマップ（`cobblestone_floor_09_disp_4k.png`、起動時にCPUで読む）で法線の向きへ動かし、石の盛り上がりと目地の窪みを実際の形にする（高さの尺度は今の POM の見た目に合わせ、値と根拠を記録する）。動かした形から法線を作り直し、法線マップと向きが合う。この球の材質では POM を切る（形で凹凸を出すので二重にしない）。メッシュに穴・割れ（UVの継ぎ目・極で頂点がずれて開く所）が無く、極の付近で棘が出ない（極へ向けて変位を弱める等。方法を記録する）。撮影の近接視点と低角度で、球の輪郭が石の凹凸でガタガタして見え、影（太陽・点光源・コンタクトシャドウ）とレイトレのシーンも同じ形を使う（変更前後の拡大画像）。起動時間とGPUの時間の条件は SS-MEGA-SPHERE と同じ。
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`

@@ -779,8 +779,11 @@ namespace NorvesLib::Core::Rendering
         const bool bMegaGeometryDebugPayloadSupported =
             bMegaGeometryDebugPayloadRequested &&
             caps.bDrawIndirectFirstInstance;
+        // デバッグ表示でなければ、描いているクラスタのLODの段を渡す（変位した材質が段の頂点の間隔を知るため）。
+        const bool bLODLevelPayload = !bMegaGeometryDebugPayloadRequested && caps.bDrawIndirectFirstInstance;
         const uint32_t debugPayloadMode =
-            GetMegaGeometryDebugPayloadMode(command.DebugMode, bMegaGeometryDebugPayloadSupported);
+            bLODLevelPayload ? DEBUG_PAYLOAD_MODE_LOD_LEVEL
+                             : GetMegaGeometryDebugPayloadMode(command.DebugMode, bMegaGeometryDebugPayloadSupported);
 
         if (bMegaGeometryDebugPayloadRequested &&
             !caps.bDrawIndirectFirstInstance &&
@@ -971,7 +974,7 @@ namespace NorvesLib::Core::Rendering
                 float PreviousWorld[16];
                 float PreviousView[16];
                 float PreviousProjection[16];
-                float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ
+                float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
             };
             static_assert(sizeof(PerObjectUBO) <= 512u);
 
@@ -1001,6 +1004,8 @@ namespace NorvesLib::Core::Rendering
             perObject.PomParams[1] = mat.bHasHeightMap ? 1.0f : 0.0f;
             perObject.PomParams[2] = static_cast<float>(static_cast<uint8_t>(command.DebugMode));
             perObject.PomParams[3] = bMegaGeometryDebugPayloadSupported ? 1.0f : 0.0f;
+            perObject.FrameParams[2] = mat.DisplacementUVSpacing > 0.0f ? mat.DisplacementUVSpacing : 0.0f;
+            perObject.FrameParams[3] = bLODLevelPayload ? 1.0f : 0.0f;
 
             drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
 
