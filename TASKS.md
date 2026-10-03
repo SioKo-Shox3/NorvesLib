@@ -1753,15 +1753,15 @@
 - paths: Tools/AssetCook/CMakeLists.txt, TASKS.md, PROGRESS.md
 - notes: G2実装開始は作者承認済み。G2-S1〜S8の推奨案の包括承認ではない。まず形式/既定値に依存しない分離を行う。
 
-## G2-SELECT-S8: GLBとBVHの解析方針を確定する
-- status: blocked
-- done-when: 作者の選定を記録し、GR77等へ適用する。推奨Aは既存JsonDocument/stbを利用した共有GLB処理と自前BVH、FBXはBlender経由。
-- notes: 2026-10-02 UTCにGLBの既存JSON/stb活用部分を確認依頼、返答待ち。BVH/FBX方針は質問本文に含めていないため、この返答だけで包括承認しない。新規外部parserの採否を暗黙に確定しない。非依存の作業は継続。
+## G2-SELECT-S8: GLBの共有解析方針を確定する
+- status: done
+- done-when: 作者の選定を記録しGR77へ適用する。
+- notes: 2026-10-03 UTCに既存JsonDocument/stbを活用するGLB共有処理を承認。新規外部glTF parserは追加しない。BVH/FBXは質問範囲外で、この承認に含めない。
 
 ## G2-SELECT-S2: 取り込み設定の正本を確定する
-- status: blocked
-- done-when: 作者の選定を記録し、GR78/GR96へ適用する。推奨Aはソース隣<ソース名>.import.jsonを正本にし、cook/looseへ共通適用、欠如時は恒等。
-- notes: 2026-10-02 UTCに確認を依頼、返答待ち。設定正本を実装で既成事実化しない。イベント/ソケット等のruntime定義と取り込み変換は分離する。
+- status: done
+- done-when: 作者の選定を記録しGR78/GR96へ適用する。
+- notes: 2026-10-03 UTCにAを承認。ソース隣<ソース名>.import.jsonを正本にしてcook/looseで共用する。欠如時は恒等。イベント/ソケット等のruntime定義と取り込み変換は分離する。
 
 ## G2-GR86-LIMITS: 現行の関節上限を共有定数へ集約する
 - status: done
@@ -1769,3 +1769,18 @@
 - verify: 対象3箇所の参照と旧128境界の意味不変を照合、公開headerのcompileとPUBLIC_HEADERS登録、可能な関連CPU回帰、実統合compile制約を明記する。
 - stop-when: 未承認の256関節化、JOINTS_1拒否変更、format v1への先行変更、既存型/描画ABIの変更。
 - notes: GR86前半の選定不要部分。G2-S4の縮約/焼き込み/Strict変更とStage Bの上限拡張は保留したまま進める。
+
+## G2-GR77-CONTAINER: GLBの共有バイトコンテナを解析する
+- status: done
+- done-when: 共有のGltfContainerが借用SpanでGLB v2 header/JSON/BINを範囲安全に分解し、非GLB入力はBOMを除いたJSON viewとして区別する。未知chunkを無視し、既知chunk順/重複/長さ/切断を拒否する。BINのコピー/ファイルI/O/JSON意味解析は行わない。
+- verify: 既存CookedMeshTest束へMEMBERを追加し、正常/未知chunk/切断/overflow/順序/再利用時出力clear/入力非変更と借用寿命契約を実parserの通常/O2-NDEBUG/sanitizer/MEMBER compileで確認する。
+- stop-when: 入力越境/overflow、構造上無効なGLBを成功扱い、所有権を偽装、Windows stub導入、3経路への接続完了と誤認。
+- paths: Library/Core/Private/Resource/GltfContainer.h, Library/Core/Private/Resource/GltfContainer.cpp, Library/Core/CMakeLists.txt, Test/Core/Asset/GltfContainerTest.cpp, Test/Core/Asset/CMakeLists.txt, Docs/Architecture/AssetImportPipeline.md, TASKS.md, PROGRESS.md
+- notes: GR77最初の部品。buffers[0]/byteLength/padding、data URI/base64、画像、cooker/loose/骨格への接続は後続タスク。G2-S8のGLB部分だけを承認済みとして使う。
+
+## G2-GR77-BASE64: 埋め込みdata URI向けの厳密base64を共有化する
+- status: todo
+- done-when: Span入力/出力の無割当primitiveでRFC4648標準alphabet・padding・末尾未使用bitを検証し必要長と復号を提供する。容量/入出力重なりを拒否し、失敗時は出力bytes不変/長さ0。
+- verify: RFC既知例、全1/2byte入力と固定seed3byte、非正規padding/無効文字/空白/切断、容量/alias/出力tail保持を通常/O2/sanitizer/MEMBERで実行する。
+- stop-when: padding不正の黙認、部分書込み、入力越境/overflow、data URI/JSON/ファイル接続を完了扱いする。
+- notes: GltfBufferSet/画像のdata URI解決が使う下層部品。URIの構文・percent decode・MIMEは別層で扱う。

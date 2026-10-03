@@ -15,6 +15,7 @@ target_include_directories(AssetSystemTest PRIVATE
 norves_add_test_bundle(CookedMeshTest
     FOLDER "Test/Core/Asset"
     MEMBER CookedMeshTest CookedMeshTest.cpp
+    MEMBER GltfContainerTest GltfContainerTest.cpp
     MEMBER CookedTextureTest CookedTextureTest.cpp
     MEMBER AudioCookedAssetTest AudioCookedAssetTest.cpp
     MEMBER CookedSkeletalAssetTest CookedSkeletalAssetTest.cpp
@@ -22,6 +23,7 @@ norves_add_test_bundle(CookedMeshTest
 target_link_libraries(CookedMeshTest PRIVATE Core)
 target_include_directories(CookedMeshTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
 add_dependencies(CookedMeshTest AssetCook)
 
@@ -49,3 +51,5 @@ add_test(NAME CookedSkeletalAssetTest
         -P "${CMAKE_CURRENT_SOURCE_DIR}/CookedSkeletalAssetTest.cmake.in"
 )
 set_property(TEST CookedSkeletalAssetTest APPEND PROPERTY ENVIRONMENT "NORVES_TEST_BUNDLE_MEMBER=CookedSkeletalAssetTest")
+
+add_test(NAME GltfContainerTest COMMAND CookedMeshTest --test=GltfContainerTest)

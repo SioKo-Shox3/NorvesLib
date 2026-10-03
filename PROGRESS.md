@@ -435,3 +435,7 @@
 
 - G2-GR86-LIMITS: 現glTF decoder/cooker/NVSKEL 0.x loaderの128上限をResource/SkeletalLimits.hのLegacyMaximumJointCountへ集約。値/比較演算/0件拒否/エラー/format/vertex ABIは維持し、新版の256化で旧形式を緩めない名前にした。公開headerのC++23/O2/Werror・128/129境界・0〜1024述語一致、3参照とPUBLIC_HEADERS登録/BOMCRLFを確認、独立レビューPASS。3consumerのcompileはWindows.hで停止、実資産ロードの合格ではない。
 - Next: G2のGLB共有処理とsidecar正本は作者回答待ち。GLB質問への承認をBVH/FBXまで広げない。新規外部parserや形式/既定値変更は選定前に進めない。
+
+- G2選定: 2026-10-03 UTCにS8のGLB共有解析（既存JsonDocument/stb）とS2のsource隣sidecar/cook-loose共用を作者承認。BVH/FBXと他の未決選定には拡張しない。
+- G2-GR77-CONTAINER: 無割当/借用SpanのGLB構造parserを追加。magic/v2/全長/整列/範囲/JSON先頭・BIN第2/既知重複を検証し未知chunkは無視、非GLBはBOM除去JSON view、失敗時clear。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/Werror/MEMBERと4,000固定seed破損入力成功。独立66,470ケース反証と寿命/非整列/巨大境界も成功しPASS。JSON意味/padding照合や3消費経路の配線は未実装で、GLB資産の取り込み完了とは扱わない。
+- Next: GR77のdata URI向け厳密Base64 primitive、続いて共有buffer解決へ進む。

@@ -166,6 +166,8 @@ set(PRIVATE_SOURCES
     Private/Resource/MaterialResource.cpp
     Private/Resource/GLTFAnalyzer.cpp
     Private/Resource/SkeletalGltfDecode.cpp
+    Private/Resource/GltfContainer.h
+    Private/Resource/GltfContainer.cpp
     Private/Resource/SkinnedMeshResource.cpp
     Private/Resource/FontAtlas.cpp
     Private/Resource/ModelAssetLoader.cpp
