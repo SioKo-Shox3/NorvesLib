@@ -231,19 +231,28 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
     uint parentStart = cluster.lodInfo.z;
     uint parentCount = cluster.lodInfo.w;
 
-    // カメラからの距離。メッシュ共通のLOD球があれば、全クラスタがその球の表面までの距離で選ぶ
+    // 誤差1を画面の画素へ直す倍率。メッシュ共通のLOD球があれば、全クラスタが同じ倍率で選ぶ
     // （どの段も閉じたメッシュなら、メッシュ全体で同じ段が選ばれて段の境目に割れ目ができない）。
-    float dist = distance(center, cullData.cameraPosition.xyz);
+    // 誤差は球の法線方向のずれなので、見える面での投影の最大 projectionFactor·D/(D²−R²) を使う
+    // （MegaGeometryLODSelection.h の ComputeLODSphereErrorPixelsPerMeter と同じ式）。
+    float errorScale;
     if (cullData.lodSphere.w > 0.0)
     {
+        float worldScale = ComputeWorldRadiusScale();
         vec3 lodCenter = TransformClusterCenterToWorld(cullData.lodSphere.xyz);
-        float lodRadius = cullData.lodSphere.w * ComputeWorldRadiusScale();
-        dist = distance(lodCenter, cullData.cameraPosition.xyz) - lodRadius;
+        float lodRadius = cullData.lodSphere.w * worldScale;
+        float centerDistance = distance(lodCenter, cullData.cameraPosition.xyz);
+        float denominator = max(centerDistance * centerDistance - lodRadius * lodRadius, 1e-6);
+        errorScale = cullData.projectionFactor * centerDistance / denominator * worldScale;
     }
-    dist = max(dist, 0.001); // 0除算防止
+    else
+    {
+        float dist = max(distance(center, cullData.cameraPosition.xyz), 0.001); // 0除算防止
+        errorScale = cullData.projectionFactor / dist;
+    }
 
     // このクラスタのスクリーン投影誤差（ピクセル単位）
-    float projectedError = lodError * cullData.projectionFactor / dist;
+    float projectedError = lodError * errorScale;
 
     // LOD 0: 最詳細レベル → 常に描画候補（ただし親が十分なら親に任せる）
     if (lodLevel == 0)
@@ -259,7 +268,7 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
         {
             GPUClusterData parent = clusters[parentStart + i];
             float parentError = uintBitsToFloat(parent.lodInfo.y);
-            float parentProjectedError = parentError * cullData.projectionFactor / dist;
+            float parentProjectedError = parentError * errorScale;
             if (parentProjectedError <= cullData.lodBias)
             {
                 return false; // 親で十分
@@ -286,7 +295,7 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
     {
         GPUClusterData parent = clusters[parentStart + i];
         float parentError = uintBitsToFloat(parent.lodInfo.y);
-        float parentProjectedError = parentError * cullData.projectionFactor / dist;
+        float parentProjectedError = parentError * errorScale;
         if (parentProjectedError > cullData.lodBias)
         {
             return true; // 親が粗すぎるので自身を描画

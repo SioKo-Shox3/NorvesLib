@@ -250,6 +250,20 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     };
 
     /**
+     * @brief MegaMeshのLODの1段を1回の描画で描くための範囲と誤差
+     *
+     * その段のクラスタが、頂点の基点が全て0で統合インデックスの中に隙間なく並んでいるときだけ
+     * IndexCount が0でない（影へ段を選んで描くのに使う）。
+     */
+    struct MegaMeshLevelRange
+    {
+        uint32_t FirstIndex = 0;
+        uint32_t IndexCount = 0;
+        /** @brief その段のLODの誤差（クラスタの LODError の最大。ローカル空間の長さ） */
+        float Error = 0.0f;
+    };
+
+    /**
      * @brief MegaMesh GPUデータ
      *
      * GPU上のリソースハンドルを保持する内部構造体。
@@ -267,6 +281,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t ShadowFirstIndex = 0;
         /** @brief 影とレイトレーシングで使うLODの段のインデックス数（0なら影へ描かない） */
         uint32_t ShadowIndexCount = 0;
+        /** @brief 影に使う最も細かい段（MegaMeshCreateInfo::ShadowLODLevel） */
+        uint32_t ShadowLODLevel = 0;
+        /** @brief 段ごとの描画の範囲と誤差（添え字が段。影へテクセルに見合う段を選ぶのに使う） */
+        VariableArray<MegaMeshLevelRange> LevelRanges;
 
         BoundingSphere TotalBounds;
         /** @brief LODの選択に使う共通の境界球（無効ならクラスタごとの中心で選ぶ） */

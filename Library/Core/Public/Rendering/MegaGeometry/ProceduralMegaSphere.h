@@ -196,7 +196,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         Container::VariableArray<uint32_t> LevelClusterCounts;
         /** @brief 段ごとのLODの誤差（LOD0の面からのずれの上限。LOD0は0） */
         Container::VariableArray<float> LevelErrors;
-        /** @brief 段ごとの変位の誤差（LOD0の変位した面との半径方向のずれの最大。LevelErrors に含まれる） */
+        /** @brief 段ごとの変位の誤差（LOD0の変位した面との半径方向のずれの最大。LevelErrors はこれと球面とのずれの大きい方） */
         Container::VariableArray<float> LevelDisplacementErrors;
         /** @brief 変位で最も内側へ動いた量（m。変位しなければ0） */
         float MaxDisplacementDepth = 0.0f;
@@ -226,7 +226,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      *
      * 高さの場があれば各段の頂点を変位させ、法線を変位した格子の隣の頂点の差から作り直す。経度の継ぎ目の
      * 列は経度0の列の位置・法線をそのまま写し、極の頂点は動かさない（極の付近は変位が0なので、極の頂点を
-     * 列ごとに分けても位置が揃う）。変位した段のLODの誤差には、LOD0の変位した面との半径方向のずれの最大を足す。
+     * 列ごとに分けても位置が揃う）。変位した段のLODの誤差は、球面とのずれと、LOD0の変位した面との半径方向の
+     * ずれの最大の大きい方。
      *
      * @return 設定が不正（分割数が段数で割り切れない等）なら false
      */
@@ -555,8 +556,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         }
         levelClusterStart[levelCount] = static_cast<uint32_t>(outData.Clusters.size());
 
-        // 変位した段のLODの誤差: LOD0の各頂点で、段kの格子の半径方向の変位を双線形に補間した値との差の最大を、
-        // 平面の三角形と球面とのずれに足す（粗い段で失われる凹凸の高さ。これが無いと近くでも粗い段が選ばれる）。
+        // 変位した段のLODの誤差: LOD0の各頂点で、段kの格子の半径方向の変位を双線形に補間した値との差の最大と、
+        // 平面の三角形と球面とのずれの大きい方（粗い段で失われる凹凸の高さ。これが無いと近くでも粗い段が選ばれる）。
         if (heightField && levelCount > 1u)
         {
             auto radialOffset = [&](uint32_t level, uint32_t row, uint32_t column) -> double
@@ -598,8 +599,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                     }
                 }
                 outData.LevelDisplacementErrors[level] = static_cast<float>(maxDifference);
+                // 球面からのずれと変位の差は同じ半径方向のずれなので、大きい方をこの段の誤差にする。
                 // 粗い段ほど誤差が大きい順を保つ（カリングは親の誤差が子以上であることを前提にする）
-                outData.LevelErrors[level] = std::max(outData.LevelErrors[level] + static_cast<float>(maxDifference),
+                outData.LevelErrors[level] = std::max(std::max(outData.LevelErrors[level], static_cast<float>(maxDifference)),
                                                       outData.LevelErrors[level - 1u]);
             }
             for (MeshCluster &cluster : outData.Clusters)

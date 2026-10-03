@@ -414,7 +414,7 @@
 - notes: 2026-10-03 SS-MEGA-SPHERE で見つけた。岩は頂点67042・三角形66122、小屋は頂点6599・三角形4281で、閉じたメッシュの目安（頂点≒三角形の半分）より頂点が多く、UVの島ごとに頂点が複製されている。`MeshClusterizer::BuildAdjacencyGraph` は頂点の番号の辺だけで隣接をつなぐため、クラスタの成長が島の境で止まる（手続きの球は頂点を共有するので平均127.8）。
 
 ## SS-MEGA-LOD-PERF: 大きな球のLODを画面上の誤差で選び、CSMのMegaGeometryをカスケードに見合う段で描く
-- status: todo
+- status: done
 - done-when: (1) 大きな球（MegaGeometry、変位あり）のクラスタのLODを、その段で失われる形の誤差（球面からのずれと変位の差の大きい方）を画面へ投影した大きさで選び、誤差が約1画素以下になる最も粗い段を使う（近接視点で1画素より小さい三角形ばかりの LOD0 を描かない）。段の境目に割れ目が出ない（SS-MEGA-SPHERE の LOD 球の規則を保つ）。(2) CSM の各カスケードへ描く MegaGeometry（岩・小屋・球）の段を、カスケードの1テクセルの大きさに見合う誤差で選ぶ（遠いカスケードほど粗い）。点光源のキューブも同じ考えで、遠い面・小さいキューブには粗い段を使う。どの段を何三角形描いたかを視点・カスケードごとにログへ出す。(3) RelWithDebInfo の `-GpuTimingFrames 600` で、近接視点（昼45°）の1フレームのGPUの中央値が5 ms以下、昼の3視点の全540フレームが16.6 ms以下（MegaGeometryPass・ShadowMapPass の中央値を変更前の SS-ACCEPT-DETAIL の値と並べて記録する）。(4) 見た目が変わらない: 近接・低角度の球の輪郭と目地、地面の影の、変更前後の拡大画像で差が目に見えない（差の画像と、球の領域の平均の差を示す）。
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
@@ -424,6 +424,14 @@
 - stop-when: 誤差1画素で見た目に差が出る場合は、差が見えない最も粗い閾値を撮り比べで選び、選んだ値と測定を記録する。中央値5 msに届かない場合は、届いた値とパスごとの内訳を既知の限界として記録して完了にする。
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/Rendering3DTest, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-03 SS-ACCEPT-DETAIL の計測で分かった。近接視点のGPUの中央値が 約3.1 → 8.2〜9.3 ms に増え、増分のほぼすべてが MegaGeometryPass（0.34 → 5.4〜6.2 ms）。変位を LOD の誤差に含めた結果、近接で大きな球の LOD0（1,046,528三角形）が選ばれ、その多くが1画素より小さい。12960フレーム中2フレームが16.6 msを超えた（MegaGeometryPass と ShadowMapPass が同じフレームで跳ねた）。CSM は岩・小屋を LOD0 のまま4カスケードすべてへ描く（`csm_mega_lod=0`）。この計測は FIX-MEGA-CLUSTER-ADJACENCY（法線コーンのカリングの変更を含む）の前。2026-10-03 ユーザーの指示: 最適化を先にやってからマージ・プッシュする。危険地帯（MegaGeometry・影・RenderThread）。評価者を通す。
+- result: 2026-10-03 完了。閾値は1画素のまま（撮り比べで2画素は近接で LOD1 になり目地の深い暗がりが消え、低角度は LOD4 で球が平均10/255暗くなるため不採用）。近接は LOD1 の誤差が1.56画素で LOD0 を保つ（見た目を変えない側を優先）。近接（昼45°）のGPUの中央値は 5.326 ms で5 msに届かず、既知の限界（MegaGeometryPass 2.582・LightingPass 0.648・ShadowMapPass 0.643 ms）。3視点1620フレームの最大 9.03 ms で予算超え0。
+
+## FIX-STRING-EMPTY-CSTR: 空の Container::String の c_str() が終端の無い値を返すのを直す
+- status: todo
+- done-when: 空の `TString` の `c_str()`・`data()` が空の文字列（終端の0）を指し、`%s` で書いても余計な文字が出ない。既存の呼び出しの挙動を変えない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- paths: Library/Core/Public/Container, Test/Core, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 SS-MEGA-LOD-PERF で見つけた。`String.h` の `c_str()` は空のとき `&npos`（size_t の最大値のバイト列）を返し、ログに化けた文字が出た。SS-MEGA-LOD-PERF では呼ぶ側で空なら "" を渡して避けた。
 
 ## SS-ACCEPT-PERF: 最適化の後のGPUの時間と撮影を受入れ記録へ反映する
 - status: todo

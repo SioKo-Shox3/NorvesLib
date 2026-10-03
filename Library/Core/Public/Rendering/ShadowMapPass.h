@@ -183,6 +183,10 @@ namespace NorvesLib::Core::Rendering
         // 最後に記録したカスケードごとのMegaGeometryの描画数と三角形数。変わったときだけ記録する。
         uint32_t m_LoggedCsmMegaDraws[4] = {~0u, ~0u, ~0u, ~0u};
         uint32_t m_LoggedCsmMegaTriangles[4] = {~0u, ~0u, ~0u, ~0u};
+        // 最後に記録したカスケードごとのMegaGeometryの段（メッシュ名:段/三角形数）。変わったときだけ記録する。
+        Container::String m_LoggedCsmMegaLevels;
+        // 最後に記録した点光源のキューブの面ごとのMegaGeometryの段。変わったときだけ記録する。
+        Container::String m_LoggedPointMegaLevels;
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;

@@ -265,6 +265,52 @@ namespace NorvesLib::Core::Rendering
         gpuData.ShadowFirstIndex = bShadowRangeValid ? static_cast<uint32_t>(shadowIndexBegin) : 0u;
         gpuData.ShadowIndexCount =
             bShadowRangeValid ? static_cast<uint32_t>(shadowIndexEnd - shadowIndexBegin) : 0u;
+        gpuData.ShadowLODLevel = shadowLODLevel;
+
+        // 段ごとの範囲と誤差（影へカスケード・光源からの距離に見合う段を選ぶため）。段の範囲の決め方は
+        // 影の段と同じで、1回の範囲で描けない段は IndexCount を0にする。
+        {
+            uint32_t maxLevel = 0;
+            for (const auto &cluster : *uploadClusters)
+            {
+                maxLevel = std::max(maxLevel, cluster.LODLevel);
+            }
+            struct LevelAccumulator
+            {
+                uint64_t Begin = UINT64_MAX;
+                uint64_t End = 0;
+                uint64_t Sum = 0;
+                bool bDrawableAsOneRange = true;
+            };
+            Container::VariableArray<LevelAccumulator> accumulators(static_cast<size_t>(maxLevel) + 1u);
+            gpuData.LevelRanges.resize(static_cast<size_t>(maxLevel) + 1u);
+            for (const auto &cluster : *uploadClusters)
+            {
+                LevelAccumulator &accumulator = accumulators[cluster.LODLevel];
+                MegaGeometry::MegaMeshLevelRange &range = gpuData.LevelRanges[cluster.LODLevel];
+                range.Error = std::max(range.Error, cluster.LODError);
+                if (cluster.VertexOffset != 0)
+                {
+                    accumulator.bDrawableAsOneRange = false;
+                    continue;
+                }
+                accumulator.Begin = std::min<uint64_t>(accumulator.Begin, cluster.IndexOffset);
+                accumulator.End = std::max<uint64_t>(accumulator.End,
+                                                     static_cast<uint64_t>(cluster.IndexOffset) + cluster.IndexCount);
+                accumulator.Sum += cluster.IndexCount;
+            }
+            for (size_t level = 0; level < accumulators.size(); ++level)
+            {
+                const LevelAccumulator &accumulator = accumulators[level];
+                MegaGeometry::MegaMeshLevelRange &range = gpuData.LevelRanges[level];
+                const bool bValid = accumulator.bDrawableAsOneRange && accumulator.End > 0u &&
+                                    accumulator.Begin < accumulator.End &&
+                                    accumulator.End - accumulator.Begin == accumulator.Sum &&
+                                    accumulator.End <= uploadIndexCount;
+                range.FirstIndex = bValid ? static_cast<uint32_t>(accumulator.Begin) : 0u;
+                range.IndexCount = bValid ? static_cast<uint32_t>(accumulator.End - accumulator.Begin) : 0u;
+            }
+        }
 
         // クラスタの大きさ（1クラスタあたりの三角形数）を段ごとに記録する。極端に小さいと
         // カリングと間接描画の1件あたりの手間に対して描く量が少なくなる。

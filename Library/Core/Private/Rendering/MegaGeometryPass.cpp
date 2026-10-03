@@ -25,6 +25,8 @@
 #include "RHI/DeviceCapabilities.h"
 #include "Text/IdentityPool.h"
 #include "Logging/LogMacros.h"
+#include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
+#include <cstdlib>
 #include <cstring>
 #include <cmath>
 
@@ -72,6 +74,24 @@ namespace NorvesLib::Core::Rendering
     MegaGeometryPass::MegaGeometryPass(const MegaGeometryPassSettings &settings)
         : m_Settings(settings)
     {
+        // 撮り比べ用に、LODの段を選ぶ誤差の閾値（画素）を環境変数で替えられるようにする。
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char *value = std::getenv("NORVES_MEGA_LOD_ERROR_PX");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (value != nullptr && value[0] != '\0')
+        {
+            char *end = nullptr;
+            const float threshold = std::strtof(value, &end);
+            if (end != value && *end == '\0' && std::isfinite(threshold) && threshold > 0.0f)
+            {
+                m_Settings.LODBias = threshold;
+            }
+        }
     }
 
     MegaGeometryPass::~MegaGeometryPass()
@@ -909,6 +929,7 @@ namespace NorvesLib::Core::Rendering
                 uniformData.LODSphere[1] = gpuData->LODBounds.CenterY;
                 uniformData.LODSphere[2] = gpuData->LODBounds.CenterZ;
                 uniformData.LODSphere[3] = gpuData->LODBounds.Radius;
+                LogUniformLODSelection(instance, *gpuData, uniformData);
             }
             cullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
 
@@ -1104,6 +1125,79 @@ namespace NorvesLib::Core::Rendering
                                    RHI::ResourceState::IndirectArgument,
                                    RHI::ResourceState::Common);
         }
+    }
+
+    void MegaGeometryPass::LogUniformLODSelection(const MegaMeshInstance &instance,
+                                                  const MegaGeometry::MegaMeshGPUData &gpuData,
+                                                  const CullUniformData &uniformData)
+    {
+        if (gpuData.LevelRanges.empty())
+        {
+            return;
+        }
+
+        // ワールド行列は行ベクトル規約（並進は行3）。半径は最大の軸の伸びで広げる（cluster_cull.comp と同じ）。
+        const float *world = instance.WorldMatrix;
+        const BoundingSphere &local = gpuData.LODBounds;
+        float center[3] = {};
+        float maxScaleSquared = 0.0f;
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            center[axis] = local.CenterX * world[0 + axis] + local.CenterY * world[4 + axis] +
+                           local.CenterZ * world[8 + axis] + world[12 + axis];
+            const float lengthSquared = world[axis * 4 + 0] * world[axis * 4 + 0] +
+                                        world[axis * 4 + 1] * world[axis * 4 + 1] +
+                                        world[axis * 4 + 2] * world[axis * 4 + 2];
+            maxScaleSquared = std::max(maxScaleSquared, lengthSquared);
+        }
+        const float scale = std::sqrt(maxScaleSquared);
+        const float dx = center[0] - uniformData.CameraPosition[0];
+        const float dy = center[1] - uniformData.CameraPosition[1];
+        const float dz = center[2] - uniformData.CameraPosition[2];
+        const float centerDistance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const float radius = local.Radius * scale;
+        const float errorScale = MegaGeometry::ComputeLODSphereErrorPixelsPerMeter(
+                                     centerDistance, radius, uniformData.ProjectionFactor) *
+                                 scale;
+        const uint32_t level = MegaGeometry::SelectCoarsestLODWithinError(gpuData.LevelRanges,
+                                                                           errorScale,
+                                                                           uniformData.LODBias);
+
+        LoggedUniformLOD *logged = nullptr;
+        for (LoggedUniformLOD &entry : m_LoggedUniformLODs)
+        {
+            if (entry.MegaMeshId == instance.Handle.Id)
+            {
+                logged = &entry;
+                break;
+            }
+        }
+        if (logged && logged->Level == level)
+        {
+            return;
+        }
+        if (!logged)
+        {
+            m_LoggedUniformLODs.push_back(LoggedUniformLOD{instance.Handle.Id, level});
+        }
+        else
+        {
+            logged->Level = level;
+        }
+
+        const MegaGeometry::MegaMeshLevelRange &range = gpuData.LevelRanges[level];
+        const bool bHasCoarser = level + 1u < gpuData.LevelRanges.size();
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "mega_lod_select mesh=\"%s\" level=%u level_triangles=%u camera_to_lod_center_m=%.3f "
+                        "lod_radius_m=%.3f threshold_px=%.2f level_error_px=%.3f coarser_level_error_px=%.3f",
+                        gpuData.DebugName.empty() ? "" : gpuData.DebugName.c_str(),
+                        level,
+                        range.IndexCount / 3u,
+                        static_cast<double>(centerDistance),
+                        static_cast<double>(radius),
+                        static_cast<double>(uniformData.LODBias),
+                        static_cast<double>(range.Error * errorScale),
+                        bHasCoarser ? static_cast<double>(gpuData.LevelRanges[level + 1u].Error * errorScale) : -1.0);
     }
 
     // ========================================

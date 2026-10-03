@@ -1,5 +1,7 @@
-#include "Asset/AssetSystem.h"
+﻿#include "Asset/AssetSystem.h"
 #include "Rendering/RenderResources.h"
+#include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
+#include "Rendering/MegaGeometry/ProceduralMegaSphere.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "Library/Core/Private/Resource/ModelAssetLoader.h"
@@ -8,6 +10,8 @@
 
 #include <cassert>
 #include <chrono>
+#include <cmath>
+#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -395,6 +399,123 @@ namespace
         assert(manager.GetResourceStats().BufferCount == 0);
     }
 
+    // 手続きの球の段ごとの範囲・誤差と、段の選び方の契約（GBufferは割れ目の無い一律の段、影は影の段より細かくしない）
+    void TestProceduralSphereLevelRangesAndLODSelection()
+    {
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+
+        Mega::ProceduralMegaSphereSettings settings;
+        settings.Segments = 64;
+        settings.Rings = 32;
+        settings.LODLevelCount = 4;
+        settings.PatchCells = 4;
+        Mega::ProceduralMegaSphereData sphere;
+        assert(Mega::BuildProceduralMegaSphere(settings, sphere));
+
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(manager.Initialize(device));
+        Mega::MegaMeshCreateInfo createInfo;
+        createInfo.VertexData = sphere.Vertices.data();
+        createInfo.VertexDataSize = sphere.Vertices.size() * sizeof(Mesh3DVertex);
+        createInfo.VertexCount = static_cast<uint32_t>(sphere.Vertices.size());
+        createInfo.VertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+        createInfo.IndexData = sphere.Indices.data();
+        createInfo.IndexCount = static_cast<uint32_t>(sphere.Indices.size());
+        createInfo.Clusters = sphere.Clusters;
+        createInfo.TotalBounds = sphere.Bounds;
+        createInfo.LODBounds = sphere.Bounds;
+        createInfo.bBuildLODHierarchy = false;
+        createInfo.ShadowLODLevel = 1;
+        createInfo.DebugName = "LevelRangeSphere";
+        const auto handle = manager.MegaGeometry().CreateMegaMesh(createInfo);
+        assert(handle.IsValid());
+        const auto *gpuData = manager.MegaGeometry().GetMegaMeshGPUData(handle);
+        assert(gpuData != nullptr);
+        assert(gpuData->ShadowLODLevel == 1u);
+        assert(gpuData->LevelRanges.size() == settings.LODLevelCount);
+        uint32_t expectedFirstIndex = 0;
+        for (uint32_t level = 0; level < settings.LODLevelCount; ++level)
+        {
+            const Mega::MegaMeshLevelRange &range = gpuData->LevelRanges[level];
+            assert(range.FirstIndex == expectedFirstIndex);
+            assert(range.IndexCount == sphere.LevelTriangleCounts[level] * 3u);
+            assert(range.Error == sphere.LevelErrors[level]);
+            assert(level == 0u || range.Error >= gpuData->LevelRanges[level - 1u].Error);
+            expectedFirstIndex += range.IndexCount;
+        }
+        assert(gpuData->ShadowFirstIndex == gpuData->LevelRanges[1].FirstIndex);
+        assert(gpuData->ShadowIndexCount == gpuData->LevelRanges[1].IndexCount);
+
+        // 見える面での法線方向のずれの投影の最大を、球の表面の点を細かく走査した値と比べる
+        const float projectionFactor = 623.5f;
+        const float radius = 1.0f;
+        for (float centerDistance : {1.05f, 1.5f, 2.5f, 6.0f, 40.0f})
+        {
+            double bruteForce = 0.0;
+            for (int step = 0; step <= 200000; ++step)
+            {
+                const double angle = 3.14159265358979323846 * step / 200000.0;
+                const double px = radius * std::cos(angle);
+                const double py = radius * std::sin(angle);
+                if (px * centerDistance < radius * radius)
+                {
+                    break; // 輪郭より向こうは見えない
+                }
+                const double vx = px - centerDistance;
+                const double vy = py;
+                const double distance = std::sqrt(vx * vx + vy * vy);
+                const double sinTheta = std::abs(std::cos(angle) * vy - std::sin(angle) * vx) / distance;
+                bruteForce = std::max(bruteForce, projectionFactor * sinTheta / distance);
+            }
+            const float scale = Mega::ComputeLODSphereErrorPixelsPerMeter(centerDistance, radius, projectionFactor);
+            assert(std::abs(scale - bruteForce) <= 1.0e-3 * bruteForce);
+            // 最も近い点までの距離で割る従来の見積もり以下（同じ閾値で細かすぎる段を選ばない）
+            assert(scale <= projectionFactor / (centerDistance - radius) * 1.0001f);
+        }
+        // カメラが球の中なら最も細かい段
+        assert(Mega::SelectCoarsestLODWithinError(
+                   gpuData->LevelRanges,
+                   Mega::ComputeLODSphereErrorPixelsPerMeter(0.5f, radius, projectionFactor),
+                   1.0f) == 0u);
+
+        // 一律の段の選び方は、cluster_cull.comp の親子の判定（自分の誤差 ≤ 閾値 < 親の誤差）と一致する
+        for (float errorScale : {0.0f, 1.0f, 10.0f, 100.0f, 1000.0f, 1.0e5f, 1.0e7f})
+        {
+            const uint32_t selected = Mega::SelectCoarsestLODWithinError(gpuData->LevelRanges, errorScale, 1.0f);
+            uint32_t drawnLevels = 0;
+            for (uint32_t level = 0; level < settings.LODLevelCount; ++level)
+            {
+                const bool bSelfWithin = level == 0u || gpuData->LevelRanges[level].Error * errorScale <= 1.0f;
+                const bool bParentTooCoarse = level + 1u == settings.LODLevelCount ||
+                                              gpuData->LevelRanges[level + 1u].Error * errorScale > 1.0f;
+                if (bSelfWithin && bParentTooCoarse)
+                {
+                    assert(level == selected);
+                    ++drawnLevels;
+                }
+            }
+            assert(drawnLevels == 1u);
+        }
+
+        // 影の段: 影に指定した段より細かくせず、テクセルが大きいほど粗い（単調）。
+        uint32_t previous = 0;
+        for (float texelSize : {0.0f, 1.0e-6f, 0.001f, 0.01f, 0.05f, 0.2f, 1.0f, 100.0f})
+        {
+            const uint32_t level = Mega::SelectShadowLODLevel(*gpuData, 1.0f, texelSize, 1.0f);
+            assert(level >= gpuData->ShadowLODLevel);
+            assert(level >= previous);
+            assert(level == gpuData->ShadowLODLevel ||
+                   gpuData->LevelRanges[level].Error <= texelSize);
+            previous = level;
+        }
+        assert(Mega::SelectShadowLODLevel(*gpuData, 1.0f, 100.0f, 1.0f) == settings.LODLevelCount - 1u);
+        // ワールドで2倍に伸ばした物は誤差も2倍で、同じテクセルなら細かい段に留まる
+        const float texel = gpuData->LevelRanges[settings.LODLevelCount - 1u].Error * 1.5f;
+        assert(Mega::SelectShadowLODLevel(*gpuData, 1.0f, texel, 1.0f) == settings.LODLevelCount - 1u);
+        assert(Mega::SelectShadowLODLevel(*gpuData, 2.0f, texel, 1.0f) < settings.LODLevelCount - 1u);
+    }
+
     void TestSharedHandleCounter()
     {
         RenderResources manager;
@@ -753,6 +874,7 @@ int main()
     TestInvalidCreateInfoCreatesNoBuffers();
     TestMegaEmissiveCanonicalContractRejectsInvalidWithoutSideEffects();
     TestSuccessfulNoLodUpload();
+    TestProceduralSphereLevelRangesAndLODSelection();
     TestSharedHandleCounter();
     TestCreateFailureDoesNotRegister(1);
     TestCreateFailureDoesNotRegister(2);

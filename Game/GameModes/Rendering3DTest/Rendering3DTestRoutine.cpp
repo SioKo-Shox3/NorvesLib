@@ -358,6 +358,20 @@ namespace Game::GameModes
             return value == nullptr || std::strcmp(value, "0") != 0;
         }
 
+        // 環境変数 NORVES_STARTUP_SPHERE_SPIN が "0" なら false（大きな球の自転を止め、同じ向きで撮り比べる用）。
+        bool ReadStartupSphereSpinEnabled()
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_STARTUP_SPHERE_SPIN");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            return value == nullptr || std::strcmp(value, "0") != 0;
+        }
+
         // 起動画面の高さフォグ（R3）。地面での密度（1/m、0で無効）と、高さ方向の減衰（1/m）。
         // 減衰を上限の 1/m にして地面すれすれの薄い層にし、遠くの地面へ向かう浅い視線だけが厚く霞む
         // ようにする。密度は太陽 45° の撮り比べ（0.02〜0.1）で、地面すれすれの低角度視点でも近くの各球の
@@ -2368,7 +2382,8 @@ namespace Game::GameModes
         // 球体をY軸回転させる
         if (data.m_pSphereObject && (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested))
         {
-            float angle = data.m_ElapsedTime * data.m_RotationSpeed;
+            static const bool bSphereSpin = ReadStartupSphereSpinEnabled();
+            float angle = bSphereSpin ? data.m_ElapsedTime * data.m_RotationSpeed : 0.0f;
             NorvesLib::Math::Vector3 yAxis(0.0f, 1.0f, 0.0f);
             NorvesLib::Math::Quaternion rotation(yAxis, angle);
             data.m_pSphereObject->SetRotation(rotation);
