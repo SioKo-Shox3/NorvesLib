@@ -215,23 +215,6 @@ namespace NorvesLib::Tools::AssetCook
             return Fnv1a64Update(hash, bytes, sizeof(bytes));
         }
 
-        // Hashes the complete glTF source: the JSON bytes (BOM included) plus every external
-        // buffer, each prefixed by its little-endian 64-bit byte length so that a byte moving
-        // across a boundary cannot collide with an unchanged source.
-        uint64_t ComputeGltfSourceHash(const uint8_t* sourceBytes, size_t sourceSize,
-                                       const VariableArray<VariableArray<uint8_t>>& bufferBytes)
-        {
-            uint64_t hash = Format::Fnv1a64OffsetBasis;
-            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(sourceSize));
-            hash = Fnv1a64Update(hash, sourceBytes, sourceSize);
-            for (const VariableArray<uint8_t>& bytes : bufferBytes)
-            {
-                hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(bytes.size()));
-                hash = Fnv1a64Update(hash, bytes.data(), bytes.size());
-            }
-            return hash;
-        }
-
         // 埋込みbufferは元sourceに含まれる。外部bufferは余剰を含む全量をJSON順で加える。
         uint64_t ComputeGltfSourceHash(const uint8_t* sourceBytes, size_t sourceSize,
                                        const Gltf::BufferSet& buffers)
@@ -1987,23 +1970,14 @@ namespace NorvesLib::Tools::AssetCook
                 error = AnsiString("unsupported skeletal format: ") + AnsiString(format);
                 return false;
             }
-            if (sourceBytes == nullptr || sourceSize == 0 ||
-                std::find(sourceBytes, sourceBytes + sourceSize, uint8_t{0}) != sourceBytes + sourceSize)
+            if (sourceBytes == nullptr || sourceSize == 0)
             {
-                error = "glTF JSON input is empty or contains an embedded NUL byte";
+                error = "glTF source input is empty";
                 return false;
             }
-
-            size_t jsonOffset = 0;
-            if (sourceSize >= 3 && sourceBytes[0] == 0xefu && sourceBytes[1] == 0xbbu && sourceBytes[2] == 0xbfu)
-            {
-                jsonOffset = 3;
-            }
-            const String jsonText = ToCoreString(
-                AnsiStringView(reinterpret_cast<const char*>(sourceBytes) + jsonOffset, sourceSize - jsonOffset));
-            NorvesLib::Core::Skeletal::SkeletalGltfSourceBuffers sourceBuffers;
+            Gltf::BufferSet sourceBuffers;
             const auto decoded = NorvesLib::Core::Skeletal::DecodeSkeletalGltf(
-                jsonText, ToCoreString(sourcePath), &sourceBuffers);
+                {sourceBytes, sourceSize}, ToCoreString(sourcePath), &sourceBuffers);
             if (!decoded.Succeeded())
             {
                 error = AnsiString("skeletal glTF decode failed: status=") +

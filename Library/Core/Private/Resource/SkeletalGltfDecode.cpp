@@ -1,7 +1,8 @@
 ﻿#include "Resource/SkeletalGltfDecode.h"
 #include "Resource/SkeletalLimits.h"
 
-#include "FileStream/FileStream.h"
+#include "Resource/GltfBufferFile.h"
+#include "Resource/GltfBufferJson.h"
 #include "Text/JsonDocument.h"
 
 #include <algorithm>
@@ -38,12 +39,6 @@ namespace NorvesLib::Core::Skeletal
             size_t ByteOffset = 0;
             size_t ByteLength = 0;
             size_t ByteStride = 0;
-        };
-
-        struct BufferInfo
-        {
-            Container::String Uri;
-            size_t ByteLength = 0;
         };
 
         struct AccessorLayout
@@ -598,38 +593,6 @@ namespace NorvesLib::Core::Skeletal
             return 0.0f;
         }
 
-        bool ReadBinaryFile(const Container::String& path, Container::VariableArray<uint8_t>& outBytes)
-        {
-            auto stream = NorvesLib::FileStream::FileStream::Create(
-                path,
-                NorvesLib::FileStream::FileMode::Read,
-                NorvesLib::FileStream::FileAccess::Read,
-                NorvesLib::FileStream::FileShare::Read);
-            if (!stream || !stream->IsOpen())
-            {
-                return false;
-            }
-
-            const int64_t fileSize = stream->GetSize();
-            if (fileSize < 0 || static_cast<uint64_t>(fileSize) > std::numeric_limits<size_t>::max())
-            {
-                stream->Close();
-                return false;
-            }
-
-            outBytes.resize(static_cast<size_t>(fileSize));
-            const size_t readSize = outBytes.empty() ? 0 : stream->Read(outBytes.data(), outBytes.size());
-            stream->Close();
-            return readSize == outBytes.size();
-        }
-
-        Container::String MakeBufferPath(const Container::String& sourcePath, const Container::String& uri)
-        {
-            const std::filesystem::path path =
-                (std::filesystem::path(sourcePath.c_str()).parent_path() / uri.c_str()).lexically_normal();
-            return Container::String(path.string().c_str());
-        }
-
         bool ParseAccessors(const JsonValue& root,
                             Container::VariableArray<AccessorInfo>& outAccessors,
                             SkeletalGltfDecodeStatus& outStatus)
@@ -718,55 +681,9 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
-        bool ParseBuffers(const JsonValue& root, Container::VariableArray<BufferInfo>& outBuffers)
-        {
-            const JsonValue values = root.FindMember("buffers");
-            if (!values.IsArray() || values.GetArraySize() == 0)
-            {
-                return false;
-            }
-
-            outBuffers.reserve(values.GetArraySize());
-            for (size_t index = 0; index < values.GetArraySize(); ++index)
-            {
-                const JsonValue value = values.GetArrayElement(index);
-                if (!value.IsObject())
-                {
-                    return false;
-                }
-
-                BufferInfo buffer;
-                buffer.Uri = value.FindMember("uri").AsString();
-                if (!TryReadRequiredSize(value, "byteLength", buffer.ByteLength) || buffer.Uri.empty() ||
-                    buffer.Uri.find("data:") == 0)
-                {
-                    return false;
-                }
-                outBuffers.push_back(std::move(buffer));
-            }
-            return true;
-        }
-
-        bool LoadBuffers(const Container::VariableArray<BufferInfo>& buffers,
-                         const Container::String& sourcePath,
-                         Container::VariableArray<Container::VariableArray<uint8_t>>& outBytes)
-        {
-            outBytes.resize(buffers.size());
-            for (size_t index = 0; index < buffers.size(); ++index)
-            {
-                if (!ReadBinaryFile(MakeBufferPath(sourcePath, buffers[index].Uri), outBytes[index]) ||
-                    outBytes[index].size() < buffers[index].ByteLength)
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
         bool BuildAccessorLayout(const AccessorInfo& accessor,
                                  const Container::VariableArray<BufferViewInfo>& bufferViews,
-                                 const Container::VariableArray<BufferInfo>& buffers,
-                                 const Container::VariableArray<Container::VariableArray<uint8_t>>& bufferBytes,
+                                 const Gltf::BufferSet& buffers,
                                  AccessorLayout& outLayout)
         {
             if (accessor.BufferView >= bufferViews.size())
@@ -775,14 +692,14 @@ namespace NorvesLib::Core::Skeletal
             }
 
             const BufferViewInfo& view = bufferViews[accessor.BufferView];
-            if (view.Buffer >= buffers.size() || view.Buffer >= bufferBytes.size())
+            if (view.Buffer >= buffers.GetCount())
             {
                 return false;
             }
 
             size_t viewEnd = 0;
             if (!CheckedAdd(view.ByteOffset, view.ByteLength, viewEnd) ||
-                viewEnd > buffers[view.Buffer].ByteLength || viewEnd > bufferBytes[view.Buffer].size())
+                viewEnd > buffers.GetDeclaredByteLength(view.Buffer) || viewEnd > buffers.GetBytes(view.Buffer).size())
             {
                 return false;
             }
@@ -819,12 +736,12 @@ namespace NorvesLib::Core::Skeletal
 
             size_t dataOffset = 0;
             if (!CheckedAdd(view.ByteOffset, accessor.ByteOffset, dataOffset) ||
-                dataOffset > bufferBytes[view.Buffer].size())
+                dataOffset > buffers.GetBytes(view.Buffer).size())
             {
                 return false;
             }
 
-            outLayout.Data = bufferBytes[view.Buffer].data() + dataOffset;
+            outLayout.Data = buffers.GetBytes(view.Buffer).data() + dataOffset;
             outLayout.Stride = stride;
             outLayout.ElementSize = elementSize;
             return true;
@@ -835,8 +752,7 @@ namespace NorvesLib::Core::Skeletal
                          const Container::String& type,
                          uint32_t componentType,
                          const Container::VariableArray<BufferViewInfo>& bufferViews,
-                         const Container::VariableArray<BufferInfo>& buffers,
-                         const Container::VariableArray<Container::VariableArray<uint8_t>>& bufferBytes,
+                         const Gltf::BufferSet& buffers,
                          const AccessorInfo*& outAccessor,
                          AccessorLayout& outLayout)
         {
@@ -846,7 +762,7 @@ namespace NorvesLib::Core::Skeletal
             }
             const AccessorInfo& accessor = accessors[index];
             if (accessor.Type != type || accessor.ComponentType != componentType ||
-                !BuildAccessorLayout(accessor, bufferViews, buffers, bufferBytes, outLayout))
+                !BuildAccessorLayout(accessor, bufferViews, buffers, outLayout))
             {
                 return false;
             }
@@ -962,8 +878,7 @@ namespace NorvesLib::Core::Skeletal
         bool ExtractMesh(const PrimitiveInfo& primitive,
                          const Container::VariableArray<AccessorInfo>& accessors,
                          const Container::VariableArray<BufferViewInfo>& bufferViews,
-                         const Container::VariableArray<BufferInfo>& buffers,
-                         const Container::VariableArray<Container::VariableArray<uint8_t>>& bufferBytes,
+                         const Gltf::BufferSet& buffers,
                          SkeletalGltfData& outData)
         {
             const AccessorInfo* position = nullptr;
@@ -979,11 +894,11 @@ namespace NorvesLib::Core::Skeletal
             AccessorLayout weightsLayout;
             AccessorLayout indexLayout;
 
-            if (!GetAccessor(accessors, primitive.Position, "VEC3", FloatComponent, bufferViews, buffers, bufferBytes,
+            if (!GetAccessor(accessors, primitive.Position, "VEC3", FloatComponent, bufferViews, buffers,
                              position, positionLayout) ||
-                !GetAccessor(accessors, primitive.Normal, "VEC3", FloatComponent, bufferViews, buffers, bufferBytes,
+                !GetAccessor(accessors, primitive.Normal, "VEC3", FloatComponent, bufferViews, buffers,
                              normal, normalLayout) ||
-                !GetAccessor(accessors, primitive.TexCoord, "VEC2", FloatComponent, bufferViews, buffers, bufferBytes,
+                !GetAccessor(accessors, primitive.TexCoord, "VEC2", FloatComponent, bufferViews, buffers,
                              texCoord, texCoordLayout))
             {
                 return false;
@@ -1011,9 +926,9 @@ namespace NorvesLib::Core::Skeletal
             if (!bValidJointType || !bValidWeightType || !bValidIndexType || position->ByteOffset % 4 != 0 ||
                 normal->ByteOffset % 4 != 0 || texCoord->ByteOffset % 4 != 0 || joints->ByteOffset % 4 != 0 ||
                 weights->ByteOffset % 4 != 0 ||
-                !BuildAccessorLayout(*joints, bufferViews, buffers, bufferBytes, jointsLayout) ||
-                !BuildAccessorLayout(*weights, bufferViews, buffers, bufferBytes, weightsLayout) ||
-                !BuildAccessorLayout(*indices, bufferViews, buffers, bufferBytes, indexLayout) ||
+                !BuildAccessorLayout(*joints, bufferViews, buffers, jointsLayout) ||
+                !BuildAccessorLayout(*weights, bufferViews, buffers, weightsLayout) ||
+                !BuildAccessorLayout(*indices, bufferViews, buffers, indexLayout) ||
                 position->Count == 0 || normal->Count != position->Count || texCoord->Count != position->Count ||
                 joints->Count != position->Count || weights->Count != position->Count ||
                 indices->Count == 0 || indices->Count % 3 != 0)
@@ -1098,8 +1013,7 @@ namespace NorvesLib::Core::Skeletal
                              const NodeContract& nodeContract,
                              const Container::VariableArray<AccessorInfo>& accessors,
                              const Container::VariableArray<BufferViewInfo>& bufferViews,
-                             const Container::VariableArray<BufferInfo>& buffers,
-                             const Container::VariableArray<Container::VariableArray<uint8_t>>& bufferBytes,
+                             const Gltf::BufferSet& buffers,
                              SkeletalGltfData& outData,
                              Container::VariableArray<int32_t>& outNodeToJoint)
         {
@@ -1114,8 +1028,7 @@ namespace NorvesLib::Core::Skeletal
             const AccessorInfo* inverseBind = nullptr;
             AccessorLayout inverseBindLayout;
             if (!TryReadRequiredUInt32(skin, "inverseBindMatrices", inverseBindAccessorIndex) ||
-                !GetAccessor(accessors, inverseBindAccessorIndex, "MAT4", FloatComponent, bufferViews, buffers,
-                             bufferBytes, inverseBind, inverseBindLayout) ||
+                !GetAccessor(accessors, inverseBindAccessorIndex, "MAT4", FloatComponent, bufferViews, buffers, inverseBind, inverseBindLayout) ||
                 inverseBind->Count != jointValues.GetArraySize())
             {
                 return false;
@@ -1202,8 +1115,7 @@ namespace NorvesLib::Core::Skeletal
                               const Container::VariableArray<int32_t>& nodeToJoint,
                               const Container::VariableArray<AccessorInfo>& accessors,
                               const Container::VariableArray<BufferViewInfo>& bufferViews,
-                              const Container::VariableArray<BufferInfo>& buffers,
-                              const Container::VariableArray<Container::VariableArray<uint8_t>>& bufferBytes,
+                              const Gltf::BufferSet& buffers,
                               SkeletalGltfData& outData)
         {
             const JsonValue samplers = animation.FindMember("samplers");
@@ -1234,7 +1146,7 @@ namespace NorvesLib::Core::Skeletal
                 AccessorLayout inputLayout;
                 if (!TryReadRequiredUInt32(sampler, "input", inputIndex) ||
                     !TryReadRequiredUInt32(sampler, "output", outputIndex) ||
-                    !GetAccessor(accessors, inputIndex, "SCALAR", FloatComponent, bufferViews, buffers, bufferBytes,
+                    !GetAccessor(accessors, inputIndex, "SCALAR", FloatComponent, bufferViews, buffers,
                                  input, inputLayout) ||
                     outputIndex >= accessors.size())
                 {
@@ -1282,7 +1194,7 @@ namespace NorvesLib::Core::Skeletal
                                                                 : SkeletalAnimationInterpolation::Linear;
                 const AccessorInfo* output = nullptr;
                 AccessorLayout outputLayout;
-                if (!GetAccessor(accessors, outputIndex, outputType, FloatComponent, bufferViews, buffers, bufferBytes,
+                if (!GetAccessor(accessors, outputIndex, outputType, FloatComponent, bufferViews, buffers,
                                  output, outputLayout) ||
                     input->Count == 0 || output->Count != input->Count)
                 {
@@ -1336,9 +1248,128 @@ namespace NorvesLib::Core::Skeletal
         }
     } // namespace
 
+    namespace
+    {
+        SkeletalGltfDecodeResult DecodeResolvedDocument(const JsonValue& root, const Gltf::ContainerView& container,
+            const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers)
+        {
+            if (!root.IsObject())
+            {
+                return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
+            }
+
+            PrimitiveInfo primitive;
+            SkeletalGltfDecodeStatus status = SkeletalGltfDecodeStatus::InvalidDocument;
+            if (!ParsePrimitive(root, primitive, status))
+            {
+                return Fail(status);
+            }
+
+            JsonValue skin;
+            if (!ParseSkinContract(root, skin, status))
+            {
+                return Fail(status);
+            }
+
+            JsonValue animation;
+            if (!ParseAnimationContract(root, animation, status))
+            {
+                return Fail(status);
+            }
+
+            Container::VariableArray<AccessorInfo> accessors;
+            Container::VariableArray<BufferViewInfo> bufferViews;
+            Gltf::BufferSet buffers;
+            Gltf::BufferFileContext fileContext{std::filesystem::path(sourcePath.c_str())};
+            status = SkeletalGltfDecodeStatus::InvalidAccessor;
+            if (!ParseAccessors(root, accessors, status))
+            {
+                return Fail(status);
+            }
+            if (!ParseBufferViews(root, bufferViews) ||
+                Gltf::ResolveJsonBuffers(root, container, Gltf::ReadBufferFile, &fileContext, buffers).Result != Gltf::BufferResolveResult::Success)
+            {
+                return Fail(SkeletalGltfDecodeStatus::InvalidAccessor);
+            }
+
+            SkeletalGltfData data;
+            Container::VariableArray<int32_t> nodeToJoint;
+            NodeContract nodeContract;
+            if (!ParseNodeContract(root, nodeContract))
+            {
+                return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
+            }
+            data.MeshNodeGlobalTransform = nodeContract.MeshNodeGlobal;
+            if (!ExtractMesh(primitive, accessors, bufferViews, buffers, data))
+            {
+                return Fail(SkeletalGltfDecodeStatus::InvalidAccessor);
+            }
+            const size_t skinJointCount = skin.FindMember("joints").GetArraySize();
+            for (const SkeletalVertex& vertex : data.Vertices)
+            {
+                for (const uint32_t jointIndex : vertex.JointIndices)
+                {
+                    if (jointIndex >= skinJointCount)
+                    {
+                        return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
+                    }
+                }
+            }
+            if (!ExtractSkeleton(root, skin, nodeContract, accessors, bufferViews, buffers, data, nodeToJoint))
+            {
+                return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
+            }
+            if (!ExtractAnimation(animation, nodeToJoint, accessors, bufferViews, buffers, data))
+            {
+                return Fail(SkeletalGltfDecodeStatus::InvalidAnimation);
+            }
+
+            SkeletalGltfDecodeResult result;
+            result.Status = SkeletalGltfDecodeStatus::Success;
+            result.Data = std::move(data);
+            if (outSourceBuffers != nullptr)
+            {
+                outSourceBuffers->Swap(buffers);
+            }
+            return result;
+        }
+    } // namespace
+
+    SkeletalGltfDecodeResult DecodeSkeletalGltf(Container::Span<const uint8_t> sourceBytes,
+        const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers)
+    {
+        if (outSourceBuffers != nullptr)
+        {
+            outSourceBuffers->Reset();
+        }
+        Gltf::ContainerView container;
+        const auto parsed = Gltf::ParseContainer(sourceBytes, container);
+        if (parsed != Gltf::ContainerParseResult::Success && parsed != Gltf::ContainerParseResult::NotGlb)
+        {
+            return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
+        }
+        if (container.Json.empty() ||
+            std::find(container.Json.begin(), container.Json.end(), uint8_t{0}) != container.Json.end())
+        {
+            return Fail(SkeletalGltfDecodeStatus::InvalidJson);
+        }
+        Container::String text;
+        text.reserve(container.Json.size());
+        for (const uint8_t value : container.Json)
+        {
+            text.push_back(static_cast<Container::String::value_type>(value));
+        }
+        JsonDocument document;
+        Container::String error;
+        if (!JsonDocument::TryParse(text, document, &error))
+        {
+            return Fail(SkeletalGltfDecodeStatus::InvalidJson);
+        }
+        return DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers);
+    }
+
     SkeletalGltfDecodeResult DecodeSkeletalGltf(const Container::String& jsonText,
-                                                const Container::String& sourcePath,
-                                                SkeletalGltfSourceBuffers* outSourceBuffers)
+        const Container::String& sourcePath, SkeletalGltfSourceBuffers* outSourceBuffers)
     {
         if (outSourceBuffers != nullptr)
         {
@@ -1350,85 +1381,18 @@ namespace NorvesLib::Core::Skeletal
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidJson);
         }
-
-        const JsonValue root = document.GetRoot();
-        if (!root.IsObject())
+        Gltf::BufferSet buffers;
+        auto result = DecodeResolvedDocument(document.GetRoot(), {}, sourcePath,
+            outSourceBuffers != nullptr ? &buffers : nullptr);
+        if (result.Succeeded() && outSourceBuffers != nullptr)
         {
-            return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
-        }
-
-        PrimitiveInfo primitive;
-        SkeletalGltfDecodeStatus status = SkeletalGltfDecodeStatus::InvalidDocument;
-        if (!ParsePrimitive(root, primitive, status))
-        {
-            return Fail(status);
-        }
-
-        JsonValue skin;
-        if (!ParseSkinContract(root, skin, status))
-        {
-            return Fail(status);
-        }
-
-        JsonValue animation;
-        if (!ParseAnimationContract(root, animation, status))
-        {
-            return Fail(status);
-        }
-
-        Container::VariableArray<AccessorInfo> accessors;
-        Container::VariableArray<BufferViewInfo> bufferViews;
-        Container::VariableArray<BufferInfo> buffers;
-        Container::VariableArray<Container::VariableArray<uint8_t>> bufferBytes;
-        status = SkeletalGltfDecodeStatus::InvalidAccessor;
-        if (!ParseAccessors(root, accessors, status))
-        {
-            return Fail(status);
-        }
-        if (!ParseBufferViews(root, bufferViews) || !ParseBuffers(root, buffers) ||
-            !LoadBuffers(buffers, sourcePath, bufferBytes))
-        {
-            return Fail(SkeletalGltfDecodeStatus::InvalidAccessor);
-        }
-
-        SkeletalGltfData data;
-        Container::VariableArray<int32_t> nodeToJoint;
-        NodeContract nodeContract;
-        if (!ParseNodeContract(root, nodeContract))
-        {
-            return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
-        }
-        data.MeshNodeGlobalTransform = nodeContract.MeshNodeGlobal;
-        if (!ExtractMesh(primitive, accessors, bufferViews, buffers, bufferBytes, data))
-        {
-            return Fail(SkeletalGltfDecodeStatus::InvalidAccessor);
-        }
-        const size_t skinJointCount = skin.FindMember("joints").GetArraySize();
-        for (const SkeletalVertex& vertex : data.Vertices)
-        {
-            for (const uint32_t jointIndex : vertex.JointIndices)
+            SkeletalGltfSourceBuffers owned(buffers.GetCount());
+            for (size_t index = 0; index < buffers.GetCount(); ++index)
             {
-                if (jointIndex >= skinJointCount)
-                {
-                    return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
-                }
+                const auto bytes = buffers.GetSourceBytes(index);
+                owned[index].assign(bytes.begin(), bytes.end());
             }
-        }
-        if (!ExtractSkeleton(root, skin, nodeContract, accessors, bufferViews, buffers, bufferBytes, data, nodeToJoint))
-        {
-            return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
-        }
-        if (!ExtractAnimation(animation, nodeToJoint, accessors, bufferViews, buffers, bufferBytes, data))
-        {
-            return Fail(SkeletalGltfDecodeStatus::InvalidAnimation);
-        }
-
-        SkeletalGltfDecodeResult result;
-        result.Status = SkeletalGltfDecodeStatus::Success;
-        result.Data = std::move(data);
-        if (outSourceBuffers != nullptr)
-        {
-            *outSourceBuffers = std::move(bufferBytes);
+            outSourceBuffers->swap(owned);
         }
         return result;
     }

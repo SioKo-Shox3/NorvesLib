@@ -463,3 +463,6 @@
 
 - G2-GR77-PACKAGE-IMAGES: Mainのmodel-only guardをmodel+N textureの単一entry package群へ接続。全変換/メモリpackageとpayload検証→実file書込/flush→incoming全AssetSystem解決/bytes一致→manifest1回更新。audioのmergeをincoming列へ一般化し同keyだけ更新、serializerと従来model出力tailはbyte不変。第1周で保持entryのbacking packageを暗黙img出力が壊す衝突を発見し、canonical/equivalent/Windows case比較で書込前に一律拒否、実audio package衝突回帰を追加、第2周PASS。3GLB fixtureは実container/BIN/range/stbi memory decodeで正常2/異常1を確認。CMake3.14+PS smokeを登録したがCMake/PS不在、MainはWindows.hでcompile停止しCLI/package統合実行は未検証。複数file I/O rollbackなし、variant間画像共有を明記し、準備/確定・一時file置換はGR96へ残す。
 - Next: GR77の骨格共有buffer/GLB入口を接続する。looseは既知のaccessor範囲計算を先に安全化してから接続する。GR77全体と実物61MB受入れは未完。
+
+- G2-GR77-SKELETAL-BUFFERS: 骨格decoder/cooker/AnalyzeSkeletalを共有container/BufferSetへ接続し、GLB/data URIと外部bufferを宣言範囲で読む。旧metadata/抽出順、128関節/単一clip/変換/NVSKEL形式を保持。decodedは独立所有、hash用BINは借用、String互換出力は全source bytes所有copy。M9に3入力形のdecoded/NVSKEL/SourceHash、BIN pointer、BOM/余剰/旧出力/失敗clearを登録し、試験directoryを一意の排他作成へ変更。独立レビューPASS。実container/buffer意味の通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER、M9 fixtureの実container/BIN、実配列/Spanの型syntaxは成功。骨格本体と新native試験はWindows.hでcompile停止し、decoder/cooker/analyzer実行とpayload一致は未検証。
+- Next: GR77 loose accessorのunchecked範囲計算を先に安全化し、その後looseの共有buffer/画像bytes/stagingを接続する。実物GLB受入れと実Windows統合は未検証のまま区別する。

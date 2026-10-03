@@ -1846,7 +1846,7 @@
 - notes: GR111の多entry形式は導入しない。model外部画像の既存single出力は保持し、manifest keyはlogicalPath/kind/variant。texture参照のdefault variantを守る。
 
 ## G2-GR77-SKELETAL-BUFFERS: 骨格デコーダとcookerへ共有GLBを接続する
-- status: todo
+- status: done
 - done-when: SkeletalGltfDecodeのbuffer読込/accessor参照を共有BufferSetへ接続し、元bytesのGLB/JSON入口をcookerとAnalyzeSkeletalから利用する。旧String入口も保持し、既存骨格契約/128上限/単一clip/変換/formatは変えない。hashは元sourceと全外部bufferだけを含み、BINを複製しない。
 - verify: M9の既存fixtureをJSON外部/GLB/data URIで表し、頂点/関節/clipとNVSKEL payload/hashの比較、不正buffer拒否を既存束へ追加する。実native未検証と共有helper成功を区別する。
 - stop-when: Armature親/clip複数/256関節への未承認拡張、NVSKEL形式変更、String互換APIの破壊、hash/BIN借用寿命の逸脱。

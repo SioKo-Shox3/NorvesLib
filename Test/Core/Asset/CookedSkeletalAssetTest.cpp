@@ -4,6 +4,11 @@
 #include "FileStream/Package.h"
 #include "Rendering/VertexLayout.h"
 #include "Resource/GLTFAnalyzer.h"
+#include "Resource/SkeletalGltfDecode.h"
+#include "Resource/GltfBufferSet.h"
+#include "Tools/AssetCook/MeshCooker.h"
+#include <chrono>
+#include <charconv>
 
 #include <bit>
 #include <cassert>
@@ -315,9 +320,14 @@ namespace
     public:
         LooseFixture()
         {
-            Root = std::filesystem::temp_directory_path() / "NorvesLibM9CookedSkeletal";
-            std::filesystem::remove_all(Root);
-            std::filesystem::create_directories(Root);
+            char number[64] = {};
+            const auto converted = std::to_chars(number, number + sizeof(number),
+                std::chrono::steady_clock::now().time_since_epoch().count());
+            assert(converted.ec == std::errc{});
+            const Container::AnsiString name = Container::AnsiString("NorvesLibM9CookedSkeletal-") +
+                Container::AnsiString(Container::AnsiStringView(number, static_cast<size_t>(converted.ptr - number)));
+            Root = std::filesystem::temp_directory_path() / std::filesystem::path(name.begin(), name.end());
+            assert(std::filesystem::create_directory(Root));
             const std::filesystem::path source = FindFixtureRoot() / "ValidU8Float.gltf";
             assert(std::filesystem::copy_file(source, Root / "ValidU8Float.gltf"));
             const ByteArray bytes = BuildLooseFixtureBuffer();
@@ -343,6 +353,97 @@ namespace
 
         std::filesystem::path Root;
     };
+
+    ByteArray TextBytes(Container::AnsiStringView text)
+    {
+        ByteArray result(text.size());
+        std::memcpy(result.data(), text.data(), text.size());
+        return result;
+    }
+    Container::String CoreText(Container::AnsiStringView text)
+    {
+        Container::String result;
+        for (const char value : text)
+        {
+            result.push_back(static_cast<Container::String::value_type>(static_cast<uint8_t>(value)));
+        }
+        return result;
+    }
+    Container::AnsiString ReadFixtureJson(const Container::String& path)
+    {
+        auto stream = FileStream::FileStream::Create(path, FileStream::FileMode::Read,
+            FileStream::FileAccess::Read, FileStream::FileShare::Read);
+        assert(stream && stream->IsOpen() && stream->GetSize() > 0);
+        ByteArray bytes(static_cast<size_t>(stream->GetSize()));
+        assert(stream->Read(bytes.data(), bytes.size()) == bytes.size());
+        stream->Close();
+        return Container::AnsiString(Container::AnsiStringView(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+    }
+    Container::AnsiString ChangeBufferUri(Container::AnsiStringView text, Container::AnsiStringView replacement)
+    {
+        constexpr Container::AnsiStringView needle = "\"uri\": \"fixture.bin\",";
+        const size_t offset = text.find(needle);
+        assert(offset != Container::AnsiStringView::npos);
+        return Container::AnsiString(text.substr(0, offset)) + Container::AnsiString(replacement) +
+            Container::AnsiString(text.substr(offset + needle.size()));
+    }
+    Container::AnsiString EncodeFixtureBase64(const ByteArray& bytes)
+    {
+        constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        Container::AnsiString result;
+        for (size_t i = 0; i < bytes.size(); i += 3)
+        {
+            const bool bSecond = i + 1 < bytes.size();
+            const bool bThird = i + 2 < bytes.size();
+            const uint32_t value = (uint32_t{bytes[i]} << 16) |
+                (bSecond ? uint32_t{bytes[i + 1]} << 8 : 0) | (bThird ? bytes[i + 2] : 0);
+            result.push_back(alphabet[(value >> 18) & 63]);
+            result.push_back(alphabet[(value >> 12) & 63]);
+            result.push_back(bSecond ? alphabet[(value >> 6) & 63] : '=');
+            result.push_back(bThird ? alphabet[value & 63] : '=');
+        }
+        return result;
+    }
+    ByteArray MakeSkeletalGlb(Container::AnsiStringView json, const ByteArray& binary)
+    {
+        const size_t jsonSize = (json.size() + 3) & ~size_t{3};
+        const size_t binarySize = (binary.size() + 3) & ~size_t{3};
+        ByteArray result(28 + jsonSize + binarySize, 0);
+        WriteLe32(result, 0, 0x46546c67);
+        WriteLe32(result, 4, 2);
+        WriteLe32(result, 8, static_cast<uint32_t>(result.size()));
+        WriteLe32(result, 12, static_cast<uint32_t>(jsonSize));
+        WriteLe32(result, 16, 0x4e4f534a);
+        std::memcpy(result.data() + 20, json.data(), json.size());
+        for (size_t i = json.size(); i < jsonSize; ++i)
+        {
+            result[20 + i] = ' ';
+        }
+        WriteLe32(result, 20 + jsonSize, static_cast<uint32_t>(binarySize));
+        WriteLe32(result, 24 + jsonSize, 0x004e4942);
+        std::memcpy(result.data() + 28 + jsonSize, binary.data(), binary.size());
+        return result;
+    }
+    uint64_t HashSourcePart(uint64_t hash, Container::Span<const uint8_t> bytes)
+    {
+        for (unsigned i = 0; i < 8; ++i)
+        {
+            hash = (hash ^ ((static_cast<uint64_t>(bytes.size()) >> (8 * i)) & 255)) * 1099511628211ull;
+        }
+        for (const auto value : bytes)
+        {
+            hash = (hash ^ value) * 1099511628211ull;
+        }
+        return hash;
+    }
+    void WriteFixtureBytes(const std::filesystem::path& path, const ByteArray& bytes)
+    {
+        auto stream = FileStream::FileStream::Create(ToCorePath(path), FileStream::FileMode::Write,
+            FileStream::FileAccess::Write, FileStream::FileShare::None);
+        assert(stream && stream->IsOpen());
+        assert(stream->Write(bytes.data(), bytes.size()) == bytes.size());
+        stream->Close();
+    }
 
     void AssertLiteralCookedData(const Asset::CookedSkeletalData& cooked, uint64_t expectedPayloadHash = 0)
     {
@@ -507,6 +608,89 @@ namespace
             const Skeletal::SkeletalGltfDecodeResult loose = Gltf::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
             assert(loose.Succeeded());
             AssertEquivalent(loose.Data, retainedResult.Data.Skeletal);
+            const Container::AnsiString text = ReadFixtureJson(fixture.Path());
+            const ByteArray external = TextBytes(text);
+            const ByteArray binary = BuildLooseFixtureBuffer();
+            const Container::AnsiString withoutUri = ChangeBufferUri(text, "");
+            const ByteArray glb = MakeSkeletalGlb(withoutUri, binary);
+            const Container::AnsiString embeddedUri = Container::AnsiString("\"uri\":\"data:application/octet-stream;base64,") +
+                EncodeFixtureBase64(binary) + "\",";
+            const ByteArray dataUri = TextBytes(ChangeBufferUri(text, embeddedUri));
+            NorvesLib::Core::Gltf::BufferSet sources;
+            for (const ByteArray* source : {&external, &glb, &dataUri})
+            {
+                const auto decoded = Skeletal::DecodeSkeletalGltf({source->data(), source->size()}, fixture.Path(), &sources);
+                assert(decoded.Succeeded());
+                AssertEquivalent(decoded.Data, loose.Data);
+                assert(sources.GetCount() == 1 && sources.GetBytes(0).size() == binary.size());
+                assert(std::memcmp(sources.GetBytes(0).data(), binary.data(), binary.size()) == 0);
+                if (source == &glb)
+                {
+                    NorvesLib::Core::Gltf::ContainerView view;
+                    assert(NorvesLib::Core::Gltf::ParseContainer(glb, view) == NorvesLib::Core::Gltf::ContainerParseResult::Success);
+                    assert(sources.GetBytes(0).data() == view.Bin.data());
+                }
+            }
+            const auto glbPath = fixture.Root / "embedded.glb";
+            WriteFixtureBytes(glbPath, glb);
+            const auto looseGlb = Gltf::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(glbPath));
+            assert(looseGlb.Succeeded());
+            AssertEquivalent(looseGlb.Data, loose.Data);
+
+            Skeletal::SkeletalGltfSourceBuffers legacySources;
+            const auto legacy = Skeletal::DecodeSkeletalGltf(CoreText(text), fixture.Path(), &legacySources);
+            assert(legacy.Succeeded() && legacySources.size() == 1 && legacySources[0].size() == binary.size());
+            AssertEquivalent(legacy.Data, loose.Data);
+
+            using NorvesLib::Tools::AssetCook::SkeletalCookResult;
+            const Container::AnsiString sourcePath((fixture.Root / "ValidU8Float.gltf").generic_string().c_str());
+            auto cook = [&](const ByteArray& source, SkeletalCookResult& out)
+            {
+                Container::AnsiString error;
+                return NorvesLib::Tools::AssetCook::CookGltfToNvskel(source.data(), source.size(),
+                    "nvskel.v0.skinned.pnujiw.u32", sourcePath, out, error);
+            };
+            SkeletalCookResult externalCook;
+            assert(cook(external, externalCook));
+            assert(externalCook.SourceHash == HashSourcePart(HashSourcePart(14695981039346656037ull, external), binary));
+            for (const ByteArray* source : {&glb, &dataUri})
+            {
+                SkeletalCookResult result;
+                assert(cook(*source, result));
+                assert(result.NvskelBytes.size() == externalCook.NvskelBytes.size());
+                assert(std::memcmp(result.NvskelBytes.data(), externalCook.NvskelBytes.data(), result.NvskelBytes.size()) == 0);
+                assert(result.SourceHash == HashSourcePart(14695981039346656037ull, *source));
+                assert(result.VertexCount == externalCook.VertexCount && result.IndexCount == externalCook.IndexCount &&
+                    result.JointCount == externalCook.JointCount && result.ClipCount == externalCook.ClipCount);
+            }
+            ByteArray withBom{0xef, 0xbb, 0xbf};
+            withBom.insert(withBom.end(), external.begin(), external.end());
+            ByteArray withExtra = binary;
+            withExtra.push_back(77);
+            WriteFixtureBytes(fixture.Root / "fixture.bin", withExtra);
+            SkeletalCookResult extraCook;
+            assert(cook(withBom, extraCook));
+            assert(extraCook.SourceHash == HashSourcePart(HashSourcePart(14695981039346656037ull, withBom), withExtra));
+            assert(extraCook.NvskelBytes.size() == externalCook.NvskelBytes.size());
+            assert(std::memcmp(extraCook.NvskelBytes.data(), externalCook.NvskelBytes.data(), extraCook.NvskelBytes.size()) == 0);
+            assert(Skeletal::DecodeSkeletalGltf(CoreText(text), fixture.Path(), &legacySources).Succeeded());
+            assert(legacySources[0].size() == withExtra.size() && legacySources[0].back() == 77);
+
+            ByteArray invalidGlb = glb;
+            invalidGlb[8] ^= 1;
+            const ByteArray missingBin = TextBytes(withoutUri);
+            const ByteArray shortData = TextBytes(ChangeBufferUri(text, "\"uri\":\"data:application/octet-stream;base64,AA==\","));
+            const ByteArray* invalidSources[] = {&invalidGlb, &missingBin, &shortData};
+            for (const ByteArray* invalid : invalidSources)
+            {
+                assert(Skeletal::DecodeSkeletalGltf(glb, fixture.Path(), &sources).Succeeded() && sources.GetCount() == 1);
+                assert(!Skeletal::DecodeSkeletalGltf(*invalid, fixture.Path(), &sources).Succeeded() && sources.GetCount() == 0);
+            }
+            assert(!Skeletal::DecodeSkeletalGltf(Container::Span<const uint8_t>{}, fixture.Path(), &sources).Succeeded());
+            const auto previousHash = extraCook.SourceHash;
+            assert(!cook(invalidGlb, extraCook) && extraCook.SourceHash == previousHash);
+            assert(extraCook.NvskelBytes.size() == externalCook.NvskelBytes.size());
+            assert(std::memcmp(extraCook.NvskelBytes.data(), externalCook.NvskelBytes.data(), extraCook.NvskelBytes.size()) == 0);
         }
 
         assert(Asset::ParseCookedSkeletal(Asset::AssetBlob::Invalid()).Status ==
