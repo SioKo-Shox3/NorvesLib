@@ -76,3 +76,14 @@ byteLengthはnumber型の有限・正の整数で、2^53−1とsize_t上限以�
 URIの所有配列とrequest配列を先に確保し、URIの確保後だけ借用Spanを作る。Resolve呼出しが終わるまでそのstorageを変更しない。JSON documentは解決後に破棄でき、残るsetは外部/data URI bytesを所有し、元GLBだけを借用する。失敗/例外ではsetを空にし、allocation/reader例外を伝播する。
 
 ParseBufferByteLengthの実pure関数は通常/O2-NDEBUG/ASan・UBSanで確認し、GltfBufferNumberTestを既存束へ追加する。GltfBufferJsonTestは型/欠落/重複/uri空・null/3source混在/JSON破棄後の寿命を確認する登録済み試験だが、JsonDocumentのWindows.h依存により現環境ではcompile/実行未確認。numeric helperの成功でJSON統合の合格を代用しない。
+
+## GR77: 静的cookerのbuffer接続
+
+CookGltfToNvmeshは共有containerでJSONとBINを分離し、JSON部分だけのNUL検査とJsonDocument解析を行う。ResolveJsonBuffers/BufferSetで外部・data URI・GLB BINを解決し、既存のaccessor範囲/整列検証とmesh抽出へ宣言長のviewを渡す。GLB BINはCook呼出の元sourceを借用し、複製しない。完成NVMESHは従来どおり自身のbytesを所有する。
+
+- source hashは元source全量をBOM込み・LE64長prefix付きでhashし、外部bufferだけをJSON順に全実bytesと長prefixで追記する。外部bufferの宣言長を超える余剰も保持する。GLB/data URIは元sourceに既に含まれるため二重に加えない。GLBに追加の外部bufferがある場合はその外部bytesを追記する
+- 従来の一mesh/一primitive・mesh-local頂点・cluster・material path・既定値・NVMESH形式を保持する。外部imageは参照pathを作るだけで、この段階で画像ファイルを新たに読まない。embedded imageのpackage生成、looseとskeletalの接続はまだ含まない
+- data URI bufferは対応application MIMEの正規Base64を受理する。旧smokeのAA==は宣言長に足りないため、非対応ではなく短いbufferとして失敗する。重複field・非正整数・危険な外部pathなど共有resolverの拒否規則が適用される
+- StaticGltfBufferCookTestを既存CookedMeshTest束に追加し、AssetCookLibをリンクする。102byte三角形の外部/GLB/data URIのpayload一致、BOM/外部余剰/混在GLBのhash、percent path、短さ/不正padding/壊れたGLBと失敗時出力保持を検査する
+
+実cookerと新試験のcompileは既存String.hのWindows.h依存で停止しており、native実行・CMake構成・既存smoke・出力bytes一致は未検証。GLB containerとbuffer意味helperの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER回帰は実行成功。fixture JSON/既知binaryの文法・整合性照合と、skeletal/material/cluster部のsource不変確認は統合実行と区別する。

@@ -6,6 +6,8 @@
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
 #include "Resource/SkeletalGltfDecode.h"
 #include "Resource/SkeletalLimits.h"
+#include "Resource/GltfBufferFile.h"
+#include "Resource/GltfBufferJson.h"
 #include "Text/JsonDocument.h"
 
 #include <algorithm>
@@ -14,9 +16,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <limits>
-#include <system_error>
 #include <utility>
 
 namespace NorvesLib::Tools::AssetCook
@@ -35,6 +35,7 @@ namespace NorvesLib::Tools::AssetCook
         using NorvesLib::Core::Container::VariableArray;
         using NorvesLib::Core::Rendering::MegaGeometry::MeshCluster;
         using NorvesLib::Core::Rendering::MegaGeometry::MeshClusterizer;
+        namespace Gltf = NorvesLib::Core::Gltf;
         namespace ClusterRecordOffset = NorvesLib::Core::Asset::CookedMeshFormatV0::ClusterRecordOffset;
         namespace Format = NorvesLib::Core::Asset::CookedMeshFormatV0;
         namespace HeaderOffset = NorvesLib::Core::Asset::CookedMeshFormatV0::HeaderOffset;
@@ -89,12 +90,6 @@ namespace NorvesLib::Tools::AssetCook
             size_t ByteLength = 0;
             size_t ByteStride = 0;
             bool bHasByteStride = false;
-        };
-
-        struct BufferInfo
-        {
-            AnsiString Uri;
-            size_t ByteLength = 0;
         };
 
         struct PrimitiveInfo
@@ -231,6 +226,25 @@ namespace NorvesLib::Tools::AssetCook
             {
                 hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(bytes.size()));
                 hash = Fnv1a64Update(hash, bytes.data(), bytes.size());
+            }
+            return hash;
+        }
+
+        // 埋込みbufferは元sourceに含まれる。外部bufferは余剰を含む全量をJSON順で加える。
+        uint64_t ComputeGltfSourceHash(const uint8_t* sourceBytes, size_t sourceSize,
+                                       const Gltf::BufferSet& buffers)
+        {
+            uint64_t hash = Format::Fnv1a64OffsetBasis;
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(sourceSize));
+            hash = Fnv1a64Update(hash, sourceBytes, sourceSize);
+            for (size_t index = 0; index < buffers.GetCount(); ++index)
+            {
+                if (buffers.GetSourceKind(index) == Gltf::BufferStorageKind::ExternalFile)
+                {
+                    const auto bytes = buffers.GetSourceBytes(index);
+                    hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(bytes.size()));
+                    hash = Fnv1a64Update(hash, bytes.data(), bytes.size());
+                }
             }
             return hash;
         }
@@ -470,52 +484,6 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool IsPathWithin(const std::filesystem::path& directory, const std::filesystem::path& candidate)
-        {
-            auto directoryIterator = directory.begin();
-            auto candidateIterator = candidate.begin();
-            for (; directoryIterator != directory.end(); ++directoryIterator, ++candidateIterator)
-            {
-                if (candidateIterator == candidate.end() || *directoryIterator != *candidateIterator)
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        bool ReadBinaryFile(const std::filesystem::path& path, VariableArray<uint8_t>& outBytes, AnsiString& error)
-        {
-            std::ifstream input(path, std::ios::binary);
-            if (!input.is_open())
-            {
-                error = AnsiString("failed to open glTF buffer: ") + path.string().c_str();
-                return false;
-            }
-
-            input.seekg(0, std::ios::end);
-            const std::streamoff fileSize = input.tellg();
-            if (fileSize < 0 || static_cast<uint64_t>(fileSize) > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
-                static_cast<uint64_t>(fileSize) > static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max()))
-            {
-                error = AnsiString("invalid glTF buffer file size: ") + path.string().c_str();
-                return false;
-            }
-
-            outBytes.resize(static_cast<size_t>(fileSize));
-            input.seekg(0, std::ios::beg);
-            if (!outBytes.empty())
-            {
-                input.read(reinterpret_cast<char*>(outBytes.data()), static_cast<std::streamsize>(outBytes.size()));
-                if (input.gcount() != static_cast<std::streamsize>(outBytes.size()))
-                {
-                    error = AnsiString("failed to read glTF buffer: ") + path.string().c_str();
-                    return false;
-                }
-            }
-            return true;
-        }
-
         bool ParseAccessors(const JsonValue& root, VariableArray<AccessorInfo>& outAccessors, AnsiString& error)
         {
             const JsonValue accessors = root.FindMember("accessors");
@@ -577,36 +545,6 @@ namespace NorvesLib::Tools::AssetCook
                     return false;
                 }
                 outBufferViews.push_back(bufferView);
-            }
-            return true;
-        }
-
-        bool ParseBuffers(const JsonValue& root, VariableArray<BufferInfo>& outBuffers, AnsiString& error)
-        {
-            const JsonValue buffers = root.FindMember("buffers");
-            if (!buffers.IsArray() || buffers.GetArraySize() == 0)
-            {
-                error = "glTF buffers must be a non-empty array";
-                return false;
-            }
-
-            outBuffers.clear();
-            outBuffers.reserve(buffers.GetArraySize());
-            for (size_t index = 0; index < buffers.GetArraySize(); ++index)
-            {
-                const JsonValue value = buffers.GetArrayElement(index);
-                BufferInfo buffer;
-                if (!value.IsObject() || !TryConvertAsciiString(value.FindMember("uri"), buffer.Uri) ||
-                    !TryReadRequiredSize(value, "byteLength", buffer.ByteLength) ||
-                    !ValidateRelativePath(buffer.Uri, "buffer URI", error))
-                {
-                    if (error.empty())
-                    {
-                        error = AnsiString("invalid glTF buffer at index ") + FormatInteger(index);
-                    }
-                    return false;
-                }
-                outBuffers.push_back(std::move(buffer));
             }
             return true;
         }
@@ -673,55 +611,51 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool LoadBuffers(const VariableArray<BufferInfo>& buffers, const std::filesystem::path& sourcePath,
-                         VariableArray<VariableArray<uint8_t>>& outBufferBytes, AnsiString& error)
+        bool ResolveCookBuffers(const JsonValue& root, const Gltf::ContainerView& container,
+                                AnsiStringView sourcePath, Gltf::BufferSet& buffers, AnsiString& error)
         {
-            std::error_code errorCode;
-            const std::filesystem::path absoluteSource = std::filesystem::absolute(sourcePath, errorCode);
-            if (errorCode)
+            Gltf::BufferFileContext context{std::filesystem::path(sourcePath.begin(), sourcePath.end())};
+            const auto outcome = Gltf::ResolveJsonBuffers(root, container, Gltf::ReadBufferFile, &context, buffers);
+            if (outcome.Result == Gltf::BufferResolveResult::Success)
             {
-                error = "failed to make glTF source path absolute";
-                return false;
+                return true;
             }
-
-            const std::filesystem::path sourceDirectory =
-                std::filesystem::weakly_canonical(absoluteSource.parent_path(), errorCode);
-            if (errorCode)
+            // 既存の相対path診断を維持し、percent復号後の違反は共有resolverの結果で拒否する。
+            if (outcome.Result == Gltf::BufferResolveResult::InvalidUri)
             {
-                error = "failed to canonicalize glTF source directory";
-                return false;
-            }
-
-            outBufferBytes.clear();
-            outBufferBytes.resize(buffers.size());
-            for (size_t index = 0; index < buffers.size(); ++index)
-            {
-                const std::filesystem::path candidate = std::filesystem::weakly_canonical(
-                    sourceDirectory / std::filesystem::path(buffers[index].Uri.begin(), buffers[index].Uri.end()),
-                    errorCode);
-                if (errorCode || !IsPathWithin(sourceDirectory, candidate))
-                {
-                    error = "glTF buffer URI escapes the input directory";
-                    return false;
-                }
-
-                if (!ReadBinaryFile(candidate, outBufferBytes[index], error))
+                AnsiString uri;
+                const JsonValue descriptors = root.FindMember("buffers");
+                if (outcome.BufferIndex < descriptors.GetArraySize() &&
+                    TryConvertAsciiString(descriptors.GetArrayElement(outcome.BufferIndex).FindMember("uri"), uri) &&
+                    !StartsWithDataUri(AnsiStringView(uri)) && !ValidateRelativePath(uri, "buffer URI", error))
                 {
                     return false;
                 }
-
-                if (outBufferBytes[index].size() < buffers[index].ByteLength)
-                {
-                    error = "glTF buffer file is smaller than its declared byteLength";
-                    return false;
-                }
+                error = "invalid glTF buffer URI";
             }
-            return true;
+            else if (outcome.Result == Gltf::BufferResolveResult::SourceTooShort)
+            {
+                error = "glTF buffer file is smaller than its declared byteLength";
+            }
+            else if (outcome.Result == Gltf::BufferResolveResult::ExternalReadFailure)
+            {
+                error = outcome.ReadError == Gltf::ExternalBufferReadResult::OutsideDirectory
+                    ? "glTF buffer URI escapes the input directory" : "failed to read glTF buffer";
+            }
+            else if (outcome.Result == Gltf::BufferResolveResult::InvalidEmbeddedData ||
+                     outcome.Result == Gltf::BufferResolveResult::UnsupportedDataMime)
+            {
+                error = "invalid glTF embedded buffer data";
+            }
+            else
+            {
+                error = "invalid glTF buffer descriptor";
+            }
+            return false;
         }
 
         bool ValidateAccessorLayout(const AccessorInfo& accessor, const VariableArray<BufferViewInfo>& bufferViews,
-                                    const VariableArray<BufferInfo>& buffers,
-                                    const VariableArray<VariableArray<uint8_t>>& bufferBytes,
+                                    const Gltf::BufferSet& buffers,
                                     uint32_t requiredComponentType, AnsiStringView requiredType, size_t componentCount,
                                     const char* label, AccessorUsage usage, AccessorLayout& outLayout, AnsiString& error)
         {
@@ -738,7 +672,7 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             const BufferViewInfo& bufferView = bufferViews[accessor.BufferView];
-            if (bufferView.Buffer >= buffers.size() || bufferView.Buffer >= bufferBytes.size())
+            if (bufferView.Buffer >= buffers.GetCount())
             {
                 error = AnsiString(label) + " bufferView buffer is out of range";
                 return false;
@@ -792,7 +726,7 @@ namespace NorvesLib::Tools::AssetCook
 
             size_t bufferViewEnd = 0;
             if (!CheckedAdd(bufferView.ByteOffset, bufferView.ByteLength, bufferViewEnd) ||
-                bufferViewEnd > buffers[bufferView.Buffer].ByteLength || bufferViewEnd > bufferBytes[bufferView.Buffer].size())
+                bufferViewEnd > buffers.GetDeclaredByteLength(bufferView.Buffer) || bufferViewEnd > buffers.GetBytes(bufferView.Buffer).size())
             {
                 error = AnsiString(label) + " bufferView range is invalid";
                 return false;
@@ -831,21 +765,20 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             size_t absoluteEnd = 0;
-            if (!CheckedAdd(startOffset, requiredBytes, absoluteEnd) || absoluteEnd > buffers[bufferView.Buffer].ByteLength ||
-                absoluteEnd > bufferBytes[bufferView.Buffer].size())
+            if (!CheckedAdd(startOffset, requiredBytes, absoluteEnd) || absoluteEnd > buffers.GetDeclaredByteLength(bufferView.Buffer) ||
+                absoluteEnd > buffers.GetBytes(bufferView.Buffer).size())
             {
                 error = AnsiString(label) + " accessor exceeds its buffer";
                 return false;
             }
 
-            outLayout.pData = bufferBytes[bufferView.Buffer].data() + startOffset;
+            outLayout.pData = buffers.GetBytes(bufferView.Buffer).data() + startOffset;
             outLayout.Stride = stride;
             return true;
         }
 
         bool ExtractMesh(const VariableArray<AccessorInfo>& accessors, const VariableArray<BufferViewInfo>& bufferViews,
-                         const VariableArray<BufferInfo>& buffers,
-                         const VariableArray<VariableArray<uint8_t>>& bufferBytes, const PrimitiveInfo& primitive,
+                         const Gltf::BufferSet& buffers, const PrimitiveInfo& primitive,
                          VariableArray<MeshVertexPnt>& outVertices, VariableArray<uint32_t>& outIndices,
                          AnsiString& error)
         {
@@ -875,11 +808,11 @@ namespace NorvesLib::Tools::AssetCook
             AccessorLayout normalLayout;
             AccessorLayout texCoordLayout;
             AccessorLayout indexLayout;
-            if (!ValidateAccessorLayout(positions, bufferViews, buffers, bufferBytes, GltfFloatComponent, "VEC3", 3, "POSITION",
+            if (!ValidateAccessorLayout(positions, bufferViews, buffers, GltfFloatComponent, "VEC3", 3, "POSITION",
                                         AccessorUsage::VertexAttribute, positionLayout, error) ||
-                !ValidateAccessorLayout(normals, bufferViews, buffers, bufferBytes, GltfFloatComponent, "VEC3", 3, "NORMAL",
+                !ValidateAccessorLayout(normals, bufferViews, buffers, GltfFloatComponent, "VEC3", 3, "NORMAL",
                                         AccessorUsage::VertexAttribute, normalLayout, error) ||
-                !ValidateAccessorLayout(texCoords, bufferViews, buffers, bufferBytes, GltfFloatComponent, "VEC2", 2,
+                !ValidateAccessorLayout(texCoords, bufferViews, buffers, GltfFloatComponent, "VEC2", 2,
                                         "TEXCOORD_0", AccessorUsage::VertexAttribute, texCoordLayout, error))
             {
                 return false;
@@ -890,7 +823,7 @@ namespace NorvesLib::Tools::AssetCook
                 error = "indices accessor componentType must be uint16 or uint32";
                 return false;
             }
-            if (!ValidateAccessorLayout(indices, bufferViews, buffers, bufferBytes, indices.ComponentType, "SCALAR", 1,
+            if (!ValidateAccessorLayout(indices, bufferViews, buffers, indices.ComponentType, "SCALAR", 1,
                                         "indices", AccessorUsage::Index, indexLayout, error))
             {
                 return false;
@@ -1601,7 +1534,20 @@ namespace NorvesLib::Tools::AssetCook
                 error = "glTF JSON input is empty";
                 return false;
             }
-            if (std::find(sourceBytes, sourceBytes + sourceSize, uint8_t{0}) != sourceBytes + sourceSize)
+            Gltf::ContainerView container;
+            const auto containerResult = Gltf::ParseContainer({sourceBytes, sourceSize}, container);
+            if (containerResult != Gltf::ContainerParseResult::Success &&
+                containerResult != Gltf::ContainerParseResult::NotGlb)
+            {
+                error = "invalid GLB container";
+                return false;
+            }
+            if (container.Json.empty())
+            {
+                error = "glTF JSON input is empty";
+                return false;
+            }
+            if (std::find(container.Json.begin(), container.Json.end(), uint8_t{0}) != container.Json.end())
             {
                 error = "glTF JSON input contains an embedded NUL byte";
                 return false;
@@ -1611,20 +1557,9 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            // The BOM is stripped for parsing only: the source hash still covers the original bytes.
-            size_t jsonOffset = 0;
-            if (sourceSize >= 3 && sourceBytes[0] == 0xefu && sourceBytes[1] == 0xbbu && sourceBytes[2] == 0xbfu)
-            {
-                jsonOffset = 3;
-            }
-            if (jsonOffset == sourceSize)
-            {
-                error = "glTF JSON input is empty";
-                return false;
-            }
-
-            const AnsiString jsonText(AnsiStringView(reinterpret_cast<const char*>(sourceBytes) + jsonOffset,
-                                                     sourceSize - jsonOffset));
+            // JSONだけを文字列にし、BINは元sourceの寿命内で借用する。hashにはBOMも残す。
+            const AnsiString jsonText(AnsiStringView(reinterpret_cast<const char*>(container.Json.data()),
+                                                     container.Json.size()));
             JsonDocument document;
             NorvesLib::Core::Container::String parseError;
             if (!JsonDocument::TryParse(ToCoreString(AnsiStringView(jsonText)), document, &parseError))
@@ -1646,23 +1581,22 @@ namespace NorvesLib::Tools::AssetCook
 
             VariableArray<AccessorInfo> accessors;
             VariableArray<BufferViewInfo> bufferViews;
-            VariableArray<BufferInfo> buffers;
             PrimitiveInfo primitive;
             if (!ParseAccessors(root, accessors, error) || !ParseBufferViews(root, bufferViews, error) ||
-                !ParseBuffers(root, buffers, error) || !ParsePrimitive(root, primitive, error))
+                !ParsePrimitive(root, primitive, error))
             {
                 return false;
             }
 
-            VariableArray<VariableArray<uint8_t>> bufferBytes;
-            if (!LoadBuffers(buffers, std::filesystem::path(sourcePath.begin(), sourcePath.end()), bufferBytes, error))
+            Gltf::BufferSet buffers;
+            if (!ResolveCookBuffers(root, container, sourcePath, buffers, error))
             {
                 return false;
             }
 
             VariableArray<MeshVertexPnt> vertices;
             VariableArray<uint32_t> indices;
-            if (!ExtractMesh(accessors, bufferViews, buffers, bufferBytes, primitive, vertices, indices, error))
+            if (!ExtractMesh(accessors, bufferViews, buffers, primitive, vertices, indices, error))
             {
                 return false;
             }
@@ -1710,7 +1644,7 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            result.SourceHash = ComputeGltfSourceHash(sourceBytes, sourceSize, bufferBytes);
+            result.SourceHash = ComputeGltfSourceHash(sourceBytes, sourceSize, buffers);
             result.VertexCount = static_cast<uint32_t>(vertices.size());
             result.IndexCount = static_cast<uint32_t>(finalIndices.size());
             result.ClusterCount = static_cast<uint32_t>(finalClusters.size());

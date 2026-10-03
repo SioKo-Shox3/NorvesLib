@@ -15,6 +15,7 @@ target_include_directories(AssetSystemTest PRIVATE
 norves_add_test_bundle(CookedMeshTest
     FOLDER "Test/Core/Asset"
     MEMBER CookedMeshTest CookedMeshTest.cpp
+    MEMBER StaticGltfBufferCookTest StaticGltfBufferCookTest.cpp
     MEMBER GltfContainerTest GltfContainerTest.cpp
     MEMBER GltfBufferSourceTest GltfBufferSourceTest.cpp
     MEMBER GltfBufferSetTest GltfBufferSetTest.cpp
@@ -26,7 +27,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER AudioCookedAssetTest AudioCookedAssetTest.cpp
     MEMBER CookedSkeletalAssetTest CookedSkeletalAssetTest.cpp
 )
-target_link_libraries(CookedMeshTest PRIVATE Core)
+target_link_libraries(CookedMeshTest PRIVATE Core AssetCookLib)
 target_include_directories(CookedMeshTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
@@ -65,3 +66,5 @@ add_test(NAME GltfBufferSetTest COMMAND CookedMeshTest --test=GltfBufferSetTest)
 add_test(NAME GltfBufferUriTest COMMAND CookedMeshTest --test=GltfBufferUriTest)
 add_test(NAME GltfBufferJsonTest COMMAND CookedMeshTest --test=GltfBufferJsonTest)
 add_test(NAME GltfBufferNumberTest COMMAND CookedMeshTest --test=GltfBufferNumberTest)
+
+add_test(NAME StaticGltfBufferCookTest COMMAND CookedMeshTest --test=StaticGltfBufferCookTest)

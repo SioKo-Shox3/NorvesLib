@@ -1818,8 +1818,15 @@
 - notes: G2 BufferSetの実allocator接続compileで既存不足を検出。G2の取り込み実装とは別の小修正候補として保存。
 
 ## G2-GR77-COOK-BUFFERS: 静的cookerへ共有GLBとbufferを接続する
-- status: todo
+- status: done
 - done-when: CookGltfToNvmeshが共有container/JSON buffer resolverを使い、GLB BINとdata URI bufferを読める。既存geometry/material/default/formatを維持し、旧.gltf hashはBOMと外部buffer全量を保存、新embedded内容を二重hashしない。
 - verify: 既存静的cooker fixtureをJSON+external/GLB/data URIで比較する登録試験とsmoke更新を追加。payload一致/metadata/hash変化/不正の拒否を固定し、Windows統合未実行を明記する。
 - stop-when: BINのコピー、既存material色空間/既定の変更、既存.gltf外部画像の新規実読込、自前parserへ未承認切替、3経路全完了の誤認。
 - notes: embedded imageは次段の所有/借用とMain packagingで接続する。既存data_uri_buffer negativeは1byteで宣言長を満たさず、受理追加後も短さで失敗する。
+
+## G2-GR77-IMAGE-SOURCE: 画像の外部参照と埋込みbytesを共有解決する
+- status: todo
+- done-when: GltfImageSourceでimagesのfile URI/data URI/bufferView+mimeTypeを分類し、埋込みPNG/JPEGのbytesと寿命を明示する。URIとbufferViewの排他・既知field型/重複・buffer宣言範囲を検証し、外部画像はここでは読み込まない。
+- verify: 既存束にfile/data URI/BIN view/外部buffer view・MIME/範囲/型/所有copy-moveの契約試験を追加し、実行可能helperとWindows依存未検証を分ける。
+- stop-when: BIN全体コピー、所有bytesへの自己Span保存、壊れたdata URIや範囲外viewの受理、material色空間/format既定の変更。
+- notes: MeshCookResultへの寿命移譲、Mainのmodel+texture出力/manifest一括更新、loose staging接続は後続タスク。GR77完了とは分ける。

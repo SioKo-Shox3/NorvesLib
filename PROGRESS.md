@@ -451,3 +451,6 @@
 
 - G2-GR77-BUFFER-JSON: JsonDocumentのbuffers記述を共有resolverへ接続。既知field重複、型、正の安全整数、uri省略/null/ASCIIを区別し、所有URI配列を固定して呼出中Span寿命を保持。数値helperは通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/Werror/MEMBERで成功、独立レビューPASS。25個のfixture JSON文法も別途確認。JsonDocumentを含むsource/testはWindows.h依存でcompile/実行未確認、数値試験で代用しない。
 - Next: GR77静的cookerへcontainer/bufferを接続する。外部imageは旧どおりpath参照だけで、embedded imageの所有/packagingは後続へ分ける。
+
+- G2-GR77-COOK-BUFFERS: 静的cookerを共有container/JSON buffer resolverへ接続し、BINをコピーせず宣言viewでmesh抽出する。元source/BOMと外部buffer余剰を含むhashを保持し、GLB/data URIを二重hashしない。102byte三角形の外部/GLB/data URI payloadと混在/BOM/余剰hash・不正/失敗出力保持を既存束へ登録。旧AA== smokeは短いbuffer拒否へ更新。material/cluster/wire/skeletalのsource不変、fixture整合、CMake参照、BOMCRLFを確認、独立レビューPASS。実container/buffer-sourceの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER成功。cooker/新試験のcompileはWindows.hで停止し、native/CMake/smoke/payload一致は未検証。
+- Next: GR77の画像source共有解決へ進み、続いてembedded imageの結果寿命とmodel+texture package/manifest接続を行う。loose/skeletalも後続で、GR77全体は未完。
