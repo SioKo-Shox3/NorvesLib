@@ -2024,7 +2024,13 @@
 - notes: 作者承認済みのStage B必須要件。blocked理由はv1形式とStage A等の前提待ちで、作者の再承認待ちではない。
 
 ## G2-GR86-REDUCE-KERNEL: 4影響への決定的な縮約を実装する
-- status: todo
+- status: done
 - done-when: 全影響の有限/非負/関節範囲/総和を検査し、同一関節をまとめ、重み降順/同値joint番号順で4本を選び正規化する。脱落量・警告・許容超過を返し、失敗時vertex出力保持。
 - verify: 5影響既知値、同一joint合算、入力順置換、同重みtie、微小重み、ゼロ/負/非有限/不正joint/総和、閾値境界、出力保持/aliasを純試験で検証する。
 - stop-when: glTF正規化整数のraw総和検査を省く接続、未検証kernelのdecode適用、Strict/頂点ABI/形式の変更。
+
+## G2-GR86-OPTIONS-HASH: 縮約指定と診断の型・hashを定義する
+- status: todo
+- done-when: Strict既定/ReduceToFourの明示指定と警告・失敗閾値、走査範囲付きreportを独立型にし、Strictは既存hash不変・Reduceだけ正規化policyをsource hashへ連結可能にする。
+- verify: 値域/未対応enum/Strict未使用閾値/符号付きゼロ/既知bytes/FNV状態/既定不変/閾値・algorithm変更を純試験で固定する。
+- stop-when: 未実装Morph/Cubic optionの受理、未接続をCLI完了扱い、struct paddingでhashが変わる。

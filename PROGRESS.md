@@ -535,3 +535,6 @@
 
 - G2-GR86-STRICT-INFLUENCES: 承認済みStrict変更としてJOINTS_n/WEIGHTS_nの追加セットを値/片側/null/ゼロに依らずInfluenceLimitExceededで拒否。属性名の正準/overflow/customを分類し、実decodeとcook前fingerprintで同一Json gateを共有して旧cacheのskip迂回も防ぐ。status末尾15のみ追加し既存0〜14、128関節、64B頂点、NVSKEL形式は維持。分類実装を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBER compileで成功、独立PASS。追加重みゼロの正規fixtureとraw/legacy/cooker/preflight/CLI出力保持をnative登録。Json/decode/nativeはWindows.hで未実行。
 - Next: 同一joint合算・決定的な上位4本・脱落量/閾値・失敗保持を備える縮約kernelを独立実装し、その後明示Reduce optionにだけ接続する。
+
+- G2-GR86-REDUCE-KERNEL: 同jointを正準順で補償加算し、合算後微小値を除き、重み降順/同値joint番号順で4本へ縮約・float正規化する純kernelを追加。脱落量は除去値の直接和/元総和で求め、厳密な閾値超過と正値underflowを拒否、失敗時vertexを保持。型・容量・全Span/options aliasも検査。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBER成功、独立PASS。追加反証の合算後閾値/総和nextafter/巨大Span/部分alias/混合桁重複jointの10000順置換も成功。恒久回帰への後二例追補はnonblocking候補。glTF raw整数総和とセット構造検査は接続側で別途行うため、現時点ではdecode/CLI未接続。
+- Next: Strict既定不変を保つ明示Reduce options/reportとcanonical policy hashを定義し、その後複数セット読込へ接続する。

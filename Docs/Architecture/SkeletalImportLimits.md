@@ -5,7 +5,7 @@
 
 | 制約 | 既定 | 明示指定時/後段 | 現在の状態 |
 |---|---|---|---|
-| 頂点影響数 | 4本、追加セットを専用statusで拒否 | cookで上位4本へ縮約・正規化・報告 | 追加セット拒否を実装、縮約は未実装 |
+| 頂点影響数 | 4本、追加セットを専用statusで拒否 | cookで上位4本へ縮約・正規化・報告 | 追加セット拒否を実装、縮約kernelあり・decode未接続 |
 | CUBICSPLINE | 拒否 | 誤差制限付きLINEAR焼込 | 未実装 |
 | morph | 拒否 | dropと数量報告 | 未実装 |
 | sparse | 拒否 | 変更なし | 既存拒否を維持 |
@@ -32,3 +32,23 @@ JOINTS_n / WEIGHTS_nのn>=1は、片方だけ・値がnull・追加重みが全�
 
 属性名分類の実コードは通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で実行する。
 Json bridge/decode/legacy/cooker/preflightとCLI出力保持の回帰はnative束へ登録し、Windows.h制約で未実行として区別する。
+
+## 上位4本縮約kernel（decode未接続）
+
+ReduceSkinInfluencesは呼出側workspaceを使い、値/関節範囲/入力総和を検査してから同一jointをまとめる。
+足し合わせる順もjoint番号と値で正準化し、補償加算を使う。合算後のMinimumWeight以下を落とし、
+残りを重み降順・同値joint番号順で4本へ絞る。微小値が同一jointへ分散している場合は合算してから判定する。
+
+脱落量は『微小値として落とした量＋上位4本外の量』を元総和で割った比率。
+元総和から残量を引く式ではなく、落とした量を直接足し、微小な脱落を丸めて消さない。
+WarnDroppedWeightを超えれば警告、FailDroppedWeightを超えれば失敗（等しい場合は許可）。
+これは脱落weight比率であり、実ポーズの最大変形距離を保証する値ではない。
+出力4本をfloatへ正規化し、正値の完全underflowは拒否する。失敗時vertex出力は非変更で、閾値超過時の測定結果は返す。
+
+このkernelは数値として正規化済みの影響を扱う。glTFのセット連続性/型/同数/正規化整数raw総和の検証は
+接続側で別途行う。glTF自体では同一jointの複数非ゼロweightは規約外だが、明示Reduceの合算は限定した修復処理とする。
+Strictの通常4影響経路をこの修復へ無言で切り替えない。
+参考: [glTF skinned mesh attributes](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#skinned-mesh-attributes)。
+
+5本の既知値、120順列、同joint/tie/微小値、警告・失敗境界、無効値/関節/総和/aliasと出力保持を純実装で確認する。
+CUBICSPLINE/morphとdecode/CLI接続は別作業。

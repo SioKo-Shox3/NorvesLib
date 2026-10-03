@@ -170,6 +170,8 @@ set(PRIVATE_SOURCES
     Private/Resource/SkeletalGltfDecode.cpp
     Private/Resource/SkeletalInfluenceAttributes.h
     Private/Resource/SkeletalInfluenceAttributes.cpp
+    Private/Resource/SkeletalInfluenceReduction.h
+    Private/Resource/SkeletalInfluenceReduction.cpp
     Private/Resource/GltfAccessorRange.h
     Private/Resource/ImportTransform.h
     Private/Resource/ImportTransform.cpp
