@@ -107,23 +107,36 @@ bool FrustumCullSphere(vec3 center, float radius)
 /**
  * @brief 法線コーン バックフェースカリング
  *
- * クラスタの全三角形が裏向きかを判定します。
+ * クラスタの全三角形が裏向きかを、メッシュのローカル空間で判定します。
+ * 非一様スケールやせん断では法線の向きの広がり（コーンの半角）がワールドで変わるため、
+ * コーンをワールドへ移さず、カメラ位置をローカルへ戻して比べる。
+ * 三角形の表裏（法線と視線の内積の符号）はアフィン変換で保たれ、鏡映（行列式が負）でだけ反転する。
  * coneCutoff は cos(コーンの半角)。半角が90°以上（coneCutoff <= 0）ならカリングしない。
  * @return true = カリング（全三角形が裏向き）
  */
-bool NormalConeCull(vec3 coneAxis, float coneCutoff, vec3 clusterCenter, float clusterRadius)
+bool NormalConeCull(vec3 localConeAxis, float coneCutoff, vec3 localCenter, float localRadius)
 {
     if (coneCutoff <= 0.0)
     {
         return false; // どこから見ても表向きの三角形を含みうる
     }
 
+    mat3 linearPart = mat3(cullData.worldMatrix);
+    float det = determinant(linearPart);
+    if (abs(det) <= 1e-12)
+    {
+        return false; // 潰れた変換ではローカルへ戻せない
+    }
+
+    vec3 cameraLocal = inverse(linearPart) * (cullData.cameraPosition.xyz - cullData.worldMatrix[3].xyz);
+    vec3 coneAxis = det < 0.0 ? -localConeAxis : localConeAxis;
+
     // 法線は全てコーン軸から半角以内にあるので、視線とコーン軸のなす角が 90°−半角 未満なら
     // 全ての三角形が裏向きになる（cos(90°−半角) = sin(半角) と比べる）。
     // 視線はカメラから境界球内のどの点へ向かうものでも成り立つよう、半径の分だけ余裕を取る
     float sinHalfAngle = sqrt(max(1.0 - coneCutoff * coneCutoff, 0.0));
-    vec3 toCenter = clusterCenter - cullData.cameraPosition.xyz;
-    return dot(toCenter, coneAxis) >= sinHalfAngle * length(toCenter) + clusterRadius;
+    vec3 toCenter = localCenter - cameraLocal;
+    return dot(toCenter, coneAxis) >= sinHalfAngle * length(toCenter) + localRadius;
 }
 
 vec3 TransformClusterCenterToWorld(vec3 localCenter)
@@ -137,36 +150,6 @@ float ComputeWorldRadiusScale()
     float scaleY = length(cullData.worldMatrix[1].xyz);
     float scaleZ = length(cullData.worldMatrix[2].xyz);
     return max(scaleX, max(scaleY, scaleZ));
-}
-
-vec3 TransformConeAxisToWorld(vec3 localAxis)
-{
-    mat3 linearPart = mat3(cullData.worldMatrix);
-    float det = determinant(linearPart);
-
-    vec3 transformedAxis = localAxis;
-    if (abs(det) > 1e-6)
-    {
-        mat3 normalMatrix = transpose(inverse(linearPart));
-        if (det < 0.0)
-        {
-            normalMatrix = -normalMatrix;
-        }
-
-        transformedAxis = normalMatrix * localAxis;
-    }
-    else
-    {
-        transformedAxis = linearPart * localAxis;
-    }
-
-    float axisLengthSq = dot(transformedAxis, transformedAxis);
-    if (axisLengthSq <= 1e-8)
-    {
-        return localAxis;
-    }
-
-    return transformedAxis * inversesqrt(axisLengthSq);
 }
 
 /**
@@ -356,9 +339,7 @@ void main()
     }
 
     // バックフェースカリング（法線コーン）
-    vec3 coneAxis = TransformConeAxisToWorld(cluster.normalCone.xyz);
-    float coneCutoff = cluster.normalCone.w;
-    if (NormalConeCull(coneAxis, coneCutoff, center, radius))
+    if (NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius))
     {
         return;
     }
