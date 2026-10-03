@@ -27,6 +27,9 @@ namespace NorvesLib::Core::Skeletal
         double MaximumDroppedWeight = 0;
         double MeanDroppedWeight = 0;
         uint64_t FailedVertexIndex = std::numeric_limits<uint64_t>::max();
+        // 失敗頂点は正常prefixの平均/最大へ混ぜず、測定できた脱落量だけ別に返す。
+        double FailedVertexDroppedWeight = 0;
+        bool bHasFailedVertexDroppedWeight = false;
         bool bInfluenceScanComplete = false;
     };
 } // namespace NorvesLib::Core::Skeletal

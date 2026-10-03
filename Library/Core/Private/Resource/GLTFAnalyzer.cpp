@@ -1003,7 +1003,8 @@ namespace NorvesLib::Core::Resource
         return true;
     }
 
-    Skeletal::SkeletalGltfDecodeResult GLTFAnalyzer::AnalyzeSkeletal(const String& gltfPath)
+    Skeletal::SkeletalGltfDecodeResult GLTFAnalyzer::AnalyzeSkeletal(const String& gltfPath,
+        const Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
     {
         const String resolvedPath = ResolveAssetPath(gltfPath);
         Container::VariableArray<uint8_t> sourceBytes;
@@ -1013,7 +1014,7 @@ namespace NorvesLib::Core::Resource
             result.Status = Skeletal::SkeletalGltfDecodeStatus::FileReadFailed;
             return result;
         }
-        return Skeletal::DecodeSkeletalGltf({sourceBytes.data(), sourceBytes.size()}, resolvedPath);
+        return Skeletal::DecodeSkeletalGltf({sourceBytes.data(), sourceBytes.size()}, resolvedPath, nullptr, nullptr, decodeOptions);
     }
 
     Rendering::ModelHandle GLTFAnalyzer::LoadModel(const String& gltfPath,

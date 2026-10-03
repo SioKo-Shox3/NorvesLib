@@ -22,7 +22,8 @@ namespace NorvesLib::Core::Skeletal
     // 失敗時はoutSourceBuffersを空にする。decodedの頂点/関節/clipは独立所有する。
     [[nodiscard]] SkeletalGltfDecodeResult DecodeSkeletalGltf(Container::Span<const uint8_t> sourceBytes,
         const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers = nullptr,
-        const AssetImport::LoadedImportSettings* importSettings = nullptr);
+        const AssetImport::LoadedImportSettings* importSettings = nullptr,
+        const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
 
     // 旧String入口の互換用。出力buffer配列を求めた場合は全source bytesを所有コピーする。
     using SkeletalGltfSourceBuffers = Container::VariableArray<Container::VariableArray<uint8_t>>;
@@ -30,5 +31,6 @@ namespace NorvesLib::Core::Skeletal
     [[nodiscard]] SkeletalGltfDecodeResult DecodeSkeletalGltf(const Container::String& jsonText,
                                                               const Container::String& sourcePath,
                                                               SkeletalGltfSourceBuffers* outSourceBuffers = nullptr,
-                                                              const AssetImport::LoadedImportSettings* importSettings = nullptr);
+                                                              const AssetImport::LoadedImportSettings* importSettings = nullptr,
+        const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
 } // namespace NorvesLib::Core::Skeletal

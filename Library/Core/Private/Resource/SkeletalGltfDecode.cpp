@@ -1,6 +1,8 @@
 ﻿#include "Resource/SkeletalGltfDecode.h"
 #include "Resource/SkeletalLimits.h"
 #include "Resource/SkeletalInfluenceAttributes.h"
+#include "Resource/SkeletalInfluenceReduction.h"
+#include "Resource/SkeletalImportPolicy.h"
 
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
@@ -60,6 +62,7 @@ namespace NorvesLib::Core::Skeletal
             uint32_t Joints = InvalidIndex;
             uint32_t Weights = InvalidIndex;
             uint32_t Indices = InvalidIndex;
+            Container::VariableArray<SkeletalInfluenceSet> InfluenceSets;
         };
 
         using MatrixValues = Container::FixedArray<float, 16>;
@@ -774,7 +777,8 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
-        bool ParsePrimitive(const JsonValue& root, PrimitiveInfo& outPrimitive, SkeletalGltfDecodeStatus& outStatus)
+        bool ParsePrimitive(const JsonValue& root, PrimitiveInfo& outPrimitive, SkeletalGltfDecodeStatus& outStatus,
+            const SkeletalGltfDecodeOptions& options)
         {
             const JsonValue meshes = root.FindMember("meshes");
             if (!meshes.IsArray() || meshes.GetArraySize() != 1)
@@ -813,11 +817,20 @@ namespace NorvesLib::Core::Skeletal
                 outStatus = SkeletalGltfDecodeStatus::InvalidDocument;
                 return false;
             }
-            const auto influences=ValidateStrictInfluenceAttributes(attributes);
-            if (influences!=StrictInfluenceStatus::Success)
+            if (options.InfluencePolicy == SkeletalInfluencePolicy::Strict)
             {
-                outStatus=influences==StrictInfluenceStatus::AdditionalSet ?
-                    SkeletalGltfDecodeStatus::InfluenceLimitExceeded : SkeletalGltfDecodeStatus::InvalidAccessor;
+                const auto influences = ValidateStrictInfluenceAttributes(attributes);
+                if (influences != StrictInfluenceStatus::Success)
+                {
+                    outStatus = influences == StrictInfluenceStatus::AdditionalSet ?
+                        SkeletalGltfDecodeStatus::InfluenceLimitExceeded : SkeletalGltfDecodeStatus::InvalidAccessor;
+                    return false;
+                }
+            }
+            else if (CollectSkeletalInfluenceSets(attributes, outPrimitive.InfluenceSets) !=
+                InfluenceSetCollectionStatus::Success)
+            {
+                outStatus = SkeletalGltfDecodeStatus::InvalidAccessor;
                 return false;
             }
             if (!TryReadRequiredUInt32(attributes, "POSITION", outPrimitive.Position) ||
@@ -886,11 +899,126 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
+        struct InfluenceSetLayout
+        {
+            const AccessorInfo* Joints = nullptr;
+            const AccessorInfo* Weights = nullptr;
+            AccessorLayout JointLayout;
+            AccessorLayout WeightLayout;
+        };
+
+        bool PrepareInfluenceLayouts(const PrimitiveInfo& primitive,
+            const Container::VariableArray<AccessorInfo>& accessors,
+            const Container::VariableArray<BufferViewInfo>& bufferViews,
+            const Gltf::BufferSet& buffers, uint32_t vertexCount,
+            Container::VariableArray<InfluenceSetLayout>& layouts)
+        {
+            const size_t count = primitive.InfluenceSets.size();
+            if (count == 0 || count > UINT32_MAX / 4 ||
+                count > std::numeric_limits<size_t>::max() / (4 * sizeof(SkinInfluence))) return false;
+            layouts.resize(count);
+            for (size_t index = 0; index < count; ++index)
+            {
+                const auto& set = primitive.InfluenceSets[index];
+                if (set.JointsAccessor >= accessors.size() || set.WeightsAccessor >= accessors.size()) return false;
+                auto& layout = layouts[index];
+                layout.Joints = &accessors[set.JointsAccessor];
+                layout.Weights = &accessors[set.WeightsAccessor];
+                const auto& joints = *layout.Joints;
+                const auto& weights = *layout.Weights;
+                if (joints.Type != "VEC4" || joints.bNormalized ||
+                    (joints.ComponentType != ByteComponent && joints.ComponentType != UnsignedShortComponent) ||
+                    weights.Type != "VEC4" ||
+                    !((weights.ComponentType == FloatComponent && !weights.bNormalized) ||
+                        ((weights.ComponentType == ByteComponent || weights.ComponentType == UnsignedShortComponent) && weights.bNormalized)) ||
+                    joints.Count != vertexCount || weights.Count != vertexCount ||
+                    joints.ByteOffset % 4 != 0 || weights.ByteOffset % 4 != 0 ||
+                    !BuildAccessorLayout(joints, bufferViews, buffers, layout.JointLayout) ||
+                    !BuildAccessorLayout(weights, bufferViews, buffers, layout.WeightLayout)) return false;
+            }
+            return true;
+        }
+
+        bool ReduceVertexInfluences(size_t vertexIndex, uint32_t jointCount,
+            const Container::VariableArray<InfluenceSetLayout>& layouts,
+            const SkeletalGltfDecodeOptions& options, Container::VariableArray<SkinInfluence>& input,
+            Container::VariableArray<SkinInfluence>& workspace, SkeletalVertex& vertex,
+            SkeletalGltfDecodeReport& report, SkeletalGltfDecodeStatus& status)
+        {
+            report.FailedVertexIndex = vertexIndex;
+            uint64_t rawSum65535 = 0;
+            bool allInteger = true;
+            for (size_t setIndex = 0; setIndex < layouts.size(); ++setIndex)
+            {
+                const auto& set = layouts[setIndex];
+                const uint8_t* joints = set.JointLayout.Data + vertexIndex * set.JointLayout.Stride;
+                const uint8_t* weights = set.WeightLayout.Data + vertexIndex * set.WeightLayout.Stride;
+                for (size_t slot = 0; slot < 4; ++slot)
+                {
+                    auto& influence = input[setIndex * 4 + slot];
+                    influence.JointIndex = ReadUnsignedComponent(joints + slot * GetComponentSize(set.Joints->ComponentType), set.Joints->ComponentType);
+                    // ゼロweightや後で落とす影響も、元データのjoint範囲は必ず検査する。
+                    if (influence.JointIndex >= jointCount)
+                    {
+                        status = SkeletalGltfDecodeStatus::InvalidSkeleton;
+                        return false;
+                    }
+                    const uint8_t* value = weights + slot * GetComponentSize(set.Weights->ComponentType);
+                    if (set.Weights->ComponentType == FloatComponent)
+                    {
+                        allInteger = false;
+                        influence.Weight = ReadFloat(value);
+                    }
+                    else
+                    {
+                        const uint32_t raw = ReadUnsignedComponent(value, set.Weights->ComponentType);
+                        const uint32_t factor = set.Weights->ComponentType == ByteComponent ? 257 : 1;
+                        rawSum65535 += uint64_t(raw) * factor;
+                        influence.Weight = double(raw) / (set.Weights->ComponentType == ByteComponent ? 255.0 : 65535.0);
+                    }
+                }
+            }
+            // 全て整数なら共通分母で厳密検査。FLOATを含む場合はkernelの総和許容を使う。
+            if (allInteger && rawSum65535 != 65535) return false;
+            InfluenceReductionOptions reduction;
+            reduction.WarnDroppedWeight = options.WarnDroppedWeight;
+            reduction.FailDroppedWeight = options.FailDroppedWeight;
+            ReducedSkinInfluences reduced;
+            const auto outcome = ReduceSkinInfluences({input.data(), input.size()}, jointCount, reduction,
+                {workspace.data(), workspace.size()}, reduced);
+            if (outcome.Status != InfluenceReductionStatus::Success)
+            {
+                if (outcome.Status == InfluenceReductionStatus::DroppedWeightExceeded)
+                {
+                    status = SkeletalGltfDecodeStatus::InfluenceReductionExceeded;
+                    report.FailedVertexDroppedWeight = outcome.DroppedWeight;
+                    report.bHasFailedVertexDroppedWeight = true;
+                }
+                return false;
+            }
+            for (size_t slot = 0; slot < 4; ++slot)
+            {
+                vertex.JointIndices[slot] = reduced.Joints[slot];
+                vertex.JointWeights[slot] = reduced.Weights[slot];
+            }
+            ++report.ProcessedVertexCount;
+            report.ReducedVertexCount += outcome.bReduced;
+            report.MergedJointVertexCount += outcome.OriginalNonzeroCount > outcome.UniqueNonzeroCount;
+            report.RenormalizedVertexCount += outcome.bRenormalized;
+            report.WarningVertexCount += outcome.bWarning;
+            report.MaximumDroppedWeight = std::max(report.MaximumDroppedWeight, outcome.DroppedWeight);
+            report.MeanDroppedWeight += (outcome.DroppedWeight - report.MeanDroppedWeight) / double(report.ProcessedVertexCount);
+            report.FailedVertexIndex = std::numeric_limits<uint64_t>::max();
+            return true;
+        }
+
         bool ExtractMesh(const PrimitiveInfo& primitive,
                          const Container::VariableArray<AccessorInfo>& accessors,
                          const Container::VariableArray<BufferViewInfo>& bufferViews,
                          const Gltf::BufferSet& buffers,
-                         SkeletalGltfData& outData)
+                         SkeletalGltfData& outData, uint32_t jointCount,
+                         const SkeletalGltfDecodeOptions& options, SkeletalGltfDecodeReport& report,
+                         SkeletalGltfDecodeStatus& status)
         {
             const AccessorInfo* position = nullptr;
             const AccessorInfo* normal = nullptr;
@@ -947,6 +1075,17 @@ namespace NorvesLib::Core::Skeletal
                 return false;
             }
 
+            const bool reduce = options.InfluencePolicy == SkeletalInfluencePolicy::ReduceToFour;
+            Container::VariableArray<InfluenceSetLayout> influenceLayouts;
+            Container::VariableArray<SkinInfluence> inputInfluences;
+            Container::VariableArray<SkinInfluence> influenceWorkspace;
+            if (reduce)
+            {
+                report.TotalVertexCount = position->Count;
+                if (!PrepareInfluenceLayouts(primitive, accessors, bufferViews, buffers, position->Count, influenceLayouts)) return false;
+                inputInfluences.resize(influenceLayouts.size() * 4);
+                influenceWorkspace.resize(inputInfluences.size());
+            }
             outData.Vertices.resize(position->Count);
             for (size_t vertexIndex = 0; vertexIndex < position->Count; ++vertexIndex)
             {
@@ -959,22 +1098,6 @@ namespace NorvesLib::Core::Skeletal
                 vertex.Position = {ReadFloat(positionData), ReadFloat(positionData + 4), ReadFloat(positionData + 8)};
                 vertex.Normal = {ReadFloat(normalData), ReadFloat(normalData + 4), ReadFloat(normalData + 8)};
                 vertex.TexCoord = {ReadFloat(texCoordData), ReadFloat(texCoordData + 4)};
-                const size_t jointComponentSize = GetComponentSize(joints->ComponentType);
-                const size_t weightComponentSize = GetComponentSize(weights->ComponentType);
-                uint32_t rawWeightSum = 0;
-                for (size_t influence = 0; influence < 4; ++influence)
-                {
-                    vertex.JointIndices[influence] =
-                        ReadUnsignedComponent(jointData + influence * jointComponentSize, joints->ComponentType);
-                    vertex.JointWeights[influence] = ReadWeightComponent(
-                        weightData + influence * weightComponentSize, weights->ComponentType, weights->bNormalized);
-                    if (weights->ComponentType != FloatComponent)
-                    {
-                        rawWeightSum += ReadUnsignedComponent(
-                            weightData + influence * weightComponentSize, weights->ComponentType);
-                    }
-                }
-                float weightSum = 0.0f;
                 if (!std::isfinite(vertex.Position.X) || !std::isfinite(vertex.Position.Y) ||
                     !std::isfinite(vertex.Position.Z) || !std::isfinite(vertex.Normal.X) ||
                     !std::isfinite(vertex.Normal.Y) || !std::isfinite(vertex.Normal.Z) ||
@@ -982,25 +1105,50 @@ namespace NorvesLib::Core::Skeletal
                 {
                     return false;
                 }
-                for (float weight : vertex.JointWeights)
+                if (reduce)
                 {
-                    if (!std::isfinite(weight) || weight < 0.0f)
+                    if (!ReduceVertexInfluences(vertexIndex, jointCount, influenceLayouts, options,
+                        inputInfluences, influenceWorkspace, vertex, report, status)) return false;
+                }
+                else
+                {
+                    const size_t jointComponentSize = GetComponentSize(joints->ComponentType);
+                    const size_t weightComponentSize = GetComponentSize(weights->ComponentType);
+                    uint32_t rawWeightSum = 0;
+                    for (size_t influence = 0; influence < 4; ++influence)
+                    {
+                        vertex.JointIndices[influence] =
+                            ReadUnsignedComponent(jointData + influence * jointComponentSize, joints->ComponentType);
+                        vertex.JointWeights[influence] = ReadWeightComponent(
+                            weightData + influence * weightComponentSize, weights->ComponentType, weights->bNormalized);
+                        if (weights->ComponentType != FloatComponent)
+                        {
+                            rawWeightSum += ReadUnsignedComponent(
+                                weightData + influence * weightComponentSize, weights->ComponentType);
+                        }
+                    }
+                    float weightSum = 0.0f;
+                    for (float weight : vertex.JointWeights)
+                    {
+                        if (!std::isfinite(weight) || weight < 0.0f)
+                        {
+                            return false;
+                        }
+                        weightSum += weight;
+                    }
+                    if (!std::isfinite(weightSum) || std::fabs(weightSum - 1.0f) > 0.001f)
                     {
                         return false;
                     }
-                    weightSum += weight;
-                }
-                if (!std::isfinite(weightSum) || std::fabs(weightSum - 1.0f) > 0.001f)
-                {
-                    return false;
-                }
-                if ((weights->ComponentType == ByteComponent && rawWeightSum != UINT8_MAX) ||
-                    (weights->ComponentType == UnsignedShortComponent && rawWeightSum != UINT16_MAX))
-                {
-                    return false;
+                    if ((weights->ComponentType == ByteComponent && rawWeightSum != UINT8_MAX) ||
+                        (weights->ComponentType == UnsignedShortComponent && rawWeightSum != UINT16_MAX))
+                    {
+                        return false;
+                    }
                 }
             }
 
+            if (reduce) report.bInfluenceScanComplete = true;
             outData.Indices.resize(indices->Count);
             const size_t indexComponentSize = GetComponentSize(indices->ComponentType);
             for (size_t index = 0; index < indices->Count; ++index)
@@ -1353,8 +1501,11 @@ namespace NorvesLib::Core::Skeletal
 
         SkeletalGltfDecodeResult DecodeResolvedDocument(const JsonValue& root, const Gltf::ContainerView& container,
             const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
-        const AssetImport::LoadedImportSettings* importSettings)
+        const AssetImport::LoadedImportSettings* importSettings,
+        const SkeletalGltfDecodeOptions* decodeOptions)
         {
+            const SkeletalGltfDecodeOptions options = decodeOptions != nullptr ? *decodeOptions : SkeletalGltfDecodeOptions{};
+            if (!IsValidSkeletalGltfDecodeOptions(options)) return Fail(SkeletalGltfDecodeStatus::InvalidImportOptions);
             if (!root.IsObject())
             {
                 return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
@@ -1380,7 +1531,7 @@ namespace NorvesLib::Core::Skeletal
 
             PrimitiveInfo primitive;
             SkeletalGltfDecodeStatus status = SkeletalGltfDecodeStatus::InvalidDocument;
-            if (!ParsePrimitive(root, primitive, status))
+            if (!ParsePrimitive(root, primitive, status, options))
             {
                 return Fail(status);
             }
@@ -1420,38 +1571,50 @@ namespace NorvesLib::Core::Skeletal
                 return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
             }
             data.MeshNodeGlobalTransform = nodeContract.MeshNodeGlobal;
-            if (!ExtractMesh(primitive, accessors, bufferViews, buffers, data))
-            {
-                return Fail(SkeletalGltfDecodeStatus::InvalidAccessor);
-            }
             const size_t skinJointCount = skin.FindMember("joints").GetArraySize();
+            SkeletalGltfDecodeReport report;
+            status = SkeletalGltfDecodeStatus::InvalidAccessor;
+            if (!ExtractMesh(primitive, accessors, bufferViews, buffers, data,
+                static_cast<uint32_t>(skinJointCount), options, report, status))
+            {
+                auto failure = Fail(status);
+                failure.Report = report;
+                return failure;
+            }
+            const auto failWithReport = [&report](SkeletalGltfDecodeStatus failureStatus)
+            {
+                auto failure = Fail(failureStatus);
+                failure.Report = report;
+                return failure;
+            };
             for (const SkeletalVertex& vertex : data.Vertices)
             {
                 for (const uint32_t jointIndex : vertex.JointIndices)
                 {
                     if (jointIndex >= skinJointCount)
                     {
-                        return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
+                        return failWithReport(SkeletalGltfDecodeStatus::InvalidSkeleton);
                     }
                 }
             }
             if (!ExtractSkeleton(root, skin, nodeContract, accessors, bufferViews, buffers, data, nodeToJoint))
             {
-                return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
+                return failWithReport(SkeletalGltfDecodeStatus::InvalidSkeleton);
             }
             if (!ExtractAnimation(animation, nodeToJoint, accessors, bufferViews, buffers, data))
             {
-                return Fail(SkeletalGltfDecodeStatus::InvalidAnimation);
+                return failWithReport(SkeletalGltfDecodeStatus::InvalidAnimation);
             }
 
             if (selectedImport->bPresent && !ApplySkeletalImport(data, selectedImport->Settings))
             {
-                return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
+                return failWithReport(SkeletalGltfDecodeStatus::InvalidDocument);
             }
 
             SkeletalGltfDecodeResult result;
             result.Status = SkeletalGltfDecodeStatus::Success;
             result.Data = std::move(data);
+            result.Report = report;
             if (outSourceBuffers != nullptr)
             {
                 outSourceBuffers->Swap(buffers);
@@ -1462,7 +1625,8 @@ namespace NorvesLib::Core::Skeletal
 
     SkeletalGltfDecodeResult DecodeSkeletalGltf(Container::Span<const uint8_t> sourceBytes,
         const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
-        const AssetImport::LoadedImportSettings* importSettings)
+        const AssetImport::LoadedImportSettings* importSettings,
+        const SkeletalGltfDecodeOptions* decodeOptions)
     {
         if (outSourceBuffers != nullptr)
         {
@@ -1491,12 +1655,13 @@ namespace NorvesLib::Core::Skeletal
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidJson);
         }
-        return DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers, importSettings);
+        return DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers, importSettings, decodeOptions);
     }
 
     SkeletalGltfDecodeResult DecodeSkeletalGltf(const Container::String& jsonText,
         const Container::String& sourcePath, SkeletalGltfSourceBuffers* outSourceBuffers,
-        const AssetImport::LoadedImportSettings* importSettings)
+        const AssetImport::LoadedImportSettings* importSettings,
+        const SkeletalGltfDecodeOptions* decodeOptions)
     {
         if (outSourceBuffers != nullptr)
         {
@@ -1510,7 +1675,7 @@ namespace NorvesLib::Core::Skeletal
         }
         Gltf::BufferSet buffers;
         auto result = DecodeResolvedDocument(document.GetRoot(), {}, sourcePath,
-            outSourceBuffers != nullptr ? &buffers : nullptr, importSettings);
+            outSourceBuffers != nullptr ? &buffers : nullptr, importSettings, decodeOptions);
         if (result.Succeeded() && outSourceBuffers != nullptr)
         {
             SkeletalGltfSourceBuffers owned(buffers.GetCount());

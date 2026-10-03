@@ -51,9 +51,9 @@ Strictの通常4影響経路をこの修復へ無言で切り替えない。
 参考: [glTF skinned mesh attributes](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#skinned-mesh-attributes)。
 
 5本の既知値、120順列、同joint/tie/微小値、警告・失敗境界、無効値/関節/総和/aliasと出力保持を純実装で確認する。
-CUBICSPLINE/morphとdecode/CLI接続は別作業。
+CUBICSPLINE/morphとcook/CLI接続は別作業。raw/legacy/file decode接続は下記を参照。
 
-## 明示policyと診断型（接続前）
+## 明示policyと診断型
 
 SkeletalGltfDecodeOptionsはInfluencePolicy=Strict(0)/ReduceToFour(1)とWarnDroppedWeight/FailDroppedWeightを持つ。
 既定はStrict、閾値は0.01/0.25。閾値は有限で0<=warn<=fail<=1。Strictでは未使用の非既定閾値を拒否し、
@@ -69,16 +69,36 @@ struct paddingや文字列表現を使わず、-0を+0へ統一する。algorith
 警告閾値の変更もhashに含み、同じ入力の別policyを旧cacheと混同しない。
 
 固定bytesと独立3初期stateのFNV既知値、Strict不変、閾値/algorithm差、invalid enum/数値、ゼロの正規化を
-通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBERで検査する。これは型/hashの実装であり、decode/CLIは未接続。
+通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBERで検査する。cook/CLIのhashへの接続は別作業で、decode入口は下記の明示指定に対応する。
 
-## 複数セット記述の収集（Reduce接続前）
+## 複数セット記述の収集
 
 CollectSkeletalInfluenceSetsはJOINTS_n/WEIGHTS_nの属性名とaccessor番号を収集し、JSON内の並びに依らず
 set番号/joint→weight順へ正準化する。0始まり連続・各setのjoint/weight各1つを必須にし、
 片側欠落、番号飛び、重複名、非正準名、不正な整数accessor番号を拒否する。
 成功結果はset0..N-1順の所有配列で、失敗時は以前の結果を保持する。
 
-ここではaccessorの存在/型/count/bufferやweight数値は検査しない。Reduceのdecode接続時にそれらを追加する。
+ここではaccessorの存在/型/count/bufferやweight数値は検査しない。decode側がそれらを検査する。
 既定Strictは引き続き専用gateで追加セット自体を拒否し、このcollectorを使って受理へ緩めない。
 正準pair検査と既存属性名分類を通常/O2-NDEBUG/ASan・UBSanで実行し、JsonDocument経由の収集/失敗保持試験は
 native束へ登録する。実JSON試験はWindows.h依存で未実行として区別する。
+
+## 明示Reduceのdecode入口
+
+raw bytes/旧StringのDecodeSkeletalGltfおよびGLTFAnalyzer::AnalyzeSkeletalは、末尾の任意decodeOptionsを呼出中だけ借用する。
+省略はStrictの従来経路で、ReduceToFourの明示時だけ複数セットを収集し共有kernelへ渡す。
+各setのVEC4/component/normalized/count/offset/layoutと、全slotのjoint範囲を縮約前に検査する。
+ゼロweightや捨てるslotもjoint範囲の例外にしない。整数weightだけならUNORM8を257倍した65535分母の
+raw総和を厳密に照合する。FLOATを含む場合は全セットの数値総和へkernelの0.001許容を適用する。
+どちらもsetごとに1を要求せず、頂点の全影響を合わせて検査する。128関節、頂点ABI、cooked wireは不変。
+
+statusは既存0〜15を保ち、InvalidImportOptions=16、InfluenceReductionExceeded=17を追加する。
+縮約reportは成功した頂点prefixの最大/平均/各件数を持ち、失敗頂点をその母集団へ混ぜない。
+閾値超過時だけ別欄FailedVertexDroppedWeight/bHasFailedVertexDroppedWeightへ測定を返す。
+bInfluenceScanCompleteは影響走査の完了だけを表し、後段のindex/骨格/clip/import失敗とは別である。
+Strictのreportは既定値。失敗Dataは空、source buffer出力も空のままで、部分decode結果を公開しない。
+
+FiveInfluences.gltfは3頂点中1頂点だけ5本の影響を持つ検証用fixtureで、binはnative試験が生成する。
+raw/GLB/String/fileの同値、5→4の値と測定、閾値超過、追加slotの不正joint/ゼロweight/負値、
+UNORM16のraw総和1不足とoptions不正をnative試験へ登録する。LinuxではCoreのWindows.h依存により
+この統合試験は実行できず、純kernel/policy/pair試験の実行と区別する。cook/CLIはまだStrictのみ。

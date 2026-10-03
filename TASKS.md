@@ -2042,7 +2042,13 @@
 - stop-when: raw整数weight総和やjoint範囲検査を省くdecode接続、未検証のReduce受理、Strict既定の緩和。
 
 ## G2-GR86-REDUCE-DECODE: 明示Reduceを骨格decodeへ接続する
-- status: todo
+- status: done
 - done-when: options指定時だけ全joint/weightセットの型/count/range/整数raw総和を検査し、共有kernelで4本へ縮約する。reportは正常prefixと失敗頂点の測定を区別し、raw/legacy/file入口で一致する。既定Strictは不変。
 - verify: 5影響fixture、raw/GLB/legacy/fileの一致、閾値超過/負値/追加セット内の不正joint/UNORM総和/不正options、失敗Data/sourcebufferの非公開を登録する。
 - stop-when: cooked wire/頂点ABI/128上限変更、未接続のcooker/CLI成功主張、捨てる影響の不正値黙認。
+
+## G2-GR86-REDUCE-COOK: 縮約指定とhashを骨格cookへ接続する
+- status: todo
+- done-when: 明示optionsをcook/preflightへ伝播し、同一source/settings/policy/algorithmから同じhashを得る。Strict hashとwireは不変、失敗out保持、縮約診断を返す。
+- verify: Strict旧hash、Reduce cooked値/診断、preflight同値、warn/fail変更hash、閾値超過out保持をnativeへ登録。純hash回帰を実行する。
+- stop-when: CLI未接続なのに利用可能と主張、形式/ABI/128上限変更、設定指定の黙殺。

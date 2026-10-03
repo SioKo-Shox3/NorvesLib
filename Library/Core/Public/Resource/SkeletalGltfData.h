@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "Resource/SkeletalImportOptions.h"
+
 #include "Container/Containers.h"
 
 #include <cstdint>
@@ -107,13 +109,16 @@ namespace NorvesLib::Core::Skeletal
         InvalidSkeleton,
         InvalidAnimation,
         UnsupportedSparseAccessor,
-        InfluenceLimitExceeded
+        InfluenceLimitExceeded,
+        InvalidImportOptions,
+        InfluenceReductionExceeded
     };
 
     struct SkeletalGltfDecodeResult
     {
         SkeletalGltfDecodeStatus Status = SkeletalGltfDecodeStatus::InvalidDocument;
         SkeletalGltfData Data;
+        SkeletalGltfDecodeReport Report;
 
         [[nodiscard]] bool Succeeded() const
         {

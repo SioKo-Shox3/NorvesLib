@@ -544,3 +544,6 @@
 
 - G2-GR86-INFLUENCE-SETS: JSON内順序に依らずJOINTS_n/WEIGHTS_nを正準順へ収集する所有collectorとpair検査を追加。0始まり連続/各1個/同数pair/整数u32番号を検査し、失敗時結果保持。Strict専用gateは変更せず、accessor型/count/buffer/weightは後段責務と明記。pure pairと既存分類の6mode実行/MEMBER成功、native16JSON fixtureは文法確認と登録のみ（Windows.hで未実行）。独立PASS。
 - Next: Reduceをraw/legacy/file decodeへ明示optionsとして接続し、全影響のjoint範囲とUNORM raw総和を落とす前に検査する。
+
+- G2-GR86-REDUCE-DECODE: 明示Reduceだけraw/legacy/fileに複数set読込と縮約を接続。全slot joint範囲、型/count/layout、全整数影響の65535共通分母raw総和を縮約前検査。成功prefixの統計と失敗頂点脱落量を分離し、失敗Data/sourceを非公開。Strict/status0〜15/128関節/ABI/wire不変、16/17を末尾追加。3頂点中1頂点5影響fixtureと入口同値/閾値/不正joint/負値/UNORM/optionsをnative登録。純kernel/policy6実行成功、独立確認はpair込み9実行成功。review中にExtractAnimationの不要追加引数を復元し最終PASS。nativeはWindows.hで未実行。正常prefix後失敗と複数UNORM混在の恒久回帰強化はnonblocking追補。
+- Next: collector/decodeを公開し、GR86-REDUCE-COOKのcook/preflight/hash/診断へ接続する。CLIはその後、CUBICSPLINE/morphは別反復。

@@ -30,9 +30,10 @@ namespace NorvesLib::Core::Resource
                                                 Rendering::ModelLoadResourceContext resources);
 
         /**
-         * @brief Decodes the minimal v0 skeletal glTF subset without creating GPU resources.
+         * @brief GPU資源を作らず骨格glTFをdecodeする。縮約は明示options指定時だけ行う。
          */
-        static Skeletal::SkeletalGltfDecodeResult AnalyzeSkeletal(const Container::String& gltfPath);
+        static Skeletal::SkeletalGltfDecodeResult AnalyzeSkeletal(const Container::String& gltfPath,
+            const Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr);
 
         /**
          * @brief Loads a glTF file asynchronously and builds the GPU resources on the main thread later.

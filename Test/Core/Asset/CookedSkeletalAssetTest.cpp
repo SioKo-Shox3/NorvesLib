@@ -692,6 +692,98 @@ namespace
         firstSkeleton.Finalize(); secondSkeleton.Finalize();
     }
 
+    // 5影響は先頭の1頂点のみ。他の頂点は元データと同じ影響を維持する。
+    void RunInfluenceReductionContract()
+    {
+        using namespace Skeletal;
+        LooseFixture fixture;
+        const auto source = ReadFixtureJson(ToCorePath(FindFixtureRoot() / "FiveInfluences.gltf"));
+        const auto sourceBytes = TextBytes(source);
+        const auto sourcePath = ToCorePath(fixture.Root / "FiveInfluences.gltf");
+        WriteFixtureBytes(fixture.Root / "FiveInfluences.gltf", sourceBytes);
+        const auto base = BuildLooseFixtureBuffer();
+        ByteArray binary(668, 0);
+        std::memcpy(binary.data(), base.data(), 224);
+        for (size_t joint = 0; joint < 5; ++joint) WriteMatrix(binary, 224 + joint * 64, -float(joint));
+        std::memcpy(binary.data() + 544, base.data() + 352, 64);
+        constexpr float firstWeights[4] = {0.4f, 0.3f, 0.15f, 0.1f};
+        for (size_t slot = 0; slot < 4; ++slot)
+        {
+            binary[96 + slot] = static_cast<uint8_t>(slot);
+            WriteFloat(binary, 132 + slot * 4, firstWeights[slot]);
+        }
+        binary[608] = 4;
+        WriteFloat(binary, 620, 0.05f);
+        WriteFixtureBytes(fixture.Root / "fixture.bin", binary);
+        SkeletalGltfDecodeOptions options;
+        options.InfluencePolicy = SkeletalInfluencePolicy::ReduceToFour;
+        Gltf::BufferSet buffers;
+        const auto decoded = DecodeSkeletalGltf({sourceBytes.data(), sourceBytes.size()}, sourcePath, &buffers, nullptr, &options);
+        assert(decoded.Succeeded() && decoded.Data.Vertices.size() == 3 && decoded.Data.Joints.size() == 5);
+        assert(buffers.GetCount() == 1);
+        const auto checkReport = [](const SkeletalGltfDecodeReport& report)
+        {
+            assert(report.TotalVertexCount == 3 && report.ProcessedVertexCount == 3);
+            assert(report.ReducedVertexCount == 1 && report.WarningVertexCount == 1 && report.RenormalizedVertexCount == 1);
+            assert(report.MergedJointVertexCount == 0 && report.bInfluenceScanComplete);
+            assert(std::abs(report.MaximumDroppedWeight - 0.05) < 1e-7);
+            assert(std::abs(report.MeanDroppedWeight - 0.05 / 3) < 1e-7);
+            assert(report.FailedVertexIndex == UINT64_MAX && !report.bHasFailedVertexDroppedWeight);
+        };
+        checkReport(decoded.Report);
+        for (size_t slot = 0; slot < 4; ++slot)
+        {
+            assert(decoded.Data.Vertices[0].JointIndices[slot] == slot);
+            assert(std::abs(decoded.Data.Vertices[0].JointWeights[slot] - firstWeights[slot] / 0.95f) < 1e-6f);
+        }
+        SkeletalGltfSourceBuffers legacyBuffers;
+        const auto legacy = DecodeSkeletalGltf(CoreText(source), sourcePath, &legacyBuffers, nullptr, &options);
+        assert(legacy.Succeeded() && legacyBuffers.size() == 1);
+        AssertEquivalent(decoded.Data, legacy.Data); checkReport(legacy.Report);
+        const auto file = Resource::GLTFAnalyzer::AnalyzeSkeletal(sourcePath, &options);
+        assert(file.Succeeded()); AssertEquivalent(decoded.Data, file.Data); checkReport(file.Report);
+        const auto glb = MakeSkeletalGlb(ChangeBufferUri(source, ""), binary);
+        const auto embedded = DecodeSkeletalGltf({glb.data(), glb.size()}, sourcePath, nullptr, nullptr, &options);
+        assert(embedded.Succeeded()); AssertEquivalent(decoded.Data, embedded.Data); checkReport(embedded.Report);
+        assert(DecodeSkeletalGltf({sourceBytes.data(), sourceBytes.size()}, sourcePath).Status == SkeletalGltfDecodeStatus::InfluenceLimitExceeded);
+        const auto checkEmpty = [](const SkeletalGltfDecodeResult& result)
+        {
+            assert(result.Data.Vertices.empty() && result.Data.Indices.empty() && result.Data.Joints.empty() && result.Data.Clips.empty());
+        };
+        auto limited = options; limited.FailDroppedWeight = 0.04;
+        const auto failed = DecodeSkeletalGltf({sourceBytes.data(), sourceBytes.size()}, sourcePath, &buffers, nullptr, &limited);
+        assert(failed.Status == SkeletalGltfDecodeStatus::InfluenceReductionExceeded && buffers.GetCount() == 0);
+        checkEmpty(failed);
+        assert(failed.Report.ProcessedVertexCount == 0 && failed.Report.FailedVertexIndex == 0 && !failed.Report.bInfluenceScanComplete);
+        assert(failed.Report.MaximumDroppedWeight == 0 && failed.Report.MeanDroppedWeight == 0);
+        assert(failed.Report.bHasFailedVertexDroppedWeight && std::abs(failed.Report.FailedVertexDroppedWeight - 0.05) < 1e-7);
+        const auto failedLegacy = DecodeSkeletalGltf(CoreText(source), sourcePath, &legacyBuffers, nullptr, &limited);
+        assert(failedLegacy.Status == failed.Status && legacyBuffers.empty()); checkEmpty(failedLegacy);
+        const auto failedGlb = DecodeSkeletalGltf({glb.data(), glb.size()}, sourcePath, nullptr, nullptr, &limited);
+        assert(failedGlb.Status == failed.Status); checkEmpty(failedGlb);
+        assert(Resource::GLTFAnalyzer::AnalyzeSkeletal(sourcePath, &limited).Status == failed.Status);
+        auto invalidOptions = options; invalidOptions.WarnDroppedWeight = 0.5;
+        assert(DecodeSkeletalGltf({sourceBytes.data(), sourceBytes.size()}, sourcePath, nullptr, nullptr, &invalidOptions).Status == SkeletalGltfDecodeStatus::InvalidImportOptions);
+        // 捨てられる5本目もjoint範囲、負値、ゼロweight時のjointを検査する。
+        binary[608] = 5; WriteFixtureBytes(fixture.Root / "fixture.bin", binary);
+        const auto badJoint = DecodeSkeletalGltf(CoreText(source), sourcePath, nullptr, nullptr, &options);
+        assert(badJoint.Status == SkeletalGltfDecodeStatus::InvalidSkeleton); checkEmpty(badJoint);
+        WriteFloat(binary, 620, 0); WriteFixtureBytes(fixture.Root / "fixture.bin", binary);
+        assert(DecodeSkeletalGltf(CoreText(source), sourcePath, nullptr, nullptr, &options).Status == SkeletalGltfDecodeStatus::InvalidSkeleton);
+        binary[608] = 4; WriteFloat(binary, 620, -0.05f); WriteFixtureBytes(fixture.Root / "fixture.bin", binary);
+        assert(DecodeSkeletalGltf(CoreText(source), sourcePath, nullptr, nullptr, &options).Status == SkeletalGltfDecodeStatus::InvalidAccessor);
+        // UNORM16の1不足はfloat許容内でも拒否する。Strict/Reduceとも同じ元入力契約。
+        auto quantized = base;
+        for (size_t vertex = 0; vertex < 3; ++vertex) WriteLe16(quantized, 192 + vertex * 8, UINT16_MAX);
+        const auto quantizedSource = ReadFixtureJson(ToCorePath(FindFixtureRoot() / "ValidU8Unorm16.gltf"));
+        WriteFixtureBytes(fixture.Root / "fixture.bin", quantized);
+        assert(DecodeSkeletalGltf(CoreText(quantizedSource), sourcePath, nullptr, nullptr, &options).Succeeded());
+        WriteLe16(quantized, 192, UINT16_MAX - 1); WriteFixtureBytes(fixture.Root / "fixture.bin", quantized);
+        const auto badSum = DecodeSkeletalGltf(CoreText(quantizedSource), sourcePath, nullptr, nullptr, &options);
+        assert(badSum.Status == SkeletalGltfDecodeStatus::InvalidAccessor); checkEmpty(badSum);
+        assert(badSum.Report.ProcessedVertexCount == 0 && badSum.Report.FailedVertexIndex == 0);
+    }
+
     void RunUnitContract()
     {
         AssertSkinnedVertexAbi();
@@ -1158,6 +1250,7 @@ int main(int argc, char** argv)
     std::cout << "CookedSkeletalAssetTest start\n";
     if (argc == 1)
     {
+        RunInfluenceReductionContract();
         RunUnitContract();
     }
     else
