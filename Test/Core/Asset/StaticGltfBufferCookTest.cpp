@@ -255,6 +255,20 @@ namespace
         const char* jpegImages = R"({"uri":"data:image/jpeg;base64,/9j/"},{"uri":"data:image/jpeg;base64,/9j/"},{"uri":"data:image/jpeg;base64,/9j/"})";
         assert(Cook(Copy(ImageJson(externalBuffers, jpegImages)), path, owned, error));
         assert(AnsiStringView(owned.EmbeddedImages[0].LogicalPath) == AnsiStringView("Models/triangle.gltf.img0.jpg"));
+        const MeshCookResult beforeMismatch = owned;
+        const char* wrongMime[] = {
+            R"({"bufferView":4,"mimeType":"image/jpeg"},{"bufferView":4,"mimeType":"image/png"},{"bufferView":4,"mimeType":"image/png"})",
+            R"({"uri":"data:image/png;base64,/9j/"},{"uri":"data:image/jpeg;base64,/9j/"},{"uri":"data:image/jpeg;base64,/9j/"})"
+        };
+        for (const char* images : wrongMime)
+        {
+            assert(!Cook(Copy(ImageJson(externalBuffers, images)), path, owned, error));
+            assert(error == "embedded image MIME does not match signature");
+            assert(owned.SourceHash == beforeMismatch.SourceHash && owned.EmbeddedImages.size() == beforeMismatch.EmbeddedImages.size());
+            SamePayload(beforeMismatch, owned);
+            assert(owned.EmbeddedImages[0].GetBytes().size() == 3 && owned.EmbeddedImages[0].GetBytes()[0] == 255);
+        }
+
 
     }
 } // namespace

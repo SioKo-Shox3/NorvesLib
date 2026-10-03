@@ -490,3 +490,6 @@
 
 - G2-GR78-SIDECAR-IO-HASH: source全名+.import.json/明示override/required/disabledを共有選択し、自動探索の真の不在だけ既定へ戻す独立APIを追加。通常file/1MiB/BOM/NUL/短読・増大/厳格JSON/出力保持を定義。第1周でMSVCの不正名/network障害がerrc不在へ畳まれる点を指摘され、Windows raw system error2/3限定へ修正し第2周PASS。hashは既存FNV stateへ長さ52LE64+正規化bytes+algorithm1LE32を連結し、無しなら完全不変。3既知値と変更条件を実hash通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で成功。HashTest/FileTestの実MEMBER Werror compile成功、Windows不正名回帰は登録のみ。実file loaderはWindows.hでcompile停止、I/O/JSON runtime未確認。変換/CLI/ロードは未接続。
 - Next: 作者へ表面重心を保留し他の原点/scale/axes接続を先行する案を確認中。返答までは保留を維持し、独立したGR77のMIME/signature整合を補う。
+
+- G2-GR77-MIME-SIGNATURE: 埋込みPNG/JPEGの宣言MIMEと実signatureを共有predicateで一致検査し、cooker結果の公開/packaging前とlooseで拒否する。外部画像と有効入力bytes/hashを変更せず、未知signatureの旧CLI reasonを維持。不一致1200byte GLB、native cooker/looseの失敗出力保持とCLI既存manifest/model保持を登録。pure判定は通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）実行、MEMBER compile成功、fixture構造/PNG CRC確認。独立レビューPASS。native cooker/loose/CLIはWindows.h/CMake制約で未実行。
+- Next: GR78縮小スコープ案の返答待ちを維持。G2検証時に見つかったMemoryOverrides.hの不足utility includeを既存todoとして独立修正する。

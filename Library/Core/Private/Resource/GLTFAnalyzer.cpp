@@ -420,7 +420,7 @@ namespace NorvesLib::Core::Resource
             }
             // 埋込み画像のRequestPathは空のままにし、finalize時のmanifest検索へ渡さない。
             const auto bytes = source.GetBytes(buffers);
-            return Gltf::ProbeEmbeddedImageMime(bytes) != Gltf::DataUriMime::Unknown;
+            return Gltf::MatchesEmbeddedImageMime(bytes, source.GetMime());
         }
 
         bool ParseMaterialTextures(const JsonValue& root,

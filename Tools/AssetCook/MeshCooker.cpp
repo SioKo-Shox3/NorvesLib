@@ -977,6 +977,13 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             const auto bytes = image.GetBytes(buffers);
+            if (!Gltf::MatchesEmbeddedImageMime(bytes, image.GetMime()))
+            {
+                error = Gltf::ProbeEmbeddedImageMime(bytes) == Gltf::DataUriMime::Unknown
+                    ? "embedded image must contain PNG or JPEG bytes"
+                    : "embedded image MIME does not match signature";
+                return false;
+            }
             const bool bBorrowGlb = image.GetKind() == Gltf::ImageSourceKind::BufferView &&
                 buffers.GetSourceKind(image.GetBufferIndex()) == Gltf::BufferStorageKind::GlbBin;
             if (!entry.SetBytes(bytes, bBorrowGlb))

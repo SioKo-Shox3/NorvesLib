@@ -1879,7 +1879,7 @@
 - notes: GLTFAnalyzer::ExtractMeshDataはindex値を未検査で返し、MeshClusterizer::ComputeNormalCone/ComputeBoundingSphereがその値で頂点を参照する。LOOSE-SOURCES前に安全化する。
 
 ## G2-GR77-MIME-SIGNATURE: 埋込み画像の宣言MIMEと実形式の一致を検証する
-- status: todo
+- status: done
 - done-when: PNG/JPEG宣言と実signatureの矛盾を、cook packagingとlooseの同じ規則で拒否する。外部画像の従来decoder形式は狭めない。
 - verify: PNG宣言/JPEG signatureと逆の拒否、正常一致、失敗時出力保持を既存束へ登録する。
 - stop-when: 新形式追加、native未実行を合格扱い、材質や色空間既定を変更。

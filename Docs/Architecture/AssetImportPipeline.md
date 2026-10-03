@@ -200,3 +200,15 @@ GLB、data URI buffer、data URI image、外部bufferViewのgeometryと5画像�
 生成した1200byte fixtureの実Container/range/stbは通常・最適化・ASan/UBSanで確認した。
 実JsonDocument/GLTFAnalyzer/staging試験はWindows.h依存でcompile停止し未実行。
 実物大型GLB・GPU描画・Windows統合の受入れは完了していない。
+
+### 埋込み画像のMIMEとsignature一致（GR77）
+
+MeshCookerの結果生成前とloose画像解決はMatchesEmbeddedImageMimeの同じ判定を通す。
+PNG/JPEGの宣言と実signatureが逆の場合は拒否し、拡張子だけ誤った画像資産を作らない。
+未知signatureのCLI診断は従来値を維持し、宣言とsignatureの矛盾は別の明示エラーにする。
+外部画像は従来どおり参照を保持し、そのdecoder対応形式を狭めない。
+signature一致は画像全体の完全性の証明ではなく、最後のdecode検証はstbが担当する。
+
+純粋判定は通常・最適化・ASan/UBSan（LeakSanitizer除外）で実行し、MEMBERはcompileを確認。
+PNGをJPEGと宣言したGLBをCLI smokeへ足し、失敗時に既存manifest/modelが変わらないことを登録した。
+cookerとlooseのnative試験も不一致と出力保持を登録したが、Windows.h依存で実行は未確認。

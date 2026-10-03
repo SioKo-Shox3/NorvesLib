@@ -57,6 +57,13 @@ namespace NorvesLib::Core::Gltf
         return DataUriMime::Unknown;
     }
 
+    // 対応する宣言MIMEとsignatureが一致することだけを判定し、完全性はdecoderへ委ねる。
+    [[nodiscard]] inline bool MatchesEmbeddedImageMime(Container::Span<const uint8_t> bytes, DataUriMime expected) noexcept
+    {
+        return (expected == DataUriMime::Png || expected == DataUriMime::Jpeg) &&
+            ProbeEmbeddedImageMime(bytes) == expected;
+    }
+
     class ImageSource
     {
     public:

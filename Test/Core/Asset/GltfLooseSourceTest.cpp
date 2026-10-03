@@ -213,7 +213,9 @@ int main()
     // signatureは正しいが画像本体が無い場合はdecoderで失敗し、候補geometryも公開しない。
     const Bytes truncatedImage = Copy(ImageJson(externalBuffer,
         R"({"uri":"data:image/png;base64,iVBORw0KGgo="},{"uri":"data:image/png;base64,iVBORw0KGgo="},{"uri":"data:image/png;base64,iVBORw0KGgo="})"));
-    const Bytes* invalidInputs[] = {&malformed, &wrongImage, &wrongView, &required, &truncatedImage};
+    const Bytes mismatchedMime = Glb(ImageJson(R"({"byteLength":174})",
+        R"({"bufferView":4,"mimeType":"image/jpeg"},{"bufferView":4,"mimeType":"image/png"},{"bufferView":4,"mimeType":"image/png"})"), true, binary);
+    const Bytes* invalidInputs[] = {&malformed, &wrongImage, &wrongView, &required, &truncatedImage, &mismatchedMime};
     for (const Bytes* bytes : invalidInputs)
     {
         Write(source, *bytes);
