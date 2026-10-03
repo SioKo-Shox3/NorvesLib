@@ -517,3 +517,6 @@
 
 - G2-GR78-CLI-SKIP: --skip-if-unchangedをcook前fingerprintへ接続。manifest key/source hash/format/entry/type/version/要求出力先と実NVPACK entry・payload hash・NVMESH/NVSKEL構造を照合し、全embedded画像のmanifest/package/NVTEX/colorspaceも検査したhitだけ早期return。入力未変更でも欠損・破損・要求変更なら通常cookへ戻す。実flag parserを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）実行とMEMBER compile成功。native smokeに全出力timestamp非更新、設定/meta、model/画像欠損・破損、有効表記のhash不一致/format/entry/variant/output変更、骨格buffer変更を登録。独立PASS。cache本体/Main/native smokeはWindows.h等のため未実行。競合変更に対するatomic性やFNVの認証用途は保証しない。
 - Next: preflightとskipをまとめて2コミット公開後、GR78-CLI-INSPECTのcookしない診断に進む。実物4本は未入手のため手動照合は保留。
+
+- G2-GR78-INSPECT-GEOMETRY: 無変換bounds/軸長/最長軸・頂点/三角形/完全一致位置溶接/頂点共有成分/厳密ゼロ法線の純kernelを追加。符号付きゼロは同一、近接値は別、孤立頂点込みと明記。sort/union-by-rank/path-halvingで計測し、非有限/index/容量/全Span重複と乗算overflowを先行拒否。第1周でworkspace使用prefixだけの検査と公開契約の差を指摘され、全Spanへ修正し回帰を追加、第2周PASS。最終ソースの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）実行とMEMBER compile成功。CLI接続はまだ行わない。
+- Next: GR78 inspect用のPNG/JPEG寸法・チャンネル統計を実stbで診断する部品を追加し、その後geometry/画像/材質を無書込CLIへ統合する。

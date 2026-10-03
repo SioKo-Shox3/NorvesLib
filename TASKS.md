@@ -1975,3 +1975,9 @@
 - done-when: geometry変換/cluster/画像decode/package生成なしで元source/buffers/設定のcookと同じhashを返し、embedded画像の論理path/format/hashを所有metadataとして返す。設定loaderを本cookと共有し、失敗時出力保持。
 - verify: glTF/GLB/data URIと設定有無/変更/meta/無効/必須、骨格、embedded画像metadata、外部buffer全量のhash同値をnative既存束へ登録する。
 - stop-when: preflight成功をgeometryの妥当性保証とする、失敗の部分公開、画像bytesの寿命をcallerに漏らす。
+
+## G2-GR78-INSPECT-GEOMETRY: 無変換の幾何診断kernelを実装する
+- status: done
+- done-when: bounds/軸長/最長軸・頂点/三角形数・数値完全一致の位置溶接数・頂点共有成分数・ゼロ法線を変更なしで計測する。符号付きゼロは同一、未参照頂点は孤立成分と明示する。
+- verify: 既知の分離三角形/継ぎ目/孤立/縮退、非有限/不正index/workspace重複、微小値/float両極端、面順序の純実装試験。
+- stop-when: epsilonを無言適用、source geometryを書換え、未検証kernelを診断CLIへ接続する。

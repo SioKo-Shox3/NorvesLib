@@ -243,3 +243,15 @@ FNV64と安定したfilesystemを前提とするcache照合であり、競合変
 実引数parserのskip flagを通常/O2-NDEBUG/ASan・UBSanで確認。native smokeへ非更新、metaのみ変更、
 設定値変更、model/画像欠損・破損、manifest hash/format/出力先/entry/variant変更と骨格外部buffer変更を登録。
 cache本体とCLIはWindows依存により未実行。
+
+## 幾何診断の計測契約
+
+診断kernel `InspectGeometry` は、変換前のpositions/normalsと三角形indexからbounds・軸長・最長軸、
+頂点/三角形/位置溶接後頂点/成分/ゼロ法線の数を返す。最長軸が同値ならX→Y→Zの順で選ぶ。
+溶接はfloatの数値完全一致（+0/-0は同じ）で、epsilon丸めはしない。成分は三角形の頂点共有による連結を数え、
+未参照の溶接頂点も孤立成分に含める。ゼロ法線は3成分が厳密に0の場合だけで、微小値はゼロ扱いしない。
+sourceは不変で、独立workspaceを用いてsort/union-by-rankとpath compressionを行う。
+非有限値、不正index、workspace不足/重複は拒否し、失敗時の計測結果を保持する。
+
+小型既知形状と分離/継ぎ目/孤立/縮退、面順序、微小値、float両極端、無効入力を
+通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）の実kernelで確認。CLIへの接続は後続。
