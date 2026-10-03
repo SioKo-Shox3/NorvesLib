@@ -2462,6 +2462,11 @@ namespace NorvesLib::Tools::AssetCook
                         error += " cubic_bake_status=" + FormatInteger(decoded.Report.FailedCubicBakeStatus);
                     }
                 }
+                if (options.MorphPolicy == Core::Skeletal::SkeletalMorphPolicy::Drop && decoded.Report.bMorphScanComplete)
+                {
+                    error += " morph_validated_targets=" + FormatInteger(decoded.Report.DroppedMorphTargetCount);
+                    error += " morph_validated_channels=" + FormatInteger(decoded.Report.DroppedMorphAnimationChannelCount);
+                }
                 return false;
             }
 

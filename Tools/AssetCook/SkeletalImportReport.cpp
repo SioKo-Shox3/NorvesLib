@@ -12,10 +12,6 @@ namespace NorvesLib::Tools::AssetCook
         using namespace Core::Skeletal;
         const auto& diagnostics = input.Diagnostics;
         const auto& report = diagnostics.Report;
-        if (input.Options.MorphPolicy != SkeletalMorphPolicy::Reject)
-        {
-            return {};
-        }
         const bool failed = input.Outcome == SkeletalImportOutcome::Failed;
         const bool ready = input.Outcome == SkeletalImportOutcome::PayloadReady;
         const bool cached = input.Outcome == SkeletalImportOutcome::CacheHit;
@@ -39,6 +35,27 @@ namespace NorvesLib::Tools::AssetCook
                     report.FailedVertexIndex != report.ProcessedVertexCount || report.bInfluenceScanComplete)) ||
                 (report.bHasFailedVertexDroppedWeight && (report.FailedVertexIndex == UINT64_MAX || !ratio(report.FailedVertexDroppedWeight))) ||
                 (ready && (report.TotalVertexCount == 0 || !report.bInfluenceScanComplete || report.FailedVertexIndex != UINT64_MAX))) return {};
+        }
+        const bool drop = input.Options.MorphPolicy == SkeletalMorphPolicy::Drop;
+        if (drop)
+        {
+            if (!report.bMorphScanComplete)
+            {
+                if (ready || report.DroppedMorphTargetCount != 0 || report.DroppedMorphMeshWeightCount != 0 ||
+                    report.DroppedMorphNodeWeightCount != 0 || report.DroppedMorphAnimationChannelCount != 0)
+                {
+                    return {};
+                }
+            }
+            else if (!diagnostics.bDecodeAttempted || report.DroppedMorphTargetCount > UINT32_MAX ||
+                (report.DroppedMorphMeshWeightCount != 0 && report.DroppedMorphMeshWeightCount != report.DroppedMorphTargetCount) ||
+                (report.DroppedMorphNodeWeightCount != 0 && report.DroppedMorphNodeWeightCount != report.DroppedMorphTargetCount) ||
+                report.DroppedMorphAnimationChannelCount > 1 ||
+                (report.DroppedMorphTargetCount == 0 && report.DroppedMorphAnimationChannelCount != 0))
+            {
+                // 現行1mesh/1primitive/1mesh-node/1clipの検証結果だけを受け付ける。
+                return {};
+            }
         }
         const bool bake = input.Options.CubicSplinePolicy == SkeletalCubicSplinePolicy::Bake;
         if (bake)
@@ -214,6 +231,22 @@ namespace NorvesLib::Tools::AssetCook
                     text("null");
                 }
                 text("}");
+            }
+        }
+        if (drop)
+        {
+            text(",\"morph_policy\":\"drop\",\"morph_scan\":");
+            if (!report.bMorphScanComplete)
+            {
+                text("null");
+            }
+            else
+            {
+                text("{\"dropped_targets\":"); number(report.DroppedMorphTargetCount);
+                text(",\"mesh_weight_values\":"); number(report.DroppedMorphMeshWeightCount);
+                text(",\"node_weight_values\":"); number(report.DroppedMorphNodeWeightCount);
+                text(",\"animation_channels\":"); number(report.DroppedMorphAnimationChannelCount);
+                text(",\"scan_complete\":true}");
             }
         }
         text("}}");

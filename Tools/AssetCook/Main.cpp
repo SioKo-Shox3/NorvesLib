@@ -1810,7 +1810,8 @@ namespace
             << "Model import: [--import-settings <file>] [--require-sidecar] OR [--no-sidecar] [--skip-if-unchanged]\n"
             << "Skeletal import: [--skin-influences strict|reduce] [--skin-warn-dropped-weight 0..1] [--skin-fail-dropped-weight 0..1]\n"
             << "Cubic bake: [--cubicspline reject|bake] [--cubic-translation-tolerance meters] [--cubic-rotation-tolerance-deg degrees] [--cubic-scale-tolerance value]\n"
-            << "Bake budgets: [--cubic-max-depth 0..24] [--cubic-max-channel-samples 2..1048576] [--cubic-max-asset-samples 2..4194304]\n";
+            << "Bake budgets: [--cubic-max-depth 0..24] [--cubic-max-channel-samples 2..1048576] [--cubic-max-asset-samples 2..4194304]\n"
+            << "Morph import: [--morph reject|drop]\n";
     }
 
     bool CookRawAsset(const CookOptions &options, std::string &error)
@@ -2774,6 +2775,19 @@ namespace
             if (report.BakedCubicChannelCount != 0)
             {
                 std::cerr << "警告: CUBICSPLINEを許容誤差内のLINEAR列へ変換しました\n";
+            }
+        }
+        if (options.SkeletalImport.Decode.MorphPolicy == NorvesLib::Core::Skeletal::SkeletalMorphPolicy::Drop)
+        {
+            const auto& report = skeletalResult.DecodeReport;
+            std::cerr << "morph=drop dropped_targets=" << report.DroppedMorphTargetCount
+                << " mesh_weight_values=" << report.DroppedMorphMeshWeightCount
+                << " node_weight_values=" << report.DroppedMorphNodeWeightCount
+                << " animation_channels=" << report.DroppedMorphAnimationChannelCount << "\n";
+            if (report.DroppedMorphTargetCount != 0 || report.DroppedMorphMeshWeightCount != 0 ||
+                report.DroppedMorphNodeWeightCount != 0 || report.DroppedMorphAnimationChannelCount != 0)
+            {
+                std::cerr << "警告: morphを除去しました。元メッシュへの焼付けは行っていません\n";
             }
         }
         std::cerr << "AssetCook wrote skeletal model package=\"" << packagePath.generic_string()

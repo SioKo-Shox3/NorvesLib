@@ -577,3 +577,6 @@
 
 - G2-GR86-MORPH-DECODE: 明示DropでPOSITION/NORMAL/TANGENTのデルタと初期mesh/node weight・weight channelを検証し、base/TRSへ適用せず除去。weight専用Cubicは焼込不要、共有samplerはTRS側条件を維持。数量は検証完了後だけ確定し、Strictとpreflightは同じmorph存在gateで拒否。nativeに入口/cook往復/不正12種/sparse/非有限/出力保持を登録。第1周の試験API名とcompact JSONのURI除去を修正し第2周PASS。fixture全buffer範囲/12mutation文法/URI除去をPython確認、既存純policy/CLI回帰成功。nativeはWindows.hで未実行。完全validatorではなく、POSITION bounds実値照合・weight入力min/maxとanimation不正の細分理由は残る。LINEAR/STEP weight等の追加回帰はCLI taskで補強する。
 - Next: MORPH-CLIで明示指定、cook/skip同一設定、数量警告、JSON未測定/検証済みと失敗を接続する。
+
+- G2-GR86-MORPH-CLI: --morph reject|dropを厳密parseしcook/skipへ同じ方針を伝播。数量と除去警告、JSONのmorph_policy/morph_scanを追加し、未走査/cacheはnull、実測0件と後段失敗の検証済み数量を区別。純parser/report各3mode・MEMBER・18JSON独立解析成功、独立PASS。nativeには警告/出力保持/cache/0件、LINEAR/STEP weight・複数target・weightだけのclip拒否・TRS後段失敗を追加。nativeはWindows.h/CMake/PowerShell依存で未実行。
+- Next: GR86前半の最終portable回帰と検証範囲を記録する。GR79/GR32/GR82へ進むためS3(a)材質レコードとS7のmesh受理範囲は作者判断待ち。

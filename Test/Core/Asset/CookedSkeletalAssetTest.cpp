@@ -1196,6 +1196,55 @@ namespace
         assert(allPolicies.Succeeded()); AssertEquivalent(decoded.Data, allPolicies.Data); checkReport(allPolicies.Report);
         assert(allPolicies.Report.bCubicScanComplete && allPolicies.Report.TotalAnimationChannelCount == 3 &&
             allPolicies.Report.ProcessedAnimationChannelCount == 3 && allPolicies.Report.BakedCubicChannelCount == 0);
+        const auto reportJson = [&](bool success, const SkeletalGltfDecodeResult& result, const SkeletalGltfDecodeOptions& options)
+        {
+            SkeletalImportReportInput input;
+            input.Outcome = success ? SkeletalImportOutcome::PayloadReady : SkeletalImportOutcome::Failed;
+            input.Options = options;
+            input.Diagnostics.bDecodeAttempted = true;
+            input.Diagnostics.DecodeStatus = static_cast<uint32_t>(result.Status);
+            input.Diagnostics.Report = result.Report;
+            const auto json = BuildSkeletalImportReport(input);
+            assert(json.bValid && std::strstr(json.Bytes, "\"morph_scan\":{"));
+        };
+        reportJson(true, decoded, drop);
+        reportJson(true, allPolicies, combined);
+        for (const char* interpolation : {"LINEAR", "STEP"})
+        {
+            auto text = source;
+            replaceOnce(text, "\"output\":17,\"interpolation\":\"CUBICSPLINE\"",
+                Container::AnsiString("\"output\":17,\"interpolation\":\"") + interpolation + "\"");
+            replaceOnce(text, "\"name\":\"MorphWeights\",\"bufferView\":17,\"componentType\":5126,\"count\":6",
+                "\"name\":\"MorphWeights\",\"bufferView\":17,\"componentType\":5126,\"count\":2");
+            const auto result = DecodeSkeletalGltf(TextBytes(text), path, nullptr, nullptr, &drop);
+            assert(result.Succeeded()); AssertEquivalent(decoded.Data, result.Data); checkReport(result.Report); reportJson(true, result, drop);
+        }
+        auto twoTargets = source;
+        replaceOnce(twoTargets, "\"targets\":[{\"POSITION\":13,\"NORMAL\":14,\"TANGENT\":16}]",
+            "\"targets\":[{\"POSITION\":13,\"NORMAL\":14,\"TANGENT\":16},{\"POSITION\":13}]");
+        replaceOnce(twoTargets, "\"weights\":[0.25]", "\"weights\":[0.25,0.3]");
+        replaceOnce(twoTargets, "\"weights\":[0.5]", "\"weights\":[0.5,0.6]");
+        replaceOnce(twoTargets, "\"byteLength\":596", "\"byteLength\":620");
+        replaceOnce(twoTargets, "\"byteOffset\":572,\"byteLength\":24", "\"byteOffset\":572,\"byteLength\":48");
+        replaceOnce(twoTargets, "\"name\":\"MorphWeights\",\"bufferView\":17,\"componentType\":5126,\"count\":6",
+            "\"name\":\"MorphWeights\",\"bufferView\":17,\"componentType\":5126,\"count\":12");
+        auto twoBinary = binary; twoBinary.resize(620, 0);
+        WriteFixtureBytes(fixture.Root / "fixture.bin", twoBinary);
+        const auto two = DecodeSkeletalGltf(TextBytes(twoTargets), path, nullptr, nullptr, &drop);
+        assert(two.Succeeded() && two.Report.DroppedMorphTargetCount == 2 && two.Report.DroppedMorphMeshWeightCount == 2 &&
+            two.Report.DroppedMorphNodeWeightCount == 2 && two.Report.DroppedMorphAnimationChannelCount == 1);
+        AssertEquivalent(decoded.Data, two.Data); reportJson(true, two, drop);
+        WriteFixtureBytes(fixture.Root / "fixture.bin", binary);
+        auto onlyWeights = source;
+        replaceOnce(onlyWeights, "{\"sampler\":0,\"target\":{\"node\":1,\"path\":\"translation\"}},{\"sampler\":1,\"target\":{\"node\":0,\"path\":\"rotation\"}},", "");
+        const auto emptyClip = DecodeSkeletalGltf(TextBytes(onlyWeights), path, nullptr, nullptr, &drop);
+        assert(emptyClip.Status == SkeletalGltfDecodeStatus::InvalidAnimation && emptyClip.Data.Vertices.empty());
+        checkReport(emptyClip.Report); reportJson(false, emptyClip, drop);
+        auto invalidTrs = source;
+        replaceOnce(invalidTrs, "\"node\":1,\"path\":\"translation\"", "\"node\":2,\"path\":\"translation\"");
+        const auto trsFailure = DecodeSkeletalGltf(TextBytes(invalidTrs), path, nullptr, nullptr, &drop);
+        assert(trsFailure.Status == SkeletalGltfDecodeStatus::InvalidAnimation && trsFailure.Data.Vertices.empty());
+        checkReport(trsFailure.Report); reportJson(false, trsFailure, drop);
         const auto retained = cooked;
         const auto reject = [&](const Container::AnsiString& text, const ByteArray& data)
         {

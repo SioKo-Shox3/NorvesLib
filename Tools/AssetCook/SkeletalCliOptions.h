@@ -15,6 +15,7 @@ namespace NorvesLib::Tools::AssetCook
         bool bWarnSpecified = false;
         bool bFailSpecified = false;
         bool bCubicSpecified = false;
+        bool bMorphSpecified = false;
         bool bTranslationSpecified = false;
         bool bRotationSpecified = false;
         bool bScaleSpecified = false;
@@ -28,7 +29,7 @@ namespace NorvesLib::Tools::AssetCook
         }
         [[nodiscard]] bool HasAny() const noexcept
         {
-            return bPolicySpecified || bWarnSpecified || bFailSpecified || bCubicSpecified || HasCubicSettings();
+            return bPolicySpecified || bWarnSpecified || bFailSpecified || bCubicSpecified || bMorphSpecified || HasCubicSettings();
         }
     };
 
@@ -54,6 +55,7 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t* integer = nullptr;
         bool influencePolicy = false;
         bool cubicPolicy = false;
+        bool morphPolicy = false;
         bool rotationDegrees = false;
         double lower = 0, upper = 1;
         bool exclusiveLower = false;
@@ -72,6 +74,11 @@ namespace NorvesLib::Tools::AssetCook
         {
             specified = &candidate.bFailSpecified;
             scalar = &candidate.Decode.FailDroppedWeight;
+        }
+        else if (matches("--morph"))
+        {
+            specified = &candidate.bMorphSpecified;
+            morphPolicy = true;
         }
         else if (matches("--cubicspline"))
         {
@@ -154,6 +161,21 @@ namespace NorvesLib::Tools::AssetCook
             else
             {
                 return reject("--skin-influencesにはstrictまたはreduceを指定してください");
+            }
+        }
+        else if (morphPolicy)
+        {
+            if (std::strcmp(value, "reject") == 0)
+            {
+                candidate.Decode.MorphPolicy = Core::Skeletal::SkeletalMorphPolicy::Reject;
+            }
+            else if (std::strcmp(value, "drop") == 0)
+            {
+                candidate.Decode.MorphPolicy = Core::Skeletal::SkeletalMorphPolicy::Drop;
+            }
+            else
+            {
+                return reject("--morphにはrejectまたはdropを指定してください");
             }
         }
         else if (cubicPolicy)

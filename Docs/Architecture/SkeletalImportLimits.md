@@ -7,7 +7,7 @@
 |---|---|---|---|
 | 頂点影響数 | 4本、追加セットを専用statusで拒否 | cookで上位4本へ縮約・正規化・報告 | API/CLI/JSON接続済み、native未実行 |
 | CUBICSPLINE | 拒否 | 誤差制限付きLINEAR焼込 | API/CLI接続済み、native未実行 |
-| morph | 拒否 | dropと数量報告 | API接続済み、CLI/JSON未接続 |
+| morph | 拒否 | dropと数量報告 | API/CLI/JSON接続済み、native未実行 |
 | sparse | 拒否 | 変更なし | 既存拒否を維持 |
 | 関節数 | 現行/0.2は128 | v1で256 | 128共有定数化済み、256はStage B |
 
@@ -51,13 +51,13 @@ Strictの通常4影響経路をこの修復へ無言で切り替えない。
 参考: [glTF skinned mesh attributes](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#skinned-mesh-attributes)。
 
 5本の既知値、120順列、同joint/tie/微小値、警告・失敗境界、無効値/関節/総和/aliasと出力保持を純実装で確認する。
-CUBICSPLINEは下記で接続、morphは別作業。raw/legacy/file decodeとcook接続は下記を参照。
+CUBICSPLINEは下記で接続、morphは下記のDropで接続する。raw/legacy/file decodeとcook接続は下記を参照。
 
 ## 明示policyと診断型
 
 SkeletalGltfDecodeOptionsはInfluencePolicy=Strict(0)/ReduceToFour(1)とWarnDroppedWeight/FailDroppedWeightを持つ。
 既定はStrict、閾値は0.01/0.25。閾値は有限で0<=warn<=fail<=1。Strictでは未使用の非既定閾値を拒否し、
-無視した指定を成功にしない。CUBICSPLINE指定は後述のBakeで拡張し、morph指定は未実装。
+無視した指定を成功にしない。CUBICSPLINE指定は後述のBakeで拡張し、morph指定は後述の明示Dropに対応する。
 
 SkeletalGltfDecodeReportは総頂点数/処理済みprefix数、縮約/同joint合算/再正規化/警告の頂点数、
 脱落比率の最大/平均、失敗頂点index、影響走査完了flagを分ける。未走査の頂点を含む全体平均と誤認しない。
@@ -127,7 +127,7 @@ decodeの正常prefix後失敗とUNORM8/16複数setの全総和/1不足も恒久
 --skin-fail-dropped-weight 0..1をNVSKEL model cookに限り受け付ける。別引数とequalsを両方扱う。
 閾値の既定は0.01/0.25で0<=warn<=fail<=1。閾値指定にはreduceの明示指定が必要。
 重複/空値/非有限/範囲外/末尾ゴミ/非骨格への指定は書込前に拒否する。
---cubicsplineは後述の明示Bakeに対応する。--morph/--joint-policyは未実装のため受理しない。
+--cubicsplineは後述の明示Bakeに対応する。--morphは後述の明示Dropに対応する。--joint-policyは未実装のため受理しない。
 
 本cookと--skip-if-unchangedのfingerprintへ同じpolicyを渡すため、Strictとの混同や
 閾値変更時のcache誤使用を防ぐ。cache hitは縮約を再実行せず既存のskip通知を返す。
@@ -157,7 +157,7 @@ Reduceでも総頂点数がまだ不明な失敗はinfluence_scan=null。総数�
 最大/平均はnullとして数値0の測定と区別する。失敗頂点で測れた脱落量は別欄に残す。
 Reduceの測定はprocessed prefixの最大/平均と失敗頂点脱落量を分離する。
 
-CUBICSPLINEは後述のskin拡張へ追加し、morphは未実装。GR84のBVH/retarget測定はまだ存在せず、
+CUBICSPLINEは後述のskin拡張へ追加し、morphは後述のDrop拡張へ追加する。GR84のBVH/retarget測定はまだ存在せず、
 将来はこの版付きenvelopeへ別セクションを足す。BVH受理やretargetの実装済みを意味しない。
 pure serializerの3mode/MEMBERとPython独立JSON解析で構文/数値/状態を検査する。
 native回帰には成功/閾値失敗/古い診断の消去・CLI JSON/警告有無/cache未測定を登録し、
@@ -246,7 +246,7 @@ Bakeを指定しても通常補間だけならbaked_channels=0、各誤差=null�
 
 SkeletalMorphPolicyはReject=0/Drop=1で既定Reject。Dropは明示指定でのみ有効になる。
 公開options・canonical・診断型を定義し、decoderは下記で接続する。
-JSON serializerはDropを未接続として失敗する。CLI引数はまだ受理しない。
+JSON serializerとCLI引数は下記のDrop診断へ接続する。
 
 Drop無しはStrictのSize0、ReduceのSRED25byte、BakeのSCBK66byteと既存hashをそのまま保つ。
 DropはSMDPで、MorphPolicyだけRejectへ戻した既存canonicalを包む。
@@ -287,3 +287,21 @@ JsonDocument/decoder/cookはWindows.h依存のためこのLinux環境で実行�
 
 既知の検証限界: POSITION boundsのfloat32範囲/実値との一致とweight入力accessorのmin/maxまでは検査しない。
 Morph metadata/weight animationの不正は現状InvalidAccessorへまとめるため、原因分類は粗い。
+
+## morph DropのCLI・JSON診断
+
+NVSKEL model cookで --morph reject|drop を指定できる（既定reject）。別引数/equalsの両方に対応し、
+重複・空値・未知値・非骨格model用途は拒否する。cook/skipは同じMorphPolicyと他の許容設定を共有する。
+実cook成功時はstderrへtarget数、mesh/node初期weightの要素数、weight animation channel数を出す。
+除去対象が存在するときだけ、baseへの焼付けを行わず除去したことを警告する。
+
+ImportReport version1はDrop時だけskin内にmorph_policy=dropとmorph_scanを追加する。
+未走査/検査途中の失敗/cache hitはmorph_scan=null。検査済みはdropped_targets、mesh_weight_values、
+node_weight_values、animation_channelsとscan_complete=trueを持つ。対象無しを検査した場合のみ各数が0になる。
+morph検査後にTRS等の別段階で失敗しても、検査済み数量はoutcome=failedとともに残す。asset成功を意味しない。
+Reject時の既存JSONは不変。Reduce/Bake/Dropは同じskinにそれぞれの単位と診断を持つ。
+現profileは1mesh/1primitive/1mesh-node/1clipなので、初期weight数は0またはtarget数、weight channelは0または1として検査する。
+
+純parser/JSON試験とは別にnative smokeへ、明示成功/既定拒否/不正入力で出力保持、設定同値cache hit/差分miss、
+除去警告と未測定null/実測0件を登録する。native unitはLINEAR/STEP weight、複数target、weightだけのclip拒否、
+morph検査後のTRS失敗の数量保持も補強する。Windows.h/CMake/PowerShellに依存する実行は未確認。

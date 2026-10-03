@@ -2108,7 +2108,23 @@
 - stop-when: malformedをDropで成功扱い、baseへmorphを黙って焼込、未測定数を確定と偽る。
 
 ## G2-GR86-MORPH-CLI: 明示dropをCLIとJSONへ接続する
-- status: todo
+- status: done
 - done-when: --morph reject|dropを厳密parseしcook/skipへ同じpolicyを渡す。除去数・警告・未走査nullをJSONへ格納し、既定は拒否する。
 - verify: pure parser/JSONとnativeCLI既定拒否/明示成功/出力保持/設定差cache鍵を検査または登録する。
 - stop-when: 指定無しの無言drop、sparse/256受理、native未実行を成功と主張。
+
+## G2-GR86-VALIDATION: 前半の実装と検証範囲を固定する
+- status: todo
+- done-when: Strict/Reduce/Bake/Dropの現行実装、純検証、native未実行、既知の入力制限、v1待ち256を分けて記録する。
+- verify: 現行ソースから関連portable testsを再ビルド・実行し、native登録/ログ/公開branchと照合する。
+- stop-when: Windows/GPU/実物assetの受入れを未実行のまま合格とする、GR86後半256まで完了と扱う。
+
+## G2-SELECT-S3-MATERIAL-FORMAT: 共通材質レコードの載せ先を確定する
+- status: blocked
+- done-when: S3(a)のNVMESH v1/128B材質レコード/v0併読案と代案を作者へ確認し、GR79/GR32/GR82の共有仕様へ反映する。
+- notes: S1のNVSKEL版承認はS3の材質選定承認を含まない。ARM既定とemissive nitsは別判断として保留する。
+
+## G2-SELECT-S7-MESH-PROFILE: 骨格mesh数の受理範囲を確定する
+- status: blocked
+- done-when: S7の1mesh/Nprimitiveまたは同skin・同transform複数mesh案を作者へ確認してGR32へ反映する。
+- notes: S1承認だけでmesh/node契約は緩和しない。

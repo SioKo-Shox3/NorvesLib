@@ -161,7 +161,54 @@ int main()
     }
     input = {};
     input.Options.MorphPolicy = SkeletalMorphPolicy::Drop;
-    assert(!BuildSkeletalImportReport(input).bValid); // JSON接続前にRejectと偽らない。
+    assert(BuildSkeletalImportReport(input).bValid && std::strstr(BuildSkeletalImportReport(input).Bytes, "\"morph_scan\":null"));
+    Print(input);
+    input.Diagnostics.bDecodeAttempted = true;
+    input.Diagnostics.DecodeStatus = 6;
+    Print(input); // 検査途中の失敗は未測定。
+    input.Diagnostics.Report.bMorphScanComplete = true;
+    input.Diagnostics.Report.DroppedMorphTargetCount = 2;
+    input.Diagnostics.Report.DroppedMorphMeshWeightCount = 2;
+    input.Diagnostics.Report.DroppedMorphNodeWeightCount = 2;
+    input.Diagnostics.Report.DroppedMorphAnimationChannelCount = 1;
+    Print(input); // morph検査後に別部分で失敗した場合は検証済み数量を保持。
+    const auto morphFailed = input;
+    input.Outcome = SkeletalImportOutcome::PayloadReady;
+    input.Diagnostics.DecodeStatus = 0;
+    Print(input);
+    input = {};
+    input.Options.MorphPolicy = SkeletalMorphPolicy::Drop;
+    input.Outcome = SkeletalImportOutcome::PayloadReady;
+    input.Diagnostics.bDecodeAttempted = true;
+    input.Diagnostics.Report.bMorphScanComplete = true;
+    Print(input); // 除去対象が存在しないことを検査した場合だけ0件。
+    input.Outcome = SkeletalImportOutcome::CacheHit;
+    input.Diagnostics = {};
+    Print(input);
+    assert(std::strstr(BuildSkeletalImportReport(input).Bytes, "\"morph_scan\":null"));
+    input = complete;
+    input.Options.MorphPolicy = SkeletalMorphPolicy::Drop;
+    input.Diagnostics.Report.bMorphScanComplete = true;
+    input.Diagnostics.Report.DroppedMorphTargetCount = 1;
+    Print(input); // Bakeとの組合せでも両方の単位/数量を失わない。
+    const auto combinedJson = BuildSkeletalImportReport(input);
+    assert(std::strstr(combinedJson.Bytes, "\"cubic_scan\":{") && std::strstr(combinedJson.Bytes, "\"morph_scan\":{"));
+    for (int invalid = 0; invalid < 8; ++invalid)
+    {
+        input = morphFailed;
+        switch (invalid)
+        {
+        case 0: input.Diagnostics.Report.bMorphScanComplete = false; break;
+        case 1: input.Diagnostics.bDecodeAttempted = false; break;
+        case 2: input.Diagnostics.Report.DroppedMorphTargetCount = UINT64_MAX; break;
+        case 3: input.Diagnostics.Report.DroppedMorphMeshWeightCount = 1; break;
+        case 4: input.Diagnostics.Report.DroppedMorphNodeWeightCount = 1; break;
+        case 5: input.Diagnostics.Report.DroppedMorphAnimationChannelCount = 2; break;
+        case 6: input.Diagnostics.Report = {}; input.Diagnostics.Report.bMorphScanComplete = true; input.Diagnostics.Report.DroppedMorphAnimationChannelCount = 1; break;
+        case 7: input.Outcome = SkeletalImportOutcome::PayloadReady; input.Diagnostics.DecodeStatus = 0; input.Diagnostics.Report = {}; break;
+        }
+        assert(!BuildSkeletalImportReport(input).bValid);
+    }
     std::cout << "SkeletalImportReportTest PASS: json_stages_measurements_prefix_failure_finite_bounds\n";
     return 0;
 }

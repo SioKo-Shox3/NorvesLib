@@ -56,7 +56,7 @@ int main()
     options = {}; assert(!Parse({"--skin-influences=reduce"}, options, false));
     options = {}; assert(Parse({}, options, false));
     options = {}; assert(Parse({"--skin-influences=reduce", "--skin-warn-dropped-weight=-0", "--skin-fail-dropped-weight=1e0"}, options));
-    const char* unknown[] = {"--morph=drop"}; int index = 0; const char* error = nullptr;
+    const char* unknown[] = {"--joint-policy=256"}; int index = 0; const char* error = nullptr;
     assert(ParseSkeletalArgument(1, unknown, index, options, error) == ImportArgumentResult::Unhandled && index == 0 && !error);
     using namespace NorvesLib::Core::Skeletal;
     options = {};
@@ -122,6 +122,33 @@ int main()
     assert(!Parse({"--cubicspline=reject"}, options, false));
     options = {};
     assert(Parse({"--cubicspline=reject"}, options));
+    options = {};
+    assert(Parse({"--morph", "drop"}, options));
+    assert(options.bMorphSpecified && options.HasAny() && options.Decode.MorphPolicy == SkeletalMorphPolicy::Drop);
+    options = {};
+    assert(Parse({"--morph=reject"}, options));
+    assert(options.bMorphSpecified && options.Decode.MorphPolicy == SkeletalMorphPolicy::Reject);
+    options = {};
+    assert(Parse({"--cubicspline=bake", "--morph=drop", "--skin-influences=reduce"}, options));
+    const auto morphSaved = options;
+    for (const char* bad : {"", "Drop", "auto", "bake", " drop", "drop ", "--cubicspline=bake"})
+    {
+        options = {};
+        const char* arguments[] = {"--morph", bad}; int position = 0;
+        assert(ParseSkeletalArgument(2, arguments, position, options, error) == ImportArgumentResult::Rejected);
+        assert(position == 0 && !options.HasAny() && options.Decode.MorphPolicy == SkeletalMorphPolicy::Reject);
+    }
+    options = morphSaved;
+    const char* duplicateMorph[] = {"--morph=reject"}; index = 0;
+    assert(ParseSkeletalArgument(1, duplicateMorph, index, options, error) == ImportArgumentResult::Rejected && index == 0);
+    assert(options.bMorphSpecified && options.Decode.MorphPolicy == SkeletalMorphPolicy::Drop &&
+        options.Decode.CubicSplinePolicy == SkeletalCubicSplinePolicy::Bake && options.Decode.InfluencePolicy == SkeletalInfluencePolicy::ReduceToFour);
+    options = {};
+    assert(!Parse({"--morph"}, options));
+    options = {};
+    assert(!Parse({"--morph=drop"}, options, false));
+    options = {};
+    assert(!Parse({"--morph=reject"}, options, false));
     std::cout << "SkeletalCliOptionsTest PASS: policy_thresholds_order_duplicates_invalid_atomicity_scope\n";
     return 0;
 }
