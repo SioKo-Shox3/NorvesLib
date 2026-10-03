@@ -580,3 +580,6 @@
 
 - G2-GR86-MORPH-CLI: --morph reject|dropを厳密parseしcook/skipへ同じ方針を伝播。数量と除去警告、JSONのmorph_policy/morph_scanを追加し、未走査/cacheはnull、実測0件と後段失敗の検証済み数量を区別。純parser/report各3mode・MEMBER・18JSON独立解析成功、独立PASS。nativeには警告/出力保持/cache/0件、LINEAR/STEP weight・複数target・weightだけのclip拒否・TRS後段失敗を追加。nativeはWindows.h/CMake/PowerShell依存で未実行。
 - Next: GR86前半の最終portable回帰と検証範囲を記録する。GR79/GR32/GR82へ進むためS3(a)材質レコードとS7のmesh受理範囲は作者判断待ち。
+
+- G2-GR86-VALIDATION: 公開実装b2aa6ffの8 portable試験をg++14.2.0で再ビルドし通常/O2-NDEBUG/ASan・UBSanの計24実行成功（LSan除外）。実InvokeBundledMainを含む8 MEMBER wrapper compileとJSON各18件・計54件の独立構文/意味照合も成功。GR86ImportValidation.mdに実装済み前半、native/実物/GPU未実行、数値条件・morph制限、v1待ち256を分離して記録。独立監査で過大主張なし。0.2は計画中と明示した。
+- Next: S3(a)/S7回答待ちの間、GR32/GR82の形式移行とauthoring rest保持の変更箇所を読み取りで棚卸しする。機能実装/新wireの適用は先取りしない。

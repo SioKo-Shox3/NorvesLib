@@ -2114,7 +2114,7 @@
 - stop-when: 指定無しの無言drop、sparse/256受理、native未実行を成功と主張。
 
 ## G2-GR86-VALIDATION: 前半の実装と検証範囲を固定する
-- status: todo
+- status: done
 - done-when: Strict/Reduce/Bake/Dropの現行実装、純検証、native未実行、既知の入力制限、v1待ち256を分けて記録する。
 - verify: 現行ソースから関連portable testsを再ビルド・実行し、native登録/ログ/公開branchと照合する。
 - stop-when: Windows/GPU/実物assetの受入れを未実行のまま合格とする、GR86後半256まで完了と扱う。
@@ -2128,3 +2128,9 @@
 - status: blocked
 - done-when: S7の1mesh/Nprimitiveまたは同skin・同transform複数mesh案を作者へ確認してGR32へ反映する。
 - notes: S1承認だけでmesh/node契約は緩和しない。
+
+## G2-GR32-GR82-MIGRATION-INVENTORY: 承認済み形式移行の変更箇所を整理する
+- status: todo
+- done-when: 現行0.0/0.1の単一primitive/clip契約、統一0.2への影響箇所、v1作成時restの現在の欠落箇所と必須試験を棚卸しする。未選定S3/S7の結論・wire詳細を先取りしない。
+- verify: 実header/decoder/cooker/loader/resource/component/testと作者の決定記録を照合する。
+- stop-when: 受理条件/API/wireを変更、比較空間や閾値を未決のまま固定、未実装0.2/v1を実装済みと表現する。
