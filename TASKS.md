@@ -414,8 +414,8 @@
 - notes: 2026-10-03 SS-MEGA-SPHERE で見つけた。岩は頂点67042・三角形66122、小屋は頂点6599・三角形4281で、閉じたメッシュの目安（頂点≒三角形の半分）より頂点が多く、UVの島ごとに頂点が複製されている。`MeshClusterizer::BuildAdjacencyGraph` は頂点の番号の辺だけで隣接をつなぐため、クラスタの成長が島の境で止まる（手続きの球は頂点を共有するので平均127.8）。
 
 ## SS-MEGA-LOD-PERF: 大きな球のLODを画面上の誤差で選び、CSMのMegaGeometryをカスケードに見合う段で描く
-- status: blocked
-- done-when: (1) 大きな球（MegaGeometry、変位あり）のクラスタのLODを、その段で失われる形の誤差（球面からのずれと変位の差の大きい方）を実際の透視投影で画素へ直した大きさ（変位の前後のクリップ座標を画素へ直した差の上限。角度の近似で過小に見積もらない）で選び、誤差が閾値以下になる最も粗い段を使う。閾値は撮り比べで見た目の差が出ない値に決める（1画素では低角度の目地に差が見えたので、それより小さい値も試し、選んだ値と各視点の段を記録する）。近接視点で LOD0 より粗い段を選べるよう、LOD0 と LOD1 の間の段（例: 縦横を約0.7倍にした段）を足すことを試し、それでも閾値を超える場合に限り LOD0 を使う。段の境目に割れ目が出ない（SS-MEGA-SPHERE の LOD 球の規則を保つ）。(2) CSM の各カスケードへ描く大きな球の段を、カスケードの1テクセルの大きさに見合う誤差で選ぶ（遠いカスケードほど粗い）。点光源のキューブも同じ考えで、遠い面・小さいキューブには粗い段を使う。岩・小屋は読み込みで LOD の階層を作っていない（`ModelStaging.cpp` の `bBuildLODHierarchy = false`）ので、階層を作る費用（起動時間の増分）が2秒以内なら作って同じ規則で選び、超えるなら LOD0 のまま描いてその判断と ShadowMapPass の時間を記録する。どの段を何三角形描いたかを視点・カスケードごとにログへ出す。(3) RelWithDebInfo の `-GpuTimingFrames 600` で、近接視点（昼45°）の1フレームのGPUの中央値が5 ms以下、昼の3視点の全540フレームが16.6 ms以下（MegaGeometryPass・ShadowMapPass の中央値を変更前の SS-ACCEPT-DETAIL の値と並べて記録する）。(4) 見た目が変わらない: 近接・低角度の球の輪郭と目地、地面の影の、変更前後の拡大画像で差が目に見えない（差の画像と、球の領域の平均の差を示す）。
+- status: todo
+- done-when: (1) 大きな球（MegaGeometry、変位あり）のクラスタのLODを、その段で失われる形の誤差（球面からのずれと変位の差の大きい方）を実際の透視投影で画素へ直した大きさ（変位の前後のクリップ座標を画素へ直した差の上限。角度の近似で過小に見積もらない。この上限を、変位の前後のクリップ座標を画素へ直して比べる契約テストで確かめる）で選び、誤差が閾値以下になる最も粗い段を使う。閾値は撮り比べで見た目の差が出ない値（1画素以下）に決め、選んだ値と各視点の段を記録する。近接視点で LOD0 が選ばれるのは、それより粗い段の誤差が閾値を超えるときで、それは受け入れる（LOD0 は近接で目に見える変位の細部を運ぶ）。段の境目に割れ目が出ない（SS-MEGA-SPHERE の LOD 球の規則を保つ）。(2) CSM の各カスケードへ描く大きな球の段を、カスケードの1テクセルの大きさに見合う誤差で選ぶ（遠いカスケードほど粗い）。点光源のキューブも同じ考えで、遠い面・小さいキューブには粗い段を使う。岩・小屋は LOD0 のまま描き（影だけの粗い段は backlog の FIX-MEGA-SHADOW-LOD-LOADED で扱う）、その三角形数と ShadowMapPass の時間を記録する。どの段を何三角形描いたかを視点・カスケードごとにログへ出す。(3) RelWithDebInfo の `-GpuTimingFrames 600` で、近接視点（昼45°）の1フレームのGPUの中央値が5 ms以下、昼の3視点の全540フレームが16.6 ms以下（MegaGeometryPass・ShadowMapPass の中央値を変更前の SS-ACCEPT-DETAIL の値と並べて記録する）。(4) 見た目が変わらない: 近接・低角度の球の輪郭と目地、地面の影の、変更前後の拡大画像で差が目に見えない（差の画像と、球の領域の平均の差を示す）。
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-MEGA-LOD-PERF -SunElevations 45,3`
@@ -425,6 +425,13 @@
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/Rendering3DTest, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-03 SS-ACCEPT-DETAIL の計測で分かった。近接視点のGPUの中央値が 約3.1 → 8.2〜9.3 ms に増え、増分のほぼすべてが MegaGeometryPass（0.34 → 5.4〜6.2 ms）。変位を LOD の誤差に含めた結果、近接で大きな球の LOD0（1,046,528三角形）が選ばれ、その多くが1画素より小さい。12960フレーム中2フレームが16.6 msを超えた（MegaGeometryPass と ShadowMapPass が同じフレームで跳ねた）。CSM は岩・小屋を LOD0 のまま4カスケードすべてへ描く（`csm_mega_lod=0`）。この計測は FIX-MEGA-CLUSTER-ADJACENCY（法線コーンのカリングの変更を含む）の前。2026-10-03 ユーザーの指示: 最適化を先にやってからマージ・プッシュする。危険地帯（MegaGeometry・影・RenderThread）。評価者を通す。
 - result: 2026-10-03 完了。閾値は1画素のまま（撮り比べで2画素は近接で LOD1 になり目地の深い暗がりが消え、低角度は LOD4 で球が平均10/255暗くなるため不採用）。近接は LOD1 の誤差が1.56画素で LOD0 を保つ（見た目を変えない側を優先）。近接（昼45°）のGPUの中央値は 5.326 ms で5 msに届かず、既知の限界（MegaGeometryPass 2.582・LightingPass 0.648・ShadowMapPass 0.643 ms）。3視点1620フレームの最大 9.03 ms で予算超え0。
+- notes: 2026-10-03 評価1周目（`cb84375`）は NEEDS_WORK（`NEXT_FINDINGS.md`）。反復2が `blocked/SS-MEGA-LOD-PERF.md` に書いた推奨（A: 近接の LOD0 を受け入れ、誤差の閾値だけを条件にする／D: 岩・小屋の影の粗い段は別の項目にする）を親が採り、done-when を改めた。正しい透視投影の式では近接の LOD1 は約1.8画素、中間の段を足しても約1.2画素の見込みで、1画素以下の閾値では LOD0 が残るため、中間の段は求めない。直すのは指摘3（投影の式とその契約テスト）と指摘4（閾値の撮り比べ）。上の result 行は反復1の記録で、2周目の結果で書き直す。
+
+## FIX-MEGA-SHADOW-LOD-LOADED: 読み込むモデルのMegaGeometryに影だけの粗い段を作る
+- status: backlog
+- done-when: 読み込むモデル（岩・小屋など）の MegaGeometry に、GBuffer のクラスタは元のまま保ったまま、影（CSM・点光源のキューブ）だけに使う粗い段を作り、カスケードの1テクセルに見合う段を選ぶ。読み込みの時間・メモリの増分を記録する。
+- paths: Library/Core/Private/Resource, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
+- notes: SS-MEGA-LOD-PERF（2026-10-03）から分けた。`ModelStaging.cpp` は `bBuildLODHierarchy = false` で、階層を作ると GBuffer のクラスタも DAG に置き換わる（`MegaGeometryResourceStore.cpp` の `uploadClusters = &lodHierarchy.AllClusters`）ため、影だけの段には別の設計が要る。近接の ShadowMapPass は 0.643 ms で、岩（66,122三角形）・小屋（4,281三角形）×4カスケードの寄与は小さい。危険地帯（アセットの読み込み・リソースの寿命）。
 
 ## FIX-STRING-EMPTY-CSTR: 空の Container::String の c_str() が終端の無い値を返すのを直す
 - status: todo
