@@ -460,3 +460,6 @@
 
 - G2-GR77-COOK-IMAGES: 静的cookerの材質をImageSourceへ接続し、imageIndex順のEmbeddedImagesへ仮想path・role/format・画像hashを保持。GLBだけ借用、外部/data URI buffer内imageと直接data URIは画像部分を結果所有し、local BufferSet破棄後のdanglingを防ぐ。copy→swap/自己所有領域の借用拒否、同format重複統合/srgb-linear衝突拒否。GLB入力はoutResult自身に所有させない契約を明記。実1pxPNGをstbでdecode成功、JSON23fragmentと174byte画像buffer fixture整合、実range3mode回帰成功。nativeにはpayload/3role/所有copy-move/画像hash/失敗全出力保持/JPEG pathを登録したがWindows.hでcompile停止、実行未確認。独立第2周PASS。Mainはpackage接続前のためEmbeddedImagesを出力書込前に拒否し、未生成textureへの参照を成功packageにしない。
 - Next: GR77のMain model+N texture packageとmanifest一括統合を実装してguardを置換する。skeletal/looseは後続、GR77全体は未完。
+
+- G2-GR77-PACKAGE-IMAGES: Mainのmodel-only guardをmodel+N textureの単一entry package群へ接続。全変換/メモリpackageとpayload検証→実file書込/flush→incoming全AssetSystem解決/bytes一致→manifest1回更新。audioのmergeをincoming列へ一般化し同keyだけ更新、serializerと従来model出力tailはbyte不変。第1周で保持entryのbacking packageを暗黙img出力が壊す衝突を発見し、canonical/equivalent/Windows case比較で書込前に一律拒否、実audio package衝突回帰を追加、第2周PASS。3GLB fixtureは実container/BIN/range/stbi memory decodeで正常2/異常1を確認。CMake3.14+PS smokeを登録したがCMake/PS不在、MainはWindows.hでcompile停止しCLI/package統合実行は未検証。複数file I/O rollbackなし、variant間画像共有を明記し、準備/確定・一時file置換はGR96へ残す。
+- Next: GR77の骨格共有buffer/GLB入口を接続する。looseは既知のaccessor範囲計算を先に安全化してから接続する。GR77全体と実物61MB受入れは未完。

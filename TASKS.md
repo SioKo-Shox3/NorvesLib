@@ -1839,8 +1839,15 @@
 - notes: Mainのmodel+N texture package/manifest一括更新は別タスク。現行albedo/normal/ARMのみ接続し、occlusion/emissiveの描画仕様を勝手に増やさない。
 
 ## G2-GR77-PACKAGE-IMAGES: モデルと埋込みtextureを一括出力する
-- status: todo
+- status: done
 - done-when: MainでEmbeddedImagesを既存texture cookerへ渡しmodel+N個の単一entry packageを作る。既存manifestを任意のAssetCookedReference群で統合し、無関係entry/骨格metadataを保持する。全候補の変換とpackage検証後にmanifestを1回更新し、model-only拒否guardを置換する。
 - verify: 小GLBのmodel1+texture3、role format/path/hash、全AssetSystem解決、同key更新/無関係entry維持/重複拒否、失敗時manifest非更新を既存smoke方式へ追加。旧外部画像なし経路とaudioの回帰を固定し、native未検証を明記する。
 - stop-when: 多entry NVPKG形式への変更、materialの未承認既定変更、未生成textureを参照するmodelだけを成功出力、formatをmanifest keyと誤認する。
 - notes: GR111の多entry形式は導入しない。model外部画像の既存single出力は保持し、manifest keyはlogicalPath/kind/variant。texture参照のdefault variantを守る。
+
+## G2-GR77-SKELETAL-BUFFERS: 骨格デコーダとcookerへ共有GLBを接続する
+- status: todo
+- done-when: SkeletalGltfDecodeのbuffer読込/accessor参照を共有BufferSetへ接続し、元bytesのGLB/JSON入口をcookerとAnalyzeSkeletalから利用する。旧String入口も保持し、既存骨格契約/128上限/単一clip/変換/formatは変えない。hashは元sourceと全外部bufferだけを含み、BINを複製しない。
+- verify: M9の既存fixtureをJSON外部/GLB/data URIで表し、頂点/関節/clipとNVSKEL payload/hashの比較、不正buffer拒否を既存束へ追加する。実native未検証と共有helper成功を区別する。
+- stop-when: Armature親/clip複数/256関節への未承認拡張、NVSKEL形式変更、String互換APIの破壊、hash/BIN借用寿命の逸脱。
+- notes: GR82の骨格契約変更やStage A/Bを先取りしない。画像/材質を骨格側へ新たに導入しない。

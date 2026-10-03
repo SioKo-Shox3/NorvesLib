@@ -26,6 +26,9 @@
 #include <system_error>
 #include <vector>
 #include <tchar.h>
+#if defined(_WIN32)
+#include <Windows.h>
+#endif
 
 namespace
 {
@@ -690,6 +693,7 @@ namespace
             output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         }
 
+        output.flush();
         if (!output.good())
         {
             error = "failed to write skeletal output package";
@@ -716,6 +720,7 @@ namespace
         }
 
         output.write(text.data(), static_cast<std::streamsize>(text.size()));
+        output.flush();
         if (!output.good())
         {
             error = "failed to write skeletal output manifest";
@@ -985,12 +990,28 @@ namespace
                left.Variant == right.Variant;
     }
 
-    bool BuildMergedAudioManifestJson(
+    bool BuildMergedManifestJson(
         const std::filesystem::path& manifestPath,
-        const NorvesLib::Core::Asset::AssetCookedReference& audioReference,
+        NorvesLib::Core::Container::Span<const NorvesLib::Core::Asset::AssetCookedReference> incoming,
         NorvesLib::Core::Container::AnsiString& outJson,
         auto& error)
     {
+        if (incoming.empty() || incoming.data() == nullptr)
+        {
+            error = "manifest update requires asset references";
+            return false;
+        }
+        for (size_t index = 0; index < incoming.size(); ++index)
+        {
+            for (size_t previous = 0; previous < index; ++previous)
+            {
+                if (HasSameManifestKey(incoming[index], incoming[previous]))
+                {
+                    error = "manifest update contains duplicate asset keys";
+                    return false;
+                }
+            }
+        }
         NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Asset::AssetCookedReference> references;
         std::error_code existsError;
         const bool bManifestExists = std::filesystem::exists(manifestPath, existsError);
@@ -1015,17 +1036,29 @@ namespace
                 error = "existing manifest is invalid: " + ToStdString(manifest.GetParseError());
                 return false;
             }
-            references.reserve(manifest.GetReferenceCount() + 1);
+            if (incoming.size() > std::numeric_limits<size_t>::max() - manifest.GetReferenceCount())
+            {
+                error = "manifest reference count overflow";
+                return false;
+            }
+            references.reserve(manifest.GetReferenceCount() + incoming.size());
             for (size_t index = 0; index < manifest.GetReferenceCount(); ++index)
             {
                 const auto& reference = manifest.GetReference(index);
-                if (!HasSameManifestKey(reference, audioReference))
+                const bool bReplaced = std::any_of(incoming.begin(), incoming.end(), [&](const auto& replacement)
+                {
+                    return HasSameManifestKey(reference, replacement);
+                });
+                if (!bReplaced)
                 {
                     references.push_back(reference);
                 }
             }
         }
-        references.push_back(audioReference);
+        for (const auto& reference : incoming)
+        {
+            references.push_back(reference);
+        }
         std::sort(references.begin(), references.end(), [](const auto& left, const auto& right)
         {
             if (left.LogicalPath != right.LogicalPath)
@@ -1924,6 +1957,244 @@ namespace
         return true;
     }
 
+    bool SameCookOutputPath(const std::filesystem::path& left, const std::filesystem::path& right)
+    {
+#if defined(_WIN32)
+        // Windowsの通常path比較は大文字小文字を区別しない。未作成fileのaliasも拒否する。
+        return CompareStringOrdinal(left.c_str(), -1, right.c_str(), -1, TRUE) == CSTR_EQUAL;
+#else
+        return left == right;
+#endif
+    }
+
+    bool CookEmbeddedModelAssets(const CookOptions& options,
+                                 const std::filesystem::path& inputPath,
+                                 const std::filesystem::path& packagePath,
+                                 const std::filesystem::path& manifestPath,
+                                 NorvesLib::Core::Container::AnsiStringView logicalPath,
+                                 NorvesLib::Core::Container::AnsiStringView entryName,
+                                 const NorvesLib::Tools::AssetCook::MeshCookResult& mesh,
+                                 auto& error)
+    {
+        using NorvesLib::Core::Container::AnsiString;
+        using NorvesLib::Core::Container::VariableArray;
+        using NorvesLib::Core::Asset::AssetCookedReference;
+        struct PendingPackage
+        {
+            std::filesystem::path Path;
+            std::filesystem::path CanonicalPath;
+            AssetCookedReference Reference;
+            VariableArray<uint8_t> Payload;
+            VariableArray<uint8_t> PackageBytes;
+        };
+        VariableArray<PendingPackage> pending;
+        pending.reserve(mesh.EmbeddedImages.size() + 1);
+        PendingPackage model;
+        model.Path = packagePath;
+        model.Payload = mesh.NvmeshBytes;
+        model.Reference.LogicalPath = AnsiString(logicalPath);
+        model.Reference.Kind = AssetKind::Model;
+        model.Reference.SourceHash = mesh.SourceHash;
+        model.Reference.Variant = options.Variant.c_str();
+        model.Reference.Format = options.Format.c_str();
+        model.Reference.EntryName = AnsiString(entryName);
+        model.Reference.EntryType = MakeAssetPackageFourCC('M', 's', 'h', '0');
+        pending.push_back(std::move(model));
+
+        // 全textureを変換してから書き始め、壊れた画像で途中まで出力しない。
+        constexpr uint8_t pngMagic[] = {137, 80, 78, 71, 13, 10, 26, 10};
+        for (const auto& image : mesh.EmbeddedImages)
+        {
+            const auto bytes = image.GetBytes();
+            const bool bPng = bytes.size() >= sizeof(pngMagic) && bytes.data() != nullptr &&
+                std::memcmp(bytes.data(), pngMagic, sizeof(pngMagic)) == 0;
+            const bool bJpeg = bytes.size() >= 3 && bytes.data() != nullptr &&
+                bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff;
+            if (!bPng && !bJpeg)
+            {
+                error = "embedded image must contain PNG or JPEG bytes";
+                return false;
+            }
+            NorvesLib::Tools::AssetCook::TextureCookResult texture;
+            if (!NorvesLib::Tools::AssetCook::CookTextureToNvtex(bytes.data(), bytes.size(), image.Format.c_str(),
+                    image.LogicalPath.c_str(), texture, error))
+            {
+                return false;
+            }
+            PendingPackage item;
+            char indexText[32] = {};
+            const auto converted = std::to_chars(indexText, indexText + sizeof(indexText), image.ImageIndex);
+            if (converted.ec != std::errc{})
+            {
+                error = "embedded image index formatting failed";
+                return false;
+            }
+            AnsiString filename(packagePath.filename().generic_string().c_str());
+            filename += ".img";
+            filename.append(indexText, static_cast<size_t>(converted.ptr - indexText));
+            filename += ".nvpkg";
+            item.Path = packagePath.parent_path() / std::filesystem::path(filename.begin(), filename.end());
+            item.Payload.assign(texture.NvtexBytes.begin(), texture.NvtexBytes.end());
+            item.Reference.LogicalPath = image.LogicalPath;
+            item.Reference.Kind = AssetKind::Texture;
+            item.Reference.SourceHash = image.SourceHash;
+            // NVMESH材質はpathのみを持ち、TextureAssetResolverがdefault variantを解決する。
+            item.Reference.Variant = "default";
+            item.Reference.Format = image.Format;
+            item.Reference.EntryName = "__texture__";
+            item.Reference.EntryType = MakeAssetPackageFourCC('T', 'e', 'x', '0');
+            pending.push_back(std::move(item));
+        }
+
+        // 安定したfilesystemを前提に、既存symlinkと未作成fileのWindows case aliasも検査する。
+        std::error_code pathError;
+        const auto canonicalInput = std::filesystem::weakly_canonical(inputPath, pathError);
+        if (pathError)
+        {
+            error = "failed to canonicalize embedded model input";
+            return false;
+        }
+        const auto canonicalManifest = std::filesystem::weakly_canonical(manifestPath, pathError);
+        if (pathError)
+        {
+            error = "failed to canonicalize embedded model manifest";
+            return false;
+        }
+        for (size_t index = 0; index < pending.size(); ++index)
+        {
+            auto& item = pending[index];
+            item.CanonicalPath = std::filesystem::weakly_canonical(item.Path, pathError);
+            if (pathError)
+            {
+                error = "failed to canonicalize model/texture output";
+                return false;
+            }
+            std::error_code inputError;
+            std::error_code manifestError;
+            const bool bSameInput = std::filesystem::equivalent(item.Path, inputPath, inputError);
+            const bool bSameManifest = std::filesystem::equivalent(item.Path, manifestPath, manifestError);
+            if (SameCookOutputPath(item.CanonicalPath, canonicalInput) || SameCookOutputPath(item.CanonicalPath, canonicalManifest) ||
+                (!inputError && bSameInput) || (!manifestError && bSameManifest))
+            {
+                error = "model/texture output must not alias source or manifest";
+                return false;
+            }
+            for (size_t previous = 0; previous < index; ++previous)
+            {
+                std::error_code equivalentError;
+                const bool bSameFile = std::filesystem::equivalent(pending[previous].Path, item.Path, equivalentError);
+                if (SameCookOutputPath(pending[previous].CanonicalPath, item.CanonicalPath) || (!equivalentError && bSameFile))
+                {
+                    error = "model/texture output paths must be unique";
+                    return false;
+                }
+            }
+        }
+        VariableArray<AssetCookedReference> references;
+        references.reserve(pending.size());
+        for (auto& item : pending)
+        {
+            auto& reference = item.Reference;
+            reference.SourceHashHex = FormatAssetHashHex(reference.SourceHash);
+            reference.EntryTypeText = FormatAssetPackageFourCCText(reference.EntryType);
+            reference.CookedVersion = 0;
+            if (!MakeSkeletalCookedPackageManifestPath(item.Path, manifestPath.parent_path(), reference.CookedPackage, error) ||
+                !BuildSingleSkeletalEntryPackage(reference.EntryName, reference.EntryType, item.Payload,
+                    item.PackageBytes, reference.CookedHash, error))
+            {
+                return false;
+            }
+            reference.CookedHashHex = FormatAssetHashHex(reference.CookedHash);
+            NorvesLib::FileStream::Package package;
+            NorvesLib::FileStream::PackageEntry entry;
+            if (!package.LoadFromMemory({item.PackageBytes.data(), item.PackageBytes.size()}) ||
+                !package.FindEntry(reference.EntryName, reference.EntryType, entry) || entry.PayloadHash != reference.CookedHash)
+            {
+                error = "self-validation failed: generated model/texture package is invalid";
+                return false;
+            }
+            const auto blob = package.OpenEntry(entry);
+            if (!blob.IsValid() || !CompareSkeletalBytes(blob.GetData(), blob.GetSize(), item.Payload) ||
+                (reference.Kind == AssetKind::Model ? !ParseCookedMesh(blob).Succeeded() : !ParseCookedTexture(blob).Succeeded()))
+            {
+                error = "self-validation failed: generated model/texture payload is invalid";
+                return false;
+            }
+            references.push_back(reference);
+        }
+        AnsiString manifestJson;
+        if (!BuildMergedManifestJson(manifestPath, {references.data(), references.size()}, manifestJson, error))
+        {
+            return false;
+        }
+        AssetSystem system{AnsiString(manifestPath.parent_path().generic_string().c_str())};
+        const AnsiString sourceName(manifestPath.generic_string().c_str());
+        if (!system.LoadManifestFromJsonText(ToCoreString(manifestJson), sourceName))
+        {
+            error = "self-validation failed: generated model/texture manifest is invalid";
+            return false;
+        }
+        // 保持した別keyのbacking packageを単一entry出力で上書きしない。
+        for (size_t index = 0; index < system.GetAssetCount(); ++index)
+        {
+            const auto& retained = system.GetAssetReference(index);
+            const bool bIncoming = std::any_of(references.begin(), references.end(), [&](const auto& reference)
+            {
+                return HasSameManifestKey(retained, reference);
+            });
+            if (bIncoming)
+            {
+                continue;
+            }
+            const auto retainedPath = manifestPath.parent_path() /
+                std::filesystem::path(retained.CookedPackage.begin(), retained.CookedPackage.end());
+            const auto canonicalRetained = std::filesystem::weakly_canonical(retainedPath, pathError);
+            if (pathError)
+            {
+                error = "failed to canonicalize retained asset package";
+                return false;
+            }
+            for (const auto& item : pending)
+            {
+                std::error_code equivalentError;
+                const bool bSameFile = std::filesystem::equivalent(retainedPath, item.Path, equivalentError);
+                if (SameCookOutputPath(canonicalRetained, item.CanonicalPath) || (!equivalentError && bSameFile))
+                {
+                    error = "model/texture output package is referenced by another asset key";
+                    return false;
+                }
+            }
+        }
+        for (const auto& item : pending)
+        {
+            if (!WriteSkeletalBinaryFile(item.Path, item.PackageBytes, error))
+            {
+                return false;
+            }
+        }
+        for (const auto& item : pending)
+        {
+            const auto& reference = item.Reference;
+            const auto resolved = system.ResolveAsset(reference.LogicalPath, reference.Kind, reference.Variant);
+            if (!resolved.Succeeded() || resolved.Status != AssetResolveStatus::SuccessCooked || !resolved.UsedCooked() ||
+                !CompareSkeletalBytes(resolved.Blob.GetData(), resolved.Blob.GetSize(), item.Payload))
+            {
+                error = "self-validation failed: written model/texture asset could not be resolved";
+                return false;
+            }
+        }
+        // package群を実際に解決できてからmanifestを1回だけ書く。multi-file transactionではない。
+        if (!WriteSkeletalTextFile(manifestPath, manifestJson, error))
+        {
+            return false;
+        }
+        std::cerr << "AssetCook wrote embedded model package=\"" << packagePath.generic_string()
+                  << "\" manifest=\"" << manifestPath.generic_string()
+                  << "\" textures=" << mesh.EmbeddedImages.size()
+                  << " vertices=" << mesh.VertexCount << " indices=" << mesh.IndexCount << "\n";
+        return true;
+    }
+
     bool CookModelAsset(const CookOptions& options, std::string& error)
     {
         std::filesystem::path inputPath;
@@ -1978,11 +2249,9 @@ namespace
             return false;
         }
 
-        // モデル単独出力では埋込み画像への参照を満たせないため、書込み前に拒否する。
         if (!meshResult.EmbeddedImages.empty())
         {
-            error = "model-only output cannot package embedded images";
-            return false;
+            return CookEmbeddedModelAssets(options, inputPath, packagePath, manifestPath, logicalPath, entryName, meshResult, error);
         }
 
         // Single conversion at the package boundary: MeshCooker exposes NorvesLib containers,
@@ -2274,7 +2543,7 @@ namespace
         reference.CookedVersion = 0;
 
         NorvesLib::Core::Container::AnsiString manifestJson;
-        if (!BuildMergedAudioManifestJson(manifestPath, reference, manifestJson, error))
+        if (!BuildMergedManifestJson(manifestPath, {&reference, 1}, manifestJson, error))
         {
             return false;
         }
