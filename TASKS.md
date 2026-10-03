@@ -1918,7 +1918,7 @@
 - stop-when: GR96一括cook/依存追跡の先取り、誤ったskip、未実装オプションの受理。
 
 ## G2-GR78-SIDECAR-IO-HASH: 設定fileの読込とhash連結を独立実装する
-- status: todo
+- status: done
 - done-when: source隣/明示override/無効/必須の設定file選択と安全なread・厳格parseを共有化し、sidecar無しの旧hashを保持、有りの正規化bytes+algorithm version連結を定義する。geometryへはまだ適用しない。
 - verify: absent/invalid/required/override/conflict/出力保持をnative登録し、純hashの既知値/無し不変/値変更とバージョン変更を実行する。
 - stop-when: 保留中ImportTransformを未確認でロードへ接続、file不在以外のI/O失敗を無し扱い、meta/書式差でhash変更。

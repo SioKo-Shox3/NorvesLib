@@ -487,3 +487,6 @@
 
 - G2-GR78-TRANSFORM: 軸/鏡像、scale/3種fit、bounds/足元/表面/custom原点、法線/UV/windingの無確保2pass変換を追加。全layout/index/結果検証後に書き込み、失敗非変更・非整列/未指定field保持を実装。48方向、全fit、各原点、極端値を純実装の通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER-Werrorで成功。ただし独立第2周で累積表面重心の中間丸め相殺が残ったためblocked。最新修正は各頂点×面積とfma残差をmoment展開に直接加え、最後に3×面積で除算する。M=2^100/t=2^-100の2面と面順序/循環順の回帰も3mode成功だが最終差分の独立確認は未完。ロード/cooker未接続を維持する。
 - Next: GR78-SIDECAR-IO-HASHを先行する。変換適用部分は保留を維持し、設定file選択/読込/hashの独立部分を進める。
+
+- G2-GR78-SIDECAR-IO-HASH: source全名+.import.json/明示override/required/disabledを共有選択し、自動探索の真の不在だけ既定へ戻す独立APIを追加。通常file/1MiB/BOM/NUL/短読・増大/厳格JSON/出力保持を定義。第1周でMSVCの不正名/network障害がerrc不在へ畳まれる点を指摘され、Windows raw system error2/3限定へ修正し第2周PASS。hashは既存FNV stateへ長さ52LE64+正規化bytes+algorithm1LE32を連結し、無しなら完全不変。3既知値と変更条件を実hash通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で成功。HashTest/FileTestの実MEMBER Werror compile成功、Windows不正名回帰は登録のみ。実file loaderはWindows.hでcompile停止、I/O/JSON runtime未確認。変換/CLI/ロードは未接続。
+- Next: 作者へ表面重心を保留し他の原点/scale/axes接続を先行する案を確認中。返答までは保留を維持し、独立したGR77のMIME/signature整合を補う。

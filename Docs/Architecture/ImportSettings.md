@@ -96,3 +96,32 @@ SurfaceCentroidの極端値では面積と三角形中心の途中丸めによ�
 最新修正は三角形中心へ一度丸めず、各頂点×面積の積とfma残差をmoment展開へ足し、最後に3×総面積で割る。
 M=2^100、t=2^-100の等面積2面を含む追加回帰は通常・最適化・sanitizerで成功したが、この最終修正の独立確認はまだ完了していない。
 変換APIは未接続のまま保留し、実ロード/cookerへ適用する前に確認を必要とする。
+
+## 設定file選択とsource_hash連結の基盤
+
+ImportSettingsFileはソース全名へ.import.jsonを追加する。拡張子を置き換えない。
+明示OverridePathがあればそちらを使用し、不在なら失敗。bRequiredも不在を拒否する。
+bDisabledは読込をせず恒等設定へ戻すが、required/overrideと同時指定した場合はInvalidOptions。
+自動探索のfile不在だけを恒等として扱い、権限/状態取得失敗・directory・dangling linkは無視しない。
+
+設定fileは通常fileか確認し、最大1MiBまで読む。UTF-8 BOMは除去し、NUL・切断/読込時の増大・不正JSON・不正設定を拒否する。
+失敗時はLoadedImportSettingsを変更しない。確保例外は伝播する。
+symlink先の通常fileは許すが、競合書換えに対するatomic snapshotやfilesystem sandboxではない。
+読み込んだPath/bPresentを返すので、接続層が採用設定をログへ示せる。
+
+AppendImportSettingsHashは既存FNV-1a64のstateへ、u64LEの長さ52、正規化52byte、u32LEのImportCookAlgorithmVersion（現在1）を連結する。
+既存hash値自体をもう一度byte化してhashし直す処理ではない。
+sidecar無しでは設定やalgorithm versionに依らず既存hashをそのまま返す。
+有りの不正typed設定は失敗する。将来algorithmの意味が変わるときはversionを更新する。
+
+ImportSettingsHashTestの3つの既知state/期待値、無し不変、値・algorithm変更、-0、無効設定を通常・最適化・sanitizerで確認した。
+hash試験とfile試験のMEMBER compileはWerrorで成功。
+実file loaderはJsonDocument→Windows.hに依存しており、本体compile/実file試験は未実行。
+これらはまだcook/loose/CLIへ接続していない独立APIであり、保留中のgeometry変換を有効化しない。
+
+Windowsの自動不在判定はraw system errorのFILE_NOT_FOUND/PATH_NOT_FOUNDだけを許可する。
+MSVCのfile_type::not_found/errc写像は不正名やnetwork path障害も含むため、それだけでは設定無しと判断しない。
+根拠: Microsoft STLのfilesystem（symlink_statusはraw errorを保持）とxfilesystem_abi.hの不在分類。
+https://github.com/microsoft/STL/blob/main/stl/inc/filesystem
+https://github.com/microsoft/STL/blob/main/stl/inc/xfilesystem_abi.h
+Windows不正名の実I/O回帰は登録のみで未実行。raw error判定のconstexpr境界は実file-test MEMBER compileで検証する。

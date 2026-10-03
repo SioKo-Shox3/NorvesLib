@@ -171,6 +171,10 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfAccessorRange.h
     Private/Resource/ImportTransform.h
     Private/Resource/ImportTransform.cpp
+    Private/Resource/ImportSettingsFile.h
+    Private/Resource/ImportSettingsFile.cpp
+    Private/Resource/ImportSettingsHash.h
+    Private/Resource/ImportSettingsHash.cpp
     Private/Resource/ImportSettings.h
     Private/Resource/ImportSettings.cpp
     Private/Resource/ImportSettingsJson.cpp
