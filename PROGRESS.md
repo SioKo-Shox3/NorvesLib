@@ -520,3 +520,6 @@
 
 - G2-GR78-INSPECT-GEOMETRY: 無変換bounds/軸長/最長軸・頂点/三角形/完全一致位置溶接/頂点共有成分/厳密ゼロ法線の純kernelを追加。符号付きゼロは同一、近接値は別、孤立頂点込みと明記。sort/union-by-rank/path-halvingで計測し、非有限/index/容量/全Span重複と乗算overflowを先行拒否。第1周でworkspace使用prefixだけの検査と公開契約の差を指摘され、全Spanへ修正し回帰を追加、第2周PASS。最終ソースの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）実行とMEMBER compile成功。CLI接続はまだ行わない。
 - Next: GR78 inspect用のPNG/JPEG寸法・チャンネル統計を実stbで診断する部品を追加し、その後geometry/画像/材質を無書込CLIへ統合する。
+
+- G2-GR78-INSPECT-IMAGE: PNG/JPEGを実stbで診断し、幅/高さ/decoded channel/8・16bitと整数min/max/meanを取得。色空間の線形化や16bitの縮約はせず、入出力aliasと失敗公開を防ぎRAIIで解放。最終pixel payloadの512MiB上限をinfo後に判定する。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で実stbの既知PNG8/PNG16/JPEGとinvalid/巨大/aliasを実行成功、MEMBER compile成功。独立PASS、追加反証のgray/gray-alpha/palette+tRNS/1bit/16bit RGB・tRNSも成功。512MiBはstb内部総メモリ/IDAT inflate上限ではない点をheaderと仕様に明記。CLI/native統合と実物照合は別受入れ。
+- Next: 幾何・画像の診断部品を公開後、材質係数と合わせて--inspect <file>の無変換・無書込診断へ接続する。

@@ -255,3 +255,16 @@ sourceは不変で、独立workspaceを用いてsort/union-by-rankとpath compre
 
 小型既知形状と分離/継ぎ目/孤立/縮退、面順序、微小値、float両極端、無効入力を
 通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）の実kernelで確認。CLIへの接続は後続。
+
+## 画像診断の計測契約
+
+`InspectImage` はPNG/JPEGを既存stbで展開し、幅/高さ/decoded channel数/8または16bitと、
+各channelの整数sampleのmin/max/meanを返す。16bit PNGは16bitとして取得し、8bitへの縮約や
+色空間の線形化を行わない。JPEGはstbのdecoded色成分に対する統計で、元の圧縮成分の統計ではない。
+画像は1枚ずつ処理し、展開前のinfoで最終pixel payloadの512MiB上限を検査する。stb内部の作業領域/IDAT inflateを含む
+総メモリの制限や敵対入力のsandboxではない。decoded storageは呼出中だけ所有し、
+失敗時の出力は保持する。対応外形式は明示拒否し、source画像に書き込まない。
+
+実stbをリンクして2x2 RGBA PNGの既知値、16bit grayの0/65535、定色JPEG、破損PNG/JPEG、
+巨大dimensions/不正入力/入出力aliasを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で実行する。
+MEMBER compileも確認し、native CLIへの接続と実物4本の照合は別の受入れとする。

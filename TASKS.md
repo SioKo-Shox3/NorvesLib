@@ -1981,3 +1981,9 @@
 - done-when: bounds/軸長/最長軸・頂点/三角形数・数値完全一致の位置溶接数・頂点共有成分数・ゼロ法線を変更なしで計測する。符号付きゼロは同一、未参照頂点は孤立成分と明示する。
 - verify: 既知の分離三角形/継ぎ目/孤立/縮退、非有限/不正index/workspace重複、微小値/float両極端、面順序の純実装試験。
 - stop-when: epsilonを無言適用、source geometryを書換え、未検証kernelを診断CLIへ接続する。
+
+## G2-GR78-INSPECT-IMAGE: 画像寸法とチャンネル統計を診断する
+- status: done
+- done-when: PNG/JPEGを既存stbで展開し、8/16bitの寸法/decoded channel数と整数min/max/meanを取得。色空間線形化はせず、最終pixel payloadの512MiB上限を事前検査する（stb内部総メモリの制限ではない）。失敗時結果保持。
+- verify: 既知8bit RGBA/16bit gray、壊れたPNG/JPEG/未対応/巨大dimensions/aliasの実stb試験を3modeとMEMBERで確認する。
+- stop-when: 16bit画像を無言で8bit化する、巨大decodeを上限なしで始める、source画像を編集する。

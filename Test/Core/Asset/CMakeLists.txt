@@ -21,6 +21,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER ImportTransformTest ImportTransformTest.cpp
     MEMBER ImportCliOptionsTest ImportCliOptionsTest.cpp
     MEMBER GeometryInspectionTest GeometryInspectionTest.cpp
+    MEMBER ImageInspectionTest ImageInspectionTest.cpp
     MEMBER ImportSettingsValueTest ImportSettingsValueTest.cpp
     MEMBER ImportSettingsJsonTest ImportSettingsJsonTest.cpp
     MEMBER GltfLooseSourceTest GltfLooseSourceTest.cpp
@@ -110,3 +111,5 @@ add_test(NAME ImportStaticIntegrationTest COMMAND CookedMeshTest --test=ImportSt
 add_test(NAME ImportCliOptionsTest COMMAND CookedMeshTest --test=ImportCliOptionsTest)
 
 add_test(NAME GeometryInspectionTest COMMAND CookedMeshTest --test=GeometryInspectionTest)
+
+add_test(NAME ImageInspectionTest COMMAND CookedMeshTest --test=ImageInspectionTest)

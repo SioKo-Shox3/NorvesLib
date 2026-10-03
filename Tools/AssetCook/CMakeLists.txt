@@ -8,6 +8,8 @@ add_library(AssetCookLib STATIC
     ModelCookCache.h
     GeometryInspection.cpp
     GeometryInspection.h
+    ImageInspection.cpp
+    ImageInspection.h
     TextureCooker.cpp
     TextureCooker.h
 )
