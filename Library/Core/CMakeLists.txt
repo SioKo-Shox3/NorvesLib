@@ -36,6 +36,7 @@ set(PRIVATE_SOURCES
     # Animation
     Private/Animation/AnimationClipResource.cpp
     Private/Animation/SkeletalAnimationSampler.cpp
+    Private/Animation/SkeletalSamplingMath.h
     Private/Animation/SkeletalAssetResource.cpp
     Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
@@ -176,6 +177,8 @@ set(PRIVATE_SOURCES
     Private/Resource/SkeletalImportPolicy.cpp
     Private/Resource/SkeletalCubicBounds.h
     Private/Resource/SkeletalCubicBounds.cpp
+    Private/Resource/SkeletalCubicBake.h
+    Private/Resource/SkeletalCubicBake.cpp
     Private/Resource/GltfAccessorRange.h
     Private/Resource/ImportTransform.h
     Private/Resource/ImportTransform.cpp

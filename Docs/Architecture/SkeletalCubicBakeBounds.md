@@ -64,3 +64,43 @@ Linuxで拡張精度long doubleが使える場合は、独立Hermite参照値が
 MSVCのようにlong doubleがbinary64と同精度の場合は、参照式側の丸めを考慮した比較に切り替える。
 その版はULP級の厳密包絡検証とは呼ばず、既知の正確な値のassertと別に扱う。
 参照式の誤差予算はテストだけにあり、実装の境界や採用許容には加えない。
+
+## 適応LINEAR生成と条件付きfloat認証
+
+BakeCubicChannelは2キー以上の有限・非負・厳密増加float時刻とtripletを受ける。
+元キー時刻を保持し、左→右の決定的な二分で所有候補列をworkspaceへ作る。
+全区間を認証した成功時だけoutへコピーし、失敗時はout全体を保持する。
+callerのworkspace/output容量、最大sample数、最大深さ（上限24）を超えれば拒否する。
+左右の中間時刻が同じfloatへ丸まる、duration<=EPSILON、内部zero quaternion等も拒否する。
+
+float時刻の差と分割比そのものを外向き区間で作り、丸めたdouble比を正確な比とみなさない。
+ValueScaleはBezier control全体へ外向き適用する。vectorのToleranceはその適用後のL2長さ。
+translationへ最終メートル倍率を渡し、scale channelは1を渡す接続が必要で、二重scaleをしない。
+RotationはValueScale=1のみ。元quaternion/tangentの符号を変えず、保存キーだけを正規化する。
+
+実samplerのNormalizeQuaternion/Slerp/alpha式をSkeletalSamplingMath.hへ移し、
+元の式・分岐を変えずsamplerと純試験で同じ実helperを使用する。
+これはCoreのresource/pose/Windows全体を代用品で通す方法ではなく、実Math型のportable数値部分の共有。
+
+### float誤差予算の条件
+
+sampler側もbinary32/最近接/gradual underflow/正確なsqrt/精密FPであることを要求する。
+bakerの実行環境は検査するが、別targetのsampler実ビルドまで検証済みとはしない。
+Windows全体での受入れは未実行であり、以下はその数値profileを満たす場合の解析。
+対象時刻はsamplerへ渡されたfinite float queryで、実数時刻からfloat化する前の時間誤差を含まない。
+
+ε=2^-23、u=ε/2。保存回転端点normを[.99,1.01]、数学的な正規化dot下限を>.9996と認証する。
+NormalizeのEuclid誤差<=16u、float dot差<64uなので実dot>.9995fとなり、
+半球反転とsin/acosを使うSLERP枝を避け、実NLERP枝だけを使う。
+時間alpha差<=4u、Lerp算術の誤差<=8u、端点差d<.03から、
+正規化前の実Lerpと理想chordの差<32u、chord norm>.9998。
+NLERP後とconjugate後の2回のNormalizeを含め、SO(3)誤差は
+4*32u/.9998+2*4*16u<257u<256ε rad。数学上界へ256εを足し許容以下の場合だけ採用する。
+
+vectorは両端のL1 norm最大M（最低1）に対して64εMを保守的予算とする。
+alpha差<=4uと3段のfloat Lerp演算を含めたL1誤差より十分大きい。
+各保存成分はFLT_MAX/16以内に制限し、差分・乗算・加算の中間overflowを避ける。
+これは個別値の実測誤差でなく上界であり、予算が許容以上なら保守的に拒否する。
+
+ここまでの境界はlocal TRS値まで。行列生成、親変換、skinningの誤差は含まない。
+現段階はbake kernelであり、decoder/cook/CLIのCUBICSPLINE受理はまだ有効化しない。

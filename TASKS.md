@@ -2072,7 +2072,25 @@
 - stop-when: 中点標本だけで全区間保証とする、tangent符号の暗黙変更、誤差のメートル/角度混同、未接続decode受理。
 
 ## G2-GR86-CUBIC-RUNTIME: 実sampler条件で焼込誤差を認証する
-- status: todo
+- status: done
 - done-when: 数学kernel上界に保存float時刻/値と実runtime数値条件を合わせ、短duration/半球/NLERPを扱う。保証対象・数値仮定・許容の下限を明記し、深さ/sample予算内で全区間が認証できた場合だけ所有LINEAR列を返す。
 - verify: 中点相殺/巨大tangent/非単位dt/float時刻衝突/近ゼロquaternion/短duration/予算超過、最終キーと全区間境界。
 - stop-when: 任意epsilonだけで形式的runtime保証とする、未認証区間を成功公開、元cubic符号変更、変換後メートル誤差を無視する。
+
+## G2-GR86-CUBIC-POLICY: 焼込指定・許容・診断・hashを定義する
+- status: todo
+- done-when: Reject既定/Bake明示、translationメートル/rotationラジアン/scale無次元の許容、depth/channel/asset sample予算と診断を定義。未使用指定を拒否し、Bake無しの既存Strict/Reduce canonical/hashを維持する。Bake時だけ全設定/algorithmをhashへ追加する。
+- verify: pure validation/canonical/hash golden、既存Strict/Reduce無変更、数値下限/不正/上限/無意味指定の拒否。
+- stop-when: 未接続decoderがBakeを黙って無視して成功する、既存hash回帰、未実装morph/256を受理。
+
+## G2-GR86-CUBIC-DECODE: 明示焼込を骨格decodeへ接続する
+- status: todo
+- done-when: CUBICSPLINE triplet/count/有限時刻を検査して共通bakerへ渡す。fitを含む最終translation倍率のメートル空間で認証し二重scaleしない。raw/legacy/file/cookを同じ経路にし、prefix診断と失敗Data/source非公開を維持する。既定Rejectの挙動を維持する。
+- verify: Translation/Rotation/Scaleの既知曲線、glTF/GLB、source triplet不正・zeroq・容量/閾値超過、sidecar scale/fitと実helper/parse往復。native未実行は区別する。
+- stop-when: 元cubicの符号変更、scale後の許容超過黙認、partial成功、native/GPU実行済みと偽る。
+
+## G2-GR86-CUBIC-CLI: 焼込CLIとJSON診断を接続する
+- status: todo
+- done-when: --cubicspline reject|bakeと許容指定をstrict parseし、cook/skipへ同じpolicyを渡す。焼込channels/keys/単位別上界/失敗をImportReportへ格納し、未走査はnullとする。
+- verify: pure parser/JSON、nativeCLI成功・既定拒否・失敗保持・設定差cache鍵、診断単位。
+- stop-when: 未実装morph/256指定を受理、cacheと本cookの設定不一致、未測定をゼロと偽る。

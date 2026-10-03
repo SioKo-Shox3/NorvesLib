@@ -203,20 +203,20 @@ namespace NorvesLib::Core::Skeletal
         }
     }
 
-    CubicBoundsStatus BuildHermiteBezierBounds(const CubicPoint& start, const CubicPoint& end,
-        const CubicPoint& outgoing, const CubicPoint& incoming, double duration, uint32_t dimensions,
+    static CubicBoundsStatus BuildHermiteBezierInterval(const CubicPoint& start, const CubicPoint& end,
+        const CubicPoint& outgoing, const CubicPoint& incoming, CubicInterval duration, uint32_t dimensions,
         CubicBezierBounds& out) noexcept
     {
         if (!Supported())
         {
             return CubicBoundsStatus::UnsupportedArithmetic;
         }
-        if ((dimensions != 3 && dimensions != 4) || !std::isfinite(duration) || duration <= 0)
+        if ((dimensions != 3 && dimensions != 4) || !Valid(duration) || duration.Lower <= 0)
         {
             return CubicBoundsStatus::InvalidInput;
         }
         CubicBezierBounds candidate; candidate.Dimensions = dimensions;
-        const I scale = DivPositive(Exact(duration), Exact(3));
+        const I scale = DivPositive(duration, Exact(3));
         for (uint32_t component = 0; component < dimensions; ++component)
         {
             const I a = Exact(start.Values[component]), z = Exact(end.Values[component]);
@@ -229,6 +229,55 @@ namespace NorvesLib::Core::Skeletal
             candidate.Controls[1].Values[component] = Add(a, Mul(scale, firstTangent));
             candidate.Controls[2].Values[component] = Sub(z, Mul(scale, lastTangent));
             candidate.Controls[3].Values[component] = z;
+        }
+        if (!Valid(candidate))
+        {
+            return CubicBoundsStatus::InvalidInput;
+        }
+        out = candidate;
+        return CubicBoundsStatus::Success;
+    }
+
+    CubicBoundsStatus BuildHermiteBezierBounds(const CubicPoint& start, const CubicPoint& end,
+        const CubicPoint& outgoing, const CubicPoint& incoming, double duration, uint32_t dimensions,
+        CubicBezierBounds& out) noexcept
+    {
+        return BuildHermiteBezierInterval(start, end, outgoing, incoming, Exact(duration), dimensions, out);
+    }
+
+    CubicBoundsStatus BuildHermiteBezierAtTimes(const CubicPoint& start, const CubicPoint& end,
+        const CubicPoint& outgoing, const CubicPoint& incoming, float startTime, float endTime, uint32_t dimensions,
+        CubicBezierBounds& out) noexcept
+    {
+        if (!Supported())
+        {
+            return CubicBoundsStatus::UnsupportedArithmetic;
+        }
+        if (!std::isfinite(startTime) || !std::isfinite(endTime) || startTime < 0 || endTime <= startTime)
+        {
+            return CubicBoundsStatus::InvalidInput;
+        }
+        return BuildHermiteBezierInterval(start, end, outgoing, incoming,
+            Sub(Exact(endTime), Exact(startTime)), dimensions, out);
+    }
+
+    CubicBoundsStatus ScaleCubicBounds(const CubicBezierBounds& curve, double scale, CubicBezierBounds& out) noexcept
+    {
+        if (!Supported())
+        {
+            return CubicBoundsStatus::UnsupportedArithmetic;
+        }
+        if (!Valid(curve) || !std::isfinite(scale) || scale <= 0)
+        {
+            return CubicBoundsStatus::InvalidInput;
+        }
+        auto candidate = curve;
+        for (auto& point : candidate.Controls)
+        {
+            for (uint32_t component = 0; component < curve.Dimensions; ++component)
+            {
+                point.Values[component] = Mul(point.Values[component], Exact(scale));
+            }
         }
         if (!Valid(candidate))
         {
@@ -275,13 +324,13 @@ namespace NorvesLib::Core::Skeletal
         out = level[0]; return CubicBoundsStatus::Success;
     }
 
-    CubicBoundsStatus SplitCubicBounds(const CubicBezierBounds& curve, double parameter, CubicBezierBounds& left, CubicBezierBounds& right) noexcept
+    static CubicBoundsStatus SplitCubicBoundsInterval(const CubicBezierBounds& curve, CubicInterval parameter, CubicBezierBounds& left, CubicBezierBounds& right) noexcept
     {
         if (!Supported())
         {
             return CubicBoundsStatus::UnsupportedArithmetic;
         }
-        if (&left == &right || !Valid(curve) || !std::isfinite(parameter) || parameter <= 0 || parameter >= 1)
+        if (&left == &right || !Valid(curve) || !Valid(parameter) || parameter.Lower <= 0 || parameter.Upper >= 1)
         {
             return CubicBoundsStatus::InvalidInput;
         }
@@ -297,7 +346,7 @@ namespace NorvesLib::Core::Skeletal
         {
             for (uint32_t index = 0; index < 4 - depth; ++index)
             {
-                level[index] = Blend(level[index], level[index + 1], Exact(parameter), curve.Dimensions);
+                level[index] = Blend(level[index], level[index + 1], parameter, curve.Dimensions);
             }
             first.Controls[depth] = level[0]; second.Controls[3 - depth] = level[3 - depth];
         }
@@ -306,6 +355,29 @@ namespace NorvesLib::Core::Skeletal
             return CubicBoundsStatus::InvalidInput;
         }
         left = first; right = second; return CubicBoundsStatus::Success;
+    }
+
+    CubicBoundsStatus SplitCubicBounds(const CubicBezierBounds& curve, double parameter,
+        CubicBezierBounds& left, CubicBezierBounds& right) noexcept
+    {
+        return SplitCubicBoundsInterval(curve, Exact(parameter), left, right);
+    }
+
+    CubicBoundsStatus SplitCubicBoundsAtTime(const CubicBezierBounds& curve,
+        float startTime, float endTime, float splitTime, CubicBezierBounds& left, CubicBezierBounds& right) noexcept
+    {
+        if (!Supported())
+        {
+            return CubicBoundsStatus::UnsupportedArithmetic;
+        }
+        if (!std::isfinite(startTime) || !std::isfinite(endTime) || !std::isfinite(splitTime) ||
+            startTime < 0 || splitTime <= startTime || splitTime >= endTime)
+        {
+            return CubicBoundsStatus::InvalidInput;
+        }
+        const I numerator = Sub(Exact(splitTime), Exact(startTime));
+        const I denominator = Sub(Exact(endTime), Exact(startTime));
+        return SplitCubicBoundsInterval(curve, DivPositive(numerator, denominator), left, right);
     }
 
     CubicChordBound BoundVectorChord(const CubicBezierBounds& curve, const CubicFloatPoint& start, const CubicFloatPoint& end) noexcept
@@ -345,6 +417,7 @@ namespace NorvesLib::Core::Skeletal
             return {};
         }
         auto a = FloatPoint(start), z = FloatPoint(end);
+        const I storedA = Length(a, 4), storedZ = Length(z, 4);
         if (!Normalize(a) || !Normalize(z))
         {
             return {};
@@ -393,6 +466,7 @@ namespace NorvesLib::Core::Skeletal
         {
             return {CubicBoundsStatus::Uncertified};
         }
-        return {CubicBoundsStatus::Success, angular.Upper, curveMinimum.Lower};
+        return {CubicBoundsStatus::Success, angular.Upper, curveMinimum.Lower, dot.Lower,
+            std::min(storedA.Lower, storedZ.Lower), std::max(storedA.Upper, storedZ.Upper)};
     }
 } // namespace NorvesLib::Core::Skeletal

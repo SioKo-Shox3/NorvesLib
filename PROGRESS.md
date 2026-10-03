@@ -559,3 +559,6 @@
 
 - G2-GR86-CUBIC-KERNEL: Hermite→外向き区間Bezier、deCasteljau評価/分割、保存float端点に対する理想LINEARの全区間L2/SO(3)上界を追加。quaternion符号を変えずE<mで非ゼロを認証し、角度上界4E/m+d²を保守的に計算。失敗out保持、左右alias拒否、入力片側alias許可。IEEE最近接/subnormal/精密FPを仮定しunsafe算術検出時拒否。純3mode/Werror MEMBER成功、3781認証ランダム曲線×201点の独立回転反証も違反なし。内部zero回帰を追加し規約の波括弧整形後、第2周PASS。binary64参照式の丸め偽陽性をtest専用予算で区別し、double参照版も成功（ULP級厳密包絡/Windows成功ではない）。実samplerのfloat/短区間/sidecar単位・decode/cook受理は次taskであり現段階CUBICSPLINE拒否を維持。
 - Next: GR86-CUBIC-RUNTIME。全回転区間を数学dot下限>0.9996へ分割して実NLERP分岐を認証し、256*float epsilon radの保守的数値予算を条件付きで加える。保存float時刻の区間長/分割比も外向き区間で扱い、短dt/深さ/sample不足は拒否する。
+
+- G2-GR86-CUBIC-RUNTIME: 保存float時刻の差/分割比を外向き区間に入れ、ValueScale適用後の数学上界と条件付きfloat予算で適応LINEAR列を生成。回転はnorm[.99,1.01]/dot下限>.9996を認証し実NLERP枝へ限定、256epsilon rad予算、vectorは64epsilon*端点L1規模。短dt/時刻衝突/zeroq/深さ24/sample容量を拒否し全out保持。元samplerのNormalize/Slerp/alpha式をportable private helperへ式不変で移し本物Math型と共有。pure3mode/Werror MEMBER/旧bounds回帰成功、第2周PASS。独立反証は成功534曲線・6,503,462 queryで上界違反なし。oracle hをlong doubleのまま保ち2^-60→1時刻差を追加。Core/pose/Windows全体はWindows.hにより未実行、別targetのFP条件は未確認と明記。Cubic decode受理はまだ拒否。
+- Next: Cubic policy/hashを定義し、最終メートル倍率のdecode接続とCLI/JSONへ順に進む。
