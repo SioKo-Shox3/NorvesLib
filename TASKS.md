@@ -394,7 +394,7 @@
 - notes: 2026-10-03 ユーザーの「MegaGeometryでめちゃめちゃポリ数上げてもいい」を受け、高ポリを生かして輪郭にも凹凸を出す。高さマップは16ビットのグレーのPNG。評価者を通す。
 
 ## SS-ACCEPT-DETAIL: テクスチャのミップ・MegaGeometryの影・高ポリの球を受入れ記録へ足す
-- status: todo
+- status: done
 - done-when: `Docs/RenderingValidation/StartupSceneAcceptance.md` に、FIX-ASYNC-TEXTURE-MIPS・SS-CSM-MEGA-CASTERS・SS-MEGA-SPHERE・SS-MEGA-SPHERE-DISPLACE の後の撮影（朝・昼・夕・夜 × 既定・近接・低角度）と、変更前（`b347eb7`）の同じ視点を並べた比較、SS-LOOK-BALANCE の数値の範囲の判定、RelWithDebInfo の1フレームのGPUの時間（加速構造の更新を含む。全フレームが16.6 ms以下か、超えたフレームのパスごとの内訳）、起動から撮影までの時間を足す。Release は build が通り撮影できることだけを確かめる。評価者が撮影を開いて反証を試みる。
 - verify: `cmake --build build --config Release --target Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
