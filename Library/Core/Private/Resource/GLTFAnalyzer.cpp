@@ -1,5 +1,6 @@
 ﻿#include "Resource/GLTFAnalyzer.h"
 #include "Resource/ModelStaging.h"
+#include "Resource/GltfAccessorRange.h"
 #include "Resource/SkeletalGltfDecode.h"
 
 #include "FileStream/FileStream.h"
@@ -275,30 +276,18 @@ namespace NorvesLib::Core::Resource
         bool ValidateAccessorBounds(const AccessorInfo& accessor,
                                     const BufferViewInfo& bufferView,
                                     const VariableArray<uint8_t>& bufferData,
+                                    size_t declaredBufferSize,
                                     const char* label)
         {
-            size_t elementSize = GetComponentSize(accessor.ComponentType) * GetComponentCount(accessor.Type);
-            size_t stride = GetAccessorStride(accessor, bufferView);
-            size_t startOffset = bufferView.ByteOffset + accessor.ByteOffset;
-
-            if (elementSize == 0 || stride < elementSize)
+            const size_t elementSize = GetComponentSize(accessor.ComponentType) * GetComponentCount(accessor.Type);
+            const size_t stride = GetAccessorStride(accessor, bufferView);
+            const auto range = Gltf::ComputeAccessorByteRange(bufferData.size(), declaredBufferSize,
+                bufferView.ByteOffset, bufferView.ByteLength, accessor.ByteOffset, accessor.Count, elementSize, stride);
+            if (!range.bValid)
             {
-                NORVES_LOG_ERROR("GLTFAnalyzer", "Invalid accessor layout: %s", label);
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Invalid accessor layout or declared range: %s", label);
                 return false;
             }
-
-            if (accessor.Count == 0)
-            {
-                return true;
-            }
-
-            size_t requiredSize = startOffset + (static_cast<size_t>(accessor.Count) - 1) * stride + elementSize;
-            if (requiredSize > bufferData.size())
-            {
-                NORVES_LOG_ERROR("GLTFAnalyzer", "Accessor range exceeds buffer: %s", label);
-                return false;
-            }
-
             return true;
         }
 
@@ -608,6 +597,7 @@ namespace NorvesLib::Core::Resource
 
         bool ExtractMeshData(const VariableArray<AccessorInfo>& accessors,
                              const VariableArray<BufferViewInfo>& bufferViews,
+                             const VariableArray<BufferInfo>& buffers,
                              const VariableArray<VariableArray<uint8_t>>& bufferData,
                              const PrimitiveInfo& primitiveInfo,
                              VariableArray<Rendering::Mesh3DVertex>& outVertices,
@@ -644,7 +634,9 @@ namespace NorvesLib::Core::Resource
             if (positionBufferView.Buffer >= bufferData.size() ||
                 normalBufferView.Buffer >= bufferData.size() ||
                 texCoordBufferView.Buffer >= bufferData.size() ||
-                indexBufferView.Buffer >= bufferData.size())
+                indexBufferView.Buffer >= bufferData.size() ||
+                positionBufferView.Buffer >= buffers.size() || normalBufferView.Buffer >= buffers.size() ||
+                texCoordBufferView.Buffer >= buffers.size() || indexBufferView.Buffer >= buffers.size())
             {
                 NORVES_LOG_ERROR("GLTFAnalyzer", "buffer index is invalid");
                 return false;
@@ -670,10 +662,14 @@ namespace NorvesLib::Core::Resource
                 return false;
             }
 
-            if (!ValidateAccessorBounds(positionAccessor, positionBufferView, positionBuffer, "POSITION") ||
-                !ValidateAccessorBounds(normalAccessor, normalBufferView, normalBuffer, "NORMAL") ||
-                !ValidateAccessorBounds(texCoordAccessor, texCoordBufferView, texCoordBuffer, "TEXCOORD_0") ||
-                !ValidateAccessorBounds(indexAccessor, indexBufferView, indexBuffer, "indices"))
+            if (!ValidateAccessorBounds(positionAccessor, positionBufferView, positionBuffer,
+                                        buffers[positionBufferView.Buffer].ByteLength, "POSITION") ||
+                !ValidateAccessorBounds(normalAccessor, normalBufferView, normalBuffer,
+                                        buffers[normalBufferView.Buffer].ByteLength, "NORMAL") ||
+                !ValidateAccessorBounds(texCoordAccessor, texCoordBufferView, texCoordBuffer,
+                                        buffers[texCoordBufferView.Buffer].ByteLength, "TEXCOORD_0") ||
+                !ValidateAccessorBounds(indexAccessor, indexBufferView, indexBuffer,
+                                        buffers[indexBufferView.Buffer].ByteLength, "indices"))
             {
                 return false;
             }
@@ -896,7 +892,7 @@ namespace NorvesLib::Core::Resource
             VariableArray<Rendering::Mesh3DVertex> vertices;
             VariableArray<uint32_t> indices;
             auto meshExtractStartTime = LoadProfileNow();
-            if (!ExtractMeshData(accessors, bufferViews, bufferData, primitiveInfo, vertices, indices))
+            if (!ExtractMeshData(accessors, bufferViews, buffers, bufferData, primitiveInfo, vertices, indices))
             {
                 NORVES_LOG_INFO("AssetLoadProfile",
                                 "stage=gltf_mesh_extract role=%s request_id=%u path=\"%s\" vertices=%zu indices=%zu ms=%.3f success=0",
@@ -1050,6 +1046,21 @@ namespace NorvesLib::Core::Resource
             return true;
         }
     } // anonymous namespace
+
+    bool ModelStaging::BuildModelStagingFromLooseGltf(const String& requestPath,
+                                                    const String& resolvedPath,
+                                                    ModelStagingData& outStaging,
+                                                    const char* role,
+                                                    uint32_t requestId)
+    {
+        ModelStagingData candidate;
+        if (!BuildModelStaging(requestPath, resolvedPath, candidate, role, requestId))
+        {
+            return false;
+        }
+        outStaging = std::move(candidate);
+        return true;
+    }
 
     Skeletal::SkeletalGltfDecodeResult GLTFAnalyzer::AnalyzeSkeletal(const String& gltfPath)
     {

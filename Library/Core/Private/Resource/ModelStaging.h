@@ -76,6 +76,13 @@ namespace NorvesLib::Core::Resource::ModelStaging
         StagedTextureData MetallicTexture;
     };
 
+    // GPUを作らずloose glTFをCPU stagingへ変換する。成功時だけ出力を置換する。
+    bool BuildModelStagingFromLooseGltf(const Container::String& requestPath,
+                                      const Container::String& resolvedPath,
+                                      ModelStagingData& outStaging,
+                                      const char* role,
+                                      uint32_t requestId);
+
     size_t GetStagedLooseTextureBytes(const ModelStagingData& staging);
     uint32_t GetStagedPreparedTextureCount(const ModelStagingData& staging);
     uint32_t GetStagedTextureCount(const ModelStagingData& staging);

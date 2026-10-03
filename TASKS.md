@@ -1806,7 +1806,7 @@
 - stop-when: null uriを省略と誤認、doubleからsizeへの範囲外cast、移動したURI配列へのSpan、未承認の形式/既定値変更。
 
 ## G2-GR77-LOOSE-BOUNDS: loose accessorの範囲計算を安全化する
-- status: todo
+- status: done
 - done-when: GLTFAnalyzerのunchecked startOffset/count*strideをcheckedな宣言buffer/view範囲検証へ置換し、GR77共有buffer接続前にoverflowによる越境を防ぐ。正常既存fixtureの属性値は維持する。
 - verify: count/stride/offsetの整数境界を実純helperと既存staging試験へ追加し、旧正常値の不変と不正拒否を確認する。
 - notes: buffer解決の共有化だけでは現在のValidateAccessorBoundsのunchecked加算/乗算は解消しない。loose接続の前提として別タスク化。
@@ -1851,3 +1851,22 @@
 - verify: M9の既存fixtureをJSON外部/GLB/data URIで表し、頂点/関節/clipとNVSKEL payload/hashの比較、不正buffer拒否を既存束へ追加する。実native未検証と共有helper成功を区別する。
 - stop-when: Armature親/clip複数/256関節への未承認拡張、NVSKEL形式変更、String互換APIの破壊、hash/BIN借用寿命の逸脱。
 - notes: GR82の骨格契約変更やStage A/Bを先取りしない。画像/材質を骨格側へ新たに導入しない。
+
+## G2-GR77-IMAGE-STAGING: 埋込み画像bytesをCPU texture stagingへ渡す
+- status: todo
+- done-when: ModelStagingの画像decodeをfile読込とbytes読込へ分け、PNG/JPEG bytesから標準RGBA8とARMの3つのR8 stagingを生成できる。既存外部画像の既定format/チャンネル写像を維持し、input長/dimension境界とstb所有解放を守る。
+- verify: 同じ小PNGのfile/bytes pixel一致、ARM分解、異常bytes/大きい長さの拒否、stagingの所有と失敗出力契約を既存束へ追加。native未検証と実stb/helper確認を区別する。
+- stop-when: albedo既定色空間の変更、GPU生成、stb確保の例外時漏れ、借用pixelsの返却。
+- notes: GLTFAnalyzerの画像参照接続は後続。空RequestPathとHasDataによるfinalize契約を保持する。
+
+## G2-GR77-DOCUMENT-PROFILE: 必須glTF拡張の拒否規則を共有する
+- status: todo
+- done-when: extensionsRequiredの型/重複と非対応必須拡張を共有判定し、静的cooker/loose/骨格で黙って無視しない。現時点の許可リストは空で、既存静的cookerの通常診断を維持する。
+- verify: 無指定/空配列/型違い/重複/Draco/meshopt/quantization/texture_transformの拒否を既存束へ登録。native未検証を明記する。
+- stop-when: 未実装拡張の受理、optional extensionsUsed全体の無差別拒否、骨格/材質の未承認仕様拡張。
+
+## G2-GR77-LOOSE-SOURCES: loose静的モデルへGLBと埋込み画像を接続する
+- status: todo
+- done-when: GLTFAnalyzerの静的stagingを共有container/BufferSet/ImageSourceへ接続し、GLB/data URIのgeometryとPNG/JPEG画像をCPU所有stagingにする。埋込み画像のRequestPathは空、既存外部画像の論理参照とRGBA8/ARM分解を保持する。
+- verify: 小GLB・data URI・外部入力でgeometry/5staged textures（元画像3枚）を比較し、元source破棄後の所有と必須拡張拒否を確認する登録試験。Windows/GPU未検証と区別する。
+- stop-when: BIN全体コピー、埋込み画像をcooked manifest参照へ回す、既存材質既定の変更、full static parser統合の先取り。

@@ -136,3 +136,13 @@ SkeletalGltfDecodeは元byte列の入口を持ち、共有containerでGLB/JSON�
 - 各入口は正常失敗でsource出力を空にする。元bytesをoutSourceBuffers自身に所有させない。旧StringとSpanのoverloadがあるため、空入力の試験は型を明示する
 
 CookedSkeletalAssetTestのM9 fixtureからGLB/data URIを組み、decoded値、NVSKEL全bytes、SourceHash、BIN pointer、BOM/外部余剰、旧String出力、不正GLB/欠落BIN/短いdata URIと出力clearを登録する。試験専用directoryは排他的な一意名で作り、並列試験の既存directoryを削除しない。実骨格decoder/cooker/analyzer/このnative試験はWindows.h依存でcompile/実行未検証であり、共有container/buffer helperの成功と区別する。
+
+## GR77: loose accessorの宣言範囲
+
+GltfAccessorRangeはactual buffer長・宣言buffer長・bufferView offset/length・accessor offset/count/element/strideから、範囲が成立するときだけ開始位置と必要byte数を返す純粋なhelper。加算/乗算する前に減算/除算で境界を証明し、0 count・0 element・短いstrideも拒否する。形式ごとの整列/type/stride規則を統合するものではない。
+
+GLTFAnalyzerは4つの使用accessorをこのhelperへ通し、実fileに余剰があっても宣言buffer/view外を読まない。安全性を確認した不変のmetadataだけで、その後のpointerとstrideを計算する。既存の頂点値・index winding・cluster・材質既定は変えない。private ModelStagingのCPU入口を追加し、既存の内部staging処理をGPU生成なしで呼べるようにする。この入口は候補を完成させてから出力へ移す。
+
+GltfAccessorRangeTestは小範囲の全列挙とsize_t極値、対応compilerではunsigned128の独立oracle（2万件、うち1万件は有効な広い範囲）を実行する。Linuxの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で各5,438,750件とMEMBER compileが成功。追跡glTF6fileの使用attribute/index24layoutも実helperに通過した。12件は実file長、fixtureの12件は宣言長をactual長としたmetadata確認で、後者は実I/O成功を意味しない。
+
+GltfAccessorStagingTestは小三角形の成功と短いview/短い宣言buffer/巨大offset/0countを既存束へ登録し、失敗時に旧stagingを保持することを検査する。GLTFAnalyzer/このnative試験はWindows.h依存でcompile/実行未検証。現在のJSON数値getterや形式全体の厳格化・static parser統合まで済んだとは扱わない。

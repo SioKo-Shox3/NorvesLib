@@ -466,3 +466,6 @@
 
 - G2-GR77-SKELETAL-BUFFERS: 骨格decoder/cooker/AnalyzeSkeletalを共有container/BufferSetへ接続し、GLB/data URIと外部bufferを宣言範囲で読む。旧metadata/抽出順、128関節/単一clip/変換/NVSKEL形式を保持。decodedは独立所有、hash用BINは借用、String互換出力は全source bytes所有copy。M9に3入力形のdecoded/NVSKEL/SourceHash、BIN pointer、BOM/余剰/旧出力/失敗clearを登録し、試験directoryを一意の排他作成へ変更。独立レビューPASS。実container/buffer意味の通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER、M9 fixtureの実container/BIN、実配列/Spanの型syntaxは成功。骨格本体と新native試験はWindows.hでcompile停止し、decoder/cooker/analyzer実行とpayload一致は未検証。
 - Next: GR77 loose accessorのunchecked範囲計算を先に安全化し、その後looseの共有buffer/画像bytes/stagingを接続する。実物GLB受入れと実Windows統合は未検証のまま区別する。
+
+- G2-GR77-LOOSE-BOUNDS: looseの4accessorを純粋な宣言範囲helperへ通し、actual/declared/viewと正のcount/element/strideを減算・除算で証明してからpointerを作る。private CPU staging入口は候補完成時だけ出力置換。実helper通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で各5,438,750件（広い有効範囲1万を含む）、MEMBER compile成功。追跡glTF6fileの24layoutも通過（12実file長/12宣言長のみ）。小三角形の正常と短いview/宣言・巨大offset・0countをnativeへ登録したが、GLTFAnalyzer/実staging試験はWindows.hでcompile停止。独立レビューPASS。JSON getterや全形式の厳格化とは区別する。
+- Next: GR77の画像bytes→CPU stagingと必須拡張判定を共有し、最後にlooseへGLB/buffer/imageを配線する。staging/GPU/実物受入れ未検証を完了扱いしない。

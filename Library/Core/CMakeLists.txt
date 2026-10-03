@@ -168,6 +168,7 @@ set(PRIVATE_SOURCES
     Private/Resource/MaterialResource.cpp
     Private/Resource/GLTFAnalyzer.cpp
     Private/Resource/SkeletalGltfDecode.cpp
+    Private/Resource/GltfAccessorRange.h
     Private/Resource/GltfContainer.h
     Private/Resource/GltfContainer.cpp
     Private/Resource/GltfBufferSource.h
