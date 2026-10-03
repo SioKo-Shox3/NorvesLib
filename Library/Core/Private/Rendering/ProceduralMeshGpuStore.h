@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Rendering/ProceduralMeshGPUData.h"
 #include "Rendering/RenderTypes.h"
@@ -43,6 +43,8 @@ namespace NorvesLib::Core::Rendering
         bool TryGetSubMeshRanges(MeshDataHandle handle,
                                  Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS>& out,
                                  uint32_t& outCount) const;
+        // 登録した頂点から求めたローカル空間のAABB（求められなかったメッシュは false）
+        bool TryGetLocalBounds(MeshDataHandle handle, BoundingBox &outBounds) const;
         void UnregisterMesh(MeshDataHandle handle);
         void Clear();
 

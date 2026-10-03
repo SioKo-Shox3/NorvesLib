@@ -8,6 +8,8 @@
 
 2026-10-03 続き2（ブランチ `fix/showcase-sphere-reflection-ao`）: ユーザーの指摘（金属の見本の球がカメラの角度によって一部透けて見え、同じ角度でも影のかかり方がちらつく）から、FIX-GTAO-STATIC-NOISE → FIX-SSR-SPECULAR-COMPOSITE を直す。
 
+2026-10-04 続き3（ブランチ `feature/ground-material-showcase`）: ユーザーの要望（地面のテクスチャを色々用意して質感を見比べられるように。テクスチャは Poly Haven から落とし、git に入れない）から、SS-GROUND-SWATCHES を足し、その途中で見つけた FIX-MESH-BOUNDS-CULLING を直す。
+
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## SS-CAPTURE: 起動画面を撮影して数値を出す経路を作る
@@ -491,6 +493,28 @@
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders/lighting.frag, Assets/Shaders/ssr.frag, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 原因は `ssr.frag` が当たった画素で照明済みの色を `mix(scene, L_hit, alpha)` で置き換えていたこと。金属は `reflectStrength` が1になり alpha が約0.8（強度0.8）に達し、写った地面の色を金色を掛けずに入れるので、球の縁に地面の切り抜きが透けたように見える。外れた画素は空から作る環境マップ（金色が掛かる）のままで、当たり外れの境目がカメラの角度で動く。危険地帯（描画パスの構造）なので評価者を通す。
 - result: 2026-10-03 完了（`1129bfd`・`06fb327`・`7f3f34f`）。視点 `-112,4,8.5` でSSRの有無で差が出る金属の球の画素の (R−B)/(R+G+B) のSSRなしに対する比は、粗さ0.1・0.3・0.5で0.71→1.09、0.68→1.13、0.80→1.04。拡大画像で地面の切り抜きは消え、縁には金色の細い映り込みが残る。フレーム間の平均絶対差は粗さ0.3で0.239→0.213。評価者（Astra）の1周目の指摘（フォグ・半透明を重ねた後の色から減衰前の鏡面反射を引いていた）を受け、SSRを照明の直後（フォグ・半透明の前）へ移し、フォグ・半透明・被写界深度・動きぼけはSSRの出力へ重ねるようにした。RenderGraphCompileTest・Indoor/Outdoor golden pass（Outdoorは球の輪郭と接地部の陰の266画素の差を`Docs/RenderingValidation/R1Acceptance.md` に記録して再承認、Indoorは一致）。起動画面の朝・昼・夕の撮影（`startup-capture/FIX-SSR-SPECULAR-COMPOSITE/`）は平均輝度が前回の受入れより0.3〜1.8下がった（SSRの映り込みが反射率どおりの強さになった分）。反射に写る色は照明の色（フォグ・半透明を含まない）。評価者の2周目の指摘（フォグ・半透明がSSRの出力へ重なるのに、ViewはHDRのシーンの色として照明の直後の "Scene.Color" を取り、SceneColorのキャプチャからそれらが抜ける）は、SSRの出力を書き出してViewが優先して取るように直し（`7f3f34f`）、RenderingHdrIndoor/OutdoorScene・RenderingHdrEmissive2本・FrameCaptureFloatReadback・golden 2本・RenderGraphCompileTestの8本 pass で確かめた。評価は2周までなので3周目は回していない。
+
+## FIX-MESH-BOUNDS-CULLING: 手続きメッシュの境界球を登録した頂点から求め、大きなメッシュが見えたままカリングされないようにする
+- status: done
+- done-when: `MeshComponent::BuildMeshProxy` が、MeshResources に Mesh3DVertex の並びで登録したメッシュの頂点の位置から求めたローカルのAABBを包む球を `MeshProxy::WorldBounds` にする。回転と非一様スケールが重なっても変換後の箱の角を包む。起動画面の既定視点で、地面の外側の区画（中心が視錐台の外）が描かれる。
+- verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MeshResourcesProceduralGpuTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|SceneViewProxyReconcileTest|SceneViewProxyLookupTest|ComponentDirtyTrackingTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/FIX-MESH-BOUNDS-CULLING -Configuration RelWithDebInfo`
+- stop-when: Mesh3DVertex 以外の並びで MeshResources に登録する経路があり、頂点の大きさだけでは並びを判別できない場合は、理由を記録して止める。
+- paths: Library/Core/Private/Component/MeshComponent.cpp, Library/Core/Private/Rendering/ProceduralMeshGpuStore.cpp, Library/Core/Private/Rendering/ProceduralMeshGpuStore.h, Library/Core/Public/Rendering/ProceduralMeshGPUData.h, Library/Core/Public/Rendering/RenderResources.h, Library/Core/Private/Rendering/RenderResources.cpp, Test/Core/Rendering/MeshResourcesProceduralGpuTest.cpp, TASKS.md, PROGRESS.md
+- notes: 原因は `BuildMeshProxy` が `GetLocalBounds()` の既定の単位の箱から求めた半径約0.87 m の球を入れていたこと。`SceneView::FrustumCull` はこの球で判定するので、16 m × 60 m の地面は中心が視錐台の外に出ると見えている部分ごと描かれなかった。GBufferPass はこの置き場のメッシュを `sizeof(Mesh3DVertex)` のストライドで描き、製品コードの登録元はすべて Mesh3DVertex。危険地帯（公開 API・カリング・影のキャスターの範囲）なので評価者を通す。
+- result: 2026-10-04 完了（`47382182`・`28755270`）。起動画面の既定視点で外側の石畳が両側に描かれることを撮影で確かめた（修正前は背景が見えていた）。評価者（Astra）の1周目の指摘（行の長さの最大値を半径に掛ける方法は回転と非一様スケールの組み合わせで箱の角が球の外へ出る）を受け、半径を上3x3の絶対値で移した半分の大きさの長さにし、その物体を World から同期した MeshProxy の境界球が8つの角を包む回帰を足した（修正前の式では落ちる）。2周目は PASS。MeshResourcesProceduralGpuTest・Indoor/Outdoor golden・SceneViewProxyReconcile/Lookup・ComponentDirtyTracking pass。ComponentDataRegistryTest・WorldSyncDifferentialTest は TEST-FULL-CTEST-BASELINE に記録済みの既存の失敗（WorldTransform の777）で落ちる。日本語のコメントを足したファイルに BOM を付けた（BOM が無いと MSVC が CP932 として読み、「。」で終わるコメントが次の行を飲み込んで宣言が消え、ビルドが失敗した）。選択の境界（`Entity::GetLocalBounds` → SceneQuery）は既定の単位の箱のままで、大きな地面の端は選択できない（既存）。
+
+## SS-GROUND-SWATCHES: 起動画面の地面に Poly Haven の地面の材質を帯に並べ、質感を見比べられるようにする
+- status: done
+- done-when: 起動画面の地面の中央 x∈[-14,14] に4 m 幅の帯を7本（雪・泥と落ち葉・森の地面・石畳・大理石・アスファルト・砂）並べ、外側は従来の石畳のまま。各帯は色・法線（DirectX の向き）・粗さ・AO・高さ（大理石は無し）を持ち、タイルの長さは実物の大きさに合わせる。テクスチャは `Scripts/FetchPolyHavenTextures.ps1` が落とし、git に入れない。テクスチャが無い帯は石畳にして警告を出す。既定・近接・低角度の撮影で天球・地面・球・岩が見える。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenTextures.ps1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-GROUND-SWATCHES -Configuration RelWithDebInfo`
+- stop-when: Poly Haven の API が取れない、または利用条件が CC0 でない場合は理由を記録して止める。
+- paths: Game/GameModes/Rendering3DTest, Scripts/FetchPolyHavenTextures.ps1, .gitignore, TASKS.md, PROGRESS.md
+- notes: 地面は9枚の手続きの平面（メッシュのハンドル 110〜118）。帯の UV は地面全体の座標から求めるので、帯の境目で模様がずれない。視差の高さは高さマップの深さ / タイルの長さ。テクスチャは6種 × 5枚の 4k jpg（計 213.8 MB）で、`Assets/Textures/PolyHaven/<id>/` に置く（`.gitignore` 済み）。
+- result: 2026-10-04 完了（`9d569868`・`d125bfb7`）。取得スクリプトは30枚を落とし、MD5 が一致した。起動画面の撮影（既定 116.6・近接 117.0・低角度 119.5）は result=pass で、6種の材質のテクスチャがすべて読み込まれ（読み込みの失敗なし）、既定視点に7本の帯と外側の石畳、近接・低角度で球・岩・小屋が見えることを PNG を開いて確かめた。このモードの材質は（既存の地面・球の材質と同じく）モードを抜けても解放しない。
 
 ## R1-P5: 透明描画を物理ライト・GGX・IBLへ接続する
 - status: done

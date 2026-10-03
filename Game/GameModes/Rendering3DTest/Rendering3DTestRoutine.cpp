@@ -61,6 +61,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 #include <utility>
 
 using namespace NorvesLib::Core::Container;
@@ -93,6 +95,63 @@ namespace Game::GameModes
         constexpr uint32_t kBigSphereSegments = 1024u;
         constexpr uint32_t kBigSphereRings = 512u;
         constexpr const char *kBigSphereHeightMapRelativePath = "Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png";
+
+        // 地面（60 m 四方、y=-1）。石畳のテクスチャは 2 m ごとに繰り返す。
+        constexpr float kGroundSize = 60.0f;
+        constexpr float kGroundTileSize = 2.0f;
+        // 地面の石畳の視差の深さ（石畳の1枚2 mに対する割合。仮の球より1タイルが小さいため、凹凸の深さが
+        // 同じ程度になるよう小さくする。高ポリの球も同じ値を使う）
+        constexpr float kGroundHeightScale = 0.03f;
+
+        // 地面の見本の区画: 幅4 mの帯を x=-14〜14 に並べ、中央の帯（大きな球の下）と外側は石畳のまま、
+        // ほかの帯へ Poly Haven（CC0）の材質を1つずつ置いて、同じ光の下で近くから遠くまで見比べる。
+        // テクスチャは Scripts/FetchPolyHavenTextures.ps1 が Assets/Textures/PolyHaven/<id>/ へ落とす
+        // （git の管理外。素材の並びはスクリプトと同じ）。ファイルが無い帯は石畳で描く。
+        struct GroundSwatchSpec
+        {
+            const char *AssetId;     // Poly Haven の資産ID（フォルダ名・ファイル名の接頭辞）
+            float CenterX;           // 帯の中心のx（m）
+            float TileMeters;        // テクスチャ1枚の実寸（m、Poly Haven の寸法）
+            float HeightDepthMeters; // 視差オクルージョンの深さ（m）。0なら高さマップを読まない
+        };
+        constexpr float kGroundSwatchWidth = 4.0f;
+        constexpr float kGroundSwatchHalfSpan = 14.0f; // 帯を並べる範囲の半分（7本 × 4 m）
+        constexpr GroundSwatchSpec kGroundSwatches[] = {
+            {"snow_02", -12.0f, 2.0f, 0.02f},             // 雪
+            {"brown_mud_leaves_01", -8.0f, 1.3f, 0.02f},  // 泥と落ち葉
+            {"forrest_ground_01", -4.0f, 2.0f, 0.03f},    // 森の地面（材質見本の球の下）
+            {"marble_01", 4.0f, 1.5f, 0.0f},              // 大理石（磨いた平らな床なので視差なし。点光源・岩の下）
+            {"asphalt_02", 8.0f, 3.0f, 0.005f},           // アスファルト
+            {"sand_01", 12.0f, 1.5f, 0.01f},              // 砂
+        };
+        constexpr uint32_t kGroundSwatchCount = static_cast<uint32_t>(sizeof(kGroundSwatches) / sizeof(kGroundSwatches[0]));
+
+        // 見本の材質のテクスチャの読み込みパス（"Assets/" から始まる）。suffix は diff・nor_dx・rough・ao・disp。
+        String MakeGroundSwatchTexturePath(const GroundSwatchSpec &spec, const char *suffix)
+        {
+            return String("Assets/Textures/PolyHaven/") + spec.AssetId + "/" + spec.AssetId + "_" + suffix + "_4k.jpg";
+        }
+
+        // 見本の材質が使うテクスチャがすべてディスクにあるか（無ければ、その帯は石畳で描く）
+        bool AreGroundSwatchTexturesPresent(const GroundSwatchSpec &spec)
+        {
+            const AnsiString assetRoot = Asset::AssetFileReader::GetCompiledDefaultAssetRoot();
+            const char *suffixes[] = {"diff", "nor_dx", "rough", "ao", "disp"};
+            const uint32_t suffixCount = spec.HeightDepthMeters > 0.0f ? 5u : 4u;
+            for (uint32_t suffixIndex = 0; suffixIndex < suffixCount; ++suffixIndex)
+            {
+                const String relativePath = String("Textures/PolyHaven/") + spec.AssetId + "/" + spec.AssetId + "_" +
+                                            suffixes[suffixIndex] + "_4k.jpg";
+                const String fullPath = assetRoot.empty() ? String("Assets/") + relativePath
+                                                          : String(assetRoot.c_str()) + "/" + relativePath;
+                std::error_code errorCode;
+                if (!std::filesystem::exists(std::filesystem::path(fullPath.c_str()), errorCode) || errorCode)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
 
         double ElapsedMilliseconds(std::chrono::steady_clock::time_point startTime)
         {
@@ -829,35 +888,86 @@ namespace Game::GameModes
                 NORVES_LOG_ERROR("Rendering3DTest", "Failed to register sphere mesh");
             }
 
-            // 地面メッシュの生成（60 m 四方の Plane）。石畳のテクスチャを 2 m ごとに繰り返すよう UV を広げる。
-            constexpr float kGroundSize = 60.0f;
-            constexpr float kGroundTileSize = 2.0f;
-            VariableArray<Mesh3DVertex> groundVertices;
-            VariableArray<uint32_t> groundIndices;
-            ProceduralMeshGenerator::GeneratePlane(kGroundSize, kGroundSize, 8, 8, groundVertices, groundIndices);
-            for (Mesh3DVertex &vertex : groundVertices)
+            // 地面（60 m 四方）を x 方向の帯の区画に分ける。左右の外側（|x| > 14 m）と中央の帯（大きな球の下）は
+            // 石畳、ほかの幅4 mの帯は見本の材質（テクスチャが無ければ石畳）。
+            data.m_GroundPieces.clear();
             {
-                vertex.TexCoord[0] *= kGroundSize / kGroundTileSize;
-                vertex.TexCoord[1] *= kGroundSize / kGroundTileSize;
+                auto addGroundPiece = [&data](float minX, float maxX, int32_t swatchIndex, float tileMeters)
+                {
+                    GroundPiece piece;
+                    piece.CenterX = (minX + maxX) * 0.5f;
+                    piece.Width = maxX - minX;
+                    piece.TileMeters = tileMeters;
+                    piece.SwatchIndex = swatchIndex;
+                    data.m_GroundPieces.push_back(piece);
+                };
+                const float halfGround = kGroundSize * 0.5f;
+                addGroundPiece(-halfGround, -kGroundSwatchHalfSpan, -1, kGroundTileSize);
+                const uint32_t stripCount = static_cast<uint32_t>(2.0f * kGroundSwatchHalfSpan / kGroundSwatchWidth + 0.5f);
+                for (uint32_t stripIndex = 0; stripIndex < stripCount; ++stripIndex)
+                {
+                    const float stripMinX = -kGroundSwatchHalfSpan + static_cast<float>(stripIndex) * kGroundSwatchWidth;
+                    const float stripCenterX = stripMinX + kGroundSwatchWidth * 0.5f;
+                    int32_t swatchIndex = -1;
+                    for (uint32_t candidate = 0; candidate < kGroundSwatchCount; ++candidate)
+                    {
+                        if (std::fabs(kGroundSwatches[candidate].CenterX - stripCenterX) < 0.01f)
+                        {
+                            swatchIndex = static_cast<int32_t>(candidate);
+                        }
+                    }
+                    if (swatchIndex >= 0 && !AreGroundSwatchTexturesPresent(kGroundSwatches[swatchIndex]))
+                    {
+                        NORVES_LOG_WARNING("Rendering3DTest",
+                                           "地面の見本の材質のテクスチャが無いので、その帯は石畳で描きます: %s"
+                                           "（Scripts/FetchPolyHavenTextures.ps1 で Assets/Textures/PolyHaven へ落とせます）",
+                                           kGroundSwatches[swatchIndex].AssetId);
+                        swatchIndex = -1;
+                    }
+                    addGroundPiece(stripMinX,
+                                   stripMinX + kGroundSwatchWidth,
+                                   swatchIndex,
+                                   swatchIndex >= 0 ? kGroundSwatches[swatchIndex].TileMeters : kGroundTileSize);
+                }
+                addGroundPiece(kGroundSwatchHalfSpan, halfGround, -1, kGroundTileSize);
             }
 
-            bool bGroundOk = meshes.Register(
-                data.m_GroundMeshHandle,
-                groundVertices.data(),
-                static_cast<uint32_t>(groundVertices.size() * sizeof(Mesh3DVertex)),
-                groundIndices.data(),
-                static_cast<uint32_t>(groundIndices.size()));
+            // 区画ごとの平面。UVは世界のx・zをテクスチャ1枚の実寸で割った値（石畳の区画は、以前の60 m四方の
+            // 1枚の地面と同じ模様の位置になる）。格子は約7.5 m間隔。
+            bool bGroundOk = true;
+            for (uint32_t pieceIndex = 0; pieceIndex < data.m_GroundPieces.size(); ++pieceIndex)
+            {
+                GroundPiece &piece = data.m_GroundPieces[pieceIndex];
+                piece.MeshHandle = MeshDataHandle{Rendering3DTestData::kGroundPieceMeshHandleBase + pieceIndex};
+                const uint32_t subdivisionsX =
+                    std::max(1u, static_cast<uint32_t>(piece.Width / 7.5f + 0.5f));
+                VariableArray<Mesh3DVertex> pieceVertices;
+                VariableArray<uint32_t> pieceIndices;
+                ProceduralMeshGenerator::GeneratePlane(piece.Width, kGroundSize, subdivisionsX, 8, pieceVertices, pieceIndices);
+                const float halfGround = kGroundSize * 0.5f;
+                for (Mesh3DVertex &vertex : pieceVertices)
+                {
+                    vertex.TexCoord[0] = (vertex.Position[0] + piece.CenterX + halfGround) / piece.TileMeters;
+                    vertex.TexCoord[1] = (vertex.Position[2] + halfGround) / piece.TileMeters;
+                }
 
-            if (bGroundOk)
-            {
-                ctx.ScopeRef.TrackMesh(data.m_GroundMeshHandle);
-                NORVES_LOG_INFO("Rendering3DTest", "Ground mesh registered: %zu vertices, %zu indices",
-                                groundVertices.size(), groundIndices.size());
+                const bool bPieceOk = meshes.Register(
+                    piece.MeshHandle,
+                    pieceVertices.data(),
+                    static_cast<uint32_t>(pieceVertices.size() * sizeof(Mesh3DVertex)),
+                    pieceIndices.data(),
+                    static_cast<uint32_t>(pieceIndices.size()));
+                if (bPieceOk)
+                {
+                    ctx.ScopeRef.TrackMesh(piece.MeshHandle);
+                }
+                else
+                {
+                    NORVES_LOG_ERROR("Rendering3DTest", "地面の区画のメッシュを登録できませんでした: center_x=%.1f", piece.CenterX);
+                }
+                bGroundOk = bGroundOk && bPieceOk;
             }
-            else
-            {
-                NORVES_LOG_ERROR("Rendering3DTest", "Failed to register ground mesh");
-            }
+            NORVES_LOG_INFO("Rendering3DTest", "Ground pieces registered: %zu pieces", data.m_GroundPieces.size());
 
             data.m_bMeshesRegistered = bSphereOk && bGroundOk;
 
@@ -1037,8 +1147,7 @@ namespace Game::GameModes
                 cobbleUpdate->PendingTextureCount = 5;
 
                 // 地面の石畳は2 mのタイルで、仮の球（UVの1周が約6.3 m）より1タイルが小さいため、
-                // 凹凸の深さが同じ程度になるよう高さのスケールを小さくする（高ポリの球も同じ値を使う）。
-                constexpr float kGroundHeightScale = 0.03f;
+                // 凹凸の深さが同じ程度になるよう高さのスケールを小さくする（kGroundHeightScale）。
                 const MaterialHandle groundMaterial = data.m_GroundMaterial;
                 auto finishCobbleStone = [cobbleUpdate, groundMaterial, &materials]()
                 {
@@ -1105,6 +1214,86 @@ namespace Game::GameModes
                         showcaseMatInfo.DebugName = "ShowcaseSphere";
                         data.m_ShowcaseMaterials.push_back(materials.Create(showcaseMatInfo));
                     }
+                }
+            }
+
+            // --- 地面の見本の区画の材質（テクスチャなしで先に作り、Poly Haven のテクスチャがそろったら入れる） ---
+            // テクスチャが無く石畳で描く帯の材質は作らない（無効のハンドルのまま）。
+            {
+                data.m_GroundSwatchMaterials.clear();
+                for (uint32_t swatchIndex = 0; swatchIndex < kGroundSwatchCount; ++swatchIndex)
+                {
+                    bool bUsed = false;
+                    for (const GroundPiece &piece : data.m_GroundPieces)
+                    {
+                        bUsed = bUsed || piece.SwatchIndex == static_cast<int32_t>(swatchIndex);
+                    }
+                    if (!bUsed)
+                    {
+                        data.m_GroundSwatchMaterials.push_back(MaterialHandle::Invalid());
+                        continue;
+                    }
+
+                    const GroundSwatchSpec &spec = kGroundSwatches[swatchIndex];
+                    const bool bHasHeight = spec.HeightDepthMeters > 0.0f;
+                    MaterialCreateData swatchMatInfo;
+                    // 視差の深さ（m）を、テクスチャ1枚の実寸に対する割合（高さのスケール）へ直す
+                    swatchMatInfo.HeightScale = bHasHeight ? spec.HeightDepthMeters / spec.TileMeters : 0.0f;
+                    swatchMatInfo.DebugName = spec.AssetId;
+                    const MaterialHandle swatchMaterial = materials.Create(swatchMatInfo);
+                    data.m_GroundSwatchMaterials.push_back(swatchMaterial);
+
+                    auto swatchUpdate = MakeShared<PendingMaterialUpdate>();
+                    swatchUpdate->TargetMaterial = swatchMaterial;
+                    swatchUpdate->CreateData = swatchMatInfo;
+                    swatchUpdate->PendingTextureCount = bHasHeight ? 5u : 4u;
+                    const char *assetId = spec.AssetId;
+                    auto finishSwatch = [swatchUpdate, assetId, &materials]()
+                    {
+                        if (--swatchUpdate->PendingTextureCount != 0)
+                        {
+                            return;
+                        }
+                        materials.Update(swatchUpdate->TargetMaterial, swatchUpdate->CreateData);
+                        NORVES_LOG_INFO("Rendering3DTest", "地面の見本の材質のテクスチャを読み込みました: %s", assetId);
+                    };
+
+                    textures.LoadTextureAsync(MakeGroundSwatchTexturePath(spec, "diff"),
+                                              [swatchUpdate, finishSwatch](TextureHandle handle)
+                                              {
+                                                  swatchUpdate->CreateData.AlbedoTexture = handle;
+                                                  finishSwatch();
+                                              });
+                    // このエンジンの余接フレームは DirectX の向き（石畳と同じく nor_dx）
+                    textures.LoadTextureAsync(MakeGroundSwatchTexturePath(spec, "nor_dx"),
+                                              [swatchUpdate, finishSwatch](TextureHandle handle)
+                                              {
+                                                  swatchUpdate->CreateData.NormalTexture = handle;
+                                                  finishSwatch();
+                                              });
+                    textures.LoadTextureAsync(MakeGroundSwatchTexturePath(spec, "rough"),
+                                              [swatchUpdate, finishSwatch](TextureHandle handle)
+                                              {
+                                                  swatchUpdate->CreateData.RoughnessTexture = handle;
+                                                  finishSwatch();
+                                              });
+                    textures.LoadTextureAsync(MakeGroundSwatchTexturePath(spec, "ao"),
+                                              [swatchUpdate, finishSwatch](TextureHandle handle)
+                                              {
+                                                  swatchUpdate->CreateData.AOTexture = handle;
+                                                  finishSwatch();
+                                              });
+                    if (bHasHeight)
+                    {
+                        textures.LoadTextureAsync(MakeGroundSwatchTexturePath(spec, "disp"),
+                                                  [swatchUpdate, finishSwatch](TextureHandle handle)
+                                                  {
+                                                      swatchUpdate->CreateData.HeightTexture = handle;
+                                                      finishSwatch();
+                                                  });
+                    }
+
+                    data.m_PendingMaterialUpdates.push_back(swatchUpdate);
                 }
             }
 
@@ -1183,25 +1372,38 @@ namespace Game::GameModes
                          data.m_InstancedMeshCount);
             }
 
-            // --- 地面オブジェクト ---
-            data.m_pGroundObject = world.SpawnObject<Entity>();
-            ctx.ScopeRef.TrackObject(data.m_pGroundObject);
+            // --- 地面の区画のオブジェクト（Y=-1.0、帯の中心のxに置く） ---
+            // 石畳の区画は地面の材質、見本の区画はその材質。中央の帯（大きな球の下）を地面の代表として持つ。
+            data.m_pGroundObject = nullptr;
+            data.m_pGroundMeshComponent = nullptr;
+            for (GroundPiece &piece : data.m_GroundPieces)
+            {
+                piece.Material = piece.SwatchIndex >= 0
+                                     ? data.m_GroundSwatchMaterials[static_cast<uint32_t>(piece.SwatchIndex)]
+                                     : data.m_GroundMaterial;
+                piece.pObject = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(piece.pObject);
+                piece.pObject->SetPosition(piece.CenterX, -1.0f, 0.0f);
 
-            // 地面をY=-1.0に配置
-            data.m_pGroundObject->SetPosition(0.0f, -1.0f, 0.0f);
+                Component::MeshComponent *pieceMeshComponent =
+                    world.CreateComponent<Component::MeshComponent>(piece.pObject);
+                pieceMeshComponent->SetMeshHandle(piece.MeshHandle);
+                pieceMeshComponent->SetCastShadow(false);
+                // オブジェクトカラー（白 = テクスチャの色をそのまま使う）→ CustomData
+                pieceMeshComponent->SetCustomData(0, 1.0f);
+                pieceMeshComponent->SetCustomData(1, 1.0f);
+                pieceMeshComponent->SetCustomData(2, 1.0f);
+                pieceMeshComponent->SetCustomData(3, 1.0f);
+                pieceMeshComponent->SetMaterial(0, piece.Material);
 
-            data.m_pGroundMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pGroundObject);
-            data.m_pGroundMeshComponent->SetMeshHandle(data.m_GroundMeshHandle);
-            data.m_pGroundMeshComponent->SetCastShadow(false);
-            // オブジェクトカラー（白 = 石畳のテクスチャの色をそのまま使う）→ CustomData
-            data.m_pGroundMeshComponent->SetCustomData(0, 1.0f);
-            data.m_pGroundMeshComponent->SetCustomData(1, 1.0f);
-            data.m_pGroundMeshComponent->SetCustomData(2, 1.0f);
-            data.m_pGroundMeshComponent->SetCustomData(3, 1.0f);
-            // 地面マテリアル（石畳）を適用
-            data.m_pGroundMeshComponent->SetMaterial(0, data.m_GroundMaterial);
+                if (piece.SwatchIndex < 0 && std::fabs(piece.CenterX) < 0.01f)
+                {
+                    data.m_pGroundObject = piece.pObject;
+                    data.m_pGroundMeshComponent = pieceMeshComponent;
+                }
+            }
 
-            LOG_INFO("Ground Entity created and added to World");
+            LOG_INFO("Ground pieces created and added to World count=%zu", data.m_GroundPieces.size());
 
             // --- ポイントライト光源球体オブジェクト ---
             data.m_pLightSphereObject = world.SpawnObject<Entity>();
@@ -2493,6 +2695,8 @@ namespace Game::GameModes
         data.m_BigSphereModelHandle = ModelHandle::Invalid();
         data.m_pGroundObject = nullptr;
         data.m_pGroundMeshComponent = nullptr;
+        data.m_GroundPieces.clear();
+        data.m_GroundSwatchMaterials.clear();
         data.m_pLightSphereObject = nullptr;
         data.m_pLightSphereMeshComponent = nullptr;
         data.m_pPointLightComponent = nullptr;

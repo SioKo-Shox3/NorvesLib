@@ -61,6 +61,23 @@ namespace Game::GameModes
     };
 
     /**
+     * @brief 地面の1区画（x方向に並べた、奥行きが地面全体の帯）
+     *
+     * 石畳の区画（中央と外側）と、見本の材質の区画がある。区画ごとにメッシュ（UVはテクスチャの実寸で
+     * 繰り返す）・材質・Entityを1つずつ持つ。
+     */
+    struct GroundPiece
+    {
+        NorvesLib::Core::Rendering::MeshDataHandle MeshHandle;
+        NorvesLib::Core::Rendering::MaterialHandle Material;
+        float CenterX = 0.0f;    ///< 帯の中心のx（m）
+        float Width = 0.0f;      ///< 帯の幅（m）
+        float TileMeters = 2.0f; ///< テクスチャ1枚の実寸（m）
+        int32_t SwatchIndex = -1; ///< 見本の材質の表の番号（石畳なら-1）
+        NorvesLib::Core::Entity *pObject = nullptr;
+    };
+
+    /**
      * @brief Boulder の非同期ロード共有状態
      *
      * コールバックが Data 本体ではなくこの共有状態を値キャプチャすることで、
@@ -83,8 +100,12 @@ namespace Game::GameModes
     {
         // メッシュハンドル
         NorvesLib::Core::Rendering::MeshDataHandle m_SphereMeshHandle{100};
-        NorvesLib::Core::Rendering::MeshDataHandle m_GroundMeshHandle{101};
         NorvesLib::Core::Rendering::MeshDataHandle m_LightSphereMeshHandle{102};
+        // 地面の区画のメッシュ（110から区画ごとに1つずつ使う）
+        static constexpr uint32_t kGroundPieceMeshHandleBase = 110u;
+        VariableArray<GroundPiece> m_GroundPieces;
+        // 見本の材質（Rendering3DTestRoutine.cpp の表と同じ並び。テクスチャが無い材質は無効のまま）
+        VariableArray<NorvesLib::Core::Rendering::MaterialHandle> m_GroundSwatchMaterials;
 
         // テクスチャハンドル
         NorvesLib::Core::Rendering::TextureHandle m_CheckerTextureHandle;

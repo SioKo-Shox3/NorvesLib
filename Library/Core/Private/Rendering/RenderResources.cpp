@@ -1,4 +1,4 @@
-#include "Rendering/RenderResources.h"
+﻿#include "Rendering/RenderResources.h"
 
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/SkinnedMeshGpuStore.h"
@@ -533,6 +533,14 @@ namespace NorvesLib::Core::Rendering
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
         return impl && impl->ProceduralMeshes
                    ? impl->ProceduralMeshes->TryGetSubMeshRanges(handle, out, outCount)
+                   : false;
+    }
+
+    bool MeshResources::TryGetLocalBounds(MeshDataHandle handle, BoundingBox &outBounds) const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->ProceduralMeshes
+                   ? impl->ProceduralMeshes->TryGetLocalBounds(handle, outBounds)
                    : false;
     }
 

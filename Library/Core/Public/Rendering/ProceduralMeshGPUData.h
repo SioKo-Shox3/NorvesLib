@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Rendering/RenderTypes.h"
 #include "Container/Containers.h"
@@ -20,6 +20,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t IndexCount = 0;
         Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS> SubMeshes;
         uint32_t SubMeshCount = 0;
+        // 登録した頂点の位置から求めたローカル空間のAABB（Mesh3DVertex の並びで登録されたときだけ有効）
+        BoundingBox LocalBounds;
+        bool bHasLocalBounds = false;
     };
 
 } // namespace NorvesLib::Core::Rendering
