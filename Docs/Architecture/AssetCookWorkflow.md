@@ -177,3 +177,7 @@ source隣の `<source>.import.json` をstatic/skeletalのcookとlooseで共有�
 設定の意味・骨格での制約・hashの互換性は [ImportSettings.md](ImportSettings.md) を参照してください。
 CLIでは `--import-settings <file>` で正本を指定し、`--require-sidecar` で不在を検出、
 `--no-sidecar` で従来の無設定経路を選べます。無効化と前二つは同時指定できません。
+
+診断のみの場合は `AssetCook --inspect <model.gltf|model.glb>` を使います。
+元のmesh-local形状、画像の8/16bit整数統計、材質係数を表示し、sourceや設定fileを変更しません。
+単一mesh/primitiveの現行static profileが対象です。表示されるforward候補の符号と実寸は手動で決めてください。

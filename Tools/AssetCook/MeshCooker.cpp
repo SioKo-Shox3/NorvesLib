@@ -1,4 +1,5 @@
 ﻿#include "MeshCooker.h"
+#include "ModelInspection.h"
 
 #include "Asset/CookedMeshFormat.h"
 #include "Asset/CookedSkeletalFormat.h"
@@ -1546,6 +1547,245 @@ namespace NorvesLib::Tools::AssetCook
             WriteLe64(outBytes, HeaderOffset::PayloadHash, payloadHash);
             return true;
         }
+        bool InspectOptionalNumber(const JsonValue& object, const char* key, double minimum,
+            double maximum, double& out)
+        {
+            const auto value=object.FindMember(key);
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            if (!value.IsNumber())
+            {
+                return false;
+            }
+            const double number=value.AsNumber();
+            if (!std::isfinite(number) || number<minimum || number>maximum)
+            {
+                return false;
+            }
+            out=number;
+            return true;
+        }
+        template<size_t N>
+        bool InspectOptionalFactor(const JsonValue& object,const char* key,double (&out)[N])
+        {
+            const auto value=object.FindMember(key);
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            if (!value.IsArray() || value.GetArraySize()!=N)
+            {
+                return false;
+            }
+            for (size_t index=0;index<N;++index)
+            {
+                const auto item=value.GetArrayElement(index);
+                if (!item.IsNumber() || !std::isfinite(item.AsNumber()) || item.AsNumber()<0 || item.AsNumber()>1)
+                {
+                    return false;
+                }
+                out[index]=item.AsNumber();
+            }
+            return true;
+        }
+        bool InspectMaterial(const JsonValue& material,MaterialInspection& out)
+        {
+            if (!material.IsObject())
+            {
+                return false;
+            }
+            const auto pbr=material.FindMember("pbrMetallicRoughness");
+            if (pbr.IsValid() && (!pbr.IsObject() || !InspectOptionalFactor(pbr,"baseColorFactor",out.BaseColor) ||
+                !InspectOptionalNumber(pbr,"metallicFactor",0,1,out.Metallic) ||
+                !InspectOptionalNumber(pbr,"roughnessFactor",0,1,out.Roughness)))
+            {
+                return false;
+            }
+            if (!InspectOptionalFactor(material,"emissiveFactor",out.Emissive) ||
+                !InspectOptionalNumber(material,"alphaCutoff",0,std::numeric_limits<double>::max(),out.AlphaCutoff))
+            {
+                return false;
+            }
+            const auto alpha=material.FindMember("alphaMode");
+            if (alpha.IsValid())
+            {
+                AnsiString mode;
+                if (!TryConvertAsciiString(alpha,mode))
+                {
+                    return false;
+                }
+                if (mode=="OPAQUE")
+                {
+                    out.AlphaMode=InspectionAlphaMode::Opaque;
+                }
+                else if (mode=="MASK")
+                {
+                    out.AlphaMode=InspectionAlphaMode::Mask;
+                }
+                else if (mode=="BLEND")
+                {
+                    out.AlphaMode=InspectionAlphaMode::Blend;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            const auto doubleSided=material.FindMember("doubleSided");
+            if (doubleSided.IsValid())
+            {
+                if (!doubleSided.IsBoolean())
+                {
+                    return false;
+                }
+                out.bDoubleSided=doubleSided.AsBool();
+            }
+            const auto normal=material.FindMember("normalTexture");
+            const auto occlusion=material.FindMember("occlusionTexture");
+            if ((normal.IsValid() && (!normal.IsObject() || !InspectOptionalNumber(normal,"scale",
+                    -std::numeric_limits<double>::max(),std::numeric_limits<double>::max(),out.NormalScale))) ||
+                (occlusion.IsValid() && (!occlusion.IsObject() || !InspectOptionalNumber(occlusion,"strength",0,1,out.OcclusionStrength))))
+            {
+                return false;
+            }
+            const auto extensions=material.FindMember("extensions");
+            if (extensions.IsValid())
+            {
+                if (!extensions.IsObject())
+                {
+                    return false;
+                }
+                const auto emissive=extensions.FindMember("KHR_materials_emissive_strength");
+                if (emissive.IsValid() && (!emissive.IsObject() || !InspectOptionalNumber(emissive,"emissiveStrength",
+                    0,std::numeric_limits<double>::max(),out.EmissiveStrength)))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool InspectGltfModelInternal(const uint8_t* sourceBytes,size_t sourceSize,AnsiStringView sourcePath,
+            ModelInspection& outInspection,AnsiString& error)
+        {
+            if (!sourceBytes || sourceSize==0)
+            {
+                error="inspect input is empty";
+                return false;
+            }
+            Gltf::ContainerView container;
+            const auto parsed=Gltf::ParseContainer({sourceBytes,sourceSize},container);
+            if ((parsed!=Gltf::ContainerParseResult::Success && parsed!=Gltf::ContainerParseResult::NotGlb) ||
+                container.Json.empty() || std::find(container.Json.begin(),container.Json.end(),uint8_t{0})!=container.Json.end())
+            {
+                error="invalid inspect glTF container";
+                return false;
+            }
+            JsonDocument document;
+            const AnsiStringView json(reinterpret_cast<const char*>(container.Json.data()),container.Json.size());
+            if (!JsonDocument::TryParse(ToCoreString(json),document) || !ValidateRequiredExtensions(document.GetRoot(),error))
+            {
+                error="invalid inspect glTF document";
+                return false;
+            }
+            const auto root=document.GetRoot();
+            VariableArray<AccessorInfo> accessors;
+            VariableArray<BufferViewInfo> views;
+            PrimitiveInfo primitive;
+            Gltf::BufferSet buffers;
+            VariableArray<MeshVertexPnt> vertices;
+            VariableArray<uint32_t> indices;
+            if (!ParseAccessors(root,accessors,error) || !ParseBufferViews(root,views,error) ||
+                !ParsePrimitive(root,primitive,error) || !ResolveCookBuffers(root,container,sourcePath,buffers,error) ||
+                !ExtractMesh(accessors,views,buffers,primitive,vertices,indices,error))
+            {
+                return false;
+            }
+            ModelInspection result;
+            VariableArray<InspectionVertex> inspectionVertices(vertices.size());
+            VariableArray<uint32_t> order(vertices.size()),representatives(vertices.size()),parents(vertices.size());
+            for (size_t index=0;index<vertices.size();++index)
+            {
+                for (size_t axis=0;axis<3;++axis)
+                {
+                    inspectionVertices[index].Position[axis]=vertices[index].Position[axis];
+                    inspectionVertices[index].Normal[axis]=vertices[index].Normal[axis];
+                }
+            }
+            if (!InspectGeometry(inspectionVertices,indices,order,representatives,parents,result.Geometry))
+            {
+                error="inspect geometry failed";
+                return false;
+            }
+            const auto images=root.FindMember("images");
+            if (images.IsValid() && !images.IsArray())
+            {
+                error="inspect images must be an array";
+                return false;
+            }
+            Gltf::BufferFileContext imageContext{std::filesystem::path(sourcePath.begin(),sourcePath.end())};
+            for (size_t index=0;index<images.GetArraySize();++index)
+            {
+                Gltf::ImageSource image;
+                if (Gltf::ImageSource::Resolve(root,index,buffers,image)!=Gltf::ImageSourceResult::Success)
+                {
+                    error="inspect image source is invalid: "+FormatInteger(index);
+                    return false;
+                }
+                VariableArray<uint8_t> fileBytes;
+                auto bytes=image.GetBytes(buffers);
+                if (image.GetKind()==Gltf::ImageSourceKind::ExternalFile)
+                {
+                    if (Gltf::ReadBufferFile(image.GetExternalUri(),fileBytes,&imageContext)!=Gltf::ExternalBufferReadResult::Success)
+                    {
+                        error="inspect image file could not be read: "+FormatInteger(index);
+                        return false;
+                    }
+                    bytes={fileBytes.data(),fileBytes.size()};
+                }
+                if (image.GetMime()!=Gltf::DataUriMime::Unknown && !Gltf::MatchesEmbeddedImageMime(bytes,image.GetMime()))
+                {
+                    error="inspect image MIME does not match signature: "+FormatInteger(index);
+                    return false;
+                }
+                ImageInspection inspection;
+                const auto status=InspectImage(bytes,inspection);
+                if (status!=ImageInspectionStatus::Success)
+                {
+                    error="inspect image decode failed: image="+FormatInteger(index)+" status="+FormatInteger(static_cast<int>(status));
+                    return false;
+                }
+                result.Images.push_back(inspection);
+            }
+            const auto materials=root.FindMember("materials");
+            if (materials.IsValid() && !materials.IsArray())
+            {
+                error="inspect materials must be an array";
+                return false;
+            }
+            if (primitive.bHasMaterial && primitive.MaterialIndex>=materials.GetArraySize())
+            {
+                error="inspect primitive material is out of range";
+                return false;
+            }
+            result.bHasMaterial=primitive.bHasMaterial;
+            result.MaterialIndex=primitive.MaterialIndex;
+            for (size_t index=0;index<materials.GetArraySize();++index)
+            {
+                MaterialInspection material;
+                if (!InspectMaterial(materials.GetArrayElement(index),material))
+                {
+                    error="inspect material coefficients are invalid: "+FormatInteger(index);
+                    return false;
+                }
+                result.Materials.push_back(material);
+            }
+            outInspection=std::move(result);
+            return true;
+        }
+
         bool LoadCookImportSettings(AnsiStringView sourcePath,
             const AssetImport::ImportSettingsFileOptions* importOptions,
             AssetImport::LoadedImportSettings& loadedImport, AnsiString& error)
@@ -2238,6 +2478,12 @@ namespace NorvesLib::Tools::AssetCook
     bool MeshEmbeddedImage::IsBorrowed() const noexcept
     {
         return !m_BorrowedBytes.empty();
+    }
+
+    bool InspectGltfModel(const uint8_t* sourceBytes,size_t sourceSize,Core::Container::AnsiStringView sourcePath,
+        ModelInspection& outInspection,Core::Container::AnsiString& error)
+    {
+        return InspectGltfModelInternal(sourceBytes,sourceSize,sourcePath,outInspection,error);
     }
 
     bool FingerprintModelCookSource(const uint8_t* sourceBytes, size_t sourceSize,

@@ -1,4 +1,5 @@
 ﻿#include "Tools/AssetCook/MeshCooker.h"
+#include "Tools/AssetCook/ModelInspection.h"
 #include "Container/Span.h"
 #include "Asset/CookedMeshFormat.h"
 #include "Asset/AssetPackageFormat.h"
@@ -187,6 +188,43 @@ namespace
         const Bytes glb = Glb(ImageJson(R"({"byteLength":174})", views), true, binary);
         MeshCookResult embedded;
         assert(Cook(glb, path, embedded, error));
+        ModelInspection inspection;
+        assert(InspectGltfModel(glb.data(),glb.size(),path,inspection,error));
+        assert(inspection.Geometry.VertexCount==3 && inspection.Geometry.TriangleCount==1 &&
+            inspection.Geometry.WeldedVertexCount==3 && inspection.Geometry.ConnectedComponentCount==1 &&
+            inspection.Geometry.ZeroNormalCount==0 && inspection.Geometry.Length[0]==1 && inspection.Geometry.Length[1]==1);
+        assert(inspection.Images.size()==3 && inspection.Materials.size()==1 && inspection.bHasMaterial && inspection.MaterialIndex==0);
+        for (const auto& image : inspection.Images)
+        {
+            assert(image.Width==1 && image.Height==1 && image.Channels==4 && image.BitsPerChannel==8);
+            assert(image.Channel[0].Mean==100 && image.Channel[1].Mean==150 && image.Channel[2].Mean==200 && image.Channel[3].Mean==255);
+        }
+        assert(inspection.Materials[0].Metallic==1 && inspection.Materials[0].Roughness==1 &&
+            inspection.Materials[0].EmissiveStrength==1 && !inspection.Materials[0].bDoubleSided);
+        const char* coefficients=R"({"pbrMetallicRoughness":{"baseColorFactor":[0.2,0.3,0.4,0.5],"metallicFactor":0.6,"roughnessFactor":0.7},"emissiveFactor":[0.1,0.2,0.3],"alphaMode":"MASK","alphaCutoff":2,"doubleSided":true,"normalTexture":{"index":1,"scale":-2},"occlusionTexture":{"index":2,"strength":0.25},"extensions":{"KHR_materials_emissive_strength":{"emissiveStrength":2.5}}})";
+        const auto coefficientGlb=Glb(ImageJson(R"({"byteLength":174})",views,coefficients),true,binary);
+        assert(InspectGltfModel(coefficientGlb.data(),coefficientGlb.size(),path,inspection,error));
+        const auto& material=inspection.Materials[0];
+        assert(material.BaseColor[0]==0.2 && material.BaseColor[3]==0.5 && material.Metallic==0.6 && material.Roughness==0.7);
+        assert(material.Emissive[2]==0.3 && material.EmissiveStrength==2.5 && material.NormalScale==-2 &&
+            material.OcclusionStrength==0.25 && material.AlphaMode==InspectionAlphaMode::Mask && material.AlphaCutoff==2 && material.bDoubleSided);
+        const auto retainedInspection=inspection;
+        const auto badMaterial=Glb(ImageJson(R"({"byteLength":174})",views,R"({"pbrMetallicRoughness":{"metallicFactor":2}})"),true,binary);
+        assert(!InspectGltfModel(badMaterial.data(),badMaterial.size(),path,inspection,error));
+        assert(inspection.Materials[0].Metallic==retainedInspection.Materials[0].Metallic &&
+            inspection.Images.size()==retainedInspection.Images.size() && inspection.Geometry.VertexCount==retainedInspection.Geometry.VertexCount);
+        assert(!InspectGltfModel(nullptr,0,path,inspection,error));
+        // 外部画像もsource隣から読んで診断する。通常cookの外部参照方針は変更しない。
+        for (size_t i=0;i<3;++i)
+        {
+            char number[8]={}; const auto end=std::to_chars(number,number+sizeof(number),i);
+            assert(end.ec==std::errc{});
+            AnsiString filename="triangle.gltf.img"; filename.append(number,static_cast<size_t>(end.ptr-number)); filename+=".png";
+            Write(directory/std::filesystem::path(filename.begin(),filename.end()),ImagePng);
+        }
+        const auto externalImages=Copy(ImageJson(externalBuffers,files));
+        assert(InspectGltfModel(externalImages.data(),externalImages.size(),path,inspection,error));
+        assert(inspection.Images.size()==3 && inspection.Images[0].Channel[0].Mean==100);
         SamePayload(baseline, embedded);
         assert(embedded.EmbeddedImages.size() == 3);
         for (size_t i = 0; i < 3; ++i)

@@ -1,6 +1,7 @@
 #include "MeshCooker.h"
 #include "ImportCliOptions.h"
 #include "ModelCookCache.h"
+#include "ModelInspection.h"
 #include "AudioCooker.h"
 #include "TextureCooker.h"
 
@@ -23,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -1768,7 +1770,8 @@ namespace
     void PrintUsage()
     {
         std::cerr
-            << "Usage: AssetCook --input <file> --out <package> --manifest <manifest.json> "
+            << "Usage: AssetCook --inspect <model.gltf|model.glb>\n"
+            << "       AssetCook --input <file> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind raw --entry <entry> --entry-type Raw "
             << "--format raw.v0 --variant default\n"
             << "       AssetCook --input <image> --out <package> --manifest <manifest.json> "
@@ -2251,6 +2254,91 @@ namespace
         return true;
     }
 
+    bool InspectModelFile(const std::filesystem::path& input, auto& error)
+    {
+        std::filesystem::path path;
+        if (!MakeAbsolutePath(input,path,error))
+        {
+            return false;
+        }
+        NorvesLib::Core::Container::VariableArray<uint8_t> bytes;
+        if (!ReadSkeletalBinaryFile(path,bytes,error))
+        {
+            return false;
+        }
+        NorvesLib::Tools::AssetCook::ModelInspection result;
+        NorvesLib::Core::Container::AnsiString inspectError;
+        const NorvesLib::Core::Container::AnsiString sourcePath(path.generic_string().c_str());
+        if (!NorvesLib::Tools::AssetCook::InspectGltfModel(bytes.data(),bytes.size(),sourcePath,result,inspectError))
+        {
+            error.assign(inspectError.data(),inspectError.size());
+            return false;
+        }
+        const auto& geometry=result.Geometry;
+        const char* axes[]={"X","Y","Z"};
+        std::cout << std::setprecision(17)
+            << "inspection_version=1\nposition_space=mesh_local_before_import\nimport_settings_applied=false\n"
+            << "weld_mode=exact_numeric_position\ncomponent_mode=shared_vertex_including_unreferenced\n"
+            << "image_sample_domain=decoded_integer_unlinearized\nmaterial_scope=core_and_optional_emissive_strength\n"
+            << "vertex_count=" << geometry.VertexCount << "\ntriangle_count=" << geometry.TriangleCount
+            << "\nwelded_vertex_count=" << geometry.WeldedVertexCount
+            << "\ncomponent_count=" << geometry.ConnectedComponentCount
+            << "\nzero_normal_count=" << geometry.ZeroNormalCount << "\n";
+        for (size_t axis=0;axis<3;++axis)
+        {
+            std::cout << "bounds." << axes[axis] << ".min=" << geometry.Minimum[axis]
+                << "\nbounds." << axes[axis] << ".max=" << geometry.Maximum[axis]
+                << "\nlength." << axes[axis] << "=" << geometry.Length[axis] << "\n";
+        }
+        std::cout << "longest_axis=" << axes[geometry.LongestAxis] << "\nimage_count=" << result.Images.size() << "\n";
+        for (size_t index=0;index<result.Images.size();++index)
+        {
+            const auto& image=result.Images[index];
+            std::cout << "image[" << index << "].width=" << image.Width << "\nimage[" << index << "].height=" << image.Height
+                << "\nimage[" << index << "].channels=" << image.Channels << "\nimage[" << index << "].bits=" << image.BitsPerChannel << "\n";
+            for (size_t channel=0;channel<image.Channels;++channel)
+            {
+                std::cout << "image[" << index << "].channel[" << channel << "].min=" << image.Channel[channel].Minimum
+                    << "\nimage[" << index << "].channel[" << channel << "].max=" << image.Channel[channel].Maximum
+                    << "\nimage[" << index << "].channel[" << channel << "].mean=" << image.Channel[channel].Mean << "\n";
+            }
+        }
+        std::cout << "material_count=" << result.Materials.size() << "\n";
+        if (result.bHasMaterial)
+        {
+            std::cout << "primitive_material=" << result.MaterialIndex << "\n";
+        }
+        else
+        {
+            std::cout << "primitive_material=default\ndefault_material.base_color=1,1,1,1\n"
+                << "default_material.metallic=1\ndefault_material.roughness=1\ndefault_material.emissive=0,0,0\n"
+                << "default_material.alpha_mode=OPAQUE\ndefault_material.double_sided=false\n";
+        }
+        for (size_t index=0;index<result.Materials.size();++index)
+        {
+            const auto& material=result.Materials[index];
+            const char* alpha=material.AlphaMode==NorvesLib::Tools::AssetCook::InspectionAlphaMode::Opaque ? "OPAQUE" :
+                material.AlphaMode==NorvesLib::Tools::AssetCook::InspectionAlphaMode::Mask ? "MASK" : "BLEND";
+            std::cout << "material[" << index << "].base_color=" << material.BaseColor[0] << "," << material.BaseColor[1]
+                << "," << material.BaseColor[2] << "," << material.BaseColor[3]
+                << "\nmaterial[" << index << "].metallic=" << material.Metallic
+                << "\nmaterial[" << index << "].roughness=" << material.Roughness
+                << "\nmaterial[" << index << "].emissive=" << material.Emissive[0] << "," << material.Emissive[1] << "," << material.Emissive[2]
+                << "\nmaterial[" << index << "].emissive_strength=" << material.EmissiveStrength
+                << "\nmaterial[" << index << "].normal_scale=" << material.NormalScale
+                << "\nmaterial[" << index << "].occlusion_strength=" << material.OcclusionStrength
+                << "\nmaterial[" << index << "].alpha_mode=" << alpha
+                << "\nmaterial[" << index << "].alpha_cutoff=" << material.AlphaCutoff
+                << "\nmaterial[" << index << "].double_sided=" << (material.bDoubleSided ? "true" : "false") << "\n";
+        }
+        // boundsだけでは頭の向き/符号/実寸を決められない。恒等templateだけをstdoutへ出す。
+        std::cout << "candidate_up_assumption=+Y\nforward_axis_candidates="
+            << (geometry.Length[2]>=geometry.Length[0] ? "Z,X" : "X,Z")
+            << "\nforward_sign=manual\nsettings_template_requires_manual_units_and_axes=true\n"
+            << "settings_template={\"version\":1,\"units\":{\"scale\":1},\"axes\":{\"up\":\"+Y\",\"forward\":\"+Z\"},\"origin\":{\"mode\":\"keep\"}}\n";
+        return true;
+    }
+
     bool TrySkipModelCook(const CookOptions& options, const std::filesystem::path& inputPath,
         const std::filesystem::path& packagePath, const std::filesystem::path& manifestPath,
         NorvesLib::Core::Container::Span<const uint8_t> source,
@@ -2717,6 +2805,19 @@ namespace
 
 int main(int argc, char **argv)
 {
+    std::filesystem::path inspectPath;
+    const char* inspectError=nullptr;
+    const auto inspect=NorvesLib::Tools::AssetCook::ParseInspectCommandLine(argc,argv,inspectPath,inspectError);
+    if (inspect!=NorvesLib::Tools::AssetCook::ImportArgumentResult::Unhandled)
+    {
+        std::string error;
+        if (inspect==NorvesLib::Tools::AssetCook::ImportArgumentResult::Rejected || !InspectModelFile(inspectPath,error))
+        {
+            std::cerr << "AssetCook error: " << (inspectError ? inspectError : error.c_str()) << "\n";
+            return 1;
+        }
+        return 0;
+    }
     CookOptions options;
     std::string error;
     if (!ParseCommandLine(argc, argv, options, error))

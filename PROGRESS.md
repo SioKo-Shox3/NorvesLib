@@ -523,3 +523,6 @@
 
 - G2-GR78-INSPECT-IMAGE: PNG/JPEGを実stbで診断し、幅/高さ/decoded channel/8・16bitと整数min/max/meanを取得。色空間の線形化や16bitの縮約はせず、入出力aliasと失敗公開を防ぎRAIIで解放。最終pixel payloadの512MiB上限をinfo後に判定する。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で実stbの既知PNG8/PNG16/JPEGとinvalid/巨大/aliasを実行成功、MEMBER compile成功。独立PASS、追加反証のgray/gray-alpha/palette+tRNS/1bit/16bit RGB・tRNSも成功。512MiBはstb内部総メモリ/IDAT inflate上限ではない点をheaderと仕様に明記。CLI/native統合と実物照合は別受入れ。
 - Next: 幾何・画像の診断部品を公開後、材質係数と合わせて--inspect <file>の無変換・無書込診断へ接続する。
+
+- G2-GR78-CLI-INSPECT: --inspect <file>/equalsを独立modeとして接続。単一mesh/primitiveの現行static profileを既存accessor検証で読み、mesh-local変換前の幾何と全画像の整数統計、core材質係数/規定値と任意emissive strengthを診断する。sidecar/cook/cluster/書込を通らず、成功後だけstdoutへ表示。+Y仮定の水平軸候補と符号manual、恒等設定叩き台はstdoutのみ。実引数parserの3mode/MEMBER成功、native API/CLI試験に値・不正入力・出力保持/外部画像・無書込を登録。独立PASS。nativeはWindows.hで未実行、実物4本は未入手。必須拡張の具体的診断理由保持とCLI再入力差の回帰はnonblocking追補候補。
+- Next: GR78の実装/検証/保留をまとめる。GR86(S4)とGR32/GR82(S1)の推奨案は作者へ確認し、回答までは変更を適用しない。

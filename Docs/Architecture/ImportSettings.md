@@ -1,7 +1,7 @@
 # 取り込み設定 v1
 
 GR78のソース隣設定は <source>.import.json（例: Dog.glb.import.json）を正本とし、cook/looseで共用する。
-値・JSON解析・設定file選択/読込・正規化hash・下記のgeometry変換を共有し、静的glTF/GLBのAssetCookとlooseロードへ接続する。骨格には下記の一様scale/fitを適用する。CLIの明示指定/require/disabledを共有loaderへ接続し、skipはcook前照合へ接続し、inspectは後続。
+値・JSON解析・設定file選択/読込・正規化hash・下記のgeometry変換を共有し、静的glTF/GLBのAssetCookとlooseロードへ接続する。骨格には下記の一様scale/fitを適用する。CLIの明示指定/require/disabledを共有loaderへ接続し、skipはcook前照合へ接続し、inspectは下記の無変換診断modeへ接続する。
 
 ## 共通の配置と責務
 
@@ -208,7 +208,7 @@ CLI smokeには設定正本をpackage/manifestで上書きしない拒否と通�
 - `--require-sidecar` は採用設定の存在を必須にする。明示overrideとの併用は可能。
 - `--no-sidecar` は設定fileを一切読まず、従来のbytes/hashを使用する。override/requireとは相互排他。
 - 重複指定、空path、値付きboolean flag、model以外のkindでは拒否する。static/skeletalとも同じ共有loaderへ渡す。
-- 明示overrideもpackage/manifest/派生textureの出力alias保護対象。`--skip-if-unchanged` は下記のcook前照合を使用する。`--inspect` はまだ未実装で、未知引数として拒否する。
+- 明示overrideもpackage/manifest/派生textureの出力alias保護対象。`--skip-if-unchanged` は下記のcook前照合を使用する。`--inspect <file>` は独立した無書込診断modeで、cook用引数とは混在させない。
 
 ImportCliOptionsTestは共有の実引数parserを独立実行する。AssetCookImportSmokeはGLBの設定優先順位、disabledのbytes/hash回帰、失敗時出力保持と明示設定の上書き拒否をnative CLIで確認する登録であり、Windows依存環境での実行は別途必要。
 
@@ -254,7 +254,7 @@ sourceは不変で、独立workspaceを用いてsort/union-by-rankとpath compre
 非有限値、不正index、workspace不足/重複は拒否し、失敗時の計測結果を保持する。
 
 小型既知形状と分離/継ぎ目/孤立/縮退、面順序、微小値、float両極端、無効入力を
-通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）の実kernelで確認。CLIへの接続は後続。
+通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）の実kernelで確認。下記CLIから共有する。
 
 ## 画像診断の計測契約
 
@@ -268,3 +268,28 @@ sourceは不変で、独立workspaceを用いてsort/union-by-rankとpath compre
 実stbをリンクして2x2 RGBA PNGの既知値、16bit grayの0/65535、定色JPEG、破損PNG/JPEG、
 巨大dimensions/不正入力/入出力aliasを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で実行する。
 MEMBER compileも確認し、native CLIへの接続と実物4本の照合は別の受入れとする。
+
+## --inspect の使用と範囲
+
+`AssetCook --inspect <model.gltf|model.glb>` または `--inspect=<file>` は、cookの必須引数なしで診断する独立mode。
+余分な引数/cook出力先/設定指定との混在は拒否する。source、外部buffers/画像だけを読み、sidecarは読まない。
+package、manifest、sidecarの作成/変更は行わず、全診断が成功した場合だけstdoutへ値を出す。
+
+現行static profileと同じ単一mesh/primitiveのindexed TRIANGLES、float POSITION/NORMAL/UV、u16/u32 indicesが対象。
+sparse/圧縮/必須拡張/複数primitiveなどの未対応入力は明示拒否する。診断空間はmesh-localの変換前であり、
+node/worldやimport設定の適用後ではない。全images/materialsを配列順に診断し、未使用項目も含める。
+外部画像は共有URI/containment規則でsource隣から読み、PNG/JPEGだけを診断する。
+
+材質はcore PBRのbaseColor/metallic/roughness/emissive、alphaMode/alphaCutoff/doubleSided、normal scale/occlusion strength、
+任意のKHR_materials_emissive_strength係数を原値/規定値として表示する。描画やcookへの材質取り込みを有効化する変更ではない。
+他拡張の見た目全体を再現する診断やglTF完全validatorではない。
+値域と規定値はKhronosの [material schema](https://github.com/KhronosGroup/glTF/blob/main/specification/2.0/schema/material.schema.json) と
+[PBR schema](https://github.com/KhronosGroup/glTF/blob/main/specification/2.0/schema/material.pbrMetallicRoughness.schema.json) に合わせる。
+alphaCutoffは1超も受理し、normal scaleは有限の負値もそのまま表示する。
+
++Yを仮のupとした水平X/Zのforward候補を軸長順で2つ示すが、符号はmanualと明記する。
+stdoutのimport.json叩き台は恒等設定のみで、実寸と向きは作者の目視/指定で埋める。source隣へ自動保存しない。
+
+実引数parserの独立mode/equals/混在・空値拒否は通常/O2-NDEBUG/ASan・UBSanとMEMBER compileで確認する。
+native束へ幾何/画像の既知値、材質規定値/明示係数/無効値/出力保持/外部画像を登録し、CLI smokeへ診断値と
+source/sidecar非変更・出力file非生成を登録する。native統合はWindows.hにより未実行、実物4本も未配置のため未照合。

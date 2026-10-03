@@ -4,6 +4,7 @@ add_library(AssetCookLib STATIC
     AudioCooker.h
     MeshCooker.cpp
     MeshCooker.h
+    ModelInspection.h
     ModelCookCache.cpp
     ModelCookCache.h
     GeometryInspection.cpp
@@ -86,4 +87,12 @@ add_test(NAME AssetCookImportSmoke
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -DSMOKE_DIR=${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Import
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookImportSmoke.cmake.in"
+)
+
+add_test(NAME AssetCookInspectSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DSMOKE_DIR=${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Inspect
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookInspectSmoke.cmake.in"
 )

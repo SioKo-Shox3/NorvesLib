@@ -1914,7 +1914,7 @@
 - stop-when: cook/looseの設定解釈差、未承認形式更新、実native未実行の隠蔽。
 
 ## G2-GR78-CLI: 設定指定・require・skipと診断の入口を追加する
-- status: doing
+- status: done
 - done-when: import-settings/no-sidecar/require-sidecar、hashとpackage実体一致を条件にしたskip、inspect診断を追加する。既存必須CLIとsidecar無し出力は維持する。
 - verify: 設定優先順位/相互排他/失敗、skip時非更新、package欠如/破損時再cook、inspectをsmokeへ登録する。
 - stop-when: GR96一括cook/依存追跡の先取り、誤ったskip、未実装オプションの受理。
@@ -1965,7 +1965,7 @@
 - stop-when: 本cookを実行してからskip扱い、hash一致だけでpackage実体未検査、GR96一括依存追跡への拡大。
 
 ## G2-GR78-CLI-INSPECT: cookしないmodel診断を追加する
-- status: todo
+- status: done
 - done-when: --inspect <file>でbounds/軸長/頂点三角形数/位置溶接と成分/ゼロ法線/画像寸法・チャンネル統計/材質係数と設定叩き台を診断し、前方向の符号を勝手に決めない。
 - verify: 小型既知fixtureの幾何/画像/材質値、無出力cookと入力非変更を確認する。本人実物は入手後に別受入れ。
 - stop-when: 診断のためpackage生成/既存sidecar上書き、未知方向を確定として出す、未入手実物を合格扱い。
@@ -1987,3 +1987,9 @@
 - done-when: PNG/JPEGを既存stbで展開し、8/16bitの寸法/decoded channel数と整数min/max/meanを取得。色空間線形化はせず、最終pixel payloadの512MiB上限を事前検査する（stb内部総メモリの制限ではない）。失敗時結果保持。
 - verify: 既知8bit RGBA/16bit gray、壊れたPNG/JPEG/未対応/巨大dimensions/aliasの実stb試験を3modeとMEMBERで確認する。
 - stop-when: 16bit画像を無言で8bit化する、巨大decodeを上限なしで始める、source画像を編集する。
+
+## G2-GR78-VALIDATION: 実装範囲と検証状態を整理する
+- status: todo
+- done-when: GR78の承認済み実装とsurface保留、純実装の実行結果とnative/実物の未検証を分けて記録する。
+- verify: 各task/commit/実log/CMake登録を照合し、次のG2選定を承認済み扱いにしない。
+- stop-when: Windows/native/実物を未実行のままPASSとする、surfaceを実装済みへ含める。

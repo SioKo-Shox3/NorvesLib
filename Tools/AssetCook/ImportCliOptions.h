@@ -85,6 +85,30 @@ namespace NorvesLib::Tools::AssetCook
         return ImportArgumentResult::Unhandled;
     }
 
+    // --inspectは独立modeで、cook出力先や設定変更フラグを混在させない。
+    inline ImportArgumentResult ParseInspectCommandLine(int argc,const char* const* argv,
+        std::filesystem::path& outPath,const char*& error)
+    {
+        if (argc<2)
+        {
+            return ImportArgumentResult::Unhandled;
+        }
+        const bool bSeparate=std::strcmp(argv[1],"--inspect")==0;
+        const bool bEquals=std::strncmp(argv[1],"--inspect=",10)==0;
+        if (!bSeparate && !bEquals)
+        {
+            return ImportArgumentResult::Unhandled;
+        }
+        const char* value=bSeparate ? (argc==3 ? argv[2] : nullptr) : (argc==2 ? argv[1]+10 : nullptr);
+        if (!value || !*value || std::strncmp(value,"--",2)==0)
+        {
+            error="--inspect requires one file path and no cook options";
+            return ImportArgumentResult::Rejected;
+        }
+        outPath=value;
+        return ImportArgumentResult::Accepted;
+    }
+
     inline bool HasImportArguments(const Core::AssetImport::ImportSettingsFileOptions& options)
     {
         return options.bDisabled || options.bRequired || !options.OverridePath.empty();

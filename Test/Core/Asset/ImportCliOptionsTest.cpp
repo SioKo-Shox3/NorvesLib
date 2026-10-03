@@ -70,6 +70,20 @@ int main()
         bSkip=false;
         assert(ParseSkipArgument(argument,bSkip,error)==ImportArgumentResult::Unhandled && !bSkip);
     }
+    std::filesystem::path inspectPath="retained";
+    const char* inspectSeparate[]={"AssetCook","--inspect","a model.glb"};
+    assert(ParseInspectCommandLine(3,inspectSeparate,inspectPath,error)==ImportArgumentResult::Accepted && inspectPath=="a model.glb");
+    const char* inspectEquals[]={"AssetCook","--inspect=b.gltf"};
+    assert(ParseInspectCommandLine(2,inspectEquals,inspectPath,error)==ImportArgumentResult::Accepted && inspectPath=="b.gltf");
+    for (const char* argument : {"--inspect","--inspect=","--inspect=--out"})
+    {
+        const char* argv[]={"AssetCook",argument};
+        assert(ParseInspectCommandLine(2,argv,inspectPath,error)==ImportArgumentResult::Rejected && inspectPath=="b.gltf");
+    }
+    const char* mixed[]={"AssetCook","--inspect","b.gltf","--out","bad"};
+    assert(ParseInspectCommandLine(5,mixed,inspectPath,error)==ImportArgumentResult::Rejected && inspectPath=="b.gltf");
+    const char* noInspect[]={"AssetCook","--input","b.gltf"};
+    assert(ParseInspectCommandLine(3,noInspect,inspectPath,error)==ImportArgumentResult::Unhandled);
     std::cout << "ImportCliOptionsTest PASS: paths_flags_conflicts_duplicates_failure_preservation\n";
     return 0;
 }
