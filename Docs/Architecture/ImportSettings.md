@@ -65,3 +65,34 @@ ImportSettingsValueTestは固定bytesの既知値、全軸組合せ、非有限/
 ImportSettingsJsonTestは43のJSON fixtureを登録。fixture自体のJSON文法は別途確認した。
 実JsonDocumentを含むsource/testはWindows.h依存でcompile停止しており、native解析試験は未実行。
 file探索・変換・cook/loose統合が通ったという意味ではない。
+
+## 共有geometry変換（GR78）
+
+ImportTransformはinterleaved頂点の位置float3・法線float3・UV float2とuint32 indexを受けるprivateな無確保処理。
+strideとfield offsetでlayoutを渡し、他のfieldやpaddingは変更しない。頂点/indexの全spanは非交差で、呼出中は不変入力とする。
+
+- up/forwardをtargetの+Y/+Zへ写す右手直交基底を作り、mirrorXはtarget Xへ別に掛ける
+- units.fitは軸変換後boundsのup=Y、forward=Z、longest=最大extentでmetersへ合わせる。選択軸のextentが0なら失敗
+- bounds_centerはbounds中心、bounds_bottom_centerはXZ中心とminY、surface_centroidは三角形面積重みの中心を原点へ移す。零面積triangleは寄与せず、全て零面積なら失敗
+- custom.offsetは軸/scale適用後に加える平行移動量。ソース内のpivot指定ではない
+- 演算はdouble。P' = (R×P − Pivot) × Scale + Offset と評価し、巨大な中間平行移動行列を作らない。floatへは最後に一度だけ変換する
+- 法線は正の一様scaleで逆転置のscale成分が正規化時に消えるため、直交rotation/mirrorを適用して単位化する。ゼロ/非有限法線は拒否
+- UVはflipU/flipVに応じ1−u / 1−v。windingは既存glTF→engineの反転後を基準とし、keepは追加反転なし、flipは常に追加、autoはmirrorX時だけ追加する
+- 全layout/index/位置/変換後のfloat表現可能性を検証してから書込passへ進む。失敗時は頂点もindexも非変更。位置の非ゼロ値が乗算またはfloat変換で0へunderflowする場合も拒否する
+- 非整列byte storageはmemcpyで読み書きする
+
+実ImportTransformTestは48の軸/鏡像組合せの体積符号、3種類fit、bounds/足元/面積重み原点、custom移動、
+法線/UV、layout・index・NaN/inf/overflow/underflowと失敗時非変更、非整列storageと未指定field保持を確認する。
+通常・最適化・ASan/UBSan（LeakSanitizer除外）を実行済み。
+骨格のIBM/animation等の一様scaleと、実cooker/looseへの挿入は後続。現時点でロード結果はまだ変わらない。
+
+SurfaceCentroidは辺の大きな数同士の減算を避け、float32座標の積をbinary64で保持して外積の6項を誤差展開で加算する。
+三角形頂点の演算順も座標順へ正規化し、中心と面積重みmoment・総面積を補償付き和で保持する。
+巨大な正負座標と小さい座標の混在、三角形の循環index、複数面の列挙順による重心消失を回帰試験へ追加した。
+
+### 変換の保留範囲
+
+SurfaceCentroidの極端値では面積と三角形中心の途中丸めによる相殺が見つかった。
+最新修正は三角形中心へ一度丸めず、各頂点×面積の積とfma残差をmoment展開へ足し、最後に3×総面積で割る。
+M=2^100、t=2^-100の等面積2面を含む追加回帰は通常・最適化・sanitizerで成功したが、この最終修正の独立確認はまだ完了していない。
+変換APIは未接続のまま保留し、実ロード/cookerへ適用する前に確認を必要とする。

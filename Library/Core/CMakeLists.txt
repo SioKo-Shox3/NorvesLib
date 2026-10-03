@@ -169,6 +169,8 @@ set(PRIVATE_SOURCES
     Private/Resource/GLTFAnalyzer.cpp
     Private/Resource/SkeletalGltfDecode.cpp
     Private/Resource/GltfAccessorRange.h
+    Private/Resource/ImportTransform.h
+    Private/Resource/ImportTransform.cpp
     Private/Resource/ImportSettings.h
     Private/Resource/ImportSettings.cpp
     Private/Resource/ImportSettingsJson.cpp

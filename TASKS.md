@@ -1900,7 +1900,7 @@
 - notes: S2承認済み。CoreからToolsへ依存させないため解析もCore privateへ配置し、AssetCookLibとlooseが共有する。file探索・変換適用・hash連結・CLIは別反復。
 
 ## G2-GR78-TRANSFORM: 取り込み変換の共有演算を実装する
-- status: todo
+- status: blocked
 - done-when: 軸正規化・一様scale/fit・mirrorX・原点・法線/UV/windingをdoubleで合成し、float表現可能性を検証して静的geometryへ適用する。骨格は一様scaleのみの制約を保持する。
 - verify: 軸写像、fit、各原点、鏡像、法線、UV、極端値/縮退/失敗出力を検証する。
 - stop-when: 骨格への未承認軸/原点変更、描画既定/形式変更、非有限やoverflowの黙認。
@@ -1916,3 +1916,10 @@
 - done-when: import-settings/no-sidecar/require-sidecar、hashとpackage実体一致を条件にしたskip、inspect診断を追加する。既存必須CLIとsidecar無し出力は維持する。
 - verify: 設定優先順位/相互排他/失敗、skip時非更新、package欠如/破損時再cook、inspectをsmokeへ登録する。
 - stop-when: GR96一括cook/依存追跡の先取り、誤ったskip、未実装オプションの受理。
+
+## G2-GR78-SIDECAR-IO-HASH: 設定fileの読込とhash連結を独立実装する
+- status: todo
+- done-when: source隣/明示override/無効/必須の設定file選択と安全なread・厳格parseを共有化し、sidecar無しの旧hashを保持、有りの正規化bytes+algorithm version連結を定義する。geometryへはまだ適用しない。
+- verify: absent/invalid/required/override/conflict/出力保持をnative登録し、純hashの既知値/無し不変/値変更とバージョン変更を実行する。
+- stop-when: 保留中ImportTransformを未確認でロードへ接続、file不在以外のI/O失敗を無し扱い、meta/書式差でhash変更。
+- notes: GR78-TRANSFORMの独立確認保留中に先行できるSIDECARの部分作業。

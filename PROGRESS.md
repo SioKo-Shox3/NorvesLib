@@ -484,3 +484,6 @@
 
 - G2-GR78-SETTINGS: cook/loose共用のv1取り込み設定をCore privateへ追加。units/fit/符号付きaxes/mirror/origin/UV/windingの値・型・有限性・矛盾とJSON未知/重複を検証し、metaはhashから除外、未実装予約blockは空objectのみ。成功時だけ出力置換。固定52byteのLE/binary64/-0統一で正規化し、sidecar無しは呼出側で別扱い。純値/軸36組/既知bytes/各field変更を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER-Werrorで成功。43JSON fixture文法確認、実JsonDocument source/testはWindows.hでcompile停止。独立レビューPASS。file探索/変換適用/hash/CLIはまだ未接続。
 - Next: GR78の軸/scale/fit/原点/法線/UV/winding共有変換を実装し、その後sidecarを既存ロードとcookへ接続する。既存モデルはsidecar無しなら恒等・現行hash不変を維持する。
+
+- G2-GR78-TRANSFORM: 軸/鏡像、scale/3種fit、bounds/足元/表面/custom原点、法線/UV/windingの無確保2pass変換を追加。全layout/index/結果検証後に書き込み、失敗非変更・非整列/未指定field保持を実装。48方向、全fit、各原点、極端値を純実装の通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBER-Werrorで成功。ただし独立第2周で累積表面重心の中間丸め相殺が残ったためblocked。最新修正は各頂点×面積とfma残差をmoment展開に直接加え、最後に3×面積で除算する。M=2^100/t=2^-100の2面と面順序/循環順の回帰も3mode成功だが最終差分の独立確認は未完。ロード/cooker未接続を維持する。
+- Next: GR78-SIDECAR-IO-HASHを先行する。変換適用部分は保留を維持し、設定file選択/読込/hashの独立部分を進める。
