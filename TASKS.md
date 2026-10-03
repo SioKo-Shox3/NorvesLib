@@ -405,7 +405,7 @@
 - notes: 区切り。評価者を通す。
 
 ## FIX-MEGA-CLUSTER-ADJACENCY: 読み込むモデルのMegaGeometryのクラスタを位置でつないで大きくする
-- status: todo
+- status: done
 - done-when: クックの `MeshClusterizer` の三角形の隣接を、頂点の番号ではなく位置（UVの継ぎ目・法線の分かれ目で複製された頂点を同じ位置として扱う）でつなぎ、起動画面の岩（今は66122三角形が25562クラスタ、平均2.59、16未満が25001）と小屋（4281三角形が1323クラスタ、平均3.24）のLOD0の1クラスタあたりの平均三角形数を64以上にする（`stage=megamesh_cluster_stats` の行で確かめる）。描画の見た目（撮影）と影・レイトレの範囲は変わらない。
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/FIX-MEGA-CLUSTER-ADJACENCY -SunElevations 45`

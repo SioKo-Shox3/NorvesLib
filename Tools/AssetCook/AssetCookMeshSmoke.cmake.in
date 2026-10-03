@@ -1062,7 +1062,7 @@ nvmesh_read_le_uint("${PACKAGE_HEX}" ${NVMESH_HEADER_CLUSTER_COUNT} 4 baseline_c
 
 if(NOT baseline_vertex_count EQUAL 67042 OR
    NOT baseline_index_count EQUAL 198366 OR
-   NOT baseline_cluster_count EQUAL 25562)
+   NOT baseline_cluster_count EQUAL 1029)
     message(FATAL_ERROR
         "AssetCookMeshSmoke baseline counts changed: vertices=${baseline_vertex_count} "
         "indices=${baseline_index_count} clusters=${baseline_cluster_count}")
