@@ -1,5 +1,6 @@
 #include "MeshCooker.h"
 #include "ImportCliOptions.h"
+#include "SkeletalCliOptions.h"
 #include "ModelCookCache.h"
 #include "ModelInspection.h"
 #include "AudioCooker.h"
@@ -71,6 +72,7 @@ namespace
         std::filesystem::path ManifestPath;
         NorvesLib::Core::AssetImport::ImportSettingsFileOptions ImportSettings;
         bool bSkipIfUnchanged = false;
+        NorvesLib::Tools::AssetCook::SkeletalCliOptions SkeletalImport;
         std::string LogicalPath;
         std::string Kind;
         std::string EntryName;
@@ -1583,6 +1585,14 @@ namespace
             {
                 continue;
             }
+            const auto skeletalArgument = NorvesLib::Tools::AssetCook::ParseSkeletalArgument(
+                argc, argv, index, outOptions.SkeletalImport, importError);
+            if (skeletalArgument == NorvesLib::Tools::AssetCook::ImportArgumentResult::Rejected)
+            {
+                error = importError;
+                return false;
+            }
+            if (skeletalArgument == NorvesLib::Tools::AssetCook::ImportArgumentResult::Accepted) continue;
             std::string argument = argv[index];
             std::string value;
             const size_t equals = argument.find('=');
@@ -1695,6 +1705,14 @@ namespace
             return false;
         }
 
+        const char* skeletalError = nullptr;
+        if (!NorvesLib::Tools::AssetCook::ValidateSkeletalArguments(outOptions.SkeletalImport,
+            outOptions.Kind == "model" && NorvesLib::Tools::AssetCook::IsSupportedSkeletalCookFormat(outOptions.Format), skeletalError))
+        {
+            error = skeletalError;
+            return false;
+        }
+
         if (outOptions.Kind != "model" && (outOptions.bSkipIfUnchanged || NorvesLib::Tools::AssetCook::HasImportArguments(outOptions.ImportSettings)))
         {
             error = "import settings options require --kind model";
@@ -1789,7 +1807,8 @@ namespace
             << "       AssetCook --input <audio.wav> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind audio --entry <entry.nvaud> --entry-type Aud0 "
             << "--format nvaud.v0.pcm16 --variant default\n"
-            << "Model import: [--import-settings <file>] [--require-sidecar] OR [--no-sidecar] [--skip-if-unchanged]\n";
+            << "Model import: [--import-settings <file>] [--require-sidecar] OR [--no-sidecar] [--skip-if-unchanged]\n"
+            << "Skeletal import: [--skin-influences strict|reduce] [--skin-warn-dropped-weight 0..1] [--skin-fail-dropped-weight 0..1]\n";
     }
 
     bool CookRawAsset(const CookOptions &options, std::string &error)
@@ -2354,7 +2373,8 @@ namespace
         NorvesLib::Core::Container::AnsiString fingerprintError;
         const NorvesLib::Core::Container::AnsiString sourcePath(inputPath.generic_string().c_str());
         if (!NorvesLib::Tools::AssetCook::FingerprintModelCookSource(source.data(),source.size(),
-            options.Format.c_str(),sourcePath,logicalPath,fingerprint,fingerprintError,&options.ImportSettings))
+            options.Format.c_str(),sourcePath,logicalPath,fingerprint,fingerprintError,&options.ImportSettings,
+            NorvesLib::Tools::AssetCook::IsSupportedSkeletalCookFormat(options.Format) ? &options.SkeletalImport.Decode : nullptr))
         {
             error.assign(fingerprintError.data(),fingerprintError.size());
             return false;
@@ -2601,7 +2621,8 @@ namespace
                                                            sourcePath,
                                                            skeletalResult,
                                                            skeletalError,
-                                                           &options.ImportSettings))
+                                                           &options.ImportSettings,
+                                                           &options.SkeletalImport.Decode))
         {
             error.assign(skeletalError.data(), skeletalError.size());
             return false;
@@ -2686,6 +2707,20 @@ namespace
             return false;
         }
 
+        if (options.SkeletalImport.Decode.InfluencePolicy == NorvesLib::Core::Skeletal::SkeletalInfluencePolicy::ReduceToFour)
+        {
+            const auto& report = skeletalResult.DecodeReport;
+            std::cerr << std::setprecision(std::numeric_limits<double>::max_digits10)
+                << "skin_influences=reduce processed_vertices=" << report.ProcessedVertexCount
+                << " reduced_vertices=" << report.ReducedVertexCount
+                << " merged_joint_vertices=" << report.MergedJointVertexCount
+                << " renormalized_vertices=" << report.RenormalizedVertexCount
+                << " warning_vertices=" << report.WarningVertexCount
+                << " max_dropped_weight=" << report.MaximumDroppedWeight
+                << " mean_dropped_weight=" << report.MeanDroppedWeight << "\n";
+            if (report.WarningVertexCount != 0)
+                std::cerr << "警告: 脱落weightが指定の警告閾値を超えた頂点があります\n";
+        }
         std::cerr << "AssetCook wrote skeletal model package=\"" << packagePath.generic_string()
                   << "\" manifest=\"" << manifestPath.generic_string()
                   << "\" source_bytes=" << inputBytes.size()

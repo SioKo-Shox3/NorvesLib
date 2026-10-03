@@ -51,7 +51,7 @@ Strictの通常4影響経路をこの修復へ無言で切り替えない。
 参考: [glTF skinned mesh attributes](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#skinned-mesh-attributes)。
 
 5本の既知値、120順列、同joint/tie/微小値、警告・失敗境界、無効値/関節/総和/aliasと出力保持を純実装で確認する。
-CUBICSPLINE/morphとCLI接続は別作業。raw/legacy/file decodeとcook接続は下記を参照。
+CUBICSPLINE/morphは別作業。raw/legacy/file decodeとcook接続は下記を参照。
 
 ## 明示policyと診断型
 
@@ -69,7 +69,7 @@ struct paddingや文字列表現を使わず、-0を+0へ統一する。algorith
 警告閾値の変更もhashに含み、同じ入力の別policyを旧cacheと混同しない。
 
 固定bytesと独立3初期stateのFNV既知値、Strict不変、閾値/algorithm差、invalid enum/数値、ゼロの正規化を
-通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBERで検査する。cook/preflightのhashとdecode入口は下記の明示指定に対応する。CLI指定は別作業。
+通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBERで検査する。cook/preflightのhashとdecode入口は下記の明示指定に対応する。CLI指定は下記を参照。
 
 ## 複数セット記述の収集
 
@@ -101,7 +101,7 @@ Strictのreportは既定値。失敗Dataは空、source buffer出力も空のま
 FiveInfluences.gltfは3頂点中1頂点だけ5本の影響を持つ検証用fixtureで、binはnative試験が生成する。
 raw/GLB/String/fileの同値、5→4の値と測定、閾値超過、追加slotの不正joint/ゼロweight/負値、
 UNORM16のraw総和1不足とoptions不正をnative試験へ登録する。LinuxではCoreのWindows.h依存により
-この統合試験は実行できず、純kernel/policy/pair試験の実行と区別する。CLIはまだStrictのみ。
+この統合試験は実行できず、純kernel/policy/pair試験の実行と区別する。CLIは既定Strict、明示Reduceを下記で指定する。
 
 ## 骨格cookと事前hash照合
 
@@ -119,4 +119,21 @@ preflightはStrict追加set拒否を維持し、Reduceなら連続pair記述を�
 native回帰にraw/GLBのcook/preflight hash一致、cooked再読込値、warn/failのhash差、
 sidecarとの連結順、Strict明示値と省略値の旧hash一致、失敗out保持と診断を登録する。
 decodeの正常prefix後失敗とUNORM8/16複数setの全総和/1不足も恒久回帰へ加える。
-これらの統合試験はWindows.h依存で未実行。CLI flag/skipへの接続はまだ行わない。
+これらの統合試験はWindows.h依存で未実行。CLI flag/skipは下記のpolicyを同一経路へ渡す。
+
+## AssetCookの明示縮約指定
+
+--skin-influences strict|reduce（省略strict）、--skin-warn-dropped-weight 0..1、
+--skin-fail-dropped-weight 0..1をNVSKEL model cookに限り受け付ける。別引数とequalsを両方扱う。
+閾値の既定は0.01/0.25で0<=warn<=fail<=1。閾値指定にはreduceの明示指定が必要。
+重複/空値/非有限/範囲外/末尾ゴミ/非骨格への指定は書込前に拒否する。
+--cubicspline/--morph/--joint-policyは未実装のため受理しない。
+
+本cookと--skip-if-unchangedのfingerprintへ同じpolicyを渡すため、Strictとの混同や
+閾値変更時のcache誤使用を防ぐ。cache hitは縮約を再実行せず既存のskip通知を返す。
+実際にcookしたReduce資産はstderrへ処理頂点数/縮約/合算/再正規化/警告数と最大/平均脱落比率を出し、
+警告閾値超過を明示する。共有JSON ImportReportへの格納は別taskで、現段階では未実装。
+
+pure parserを通常/O2-NDEBUG/ASan・UBSanとMEMBERで検査する。native CLI smokeには5影響fixture、
+既定拒否/縮約成功/閾値超過と出力保持/同policy cache hit/閾値変更cache missを登録する。
+Main/native CLI smokeはWindows.h・PowerShell/CMake依存によりこのLinux環境では未実行。

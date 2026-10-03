@@ -550,3 +550,6 @@
 
 - G2-GR86-REDUCE-COOK: 明示optionsを骨格cook/preflightへ伝播し、source/buffer→import settings→policy/algorithmの同順hashを共有。Strict hash/wire不変、成功DecodeReport所有、失敗out保持とerror内の頂点/脱落量を追加。preflight成功はcook可能性を意味せず、静的meshへの骨格options指定は拒否。raw/GLB再読込・hash/閾値差・sidecar・旧Strict同値・失敗保持、decoder正常prefix後失敗/混在UNORMの恒久回帰を登録。純policy3mode実行成功、独立PASS。nativeはWindows.hで未実行。
 - Next: GR86-REDUCE-CLIの明示指定とskip接続へ。共有JSON ImportReportは別taskとして保持し、stderr診断だけでGR86全体完了としない。
+
+- G2-GR86-REDUCE-CLI: --skin-influences strict|reduceとwarn/fail閾値を別引数/equalsで厳密parse。重複/不正数/閾値だけ/非骨格指定を拒否し、順序に依らず最終検査する。cookとskipへ同じpolicyを伝播し、実cook時のstderr統計/警告を追加。純parser通常/O2-NDEBUG/ASan・UBSan（LSan除外）と-Werror MEMBER成功、独立PASS。5影響CLI成功/既定拒否/閾値失敗出力保持/同値cachehit・閾値差cachemissのnative smokeを登録。Main/native smokeはWindows.hとPowerShell/CMake依存で未実行。警告文/全診断値のnative assert強化はnonblocking候補。
+- Next: cook/CLIを公開し、共有JSON ImportReportへ成功/失敗測定を接続する。CUBICSPLINE/morph/joint-policyは未実装のまま拒否。

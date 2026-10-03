@@ -2054,7 +2054,7 @@
 - stop-when: CLI未接続なのに利用可能と主張、形式/ABI/128上限変更、設定指定の黙殺。
 
 ## G2-GR86-REDUCE-CLI: 明示縮約と閾値をCLIから指定する
-- status: todo
+- status: done
 - done-when: --skin-influences strict|reduceとwarn/fail閾値を厳密parseし、skeletal cook/skipの両方へ同じpolicyを伝播する。既定Strict/非骨格拒否/重複・不正・無意味指定拒否と脱落量診断を維持する。
 - verify: pure parserの通常/O2/sanitizer/MEMBER、native CLI smokeで縮約成功・既定拒否・閾値失敗出力保持・policy変更でcache miss/同値でhitを登録する。
 - stop-when: 未実装のCUBICSPLINE/morph/joint-policyを受理する、skipだけStrictのまま、native未実行を成功と主張する。

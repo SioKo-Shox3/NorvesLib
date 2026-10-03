@@ -374,6 +374,89 @@ if(NOT extra_package_before STREQUAL extra_package_after OR NOT extra_manifest_b
     message(FATAL_ERROR "Strict extra influence rejection modified prior output")
 endif()
 
+
+# GR86: 先頭頂点だけ5影響のfixtureでCLI指定・拒否・cache鍵を確認する。
+set(REDUCE_DIR "${SMOKE_DIR}/Reduce")
+file(MAKE_DIRECTORY "${REDUCE_DIR}")
+file(COPY_FILE "${SOURCE_ROOT}/Assets/Models/M9Skinned/FiveInfluences.gltf" "${REDUCE_DIR}/FiveInfluences.gltf")
+file(WRITE "${REDUCE_DIR}/write_reduce.ps1" [=[
+param([string]$BasePath, [string]$OutputPath)
+$ErrorActionPreference = "Stop"
+$base = [IO.File]::ReadAllBytes($BasePath)
+$bytes = [byte[]]::new(668)
+[Array]::Copy($base, 0, $bytes, 0, 224)
+[Array]::Copy($base, 352, $bytes, 544, 64)
+function Write-Single([int]$Offset, [single]$Value) { [BitConverter]::GetBytes($Value).CopyTo($bytes, $Offset) }
+for ($joint = 0; $joint -lt 5; ++$joint) {
+    foreach ($element in [int[]](0,5,10,15)) { Write-Single (224 + $joint * 64 + $element * 4) 1 }
+    Write-Single (224 + $joint * 64 + 52) (-$joint)
+}
+$weights = [single[]](0.4,0.3,0.15,0.1)
+for ($slot = 0; $slot -lt 4; ++$slot) {
+    $bytes[96 + $slot] = $slot
+    Write-Single (132 + $slot * 4) $weights[$slot]
+}
+$bytes[608] = 4
+Write-Single 620 0.05
+[IO.File]::WriteAllBytes($OutputPath, $bytes)
+]=])
+execute_process(COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${REDUCE_DIR}/write_reduce.ps1"
+    -BasePath "${SOURCE_BIN}" -OutputPath "${REDUCE_DIR}/fixture.bin"
+    RESULT_VARIABLE reduce_fixture_result ERROR_VARIABLE reduce_fixture_error)
+if(NOT reduce_fixture_result EQUAL 0)
+    message(FATAL_ERROR "reduction fixture generation failed: ${reduce_fixture_error}")
+endif()
+set(REDUCE_ARGS --input "${REDUCE_DIR}/FiveInfluences.gltf" --out "${REDUCE_DIR}/rig.nvpkg"
+    --manifest "${REDUCE_DIR}/manifest.json" --logical Models/rig.gltf --kind model
+    --entry rig.nvskel --entry-type Skl0 --format nvskel.v0.skinned.pnujiw.u32 --variant default --no-sidecar)
+function(expect_reduce success skipped)
+    execute_process(COMMAND "${ASSET_COOK_EXE}" ${REDUCE_ARGS} ${ARGN}
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    if((success AND NOT result EQUAL 0) OR (NOT success AND result EQUAL 0))
+        message(FATAL_ERROR "unexpected reduction CLI result: ${result} ${output} ${error}")
+    endif()
+    string(FIND "${output}" "AssetCook skipped unchanged model" skip_position)
+    if(success AND ((skipped AND skip_position EQUAL -1) OR (NOT skipped AND NOT skip_position EQUAL -1)))
+        message(FATAL_ERROR "unexpected reduction cache result: ${output} ${error}")
+    endif()
+    if(success AND NOT skipped)
+        string(FIND "${error}" "reduced_vertices=1" report_position)
+        if(report_position EQUAL -1)
+            message(FATAL_ERROR "reduction report missing: ${error}")
+        endif()
+    endif()
+endfunction()
+expect_reduce(TRUE FALSE --skin-influences reduce)
+file(SHA256 "${REDUCE_DIR}/rig.nvpkg" reduce_package_before)
+file(SHA256 "${REDUCE_DIR}/manifest.json" reduce_manifest_before)
+expect_reduce(FALSE FALSE)
+expect_reduce(FALSE FALSE --skin-influences strict --skip-if-unchanged)
+expect_reduce(FALSE FALSE --skin-influences reduce --skin-fail-dropped-weight 0.04 --skip-if-unchanged)
+expect_reduce(FALSE FALSE --skin-influences reduce --skin-warn-dropped-weight nan)
+expect_reduce(FALSE FALSE --skin-influences reduce --skin-influences reduce)
+expect_reduce(FALSE FALSE --skin-warn-dropped-weight 0.01)
+expect_reduce(FALSE FALSE --skin-influences reduce --format nvmesh.v0.mesh3d.pnt.u32.clustered --entry-type Msh0)
+file(SHA256 "${REDUCE_DIR}/rig.nvpkg" reduce_package_after)
+file(SHA256 "${REDUCE_DIR}/manifest.json" reduce_manifest_after)
+if(NOT reduce_package_before STREQUAL reduce_package_after OR NOT reduce_manifest_before STREQUAL reduce_manifest_after)
+    message(FATAL_ERROR "reduction rejection modified prior output")
+endif()
+file(TIMESTAMP "${REDUCE_DIR}/rig.nvpkg" reduce_time_before UTC)
+execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 2)
+expect_reduce(TRUE TRUE --skin-influences=reduce --skip-if-unchanged)
+file(TIMESTAMP "${REDUCE_DIR}/rig.nvpkg" reduce_time_after UTC)
+if(NOT reduce_time_before STREQUAL reduce_time_after)
+    message(FATAL_ERROR "reduction cache hit rewrote package")
+endif()
+expect_reduce(TRUE FALSE --skin-influences reduce --skin-warn-dropped-weight 0.06 --skip-if-unchanged)
+file(SHA256 "${REDUCE_DIR}/manifest.json" reduce_changed_manifest)
+if(reduce_changed_manifest STREQUAL reduce_manifest_before)
+    message(FATAL_ERROR "warning threshold failed to alter manifest source hash")
+endif()
+expect_reduce(TRUE TRUE --skin-warn-dropped-weight=0.06 --skin-influences=reduce --skip-if-unchanged)
+expect_reduce(TRUE FALSE --skin-influences reduce --skin-fail-dropped-weight 0.2 --skip-if-unchanged)
+expect_reduce(TRUE TRUE --skin-influences reduce --skin-fail-dropped-weight 0.2 --skip-if-unchanged)
+
 message(STATUS "${unit_stdout}")
 message(STATUS "${cook_stdout}")
 message(STATUS "${package_stdout}")
