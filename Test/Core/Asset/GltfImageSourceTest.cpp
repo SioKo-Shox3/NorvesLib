@@ -56,6 +56,7 @@ int main()
     assert(source.GetExternalUri().size() == 16);
     assert(std::memcmp(source.GetExternalUri().data(), "textures/a b.png", 16) == 0);
     assert(source.GetBytes(buffers).empty());
+    assert(source.GetBufferIndex() == std::numeric_limits<size_t>::max());
     ImageSource externalCopy = source;
     ImageSource externalAssigned;
     externalAssigned = source;
@@ -93,14 +94,14 @@ int main()
     const char* view = R"({"images":[{"bufferView":0,"mimeType":"image/png"}],"bufferViews":[{"buffer":0,"byteOffset":2,"byteLength":3}]})";
     assert(Resolve(view, buffers, source) == ImageSourceResult::Success);
     assert(source.GetKind() == ImageSourceKind::BufferView && source.GetBytes(buffers).data() == bin + 2);
-    assert(source.GetBytes(buffers).size() == 3);
+    assert(source.GetBytes(buffers).size() == 3 && source.GetBufferIndex() == 0);
     copy = source;
     source.Reset();
     assert(copy.GetBytes(buffers).data() == bin + 2);
     const char* ownedView = R"({"images":[{"bufferView":0,"mimeType":"image/jpeg"}],"bufferViews":[{"buffer":1,"byteLength":4}]})";
     assert(Resolve(ownedView, buffers, source) == ImageSourceResult::Success);
     assert(source.GetBytes(buffers).data() == buffers.GetBytes(1).data());
-    assert(source.GetBytes(buffers)[3] == 40);
+    assert(source.GetBytes(buffers)[3] == 40 && source.GetBufferIndex() == 1);
 
     for (const char* bad : {
         R"({})", R"({"images":null})", R"({"images":[]})", R"({"images":[null]})",

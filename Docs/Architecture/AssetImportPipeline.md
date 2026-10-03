@@ -99,3 +99,14 @@ GltfImageSourceは画像記述の解決とbytesの所在を扱い、stbでの画
 - Resolve失敗/例外は出力を空にし、確保例外は伝播する。bufferViewのGetBytesも再度範囲確認し、BufferSetが空になっていた場合は空viewを返す
 
 GltfImageRangeTestは実inline helperの範囲/空/null/size_t境界/借用を通常・O2-NDEBUG・ASan/UBSan（LeakSanitizer除外）で実行する。GltfImageSourceTestは既存束へ記述/所有copy-move/data URI/借用view/MIME/失敗clearを登録するが、実JsonDocument/所有配列の統合実行はWindows.h依存で未検証。cooker/stagingへの画像接続やtexture package出力はこの部品には含まない。
+
+## GR77: 静的cookerの埋込み画像結果
+
+MeshCookResult.EmbeddedImagesは参照された埋込み画像をimageIndex順に返す。論理pathはモデルの論理path全体に.img<imageIndex>.png（JPEGは.jpg）を付け、同じpathをNVMESH材質へ格納する。Albedoはnvtex.v0.rgba8.srgb、Normal/ARMはnvtex.v0.rgba8.linear。同じimageIndexと互換formatは1件へ集約してRolesを合成し、sRGB/linearの衝突は明示エラーにする。画像bytesのsource hashは元画像bytesのFNV-1a64。既存の色空間・material既定・頂点/cluster/wire形式は変えない。
+
+- 元GLBのBIN内画像だけはsourceBytesへ借用する。呼出側はEmbeddedImagesを利用する間、元GLBの寿命とアドレスを維持する。成功時の結果置換が借用元を解放しないよう、GLB入力はoutResult自身の所有storageに置かない。外部buffer/data URI由来の画像は、cookerローカルBufferSet/ImageSourceが破棄されても有効なよう画像部分だけを結果へ所有コピーする
+- MeshEmbeddedImageの所有copyは独立bytes、借用copyは同じ元GLBへの参照。copy代入は候補copy→swap。SetBytesは空/nullや所有storageを解放して自己借用する操作を拒否し、所有切替時の確保失敗では既存bytesを維持する
+- 外部画像URIは従来どおり材質pathだけを保存し、画像fileの実読込やEmbeddedImagesへの追加はしない。occlusion/emissive等の新しい材質処理は追加しない
+- StaticGltfBufferCookTestに1px PNGを加え、外部参照とのNVMESH bytes一致、3roleのpath/format/hash、GLB借用、外部buffer/data URI所有、copy/move、同format共有、衝突時出力保持を登録する。画像bytes変更はmodel source hashへ反映し、画像内容のdecodeは後続texture cookerへ委ねる
+
+現時点のMainはmodel単独出力のため、EmbeddedImagesがあればファイル書込み前に明示拒否する。参照先textureの無いmodel packageを成功扱いしない。model+N texture出力とmanifest統合は後続の接続でこのガードを置き換える。実cooker/新画像fixtureはWindows.h依存でnative compile/実行未検証であり、画像decodeやpackage出力の成功を意味しない。

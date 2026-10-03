@@ -121,6 +121,10 @@ namespace NorvesLib::Core::Gltf
     {
         return m_Mime;
     }
+    size_t ImageSource::GetBufferIndex() const noexcept
+    {
+        return m_Kind == ImageSourceKind::BufferView ? m_BufferIndex : std::numeric_limits<size_t>::max();
+    }
     Container::Span<const uint8_t> ImageSource::GetExternalUri() const noexcept
     {
         return {m_ExternalUri.data(), m_ExternalUri.size()};

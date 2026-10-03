@@ -8,6 +8,8 @@
 #include "Resource/SkeletalLimits.h"
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
+#include "Resource/GltfImageSource.h"
+#include "Asset/AssetPackageFormat.h"
 #include "Text/JsonDocument.h"
 
 #include <algorithm>
@@ -913,7 +915,9 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         bool ResolveTextureReference(const JsonValue& root, const JsonValue& textureInfo, AnsiStringView logicalPath,
-                                     const char* label, AnsiString& outReference, AnsiString& error)
+                                     const char* label, MeshImageRole role, const Gltf::BufferSet& buffers,
+                                     VariableArray<MeshEmbeddedImage>& embeddedImages,
+                                     AnsiString& outReference, AnsiString& error)
         {
             outReference.clear();
             if (!textureInfo.IsValid())
@@ -926,8 +930,7 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            // NVMESH v0 stores a single UV set. A missing texCoord means 0; an explicit 0 is fine;
-            // anything else would silently bind the wrong UV channel.
+            // NVMESH v0のUV setは1つ。texCoord省略/明示0を許可し、他のUVへの誤結合を拒否する。
             uint32_t texCoord = 0;
             if (!TryReadOptionalUInt32(textureInfo, "texCoord", 0, texCoord))
             {
@@ -940,7 +943,7 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            // KHR_texture_transform and friends rewrite UV semantics that this cooker cannot bake.
+            // このcookerではUV変換を焼き込めないため、KHR_texture_transform等を拒否する。
             if (textureInfo.FindMember("extensions").IsValid())
             {
                 error = AnsiString(label) + " texture info extensions are not supported";
@@ -966,17 +969,62 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            const JsonValue image = images.GetArrayElement(imageIndex);
-            AnsiString imageUri;
-            if (!image.IsObject() || !TryConvertAsciiString(image.FindMember("uri"), imageUri) || imageUri.empty())
+            Gltf::ImageSource image;
+            const auto imageResult = Gltf::ImageSource::Resolve(root, imageIndex, buffers, image);
+            if (imageResult != Gltf::ImageSourceResult::Success)
             {
-                error = AnsiString(label) + " image URI is required";
+                error = AnsiString(label) + " image source is invalid";
                 return false;
             }
-            return BuildLogicalTextureReference(logicalPath, imageUri, label, outReference, error);
+            if (image.GetKind() == Gltf::ImageSourceKind::ExternalFile)
+            {
+                const auto uri = image.GetExternalUri();
+                return BuildLogicalTextureReference(logicalPath,
+                    AnsiStringView(reinterpret_cast<const char*>(uri.data()), uri.size()), label, outReference, error);
+            }
+
+            const AnsiStringView textureFormat = role == MeshImageRole::Albedo
+                ? "nvtex.v0.rgba8.srgb" : "nvtex.v0.rgba8.linear";
+            for (auto& existing : embeddedImages)
+            {
+                if (existing.ImageIndex == imageIndex)
+                {
+                    if (AnsiStringView(existing.Format) != textureFormat)
+                    {
+                        error = "embedded image roles require conflicting texture formats";
+                        return false;
+                    }
+                    existing.Roles |= static_cast<uint8_t>(role);
+                    outReference = existing.LogicalPath;
+                    return true;
+                }
+            }
+            MeshEmbeddedImage entry;
+            entry.ImageIndex = imageIndex;
+            entry.Roles = static_cast<uint8_t>(role);
+            entry.Format = AnsiString(textureFormat);
+            entry.LogicalPath = AnsiString(logicalPath) + ".img" + FormatInteger(imageIndex) +
+                (image.GetMime() == Gltf::DataUriMime::Png ? ".png" : ".jpg");
+            if (!ValidateRelativePath(entry.LogicalPath, "embedded image logical path", error))
+            {
+                return false;
+            }
+            const auto bytes = image.GetBytes(buffers);
+            const bool bBorrowGlb = image.GetKind() == Gltf::ImageSourceKind::BufferView &&
+                buffers.GetSourceKind(image.GetBufferIndex()) == Gltf::BufferStorageKind::GlbBin;
+            if (!entry.SetBytes(bytes, bBorrowGlb))
+            {
+                error = "embedded image bytes are empty or invalid";
+                return false;
+            }
+            entry.SourceHash = Core::Asset::ComputeAssetPackagePayloadHash(bytes.data(), bytes.size());
+            outReference = entry.LogicalPath;
+            embeddedImages.push_back(std::move(entry));
+            return true;
         }
 
         bool ResolveMaterialReferences(const JsonValue& root, const PrimitiveInfo& primitive, AnsiStringView logicalPath,
+                                       const Gltf::BufferSet& buffers, VariableArray<MeshEmbeddedImage>& embeddedImages,
                                        MaterialReferences& outReferences, AnsiString& error)
         {
             outReferences = {};
@@ -1000,7 +1048,7 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             if (!ResolveTextureReference(root, material.FindMember("normalTexture"), logicalPath, "normal",
-                                         outReferences.Normal, error))
+                                         MeshImageRole::Normal, buffers, embeddedImages, outReferences.Normal, error))
             {
                 return false;
             }
@@ -1017,9 +1065,9 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             return ResolveTextureReference(root, pbr.FindMember("baseColorTexture"), logicalPath, "albedo",
-                                           outReferences.Albedo, error) &&
+                                           MeshImageRole::Albedo, buffers, embeddedImages, outReferences.Albedo, error) &&
                    ResolveTextureReference(root, pbr.FindMember("metallicRoughnessTexture"), logicalPath, "ARM",
-                                           outReferences.Arm, error);
+                                           MeshImageRole::Arm, buffers, embeddedImages, outReferences.Arm, error);
         }
 
         BoundsSphere CalculateBounds(const VariableArray<MeshVertexPnt>& vertices)
@@ -1601,11 +1649,17 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
+            MeshCookResult result;
             MaterialReferences materialReferences;
-            if (!ResolveMaterialReferences(root, primitive, logicalPath, materialReferences, error))
+            if (!ResolveMaterialReferences(root, primitive, logicalPath, buffers, result.EmbeddedImages, materialReferences, error))
             {
                 return false;
             }
+
+            std::sort(result.EmbeddedImages.begin(), result.EmbeddedImages.end(), [](const auto& left, const auto& right)
+            {
+                return left.ImageIndex < right.ImageIndex;
+            });
 
             VariableArray<MeshCluster> coarseClusters;
             VariableArray<uint32_t> coarseIndices;
@@ -1628,7 +1682,6 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            MeshCookResult result;
             if (!BuildNvmeshBytes(vertices, finalClusters, finalIndices, materialReferences, result.NvmeshBytes, error))
             {
                 return false;
@@ -1983,6 +2036,62 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
     } // namespace
+
+    MeshEmbeddedImage& MeshEmbeddedImage::operator=(const MeshEmbeddedImage& other)
+    {
+        if (this != &other)
+        {
+            MeshEmbeddedImage candidate(other);
+            Swap(candidate);
+        }
+        return *this;
+    }
+    void MeshEmbeddedImage::Swap(MeshEmbeddedImage& other) noexcept
+    {
+        std::swap(ImageIndex, other.ImageIndex);
+        std::swap(Roles, other.Roles);
+        std::swap(LogicalPath, other.LogicalPath);
+        std::swap(Format, other.Format);
+        std::swap(SourceHash, other.SourceHash);
+        m_OwnedBytes.swap(other.m_OwnedBytes);
+        std::swap(m_BorrowedBytes, other.m_BorrowedBytes);
+    }
+    bool MeshEmbeddedImage::SetBytes(Core::Container::Span<const uint8_t> bytes, bool bBorrow)
+    {
+        if (bytes.empty() || bytes.data() == nullptr)
+        {
+            return false;
+        }
+        if (bBorrow)
+        {
+            // 自己所有bytesを借用へ切り替えると解放後にdanglingになるため拒否する。
+            const auto begin = reinterpret_cast<uintptr_t>(bytes.data());
+            const auto owned = reinterpret_cast<uintptr_t>(m_OwnedBytes.data());
+            if (!m_OwnedBytes.empty() &&
+                (begin >= owned ? begin - owned < m_OwnedBytes.size() : owned - begin < bytes.size()))
+            {
+                return false;
+            }
+            Core::Container::VariableArray<uint8_t> empty;
+            m_OwnedBytes.swap(empty);
+            m_BorrowedBytes = bytes;
+        }
+        else
+        {
+            Core::Container::VariableArray<uint8_t> candidate(bytes.begin(), bytes.end());
+            m_OwnedBytes.swap(candidate);
+            m_BorrowedBytes = {};
+        }
+        return true;
+    }
+    Core::Container::Span<const uint8_t> MeshEmbeddedImage::GetBytes() const noexcept
+    {
+        return IsBorrowed() ? m_BorrowedBytes : Core::Container::Span<const uint8_t>(m_OwnedBytes.data(), m_OwnedBytes.size());
+    }
+    bool MeshEmbeddedImage::IsBorrowed() const noexcept
+    {
+        return !m_BorrowedBytes.empty();
+    }
 
     bool IsSupportedMeshCookFormat(NorvesLib::Core::Container::AnsiStringView format) noexcept
     {

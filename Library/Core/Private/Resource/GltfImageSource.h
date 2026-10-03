@@ -46,6 +46,8 @@ namespace NorvesLib::Core::Gltf
         void Swap(ImageSource& other) noexcept;
         ImageSourceKind GetKind() const noexcept;
         DataUriMime GetMime() const noexcept;
+        // bufferView以外は無効indexを返す。
+        size_t GetBufferIndex() const noexcept;
         Container::Span<const uint8_t> GetExternalUri() const noexcept;
         // bufferViewはResolveに渡した同じ内容のbuffersが必要。返却viewより長く保持すること。
         // data URIの返却viewはこのImageSourceへ借用し、file URIでは空を返す。

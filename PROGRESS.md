@@ -457,3 +457,6 @@
 
 - G2-GR77-IMAGE-SOURCE: file URI/data URI/bufferView画像を共有解決。path/data bytesは所有、viewはbuffer index/offset/lengthだけを保持して宣言範囲へ再bindし、自己SpanとBINコピーを避ける。MIME/既知重複/排他/型/安全整数/範囲と失敗clear、copy→swapを固定。第1周で画像viewのbyteStride黙認を指摘され、値/null/重複を全拒否する存在検査と負例を追加、第2周PASS。外部URIとdata URIのcopy/move所有、BufferSet寿命を試験へ登録。実range helper通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/Werror/MEMBERとmove特性成功。40JSON fixture文法/PNGJPEG prefix既知bytes確認。JsonDocument/native試験はWindows.hでcompile停止し、画像decode/消費経路は未検証。
 - Next: GR77静的cookerのEmbeddedImagesと材質参照を接続し、GLB借用とlocal buffer由来画像の所有を区別する。その後Mainのmodel+texture packageとmanifest更新、loose/skeletalへ進む。
+
+- G2-GR77-COOK-IMAGES: 静的cookerの材質をImageSourceへ接続し、imageIndex順のEmbeddedImagesへ仮想path・role/format・画像hashを保持。GLBだけ借用、外部/data URI buffer内imageと直接data URIは画像部分を結果所有し、local BufferSet破棄後のdanglingを防ぐ。copy→swap/自己所有領域の借用拒否、同format重複統合/srgb-linear衝突拒否。GLB入力はoutResult自身に所有させない契約を明記。実1pxPNGをstbでdecode成功、JSON23fragmentと174byte画像buffer fixture整合、実range3mode回帰成功。nativeにはpayload/3role/所有copy-move/画像hash/失敗全出力保持/JPEG pathを登録したがWindows.hでcompile停止、実行未確認。独立第2周PASS。Mainはpackage接続前のためEmbeddedImagesを出力書込前に拒否し、未生成textureへの参照を成功packageにしない。
+- Next: GR77のMain model+N texture packageとmanifest一括統合を実装してguardを置換する。skeletal/looseは後続、GR77全体は未完。

@@ -1832,8 +1832,15 @@
 - notes: MeshCookResultへの寿命移譲、Mainのmodel+texture出力/manifest一括更新、loose staging接続は後続タスク。GR77完了とは分ける。
 
 ## G2-GR77-COOK-IMAGES: 静的cookerの埋込み画像を結果へ保持する
-- status: todo
+- status: done
 - done-when: GltfImageSourceからPNG/JPEGを材質roleごとに解決し、決定的な仮想pathとsrgb/linear formatをNVMESH参照とEmbeddedImagesへ保存する。GLB画像は元sourceへ借用し、cookerローカルBufferSet/data URIの画像は結果側が所有する。同一画像の互換roleは重複させず、色空間衝突は明示拒否する。
 - verify: 外部imageの参照のみ経路維持、GLB/data URI/外部buffer内imageの寿命、決定path/format/重複と衝突、失敗出力不変を既存束へ登録。実行可能範囲とnative未検証を明記する。
 - stop-when: BIN全体コピー、局所所有bytesへのdangling Span、既存外部画像の無条件実読込、material既定変更、Main出力まで完了と誤認する。
 - notes: Mainのmodel+N texture package/manifest一括更新は別タスク。現行albedo/normal/ARMのみ接続し、occlusion/emissiveの描画仕様を勝手に増やさない。
+
+## G2-GR77-PACKAGE-IMAGES: モデルと埋込みtextureを一括出力する
+- status: todo
+- done-when: MainでEmbeddedImagesを既存texture cookerへ渡しmodel+N個の単一entry packageを作る。既存manifestを任意のAssetCookedReference群で統合し、無関係entry/骨格metadataを保持する。全候補の変換とpackage検証後にmanifestを1回更新し、model-only拒否guardを置換する。
+- verify: 小GLBのmodel1+texture3、role format/path/hash、全AssetSystem解決、同key更新/無関係entry維持/重複拒否、失敗時manifest非更新を既存smoke方式へ追加。旧外部画像なし経路とaudioの回帰を固定し、native未検証を明記する。
+- stop-when: 多entry NVPKG形式への変更、materialの未承認既定変更、未生成textureを参照するmodelだけを成功出力、formatをmanifest keyと誤認する。
+- notes: GR111の多entry形式は導入しない。model外部画像の既存single出力は保持し、manifest keyはlogicalPath/kind/variant。texture参照のdefault variantを守る。

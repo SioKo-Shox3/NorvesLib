@@ -1978,6 +1978,13 @@ namespace
             return false;
         }
 
+        // モデル単独出力では埋込み画像への参照を満たせないため、書込み前に拒否する。
+        if (!meshResult.EmbeddedImages.empty())
+        {
+            error = "model-only output cannot package embedded images";
+            return false;
+        }
+
         // Single conversion at the package boundary: MeshCooker exposes NorvesLib containers,
         // the package/manifest writers below still take std::vector payloads.
         const std::vector<uint8_t> nvmeshBytes(meshResult.NvmeshBytes.begin(), meshResult.NvmeshBytes.end());
