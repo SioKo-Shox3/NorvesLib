@@ -7,6 +7,7 @@
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
 #include "Resource/SkeletalGltfDecode.h"
 #include "Resource/SkeletalLimits.h"
+#include "Resource/SkeletalInfluenceAttributes.h"
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
 #include "Resource/GltfDocumentProfile.h"
@@ -1856,6 +1857,16 @@ namespace NorvesLib::Tools::AssetCook
             {
                 error = "skeletal import supports only uniform scale/fit; axes, mirror, origin and mesh changes are unsupported";
                 return false;
+            }
+            if (format==SupportedSkeletalFormat)
+            {
+                const auto attributes=root.FindMember("meshes").GetArrayElement(0).FindMember("primitives").GetArrayElement(0).FindMember("attributes");
+                const auto strict=Core::Skeletal::ValidateStrictInfluenceAttributes(attributes);
+                if (strict!=Core::Skeletal::StrictInfluenceStatus::Success)
+                {
+                    error="skeletal strict influences rejected: status="+FormatInteger(static_cast<int>(strict));
+                    return false;
+                }
             }
             ModelCookFingerprint result;
             if (format==SupportedMeshFormat)

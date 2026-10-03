@@ -826,6 +826,40 @@ namespace
                 assert(result.VertexCount == externalCook.VertexCount && result.IndexCount == externalCook.IndexCount &&
                     result.JointCount == externalCook.JointCount && result.ClipCount == externalCook.ClipCount);
             }
+            Container::AnsiString errorForExtra;
+            // 旧版が黙認した追加セットをraw/legacy/cook前照合/本cookの全入口で拒否する。
+            const size_t attributesStart=text.find("\"attributes\": {");
+            assert(attributesStart!=Container::AnsiString::npos);
+            const size_t insert=attributesStart+std::strlen("\"attributes\": {");
+            const auto retainedExtraPayload=externalCook.NvskelBytes;
+            const auto retainedExtraHash=externalCook.SourceHash;
+            for (const char* extra : {"\"JOINTS_1\":3,", "\"WEIGHTS_7\":5,", "\"JOINTS_1\":null,",
+                "\"JOINTS_4294967295\":3,", "\"JOINTS_1\":3,\"WEIGHTS_1\":5,"})
+            {
+                const Container::AnsiString extraText=Container::AnsiString(text.substr(0,insert))+extra+Container::AnsiString(text.substr(insert));
+                const auto extraBytes=TextBytes(extraText);
+                assert(Skeletal::DecodeSkeletalGltf(extraBytes,fixture.Path(),&sources).Status==
+                    Skeletal::SkeletalGltfDecodeStatus::InfluenceLimitExceeded && sources.GetCount()==0);
+                assert(Skeletal::DecodeSkeletalGltf(CoreText(extraText),fixture.Path(),&legacySources).Status==
+                    Skeletal::SkeletalGltfDecodeStatus::InfluenceLimitExceeded && legacySources.empty());
+                NorvesLib::Tools::AssetCook::ModelCookFingerprint fingerprint;
+                fingerprint.SourceHash=123;
+                assert(!NorvesLib::Tools::AssetCook::FingerprintModelCookSource(extraBytes.data(),extraBytes.size(),
+                    "nvskel.v0.skinned.pnujiw.u32",sourcePath,"Models/rig.gltf",fingerprint,errorForExtra));
+                assert(fingerprint.SourceHash==123);
+                assert(!cook(extraBytes,externalCook) && externalCook.SourceHash==retainedExtraHash && externalCook.NvskelBytes==retainedExtraPayload);
+            }
+            const Container::AnsiString customText=Container::AnsiString(text.substr(0,insert))+"\"_JOINTS_1\":3,"+Container::AnsiString(text.substr(insert));
+            const auto custom=Skeletal::DecodeSkeletalGltf(TextBytes(customText),fixture.Path());
+            assert(custom.Succeeded()); AssertEquivalent(custom.Data,loose.Data);
+            const auto zeroExtraText=ReadFixtureJson(ToCorePath(FindFixtureRoot()/"ExtraZeroInfluences.gltf"));
+            ByteArray zeroExtraBinary=binary; zeroExtraBinary.resize(464,0);
+            WriteFixtureBytes(fixture.Root/"extra_zero.bin",zeroExtraBinary);
+            const auto zeroExtraGlb=MakeSkeletalGlb(ChangeBufferUri(zeroExtraText,""),zeroExtraBinary);
+            assert(Skeletal::DecodeSkeletalGltf(zeroExtraGlb,fixture.Path()).Status==
+                Skeletal::SkeletalGltfDecodeStatus::InfluenceLimitExceeded);
+            assert(!cook(zeroExtraGlb,externalCook) && externalCook.SourceHash==retainedExtraHash && externalCook.NvskelBytes==retainedExtraPayload);
+
             Container::AnsiString errorForImport;
             // source隣sidecarをraw/legacy/loose/cookerで同じsnapshotとして適用する。
             auto sidecar = fixture.Root / "ValidU8Float.gltf.import.json";

@@ -1,5 +1,6 @@
 ﻿#include "Resource/SkeletalGltfDecode.h"
 #include "Resource/SkeletalLimits.h"
+#include "Resource/SkeletalInfluenceAttributes.h"
 
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
@@ -810,6 +811,13 @@ namespace NorvesLib::Core::Skeletal
             if (!attributes.IsObject())
             {
                 outStatus = SkeletalGltfDecodeStatus::InvalidDocument;
+                return false;
+            }
+            const auto influences=ValidateStrictInfluenceAttributes(attributes);
+            if (influences!=StrictInfluenceStatus::Success)
+            {
+                outStatus=influences==StrictInfluenceStatus::AdditionalSet ?
+                    SkeletalGltfDecodeStatus::InfluenceLimitExceeded : SkeletalGltfDecodeStatus::InvalidAccessor;
                 return false;
             }
             if (!TryReadRequiredUInt32(attributes, "POSITION", outPrimitive.Position) ||

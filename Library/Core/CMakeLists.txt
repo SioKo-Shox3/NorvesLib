@@ -168,6 +168,8 @@ set(PRIVATE_SOURCES
     Private/Resource/MaterialResource.cpp
     Private/Resource/GLTFAnalyzer.cpp
     Private/Resource/SkeletalGltfDecode.cpp
+    Private/Resource/SkeletalInfluenceAttributes.h
+    Private/Resource/SkeletalInfluenceAttributes.cpp
     Private/Resource/GltfAccessorRange.h
     Private/Resource/ImportTransform.h
     Private/Resource/ImportTransform.cpp

@@ -532,3 +532,6 @@
 
 - G2-S1-S4-DECISIONS: 作者の2026-10-03承認を記録。S4 A（Strict追加セット拒否/4本縮約/LINEAR焼込/morph明示drop/256はv1）とS1 A（0.2統一→v1）を確定。オオカミ/シ者の作り分け/共通土台張り直しを採用済みとしていた前提を未定へ訂正。v1 clip作成時rest保持、現在骨格との束縛時比較、許容超過既定拒否、明示許可と差量報告、全関節Translation回帰を必須契約へ追加。SkeletonIdだけでcache共有しない点も反映。ローカルPlans3本と追跡仕様/選定taskを照合し、追加auditでblocking誤記なし。他選定は未確定のまま。
 - Next: GR86 Strictの追加ウェイトセット黙認をまず拒否する。cook前fingerprintも同じ検査を共有し、過去cache経由で新Strict拒否を迂回させない。
+
+- G2-GR86-STRICT-INFLUENCES: 承認済みStrict変更としてJOINTS_n/WEIGHTS_nの追加セットを値/片側/null/ゼロに依らずInfluenceLimitExceededで拒否。属性名の正準/overflow/customを分類し、実decodeとcook前fingerprintで同一Json gateを共有して旧cacheのskip迂回も防ぐ。status末尾15のみ追加し既存0〜14、128関節、64B頂点、NVSKEL形式は維持。分類実装を通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBER compileで成功、独立PASS。追加重みゼロの正規fixtureとraw/legacy/cooker/preflight/CLI出力保持をnative登録。Json/decode/nativeはWindows.hで未実行。
+- Next: 同一joint合算・決定的な上位4本・脱落量/閾値・失敗保持を備える縮約kernelを独立実装し、その後明示Reduce optionにだけ接続する。

@@ -106,7 +106,8 @@ namespace NorvesLib::Core::Skeletal
         JointLimitExceeded,
         InvalidSkeleton,
         InvalidAnimation,
-        UnsupportedSparseAccessor
+        UnsupportedSparseAccessor,
+        InfluenceLimitExceeded
     };
 
     struct SkeletalGltfDecodeResult

@@ -402,6 +402,20 @@ namespace
 
             const Container::String valid = ReadText(Root / "ValidU8Float.gltf");
             const Container::String validU16Weights = ReadText(Root / "ValidU8Unorm16.gltf");
+            Copy(sourceRoot,"ExtraZeroInfluences.gltf");
+            ByteArray extraZero=BuildFixtureBuffer();
+            extraZero.resize(464,0);
+            WriteBytes(Root/"extra_zero.bin",extraZero);
+            const char* extraNames[]={"ExtraJoints.gltf","ExtraWeights.gltf","ExtraPair.gltf","ExtraHighIndex.gltf","MalformedInfluence.gltf"};
+            const char* extraFields[]={"\"JOINTS_1\":3,","\"WEIGHTS_1\":5,","\"JOINTS_1\":3,\"WEIGHTS_1\":5,",
+                "\"JOINTS_4294967295\":3,","\"JOINTS_01\":3,"};
+            for (size_t index=0;index<5;++index)
+            {
+                Container::String extra=valid;
+                ReplaceOnce(extra,"\"attributes\": {",Container::String("\"attributes\":{")+Container::String(extraFields[index]));
+                WriteText(Root/extraNames[index],extra);
+            }
+
 
             Container::String malformed = valid;
             ReplaceAfter(malformed, "\"bufferView\": 3", "\"count\": 3", "\"count\": 4");
@@ -756,6 +770,14 @@ int main()
     ExpectReject(fixture, "MalformedAccessor.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidAccessor);
     ExpectReject(fixture, "FractionalAccessorCount.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidAccessor);
     ExpectReject(fixture, "SparseAccessor.gltf", Skeletal::SkeletalGltfDecodeStatus::UnsupportedSparseAccessor);
+    static_assert(static_cast<uint8_t>(Skeletal::SkeletalGltfDecodeStatus::UnsupportedSparseAccessor)==14);
+    static_assert(static_cast<uint8_t>(Skeletal::SkeletalGltfDecodeStatus::InfluenceLimitExceeded)==15);
+    for (const char* name : {"ExtraZeroInfluences.gltf","ExtraJoints.gltf","ExtraWeights.gltf","ExtraPair.gltf","ExtraHighIndex.gltf"})
+    {
+        ExpectReject(fixture,name,Skeletal::SkeletalGltfDecodeStatus::InfluenceLimitExceeded);
+    }
+    ExpectReject(fixture,"MalformedInfluence.gltf",Skeletal::SkeletalGltfDecodeStatus::InvalidAccessor);
+
     ExpectReject(fixture, "OutOfRangeJoint.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
     ExpectReject(fixture, "TwoSkins.gltf", Skeletal::SkeletalGltfDecodeStatus::UnsupportedSkinCount);
     ExpectReject(fixture, "TwoPrimitives.gltf", Skeletal::SkeletalGltfDecodeStatus::UnsupportedPrimitiveCount);

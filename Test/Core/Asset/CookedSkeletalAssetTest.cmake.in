@@ -351,6 +351,29 @@ file(APPEND "${SOURCE_BIN}" "extra")
 expect_skeletal_skip(FALSE)
 expect_skeletal_skip(TRUE)
 
+# cache照合へ進む前に、Strict追加セットを拒否して既存出力を保持する。
+set(EXTRA_GLTF "${SMOKE_DIR}/Source/extra-influences.gltf")
+file(READ "${SOURCE_GLTF}" extra_json)
+string(REPLACE "\"JOINTS_0\": 3" "\"JOINTS_1\":3,\"JOINTS_0\":3" extra_json "${extra_json}")
+file(WRITE "${EXTRA_GLTF}" "${extra_json}")
+file(SHA256 "${SMOKE_DIR}/RuntimeRoot/Cooked/disabled.nvpkg" extra_package_before)
+file(SHA256 "${SMOKE_DIR}/RuntimeRoot/disabled.json" extra_manifest_before)
+execute_process(COMMAND "${ASSET_COOK_EXE}"
+    --input "${EXTRA_GLTF}" --out "${SMOKE_DIR}/RuntimeRoot/Cooked/disabled.nvpkg"
+    --manifest "${SMOKE_DIR}/RuntimeRoot/disabled.json" --logical "${LOGICAL_PATH}" --kind model
+    --entry "${ENTRY_NAME}" --entry-type Skl0 --format nvskel.v0.skinned.pnujiw.u32 --variant default
+    --no-sidecar --skip-if-unchanged
+    RESULT_VARIABLE extra_result OUTPUT_VARIABLE extra_output ERROR_VARIABLE extra_error)
+string(FIND "${extra_error}" "skeletal strict influences rejected" extra_reason)
+if(extra_result EQUAL 0 OR extra_reason EQUAL -1)
+    message(FATAL_ERROR "Strict extra influences bypassed preflight: ${extra_output} ${extra_error}")
+endif()
+file(SHA256 "${SMOKE_DIR}/RuntimeRoot/Cooked/disabled.nvpkg" extra_package_after)
+file(SHA256 "${SMOKE_DIR}/RuntimeRoot/disabled.json" extra_manifest_after)
+if(NOT extra_package_before STREQUAL extra_package_after OR NOT extra_manifest_before STREQUAL extra_manifest_after)
+    message(FATAL_ERROR "Strict extra influence rejection modified prior output")
+endif()
+
 message(STATUS "${unit_stdout}")
 message(STATUS "${cook_stdout}")
 message(STATUS "${package_stdout}")

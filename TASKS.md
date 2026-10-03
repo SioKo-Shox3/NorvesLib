@@ -2011,7 +2011,7 @@
 - stop-when: rest pose不一致をSkeletonId一致だけで許可する、未定の造形/共有案を採用済みへ戻す。
 
 ## G2-GR86-STRICT-INFLUENCES: 追加ウェイトセットの黙認を拒否する
-- status: todo
+- status: done
 - done-when: StrictのJOINTS_n/WEIGHTS_n（n>=1）を専用InfluenceLimitExceededで拒否し、既存status値と通常4影響入力の挙動を保つ。
 - verify: 属性名分類の純試験、JOINTS_1/WEIGHTS_1有無/値/片側/大きいn/不正名、raw/legacy/cookerの拒否と出力保持を登録する。
 - stop-when: 未実装Reduce optionの受理、関節上限/頂点ABI/形式変更、既存status番号の変動。
@@ -2022,3 +2022,9 @@
 - verify: 同名同階層・異なるrest、全関節Translationを含む古いclip、許容内/外/明示許可/q符号同値、欠落/不正snapshot、cook/parse/bind往復。
 - stop-when: SkeletonIdからrestを除いたことを無条件互換と扱う、古いclipの歪みを黙認する。
 - notes: 作者承認済みのStage B必須要件。blocked理由はv1形式とStage A等の前提待ちで、作者の再承認待ちではない。
+
+## G2-GR86-REDUCE-KERNEL: 4影響への決定的な縮約を実装する
+- status: todo
+- done-when: 全影響の有限/非負/関節範囲/総和を検査し、同一関節をまとめ、重み降順/同値joint番号順で4本を選び正規化する。脱落量・警告・許容超過を返し、失敗時vertex出力保持。
+- verify: 5影響既知値、同一joint合算、入力順置換、同重みtie、微小重み、ゼロ/負/非有限/不正joint/総和、閾値境界、出力保持/aliasを純試験で検証する。
+- stop-when: glTF正規化整数のraw総和検査を省く接続、未検証kernelのdecode適用、Strict/頂点ABI/形式の変更。
