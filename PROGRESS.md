@@ -583,3 +583,6 @@
 
 - G2-GR86-VALIDATION: 公開実装b2aa6ffの8 portable試験をg++14.2.0で再ビルドし通常/O2-NDEBUG/ASan・UBSanの計24実行成功（LSan除外）。実InvokeBundledMainを含む8 MEMBER wrapper compileとJSON各18件・計54件の独立構文/意味照合も成功。GR86ImportValidation.mdに実装済み前半、native/実物/GPU未実行、数値条件・morph制限、v1待ち256を分離して記録。独立監査で過大主張なし。0.2は計画中と明示した。
 - Next: S3(a)/S7回答待ちの間、GR32/GR82の形式移行とauthoring rest保持の変更箇所を読み取りで棚卸しする。機能実装/新wireの適用は先取りしない。
+
+- G2-GR32-GR82-MIGRATION-INVENTORY: 現行minor0/1・256B、1primitive/1clip、cooker/loader/resource/component/起動側の単一clip依存を実ソースで棚卸しした。NVSKELMigrationInventory.mdへ統一0.2への変更境界と旧版/中間/Stage A試験、v1作成時restの現在の欠落箇所・取得→変換→cook→parse→bind→reloadの追跡と必須拒否/明示許可試験を整理。コード/wire/受理契約は未変更。S3(a)/S7とARM/emissive/S5/S6を未決のまま維持した。
+- Next: 現G2の自律的に進められる実装/準備は一区切り。S3(a)/S7の回答後にGR32/GR79/GR82の次taskを具体化する。未実行native/実物、surface保留、v1 rest guardは引き続き未完として保持する。
