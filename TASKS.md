@@ -359,7 +359,7 @@
 - notes: 2026-10-03 ユーザーの指摘（石のタイルが4Kのはずなのに近づくと粗い）から調べて分かった。`.harness/runs/startup-capture/SS-ACCEPT/near-sun45.Game.log` で `cobblestone_floor_09_diff_4k.png data_size=67108864 mip_levels=1 mipgen_ms=0.000`。同期の経路（`LoadStbiBlobForCaller`）は `true` を渡すが、非同期・メインの描画の経路の3か所は `false`。2026-06-07 の分離（`dee9822`）からこの形で、意図した記録は無い。異方性フィルタ（x4）もミップが無いと効かない。危険地帯（アセットの読み込み）。評価者を通す。
 
 ## SS-CSM-MEGA-CASTERS: 太陽の影（CSM）にMegaGeometryを描く
-- status: todo
+- status: done
 - done-when: CSM の4枚のカスケードへ MegaGeometry（岩・小屋・今後の高ポリの球）を影のキャスターとして描く。カスケードごとにテクセルの大きさに見合う細かさのLOD（クラスタのLODの切り出しか、LOD0 をそのまま）を選び、選び方と三角形数を記録する。CSM の深度範囲に含める境界球が、実際に描くキャスターと一致する（backlog の FIX-CSM-MEGA-CASTER-BOUNDS を閉じる）。撮影の昼（45°）と夕（3°）で、小屋と岩の太陽の影が地面に落ち、影の縁にアクネ（縞）とピーターパン（接地部の浮き）が見えない（変更前後の拡大画像）。MegaGeometry の自己影（岩の窪み・小屋の軒）に縞が出ない。RelWithDebInfo の起動画面の1フレームのGPUの時間が16.6 ms以下のまま（`-GpuTimingFrames 600` の計測。ShadowMapPass の増分を記録）。検証シーンの golden が変わる場合は差の原因と妥当性を確かめて再承認する（任されている）。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest CascadedShadowLightMatricesTest -- /m:1`
@@ -1211,12 +1211,12 @@
 - notes: R7-O3の既知差4。朝・夕は1.07〜1.11倍。
 
 ## FIX-CSM-MEGA-CASTER-BOUNDS: CSMの遮蔽物の境界球にShadowMapPassが描かないMegaGeometryを含めない
-- status: backlog
+- status: done
 - done-when: CSMの深度範囲に含める境界球が、影の地図に実際に描く物体と一致する（MegaGeometryを影に描くまでは含めない、または描くようにする）。
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(DirectionalShadowLightMatricesTest|CascadedShadowLightMatricesTest)$"`
 - stop-when: MegaGeometryを影に描くかの判断が要る場合はユーザーへ戻す。
 - paths: Library/Core/Private/Rendering, Test/Core/Rendering
-- notes: `382489f`の評価のnon-blocking指摘。過大収集で深度範囲とPCSSの探索半径が広がるだけで、影は欠けない。
+- notes: `382489f`の評価のnon-blocking指摘。過大収集で深度範囲とPCSSの探索半径が広がるだけで、影は欠けない。2026-10-03 SS-CSM-MEGA-CASTERS で「描く」側で閉じた（CSMの深度範囲へ含めるMegaGeometryの境界球を、実際に描くキャスターの一覧から取る）。
 
 ## FIX-MEGAGEOMETRY-RECORD-TEST: RenderGraphCompileTestのMegaGeometryの記録の検査が落ちる原因を直す
 - status: backlog

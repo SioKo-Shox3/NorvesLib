@@ -436,6 +436,67 @@ namespace
         Expect(ResultIsFinite(withSun), "sky sun CSM result is finite");
     }
 
+    // カスケードごとにキャスターを省く判定は、影の地図のXYにかかる物を省かない（省くと影が欠ける）。
+    // 光源側へ遠く離れた物は深度範囲で拾うので省かず、横に外れた物だけを省く。
+    void TestCascadeCasterCullingKeepsCastersInsideShadowMap()
+    {
+        CoreContainer::VariableArray<LightProxy> lights;
+        lights.push_back(MakeDirectionalLight(SkySunLightId, 0.35f, -0.8f, 0.25f));
+        const CameraProxy camera = MakePerspectiveCamera();
+        const CascadedShadowMatrixResult result = BuildCascadedShadowLightMatrices(
+            &lights, camera, MakeDefaultCascadedShadowMatrixSettings());
+        Expect(result.bEnabled, "the culling test camera builds CSM");
+        if (!result.bEnabled)
+        {
+            return;
+        }
+
+        for (const CascadedShadowCascade& cascade : result.Cascades)
+        {
+            const NorvesLib::Math::Vector3 center = cascade.SnappedCenter;
+            Expect(CascadedShadowCascadeMayContainCaster(
+                       cascade, BoundingSphere{center.x, center.y, center.z, 0.5f}),
+                   "a caster at the cascade center is kept");
+
+            // 影の地図の隅（NDCで±0.99）にかかる小さな物も省かない。
+            const NorvesLib::Math::Matrix4x4 inverseViewProjection =
+                NorvesLib::Math::MatrixUtils::Inverse(cascade.Projection * cascade.View);
+            const NorvesLib::Math::Vector4 cornerClip =
+                inverseViewProjection * NorvesLib::Math::Vector4(0.99f, -0.99f, 0.5f, 1.0f);
+            const NorvesLib::Math::Vector3 corner(cornerClip.x / cornerClip.w,
+                                                  cornerClip.y / cornerClip.w,
+                                                  cornerClip.z / cornerClip.w);
+            Expect(CascadedShadowCascadeMayContainCaster(
+                       cascade, BoundingSphere{corner.x, corner.y, corner.z, 0.01f}),
+                   "a caster at the shadow map corner is kept");
+
+            const NorvesLib::Math::Vector3 towardLight = center - cascade.Direction * 500.0f;
+            Expect(CascadedShadowCascadeMayContainCaster(
+                       cascade, BoundingSphere{towardLight.x, towardLight.y, towardLight.z, 0.5f}),
+                   "a caster far toward the light over the cascade is kept");
+
+            const NorvesLib::Math::Vector3 side = NorvesLib::Math::VectorUtils::Normalize(
+                NorvesLib::Math::VectorUtils::Cross(cascade.Direction,
+                                                    NorvesLib::Math::Vector3(0.0f, 0.0f, 1.0f)));
+            const NorvesLib::Math::Vector3 outside = center + side * (cascade.Radius * 1.5f + 2.0f);
+            Expect(!CascadedShadowCascadeMayContainCaster(
+                       cascade, BoundingSphere{outside.x, outside.y, outside.z, 0.5f}),
+                   "a caster beside the cascade's square is culled");
+            Expect(CascadedShadowCascadeMayContainCaster(
+                       cascade, BoundingSphere{outside.x, outside.y, outside.z, cascade.Radius + 2.0f}),
+                   "a large caster reaching into the cascade is kept");
+        }
+
+        CascadedShadowCascade disabled = result.Cascades[0];
+        disabled.bEnabled = false;
+        Expect(!CascadedShadowCascadeMayContainCaster(disabled, BoundingSphere{0.0f, 0.0f, 0.0f, 1.0f}),
+               "a disabled cascade draws no caster");
+        Expect(!CascadedShadowCascadeMayContainCaster(
+                   result.Cascades[0],
+                   BoundingSphere{std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f, 1.0f}),
+               "non-finite caster bounds are not drawn");
+    }
+
     void TestSubtexelCameraMotionKeepsSnappedMatrices()
     {
         CoreContainer::VariableArray<LightProxy> lights;
@@ -480,6 +541,7 @@ int main()
     TestInvalidInputsFallBackToShadowOff();
     TestSkySunDrivesCsmBesideSceneDirectionalLight();
     TestEachCascadeCoversItsCameraSlice();
+    TestCascadeCasterCullingKeepsCastersInsideShadowMap();
     TestSubtexelCameraMotionKeepsSnappedMatrices();
 
     if (g_FailureCount != 0)
