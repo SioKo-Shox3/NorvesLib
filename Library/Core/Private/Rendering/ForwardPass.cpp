@@ -503,8 +503,15 @@ namespace NorvesLib::Core::Rendering
 
         if (m_bTransparentOnly)
         {
+            // SSRがあれば、その出力（照明・SSR・フォグの後の色）へ半透明を重ねる
             RGTextureHandle sceneColorHandle;
-            if (builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::SceneColor,
+            if (builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::SSRSceneColor,
+                                                    sceneColorHandle,
+                                                    RHI::AttachmentLoadOp::Load,
+                                                    RHI::AttachmentStoreOp::Store,
+                                                    RHI::ResourceState::RenderTarget,
+                                                    RHI::ResourceState::ShaderResource) ||
+                builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::SceneColor,
                                                     sceneColorHandle,
                                                     RHI::AttachmentLoadOp::Load,
                                                     RHI::AttachmentStoreOp::Store,

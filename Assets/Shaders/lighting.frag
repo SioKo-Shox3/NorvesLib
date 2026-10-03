@@ -86,6 +86,11 @@ layout(set = 0, binding = 11) readonly buffer NeuralBRDFWeights
 } neuralBRDF;
 
 layout(location = 0) out vec4 outColor;
+// SSRPass が環境光の鏡面反射を画面の反射へ置き換えるための出力。outIndirectSpecular は環境光の鏡面反射として
+// outColor へ足した値（露出後）、outSpecularReflectance はその反射率（鏡面の遮蔽込み、無次元、RGB）。
+// 環境光を求めない表示（デバッグ・検証の表示、空）では0のままで、SSRは何も足さない。
+layout(location = 1) out vec4 outIndirectSpecular;
+layout(location = 2) out vec4 outSpecularReflectance;
 
 // ========================================
 // PBR関連関数
@@ -744,6 +749,24 @@ vec3 EvaluateDiffuseEndpoint(vec3 irradiance,
            (1.0 - metallic) * (vec3(1.0) - Ed);
 }
 
+// 環境光の鏡面反射の反射率（split-sumのDFGに多重散乱の補償を掛けたもの。誘電体はF0=0.04、金属はalbedo）。
+// IBL・RTGIの鏡面の項と、SSRへ渡す反射率で同じ式を使う。
+vec3 EvaluateSpecularReflectance(vec3 albedo,
+                                 float metallic,
+                                 vec2 brdf)
+{
+    float Ess = max(brdf.x + brdf.y, 0.0001);
+    vec3 F0d = vec3(0.04);
+    vec3 F0c = albedo;
+    vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
+    vec3 CompC = vec3(1.0) + F0c * (1.0 - Ess) / Ess;
+    vec3 Ed = clamp((F0d * brdf.x + brdf.y) * CompD,
+                    vec3(0.0), vec3(1.0));
+    vec3 Ec = clamp((F0c * brdf.x + brdf.y) * CompC,
+                    vec3(0.0), vec3(1.0));
+    return (1.0 - metallic) * Ed + metallic * Ec;
+}
+
 vec3 EvaluateIblEndpoint(vec3 albedo,
                          float metallic,
                          float roughness,
@@ -756,16 +779,6 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
                          bool bUseDDGI,
                          vec3 ddgiIrradiance)
 {
-    float Ess = max(brdf.x + brdf.y, 0.0001);
-    vec3 F0d = vec3(0.04);
-    vec3 F0c = albedo;
-    vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
-    vec3 CompC = vec3(1.0) + F0c * (1.0 - Ess) / Ess;
-    vec3 Ed = clamp((F0d * brdf.x + brdf.y) * CompD,
-                    vec3(0.0), vec3(1.0));
-    vec3 Ec = clamp((F0c * brdf.x + brdf.y) * CompC,
-                    vec3(0.0), vec3(1.0));
-
     vec3 irradiance = bUseDDGI
         ? ddgiIrradiance
         : textureLod(diffuseIrradiance, EquirectangularUV(N), 0.0).rgb;
@@ -773,8 +786,7 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
 
     vec3 R = reflect(-V, N);
     vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
-    vec3 specularIBL = prefilteredColor *
-                       ((1.0 - metallic) * Ed + metallic * Ec);
+    vec3 specularIBL = prefilteredColor * EvaluateSpecularReflectance(albedo, metallic, brdf);
     if (bUseDDGI)
     {
         return diffuseIBL * diffuseAO + specularIBL * specularAO * iblIntensity;
@@ -797,19 +809,10 @@ vec3 EvaluateRTGIEndpoint(vec3 albedo,
     vec3 specular = vec3(0.0);
     if (params.bIBLEnabled != 0u)
     {
-        float Ess = max(brdf.x + brdf.y, 0.0001);
-        vec3 F0d = vec3(0.04);
-        vec3 F0c = albedo;
-        vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
-        vec3 CompC = vec3(1.0) + F0c * (1.0 - Ess) / Ess;
-        vec3 Ed = clamp((F0d * brdf.x + brdf.y) * CompD,
-                        vec3(0.0), vec3(1.0));
-        vec3 Ec = clamp((F0c * brdf.x + brdf.y) * CompC,
-                        vec3(0.0), vec3(1.0));
         vec3 R = reflect(-V, N);
         vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
         specular = prefilteredColor *
-                   ((1.0 - metallic) * Ed + metallic * Ec) *
+                   EvaluateSpecularReflectance(albedo, metallic, brdf) *
                    specularAO * iblIntensity;
     }
     return diffuse + specular;
@@ -1004,6 +1007,10 @@ bool TrySampleDDGIIrradiance(vec3 worldPosition,
 
 void main()
 {
+    // 環境光を求めずに返す表示では、SSRへ渡す出力は0のまま
+    outIndirectSpecular = vec4(0.0);
+    outSpecularReflectance = vec4(0.0);
+
     // GBufferからデータを取得
     vec4 albedoSample = texture(gbufferAlbedo, fragUV);
     vec4 normalSample = texture(gbufferNormal, fragUV);
@@ -1377,6 +1384,9 @@ void main()
     vec3 ambient = vec3(0.0);
     float specularAO = 1.0;
     float directSpecularAO = 1.0;
+    // ambient に含めた環境光の鏡面反射（露出前）と、その反射率（SSRへ渡す）
+    vec3 indirectSpecular = vec3(0.0);
+    vec3 indirectSpecularReflectance = vec3(0.0);
 
     if (!bValidationLambert && !bValidationPBR)
     {
@@ -1455,6 +1465,11 @@ void main()
                                        brdf,
                                        bDDGIAvailable,
                                        ddgiIrradiance);
+            // EvaluateIblEndpoint・EvaluateRTGIEndpoint の鏡面の項と同じ値（どちらも遮蔽と強度を掛ける）
+            indirectSpecularReflectance =
+                EvaluateSpecularReflectance(iblAlbedo, metallic, brdf) * specularAO;
+            indirectSpecular = SamplePrefilteredSpecular(reflect(-V, N), iblRoughness) *
+                               indirectSpecularReflectance * iblIntensity;
         }
         else
         {
@@ -1466,6 +1481,9 @@ void main()
             vec3 diffuseAmbient = kD_ambient * ambientLight * albedo;
             vec3 specularAmbient = F_ambient * ambientLight * (1.0 - roughness * 0.5);
             ambient = diffuseAmbient * diffuseAO + specularAmbient * specularAO;
+            // 一様な環境光の鏡面の項（RTGIへ置き換えると、強度0で鏡面の項は無くなる）
+            indirectSpecularReflectance = F_ambient * (1.0 - roughness * 0.5) * specularAO;
+            indirectSpecular = bRTGIAvailable ? vec3(0.0) : specularAmbient * specularAO;
             if (bRTGIAvailable)
             {
                 vec2 rtgiDfgCoordinate = clamp(vec2(NdotV, roughness),
@@ -1525,4 +1543,6 @@ void main()
     // 発光を読まない表示（純Lambert・直接PBRの検証）では emissive は0のまま。
     outColor = vec4(ApplySceneColorPreExposure(color) + ResolveGBufferEmissiveSceneColor(emissive),
                     outputAlpha);
+    outIndirectSpecular = vec4(ApplySceneColorPreExposure(indirectSpecular), 0.0);
+    outSpecularReflectance = vec4(clamp(indirectSpecularReflectance, vec3(0.0), vec3(1.0)), 0.0);
 }

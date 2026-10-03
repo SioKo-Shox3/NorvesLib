@@ -347,13 +347,22 @@ namespace NorvesLib::Core::Rendering
             m_CascadedShadowMapHandle = cascadedShadowMapHandle.ToResourceHandle();
         }
 
+        // SSRがあれば、その出力（照明の色の環境光の鏡面反射を画面の反射へ置き換えた色）へフォグを重ねる
         RGTextureHandle sceneColorHandle;
-        if (!builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::SceneColor,
-                                                 sceneColorHandle,
-                                                 RHI::AttachmentLoadOp::Load,
-                                                 RHI::AttachmentStoreOp::Store,
-                                                 RHI::ResourceState::RenderTarget,
-                                                 RHI::ResourceState::ShaderResource))
+        const bool bHasSceneColor =
+            builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::SSRSceneColor,
+                                                sceneColorHandle,
+                                                RHI::AttachmentLoadOp::Load,
+                                                RHI::AttachmentStoreOp::Store,
+                                                RHI::ResourceState::RenderTarget,
+                                                RHI::ResourceState::ShaderResource) ||
+            builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::SceneColor,
+                                                sceneColorHandle,
+                                                RHI::AttachmentLoadOp::Load,
+                                                RHI::AttachmentStoreOp::Store,
+                                                RHI::ResourceState::RenderTarget,
+                                                RHI::ResourceState::ShaderResource);
+        if (!bHasSceneColor)
         {
             m_SceneDepthHandle = {};
             m_SkyAtmosphereRadianceHandle = {};

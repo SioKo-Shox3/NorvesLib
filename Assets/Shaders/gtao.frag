@@ -25,7 +25,7 @@ layout(set = 0, binding = 2) uniform GTAOParams
     mat4 view;           // ワールド → ビュー（法線の変換に使う）
     vec4 screenSize;     // xy=寸法, zw=1/寸法
     vec4 radiusParams;   // x=半径(m), y=減衰を始める距離(m), z=減衰の幅(m), w=画面上の半径の上限(画素)
-    vec4 noiseParams;    // x=スライスの向きの時間のずらし, y=段の位置の時間のずらし, z=可視率の指数, w=未使用
+    vec4 noiseParams;    // x=スライスの向きのずらし, y=段の位置のずらし（SSAOPassは0に固定する）, z=可視率の指数, w=未使用
 } params;
 
 const float PI = 3.14159265358979;

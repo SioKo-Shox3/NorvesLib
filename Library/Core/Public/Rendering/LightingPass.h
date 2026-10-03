@@ -82,6 +82,9 @@ namespace NorvesLib::Core::Rendering
      * 出力:
      * - "SceneColor"       : HDRライティング結果 (R16G16B16A16_FLOAT)
      * - "SceneDepth"       : 深度のコピー（GBuffer_Depthのエイリアス）
+     * - "LightingIndirectSpecular"    : SceneColorへ足した環境光の鏡面反射（露出後、R16G16B16A16_FLOAT）
+     * - "LightingSpecularReflectance" : その反射率（鏡面の遮蔽込み、R8G8B8A8_UNORM）。SSRPassが
+     *                                   環境光の鏡面反射を画面の反射へ置き換えるのに使う
      *
      * ライトデータはSceneViewのLightProxyから収集してSSBOにパックします。
      */
@@ -177,6 +180,15 @@ namespace NorvesLib::Core::Rendering
         RHI::ITexture* GetSceneColorTexture() const { return m_SceneColorTexture.get(); }
         RGResourceHandle GetSceneColorHandle() const { return m_SceneColorHandle.ToResourceHandle(); }
 
+        /**
+         * @brief SceneColorへ足した環境光の鏡面反射（露出後）と、その反射率の出力
+         */
+        RGResourceHandle GetIndirectSpecularHandle() const { return m_IndirectSpecularHandle.ToResourceHandle(); }
+        RGResourceHandle GetSpecularReflectanceHandle() const
+        {
+            return m_SpecularReflectanceHandle.ToResourceHandle();
+        }
+
     private:
         friend struct DDGIProbeRayQueryVulkanTestAccess;
         friend struct RTGIDiffuseIndirectVulkanTestAccess;
@@ -199,12 +211,22 @@ namespace NorvesLib::Core::Rendering
         bool EnsureLightArrayBufferCapacity(uint32_t requiredLightCount);
         uint32_t GetLightArrayBufferSizeBytes() const;
 
+        // ライティングの描画先（MRTの3枚。順にシェーダーの出力 location 0・1・2）
+        struct LightingOutputTargets
+        {
+            RHI::TexturePtr SceneColor;
+            RHI::TexturePtr IndirectSpecular;
+            RHI::TexturePtr SpecularReflectance;
+        };
+
         uint32_t ResolveLightingWidth(const ViewRenderContext& context) const;
         uint32_t ResolveLightingHeight(const ViewRenderContext& context) const;
         bool CreateLightingResources(uint32_t width, uint32_t height, ViewRenderContext& context);
+        // 旧経路（RenderGraphを通らない）で使う、SceneColorと環境光の鏡面反射の出力を作る
+        bool CreateLegacyLightingOutputs(uint32_t width, uint32_t height, LightingOutputTargets& outTargets) const;
         bool PrepareLightingOutput(uint32_t width,
                                    uint32_t height,
-                                   const RHI::TexturePtr& sceneColorTexture,
+                                   const LightingOutputTargets& targets,
                                    bool bUseRenderGraphInitialState,
                                    ViewRenderContext& context);
         struct AttachmentSignature
@@ -224,6 +246,8 @@ namespace NorvesLib::Core::Rendering
         struct RenderPassSignature
         {
             AttachmentSignature SceneColor;
+            AttachmentSignature IndirectSpecular;
+            AttachmentSignature SpecularReflectance;
             bool bValid = false;
         };
 
@@ -233,12 +257,12 @@ namespace NorvesLib::Core::Rendering
                                        const RenderPassSignature& rhs) const;
         RenderPassSignature CreateLightingRenderPassSignature(uint32_t width,
                                                               uint32_t height,
-                                                              const RHI::TexturePtr& sceneColorTexture,
+                                                              const LightingOutputTargets& targets,
                                                               bool bUseRenderGraphInitialState) const;
         bool EnsureLightingRenderPass(const RenderPassSignature& signature);
         bool EnsureLightingFramebuffer(uint32_t width,
                                        uint32_t height,
-                                       const RHI::TexturePtr& sceneColorTexture);
+                                       const LightingOutputTargets& targets);
         bool CreateLightingDescriptorSet(RHI::DescriptorSetPtr& outDescriptorSet);
         bool EnsureLightingDescriptorSet();
         bool EnsureLightingPipeline();
@@ -275,7 +299,7 @@ namespace NorvesLib::Core::Rendering
                                  const RHI::TexturePtr& normalTexture,
                                  const RHI::TexturePtr& materialTexture);
         void RegisterOutputs(ViewRenderContext& context,
-                             const RHI::TexturePtr& sceneColorTexture,
+                             const LightingOutputTargets& targets,
                              const RHI::TexturePtr& depthTexture) const;
         bool TryEnqueueNativeTransitionPass(ViewRenderContext& context) const;
 
@@ -301,7 +325,11 @@ namespace NorvesLib::Core::Rendering
 
         // 出力テクスチャ（Device::CreateTextureで作成、自己所有）
         RHI::TexturePtr m_SceneColorTexture;
+        RHI::TexturePtr m_IndirectSpecularTexture;
+        RHI::TexturePtr m_SpecularReflectanceTexture;
         RGTextureHandle m_SceneColorHandle;
+        RGTextureHandle m_IndirectSpecularHandle;
+        RGTextureHandle m_SpecularReflectanceHandle;
         RGResourceHandle m_GBufferAlbedoHandle;
         RGResourceHandle m_GBufferNormalHandle;
         RGResourceHandle m_GBufferMaterialHandle;
@@ -460,6 +488,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bUsingRenderGraphResources = false;
         bool m_bRenderPassUsesRenderGraphInitialState = false;
         RHI::ITexture* m_FramebufferSceneColorTexture = nullptr;
+        RHI::ITexture* m_FramebufferIndirectSpecularTexture = nullptr;
+        RHI::ITexture* m_FramebufferSpecularReflectanceTexture = nullptr;
         uint32_t m_FramebufferWidth = 0;
         uint32_t m_FramebufferHeight = 0;
         RenderPassSignature m_RenderPassSignature;

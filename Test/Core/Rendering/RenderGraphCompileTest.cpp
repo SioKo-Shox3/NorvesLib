@@ -2808,7 +2808,9 @@ namespace
 
         assert(graph.Compile(context));
         assert(lightingPass.GetSceneColorHandle().IsValid());
-        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 9);
+        assert(lightingPass.GetIndirectSpecularHandle().IsValid());
+        assert(lightingPass.GetSpecularReflectanceHandle().IsValid());
+        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 11);
 
         bool bHasAlbedoRead = false;
         bool bHasNormalRead = false;
@@ -2817,6 +2819,8 @@ namespace
         bool bHasEmissiveRead = false;
         bool bHasSSAORead = false;
         bool bHasSceneColorWrite = false;
+        bool bHasIndirectSpecularWrite = false;
+        bool bHasSpecularReflectanceWrite = false;
         for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(lightingPassIndex); ++accessIndex)
         {
             RGResourceHandle resource;
@@ -2879,6 +2883,21 @@ namespace
                 assert(finalState == RHI::ResourceState::ShaderResource);
                 bHasSceneColorWrite = true;
             }
+            // SSRPassが読む環境光の鏡面反射とその反射率も、描画先として書いて読める状態で終える
+            if (resource == lightingPass.GetIndirectSpecularHandle())
+            {
+                assert(mode == RGAccessMode::Write);
+                assert(state == RHI::ResourceState::RenderTarget);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasIndirectSpecularWrite = true;
+            }
+            if (resource == lightingPass.GetSpecularReflectanceHandle())
+            {
+                assert(mode == RGAccessMode::Write);
+                assert(state == RHI::ResourceState::RenderTarget);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasSpecularReflectanceWrite = true;
+            }
         }
 
         assert(bHasAlbedoRead);
@@ -2888,6 +2907,8 @@ namespace
         assert(bHasEmissiveRead);
         assert(bHasSSAORead);
         assert(bHasSceneColorWrite);
+        assert(bHasIndirectSpecularWrite);
+        assert(bHasSpecularReflectanceWrite);
 
         const auto& order = graph.GetCompiledPassOrder();
         assert(order.size() == 3);
@@ -2896,7 +2917,7 @@ namespace
         assert(order[2] == lightingPassIndex);
 
         const auto& barriers = graph.GetCompiledBarriers();
-        assert(barriers.size() == 10);
+        assert(barriers.size() == 12);
         assert(barriers[8].Kind == RGBarrierKind::Texture);
         assert(barriers[8].BeforeState == RHI::ResourceState::Undefined);
         assert(barriers[8].AfterState == RHI::ResourceState::UnorderedAccess);
@@ -2907,6 +2928,14 @@ namespace
         assert(barriers[9].AfterState == RHI::ResourceState::RenderTarget);
         assert(barriers[9].PassIndex == lightingPassIndex);
         assert(barriers[9].CompiledOrderIndex == 2);
+        for (size_t i = 10; i < 12; ++i)
+        {
+            assert(barriers[i].Kind == RGBarrierKind::Texture);
+            assert(barriers[i].BeforeState == RHI::ResourceState::Undefined);
+            assert(barriers[i].AfterState == RHI::ResourceState::RenderTarget);
+            assert(barriers[i].PassIndex == lightingPassIndex);
+            assert(barriers[i].CompiledOrderIndex == 2);
+        }
     }
 
     void TestGBufferSSAOLightingNativeDeclareUsesNamedResourcesWithoutPassPointers()
@@ -2932,7 +2961,7 @@ namespace
         assert(ssaoPass.GetSSAOBlurredHandle().IsValid());
         assert(lightingPass.GetSceneColorHandle().IsValid());
         assert(graph.GetDeclaredPassAccessCount(ssaoPassIndex) == 4);
-        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 9);
+        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 11);
 
         auto hasShaderReadAccess = [&graph](uint32_t passIndex, RGResourceHandle expected) -> bool
         {
@@ -3002,7 +3031,7 @@ namespace
         const uint32_t lightingPassIndex = graph.AddPass(&lightingPass);
 
         assert(graph.Compile(context));
-        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 10);
+        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 12);
 
         bool bHasShadowMapRead = false;
         for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(lightingPassIndex); ++accessIndex)
@@ -3154,19 +3183,19 @@ namespace
         assert(order[3] == forwardPassIndex);
 
         const auto& barriers = graph.GetCompiledBarriers();
-        assert(barriers.size() == 12);
-        assert(barriers[10].Kind == RGBarrierKind::Texture);
-        assert(barriers[10].Resource == lightingPass.GetSceneColorHandle());
-        assert(barriers[10].BeforeState == RHI::ResourceState::ShaderResource);
-        assert(barriers[10].AfterState == RHI::ResourceState::RenderTarget);
-        assert(barriers[10].PassIndex == forwardPassIndex);
-        assert(barriers[10].CompiledOrderIndex == 3);
-        assert(barriers[11].Kind == RGBarrierKind::Texture);
-        assert(barriers[11].Resource == gbufferPass.GetDepthHandle());
-        assert(barriers[11].BeforeState == RHI::ResourceState::ShaderResource);
-        assert(barriers[11].AfterState == RHI::ResourceState::DepthRead);
-        assert(barriers[11].PassIndex == forwardPassIndex);
-        assert(barriers[11].CompiledOrderIndex == 3);
+        assert(barriers.size() == 14);
+        assert(barriers[12].Kind == RGBarrierKind::Texture);
+        assert(barriers[12].Resource == lightingPass.GetSceneColorHandle());
+        assert(barriers[12].BeforeState == RHI::ResourceState::ShaderResource);
+        assert(barriers[12].AfterState == RHI::ResourceState::RenderTarget);
+        assert(barriers[12].PassIndex == forwardPassIndex);
+        assert(barriers[12].CompiledOrderIndex == 3);
+        assert(barriers[13].Kind == RGBarrierKind::Texture);
+        assert(barriers[13].Resource == gbufferPass.GetDepthHandle());
+        assert(barriers[13].BeforeState == RHI::ResourceState::ShaderResource);
+        assert(barriers[13].AfterState == RHI::ResourceState::DepthRead);
+        assert(barriers[13].PassIndex == forwardPassIndex);
+        assert(barriers[13].CompiledOrderIndex == 3);
     }
 
     void TestSSRNativeDeclareDependencies()
@@ -3200,13 +3229,15 @@ namespace
 
         assert(graph.Compile(context));
         assert(ssrPass.GetSceneColorHandle().IsValid());
-        assert(graph.GetDeclaredPassAccessCount(ssrPassIndex) == 5);
+        assert(graph.GetDeclaredPassAccessCount(ssrPassIndex) == 7);
 
         bool bHasNormalRead = false;
         bool bHasMaterialRead = false;
         bool bHasDepthRead = false;
         bool bHasSceneColorRead = false;
         bool bHasOutputWrite = false;
+        bool bHasIndirectSpecularRead = false;
+        bool bHasSpecularReflectanceRead = false;
         for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(ssrPassIndex); ++accessIndex)
         {
             RGResourceHandle resource;
@@ -3247,6 +3278,21 @@ namespace
                 assert(finalState == RHI::ResourceState::ShaderResource);
                 bHasSceneColorRead = true;
             }
+            // 環境光の鏡面反射とその反射率（LightingPassの出力）をシェーダーから読む
+            if (resource == lightingPass.GetIndirectSpecularHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasIndirectSpecularRead = true;
+            }
+            if (resource == lightingPass.GetSpecularReflectanceHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasSpecularReflectanceRead = true;
+            }
             if (resource == ssrPass.GetSceneColorHandle())
             {
                 assert(mode == RGAccessMode::Write);
@@ -3261,6 +3307,8 @@ namespace
         assert(bHasDepthRead);
         assert(bHasSceneColorRead);
         assert(bHasOutputWrite);
+        assert(bHasIndirectSpecularRead);
+        assert(bHasSpecularReflectanceRead);
 
         const auto& order = graph.GetCompiledPassOrder();
         assert(order.size() == 5);
@@ -3773,7 +3821,7 @@ namespace
 
         assert(graph.Compile(context));
         assert(graph.GetDeclaredPassAccessCount(forwardPassIndex) == 2);
-        assert(graph.GetDeclaredPassAccessCount(ssrPassIndex) == 5);
+        assert(graph.GetDeclaredPassAccessCount(ssrPassIndex) == 7);
         assert(graph.GetDeclaredPassAccessCount(bloomPassIndex) == 2);
         assert(graph.GetDeclaredPassAccessCount(toneMappingPassIndex) == 2);
 
@@ -4184,7 +4232,10 @@ namespace
         exportedTexture.reset();
         assert(!result.TryGetTexture(RenderGraphResourceNames::SceneDepth, exportedTexture));
         assert(exportedTexture == nullptr);
-        assert(commandList.Barriers.size() == 10);
+        // 環境光の鏡面反射とその反射率は、SceneColorと同じ描画で書く（書き出さず、同じRenderGraphの中で読む）
+        assert(graphResources.GetTexture(lightingPass.GetIndirectSpecularHandle()));
+        assert(graphResources.GetTexture(lightingPass.GetSpecularReflectanceHandle()));
+        assert(commandList.Barriers.size() == 12);
         assert(commandList.BeginRenderPassCount == 4);
         assert(commandList.EndRenderPassCount == 4);
         assert(commandList.DrawCallCount == 3);
@@ -4845,7 +4896,7 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 4);
-        assert(commandList.Barriers.size() == 12);
+        assert(commandList.Barriers.size() == 14);
         assert(commandList.BeginRenderPassCount == 5);
         assert(commandList.EndRenderPassCount == 5);
         assert(commandList.DrawCallCount == 3);
@@ -4937,7 +4988,7 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 5);
-        assert(commandList.Barriers.size() == 14);
+        assert(commandList.Barriers.size() == 16);
         assert(commandList.BeginRenderPassCount == 6);
         assert(commandList.EndRenderPassCount == 6);
         assert(commandList.DrawCallCount == 4);
@@ -6030,7 +6081,8 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 1);
-        assert(commandList.Barriers.size() == 2);
+        // SceneColorと、SSRPassへ渡す環境光の鏡面反射・反射率の3枚を消して読める状態へ移す（反射率0でSSRは何も足さない）
+        assert(commandList.Barriers.size() == 4);
         assert(commandList.BeginRenderPassCount == 1);
         assert(commandList.EndRenderPassCount == 1);
         assert(commandList.DrawCallCount == 0);
@@ -6190,13 +6242,15 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 1);
-        assert(commandList.Barriers.size() == 2);
+        assert(commandList.Barriers.size() == 4);
         assert(commandList.BeginRenderPassCount == 1);
         assert(commandList.EndRenderPassCount == 1);
         assert(commandList.DrawCallCount == 0);
         assert(pendingFrameCommands.empty());
         assert(!sharedResources.HasTexture("SceneColor"));
         assert(!sharedResources.HasTexture("SceneDepth"));
+        assert(!sharedResources.HasTexture("LightingIndirectSpecular"));
+        assert(!sharedResources.HasTexture("LightingSpecularReflectance"));
 
         lightingPass.Shutdown();
         renderer.Shutdown();

@@ -6,6 +6,8 @@
 
 2026-10-03 続き（ブランチ `feature/startup-scene-detail`）: ユーザーの指摘（石のタイルが近づくと粗い）と要望（球をMegaGeometryで高ポリに）から、FIX-ASYNC-TEXTURE-MIPS → SS-CSM-MEGA-CASTERS → SS-MEGA-SPHERE → SS-MEGA-SPHERE-DISPLACE → SS-ACCEPT-DETAIL の順に進める。
 
+2026-10-03 続き2（ブランチ `fix/showcase-sphere-reflection-ao`）: ユーザーの指摘（金属の見本の球がカメラの角度によって一部透けて見え、同じ角度でも影のかかり方がちらつく）から、FIX-GTAO-STATIC-NOISE → FIX-SSR-SPECULAR-COMPOSITE を直す。
+
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## SS-CAPTURE: 起動画面を撮影して数値を出す経路を作る
@@ -469,6 +471,26 @@
 - done-when: 夜の近接視点で、大きな球の光源と反対側の明るさが60描画フレーム目と600描画フレーム目で物理的に説明できる範囲でそろう（原因が RTGI の履歴なら、間接光の大きさを光源側との比で確かめる）。原因と直し方を記録する。
 - paths: Library/Core/Private/Rendering, Assets/Shaders, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 2026-10-03 SS-ACCEPT-PERF で見つけた。近接・夜の球の反対側 / 光源側の8bit輝度は、60フレーム目の Debug・Release の撮影で 0.02〜0.03、600フレーム目の RelWithDebInfo の GPU 計測の撮影で 0.80〜0.84（`.harness/runs/20261003-181031/verify-SS-ACCEPT-PERF-14.txt`）。変更前（`b347eb7`）の `SS-ACCEPT-gpu-night` でも 0.48〜0.61 で、前からある。構成の違いかフレーム数の違いかはまだ切り分けていない。
+
+## FIX-GTAO-STATIC-NOISE: GTAOの雑音をフレームごとにずらさず、金属の球の鏡面の遮蔽のちらつきを止める
+- status: done
+- done-when: GTAOの雑音（スライスの向き・段の位置の4×4の並び）をフレームごとにずらさず、雑音除去の4×4の平均だけで均す。大きな球の自転を止めた（`NORVES_STARTUP_SPHERE_SPIN=0`）静止の視点 `-112,4,8.5` を4フレームおきに12枚撮り、各フレームの平均で正規化したフレーム間の平均絶対差（8bitの表示値）が、金属の見本の球（粗さ0.3・0.5・0.7）で変更前より25%以上小さく、地面で±10%に収まる。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/FIX-GTAO-STATIC-NOISE -Configuration RelWithDebInfo -ViewNames default -DefaultCamera -112,4,8.5 -StillRenderedFrames 90,94,98,102,106,110,114,118,122,126,130,134,150`（`NORVES_STARTUP_SPHERE_SPIN=0`）
+- paths: Library/Core/Private/Rendering/SSAOPass.cpp, Assets/Shaders/gtao.frag, TASKS.md, PROGRESS.md
+- notes: 金属の面の見た目はほぼ環境光の鏡面反射×鏡面の遮蔽（GTAOの可視率から求める）だけで、模様が無いのでTAAの近傍のクランプがGTAOのフレームごとの揺れを通す。鏡面の遮蔽からGTAOを外した撮影でもちらつきは同じ水準まで下がった（粗さ0.3で0.439→0.238）。接触影を切っても、RTGIを切っても球のちらつきは変わらなかった。
+- result: 2026-10-03 完了。フレーム間の平均絶対差は金属の粗さ0.3で0.439→0.239、0.5で0.361→0.246、0.7で0.349→0.259、粗さ0.1で0.233→0.224、地面0.329→0.329。最終画像の静止の差は平均0.19（8bit）で、AOの模様は見えない。検証シーンのgoldenはジッタを掛けないので、もともと雑音をずらしていない。
+
+## FIX-SSR-SPECULAR-COMPOSITE: SSRを環境光の鏡面反射の置き換えにし、金属の色と反射率を掛ける
+- status: done
+- done-when: LightingPass が、環境光の鏡面反射として SceneColor へ足した値（露出後）と、その反射率（鏡面の遮蔽込み、無次元、RGB）を別の出力に書き、SSRPass は当たった画素で `scene + a·(反射率·L_hit − 足した値)` にする（金属は反射率にalbedoの色が入る）。a は粗さ・距離・画面の端・厚さの余裕のなめらかな重みと強度の積。デバッグ表示・検証の表示（反射率0）ではSSRを足さない。視点 `-112,4,8.5` で、SSRが当たった金属の球の画素が金色を保ち（SSRの有無で差が出る画素の (R−B)/(R+G+B) がSSRなしの同じ画素の0.8倍以上）、輪郭のくっきりした地面の切り抜きが無いことを拡大画像で確かめる。Indoor/Outdoor のgoldenを回し、差がこの変更だけによるなら再承認する。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- stop-when: 照明パスの出力を増やすとRenderGraphの資源の寿命やレガシー経路の契約を崩す場合は、理由を記録して止める。
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders/lighting.frag, Assets/Shaders/ssr.frag, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 原因は `ssr.frag` が当たった画素で照明済みの色を `mix(scene, L_hit, alpha)` で置き換えていたこと。金属は `reflectStrength` が1になり alpha が約0.8（強度0.8）に達し、写った地面の色を金色を掛けずに入れるので、球の縁に地面の切り抜きが透けたように見える。外れた画素は空から作る環境マップ（金色が掛かる）のままで、当たり外れの境目がカメラの角度で動く。危険地帯（描画パスの構造）なので評価者を通す。
+- result: 2026-10-03 完了（`1129bfd`・`06fb327`・`7f3f34f`）。視点 `-112,4,8.5` でSSRの有無で差が出る金属の球の画素の (R−B)/(R+G+B) のSSRなしに対する比は、粗さ0.1・0.3・0.5で0.71→1.09、0.68→1.13、0.80→1.04。拡大画像で地面の切り抜きは消え、縁には金色の細い映り込みが残る。フレーム間の平均絶対差は粗さ0.3で0.239→0.213。評価者（Astra）の1周目の指摘（フォグ・半透明を重ねた後の色から減衰前の鏡面反射を引いていた）を受け、SSRを照明の直後（フォグ・半透明の前）へ移し、フォグ・半透明・被写界深度・動きぼけはSSRの出力へ重ねるようにした。RenderGraphCompileTest・Indoor/Outdoor golden pass（Outdoorは球の輪郭と接地部の陰の266画素の差を`Docs/RenderingValidation/R1Acceptance.md` に記録して再承認、Indoorは一致）。起動画面の朝・昼・夕の撮影（`startup-capture/FIX-SSR-SPECULAR-COMPOSITE/`）は平均輝度が前回の受入れより0.3〜1.8下がった（SSRの映り込みが反射率どおりの強さになった分）。反射に写る色は照明の色（フォグ・半透明を含まない）。評価者の2周目の指摘（フォグ・半透明がSSRの出力へ重なるのに、ViewはHDRのシーンの色として照明の直後の "Scene.Color" を取り、SceneColorのキャプチャからそれらが抜ける）は、SSRの出力を書き出してViewが優先して取るように直し（`7f3f34f`）、RenderingHdrIndoor/OutdoorScene・RenderingHdrEmissive2本・FrameCaptureFloatReadback・golden 2本・RenderGraphCompileTestの8本 pass で確かめた。評価は2周までなので3周目は回していない。
 
 ## R1-P5: 透明描画を物理ライト・GGX・IBLへ接続する
 - status: done
