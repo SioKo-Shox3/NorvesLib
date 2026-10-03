@@ -1812,7 +1812,7 @@
 - notes: buffer解決の共有化だけでは現在のValidateAccessorBoundsのunchecked加算/乗算は解消しない。loose接続の前提として別タスク化。
 
 ## CORE-MEMORY-HEADER-UTILITY: メモリAPIヘッダの標準includeを自己完結させる
-- status: todo
+- status: done
 - done-when: MemoryOverrides.h単体でstd::forwardの宣言不足にならないよう必要includeを明示し、動作を変更しない。
 - verify: 実header単体のsyntax確認。MemorySystem全体のWindows依存解消とは扱わない。
 - notes: G2 BufferSetの実allocator接続compileで既存不足を検出。G2の取り込み実装とは別の小修正候補として保存。

@@ -493,3 +493,6 @@
 
 - G2-GR77-MIME-SIGNATURE: 埋込みPNG/JPEGの宣言MIMEと実signatureを共有predicateで一致検査し、cooker結果の公開/packaging前とlooseで拒否する。外部画像と有効入力bytes/hashを変更せず、未知signatureの旧CLI reasonを維持。不一致1200byte GLB、native cooker/looseの失敗出力保持とCLI既存manifest/model保持を登録。pure判定は通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）実行、MEMBER compile成功、fixture構造/PNG CRC確認。独立レビューPASS。native cooker/loose/CLIはWindows.h/CMake制約で未実行。
 - Next: GR78縮小スコープ案の返答待ちを維持。G2検証時に見つかったMemoryOverrides.hの不足utility includeを既存todoとして独立修正する。
+
+- CORE-MEMORY-HEADER-UTILITY（G2検証基盤）: MemoryOverrides.hへstd::forwardを宣言するutilityを1行追加。実header単独の追加前compile失敗を再現し、追加後はC++23/Werror syntaxとNew<Probe>(int&&)の実object compile成功。独立確認でもPASS。BOM/CRLFと他bytesを保持し、allocator/runtime/API意味は変更しない。MemorySystemのWindows依存解消や実allocator実行とは区別する。
+- Next: G2／GR78の表面重心を後回しにして他変換を接続する案は作者回答待ち。G2の未確定形式選定も維持し、承認無しに保留変換やNVSKEL形式を適用しない。
