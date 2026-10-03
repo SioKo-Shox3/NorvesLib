@@ -11,6 +11,7 @@ R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=F6ABAD4BEB4DD778BF9F55FFEB1665ACA20FB3764584112A89DECF45CDBEDB5F CodeHead=ea1318e979edc603d93086e15d6080ef7ab81113 を承認する。
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=760DAEF7F942E7A1028F5906CFF60A881939DCD854C4D5B9688133E204064A92 CodeHead=0af69587869dbe67c7656e1ccd4779aa815d84b5 を承認する。
 R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=369C71AB50B64B69AEA4598B6D5FC0E63D75979698D207FB97F3CB0BDA5D0217 CodeHead=a2811db8ff6e47fafc2ebae9a252507871135cd5 を承認する。
+R1 baseline candidate Indoor=D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7 Outdoor=33B8B94CCE4B8C44A53B4593DEE5BEB739AA8570A87D4780FA0BD9122CFEAC91 CodeHead=06fb327cee94cdf7478810beae34e5e37b89dcaa を承認する。
 
 ## P6b plan and procedure approval
 P6b plan SHA256=37D08DE402478F1D1EBEEEE2D0D8F134492AA0A0EDEB2A4C8FF69527721A2AE3
@@ -110,4 +111,12 @@ GPU performance=Deferred; executions=0; destination=future CI GPU runner
 - 差分の範囲: 検証シーンの粗さは`R1ScalarHalf`の128/255（0.502）で、旧しきい値0.5をわずかに超えてSSRが掛からなかった。新しいフェードでは約0.49の重みで掛かる。旧baselineとの差は282画素（8/255超は60）で、すべて球の陰になった下半分と輪郭に集まり、日の当たる緑の地面を映して明るくなった（最大差は(206,139)の(0,0,0)→(95,123,61)）。平均輝度124.402→124.424。Indoorは一致する。
 - 物理的な妥当性: 粗さ0.5の光沢のある球の下半分は、法線が地面を向くため反射方向が明るい地面に当たり、斜めの輪郭ほどフレネルで強く映る。差の色は地面の緑みの色で、球自身の色（棄却する前の候補では黄色の球の下に黄色が出た自己ヒット）ではない。
 - 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead a2811db8ff6e47fafc2ebae9a252507871135cd5`を2回走らせ、Outdoor候補はどちらも`369C71AB…5D0217`、Indoor候補は既存baseline `D0D34A5F…5E05E7`と一致した。
+- 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。
+
+## SSRを環境光の鏡面反射の置き換えにした後のOutdoor再承認
+- 2026-10-03、上の承認行のOutdoor出力（SHA256=`33B8B94CCE4B8C44A53B4593DEE5BEB739AA8570A87D4780FA0BD9122CFEAC91`）を新しいOutdoor baselineとして承認した。承認はTASKS.mdの基準画像の再承認の扱い（差がその変更だけによるときは任される）による。
+- 修正の内容（`1129bfd`・`06fb327`）: SSRは当たった画素で照明済みの色を `mix(scene, L_hit, alpha)`（alphaは斜めで粗さから決めた上限 `1 - roughness` まで上がる）で置き換えていた。LightingPassが環境光の鏡面反射として足した値と、その反射率（split-sumのDFGに多重散乱の補償と鏡面の遮蔽を掛けたもの）を出力し、SSRは `scene + a・(反射率・L_hit − 足した値)` で環境光の鏡面反射だけを置き換える。SSRはLightingPassの直後（フォグ・半透明の前）へ移し、減衰していない照明の色の上で置き換える。
+- 差分の範囲: 旧baselineとの差は266画素（8/255超は35）で、すべて球の輪郭と接地部の陰（x 81〜211、y 123〜172）に集まる。明るくなった画素132、暗くなった画素119で、平均輝度は129.395→129.382。最大差は緑の球の下の陰の輪郭(153,136)の(54,83,21)→(0,2,0)。SSRをフォグの前へ移す前の候補（`1129bfd`の出力）との差は5画素・最大2/255。Indoorは一致する。
+- 物理的な妥当性: 粗さ0.5の誘電体の球の陰の下半分では、映り込みの強さは環境光の鏡面反射と同じDFGの反射率（輪郭の斜めでも数割に届かない）と、接地部で強くなる鏡面の遮蔽で決まる。旧式は粗さだけで決めた上限まで地面の色を混ぜていたため、接地部の陰の輪郭に地面の緑が強く出ていた。差の画素の平均の色は旧(189.6,175.1,143.8)→新(187.3,171.7,141.7)で、色相は変わらない。
+- 再生成: `UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead 06fb327cee94cdf7478810beae34e5e37b89dcaa`を2回走らせ、Outdoor候補はどちらも`33B8B94C…FEAC91`、Indoor候補は既存baseline `D0D34A5F…5E05E7`と一致した。
 - 閾値（`VisualThresholds.tsv`のmean FLIP上限`0.000001`、raw channel差上限8）は変更しない。

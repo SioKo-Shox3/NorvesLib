@@ -482,7 +482,7 @@
 - result: 2026-10-03 完了。フレーム間の平均絶対差は金属の粗さ0.3で0.439→0.239、0.5で0.361→0.246、0.7で0.349→0.259、粗さ0.1で0.233→0.224、地面0.329→0.329。最終画像の静止の差は平均0.19（8bit）で、AOの模様は見えない。検証シーンのgoldenはジッタを掛けないので、もともと雑音をずらしていない。
 
 ## FIX-SSR-SPECULAR-COMPOSITE: SSRを環境光の鏡面反射の置き換えにし、金属の色と反射率を掛ける
-- status: doing
+- status: done
 - done-when: LightingPass が、環境光の鏡面反射として SceneColor へ足した値（露出後）と、その反射率（鏡面の遮蔽込み、無次元、RGB）を別の出力に書き、SSRPass は当たった画素で `scene + a·(反射率·L_hit − 足した値)` にする（金属は反射率にalbedoの色が入る）。a は粗さ・距離・画面の端・厚さの余裕のなめらかな重みと強度の積。デバッグ表示・検証の表示（反射率0）ではSSRを足さない。視点 `-112,4,8.5` で、SSRが当たった金属の球の画素が金色を保ち（SSRの有無で差が出る画素の (R−B)/(R+G+B) がSSRなしの同じ画素の0.8倍以上）、輪郭のくっきりした地面の切り抜きが無いことを拡大画像で確かめる。Indoor/Outdoor のgoldenを回し、差がこの変更だけによるなら再承認する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderingGoldenImageTest -- /m:1`
@@ -490,6 +490,7 @@
 - stop-when: 照明パスの出力を増やすとRenderGraphの資源の寿命やレガシー経路の契約を崩す場合は、理由を記録して止める。
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders/lighting.frag, Assets/Shaders/ssr.frag, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 原因は `ssr.frag` が当たった画素で照明済みの色を `mix(scene, L_hit, alpha)` で置き換えていたこと。金属は `reflectStrength` が1になり alpha が約0.8（強度0.8）に達し、写った地面の色を金色を掛けずに入れるので、球の縁に地面の切り抜きが透けたように見える。外れた画素は空から作る環境マップ（金色が掛かる）のままで、当たり外れの境目がカメラの角度で動く。危険地帯（描画パスの構造）なので評価者を通す。
+- result: 2026-10-03 完了（`1129bfd`・`06fb327`）。視点 `-112,4,8.5` でSSRの有無で差が出る金属の球の画素の (R−B)/(R+G+B) のSSRなしに対する比は、粗さ0.1・0.3・0.5で0.71→1.09、0.68→1.13、0.80→1.04。拡大画像で地面の切り抜きは消え、縁には金色の細い映り込みが残る。フレーム間の平均絶対差は粗さ0.3で0.239→0.213。評価者（Astra）の1周目の指摘（フォグ・半透明を重ねた後の色から減衰前の鏡面反射を引いていた）を受け、SSRを照明の直後（フォグ・半透明の前）へ移し、フォグ・半透明・被写界深度・動きぼけはSSRの出力へ重ねるようにした。RenderGraphCompileTest・Indoor/Outdoor golden pass（Outdoorは球の輪郭と接地部の陰の266画素の差を`Docs/RenderingValidation/R1Acceptance.md` に記録して再承認、Indoorは一致）。起動画面の朝・昼・夕の撮影（`startup-capture/FIX-SSR-SPECULAR-COMPOSITE/`）は平均輝度が前回の受入れより0.3〜1.8下がった（SSRの映り込みが反射率どおりの強さになった分）。反射に写る色は照明の色（フォグ・半透明を含まない）。
 
 ## R1-P5: 透明描画を物理ライト・GGX・IBLへ接続する
 - status: done
