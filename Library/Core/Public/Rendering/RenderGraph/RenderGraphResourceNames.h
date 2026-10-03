@@ -23,6 +23,10 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity SSAOBlurred = Identity::Literal("SSAO.Blurred", sizeof("SSAO.Blurred") - 1);
     inline constexpr Identity SceneColor = Identity::Literal("Scene.Color", sizeof("Scene.Color") - 1);
     inline constexpr Identity SceneDepth = Identity::Literal("Scene.Depth", sizeof("Scene.Depth") - 1);
+    inline constexpr Identity LightingIndirectSpecular =
+        Identity::Literal("Lighting.IndirectSpecular", sizeof("Lighting.IndirectSpecular") - 1);
+    inline constexpr Identity LightingSpecularReflectance =
+        Identity::Literal("Lighting.SpecularReflectance", sizeof("Lighting.SpecularReflectance") - 1);
     inline constexpr Identity RTGIDiffuseIndirect =
         Identity::Literal("RTGI.DiffuseIndirect", sizeof("RTGI.DiffuseIndirect") - 1);
     inline constexpr Identity RTGIHistoryCurrent =

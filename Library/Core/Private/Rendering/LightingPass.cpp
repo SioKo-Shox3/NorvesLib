@@ -787,7 +787,10 @@ namespace NorvesLib::Core::Rendering
     }
 
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
-    // 接触影の雑音を、TAAのジッタが掛かったフレームごとに黄金比でずらす（GTAOと同じ周期）
+    // SSRPassへ渡す、SceneColorへ足した環境光の鏡面反射（露出後）と、その反射率（0〜1）の形式
+    static constexpr RHI::Format LIGHTING_INDIRECT_SPECULAR_FORMAT = RHI::Format::R16G16B16A16_FLOAT;
+    static constexpr RHI::Format LIGHTING_SPECULAR_REFLECTANCE_FORMAT = RHI::Format::R8G8B8A8_UNORM;
+    // 接触影の雑音を、TAAのジッタが掛かったフレームごとに黄金比でずらす
     static constexpr float CONTACT_SHADOW_TEMPORAL_NOISE_STEP = 0.6180339887f;
     static constexpr uint64_t CONTACT_SHADOW_TEMPORAL_NOISE_PERIOD = 64u;
     static constexpr uint32_t DDGI_ATLAS_TEXEL_COUNT = 8u;
@@ -1800,6 +1803,8 @@ namespace NorvesLib::Core::Rendering
         m_LightingFramebuffer.reset();
         m_LightingRenderPass.reset();
         m_SceneColorTexture.reset();
+        m_IndirectSpecularTexture.reset();
+        m_SpecularReflectanceTexture.reset();
 
         // RTGIのcompute資源はdescriptor、pipeline、shaderの順で解放する。
         m_RTGIComputeDescriptorSet.reset();
@@ -1898,6 +1903,8 @@ namespace NorvesLib::Core::Rendering
         m_GBufferPass = nullptr;
         m_SSAOPass = nullptr;
         m_SceneColorHandle = {};
+        m_IndirectSpecularHandle = {};
+        m_SpecularReflectanceHandle = {};
         m_GBufferAlbedoHandle = {};
         m_GBufferNormalHandle = {};
         m_GBufferMaterialHandle = {};
@@ -1911,6 +1918,8 @@ namespace NorvesLib::Core::Rendering
         m_bUsingRenderGraphResources = false;
         m_bRenderPassUsesRenderGraphInitialState = false;
         m_FramebufferSceneColorTexture = nullptr;
+        m_FramebufferIndirectSpecularTexture = nullptr;
+        m_FramebufferSpecularReflectanceTexture = nullptr;
         m_FramebufferWidth = 0;
         m_FramebufferHeight = 0;
 
@@ -1935,7 +1944,11 @@ namespace NorvesLib::Core::Rendering
             width != m_CurrentWidth ||
             height != m_CurrentHeight ||
             !m_SceneColorTexture ||
+            !m_IndirectSpecularTexture ||
+            !m_SpecularReflectanceTexture ||
             m_FramebufferSceneColorTexture != m_SceneColorTexture.get() ||
+            m_FramebufferIndirectSpecularTexture != m_IndirectSpecularTexture.get() ||
+            m_FramebufferSpecularReflectanceTexture != m_SpecularReflectanceTexture.get() ||
             m_bRenderPassUsesRenderGraphInitialState != bUseRenderGraphInitialState ||
             !m_LightingRenderPass ||
             !m_LightingFramebuffer ||
@@ -1944,20 +1957,15 @@ namespace NorvesLib::Core::Rendering
 
         if (bResourcesChanged)
         {
-            RHI::TextureDesc sceneColorDesc =
-                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor");
-            sceneColorDesc.Usage = sceneColorDesc.Usage | RHI::ResourceUsage::TransferSrc;
-            RHI::TexturePtr sceneColorTexture = m_Device->CreateTexture(
-                sceneColorDesc);
-            if (!sceneColorTexture)
+            LightingOutputTargets targets;
+            if (!CreateLegacyLightingOutputs(width, height, targets))
             {
-                NORVES_LOG_ERROR("LightingPass", "Failed to create SceneColor texture");
                 return;
             }
 
             if (!PrepareLightingOutput(width,
                                        height,
-                                       sceneColorTexture,
+                                       targets,
                                        bUseRenderGraphInitialState,
                                        context))
             {
@@ -2204,6 +2212,27 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState::ShaderResource);
         builder.ExportTexture(RenderGraphResourceNames::SceneColor, m_SceneColorHandle);
 
+        // SSRPassが環境光の鏡面反射を画面の反射へ置き換えるための出力（同じRenderGraphの中だけで読む）
+        m_IndirectSpecularHandle = builder.WriteTextureAttachment(
+            RenderGraphResourceNames::LightingIndirectSpecular,
+            RGTextureDesc::RenderTarget(width, height, LIGHTING_INDIRECT_SPECULAR_FORMAT, "LightingIndirectSpecular"),
+            RGAttachmentKind::Color,
+            RHI::AttachmentLoadOp::Clear,
+            RHI::AttachmentStoreOp::Store,
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
+        m_SpecularReflectanceHandle = builder.WriteTextureAttachment(
+            RenderGraphResourceNames::LightingSpecularReflectance,
+            RGTextureDesc::RenderTarget(width,
+                                        height,
+                                        LIGHTING_SPECULAR_REFLECTANCE_FORMAT,
+                                        "LightingSpecularReflectance"),
+            RGAttachmentKind::Color,
+            RHI::AttachmentLoadOp::Clear,
+            RHI::AttachmentStoreOp::Store,
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
+
         builder.PreserveInsertionOrder();
     }
 
@@ -2218,10 +2247,13 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        RHI::TexturePtr sceneColorTexture = resources.GetTexture(m_SceneColorHandle);
-        if (!sceneColorTexture)
+        LightingOutputTargets targets;
+        targets.SceneColor = resources.GetTexture(m_SceneColorHandle);
+        targets.IndirectSpecular = resources.GetTexture(m_IndirectSpecularHandle);
+        targets.SpecularReflectance = resources.GetTexture(m_SpecularReflectanceHandle);
+        if (!targets.SceneColor || !targets.IndirectSpecular || !targets.SpecularReflectance)
         {
-            NORVES_LOG_ERROR("LightingPass", "Failed to resolve native SceneColor texture");
+            NORVES_LOG_ERROR("LightingPass", "Failed to resolve native lighting output textures");
             return;
         }
 
@@ -2341,9 +2373,9 @@ namespace NorvesLib::Core::Rendering
             m_FramePointShadowCubeTexture = resources.GetTexture(m_PointShadowCubeHandle);
         }
 
-        if (!PrepareLightingOutput(sceneColorTexture->GetWidth(),
-                                   sceneColorTexture->GetHeight(),
-                                   sceneColorTexture,
+        if (!PrepareLightingOutput(targets.SceneColor->GetWidth(),
+                                   targets.SceneColor->GetHeight(),
+                                   targets,
                                    true,
                                    context))
         {
@@ -2436,40 +2468,66 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        RHI::TextureDesc sceneColorDesc =
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor");
-        sceneColorDesc.Usage = sceneColorDesc.Usage | RHI::ResourceUsage::TransferSrc;
-        RHI::TexturePtr sceneColorTexture = m_Device->CreateTexture(sceneColorDesc);
-        if (!sceneColorTexture)
+        LightingOutputTargets targets;
+        if (!CreateLegacyLightingOutputs(width, height, targets))
         {
-            NORVES_LOG_ERROR("LightingPass", "Failed to create SceneColor texture");
             return false;
         }
 
-        return PrepareLightingOutput(width, height, sceneColorTexture, false, context);
+        return PrepareLightingOutput(width, height, targets, false, context);
+    }
+
+    bool LightingPass::CreateLegacyLightingOutputs(uint32_t width,
+                                                   uint32_t height,
+                                                   LightingOutputTargets& outTargets) const
+    {
+        outTargets = {};
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        RHI::TextureDesc sceneColorDesc =
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor");
+        sceneColorDesc.Usage = sceneColorDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        outTargets.SceneColor = m_Device->CreateTexture(sceneColorDesc);
+        outTargets.IndirectSpecular = m_Device->CreateTexture(RHI::TextureDesc::RenderTarget(
+            width, height, LIGHTING_INDIRECT_SPECULAR_FORMAT, "LightingIndirectSpecular"));
+        outTargets.SpecularReflectance = m_Device->CreateTexture(RHI::TextureDesc::RenderTarget(
+            width, height, LIGHTING_SPECULAR_REFLECTANCE_FORMAT, "LightingSpecularReflectance"));
+        if (!outTargets.SceneColor || !outTargets.IndirectSpecular || !outTargets.SpecularReflectance)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create lighting output textures");
+            outTargets = {};
+            return false;
+        }
+        return true;
     }
 
     bool LightingPass::PrepareLightingOutput(uint32_t width,
                                              uint32_t height,
-                                             const RHI::TexturePtr& sceneColorTexture,
+                                             const LightingOutputTargets& targets,
                                              bool bUseRenderGraphInitialState,
                                              ViewRenderContext& context)
     {
         (void)context;
 
-        if (!m_Device || !sceneColorTexture || width == 0 || height == 0)
+        if (!m_Device || !targets.SceneColor || !targets.IndirectSpecular || !targets.SpecularReflectance ||
+            width == 0 || height == 0)
         {
             return false;
         }
 
         m_CurrentWidth = width;
         m_CurrentHeight = height;
-        m_SceneColorTexture = sceneColorTexture;
+        m_SceneColorTexture = targets.SceneColor;
+        m_IndirectSpecularTexture = targets.IndirectSpecular;
+        m_SpecularReflectanceTexture = targets.SpecularReflectance;
         m_bUsingRenderGraphResources = bUseRenderGraphInitialState;
 
         const RenderPassSignature signature = CreateLightingRenderPassSignature(width,
                                                                                 height,
-                                                                                sceneColorTexture,
+                                                                                targets,
                                                                                 bUseRenderGraphInitialState);
 
         if (!EnsureLightingRenderPass(signature))
@@ -2477,7 +2535,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (!EnsureLightingFramebuffer(width, height, sceneColorTexture))
+        if (!EnsureLightingFramebuffer(width, height, targets))
         {
             return false;
         }
@@ -2514,27 +2572,40 @@ namespace NorvesLib::Core::Rendering
                                                  const RenderPassSignature& rhs) const
     {
         return lhs.bValid == rhs.bValid &&
-               AttachmentSignatureEquals(lhs.SceneColor, rhs.SceneColor);
+               AttachmentSignatureEquals(lhs.SceneColor, rhs.SceneColor) &&
+               AttachmentSignatureEquals(lhs.IndirectSpecular, rhs.IndirectSpecular) &&
+               AttachmentSignatureEquals(lhs.SpecularReflectance, rhs.SpecularReflectance);
     }
 
     LightingPass::RenderPassSignature LightingPass::CreateLightingRenderPassSignature(
         uint32_t width,
         uint32_t height,
-        const RHI::TexturePtr& sceneColorTexture,
+        const LightingOutputTargets& targets,
         bool bUseRenderGraphInitialState) const
     {
+        const RHI::ResourceState initialState =
+            bUseRenderGraphInitialState ? RHI::ResourceState::RenderTarget : RHI::ResourceState::Undefined;
+        auto makeColorSignature = [&](const RHI::TexturePtr& texture, RHI::Format fallbackFormat)
+        {
+            return AttachmentSignature{RGAttachmentKind::Color,
+                                       texture ? texture->GetFormat() : fallbackFormat,
+                                       RHI::AttachmentLoadOp::Clear,
+                                       RHI::AttachmentStoreOp::Store,
+                                       initialState,
+                                       RHI::ResourceState::ShaderResource,
+                                       texture.get(),
+                                       width,
+                                       height,
+                                       false};
+        };
+
         RenderPassSignature signature;
         signature.bValid = true;
-        signature.SceneColor = {RGAttachmentKind::Color,
-                                sceneColorTexture ? sceneColorTexture->GetFormat() : m_Settings.OutputFormat,
-                                RHI::AttachmentLoadOp::Clear,
-                                RHI::AttachmentStoreOp::Store,
-                                bUseRenderGraphInitialState ? RHI::ResourceState::RenderTarget : RHI::ResourceState::Undefined,
-                                RHI::ResourceState::ShaderResource,
-                                sceneColorTexture.get(),
-                                width,
-                                height,
-                                false};
+        signature.SceneColor = makeColorSignature(targets.SceneColor, m_Settings.OutputFormat);
+        signature.IndirectSpecular =
+            makeColorSignature(targets.IndirectSpecular, LIGHTING_INDIRECT_SPECULAR_FORMAT);
+        signature.SpecularReflectance =
+            makeColorSignature(targets.SpecularReflectance, LIGHTING_SPECULAR_REFLECTANCE_FORMAT);
         return signature;
     }
 
@@ -2550,25 +2621,34 @@ namespace NorvesLib::Core::Rendering
         m_LightingFramebuffer.reset();
         m_LightingPipeline.reset();
         m_FramebufferSceneColorTexture = nullptr;
+        m_FramebufferIndirectSpecularTexture = nullptr;
+        m_FramebufferSpecularReflectanceTexture = nullptr;
         m_FramebufferWidth = 0;
         m_FramebufferHeight = 0;
         m_RenderPassSignature = {};
 
         RHI::RenderPassDesc rpDesc;
 
-        RHI::AttachmentDesc colorAttach;
-        colorAttach.format = signature.SceneColor.Format;
-        colorAttach.isDepthStencil = false;
-        colorAttach.clear = true;
-        colorAttach.clearColor[0] = 0.0f;
-        colorAttach.clearColor[1] = 0.0f;
-        colorAttach.clearColor[2] = 0.0f;
-        colorAttach.clearColor[3] = 1.0f;
-        colorAttach.loadOp = signature.SceneColor.LoadOp;
-        colorAttach.storeOp = signature.SceneColor.StoreOp;
-        colorAttach.initialState = signature.SceneColor.InitialState;
-        colorAttach.finalState = signature.SceneColor.FinalState;
-        rpDesc.colorAttachments.push_back(colorAttach);
+        // SceneColorはアルファ1、環境光の鏡面反射とその反射率は0で始める（書かない画素はSSRが何も足さない）
+        auto pushColorAttachment = [&rpDesc](const AttachmentSignature& attachment, float clearAlpha)
+        {
+            RHI::AttachmentDesc colorAttach;
+            colorAttach.format = attachment.Format;
+            colorAttach.isDepthStencil = false;
+            colorAttach.clear = true;
+            colorAttach.clearColor[0] = 0.0f;
+            colorAttach.clearColor[1] = 0.0f;
+            colorAttach.clearColor[2] = 0.0f;
+            colorAttach.clearColor[3] = clearAlpha;
+            colorAttach.loadOp = attachment.LoadOp;
+            colorAttach.storeOp = attachment.StoreOp;
+            colorAttach.initialState = attachment.InitialState;
+            colorAttach.finalState = attachment.FinalState;
+            rpDesc.colorAttachments.push_back(colorAttach);
+        };
+        pushColorAttachment(signature.SceneColor, 1.0f);
+        pushColorAttachment(signature.IndirectSpecular, 0.0f);
+        pushColorAttachment(signature.SpecularReflectance, 0.0f);
         rpDesc.hasDepthStencil = false;
 
         m_LightingRenderPass = m_Device->CreateRenderPass(rpDesc);
@@ -2586,24 +2666,29 @@ namespace NorvesLib::Core::Rendering
 
     bool LightingPass::EnsureLightingFramebuffer(uint32_t width,
                                                  uint32_t height,
-                                                 const RHI::TexturePtr& sceneColorTexture)
+                                                 const LightingOutputTargets& targets)
     {
         if (m_LightingFramebuffer &&
-            m_FramebufferSceneColorTexture == sceneColorTexture.get() &&
+            m_FramebufferSceneColorTexture == targets.SceneColor.get() &&
+            m_FramebufferIndirectSpecularTexture == targets.IndirectSpecular.get() &&
+            m_FramebufferSpecularReflectanceTexture == targets.SpecularReflectance.get() &&
             m_FramebufferWidth == width &&
             m_FramebufferHeight == height)
         {
             return true;
         }
 
-        if (!m_LightingRenderPass || !sceneColorTexture)
+        if (!m_LightingRenderPass || !targets.SceneColor || !targets.IndirectSpecular ||
+            !targets.SpecularReflectance)
         {
             return false;
         }
 
         RHI::FramebufferDesc fbDesc;
         fbDesc.renderPass = m_LightingRenderPass;
-        fbDesc.colorTargets.push_back(sceneColorTexture);
+        fbDesc.colorTargets.push_back(targets.SceneColor);
+        fbDesc.colorTargets.push_back(targets.IndirectSpecular);
+        fbDesc.colorTargets.push_back(targets.SpecularReflectance);
         fbDesc.width = width;
         fbDesc.height = height;
 
@@ -2614,7 +2699,9 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        m_FramebufferSceneColorTexture = sceneColorTexture.get();
+        m_FramebufferSceneColorTexture = targets.SceneColor.get();
+        m_FramebufferIndirectSpecularTexture = targets.IndirectSpecular.get();
+        m_FramebufferSpecularReflectanceTexture = targets.SpecularReflectance.get();
         m_FramebufferWidth = width;
         m_FramebufferHeight = height;
         return true;
@@ -2730,9 +2817,12 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.depthStencilState.depthTestEnable = false;
         pipelineDesc.depthStencilState.depthWriteEnable = false;
 
+        // SceneColor・環境光の鏡面反射・その反射率の3枚（ブレンドなし）
         RHI::BlendAttachmentDesc blendAttachment;
         blendAttachment.blendEnable = false;
         blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+        pipelineDesc.blendState.attachments.push_back(blendAttachment);
+        pipelineDesc.blendState.attachments.push_back(blendAttachment);
         pipelineDesc.blendState.attachments.push_back(blendAttachment);
 
         pipelineDesc.renderPass = m_LightingRenderPass;
@@ -3813,7 +3903,11 @@ namespace NorvesLib::Core::Rendering
 
         if (m_bRegisterLegacyBridge && bRegisterLegacyOutputs)
         {
-            RegisterOutputs(context, m_SceneColorTexture, depthTexture);
+            LightingOutputTargets targets;
+            targets.SceneColor = m_SceneColorTexture;
+            targets.IndirectSpecular = m_IndirectSpecularTexture;
+            targets.SpecularReflectance = m_SpecularReflectanceTexture;
+            RegisterOutputs(context, targets, depthTexture);
         }
 
         m_LightingDescriptorSet->BindTexture(0, albedoTexture);
@@ -3988,7 +4082,7 @@ namespace NorvesLib::Core::Rendering
     }
 
     void LightingPass::RegisterOutputs(ViewRenderContext& context,
-                                       const RHI::TexturePtr& sceneColorTexture,
+                                       const LightingOutputTargets& targets,
                                        const RHI::TexturePtr& depthTexture) const
     {
         if (!context.SharedResources)
@@ -3996,9 +4090,17 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (sceneColorTexture)
+        if (targets.SceneColor)
         {
-            context.SharedResources->RegisterTexturePtr("SceneColor", sceneColorTexture);
+            context.SharedResources->RegisterTexturePtr("SceneColor", targets.SceneColor);
+        }
+        if (targets.IndirectSpecular)
+        {
+            context.SharedResources->RegisterTexturePtr("LightingIndirectSpecular", targets.IndirectSpecular);
+        }
+        if (targets.SpecularReflectance)
+        {
+            context.SharedResources->RegisterTexturePtr("LightingSpecularReflectance", targets.SpecularReflectance);
         }
 
         if (depthTexture)

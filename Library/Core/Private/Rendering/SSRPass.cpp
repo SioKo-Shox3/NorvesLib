@@ -127,6 +127,25 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 環境光の鏡面反射・反射率の入力が無いときの0（反射率0なのでSSRは何も足さない）
+        {
+            RHI::TextureDesc zeroDesc;
+            zeroDesc.Width = 1u;
+            zeroDesc.Height = 1u;
+            zeroDesc.MipLevels = 1u;
+            zeroDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+            zeroDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            zeroDesc.DebugName = "SSRZeroReflectance";
+            m_ZeroTexture = m_Device->CreateTexture(zeroDesc);
+            if (!m_ZeroTexture)
+            {
+                NORVES_LOG_ERROR("SSRPass", "Failed to create zero reflectance texture");
+                return false;
+            }
+            const uint8_t zeroPixel[4] = {0u, 0u, 0u, 0u};
+            m_ZeroTexture->Update(zeroPixel, sizeof(zeroPixel), sizeof(zeroPixel));
+        }
+
         m_bInitialized = true;
         NORVES_LOG_INFO("SSRPass", "SSRPass initialized");
         return true;
@@ -149,8 +168,11 @@ namespace NorvesLib::Core::Rendering
         m_DescriptorSet.reset();
         m_LinearSampler.reset();
         m_PointSampler.reset();
+        m_ZeroTexture.reset();
         m_Device = nullptr;
         m_OutputHandle = {};
+        m_IndirectSpecularInputHandle = {};
+        m_SpecularReflectanceInputHandle = {};
         m_bRenderPassUsesRenderGraphInitialState = false;
         m_FramebufferOutputTexture = nullptr;
 
@@ -293,9 +315,11 @@ namespace NorvesLib::Core::Rendering
             dsDesc.bindings.push_back(binding);
         }
 
+        // 5 = 雑音、6 = 環境光の鏡面反射、7 = その反射率
+        for (uint32_t i = 5; i < 8; ++i)
         {
             RHI::DescriptorBinding binding;
-            binding.binding = 5;
+            binding.binding = i;
             binding.type = RHI::ResourceBindType::CombinedImageSampler;
             binding.stages = RHI::ShaderStage::Pixel;
             dsDesc.bindings.push_back(binding);
@@ -360,12 +384,15 @@ namespace NorvesLib::Core::Rendering
 
         // 入力テクスチャ取得
         RHI::TexturePtr normalTex, materialTex, depthTex, sceneColorTex;
+        RHI::TexturePtr indirectSpecularTex, specularReflectanceTex;
         if (context.SharedResources)
         {
             normalTex = context.SharedResources->GetTexturePtr("GBuffer_Normal");
             materialTex = context.SharedResources->GetTexturePtr("GBuffer_Material");
             depthTex = context.SharedResources->GetTexturePtr("GBuffer_Depth");
             sceneColorTex = context.SharedResources->GetTexturePtr("SceneColor");
+            indirectSpecularTex = context.SharedResources->GetTexturePtr("LightingIndirectSpecular");
+            specularReflectanceTex = context.SharedResources->GetTexturePtr("LightingSpecularReflectance");
         }
 
         if (!normalTex || !materialTex || !depthTex || !sceneColorTex)
@@ -374,7 +401,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInputs(context, normalTex, materialTex, depthTex, sceneColorTex, true);
+        ExecuteWithInputs(context,
+                          normalTex,
+                          materialTex,
+                          depthTex,
+                          sceneColorTex,
+                          indirectSpecularTex,
+                          specularReflectanceTex,
+                          true);
     }
 
     void SSRPass::Declare(RenderGraphBuilder &builder)
@@ -388,6 +422,8 @@ namespace NorvesLib::Core::Rendering
         m_GBufferMaterialHandle = {};
         m_GBufferDepthHandle = {};
         m_SceneColorInputHandle = {};
+        m_IndirectSpecularInputHandle = {};
+        m_SpecularReflectanceInputHandle = {};
 
         RGTextureHandle normalHandle;
         if (builder.TryReadTexture(RenderGraphResourceNames::GBufferNormal,
@@ -459,6 +495,35 @@ namespace NorvesLib::Core::Rendering
                 m_SceneColorInputHandle = fallbackSceneColorHandle;
                 m_bLegacyInputFallbackActive = true;
             }
+        }
+
+        // 環境光の鏡面反射とその反射率。無ければ実行時に反射率0の既定を結ぶ（SSRは何も足さない）。
+        RGTextureHandle indirectSpecularHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::LightingIndirectSpecular,
+                                   indirectSpecularHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_IndirectSpecularInputHandle = indirectSpecularHandle.ToResourceHandle();
+        }
+        else if (m_LightingPass && m_LightingPass->GetIndirectSpecularHandle().IsValid())
+        {
+            builder.Read(m_LightingPass->GetIndirectSpecularHandle(), RHI::ResourceState::ShaderResource);
+            m_IndirectSpecularInputHandle = m_LightingPass->GetIndirectSpecularHandle();
+            m_bLegacyInputFallbackActive = true;
+        }
+
+        RGTextureHandle specularReflectanceHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::LightingSpecularReflectance,
+                                   specularReflectanceHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_SpecularReflectanceInputHandle = specularReflectanceHandle.ToResourceHandle();
+        }
+        else if (m_LightingPass && m_LightingPass->GetSpecularReflectanceHandle().IsValid())
+        {
+            builder.Read(m_LightingPass->GetSpecularReflectanceHandle(), RHI::ResourceState::ShaderResource);
+            m_SpecularReflectanceInputHandle = m_LightingPass->GetSpecularReflectanceHandle();
+            m_bLegacyInputFallbackActive = true;
         }
 
         RGTextureHandle outputHandle = builder.WriteTexture(
@@ -574,11 +639,30 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        RHI::TexturePtr indirectSpecularTex;
+        RHI::TexturePtr specularReflectanceTex;
+        if (m_IndirectSpecularInputHandle.IsValid())
+        {
+            indirectSpecularTex = resources.GetTexture(m_IndirectSpecularInputHandle);
+        }
+        if (m_SpecularReflectanceInputHandle.IsValid())
+        {
+            specularReflectanceTex = resources.GetTexture(m_SpecularReflectanceInputHandle);
+        }
+        // 旧経路の登録から読むときは、同じLightingPassが書いた組として2枚とも読む
+        if (!indirectSpecularTex && !specularReflectanceTex && context.SharedResources)
+        {
+            indirectSpecularTex = context.SharedResources->GetTexturePtr("LightingIndirectSpecular");
+            specularReflectanceTex = context.SharedResources->GetTexturePtr("LightingSpecularReflectance");
+        }
+
         ExecuteWithInputs(context,
                           normalTex,
                           materialTex,
                           depthTex,
                           sceneColorTex,
+                          indirectSpecularTex,
+                          specularReflectanceTex,
                           m_bLegacyInputFallbackActive || bUsedSharedResourceFallback);
     }
 
@@ -587,6 +671,8 @@ namespace NorvesLib::Core::Rendering
                                     const RHI::TexturePtr &materialTex,
                                     const RHI::TexturePtr &depthTex,
                                     const RHI::TexturePtr &sceneColorTex,
+                                    const RHI::TexturePtr &indirectSpecularTex,
+                                    const RHI::TexturePtr &specularReflectanceTex,
                                     bool bRegisterLegacyBridge)
     {
         if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSet)
@@ -654,6 +740,13 @@ namespace NorvesLib::Core::Rendering
         // binding 5 (noise) - sceneColorをダミーとしてバインド
         m_DescriptorSet->BindTexture(5, sceneColorTex);
         m_DescriptorSet->BindSampler(5, m_LinearSampler);
+
+        // 環境光の鏡面反射とその反射率。片方でも無ければ両方0にして、SSRは何も足さない。
+        const bool bHasSpecularInputs = indirectSpecularTex && specularReflectanceTex;
+        m_DescriptorSet->BindTexture(6, bHasSpecularInputs ? indirectSpecularTex : m_ZeroTexture);
+        m_DescriptorSet->BindSampler(6, m_PointSampler);
+        m_DescriptorSet->BindTexture(7, bHasSpecularInputs ? specularReflectanceTex : m_ZeroTexture);
+        m_DescriptorSet->BindSampler(7, m_PointSampler);
 
         m_DescriptorSet->Update();
 
