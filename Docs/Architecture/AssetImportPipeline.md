@@ -157,3 +157,16 @@ ModelStagingはfile読込とstbi_load_from_memoryを分離し、StageStandardTex
 - bytes入口は成功した候補だけを出力へ移し、falseでは旧出力を保持する。ARMの3出力が同じobjectをaliasする呼出しは拒否する。GPU resource生成やアップロードは行わない
 
 GltfImageRangeTestへPNG/JPEG signatureと切断/null判定を追加し、同じ実headerを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBERで確認する。ImageBytesStagingTestは小PNGのfile/bytes pixel一致、ARM分解、format、異常input/長さ/alias拒否と旧出力保持を既存束へ登録する。実ModelStagingとnative試験はWindows.h依存でcompile/実行未検証であり、signatureや単独stbの確認を統合実行と混同しない。
+
+## 必須glTF拡張の共通判定（GR77）
+
+静的cooker・loose静的staging・骨格decoderはGltfDocumentProfileの同じ判定を使う。
+現在対応する必須拡張の許可リストは空。extensionsRequired省略/空配列は許可し、
+重複field・配列以外・文字列以外の要素と非空配列は拒否する。Draco、meshopt、
+mesh_quantization、texture_transformも未対応なので、必須指定を黙って無視しない。
+optionalなextensionsUsedの宣言だけでは拒否しない。これは全glTF schema検証ではない。
+
+静的cookerの通常診断を保持し、骨格は既存InvalidDocumentへ写像する。
+判定はbuffer読込やgeometry抽出より前。GltfDocumentProfileTestに共通判定と
+cooker/骨格入口、GltfAccessorStagingTestに正常geometryへ必須拡張を付けた拒否を登録。
+Linux環境では実JsonDocument/consumerがWindows.hへ依存するため、登録試験のnative実行は未確認。

@@ -631,6 +631,30 @@ namespace
                     assert(sources.GetBytes(0).data() == view.Bin.data());
                 }
             }
+            // 正常な骨格fixtureへ必須拡張だけを加え、ガード欠落なら成功する入力で反証する。
+            const auto objectStart = text.find('{');
+            assert(objectStart != Container::AnsiString::npos);
+            for (const char* declaration : {"\"extensionsRequired\":[],",
+                "\"extensionsUsed\":[\"KHR_draco_mesh_compression\"],"})
+            {
+                const Container::AnsiString optional = Container::AnsiString("{") + declaration + text.substr(objectStart + 1);
+                const auto decoded = Skeletal::DecodeSkeletalGltf(TextBytes(optional), fixture.Path());
+                assert(decoded.Succeeded());
+                AssertEquivalent(decoded.Data, loose.Data);
+            }
+            for (const char* extension : {"KHR_draco_mesh_compression", "EXT_meshopt_compression",
+                "KHR_mesh_quantization", "KHR_texture_transform"})
+            {
+                Container::AnsiString required = "{\"extensionsRequired\":[\"";
+                required += extension;
+                required += "\"],";
+                required += text.substr(objectStart + 1);
+                assert(Skeletal::DecodeSkeletalGltf(glb, fixture.Path(), &sources).Succeeded());
+                const auto rejected = Skeletal::DecodeSkeletalGltf(TextBytes(required), fixture.Path(), &sources);
+                assert(rejected.Status == Skeletal::SkeletalGltfDecodeStatus::InvalidDocument && sources.GetCount() == 0);
+                assert(Skeletal::DecodeSkeletalGltf(CoreText(required), fixture.Path()).Status ==
+                    Skeletal::SkeletalGltfDecodeStatus::InvalidDocument);
+            }
             const auto glbPath = fixture.Root / "embedded.glb";
             WriteFixtureBytes(glbPath, glb);
             const auto looseGlb = Gltf::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(glbPath));

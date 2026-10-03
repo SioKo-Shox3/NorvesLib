@@ -472,3 +472,6 @@
 
 - G2-GR77-IMAGE-STAGING: file読込とbytes decodeを分離し、PNG/JPEG bytesから所有RGBA8/ARM3枚のCPU stagingを作る。Mainとsignature判定を共有し、旧外部fileの形式/既定RGBA8_UNORM/RGB→AO/Roughness/Metallicを維持。INT_MAX・dimension境界、非copy stb scope owner、候補成功時のみ移動、ARM出力alias拒否を追加。実signature/range通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBERとstbi memory 1px fixture成功。file/bytes/ARM/failure native試験は登録済みだがWindows.hでcompile停止、実staging未実行。独立レビューPASS。
 - Next: GR77の必須glTF拡張拒否を共有し、looseへcontainer/buffer/image bytesを接続する。
+
+- G2-GR77-DOCUMENT-PROFILE: 必須拡張の型/field重複/非対応を共通判定へ集約し、静的cooker・loose・骨格でbuffer/geometry前に拒否。空requiredとoptional usedは維持、cooker通常診断/骨格InvalidDocumentを保持。22共通fixture、実正常骨格の4拒否/2成功とString/bytes/source clear、loose正常geometryへの4必須拡張拒否を登録。ヘッダC++23/Werror・fixture JSON構文・CMake登録/BOMCRLF/diff成功、独立レビューPASS。実JsonDocument/consumer/testはWindows.hでcompile停止、native実行未確認。
+- Next: loose接続前に発見したindex値の頂点範囲検査を補う。既存clusterizerはindexを信頼して頂点を参照するため、GLTFAnalyzer側で拒否してからGLB/buffer/image接続へ進む。

@@ -15,6 +15,7 @@ target_include_directories(AssetSystemTest PRIVATE
 norves_add_test_bundle(CookedMeshTest
     FOLDER "Test/Core/Asset"
     MEMBER CookedMeshTest CookedMeshTest.cpp
+    MEMBER GltfDocumentProfileTest GltfDocumentProfileTest.cpp
     MEMBER GltfAccessorStagingTest GltfAccessorStagingTest.cpp
     MEMBER GltfAccessorRangeTest GltfAccessorRangeTest.cpp
     MEMBER ImageBytesStagingTest ImageBytesStagingTest.cpp
@@ -82,3 +83,5 @@ add_test(NAME GltfAccessorRangeTest COMMAND CookedMeshTest --test=GltfAccessorRa
 add_test(NAME GltfAccessorStagingTest COMMAND CookedMeshTest --test=GltfAccessorStagingTest)
 
 add_test(NAME ImageBytesStagingTest COMMAND CookedMeshTest --test=ImageBytesStagingTest)
+
+add_test(NAME GltfDocumentProfileTest COMMAND CookedMeshTest --test=GltfDocumentProfileTest)

@@ -1,6 +1,7 @@
 ﻿#include "Resource/GLTFAnalyzer.h"
 #include "Resource/ModelStaging.h"
 #include "Resource/GltfAccessorRange.h"
+#include "Resource/GltfDocumentProfile.h"
 #include "Resource/SkeletalGltfDecode.h"
 
 #include "FileStream/FileStream.h"
@@ -800,6 +801,13 @@ namespace NorvesLib::Core::Resource
             if (!root.IsObject())
             {
                 NORVES_LOG_ERROR("GLTFAnalyzer", "glTF root is not an object");
+                return false;
+            }
+
+            const auto extensionStatus = Gltf::CheckRequiredExtensions(root);
+            if (extensionStatus != Gltf::RequiredExtensionsStatus::Success)
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "%s", Gltf::RequiredExtensionsError(extensionStatus));
                 return false;
             }
 

@@ -1860,7 +1860,7 @@
 - notes: GLTFAnalyzerの画像参照接続は後続。空RequestPathとHasDataによるfinalize契約を保持する。
 
 ## G2-GR77-DOCUMENT-PROFILE: 必須glTF拡張の拒否規則を共有する
-- status: todo
+- status: done
 - done-when: extensionsRequiredの型/重複と非対応必須拡張を共有判定し、静的cooker/loose/骨格で黙って無視しない。現時点の許可リストは空で、既存静的cookerの通常診断を維持する。
 - verify: 無指定/空配列/型違い/重複/Draco/meshopt/quantization/texture_transformの拒否を既存束へ登録。native未検証を明記する。
 - stop-when: 未実装拡張の受理、optional extensionsUsed全体の無差別拒否、骨格/材質の未承認仕様拡張。
@@ -1870,3 +1870,10 @@
 - done-when: GLTFAnalyzerの静的stagingを共有container/BufferSet/ImageSourceへ接続し、GLB/data URIのgeometryとPNG/JPEG画像をCPU所有stagingにする。埋込み画像のRequestPathは空、既存外部画像の論理参照とRGBA8/ARM分解を保持する。
 - verify: 小GLB・data URI・外部入力でgeometry/5staged textures（元画像3枚）を比較し、元source破棄後の所有と必須拡張拒否を確認する登録試験。Windows/GPU未検証と区別する。
 - stop-when: BIN全体コピー、埋込み画像をcooked manifest参照へ回す、既存材質既定の変更、full static parser統合の先取り。
+
+## G2-GR77-LOOSE-INDEX-RANGE: クラスタ生成前に頂点インデックスを検査する
+- status: todo
+- done-when: loose geometryの全indexがvertices範囲内であることを、MeshClusterizerへ渡す前に検査する。不正入力は失敗し既存出力を保持する。
+- verify: 3頂点に対するindex=3/65535の拒否と正常0/1/2の受理を既存staging試験へ登録。純粋な共通検査も境界と空/nullを検証する。
+- stop-when: clusterizer全体改修、正常meshのwindingや材質変更、native未実行を合格扱いする。
+- notes: GLTFAnalyzer::ExtractMeshDataはindex値を未検査で返し、MeshClusterizer::ComputeNormalCone/ComputeBoundingSphereがその値で頂点を参照する。LOOSE-SOURCES前に安全化する。

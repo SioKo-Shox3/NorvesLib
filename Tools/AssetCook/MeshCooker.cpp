@@ -8,6 +8,7 @@
 #include "Resource/SkeletalLimits.h"
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
+#include "Resource/GltfDocumentProfile.h"
 #include "Resource/GltfImageSource.h"
 #include "Asset/AssetPackageFormat.h"
 #include "Text/JsonDocument.h"
@@ -570,27 +571,10 @@ namespace NorvesLib::Tools::AssetCook
 
         bool ValidateRequiredExtensions(const JsonValue& root, AnsiString& error)
         {
-            const JsonValue extensionsRequired = root.FindMember("extensionsRequired");
-            if (!extensionsRequired.IsValid())
+            const auto status = Gltf::CheckRequiredExtensions(root);
+            if (status != Gltf::RequiredExtensionsStatus::Success)
             {
-                return true;
-            }
-            if (!extensionsRequired.IsArray())
-            {
-                error = "glTF extensionsRequired must be an array of strings";
-                return false;
-            }
-            for (size_t index = 0; index < extensionsRequired.GetArraySize(); ++index)
-            {
-                if (!extensionsRequired.GetArrayElement(index).IsString())
-                {
-                    error = "glTF extensionsRequired must be an array of strings";
-                    return false;
-                }
-            }
-            if (extensionsRequired.GetArraySize() != 0)
-            {
-                error = "glTF required extensions are not supported";
+                error = Gltf::RequiredExtensionsError(status);
                 return false;
             }
             return true;

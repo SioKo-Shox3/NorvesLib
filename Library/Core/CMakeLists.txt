@@ -169,6 +169,8 @@ set(PRIVATE_SOURCES
     Private/Resource/GLTFAnalyzer.cpp
     Private/Resource/SkeletalGltfDecode.cpp
     Private/Resource/GltfAccessorRange.h
+    Private/Resource/GltfDocumentProfile.h
+    Private/Resource/GltfDocumentProfile.cpp
     Private/Resource/GltfContainer.h
     Private/Resource/GltfContainer.cpp
     Private/Resource/GltfBufferSource.h

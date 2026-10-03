@@ -3,6 +3,7 @@
 
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
+#include "Resource/GltfDocumentProfile.h"
 #include "Text/JsonDocument.h"
 
 #include <algorithm>
@@ -1254,6 +1255,11 @@ namespace NorvesLib::Core::Skeletal
             const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers)
         {
             if (!root.IsObject())
+            {
+                return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
+            }
+
+            if (Gltf::CheckRequiredExtensions(root) != Gltf::RequiredExtensionsStatus::Success)
             {
                 return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
             }

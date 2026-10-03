@@ -79,6 +79,18 @@ int main()
         assert(!Staging::BuildModelStagingFromLooseGltf(path, path, staging, "test", 0));
         assert(staging.Vertices.data() == oldVertices && staging.Vertices.size() == 3);
     }
+    // 正常なgeometryへ必須拡張だけを追加し、拒否と既存出力保持を確認する。
+    for (const char* extension : {"KHR_draco_mesh_compression", "EXT_meshopt_compression",
+        "KHR_mesh_quantization", "KHR_texture_transform"})
+    {
+        Container::AnsiString json = "{\"extensionsRequired\":[\"";
+        json += extension;
+        json += "\"],";
+        json += variants[0] + 1;
+        Write(file, json.data(), json.size());
+        assert(!Staging::BuildModelStagingFromLooseGltf(path, path, staging, "test", 0));
+        assert(staging.Vertices.data() == oldVertices && staging.Vertices.size() == 3);
+    }
     std::cout << "GltfAccessorStagingTest PASS: valid_mesh_view_declared_offset_count_bounds\n";
     return 0;
 }
