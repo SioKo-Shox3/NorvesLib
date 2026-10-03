@@ -505,3 +505,6 @@
 
 - G2-GR78-OUTPUT-SIDECAR-GUARD: 採用sidecarをmodel package/manifest/派生texture packageで上書きするpath・symlink・hardlink aliasを全write前に拒否。既存Windows case比較を再利用し、canonicalize失敗も拒否する。Mainの実helper textをLinuxで直接compileし、同一/正規化/hardlink/symlink/別fileを通常/O2/ASan・UBSan（LeakSanitizer除外）で成功。CLI smokeに2直接alias、通常cook、派生texture hardlinkと設定/モデル/manifest保持を追加し独立PASS。Main全体/Windows/CLI/CMakeは未実行で、helper検証と区別する。
 - Next: 静的sidecar接続とguardの2コミットをまとめて公開し、GR78-SKELETAL-SIDECARの一様scaleへ進む。SurfaceCentroidは作者合意どおり拒否を維持。
+
+- G2-GR78-SKELETAL-SIDECAR: 共有scale/fit倍率を骨格の頂点位置・IBM平行移動・Translation sample・mesh-node平行移動へ同時適用し、raw/legacy/loose/cookへ接続。fitはmesh-node線形変換後のasset空間寸法で決定し、回転/scale/法線/UV/weight/形式は維持。設定snapshotをcookとhashで共有し、骨格非対応のaxes/origin/mesh変更は拒否する。設定出力alias guardも骨格CLIに接続。共有primitiveを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で実行成功、MEMBER compile成功。native試験に非identity Scale fixture、0/1/2秒の回転終端、raw/cookedのscale/fitと実sampler比較、設定有無/hash/失敗保持/CLI guardを登録。独立第2周PASS。実decoder/cooker/sampler/CLIはWindows.h等の環境制約で未実行、登録と実行を区別する。
+- Next: GR78-CLIの設定指定/require/no-sidecar、単体skip、inspectを進める。surface_centroidと実物描画受入れは保留を維持する。

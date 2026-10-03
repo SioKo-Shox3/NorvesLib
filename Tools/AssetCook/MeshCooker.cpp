@@ -2008,7 +2008,8 @@ namespace NorvesLib::Tools::AssetCook
                                       AnsiStringView format,
                                       AnsiStringView sourcePath,
                                       SkeletalCookResult& outResult,
-                                      AnsiString& error)
+                                      AnsiString& error,
+                          const Core::AssetImport::ImportSettingsFileOptions* importOptions)
         {
             if (format != SupportedSkeletalFormat)
             {
@@ -2020,9 +2021,30 @@ namespace NorvesLib::Tools::AssetCook
                 error = "glTF source input is empty";
                 return false;
             }
+            AssetImport::LoadedImportSettings loadedImport;
+            const AssetImport::ImportSettingsFileOptions automaticImport;
+            const auto& effectiveImport = importOptions != nullptr ? *importOptions : automaticImport;
+            AssetImport::SettingsFileOutcome settingsResult;
+            if (!sourcePath.empty() || effectiveImport.bRequired || !effectiveImport.OverridePath.empty())
+            {
+                settingsResult = AssetImport::LoadImportSettingsFile(
+                    std::filesystem::path(sourcePath.begin(), sourcePath.end()), effectiveImport, loadedImport);
+            }
+            if (settingsResult.Result != AssetImport::SettingsFileResult::Success)
+            {
+                error = AnsiString("import settings rejected: file=") +
+                    FormatInteger(static_cast<int>(settingsResult.Result)) + " validation=" +
+                    FormatInteger(static_cast<int>(settingsResult.Validation));
+                return false;
+            }
+            if (loadedImport.bPresent && !AssetImport::SupportsSkeletalScaleImport(loadedImport.Settings))
+            {
+                error = "skeletal import supports only uniform scale/fit; axes, mirror, origin and mesh changes are unsupported";
+                return false;
+            }
             Gltf::BufferSet sourceBuffers;
             const auto decoded = NorvesLib::Core::Skeletal::DecodeSkeletalGltf(
-                {sourceBytes, sourceSize}, ToCoreString(sourcePath), &sourceBuffers);
+                {sourceBytes, sourceSize}, ToCoreString(sourcePath), &sourceBuffers, &loadedImport);
             if (!decoded.Succeeded())
             {
                 error = AnsiString("skeletal glTF decode failed: status=") +
@@ -2046,7 +2068,21 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            result.SourceHash = ComputeGltfSourceHash(sourceBytes, sourceSize, sourceBuffers);
+            const auto sourceHash = AssetImport::AppendImportSettingsHash(
+                ComputeGltfSourceHash(sourceBytes, sourceSize, sourceBuffers), loadedImport.bPresent, loadedImport.Settings);
+            if (!sourceHash.bValid)
+            {
+                error = "invalid import settings hash";
+                return false;
+            }
+            result.SourceHash = sourceHash.Value;
+            result.bHasImportSettings = loadedImport.bPresent;
+            result.ImportSettingsPath = AnsiString(loadedImport.Path.generic_string().c_str());
+            if (loadedImport.bPresent)
+            {
+                result.ImportSettingsHash = AssetImport::AppendImportSettingsHash(
+                    Format::Fnv1a64OffsetBasis, true, loadedImport.Settings).Value;
+            }
             result.VertexCount = static_cast<uint32_t>(decoded.Data.Vertices.size());
             result.IndexCount = static_cast<uint32_t>(decoded.Data.Indices.size());
             result.JointCount = static_cast<uint32_t>(decoded.Data.Joints.size());
@@ -2143,10 +2179,11 @@ namespace NorvesLib::Tools::AssetCook
                           NorvesLib::Core::Container::AnsiStringView format,
                           NorvesLib::Core::Container::AnsiStringView sourcePath,
                           SkeletalCookResult& outResult,
-                          NorvesLib::Core::Container::AnsiString& error)
+                          NorvesLib::Core::Container::AnsiString& error,
+                          const Core::AssetImport::ImportSettingsFileOptions* importOptions)
     {
         AnsiString internalError;
-        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError))
+        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError, importOptions))
         {
             error = internalError;
             return false;

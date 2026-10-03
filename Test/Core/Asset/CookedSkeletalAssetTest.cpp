@@ -6,6 +6,12 @@
 #include "Resource/GLTFAnalyzer.h"
 #include "Resource/SkeletalGltfDecode.h"
 #include "Resource/GltfBufferSet.h"
+#include "Resource/ImportSettingsFile.h"
+#include "Animation/SkeletonResource.h"
+#include "Animation/AnimationClipResource.h"
+#include "Animation/SkeletalAnimationSampler.h"
+#include "Resource/SkinnedMeshResource.h"
+#include <algorithm>
 #include "Tools/AssetCook/MeshCooker.h"
 #include <chrono>
 #include <charconv>
@@ -39,6 +45,11 @@ namespace FileStream = NorvesLib::FileStream;
 namespace Rendering = NorvesLib::Core::Rendering;
 namespace Gltf = NorvesLib::Core::Resource;
 namespace Skeletal = NorvesLib::Core::Skeletal;
+namespace Math = NorvesLib::Math;
+namespace Animation = NorvesLib::Core::Animation;
+using NorvesLib::Core::SkeletonResource;
+using NorvesLib::Core::AnimationClipResource;
+using NorvesLib::Core::SkinnedMeshResource;
 
 namespace
 {
@@ -563,6 +574,124 @@ namespace
         assert(layout.Elements[4].GetSize() == 16);
     }
 
+    void AssertScaledSkeletal(const Skeletal::SkeletalGltfData& before,
+                              const Skeletal::SkeletalGltfData& after, float scale)
+    {
+        const auto near = [](float a, float b) { return std::abs(a - b) < 1e-4f; };
+        assert(before.Vertices.size() == after.Vertices.size() && before.Joints.size() == after.Joints.size());
+        assert(before.Indices == after.Indices && before.Clips.size() == after.Clips.size());
+        for (size_t index = 0; index < before.Vertices.size(); ++index)
+        {
+            const auto& a = before.Vertices[index];
+            const auto& b = after.Vertices[index];
+            assert(near(b.Position.X, a.Position.X * scale) && near(b.Position.Y, a.Position.Y * scale) &&
+                near(b.Position.Z, a.Position.Z * scale));
+            assert(b.Normal.X == a.Normal.X && b.Normal.Y == a.Normal.Y && b.Normal.Z == a.Normal.Z);
+            assert(b.TexCoord.U == a.TexCoord.U && b.TexCoord.V == a.TexCoord.V);
+            assert(b.JointIndices == a.JointIndices && b.JointWeights == a.JointWeights);
+        }
+        for (size_t index = 0; index < before.Joints.size(); ++index)
+        {
+            const auto& a = before.Joints[index];
+            const auto& b = after.Joints[index];
+            assert(a.Name == b.Name && a.ParentIndex == b.ParentIndex);
+            for (size_t element = 0; element < 16; ++element)
+            {
+                if (element >= 12 && element < 15)
+                {
+                    assert(near(b.InverseBindMatrix[element], a.InverseBindMatrix[element] * scale));
+                }
+                else
+                {
+                    assert(b.InverseBindMatrix[element] == a.InverseBindMatrix[element]);
+                }
+            }
+        }
+        for (size_t element = 0; element < 16; ++element)
+        {
+            if (element >= 12 && element < 15)
+            {
+                assert(near(after.MeshNodeGlobalTransform[element], before.MeshNodeGlobalTransform[element] * scale));
+            }
+            else
+            {
+                assert(after.MeshNodeGlobalTransform[element] == before.MeshNodeGlobalTransform[element]);
+            }
+        }
+        for (size_t clip = 0; clip < before.Clips.size(); ++clip)
+        {
+            assert(before.Clips[clip].Name == after.Clips[clip].Name &&
+                before.Clips[clip].DurationSeconds == after.Clips[clip].DurationSeconds);
+            assert(before.Clips[clip].Channels.size() == after.Clips[clip].Channels.size());
+            for (size_t channel = 0; channel < before.Clips[clip].Channels.size(); ++channel)
+            {
+                const auto& a = before.Clips[clip].Channels[channel];
+                const auto& b = after.Clips[clip].Channels[channel];
+                assert(a.Path == b.Path && a.JointIndex == b.JointIndex && a.Interpolation == b.Interpolation);
+                assert(a.Samples.size() == b.Samples.size());
+                const float factor = a.Path == Skeletal::SkeletalAnimationPath::Translation ? scale : 1.0f;
+                for (size_t sample = 0; sample < a.Samples.size(); ++sample)
+                {
+                    assert(a.Samples[sample].TimeSeconds == b.Samples[sample].TimeSeconds);
+                    const auto& x = a.Samples[sample].Value;
+                    const auto& y = b.Samples[sample].Value;
+                    assert(near(y.X,x.X*factor) && near(y.Y,x.Y*factor) && near(y.Z,x.Z*factor) && y.W == x.W);
+                    if (a.Path != Skeletal::SkeletalAnimationPath::Translation)
+                    {
+                        assert(y.X==x.X && y.Y==x.Y && y.Z==x.Z);
+                    }
+
+                }
+            }
+        }
+    }
+
+    Math::Matrix4x4 ImportMatrix(const Container::FixedArray<float,16>& values)
+    {
+        return Math::Matrix4x4(values[0],values[1],values[2],values[3],
+            values[4],values[5],values[6],values[7],values[8],values[9],values[10],values[11],
+            values[12],values[13],values[14],values[15]);
+    }
+
+    void AssertScaledSample(const Skeletal::SkeletalGltfData& before,
+                            const Skeletal::SkeletalGltfData& after, float scale)
+    {
+        SkeletonResource firstSkeleton, secondSkeleton;
+        AnimationClipResource firstClip, secondClip;
+        SkinnedMeshResource firstMesh, secondMesh;
+        firstSkeleton.Initialize(); secondSkeleton.Initialize();
+        firstClip.Initialize(); secondClip.Initialize(); firstMesh.Initialize(); secondMesh.Initialize();
+        auto first = before;
+        auto second = after;
+        firstSkeleton.SetJoints(std::move(first.Joints)); secondSkeleton.SetJoints(std::move(second.Joints));
+        firstClip.SetClip(std::move(first.Clips[0])); secondClip.SetClip(std::move(second.Clips[0]));
+        firstMesh.SetVertices(std::move(first.Vertices)); secondMesh.SetVertices(std::move(second.Vertices));
+        firstMesh.SetIndices(std::move(first.Indices)); secondMesh.SetIndices(std::move(second.Indices));
+        firstMesh.SetMeshNodeGlobalTransform(before.MeshNodeGlobalTransform);
+        secondMesh.SetMeshNodeGlobalTransform(after.MeshNodeGlobalTransform);
+        assert(firstSkeleton.Load() && secondSkeleton.Load() && firstClip.Load() && secondClip.Load());
+        for (float time : {0.0f,1.0f,2.0f})
+        {
+            Animation::SkeletalPoseSnapshot firstPose, secondPose;
+            assert(Animation::SkeletalAnimationSampler::Sample(firstSkeleton,firstClip,firstMesh,time,
+                ImportMatrix(before.MeshNodeGlobalTransform),firstPose));
+            assert(Animation::SkeletalAnimationSampler::Sample(secondSkeleton,secondClip,secondMesh,time,
+                ImportMatrix(after.MeshNodeGlobalTransform),secondPose));
+            for (size_t vertex=0;vertex<before.Vertices.size();++vertex)
+            {
+                const auto a=Animation::SkeletalAnimationSampler::SkinVertex(firstMesh.GetVertices()[vertex],firstPose.BonePalette);
+                const auto b=Animation::SkeletalAnimationSampler::SkinVertex(secondMesh.GetVertices()[vertex],secondPose.BonePalette);
+                assert(std::abs(b.Position.x-a.Position.x*scale)<1e-4f);
+                assert(std::abs(b.Position.y-a.Position.y*scale)<1e-4f);
+                assert(std::abs(b.Position.z-a.Position.z*scale)<1e-4f);
+                assert(std::abs(b.Normal.x-a.Normal.x)<1e-4f && std::abs(b.Normal.y-a.Normal.y)<1e-4f &&
+                    std::abs(b.Normal.z-a.Normal.z)<1e-4f);
+            }
+        }
+        firstMesh.Finalize(); secondMesh.Finalize(); firstClip.Finalize(); secondClip.Finalize();
+        firstSkeleton.Finalize(); secondSkeleton.Finalize();
+    }
+
     void RunUnitContract()
     {
         AssertSkinnedVertexAbi();
@@ -687,6 +816,130 @@ namespace
                 assert(result.VertexCount == externalCook.VertexCount && result.IndexCount == externalCook.IndexCount &&
                     result.JointCount == externalCook.JointCount && result.ClipCount == externalCook.ClipCount);
             }
+            Container::AnsiString errorForImport;
+            // source隣sidecarをraw/legacy/loose/cookerで同じsnapshotとして適用する。
+            auto sidecar = fixture.Root / "ValidU8Float.gltf.import.json";
+            WriteFixtureBytes(sidecar,TextBytes("{\"version\":1}"));
+            SkeletalCookResult identityImport;
+            assert(cook(external,identityImport) && identityImport.bHasImportSettings);
+            assert(identityImport.SourceHash!=externalCook.SourceHash && identityImport.NvskelBytes==externalCook.NvskelBytes);
+            WriteFixtureBytes(sidecar,TextBytes("{\"version\":1,\"units\":{\"scale\":2}}"));
+            const auto scaled = Skeletal::DecodeSkeletalGltf(external,fixture.Path());
+            assert(scaled.Succeeded());
+            AssertScaledSkeletal(loose.Data,scaled.Data,2.0f);
+            AssertScaledSample(loose.Data,scaled.Data,2.0f);
+            const auto scaledLegacy = Skeletal::DecodeSkeletalGltf(CoreText(text),fixture.Path());
+            assert(scaledLegacy.Succeeded()); AssertEquivalent(scaled.Data,scaledLegacy.Data);
+            const auto scaledLoose = Gltf::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
+            assert(scaledLoose.Succeeded()); AssertEquivalent(scaled.Data,scaledLoose.Data);
+            SkeletalCookResult scaledCook;
+            assert(cook(external,scaledCook) && scaledCook.bHasImportSettings && scaledCook.SourceHash!=externalCook.SourceHash);
+            const auto scaledParsed = Asset::ParseCookedSkeletal(MakeBlob(scaledCook.NvskelBytes));
+            assert(scaledParsed.Succeeded()); AssertEquivalent(scaled.Data,scaledParsed.Data.Skeletal);
+            const auto scaledHash=scaledCook.SourceHash;
+            const auto settingsHash=scaledCook.ImportSettingsHash;
+            WriteFixtureBytes(sidecar,TextBytes("{ \"meta\":{\"note\":\"format only\"},\"units\":{\"scale\":2},\"version\":1 }"));
+            assert(cook(external,scaledCook) && scaledCook.SourceHash==scaledHash && scaledCook.ImportSettingsHash==settingsHash);
+            // .glbも同じデータ/設定を適用し、BINを別途hashしない。
+            auto glbSidecar=glbPath; glbSidecar+=".import.json";
+            WriteFixtureBytes(glbSidecar,TextBytes("{\"version\":1,\"units\":{\"scale\":2}}"));
+            const auto scaledGlb=Gltf::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(glbPath));
+            assert(scaledGlb.Succeeded()); AssertEquivalent(scaled.Data,scaledGlb.Data);
+
+            NorvesLib::Core::AssetImport::ImportSettingsFileOptions disabledImport;
+            disabledImport.bDisabled=true;
+            SkeletalCookResult unscaledCook;
+            assert(NorvesLib::Tools::AssetCook::CookGltfToNvskel(external.data(),external.size(),
+                "nvskel.v0.skinned.pnujiw.u32",sourcePath,unscaledCook,errorForImport,&disabledImport));
+            assert(unscaledCook.SourceHash==externalCook.SourceHash && !unscaledCook.bHasImportSettings);
+            assert(unscaledCook.NvskelBytes==externalCook.NvskelBytes);
+            NorvesLib::Core::AssetImport::LoadedImportSettings noImport;
+            const auto unscaled= Skeletal::DecodeSkeletalGltf(external,fixture.Path(),nullptr,&noImport);
+            assert(unscaled.Succeeded()); AssertEquivalent(loose.Data,unscaled.Data);
+
+            WriteFixtureBytes(sidecar,TextBytes("{\"version\":1,\"units\":{\"fit\":{\"axis\":\"up\",\"meters\":0.6}}}"));
+            const auto fitted=Skeletal::DecodeSkeletalGltf(external,fixture.Path());
+            assert(fitted.Succeeded());
+            float minY=loose.Data.Vertices[0].Position.Y,maxY=minY;
+            for(const auto& vertex:loose.Data.Vertices)
+            {
+                minY=std::min(minY,vertex.Position.Y); maxY=std::max(maxY,vertex.Position.Y);
+            }
+            const float fitScale=0.6f/(maxY-minY);
+            AssertScaledSkeletal(loose.Data,fitted.Data,fitScale);
+            AssertScaledSample(loose.Data,fitted.Data,fitScale);
+            const size_t meshName=text.find("\"name\": \"Mesh\"");
+            assert(meshName!=Container::AnsiString::npos);
+            const Container::AnsiString nodeScaled = Container::AnsiString(text.substr(0,meshName)) +
+                "\"scale\":[1,2,1]," + Container::AnsiString(text.substr(meshName));
+            const auto nodeBaseline=Skeletal::DecodeSkeletalGltf(CoreText(nodeScaled),fixture.Path(),nullptr,&noImport);
+            const auto nodeFitted=Skeletal::DecodeSkeletalGltf(CoreText(nodeScaled),fixture.Path());
+            assert(nodeBaseline.Succeeded() && nodeFitted.Succeeded());
+            AssertScaledSkeletal(nodeBaseline.Data,nodeFitted.Data,fitScale/2.0f);
+            AssertScaledSample(nodeBaseline.Data,nodeFitted.Data,fitScale/2.0f);
+
+            // 非identityのScaleチャンネルを持つ入力でも回転/scaleは変更しない。
+            const auto scaleText = ReadFixtureJson(ToCorePath(FindFixtureRoot() / "ValidImportScale.gltf"));
+            ByteArray scaleBinary = binary;
+            scaleBinary.resize(440);
+            constexpr float scaleKeys[] = {1.0f,2.0f,1.0f,2.0f,3.0f,0.5f};
+            for (size_t index = 0; index < 6; ++index)
+            {
+                WriteFloat(scaleBinary,416 + index * sizeof(float),scaleKeys[index]);
+            }
+            const auto scaleGlb = MakeSkeletalGlb(ChangeBufferUri(scaleText,""),scaleBinary);
+            const auto scaleBaseline = Skeletal::DecodeSkeletalGltf(scaleGlb,fixture.Path(),nullptr,&noImport);
+            assert(scaleBaseline.Succeeded() && scaleBaseline.Data.Clips[0].Channels.size()==3);
+            const auto& scaleChannel = scaleBaseline.Data.Clips[0].Channels[2];
+            assert(scaleChannel.Path==Skeletal::SkeletalAnimationPath::Scale && scaleChannel.Samples.size()==2);
+            assert(scaleChannel.Samples[0].Value.Y==2.0f && scaleChannel.Samples[1].Value.X==2.0f &&
+                scaleChannel.Samples[1].Value.Y==3.0f && scaleChannel.Samples[1].Value.Z==0.5f);
+            for (bool fit : {false,true})
+            {
+                WriteFixtureBytes(sidecar,TextBytes(fit ?
+                    "{\"version\":1,\"units\":{\"fit\":{\"axis\":\"up\",\"meters\":0.6}}}" :
+                    "{\"version\":1,\"units\":{\"scale\":2}}"));
+                const auto imported = Skeletal::DecodeSkeletalGltf(scaleGlb,fixture.Path());
+                assert(imported.Succeeded());
+                const float factor = fit ? fitScale : 2.0f;
+                AssertScaledSkeletal(scaleBaseline.Data,imported.Data,factor);
+                AssertScaledSample(scaleBaseline.Data,imported.Data,factor);
+                SkeletalCookResult importedCook;
+                assert(cook(scaleGlb,importedCook));
+                const auto importedParsed = Asset::ParseCookedSkeletal(MakeBlob(importedCook.NvskelBytes));
+                assert(importedParsed.Succeeded());
+                AssertEquivalent(imported.Data,importedParsed.Data.Skeletal);
+                AssertScaledSkeletal(scaleBaseline.Data,importedParsed.Data.Skeletal,factor);
+                AssertScaledSample(scaleBaseline.Data,importedParsed.Data.Skeletal,factor);
+            }
+
+            const auto retainedHash=scaledCook.SourceHash;
+            const ByteArray retainedImportPayload=scaledCook.NvskelBytes;
+            for(const char* invalid:{
+                "{\"version\":1,\"axes\":{\"up\":\"+Z\",\"forward\":\"+X\"}}",
+                "{\"version\":1,\"axes\":{\"mirrorX\":true}}",
+                "{\"version\":1,\"origin\":{\"mode\":\"bounds_center\"}}",
+                "{\"version\":1,\"origin\":{\"mode\":\"surface_centroid\"}}",
+                "{\"version\":1,\"mesh\":{\"flipV\":true}}",
+                "{\"version\":1,\"mesh\":{\"winding\":\"flip\"}}",
+                "{\"version\":1,\"units\":{\"scale\":1e308}}"})
+            {
+                WriteFixtureBytes(sidecar,TextBytes(invalid));
+                assert(!Skeletal::DecodeSkeletalGltf(external,fixture.Path(),&sources).Succeeded() && sources.GetCount()==0);
+                assert(!cook(external,scaledCook) && scaledCook.SourceHash==retainedHash);
+                assert(scaledCook.NvskelBytes==retainedImportPayload);
+            }
+            assert(std::filesystem::remove(sidecar));
+            assert(std::filesystem::remove(glbSidecar));
+            assert(cook(external,unscaledCook) && unscaledCook.SourceHash==externalCook.SourceHash);
+            assert(unscaledCook.NvskelBytes==externalCook.NvskelBytes);
+            NorvesLib::Core::AssetImport::ImportSettingsFileOptions requiredImport; requiredImport.bRequired=true;
+            assert(!NorvesLib::Tools::AssetCook::CookGltfToNvskel(glb.data(),glb.size(),
+                "nvskel.v0.skinned.pnujiw.u32",{},scaledCook,errorForImport,&requiredImport));
+            assert(NorvesLib::Tools::AssetCook::CookGltfToNvskel(glb.data(),glb.size(),
+                "nvskel.v0.skinned.pnujiw.u32",{},unscaledCook,errorForImport));
+            assert(unscaledCook.NvskelBytes==externalCook.NvskelBytes);
+
             ByteArray withBom{0xef, 0xbb, 0xbf};
             withBom.insert(withBom.end(), external.begin(), external.end());
             ByteArray withExtra = binary;

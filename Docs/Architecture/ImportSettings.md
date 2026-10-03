@@ -1,7 +1,7 @@
 # 取り込み設定 v1
 
 GR78のソース隣設定は <source>.import.json（例: Dog.glb.import.json）を正本とし、cook/looseで共用する。
-値・JSON解析・設定file選択/読込・正規化hash・下記のgeometry変換を共有し、静的glTF/GLBのAssetCookとlooseロードへ接続する。骨格経路とCLIの明示指定/skip/inspectは後続。
+値・JSON解析・設定file選択/読込・正規化hash・下記のgeometry変換を共有し、静的glTF/GLBのAssetCookとlooseロードへ接続する。骨格には下記の一様scale/fitを適用する。CLIの明示指定/skip/inspectは後続。
 
 ## 共通の配置と責務
 
@@ -84,7 +84,7 @@ strideとfield offsetでlayoutを渡し、他のfieldやpaddingは変更しな�
 実ImportTransformTestは48の軸/鏡像組合せの体積符号、3種類fit、bounds/足元原点、custom移動、
 法線/UV、layout・index・NaN/inf/overflow/underflowと失敗時非変更、非整列storageと未指定field保持を確認する。
 通常・最適化・ASan/UBSan（LeakSanitizer除外）を実行済み。
-骨格のIBM/animation等の一様scaleは後続。静的cooker/looseへの挿入は下記の接続契約に従う。
+骨格のIBM/animation等の一様scaleと静的cooker/looseへの挿入は、下記の接続契約に従う。
 
 表面重心は作者承認により後段へ分離した。極端値の精度確認が完了するまでは名前を認識して明示拒否し、
 bounds_center等へ無言で置き換えない。候補実装は履歴に残るが、現在の変換処理からは除外している。
@@ -172,3 +172,32 @@ Dog.glbの隣のDog.glb.import.jsonへ置く例。sourceの上/前方向が+Y/+Z
   "mesh": { "winding": "auto", "flipU": false, "flipV": false }
 }
 ```
+
+
+## 骨格の一様scale/fit
+
+現行NVSKEL形式を変えず、骨格decoder（raw GLB/JSON・legacy String・AnalyzeSkeletal）とcookerへ同じ設定を適用する。
+対応は正の一様scale/fitだけ。up=+Y/forward=+Z、mirrorX=false、origin=keep、winding=keep、UV反転無しを要求し、
+他の指定は未対応として拒否する。表面重心は引き続き拒否する。
+
+- 頂点位置XYZをs倍
+- 全jointの逆バインド行列の平行移動（flat index12〜14）をs倍
+- 全clipのTranslationチャンネルのXYZをs倍。time/WとRotation/Scaleチャンネルは不変
+- MeshNodeGlobalTransformの平行移動をs倍。全行列の線形成分は不変
+- 法線・UV・joint名/階層/indices/weightsは不変
+
+これは行ベクトル規約の単位変更に相当する。変換中のdataは未公開candidateなので、途中のoverflow/underflowで部分結果を返さない。
+scale/fitの倍率式とfloatへの安全な倍率変換は共有primitiveを使う。
+fitはmesh-nodeの線形変換後に測ったasset内boundsのextentを使い、平行移動は除外する。
+Scene上の所有Entityのworld変換は含めない。非identityのmesh-node scaleも二重適用しない。
+
+cookerは設定を一度だけ読み、同じLoadedImportSettingsをdecoderへ渡してgeometryとhashの食違いを防ぐ。
+Core decoderは呼出中のみ借用し、結果へ設定pointerを保持しない。引数省略時はsource隣を自動探索する。
+空source locatorの自己完結入力はauto設定無し、cookerのrequiredは失敗、明示overrideは採用する。
+設定無し/disabledは旧payload/hashを維持する。Mainの骨格出力も採用sidecarへのaliasを事前に拒否する。
+
+CookedSkeletalAssetTestにM9のraw/legacy/loose/GLB/cooker同値、恒等/disabled、meta hash不変、
+fit（mesh-node scaleありを含む）、不変field、拒否時出力保持を追加した。
+実SkeletalAnimationSamplerとSkinVertexで3時刻の変形結果がs倍・法線不変になる検査も登録した。
+CLI smokeには設定正本をpackage/manifestで上書きしない拒否と通常cookを追加した。
+共有primitiveは通常・最適化・sanitizerで実行成功、MEMBERではcompile成功。実decoder/pose/CLI/nativeはWindows.h等により未実行。

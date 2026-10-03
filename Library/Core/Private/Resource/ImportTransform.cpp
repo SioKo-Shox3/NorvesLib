@@ -134,6 +134,70 @@ namespace NorvesLib::Core::AssetImport
         }
     } // namespace
 
+    bool SupportsSkeletalScaleImport(const ImportSettings& settings) noexcept
+    {
+        return ValidateSettings(settings) == SettingsResult::Success &&
+            settings.Up == SignedAxis::PositiveY && settings.Forward == SignedAxis::PositiveZ &&
+            !settings.bMirrorX && settings.Origin == OriginMode::Keep &&
+            settings.Winding == WindingMode::Keep && !settings.bFlipU && !settings.bFlipV;
+    }
+
+    UniformImportScale ResolveUniformImportScale(const ImportSettings& settings,
+        const double (&minimum)[3], const double (&maximum)[3]) noexcept
+    {
+        const auto validation = ValidateSettings(settings);
+        if (validation != SettingsResult::Success)
+        {
+            return {validation == SettingsResult::UnsupportedFeature ? TransformResult::UnsupportedOrigin :
+                TransformResult::InvalidSettings, 1.0};
+        }
+        double extents[3];
+        for (size_t axis = 0; axis < 3; ++axis)
+        {
+            if (!std::isfinite(minimum[axis]) || !std::isfinite(maximum[axis]) || maximum[axis] < minimum[axis])
+            {
+                return {TransformResult::InvalidVertex, 1.0};
+            }
+            extents[axis] = maximum[axis] - minimum[axis];
+            if (!std::isfinite(extents[axis]))
+            {
+                return {TransformResult::Unrepresentable, 1.0};
+            }
+        }
+        double scale = settings.Scale;
+        if (settings.Fit != FitAxis::None)
+        {
+            const double extent = settings.Fit == FitAxis::Up ? extents[1] :
+                settings.Fit == FitAxis::Forward ? extents[2] : std::max({extents[0], extents[1], extents[2]});
+            if (extent <= 0.0)
+            {
+                return {TransformResult::DegenerateFit, 1.0};
+            }
+            scale = settings.FitMeters / extent;
+        }
+        if (!std::isfinite(scale) || scale <= 0.0)
+        {
+            return {TransformResult::Unrepresentable, 1.0};
+        }
+        return {TransformResult::Success, scale};
+    }
+
+    bool TryScaleImportValue(float value, double scale, float& outValue) noexcept
+    {
+        if (!std::isfinite(value) || !std::isfinite(scale) || scale <= 0.0)
+        {
+            return false;
+        }
+        const double result = static_cast<double>(value) * scale;
+        float candidate = 0.0f;
+        if ((value != 0.0f && result == 0.0) || !AsFloat(result, candidate, true))
+        {
+            return false;
+        }
+        outValue = candidate;
+        return true;
+    }
+
     ImportTransformOutcome ApplyImportTransform(Container::Span<uint8_t> vertices, size_t vertexCount,
         ImportVertexLayout layout, Container::Span<uint32_t> indices, const ImportSettings& input) noexcept
     {
@@ -205,22 +269,12 @@ namespace NorvesLib::Core::AssetImport
                 maximum[axis] = std::max(maximum[axis], position[axis]);
             }
         }
-        plan.Scale = settings.Scale;
-        if (settings.Fit != FitAxis::None)
+        const auto resolvedScale = ResolveUniformImportScale(settings, minimum, maximum);
+        if (resolvedScale.Result != TransformResult::Success)
         {
-            const double extents[] = {maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2]};
-            const double extent = settings.Fit == FitAxis::Up ? extents[1] :
-                settings.Fit == FitAxis::Forward ? extents[2] : std::max({extents[0], extents[1], extents[2]});
-            if (extent <= 0.0)
-            {
-                return fail(TransformResult::DegenerateFit);
-            }
-            plan.Scale = settings.FitMeters / extent;
+            return fail(resolvedScale.Result);
         }
-        if (!std::isfinite(plan.Scale) || plan.Scale <= 0)
-        {
-            return fail(TransformResult::Unrepresentable);
-        }
+        plan.Scale = resolvedScale.Value;
         if (settings.Origin == OriginMode::BoundsCenter || settings.Origin == OriginMode::BoundsBottomCenter)
         {
             for (size_t axis = 0; axis < 3; ++axis)

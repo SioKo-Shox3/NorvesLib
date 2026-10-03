@@ -2422,6 +2422,18 @@ namespace
             return false;
         }
 
+        if (skeletalResult.bHasImportSettings)
+        {
+            const std::filesystem::path sidecar(skeletalResult.ImportSettingsPath.begin(), skeletalResult.ImportSettingsPath.end());
+            if (!GuardImportSettingsOutput(packagePath, sidecar, error) ||
+                !GuardImportSettingsOutput(manifestPath, sidecar, error))
+            {
+                return false;
+            }
+        }
+        std::cout << "sidecar: " << (skeletalResult.bHasImportSettings ? ToStdString(skeletalResult.ImportSettingsPath) : "none")
+                  << " settings_hash=" << ToStdString(FormatAssetHashHex(skeletalResult.ImportSettingsHash)) << "\n";
+
         if (!ValidateCookedSkeletalPayload(skeletalResult.NvskelBytes, error))
         {
             return false;

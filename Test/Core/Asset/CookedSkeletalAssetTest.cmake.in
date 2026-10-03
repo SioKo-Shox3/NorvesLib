@@ -270,6 +270,34 @@ if(invalid_cook_result EQUAL 0)
     message(FATAL_ERROR "AssetCook accepted a JOINTS_0 index outside the skin joint table")
 endif()
 
+# 骨格cookも採用設定をmodel package/manifestで上書きしない。
+set(IMPORT_SIDECAR "${SOURCE_GLTF}.import.json")
+file(WRITE "${IMPORT_SIDECAR}" "{\"version\":1,\"units\":{\"scale\":2}}")
+file(SHA256 "${IMPORT_SIDECAR}" import_settings_before)
+function(expect_skeletal_settings_guard output manifest)
+    execute_process(COMMAND "${ASSET_COOK_EXE}"
+        --input "${SOURCE_GLTF}" --out "${output}" --manifest "${manifest}"
+        --logical "${LOGICAL_PATH}" --kind model --entry "${ENTRY_NAME}" --entry-type Skl0
+        --format nvskel.v0.skinned.pnujiw.u32 --variant default
+        RESULT_VARIABLE result ERROR_VARIABLE error)
+    string(FIND "${error}" "output must not alias import settings" reason)
+    file(SHA256 "${IMPORT_SIDECAR}" import_settings_after)
+    if(result EQUAL 0 OR reason EQUAL -1 OR NOT import_settings_before STREQUAL import_settings_after)
+        message(FATAL_ERROR "skeletal sidecar was not protected: ${error}")
+    endif()
+endfunction()
+expect_skeletal_settings_guard("${IMPORT_SIDECAR}" "${SMOKE_DIR}/RuntimeRoot/import-guard.json")
+expect_skeletal_settings_guard("${SMOKE_DIR}/RuntimeRoot/Cooked/import-guard.nvpkg" "${IMPORT_SIDECAR}")
+execute_process(COMMAND "${ASSET_COOK_EXE}"
+    --input "${SOURCE_GLTF}" --out "${SMOKE_DIR}/RuntimeRoot/Cooked/imported.nvpkg"
+    --manifest "${SMOKE_DIR}/RuntimeRoot/imported.json" --logical "${LOGICAL_PATH}" --kind model
+    --entry "${ENTRY_NAME}" --entry-type Skl0 --format nvskel.v0.skinned.pnujiw.u32 --variant default
+    RESULT_VARIABLE import_result ERROR_VARIABLE import_error)
+file(SHA256 "${IMPORT_SIDECAR}" import_settings_after_success)
+if(NOT import_result EQUAL 0 OR NOT import_settings_before STREQUAL import_settings_after_success)
+    message(FATAL_ERROR "normal skeletal sidecar cook failed: ${import_error}")
+endif()
+
 message(STATUS "${unit_stdout}")
 message(STATUS "${cook_stdout}")
 message(STATUS "${package_stdout}")

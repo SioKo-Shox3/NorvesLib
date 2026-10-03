@@ -17,6 +17,20 @@ namespace NorvesLib::Core::AssetImport
         Success, InvalidSettings, InvalidLayout, InvalidIndices, InvalidVertex,
         DegenerateFit, DegenerateSurface, Unrepresentable, UnsupportedOrigin
     };
+    // 骨格v0で適用するのはscale/fitだけ。軸・鏡像・原点・UV・巻きは別対応まで拒否する。
+    [[nodiscard]] bool SupportsSkeletalScaleImport(const ImportSettings& settings) noexcept;
+
+    struct UniformImportScale
+    {
+        TransformResult Result = TransformResult::Unrepresentable;
+        double Value = 1.0;
+    };
+    // 既に軸を揃えたboundsから正の一様倍率を解決する。骨格と静的meshで同じfit式を使う。
+    [[nodiscard]] UniformImportScale ResolveUniformImportScale(const ImportSettings& settings,
+        const double (&minimum)[3], const double (&maximum)[3]) noexcept;
+    // 有限なfloat成分を倍率変換する。overflow/完全underflowは拒否し、失敗時outを保持する。
+    [[nodiscard]] bool TryScaleImportValue(float value, double scale, float& outValue) noexcept;
+
     struct ImportTransformOutcome
     {
         TransformResult Result = TransformResult::InvalidLayout;

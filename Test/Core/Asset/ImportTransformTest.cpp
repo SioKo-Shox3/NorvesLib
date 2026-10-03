@@ -60,6 +60,29 @@ namespace
 }
 int main()
 {
+    const double minimum[] = {-1,-2,-3}, maximum[] = {1,2,3};
+    ImportSettings scaleSettings;
+    assert(SupportsSkeletalScaleImport(scaleSettings));
+    scaleSettings.Fit=FitAxis::Up; scaleSettings.FitMeters=2;
+    assert(SupportsSkeletalScaleImport(scaleSettings));
+    assert(ResolveUniformImportScale(scaleSettings,minimum,maximum).Value==0.5);
+    scaleSettings.Origin=OriginMode::BoundsCenter;
+    assert(!SupportsSkeletalScaleImport(scaleSettings));
+    scaleSettings={}; scaleSettings.bFlipV=true;
+    assert(!SupportsSkeletalScaleImport(scaleSettings));
+    scaleSettings={}; scaleSettings.Winding=WindingMode::Auto;
+    assert(!SupportsSkeletalScaleImport(scaleSettings));
+    const double invalidBounds[] = {std::numeric_limits<double>::infinity(),0,0};
+    assert(ResolveUniformImportScale({},invalidBounds,maximum).Result==TransformResult::InvalidVertex);
+    float scaledValue=42;
+    assert(TryScaleImportValue(-3,2,scaledValue) && scaledValue==-6);
+    assert(TryScaleImportValue(-0.0f,2,scaledValue) && scaledValue==0 && std::signbit(scaledValue));
+    scaledValue=42;
+    assert(!TryScaleImportValue(1,0,scaledValue) && scaledValue==42);
+    assert(!TryScaleImportValue(std::numeric_limits<float>::max(),2,scaledValue) && scaledValue==42);
+    assert(!TryScaleImportValue(std::numeric_limits<float>::denorm_min(),0.5,scaledValue) && scaledValue==42);
+    assert(!TryScaleImportValue(0.125f,std::numeric_limits<double>::denorm_min(),scaledValue) && scaledValue==42);
+    assert(!TryScaleImportValue(std::numeric_limits<float>::quiet_NaN(),2,scaledValue) && scaledValue==42);
     Vertex vertices[3]; Triangle(vertices);
     uint32_t indices[] = {0,1,2};
     ImportSettings settings;

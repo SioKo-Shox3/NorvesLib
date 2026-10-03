@@ -58,6 +58,9 @@ namespace NorvesLib::Tools::AssetCook
     struct SkeletalCookResult
     {
         Core::Container::VariableArray<uint8_t> NvskelBytes;
+        Core::Container::AnsiString ImportSettingsPath;
+        uint64_t ImportSettingsHash = 0;
+        bool bHasImportSettings = false;
         uint64_t SourceHash = 0;
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
@@ -85,5 +88,6 @@ namespace NorvesLib::Tools::AssetCook
                                         Core::Container::AnsiStringView format,
                                         Core::Container::AnsiStringView sourcePath,
                                         SkeletalCookResult& outResult,
-                                        Core::Container::AnsiString& error);
+                                        Core::Container::AnsiString& error,
+                                        const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr);
 } // namespace NorvesLib::Tools::AssetCook

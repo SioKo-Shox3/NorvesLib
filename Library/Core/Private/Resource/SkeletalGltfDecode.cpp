@@ -4,6 +4,8 @@
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
 #include "Resource/GltfDocumentProfile.h"
+#include "Resource/ImportSettingsFile.h"
+#include "Resource/ImportTransform.h"
 #include "Text/JsonDocument.h"
 
 #include <algorithm>
@@ -1251,8 +1253,99 @@ namespace NorvesLib::Core::Skeletal
 
     namespace
     {
+        bool ApplySkeletalImport(SkeletalGltfData& data, const AssetImport::ImportSettings& settings)
+        {
+            using namespace AssetImport;
+            if (!SupportsSkeletalScaleImport(settings) || data.Vertices.empty())
+            {
+                return false;
+            }
+            double minimum[3] = {}, maximum[3] = {};
+            if (settings.Fit != FitAxis::None)
+            {
+                // fitはasset内のmesh-node線形変換後の長さを使う。平行移動はextentに影響しない。
+                const auto& matrix = data.MeshNodeGlobalTransform;
+                for (size_t index = 0; index < data.Vertices.size(); ++index)
+                {
+                    const auto& position = data.Vertices[index].Position;
+                    for (size_t axis = 0; axis < 3; ++axis)
+                    {
+                        const double value = static_cast<double>(matrix[axis]) * position.X +
+                            static_cast<double>(matrix[4 + axis]) * position.Y +
+                            static_cast<double>(matrix[8 + axis]) * position.Z;
+                        if (!std::isfinite(value))
+                        {
+                            return false;
+                        }
+                        if (index == 0)
+                        {
+                            minimum[axis] = maximum[axis] = value;
+                        }
+                        else
+                        {
+                            minimum[axis] = std::min(minimum[axis], value);
+                            maximum[axis] = std::max(maximum[axis], value);
+                        }
+                    }
+                }
+            }
+            const auto resolved = ResolveUniformImportScale(settings, minimum, maximum);
+            if (resolved.Result != TransformResult::Success)
+            {
+                return false;
+            }
+            const auto scale = [&](float& value)
+            {
+                return TryScaleImportValue(value, resolved.Value, value);
+            };
+            // dataはdecoder内の未公開candidate。途中失敗時も外部へ部分適用を返さない。
+            for (auto& vertex : data.Vertices)
+            {
+                if (!scale(vertex.Position.X) || !scale(vertex.Position.Y) || !scale(vertex.Position.Z))
+                {
+                    return false;
+                }
+            }
+            for (auto& joint : data.Joints)
+            {
+                for (size_t axis = 12; axis < 15; ++axis)
+                {
+                    if (!scale(joint.InverseBindMatrix[axis]))
+                    {
+                        return false;
+                    }
+                }
+            }
+            for (auto& clip : data.Clips)
+            {
+                for (auto& channel : clip.Channels)
+                {
+                    if (channel.Path != SkeletalAnimationPath::Translation)
+                    {
+                        continue;
+                    }
+                    for (auto& sample : channel.Samples)
+                    {
+                        if (!scale(sample.Value.X) || !scale(sample.Value.Y) || !scale(sample.Value.Z))
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+            for (size_t axis = 12; axis < 15; ++axis)
+            {
+                if (!scale(data.MeshNodeGlobalTransform[axis]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         SkeletalGltfDecodeResult DecodeResolvedDocument(const JsonValue& root, const Gltf::ContainerView& container,
-            const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers)
+            const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
+        const AssetImport::LoadedImportSettings* importSettings)
         {
             if (!root.IsObject())
             {
@@ -1262,6 +1355,19 @@ namespace NorvesLib::Core::Skeletal
             if (Gltf::CheckRequiredExtensions(root) != Gltf::RequiredExtensionsStatus::Success)
             {
                 return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
+            }
+
+            AssetImport::LoadedImportSettings discoveredImport;
+            const auto* selectedImport = importSettings;
+            if (selectedImport == nullptr)
+            {
+                if (!sourcePath.empty() &&
+                    AssetImport::LoadImportSettingsFile(std::filesystem::path(sourcePath.c_str()), {}, discoveredImport).Result !=
+                        AssetImport::SettingsFileResult::Success)
+                {
+                    return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
+                }
+                selectedImport = &discoveredImport;
             }
 
             PrimitiveInfo primitive;
@@ -1330,6 +1436,11 @@ namespace NorvesLib::Core::Skeletal
                 return Fail(SkeletalGltfDecodeStatus::InvalidAnimation);
             }
 
+            if (selectedImport->bPresent && !ApplySkeletalImport(data, selectedImport->Settings))
+            {
+                return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
+            }
+
             SkeletalGltfDecodeResult result;
             result.Status = SkeletalGltfDecodeStatus::Success;
             result.Data = std::move(data);
@@ -1342,7 +1453,8 @@ namespace NorvesLib::Core::Skeletal
     } // namespace
 
     SkeletalGltfDecodeResult DecodeSkeletalGltf(Container::Span<const uint8_t> sourceBytes,
-        const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers)
+        const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
+        const AssetImport::LoadedImportSettings* importSettings)
     {
         if (outSourceBuffers != nullptr)
         {
@@ -1371,11 +1483,12 @@ namespace NorvesLib::Core::Skeletal
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidJson);
         }
-        return DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers);
+        return DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers, importSettings);
     }
 
     SkeletalGltfDecodeResult DecodeSkeletalGltf(const Container::String& jsonText,
-        const Container::String& sourcePath, SkeletalGltfSourceBuffers* outSourceBuffers)
+        const Container::String& sourcePath, SkeletalGltfSourceBuffers* outSourceBuffers,
+        const AssetImport::LoadedImportSettings* importSettings)
     {
         if (outSourceBuffers != nullptr)
         {
@@ -1389,7 +1502,7 @@ namespace NorvesLib::Core::Skeletal
         }
         Gltf::BufferSet buffers;
         auto result = DecodeResolvedDocument(document.GetRoot(), {}, sourcePath,
-            outSourceBuffers != nullptr ? &buffers : nullptr);
+            outSourceBuffers != nullptr ? &buffers : nullptr, importSettings);
         if (result.Succeeded() && outSourceBuffers != nullptr)
         {
             SkeletalGltfSourceBuffers owned(buffers.GetCount());

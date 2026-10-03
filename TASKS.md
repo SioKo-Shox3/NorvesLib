@@ -1908,7 +1908,7 @@
 - notes: 2026-10-03作者承認によりsurface_centroidを未対応として明示拒否し、他変換を先行する縮小scopeで再開。表面重心は別保留へ分離。
 
 ## G2-GR78-SIDECAR: ソース隣の設定読込と変換・hashを接続する
-- status: todo
+- status: done
 - done-when: <source>.import.jsonをcook/looseで読み、無しは既存bytes/hash不変、有りは共有変換と正規化設定hashを適用。骨格の位置/IBM/translation/mesh-nodeを同時scaleする。
 - verify: sidecar無し回帰、有無/値変更/書式とmeta変更、失敗保持、static/skeletal/cook/looseの一貫性を既存束へ登録する。
 - stop-when: cook/looseの設定解釈差、未承認形式更新、実native未実行の隠蔽。
@@ -1940,7 +1940,7 @@
 - stop-when: surface_centroidの再有効化、骨格への無言適用、未実装オプションの黙認、native未実行を成功扱い。
 
 ## G2-GR78-SKELETAL-SIDECAR: 骨格へ一様scaleと設定hashを適用する
-- status: todo
+- status: done
 - done-when: 頂点位置/IBMの平行移動/animation Translation/mesh-node平行移動を同じ正の一様scaleで変換し、cook/loose/legacyで共有する。軸・鏡像・原点やmesh変更は未対応として拒否する。
 - verify: sidecar無し同値、scale前後のskinning結果、fit倍率、回転/scaleチャンネル不変、範囲外と拒否時出力保持を既存束へ登録する。
 - stop-when: 未承認NVSKEL形式変更、骨格の軸/原点変換、native未実行を実skinning成功扱い。
