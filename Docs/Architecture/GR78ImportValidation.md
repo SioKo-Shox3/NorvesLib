@@ -58,5 +58,5 @@ ctest --test-dir build -C Debug --output-on-failure -R "^(ImportSettingsValueTes
 
 ## 次の選定
 
-G2-S4（GR86の縮約/焼込/Strict変更とv1時の256関節化）、G2-S1（GR32/GR82の0.2統一と後続v1、SkeletonIdのrest pose扱い）は確認待ち。
-GR78の承認をこれらの承認へ広げない。S3/S5/S6/S7とS8のBVH/FBX部分も別途未確定。
+G2-S4とG2-S1は本記録後の2026-10-03に作者が条件付き承認。内容とrest poseの安全条件は
+[G2ImportDecisions.md](G2ImportDecisions.md)に記録した。S3/S5/S6/S7とS8のBVH/FBX部分は別途未確定。

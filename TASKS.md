@@ -1995,11 +1995,30 @@
 - stop-when: Windows/native/実物を未実行のままPASSとする、surfaceを実装済みへ含める。
 
 ## G2-SELECT-S4: GR86の縮約/焼込/Strict方針を確定する
-- status: blocked
+- status: done
 - done-when: 作者の回答を記録し、その範囲内で後続taskを作る。
-- notes: 2026-10-03に推奨A（上位4本縮約、CUBICSPLINE焼込、morph明示drop、Strict余剰拒否、v1時256）を確認中。未回答。
+- notes: 2026-10-03に推奨A（上位4本縮約、CUBICSPLINE焼込、morph明示drop、Strict余剰拒否、v1時256）を作者が承認。
 
 ## G2-SELECT-S1: NVSKELの版と骨格識別方針を確定する
-- status: blocked
+- status: done
 - done-when: 作者の回答を記録し、GR32/GR82の形式を同じ定義へ揃える。
-- notes: 2026-10-03に推奨A（0.2へsubmesh/複数clip統一、材質仕様後v1、SkeletonIdにrest poseを含めず骨長差はGR85）を確認中。S7のmesh数条件は別未確定。
+- notes: 2026-10-03に推奨A（0.2へsubmesh/複数clip統一、材質仕様後v1、SkeletonIdにrest poseを含めず骨長差はGR85）を作者が承認。v1 clip作成時rest pose保持と束縛時の既定拒否/明示許可/差分報告を追加。企画の骨格共有は未定へ訂正。S7のmesh数条件は別未確定。
+
+## G2-S1-S4-DECISIONS: 承認とrest pose安全契約を計画へ反映する
+- status: done
+- done-when: S4/S1 A採用、企画共有案未定への訂正、v1 clip作成時rest pose/束縛時比較/既定拒否/明示許可/差分報告を正本へ記録する。
+- verify: roadmap/requirements/handoffの競合前提を照合し、他選定を承認済みにしない。
+- stop-when: rest pose不一致をSkeletonId一致だけで許可する、未定の造形/共有案を採用済みへ戻す。
+
+## G2-GR86-STRICT-INFLUENCES: 追加ウェイトセットの黙認を拒否する
+- status: todo
+- done-when: StrictのJOINTS_n/WEIGHTS_n（n>=1）を専用InfluenceLimitExceededで拒否し、既存status値と通常4影響入力の挙動を保つ。
+- verify: 属性名分類の純試験、JOINTS_1/WEIGHTS_1有無/値/片側/大きいn/不正名、raw/legacy/cookerの拒否と出力保持を登録する。
+- stop-when: 未実装Reduce optionの受理、関節上限/頂点ABI/形式変更、既存status番号の変動。
+
+## G2-GR82-V1-REST-POSE-GUARD: clip作成時骨格の差を束縛時に検査する
+- status: blocked
+- done-when: v1で各clipの作成時rest snapshotを保存し、現在骨格との差が許容超過なら既定拒否、明示許可時だけ通し、差量と超過関節を報告する。
+- verify: 同名同階層・異なるrest、全関節Translationを含む古いclip、許容内/外/明示許可/q符号同値、欠落/不正snapshot、cook/parse/bind往復。
+- stop-when: SkeletonIdからrestを除いたことを無条件互換と扱う、古いclipの歪みを黙認する。
+- notes: 作者承認済みのStage B必須要件。blocked理由はv1形式とStage A等の前提待ちで、作者の再承認待ちではない。

@@ -529,3 +529,6 @@
 
 - G2-GR78-VALIDATION: Docs/Architecture/GR78ImportValidation.mdへ承認済み実装・18実行成功（6純実装×3mode）・MEMBER compile・native/実物の未実行・surface保留を分離して記録。CMake登録と実logを最終照合し、CI空statusを成功扱いしない。次のS4/S1確認待ちをtaskへ明記し、GR78承認を他選定へ拡張しない。
 - Next: inspect/検証記録を公開し、S4/S1の回答に応じてG2を継続する。未承認の形式/Strict/描画既定は変更しない。
+
+- G2-S1-S4-DECISIONS: 作者の2026-10-03承認を記録。S4 A（Strict追加セット拒否/4本縮約/LINEAR焼込/morph明示drop/256はv1）とS1 A（0.2統一→v1）を確定。オオカミ/シ者の作り分け/共通土台張り直しを採用済みとしていた前提を未定へ訂正。v1 clip作成時rest保持、現在骨格との束縛時比較、許容超過既定拒否、明示許可と差量報告、全関節Translation回帰を必須契約へ追加。SkeletonIdだけでcache共有しない点も反映。ローカルPlans3本と追跡仕様/選定taskを照合し、追加auditでblocking誤記なし。他選定は未確定のまま。
+- Next: GR86 Strictの追加ウェイトセット黙認をまず拒否する。cook前fingerprintも同じ検査を共有し、過去cache経由で新Strict拒否を迂回させない。
