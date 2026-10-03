@@ -538,3 +538,6 @@
 
 - G2-GR86-REDUCE-KERNEL: 同jointを正準順で補償加算し、合算後微小値を除き、重み降順/同値joint番号順で4本へ縮約・float正規化する純kernelを追加。脱落量は除去値の直接和/元総和で求め、厳密な閾値超過と正値underflowを拒否、失敗時vertexを保持。型・容量・全Span/options aliasも検査。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBER成功、独立PASS。追加反証の合算後閾値/総和nextafter/巨大Span/部分alias/混合桁重複jointの10000順置換も成功。恒久回帰への後二例追補はnonblocking候補。glTF raw整数総和とセット構造検査は接続側で別途行うため、現時点ではdecode/CLI未接続。
 - Next: Strict既定不変を保つ明示Reduce options/reportとcanonical policy hashを定義し、その後複数セット読込へ接続する。
+
+- G2-GR86-OPTIONS-HASH: 独立Public型へStrict/ReduceToFour・warn/failと走査prefixを明示するreportを定義。Strictは既定閾値のみ受理しhash不変、ReduceはSRED/schema/policy/warn/failの25byte LE/-0正規化と長さ/algorithmを既存FNVへ連結。公開header登録とkernel初期値の定数共有を実施。Python独立固定bytes/3state goldenと実policy・kernelの計6mode実行、MEMBER/public単独include/layout/trivial-copy確認に成功、独立PASS。decode/CLI/形式/statusは未変更。
+- Next: 0始まり連続のJOINTS_n/WEIGHTS_n pairを収集・検証する部品を作り、Reduce指定のdecode接続へ進む。

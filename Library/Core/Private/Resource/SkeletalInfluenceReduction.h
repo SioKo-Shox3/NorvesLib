@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Span.h"
+#include "Resource/SkeletalImportOptions.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Skeletal
@@ -14,8 +15,8 @@ namespace NorvesLib::Core::Skeletal
     {
         double MinimumWeight = 1e-6;
         double InputWeightSumTolerance = 0.001;
-        double WarnDroppedWeight = 0.01;
-        double FailDroppedWeight = 0.25;
+        double WarnDroppedWeight = DefaultWarnDroppedWeight;
+        double FailDroppedWeight = DefaultFailDroppedWeight;
     };
     struct ReducedSkinInfluences
     {

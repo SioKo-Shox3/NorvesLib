@@ -52,3 +52,21 @@ Strictの通常4影響経路をこの修復へ無言で切り替えない。
 
 5本の既知値、120順列、同joint/tie/微小値、警告・失敗境界、無効値/関節/総和/aliasと出力保持を純実装で確認する。
 CUBICSPLINE/morphとdecode/CLI接続は別作業。
+
+## 明示policyと診断型（接続前）
+
+SkeletalGltfDecodeOptionsはInfluencePolicy=Strict(0)/ReduceToFour(1)とWarnDroppedWeight/FailDroppedWeightを持つ。
+既定はStrict、閾値は0.01/0.25。閾値は有限で0<=warn<=fail<=1。Strictでは未使用の非既定閾値を拒否し、
+無視した指定を成功にしない。CUBICSPLINE/morphの指定はまだこの型にもCLIにも追加しない。
+
+SkeletalGltfDecodeReportは総頂点数/処理済みprefix数、縮約/同joint合算/再正規化/警告の頂点数、
+脱落比率の最大/平均、失敗頂点index、影響走査完了flagを分ける。未走査の頂点を含む全体平均と誤認しない。
+
+Strict既定はcanonicalがvalid/Size0でsource hashを一切変えない。
+Reduceだけ25byteを生成し、既存stateへlength(u64LE)+canonical+algorithm(u32LE)を連結する。
+canonicalはSRED(4byte)、schema=1(u32LE)、policy=1(u8)、warn/fail(binary64LE各8byte)。
+struct paddingや文字列表現を使わず、-0を+0へ統一する。algorithm初期値は1で、縮約処理の意味を変えるときに更新する。
+警告閾値の変更もhashに含み、同じ入力の別policyを旧cacheと混同しない。
+
+固定bytesと独立3初期stateのFNV既知値、Strict不変、閾値/algorithm差、invalid enum/数値、ゼロの正規化を
+通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）とMEMBERで検査する。これは型/hashの実装であり、decode/CLIは未接続。

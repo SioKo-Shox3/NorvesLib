@@ -172,6 +172,8 @@ set(PRIVATE_SOURCES
     Private/Resource/SkeletalInfluenceAttributes.cpp
     Private/Resource/SkeletalInfluenceReduction.h
     Private/Resource/SkeletalInfluenceReduction.cpp
+    Private/Resource/SkeletalImportPolicy.h
+    Private/Resource/SkeletalImportPolicy.cpp
     Private/Resource/GltfAccessorRange.h
     Private/Resource/ImportTransform.h
     Private/Resource/ImportTransform.cpp
@@ -481,6 +483,7 @@ set(PUBLIC_HEADERS
     Public/Resource/MaterialResource.h
     Public/Resource/GLTFAnalyzer.h
     Public/Resource/SkeletalGltfData.h
+    Public/Resource/SkeletalImportOptions.h
     Public/Resource/SkeletalLimits.h
     Public/Resource/SkinnedMeshResource.h
     Public/Resource/FontAtlas.h

@@ -22,6 +22,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER ImportCliOptionsTest ImportCliOptionsTest.cpp
     MEMBER SkeletalInfluenceAttributeTest SkeletalInfluenceAttributeTest.cpp
     MEMBER SkeletalInfluenceReductionTest SkeletalInfluenceReductionTest.cpp
+    MEMBER SkeletalImportPolicyTest SkeletalImportPolicyTest.cpp
     MEMBER GeometryInspectionTest GeometryInspectionTest.cpp
     MEMBER ImageInspectionTest ImageInspectionTest.cpp
     MEMBER ImportSettingsValueTest ImportSettingsValueTest.cpp
@@ -119,3 +120,5 @@ add_test(NAME ImageInspectionTest COMMAND CookedMeshTest --test=ImageInspectionT
 add_test(NAME SkeletalInfluenceAttributeTest COMMAND CookedMeshTest --test=SkeletalInfluenceAttributeTest)
 
 add_test(NAME SkeletalInfluenceReductionTest COMMAND CookedMeshTest --test=SkeletalInfluenceReductionTest)
+
+add_test(NAME SkeletalImportPolicyTest COMMAND CookedMeshTest --test=SkeletalImportPolicyTest)

@@ -2030,7 +2030,13 @@
 - stop-when: glTF正規化整数のraw総和検査を省く接続、未検証kernelのdecode適用、Strict/頂点ABI/形式の変更。
 
 ## G2-GR86-OPTIONS-HASH: 縮約指定と診断の型・hashを定義する
-- status: todo
+- status: done
 - done-when: Strict既定/ReduceToFourの明示指定と警告・失敗閾値、走査範囲付きreportを独立型にし、Strictは既存hash不変・Reduceだけ正規化policyをsource hashへ連結可能にする。
 - verify: 値域/未対応enum/Strict未使用閾値/符号付きゼロ/既知bytes/FNV状態/既定不変/閾値・algorithm変更を純試験で固定する。
 - stop-when: 未実装Morph/Cubic optionの受理、未接続をCLI完了扱い、struct paddingでhashが変わる。
+
+## G2-GR86-INFLUENCE-SETS: 複数joint/weightセットの記述を検証する
+- status: todo
+- done-when: Reduce用にJOINTS_n/WEIGHTS_nを正準順へ集め、0始まり連続・同数pair・重複なし・accessor番号の型/範囲を検証して所有結果を返す。Strict gateは変更しない。
+- verify: 順序違い/複数pair/欠損/非連続/重複/不正名/不正番号と失敗出力保持をpure/nativeに分けて検証する。
+- stop-when: raw整数weight総和やjoint範囲検査を省くdecode接続、未検証のReduce受理、Strict既定の緩和。
