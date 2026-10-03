@@ -172,6 +172,10 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfContainer.cpp
     Private/Resource/GltfBufferSource.h
     Private/Resource/GltfBufferSource.cpp
+    Private/Resource/GltfBufferSet.h
+    Private/Resource/GltfBufferSet.cpp
+    Private/Resource/GltfBufferFile.h
+    Private/Resource/GltfBufferFile.cpp
     Private/Resource/SkinnedMeshResource.cpp
     Private/Resource/FontAtlas.cpp
     Private/Resource/ModelAssetLoader.cpp

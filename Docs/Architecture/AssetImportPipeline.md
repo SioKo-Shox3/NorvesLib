@@ -50,3 +50,19 @@ Resource/GltfBufferSource.hは、JSONやファイルI/Oへ依存しない意味�
 - BufferSetはapplication系、ImageSourceはimage系を採用する。generic URI分類で成功しただけでは、その用途で使えるMIMEと判断しない
 
 GltfBufferSourceTestは対応MIME/parameter/percentの復号連携、全256byteのpercent変換、異常値/容量/交差、BINの0〜3byte padding/宣言長/index/欠落と4,000固定seed変異を検証する。まだ実ファイルのbuffer所有や3消費経路への接続は行わない。
+
+## GR77: BufferSetの所有と外部ファイル境界
+
+BufferSetはJSONから独立したBufferRequest列を受け取り、外部ファイル/data URIは独自VariableArrayで所有、GLB BINは元ファイルへ借用する。所有配列自身を指すSpanをメンバに保存せず、取得のたびにviewを作る。copyは所有bytesを複製し、GLBだけは同じ入力へ借用する。copy代入は候補copy→noexcept swapとし、内側の確保例外で旧metadataとbytesが分離しない。move/copy/再解決後も、呼出側はGLBの寿命とアドレスを維持する。
+
+- GetBytesはaccessor用の宣言byteLength範囲。GetSourceBytesは外部ファイルの余剰byteを含む全量、data URIは復号全量、BINは宣言範囲。旧.gltf hashではBOMを含む元source全体と各外部ファイル全量をJSON順で使い、宣言範囲だけでhashしない
+- data URIはapplication/octet-streamかapplication/gltf-bufferに限定し、画像MIMEをbufferとして受け入れない。percent→厳密Base64の後、宣言長以上のbytesがあることを確認する
+- 外部URIはpercent復号後の正規相対ASCII pathを使用する。NUL/control/non-ASCII、絶対path、backslash、colon、空/./../末尾dot・spaceのsegmentを拒否する。raw query/fragmentもファイル名とみなさない。ASCII範囲は既存cookerと同じ制約、末尾dot/spaceはWindowsの別名解釈を避けるための追加拒否
+- reader callbackは同期・呼出中の借用。入力/request/container/outSetを変更せず、実filesystemのsource directory境界を守る責務を持つ。任意のcustom callbackが安全なファイルアクセスを自動的に保証されるわけではない
+- 標準ReadBufferFileはSourceFileのparentと候補をweakly_canonicalし、path component単位で内側か確認する。文字列prefixだけで判断しない。通常ファイルだけを読み、directory/device/FIFO等を対象にしない。source directory外のsymlinkを拒否する
+- filesystemが読込中に悪意をもって差し替えられない通常のローカル資産運用を前提とする。canonical確認とopenをOSレベルで不可分にしたsandboxではない
+- 候補を組み立てた後にswapして公開する。失敗/例外は出力setを空にし、allocation/reader例外は再送出する。旧setから取得したviewはReset/再解決/破棄後に利用しない。読込元GLBを出力set自身の破棄対象storageへ置かない
+
+実BufferSet/FileReader/Test sourceはg++のsyntax/Werror確認とMEMBER object compileが可能。所有/コピー/例外/実ファイル・symlinkの試験は既存CookedMeshTest束へ登録するが、実allocatorを含むLinux実行は未確認。実allocator接続のcompile試行では既存MemoryOverrides.hのutility不足、MemorySystem.cppではWindows.h依存で停止した。代替allocatorは作らない。GltfBufferUriTestは実BufferSet.cppから相対path検証だけをsection GCで直接リンクし、通常/O2/ASan・UBSanで実行する。純predicateの成功を所有/ファイルI/O試験の成功と扱わない。
+
+JSONからのdescriptor構築とcooker/loose/skeletalへの接続は後続。looseの旧accessor計算にはunchecked加算/乗算があるため、共通bufferの宣言境界を導入する際に別途修正する。

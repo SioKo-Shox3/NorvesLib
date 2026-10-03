@@ -1793,8 +1793,26 @@
 - notes: GR77のGltfBufferSet/画像が使う意味検証を先行し、cooker/loose/skeletalは後続で接続する。
 
 ## G2-GR77-BUFFER-SET: 外部と埋め込みbufferの所有と参照を共有化する
-- status: todo
+- status: done
 - done-when: 所有する外部/data URI bytesと借用GLB BINを共通BufferSetで解決し、宣言範囲のaccessor viewと外部hash用の全source bytesを区別する。自己所有配列へのSpanを保存せずcopy/moveで参照を壊さない。JSON/消費経路接続は後続へ分ける。
 - verify: descriptor・data URI・BIN・reader失敗・容量/宣言長・copy/move/再利用・出力契約の実testを既存束へ追加。実source syntax/型特性と可能なCPU helper回帰を確認し、実allocator/Windows依存の未実行を明記する。
 - stop-when: BINコピー、旧.gltf hashのBOM/外部余剰byteの消失、借用寿命の隠蔽、read callbackによる境界迂回を安全と主張、偽allocator/Windows stub。
 - notes: 3経路はまだ接続しない。外部URIはpercent後の相対path検証と実filesystem containmentを通す。data URIの受理追加はGR77の意図的仕様変更として旧拒否smokeを更新する。
+
+## G2-GR77-BUFFER-JSON: JSONのbuffer記述を共有resolverへ変換する
+- status: todo
+- done-when: 既存JsonDocumentのbuffersから型/正の安全整数byteLength/uriの有無/ASCII文字列/重複既知fieldを検証し、借用descriptorの寿命を保ってBufferSetへ渡す。3consumerのJSON読取りを共有できる入口を用意する。
+- verify: 既存CookedMeshTest束へJSON記述の正常/欠落/型違い/重複/数値境界/BIN/data URIを追加。実型の宣言・呼出を照合し、Windows依存でcompileできない範囲と純helper回帰を区別する。
+- stop-when: null uriを省略と誤認、doubleからsizeへの範囲外cast、移動したURI配列へのSpan、未承認の形式/既定値変更。
+
+## G2-GR77-LOOSE-BOUNDS: loose accessorの範囲計算を安全化する
+- status: todo
+- done-when: GLTFAnalyzerのunchecked startOffset/count*strideをcheckedな宣言buffer/view範囲検証へ置換し、GR77共有buffer接続前にoverflowによる越境を防ぐ。正常既存fixtureの属性値は維持する。
+- verify: count/stride/offsetの整数境界を実純helperと既存staging試験へ追加し、旧正常値の不変と不正拒否を確認する。
+- notes: buffer解決の共有化だけでは現在のValidateAccessorBoundsのunchecked加算/乗算は解消しない。loose接続の前提として別タスク化。
+
+## CORE-MEMORY-HEADER-UTILITY: メモリAPIヘッダの標準includeを自己完結させる
+- status: todo
+- done-when: MemoryOverrides.h単体でstd::forwardの宣言不足にならないよう必要includeを明示し、動作を変更しない。
+- verify: 実header単体のsyntax確認。MemorySystem全体のWindows依存解消とは扱わない。
+- notes: G2 BufferSetの実allocator接続compileで既存不足を検出。G2の取り込み実装とは別の小修正候補として保存。
