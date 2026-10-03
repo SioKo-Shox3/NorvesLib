@@ -348,7 +348,7 @@
 - notes: 2026-10-02 再開。評価1周目の指摘3（既定視点の変更前後のカメラ）は `51a22e7` で対応済み。指摘1・2（GPU時間・加速構造の更新を含む区間・予算を超えたフレームのパスごとの内訳と軽くする案）は SS-GPU-PROFILE の後に RelWithDebInfo で測り直して記録する。完了条件の「Releaseの構成で測る」は、2026-10-02 のユーザーの指示（Release にGPUの計測やログなどのデバッグの機能を入れない）により RelWithDebInfo へ改めた。RelWithDebInfo の既存のトレースでは夜の既定視点で540フレーム中6が16.6 msを超え、最大18.16 ms。
 
 ## FIX-ASYNC-TEXTURE-MIPS: 非同期で読み込むテクスチャにもミップマップを全段作る
-- status: todo
+- status: done
 - done-when: 非同期の読み込みの経路（`TextureAssetLoader.cpp` の `DecodeLooseBlobWithStbiForWorker` など、ばらのPNGを stb で読む経路で `bFullMipChain=false` を渡している所）でも、同期の経路と同じくミップマップを全段（4096²なら13段）作る。ミップの生成はGPUで行い（既存の `GpuResourceStore` のミップ生成）、RenderThread の同期を変えない。法線マップ・ラフネス・高さなど色でないテクスチャもリニアのまま縮小される（sRGBの扱いが同期の経路と同じ）。起動画面の Game.log で石畳の5枚のテクスチャが `mip_levels=13` とミップ生成の成功を出し、起動から撮影までの時間の増分が2秒以内（ミップ生成の時間をログから合計して PROGRESS に書く）。昼の既定視点で遠くの地面のざらつき（ミップが無いことによるエイリアシング）が消えたことを、変更前後の遠景の拡大画像と、遠景の領域の隣り合う画素の差の平均（高周波の量）で示す。検証シーンの golden が変わる場合は、差がミップの有無だけによることを確かめて再承認する（任されている）。
 - verify: `cmake -S . -B build -DNORVES_BUILD_TESTS=ON`
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
