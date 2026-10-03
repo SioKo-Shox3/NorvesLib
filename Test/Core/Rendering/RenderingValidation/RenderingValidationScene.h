@@ -15,6 +15,7 @@ namespace NorvesLib::Core
 {
     class Entity;
     class World;
+    class SkeletalAssetResource;
 
     namespace Component
     {
@@ -273,6 +274,10 @@ namespace NorvesLib::Test::RenderingValidation
         // R8の屋外の連番: 地面の上を動く球を1つ足し、中心の位置を変える（屋外のシーンだけ）。
         bool AddR8OutdoorMovingSphere() const;
         bool SetR8OutdoorMovingSpherePosition(float x, float y, float z) const;
+        // velocity の検証: 1本の骨で動く2 m四方の骨付きの四角形を、R5 の場面の受け手の手前（中心 (-3, 0, 10)）に
+        // 置く。骨の平行移動のアニメーションは時刻 t 秒で (t, 0, 0) m（0〜1秒）。R5 の場面の準備の後に呼ぶ。
+        bool AddR5SkinnedQuad() const;
+        bool SetR5SkinnedQuadAnimationTime(float timeSeconds) const;
         bool SetR4CornellLightOffsetX(float offsetX) const;
         bool SetR4CornellObjectOffsetX(float offsetX) const;
         bool SetR4CornellPointLightState(float offsetX, float intensity) const;
@@ -280,6 +285,11 @@ namespace NorvesLib::Test::RenderingValidation
         bool SetR4CornellEmitterVisible(bool bVisible) const;
         /** @brief 基本シーンの光源（屋外は方向光）を点灯・消灯する（空の太陽だけで照らす比較で使う）。 */
         bool SetBaseLightActive(bool bActive) const;
+        /**
+         * @brief 基本シーンの平面を、指定の色・輝度（nits）の発光の材質にする
+         * （明るい発光がGBuffer・SceneColorで溢れないことの検証で使う）。
+         */
+        bool ApplyBaseEmissivePlaneFixture(const float (&emissiveColor)[3], float luminanceNits) const;
         const Core::Rendering::CameraProxy& GetCamera() const;
         const Core::Rendering::CameraProxy& GetR3ShadowedShaftsCamera() const;
         const Core::Rendering::CameraProxy& GetR5RayTracingShadowCamera() const;
@@ -373,6 +383,8 @@ namespace NorvesLib::Test::RenderingValidation
         mutable Core::Entity* m_pR4CornellEmitterEntity = nullptr;
         mutable Core::Entity* m_pR4CornellDynamicObjectEntity = nullptr;
         mutable Core::Entity* m_pR8OutdoorMovingSphereEntity = nullptr;
+        mutable Core::Entity* m_pR5SkinnedQuadEntity = nullptr;
+        mutable Core::Container::TSharedPtr<Core::SkeletalAssetResource> m_R5SkinnedQuadAsset;
         mutable Core::Container::FixedArray<Core::Entity*, 4> m_R4CornellPointLights{};
         bool m_bPublished = false;
     };

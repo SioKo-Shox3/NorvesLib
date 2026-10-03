@@ -151,6 +151,8 @@ namespace NorvesLib::Core::Rendering
             if (settings.CascadeCount != CSM_CASCADE_COUNT ||
                 settings.ShadowMapResolution == 0u ||
                 !std::isfinite(settings.SplitLambda) ||
+                !std::isfinite(settings.MaxShadowDistance) ||
+                settings.MaxShadowDistance <= 0.0f ||
                 !std::isfinite(settings.DepthPadding) ||
                 !std::isfinite(settings.Directional.LightDistance) ||
                 settings.DepthPadding < 0.0f ||
@@ -646,8 +648,10 @@ namespace NorvesLib::Core::Rendering
 
         CascadedShadowMatrixResult builtResult;
         builtResult.bHasMultipleDirectionalLights = result.bHasMultipleDirectionalLights;
+        // 分割はカメラのfarではなく影の最大距離までに収め、近くのカスケードの解像度を保つ。
+        const float shadowFarDistance = std::min(camera.FarPlane, settings.MaxShadowDistance);
         if (!BuildSplitDistances(camera.NearPlane,
-                                 camera.FarPlane,
+                                 shadowFarDistance,
                                  splitLambda,
                                  builtResult.SplitDistances))
         {

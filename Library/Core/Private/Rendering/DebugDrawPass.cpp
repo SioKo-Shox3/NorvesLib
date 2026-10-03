@@ -13,6 +13,8 @@
 #include "RHI/IDescriptorSet.h"
 #include "RHI/ITexture.h"
 #include "Logging/LogMacros.h"
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 
 namespace NorvesLib::Core::Rendering
@@ -23,6 +25,8 @@ namespace NorvesLib::Core::Rendering
         {
             float view[16];
             float projection[16];
+            // xy: 描画先（PresentationColor）の画素座標から SceneDepth の画素座標への倍率
+            float depthCoordScale[4];
         };
 
         constexpr uint32_t DEBUG_LINE_UNIFORM_SLOTS = 32;
@@ -42,8 +46,14 @@ namespace NorvesLib::Core::Rendering
             RHI::DescriptorBinding uboBinding;
             uboBinding.binding = 0;
             uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
-            uboBinding.stages = RHI::ShaderStage::Vertex;
+            uboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
             descriptorSetDesc.bindings.push_back(uboBinding);
+
+            RHI::DescriptorBinding sceneDepthBinding;
+            sceneDepthBinding.binding = 1;
+            sceneDepthBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            sceneDepthBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(sceneDepthBinding);
 
             return descriptorSetDesc;
         }
@@ -92,6 +102,23 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        RHI::SamplerDesc samplerDesc;
+        samplerDesc.filterMin = RHI::FilterMode::Point;
+        samplerDesc.filterMag = RHI::FilterMode::Point;
+        samplerDesc.filterMip = RHI::FilterMode::Point;
+        samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_PointSampler = m_Device->CreateSampler(samplerDesc);
+        if (!m_PointSampler)
+        {
+            NORVES_LOG_ERROR("DebugDrawPass", "Failed to create scene depth sampler");
+            m_LineVertexShader.reset();
+            m_LineFragmentShader.reset();
+            m_Device = nullptr;
+            return false;
+        }
+
         const RHI::DescriptorSetDesc descriptorSetDesc = CreateDebugLineDescriptorSetDesc();
         if (!m_UniformAllocator.Initialize(m_Device,
                                            sizeof(DebugLineCameraUBO),
@@ -130,16 +157,16 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        m_ToneMappedColorTexture.reset();
-        m_SceneDepthTexture.reset();
+        m_PresentationColorTexture.reset();
         m_RenderPass.reset();
         m_Framebuffer.reset();
         m_Pipeline.reset();
+        m_PointSampler.reset();
         m_LineVertexShader.reset();
         m_LineFragmentShader.reset();
         m_UniformAllocator.Shutdown();
         m_VertexRing.Shutdown();
-        m_ToneMappedColorHandle = {};
+        m_PresentationColorHandle = {};
         m_SceneDepthHandle = {};
         m_RenderPassSignature = {};
         m_CurrentWidth = 0;
@@ -162,7 +189,7 @@ namespace NorvesLib::Core::Rendering
 
     void DebugDrawPass::Declare(RenderGraphBuilder& builder)
     {
-        m_ToneMappedColorHandle = {};
+        m_PresentationColorHandle = {};
         m_SceneDepthHandle = {};
 
         const ViewRenderContext* context = builder.GetContext();
@@ -175,38 +202,36 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        RGTextureHandle availableToneMappedColor;
+        // Upscale の後の最終解像度の画像へ描く（Upscale が要らないときは ToneMappedColor と同じテクスチャ）。
+        RGTextureHandle availablePresentationColor;
         RGTextureHandle availableSceneDepth;
-        if (!builder.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, availableToneMappedColor) ||
+        if (!builder.TryGetTexture(RenderGraphResourceNames::PresentationColor, availablePresentationColor) ||
             !builder.TryGetTexture(RenderGraphResourceNames::SceneDepth, availableSceneDepth))
         {
             builder.PreserveInsertionOrder();
             return;
         }
 
-        RGTextureHandle toneMappedColorHandle;
-        if (builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::ToneMappedColor,
-                                                toneMappedColorHandle,
+        RGTextureHandle sceneDepthHandle;
+        if (!builder.TryReadTexture(RenderGraphResourceNames::SceneDepth,
+                                    sceneDepthHandle,
+                                    RHI::ResourceState::ShaderResource))
+        {
+            builder.PreserveInsertionOrder();
+            return;
+        }
+        m_SceneDepthHandle = sceneDepthHandle.ToResourceHandle();
+
+        RGTextureHandle presentationColorHandle;
+        if (builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::PresentationColor,
+                                                presentationColorHandle,
                                                 RHI::AttachmentLoadOp::Load,
                                                 RHI::AttachmentStoreOp::Store,
                                                 RHI::ResourceState::RenderTarget,
                                                 RHI::ResourceState::ShaderResource))
         {
-            m_ToneMappedColorHandle = toneMappedColorHandle.ToResourceHandle();
-            builder.ExportTexture(RenderGraphResourceNames::ToneMappedColor, toneMappedColorHandle);
-        }
-
-        RGTextureHandle sceneDepthHandle;
-        if (builder.TryUseAttachment(RenderGraphResourceNames::SceneDepth,
-                                     sceneDepthHandle,
-                                     RGAttachmentKind::DepthStencil,
-                                     RGAttachmentMutability::ReadOnly,
-                                     RHI::AttachmentLoadOp::Load,
-                                     RHI::AttachmentStoreOp::DontCare,
-                                     RHI::ResourceState::DepthRead,
-                                     RHI::ResourceState::DepthRead))
-        {
-            m_SceneDepthHandle = sceneDepthHandle.ToResourceHandle();
+            m_PresentationColorHandle = presentationColorHandle.ToResourceHandle();
+            builder.ExportTexture(RenderGraphResourceNames::PresentationColor, presentationColorHandle);
         }
 
         builder.PreserveInsertionOrder();
@@ -235,22 +260,22 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        if (!m_ToneMappedColorHandle.IsValid() || !m_SceneDepthHandle.IsValid())
+        if (!m_PresentationColorHandle.IsValid() || !m_SceneDepthHandle.IsValid())
         {
             return;
         }
 
-        RHI::TexturePtr toneMappedColorTexture = resources.GetTexture(m_ToneMappedColorHandle);
+        RHI::TexturePtr presentationColorTexture = resources.GetTexture(m_PresentationColorHandle);
         RHI::TexturePtr sceneDepthTexture = resources.GetTexture(m_SceneDepthHandle);
-        if (!toneMappedColorTexture || !sceneDepthTexture)
+        if (!presentationColorTexture || !sceneDepthTexture || sceneDepthTexture->GetWidth() == 0 ||
+            sceneDepthTexture->GetHeight() == 0)
         {
             return;
         }
 
-        if (!PrepareResources(toneMappedColorTexture->GetWidth(),
-                              toneMappedColorTexture->GetHeight(),
-                              toneMappedColorTexture,
-                              sceneDepthTexture))
+        if (!PrepareResources(presentationColorTexture->GetWidth(),
+                              presentationColorTexture->GetHeight(),
+                              presentationColorTexture))
         {
             return;
         }
@@ -263,12 +288,23 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // デバッグの線は TAA と Upscale の後に描くので、投影のサブピクセルのジッタを外したカメラで描く（線が揺れない）。
+        CameraProxy lineCamera = *activeCamera;
+        lineCamera.ProjectionJitterNdcX = 0.0f;
+        lineCamera.ProjectionJitterNdcY = 0.0f;
         CameraViewConstants cameraConstants =
-            CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
+            CameraViewConstants::BuildForDevice(lineCamera, context.GetActiveAspectRatio(), context.Device);
 
         DebugLineCameraUBO uboData{};
         cameraConstants.CopyShaderView(uboData.view);
         cameraConstants.CopyShaderProjection(uboData.projection);
+        // Upscale は内部解像度の画像全体を画面全体へ広げるので、描画先と SceneDepth の画素は大きさの比で対応する。
+        const float colorToDepthX = static_cast<float>(sceneDepthTexture->GetWidth()) /
+                                    static_cast<float>(presentationColorTexture->GetWidth());
+        const float colorToDepthY = static_cast<float>(sceneDepthTexture->GetHeight()) /
+                                    static_cast<float>(presentationColorTexture->GetHeight());
+        uboData.depthCoordScale[0] = colorToDepthX;
+        uboData.depthCoordScale[1] = colorToDepthY;
 
         m_UniformAllocator.Reset();
         DynamicUniformAllocator::Allocation allocation = m_UniformAllocator.Allocate();
@@ -278,12 +314,29 @@ namespace NorvesLib::Core::Rendering
         }
 
         allocation.UniformBuffer->Update(&uboData, sizeof(DebugLineCameraUBO));
+        allocation.DescriptorSet->BindTexture(1, sceneDepthTexture);
+        allocation.DescriptorSet->BindSampler(1, m_PointSampler);
+        allocation.DescriptorSet->Update();
+
+        // 内部解像度の Viewport を描画先の解像度へ広げる（同じ解像度なら従来の Viewport のまま）。
+        RHI::Viewport viewport = context.GetActiveLocalViewport();
+        viewport.x /= colorToDepthX;
+        viewport.y /= colorToDepthY;
+        viewport.width /= colorToDepthX;
+        viewport.height /= colorToDepthY;
+        RHI::ScissorRect scissor = context.GetActiveLocalScissor();
+        scissor.left = static_cast<int32_t>(std::lround(static_cast<float>(scissor.left) / colorToDepthX));
+        scissor.top = static_cast<int32_t>(std::lround(static_cast<float>(scissor.top) / colorToDepthY));
+        scissor.right = std::min(static_cast<int32_t>(presentationColorTexture->GetWidth()),
+                                 static_cast<int32_t>(std::lround(static_cast<float>(scissor.right) / colorToDepthX)));
+        scissor.bottom = std::min(static_cast<int32_t>(presentationColorTexture->GetHeight()),
+                                  static_cast<int32_t>(std::lround(static_cast<float>(scissor.bottom) / colorToDepthY)));
 
         context.EnqueueFrameCommand(FrameCommand::CreateDebugDrawLineList(
             m_RenderPass,
             m_Framebuffer,
-            context.GetActiveLocalViewport(),
-            context.GetActiveLocalScissor(),
+            viewport,
+            scissor,
             m_Pipeline,
             allocation.DescriptorSet,
             vertexBuffer,
@@ -292,12 +345,10 @@ namespace NorvesLib::Core::Rendering
 
     bool DebugDrawPass::PrepareResources(uint32_t width,
                                          uint32_t height,
-                                         const RHI::TexturePtr& toneMappedColorTexture,
-                                         const RHI::TexturePtr& sceneDepthTexture)
+                                         const RHI::TexturePtr& presentationColorTexture)
     {
         if (!m_Device ||
-            !toneMappedColorTexture ||
-            !sceneDepthTexture ||
+            !presentationColorTexture ||
             !m_LineVertexShader ||
             !m_LineFragmentShader)
         {
@@ -305,15 +356,14 @@ namespace NorvesLib::Core::Rendering
         }
 
         const RenderPassSignature signature =
-            CreateRenderPassSignature(width, height, toneMappedColorTexture, sceneDepthTexture);
+            CreateRenderPassSignature(width, height, presentationColorTexture);
         const bool bResourcesChanged =
             !RenderPassSignatureEquals(m_RenderPassSignature, signature) ||
             !m_RenderPass ||
             !m_Framebuffer ||
             !m_Pipeline;
 
-        m_ToneMappedColorTexture = toneMappedColorTexture;
-        m_SceneDepthTexture = sceneDepthTexture;
+        m_PresentationColorTexture = presentationColorTexture;
         if (!bResourcesChanged)
         {
             return true;
@@ -327,23 +377,15 @@ namespace NorvesLib::Core::Rendering
         RHI::RenderPassDesc renderPassDesc;
 
         RHI::AttachmentDesc colorAttachment;
-        colorAttachment.format = signature.ToneMappedColor.Format;
+        colorAttachment.format = signature.PresentationColor.Format;
         colorAttachment.isDepthStencil = false;
         colorAttachment.clear = false;
-        colorAttachment.loadOp = signature.ToneMappedColor.LoadOp;
-        colorAttachment.storeOp = signature.ToneMappedColor.StoreOp;
-        colorAttachment.initialState = signature.ToneMappedColor.InitialState;
-        colorAttachment.finalState = signature.ToneMappedColor.FinalState;
+        colorAttachment.loadOp = signature.PresentationColor.LoadOp;
+        colorAttachment.storeOp = signature.PresentationColor.StoreOp;
+        colorAttachment.initialState = signature.PresentationColor.InitialState;
+        colorAttachment.finalState = signature.PresentationColor.FinalState;
         renderPassDesc.colorAttachments.push_back(colorAttachment);
-
-        renderPassDesc.hasDepthStencil = true;
-        renderPassDesc.depthStencilAttachment.format = signature.SceneDepth.Format;
-        renderPassDesc.depthStencilAttachment.isDepthStencil = true;
-        renderPassDesc.depthStencilAttachment.clear = false;
-        renderPassDesc.depthStencilAttachment.loadOp = signature.SceneDepth.LoadOp;
-        renderPassDesc.depthStencilAttachment.storeOp = signature.SceneDepth.StoreOp;
-        renderPassDesc.depthStencilAttachment.initialState = signature.SceneDepth.InitialState;
-        renderPassDesc.depthStencilAttachment.finalState = signature.SceneDepth.FinalState;
+        renderPassDesc.hasDepthStencil = false;
 
         m_RenderPass = m_Device->CreateRenderPass(renderPassDesc);
         if (!m_RenderPass)
@@ -354,8 +396,7 @@ namespace NorvesLib::Core::Rendering
 
         RHI::FramebufferDesc framebufferDesc;
         framebufferDesc.renderPass = m_RenderPass;
-        framebufferDesc.colorTargets.push_back(toneMappedColorTexture);
-        framebufferDesc.depthStencilTarget = sceneDepthTexture;
+        framebufferDesc.colorTargets.push_back(presentationColorTexture);
         framebufferDesc.width = width;
         framebufferDesc.height = height;
 
@@ -396,9 +437,9 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
         pipelineDesc.rasterState.lineWidth = 1.0f;
 
-        pipelineDesc.depthStencilState.depthTestEnable = true;
+        // 遮蔽は line.frag が SceneDepth を読んで行う（描画先と SceneDepth の解像度が違ってもよい）。
+        pipelineDesc.depthStencilState.depthTestEnable = false;
         pipelineDesc.depthStencilState.depthWriteEnable = false;
-        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
 
         RHI::BlendAttachmentDesc blendAttachment;
         blendAttachment.blendEnable = false;
@@ -441,38 +482,27 @@ namespace NorvesLib::Core::Rendering
                                                   const RenderPassSignature& rhs) const
     {
         return lhs.bValid == rhs.bValid &&
-               AttachmentSignatureEquals(lhs.ToneMappedColor, rhs.ToneMappedColor) &&
-               AttachmentSignatureEquals(lhs.SceneDepth, rhs.SceneDepth);
+               AttachmentSignatureEquals(lhs.PresentationColor, rhs.PresentationColor);
     }
 
     DebugDrawPass::RenderPassSignature DebugDrawPass::CreateRenderPassSignature(
         uint32_t width,
         uint32_t height,
-        const RHI::TexturePtr& toneMappedColorTexture,
-        const RHI::TexturePtr& sceneDepthTexture) const
+        const RHI::TexturePtr& presentationColorTexture) const
     {
         RenderPassSignature signature;
         signature.bValid = true;
-        signature.ToneMappedColor = {RGAttachmentKind::Color,
-                                     toneMappedColorTexture ? toneMappedColorTexture->GetFormat() : RHI::Format::UNKNOWN,
-                                     RHI::AttachmentLoadOp::Load,
-                                     RHI::AttachmentStoreOp::Store,
-                                     RHI::ResourceState::RenderTarget,
-                                     RHI::ResourceState::ShaderResource,
-                                     toneMappedColorTexture.get(),
-                                     width,
-                                     height,
-                                     false};
-        signature.SceneDepth = {RGAttachmentKind::DepthStencil,
-                                sceneDepthTexture ? sceneDepthTexture->GetFormat() : RHI::Format::UNKNOWN,
-                                RHI::AttachmentLoadOp::Load,
-                                RHI::AttachmentStoreOp::DontCare,
-                                RHI::ResourceState::DepthRead,
-                                RHI::ResourceState::DepthRead,
-                                sceneDepthTexture.get(),
-                                width,
-                                height,
-                                true};
+        signature.PresentationColor = {RGAttachmentKind::Color,
+                                       presentationColorTexture ? presentationColorTexture->GetFormat()
+                                                                : RHI::Format::UNKNOWN,
+                                       RHI::AttachmentLoadOp::Load,
+                                       RHI::AttachmentStoreOp::Store,
+                                       RHI::ResourceState::RenderTarget,
+                                       RHI::ResourceState::ShaderResource,
+                                       presentationColorTexture.get(),
+                                       width,
+                                       height,
+                                       false};
         return signature;
     }
 

@@ -55,9 +55,12 @@ namespace NorvesLib::RHI::Vulkan
         // デプスアタッチメントのイメージビュー取得
         if (m_desc.depthStencilTarget)
         {
-            if (m_desc.depthStencilTarget->GetArraySize() == 0 ||
-                m_desc.depthStencilArrayLayer >= m_desc.depthStencilTarget->GetArraySize() ||
-                m_desc.depthStencilTarget->IsCubemap())
+            // キューブ（配列）は6面を1層ずつ数える（層 = キューブの番号 * 6 + 面）。
+            const uint32_t depthArrayLayerCount =
+                m_desc.depthStencilTarget->GetArraySize() *
+                (m_desc.depthStencilTarget->IsCubemap() ? 6u : 1u);
+            if (depthArrayLayerCount == 0 ||
+                m_desc.depthStencilArrayLayer >= depthArrayLayerCount)
             {
                 throw std::runtime_error("デプス配列アタッチメントのlayerが範囲外です");
             }

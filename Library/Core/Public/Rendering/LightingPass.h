@@ -44,6 +44,23 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief Neural BRDFウェイトファイルパス（空の場合は解析的BRDFを使用） */
         Container::String NeuralBRDFWeightPath;
+
+        /**
+         * @brief 接触影のレイの長さ（m）。0以下で無効
+         *
+         * 影を掛ける方向光（空の太陽）とキューブシャドウを持つ点光源について、GBufferの深度を
+         * 光の方向へこの長さだけ画面空間で辿り、CSM・キューブシャドウの解像度では出ない接地部の
+         * 細い影を影の結果へ掛けます。
+         */
+        float ContactShadowLength = 0.3f;
+
+        /**
+         * @brief 接触影で、深度バッファの面の奥にこの厚さ（m）までの点を遮られたとみなす
+         *
+         * 実際の厚さは、この値・レイの1段の長さ・受け手の位置の1画素の世界の幅の最大です。
+         * 薄くすると、見えない側の面から物体へ入るレイ（逆光の接地部など）を見落とします。
+         */
+        float ContactShadowThickness = 0.3f;
     };
 
     /**
@@ -293,6 +310,7 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_GBufferEmissiveHandle;
         RGResourceHandle m_SSAOBlurredHandle;
         RGResourceHandle m_ShadowMapHandle;
+        RGResourceHandle m_PointShadowCubeHandle;
         RGResourceHandle m_RTGIDiffuseIndirectHandle;
 
         // ライティング用リソース
@@ -350,12 +368,24 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_RTGIHistoryLightRevision = 0;
         RTGIRayQueryCapability m_RTGIHistoryCapability;
         uint32_t m_RTGIHistoryLightWeightLimitedFrames = 0;
-        /** @brief 視点（逆ビュー射影・位置）とレイトレーシングのinstanceの前フレームの署名 */
+        /** @brief 履歴の放射輝度に掛かっているプリエクスポージャ（露出が変わったら比で掛け直す） */
+        float m_RTGIHistoryPreExposure = 1.0f;
+        /** @brief 直近に記録した間接光の出どころ（RTGIIndirectLightingSource。0xFFは未記録） */
+        uint8_t m_LoggedIndirectLightingSource = 0xFFu;
+        /** @brief 視点（ジッタを除いた逆ビュー射影・位置）とレイトレーシングのinstanceの前フレームの署名 */
         uint64_t m_RTGIStaticSignature = 0;
         /** @brief 視点・光源・シーンが変わらなかった連続フレーム数 */
         uint32_t m_RTGIStaticFrames = 0;
         /** @brief 直近のdispatchで使った画素ごとの履歴の年齢の上限 */
         uint32_t m_RTGIHistoryAgeCap = RTGIHistoryMaximumAge;
+        /**
+         * @brief RTGIの低食い違い列の番号。描画フレーム番号が変わったdispatchごとに1ずつ進め、同じ描画フレーム番号の
+         * dispatchは同じ列の番号を使う（描画フレーム番号は1回の描画の間に不規則に複数進むことがある）。
+         */
+        uint32_t m_RTGISampleIndex = 0;
+        /** @brief m_RTGISampleIndex を最後に進めたときの描画フレーム番号 */
+        uint64_t m_RTGISampleFrameNumber = 0;
+        bool m_bRTGISampleFrameNumberValid = false;
         bool m_bRTGIStaticSignatureValid = false;
         bool m_bRTGIHistoryValid = false;
         bool m_bRTGIHistoryFrameNumberValid = false;
@@ -388,6 +418,10 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_ValidationRaw252PrefilteredSpecularTexture;
         RHI::TexturePtr m_DefaultBlackTexture;
         RHI::TexturePtr m_DefaultShadowMapArrayTexture;
+        /** @brief 点光源のキューブシャドウが無いフレームにbinding 20へ置く1×1のキューブ配列（距離1） */
+        RHI::TexturePtr m_DefaultPointShadowCubeTexture;
+        /** @brief このフレームにShadowMapPassが描いたキューブ配列（無いフレームは空） */
+        RHI::TexturePtr m_FramePointShadowCubeTexture;
         RHI::TexturePtr m_DefaultDDGIIrradianceAtlas;
         RHI::TexturePtr m_DefaultDDGIDistanceAtlas;
         RHI::SamplerPtr m_IBLSampler;         ///< 環境放射輝度用サンプラー

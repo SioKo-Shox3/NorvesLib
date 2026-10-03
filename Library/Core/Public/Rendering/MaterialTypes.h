@@ -4,6 +4,7 @@
 #include "Container/Containers.h"
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -224,6 +225,8 @@ namespace NorvesLib::Core::Rendering
      * @brief エミッシブ入力をY=1のchromaticityとnitsへ正規化します。
      *
      * 入力と計算はdoubleで検証し、成功時のみ出力を更新します。
+     * 物理の発光（色度×nits）の各チャンネルはfloatで有限であればよい。GBufferへは
+     * プリエクスポージャを掛けた値を書くため、RGBA16Fの上限（65504）では制限しない。
      */
     inline bool TryBuildCanonicalEmissive(const float (&inputColor)[3],
                                            float inputLuminanceNits,
@@ -264,14 +267,15 @@ namespace NorvesLib::Core::Rendering
         const double normalizedRed = red / y;
         const double normalizedGreen = green / y;
         const double normalizedBlue = blue / y;
+        constexpr double MaxPhysicalEmissive = static_cast<double>(std::numeric_limits<float>::max());
         const double physicalRed = normalizedRed * luminanceNits;
         const double physicalGreen = normalizedGreen * luminanceNits;
         const double physicalBlue = normalizedBlue * luminanceNits;
         if (!std::isfinite(normalizedRed) || !std::isfinite(normalizedGreen) ||
             !std::isfinite(normalizedBlue) || !std::isfinite(physicalRed) ||
             !std::isfinite(physicalGreen) || !std::isfinite(physicalBlue) ||
-            std::abs(physicalRed) >= 65504.0 || std::abs(physicalGreen) >= 65504.0 ||
-            std::abs(physicalBlue) >= 65504.0)
+            std::abs(physicalRed) > MaxPhysicalEmissive || std::abs(physicalGreen) > MaxPhysicalEmissive ||
+            std::abs(physicalBlue) > MaxPhysicalEmissive)
         {
             return false;
         }
@@ -296,6 +300,11 @@ namespace NorvesLib::Core::Rendering
         TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
 
         float HeightScale = 0.05f; ///< POMの高さスケール（0.0～0.1程度が自然）
+
+        /// 金属度・粗さのスカラー値（0～1）。対応するテクスチャが無いときにこの値を使う。
+        /// 負は未指定で、テクスチャが無ければ既定値（金属度0・粗さ0.5）になる。
+        float Metallic = -1.0f;
+        float Roughness = -1.0f;
 
         float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
         float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。
@@ -322,6 +331,9 @@ namespace NorvesLib::Core::Rendering
         TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
 
         float HeightScale = 0.05f; ///< POMの高さスケール
+
+        float Metallic = -1.0f;  ///< 金属度のスカラー値。負は未指定（MaterialCreateData::Metallic）
+        float Roughness = -1.0f; ///< 粗さのスカラー値。負は未指定（MaterialCreateData::Roughness）
 
         float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
         float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。

@@ -406,7 +406,9 @@ namespace NorvesLib::RHI
         ResolveSource,
         Present,
         GenericRead,
-        RayTracingStorage
+        RayTracingStorage,
+        // CPU から写像して読むバッファ（GPU の書き込みの後にホストの読み取りへ見せる。テクスチャには使わない）
+        HostRead
     };
 
     /**

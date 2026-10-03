@@ -675,17 +675,18 @@ namespace NorvesLib::RHI::Vulkan
 
     vk::ImageView VulkanTexture::GetArrayLayerImageView(uint32_t arrayLayer) const
     {
+        // キューブ（配列）は6面を1層ずつ数える（層 = キューブの番号 * 6 + 面）。
+        const uint32_t totalArrayLayers = GetTotalArrayLayerCount();
         if (m_desc.Dimension != TextureDimension::Texture2D ||
-            m_desc.IsCubemap ||
             m_desc.ArraySize == 0 ||
-            arrayLayer >= m_desc.ArraySize)
+            arrayLayer >= totalArrayLayers)
         {
             return vk::ImageView{};
         }
 
         if (m_arrayLayerImageViews.empty())
         {
-            m_arrayLayerImageViews.resize(m_desc.ArraySize, nullptr);
+            m_arrayLayerImageViews.resize(totalArrayLayers, nullptr);
         }
 
         if (!m_arrayLayerImageViews[arrayLayer])

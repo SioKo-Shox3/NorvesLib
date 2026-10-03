@@ -300,6 +300,13 @@ namespace NorvesLib::Debug
         void BeginFrame(uint64_t frameNumber, float deltaTime);
         void EndFrame();
         void RecordScope(const char* name, const char* category, float durationMs);
+        /**
+         * @brief 完了したGPUの区間を1行としてトレースへ書く
+         * @param frameNumber 区間を記録したフレームの番号（GPUの完了はCPUのフレームより遅れる）
+         * @param name 区間の名前（FrameGPU・AccelerationStructureBuild・RenderGraph のパス名）
+         * @param durationMs GPUのタイムスタンプで測った時間
+         */
+        void RecordGPUScope(uint64_t frameNumber, const char* name, float durationMs);
         void SetGameThreadTimeMs(float timeMs);
         void SetRenderPrepareTimeMs(float timeMs);
         void SetRenderThreadTimeMs(float timeMs);
@@ -323,6 +330,7 @@ namespace NorvesLib::Debug
         void WriteTraceHeader();
         void WriteFrameTraceLine();
         void WriteScopeTraceLine(const ProfileEvent& event);
+        void WriteGPUScopeTraceLine(uint64_t frameNumber, const String& name, float durationMs);
 
     private:
         NorvesLib::Thread::Atomic<bool> m_bTraceActive{false};

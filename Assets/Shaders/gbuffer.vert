@@ -13,7 +13,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;      // x=heightScale, y=hasHeightMap, z=unused, w=unused
-    vec4 velocityParams;  // x=前フレームカメラ履歴の有効フラグ
+    vec4 frameParams;     // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ
 } mvp;
 
 struct InstanceData

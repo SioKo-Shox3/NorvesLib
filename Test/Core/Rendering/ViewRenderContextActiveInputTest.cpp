@@ -1,4 +1,4 @@
-#include "Rendering/ViewRenderContext.h"
+﻿#include "Rendering/ViewRenderContext.h"
 #include <cassert>
 #include <iostream>
 
@@ -115,6 +115,26 @@ int main()
     assert(outputScissor.top == 90);
     assert(outputScissor.right == 800);
     assert(outputScissor.bottom == 450);
+
+    // 内部解像度が画面の半分（SetRenderScale(0.5)）なら、画面へ写す矩形は画面の画素へ広げる。
+    // 内部解像度の矩形のまま写すと、拡大した画像が画面の左上の1/4にしか出ない。
+    context.ScreenWidth = 2560;
+    context.ScreenHeight = 1440;
+    RHI::Viewport scaledOutputViewport = context.GetActiveOutputViewport();
+    assert(scaledOutputViewport.x == 320.0f);
+    assert(scaledOutputViewport.y == 180.0f);
+    assert(scaledOutputViewport.width == 1280.0f);
+    assert(scaledOutputViewport.height == 720.0f);
+    assert(scaledOutputViewport.minDepth == 0.2f);
+    assert(scaledOutputViewport.maxDepth == 0.8f);
+    RHI::ScissorRect scaledOutputScissor = context.GetActiveOutputScissor();
+    assert(scaledOutputScissor.left == 320);
+    assert(scaledOutputScissor.top == 180);
+    assert(scaledOutputScissor.right == 1600);
+    assert(scaledOutputScissor.bottom == 900);
+    // 描画（内部解像度）の矩形は変わらない。
+    assert(context.GetActiveLocalViewport().width == 640.0f);
+    assert(context.GetActiveRenderWidth() == 640);
 
     std::cout << "ViewRenderContextActiveInputTest passed\n";
     return 0;

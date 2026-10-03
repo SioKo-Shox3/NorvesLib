@@ -21,6 +21,11 @@ const float FIREFLY_NEIGHBOR_RATIO = 4.0;
 // 重み付けする。静止が続いて年齢が伸びた画素では、時間方向の累積が雑音を減らすため、近傍の重みを
 // FULL_SPATIAL_AGE/年齢へ下げ、影の縁などの空間方向のぼけを減らす。
 const float FULL_SPATIAL_AGE = 8.0;
+// 近傍の重みを下げるのはこの年齢まで（重みの下限は FULL_SPATIAL_AGE/この値）。撮影の範囲の静止画面では
+// 画素の年齢が経過フレーム数で頭打ちになり、時間方向の累積だけでは1試料/frameの推定のばらつきが残って
+// 表示の8bitの境目で明滅するため、3x3の近傍の重みを半分まで残す（視点などが動いているフレームの
+// 重みは1なので、静止画面がそれよりぼけることはない）。
+const float MINIMUM_SPATIAL_AGE_SCALE_LIMIT = 16.0;
 
 float RadianceLuminance(vec3 value)
 {
@@ -78,7 +83,7 @@ void main()
     centerNormal *= inversesqrt(centerNormalLengthSquared);
     float centerAge = texelFetch(historyAge, pixel, 0).r;
     float neighborScale = IsFiniteScalar(centerAge) && centerAge > FULL_SPATIAL_AGE
-        ? FULL_SPATIAL_AGE / centerAge
+        ? FULL_SPATIAL_AGE / min(centerAge, MINIMUM_SPATIAL_AGE_SCALE_LIMIT)
         : 1.0;
     vec3 accumulatedRadiance = vec3(0.0);
     float accumulatedWeight = 0.0;

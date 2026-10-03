@@ -165,6 +165,40 @@ namespace NorvesLib::Core::Component
         return true;
     }
 
+    void CameraComponent::SetExposureMode(Rendering::CameraExposureMode exposureMode)
+    {
+        if (m_ExposureMode != exposureMode)
+        {
+            m_ExposureMode = exposureMode;
+            MarkRenderStateDirty();
+        }
+    }
+
+    void CameraComponent::SetAntiAliasingMode(Rendering::CameraAntiAliasingMode antiAliasingMode)
+    {
+        if (m_AntiAliasingMode != antiAliasingMode)
+        {
+            m_AntiAliasingMode = antiAliasingMode;
+            MarkRenderStateDirty();
+        }
+    }
+
+    bool CameraComponent::SetGradingContrast(float contrast)
+    {
+        if (!std::isfinite(contrast))
+        {
+            return false;
+        }
+        // 負はすべて「View の設定を使う」として同じ値にそろえる。
+        const float normalized = contrast < 0.0f ? -1.0f : contrast;
+        if (m_GradingContrast != normalized)
+        {
+            m_GradingContrast = normalized;
+            MarkRenderStateDirty();
+        }
+        return true;
+    }
+
     bool CameraComponent::SetShutterSpeed(float shutterSpeed)
     {
         Rendering::CameraProxy validation;
@@ -262,6 +296,9 @@ namespace NorvesLib::Core::Component
         snapshot.CullingMask = CullingMaskProp;
         snapshot.RenderOrder = RenderOrder;
         snapshot.FocusDistance = m_FocusDistance;
+        snapshot.ExposureMode = m_ExposureMode;
+        snapshot.AntiAliasing = m_AntiAliasingMode;
+        snapshot.GradingContrast = m_GradingContrast;
         if (!TryBuildExposureSnapshot(
                 Aperture.Get(),
                 ShutterSpeed.Get(),

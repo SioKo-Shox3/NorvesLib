@@ -30,7 +30,9 @@ namespace
         ObjectMotion,
         CameraObjectMotion,
         FirstFrameInvalidHistory,
-        MoveThenStop
+        MoveThenStop,
+        // 骨のアニメーションだけで動く骨付きの四角形（物体の変換とカメラは止まったまま）
+        SkinnedMotion
     };
 
     enum class CaptureStage : uint8_t
@@ -56,6 +58,9 @@ namespace
         float ExpectedX = 0.0f;
         float ExpectedY = 0.0f;
     };
+
+    // 骨付きの四角形の場面で、動いた後に置くアニメーションの時刻（秒）。骨は (0.5, 0, 0) m 動く。
+    constexpr float SkinnedMovedTimeSeconds = 0.5f;
 
     uint16_t ReadHalf(const Core::Container::VariableArray<uint8_t>& pixels, size_t offset)
     {
@@ -270,6 +275,11 @@ namespace
                     std::cerr << "RenderingVelocityVulkanTest: motion fixture setup failed\n";
                     return false;
                 }
+                if (m_Scenario == Scenario::SkinnedMotion && !GetFixture().AddR5SkinnedQuad())
+                {
+                    std::cerr << "RenderingVelocityVulkanTest: 骨付きの四角形を置けなかった\n";
+                    return false;
+                }
             }
             return true;
         }
@@ -328,7 +338,8 @@ namespace
                     else if ((m_Scenario == Scenario::CameraMotion ||
                               m_Scenario == Scenario::ObjectMotion ||
                               m_Scenario == Scenario::CameraObjectMotion ||
-                              m_Scenario == Scenario::MoveThenStop) &&
+                              m_Scenario == Scenario::MoveThenStop ||
+                              m_Scenario == Scenario::SkinnedMotion) &&
                              m_Stage == CaptureStage::Initial)
                     {
                         m_Stage = CaptureStage::Moved;
@@ -411,6 +422,11 @@ namespace
                 m_Scenario = Scenario::MoveThenStop;
                 return true;
             }
+            if (argument == TEXT("--scenario=skinned-motion"))
+            {
+                m_Scenario = Scenario::SkinnedMotion;
+                return true;
+            }
             outFailureReason = TEXT("unsupported velocity scenario");
             return false;
         }
@@ -440,7 +456,8 @@ namespace
 
         bool IsMotionScenario() const
         {
-            return IsCameraMotionScenario() || m_Scenario == Scenario::ObjectMotion;
+            return IsCameraMotionScenario() || m_Scenario == Scenario::ObjectMotion ||
+                   m_Scenario == Scenario::SkinnedMotion;
         }
 
         bool IsObjectMotionScenario() const
@@ -484,6 +501,12 @@ namespace
                 Fail("motion fixture object update failed");
                 return;
             }
+            if (m_Scenario == Scenario::SkinnedMotion &&
+                !GetFixture().SetR5SkinnedQuadAnimationTime(bMoved ? SkinnedMovedTimeSeconds : 0.0f))
+            {
+                Fail("骨付きの四角形のアニメーションの時刻を更新できなかった");
+                return;
+            }
             CameraProxy camera = GetFixture().GetR5RayTracingShadowCamera();
             camera.PositionX = IsCameraMotionScenario() && bMoved ? 0.35f : 0.0f;
             renderWorld.SetMainCamera(camera);
@@ -499,6 +522,11 @@ namespace
             {
                 outFailureReason = TEXT("analytic velocity sample has no RHI device");
                 return false;
+            }
+
+            if (m_Scenario == Scenario::SkinnedMotion)
+            {
+                return EvaluateSkinnedMotion(frame, device.get(), outFailureReason);
             }
 
             const bool bCameraMotion = IsCameraMotionScenario();
@@ -552,6 +580,45 @@ namespace
                                          0u,
                                          "background-object-motion",
                                          outFailureReason))
+            {
+                return false;
+            }
+            return true;
+        }
+
+        // 骨の平行移動 (0.5, 0, 0) m だけで動いた四角形の中の点は、前のパレットで動かした位置からの動きを
+        // velocity に持つ。前のパレットが使われなければ0になる。止まった受け手は0のまま。
+        bool EvaluateSkinnedMotion(
+            const CapturedFrame& frame,
+            const RHI::IDevice* device,
+            Core::Container::String& outFailureReason)
+        {
+            const CameraProxy& camera = GetFixture().GetR5RayTracingShadowCamera();
+            ExpectedVelocitySample skinnedSample;
+            if (!BuildExpectedVelocitySample(camera,
+                                             camera,
+                                             Math::Vector3(-3.0f, 0.0f, 10.0f),
+                                             Math::Vector3(-3.0f + SkinnedMovedTimeSeconds, 0.0f, 10.0f),
+                                             device,
+                                             skinnedSample) ||
+                !CheckExpectedVelocitySample(frame, skinnedSample, "skinned-bone-motion", outFailureReason))
+            {
+                return false;
+            }
+            if (std::abs(skinnedSample.ExpectedX) <= 0.002f)
+            {
+                outFailureReason = TEXT("骨付きの四角形の動きの期待値が小さすぎて0と区別できない");
+                return false;
+            }
+
+            ExpectedVelocitySample receiverSample;
+            if (!BuildExpectedVelocitySample(camera,
+                                             camera,
+                                             Math::Vector3(3.0f, 0.0f, 20.0f),
+                                             Math::Vector3(3.0f, 0.0f, 20.0f),
+                                             device,
+                                             receiverSample) ||
+                !CheckExpectedVelocitySample(frame, receiverSample, "receiver-static-skinned-motion", outFailureReason))
             {
                 return false;
             }

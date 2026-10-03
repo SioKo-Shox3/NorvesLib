@@ -276,7 +276,7 @@ namespace
         {"negative rgb", -0.25f, 0.0f, 0.0f, 1.0f},
         {"negative nits", 0.25f, 0.25f, 0.25f, -1.0f},
         {"positive nits with tiny Y", 0.000001f, 0.0f, 0.0f, 1.0f},
-        {"rgba16f product overflow", 1.0f, 0.0f, 0.0f, 20000.0f},
+        {"float product overflow", 1.0f, 0.0f, 0.0f, 1.0e38f},
     };
 
     void SetInvalidEmissive(MaterialCreateData &createInfo, const InvalidEmissiveRow &row)

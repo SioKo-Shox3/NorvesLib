@@ -17,6 +17,8 @@
 #include "Rendering/FXAAPass.h"
 #include "Rendering/UpscalePass.h"
 #include "Rendering/SSRPass.h"
+#include "Rendering/AutoExposurePass.h"
+#include "Rendering/TemporalAAPass.h"
 #include "Rendering/PostProcessStack.h"
 #include "Rendering/NeuralMaterialDecodePass.h"
 #include "Rendering/MegaGeometryPass.h"
@@ -25,6 +27,8 @@
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -95,7 +99,76 @@ namespace NorvesLib::Core::Rendering
             return proxy.RenderSubtype == BoardRenderSubtype::Impostor &&
                    proxy.SourceMeshComponentId != 0;
         }
+
+        AutoExposurePass *FindAutoExposurePass(const PostProcessStack *postProcessStack)
+        {
+            if (!postProcessStack)
+            {
+                return nullptr;
+            }
+            for (const auto &pass : postProcessStack->GetPasses())
+            {
+                if (auto *autoExposurePass = dynamic_cast<AutoExposurePass *>(pass.get()))
+                {
+                    return autoExposurePass->IsEnabled() ? autoExposurePass : nullptr;
+                }
+            }
+            return nullptr;
+        }
+
+        // 露出の方式が Auto のカメラへ、前のフレームまでに順応させた EV100 の露出を写す。
+        // 写した露出はこの View の全パス（ライティング・空・フォグ・測定）で同じ値として使われる。
+        bool TryApplyAutoExposure(AutoExposurePass &autoExposurePass,
+                                  const CameraProxy &camera,
+                                  CameraProxy &outCamera)
+        {
+            autoExposurePass.SetExposureCompensation(camera.ExposureCompensation);
+            autoExposurePass.SetCompensationCurve(camera.AutoExposureCurve);
+            float adaptedEV100 = 0.0f;
+            if (!autoExposurePass.TryGetAdaptedEV100(adaptedEV100))
+            {
+                return false;
+            }
+            const float exposure = AutoExposurePreExposureFromEV100(adaptedEV100);
+            if (!(exposure > 0.0f))
+            {
+                return false;
+            }
+            outCamera = camera;
+            outCamera.EV100 = adaptedEV100;
+            outCamera.Exposure = exposure;
+            outCamera.PreExposure = exposure;
+            outCamera.InvPreExposure = 1.0f / exposure;
+            return true;
+        }
+
+        TemporalAAPass *FindTemporalAAPass(const PostProcessStack *postProcessStack)
+        {
+            if (!postProcessStack)
+            {
+                return nullptr;
+            }
+            for (const auto &pass : postProcessStack->GetPasses())
+            {
+                if (auto *temporalAAPass = dynamic_cast<TemporalAAPass *>(pass.get()))
+                {
+                    return temporalAAPass;
+                }
+            }
+            return nullptr;
+        }
     } // namespace
+
+    bool SceneView::TryGetAutoExposureMeasurement(AutoExposureMeasurement &outMeasurement) const
+    {
+        const AutoExposurePass *autoExposurePass = FindAutoExposurePass(GetPostProcessStack());
+        if (!autoExposurePass || !autoExposurePass->GetLatestMeasurement().bValid)
+        {
+            return false;
+        }
+        outMeasurement = autoExposurePass->GetLatestMeasurement();
+        return true;
+    }
 
     bool SceneView::Initialize(const SceneViewSettings &settings)
     {
@@ -602,6 +675,92 @@ namespace NorvesLib::Core::Rendering
         m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size());
         m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size());
 
+        // 自動露出のカメラは、この View を描く間だけ露出を写したカメラの複製へ差し替える
+        // （FramePacket のカメラは書き換えない）
+        CameraProxy autoExposedCamera;
+        struct CameraOverrideScope final
+        {
+            ViewRenderContext &Context;
+            const CameraProxy *SavedMainCamera;
+            const CameraProxy *SavedCurrentCamera;
+            const CameraProxy *SavedPreviousMainCamera;
+            uint64_t SavedPreviousCameraFrameNumber;
+            ~CameraOverrideScope()
+            {
+                Context.MainCamera = SavedMainCamera;
+                Context.CurrentCamera = SavedCurrentCamera;
+                Context.PreviousMainCamera = SavedPreviousMainCamera;
+                Context.PreviousCameraFrameNumber = SavedPreviousCameraFrameNumber;
+            }
+        } cameraOverrideScope{context, context.MainCamera, context.CurrentCamera, context.PreviousMainCamera,
+                              context.PreviousCameraFrameNumber};
+        if (const CameraProxy *activeCamera = context.GetActiveCamera();
+            activeCamera && activeCamera->ExposureMode == CameraExposureMode::Auto)
+        {
+            AutoExposurePass *autoExposurePass = FindAutoExposurePass(GetPostProcessStack());
+            if (autoExposurePass && TryApplyAutoExposure(*autoExposurePass, *activeCamera, autoExposedCamera))
+            {
+                if (context.CurrentCamera)
+                {
+                    context.CurrentCamera = &autoExposedCamera;
+                }
+                else
+                {
+                    context.MainCamera = &autoExposedCamera;
+                }
+            }
+        }
+
+        // TAA: カメラが TAA を選んだ Viewport では、この View を描く間だけ投影へサブピクセルのジッタを掛ける。
+        // 前のカメラにも同じジッタを掛け、velocity と履歴の再投影からジッタを除く。
+        CameraProxy jitteredCamera;
+        CameraProxy jitteredPreviousCamera;
+        bool bApplyTemporalAA = false;
+        if (TemporalAAPass *temporalAAPass = FindTemporalAAPass(GetPostProcessStack()))
+        {
+            const CameraProxy *activeCamera = context.GetActiveCamera();
+            TemporalAAJitter jitter;
+            bApplyTemporalAA = activeCamera != nullptr &&
+                               (m_bTemporalAAForced ||
+                                activeCamera->AntiAliasing == CameraAntiAliasingMode::TemporalAA) &&
+                               context.GetActiveDebugMode() == DebugViewMode::Normal &&
+                               temporalAAPass->BeginFrame(context.FrameNumber,
+                                                          viewportId,
+                                                          context.GetActiveRenderWidth(),
+                                                          context.GetActiveRenderHeight(),
+                                                          jitter);
+            if (bApplyTemporalAA)
+            {
+                // 描画がゲームのフレームを飛ばしたときは、前のカメラを TAA の履歴を書いたフレームのカメラにする
+                // （物体の前の変換も RenderingCoordinator がそのフレームへ付け替える）。
+                const CameraProxy *reprojectionCamera = temporalAAPass->FindReprojectionCamera(
+                    viewportId, activeCamera->CameraId, activeCamera->SourceCameraId, context.FrameNumber);
+                const CameraProxy *previousCamera =
+                    reprojectionCamera ? reprojectionCamera : context.GetPreviousCamera();
+                jitteredCamera = *activeCamera;
+                ApplyTemporalAAJitter(jitteredCamera, jitter);
+                if (context.CurrentCamera)
+                {
+                    context.CurrentCamera = &jitteredCamera;
+                }
+                else
+                {
+                    context.MainCamera = &jitteredCamera;
+                }
+                if (previousCamera)
+                {
+                    jitteredPreviousCamera = *previousCamera;
+                    ApplyTemporalAAJitter(jitteredPreviousCamera, jitter);
+                    context.PreviousMainCamera = &jitteredPreviousCamera;
+                }
+                if (reprojectionCamera)
+                {
+                    context.PreviousCameraFrameNumber = temporalAAPass->GetHistoryFrameNumber();
+                }
+            }
+        }
+        SetTemporalAAApplied(bApplyTemporalAA, viewportId);
+
         // パスチェーンが存在すれば基底クラスのパスベース描画を実行
         if (GetPassCount() > 0)
         {
@@ -613,6 +772,35 @@ namespace NorvesLib::Core::Rendering
         {
             // パス未登録の場合はレガシー描画にフォールバック
             Render();
+        }
+    }
+
+    void SceneView::SetTemporalAAApplied(bool bApplied, uint32_t viewportId)
+    {
+        PostProcessStack *postProcessStack = GetPostProcessStack();
+        TemporalAAPass *temporalAAPass = FindTemporalAAPass(postProcessStack);
+        if (!temporalAAPass)
+        {
+            return;
+        }
+        // 有効・無効は Viewport ごとに切り替わる（同じフレームの2つ目以降の Viewport では無効）。履歴は
+        // それを書いた Viewport を TAA 無しで描いたときだけ捨てる。
+        temporalAAPass->NotifyViewportRendered(viewportId, bApplied);
+
+        IViewPass *fxaaPass = postProcessStack->GetPass("FXAAPass");
+        if (!fxaaPass)
+        {
+            return;
+        }
+        if (bApplied && fxaaPass->IsEnabled())
+        {
+            fxaaPass->SetEnabled(false);
+            m_bFXAASuppressedByTemporalAA = true;
+        }
+        else if (!bApplied && m_bFXAASuppressedByTemporalAA)
+        {
+            fxaaPass->SetEnabled(true);
+            m_bFXAASuppressedByTemporalAA = false;
         }
     }
 
@@ -665,11 +853,11 @@ namespace NorvesLib::Core::Rendering
         megaGeometryPass->SetSceneRenderer(sceneRenderer);
         AddPass(std::move(megaGeometryPass));
 
-        // SSAOPass: GBufferの深度・法線からスクリーンスペースAOを計算
+        // SSAOPass: GBufferの深度・法線から画面空間AO（GTAO）を計算。半径は世界の長さ（m）で、
+        // 球・岩の接地部や軒下（数十cm〜1 m）を拾い、部屋の大きさの壁全体は遮蔽にしない。
         SSAOSettings ssaoSettings;
-        ssaoSettings.Radius = 0.5f;
-        ssaoSettings.Bias = 0.025f;
-        ssaoSettings.Intensity = 2.0f;
+        ssaoSettings.Radius = 1.0f;
+        ssaoSettings.Intensity = 1.0f;
         auto ssaoPass = MakeUnique<SSAOPass>(ssaoSettings);
         AddPass(std::move(ssaoPass));
 
@@ -700,7 +888,7 @@ namespace NorvesLib::Core::Rendering
         transparentForwardPass->SetRegisterOutputs(false);
         AddPass(std::move(transparentForwardPass));
 
-        // PostProcessStack: SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA
+        // PostProcessStack: SSR -> TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw
         auto postProcessStack = MakeUnique<PostProcessStack>();
 
         // SSR（スクリーンスペース反射、HDR空間で適用）
@@ -709,16 +897,31 @@ namespace NorvesLib::Core::Rendering
         ssrSettings.Thickness = 0.3f;
         ssrSettings.MaxSteps = 64.0f;
         ssrSettings.Intensity = 0.8f;
-        ssrSettings.RoughnessCutoff = 0.5f;
+        // 粗さ0.3〜0.7の間でなめらかに弱める（しきい値で急に切れると、粗さの近い面の間で反射の有無が段になる）。
+        ssrSettings.RoughnessFadeStart = 0.3f;
+        ssrSettings.RoughnessFadeEnd = 0.7f;
         auto ssrPass = MakeUnique<SSRPass>(ssrSettings);
         postProcessStack->AddPass(std::move(ssrPass));
 
-        // Bloom（ToneMappingの前にHDR空間でブルーム適用）
+        // TemporalAA（ライティング・半透明・SSRの後、ブルームの前。既定は無効で、カメラが TAA を選んだ
+        // Viewport でだけ有効にし、そのとき FXAA を外す）
+        postProcessStack->AddPass(MakeUnique<TemporalAAPass>());
+        m_bTemporalAAForced = IsTemporalAAForcedByEnvironment();
+        m_bFXAASuppressedByTemporalAA = false;
+        if (m_bTemporalAAForced)
+        {
+            NORVES_LOG_INFO("SceneView", "NORVES_TEMPORAL_AA=1: すべてのカメラに TAA を掛ける");
+        }
+
+        // AutoExposure（ブルーム前のHDRシーンカラーの輝度ヒストグラムから露出を測る。露出の方式が Auto のカメラは、この値で次のフレームの露出を決める）
+        postProcessStack->AddPass(MakeUnique<AutoExposurePass>());
+
+        // Bloom（ToneMappingの前にHDR空間でブルーム適用。6段の縮小・拡大を、しきい値なしで元の色へ4%混ぜる）
         BloomSettings bloomSettings;
-        bloomSettings.Threshold = 1.15f;
-        bloomSettings.Intensity = 0.85f;
-        bloomSettings.Radius = 2.5f;
-        bloomSettings.SoftKnee = 0.35f;
+        bloomSettings.Threshold = 0.0f;
+        bloomSettings.Intensity = 0.04f;
+        bloomSettings.Radius = 1.0f;
+        bloomSettings.MipCount = 6;
         auto bloomPass = MakeUnique<BloomPass>(bloomSettings);
         postProcessStack->AddPass(std::move(bloomPass));
 
@@ -734,10 +937,6 @@ namespace NorvesLib::Core::Rendering
         auto vignettePass = MakeUnique<VignettePass>();
         postProcessStack->AddPass(std::move(vignettePass));
 
-        // DebugDraw（ToneMapping後のdisplay-linear色へ、SceneDepthで深度遮蔽）
-        auto debugDrawPass = MakeUnique<DebugDrawPass>();
-        postProcessStack->AddPass(std::move(debugDrawPass));
-
         // FXAA（アンチエイリアシング、最終パス）
         FXAASettings fxaaSettings;
         fxaaSettings.EdgeThreshold = 0.0312f;
@@ -749,10 +948,14 @@ namespace NorvesLib::Core::Rendering
         auto upscalePass = MakeUnique<UpscalePass>();
         postProcessStack->AddPass(std::move(upscalePass));
 
+        // DebugDraw（Upscale後の最終解像度のdisplay-linear色へ、ジッタを外したカメラで描き、SceneDepthで深度遮蔽）
+        auto debugDrawPass = MakeUnique<DebugDrawPass>();
+        postProcessStack->AddPass(std::move(debugDrawPass));
+
         SetPostProcessStack(std::move(postProcessStack));
 
         NORVES_LOG_INFO("SceneView",
-                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
+                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> TemporalAA(optional) -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw");
     }
 
     void SceneView::SetupPathTracingPipeline(uint32_t samplesPerFrame,
@@ -1207,3 +1410,5 @@ namespace NorvesLib::Core::Rendering
 #include "PathTracingPass.inl"
 #include "DepthOfFieldPass.inl"
 #include "MotionBlurPass.inl"
+#include "AutoExposurePass.inl"
+#include "TemporalAAPass.inl"

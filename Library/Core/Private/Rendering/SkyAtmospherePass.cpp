@@ -9,6 +9,7 @@
 #include "Logging/LogMacros.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 
@@ -199,6 +200,9 @@ namespace NorvesLib::Core::Rendering
         m_SunDiskHandle = {};
         m_Device = nullptr;
         m_LastParameters = SkyAtmosphereParameters{};
+        m_LutParameters = SkyAtmosphereParameters{};
+        m_LutSunGroundTransmittance = Math::Vector3::Zero;
+        m_bLutValid = false;
         m_LastSunDiskPreExposedLuminance = 0.0f;
         m_bLastSunDiskSaturated = false;
         m_bSnapshotEnabled = false;
@@ -257,6 +261,8 @@ namespace NorvesLib::Core::Rendering
         textureDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
         textureDesc.DebugName = debugName;
         outTexture = m_Device->CreateTexture(textureDesc);
+        // 作り直したテクスチャは中身が無いので、次の準備でLUTを作る。
+        m_bLutValid = false;
         return outTexture != nullptr;
     }
 
@@ -273,8 +279,7 @@ namespace NorvesLib::Core::Rendering
                CreateTexture(m_SunDiskTexture, 1u, 1u, "SkyAtmosphere.SunDisk");
     }
 
-    bool SkyAtmospherePass::GenerateTransmittanceLut(
-        const SkyAtmosphereParameters& parameters)
+    bool SkyAtmospherePass::GenerateTransmittanceLut(const SkyAtmosphereModel& model)
     {
         if (!m_TransmittanceTexture)
         {
@@ -298,9 +303,8 @@ namespace NorvesLib::Core::Rendering
                 const float cosine = (static_cast<float>(x) + 0.5f) /
                                      static_cast<float>(width);
                 const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
-                // 地表の太陽の照度（ComputeSunGroundIlluminance）と同じ関数で求める。
-                const Math::Vector3 transmittance =
-                    ComputeAtmosphereTransmittance(parameters, altitude, cosine);
+                // 地表の太陽の照度（ComputeSunGroundIlluminance）と同じ密度の積分の表から引く。
+                const Math::Vector3 transmittance = model.GetTransmittance(altitude, cosine);
                 data[offset + 0u] = FloatToHalfRne(transmittance.x);
                 data[offset + 1u] = FloatToHalfRne(transmittance.y);
                 data[offset + 2u] = FloatToHalfRne(transmittance.z);
@@ -313,8 +317,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool SkyAtmospherePass::GenerateRadianceLut(
-        const SkyAtmosphereParameters& parameters)
+    bool SkyAtmospherePass::GenerateRadianceLut(const SkyAtmosphereModel& model)
     {
         if (!m_RadianceTexture)
         {
@@ -323,6 +326,7 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t width = m_Settings.RadianceWidth;
         const uint32_t height = m_Settings.RadianceHeight;
+        const SkyAtmosphereParameters& parameters = model.GetParameters();
         const Math::Vector3 sunDirection =
             MakeSunDirectionFromAltitudeAzimuth(parameters.SunAltitudeDegrees,
                                                 parameters.SunAzimuthDegrees);
@@ -337,8 +341,8 @@ namespace NorvesLib::Core::Rendering
             {
                 const Math::Vector3 direction =
                     DirectionFromEquirectangular(x, y, width, height);
-                const SkyRadianceSample sample =
-                    EvaluateHillaireSkyReference(parameters, direction);
+                // 観測点から見た空（視線の透過率と地平線より下の地面を含む）。
+                const SkyRadianceSample sample = model.SampleSkyView(direction);
                 const float cosineToSun = std::clamp(Dot(direction, sunDirection), -1.0f, 1.0f);
                 const bool bInSunDisk = std::acos(cosineToSun) <= solarDiskRadius;
                 const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
@@ -375,10 +379,12 @@ namespace NorvesLib::Core::Rendering
         const float safeValue = std::isfinite(requested)
                                     ? std::clamp(requested, 0.0f, safetyLimit)
                                     : requested > 0.0f ? safetyLimit : 0.0f;
+        // 表示する円盤は、空の太陽の方向光と同じ地表の透過率で減光・着色する。
+        const Math::Vector3& transmittance = m_LutSunGroundTransmittance;
         const uint16_t pixel[4] = {
-            FloatToHalfRne(safeValue),
-            FloatToHalfRne(safeValue),
-            FloatToHalfRne(safeValue),
+            FloatToHalfRne(safeValue * std::clamp(transmittance.x, 0.0f, 1.0f)),
+            FloatToHalfRne(safeValue * std::clamp(transmittance.y, 0.0f, 1.0f)),
+            FloatToHalfRne(safeValue * std::clamp(transmittance.z, 0.0f, 1.0f)),
             FloatToHalfRne(1.0f)};
         m_SunDiskTexture->Update(pixel, sizeof(pixel), sizeof(pixel));
         m_LastSunDiskPreExposedLuminance = safeValue;
@@ -390,9 +396,34 @@ namespace NorvesLib::Core::Rendering
         const SkyAtmosphereParameters& parameters,
         float preExposure)
     {
-        return GenerateTransmittanceLut(parameters) &&
-               GenerateRadianceLut(parameters) &&
-               GenerateSunDiskTexture(parameters, preExposure);
+        if (!m_bLutValid || !AreSkyAtmosphereParametersEqual(m_LutParameters, parameters))
+        {
+            // LUTは空のパラメータ（太陽の向きを含む）が変わったときだけ作る。
+            m_bLutValid = false;
+            const auto startTime = std::chrono::steady_clock::now();
+            SkyAtmosphereModel model(parameters);
+            model.BuildSkyViewTable();
+            if (!GenerateTransmittanceLut(model) || !GenerateRadianceLut(model))
+            {
+                return false;
+            }
+            const double elapsedMilliseconds = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - startTime).count();
+            NORVES_LOG_INFO("SkyAtmospherePass",
+                            "Sky LUT generated in %.1f ms (radiance %ux%u, transmittance %ux%u, "
+                            "sun altitude %.2f, azimuth %.2f)",
+                            elapsedMilliseconds,
+                            m_Settings.RadianceWidth,
+                            m_Settings.RadianceHeight,
+                            m_Settings.TransmittanceWidth,
+                            m_Settings.TransmittanceHeight,
+                            parameters.SunAltitudeDegrees,
+                            parameters.SunAzimuthDegrees);
+            m_LutParameters = parameters;
+            m_LutSunGroundTransmittance = model.GetSunGroundTransmittance();
+            m_bLutValid = true;
+        }
+        return GenerateSunDiskTexture(parameters, preExposure);
     }
 
     void SkyAtmospherePass::PublishContextResources(ViewRenderContext& context, bool bValid)

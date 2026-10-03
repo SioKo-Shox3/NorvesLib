@@ -16,6 +16,7 @@
 #include "Core/Public/Rendering/RenderWorld.h"
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -88,6 +89,122 @@ namespace Game
         uint32_t s_Rendering3DTestInstancedMeshCount = 0;
         bool s_bRendering3DTestLayerCompositeSmoke = false;
         bool s_bRendering3DTestPhysicsSmoke = false;
+        // --startup-camera=<yaw>,<pitch>,<arm>: 起動時のカメラ（SpringArm の角度[度]と腕の長さ）。
+        constexpr const TCHAR *kStartupCameraOption = TEXT("--startup-camera=");
+        bool s_bRendering3DTestHasStartupCamera = false;
+        float s_Rendering3DTestStartupCamera[3] = {0.0f, 0.0f, 0.0f};
+        // --sun-elevation=<deg> / --sun-azimuth=<deg>: 起動時の空の太陽の仰角（0〜90）と方位（-180〜180）。
+        // --exposure-ev100=<ev>: 起動時の手動露出（EV100、-6〜24）。
+        constexpr const TCHAR *kSunElevationOption = TEXT("--sun-elevation=");
+        constexpr const TCHAR *kSunAzimuthOption = TEXT("--sun-azimuth=");
+        constexpr const TCHAR *kExposureEV100Option = TEXT("--exposure-ev100=");
+        // --height-fog-density=<1/m>: 起動画面の高さフォグの地面での密度（0で無効、0〜1）。見比べと調整に使う。
+        constexpr const TCHAR *kHeightFogDensityOption = TEXT("--height-fog-density=");
+        // --height-fog-falloff=<1/m>: 起動画面の高さフォグの高さ方向の減衰（0〜1）。見比べと調整に使う。
+        constexpr const TCHAR *kHeightFogFalloffOption = TEXT("--height-fog-falloff=");
+        // --orbit-degrees-per-second=<deg/s>: カメラを一定の速さで回す（-360〜360、撮影で動くカメラを確かめる）。
+        constexpr const TCHAR *kOrbitDegreesPerSecondOption = TEXT("--orbit-degrees-per-second=");
+        float s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
+        // --anti-aliasing=<taa|fxaa>: 起動画面のアンチエイリアシング（既定は taa）。
+        constexpr const TCHAR *kAntiAliasingOption = TEXT("--anti-aliasing=");
+        bool s_bRendering3DTestTemporalAA = true;
+        // --render-scale=<0.5〜1>: 起動画面を内部解像度（画面解像度×倍率）で描いて拡大する（既定は1）。
+        constexpr const TCHAR *kRenderScaleOption = TEXT("--render-scale=");
+        float s_Rendering3DTestRenderScale = 1.0f;
+        // --debug-draw-test-lines: 起動画面の大きな球を囲む箱をデバッグの線で毎フレーム描く（値を取らない）。
+        // デバッグ描画が最終解像度でジッタ無しに描かれることを撮影で確かめるのに使う。
+        constexpr const TCHAR *kDebugDrawTestLinesOption = TEXT("--debug-draw-test-lines");
+        bool s_bRendering3DTestDebugDrawTestLines = false;
+        // --capture-sequence=<接頭辞> と --capture-sequence-rendered-frames=<n1,n2,...>: 1回の起動の中で、
+        // アセットが落ち着いてから n 枚目の描画フレームの最終出力を <接頭辞><n>.png に保存する。
+        constexpr const TCHAR *kCaptureSequenceOption = TEXT("--capture-sequence=");
+        constexpr const TCHAR *kCaptureSequenceRenderedFramesOption = TEXT("--capture-sequence-rendered-frames=");
+        // --night: 起動画面を夜にする（空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす。値を取らない）。
+        constexpr const TCHAR *kNightOption = TEXT("--night");
+        bool s_bRendering3DTestNight = false;
+        bool s_bRendering3DTestHasHeightFogDensity = false;
+        float s_Rendering3DTestHeightFogDensity = 0.0f;
+        bool s_bRendering3DTestHasHeightFogFalloff = false;
+        float s_Rendering3DTestHeightFogFalloff = 0.0f;
+        bool s_bRendering3DTestHasSunElevation = false;
+        bool s_bRendering3DTestHasSunAzimuth = false;
+        bool s_bRendering3DTestHasExposureEV100 = false;
+        float s_Rendering3DTestSunElevation = 0.0f;
+        float s_Rendering3DTestSunAzimuth = 0.0f;
+        float s_Rendering3DTestExposureEV100 = 0.0f;
+
+        /**
+         * @brief 1つの有限の小数を読み、[minimum, maximum] に入っていれば成功とする。
+         */
+        bool TryParseBoundedFloat(const String &text, float minimum, float maximum, float &outValue)
+        {
+            char buffer[64] = {};
+            if (text.empty() || text.size() >= sizeof(buffer))
+            {
+                return false;
+            }
+            for (size_t i = 0; i < text.size(); ++i)
+            {
+                const TCHAR ch = text[i];
+                if (ch < 0x20 || ch > 0x7E)
+                {
+                    return false;
+                }
+                buffer[i] = static_cast<char>(ch);
+            }
+
+            char *pEnd = nullptr;
+            const float value = std::strtof(buffer, &pEnd);
+            if (pEnd == buffer || *pEnd != '\0' || !std::isfinite(value) || value < minimum || value > maximum)
+            {
+                return false;
+            }
+            outValue = value;
+            return true;
+        }
+
+        /**
+         * @brief "<yaw>,<pitch>,<arm>" を3つの有限の小数として読む。腕の長さは正でなければならない。
+         */
+        bool TryParseStartupCamera(const String &text, float (&outValues)[3])
+        {
+            char buffer[128] = {};
+            if (text.empty() || text.size() >= sizeof(buffer))
+            {
+                return false;
+            }
+            for (size_t i = 0; i < text.size(); ++i)
+            {
+                const TCHAR ch = text[i];
+                if (ch < 0x20 || ch > 0x7E)
+                {
+                    return false;
+                }
+                buffer[i] = static_cast<char>(ch);
+            }
+
+            const char *pCursor = buffer;
+            for (uint32_t component = 0; component < 3u; ++component)
+            {
+                char *pEnd = nullptr;
+                const float value = std::strtof(pCursor, &pEnd);
+                if (pEnd == pCursor || !std::isfinite(value))
+                {
+                    return false;
+                }
+                outValues[component] = value;
+                pCursor = pEnd;
+                if (component < 2u)
+                {
+                    if (*pCursor != ',')
+                    {
+                        return false;
+                    }
+                    ++pCursor;
+                }
+            }
+            return *pCursor == '\0' && outValues[2] > 0.0f;
+        }
 
         /**
          * @brief 文字列を符号なし 16bit ポートとして解析する。先頭末尾に空白がない 10 進数のみ
@@ -171,6 +288,24 @@ namespace Game
             const std::basic_string<TCHAR> prefixString(prefix);
             return value.size() >= prefixString.size() &&
                    value.compare(0, prefixString.size(), prefixString) == 0;
+        }
+
+        /**
+         * @brief argument が prefix で始まるとき、残りを outRest へ入れて true を返す。
+         */
+        bool TryStripPrefix(const String &argument, const TCHAR *prefix, String &outRest)
+        {
+            size_t prefixLength = 0;
+            while (prefix[prefixLength] != 0)
+            {
+                if (prefixLength >= argument.size() || argument[prefixLength] != prefix[prefixLength])
+                {
+                    return false;
+                }
+                ++prefixLength;
+            }
+            outRest = argument.substr(prefixLength);
+            return true;
         }
 
         bool IsCommandLineOption(const String &argument)
@@ -307,6 +442,19 @@ namespace Game
         s_Rendering3DTestInstancedMeshCount = 0;
         s_bRendering3DTestLayerCompositeSmoke = false;
         s_bRendering3DTestPhysicsSmoke = false;
+        s_bRendering3DTestHasStartupCamera = false;
+        s_bRendering3DTestHasSunElevation = false;
+        s_bRendering3DTestHasSunAzimuth = false;
+        s_bRendering3DTestHasExposureEV100 = false;
+        s_bRendering3DTestHasHeightFogDensity = false;
+        s_bRendering3DTestHasHeightFogFalloff = false;
+        s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
+        s_bRendering3DTestTemporalAA = true;
+        s_Rendering3DTestRenderScale = 1.0f;
+        s_bRendering3DTestDebugDrawTestLines = false;
+        s_bRendering3DTestNight = false;
+        String captureSequencePrefix;
+        VariableArray<uint64_t> captureSequenceRenderedFrames;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;
         bool bHasRendering3DTestImpostorSmokeCount = false;
@@ -333,6 +481,174 @@ namespace Game
 
                 s_bRendering3DTestPhysicsSmoke = true;
                 bHasRendering3DTestPhysicsSmoke = true;
+                continue;
+            }
+
+            String startupCameraValue;
+            if (TryStripPrefix(args[i], kStartupCameraOption, startupCameraValue))
+            {
+                if (!TryParseStartupCamera(startupCameraValue, s_Rendering3DTestStartupCamera))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --startup-camera は <yaw>,<pitch>,<arm>（arm > 0）で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasStartupCamera = true;
+                LOG_INFO("Rendering3DTest startup camera yaw=%g pitch=%g arm=%g",
+                         static_cast<double>(s_Rendering3DTestStartupCamera[0]),
+                         static_cast<double>(s_Rendering3DTestStartupCamera[1]),
+                         static_cast<double>(s_Rendering3DTestStartupCamera[2]));
+                continue;
+            }
+
+            String sunElevationValue;
+            if (TryStripPrefix(args[i], kSunElevationOption, sunElevationValue))
+            {
+                if (!TryParseBoundedFloat(sunElevationValue, 0.0f, 90.0f, s_Rendering3DTestSunElevation))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --sun-elevation は 0〜90 の度で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasSunElevation = true;
+                continue;
+            }
+
+            String sunAzimuthValue;
+            if (TryStripPrefix(args[i], kSunAzimuthOption, sunAzimuthValue))
+            {
+                if (!TryParseBoundedFloat(sunAzimuthValue, -180.0f, 180.0f, s_Rendering3DTestSunAzimuth))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --sun-azimuth は -180〜180 の度で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasSunAzimuth = true;
+                continue;
+            }
+
+            String exposureValue;
+            if (TryStripPrefix(args[i], kExposureEV100Option, exposureValue))
+            {
+                if (!TryParseBoundedFloat(exposureValue, -6.0f, 24.0f, s_Rendering3DTestExposureEV100))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --exposure-ev100 は -6〜24 で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasExposureEV100 = true;
+                continue;
+            }
+
+            String orbitValue;
+            if (TryStripPrefix(args[i], kOrbitDegreesPerSecondOption, orbitValue))
+            {
+                if (!TryParseBoundedFloat(orbitValue, -360.0f, 360.0f, s_Rendering3DTestOrbitDegreesPerSecond))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --orbit-degrees-per-second は -360〜360 の度/秒で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String antiAliasingValue;
+            if (TryStripPrefix(args[i], kAntiAliasingOption, antiAliasingValue))
+            {
+                if (antiAliasingValue == String(TEXT("taa")))
+                {
+                    s_bRendering3DTestTemporalAA = true;
+                }
+                else if (antiAliasingValue == String(TEXT("fxaa")))
+                {
+                    s_bRendering3DTestTemporalAA = false;
+                }
+                else
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --anti-aliasing は taa か fxaa で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String heightFogDensityValue;
+            if (TryStripPrefix(args[i], kHeightFogDensityOption, heightFogDensityValue))
+            {
+                if (!TryParseBoundedFloat(heightFogDensityValue, 0.0f, 1.0f, s_Rendering3DTestHeightFogDensity))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --height-fog-density は 0〜1 で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasHeightFogDensity = true;
+                continue;
+            }
+
+            String heightFogFalloffValue;
+            if (TryStripPrefix(args[i], kHeightFogFalloffOption, heightFogFalloffValue))
+            {
+                if (!TryParseBoundedFloat(heightFogFalloffValue, 0.0f, 1.0f, s_Rendering3DTestHeightFogFalloff))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --height-fog-falloff は 0〜1 で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasHeightFogFalloff = true;
+                continue;
+            }
+
+            if (args[i] == kNightOption)
+            {
+                s_bRendering3DTestNight = true;
+                continue;
+            }
+
+            String renderScaleValue;
+            if (TryStripPrefix(args[i], kRenderScaleOption, renderScaleValue))
+            {
+                if (!TryParseBoundedFloat(renderScaleValue, 0.5f, 1.0f, s_Rendering3DTestRenderScale))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: --render-scale は 0.5〜1 で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            if (args[i] == kDebugDrawTestLinesOption)
+            {
+                s_bRendering3DTestDebugDrawTestLines = true;
+                continue;
+            }
+
+            String captureSequenceRenderedFramesValue;
+            if (TryStripPrefix(args[i], kCaptureSequenceRenderedFramesOption, captureSequenceRenderedFramesValue))
+            {
+                // 「60,75,90」の形。各値は1以上の描画フレーム数。
+                captureSequenceRenderedFrames.clear();
+                size_t begin = 0;
+                while (begin <= captureSequenceRenderedFramesValue.size())
+                {
+                    size_t end = begin;
+                    while (end < captureSequenceRenderedFramesValue.size() &&
+                           captureSequenceRenderedFramesValue[end] != TEXT(','))
+                    {
+                        ++end;
+                    }
+                    uint32_t frames = 0;
+                    if (!TryParseUInt32(captureSequenceRenderedFramesValue.substr(begin, end - begin), frames) ||
+                        frames == 0)
+                    {
+                        LOG_ERROR("Game command line parse failed: --capture-sequence-rendered-frames は 1 以上の整数をカンマで区切って指定する");
+                        return false;
+                    }
+                    captureSequenceRenderedFrames.push_back(frames);
+                    begin = end + 1;
+                }
+                continue;
+            }
+
+            String captureSequenceValue;
+            if (TryStripPrefix(args[i], kCaptureSequenceOption, captureSequenceValue))
+            {
+                if (captureSequenceValue.empty())
+                {
+                    LOG_ERROR("Game command line parse failed: --capture-sequence の接頭辞が空");
+                    return false;
+                }
+                captureSequencePrefix = captureSequenceValue;
                 continue;
             }
 
@@ -791,6 +1107,17 @@ namespace Game
 #if defined(NORVES_ENABLE_IMGUI)
         m_bImGuiRequested = bImGui;
 #endif
+
+        if (captureSequencePrefix.empty() != captureSequenceRenderedFrames.empty())
+        {
+            LOG_ERROR("Game command line parse failed: --capture-sequence と --capture-sequence-rendered-frames は併せて指定する");
+            return false;
+        }
+        m_SequenceFrameCapture.Configure(captureSequencePrefix, captureSequenceRenderedFrames);
+        if (m_SequenceFrameCapture.IsEnabled())
+        {
+            LOG_INFO_F("SEQUENCE_CAPTURE configured frames=%zu", captureSequenceRenderedFrames.size());
+        }
         return true;
     }
 
@@ -1150,6 +1477,22 @@ namespace Game
         m_M6ScriptSmokeController.Update();
     }
 
+    void GameApplicationHandler::OnPreRender()
+    {
+        if (m_SequenceFrameCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_SequenceFrameCapture.OnPreRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
+        }
+    }
+
+    void GameApplicationHandler::OnPostRender()
+    {
+        if (m_SequenceFrameCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_SequenceFrameCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
+        }
+    }
+
     bool GameApplicationHandler::ShouldAdvanceSimulation() const
     {
         // Bridge 無効なら従来挙動（常に進行）。
@@ -1235,6 +1578,25 @@ namespace Game
                 mode->GetData().m_InstancedMeshCount = s_Rendering3DTestInstancedMeshCount;
                 mode->GetData().m_bLayerCompositeSmoke = s_bRendering3DTestLayerCompositeSmoke;
                 mode->GetData().m_bPhysicsSmoke = bPhysicsSmoke;
+                mode->GetData().m_bHasStartupCamera = s_bRendering3DTestHasStartupCamera;
+                mode->GetData().m_StartupCameraYaw = s_Rendering3DTestStartupCamera[0];
+                mode->GetData().m_StartupCameraPitch = s_Rendering3DTestStartupCamera[1];
+                mode->GetData().m_StartupCameraArmLength = s_Rendering3DTestStartupCamera[2];
+                mode->GetData().m_bHasStartupSunElevation = s_bRendering3DTestHasSunElevation;
+                mode->GetData().m_StartupSunElevation = s_Rendering3DTestSunElevation;
+                mode->GetData().m_bHasStartupSunAzimuth = s_bRendering3DTestHasSunAzimuth;
+                mode->GetData().m_StartupSunAzimuth = s_Rendering3DTestSunAzimuth;
+                mode->GetData().m_bHasStartupExposureEV100 = s_bRendering3DTestHasExposureEV100;
+                mode->GetData().m_StartupExposureEV100 = s_Rendering3DTestExposureEV100;
+                mode->GetData().m_bHasStartupHeightFogDensity = s_bRendering3DTestHasHeightFogDensity;
+                mode->GetData().m_StartupHeightFogDensity = s_Rendering3DTestHeightFogDensity;
+                mode->GetData().m_bHasStartupHeightFogFalloff = s_bRendering3DTestHasHeightFogFalloff;
+                mode->GetData().m_StartupHeightFogFalloff = s_Rendering3DTestHeightFogFalloff;
+                mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
+                mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
+                mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
+                mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
+                mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
                 return mode;
             });

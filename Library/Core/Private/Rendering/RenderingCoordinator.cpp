@@ -197,6 +197,7 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, packet.Scene.AmbientColorG);
             hash = HashRevisionValue(hash, packet.Scene.AmbientColorB);
             hash = HashRevisionValue(hash, packet.Scene.AmbientIntensity);
+            hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentIntensityScale);
 
             const SkyAtmosphereParameters& sky = packet.Scene.SkyAtmosphere;
             hash = HashRevisionValue(hash, sky.bEnabled);
@@ -618,6 +619,17 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        /**
+         * @brief 登録するカメラの GameThread 側の識別子を決める
+         *
+         * SourceCameraId があればそれ（GetMainCamera の値を渡し直したときも保たれる）、無ければ渡された
+         * CameraId（CameraComponent の ID など）を使う。
+         */
+        uint64_t ResolveSourceCameraId(const CameraProxy& camera)
+        {
+            return camera.SourceCameraId != 0 ? camera.SourceCameraId : camera.CameraId;
+        }
+
     } // namespace
 
     uint64_t ComputeSceneRevisionHash(const FramePacket& packet)
@@ -641,10 +653,11 @@ namespace NorvesLib::Core::Rendering
 
     bool RayTracingSceneSubsystem::BuildFrameSnapshot(const MeshResources* meshResources,
                                                        FramePacket& packet,
-                                                       const MaterialResources* materialResources)
+                                                       const MaterialResources* materialResources,
+                                                       const MegaGeometryResources* megaGeometryResources)
     {
         packet.RayTracingScene.Clear();
-        if (!meshResources)
+        if (!meshResources && !megaGeometryResources)
         {
             return true;
         }
@@ -658,7 +671,8 @@ namespace NorvesLib::Core::Rendering
             const DrawParams& draw = command.Draw;
             // 影を落とさない物体もパストレーサーの主光線・散乱光線には見えるため含める。
             // 影・DDGI・RTGIはinstance maskで影を落とす物体だけを調べる。
-            if ((command.Type != DrawCommandType::DrawIndexed &&
+            if (!meshResources ||
+                (command.Type != DrawCommandType::DrawIndexed &&
                  command.Type != DrawCommandType::DrawIndexedInstanced) ||
                 draw.PayloadKind != DrawPayloadKind::Mesh ||
                 !draw.MeshHandle.IsValid() ||
@@ -794,6 +808,74 @@ namespace NorvesLib::Core::Rendering
                 if (IsFiniteRayTracingTransform(previousWorldTransform))
                 {
                     CopyRayTracingInstanceTransform(previousWorldTransform,
+                                                    instance.PreviousTransform);
+                    instance.bHasPreviousTransform = true;
+                }
+                packet.RayTracingScene.Instances.push_back(std::move(instance));
+            }
+        }
+
+        // MegaGeometry（岩・小屋など）はGBufferではクラスタ単位でGPUが選ぶが、光線にはLOD0をそのまま
+        // 見せる（点光源の影と同じ範囲）。表面色はMegaGeometryPassのGBufferと同じく材質のBaseColorを
+        // instance色とし、textureは白とみなす。
+        if (megaGeometryResources)
+        {
+            constexpr uint32_t vertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+            for (const MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
+            {
+                if (packet.RayTracingScene.Instances.size() > 0x00FFFFFFu)
+                {
+                    break;
+                }
+                if (!proxy.IsValid())
+                {
+                    continue;
+                }
+                const MegaGeometry::MegaMeshGPUData* gpuData =
+                    megaGeometryResources->GetMegaMeshGPUData(proxy.MegaMeshHandle);
+                if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
+                    gpuData->ShadowIndexCount < 3u || gpuData->ShadowIndexCount % 3u != 0u ||
+                    gpuData->ShadowIndexCount > gpuData->IndexCount ||
+                    gpuData->VertexCount < 3u ||
+                    static_cast<uint64_t>(gpuData->VertexCount) * vertexStride >
+                        gpuData->VertexBuffer->GetSize() ||
+                    static_cast<uint64_t>(gpuData->ShadowIndexCount) * sizeof(uint32_t) >
+                        gpuData->IndexBuffer->GetSize() ||
+                    !IsFiniteRayTracingTransform(proxy.WorldTransform))
+                {
+                    continue;
+                }
+
+                RayTracingSceneInstanceSnapshot instance;
+                instance.ObjectId = proxy.ObjectId;
+                instance.ObjectInstanceIndex = 0;
+                instance.SourceVertexBuffer = gpuData->VertexBuffer;
+                instance.SourceIndexBuffer = gpuData->IndexBuffer;
+                instance.IndexOffset = 0;
+                instance.IndexCount = gpuData->ShadowIndexCount;
+                instance.VertexOffset = 0;
+                instance.VertexCount = gpuData->VertexCount;
+                instance.VertexStride = vertexStride;
+                instance.bGeometryOpaque = true;
+                const MegaGeometry::MegaMeshMaterial& material = gpuData->Material;
+                for (uint32_t channel = 0u; channel < 4u; ++channel)
+                {
+                    instance.Material.BaseColor[channel] = material.BaseColor[channel];
+                    instance.Material.ObjectColor[channel] = material.BaseColor[channel];
+                }
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    instance.Material.EmissiveColor[channel] = material.EmissiveColor[channel];
+                }
+                instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
+                instance.Instance.customIndex =
+                    static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
+                instance.Instance.mask = proxy.bCastShadow ? RayTracingInstanceMaskShadowCaster
+                                                           : RayTracingInstanceMaskNonShadowCaster;
+                CopyRayTracingInstanceTransform(proxy.WorldTransform, instance.Instance.transform);
+                if (IsFiniteRayTracingTransform(proxy.PreviousWorldTransform))
+                {
+                    CopyRayTracingInstanceTransform(proxy.PreviousWorldTransform,
                                                     instance.PreviousTransform);
                     instance.bHasPreviousTransform = true;
                 }
@@ -1095,8 +1177,19 @@ namespace NorvesLib::Core::Rendering
 
         Container::VariableArray<RenderPassGPUTiming> timings;
         timings.reserve(results.size());
+#if NORVES_ENABLE_STATS
+        NorvesLib::Debug::StatsManager& statsManager = NorvesLib::Debug::StatsManager::Get();
+        const bool bTraceActive = statsManager.IsTraceActive();
+#endif
         for (const RHI::GPUTimestampResult& result : results)
         {
+#if NORVES_ENABLE_STATS
+            // 完了したフレームの区間（FrameGPU・加速構造の更新・RenderGraph のパス）をトレースの行へ書く。
+            if (bTraceActive && result.bValid)
+            {
+                statsManager.RecordGPUScope(result.FrameNumber, result.ScopeName.c_str(), result.DurationMs);
+            }
+#endif
             RenderPassGPUTiming timing;
             timing.FrameNumber = result.FrameNumber;
             timing.PassName = result.ScopeName;
@@ -1119,6 +1212,7 @@ namespace NorvesLib::Core::Rendering
         m_PreviousCompletedTotalFrameTimeMs = 0.0f;
         m_LatestCompletedGPUTimeMs = 0.0f;
         m_bLatestCompletedGPUTimeValid = false;
+        m_LatestAutoExposure = AutoExposureMeasurement{};
         m_SceneRevision = 1u;
         m_LightRevision = 1u;
         m_LastSceneRevisionHash = 0u;
@@ -1610,6 +1704,7 @@ namespace NorvesLib::Core::Rendering
         m_PreviousCompletedTotalFrameTimeMs = 0.0f;
         m_LatestCompletedGPUTimeMs = 0.0f;
         m_bLatestCompletedGPUTimeValid = false;
+        m_LatestAutoExposure = AutoExposureMeasurement{};
         m_GPUTimingMailbox.Clear();
 
         if (m_Diagnostics)
@@ -1682,6 +1777,19 @@ namespace NorvesLib::Core::Rendering
         m_bCanvasCameraSyncPending.Store(false);
         m_PreviousMainCamera = CameraProxy{};
         m_bPreviousMainCameraValid = false;
+        m_PreviousMegaGeometryWorlds.clear();
+        m_PreviousSkinnedStates.clear();
+        m_bPreviousObjectStateValid = false;
+        if (m_RenderedObjectRebasedFrameCount > 0u)
+        {
+            NORVES_LOG_INFO("RenderingCoordinator",
+                            "stage=rendered_object_history rebased_frames=%llu incomplete_frames=%llu",
+                            static_cast<unsigned long long>(m_RenderedObjectRebasedFrameCount),
+                            static_cast<unsigned long long>(m_RenderedObjectIncompleteFrameCount));
+        }
+        m_RenderedObjectHistory.Reset();
+        m_RenderedObjectRebasedFrameCount = 0u;
+        m_RenderedObjectIncompleteFrameCount = 0u;
 
         // SceneRendererの終了
         m_SceneRenderer.Shutdown();
@@ -1887,6 +1995,7 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.StaticEnvironmentIntensityScale = m_StaticEnvironmentIntensityScale;
         packet.bRTGIEnabled = m_bRTGIEnabled;
     }
 
@@ -1932,8 +2041,13 @@ namespace NorvesLib::Core::Rendering
         if (m_CurrentPacket)
         {
             m_CurrentPacket->bHasMainCamera = false;
-            m_CurrentPacket->bHasPreviousMainCamera = m_bPreviousMainCameraValid;
-            if (m_bPreviousMainCameraValid)
+            // 前のカメラは直前のゲームのフレームのパケットのものだけを渡す（velocity と TAA の履歴の基準を
+            // 「このパケットの1つ前のフレーム」にそろえる。前の変換も同じ規約）。
+            const bool bPreviousMainCameraContinuous =
+                m_bPreviousMainCameraValid &&
+                m_PreviousMainCameraFrameNumber + 1u == m_CurrentPacket->FrameNumber;
+            m_CurrentPacket->bHasPreviousMainCamera = bPreviousMainCameraContinuous;
+            if (bPreviousMainCameraContinuous)
             {
                 m_CurrentPacket->PreviousMainCamera = m_PreviousMainCamera;
             }
@@ -1957,7 +2071,16 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
                 m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
             }
-            SnapshotSceneParameters(*m_CurrentPacket, m_Device->GetCapabilities());
+            // GPU デバイスが無いとき（契約のテスト）は、何も対応しない能力として写す。
+            const RHI::DeviceCapabilities noDeviceCapabilities{};
+            SnapshotSceneParameters(*m_CurrentPacket,
+                                    m_Device ? m_Device->GetCapabilities() : noDeviceCapabilities);
+            // 影を落とす点光源の選択と6面の行列は、空の太陽を加えた後の光源表とメインカメラから作る。
+            BuildPointShadowSnapshot(m_CurrentPacket->Scene.LightProxies,
+                                     m_CurrentPacket->bHasMainCamera
+                                         ? &m_CurrentPacket->Scene.MainCamera
+                                         : nullptr,
+                                     m_CurrentPacket->PointShadows);
 
             m_CurrentPacket->DrawCommands.clear();
             m_CurrentPacket->DrawCommands.reserve(m_MaxDrawCallsPerFrame);
@@ -2054,11 +2177,12 @@ namespace NorvesLib::Core::Rendering
                 {
                     return FindCamera(cameraId);
                 };
+                // キャンバス（UI）は内部解像度で描かず、画面解像度でそのまま描く。
                 ViewportRenderPlan viewportPlan = BuildViewportRenderPlan(*viewport,
                                                                           viewIndex,
                                                                           viewportIndex,
-                                                                          m_RenderWidth,
-                                                                          m_RenderHeight,
+                                                                          canvasView ? GetCanvasWidth() : m_RenderWidth,
+                                                                          canvasView ? GetCanvasHeight() : m_RenderHeight,
                                                                           resolveCamera,
                                                                           fallbackCamera);
 
@@ -2128,15 +2252,19 @@ namespace NorvesLib::Core::Rendering
         {
             m_CurrentPacket->GeneratedDrawCommandCount =
                 static_cast<uint32_t>(m_CurrentPacket->DrawCommands.size());
+            ApplyPreviousObjectStates(*m_CurrentPacket);
 
             const MeshResources* meshResources =
                 m_RenderResources ? &m_RenderResources->Meshes() : nullptr;
             const MaterialResources* materialResources =
                 m_RenderResources ? &m_RenderResources->Materials() : nullptr;
+            const MegaGeometryResources* megaGeometryResources =
+                m_RenderResources ? &m_RenderResources->MegaGeometry() : nullptr;
             if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildFrameSnapshot(
                     meshResources,
                     *m_CurrentPacket,
-                    materialResources))
+                    materialResources,
+                    megaGeometryResources))
             {
                 NORVES_LOG_WARNING("RayTracingSceneSubsystem",
                                    "FramePacketのレイトレーシングscene snapshotを構築できませんでした");
@@ -2150,6 +2278,66 @@ namespace NorvesLib::Core::Rendering
 
     }
 
+    void RenderingCoordinator::ApplyPreviousObjectStates(FramePacket& packet)
+    {
+        // 前の値は直前のゲームのフレームのパケットのものだけを使う（前のカメラと同じ規約）。
+        const bool bHasPrevious = m_bPreviousObjectStateValid &&
+                                  m_PreviousObjectStateFrameNumber + 1u == packet.FrameNumber;
+        for (MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
+        {
+            proxy.PreviousWorldTransform = proxy.WorldTransform;
+            if (bHasPrevious)
+            {
+                const auto found = m_PreviousMegaGeometryWorlds.find(proxy.ComponentId);
+                if (found != m_PreviousMegaGeometryWorlds.end())
+                {
+                    proxy.PreviousWorldTransform = found->second;
+                }
+            }
+        }
+        for (DrawCommand& command : packet.DrawCommands)
+        {
+            if (command.Draw.PayloadKind != DrawPayloadKind::Skinned)
+            {
+                continue;
+            }
+            command.Skinned.bHasPrevious = false;
+            command.Skinned.PreviousBonePalette.clear();
+            command.Skinned.PreviousWorldMatrix = command.Draw.WorldMatrix;
+            if (!bHasPrevious)
+            {
+                continue;
+            }
+            const auto found = m_PreviousSkinnedStates.find(command.Draw.SourceMeshComponentId);
+            // 骨の数が変わった（別のアセットに替わった）ときは前の値を使わない。
+            if (found != m_PreviousSkinnedStates.end() &&
+                found->second.BonePalette.size() == command.Skinned.BonePalette.size())
+            {
+                command.Skinned.PreviousWorldMatrix = found->second.WorldMatrix;
+                command.Skinned.PreviousBonePalette = found->second.BonePalette;
+                command.Skinned.bHasPrevious = true;
+            }
+        }
+
+        m_PreviousMegaGeometryWorlds.clear();
+        for (const MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
+        {
+            m_PreviousMegaGeometryWorlds[proxy.ComponentId] = proxy.WorldTransform;
+        }
+        m_PreviousSkinnedStates.clear();
+        for (const DrawCommand& command : packet.DrawCommands)
+        {
+            if (command.Draw.PayloadKind == DrawPayloadKind::Skinned)
+            {
+                PreviousSkinnedState& state = m_PreviousSkinnedStates[command.Draw.SourceMeshComponentId];
+                state.WorldMatrix = command.Draw.WorldMatrix;
+                state.BonePalette = command.Skinned.BonePalette;
+            }
+        }
+        m_PreviousObjectStateFrameNumber = packet.FrameNumber;
+        m_bPreviousObjectStateValid = true;
+    }
+
     FramePacket* RenderingCoordinator::EndFrame()
     {
         if (!m_bInitialized)
@@ -2161,10 +2349,12 @@ namespace NorvesLib::Core::Rendering
         // Screen.EndFrame（submit/present）はRenderFrame内で実行するため、ここでは行わない。
         FramePacket* finishedPacket = m_CurrentPacket;
         CameraProxy finishedCamera;
+        uint64_t finishedFrameNumber = 0u;
         const bool bFinishedCameraValid = m_CurrentPacket && m_CurrentPacket->bHasMainCamera;
         if (bFinishedCameraValid)
         {
             finishedCamera = m_CurrentPacket->Scene.MainCamera;
+            finishedFrameNumber = m_CurrentPacket->FrameNumber;
         }
         if (m_CurrentPacket)
         {
@@ -2185,6 +2375,7 @@ namespace NorvesLib::Core::Rendering
         if (bFinishedCameraValid)
         {
             m_PreviousMainCamera = finishedCamera;
+            m_PreviousMainCameraFrameNumber = finishedFrameNumber;
             m_bPreviousMainCameraValid = true;
         }
         else
@@ -2336,6 +2527,7 @@ namespace NorvesLib::Core::Rendering
             statsSnapshot.Stats = renderStats;
             statsSnapshot.GeneratedDrawCommandCount = packet->GeneratedDrawCommandCount;
             statsSnapshot.bGameThreadTimingsAvailable = bGameThreadTimingsAvailable;
+            statsSnapshot.AutoExposure = m_LatestAutoExposure;
             m_Diagnostics->PublishStatsSnapshot(statsSnapshot);
         };
 
@@ -2455,6 +2647,20 @@ namespace NorvesLib::Core::Rendering
 
         m_TransientPool.BeginFrame(frameIndex);
         m_RenderGraph.BeginFrame(frameIndex);
+        // TAA の履歴は最後に描いたフレームで書くので、描画がゲームのフレームを飛ばしたときは、velocity の基準
+        // （物体の前の変換）もそのフレームのものへ付け替える。TAA を選んだカメラのときだけで、それ以外の
+        // 描画は変えない。
+        const bool bTemporalAARequested =
+            (m_MainSceneView && m_MainSceneView->IsTemporalAAForced()) ||
+            (packet->bHasMainCamera &&
+             packet->Scene.MainCamera.AntiAliasing == CameraAntiAliasingMode::TemporalAA);
+        const RenderedObjectHistoryResult renderedObjectHistory =
+            m_RenderedObjectHistory.Apply(*packet, bTemporalAARequested);
+        if (renderedObjectHistory.bRebased)
+        {
+            ++m_RenderedObjectRebasedFrameCount;
+            m_RenderedObjectIncompleteFrameCount += renderedObjectHistory.bComplete ? 0u : 1u;
+        }
         RHI::BufferPtr instanceDataBuffer = m_InstanceBufferRing.Upload(frameIndex, packet->InstanceData);
 
         // フレーム別コマンドバッファを選択（ダブルバッファリングでの同期問題を回避）
@@ -2470,16 +2676,8 @@ namespace NorvesLib::Core::Rendering
             m_CommandList.get(),
             frameIndex);
 
-        if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(
-                m_Device,
-                *m_CommandList,
-                m_PacketManager.GetSlotIndex(packet),
-                *packet))
-        {
-            NORVES_LOG_WARNING("RayTracingSceneSubsystem",
-                               "FramePacketのレイトレーシング加速構造を構築できませんでした");
-        }
-
+        // フレームのGPUの区間（FrameGPU）は加速構造の更新の記録より前に開き、更新の費用も含める。
+        // タイムスタンプの書き込みは同じコマンドバッファへ足すだけで、記録の順序や同期は変えない。
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
         {
@@ -2504,6 +2702,33 @@ namespace NorvesLib::Core::Rendering
             }
         }
 #endif
+
+        {
+#if NORVES_ENABLE_STATS
+            // 加速構造の更新は別の区間としても取り、トレースのGPUの行に出す。
+            RHI::GPUTimestampScopeHandle accelerationStructureTimestamp;
+            if (bTraceActive && m_CommandList->SupportsGPUTimestamps())
+            {
+                accelerationStructureTimestamp =
+                    m_CommandList->BeginGPUTimestampScope("AccelerationStructureBuild");
+            }
+#endif
+            if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(
+                    m_Device,
+                    *m_CommandList,
+                    m_PacketManager.GetSlotIndex(packet),
+                    *packet))
+            {
+                NORVES_LOG_WARNING("RayTracingSceneSubsystem",
+                                   "FramePacketのレイトレーシング加速構造を構築できませんでした");
+            }
+#if NORVES_ENABLE_STATS
+            if (accelerationStructureTimestamp.IsValid())
+            {
+                m_CommandList->EndGPUTimestampScope(accelerationStructureTimestamp);
+            }
+#endif
+        }
 
         // ========================================
         // Deferredパスチェーン描画（スワップチェーンレンダーパスの外で実行）
@@ -2559,6 +2784,11 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotScene = &packet->Scene;
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
+        viewContext.PreviousObjectStateFrameNumber = renderedObjectHistory.PreviousFrameNumber;
+        viewContext.bPreviousObjectStateComplete = renderedObjectHistory.bComplete;
+        viewContext.PreviousCameraFrameNumber = packet->bHasPreviousMainCamera && packet->FrameNumber > 0u
+                                                    ? packet->FrameNumber - 1u
+                                                    : UINT64_MAX;
         viewContext.SkyAtmosphereSnapshot = packet->Scene.SkyAtmosphere;
         viewContext.SnapshotDrawCommandSource = &packet->DrawCommands;
         viewContext.SnapshotDrawCommands = DrawCommandView::FromRange(packet->DrawCommands,
@@ -2572,6 +2802,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotMeshProxies = &packet->Scene.MeshProxies;
         viewContext.SnapshotSkinnedMeshProxies = &packet->Scene.SkinnedMeshProxies;
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
+        viewContext.SnapshotPointShadows = &packet->PointShadows;
         viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
 
         PresentationComposer presentationComposer;
@@ -2910,6 +3141,18 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // 自動露出の測定は最初の SceneView のものを GameThread へ渡す（View の中身は RenderThread 専用）
+        for (const auto &view : m_Views)
+        {
+            const auto *sceneView = dynamic_cast<const SceneView *>(view.get());
+            AutoExposureMeasurement measurement;
+            if (sceneView && sceneView->TryGetAutoExposureMeasurement(measurement))
+            {
+                m_LatestAutoExposure = measurement;
+                break;
+            }
+        }
+
         if (m_Diagnostics)
         {
             RenderingCoordinatorStatsSnapshot statsSnapshot;
@@ -2917,6 +3160,7 @@ namespace NorvesLib::Core::Rendering
             statsSnapshot.SkinnedShadowRecordedDraws = packet->Stats.SkinnedShadowRecordedDraws;
             statsSnapshot.Stats = renderStats;
             statsSnapshot.GeneratedDrawCommandCount = packet->GeneratedDrawCommandCount;
+            statsSnapshot.AutoExposure = m_LatestAutoExposure;
             statsSnapshot.bRenderFrameCompleted = true;
             statsSnapshot.bGameThreadTimingsAvailable = bGameThreadTimingsAvailable;
 #if NORVES_ENABLE_STATS
@@ -3012,8 +3256,8 @@ namespace NorvesLib::Core::Rendering
 
         ViewSettings settings;
         settings.Type = ViewType::UI;
-        settings.Width = m_RenderWidth;
-        settings.Height = m_RenderHeight;
+        settings.Width = GetCanvasWidth();
+        settings.Height = GetCanvasHeight();
         settings.bClearColor = true;
         settings.ClearColor[0] = 0.0f;
         settings.ClearColor[1] = 0.0f;
@@ -3033,12 +3277,12 @@ namespace NorvesLib::Core::Rendering
         canvasCamera.CullingMask = RenderLayer::UI;
         canvasCamera.NearPlane = 0.0f;
         canvasCamera.FarPlane = 1.0f;
-        canvasCamera.OrthoWidth = static_cast<float>(m_RenderWidth);
-        canvasCamera.OrthoHeight = static_cast<float>(m_RenderHeight);
+        canvasCamera.OrthoWidth = static_cast<float>(GetCanvasWidth());
+        canvasCamera.OrthoHeight = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.X = 0.0f;
         canvasCamera.Viewport.Y = 0.0f;
-        canvasCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
-        canvasCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
+        canvasCamera.Viewport.Width = static_cast<float>(GetCanvasWidth());
+        canvasCamera.Viewport.Height = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.MinDepth = 0.0f;
         canvasCamera.Viewport.MaxDepth = 1.0f;
         m_CanvasCameraId = RegisterCamera(canvasCamera);
@@ -3112,6 +3356,7 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetMainCamera(const CameraProxy &camera)
     {
         m_MainCamera = camera;
+        m_MainCamera.SourceCameraId = ResolveSourceCameraId(camera);
         if (!m_MainCamera.IsValid())
         {
             m_MainCamera.Viewport.X = 0.0f;
@@ -3175,10 +3420,16 @@ namespace NorvesLib::Core::Rendering
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
     }
 
+    void RenderingCoordinator::SetStaticEnvironmentIntensityScale(float scale)
+    {
+        m_StaticEnvironmentIntensityScale = std::isfinite(scale) && scale >= 0.0f ? scale : 1.0f;
+    }
+
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)
     {
         const uint64_t cameraId = m_NextCameraId++;
         CameraProxy storedCamera = camera;
+        storedCamera.SourceCameraId = ResolveSourceCameraId(camera);
         storedCamera.CameraId = cameraId;
         m_Cameras[cameraId] = storedCamera;
         return cameraId;
@@ -3198,6 +3449,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         CameraProxy storedCamera = camera;
+        storedCamera.SourceCameraId = ResolveSourceCameraId(camera);
         storedCamera.CameraId = cameraId;
         it->second = storedCamera;
         return true;
@@ -3321,12 +3573,12 @@ namespace NorvesLib::Core::Rendering
         canvasCamera.CullingMask = RenderLayer::UI;
         canvasCamera.NearPlane = 0.0f;
         canvasCamera.FarPlane = 1.0f;
-        canvasCamera.OrthoWidth = static_cast<float>(m_RenderWidth);
-        canvasCamera.OrthoHeight = static_cast<float>(m_RenderHeight);
+        canvasCamera.OrthoWidth = static_cast<float>(GetCanvasWidth());
+        canvasCamera.OrthoHeight = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.X = 0.0f;
         canvasCamera.Viewport.Y = 0.0f;
-        canvasCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
-        canvasCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
+        canvasCamera.Viewport.Width = static_cast<float>(GetCanvasWidth());
+        canvasCamera.Viewport.Height = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.MinDepth = 0.0f;
         canvasCamera.Viewport.MaxDepth = 1.0f;
 

@@ -98,6 +98,8 @@ namespace
         const float sunDiskCosine = std::cos(R2GoldenSunDiskRadius);
         const float sunDisk = ComputeSunDiskPreExposedLuminance(
             parameters, R2GoldenPreExposure);
+        // 前計算を1回だけ作り、全画素で使い回す。
+        const SkyAtmosphereModel skyModel(parameters);
 
         constexpr float tangentHalfFov = 0.5773502691896258f;
         for (uint32_t y = 0u; y < image.Height; ++y)
@@ -112,8 +114,7 @@ namespace
                     screenX * tangentHalfFov,
                     screenY * tangentHalfFov,
                     1.0f));
-                const SkyRadianceSample sample = EvaluateHillaireSkyReference(
-                    parameters, viewDirection);
+                const SkyRadianceSample sample = skyModel.EvaluateViewRadiance(viewDirection);
                 float red = std::max(0.0f, sample.Radiance.x * R2GoldenPreExposure);
                 float green = std::max(0.0f, sample.Radiance.y * R2GoldenPreExposure);
                 float blue = std::max(0.0f, sample.Radiance.z * R2GoldenPreExposure);
@@ -156,6 +157,51 @@ namespace
                       << " bytes=" << png.size() << '\n';
         }
         return 0;
+    }
+
+    // 今の空のモデルから候補の画像を作り、PNGへ符号化して読み戻したものを固定の基準のPNGと画素で照合する。
+    // 出力先が渡されたときは候補のPNGもそこへ保存する。1枚でも画素が違えば失敗で返す。
+    int CompareR2GoldenArtifacts(const char* candidateDirectory)
+    {
+        bool bAllMatch = true;
+        for (const R2SkyGoldenCase& timeCase : R2SkyGoldenCases)
+        {
+            Core::Container::VariableArray<uint8_t> png;
+            Require(EncodeRgba8Png(BuildR2SkyGolden(timeCase), png) == GoldenImageStatus::Success,
+                    "R2 sky candidate encoding must succeed");
+            Rgba8Image candidate;
+            Require(DecodePng(Core::Container::Span<const uint8_t>(png), candidate) ==
+                        GoldenImageStatus::Success,
+                    "R2 sky candidate must decode");
+            Rgba8Image baseline;
+            Require(LoadPng(R2SourcePath(timeCase.FileName), baseline) == GoldenImageStatus::Success,
+                    "R2 sky baseline must decode");
+            RawImageDifferenceMetrics metrics;
+            Require(CompareRgba8(baseline, candidate, metrics) == GoldenImageStatus::Success,
+                    "R2 sky candidate must match the baseline size");
+            if (candidateDirectory != nullptr)
+            {
+                Core::Container::String path(candidateDirectory);
+                path += TEXT("/R2SkyCandidate-");
+                path += timeCase.Name;
+                path += TEXT(".png");
+                Require(SavePng(path, Core::Container::Span<const uint8_t>(png)) ==
+                            GoldenImageStatus::Success,
+                        "R2 sky candidate write must succeed");
+            }
+            const bool bMatch = metrics.DifferingPixelCount == 0u;
+            bAllMatch = bAllMatch && bMatch;
+            std::cout << "R2_GOLDEN_COMPARE case=" << timeCase.Name
+                      << " sun_altitude=" << timeCase.SunAltitudeDegrees
+                      << " sun_azimuth=" << timeCase.SunAzimuthDegrees
+                      << " size=" << candidate.Width << 'x' << candidate.Height
+                      << " differing_pixels=" << metrics.DifferingPixelCount
+                      << " max_channel_delta=" << static_cast<uint32_t>(metrics.MaxChannelDelta)
+                      << " mean_abs_channel_delta=" << metrics.MeanAbsoluteChannelDelta
+                      << " result=" << (bMatch ? "match" : "mismatch") << '\n';
+        }
+        std::cout << "R2_GOLDEN_COMPARE result=" << (bAllMatch ? "PASS" : "FAIL") << '\n';
+        return bAllMatch ? 0 : 1;
     }
 
     void TestR2AcceptanceArtifacts()
@@ -555,6 +601,10 @@ int main(int argc, char** argv)
     if (argc == 2 && std::strcmp(argv[1], "--write-r2-sky-goldens") == 0)
     {
         return WriteR2GoldenArtifacts();
+    }
+    if ((argc == 2 || argc == 3) && std::strcmp(argv[1], "--compare-r2-sky-goldens") == 0)
+    {
+        return CompareR2GoldenArtifacts(argc == 3 ? argv[2] : nullptr);
     }
     if (argc == 2 && std::strcmp(argv[1], "--self-test-r2-artifacts") == 0)
     {

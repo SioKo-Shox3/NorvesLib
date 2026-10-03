@@ -1947,7 +1947,7 @@ namespace
         const uint32_t megaGeometryPassIndex = graph.AddPass(&megaGeometryPass);
 
         assert(graph.Compile(context));
-        assert(graph.GetDeclaredPassAccessCount(megaGeometryPassIndex) == 8);
+        assert(graph.GetDeclaredPassAccessCount(megaGeometryPassIndex) == 9);
 
         auto hasAttachmentAccess = [&graph](uint32_t passIndex,
                                             RGResourceHandle expected,
@@ -2008,6 +2008,10 @@ namespace
                                    RHI::ResourceState::RenderTarget));
         assert(hasAttachmentAccess(megaGeometryPassIndex,
                                    gbufferPass.GetEmissiveHandle(),
+                                   RGAttachmentKind::Color,
+                                   RHI::ResourceState::RenderTarget));
+        assert(hasAttachmentAccess(megaGeometryPassIndex,
+                                   gbufferPass.GetVelocityHandle(),
                                    RGAttachmentKind::Color,
                                    RHI::ResourceState::RenderTarget));
         assert(hasAttachmentAccess(megaGeometryPassIndex,
@@ -2081,7 +2085,7 @@ namespace
         const uint32_t megaGeometryPassIndex = graph.AddPass(&megaGeometryPass);
 
         assert(graph.Compile(context));
-        assert(graph.GetDeclaredPassAccessCount(megaGeometryPassIndex) == 8);
+        assert(graph.GetDeclaredPassAccessCount(megaGeometryPassIndex) == 9);
         RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
         assert(result.bSuccess);
 
@@ -2094,7 +2098,7 @@ namespace
         bool bFoundMegaGeometryRenderPassDesc = false;
         for (const RHI::RenderPassDesc& desc : device->CreatedRenderPassDescs)
         {
-            if (desc.colorAttachments.size() != 4 || !desc.hasDepthStencil)
+            if (desc.colorAttachments.size() != 5 || !desc.hasDepthStencil)
             {
                 continue;
             }
@@ -2162,11 +2166,14 @@ namespace
             RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "LegacyCacheEmissive"));
         auto legacyDepthTexture = device->CreateTexture(
             RHI::TextureDesc::DepthStencil(128, 64, RHI::Format::D32_FLOAT, "LegacyCacheDepth"));
+        auto legacyVelocityTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16_FLOAT, "LegacyCacheVelocity"));
         sharedResources.RegisterTexturePtr("GBuffer_Albedo", legacyAlbedoTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Normal", legacyNormalTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Material", legacyMaterialTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Emissive", legacyEmissiveTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Depth", legacyDepthTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Velocity", legacyVelocityTexture);
 
         float vertices[12] = {
             0.0f, 0.0f, 0.0f, 1.0f,
@@ -2229,7 +2236,7 @@ namespace
         bool bFoundLegacyMegaGeometryRenderPassDesc = false;
         for (const RHI::RenderPassDesc& desc : device->CreatedRenderPassDescs)
         {
-            if (desc.colorAttachments.size() != 4 || !desc.hasDepthStencil)
+            if (desc.colorAttachments.size() != 5 || !desc.hasDepthStencil)
             {
                 continue;
             }
@@ -2278,7 +2285,7 @@ namespace
              ++descIndex)
         {
             const RHI::RenderPassDesc& desc = device->CreatedRenderPassDescs[descIndex];
-            if (desc.colorAttachments.size() != 4 || !desc.hasDepthStencil)
+            if (desc.colorAttachments.size() != 5 || !desc.hasDepthStencil)
             {
                 continue;
             }
@@ -2335,11 +2342,14 @@ namespace
             RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "PartialFallbackEmissive"));
         auto fallbackDepthTexture = device->CreateTexture(
             RHI::TextureDesc::DepthStencil(128, 64, RHI::Format::D32_FLOAT, "PartialFallbackDepth"));
+        auto fallbackVelocityTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16_FLOAT, "PartialFallbackVelocity"));
         sharedResources.RegisterTexturePtr("GBuffer_Albedo", fallbackAlbedoTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Normal", fallbackNormalTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Material", fallbackMaterialTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Emissive", fallbackEmissiveTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Depth", fallbackDepthTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Velocity", fallbackVelocityTexture);
 
         float vertices[12] = {
             0.0f, 0.0f, 0.0f, 1.0f,
@@ -2459,7 +2469,7 @@ namespace
         bool bFoundRenderGraphAttachmentStateDesc = false;
         for (const RHI::RenderPassDesc& desc : device->CreatedRenderPassDescs)
         {
-            if (desc.colorAttachments.size() != 4 || !desc.hasDepthStencil)
+            if (desc.colorAttachments.size() != 5 || !desc.hasDepthStencil)
             {
                 continue;
             }
@@ -2519,11 +2529,15 @@ namespace
             RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "RecordEmissive"));
         auto depthTexture = device->CreateTexture(
             RHI::TextureDesc::DepthStencil(128, 64, RHI::Format::D32_FLOAT, "RecordDepth"));
+        // MegaGeometryPass は velocity も GBuffer へ書くため、velocity が無いとフレームバッファを作らず記録しない
+        auto velocityTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16_FLOAT, "RecordVelocity"));
         sharedResources.RegisterTexturePtr("GBuffer_Albedo", albedoTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Normal", normalTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Material", materialTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Emissive", emissiveTexture);
         sharedResources.RegisterTexturePtr("GBuffer_Depth", depthTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Velocity", velocityTexture);
 
         float vertices[12] = {
             0.0f, 0.0f, 0.0f, 1.0f,

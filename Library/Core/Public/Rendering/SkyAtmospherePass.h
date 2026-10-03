@@ -76,8 +76,8 @@ namespace NorvesLib::Core::Rendering
         bool EnsureResources();
         bool GenerateLutResources(const SkyAtmosphereParameters& parameters,
                                   float preExposure);
-        bool GenerateTransmittanceLut(const SkyAtmosphereParameters& parameters);
-        bool GenerateRadianceLut(const SkyAtmosphereParameters& parameters);
+        bool GenerateTransmittanceLut(const SkyAtmosphereModel& model);
+        bool GenerateRadianceLut(const SkyAtmosphereModel& model);
         bool GenerateSunDiskTexture(const SkyAtmosphereParameters& parameters,
                                     float preExposure);
         bool CreateTexture(RHI::TexturePtr& outTexture,
@@ -97,6 +97,10 @@ namespace NorvesLib::Core::Rendering
         RGTextureHandle m_RadianceHandle;
         RGTextureHandle m_SunDiskHandle;
         SkyAtmosphereParameters m_LastParameters;
+        // 透過率LUT・放射輝度LUTを最後に作ったときのパラメータ。変わったときだけ作り直す。
+        SkyAtmosphereParameters m_LutParameters;
+        Math::Vector3 m_LutSunGroundTransmittance = Math::Vector3::Zero;
+        bool m_bLutValid = false;
         float m_LastSunDiskPreExposedLuminance = 0.0f;
         bool m_bLastSunDiskSaturated = false;
         bool m_bSnapshotEnabled = false;

@@ -157,8 +157,8 @@ namespace
         Expect(ResultIsFinite(result), "valid CSM result is finite");
         Expect(NearlyEqual(result.SplitDistances[0], camera.NearPlane),
                "first split uses the camera near plane");
-        Expect(NearlyEqual(result.SplitDistances[CSM_CASCADE_COUNT], camera.FarPlane),
-               "last split uses the camera far plane");
+        Expect(NearlyEqual(result.SplitDistances[CSM_CASCADE_COUNT], settings.MaxShadowDistance),
+               "last split uses the max shadow distance when the camera far plane is farther");
 
         for (uint32_t index = 0u; index < CSM_CASCADE_COUNT; ++index)
         {
@@ -177,6 +177,76 @@ namespace
                 Expect(cascade.NearDistance == result.Cascades[index - 1u].FarDistance,
                        "adjacent cascade boundaries are exactly continuous");
             }
+        }
+    }
+
+    // 分割は影の最大距離で決まり、カメラのfarが遠くても近くのカスケードを粗くしない。起動画面の
+    // カメラ（画角60°・16:9・near 0.1 m・far 1000 m）と2048の影の地図でカスケード0の1テクセルが
+    // 2.5 cm以下になることを確かめる。
+    void TestSplitsFollowMaxShadowDistanceNotCameraFar()
+    {
+        CoreContainer::VariableArray<LightProxy> lights;
+        lights.push_back(MakeDirectionalLight(SkySunLightId, 0.35f, -0.8f, 0.25f));
+
+        CameraProxy startupCamera = MakePerspectiveCamera();
+        startupCamera.FarPlane = 1000.0f;
+        CascadedShadowMatrixSettings settings = MakeDefaultCascadedShadowMatrixSettings();
+        Expect(NearlyEqual(settings.MaxShadowDistance, 80.0f),
+               "default max shadow distance is 80 m");
+        Expect(settings.ShadowMapResolution == 2048u, "default shadow map resolution is 2048");
+
+        const CascadedShadowMatrixResult startup =
+            BuildCascadedShadowLightMatrices(&lights, startupCamera, settings);
+        Expect(startup.bEnabled, "the startup camera builds CSM");
+        Expect(NearlyEqual(startup.SplitDistances[CSM_CASCADE_COUNT], 80.0f),
+               "a 1000 m camera far plane splits only up to the max shadow distance");
+        Expect(startup.Cascades[0].TexelSize <= 0.025f,
+               "cascade 0 texel is at most 2.5 cm for the startup camera");
+        std::cout << "csm_startup splits=" << startup.SplitDistances[0] << ","
+                  << startup.SplitDistances[1] << "," << startup.SplitDistances[2] << ","
+                  << startup.SplitDistances[3] << "," << startup.SplitDistances[4]
+                  << " cascade0_texel_m=" << startup.Cascades[0].TexelSize
+                  << " cascade3_texel_m=" << startup.Cascades[3].TexelSize << "\n";
+
+        CameraProxy fartherCamera = startupCamera;
+        fartherCamera.FarPlane = 5000.0f;
+        const CascadedShadowMatrixResult farther =
+            BuildCascadedShadowLightMatrices(&lights, fartherCamera, settings);
+        for (uint32_t index = 0u; index <= CSM_CASCADE_COUNT; ++index)
+        {
+            Expect(farther.SplitDistances[index] == startup.SplitDistances[index],
+                   "splits do not depend on a camera far plane beyond the max shadow distance");
+        }
+        Expect(farther.Cascades[0].TexelSize == startup.Cascades[0].TexelSize,
+               "cascade 0 texel does not depend on the camera far plane");
+
+        CameraProxy nearFarCamera = startupCamera;
+        nearFarCamera.FarPlane = 30.0f;
+        const CascadedShadowMatrixResult shortRange =
+            BuildCascadedShadowLightMatrices(&lights, nearFarCamera, settings);
+        Expect(shortRange.bEnabled &&
+                   NearlyEqual(shortRange.SplitDistances[CSM_CASCADE_COUNT], 30.0f),
+               "a camera far plane nearer than the max shadow distance ends the splits");
+
+        settings.MaxShadowDistance = 40.0f;
+        const CascadedShadowMatrixResult configured =
+            BuildCascadedShadowLightMatrices(&lights, startupCamera, settings);
+        Expect(configured.bEnabled &&
+                   NearlyEqual(configured.SplitDistances[CSM_CASCADE_COUNT], 40.0f),
+               "the max shadow distance is configurable");
+        Expect(configured.Cascades[0].TexelSize < startup.Cascades[0].TexelSize,
+               "a shorter max shadow distance makes cascade 0 finer");
+
+        const float invalidDistances[3] = {0.0f,
+                                           std::numeric_limits<float>::quiet_NaN(),
+                                           std::numeric_limits<float>::infinity()};
+        for (float invalidDistance : invalidDistances)
+        {
+            settings.MaxShadowDistance = invalidDistance;
+            const CascadedShadowMatrixResult invalid =
+                BuildCascadedShadowLightMatrices(&lights, startupCamera, settings);
+            Expect(!invalid.bEnabled && ResultIsFinite(invalid),
+                   "a non-positive or non-finite max shadow distance disables CSM");
         }
     }
 
@@ -404,6 +474,7 @@ namespace
 int main()
 {
     TestFourCascadeSplitAndMatrixContract();
+    TestSplitsFollowMaxShadowDistanceNotCameraFar();
     TestCasterDepthRangeAndNonFiniteBoundsAreSafe();
     TestCasterTowardLightFitsDepthRange();
     TestInvalidInputsFallBackToShadowOff();

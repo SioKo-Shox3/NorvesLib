@@ -243,6 +243,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
         uint32_t ClusterCount = 0;
+        /** @brief 影の描画で使う、統合インデックスの先頭からのLOD0の範囲（0なら影へ描かない） */
+        uint32_t ShadowIndexCount = 0;
 
         BoundingSphere TotalBounds;
 

@@ -121,6 +121,7 @@ namespace NorvesLib::Core::Rendering
         {
             MegaGeometry::MegaMeshHandle Handle;
             float WorldMatrix[16];
+            float PreviousWorldMatrix[16];
         };
 
         /**
@@ -193,11 +194,14 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_MaterialTexture;
         RHI::TexturePtr m_EmissiveTexture;
         RHI::TexturePtr m_DepthTexture;
+        // velocity（currentUV - previousUV）。GBufferPass と同じテクスチャへ書く。
+        RHI::TexturePtr m_VelocityTexture;
         RGResourceHandle m_GBufferAlbedoHandle;
         RGResourceHandle m_GBufferNormalHandle;
         RGResourceHandle m_GBufferMaterialHandle;
         RGResourceHandle m_GBufferEmissiveHandle;
         RGResourceHandle m_GBufferDepthHandle;
+        RGResourceHandle m_GBufferVelocityHandle;
 
         // PerObject UBO用ディスクリプタセット
         Container::VariableArray<RHI::BufferPtr> m_DrawUniformBuffers;

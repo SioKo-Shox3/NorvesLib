@@ -1062,6 +1062,9 @@ namespace NorvesLib::RHI::Vulkan
             physicalFeatures.drawIndirectFirstInstance == VK_TRUE ? VK_TRUE : VK_FALSE;
         features2.features.shaderInt64 =
             physicalFeatures.shaderInt64 == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // 点光源のキューブシャドウはキューブ配列（samplerCubeArray）で読む。
+        features2.features.imageCubeArray =
+            physicalFeatures.imageCubeArray == VK_TRUE ? VK_TRUE : VK_FALSE;
         m_enabledDeviceFeatures = features2.features;
 
         // Vulkan 1.2 機能: 対応している場合のみ drawIndirectCount を有効化

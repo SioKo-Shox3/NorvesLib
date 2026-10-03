@@ -5,10 +5,33 @@
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
+#include <cstdlib>
 #include <exception>
 
 namespace NorvesLib::Core::Rendering
 {
+
+    namespace
+    {
+        // 環境変数 NORVES_DEBUG_DROP_RENDER_FRAME_INTERVAL の値（2〜1000の整数）。無い・不正なら0。
+        uint32_t ReadDebugDropRenderFrameInterval()
+        {
+            char* value = nullptr;
+            size_t length = 0;
+            uint32_t interval = 0;
+            if (_dupenv_s(&value, &length, "NORVES_DEBUG_DROP_RENDER_FRAME_INTERVAL") == 0 && value)
+            {
+                char* end = nullptr;
+                const unsigned long parsed = std::strtoul(value, &end, 10);
+                if (end != value && *end == '\0' && parsed >= 2ul && parsed <= 1000ul)
+                {
+                    interval = static_cast<uint32_t>(parsed);
+                }
+            }
+            std::free(value);
+            return interval;
+        }
+    } // namespace
 
     // ========================================
     // RenderThread
@@ -28,6 +51,14 @@ namespace NorvesLib::Core::Rendering
 
         m_Coordinator = coordinator;
         m_State.Store(static_cast<uint8_t>(RenderThreadState::Stopped), std::memory_order_release);
+        m_DebugDropRenderFrameInterval = ReadDebugDropRenderFrameInterval();
+        m_DebugDroppedRenderFrameCount = 0;
+        if (m_DebugDropRenderFrameInterval != 0)
+        {
+            NORVES_LOG_INFO("Rendering",
+                            "stage=debug_drop_render_frames interval=%u（フレーム番号がこの倍数のパケットを描かずに捨てる）",
+                            m_DebugDropRenderFrameInterval);
+        }
         return true;
     }
 
@@ -116,7 +147,36 @@ namespace NorvesLib::Core::Rendering
     void RenderThread::Shutdown()
     {
         Stop();
+        if (m_DebugDropRenderFrameInterval != 0)
+        {
+            NORVES_LOG_INFO("Rendering",
+                            "stage=debug_drop_render_frames interval=%u dropped_frames=%llu",
+                            m_DebugDropRenderFrameInterval,
+                            static_cast<unsigned long long>(m_DebugDroppedRenderFrameCount));
+        }
         m_Coordinator = nullptr;
+    }
+
+    bool RenderThread::TryDropPacketForDebug(FramePacket* packet)
+    {
+        if (m_DebugDropRenderFrameInterval == 0 || !packet || !m_Coordinator || packet->FrameNumber == 0 ||
+            packet->FrameNumber % m_DebugDropRenderFrameInterval != 0 || packet->CaptureRequest.IsValid())
+        {
+            return false;
+        }
+        // NotifyNewFrame が未描画のパケットを新しいパケットで置き換えるときと同じく、描かずに再利用へ戻す。
+        if (packet->CompareExchangeState(FramePacketState::Queued, FramePacketState::Recycling) ||
+            packet->CompareExchangeState(FramePacketState::Ready, FramePacketState::Recycling))
+        {
+            packet->Clear();
+            packet->SetState(FramePacketState::Empty);
+        }
+        else
+        {
+            m_Coordinator->ReleasePacket(packet);
+        }
+        ++m_DebugDroppedRenderFrameCount;
+        return true;
     }
 
     bool RenderThread::TryAcquireAssetGpuFlushWindow()
@@ -285,6 +345,12 @@ namespace NorvesLib::Core::Rendering
                 }
                 m_IdleCondition.NotifyAll();
                 continue;
+            }
+
+            // 確認用の指定があれば、このパケットを描かずに捨てる（描画がゲームのフレームを飛ばした状態を作る）。
+            if (TryDropPacketForDebug(packet))
+            {
+                packet = nullptr;
             }
 
             // レンダリング実行

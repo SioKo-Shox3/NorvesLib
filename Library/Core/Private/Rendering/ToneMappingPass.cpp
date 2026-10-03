@@ -15,6 +15,8 @@
 #include "RHI/TransientResourcePool.h"
 #include "Logging/LogMacros.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <exception>
 #include <fstream>
@@ -26,17 +28,21 @@ namespace NorvesLib::Core::Rendering
         // tonemapping.frag の operatorType と一致させる
         constexpr uint32_t Aces20LutOperatorType = 4u;
         constexpr uint32_t AcesFilmicOperatorType = 1u;
+        constexpr uint32_t NeutralLinearOperatorType = 5u;
 
         // Scripts/BakeAcesOutputLut.py が書く見出し（32 byte、little-endian）
         constexpr char Aces20LutMagic[8] = {'N', 'L', 'U', 'T', '3', 'D', '0', '1'};
-        constexpr uint32_t Aces20LutHeaderSize = 32u;
-        constexpr uint32_t Aces20LutFormatRgba16F = 1u;
-        constexpr uint32_t Aces20LutBytesPerTexel = 8u;
+        // Scripts/BakeLookLut.py が書く見た目のLUTの見出し（並びは ACES のLUTと同じで、shaper の値は使わない）。
+        // RGB は格子点の座標からの差分（sRGBの符号化値）で、恒等のLUTは全て0になる
+        constexpr char LookLutMagic[8] = {'N', 'L', 'U', 'T', 'L', 'K', '0', '2'};
+        constexpr uint32_t Lut3dHeaderSize = 32u;
+        constexpr uint32_t Lut3dFormatRgba16F = 1u;
+        constexpr uint32_t Lut3dBytesPerTexel = 8u;
         // shaper はシェーダに固定してあるので、見出しの値が一致するLUTだけを受け入れる
         constexpr float Aces20LutShaperOffset = 0.00390625f; // 2^-8
         constexpr float Aces20LutShaperMax = 256.0f;
 
-        struct Aces20LutHeader
+        struct Lut3dHeader
         {
             char Magic[8];
             uint32_t Size;
@@ -46,7 +52,7 @@ namespace NorvesLib::Core::Rendering
             float ShaperOffset;
             float ShaperMax;
         };
-        static_assert(sizeof(Aces20LutHeader) == Aces20LutHeaderSize);
+        static_assert(sizeof(Lut3dHeader) == Lut3dHeaderSize);
 
         Container::String ResolveAssetPath(const char* relativePath)
         {
@@ -77,6 +83,87 @@ namespace NorvesLib::Core::Rendering
             }
 
             return RHI::TexturePtr(rawTexture, [](RHI::ITexture*) {});
+        }
+
+        // 3D LUT ファイルを読み、magic・格子の大きさ・成分数・形式・ファイルの長さを確かめる。
+        bool ReadLut3dFile(const Container::String& path,
+                           const char (&expectedMagic)[8],
+                           Lut3dHeader& outHeader,
+                           Container::VariableArray<uint8_t>& outTexels)
+        {
+            std::ifstream file(path.c_str(), std::ios::binary | std::ios::ate);
+            if (!file.is_open())
+            {
+                NORVES_LOG_ERROR("ToneMappingPass", "色のLUTを開けません: %s", path.c_str());
+                return false;
+            }
+
+            const std::streamoff fileSize = file.tellg();
+            file.seekg(0, std::ios::beg);
+            outHeader = {};
+            if (fileSize < static_cast<std::streamoff>(Lut3dHeaderSize) ||
+                !file.read(reinterpret_cast<char*>(&outHeader), sizeof(outHeader)))
+            {
+                NORVES_LOG_ERROR("ToneMappingPass", "色のLUTの見出しが途中で切れています: %s", path.c_str());
+                return false;
+            }
+
+            const uint64_t lutSize = outHeader.Size;
+            const uint64_t payloadSize = lutSize * lutSize * lutSize * Lut3dBytesPerTexel;
+            if (std::memcmp(outHeader.Magic, expectedMagic, sizeof(expectedMagic)) != 0 ||
+                outHeader.Size < 2u || outHeader.Size > 256u ||
+                outHeader.Channels != 4u ||
+                outHeader.Format != Lut3dFormatRgba16F ||
+                static_cast<uint64_t>(fileSize) != Lut3dHeaderSize + payloadSize)
+            {
+                NORVES_LOG_ERROR("ToneMappingPass", "色のLUTの見出しが想定の並びと一致しません: %s",
+                                 path.c_str());
+                return false;
+            }
+
+            outTexels.resize(static_cast<size_t>(payloadSize));
+            if (!file.read(reinterpret_cast<char*>(outTexels.data()), static_cast<std::streamsize>(payloadSize)))
+            {
+                NORVES_LOG_ERROR("ToneMappingPass", "色のLUTのテクセルを読めません: %s", path.c_str());
+                return false;
+            }
+            return true;
+        }
+
+        // RGBA16F の3D textureを作って texel を転送する。作成・転送の例外はここで受け止める。
+        RHI::TexturePtr CreateLut3dTexture(RHI::IDevice* device,
+                                           uint32_t size,
+                                           const Container::VariableArray<uint8_t>& texels,
+                                           const char* debugName)
+        {
+            // x=R, y=G, z=B の順（R が最も速く変わる）はそのまま3D textureの行・スライスの並びになる
+            RHI::TextureDesc lutDesc;
+            lutDesc.Width = size;
+            lutDesc.Height = size;
+            lutDesc.Depth = size;
+            lutDesc.Dimension = RHI::TextureDimension::Texture3D;
+            lutDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+            lutDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            lutDesc.DebugName = debugName;
+            const uint32_t rowPitch = size * Lut3dBytesPerTexel;
+            const uint32_t slicePitch = rowPitch * size;
+            RHI::TexturePtr lutTexture;
+            try
+            {
+                lutTexture = device->CreateTexture(lutDesc);
+                if (!lutTexture)
+                {
+                    NORVES_LOG_ERROR("ToneMappingPass", "色のLUTのテクスチャを作成できません");
+                    return nullptr;
+                }
+                lutTexture->Update(texels.data(), rowPitch, slicePitch);
+            }
+            catch (const std::exception& exception)
+            {
+                NORVES_LOG_ERROR("ToneMappingPass", "色のLUTの作成または転送に失敗しました: %s", exception.what());
+                return nullptr;
+            }
+            return lutTexture;
         }
     } // namespace
 
@@ -209,6 +296,9 @@ namespace NorvesLib::Core::Rendering
         m_ColorLutFallbackTexture.reset();
         m_ColorLutSampler.reset();
         m_bColorLutLoadFailed = false;
+        m_LookLutTexture.reset();
+        m_LookLutPath.clear();
+        m_bLookLutLoadFailed = false;
         m_Device = nullptr;
         m_OutputHandle = {};
         m_bRenderPassUsesRenderGraphInitialState = false;
@@ -354,6 +444,7 @@ namespace NorvesLib::Core::Rendering
         // binding 0: SceneColor（combined image sampler）
         // binding 1: ToneMappingParams UBO
         // binding 2: 表示変換の3D LUT（combined image sampler）
+        // binding 3: 見た目の3D LUT（combined image sampler）
         RHI::DescriptorSetDesc dsDesc;
 
         RHI::DescriptorBinding sceneColorBinding;
@@ -373,6 +464,12 @@ namespace NorvesLib::Core::Rendering
         colorLutBinding.type = RHI::ResourceBindType::CombinedImageSampler;
         colorLutBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(colorLutBinding);
+
+        RHI::DescriptorBinding lookLutBinding;
+        lookLutBinding.binding = 3;
+        lookLutBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        lookLutBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(lookLutBinding);
 
         m_ToneMappingDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
         if (!m_ToneMappingDescriptorSet)
@@ -624,13 +721,28 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        const uint32_t operatorType = PrepareColorLut();
+        // カメラがトーンマップの曲線を差し替えていればそれを使う（起動画面など、検証シーンの既定を変えずに切り替える）。
+        const CameraProxy* activeCamera = context.GetActiveCamera();
+        const uint32_t viewOperatorType = PrepareColorLut();
+        const uint32_t operatorType =
+            activeCamera != nullptr && activeCamera->ToneMapCurve == CameraToneMapCurve::NeutralLinear
+                ? NeutralLinearOperatorType
+                : viewOperatorType;
         const RHI::TexturePtr& colorLut =
             operatorType == Aces20LutOperatorType ? m_ColorLutTexture : m_ColorLutFallbackTexture;
         if (!colorLut)
         {
             NORVES_LOG_WARNING("ToneMappingPass", "Color LUT texture not ready, skipping");
             return;
+        }
+
+        // 見た目のLUTはグレーディングと同じく、表示変換そのものの ACES 2.0 SDR LUT には掛けない
+        RHI::TexturePtr lookLut =
+            operatorType != Aces20LutOperatorType ? PrepareLookLut(activeCamera) : RHI::TexturePtr{};
+        const float lookLutIntensity = lookLut ? std::clamp(activeCamera->LookLut.Intensity, 0.0f, 1.0f) : 0.0f;
+        if (!lookLut)
+        {
+            lookLut = m_ColorLutFallbackTexture;
         }
 
         // パラメータバッファ更新
@@ -647,16 +759,38 @@ namespace NorvesLib::Core::Rendering
         params.vignetteRadius = m_Settings.VignetteRadius;
         params.vignetteSoftness = m_Settings.VignetteSoftness;
         params.filmGrainStrength = m_Settings.FilmGrainStrength > 0.0f ? m_Settings.FilmGrainStrength : 0.0f;
-        params._pad2 = 0.0f;
+        params.gradingMode = 0u;
         // Color Grading
         params.colorFilter[0] = m_Settings.ColorFilter[0];
         params.colorFilter[1] = m_Settings.ColorFilter[1];
         params.colorFilter[2] = m_Settings.ColorFilter[2];
         params.colorFilter[3] = m_Settings.ColorFilterIntensity;
-        params.contrast = m_Settings.Contrast;
+        // カメラがコントラストを指定していればそれを使う（起動画面など、検証シーンの既定を変えずに切り替える）。
+        params.contrast = activeCamera != nullptr && std::isfinite(activeCamera->GradingContrast) &&
+                                  activeCamera->GradingContrast >= 0.0f
+                              ? activeCamera->GradingContrast
+                              : m_Settings.Contrast;
         params.saturation = m_Settings.Saturation;
         params.brightness = m_Settings.Brightness;
         params.temperature = m_Settings.Temperature;
+        // カメラがグレーディングを差し替えていれば、コントラスト・彩度・色温度をその値と式にする
+        // （有限でない値は差し替えない）。
+        if (activeCamera != nullptr && activeCamera->GradingOverride.bEnabled)
+        {
+            const CameraGradingOverride& grading = activeCamera->GradingOverride;
+            if (std::isfinite(grading.Contrast) && grading.Contrast > 0.0f &&
+                std::isfinite(grading.ContrastPivot) && grading.ContrastPivot > 0.0f &&
+                std::isfinite(grading.Saturation) && grading.Saturation >= 0.0f &&
+                std::isfinite(grading.Temperature))
+            {
+                params.gradingMode = 1u;
+                params.contrast = grading.Contrast;
+                params.contrastPivot = std::clamp(grading.ContrastPivot, 1.0e-4f, 1.0f);
+                params.saturation = grading.Saturation;
+                params.temperature = std::clamp(grading.Temperature, -1.0f, 1.0f);
+            }
+        }
+        params.lookLutIntensity = lookLutIntensity;
         m_ParamsBuffer->Update(&params, sizeof(GPUToneMappingParams));
 
         // トーンマッピング結果をSharedResourceRegistryに登録
@@ -670,6 +804,8 @@ namespace NorvesLib::Core::Rendering
         m_ToneMappingDescriptorSet->BindSampler(0, m_SceneColorSampler);
         m_ToneMappingDescriptorSet->BindTexture(2, colorLut);
         m_ToneMappingDescriptorSet->BindSampler(2, m_ColorLutSampler);
+        m_ToneMappingDescriptorSet->BindTexture(3, lookLut);
+        m_ToneMappingDescriptorSet->BindSampler(3, m_ColorLutSampler);
         m_ToneMappingDescriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();
@@ -709,8 +845,8 @@ namespace NorvesLib::Core::Rendering
                 {
                     const uint16_t zeroTexel[4] = {0u, 0u, 0u, 0u};
                     m_ColorLutFallbackTexture->Update(zeroTexel,
-                                                      Aces20LutBytesPerTexel,
-                                                      Aces20LutBytesPerTexel);
+                                                      Lut3dBytesPerTexel,
+                                                      Lut3dBytesPerTexel);
                 }
             }
             catch (const std::exception& exception)
@@ -744,32 +880,13 @@ namespace NorvesLib::Core::Rendering
     RHI::TexturePtr ToneMappingPass::LoadAces20SdrLut() const
     {
         const Container::String path = ResolveAssetPath(Aces20SdrLutAssetPath);
-        std::ifstream file(path.c_str(), std::ios::binary | std::ios::ate);
-        if (!file.is_open())
+        Lut3dHeader header = {};
+        Container::VariableArray<uint8_t> texels;
+        if (!ReadLut3dFile(path, Aces20LutMagic, header, texels))
         {
-            NORVES_LOG_ERROR("ToneMappingPass", "Failed to open color LUT: %s", path.c_str());
             return nullptr;
         }
-
-        const std::streamoff fileSize = file.tellg();
-        file.seekg(0, std::ios::beg);
-        Aces20LutHeader header = {};
-        if (fileSize < static_cast<std::streamoff>(Aces20LutHeaderSize) ||
-            !file.read(reinterpret_cast<char*>(&header), sizeof(header)))
-        {
-            NORVES_LOG_ERROR("ToneMappingPass", "Color LUT header is truncated: %s", path.c_str());
-            return nullptr;
-        }
-
-        const uint64_t lutSize = header.Size;
-        const uint64_t payloadSize = lutSize * lutSize * lutSize * Aces20LutBytesPerTexel;
-        if (std::memcmp(header.Magic, Aces20LutMagic, sizeof(Aces20LutMagic)) != 0 ||
-            header.Size < 2u || header.Size > 256u ||
-            header.Channels != 4u ||
-            header.Format != Aces20LutFormatRgba16F ||
-            header.ShaperOffset != Aces20LutShaperOffset ||
-            header.ShaperMax != Aces20LutShaperMax ||
-            static_cast<uint64_t>(fileSize) != Aces20LutHeaderSize + payloadSize)
+        if (header.ShaperOffset != Aces20LutShaperOffset || header.ShaperMax != Aces20LutShaperMax)
         {
             NORVES_LOG_ERROR("ToneMappingPass",
                              "Color LUT header does not match the expected shaper/layout: %s",
@@ -777,43 +894,59 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
 
-        Container::VariableArray<uint8_t> texels;
-        texels.resize(static_cast<size_t>(payloadSize));
-        if (!file.read(reinterpret_cast<char*>(texels.data()), static_cast<std::streamsize>(payloadSize)))
+        // 作成・転送の失敗は呼び出し側で ACES Filmic へ退避させる
+        RHI::TexturePtr lutTexture = CreateLut3dTexture(m_Device, header.Size, texels, "Aces20SdrRec709Lut");
+        if (lutTexture)
         {
-            NORVES_LOG_ERROR("ToneMappingPass", "Failed to read color LUT texels: %s", path.c_str());
+            NORVES_LOG_INFO("ToneMappingPass", "ACES 2.0 SDR LUT loaded (%u^3)", header.Size);
+        }
+        return lutTexture;
+    }
+
+    RHI::TexturePtr ToneMappingPass::PrepareLookLut(const CameraProxy* camera)
+    {
+        if (!m_Device || camera == nullptr || camera->LookLut.AssetPath == nullptr ||
+            camera->LookLut.AssetPath[0] == '\0' || !std::isfinite(camera->LookLut.Intensity) ||
+            camera->LookLut.Intensity <= 0.0f)
+        {
             return nullptr;
         }
 
-        // x=R, y=G, z=B の順（R が最も速く変わる）はそのまま3D textureの行・スライスの並びになる
-        RHI::TextureDesc lutDesc;
-        lutDesc.Width = header.Size;
-        lutDesc.Height = header.Size;
-        lutDesc.Depth = header.Size;
-        lutDesc.Dimension = RHI::TextureDimension::Texture3D;
-        lutDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
-        lutDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
-        lutDesc.DebugName = "Aces20SdrRec709Lut";
-        const uint32_t rowPitch = header.Size * Aces20LutBytesPerTexel;
-        const uint32_t slicePitch = rowPitch * header.Size;
-        RHI::TexturePtr lutTexture;
-        // 作成・転送の例外はここで受け止め、呼び出し側で ACES Filmic へ退避させる
-        try
+        // パスが変わったら読み直す（失敗したパスは、パスが変わるまで読み直さない）
+        if (m_LookLutPath != camera->LookLut.AssetPath)
         {
-            lutTexture = m_Device->CreateTexture(lutDesc);
-            if (!lutTexture)
-            {
-                NORVES_LOG_ERROR("ToneMappingPass", "Failed to create color LUT texture");
-                return nullptr;
-            }
-            lutTexture->Update(texels.data(), rowPitch, slicePitch);
+            m_LookLutPath = camera->LookLut.AssetPath;
+            m_LookLutTexture.reset();
+            m_bLookLutLoadFailed = false;
         }
-        catch (const std::exception& exception)
+        if (!m_LookLutTexture && !m_bLookLutLoadFailed)
         {
-            NORVES_LOG_ERROR("ToneMappingPass", "Failed to create or upload color LUT: %s", exception.what());
+            m_LookLutTexture = LoadLookLut(m_LookLutPath.c_str());
+            m_bLookLutLoadFailed = !m_LookLutTexture;
+            if (m_bLookLutLoadFailed)
+            {
+                NORVES_LOG_ERROR("ToneMappingPass", "見た目のLUTを使えないため、掛けずに描画します: %s",
+                                 m_LookLutPath.c_str());
+            }
+        }
+        return m_LookLutTexture;
+    }
+
+    RHI::TexturePtr ToneMappingPass::LoadLookLut(const char* assetPath) const
+    {
+        const Container::String path = ResolveAssetPath(assetPath);
+        Lut3dHeader header = {};
+        Container::VariableArray<uint8_t> texels;
+        if (!ReadLut3dFile(path, LookLutMagic, header, texels))
+        {
             return nullptr;
         }
-        NORVES_LOG_INFO("ToneMappingPass", "ACES 2.0 SDR LUT loaded (%u^3)", header.Size);
+
+        RHI::TexturePtr lutTexture = CreateLut3dTexture(m_Device, header.Size, texels, "ToneMappingLookLut");
+        if (lutTexture)
+        {
+            NORVES_LOG_INFO("ToneMappingPass", "見た目のLUTを読み込みました（%u^3）: %s", header.Size, assetPath);
+        }
         return lutTexture;
     }
 

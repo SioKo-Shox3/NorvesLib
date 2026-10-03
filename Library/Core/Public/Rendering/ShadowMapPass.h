@@ -35,6 +35,17 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief ライトカメラのファープレーン */
         float FarPlane = 50.0f;
+
+        /**
+         * @brief 方向光の影を受ける最大のビュー深度（m）
+         *
+         * CSMの4カスケードはカメラのnearからこの距離（カメラのfarの方が近ければfar）までを
+         * 分割する。これより遠い面は影を受けず、最後のカスケードの奥の端で影を薄めて消す。
+         */
+        float MaxShadowDistance = 80.0f;
+
+        /** @brief 点光源のキューブシャドウの1面の解像度（正方形） */
+        uint32_t PointShadowResolution = 512;
     };
 
     /**
@@ -49,6 +60,11 @@ namespace NorvesLib::Core::Rendering
      *
      * legacy bridge出力:
      * - "ShadowMap" : 4層の深度配列テクスチャ (D32_FLOAT)
+     *
+     * 影を落とす点光源（FramePacket::PointShadowsで選ばれた最大4灯）があるフレームだけ、
+     * 各灯の6面へ光源からの線形距離（範囲で割った0〜1）を描いたキューブ配列の深度テクスチャを
+     * RenderGraph named resource "PointShadowCubeMap" として公開する。点光源が無いフレームは
+     * キューブへ何も描かず、公開もしない。
      */
     class ShadowMapPass : public IViewPass, public IRenderGraphPass
     {
@@ -108,8 +124,17 @@ namespace NorvesLib::Core::Rendering
         // シャドウマップアクセス
         // ========================================
 
+        /**
+         * @brief 方向光の影を受ける最大のビュー深度（m）を設定します
+         * @param distance 0より大きい有限値。それ以外はCSMを無効にする
+         */
+        void SetMaxShadowDistance(float distance) { m_Settings.MaxShadowDistance = distance; }
+        float GetMaxShadowDistance() const { return m_Settings.MaxShadowDistance; }
+
         RHI::ITexture* GetShadowMapTexture() const { return m_ShadowMapTexture.get(); }
         RGResourceHandle GetShadowMapHandle() const { return m_ShadowMapHandle; }
+        RHI::ITexture* GetPointShadowCubeTexture() const { return m_PointShadowCubeTexture.get(); }
+        RGResourceHandle GetPointShadowCubeHandle() const { return m_PointShadowCubeHandle; }
 
     private:
         friend struct SkinnedRenderPathContractTestAccess;
@@ -117,6 +142,12 @@ namespace NorvesLib::Core::Rendering
         bool TryPrepareSkinnedCommand(ViewRenderContext& context,
                                       const DrawCommand& source,
                                       DrawCommand& outCommand) const;
+
+        /** @brief キューブシャドウの資源を初めて要るときに作ります（失敗したら以後は点光源の影を描かない） */
+        bool EnsurePointShadowResources(const ViewRenderContext& context);
+
+        /** @brief 選ばれた点光源ごとにキューブの6面を描きます */
+        void ExecutePointShadows(ViewRenderContext& context);
 
         // 設定
         ShadowMapPassSettings m_Settings;
@@ -146,8 +177,27 @@ namespace NorvesLib::Core::Rendering
 
         bool m_bRegisterLegacyBridge = true;
 
+        // 最後に記録したCSMの分割の奥（m）。変わったときだけ分割を記録する。
+        float m_LoggedCascadeSplitFar = -1.0f;
+
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;
+
+        // 点光源のキューブシャドウ（最初に影を落とす点光源が現れたフレームで作る）
+        RHI::TexturePtr m_PointShadowCubeTexture;
+        RGResourceHandle m_PointShadowCubeHandle;
+        Container::VariableArray<RHI::FramebufferPtr> m_PointShadowFramebuffers;
+        RHI::ShaderPtr m_PointShadowVertexShader;
+        RHI::ShaderPtr m_SkinnedPointShadowVertexShader;
+        RHI::ShaderPtr m_PointShadowFragmentShader;
+        RHI::PipelinePtr m_PointShadowPipeline;
+        RHI::PipelinePtr m_SkinnedPointShadowPipeline;
+        // 面ごとのUBO（非スキンの描画は面ごとに1つを共有し、スキンの描画は描画ごとに取る）
+        DynamicUniformAllocator m_PointShadowUniformAllocator;
+        bool m_bPointShadowResourcesReady = false;
+        bool m_bPointShadowResourcesFailed = false;
+        // 最後に記録したキューブシャドウの灯の数。変わったときだけ記録する。
+        uint32_t m_LoggedPointShadowLightCount = 0;
     };
 
 } // namespace NorvesLib::Core::Rendering

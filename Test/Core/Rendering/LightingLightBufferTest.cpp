@@ -300,6 +300,48 @@ namespace
         assert(ReadPackedLightFloat(packedLights[2], 56) == 0.0f);
     }
 
+    // キューブシャドウを持つ点光源だけがattenuation[3]=キューブの番号+1で詰められ、
+    // 影を落とさない点光源・選ばれなかった灯・スナップショットが無いときは0のまま。
+    void TestPointShadowCubeSlotIsMarkedOnlyForSelectedLights()
+    {
+        CoreContainer::VariableArray<LightProxy> proxies;
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            LightProxy light = MakePointLight(i);
+            light.bCastShadows = i != 1u;
+            proxies.push_back(light);
+        }
+        const CoreContainer::Span<const LightProxy> span(proxies.data(), proxies.size());
+
+        // カメラが無いときは光源表の並び順で選ぶ（0・2・3番の灯がキューブ0・1・2）。
+        PointShadowSnapshot snapshot;
+        BuildPointShadowSnapshot(proxies, nullptr, snapshot);
+        assert(snapshot.LightCount == 3u);
+
+        CoreContainer::VariableArray<GPULightData> packedLights;
+        assert(PackLightingPassLights(span, packedLights) == 4u);
+        for (const GPULightData& light : packedLights)
+        {
+            assert(ReadPackedLightFloat(light, 60) == 0.0f);
+        }
+
+        assert(PackLightingPassLights(span, packedLights, nullptr, &snapshot) == 4u);
+        assert(ReadPackedLightFloat(packedLights[0], 60) == 1.0f);
+        assert(ReadPackedLightFloat(packedLights[1], 60) == 0.0f);
+        assert(ReadPackedLightFloat(packedLights[2], 60) == 2.0f);
+        assert(ReadPackedLightFloat(packedLights[3], 60) == 3.0f);
+        // 影を落とさない灯の他の値はスナップショットの有無で変わらない。
+        GPULightData withoutShadow = {};
+        assert(PackLightingPassLight(proxies[1], withoutShadow));
+        assert(std::memcmp(&withoutShadow, &packedLights[1], sizeof(GPULightData)) == 0);
+
+        // 別のパケットの選択（LightIdが食い違う）は番号を付けない。
+        snapshot.Lights[0].LightId = 999u;
+        assert(PackLightingPassLights(span, packedLights, nullptr, &snapshot) == 4u);
+        assert(ReadPackedLightFloat(packedLights[0], 60) == 0.0f);
+        assert(ReadPackedLightFloat(packedLights[2], 60) == 2.0f);
+    }
+
     void TestEmptyInputProducesNoLights()
     {
         CoreContainer::VariableArray<LightProxy> proxies;
@@ -543,6 +585,7 @@ int main()
     TestInvalidLightsAreSkipped();
     TestEmptyInputProducesNoLights();
     TestShadowedLightIsMarkedOnlyForTheSelectedLight();
+    TestPointShadowCubeSlotIsMarkedOnlyForSelectedLights();
     TestAllInvalidInputProducesNoLights();
     TestPackWhiteAndColoredLightsUsesYOneChromaticityAndCanonicalIntensity();
     TestLocalAttenuationBoundaryLiteralTable();

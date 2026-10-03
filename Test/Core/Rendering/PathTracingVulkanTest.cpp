@@ -1170,9 +1170,11 @@ namespace
             std::cerr << "屋外PTの空LUTまたはRT pipelineを初期化できませんでした\n";
             return 1;
         }
-        // 太陽照度の解析値は純Lambertで比べる（ラスタの検証mode 253と同じ表面）。
+        // 太陽照度の解析値は純Lambertで比べる（ラスタの検証mode 253と同じ表面）。解析値は太陽だけを
+        // 含むので直接光だけの輸送で比べ、空と地平線より下の地面からの間接光は最後に別に比べる。
         pathPass.SetEnvironment(MakeUniformEnvironment(0.05f));
         pathPass.SetBsdfMode(PathTracingBsdfMode::ValidationLambert);
+        pathPass.SetTransportScope(PathTracingTransportScope::DirectOnly);
         RenderGraph graph;
         graph.Initialize(nullptr);
         VariableArray<float> pixels;
@@ -1359,9 +1361,130 @@ namespace
         std::cout << "sky_sun_light_excluded=true without_sun_light=" << withoutSunLight
                   << " with_ordinary_directional=" << CenterRadiance(pixels) << '\n';
         packet.Scene.LightProxies.clear();
+
+        // 空と地平線より下の地面からの間接光。全経路の輸送で累積した面の画素から直接光を引いた値の
+        // 平均を、空のモデルの放射輝度を面の半球で余弦重み付きに積分した照度からの値と比べる。
+        const SkyAtmosphereParameters noon =
+            SanitizeSkyAtmosphereParameters(packet.Scene.SkyAtmosphere);
+        if (!RunFrame(device, graph, pathPass, context, 13u,
+                      1u, 1u, pixels, &skyPass) ||
+            pathPass.GetAccumulatedSampleCount() != 1u)
+        {
+            std::cerr << "空の間接光の比較の直接光を描画できませんでした\n";
+            return 1;
+        }
+        const VariableArray<float> directPixels = pixels;
+        const float directCenter = CenterRadiance(directPixels);
+        // 面の画素は画素中心の1次命中距離（三角形の外は0）で選ぶ。新しい空は面より明るい方向があり、
+        // 直接光の明るさでは背景の空の画素と面を区別できない。
+        pathPass.SetDebugOutput(PathTracingDebugOutput::HitDistance);
+        pathPass.SetPixelSampling(PathTracingPixelSampling::Center);
+        if (!RunFrame(device, graph, pathPass, context, 14u,
+                      1u, 1u, pixels, &skyPass) ||
+            pathPass.GetAccumulatedSampleCount() != 1u)
+        {
+            std::cerr << "空の間接光の比較の面の範囲を描画できませんでした\n";
+            return 1;
+        }
+        const VariableArray<float> hitDistancePixels = pixels;
+        pathPass.SetDebugOutput(PathTracingDebugOutput::None);
+        pathPass.SetPixelSampling(PathTracingPixelSampling::Box);
+        constexpr uint32_t SkyIndirectFrames = 16u;
+        pathPass.SetTransportScope(PathTracingTransportScope::Full);
+        for (uint32_t frame = 0u; frame < SkyIndirectFrames; ++frame)
+        {
+            if (!RunFrame(device, graph, pathPass, context, 15u + frame,
+                          1u, 1u, pixels, &skyPass) ||
+                pathPass.GetAccumulatedSampleCount() != frame + 1u)
+            {
+                std::cerr << "空の間接光の比較の全経路を累積できませんでした\n";
+                return 1;
+            }
+        }
+        // 太陽に照らされた面の内側の画素だけを平均する。画素内のずれで縁の画素が空を引かないよう、
+        // 周りの8画素も面に入る画素に限る。
+        const auto isLitSurface = [&](uint32_t x, uint32_t y)
+        {
+            const size_t offset = (static_cast<size_t>(y) * Width + x) * 4u;
+            return hitDistancePixels[offset] > 0.0f;
+        };
+        double indirectTotal = 0.0;
+        uint32_t surfacePixelCount = 0u;
+        for (uint32_t y = 1u; y + 1u < Height; ++y)
+        {
+            for (uint32_t x = 1u; x + 1u < Width; ++x)
+            {
+                bool bInterior = true;
+                for (uint32_t neighborY = y - 1u; neighborY <= y + 1u; ++neighborY)
+                {
+                    for (uint32_t neighborX = x - 1u; neighborX <= x + 1u; ++neighborX)
+                    {
+                        bInterior = bInterior && isLitSurface(neighborX, neighborY);
+                    }
+                }
+                if (!bInterior)
+                {
+                    continue;
+                }
+                const size_t offset = (static_cast<size_t>(y) * Width + x) * 4u;
+                const float direct = directPixels[offset] + directPixels[offset + 1u] +
+                                     directPixels[offset + 2u];
+                indirectTotal += static_cast<double>(pixels[offset] + pixels[offset + 1u] +
+                                                     pixels[offset + 2u] - direct);
+                ++surfacePixelCount;
+            }
+        }
+        // 面の法線はカメラ側（-Z）。半球を天頂角64×方位128の中点で積分する（太陽円盤は光源標本の側）。
+        SkyAtmosphereModel noonModel(noon);
+        noonModel.BuildSkyViewTable();
+        const Math::Vector3 normal(0.0f, 0.0f, -1.0f);
+        const Math::Vector3 tangent(1.0f, 0.0f, 0.0f);
+        const Math::Vector3 bitangent(0.0f, 1.0f, 0.0f);
+        constexpr uint32_t ThetaSteps = 64u;
+        constexpr uint32_t PhiSteps = 128u;
+        constexpr double Pi = 3.14159265358979323846;
+        const double thetaStep = 0.5 * Pi / ThetaSteps;
+        const double phiStep = 2.0 * Pi / PhiSteps;
+        double skyIrradiance[3] = {};
+        for (uint32_t thetaIndex = 0u; thetaIndex < ThetaSteps; ++thetaIndex)
+        {
+            const double theta = (thetaIndex + 0.5) * thetaStep;
+            const double weight = std::cos(theta) * std::sin(theta) * thetaStep * phiStep;
+            for (uint32_t phiIndex = 0u; phiIndex < PhiSteps; ++phiIndex)
+            {
+                const double phi = (phiIndex + 0.5) * phiStep;
+                const float sinTheta = static_cast<float>(std::sin(theta));
+                const Math::Vector3 direction =
+                    tangent * (sinTheta * static_cast<float>(std::cos(phi))) +
+                    bitangent * (sinTheta * static_cast<float>(std::sin(phi))) +
+                    normal * static_cast<float>(std::cos(theta));
+                const SkyRadianceSample sample = noonModel.SampleSkyView(direction);
+                skyIrradiance[0] += sample.Radiance.x * weight;
+                skyIrradiance[1] += sample.Radiance.y * weight;
+                skyIrradiance[2] += sample.Radiance.z * weight;
+            }
+        }
+        const double expectedIndirect =
+            (0.8 * skyIrradiance[0] + 0.3 * skyIrradiance[1] + 0.1 * skyIrradiance[2]) *
+            camera.PreExposure / Pi;
+        const double measuredIndirect =
+            surfacePixelCount > 0u ? indirectTotal / surfacePixelCount : 0.0;
+        std::cout << "sky_indirect_surface=" << measuredIndirect
+                  << " expected_sky_indirect_surface=" << expectedIndirect
+                  << " direct_surface=" << directCenter
+                  << " surface_pixels=" << surfacePixelCount
+                  << " samples_per_pixel=" << SkyIndirectFrames << '\n';
+        // 許容差10%: 累積は画素あたり16試料で、空は太陽の周りに鋭い山があり地平線より下は地面になる。
+        if (surfacePixelCount < 64u || !(expectedIndirect > 0.0) ||
+            std::abs(measuredIndirect - expectedIndirect) > expectedIndirect * 0.1)
+        {
+            std::cerr << "空と地面からの間接光が空のモデルの照度と一致しませんでした\n";
+            return 1;
+        }
         std::cout << "sky_parameter_parity=3 solar_sampling=true "
                      "sky_disabled_fallback=true sky_missing_fallback=true "
-                     "sky_recovery_reset=true saturated_solar_sampling=true\n";
+                     "sky_recovery_reset=true saturated_solar_sampling=true "
+                     "sky_indirect=true\n";
         skyPass.Shutdown();
         pathPass.Shutdown();
         graph.Shutdown();

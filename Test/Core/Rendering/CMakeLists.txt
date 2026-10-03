@@ -153,6 +153,8 @@ norves_add_test_bundle(R8AcesLutToneMappingVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER R8AcesLutToneMappingVulkanTest R8AcesLutToneMappingVulkanTest.cpp
     MEMBER R8FilmGrainVulkanTest R8FilmGrainVulkanTest.cpp
+    MEMBER AutoExposureHistogramVulkanTest AutoExposureHistogramVulkanTest.cpp
+    MEMBER GradingLutIdentityVulkanTest GradingLutIdentityVulkanTest.cpp
 )
 target_link_libraries(R8AcesLutToneMappingVulkanTest PRIVATE RenderingGpuTestSupport)
 target_include_directories(R8AcesLutToneMappingVulkanTest PRIVATE
@@ -169,6 +171,10 @@ register_rendering_gpu_test(
 )
 # R8: フィルムグレイン（既定オフ、強さ0で従来と一致、統計・フレームごとの模様・再実行の一致）を実GPUで確かめる。
 register_rendering_gpu_test(R8FilmGrainVulkanTest R8AcesLutToneMappingVulkanTest --test=R8FilmGrainVulkanTest)
+# 自動露出: 既知の輝度の画素から作ったヒストグラムを実GPUで読み戻し、全区間がCPUの数え方と一致すること。
+register_rendering_gpu_test(AutoExposureHistogramVulkanTest R8AcesLutToneMappingVulkanTest --test=AutoExposureHistogramVulkanTest)
+# 見た目の3D LUT: 恒等のLUTで出力が変わらず、見た目のLUTがCPUの三線形補間と一致し、ACES 2.0 SDR LUTの演算子と読めないLUTでは掛からないことを実GPUで確かめる。
+register_rendering_gpu_test(GradingLutIdentityVulkanTest R8AcesLutToneMappingVulkanTest --test=GradingLutIdentityVulkanTest)
 add_executable(R6RTGIAcceptanceVulkanTest
     R6RTGIAcceptanceVulkanTest.cpp
 )
@@ -380,6 +386,12 @@ register_rendering_gpu_test(
     --scene=outdoor
     --capture-source=gbuffer-velocity
     --scenario=move-then-stop)
+register_rendering_gpu_test(
+    RenderingVelocitySkinnedVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=skinned-motion)
 
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp
@@ -485,6 +497,22 @@ register_rendering_gpu_test(
     RenderingHdrSceneCaptureTest
     --scene=outdoor
     --capture-source=scene-color)
+# 昼の露出（EV100 約14.6）で 1,000,000 nits の発光面が SceneColor で有限であることを確かめる
+# （GBufferへプリエクスポージャ後の発光を書く規約の検証）。
+register_rendering_gpu_test(
+    RenderingHdrEmissiveDaylightVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=indoor
+    --capture-source=scene-color
+    --emissive-scenario=daylight-1m-nits)
+# 同じ露出で、プリエクスポージャ後の発光が32768を超え65504未満のとき頭打ちにならず
+# そのまま SceneColor へ届くことを確かめる。
+register_rendering_gpu_test(
+    RenderingHdrEmissiveAboveHalfVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=indoor
+    --capture-source=scene-color
+    --emissive-scenario=daylight-above-32768)
 
 add_executable(RenderingRayTracingShadowVulkanTest
     RenderingRayTracingShadowVulkanTest.cpp
@@ -897,6 +925,9 @@ target_compile_definitions(RenderingGoldenImageComparatorTest PRIVATE
 )
 set_target_properties(RenderingGoldenImageComparatorTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderingGoldenImageComparatorTest COMMAND RenderingGoldenImageComparatorTest)
+# R2の空のgoldenが今の空のモデルから作った画像と画素で一致することを確かめる（空のモデルを変えたら再承認が要る）。
+add_test(NAME R2SkyGoldenCurrentModelTest
+    COMMAND RenderingGoldenImageComparatorTest --compare-r2-sky-goldens)
 
 add_executable(RenderingGoldenImageTest
     RenderingGoldenImageTest.cpp
@@ -926,6 +957,13 @@ register_rendering_gpu_test(
     RenderingGoldenImageTest
     --scene=outdoor
     --capture-source=back-buffer)
+# GTAO: 部屋の大きさ（Cornell）の壁・床・天井が遮蔽で黒くならず、隅・接地部だけが暗くなること
+register_rendering_gpu_test(
+    RenderingGTAOCornellRoomVulkanTest
+    RenderingGoldenImageTest
+    --scene=indoor
+    --capture-source=back-buffer
+    --ao-scenario=cornell-room)
 
 add_test(NAME RenderingCoordinatorStatsPropagationTest COMMAND RenderingCoordinatorDiagnosticsSnapshotTest --test=RenderingCoordinatorStatsPropagationTest)
 
@@ -988,6 +1026,9 @@ norves_add_test_bundle(CameraViewConstantsTest
     FOLDER "Test/Core/Rendering"
     MEMBER CameraViewConstantsTest CameraViewConstantsTest.cpp
     MEMBER OrthographicViewportMatrixTest OrthographicViewportMatrixTest.cpp
+    MEMBER PointShadowFaceMatricesTest PointShadowFaceMatricesTest.cpp
+    MEMBER AutoExposureMathTest AutoExposureMathTest.cpp
+    MEMBER TemporalAAJitterTest TemporalAAJitterTest.cpp
 )
 target_link_libraries(CameraViewConstantsTest PRIVATE Core)
 target_include_directories(CameraViewConstantsTest PRIVATE
@@ -1021,6 +1062,9 @@ target_include_directories(ViewportCameraIdRenderPlanTest PRIVATE
 add_test(NAME ViewportCameraIdRenderPlanTest COMMAND ViewportCameraIdRenderPlanTest)
 
 add_test(NAME OrthographicViewportMatrixTest COMMAND CameraViewConstantsTest --test=OrthographicViewportMatrixTest)
+add_test(NAME PointShadowFaceMatricesTest COMMAND CameraViewConstantsTest --test=PointShadowFaceMatricesTest)
+add_test(NAME AutoExposureMathTest COMMAND CameraViewConstantsTest --test=AutoExposureMathTest)
+add_test(NAME TemporalAAJitterTest COMMAND CameraViewConstantsTest --test=TemporalAAJitterTest)
 
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp

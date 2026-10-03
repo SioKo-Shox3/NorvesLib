@@ -129,6 +129,9 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr VertexBuffer;
         RHI::BufferPtr IndexBuffer;
         RHI::BufferPtr PaletteBuffer;
+        // 直前のフレームの変換と骨ごとの位置の行列（mat4 previousWorld; mat4 previousPalette[]）。
+        // 前の値を求めなかった描画（影など）では空。
+        RHI::BufferPtr PreviousPaletteBuffer;
         uint32_t IndexCount = 0;
 
         [[nodiscard]] bool IsValid() const

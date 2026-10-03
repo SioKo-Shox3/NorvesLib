@@ -1,4 +1,4 @@
-#include "Debug/Stats.h"
+﻿#include "Debug/Stats.h"
 #include <algorithm>
 #include <filesystem>
 #include <sstream>
@@ -316,6 +316,33 @@ namespace NorvesLib::Debug
 #endif
     }
 
+    void StatsManager::RecordGPUScope(uint64_t frameNumber, const char* name, float durationMs)
+    {
+#if NORVES_ENABLE_STATS
+        if (!IsTraceActive())
+        {
+            (void)frameNumber;
+            (void)name;
+            (void)durationMs;
+            return;
+        }
+
+        NorvesLib::Thread::ScopedLock lock(m_Mutex);
+        if (!IsTraceActive())
+        {
+            return;
+        }
+
+        // GPUの区間は数フレーム遅れて完了するため、CPUのフレームの Events には混ぜず、
+        // 区間を記録したフレームの番号で直接トレースへ書く。
+        WriteGPUScopeTraceLine(frameNumber, name ? String(name) : String{}, durationMs);
+#else
+        (void)frameNumber;
+        (void)name;
+        (void)durationMs;
+#endif
+    }
+
     void StatsManager::SetGameThreadTimeMs(float timeMs)
     {
 #if NORVES_ENABLE_STATS
@@ -531,6 +558,33 @@ namespace NorvesLib::Debug
         m_TraceFile << ','
                     << event.DurationMs
                     << ",,,,,,,,,,,,,\n";
+#endif
+    }
+
+    void StatsManager::WriteGPUScopeTraceLine(uint64_t frameNumber, const String& name, float durationMs)
+    {
+#if NORVES_ENABLE_STATS
+        if (!m_TraceFile.is_open())
+        {
+            return;
+        }
+
+        // Type=GPU の行。Frame は区間を記録したフレームの番号、ThreadId は書いたスレッド（RenderThread）。
+        // DurationMs より後ろの列はヘッダーの列の数に合わせて空で埋める。
+        m_TraceFile << "GPU,"
+                    << frameNumber << ','
+                    << GetTraceTimestampUs() << ','
+                    << GetCurrentProfileThreadId() << ',';
+        WriteCsvString(m_TraceFile, String("GPU"));
+        m_TraceFile << ',';
+        WriteCsvString(m_TraceFile, name);
+        m_TraceFile << ','
+                    << durationMs
+                    << ",,,,,,,,,,,,,,,,,\n";
+#else
+        (void)frameNumber;
+        (void)name;
+        (void)durationMs;
 #endif
     }
 

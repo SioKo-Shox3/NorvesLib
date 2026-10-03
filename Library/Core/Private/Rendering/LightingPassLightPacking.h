@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Rendering/LightingPassGpuTypes.h"
+#include "Rendering/PointShadowSnapshot.h"
 #include "Rendering/SceneProxy.h"
 #include "Container/Containers.h"
 
@@ -30,9 +31,11 @@ namespace NorvesLib::Core::Rendering
     }
 
     // attenuation[2]は、CSMとRT影の係数を掛ける灯（SelectShadowedDirectionalLight）で1。
+    // attenuation[3]は、キューブシャドウを持つ点光源でキューブ配列の番号+1、それ以外は0。
     inline bool PackLightingPassLight(const LightProxy& proxy,
                                       GPULightData& outLight,
-                                      bool bReceivesDirectionalShadow = false)
+                                      bool bReceivesDirectionalShadow = false,
+                                      uint32_t pointShadowCubeSlot = 0u)
     {
         if (!proxy.IsValid())
         {
@@ -76,20 +79,39 @@ namespace NorvesLib::Core::Rendering
         outLight.attenuation[0] = proxy.Range;
         outLight.attenuation[1] = proxy.OuterConeAngle;
         outLight.attenuation[2] = bReceivesDirectionalShadow ? 1.0f : 0.0f;
-        outLight.attenuation[3] = 0.0f;
+        outLight.attenuation[3] = static_cast<float>(pointShadowCubeSlot);
         return true;
     }
 
+    // pointShadowsはlightProxiesと同じパケットから作ったもの（LightIndexがlightProxiesの番号）。
     inline uint32_t PackLightingPassLights(Container::Span<const LightProxy> lightProxies,
                                            Container::VariableArray<GPULightData>& outLights,
-                                           const LightProxy* shadowedLight = nullptr)
+                                           const LightProxy* shadowedLight = nullptr,
+                                           const PointShadowSnapshot* pointShadows = nullptr)
     {
         outLights.clear();
 
-        for (const LightProxy& proxy : lightProxies)
+        for (uint32_t proxyIndex = 0; proxyIndex < lightProxies.size(); ++proxyIndex)
         {
+            const LightProxy& proxy = lightProxies[proxyIndex];
+            uint32_t pointShadowCubeSlot = 0u;
+            if (pointShadows != nullptr)
+            {
+                for (uint32_t cubeIndex = 0;
+                     cubeIndex < pointShadows->LightCount && cubeIndex < PointShadowMaxLights;
+                     ++cubeIndex)
+                {
+                    if (pointShadows->Lights[cubeIndex].LightIndex == proxyIndex &&
+                        pointShadows->Lights[cubeIndex].LightId == proxy.LightId)
+                    {
+                        pointShadowCubeSlot = cubeIndex + 1u;
+                        break;
+                    }
+                }
+            }
+
             GPULightData light = {};
-            if (PackLightingPassLight(proxy, light, &proxy == shadowedLight))
+            if (PackLightingPassLight(proxy, light, &proxy == shadowedLight, pointShadowCubeSlot))
             {
                 outLights.push_back(light);
             }

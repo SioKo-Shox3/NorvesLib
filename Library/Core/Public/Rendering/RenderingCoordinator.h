@@ -11,8 +11,10 @@
 #include "FramePacket.h"
 #include "ViewRenderContext.h"
 #include "Rendering/DDGIVolume.h"
+#include "Rendering/AutoExposure.h"
 #include "Rendering/VolumetricFog.h"
 #include "Rendering/InstanceBufferRing.h"
+#include "Rendering/RenderedObjectHistory.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
@@ -117,6 +119,9 @@ namespace NorvesLib::Core::Rendering
         bool bRenderFrameTimingAvailable = false;
         bool bGPUTimeAvailable = false;
         bool bTotalFrameTimeAvailable = false;
+
+        // 起動画面などのデバッグ表示用。最後に読み戻せた自動露出の測定（無ければ bValid が false）
+        AutoExposureMeasurement AutoExposure;
     };
 
     struct RenderGraphDebugDumpSnapshot
@@ -337,6 +342,13 @@ namespace NorvesLib::Core::Rendering
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
         /**
+         * @brief 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率を次のFramePacketへ公開する
+         * @param scale 0以上の有限の倍率（1で従来どおり）。範囲外は1へ戻す
+         */
+        void SetStaticEnvironmentIntensityScale(float scale);
+        float GetStaticEnvironmentIntensityScale() const { return m_StaticEnvironmentIntensityScale; }
+
+        /**
          * @brief メインカメラを取得
          */
         const CameraProxy &GetMainCamera() const { return m_MainCamera; }
@@ -534,6 +546,7 @@ namespace NorvesLib::Core::Rendering
         SkyAtmosphereParameters m_SkyAtmosphere;
         DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
+        float m_StaticEnvironmentIntensityScale = 1.0f;
         bool m_bRTGIEnabled = true;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;
@@ -548,6 +561,30 @@ namespace NorvesLib::Core::Rendering
         Thread::Atomic<bool> m_bCanvasCameraSyncPending{false};
         bool m_bCameraSet = false;
         bool m_bPreviousMainCameraValid = false;
+        // m_PreviousMainCamera を書いたパケットのゲームのフレーム番号
+        uint64_t m_PreviousMainCameraFrameNumber = 0;
+
+        // 直前のゲームのフレームのパケットに書いた MegaGeometry の変換と、スキニングの変換・パレット
+        // （ComponentId ごと）。次のパケットの前の値（velocity 用）にする。
+        struct PreviousSkinnedState
+        {
+            Math::Matrix4x4 WorldMatrix;
+            Container::VariableArray<Math::Matrix4x4> BonePalette;
+        };
+        Container::UnorderedMap<uint64_t, Math::Matrix4x4> m_PreviousMegaGeometryWorlds;
+        Container::UnorderedMap<uint64_t, PreviousSkinnedState> m_PreviousSkinnedStates;
+        uint64_t m_PreviousObjectStateFrameNumber = 0;
+        bool m_bPreviousObjectStateValid = false;
+
+        // RenderThread が最後に描いたフレームの物体の変換。描画がゲームのフレームを飛ばしたとき、TAA を選んだ
+        // カメラなら、パケットの前の変換（velocity の基準）をそのフレームのものへ付け替える。
+        RenderedObjectHistory m_RenderedObjectHistory;
+        // 付け替えたフレーム数と、そのうち照合できないインスタンスがあったフレーム数（終了時にログへ出す）
+        uint64_t m_RenderedObjectRebasedFrameCount = 0;
+        uint64_t m_RenderedObjectIncompleteFrameCount = 0;
+
+        /** @brief パケットの MegaGeometry・スキニングへ前の値を書き、このパケットの値を次の前の値として覚える。 */
+        void ApplyPreviousObjectStates(FramePacket& packet);
 
         // Screen（最終出力先 - SwapChain所有）
         Screen m_Screen;
@@ -612,6 +649,8 @@ namespace NorvesLib::Core::Rendering
         float m_PreviousCompletedTotalFrameTimeMs = 0.0f;
         float m_LatestCompletedGPUTimeMs = 0.0f;
         bool m_bLatestCompletedGPUTimeValid = false;
+        // RenderThread専用。SceneView の自動露出のパスから最後に取れた測定。
+        AutoExposureMeasurement m_LatestAutoExposure;
 
         // フレームタイミング
         double m_LastFrameTime = 0.0;
@@ -622,6 +661,9 @@ namespace NorvesLib::Core::Rendering
         bool m_bFrameSubmissionStarted = false;
 
         void UpdateRenderResolution(uint32_t screenWidth, uint32_t screenHeight);
+        // キャンバス（UI）の描画先・正射影の大きさ。内部解像度（SetRenderScale）に依らず画面解像度。
+        uint32_t GetCanvasWidth() const { return m_Width > 0 ? m_Width : 1u; }
+        uint32_t GetCanvasHeight() const { return m_Height > 0 ? m_Height : 1u; }
         void RequestCanvasCameraSync();
         void ConsumePendingCanvasCameraSync();
         void UpdateCanvasCameraForRenderResolution();

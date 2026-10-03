@@ -71,6 +71,13 @@ namespace NorvesLib::Core::Rendering
         const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies,
         Container::VariableArray<BoundingSphere>& outBounds);
 
+    /**
+     * @brief 影を落とすスキンメッシュのアニメーション後のワールド境界球を求める
+     * @return 表示中・影を落とす・境界が有限のときtrue
+     */
+    bool BuildSkinnedShadowCasterWorldBounds(const SkinnedMeshProxy& proxy,
+                                             BoundingSphere& outBounds);
+
     DirectionalShadowMatrixSettings FitDirectionalShadowMatrixSettingsToCasters(
         const DirectionalShadowMatrixSettings& baseSettings,
         const Container::VariableArray<MeshProxy>* meshProxies,

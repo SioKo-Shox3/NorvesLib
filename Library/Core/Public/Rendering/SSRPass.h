@@ -34,8 +34,11 @@ namespace NorvesLib::Core::Rendering
         /** @brief フェード終了距離 */
         float FadeEnd = 15.0f;
 
-        /** @brief ラフネスカットオフ */
-        float RoughnessCutoff = 0.5f;
+        /** @brief 反射を弱め始める材質の粗さ（これ以下は粗さで弱めない） */
+        float RoughnessFadeStart = 0.3f;
+
+        /** @brief 反射が0になる材質の粗さ（Start から smoothstep でなめらかに弱める。これ以上は反射を足さない） */
+        float RoughnessFadeEnd = 0.7f;
 
         /** @brief SSR強度 */
         float Intensity = 0.8f;

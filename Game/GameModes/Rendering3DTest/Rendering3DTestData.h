@@ -9,6 +9,7 @@
 #include "Core/Public/Object/Entity.h"
 #include "GameModes/Rendering3DTest/Rendering3DTestDebugInput.h"
 #include "Core/Public/Rendering/MaterialTypes.h"
+#include "Core/Public/Rendering/SkyAtmosphere.h"
 #include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Core/Public/Rendering/RenderTypes.h"
 #include "Core/Public/Thread/Atomic.h"
@@ -117,11 +118,15 @@ namespace Game::GameModes
         NorvesLib::Core::Component::MegaGeometryComponent *m_pBoulderMegaGeometryComponent = nullptr;
 
         // LightComponent参照（Entityが所有）
-        NorvesLib::Core::Component::LightComponent *m_pDirectionalLightComponent = nullptr;
         NorvesLib::Core::Component::PointLightComponent *m_pPointLightComponent = nullptr;
 
-        // ディレクショナルライト用Entity（位置は不要だがComponentホスト用）
-        NorvesLib::Core::Entity *m_pDirectionalLightObject = nullptr;
+        // 物理空（R2 SkyAtmosphere）の設定。空が有効なとき、エンジンが空の太陽の方向光を光源表へ加え、
+        // IBLも空から作る。シーン独自の方向光は置かない。
+        NorvesLib::Core::Rendering::SkyAtmosphereParameters m_SkyAtmosphere;
+
+        // 方向ライト操作（LightController）が書き込む進行方向の置き場。光源表へは登録せず、
+        // Tick で操作の角度を空の太陽の仰角・方位へ写す。
+        NorvesLib::Core::Rendering::LightProxy m_SkySunControlLight;
 
         // World 所有の pivot/camera Entity と、その camera Entity が Inner 所有する Component。
         NorvesLib::Core::Entity *m_pCameraPivotObject = nullptr;
@@ -144,7 +149,7 @@ namespace Game::GameModes
         // 左クリック選択コントローラー（シーン所有・イベント駆動）
         Game::Input::PickingController m_PickingController;
 
-        // 方向ライト操作コントローラー（矢印/+-、シーン所有・イベント駆動）
+        // 空の太陽の仰角・方位を動かす操作コントローラー（矢印、シーン所有・イベント駆動）
         NorvesLib::Core::Input::LightController m_LightController;
 
         // F1-F5 デバッグビュー切替コントローラー（シーン所有・イベント駆動）
@@ -154,6 +159,64 @@ namespace Game::GameModes
         bool m_bMeshesRegistered = false;
         bool m_bCameraSmokeSyncEmitted = false;
         bool m_bCameraSmokeCompleteEmitted = false;
+        // --startup-camera で指定した起動時のカメラ（SpringArm の yaw・pitch[度]と腕の長さ）
+        bool m_bHasStartupCamera = false;
+        float m_StartupCameraYaw = 0.0f;
+        float m_StartupCameraPitch = 0.0f;
+        float m_StartupCameraArmLength = 0.0f;
+        // --sun-elevation / --sun-azimuth で指定した起動時の空の太陽の仰角・方位（度）
+        bool m_bHasStartupSunElevation = false;
+        float m_StartupSunElevation = 0.0f;
+        bool m_bHasStartupSunAzimuth = false;
+        float m_StartupSunAzimuth = 0.0f;
+        // --exposure-ev100 で指定した起動時の手動露出
+        bool m_bHasStartupExposureEV100 = false;
+        float m_StartupExposureEV100 = 0.0f;
+        // --height-fog-density で指定した高さフォグの地面での密度（0で無効）
+        bool m_bHasStartupHeightFogDensity = false;
+        float m_StartupHeightFogDensity = 0.0f;
+        // --height-fog-falloff で指定した高さフォグの高さ方向の減衰（1/m）
+        bool m_bHasStartupHeightFogFalloff = false;
+        float m_StartupHeightFogFalloff = 0.0f;
+        // --orbit-degrees-per-second で指定したカメラの周回の速さ（度/秒、0で止まったまま）。撮影で
+        // 動くカメラの TAA の残像を確かめるのに使う。
+        float m_OrbitDegreesPerSecond = 0.0f;
+        // --render-scale で指定した内部解像度の倍率（0.5〜1、既定は1で画面解像度のまま描く）。
+        float m_StartupRenderScale = 1.0f;
+        // --debug-draw-test-lines の指定で true にする。大きな球を囲む箱をデバッグの線で毎フレーム描く。
+        bool m_bDebugDrawTestLines = false;
+        // 起動時のアンチエイリアシングが TAA なら true（既定は TAA、--anti-aliasing=fxaa の指定で false）。
+        bool m_bStartupTemporalAA = true;
+        // --night の指定で true にする。空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす
+        // （点光源の影を見る撮影用。既定は昼）。
+        bool m_bStartupNight = false;
+
+        // 手動露出（EV100）。ImGui のスライダーが書き、Tick が絞り・ISO を保ったままシャッター速度へ写す。
+        float m_ExposureEV100 = 0.0f;
+        float m_AppliedExposureEV100 = 0.0f;
+        // 自動露出（起動画面の既定）。ImGui のチェックボックスが書き、Tick がカメラの露出の方式へ写す。
+        bool m_bAutoExposure = true;
+        bool m_bAppliedAutoExposure = true;
+        // アンチエイリアシング（起動画面の既定は TAA、切ると FXAA）。ImGui のチェックボックスが書き、
+        // Tick がカメラのアンチエイリアシングの方式へ写す。
+        bool m_bTemporalAA = true;
+        bool m_bAppliedTemporalAA = true;
+        // レンズの効果（色収差とレンズダート。起動画面の既定は有効、環境変数 NORVES_STARTUP_LENS_EFFECTS=0 で
+        // 無効で起動する）。ImGui のチェックボックスが書き、Tick がカメラのレンズ効果へ写す。
+        bool m_bLensEffects = true;
+        // 見た目の3D LUT（暖かみのある映画調。起動画面の既定は有効、環境変数 NORVES_STARTUP_LOOK_LUT=0 で
+        // 無効で起動する）。ImGui のチェックボックスが書き、Tick がカメラの LUT へ写す。
+        bool m_bLookLut = true;
+        // RenderThread が読み戻した自動露出の測定。Tick が統計のスナップショットから写し、ImGui が表示する。
+        NorvesLib::Core::Rendering::AutoExposureMeasurement m_AutoExposureMeasurement;
+
+        // 環境変数 NORVES_STARTUP_SUN_STEP="<仰角>,<秒>" の指定。起動からその秒数の後に一度だけ、
+        // 空の太陽の仰角を急に変える（自動露出の順応の確かめ用）。
+        bool m_bHasSunStep = false;
+        bool m_bSunStepApplied = false;
+        float m_SunStepElevation = 0.0f;
+        float m_SunStepDelaySeconds = 0.0f;
+        double m_SunStepElapsedSeconds = 0.0;
 
         // ========================================
         // glTF Model（Boulder）
@@ -195,6 +258,15 @@ namespace Game::GameModes
         bool m_bBoulderModelLoaded = false;
         bool m_bBoulderModelLoadPending = false;
         TSharedPtr<BoulderAsyncState> m_BoulderAsyncState; ///< 非同期ロード共有状態
+
+        // 展示物: 材質見本の球の列（金属0と1の2列 × 粗さ5段）と小屋（Cottage_Clean の glTF）
+        VariableArray<NorvesLib::Core::Rendering::MaterialHandle> m_ShowcaseMaterials;
+        VariableArray<NorvesLib::Core::Entity *> m_ShowcaseSphereObjects;
+        NorvesLib::Core::Entity *m_pCottageObject = nullptr;
+        NorvesLib::Core::Component::MegaGeometryComponent *m_pCottageMegaGeometryComponent = nullptr;
+        NorvesLib::Core::Rendering::ModelHandle m_CottageModelHandle;
+        uint32_t m_CottageLoadRequestId = 0;
+        TSharedPtr<BoulderAsyncState> m_CottageAsyncState; ///< 小屋の非同期ロード共有状態（Boulder と同じ型）
         NorvesLib::Core::Particle::ParticleEmitterHandle m_ParticleEmitter;
     };
 

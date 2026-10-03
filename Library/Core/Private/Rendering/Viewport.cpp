@@ -5,8 +5,36 @@
 #include "Math/MatrixUtils.h"
 #include "Math/Vector3.h"
 
+#include <cstdlib>
+#include <cstring>
+
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        // 撮影の確認用: 環境変数 NORVES_DEBUG_VIEW にデバッグ表示の名前（DebugViewModeToString の値）が
+        // 入っていれば、その表示で始める。無い・名前が合わないときは Normal。
+        DebugViewMode ResolveInitialDebugViewModeFromEnvironment()
+        {
+            char *value = nullptr;
+            size_t length = 0;
+            DebugViewMode resolved = DebugViewMode::Normal;
+            if (_dupenv_s(&value, &length, "NORVES_DEBUG_VIEW") == 0 && value)
+            {
+                for (uint8_t index = 0; index < static_cast<uint8_t>(DebugViewMode::Count); ++index)
+                {
+                    const DebugViewMode mode = static_cast<DebugViewMode>(index);
+                    if (std::strcmp(value, DebugViewModeToString(mode)) == 0)
+                    {
+                        resolved = mode;
+                        break;
+                    }
+                }
+            }
+            std::free(value);
+            return resolved;
+        }
+    }
 
     bool Viewport::Initialize(const ViewportSettings &settings)
     {
@@ -21,6 +49,12 @@ namespace NorvesLib::Core::Rendering
         m_Height = settings.Height;
         m_MinDepth = settings.MinDepth;
         m_MaxDepth = settings.MaxDepth;
+
+        const DebugViewMode initialDebugViewMode = ResolveInitialDebugViewModeFromEnvironment();
+        if (initialDebugViewMode != DebugViewMode::Normal)
+        {
+            SetDebugViewMode(initialDebugViewMode);
+        }
 
         // TODO: レンダーターゲット作成
 

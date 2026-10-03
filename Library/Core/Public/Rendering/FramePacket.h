@@ -7,6 +7,7 @@
 #include "ViewportSnapshot.h"
 #include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/RTGIContract.h"
+#include "Rendering/PointShadowSnapshot.h"
 #include "Debug/Stats.h"
 #include "Container/Containers.h"
 #include "Thread/Atomic.h"
@@ -184,6 +185,9 @@ namespace NorvesLib::Core::Rendering
         SceneProxy Scene;
         RayTracingSceneSnapshot RayTracingScene;
 
+        /** @brief キューブシャドウを描く点光源の選択と6面の行列（Scene.LightProxiesとMainCameraから作る） */
+        PointShadowSnapshot PointShadows;
+
         /**
          * @brief TLAS snapshotがray query入力として完全か判定
          *
@@ -272,6 +276,7 @@ namespace NorvesLib::Core::Rendering
             PreviousMainCamera = CameraProxy{};
             Scene.Clear();
             RayTracingScene.Clear();
+            PointShadows.Clear();
             DrawCommands.clear();
             DrawCommandRange = CommandRange{};
             OpaqueCommandRange = CommandRange{};

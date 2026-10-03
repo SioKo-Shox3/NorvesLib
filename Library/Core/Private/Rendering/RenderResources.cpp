@@ -563,11 +563,14 @@ namespace NorvesLib::Core::Rendering
         const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease,
         const Container::VariableArray<Math::Matrix4x4>& bonePalette,
         const Math::Matrix4x4& worldTransform,
-        SkinnedMeshPreparedDraw& outPrepared)
+        SkinnedMeshPreparedDraw& outPrepared,
+        const Container::VariableArray<Math::Matrix4x4>* previousBonePalette,
+        const Math::Matrix4x4* previousWorldTransform)
     {
         auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
         return impl && impl->SkinnedMeshes
-                   ? impl->SkinnedMeshes->PrepareDraw(frameLease, bonePalette, worldTransform, outPrepared)
+                   ? impl->SkinnedMeshes->PrepareDraw(frameLease, bonePalette, worldTransform, outPrepared,
+                                                      previousBonePalette, previousWorldTransform)
                    : false;
     }
 

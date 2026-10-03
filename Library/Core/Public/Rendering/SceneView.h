@@ -7,6 +7,7 @@
 #include "DrawCommand.h"
 #include "PathTracingTransportScope.h"
 #include "RasterDirectBrdf.h"
+#include "Rendering/AutoExposure.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Container/UnorderedSet.h"
@@ -208,6 +209,22 @@ namespace NorvesLib::Core::Rendering
          */
         virtual void Render(ViewRenderContext &context) override;
 
+        /**
+         * @brief 自動露出のパスが最後に読み戻した測定を取る（RenderThread から呼ぶ）
+         * @param outMeasurement 測定の書き込み先
+         * @return 有効な自動露出のパスがあり、有効な測定があるとき true
+         */
+        bool TryGetAutoExposureMeasurement(AutoExposureMeasurement &outMeasurement) const;
+
+        /**
+         * @brief カメラの選択にかかわらず TAA を掛けるかを設定する（描画が止まっている間に呼ぶ）
+         *
+         * ディファードのパイプラインを作るとき、環境変数 NORVES_TEMPORAL_AA=1 ならこれを true にする
+         * （撮影で TAA の結果を確かめるため）。
+         */
+        void SetTemporalAAForced(bool bForced) { m_bTemporalAAForced = bForced; }
+        bool IsTemporalAAForced() const { return m_bTemporalAAForced; }
+
         // ========================================
         // パイプライン構築ヘルパー
         // ========================================
@@ -407,6 +424,15 @@ namespace NorvesLib::Core::Rendering
 
         void AppendWorldBoardDrawCommands();
 
+        /**
+         * @brief このフレームの Viewport に TAA を掛けるかでパスの有効・無効を切り替える
+         *
+         * 掛けるときは TAA のパスを有効にして FXAA を外し、掛けないときは TAA のパスを無効にして
+         * 外した FXAA を戻す。履歴を書いた Viewport を TAA 無しで描くときは TAA の履歴を捨てる
+         * （同じフレームの2つ目以降の Viewport は履歴に触れない）。
+         */
+        void SetTemporalAAApplied(bool bApplied, uint32_t viewportId);
+
     private:
         // MeshProxy（WorldからSceneViewに直接渡される）
         // MeshProxyの索引はComponentIdで管理し、ObjectIdはソートや所有元の文脈に使います。
@@ -441,6 +467,9 @@ namespace NorvesLib::Core::Rendering
         float m_MaxDrawDistance = 10000.0f;
         bool m_bEnableInstancing = true;
         uint32_t m_MinInstanceCount = 2;
+        bool m_bTemporalAAForced = false;
+        // TAA のために FXAA を外しているか（TAA を止めたとき戻す）
+        bool m_bFXAASuppressedByTemporalAA = false;
 
         // 統計
         SceneViewStats m_Stats;

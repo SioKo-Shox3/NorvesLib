@@ -11,6 +11,8 @@
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "Logging/LogMacros.h"
+#include <algorithm>
+#include <cmath>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -436,9 +438,33 @@ namespace NorvesLib::Core::Rendering
         params.intensity = m_Settings.Intensity;
         params.radius = m_Settings.Radius;
         params.softness = m_Settings.Softness;
+        // カメラがビネットを差し替えていればその値を使う（有限でない値は差し替えない）。
+        const CameraProxy* activeCamera = context.GetActiveCamera();
+        if (activeCamera != nullptr && activeCamera->GradingOverride.bEnabled)
+        {
+            const CameraGradingOverride& grading = activeCamera->GradingOverride;
+            if (std::isfinite(grading.VignetteIntensity) && std::isfinite(grading.VignetteRadius) &&
+                std::isfinite(grading.VignetteSoftness))
+            {
+                params.intensity = std::clamp(grading.VignetteIntensity, 0.0f, 1.0f);
+                params.radius = grading.VignetteRadius;
+                params.softness = grading.VignetteSoftness;
+            }
+        }
+        // 色収差はカメラのレンズ効果からだけ取る（既定0で掛けない。有限でない値・負は0、上限16画素）。
+        params.chromaticAberrationPixels = 0.0f;
+        if (activeCamera != nullptr && std::isfinite(activeCamera->LensEffects.ChromaticAberrationPixels))
+        {
+            params.chromaticAberrationPixels =
+                std::clamp(activeCamera->LensEffects.ChromaticAberrationPixels, 0.0f, 16.0f);
+        }
         const bool bDebugPostProcessBypass =
             IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
         params.bEnabled = bDebugPostProcessBypass ? 0u : (m_Settings.bEnabled ? 1u : 0u);
+        if (bDebugPostProcessBypass)
+        {
+            params.chromaticAberrationPixels = 0.0f;
+        }
         m_ParamsBuffer->Update(&params, sizeof(GPUVignetteParams));
 
         if (bRegisterLegacyBridge && context.SharedResources)

@@ -41,6 +41,7 @@
 #include "Core/Public/Math/Matrix4x4.h"
 #include "Core/Public/Math/Quaternion.h"
 #include "Core/Public/Math/Vector3.h"
+#include "GameModes/Rendering3DTest/Rendering3DTestDebugDraw.h"
 
 // ImGui 有効時のみ、方向ライト編集 view を併走させる SubRoutine を引き込む。
 // OFF 時はヘッダごとガードアウトされ空 TU となり push もガードアウトされる(挙動不変)。
@@ -48,8 +49,12 @@
 #include "Core/Public/GameMode/IGameModeController.h"  // RequestPushSubRoutine の完全定義
 #include "GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.h"
 #endif
+#include "GameModes/Rendering3DTest/SkySunControl.h"
+#include "Core/Public/Rendering/VolumetricFog.h"
 
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <utility>
 
 using namespace NorvesLib::Core::Container;
@@ -64,6 +69,164 @@ namespace Game::GameModes
 {
     namespace
     {
+        // 環境変数 NORVES_STARTUP_SUN_STEP="<仰角(度)>,<秒>" を読む。形式が違うときは false。
+        bool TryReadStartupSunStep(float& outElevation, float& outDelaySeconds)
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_STARTUP_SUN_STEP");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            if (value == nullptr || value[0] == '\0')
+            {
+                return false;
+            }
+            char* end = nullptr;
+            const float elevation = std::strtof(value, &end);
+            if (end == value || *end != ',')
+            {
+                return false;
+            }
+            const char* delayText = end + 1;
+            const float delaySeconds = std::strtof(delayText, &end);
+            if (end == delayText || *end != '\0' || !std::isfinite(elevation) || !std::isfinite(delaySeconds) ||
+                elevation < 0.0f || elevation > 90.0f || delaySeconds < 0.0f)
+            {
+                return false;
+            }
+            outElevation = elevation;
+            outDelaySeconds = delaySeconds;
+            return true;
+        }
+
+        // 環境変数 NORVES_STARTUP_LENS_EFFECTS が "0" なら false（起動画面のレンズの効果を切って撮り比べる用）。
+        bool ReadStartupLensEffectsEnabled()
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_STARTUP_LENS_EFFECTS");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            return value == nullptr || std::strcmp(value, "0") != 0;
+        }
+
+        // 環境変数 NORVES_STARTUP_RTGI が "0" なら false（起動画面のRTGIを切り、IBLだけで撮り比べる用）。
+        bool ReadStartupRTGIEnabled()
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_STARTUP_RTGI");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            return value == nullptr || std::strcmp(value, "0") != 0;
+        }
+
+        // 環境変数 NORVES_STARTUP_LOOK_LUT が "0" なら false（起動画面の見た目の LUT を切って撮り比べる用）。
+        bool ReadStartupLookLutEnabled()
+        {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+            const char* value = std::getenv("NORVES_STARTUP_LOOK_LUT");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+            return value == nullptr || std::strcmp(value, "0") != 0;
+        }
+
+        // 起動画面の高さフォグ（R3）。地面での密度（1/m、0で無効）と、高さ方向の減衰（1/m）。
+        // 減衰を上限の 1/m にして地面すれすれの薄い層にし、遠くの地面へ向かう浅い視線だけが厚く霞む
+        // ようにする。密度は太陽 45° の撮り比べ（0.02〜0.1）で、地面すれすれの低角度視点でも近くの各球の
+        // 表示のリニア輝度の標準偏差がフォグ無しの 90% 以上に残る値を選んだ（0.04 では低角度の手前の球が
+        // 約 85% まで落ちる）。--height-fog-density・--height-fog-falloff で替えられる。
+        constexpr float kStartupHeightFogDensity = 0.02f;
+        constexpr float kStartupHeightFogFalloff = 1.0f;
+
+        // 起動画面の自動露出の露出補正（EV）。自動露出は画面の log2 輝度の平均を中間調へ合わせるため、
+        // 明るい空が画面の多くを占める昼の屋外では地面が暗く写る。写真の逆光補正と同じく露出を上げる。
+        // トーンマップを暗部を縮めない NeutralLinear にしたので、昼（仰角45°）の画面の平均が 0〜255 で約120に
+        // なる +1.25 EV にとどめる（以前の ACES での +2 EV は平均が約180で白っぽく飛んだ）。手動露出には掛けない。
+        constexpr float kStartupAutoExposureCompensationEV = 1.25f;
+
+        // 起動画面の自動露出で、測光した明るさ（露出補正の前の目標の EV100）に応じて足す露出補正。
+        // 自動露出だけでは夕も夜も昼と同じ中間調まで持ち上がり、夜が夜に見えない。目の暗順応が昼の明るさまで
+        // 戻らないのと同じく、14 EV（朝の仰角10°の測光値が約13.5〜13.8、昼の45°が約15.4〜15.8）より暗いほど
+        // 1 EV あたり約0.41 EV ずつ暗く保ち、0 EV で -5.7 EV にする（夕の3°の約11.4〜12.1で約 -0.8〜-1.1 EV、
+        // 夜の約2〜4で約 -4.1〜-4.9 EV）。夜は光源のにじみが画面を広く占める低角度の視点が最も明るく写るので、
+        // その画面の平均が80を超えない傾きにした。撮影で朝・昼・夕・夜の画面の平均が約115・120・90・60になる。
+        constexpr float kStartupDarkSceneEV100 = 0.0f;
+        constexpr float kStartupDarkSceneCompensationEV = -5.7f;
+        constexpr float kStartupBrightSceneEV100 = 14.0f;
+
+        // --night の静的HDR（grasslands_sunset_4k）の倍率。倍率1の上半球の放射輝度を余弦で積分した水平面の
+        // 照度は約 3.9 lx なので、0.08 で約 0.31 lx（満月の夜の地面の目安 0.1〜1 lx）にする。
+        constexpr float kNightStaticEnvironmentIntensityScale = 0.08f;
+
+        // 光源球の電球の色（リニアの sRGB、最大の成分を1にした値）。白熱電球の色温度 2850 K（100 W 形の
+        // タングステン電球、CIE 標準イルミナント A の 2856 K に近い）の黒体の色度を Kim ほかの3次式の近似で
+        // 求め（x = 0.4475、y = 0.4067）、XYZ から sRGB（D65）の行列でリニアの RGB へ直した。
+        // 照明の強さは色の輝度で割って光束（lm）に合わせるので、ここは色だけを決める。
+        constexpr float kLightBulbColor[3] = {1.0f, 0.4457f, 0.1276f};
+
+        float StartupExposureCompensationEV(bool bAutoExposure)
+        {
+            return bAutoExposure ? kStartupAutoExposureCompensationEV : 0.0f;
+        }
+
+        // 起動画面のレンズの効果。色収差は画面の左右の端で R・B が 1.5 画素ずれる弱さにとどめ、輪郭の色の
+        // にじみがわずかに見える程度にする。レンズダートは、ブルームのうちプリエクスポージャ後で1を超えた
+        // 明るいにじみ（太陽・発光球の周り）にだけ模様を浮かせる。強さ2は夕（仰角3°）に太陽のにじみの中で
+        // しみの丸が見え、昼（45°）の空には模様が出ない値（しきい値0.3では昼の空にもしみが浮いた）。夜の点光源の
+        // 周りの暗い背景では、BloomSettings::LensDirtSceneRatio が加算をブルーム前の画素の値の0.25倍へ頭打ちにし、
+        // しみが色付きの円（ゴースト）として浮かないようにする。
+        constexpr float kStartupChromaticAberrationPixels = 1.5f;
+        constexpr float kStartupLensDirtIntensity = 2.0f;
+
+        // 起動画面のトーンマップとグレーディングとビネット（検証シーンのカメラは View の既定のまま）。
+        // トーンマップは中間調まで線形の NeutralLinear（明部だけを Khronos PBR Neutral の式で圧縮する）。ACES Filmic と
+        // Khronos PBR Neutral の参照実装はどちらも足元で暗部を縮め、空の光だけの影の中（ライティングの出力で日向の
+        // 約2割）が、画面の平均を約120にする露出では表示のリニア輝度で日向の1割強まで落ちる。
+        // 線形の暗部の上に、黒と白を動かさない S 字のコントラスト 1.15（軸 0.5）で中間を立てる（影の中は日向の
+        // 約18〜21%）。彩度は 1.6: 線形の曲線は ACES のように中間の彩度を上げず、見た目の LUT が明部の彩度を
+        // 落とすため、これより低いと昼の空の上端が灰色に寄る（B − R が符号化値で40を切る）。色温度は0（暖かみは
+        // LUT が持つ）。ビネットは強さ 0.25・半径 0.85・幅 0.6 で、画面の隅を約 0.78 倍にする（View の既定 0.3・0.8・0.5 の
+        // 約 0.72 倍より弱め、明るい地面の隅が濁らないようにする）。
+        // 起動画面の見た目の 3D LUT（Scripts/BakeLookLut.py が焼く暖かみのある映画調）。上のグレーディングの後に
+        // 掛かり、中間と明部を琥珀へ、暗部をわずかに青緑へ寄せ、黒をわずかに持ち上げる。
+        constexpr const char* kStartupLookLutAssetPath = "Textures/LookLuts/WarmFilm.lut3d";
+
+        void ApplyStartupGrading(CameraProxy& camera, bool bLensEffects, bool bLookLut)
+        {
+            camera.ToneMapCurve = CameraToneMapCurve::NeutralLinear;
+            camera.AutoExposureCurve.bEnabled = true;
+            camera.AutoExposureCurve.DarkEV100 = kStartupDarkSceneEV100;
+            camera.AutoExposureCurve.DarkCompensation = kStartupDarkSceneCompensationEV;
+            camera.AutoExposureCurve.BrightEV100 = kStartupBrightSceneEV100;
+            camera.AutoExposureCurve.BrightCompensation = 0.0f;
+            camera.LookLut.AssetPath = bLookLut ? kStartupLookLutAssetPath : nullptr;
+            camera.LookLut.Intensity = 1.0f;
+            camera.LensEffects.ChromaticAberrationPixels = bLensEffects ? kStartupChromaticAberrationPixels : 0.0f;
+            camera.LensEffects.LensDirtIntensity = bLensEffects ? kStartupLensDirtIntensity : 0.0f;
+            camera.GradingOverride.bEnabled = true;
+            camera.GradingOverride.Contrast = 1.15f;
+            camera.GradingOverride.ContrastPivot = 0.5f;
+            camera.GradingOverride.Saturation = 1.6f;
+            camera.GradingOverride.Temperature = 0.0f;
+            camera.GradingOverride.VignetteIntensity = 0.25f;
+            camera.GradingOverride.VignetteRadius = 0.85f;
+            camera.GradingOverride.VignetteSoftness = 0.6f;
+        }
+
         void UnregisterRendering3DInput(GameModeContext& ctx, Rendering3DTestData& data)
         {
             auto& inputRouter = ctx.EngineRef.GetInputRouter();
@@ -122,18 +285,50 @@ namespace Game::GameModes
                 return false;
             }
 
-            data.m_pSpringArmComponent->SetArmLength(5.0f);
+            // 既定の視点は、球・岩・材質見本の球と奥の小屋がまとめて入るよう引いて浅く見下ろす。
+            data.m_pSpringArmComponent->SetArmLength(10.0f);
             data.m_pSpringArmComponent->SetYaw(0.0f);
-            data.m_pSpringArmComponent->SetPitch(30.0f);
-            data.m_pCameraComponent->SetActiveCamera(true);
-            // このシーンの光・発光・環境マップは、光を物理単位（lux・nits）とEV100の露出へ移す前の値で作ってある。
-            // プリエクスポージャ（2^(露出補正-EV100)/1.2）が1になる露出補正を掛け、従来の明るさで表示する。
+            data.m_pSpringArmComponent->SetPitch(20.0f);
+            if (data.m_bHasStartupCamera)
             {
-                const float aperture = data.m_pCameraComponent->GetAperture();
-                const float ev100 = std::log2(aperture * aperture / data.m_pCameraComponent->GetShutterSpeed() *
-                                              (100.0f / data.m_pCameraComponent->GetISO()));
-                data.m_pCameraComponent->SetExposureCompensation(ev100 + std::log2(1.2f));
+                data.m_pSpringArmComponent->SetArmLength(data.m_StartupCameraArmLength);
+                data.m_pSpringArmComponent->SetYaw(data.m_StartupCameraYaw);
+                data.m_pSpringArmComponent->SetPitch(data.m_StartupCameraPitch);
             }
+            data.m_pCameraComponent->SetActiveCamera(true);
+            // 晴天の昼の手動露出（f/16・1/100 s・ISO 100、EV100 約14.6）。光・発光・空は物理単位の値で、
+            // 露出補正は掛けない。
+            data.m_pCameraComponent->SetAperture(16.0f);
+            data.m_pCameraComponent->SetShutterSpeed(1.0f / 100.0f);
+            data.m_pCameraComponent->SetISO(100.0f);
+            data.m_pCameraComponent->SetExposureCompensation(0.0f);
+            // --exposure-ev100 の指定があれば、絞り・ISO を保ったままシャッター速度で合わせる。
+            data.m_ExposureEV100 = ComputeEV100(data.m_pCameraComponent->GetAperture(),
+                                                data.m_pCameraComponent->GetShutterSpeed(),
+                                                data.m_pCameraComponent->GetISO());
+            if (data.m_bHasStartupExposureEV100)
+            {
+                data.m_ExposureEV100 = data.m_StartupExposureEV100;
+                data.m_pCameraComponent->SetShutterSpeed(ComputeShutterSpeedForEV100(
+                    data.m_pCameraComponent->GetAperture(), data.m_pCameraComponent->GetISO(),
+                    data.m_ExposureEV100));
+            }
+            data.m_AppliedExposureEV100 = data.m_ExposureEV100;
+            // 起動画面は自動露出にする。上の手動露出は、最初の測定が出るまでの露出と、ImGui で自動を
+            // 切ったときの露出になる。
+            data.m_bAutoExposure = true;
+            data.m_bAppliedAutoExposure = true;
+            data.m_pCameraComponent->SetExposureMode(CameraExposureMode::Auto);
+            data.m_pCameraComponent->SetExposureCompensation(StartupExposureCompensationEV(data.m_bAutoExposure));
+            // 既定のコントラスト（1.05）は表示のリニア値 0.024 未満（sRGB で約 43/255 以下）を黒へ切り、晴天の
+            // 影の中の地面（空の光だけで日向の約 2 割）が真っ黒になるため、起動画面ではこの式のコントラストを
+            // 掛けない。起動画面のコントラストは、黒を切らない式で ApplyStartupGrading が差し替える。
+            data.m_pCameraComponent->SetGradingContrast(1.0f);
+            // 起動画面のアンチエイリアシングは TAA（--anti-aliasing=fxaa と ImGui で FXAA を選べる）。
+            data.m_bTemporalAA = data.m_bStartupTemporalAA;
+            data.m_bAppliedTemporalAA = data.m_bTemporalAA;
+            data.m_pCameraComponent->SetAntiAliasingMode(data.m_bTemporalAA ? CameraAntiAliasingMode::TemporalAA
+                                                                            : CameraAntiAliasingMode::FXAA);
             data.m_pSpringArmComponent->RefreshOwnerTransform();
 
             CameraProxy initialCamera;
@@ -144,10 +339,20 @@ namespace Game::GameModes
                 return false;
             }
 
+            data.m_bLensEffects = ReadStartupLensEffectsEnabled();
+            data.m_bLookLut = ReadStartupLookLutEnabled();
+            ApplyStartupGrading(initialCamera, data.m_bLensEffects, data.m_bLookLut);
             ctx.EngineRef.GetRenderWorld().SetMainCamera(initialCamera);
-            // 起動画面はRTGIを使わず、従来どおり環境光（IBL）で間接光を表す（RTGIの少ない光線数の雑音が
-            // 物体と地面に粒状に残るため）。
-            ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGIEnabled(false);
+            // 起動画面の間接光はRTGI（レイトレが使えない環境では環境光（IBL）へ落ちる）。
+            // 環境変数 NORVES_STARTUP_RTGI=0 で切り、IBLだけの画面と撮り比べられる。
+            ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGIEnabled(
+                ReadStartupRTGIEnabled());
+            // --render-scale の指定があれば、内部解像度（画面解像度×倍率）で描いて拡大する。
+            if (data.m_StartupRenderScale < 1.0f)
+            {
+                ctx.EngineRef.GetRenderWorld().SetRenderScale(data.m_StartupRenderScale);
+                LOG_INFO_F("Rendering3DTest render_scale=%.3f", static_cast<double>(data.m_StartupRenderScale));
+            }
             data.m_PickingController.SetFallbackSelectionDepth(
                 data.m_pSpringArmComponent->GetArmLength());
             LOG_INFO("CAMERA_COMPONENT_SMOKE stage=registered");
@@ -396,10 +601,17 @@ namespace Game::GameModes
                 NORVES_LOG_ERROR("Rendering3DTest", "Failed to register sphere mesh");
             }
 
-            // 地面メッシュの生成（10x10のPlane）
+            // 地面メッシュの生成（60 m 四方の Plane）。石畳のテクスチャを 2 m ごとに繰り返すよう UV を広げる。
+            constexpr float kGroundSize = 60.0f;
+            constexpr float kGroundTileSize = 2.0f;
             VariableArray<Mesh3DVertex> groundVertices;
             VariableArray<uint32_t> groundIndices;
-            ProceduralMeshGenerator::GeneratePlane(10.0f, 10.0f, 4, 4, groundVertices, groundIndices);
+            ProceduralMeshGenerator::GeneratePlane(kGroundSize, kGroundSize, 8, 8, groundVertices, groundIndices);
+            for (Mesh3DVertex &vertex : groundVertices)
+            {
+                vertex.TexCoord[0] *= kGroundSize / kGroundTileSize;
+                vertex.TexCoord[1] *= kGroundSize / kGroundTileSize;
+            }
 
             bool bGroundOk = meshes.Register(
                 data.m_GroundMeshHandle,
@@ -562,84 +774,104 @@ namespace Game::GameModes
             }
 
             // --- CobbleStoneFloor（石畳）マテリアル（テクスチャなしで先に作成） ---
+            // 地面も同じ石畳のテクスチャを使う。読み込みは1回だけで、そろったら両方の材質へ入れる。
             {
                 MaterialCreateData cobbleMatInfo;
                 cobbleMatInfo.HeightScale = 0.05f;
                 cobbleMatInfo.DebugName = "CobbleStoneFloor";
                 data.m_CobbleStoneMaterial = materials.Create(cobbleMatInfo);
 
+                MaterialCreateData groundMatInfo;
+                groundMatInfo.DebugName = "Ground";
+                data.m_GroundMaterial = materials.Create(groundMatInfo);
+
                 auto cobbleUpdate = MakeShared<PendingMaterialUpdate>();
                 cobbleUpdate->TargetMaterial = data.m_CobbleStoneMaterial;
                 cobbleUpdate->CreateData = cobbleMatInfo;
                 cobbleUpdate->PendingTextureCount = 5;
 
+                // 地面の石畳は2 mのタイルで、球（UVの1周が約6.3 m）より1タイルが小さいため、
+                // 凹凸の深さが球と同じ程度になるよう高さのスケールを小さくする。
+                constexpr float kGroundHeightScale = 0.03f;
+                const MaterialHandle groundMaterial = data.m_GroundMaterial;
+                auto finishCobbleStone = [cobbleUpdate, groundMaterial, &materials]()
+                {
+                    if (--cobbleUpdate->PendingTextureCount != 0)
+                    {
+                        return;
+                    }
+                    materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                    MaterialCreateData groundData = cobbleUpdate->CreateData;
+                    groundData.HeightScale = kGroundHeightScale;
+                    groundData.DebugName = "Ground";
+                    materials.Update(groundMaterial, groundData);
+                    NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
+                };
+
                 textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png",
-                                                 [cobbleUpdate, &materials](TextureHandle handle)
+                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.AlbedoTexture = handle;
-                                                     if (--cobbleUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                                                     }
+                                                     finishCobbleStone();
                                                  });
-                textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_gl_4k.png",
-                                                 [cobbleUpdate, &materials](TextureHandle handle)
+                textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_dx_4k.png",
+                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.NormalTexture = handle;
-                                                     if (--cobbleUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                                                     }
+                                                     finishCobbleStone();
                                                  });
                 textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png",
-                                                 [cobbleUpdate, &materials](TextureHandle handle)
+                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.RoughnessTexture = handle;
-                                                     if (--cobbleUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                                                     }
+                                                     finishCobbleStone();
                                                  });
                 textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png",
-                                                 [cobbleUpdate, &materials](TextureHandle handle)
+                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.AOTexture = handle;
-                                                     if (--cobbleUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                                                     }
+                                                     finishCobbleStone();
                                                  });
                 textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
-                                                 [cobbleUpdate, &materials](TextureHandle handle)
+                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.HeightTexture = handle;
-                                                     if (--cobbleUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                                                     }
+                                                     finishCobbleStone();
                                                  });
 
                 data.m_PendingMaterialUpdates.push_back(cobbleUpdate);
                 NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material created (textures loading async)");
             }
 
-            // 地面マテリアル作成（チェッカーボードは同期で作成済み）
-            MaterialCreateData groundMatInfo;
-            groundMatInfo.AlbedoTexture = data.m_CheckerTextureHandle;
-            groundMatInfo.DebugName = "Ground";
-            data.m_GroundMaterial = materials.Create(groundMatInfo);
+            // --- 材質見本の球の材質（同じ色で、金属0と1 × 粗さ5段） ---
+            {
+                constexpr float kShowcaseMetallic[] = {0.0f, 1.0f};
+                constexpr float kShowcaseRoughness[] = {0.1f, 0.3f, 0.5f, 0.7f, 0.9f};
+                data.m_ShowcaseMaterials.clear();
+                for (float metallic : kShowcaseMetallic)
+                {
+                    for (float roughness : kShowcaseRoughness)
+                    {
+                        MaterialCreateData showcaseMatInfo;
+                        showcaseMatInfo.Metallic = metallic;
+                        showcaseMatInfo.Roughness = roughness;
+                        showcaseMatInfo.DebugName = "ShowcaseSphere";
+                        data.m_ShowcaseMaterials.push_back(materials.Create(showcaseMatInfo));
+                    }
+                }
+            }
 
             // 光源球体マテリアル作成（エミッシブ、テクスチャ不要）
             MaterialCreateData lightSphereMatInfo;
-            lightSphereMatInfo.EmissiveColor[0] = 1.0f;
-            lightSphereMatInfo.EmissiveColor[1] = 0.9f;
-            lightSphereMatInfo.EmissiveColor[2] = 0.3f;
-            lightSphereMatInfo.EmissiveLuminanceNits = 8.0f;
+            lightSphereMatInfo.EmissiveColor[0] = kLightBulbColor[0];
+            lightSphereMatInfo.EmissiveColor[1] = kLightBulbColor[1];
+            lightSphereMatInfo.EmissiveColor[2] = kLightBulbColor[2];
+            // 内面つや消しの電球の見かけの表面の輝度（約15 cd/cm² = 150000 nits）で描く。光束1600 lmを半径約3 cmの
+            // 球から一様に出したときの平均（Φ/(π·4πr²) ≈ 45000 nits）より、フィラメントの光が集まる正面は明るい。
+            // 見える球（半径0.15 m）の面で割った値（約1800 nits）では夕の自動露出でも背景の数倍にとどまり
+            // ブルームでにじまないため、電球そのものの明るさで描く。照明は点光源の光束のまま。
+            // GBufferへはプリエクスポージャ後の値を書くため、昼・夕の露出では半精度の範囲に十分収まる。
+            lightSphereMatInfo.EmissiveLuminanceNits = 150000.0f;
             lightSphereMatInfo.DebugName = "LightSphere";
             data.m_LightSphereMaterial = materials.Create(lightSphereMatInfo);
         }
@@ -654,8 +886,8 @@ namespace Game::GameModes
             data.m_pSphereObject = world.SpawnObject<Entity>();
             ctx.ScopeRef.TrackObject(data.m_pSphereObject);
 
-            // 球体を地面の上に配置（半径1.0 + 地面Y=-1.0 → Y=0.5で浮かせる）
-            data.m_pSphereObject->SetPosition(0.0f, 0.5f, 0.0f);
+            // 球体を地面の上に置く（半径1.0、地面Y=-1.0 → 中心Y=0.0で接地）
+            data.m_pSphereObject->SetPosition(0.0f, 0.0f, 0.0f);
 
             data.m_pSphereMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pSphereObject);
             data.m_pSphereMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
@@ -714,12 +946,12 @@ namespace Game::GameModes
             data.m_pGroundMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pGroundObject);
             data.m_pGroundMeshComponent->SetMeshHandle(data.m_GroundMeshHandle);
             data.m_pGroundMeshComponent->SetCastShadow(false);
-            // オブジェクトカラー（暗い緑灰色）→ CustomData
-            data.m_pGroundMeshComponent->SetCustomData(0, 0.35f);
-            data.m_pGroundMeshComponent->SetCustomData(1, 0.45f);
-            data.m_pGroundMeshComponent->SetCustomData(2, 0.3f);
+            // オブジェクトカラー（白 = 石畳のテクスチャの色をそのまま使う）→ CustomData
+            data.m_pGroundMeshComponent->SetCustomData(0, 1.0f);
+            data.m_pGroundMeshComponent->SetCustomData(1, 1.0f);
+            data.m_pGroundMeshComponent->SetCustomData(2, 1.0f);
             data.m_pGroundMeshComponent->SetCustomData(3, 1.0f);
-            // 地面マテリアルを適用
+            // 地面マテリアル（石畳）を適用
             data.m_pGroundMeshComponent->SetMaterial(0, data.m_GroundMaterial);
 
             LOG_INFO("Ground Entity created and added to World");
@@ -734,43 +966,135 @@ namespace Game::GameModes
             data.m_pLightSphereMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pLightSphereObject);
             data.m_pLightSphereMeshComponent->SetMeshHandle(data.m_LightSphereMeshHandle);
             data.m_pLightSphereMeshComponent->SetCastShadow(false); // 光源自体は影を落とさない
-            // 明るい黄色（発光体の見た目）
-            data.m_pLightSphereMeshComponent->SetCustomData(0, 1.0f);
-            data.m_pLightSphereMeshComponent->SetCustomData(1, 0.9f);
-            data.m_pLightSphereMeshComponent->SetCustomData(2, 0.3f);
+            // 電球の色（発光体の見た目）
+            data.m_pLightSphereMeshComponent->SetCustomData(0, kLightBulbColor[0]);
+            data.m_pLightSphereMeshComponent->SetCustomData(1, kLightBulbColor[1]);
+            data.m_pLightSphereMeshComponent->SetCustomData(2, kLightBulbColor[2]);
             data.m_pLightSphereMeshComponent->SetCustomData(3, 1.0f);
             // 光源球体マテリアル（エミッシブ設定はマテリアル側に移動済み）
             data.m_pLightSphereMeshComponent->SetMaterial(0, data.m_LightSphereMaterial);
 
             // PointLightComponentの追加（SceneViewへのLightProxy登録はWorld::SyncToSceneView()で自動化）
             data.m_pPointLightComponent = world.CreateComponent<Component::PointLightComponent>(data.m_pLightSphereObject);
-            data.m_pPointLightComponent->SetLightColor(1.0f, 0.9f, 0.3f);
-            data.m_pPointLightComponent->SetIntensity(2.0f);
+            data.m_pPointLightComponent->SetLightColor(kLightBulbColor[0], kLightBulbColor[1], kLightBulbColor[2]);
+            // 100 W 形の電球相当の光束（1600 lm）。
+            data.m_pPointLightComponent->SetIntensityUnit(Component::LightIntensityUnit::Lumen);
+            data.m_pPointLightComponent->SetIntensity(1600.0f);
             data.m_pPointLightComponent->SetRange(10.0f);
             data.m_pPointLightComponent->SetLightVisible(true);
-            data.m_pPointLightComponent->SetCastShadows(false);
+            // キューブシャドウで球・岩・材質見本の球の影を地面へ落とす。
+            data.m_pPointLightComponent->SetCastShadows(true);
             LOG_INFO("Light sphere Entity created and added to World");
 
-            // --- ディレクショナルライト（シャドウ方向と一致） ---
-            data.m_pDirectionalLightObject = world.SpawnObject<Entity>();
-            ctx.ScopeRef.TrackObject(data.m_pDirectionalLightObject);
-            data.m_pDirectionalLightObject->SetPosition(0.0f, 0.0f, 0.0f);
+            // --- 材質見本の球の列 ---
+            // 球（中心X=0）の左に、手前の列を非金属、奥の列を金属として粗さ0.1〜0.9を左から並べる。
+            // 奥の列は既定の視点で手前の列に隠れないよう間を空ける。
+            {
+                constexpr uint32_t kShowcaseColumns = 5u;
+                constexpr float kShowcaseRadius = 0.4f;
+                constexpr float kShowcaseSpacing = 1.0f;
+                constexpr float kShowcaseStartX = -6.4f;
+                constexpr float kShowcaseRowZ[] = {1.2f, -0.8f};
+                // 見本の色（リニア）。金属では反射の色になる。
+                constexpr float kShowcaseColor[3] = {0.9f, 0.7f, 0.4f};
+                data.m_ShowcaseSphereObjects.clear();
+                for (uint32_t materialIndex = 0; materialIndex < data.m_ShowcaseMaterials.size(); ++materialIndex)
+                {
+                    const uint32_t row = materialIndex / kShowcaseColumns;
+                    const uint32_t column = materialIndex % kShowcaseColumns;
+                    Entity *showcaseObject = world.SpawnObject<Entity>();
+                    ctx.ScopeRef.TrackObject(showcaseObject);
+                    showcaseObject->SetPosition(kShowcaseStartX + static_cast<float>(column) * kShowcaseSpacing,
+                                                -1.0f + kShowcaseRadius,
+                                                kShowcaseRowZ[row]);
+                    showcaseObject->SetScale(kShowcaseRadius, kShowcaseRadius, kShowcaseRadius);
 
-            data.m_pDirectionalLightComponent = world.CreateComponent<Component::LightComponent>(data.m_pDirectionalLightObject);
-            // LightComponentはデフォルトでDirectional型
-            data.m_pDirectionalLightComponent->SetLightColor(1.0f, 1.0f, 1.0f);
-            data.m_pDirectionalLightComponent->SetIntensity(1.0f);
-            data.m_pDirectionalLightComponent->SetLightDirection(-0.577f, -0.577f, -0.577f);
-            data.m_pDirectionalLightComponent->SetLightVisible(true);
-            data.m_pDirectionalLightComponent->SetCastShadows(true);
-            LOG_INFO("Directional light created and added to World");
+                    Component::MeshComponent *showcaseMeshComponent =
+                        world.CreateComponent<Component::MeshComponent>(showcaseObject);
+                    showcaseMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
+                    showcaseMeshComponent->SetCastShadow(true);
+                    showcaseMeshComponent->SetCustomData(0, kShowcaseColor[0]);
+                    showcaseMeshComponent->SetCustomData(1, kShowcaseColor[1]);
+                    showcaseMeshComponent->SetCustomData(2, kShowcaseColor[2]);
+                    showcaseMeshComponent->SetCustomData(3, 1.0f);
+                    showcaseMeshComponent->SetMaterial(0, data.m_ShowcaseMaterials[materialIndex]);
+                    data.m_ShowcaseSphereObjects.push_back(showcaseObject);
+                }
+                LOG_INFO("Rendering3DTest showcase spheres created count=%zu", data.m_ShowcaseSphereObjects.size());
+            }
 
-            // 方向ライト操作コントローラーを方向ライトへ接続し、入力ルーターへ
-            // ゲーム優先度で登録する。SetTargetComponent が現在方向/強度から
-            // 内部 Yaw/Pitch を seed するため初回入力でのジャンプは起きない。
+            // --- 物理空と空の太陽 ---
+            // 空を有効にすると、エンジンが空の太陽の方向光（影を落とす）を光源表へ加え、IBLも空から作る。
+            // 太陽は仰角40°・方位30°（+X寄り・カメラ側の上空）に置き、既定の視点から球と岩の影が
+            // 左奥の地面へ落ちるようにする。
+            data.m_SkyAtmosphere = MakeDefaultSkyAtmosphereParameters();
+            data.m_SkyAtmosphere.bEnabled = true;
+            data.m_SkyAtmosphere.SunAltitudeDegrees = 40.0f;
+            data.m_SkyAtmosphere.SunAzimuthDegrees = 30.0f;
+            if (data.m_bHasStartupSunElevation)
+            {
+                data.m_SkyAtmosphere.SunAltitudeDegrees = data.m_StartupSunElevation;
+            }
+            if (data.m_bHasStartupSunAzimuth)
+            {
+                data.m_SkyAtmosphere.SunAzimuthDegrees = data.m_StartupSunAzimuth;
+            }
+            // --night: 空（と空の太陽の方向光）を消し、環境光を空が無効なときの静的HDRにして月明かり程度へ
+            // 落とす。点光源（1600 lm）だけが地面を照らすので、点光源の影が目で見える。
+            if (data.m_bStartupNight)
+            {
+                data.m_SkyAtmosphere.bEnabled = false;
+            }
+            ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(
+                data.m_bStartupNight ? kNightStaticEnvironmentIntensityScale : 1.0f);
+            ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
+            if (data.m_bStartupNight)
+            {
+                LOG_INFO("Rendering3DTest night enabled static_environment_scale=%.3f",
+                         kNightStaticEnvironmentIntensityScale);
+            }
+            else
+            {
+                LOG_INFO("Sky atmosphere enabled sun_altitude=%.1f sun_azimuth=%.1f",
+                         data.m_SkyAtmosphere.SunAltitudeDegrees, data.m_SkyAtmosphere.SunAzimuthDegrees);
+            }
+            data.m_bSunStepApplied = false;
+            data.m_SunStepElapsedSeconds = 0.0;
+            data.m_bHasSunStep = TryReadStartupSunStep(data.m_SunStepElevation, data.m_SunStepDelaySeconds);
+            if (data.m_bHasSunStep)
+            {
+                LOG_INFO("Sun step scheduled elevation=%.1f delay_s=%.2f", data.m_SunStepElevation,
+                         data.m_SunStepDelaySeconds);
+            }
+
+            // R3 の高さフォグ。地面（y=-1）で最も濃く、上へ行くほど薄くする。密度が0なら無効。
+            {
+                VolumetricFogParameters fog = MakeDefaultVolumetricFogParameters();
+                fog.DensityAtBaseHeight = data.m_bHasStartupHeightFogDensity ? data.m_StartupHeightFogDensity
+                                                                              : kStartupHeightFogDensity;
+                fog.bEnabled = fog.DensityAtBaseHeight > 0.0f;
+                fog.BaseHeight = -1.0f;
+                fog.HeightFalloffPerUnit = data.m_bHasStartupHeightFogFalloff ? data.m_StartupHeightFogFalloff
+                                                                               : kStartupHeightFogFalloff;
+                ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(fog);
+            }
+
+            // 方向ライト操作コントローラーを空の太陽の置き場へ接続し、入力ルーターへ
+            // ゲーム優先度で登録する。矢印キーの角度は Tick で空の太陽の仰角・方位へ写す。
+            // 空の太陽の明るさは空が決めるので、+/- の強度操作は使わない（速度0）。
             // 自バインドキー（矢印・+/-・Shift）のみ consume し他は透過するため、
             // 同優先度の debug コントローラと共存する。
-            data.m_LightController.SetTargetComponent(data.m_pDirectionalLightComponent);
+            {
+                float yaw = 0.0f;
+                float pitch = 0.0f;
+                ConvertSkySunToLightControllerAngles(data.m_SkyAtmosphere.SunAltitudeDegrees,
+                                                     data.m_SkyAtmosphere.SunAzimuthDegrees, yaw, pitch);
+                data.m_SkySunControlLight = LightProxy{};
+                data.m_LightController.SetTargetComponent(nullptr);
+                data.m_LightController.SetTargetLight(&data.m_SkySunControlLight);
+                data.m_LightController.SetIntensitySpeed(0.0f);
+                data.m_LightController.SetDirection(yaw, pitch);
+            }
             ctx.EngineRef.GetInputRouter().RegisterController(
                 &data.m_LightController,
                 NorvesLib::Core::Input::InputRouter::PriorityGame);
@@ -782,13 +1106,18 @@ namespace Game::GameModes
                 &data.m_DebugInput,
                 NorvesLib::Core::Input::InputRouter::PriorityGame);
 
-            // ImGui 有効時のみ、方向ライト編集 view を本段(Rendering3DTest)へ併走 push する。
+            // ImGui 有効時のみ、空の太陽の編集 view を本段(Rendering3DTest)へ併走 push する。
             // push は遅延適用され同一ドレイン内で現在の top 段へ積まれ Enter(=RegisterImGuiView)される。
             // MakeUnique<派生>(=std::make_unique)の prvalue は ISubRoutine の仮想デストラクタにより
             // TUniquePtr<ISubRoutine>(=std::unique_ptr<ISubRoutine>)の値引数へ暗黙 upcast move される。
 #if defined(NORVES_ENABLE_IMGUI)
             ctx.ControllerRef.RequestPushSubRoutine(
-                MakeUnique<DirectionalLightEditSubRoutine>(data.m_pDirectionalLightComponent));
+                MakeUnique<DirectionalLightEditSubRoutine>(&data.m_LightController, &data.m_ExposureEV100,
+                                                          &data.m_bAutoExposure,
+                                                          &data.m_AutoExposureMeasurement,
+                                                          &data.m_bTemporalAA,
+                                                          &data.m_bLensEffects,
+                                                          &data.m_bLookLut));
 #endif
         }
 
@@ -1191,7 +1520,7 @@ namespace Game::GameModes
             // 非同期ロード中に表示する簡易プレースホルダ
             data.m_pBoulderPlaceholderObject = world.SpawnObject<Entity>();
             ctx.ScopeRef.TrackObject(data.m_pBoulderPlaceholderObject);
-            data.m_pBoulderPlaceholderObject->SetPosition(3.0f, 0.5f, 0.0f);
+            data.m_pBoulderPlaceholderObject->SetPosition(3.0f, -0.25f, 0.0f);
             data.m_pBoulderPlaceholderObject->SetScale(0.75f, 0.75f, 0.75f);
 
             data.m_pBoulderPlaceholderMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pBoulderPlaceholderObject);
@@ -1243,6 +1572,27 @@ namespace Game::GameModes
             {
                 NORVES_LOG_INFO("Rendering3DTest", "Boulder model async load started: %s", modelPath.c_str());
             }
+
+            // 小屋（Scripts/ConvertObjToGltf.py で OBJ から変換した glTF）。cooked モデルの計測では読み込まない。
+            if (!data.m_bUseCookedModel)
+            {
+                auto cottageState = MakeShared<BoulderAsyncState>();
+                data.m_CottageAsyncState = cottageState;
+                data.m_CottageLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
+                    String("Assets/Models/Cottage_Clean/Cottage_Clean.gltf"),
+                    modelLoadContext,
+                    [cottageState](ModelHandle handle)
+                    {
+                        cottageState->m_Handle = handle;
+                        cottageState->m_bLoaded = handle.IsValid();
+                        cottageState->m_bCompleted.Store(true);
+                    });
+                if (data.m_CottageLoadRequestId == 0)
+                {
+                    data.m_CottageAsyncState.reset();
+                    NORVES_LOG_ERROR("Rendering3DTest", "小屋のモデルの非同期ロード開始に失敗しました");
+                }
+            }
         }
 
 #if defined(NORVES_GAME_AUDIO)
@@ -1288,10 +1638,87 @@ namespace Game::GameModes
             data.m_M8MinimalPhysicsSmoke.Update(ctx);
         }
 
-        // 方向ライトの連続 hold 適用。held フラグは LightController::OnKey が
+        // 空の太陽の操作の連続 hold 適用。held フラグは LightController::OnKey が
         // InputRouter 経由で更新する。ImGui がキーボードを掴んでいる間は
         // 上位で consume されるため held は積まれず、ここでも動かない（排他）。
         data.m_LightController.Update(deltaTime);
+
+        // NORVES_STARTUP_SUN_STEP の指定があれば、起動からその秒数の後に一度だけ太陽の仰角を急に変える。
+        // 操作の角度へ書くので、下の空への写しで同じフレームに空へ渡る。
+        if (data.m_bHasSunStep && !data.m_bSunStepApplied && data.m_SkyAtmosphere.bEnabled)
+        {
+            data.m_SunStepElapsedSeconds += static_cast<double>(deltaTime);
+            if (data.m_SunStepElapsedSeconds >= static_cast<double>(data.m_SunStepDelaySeconds))
+            {
+                float yaw = 0.0f;
+                float pitch = 0.0f;
+                ConvertSkySunToLightControllerAngles(data.m_SunStepElevation,
+                                                     data.m_SkyAtmosphere.SunAzimuthDegrees, yaw, pitch);
+                data.m_LightController.SetDirection(yaw, pitch);
+                data.m_bSunStepApplied = true;
+                LOG_INFO("Sun step applied elevation=%.1f elapsed_s=%.3f", data.m_SunStepElevation,
+                         data.m_SunStepElapsedSeconds);
+            }
+        }
+
+        // 操作の角度（矢印キー・ImGui）を空の太陽の仰角・方位へ写す。太陽は地平線より下へ
+        // 行かせない（光が上向きに進む角度は水平へ戻す）。変わったときだけ空へ渡し、
+        // 空由来のIBLの作り直しを角度が動いたフレームに限る。
+        if (data.m_SkyAtmosphere.bEnabled)
+        {
+            if (data.m_LightController.GetPitch() > 0.0f)
+            {
+                data.m_LightController.SetDirection(data.m_LightController.GetYaw(), 0.0f);
+            }
+            float altitude = 0.0f;
+            float azimuth = 0.0f;
+            ConvertLightControllerAnglesToSkySun(data.m_LightController.GetYaw(),
+                                                 data.m_LightController.GetPitch(), altitude, azimuth);
+            if (std::abs(altitude - data.m_SkyAtmosphere.SunAltitudeDegrees) > 1.0e-3f ||
+                std::abs(azimuth - data.m_SkyAtmosphere.SunAzimuthDegrees) > 1.0e-3f)
+            {
+                data.m_SkyAtmosphere.SunAltitudeDegrees = altitude;
+                data.m_SkyAtmosphere.SunAzimuthDegrees = azimuth;
+                ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
+            }
+        }
+
+        // RenderThread が読み戻した自動露出の目標・順応後の EV100 を、統計のスナップショットから表示用へ写す。
+        data.m_AutoExposureMeasurement =
+            ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().GetStatsSnapshot().AutoExposure;
+
+        // ImGui で切り替えた自動露出の有無を、カメラの露出の方式へ写す。
+        if (data.m_pCameraComponent != nullptr && data.m_bAutoExposure != data.m_bAppliedAutoExposure)
+        {
+            data.m_pCameraComponent->SetExposureMode(data.m_bAutoExposure ? CameraExposureMode::Auto
+                                                                          : CameraExposureMode::Manual);
+            data.m_pCameraComponent->SetExposureCompensation(StartupExposureCompensationEV(data.m_bAutoExposure));
+            data.m_bAppliedAutoExposure = data.m_bAutoExposure;
+        }
+
+        // ImGui で切り替えたアンチエイリアシング（TAA/FXAA）を、カメラの方式へ写す。
+        if (data.m_pCameraComponent != nullptr && data.m_bTemporalAA != data.m_bAppliedTemporalAA)
+        {
+            data.m_pCameraComponent->SetAntiAliasingMode(data.m_bTemporalAA ? CameraAntiAliasingMode::TemporalAA
+                                                                            : CameraAntiAliasingMode::FXAA);
+            data.m_bAppliedTemporalAA = data.m_bTemporalAA;
+        }
+
+        // ImGui で動かした手動露出（EV100）を、絞り・ISO を保ったままシャッター速度へ写す。
+        if (data.m_pCameraComponent != nullptr &&
+            std::abs(data.m_ExposureEV100 - data.m_AppliedExposureEV100) > 1.0e-4f)
+        {
+            if (data.m_pCameraComponent->SetShutterSpeed(ComputeShutterSpeedForEV100(
+                    data.m_pCameraComponent->GetAperture(), data.m_pCameraComponent->GetISO(),
+                    data.m_ExposureEV100)))
+            {
+                data.m_AppliedExposureEV100 = data.m_ExposureEV100;
+            }
+            else
+            {
+                data.m_ExposureEV100 = data.m_AppliedExposureEV100;
+            }
+        }
 
         // InputRouter で上位 controller に consume されなかった値状態だけを Maya
         // の変換層へ渡し、SpringArm を単一のカメラ姿勢正本として更新する。
@@ -1305,6 +1732,13 @@ namespace Game::GameModes
                 deltaTime,
                 data.m_pSpringArmComponent->GetArmLength());
             data.m_pSpringArmComponent->ApplyIntent(intent);
+            // --orbit-degrees-per-second の指定があれば、経過時間に比例してカメラを軸の周りに回す。
+            if (data.m_OrbitDegreesPerSecond != 0.0f)
+            {
+                float yaw = data.m_pSpringArmComponent->GetYaw() + data.m_OrbitDegreesPerSecond * deltaTime;
+                yaw = std::fmod(yaw, 360.0f);
+                data.m_pSpringArmComponent->SetYaw(yaw);
+            }
             data.m_CameraInputCollector.ResetFrame();
             data.m_pSpringArmComponent->RefreshOwnerTransform();
             data.m_PickingController.SetFallbackSelectionDepth(
@@ -1330,6 +1764,7 @@ namespace Game::GameModes
             CameraProxy cameraProxy;
             if (data.m_pCameraComponent->BuildCameraProxy(cameraProxy))
             {
+                ApplyStartupGrading(cameraProxy, data.m_bLensEffects, data.m_bLookLut);
                 ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
                 if (!data.m_bCameraSmokeSyncEmitted)
                 {
@@ -1341,6 +1776,10 @@ namespace Game::GameModes
         }
 
         data.m_PickingController.DrawSelection();
+        if (data.m_bDebugDrawTestLines)
+        {
+            Game::GameModes::SubmitRendering3DTestDebugDraw();
+        }
 
         data.m_ElapsedTime += deltaTime;
 
@@ -1611,7 +2050,8 @@ namespace Game::GameModes
                     {
                         data.m_pBoulderObject = world.SpawnObject<Entity>();
                         ctx.ScopeRef.TrackObject(data.m_pBoulderObject);
-                        data.m_pBoulderObject->SetPosition(3.0f, 0.0f, 0.0f);
+                        // 岩のモデルの最下点はY=-0.074なので、地面（Y=-1.0）に接するよう下げる。
+                        data.m_pBoulderObject->SetPosition(3.0f, -0.93f, 0.0f);
 
                         data.m_pBoulderMegaGeometryComponent = world.CreateComponent<Component::MegaGeometryComponent>(data.m_pBoulderObject);
                         data.m_pBoulderMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
@@ -1624,6 +2064,49 @@ namespace Game::GameModes
 
                     NORVES_LOG_INFO("Rendering3DTest", "Boulder model loaded and added to World");
                 }
+            }
+        }
+
+        if (data.m_CottageAsyncState &&
+            data.m_CottageAsyncState->m_bCompleted.Load() &&
+            !data.m_CottageAsyncState->m_bCancelled.Load())
+        {
+            auto state = data.m_CottageAsyncState;
+            data.m_CottageAsyncState.reset(); // 一度だけ消費
+            data.m_CottageLoadRequestId = 0;
+
+            auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
+            bool bCottageReady = false;
+            if (state->m_bLoaded)
+            {
+                const auto megaMeshHandle = megaGeometry.GetModelMegaMeshHandle(state->m_Handle);
+                bCottageReady = megaMeshHandle.IsValid();
+                if (!bCottageReady)
+                {
+                    megaGeometry.ReleaseModel(state->m_Handle);
+                }
+            }
+            if (!bCottageReady)
+            {
+                NORVES_LOG_ERROR("Rendering3DTest", "小屋のモデルのロードに失敗しました");
+            }
+            else
+            {
+                const auto megaMeshHandle = megaGeometry.GetModelMegaMeshHandle(state->m_Handle);
+                auto &world = ctx.WorldRef;
+                data.m_CottageModelHandle = state->m_Handle;
+                // 小屋（幅約12.4 m・奥行き約14.7 m・高さ約6.8 m）は球の奥に置き、既定の視点で
+                // 手前の展示物の上に見えるようにする。モデルの最下点はY=-0.016。
+                data.m_pCottageObject = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(data.m_pCottageObject);
+                data.m_pCottageObject->SetPosition(0.0f, -0.984f, -18.0f);
+                data.m_pCottageMegaGeometryComponent =
+                    world.CreateComponent<Component::MegaGeometryComponent>(data.m_pCottageObject);
+                data.m_pCottageMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
+                data.m_pCottageMegaGeometryComponent->SetCastShadow(true);
+                // 消費したモデルはスコープに解放を委ねる。
+                ctx.ScopeRef.TrackModel(data.m_CottageModelHandle);
+                NORVES_LOG_INFO("Rendering3DTest", "Cottage model loaded and added to World");
             }
         }
 
@@ -1707,6 +2190,23 @@ namespace Game::GameModes
             data.m_BoulderLoadRequestId = 0;
         }
 
+        // 小屋の非同期ロードも岩と同じ手順で閉じる。
+        if (data.m_CottageAsyncState)
+        {
+            auto state = data.m_CottageAsyncState;
+            data.m_CottageAsyncState->m_bCancelled.Store(true);
+            data.m_CottageAsyncState.reset();
+            if (state->m_bCompleted.Load() && state->m_bLoaded && state->m_Handle.IsValid())
+            {
+                ctx.RenderResourcesRef.MegaGeometry().ReleaseModel(state->m_Handle);
+            }
+        }
+        if (data.m_CottageLoadRequestId != 0)
+        {
+            Resource::GLTFAnalyzer::CancelModelLoad(data.m_CottageLoadRequestId);
+            data.m_CottageLoadRequestId = 0;
+        }
+
         // 2) 追跡済みリソース（球体/地面/光源球体/ディレクショナル/placeholder/
         //    boulder の各オブジェクト・3 メッシュ・boulder モデル）の解放は
         //    GameModeScope::Cleanup（Leave 直後に StateMachine が呼ぶ）が
@@ -1724,8 +2224,17 @@ namespace Game::GameModes
         data.m_pBoulderPlaceholderMeshComponent = nullptr;
         data.m_pBoulderObject = nullptr;
         data.m_pBoulderMegaGeometryComponent = nullptr;
-        data.m_pDirectionalLightObject = nullptr;
-        data.m_pDirectionalLightComponent = nullptr;
+        data.m_pCottageObject = nullptr;
+        data.m_pCottageMegaGeometryComponent = nullptr;
+        data.m_CottageModelHandle = ModelHandle::Invalid();
+        data.m_ShowcaseSphereObjects.clear();
+        data.m_ShowcaseMaterials.clear();
+        // 空はRenderWorldの設定なので、ほかのモードへ持ち越さないよう無効へ戻す。
+        data.m_SkyAtmosphere = MakeDefaultSkyAtmosphereParameters();
+        ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
+        ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
+        ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
+        data.m_LightController.SetTargetLight(nullptr);
         data.m_F4BoardObjects.clear();
         data.m_F4BoardComponents.clear();
         data.m_F9BillboardObjects.clear();

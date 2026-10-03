@@ -129,6 +129,10 @@ namespace NorvesLib::Core::Engine
         bool m_bWaitForAssetSettle = false;
         bool m_bObservedPendingAssets = false;
         bool m_bAssetSettleBaselineLatched = false;
+        // --capture-png: 描画フレーム数の終了条件に達したら最終出力を取得してPNGに保存し、保存後に終了する。
+        Container::String m_CapturePngPath;
+        uint64_t m_CaptureRequestedRenderedFrame = 0;
+        bool m_bCaptureRequested = false;
     };
 
 } // namespace NorvesLib::Core::Engine

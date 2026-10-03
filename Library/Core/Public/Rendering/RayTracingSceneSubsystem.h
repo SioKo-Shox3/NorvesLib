@@ -14,6 +14,7 @@ namespace NorvesLib::Core::Rendering
 {
     class MeshResources;
     class MaterialResources;
+    class MegaGeometryResources;
 
     /**
      * @brief FramePacketの描画スナップショットから加速構造を管理
@@ -35,11 +36,13 @@ namespace NorvesLib::Core::Rendering
          * @param meshResources DrawCommandのメッシュハンドルを解決するGPUメッシュリソース
          * @param packet 構築元および出力先のフレームスナップショット
          * @param materialResources DrawCommandのマテリアル値を解決するリソース
+         * @param megaGeometryResources MegaGeometry（岩・小屋など）のLOD0を解決するリソース。nullなら含めない
          * @return 有効なスナップショットを構築できた場合true
          */
         bool BuildFrameSnapshot(const MeshResources* meshResources,
                                 FramePacket& packet,
-                                const MaterialResources* materialResources = nullptr);
+                                const MaterialResources* materialResources = nullptr,
+                                const MegaGeometryResources* megaGeometryResources = nullptr);
 
         /**
          * @brief FramePacketのgeometryからBLAS/TLAS buildをRenderThreadへ記録

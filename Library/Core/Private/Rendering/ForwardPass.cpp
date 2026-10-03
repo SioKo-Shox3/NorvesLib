@@ -232,7 +232,8 @@ namespace NorvesLib::Core::Rendering
             lightBufferBinding.stages = RHI::ShaderStage::Pixel;
             descriptorSetDesc.bindings.push_back(lightBufferBinding);
 
-            for (uint32_t binding = 9; binding <= 13; ++binding)
+            // 9=CSM、10〜13=IBL、14=点光源のキューブシャドウ
+            for (uint32_t binding = 9; binding <= 14; ++binding)
             {
                 RHI::DescriptorBinding lightingTextureBinding;
                 lightingTextureBinding.binding = binding;
@@ -331,11 +332,41 @@ namespace NorvesLib::Core::Rendering
                 }
             }
 
+            // samplerCubeArrayの既定値（LightingPassの公開が無いとき）。キューブ配列のビューにするため
+            // 2キューブにし、各キューブの6面を距離1（遮るものなし）で埋める。
+            RHI::TextureDesc pointShadowFallbackDesc;
+            pointShadowFallbackDesc.Width = 1u;
+            pointShadowFallbackDesc.Height = 1u;
+            pointShadowFallbackDesc.ArraySize = 2u;
+            pointShadowFallbackDesc.IsCubemap = true;
+            pointShadowFallbackDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+            pointShadowFallbackDesc.Usage = shadowMapFallbackDesc.Usage;
+            pointShadowFallbackDesc.DebugName = "ForwardPointShadowCubeFallback";
+            m_DefaultPointShadowCubeTexture = m_Device->CreateTexture(pointShadowFallbackDesc);
+            if (m_DefaultPointShadowCubeTexture)
+            {
+                uint8_t pointShadowFallbackFaces[6u * 4u];
+                for (uint8_t& value : pointShadowFallbackFaces)
+                {
+                    value = 255u;
+                }
+                for (uint32_t cubeIndex = 0u; cubeIndex < pointShadowFallbackDesc.ArraySize; ++cubeIndex)
+                {
+                    // キューブの更新は6面をまとめて転送する（slicePitchに6面分の大きさを渡す）。
+                    m_DefaultPointShadowCubeTexture->Update(pointShadowFallbackFaces,
+                                                            4u,
+                                                            sizeof(pointShadowFallbackFaces),
+                                                            0u,
+                                                            cubeIndex);
+                }
+            }
+
             if (!m_DefaultWhiteTexture ||
                 !m_DefaultFlatNormalTexture ||
                 !m_DefaultBlackTexture ||
                 !m_DefaultMidGrayTexture ||
-                !m_DefaultShadowMapArrayTexture)
+                !m_DefaultShadowMapArrayTexture ||
+                !m_DefaultPointShadowCubeTexture)
             {
                 NORVES_LOG_ERROR("ForwardPass", "Failed to create transparent forward fallback textures");
                 return false;
@@ -389,6 +420,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
         m_DefaultShadowMapArrayTexture.reset();
+        m_DefaultPointShadowCubeTexture.reset();
         m_DefaultMidGrayTexture.reset();
         m_DefaultLinearSampler.reset();
         m_UniformAllocator.Shutdown();
@@ -789,7 +821,8 @@ namespace NorvesLib::Core::Rendering
         lightBufferBinding.stages = RHI::ShaderStage::Pixel;
         descriptorSetDesc.bindings.push_back(lightBufferBinding);
 
-        for (uint32_t binding = 9; binding <= 13; ++binding)
+        // 9=CSM、10〜13=IBL、14=点光源のキューブシャドウ
+        for (uint32_t binding = 9; binding <= 14; ++binding)
         {
             RHI::DescriptorBinding lightingTextureBinding;
             lightingTextureBinding.binding = binding;
@@ -1321,6 +1354,16 @@ namespace NorvesLib::Core::Rendering
             allocation.DescriptorSet->BindSampler(12, physicalLighting.PrefilteredSpecularSampler);
             allocation.DescriptorSet->BindTexture(13, physicalLighting.DfgLutTexture);
             allocation.DescriptorSet->BindSampler(13, physicalLighting.DfgLutSampler);
+            const bool bPointShadowCubesPublished =
+                physicalLighting.PointShadowCubeTexture && physicalLighting.PointShadowCubeSampler;
+            allocation.DescriptorSet->BindTexture(
+                14,
+                bPointShadowCubesPublished ? physicalLighting.PointShadowCubeTexture
+                                           : m_DefaultPointShadowCubeTexture);
+            allocation.DescriptorSet->BindSampler(
+                14,
+                bPointShadowCubesPublished ? physicalLighting.PointShadowCubeSampler
+                                           : m_DefaultLinearSampler);
             allocation.DescriptorSet->Update();
 
             DrawCommand drawCommand = cmd;

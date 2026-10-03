@@ -1,0 +1,68 @@
+﻿#version 450
+
+// ========================================
+// 自動露出の輝度ヒストグラム コンピュートシェーダー
+//
+// SceneColor の各画素の輝度（Rec.709 の係数）からプリエクスポージャを外して絶対輝度（cd/m²）へ戻し、
+// log2 輝度で256区間のヒストグラムへ数える。区間の規則は
+// Library/Core/Public/Rendering/AutoExposure.h の AutoExposureLuminanceToBin と同じ。
+// グループ内の共有メモリで数えてから、区間ごとに1回だけ全体のバッファへ足す。
+// ========================================
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+const uint BIN_COUNT = 256u;
+
+layout(set = 0, binding = 0) uniform sampler2D u_SceneColor;
+
+layout(std430, set = 0, binding = 1) buffer HistogramBuffer
+{
+    uint bins[BIN_COUNT];
+} histogram;
+
+layout(set = 0, binding = 2) uniform AutoExposureParams
+{
+    // x: ヒストグラムの下端（log2 cd/m²）、y: log2 輝度1あたりの区間の数、z: プリエクスポージャの逆数、w: 未使用
+    vec4 rangeAndScale;
+    // xy: 画像の寸法
+    uvec4 imageSize;
+} params;
+
+shared uint s_Bins[BIN_COUNT];
+
+uint LuminanceToBin(float luminance)
+{
+    // 0以下とNaNは区間0（NaNとの比較は偽になる）
+    if (!(luminance > 0.0))
+    {
+        return 0u;
+    }
+    if (isinf(luminance))
+    {
+        return BIN_COUNT - 1u;
+    }
+    float position = (log2(luminance) - params.rangeAndScale.x) * params.rangeAndScale.y;
+    return uint(clamp(floor(position), 0.0, float(BIN_COUNT - 1u)));
+}
+
+void main()
+{
+    uint localIndex = gl_LocalInvocationIndex;
+    s_Bins[localIndex] = 0u;
+    barrier();
+
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x < int(params.imageSize.x) && coord.y < int(params.imageSize.y))
+    {
+        vec3 color = texelFetch(u_SceneColor, coord, 0).rgb;
+        float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722)) * params.rangeAndScale.z;
+        atomicAdd(s_Bins[LuminanceToBin(luminance)], 1u);
+    }
+    barrier();
+
+    uint count = s_Bins[localIndex];
+    if (count > 0u)
+    {
+        atomicAdd(histogram.bins[localIndex], count);
+    }
+}
