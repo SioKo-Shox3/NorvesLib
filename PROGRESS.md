@@ -469,3 +469,6 @@
 
 - G2-GR77-LOOSE-BOUNDS: looseの4accessorを純粋な宣言範囲helperへ通し、actual/declared/viewと正のcount/element/strideを減算・除算で証明してからpointerを作る。private CPU staging入口は候補完成時だけ出力置換。実helper通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）で各5,438,750件（広い有効範囲1万を含む）、MEMBER compile成功。追跡glTF6fileの24layoutも通過（12実file長/12宣言長のみ）。小三角形の正常と短いview/宣言・巨大offset・0countをnativeへ登録したが、GLTFAnalyzer/実staging試験はWindows.hでcompile停止。独立レビューPASS。JSON getterや全形式の厳格化とは区別する。
 - Next: GR77の画像bytes→CPU stagingと必須拡張判定を共有し、最後にlooseへGLB/buffer/imageを配線する。staging/GPU/実物受入れ未検証を完了扱いしない。
+
+- G2-GR77-IMAGE-STAGING: file読込とbytes decodeを分離し、PNG/JPEG bytesから所有RGBA8/ARM3枚のCPU stagingを作る。Mainとsignature判定を共有し、旧外部fileの形式/既定RGBA8_UNORM/RGB→AO/Roughness/Metallicを維持。INT_MAX・dimension境界、非copy stb scope owner、候補成功時のみ移動、ARM出力alias拒否を追加。実signature/range通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/MEMBERとstbi memory 1px fixture成功。file/bytes/ARM/failure native試験は登録済みだがWindows.hでcompile停止、実staging未実行。独立レビューPASS。
+- Next: GR77の必須glTF拡張拒否を共有し、looseへcontainer/buffer/image bytesを接続する。

@@ -1853,7 +1853,7 @@
 - notes: GR82の骨格契約変更やStage A/Bを先取りしない。画像/材質を骨格側へ新たに導入しない。
 
 ## G2-GR77-IMAGE-STAGING: 埋込み画像bytesをCPU texture stagingへ渡す
-- status: todo
+- status: done
 - done-when: ModelStagingの画像decodeをfile読込とbytes読込へ分け、PNG/JPEG bytesから標準RGBA8とARMの3つのR8 stagingを生成できる。既存外部画像の既定format/チャンネル写像を維持し、input長/dimension境界とstb所有解放を守る。
 - verify: 同じ小PNGのfile/bytes pixel一致、ARM分解、異常bytes/大きい長さの拒否、stagingの所有と失敗出力契約を既存束へ追加。native未検証と実stb/helper確認を区別する。
 - stop-when: albedo既定色空間の変更、GPU生成、stb確保の例外時漏れ、借用pixelsの返却。

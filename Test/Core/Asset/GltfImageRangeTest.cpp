@@ -37,6 +37,20 @@ int main()
     assert(!BindImageByteRange(bytes, max, 1).bValid);
     assert(!BindImageByteRange(bytes, 1, max).bValid);
     assert(!BindImageByteRange(bytes, max, max).bValid);
+    const uint8_t png[] = {137, 80, 78, 71, 13, 10, 26, 10};
+    const uint8_t jpeg[] = {255, 216, 255};
+    assert(ProbeEmbeddedImageMime(png) == DataUriMime::Png);
+    assert(ProbeEmbeddedImageMime(jpeg) == DataUriMime::Jpeg);
+    for (size_t length = 0; length < sizeof(png); ++length)
+    {
+        assert(ProbeEmbeddedImageMime({png, length}) == DataUriMime::Unknown);
+    }
+    for (size_t length = 0; length < sizeof(jpeg); ++length)
+    {
+        assert(ProbeEmbeddedImageMime({jpeg, length}) == DataUriMime::Unknown);
+    }
+    assert(ProbeEmbeddedImageMime({nullptr, sizeof(png)}) == DataUriMime::Unknown);
+    assert(ProbeEmbeddedImageMime(bytes) == DataUriMime::Unknown);
     std::cout << "GltfImageRangeTest PASS: declared_range_nonempty_null_overflow_borrow\n";
     return 0;
 }

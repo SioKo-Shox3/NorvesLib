@@ -30,6 +30,33 @@ namespace NorvesLib::Core::Gltf
         return {true, {buffer.data() + offset, length}};
     }
 
+    // 埋込みで扱うPNG/JPEGのsignatureだけを判別する。完全性/dimensionはdecoderが検証する。
+    [[nodiscard]] inline DataUriMime ProbeEmbeddedImageMime(Container::Span<const uint8_t> bytes) noexcept
+    {
+        if (bytes.data() == nullptr)
+        {
+            return DataUriMime::Unknown;
+        }
+        constexpr uint8_t signature[] = {137, 80, 78, 71, 13, 10, 26, 10};
+        if (bytes.size() >= sizeof(signature))
+        {
+            bool bPng = true;
+            for (size_t index = 0; index < sizeof(signature); ++index)
+            {
+                bPng = bPng && bytes[index] == signature[index];
+            }
+            if (bPng)
+            {
+                return DataUriMime::Png;
+            }
+        }
+        if (bytes.size() >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff)
+        {
+            return DataUriMime::Jpeg;
+        }
+        return DataUriMime::Unknown;
+    }
+
     class ImageSource
     {
     public:

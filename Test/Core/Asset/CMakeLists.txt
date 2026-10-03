@@ -17,6 +17,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER CookedMeshTest CookedMeshTest.cpp
     MEMBER GltfAccessorStagingTest GltfAccessorStagingTest.cpp
     MEMBER GltfAccessorRangeTest GltfAccessorRangeTest.cpp
+    MEMBER ImageBytesStagingTest ImageBytesStagingTest.cpp
     MEMBER GltfImageRangeTest GltfImageRangeTest.cpp
     MEMBER GltfImageSourceTest GltfImageSourceTest.cpp
     MEMBER StaticGltfBufferCookTest StaticGltfBufferCookTest.cpp
@@ -79,3 +80,5 @@ add_test(NAME GltfImageSourceTest COMMAND CookedMeshTest --test=GltfImageSourceT
 add_test(NAME GltfAccessorRangeTest COMMAND CookedMeshTest --test=GltfAccessorRangeTest)
 
 add_test(NAME GltfAccessorStagingTest COMMAND CookedMeshTest --test=GltfAccessorStagingTest)
+
+add_test(NAME ImageBytesStagingTest COMMAND CookedMeshTest --test=ImageBytesStagingTest)

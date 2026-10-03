@@ -11,6 +11,7 @@
 #include "Asset/AssetPath.h"
 #include "Asset/AssetSystem.h"
 #include "Container/Span.h"
+#include "Resource/GltfImageSource.h"
 #include "FileStream/Package.h"
 
 #include <algorithm>
@@ -2002,15 +2003,11 @@ namespace
         pending.push_back(std::move(model));
 
         // 全textureを変換してから書き始め、壊れた画像で途中まで出力しない。
-        constexpr uint8_t pngMagic[] = {137, 80, 78, 71, 13, 10, 26, 10};
         for (const auto& image : mesh.EmbeddedImages)
         {
             const auto bytes = image.GetBytes();
-            const bool bPng = bytes.size() >= sizeof(pngMagic) && bytes.data() != nullptr &&
-                std::memcmp(bytes.data(), pngMagic, sizeof(pngMagic)) == 0;
-            const bool bJpeg = bytes.size() >= 3 && bytes.data() != nullptr &&
-                bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff;
-            if (!bPng && !bJpeg)
+            const auto mime = NorvesLib::Core::Gltf::ProbeEmbeddedImageMime(bytes);
+            if (mime != NorvesLib::Core::Gltf::DataUriMime::Png && mime != NorvesLib::Core::Gltf::DataUriMime::Jpeg)
             {
                 error = "embedded image must contain PNG or JPEG bytes";
                 return false;

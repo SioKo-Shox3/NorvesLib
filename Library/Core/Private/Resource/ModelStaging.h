@@ -87,6 +87,21 @@ namespace NorvesLib::Core::Resource::ModelStaging
     uint32_t GetStagedPreparedTextureCount(const ModelStagingData& staging);
     uint32_t GetStagedTextureCount(const ModelStagingData& staging);
 
+    // PNG/JPEG bytesを所有CPU stagingへ復号する。GPUは作らず、falseでは既存出力を保つ。
+    bool StageStandardTextureBytes(Container::Span<const uint8_t> bytes,
+                                   const Container::String& debugName,
+                                   StagedTextureData& outTexture,
+                                   const char* role,
+                                   uint32_t requestId);
+    // ARMの3出力は互いに異なるobjectを指定する。
+    bool StageArmTextureBytes(Container::Span<const uint8_t> bytes,
+                              const Container::String& debugNamePrefix,
+                              StagedTextureData& outAOTexture,
+                              StagedTextureData& outRoughnessTexture,
+                              StagedTextureData& outMetallicTexture,
+                              const char* role,
+                              uint32_t requestId);
+
     bool StageStandardTexture(const TextureReference& textureReference,
                               const Container::String& debugName,
                               StagedTextureData& outTexture,
