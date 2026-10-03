@@ -5,6 +5,11 @@
 #include "Resource/GltfBufferJson.h"
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfImageSource.h"
+#include "Resource/ImportSettingsFile.h"
+#include "Resource/ImportSettingsHash.h"
+#include "Resource/ImportTransform.h"
+#include "Asset/AssetPackageFormat.h"
+#include <limits>
 #include "Resource/SkeletalGltfDecode.h"
 
 #include "Logging/LogMacros.h"
@@ -634,7 +639,8 @@ namespace NorvesLib::Core::Resource
                                const String& resolvedGltfPath,
                                ModelStagingData& outStaging,
                                const char* role,
-                               uint32_t requestId)
+                               uint32_t requestId,
+                               const AssetImport::ImportSettingsFileOptions* importOptions = nullptr)
         {
             auto totalStartTime = LoadProfileNow();
             VariableArray<uint8_t> sourceBytes;
@@ -780,6 +786,44 @@ namespace NorvesLib::Core::Resource
                             indices.size() * sizeof(uint32_t),
                             LoadProfileElapsedMs(meshExtractStartTime));
 
+            AssetImport::LoadedImportSettings loadedImport;
+            const AssetImport::ImportSettingsFileOptions automaticImport;
+            const auto settingsResult = AssetImport::LoadImportSettingsFile(gltfFilePath,
+                importOptions != nullptr ? *importOptions : automaticImport, loadedImport);
+            if (settingsResult.Result != AssetImport::SettingsFileResult::Success)
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Import settings rejected: file=%u validation=%u",
+                    static_cast<unsigned int>(settingsResult.Result), static_cast<unsigned int>(settingsResult.Validation));
+                return false;
+            }
+            uint64_t settingsHash = 0;
+            if (loadedImport.bPresent)
+            {
+                if (vertices.size() > std::numeric_limits<size_t>::max() / sizeof(Rendering::Mesh3DVertex))
+                {
+                    return false;
+                }
+                const AssetImport::ImportVertexLayout layout{sizeof(Rendering::Mesh3DVertex),
+                    offsetof(Rendering::Mesh3DVertex, Position), offsetof(Rendering::Mesh3DVertex, Normal),
+                    offsetof(Rendering::Mesh3DVertex, TexCoord)};
+                const auto transformed = AssetImport::ApplyImportTransform(
+                    {reinterpret_cast<uint8_t*>(vertices.data()), vertices.size() * sizeof(Rendering::Mesh3DVertex)},
+                    vertices.size(), layout, indices, loadedImport.Settings);
+                if (transformed.Result != AssetImport::TransformResult::Success)
+                {
+                    NORVES_LOG_ERROR("GLTFAnalyzer", "Import transform rejected: status=%u",
+                        static_cast<unsigned int>(transformed.Result));
+                    return false;
+                }
+                settingsHash = AssetImport::AppendImportSettingsHash(
+                    Asset::AssetPackageFormatV1::Fnv1a64OffsetBasis, true, loadedImport.Settings).Value;
+            }
+            const AnsiString sidecarPath(loadedImport.Path.generic_string().c_str());
+            NORVES_LOG_INFO("AssetLoadProfile",
+                "stage=gltf_import_settings role=%s request_id=%u sidecar=\"%s\" present=%d settings_hash=%llu",
+                role, static_cast<unsigned int>(requestId), sidecarPath.c_str(),
+                loadedImport.bPresent ? 1 : 0, static_cast<unsigned long long>(settingsHash));
+
             VariableArray<Rendering::MegaGeometry::MeshCluster> clusters;
             VariableArray<uint32_t> clusterizedIndices;
             auto clusterizeStartTime = LoadProfileNow();
@@ -816,6 +860,31 @@ namespace NorvesLib::Core::Resource
                             clusterizedIndices.size() * sizeof(uint32_t),
                             LoadProfileElapsedMs(clusterizeStartTime));
 
+            const auto finiteBounds = [](const Rendering::BoundingSphere& bounds)
+            {
+                return std::isfinite(bounds.CenterX) && std::isfinite(bounds.CenterY) &&
+                    std::isfinite(bounds.CenterZ) && std::isfinite(bounds.Radius) && bounds.Radius >= 0.0f;
+            };
+            const auto totalBounds = CalculateBoundingSphere(vertices);
+            if (loadedImport.bPresent)
+            {
+                if (!finiteBounds(totalBounds))
+                {
+                    NORVES_LOG_ERROR("GLTFAnalyzer", "Imported model bounds are not representable");
+                    return false;
+                }
+                for (const auto& cluster : clusters)
+                {
+                    if (!finiteBounds(cluster.Bounds) || !std::isfinite(cluster.ConeAxisX) ||
+                        !std::isfinite(cluster.ConeAxisY) || !std::isfinite(cluster.ConeAxisZ) ||
+                        !std::isfinite(cluster.ConeCutoff) || !std::isfinite(cluster.LODError))
+                    {
+                        NORVES_LOG_ERROR("GLTFAnalyzer", "Imported cluster data is not representable");
+                        return false;
+                    }
+                }
+            }
+
             String debugName = primitiveInfo.MeshName;
             if (debugName.empty())
             {
@@ -851,7 +920,7 @@ namespace NorvesLib::Core::Resource
             outStaging.Vertices = std::move(vertices);
             outStaging.ClusterizedIndices = std::move(clusterizedIndices);
             outStaging.Clusters = std::move(clusters);
-            outStaging.TotalBounds = CalculateBoundingSphere(outStaging.Vertices);
+            outStaging.TotalBounds = totalBounds;
             outStaging.DebugName = debugName;
             outStaging.ResolvedPath = resolvedGltfPath;
             outStaging.TextureReferences = materialInfo;
@@ -922,10 +991,11 @@ namespace NorvesLib::Core::Resource
                                                     const String& resolvedPath,
                                                     ModelStagingData& outStaging,
                                                     const char* role,
-                                                    uint32_t requestId)
+                                                    uint32_t requestId,
+                                                    const AssetImport::ImportSettingsFileOptions* importOptions)
     {
         ModelStagingData candidate;
-        if (!BuildModelStaging(requestPath, resolvedPath, candidate, role, requestId))
+        if (!BuildModelStaging(requestPath, resolvedPath, candidate, role, requestId, importOptions))
         {
             return false;
         }

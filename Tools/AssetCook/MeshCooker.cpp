@@ -10,6 +10,9 @@
 #include "Resource/GltfBufferJson.h"
 #include "Resource/GltfDocumentProfile.h"
 #include "Resource/GltfImageSource.h"
+#include "Resource/ImportSettingsFile.h"
+#include "Resource/ImportSettingsHash.h"
+#include "Resource/ImportTransform.h"
 #include "Asset/AssetPackageFormat.h"
 #include "Text/JsonDocument.h"
 
@@ -39,6 +42,7 @@ namespace NorvesLib::Tools::AssetCook
         using NorvesLib::Core::Rendering::MegaGeometry::MeshCluster;
         using NorvesLib::Core::Rendering::MegaGeometry::MeshClusterizer;
         namespace Gltf = NorvesLib::Core::Gltf;
+        namespace AssetImport = NorvesLib::Core::AssetImport;
         namespace ClusterRecordOffset = NorvesLib::Core::Asset::CookedMeshFormatV0::ClusterRecordOffset;
         namespace Format = NorvesLib::Core::Asset::CookedMeshFormatV0;
         namespace HeaderOffset = NorvesLib::Core::Asset::CookedMeshFormatV0::HeaderOffset;
@@ -1544,7 +1548,7 @@ namespace NorvesLib::Tools::AssetCook
         }
         bool CookGltfToNvmeshInternal(const uint8_t* sourceBytes, size_t sourceSize, AnsiStringView format,
                                       AnsiStringView sourcePath, AnsiStringView logicalPath, MeshCookResult& outResult,
-                                      AnsiString& error)
+                                      AnsiString& error, const AssetImport::ImportSettingsFileOptions* importOptions)
         {
             if (format != SupportedMeshFormat)
             {
@@ -1623,6 +1627,42 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
+            AssetImport::LoadedImportSettings loadedImport;
+            const AssetImport::ImportSettingsFileOptions automaticImport;
+            const auto& effectiveImport = importOptions != nullptr ? *importOptions : automaticImport;
+            AssetImport::SettingsFileOutcome settingsResult;
+            // 自己完結するメモリ入力にsource locatorが無い旧API経路では、auto探索だけを省略する。
+            if (!sourcePath.empty() || effectiveImport.bRequired || !effectiveImport.OverridePath.empty())
+            {
+                settingsResult = AssetImport::LoadImportSettingsFile(
+                    std::filesystem::path(sourcePath.begin(), sourcePath.end()), effectiveImport, loadedImport);
+            }
+            if (settingsResult.Result != AssetImport::SettingsFileResult::Success)
+            {
+                error = AnsiString("import settings rejected: file=") +
+                    FormatInteger(static_cast<int>(settingsResult.Result)) + " validation=" +
+                    FormatInteger(static_cast<int>(settingsResult.Validation));
+                return false;
+            }
+            if (loadedImport.bPresent)
+            {
+                if (vertices.size() > std::numeric_limits<size_t>::max() / sizeof(MeshVertexPnt))
+                {
+                    error = "import vertex byte size overflow";
+                    return false;
+                }
+                const AssetImport::ImportVertexLayout layout{sizeof(MeshVertexPnt),
+                    offsetof(MeshVertexPnt, Position), offsetof(MeshVertexPnt, Normal), offsetof(MeshVertexPnt, TexCoord)};
+                const auto transformed = AssetImport::ApplyImportTransform(
+                    {reinterpret_cast<uint8_t*>(vertices.data()), vertices.size() * sizeof(MeshVertexPnt)},
+                    vertices.size(), layout, indices, loadedImport.Settings);
+                if (transformed.Result != AssetImport::TransformResult::Success)
+                {
+                    error = AnsiString("import transform rejected: status=") + FormatInteger(static_cast<int>(transformed.Result));
+                    return false;
+                }
+            }
+
             MeshCookResult result;
             MaterialReferences materialReferences;
             if (!ResolveMaterialReferences(root, primitive, logicalPath, buffers, result.EmbeddedImages, materialReferences, error))
@@ -1671,7 +1711,21 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            result.SourceHash = ComputeGltfSourceHash(sourceBytes, sourceSize, buffers);
+            const auto sourceHash = AssetImport::AppendImportSettingsHash(
+                ComputeGltfSourceHash(sourceBytes, sourceSize, buffers), loadedImport.bPresent, loadedImport.Settings);
+            if (!sourceHash.bValid)
+            {
+                error = "invalid import settings hash";
+                return false;
+            }
+            result.SourceHash = sourceHash.Value;
+            result.bHasImportSettings = loadedImport.bPresent;
+            result.ImportSettingsPath = AnsiString(loadedImport.Path.generic_string().c_str());
+            if (loadedImport.bPresent)
+            {
+                result.ImportSettingsHash = AssetImport::AppendImportSettingsHash(
+                    Format::Fnv1a64OffsetBasis, true, loadedImport.Settings).Value;
+            }
             result.VertexCount = static_cast<uint32_t>(vertices.size());
             result.IndexCount = static_cast<uint32_t>(finalIndices.size());
             result.ClusterCount = static_cast<uint32_t>(finalClusters.size());
@@ -2067,10 +2121,11 @@ namespace NorvesLib::Tools::AssetCook
                           NorvesLib::Core::Container::AnsiStringView format,
                           NorvesLib::Core::Container::AnsiStringView sourcePath,
                           NorvesLib::Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
-                          NorvesLib::Core::Container::AnsiString& error)
+                          NorvesLib::Core::Container::AnsiString& error,
+                          const Core::AssetImport::ImportSettingsFileOptions* importOptions)
     {
         AnsiString internalError;
-        if (!CookGltfToNvmeshInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult, internalError))
+        if (!CookGltfToNvmeshInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult, internalError, importOptions))
         {
             error = internalError.c_str();
             return false;

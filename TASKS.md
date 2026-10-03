@@ -1934,7 +1934,7 @@
 - notes: 2026-10-03作者は他変換を先行し、この機能は未対応として明示拒否する方針を承認。以前の候補はa6391b2の履歴に保持、active実装からは除く。
 
 ## G2-GR78-STATIC-SIDECAR: 静的cookとlooseへ設定を適用する
-- status: todo
+- status: done
 - done-when: 共有loaderと承認済み変換を静的meshのcluster/bounds前へ挿入し、無しなら旧bytes/hashを保ち、有りなら正規化設定hashを連結する。override/disabled/requiredを内部APIへ渡せ、採用設定を診断可能にする。
 - verify: sidecar無し/disabledのpayload同値、scale/fit/origin/UV/windingのcook-loose同値、meta/書式hash不変と値変更、surface拒否と出力保持を既存束へ登録する。
 - stop-when: surface_centroidの再有効化、骨格への無言適用、未実装オプションの黙認、native未実行を成功扱い。
@@ -1944,3 +1944,10 @@
 - done-when: 頂点位置/IBMの平行移動/animation Translation/mesh-node平行移動を同じ正の一様scaleで変換し、cook/loose/legacyで共有する。軸・鏡像・原点やmesh変更は未対応として拒否する。
 - verify: sidecar無し同値、scale前後のskinning結果、fit倍率、回転/scaleチャンネル不変、範囲外と拒否時出力保持を既存束へ登録する。
 - stop-when: 未承認NVSKEL形式変更、骨格の軸/原点変換、native未実行を実skinning成功扱い。
+
+## G2-GR78-OUTPUT-SIDECAR-GUARD: cook出力による設定file上書きを拒否する
+- status: todo
+- done-when: 採用したsidecarとmodel package/manifest/embedded texture packageのpath・symlink・hardlink aliasを、書込前に拒否する。
+- verify: 有効sidecarをpackage/manifest出力先にしたCLI回帰で失敗と既存設定bytes保持を登録し、通常出力を妨げないことを確認する。
+- stop-when: 設定正本を出力で上書きする、途中書込後にaliasを判定する、TOCTOU完全防御と主張する。
+- notes: 静的接続で追加された新規入力sidecarの保護。通常出力pathの既存挙動は維持する。

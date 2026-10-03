@@ -8,6 +8,11 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace NorvesLib::Core::AssetImport
+{
+    struct ImportSettingsFileOptions;
+}
+
 namespace NorvesLib::Tools::AssetCook
 {
     enum class MeshImageRole : uint8_t { Albedo = 1, Normal = 2, Arm = 4 };
@@ -41,6 +46,9 @@ namespace NorvesLib::Tools::AssetCook
     {
         Core::Container::VariableArray<uint8_t> NvmeshBytes;
         Core::Container::VariableArray<MeshEmbeddedImage> EmbeddedImages;
+        Core::Container::AnsiString ImportSettingsPath;
+        uint64_t ImportSettingsHash = 0;
+        bool bHasImportSettings = false;
         uint64_t SourceHash = 0;
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
@@ -67,7 +75,8 @@ namespace NorvesLib::Tools::AssetCook
                                         Core::Container::AnsiStringView sourcePath,
                                         Core::Container::AnsiStringView logicalPath,
                                         MeshCookResult& outResult,
-                                        Core::Container::AnsiString& error);
+                                        Core::Container::AnsiString& error,
+                                        const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr);
 
     [[nodiscard]] bool IsSupportedSkeletalCookFormat(Core::Container::AnsiStringView format) noexcept;
 

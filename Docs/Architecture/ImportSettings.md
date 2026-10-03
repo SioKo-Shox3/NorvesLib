@@ -1,7 +1,7 @@
 # 取り込み設定 v1
 
 GR78のソース隣設定は <source>.import.json（例: Dog.glb.import.json）を正本とし、cook/looseで共用する。
-値・JSON解析・設定file選択/読込・正規化hash・下記のgeometry変換を共通基盤として用意する。実cooker/loose/CLIへの接続は後続であり、現時点では設定fileを置くだけではロードへ反映されない。
+値・JSON解析・設定file選択/読込・正規化hash・下記のgeometry変換を共有し、静的glTF/GLBのAssetCookとlooseロードへ接続する。骨格経路とCLIの明示指定/skip/inspectは後続。
 
 ## 共通の配置と責務
 
@@ -64,7 +64,7 @@ ImportSettingsValueTestは固定bytesの既知値、全軸組合せ、非有限/
 通常・最適化・ASan/UBSan（LeakSanitizer除外）およびMEMBERのWerror compileを実行済み。
 ImportSettingsJsonTestは44のJSON fixtureを登録。fixture自体のJSON文法は別途確認した。
 実JsonDocumentを含むsource/testはWindows.h依存でcompile停止しており、native解析試験は未実行。
-file探索・変換・cook/loose統合が通ったという意味ではない。
+この設定単体の試験だけでfile I/Oやcook/loose統合が通ったという意味ではない。
 
 ## 共有geometry変換（GR78）
 
@@ -84,7 +84,7 @@ strideとfield offsetでlayoutを渡し、他のfieldやpaddingは変更しな�
 実ImportTransformTestは48の軸/鏡像組合せの体積符号、3種類fit、bounds/足元原点、custom移動、
 法線/UV、layout・index・NaN/inf/overflow/underflowと失敗時非変更、非整列storageと未指定field保持を確認する。
 通常・最適化・ASan/UBSan（LeakSanitizer除外）を実行済み。
-骨格のIBM/animation等の一様scaleと、実cooker/looseへの挿入は後続。現時点でロード結果はまだ変わらない。
+骨格のIBM/animation等の一様scaleは後続。静的cooker/looseへの挿入は下記の接続契約に従う。
 
 表面重心は作者承認により後段へ分離した。極端値の精度確認が完了するまでは名前を認識して明示拒否し、
 bounds_center等へ無言で置き換えない。候補実装は履歴に残るが、現在の変換処理からは除外している。
@@ -109,7 +109,7 @@ sidecar無しでは設定やalgorithm versionに依らず既存hashをそのま�
 ImportSettingsHashTestの3つの既知state/期待値、無し不変、値・algorithm変更、-0、無効設定を通常・最適化・sanitizerで確認した。
 hash試験とfile試験のMEMBER compileはWerrorで成功。
 実file loaderはJsonDocument→Windows.hに依存しており、本体compile/実file試験は未実行。
-これらはまだcook/loose/CLIへ接続していない独立APIであり、実ロードのgeometry変換をまだ有効化しない。
+file/hash API単体の実行確認範囲と、下記の静的cook/loose接続の未実行試験を区別する。
 
 Windowsの自動不在判定はraw system errorのFILE_NOT_FOUND/PATH_NOT_FOUNDだけを許可する。
 MSVCのfile_type::not_found/errc写像は不正名やnetwork path障害も含むため、それだけでは設定無しと判断しない。
@@ -117,3 +117,30 @@ MSVCのfile_type::not_found/errc写像は不正名やnetwork path障害も含む
 https://github.com/microsoft/STL/blob/main/stl/inc/filesystem
 https://github.com/microsoft/STL/blob/main/stl/inc/xfilesystem_abi.h
 Windows不正名の実I/O回帰は登録のみで未実行。raw error判定のconstexpr境界は実file-test MEMBER compileで検証する。
+
+
+## 静的cook/looseへの接続
+
+静的モデルのgeometry抽出後、cluster/bounds生成前に同じLoadImportSettingsFileとApplyImportTransformを呼ぶ。
+sidecar無しまたはdisabledは変換を一切呼ばず、旧geometryとsource_hashを保持する。
+明示的な恒等sidecarはgeometryを共有変換へ通し、設定有りとしてhashを連結する。
+
+CookGltfToNvmeshとprivate CPU staging入口の末尾optional optionsでoverride/disabled/requiredを渡せる。
+通常GLTFAnalyzerのsync/asyncは自動探索を使う。これらは同期呼出中にだけoptionsを借用し保持しない。
+CLIの新規フラグはまだ追加していないが、既存の静的モデルcookは自動sidecarを読む。
+cooker結果は採用path/present/settings hashを所有し、Mainはsidecar診断を出す。looseはgltf_import_settingsへ同じ情報を記録する。
+
+新しいmodel source_hashは元source/外部bufferの旧FNV stateに設定を連結する。
+geometryだけの設定では埋込み画像bytesとtexture source_hashは変えない。
+NVMESH形式と既存材質は変更しない。失敗時はcandidateを公開しない。
+設定適用後に既存float演算でbounds/coneが非有限になる場合も、looseは公開前に拒否する。
+
+ImportStaticIntegrationTestを既存束へ登録した。glTF/GLB、無し/恒等/disabledのpayload同値、
+scale/fit/axes/原点/UV/windingのcook-loose頂点・index・bounds一致、meta/書式のhash不変、
+値変更・override/required・表面重心/不正scale/fit退化/巨大scale拒否と既存出力保持を検査する。
+実cooker/loose/新統合試験はWindows.hでcompile停止しており、登録試験は未実行。
+純粋な共有変換・hashの成功をnative統合の成功として扱わない。
+
+自己完結GLB/data URIのcook APIはsource locatorが空でも従来どおり使用できる。
+その場合auto探索は設定無しとし、旧payload/hashを保つ。requiredは失敗し、明示overrideは読み込む。
+通常file loader自体の「空source/overrideはInvalidOptions」という契約は変更しない。

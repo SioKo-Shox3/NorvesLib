@@ -15,6 +15,7 @@ target_include_directories(AssetSystemTest PRIVATE
 norves_add_test_bundle(CookedMeshTest
     FOLDER "Test/Core/Asset"
     MEMBER CookedMeshTest CookedMeshTest.cpp
+    MEMBER ImportStaticIntegrationTest ImportStaticIntegrationTest.cpp
     MEMBER ImportSettingsHashTest ImportSettingsHashTest.cpp
     MEMBER ImportSettingsFileTest ImportSettingsFileTest.cpp
     MEMBER ImportTransformTest ImportTransformTest.cpp
@@ -101,3 +102,5 @@ add_test(NAME ImportTransformTest COMMAND CookedMeshTest --test=ImportTransformT
 
 add_test(NAME ImportSettingsHashTest COMMAND CookedMeshTest --test=ImportSettingsHashTest)
 add_test(NAME ImportSettingsFileTest COMMAND CookedMeshTest --test=ImportSettingsFileTest)
+
+add_test(NAME ImportStaticIntegrationTest COMMAND CookedMeshTest --test=ImportStaticIntegrationTest)

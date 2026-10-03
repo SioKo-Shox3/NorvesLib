@@ -2246,6 +2246,9 @@ namespace
             return false;
         }
 
+        std::cout << "sidecar: " << (meshResult.bHasImportSettings ? ToStdString(meshResult.ImportSettingsPath) : "none")
+                  << " settings_hash=" << ToStdString(FormatAssetHashHex(meshResult.ImportSettingsHash)) << "\n";
+
         if (!meshResult.EmbeddedImages.empty())
         {
             return CookEmbeddedModelAssets(options, inputPath, packagePath, manifestPath, logicalPath, entryName, meshResult, error);

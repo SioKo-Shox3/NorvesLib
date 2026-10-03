@@ -12,6 +12,11 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace NorvesLib::Core::AssetImport
+{
+    struct ImportSettingsFileOptions;
+}
+
 namespace NorvesLib::Core::Resource::ModelStaging
 {
     struct TextureReference
@@ -81,7 +86,8 @@ namespace NorvesLib::Core::Resource::ModelStaging
                                       const Container::String& resolvedPath,
                                       ModelStagingData& outStaging,
                                       const char* role,
-                                      uint32_t requestId);
+                                      uint32_t requestId,
+                                      const AssetImport::ImportSettingsFileOptions* importOptions = nullptr);
 
     size_t GetStagedLooseTextureBytes(const ModelStagingData& staging);
     uint32_t GetStagedPreparedTextureCount(const ModelStagingData& staging);

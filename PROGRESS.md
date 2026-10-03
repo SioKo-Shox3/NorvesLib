@@ -499,3 +499,6 @@
 
 - G2-GR78-TRANSFORM（縮小scope）: 2026-10-03の作者承認でsurface_centroidを未対応として明示拒否し、keep/bounds中心/足元/custom・scale/fit・axes/mirror・UV/windingを先行。候補の表面面積/重心コードをactive実装から除き、値/JSONはUnsupportedFeature、変換はUnsupportedOrigin、canonicalはSize0、失敗出力保持を固定。48方向を含む変換/値の通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）6実行とMEMBER compile成功。44JSON fixture文法確認、nativeJSON未実行。新scope独立レビューPASS。SurfaceCentroidは別保留へ分離し、他変換の接続を再開できる状態。
 - Next: GR78-STATIC-SIDECARとして静的cook/looseへ共有file設定と変換/hashを接続し、その後骨格の一様scaleを別反復で接続する。
+
+- G2-GR78-STATIC-SIDECAR: 静的cook/looseへ共有設定file/変換をcluster前に接続し、設定有りだけsource_hashへ正規化を連結。無し/disabledは旧経路、結果に採用設定を所有してCLI/looseへ診断する。looseは設定適用後の非有限bounds/coneも公開前に拒否。native統合試験にglTF/GLB・各変換・無し/恒等/disabled・meta/hash・override/required・surface/巨大scale失敗保持を登録。第1周の空source locator互換低下を修正し、自己完結GLB/data URIの空/非空同値とrequired/overrideを追加、第2周PASS。共有kernel/hash実行成功、実cooker/loose/統合試験はWindows.hで未実行。
+- Next: 新しい入力sidecarをcook出力先で上書きしないguardを追加してから、静的接続と併せて公開する。骨格一様scaleはその後に進める。
