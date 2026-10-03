@@ -755,9 +755,10 @@ namespace
         const Container::AnsiString cookPath((fixture.Root / "FiveInfluences.gltf").generic_string().c_str());
         constexpr Container::AnsiStringView format = "nvskel.v0.skinned.pnujiw.u32";
         Container::AnsiString cookError;
+        SkeletalCookDiagnostics diagnostics;
         auto cookWith = [&](const ByteArray& bytes, const SkeletalGltfDecodeOptions* policy, SkeletalCookResult& out)
         {
-            return CookGltfToNvskel(bytes.data(), bytes.size(), format, cookPath, out, cookError, nullptr, policy);
+            return CookGltfToNvskel(bytes.data(), bytes.size(), format, cookPath, out, cookError, nullptr, policy, &diagnostics);
         };
         auto fingerprintWith = [&](const ByteArray& bytes, const SkeletalGltfDecodeOptions* policy, ModelCookFingerprint& out)
         {
@@ -768,6 +769,8 @@ namespace
         assert(cookWith(sourceBytes, &options, cooked) && fingerprintWith(sourceBytes, &options, fingerprint));
         assert(cooked.SourceHash == fingerprint.SourceHash && !cooked.bHasImportSettings);
         checkReport(cooked.DecodeReport);
+        assert(diagnostics.bDecodeAttempted && diagnostics.DecodeStatus == 0);
+        checkReport(diagnostics.Report);
         auto parsedCook = Asset::ParseCookedSkeletal(MakeBlob(cooked.NvskelBytes));
         assert(parsedCook.Succeeded()); AssertEquivalent(decoded.Data, parsedCook.Data.Skeletal);
         SkeletalCookResult cookedGlb;
@@ -791,12 +794,15 @@ namespace
         // fingerprint成功はcook可能性の証明ではない。値を読み縮約する本cookで拒否する。
         assert(fingerprintWith(sourceBytes, &cookLimit, changedFingerprint));
         assert(!cookWith(sourceBytes, &cookLimit, cooked));
+        assert(diagnostics.bDecodeAttempted && diagnostics.DecodeStatus == 17 && diagnostics.Report.FailedVertexIndex == 0);
+        assert(diagnostics.Report.bHasFailedVertexDroppedWeight && std::abs(diagnostics.Report.FailedVertexDroppedWeight - 0.05) < 1e-7);
         assert(cookError.find("failed_vertex=0") != Container::AnsiString::npos &&
             cookError.find("dropped_weight=") != Container::AnsiString::npos);
         assert(cooked.SourceHash == savedCook.SourceHash && cooked.NvskelBytes == savedCook.NvskelBytes);
         checkReport(cooked.DecodeReport);
         auto badPolicy = options; badPolicy.FailDroppedWeight = -1;
         assert(!cookWith(sourceBytes, &badPolicy, cooked) && !fingerprintWith(sourceBytes, &badPolicy, fingerprint));
+        assert(!diagnostics.bDecodeAttempted && diagnostics.Report.ProcessedVertexCount == 0);
         assert(cooked.SourceHash == savedCook.SourceHash && fingerprint.SourceHash == savedFingerprint.SourceHash);
         assert(!FingerprintModelCookSource(sourceBytes.data(), sourceBytes.size(), "nvmesh.v0.mesh3d.pnt.u32.clustered",
             cookPath, "Models/rig.gltf", fingerprint, cookError, nullptr, &options));

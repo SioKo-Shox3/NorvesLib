@@ -5,6 +5,7 @@
 #include "Container/VariableArray.h"
 #include "Container/Span.h"
 #include "Resource/SkeletalImportOptions.h"
+#include "SkeletalImportReport.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -116,5 +117,6 @@ namespace NorvesLib::Tools::AssetCook
                                         SkeletalCookResult& outResult,
                                         Core::Container::AnsiString& error,
                                         const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
-                                        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+                                        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr,
+                                        SkeletalCookDiagnostics* outDiagnostics = nullptr);
 } // namespace NorvesLib::Tools::AssetCook

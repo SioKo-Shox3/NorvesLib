@@ -2060,7 +2060,13 @@
 - stop-when: 未実装のCUBICSPLINE/morph/joint-policyを受理する、skipだけStrictのまま、native未実行を成功と主張する。
 
 ## G2-GR86-IMPORT-REPORT: 縮約・焼込・dropのJSON診断を共有形式へまとめる
-- status: todo
+- status: done
 - done-when: 実装済みpolicyの測定と失敗を版付きImportReportへまとめ、GR84の将来拡張と区別する。CLI stderr警告と同じ測定を持つ。
 - verify: JSON文法/数値/未完走査と失敗計測の分離/決定的出力、書込経路を足す場合は既存入力・出力保護。
 - stop-when: 未実装のBVH/retargetを実装済みとして報告、既存出力保護の迂回。
+
+## G2-GR86-CUBIC-KERNEL: CUBICSPLINEの評価と保守的誤差境界を実装する
+- status: todo
+- done-when: double Hermite/Bezier評価と全区間のLINEAR近似誤差上界を定義し、移動/scale/回転の単位を区別する。実samplerの短区間・半球/NLERP分岐、float出力丸め、有限性を考慮し、保証できない入力は拒否する。
+- verify: 公式式の既知値、非単位時間、S字中点相殺、回転正規化/ゼロ/半球と実sampler条件、誤差境界を純kernelで反証する。
+- stop-when: 中点標本だけで全区間保証とする、tangent符号の暗黙変更、誤差のメートル/角度混同、未接続decode受理。

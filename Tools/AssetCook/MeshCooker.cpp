@@ -2392,7 +2392,7 @@ namespace NorvesLib::Tools::AssetCook
                                       SkeletalCookResult& outResult,
                                       AnsiString& error,
                           const Core::AssetImport::ImportSettingsFileOptions* importOptions,
-                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions, SkeletalCookDiagnostics& diagnostics)
         {
             if (format != SupportedSkeletalFormat)
             {
@@ -2423,6 +2423,9 @@ namespace NorvesLib::Tools::AssetCook
             Gltf::BufferSet sourceBuffers;
             const auto decoded = NorvesLib::Core::Skeletal::DecodeSkeletalGltf(
                 {sourceBytes, sourceSize}, ToCoreString(sourcePath), &sourceBuffers, &loadedImport, &options);
+            diagnostics.bDecodeAttempted = true;
+            diagnostics.DecodeStatus = static_cast<uint32_t>(decoded.Status);
+            diagnostics.Report = decoded.Report;
             if (!decoded.Succeeded())
             {
                 error = AnsiString("skeletal glTF decode failed: status=") +
@@ -2597,14 +2600,17 @@ namespace NorvesLib::Tools::AssetCook
                           SkeletalCookResult& outResult,
                           NorvesLib::Core::Container::AnsiString& error,
                           const Core::AssetImport::ImportSettingsFileOptions* importOptions,
-                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions, SkeletalCookDiagnostics* outDiagnostics)
     {
         AnsiString internalError;
-        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError, importOptions, decodeOptions))
+        SkeletalCookDiagnostics diagnostics;
+        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError, importOptions, decodeOptions, diagnostics))
         {
+            if (outDiagnostics) *outDiagnostics = diagnostics;
             error = internalError;
             return false;
         }
+        if (outDiagnostics) *outDiagnostics = diagnostics;
         return true;
     }
 } // namespace NorvesLib::Tools::AssetCook

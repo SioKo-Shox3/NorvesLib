@@ -132,8 +132,33 @@ decodeの正常prefix後失敗とUNORM8/16複数setの全総和/1不足も恒久
 本cookと--skip-if-unchangedのfingerprintへ同じpolicyを渡すため、Strictとの混同や
 閾値変更時のcache誤使用を防ぐ。cache hitは縮約を再実行せず既存のskip通知を返す。
 実際にcookしたReduce資産はstderrへ処理頂点数/縮約/合算/再正規化/警告数と最大/平均脱落比率を出し、
-警告閾値超過を明示する。共有JSON ImportReportへの格納は別taskで、現段階では未実装。
+警告閾値超過を明示する。共有JSON ImportReportへの格納は下記のversion 1を用いる。
 
 pure parserを通常/O2-NDEBUG/ASan・UBSanとMEMBERで検査する。native CLI smokeには5影響fixture、
 既定拒否/縮約成功/閾値超過と出力保持/同policy cache hit/閾値変更cache missを登録する。
 Main/native CLI smokeはWindows.h・PowerShell/CMake依存によりこのLinux環境では未実行。
+
+## ImportReport JSON version 1
+
+BuildSkeletalImportReportは版付き共通envelope（version/kind/outcome/source_hash/decode_status）と
+skinセクションを生成する。固定識別子と有限の数値のみ、locale非依存、決定的な出力。
+任意文字列やsourceパスを含めず、4096byteの所有結果へ生成し、不正な測定は空の失敗結果にする。
+source_hashは既知のcook/cache時だけ16桁hex文字列、失敗時はnull。
+
+CLIは骨格cook API実行後とcache hit時に、stderrへimport_report=に続く1行JSONを出す。
+outcome=payload_readyはNVSKEL payloadが作れた状態で、後続package/manifest書込の完了宣言ではない。
+failedはcook API失敗、cache_hitは再decode省略。引数parse・入力file読込・preflight段階での拒否は
+従来のerror通知であり、このJSONの生成対象ではない。新たなreport fileは書き込まない。
+
+SkeletalCookDiagnosticsは既存resultと独立した任意出力。失敗resultを維持したまま、
+decodeを試したか、status、成功prefixと失敗頂点の測定を返す。decode未実行の失敗は前回の測定を残さない。
+Strictやcache hitは影響の再測定をしていないためinfluence_scan=nullとし、ゼロ件測定と偽装しない。
+Reduceでも総頂点数がまだ不明な失敗はinfluence_scan=null。総数を取得済みでも成功prefixが0なら、
+最大/平均はnullとして数値0の測定と区別する。失敗頂点で測れた脱落量は別欄に残す。
+Reduceの測定はprocessed prefixの最大/平均と失敗頂点脱落量を分離する。
+
+CUBICSPLINE/morphは実装時に同じskinセクションへ追加する。GR84のBVH/retarget測定はまだ存在せず、
+将来はこの版付きenvelopeへ別セクションを足す。BVH受理やretargetの実装済みを意味しない。
+pure serializerの3mode/MEMBERとPython独立JSON解析で構文/数値/状態を検査する。
+native回帰には成功/閾値失敗/古い診断の消去・CLI JSON/警告有無/cache未測定を登録し、
+CoreとMainのWindows.h依存のため未実行として区別する。

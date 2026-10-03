@@ -21,6 +21,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER ImportTransformTest ImportTransformTest.cpp
     MEMBER ImportCliOptionsTest ImportCliOptionsTest.cpp
     MEMBER SkeletalCliOptionsTest SkeletalCliOptionsTest.cpp
+    MEMBER SkeletalImportReportTest SkeletalImportReportTest.cpp
     MEMBER SkeletalInfluenceAttributeTest SkeletalInfluenceAttributeTest.cpp
     MEMBER SkeletalInfluenceSetPairTest SkeletalInfluenceSetPairTest.cpp
     MEMBER SkeletalInfluenceSetsJsonTest SkeletalInfluenceSetsJsonTest.cpp
@@ -130,3 +131,5 @@ add_test(NAME SkeletalInfluenceSetPairTest COMMAND CookedMeshTest --test=Skeleta
 add_test(NAME SkeletalInfluenceSetsJsonTest COMMAND CookedMeshTest --test=SkeletalInfluenceSetsJsonTest)
 
 add_test(NAME SkeletalCliOptionsTest COMMAND CookedMeshTest --test=SkeletalCliOptionsTest)
+
+add_test(NAME SkeletalImportReportTest COMMAND CookedMeshTest --test=SkeletalImportReportTest)

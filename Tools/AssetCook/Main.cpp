@@ -2358,6 +2358,18 @@ namespace
         return true;
     }
 
+    void PrintSkeletalImportReport(const NorvesLib::Tools::AssetCook::SkeletalImportReportInput& input)
+    {
+        const auto json = NorvesLib::Tools::AssetCook::BuildSkeletalImportReport(input);
+        if (json.bValid)
+        {
+            std::cerr << "import_report=";
+            std::cerr.write(json.Bytes, static_cast<std::streamsize>(json.Size));
+            std::cerr << "\n";
+        }
+        else std::cerr << "骨格ImportReportの測定値が不正です\n";
+    }
+
     bool TrySkipModelCook(const CookOptions& options, const std::filesystem::path& inputPath,
         const std::filesystem::path& packagePath, const std::filesystem::path& manifestPath,
         NorvesLib::Core::Container::Span<const uint8_t> source,
@@ -2393,6 +2405,14 @@ namespace
         {
             std::cout << "sidecar: " << (fingerprint.bHasImportSettings ? ToStdString(fingerprint.ImportSettingsPath) : "none")
                 << " settings_hash=" << ToStdString(FormatAssetHashHex(fingerprint.ImportSettingsHash)) << "\n";
+            if (NorvesLib::Tools::AssetCook::IsSupportedSkeletalCookFormat(options.Format))
+            {
+                NorvesLib::Tools::AssetCook::SkeletalImportReportInput report;
+                report.Outcome = NorvesLib::Tools::AssetCook::SkeletalImportOutcome::CacheHit;
+                report.SourceHash = fingerprint.SourceHash;
+                report.Options = options.SkeletalImport.Decode;
+                PrintSkeletalImportReport(report);
+            }
             std::cout << "AssetCook skipped unchanged model source_hash=" << ToStdString(FormatAssetHashHex(fingerprint.SourceHash)) << "\n";
         }
         return true;
@@ -2615,14 +2635,23 @@ namespace
         NorvesLib::Tools::AssetCook::SkeletalCookResult skeletalResult;
         NorvesLib::Core::Container::AnsiString skeletalError;
         const NorvesLib::Core::Container::AnsiString sourcePath(inputPath.generic_string().c_str());
-        if (!NorvesLib::Tools::AssetCook::CookGltfToNvskel(inputBytes.data(),
+        NorvesLib::Tools::AssetCook::SkeletalCookDiagnostics diagnostics;
+        const bool cooked = NorvesLib::Tools::AssetCook::CookGltfToNvskel(inputBytes.data(),
                                                            inputBytes.size(),
                                                            format,
                                                            sourcePath,
                                                            skeletalResult,
                                                            skeletalError,
                                                            &options.ImportSettings,
-                                                           &options.SkeletalImport.Decode))
+                                                           &options.SkeletalImport.Decode, &diagnostics);
+        NorvesLib::Tools::AssetCook::SkeletalImportReportInput report;
+        report.Outcome = cooked ? NorvesLib::Tools::AssetCook::SkeletalImportOutcome::PayloadReady :
+            NorvesLib::Tools::AssetCook::SkeletalImportOutcome::Failed;
+        report.SourceHash = cooked ? skeletalResult.SourceHash : 0;
+        report.Options = options.SkeletalImport.Decode;
+        report.Diagnostics = diagnostics;
+        PrintSkeletalImportReport(report);
+        if (!cooked)
         {
             error.assign(skeletalError.data(), skeletalError.size());
             return false;

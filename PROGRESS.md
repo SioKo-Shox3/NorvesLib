@@ -553,3 +553,6 @@
 
 - G2-GR86-REDUCE-CLI: --skin-influences strict|reduceとwarn/fail閾値を別引数/equalsで厳密parse。重複/不正数/閾値だけ/非骨格指定を拒否し、順序に依らず最終検査する。cookとskipへ同じpolicyを伝播し、実cook時のstderr統計/警告を追加。純parser通常/O2-NDEBUG/ASan・UBSan（LSan除外）と-Werror MEMBER成功、独立PASS。5影響CLI成功/既定拒否/閾値失敗出力保持/同値cachehit・閾値差cachemissのnative smokeを登録。Main/native smokeはWindows.hとPowerShell/CMake依存で未実行。警告文/全診断値のnative assert強化はnonblocking候補。
 - Next: cook/CLIを公開し、共有JSON ImportReportへ成功/失敗測定を接続する。CUBICSPLINE/morph/joint-policyは未実装のまま拒否。
+
+- G2-GR86-IMPORT-REPORT: version1共通envelope/skinの所有JSONを追加。payload_ready（package書込前）/failed/cache_hitを区別し、cook独立診断出力で失敗resultを保持しつつstatus/prefix/失敗頂点を返す。CLIはAPI結果とcacheにstderr1行JSONを出し新file書込なし。第1周の未測定0混同を修正し、Strict/cache/総数不明はscan=null、prefix0のmax/mean=null、失敗頂点測定は独立保持。第2周PASS。pure3mode/Werror MEMBER/Python独立JSON解析成功、native診断/CLI JSON・警告閾値回帰はWindows.hにより未実行。Cubic/morph/GR84測定は将来拡張として明記。
+- Next: ImportReport公開後、GR86 CUBICSPLINEの保守的誤差付きLINEAR焼込へ。実samplerの短区間処理とfloat丸めを評価し、保証不能は拒否する。
