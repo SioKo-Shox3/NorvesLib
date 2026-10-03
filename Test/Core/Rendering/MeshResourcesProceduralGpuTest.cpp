@@ -1,6 +1,11 @@
 ﻿#include "Rendering/RenderResources.h"
+#include "Component/MeshComponent.h"
+#include "Math/MatrixUtils.h"
+#include "Object/Entity.h"
+#include "Object/World.h"
 #include "Rendering/MeshTypes.h"
 #include "Rendering/ProceduralMeshGenerator.h"
+#include "Rendering/SceneView.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "RHI/IFramebuffer.h"
@@ -12,6 +17,7 @@
 #include "RHI/ISwapChain.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -132,6 +138,60 @@ namespace
         handle.Id = id;
         return handle;
     }
+
+    // 回転と非一様スケールが重なった物体でも、BuildMeshProxy の境界球が変換後のローカルAABBの角をすべて包む
+    void TestMeshProxyBoundsContainRotatedNonUniformScale(RenderResources &resources)
+    {
+        const MeshDataHandle longMeshHandle = MakeMeshHandle(80);
+        Mesh3DVertex longVertices[3] = {};
+        longVertices[0].Position[0] = -16.0f;
+        longVertices[0].Position[2] = -1.0f;
+        longVertices[1].Position[0] = 16.0f;
+        longVertices[1].Position[2] = 1.0f;
+        longVertices[2].Position[1] = 0.5f;
+        const uint32_t longIndices[3] = {0, 1, 2};
+        assert(resources.Meshes().Register(longMeshHandle, longVertices, sizeof(longVertices), longIndices, 3));
+
+        // World が後に壊れるので、SceneView を先に宣言する
+        SceneView view;
+        SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        NorvesLib::Core::World world;
+        world.Initialize();
+        world.SetSceneView(&view);
+
+        NorvesLib::Core::Entity *object = world.SpawnObject<NorvesLib::Core::Entity>();
+        assert(object);
+        NorvesLib::Core::Component::MeshComponent *mesh =
+            world.CreateComponent<NorvesLib::Core::Component::MeshComponent>(object);
+        assert(mesh);
+        mesh->SetMeshHandle(longMeshHandle);
+        const float halfAngle = 0.5f * 0.78539816f;
+        object->SetRotation(0.0f, 0.0f, std::sin(halfAngle), std::cos(halfAngle));
+        object->SetScale(3.0f, 0.5f, 1.0f);
+        object->SetPosition(5.0f, -1.0f, 2.0f);
+
+        world.SyncToSceneView(nullptr, &resources.Meshes());
+        assert(view.GetMeshProxies().size() == 1);
+        const MeshProxy &proxy = view.GetMeshProxies()[0];
+        const BoundingSphere &bounds = proxy.WorldBounds;
+        for (uint32_t corner = 0; corner < 8; ++corner)
+        {
+            const NorvesLib::Math::Vector3 localCorner((corner & 1u) != 0 ? 16.0f : -16.0f,
+                                                       (corner & 2u) != 0 ? 0.5f : 0.0f,
+                                                       (corner & 4u) != 0 ? 1.0f : -1.0f);
+            const NorvesLib::Math::Vector3 worldCorner =
+                NorvesLib::Math::MatrixUtils::TransformPointRowVector(proxy.WorldTransform, localCorner);
+            const float dx = worldCorner.x - bounds.CenterX;
+            const float dy = worldCorner.y - bounds.CenterY;
+            const float dz = worldCorner.z - bounds.CenterZ;
+            assert(std::sqrt(dx * dx + dy * dy + dz * dz) <= bounds.Radius * 1.0001f + 1.0e-4f);
+        }
+        std::cout << "MeshProxy bounds radius=" << bounds.Radius << "\n" << std::flush;
+
+        world.SetSceneView(nullptr);
+        resources.Meshes().Unregister(longMeshHandle);
+    }
 }
 
 int main()
@@ -218,6 +278,7 @@ int main()
     assert(localBounds.MinX == -30.0f && localBounds.MaxX == 2.0f);
     assert(localBounds.MinY == -1.0f && localBounds.MaxY == 3.0f);
     assert(localBounds.MinZ == -30.0f && localBounds.MaxZ == 4.0f);
+    TestMeshProxyBoundsContainRotatedNonUniformScale(manager);
     boundsVertices[1].Position[1] = std::numeric_limits<float>::infinity();
     assert(manager.Meshes().Register(boundsHandle, boundsVertices, sizeof(boundsVertices), indicesA, 3));
     assert(!manager.Meshes().TryGetLocalBounds(boundsHandle, localBounds));

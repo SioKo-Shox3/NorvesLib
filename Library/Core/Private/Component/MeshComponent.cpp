@@ -29,28 +29,29 @@ namespace NorvesLib::Core::Component
             return materialData->Blend;
         }
 
-        // ローカル空間のAABBを包む球をワールドへ移す（中心はワールド行列で点として変換し、半径は最大の軸の伸びを掛ける）
+        // ローカル空間のAABBを包む球をワールドへ移す。中心はワールド行列で点として変換し、半径は上3x3の絶対値で
+        // 移した半分の大きさ（変換後の箱を包むワールドのAABB）の長さにする。回転と非一様スケールが重なっても包む。
         Rendering::BoundingSphere MakeWorldBoundingSphere(const Rendering::BoundingBox &localBounds,
                                                           const Math::Matrix4x4 &worldTransform)
         {
             const Math::Vector3 localCenter((localBounds.MinX + localBounds.MaxX) * 0.5f,
                                             (localBounds.MinY + localBounds.MaxY) * 0.5f,
                                             (localBounds.MinZ + localBounds.MaxZ) * 0.5f);
-            const float extentX = (localBounds.MaxX - localBounds.MinX) * 0.5f;
-            const float extentY = (localBounds.MaxY - localBounds.MinY) * 0.5f;
-            const float extentZ = (localBounds.MaxZ - localBounds.MinZ) * 0.5f;
-            const float localRadius = std::sqrt(extentX * extentX + extentY * extentY + extentZ * extentZ);
+            const Math::Vector3 localHalfExtents((localBounds.MaxX - localBounds.MinX) * 0.5f,
+                                                 (localBounds.MaxY - localBounds.MinY) * 0.5f,
+                                                 (localBounds.MaxZ - localBounds.MinZ) * 0.5f);
 
             const Math::Vector3 worldCenter = Math::MatrixUtils::TransformPointRowVector(worldTransform, localCenter);
-            const Math::Vector3 scale = Math::MatrixUtils::ExtractScale(worldTransform);
-            const float maxScale = scale.x > scale.y ? (scale.x > scale.z ? scale.x : scale.z)
-                                                     : (scale.y > scale.z ? scale.y : scale.z);
+            const Math::Vector3 worldHalfExtents =
+                Math::MatrixUtils::AbsUpper3x3TransformExtentsRowVector(worldTransform, localHalfExtents);
 
             Rendering::BoundingSphere worldBounds;
             worldBounds.CenterX = worldCenter.x;
             worldBounds.CenterY = worldCenter.y;
             worldBounds.CenterZ = worldCenter.z;
-            worldBounds.Radius = localRadius * maxScale;
+            worldBounds.Radius = std::sqrt(worldHalfExtents.x * worldHalfExtents.x +
+                                           worldHalfExtents.y * worldHalfExtents.y +
+                                           worldHalfExtents.z * worldHalfExtents.z);
             return worldBounds;
         }
     } // namespace
