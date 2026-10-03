@@ -414,7 +414,7 @@
 - notes: 2026-10-03 SS-MEGA-SPHERE で見つけた。岩は頂点67042・三角形66122、小屋は頂点6599・三角形4281で、閉じたメッシュの目安（頂点≒三角形の半分）より頂点が多く、UVの島ごとに頂点が複製されている。`MeshClusterizer::BuildAdjacencyGraph` は頂点の番号の辺だけで隣接をつなぐため、クラスタの成長が島の境で止まる（手続きの球は頂点を共有するので平均127.8）。
 
 ## SS-MEGA-LOD-PERF: 大きな球のLODを画面上の誤差で選び、CSMのMegaGeometryをカスケードに見合う段で描く
-- status: todo
+- status: done
 - done-when: (1) 大きな球（MegaGeometry、変位あり）のクラスタのLODを、その段で失われる形の誤差（球面からのずれと変位の差の大きい方）を実際の透視投影で画素へ直した大きさ（変位の前後のクリップ座標を画素へ直した差の上限。角度の近似で過小に見積もらない。この上限を、変位の前後のクリップ座標を画素へ直して比べる契約テストで確かめる）で選び、誤差が閾値以下になる最も粗い段を使う。閾値は撮り比べで見た目の差が出ない値（1画素以下）に決め、選んだ値と各視点の段を記録する。近接視点で LOD0 が選ばれるのは、それより粗い段の誤差が閾値を超えるときで、それは受け入れる（LOD0 は近接で目に見える変位の細部を運ぶ）。段の境目に割れ目が出ない（SS-MEGA-SPHERE の LOD 球の規則を保つ）。(2) CSM の各カスケードへ描く大きな球の段を、カスケードの1テクセルの大きさに見合う誤差で選ぶ（遠いカスケードほど粗い）。点光源のキューブも同じ考えで、遠い面・小さいキューブには粗い段を使う。岩・小屋は LOD0 のまま描き（影だけの粗い段は backlog の FIX-MEGA-SHADOW-LOD-LOADED で扱う）、その三角形数と ShadowMapPass の時間を記録する。どの段を何三角形描いたかを視点・カスケードごとにログへ出す。(3) RelWithDebInfo の `-GpuTimingFrames 600` で、近接視点（昼45°）の1フレームのGPUの中央値が5 ms以下、昼の3視点の全540フレームが16.6 ms以下（MegaGeometryPass・ShadowMapPass の中央値を変更前の SS-ACCEPT-DETAIL の値と並べて記録する）。(4) 見た目が変わらない: 近接・低角度の球の輪郭と目地、地面の影の、変更前後の拡大画像で差が目に見えない（差の画像と、球の領域の平均の差を示す）。
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
@@ -424,8 +424,14 @@
 - stop-when: 誤差1画素で見た目に差が出る場合は、差が見えない最も粗い閾値を撮り比べで選び、選んだ値と測定を記録する。中央値5 msに届かない場合は、届いた値とパスごとの内訳を既知の限界として記録して完了にする。
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Game/GameModes/Rendering3DTest, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-03 SS-ACCEPT-DETAIL の計測で分かった。近接視点のGPUの中央値が 約3.1 → 8.2〜9.3 ms に増え、増分のほぼすべてが MegaGeometryPass（0.34 → 5.4〜6.2 ms）。変位を LOD の誤差に含めた結果、近接で大きな球の LOD0（1,046,528三角形）が選ばれ、その多くが1画素より小さい。12960フレーム中2フレームが16.6 msを超えた（MegaGeometryPass と ShadowMapPass が同じフレームで跳ねた）。CSM は岩・小屋を LOD0 のまま4カスケードすべてへ描く（`csm_mega_lod=0`）。この計測は FIX-MEGA-CLUSTER-ADJACENCY（法線コーンのカリングの変更を含む）の前。2026-10-03 ユーザーの指示: 最適化を先にやってからマージ・プッシュする。危険地帯（MegaGeometry・影・RenderThread）。評価者を通す。
-- result: 2026-10-03 完了。閾値は1画素のまま（撮り比べで2画素は近接で LOD1 になり目地の深い暗がりが消え、低角度は LOD4 で球が平均10/255暗くなるため不採用）。近接は LOD1 の誤差が1.56画素で LOD0 を保つ（見た目を変えない側を優先）。近接（昼45°）のGPUの中央値は 5.326 ms で5 msに届かず、既知の限界（MegaGeometryPass 2.582・LightingPass 0.648・ShadowMapPass 0.643 ms）。3視点1620フレームの最大 9.03 ms で予算超え0。
+- result: 2026-10-03 完了（反復2）。投影の式を、角度の変化の最大 projectionFactor·D/(D²−R²) に視線から外れた点での透視の伸び 1/cos²α の上限（視錐台の角と、中心の方向の角＋見かけの半径の小さい方）を掛けた上限に直した（`MegaGeometryLODSelection.h`・`cluster_cull.comp`）。契約テストはエンジンの view・projection（Vulkan の Z 反転と Y 反転の有無）で球の表面の点を法線方向に変位させ、前後のクリップ座標を画素へ直した差が上限以下で、上限の6割以上が実際に出ることを確かめる（角度だけの式では落ちる）。閾値は1画素のまま（撮り比べ: 1画素は近接 LOD0・低角度 LOD1 で変更前と同じ段になり、変更前との差は16超の画素0。0.5画素は低角度も LOD0 で LOD0 の参照と見分けがつかないが、変更前より細かくなる）。既定（10 m）は LOD4（0.866画素）。CSM は球 c0 LOD3・c1〜c3 LOD4、岩 LOD0 66,122・小屋 LOD0 4,281三角形をカスケードごと、ShadowMapPass 中央値 0.74〜0.80 ms。近接（昼45°）のGPUの中央値は 8.42 ms で5 msに届かず、既知の限界（MegaGeometryPass 4.62・LightingPass 1.34・ShadowMapPass 0.80 ms。LOD0 の球の1,046,528三角形が主）。3視点1620フレームの最大 14.41 ms で予算超え0。同じ版の再計測は環境の負荷で ShadowMapPass が 2.1 ms へ増えて跳ね、近接で57フレームが予算を超えた（既知の限界）。
 - notes: 2026-10-03 評価1周目（`cb84375`）は NEEDS_WORK（`NEXT_FINDINGS.md`）。反復2が `blocked/SS-MEGA-LOD-PERF.md` に書いた推奨（A: 近接の LOD0 を受け入れ、誤差の閾値だけを条件にする／D: 岩・小屋の影の粗い段は別の項目にする）を親が採り、done-when を改めた。正しい透視投影の式では近接の LOD1 は約1.8画素、中間の段を足しても約1.2画素の見込みで、1画素以下の閾値では LOD0 が残るため、中間の段は求めない。直すのは指摘3（投影の式とその契約テスト）と指摘4（閾値の撮り比べ）。上の result 行は反復1の記録で、2周目の結果で書き直す。
+
+## FIX-MEGA-LOD-SHADING: MegaGeometry の粗い段の陰影が LOD0 より暗く・柔らかくなるのを直す
+- status: backlog
+- done-when: 変位のある大きな球の LOD1〜LOD4 で、目地の陰影（法線）が LOD0 と見分けがつかない（既定・低角度の視点の拡大画像で、LOD0 の参照との球の領域の平均の差が撮り直しの雑音と同じ程度）。形の誤差の閾値（1画素）は変えない。
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 SS-MEGA-LOD-PERF の撮り比べで見つけた。形の誤差が1画素未満でも、低角度（6 m）の LOD1（0.58画素）は LOD0 より目地が柔らかく（16超の画素 0.8%）、既定（10 m）の LOD4（0.87画素）は球の平均で 6〜10/255 暗い。変更前の段の選び方でも同じ段で、起こっていた差。粗い段の頂点の法線が変位の細部を平均してしまうのが原因と見られる。
 
 ## FIX-MEGA-SHADOW-LOD-LOADED: 読み込むモデルのMegaGeometryに影だけの粗い段を作る
 - status: backlog

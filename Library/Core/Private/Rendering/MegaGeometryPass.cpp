@@ -1156,8 +1156,33 @@ namespace NorvesLib::Core::Rendering
         const float dz = center[2] - uniformData.CameraPosition[2];
         const float centerDistance = std::sqrt(dx * dx + dy * dy + dz * dz);
         const float radius = local.Radius * scale;
-        const float errorScale = MegaGeometry::ComputeLODSphereErrorPixelsPerMeter(
-                                     centerDistance, radius, uniformData.ProjectionFactor) *
+
+        // 中心の深さと画角は、シェーダーへ渡す列優先の行列から cluster_cull.comp と同じく求める
+        // （配列の [列 * 4 + 行]。深さはクリップ座標の w を projection[2][3] で割った値）。
+        const float *view = uniformData.ViewMatrix;
+        const float *projection = uniformData.ProjectionMatrix;
+        float viewPosition[4] = {};
+        for (uint32_t row = 0; row < 4; ++row)
+        {
+            viewPosition[row] =
+                view[0 * 4 + row] * center[0] + view[1 * 4 + row] * center[1] + view[2 * 4 + row] * center[2] +
+                view[3 * 4 + row];
+        }
+        float clipW = 0.0f;
+        for (uint32_t column = 0; column < 4; ++column)
+        {
+            clipW += projection[column * 4 + 3] * viewPosition[column];
+        }
+        const float depthScale = std::abs(projection[2 * 4 + 3]);
+        const float centerDepth = depthScale > 1.0e-6f ? clipW / depthScale : 0.0f;
+        const float tanHalfFovX = 1.0f / std::max(std::abs(projection[0 * 4 + 0]), 1.0e-6f);
+        const float tanHalfFovY = 1.0f / std::max(std::abs(projection[1 * 4 + 1]), 1.0e-6f);
+        const float errorScale = MegaGeometry::ComputeLODSphereErrorPixelsPerMeter(centerDistance,
+                                                                                    centerDepth,
+                                                                                    radius,
+                                                                                    uniformData.ProjectionFactor,
+                                                                                    tanHalfFovX,
+                                                                                    tanHalfFovY) *
                                  scale;
         const uint32_t level = MegaGeometry::SelectCoarsestLODWithinError(gpuData.LevelRanges,
                                                                            errorScale,
@@ -1189,12 +1214,16 @@ namespace NorvesLib::Core::Rendering
         const bool bHasCoarser = level + 1u < gpuData.LevelRanges.size();
         NORVES_LOG_INFO("MegaGeometryPass",
                         "mega_lod_select mesh=\"%s\" level=%u level_triangles=%u camera_to_lod_center_m=%.3f "
-                        "lod_radius_m=%.3f threshold_px=%.2f level_error_px=%.3f coarser_level_error_px=%.3f",
+                        "lod_radius_m=%.3f center_depth_m=%.3f perspective_stretch=%.3f threshold_px=%.2f "
+                        "level_error_px=%.3f coarser_level_error_px=%.3f",
                         gpuData.DebugName.empty() ? "" : gpuData.DebugName.c_str(),
                         level,
                         range.IndexCount / 3u,
                         static_cast<double>(centerDistance),
                         static_cast<double>(radius),
+                        static_cast<double>(centerDepth),
+                        static_cast<double>(MegaGeometry::ComputeLODSpherePerspectiveStretch(
+                            centerDistance, centerDepth, radius, tanHalfFovX, tanHalfFovY)),
                         static_cast<double>(uniformData.LODBias),
                         static_cast<double>(range.Error * errorScale),
                         bHasCoarser ? static_cast<double>(gpuData.LevelRanges[level + 1u].Error * errorScale) : -1.0);

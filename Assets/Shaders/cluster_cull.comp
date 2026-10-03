@@ -233,7 +233,8 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
 
     // 誤差1を画面の画素へ直す倍率。メッシュ共通のLOD球があれば、全クラスタが同じ倍率で選ぶ
     // （どの段も閉じたメッシュなら、メッシュ全体で同じ段が選ばれて段の境目に割れ目ができない）。
-    // 誤差は球の法線方向のずれなので、見える面での投影の最大 projectionFactor·D/(D²−R²) を使う
+    // 誤差は球の法線方向のずれなので、見える面での角度の変化の最大 projectionFactor·D/(D²−R²) に、
+    // 視線から外れた点で透視投影が横のずれを伸ばす倍率 1/cos²α の上限を掛けた値を使う
     // （MegaGeometryLODSelection.h の ComputeLODSphereErrorPixelsPerMeter と同じ式）。
     float errorScale;
     if (cullData.lodSphere.w > 0.0)
@@ -243,7 +244,30 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
         float lodRadius = cullData.lodSphere.w * worldScale;
         float centerDistance = distance(lodCenter, cullData.cameraPosition.xyz);
         float denominator = max(centerDistance * centerDistance - lodRadius * lodRadius, 1e-6);
-        errorScale = cullData.projectionFactor * centerDistance / denominator * worldScale;
+        float angularScale = cullData.projectionFactor * centerDistance / denominator;
+
+        // 描かれる点は視錐台の中なので tan²α ≤ tan²(fovX/2) + tan²(fovY/2)。球が前方にあれば
+        // α ≤ 中心の方向の角 β + 見かけの半径 asin(R/D) でもあるので、小さい方を使う。
+        float tanHalfFovX = 1.0 / max(abs(cullData.projectionMatrix[0][0]), 1e-6);
+        float tanHalfFovY = 1.0 / max(abs(cullData.projectionMatrix[1][1]), 1e-6);
+        float stretch = 1.0 + tanHalfFovX * tanHalfFovX + tanHalfFovY * tanHalfFovY;
+        float depthScale = abs(cullData.projectionMatrix[2][3]);
+        float centerDepth = depthScale > 1e-6
+            ? (cullData.projectionMatrix * cullData.viewMatrix * vec4(lodCenter, 1.0)).w / depthScale
+            : 0.0;
+        if (centerDistance > lodRadius && centerDepth > 0.0)
+        {
+            float cosBeta = min(centerDepth / centerDistance, 1.0);
+            float sinBeta = sqrt(max(1.0 - cosBeta * cosBeta, 0.0));
+            float sinGamma = lodRadius / centerDistance;
+            float cosGamma = sqrt(max(1.0 - sinGamma * sinGamma, 0.0));
+            float cosAlpha = cosBeta * cosGamma - sinBeta * sinGamma;
+            if (cosAlpha > 0.0)
+            {
+                stretch = min(stretch, 1.0 / (cosAlpha * cosAlpha));
+            }
+        }
+        errorScale = angularScale * stretch * worldScale;
     }
     else
     {

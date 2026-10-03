@@ -1,4 +1,5 @@
 ﻿#include "Asset/AssetSystem.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
 #include "Rendering/MegaGeometry/ProceduralMegaSphere.h"
@@ -399,6 +400,243 @@ namespace
         assert(manager.GetResourceStats().BufferCount == 0);
     }
 
+    // 列優先（GLSL と同じ [列 * 4 + 行]）の行列とベクトルの積
+    void MultiplyColumnMajor(const float *matrix, const double *vector, double *out)
+    {
+        for (int row = 0; row < 4; ++row)
+        {
+            out[row] = 0.0;
+            for (int column = 0; column < 4; ++column)
+            {
+                out[row] += static_cast<double>(matrix[column * 4 + row]) * vector[column];
+            }
+        }
+    }
+
+    // ワールドの点を、シェーダーへ渡す view・projection でクリップ座標にし、画素へ直す。視錐台の外なら false
+    bool ProjectToPixels(const float *view,
+                         const float *projection,
+                         const double *worldPosition,
+                         double width,
+                         double height,
+                         double *outPixel)
+    {
+        const double position[4] = {worldPosition[0], worldPosition[1], worldPosition[2], 1.0};
+        double viewPosition[4] = {};
+        double clip[4] = {};
+        MultiplyColumnMajor(view, position, viewPosition);
+        MultiplyColumnMajor(projection, viewPosition, clip);
+        if (!(clip[3] > 0.0) || std::abs(clip[0]) > clip[3] || std::abs(clip[1]) > clip[3])
+        {
+            return false;
+        }
+        outPixel[0] = (clip[0] / clip[3] * 0.5 + 0.5) * width;
+        outPixel[1] = (clip[1] / clip[3] * 0.5 + 0.5) * height;
+        return true;
+    }
+
+    // LOD球の誤差の上限が、変位の前後の点をクリップ座標から画素へ直した差を超えないことの契約
+    // （角度の変化だけで見積もると、視線から外れた点での透視投影の伸びを見落として過小になる）
+    void TestLODSphereErrorBoundsPerspectivePixelDisplacement()
+    {
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+
+        const double width = 1280.0;
+        const double height = 720.0;
+        CameraProxy camera;
+        camera.PositionX = 1.0f;
+        camera.PositionY = 2.0f;
+        camera.PositionZ = 3.0f;
+        const double forwardRaw[3] = {0.3, -0.2, -1.0};
+        const double forwardLength =
+            std::sqrt(forwardRaw[0] * forwardRaw[0] + forwardRaw[1] * forwardRaw[1] + forwardRaw[2] * forwardRaw[2]);
+        const double forward[3] = {
+            forwardRaw[0] / forwardLength, forwardRaw[1] / forwardLength, forwardRaw[2] / forwardLength};
+        // right = forward × (0,1,0)、up = right × forward
+        double right[3] = {-forward[2], 0.0, forward[0]};
+        const double rightLength = std::sqrt(right[0] * right[0] + right[2] * right[2]);
+        right[0] /= rightLength;
+        right[2] /= rightLength;
+        const double up[3] = {right[1] * forward[2] - right[2] * forward[1],
+                              right[2] * forward[0] - right[0] * forward[2],
+                              right[0] * forward[1] - right[1] * forward[0]};
+        camera.ForwardX = static_cast<float>(forward[0]);
+        camera.ForwardY = static_cast<float>(forward[1]);
+        camera.ForwardZ = static_cast<float>(forward[2]);
+        camera.UpX = static_cast<float>(up[0]);
+        camera.UpY = static_cast<float>(up[1]);
+        camera.UpZ = static_cast<float>(up[2]);
+        camera.RightX = static_cast<float>(right[0]);
+        camera.RightY = static_cast<float>(right[1]);
+        camera.RightZ = static_cast<float>(right[2]);
+        camera.FieldOfView = 60.0f;
+        camera.NearPlane = 0.001f;
+        camera.FarPlane = 1000.0f;
+        const CameraViewConstants constants = CameraViewConstants::Build(camera, static_cast<float>(width / height));
+        float view[16] = {};
+        constants.CopyShaderView(view);
+        // VulkanDevice::AdjustProjectionForClipSpace と同じく Z を反転し、Y 反転の有無の両方で確かめる
+        float projection[16] = {};
+        float flippedProjection[16] = {};
+        NorvesLib::Math::MatrixUtils::TransposeToShaderData(
+            constants.ProjectionMatrix *
+                NorvesLib::Math::MatrixUtils::CreateScale(NorvesLib::Math::Vector3(1.0f, 1.0f, -1.0f)),
+            projection);
+        NorvesLib::Math::MatrixUtils::TransposeToShaderData(
+            constants.ProjectionMatrix *
+                NorvesLib::Math::MatrixUtils::CreateScale(NorvesLib::Math::Vector3(1.0f, -1.0f, -1.0f)),
+            flippedProjection);
+        const float *projections[2] = {projection, flippedProjection};
+
+        const float projectionFactor =
+            static_cast<float>(height / (2.0 * std::tan(camera.FieldOfView * 0.5 * 3.14159265358979323846 / 180.0)));
+        const double cameraPosition[3] = {camera.PositionX, camera.PositionY, camera.PositionZ};
+
+        // 中心の深さと画角は MegaGeometryPass・cluster_cull.comp と同じく行列から求める
+        auto computeBound = [&](const float *proj, const double *center, float radius) {
+            const double position[4] = {center[0], center[1], center[2], 1.0};
+            double viewPosition[4] = {};
+            double clip[4] = {};
+            MultiplyColumnMajor(view, position, viewPosition);
+            MultiplyColumnMajor(proj, viewPosition, clip);
+            const float centerDepth = static_cast<float>(clip[3] / std::abs(proj[2 * 4 + 3]));
+            const double dx = center[0] - cameraPosition[0];
+            const double dy = center[1] - cameraPosition[1];
+            const double dz = center[2] - cameraPosition[2];
+            const float centerDistance = static_cast<float>(std::sqrt(dx * dx + dy * dy + dz * dz));
+            return static_cast<double>(Mega::ComputeLODSphereErrorPixelsPerMeter(centerDistance,
+                                                                                  centerDepth,
+                                                                                  radius,
+                                                                                  projectionFactor,
+                                                                                  1.0f / std::abs(proj[0 * 4 + 0]),
+                                                                                  1.0f / std::abs(proj[1 * 4 + 1])));
+        };
+
+        // 変位の前後の画素の差 / 変位の大きさ。見えない面・視錐台の外なら負
+        auto measure = [&](const float *proj, const double *center, double radius, const double *normal, double delta) {
+            double before[3] = {};
+            double after[3] = {};
+            double facing = 0.0;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                before[axis] = center[axis] + radius * normal[axis];
+                after[axis] = center[axis] + (radius + delta) * normal[axis];
+                facing += (cameraPosition[axis] - before[axis]) * normal[axis];
+            }
+            if (facing <= 0.0)
+            {
+                return -1.0;
+            }
+            double pixelBefore[2] = {};
+            double pixelAfter[2] = {};
+            if (!ProjectToPixels(view, proj, before, width, height, pixelBefore) ||
+                !ProjectToPixels(view, proj, after, width, height, pixelAfter))
+            {
+                return -1.0;
+            }
+            const double px = pixelAfter[0] - pixelBefore[0];
+            const double py = pixelAfter[1] - pixelBefore[1];
+            return std::sqrt(px * px + py * py) / std::abs(delta);
+        };
+
+        // カメラの基底で (tanX, tanY) の方向をワールドの単位ベクトルへ
+        auto directionFromCamera = [&](double tanX, double tanY, double *out) {
+            double length = 0.0;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                out[axis] = forward[axis] + tanX * right[axis] + tanY * up[axis];
+                length += out[axis] * out[axis];
+            }
+            length = std::sqrt(length);
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                out[axis] /= length;
+            }
+        };
+
+        // 中心距離1.5・半径1・中心角 cos=0.850781059 の点を内向きに 1.336541 mm 変位させる例。
+        // 角度だけの見積もり projectionFactor·D/(D²−R²) では1画素だが、画素の差は約1.56画素
+        {
+            double axis[3] = {};
+            directionFromCamera(0.0, 0.0, axis);
+            const double center[3] = {cameraPosition[0] + 1.5 * axis[0],
+                                      cameraPosition[1] + 1.5 * axis[1],
+                                      cameraPosition[2] + 1.5 * axis[2]};
+            const double cosPhi = 0.850781059;
+            const double sinPhi = std::sqrt(1.0 - cosPhi * cosPhi);
+            const double normal[3] = {-cosPhi * axis[0] + sinPhi * right[0],
+                                      -cosPhi * axis[1] + sinPhi * right[1],
+                                      -cosPhi * axis[2] + sinPhi * right[2]};
+            const double delta = 0.001336541;
+            const double angularOnly = projectionFactor * 1.5 / (1.5 * 1.5 - 1.0);
+            assert(angularOnly * delta > 0.99 && angularOnly * delta < 1.01);
+            for (const float *proj : projections)
+            {
+                const double pixels = measure(proj, center, 1.0, normal, -delta) * delta;
+                assert(pixels > 1.5 && pixels < 1.6);
+                assert(computeBound(proj, center, 1.0f) * delta >= pixels);
+            }
+        }
+
+        // 球の中心の距離・方向を変えて、見えて視錐台に入る表面の点を総当たりで内外へ変位させる
+        const double golden = 3.14159265358979323846 * (3.0 - std::sqrt(5.0));
+        const int sampleCount = 40000;
+        const double tanOffsets[][2] = {{0.0, 0.0}, {0.3, 0.0}, {0.0, 0.4}, {-0.7, 0.3}, {0.9, -0.5}, {1.4, 0.0}};
+        for (const double distanceRatio : {1.05, 1.5, 2.5, 6.0, 40.0})
+        {
+            for (const auto &tanOffset : tanOffsets)
+            {
+                const double radius = 0.75;
+                double direction[3] = {};
+                directionFromCamera(tanOffset[0], tanOffset[1], direction);
+                const double centerDistance = distanceRatio * radius;
+                const double center[3] = {cameraPosition[0] + centerDistance * direction[0],
+                                          cameraPosition[1] + centerDistance * direction[1],
+                                          cameraPosition[2] + centerDistance * direction[2]};
+                for (const float *proj : projections)
+                {
+                    const double bound = computeBound(proj, center, static_cast<float>(radius));
+                    assert(std::isfinite(bound) && bound > 0.0);
+                    double maxMeasured = 0.0;
+                    int visibleCount = 0;
+                    for (int sample = 0; sample < sampleCount; ++sample)
+                    {
+                        const double y = 1.0 - 2.0 * (sample + 0.5) / sampleCount;
+                        const double ring = std::sqrt(std::max(1.0 - y * y, 0.0));
+                        const double normal[3] = {
+                            ring * std::cos(golden * sample), y, ring * std::sin(golden * sample)};
+                        const double delta = 1.0e-5 * radius;
+                        const double outward = measure(proj, center, radius, normal, delta);
+                        const double inward = measure(proj, center, radius, normal, -delta);
+                        if (outward < 0.0 || inward < 0.0)
+                        {
+                            continue;
+                        }
+                        ++visibleCount;
+                        maxMeasured = std::max(maxMeasured, std::max(outward, inward));
+                    }
+                    if (visibleCount == 0)
+                    {
+                        continue; // 視錐台の外の置き方
+                    }
+                    assert(maxMeasured <= bound * 1.001);
+                    // 上限が緩すぎて粗い段を選べなくならない（見える点が十分ある置き方で、上限の6割以上が実際に出る）
+                    if (visibleCount >= sampleCount / 20 && distanceRatio > 1.05)
+                    {
+                        assert(maxMeasured >= bound * 0.6);
+                    }
+                    // 近い球では、角度だけの見積もりを実際の画素の差が上回る
+                    if (distanceRatio == 1.5 && tanOffset[0] == 0.0 && tanOffset[1] == 0.0)
+                    {
+                        const double angularOnly =
+                            projectionFactor * centerDistance / (centerDistance * centerDistance - radius * radius);
+                        assert(maxMeasured > angularOnly * 1.3);
+                    }
+                }
+            }
+        }
+    }
+
     // 手続きの球の段ごとの範囲・誤差と、段の選び方の契約（GBufferは割れ目の無い一律の段、影は影の段より細かくしない）
     void TestProceduralSphereLevelRangesAndLODSelection()
     {
@@ -447,36 +685,10 @@ namespace
         assert(gpuData->ShadowFirstIndex == gpuData->LevelRanges[1].FirstIndex);
         assert(gpuData->ShadowIndexCount == gpuData->LevelRanges[1].IndexCount);
 
-        // 見える面での法線方向のずれの投影の最大を、球の表面の点を細かく走査した値と比べる
-        const float projectionFactor = 623.5f;
-        const float radius = 1.0f;
-        for (float centerDistance : {1.05f, 1.5f, 2.5f, 6.0f, 40.0f})
-        {
-            double bruteForce = 0.0;
-            for (int step = 0; step <= 200000; ++step)
-            {
-                const double angle = 3.14159265358979323846 * step / 200000.0;
-                const double px = radius * std::cos(angle);
-                const double py = radius * std::sin(angle);
-                if (px * centerDistance < radius * radius)
-                {
-                    break; // 輪郭より向こうは見えない
-                }
-                const double vx = px - centerDistance;
-                const double vy = py;
-                const double distance = std::sqrt(vx * vx + vy * vy);
-                const double sinTheta = std::abs(std::cos(angle) * vy - std::sin(angle) * vx) / distance;
-                bruteForce = std::max(bruteForce, projectionFactor * sinTheta / distance);
-            }
-            const float scale = Mega::ComputeLODSphereErrorPixelsPerMeter(centerDistance, radius, projectionFactor);
-            assert(std::abs(scale - bruteForce) <= 1.0e-3 * bruteForce);
-            // 最も近い点までの距離で割る従来の見積もり以下（同じ閾値で細かすぎる段を選ばない）
-            assert(scale <= projectionFactor / (centerDistance - radius) * 1.0001f);
-        }
         // カメラが球の中なら最も細かい段
         assert(Mega::SelectCoarsestLODWithinError(
                    gpuData->LevelRanges,
-                   Mega::ComputeLODSphereErrorPixelsPerMeter(0.5f, radius, projectionFactor),
+                   Mega::ComputeLODSphereErrorPixelsPerMeter(0.5f, 0.5f, 1.0f, 623.5f, 1.0f, 0.58f),
                    1.0f) == 0u);
 
         // 一律の段の選び方は、cluster_cull.comp の親子の判定（自分の誤差 ≤ 閾値 < 親の誤差）と一致する
@@ -875,6 +1087,7 @@ int main()
     TestMegaEmissiveCanonicalContractRejectsInvalidWithoutSideEffects();
     TestSuccessfulNoLodUpload();
     TestProceduralSphereLevelRangesAndLODSelection();
+    TestLODSphereErrorBoundsPerspectivePixelDisplacement();
     TestSharedHandleCounter();
     TestCreateFailureDoesNotRegister(1);
     TestCreateFailureDoesNotRegister(2);
