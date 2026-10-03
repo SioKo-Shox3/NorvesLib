@@ -440,7 +440,7 @@
 - notes: SS-MEGA-LOD-PERF（2026-10-03）から分けた。`ModelStaging.cpp` は `bBuildLODHierarchy = false` で、階層を作ると GBuffer のクラスタも DAG に置き換わる（`MegaGeometryResourceStore.cpp` の `uploadClusters = &lodHierarchy.AllClusters`）ため、影だけの段には別の設計が要る。近接の ShadowMapPass は 0.643 ms で、岩（66,122三角形）・小屋（4,281三角形）×4カスケードの寄与は小さい。危険地帯（アセットの読み込み・リソースの寿命）。
 
 ## FIX-STRING-EMPTY-CSTR: 空の Container::String の c_str() が終端の無い値を返すのを直す
-- status: todo
+- status: done
 - done-when: 空の `TString` の `c_str()`・`data()` が空の文字列（終端の0）を指し、`%s` で書いても余計な文字が出ない。既存の呼び出しの挙動を変えない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - paths: Library/Core/Public/Container, Test/Core, TASKS.md, PROGRESS.md
