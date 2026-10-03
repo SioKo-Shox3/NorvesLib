@@ -12,6 +12,10 @@ namespace NorvesLib::Tools::AssetCook
         using namespace Core::Skeletal;
         const auto& diagnostics = input.Diagnostics;
         const auto& report = diagnostics.Report;
+        if (input.Options.MorphPolicy != SkeletalMorphPolicy::Reject)
+        {
+            return {};
+        }
         const bool failed = input.Outcome == SkeletalImportOutcome::Failed;
         const bool ready = input.Outcome == SkeletalImportOutcome::PayloadReady;
         const bool cached = input.Outcome == SkeletalImportOutcome::CacheHit;

@@ -241,3 +241,21 @@ Bakeを指定しても通常補間だけならbaked_channels=0、各誤差=null�
 
 純parser/JSON検査とnative CLI smokeを分ける。後者はglTFの3種Cubic、既定拒否・予算超過・出力保持、
 同設定cache hit・設定差cache miss、JSON単位と未測定nullを登録。Windows.h/PowerShell/CMakeが必要な統合実行は未確認。
+
+## morph Dropのpolicy/hash定義（decode接続前）
+
+SkeletalMorphPolicyはReject=0/Drop=1で既定Reject。Dropは明示指定でのみ有効になる。
+この段階では公開options・canonical・診断型のみ定義する。decoderはDropをUnsupportedMorphTargetsで拒否し、
+JSON serializerもDropを未接続として失敗する。CLI引数はまだ受理しない。
+
+Drop無しはStrictのSize0、ReduceのSRED25byte、BakeのSCBK66byteと既存hashをそのまま保つ。
+DropはSMDPで、MorphPolicyだけRejectへ戻した既存canonicalを包む。
+magic SMDP（4byte）/schema=1（u32 LE）/Drop=1（u8）/inner size（u32 LE）/
+inner bytes（0/25/66byte）/morph algorithm=1（u32 LE）で計17/42/83byte。
+既存外側hash規約のu64 size + bytes + u32 reduction algorithmを維持する。
+これによりDrop有無、縮約/焼込設定、除去algorithmの違いをcache鍵で区別する。
+
+診断型にはDroppedMorphTargetCount（target数）、DroppedMorphMeshWeightCount（mesh初期weight配列要素数）、
+DroppedMorphNodeWeightCount（node初期weight配列要素数）、DroppedMorphAnimationChannelCount（weight channel数）、
+bMorphScanCompleteを定義する。完了前のゼロは未測定であり、ゼロ除去として報告しない。
+除去はbase geometryへmorphを焼き付ける処理ではない。sparse拒否と128関節上限は維持する。

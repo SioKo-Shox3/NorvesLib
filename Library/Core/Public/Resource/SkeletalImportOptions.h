@@ -24,9 +24,15 @@ namespace NorvesLib::Core::Skeletal
     inline constexpr uint32_t MaximumCubicSamplesPerAsset = 4194304;
     inline constexpr double CubicRotationNumericErrorBudget = 256 * double(std::numeric_limits<float>::epsilon());
     inline constexpr double CubicVectorNumericErrorFloor = 64 * double(std::numeric_limits<float>::epsilon());
+    enum class SkeletalMorphPolicy : uint8_t
+    {
+        Reject = 0,
+        Drop = 1
+    };
     struct SkeletalGltfDecodeOptions
     {
         SkeletalInfluencePolicy InfluencePolicy = SkeletalInfluencePolicy::Strict;
+        SkeletalMorphPolicy MorphPolicy = SkeletalMorphPolicy::Reject;
         double WarnDroppedWeight = DefaultWarnDroppedWeight;
         double FailDroppedWeight = DefaultFailDroppedWeight;
         SkeletalCubicSplinePolicy CubicSplinePolicy = SkeletalCubicSplinePolicy::Reject;
@@ -71,5 +77,12 @@ namespace NorvesLib::Core::Skeletal
         bool bHasCubicBakeFailure = false;
         bool bCubicScanStarted = false;
         bool bCubicScanComplete = false;
+        // 検証済みの除去対象数。scan完了前は未測定であり、ゼロ件と報告しない。
+        // weight数は初期値配列の要素数、animationはweight channelの数。
+        uint64_t DroppedMorphTargetCount = 0;
+        uint64_t DroppedMorphMeshWeightCount = 0;
+        uint64_t DroppedMorphNodeWeightCount = 0;
+        uint64_t DroppedMorphAnimationChannelCount = 0;
+        bool bMorphScanComplete = false;
     };
 } // namespace NorvesLib::Core::Skeletal

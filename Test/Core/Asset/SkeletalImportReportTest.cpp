@@ -159,6 +159,9 @@ int main()
         }
         assert(!BuildSkeletalImportReport(input).bValid);
     }
+    input = {};
+    input.Options.MorphPolicy = SkeletalMorphPolicy::Drop;
+    assert(!BuildSkeletalImportReport(input).bValid); // JSON接続前にRejectと偽らない。
     std::cout << "SkeletalImportReportTest PASS: json_stages_measurements_prefix_failure_finite_bounds\n";
     return 0;
 }

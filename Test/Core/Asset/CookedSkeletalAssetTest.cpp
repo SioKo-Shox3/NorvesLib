@@ -1032,6 +1032,19 @@ namespace
         {
             return CookGltfToNvskel(bytes.data(),bytes.size(),format,cookPath,out,error,nullptr,&selected,&diagnostics);
         };
+        // 方針だけを先行定義したDropは、全入口で未対応として拒否する。
+        auto pendingDrop = options;
+        pendingDrop.MorphPolicy = SkeletalMorphPolicy::Drop;
+        Gltf::BufferSet rejectedSources;
+        SkeletalGltfSourceBuffers rejectedLegacy;
+        const auto rejected = DecodeSkeletalGltf(source, path, &rejectedSources, nullptr, &pendingDrop);
+        assert(rejected.Status == SkeletalGltfDecodeStatus::UnsupportedMorphTargets && rejectedSources.GetCount() == 0 && rejected.Data.Vertices.empty());
+        assert(DecodeSkeletalGltf(CoreText(text), path, &rejectedLegacy, nullptr, &pendingDrop).Status == SkeletalGltfDecodeStatus::UnsupportedMorphTargets && rejectedLegacy.empty());
+        assert(DecodeSkeletalGltf(glb, path, nullptr, nullptr, &pendingDrop).Status == SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
+        assert(Resource::GLTFAnalyzer::AnalyzeSkeletal(path, &pendingDrop).Status == SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
+        SkeletalCookResult rejectedCook;
+        rejectedCook.VertexCount = 99;
+        assert(!cook(source, pendingDrop, rejectedCook) && rejectedCook.VertexCount == 99);
         assert(cook(source,options,cooked));
         assert(FingerprintModelCookSource(source.data(),source.size(),format,cookPath,"Models/rig.gltf",fingerprint,error,nullptr,&options));
         assert(fingerprint.SourceHash==cooked.SourceHash && diagnostics.bDecodeAttempted && diagnostics.DecodeStatus==0);

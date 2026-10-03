@@ -571,3 +571,6 @@
 
 - G2-GR86-CUBIC-CLI: --cubicspline reject|bakeと最終メートル/度/scale許容・depth/channel/asset予算を厳密parseし、既存のcook/skip共通optionsへ接続。JSON version1はBake時だけ単位付き設定/成功prefix/種類別上界/失敗channelと理由を追加し、未開始/cache/該当種類未測定はnull。旧Reject JSON不変、変換警告も追加。純parser/report各3mode・MEMBER・独立JSON11件解析成功、独立PASS。実bakerでsmoke fixtureの101/85/45key・sample予算失敗も照合。Main/nativeCLI/CMake/PowerShellはWindows.h等により未実行。既定拒否/失敗出力保持/設定差cache/JSONをnative登録。
 - Next: 明示morph Dropのpolicy/hash・decode・CLI診断へ進む。sparse拒否と128関節を維持し、256はv1まで保留。
+
+- G2-GR86-MORPH-POLICY: Reject/Dropと除去数量/scan完了型を定義。Drop無しのSize0/SRED25/SCBK66を保持し、DropだけSMDP(schema/policy/inner size/旧canonical/morph algorithm)17/42/83byteで包む。decoderは接続までUnsupportedMorphTargets、JSONもDropを旧Rejectと偽らず未対応とする。純policy3mode/MEMBER/public単独POD/CLI・report回帰成功、独立Python固定列・12hash照合と再実行PASS。raw/legacy/GLB/file/cook拒否native回帰を登録、Windows.hにより未実行。
+- Next: GR86-MORPH-DECODE。明示Dropだけtargets/初期weights/weight channelを検証して除去し、base/TRSを維持する。Strict/skipの無言無視も防ぐ。

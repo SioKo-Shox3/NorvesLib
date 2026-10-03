@@ -1647,6 +1647,11 @@ namespace NorvesLib::Core::Skeletal
         {
             const SkeletalGltfDecodeOptions options = decodeOptions != nullptr ? *decodeOptions : SkeletalGltfDecodeOptions{};
             if (!IsValidSkeletalGltfDecodeOptions(options)) return Fail(SkeletalGltfDecodeStatus::InvalidImportOptions);
+            // 方針/hashを先行定義する段階では未接続Dropを黙って無視しない。
+            if (options.MorphPolicy == SkeletalMorphPolicy::Drop)
+            {
+                return Fail(SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
+            }
             if (!root.IsObject())
             {
                 return Fail(SkeletalGltfDecodeStatus::InvalidDocument);

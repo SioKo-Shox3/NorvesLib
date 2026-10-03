@@ -8,6 +8,10 @@ namespace NorvesLib::Core::Skeletal
 {
     bool IsValidSkeletalGltfDecodeOptions(const SkeletalGltfDecodeOptions& options) noexcept
     {
+        if (options.MorphPolicy != SkeletalMorphPolicy::Reject && options.MorphPolicy != SkeletalMorphPolicy::Drop)
+        {
+            return false;
+        }
         if (!std::isfinite(options.WarnDroppedWeight) || !std::isfinite(options.FailDroppedWeight) ||
             options.WarnDroppedWeight < 0 || options.WarnDroppedWeight > options.FailDroppedWeight || options.FailDroppedWeight > 1)
         {
@@ -50,6 +54,36 @@ namespace NorvesLib::Core::Skeletal
         if (!IsValidSkeletalGltfDecodeOptions(options))
         {
             return {};
+        }
+        // Dropだけ既存canonicalを包む。内側をRejectへ戻すので再帰は一段に限る。
+        if (options.MorphPolicy == SkeletalMorphPolicy::Drop)
+        {
+            auto innerOptions = options;
+            innerOptions.MorphPolicy = SkeletalMorphPolicy::Reject;
+            const auto inner = EncodeSkeletalImportPolicy(innerOptions);
+            if (!inner.bValid || inner.Size > 66)
+            {
+                return {};
+            }
+            CanonicalSkeletalImportPolicy result;
+            result.bValid = true;
+            result.Size = 17 + inner.Size;
+            result.Bytes[0] = 'S';
+            result.Bytes[1] = 'M';
+            result.Bytes[2] = 'D';
+            result.Bytes[3] = 'P';
+            result.Bytes[4] = 1; // schema u32 LE。残りはゼロ初期化済み。
+            result.Bytes[8] = static_cast<uint8_t>(options.MorphPolicy);
+            for (size_t byte = 0; byte < 4; ++byte)
+            {
+                result.Bytes[9 + byte] = static_cast<uint8_t>(static_cast<uint32_t>(inner.Size) >> (byte * 8));
+                result.Bytes[13 + inner.Size + byte] = static_cast<uint8_t>(SkeletalMorphDropAlgorithmVersion >> (byte * 8));
+            }
+            for (size_t byte = 0; byte < inner.Size; ++byte)
+            {
+                result.Bytes[13 + byte] = inner.Bytes[byte];
+            }
+            return result;
         }
         CanonicalSkeletalImportPolicy result;
         result.bValid = true;

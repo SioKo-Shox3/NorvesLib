@@ -2096,7 +2096,7 @@
 - stop-when: 未実装morph/256指定を受理、cacheと本cookの設定不一致、未測定をゼロと偽る。
 
 ## G2-GR86-MORPH-POLICY: 明示dropの方針・数量診断・hashを定義する
-- status: todo
+- status: done
 - done-when: Reject既定/Drop明示を公開optionsへ定義し、既存Strict/Reduce/Bakeのみのhashを維持する。Dropはalgorithmを含む別canonicalで区別し、未接続段階で指定を黙って無視しない。
 - verify: enum/旧hash golden/Dropの全既存policy組合せと型単独includeを純試験で検査する。
 - stop-when: 未接続Dropの成功黙認、既存cache鍵の予期しない変更、sparse/256の受理。

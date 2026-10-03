@@ -119,6 +119,99 @@ int main()
     }
     assert(!report.bCubicScanStarted && !report.bCubicScanComplete && report.BakedCubicChannelCount==0 &&
         report.FailedAnimationChannelIndex==UINT64_MAX && !report.bHasCubicBakeFailure);
+    // SMDP固定列とFNVはPython struct.packによる独立oracle。
+    {
+        options = {};
+        options.MorphPolicy = SkeletalMorphPolicy::Drop;
+        const uint8_t expectedDrop[] = {0x53,0x4d,0x44,0x50,0x01,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x01,0x00,0x00,0x00};
+        const auto encodedDrop = EncodeSkeletalImportPolicy(options);
+        assert(encodedDrop.bValid && encodedDrop.Size == sizeof(expectedDrop) &&
+            std::memcmp(encodedDrop.Bytes, expectedDrop, sizeof(expectedDrop)) == 0);
+        assert(AppendSkeletalImportPolicyHash(0ull, options).Value == 0x3e404d7a724437ull);
+        assert(AppendSkeletalImportPolicyHash(14695981039346656037ull, options).Value == 0xea60648fb9b11c24ull);
+        assert(AppendSkeletalImportPolicyHash(1311768467463790320ull, options).Value == 0xa746ffec483e72e7ull);
+        assert(AppendSkeletalImportPolicyHash(0, options, 2).Value != AppendSkeletalImportPolicyHash(0, options).Value);
+        auto reject = options;
+        reject.MorphPolicy = SkeletalMorphPolicy::Reject;
+        assert(AppendSkeletalImportPolicyHash(0, reject).Value != AppendSkeletalImportPolicyHash(0, options).Value);
+    }
+    {
+        options = {};
+        options.MorphPolicy = SkeletalMorphPolicy::Drop;
+        options.InfluencePolicy = SkeletalInfluencePolicy::ReduceToFour;
+        const uint8_t expectedDrop[] = {0x53,0x4d,0x44,0x50,0x01,0x00,0x00,0x00,0x01,0x19,0x00,0x00,0x00,0x53,0x52,0x45,0x44,0x01,0x00,0x00,0x00,0x01,0x7b,0x14,0xae,0x47,0xe1,0x7a,0x84,0x3f,0x00,0x00,0x00,0x00,0x00,0x00,0xd0,0x3f,0x01,0x00,0x00,0x00};
+        const auto encodedDrop = EncodeSkeletalImportPolicy(options);
+        assert(encodedDrop.bValid && encodedDrop.Size == sizeof(expectedDrop) &&
+            std::memcmp(encodedDrop.Bytes, expectedDrop, sizeof(expectedDrop)) == 0);
+        assert(AppendSkeletalImportPolicyHash(0ull, options).Value == 0xdcd48481ba4798d2ull);
+        assert(AppendSkeletalImportPolicyHash(14695981039346656037ull, options).Value == 0x5902ec3d110af8f7ull);
+        assert(AppendSkeletalImportPolicyHash(1311768467463790320ull, options).Value == 0xacc2c52e1b46a062ull);
+        assert(AppendSkeletalImportPolicyHash(0, options, 2).Value != AppendSkeletalImportPolicyHash(0, options).Value);
+        auto reject = options;
+        reject.MorphPolicy = SkeletalMorphPolicy::Reject;
+        assert(AppendSkeletalImportPolicyHash(0, reject).Value != AppendSkeletalImportPolicyHash(0, options).Value);
+    }
+    {
+        options = {};
+        options.MorphPolicy = SkeletalMorphPolicy::Drop;
+        options.CubicSplinePolicy = SkeletalCubicSplinePolicy::Bake;
+        const uint8_t expectedDrop[] = {0x53,0x4d,0x44,0x50,0x01,0x00,0x00,0x00,0x01,0x42,0x00,0x00,0x00,0x53,0x43,0x42,0x4b,0x01,0x00,0x00,0x00,0x00,0x7b,0x14,0xae,0x47,0xe1,0x7a,0x84,0x3f,0x00,0x00,0x00,0x00,0x00,0x00,0xd0,0x3f,0x01,0xfc,0xa9,0xf1,0xd2,0x4d,0x62,0x50,0x3f,0xf5,0x61,0xb7,0x03,0x71,0x98,0x5c,0x3f,0xfc,0xa9,0xf1,0xd2,0x4d,0x62,0x50,0x3f,0x14,0x00,0x00,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x10,0x00,0x01,0x00,0x00,0x00,0x01,0x00,0x00,0x00};
+        const auto encodedDrop = EncodeSkeletalImportPolicy(options);
+        assert(encodedDrop.bValid && encodedDrop.Size == sizeof(expectedDrop) &&
+            std::memcmp(encodedDrop.Bytes, expectedDrop, sizeof(expectedDrop)) == 0);
+        assert(AppendSkeletalImportPolicyHash(0ull, options).Value == 0x3a2649047c336611ull);
+        assert(AppendSkeletalImportPolicyHash(14695981039346656037ull, options).Value == 0xc0e19686114cfbf6ull);
+        assert(AppendSkeletalImportPolicyHash(1311768467463790320ull, options).Value == 0xb3b183bde97027e1ull);
+        assert(AppendSkeletalImportPolicyHash(0, options, 2).Value != AppendSkeletalImportPolicyHash(0, options).Value);
+        auto reject = options;
+        reject.MorphPolicy = SkeletalMorphPolicy::Reject;
+        assert(AppendSkeletalImportPolicyHash(0, reject).Value != AppendSkeletalImportPolicyHash(0, options).Value);
+    }
+    {
+        options = {};
+        options.MorphPolicy = SkeletalMorphPolicy::Drop;
+        options.InfluencePolicy = SkeletalInfluencePolicy::ReduceToFour;
+        options.CubicSplinePolicy = SkeletalCubicSplinePolicy::Bake;
+        const uint8_t expectedDrop[] = {0x53,0x4d,0x44,0x50,0x01,0x00,0x00,0x00,0x01,0x42,0x00,0x00,0x00,0x53,0x43,0x42,0x4b,0x01,0x00,0x00,0x00,0x01,0x7b,0x14,0xae,0x47,0xe1,0x7a,0x84,0x3f,0x00,0x00,0x00,0x00,0x00,0x00,0xd0,0x3f,0x01,0xfc,0xa9,0xf1,0xd2,0x4d,0x62,0x50,0x3f,0xf5,0x61,0xb7,0x03,0x71,0x98,0x5c,0x3f,0xfc,0xa9,0xf1,0xd2,0x4d,0x62,0x50,0x3f,0x14,0x00,0x00,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x10,0x00,0x01,0x00,0x00,0x00,0x01,0x00,0x00,0x00};
+        const auto encodedDrop = EncodeSkeletalImportPolicy(options);
+        assert(encodedDrop.bValid && encodedDrop.Size == sizeof(expectedDrop) &&
+            std::memcmp(encodedDrop.Bytes, expectedDrop, sizeof(expectedDrop)) == 0);
+        assert(AppendSkeletalImportPolicyHash(0ull, options).Value == 0xb07e25b49e56b358ull);
+        assert(AppendSkeletalImportPolicyHash(14695981039346656037ull, options).Value == 0x5d4ea5781719d217ull);
+        assert(AppendSkeletalImportPolicyHash(1311768467463790320ull, options).Value == 0xa64ea8c4b515e6a8ull);
+        assert(AppendSkeletalImportPolicyHash(0, options, 2).Value != AppendSkeletalImportPolicyHash(0, options).Value);
+        auto reject = options;
+        reject.MorphPolicy = SkeletalMorphPolicy::Reject;
+        assert(AppendSkeletalImportPolicyHash(0, reject).Value != AppendSkeletalImportPolicyHash(0, options).Value);
+    }
+    for (unsigned morph = 0; morph < 256; ++morph)
+    {
+        for (unsigned influence = 0; influence < 2; ++influence)
+        {
+            for (unsigned cubic = 0; cubic < 2; ++cubic)
+            {
+                options = {};
+                options.MorphPolicy = static_cast<SkeletalMorphPolicy>(morph);
+                options.InfluencePolicy = static_cast<SkeletalInfluencePolicy>(influence);
+                options.CubicSplinePolicy = static_cast<SkeletalCubicSplinePolicy>(cubic);
+                assert(IsValidSkeletalGltfDecodeOptions(options) == (morph < 2));
+                assert(EncodeSkeletalImportPolicy(options).bValid == (morph < 2));
+                assert(AppendSkeletalImportPolicyHash(0, options).bValid == (morph < 2));
+            }
+        }
+    }
+    options = {};
+    options.MorphPolicy = SkeletalMorphPolicy::Drop;
+    options.InfluencePolicy = SkeletalInfluencePolicy::ReduceToFour;
+    options.FailDroppedWeight = std::numeric_limits<double>::infinity();
+    assert(!EncodeSkeletalImportPolicy(options).bValid);
+    options = {};
+    options.MorphPolicy = SkeletalMorphPolicy::Drop;
+    options.CubicSplinePolicy = SkeletalCubicSplinePolicy::Bake;
+    options.CubicMaximumDepth = 25;
+    assert(!EncodeSkeletalImportPolicy(options).bValid);
+    assert(!report.bMorphScanComplete && report.DroppedMorphTargetCount == 0 &&
+        report.DroppedMorphMeshWeightCount == 0 && report.DroppedMorphNodeWeightCount == 0 && report.DroppedMorphAnimationChannelCount == 0);
     std::cout << "SkeletalImportPolicyTest PASS: strict_identity_reduce_legacy_cubic_canonical_golden_hash_limits_invalid\n";
     return 0;
 }
