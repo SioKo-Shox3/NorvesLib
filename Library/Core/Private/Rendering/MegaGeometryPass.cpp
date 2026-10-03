@@ -900,6 +900,13 @@ namespace NorvesLib::Core::Rendering
             uniformData.DebugPayloadMode = debugPayloadMode;
 
             std::memcpy(uniformData.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
+            if (gpuData->LODBounds.IsValid())
+            {
+                uniformData.LODSphere[0] = gpuData->LODBounds.CenterX;
+                uniformData.LODSphere[1] = gpuData->LODBounds.CenterY;
+                uniformData.LODSphere[2] = gpuData->LODBounds.CenterZ;
+                uniformData.LODSphere[3] = gpuData->LODBounds.Radius;
+            }
             cullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
 
             // ----------------------------------------

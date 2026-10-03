@@ -59,12 +59,13 @@ namespace NorvesLib::Core::Rendering
         };
         static_assert(sizeof(ShadowPerObjectUBO) == 208);
 
-        // MegaGeometryの影のキャスター（LOD0の範囲を1回で描く）。CSMと点光源の影の両方へ描き、
+        // MegaGeometryの影のキャスター（影に使う段の範囲を1回で描く。既定はLOD0）。CSMと点光源の影の両方へ描き、
         // CSMの深度範囲にもこの境界球を含める（描く物と深度範囲に含める物を一致させる）。
         struct MegaShadowCaster
         {
             RHI::BufferPtr VertexBuffer;
             RHI::BufferPtr IndexBuffer;
+            uint32_t FirstIndex = 0;
             uint32_t IndexCount = 0;
             float World[16] = {};
             BoundingSphere Bounds;
@@ -93,8 +94,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 影を落とすMegaGeometry（岩・小屋など）を集める。GBufferではクラスタ単位でGPUがLODを
-        // 選ぶが、影へはLOD0をそのまま描く（読み込んだモデルはLOD0だけを持ち、実行時に作る階層も
-        // 段ごとに頂点の基点が違ううえ簡略化に失敗した群を飛ばすため、1段を1回の範囲で描けない）。
+        // 選ぶが、影へはメッシュが指定した1段（既定はLOD0）をそのまま描く（読み込んだモデルはLOD0だけを
+        // 持ち、実行時に作る階層も段ごとに頂点の基点が違ううえ簡略化に失敗した群を飛ばすため、1段を
+        // 1回の範囲で描けない。手続きで作る球は粗い段を連続した範囲として持ち、それを影に使う）。
         // 行列はMegaGeometryPassと同じくプロキシの行列をそのままシェーダーへ渡す。インスタンスは
         // 読まないが記述子のレイアウトを満たすために結ぶので、インスタンスのバッファが要る。
         void CollectMegaShadowCasters(const ViewRenderContext& context,
@@ -123,6 +125,7 @@ namespace NorvesLib::Core::Rendering
                 MegaShadowCaster caster;
                 caster.VertexBuffer = gpuData->VertexBuffer;
                 caster.IndexBuffer = gpuData->IndexBuffer;
+                caster.FirstIndex = gpuData->ShadowFirstIndex;
                 caster.IndexCount = gpuData->ShadowIndexCount;
                 std::memcpy(caster.World, &proxy.WorldTransform, sizeof(caster.World));
                 caster.Bounds = TransformMegaBounds(gpuData->TotalBounds, caster.World);
@@ -136,7 +139,7 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // MegaGeometryのLOD0の範囲を描く深度描画のコマンドを作る（記述子セットは呼び出し側で用意する）。
+        // MegaGeometryの影に使う段の範囲を描く深度描画のコマンドを作る（記述子セットは呼び出し側で用意する）。
         DrawCommand MakeMegaShadowDrawCommand(const MegaShadowCaster& caster,
                                               const RHI::PipelinePtr& pipeline,
                                               const RHI::DescriptorSetPtr& descriptorSet)
@@ -151,7 +154,7 @@ namespace NorvesLib::Core::Rendering
             command.Mesh2D.VertexBuffer = caster.VertexBuffer;
             command.Mesh2D.IndexBuffer = caster.IndexBuffer;
             command.Mesh2D.IndexCount = caster.IndexCount;
-            command.Mesh2D.IndexOffset = 0;
+            command.Mesh2D.IndexOffset = caster.FirstIndex;
             command.Mesh2D.VertexOffset = 0;
             command.Mesh2D.IndexType = RHI::IndexType::Uint32;
             return command;

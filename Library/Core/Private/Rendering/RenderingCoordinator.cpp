@@ -815,8 +815,8 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // MegaGeometry（岩・小屋など）はGBufferではクラスタ単位でGPUが選ぶが、光線にはLOD0をそのまま
-        // 見せる（点光源の影と同じ範囲）。表面色はMegaGeometryPassのGBufferと同じく材質のBaseColorを
+        // MegaGeometry（岩・小屋など）はGBufferではクラスタ単位でGPUが選ぶが、光線には影に使う段
+        // （既定はLOD0）をそのまま見せる（点光源の影と同じ範囲）。表面色はMegaGeometryPassのGBufferと同じく材質のBaseColorを
         // instance色とし、textureは白とみなす。
         if (megaGeometryResources)
         {
@@ -835,11 +835,13 @@ namespace NorvesLib::Core::Rendering
                     megaGeometryResources->GetMegaMeshGPUData(proxy.MegaMeshHandle);
                 if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
                     gpuData->ShadowIndexCount < 3u || gpuData->ShadowIndexCount % 3u != 0u ||
-                    gpuData->ShadowIndexCount > gpuData->IndexCount ||
+                    gpuData->ShadowFirstIndex > gpuData->IndexCount ||
+                    gpuData->ShadowIndexCount > gpuData->IndexCount - gpuData->ShadowFirstIndex ||
                     gpuData->VertexCount < 3u ||
                     static_cast<uint64_t>(gpuData->VertexCount) * vertexStride >
                         gpuData->VertexBuffer->GetSize() ||
-                    static_cast<uint64_t>(gpuData->ShadowIndexCount) * sizeof(uint32_t) >
+                    (static_cast<uint64_t>(gpuData->ShadowFirstIndex) + gpuData->ShadowIndexCount) *
+                            sizeof(uint32_t) >
                         gpuData->IndexBuffer->GetSize() ||
                     !IsFiniteRayTracingTransform(proxy.WorldTransform))
                 {
@@ -851,7 +853,7 @@ namespace NorvesLib::Core::Rendering
                 instance.ObjectInstanceIndex = 0;
                 instance.SourceVertexBuffer = gpuData->VertexBuffer;
                 instance.SourceIndexBuffer = gpuData->IndexBuffer;
-                instance.IndexOffset = 0;
+                instance.IndexOffset = gpuData->ShadowFirstIndex;
                 instance.IndexCount = gpuData->ShadowIndexCount;
                 instance.VertexOffset = 0;
                 instance.VertexCount = gpuData->VertexCount;

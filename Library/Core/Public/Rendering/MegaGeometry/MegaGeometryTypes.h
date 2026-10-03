@@ -222,6 +222,18 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t MaxLODLevels = 8;           // 最大LODレベル数
         uint32_t MinTrianglesForLOD = 128;   // LOD構築終了条件
 
+        /**
+         * @brief LODの選択に使う、メッシュ全体で共通の境界球（ローカル空間）
+         *
+         * 無効（半径0）なら、各クラスタが自分の境界球の中心までの距離でLODを選ぶ（従来どおり）。
+         * 有効なら全クラスタがこの球の表面までの距離で選ぶため、どのLODも閉じたメッシュとして
+         * 作ってあれば、メッシュ全体で同じ段が選ばれて段の境目に割れ目ができない。
+         */
+        BoundingSphere LODBounds;
+
+        /** @brief 影とレイトレーシングに使うLODの段（その段のクラスタが統合インデックスで連続している必要がある） */
+        uint32_t ShadowLODLevel = 0;
+
         // マテリアル
         MegaMeshMaterial Material;
 
@@ -243,10 +255,14 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
         uint32_t ClusterCount = 0;
-        /** @brief 影の描画で使う、統合インデックスの先頭からのLOD0の範囲（0なら影へ描かない） */
+        /** @brief 影とレイトレーシングで使うLODの段の、統合インデックスでの開始位置 */
+        uint32_t ShadowFirstIndex = 0;
+        /** @brief 影とレイトレーシングで使うLODの段のインデックス数（0なら影へ描かない） */
         uint32_t ShadowIndexCount = 0;
 
         BoundingSphere TotalBounds;
+        /** @brief LODの選択に使う共通の境界球（無効ならクラスタごとの中心で選ぶ） */
+        BoundingSphere LODBounds;
 
         MegaMeshMaterial Material;
 

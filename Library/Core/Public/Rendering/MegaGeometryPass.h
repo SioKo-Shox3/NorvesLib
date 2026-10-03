@@ -112,6 +112,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t DebugPayloadMode; // firstInstanceへ書き込むデバッグpayload種別
             uint32_t Padding[2];    // std140でmat4を16バイト境界に揃える
             float WorldMatrix[16];
+            float LODSphere[4];     // LODの選択に使うメッシュ共通の境界球（ローカル。半径0ならクラスタごと）
         };
 
         /**

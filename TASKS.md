@@ -371,7 +371,7 @@
 - notes: 2026-10-03 親が調べて分かった。`ShadowMapPass.cpp` は点光源のキューブへは MegaGeometry の LOD0 を描く（`PointShadowMegaCaster`）が、CSM へは描かない。そのため起動画面の岩と小屋には太陽の影が無く、見えている影はコンタクトシャドウだけ。SS-MEGA-SPHERE で大きな球を MegaGeometry にする前に要る。危険地帯（影・RenderThread）。評価者を通す。
 
 ## SS-MEGA-SPHERE: 大きな球を高ポリのMegaGeometryにし、テクスチャの密度を地面に揃える
-- status: todo
+- status: done
 - done-when: 起動画面の大きな石畳の球（半径1 m、今は通常のメッシュの 32×16 の UV 球）を、手続きで作る高ポリの球（三角形 約100万〜200万。クラスタとLODの階層を持つ）の MegaGeometry に置き換える。UV は横3回・縦1.5回の繰り返しにし、テクスチャの密度（約2 mで1枚）と縦横比を地面の石畳に揃える（UVの継ぎ目で模様が切れない）。今の球が持つ機能をすべて保つ: 太陽の影（SS-CSM-MEGA-CASTERS）・点光源の影（数百万三角形を6面×灯数で描く費用が大きければ、影には粗いLODを使う）・コンタクトシャドウ・自転とTAAのvelocity・レイトレのシーン（RTGI）・材質（石畳、POM）。撮影の近接視点で球の輪郭に角（ポリゴンの折れ）が見えず、石の大きさが地面の石と同じくらいに見える（変更前後の拡大画像）。起動から撮影までの時間の増分が10秒以内（クラスタとLODの構築の時間をログに出す。超えるなら三角形数を下げる）。RelWithDebInfo の起動画面の1フレームのGPUの時間が16.6 ms以下のまま（パスごとの増分を記録）。MegaGeometry のクラスタの大きさ（1クラスタあたりの三角形数の平均）を記録し、極端に小さい（例: 平均16未満）なら原因を調べて記録する。
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
@@ -403,6 +403,15 @@
 - stop-when: GPUの時間の予算を超える場合は、内訳と軽くする案を既知の限界として記録して完了にする。
 - paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 区切り。評価者を通す。
+
+## FIX-MEGA-CLUSTER-ADJACENCY: 読み込むモデルのMegaGeometryのクラスタを位置でつないで大きくする
+- status: todo
+- done-when: クックの `MeshClusterizer` の三角形の隣接を、頂点の番号ではなく位置（UVの継ぎ目・法線の分かれ目で複製された頂点を同じ位置として扱う）でつなぎ、起動画面の岩（今は66122三角形が25562クラスタ、平均2.59、16未満が25001）と小屋（4281三角形が1323クラスタ、平均3.24）のLOD0の1クラスタあたりの平均三角形数を64以上にする（`stage=megamesh_cluster_stats` の行で確かめる）。描画の見た目（撮影）と影・レイトレの範囲は変わらない。
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/FIX-MEGA-CLUSTER-ADJACENCY -SunElevations 45`
+- stop-when: クック済みのアセットの作り直しが要り、その手順が決まっていない場合は、作り直しの手順と影響を blocked に書いて止める。
+- paths: Tools/AssetCook, Library/Core/Private/Rendering/MegaGeometry, Library/Core/Public/Rendering/MegaGeometry, Assets, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 SS-MEGA-SPHERE で見つけた。岩は頂点67042・三角形66122、小屋は頂点6599・三角形4281で、閉じたメッシュの目安（頂点≒三角形の半分）より頂点が多く、UVの島ごとに頂点が複製されている。`MeshClusterizer::BuildAdjacencyGraph` は頂点の番号の辺だけで隣接をつなぐため、クラスタの成長が島の境で止まる（手続きの球は頂点を共有するので平均127.8）。
 
 ## R1-P5: 透明描画を物理ライト・GGX・IBLへ接続する
 - status: done

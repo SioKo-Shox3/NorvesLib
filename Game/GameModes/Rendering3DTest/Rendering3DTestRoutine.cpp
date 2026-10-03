@@ -52,6 +52,7 @@
 #include "GameModes/Rendering3DTest/SkySunControl.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -69,6 +70,98 @@ namespace Game::GameModes
 {
     namespace
     {
+        // 大きな球の高ポリのMegaGeometryの影・光線に使う段（160×80 の格子、約2.5万三角形）。
+        // 球面とのずれは約0.4 mmで、影の地図・光線の命中では見分けられない。
+        constexpr uint32_t kBigSphereShadowLODLevel = 3u;
+        // 大きな球の石畳の視差の深さ。テクスチャの密度（約2 mで1枚）を地面にそろえたので、地面と同じ値にする。
+        constexpr float kBigSphereHeightScale = 0.03f;
+
+        double ElapsedMilliseconds(std::chrono::steady_clock::time_point startTime)
+        {
+            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime).count();
+        }
+
+        // 起動時に作った大きな球の頂点・クラスタから、石畳の材質を付けたMegaMeshを作り、仮に置いていた
+        // 通常のメッシュの球（32×16）と差し替える。作れなければ仮の球を残す。
+        void CreateBigSphereMegaGeometry(GameModeContext &ctx, Rendering3DTestData &data)
+        {
+            TSharedPtr<ProceduralMegaSphereData> sphereData = data.m_pBigSphereMegaData;
+            data.m_pBigSphereMegaData.reset();
+            if (!sphereData || !data.m_CobbleStoneMaterialUpdate)
+            {
+                return;
+            }
+
+            const auto createStartTime = std::chrono::steady_clock::now();
+            auto &textures = ctx.RenderResourcesRef.Textures();
+            auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
+            const MaterialCreateData &cobble = data.m_CobbleStoneMaterialUpdate->CreateData;
+
+            MegaMeshCreateInfo createInfo;
+            createInfo.VertexData = sphereData->Vertices.data();
+            createInfo.VertexDataSize = sphereData->Vertices.size() * sizeof(Mesh3DVertex);
+            createInfo.VertexCount = static_cast<uint32_t>(sphereData->Vertices.size());
+            createInfo.VertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+            createInfo.IndexData = sphereData->Indices.data();
+            createInfo.IndexCount = static_cast<uint32_t>(sphereData->Indices.size());
+            createInfo.Clusters = sphereData->Clusters;
+            createInfo.TotalBounds = sphereData->Bounds;
+            // どの段も閉じた球なので、メッシュ全体で同じ段を選ばせて段の境目の割れ目を防ぐ。
+            createInfo.LODBounds = sphereData->Bounds;
+            createInfo.bBuildLODHierarchy = false;
+            createInfo.ShadowLODLevel = kBigSphereShadowLODLevel;
+            createInfo.Material.AlbedoTexture = textures.GetRHITexturePtr(cobble.AlbedoTexture);
+            createInfo.Material.NormalTexture = textures.GetRHITexturePtr(cobble.NormalTexture);
+            createInfo.Material.RoughnessTexture = textures.GetRHITexturePtr(cobble.RoughnessTexture);
+            createInfo.Material.AOTexture = textures.GetRHITexturePtr(cobble.AOTexture);
+            createInfo.Material.HeightTexture = textures.GetRHITexturePtr(cobble.HeightTexture);
+            createInfo.Material.HeightScale = kBigSphereHeightScale;
+            createInfo.Material.bHasHeightMap = static_cast<bool>(createInfo.Material.HeightTexture);
+            createInfo.DebugName = "BigCobbleSphere";
+
+            const MegaMeshHandle megaMeshHandle = megaGeometry.CreateMegaMesh(createInfo);
+            const double createMs = ElapsedMilliseconds(createStartTime);
+            if (!megaMeshHandle.IsValid())
+            {
+                NORVES_LOG_ERROR("Rendering3DTest", "大きな球のMegaMeshを作れませんでした（仮の球のまま）");
+                return;
+            }
+            const ModelHandle modelHandle = megaGeometry.RegisterModel(megaMeshHandle, "BigCobbleSphere");
+            if (!modelHandle.IsValid())
+            {
+                megaGeometry.ReleaseMegaMesh(megaMeshHandle);
+                NORVES_LOG_ERROR("Rendering3DTest", "大きな球のMegaMeshをモデルとして登録できませんでした（仮の球のまま）");
+                return;
+            }
+            ctx.ScopeRef.TrackModel(modelHandle);
+            data.m_BigSphereModelHandle = modelHandle;
+
+            auto &world = ctx.WorldRef;
+            Entity *megaSphereObject = world.SpawnObject<Entity>();
+            ctx.ScopeRef.TrackObject(megaSphereObject);
+            megaSphereObject->SetPosition(0.0f, 0.0f, 0.0f);
+            if (data.m_pSphereObject)
+            {
+                megaSphereObject->SetRotation(data.m_pSphereObject->GetRotation());
+                // スコープ追跡から外してから World から除去する（Cleanup が解放済みポインタを触らないように）。
+                ctx.ScopeRef.Untrack(data.m_pSphereObject);
+                world.RemoveObject(data.m_pSphereObject);
+            }
+            data.m_pSphereObject = megaSphereObject;
+            data.m_pSphereMeshComponent = nullptr;
+            data.m_pSphereMegaGeometryComponent =
+                world.CreateComponent<Component::MegaGeometryComponent>(megaSphereObject);
+            data.m_pSphereMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
+            data.m_pSphereMegaGeometryComponent->SetCastShadow(true);
+
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=big_sphere_megamesh_create create_ms=%.1f vertices=%u triangles=%u clusters=%u",
+                            createMs,
+                            createInfo.VertexCount,
+                            createInfo.IndexCount / 3u,
+                            static_cast<uint32_t>(createInfo.Clusters.size()));
+        }
+
         // 環境変数 NORVES_STARTUP_SUN_STEP="<仰角(度)>,<秒>" を読む。形式が違うときは false。
         bool TryReadStartupSunStep(float& outElevation, float& outDelaySeconds)
         {
@@ -633,6 +726,42 @@ namespace Game::GameModes
 
             data.m_bMeshesRegistered = bSphereOk && bGroundOk;
 
+            // 大きな球の高ポリのMegaGeometry（緯度経度の格子で LOD0 は 1280×640、約164万三角形。
+            // 8×8セルのクラスタと、縦横半分ずつ粗くした5段のLOD）の頂点とクラスタをここで作っておき、
+            // 石畳のテクスチャがそろったら MegaMesh にして、上の通常のメッシュの球（仮の球）と差し替える。
+            // UVは横3回・縦1.5回の繰り返しで、1枚が約2.1 m四方（地面の石畳の2 mとほぼ同じ密度・縦横比）。
+            {
+                const auto buildStartTime = std::chrono::steady_clock::now();
+                auto sphereData = MakeShared<ProceduralMegaSphereData>();
+                const ProceduralMegaSphereSettings sphereSettings{};
+                if (BuildProceduralMegaSphere(sphereSettings, *sphereData))
+                {
+                    NORVES_LOG_INFO("AssetLoadProfile",
+                                    "stage=big_sphere_cluster_lod_build build_ms=%.1f vertices=%u triangles=%u clusters=%u levels=%u",
+                                    ElapsedMilliseconds(buildStartTime),
+                                    static_cast<uint32_t>(sphereData->Vertices.size()),
+                                    static_cast<uint32_t>(sphereData->Indices.size() / 3u),
+                                    static_cast<uint32_t>(sphereData->Clusters.size()),
+                                    static_cast<uint32_t>(sphereData->LevelTriangleCounts.size()));
+                    for (uint32_t level = 0; level < sphereData->LevelTriangleCounts.size(); ++level)
+                    {
+                        NORVES_LOG_INFO("Rendering3DTest",
+                                        "big_sphere_lod level=%u triangles=%u clusters=%u avg_triangles_per_cluster=%.1f lod_error_m=%.3g",
+                                        level,
+                                        sphereData->LevelTriangleCounts[level],
+                                        sphereData->LevelClusterCounts[level],
+                                        static_cast<double>(sphereData->LevelTriangleCounts[level]) /
+                                            static_cast<double>(sphereData->LevelClusterCounts[level]),
+                                        static_cast<double>(sphereData->LevelErrors[level]));
+                    }
+                    data.m_pBigSphereMegaData = sphereData;
+                }
+                else
+                {
+                    NORVES_LOG_ERROR("Rendering3DTest", "大きな球の高ポリのMegaGeometryを作れませんでした（通常のメッシュの球のまま）");
+                }
+            }
+
             // ポイントライト光源球体メッシュの生成（小さい球体: 半径0.15）
             VariableArray<Mesh3DVertex> lightSphereVertices;
             VariableArray<uint32_t> lightSphereIndices;
@@ -790,8 +919,8 @@ namespace Game::GameModes
                 cobbleUpdate->CreateData = cobbleMatInfo;
                 cobbleUpdate->PendingTextureCount = 5;
 
-                // 地面の石畳は2 mのタイルで、球（UVの1周が約6.3 m）より1タイルが小さいため、
-                // 凹凸の深さが球と同じ程度になるよう高さのスケールを小さくする。
+                // 地面の石畳は2 mのタイルで、仮の球（UVの1周が約6.3 m）より1タイルが小さいため、
+                // 凹凸の深さが同じ程度になるよう高さのスケールを小さくする（高ポリの球も同じ値を使う）。
                 constexpr float kGroundHeightScale = 0.03f;
                 const MaterialHandle groundMaterial = data.m_GroundMaterial;
                 auto finishCobbleStone = [cobbleUpdate, groundMaterial, &materials]()
@@ -840,6 +969,7 @@ namespace Game::GameModes
                                                  });
 
                 data.m_PendingMaterialUpdates.push_back(cobbleUpdate);
+                data.m_CobbleStoneMaterialUpdate = cobbleUpdate;
                 NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material created (textures loading async)");
             }
 
@@ -2110,6 +2240,13 @@ namespace Game::GameModes
             }
         }
 
+        // 大きな球: 石畳のテクスチャがそろったら高ポリのMegaGeometryを作り、仮の球と差し替える。
+        if (data.m_pBigSphereMegaData && data.m_CobbleStoneMaterialUpdate &&
+            data.m_CobbleStoneMaterialUpdate->PendingTextureCount == 0)
+        {
+            CreateBigSphereMegaGeometry(ctx, data);
+        }
+
         // 球体をY軸回転させる
         if (data.m_pSphereObject && (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested))
         {
@@ -2215,6 +2352,10 @@ namespace Game::GameModes
         //    スコープは独自の追跡リストを使うため、ここでの null 化は安全。
         data.m_pSphereObject = nullptr;
         data.m_pSphereMeshComponent = nullptr;
+        data.m_pSphereMegaGeometryComponent = nullptr;
+        data.m_pBigSphereMegaData.reset();
+        data.m_CobbleStoneMaterialUpdate.reset();
+        data.m_BigSphereModelHandle = ModelHandle::Invalid();
         data.m_pGroundObject = nullptr;
         data.m_pGroundMeshComponent = nullptr;
         data.m_pLightSphereObject = nullptr;
