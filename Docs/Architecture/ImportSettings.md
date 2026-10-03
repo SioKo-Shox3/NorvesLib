@@ -144,3 +144,31 @@ scale/fit/axes/原点/UV/windingのcook-loose頂点・index・bounds一致、met
 自己完結GLB/data URIのcook APIはsource locatorが空でも従来どおり使用できる。
 その場合auto探索は設定無しとし、旧payload/hashを保つ。requiredは失敗し、明示overrideは読み込む。
 通常file loader自体の「空source/overrideはInvalidOptions」という契約は変更しない。
+
+## 設定正本の上書き防止
+
+静的モデルcookは、採用したsidecarとmodel package/manifest/派生texture packageが同じfileを指す出力を拒否する。
+書込開始前にweakly_canonicalによるpath一致、Windowsの通常case比較、filesystem::equivalentによるhardlink一致を検査する。
+安定したfilesystem上の誤指定防止であり、競合したpath差替えを完全に防ぐsandboxではない。
+
+AssetCookGlbSmokeへsidecarをpackage/manifestにした拒否とJSON bytes保持、通常出力成功、
+派生image0 packageからsidecarへのhardlink（対応filesystemのみ）を登録する。
+実Mainから同じpath判定関数のtextを切り出し、Linux上の実filesystemで通常・最適化・ASan/UBSanを実行した。
+これはMain全体やWindows CLIの実行ではない。native smokeはCMake/Windows環境未整備のため未実行。
+CMake CREATE_LINKは3.14以降の公式機能を使い、hardlink不能の場合はそのcaseだけを明示skipする。
+https://cmake.org/cmake/help/latest/command/file.html#create-link
+
+## 静的モデルの最小設定例
+
+Dog.glbの隣のDog.glb.import.jsonへ置く例。sourceの上/前方向が+Y/+Zである場合に限る。
+高さを0.6mへ合わせ、XZ中心と足元を原点へ移す。headの向きの符号はモデルを見て作者が決める。
+
+```json
+{
+  "version": 1,
+  "units": { "fit": { "axis": "up", "meters": 0.6 } },
+  "axes": { "up": "+Y", "forward": "+Z", "mirrorX": false },
+  "origin": { "mode": "bounds_bottom_center" },
+  "mesh": { "winding": "auto", "flipU": false, "flipV": false }
+}
+```

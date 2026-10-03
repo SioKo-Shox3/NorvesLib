@@ -502,3 +502,6 @@
 
 - G2-GR78-STATIC-SIDECAR: 静的cook/looseへ共有設定file/変換をcluster前に接続し、設定有りだけsource_hashへ正規化を連結。無し/disabledは旧経路、結果に採用設定を所有してCLI/looseへ診断する。looseは設定適用後の非有限bounds/coneも公開前に拒否。native統合試験にglTF/GLB・各変換・無し/恒等/disabled・meta/hash・override/required・surface/巨大scale失敗保持を登録。第1周の空source locator互換低下を修正し、自己完結GLB/data URIの空/非空同値とrequired/overrideを追加、第2周PASS。共有kernel/hash実行成功、実cooker/loose/統合試験はWindows.hで未実行。
 - Next: 新しい入力sidecarをcook出力先で上書きしないguardを追加してから、静的接続と併せて公開する。骨格一様scaleはその後に進める。
+
+- G2-GR78-OUTPUT-SIDECAR-GUARD: 採用sidecarをmodel package/manifest/派生texture packageで上書きするpath・symlink・hardlink aliasを全write前に拒否。既存Windows case比較を再利用し、canonicalize失敗も拒否する。Mainの実helper textをLinuxで直接compileし、同一/正規化/hardlink/symlink/別fileを通常/O2/ASan・UBSan（LeakSanitizer除外）で成功。CLI smokeに2直接alias、通常cook、派生texture hardlinkと設定/モデル/manifest保持を追加し独立PASS。Main全体/Windows/CLI/CMakeは未実行で、helper検証と区別する。
+- Next: 静的sidecar接続とguardの2コミットをまとめて公開し、GR78-SKELETAL-SIDECARの一様scaleへ進む。SurfaceCentroidは作者合意どおり拒否を維持。

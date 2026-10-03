@@ -191,4 +191,59 @@ if(guard_result EQUAL 0 OR guard_reason EQUAL -1 OR
     EXISTS "${GUARD_DIR}/Cooked/model.nvpkg" OR EXISTS "${GUARD_DIR}/Cooked/model.nvpkg.img1.nvpkg")
     message(FATAL_ERROR "retained asset package was not protected: ${guard_error}")
 endif()
+# 採用sidecarの正本をpackage/manifest/派生textureで上書きしない。
+set(SETTINGS_DIR "${RUN_DIR}/SettingsGuard")
+file(MAKE_DIRECTORY "${SETTINGS_DIR}/Cooked")
+set(SETTINGS_MODEL "${SETTINGS_DIR}/protected.glb")
+configure_file("${FIXTURE_DIR}/embedded_tri.glb" "${SETTINGS_MODEL}" COPYONLY)
+set(SETTINGS_PATH "${SETTINGS_MODEL}.import.json")
+file(WRITE "${SETTINGS_PATH}" "{\"version\":1,\"units\":{\"scale\":2}}")
+file(SHA256 "${SETTINGS_PATH}" settings_before)
+
+function(expect_settings_guard output manifest)
+    execute_process(COMMAND "${ASSET_COOK_EXE}"
+        --input "${SETTINGS_MODEL}" --out "${output}" --manifest "${manifest}"
+        --logical "Models/protected.glb" --kind model --entry "__mesh__" --entry-type Msh0
+        --format "nvmesh.v0.mesh3d.pnt.u32.clustered" --variant default
+        RESULT_VARIABLE result ERROR_VARIABLE error)
+    string(FIND "${error}" "output must not alias import settings" reason)
+    file(SHA256 "${SETTINGS_PATH}" settings_after)
+    if(result EQUAL 0 OR reason EQUAL -1 OR NOT settings_before STREQUAL settings_after)
+        message(FATAL_ERROR "import settings were not protected: ${error}")
+    endif()
+endfunction()
+
+set(settings_package "${SETTINGS_DIR}/Cooked/model.nvpkg")
+set(settings_manifest "${SETTINGS_DIR}/manifest.json")
+expect_settings_guard("${SETTINGS_PATH}" "${settings_manifest}")
+expect_settings_guard("${settings_package}" "${SETTINGS_PATH}")
+if(EXISTS "${settings_package}" OR EXISTS "${settings_manifest}")
+    message(FATAL_ERROR "sidecar alias rejection wrote an unrelated output")
+endif()
+execute_process(COMMAND "${ASSET_COOK_EXE}"
+    --input "${SETTINGS_MODEL}" --out "${settings_package}" --manifest "${settings_manifest}"
+    --logical "Models/protected.glb" --kind model --entry "__mesh__" --entry-type Msh0
+    --format "nvmesh.v0.mesh3d.pnt.u32.clustered" --variant default
+    RESULT_VARIABLE settings_result ERROR_VARIABLE settings_error)
+file(SHA256 "${SETTINGS_PATH}" settings_after_success)
+if(NOT settings_result EQUAL 0 OR NOT settings_before STREQUAL settings_after_success)
+    message(FATAL_ERROR "normal sidecar cook failed: ${settings_error}")
+endif()
+# file(CREATE_LINK)は3.14以降。link非対応filesystemはそのcaseだけを明示skipする。
+set(settings_texture "${settings_package}.img0.nvpkg")
+file(REMOVE "${settings_texture}")
+file(CREATE_LINK "${SETTINGS_PATH}" "${settings_texture}" RESULT settings_link_result)
+if(settings_link_result STREQUAL "0")
+    file(SHA256 "${settings_package}" settings_model_before)
+    file(SHA256 "${settings_manifest}" settings_manifest_before)
+    expect_settings_guard("${settings_package}" "${settings_manifest}")
+    file(SHA256 "${settings_package}" settings_model_after)
+    file(SHA256 "${settings_manifest}" settings_manifest_after)
+    if(NOT settings_model_before STREQUAL settings_model_after OR NOT settings_manifest_before STREQUAL settings_manifest_after)
+        message(FATAL_ERROR "derived sidecar alias changed model or manifest")
+    endif()
+else()
+    message(STATUS "sidecar hardlink case skipped: ${settings_link_result}")
+endif()
+
 message(STATUS "AssetCookGlbSmoke PASS: package validation, model+3 textures, metadata preservation, repeat, image update, failure")

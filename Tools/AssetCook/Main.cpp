@@ -1968,6 +1968,26 @@ namespace
 #endif
     }
 
+    bool GuardImportSettingsOutput(const std::filesystem::path& output,
+                                   const std::filesystem::path& sidecar, auto& error)
+    {
+        std::error_code sidecarError, outputError, equivalentError;
+        const auto canonicalSidecar = std::filesystem::weakly_canonical(sidecar, sidecarError);
+        const auto canonicalOutput = std::filesystem::weakly_canonical(output, outputError);
+        if (sidecar.empty() || sidecarError || outputError)
+        {
+            error = "failed to canonicalize import settings/output";
+            return false;
+        }
+        const bool bSameFile = std::filesystem::equivalent(output, sidecar, equivalentError);
+        if (SameCookOutputPath(canonicalOutput, canonicalSidecar) || (!equivalentError && bSameFile))
+        {
+            error = "model/texture output must not alias import settings";
+            return false;
+        }
+        return true;
+    }
+
     bool CookEmbeddedModelAssets(const CookOptions& options,
                                  const std::filesystem::path& inputPath,
                                  const std::filesystem::path& packagePath,
@@ -2060,6 +2080,11 @@ namespace
         for (size_t index = 0; index < pending.size(); ++index)
         {
             auto& item = pending[index];
+            if (mesh.bHasImportSettings && !GuardImportSettingsOutput(item.Path,
+                    std::filesystem::path(mesh.ImportSettingsPath.begin(), mesh.ImportSettingsPath.end()), error))
+            {
+                return false;
+            }
             item.CanonicalPath = std::filesystem::weakly_canonical(item.Path, pathError);
             if (pathError)
             {
@@ -2244,6 +2269,16 @@ namespace
         {
             error = ToStdString(meshError);
             return false;
+        }
+
+        if (meshResult.bHasImportSettings)
+        {
+            const std::filesystem::path sidecar(meshResult.ImportSettingsPath.begin(), meshResult.ImportSettingsPath.end());
+            if (!GuardImportSettingsOutput(packagePath, sidecar, error) ||
+                !GuardImportSettingsOutput(manifestPath, sidecar, error))
+            {
+                return false;
+            }
         }
 
         std::cout << "sidecar: " << (meshResult.bHasImportSettings ? ToStdString(meshResult.ImportSettingsPath) : "none")

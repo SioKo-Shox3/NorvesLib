@@ -1946,7 +1946,7 @@
 - stop-when: 未承認NVSKEL形式変更、骨格の軸/原点変換、native未実行を実skinning成功扱い。
 
 ## G2-GR78-OUTPUT-SIDECAR-GUARD: cook出力による設定file上書きを拒否する
-- status: todo
+- status: done
 - done-when: 採用したsidecarとmodel package/manifest/embedded texture packageのpath・symlink・hardlink aliasを、書込前に拒否する。
 - verify: 有効sidecarをpackage/manifest出力先にしたCLI回帰で失敗と既存設定bytes保持を登録し、通常出力を妨げないことを確認する。
 - stop-when: 設定正本を出力で上書きする、途中書込後にaliasを判定する、TOCTOU完全防御と主張する。
