@@ -28,7 +28,7 @@ namespace NorvesLib::Core::Rendering
         float view[16];
         float screenSize[4];   // xy=寸法, zw=1/寸法
         float radiusParams[4]; // x=半径(m), y=減衰を始める距離(m), z=減衰の幅(m), w=画面上の半径の上限(画素)
-        float noiseParams[4];  // x=スライスの向きの時間のずらし, y=段の位置の時間のずらし, z=可視率の指数
+        float noiseParams[4];  // x=スライスの向きのずらし, y=段の位置のずらし（どちらも0に固定）, z=可視率の指数
     };
 
     struct GPUBlurParams
@@ -42,12 +42,6 @@ namespace NorvesLib::Core::Rendering
 
     static constexpr uint32_t SSAO_PARAMS_SIZE = sizeof(GPUSSAOParams);
     static constexpr uint32_t BLUR_PARAMS_SIZE = sizeof(GPUBlurParams);
-
-    // TAAで時間方向に蓄積するときの、フレームごとの雑音のずらし（黄金比系の低食い違い列）
-    static constexpr float TemporalSliceNoiseStep = 0.6180339887f;
-    static constexpr float TemporalStepNoiseStep = 0.7548776662f;
-    // 時間のずらしを繰り返す長さ（浮動小数の精度を保つため、フレーム番号をこの周期で丸める）
-    static constexpr uint64_t TemporalNoisePeriod = 64u;
 
     static RHI::DescriptorSetDesc CreateSSAODescriptorSetDesc()
     {
@@ -829,7 +823,6 @@ namespace NorvesLib::Core::Rendering
         GPUBlurParams blurParams = {};
 
         const CameraProxy *activeCamera = context.GetActiveCamera();
-        bool bTemporalAccumulation = false;
         if (activeCamera)
         {
             // GBufferを描いたのと同じ（TAAのジッタ込みの）投影で深度を復元する
@@ -839,9 +832,6 @@ namespace NorvesLib::Core::Rendering
             cameraConstants.CopyShaderInverseProjection(ssaoParams.invProjection);
             cameraConstants.CopyShaderView(ssaoParams.view);
             cameraConstants.CopyShaderInverseProjection(blurParams.invProjection);
-            // ジッタが掛かっていれば、このViewportはTAAの履歴で時間方向に蓄積される
-            bTemporalAccumulation = activeCamera->ProjectionJitterNdcX != 0.0f ||
-                                    activeCamera->ProjectionJitterNdcY != 0.0f;
         }
 
         const float radius = std::isfinite(m_Settings.Radius) && m_Settings.Radius > 0.0f
@@ -862,13 +852,9 @@ namespace NorvesLib::Core::Rendering
         ssaoParams.radiusParams[3] = std::isfinite(m_Settings.MaxRadiusPixels)
                                          ? std::max(m_Settings.MaxRadiusPixels, 0.0f)
                                          : 0.0f;
-        if (bTemporalAccumulation)
-        {
-            // 雑音の4×4の並びをフレームごとにずらし、TAAが別の向き・段の結果を混ぜるようにする
-            const float frame = static_cast<float>(context.FrameNumber % TemporalNoisePeriod);
-            ssaoParams.noiseParams[0] = frame * TemporalSliceNoiseStep - std::floor(frame * TemporalSliceNoiseStep);
-            ssaoParams.noiseParams[1] = frame * TemporalStepNoiseStep - std::floor(frame * TemporalStepNoiseStep);
-        }
+        // 雑音の4×4の並びはフレームごとにずらさない（noiseParams の x・y は0のまま）。雑音除去の4×4の平均が
+        // 並びの一巡を覆うので、空間だけで均せる。ずらすとその平均がフレームごとに変わり、模様の無い滑らかな
+        // 金属の面では、TAAの近傍のクランプがその揺れを通して鏡面の遮蔽がちらつく。
         ssaoParams.noiseParams[2] = std::isfinite(m_Settings.Intensity) && m_Settings.Intensity > 0.0f
                                         ? m_Settings.Intensity
                                         : 1.0f;
