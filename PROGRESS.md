@@ -442,3 +442,6 @@
 
 - G2-GR77-BASE64: 無割当Span版の厳密base64検証/必要長/復号を追加。標準alphabet、末尾padding、canonical pad bits、容量/全span非交差を検査し、失敗時output非変更・成功tail保持。第1周のサイズ参照alias問題をBase64DecodeOutcomeの値返却へ変更し解消。RFC例、全256単byte/65,536二byte/4,096三byteを通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/Werror/MEMBERで成功。独立multi-quartet8,256/overlap39,576/padding24,576反証も成功、第2周PASS。data URI構文/percent/JSON/3経路接続は未実装。
 - Next: GR77のdata URI/BIN意味検証、共有buffer所有と3経路への接続へ進む。旧.gltfのsource hashはBOMと外部buffer余剰byteも保持し、新しい埋込みbytesを二重hashしない。
+
+- G2-GR77-BUFFER-SEMANTICS: 借用data URI view、対応4MIME/parameter/base64 flag、percent size/decode、GLB buffer0の宣言長と0〜3byteゼロpaddingを共有化。第1周のraw URI文字制約不足をMIME tokenとは別のurlchar検査で修正し、percent表記は維持。通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/Werror/MEMBER、256byte percent変換と4,000変異成功。独立1,536ケース反証もPASS、第2周PASS。サイズ/viewは値返却、失敗非変更/借用契約を保持。JSON/I/O/実BufferSet/3消費経路は未接続。
+- Next: GR77のBufferSet所有・外部/data URI/BIN解決へ進む。旧.gltfの全source hashを保ち、loose accessorのunchecked範囲検証は接続時に別修正として扱う。

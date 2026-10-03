@@ -170,6 +170,8 @@ set(PRIVATE_SOURCES
     Private/Resource/SkeletalGltfDecode.cpp
     Private/Resource/GltfContainer.h
     Private/Resource/GltfContainer.cpp
+    Private/Resource/GltfBufferSource.h
+    Private/Resource/GltfBufferSource.cpp
     Private/Resource/SkinnedMeshResource.cpp
     Private/Resource/FontAtlas.cpp
     Private/Resource/ModelAssetLoader.cpp

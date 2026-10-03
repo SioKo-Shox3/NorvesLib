@@ -1786,8 +1786,15 @@
 - notes: GltfBufferSet/画像のdata URI解決が使う下層部品。URIの構文・percent decode・MIMEは別層で扱う。
 
 ## G2-GR77-BUFFER-SEMANTICS: data URIとGLB BINの意味境界を検証する
-- status: todo
+- status: done
 - done-when: 共有の無割当helperでdata URIの対応MIME/base64形式/parameter/percent escapeを扱い、GLB buffer0の宣言長と0〜3byteのゼロpaddingを検証する。失敗時の出力非変更/空viewと借用寿命を明示する。
 - verify: 既知data URI、大小文字/parameter/percent、壊れたescape、対応外MIME/encoding、BIN index/長さ/padding/欠落を実helperで通常/O2/sanitizer/MEMBER確認。ファイルI/O/JSON/ownedBufferSetは後続と区別する。
 - stop-when: 非base64や対応外画像の黙認、percent後のNUL/経路を無条件に安全と扱う、出力部分書込み、BINコピー。
 - notes: GR77のGltfBufferSet/画像が使う意味検証を先行し、cooker/loose/skeletalは後続で接続する。
+
+## G2-GR77-BUFFER-SET: 外部と埋め込みbufferの所有と参照を共有化する
+- status: todo
+- done-when: 所有する外部/data URI bytesと借用GLB BINを共通BufferSetで解決し、宣言範囲のaccessor viewと外部hash用の全source bytesを区別する。自己所有配列へのSpanを保存せずcopy/moveで参照を壊さない。JSON/消費経路接続は後続へ分ける。
+- verify: descriptor・data URI・BIN・reader失敗・容量/宣言長・copy/move/再利用・出力契約の実testを既存束へ追加。実source syntax/型特性と可能なCPU helper回帰を確認し、実allocator/Windows依存の未実行を明記する。
+- stop-when: BINコピー、旧.gltf hashのBOM/外部余剰byteの消失、借用寿命の隠蔽、read callbackによる境界迂回を安全と主張、偽allocator/Windows stub。
+- notes: 3経路はまだ接続しない。外部URIはpercent後の相対path検証と実filesystem containmentを通す。data URIの受理追加はGR77の意図的仕様変更として旧拒否smokeを更新する。

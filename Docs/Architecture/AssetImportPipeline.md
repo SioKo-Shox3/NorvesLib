@@ -37,3 +37,16 @@ Text/Base64.hは独自Spanだけを使う無割当の下層部品。GetBase64Dec
 data URIのscheme/media type/parameters、percent-decoding、JSONの文字列型はこのprimitiveに渡す前の上位層が扱う。2つの固定prefixだけの判定を汎用[RFC 2397](https://www.rfc-editor.org/rfc/rfc2397.html)準拠のURI parserと呼ばない。
 
 Base64DecodeTestは既存CookedMeshTest束のMEMBER。RFC例、1byte全256通り、2byte全65,536通り、固定seedの3byte4,096件、異常padding/容量/alias/失敗時非変更を同じ実装へ直接リンクして検証する。data URIやGLBの消費経路への接続完了を意味しない。
+
+## GR77: data URIとBINの意味境界
+
+Resource/GltfBufferSource.hは、JSONやファイルI/Oへ依存しない意味検証を提供する。
+
+- ParseDataUriはscheme/media typeの大小文字を区別せず、application/octet-stream・application/gltf-buffer・image/png・image/jpegを分類する。type/subtypeのpercent表記も扱う。MIME parametersは文法を検証して許可し、最後のliteral base64 flagを要求する。省略MIMEのtext/plain、対応外MIME、非base64はこのglTF用profileでは受け入れない
+- parameterはASCII token属性と、tokenまたはpercent表記を使ったprintable ASCII値を扱う。raw文字はRFC2396のurlcharにも制限し、#や^等はpercent表記が必要。payloadのraw文字にも同じURI文字制限を適用する。未知のparameterを変換設定として解釈しない。汎用の全media type/全URI実装ではない
+- 戻りviewはURIのpayloadを借用し、percent復号後の必要長を持つ。成功はURI header/escapeの検証だけ。呼出側がpercent復号→厳密Base64検証/復号を必ず行う。壊れたBase64をURI構造の成功だけで受理しない
+- GetPercentDecodedSize/DecodePercentBytesは%HHをbyteへ戻すだけで、+を空白へ変換しない。空やNULを含むbyte値も機械的に扱う。文字コード、ファイルパス、NUL可否は利用層の責務であり、この成功を安全なパスとみなさない。容量・入出力span交差を検証し、失敗時出力非変更、サイズは値返却
+- BindGlbBufferはuriのないbuffers[0]専用。GLB/BINの存在、index0、正の宣言長、BINの4byte整列長、宣言長との差0〜3、余剰byteが0であることを検証し、宣言範囲だけを借用viewで返す。失敗viewは空。JSONの型/uri未定義は呼出側が先に確認する
+- BufferSetはapplication系、ImageSourceはimage系を採用する。generic URI分類で成功しただけでは、その用途で使えるMIMEと判断しない
+
+GltfBufferSourceTestは対応MIME/parameter/percentの復号連携、全256byteのpercent変換、異常値/容量/交差、BINの0〜3byte padding/宣言長/index/欠落と4,000固定seed変異を検証する。まだ実ファイルのbuffer所有や3消費経路への接続は行わない。
