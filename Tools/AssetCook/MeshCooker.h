@@ -68,6 +68,29 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t ClipCount = 0;
     };
 
+    struct ModelImageFingerprint
+    {
+        uint32_t ImageIndex = 0;
+        Core::Container::AnsiString LogicalPath;
+        Core::Container::AnsiString Format;
+        uint64_t SourceHash = 0;
+    };
+    struct ModelCookFingerprint
+    {
+        uint64_t SourceHash = 0;
+        uint64_t ImportSettingsHash = 0;
+        bool bHasImportSettings = false;
+        Core::Container::AnsiString ImportSettingsPath;
+        Core::Container::VariableArray<ModelImageFingerprint> EmbeddedImages;
+    };
+    // 入力/設定のcache照合用。geometry検証・変換・画像decode・cookは行わない。
+    // 全metadataを所有し、失敗時outを保持する。成功はmodel自体のcook可能性を保証しない。
+    [[nodiscard]] bool FingerprintModelCookSource(const uint8_t* sourceBytes, size_t sourceSize,
+        Core::Container::AnsiStringView format, Core::Container::AnsiStringView sourcePath,
+        Core::Container::AnsiStringView logicalPath, ModelCookFingerprint& outResult,
+        Core::Container::AnsiString& error,
+        const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr);
+
     [[nodiscard]] bool IsSupportedMeshCookFormat(Core::Container::AnsiStringView format) noexcept;
 
     // 成功時のEmbeddedImagesはGLB画像だけsourceBytesを借用し、それ以外は結果が所有する。

@@ -511,3 +511,6 @@
 
 - G2-GR78-CLI-SETTINGS: --import-settings（別引数/equals）・--no-sidecar・--require-sidecarをstatic/skeletalの共有loaderへ接続。明示設定優先、排他/重複/空値/値付きbool/非model拒否、設定出力alias保護を維持。実parserの通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）実行とMEMBER compile成功、独立確認PASS。GLB設定優先/無効化のbytes/hash回帰/失敗出力保持/明示正本保護と骨格override/disabledのCLI smokeを登録。Main/native CLIはWindows.h等により未実行。skip/inspectはまだ未知引数として拒否する。
 - Next: GR78-CLI-SKIPを独立反復に分離。元source/buffers/設定hashをcook前に計算し、manifestと実package/派生画像を検証してから省略する。inspect診断はその後。
+
+- G2-GR78-SOURCE-PREFLIGHT: FingerprintModelCookSourceを追加し、geometry変換/cluster/画像decode/package生成前に本cookと同じsource/buffers/正規化設定hashとowned embedded画像metadataを取得する。設定file helperをstatic/skeletal/cook前照合で共有。返却に借用bytesを含めず、成功末尾だけ公開する。既存native束へ各入力形態/設定/骨格/hash同値/画像metadata/失敗保持と巨大scaleでの照合成功・cook失敗の区別を登録。既存純設定hashの3mode再実行成功、今回のnativecompileはWindows.hで停止し実行未確認。独立レビューPASS。非blockingのrequired不在時preflight単独assert強化はnative受入れ時の追補候補として保持。
+- Next: GR78-CLI-SKIPへ接続し、manifest key/source hash/要求format・出力先とmodelおよび派生画像package実体を検証してからcookを省略する。

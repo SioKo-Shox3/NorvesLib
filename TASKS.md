@@ -1969,3 +1969,9 @@
 - done-when: --inspect <file>でbounds/軸長/頂点三角形数/位置溶接と成分/ゼロ法線/画像寸法・チャンネル統計/材質係数と設定叩き台を診断し、前方向の符号を勝手に決めない。
 - verify: 小型既知fixtureの幾何/画像/材質値、無出力cookと入力非変更を確認する。本人実物は入手後に別受入れ。
 - stop-when: 診断のためpackage生成/既存sidecar上書き、未知方向を確定として出す、未入手実物を合格扱い。
+
+## G2-GR78-SOURCE-PREFLIGHT: cook前の入力hashと派生画像記述を共有化する
+- status: done
+- done-when: geometry変換/cluster/画像decode/package生成なしで元source/buffers/設定のcookと同じhashを返し、embedded画像の論理path/format/hashを所有metadataとして返す。設定loaderを本cookと共有し、失敗時出力保持。
+- verify: glTF/GLB/data URIと設定有無/変更/meta/無効/必須、骨格、embedded画像metadata、外部buffer全量のhash同値をnative既存束へ登録する。
+- stop-when: preflight成功をgeometryの妥当性保証とする、失敗の部分公開、画像bytesの寿命をcallerに漏らす。

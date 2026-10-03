@@ -211,3 +211,17 @@ CLI smokeには設定正本をpackage/manifestで上書きしない拒否と通�
 - 明示overrideもpackage/manifest/派生textureの出力alias保護対象。`--skip-if-unchanged` / `--inspect` はまだ未実装で、未知引数として拒否する。
 
 ImportCliOptionsTestは共有の実引数parserを独立実行する。AssetCookImportSmokeはGLBの設定優先順位、disabledのbytes/hash回帰、失敗時出力保持と明示設定の上書き拒否をnative CLIで確認する登録であり、Windows依存環境での実行は別途必要。
+
+## cook前の入力照合
+
+`FingerprintModelCookSource` はJSON/container、buffers、設定の検証とhash計算だけを行う。
+本cookと同じ元source全量/BOM・外部buffer全量（宣言後余剰を含む）・正規化設定を使用し、
+設定file選択のhelperも共通化する。staticでは同じ材質参照resolverからembedded画像の
+index/論理path/format/source hashを取り出し、すべて所有metadataにする（画像bytesは返さない）。
+geometryの展開・変換・cluster化・画像decode・package生成は行わない。
+そのため成功は入力modelのcook可能性を保証せず、cache missなら通常cookの検証が必要。
+失敗時は既存結果を保持する。sourceと設定は安定したfilesystemを前提とし、競合変更のatomic snapshotではない。
+
+既存native束へglTF/GLB/data URI・設定有無/変更/meta/disabled・外部buffer余剰・骨格・
+embedded画像のcook結果との照合と失敗保持を追加する。これらはWindows依存により未実行で、
+後続のCLI skip判断はまだ未接続。

@@ -115,8 +115,35 @@ namespace
     };
     bool Cook(const Bytes& bytes, AnsiStringView path, MeshCookResult& result, AnsiString& error)
     {
-        return CookGltfToNvmesh(bytes.data(), bytes.size(), "nvmesh.v0.mesh3d.pnt.u32.clustered",
+        ModelCookFingerprint fingerprint;
+        const bool identified=FingerprintModelCookSource(bytes.data(),bytes.size(),
+            "nvmesh.v0.mesh3d.pnt.u32.clustered",path,"Models/triangle.gltf",fingerprint,error);
+        const bool cooked=CookGltfToNvmesh(bytes.data(), bytes.size(), "nvmesh.v0.mesh3d.pnt.u32.clustered",
             path, "Models/triangle.gltf", result, error);
+        if (cooked)
+        {
+            assert(identified && fingerprint.SourceHash==result.SourceHash);
+            assert(fingerprint.EmbeddedImages.size()==result.EmbeddedImages.size());
+            for (size_t i=0;i<fingerprint.EmbeddedImages.size();++i)
+            {
+                const auto& a=fingerprint.EmbeddedImages[i];
+                const auto& b=result.EmbeddedImages[i];
+                assert(a.ImageIndex==b.ImageIndex && a.LogicalPath==b.LogicalPath &&
+                    a.Format==b.Format && a.SourceHash==b.SourceHash);
+            }
+            const auto retained=fingerprint;
+            AnsiString rejectedError;
+            assert(!FingerprintModelCookSource(nullptr,0,"nvmesh.v0.mesh3d.pnt.u32.clustered",
+                path,"Models/triangle.gltf",fingerprint,rejectedError));
+            assert(fingerprint.SourceHash==retained.SourceHash && fingerprint.EmbeddedImages.size()==retained.EmbeddedImages.size());
+            for (size_t i=0;i<fingerprint.EmbeddedImages.size();++i)
+            {
+                assert(fingerprint.EmbeddedImages[i].SourceHash==retained.EmbeddedImages[i].SourceHash &&
+                    fingerprint.EmbeddedImages[i].LogicalPath==retained.EmbeddedImages[i].LogicalPath &&
+                    fingerprint.EmbeddedImages[i].Format==retained.EmbeddedImages[i].Format);
+            }
+        }
+        return cooked;
     }
     void SamePayload(const MeshCookResult& expected, const MeshCookResult& actual)
     {

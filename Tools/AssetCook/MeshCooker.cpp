@@ -1546,6 +1546,121 @@ namespace NorvesLib::Tools::AssetCook
             WriteLe64(outBytes, HeaderOffset::PayloadHash, payloadHash);
             return true;
         }
+        bool LoadCookImportSettings(AnsiStringView sourcePath,
+            const AssetImport::ImportSettingsFileOptions* importOptions,
+            AssetImport::LoadedImportSettings& loadedImport, AnsiString& error)
+        {
+            const AssetImport::ImportSettingsFileOptions automaticImport;
+            const auto& effectiveImport = importOptions != nullptr ? *importOptions : automaticImport;
+            AssetImport::SettingsFileOutcome outcome;
+            // source locator無しの自己完結入力はauto探索だけ省略する。
+            if (!sourcePath.empty() || effectiveImport.bRequired || !effectiveImport.OverridePath.empty())
+            {
+                outcome = AssetImport::LoadImportSettingsFile(
+                    std::filesystem::path(sourcePath.begin(), sourcePath.end()), effectiveImport, loadedImport);
+            }
+            if (outcome.Result != AssetImport::SettingsFileResult::Success)
+            {
+                error = AnsiString("import settings rejected: file=") +
+                    FormatInteger(static_cast<int>(outcome.Result)) + " validation=" +
+                    FormatInteger(static_cast<int>(outcome.Validation));
+                return false;
+            }
+            return true;
+        }
+
+        bool FingerprintModelCookSourceInternal(const uint8_t* sourceBytes, size_t sourceSize,
+            AnsiStringView format, AnsiStringView sourcePath, AnsiStringView logicalPath,
+            ModelCookFingerprint& outResult, AnsiString& error,
+            const AssetImport::ImportSettingsFileOptions* importOptions)
+        {
+            if (format != SupportedMeshFormat && format != SupportedSkeletalFormat)
+            {
+                error = "unsupported model fingerprint format";
+                return false;
+            }
+            if (!sourceBytes || sourceSize==0)
+            {
+                error = "glTF source input is empty";
+                return false;
+            }
+            Gltf::ContainerView container;
+            const auto parsed = Gltf::ParseContainer({sourceBytes,sourceSize},container);
+            if ((parsed != Gltf::ContainerParseResult::Success && parsed != Gltf::ContainerParseResult::NotGlb) ||
+                container.Json.empty() || std::find(container.Json.begin(),container.Json.end(),uint8_t{0})!=container.Json.end())
+            {
+                error = "invalid glTF container for fingerprint";
+                return false;
+            }
+            if (!ValidateRelativePath(logicalPath,"model logical path",error))
+            {
+                return false;
+            }
+            JsonDocument document;
+            const AnsiStringView json(reinterpret_cast<const char*>(container.Json.data()),container.Json.size());
+            if (!JsonDocument::TryParse(ToCoreString(json),document) || !ValidateRequiredExtensions(document.GetRoot(),error))
+            {
+                error = "invalid glTF document for fingerprint";
+                return false;
+            }
+            const auto root = document.GetRoot();
+            Gltf::BufferSet buffers;
+            AssetImport::LoadedImportSettings settings;
+            if (!ResolveCookBuffers(root,container,sourcePath,buffers,error) ||
+                !LoadCookImportSettings(sourcePath,importOptions,settings,error))
+            {
+                return false;
+            }
+            if (format==SupportedSkeletalFormat && settings.bPresent &&
+                !AssetImport::SupportsSkeletalScaleImport(settings.Settings))
+            {
+                error = "skeletal import supports only uniform scale/fit; axes, mirror, origin and mesh changes are unsupported";
+                return false;
+            }
+            ModelCookFingerprint result;
+            if (format==SupportedMeshFormat)
+            {
+                PrimitiveInfo primitive;
+                MaterialReferences references;
+                VariableArray<MeshEmbeddedImage> images;
+                if (!ParsePrimitive(root,primitive,error) ||
+                    !ResolveMaterialReferences(root,primitive,logicalPath,buffers,images,references,error))
+                {
+                    return false;
+                }
+                for (auto& image : images)
+                {
+                    ModelImageFingerprint metadata;
+                    metadata.ImageIndex=image.ImageIndex;
+                    metadata.LogicalPath=std::move(image.LogicalPath);
+                    metadata.Format=std::move(image.Format);
+                    metadata.SourceHash=image.SourceHash;
+                    result.EmbeddedImages.push_back(std::move(metadata));
+                }
+                std::sort(result.EmbeddedImages.begin(),result.EmbeddedImages.end(),[](const auto& a,const auto& b)
+                {
+                    return a.ImageIndex<b.ImageIndex;
+                });
+            }
+            const auto hash = AssetImport::AppendImportSettingsHash(
+                ComputeGltfSourceHash(sourceBytes,sourceSize,buffers),settings.bPresent,settings.Settings);
+            if (!hash.bValid)
+            {
+                error = "invalid import settings hash";
+                return false;
+            }
+            result.SourceHash=hash.Value;
+            result.bHasImportSettings=settings.bPresent;
+            result.ImportSettingsPath=AnsiString(settings.Path.generic_string().c_str());
+            if (settings.bPresent)
+            {
+                result.ImportSettingsHash=AssetImport::AppendImportSettingsHash(
+                    Format::Fnv1a64OffsetBasis,true,settings.Settings).Value;
+            }
+            outResult=std::move(result);
+            return true;
+        }
+
         bool CookGltfToNvmeshInternal(const uint8_t* sourceBytes, size_t sourceSize, AnsiStringView format,
                                       AnsiStringView sourcePath, AnsiStringView logicalPath, MeshCookResult& outResult,
                                       AnsiString& error, const AssetImport::ImportSettingsFileOptions* importOptions)
@@ -1628,20 +1743,8 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             AssetImport::LoadedImportSettings loadedImport;
-            const AssetImport::ImportSettingsFileOptions automaticImport;
-            const auto& effectiveImport = importOptions != nullptr ? *importOptions : automaticImport;
-            AssetImport::SettingsFileOutcome settingsResult;
-            // 自己完結するメモリ入力にsource locatorが無い旧API経路では、auto探索だけを省略する。
-            if (!sourcePath.empty() || effectiveImport.bRequired || !effectiveImport.OverridePath.empty())
+            if (!LoadCookImportSettings(sourcePath, importOptions, loadedImport, error))
             {
-                settingsResult = AssetImport::LoadImportSettingsFile(
-                    std::filesystem::path(sourcePath.begin(), sourcePath.end()), effectiveImport, loadedImport);
-            }
-            if (settingsResult.Result != AssetImport::SettingsFileResult::Success)
-            {
-                error = AnsiString("import settings rejected: file=") +
-                    FormatInteger(static_cast<int>(settingsResult.Result)) + " validation=" +
-                    FormatInteger(static_cast<int>(settingsResult.Validation));
                 return false;
             }
             if (loadedImport.bPresent)
@@ -2022,19 +2125,8 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             AssetImport::LoadedImportSettings loadedImport;
-            const AssetImport::ImportSettingsFileOptions automaticImport;
-            const auto& effectiveImport = importOptions != nullptr ? *importOptions : automaticImport;
-            AssetImport::SettingsFileOutcome settingsResult;
-            if (!sourcePath.empty() || effectiveImport.bRequired || !effectiveImport.OverridePath.empty())
+            if (!LoadCookImportSettings(sourcePath, importOptions, loadedImport, error))
             {
-                settingsResult = AssetImport::LoadImportSettingsFile(
-                    std::filesystem::path(sourcePath.begin(), sourcePath.end()), effectiveImport, loadedImport);
-            }
-            if (settingsResult.Result != AssetImport::SettingsFileResult::Success)
-            {
-                error = AnsiString("import settings rejected: file=") +
-                    FormatInteger(static_cast<int>(settingsResult.Result)) + " validation=" +
-                    FormatInteger(static_cast<int>(settingsResult.Validation));
                 return false;
             }
             if (loadedImport.bPresent && !AssetImport::SupportsSkeletalScaleImport(loadedImport.Settings))
@@ -2146,6 +2238,15 @@ namespace NorvesLib::Tools::AssetCook
     bool MeshEmbeddedImage::IsBorrowed() const noexcept
     {
         return !m_BorrowedBytes.empty();
+    }
+
+    bool FingerprintModelCookSource(const uint8_t* sourceBytes, size_t sourceSize,
+        Core::Container::AnsiStringView format, Core::Container::AnsiStringView sourcePath,
+        Core::Container::AnsiStringView logicalPath, ModelCookFingerprint& outResult,
+        Core::Container::AnsiString& error, const Core::AssetImport::ImportSettingsFileOptions* importOptions)
+    {
+        return FingerprintModelCookSourceInternal(sourceBytes,sourceSize,format,sourcePath,logicalPath,
+            outResult,error,importOptions);
     }
 
     bool IsSupportedMeshCookFormat(NorvesLib::Core::Container::AnsiStringView format) noexcept

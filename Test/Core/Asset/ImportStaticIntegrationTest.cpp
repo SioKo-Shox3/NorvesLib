@@ -151,8 +151,19 @@ int main()
         AnsiString error;
         auto cook=[&](MeshCookResult& result,const Import::ImportSettingsFileOptions* options=nullptr)
         {
-            return CookGltfToNvmesh(source.data(),source.size(),"nvmesh.v0.mesh3d.pnt.u32.clustered",
+            ModelCookFingerprint fingerprint;
+            const bool identified=FingerprintModelCookSource(source.data(),source.size(),
+                "nvmesh.v0.mesh3d.pnt.u32.clustered",cookPath,"Models/model",fingerprint,error,options);
+            const bool cooked=CookGltfToNvmesh(source.data(),source.size(),"nvmesh.v0.mesh3d.pnt.u32.clustered",
                 cookPath,"Models/model",result,error,options);
+            if (cooked)
+            {
+                assert(identified && fingerprint.SourceHash==result.SourceHash);
+                assert(fingerprint.bHasImportSettings==result.bHasImportSettings &&
+                    fingerprint.ImportSettingsHash==result.ImportSettingsHash &&
+                    fingerprint.ImportSettingsPath==result.ImportSettingsPath);
+            }
+            return cooked;
         };
         auto stage=[&](Staging::ModelStagingData& result,const Import::ImportSettingsFileOptions* options=nullptr)
         {
@@ -249,6 +260,19 @@ int main()
             assert(transformed.NvmeshBytes.size()==beforePayload.size() &&
                 std::memcmp(transformed.NvmeshBytes.data(),beforePayload.data(),beforePayload.size())==0);
         }
+        // hash計算成功はgeometryのcook可能性を保証しない（巨大scaleは焼込時に拒否）。
+        Write(sidecar,Copy(R"({"version":1,"units":{"scale":1e308}})"));
+        ModelCookFingerprint fingerprint;
+        assert(FingerprintModelCookSource(source.data(),source.size(),"nvmesh.v0.mesh3d.pnt.u32.clustered",
+            cookPath,"Models/model",fingerprint,error));
+        assert(!cook(transformed));
+        const auto previousFingerprint=fingerprint;
+        Write(sidecar,Copy("invalid json"));
+        assert(!FingerprintModelCookSource(source.data(),source.size(),"nvmesh.v0.mesh3d.pnt.u32.clustered",
+            cookPath,"Models/model",fingerprint,error));
+        assert(fingerprint.SourceHash==previousFingerprint.SourceHash &&
+            fingerprint.ImportSettingsHash==previousFingerprint.ImportSettingsHash &&
+            fingerprint.ImportSettingsPath==previousFingerprint.ImportSettingsPath);
         assert(std::filesystem::remove(sidecar));
         Import::ImportSettingsFileOptions required; required.bRequired=true;
         assert(!cook(transformed,&required) && !stage(loose,&required));

@@ -800,8 +800,18 @@ namespace
             auto cook = [&](const ByteArray& source, SkeletalCookResult& out)
             {
                 Container::AnsiString error;
-                return NorvesLib::Tools::AssetCook::CookGltfToNvskel(source.data(), source.size(),
+                NorvesLib::Tools::AssetCook::ModelCookFingerprint fingerprint;
+                const bool identified=NorvesLib::Tools::AssetCook::FingerprintModelCookSource(source.data(),source.size(),
+                    "nvskel.v0.skinned.pnujiw.u32",sourcePath,"Models/rig.gltf",fingerprint,error);
+                const bool cooked=NorvesLib::Tools::AssetCook::CookGltfToNvskel(source.data(), source.size(),
                     "nvskel.v0.skinned.pnujiw.u32", sourcePath, out, error);
+                if (cooked)
+                {
+                    assert(identified && fingerprint.SourceHash==out.SourceHash && fingerprint.EmbeddedImages.empty());
+                    assert(fingerprint.ImportSettingsHash==out.ImportSettingsHash &&
+                        fingerprint.bHasImportSettings==out.bHasImportSettings && fingerprint.ImportSettingsPath==out.ImportSettingsPath);
+                }
+                return cooked;
             };
             SkeletalCookResult externalCook;
             assert(cook(external, externalCook));
