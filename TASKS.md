@@ -447,7 +447,7 @@
 - notes: 2026-10-03 SS-MEGA-LOD-PERF で見つけた。`String.h` の `c_str()` は空のとき `&npos`（size_t の最大値のバイト列）を返し、ログに化けた文字が出た。SS-MEGA-LOD-PERF では呼ぶ側で空なら "" を渡して避けた。
 
 ## SS-ACCEPT-PERF: 最適化の後のGPUの時間と撮影を受入れ記録へ反映する
-- status: todo
+- status: done
 - done-when: `Docs/RenderingValidation/StartupSceneAcceptance.md` の「テクスチャのミップ・MegaGeometry の影・高ポリの球」の節の GPU のフレーム時間を、FIX-MEGA-CLUSTER-ADJACENCY と SS-MEGA-LOD-PERF の後の値（RelWithDebInfo、12視点 × 2回、540フレームずつ）で更新し、予算超えのフレームの有無（あればパスごとの内訳）と、SS-ACCEPT-DETAIL の値からの変化を並べる。撮影（朝・昼・夕・夜 × 3視点）を撮り直し、SS-LOOK-BALANCE の数値の範囲の判定と、変更前（`b347eb7`）との比較画像を差し替える。既知の限界を今の状態に合わせて書き直す。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SS-ACCEPT-PERF -SunElevations 10,45,3`
@@ -455,6 +455,20 @@
 - stop-when: 予算を超えるフレームが残る場合は、内訳と軽くする案を既知の限界として記録して完了にする。
 - paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 区切り。評価者を通す。
+- result: 2026-10-03 完了。撮影12枚 result=pass、SS-LOOK-BALANCE 全項目 PASS、変更前との比較画像は `startup-capture/SS-ACCEPT-PERF-compare/`。GPU の12視点 × 2回は別のアプリが GPU を約4割使う状態で測ることになり、12960フレーム中468フレームが16.6 msを超えた（最大 37.261 ms、ShadowMapPass・MegaGeometryPass・LightingPass が同じフレームで跳ね、変更していない軽いパスも跳ねる）。同じコードを競合なしで測った昼の3視点（SS-MEGA-LOD-PERF）は予算超え0。内訳・軽くする案・再計測待ちを既知の限界に記録した。
+
+## SS-ACCEPT-PERF-REMEASURE: 起動画面のGPUの時間を競合なしで12視点 × 2回測り直す
+- status: backlog
+- done-when: GPU を他のアプリと共有しない状態（Game が動いていない時点の GPU の使用率が数%以下であることを計測の前後に記録する）で、RelWithDebInfo の `-GpuTimingFrames 600` を朝・昼・夕・夜 × 3視点 × 2回回し、`Docs/RenderingValidation/StartupSceneAcceptance.md` の「テクスチャのミップ・MegaGeometry の影・高ポリの球」の節の GPU の表と予算の判定（超えたフレームがあればパスごとの内訳）を置き換える。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- paths: Docs/RenderingValidation, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 SS-ACCEPT-PERF の計測は、ユーザーの別のアプリ（javaw）が GPU を36〜40%使う中で回った。PC を占有する重い処理なので、ユーザーが PC を使ってよいと言ったときだけ todo に戻す。
+
+## FIX-NIGHT-SPHERE-LONG-RUN: 夜の大きな球の光源と反対側が、長く描くと明るくなるのを調べる
+- status: backlog
+- done-when: 夜の近接視点で、大きな球の光源と反対側の明るさが60描画フレーム目と600描画フレーム目で物理的に説明できる範囲でそろう（原因が RTGI の履歴なら、間接光の大きさを光源側との比で確かめる）。原因と直し方を記録する。
+- paths: Library/Core/Private/Rendering, Assets/Shaders, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 2026-10-03 SS-ACCEPT-PERF で見つけた。近接・夜の球の反対側 / 光源側の8bit輝度は、60フレーム目の Debug・Release の撮影で 0.02〜0.03、600フレーム目の RelWithDebInfo の GPU 計測の撮影で 0.80〜0.84（`.harness/runs/20261003-181031/verify-SS-ACCEPT-PERF-14.txt`）。変更前（`b347eb7`）の `SS-ACCEPT-gpu-night` でも 0.48〜0.61 で、前からある。構成の違いかフレーム数の違いかはまだ切り分けていない。
 
 ## R1-P5: 透明描画を物理ライト・GGX・IBLへ接続する
 - status: done
