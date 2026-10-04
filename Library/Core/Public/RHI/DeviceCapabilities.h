@@ -77,6 +77,13 @@ namespace NorvesLib::RHI
 
         /** @brief 取得手段があり、予算と使用量を取得したか（無いバックエンドでは false） */
         bool bValid = false;
+
+        /**
+         * @brief 全 DeviceLocal ヒープの大きさの合計（バイト）。bValid に依らず、取れるバックエンドでは埋める
+         *
+         * 予算・使用量が取れないときに、予算の上限の代わりに呼び出し側が使う。0 は取れていない。
+         */
+        uint64_t DeviceLocalHeapBytes = 0;
     };
 
     /**

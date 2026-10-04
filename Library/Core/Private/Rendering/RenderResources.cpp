@@ -1408,6 +1408,7 @@ namespace NorvesLib::Core::Rendering
         input.HeapBudgetBytes = budget.BudgetBytes;
         input.HeapUsageBytes = budget.UsageBytes;
         input.CapBytes = impl->VideoMemoryCapMb * kBytesPerMb;
+        input.DeviceLocalHeapBytes = budget.DeviceLocalHeapBytes;
         if (impl->SparsePool)
         {
             // 貸し出し量ではなく、プールの塊として確保した量を渡す（ヒープの使用量にはその全部が入っている）

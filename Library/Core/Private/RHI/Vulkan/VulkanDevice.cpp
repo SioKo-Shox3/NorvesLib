@@ -1636,8 +1636,22 @@ namespace NorvesLib::RHI::Vulkan
     VideoMemoryBudget VulkanDevice::GetVideoMemoryBudget() const
     {
         VideoMemoryBudget result;
-        if (!m_bMemoryBudgetExtensionEnabled || !m_physicalDevice)
+        if (!m_physicalDevice)
         {
+            return result;
+        }
+
+        // ヒープの大きさは拡張の有無に依らず取れるので、拡張が無いときもここで埋めて返す
+        if (!m_bMemoryBudgetExtensionEnabled)
+        {
+            const vk::PhysicalDeviceMemoryProperties memoryProperties = m_physicalDevice.getMemoryProperties();
+            for (uint32_t i = 0; i < memoryProperties.memoryHeapCount && i < VK_MAX_MEMORY_HEAPS; ++i)
+            {
+                if (memoryProperties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal)
+                {
+                    result.DeviceLocalHeapBytes += memoryProperties.memoryHeaps[i].size;
+                }
+            }
             return result;
         }
 
@@ -1653,6 +1667,7 @@ namespace NorvesLib::RHI::Vulkan
             {
                 result.BudgetBytes += budgetProperties.heapBudget[i];
                 result.UsageBytes += budgetProperties.heapUsage[i];
+                result.DeviceLocalHeapBytes += memoryProperties2.memoryProperties.memoryHeaps[i].size;
             }
         }
 

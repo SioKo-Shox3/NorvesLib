@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 // VRAM の予算をプールへ割り振る計算。
-// 上限 = min(ヒープの予算, --vram-budget-mb) から、プール以外の使用量を引いた残りを、プールごとの取り分で分ける。
+// 上限 = min(ヒープの予算, --vram-budget-mb)（どちらも無ければ DeviceLocal のヒープの大きさ）から、プール以外の使用量を引いた残りを、プールごとの取り分で分ける。
 // プール以外の使用量は、ヒープの使用量が取れるときは「ヒープの使用量 − プールの確保分」で決める。
 // 取れないときは台帳で数えきれない確保（解放待ち・パスが直接作るテクスチャ）があるので、上限の一定割合を見込む近似にする。
 // 時刻もデバイスも持たない計算だけの型なので、予算値を制御したテストから境界を確かめられる。
@@ -34,6 +34,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t HeapUsageBytes = 0;
         /** @brief --vram-budget-mb の上限（バイト。0 は上限なし） */
         uint64_t CapBytes = 0;
+        /** @brief DeviceLocal のヒープの大きさの合計（バイト。0 は不明）。ヒープの予算も CapBytes も無いときだけ上限に使う */
+        uint64_t DeviceLocalHeapBytes = 0;
         /** @brief プールごとに確保済みの物理メモリの量（バイト）。ヒープの使用量から引いてプール以外を出す */
         uint64_t PoolCapacityBytes[VideoMemoryPoolCount] = {};
     };
@@ -108,7 +110,8 @@ namespace NorvesLib::Core::Rendering
 
             const bool bHeapCeiling = input.bHeapValid && input.HeapBudgetBytes > 0;
             const bool bCapCeiling = input.CapBytes > 0;
-            if (!bHeapCeiling && !bCapCeiling)
+            const bool bSizeCeiling = !bHeapCeiling && !bCapCeiling && input.DeviceLocalHeapBytes > 0;
+            if (!bHeapCeiling && !bCapCeiling && !bSizeCeiling)
             {
                 return result;
             }
@@ -118,9 +121,13 @@ namespace NorvesLib::Core::Rendering
             {
                 result.CeilingBytes = input.HeapBudgetBytes < input.CapBytes ? input.HeapBudgetBytes : input.CapBytes;
             }
+            else if (bHeapCeiling)
+            {
+                result.CeilingBytes = input.HeapBudgetBytes;
+            }
             else
             {
-                result.CeilingBytes = bHeapCeiling ? input.HeapBudgetBytes : input.CapBytes;
+                result.CeilingBytes = bCapCeiling ? input.CapBytes : input.DeviceLocalHeapBytes;
             }
             if (!input.bHeapValid)
             {

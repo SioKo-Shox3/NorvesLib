@@ -142,6 +142,48 @@ void TestEstimateNeverNegativeOrOverflow()
     Expect(huge.NonPoolBytes + huge.AvailableBytes == UINT64_MAX, "見込みと割り振れる量の和は上限");
 }
 
+void TestDeviceLocalHeapSizeCeiling()
+{
+    const VideoMemoryBudgetManager manager;
+
+    // ヒープの予算も引数も無いときは、DeviceLocal のヒープの大きさを上限にして30%を見込む
+    VideoMemoryBudgetInput input;
+    input.bHeapValid = false;
+    input.DeviceLocalHeapBytes = 2000 * Mb;
+    const VideoMemoryBudgetResult result = manager.Compute(input);
+    Expect(result.bLimited, "ヒープの大きさだけでも上限がある");
+    Expect(result.CeilingBytes == 2000 * Mb, "上限はヒープの大きさ");
+    Expect(result.bNonPoolEstimated, "ヒープの使用量が取れないので見込み");
+    Expect(result.NonPoolBytes == 600 * Mb, "ヒープの大きさの30%を見込む");
+    Expect(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) == 1400 * Mb, "目標 = ヒープの大きさ - 見込み");
+
+    // 引数の上限があるときは、ヒープの大きさより引数を優先する
+    input.CapBytes = 1000 * Mb;
+    const VideoMemoryBudgetResult capped = manager.Compute(input);
+    Expect(capped.CeilingBytes == 1000 * Mb, "引数があればヒープの大きさより引数");
+    Expect(capped.GetTargetBytes(VideoMemoryPool::VirtualTexture) == 700 * Mb, "引数の上限から30%を引く");
+
+    // ヒープの予算があるときも、ヒープの大きさは使わない（大きさが予算より大きくても予算が上限）
+    VideoMemoryBudgetInput withBudget = MakeInput(1500, 300, 0, 0);
+    withBudget.DeviceLocalHeapBytes = 8000 * Mb;
+    const VideoMemoryBudgetResult budgeted = manager.Compute(withBudget);
+    Expect(budgeted.CeilingBytes == 1500 * Mb, "ヒープの予算があれば予算が上限");
+    Expect(!budgeted.bNonPoolEstimated && budgeted.NonPoolBytes == 300 * Mb, "使用量が取れるときは使用量から出す");
+
+    // 拡張があって予算が 0（異常値）のときは、ヒープの大きさを上限にし、プール以外は使用量から出す
+    VideoMemoryBudgetInput zeroBudget = MakeInput(0, 500, 0, 100);
+    zeroBudget.DeviceLocalHeapBytes = 2000 * Mb;
+    const VideoMemoryBudgetResult zero = manager.Compute(zeroBudget);
+    Expect(zero.CeilingBytes == 2000 * Mb, "予算 0 のときはヒープの大きさを上限にする");
+    Expect(!zero.bNonPoolEstimated && zero.NonPoolBytes == 400 * Mb, "使用量が取れるので見込まない");
+
+    // 巨大なヒープでも溢れず、負にならない
+    VideoMemoryBudgetInput huge;
+    huge.DeviceLocalHeapBytes = UINT64_MAX;
+    const VideoMemoryBudgetResult hugeResult = manager.Compute(huge);
+    Expect(hugeResult.NonPoolBytes + hugeResult.AvailableBytes == UINT64_MAX, "巨大なヒープでも見込みと割り振れる量の和は上限");
+}
+
 void TestUnlimited()
 {
     const VideoMemoryBudgetManager manager;
@@ -231,6 +273,7 @@ int RunTest()
     TestPoolLargerThanUsage();
     TestCapOnlyWithoutHeap();
     TestEstimateNeverNegativeOrOverflow();
+    TestDeviceLocalHeapSizeCeiling();
     TestUnlimited();
     TestShares();
     TestLogGate();
