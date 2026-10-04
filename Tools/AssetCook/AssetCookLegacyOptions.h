@@ -24,6 +24,14 @@ namespace NorvesLib::Tools::AssetCook::Detail
         std::string Variant;
     };
 
+    [[nodiscard]] bool MakeCachePackagePath(const std::filesystem::path& package,const std::filesystem::path& parent,
+        Core::Container::AnsiString& relative,Core::Container::AnsiString& error);
+    [[nodiscard]] bool MakeLosslessModelPath(const std::filesystem::path& path,Core::Container::AnsiString& text);
+    [[nodiscard]] CookOptions MakeLegacyCookOptions(const SingleAssetCookRequest& request);
+    // 共有cache用に既存単体境界の検査・正規化を再利用する。旧CLIのskip制約は変更しない。
+    [[nodiscard]] bool NormalizeCacheCookRequest(const SingleAssetCookRequest& request, SingleAssetCookRequest& out,
+        Core::Container::AnsiString& error);
+
     [[nodiscard]] bool ValidateCookOptions(const CookOptions& options, std::string& error);
     [[nodiscard]] SingleAssetCookRequest MakeSingleCookRequest(const CookOptions& options);
 }

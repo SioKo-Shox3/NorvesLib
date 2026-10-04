@@ -1,5 +1,9 @@
 # CLIと直接リンクする試験で同じcooker実装を共有する。
 add_library(AssetCookLib STATIC
+    CookCacheDecision.cpp
+    CookCacheDecision.h
+    CookCacheDecisionTestAccess.h
+    CookOutputPaths.h
     CookOutputPackage.cpp
     CookOutputPackage.h
     CookDependencySnapshot.cpp
