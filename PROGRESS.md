@@ -686,3 +686,5 @@
 - G2-S6-NATIVE-TEST-COMPILE: run37196379322で2件修正後のCore/AssetCook/CookedMeshTestビルドと指定7CPU契約成功を確認し、この修正taskはdone。実CLIはRaw/Texture/Audio/Mesh成功、Glbのverify.ps1内Get-FileHash不在で停止。基準snapshotは未生成、Main分割gateは未達のまま。
 
 - G2-S6-SMOKE-ENVIRONMENT: MicrosoftのPS7→Python/中間process→Windows PSのPSModulePath継承問題に沿って、driverがWindowsの子環境辞書だけから当該keyを大小文字非依存で除去。親/他変数/Skeletal memberを保持し12単体通常/-Oと独立review PASS。smoke command/fixture/生byte条件は不変、成功基準前のdriver hash更新を明記。Python UTF8 modeもCIに固定。実Glb/Import/Skeletal再実行と基準snapshotは未確認のためdoing。
+
+- G2-JSON-UNICODE-INPUT実Windows検証: run37197864299で更新Core/AssetCookはビルド成功。JsonUnicodeInputTestのraw literalをCHECKの#式へ直接渡した箇所がMSVC C2017/C3688となったため、同一literalを局所変数へ移しmacro文字列化の対象から外す。fixture byte/期待値は不変。native試験/7smokeは未達、doingを継続。

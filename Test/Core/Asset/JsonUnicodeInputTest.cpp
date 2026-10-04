@@ -47,7 +47,8 @@ int main()
     CHECK(raw.GetRoot().FindMember("n").AsNumber()==-125);
     CHECK(Parse("\"A\\u0000B\"",raw));
     const auto& nul=raw.GetRoot().AsString();CHECK(nul.size()==3 && nul[0]=='A' && nul[1]==0 && nul[2]=='B');
-    CHECK(Parse(R"({"A\u0000BCDEFGHIJKLMNOPQRSTUVWXYZ":"A\u0000BCDEFGHIJKLMNOPQRSTUVWXYZ","escaped":"\\\"tail","growth":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]})",raw));
+    const char* longNulJson=R"({"A\u0000BCDEFGHIJKLMNOPQRSTUVWXYZ":"A\u0000BCDEFGHIJKLMNOPQRSTUVWXYZ","escaped":"\\\"tail","growth":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]})";
+    CHECK(Parse(longNulJson,raw));
     const char expectedNul[]="A\0BCDEFGHIJKLMNOPQRSTUVWXYZ";
     const auto& longKey=raw.GetRoot().GetMemberName(0);
     const auto& longValue=raw.GetRoot().GetMemberValue(0).AsString();
