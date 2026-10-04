@@ -80,7 +80,7 @@ namespace
         uint32_t FallbackMinTriangles = 0;
         // --generate displaced-sphere: --input の高さマップ（16 ビットのグレーの PNG）から、起動画面の大きな球を作って焼く。
         // 空なら --input の glTF を焼く。
-        std::string Generate;
+        NorvesLib::Core::Container::AnsiString Generate;
     };
 
     std::string ToStdString(const NorvesLib::Core::Container::AnsiString &value)
@@ -1757,7 +1757,7 @@ namespace
                     error = "--generate は displaced-sphere だけを指定できます";
                     return false;
                 }
-                outOptions.Generate = value;
+                outOptions.Generate = NorvesLib::Core::Container::AnsiString(value.c_str());
             }
             else if (argument == "--flip-normal-y")
             {

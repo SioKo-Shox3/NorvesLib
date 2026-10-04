@@ -765,3 +765,9 @@
 - フォールバックの確認: `build/CookedAssets/Cooked/StartupModels/BigCobbleSphere/BigCobbleSphere.nvpkg` を一時的に退避して撮ると、`COOKED_BIG_SPHERE_MISSING` の警告のあと実行時の生成で組み立て、撮影は通り、画素は `--rendering3dtest-big-sphere-source=runtime` の撮影と完全に一致（99 dB）。パッケージは撮影後に元へ戻した。
 - 検証: `verify-VTG4-BIG-SPHERE-COOK-19-build-final.txt`（AssetCook・CookAssets・Game のビルド BUILD_EXIT_CODE=0。途中の `-1`/`-5`/`-10` も同じコマンド）、`-11-capture.txt`（`-Deterministic` の撮影 result=pass、出力 `.harness/runs/startup-capture/VTG4-BIG-SPHERE-COOK/`）、`-12-psnr-vs-runtime.txt`（実行時の生成との PSNR。比べる側の撮影は `-3-capture-runtime.txt`・`VTG4-BIG-SPHERE-COOK-runtime/`）、`-7`/`-8`/`-9`（旋回の連続撮影とその PSNR）、`-13-missing-package.txt`（パッケージ欠損）、`-16-check-package.txt`（階層の検査）、`-17-check-boulder.txt`・`-18-synthetic.txt`（岩と合成の球の検査が変わらず通る）。`dev-*.txt` は途中の確認（32K のフォールバックの検査など）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - Notes: (1) Git Bash は `cmake --build ... /m:1` の `/m:1` をパス変換で壊す。ビルドは PowerShell で回す。(2) 球の焼き込みの試験（`AssetCookMeshSmoke` に高さマップから焼く検査）は、Debug で数分かかる見込みなので足していない。代わりに `--check-package` で焼いた実物を検査した（`-16`）。(3) `Docs/Architecture/NVMESHv1.md` は `paths:` の外なので更新していない。`fallback_min_triangles` の上限 131072 と `--generate displaced-sphere` の記述は TASKS.md の VTG4-DAG-FALLBACK-DOC に積んだ。(4) 次は VTG4-DAG-FALLBACK-DOC、そのあと VTG4-POLYHAVEN-MODELS。
+
+## 反復 17（run 20261005-043300）: VTG4-BIG-SPHERE-COOK（評価者の差し戻しへの対応、BLOCKED）
+- 独自型ルール: `CookOptions::Generate` を `std::string` から `AnsiString` へ直した（`Usage` と同じ型。`Main.cpp` の2か所）。再ビルド（`verify-VTG4-BIG-SPHERE-COOK-20-build.txt` BUILD_EXIT_CODE=0）で、クッカーが球を同じ階層（17 段・17984 クラスタ）に焼き直すことを確かめた。
+- 起動時間: 時刻を3視点×2経路で出し直した（`-21-startup-timeline.txt`）。球は両経路とも約 0.9 秒で用意でき、石畳のテクスチャが約 8.0〜8.2 秒でそろうまで待たれない（`wait_ms=0.0`）。起動の律速は環境マップ（約 4.8 秒）とテクスチャで、球の焼き込みでは短縮できない。クック済みは転送が増える分 0〜0.2 秒長い。
+- 判断: 短縮を完了条件から外すかは仕様判断なので `blocked/VTG4-BIG-SPHERE-COOK.md` に選択肢と推奨を書き、BLOCKED にした。
+- Notes: 次は人の判断のあと。ほかの未完は VTG4-DAG-FALLBACK-DOC、VTG4-POLYHAVEN-MODELS。
