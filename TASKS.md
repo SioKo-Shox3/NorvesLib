@@ -2237,7 +2237,7 @@
 - stop-when: 旧strict入口を緩める、budgetをclipごとリセット、root morphをclip数倍、Stage BやM9まで対応済み扱いする。
 
 ## G2-GR82-A2-CLIP-RESOURCES: 複数clipの保持と一意名前引きを接続する
-- status: todo
+- status: done
 - done-when: SkeletalAssetResourceで複数clipを保持しGetClipCount/GetClip(name)を追加。単数SetResources互換とGetAnimationClip先頭を維持。空/重複名は名前引きで曖昧拒否し資産自体を一律拒否しない。
 - verify: 単数互換/配列所有/子Load/不正子/Unload/名前欠落重複/強参照寿命/メモリ計上をnative登録。
 - stop-when: M9の複数clip guardを無断解除、制作alias規約を勝手に採用、Resource寿命破壊。

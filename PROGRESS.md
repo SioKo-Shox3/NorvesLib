@@ -634,3 +634,6 @@
 
 - G2-GR82-A1-MULTI-CLIP-DECODE: 新DecodeRigGltfだけanimations>=1を受けcookへ接続。旧bytes/String/GLTFAnalyzerのstrict TwoClips/中間親拒否は維持し、現128joint/1mesh/1skin/1mesh-node/8primitive範囲を保つ。全clip順のCubic total/prefix/失敗添字・共通出力予算、全clip成功時complete。Morph rootは1回・weight channelsは各clip検査し全成功後のみ報告公開。旧設定hash/JSONキー不変。3clip(2primitive/duration2・3・4)raw/GLB/cook/parse・3本目失敗保持・Cubic全体予算/scale・Morph集計/後続失敗をnative登録、AssertEquivalentも全clip比較。pure report通常/O2/ASanUBSan(LSan除外)3mode・各19JSON計57parse・MEMBERcompile成功、fixture宣言範囲独立確認、独立PASS。実Core/decoder/cook/GLBはWindows.hで未実行。
 - Next: GR82-A2-CLIP-RESOURCES。v1/restguard・M9複数clip接続は別工程。
+
+- G2-GR82-A2-CLIP-RESOURCES: SetClipResourcesでclip列をコピー所有し、単数SetResourcesと安定した先頭GetAnimationClipを維持。index/一意完全一致name引き、空/欠落/重複拒否、全子Loaded/Valid、Unloadとcapacityメモリ計上を接続。第1周でStringViewのNUL終端比較を検出し、長さ+全codeunitへ修正。実保持NUL後B/Cと誤一致/誤重複、子内容増加時の束メモリ不変も反証追加し第2周PASS。新SkeletalAssetResourceTestをMEMBER/CTest登録、旧LifetimeTest無変更。Windows.hでnativeコンパイル/実行は未検証。M9/SkinnedMeshComponent/選択alias/v1は未変更。
+- Next: ARM/nits既定は作者回答待ち。GR79 NVMESH v1の形式/検証を独立に進め、受理後の材質情報をruntimeで黙って捨てないよう接続gateを分離する。

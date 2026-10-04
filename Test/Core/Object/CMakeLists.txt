@@ -21,6 +21,7 @@ norves_add_test_bundle(ResourceRegistryTest
     MEMBER ResourceRegistryTest ResourceRegistryTest.cpp
     MEMBER ResourceMetadataTest ResourceMetadataTest.cpp
     MEMBER SkeletalResourceLifetimeTest SkeletalResourceLifetimeTest.cpp
+    MEMBER SkeletalAssetResourceTest SkeletalAssetResourceTest.cpp
 )
 target_link_libraries(ResourceRegistryTest PRIVATE Core)
 target_include_directories(ResourceRegistryTest PRIVATE
@@ -110,6 +111,7 @@ add_test(NAME SceneSerializerTest COMMAND SceneSerializerTest)
 add_test(NAME SceneFileRoundTripTest COMMAND SceneSerializerTest --test=SceneFileRoundTripTest)
 
 add_test(NAME SkeletalResourceLifetimeTest COMMAND ResourceRegistryTest --test=SkeletalResourceLifetimeTest)
+add_test(NAME SkeletalAssetResourceTest COMMAND ResourceRegistryTest --test=SkeletalAssetResourceTest)
 
 add_test(NAME SpringArmComponentTest COMMAND EntityTreeTest --test=SpringArmComponentTest)
 

@@ -322,3 +322,14 @@ scale/fitはgeometryとclip translationへ各1回だけ適用する。失敗Data
 JSON report v1のanimation_channelsは全clipの合計へ広がる。既存の単一clipの値・キー・canonical設定/hashは変えない。
 純report検証3mode/各19JSONは実行。3clipのraw/GLB・cook/parse・失敗prefix・Cubic全体予算・Morph集計・scale回帰をnativeへ登録するがWindows依存で未実行。
 M9の複数clip拒否はGR83まで維持する。
+
+## Stage Aのclip Resource束
+
+SkeletalAssetResource::SetClipResources(mesh,skeleton,clips)はclip配列をコピーして強参照で保持する。
+単数SetResourcesは1件配列へ委譲し、既存のGetAnimationClipは先頭への安定したメンバ参照を返す。
+新入口は別名にして、旧SetResources(mesh,skeleton,{})の解決を曖昧にしない。
+GetClipCountは格納エントリ数。GetClip(index)は範囲外で空、GetClip(name)は完全一致の一意名だけ返す。長さと全コード単位を比較し、手組みResourceに埋め込みNULがあっても後続の値を省略しない。
+空名・不在・重複は名前引きで空を返し、自動改名しない。空/重複名のclip自体はindexで取得できる。
+子資産の内容を新たに検証するのではなく、従来どおりmesh/skeleton/全clipのLoaded/Valid状態で束の成否を決める。
+空配列/null/未load子はFailed。Unloadは全強参照を外す。GetMemorySizeは保持した配列capacityを含め、子資産本体を二重計上しない。
+実ResourceRegistryの複数保持/名前/単数互換/子状態/GC/メモリ計上をMEMBER+CTestへ登録。Windows依存でnative未実行。
