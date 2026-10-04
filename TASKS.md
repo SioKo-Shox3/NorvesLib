@@ -2454,7 +2454,7 @@
 - stop-when: 別の命名/増分authorityを作る、新snapshotで途中変更を黙認する、stage locatorを保存stateへ入れる、lock/journalなしでproduction公開や既存root採用を始める。
 
 ## G2-S6-OUTPUT-SET-GUARD: asset集合を跨ぐ出力と入力の衝突を拒否する
-- status: doing
+- status: done
 - done-when: 検証済みplan集合のprimary/派生key・物理path・prefixを、他assetの全依存/spec/control locatorと照合する。書込/所有取得を行わず、単体命名・増分判断を複製しない。
 - verify: primary/派生/variantの衝突、case/short alias/hardlink/prefix罠、他asset入力/外部file/不在sidecarとの衝突、無関係file保持、規模上限/計算量、Windowsと既存byte gate。
 - stop-when: unknown所有fileを採用する、出力命名を独自実装する、衝突確認なしでstage作成/公開をproductionへ接続する。

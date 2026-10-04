@@ -764,3 +764,5 @@
 
 - G2-S6-OUTPUT-SET-GUARD検証準備: 共通Prepare由来の全依存とprimary/派生keyを再採取し、volume GUID/file ID・component順prefix・hardlinkを集合単位で照合する読み取り専用APIを追加。4096plan/65536 protected出現/32MiB metadata上限と集約identity観測数の試験を登録し25CPUへ拡張。既存CookCacheDecision実装prefixはinclude以外byte不変。比較器12件×通常/最適化、独立prefix順序モデル10000例が成功。実Windows/79+10byte gateは未実行。
 - G2-S6-OUTPUT-SET-GUARD補強: 共通manifestはcase-fold path一致だけで統合せず、存在状態と既存file ID、不在時はcanonical native表記の完全一致を要求する。case-sensitive directoryの別endpointを誤って1件へ縮約しない。対応する値レベル反証と実不在pathのcase差分試験を追加。
+
+- G2-S6-OUTPUT-SET-GUARD受入: 38a2c4b6/run37241681312で実Windows build・25CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。集合guard試験13.27秒、実8.3 aliasフラグ1。fresh全依存・primary/派生key・prefix・file ID・hardlink・manifest同一性・4096plan/65536保護出現/metadata予算を確認。3ZIPと79+10固定出力の直接byte一致を独立確認しrootで再実行。読み取り専用guardをdone。所有binding/lock/journal/production公開は未接続。
