@@ -6,6 +6,7 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
+#include <atomic>
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -54,6 +55,17 @@ namespace NorvesLib::RHI::Vulkan
         virtual void Update(const void *data, uint32_t rowPitch, uint32_t slicePitch,
                             uint32_t mipLevel = 0, uint32_t arrayIndex = 0) override;
 
+        // sparse（部分常駐）テクスチャ
+        bool IsSparse() const override { return m_desc.bSparse; }
+        bool GetSparseInfo(SparseTextureInfo &outInfo) const override;
+        uint64_t GetSparseBoundBytes() const override { return m_sparseBoundBytes.load(std::memory_order_relaxed); }
+
+        /**
+         * @brief 結んだ物理メモリの量を増減する（タイルの結び付け・外しが呼ぶ。VRAM の台帳が読む）
+         * @param deltaBytes 結んだ分は正、外した分は負
+         */
+        void AddSparseBoundBytes(int64_t deltaBytes);
+
         // per-mip ImageView
         uint64_t GetMipImageViewHandle(uint32_t mipLevel) const override;
         vk::ImageView GetMipImageView(uint32_t mipLevel) const;
@@ -93,6 +105,7 @@ namespace NorvesLib::RHI::Vulkan
 
     private:
         void CreateTexture();
+        void CreateSparseTexture(vk::ImageCreateInfo &imageInfo);
         void CreateImageView();
         void InitializeSubresourceLayouts(vk::ImageLayout layout);
         uint32_t GetTotalArrayLayerCount() const;
@@ -112,6 +125,8 @@ namespace NorvesLib::RHI::Vulkan
         NorvesLib::Core::Container::VariableArray<vk::ImageLayout> m_subresourceLayouts;
         vk::ImageLayout m_currentLayout = vk::ImageLayout::eUndefined;
         bool m_bOwnsImage = true;
+        SparseTextureInfo m_sparseInfo;
+        std::atomic<uint64_t> m_sparseBoundBytes{0};
     };
 
 } // namespace NorvesLib::RHI::Vulkan

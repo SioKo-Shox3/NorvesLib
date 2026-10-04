@@ -250,6 +250,9 @@ namespace NorvesLib::RHI::Vulkan
         void DetectCapabilities();
         void DetectSparseFormatProperties();
 
+        // sparse テクスチャを作れるか確かめる（作れない理由はログに出す）
+        bool ValidateSparseTextureDesc(const TextureDesc &desc) const;
+
         // ヘルパー
         bool IsDeviceSuitable(vk::PhysicalDevice device);
         VariableArray<const char *> GetRequiredExtensions();

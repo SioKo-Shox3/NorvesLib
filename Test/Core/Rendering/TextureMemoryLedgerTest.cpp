@@ -55,8 +55,11 @@ public:
     RHI::ResourceUsage GetUsage() const override { return Desc.Usage; }
     bool IsCubemap() const override { return Desc.IsCubemap; }
     void Update(const void*, uint32_t, uint32_t, uint32_t = 0, uint32_t = 0) override {}
+    bool IsSparse() const override { return Desc.bSparse; }
+    uint64_t GetSparseBoundBytes() const override { return Desc.bSparse ? BoundBytes : 0; }
 
     RHI::TextureDesc Desc;
+    uint64_t BoundBytes = 0;
 };
 
 class LedgerFakeSampler final : public RHI::ISampler
@@ -86,7 +89,9 @@ public:
 
     RHI::TexturePtr CreateTexture(const RHI::TextureDesc& desc) override
     {
-        return MakeShared<LedgerFakeTexture>(desc);
+        auto texture = MakeShared<LedgerFakeTexture>(desc);
+        LastTexture = texture.get();
+        return texture;
     }
 
     RHI::SamplerPtr CreateSampler(const RHI::SamplerDesc& desc) override
@@ -113,6 +118,7 @@ public:
     }
 
     RHI::DeviceCapabilities Capabilities;
+    LedgerFakeTexture* LastTexture = nullptr;
 };
 
 TextureCreateInfo MakeInfo(uint32_t width, uint32_t height, uint32_t mipLevels, TextureCreateInfo::Format format)
@@ -194,10 +200,76 @@ void TestStoreLedger()
     manager.Shutdown();
 }
 
+void TestSparseLedger()
+{
+    RenderResources manager;
+    auto device = MakeShared<LedgerFakeDevice>();
+    Expect(manager.Initialize(device), "偽デバイスで RenderResources が初期化できなければならない");
+
+    TextureCreateInfo sparseInfo = MakeInfo(4096, 4096, 13, TextureCreateInfo::Format::BC7_UNORM);
+    sparseInfo.bSparse = true;
+
+    // sparse に対応しないデバイスでは作成が失敗し、台帳にも載らない。
+    Expect(!manager.Textures().CreateTexture(sparseInfo).IsValid(), "sparse に対応しないデバイスでは作成が失敗しなければならない");
+    Expect(manager.GetResourceStats().TextureCount == 0, "失敗した作成はテクスチャに数えない");
+
+    device->Capabilities.bTextureCompressionBC = true;
+    RHI::SparseCapabilities& sparse = device->Capabilities.Sparse;
+    sparse.bSparseBinding = true;
+    sparse.bResidencyImage2D = true;
+    sparse.FormatCount = 1;
+    sparse.Formats[0].TextureFormat = RHI::Format::BC7_UNORM;
+    sparse.Formats[0].bSupported = true;
+    sparse.Formats[0].bStandardBlockShape = true;
+    sparse.Formats[0].GranularityWidth = 256;
+    sparse.Formats[0].GranularityHeight = 256;
+
+    // 形式・用途・初期データが sparse に合わないものは断る。
+    TextureCreateInfo unsupportedFormat = sparseInfo;
+    unsupportedFormat.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+    Expect(!manager.Textures().CreateTexture(unsupportedFormat).IsValid(), "標準ブロック形状を照会していない形式の sparse は断らなければならない");
+    TextureCreateInfo arrayInfo = sparseInfo;
+    arrayInfo.ArraySize = 2;
+    Expect(!manager.Textures().CreateTexture(arrayInfo).IsValid(), "配列の sparse は断らなければならない");
+    TextureCreateInfo renderTargetInfo = sparseInfo;
+    renderTargetInfo.bRenderTarget = true;
+    Expect(!manager.Textures().CreateTexture(renderTargetInfo).IsValid(), "レンダーターゲットの sparse は断らなければならない");
+    const uint8_t initialData[16] = {};
+    Expect(!manager.Textures().CreateTexture(sparseInfo, initialData, sizeof(initialData)).IsValid(),
+           "sparse に初期データは渡せない");
+    Expect(manager.GetResourceStats().TextureCount == 0, "断られた作成はテクスチャに数えない");
+
+    // 作成した時点では何も結んでいないので 0 バイト。結んだ量が台帳に載り、外すと戻る。
+    const TextureHandle handle = manager.Textures().CreateTexture(sparseInfo);
+    Expect(handle.IsValid(), "sparse に対応するデバイスでは作成できなければならない");
+    Expect(device->LastTexture != nullptr && device->LastTexture->Desc.bSparse, "RHI へ sparse の印が渡る");
+    Expect(manager.GetResourceStats().TextureCount == 1, "sparse のテクスチャも枚数には数える");
+    Expect(manager.GetResourceStats().TextureBytes == 0, "結んでいない sparse は 0 バイトを数える");
+
+    if (device->LastTexture != nullptr)
+    {
+        device->LastTexture->BoundBytes = 3ull * 65536;
+    }
+    Expect(manager.GetResourceStats().TextureBytes == 3ull * 65536, "結んだ量（3 ページ）が台帳に載る");
+
+    // 通常のテクスチャと並べても、sparse は結んだ量だけを足す。
+    const TextureHandle plain =
+        manager.Textures().CreateTexture(MakeInfo(1, 1, 1, TextureCreateInfo::Format::RGBA8_UNORM));
+    Expect(plain.IsValid(), "通常の 1x1 が作成できなければならない");
+    Expect(manager.GetResourceStats().TextureBytes == 3ull * 65536 + 4ull, "通常は全量、sparse は結んだ量を足す");
+
+    manager.Textures().ReleaseTexture(plain);
+    manager.Textures().ReleaseTexture(handle);
+    Expect(manager.GetResourceStats().TextureBytes == 0, "全て解放すると 0 バイトに戻る");
+
+    manager.Shutdown();
+}
+
 int RunTest()
 {
     TestEstimate();
     TestStoreLedger();
+    TestSparseLedger();
 
     if (g_failures != 0)
     {

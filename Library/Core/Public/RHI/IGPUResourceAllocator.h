@@ -53,6 +53,7 @@ namespace NorvesLib::RHI
         ResourceUsage Usage = ResourceUsage::ShaderRead;          ///< 使用用途
         TextureDimension Dimension = TextureDimension::Texture2D; ///< テクスチャ次元
         bool IsCubemap = false;                                   ///< キューブマップか
+        bool bSparse = false;                                     ///< sparse（物理メモリを結ばずに作り、タイルごとに結ぶ）か
         const char *DebugName = nullptr;                          ///< デバッグ用名前
 
         TextureDesc() = default;

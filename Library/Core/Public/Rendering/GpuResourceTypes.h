@@ -78,6 +78,10 @@ namespace NorvesLib::Core::Rendering
         /// ミップごとの大きさは各形式のブロック単位（BC は 4x4 画素のブロックを切り上げ）で数える。
         bool bInitialDataHasAllMips = false;
 
+        /// sparse（部分常駐）のテクスチャにするか。物理メモリを結ばずに全ミップを作り、タイルごとに結ぶ。
+        /// 対応しない GPU・形式・用途（レンダーターゲット・深度・配列）では作成が失敗する。初期データは渡せない。
+        bool bSparse = false;
+
         TextureType Type = TextureType::Texture2D;
 
         bool bRenderTarget = false;

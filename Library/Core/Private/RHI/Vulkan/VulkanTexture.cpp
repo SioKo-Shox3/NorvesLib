@@ -524,6 +524,12 @@ namespace NorvesLib::RHI::Vulkan
         imageInfo.sharingMode = vk::SharingMode::eExclusive;
         imageInfo.initialLayout = vk::ImageLayout::eUndefined;
 
+        // sparse は物理メモリを結ばずにイメージだけを作る（結び付けはタイル単位で後から行う）
+        if (m_desc.bSparse)
+        {
+            imageInfo.flags |= vk::ImageCreateFlagBits::eSparseBinding | vk::ImageCreateFlagBits::eSparseResidency;
+        }
+
         // イメージの作成
         vk::Device vkDevice = m_device->GetVkDevice();
         auto createResult = vkDevice.createImage(imageInfo);
@@ -536,6 +542,14 @@ namespace NorvesLib::RHI::Vulkan
             vk::ObjectType::eImage,
             reinterpret_cast<uint64_t>(static_cast<VkImage>(m_image)),
             m_desc.DebugName);
+
+        if (m_desc.bSparse)
+        {
+            CreateSparseTexture(imageInfo);
+            m_currentLayout = vk::ImageLayout::eUndefined;
+            InitializeSubresourceLayouts(vk::ImageLayout::eUndefined);
+            return;
+        }
 
         // メモリ要件の取得
         vk::MemoryRequirements memRequirements = vkDevice.getImageMemoryRequirements(m_image);
@@ -566,6 +580,77 @@ namespace NorvesLib::RHI::Vulkan
 
         m_currentLayout = vk::ImageLayout::eUndefined;
         InitializeSubresourceLayouts(vk::ImageLayout::eUndefined);
+    }
+
+    void VulkanTexture::CreateSparseTexture(vk::ImageCreateInfo &imageInfo)
+    {
+        vk::Device vkDevice = m_device->GetVkDevice();
+
+        // 色の面のタイル形状とミップテイルを照会する（2D・配列1枚・単一の色の面だけを作るので要求は1件）
+        const auto requirements = vkDevice.getImageSparseMemoryRequirements(m_image);
+        const vk::SparseImageMemoryRequirements *colorRequirements = nullptr;
+        for (const vk::SparseImageMemoryRequirements &requirement : requirements)
+        {
+            if (requirement.formatProperties.aspectMask & vk::ImageAspectFlagBits::eColor)
+            {
+                colorRequirements = &requirement;
+                break;
+            }
+        }
+        if (colorRequirements == nullptr)
+        {
+            throw std::runtime_error("sparseイメージの色の面のメモリ要件を取得できません");
+        }
+
+        const vk::Extent3D granularity = colorRequirements->formatProperties.imageGranularity;
+        const uint32_t mipLevels = imageInfo.mipLevels;
+
+        SparseTextureInfo info;
+        info.TileWidth = granularity.width;
+        info.TileHeight = granularity.height;
+        const FormatBlockInfo block = GetFormatBlockInfo(m_desc.TextureFormat);
+        info.TileSizeBytes = (granularity.width / block.BlockWidth) * (granularity.height / block.BlockHeight) * block.BlockBytes;
+        info.MipLevels = mipLevels;
+        info.MipTailFirstLevel = std::min(colorRequirements->imageMipTailFirstLod, mipLevels);
+        info.MipTailSize = colorRequirements->imageMipTailSize;
+        info.MipTailOffset = colorRequirements->imageMipTailOffset;
+        info.MipTailStride = colorRequirements->imageMipTailStride;
+        for (uint32_t mip = 0; mip < info.MipTailFirstLevel; ++mip)
+        {
+            const uint32_t mipWidth = std::max(1u, m_desc.Width >> mip);
+            const uint32_t mipHeight = std::max(1u, m_desc.Height >> mip);
+            info.TilesX[mip] = (mipWidth + granularity.width - 1) / granularity.width;
+            info.TilesY[mip] = (mipHeight + granularity.height - 1) / granularity.height;
+        }
+        m_sparseInfo = info;
+    }
+
+    bool VulkanTexture::GetSparseInfo(SparseTextureInfo &outInfo) const
+    {
+        if (!m_desc.bSparse)
+        {
+            return false;
+        }
+        outInfo = m_sparseInfo;
+        return true;
+    }
+
+    void VulkanTexture::AddSparseBoundBytes(int64_t deltaBytes)
+    {
+        if (deltaBytes >= 0)
+        {
+            m_sparseBoundBytes.fetch_add(static_cast<uint64_t>(deltaBytes), std::memory_order_relaxed);
+            return;
+        }
+
+        // 外す量が結んでいる量を超えても 0 で止める（二重に外しても台帳が負にならない）
+        const uint64_t releaseBytes = static_cast<uint64_t>(-deltaBytes);
+        uint64_t current = m_sparseBoundBytes.load(std::memory_order_relaxed);
+        uint64_t next = 0;
+        do
+        {
+            next = current > releaseBytes ? current - releaseBytes : 0;
+        } while (!m_sparseBoundBytes.compare_exchange_weak(current, next, std::memory_order_relaxed));
     }
 
     void VulkanTexture::CreateImageView()
@@ -833,6 +918,11 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanTexture::Update(const void *data, uint32_t rowPitch, uint32_t slicePitch,
                                uint32_t mipLevel, uint32_t arrayIndex)
     {
+        if (m_desc.bSparse)
+        {
+            throw std::runtime_error("sparseテクスチャはUpdateで更新できません（タイル単位の書き込みを使います）");
+        }
+
         if (!data)
         {
             throw std::runtime_error("更新データがnullです");

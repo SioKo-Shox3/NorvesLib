@@ -1,4 +1,4 @@
-#include "Rendering/TextureAssetRuntime.h"
+﻿#include "Rendering/TextureAssetRuntime.h"
 
 #include "Rendering/CookedTextureUpload.h"
 #include "Rendering/GpuResourceStore.h"
@@ -182,6 +182,15 @@ namespace NorvesLib::Core::Rendering
                                                      const void *data,
                                                      size_t dataSize)
     {
+        // sparse は Update で中身を作れない。初期データは渡せない（タイル単位で書き込む）。
+        if (createInfo.bSparse && data && dataSize > 0)
+        {
+            NORVES_LOG_ERROR("TextureResources",
+                             "sparseテクスチャに初期データは渡せません（タイル単位で書き込みます）: texture=%s",
+                             createInfo.DebugName.c_str());
+            return TextureHandle::Invalid();
+        }
+
         uint32_t effectiveMipLevels = std::max(1u, createInfo.MipLevels);
         auto createStartTime = LoadProfileNow();
         TextureHandle handle = IsBound()

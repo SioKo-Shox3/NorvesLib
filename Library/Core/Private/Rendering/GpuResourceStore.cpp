@@ -91,8 +91,14 @@ namespace NorvesLib::Core::Rendering
         }
 
         // RHI テクスチャの実際の形式・ミップ数・配列数から確保量を数える。
+        // sparse のテクスチャは作成時に何も結ばないので 0（結んだ量は GetStats が実行時に読む）。
         size_t EstimateRHITextureBytes(const RHI::ITexture &texture)
         {
+            if (texture.IsSparse())
+            {
+                return 0;
+            }
+
             RHI::TextureDesc desc;
             desc.Width = texture.GetWidth();
             desc.Height = texture.GetHeight();
@@ -323,6 +329,36 @@ namespace NorvesLib::Core::Rendering
         desc.ArraySize = createInfo.ArraySize;
         desc.TextureFormat = ToRHITextureFormat(createInfo.PixelFormat);
 
+        if (createInfo.bSparse)
+        {
+            // 対応しない GPU・用途では作らない（全常駐で作る逃げ道は呼び出し側が選ぶ）
+            const RHI::SparseCapabilities &sparse = m_Device->GetCapabilities().Sparse;
+            const RHI::SparseFormatProperties *sparseFormat = sparse.FindFormat(desc.TextureFormat);
+            if (!sparse.bSparseBinding || !sparse.bResidencyImage2D)
+            {
+                NORVES_LOG_ERROR("RenderResources",
+                                 "sparseテクスチャを作れません: デバイスが sparse に対応していません texture=%s",
+                                 createInfo.DebugName.c_str());
+                return TextureHandle::Invalid();
+            }
+            if (sparseFormat == nullptr || !sparseFormat->bSupported || !sparseFormat->bStandardBlockShape)
+            {
+                NORVES_LOG_ERROR("RenderResources",
+                                 "sparseテクスチャを作れません: この形式は標準ブロック形状の sparse に対応していません texture=%s",
+                                 createInfo.DebugName.c_str());
+                return TextureHandle::Invalid();
+            }
+            if (createInfo.bRenderTarget || createInfo.bDepthStencil || createInfo.ArraySize != 1 ||
+                createInfo.Type != TextureType::Texture2D)
+            {
+                NORVES_LOG_ERROR("RenderResources",
+                                 "sparseテクスチャは配列1枚の2Dの色テクスチャだけ作れます: texture=%s",
+                                 createInfo.DebugName.c_str());
+                return TextureHandle::Invalid();
+            }
+            desc.bSparse = true;
+        }
+
         // BC に対応しないデバイスでは作らない（CPU で展開する逃げ道は作らない）
         if (RHI::IsBlockCompressedFormat(desc.TextureFormat))
         {
@@ -344,7 +380,8 @@ namespace NorvesLib::Core::Rendering
 
         desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
         // ミップ生成（ブリット）で元のミップを読むときだけ転送元が要る。全ミップを渡すテクスチャは生成しない。
-        if (mipLevels > 1 && !HasPackedMipChain(createInfo))
+        // sparse は全ミップをタイル単位の書き込みで作るので、ミップ生成もしない。
+        if (mipLevels > 1 && !HasPackedMipChain(createInfo) && !createInfo.bSparse)
         {
             desc.Usage = desc.Usage | RHI::ResourceUsage::TransferSrc;
         }
@@ -387,6 +424,15 @@ namespace NorvesLib::Core::Rendering
                                                   const void *data,
                                                   size_t dataSize)
     {
+        // sparse は Update で中身を作れない。初期データは渡せない。
+        if (createInfo.bSparse && data && dataSize > 0)
+        {
+            NORVES_LOG_ERROR("RenderResources",
+                             "sparseテクスチャに初期データは渡せません（タイル単位で書き込みます）: texture=%s",
+                             createInfo.DebugName.c_str());
+            return TextureHandle::Invalid();
+        }
+
         auto handle = CreateTexture(createInfo);
         if (handle.IsValid() && data && dataSize > 0)
         {
@@ -755,6 +801,12 @@ namespace NorvesLib::Core::Rendering
         for (const auto &[id, data] : m_Textures)
         {
             (void)id;
+            // sparse のテクスチャは、いま結んでいる物理メモリの量で数える。
+            if (data.RHITexture && data.RHITexture->IsSparse())
+            {
+                stats.TextureBytes += static_cast<size_t>(data.RHITexture->GetSparseBoundBytes());
+                continue;
+            }
             stats.TextureBytes += data.Bytes;
         }
         stats.TotalTextureMemory = stats.TextureBytes;

@@ -152,7 +152,7 @@
 - notes: 計画書 4.2。危険地帯（RHI/Vulkan）。sparse の無い GPU では以降の VT を使わず、段1の BC の全常駐で描く。
 
 ## VTG2-SPARSE-TEXTURE: sparseのテクスチャを作り、タイルとミップテイルの情報を返す
-- status: todo
+- status: done
 - done-when: `TextureCreateInfo` に sparse の印を足し、物理メモリを結ばない sparse の 2D テクスチャ（全ミップ）を作れる。RHI の API がタイルの大きさ（texel）、ミップごとのタイルの数（x・y）、ミップテイルの開始段と大きさ・オフセット（`vkGetImageSparseMemoryRequirements`）を返す。sparse に対応しない GPU・形式では作成が失敗して理由をログに出す。テクスチャの台帳（`VRAM_LEDGER`）は sparse のテクスチャを「結んだ量」で数える。GPU のテスト `SparseTextureVulkanTest`（`RHITextureUpdateVulkanTest` の束）が 4096² の BC7 の sparse のテクスチャでタイルの数（ミップ0 は 16×16）とミップテイルの開始段を確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(SparseTextureVulkanTest|SparseCapabilitiesVulkanTest|TextureMemoryLedgerTest)$"`

@@ -340,6 +340,14 @@ set_tests_properties(SparseCapabilitiesVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+add_test(NAME SparseTextureVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseTextureVulkanTest)
+set_tests_properties(SparseTextureVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME VideoMemoryBudgetVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetVulkanTest)
 set_tests_properties(VideoMemoryBudgetVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -356,6 +364,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
     MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
+    MEMBER SparseTextureVulkanTest SparseTextureVulkanTest.cpp
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)

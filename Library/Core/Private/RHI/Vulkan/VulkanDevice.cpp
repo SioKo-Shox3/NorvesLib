@@ -2222,6 +2222,11 @@ namespace NorvesLib::RHI::Vulkan
             return nullptr;
         }
 
+        if (desc.bSparse && !ValidateSparseTextureDesc(desc))
+        {
+            return nullptr;
+        }
+
         auto texture = MakeShared<VulkanTexture>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
         return StaticPointerCast<ITexture>(texture);
@@ -2765,6 +2770,55 @@ namespace NorvesLib::RHI::Vulkan
                         m_Capabilities.Sparse.bResidencyImage2D ? "Yes" : "No",
                         m_Capabilities.Sparse.bShaderResourceResidency ? "Yes" : "No",
                         m_Capabilities.Sparse.bShaderResourceMinLod ? "Yes" : "No");
+    }
+
+    bool VulkanDevice::ValidateSparseTextureDesc(const TextureDesc &desc) const
+    {
+        const char *name = desc.DebugName != nullptr ? desc.DebugName : "";
+        const SparseCapabilities &sparse = m_Capabilities.Sparse;
+
+        if (!sparse.bSparseBinding || !sparse.bResidencyImage2D)
+        {
+            NORVES_LOG_ERROR("Vulkan",
+                             "sparseテクスチャを作れません: デバイスが sparse の結び付けまたは2Dの部分常駐に対応していません name=%s",
+                             name);
+            return false;
+        }
+
+        // 2D・配列1枚・サンプル数1の色のテクスチャだけが対象（VT の材質のテクスチャ）
+        if (desc.Dimension != TextureDimension::Texture2D || desc.IsCubemap || desc.ArraySize != 1 || desc.Depth != 1)
+        {
+            NORVES_LOG_ERROR("Vulkan",
+                             "sparseテクスチャを作れません: 2D・配列1枚・キューブでないものだけ作れます name=%s", name);
+            return false;
+        }
+
+        if ((desc.Usage & ResourceUsage::RenderTarget) != ResourceUsage::None ||
+            (desc.Usage & ResourceUsage::DepthStencil) != ResourceUsage::None)
+        {
+            NORVES_LOG_ERROR("Vulkan",
+                             "sparseテクスチャを作れません: レンダーターゲット・深度にはできません name=%s", name);
+            return false;
+        }
+
+        if (desc.MipLevels == 0 || desc.MipLevels > SparseTextureInfo::MaxMipLevels)
+        {
+            NORVES_LOG_ERROR("Vulkan",
+                             "sparseテクスチャを作れません: ミップ数 %u は 1〜%u の範囲外です name=%s",
+                             desc.MipLevels, SparseTextureInfo::MaxMipLevels, name);
+            return false;
+        }
+
+        const SparseFormatProperties *format = sparse.FindFormat(desc.TextureFormat);
+        if (format == nullptr || !format->bSupported || !format->bStandardBlockShape)
+        {
+            NORVES_LOG_ERROR("Vulkan",
+                             "sparseテクスチャを作れません: この形式は標準ブロック形状の sparse に対応していません format=%d name=%s",
+                             static_cast<int>(desc.TextureFormat), name);
+            return false;
+        }
+
+        return true;
     }
 
     // 形式ごとの sparse 2D テクスチャの標準ブロック形状を照会する
