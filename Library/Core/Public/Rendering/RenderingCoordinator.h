@@ -472,6 +472,8 @@ namespace NorvesLib::Core::Rendering
     private:
         friend struct DDGISnapshotContractTestAccess;
 
+        // CPUのpacket生成は実capability値を受け取る。GPU操作は行わない。
+        void GenerateDrawCommands(const RHI::DeviceCapabilities& capabilities);
         void SnapshotSceneParameters(FramePacket& packet,
                                      const RHI::DeviceCapabilities& capabilities) const;
         void UpdateFrameRevisions(FramePacket& packet);

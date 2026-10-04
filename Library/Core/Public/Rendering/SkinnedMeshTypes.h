@@ -178,6 +178,9 @@ namespace NorvesLib::Core::Rendering
     {
         SkinnedMeshHandle MeshHandle;
         MaterialHandle Material;
+        // componentから値コピーしたslot材質。未設定はslot0を解決済み。
+        MaterialHandle Materials[MAX_MATERIAL_SLOTS]{};
+        uint32_t MaterialCount = 0;
         Container::TWeakPtr<const SkinnedMeshAssetLease> AssetLease;
         uint64_t ObjectId = 0;
         uint64_t ComponentId = 0;

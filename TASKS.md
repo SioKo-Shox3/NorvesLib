@@ -2182,14 +2182,20 @@
 - stop-when: RenderThreadがmutable Resourceを参照、表の無言破棄、旧frame leaseの内容を後から書換える。
 
 ## G2-GR32-COMPONENT-SLOTS: 材質slotの名前APIとframe snapshotを接続する
-- status: todo
+- status: done
 - done-when: SkinnedMeshComponentがindex/名前でslot材質を設定し、従来SetMaterial/GetMaterialの互換を保つ。FramePacketへ値所有で渡し、欠落slot/古いresource世代の扱いを定義する。
 - verify: index/名前/重複・不在/旧単一材質fallback/世代差し替え/描画thread越境のCPU契約。
 - stop-when: mutable componentを描画threadが読む、曖昧な名前を無言で別slotへ適用、既存材質を破壊する。
 
+## G2-GR32-COOK-METADATA: cook metadataへ表数量を記録する
+- status: todo
+- done-when: 新cookのmanifest metadataへsubmesh_count/material_slot_countを保存し、旧manifestの省略を未知として保持する。既存項目/merge/cacheを壊さず、欠落を1件と捏造しない。
+- verify: 1/2/8表の数量、旧省略/不正値、manifest再読込/merge、既存CLI metadata回帰を登録する。
+- stop-when: 旧省略から件数を推測して表示、wireとmetadataが不一致、既存metadataをmergeで失う。
+
 ## G2-GR32-DRAW-RANGES: submesh別描画とcomponent単位palette共有を接続する
 - status: todo
-- done-when: AppendSkinnedDrawCommandsとRecordSkinnedDrawCallが絶対index範囲/baseVertex0/slot/NoShadowを使い、GBufferと影のpalette準備をcomponent単位で共有する。途中guardを接続済み経路で解除する。
+- done-when: AppendSkinnedDrawCommandsとRecordSkinnedDrawCallが絶対index範囲/baseVertex0/slot/NoShadowを使う。途中guardを接続済み経路で解除し、palette共有は別taskへ分ける。
 - verify: 計画指定の独立SkinnedSubmeshDrawContractTestへdraw数/範囲/影flag/palette共有を登録する。GPU受入れは別gateに残す。
 - stop-when: submeshごとに重いskinning準備を複製、範囲外draw、既定描画/シェーダーABIを変更、GPU実行無しでGR32全体完了を宣言。
 
@@ -2199,3 +2205,10 @@
 - verify: Windows/Vulkanで独立draw契約とGPU readback、起動画面を取得して実画像/結果を確認する。
 - blocked-by: 現在のクラウドにWindows/Vulkan実行環境がない。非描画のWindows免除を描画へ拡張しない。
 - stop-when: mock/source確認を実GPU合格と扱う、ユーザー指定を変えて別環境へ無断移動する。
+
+## G2-GR32-PALETTE-SHARING: component単位のpalette共有を接続する
+- status: blocked
+- done-when: GBuffer/CSM/点光源影/viewport/submeshで同componentの準備を共有し、別component・世代・フレームや異なるposeを混同しない。frame leaseとsubmitted serialの寿命を保つ。
+- verify: 配置の確定後、独立draw契約で生成回数/現・前pose/順序/別component/abort/寿命を確認する。
+- blocked-by: 計画のcomponentあたりCreateBuffer1回と、現行velocity ABIの現在/前フレーム2本が衝突。2026-10-04に「2本1組を一度準備して共有」を推奨として作者確認中。承認までbuffer数の契約を変更しない。
+- stop-when: 他component/古いframeのpaletteを流用、prepared tokenを寿命検査なしに使う、参照中またはGPU使用中のbufferを解放する。

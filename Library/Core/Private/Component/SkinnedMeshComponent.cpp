@@ -102,6 +102,10 @@ namespace NorvesLib::Core::Component
 
     void SkinnedMeshComponent::SetSkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset)
     {
+        if (m_SkeletalAsset != asset)
+        {
+            m_SlotMaterials.Clear();
+        }
         m_SkeletalAsset = asset;
         m_bMeshNodeTransformOverridden = false;
         m_Pose.Clear();
@@ -194,6 +198,101 @@ namespace NorvesLib::Core::Component
         return m_Material;
     }
 
+    bool SkinnedMeshComponent::SetMaterial(uint32_t slot, Rendering::MaterialHandle material)
+    {
+        return SetSlotMaterial(slot, material);
+    }
+
+    Rendering::MaterialHandle SkinnedMeshComponent::GetMaterial(uint32_t slot) const
+    {
+        Rendering::MaterialHandle material;
+        (void)TryGetSlotMaterial(slot, material);
+        return material;
+    }
+
+    Container::TSharedPtr<const Rendering::SkinnedMeshAssetLease> SkinnedMeshComponent::GetMaterialBindingLease() const
+    {
+        if (!m_SkeletalAsset || !m_SkeletalAsset->GetMesh() || !m_SkeletalAsset->GetMesh()->IsLoaded())
+        {
+            return {};
+        }
+        return m_SkeletalAsset->GetMesh()->GetRenderAssetLease();
+    }
+
+    uint32_t SkinnedMeshComponent::GetMaterialSlotCount() const
+    {
+        const auto lease = GetMaterialBindingLease();
+        if (!lease || !lease->GetHandle().IsValid())
+        {
+            return 0;
+        }
+        return lease->GetMaterialSlotNames().empty() ? 1u : static_cast<uint32_t>(lease->GetMaterialSlotNames().size());
+    }
+
+    int32_t SkinnedMeshComponent::FindMaterialSlot(Container::StringView name) const
+    {
+        const auto lease = GetMaterialBindingLease();
+        if (!lease || !lease->GetHandle().IsValid())
+        {
+            return -1;
+        }
+        const auto& names = lease->GetMaterialSlotNames();
+        const uint32_t count = names.empty() ? 1u : static_cast<uint32_t>(names.size());
+        return Skeletal::FindUniqueSkeletalMaterialSlot(count, [&names, name](uint32_t slot)
+        {
+            if (names.empty())
+            {
+                return name == Container::StringView("Default");
+            }
+            return name == Container::StringView(names[slot].data(), names[slot].size());
+        });
+    }
+
+    bool SkinnedMeshComponent::SetSlotMaterial(uint32_t slot, Rendering::MaterialHandle material)
+    {
+        const auto lease = GetMaterialBindingLease();
+        if (!lease)
+        {
+            return false;
+        }
+        const auto handle = lease->GetHandle();
+        const uint32_t count = lease->GetMaterialSlotNames().empty() ? 1u : static_cast<uint32_t>(lease->GetMaterialSlotNames().size());
+        if (!m_SlotMaterials.Set(handle.Id, handle.Generation, count, slot, slot == 0 ? 0 : material.Id))
+        {
+            return false;
+        }
+        if (slot == 0)
+        {
+            m_Material = material;
+        }
+        MarkRenderStateDirty();
+        return true;
+    }
+
+    bool SkinnedMeshComponent::SetSlotMaterial(Container::StringView name, Rendering::MaterialHandle material)
+    {
+        const int32_t slot = FindMaterialSlot(name);
+        return slot >= 0 && SetSlotMaterial(static_cast<uint32_t>(slot), material);
+    }
+
+    bool SkinnedMeshComponent::TryGetSlotMaterial(uint32_t slot, Rendering::MaterialHandle& out) const
+    {
+        const auto lease = GetMaterialBindingLease();
+        if (!lease)
+        {
+            return false;
+        }
+        const auto handle = lease->GetHandle();
+        const uint32_t count = lease->GetMaterialSlotNames().empty() ? 1u : static_cast<uint32_t>(lease->GetMaterialSlotNames().size());
+        uint64_t id = 0;
+        if (!m_SlotMaterials.TryGet(handle.Id, handle.Generation, count, slot, m_Material.Id, id))
+        {
+            return false;
+        }
+        out = Rendering::MaterialHandle{id};
+        return true;
+    }
+
     void SkinnedMeshComponent::SetCastShadow(bool bCastShadow)
     {
         m_bCastShadow = bCastShadow;
@@ -217,6 +316,26 @@ namespace NorvesLib::Core::Component
         const Container::TSharedPtr<SkinnedMeshResource>& mesh = m_SkeletalAsset->GetMesh();
         outProxy.MeshHandle = mesh->GetRenderMeshHandle();
         outProxy.Material = m_Material;
+        const uint32_t slotCount = GetMaterialSlotCount();
+        if (slotCount == 0 || slotCount > Rendering::MAX_MATERIAL_SLOTS)
+        {
+            outProxy = {};
+            return false;
+        }
+        outProxy.MaterialCount = slotCount;
+        for (uint32_t slot = 0; slot < slotCount; ++slot)
+        {
+            if (!TryGetSlotMaterial(slot, outProxy.Materials[slot]))
+            {
+                outProxy = {};
+                return false;
+            }
+        }
+        // 旧単一draw経路にもslot0のoverrideを反映する。
+        if (slotCount != 0)
+        {
+            outProxy.Material = outProxy.Materials[0];
+        }
         outProxy.AssetLease = mesh->GetRenderAssetLease();
         outProxy.WorldTransform = BuildOwnerWorldTransform();
         outProxy.BonePalette = m_Pose.BonePalette;

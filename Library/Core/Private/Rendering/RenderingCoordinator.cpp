@@ -162,6 +162,11 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Generation);
             hash = HashRevisionValue(hash, proxy.Material.Id);
+            hash = HashRevisionValue(hash, proxy.MaterialCount);
+            for (uint32_t slot = 0; slot < proxy.MaterialCount && slot < MAX_MATERIAL_SLOTS; ++slot)
+            {
+                hash = HashRevisionValue(hash, proxy.Materials[slot].Id);
+            }
             hash = HashRevisionValue(hash, proxy.ObjectId);
             hash = HashRevisionValue(hash, proxy.ComponentId);
             hash = HashRevisionValue(hash, proxy.bCastShadow);
@@ -1937,6 +1942,15 @@ namespace NorvesLib::Core::Rendering
 
     void RenderingCoordinator::GenerateDrawCommands()
     {
+        if (!m_bInitialized || !m_Device)
+        {
+            return;
+        }
+        GenerateDrawCommands(m_Device->GetCapabilities());
+    }
+
+    void RenderingCoordinator::GenerateDrawCommands(const RHI::DeviceCapabilities& capabilities)
+    {
         if (!m_bInitialized)
         {
             return;
@@ -1977,7 +1991,7 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
                 m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
             }
-            SnapshotSceneParameters(*m_CurrentPacket, m_Device->GetCapabilities());
+            SnapshotSceneParameters(*m_CurrentPacket, capabilities);
             // 影を落とす点光源の選択と6面の行列は、空の太陽を加えた後の光源表とメインカメラから作る。
             BuildPointShadowSnapshot(m_CurrentPacket->Scene.LightProxies,
                                      m_CurrentPacket->bHasMainCamera

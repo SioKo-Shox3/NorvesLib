@@ -610,3 +610,6 @@
 
 - G2-GR32-RESOURCE-TABLES: SkinnedMeshResourceがsubmesh/slot名を所有し、geometry/有限bounds/頂点範囲/名前をLoad・Refreshで検査して不変leaseへコピーする。旧3引数/空表互換と、generation/非active/Unload後のsnapshot寿命を維持。新表FrameLeaseは範囲draw接続まで明示拒否し、情報を単一drawへ落とさない。純実index/metadata/layout3mode・MEMBER成功、独立PASS。native1/2/8表・不正slot/NUL・直前generation比較・明示表Unload後保持を登録、Windows.hでResource/Core/描画実行は未検証。
 - Next: GR32-COMPONENT-SLOTS。材質slotの名前/index API、旧材質fallback、世代差し替え時の安全なbindingとframe値所有を接続する。
+
+- G2-GR32-COMPONENT-SLOTS: index/名前APIと旧slot0別名を接続し、未割当slotはslot0へfallback、slot1以降のoverrideをmesh世代へ束縛。固定Materials[8]/MaterialCountをproxyへ値コピーし、SceneRevisionも材質列を反映。第1周でnative snapshotの既存null device・packet検証不足を確認し、実CPU生成をcapabilities引数へ分け、再同期/世代差し替え/破棄後の2slot保持を追加。原文のslot0/固定配列仕様へ整合させ第2周PASS。純binding3mode・MEMBER成功。native Component/packet/RevisionとGPUはWindows.hで未実行。
+- Next: GR32のcook metadataへ表数量を追記し、範囲drawへ進む。palette共有は現/前フレーム2本1組の解釈を作者確認中で別taskに保留し、独立した部分を継続する。

@@ -157,3 +157,25 @@ GetMemorySizeにはresource側の表とslot名の所有サイズを加える。
 このguardをDRAW-RANGESで範囲検証に置き換えるまで、新表のCPU保持を描画完了とは扱わない。
 純layout/実index/頂点範囲/有限bounds検査を実行し、Resourceの1/2/8表・不正名/範囲・世代・Unload寿命はnative回帰へ登録する。
 native Resource/Core/描画のWindows実行はまだ未検証。
+
+## Componentの材質slot API
+
+SkinnedMeshComponentのGetMaterialSlotCount/FindMaterialSlot/SetSlotMaterial/TryGetSlotMaterialで、indexまたは名前から材質を指定する。
+旧空表は1slot・名前Defaultとして扱う。空/重複名は保持されるが、名前が一意に引けない場合は-1/falseで設定しない。
+index指定は重複名のslotにも使用できる。不正index/資産なしの取得失敗は出力を保持する。
+
+従来SetMaterial/GetMaterialはslot0の別名。SetMaterial(slot,handle)/GetMaterial(slot)も用意する。未指定slotはslot0へ落ち、slot1以降へ無効handle（id=0）を指定するとoverrideを解除する。
+slot1以降のoverrideはmesh id/generation/slot数へ束縛し、世代が変わった場合はslot0へ戻す。別SkeletalAssetへ設定し直す場合も消去する。slot0は旧APIと同じcomponent材質として保持する。
+同じassetの再設定でmesh世代が変わっていなければ保持する。異なる表へ古いindex指定を無言で移植しない。
+
+SkinnedMeshProxyは解決済みMaterials[8]/MaterialCountを値コピーし、旧単一draw用Materialにはslot0を入れる。
+FramePacket/SceneViewの値所有コピーで後続のcomponent設定変更から独立する。SceneRevisionはslot数/各material idも含める。
+範囲draw未接続のFrameLease guardは継続し、ここだけで複数材質がGPU表示できたとは扱わない。
+
+世代/fallback/無効入力/曖昧名の純binding試験を通常/最適化/sanitizerで実行する。
+Component API・snapshot・SceneRevisionのnative回帰は登録済みだがWindows.hにより未実行。
+
+packetのnative回帰はSceneViewから実GenerateDrawCommandsへ通し、component再設定・再同期・mesh世代変更・破棄後の保持を確認する。
+CPU packet生成はDeviceCapabilitiesを受け取るprivate overloadへ分離し、本番入口は実deviceから渡す。
+試験は実capability値を渡すため、未設定deviceのnull参照やFakeDevice/Core差し替えを検証経路に使わない。
+このnative回帰もWindows依存で未実行であり、GPU描画の証拠にはしない。

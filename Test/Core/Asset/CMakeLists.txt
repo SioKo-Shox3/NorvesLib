@@ -30,6 +30,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SkeletalInfluenceReductionTest SkeletalInfluenceReductionTest.cpp
     MEMBER SkeletalImportPolicyTest SkeletalImportPolicyTest.cpp
     MEMBER SkeletalSubmeshLayoutTest SkeletalSubmeshLayoutTest.cpp
+    MEMBER SkeletalMaterialBindingsTest SkeletalMaterialBindingsTest.cpp
     MEMBER CookedSkeletalWireContractTest CookedSkeletalWireContractTest.cpp
     MEMBER CookedSkeletalNameCodecTest CookedSkeletalNameCodecTest.cpp
     MEMBER GeometryInspectionTest GeometryInspectionTest.cpp
@@ -72,6 +73,7 @@ add_test(NAME AssetSystemTest COMMAND AssetSystemTest)
 add_test(NAME CookedTextureTest COMMAND CookedMeshTest --test=CookedTextureTest)
 add_test(NAME CookedMeshTest COMMAND CookedMeshTest)
 add_test(NAME SkeletalSubmeshLayoutTest COMMAND CookedMeshTest --test=SkeletalSubmeshLayoutTest)
+add_test(NAME SkeletalMaterialBindingsTest COMMAND CookedMeshTest --test=SkeletalMaterialBindingsTest)
 add_test(NAME CookedSkeletalWireContractTest COMMAND CookedMeshTest --test=CookedSkeletalWireContractTest)
 add_test(NAME CookedSkeletalNameCodecTest COMMAND CookedMeshTest --test=CookedSkeletalNameCodecTest)
 

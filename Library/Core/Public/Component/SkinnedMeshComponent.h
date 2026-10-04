@@ -5,6 +5,7 @@
 #include "Component.h"
 #include "Math/Matrix4x4.h"
 #include "Rendering/SkinnedMeshTypes.h"
+#include "Resource/SkeletalMaterialBindings.h"
 
 namespace NorvesLib::Core::Component
 {
@@ -39,6 +40,14 @@ namespace NorvesLib::Core::Component
         float GetPlaybackRate() const;
         void SetMaterial(Rendering::MaterialHandle material);
         Rendering::MaterialHandle GetMaterial() const;
+        // 旧APIはslot0の別名。未指定slotはslot0へ落ち、無効handleでoverrideを解除する。
+        [[nodiscard]] bool SetMaterial(uint32_t slot, Rendering::MaterialHandle material);
+        Rendering::MaterialHandle GetMaterial(uint32_t slot) const;
+        uint32_t GetMaterialSlotCount() const;
+        int32_t FindMaterialSlot(Container::StringView name) const;
+        [[nodiscard]] bool SetSlotMaterial(uint32_t slot, Rendering::MaterialHandle material);
+        [[nodiscard]] bool SetSlotMaterial(Container::StringView name, Rendering::MaterialHandle material);
+        [[nodiscard]] bool TryGetSlotMaterial(uint32_t slot, Rendering::MaterialHandle& out) const;
         void SetCastShadow(bool bCastShadow);
         bool CastsShadow() const;
         void SetVisible(bool bVisible);
@@ -60,6 +69,7 @@ namespace NorvesLib::Core::Component
         [[nodiscard]] bool TryGetJointWorldTransform(uint32_t index, Math::Transform& outTransform) const;
 
     private:
+        Container::TSharedPtr<const Rendering::SkinnedMeshAssetLease> GetMaterialBindingLease() const;
         bool HasValidPoseResources() const;
         bool HasCurrentPose() const;
         Math::Matrix4x4 BuildOwnerWorldTransform() const;
@@ -73,6 +83,7 @@ namespace NorvesLib::Core::Component
         Container::TWeakPtr<SkeletonResource> m_EvaluatedSkeleton;
         Container::TWeakPtr<AnimationClipResource> m_EvaluatedClip;
         Rendering::MaterialHandle m_Material;
+        Skeletal::SkeletalMaterialBindings m_SlotMaterials;
         float m_AnimationTimeSeconds = 0.0f;
         float m_PlaybackRate = 1.0f;
         bool m_bPlaying = true;

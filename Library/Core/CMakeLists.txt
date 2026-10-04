@@ -500,6 +500,7 @@ set(PUBLIC_HEADERS
     Public/Resource/SkeletalImportOptions.h
     Public/Resource/SkeletalLimits.h
     Public/Resource/SkeletalSubMesh.h
+    Public/Resource/SkeletalMaterialBindings.h
     Public/Resource/SkinnedMeshResource.h
     Public/Resource/FontAtlas.h
     # Component

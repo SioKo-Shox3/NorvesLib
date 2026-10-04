@@ -110,6 +110,63 @@ namespace
         assert(clip->Load());
     }
 
+    void TestMaterialSlots(Component::SkinnedMeshComponent& component,
+        const Container::TSharedPtr<SkinnedMeshResource>& mesh,
+        const Container::TSharedPtr<SkeletalAssetResource>& asset)
+    {
+        const auto originalTransform = component.GetMeshNodeGlobalTransform();
+        component.SetMaterial(MaterialHandle{10});
+        assert(component.GetMaterialSlotCount() == 1 && component.FindMaterialSlot("Default") == 0);
+        MaterialHandle material{999};
+        assert(component.TryGetSlotMaterial(0,material) && material.Id == 10);
+        assert(component.SetSlotMaterial(0,MaterialHandle{20}));
+        SkinnedMeshProxy legacy;
+        assert(component.BuildSkinnedMeshProxy(legacy) && legacy.Material.Id == 20 && legacy.Materials[0].Id == 20);
+        assert(!component.SetSlotMaterial("Missing",MaterialHandle{90}));
+        Container::VariableArray<uint32_t> indices{0,1,0,0,1,0};
+        mesh->SetIndices(std::move(indices));
+        Container::VariableArray<Skeletal::SkeletalSubMesh> submeshes{{0,3,0},{3,3,1}};
+        Container::VariableArray<Skeletal::SkeletalMaterialSlot> slots(2);
+        slots[0].Name = "Body"; slots[1].Name = "Eyes";
+        mesh->SetSubmeshTables(std::move(submeshes),std::move(slots));
+        assert(mesh->Load());
+        component.SetSkeletalAsset(asset);
+        assert(component.GetMaterialSlotCount() == 2 && component.FindMaterialSlot("Eyes") == 1);
+        assert(component.TryGetSlotMaterial(0,material) && material.Id == 20); // slot0は旧APIと同じcomponent材質として保持。
+        assert(component.SetSlotMaterial("Body",MaterialHandle{30}) && component.SetSlotMaterial("Eyes",MaterialHandle{40}));
+        component.SetMaterial(MaterialHandle{15});
+        assert(component.GetMaterial().Id == 15 && component.GetMaterial(0).Id == 15 && component.TryGetSlotMaterial(0,material) && material.Id == 15);
+        material.Id = 999;
+        assert(!component.TryGetSlotMaterial(2,material) && material.Id == 999);
+        assert(!component.SetSlotMaterial(2,MaterialHandle{99}));
+        SkinnedMeshProxy captured;
+        assert(component.BuildSkinnedMeshProxy(captured));
+        assert(captured.MaterialCount == 2 && captured.Materials[0].Id == 15 && captured.Materials[1].Id == 40);
+        assert(component.SetSlotMaterial("Eyes",MaterialHandle{50}) && captured.Materials[1].Id == 40);
+        assert(component.SetSlotMaterial("Eyes",MaterialHandle{}));
+        assert(component.TryGetSlotMaterial(1,material) && material.Id == 15);
+        submeshes = mesh->GetSubMeshes();
+        slots = mesh->GetMaterialSlots();
+        slots[1].Name = "Body";
+        mesh->SetSubmeshTables(std::move(submeshes),std::move(slots));
+        assert(mesh->Load());
+        assert(component.FindMaterialSlot("Body") == -1 && !component.SetSlotMaterial("Body",MaterialHandle{99}));
+        assert(component.TryGetSlotMaterial(0,material) && material.Id == 15);
+        assert(component.SetMaterial(1,MaterialHandle{60}));
+        assert(component.TryGetSlotMaterial(1,material) && material.Id == 60);
+        assert(captured.Materials[0].Id == 15 && captured.Materials[1].Id == 40);
+        mesh->SetSubmeshTables({},{});
+        mesh->SetIndices(Container::VariableArray<uint32_t>{0,1,0});
+        assert(mesh->Load());
+        assert(component.SetSlotMaterial(0,MaterialHandle{77}));
+        component.SetSkeletalAsset({});
+        assert(component.GetMaterialSlotCount() == 0 && !component.SetSlotMaterial(0,MaterialHandle{99}));
+        component.SetSkeletalAsset(asset);
+        assert(component.TryGetSlotMaterial(0,material) && material.Id == 77);
+        component.SetMaterial({});
+        component.SetMeshNodeGlobalTransform(originalTransform);
+    }
+
     void AssertSnapshot(const FramePacket& packet, uint64_t componentId)
     {
         assert(packet.Scene.SkinnedMeshProxies.size() == 1);
@@ -132,7 +189,7 @@ namespace
         coordinator.m_MaxDrawCallsPerFrame = 16;
         coordinator.m_MainSceneView = sceneView;
         coordinator.m_CurrentPacket = &packet;
-        coordinator.GenerateDrawCommands();
+        coordinator.GenerateDrawCommands(NorvesLib::RHI::DeviceCapabilities{});
         coordinator.m_CurrentPacket = nullptr;
         coordinator.m_MainSceneView.reset();
         coordinator.m_bInitialized = false;
@@ -196,6 +253,8 @@ int main()
     assert(sceneView->GetSkinnedMeshProxies().size() == 1);
     assert(!component->IsRenderStateDirty());
 
+    TestMaterialSlots(*component,mesh,asset);
+
     component->SetAnimationTimeSeconds(0.75f);
     component->SetLooping(true);
     world.Tick(0.5f);
@@ -230,6 +289,14 @@ int main()
     assert(staleCheck->Scene.SkinnedMeshProxies.empty());
     manager.CancelWrite(staleCheck);
 
+    Container::VariableArray<Skeletal::SkeletalSubMesh> packetRanges{{0,3,0},{3,3,1}};
+    Container::VariableArray<Skeletal::SkeletalMaterialSlot> packetSlots(2);
+    packetSlots[0].Name = "Body"; packetSlots[1].Name = "Eyes";
+    mesh->SetIndices(Container::VariableArray<uint32_t>{0,1,0,0,1,0});
+    mesh->SetSubmeshTables(std::move(packetRanges),std::move(packetSlots));
+    assert(mesh->Load());
+    component->SetMaterial(MaterialHandle{10});
+    assert(component->SetSlotMaterial("Body",MaterialHandle{30}) && component->SetSlotMaterial("Eyes",MaterialHandle{40}));
     component->SetVisible(true);
     world.SyncToSceneView();
     assert(sceneView->GetSkinnedMeshProxies().size() == 1);
@@ -237,6 +304,28 @@ int main()
     assert(written);
     GeneratePacketSnapshot(coordinator, sceneView, *written);
     manager.FinishWrite(written);
+    const auto assertSlotSnapshot = [](const FramePacket& packet)
+    {
+        assert(packet.Scene.SkinnedMeshProxies.size() == 1);
+        const auto& materials = packet.Scene.SkinnedMeshProxies[0].Materials;
+        assert(packet.Scene.SkinnedMeshProxies[0].MaterialCount == 2 && materials[0].Id == 30 && materials[1].Id == 40);
+    };
+    assertSlotSnapshot(*written);
+    assert(component->SetSlotMaterial("Eyes",MaterialHandle{99}));
+    world.SyncToSceneView();
+    assert(sceneView->GetSkinnedMeshProxies()[0].Materials[1].Id == 99);
+    assertSlotSnapshot(*written);
+    packetRanges = mesh->GetSubMeshes();
+    packetSlots = mesh->GetMaterialSlots();
+    packetSlots[0].Name = "Eyes"; packetSlots[1].Name = "Body";
+    mesh->SetSubmeshTables(std::move(packetRanges),std::move(packetSlots));
+    assert(mesh->Load());
+    component->SetSkeletalAsset(asset);
+    world.SyncToSceneView();
+    assert(sceneView->GetSkinnedMeshProxies()[0].Materials[0].Id == 30 &&
+        sceneView->GetSkinnedMeshProxies()[0].Materials[1].Id == 30);
+    assertSlotSnapshot(*written);
+
 
     world.Finalize();
     sceneView->ClearAllProxies();
@@ -252,6 +341,7 @@ int main()
     FramePacket* read = manager.AcquireForRead();
     assert(read == written);
     AssertSnapshot(*read, componentId);
+    assertSlotSnapshot(*read);
     manager.FinishRead(read);
     assert(read->Scene.SkinnedMeshProxies.empty());
     assert(manager.IsEmpty());
