@@ -21,13 +21,22 @@ namespace NorvesLib::Tools::AssetCook
         using NorvesLib::Core::Container::TUniquePtr;
         using NorvesLib::Core::Container::VariableArray;
         using NorvesLib::Core::Asset::ComputeCookedTextureFullMipCount;
+        using NorvesLib::Core::Asset::ComputeCookedTextureFirstTailMip;
         using NorvesLib::Core::Asset::ComputeCookedTexturePayloadHash;
+        using NorvesLib::Core::Asset::ComputeCookedTextureTileGrid;
+        using NorvesLib::Core::Asset::ComputeCookedTextureTileRect;
+        using NorvesLib::Core::Asset::CookedTextureTileRect;
+        using NorvesLib::Core::Asset::CookedTextureTileShape;
+        using NorvesLib::Core::Asset::GatherCookedTextureTile;
+        using NorvesLib::Core::Asset::GetCookedTextureStandardTileShape;
         using NorvesLib::Core::Asset::CookedTextureColorSpace;
         using NorvesLib::Core::Asset::CookedTexturePixelFormat;
         using NorvesLib::Core::Asset::GetCookedTextureBytesPerPixel;
         namespace Format = NorvesLib::Core::Asset::CookedTextureFormatV0;
         namespace HeaderOffset = NorvesLib::Core::Asset::CookedTextureFormatV0::HeaderOffset;
         namespace MipRecordOffset = NorvesLib::Core::Asset::CookedTextureFormatV0::MipRecordOffset;
+        namespace TiledHeaderOffset = NorvesLib::Core::Asset::CookedTextureFormatV0::TiledHeaderOffset;
+        namespace TileRecordOffset = NorvesLib::Core::Asset::CookedTextureFormatV0::TileRecordOffset;
 
         struct TextureFormatInfo
         {
@@ -356,7 +365,9 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         // ミップの並びを NVTEX に詰める。各ミップのバイト数は形式のブロック単位の大きさと一致していなければならない。
-        // ブロック圧縮と R16 は v0.1、それ以外は v0.0 で書く。
+        // ブロック圧縮と R16 は v0.1 以上、それ以外は v0.0 で書ける。
+        // versionMinor が v0.2 のときは、タイルより小さくない段を標準ブロック形状のタイル単位（ミップごと、行優先）に
+        // 並べ直し、残りの段（ミップテイル）を行優先のまま続け、タイルの表を持つヘッダで書く。
         bool BuildNvtexBytes(const VariableArray<MipImage> &mips,
                              CookedTexturePixelFormat pixelFormat,
                              CookedTextureColorSpace colorSpace,
@@ -377,6 +388,9 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
+            const bool bTiled = versionMinor == Format::VersionMinorTiled;
+            const size_t headerSize = bTiled ? Format::HeaderSizeTiled : Format::HeaderSize;
+
             size_t mipTableSize = 0;
             if (!CheckedMultiply(mipCount, Format::MipRecordSize, mipTableSize))
             {
@@ -384,8 +398,44 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
+            // v0.2: タイルの段の数とタイルの総数を形式から決める。
+            uint32_t firstTailMip = 0;
+            size_t tileCount = 0;
+            if (bTiled)
+            {
+                if (mipCount != ComputeCookedTextureFullMipCount(mips.front().Width, mips.front().Height))
+                {
+                    error = "texture mip chain must be complete for tiled layout";
+                    return false;
+                }
+
+                firstTailMip = ComputeCookedTextureFirstTailMip(pixelFormat, mips.front().Width, mips.front().Height);
+                for (uint32_t mipIndex = 0; mipIndex < firstTailMip; ++mipIndex)
+                {
+                    uint32_t tilesX = 0;
+                    uint32_t tilesY = 0;
+                    size_t mipTiles = 0;
+                    if (!ComputeCookedTextureTileGrid(pixelFormat, mips[mipIndex].Width, mips[mipIndex].Height, tilesX, tilesY) ||
+                        !CheckedMultiply(static_cast<size_t>(tilesX), static_cast<size_t>(tilesY), mipTiles) ||
+                        !CheckedAdd(tileCount, mipTiles, tileCount))
+                    {
+                        error = "texture tile count overflow";
+                        return false;
+                    }
+                }
+            }
+
+            size_t tileTableSize = 0;
+            if (!CheckedMultiply(tileCount, Format::TileRecordSize, tileTableSize))
+            {
+                error = "texture tile table size overflow";
+                return false;
+            }
+
+            size_t tileTableOffset = 0;
             size_t payloadOffset = 0;
-            if (!CheckedAdd(Format::HeaderSize, mipTableSize, payloadOffset))
+            if (!CheckedAdd(headerSize, mipTableSize, tileTableOffset) ||
+                !CheckedAdd(tileTableOffset, tileTableSize, payloadOffset))
             {
                 error = "texture payload offset overflow";
                 return false;
@@ -437,13 +487,13 @@ namespace NorvesLib::Tools::AssetCook
 
             outBytes.assign(fileSize, 0);
             std::memcpy(outBytes.data() + HeaderOffset::Magic, Format::Magic, Format::MagicSize);
-            WriteLe32(outBytes, HeaderOffset::HeaderSize, static_cast<uint32_t>(Format::HeaderSize));
+            WriteLe32(outBytes, HeaderOffset::HeaderSize, static_cast<uint32_t>(headerSize));
             WriteLe16(outBytes, HeaderOffset::VersionMajor, Format::VersionMajor);
             WriteLe16(outBytes, HeaderOffset::VersionMinor, versionMinor);
             WriteLe32(outBytes, HeaderOffset::EndianMarker, Format::EndianMarker);
             WriteLe32(outBytes, HeaderOffset::MipRecordSize, static_cast<uint32_t>(Format::MipRecordSize));
             WriteLe64(outBytes, HeaderOffset::FileSize, static_cast<uint64_t>(fileSize));
-            WriteLe64(outBytes, HeaderOffset::MipTableOffset, static_cast<uint64_t>(Format::HeaderSize));
+            WriteLe64(outBytes, HeaderOffset::MipTableOffset, static_cast<uint64_t>(headerSize));
             WriteLe64(outBytes, HeaderOffset::MipTableSize, static_cast<uint64_t>(mipTableSize));
             WriteLe64(outBytes, HeaderOffset::PayloadOffset, static_cast<uint64_t>(payloadOffset));
             WriteLe64(outBytes, HeaderOffset::PayloadSize, static_cast<uint64_t>(payloadSize));
@@ -458,10 +508,12 @@ namespace NorvesLib::Tools::AssetCook
             WriteLe64(outBytes, HeaderOffset::Reserved1, 0);
 
             size_t payloadCursor = payloadOffset;
+            size_t tileRecordIndex = 0;
+            size_t tailOffset = 0;
             for (size_t mipIndex = 0; mipIndex < mipCount; ++mipIndex)
             {
                 const MipImage &mip = mips[mipIndex];
-                const size_t recordOffset = Format::HeaderSize + mipIndex * Format::MipRecordSize;
+                const size_t recordOffset = headerSize + mipIndex * Format::MipRecordSize;
                 WriteLe64(outBytes, recordOffset + MipRecordOffset::DataOffset, static_cast<uint64_t>(payloadCursor));
                 WriteLe64(outBytes, recordOffset + MipRecordOffset::DataSize, static_cast<uint64_t>(mip.Bytes.size()));
                 WriteLe32(outBytes, recordOffset + MipRecordOffset::Width, mip.Width);
@@ -469,8 +521,73 @@ namespace NorvesLib::Tools::AssetCook
                 WriteLe32(outBytes, recordOffset + MipRecordOffset::Reserved0, 0);
                 WriteLe32(outBytes, recordOffset + MipRecordOffset::Reserved1, 0);
 
-                std::memcpy(outBytes.data() + payloadCursor, mip.Bytes.data(), mip.Bytes.size());
+                if (bTiled && mipIndex < firstTailMip)
+                {
+                    uint32_t tilesX = 0;
+                    uint32_t tilesY = 0;
+                    (void)ComputeCookedTextureTileGrid(pixelFormat, mip.Width, mip.Height, tilesX, tilesY);
+                    size_t tileCursor = payloadCursor;
+                    for (uint32_t tileY = 0; tileY < tilesY; ++tileY)
+                    {
+                        for (uint32_t tileX = 0; tileX < tilesX; ++tileX)
+                        {
+                            CookedTextureTileRect rect;
+                            if (!ComputeCookedTextureTileRect(pixelFormat, mip.Width, mip.Height, tileX, tileY, rect))
+                            {
+                                error = "texture tile rect is invalid";
+                                return false;
+                            }
+
+                            GatherCookedTextureTile(pixelFormat, mip.Width, rect, mip.Bytes.data(), outBytes.data() + tileCursor);
+
+                            const size_t tileRecordOffset = tileTableOffset + tileRecordIndex * Format::TileRecordSize;
+                            WriteLe64(outBytes, tileRecordOffset + TileRecordOffset::DataOffset, static_cast<uint64_t>(tileCursor));
+                            WriteLe64(outBytes, tileRecordOffset + TileRecordOffset::DataSize, rect.DataBytes);
+                            WriteLe32(outBytes, tileRecordOffset + TileRecordOffset::MipIndex, static_cast<uint32_t>(mipIndex));
+                            WriteLe32(outBytes, tileRecordOffset + TileRecordOffset::LayerIndex, 0);
+                            WriteLe32(outBytes, tileRecordOffset + TileRecordOffset::TileX, tileX);
+                            WriteLe32(outBytes, tileRecordOffset + TileRecordOffset::TileY, tileY);
+
+                            tileCursor += static_cast<size_t>(rect.DataBytes);
+                            ++tileRecordIndex;
+                        }
+                    }
+
+                    if (tileCursor != payloadCursor + mip.Bytes.size())
+                    {
+                        error = "texture tiles do not cover the mip";
+                        return false;
+                    }
+                }
+                else
+                {
+                    if (bTiled && mipIndex == firstTailMip)
+                    {
+                        tailOffset = payloadCursor;
+                    }
+
+                    std::memcpy(outBytes.data() + payloadCursor, mip.Bytes.data(), mip.Bytes.size());
+                }
                 payloadCursor += mip.Bytes.size();
+            }
+
+            if (bTiled)
+            {
+                if (tileRecordIndex != tileCount || tailOffset == 0)
+                {
+                    error = "texture tile table is inconsistent";
+                    return false;
+                }
+
+                const CookedTextureTileShape shape = GetCookedTextureStandardTileShape(pixelFormat);
+                WriteLe32(outBytes, TiledHeaderOffset::TileWidth, shape.Width);
+                WriteLe32(outBytes, TiledHeaderOffset::TileHeight, shape.Height);
+                WriteLe32(outBytes, TiledHeaderOffset::FirstTailMip, firstTailMip);
+                WriteLe32(outBytes, TiledHeaderOffset::TileDataBytes, Format::StandardTileBytes);
+                WriteLe64(outBytes, TiledHeaderOffset::TileTableOffset, static_cast<uint64_t>(tileTableOffset));
+                WriteLe64(outBytes, TiledHeaderOffset::TileTableSize, static_cast<uint64_t>(tileTableSize));
+                WriteLe64(outBytes, TiledHeaderOffset::TailOffset, static_cast<uint64_t>(tailOffset));
+                WriteLe64(outBytes, TiledHeaderOffset::TailSize, static_cast<uint64_t>(payloadOffset + payloadSize - tailOffset));
             }
 
             WriteLe64(outBytes,
@@ -479,7 +596,7 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        // ---- 用途別のクック(NVTEX v0.1) ----
+        // ---- 用途別のクック(NVTEX v0.2。標準ブロック形状のタイル配置) ----
 
         // 16 ビット 1 チャンネルのミップ(R16 の高さ用)。
         struct MipImage16
@@ -986,7 +1103,7 @@ namespace NorvesLib::Tools::AssetCook
             result.BytesPerPixel = 0;
             result.PixelFormatName = pixelFormatName;
             if (!BuildNvtexBytes(compressedMips, pixelFormat, colorSpace,
-                                 Format::VersionMinorBlockCompressed, result.NvtexBytes, error))
+                                 Format::VersionMinorTiled, result.NvtexBytes, error))
             {
                 return false;
             }
@@ -1012,7 +1129,7 @@ namespace NorvesLib::Tools::AssetCook
             result.BytesPerPixel = 2;
             result.PixelFormatName = "R16";
             if (!BuildNvtexBytes(mips, CookedTexturePixelFormat::R16UNorm, CookedTextureColorSpace::Linear,
-                                 Format::VersionMinorBlockCompressed, result.NvtexBytes, error))
+                                 Format::VersionMinorTiled, result.NvtexBytes, error))
             {
                 return false;
             }
@@ -1117,11 +1234,11 @@ namespace NorvesLib::Tools::AssetCook
     {
         switch (usage)
         {
-        case TextureUsage::Albedo: return "nvtex.v0.1.bc7.srgb";
-        case TextureUsage::Normal: return "nvtex.v0.1.bc5.linear";
-        case TextureUsage::Orm: return "nvtex.v0.1.bc7.linear";
-        case TextureUsage::Single: return "nvtex.v0.1.bc4.linear";
-        case TextureUsage::Height16: return "nvtex.v0.1.r16.linear";
+        case TextureUsage::Albedo: return "nvtex.v0.2.bc7.srgb";
+        case TextureUsage::Normal: return "nvtex.v0.2.bc5.linear";
+        case TextureUsage::Orm: return "nvtex.v0.2.bc7.linear";
+        case TextureUsage::Single: return "nvtex.v0.2.bc4.linear";
+        case TextureUsage::Height16: return "nvtex.v0.2.r16.linear";
         }
         return "";
     }
