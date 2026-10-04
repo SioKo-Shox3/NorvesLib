@@ -358,7 +358,7 @@
 - notes: 計画書 4.3。既存の `LODHierarchyBuilder`（実行時。未使用・n² の疑い）は使わない。
 
 ## VTG4-DAG-BAKE-DOC: NVMESH v1 の文書を焼き込みの実装に合わせる
-- status: todo
+- status: done
 - done-when: `Docs/Architecture/NVMESHv1.md` の「v1 を書くのは クッカー（… まだ v0 だけを出す）」を実装に合わせて直し、焼き込み（クッカー）の手順・既知の限界・試験の節を足す。内容は `PROGRESS.md` の「反復 5（run 20261005-043300）」の記録に書いた実装の事実（形式名 `nvmesh.v1.mesh3d.pnt.u32.lodgraph`・`cooked_version` 1・溶接/クラスタ化/グループ化/境界固定の簡略化/許容モードの再試行/打ち切り/フォールバックの選び方・実測値・「つまみ」の限界）に従う。コードは触らない。
 - verify: `git diff --numstat -- Docs/Architecture/NVMESHv1.md`
 - stop-when: 記録と実装（`Tools/AssetCook/CookMeshDag.cpp`）が食い違うときは、実装を正として文書に書く。

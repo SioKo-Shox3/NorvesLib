@@ -696,3 +696,9 @@
 - 変異: 安全判定を常に真にすると、岩の検査が pinched=2・2・10・フォールバック 10 で落ちる（`verify-VTG4-DAG-BAKE-24-mutation.txt`）。戻して再ビルドした。
 - 検証: `verify-VTG4-DAG-BAKE-25.txt`（変異を戻した後の Debug のビルド BUILD_EXIT_CODE=0）、`-26.txt`（ctest 3/3 passed）、`-23.txt`（ctest -V。`MESH_COOK` の行と岩の検査）、`-20-smoke-output.txt`（球の実測。rejected 0、`MESH_DAG_SCALE levels=10/10 clusters=717/717 permissive=172/172`）、`-21-boulder-check.txt`（岩の検査の出力）。`-16`〜`-19` は途中のビルドと ctest（`-17` は岩の切り口 1 通りとフォールバックに 10 本残って失敗）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - Notes: (1) `MeshCooker.cpp/.h` は行末が CRLF と LF の混在なので、行末を正規化せず該当行だけバイト単位で置換した。(2) 起動画面の岩を v1 に切り替える VTG4-COOK-STARTUP-MODELS では、`rejected_groups` と段の誤差の見え方を確認する。(3) 次は VTG4-DAG-BAKE-DOC。
+
+## 反復 7（run 20261005-043300）: VTG4-DAG-BAKE-DOC（done）
+- VTG4-DAG-BAKE-DOC: `Docs/Architecture/NVMESHv1.md` を焼き込みの実装（`Tools/AssetCook/CookMeshDag.cpp`・`MeshCooker.cpp`）に合わせた。「v1 を書くのは クッカー…まだ v0 だけを出す」を、`--format nvmesh.v1.mesh3d.pnt.u32.lodgraph` を指定したクックだけが v1（`cooked_version` 1）を出す、へ直し、識別表の「予定」を外した。「焼き込み（クッカー）」（溶接・段0のクラスタ化・グループ化・境界固定の簡略化・辺を非多様体にしない候補選び・許容モードと目標 3/4 の再試行・見送り・打ち切り・頂点とインデックス・フォールバックの選び方・実測値）、「既知の限界」、試験の節（`AssetCookMeshSimplifySmoke`・`AssetCookMeshSmoke` の内容と ctest の対象）を足した。
+- 記録と実装の食い違い（stop-when に従い実装を正にした）: 反復 5 の記録の「つまみ」は反復 6 で解消済み（簡略化が非多様体の辺を作らない候補だけを採る）。岩の実測は反復 6 の値（13 段・1451 クラスタ・345 グループ・根 1・見送り 13）を書き、反復 5 の「検査は穴だけを失敗とする」は書かず、穴・非多様体の辺 0 を要求する検査として書いた。許容モードに入る条件は実装の「三角形が目標の 1.25 倍以内に届かない、または候補が無い」。
+- 検証: `verify-VTG4-DAG-BAKE-DOC-1.txt`（`git diff --numstat` が 72/4、`--ignore-cr-at-eol` も同じ 72/4。行末の全体書き換えなし）。文書のみでコードは触っていない。
+- Notes: `NVMESHv1.md` は LF の行末（BOM 無し）で、そのまま維持した。次は VTG4-DAG-SELECT-GPU。
