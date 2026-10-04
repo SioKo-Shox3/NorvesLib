@@ -2170,7 +2170,32 @@
 - stop-when: 旧clipCount拒否を緩和、同minorで表を読み分ける裏分岐、部分資産公開、未対応runtimeへ無言で流す。
 
 ## G2-GR32-V02-WRITER: 統一0.2をcookして旧cacheを再生成する
-- status: todo
+- status: done
 - done-when: submesh/slot/複数clip共通schemaの0.2を生成し再parseで照合する。1primitiveも名前slotへ具体化し、旧空表は互換1件へ変換する。cacheはcurrent writer minorを検査し旧版のままskipしない。既存出力保護を保つ。
 - verify: raw/GLB/cook/parseの表一致、旧版loadとcache再生成、slot/UTF-8/範囲、CLI metadata/失敗保持。
 - stop-when: table/nameを失う、旧cacheを新writer済み扱い、Resource/描画の未接続を成功と偽る。
+
+## G2-GR32-RESOURCE-TABLES: 所有資産と不変leaseへsubmesh表を保持する
+- status: todo
+- done-when: SkinnedMeshResourceがsubmesh/slot名を所有・検証し、不変AssetLeaseへ世代単位で保持する。旧空表/3引数lease互換を保ち、未対応描画への新表の無言破棄はguardする。
+- verify: 旧互換/1・2・8表/片側空/範囲/名前保持/世代とlease寿命/不正時の非公開をCPU契約へ登録する。native未実行は明記する。
+- stop-when: RenderThreadがmutable Resourceを参照、表の無言破棄、旧frame leaseの内容を後から書換える。
+
+## G2-GR32-COMPONENT-SLOTS: 材質slotの名前APIとframe snapshotを接続する
+- status: todo
+- done-when: SkinnedMeshComponentがindex/名前でslot材質を設定し、従来SetMaterial/GetMaterialの互換を保つ。FramePacketへ値所有で渡し、欠落slot/古いresource世代の扱いを定義する。
+- verify: index/名前/重複・不在/旧単一材質fallback/世代差し替え/描画thread越境のCPU契約。
+- stop-when: mutable componentを描画threadが読む、曖昧な名前を無言で別slotへ適用、既存材質を破壊する。
+
+## G2-GR32-DRAW-RANGES: submesh別描画とcomponent単位palette共有を接続する
+- status: todo
+- done-when: AppendSkinnedDrawCommandsとRecordSkinnedDrawCallが絶対index範囲/baseVertex0/slot/NoShadowを使い、GBufferと影のpalette準備をcomponent単位で共有する。途中guardを接続済み経路で解除する。
+- verify: 計画指定の独立SkinnedSubmeshDrawContractTestへdraw数/範囲/影flag/palette共有を登録する。GPU受入れは別gateに残す。
+- stop-when: submeshごとに重いskinning準備を複製、範囲外draw、既定描画/シェーダーABIを変更、GPU実行無しでGR32全体完了を宣言。
+
+## G2-GR32-GPU-ACCEPTANCE: 多材質と旧描画互換をWindows GPUで確認する
+- status: blocked
+- done-when: 2材質板のGPU readbackと旧NVSKEL/M9SkinnedのGBuffer全画素一致、既定Rendering3DTestを実機で確認する。
+- verify: Windows/Vulkanで独立draw契約とGPU readback、起動画面を取得して実画像/結果を確認する。
+- blocked-by: 現在のクラウドにWindows/Vulkan実行環境がない。非描画のWindows免除を描画へ拡張しない。
+- stop-when: mock/source確認を実GPU合格と扱う、ユーザー指定を変えて別環境へ無断移動する。

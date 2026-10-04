@@ -16,6 +16,8 @@
 #include "Resource/SkinnedMeshResource.h"
 #include <algorithm>
 #include "Tools/AssetCook/MeshCooker.h"
+#include "Tools/AssetCook/ModelCookCache.h"
+#include <cstdio>
 #include <chrono>
 #include <charconv>
 
@@ -600,6 +602,55 @@ namespace
         assert(stream && stream->IsOpen());
         assert(stream->Write(bytes.data(), bytes.size()) == bytes.size());
         stream->Close();
+    }
+
+    void RunSkeletalCacheVersionContract(const std::filesystem::path& root, const ByteArray& current)
+    {
+        using namespace NorvesLib::Tools::AssetCook;
+        const auto packagePath = root / "version-cache.nvpkg";
+        const auto manifestPath = root / "version-cache.json";
+        ModelCookFingerprint fingerprint;
+        fingerprint.SourceHash = 1;
+        const auto check = [&](const ByteArray& payload, bool expected)
+        {
+            // 1entryの独立package配置。name10Bの後を8Bへ整列する。
+            ByteArray package(176 + payload.size(), 0);
+            const uint8_t magic[] = {'N','V','P','K','G','v','1',0};
+            std::memcpy(package.data(),magic,8);
+            WriteLe32(package,8,96); WriteLe16(package,12,1);
+            WriteLe32(package,16,0x01020304); WriteLe32(package,20,64);
+            WriteLe64(package,24,package.size()); WriteLe32(package,32,1);
+            WriteLe64(package,40,96); WriteLe64(package,48,64);
+            WriteLe64(package,56,160); WriteLe64(package,64,10);
+            WriteLe64(package,72,176); WriteLe32(package,80,8);
+            WriteLe64(package,96,160); WriteLe32(package,104,10);
+            WriteLe32(package,108,Asset::MakeAssetPackageFourCC('S','k','l','0'));
+            WriteLe64(package,120,176); WriteLe64(package,128,payload.size());
+            WriteLe64(package,136,payload.size());
+            const auto hash = Asset::ComputeAssetPackagePayloadHash(payload.data(),payload.size());
+            WriteLe64(package,144,hash);
+            std::memcpy(package.data()+160,"rig.nvskel",10);
+            std::memcpy(package.data()+176,payload.data(),payload.size());
+            FileStream::Package loaded;
+            assert(loaded.LoadFromMemory({package.data(),package.size()}));
+            assert(Asset::ParseCookedSkeletal(MakeBlob(payload)).Succeeded());
+            char hashText[17]{};
+            std::snprintf(hashText,sizeof(hashText),"%016llx",static_cast<unsigned long long>(hash));
+            Container::AnsiString manifest = R"json({"version":1,"assets":[{"logical_path":"Models/rig.gltf","kind":"model","source_hash":"0000000000000001","variant":"default","format":"nvskel.v0.skinned.pnujiw.u32","cooked_package":"version-cache.nvpkg","entry_name":"rig.nvskel","entry_type":"Skl0","cooked_hash":")json";
+            manifest += hashText;
+            manifest += R"json(","cooked_version":0}]})json";
+            WriteFixtureBytes(packagePath,package);
+            WriteFixtureBytes(manifestPath,TextBytes(manifest));
+            assert(IsModelCookCacheCurrent(manifestPath,packagePath,"Models/rig.gltf","default",
+                "nvskel.v0.skinned.pnujiw.u32","rig.nvskel",fingerprint) == expected);
+        };
+        auto legacy = BuildGoldenSkeletal();
+        check(legacy,false);
+        WriteLe16(legacy,14,0);
+        std::memset(legacy.data()+192,0,64);
+        RecomputeSkeletalHash(legacy);
+        check(legacy,false);
+        check(current,true);
     }
 
     void AssertLiteralCookedData(const Asset::CookedSkeletalData& cooked, uint64_t expectedPayloadHash = 0)
@@ -1498,9 +1549,18 @@ namespace
         Container::AnsiString error;
         SkeletalCookDiagnostics diagnostics;
         const auto sourceBytes=TextBytes(source);
-        assert(!CookGltfToNvskel(sourceBytes.data(),sourceBytes.size(),format,cookPath,retained,error,nullptr,nullptr,&diagnostics));
-        assert(retained.SourceHash==123 && retained.VertexCount==456 && diagnostics.bDecodeAttempted && diagnostics.DecodeStatus==0);
-        assert(error.find("NVSKEL0.2")!=Container::AnsiString::npos); // 未接続writerは表を捨てない。
+        assert(CookGltfToNvskel(sourceBytes.data(),sourceBytes.size(),format,cookPath,retained,error,nullptr,nullptr,&diagnostics));
+        assert(retained.VertexCount==6 && diagnostics.bDecodeAttempted && diagnostics.DecodeStatus==0);
+        const auto cookedTables = Asset::ParseCookedSkeletal(MakeBlob(retained.NvskelBytes));
+        assert(cookedTables.Succeeded() && cookedTables.Data.VersionMinor == 2);
+        checkTables(cookedTables.Data.Skeletal);
+        AssertEquivalent(decoded.Data, cookedTables.Data.Skeletal);
+        assert(cookedTables.Data.Skeletal.SubMeshes[0].BoundsRadius > 0 &&
+            cookedTables.Data.Skeletal.SubMeshes[1].BoundsCenter[0] == 2.5f);
+        SkeletalCookResult glbCook;
+        assert(CookGltfToNvskel(glb.data(),glb.size(),format,cookPath,glbCook,error));
+        assert(glbCook.NvskelBytes == retained.NvskelBytes);
+        RunSkeletalCacheVersionContract(fixture.Root, retained.NvskelBytes);
         ModelCookFingerprint fingerprint;
         assert(FingerprintModelCookSource(sourceBytes.data(),sourceBytes.size(),format,cookPath,"Models/two.gltf",fingerprint,error));
         const Container::AnsiString primitiveA=R"json({"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2,"JOINTS_0":3,"WEIGHTS_0":5},"indices":8,"mode":4,"material":0})json";
@@ -1536,7 +1596,33 @@ namespace
         }
         auto single=source; replaceOnce(single,originalList,Container::AnsiString("\"primitives\":[")+primitiveA+"]");
         const auto singleDecoded=DecodeSkeletalGltf(TextBytes(single),path);
-        assert(singleDecoded.Succeeded() && singleDecoded.Data.SubMeshes.empty() && singleDecoded.Data.MaterialSlots.empty());
+        assert(singleDecoded.Succeeded() && singleDecoded.Data.SubMeshes.size() == 1 &&
+            singleDecoded.Data.MaterialSlots.size() == 1 && singleDecoded.Data.MaterialSlots[0].Name == "Body");
+        const auto singleBytes = TextBytes(single);
+        SkeletalCookResult singleCook;
+        assert(CookGltfToNvskel(singleBytes.data(),singleBytes.size(),format,cookPath,singleCook,error));
+        const auto singleParsed = Asset::ParseCookedSkeletal(MakeBlob(singleCook.NvskelBytes));
+        assert(singleParsed.Succeeded() && singleParsed.Data.VersionMinor == 2 &&
+            singleParsed.Data.Skeletal.MaterialSlots[0].Name == "Body");
+        auto unicodeSingle = single;
+        replaceOnce(unicodeSingle, R"json("name":"Body")json", R"json("name":"\u9aa8\ud83d\udc3a")json");
+        const auto unicodeBytes = TextBytes(unicodeSingle);
+        SkeletalCookResult unicodeCook;
+        assert(CookGltfToNvskel(unicodeBytes.data(),unicodeBytes.size(),format,cookPath,unicodeCook,error));
+        const auto unicodeParsed = Asset::ParseCookedSkeletal(MakeBlob(unicodeCook.NvskelBytes));
+        assert(unicodeParsed.Succeeded());
+        const auto& unicodeName = unicodeParsed.Data.Skeletal.MaterialSlots[0].Name;
+        uint8_t nameBytes[7]{};
+        const uint8_t expectedName[] = {0xe9,0xaa,0xa8,0xf0,0x9f,0x90,0xba};
+        assert(Asset::EncodeSkeletalWireName<Container::String::value_type>(2,
+            {unicodeName.data(),unicodeName.size()},nameBytes).Succeeded());
+        assert(std::memcmp(nameBytes,expectedName,7) == 0);
+        const auto savedCook = unicodeCook;
+        auto invalidSingle = single;
+        replaceOnce(invalidSingle, R"json("material":0)json", R"json("material":99)json");
+        const auto invalidBytes = TextBytes(invalidSingle);
+        assert(!CookGltfToNvskel(invalidBytes.data(),invalidBytes.size(),format,cookPath,unicodeCook,error));
+        assert(unicodeCook.NvskelBytes == savedCook.NvskelBytes && unicodeCook.SourceHash == savedCook.SourceHash);
         auto duplicateNames=source; replaceOnce(duplicateNames,"\"name\":\"Eyes\"","\"name\":\"Body\"");
         auto duplicate=DecodeSkeletalGltf(TextBytes(duplicateNames),path);
         assert(duplicate.Succeeded() && duplicate.Data.MaterialSlots[0].Name=="Body [0]" && duplicate.Data.MaterialSlots[1].Name=="Body [1]");

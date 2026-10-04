@@ -2,8 +2,8 @@
 
 ## 状態と版の境界
 
-readerは旧0.0/0.1を維持して0.2の所有表/複数clip検査を接続済み。writerはまだ0.1のままで、
-新しいsubmesh/slot表付きdataのcookを明示拒否する。Resource/描画の接続も未完。
+readerは旧0.0/0.1を維持して0.2の所有表/複数clip検査を接続済み。writerも統一0.2を生成し、
+旧cacheは再生成対象になる。Resource/描画の接続は未完で、M9経路は新表付き資産を明示拒否する。
 0.2はGR32のsubmesh/名前slotとGR82 Stage Aの複数clipを同じ定義へ載せる。別のminor=2を作らない。
 
 | 項目 | 0.0 | 0.1 | 0.2 |
@@ -154,8 +154,32 @@ clip名/slot名の空や重複はwireでは表現できる。名前選択・一�
 0.2の複数clipはchannel/sampleを表順に一意所有し、joint/path重複とdurationをclip単位で検査する。
 エラー時は部分的なSkeletalやSourceBlobを公開しない。
 M9の起動側はまだ単一clip/全index描画なので、新表付き・複数clipを明示拒否する。
-writer/cacheの切替とResource/描画の接続は未完で、readerの受理だけをゲームでの使用可能と扱わない。
+Resource/描画の接続は未完で、reader/writerの受理だけをゲームでの使用可能と扱わない。
 
 検証は純wire/submesh recordの通常・最適化・sanitizer試験と、手書き0.2のnative回帰登録を分ける。
 native回帰には2clip/2submesh/UTF-8、旧golden、範囲/予約/padding/hash/clip跨ぎと失敗出力を含めるが、
 このLinux環境ではWindows.h依存により実readerを含むCore全体の試験は未実行。
+
+## 0.2 writerとcache移行
+
+raw decoderは1primitiveでも明示submesh/slotを作り、material名を保持する。
+writerは両表空の旧所有dataを全index/slot0（Default名）へ具体化する。片側空は拒否する。
+320B/64B表/UTF-8を生成し、padding/予約byteを0にしてtransform→extension→payloadでhashを計算する。
+再parse後に表数量・index/slot/flags/頂点範囲・joint/clip/slot名を照合し、外側のcook結果は全成功時だけ置き換える。
+
+submesh boundsは最終scale適用済みの参照頂点から計算する。floatに丸めたAABB中心から最大距離を取り、
+正の半径はfloatの1ULP外側へ丸める。非有限/範囲外index/float半径overflowは拒否する。
+これは静止頂点位置のboundsであり、animation全poseを包む保証や、そのままskinning cullingへ使える保証ではない。
+
+cacheは通常parse成功に加えてminor=2を要求する。source hashやmanifestのcooked_version=0が一致していても、
+minor0/1 payloadを最新出力としてskipしない。通常loadでは旧版を引き続き読める。
+rawの複数clip生成はGR82の次工程であり、このwriter接続だけでraw TwoClipsを受理しない。
+
+純bounds/layoutの通常・最適化・sanitizerと名前/wire回帰を実行する。
+raw/GLB→cook→parseの表/Unicode保持・失敗出力保持、旧0.0/0.1 cache missと0.2 hitはnative回帰へ登録する。
+Windows依存のwriter/loader/cache/CLI統合は未実行で、GPU描画受入れも未完。
+
+名前をJSONの\u escapeで渡す経路では、high/low surrogateを一つのscalarへ結合する。
+孤立surrogate・途中切れ・不正な組合せはJsonDocumentで拒否し、有効な非BMP文字は4byte UTF-8になる。
+この修正は共通JSON parserにも適用する。純試験は全scalarのescape読取・UTF-8黄金hashとUTF-16/32出力を照合し、
+JsonDocument本体とAssetCookでのescape名の往復はnative回帰へ登録する（この環境では未実行）。

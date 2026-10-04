@@ -46,6 +46,7 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER ModuleRegistryTest ${CMAKE_SOURCE_DIR}/Test/Core/Module/ModuleRegistryTest.cpp
     MEMBER IdentityLiteralTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/IdentityLiteralTest.cpp
     MEMBER JsonWriterTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonWriterTest.cpp
+    MEMBER JsonUnicodeScalarTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonUnicodeScalarTest.cpp
     SOURCES
         ${CMAKE_SOURCE_DIR}/Game/Input/CameraInputCollector.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp

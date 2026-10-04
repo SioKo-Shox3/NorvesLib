@@ -3,6 +3,9 @@
 
 #include "Asset/CookedMeshFormat.h"
 #include "Asset/CookedSkeletalFormat.h"
+#include "Asset/CookedSkeletalNameCodec.h"
+#include "Resource/SkeletalSubmeshLayout.h"
+#include "Resource/SkeletalSubmeshBounds.h"
 #include "Container/FixedArray.h"
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
 #include "Resource/SkeletalGltfDecode.h"
@@ -2146,23 +2149,24 @@ namespace NorvesLib::Tools::AssetCook
                                   SkeletalStringReference& outReference,
                                   AnsiString& error)
         {
-            if (value.size() > UINT32_MAX || stringTable.size() > UINT32_MAX - value.size())
+            using Char = String::value_type;
+            const auto measured = Core::Asset::MeasureSkeletalNameEncoding<Char>(2, {value.data(), value.size()});
+            if (!measured.Succeeded() || stringTable.size() > UINT32_MAX - measured.ByteCount)
             {
-                error = "skeletal string table exceeds the NVSKEL v0 32-bit limit";
+                error = "骨格名のUTF-8変換または32bit文字列表上限の検査に失敗しました";
                 return false;
             }
-            outReference.Offset = stringTable.size();
-            outReference.Length = static_cast<uint32_t>(value.size());
-            for (const auto character : value)
+            const size_t offset = stringTable.size();
+            stringTable.resize(offset + measured.ByteCount);
+            uint8_t* destination = measured.ByteCount == 0 ? nullptr : stringTable.data() + offset;
+            if (!Core::Asset::EncodeSkeletalWireName<Char>(2, {value.data(), value.size()},
+                    {destination, measured.ByteCount}).Succeeded())
             {
-                const uint32_t codePoint = static_cast<uint32_t>(character);
-                if (codePoint < 0x20u || codePoint > 0x7eu)
-                {
-                    error = "NVSKEL v0 names must contain printable ASCII only";
-                    return false;
-                }
-                stringTable.push_back(static_cast<uint8_t>(codePoint));
+                stringTable.resize(offset);
+                error = "骨格名をUTF-8へ変換できません";
+                return false;
             }
+            outReference = {offset, static_cast<uint32_t>(measured.ByteCount)};
             return true;
         }
 
@@ -2172,31 +2176,58 @@ namespace NorvesLib::Tools::AssetCook
         {
             namespace SkeletalFormat = NorvesLib::Core::Asset::CookedSkeletalFormatV0;
             namespace SkeletalHeader = SkeletalFormat::HeaderOffset;
-            if (!skeletal.SubMeshes.empty() || !skeletal.MaterialSlots.empty())
+            namespace V02 = Core::Asset::CookedSkeletalFormatV02;
+            const auto layout = Core::Skeletal::ResolveSkeletalSubmeshLayout(
+                {skeletal.SubMeshes.data(), skeletal.SubMeshes.size()}, skeletal.Indices.size(), skeletal.MaterialSlots.size());
+            if (!layout.Succeeded())
             {
-                error = "複数primitiveの表を保存するNVSKEL0.2 writerは未接続です";
+                error = "骨格submesh/材質slotの所有範囲が不正です";
                 return false;
             }
+            VariableArray<Core::Skeletal::SkeletalSubMesh> submeshes = skeletal.SubMeshes;
+            VariableArray<Core::Skeletal::SkeletalMaterialSlot> slots = skeletal.MaterialSlots;
+            if (layout.bUsesImplicitSingleSubmesh)
+            {
+                submeshes.push_back(layout.ImplicitSubmesh);
+                Core::Skeletal::SkeletalMaterialSlot slot;
+                slot.Name = "Default";
+                slots.push_back(std::move(slot));
+            }
             if (skeletal.Vertices.empty() || skeletal.Indices.empty() || skeletal.Joints.empty() ||
-                skeletal.Clips.size() != 1 || skeletal.Joints.size() > Core::Skeletal::LegacyMaximumJointCount ||
+                (skeletal.Clips.empty() || skeletal.Clips.size() > UINT32_MAX) || skeletal.Joints.size() > Core::Skeletal::LegacyMaximumJointCount ||
                 skeletal.Vertices.size() > UINT32_MAX || skeletal.Indices.size() > UINT32_MAX)
             {
                 error = "skeletal data exceeds the NVSKEL v0 count contract";
                 return false;
             }
 
+            // 最終scale済み頂点から保存boundsを計算する。
+            for (auto& submesh : submeshes)
+            {
+                if (!Core::Skeletal::ComputeSkeletalSubmeshBounds(
+                        {skeletal.Indices.data() + submesh.IndexStart, submesh.IndexCount}, skeletal.Vertices.size(),
+                        [&skeletal](uint32_t index)
+                        {
+                            return skeletal.Vertices[index].Position;
+                        }, submesh))
+                {
+                    error = "骨格submeshのindex/座標/boundsが不正です";
+                    return false;
+                }
+            }
+
             size_t channelCount = 0;
             size_t sampleCount = 0;
             for (const NorvesLib::Core::Skeletal::SkeletalAnimationClip& clip : skeletal.Clips)
             {
-                if (!CheckedAdd(channelCount, clip.Channels.size(), channelCount))
+                if (clip.Channels.empty() || !CheckedAdd(channelCount, clip.Channels.size(), channelCount))
                 {
                     error = "skeletal channel count overflow";
                     return false;
                 }
                 for (const NorvesLib::Core::Skeletal::SkeletalAnimationChannel& channel : clip.Channels)
                 {
-                    if (!CheckedAdd(sampleCount, channel.Samples.size(), sampleCount))
+                    if (channel.Samples.empty() || !CheckedAdd(sampleCount, channel.Samples.size(), sampleCount))
                     {
                         error = "skeletal sample count overflow";
                         return false;
@@ -2227,6 +2258,15 @@ namespace NorvesLib::Tools::AssetCook
                 }
             }
 
+            VariableArray<SkeletalStringReference> slotNames(slots.size());
+            for (size_t slotIndex = 0; slotIndex < slots.size(); ++slotIndex)
+            {
+                if (!AppendSkeletalString(slots[slotIndex].Name, stringTable, slotNames[slotIndex], error))
+                {
+                    return false;
+                }
+            }
+
             size_t vertexSize = 0;
             size_t indexSize = 0;
             size_t jointSize = 0;
@@ -2244,13 +2284,17 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            const size_t vertexOffset = SkeletalFormat::HeaderSize;
+            const size_t submeshSize = submeshes.size() * V02::SubmeshRecordSize;
+            const size_t slotSize = slots.size() * V02::MaterialSlotRecordSize;
+            const size_t vertexOffset = V02::HeaderSize;
             size_t sectionEnd = 0;
             size_t indexOffset = 0;
             size_t jointOffset = 0;
             size_t clipOffset = 0;
             size_t channelOffset = 0;
             size_t sampleOffset = 0;
+            size_t submeshOffset = 0;
+            size_t slotOffset = 0;
             size_t stringOffset = 0;
             size_t fileSize = 0;
             if (!CheckedAdd(vertexOffset, vertexSize, sectionEnd) ||
@@ -2264,7 +2308,9 @@ namespace NorvesLib::Tools::AssetCook
                 !CheckedAdd(channelOffset, channelSize, sectionEnd) ||
                 !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, sampleOffset) ||
                 !CheckedAdd(sampleOffset, sampleSize, sectionEnd) ||
-                !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, stringOffset) ||
+                !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, submeshOffset) ||
+                !CheckedAdd(submeshOffset, submeshSize, slotOffset) ||
+                !CheckedAdd(slotOffset, slotSize, stringOffset) ||
                 !CheckedAdd(stringOffset, stringTable.size(), fileSize))
             {
                 error = "skeletal section offset overflow";
@@ -2273,9 +2319,9 @@ namespace NorvesLib::Tools::AssetCook
 
             outBytes.assign(fileSize, 0);
             std::memcpy(outBytes.data() + SkeletalHeader::Magic, SkeletalFormat::Magic, SkeletalFormat::MagicSize);
-            WriteLe32(outBytes, SkeletalHeader::HeaderSize, static_cast<uint32_t>(SkeletalFormat::HeaderSize));
+            WriteLe32(outBytes, SkeletalHeader::HeaderSize, static_cast<uint32_t>(V02::HeaderSize));
             WriteLe16(outBytes, SkeletalHeader::VersionMajor, SkeletalFormat::VersionMajor);
-            WriteLe16(outBytes, SkeletalHeader::VersionMinor, SkeletalFormat::VersionMinor);
+            WriteLe16(outBytes, SkeletalHeader::VersionMinor, V02::VersionMinor);
             WriteLe32(outBytes, SkeletalHeader::EndianMarker, SkeletalFormat::EndianMarker);
             WriteLe32(outBytes, SkeletalHeader::VertexRecordSize,
                       static_cast<uint32_t>(SkeletalFormat::VertexRecordSize));
@@ -2308,6 +2354,14 @@ namespace NorvesLib::Tools::AssetCook
             WriteLe32(outBytes, SkeletalHeader::ClipCount, static_cast<uint32_t>(skeletal.Clips.size()));
             WriteLe32(outBytes, SkeletalHeader::ChannelCount, static_cast<uint32_t>(channelCount));
             WriteLe32(outBytes, SkeletalHeader::SampleCount, static_cast<uint32_t>(sampleCount));
+            WriteLe32(outBytes, V02::HeaderOffset::SubmeshRecordSize, V02::SubmeshRecordSize);
+            WriteLe32(outBytes, V02::HeaderOffset::MaterialSlotRecordSize, V02::MaterialSlotRecordSize);
+            WriteLe64(outBytes, V02::HeaderOffset::SubmeshOffset, submeshOffset);
+            WriteLe64(outBytes, V02::HeaderOffset::SubmeshSize, submeshSize);
+            WriteLe64(outBytes, V02::HeaderOffset::MaterialSlotOffset, slotOffset);
+            WriteLe64(outBytes, V02::HeaderOffset::MaterialSlotSize, slotSize);
+            WriteLe32(outBytes, V02::HeaderOffset::SubmeshCount, static_cast<uint32_t>(submeshes.size()));
+            WriteLe32(outBytes, V02::HeaderOffset::MaterialSlotCount, static_cast<uint32_t>(slots.size()));
             for (size_t element = 0; element < 16; ++element)
             {
                 WriteFloat32(outBytes,
@@ -2402,10 +2456,31 @@ namespace NorvesLib::Tools::AssetCook
                 std::memcpy(outBytes.data() + stringOffset, stringTable.data(), stringTable.size());
             }
 
-            const uint64_t payloadHash = NorvesLib::Core::Asset::ComputeCookedSkeletalV01Hash(
+            for (size_t index = 0; index < submeshes.size(); ++index)
+            {
+                const auto& submesh = submeshes[index];
+                const size_t record = submeshOffset + index * V02::SubmeshRecordSize;
+                WriteLe32(outBytes, record, submesh.IndexStart);
+                WriteLe32(outBytes, record + 4, submesh.IndexCount);
+                WriteLe32(outBytes, record + 12, submesh.VertexCount);
+                WriteLe32(outBytes, record + 16, submesh.MaterialSlot);
+                WriteLe32(outBytes, record + 20, submesh.bNoShadow ? V02::SubmeshFlagNoShadow : 0);
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    WriteFloat32(outBytes, record + 24 + axis * 4, submesh.BoundsCenter[axis]);
+                }
+                WriteFloat32(outBytes, record + 36, submesh.BoundsRadius);
+            }
+            for (size_t index = 0; index < slots.size(); ++index)
+            {
+                const size_t record = slotOffset + index * V02::MaterialSlotRecordSize;
+                WriteLe64(outBytes, record, slotNames[index].Offset);
+                WriteLe32(outBytes, record + 8, slotNames[index].Length);
+            }
+            const uint64_t payloadHash = NorvesLib::Core::Asset::ComputeCookedSkeletalV02Hash(
                 outBytes.data() + SkeletalHeader::MeshNodeGlobalTransform,
-                outBytes.data() + SkeletalFormat::HeaderSize,
-                outBytes.size() - SkeletalFormat::HeaderSize);
+                outBytes.data() + 256, outBytes.data() + V02::HeaderSize,
+                outBytes.size() - V02::HeaderSize);
             WriteLe64(outBytes, SkeletalHeader::PayloadHash, payloadHash);
             return true;
         }
@@ -2504,6 +2579,53 @@ namespace NorvesLib::Tools::AssetCook
                 error = AnsiString("generated NVSKEL failed self-validation: status=") +
                         FormatInteger(static_cast<int>(parsed.Status));
                 return false;
+            }
+
+            // 新しい表とUTF名を再parse後に照合し、形式が妥当でも情報が消えた出力を拒否する。
+            const auto& roundtrip = parsed.Data.Skeletal;
+            if (parsed.Data.VersionMinor != Core::Asset::CookedSkeletalFormatV02::VersionMinor ||
+                roundtrip.SubMeshes.size() != decoded.Data.SubMeshes.size() ||
+                roundtrip.MaterialSlots.size() != decoded.Data.MaterialSlots.size() ||
+                roundtrip.Clips.size() != decoded.Data.Clips.size() || roundtrip.Joints.size() != decoded.Data.Joints.size())
+            {
+                error = "NVSKEL0.2の表数量が再読込後に一致しません";
+                return false;
+            }
+            for (size_t index = 0; index < decoded.Data.SubMeshes.size(); ++index)
+            {
+                const auto& expected = decoded.Data.SubMeshes[index];
+                const auto& actual = roundtrip.SubMeshes[index];
+                if (expected.IndexStart != actual.IndexStart || expected.IndexCount != actual.IndexCount ||
+                    expected.MaterialSlot != actual.MaterialSlot || expected.bNoShadow != actual.bNoShadow ||
+                    expected.VertexCount != actual.VertexCount)
+                {
+                    error = "NVSKEL0.2のsubmesh情報が再読込後に一致しません";
+                    return false;
+                }
+            }
+            for (size_t index = 0; index < decoded.Data.MaterialSlots.size(); ++index)
+            {
+                if (decoded.Data.MaterialSlots[index].Name != roundtrip.MaterialSlots[index].Name)
+                {
+                    error = "NVSKEL0.2の材質名が再読込後に一致しません";
+                    return false;
+                }
+            }
+            for (size_t index = 0; index < decoded.Data.Clips.size(); ++index)
+            {
+                if (decoded.Data.Clips[index].Name != roundtrip.Clips[index].Name)
+                {
+                    error = "NVSKEL0.2のclip名が再読込後に一致しません";
+                    return false;
+                }
+            }
+            for (size_t index = 0; index < decoded.Data.Joints.size(); ++index)
+            {
+                if (decoded.Data.Joints[index].Name != roundtrip.Joints[index].Name)
+                {
+                    error = "NVSKEL0.2の関節名が再読込後に一致しません";
+                    return false;
+                }
             }
 
             const auto sourceHash = AssetImport::AppendImportSettingsHash(

@@ -87,7 +87,8 @@ namespace NorvesLib::Tools::AssetCook
             }
             if (entryType==CookedSkeletalFormatV0::EntryType)
             {
-                return ParseCookedSkeletal(payload).Succeeded();
+                const auto skeletal = ParseCookedSkeletal(payload);
+                return skeletal.Succeeded() && skeletal.Data.VersionMinor == CookedSkeletalFormatV02::VersionMinor;
             }
             const auto texture=ParseCookedTexture(payload);
             if (!texture.Succeeded())

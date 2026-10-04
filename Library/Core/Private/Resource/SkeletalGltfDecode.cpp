@@ -1008,8 +1008,8 @@ namespace NorvesLib::Core::Skeletal
                     return false;
                 }
             }
-            // 0.2 writer接続前の中間段階では、単一primitiveの従来の空表/バイト互換を維持する。
-            if (outPrimitives.size() > 1 && !AssignMaterialSlots(root, primitives, outPrimitives, outSlots))
+            // 単一primitiveもsource材質名を保持し、0.2の明示表へ保存する。
+            if (!AssignMaterialSlots(root, primitives, outPrimitives, outSlots))
             {
                 status = SkeletalGltfDecodeStatus::InvalidSubMesh;
                 return false;
@@ -2194,10 +2194,7 @@ namespace NorvesLib::Core::Skeletal
                     failure.Report = report;
                     return failure;
                 }
-                if (primitives.size() > 1)
-                {
-                    data.SubMeshes.push_back({static_cast<uint32_t>(baseIndex), static_cast<uint32_t>(data.Indices.size() - baseIndex), primitive.MaterialSlot});
-                }
+                data.SubMeshes.push_back({static_cast<uint32_t>(baseIndex), static_cast<uint32_t>(data.Indices.size() - baseIndex), primitive.MaterialSlot});
             }
             if (!ResolveSkeletalSubmeshLayout({data.SubMeshes.data(), data.SubMeshes.size()}, data.Indices.size(), data.MaterialSlots.size()).Succeeded())
             {

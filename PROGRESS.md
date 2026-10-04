@@ -604,3 +604,6 @@
 
 - G2-GR32-V02-READER: 旧0.0/0.1を維持して統一0.2の320B/表/UTF-8・予約byte・packed padding/hashを接続。submeshのVertexCount/NoShadow/boundsを保持し絶対index範囲を検査。clipごとにjoint/path重複とdurationを検査し、channel/sampleを表順一意所有、失敗Dataは非公開。未接続M9は新表/複数clipを明示拒否。pure wire/record・layout各3modeと実MEMBER成功、独立レビューPASS。手書き2clip/2submesh/UTF8と破損回帰をnative登録、独立Pythonは配置/名前/所有/時刻だけ照合。native/Core全体はWindows.hで未検証。UTF8は長さだけでなく再encodeした7byte一致も試験する。
 - Next: GR32-V02-WRITER。統一0.2生成・旧空表具体化・再parse照合とcurrent writer minorによるcache移行を接続する。Resource/描画の実使用は引き続き別工程。
+
+- G2-GR32-V02-WRITER: 1primitiveもslot名を保持し、統一0.2/320B/表/UTF-8/new hashを生成、再parseで表と名前を照合。旧空表は全index/Default slotへ具体化、静止頂点boundsは最終scale後に計算。cacheはminor2必須として旧0/1はload互換のみ。第1周で共通JSONのsurrogate未結合を発見し、pure escape/scalar部品で結合・不正拒否・4byte UTF-8を修正、第2周PASS。pure bounds/layout・JSON各3mode計6runと実MEMBER2件、wire/name回帰成功。全scalarのUTF8黄金hash、cache fixture JSON/配置も独立確認。raw/GLB→cook/parse・単一slot/Unicode名・旧cachemiss/新hit・出力保持はnative登録、Windows.hで本体/CLI未実行。M9新表guardはResource/描画接続まで維持。
+- Next: GR32-RESOURCE-TABLES → COMPONENT-SLOTS → DRAW-RANGES。CPU契約と描画実装の接続を進め、Windows/GPU受入れはblockedの別gateに保持する。

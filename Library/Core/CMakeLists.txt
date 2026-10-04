@@ -45,6 +45,7 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
     Private/Text/JsonDocument.cpp
+    Private/Text/JsonUnicodeScalar.h
     Private/Text/Base64.h
     Private/Text/Base64.cpp
     Private/Text/JsonWriter.cpp
@@ -180,6 +181,7 @@ set(PRIVATE_SOURCES
     Private/Resource/SkeletalImportPolicy.h
     Private/Resource/SkeletalImportPolicy.cpp
     Private/Resource/SkeletalSubmeshLayout.h
+    Private/Resource/SkeletalSubmeshBounds.h
     Private/Resource/SkeletalSubmeshLayout.cpp
     Private/Resource/SkeletalCubicBounds.h
     Private/Resource/SkeletalCubicBounds.cpp

@@ -309,4 +309,4 @@ morph検査後のTRS失敗の数量保持も補強する。Windows.h/CMake/Power
 GR32のNprimitive decode接続以降、morph_scanへmesh_target_widthを追加する。
 dropped_targetsは対象を持つ全primitiveのtarget配列数の合計であり、mesh_target_widthとは異なる。
 初期mesh/node weightsとweight channelは共通幅で検査する。総数は幅の1〜8倍（幅0なら総数0）。
-現段階はraw decodeのみ複数primitiveを受理し、旧0.1 writerはその表を落とさず失敗する。
+raw decode/cook/parseが複数primitiveの表を保持する。writerは統一0.2、旧0.0/0.1は読込互換のみ維持する。Resource/描画接続は未完。

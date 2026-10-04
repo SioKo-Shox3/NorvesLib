@@ -140,5 +140,5 @@ Windows.hに依存するためこのLinux環境では登録・静的照合に留
 
 旧0.0/0.1を維持して320B/表/UTF-8とclip別所有検査を接続する。
 submeshのflags/bounds/任意VertexCountを所有型へ残し、未接続M9経路は表付き資産を明示拒否する。
-writerはまだ0.1で新表を拒否し、cacheのcurrent writer minor判定もwriter切替時に追加する。
+writerは統一0.2へ切替え、単一primitiveのslot名も保存する。cacheはminor2を要求し、旧版は通常loadのみ維持する。
 readerのnative回帰は登録済みだがWindows/Core全体の実行は未検証。描画受入れも未完。

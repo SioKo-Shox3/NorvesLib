@@ -1,4 +1,6 @@
 ﻿#include "Resource/SkeletalSubmeshLayout.h"
+#include "Resource/SkeletalSubmeshBounds.h"
+#include <cmath>
 #include "Resource/SkeletalLimits.h"
 #ifdef NDEBUG
 #undef NDEBUG
@@ -90,6 +92,33 @@ int main()
     assert(ResolveSkeletalSubmeshLayout(maximum, UINT32_MAX, 1).Succeeded());
     const SkeletalSubMesh overflow[] = {{0,3,0},{3,UINT32_MAX,0}};
     AssertFailure(ResolveSkeletalSubmeshLayout(overflow, UINT32_MAX, 1), Status::InvalidIndexRange);
+    struct Point { float X, Y, Z; };
+    Point positions[] = {{-1,0,0}, {3,2,0}, {0,1,0}};
+    uint32_t ids[] = {0,1,2};
+    SkeletalSubMesh bounds{7,3,2};
+    bounds.bNoShadow = true;
+    const auto read = [&positions](uint32_t index)
+    {
+        return positions[index];
+    };
+    assert(ComputeSkeletalSubmeshBounds(ids,3,read,bounds));
+    assert(bounds.BoundsCenter[0] == 1 && bounds.BoundsCenter[1] == 1 && bounds.BoundsCenter[2] == 0);
+    assert(double(bounds.BoundsRadius) >= std::sqrt(5.0) && bounds.IndexStart == 7 && bounds.MaterialSlot == 2 && bounds.bNoShadow);
+    const float retainedRadius = bounds.BoundsRadius;
+    ids[2] = 3;
+    assert(!ComputeSkeletalSubmeshBounds(ids,3,read,bounds) && bounds.BoundsRadius == retainedRadius);
+    ids[2] = 2;
+    positions[2].X = std::numeric_limits<float>::quiet_NaN();
+    assert(!ComputeSkeletalSubmeshBounds(ids,3,read,bounds) && bounds.BoundsRadius == retainedRadius);
+    positions[2] = {0,0,0};
+    positions[0] = {-std::numeric_limits<float>::max(),-std::numeric_limits<float>::max(),0};
+    positions[1] = {std::numeric_limits<float>::max(),std::numeric_limits<float>::max(),0};
+    assert(!ComputeSkeletalSubmeshBounds(ids,3,read,bounds) && bounds.BoundsRadius == retainedRadius);
+    positions[0] = positions[1] = positions[2] = {2,3,4};
+    assert(ComputeSkeletalSubmeshBounds(ids,3,read,bounds) && bounds.BoundsRadius == 0 && bounds.BoundsCenter[2] == 4);
+    assert(!ComputeSkeletalSubmeshBounds({},3,read,bounds));
+    assert(!ComputeSkeletalSubmeshBounds({nullptr,3},3,read,bounds));
+    assert(!ComputeSkeletalSubmeshBounds(ids,0,read,bounds));
     std::cout << "SkeletalSubmeshLayoutTest PASS: packed_ranges_slots_legacy_empty_limits_atomic_readonly\n";
     return 0;
 }

@@ -127,7 +127,7 @@ namespace NorvesLib::Core::Asset
     }
 
     // 0.2はGR32の表とGR82 Stage Aの複数clipを同じwireへ載せる。
-    // 現writerのCookedSkeletalFormatV0::VersionMinorは接続時まで1のまま。
+    // CookedSkeletalFormatV0は旧0.1定義として固定。現writer/cacheはV02::VersionMinorを使う。
     namespace CookedSkeletalFormatV02
     {
         inline constexpr uint16_t VersionMajor = 0;

@@ -1,4 +1,5 @@
 ﻿#include "Text/JsonDocument.h"
+#include "Text/JsonUnicodeScalar.h"
 #include <charconv>
 
 #include <cctype>
@@ -335,7 +336,7 @@ namespace NorvesLib::Core
                     {
                         return false;
                     }
-                    AppendUtf8(outString, codePoint);
+                    AppendUnicodeScalar(outString, codePoint);
                     break;
                 }
                 default:
@@ -348,54 +349,23 @@ namespace NorvesLib::Core
 
         bool ParseUnicodeEscape(uint32_t& outCodePoint)
         {
-            outCodePoint = 0;
-
-            for (int index = 0; index < 4; ++index)
+            TextDetail::JsonUnicodeEscape decoded;
+            if (!TextDetail::DecodeJsonUnicodeEscape<Container::String::value_type>(
+                    {m_Text.data() + m_Position, m_Text.size() - m_Position}, decoded))
             {
-                if (IsAtEnd())
-                {
-                    return SetError("Incomplete unicode escape");
-                }
-
-                char ch = Advance();
-                outCodePoint <<= 4;
-                if (ch >= '0' && ch <= '9')
-                {
-                    outCodePoint |= static_cast<uint32_t>(ch - '0');
-                }
-                else if (ch >= 'a' && ch <= 'f')
-                {
-                    outCodePoint |= static_cast<uint32_t>(10 + ch - 'a');
-                }
-                else if (ch >= 'A' && ch <= 'F')
-                {
-                    outCodePoint |= static_cast<uint32_t>(10 + ch - 'A');
-                }
-                else
-                {
-                    return SetError("Invalid unicode escape");
-                }
+                return SetError("不正または不完全なUnicodeエスケープです");
             }
-
+            m_Position += decoded.Consumed;
+            outCodePoint = decoded.Scalar;
             return true;
         }
 
-        void AppendUtf8(Container::String& outString, uint32_t codePoint) const
+        void AppendUnicodeScalar(Container::String& outString, uint32_t codePoint) const
         {
-            if (codePoint <= 0x7F)
+            const auto encoded = TextDetail::EncodeJsonUnicodeScalar<Container::String::value_type>(codePoint);
+            for (size_t index = 0; index < encoded.Count; ++index)
             {
-                outString.push_back(static_cast<char>(codePoint));
-            }
-            else if (codePoint <= 0x7FF)
-            {
-                outString.push_back(static_cast<char>(0xC0 | ((codePoint >> 6) & 0x1F)));
-                outString.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
-            }
-            else
-            {
-                outString.push_back(static_cast<char>(0xE0 | ((codePoint >> 12) & 0x0F)));
-                outString.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
-                outString.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+                outString.push_back(encoded.Units[index]);
             }
         }
 
