@@ -13,12 +13,15 @@
 #include <chrono>
 #include <cmath>
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <utility>
 #include <vector>
 #if defined(_MSC_VER)
 #include <crtdbg.h>
@@ -205,7 +208,7 @@ namespace
 
     void AssertGPUClusterLayout()
     {
-        assert(sizeof(MegaGeometry::GPUClusterData) == 64);
+        assert(sizeof(MegaGeometry::GPUClusterData) == 96);
         assert(offsetof(MegaGeometry::GPUClusterData, BoundsCenterX) == 0);
         assert(offsetof(MegaGeometry::GPUClusterData, ConeAxisX) == 16);
         assert(offsetof(MegaGeometry::GPUClusterData, IndexOffset) == 32);
@@ -213,6 +216,11 @@ namespace
         assert(offsetof(MegaGeometry::GPUClusterData, LODError) == 52);
         assert(offsetof(MegaGeometry::GPUClusterData, ParentStart) == 56);
         assert(offsetof(MegaGeometry::GPUClusterData, ParentCount) == 60);
+        assert(offsetof(MegaGeometry::GPUClusterData, ParentCenterX) == 64);
+        assert(offsetof(MegaGeometry::GPUClusterData, Flags) == 80);
+        assert(offsetof(MegaGeometry::GPUClusterData, ParentError) == 84);
+        assert(offsetof(MegaGeometry::GPUClusterData, GroupId) == 88);
+        assert(offsetof(MegaGeometry::GPUClusterData, PageId) == 92);
     }
 
     void AssertNoLodUploadBuffers(const FakeDevice &device)
@@ -244,6 +252,8 @@ namespace
         assert(uploadedCluster.LODError == 0.125f);
         assert(uploadedCluster.ParentStart == 7);
         assert(uploadedCluster.ParentCount == 3);
+        // 焼き込み済みの階層ではない（従来の段の選び方）
+        assert(uploadedCluster.Flags == 0u);
     }
 
     BufferCreateInfo MakeCounterBufferInfo()
@@ -728,6 +738,527 @@ namespace
         assert(Mega::SelectShadowLODLevel(*gpuData, 2.0f, texel, 1.0f) < settings.LODLevelCount - 1u);
     }
 
+    // ----------------------------------------
+    // 焼き込み済みの階層（NVMESH v1）の段の選び方
+    // ----------------------------------------
+
+    // 立方体の合成の階層。各面は8x8の格子で、段0は面ごとに4クラスタ（4x4格子）、段1は面ごとに1クラスタ
+    // （縁の32頂点から中心への扇。縁は段0と同じ辺）、段2（根）は立方体の12三角形。グループは面ごとに4つ（段0→1）と、
+    // 6面を1つにまとめるもの（段1→2）。縁の頂点を残して簡略化してあるので、面ごとに違う段を混ぜても閉じたメッシュになる。
+    struct BakedCubeDag
+    {
+        static constexpr uint32_t GridCells = 8;
+        static constexpr float FaceError = 0.05f;
+        static constexpr float RootGroupError = 0.2f;
+
+        std::vector<Mesh3DVertex> Vertices;
+        std::vector<uint32_t> Indices;
+        MegaGeometry::MegaMeshCreateInfo CreateInfo;
+    };
+
+    // 球の中心の平均と、全ての球を包む半径（丸めで包めなくならないよう、わずかに広げる）
+    BoundingSphere EncloseSpheresForTest(const BoundingSphere *spheres, size_t count)
+    {
+        double center[3] = {};
+        for (size_t i = 0; i < count; ++i)
+        {
+            center[0] += spheres[i].CenterX;
+            center[1] += spheres[i].CenterY;
+            center[2] += spheres[i].CenterZ;
+        }
+        for (double &value : center)
+        {
+            value /= static_cast<double>(count);
+        }
+        double radius = 0.0;
+        for (size_t i = 0; i < count; ++i)
+        {
+            const double dx = spheres[i].CenterX - center[0];
+            const double dy = spheres[i].CenterY - center[1];
+            const double dz = spheres[i].CenterZ - center[2];
+            radius = std::max(radius, std::sqrt(dx * dx + dy * dy + dz * dz) + spheres[i].Radius);
+        }
+        BoundingSphere sphere;
+        sphere.CenterX = static_cast<float>(center[0]);
+        sphere.CenterY = static_cast<float>(center[1]);
+        sphere.CenterZ = static_cast<float>(center[2]);
+        sphere.Radius = static_cast<float>(radius) * 1.0001f + 1.0e-5f;
+        return sphere;
+    }
+
+    // 頂点の外接のボックスの中心を中心にした、全頂点を包む球
+    BoundingSphere SphereOfVerticesForTest(const std::vector<Mesh3DVertex> &vertices)
+    {
+        double lo[3] = {1e30, 1e30, 1e30};
+        double hi[3] = {-1e30, -1e30, -1e30};
+        for (const Mesh3DVertex &vertex : vertices)
+        {
+            for (int a = 0; a < 3; ++a)
+            {
+                lo[a] = std::min<double>(lo[a], vertex.Position[a]);
+                hi[a] = std::max<double>(hi[a], vertex.Position[a]);
+            }
+        }
+        const double center[3] = {(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5, (lo[2] + hi[2]) * 0.5};
+        double radius = 0.0;
+        for (const Mesh3DVertex &vertex : vertices)
+        {
+            const double dx = vertex.Position[0] - center[0];
+            const double dy = vertex.Position[1] - center[1];
+            const double dz = vertex.Position[2] - center[2];
+            radius = std::max(radius, std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        BoundingSphere sphere;
+        sphere.CenterX = static_cast<float>(center[0]);
+        sphere.CenterY = static_cast<float>(center[1]);
+        sphere.CenterZ = static_cast<float>(center[2]);
+        sphere.Radius = static_cast<float>(radius) * 1.0001f + 1.0e-5f;
+        return sphere;
+    }
+
+    void BuildBakedCubeDag(BakedCubeDag &dag)
+    {
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+        constexpr uint32_t N = BakedCubeDag::GridCells;
+        constexpr uint32_t faceCount = 6;
+
+        struct ClusterBuild
+        {
+            std::vector<Mesh3DVertex> Vertices;
+            std::vector<uint32_t> Indices; // 自分の頂点の範囲の先頭からの相対
+        };
+        std::vector<ClusterBuild> builds; // 段0（24）→ 段1（6）→ 根（1）の順
+
+        // 面 face の格子点 (i, j)（0..N）。i・j が増える向きの外積が外向きになる（負の面は u を反転する）
+        const auto facePoint = [&](uint32_t face, uint32_t i, uint32_t j) -> Mesh3DVertex
+        {
+            const uint32_t axis = face / 2;
+            const float sign = (face % 2 == 0) ? 1.0f : -1.0f;
+            const uint32_t uAxis = (axis + 1) % 3;
+            const uint32_t vAxis = (axis + 2) % 3;
+            Mesh3DVertex vertex{};
+            vertex.Position[axis] = sign;
+            vertex.Position[uAxis] = sign * (2.0f * static_cast<float>(i) / N - 1.0f);
+            vertex.Position[vAxis] = 2.0f * static_cast<float>(j) / N - 1.0f;
+            vertex.Normal[axis] = sign;
+            return vertex;
+        };
+
+        // 段0: 面ごとに4クラスタ（4x4の格子を象限ごとに）
+        std::vector<BoundingSphere> level0Spheres;
+        for (uint32_t face = 0; face < faceCount; ++face)
+        {
+            for (uint32_t quadrant = 0; quadrant < 4; ++quadrant)
+            {
+                const uint32_t qi = (quadrant % 2) * (N / 2);
+                const uint32_t qj = (quadrant / 2) * (N / 2);
+                const uint32_t side = N / 2 + 1;
+                ClusterBuild build;
+                for (uint32_t j = 0; j < side; ++j)
+                {
+                    for (uint32_t i = 0; i < side; ++i)
+                    {
+                        build.Vertices.push_back(facePoint(face, qi + i, qj + j));
+                    }
+                }
+                for (uint32_t j = 0; j < N / 2; ++j)
+                {
+                    for (uint32_t i = 0; i < N / 2; ++i)
+                    {
+                        const uint32_t p00 = j * side + i;
+                        const uint32_t p10 = p00 + 1;
+                        const uint32_t p01 = p00 + side;
+                        const uint32_t p11 = p01 + 1;
+                        build.Indices.insert(build.Indices.end(), {p00, p10, p11, p00, p11, p01});
+                    }
+                }
+                level0Spheres.push_back(SphereOfVerticesForTest(build.Vertices));
+                builds.push_back(std::move(build));
+            }
+        }
+
+        // 段1: 面ごとに、縁の 4N 頂点から中心の頂点への扇（縁の辺は段0と同じ）
+        std::vector<BoundingSphere> faceGroupSpheres;
+        for (uint32_t face = 0; face < faceCount; ++face)
+        {
+            faceGroupSpheres.push_back(EncloseSpheresForTest(&level0Spheres[face * 4], 4));
+            std::vector<std::pair<uint32_t, uint32_t>> ring;
+            for (uint32_t i = 0; i < N; ++i)
+            {
+                ring.emplace_back(i, 0);
+            }
+            for (uint32_t j = 0; j < N; ++j)
+            {
+                ring.emplace_back(N, j);
+            }
+            for (uint32_t i = N; i > 0; --i)
+            {
+                ring.emplace_back(i, N);
+            }
+            for (uint32_t j = N; j > 0; --j)
+            {
+                ring.emplace_back(0, j);
+            }
+            ClusterBuild build;
+            for (const auto &point : ring)
+            {
+                build.Vertices.push_back(facePoint(face, point.first, point.second));
+            }
+            build.Vertices.push_back(facePoint(face, N / 2, N / 2));
+            const uint32_t centerIndex = static_cast<uint32_t>(ring.size());
+            for (uint32_t k = 0; k < ring.size(); ++k)
+            {
+                const uint32_t next = static_cast<uint32_t>((k + 1) % ring.size());
+                build.Indices.insert(build.Indices.end(), {centerIndex, k, next});
+            }
+            builds.push_back(std::move(build));
+        }
+        const BoundingSphere rootGroupSphere = EncloseSpheresForTest(faceGroupSpheres.data(), faceGroupSpheres.size());
+
+        // 根: 立方体の12三角形（面ごとに角の4点）
+        {
+            ClusterBuild build;
+            for (uint32_t face = 0; face < faceCount; ++face)
+            {
+                const uint32_t base = static_cast<uint32_t>(build.Vertices.size());
+                build.Vertices.push_back(facePoint(face, 0, 0));
+                build.Vertices.push_back(facePoint(face, N, 0));
+                build.Vertices.push_back(facePoint(face, N, N));
+                build.Vertices.push_back(facePoint(face, 0, N));
+                build.Indices.insert(build.Indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+            }
+            builds.push_back(std::move(build));
+        }
+
+        // クラスタの記録と、全段を1組にしたバッファ
+        MegaGeometry::MegaMeshCreateInfo &createInfo = dag.CreateInfo;
+        uint32_t vertexOffset = 0;
+        uint32_t indexOffset = 0;
+        for (size_t clusterIndex = 0; clusterIndex < builds.size(); ++clusterIndex)
+        {
+            const ClusterBuild &build = builds[clusterIndex];
+            Mega::MeshCluster cluster;
+            cluster.IndexOffset = indexOffset;
+            cluster.IndexCount = static_cast<uint32_t>(build.Indices.size());
+            cluster.VertexOffset = static_cast<int32_t>(vertexOffset);
+            cluster.VertexCount = static_cast<uint32_t>(build.Vertices.size());
+            cluster.ConeCutoff = -1.0f;
+            if (clusterIndex < faceCount * 4)
+            {
+                const uint32_t face = static_cast<uint32_t>(clusterIndex) / 4;
+                cluster.Bounds = level0Spheres[clusterIndex];
+                cluster.LODLevel = 0;
+                cluster.LODError = 0.0f;
+                cluster.ParentBounds = faceGroupSpheres[face];
+                cluster.ParentError = BakedCubeDag::FaceError;
+                cluster.GroupId = face;
+            }
+            else if (clusterIndex < faceCount * 5)
+            {
+                // 段1のクラスタは、自分を作ったグループ（面）の球と誤差を自分の値として持つ
+                const uint32_t face = static_cast<uint32_t>(clusterIndex) - faceCount * 4;
+                cluster.Bounds = faceGroupSpheres[face];
+                cluster.LODLevel = 1;
+                cluster.LODError = BakedCubeDag::FaceError;
+                cluster.ParentBounds = rootGroupSphere;
+                cluster.ParentError = BakedCubeDag::RootGroupError;
+                cluster.GroupId = faceCount;
+            }
+            else
+            {
+                // 根: 親のグループが無い（GroupId・ParentError は既定のまま）
+                cluster.Bounds = rootGroupSphere;
+                cluster.LODLevel = 2;
+                cluster.LODError = BakedCubeDag::RootGroupError;
+            }
+            createInfo.Clusters.push_back(cluster);
+            dag.Vertices.insert(dag.Vertices.end(), build.Vertices.begin(), build.Vertices.end());
+            dag.Indices.insert(dag.Indices.end(), build.Indices.begin(), build.Indices.end());
+            vertexOffset += cluster.VertexCount;
+            indexOffset += cluster.IndexCount;
+        }
+
+        createInfo.VertexData = dag.Vertices.data();
+        createInfo.VertexDataSize = dag.Vertices.size() * sizeof(Mesh3DVertex);
+        createInfo.VertexCount = static_cast<uint32_t>(dag.Vertices.size());
+        createInfo.VertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+        createInfo.IndexData = dag.Indices.data();
+        createInfo.IndexCount = static_cast<uint32_t>(dag.Indices.size());
+        createInfo.TotalBounds = rootGroupSphere;
+        createInfo.bBuildLODHierarchy = false;
+        createInfo.bBakedLODHierarchy = true;
+        createInfo.BakedLODLevelCount = 3;
+        for (uint32_t face = 0; face < faceCount; ++face)
+        {
+            Mega::MeshClusterGroup group;
+            group.Bounds = faceGroupSpheres[face];
+            group.Error = BakedCubeDag::FaceError;
+            group.ClusterOffset = face * 4;
+            group.ClusterCount = 4;
+            group.LODLevel = 0;
+            createInfo.ClusterGroups.push_back(group);
+        }
+        Mega::MeshClusterGroup rootGroup;
+        rootGroup.Bounds = rootGroupSphere;
+        rootGroup.Error = BakedCubeDag::RootGroupError;
+        rootGroup.ClusterOffset = faceCount * 4;
+        rootGroup.ClusterCount = faceCount;
+        rootGroup.LODLevel = 1;
+        createInfo.ClusterGroups.push_back(rootGroup);
+        createInfo.DebugName = "BakedCubeDag";
+    }
+
+    // 選んだクラスタの三角形が、位置で溶接した閉じた多様体（すべての辺がちょうど2つの三角形に共有され、向きが釣り合う）か
+    bool IsSelectedSurfaceClosed(const BakedCubeDag &dag, const std::vector<uint32_t> &selectedClusters)
+    {
+        using Key = std::array<int64_t, 3>;
+        const auto quantize = [&](uint32_t vertexIndex) -> Key
+        {
+            const Mesh3DVertex &vertex = dag.Vertices[vertexIndex];
+            return Key{static_cast<int64_t>(std::llround(vertex.Position[0] * 4096.0)),
+                       static_cast<int64_t>(std::llround(vertex.Position[1] * 4096.0)),
+                       static_cast<int64_t>(std::llround(vertex.Position[2] * 4096.0))};
+        };
+        std::map<std::pair<Key, Key>, int> directed;
+        for (const uint32_t clusterIndex : selectedClusters)
+        {
+            const auto &cluster = dag.CreateInfo.Clusters[clusterIndex];
+            for (uint32_t i = 0; i + 2 < cluster.IndexCount; i += 3)
+            {
+                Key keys[3];
+                for (uint32_t k = 0; k < 3; ++k)
+                {
+                    keys[k] = quantize(static_cast<uint32_t>(cluster.VertexOffset) +
+                                       dag.Indices[cluster.IndexOffset + i + k]);
+                }
+                for (uint32_t k = 0; k < 3; ++k)
+                {
+                    ++directed[{keys[k], keys[(k + 1) % 3]}];
+                }
+            }
+        }
+        for (const auto &entry : directed)
+        {
+            // 辺ごとに、順方向が1回・逆方向が1回
+            const auto reverse = directed.find({entry.first.second, entry.first.first});
+            if (entry.second != 1 || reverse == directed.end() || reverse->second != 1)
+            {
+                return false;
+            }
+        }
+        return !directed.empty();
+    }
+
+    void TestBakedLODUploadsParentSphereAndFlags()
+    {
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+        BakedCubeDag dag;
+        BuildBakedCubeDag(dag);
+
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(manager.Initialize(device));
+        const auto handle = manager.MegaGeometry().CreateMegaMesh(dag.CreateInfo);
+        assert(handle.IsValid());
+        const auto *gpuData = manager.MegaGeometry().GetMegaMeshGPUData(handle);
+        assert(gpuData != nullptr);
+
+        // 全段のクラスタを1組の頂点・インデックス・クラスタのバッファに置く
+        const uint32_t clusterCount = static_cast<uint32_t>(dag.CreateInfo.Clusters.size());
+        assert(clusterCount == 31u);
+        assert(gpuData->ClusterCount == clusterCount);
+        assert(gpuData->VertexCount == dag.Vertices.size());
+        assert(gpuData->IndexCount == dag.Indices.size());
+        assert(gpuData->LevelRanges.size() == 3u);
+        assert(gpuData->LevelRanges[0].Error == 0.0f);
+        assert(gpuData->LevelRanges[1].Error == BakedCubeDag::FaceError);
+        assert(gpuData->LevelRanges[2].Error == BakedCubeDag::RootGroupError);
+        assert(device->CreatedBuffers.size() == 3);
+        assert(device->CreatedBuffers[0]->LastUpdateSize == dag.Vertices.size() * sizeof(Mesh3DVertex));
+        assert(device->CreatedBuffers[1]->LastUpdateSize == dag.Indices.size() * sizeof(uint32_t));
+        assert(device->CreatedBuffers[2]->LastUpdateSize == clusterCount * sizeof(Mega::GPUClusterData));
+
+        std::vector<Mega::GPUClusterData> uploaded(clusterCount);
+        std::memcpy(uploaded.data(),
+                    device->CreatedBuffers[2]->Bytes.data(),
+                    clusterCount * sizeof(Mega::GPUClusterData));
+        for (uint32_t i = 0; i < clusterCount; ++i)
+        {
+            const Mega::MeshCluster &source = dag.CreateInfo.Clusters[i];
+            const Mega::GPUClusterData &gpu = uploaded[i];
+            assert((gpu.Flags & Mega::GPU_CLUSTER_FLAG_BAKED_LOD) != 0u);
+            assert(gpu.BoundsRadius == source.Bounds.Radius);
+            assert(gpu.LODLevel == source.LODLevel);
+            assert(gpu.LODError == source.LODError);
+            assert(gpu.GroupId == source.GroupId);
+            if (source.GroupId == Mega::INVALID_CLUSTER_GROUP_ID)
+            {
+                assert(i == clusterCount - 1u);
+                continue;
+            }
+            assert(gpu.ParentError == source.ParentError);
+            assert(gpu.ParentRadius == source.ParentBounds.Radius);
+            assert(gpu.ParentCenterX == source.ParentBounds.CenterX);
+            assert(gpu.ParentCenterY == source.ParentBounds.CenterY);
+            assert(gpu.ParentCenterZ == source.ParentBounds.CenterZ);
+        }
+        // 同じグループのクラスタは親の球と誤差が同じ（同じ判断になる前提）
+        for (const Mega::MeshClusterGroup &group : dag.CreateInfo.ClusterGroups)
+        {
+            const Mega::GPUClusterData &first = uploaded[group.ClusterOffset];
+            for (uint32_t member = 1; member < group.ClusterCount; ++member)
+            {
+                const Mega::GPUClusterData &other = uploaded[group.ClusterOffset + member];
+                assert(first.ParentRadius == other.ParentRadius);
+                assert(first.ParentError == other.ParentError);
+                assert(first.ParentCenterX == other.ParentCenterX);
+                assert(first.GroupId == other.GroupId);
+            }
+        }
+
+        // 壊れた階層（インデックスの範囲外・親の誤差が自分より小さい）は何も作らない
+        {
+            Mega::MegaMeshCreateInfo broken = dag.CreateInfo;
+            broken.Clusters[3].IndexCount = broken.IndexCount; // 範囲外
+            RenderResources brokenManager;
+            auto brokenDevice = MakeShared<FakeDevice>();
+            assert(brokenManager.Initialize(brokenDevice));
+            assert(!brokenManager.MegaGeometry().CreateMegaMesh(broken).IsValid());
+            assert(brokenDevice->CreatedBufferDescs.empty());
+        }
+        {
+            Mega::MegaMeshCreateInfo broken = dag.CreateInfo;
+            broken.Clusters[5].LODError = 1.0f; // 親の誤差（0.05）より大きい
+            RenderResources brokenManager;
+            auto brokenDevice = MakeShared<FakeDevice>();
+            assert(brokenManager.Initialize(brokenDevice));
+            assert(!brokenManager.MegaGeometry().CreateMegaMesh(broken).IsValid());
+            assert(brokenDevice->CreatedBufferDescs.empty());
+        }
+    }
+
+    // 距離を変えたとき、選ばれるクラスタの集まりが閉じたメッシュになり、どの段0のクラスタも欠けも二重もなく描かれる
+    void TestBakedLODSelectionKeepsClosedMeshAcrossDistances()
+    {
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+        BakedCubeDag dag;
+        BuildBakedCubeDag(dag);
+        const auto &clusters = dag.CreateInfo.Clusters;
+        const uint32_t clusterCount = static_cast<uint32_t>(clusters.size());
+        constexpr uint32_t rootIndex = 30;
+
+        // ワールドは一様な伸び 1.5 と並進（行ベクトル規約）
+        const float world[16] = {1.5f, 0.0f, 0.0f, 0.0f, 0.0f, 1.5f, 0.0f, 0.0f,
+                                 0.0f, 0.0f, 1.5f, 0.0f, 3.0f, -2.0f, 5.0f, 1.0f};
+        const float target[3] = {3.0f, -2.0f, 5.0f};
+        const float directions[4][3] = {
+            {0.0f, 0.0f, 1.0f}, {1.0f, 0.4f, 0.3f}, {-0.6f, 1.0f, -0.2f}, {0.3f, -0.5f, -1.0f}};
+
+        bool bSawFinest = false;
+        bool bSawFaceLevel = false;
+        bool bSawRoot = false;
+        bool bSawMixed = false;
+        for (const auto &directionRaw : directions)
+        {
+            float direction[3] = {directionRaw[0], directionRaw[1], directionRaw[2]};
+            const float directionLength =
+                std::sqrt(direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]);
+            for (float &value : direction)
+            {
+                value /= directionLength;
+            }
+
+            // 0.3 m から 1000 m まで、対数で刻む
+            for (int step = 0; step <= 480; ++step)
+            {
+                const float distance = 0.3f * std::pow(1000.0f / 0.3f, static_cast<float>(step) / 480.0f);
+                Mega::BakedLODView view;
+                for (int a = 0; a < 3; ++a)
+                {
+                    view.CameraPosition[a] = target[a] + direction[a] * distance;
+                    view.Forward[a] = -direction[a];
+                }
+                view.TanHalfFovY = std::tan(0.5f * 1.04719755f); // 縦 60 度
+                view.TanHalfFovX = view.TanHalfFovY * 16.0f / 9.0f;
+                view.ProjectionFactor = 1080.0f / (2.0f * view.TanHalfFovY);
+                view.LODBias = 1.0f;
+
+                std::vector<uint32_t> selected;
+                std::vector<bool> drawn(clusterCount, false);
+                for (uint32_t i = 0; i < clusterCount; ++i)
+                {
+                    drawn[i] = Mega::ShouldDrawBakedCluster(clusters[i], world, view);
+                    if (drawn[i])
+                    {
+                        selected.push_back(i);
+                    }
+                }
+
+                // 同じグループのクラスタは、親のグループの判定が同じ（段0のクラスタは自分も同じ誤差0なので判断が全て同じ）
+                for (const Mega::MeshClusterGroup &group : dag.CreateInfo.ClusterGroups)
+                {
+                    const bool bParentTooCoarse =
+                        Mega::IsBakedParentTooCoarse(clusters[group.ClusterOffset], world, view);
+                    for (uint32_t member = 0; member < group.ClusterCount; ++member)
+                    {
+                        const uint32_t index = group.ClusterOffset + member;
+                        assert(Mega::IsBakedParentTooCoarse(clusters[index], world, view) == bParentTooCoarse);
+                        if (group.LODLevel == 0)
+                        {
+                            assert(drawn[index] == drawn[group.ClusterOffset]);
+                        }
+                    }
+                }
+
+                // 段0のどのクラスタも、自分・面の段1・根のうちちょうど1つが描かれる
+                for (uint32_t face = 0; face < 6; ++face)
+                {
+                    for (uint32_t quadrant = 0; quadrant < 4; ++quadrant)
+                    {
+                        const uint32_t leaf = face * 4 + quadrant;
+                        const int drawnCount = (drawn[leaf] ? 1 : 0) + (drawn[24u + face] ? 1 : 0) +
+                                               (drawn[rootIndex] ? 1 : 0);
+                        assert(drawnCount == 1);
+                    }
+                }
+
+                assert(IsSelectedSurfaceClosed(dag, selected));
+
+                bool bAnyLevel0 = false;
+                bool bAnyLevel1 = false;
+                bool bAnyRoot = false;
+                for (const uint32_t index : selected)
+                {
+                    bAnyLevel0 |= clusters[index].LODLevel == 0;
+                    bAnyLevel1 |= clusters[index].LODLevel == 1;
+                    bAnyRoot |= clusters[index].LODLevel == 2;
+                }
+                bSawFinest |= bAnyLevel0 && !bAnyLevel1 && !bAnyRoot;
+                bSawFaceLevel |= bAnyLevel1 && !bAnyLevel0 && !bAnyRoot;
+                bSawRoot |= bAnyRoot && !bAnyLevel0 && !bAnyLevel1;
+                bSawMixed |= bAnyLevel0 && bAnyLevel1;
+            }
+        }
+        // 距離で段が切り替わり、面ごとに違う段が混ざる切り方でも閉じている
+        assert(bSawFinest);
+        assert(bSawFaceLevel);
+        assert(bSawRoot);
+        assert(bSawMixed);
+
+        // カメラが球の中なら（最も近い点までの距離が0）最も細かい段
+        Mega::BakedLODView inside;
+        inside.CameraPosition[0] = target[0];
+        inside.CameraPosition[1] = target[1];
+        inside.CameraPosition[2] = target[2];
+        inside.TanHalfFovY = 0.577f;
+        inside.TanHalfFovX = 1.0f;
+        inside.ProjectionFactor = 935.0f;
+        for (uint32_t i = 0; i < clusterCount; ++i)
+        {
+            assert(Mega::ShouldDrawBakedCluster(clusters[i], world, inside) == (clusters[i].LODLevel == 0));
+        }
+    }
+
     void TestSharedHandleCounter()
     {
         RenderResources manager;
@@ -1088,6 +1619,8 @@ int main()
     TestSuccessfulNoLodUpload();
     TestProceduralSphereLevelRangesAndLODSelection();
     TestLODSphereErrorBoundsPerspectivePixelDisplacement();
+    TestBakedLODUploadsParentSphereAndFlags();
+    TestBakedLODSelectionKeepsClosedMeshAcrossDistances();
     TestSharedHandleCounter();
     TestCreateFailureDoesNotRegister(1);
     TestCreateFailureDoesNotRegister(2);

@@ -54,7 +54,23 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float LODError;       // このクラスタの簡略化誤差
         uint32_t ParentStart; // 親クラスタグループの開始インデックス
         uint32_t ParentCount; // 親クラスタグループ数
+
+        // 焼き込み済みのLOD階層（NVMESH v1）の親のグループ。Flags の BAKED_LOD ビットが立つクラスタだけが読む。
+        // 自分（BoundsCenter・BoundsRadius・LODError）と親のグループ（ここ）を、それぞれの球から画面へ
+        // 投影した誤差で判定し、同じグループのクラスタが同じ判断になる。
+        float ParentCenterX;
+        float ParentCenterY;
+        float ParentCenterZ;
+        float ParentRadius;
+
+        uint32_t Flags;       // GPU_CLUSTER_FLAG_*
+        float ParentError;    // 親のグループの誤差（根は使わない）
+        uint32_t GroupId;     // 親のグループの番号（根は INVALID_CLUSTER_GROUP_ID）
+        uint32_t PageId;      // ページの番号（段5まで 0）
     };
+
+    /** @brief GPUClusterData::Flags: 焼き込み済みの階層のクラスタ（親のグループの球と誤差で段を選ぶ） */
+    constexpr uint32_t GPU_CLUSTER_FLAG_BAKED_LOD = 1u;
 
     /**
      * @brief GPUインスタンスデータ

@@ -366,7 +366,7 @@
 - notes: VTG4-DAG-BAKE の paths に `Docs/Architecture` が無かったので、文書の更新だけ分けた。
 
 ## VTG4-DAG-SELECT-GPU: GPUのカリングで階層の切り方を選ぶ
-- status: todo
+- status: done
 - done-when: クック済みの NVMESH v1 を MegaGeometry に読み込み（全段のクラスタを1組の頂点・インデックスに置く）、`cluster_cull.comp` が「自分の誤差を画面へ投影した値がしきい値以下で、親のグループの誤差を投影した値がしきい値を超える」クラスタだけを描く（同じグループのクラスタが同じ判断になるよう、親の判定はグループの境界球と誤差で行う）。段3の2パスの遮蔽（クラスタの番号ごとの可視ビット）と両立する。v0 と手続きの球は従来の段の選び方のまま。`MegaGeometryResourcesTest` に、v1 のメッシュで距離を変えたとき選ばれるクラスタの集まりが閉じたメッシュになる（CPU で同じ判定を写した検査）ケースを足す。
 - verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest|HiZOcclusionTestVulkanTest|CookedMeshTest)$"`
