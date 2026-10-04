@@ -136,6 +136,17 @@ namespace NorvesLib::Core::Rendering
         TextureHandle CreateVirtualTexture(const Container::String &path, uint32_t *pOutVirtualTextureIndex = nullptr);
         // VT のミップテイルが常駐してサンプルできるか。VT でないハンドルは false
         bool IsVirtualTextureReady(TextureHandle handle) const;
+        // デバイスが sparse の VT に対応していて、CreateVirtualTexture を試せるか
+        bool SupportsVirtualTexture() const;
+        // CreateVirtualTexture で作り、ミップテイルが常駐してサンプルできるようになったら callback をメインスレッドで呼ぶ
+        // （FlushCompletedTextureLoads で呼ばれる。読み込み中は GetPendingAsyncLoadCount に数える）。
+        // 作れなかったときは false を返し、callback は呼ばない（呼び出し側が全常駐の LoadTextureAsync へ戻す）。
+        // 一定のフレームの間にミップテイルが常駐しなければ VT を解放し、無効なハンドルで callback を呼ぶ。
+        bool CreateVirtualTextureAsync(const Container::String &path,
+                                       NorvesLib::Core::Delegate<void, TextureHandle> callback);
+        // VT のストリーマが落ち着いているか（要求済み・読み込み中・結び待ちのタイルが無い）。VT が無いときは true。
+        // 起動画面の決定的な撮影が、タイルがそろってから撮るために使う。
+        bool IsVirtualTextureStreamingIdle() const;
         // VT の表の添字を取る。VT でないハンドルは false
         bool TryGetVirtualTextureIndex(TextureHandle handle, uint32_t &outIndex) const;
 

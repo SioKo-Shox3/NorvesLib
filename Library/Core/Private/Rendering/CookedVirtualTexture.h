@@ -119,6 +119,8 @@ namespace NorvesLib::Core::Rendering
      * @param baseOffset .nvtex の先頭のファイル内の位置
      * @param nvtexSize .nvtex のバイト数
      * @param pOutReason 失敗の理由（ログ用。null でもよい）
+     * @param bTreatSrgbAsLinear AssetSystem が sRGB を UNORM として上げる互換設定のとき true。クック済みの sRGB の
+     *        色空間を Linear に読み替え（BC7 sRGB は BC7 UNORM）、全常駐で読むテクスチャと同じ標本値にする
      * @return 作れたら true。v0.2 でない・レイヤーが複数・形式に対応しないときは false
      */
     [[nodiscard]] bool PrepareCookedVirtualTexture(const Asset::AssetFileReader &reader,
@@ -127,7 +129,8 @@ namespace NorvesLib::Core::Rendering
                                                    uint64_t nvtexSize,
                                                    const Container::String &debugName,
                                                    CookedVirtualTexturePlan &outPlan,
-                                                   Container::String *pOutReason = nullptr);
+                                                   Container::String *pOutReason = nullptr,
+                                                   bool bTreatSrgbAsLinear = false);
 
     struct CookedVirtualTextureSource::Shared
     {
@@ -201,7 +204,8 @@ namespace NorvesLib::Core::Rendering
                                      uint64_t nvtexSize,
                                      const Container::String &debugName,
                                      CookedVirtualTexturePlan &outPlan,
-                                     Container::String *pOutReason)
+                                     Container::String *pOutReason,
+                                     bool bTreatSrgbAsLinear)
     {
         auto fail = [pOutReason](const char *reason)
         {
@@ -225,6 +229,10 @@ namespace NorvesLib::Core::Rendering
         if (texture.LayerCount != 1)
         {
             return fail("VT は単一レイヤーのテクスチャにだけ対応する");
+        }
+        if (bTreatSrgbAsLinear && texture.ColorSpace == Asset::CookedTextureColorSpace::SRGB)
+        {
+            texture.ColorSpace = Asset::CookedTextureColorSpace::Linear;
         }
 
         TextureCreateInfo createInfo;

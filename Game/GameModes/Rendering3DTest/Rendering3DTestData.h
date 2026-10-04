@@ -222,6 +222,14 @@ namespace Game::GameModes
         // --night の指定で true にする。空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす
         // （点光源の影を見る撮影用。既定は昼）。
         bool m_bStartupNight = false;
+        // 材質のアルベドを VT（sparse）で描くか（--virtual-texture=off で false）。sparse に対応しない GPU・クック済みに無い
+        // テクスチャは、true でも全常駐で読む。
+        bool m_bVirtualTexture = true;
+        // VT のタイルがそろうのを待つ状態（決定的な撮影が、タイルがそろってから数え直すため）。組み立てが終わってから、
+        // ストリーマが落ち着いている連続のティック数と、待った合計のティック数。一度落ち着いたら戻さない。
+        uint32_t m_VirtualTextureIdleTicks = 0;
+        uint32_t m_VirtualTextureWaitTicks = 0;
+        bool m_bVirtualTextureSettled = false;
 
         // クック済みのマニフェストに、論理パス（"Assets/..." から始まる）の項目があるか。起動画面の材質は、
         // クック済みの BC のテクスチャと ORM があればそれを、無ければばらの元画像を読む。未設定ならすべてばらで読む。

@@ -155,6 +155,7 @@ namespace Game::GameModes
         enum class MaterialSlotKind
         {
             Plain,  // 読み込めたハンドルをそのまま入れる
+            Albedo, // クック済みなら VT（sparse）で作る。作れない・常駐しなければ全常駐で読み直す
             Normal, // 読み込めた形式が BC5（2チャンネル）なら bNormalTwoChannel を立てる
             Orm,    // 読み込めなければ、粗さ・AO・メタリックの別々の元画像を読む枠へ戻る
         };
@@ -162,6 +163,8 @@ namespace Game::GameModes
         // 材質1つ分の枠を1つ非同期で読む。結果は update->CreateData へ入れ、update->PendingTextureCount が 0 に
         // なったとき onComplete を呼ぶ。ORM が読めなかったときは、読み終わる前に別々の元画像の枠を数に足すので、
         // 数が途中で 0 になることはない（コールバックはメインスレッドで呼ばれる）。
+        // bTryVirtualTexture のとき（アルベドの枠だけ）は、先に VT で作り、ミップテイルが常駐したら材質へ入れる。
+        // VT を作れない、または常駐しなかったときは、同じ枠を全常駐で読み直す。
         template <typename OnComplete>
         void LoadMaterialSlot(TextureResources &textures,
                               const TSharedPtr<PendingMaterialUpdate> &update,
@@ -169,52 +172,75 @@ namespace Game::GameModes
                               const String &path,
                               TextureHandle MaterialCreateData::*member,
                               MaterialSlotKind kind,
+                              bool bTryVirtualTexture,
                               OnComplete onComplete)
         {
-            textures.LoadTextureAsync(
-                path,
-                [&textures, update, paths, path, member, kind, onComplete](TextureHandle handle)
+            auto onLoaded = [&textures, update, paths, path, member, kind, onComplete](TextureHandle handle)
+            {
+                update->CreateData.*member = handle;
+                if (kind == MaterialSlotKind::Normal)
                 {
-                    update->CreateData.*member = handle;
-                    if (kind == MaterialSlotKind::Normal)
+                    // クック済みの法線は BC5。ばらの元画像へ戻ったときは RGBA8 なので立てない。
+                    const NorvesLib::RHI::ITexture *rhiTexture = handle.IsValid() ? textures.GetRHITexture(handle) : nullptr;
+                    update->CreateData.bNormalTwoChannel =
+                        rhiTexture != nullptr && rhiTexture->GetFormat() == NorvesLib::RHI::Format::BC5_UNORM;
+                }
+                else if (kind == MaterialSlotKind::Orm && !handle.IsValid())
+                {
+                    NORVES_LOG_WARNING("Rendering3DTest",
+                                       "MATERIAL_ORM_FALLBACK path=%s クック済みの ORM を読めないため、"
+                                       "粗さ・AO・メタリックのばらの元画像を読みます",
+                                       path.c_str());
+                    struct LooseSlot
                     {
-                        // クック済みの法線は BC5。ばらの元画像へ戻ったときは RGBA8 なので立てない。
-                        const NorvesLib::RHI::ITexture *rhiTexture = handle.IsValid() ? textures.GetRHITexture(handle) : nullptr;
-                        update->CreateData.bNormalTwoChannel =
-                            rhiTexture != nullptr && rhiTexture->GetFormat() == NorvesLib::RHI::Format::BC5_UNORM;
-                    }
-                    else if (kind == MaterialSlotKind::Orm && !handle.IsValid())
+                        const String *Path;
+                        TextureHandle MaterialCreateData::*Member;
+                    };
+                    const LooseSlot looseSlots[] = {
+                        {&paths.Metallic, &MaterialCreateData::MetallicTexture},
+                        {&paths.Roughness, &MaterialCreateData::RoughnessTexture},
+                        {&paths.AO, &MaterialCreateData::AOTexture},
+                    };
+                    for (const LooseSlot &looseSlot : looseSlots)
                     {
-                        NORVES_LOG_WARNING("Rendering3DTest",
-                                           "MATERIAL_ORM_FALLBACK path=%s クック済みの ORM を読めないため、"
-                                           "粗さ・AO・メタリックのばらの元画像を読みます",
-                                           path.c_str());
-                        struct LooseSlot
+                        if (!looseSlot.Path->empty())
                         {
-                            const String *Path;
-                            TextureHandle MaterialCreateData::*Member;
-                        };
-                        const LooseSlot looseSlots[] = {
-                            {&paths.Metallic, &MaterialCreateData::MetallicTexture},
-                            {&paths.Roughness, &MaterialCreateData::RoughnessTexture},
-                            {&paths.AO, &MaterialCreateData::AOTexture},
-                        };
-                        for (const LooseSlot &looseSlot : looseSlots)
-                        {
-                            if (!looseSlot.Path->empty())
-                            {
-                                ++update->PendingTextureCount;
-                                LoadMaterialSlot(textures, update, paths, *looseSlot.Path, looseSlot.Member,
-                                                 MaterialSlotKind::Plain, onComplete);
-                            }
+                            ++update->PendingTextureCount;
+                            LoadMaterialSlot(textures, update, paths, *looseSlot.Path, looseSlot.Member,
+                                             MaterialSlotKind::Plain, false, onComplete);
                         }
                     }
+                }
 
-                    if (--update->PendingTextureCount == 0)
+                if (--update->PendingTextureCount == 0)
+                {
+                    onComplete();
+                }
+            };
+
+            if (bTryVirtualTexture)
+            {
+                const bool bStarted = textures.CreateVirtualTextureAsync(
+                    path,
+                    [&textures, update, paths, path, member, kind, onComplete, onLoaded](TextureHandle handle)
                     {
-                        onComplete();
-                    }
-                });
+                        if (handle.IsValid())
+                        {
+                            onLoaded(handle);
+                            return;
+                        }
+                        NORVES_LOG_WARNING("Rendering3DTest",
+                                           "VT_FALLBACK path=%s VTのミップテイルが常駐しないため、全常駐で読み直します",
+                                           path.c_str());
+                        LoadMaterialSlot(textures, update, paths, path, member, kind, false, onComplete);
+                    });
+                if (bStarted)
+                {
+                    return;
+                }
+                NORVES_LOG_WARNING("Rendering3DTest", "VT_FALLBACK path=%s VTを作れないため、全常駐で読みます", path.c_str());
+            }
+            textures.LoadTextureAsync(path, onLoaded);
         }
 
         // 材質1つ分のテクスチャを非同期で読み、そろったら onComplete を呼ぶ。マニフェストにクック済みの ORM が
@@ -250,7 +276,7 @@ namespace Game::GameModes
                 }
             };
 
-            addSlot(paths.Albedo, &MaterialCreateData::AlbedoTexture);
+            addSlot(paths.Albedo, &MaterialCreateData::AlbedoTexture, MaterialSlotKind::Albedo);
             addSlot(paths.Normal, &MaterialCreateData::NormalTexture, MaterialSlotKind::Normal);
             update->CreateData.bNormalTwoChannel = false;
             if (IsTextureCooked(data, paths.Orm))
@@ -268,8 +294,11 @@ namespace Game::GameModes
             update->PendingTextureCount = slotCount;
             for (uint32_t slotIndex = 0; slotIndex < slotCount; ++slotIndex)
             {
+                const bool bTryVirtualTexture = slots[slotIndex].Kind == MaterialSlotKind::Albedo &&
+                                                data.m_bVirtualTexture && textures.SupportsVirtualTexture() &&
+                                                IsTextureCooked(data, *slots[slotIndex].Path);
                 LoadMaterialSlot(textures, update, paths, *slots[slotIndex].Path, slots[slotIndex].Member,
-                                 slots[slotIndex].Kind, onComplete);
+                                 slots[slotIndex].Kind, bTryVirtualTexture, onComplete);
             }
         }
 
@@ -580,8 +609,8 @@ namespace Game::GameModes
         }
 
         // 起動画面の組み立て（材質のテクスチャ・岩と小屋のモデル・大きな球の生成）が非同期の読み込みを含めて
-        // すべて終わったか。決定的な撮影（--capture-deterministic）はこれが真になった時点から時間を数え直す。
-        bool IsStartupSceneAssembled(const Rendering3DTestData &data)
+        // 終わったか。VT のタイルがそろうのは待たない（IsStartupSceneAssembled が加える）。
+        bool IsStartupSceneAssembledBeforeVirtualTexture(const Rendering3DTestData &data)
         {
             for (const TSharedPtr<PendingMaterialUpdate> &update : data.m_PendingMaterialUpdates)
             {
@@ -592,6 +621,45 @@ namespace Game::GameModes
             }
             return !data.m_BoulderAsyncState && !data.m_CottageAsyncState && !data.m_pBigSphereMegaData &&
                    !data.m_BigSphereBuildTask;
+        }
+
+        // 起動画面の組み立てが、VT のタイルがそろうまで含めてすべて終わったか。
+        // 決定的な撮影（--capture-deterministic）はこれが真になった時点から時間を数え直す。
+        bool IsStartupSceneAssembled(const Rendering3DTestData &data)
+        {
+            return IsStartupSceneAssembledBeforeVirtualTexture(data) && data.m_bVirtualTextureSettled;
+        }
+
+        // 組み立てが終わった後、VT のタイルがそろう（要求が途絶えて、ストリーマが落ち着く）まで待つ。
+        // 材質のアルベドが VT でなければ待たない。要求は 4×4 画素のうち巡回する 1 画素が書き、数フレーム遅れて届くので、
+        // 落ち着いた状態が kVirtualTextureIdleTicksToSettle ティック続くのを待つ。タイルがそろわないまま
+        // kVirtualTextureMaxWaitTicks を超えたら待つのをやめ、ログに残す（撮影の差で見える）。
+        constexpr uint32_t kVirtualTextureIdleTicksToSettle = 60;
+        constexpr uint32_t kVirtualTextureMaxWaitTicks = 1800;
+        void UpdateVirtualTextureSettle(GameModeContext &ctx, Rendering3DTestData &data)
+        {
+            if (data.m_bVirtualTextureSettled || !IsStartupSceneAssembledBeforeVirtualTexture(data))
+            {
+                return;
+            }
+            TextureResources &textures = ctx.RenderResourcesRef.Textures();
+            if (!data.m_bVirtualTexture || !textures.SupportsVirtualTexture())
+            {
+                data.m_bVirtualTextureSettled = true;
+                return;
+            }
+
+            ++data.m_VirtualTextureWaitTicks;
+            data.m_VirtualTextureIdleTicks =
+                textures.IsVirtualTextureStreamingIdle() ? data.m_VirtualTextureIdleTicks + 1 : 0;
+            const bool bIdle = data.m_VirtualTextureIdleTicks >= kVirtualTextureIdleTicksToSettle;
+            const bool bTimedOut = data.m_VirtualTextureWaitTicks >= kVirtualTextureMaxWaitTicks;
+            if (bIdle || bTimedOut)
+            {
+                data.m_bVirtualTextureSettled = true;
+                NORVES_LOG_INFO("Rendering3DTest", "VT_SETTLED ticks=%u timed_out=%d",
+                                static_cast<unsigned>(data.m_VirtualTextureWaitTicks), bIdle ? 0 : 1);
+            }
         }
 
         // 起動画面の高さフォグ（R3）。地面での密度（1/m、0で無効）と、高さ方向の減衰（1/m）。
@@ -2672,6 +2740,7 @@ namespace Game::GameModes
         // 決定的な撮影は、組み立てが終わった時点（この Tick の大きな球の生成まで含む）から数え直す。
         if (ctx.EngineRef.GetDeterministicCapture().IsEnabled())
         {
+            UpdateVirtualTextureSettle(ctx, data);
             ctx.EngineRef.GetDeterministicCapture().SetSceneReady(IsStartupSceneAssembled(data));
         }
 

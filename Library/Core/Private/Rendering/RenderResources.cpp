@@ -106,6 +106,15 @@ namespace NorvesLib::Core::Rendering
         // テクスチャのハンドルの番号から VT の表の添字へ
         mutable Thread::Mutex VtMutex;
         Container::UnorderedMap<uint64_t, uint32_t> VtIndexByTexture;
+        // CreateVirtualTextureAsync で作り、ミップテイルの常駐を待っている VT（VtMutex で守る）
+        struct PendingVirtualTexture
+        {
+            TextureHandle Handle;
+            NorvesLib::Core::Delegate<void, TextureHandle> Callback;
+            // 常駐を待った FlushCompletedTextureLoads の回数（打ち切りの判定）
+            uint32_t WaitedPolls = 0;
+        };
+        Container::VariableArray<PendingVirtualTexture> VtPendingReady;
         // ストリーマに渡すフレームの番号（RenderThread だけが進める）
         uint64_t VtFrame = 0;
         // VT_STREAMER ログの間引き（RenderThread だけが触る）
@@ -327,17 +336,79 @@ namespace NorvesLib::Core::Rendering
     uint32_t TextureResources::FlushCompletedTextureLoads()
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
-        return impl && impl->TextureAssets
-                   ? impl->TextureAssets->FlushCompletedTextureLoads()
-                   : 0;
+        uint32_t processed = impl && impl->TextureAssets
+                                 ? impl->TextureAssets->FlushCompletedTextureLoads()
+                                 : 0;
+        if (!impl || !impl->VtStreamer)
+        {
+            return processed;
+        }
+
+        // ミップテイルが常駐した VT（または待ち切れなかった VT）を、ロックの外で通知する
+        // （callback が新しい読み込みを始めても VtMutex を持たないようにする）。
+        // 常駐の判定は RenderThread が進めるストリーマの状態を見るだけなので、描画の同期を要さない。
+        constexpr uint32_t kMaxWaitedPolls = 1800;
+        struct Completion
+        {
+            TextureHandle Handle;
+            NorvesLib::Core::Delegate<void, TextureHandle> Callback;
+            bool bTimedOut = false;
+        };
+        Container::VariableArray<Completion> completions;
+        {
+            Thread::ScopedLock lock(impl->VtMutex);
+            for (size_t i = 0; i < impl->VtPendingReady.size();)
+            {
+                RenderResources::Impl::PendingVirtualTexture &pending = impl->VtPendingReady[i];
+                const auto indexIt = impl->VtIndexByTexture.find(pending.Handle.Id);
+                const bool bReady = indexIt != impl->VtIndexByTexture.end() &&
+                                    impl->VtStreamer->IsMipTailResident(indexIt->second);
+                const bool bTimedOut = !bReady && ++pending.WaitedPolls >= kMaxWaitedPolls;
+                if (bReady || bTimedOut)
+                {
+                    Completion completion;
+                    completion.Handle = pending.Handle;
+                    completion.Callback = std::move(pending.Callback);
+                    completion.bTimedOut = bTimedOut;
+                    completions.push_back(std::move(completion));
+                    impl->VtPendingReady.erase(impl->VtPendingReady.begin() + static_cast<std::ptrdiff_t>(i));
+                    continue;
+                }
+                ++i;
+            }
+        }
+        for (Completion &completion : completions)
+        {
+            TextureHandle result = completion.Handle;
+            if (completion.bTimedOut)
+            {
+                NORVES_LOG_ERROR("RenderResources",
+                                 "VTのミップテイルが常駐しないため、VTを解放して全常駐へ戻します handle=%llu",
+                                 static_cast<unsigned long long>(completion.Handle.Id));
+                ReleaseTexture(completion.Handle);
+                result = TextureHandle::Invalid();
+            }
+            if (completion.Callback.IsBound())
+            {
+                completion.Callback.Invoke(result);
+            }
+            ++processed;
+        }
+        return processed;
     }
 
     uint32_t TextureResources::GetPendingAsyncLoadCount() const
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
-        return impl && impl->TextureAssets
-                   ? impl->TextureAssets->GetPendingAsyncLoadCount()
-                   : 0;
+        uint32_t count = impl && impl->TextureAssets
+                             ? impl->TextureAssets->GetPendingAsyncLoadCount()
+                             : 0;
+        if (impl)
+        {
+            Thread::ScopedLock lock(impl->VtMutex);
+            count += static_cast<uint32_t>(impl->VtPendingReady.size());
+        }
+        return count;
     }
 
     bool TextureResources::SetTextureAssetRoot(const Container::String &assetRoot)
@@ -496,8 +567,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         CookedVirtualTexturePlan plan;
+        // 全常駐で読むクック済みと同じ標本値にするため、sRGB を UNORM として上げる互換設定も合わせる
         if (!PrepareCookedVirtualTexture(assetSystem->GetCookedFileReader(), range.Request, range.BaseOffset, range.Size,
-                                         path, plan, &reason))
+                                         path, plan, &reason, assetSystem->GetTreatSrgbTexturesAsLinear()))
         {
             NORVES_LOG_ERROR("RenderResources",
                              "VTを作れません: クック済みのテクスチャを開けません texture=%s reason=%s",
@@ -528,6 +600,15 @@ namespace NorvesLib::Core::Rendering
         {
             Thread::ScopedLock lock(impl->VtMutex);
             impl->VtIndexByTexture[handle.Id] = index;
+        }
+        {
+            const RHI::ITexture *created = impl->GpuResources->GetRHITexture(handle);
+            LOG_INFO("VT_CREATE path=%s size=%ux%u mips=%u rhi_format=%u create_format=%u index=%u", path.c_str(),
+                     static_cast<unsigned>(created ? created->GetWidth() : 0),
+                     static_cast<unsigned>(created ? created->GetHeight() : 0),
+                     static_cast<unsigned>(created ? created->GetMipLevels() : 0),
+                     static_cast<unsigned>(created ? created->GetFormat() : RHI::Format::UNKNOWN),
+                     static_cast<unsigned>(registration.Format), static_cast<unsigned>(index));
         }
         // 材質のシェーダーが要求を書けるデバイスなら、最初の VT でフィードバックのバッファを確保して有効にする
         EnableVirtualTextureFeedback();
@@ -592,6 +673,56 @@ namespace NorvesLib::Core::Rendering
         uint32_t index = 0;
         return impl && impl->VtStreamer && TryGetVirtualTextureIndex(handle, index) &&
                impl->VtStreamer->IsMipTailResident(index);
+    }
+
+    bool TextureResources::SupportsVirtualTexture() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->bInitialized && impl->VtStreamer && impl->TextureAssets;
+    }
+
+    bool TextureResources::CreateVirtualTextureAsync(const Container::String &path,
+                                                     NorvesLib::Core::Delegate<void, TextureHandle> callback)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (!SupportsVirtualTexture())
+        {
+            return false;
+        }
+        const TextureHandle handle = CreateVirtualTexture(path);
+        if (!handle.IsValid())
+        {
+            return false;
+        }
+
+        RenderResources::Impl::PendingVirtualTexture pending;
+        pending.Handle = handle;
+        pending.Callback = std::move(callback);
+        Thread::ScopedLock lock(impl->VtMutex);
+        impl->VtPendingReady.push_back(std::move(pending));
+        return true;
+    }
+
+    bool TextureResources::IsVirtualTextureStreamingIdle() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (!impl || !impl->VtStreamer)
+        {
+            return true;
+        }
+        {
+            Thread::ScopedLock lock(impl->VtMutex);
+            if (impl->VtIndexByTexture.empty())
+            {
+                return true;
+            }
+            if (!impl->VtPendingReady.empty())
+            {
+                return false;
+            }
+        }
+        const VirtualTextureStreamerStats stats = impl->VtStreamer->GetStats();
+        return stats.WantedTiles == 0 && stats.ReadingTiles == 0 && stats.ReadyTiles == 0;
     }
 
     RHI::ITexture *TextureResources::GetRHITexture(TextureHandle handle) const
@@ -1057,6 +1188,7 @@ namespace NorvesLib::Core::Rendering
         m_Impl->VtStreamer.reset();
         m_Impl->VtGpu.reset();
         m_Impl->VtIndexByTexture.clear();
+        m_Impl->VtPendingReady.clear();
         m_Impl->RetireQueue.Clear();
         m_Impl->TileUpload.reset();
         m_Impl->VtFeedback.reset();
@@ -1490,6 +1622,7 @@ namespace NorvesLib::Core::Rendering
             m_Impl->VtStreamer->Clear();
             Thread::ScopedLock vtLock(m_Impl->VtMutex);
             m_Impl->VtIndexByTexture.clear();
+            m_Impl->VtPendingReady.clear();
         }
 
         if (m_Impl->GpuResources)
