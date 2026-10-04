@@ -189,7 +189,7 @@
 - notes: 危険地帯（アセットロード）。
 
 ## VTG2-BUDGET-MANAGER: VRAMの予算をプールへ割り振る
-- status: done
+- status: doing
 - done-when: `VideoMemoryBudgetManager`（RenderResources が持つ。シングルトン禁止）が、上限 = min(heapBudget − VT 以外の使用量, `--vram-budget-mb` − VT 以外の使用量) を約1秒ごとに計算し、VT のプール（`SparsePagePool`）の目標の大きさを決める（後の段のジオメトリ・VSM のプールの枠も持つ）。変化したときだけ `VRAM_POOLS cap_mb=<n> non_pool_mb=<n> vt_target_mb=<n>` を出す。CPU のテスト `VideoMemoryBudgetManagerTest`（`RenderResourcesDomainContractTest` の束）が、上限・予算外の使用量・上限の引数の組み合わせで目標の大きさが期待どおりで、負にならないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VideoMemoryBudgetManagerTest|TextureMemoryLedgerTest)$"`
