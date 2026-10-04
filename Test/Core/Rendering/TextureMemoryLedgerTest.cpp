@@ -33,7 +33,7 @@ void Expect(bool condition, const char* message)
 {
     if (!condition)
     {
-        std::cerr << "TextureMemoryLedgerTest failed: " << message << std::endl;
+        std::cerr << "TextureMemoryLedgerTest 失敗: " << message << std::endl;
         ++g_failures;
     }
 }
@@ -140,55 +140,55 @@ void TestEstimate()
 {
     // RGBA8 4096x4096 の全ミップ(13段) = 4 * (4^13 - 1) / 3。
     Expect(RHI::EstimateTextureSize(MakeDesc(4096, 4096, 13, RHI::Format::R8G8B8A8_UNORM)) == 89478484ull,
-           "RGBA8 4096x4096 full mip chain must be 89,478,484 bytes");
+           "RGBA8 4096x4096 の全ミップは 89,478,484 バイトでなければならない");
     // 1x1 は1画素だけ。
     Expect(RHI::EstimateTextureSize(MakeDesc(1, 1, 1, RHI::Format::R8G8B8A8_UNORM)) == 4ull,
-           "RGBA8 1x1 must be 4 bytes");
+           "RGBA8 1x1 は 4 バイトでなければならない");
     // ミップ数が足りなくても、必要段より多く指定しても、1x1 で打ち切らず最小 1 を保つ。
     Expect(RHI::EstimateTextureSize(MakeDesc(2, 2, 4, RHI::Format::R8G8B8A8_UNORM)) == 16 + 4 + 4 + 4,
-           "mips past 1x1 keep counting 1 texel");
+           "1x1 を過ぎたミップも 1 画素として数え続ける");
     // 単一ミップ・形式ごとの1画素のバイト数。
     Expect(RHI::EstimateTextureSize(MakeDesc(8, 4, 1, RHI::Format::R16G16B16A16_FLOAT)) == 8ull * 4 * 8,
-           "RGBA16F 8x4 single mip");
+           "RGBA16F 8x4 の単一ミップ");
     Expect(RHI::EstimateTextureSize(MakeDesc(8, 4, 1, RHI::Format::R8_UNORM)) == 8ull * 4,
-           "R8 8x4 single mip");
+           "R8 8x4 の単一ミップ");
     // 配列数は掛ける。
     RHI::TextureDesc array = MakeDesc(4, 4, 1, RHI::Format::R8G8B8A8_UNORM);
     array.ArraySize = 6;
-    Expect(RHI::EstimateTextureSize(array) == 4ull * 4 * 4 * 6, "array size multiplies");
+    Expect(RHI::EstimateTextureSize(array) == 4ull * 4 * 4 * 6, "配列数が掛け合わされる");
 }
 
 void TestStoreLedger()
 {
     RenderResources manager;
     auto device = MakeShared<LedgerFakeDevice>();
-    Expect(manager.Initialize(device), "RenderResources must initialize with the fake device");
+    Expect(manager.Initialize(device), "偽デバイスで RenderResources が初期化できなければならない");
 
-    Expect(manager.GetResourceStats().TextureBytes == 0, "empty store must count 0 bytes");
+    Expect(manager.GetResourceStats().TextureBytes == 0, "空のストアは 0 バイトを数える");
 
     const TextureHandle big =
         manager.Textures().CreateTexture(MakeInfo(4096, 4096, 13, TextureCreateInfo::Format::RGBA8_UNORM));
-    Expect(big.IsValid(), "4096x4096 texture must be created");
-    Expect(manager.GetResourceStats().TextureBytes == 89478484ull, "store must count the full mip chain");
-    Expect(manager.GetResourceStats().TotalTextureMemory == 89478484ull, "TotalTextureMemory mirrors TextureBytes");
+    Expect(big.IsValid(), "4096x4096 のテクスチャが作成できなければならない");
+    Expect(manager.GetResourceStats().TextureBytes == 89478484ull, "ストアは全ミップ分を数えなければならない");
+    Expect(manager.GetResourceStats().TotalTextureMemory == 89478484ull, "TotalTextureMemory は TextureBytes と同値になる");
 
     const TextureHandle tiny =
         manager.Textures().CreateTexture(MakeInfo(1, 1, 1, TextureCreateInfo::Format::RGBA8_UNORM));
-    Expect(tiny.IsValid(), "1x1 texture must be created");
-    Expect(manager.GetResourceStats().TextureBytes == 89478484ull + 4ull, "1x1 adds 4 bytes");
-    Expect(manager.GetResourceStats().TextureCount == 2, "two textures are counted");
+    Expect(tiny.IsValid(), "1x1 のテクスチャが作成できなければならない");
+    Expect(manager.GetResourceStats().TextureBytes == 89478484ull + 4ull, "1x1 は 4 バイトを足す");
+    Expect(manager.GetResourceStats().TextureCount == 2, "2 枚のテクスチャが数えられる");
 
     // 作成→解放で合計が戻る。
     manager.Textures().ReleaseTexture(tiny);
-    Expect(manager.GetResourceStats().TextureBytes == 89478484ull, "releasing the 1x1 texture restores the total");
+    Expect(manager.GetResourceStats().TextureBytes == 89478484ull, "1x1 を解放すると合計が戻る");
     manager.Textures().ReleaseTexture(big);
-    Expect(manager.GetResourceStats().TextureBytes == 0, "releasing every texture returns to 0 bytes");
+    Expect(manager.GetResourceStats().TextureBytes == 0, "全て解放すると 0 バイトに戻る");
 
     // 外部登録のテクスチャ（スワップチェーン等）は所有しないので数えない。
     auto external = MakeShared<LedgerFakeTexture>(MakeDesc(1920, 1080, 1, RHI::Format::R8G8B8A8_UNORM));
     const TextureHandle externalHandle = manager.Textures().RegisterExternalTexture(external, "ExternalTexture");
-    Expect(externalHandle.IsValid(), "external texture must register");
-    Expect(manager.GetResourceStats().TextureBytes == 0, "external textures must not be counted");
+    Expect(externalHandle.IsValid(), "外部テクスチャが登録できなければならない");
+    Expect(manager.GetResourceStats().TextureBytes == 0, "外部テクスチャは数えない");
     manager.Textures().ReleaseTexture(externalHandle);
 
     manager.Shutdown();
@@ -204,7 +204,7 @@ int RunTest()
         return 1;
     }
 
-    std::cout << "TextureMemoryLedgerTest passed" << std::endl;
+    std::cout << "TextureMemoryLedgerTest 成功" << std::endl;
     return 0;
 }
 
