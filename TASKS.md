@@ -281,24 +281,54 @@
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: この段の後、親が main へマージしてプッシュする。
 
-## VTG3-HIZ-CONSERVATIVE: Hi-Zの判定を保守的な矩形の判定に作り直す
-- status: backlog
-- done-when: クラスタの AABB を画面の矩形へ投影し、矩形が 2×2 texel に収まる HZB のミップで最も手前の深度と比べる判定に置き換える（深度の向きを確かめる）。解像度の不整合を直す。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest)$"`
-- paths: Assets/Shaders, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 段3の開始時に親が詳しくする（計画書 4.3）。
-
-## VTG3-TWO-PASS-OCCLUSION: 2パスの遮蔽カリングを入れて有効にする
-- status: backlog
-- done-when: 前フレームで見えたクラスタを先に描いて HZB を作り、残りを HZB で判定して描く。可視のビットを更新する。小屋の陰のクラスタが省かれる数を記録し、撮影で穴・消失が出ない。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG3-TWO-PASS-OCCLUSION -Configuration RelWithDebInfo`
+## VTG3-HIZ-PYRAMID: 今のフレームの深度からHZBの全ミップを作るパスを足す
+- status: todo
+- done-when: MegaGeometry の描画の途中（後の VTG3-TWO-PASS-OCCLUSION の1パス目の後）で呼べる、深度から HZB（R32_FLOAT、全ミップ、2×2 の最大で縮める。深度は Less の標準の向き）を作る RenderGraph のパスを足す。幅・高さが奇数の段は、はみ出す行・列も最大に含めて保守的にする（縮めた1 texel がそれの覆う深度の最大以上）。ミップ0 は深度の解像度の半分。既存の `hiz_generate.comp`・`GenerateHiZPyramid` を土台にし、使われていない資源の作成と寿命を整理する。GPU のテスト `HiZPyramidVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）が、既知の深度（奇数の大きさ 37×23 を含む）から作った各ミップの各 texel が、覆う深度の最大と一致することを読み戻して確かめる。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(HiZPyramidVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: HZB のパスを RenderGraph に置くと、GBuffer の深度の Load/Store の契約（MegaGeometry が GBuffer へ Load で描く）を崩す場合は、理由を記録して止める。
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。Hi-Z は 2026-05 の `4d1e6a37` で過剰カリングのため無効にされた（AABB の中心1点・解像度の不整合）。危険地帯（描画パスの構造）。
+
+## VTG3-HIZ-CONSERVATIVE: クラスタの遮蔽の判定を保守的な矩形の判定に作り直す
+- status: todo
+- done-when: `cluster_cull.comp` の Hi-Z の判定を、クラスタの境界（球、またはそれを包む AABB の8点）を画面へ投影した矩形と最も手前の深度で行う形に置き換える。矩形が 2×2 texel 以内に収まる HZB のミップを選び、その範囲の4 texel の最大と、境界の最も手前の深度を比べる（手前の深度 > 範囲の最大なら隠れている）。境界が近平面をまたぐ・カメラの後ろにかかるときは隠れていない扱い。HZB のミップ0 が深度の半分の解像度であることを投影の計算に正しく入れる。判定は共通の GLSL の関数にし、GPU のテスト `HiZOcclusionTestVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、合成した HZB と境界の組（完全に隠れる・一部見える・近平面をまたぐ・画面の端にかかる・小さくて1 texel に収まる）で期待どおりの判定になることを確かめる（見えているものを隠れていると判定する誤りが0件）。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(HiZOcclusionTestVulkanTest|HiZPyramidVulkanTest|MegaGeometryResourcesTest)$"`
+- stop-when: 境界の投影が透視の行列の規約（View/Proj は列ベクトル＋Transpose、World は行ベクトル）と合わず、Math の抽象 API に足す必要がある場合は、足す API を記録して止める。
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。行列の要素を直接触らず Math の抽象 API を使う（`no-direct-matrix-element-access` の方針）。
+
+## VTG3-TWO-PASS-OCCLUSION: 2パスの遮蔽カリングを入れて既定で有効にする
+- status: todo
+- done-when: MegaGeometry のインスタンスごとに、クラスタごとの「前のフレームで見えた」ビットの持続のバッファを持つ。1パス目は前のフレームで見えたクラスタだけを（視錐台・法線のコーン・LOD の判定はするが遮蔽の判定はせずに）描き、その時点の深度（GBufferPass の不透明＋1パス目）から HZB を作る（VTG3-HIZ-PYRAMID）。2パス目は1パス目で描かなかったクラスタを HZB で判定し（VTG3-HIZ-CONSERVATIVE）、見えたものを描く。2パス目は1パス目で描いたクラスタも HZB で判定し直してビットを更新する（次のフレームのため）。インスタンスの追加・LOD の切り替え・メッシュの差し替えでビットを捨てる。`--mega-occlusion=off` で従来の経路（遮蔽の判定なし）に戻せる。`MEGA_OCCLUSION pass1=<n> pass2_tested=<n> pass2_drawn=<n> occluded=<n>` を撮影のログに出す。`RenderGraphCompileTest` の MegaGeometry の記録の検査を新しいパスの並びに合わせる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MegaGeometryResourcesTest MegaGeometryFrameCommandDebugModeTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest|HiZOcclusionTestVulkanTest|HiZPyramidVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG3-TWO-PASS-OCCLUSION -Configuration RelWithDebInfo -Deterministic`
+- stop-when: 1パス目と2パス目の間で GBuffer へ描く順序を変えると、MegaGeometry の Velocity・Emissive の書き込みの契約が崩れる場合は、理由を記録して止める。
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（描画パス・RenderThread）。影（CSM・点光源）の描画には遮蔽の判定を掛けない（カメラの視点の深度で影のキャスターを省くと影が欠ける）。
+
+## VTG3-OCCLUSION-ORBIT: 旋回するカメラで遮蔽カリングの穴・遅れが出ないことを確かめる
+- status: todo
+- done-when: 起動画面で小屋・岩・大きな球が互いを隠す視点（小屋の陰に岩が入る位置など）を撮影スクリプトの視点に足し、`-Deterministic` で遮蔽あり・なし（`--mega-occlusion=off`）を撮って PSNR を記録する（目安 60 dB 以上。差の画素を開いて穴・欠けでないことを確かめる）。`-OrbitDegreesPerSecond` の連続フレーム（遮蔽あり）を開き、隠れていた物が見え始めるフレームで欠け・ちらつき・1フレームの遅れが無いことを確かめる。`MEGA_OCCLUSION` の occluded の数（隠れて省いたクラスタ）を視点ごとに記録し、隠し合う視点で 0 より大きいことを確かめる。GPU 時間（`-GpuTimingFrames`、RelWithDebInfo）の MegaGeometry の前後も記録する。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG3-OCCLUSION-ORBIT -Configuration RelWithDebInfo -Deterministic`
+- stop-when: 穴・欠けが出て、判定の保守性を上げても消えない場合は、撮影と値を記録して止める。
+- paths: Scripts/CaptureStartupScene.ps1, Game, Assets/Shaders, Library/Core/Private/Rendering, TASKS.md, PROGRESS.md
+- notes: 起動画面の見た目を変えうる（絶対規則7）。
 
 ## VTG3-ACCEPT: 段3（遮蔽カリング）の受入れを記録する
-- status: backlog
-- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段3の節（省いたクラスタの数・GPU 時間・撮影）。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest)$"`
+- status: todo
+- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段3の節に、遮蔽あり・なしの `-Deterministic` の撮影（朝・昼・夕・夜 × 既定・近接・低角度と、隠し合う視点）の PSNR、`MEGA_OCCLUSION` の省いたクラスタの数、GPU 時間の前後、旋回の連続フレームの所見、golden、関係するテストの結果、既知の限界を書く。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest MegaGeometryResourcesTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(HiZPyramidVulkanTest|HiZOcclusionTestVulkanTest|RenderGraphCompileTest|MegaGeometryResourcesTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG3-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG3-ACCEPT-night -Configuration RelWithDebInfo -Deterministic -Night`
+- stop-when: 受入れの数値が段3の受入れ（計画書 5）を満たさない場合は、測った値を記録して止める。
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG4-MESHOPT-VENDOR: meshoptimizerを取り込む
 - status: backlog
