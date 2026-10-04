@@ -257,6 +257,12 @@ namespace NorvesLib::Core
 
             outNodeIndex = m_Document.CreateNode(JsonType::Number);
             m_Document.m_Nodes[outNodeIndex].NumberValue = numberValue;
+            bool bIntegerLiteral = true;
+            for (const auto unit : numberLiteral)
+            {
+                if (unit == '.' || unit == 'e' || unit == 'E') bIntegerLiteral = false;
+            }
+            m_Document.m_Nodes[outNodeIndex].bIntegerLiteral = bIntegerLiteral;
             return true;
         }
 

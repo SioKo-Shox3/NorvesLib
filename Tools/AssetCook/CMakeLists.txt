@@ -1,5 +1,7 @@
 # CLIと直接リンクする試験で同じcooker実装を共有する。
 add_library(AssetCookLib STATIC
+    TextureAssetSetSpec.cpp
+    TextureAssetSetSpec.h
     AssetCookOutput.cpp
     AssetCookOutput.h
     AssetCookLegacyOptions.h

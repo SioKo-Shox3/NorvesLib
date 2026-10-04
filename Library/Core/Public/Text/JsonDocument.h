@@ -46,6 +46,8 @@ namespace NorvesLib::Core
         bool IsString() const;
         bool IsNumber() const;
         bool IsBoolean() const;
+        // 小数点・指数を含まない整数tokenか。値の範囲保証ではない。
+        bool IsIntegerLiteral() const;
 
         /**
          * @brief Returns the array size.
@@ -165,6 +167,7 @@ namespace NorvesLib::Core
             JsonType Type = JsonType::Invalid;
             Container::String StringValue;
             double NumberValue = 0.0;
+            bool bIntegerLiteral = false;
             bool bBoolValue = false;
             Container::VariableArray<size_t> ArrayChildren;
             Container::VariableArray<JsonObjectEntry> ObjectChildren;
@@ -196,6 +199,11 @@ namespace NorvesLib::Core
         }
 
         return m_pDocument->m_Nodes[m_NodeIndex].Type;
+    }
+
+    inline bool JsonValue::IsIntegerLiteral() const
+    {
+        return IsNumber() && m_pDocument->m_Nodes[m_NodeIndex].bIntegerLiteral;
     }
 
     inline bool JsonValue::IsNull() const

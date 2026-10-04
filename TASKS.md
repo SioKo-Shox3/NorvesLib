@@ -2380,3 +2380,9 @@
 - done-when: 固定main b8c5df1のCookTextureAssetSet.ps1とSilverTextures/SilverGltfTexturesを、固定before AssetCook.exeと明示Windows PowerShell5.1で実行し8package+2manifestの生byteを保存する。
 - verify: 11入力のGit/checkout hash、exe hash、PowerShell実version/hash、全10file一覧/size/hash、終了コードと各5/3asset。2回の独立出力が全byte一致。
 - stop-when: PS serializerを推測/正規化、基準の実行失敗を成功扱い、withdrawn対象で代用、texture基準だけでmodel依存印まで完了とする。
+
+## G2-S6-TEXTURE-SPEC: texture spec v1を所有するC++要求へ解析する
+- status: doing
+- done-when: 固定2specとv1必須field/default variant/Assets prefix/順序を保持した値所有型へ解析する。整数version、重複/未一致型/unsafe出力pathを拒否し、失敗時の出力を保持する。未知fieldとusageは旧仕様どおり無視。
+- verify: 実JsonDocumentで2spec相当・寿命・default/override・case-insensitive重複・traversal・version literal・NUL/type不正を検証。既存11CPU/7CLI/79byte一致を回帰。
+- stop-when: runtime cook/増分/serializerを未接続なのに--asset-set完了とする、独自型でない公開所有containerを増やす。
