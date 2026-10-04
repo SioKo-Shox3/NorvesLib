@@ -12,6 +12,8 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
 
+#include "Math/MatrixUtils.h"
+
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -110,23 +112,18 @@ namespace
         uint32_t m_State;
     };
 
-    // 列優先の行列（シェーダーへ渡す配列。[列 * 4 + 行]）で同次座標を変換する
-    void TransformPoint(const float matrix[16], float x, float y, float z, float outClip[4])
+    // 同次座標の変換は Math の抽象 API（列ベクトル規約の View/Proj）で行い、行列の要素へは触れない
+    void TransformPoint(const Math::Matrix4x4& matrix, float x, float y, float z, float outClip[4])
     {
-        const float input[4] = {x, y, z, 1.0f};
-        for (uint32_t row = 0; row < 4; ++row)
-        {
-            float sum = 0.0f;
-            for (uint32_t column = 0; column < 4; ++column)
-            {
-                sum += matrix[column * 4 + row] * input[column];
-            }
-            outClip[row] = sum;
-        }
+        const Math::Vector4 clip = Math::MatrixUtils::TransformPoint(matrix, Math::Vector3(x, y, z));
+        outClip[0] = clip.x;
+        outClip[1] = clip.y;
+        outClip[2] = clip.z;
+        outClip[3] = clip.w;
     }
 
     // 画面の中心の軸上で、ビュー空間の奥行き z にある点の深度（[0,1]）
-    float DepthAtViewZ(const float viewProjection[16], float viewZ)
+    float DepthAtViewZ(const Math::Matrix4x4& viewProjection, float viewZ)
     {
         float clip[4] = {};
         TransformPoint(viewProjection, 0.0f, 0.0f, viewZ, clip);
@@ -143,7 +140,7 @@ namespace
     };
 
     // クリア値 1.0 の深度へ、画面に平行な面（奥行き一定）を重ねる。重なりは手前（小さい値）が勝つ。
-    VariableArray<float> MakeDepth(const float viewProjection[16], uint32_t width, uint32_t height, const DepthRect* rects, size_t rectCount)
+    VariableArray<float> MakeDepth(const Math::Matrix4x4& viewProjection, uint32_t width, uint32_t height, const DepthRect* rects, size_t rectCount)
     {
         VariableArray<float> depth;
         depth.resize(static_cast<size_t>(width) * height);
@@ -214,7 +211,8 @@ namespace
         BufferPtr ParamBuffer;
         BufferPtr ResultBuffer;
         BufferPtr ReadbackBuffer;
-        float ViewProjection[16] = {};
+        Math::Matrix4x4 ViewProjectionMatrix = Math::Matrix4x4::Identity; // CPU 側の投影（点の変換用）
+        float ViewProjection[16] = {};                                     // シェーダーへ渡すだけの配列
         float TanHalfX = 0.0f;
         float TanHalfY = 0.0f;
     };
@@ -312,7 +310,7 @@ namespace
                       size_t sphereCount,
                       uint32_t& falseHidden)
     {
-        const VariableArray<float> depth = MakeDepth(fixture.ViewProjection, width, height, rects, rectCount);
+        const VariableArray<float> depth = MakeDepth(fixture.ViewProjectionMatrix, width, height, rects, rectCount);
         uint32_t occluded[MaxSpheres] = {};
         if (!RunProbe(fixture, depth, width, height, spheres, sphereCount, occluded))
         {
@@ -376,7 +374,7 @@ namespace
         // ワールドの x と画面の左右の向きの対応は、射影から求める（カメラの規約に依らないようにする）。
         {
             float probeClip[4] = {};
-            TransformPoint(fixture.ViewProjection, 1.0f, 0.0f, 10.0f, probeClip);
+            TransformPoint(fixture.ViewProjectionMatrix, 1.0f, 0.0f, 10.0f, probeClip);
             const float toLeft = probeClip[0] / probeClip[3] < 0.0f ? 1.0f : -1.0f; // 画面の左へ向かうワールド x の符号
             const DepthRect leftWall[] = {{0.0f, 0.0f, 0.5f, 1.0f, 20.0f}};
             const Sphere spheres[] = {
@@ -423,7 +421,7 @@ namespace
                 } while (offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2] > 1.0f);
             }
             float clip[4] = {};
-            TransformPoint(fixture.ViewProjection,
+            TransformPoint(fixture.ViewProjectionMatrix,
                            sphere.X + offset[0] * sphere.Radius,
                            sphere.Y + offset[1] * sphere.Radius,
                            sphere.Z + offset[2] * sphere.Radius,
@@ -465,7 +463,7 @@ namespace
                 const float v0 = rng.Range(0.0f, 0.9f);
                 rects[rectIndex] = {u0, v0, std::min(1.0f, u0 + rng.Range(0.02f, 1.0f)), std::min(1.0f, v0 + rng.Range(0.02f, 1.0f)), rng.Range(2.0f, 70.0f)};
             }
-            const VariableArray<float> depth = MakeDepth(fixture.ViewProjection, width, height, rects, rectCount);
+            const VariableArray<float> depth = MakeDepth(fixture.ViewProjectionMatrix, width, height, rects, rectCount);
 
             Sphere spheres[MaxSpheres] = {};
             for (uint32_t index = 0; index < MaxSpheres; ++index)
@@ -605,6 +603,7 @@ namespace
             camera.FarPlane = 1000.0f;
             const float aspect = 16.0f / 9.0f;
             const CameraViewConstants constants = CameraViewConstants::BuildForDevice(camera, aspect, device.get());
+            fixture.ViewProjectionMatrix = constants.ViewProjectionMatrix;
             constants.CopyShaderViewProjection(fixture.ViewProjection);
             fixture.TanHalfY = std::tan(constants.FieldOfViewRadians * 0.5f);
             fixture.TanHalfX = fixture.TanHalfY * aspect;
@@ -653,7 +652,7 @@ namespace
         std::cout << "VUID_COUNT=" << validationErrorCount << '\n';
         if (validationErrorCount != 0u)
         {
-            std::cerr << "Vulkan validation errorを検出しました: " << validationErrorCount << '\n';
+            std::cerr << "Vulkan の検証エラーを検出しました: " << validationErrorCount << '\n';
             bPassed = false;
         }
 
