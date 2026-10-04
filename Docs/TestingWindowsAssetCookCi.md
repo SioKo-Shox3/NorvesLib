@@ -40,3 +40,11 @@ glTF外部ファイルと sidecar の増分依存、未一致材質設定のpref
 ## 初回取得URLの修正
 
 初回 run 37194998794 は汎用名 `vulkan_sdk.exe.json` が404となり、SDK実行前に停止した。公式downloadページに掲載された実ファイル名 `VulkanSDK-1.4.309.0-Installer.exe` を使う。公式 `vulkan.lunarg.com/sdk/sha/1.4.309.0/windows/VulkanSDK-1.4.309.0-Installer.exe.json` のHTTP200と、同ページのSHA256 `48b132169b64fe65cdb0f20970195335a65354e73f1ea5373032c2a8bbad4297` の一致を確認した。receiptの版・platform・file・固定hashを照合してからダウンロード実体を検証する。SDKの版や導入componentは変更しない。
+
+## PowerShell子process環境
+
+run 37196379322はビルド/指定7CPU契約/Raw・Texture・Audio・Meshを通過したが、Glb検証内のGet-FileHash探索で停止した。Microsoftが記述するPowerShell7→中間process→Windows PowerShellのPSModulePath継承問題と一致するため、driverがWindowsの子process環境辞書からPSModulePathだけを大小文字非依存で除く。親processやOS設定は変えず、Windows PowerShellが自身のmodule pathを構成する。Skeletal member指定は維持する。
+
+smoke command・fixture・package/manifestのbyte条件は変更しない。成功baseline未作成の段階でdriverを修正し、そのdriver hashを含めて基準を採取する。実再試験の成功前に原因確定とは扱わない。CIのPythonはUTF8 modeを明示し、pipeへの日本語ログがrunner既定codepageへ依存しないようにする。
+
+根拠: [MicrosoftのPSModulePath説明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath?view=powershell-7.5#starting-windows-powershell-from-powershell-7)

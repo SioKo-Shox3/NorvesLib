@@ -2350,3 +2350,9 @@
 - done-when: CookedMeshV1TestのAnsiStringView/literal不正比較と、CookedSkeletalAssetTestのWindows nearマクロ衝突を修正し、テストの値域/厳しさを維持する。
 - verify: 差分の意味不変・名前衝突回帰、Windows CIでCookedMeshTestビルドと既存CLI smokeを再検証。Core/AssetCookはrun37195379624でビルド成功、テスト/CLI実行は未到達。
 - stop-when: assertionを削除/弱化して通す、エンジン実装の挙動を巻き込む、未再実行のnative成功を主張。
+
+## G2-S6-SMOKE-ENVIRONMENT: Windows PowerShell検証の子環境を整える
+- status: doing
+- done-when: PowerShell7→Python→CMake→Windows PowerShellでPSModulePathを継承して標準Utilityを見失う経路を、子process環境だけの除去で避ける。親環境・smoke command/fixture/byte条件は保持し、実Glb以降を再検証する。
+- verify: 大小文字の異なる環境key/他変数/親保持/Skeletal指定の単体試験、実Windows CLI7case。基準未採取なのでdriver recipe修正は今回を含めて固定する。
+- stop-when: OS/ユーザーの恒久環境を変更、manifest比較を弱化、実再試験前に環境原因の確定/全smoke合格を主張。

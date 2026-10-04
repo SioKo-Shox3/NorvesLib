@@ -28,6 +28,7 @@ jobs:
       run:
         shell: pwsh
     env:
+      PYTHONUTF8: '1'
       SDK_VERSION: 1.4.309.0
       SDK_ROOT: C:\VulkanSDK\1.4.309.0
     steps:

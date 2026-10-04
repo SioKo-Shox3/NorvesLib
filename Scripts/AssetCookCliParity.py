@@ -106,6 +106,17 @@ def build_recipe(source: Path, scripts: list[Path]) -> dict[str, str]:
     return recipe
 
 
+def smoke_environment(parent, case: str, windows: bool) -> dict[str, str]:
+    """親を変えず、Windows PowerShell自身に標準module pathを組み立てさせる。"""
+    environment = dict(parent)
+    if windows:
+        environment = {key: value for key, value in environment.items()
+                       if key.casefold() != "psmodulepath"}
+    if case == "Skeletal":
+        environment["NORVES_TEST_BUNDLE_MEMBER"] = "CookedSkeletalAssetTest"
+    return environment
+
+
 def capture(args: argparse.Namespace) -> None:
     source = args.source.resolve(strict=True)
     exe = args.exe.resolve(strict=True)
@@ -134,9 +145,7 @@ def capture(args: argparse.Namespace) -> None:
     commands.append(("Skeletal", [args.cmake, f"-DASSET_COOK_EXE={exe}", f"-DUNIT_TEST_EXE={unit}", f"-DSOURCE_ROOT={source}", f"-DFIXTURE_GLTF={source / 'Assets/Models/M9Skinned/ValidU8Float.gltf'}", f"-DSMOKE_DIR={run_root / 'Skeletal'}", "-P", str(skeletal)]))
     for case, command in commands:
         with (logs / f"{case}.log").open("wb") as log:
-            environment = dict(os.environ)
-            if case == "Skeletal":
-                environment["NORVES_TEST_BUNDLE_MEMBER"] = "CookedSkeletalAssetTest"
+            environment = smoke_environment(os.environ, case, os.name == "nt")
             result = subprocess.run(command, cwd=source, env=environment, stdout=log, stderr=subprocess.STDOUT, check=False)
         if result.returncode != 0:
             raise ValueError(f"{case} smoke失敗(exit={result.returncode})。{logs / (case + '.log')} を確認してください")

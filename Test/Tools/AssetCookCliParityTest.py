@@ -32,6 +32,24 @@ class ParityTest(unittest.TestCase):
         parity.write_snapshot(self.input, self.a, self.meta)
         parity.write_snapshot(self.input, self.b, self.meta)
 
+    def test_windows_child_module_path(self):
+        parent = {"PSModulePath": "ps7", "PSMODULEPATH": "other", "psmodulepath": "", "PATH": "keep",
+                  "PSModulePathExtra": "keep-too", "NORVES_TEST_BUNDLE_MEMBER": "original"}
+        held = dict(parent)
+        child = parity.smoke_environment(parent, "Glb", True)
+        self.assertEqual(parent, held)
+        self.assertEqual(child, {"PATH": "keep", "PSModulePathExtra": "keep-too",
+                                 "NORVES_TEST_BUNDLE_MEMBER": "original"})
+        child["PATH"] = "changed"
+        self.assertEqual(parent["PATH"], "keep")
+
+    def test_posix_and_skeletal_environment(self):
+        parent = {"PSMODULEPATH": "keep", "NORVES_TEST_BUNDLE_MEMBER": "old"}
+        self.assertEqual(parity.smoke_environment(parent, "Raw", False), parent)
+        self.assertEqual(parity.smoke_environment(parent, "Skeletal", True),
+                         {"NORVES_TEST_BUNDLE_MEMBER": "CookedSkeletalAssetTest"})
+        self.assertEqual(parent["NORVES_TEST_BUNDLE_MEMBER"], "old")
+
     def test_identical(self):
         self.snapshots()
         self.assertEqual(parity.compare(self.a, self.b), [])
