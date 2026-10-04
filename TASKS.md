@@ -243,7 +243,7 @@
 - notes: 危険地帯（メモリ・寿命）。
 
 ## VTG2-VT-STARTUP: 起動画面の材質をVTで描く
-- status: done
+- status: doing
 - done-when: sparse に対応する GPU では、起動画面の材質（銀・石畳・地面の見本6種）のテクスチャを VT（sparse・v0.2）で作り、フィードバック・ストリーマ・追い出しで描く（非対応なら段1の全常駐）。`--virtual-texture=off` で段1の全常駐へ戻せる。`-Deterministic` の撮影で、VT と全常駐（`--virtual-texture=off`）の各視点の PSNR が、同じコードの全常駐を2回撮った揺らぎと同程度（記録する）、PNG を開いて黒・ぼけたタイル・ちらつきが見えない。撮影の `VRAM_LEDGER`・`VRAM_POOLS` で、材質のテクスチャの量（VT は結んだ量）が全常駐より減ることを記録する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game AssetCook CookAssets -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-VT-STARTUP -Configuration RelWithDebInfo -Deterministic`
