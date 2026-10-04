@@ -1,0 +1,134 @@
+{
+  "name": "meshoptimizer",
+  "version": "1.3",
+  "upstream": {
+    "repository": "https://github.com/zeux/meshoptimizer",
+    "tag": "v1.3",
+    "commit": "9e1f07b159d3cb777f1c67ed31fc11fd117986f4",
+    "commitDate": "2026-09-25",
+    "retrievedBy": "git clone + git checkout v1.3(src/ を upstream/ へ、LICENSE.md を LICENSE へコピー)"
+  },
+  "license": {
+    "spdx": "MIT",
+    "source": "LICENSE(Copyright (c) 2016-2026 Arseny Kapoulkine)",
+    "excluded": "demo・gltf(gltfpack)・js・tools・extern は取り込まない"
+  },
+  "usage": "Tools/AssetCook の CookMeshOptimizer だけがリンクする(Core・Game には入れない)",
+  "files": [
+    {
+      "path": "upstream/allocator.cpp",
+      "size": 607,
+      "sha256": "D2CC48691FE2F4C6D097BF7A766389CFB7F83CA14A5F747E3944332656D02254"
+    },
+    {
+      "path": "upstream/clusterizer.cpp",
+      "size": 47880,
+      "sha256": "A2775EDF77D86A9A5F0CA82F4635CE6CE741BBDA79FD9A652FFC8C5DD61D3B0E"
+    },
+    {
+      "path": "upstream/indexanalyzer.cpp",
+      "size": 3820,
+      "sha256": "BFF37AECB10CEFA33F3F6A217413C6AC98899C23E6DE5282420C60E6BAF786EC"
+    },
+    {
+      "path": "upstream/indexcodec.cpp",
+      "size": 21390,
+      "sha256": "2B98EDE67AB4731E8AB54DA794C46B735D659EA360666FE66BC5725C027FFF6E"
+    },
+    {
+      "path": "upstream/indexgenerator.cpp",
+      "size": 24600,
+      "sha256": "F362CDCD8AF10016333BF699347A9364335987F413F061E5B7E8CAFE3B498948"
+    },
+    {
+      "path": "upstream/meshletcodec.cpp",
+      "size": 33807,
+      "sha256": "F7BAD517CB77A646BA0BEEF916AC42715C2FE18002F29E12C6CD4CCD5835E678"
+    },
+    {
+      "path": "upstream/meshletutils.cpp",
+      "size": 20635,
+      "sha256": "4813A0C9E8648C6DE53F317322FA17C9486FF024F186AA9D631E7C60BA96C33E"
+    },
+    {
+      "path": "upstream/meshoptimizer.h",
+      "size": 109292,
+      "sha256": "E3688EF553F603391747895A5C221EF1528574CC7F8173782417A96CB531F61B"
+    },
+    {
+      "path": "upstream/opacitymap.cpp",
+      "size": 18567,
+      "sha256": "81037B530D10AAAC80A43197294AEF5B27B3CCF8D1E323C5CCDC0945FC4C5D69"
+    },
+    {
+      "path": "upstream/overdrawoptimizer.cpp",
+      "size": 11671,
+      "sha256": "A70412562F991133CE52B2833ADEE9DE0A9029DC45312ADA1EB5C2452DC4F3EE"
+    },
+    {
+      "path": "upstream/partition.cpp",
+      "size": 19387,
+      "sha256": "CF34F00DD7A550C7B18B31C35D683AC2EFB9E1D711BCEC411649D311477D4B2D"
+    },
+    {
+      "path": "upstream/quantization.cpp",
+      "size": 3503,
+      "sha256": "28282F555D42A118A6735F161B1BA78FCBE0D1810A6A337A399BD8471F79105E"
+    },
+    {
+      "path": "upstream/rasterizer.cpp",
+      "size": 8739,
+      "sha256": "2172E0AC82359A19F2880763E2088F51B7EC361B23FB54F743B618691967DBE5"
+    },
+    {
+      "path": "upstream/remesher.cpp",
+      "size": 27168,
+      "sha256": "51A06F9D348709B99E2F750710CC607793C8A08C5486193D8622CA2A06F67FB2"
+    },
+    {
+      "path": "upstream/simplifier.cpp",
+      "size": 107217,
+      "sha256": "719303B6970398631E30724E8EEBC6CD2E7E08B67FE8AB7CBF7EECAFDAA08616"
+    },
+    {
+      "path": "upstream/spatialorder.cpp",
+      "size": 11093,
+      "sha256": "9005EE0069ED8C56797606DE80C0CD951AB55FFB608BC3AF83C4E5B2517371B1"
+    },
+    {
+      "path": "upstream/stripifier.cpp",
+      "size": 7752,
+      "sha256": "E653E6BE3A9B821016A1F6A90B756B971422F1246EBD03E60B478251A288BFD4"
+    },
+    {
+      "path": "upstream/tangentspace.cpp",
+      "size": 26559,
+      "sha256": "1BA72A59793887E870E5CC2C31B9B3D38296B436EE2FCDFB2C9E409B480E4079"
+    },
+    {
+      "path": "upstream/vcacheoptimizer.cpp",
+      "size": 14171,
+      "sha256": "618429EF4DB8AB9B16FDE4E73DCF425D89452ACBF103085478BC8B1761FA6689"
+    },
+    {
+      "path": "upstream/vertexcodec.cpp",
+      "size": 60507,
+      "sha256": "6AF26A85ED38DAFFB97D988E9704FFC257C690AF05048304044BFC786699550F"
+    },
+    {
+      "path": "upstream/vertexfilter.cpp",
+      "size": 55477,
+      "sha256": "780E7F95024B577B8ADCB8EE2A2E442294EBD62A1B6AAF37627FC1FF3CAC4FF3"
+    },
+    {
+      "path": "upstream/vfetchoptimizer.cpp",
+      "size": 1915,
+      "sha256": "AA534BB8150CA27AE229C58A0DC51F85F9ACCCBC5D4214F4C82EDD91FC08E478"
+    },
+    {
+      "path": "LICENSE",
+      "size": 1079,
+      "sha256": "F03037CA7BAD1E3EB7F4A63FA6084A8BAABD5BA30D3C239A9A7F35705D873E26"
+    }
+  ]
+}

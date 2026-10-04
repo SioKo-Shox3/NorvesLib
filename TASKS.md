@@ -331,7 +331,7 @@
 - notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG4-MESHOPT-VENDOR: meshoptimizerを取り込む
-- status: todo
+- status: done
 - done-when: `Library/ThirdParty/meshoptimizer/` に固定した commit（リリースのタグ）のソースと `LICENSE`（MIT）、`UPSTREAM.json`（版・commit・取得元・sha256・SPDX）を置き、独立の静的ライブラリ `NorvesThirdParty_MeshOptimizer` を作って `AssetCook` にだけリンクする（Core・Game はリンクしない）。`Tools/AssetCook` に薄い境界（`MeshSimplifier` の名前は既存と衝突するので `CookMeshOptimizer` などにする）を置き、スモーク `AssetCookMeshSimplifySmoke`（`Tools/AssetCook/CMakeLists.txt` の add_test）が、緯度経度の球（約 2 万三角形）を境界の頂点を固定して半分に簡略化し、三角形の数・誤差（相対）・固定した頂点が動かないことを確かめる。
 - verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(AssetCookMeshSimplifySmoke|AssetCookMeshSmoke)$"`

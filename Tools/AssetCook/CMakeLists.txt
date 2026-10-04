@@ -18,6 +18,18 @@ target_link_libraries(AssetCookBlockCompressor PUBLIC NorvesThirdParty_Bc7Enc Co
 target_include_directories(AssetCookBlockCompressor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(AssetCookBlockCompressor PROPERTIES FOLDER "Tools")
 
+# メッシュ簡略化(meshoptimizer)も AssetCook だけがリンクする。Core・Game には入れない。
+add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/meshoptimizer
+    ${CMAKE_BINARY_DIR}/ThirdParty/meshoptimizer)
+
+add_library(AssetCookMeshOptimizer STATIC
+    CookMeshOptimizer.cpp
+    CookMeshOptimizer.h
+)
+target_link_libraries(AssetCookMeshOptimizer PUBLIC NorvesThirdParty_MeshOptimizer Core)
+target_include_directories(AssetCookMeshOptimizer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(AssetCookMeshOptimizer PROPERTIES FOLDER "Tools")
+
 # テクスチャのクック(用途ごとの形式・ミップ・NVTEX の書き出し)。スモークからも使えるよう独立の静的ライブラリにする。
 add_library(AssetCookTextureCooker STATIC
     TextureCooker.cpp
@@ -30,7 +42,7 @@ target_include_directories(AssetCookTextureCooker
 )
 set_target_properties(AssetCookTextureCooker PROPERTIES FOLDER "Tools")
 
-target_link_libraries(AssetCook PRIVATE Core AssetCookBlockCompressor AssetCookTextureCooker)
+target_link_libraries(AssetCook PRIVATE Core AssetCookBlockCompressor AssetCookTextureCooker AssetCookMeshOptimizer)
 target_include_directories(AssetCook PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
@@ -44,6 +56,13 @@ target_link_libraries(AssetCookBlockCompressSmoke PRIVATE AssetCookBlockCompress
 set_target_properties(AssetCookBlockCompressSmoke PROPERTIES FOLDER "Tools")
 add_dependencies(AssetCook AssetCookBlockCompressSmoke)
 add_test(NAME AssetCookBlockCompressSmoke COMMAND $<TARGET_FILE:AssetCookBlockCompressSmoke>)
+
+# メッシュ簡略化の境界のスモーク(緯度経度の球を縁を固定して半分にする)。
+add_executable(AssetCookMeshSimplifySmoke AssetCookMeshSimplifySmoke.cpp)
+target_link_libraries(AssetCookMeshSimplifySmoke PRIVATE AssetCookMeshOptimizer)
+set_target_properties(AssetCookMeshSimplifySmoke PROPERTIES FOLDER "Tools")
+add_dependencies(AssetCook AssetCookMeshSimplifySmoke)
+add_test(NAME AssetCookMeshSimplifySmoke COMMAND $<TARGET_FILE:AssetCookMeshSimplifySmoke>)
 
 # 用途ごとのクックの中身(ORM の詰め方・法線のミップ・R16 の精度など)を確かめる。AssetCookTextureSmoke から呼ぶ。
 add_executable(AssetCookTextureUsageSmoke AssetCookTextureUsageSmoke.cpp)
