@@ -2321,7 +2321,7 @@
 - stop-when: 生成slot名を元名に復元扱い、別関数へ解決ルールを複製、同名swapを検出可能と主張、未一致を無視して成功。
 
 ## G2-JSON-UNICODE-INPUT: UTF8入口とnative文字幅を整合する
-- status: doing
+- status: done
 - done-when: JSON bytes入口を厳密UTF8→nativeの共通APIへ接続し、lexerのchar縮約/数値tokenのwide型不整合を修正。ANSI/UTF16/UTF32のraw/escape/native同名性を契約化し、material resolverで推測修復しない。
 - verify: 骨+狼emoji/Latin、構文文字と同じ下位byteのUnicode、invalidUTF8/surrogate/NUL、ASCII/数値互換を純helperと実native登録で検証。Corewideの実compile/実行未確認を明示。
 - stop-when: byte拡幅だけや符号修正だけでdecode済みとする、path用ToCoreStringをJSON修正で一括変更、native実行未実施を合格扱いする。
@@ -2352,7 +2352,13 @@
 - stop-when: assertionを削除/弱化して通す、エンジン実装の挙動を巻き込む、未再実行のnative成功を主張。
 
 ## G2-S6-SMOKE-ENVIRONMENT: Windows PowerShell検証の子環境を整える
-- status: doing
+- status: done
 - done-when: PowerShell7→Python→CMake→Windows PowerShellでPSModulePathを継承して標準Utilityを見失う経路を、子process環境だけの除去で避ける。親環境・smoke command/fixture/byte条件は保持し、実Glb以降を再検証する。
 - verify: 大小文字の異なる環境key/他変数/親保持/Skeletal指定の単体試験、実Windows CLI7case。基準未採取なのでdriver recipe修正は今回を含めて固定する。
 - stop-when: OS/ユーザーの恒久環境を変更、manifest比較を弱化、実再試験前に環境原因の確定/全smoke合格を主張。
+
+## G2-MATERIAL-IMPORT-PLAN: sidecarと元材質の解決結果を値所有する
+- status: doing
+- done-when: 幾何設定52Bを維持した新document/loaderが資産layerと素材selector+layer+surfaceを厳密解析。glTF元index/name catalogを所有し、全selectorを共通関数1回で解決、ARM/発光設定とSurfaceNameを値所有planへ届ける。旧loader/v0受理は拡張せず、実cook接続は次の垂直slice。
+- verify: raw無名/Material_0/入替/同名警告情報/未一致/二重target/Unicode/JSON寿命後所有/失敗保持、旧幾何APIの拒否互換、sidecarfile入口。native testをCIで実行する。
+- stop-when: SurfaceNameをreportだけでruntime対応とする、未対応cookに設定を捨てて渡す、resolver照合を複製、元indexを生成slotへ置換。

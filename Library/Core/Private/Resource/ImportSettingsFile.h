@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Resource/ImportSettings.h"
+#include "Resource/MaterialImportDocument.h"
 #include <filesystem>
 
 namespace NorvesLib::Core::AssetImport
@@ -14,6 +15,12 @@ namespace NorvesLib::Core::AssetImport
     struct LoadedImportSettings
     {
         ImportSettings Settings;
+        std::filesystem::path Path;
+        bool bPresent = false;
+    };
+    struct LoadedImportSettingsDocument
+    {
+        ImportSettingsDocument Settings;
         std::filesystem::path Path;
         bool bPresent = false;
     };
@@ -39,4 +46,7 @@ namespace NorvesLib::Core::AssetImport
     // 通常fileだけ読み最大1MiB。source/設定の競合書換えに対するatomic snapshotは提供しない。
     [[nodiscard]] SettingsFileOutcome LoadImportSettingsFile(const std::filesystem::path& source,
         const ImportSettingsFileOptions& options, LoadedImportSettings& outSettings);
+    // 新document用。旧LoadImportSettingsFileは幾何-onlyの拒否互換を保つ。
+    [[nodiscard]] SettingsFileOutcome LoadImportSettingsDocument(const std::filesystem::path& source,
+        const ImportSettingsFileOptions& options, LoadedImportSettingsDocument& outSettings);
 } // namespace NorvesLib::Core::AssetImport

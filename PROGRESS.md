@@ -688,3 +688,6 @@
 - G2-S6-SMOKE-ENVIRONMENT: MicrosoftのPS7→Python/中間process→Windows PSのPSModulePath継承問題に沿って、driverがWindowsの子環境辞書だけから当該keyを大小文字非依存で除去。親/他変数/Skeletal memberを保持し12単体通常/-Oと独立review PASS。smoke command/fixture/生byte条件は不変、成功基準前のdriver hash更新を明記。Python UTF8 modeもCIに固定。実Glb/Import/Skeletal再実行と基準snapshotは未確認のためdoing。
 
 - G2-JSON-UNICODE-INPUT実Windows検証: run37197864299で更新Core/AssetCookはビルド成功。JsonUnicodeInputTestのraw literalをCHECKの#式へ直接渡した箇所がMSVC C2017/C3688となったため、同一literalを局所変数へ移しmacro文字列化の対象から外す。fixture byte/期待値は不変。native試験/7smokeは未達、doingを継続。
+
+- G2-MATERIAL-IMPORT-PLAN: 新document/元index+UTF8名catalog/解決済みplanを値所有化。幾何52Bと旧loaderの拒否を維持し、新file入口だけが材質設定を読む。全rowのARM/発光/surfaceを共通resolver1回へ渡し、名前/番号二重指定・不在を拒否。無名/Material_0・catalog順とsource順・重複診断source index・寿命/後段失敗保持・legacy/BOMをnative試験へ登録。45JSON literal構文確認、独立review PASS、非blockingの不正手組みcatalog/後続layerとsurface失敗保持も補強。実nativeは未実行のためdoing。CLI/v1 cook/cache/SurfaceName永続化は未接続。
+- run37198756161でCore/AssetCook/CookedMeshTestビルドと9CPU試験成功を確認。G2-JSON-UNICODE-INPUTはnative ANSI/TCHAR経路も合格してdone（Core全体UNICODE構成は未検証）。PSModulePath修正でGlb/Importも通り環境修正taskはdone。全7smokeはSkeletalのfixture helperがextra_zero.binにfixture.bin固定needleを当てて停止し未完。出力/受入れ条件は緩めず別修正する。

@@ -1,5 +1,8 @@
 ﻿#include "Resource/MaterialImportSettingsJson.h"
 #include "Text/JsonDocument.h"
+#include "Resource/MaterialImportDocument.h"
+#include "Asset/CookedSkeletalNameCodec.h"
+#include <utility>
 #include <cmath>
 
 namespace NorvesLib::Core::AssetImport
@@ -221,5 +224,82 @@ namespace NorvesLib::Core::AssetImport
         }
         outLayer = layer;
         return SettingsResult::Success;
+    }
+    SettingsResult ParseMaterialOverrideSettings(const JsonValue& value, MaterialOverrideSettings& out)
+    {
+        constexpr const char* fields[] = {"name", "index", "expectedName", "surface",
+            "arm", "doubleSided", "alphaMode", "emissiveNitsPerUnit"};
+        auto status = CheckFields(value, fields);
+        if (status != SettingsResult::Success)
+        {
+            return status;
+        }
+        MaterialOverrideSettings candidate;
+        const auto encode = [](const JsonValue& input, bool allowEmpty, MaterialNameBytes& target)
+        {
+            if (!input.IsString())
+            {
+                return SettingsResult::InvalidType;
+            }
+            const auto& text = input.AsString();
+            if (!allowEmpty && text.empty())
+            {
+                return SettingsResult::InvalidValue;
+            }
+            const Container::Span<const Container::String::value_type> source{text.data(), text.size()};
+            const auto measure = Asset::MeasureSkeletalNameEncoding(2, source);
+            if (!measure.Succeeded())
+            {
+                return SettingsResult::InvalidValue;
+            }
+            target.resize(measure.ByteCount);
+            return Asset::EncodeSkeletalWireName(2, source, {target.data(), target.size()}).Succeeded() ?
+                SettingsResult::Success : SettingsResult::InvalidValue;
+        };
+        const auto name = value.FindMember("name"), index = value.FindMember("index"), expected = value.FindMember("expectedName");
+        if (name.IsValid())
+        {
+            if (index.IsValid() || expected.IsValid())
+            {
+                return SettingsResult::InvalidValue;
+            }
+            status = encode(name, false, candidate.Name);
+        }
+        else
+        {
+            if (!index.IsNumber() || !expected.IsValid())
+            {
+                return SettingsResult::InvalidValue;
+            }
+            const double number = index.AsNumber();
+            if (!std::isfinite(number) || number < 0 || number > UINT32_MAX || std::floor(number) != number)
+            {
+                return SettingsResult::InvalidValue;
+            }
+            candidate.Kind = MaterialSelectorKind::IndexAndExpectedName;
+            candidate.SourceIndex = static_cast<uint32_t>(number);
+            candidate.bExpectedNamePresent = true;
+            status = encode(expected, true, candidate.Name);
+        }
+        if (status != SettingsResult::Success)
+        {
+            return status;
+        }
+        const auto surface = value.FindMember("surface");
+        if (surface.IsValid())
+        {
+            status = encode(surface, false, candidate.SurfaceName);
+            if (status != SettingsResult::Success)
+            {
+                return status;
+            }
+            candidate.bSurfacePresent = true;
+        }
+        status = ReadLayer(value, candidate.Settings);
+        if (status == SettingsResult::Success)
+        {
+            out = std::move(candidate);
+        }
+        return status;
     }
 } // namespace NorvesLib::Core::AssetImport

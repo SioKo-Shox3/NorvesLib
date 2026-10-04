@@ -42,6 +42,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER MaterialImportPolicyTest MaterialImportPolicyTest.cpp
     MEMBER MaterialImportSettingsTest MaterialImportSettingsTest.cpp
     MEMBER MaterialImportSettingsJsonTest MaterialImportSettingsJsonTest.cpp
+    MEMBER MaterialImportDocumentTest MaterialImportDocumentTest.cpp
     MEMBER ArmModeTokenTest ArmModeTokenTest.cpp
     MEMBER UnicodeTextTest UnicodeTextTest.cpp
     MEMBER JsonUnicodeInputTest JsonUnicodeInputTest.cpp
@@ -186,3 +187,5 @@ add_test(NAME MaterialSelectionTest COMMAND CookedMeshTest --test=MaterialSelect
 
 add_test(NAME UnicodeTextTest COMMAND CookedMeshTest --test=UnicodeTextTest)
 add_test(NAME JsonUnicodeInputTest COMMAND CookedMeshTest --test=JsonUnicodeInputTest)
+
+add_test(NAME MaterialImportDocumentTest COMMAND CookedMeshTest --test=MaterialImportDocumentTest)

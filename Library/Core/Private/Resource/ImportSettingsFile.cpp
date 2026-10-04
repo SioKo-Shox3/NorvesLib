@@ -5,8 +5,9 @@
 
 namespace NorvesLib::Core::AssetImport
 {
-    SettingsFileOutcome LoadImportSettingsFile(const std::filesystem::path& source,
-        const ImportSettingsFileOptions& options, LoadedImportSettings& outSettings)
+    template<typename Loaded, typename Parser>
+    static SettingsFileOutcome LoadSettingsFileInternal(const std::filesystem::path& source,
+        const ImportSettingsFileOptions& options, Loaded& outSettings, Parser parse)
     {
         const auto fail = [](SettingsFileResult result)
         {
@@ -16,7 +17,7 @@ namespace NorvesLib::Core::AssetImport
         {
             return fail(SettingsFileResult::InvalidOptions);
         }
-        LoadedImportSettings candidate;
+        Loaded candidate;
         if (options.bDisabled)
         {
             outSettings = std::move(candidate);
@@ -93,7 +94,7 @@ namespace NorvesLib::Core::AssetImport
         {
             return fail(SettingsFileResult::InvalidJson);
         }
-        const auto validation = ParseSettings(document.GetRoot(), candidate.Settings);
+        const auto validation = parse(document.GetRoot(), candidate.Settings);
         if (validation != SettingsResult::Success)
         {
             return {SettingsFileResult::InvalidSettings, validation};
@@ -101,5 +102,15 @@ namespace NorvesLib::Core::AssetImport
         candidate.bPresent = true;
         outSettings = std::move(candidate);
         return {};
+    }
+    SettingsFileOutcome LoadImportSettingsFile(const std::filesystem::path& source,
+        const ImportSettingsFileOptions& options, LoadedImportSettings& outSettings)
+    {
+        return LoadSettingsFileInternal(source, options, outSettings, ParseSettings);
+    }
+    SettingsFileOutcome LoadImportSettingsDocument(const std::filesystem::path& source,
+        const ImportSettingsFileOptions& options, LoadedImportSettingsDocument& outSettings)
+    {
+        return LoadSettingsFileInternal(source, options, outSettings, ParseImportSettingsDocument);
     }
 } // namespace NorvesLib::Core::AssetImport

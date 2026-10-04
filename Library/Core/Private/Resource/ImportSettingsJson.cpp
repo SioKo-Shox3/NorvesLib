@@ -1,6 +1,10 @@
 ﻿#include "Resource/ImportSettings.h"
 #include "Text/JsonDocument.h"
+#include "Resource/MaterialImportDocument.h"
+#include "Resource/MaterialImportSettingsJson.h"
+#include <utility>
 #include <cmath>
+#include <cstring>
 
 namespace NorvesLib::Core::AssetImport
 {
@@ -20,7 +24,7 @@ namespace NorvesLib::Core::AssetImport
             return index == value.size() && name[index] == 0;
         }
         template<size_t Count>
-        SettingsResult CheckFields(const JsonValue& object, const char* const (&names)[Count])
+        SettingsResult CheckFields(const JsonValue& object, const char* const (&names)[Count], size_t allowedCount = Count)
         {
             if (!object.IsObject())
             {
@@ -30,7 +34,7 @@ namespace NorvesLib::Core::AssetImport
             for (size_t index = 0; index < object.GetObjectSize(); ++index)
             {
                 bool bKnown = false;
-                for (size_t field = 0; field < Count; ++field)
+                for (size_t field = 0; field < allowedCount; ++field)
                 {
                     if (EqualsAscii(object.GetMemberName(index), names[field]))
                     {
@@ -261,15 +265,15 @@ namespace NorvesLib::Core::AssetImport
         }
     } // namespace
 
-    SettingsResult ParseSettings(const JsonValue& root, ImportSettings& outSettings)
+    static SettingsResult ParseGeometrySettings(const JsonValue& root, ImportSettings& outSettings, bool allowMaterial)
     {
         if (!root.IsObject())
         {
             return SettingsResult::InvalidRoot;
         }
         constexpr const char* fields[] = {"version", "meta", "units", "axes", "origin", "mesh",
-            "repair", "lod", "material", "collision", "clip"};
-        auto result = CheckFields(root, fields);
+            "repair", "lod", "material", "collision", "clip", "materials"};
+        auto result = CheckFields(root, fields, allowMaterial ? 12 : 11);
         if (result != SettingsResult::Success)
         {
             return result;
@@ -307,6 +311,10 @@ namespace NorvesLib::Core::AssetImport
         }
         for (const char* name : {"repair", "lod", "material", "collision", "clip"})
         {
+            if (allowMaterial && std::strcmp(name, "material") == 0)
+            {
+                continue;
+            }
             const auto reserved = root.FindMember(name);
             if (reserved.IsValid() && (!reserved.IsObject() || reserved.GetObjectSize() != 0))
             {
@@ -319,5 +327,46 @@ namespace NorvesLib::Core::AssetImport
             outSettings = candidate;
         }
         return result;
+    }
+    SettingsResult ParseSettings(const JsonValue& root, ImportSettings& outSettings)
+    {
+        return ParseGeometrySettings(root, outSettings, false);
+    }
+    SettingsResult ParseImportSettingsDocument(const JsonValue& root, ImportSettingsDocument& out)
+    {
+        ImportSettingsDocument candidate;
+        auto status = ParseGeometrySettings(root, candidate.Geometry, true);
+        if (status != SettingsResult::Success)
+        {
+            return status;
+        }
+        const auto material = root.FindMember("material");
+        status = ParseAssetMaterialSettings(material, candidate.Profile, candidate.AssetMaterial);
+        if (status != SettingsResult::Success)
+        {
+            return status;
+        }
+        candidate.bAssetMaterialSpecified = material.IsObject() && material.GetObjectSize() != 0;
+        const auto overrides = root.FindMember("materials");
+        if (overrides.IsValid())
+        {
+            if (!overrides.IsArray() || overrides.GetArraySize() > UINT32_MAX)
+            {
+                return SettingsResult::InvalidType;
+            }
+            candidate.Materials.reserve(overrides.GetArraySize());
+            for (size_t index = 0; index < overrides.GetArraySize(); ++index)
+            {
+                MaterialOverrideSettings entry;
+                status = ParseMaterialOverrideSettings(overrides.GetArrayElement(index), entry);
+                if (status != SettingsResult::Success)
+                {
+                    return status;
+                }
+                candidate.Materials.push_back(std::move(entry));
+            }
+        }
+        out = std::move(candidate);
+        return SettingsResult::Success;
     }
 } // namespace NorvesLib::Core::AssetImport
