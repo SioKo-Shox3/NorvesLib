@@ -1,4 +1,4 @@
-#include "MeshCooker.h"
+﻿#include "MeshCooker.h"
 #include "AudioCooker.h"
 #include "TextureCooker.h"
 
@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -67,6 +68,12 @@ namespace
         std::string EntryTypeText;
         std::string Format;
         std::string Variant;
+        // 用途ごとのテクスチャのクック(--kind texture)。指定すると Format は用途から決まる。
+        NorvesLib::Core::Container::AnsiString Usage;
+        NorvesLib::Core::Container::AnsiString Quality;
+        std::filesystem::path OrmAoPath;
+        std::filesystem::path OrmRoughnessPath;
+        std::filesystem::path OrmMetallicPath;
     };
 
     std::string ToStdString(const NorvesLib::Core::Container::AnsiString &value)
@@ -326,9 +333,10 @@ namespace
         }
     }
 
+    template <typename Bytes>
     bool BuildSingleEntryPackage(const std::string &entryName,
                                  AssetPackageFourCC entryType,
-                                 const std::vector<uint8_t> &payload,
+                                 const Bytes &payload,
                                  std::vector<uint8_t> &outBytes,
                                  uint64_t &outPayloadHash,
                                  std::string &error)
@@ -518,7 +526,8 @@ namespace
         return true;
     }
 
-    bool ReadBinaryFile(const std::filesystem::path &path, std::vector<uint8_t> &outBytes, std::string &error)
+    template <typename Bytes>
+    bool ReadBinaryFile(const std::filesystem::path &path, Bytes &outBytes, std::string &error)
     {
         std::ifstream input(path, std::ios::binary);
         if (!input.is_open())
@@ -1088,7 +1097,8 @@ namespace
         return true;
     }
 
-    bool CompareBytes(const uint8_t *actualData, size_t actualSize, const std::vector<uint8_t> &expected)
+    template <typename Bytes>
+    bool CompareBytes(const uint8_t *actualData, size_t actualSize, const Bytes &expected)
     {
         if (actualSize != expected.size())
         {
@@ -1121,10 +1131,11 @@ namespace
         return actualData != nullptr && std::memcmp(actualData, expected.data(), expected.size()) == 0;
     }
 
+    template <typename Bytes>
     bool ValidatePackageOutput(const std::filesystem::path &packagePath,
                                const std::string &entryName,
                                AssetPackageFourCC entryType,
-                               const std::vector<uint8_t> &expectedPayload,
+                               const Bytes &expectedPayload,
                                std::string &error)
     {
         std::vector<uint8_t> packageBytes;
@@ -1158,7 +1169,8 @@ namespace
         return true;
     }
 
-    bool ValidateCookedTexturePayload(const std::vector<uint8_t> &expectedPayload, std::string &error)
+    template <typename Bytes>
+    bool ValidateCookedTexturePayload(const Bytes &expectedPayload, std::string &error)
     {
         const NorvesLib::Core::Container::Span<const uint8_t> span(expectedPayload.data(), expectedPayload.size());
         const NorvesLib::Core::Asset::CookedTextureParseResult result =
@@ -1173,10 +1185,11 @@ namespace
         return true;
     }
 
+    template <typename Bytes>
     bool ValidateCookedTexturePackageOutput(const std::filesystem::path &packagePath,
                                             const std::string &entryName,
                                             AssetPackageFourCC entryType,
-                                            const std::vector<uint8_t> &expectedPayload,
+                                            const Bytes &expectedPayload,
                                             std::string &error)
     {
         std::vector<uint8_t> packageBytes;
@@ -1372,12 +1385,13 @@ namespace
         return true;
     }
 
+    template <typename Bytes>
     bool ValidateAssetSystemOutput(const std::filesystem::path &manifestPath,
                                    const std::string &manifestJson,
                                    const std::string &logicalPath,
                                    AssetKind kind,
                                    const std::string &variant,
-                                   const std::vector<uint8_t> &expectedPayload,
+                                   const Bytes &expectedPayload,
                                    std::string &error)
     {
         const std::filesystem::path manifestParent = manifestPath.parent_path();
@@ -1510,6 +1524,70 @@ namespace
         return true;
     }
 
+    // --usage と、それに付く引数の組み合わせを確かめ、Format を用途から決める。
+    bool ResolveTextureUsageOptions(CookOptions &options, NorvesLib::Tools::AssetCook::ErrorString &error)
+    {
+        const bool bHasOrmSource = !options.OrmAoPath.empty() ||
+                                   !options.OrmRoughnessPath.empty() ||
+                                   !options.OrmMetallicPath.empty();
+        if (options.Usage.empty())
+        {
+            if (bHasOrmSource || !options.Quality.empty())
+            {
+                error = "--orm-* と --quality は --usage と一緒に指定してください";
+                return false;
+            }
+            return true;
+        }
+
+        NorvesLib::Tools::AssetCook::TextureUsage usage{};
+        if (!NorvesLib::Tools::AssetCook::ParseTextureUsage(options.Usage, usage))
+        {
+            error = "--usage は albedo・normal・orm・single・height16 のどれかです";
+            return false;
+        }
+
+        if (options.Kind != "texture")
+        {
+            error = "--usage は --kind texture と一緒に指定してください";
+            return false;
+        }
+
+        if (!options.Format.empty())
+        {
+            error = "--usage が形式を決めるので --format は指定しないでください";
+            return false;
+        }
+        options.Format = NorvesLib::Tools::AssetCook::GetTextureUsageManifestFormat(usage);
+
+        if (!options.Quality.empty() && options.Quality != "fast" && options.Quality != "normal" && options.Quality != "best")
+        {
+            error = "--quality は fast・normal・best のどれかです";
+            return false;
+        }
+
+        if (usage == NorvesLib::Tools::AssetCook::TextureUsage::Orm)
+        {
+            if (!options.InputPath.empty())
+            {
+                error = "--usage orm は --input ではなく --orm-ao・--orm-roughness・--orm-metallic を読みます";
+                return false;
+            }
+            if (!bHasOrmSource)
+            {
+                error = "--usage orm には --orm-ao・--orm-roughness・--orm-metallic のどれか 1 つが要ります";
+                return false;
+            }
+        }
+        else if (bHasOrmSource)
+        {
+            error = "--orm-* は --usage orm と一緒に指定してください";
+            return false;
+        }
+
+        return true;
+    }
+
     bool ParseCommandLine(int argc, char **argv, CookOptions &outOptions, std::string &error)
     {
         if (argc == 2 && std::string_view(argv[1]) == "--help")
@@ -1611,6 +1689,46 @@ namespace
                 }
                 outOptions.Variant = value;
             }
+            else if (argument == "--usage")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                outOptions.Usage = NorvesLib::Core::Container::AnsiString(value.c_str());
+            }
+            else if (argument == "--quality")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                outOptions.Quality = NorvesLib::Core::Container::AnsiString(value.c_str());
+            }
+            else if (argument == "--orm-ao")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                outOptions.OrmAoPath = value;
+            }
+            else if (argument == "--orm-roughness")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                outOptions.OrmRoughnessPath = value;
+            }
+            else if (argument == "--orm-metallic")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                outOptions.OrmMetallicPath = value;
+            }
             else
             {
                 error = "unknown argument: " + argument;
@@ -1618,7 +1736,16 @@ namespace
             }
         }
 
-        if (outOptions.InputPath.empty() ||
+        // 用途別の引数の検証は独自型でエラーを返すので、既存の CLI の std::string へは境界で変換する。
+        NorvesLib::Tools::AssetCook::ErrorString usageError;
+        if (!ResolveTextureUsageOptions(outOptions, usageError))
+        {
+            error = ToStdString(usageError);
+            return false;
+        }
+
+        const bool bOrmUsage = outOptions.Usage == "orm";
+        if ((outOptions.InputPath.empty() && !bOrmUsage) ||
             outOptions.PackagePath.empty() ||
             outOptions.ManifestPath.empty() ||
             outOptions.LogicalPath.empty() ||
@@ -1642,7 +1769,8 @@ namespace
         }
         else if (outOptions.Kind == "texture")
         {
-            if (!NorvesLib::Tools::AssetCook::IsSupportedTextureCookFormat(outOptions.Format))
+            if (outOptions.Usage.empty() &&
+                !NorvesLib::Tools::AssetCook::IsSupportedTextureCookFormat(outOptions.Format))
             {
                 error = "unsupported texture --format";
                 return false;
@@ -1708,6 +1836,13 @@ namespace
             << "--logical <path> --kind texture --entry <entry.nvtex> --entry-type Tex0 "
             << "--format nvtex.v0.rgba8.srgb|nvtex.v0.rgba8.linear|nvtex.v0.rg8.linear|nvtex.v0.r8.linear "
             << "--variant default\n"
+            << "       AssetCook --input <image> --out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind texture --entry <entry.nvtex> --entry-type Tex0 "
+            << "--usage albedo|normal|single|height16 [--quality fast|normal|best] --variant default\n"
+            << "       AssetCook --orm-ao <image> --orm-roughness <image> --orm-metallic <image> "
+            << "--out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind texture --entry <entry.nvtex> --entry-type Tex0 "
+            << "--usage orm [--quality fast|normal|best] --variant default\n"
             << "       AssetCook --input <model.gltf> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind model --entry <entry.nvmesh> --entry-type Msh0 "
             << "--format nvmesh.v0.mesh3d.pnt.u32.clustered "
@@ -1810,15 +1945,16 @@ namespace
         std::filesystem::path inputPath;
         std::filesystem::path packagePath;
         std::filesystem::path manifestPath;
-        if (!MakeAbsolutePath(options.InputPath, inputPath, error) ||
+        // ORM は --input を取らず、--orm-* の元画像を別に読む。
+        if ((!options.InputPath.empty() && !MakeAbsolutePath(options.InputPath, inputPath, error)) ||
             !MakeAbsolutePath(options.PackagePath, packagePath, error) ||
             !MakeAbsolutePath(options.ManifestPath, manifestPath, error))
         {
             return false;
         }
 
-        std::vector<uint8_t> inputBytes;
-        if (!ReadBinaryFile(inputPath, inputBytes, error))
+        NorvesLib::Tools::AssetCook::ByteArray inputBytes;
+        if (!options.InputPath.empty() && !ReadBinaryFile(inputPath, inputBytes, error))
         {
             return false;
         }
@@ -1847,15 +1983,96 @@ namespace
         }
 
         NorvesLib::Tools::AssetCook::TextureCookResult textureResult;
-        if (!NorvesLib::Tools::AssetCook::CookTextureToNvtex(inputBytes.data(),
-                                                             inputBytes.size(),
-                                                             options.Format,
-                                                             inputPath.generic_string(),
-                                                             textureResult,
-                                                             error))
+        // 元画像のハッシュ。ORM は 3 枠をまとめて 1 つにする(枠ごとに有無・大きさ・中身を並べる)。
+        NorvesLib::Tools::AssetCook::ByteArray sourceHashBytes;
+        const auto cookStart = std::chrono::steady_clock::now();
+        NorvesLib::Tools::AssetCook::ErrorString cookError;
+        if (options.Usage.empty())
         {
-            return false;
+            if (!NorvesLib::Tools::AssetCook::CookTextureToNvtex(
+                    inputBytes.data(),
+                    inputBytes.size(),
+                    options.Format,
+                    NorvesLib::Tools::AssetCook::ErrorString(inputPath.generic_string().c_str()),
+                    textureResult,
+                    cookError))
+            {
+                error = ToStdString(cookError);
+                return false;
+            }
+            sourceHashBytes = inputBytes;
         }
+        else
+        {
+            using namespace NorvesLib::Tools::AssetCook;
+            TextureUsageCookParams cookParams;
+            if (!ParseTextureUsage(options.Usage, cookParams.Usage))
+            {
+                error = "--usage は albedo・normal・orm・single・height16 のどれかです";
+                return false;
+            }
+            if (options.Quality == "fast")
+            {
+                cookParams.Quality = BlockQuality::Fast;
+            }
+            else if (options.Quality == "best")
+            {
+                cookParams.Quality = BlockQuality::Best;
+            }
+
+            TextureSourceImage mainSource;
+            OrmSourceImages ormSources;
+            ByteArray ormBytes[3];
+            ErrorString ormNames[3];
+            if (cookParams.Usage == TextureUsage::Orm)
+            {
+                const std::filesystem::path *ormPaths[3] = {&options.OrmAoPath, &options.OrmRoughnessPath, &options.OrmMetallicPath};
+                TextureSourceImage *ormSlots[3] = {&ormSources.Ao, &ormSources.Roughness, &ormSources.Metallic};
+                for (int slot = 0; slot < 3; ++slot)
+                {
+                    sourceHashBytes.push_back(ormPaths[slot]->empty() ? 0 : 1);
+                    if (ormPaths[slot]->empty())
+                    {
+                        continue;
+                    }
+
+                    std::filesystem::path slotPath;
+                    if (!MakeAbsolutePath(*ormPaths[slot], slotPath, error) ||
+                        !ReadBinaryFile(slotPath, ormBytes[slot], error))
+                    {
+                        return false;
+                    }
+
+                    ormNames[slot] = ErrorString(slotPath.generic_string().c_str());
+                    ormSlots[slot]->Bytes = ormBytes[slot].data();
+                    ormSlots[slot]->Size = ormBytes[slot].size();
+                    ormSlots[slot]->Name = ormNames[slot];
+
+                    const uint64_t slotSize = static_cast<uint64_t>(ormBytes[slot].size());
+                    for (int shift = 0; shift < 64; shift += 8)
+                    {
+                        sourceHashBytes.push_back(static_cast<uint8_t>((slotSize >> shift) & 0xffu));
+                    }
+                    sourceHashBytes.insert(sourceHashBytes.end(), ormBytes[slot].begin(), ormBytes[slot].end());
+                }
+            }
+            else
+            {
+                mainSource.Bytes = inputBytes.data();
+                mainSource.Size = inputBytes.size();
+                mainSource.Name = ErrorString(inputPath.generic_string().c_str());
+                sourceHashBytes = inputBytes;
+            }
+
+            if (!CookTextureForUsage(mainSource, ormSources, cookParams, textureResult, cookError))
+            {
+                error = ToStdString(cookError);
+                return false;
+            }
+        }
+        const auto cookElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - cookStart)
+                                       .count();
 
         if (!ValidateCookedTexturePayload(textureResult.NvtexBytes, error))
         {
@@ -1876,7 +2093,7 @@ namespace
             return false;
         }
 
-        const uint64_t sourceHash = ComputeAssetPackagePayloadHash(inputBytes.data(), inputBytes.size());
+        const uint64_t sourceHash = ComputeAssetPackagePayloadHash(sourceHashBytes.data(), sourceHashBytes.size());
         std::string manifestJson;
         if (!BuildManifestJson(logicalPath,
                                options.Kind,
@@ -1914,13 +2131,21 @@ namespace
 
         std::cerr << "AssetCook wrote texture package=\"" << packagePath.generic_string()
                   << "\" manifest=\"" << manifestPath.generic_string()
-                  << "\" source_bytes=" << inputBytes.size()
+                  << "\" source_bytes=" << sourceHashBytes.size()
                   << " nvtex_bytes=" << textureResult.NvtexBytes.size()
                   << " width=" << textureResult.Width
                   << " height=" << textureResult.Height
                   << " mips=" << textureResult.MipCount
                   << " bytes_per_pixel=" << textureResult.BytesPerPixel
                   << "\n";
+        if (!options.Usage.empty())
+        {
+            // 計測の行は機械が拾うので英語のまま標準出力へ出す。時間は元画像の復号から圧縮までのクック分。
+            std::cout << "TEXTURE_COOK usage=" << options.Usage
+                      << " format=" << textureResult.PixelFormatName
+                      << " size=" << textureResult.Width << "x" << textureResult.Height
+                      << " ms=" << cookElapsedMs << "\n";
+        }
         return true;
     }
 

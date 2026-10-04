@@ -52,6 +52,7 @@
 #include "GameModes/Rendering3DTest/SkySunControl.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
 #include "Core/Public/Asset/AssetFileReader.h"
+#include "Core/Public/RHI/ITexture.h"
 #include "Core/Public/Thread/JobSystem.h"
 #include "Core/Public/Thread/Task.h"
 
@@ -132,9 +133,155 @@ namespace Game::GameModes
             return String("Assets/Textures/PolyHaven/") + spec.AssetId + "/" + spec.AssetId + "_" + suffix + "_4k.jpg";
         }
 
-        // 見本の材質が使うテクスチャがすべてディスクにあるか（無ければ、その帯は石畳で描く）
-        bool AreGroundSwatchTexturesPresent(const GroundSwatchSpec &spec)
+        // 材質1つ分のテクスチャの名前。"Assets/" から始まる論理パスで、クック済みもばらの元画像もこの名前で引ける。
+        struct MaterialTexturePaths
         {
+            String Albedo;
+            String Normal;
+            String Orm;       // クック済みの ORM（AO・粗さ・メタリックを1枚に詰めたもの）。ばらの元画像は無い
+            String Metallic;  // ばらの元画像。空なら使わない（ORM が無いときの別々の枠）
+            String Roughness; // 同上
+            String AO;        // 同上
+            String Height;    // 空なら視差の高さを読まない
+        };
+
+        // クック済みのマニフェストにこの論理パスの項目があるか。クック済みを使わないとき（未設定）は常に false。
+        bool IsTextureCooked(const Rendering3DTestData &data, const String &path)
+        {
+            return !path.empty() && data.m_IsTextureCooked.IsBound() && data.m_IsTextureCooked.Invoke(path);
+        }
+
+        // 材質の枠の種類。読み込めた結果によって、後始末が変わる。
+        enum class MaterialSlotKind
+        {
+            Plain,  // 読み込めたハンドルをそのまま入れる
+            Normal, // 読み込めた形式が BC5（2チャンネル）なら bNormalTwoChannel を立てる
+            Orm,    // 読み込めなければ、粗さ・AO・メタリックの別々の元画像を読む枠へ戻る
+        };
+
+        // 材質1つ分の枠を1つ非同期で読む。結果は update->CreateData へ入れ、update->PendingTextureCount が 0 に
+        // なったとき onComplete を呼ぶ。ORM が読めなかったときは、読み終わる前に別々の元画像の枠を数に足すので、
+        // 数が途中で 0 になることはない（コールバックはメインスレッドで呼ばれる）。
+        template <typename OnComplete>
+        void LoadMaterialSlot(TextureResources &textures,
+                              const TSharedPtr<PendingMaterialUpdate> &update,
+                              const MaterialTexturePaths &paths,
+                              const String &path,
+                              TextureHandle MaterialCreateData::*member,
+                              MaterialSlotKind kind,
+                              OnComplete onComplete)
+        {
+            textures.LoadTextureAsync(
+                path,
+                [&textures, update, paths, path, member, kind, onComplete](TextureHandle handle)
+                {
+                    update->CreateData.*member = handle;
+                    if (kind == MaterialSlotKind::Normal)
+                    {
+                        // クック済みの法線は BC5。ばらの元画像へ戻ったときは RGBA8 なので立てない。
+                        const NorvesLib::RHI::ITexture *rhiTexture = handle.IsValid() ? textures.GetRHITexture(handle) : nullptr;
+                        update->CreateData.bNormalTwoChannel =
+                            rhiTexture != nullptr && rhiTexture->GetFormat() == NorvesLib::RHI::Format::BC5_UNORM;
+                    }
+                    else if (kind == MaterialSlotKind::Orm && !handle.IsValid())
+                    {
+                        NORVES_LOG_WARNING("Rendering3DTest",
+                                           "MATERIAL_ORM_FALLBACK path=%s クック済みの ORM を読めないため、"
+                                           "粗さ・AO・メタリックのばらの元画像を読みます",
+                                           path.c_str());
+                        struct LooseSlot
+                        {
+                            const String *Path;
+                            TextureHandle MaterialCreateData::*Member;
+                        };
+                        const LooseSlot looseSlots[] = {
+                            {&paths.Metallic, &MaterialCreateData::MetallicTexture},
+                            {&paths.Roughness, &MaterialCreateData::RoughnessTexture},
+                            {&paths.AO, &MaterialCreateData::AOTexture},
+                        };
+                        for (const LooseSlot &looseSlot : looseSlots)
+                        {
+                            if (!looseSlot.Path->empty())
+                            {
+                                ++update->PendingTextureCount;
+                                LoadMaterialSlot(textures, update, paths, *looseSlot.Path, looseSlot.Member,
+                                                 MaterialSlotKind::Plain, onComplete);
+                            }
+                        }
+                    }
+
+                    if (--update->PendingTextureCount == 0)
+                    {
+                        onComplete();
+                    }
+                });
+        }
+
+        // 材質1つ分のテクスチャを非同期で読み、そろったら onComplete を呼ぶ。マニフェストにクック済みの ORM が
+        // あればまずそれを読み（AO・粗さ・メタリックの3枠の代わり。読めなければ別々のばらの元画像へ戻る）、
+        // 無ければ最初から別々のばらの元画像を読む。法線は、読めた形式が BC5 のときだけ2チャンネルの印を付ける。
+        // アルベド・法線・高さは、クック済みもばらも同じ名前で読む
+        // （クック済みを使えないものはエンジンがばらの元画像を無圧縮で読み、TEXTURE_COOKED_MISSING を警告する）。
+        template <typename OnComplete>
+        void RequestMaterialTextures(const Rendering3DTestData &data,
+                                     TextureResources &textures,
+                                     const TSharedPtr<PendingMaterialUpdate> &update,
+                                     const MaterialTexturePaths &paths,
+                                     OnComplete onComplete)
+        {
+            struct Slot
+            {
+                const String *Path = nullptr;
+                TextureHandle MaterialCreateData::*Member = nullptr;
+                MaterialSlotKind Kind = MaterialSlotKind::Plain;
+            };
+            Slot slots[8];
+            uint32_t slotCount = 0;
+            auto addSlot = [&slots, &slotCount](const String &path,
+                                                TextureHandle MaterialCreateData::*member,
+                                                MaterialSlotKind kind = MaterialSlotKind::Plain)
+            {
+                if (!path.empty())
+                {
+                    slots[slotCount].Path = &path;
+                    slots[slotCount].Member = member;
+                    slots[slotCount].Kind = kind;
+                    ++slotCount;
+                }
+            };
+
+            addSlot(paths.Albedo, &MaterialCreateData::AlbedoTexture);
+            addSlot(paths.Normal, &MaterialCreateData::NormalTexture, MaterialSlotKind::Normal);
+            update->CreateData.bNormalTwoChannel = false;
+            if (IsTextureCooked(data, paths.Orm))
+            {
+                addSlot(paths.Orm, &MaterialCreateData::ORMTexture, MaterialSlotKind::Orm);
+            }
+            else
+            {
+                addSlot(paths.Metallic, &MaterialCreateData::MetallicTexture);
+                addSlot(paths.Roughness, &MaterialCreateData::RoughnessTexture);
+                addSlot(paths.AO, &MaterialCreateData::AOTexture);
+            }
+            addSlot(paths.Height, &MaterialCreateData::HeightTexture);
+
+            update->PendingTextureCount = slotCount;
+            for (uint32_t slotIndex = 0; slotIndex < slotCount; ++slotIndex)
+            {
+                LoadMaterialSlot(textures, update, paths, *slots[slotIndex].Path, slots[slotIndex].Member,
+                                 slots[slotIndex].Kind, onComplete);
+            }
+        }
+
+        // 見本の材質が使うテクスチャがすべてディスクにあるか（無ければ、その帯は石畳で描く）。
+        // クック済みの色が引けるなら、ばらの元画像が無くても使える。
+        bool AreGroundSwatchTexturesPresent(const Rendering3DTestData &data, const GroundSwatchSpec &spec)
+        {
+            if (IsTextureCooked(data, MakeGroundSwatchTexturePath(spec, "diff")))
+            {
+                return true;
+            }
+
             const AnsiString assetRoot = Asset::AssetFileReader::GetCompiledDefaultAssetRoot();
             const char *suffixes[] = {"diff", "nor_dx", "rough", "ao", "disp"};
             const uint32_t suffixCount = spec.HeightDepthMeters > 0.0f ? 5u : 4u;
@@ -265,7 +412,6 @@ namespace Game::GameModes
             }
 
             const auto createStartTime = std::chrono::steady_clock::now();
-            auto &textures = ctx.RenderResourcesRef.Textures();
             auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             const MaterialCreateData &cobble = data.m_CobbleStoneMaterialUpdate->CreateData;
 
@@ -282,10 +428,12 @@ namespace Game::GameModes
             createInfo.LODBounds = sphereData->Bounds;
             createInfo.bBuildLODHierarchy = false;
             createInfo.ShadowLODLevel = kBigSphereShadowLODLevel;
-            createInfo.Material.AlbedoTexture = textures.GetRHITexturePtr(cobble.AlbedoTexture);
-            createInfo.Material.NormalTexture = textures.GetRHITexturePtr(cobble.NormalTexture);
-            createInfo.Material.RoughnessTexture = textures.GetRHITexturePtr(cobble.RoughnessTexture);
-            createInfo.Material.AOTexture = textures.GetRHITexturePtr(cobble.AOTexture);
+            createInfo.Material.AlbedoTexture = cobble.AlbedoTexture;
+            createInfo.Material.NormalTexture = cobble.NormalTexture;
+            createInfo.Material.RoughnessTexture = cobble.RoughnessTexture;
+            createInfo.Material.AOTexture = cobble.AOTexture;
+            createInfo.Material.ORMTexture = cobble.ORMTexture;
+            createInfo.Material.bNormalTwoChannel = cobble.bNormalTwoChannel;
             if (sphereData->DisplacementUVSpacing > 0.0f)
             {
                 // 凹凸は形（変位）で出すので POM は切る。法線マップは形が持つ粗い傾きを差し引いて細部だけ載せる。
@@ -293,9 +441,9 @@ namespace Game::GameModes
             }
             else
             {
-                createInfo.Material.HeightTexture = textures.GetRHITexturePtr(cobble.HeightTexture);
+                createInfo.Material.HeightTexture = cobble.HeightTexture;
                 createInfo.Material.HeightScale = kBigSphereHeightScale;
-                createInfo.Material.bHasHeightMap = static_cast<bool>(createInfo.Material.HeightTexture);
+                createInfo.Material.bHasHeightMap = createInfo.Material.HeightTexture.IsValid();
             }
             createInfo.DebugName = "BigCobbleSphere";
 
@@ -916,7 +1064,7 @@ namespace Game::GameModes
                             swatchIndex = static_cast<int32_t>(candidate);
                         }
                     }
-                    if (swatchIndex >= 0 && !AreGroundSwatchTexturesPresent(kGroundSwatches[swatchIndex]))
+                    if (swatchIndex >= 0 && !AreGroundSwatchTexturesPresent(data, kGroundSwatches[swatchIndex]))
                     {
                         NORVES_LOG_WARNING("Rendering3DTest",
                                            "地面の見本の材質のテクスチャが無いので、その帯は石畳で描きます: %s"
@@ -1068,62 +1216,23 @@ namespace Game::GameModes
                 silverMatInfo.DebugName = "SilverPBR";
                 data.m_SilverMaterial = materials.Create(silverMatInfo);
 
-                // テクスチャの非同期読み込みリクエスト
                 auto silverUpdate = MakeShared<PendingMaterialUpdate>();
                 silverUpdate->TargetMaterial = data.m_SilverMaterial;
                 silverUpdate->CreateData = silverMatInfo;
-                silverUpdate->PendingTextureCount = 5;
 
-                textures.LoadTextureAsync("Assets/Textures/Silver/silver_albedo.png",
-                                                 [silverUpdate, &materials](TextureHandle handle)
-                                                 {
-                                                     silverUpdate->CreateData.AlbedoTexture = handle;
-                                                     if (--silverUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(silverUpdate->TargetMaterial, silverUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
-                                                     }
-                                                 });
-                textures.LoadTextureAsync("Assets/Textures/Silver/silver_normal-ogl.png",
-                                                 [silverUpdate, &materials](TextureHandle handle)
-                                                 {
-                                                     silverUpdate->CreateData.NormalTexture = handle;
-                                                     if (--silverUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(silverUpdate->TargetMaterial, silverUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
-                                                     }
-                                                 });
-                textures.LoadTextureAsync("Assets/Textures/Silver/silver_metallic.png",
-                                                 [silverUpdate, &materials](TextureHandle handle)
-                                                 {
-                                                     silverUpdate->CreateData.MetallicTexture = handle;
-                                                     if (--silverUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(silverUpdate->TargetMaterial, silverUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
-                                                     }
-                                                 });
-                textures.LoadTextureAsync("Assets/Textures/Silver/silver_roughness.png",
-                                                 [silverUpdate, &materials](TextureHandle handle)
-                                                 {
-                                                     silverUpdate->CreateData.RoughnessTexture = handle;
-                                                     if (--silverUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(silverUpdate->TargetMaterial, silverUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
-                                                     }
-                                                 });
-                textures.LoadTextureAsync("Assets/Textures/Silver/silver_ao.png",
-                                                 [silverUpdate, &materials](TextureHandle handle)
-                                                 {
-                                                     silverUpdate->CreateData.AOTexture = handle;
-                                                     if (--silverUpdate->PendingTextureCount == 0)
-                                                     {
-                                                         materials.Update(silverUpdate->TargetMaterial, silverUpdate->CreateData);
-                                                         NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
-                                                     }
-                                                 });
+                MaterialTexturePaths silverPaths;
+                silverPaths.Albedo = "Assets/Textures/Silver/silver_albedo.png";
+                silverPaths.Normal = "Assets/Textures/Silver/silver_normal-ogl.png";
+                silverPaths.Orm = "Assets/Textures/Silver/silver_orm";
+                silverPaths.Metallic = "Assets/Textures/Silver/silver_metallic.png";
+                silverPaths.Roughness = "Assets/Textures/Silver/silver_roughness.png";
+                silverPaths.AO = "Assets/Textures/Silver/silver_ao.png";
+                RequestMaterialTextures(data, textures, silverUpdate, silverPaths,
+                                        [silverUpdate, &materials]()
+                                        {
+                                            materials.Update(silverUpdate->TargetMaterial, silverUpdate->CreateData);
+                                            NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
+                                        });
 
                 data.m_PendingMaterialUpdates.push_back(silverUpdate);
                 NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material created (textures loading async)");
@@ -1144,17 +1253,12 @@ namespace Game::GameModes
                 auto cobbleUpdate = MakeShared<PendingMaterialUpdate>();
                 cobbleUpdate->TargetMaterial = data.m_CobbleStoneMaterial;
                 cobbleUpdate->CreateData = cobbleMatInfo;
-                cobbleUpdate->PendingTextureCount = 5;
 
                 // 地面の石畳は2 mのタイルで、仮の球（UVの1周が約6.3 m）より1タイルが小さいため、
                 // 凹凸の深さが同じ程度になるよう高さのスケールを小さくする（kGroundHeightScale）。
                 const MaterialHandle groundMaterial = data.m_GroundMaterial;
                 auto finishCobbleStone = [cobbleUpdate, groundMaterial, &materials]()
                 {
-                    if (--cobbleUpdate->PendingTextureCount != 0)
-                    {
-                        return;
-                    }
                     materials.Update(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
                     MaterialCreateData groundData = cobbleUpdate->CreateData;
                     groundData.HeightScale = kGroundHeightScale;
@@ -1163,36 +1267,14 @@ namespace Game::GameModes
                     NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
                 };
 
-                textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png",
-                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
-                                                 {
-                                                     cobbleUpdate->CreateData.AlbedoTexture = handle;
-                                                     finishCobbleStone();
-                                                 });
-                textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_dx_4k.png",
-                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
-                                                 {
-                                                     cobbleUpdate->CreateData.NormalTexture = handle;
-                                                     finishCobbleStone();
-                                                 });
-                textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png",
-                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
-                                                 {
-                                                     cobbleUpdate->CreateData.RoughnessTexture = handle;
-                                                     finishCobbleStone();
-                                                 });
-                textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png",
-                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
-                                                 {
-                                                     cobbleUpdate->CreateData.AOTexture = handle;
-                                                     finishCobbleStone();
-                                                 });
-                textures.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
-                                                 [cobbleUpdate, finishCobbleStone](TextureHandle handle)
-                                                 {
-                                                     cobbleUpdate->CreateData.HeightTexture = handle;
-                                                     finishCobbleStone();
-                                                 });
+                MaterialTexturePaths cobblePaths;
+                cobblePaths.Albedo = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png";
+                cobblePaths.Normal = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_dx_4k.png";
+                cobblePaths.Orm = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_orm_4k";
+                cobblePaths.Roughness = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png";
+                cobblePaths.AO = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png";
+                cobblePaths.Height = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png";
+                RequestMaterialTextures(data, textures, cobbleUpdate, cobblePaths, finishCobbleStone);
 
                 data.m_PendingMaterialUpdates.push_back(cobbleUpdate);
                 data.m_CobbleStoneMaterialUpdate = cobbleUpdate;
@@ -1246,52 +1328,25 @@ namespace Game::GameModes
                     auto swatchUpdate = MakeShared<PendingMaterialUpdate>();
                     swatchUpdate->TargetMaterial = swatchMaterial;
                     swatchUpdate->CreateData = swatchMatInfo;
-                    swatchUpdate->PendingTextureCount = bHasHeight ? 5u : 4u;
                     const char *assetId = spec.AssetId;
                     auto finishSwatch = [swatchUpdate, assetId, &materials]()
                     {
-                        if (--swatchUpdate->PendingTextureCount != 0)
-                        {
-                            return;
-                        }
                         materials.Update(swatchUpdate->TargetMaterial, swatchUpdate->CreateData);
                         NORVES_LOG_INFO("Rendering3DTest", "地面の見本の材質のテクスチャを読み込みました: %s", assetId);
                     };
 
-                    textures.LoadTextureAsync(MakeGroundSwatchTexturePath(spec, "diff"),
-                                              [swatchUpdate, finishSwatch](TextureHandle handle)
-                                              {
-                                                  swatchUpdate->CreateData.AlbedoTexture = handle;
-                                                  finishSwatch();
-                                              });
                     // このエンジンの余接フレームは DirectX の向き（石畳と同じく nor_dx）
-                    textures.LoadTextureAsync(MakeGroundSwatchTexturePath(spec, "nor_dx"),
-                                              [swatchUpdate, finishSwatch](TextureHandle handle)
-                                              {
-                                                  swatchUpdate->CreateData.NormalTexture = handle;
-                                                  finishSwatch();
-                                              });
-                    textures.LoadTextureAsync(MakeGroundSwatchTexturePath(spec, "rough"),
-                                              [swatchUpdate, finishSwatch](TextureHandle handle)
-                                              {
-                                                  swatchUpdate->CreateData.RoughnessTexture = handle;
-                                                  finishSwatch();
-                                              });
-                    textures.LoadTextureAsync(MakeGroundSwatchTexturePath(spec, "ao"),
-                                              [swatchUpdate, finishSwatch](TextureHandle handle)
-                                              {
-                                                  swatchUpdate->CreateData.AOTexture = handle;
-                                                  finishSwatch();
-                                              });
+                    MaterialTexturePaths swatchPaths;
+                    swatchPaths.Albedo = MakeGroundSwatchTexturePath(spec, "diff");
+                    swatchPaths.Normal = MakeGroundSwatchTexturePath(spec, "nor_dx");
+                    swatchPaths.Orm = String("Assets/Textures/PolyHaven/") + spec.AssetId + "/" + spec.AssetId + "_orm_4k";
+                    swatchPaths.Roughness = MakeGroundSwatchTexturePath(spec, "rough");
+                    swatchPaths.AO = MakeGroundSwatchTexturePath(spec, "ao");
                     if (bHasHeight)
                     {
-                        textures.LoadTextureAsync(MakeGroundSwatchTexturePath(spec, "disp"),
-                                                  [swatchUpdate, finishSwatch](TextureHandle handle)
-                                                  {
-                                                      swatchUpdate->CreateData.HeightTexture = handle;
-                                                      finishSwatch();
-                                                  });
+                        swatchPaths.Height = MakeGroundSwatchTexturePath(spec, "disp");
                     }
+                    RequestMaterialTextures(data, textures, swatchUpdate, swatchPaths, finishSwatch);
 
                     data.m_PendingMaterialUpdates.push_back(swatchUpdate);
                 }

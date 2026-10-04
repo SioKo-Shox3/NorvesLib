@@ -4,17 +4,52 @@ add_executable(AssetCook
     Main.cpp
     MeshCooker.cpp
     MeshCooker.h
+)
+
+# BC エンコーダ(bc7enc_rdo)は AssetCook だけがリンクする。Core・Game には入れない。
+add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/bc7enc_rdo
+    ${CMAKE_BINARY_DIR}/ThirdParty/bc7enc_rdo)
+
+add_library(AssetCookBlockCompressor STATIC
+    BlockCompressor.cpp
+    BlockCompressor.h
+)
+target_link_libraries(AssetCookBlockCompressor PUBLIC NorvesThirdParty_Bc7Enc Core)
+target_include_directories(AssetCookBlockCompressor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(AssetCookBlockCompressor PROPERTIES FOLDER "Tools")
+
+# テクスチャのクック(用途ごとの形式・ミップ・NVTEX の書き出し)。スモークからも使えるよう独立の静的ライブラリにする。
+add_library(AssetCookTextureCooker STATIC
     TextureCooker.cpp
     TextureCooker.h
 )
+target_link_libraries(AssetCookTextureCooker PUBLIC AssetCookBlockCompressor Core)
+target_include_directories(AssetCookTextureCooker
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    PRIVATE ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+)
+set_target_properties(AssetCookTextureCooker PROPERTIES FOLDER "Tools")
 
-target_link_libraries(AssetCook PRIVATE Core)
+target_link_libraries(AssetCook PRIVATE Core AssetCookBlockCompressor AssetCookTextureCooker)
 target_include_directories(AssetCook PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
 )
 
 set_target_properties(AssetCook PROPERTIES FOLDER "Tools")
+
+# ブロック圧縮のスモーク。AssetCook をビルドするときに一緒にビルドされるよう依存を張る。
+add_executable(AssetCookBlockCompressSmoke AssetCookBlockCompressSmoke.cpp)
+target_link_libraries(AssetCookBlockCompressSmoke PRIVATE AssetCookBlockCompressor)
+set_target_properties(AssetCookBlockCompressSmoke PROPERTIES FOLDER "Tools")
+add_dependencies(AssetCook AssetCookBlockCompressSmoke)
+add_test(NAME AssetCookBlockCompressSmoke COMMAND $<TARGET_FILE:AssetCookBlockCompressSmoke>)
+
+# 用途ごとのクックの中身(ORM の詰め方・法線のミップ・R16 の精度など)を確かめる。AssetCookTextureSmoke から呼ぶ。
+add_executable(AssetCookTextureUsageSmoke AssetCookTextureUsageSmoke.cpp)
+target_link_libraries(AssetCookTextureUsageSmoke PRIVATE AssetCookTextureCooker)
+set_target_properties(AssetCookTextureUsageSmoke PROPERTIES FOLDER "Tools")
+add_dependencies(AssetCook AssetCookTextureUsageSmoke)
 
 set(ASSET_COOK_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>")
 add_test(NAME AssetCookRawSmoke
@@ -34,6 +69,7 @@ set(ASSET_COOK_TEXTURE_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/T
 add_test(NAME AssetCookTextureSmoke
     COMMAND ${CMAKE_COMMAND}
         -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DUSAGE_SMOKE_EXE=$<TARGET_FILE:AssetCookTextureUsageSmoke>
         -DSMOKE_DIR=${ASSET_COOK_TEXTURE_SMOKE_DIR}
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookTextureSmoke.cmake.in"
 )
@@ -55,3 +91,19 @@ add_test(NAME AssetCookAudioSmoke
         -DSMOKE_DIR=${ASSET_COOK_AUDIO_SMOKE_DIR}
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookAudioSmoke.cmake.in"
 )
+
+# 起動画面の材質などを差分クックして build/CookedAssets/ へ書く(ALL に含めない)。
+# 差分の判定(元画像・一覧の項目・AssetCook の実行ファイル)は Scripts/CookAssets.ps1 が項目ごとの印で行い、
+# 変わらない項目は焼き直さない。AssetCook が変わったら全項目を焼き直す。
+add_custom_target(CookAssets
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_SOURCE_DIR}/Scripts/CookAssets.ps1"
+        -AssetCookExe "$<TARGET_FILE:AssetCook>"
+        -SpecDir "${CMAKE_SOURCE_DIR}/Assets/AssetSets"
+        -RuntimeRoot "${CMAKE_BINARY_DIR}/CookedAssets"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "AssetSets の一覧を build/CookedAssets へ差分クックする"
+    VERBATIM
+)
+add_dependencies(CookAssets AssetCook)
+set_target_properties(CookAssets PROPERTIES FOLDER "Tools")

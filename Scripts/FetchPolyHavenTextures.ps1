@@ -114,4 +114,5 @@ if ($failures.Count -ne 0)
 {
     exit 1
 }
+Write-Output 'FETCH_POLYHAVEN next: 落としたテクスチャを BC に焼くには `cmake --build build --config RelWithDebInfo --target CookAssets` を実行する（build/CookedAssets/ へ差分クックする）'
 exit 0

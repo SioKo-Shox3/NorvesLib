@@ -1283,7 +1283,9 @@ namespace NorvesLib::Core::Rendering
             TextureHandle matMetallic;
             TextureHandle matRoughness;
             TextureHandle matAO;
+            TextureHandle matORM;
             TextureHandle matHeight;
+            bool bMatNormalTwoChannel = false;
 
             if (cmd.Draw.MaterialHandle.IsValid())
             {
@@ -1295,7 +1297,9 @@ namespace NorvesLib::Core::Rendering
                     matMetallic = materialData->MetallicTexture;
                     matRoughness = materialData->RoughnessTexture;
                     matAO = materialData->AOTexture;
+                    matORM = materialData->ORMTexture;
                     matHeight = materialData->HeightTexture;
+                    bMatNormalTwoChannel = materialData->bNormalTwoChannel;
                     uboData.emissiveColor[0] = materialData->EmissiveColor[0];
                     uboData.emissiveColor[1] = materialData->EmissiveColor[1];
                     uboData.emissiveColor[2] = materialData->EmissiveColor[2];
@@ -1304,8 +1308,6 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
-
-            allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
 
             auto resolveTexture = [&](TextureHandle handle, const RHI::TexturePtr& defaultTexture) -> RHI::TexturePtr
             {
@@ -1321,15 +1323,26 @@ namespace NorvesLib::Core::Rendering
                 return defaultTexture;
             };
 
+            // ORM は metallic の枠に張り、シェーダーへフラグで伝える（descriptor の binding は増やさない）。
+            // texture が解決できないときは別々の枠（既定値）の経路へ落とす。
+            const RHI::TexturePtr ormTexture = resolveTexture(matORM, nullptr);
+            uboData.pomParams[2] = ormTexture ? 1.0f : 0.0f;
+            uboData.pomParams[3] = bMatNormalTwoChannel ? 1.0f : 0.0f;
+
+            allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
+
             allocation.DescriptorSet->BindTexture(1, resolveTexture(matAlbedo, m_DefaultWhiteTexture));
             allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
             allocation.DescriptorSet->BindTexture(2, resolveTexture(matNormal, m_DefaultFlatNormalTexture));
             allocation.DescriptorSet->BindSampler(2, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(3, resolveTexture(matMetallic, m_DefaultBlackTexture));
+            allocation.DescriptorSet->BindTexture(
+                3, ormTexture ? ormTexture : resolveTexture(matMetallic, m_DefaultBlackTexture));
             allocation.DescriptorSet->BindSampler(3, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(4, resolveTexture(matRoughness, m_DefaultMidGrayTexture));
+            allocation.DescriptorSet->BindTexture(
+                4, ormTexture ? ormTexture : resolveTexture(matRoughness, m_DefaultMidGrayTexture));
             allocation.DescriptorSet->BindSampler(4, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(5, resolveTexture(matAO, m_DefaultWhiteTexture));
+            allocation.DescriptorSet->BindTexture(
+                5, ormTexture ? ormTexture : resolveTexture(matAO, m_DefaultWhiteTexture));
             allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
             allocation.DescriptorSet->BindTexture(6, resolveTexture(matHeight, m_DefaultBlackTexture));
             allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);

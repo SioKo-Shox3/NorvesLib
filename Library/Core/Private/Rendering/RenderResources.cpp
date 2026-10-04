@@ -1,7 +1,9 @@
 ﻿#include "Rendering/RenderResources.h"
 
 #include "Rendering/GpuResourceStore.h"
+#include "Rendering/GpuRetireQueue.h"
 #include "Rendering/SkinnedMeshGpuStore.h"
+#include "Rendering/VideoMemoryBudgetLogGate.h"
 #include "Rendering/MegaGeometryResourceStore.h"
 #include "Rendering/ProceduralMeshGpuStore.h"
 #include "Rendering/RenderMaterialStore.h"
@@ -16,6 +18,7 @@
 #include "Resource/ModelAssetRuntime.h"
 #include "Thread/Atomic.h"
 
+#include <chrono>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -79,6 +82,8 @@ namespace NorvesLib::Core::Rendering
 
         Thread::Atomic<uint64_t> NextHandleId{1};
         Container::TSharedPtr<RHI::IDevice> Device;
+        // GpuResources より先に宣言する（各ストアが破棄された後に最後まで残る）。
+        GpuRetireQueue RetireQueue;
         Container::TUniquePtr<SkinnedMeshGpuStore> SkinnedMeshes;
         Container::TUniquePtr<GpuResourceStore> GpuResources;
         Container::TUniquePtr<ProceduralMeshGpuStore> ProceduralMeshes;
@@ -88,6 +93,10 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<ModelAssetRuntime> ModelAssets;
         bool bInitialized = false;
         bool bShuttingDown = false;
+
+        // VRAM の上限（MB。0 は上限なし）と、予算ログの間引き状態（GameThread だけが触る）
+        uint64_t VideoMemoryCapMb = 0;
+        VideoMemoryBudgetLogGate VideoMemoryLogGate;
     };
 
     GpuResources::GpuResources(RenderResources *pOwner)
@@ -812,6 +821,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_Impl->GpuResources = Container::MakeUnique<GpuResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
+        m_Impl->GpuResources->SetRetireQueue(&m_Impl->RetireQueue);
         m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
         m_Impl->MegaGeometryResources =
             Container::MakeUnique<MegaGeometryResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
@@ -844,6 +854,8 @@ namespace NorvesLib::Core::Rendering
         {
             m_Impl->Device->WaitIdle();
         }
+        // GPU が止まったので、待っていた RHI 資源を期限を問わず全部破棄する。
+        m_Impl->RetireQueue.Clear();
         if (m_Impl->SkinnedMeshes)
         {
             m_Impl->SkinnedMeshes->ForceClearAfterWaitIdle();
@@ -870,6 +882,83 @@ namespace NorvesLib::Core::Rendering
     bool RenderResources::IsInitialized() const
     {
         return m_Impl->bInitialized;
+    }
+
+    void RenderResources::BeginRetireFrame(uint64_t completedSubmissionSerial)
+    {
+        m_Impl->RetireQueue.BeginFrame(completedSubmissionSerial);
+    }
+
+    void RenderResources::CommitRetireFrame(uint64_t submissionSerial)
+    {
+        m_Impl->RetireQueue.CommitFrame(submissionSerial);
+    }
+
+    void RenderResources::AbortRetireFrame()
+    {
+        m_Impl->RetireQueue.AbortFrame();
+    }
+
+    size_t RenderResources::GetPendingRetireCount() const
+    {
+        return m_Impl->RetireQueue.GetPendingCount();
+    }
+
+    void RenderResources::SetVideoMemoryCapMb(uint64_t capMb)
+    {
+        m_Impl->VideoMemoryCapMb = capMb;
+    }
+
+    uint64_t RenderResources::GetVideoMemoryCapMb() const
+    {
+        return m_Impl->VideoMemoryCapMb;
+    }
+
+    void RenderResources::PollVideoMemoryBudget()
+    {
+        Impl* impl = m_Impl.get();
+        if (!impl || !impl->bInitialized || !impl->Device)
+        {
+            return;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (!impl->VideoMemoryLogGate.IsPollDue(now))
+        {
+            return;
+        }
+        impl->VideoMemoryLogGate.MarkPolled(now);
+
+        const RHI::VideoMemoryBudget budget = impl->Device->GetVideoMemoryBudget();
+        const uint64_t budgetBytes = budget.bValid ? budget.BudgetBytes : 0;
+        const uint64_t usageBytes = budget.bValid ? budget.UsageBytes : 0;
+
+        // 前回ログした値からの変化が 1% 未満なら出さない（初回は必ず出す）。
+        if (!impl->VideoMemoryLogGate.CommitIfChanged(budgetBytes, usageBytes))
+        {
+            return;
+        }
+
+        constexpr uint64_t kBytesPerMb = 1024ull * 1024ull;
+        if (impl->VideoMemoryCapMb > 0)
+        {
+            NORVES_LOG_INFO(
+                "RenderResources",
+                "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=%llu source=%s",
+                static_cast<unsigned long long>(budgetBytes / kBytesPerMb),
+                static_cast<unsigned long long>(usageBytes / kBytesPerMb),
+                static_cast<unsigned long long>(impl->VideoMemoryCapMb),
+                budget.bValid ? "ext" : "none");
+        }
+        else
+        {
+            NORVES_LOG_INFO(
+                "RenderResources",
+                "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=none source=%s",
+                static_cast<unsigned long long>(budgetBytes / kBytesPerMb),
+                static_cast<unsigned long long>(usageBytes / kBytesPerMb),
+                budget.bValid ? "ext" : "none");
+        }
     }
 
     bool RenderResources::ReloadAssetRuntimeSnapshot(

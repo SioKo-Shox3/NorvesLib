@@ -1,4 +1,4 @@
-#include "Asset/AssetPackageFormat.h"
+﻿#include "Asset/AssetPackageFormat.h"
 #include "Asset/AssetManifest.h"
 #include "Asset/CookedTextureFormat.h"
 #include "Rendering/RenderResources.h"
@@ -222,6 +222,7 @@ namespace
         return TextureV0::HeaderSize + mipIndex * TextureV0::MipRecordSize;
     }
 
+    // BC7 は 4x4 画素 16 バイトのブロック。それ以外は非圧縮で、1 画素のバイト数は形式から引く。
     std::vector<uint8_t> BuildCookedTextureBytes(uint32_t width,
                                                  uint32_t height,
                                                  uint32_t layerCount,
@@ -229,7 +230,9 @@ namespace
                                                  CookedTextureColorSpace colorSpace)
     {
         const uint32_t mipCount = ComputeCookedTextureFullMipCount(width, height);
-        const size_t bytesPerPixel = GetCookedTextureBytesPerPixel(pixelFormat);
+        const bool bBlock = pixelFormat == CookedTexturePixelFormat::BC7;
+        const uint32_t blockSize = bBlock ? 4 : 1;
+        const size_t blockBytes = bBlock ? 16 : GetCookedTextureBytesPerPixel(pixelFormat);
         const size_t mipTableOffset = TextureV0::HeaderSize;
         const size_t mipTableSize = static_cast<size_t>(mipCount) * TextureV0::MipRecordSize;
         const size_t payloadOffset = mipTableOffset + mipTableSize;
@@ -243,10 +246,9 @@ namespace
         {
             const uint32_t mipWidth = ExpectedMipDimension(width, mipIndex);
             const uint32_t mipHeight = ExpectedMipDimension(height, mipIndex);
-            const size_t dataSize = static_cast<size_t>(mipWidth) *
-                                    static_cast<size_t>(mipHeight) *
-                                    static_cast<size_t>(layerCount) *
-                                    bytesPerPixel;
+            const size_t blocksX = (mipWidth + blockSize - 1) / blockSize;
+            const size_t blocksY = (mipHeight + blockSize - 1) / blockSize;
+            const size_t dataSize = blocksX * blocksY * static_cast<size_t>(layerCount) * blockBytes;
             std::vector<uint8_t> mipBytes(dataSize);
             for (uint8_t &value : mipBytes)
             {
@@ -261,7 +263,9 @@ namespace
         std::memcpy(bytes.data() + TextureV0::HeaderOffset::Magic, TextureV0::Magic, TextureV0::MagicSize);
         WriteLe32(bytes, TextureV0::HeaderOffset::HeaderSize, static_cast<uint32_t>(TextureV0::HeaderSize));
         WriteLe16(bytes, TextureV0::HeaderOffset::VersionMajor, TextureV0::VersionMajor);
-        WriteLe16(bytes, TextureV0::HeaderOffset::VersionMinor, TextureV0::VersionMinor);
+        // BC は v0.1 で書く。それ以外は従来どおり v0.0。
+        WriteLe16(bytes, TextureV0::HeaderOffset::VersionMinor,
+                  bBlock ? TextureV0::VersionMinorBlockCompressed : TextureV0::VersionMinor);
         WriteLe32(bytes, TextureV0::HeaderOffset::EndianMarker, TextureV0::EndianMarker);
         WriteLe32(bytes, TextureV0::HeaderOffset::MipRecordSize, static_cast<uint32_t>(TextureV0::MipRecordSize));
         WriteLe64(bytes, TextureV0::HeaderOffset::FileSize, static_cast<uint64_t>(fileSize));
@@ -894,6 +898,11 @@ namespace
                                CookedTextureColorSpace::Linear,
                                1,
                                "SplitRG8Unsupported");
+        // BC は RGBA8 の分割に通さない（理由を返して失敗する）
+        AssertSplitUnsupported(CookedTexturePixelFormat::BC7,
+                               CookedTextureColorSpace::Linear,
+                               1,
+                               "SplitBc7Unsupported");
     }
 }
 

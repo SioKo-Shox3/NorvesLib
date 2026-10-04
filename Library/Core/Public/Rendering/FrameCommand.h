@@ -72,6 +72,8 @@ namespace NorvesLib::Core::Rendering
     {
         MegaGeometryPass* Pass = nullptr;
         MegaGeometryResources* MegaGeometry = nullptr;
+        // 材質のテクスチャのハンドルを描画時に引き直すのに使う（null なら全部デフォルトのテクスチャ）
+        TextureResources* Textures = nullptr;
         CameraProxy MainCamera;
         bool bHasMainCamera = false;
         // velocity 用の前のカメラ（MainCamera と同じジッタを掛けたもの）

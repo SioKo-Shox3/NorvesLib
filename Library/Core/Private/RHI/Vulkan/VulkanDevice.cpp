@@ -1062,6 +1062,9 @@ namespace NorvesLib::RHI::Vulkan
             physicalFeatures.drawIndirectFirstInstance == VK_TRUE ? VK_TRUE : VK_FALSE;
         features2.features.shaderInt64 =
             physicalFeatures.shaderInt64 == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // BC圧縮テクスチャは、対応しているデバイスだけで有効にする。
+        features2.features.textureCompressionBC =
+            physicalFeatures.textureCompressionBC == VK_TRUE ? VK_TRUE : VK_FALSE;
         // 点光源のキューブシャドウはキューブ配列（samplerCubeArray）で読む。
         features2.features.imageCubeArray =
             physicalFeatures.imageCubeArray == VK_TRUE ? VK_TRUE : VK_FALSE;
@@ -1376,6 +1379,13 @@ namespace NorvesLib::RHI::Vulkan
         m_formatMap[Format::D16_UNORM] = vk::Format::eD16Unorm;
         m_formatMap[Format::D24_UNORM_S8_UINT] = vk::Format::eD24UnormS8Uint;
         m_formatMap[Format::D32_FLOAT] = vk::Format::eD32Sfloat;
+        m_formatMap[Format::R16_UNORM] = vk::Format::eR16Unorm;
+        m_formatMap[Format::BC1_UNORM] = vk::Format::eBc1RgbaUnormBlock;
+        m_formatMap[Format::BC1_SRGB] = vk::Format::eBc1RgbaSrgbBlock;
+        m_formatMap[Format::BC4_UNORM] = vk::Format::eBc4UnormBlock;
+        m_formatMap[Format::BC5_UNORM] = vk::Format::eBc5UnormBlock;
+        m_formatMap[Format::BC7_UNORM] = vk::Format::eBc7UnormBlock;
+        m_formatMap[Format::BC7_SRGB] = vk::Format::eBc7SrgbBlock;
 
         // vk::Format → RHI Format (逆変換マップも作成)
         for (const auto &[rhiFormat, vkFormat] : m_formatMap)
@@ -1539,7 +1549,45 @@ namespace NorvesLib::RHI::Vulkan
         }
 #endif
 
+        // VK_EXT_memory_budget（DeviceLocal ヒープの予算と使用量の取得。無くても動作する）
+        m_bMemoryBudgetExtensionEnabled = false;
+        if (hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME))
+        {
+            extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+            m_bMemoryBudgetExtensionEnabled = true;
+            NORVES_LOG_INFO("VulkanDevice", "任意拡張を有効化: VK_EXT_memory_budget");
+        }
+
         return extensions;
+    }
+
+    // DeviceLocal ヒープの予算と使用量（拡張が無効なら bValid=false）
+    VideoMemoryBudget VulkanDevice::GetVideoMemoryBudget() const
+    {
+        VideoMemoryBudget result;
+        if (!m_bMemoryBudgetExtensionEnabled || !m_physicalDevice)
+        {
+            return result;
+        }
+
+        vk::PhysicalDeviceMemoryBudgetPropertiesEXT budgetProperties{};
+        vk::PhysicalDeviceMemoryProperties2 memoryProperties2{};
+        memoryProperties2.pNext = &budgetProperties;
+        m_physicalDevice.getMemoryProperties2(&memoryProperties2);
+
+        const uint32_t heapCount = memoryProperties2.memoryProperties.memoryHeapCount;
+        for (uint32_t i = 0; i < heapCount && i < VK_MAX_MEMORY_HEAPS; ++i)
+        {
+            if (memoryProperties2.memoryProperties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal)
+            {
+                result.BudgetBytes += budgetProperties.heapBudget[i];
+                result.UsageBytes += budgetProperties.heapUsage[i];
+            }
+        }
+
+        // 拡張が有効なら取得は成功とする。予算が0の場合も値の異常として呼び出し側（テスト）に見せる。
+        result.bValid = true;
+        return result;
     }
 
     // キューファミリーのインデックス取得
@@ -2115,6 +2163,14 @@ namespace NorvesLib::RHI::Vulkan
 
     TexturePtr VulkanDevice::CreateTexture(const TextureDesc &desc)
     {
+        // BC 形式は textureCompressionBC を有効にした論理デバイスでだけ作れる（CPU で展開する逃げ道は作らない）
+        if (IsBlockCompressedFormat(desc.TextureFormat) && !m_Capabilities.bTextureCompressionBC)
+        {
+            NORVES_LOG_ERROR("Vulkan", "BCテクスチャを作れません: textureCompressionBC が有効ではありません name=%s",
+                             desc.DebugName != nullptr ? desc.DebugName : "");
+            return nullptr;
+        }
+
         auto texture = MakeShared<VulkanTexture>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
         return StaticPointerCast<ITexture>(texture);
@@ -2606,6 +2662,8 @@ namespace NorvesLib::RHI::Vulkan
                 m_vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE;
             m_Capabilities.bDrawIndirectFirstInstance =
                 (m_enabledDeviceFeatures.drawIndirectFirstInstance == VK_TRUE);
+            m_Capabilities.bTextureCompressionBC =
+                (m_enabledDeviceFeatures.textureCompressionBC == VK_TRUE);
 
             if (m_Capabilities.bDrawIndirectCount)
             {
@@ -2622,7 +2680,8 @@ namespace NorvesLib::RHI::Vulkan
         const char *deviceName = m_Capabilities.DeviceName;
         NORVES_LOG_INFO("VulkanDevice", "Device Capabilities: GPU=%s, NVIDIA=%s, "
                                         "NeuralShaders=%s, MegaGeometry=%s, AccelerationStructure=%s, "
-                                        "RayQuery=%s, RayTracingPipeline=%s, DrawIndirectCount=%s, DrawIndirectFirstInstance=%s",
+                                        "RayQuery=%s, RayTracingPipeline=%s, DrawIndirectCount=%s, DrawIndirectFirstInstance=%s, "
+                                        "TextureCompressionBC=%s",
                         deviceName,
                         m_Capabilities.bIsNvidia ? "Yes" : "No",
                         m_Capabilities.NeuralShaders.bSupported ? "Yes" : "No",
@@ -2631,7 +2690,8 @@ namespace NorvesLib::RHI::Vulkan
                         m_Capabilities.RayTracing.bRayQuery ? "Yes" : "No",
                         m_Capabilities.RayTracing.bRayTracingPipeline ? "Yes" : "No",
                         m_Capabilities.bDrawIndirectCount ? "Yes" : "No",
-                        m_Capabilities.bDrawIndirectFirstInstance ? "Yes" : "No");
+                        m_Capabilities.bDrawIndirectFirstInstance ? "Yes" : "No",
+                        m_Capabilities.bTextureCompressionBC ? "Yes" : "No");
     }
 
 } // namespace NorvesLib::RHI::Vulkan

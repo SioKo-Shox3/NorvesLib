@@ -58,6 +58,50 @@ namespace NorvesLib::Core::Rendering
             return Container::String(value.c_str());
         }
 
+        // AssetSystem が sRGB を UNORM として上げる互換設定のとき、クック済みの色空間を Linear に読み替える
+        // （BC7 sRGB は BC7 UNORM、RGBA8 sRGB は RGBA8 UNORM としてアップロードされ、ばらの画像と同じ標本値になる）。
+        void ApplySrgbAsLinearPolicy(const Container::TSharedPtr<const Asset::AssetSystem> &assetSystem,
+                                     Asset::CookedTextureData &texture)
+        {
+            if (assetSystem && assetSystem->GetTreatSrgbTexturesAsLinear() &&
+                texture.ColorSpace == Asset::CookedTextureColorSpace::SRGB)
+            {
+                texture.ColorSpace = Asset::CookedTextureColorSpace::Linear;
+            }
+        }
+
+        // クック済みが使えないテクスチャを、ばらのファイルで読むときの警告。論理パスごとに1回だけ出す。
+        // 項目が無い場合のほか、項目はあるのにパッケージが無い・壊れている場合にも同じ記録で出す。
+        void WarnCookedUnusableOnce(const Container::TSharedPtr<TextureCookedMissingLog> &log,
+                                    const Container::AnsiString &logicalPath)
+        {
+            if (!log || !log->TryMarkWarned(logicalPath))
+            {
+                return;
+            }
+
+            NORVES_LOG_WARNING("TextureResources", "TEXTURE_COOKED_MISSING path=%s", logicalPath.c_str());
+        }
+
+        // マニフェストを読んだのにクック済みの項目が無い、またはクック済みを使えずばらへ戻したときの警告。
+        // マニフェストが無い従来の経路（LooseFallbackManifestMissing）では出さない。ただしクック済みを使う前提の設定
+        // （AssetSystem::IsCookedExpected）でマニフェストを読めなかったときは、ばらで読んだ各パスに出す。
+        void WarnCookedMissingOnce(const Container::TSharedPtr<TextureCookedMissingLog> &log,
+                                   const Container::TSharedPtr<const Asset::AssetSystem> &assetSystem,
+                                   const Asset::AssetResolveResult &resolveResult,
+                                   const Container::AnsiString &logicalPath)
+        {
+            const bool bManifestMissingButExpected =
+                resolveResult.ManifestStatus == Asset::AssetManifestResolveStatus::LooseFallbackManifestMissing &&
+                assetSystem && assetSystem->IsCookedExpected();
+            if (bManifestMissingButExpected ||
+                resolveResult.ManifestStatus == Asset::AssetManifestResolveStatus::LooseFallbackVariantMissing ||
+                resolveResult.Source == Asset::AssetResolveSource::DebugLooseFallback)
+            {
+                WarnCookedUnusableOnce(log, logicalPath);
+            }
+        }
+
         uint32_t CalculateFullMipCount(uint32_t width, uint32_t height)
         {
             uint32_t mipLevels = 1;
@@ -650,6 +694,7 @@ namespace NorvesLib::Core::Rendering
             Asset::AssetManifest::DefaultVariant,
             plan.FallbackMode);
         const double resolveMs = LoadProfileElapsedMs(resolveStartTime);
+        WarnCookedMissingOnce(plan.CookedMissingLog, plan.AssetSystem, resolveResult, plan.LogicalPath);
         NORVES_LOG_INFO("AssetLoadProfile",
                         "stage=texture_asset_resolve role=caller path=\"%s\" logical_path=\"%s\" source=%s resolve_ms=%.3f status=%s manifest_status=%u success=%d explicit_fallback=%d",
                         plan.RequestPath.c_str(),
@@ -702,6 +747,7 @@ namespace NorvesLib::Core::Rendering
         {
             if (plan.FallbackMode == Asset::AssetFallbackMode::DebugAllowLooseFallback)
             {
+                WarnCookedUnusableOnce(plan.CookedMissingLog, plan.LogicalPath);
                 NORVES_LOG_INFO("AssetLoadProfile",
                                 "stage=texture_asset_debug_fallback role=caller source=loose_stbi path=\"%s\" logical_path=\"%s\" reason=\"cooked texture parse failed\"",
                                 plan.RequestPath.c_str(),
@@ -712,6 +758,7 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
+        ApplySrgbAsLinearPolicy(plan.AssetSystem, parseResult.Texture);
         result.CookedTexture = Container::MakeShared<CookedTextureAsyncPayload>();
         result.CookedTexture->Texture = std::move(parseResult.Texture);
         result.bSuccess = true;
@@ -737,6 +784,7 @@ namespace NorvesLib::Core::Rendering
             Asset::AssetManifest::DefaultVariant,
             plan.FallbackMode);
         const double resolveMs = LoadProfileElapsedMs(resolveStartTime);
+        WarnCookedMissingOnce(plan.CookedMissingLog, plan.AssetSystem, resolveResult, plan.LogicalPath);
         NORVES_LOG_INFO("AssetLoadProfile",
                         "stage=texture_asset_resolve role=worker path=\"%s\" logical_path=\"%s\" source=%s resolve_ms=%.3f status=%s manifest_status=%u success=%d explicit_fallback=%d",
                         result.Path.c_str(),
@@ -795,6 +843,7 @@ namespace NorvesLib::Core::Rendering
         {
             if (TextureAssetResolver::AllowsDebugLooseFallback(result.FallbackMode))
             {
+                WarnCookedUnusableOnce(plan.CookedMissingLog, plan.LogicalPath);
                 NORVES_LOG_INFO("AssetLoadProfile",
                                 "stage=texture_asset_debug_fallback role=worker source=loose_stbi path=\"%s\" logical_path=\"%s\" reason=\"cooked texture parse failed\"",
                                 result.Path.c_str(),
@@ -808,6 +857,7 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
+        ApplySrgbAsLinearPolicy(plan.AssetSystem, parseResult.Texture);
         result.CookedTexture = Container::MakeShared<CookedTextureAsyncPayload>();
         result.CookedTexture->Texture = std::move(parseResult.Texture);
         const int width = static_cast<int>(result.CookedTexture->Texture.Width);
@@ -875,6 +925,11 @@ namespace NorvesLib::Core::Rendering
         auto finish = [&](PreparedTextureAssetStatus status, const char *reason)
         {
             SetPreparedTextureAssetStatus(workingPlan.Prepared, status, reason);
+            if (status == PreparedTextureAssetStatus::DebugLooseFallback)
+            {
+                // クック済みの項目はあるのに使えず、ばらのファイルへ戻す（パッケージ欠落・破損など）。
+                WarnCookedUnusableOnce(workingPlan.CookedMissingLog, workingPlan.Prepared.LogicalPath);
+            }
             NORVES_LOG_INFO("AssetLoadProfile",
                             "stage=texture_prepare_asset role=%s request_id=%u path=\"%s\" logical_path=\"%s\" cache_key=\"%s\" generation=%llu status=%s source=%s reason=\"%s\"",
                             profileRole,
@@ -912,8 +967,13 @@ namespace NorvesLib::Core::Rendering
         case Asset::AssetManifestResolveStatus::CookedReferenceFound:
             break;
         case Asset::AssetManifestResolveStatus::LooseFallbackManifestMissing:
+            if (workingPlan.AssetSystem && workingPlan.AssetSystem->IsCookedExpected())
+            {
+                WarnCookedUnusableOnce(workingPlan.CookedMissingLog, workingPlan.Prepared.LogicalPath);
+            }
             return finish(PreparedTextureAssetStatus::ManifestMissingLooseFallback, "asset manifest is not loaded");
         case Asset::AssetManifestResolveStatus::LooseFallbackVariantMissing:
+            WarnCookedUnusableOnce(workingPlan.CookedMissingLog, workingPlan.Prepared.LogicalPath);
             return finish(PreparedTextureAssetStatus::VariantMissingLooseFallback, "asset manifest variant is missing");
         case Asset::AssetManifestResolveStatus::InvalidManifest:
             return finish(PreparedTextureAssetStatus::ManifestInvalid, "asset manifest is invalid");
@@ -1027,6 +1087,7 @@ namespace NorvesLib::Core::Rendering
             return finish(status, "cooked texture parse failed");
         }
 
+        ApplySrgbAsLinearPolicy(workingPlan.AssetSystem, parseResult.Texture);
         workingPlan.Prepared.Payload = Container::MakeShared<CookedTextureAsyncPayload>();
         workingPlan.Prepared.Payload->Texture = std::move(parseResult.Texture);
         return finish(PreparedTextureAssetStatus::CookedReady, "");

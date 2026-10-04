@@ -152,12 +152,27 @@ namespace NorvesLib::Core::Asset
 
     AssetSystem::AssetSystem()
         : m_FileReader()
+        , m_LooseFileReader()
     {
     }
 
     AssetSystem::AssetSystem(const Container::AnsiString &assetRoot)
         : m_FileReader(assetRoot)
+        , m_LooseFileReader(assetRoot)
+        , m_AssetRoot(assetRoot)
     {
+    }
+
+    void AssetSystem::SetLooseAssetRoot(const Container::AnsiString &looseAssetRoot)
+    {
+        m_LooseAssetRoot = looseAssetRoot;
+        const Container::AnsiString &readerRoot = looseAssetRoot.empty() ? m_AssetRoot : looseAssetRoot;
+        m_LooseFileReader = readerRoot.empty() ? AssetFileReader() : AssetFileReader(readerRoot);
+    }
+
+    const Container::AnsiString &AssetSystem::GetLooseAssetRoot() const noexcept
+    {
+        return m_LooseAssetRoot.empty() ? m_AssetRoot : m_LooseAssetRoot;
     }
 
     void AssetSystem::ResetManifest()
@@ -230,7 +245,7 @@ namespace NorvesLib::Core::Asset
 
         if (manifestResult.ShouldUseLooseFallback())
         {
-            return ResolveLooseInto(std::move(result), m_FileReader, normalizedLogicalPath, AssetResolveSource::Loose);
+            return ResolveLooseInto(std::move(result), m_LooseFileReader, normalizedLogicalPath, AssetResolveSource::Loose);
         }
 
         if (!manifestResult.ShouldUseCooked())
@@ -255,7 +270,7 @@ namespace NorvesLib::Core::Asset
                 result.CookedReference.CookedPackage,
                 packageRead.Status);
             return ResolveCookedFailure(std::move(result),
-                                        m_FileReader,
+                                        m_LooseFileReader,
                                         request,
                                         GetPackageReadFailureKind(packageRead.Status),
                                         AssetResolveStatus::CookedPackageReadFailed,
@@ -269,7 +284,7 @@ namespace NorvesLib::Core::Asset
             reason += result.CookedReference.CookedPackage;
             reason += "\"";
             return ResolveCookedFailure(std::move(result),
-                                        m_FileReader,
+                                        m_LooseFileReader,
                                         request,
                                         AssetCookedFailureKind::PackageParseFailed,
                                         AssetResolveStatus::CookedPackageParseFailed,
@@ -285,7 +300,7 @@ namespace NorvesLib::Core::Asset
             reason += result.CookedReference.EntryName;
             reason += "\"";
             return ResolveCookedFailure(std::move(result),
-                                        m_FileReader,
+                                        m_LooseFileReader,
                                         request,
                                         AssetCookedFailureKind::EntryMissing,
                                         AssetResolveStatus::CookedEntryMissing,
@@ -301,7 +316,7 @@ namespace NorvesLib::Core::Asset
             reason += result.CookedReference.EntryName;
             reason += "\"";
             return ResolveCookedFailure(std::move(result),
-                                        m_FileReader,
+                                        m_LooseFileReader,
                                         request,
                                         AssetCookedFailureKind::EntryMissing,
                                         AssetResolveStatus::CookedEntryMissing,
@@ -317,7 +332,7 @@ namespace NorvesLib::Core::Asset
             reason += result.CookedReference.EntryName;
             reason += "\"";
             return ResolveCookedFailure(std::move(result),
-                                        m_FileReader,
+                                        m_LooseFileReader,
                                         request,
                                         AssetCookedFailureKind::EntryHashMismatch,
                                         AssetResolveStatus::CookedEntryHashMismatch,

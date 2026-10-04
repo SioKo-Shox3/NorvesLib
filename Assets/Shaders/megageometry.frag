@@ -24,6 +24,7 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousView;
     mat4 previousProjection;
     vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV。0なら変位なし）, w=fragDebugPayload がLODの段か（1/0）
+    vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -109,7 +110,8 @@ vec3 RemoveDisplacedNormalSlope(vec3 tangentNormal, vec2 texCoord, float displac
     float lodLevel = mvp.frameParams.w > 0.5 ? float(fragDebugPayload) : 0.0;
     float vertexMip = log2(max(displacementUVSpacing * float(textureSize(normalTexture, 0).x), 1.0)) + lodLevel;
     float coarseMip = max(vertexMip, textureQueryLod(normalTexture, texCoord).y);
-    vec3 coarseNormal = textureLod(normalTexture, texCoord, coarseMip).rgb * 2.0 - 1.0;
+    // 粗い傾きも標本は2チャンネル（BC5）の法線を復号して引く（B は0なので RGB のままでは Z が負になる）。
+    vec3 coarseNormal = DecodePbrTangentNormal(textureLod(normalTexture, texCoord, coarseMip), mvp.materialParams.y > 0.5);
     vec2 detailSlope = tangentNormal.xy / max(tangentNormal.z, 0.1) - coarseNormal.xy / max(coarseNormal.z, 0.1);
     return normalize(vec3(detailSlope, 1.0));
 }
@@ -158,12 +160,13 @@ void main()
     }
 
     // テクスチャサンプリング × オブジェクトカラー（POM補正済みUV使用）
-    vec4 texColor = texture(albedoTexture, texCoord);
-    outAlbedo = vec4(fragObjectColor * texColor.rgb, texColor.a);
+    PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
+        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
+        mvp.materialParams.x > 0.5, mvp.materialParams.y > 0.5);
+    outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples), textureSamples.Albedo.a);
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
-    vec3 normalMapSample = texture(normalTexture, texCoord).rgb;
-    vec3 tangentNormal = normalMapSample * 2.0 - 1.0;
+    vec3 tangentNormal = textureSamples.TangentNormal;
     float displacementUVSpacing = mvp.frameParams.z;
     if (displacementUVSpacing > 0.0)
     {
@@ -173,10 +176,7 @@ void main()
     outNormal = vec4(normal, 0.0);
 
     // PBRマテリアルパラメータ（POM補正済みUV使用）
-    float metallic  = texture(metallicTexture, texCoord).r;
-    float roughness = texture(roughnessTexture, texCoord).r;
-    float ao        = texture(aoTexture, texCoord).r;
-    outMaterial = vec4(metallic, roughness, ao, 0.0);
+    outMaterial = vec4(textureSamples.Material, 0.0);
 
     // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（gbuffer.frag と同じ）
     outEmissive = vec4(ComputePreExposedEmissive(fragEmissiveColor.rgb,

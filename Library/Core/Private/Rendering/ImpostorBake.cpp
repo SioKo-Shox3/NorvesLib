@@ -30,6 +30,13 @@ namespace NorvesLib::Core::Rendering
                 return true;
             case TextureCreateInfo::Format::D24_S8:
             case TextureCreateInfo::Format::D32_FLOAT:
+            case TextureCreateInfo::Format::R16_UNORM:
+            case TextureCreateInfo::Format::BC1_UNORM:
+            case TextureCreateInfo::Format::BC1_SRGB:
+            case TextureCreateInfo::Format::BC4_UNORM:
+            case TextureCreateInfo::Format::BC5_UNORM:
+            case TextureCreateInfo::Format::BC7_UNORM:
+            case TextureCreateInfo::Format::BC7_SRGB:
                 return false;
             }
 

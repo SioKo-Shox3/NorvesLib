@@ -59,6 +59,25 @@ namespace NorvesLib::RHI
     };
 
     /**
+     * @brief DeviceLocal ヒープの予算と使用量（全 DeviceLocal ヒープの合計）
+     *
+     * VK_EXT_memory_budget のような取得手段が無いバックエンドでは bValid が false のまま返る。
+     * その場合 BudgetBytes と UsageBytes は意味を持たない。取得手段がある場合は bValid が true で、
+     * BudgetBytes が 0 のときは異常値として呼び出し側が扱う。
+     */
+    struct VideoMemoryBudget
+    {
+        /** @brief OS とドライバがこのプロセスへ見積もるビデオメモリの予算（バイト） */
+        uint64_t BudgetBytes = 0;
+
+        /** @brief このプロセスが現在使っているビデオメモリ（バイト） */
+        uint64_t UsageBytes = 0;
+
+        /** @brief 取得手段があり、予算と使用量を取得したか（無いバックエンドでは false） */
+        bool bValid = false;
+    };
+
+    /**
      * @brief Vulkanの拡張とfeature照会から得たレイトレーシング対応状況
      */
     struct RayTracingFeatureAvailability
@@ -179,6 +198,9 @@ namespace NorvesLib::RHI
 
         /** @brief 配列sampled imageを呼び出しごとに異なる添字で参照できるか（Vulkan 1.2 descriptor indexing） */
         bool bSampledImageArrayNonUniformIndexing = false;
+
+        /** @brief BC1/BC4/BC5/BC7 のブロック圧縮テクスチャ（textureCompressionBC）が論理デバイスで有効か */
+        bool bTextureCompressionBC = false;
     };
 
 } // namespace NorvesLib::RHI

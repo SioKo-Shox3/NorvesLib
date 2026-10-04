@@ -95,6 +95,12 @@ namespace Game
          */
         bool ReloadConfiguredAssetManifest();
 
+        /**
+         * @brief クック済みのマニフェストを使えないとき、マニフェストの無い AssetSystem を「クック済みを使う前提」で入れる。
+         * @note ばらの元画像の root（m_TextureLooseAssetRoot）を読み、読んだ各パスに TEXTURE_COOKED_MISSING を1回ずつ警告する。
+         */
+        void InstallCookedManifestUnavailableAssetSystem();
+
         bool PrepareM9WorldAssets();
 
         /**
@@ -104,6 +110,12 @@ namespace Game
          */
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>
         GetAssetSystemSnapshot() const;
+
+        /**
+         * @brief クック済みのマニフェストに、テクスチャの論理パス（"Assets/..." でもよい）の項目があるか。
+         * @note マニフェストを読んでいない（クック済みを使わない）ときは常に false。
+         */
+        bool IsTextureCooked(const NorvesLib::Core::Container::String &logicalPath) const;
 
     private:
         /**
@@ -115,10 +127,24 @@ namespace Game
         void ParseBridgePortOption(
             const NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Container::String>& args);
 
+        /**
+         * @brief 非同期の読み込みが落ち着いた最初の描画の後に、テクスチャとバッファの確保量を VRAM_LEDGER として1回ログへ出す。
+         * @note 読み込み中を一度も見ないまま一定フレームが過ぎたときも、その時点で1回出す。
+         */
+        void LogVramLedgerOnce();
+
         // ゲーム固有のメンバー変数
         bool m_bIsPaused = false;
         bool m_bHasTextureAssetRuntimeConfig = false;
         bool m_bRendering3DTestUseCookedModel = false;
+        // --no-cooked-textures: クック済みを使わず、ばらの元画像を無圧縮で読む（見た目の比較用）。
+        bool m_bNoCookedTextures = false;
+        // 既定の build/CookedAssets/ を root にしたとき、マニフェストに無いテクスチャをばらで読む場所（Assets/）。
+        // 空のときは root と同じ場所を読む（--texture-asset-root で明示したときの従来の動き）。
+        NorvesLib::Core::Container::String m_TextureLooseAssetRoot;
+        // 既定のクック済みの設定が使えず（マニフェストが無い・読めない）、全テクスチャをばらの元画像で読むとき true。
+        // 読み込む各パスに TEXTURE_COOKED_MISSING を警告するため、マニフェストの無い AssetSystem を入れ直す。
+        bool m_bCookedManifestUnavailable = false;
         NorvesLib::Core::Container::String m_TextureAssetRoot;
         NorvesLib::Core::Container::String m_TextureAssetManifestPath;
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem> m_AssetSystemSnapshot;
@@ -127,6 +153,11 @@ namespace Game
         // --capture-sequence で、1回の起動の中の複数の描画フレームを撮る。
         Game::Debug::SequenceFrameCapture m_SequenceFrameCapture;
         NorvesLib::Core::Container::TSharedPtr<Game::GameModes::M9WorldAcceptanceConfig> m_M9WorldAcceptance;
+
+        // 起動画面の非同期の読み込みが終わった後に VRAM_LEDGER を1回だけログへ出すための状態。
+        bool m_bVramLedgerLogged = false;
+        bool m_bVramLedgerSawPending = false;
+        uint32_t m_VramLedgerFrameCount = 0;
 
         // Bridge（NorvesEditor 連携）。adapter は host より長生きする必要があるため、
         // 宣言順を adapter → host にしてデストラクト順（host → adapter）を保証する。

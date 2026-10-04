@@ -127,12 +127,29 @@ void main()
         }
     }
 
+    // 番号の最上位ビットは印（法線が2チャンネル、z・wがORMの1枚）。残りがtexture配列番号。
+    const uint TEXTURE_FLAG_BIT = 0x80000000u;
+    bool bNormalTwoChannel = (instance.textures.y & TEXTURE_FLAG_BIT) != 0u;
+    bool bHasORM = (instance.textures.z & TEXTURE_FLAG_BIT) != 0u;
+    vec3 materialSample;
+    if (bHasORM)
+    {
+        materialSample = DecodePbrOrmSample(
+            SampleMaterialTexture(instance.textures.z & ~TEXTURE_FLAG_BIT, uv));
+    }
+    else
+    {
+        materialSample = vec3(SampleMaterialTexture(instance.textures.z, uv).r,
+                              SampleMaterialTexture(instance.textures.w, uv).r,
+                              1.0);
+    }
     PbrMaterialTextureSamples samples = DecodePbrMaterialTextureSamples(
         SampleMaterialTexture(instance.textures.x, uv),
-        SampleMaterialTexture(instance.textures.y, uv),
-        SampleMaterialTexture(instance.textures.z, uv).r,
-        SampleMaterialTexture(instance.textures.w, uv).r,
-        1.0);
+        SampleMaterialTexture(instance.textures.y & ~TEXTURE_FLAG_BIT, uv),
+        materialSample.x,
+        materialSample.y,
+        materialSample.z,
+        bNormalTwoChannel);
     if (bHasAttributes)
     {
         shadingNormal = ApplyTangentSpaceNormal(tangentBasis, samples.TangentNormal);

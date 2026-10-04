@@ -297,6 +297,12 @@ namespace NorvesLib::RHI
         virtual const DeviceCapabilities &GetCapabilities() const = 0;
 
         /**
+         * @brief DeviceLocal ヒープの予算と使用量を取得
+         * @return 取得できないバックエンドでは bValid が false の値を返す
+         */
+        virtual VideoMemoryBudget GetVideoMemoryBudget() const { return {}; }
+
+        /**
          * @brief 描画API固有のクリップ空間に合わせてプロジェクション行列を補正
          *
          * 右手系座標のプロジェクション行列を現在の描画APIのクリップ空間に変換します。

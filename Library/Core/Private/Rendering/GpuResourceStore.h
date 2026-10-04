@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Rendering/GpuResourceTypes.h"
 #include "Rendering/RenderTypes.h"
@@ -22,6 +22,8 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    class GpuRetireQueue;
+
     class GpuResourceStore final
     {
     public:
@@ -31,6 +33,7 @@ namespace NorvesLib::Core::Rendering
             double MipgenMs = 0.0;
             bool bTextureFound = false;
             bool bUploadAttempted = false;
+            bool bUploadSucceeded = false;
             bool bMipgenSuccess = true;
         };
 
@@ -81,6 +84,14 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::ITexture> GetRHITexturePtr(TextureHandle handle) const;
         RHI::IShader *GetRHIShader(ShaderHandle handle) const;
 
+        /**
+         * @brief ReleaseBuffer・ReleaseTexture で外れた RHI 資源の行き先を設定する
+         *
+         * 設定すると、外れた資源は GPU が使い終わるまでこのキューが保持する。
+         * 未設定（nullptr）なら従来どおり即座に破棄する。
+         */
+        void SetRetireQueue(GpuRetireQueue *retireQueue);
+
         void Clear();
         ResourceStats GetResourceStats() const;
 
@@ -106,5 +117,7 @@ namespace NorvesLib::Core::Rendering
 
         SamplerHandle m_DefaultSampler;
         SamplerHandle m_PointSampler;
+
+        GpuRetireQueue *m_pRetireQueue = nullptr;
     };
 }

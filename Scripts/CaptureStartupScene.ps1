@@ -39,6 +39,9 @@
 # タイムスタンプは統計が有効な構成（Debug・RelWithDebInfo）だけで取れるため、Release とは併用しない。
 # 予算（-GpuFrameBudgetMs、既定 16.6 ms）を超えても失敗にはせず、窓のどれかのフレームが超えたら
 # within_budget=false と書く（95 パーセンタイルの判定は p95_within_budget）。
+# -LooseTextures でクック済みのテクスチャ（build/CookedAssets/）を使わず、ばらの元画像を無圧縮で読んで撮る
+# （--no-cooked-textures。クック済みとの見た目の比較用）。各撮影のログから VRAM_LEDGER の texture_mb と、
+# クック済みが無くばらで読んだ数（TEXTURE_COOKED_MISSING）を metrics.json へ書く。
 # -DefaultCamera で既定視点のカメラを替え（例: 変更前の版の既定 0,30,5）、-ViewNames で撮る視点を絞る（例: default）。
 [CmdletBinding()]
 param(
@@ -90,7 +93,11 @@ param(
     # 既定視点のカメラ（「yaw,pitch,arm」）。省略時は起動時の既定のカメラ。変更前の版と同じ視点で撮り比べる用。
     [string]$DefaultCamera = '',
     # 撮る視点の名前（「default,near」の形）。省略時は3視点すべて。
-    [string[]]$ViewNames = @()
+    [string[]]$ViewNames = @(),
+    # クック済みのテクスチャを使わず、ばらの元画像を無圧縮で読んで撮る（--no-cooked-textures。比べる側の撮影用）。
+    [switch]$LooseTextures,
+    # Game へそのまま渡す引数（空白で区切る。例: --texture-asset-root と --texture-asset-manifest で別のクック済みの出力を使う）。
+    [string[]]$ExtraGameArguments = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -513,6 +520,14 @@ foreach ($view in $shots)
     {
         $arguments += "--height-fog-falloff=$(([double]$HeightFogFalloff).ToString($invariant))"
     }
+    if ($LooseTextures)
+    {
+        $arguments += '--no-cooked-textures'
+    }
+    foreach ($extraArgument in (($ExtraGameArguments -join ' ').Split(@(' ', ','), [StringSplitOptions]::RemoveEmptyEntries)))
+    {
+        $arguments += $extraArgument
+    }
     if ($Night)
     {
         $arguments += '--night'
@@ -583,8 +598,18 @@ foreach ($view in $shots)
 
     # 間接光の出どころ（rtgi・ibl など。LightingPass が切り替わりのときだけ記録する）の最後の値。
     $indirectLighting = $null
+    $vramLedgerTextureMb = $null
+    $cookedMissingCount = $null
     if (Test-Path -LiteralPath $viewLogPath)
     {
+        # テクスチャの VRAM（最後の VRAM_LEDGER）と、クック済みが無くばらで読んだテクスチャの数。
+        $ledgerTextureMb = @(Select-String -LiteralPath $viewLogPath -Pattern 'VRAM_LEDGER textures=\d+ texture_mb=([0-9.]+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value })
+        if ($ledgerTextureMb.Count -gt 0)
+        {
+            $vramLedgerTextureMb = [double]::Parse($ledgerTextureMb[$ledgerTextureMb.Count - 1], $invariant)
+        }
+        $cookedMissingCount = @(Select-String -LiteralPath $viewLogPath -Pattern 'TEXTURE_COOKED_MISSING path=' -SimpleMatch).Count
         $indirectSources = @(Select-String -LiteralPath $viewLogPath -Pattern 'INDIRECT_LIGHTING source=(\w+)' |
             ForEach-Object { $_.Matches[0].Groups[1].Value })
         if ($indirectSources.Count -gt 0)
@@ -641,6 +666,8 @@ foreach ($view in $shots)
             clipped_white_ratio = [math]::Round($measured[3], 6)
             crushed_black_ratio = [math]::Round($measured[4], 6)
             indirect_lighting = $indirectLighting
+            vram_ledger_texture_mb = $vramLedgerTextureMb
+            cooked_missing_count = $cookedMissingCount
         }
         $results += [pscustomobject]$result
         Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5} indirect_lighting={6}" -f `

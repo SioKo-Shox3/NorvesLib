@@ -38,6 +38,15 @@ target_link_libraries(${MODULE_NAME}
 )
 target_compile_definitions(${MODULE_NAME} PRIVATE NORVES_GAME_AUDIO)
 
+# 既定のテクスチャの asset root。CookAssets 対象が build/CookedAssets/ へクック済みを焼く。
+# 無い間は従来どおり Assets/ のばらの元画像を読む。--texture-asset-root で上書きできる。
+string(REPLACE "\\" "/" NORVES_COOKED_ASSET_DIR "${CMAKE_BINARY_DIR}/CookedAssets")
+string(REPLACE "\\" "/" NORVES_SOURCE_ASSET_DIR "${CMAKE_SOURCE_DIR}/Assets")
+target_compile_definitions(${MODULE_NAME} PRIVATE
+    NORVES_COOKED_ASSET_DIR="${NORVES_COOKED_ASSET_DIR}"
+    NORVES_SOURCE_ASSET_DIR="${NORVES_SOURCE_ASSET_DIR}"
+)
+
 # NorvesEditor Bridge engine SDK link (Workstream L-P1). Only when the parent
 # build opts in via -DNORVES_BRIDGE_SDK_DIR; a plain NorvesLib build skips it.
 #

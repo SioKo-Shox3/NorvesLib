@@ -3449,9 +3449,11 @@ namespace NorvesLib::Core::Rendering
                                             sizeof(material.EmissiveLuminanceNits));
             staticSignature = HashRTGIBytes(staticSignature, material.ObjectColor,
                                             sizeof(material.ObjectColor));
-            const uint64_t textureIds[4] = {material.AlbedoTexture.Id, material.NormalTexture.Id,
+            const uint64_t textureIds[6] = {material.AlbedoTexture.Id, material.NormalTexture.Id,
                                             material.MetallicTexture.Id,
-                                            material.RoughnessTexture.Id};
+                                            material.RoughnessTexture.Id,
+                                            material.ORMTexture.Id,
+                                            material.bNormalTwoChannel ? 1ull : 0ull};
             staticSignature = HashRTGIBytes(staticSignature, textureIds, sizeof(textureIds));
         }
         const float rtgiPreExposure = std::isfinite(lightingParams.preExposure) &&

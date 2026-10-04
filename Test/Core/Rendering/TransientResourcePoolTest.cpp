@@ -12,7 +12,7 @@ namespace
     using NorvesLib::Core::Container::TUniquePtr;
     using NorvesLib::Core::Container::VariableArray;
 
-    size_t GetFormatBytesPerPixel(NorvesLib::RHI::Format format)
+    size_t GetExpectedFormatBytesPerPixel(NorvesLib::RHI::Format format)
     {
         switch (format)
         {
@@ -25,7 +25,7 @@ namespace
         }
     }
 
-    size_t EstimateTextureSize(const NorvesLib::RHI::TextureDesc& desc)
+    size_t EstimateExpectedTextureSize(const NorvesLib::RHI::TextureDesc& desc)
     {
         size_t total = 0;
         uint32_t width = desc.Width > 0 ? desc.Width : 1;
@@ -39,7 +39,7 @@ namespace
                      static_cast<size_t>(height) *
                      static_cast<size_t>(depth) *
                      static_cast<size_t>(desc.ArraySize) *
-                     GetFormatBytesPerPixel(desc.TextureFormat);
+                     GetExpectedFormatBytesPerPixel(desc.TextureFormat);
 
             width = width > 1 ? width / 2 : 1;
             height = height > 1 ? height / 2 : 1;
@@ -170,7 +170,7 @@ namespace
             auto texture = MakeUnique<FakeTexture>(desc);
             NorvesLib::RHI::TextureAllocation allocation;
             allocation.Texture = texture.get();
-            allocation.Size = bReturnZeroTextureAllocationSize ? 0 : EstimateTextureSize(desc);
+            allocation.Size = bReturnZeroTextureAllocationSize ? 0 : EstimateExpectedTextureSize(desc);
             allocation.Type = type;
 
             TextureRecord record;
@@ -511,7 +511,7 @@ namespace
         assert(texture);
         pool.EndFrame();
 
-        assert(pool.GetPoolMemoryUsage() == EstimateTextureSize(desc));
+        assert(pool.GetPoolMemoryUsage() == EstimateExpectedTextureSize(desc));
 
         pool.Shutdown();
         assert(allocator.GetLiveAllocationCount() == 0);

@@ -1,4 +1,4 @@
-#include "Asset/CookedTextureFormat.h"
+﻿#include "Asset/CookedTextureFormat.h"
 
 #include <cassert>
 #include <cstring>
@@ -33,6 +33,12 @@ namespace
     static_assert(static_cast<uint32_t>(CookedTexturePixelFormat::R8UNorm) == PixelFormatR8UNorm);
     static_assert(static_cast<uint32_t>(CookedTexturePixelFormat::RG8UNorm) == PixelFormatRG8UNorm);
     static_assert(static_cast<uint32_t>(CookedTexturePixelFormat::RGBA8UNorm) == PixelFormatRGBA8UNorm);
+    static_assert(static_cast<uint32_t>(CookedTexturePixelFormat::BC1) == PixelFormatBC1);
+    static_assert(static_cast<uint32_t>(CookedTexturePixelFormat::BC4) == PixelFormatBC4);
+    static_assert(static_cast<uint32_t>(CookedTexturePixelFormat::BC5) == PixelFormatBC5);
+    static_assert(static_cast<uint32_t>(CookedTexturePixelFormat::BC7) == PixelFormatBC7);
+    static_assert(static_cast<uint32_t>(CookedTexturePixelFormat::R16UNorm) == PixelFormatR16UNorm);
+    static_assert(VersionMinor == 0 && VersionMinorBlockCompressed == 1);
     static_assert(static_cast<uint32_t>(CookedTextureColorSpace::Linear) == ColorSpaceLinear);
     static_assert(static_cast<uint32_t>(CookedTextureColorSpace::SRGB) == ColorSpaceSRGB);
 
@@ -54,6 +60,12 @@ namespace
     {
         WriteLe32(bytes, offset, static_cast<uint32_t>(value & 0xffffffffull));
         WriteLe32(bytes, offset + 4, static_cast<uint32_t>((value >> 32) & 0xffffffffull));
+    }
+
+    uint16_t ReadLe16(const std::vector<uint8_t> &bytes, size_t offset)
+    {
+        return static_cast<uint16_t>(static_cast<uint16_t>(bytes[offset]) |
+                                     static_cast<uint16_t>(static_cast<uint16_t>(bytes[offset + 1]) << 8));
     }
 
     uint32_t ReadLe32(const std::vector<uint8_t> &bytes, size_t offset)
@@ -86,14 +98,45 @@ namespace
         return shifted == 0 ? 1 : shifted;
     }
 
+    // 形式ごとの 1 ブロックの大きさ。テスト側で独立に持ち、実装の計算を写さない。
+    struct TestBlock
+    {
+        uint32_t Width;
+        uint32_t Height;
+        uint32_t Bytes;
+    };
+
+    TestBlock TestBlockOf(CookedTexturePixelFormat pixelFormat)
+    {
+        switch (pixelFormat)
+        {
+        case CookedTexturePixelFormat::R8UNorm:
+            return {1, 1, 1};
+        case CookedTexturePixelFormat::RG8UNorm:
+        case CookedTexturePixelFormat::R16UNorm:
+            return {1, 1, 2};
+        case CookedTexturePixelFormat::RGBA8UNorm:
+            return {1, 1, 4};
+        case CookedTexturePixelFormat::BC1:
+        case CookedTexturePixelFormat::BC4:
+            return {4, 4, 8};
+        case CookedTexturePixelFormat::BC5:
+        case CookedTexturePixelFormat::BC7:
+            return {4, 4, 16};
+        }
+        return {1, 1, 0};
+    }
+
+    // versionMinor を省略すると v0.0 で書く。BC と R16 は v0.1 を明示して書く。
     std::vector<uint8_t> BuildTexture(uint32_t width,
                                       uint32_t height,
                                       uint32_t layerCount,
                                       CookedTexturePixelFormat pixelFormat,
-                                      CookedTextureColorSpace colorSpace)
+                                      CookedTextureColorSpace colorSpace,
+                                      uint16_t versionMinor = VersionMinor)
     {
         const uint32_t mipCount = ComputeCookedTextureFullMipCount(width, height);
-        const size_t bytesPerPixel = GetCookedTextureBytesPerPixel(pixelFormat);
+        const TestBlock block = TestBlockOf(pixelFormat);
         const size_t mipTableOffset = HeaderSize;
         const size_t mipTableSize = static_cast<size_t>(mipCount) * MipRecordSize;
         const size_t payloadOffset = mipTableOffset + mipTableSize;
@@ -107,10 +150,9 @@ namespace
         {
             const uint32_t mipWidth = ExpectedMipDimension(width, mipIndex);
             const uint32_t mipHeight = ExpectedMipDimension(height, mipIndex);
-            const size_t dataSize = static_cast<size_t>(mipWidth) *
-                                    static_cast<size_t>(mipHeight) *
-                                    static_cast<size_t>(layerCount) *
-                                    bytesPerPixel;
+            const size_t blocksX = (mipWidth + block.Width - 1) / block.Width;
+            const size_t blocksY = (mipHeight + block.Height - 1) / block.Height;
+            const size_t dataSize = blocksX * blocksY * static_cast<size_t>(layerCount) * block.Bytes;
             std::vector<uint8_t> mipBytes(dataSize);
             for (uint8_t &value : mipBytes)
             {
@@ -125,7 +167,7 @@ namespace
         std::memcpy(bytes.data() + HeaderOffset::Magic, Magic, MagicSize);
         WriteLe32(bytes, HeaderOffset::HeaderSize, static_cast<uint32_t>(HeaderSize));
         WriteLe16(bytes, HeaderOffset::VersionMajor, VersionMajor);
-        WriteLe16(bytes, HeaderOffset::VersionMinor, VersionMinor);
+        WriteLe16(bytes, HeaderOffset::VersionMinor, versionMinor);
         WriteLe32(bytes, HeaderOffset::EndianMarker, EndianMarker);
         WriteLe32(bytes, HeaderOffset::MipRecordSize, static_cast<uint32_t>(MipRecordSize));
         WriteLe64(bytes, HeaderOffset::FileSize, static_cast<uint64_t>(fileSize));
@@ -465,6 +507,152 @@ int main()
 
     {
         std::vector<uint8_t> bytes = BuildTexture(4, 4, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::SRGB);
+        bytes.pop_back();
+        WriteLe64(bytes, HeaderOffset::FileSize, static_cast<uint64_t>(bytes.size()));
+        ExpectStatus(std::move(bytes), CookedTextureParseStatus::TruncatedPayload);
+    }
+
+    // v0.1: ブロック圧縮の形式。ミップは 4x4 画素のブロック単位（端は切り上げ、最小 1 ブロック）で数える。
+    {
+        const std::vector<uint8_t> bytes = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7,
+                                                        CookedTextureColorSpace::SRGB, VersionMinorBlockCompressed);
+        assert(ReadLe16(bytes, HeaderOffset::VersionMinor) == 1);
+        const CookedTextureParseResult result = ParseCookedTexture(MakeBlob(bytes));
+        assert(result.Succeeded());
+        assert(result.Texture.PixelFormat == CookedTexturePixelFormat::BC7);
+        assert(result.Texture.ColorSpace == CookedTextureColorSpace::SRGB);
+        assert(result.Texture.MipCount == 4);
+        assert(result.Texture.Mips.size() == 4);
+        assert(result.Texture.Mips[0].DataSize == 64);  // 2x2 ブロック
+        assert(result.Texture.Mips[1].DataSize == 16);  // 4x4 画素 = 1 ブロック
+        assert(result.Texture.Mips[2].DataSize == 16);  // 2x2 画素でも最小 1 ブロック
+        assert(result.Texture.Mips[3].DataSize == 16);  // 1x1 画素でも最小 1 ブロック
+        assert(result.Texture.Mips[3].Width == 1 && result.Texture.Mips[3].Height == 1);
+        AssertSpanBytes(result.Texture.GetMipBytes(0), 0);
+        AssertSpanBytes(result.Texture.GetMipBytes(1), 64);
+        AssertSpanBytes(result.Texture.GetMipBytes(3), 96);
+    }
+
+    {
+        const CookedTextureParseResult result = ParseCookedTexture(MakeBlob(
+            BuildTexture(6, 5, 1, CookedTexturePixelFormat::BC1, CookedTextureColorSpace::Linear, VersionMinorBlockCompressed)));
+        assert(result.Succeeded());
+        assert(result.Texture.PixelFormat == CookedTexturePixelFormat::BC1);
+        assert(result.Texture.MipCount == 3);
+        assert(result.Texture.Mips[0].DataSize == 32);  // 6x5 画素 = 2x2 ブロック
+        assert(result.Texture.Mips[1].Width == 3 && result.Texture.Mips[1].Height == 2);
+        assert(result.Texture.Mips[1].DataSize == 8);
+        assert(result.Texture.Mips[2].DataSize == 8);
+    }
+
+    {
+        const CookedTextureParseResult bc1Srgb = ParseCookedTexture(MakeBlob(
+            BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC1, CookedTextureColorSpace::SRGB, VersionMinorBlockCompressed)));
+        assert(bc1Srgb.Succeeded());
+        assert(bc1Srgb.Texture.ColorSpace == CookedTextureColorSpace::SRGB);
+
+        const CookedTextureParseResult bc4 = ParseCookedTexture(MakeBlob(
+            BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC4, CookedTextureColorSpace::Linear, VersionMinorBlockCompressed)));
+        assert(bc4.Succeeded());
+        assert(bc4.Texture.Mips[0].DataSize == 8);
+
+        const CookedTextureParseResult bc5 = ParseCookedTexture(MakeBlob(
+            BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC5, CookedTextureColorSpace::Linear, VersionMinorBlockCompressed)));
+        assert(bc5.Succeeded());
+        assert(bc5.Texture.Mips[0].DataSize == 16);
+    }
+
+    // v0.1: R16 は 1 画素 2 バイトの非圧縮として数える。配列も通る。
+    {
+        const CookedTextureParseResult result = ParseCookedTexture(MakeBlob(
+            BuildTexture(3, 2, 2, CookedTexturePixelFormat::R16UNorm, CookedTextureColorSpace::Linear, VersionMinorBlockCompressed)));
+        assert(result.Succeeded());
+        assert(result.Texture.PixelFormat == CookedTexturePixelFormat::R16UNorm);
+        assert(result.Texture.MipCount == 2);
+        assert(result.Texture.Mips[0].DataSize == 24);  // 3x2 画素 x 2 バイト x 2 レイヤー
+        assert(result.Texture.Mips[1].DataSize == 4);   // 1x1 画素 x 2 バイト x 2 レイヤー
+    }
+
+    // v0.1 は v0.0 の形式も読める。BC の配列はブロック単位でレイヤーを数える。
+    {
+        const CookedTextureParseResult rgba = ParseCookedTexture(MakeBlob(
+            BuildTexture(2, 2, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::SRGB, VersionMinorBlockCompressed)));
+        assert(rgba.Succeeded());
+        assert(rgba.Texture.Mips[0].DataSize == 16);
+
+        const CookedTextureParseResult bcArray = ParseCookedTexture(MakeBlob(
+            BuildTexture(4, 4, 3, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear, VersionMinorBlockCompressed)));
+        assert(bcArray.Succeeded());
+        assert(bcArray.Texture.LayerCount == 3);
+        assert(bcArray.Texture.Mips[0].DataSize == 48);
+    }
+
+    // v0.0 は BC・R16 を表せない。v0.1 でも未知の形式・知らない版は拒否する。
+    {
+        ExpectStatus(BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear, VersionMinor),
+                     CookedTextureParseStatus::UnknownPixelFormat);
+        ExpectStatus(BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC1, CookedTextureColorSpace::Linear, VersionMinor),
+                     CookedTextureParseStatus::UnknownPixelFormat);
+        ExpectStatus(BuildTexture(4, 4, 1, CookedTexturePixelFormat::R16UNorm, CookedTextureColorSpace::Linear, VersionMinor),
+                     CookedTextureParseStatus::UnknownPixelFormat);
+
+        std::vector<uint8_t> bytes = BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
+                                                  VersionMinorBlockCompressed);
+        WriteLe32(bytes, HeaderOffset::PixelFormat, 9);
+        ExpectStatus(bytes, CookedTextureParseStatus::UnknownPixelFormat);
+        WriteLe32(bytes, HeaderOffset::PixelFormat, 0);
+        ExpectStatus(bytes, CookedTextureParseStatus::UnknownPixelFormat);
+
+        bytes = BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        WriteLe16(bytes, HeaderOffset::VersionMinor, 2);
+        ExpectStatus(std::move(bytes), CookedTextureParseStatus::UnsupportedVersion);
+    }
+
+    // sRGB を持てない形式（BC4・BC5・R16）は拒否する。
+    {
+        ExpectStatus(BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC4, CookedTextureColorSpace::SRGB, VersionMinorBlockCompressed),
+                     CookedTextureParseStatus::InvalidColorSpaceForFormat);
+        ExpectStatus(BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC5, CookedTextureColorSpace::SRGB, VersionMinorBlockCompressed),
+                     CookedTextureParseStatus::InvalidColorSpaceForFormat);
+        ExpectStatus(BuildTexture(4, 4, 1, CookedTexturePixelFormat::R16UNorm, CookedTextureColorSpace::SRGB, VersionMinorBlockCompressed),
+                     CookedTextureParseStatus::InvalidColorSpaceForFormat);
+    }
+
+    // ミップのバイト数はブロック単位で厳密に照合する（ブロック数の不足・過剰、画素単位の数え方を拒否）。
+    {
+        std::vector<uint8_t> bytes = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
+                                                  VersionMinorBlockCompressed);
+        const uint64_t mip0Size = ReadLe64(bytes, MipRecordOffsetFor(0) + MipRecordOffset::DataSize);
+        assert(mip0Size == 64);
+        WriteLe64(bytes, MipRecordOffsetFor(0) + MipRecordOffset::DataSize, mip0Size - 16);  // 1 ブロック不足
+        ExpectStatus(bytes, CookedTextureParseStatus::MipDataSizeMismatch);
+
+        WriteLe64(bytes, MipRecordOffsetFor(0) + MipRecordOffset::DataSize, mip0Size + 16);  // 1 ブロック過剰
+        ExpectStatus(bytes, CookedTextureParseStatus::MipDataSizeMismatch);
+
+        WriteLe64(bytes, MipRecordOffsetFor(0) + MipRecordOffset::DataSize, mip0Size);
+        WriteLe64(bytes, MipRecordOffsetFor(3) + MipRecordOffset::DataSize, 1);  // 末尾の 1x1 は最小 1 ブロックが要る
+        ExpectStatus(bytes, CookedTextureParseStatus::MipDataSizeMismatch);
+
+        // 非圧縮と同じ画素数 x ブロックのバイト数で数えたサイズ（8x8 なら 1024）も通さない
+        bytes = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
+                             VersionMinorBlockCompressed);
+        WriteLe64(bytes, MipRecordOffsetFor(0) + MipRecordOffset::DataSize, 8ull * 8ull * 16ull);
+        ExpectStatus(std::move(bytes), CookedTextureParseStatus::MipDataSizeMismatch);
+    }
+
+    // 全段必須: 圧縮形式でもミップ数の省略は拒否する。
+    {
+        std::vector<uint8_t> bytes = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
+                                                  VersionMinorBlockCompressed);
+        WriteLe32(bytes, HeaderOffset::MipCount, 1);
+        ExpectStatus(std::move(bytes), CookedTextureParseStatus::InvalidMipCount);
+    }
+
+    // ペイロードが切れた BC は拒否する。
+    {
+        std::vector<uint8_t> bytes = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
+                                                  VersionMinorBlockCompressed);
         bytes.pop_back();
         WriteLe64(bytes, HeaderOffset::FileSize, static_cast<uint64_t>(bytes.size()));
         ExpectStatus(std::move(bytes), CookedTextureParseStatus::TruncatedPayload);

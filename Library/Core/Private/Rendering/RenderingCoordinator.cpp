@@ -2602,6 +2602,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_RenderResources->SkinnedMeshes().BeginFrame(
                 swapChain->GetCompletedSubmissionSerial());
+            m_RenderResources->BeginRetireFrame(swapChain->GetCompletedSubmissionSerial());
             m_SceneRenderer.SetSkinnedMeshResources(&m_RenderResources->SkinnedMeshes());
         }
         if (m_FrameCaptureReadbackHelper)
@@ -2633,10 +2634,12 @@ namespace NorvesLib::Core::Rendering
                 {
                     m_RenderResources->SkinnedMeshes().CommitSubmittedFrame(
                         endFrameResult.SubmissionSerial);
+                    m_RenderResources->CommitRetireFrame(endFrameResult.SubmissionSerial);
                 }
                 else
                 {
                     m_RenderResources->SkinnedMeshes().AbortFrame();
+                    m_RenderResources->AbortRetireFrame();
                 }
             }
             if (endFrameResult.HasError())
@@ -3087,10 +3090,12 @@ namespace NorvesLib::Core::Rendering
             {
                 m_RenderResources->SkinnedMeshes().CommitSubmittedFrame(
                     endFrameResult.SubmissionSerial);
+                m_RenderResources->CommitRetireFrame(endFrameResult.SubmissionSerial);
             }
             else
             {
                 m_RenderResources->SkinnedMeshes().AbortFrame();
+                m_RenderResources->AbortRetireFrame();
             }
         }
         if (endFrameResult.HasError())
