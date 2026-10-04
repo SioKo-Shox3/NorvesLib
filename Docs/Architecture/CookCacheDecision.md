@@ -30,4 +30,4 @@ CaptureCookOutputRecordはcook前のcontext、成功cook後のmanifestと実pack
 
 実Windowsで全kindのcook→record→Skip、派生画像、外部buffer/image/未使用image、sidecar、無関係なmanifest変更、package padding、hard link・case alias・junction、危険path、判定途中の入力変更と出力保持を検証する。private probeはこの途中変更試験だけに使い、production入口はprobe無しで呼ぶ。
 
-実Windows受入れはCI確認後に記録する。
+cc9aa9e169098be51bda334cf30cb3c887f9ab78の[Windows run37222258176](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37222258176)で19 CPU契約、7 CLI、固定79出力とtexture v1の10出力のbyte互換が成功。実traceで末尾dot/spaceがabsolute化時に消えることを確認し、正規化前の拒否を検証した。保存state・既存root公開・旧CLI cache移行は引き続き別工程。

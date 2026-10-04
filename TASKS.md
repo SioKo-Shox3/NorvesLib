@@ -2418,7 +2418,7 @@
 - stop-when: 型parseをpayload hashだけで代用、v1を現v0として受理、source freshness/安全path/ownershipを検証したと主張する。
 
 ## G2-S6-CACHE-DECISION: 保存出力recordと共通増分判定を作る
-- status: doing
+- status: done
 - done-when: 正規化した現要求と依存snapshotから独立に出力一覧を導き、値所有record・現在manifestの自分の参照・全package印を照合してCook/Skip/Errorを返す。成功cook後のrecord採取は前後依存の一致と全出力検証を必須にする。
 - verify: 全kindの実cook→record→Skip、派生画像一覧、入力/sidecar/出力の変更、無関係manifest変更、失敗時出力保持、Windows alias/reparse/危険path/旧record path非採用、既存79+10byte gate。
 - stop-when: recordに書かれた任意pathを開く、別keyのfileやsourceを上書き可能な要求をCookにする、全manifest hashをentry cache identityにする、永続化/既存root公開を完了扱い。

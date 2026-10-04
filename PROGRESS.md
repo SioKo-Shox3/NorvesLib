@@ -728,3 +728,5 @@
 - G2-S6-CACHE-DECISION開始: 単体要求の正規化を既存private境界へ集約し、現入力からの完全な出力一覧・値所有record・共通Cook/Skip/Errorを追加。保存pathは採用せず、source/不在sidecar/他keyのaliasを先行拒否し、依存を操作前後で再採取する。全kind・外部依存・manifest無関係変更・Windows alias・途中入力変更のnative契約を登録。永続化と既存root公開は未接続、実Windows前なのでdoing。
 
 - G2-S6-CACHE-DECISION実検証: 48bdd655/run37220986849は実buildと既存18CPU・5診断が成功、新cache試験の危険出力名拒否（line203）で停止。Windowsのabsolute化より前にraw物理名の検査を追加し、末尾dot/space等が正規化で消えてから検査される経路を塞ぐ。packageの各leaf診断とmanifest名の対称回帰を追加。判定条件は弱めず、79+10byte gateは未到達のためdoingを維持。
+
+- G2-S6-CACHE-DECISION受入: cc9aa9e1/run37222258176で実Windows19CPU・7CLI/79byte・5診断・native2spec×2/10byte/16拒否が成功。保存record→Skip、全kind、外部依存・sidecar・他key、hardlink/case/junction、Cook/Skip中とrecord採取中の入力変更・保持を実証。実traceでa.とa空白がraw/aへ、CONがdevice pathへ、a:streamがdrive pathへ変わることを確認し、raw表記を先に拒否する修正も合格。3ZIP SHAと固定79+10出力の直接byte比較を独立検証。共通in-memory判断をdone、state永続化・既存root公開・旧CLI cache移行は未完。
