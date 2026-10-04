@@ -2289,3 +2289,9 @@
 - done-when: profileと素材/資産/asset-setの設定を失敗保持で解決し、解決済み材質の独立canonical/hashを用意。幾何52Bと旧v0経路を変更しない。
 - verify: AI既定と素材上書き/明示source復帰/不正下位値拒否/換算不在許可、canonical独立golden/bit/未使用値/-0、設定差hashを通常/O2/sanitizerとMEMBERで検証。
 - stop-when: 未接続JSON/CLI/asset-set/素材識別子を実装済みとする、発光の有無を見る前に換算不在だけで拒否、旧hashを変更する。
+
+## G2-GR79-MATERIAL-SETTINGS-JSON: 素材選択と独立した設定値JSONを厳密解析する
+- status: done
+- done-when: ARM mode/constant、profile、両面、alpha、換算値のJSON blockを重複/未知/型/値域の拒否と失敗保持で解析。素材selectorは作者回答待ち、既存sidecar APIは未接続のmaterialを引き続き拒否する。
+- verify: ARM token通常/O2/sanitizer/MEMBER、実JsonDocumentの省略/空/正常/未知/重複/null/非ASCII/NUL/後段失敗をnative登録。旧sidecar受理条件とMainのbyte不変を確認。
+- stop-when: parserの用意だけでsidecar/CLIに接続済みと言う、素材識別方式を先取り、警告だけで発光換算未設定を通す。

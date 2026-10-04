@@ -41,6 +41,8 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER CookedMeshV1Test CookedMeshV1Test.cpp
     MEMBER MaterialImportPolicyTest MaterialImportPolicyTest.cpp
     MEMBER MaterialImportSettingsTest MaterialImportSettingsTest.cpp
+    MEMBER MaterialImportSettingsJsonTest MaterialImportSettingsJsonTest.cpp
+    MEMBER ArmModeTokenTest ArmModeTokenTest.cpp
     MEMBER GeometryInspectionTest GeometryInspectionTest.cpp
     MEMBER ImageInspectionTest ImageInspectionTest.cpp
     MEMBER ImportSettingsValueTest ImportSettingsValueTest.cpp
@@ -165,3 +167,6 @@ add_test(NAME SkeletalCubicBakeTest COMMAND CookedMeshTest --test=SkeletalCubicB
 add_test(NAME ResourceIONamespaceCompileTest COMMAND CookedMeshTest --test=ResourceIONamespaceCompileTest)
 
 add_test(NAME MaterialImportSettingsTest COMMAND CookedMeshTest --test=MaterialImportSettingsTest)
+
+add_test(NAME MaterialImportSettingsJsonTest COMMAND CookedMeshTest --test=MaterialImportSettingsJsonTest)
+add_test(NAME ArmModeTokenTest COMMAND CookedMeshTest --test=ArmModeTokenTest)

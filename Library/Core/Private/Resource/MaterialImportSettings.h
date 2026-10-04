@@ -1,6 +1,7 @@
 ﻿// 材質設定の優先順位と解決済み設定の正規形。JSON・ファイル・RHIには依存しない。
 #pragma once
 #include "Resource/MaterialImportPolicy.h"
+#include "Container/Span.h"
 #include <cstddef>
 #include <cstdint>
 
@@ -30,6 +31,8 @@ namespace NorvesLib::Core::AssetImport
         Success, InvalidProfile, InvalidArmMask, InvalidArmPolicy,
         InvalidDoubleSided, InvalidAlphaMode, InvalidNitsPerUnit
     };
+    // texture/ignore/auto/constant:<有限0..1>。ASCII完全一致、空白や末尾余剰は拒否。失敗時out保持。
+    [[nodiscard]] MaterialSettingsStatus ParseArmModeToken(Container::Span<const char> token, ArmChannelPolicy& out) noexcept;
     [[nodiscard]] MaterialSettingsStatus ValidateMaterialSettingsLayer(const MaterialSettingsLayer& layer) noexcept;
     // 素材 > 資産 > 既定。asset-setは発光換算値だけを補う。明示された不正値は上書きで隠さない。
     // 不在の換算値はここでは有効。発光factor/strength判定後にImportEmissionが必須指定を検査する。

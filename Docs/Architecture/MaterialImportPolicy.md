@@ -62,3 +62,20 @@ u8両面、u8 alpha、u8換算存在、f64 nits/unit。LE/IEEE binary64でpaddin
 
 この部品は解決済み値の契約であり、JSONの素材選択、設定ファイル、asset-set driver、cook/cacheの実呼出しは未接続。
 素材名・資産名を付けた診断は呼出元で補う必要がある。設定名はMaterialSettingsErrorKeyで取得する。
+
+## 設定blockのJSON解析API（sidecar接続前）
+
+ParseAssetMaterialSettings は material block の値を受け、profile: source / ai_generated と下記の設定値を解析する。
+ParseMaterialSettingsLayer は同じ設定値を解析するが、profile の素材単位上書きは拒否する。
+
+- arm: occlusion / roughness / metallic ごとに texture / ignore / auto / constant:<0..1> の文字列
+- doubleSided: auto / force_true / force_false。auto は元材質へ戻す指定であり、継承はfield省略で表す
+- alphaMode: from_source / force_opaque。継承はfield省略
+- emissiveNitsPerUnit: 正の有限number。未指定は発光判定時まで保持する
+
+block省略と空objectは有効、null・未知field・重複field・不正型/値・文字列の末尾余剰は拒否する。
+constant値はASCII浮動小数（指数表記も可）として全消費し、空白・非有限・範囲外を拒否する。
+解析が最後まで成功するまで出力profile/layerを変更しない。
+
+素材の対象指定とsidecar全体の接続は別工程。既存ParseSettings/LoadImportSettingsFileは変更せず、非空material blockをまだ受理しない。
+ARM tokenの純テストは実行済み。実JsonDocumentによるJSON契約はnative MEMBER/CTestへ登録したが、Windows.h依存のため実行は未検証。

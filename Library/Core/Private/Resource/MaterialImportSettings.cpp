@@ -1,5 +1,7 @@
 ﻿#include "Resource/MaterialImportSettings.h"
 #include <bit>
+#include <charconv>
+#include <cstring>
 #include <cmath>
 #include <limits>
 #include <initializer_list>
@@ -39,6 +41,47 @@ namespace NorvesLib::Core::AssetImport
                 out.AlphaMode = layer.AlphaMode;
             }
         }
+    }
+    MaterialSettingsStatus ParseArmModeToken(Container::Span<const char> token, ArmChannelPolicy& out) noexcept
+    {
+        if (token.empty() || token.data() == nullptr)
+        {
+            return MaterialSettingsStatus::InvalidArmPolicy;
+        }
+        const auto equals = [&](const char* literal, size_t size)
+        {
+            return token.size() == size && std::memcmp(token.data(), literal, size) == 0;
+        };
+        ArmChannelPolicy result;
+        if (equals("texture", 7))
+        {
+            result.Mode = ArmMode::Texture;
+        }
+        else if (equals("ignore", 6))
+        {
+            result.Mode = ArmMode::Ignore;
+        }
+        else if (equals("auto", 4))
+        {
+            result.Mode = ArmMode::Auto;
+        }
+        else
+        {
+            constexpr char prefix[] = "constant:";
+            constexpr size_t prefixSize = sizeof(prefix) - 1;
+            if (token.size() <= prefixSize || std::memcmp(token.data(), prefix, prefixSize) != 0)
+            {
+                return MaterialSettingsStatus::InvalidArmPolicy;
+            }
+            const auto parsed = std::from_chars(token.data() + prefixSize, token.data() + token.size(), result.Constant);
+            if (parsed.ec != std::errc{} || parsed.ptr != token.data() + token.size() || !Unit(result.Constant))
+            {
+                return MaterialSettingsStatus::InvalidArmPolicy;
+            }
+            result.Mode = ArmMode::Constant;
+        }
+        out = result;
+        return MaterialSettingsStatus::Success;
     }
     MaterialSettingsStatus ValidateMaterialSettingsLayer(const MaterialSettingsLayer& layer) noexcept
     {

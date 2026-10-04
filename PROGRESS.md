@@ -656,3 +656,6 @@
 
 - G2-GR79-MATERIAL-SETTINGS-VALUE: 明示profileとchannel存在mask、素材>資産>既定、発光換算の素材>資産>asset-setを解決し、存在する不正下位値も先行拒否/出力保持。両面・alphaのInherit/FromSourceを区別して親強制から復帰可能。換算不在はImportEmissionの発光判定まで許容。解決済み67B canonical（未使用値/-0正規化）とdomain/長さ付きFNVを追加。独立Python golden/FNVff4637ca142e511e、通常/O2/ASanUBSan(LSan除外)3mode/MEMBER、独立5283反証PASS。旧幾何52B/hash/file/Mainはbyte不変。JSON/素材selector/file/asset-set/cook/cacheへの実接続は未実装。
 - Next: GR79材質設定の厳密JSONと素材指定の照合を接続し、未知/重複/名前不一致を無言適用しない。実CLIのMain分割前gateとWindows実比較は未達のまま保持。
+
+- G2-GR79-MATERIAL-SETTINGS-JSON: 設定block用の実JsonDocument parserを追加し資産profile/ARM各mode・constant/両面/alpha/nitsを厳密に型・範囲・未知・重複検査、全成功時だけprofile/layer置換。素材blockのprofile指定は拒否、空/省略は継承、換算不在は保持。pure ARM tokenのASCII全消費・finite0..1/非終端span/NUL/末尾余剰を通常/O2/ASanUBSan(LSan除外)/MEMBERと独立guard-pageで反証PASS。30JSON fixture構文をPython確認、native JSON MEMBER/CTest登録はWindows.hで未コンパイル/未実行。旧ParseSettings/LoadImportSettingsFile/Mainはbyte不変、sidecar非空materialの明示拒否を維持。独立レビューPASS。
+- Next: 素材selectorは08:06作者回答待ち。一方glTF sourceの材質係数/発光strength/texture参照の読み取りは独立して進められる。sidecar/cook/cache/asset-setの実接続・Windows実比較・実物撮影は未完のまま保持する。
