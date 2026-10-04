@@ -29,6 +29,12 @@
 
 namespace NorvesLib::Core
 {
+    namespace Asset
+    {
+        class AssetSystem;
+        struct CookedMeshData;
+    } // namespace Asset
+
     namespace Component
     {
         class MeshComponent;
@@ -90,6 +96,21 @@ namespace Game::GameModes
         NorvesLib::Thread::Atomic<bool> m_bCompleted{false}; ///< コールバック到着フラグ（Do が消費）
         NorvesLib::Core::Rendering::ModelHandle m_Handle;    ///< 結果ハンドル
         bool m_bLoaded = false;                              ///< 有効ハンドルが得られたか
+    };
+
+    /**
+     * @brief クック済み（NVMESH v1）で読む起動画面のモデル1つ分の読み込み状態
+     *
+     * メッシュは起動時に読み込んで解析し、材質のテクスチャ（VT）がそろってから MegaMesh を作る。
+     * 完了すると State を BoulderAsyncState と同じ手順で埋め、岩・小屋の組み立てが続きを受け持つ。
+     */
+    struct CookedStartupModelLoad
+    {
+        String DebugName;
+        String LogicalPath; ///< メッシュの論理パス（"Assets/Models/...gltf"）
+        TSharedPtr<NorvesLib::Core::Asset::CookedMeshData> Mesh;
+        TSharedPtr<PendingMaterialUpdate> Material;
+        TSharedPtr<BoulderAsyncState> State;
     };
 
     /**
@@ -244,6 +265,14 @@ namespace Game::GameModes
         // クック済みのマニフェストに、論理パス（"Assets/..." から始まる）の項目があるか。起動画面の材質は、
         // クック済みの BC のテクスチャと ORM があればそれを、無ければばらの元画像を読む。未設定ならすべてばらで読む。
         NorvesLib::Core::Delegate<bool, const NorvesLib::Core::Container::String &> m_IsTextureCooked;
+
+        // 起動画面の岩・小屋をクック済み（NVMESH v1・BC・VT）で読むか。false が既定で、クック済みが無ければ glTF の実行時の経路へ戻して警告する。
+        // true（--rendering3dtest-model-source=gltf、--no-cooked-textures）は、最初から glTF の経路で読む（見た目・VRAM の比較用）。
+        bool m_bStartupModelsFromGltf = false;
+        // クック済みのメッシュ（NVMESH）を解決する AssetSystem（無ければ null。クック済みのマニフェストを読んでいないとき）。
+        NorvesLib::Core::Delegate<NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>> m_GetAssetSystem;
+        // クック済みで読んでいる岩・小屋の、材質（VT）がそろうのを待っている状態。そろったら MegaMesh を作って取り除く。
+        VariableArray<CookedStartupModelLoad> m_CookedStartupModelLoads;
 
         // 手動露出（EV100）。ImGui のスライダーが書き、Tick が絞り・ISO を保ったままシャッター速度へ写す。
         float m_ExposureEV100 = 0.0f;

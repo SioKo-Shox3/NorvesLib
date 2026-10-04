@@ -52,6 +52,9 @@
 #include "GameModes/Rendering3DTest/SkySunControl.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
 #include "Core/Public/Asset/AssetFileReader.h"
+#include "Core/Public/Asset/AssetSystem.h"
+#include "Core/Public/Asset/CookedMeshFormat.h"
+#include "Core/Public/Rendering/MegaGeometry/CookedMeshMegaMeshAdapter.h"
 #include "Core/Public/RHI/ITexture.h"
 #include "Core/Public/Thread/JobSystem.h"
 #include "Core/Public/Thread/Task.h"
@@ -481,6 +484,170 @@ namespace Game::GameModes
                                     static_cast<double>(outData.LevelClusterCounts[level]),
                                 static_cast<double>(outData.LevelErrors[level]),
                                 static_cast<double>(outData.LevelDisplacementErrors[level]));
+            }
+        }
+
+        // 起動画面の岩・小屋のメッシュの論理パス。岩は既定のモデルのときだけクック済みを使う
+        // （--rendering3dtest-model で別のパスを指したときは、そのパスの glTF を従来の経路で読む）。
+        constexpr const char *kStartupBoulderMeshPath = "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf";
+        constexpr const char *kStartupCottageMeshPath = "Assets/Models/Cottage_Clean/Cottage_Clean.gltf";
+
+        // 岩・小屋の材質のテクスチャの論理パス（クック済みの BC・ORM。Scripts/CookAssets.ps1 が一覧
+        // Assets/AssetSets/Rendering3DTestStartupModels.json から焼く）。glTF の経路が読むばらの元画像の名前とは
+        // 別にしてある（同じ名前だと glTF の経路が BC5 の法線・BC7 の ORM を RGBA8 前提で読んで壊れる）。
+        MaterialTexturePaths MakeStartupBoulderTexturePaths()
+        {
+            MaterialTexturePaths paths;
+            paths.Albedo = "Assets/Models/boulder_01_4k.gltf/cooked/boulder_01_albedo";
+            paths.Normal = "Assets/Models/boulder_01_4k.gltf/cooked/boulder_01_normal";
+            paths.Orm = "Assets/Models/boulder_01_4k.gltf/cooked/boulder_01_orm";
+            return paths;
+        }
+
+        MaterialTexturePaths MakeStartupCottageTexturePaths()
+        {
+            MaterialTexturePaths paths;
+            paths.Albedo = "Assets/Models/Cottage_Clean/cooked/Cottage_Clean_albedo";
+            paths.Normal = "Assets/Models/Cottage_Clean/cooked/Cottage_Clean_normal";
+            paths.Orm = "Assets/Models/Cottage_Clean/cooked/Cottage_Clean_orm";
+            return paths;
+        }
+
+        // 起動画面の岩・小屋のクック済みメッシュ（NVMESH）を解決・解析し、材質のテクスチャ（VT）の読み込みを始める。
+        // メッシュのクック済みが無い・解析できないときは何も始めずに false を返す（呼び出し側が glTF の経路へ戻す）。
+        // 成功したら、材質がそろうのを FinishCookedStartupModels が待ち、MegaMesh を作って state を埋める。
+        bool StartCookedStartupModelLoad(GameModeContext &ctx,
+                                         Rendering3DTestData &data,
+                                         const char *debugName,
+                                         const char *meshPath,
+                                         const MaterialTexturePaths &paths,
+                                         const TSharedPtr<BoulderAsyncState> &state)
+        {
+            if (!data.m_GetAssetSystem.IsBound())
+            {
+                return false;
+            }
+            const TSharedPtr<const Asset::AssetSystem> assetSystem = data.m_GetAssetSystem.Invoke();
+            if (!assetSystem)
+            {
+                return false;
+            }
+
+            const Asset::AssetResolveResult resolved = assetSystem->ResolveAsset(meshPath, Asset::AssetKind::Model);
+            if (!resolved.UsedCooked())
+            {
+                return false;
+            }
+            // 材質のテクスチャ（アルベド・法線・ORM）もクック済みでなければ、ばらの元画像の名前が無いので glTF の経路へ戻す。
+            if (!IsTextureCooked(data, paths.Albedo) || !IsTextureCooked(data, paths.Normal) ||
+                !IsTextureCooked(data, paths.Orm))
+            {
+                NORVES_LOG_WARNING("Rendering3DTest", "COOKED_MODEL_TEXTURES_MISSING path=%s 材質のクック済みのテクスチャがそろっていません",
+                                   meshPath);
+                return false;
+            }
+            Asset::CookedMeshParseResult parsed = Asset::ParseCookedMesh(resolved.Blob);
+            if (!parsed.Succeeded() || parsed.Mesh.Clusters.empty())
+            {
+                NORVES_LOG_WARNING("Rendering3DTest", "COOKED_MODEL_INVALID path=%s status=%u クック済みのメッシュを解析できません",
+                                   meshPath, static_cast<unsigned int>(parsed.Status));
+                return false;
+            }
+
+            CookedStartupModelLoad load;
+            load.DebugName = debugName;
+            load.LogicalPath = meshPath;
+            load.Mesh = MakeShared<Asset::CookedMeshData>(std::move(parsed.Mesh));
+            load.State = state;
+            load.Material = MakeShared<PendingMaterialUpdate>();
+            load.Material->CreateData.DebugName = debugName;
+
+            NORVES_LOG_INFO("Rendering3DTest",
+                            "COOKED_MODEL path=%s format_major=%u vertices=%u indices=%u clusters=%u lod_levels=%u fallback_indices=%u",
+                            meshPath,
+                            static_cast<unsigned int>(load.Mesh->FormatMajor),
+                            static_cast<unsigned int>(load.Mesh->Vertices.size()),
+                            static_cast<unsigned int>(load.Mesh->Indices.size()),
+                            static_cast<unsigned int>(load.Mesh->Clusters.size()),
+                            static_cast<unsigned int>(load.Mesh->LODLevelCount),
+                            static_cast<unsigned int>(load.Mesh->FallbackIndexCount));
+
+            // 材質は VT（クック済みのアルベド・法線・ORM）で読む。そろったかは Material->PendingTextureCount で見る。
+            RequestMaterialTextures(data, ctx.RenderResourcesRef.Textures(), load.Material, paths, []() {});
+            data.m_PendingMaterialUpdates.push_back(load.Material);
+            data.m_CookedStartupModelLoads.push_back(std::move(load));
+            return true;
+        }
+
+        // クック済みで読んでいる岩・小屋のうち、材質のテクスチャがそろったものの MegaMesh を作り、モデルとして登録して
+        // state を埋める（岩・小屋の組み立てが、従来の非同期の読み込みと同じ手順で受け取る）。作れなければ失敗として埋める。
+        void FinishCookedStartupModels(GameModeContext &ctx, Rendering3DTestData &data)
+        {
+            auto &loads = data.m_CookedStartupModelLoads;
+            for (size_t index = 0; index < loads.size();)
+            {
+                CookedStartupModelLoad &load = loads[index];
+                if (load.State && load.State->m_bCancelled.Load())
+                {
+                    loads.erase(loads.begin() + static_cast<std::ptrdiff_t>(index));
+                    continue;
+                }
+                if (!load.Material || load.Material->PendingTextureCount != 0)
+                {
+                    ++index;
+                    continue;
+                }
+
+                const auto createStartTime = std::chrono::steady_clock::now();
+                auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
+                ModelHandle modelHandle = ModelHandle::Invalid();
+                MegaMeshCreateInfo createInfo;
+                if (BuildMegaMeshCreateInfoFromCookedMesh(*load.Mesh, createInfo))
+                {
+                    const MaterialCreateData &material = load.Material->CreateData;
+                    createInfo.Material.AlbedoTexture = material.AlbedoTexture;
+                    createInfo.Material.NormalTexture = material.NormalTexture;
+                    createInfo.Material.MetallicTexture = material.MetallicTexture;
+                    createInfo.Material.RoughnessTexture = material.RoughnessTexture;
+                    createInfo.Material.AOTexture = material.AOTexture;
+                    createInfo.Material.ORMTexture = material.ORMTexture;
+                    createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
+                    createInfo.DebugName = load.DebugName;
+
+                    const MegaMeshHandle megaMeshHandle = megaGeometry.CreateMegaMesh(createInfo);
+                    if (megaMeshHandle.IsValid())
+                    {
+                        modelHandle = megaGeometry.RegisterModel(megaMeshHandle, load.DebugName, load.LogicalPath);
+                        if (!modelHandle.IsValid())
+                        {
+                            megaGeometry.ReleaseMegaMesh(megaMeshHandle);
+                        }
+                    }
+                }
+
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=cooked_startup_model_create name=%s create_ms=%.1f vertices=%u clusters=%u success=%d",
+                                load.DebugName.c_str(),
+                                ElapsedMilliseconds(createStartTime),
+                                static_cast<unsigned int>(load.Mesh->Vertices.size()),
+                                static_cast<unsigned int>(load.Mesh->Clusters.size()),
+                                modelHandle.IsValid() ? 1 : 0);
+                if (!modelHandle.IsValid())
+                {
+                    NORVES_LOG_ERROR("Rendering3DTest", "クック済みのモデルのMegaMeshを作れませんでした: %s", load.DebugName.c_str());
+                }
+
+                if (load.State)
+                {
+                    load.State->m_Handle = modelHandle;
+                    load.State->m_bLoaded = modelHandle.IsValid();
+                    load.State->m_bCompleted.Store(true);
+                }
+                else if (modelHandle.IsValid())
+                {
+                    megaGeometry.ReleaseModel(modelHandle);
+                }
+                loads.erase(loads.begin() + static_cast<std::ptrdiff_t>(index));
             }
         }
 
@@ -2293,6 +2460,22 @@ namespace Game::GameModes
             const String modelPath = data.m_ModelPath.empty()
                                          ? String("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf")
                                          : data.m_ModelPath;
+            // 既定の岩・小屋はクック済み（NVMESH v1・BC・VT）で読む。クック済みが無い・解析できないときは、
+            // 警告して従来の glTF の実行時の経路へ戻す（--rendering3dtest-model-source=gltf は最初から glTF）。
+            bool bBoulderCooked = false;
+            bool bCottageCooked = false;
+            if (!data.m_bUseCookedModel && !data.m_bStartupModelsFromGltf && modelPath == String(kStartupBoulderMeshPath))
+            {
+                bBoulderCooked = StartCookedStartupModelLoad(ctx, data, "Boulder", kStartupBoulderMeshPath,
+                                                             MakeStartupBoulderTexturePaths(), asyncState);
+                if (!bBoulderCooked)
+                {
+                    NORVES_LOG_WARNING("Rendering3DTest",
+                                       "COOKED_MODEL_MISSING path=%s クック済みのモデルが無いため、glTF の実行時の経路で読みます"
+                                       "（CookAssets の対象を実行すると焼けます）",
+                                       kStartupBoulderMeshPath);
+                }
+            }
             Delegate<void, ModelHandle> modelLoadedCallback =
                 [asyncState](ModelHandle handle)
                 {
@@ -2303,7 +2486,11 @@ namespace Game::GameModes
                     asyncState->m_bLoaded = handle.IsValid();
                     asyncState->m_bCompleted.Store(true);
                 };
-            if (data.m_bUseCookedModel)
+            if (bBoulderCooked)
+            {
+                // 材質（VT）がそろったら、Tick の FinishCookedStartupModels が MegaMesh を作って asyncState を埋める。
+            }
+            else if (data.m_bUseCookedModel)
             {
                 data.m_BoulderLoadRequestId = renderResources.MegaGeometry().LoadModelAsync(
                     modelPath,
@@ -2317,7 +2504,11 @@ namespace Game::GameModes
                     std::move(modelLoadedCallback));
             }
 
-            if (data.m_BoulderLoadRequestId == 0)
+            if (bBoulderCooked)
+            {
+                NORVES_LOG_INFO("Rendering3DTest", "Boulder model (cooked) load started: %s", kStartupBoulderMeshPath);
+            }
+            else if (data.m_BoulderLoadRequestId == 0)
             {
                 data.m_bBoulderModelLoadPending = false;
                 asyncState->m_bLoaded = false;
@@ -2330,7 +2521,25 @@ namespace Game::GameModes
             }
 
             // 小屋（Scripts/ConvertObjToGltf.py で OBJ から変換した glTF）。cooked モデルの計測では読み込まない。
-            if (!data.m_bUseCookedModel)
+            // 既定ではクック済みで読み、無ければ警告して glTF の経路へ戻す。
+            if (!data.m_bUseCookedModel && !data.m_bStartupModelsFromGltf)
+            {
+                auto cookedCottageState = MakeShared<BoulderAsyncState>();
+                bCottageCooked = StartCookedStartupModelLoad(ctx, data, "Cottage", kStartupCottageMeshPath,
+                                                             MakeStartupCottageTexturePaths(), cookedCottageState);
+                if (bCottageCooked)
+                {
+                    data.m_CottageAsyncState = cookedCottageState;
+                }
+                else
+                {
+                    NORVES_LOG_WARNING("Rendering3DTest",
+                                       "COOKED_MODEL_MISSING path=%s クック済みのモデルが無いため、glTF の実行時の経路で読みます"
+                                       "（CookAssets の対象を実行すると焼けます）",
+                                       kStartupCottageMeshPath);
+                }
+            }
+            if (!data.m_bUseCookedModel && !bCottageCooked)
             {
                 auto cottageState = MakeShared<BoulderAsyncState>();
                 data.m_CottageAsyncState = cottageState;
@@ -2779,6 +2988,9 @@ namespace Game::GameModes
         }
 #endif
 
+        // クック済みで読んでいる岩・小屋は、材質（VT）がそろったら MegaMesh を作り、下の組み立てが受け取る。
+        FinishCookedStartupModels(ctx, data);
+
         if (data.m_BoulderAsyncState &&
             data.m_BoulderAsyncState->m_bCompleted.Load() &&
             !data.m_BoulderAsyncState->m_bCancelled.Load())
@@ -3067,6 +3279,7 @@ namespace Game::GameModes
 
         // 非同期マテリアル更新のクリア
         data.m_PendingMaterialUpdates.clear();
+        data.m_CookedStartupModelLoads.clear();
 
         if (data.m_ParticleEmitter.IsValid())
         {

@@ -1594,7 +1594,7 @@ namespace NorvesLib::Tools::AssetCook
         // ここでは入力の変換・材質の参照・書き出し・読み込みでの自己検証を受け持つ。
         bool CookLodGraphMesh(const VariableArray<MeshVertexPnt>& vertices, const VariableArray<uint32_t>& indices,
                               const MaterialReferences& materialReferences, MeshCookResult& outResult,
-                              AnsiString& error)
+                              AnsiString& error, uint32_t fallbackMinTriangles)
         {
             const auto bakeStart = std::chrono::steady_clock::now();
 
@@ -1612,7 +1612,7 @@ namespace NorvesLib::Tools::AssetCook
             CookMeshDagResult dag;
             AnsiString dagError;
             if (!BakeMeshLodDag(cookedVertices.data(), cookedVertices.size(), indices.data(), indices.size(), dag,
-                                dagError))
+                                dagError, fallbackMinTriangles))
             {
                 error = AnsiString("LOD の階層の焼き込みに失敗しました: ") + dagError;
                 return false;
@@ -1654,7 +1654,7 @@ namespace NorvesLib::Tools::AssetCook
 
         bool CookGltfToNvmeshInternal(const uint8_t* sourceBytes, size_t sourceSize, AnsiStringView format,
                                       AnsiStringView sourcePath, AnsiStringView logicalPath, MeshCookResult& outResult,
-                                      AnsiString& error)
+                                      AnsiString& error, uint32_t fallbackMinTriangles)
         {
             if (format != SupportedMeshFormat && format != SupportedMeshFormatV1)
             {
@@ -1741,7 +1741,7 @@ namespace NorvesLib::Tools::AssetCook
             if (format == SupportedMeshFormatV1)
             {
                 MeshCookResult v1Result;
-                if (!CookLodGraphMesh(vertices, indices, materialReferences, v1Result, error))
+                if (!CookLodGraphMesh(vertices, indices, materialReferences, v1Result, error, fallbackMinTriangles))
                 {
                     return false;
                 }
@@ -2136,10 +2136,11 @@ namespace NorvesLib::Tools::AssetCook
                           NorvesLib::Core::Container::AnsiStringView format,
                           NorvesLib::Core::Container::AnsiStringView sourcePath,
                           NorvesLib::Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
-                          NorvesLib::Core::Container::AnsiString& error)
+                          NorvesLib::Core::Container::AnsiString& error, uint32_t fallbackMinTriangles)
     {
         AnsiString internalError;
-        if (!CookGltfToNvmeshInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult, internalError))
+        if (!CookGltfToNvmeshInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult, internalError,
+                                      fallbackMinTriangles))
         {
             error = internalError.c_str();
             return false;

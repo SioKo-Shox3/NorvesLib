@@ -1037,8 +1037,11 @@ namespace NorvesLib::Tools::AssetCook
                 info.PixelFormat = CookedTexturePixelFormat::RGBA8UNorm;
                 info.OutputChannels = 4;
 
+                // 詰め済みの ORM（R=AO・G=粗さ・B=メタリックの1枚。glTF の ARM など）はそのまま使い、無ければ3枠から詰める。
                 MipImage base;
-                if (!PackOrmBase(orm, base, error) ||
+                const bool bPrepacked = source.IsPresent();
+                if ((bPrepacked ? !DecodeSourceImage(source.Bytes, source.Size, info, source.Name, base, error)
+                                : !PackOrmBase(orm, base, error)) ||
                     !BuildMipChain(std::move(base), info, sourceMips, error))
                 {
                     return false;
@@ -1054,8 +1057,19 @@ namespace NorvesLib::Tools::AssetCook
                 info.OutputChannels = 4;
 
                 MipImage base;
-                if (!DecodeSourceImage(source.Bytes, source.Size, info, source.Name, base, error) ||
-                    !BuildNormalMips(base, sourceMips, error))
+                if (!DecodeSourceImage(source.Bytes, source.Size, info, source.Name, base, error))
+                {
+                    return false;
+                }
+                if (params.bFlipNormalY)
+                {
+                    // OpenGL の向きの法線（Y が上）を DirectX の向き（Y が下）へ。緑を 255 から引く。
+                    for (size_t i = 1; i < base.Bytes.size(); i += 4)
+                    {
+                        base.Bytes[i] = static_cast<uint8_t>(255 - base.Bytes[i]);
+                    }
+                }
+                if (!BuildNormalMips(base, sourceMips, error))
                 {
                     return false;
                 }

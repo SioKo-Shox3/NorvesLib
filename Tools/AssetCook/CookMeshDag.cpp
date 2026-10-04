@@ -695,7 +695,8 @@ namespace NorvesLib::Tools::AssetCook
                         const uint32_t* indices,
                         size_t indexCount,
                         CookMeshDagResult& outResult,
-                        AnsiString& error)
+                        AnsiString& error,
+                        uint32_t fallbackMinTriangles)
     {
         outResult = CookMeshDagResult{};
 
@@ -888,7 +889,9 @@ namespace NorvesLib::Tools::AssetCook
         };
         const VariableArray<uint64_t> selfCumulative = makeCumulative(selfEdges);
         const VariableArray<uint64_t> parentCumulative = makeCumulative(parentEdges);
-        const uint64_t target = std::min<uint64_t>(totalTriangles / FallbackReductionDivisor, FallbackMaxTriangles);
+        const uint64_t target = std::max<uint64_t>(
+            std::min<uint64_t>(totalTriangles / FallbackReductionDivisor, FallbackMaxTriangles),
+            std::min<uint64_t>(fallbackMinTriangles, FallbackMaxTriangles));
         float threshold = candidates.back();
         for (const float candidate : candidates)
         {

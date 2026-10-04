@@ -74,6 +74,10 @@ namespace
         std::filesystem::path OrmAoPath;
         std::filesystem::path OrmRoughnessPath;
         std::filesystem::path OrmMetallicPath;
+        // --usage normal で、入力の法線の Y を反転する（OpenGL の向きの入力を DirectX の向きへ直す）。
+        bool bFlipNormalY = false;
+        // --kind model（NVMESH v1）で、フォールバックの段の三角形数の目標の下限（0 は指定なし）。
+        uint32_t FallbackMinTriangles = 0;
     };
 
     std::string ToStdString(const NorvesLib::Core::Container::AnsiString &value)
@@ -1569,14 +1573,16 @@ namespace
 
         if (usage == NorvesLib::Tools::AssetCook::TextureUsage::Orm)
         {
-            if (!options.InputPath.empty())
+            // 詰め済みの ORM（glTF の ARM など。R=AO・G=粗さ・B=メタリックの1枚）は --input で、
+            // 別々の元画像は --orm-* で渡す。両方は指定できない。
+            if (!options.InputPath.empty() && bHasOrmSource)
             {
-                error = "--usage orm は --input ではなく --orm-ao・--orm-roughness・--orm-metallic を読みます";
+                error = "--usage orm は --input（詰め済みの1枚）か --orm-ao・--orm-roughness・--orm-metallic のどちらか一方で指定してください";
                 return false;
             }
-            if (!bHasOrmSource)
+            if (options.InputPath.empty() && !bHasOrmSource)
             {
-                error = "--usage orm には --orm-ao・--orm-roughness・--orm-metallic のどれか 1 つが要ります";
+                error = "--usage orm には --input か --orm-ao・--orm-roughness・--orm-metallic のどれか 1 つが要ります";
                 return false;
             }
         }
@@ -1722,6 +1728,25 @@ namespace
                 }
                 outOptions.OrmRoughnessPath = value;
             }
+            else if (argument == "--fallback-min-triangles")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                char *end = nullptr;
+                const unsigned long parsed = std::strtoul(value.c_str(), &end, 10);
+                if (value.empty() || *end != '\0' || parsed > 1000000ul)
+                {
+                    error = "--fallback-min-triangles は 0〜1000000 の整数で指定してください";
+                    return false;
+                }
+                outOptions.FallbackMinTriangles = static_cast<uint32_t>(parsed);
+            }
+            else if (argument == "--flip-normal-y")
+            {
+                outOptions.bFlipNormalY = true;
+            }
             else if (argument == "--orm-metallic")
             {
                 if (!readValue())
@@ -1742,6 +1767,18 @@ namespace
         if (!ResolveTextureUsageOptions(outOptions, usageError))
         {
             error = ToStdString(usageError);
+            return false;
+        }
+
+        if (outOptions.bFlipNormalY && outOptions.Usage != "normal")
+        {
+            error = "--flip-normal-y は --usage normal と一緒に指定してください";
+            return false;
+        }
+
+        if (outOptions.FallbackMinTriangles != 0 && outOptions.Kind != "model")
+        {
+            error = "--fallback-min-triangles は --kind model と一緒に指定してください";
             return false;
         }
 
@@ -1839,8 +1876,13 @@ namespace
             << "--variant default\n"
             << "       AssetCook --input <image> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind texture --entry <entry.nvtex> --entry-type Tex0 "
-            << "--usage albedo|normal|single|height16 [--quality fast|normal|best] --variant default\n"
+            << "--usage albedo|normal|single|height16 [--quality fast|normal|best] "
+            << "[--flip-normal-y（normal のみ。OpenGL の向きの法線を DirectX の向きへ）] --variant default\n"
             << "       AssetCook --orm-ao <image> --orm-roughness <image> --orm-metallic <image> "
+            << "--out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind texture --entry <entry.nvtex> --entry-type Tex0 "
+            << "--usage orm [--quality fast|normal|best] --variant default\n"
+            << "       AssetCook --input <詰め済みの ORM 画像（R=AO・G=粗さ・B=メタリック）> "
             << "--out <package> --manifest <manifest.json> "
             << "--logical <path> --kind texture --entry <entry.nvtex> --entry-type Tex0 "
             << "--usage orm [--quality fast|normal|best] --variant default\n"
@@ -2026,7 +2068,8 @@ namespace
             OrmSourceImages ormSources;
             ByteArray ormBytes[3];
             ErrorString ormNames[3];
-            if (cookParams.Usage == TextureUsage::Orm)
+            cookParams.bFlipNormalY = options.bFlipNormalY;
+            if (cookParams.Usage == TextureUsage::Orm && options.InputPath.empty())
             {
                 const std::filesystem::path *ormPaths[3] = {&options.OrmAoPath, &options.OrmRoughnessPath, &options.OrmMetallicPath};
                 TextureSourceImage *ormSlots[3] = {&ormSources.Ao, &ormSources.Roughness, &ormSources.Metallic};
@@ -2199,7 +2242,8 @@ namespace
                                                            inputPath.generic_string(),
                                                            logicalPath,
                                                            meshResult,
-                                                           meshError))
+                                                           meshError,
+                                                           options.FallbackMinTriangles))
         {
             error = ToStdString(meshError);
             return false;

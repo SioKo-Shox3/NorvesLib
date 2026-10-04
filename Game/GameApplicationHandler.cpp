@@ -67,6 +67,9 @@ namespace Game
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
         constexpr const TCHAR *kRendering3DTestUseCookedModelOption = TEXT("--rendering3dtest-use-cooked-model");
+        // --rendering3dtest-model-source=cooked|gltf: 起動画面の岩・小屋をクック済み（NVMESH v1・BC・VT）で読むか、glTF の実行時の経路で読むか。
+        // 既定は cooked（クック済みが無ければ glTF へ戻して警告する）。gltf は見た目・VRAM の比較用。
+        constexpr const TCHAR *kRendering3DTestModelSourceOption = TEXT("--rendering3dtest-model-source=");
         constexpr const TCHAR *kRendering3DTestBoardSmokeCountOption = TEXT("--rendering3dtest-board-smoke-count");
         constexpr const TCHAR *kRendering3DTestBillboardSmokeCountOption = TEXT("--rendering3dtest-billboard-smoke-count");
         constexpr const TCHAR *kRendering3DTestImpostorSmokeCountOption = TEXT("--rendering3dtest-impostor-smoke-count");
@@ -131,6 +134,8 @@ namespace Game
         // off は VT を使わず、段1の全常駐で描く（見た目・VRAM の比較用）。
         constexpr const TCHAR *kVirtualTextureOption = TEXT("--virtual-texture=");
         bool s_bRendering3DTestVirtualTexture = true;
+        // --rendering3dtest-model-source=gltf のとき true（岩・小屋を glTF の実行時の経路で読む）。
+        bool s_bRendering3DTestModelSourceGltf = false;
         // --mega-occlusion=on|off: MegaGeometry（岩・小屋など）の遮蔽カリング（2パス）を使うか。既定は on。
         // off は遮蔽の判定なしの従来の1回の判定で描く（見た目・描画数の比較用）。
         constexpr const TCHAR *kMegaOcclusionOption = TEXT("--mega-occlusion=");
@@ -474,6 +479,7 @@ namespace Game
         s_bRendering3DTestDebugDrawTestLines = false;
         s_bRendering3DTestNight = false;
         s_bRendering3DTestVirtualTexture = true;
+        s_bRendering3DTestModelSourceGltf = false;
         s_bMegaOcclusion = true;
         String captureSequencePrefix;
         VariableArray<uint64_t> captureSequenceRenderedFrames;
@@ -638,6 +644,25 @@ namespace Game
                 else
                 {
                     LOG_ERROR("Rendering3DTest の引数の解析に失敗: --virtual-texture は on か off で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String modelSourceValue;
+            if (TryStripPrefix(args[i], kRendering3DTestModelSourceOption, modelSourceValue))
+            {
+                if (modelSourceValue == String(TEXT("cooked")))
+                {
+                    s_bRendering3DTestModelSourceGltf = false;
+                }
+                else if (modelSourceValue == String(TEXT("gltf")))
+                {
+                    s_bRendering3DTestModelSourceGltf = true;
+                }
+                else
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --rendering3dtest-model-source は cooked か gltf で指定する");
                     return false;
                 }
                 continue;
@@ -1825,6 +1850,12 @@ namespace Game
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
                 mode->GetData().m_bVirtualTexture = s_bRendering3DTestVirtualTexture;
+                // --no-cooked-textures はクック済みを使わない指定なので、岩・小屋も glTF の経路で読む。
+                mode->GetData().m_bStartupModelsFromGltf = s_bRendering3DTestModelSourceGltf || m_bNoCookedTextures;
+                mode->GetData().m_GetAssetSystem = [this]()
+                {
+                    return GetAssetSystemSnapshot();
+                };
                 mode->GetData().m_bStressTextures = s_bRendering3DTestStressTextures;
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
                 mode->GetData().m_IsTextureCooked = [this](const String &logicalPath)

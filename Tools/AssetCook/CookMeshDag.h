@@ -46,11 +46,14 @@ namespace NorvesLib::Tools::AssetCook
     //      三角形を半分にし、再びクラスタに分ける。これを根まで繰り返す。
     //      グループの誤差 = メンバの誤差の最大 + 簡略化の誤差(単調)、境界球 = メンバの境界球を包む球。
     //   4. 誤差のしきい値で切ったクラスタの三角形の集まりを、フォールバックの段として持つ。
+    //      三角形数の目標は min(全体 / 16, 32K)。小さなメッシュで根の段までの粗さが影・RT の形を崩すときは、
+    //      fallbackMinTriangles（既定 0 = 指定なし）で目標の下限を上げて、より細かい段を選ばせる（32K で頭打ち）。
     // 結果のクラスタ・インデックスは、クラスタごとに自分の頂点の範囲(最大 128 頂点)を持つ。
     [[nodiscard]] bool BakeMeshLodDag(const Core::Asset::CookedMeshVertex* vertices,
                                       size_t vertexCount,
                                       const uint32_t* indices,
                                       size_t indexCount,
                                       CookMeshDagResult& outResult,
-                                      Core::Container::AnsiString& error);
+                                      Core::Container::AnsiString& error,
+                                      uint32_t fallbackMinTriangles = 0);
 }

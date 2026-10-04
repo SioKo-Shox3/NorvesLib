@@ -43,7 +43,8 @@ namespace NorvesLib::Tools::AssetCook
                                         Core::Container::AnsiStringView sourcePath,
                                         Core::Container::AnsiStringView logicalPath,
                                         MeshCookResult& outResult,
-                                        Core::Container::AnsiString& error);
+                                        Core::Container::AnsiString& error,
+                                        uint32_t fallbackMinTriangles = 0);
 
     [[nodiscard]] bool IsSupportedSkeletalCookFormat(Core::Container::AnsiStringView format) noexcept;
 
