@@ -8,6 +8,7 @@ add_library(AssetCookLib STATIC
     NativeCookPath.h
     CookCacheDecision.cpp
     CookCacheDecision.h
+    CookOutputPlan.h
     CookCacheDecisionTestAccess.h
     CookOutputPaths.h
     CookOutputPackage.cpp

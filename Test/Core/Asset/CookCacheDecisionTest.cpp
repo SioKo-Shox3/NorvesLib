@@ -1,5 +1,6 @@
 ﻿// 実cook出力の増分判断と、現在要求から独立に導く出力一覧・安全境界を検証する。
 #include "Tools/AssetCook/CookCacheDecision.h"
+#include "Tools/AssetCook/CookOutputPlan.h"
 #include "Tools/AssetCook/CookOwnedState.h"
 #include "Tools/AssetCook/CookStateFile.h"
 #include "Tools/AssetCook/CookCacheDecisionTestAccess.h"
@@ -201,6 +202,31 @@ namespace
         CHECK(LoadCookOwnedState(stateFile, fromFile, error) == CookStateLoadResult::Loaded);
         const auto* diskRecord = FindCookOwnedRecord(fromFile, owned.PrimaryKey);
         CHECK(diskRecord && Decide(r, diskRecord, &f.Live) == CookDecision::Skip);
+        CookPreparedPlan finalPlan, stagedPlan;
+        CHECK(PrepareCookOutputPlan(r, 7, &f.Live, finalPlan, error));
+        CHECK(finalPlan.Outputs.size() == f.Record.Outputs.size());
+        for (size_t i = 0; i < finalPlan.Outputs.size(); ++i)
+        {
+            CHECK(finalPlan.Outputs[i].ExpectedIdentity.LogicalPath == f.Record.Outputs[i].Reference.LogicalPath);
+            CHECK(finalPlan.Outputs[i].ExpectedIdentity.CookedPackage == f.Record.Outputs[i].Reference.CookedPackage);
+        }
+        Text stageName = name; stageName.append(".stage");
+        const auto stageRoot = root / std::filesystem::path(stageName.c_str());
+        CHECK(std::filesystem::create_directory(stageRoot));
+        CHECK(PrepareCookStagingPlan(finalPlan, stageRoot, stagedPlan, error));
+        CHECK(std::filesystem::is_empty(stageRoot));
+        CHECK(CookSingleAsset(stagedPlan.Context.Request, error));
+        const auto fragment = Load(stagedPlan.Context.Request.ManifestPath);
+        CookOutputRecord stagedRecord;
+        CHECK(CaptureStagedCookOutputRecord(finalPlan, stagedPlan, fragment, stagedRecord, error));
+        CHECK(stagedRecord.DependencyFingerprint == f.Record.DependencyFingerprint);
+        CHECK(stagedRecord.Outputs.size() == f.Record.Outputs.size());
+        for (size_t i = 0; i < stagedRecord.Outputs.size(); ++i)
+        {
+            CHECK(stagedRecord.Outputs[i].Reference.CookedHash == f.Record.Outputs[i].Reference.CookedHash);
+            CHECK(stagedRecord.Outputs[i].Package.ContentHash == f.Record.Outputs[i].Package.ContentHash);
+        }
+
 
 
         CHECK(Decide(r, nullptr, &f.Live) == CookDecision::Cook);

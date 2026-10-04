@@ -752,3 +752,6 @@
 - G2-S6-STATE-FILE検証準備: root不在試験は新しいstate leafを指定し、旧実装のMissing/新規保存を直接反証する形へ補強。既存file/directory/junction/sharing・実2writer・temp衝突・故障注入・orphan保持と全kind save/load→Skipを23CPUへ接続。比較器12件×通常/最適化とBOM/CRLF検査が成功。Win32 handle動作と79+10byte gateは未実行。
 
 - G2-S6-STATE-FILE受入: 375a7dc6/run37234005425で実Windows build・23CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。native handleの保存/読戻し、全kind save/load→Skip、実2writerと競合/故障時の保持を確認。short_alias_distinct=1、different_volume_checked=1で両条件も実行済み。3ZIPと固定79+10出力の直接byte一致を独立確認しroot再実行。taskをdone。production一括更新/lock/journalは未接続。
+
+- G2-S6-STAGED-OUTPUT-PLAN開始: まず単体のauthoritative inventory公開とfinal→stageの依存保持/captureを独立して検証する。集合を跨ぐ衝突はOUTPUT-SET-GUARDへ分離し、その計算量と物理aliasを別の完了条件で扱う。両者とtransactionが揃うまではproduction batchの書込/既存root受理を変更しない。
+- G2-S6-STAGED-OUTPUT-PLAN検証準備: 既存cache実装のprefixは新header include以外のbyte一致を確認。全kindのstage再cookと元package印の一致を24CPUへ登録し、8.3別表記/reparse拒否も追加。drive root自体は支持範囲外と明記。比較器12件と行末検査は成功、実Windowsと既存byte gateは未確認。

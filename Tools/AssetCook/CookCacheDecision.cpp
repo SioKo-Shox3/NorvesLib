@@ -1,4 +1,5 @@
 ﻿#include "CookCacheDecision.h"
+#include "CookOutputPlan.h"
 #include "CookCacheDecisionTestAccess.h"
 #include "CookOutputPaths.h"
 #include "AssetCookLegacyOptions.h"
@@ -570,4 +571,275 @@ namespace NorvesLib::Tools::AssetCook
         return Detail::CaptureCookOutputRecordWithProbe(before, manifest, out, error, nullptr, nullptr);
     }
 
+    namespace
+    {
+        bool MatchesPreparedPlan(const CookPreparedPlan& saved, const CurrentPlan& current, AnsiString& error)
+        {
+            if (!SameDependencies(saved.Context.Dependencies, current.Context.Dependencies) ||
+                saved.Outputs.size() != current.Expected.size())
+            {
+                return Fail(error, "prepared_dependencies_or_inventory_changed");
+            }
+            for (size_t i = 0; i < saved.Outputs.size(); ++i)
+            {
+                if (!SameReference(saved.Outputs[i].ExpectedIdentity, current.Expected[i]) ||
+                    saved.Outputs[i].TargetPath != current.Packages[i])
+                {
+                    return Fail(error, "prepared_output_changed");
+                }
+            }
+            return true;
+        }
+        bool Reprepare(const CookPreparedPlan& saved, CurrentPlan& current, AnsiString& error)
+        {
+            return Prepare(saved.Context.Request, saved.Context.Dependencies.CookerRevision, nullptr, current, error) &&
+                   MatchesPreparedPlan(saved, current, error) && Stable(current, error);
+        }
+        CookPreparedPlan ExportPlan(const CurrentPlan& current)
+        {
+            CookPreparedPlan out;
+            out.Context = current.Context;
+            out.Context.Reason = CookDecisionReason::Forced;
+            out.Outputs.reserve(current.Expected.size());
+            for (size_t i = 0; i < current.Expected.size(); ++i)
+            {
+                out.Outputs.push_back({current.Expected[i], current.Packages[i]});
+            }
+            return out;
+        }
+#if defined(_WIN32)
+        bool DirectoryLocator(const std::filesystem::path& path)
+        {
+            AnsiString full, relative;
+            return path.is_absolute() && Paths::LocalDrivePath(path) && Paths::AsciiPath(path, full) &&
+                   Paths::AsciiPath(path.relative_path(), relative) && Paths::SafeOutputName(relative) &&
+                   Paths::NoReparse(path);
+        }
+        bool PhysicalDirectory(const std::filesystem::path& path, bool bRequirePresent, std::filesystem::path& out)
+        {
+            if (!DirectoryLocator(path))
+            {
+                return false;
+            }
+            auto existing = path;
+            VariableArray<std::filesystem::path> missing;
+            for (;;)
+            {
+                const DWORD attributes = GetFileAttributesW(existing.c_str());
+                if (attributes != INVALID_FILE_ATTRIBUTES)
+                {
+                    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+                        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+                    {
+                        return false;
+                    }
+                    break;
+                }
+                const DWORD code = GetLastError();
+                if (bRequirePresent || (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND) ||
+                    existing == existing.root_path())
+                {
+                    return false;
+                }
+                missing.push_back(existing.filename());
+                existing = existing.parent_path();
+            }
+            HANDLE h = CreateFileW(existing.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                   OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+            if (h == INVALID_HANDLE_VALUE)
+            {
+                return false;
+            }
+            struct Close
+            {
+                HANDLE Handle;
+                ~Close()
+                {
+                    CloseHandle(Handle);
+                }
+            } close{h};
+            FILE_ATTRIBUTE_TAG_INFO info{};
+            if (!GetFileInformationByHandleEx(h, FileAttributeTagInfo, &info, sizeof(info)) ||
+                (info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+                (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+            {
+                return false;
+            }
+            const DWORD flags = FILE_NAME_NORMALIZED | VOLUME_NAME_GUID;
+            const DWORD required = GetFinalPathNameByHandleW(h, nullptr, 0, flags);
+            if (required == 0 || required > 32767)
+            {
+                return false;
+            }
+            VariableArray<wchar_t> buffer(static_cast<size_t>(required) + 1, 0);
+            const DWORD count = GetFinalPathNameByHandleW(h, buffer.data(), static_cast<DWORD>(buffer.size()), flags);
+            if (count == 0 || count >= buffer.size())
+            {
+                return false;
+            }
+            std::filesystem::path candidate(buffer.data(), buffer.data() + count);
+            for (size_t i = missing.size(); i > 0; --i)
+            {
+                candidate /= missing[i - 1];
+            }
+            out = std::move(candidate);
+            return true;
+        }
+        bool DisjointRoots(const std::filesystem::path& finalRoot, const std::filesystem::path& stageRoot,
+                           AnsiString& error)
+        {
+            std::filesystem::path finalPhysical, stagePhysical;
+            if (!PhysicalDirectory(finalRoot, false, finalPhysical) ||
+                !PhysicalDirectory(stageRoot, true, stagePhysical) || Prefix(finalPhysical, stagePhysical) ||
+                Prefix(stagePhysical, finalPhysical))
+            {
+                return Fail(error, "stage_root_invalid_or_overlaps_final");
+            }
+            return true;
+        }
+#endif
+        bool CheckStageMapping(const CurrentPlan& finalPlan, const CurrentPlan& stagePlan, AnsiString& error)
+        {
+#if !defined(_WIN32)
+            (void)finalPlan;
+            (void)stagePlan;
+            return Fail(error, "Windows_output_boundary_required");
+#else
+            const auto& a = finalPlan.Context.Request;
+            const auto& b = stagePlan.Context.Request;
+            const auto stageRoot = b.ManifestPath.parent_path();
+            // 骨格policy等は共通snapshotが同じ意味をhashする。物理出力pathはその印から除かれている。
+            if (!SameDependencies(finalPlan.Context.Dependencies, stagePlan.Context.Dependencies) ||
+                a.InputPath != b.InputPath || a.ImportSettingsOverridePath != b.ImportSettingsOverridePath ||
+                !Equal(a.LogicalPath, b.LogicalPath) || !Equal(a.Kind, b.Kind) || !Equal(a.Format, b.Format) ||
+                !Equal(a.EntryName, b.EntryName) || !Equal(a.EntryTypeText, b.EntryTypeText) ||
+                !Equal(a.Variant, b.Variant) || a.bNoSidecar != b.bNoSidecar ||
+                a.bRequireSidecar != b.bRequireSidecar || a.ManifestPath.filename() != b.ManifestPath.filename() ||
+                finalPlan.Expected.size() != stagePlan.Expected.size() ||
+                !DisjointRoots(a.ManifestPath.parent_path(), stageRoot, error))
+            {
+                if (error.empty())
+                {
+                    Fail(error, "stage_request_semantics_changed");
+                }
+                return false;
+            }
+            for (size_t i = 0; i < finalPlan.Expected.size(); ++i)
+            {
+                const auto& expected = finalPlan.Expected[i];
+                if (!SameReference(expected, stagePlan.Expected[i]) ||
+                    stagePlan.Packages[i] != stageRoot / std::filesystem::path(expected.CookedPackage.c_str()))
+                {
+                    return Fail(error, "stage_relative_inventory_changed");
+                }
+            }
+            return true;
+#endif
+        }
+        bool CompleteFragment(const CurrentPlan& stage, const AssetManifest& manifest, AnsiString& error)
+        {
+            if (!manifest.IsLoaded() || manifest.GetReferenceCount() != stage.Expected.size())
+            {
+                return Fail(error, "stage_fragment_inventory_mismatch");
+            }
+            for (const auto& expected : stage.Expected)
+            {
+                const auto found = manifest.Resolve(expected.LogicalPath, expected.Kind, expected.Variant);
+                if (!found.ShouldUseCooked() || !SameIdentity(expected, found.Reference))
+                {
+                    return Fail(error, "stage_fragment_identity_mismatch");
+                }
+            }
+            return true;
+        }
+    } // namespace
+    bool PrepareCookOutputPlan(const SingleAssetCookRequest& request, uint64_t revision, const AssetManifest* manifest,
+                               CookPreparedPlan& out, AnsiString& error)
+    {
+        error.clear();
+        try
+        {
+            CurrentPlan current;
+            if (!Prepare(request, revision, manifest, current, error) || !Stable(current, error))
+            {
+                return false;
+            }
+            auto candidate = ExportPlan(current);
+            out = std::move(candidate);
+            return true;
+        }
+        catch (const std::exception&)
+        {
+            return Fail(error, "prepare_output_plan_exception");
+        }
+    }
+    bool PrepareCookStagingPlan(const CookPreparedPlan& finalPlan, const std::filesystem::path& stageRoot,
+                                CookPreparedPlan& out, AnsiString& error)
+    {
+        error.clear();
+#if !defined(_WIN32)
+        (void)finalPlan;
+        (void)stageRoot;
+        (void)out;
+        return Fail(error, "Windows_output_boundary_required");
+#else
+        try
+        {
+            CurrentPlan finalCurrent;
+            if (!Reprepare(finalPlan, finalCurrent, error) || finalCurrent.Expected.empty() ||
+                !DisjointRoots(finalCurrent.Context.Request.ManifestPath.parent_path(), stageRoot, error))
+            {
+                return false;
+            }
+            std::error_code code;
+            const auto contents = std::filesystem::directory_iterator(stageRoot, code);
+            if (code || contents != std::filesystem::directory_iterator{})
+            {
+                return Fail(error, "stage_must_be_empty_owned_directory");
+            }
+            auto request = finalCurrent.Context.Request;
+            request.PackagePath = stageRoot / std::filesystem::path(finalCurrent.Expected[0].CookedPackage.c_str());
+            request.ManifestPath = stageRoot / finalCurrent.Context.Request.ManifestPath.filename();
+            CurrentPlan stage;
+            if (!Prepare(request, finalCurrent.Context.Dependencies.CookerRevision, nullptr, stage, error) ||
+                !CheckStageMapping(finalCurrent, stage, error) || !Stable(finalCurrent, error) || !Stable(stage, error))
+            {
+                return false;
+            }
+            auto candidate = ExportPlan(stage);
+            out = std::move(candidate);
+            return true;
+        }
+        catch (const std::exception&)
+        {
+            return Fail(error, "prepare_staging_exception");
+        }
+#endif
+    }
+    bool CaptureStagedCookOutputRecord(const CookPreparedPlan& finalPlan, const CookPreparedPlan& stagePlan,
+                                       const AssetManifest& fragment, CookOutputRecord& out, AnsiString& error)
+    {
+        error.clear();
+        try
+        {
+            CurrentPlan finalCurrent, stageCurrent;
+            if (!Reprepare(finalPlan, finalCurrent, error) || !Reprepare(stagePlan, stageCurrent, error) ||
+                !CheckStageMapping(finalCurrent, stageCurrent, error) ||
+                !CompleteFragment(stageCurrent, fragment, error))
+            {
+                return false;
+            }
+            CookOutputRecord candidate;
+            if (!CaptureCookOutputRecord(stagePlan.Context, fragment, candidate, error) || !Stable(finalCurrent, error))
+            {
+                return false;
+            }
+            out = std::move(candidate);
+            return true;
+        }
+        catch (const std::exception&)
+        {
+            return Fail(error, "capture_staging_exception");
+        }
+    }
 } // namespace NorvesLib::Tools::AssetCook

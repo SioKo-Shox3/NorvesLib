@@ -2447,8 +2447,14 @@
 - verify: cook→capture→save→load→共通Skip、write/flush/verify/renameの失敗、既存file/directory/junction/競合、out保持、Windowsと既存byte gate。
 - stop-when: locked journalなしでproduction rootとstateを別々に公開、unknown ownershipの自動採用、atomic reader/powerloss耐久性を保証する。
 
-## G2-S6-STAGED-OUTPUT-PLAN: 全出力一覧とstage捕捉の境界を共有する
-- status: todo
-- done-when: 共通Prepare/BuildInventory由来の値所有planを公開し、final→stageの変更を出力rootだけへ限定する。始点snapshot・要求意味・fragment全件を照合して共通record採取へ渡し、全assetのkey/path/prefix/依存/spec/control path衝突を書込前に拒否する。
-- verify: 全kind/派生画像一覧、実stage cook/捕捉、始点後のsource/外部file/sidecar変化とout保持、cross-asset alias/順序罠、read-only計画、Windows CPUと79+10byte/16拒否 gate。
+## G2-S6-STAGED-OUTPUT-PLAN: 出力一覧とstage捕捉の境界を共有する
+- status: doing
+- done-when: 共通Prepare/BuildInventory由来の値所有planを公開し、final→stageの変更を出力rootだけへ限定する。始点snapshot・要求意味・fragment全件を照合して共通record採取へ渡す。
+- verify: 全kind/派生画像一覧、実stage cook/捕捉、始点後のsource/外部file/sidecar変化とout保持、要求/fragmentの差し替え拒否、read-only計画、Windows CPUと79+10byte/16拒否 gate。
 - stop-when: 別の命名/増分authorityを作る、新snapshotで途中変更を黙認する、stage locatorを保存stateへ入れる、lock/journalなしでproduction公開や既存root採用を始める。
+
+## G2-S6-OUTPUT-SET-GUARD: asset集合を跨ぐ出力と入力の衝突を拒否する
+- status: todo
+- done-when: 検証済みplan集合のprimary/派生key・物理path・prefixを、他assetの全依存/spec/control locatorと照合する。書込/所有取得を行わず、単体命名・増分判断を複製しない。
+- verify: primary/派生/variantの衝突、case/short alias/hardlink/prefix罠、他asset入力/外部file/不在sidecarとの衝突、無関係file保持、規模上限/計算量、Windowsと既存byte gate。
+- stop-when: unknown所有fileを採用する、出力命名を独自実装する、衝突確認なしでstage作成/公開をproductionへ接続する。
