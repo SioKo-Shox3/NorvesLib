@@ -1,5 +1,6 @@
 ﻿// 実cook出力の増分判断と、現在要求から独立に導く出力一覧・安全境界を検証する。
 #include "Tools/AssetCook/CookCacheDecision.h"
+#include "Tools/AssetCook/CookOwnedState.h"
 #include "Tools/AssetCook/CookCacheDecisionTestAccess.h"
 #include "Tools/AssetCook/AssetCookLegacyOptions.h"
 #include "Tools/AssetCook/CookOutputPaths.h"
@@ -172,6 +173,24 @@ namespace
             CHECK(false);
         }
         CHECK(Decide(r, &f.Record, &f.Live) == CookDecision::Skip);
+        // 全kindの実cook recordを所有stateで往復し、同じ共通判定へ戻す。
+        CookOwnedState state;
+        state.Binding.OwnerId = "0123456789abcdef0123456789abcdef";
+        state.Binding.RuntimeRootIdentity = (root / name).generic_string().c_str();
+        state.Binding.ManifestName = "manifest.json";
+        CookOwnedRecord owned;
+        const auto& primary = f.Record.Outputs[0].Reference;
+        owned.PrimaryKey = {primary.LogicalPath, primary.Kind, primary.Variant};
+        owned.Record = f.Record;
+        state.Records.push_back(owned);
+        Text saved;
+        CHECK(SerializeCookOwnedState(state, saved, error));
+        CookOwnedState loaded;
+        CHECK(ParseCookOwnedState({reinterpret_cast<const uint8_t*>(saved.data()), saved.size()}, state.Binding, loaded, error));
+        saved.clear();
+        const auto* restored = FindCookOwnedRecord(loaded, owned.PrimaryKey);
+        CHECK(restored && Decide(r, restored, &f.Live) == CookDecision::Skip);
+
         CHECK(Decide(r, nullptr, &f.Live) == CookDecision::Cook);
         CHECK(Decide(r, &f.Record, &f.Live, 7, false) == CookDecision::Cook);
         return f;

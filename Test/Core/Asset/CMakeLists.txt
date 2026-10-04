@@ -46,6 +46,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SingleAssetCookServiceTest SingleAssetCookServiceTest.cpp
     MEMBER TextureAssetSetSpecTest TextureAssetSetSpecTest.cpp
     MEMBER TextureAssetSetOutputTest TextureAssetSetOutputTest.cpp
+    MEMBER CookOwnedStateTest CookOwnedStateTest.cpp
     MEMBER ModelNativePathTest ModelNativePathTest.cpp
     MEMBER CookCacheDecisionTest CookCacheDecisionTest.cpp
     MEMBER CookOutputPackageTest CookOutputPackageTest.cpp
@@ -215,3 +216,6 @@ set_tests_properties(CookCacheDecisionTest PROPERTIES WORKING_DIRECTORY "${CMAKE
 
 add_test(NAME ModelNativePathTest COMMAND CookedMeshTest --test=ModelNativePathTest)
 set_tests_properties(ModelNativePathTest PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+add_test(NAME CookOwnedStateTest COMMAND CookedMeshTest --test=CookOwnedStateTest)
+set_tests_properties(CookOwnedStateTest PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")

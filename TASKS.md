@@ -2434,3 +2434,15 @@
 - done-when: 新しい出力検証・共通増分判断とその試験をAllman/制御文brace/bool命名へ揃え、headerのusing namespaceを明示修飾へ置換する。既存単体cooker本体は新設adapter範囲以外を整形しない。
 - verify: 明示した識別子・名前修飾の変更後はbrace以外のC++ token一致、文字列literal不変、BOM/CRLF/numstat、既存19CPU/79+10byte gate。
 - stop-when: cook/hash/path判断式やserialized文字列を変える、既存全fileの無関係な整形、実検証なしの互換宣言。
+
+## G2-S6-STATE-CODEC: cookの所有recordを厳密な保存形式にする
+- status: doing
+- done-when: owner/root/manifestの現在bindingに結び付いた値所有stateを無損失で解析/直列化し、未知/重複field・危険path・所有衝突・過大入力を拒否する。保存値からfileを開かず、増分判断は既存C++へ渡す。
+- verify: 実cook recordの往復とSkip、uint64境界、寿命/失敗保持、全階層schema/所有alias拒否、Windows CPUと79+10byte gate。
+- stop-when: stateを所有権の認証と扱う、record欠落を既存fileの上書き許可にする、runtime manifestを変更、file公開とtransactionを未検証で接続する。
+
+## G2-S6-STATE-FILE: 所有stateを安全に新規保存して読み戻す
+- status: todo
+- done-when: caller指定のRuntimeRoot外の同volume stateを排他新規保存し、Missing/Loaded/Errorを区別して読む。既存stateを置換せず、自分のtemp以外を採用/削除しない。
+- verify: cook→capture→save→load→共通Skip、write/flush/verify/renameの失敗、既存file/directory/junction/競合、out保持、Windowsと既存byte gate。
+- stop-when: locked journalなしでproduction rootとstateを別々に公開、unknown ownershipの自動採用、atomic reader/powerloss耐久性を保証する。

@@ -741,3 +741,6 @@
 - G2-S6-MODEL-NATIVE-PATH実検証: 4b9fd5b8/run37228182164でCore/AssetCook buildは成功、追加testのmainで局所alias TextとCore::Text、およびDetail名前空間が曖昧となりbundle compile失敗。test aliasをNativeTextへ変更し、診断encoderのnamespaceを明示する。production実装/試験値は変更せず、21CPU・79+10byteは未到達のためdoingを維持。
 
 - G2-S6-MODEL-NATIVE-PATH受入: d2556d3c/run37229272949で実Windows build・21CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。test名衝突の修正後production実装は不変。日本語/非BMPの静的・骨格glTF/GLB、source/base/override、外部依存、共通record→Skip、lock/不在/不正locatorの拒否を実証。3ZIPのdigestと79+10固定出力の直接byte一致を独立確認しroot再実行。taskをdone。argv/非ASCII外部URI/runtime出力path拡張は含めない。
+
+- G2-S6-STATE-CODEC開始: 永続化の前段として、owner/root/manifest bindingと共通CookOutputRecordを厳密JSONへ値所有で写す。uint64は固定hex、重複/未知field・所有衝突・過大入力を拒否する。file新規保存と既存root transactionは別taskに分け、codecの成功を上書き権限として扱わない。
+- G2-S6-STATE-CODEC検証準備: JSON拒否fixtureの3文字列をC++ UCNではなくJSON escape byteへ訂正し、literalだけの独立compileでbackslash列を確認。全kind実cook recordへcodec往復を追加、22CPUへ登録。比較器12件と独立prefix順序10000例が成功。native Windows/79+10は未実行。DOM前node予算は未実装の制約として明記。
