@@ -56,6 +56,10 @@ namespace
     // metallicとroughnessはR成分だけを使う。G・Bを変えて成分の取り違えを検出する。
     constexpr uint8_t MetallicBytes[3] = {64u, 200u, 10u};
     constexpr uint8_t RoughnessBytes[3] = {191u, 20u, 240u};
+    // ORMの1枚（R=AO・G=粗さ・B=メタリック）。3成分を違う値にして並びの取り違えを検出する。
+    constexpr uint8_t OrmBytes[3] = {40u, 150u, 220u};
+    // 2チャンネル（BC5）の法線はRGだけを持つ。Bは使われないことを確かめるため0にする。
+    constexpr uint8_t TwoChannelNormalBytes[3] = {173u, 189u, 0u};
 
     float Unorm(uint8_t value)
     {
@@ -581,12 +585,16 @@ namespace
         material.NormalTexture = TextureHandle{12u};
         material.MetallicTexture = TextureHandle{13u};
         material.RoughnessTexture = TextureHandle{14u};
+        material.ORMTexture = TextureHandle{15u};
+        material.bNormalTwoChannel = true;
         const RayTracingHitMaterialSnapshot snapshot = MakeRayTracingHitMaterialSnapshot(&material);
         const RayTracingHitMaterialSnapshot empty = MakeRayTracingHitMaterialSnapshot(nullptr);
         return snapshot.AlbedoTexture == material.AlbedoTexture &&
                snapshot.NormalTexture == material.NormalTexture &&
                snapshot.MetallicTexture == material.MetallicTexture &&
                snapshot.RoughnessTexture == material.RoughnessTexture &&
+               snapshot.ORMTexture == material.ORMTexture && snapshot.bNormalTwoChannel &&
+               !empty.ORMTexture.IsValid() && !empty.bNormalTwoChannel &&
                !empty.AlbedoTexture.IsValid() && !empty.NormalTexture.IsValid() &&
                !empty.MetallicTexture.IsValid() && !empty.RoughnessTexture.IsValid() &&
                empty.ObjectColor[0] == 1.0f && empty.ObjectColor[3] == 1.0f;
@@ -671,6 +679,22 @@ namespace
             textures.RegisterExternalTexture(metallicTexture, "Metallic");
         const TextureHandle roughnessHandle =
             textures.RegisterExternalTexture(roughnessTexture, "Roughness");
+        TexturePtr ormTexture = CreateSolidTexture(device, OrmBytes, "PathTracingMaterialTest.ORM");
+        TexturePtr twoChannelNormalTexture = CreateSolidTexture(
+            device, TwoChannelNormalBytes, "PathTracingMaterialTest.TwoChannelNormal");
+        if (!ormTexture || !twoChannelNormalTexture)
+        {
+            std::cerr << "ORMと2チャンネル法線のtextureを作成できませんでした\n";
+            return 1;
+        }
+        const TextureHandle ormHandle = textures.RegisterExternalTexture(ormTexture, "ORM");
+        const TextureHandle twoChannelNormalHandle =
+            textures.RegisterExternalTexture(twoChannelNormalTexture, "TwoChannelNormal");
+        if (!ormHandle.IsValid() || !twoChannelNormalHandle.IsValid())
+        {
+            std::cerr << "ORMと2チャンネル法線をRenderResourcesへ登録できませんでした\n";
+            return 1;
+        }
         // 同じRHI textureを別handleで登録し、texture表が実体で重複を除くことを確かめる。
         const TextureHandle metallicAliasHandle =
             textures.RegisterExternalTexture(metallicTexture, "MetallicAlias");
@@ -749,8 +773,24 @@ namespace
         FramePacket degeneratePacket;
         degeneratePacket.RayTracingScene.Instances.push_back(MakeInstance(degenerateQuad, 0u, 0.0f));
         degeneratePacket.RayTracingScene.Instances[0].Material.NormalTexture = normalHandle;
+        // ORMはMetallic・Roughnessの別々の枠より優先される（別々の枠は表に入らない）。
+        FramePacket ormPacket;
+        ormPacket.RayTracingScene.Instances.push_back(MakeInstance(quad, 0u, 0.0f));
+        RayTracingHitMaterialSnapshot& ormMaterial = ormPacket.RayTracingScene.Instances[0].Material;
+        ormMaterial.AlbedoTexture = albedoHandle;
+        ormMaterial.NormalTexture = normalHandle;
+        ormMaterial.MetallicTexture = metallicHandle;
+        ormMaterial.RoughnessTexture = roughnessHandle;
+        ormMaterial.ORMTexture = ormHandle;
+        FramePacket twoChannelPacket;
+        twoChannelPacket.RayTracingScene.Instances.push_back(MakeInstance(quad, 0u, 0.0f));
+        RayTracingHitMaterialSnapshot& twoChannelMaterial =
+            twoChannelPacket.RayTracingScene.Instances[0].Material;
+        twoChannelMaterial.NormalTexture = twoChannelNormalHandle;
+        twoChannelMaterial.bNormalTwoChannel = true;
         if (!BuildTopLevel(device, quadPacket) || !BuildTopLevel(device, trianglePacket) ||
-            !BuildTopLevel(device, stretchedPacket) || !BuildTopLevel(device, degeneratePacket))
+            !BuildTopLevel(device, stretchedPacket) || !BuildTopLevel(device, degeneratePacket) ||
+            !BuildTopLevel(device, ormPacket) || !BuildTopLevel(device, twoChannelPacket))
         {
             std::cerr << "検証用のTLASを作成できませんでした\n";
             return 1;
@@ -953,6 +993,33 @@ namespace
         ExpectedFallbackShadingNormal(vertexNormal, TiltedNormalBytes, degenerateNormal);
         CheckUniformRegion(mapping, pixels, insideQuad, degenerateNormal, NormalTolerance,
                            "degenerate_uv_normal", bPassed);
+
+        // 3d. ORMの1枚はR=AO・G=粗さ・B=メタリックで読み、別々の枠より優先される。
+        context.SnapshotScene = &ormPacket.Scene;
+        context.SnapshotRayTracingScene = &ormPacket.RayTracingScene;
+        if (!render(PathTracingDebugOutput::MetallicRoughness, 7u, "orm_material"))
+        {
+            return 1;
+        }
+        const float ormMaterialExpected[3] = {Unorm(OrmBytes[2]), Unorm(OrmBytes[1]), 0.0f};
+        CheckUniformRegion(mapping, pixels, insideQuad, ormMaterialExpected, ValueTolerance,
+                           "orm_material", bPassed);
+
+        // 3e. 2チャンネルの法線は、Zを単位長からXYで戻す（Bの値は使わない）。
+        context.SnapshotScene = &twoChannelPacket.Scene;
+        context.SnapshotRayTracingScene = &twoChannelPacket.RayTracingScene;
+        if (!render(PathTracingDebugOutput::ShadingNormal, 5u, "two_channel_normal"))
+        {
+            return 1;
+        }
+        {
+            const float x = Unorm(TwoChannelNormalBytes[0]) * 2.0f - 1.0f;
+            const float y = Unorm(TwoChannelNormalBytes[1]) * 2.0f - 1.0f;
+            float twoChannelNormal[3] = {x, -y, -std::sqrt(1.0f - x * x - y * y)};
+            Normalize(twoChannelNormal);
+            CheckUniformRegion(mapping, pixels, insideQuad, twoChannelNormal, NormalTolerance,
+                               "two_channel_normal", bPassed);
+        }
         context.SnapshotScene = &quadPacket.Scene;
         context.SnapshotRayTracingScene = &quadPacket.RayTracingScene;
 

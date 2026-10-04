@@ -18,7 +18,7 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousProjection;
     vec4 cameraPosition;
     vec4 emissiveChromaticityAndLuminanceNits;
-    vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=unused, w=unused
+    vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=ORMの1枚が metallicTexture の枠に張られているか（1/0）, w=法線が2チャンネル（BC5）か（1/0）
     vec4 frameParams; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ
 } mvp;
 
@@ -59,7 +59,8 @@ void main()
 
     // テクスチャサンプリング × オブジェクトカラー（POM補正済みUV使用）
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
-        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord);
+        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
+        mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5);
     outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
                      textureSamples.Albedo.a);
 

@@ -14,6 +14,18 @@ struct PbrGBufferMaterialSamples
     vec4 Material;
 };
 
+// 接空間法線を標本値から復号する。2チャンネル（BC5。RGに接空間法線のXY）のときだけ、
+// Zを単位長からXYで戻す（Zは常に表向き）。RGBA8の法線は従来どおりRGBをそのまま復号する。
+vec3 DecodePbrTangentNormal(vec4 normalSample, bool bNormalTwoChannel)
+{
+    if (bNormalTwoChannel)
+    {
+        vec2 xy = normalSample.rg * 2.0 - 1.0;
+        return vec3(xy, sqrt(max(1.0 - dot(xy, xy), 0.0)));
+    }
+    return normalSample.rgb * 2.0 - 1.0;
+}
+
 // 材質textureの標本値を材質値へ復号する。ラスタとパストレーサーは標本の取り方
 // （暗黙LODとLOD 0）だけが異なり、復号はこの関数を共有する。
 PbrMaterialTextureSamples DecodePbrMaterialTextureSamples(
@@ -21,28 +33,51 @@ PbrMaterialTextureSamples DecodePbrMaterialTextureSamples(
     vec4 normalSample,
     float metallicSample,
     float roughnessSample,
-    float aoSample)
+    float aoSample,
+    bool bNormalTwoChannel)
 {
     PbrMaterialTextureSamples result;
     result.Albedo = albedoSample;
-    result.TangentNormal = normalSample.rgb * 2.0 - 1.0;
+    result.TangentNormal = DecodePbrTangentNormal(normalSample, bNormalTwoChannel);
     result.Material = vec3(metallicSample, roughnessSample, aoSample);
     return result;
 }
 
+// ORMの1枚（R=AO・G=粗さ・B=メタリック）の標本値から、Material（metallic, roughness, ao）の順へ並べ替える。
+vec3 DecodePbrOrmSample(vec4 ormSample)
+{
+    return vec3(ormSample.b, ormSample.g, ormSample.r);
+}
+
+// bHasORM のとき ORM は metallicSampler の枠に張られており、その1枚だけを引く
+// （roughnessSampler・aoSampler は引かない）。無いときは別々の枠を引く従来の経路。
 PbrMaterialTextureSamples SamplePbrMaterialTextures(
     sampler2D albedoSampler,
     sampler2D normalSampler,
     sampler2D metallicSampler,
     sampler2D roughnessSampler,
     sampler2D aoSampler,
-    vec2 texCoord)
+    vec2 texCoord,
+    bool bHasORM,
+    bool bNormalTwoChannel)
 {
+    vec3 material;
+    if (bHasORM)
+    {
+        material = DecodePbrOrmSample(texture(metallicSampler, texCoord));
+    }
+    else
+    {
+        material = vec3(texture(metallicSampler, texCoord).r,
+                        texture(roughnessSampler, texCoord).r,
+                        texture(aoSampler, texCoord).r);
+    }
     return DecodePbrMaterialTextureSamples(texture(albedoSampler, texCoord),
                                            texture(normalSampler, texCoord),
-                                           texture(metallicSampler, texCoord).r,
-                                           texture(roughnessSampler, texCoord).r,
-                                           texture(aoSampler, texCoord).r);
+                                           material.x,
+                                           material.y,
+                                           material.z,
+                                           bNormalTwoChannel);
 }
 
 // 表面のアルベド。instance色×アルベドtextureで、材質のBaseColorは使わない。

@@ -532,7 +532,7 @@ namespace NorvesLib::Core::Rendering
             float previousProjection[16];
             float cameraPosition[4];
             float emissiveChromaticityAndLuminanceNits[4];
-            float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=unused, w=unused
+            float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=ORMの1枚を metallic の枠に張ったか(0 or 1), w=法線が2チャンネルか(0 or 1)
             float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ
         };
 
@@ -595,7 +595,9 @@ namespace NorvesLib::Core::Rendering
             TextureHandle matMetallic;
             TextureHandle matRoughness;
             TextureHandle matAO;
+            TextureHandle matORM;
             TextureHandle matHeight;
+            bool bMatNormalTwoChannel = false;
             float matHeightScale = 0.05f;
             float matMetallicValue = -1.0f;
             float matRoughnessValue = -1.0f;
@@ -616,7 +618,9 @@ namespace NorvesLib::Core::Rendering
                     matMetallic = matData->MetallicTexture;
                     matRoughness = matData->RoughnessTexture;
                     matAO = matData->AOTexture;
+                    matORM = matData->ORMTexture;
                     matHeight = matData->HeightTexture;
+                    bMatNormalTwoChannel = matData->bNormalTwoChannel;
                     matHeightScale = matData->HeightScale;
                     matMetallicValue = matData->Metallic;
                     matRoughnessValue = matData->Roughness;
@@ -634,8 +638,11 @@ namespace NorvesLib::Core::Rendering
 
             uboData.pomParams[0] = matHeightScale;
             uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
-            uboData.pomParams[2] = 0.0f;
-            uboData.pomParams[3] = 0.0f;
+            // ORM は metallic の枠に張り、シェーダーへフラグで伝える（descriptor の binding は増やさない）。
+            // texture が解決できないときは別々の枠（既定値）の経路へ落とす。
+            RHI::TexturePtr ormTex = ResolveTexture(matORM, nullptr);
+            uboData.pomParams[2] = ormTex ? 1.0f : 0.0f;
+            uboData.pomParams[3] = bMatNormalTwoChannel ? 1.0f : 0.0f;
 
             allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
 
@@ -661,6 +668,13 @@ namespace NorvesLib::Core::Rendering
             RHI::TexturePtr metallicTex = ResolveTexture(matMetallic, metallicDefault);
             RHI::TexturePtr roughnessTex = ResolveTexture(matRoughness, roughnessDefault);
             RHI::TexturePtr aoTex = ResolveTexture(matAO, m_DefaultWhiteTexture);
+            if (ormTex)
+            {
+                // シェーダーは ORM のとき metallic の枠だけを読むが、descriptor の3枠は同じ texture で埋める。
+                metallicTex = ormTex;
+                roughnessTex = ormTex;
+                aoTex = ormTex;
+            }
             RHI::TexturePtr heightTex = ResolveTexture(matHeight, m_DefaultBlackTexture);
 
             allocation.DescriptorSet->BindTexture(1, albedoTex);

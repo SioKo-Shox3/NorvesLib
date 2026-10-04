@@ -32,6 +32,8 @@ namespace NorvesLib::Core::Rendering
             data.MetallicTexture = createInfo.MetallicTexture;
             data.RoughnessTexture = createInfo.RoughnessTexture;
             data.AOTexture = createInfo.AOTexture;
+            data.ORMTexture = createInfo.ORMTexture;
+            data.bNormalTwoChannel = createInfo.bNormalTwoChannel;
             data.HeightTexture = createInfo.HeightTexture;
             data.HeightScale = createInfo.HeightScale;
             data.Metallic = SanitizeOptionalUnitScalar(createInfo.Metallic);

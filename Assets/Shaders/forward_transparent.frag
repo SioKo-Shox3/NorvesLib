@@ -11,7 +11,7 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 projection;
     vec4 cameraPosition;
     vec4 emissiveColor;
-    vec4 pomParams;
+    vec4 pomParams; // x=heightScale, y=hasHeightMap, z=ORMの1枚が metallicTexture の枠に張られているか（1/0）, w=法線が2チャンネル（BC5）か（1/0）
     vec4 sceneColorParams;
     mat4 lightView[4];
     mat4 lightProjection[4];
@@ -221,7 +221,8 @@ void main()
     }
 
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
-        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord);
+        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
+        mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5);
     vec4 texColor = textureSamples.Albedo;
     vec3 baseColor = texColor.rgb * fragObjectColor.rgb;
     float alpha = texColor.a * fragObjectColor.a;

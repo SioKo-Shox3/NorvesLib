@@ -185,7 +185,11 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         TextureHandle MetallicTexture;
         TextureHandle RoughnessTexture;
         TextureHandle AOTexture;
+        TextureHandle ORMTexture;           // ORMを1枚に詰めたテクスチャ（R=AO・G=粗さ・B=メタリック）。有効なら別々の枠より優先
         TextureHandle HeightTexture;
+
+        // NormalTexture が2チャンネル（BC5）のとき true。Zはシェーダーが XY から戻す
+        bool bNormalTwoChannel = false;
 
         // POMパラメータ
         float HeightScale = 0.0f;

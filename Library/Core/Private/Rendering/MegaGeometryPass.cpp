@@ -996,6 +996,7 @@ namespace NorvesLib::Core::Rendering
                 float PreviousView[16];
                 float PreviousProjection[16];
                 float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
+                float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）
             };
             static_assert(sizeof(PerObjectUBO) <= 512u);
 
@@ -1028,12 +1029,7 @@ namespace NorvesLib::Core::Rendering
             perObject.FrameParams[2] = mat.DisplacementUVSpacing > 0.0f ? mat.DisplacementUVSpacing : 0.0f;
             perObject.FrameParams[3] = bLODLevelPayload ? 1.0f : 0.0f;
 
-            drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
-
-            drawDescriptorSet->BindConstantBuffer(0, drawUniformBuffer, 0,
-                                                  static_cast<uint32_t>(sizeof(PerObjectUBO)));
-
-            // PBRテクスチャバインド（マテリアルテクスチャまたはデフォルトにフォールバック）
+            // PBRテクスチャ（マテリアルテクスチャまたはデフォルトにフォールバック）
             // 材質はハンドルしか持たないので、描画のたびに引き直す（解放済みならデフォルトに落ちる）。
             auto resolveTexture = [&command](TextureHandle handle, const RHI::TexturePtr &fallback) -> RHI::TexturePtr
             {
@@ -1046,11 +1042,23 @@ namespace NorvesLib::Core::Rendering
                 }
                 return fallback;
             };
+            // ORM は metallic の枠に張り、シェーダーへフラグで伝える（descriptor の binding は増やさない）。
+            // texture が解決できないときは別々の枠（既定値）の経路へ落とす。
+            const RHI::TexturePtr orm = resolveTexture(mat.ORMTexture, nullptr);
+            perObject.MaterialParams[0] = orm ? 1.0f : 0.0f;
+            perObject.MaterialParams[1] = mat.bNormalTwoChannel ? 1.0f : 0.0f;
+
+            drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
+
+            drawDescriptorSet->BindConstantBuffer(0, drawUniformBuffer, 0,
+                                                  static_cast<uint32_t>(sizeof(PerObjectUBO)));
+
+            // PBRテクスチャバインド
             auto albedo = resolveTexture(mat.AlbedoTexture, m_DefaultWhiteTexture);
             auto normal = resolveTexture(mat.NormalTexture, m_DefaultFlatNormalTexture);
-            auto metallic = resolveTexture(mat.MetallicTexture, m_DefaultBlackTexture);
-            auto roughness = resolveTexture(mat.RoughnessTexture, m_DefaultWhiteTexture);
-            auto ao = resolveTexture(mat.AOTexture, m_DefaultWhiteTexture);
+            auto metallic = orm ? orm : resolveTexture(mat.MetallicTexture, m_DefaultBlackTexture);
+            auto roughness = orm ? orm : resolveTexture(mat.RoughnessTexture, m_DefaultWhiteTexture);
+            auto ao = orm ? orm : resolveTexture(mat.AOTexture, m_DefaultWhiteTexture);
             auto height = resolveTexture(mat.HeightTexture, m_DefaultBlackTexture);
 
             drawDescriptorSet->BindTexture(1, albedo);

@@ -9,7 +9,7 @@ struct PathInstance
     vec4 emission; // rgb=発光色、a=nits
     uvec4 geometry; // x=頂点幅、y=頂点数、z=索引数、w=インスタンス番号
     vec4 objectColor; // GBufferと同じ規則のinstance色
-    uvec4 textures; // x=アルベド、y=法線、z=metallic、w=roughnessのtexture配列番号
+    uvec4 textures; // x=アルベド、y=法線、z=metallic、w=roughnessのtexture配列番号。yの最上位ビット=法線が2チャンネル（BC5）、zの最上位ビット=z・wがORMの1枚（R=AO・G=粗さ・B=メタリック）
     vec4 objectToWorld[3]; // TLASと同じ物体→ワールド変換（行優先3x4）
 };
 layout(set = 0, binding = 2, std430) readonly buffer PathInstances

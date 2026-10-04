@@ -24,6 +24,7 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousView;
     mat4 previousProjection;
     vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV。0なら変位なし）, w=fragDebugPayload がLODの段か（1/0）
+    vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -158,12 +159,13 @@ void main()
     }
 
     // テクスチャサンプリング × オブジェクトカラー（POM補正済みUV使用）
-    vec4 texColor = texture(albedoTexture, texCoord);
-    outAlbedo = vec4(fragObjectColor * texColor.rgb, texColor.a);
+    PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
+        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
+        mvp.materialParams.x > 0.5, mvp.materialParams.y > 0.5);
+    outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples), textureSamples.Albedo.a);
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
-    vec3 normalMapSample = texture(normalTexture, texCoord).rgb;
-    vec3 tangentNormal = normalMapSample * 2.0 - 1.0;
+    vec3 tangentNormal = textureSamples.TangentNormal;
     float displacementUVSpacing = mvp.frameParams.z;
     if (displacementUVSpacing > 0.0)
     {
@@ -173,10 +175,7 @@ void main()
     outNormal = vec4(normal, 0.0);
 
     // PBRマテリアルパラメータ（POM補正済みUV使用）
-    float metallic  = texture(metallicTexture, texCoord).r;
-    float roughness = texture(roughnessTexture, texCoord).r;
-    float ao        = texture(aoTexture, texCoord).r;
-    outMaterial = vec4(metallic, roughness, ao, 0.0);
+    outMaterial = vec4(textureSamples.Material, 0.0);
 
     // 発光: Y=1 の色度 × 輝度（nits）にプリエクスポージャを掛けて書く（gbuffer.frag と同じ）
     outEmissive = vec4(ComputePreExposedEmissive(fragEmissiveColor.rgb,
