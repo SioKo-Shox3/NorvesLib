@@ -181,6 +181,21 @@ namespace NorvesLib::Core::Rendering
         void SetStaticEnvironmentIntensityScale(float scale);
 
         /**
+         * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）
+         *
+         * 有効な間、FramePacket の経過時間を 1/60 秒に固定する。起動の初期化で一度だけ呼ぶ。
+         */
+        void SetDeterministicCapture(bool bEnabled);
+
+        /**
+         * @brief 決定的な撮影のエポックを始める（GameThread）
+         *
+         * 次の FramePacket を経過 0 番として、時間的な状態（TAA の揺らしと履歴・RTGI の乱数と履歴・
+         * 自動露出）を捨てて数え直させる。SetDeterministicCapture(true) の後だけ意味を持つ。
+         */
+        void BeginDeterministicEpoch();
+
+        /**
          * @brief フレーム終了（GameThread）
          *
          * FramePacketを完了状態にし、RenderThreadに通知します。

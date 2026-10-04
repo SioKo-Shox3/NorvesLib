@@ -154,14 +154,24 @@ namespace Game::GameModes
         // 材質の枠の種類。読み込めた結果によって、後始末が変わる。
         enum class MaterialSlotKind
         {
-            Plain,  // 読み込めたハンドルをそのまま入れる
-            Normal, // 読み込めた形式が BC5（2チャンネル）なら bNormalTwoChannel を立てる
-            Orm,    // 読み込めなければ、粗さ・AO・メタリックの別々の元画像を読む枠へ戻る
+            Plain,  // 読み込めたハンドルをそのまま入れる（VT にしない）
+            Albedo, // クック済みなら VT（sparse）で作る。作れない・常駐しなければ全常駐で読み直す
+            Normal, // VT を試す。読み込めた形式が BC5（2チャンネル）なら bNormalTwoChannel を立てる
+            Orm,    // VT を試す。読み込めなければ、粗さ・AO・メタリックの別々の元画像を読む枠へ戻る
+            Height, // VT を試す（視差の高さ）
         };
+
+        // 枠の種類が VT の対象か（アルベド・法線・ORM・高さ。ばらの粗さ・AO・メタリックは対象外）
+        bool IsVirtualTextureSlotKind(MaterialSlotKind kind)
+        {
+            return kind != MaterialSlotKind::Plain;
+        }
 
         // 材質1つ分の枠を1つ非同期で読む。結果は update->CreateData へ入れ、update->PendingTextureCount が 0 に
         // なったとき onComplete を呼ぶ。ORM が読めなかったときは、読み終わる前に別々の元画像の枠を数に足すので、
         // 数が途中で 0 になることはない（コールバックはメインスレッドで呼ばれる）。
+        // bTryVirtualTexture のとき（アルベド・法線・ORM・高さの枠）は、先に VT で作り、ミップテイルが常駐したら材質へ入れる。
+        // VT を作れない、または常駐しなかったときは、同じ枠を全常駐で読み直す。
         template <typename OnComplete>
         void LoadMaterialSlot(TextureResources &textures,
                               const TSharedPtr<PendingMaterialUpdate> &update,
@@ -169,52 +179,75 @@ namespace Game::GameModes
                               const String &path,
                               TextureHandle MaterialCreateData::*member,
                               MaterialSlotKind kind,
+                              bool bTryVirtualTexture,
                               OnComplete onComplete)
         {
-            textures.LoadTextureAsync(
-                path,
-                [&textures, update, paths, path, member, kind, onComplete](TextureHandle handle)
+            auto onLoaded = [&textures, update, paths, path, member, kind, onComplete](TextureHandle handle)
+            {
+                update->CreateData.*member = handle;
+                if (kind == MaterialSlotKind::Normal)
                 {
-                    update->CreateData.*member = handle;
-                    if (kind == MaterialSlotKind::Normal)
+                    // クック済みの法線は BC5。ばらの元画像へ戻ったときは RGBA8 なので立てない。
+                    const NorvesLib::RHI::ITexture *rhiTexture = handle.IsValid() ? textures.GetRHITexture(handle) : nullptr;
+                    update->CreateData.bNormalTwoChannel =
+                        rhiTexture != nullptr && rhiTexture->GetFormat() == NorvesLib::RHI::Format::BC5_UNORM;
+                }
+                else if (kind == MaterialSlotKind::Orm && !handle.IsValid())
+                {
+                    NORVES_LOG_WARNING("Rendering3DTest",
+                                       "MATERIAL_ORM_FALLBACK path=%s クック済みの ORM を読めないため、"
+                                       "粗さ・AO・メタリックのばらの元画像を読みます",
+                                       path.c_str());
+                    struct LooseSlot
                     {
-                        // クック済みの法線は BC5。ばらの元画像へ戻ったときは RGBA8 なので立てない。
-                        const NorvesLib::RHI::ITexture *rhiTexture = handle.IsValid() ? textures.GetRHITexture(handle) : nullptr;
-                        update->CreateData.bNormalTwoChannel =
-                            rhiTexture != nullptr && rhiTexture->GetFormat() == NorvesLib::RHI::Format::BC5_UNORM;
-                    }
-                    else if (kind == MaterialSlotKind::Orm && !handle.IsValid())
+                        const String *Path;
+                        TextureHandle MaterialCreateData::*Member;
+                    };
+                    const LooseSlot looseSlots[] = {
+                        {&paths.Metallic, &MaterialCreateData::MetallicTexture},
+                        {&paths.Roughness, &MaterialCreateData::RoughnessTexture},
+                        {&paths.AO, &MaterialCreateData::AOTexture},
+                    };
+                    for (const LooseSlot &looseSlot : looseSlots)
                     {
-                        NORVES_LOG_WARNING("Rendering3DTest",
-                                           "MATERIAL_ORM_FALLBACK path=%s クック済みの ORM を読めないため、"
-                                           "粗さ・AO・メタリックのばらの元画像を読みます",
-                                           path.c_str());
-                        struct LooseSlot
+                        if (!looseSlot.Path->empty())
                         {
-                            const String *Path;
-                            TextureHandle MaterialCreateData::*Member;
-                        };
-                        const LooseSlot looseSlots[] = {
-                            {&paths.Metallic, &MaterialCreateData::MetallicTexture},
-                            {&paths.Roughness, &MaterialCreateData::RoughnessTexture},
-                            {&paths.AO, &MaterialCreateData::AOTexture},
-                        };
-                        for (const LooseSlot &looseSlot : looseSlots)
-                        {
-                            if (!looseSlot.Path->empty())
-                            {
-                                ++update->PendingTextureCount;
-                                LoadMaterialSlot(textures, update, paths, *looseSlot.Path, looseSlot.Member,
-                                                 MaterialSlotKind::Plain, onComplete);
-                            }
+                            ++update->PendingTextureCount;
+                            LoadMaterialSlot(textures, update, paths, *looseSlot.Path, looseSlot.Member,
+                                             MaterialSlotKind::Plain, false, onComplete);
                         }
                     }
+                }
 
-                    if (--update->PendingTextureCount == 0)
+                if (--update->PendingTextureCount == 0)
+                {
+                    onComplete();
+                }
+            };
+
+            if (bTryVirtualTexture)
+            {
+                const bool bStarted = textures.CreateVirtualTextureAsync(
+                    path,
+                    [&textures, update, paths, path, member, kind, onComplete, onLoaded](TextureHandle handle)
                     {
-                        onComplete();
-                    }
-                });
+                        if (handle.IsValid())
+                        {
+                            onLoaded(handle);
+                            return;
+                        }
+                        NORVES_LOG_WARNING("Rendering3DTest",
+                                           "VT_FALLBACK path=%s VTのミップテイルが常駐しないため、全常駐で読み直します",
+                                           path.c_str());
+                        LoadMaterialSlot(textures, update, paths, path, member, kind, false, onComplete);
+                    });
+                if (bStarted)
+                {
+                    return;
+                }
+                NORVES_LOG_WARNING("Rendering3DTest", "VT_FALLBACK path=%s VTを作れないため、全常駐で読みます", path.c_str());
+            }
+            textures.LoadTextureAsync(path, onLoaded);
         }
 
         // 材質1つ分のテクスチャを非同期で読み、そろったら onComplete を呼ぶ。マニフェストにクック済みの ORM が
@@ -250,7 +283,7 @@ namespace Game::GameModes
                 }
             };
 
-            addSlot(paths.Albedo, &MaterialCreateData::AlbedoTexture);
+            addSlot(paths.Albedo, &MaterialCreateData::AlbedoTexture, MaterialSlotKind::Albedo);
             addSlot(paths.Normal, &MaterialCreateData::NormalTexture, MaterialSlotKind::Normal);
             update->CreateData.bNormalTwoChannel = false;
             if (IsTextureCooked(data, paths.Orm))
@@ -263,13 +296,16 @@ namespace Game::GameModes
                 addSlot(paths.Roughness, &MaterialCreateData::RoughnessTexture);
                 addSlot(paths.AO, &MaterialCreateData::AOTexture);
             }
-            addSlot(paths.Height, &MaterialCreateData::HeightTexture);
+            addSlot(paths.Height, &MaterialCreateData::HeightTexture, MaterialSlotKind::Height);
 
             update->PendingTextureCount = slotCount;
             for (uint32_t slotIndex = 0; slotIndex < slotCount; ++slotIndex)
             {
+                const bool bTryVirtualTexture = IsVirtualTextureSlotKind(slots[slotIndex].Kind) &&
+                                                data.m_bVirtualTexture && textures.SupportsVirtualTexture() &&
+                                                IsTextureCooked(data, *slots[slotIndex].Path);
                 LoadMaterialSlot(textures, update, paths, *slots[slotIndex].Path, slots[slotIndex].Member,
-                                 slots[slotIndex].Kind, onComplete);
+                                 slots[slotIndex].Kind, bTryVirtualTexture, onComplete);
             }
         }
 
@@ -298,6 +334,54 @@ namespace Game::GameModes
                 }
             }
             return true;
+        }
+
+        // テクスチャの負荷モード（--stress-textures）: 地面（60 m 四方）の外側の奥（+z）へ、負荷用の材質を貼った
+        // 12 m 四方の板を 6 列 × 4 行の格子（間隔 14 m）に並べる。4K の色・法線・ORM が 24 材質分（全常駐なら約 1.6 GB）で、
+        // VT のプールの目標より多くなる上限（--vram-budget-mb）で、VT が目標の中でタイルを入れ替えて描けることを確かめる。
+        // テクスチャは Scripts/FetchPolyHavenTextures.ps1 -StressSet が落とし、CookAssets が焼く（git の管理外）。
+        // 並びはスクリプトと Assets/AssetSets/Rendering3DTestStressTextures.json と同じ。
+        // 起動画面そのものは変えない（このモードのときだけ、カメラの軸を格子の中心へ移す）。
+        struct StressMaterialSpec
+        {
+            const char *AssetId; // Poly Haven の資産ID（フォルダ名・ファイル名の接頭辞）
+            float TileMeters;    // テクスチャ1枚の実寸（m）
+        };
+        constexpr StressMaterialSpec kStressMaterials[] = {
+            {"aerial_rocks_02", 2.0f},     {"coast_sand_rocks_02", 2.0f},     {"dry_ground_rocks", 2.0f},
+            {"gravel_ground_01", 2.0f},    {"forest_ground_04", 2.0f},        {"rock_04", 2.0f},
+            {"castle_brick_01", 2.0f},     {"concrete_wall_003", 2.0f},       {"quarry_wall", 3.0f},
+            {"mossy_stone_wall", 2.0f},    {"brown_planks_03", 1.5f},         {"dark_planks", 1.5f},
+            {"herringbone_parquet", 1.5f}, {"bark_brown_01", 2.0f},           {"cobblestone_floor_01", 2.0f},
+            {"brick_floor", 2.0f},         {"concrete_floor_worn_001", 3.0f}, {"terracotta_floor_tiles", 2.0f},
+            {"corrugated_iron", 2.0f},     {"rusty_metal_02", 2.0f},          {"metal_plate", 2.0f},
+            {"clay_roof_tiles", 2.0f},     {"roof_slates_02", 2.0f},          {"grey_roof_tiles", 2.0f},
+        };
+        constexpr uint32_t kStressMaterialCount =
+            static_cast<uint32_t>(sizeof(kStressMaterials) / sizeof(kStressMaterials[0]));
+        constexpr uint32_t kStressGridColumns = 6u;
+        constexpr float kStressPanelSize = 12.0f;
+        constexpr float kStressPanelPitch = 14.0f;
+        // 格子の中心（地面の端 z=30 から 10 m 空け、4行ぶんの奥行きの半分だけ奥）
+        constexpr float kStressGridCenterX = 0.0f;
+        constexpr float kStressGridCenterZ = 68.0f;
+
+        // i 番目の板の中心（x・z、m）
+        void GetStressPanelCenter(uint32_t index, float &outX, float &outZ)
+        {
+            const uint32_t rowCount = (kStressMaterialCount + kStressGridColumns - 1u) / kStressGridColumns;
+            outX = kStressGridCenterX +
+                   (static_cast<float>(index % kStressGridColumns) - 0.5f * static_cast<float>(kStressGridColumns - 1u)) *
+                       kStressPanelPitch;
+            outZ = kStressGridCenterZ +
+                   (static_cast<float>(index / kStressGridColumns) - 0.5f * static_cast<float>(rowCount - 1u)) *
+                       kStressPanelPitch;
+        }
+
+        // 負荷用の材質のテクスチャの読み込みパスの組み立てと存在の確認に、見本の区画と同じ関数を使うための表の項目
+        GroundSwatchSpec MakeStressTextureSpec(const StressMaterialSpec &spec)
+        {
+            return GroundSwatchSpec{spec.AssetId, 0.0f, spec.TileMeters, 0.0f};
         }
 
         double ElapsedMilliseconds(std::chrono::steady_clock::time_point startTime)
@@ -579,6 +663,60 @@ namespace Game::GameModes
             return value == nullptr || std::strcmp(value, "0") != 0;
         }
 
+        // 起動画面の組み立て（材質のテクスチャ・岩と小屋のモデル・大きな球の生成）が非同期の読み込みを含めて
+        // 終わったか。VT のタイルがそろうのは待たない（IsStartupSceneAssembled が加える）。
+        bool IsStartupSceneAssembledBeforeVirtualTexture(const Rendering3DTestData &data)
+        {
+            for (const TSharedPtr<PendingMaterialUpdate> &update : data.m_PendingMaterialUpdates)
+            {
+                if (update && update->PendingTextureCount != 0)
+                {
+                    return false;
+                }
+            }
+            return !data.m_BoulderAsyncState && !data.m_CottageAsyncState && !data.m_pBigSphereMegaData &&
+                   !data.m_BigSphereBuildTask;
+        }
+
+        // 起動画面の組み立てが、VT のタイルがそろうまで含めてすべて終わったか。
+        // 決定的な撮影（--capture-deterministic）はこれが真になった時点から時間を数え直す。
+        bool IsStartupSceneAssembled(const Rendering3DTestData &data)
+        {
+            return IsStartupSceneAssembledBeforeVirtualTexture(data) && data.m_bVirtualTextureSettled;
+        }
+
+        // 組み立てが終わった後、VT のタイルがそろう（要求が途絶えて、ストリーマが落ち着く）まで待つ。
+        // 材質のアルベドが VT でなければ待たない。要求は 4×4 画素のうち巡回する 1 画素が書き、数フレーム遅れて届くので、
+        // 落ち着いた状態が kVirtualTextureIdleTicksToSettle ティック続くのを待つ。タイルがそろわないまま
+        // kVirtualTextureMaxWaitTicks を超えたら待つのをやめ、ログに残す（撮影の差で見える）。
+        constexpr uint32_t kVirtualTextureIdleTicksToSettle = 60;
+        constexpr uint32_t kVirtualTextureMaxWaitTicks = 1800;
+        void UpdateVirtualTextureSettle(GameModeContext &ctx, Rendering3DTestData &data)
+        {
+            if (data.m_bVirtualTextureSettled || !IsStartupSceneAssembledBeforeVirtualTexture(data))
+            {
+                return;
+            }
+            TextureResources &textures = ctx.RenderResourcesRef.Textures();
+            if (!data.m_bVirtualTexture || !textures.SupportsVirtualTexture())
+            {
+                data.m_bVirtualTextureSettled = true;
+                return;
+            }
+
+            ++data.m_VirtualTextureWaitTicks;
+            data.m_VirtualTextureIdleTicks =
+                textures.IsVirtualTextureStreamingIdle() ? data.m_VirtualTextureIdleTicks + 1 : 0;
+            const bool bIdle = data.m_VirtualTextureIdleTicks >= kVirtualTextureIdleTicksToSettle;
+            const bool bTimedOut = data.m_VirtualTextureWaitTicks >= kVirtualTextureMaxWaitTicks;
+            if (bIdle || bTimedOut)
+            {
+                data.m_bVirtualTextureSettled = true;
+                NORVES_LOG_INFO("Rendering3DTest", "VT_SETTLED ticks=%u timed_out=%d",
+                                static_cast<unsigned>(data.m_VirtualTextureWaitTicks), bIdle ? 0 : 1);
+            }
+        }
+
         // 起動画面の高さフォグ（R3）。地面での密度（1/m、0で無効）と、高さ方向の減衰（1/m）。
         // 減衰を上限の 1/m にして地面すれすれの薄い層にし、遠くの地面へ向かう浅い視線だけが厚く霞む
         // ようにする。密度は太陽 45° の撮り比べ（0.02〜0.1）で、地面すれすれの低角度視点でも近くの各球の
@@ -707,7 +845,15 @@ namespace Game::GameModes
                 return false;
             }
 
-            data.m_pCameraPivotObject->SetPosition(0.0f, 0.0f, 0.0f);
+            // 負荷モードは、カメラの軸を格子の中心へ移す（視点の引数はその周りの角度と距離になる）
+            if (data.m_bStressTextures)
+            {
+                data.m_pCameraPivotObject->SetPosition(kStressGridCenterX, 0.0f, kStressGridCenterZ);
+            }
+            else
+            {
+                data.m_pCameraPivotObject->SetPosition(0.0f, 0.0f, 0.0f);
+            }
             data.m_pSpringArmComponent =
                 ctx.WorldRef.CreateComponent<Component::SpringArmComponent>(data.m_pCameraObject);
             data.m_pCameraComponent =
@@ -1117,6 +1263,36 @@ namespace Game::GameModes
             }
             NORVES_LOG_INFO("Rendering3DTest", "Ground pieces registered: %zu pieces", data.m_GroundPieces.size());
 
+            // 負荷モードの板（12 m 四方の平面。UVは板の中心を原点にした位置をテクスチャ1枚の実寸で割った値）
+            if (data.m_bStressTextures)
+            {
+                for (uint32_t panelIndex = 0; panelIndex < kStressMaterialCount; ++panelIndex)
+                {
+                    const MeshDataHandle panelHandle{Rendering3DTestData::kStressPanelMeshHandleBase + panelIndex};
+                    VariableArray<Mesh3DVertex> panelVertices;
+                    VariableArray<uint32_t> panelIndices;
+                    ProceduralMeshGenerator::GeneratePlane(kStressPanelSize, kStressPanelSize, 4, 4, panelVertices, panelIndices);
+                    for (Mesh3DVertex &vertex : panelVertices)
+                    {
+                        vertex.TexCoord[0] = (vertex.Position[0] + kStressPanelSize * 0.5f) / kStressMaterials[panelIndex].TileMeters;
+                        vertex.TexCoord[1] = (vertex.Position[2] + kStressPanelSize * 0.5f) / kStressMaterials[panelIndex].TileMeters;
+                    }
+                    if (meshes.Register(panelHandle,
+                                        panelVertices.data(),
+                                        static_cast<uint32_t>(panelVertices.size() * sizeof(Mesh3DVertex)),
+                                        panelIndices.data(),
+                                        static_cast<uint32_t>(panelIndices.size())))
+                    {
+                        ctx.ScopeRef.TrackMesh(panelHandle);
+                    }
+                    else
+                    {
+                        NORVES_LOG_ERROR("Rendering3DTest", "負荷モードの板のメッシュを登録できませんでした: %s",
+                                         kStressMaterials[panelIndex].AssetId);
+                    }
+                }
+            }
+
             data.m_bMeshesRegistered = bSphereOk && bGroundOk;
 
             // 大きな球の高ポリのMegaGeometry（BuildBigSphereMegaData）の頂点・変位・クラスタを別スレッドで作り始め、
@@ -1352,6 +1528,53 @@ namespace Game::GameModes
                 }
             }
 
+            // --- 負荷モードの材質（見本の区画と同じ流れ。高さは使わない。テクスチャが無い材質は作らない） ---
+            data.m_StressMaterials.clear();
+            if (data.m_bStressTextures)
+            {
+                uint32_t stressPresentCount = 0;
+                for (uint32_t stressIndex = 0; stressIndex < kStressMaterialCount; ++stressIndex)
+                {
+                    const StressMaterialSpec &stressSpec = kStressMaterials[stressIndex];
+                    const GroundSwatchSpec textureSpec = MakeStressTextureSpec(stressSpec);
+                    if (!AreGroundSwatchTexturesPresent(data, textureSpec))
+                    {
+                        NORVES_LOG_WARNING("Rendering3DTest",
+                                           "負荷モードの材質のテクスチャが無いので、その板は置きません: %s"
+                                           "（Scripts/FetchPolyHavenTextures.ps1 -StressSet で落とし、CookAssets で焼けます）",
+                                           stressSpec.AssetId);
+                        data.m_StressMaterials.push_back(MaterialHandle::Invalid());
+                        continue;
+                    }
+
+                    MaterialCreateData stressMatInfo;
+                    stressMatInfo.DebugName = stressSpec.AssetId;
+                    const MaterialHandle stressMaterial = materials.Create(stressMatInfo);
+                    data.m_StressMaterials.push_back(stressMaterial);
+                    ++stressPresentCount;
+
+                    auto stressUpdate = MakeShared<PendingMaterialUpdate>();
+                    stressUpdate->TargetMaterial = stressMaterial;
+                    stressUpdate->CreateData = stressMatInfo;
+                    auto finishStress = [stressUpdate, &materials]()
+                    {
+                        materials.Update(stressUpdate->TargetMaterial, stressUpdate->CreateData);
+                    };
+
+                    MaterialTexturePaths stressPaths;
+                    stressPaths.Albedo = MakeGroundSwatchTexturePath(textureSpec, "diff");
+                    stressPaths.Normal = MakeGroundSwatchTexturePath(textureSpec, "nor_dx");
+                    stressPaths.Orm = String("Assets/Textures/PolyHaven/") + stressSpec.AssetId + "/" + stressSpec.AssetId + "_orm_4k";
+                    stressPaths.Roughness = MakeGroundSwatchTexturePath(textureSpec, "rough");
+                    stressPaths.AO = MakeGroundSwatchTexturePath(textureSpec, "ao");
+                    RequestMaterialTextures(data, textures, stressUpdate, stressPaths, finishStress);
+
+                    data.m_PendingMaterialUpdates.push_back(stressUpdate);
+                }
+                NORVES_LOG_INFO("Rendering3DTest", "STRESS_TEXTURES materials=%u of %u",
+                                static_cast<unsigned>(stressPresentCount), static_cast<unsigned>(kStressMaterialCount));
+            }
+
             // 光源球体マテリアル作成（エミッシブ、テクスチャ不要）
             MaterialCreateData lightSphereMatInfo;
             lightSphereMatInfo.EmissiveColor[0] = kLightBulbColor[0];
@@ -1459,6 +1682,35 @@ namespace Game::GameModes
             }
 
             LOG_INFO("Ground pieces created and added to World count=%zu", data.m_GroundPieces.size());
+
+            // --- 負荷モードの板（Y=-1.0。材質が作れた板だけ置く） ---
+            if (data.m_bStressTextures)
+            {
+                for (uint32_t panelIndex = 0; panelIndex < data.m_StressMaterials.size(); ++panelIndex)
+                {
+                    if (!data.m_StressMaterials[panelIndex].IsValid())
+                    {
+                        continue;
+                    }
+                    float panelX = 0.0f;
+                    float panelZ = 0.0f;
+                    GetStressPanelCenter(panelIndex, panelX, panelZ);
+                    Entity *panelObject = world.SpawnObject<Entity>();
+                    ctx.ScopeRef.TrackObject(panelObject);
+                    panelObject->SetPosition(panelX, -1.0f, panelZ);
+
+                    Component::MeshComponent *panelMeshComponent =
+                        world.CreateComponent<Component::MeshComponent>(panelObject);
+                    panelMeshComponent->SetMeshHandle(MeshDataHandle{Rendering3DTestData::kStressPanelMeshHandleBase + panelIndex});
+                    panelMeshComponent->SetCastShadow(false);
+                    panelMeshComponent->SetCustomData(0, 1.0f);
+                    panelMeshComponent->SetCustomData(1, 1.0f);
+                    panelMeshComponent->SetCustomData(2, 1.0f);
+                    panelMeshComponent->SetCustomData(3, 1.0f);
+                    panelMeshComponent->SetMaterial(0, data.m_StressMaterials[panelIndex]);
+                }
+                LOG_INFO("Stress panels created and added to World count=%zu", data.m_StressMaterials.size());
+            }
 
             // --- ポイントライト光源球体オブジェクト ---
             data.m_pLightSphereObject = world.SpawnObject<Entity>();
@@ -2132,6 +2384,9 @@ namespace Game::GameModes
         }
 #endif
 
+        // 決定的な撮影では、組み立てが終わるまで読み込み中として扱う（最初の Tick が判定する）。
+        ctx.EngineRef.GetDeterministicCapture().SetSceneReady(false);
+
         return GameModeEnterResult::Succeeded;
     }
 
@@ -2640,10 +2895,22 @@ namespace Game::GameModes
         if (data.m_pSphereObject && (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested))
         {
             static const bool bSphereSpin = ReadStartupSphereSpinEnabled();
-            float angle = bSphereSpin ? data.m_ElapsedTime * data.m_RotationSpeed : 0.0f;
+            // 決定的な撮影では、自転を壁時計ではなく、読み込み完了の時点から数えた固定刻みの時間に従わせる。
+            const auto &deterministicCapture = ctx.EngineRef.GetDeterministicCapture();
+            const float spinSeconds = deterministicCapture.IsEnabled()
+                                          ? static_cast<float>(deterministicCapture.GetEpochSeconds())
+                                          : data.m_ElapsedTime;
+            float angle = bSphereSpin ? spinSeconds * data.m_RotationSpeed : 0.0f;
             NorvesLib::Math::Vector3 yAxis(0.0f, 1.0f, 0.0f);
             NorvesLib::Math::Quaternion rotation(yAxis, angle);
             data.m_pSphereObject->SetRotation(rotation);
+        }
+
+        // 決定的な撮影は、組み立てが終わった時点（この Tick の大きな球の生成まで含む）から数え直す。
+        if (ctx.EngineRef.GetDeterministicCapture().IsEnabled())
+        {
+            UpdateVirtualTextureSettle(ctx, data);
+            ctx.EngineRef.GetDeterministicCapture().SetSceneReady(IsStartupSceneAssembled(data));
         }
 
     }
@@ -2752,6 +3019,7 @@ namespace Game::GameModes
         data.m_pGroundMeshComponent = nullptr;
         data.m_GroundPieces.clear();
         data.m_GroundSwatchMaterials.clear();
+        data.m_StressMaterials.clear();
         data.m_pLightSphereObject = nullptr;
         data.m_pLightSphereMeshComponent = nullptr;
         data.m_pPointLightComponent = nullptr;

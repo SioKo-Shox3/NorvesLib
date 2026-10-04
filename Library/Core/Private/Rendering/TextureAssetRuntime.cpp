@@ -1,5 +1,6 @@
-#include "Rendering/TextureAssetRuntime.h"
+﻿#include "Rendering/TextureAssetRuntime.h"
 
+#include "Asset/AssetSystem.h"
 #include "Rendering/CookedTextureUpload.h"
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/TextureAsyncLoadQueue.h"
@@ -182,6 +183,15 @@ namespace NorvesLib::Core::Rendering
                                                      const void *data,
                                                      size_t dataSize)
     {
+        // sparse は Update で中身を作れない。初期データは渡せない（タイル単位で書き込む）。
+        if (createInfo.bSparse && data && dataSize > 0)
+        {
+            NORVES_LOG_ERROR("TextureResources",
+                             "sparseテクスチャに初期データは渡せません（タイル単位で書き込みます）: texture=%s",
+                             createInfo.DebugName.c_str());
+            return TextureHandle::Invalid();
+        }
+
         uint32_t effectiveMipLevels = std::max(1u, createInfo.MipLevels);
         auto createStartTime = LoadProfileNow();
         TextureHandle handle = IsBound()
@@ -325,6 +335,39 @@ namespace NorvesLib::Core::Rendering
         }
 
         return TextureAssetLoader::PrepareForWorker(plan, role, requestId);
+    }
+
+    bool TextureAssetRuntime::ResolveCookedTextureRange(
+        const Container::String &path,
+        Asset::AssetCookedRange &outRange,
+        Container::TSharedPtr<const Asset::AssetSystem> &outAssetSystem,
+        Container::String *pOutReason)
+    {
+        TextureAssetLoadPlan plan;
+        {
+            Thread::ScopedLock assetLock(m_TextureAssetMutex);
+            plan = GetTextureAssetResolverLocked().BuildTextureLoadPlan(path);
+        }
+        if (!plan.bPathValid || !plan.bUseAssetSystem || !plan.AssetSystem)
+        {
+            if (pOutReason != nullptr)
+            {
+                *pOutReason = Container::String("テクスチャのパスをアセットマニフェスト経由で解決できない");
+            }
+            return false;
+        }
+
+        Container::AnsiString reason;
+        if (!plan.AssetSystem->TryResolveCookedRange(plan.LogicalPath, Asset::AssetKind::Texture, outRange, &reason))
+        {
+            if (pOutReason != nullptr)
+            {
+                *pOutReason = Container::String(reason.c_str());
+            }
+            return false;
+        }
+        outAssetSystem = plan.AssetSystem;
+        return true;
     }
 
     bool TextureAssetRuntime::IsPreparedTextureAssetCurrent(const PreparedTextureAsset &prepared) const

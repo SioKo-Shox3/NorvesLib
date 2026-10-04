@@ -1,4 +1,7 @@
 #version 450
+#ifdef NORVES_SPARSE_RESIDENCY_SHADING
+#extension GL_ARB_sparse_texture2 : require
+#endif
 
 layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
@@ -19,7 +22,8 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=ORMの1枚が metallicTexture の枠に張られているか（1/0）, w=法線が2チャンネル（BC5）か（1/0）
-    vec4 frameParams; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ
+    vec4 frameParams; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
+    vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -31,6 +35,10 @@ layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/SparseResidencySampling.glsl"
+#define VT_FEEDBACK_BINDING 11
+#include "Common/VirtualTextureFeedback.glsl"
+#include "Common/PbrMaterialTextureSampling.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
 #include "Common/PreExposedEmissive.glsl"
 
@@ -46,6 +54,7 @@ void main()
     // POMパラメータ取得
     float heightScale = mvp.pomParams.x;
     float hasHeightMap = mvp.pomParams.y;
+    bool bVirtualTexture = mvp.frameParams.z > 0.5;
 
     // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
     mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
@@ -54,13 +63,26 @@ void main()
     vec2 texCoord = fragTexCoord;
     if (hasHeightMap > 0.5)
     {
-        texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, fragViewDir, heightScale);
+        texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, fragViewDir, heightScale, bVirtualTexture);
     }
 
     // テクスチャサンプリング × オブジェクトカラー（POM補正済みUV使用）
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
-        mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5);
+        mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5, bVirtualTexture);
+    // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
+    // 高さだけは POM の前の元の UV で書く。
+    WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.frameParams.w),
+                                g_VirtualTextureAlbedoEscaped);
+    WriteVirtualTextureFeedback(normalTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.x),
+                                g_VirtualTextureNormalEscaped);
+    WriteVirtualTextureFeedback(metallicTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.y),
+                                g_VirtualTextureOrmEscaped);
+    if (hasHeightMap > 0.5)
+    {
+        WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord,
+                                          DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z));
+    }
     outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
                      textureSamples.Albedo.a);
 

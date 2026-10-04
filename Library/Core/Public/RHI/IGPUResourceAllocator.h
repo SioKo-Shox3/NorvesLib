@@ -29,6 +29,7 @@ namespace NorvesLib::RHI
         uint64_t Size = 0;                         ///< バッファサイズ（バイト）
         ResourceUsage Usage = ResourceUsage::None; ///< 使用用途
         bool CPUAccessible = false;                ///< CPUからアクセス可能か
+        bool bExcludeDeviceLocal = false;          ///< DeviceLocal のメモリを選ばない（ステージング用。選べなければ作成に失敗する）
         const char *DebugName = nullptr;           ///< デバッグ用名前
 
         BufferDesc() = default;
@@ -53,6 +54,7 @@ namespace NorvesLib::RHI
         ResourceUsage Usage = ResourceUsage::ShaderRead;          ///< 使用用途
         TextureDimension Dimension = TextureDimension::Texture2D; ///< テクスチャ次元
         bool IsCubemap = false;                                   ///< キューブマップか
+        bool bSparse = false;                                     ///< sparse（物理メモリを結ばずに作り、タイルごとに結ぶ）か
         const char *DebugName = nullptr;                          ///< デバッグ用名前
 
         TextureDesc() = default;

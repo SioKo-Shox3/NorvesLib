@@ -320,6 +320,16 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetStaticEnvironmentIntensityScale(scale);
     }
 
+    void RenderWorld::SetDeterministicCapture(bool bEnabled)
+    {
+        m_RenderingCoordinator.SetDeterministicCapture(bEnabled);
+    }
+
+    void RenderWorld::BeginDeterministicEpoch()
+    {
+        m_RenderingCoordinator.BeginDeterministicEpoch();
+    }
+
     void RenderWorld::EndFrame()
     {
         if (!m_bInitialized)

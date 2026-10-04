@@ -79,7 +79,7 @@ endif()
 
 message(STATUS "${odd_stdout}")
 
-# ---- v0.0 の経路は版 0 のまま ----
+# ---- format 指定（v0.0）の経路は版 0 のまま。--usage の経路は v0.2（タイル配置）で書く ----
 # パッケージの 16 進文字列から、.nvtex 内の offset バイト目から byte_count バイトをリトルエンディアンで読む。
 # .nvtex の先頭は、エントリ名の長さでパッケージ内の位置が変わるため、マジック(NVTEX と版の 8 バイト)を探して決める。
 function(read_nvtex_le package_hex offset byte_count out_var)
@@ -116,7 +116,8 @@ string(REPEAT "A" 64 usage_gray_pixels)
 file(WRITE "${USAGE_PGM}" "P5\n8 8\n127\n${usage_gray_pixels}")
 
 # 引数: 用途 入力の種類(single=--input 1 枚 / orm=--orm-*) 入力 期待する PixelFormat 色空間 ペイロードのバイト数 マニフェストの format
-function(check_usage_cook usage input_kind input expected_pixel_format expected_color_space expected_payload_bytes expected_manifest_format)
+#       標準ブロック形状のタイルの幅・高さ(texel)
+function(check_usage_cook usage input_kind input expected_pixel_format expected_color_space expected_payload_bytes expected_manifest_format expected_tile_w expected_tile_h)
     set(package "${SMOKE_DIR}/Cooked/usage_${usage}.nvpkg")
     set(manifest "${SMOKE_DIR}/usage_${usage}_manifest.json")
     if(input_kind STREQUAL "orm")
@@ -176,8 +177,8 @@ function(check_usage_cook usage input_kind input expected_pixel_format expected_
     read_nvtex_le("${package_hex}" 56 8 payload_size)
     message(STATUS "usage=${usage} minor=${version_minor} ${width}x${height} mips=${mip_count} pixel_format=${pixel_format} color_space=${color_space} payload=${payload_size}")
 
-    if(NOT version_minor EQUAL 1)
-        message(FATAL_ERROR "--usage ${usage}: NVTEX の minor が 1 ではない(${version_minor})")
+    if(NOT version_minor EQUAL 2)
+        message(FATAL_ERROR "--usage ${usage}: NVTEX の minor が 2 ではない(${version_minor})")
     endif()
     if(NOT width EQUAL 8 OR NOT height EQUAL 8)
         message(FATAL_ERROR "--usage ${usage}: 大きさが 8x8 ではない(${width}x${height})")
@@ -194,6 +195,37 @@ function(check_usage_cook usage input_kind input expected_pixel_format expected_
     if(NOT payload_size EQUAL ${expected_payload_bytes})
         message(FATAL_ERROR "--usage ${usage}: ペイロードが ${expected_payload_bytes} バイトではない(${payload_size})")
     endif()
+
+    # v0.2 のヘッダの続き。8x8 はタイルより小さいので、全段がミップテイル（タイルの表は空）になる。
+    read_nvtex_le("${package_hex}" 8 4 header_size)
+    read_nvtex_le("${package_hex}" 112 4 tile_width)
+    read_nvtex_le("${package_hex}" 116 4 tile_height)
+    read_nvtex_le("${package_hex}" 120 4 first_tail_mip)
+    read_nvtex_le("${package_hex}" 124 4 tile_data_bytes)
+    read_nvtex_le("${package_hex}" 128 8 tile_table_offset)
+    read_nvtex_le("${package_hex}" 136 8 tile_table_size)
+    read_nvtex_le("${package_hex}" 144 8 tail_offset)
+    read_nvtex_le("${package_hex}" 152 8 tail_size)
+    read_nvtex_le("${package_hex}" 48 8 payload_offset)
+    if(NOT header_size EQUAL 160)
+        message(FATAL_ERROR "--usage ${usage}: v0.2 のヘッダが 160 バイトではない(${header_size})")
+    endif()
+    if(NOT tile_width EQUAL ${expected_tile_w} OR NOT tile_height EQUAL ${expected_tile_h})
+        message(FATAL_ERROR "--usage ${usage}: タイルの形状が ${expected_tile_w}x${expected_tile_h} ではない(${tile_width}x${tile_height})")
+    endif()
+    if(NOT tile_data_bytes EQUAL 65536)
+        message(FATAL_ERROR "--usage ${usage}: タイルのバイト数が 65536 ではない(${tile_data_bytes})")
+    endif()
+    if(NOT first_tail_mip EQUAL 0 OR NOT tile_table_size EQUAL 0)
+        message(FATAL_ERROR "--usage ${usage}: 8x8 は全段がミップテイルのはずだが first_tail_mip=${first_tail_mip} tile_table_size=${tile_table_size}")
+    endif()
+    # ヘッダ 160 + ミップ表 4 件 x 32 = 288 バイト目にタイルの表（空）とペイロードが続く。
+    if(NOT tile_table_offset EQUAL 288 OR NOT payload_offset EQUAL 288)
+        message(FATAL_ERROR "--usage ${usage}: タイルの表・ペイロードの位置が 288 ではない(${tile_table_offset}, ${payload_offset})")
+    endif()
+    if(NOT tail_offset EQUAL ${payload_offset} OR NOT tail_size EQUAL ${payload_size})
+        message(FATAL_ERROR "--usage ${usage}: ミップテイルがペイロード全体ではない(${tail_offset}, ${tail_size})")
+    endif()
 endfunction()
 
 # PixelFormat: BC4=5 BC5=6 BC7=7 R16=8、ColorSpace: Linear=1 sRGB=2。
@@ -201,12 +233,73 @@ endfunction()
 #   BC7・BC5(16 バイト/ブロック): 4+1+1+1 = 7 ブロック = 112 バイト
 #   BC4(8 バイト/ブロック): 7 ブロック = 56 バイト
 #   R16(2 バイト/画素): 64+16+4+1 = 85 画素 = 170 バイト
-check_usage_cook(albedo   single "${USAGE_PPM}"   7 2 112 "nvtex.v0.1.bc7.srgb")
-check_usage_cook(normal   single "${USAGE_PPM}"   6 1 112 "nvtex.v0.1.bc5.linear")
-check_usage_cook(orm      orm    "${USAGE_PGM}"   7 1 112 "nvtex.v0.1.bc7.linear")
-check_usage_cook(single   single "${USAGE_PGM}"   5 1 56  "nvtex.v0.1.bc4.linear")
+# タイルの形状（標準ブロック形状。BC7・BC5 は 256x256、BC4 は 512x256、R16 は 256x128 texel）。
+check_usage_cook(albedo   single "${USAGE_PPM}"   7 2 112 "nvtex.v0.2.bc7.srgb"   256 256)
+check_usage_cook(normal   single "${USAGE_PPM}"   6 1 112 "nvtex.v0.2.bc5.linear" 256 256)
+check_usage_cook(orm      orm    "${USAGE_PGM}"   7 1 112 "nvtex.v0.2.bc7.linear" 256 256)
+check_usage_cook(single   single "${USAGE_PGM}"   5 1 56  "nvtex.v0.2.bc4.linear" 512 256)
 # 8bit の入力は 16bit へ拡大される。16bit の入力の精度は AssetCookTextureUsageSmoke(PNG)で確かめる。
-check_usage_cook(height16 single "${USAGE_PGM}"   8 1 170 "nvtex.v0.1.r16.linear")
+check_usage_cook(height16 single "${USAGE_PGM}"   8 1 170 "nvtex.v0.2.r16.linear" 256 128)
+
+# タイルを持つ大きさ: BC4 の 1024x512（タイル 512x256）。段 0 は 2x2、段 1 は 1x1 のタイルで、段 2（256x128）からミップテイル。
+#   ペイロード 349544 バイト = タイル 327680（段 0・1: (32768 + 8192) ブロック x 8）+ ミップテイル 21864（残り 2733 ブロック x 8）
+#   ミップ表 11 件 x 32 = 352、タイルの表 5 件 x 32 = 160 なので、タイルの表は 160 + 352 = 512、ペイロードは 672 バイト目。
+set(TILED_PGM "${SMOKE_DIR}/tiled_gray.pgm")
+string(REPEAT "A" 524288 tiled_gray_pixels)
+file(WRITE "${TILED_PGM}" "P5\n1024 512\n127\n${tiled_gray_pixels}")
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}"
+        --input "${TILED_PGM}"
+        --out "${SMOKE_DIR}/Cooked/tiled_single.nvpkg"
+        --manifest "${SMOKE_DIR}/tiled_single_manifest.json"
+        --logical "Textures/tiled_single.nvtex"
+        --kind texture
+        --entry "tiled_single.nvtex"
+        --entry-type Tex0
+        --usage single
+        --quality fast
+        --variant default
+    RESULT_VARIABLE tiled_result
+    OUTPUT_VARIABLE tiled_out
+    ERROR_VARIABLE tiled_err
+)
+if(NOT tiled_result EQUAL 0)
+    message(STATUS "${tiled_out}")
+    message(STATUS "${tiled_err}")
+    message(FATAL_ERROR "タイルを持つ大きさの --usage single が exit code ${tiled_result} で失敗した")
+endif()
+file(READ "${SMOKE_DIR}/Cooked/tiled_single.nvpkg" tiled_hex HEX)
+read_nvtex_le("${tiled_hex}" 14 2 tiled_minor)
+read_nvtex_le("${tiled_hex}" 8 4 tiled_header_size)
+read_nvtex_le("${tiled_hex}" 24 8 tiled_file_size)
+read_nvtex_le("${tiled_hex}" 48 8 tiled_payload_offset)
+read_nvtex_le("${tiled_hex}" 56 8 tiled_payload_size)
+read_nvtex_le("${tiled_hex}" 112 4 tiled_tile_w)
+read_nvtex_le("${tiled_hex}" 116 4 tiled_tile_h)
+read_nvtex_le("${tiled_hex}" 120 4 tiled_first_tail)
+read_nvtex_le("${tiled_hex}" 128 8 tiled_table_offset)
+read_nvtex_le("${tiled_hex}" 136 8 tiled_table_size)
+read_nvtex_le("${tiled_hex}" 144 8 tiled_tail_offset)
+read_nvtex_le("${tiled_hex}" 152 8 tiled_tail_size)
+message(STATUS "tiled single: minor=${tiled_minor} payload=${tiled_payload_size} first_tail=${tiled_first_tail} tiles=${tiled_table_size}/32 tail=${tiled_tail_size}")
+if(NOT tiled_minor EQUAL 2 OR NOT tiled_header_size EQUAL 160)
+    message(FATAL_ERROR "タイルを持つ大きさ: v0.2 のヘッダではない(minor=${tiled_minor} header=${tiled_header_size})")
+endif()
+if(NOT tiled_tile_w EQUAL 512 OR NOT tiled_tile_h EQUAL 256 OR NOT tiled_first_tail EQUAL 2)
+    message(FATAL_ERROR "タイルを持つ大きさ: タイルの形状・ミップテイルの先頭が違う(${tiled_tile_w}x${tiled_tile_h} first_tail=${tiled_first_tail})")
+endif()
+if(NOT tiled_payload_size EQUAL 349544 OR NOT tiled_table_size EQUAL 160 OR NOT tiled_table_offset EQUAL 512 OR NOT tiled_payload_offset EQUAL 672)
+    message(FATAL_ERROR "タイルを持つ大きさ: 表・ペイロードの大きさか位置が違う(payload=${tiled_payload_size} table=${tiled_table_size}@${tiled_table_offset} payload@${tiled_payload_offset})")
+endif()
+math(EXPR expected_tail_offset "${tiled_payload_offset} + 327680")
+if(NOT tiled_tail_offset EQUAL ${expected_tail_offset} OR NOT tiled_tail_size EQUAL 21864)
+    message(FATAL_ERROR "タイルを持つ大きさ: ミップテイルの位置・大きさが違う(${tiled_tail_offset}, ${tiled_tail_size})")
+endif()
+math(EXPR tiled_end "${tiled_tail_offset} + ${tiled_tail_size}")
+math(EXPR tiled_payload_end "${tiled_payload_offset} + ${tiled_payload_size}")
+if(NOT tiled_end EQUAL ${tiled_payload_end})
+    message(FATAL_ERROR "タイルを持つ大きさ: ミップテイルがペイロードの終わりまで続いていない(${tiled_end} != ${tiled_payload_end})")
+endif()
 
 # 組み合わせの誤りは断る。
 function(expect_usage_failure label)

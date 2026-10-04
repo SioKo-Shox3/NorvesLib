@@ -133,90 +133,153 @@
 - notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG2-CAPTURE-DETERMINISTIC: 同じコードを2回撮ると一致する撮影の方式を足す
-- status: backlog
-- done-when: 撮影スクリプトに、テクスチャ・モデルの読み込みが終わってから決まったフレーム数だけ描き、TAA・RTGI・自動露出の履歴と乱数の種を読み込み完了の時点から数えて固定する方式を足す。同じコードを2回撮った平均輝度の差が各視点 0.1 以下、PSNR 45 dB 以上になる。既定の描画経路は変えない（撮影の方式のときだけ働く）。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-CAPTURE-DETERMINISTIC -Configuration RelWithDebInfo`
-- paths: Scripts/CaptureStartupScene.ps1, Game, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Engine, TASKS.md, PROGRESS.md
-- notes: 2026-10-04 親が足した。VTG1-MATERIAL-ORM で、同じコードを撮り直すだけで1視点あたり最大2.6動き、見た目の保全を数値で判定できなかった。段2以降（VT・ビジビリティバッファ）の見た目の比較はこの方式で撮る。
+- status: done
+- done-when: Game に撮影用の `--capture-deterministic` を足す。テクスチャ・モデル・大きな球の生成の非同期の読み込みがすべて終わってから、シミュレーションの時間を 1/60 秒の固定刻みにし、TAA の揺らしの列・RTGI の乱数の種・自動露出・時間的な履歴を「読み込み完了の時点」から数え直して、決まった描画フレーム数の後に撮る。大きな球の自転は撮影の時間に従う（壁時計に依らない）。`Scripts/CaptureStartupScene.ps1` に `-Deterministic` を足してこれを付ける。同じコードを `-Deterministic` で2回撮った各視点の平均輝度の差が 0.1 以下、PSNR が 45 dB 以上になる（3視点、`metrics.json` に `deterministic=true` と両方の値を記録する）。付けないときの既定の描画経路と見た目は変えない。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-CAPTURE-DETERMINISTIC-a -Configuration RelWithDebInfo -Deterministic`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-CAPTURE-DETERMINISTIC-b -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/VTG2-CAPTURE-DETERMINISTIC-a`
+- stop-when: GPU の処理の順序（アトミックの順など）で 45 dB に届かない場合は、測った値と原因の候補を記録して止める。
+- paths: Scripts/CaptureStartupScene.ps1, Game, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Engine, Library/Core/Public/Engine, TASKS.md, PROGRESS.md
+- notes: 2026-10-04 親が足した。VTG1-MATERIAL-ORM で、同じコードを撮り直すだけで1視点あたり最大2.6動き、見た目の保全を数値で判定できなかった。段2以降（VT・ビジビリティバッファ）の見た目の比較は `-Deterministic` で撮る。2枚の PNG の PSNR は既存の比較の道具（`VTG1-ACCEPT` で使ったもの）か、小さな PowerShell の関数で測る。
 
 ## VTG2-SPARSE-CAPS: sparseの機能とキューを照会して有効化する
-- status: backlog
-- done-when: `sparseBinding`・`sparseResidencyImage2D`・`sparseResidencyAliased`・`shaderResourceResidency`・`shaderResourceMinLod` を照会し、対応時に有効化する。sparse binding のできるキューを探して作り、`DeviceCapabilities` に sparse の可否・形式ごとの標準ブロック形状を載せる。GPU のテストが RTX 4080 で BC7・BC5・BC4・R16 の 2D の sparse の標準ブロック形状（64 KiB）を確かめる。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^SparseCapabilitiesVulkanTest$"`
+- status: done
+- done-when: Vulkan のデバイスの作成で `sparseBinding`・`sparseResidencyImage2D`・`sparseResidencyAliased`・`shaderResourceResidency`・`shaderResourceMinLod` を照会し、対応時に有効化する。`VK_QUEUE_SPARSE_BINDING_BIT` を持つキューの族を探し（グラフィックスの族が持てばそれを使う）、sparse の結び付けに使うキューを持つ。`DeviceCapabilities` に sparse の可否（2D の residency・shader の residency・MinLod）と、形式ごとの標準ブロック形状（`vkGetPhysicalDeviceSparseImageFormatProperties` の imageGranularity と標準形状か否か）を照会する API を載せる。GPU のテスト `SparseCapabilitiesVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）が、開発機（RTX 4080）で BC7・BC5・BC4・R16 の 2D の sparse が使え、64 KiB のタイル（BC7・BC5 は 256×256 texel、BC4 は 512×256、R16 は 256×128）であることを確かめる（Vulkan が無ければ 125、sparse が無ければ理由を出して 125）。
+- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(SparseCapabilitiesVulkanTest|VideoMemoryBudgetVulkanTest|RHIBlockCompressedTextureVulkanTest)$"`
+- stop-when: 機能を有効にすると開発機でデバイスの作成が失敗する場合は、理由を記録して止める。
 - paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 段2の開始時に親が詳しくする（計画書 4.2）。
+- notes: 計画書 4.2。危険地帯（RHI/Vulkan）。sparse の無い GPU では以降の VT を使わず、段1の BC の全常駐で描く。
 
 ## VTG2-SPARSE-TEXTURE: sparseのテクスチャを作り、タイルとミップテイルの情報を返す
-- status: backlog
-- done-when: RHI に sparse のテクスチャの作成（ミップ全段、物理メモリなし）と、タイルの大きさ・ミップごとのタイル数・ミップテイルの開始段と大きさを返す API を足す。sparse に対応しない GPU では作成が失敗する。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^SparseTextureVulkanTest$"`
-- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- status: done
+- done-when: `TextureCreateInfo` に sparse の印を足し、物理メモリを結ばない sparse の 2D テクスチャ（全ミップ）を作れる。RHI の API がタイルの大きさ（texel）、ミップごとのタイルの数（x・y）、ミップテイルの開始段と大きさ・オフセット（`vkGetImageSparseMemoryRequirements`）を返す。sparse に対応しない GPU・形式では作成が失敗して理由をログに出す。テクスチャの台帳（`VRAM_LEDGER`）は sparse のテクスチャを「結んだ量」で数える。GPU のテスト `SparseTextureVulkanTest`（`RHITextureUpdateVulkanTest` の束）が 4096² の BC7 の sparse のテクスチャでタイルの数（ミップ0 は 16×16）とミップテイルの開始段を確かめる。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(SparseTextureVulkanTest|SparseCapabilitiesVulkanTest|TextureMemoryLedgerTest)$"`
+- stop-when: 既存の `VulkanTexture` の作成の経路に sparse を足すと、通常のテクスチャの寿命や更新の契約を変える必要がある場合は、理由を記録して止める。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RHI/Vulkan）。
 
 ## VTG2-SPARSE-BIND: 物理ページのプールと、タイルの結び付け・外しを作る
-- status: backlog
-- done-when: DeviceLocal の大きな塊から 64 KiB のページを切り出すプールと、`vkQueueBindSparse` によるタイル・ミップテイルの結び付け・外しを、グラフィックスのキューとセマフォで順序付けて行う。外したページは `GpuRetireQueue` で遅延して返す。GPU のテストが、結んだタイルへ書いた色をサンプルで読み戻し、外したタイルを読まないことを確かめる。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^SparseBindVulkanTest$"`
-- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- status: done
+- done-when: DeviceLocal の大きな塊（既定 64 MiB）から 64 KiB のページを切り出すプール（`SparsePagePool`。RenderResources が持つ）と、RHI の「タイル（ミップ・x・y）とミップテイルへページを結ぶ・外す」API を作る。結び付けは1フレーム分をまとめて `vkQueueBindSparse` 1回で出し、グラフィックスのキューとはセマフォで順序付ける（結んだタイルを読む描画より前に結び付けが終わる）。外したページは `GpuRetireQueue` で、最後に使った提出の serial が完了してからプールへ返す。プールの使用量を `VRAM_LEDGER` に出す。GPU のテスト `SparseBindVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、ミップテイルと2タイルを結び、結んだタイルへ書いた色を計算シェーダーのサンプルで読み戻し、外した後にプールの空きが戻ることを確かめる。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(SparseBindVulkanTest|SparseTextureVulkanTest|GpuRetireQueueTest)$"`
+- stop-when: 開発機で `vkQueueBindSparse` が1回あたり 2 ms を超え、まとめ方で縮まない場合は、測った値を記録して止める。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RHI/Vulkan・メモリ・寿命）。
+
+## VTG2-TILE-UPLOAD: ステージングのリングからタイルへGPUを待たずに書く
+- status: done
+- done-when: 毎フレームのステージングのリング（既定 32 MiB、DeviceLocal でない host-visible）に置いたタイル・ミップテイルのデータを、描画のコマンドの先頭でバッファからイメージの領域へコピーする経路を作る（`VulkanTexture::Update` の waitIdle の経路は使わない）。リングの区画は、その提出の serial が完了するまで再利用しない。1フレームにコピーする量の上限（既定 24 MiB）を持つ。GPU のテスト `SparseTileUploadVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、連続する複数フレームでタイルを書いて読み戻し、その間に `WaitIdle` を呼ばないことを確かめる。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(SparseTileUploadVulkanTest|SparseBindVulkanTest|RHITextureUpdateVulkanTest)$"`
+- stop-when: 描画のコマンドの先頭へコピーを差し込むと RenderGraph の資源の状態の追跡と食い違う場合は、理由を記録して止める。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RHI/Vulkan・RenderThread）。後の段のジオメトリのページのアップロードもこのリングを使う。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残り1件だけ直す。`VulkanBuffer` の作成で、メモリの種類の選択・確保・結び付けのどれかに失敗したとき、作成済みの `VkBuffer`（と確保済みのメモリ）を破棄してから失敗を返す（例外の経路を含め、失敗時の後始末を1か所にまとめる）。`CPUAccessible=false`・`bExcludeDeviceLocal=true` の小さな `TransferSrc` のバッファの作成の失敗を繰り返しても、作成と破棄の数（または検証レイヤーの未解放の報告）が増えないことを GPU のテストで確かめる。
 
 ## VTG2-NVTEX-TILED: クック済みのテクスチャをタイルの並びで書き、1タイルずつ読めるようにする
-- status: backlog
-- done-when: クッカーが標準ブロック形状のタイル単位に並べたデータとミップテイルの塊を書き（NVTEX v0.2 またはv1）、読み込み側がファイルの範囲読みで1タイルを取り出せる。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedTextureTest|AssetCookTextureSmoke)$"`
-- paths: Tools/AssetCook, Library/Core/Public/Asset, Library/Core/Private/Asset, Test/Core/Asset, TASKS.md, PROGRESS.md
+- status: done
+- done-when: NVTEX v0.2 として、クッカーが形式の標準ブロック形状のタイル単位（ミップごと、行優先）に並べたデータと、ミップテイル（タイルより小さい段）をまとめた塊を書き、タイルの表（ファイル内のオフセット・大きさ）を持つ。v0.0・v0.1 も読む。読み込み側は、ファイルの範囲読みで1タイル・ミップテイルを取り出せる（全体を読まない）。`CookAssets` の起動画面の材質は v0.2 で焼く。`CookedTextureTest` に v0.2 のタイルの表・範囲読み・壊れた表の拒否を、`AssetCookTextureSmoke` に v0.2 の書き出しを足す。
+- verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest CookedTextureUploadTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedTextureTest|CookedTextureUploadTest|AssetCookTextureSmoke)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target AssetCook CookAssets -- /m:1`
+- stop-when: タイルの形状がデバイスごとに違い、クックの時点で1つに決められない場合は、標準ブロック形状に限る理由を記録して止める。
+- paths: Tools/AssetCook, Library/Core/Public/Asset, Library/Core/Private/Asset, Library/Core/Private/Rendering, Test/Core/Asset, Docs/Architecture, TASKS.md, PROGRESS.md
+- notes: 危険地帯（アセットロード）。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残りを直す。`Test/Core/Asset/CookedTextureTest.cpp` に足した範囲読みのテストの2か所（`BuildTexture` の戻り値を受ける変数）を独自型の `ByteArray` で受ける（既存の補助関数は変えない）。この項目で足した・変えた利用者向けのエラーの説明（評価が挙げた `AssetFileReader.cpp`・`CookedTextureLoader.cpp`・`TextureCooker.cpp` の行）を日本語にする（エラーコード・ログのキーは英語のまま）。
 
 ## VTG2-BUDGET-MANAGER: VRAMの予算をプールへ割り振る
-- status: backlog
-- done-when: `VideoMemoryBudgetManager`（RenderResources が持つ）が、上限 = min(heapBudget − 予算外の使用量, `--vram-budget-mb`) を VT のプールなどへ割り振り、`VRAM_POOLS vt_mb=<n> ...` を出す。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^VideoMemoryBudgetManagerTest$"`
-- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- status: done
+- done-when: `VideoMemoryBudgetManager`（RenderResources が持つ。シングルトン禁止）が、上限 = min(heapBudget, `--vram-budget-mb`) − VT 以外の使用量（ヒープの情報があれば heapUsage からプールの確保量を引いた値、無ければ上限の30%の見込み）を約1秒ごとに計算し、VT のプール（`SparsePagePool`）の目標の大きさを決める（後の段のジオメトリ・VSM のプールの枠も持つ）。変化したときだけ `VRAM_POOLS cap_mb=<n> non_pool_mb=<n> vt_target_mb=<n>` を出す。CPU のテスト `VideoMemoryBudgetManagerTest`（`RenderResourcesDomainContractTest` の束）が、上限・予算外の使用量・上限の引数の組み合わせで目標の大きさが期待どおりで、負にならないことを確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VideoMemoryBudgetManagerTest|TextureMemoryLedgerTest)$"`
+- stop-when: 予算外の使用量（VT 以外の確保）を数える手段が台帳に無い場合は、理由を記録して止める。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.1。 2026-10-04 親（run `20261004-164924` の保留を解く）: `blocked/VTG2-BUDGET-MANAGER.md` の選択肢Bを採る（台帳の作り直しはしない）。`VK_EXT_memory_budget` は主要な GPU で使えるので、ヒープの情報があるときは `non_pool = heapUsage − SparsePagePool が確保している全ページの量`（結んだ量・貸した量ではなく、プールの塊として確保した量）で決める。ヒープの情報が無いときは、上限（`--vram-budget-mb`、無ければ DeviceLocal のヒープの大きさ）の30%を VT 以外へ見込む保守的な近似にし、`VRAM_POOLS` に `source=estimate` を出す。台帳（`VRAM_LEDGER`）が解放待ちの資源と、パスが直接作るテクスチャを数えない点は既知の限界として段2の受入れに書く。 2026-10-04 親（run `20261004-210106` の保留を解く）: `blocked/VTG2-BUDGET-MANAGER.md` の選択肢Aを採る。`paths:` に `Library/Core/Public/RHI`・`Library/Core/Private/RHI` を足した。`RHI::VideoMemoryBudget` に、拡張の有無に依らず埋める DeviceLocal のヒープの大きさの合計（`DeviceLocalHeapBytes`）を足し（`bValid` の意味は変えない）、`--vram-budget-mb` もヒープの予算も無いときの上限に使う。CPU のテストで、上限の引数なし・ヒープの予算なし・ヒープの大きさ 2000 MiB のとき `non_pool=600 MiB`・`vt_target=1400 MiB`・`source=estimate` を確かめる。
+
+## VTG2-RESIDENCY-FALLBACK: 常駐していないタイルを読まず、粗いミップへ逃げる
+- status: done
+- done-when: VT のテクスチャ（材質の Albedo・Normal・ORM・Height の枠）のサンプルを、`GL_ARB_sparse_texture2` の `sparseTextureARB` で行い、常駐していない（residency の符号が非常駐）ときは `sparseTextureLodARB` で1段ずつ粗いミップへ下げて読み直す（ミップテイルは常に常駐なので必ず終わる）。POM の高さのサンプルも同じ。`gbuffer.frag`・`megageometry.frag`・`forward_transparent.frag` が共通の関数（`Common/` の GLSL）を使い、材質が VT でないときは従来の `texture()` のまま（golden 不変）。GPU のテスト `VirtualTextureResidencyVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、ミップテイルと一部のタイルだけを結んだテクスチャで、結んでいない領域が粗いミップの色になり、黒や未定義の値にならないことを確かめる。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderingGoldenImageTest MaterialResourcesTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureResidencyVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|MaterialResourcesTest|GBufferMaterialDescriptorCacheTest)$"`
+- stop-when: シェーダーのコンパイル（shaderc）が sparse の拡張を通さない場合は、理由を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-04 親: 計画書 4.2 の「常駐ミップの地図＋ MinLod」から、residency の符号で粗いミップへ逃げる方式に変えた（材質ごとの地図の binding を増やさずに済み、非常駐は過渡的なので追加のサンプルは一時的）。異方性フィルタは逃げた画素だけ失う。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残りを直す。POM の明示勾配の版で、再試行の開始 LOD を自前の式で求めず、POM の分岐・ループの前に元の UV の `textureQueryLod` で実際の標本の LOD を取り、明示勾配の版へ渡す（異方性の上限のせいで細かいミップへ戻らない）。評価が挙げた反例（512²、ミップ0 のタイル(0,0) とミップテイルだけ常駐、ミップ1 は非常駐、UV (0.25,0.25)、勾配 (8/512,0)・(0,1/512)、異方性の上限4 → 期待はミップ2）を `VirtualTextureResidencyVulkanTest` のケースに足す。
 
 ## VTG2-FEEDBACK-WRITE: 材質のサンプルの箇所からタイルの要求をGPUのバッファへ書く
-- status: backlog
-- done-when: 3つの frag が、4×4 の画素のうちフレームごとに巡回する1画素で、VT のテクスチャの欲しいミップとタイルを要求のバッファへ書く（重複はハッシュで減らす）。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^VirtualTextureFeedbackVulkanTest$"`
-- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- status: done
+- done-when: VT の材質の UBO にテクスチャの番号（VT の表の添字）を持たせ、3つの frag が、4×4 の画素のうちフレームごとに巡回する1画素で、`textureQueryLod` から欲しいミップ（POM の後の UV）と、そのミップのタイルの x・y を求め、フレームの要求のバッファ（storage buffer、既定 64K 件、32bit に詰めた番号・ミップ・x・y）へ書く。重複は小さなハッシュの表（atomicCompSwap）で減らす。非常駐で粗いミップへ逃げた画素は巡回によらず要求を書く。GPU のテスト `VirtualTextureFeedbackVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、既知の UV の面を描いて期待のタイルの要求が書かれることを確かめる。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureFeedbackVulkanTest|VirtualTextureResidencyVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: 要求のバッファを3つの frag の descriptor に足すと RenderGraph の資源の宣言の契約を崩す場合は、理由を記録して止める。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.2。段6でビジビリティバッファの材質の解決パスへまとめる。 2026-10-04 親（run `20261004-164924` の保留を解く）: `blocked/VTG2-FEEDBACK-WRITE.md` の選択肢1を承認する。`paths:` に `Library/Core/Public/RHI`・`Library/Core/Private/RHI` を足した。`fragmentStoresAndAtomics` を対応しているときだけ有効化して `DeviceCapabilities` に載せ、非対応の GPU ではフィードバックを無効にする（材質は従来どおり描ける）。実装のメモは blocked の文書のとおり。VT の表の番号は VTG2-VT-STREAMER（`217a284f`・`8e6ed661`）で入った表に合わせる。
 
 ## VTG2-FEEDBACK-READ: 要求を数フレーム遅れで読み戻して集計する
-- status: backlog
-- done-when: 要求のバッファを2〜3フレーム遅れで読み戻し、テクスチャごとのタイルの要求の集合にまとめる。RenderThread を止めない。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^VirtualTextureFeedbackVulkanTest$"`
-- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-
-## VTG2-RESIDENCY-CLAMP: 常駐ミップの地図でサンプルのLODを締める
-- status: backlog
-- done-when: テクスチャごとの常駐ミップの地図（R8）を持ち、3つの frag が `sparseTextureClampARB`（非対応なら `textureLod`）で常駐していないミップを読まない。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^VirtualTextureResidencyVulkanTest$"`
-- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- status: done
+- done-when: 要求のバッファを3つのリングで持ち、2フレーム前のものを GPU を待たずに読み戻して、テクスチャごとのタイルの要求の集合（同じタイルは1つ、最後に要求したフレームを持つ）にまとめる。RenderThread を止めない。集計の結果を `VirtualTextureRequestSet` として VT のストリーマへ渡す。CPU のテスト `VirtualTextureRequestSetTest`（`RenderResourcesDomainContractTest` の束）が、詰めた要求の復号・重複の除去・溢れた件数の数え方を確かめる。
+- verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureRequestSetTest|VirtualTextureFeedbackVulkanTest)$"`
+- stop-when: 読み戻しに GPU の完了待ちが要る場合は、理由を記録して止める。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RenderThread）。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残りを直す。(1) RHI のバリアにフラグメントシェーダーの storage の書き込みを表す状態を足し、`FRAGMENT_SHADER / SHADER_WRITE → HOST / HOST_READ` を記録する（完了の serial で待たない読み戻しは保つ）。(2) VTG2-FEEDBACK-WRITE の GPU のテスト `VirtualTextureFeedbackVulkanTest` に、frag が既知の要求を書き、バリアとリングを経て2フレーム後に回収されるケースを足して ctest に登録し、verify に加える。`paths:` に `Library/Core/Public/RHI`・`Library/Core/Private/RHI` を足した。
 
 ## VTG2-VT-STREAMER: 要求からタイルを読み、結び付けて常駐させる
-- status: backlog
-- done-when: 要求 → JobSystem の範囲読み → ステージングのリング → タイルへコピー → 結び付け → 常駐ミップの地図の更新、を1フレームの上限つきで回す。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^VirtualTextureStreamerTest$"`
-- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Asset, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- status: done
+- done-when: `VirtualTextureStreamer`（RenderResources が持つ）が、要求の集合から未常駐のタイルを優先度（粗いミップ・画面の近くが先）順に選び、JobSystem の範囲読みで NVTEX v0.2 から読み、ステージングのリング（VTG2-TILE-UPLOAD）へ置き、ページを結び（VTG2-SPARSE-BIND）、コピーする。1フレームの上限（読み・コピー・結び付けの数）を持つ。ミップテイルは作成時に結んで常に常駐。材質のテクスチャを VT として作る入口（クック済みの v0.2 の材質のテクスチャを sparse で作る）を `TextureResources` に足す。CPU のテスト `VirtualTextureStreamerTest`（`RenderResourcesDomainContractTest` の束。読み込み・結び付けを偽物にする）が、優先度・上限・同じタイルの二重の要求・読み込みの失敗を確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureStreamerTest|VirtualTextureRequestSetTest|GpuRetireQueueTest)$"`
+- verify: `ctest --test-dir build -C Debug -V --output-on-failure --no-tests=error -R "^VirtualTextureFeedbackVulkanTest$"`
+- stop-when: 範囲読みの JobSystem の経路が無く、アセットの読み込みの経路を作り直す必要がある場合は、理由を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Asset, Library/Core/Private/Asset, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（アセットロード・寿命・RenderThread）。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残り3件を直す。(1) コピーの1フレームの上限（件数・バイト数）を最初の1件にも掛ける。ミップテイルが上限を超えるときは、テイルを公開しないまま複数フレームに分けて書き、書き終えてから使う。上限0など処理できない設定は作成時に明示的に拒否する。(2) 優先度を「粗いミップが先 → 同じミップなら要求した画素の数（画面上の大きさ）が多い方 → 最後に要求したフレームが新しい方」と定義し直す（元の「画面の近くが先」は、カメラからの距離を要求に載せる手段が無いため、親がこの定義に置き換えた）。`HitCount` が画素の数を表すことをテストで確かめる。(3) 実際の `TileUploader` と `GpuRetireQueue` を使い、「コピーを記録 → Abort → 登録解除 → ページの再取得 → 次のフレーム」で古いコピーが記録されない回帰テストを足し、実行の証拠を残す。 2026-10-04 親（run `20261004-210106` の保留を解く）: `blocked/VTG2-VT-STREAMER.md` の選択肢1を採る。`paths:` に `Assets/Shaders` を足した。フィードバックのハッシュの表の各枠に件数の語を並べ、同じタイルの要求が重なったら `atomicAdd` で数え、読み戻しの復号が件数を `HitCount`（画面上で要求した画素の数）へ渡す。`VirtualTextureFeedbackVulkanTest` に、面積の違う2つのタイルで件数が面積の順になるケースを足す。
 
 ## VTG2-VT-EVICT: LRUで追い出し、プールの予算に収める
-- status: backlog
-- done-when: 使われていないタイルを LRU で外し、VT のプールを予算の割り振りに収める。小さなテクスチャはミップ単位で同じ仕組みに乗る。ミップテイルは常に常駐。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^VirtualTextureStreamerTest$"`
-- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- status: done
+- done-when: 最後に要求されたフレームが古いタイルから LRU で外し、`SparsePagePool` の使用量を `VideoMemoryBudgetManager` の VT の目標以下に保つ。目標が足りないときは、細かいミップのタイルから外し、要求の優先度の低いものを結ばない。小さなテクスチャ（長辺 1024 以下）はミップ単位で同じ仕組みに乗る（ミップ全体を1単位として結ぶ・外す）。ミップテイルは外さない。`VRAM_POOLS` に vt_used_mb・vt_evicted_tiles を出す。`VirtualTextureStreamerTest` に、目標を下げたときの追い出しの順と、目標以下に収まることを足す。
+- verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureStreamerTest|VideoMemoryBudgetManagerTest)$"`
+- stop-when: 追い出しと結び付けが同じフレームで競合し、外したタイルを読む描画が出る経路を塞げない場合は、理由を記録して止める。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（メモリ・寿命）。 2026-10-04 親（run `20261004-210106` の保留を解く）: `blocked/VTG2-VT-EVICT.md` の選択肢Aを採る。`paths:` に `Library/Core/Public/RHI`・`Library/Core/Private/RHI` を足した。描画用のタイムラインセマフォを1つ足し、描画の3つの提出箇所が値の割り当てと提出を同じミューテックスの下で行って通知する（提出が失敗したら値を戻す）。タイルを外す（unbind を含む）`BindSparse` だけがその時点の最新の値を待つ。結ぶだけの `BindSparse` と CPU は待たない。`SparseBindVulkanTest` に、描画で読んでいるタイルを外しても検証レイヤーの違反（`VUID_COUNT=0`）が出ず、`WaitIdle` を呼ばないケースを足す。
 
 ## VTG2-VT-STARTUP: 起動画面の材質をVTで描く
-- status: backlog
-- done-when: 起動画面の材質のテクスチャを sparse の VT で描き、見た目が段1と同等（PSNR を記録）、`VRAM_LEDGER` の VT のプールの量を記録する。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-VT-STARTUP -Configuration RelWithDebInfo`
-- paths: Game, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
+- status: done
+- done-when: sparse に対応する GPU では、起動画面の材質（銀・石畳・地面の見本6種）のテクスチャを VT（sparse・v0.2）で作り、フィードバック・ストリーマ・追い出しで描く（非対応なら段1の全常駐）。`--virtual-texture=off` で段1の全常駐へ戻せる。`-Deterministic` の撮影で、VT と全常駐（`--virtual-texture=off`）の各視点の PSNR が 45 dB 以上（差の出どころを記録する）、PNG を開いて黒・ぼけたタイル・ちらつきが見えない。撮影の `VRAM_LEDGER`・`VRAM_POOLS` で、材質のテクスチャの量（VT は結んだ量）が全常駐より減ることを記録する。
+- verify: `cmake --build build --config RelWithDebInfo --target Game AssetCook CookAssets -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-VT-STARTUP -Configuration RelWithDebInfo -Deterministic`
+- stop-when: 撮影でタイルの出入りによるちらつきが残り、優先度・上限の調整で消えない場合は、測った値と撮影を記録して止める。
+- paths: Game, Scripts/CaptureStartupScene.ps1, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 起動画面の見た目を変えうる（絶対規則7）。全常駐との比較の撮影は `-ExtraArgs` のような引数がスクリプトに無ければ足す。 2026-10-04 親（run `20261004-210106` の保留を解く）: 評価の1周目（run `20261004-210106` の反復13）の4点を直す。(1) 完了条件の「全常駐を2回撮った揺らぎと同程度」は、ストリーミングの遅れで粗いミップが残りうる VT には厳しすぎるので、「`-Deterministic` の撮影で VT と全常駐の PSNR が各視点 45 dB 以上（評価のときは 62〜69 dB）」に親が直した。差の出どころ（粗いミップが残る区画、隣のタイルの不足など）は切り分けて記録する。(2) VT にする材質のテクスチャをアルベドだけでなく、法線・ORM・高さにも広げる（それぞれ要求・常駐の管理まで接続する）。(3) `SupportsVirtualTextureFeedback()` とフィードバックの有効化の成功を確かめ、失敗したら VT を解放して全常駐へ戻す。(4) VTG2-VT-EVICT の同期が入った後、VT のプールの目標を全常駐の量より小さくする `--vram-budget-mb` で、追い出しが起きる（`vt_evicted_tiles>0`）条件の連続撮影（カメラを動かす `-OrbitDegreesPerSecond` など）を開き、黒・ちらつきが出ないことを記録する。`GameApplicationHandler.cpp` の英語の説明句を日本語にする。
+
+## VTG2-VT-FALLBACK-TEST: VTの全常駐への復帰を偽デバイスの契約テストで確かめる
+- status: done
+- done-when: `GpuRetireQueueTest`（偽デバイスで `RenderResources` を初期化するテスト）に、(1) sparse の2D部分常駐に対応してもフィードバック（`bFragmentStoresAndAtomics`・`bShaderResourceResidency`）に対応しないデバイスでは `Textures().SupportsVirtualTexture()` が false、(2) 4つの機能がそろうデバイスでは true、(3) 要求のバッファを作れず `EnableVirtualTextureFeedback()` が失敗するデバイスでは `CreateVirtualTexture` が VT を解放して無効なハンドルを返す、を足す。
+- verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^GpuRetireQueueTest$"`
+- stop-when: 偽デバイスでは (3) の失敗を作れない（要求のバッファの確保が常に成功する）場合は、(1)(2) だけにして理由を記録する。
+- paths: Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: VTG2-VT-STARTUP の評価（run `20261004-210106` 反復13）の3点目で、実機の確認は一時の環境変数で fragmentStoresAndAtomics を無いことにして行った（コミットしていない）。契約として残すための後追い。
 
 ## VTG2-STRESS-TEXTURES: テクスチャの負荷モードを足す
-- status: backlog
-- done-when: 起動引数で入る検証モードが、予算を超える量の材質（Poly Haven の材質を取得スクリプトで足して数十種）を並べ、`--vram-budget-mb 6500` で溢れずに描ける。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-STRESS-TEXTURES -Configuration RelWithDebInfo`
-- paths: Game, Scripts, Library/Core/Private/Rendering, TASKS.md, PROGRESS.md
+- status: done
+- done-when: `Scripts/FetchPolyHavenTextures.ps1` に負荷用の材質の組（Poly Haven の CC0 の地面・壁・木などの材質 20種以上、4K）を `-StressSet` で足し、`CookAssets` が焼く（無ければ飛ばす）。Game の `--stress-textures` で、起動画面の地面の外側に負荷用の材質を貼った板を格子に並べた検証モードに入る。全常駐なら負荷用の材質の量が VT のプールの目標の2倍以上になる `--vram-budget-mb` で撮り、`VRAM_POOLS` の vt_used_mb が目標以下に収まり、撮影（既定・低角度と、格子の上を見下ろす視点）を開いて黒・未定義の色が見えないことを記録する。
+- verify: `cmake --build build --config RelWithDebInfo --target Game CookAssets -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-STRESS-TEXTURES -Configuration RelWithDebInfo -Deterministic`
+- stop-when: Poly Haven の API から負荷用の組を取れない場合は、理由を記録して止める。
+- paths: Game, Scripts, Assets/AssetSets, .gitignore, TASKS.md, PROGRESS.md
+- notes: 計画書 1（検証は起動画面に足し、重い負荷は別モード）。負荷用のテクスチャは git に入れない。撮影スクリプトに負荷モードの引数が無ければ足す。
 
 ## VTG2-ACCEPT: 段2（sparseのVT）の受入れを記録する
-- status: backlog
-- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段2の節（計画書 5 の受入れ）。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- status: done
+- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段2の節に、`-Deterministic` の撮影（朝・昼・夕・夜 × 3視点、VT と全常駐の PSNR と同じコードの揺らぎ）、材質のテクスチャの量（段1の全常駐・VT）、負荷モードの `--vram-budget-mb` での `VRAM_POOLS`、golden、関係するテストの結果、既知の限界（sparse の無い GPU の扱いを含む）を書く。8GB 級を模す上限（`--vram-budget-mb 6500`）で負荷モードが溢れずに描けることを記録する。
+- verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest CookedMeshTest RenderingGoldenImageTest MaterialResourcesTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(SparseCapabilitiesVulkanTest|SparseTextureVulkanTest|SparseBindVulkanTest|SparseTileUploadVulkanTest|VirtualTextureResidencyVulkanTest|VirtualTextureFeedbackVulkanTest|VirtualTextureRequestSetTest|VirtualTextureStreamerTest|VideoMemoryBudgetManagerTest|CookedTextureTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-ACCEPT-night -Configuration RelWithDebInfo -Deterministic -Night`
+- stop-when: 受入れの数値が段2の受入れ（計画書 5）を満たさない場合は、測った値を記録して止める。
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG3-HIZ-CONSERVATIVE: Hi-Zの判定を保守的な矩形の判定に作り直す
 - status: backlog
@@ -347,6 +410,13 @@
 - done-when: タイルを材質ごとに分類し、重心座標と解析的な微分から UV・法線・接線・ミップを求め、POM を含めて GBuffer（Albedo/Normal/Material/Emissive/Velocity）を書く。VT のフィードバックをここへまとめる。
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+
+## VTG6-PT-VT-TEXTURES: パストレーサーの材質のテクスチャの配列でVTのテクスチャを読めるようにする
+- status: backlog
+- done-when: `PathTracingClosestHit.glsl` の `materialTextures[256]` の標本が、VT（sparse）のテクスチャでは非常駐のタイルを読まず粗いミップへ逃げる（VTG2-RESIDENCY-FALLBACK の共通の関数を使う）。パストレーサーを有効にした起動画面の撮影で、VT と全常駐の差を記録する。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingMaterialVulkanTest$"`
+- paths: Assets/Shaders/PathTracing, Assets/Shaders/Common, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-05 親が足した。段2の受入れの既知の限界（パストレーサーを有効にすると VT の非常駐のタイルを読みうる）。起動画面の既定（RTGI は GBuffer だけを読む）では使わない。段6の材質の解決パスと合わせて扱う。
 
 ## VTG6-RETIRE-GBUFFER-RASTER: 不透明のGBufferのラスタの経路を外す
 - status: backlog

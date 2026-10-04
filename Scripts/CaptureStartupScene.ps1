@@ -43,6 +43,22 @@
 # （--no-cooked-textures。クック済みとの見た目の比較用）。各撮影のログから VRAM_LEDGER の texture_mb と、
 # クック済みが無くばらで読んだ数（TEXTURE_COOKED_MISSING）を metrics.json へ書く。
 # -DefaultCamera で既定視点のカメラを替え（例: 変更前の版の既定 0,30,5）、-ViewNames で撮る視点を絞る（例: default）。
+#
+# -Deterministic で Game を --capture-deterministic 付きで起動し、同じコードを2回撮ると一致する画像を撮る。
+# Game は読み込みと大きな球の生成が終わるまで待ってから、経過時間を 1/60 秒の固定刻みにして、TAA の揺らしの列・
+# RTGI の乱数の列と履歴・自動露出の順応・大きな球の自転をそこから数え直し、決まった描画フレーム数の後に撮る
+# （描画は GameThread で1フレームずつ行う）。metrics.json に deterministic=true を書く。
+# 同じコードの2回の撮影は -CompareDeterministicWith で比べる: 後の撮影に前の出力先を与えると、視点ごとの平均輝度の差
+# （既定 0.1 以下）と PSNR（既定 45 dB 以上）を deterministic_comparison として metrics.json へ書く。
+# 撮り直さず既存の2つの出力先だけを比べるときは -CompareOnly を足す。-OrbitDegreesPerSecond・
+# -StillRenderedFrames・-GpuTimingFrames（連続撮影・計測）とは併用しない。
+#
+# -StressTextures でテクスチャの負荷モード（--stress-textures: 地面の外側へ、負荷用の材質 24 種を貼った板を格子に並べ、
+# カメラの軸を格子の中心へ移す）の default・low と、格子を見下ろす top（0,80,70）を撮る。負荷用のテクスチャは
+# Scripts/FetchPolyHavenTextures.ps1 -StressSet で落とし、CookAssets で焼く。-VramBudgetMb（--vram-budget-mb）で
+# VRAM の上限を人工的に下げ、各撮影のログの VRAM_POOLS（cap_mb・vt_target_mb・vt_used_mb・vt_evicted_tiles）を
+# metrics.json へ書く。最後の VT の使用量（vt_used_mb_last）が目標（vt_target_mb）を超えたまま終わったか、負荷用の材質がそろっていなければ失敗にする
+# （目標が縮んだ直後の1回の確認の間だけ使用量が超えることがあるので、最大 vt_used_mb_max は失敗にせず書くだけ）。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -96,6 +112,22 @@ param(
     [string[]]$ViewNames = @(),
     # クック済みのテクスチャを使わず、ばらの元画像を無圧縮で読んで撮る（--no-cooked-textures。比べる側の撮影用）。
     [switch]$LooseTextures,
+    # 決定的な撮影（--capture-deterministic）で撮る。同じコードを2回撮ると一致する（見た目の保全を数値で比べる用）。
+    [switch]$Deterministic,
+    # テクスチャの負荷モード（--stress-textures）で default・low・top の3視点を撮る。-ViewNames で絞れる。
+    [switch]$StressTextures,
+    # VRAM の上限（MB。--vram-budget-mb）。0 は渡さない。
+    [ValidateRange(0, 1048576)]
+    [int]$VramBudgetMb = 0,
+    # 同じコードを -Deterministic で撮った別の出力先。各視点の平均輝度の差と PSNR を求めて metrics.json へ書き、
+    # 平均輝度の差が -DeterministicMeanLuminanceLimit を超えるか PSNR が -DeterministicPsnrLimit を下回れば失敗にする。
+    [string]$CompareDeterministicWith = '',
+    [ValidateRange(0.0, 255.0)]
+    [double]$DeterministicMeanLuminanceLimit = 0.1,
+    [ValidateRange(0.0, 100.0)]
+    [double]$DeterministicPsnrLimit = 45.0,
+    # 撮影せず、OutDir に撮った既存の画像を -CompareDeterministicWith と比べて metrics.json へ書き足す。
+    [switch]$CompareOnly,
     # Game へそのまま渡す引数（空白で区切る。例: --texture-asset-root と --texture-asset-manifest で別のクック済みの出力を使う）。
     [string[]]$ExtraGameArguments = @()
 )
@@ -147,13 +179,19 @@ if ($DefaultCamera -ne '')
 {
     $views[0].Camera = $DefaultCamera
 }
+if ($StressTextures)
+{
+    # 負荷モードはカメラの軸が格子の中心なので、近接（球が無い）は撮らず、格子の全体を見下ろす視点を足す。
+    $views = @($views | Where-Object { $_.Name -ne 'near' })
+    $views += [pscustomobject]@{ Name = 'top'; Camera = '0,80,70'; NoiseRegions = @() }
+}
 $viewNameList = @(($ViewNames -join ',').Split(',', [StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
 if ($viewNameList.Count -gt 0)
 {
     $unknownViews = @($viewNameList | Where-Object { $_ -notin $views.Name })
     if ($unknownViews.Count -gt 0)
     {
-        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low）"
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low・top）"
         exit 1
     }
     $views = @($views | Where-Object { $_.Name -in $viewNameList })
@@ -190,6 +228,21 @@ if ($GpuTimingFrames -gt 0 -and $GpuTimingFrames -lt 100)
 if ($GpuTimingFrames -gt 0 -and $Configuration -eq 'Release')
 {
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=gpu_timing_without_stats（Release は統計が無効で GPU のタイムスタンプを取れない。-Configuration RelWithDebInfo で測る）"
+    exit 1
+}
+if ($Deterministic -and ($stillFrameList.Count -gt 0 -or $OrbitDegreesPerSecond -ne 0.0 -or $GpuTimingFrames -gt 0))
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=deterministic_with_sequence（-Deterministic は -OrbitDegreesPerSecond・-StillRenderedFrames・-GpuTimingFrames と併用しない）"
+    exit 1
+}
+if ($CompareOnly -and $CompareDeterministicWith -eq '')
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=compare_only_without_target（-CompareOnly は -CompareDeterministicWith と併せて使う）"
+    exit 1
+}
+if ($CompareDeterministicWith -ne '' -and -not $Deterministic)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=compare_without_deterministic（-CompareDeterministicWith は -Deterministic と併せて使う）"
     exit 1
 }
 if ($stillFrameList.Count -eq 1)
@@ -327,6 +380,69 @@ public static class StartupCaptureMetrics
         }
     }
 
+    // 同じ大きさの2枚の画像の違い。{ 平均輝度A, 平均輝度B, PSNR（dB。R・G・B の 8bit。同一なら 100）,
+    // 一致しない画素の割合, 1チャンネルの最大の絶対差 }。
+    public static double[] Compare(string pathA, string pathB)
+    {
+        using (var bitmapA = new Bitmap(pathA))
+        using (var bitmapB = new Bitmap(pathB))
+        {
+            if (bitmapA.Width != bitmapB.Width || bitmapA.Height != bitmapB.Height)
+            {
+                throw new ArgumentException("画像の寸法が揃っていない: " + pathA + " / " + pathB);
+            }
+            int width = bitmapA.Width;
+            int height = bitmapA.Height;
+            var rect = new Rectangle(0, 0, width, height);
+            BitmapData dataA = bitmapA.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData dataB = bitmapB.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                byte[] bytesA = new byte[dataA.Stride * height];
+                byte[] bytesB = new byte[dataB.Stride * height];
+                Marshal.Copy(dataA.Scan0, bytesA, 0, bytesA.Length);
+                Marshal.Copy(dataB.Scan0, bytesB, 0, bytesB.Length);
+                double sumA = 0.0;
+                double sumB = 0.0;
+                double squaredError = 0.0;
+                long mismatched = 0;
+                int maxDifference = 0;
+                for (int y = 0; y < height; ++y)
+                {
+                    for (int x = 0; x < width; ++x)
+                    {
+                        int ia = y * dataA.Stride + x * 4;
+                        int ib = y * dataB.Stride + x * 4;
+                        bool differs = false;
+                        for (int c = 0; c < 3; ++c)
+                        {
+                            int d = bytesA[ia + c] - bytesB[ib + c];
+                            if (d != 0)
+                            {
+                                differs = true;
+                                squaredError += (double)d * d;
+                                int magnitude = d < 0 ? -d : d;
+                                if (magnitude > maxDifference) { maxDifference = magnitude; }
+                            }
+                        }
+                        if (differs) { ++mismatched; }
+                        sumA += 0.2126 * bytesA[ia + 2] + 0.7152 * bytesA[ia + 1] + 0.0722 * bytesA[ia];
+                        sumB += 0.2126 * bytesB[ib + 2] + 0.7152 * bytesB[ib + 1] + 0.0722 * bytesB[ib];
+                    }
+                }
+                double count = (double)width * height;
+                double meanSquaredError = squaredError / (count * 3.0);
+                double psnr = meanSquaredError <= 0.0 ? 100.0 : Math.Min(100.0, 10.0 * Math.Log10(255.0 * 255.0 / meanSquaredError));
+                return new double[] { sumA / count, sumB / count, psnr, mismatched / count, maxDifference };
+            }
+            finally
+            {
+                bitmapA.UnlockBits(dataA);
+                bitmapB.UnlockBits(dataB);
+            }
+        }
+    }
+
     // 画像を Rec.709 の重みの輝度へ読む（display=true なら 8bit の表示値 0〜255、false なら sRGB から戻したリニア 0〜1）。
     static double[] ReadLuminance(string path, bool display, out int width, out int height)
     {
@@ -444,7 +560,7 @@ function Stop-OwnedProcessTree([int]$ProcessId)
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
 }
 
-if (-not (Test-Path -LiteralPath $gamePath))
+if (-not $CompareOnly -and -not (Test-Path -LiteralPath $gamePath))
 {
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=game_missing path=$gamePath"
     exit 1
@@ -453,6 +569,20 @@ New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 
 $failures = @()
 $results = @()
+if ($CompareOnly)
+{
+    # 撮り直さず、OutDir の既存の撮影（metrics.json の views）を比べる。
+    $existingMetricsPath = Join-Path $outRoot 'metrics.json'
+    if (-not (Test-Path -LiteralPath $existingMetricsPath))
+    {
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=compare_only_metrics_missing path=$existingMetricsPath"
+        exit 1
+    }
+    $existingMetrics = Get-Content -LiteralPath $existingMetricsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $results = @($existingMetrics.views)
+    $failures = @($existingMetrics.failures | Where-Object { $_ })
+    $shots = @()
+}
 $temporalNoise = @()
 $gpuTiming = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
@@ -523,6 +653,18 @@ foreach ($view in $shots)
     if ($LooseTextures)
     {
         $arguments += '--no-cooked-textures'
+    }
+    if ($Deterministic)
+    {
+        $arguments += '--capture-deterministic'
+    }
+    if ($StressTextures)
+    {
+        $arguments += '--stress-textures'
+    }
+    if ($VramBudgetMb -gt 0)
+    {
+        $arguments += "--vram-budget-mb=$VramBudgetMb"
     }
     foreach ($extraArgument in (($ExtraGameArguments -join ' ').Split(@(' ', ','), [StringSplitOptions]::RemoveEmptyEntries)))
     {
@@ -600,8 +742,34 @@ foreach ($view in $shots)
     $indirectLighting = $null
     $vramLedgerTextureMb = $null
     $cookedMissingCount = $null
+    $vramPools = $null
+    $stressMaterials = $null
     if (Test-Path -LiteralPath $viewLogPath)
     {
+        # VRAM_POOLS（予算の割り振りと VT の使用量）。数値は "none"（上限なし）のこともある。使用量は最大と最後の値を残す。
+        $poolLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'VRAM_POOLS cap_mb=(\w+) non_pool_mb=(\d+) vt_target_mb=(\w+) vt_used_mb=(\d+) vt_evicted_tiles=(\d+)')
+        if ($poolLines.Count -gt 0)
+        {
+            $lastPool = $poolLines[$poolLines.Count - 1].Matches[0].Groups
+            $maxUsed = ($poolLines | ForEach-Object { [uint64]$_.Matches[0].Groups[4].Value } | Measure-Object -Maximum).Maximum
+            $targetText = $lastPool[3].Value
+            $vramPools = [ordered]@{
+                cap_mb = $lastPool[1].Value
+                non_pool_mb = [uint64]$lastPool[2].Value
+                vt_target_mb = $targetText
+                vt_used_mb_last = [uint64]$lastPool[4].Value
+                vt_used_mb_max = [uint64]$maxUsed
+                vt_evicted_tiles = [uint64]$lastPool[5].Value
+                lines = $poolLines.Count
+            }
+        }
+        $stressLine = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_TEXTURES materials=(\d+) of (\d+)')
+        if ($stressLine.Count -gt 0)
+        {
+            $stressGroups = $stressLine[$stressLine.Count - 1].Matches[0].Groups
+            $stressMaterials = [ordered]@{ present = [int]$stressGroups[1].Value; total = [int]$stressGroups[2].Value }
+        }
+
         # テクスチャの VRAM（最後の VRAM_LEDGER）と、クック済みが無くばらで読んだテクスチャの数。
         $ledgerTextureMb = @(Select-String -LiteralPath $viewLogPath -Pattern 'VRAM_LEDGER textures=\d+ texture_mb=([0-9.]+)' |
             ForEach-Object { $_.Matches[0].Groups[1].Value })
@@ -621,6 +789,17 @@ foreach ($view in $shots)
         foreach ($line in $shaderFailures)
         {
             $failures += "$($view.Name): $($line.Line.Trim())"
+        }
+        if ($StressTextures)
+        {
+            if ($null -eq $stressMaterials -or $stressMaterials.present -ne $stressMaterials.total)
+            {
+                $failures += "$($view.Name): 負荷用の材質がそろっていない（STRESS_TEXTURES materials=$(if ($null -eq $stressMaterials) { 'なし' } else { "$($stressMaterials.present) of $($stressMaterials.total)" })。FetchPolyHavenTextures.ps1 -StressSet と CookAssets を実行する）"
+            }
+            if ($null -ne $vramPools -and $vramPools.vt_target_mb -ne 'none' -and $vramPools.vt_used_mb_last -gt [uint64]$vramPools.vt_target_mb)
+            {
+                $failures += "$($view.Name): VT の使用量が目標を超えたまま終わった（vt_used_mb_last=$($vramPools.vt_used_mb_last) vt_target_mb=$($vramPools.vt_target_mb)）"
+            }
         }
         if ($images.Count -gt 1)
         {
@@ -668,6 +847,8 @@ foreach ($view in $shots)
             indirect_lighting = $indirectLighting
             vram_ledger_texture_mb = $vramLedgerTextureMb
             cooked_missing_count = $cookedMissingCount
+            vram_pools = $vramPools
+            stress_materials = $stressMaterials
         }
         $results += [pscustomobject]$result
         Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5} indirect_lighting={6}" -f `
@@ -890,9 +1071,61 @@ if ($CompareNoiseWith -ne '')
     }
 }
 
+# 同じコードを -Deterministic で撮った別の撮影と、視点ごとに平均輝度の差と PSNR を求める。
+$deterministicComparison = @()
+if ($CompareDeterministicWith -ne '')
+{
+    $compareImageRoot = if ([IO.Path]::IsPathRooted($CompareDeterministicWith)) { $CompareDeterministicWith } else { Join-Path $repoRoot $CompareDeterministicWith }
+    if (-not (Test-Path -LiteralPath (Join-Path $compareImageRoot 'metrics.json')))
+    {
+        $failures += "比べる撮影の metrics.json が無い: $compareImageRoot"
+    }
+    else
+    {
+        foreach ($entry in $results)
+        {
+            $thisPng = Join-Path $outRoot $entry.png
+            $otherPng = Join-Path $compareImageRoot $entry.png
+            if (-not (Test-Path -LiteralPath $thisPng) -or -not (Test-Path -LiteralPath $otherPng))
+            {
+                $failures += "$($entry.view): 比べる画像が揃っていない（$thisPng / $otherPng）"
+                continue
+            }
+            $difference = [StartupCaptureMetrics]::Compare($thisPng, $otherPng)
+            $meanDifference = [math]::Abs($difference[0] - $difference[1])
+            $withinLimits = ($meanDifference -le $DeterministicMeanLuminanceLimit) -and ($difference[2] -ge $DeterministicPsnrLimit)
+            $comparison = [ordered]@{
+                view = $entry.view
+                png = $entry.png
+                mean_luminance = [math]::Round($difference[0], 4)
+                compare_mean_luminance = [math]::Round($difference[1], 4)
+                mean_luminance_difference = [math]::Round($meanDifference, 4)
+                psnr_db = [math]::Round($difference[2], 3)
+                mismatched_pixel_ratio = [math]::Round($difference[3], 6)
+                max_channel_difference = [int]$difference[4]
+                within_limits = $withinLimits
+            }
+            $deterministicComparison += [pscustomobject]$comparison
+            Write-Output ("CAPTURE_STARTUP_SCENE deterministic_comparison view={0} mean_luminance={1} compare_mean_luminance={2} mean_luminance_difference={3} (limit {4}) psnr_db={5} (limit {6}) mismatched_pixel_ratio={7} max_channel_difference={8} within_limits={9}" -f `
+                $comparison.view, $comparison.mean_luminance, $comparison.compare_mean_luminance, $comparison.mean_luminance_difference,
+                $DeterministicMeanLuminanceLimit, $comparison.psnr_db, $DeterministicPsnrLimit, $comparison.mismatched_pixel_ratio,
+                $comparison.max_channel_difference, $comparison.within_limits)
+            if (-not $withinLimits)
+            {
+                $failures += "$($entry.view): 同じコードの2回の撮影が一致しない（平均輝度の差 $($comparison.mean_luminance_difference) / 上限 $DeterministicMeanLuminanceLimit、PSNR $($comparison.psnr_db) dB / 下限 $DeterministicPsnrLimit dB）"
+            }
+        }
+    }
+}
+
 $metricsPath = Join-Path $outRoot 'metrics.json'
 $metrics = [ordered]@{
     configuration = $Configuration
+    deterministic = [bool]$Deterministic
+    compare_deterministic_with = $CompareDeterministicWith
+    deterministic_mean_luminance_limit = $DeterministicMeanLuminanceLimit
+    deterministic_psnr_limit = $DeterministicPsnrLimit
+    deterministic_comparison = $deterministicComparison
     orbit_degrees_per_second = $OrbitDegreesPerSecond
     orbit_rendered_frames = $orbitFrameList
     anti_aliasing = $AntiAliasing

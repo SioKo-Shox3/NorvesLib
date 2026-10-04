@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Rendering/RenderTypes.h"
 #include "Rendering/TextureAssetTypes.h"
@@ -21,6 +21,7 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Asset
 {
     class AssetSystem;
+    struct AssetCookedRange;
 }
 
 namespace NorvesLib::Core::Rendering
@@ -69,6 +70,14 @@ namespace NorvesLib::Core::Rendering
             const char *role = "worker",
             uint32_t requestId = 0);
         [[nodiscard]] bool IsPreparedTextureAssetCurrent(const PreparedTextureAsset &prepared) const;
+
+        // 論理パスのクック済みのテクスチャが、パッケージファイルのどこにあるかを求める（VT の範囲読み用）。
+        // 作成時に1回だけ呼ぶ（パッケージ全体を一度読んで位置を確かめる）。マニフェストが無い・クック済みが無い・
+        // 圧縮したエントリのときは false。outAssetSystem は範囲読みのファイル読み込みを取り出すために返す。
+        [[nodiscard]] bool ResolveCookedTextureRange(const Container::String &path,
+                                                     Asset::AssetCookedRange &outRange,
+                                                     Container::TSharedPtr<const Asset::AssetSystem> &outAssetSystem,
+                                                     Container::String *pOutReason = nullptr);
         [[nodiscard]] TextureHandle FinalizePreparedTextureAsset(
             const PreparedTextureAsset &prepared,
             const char *role = "main_render",

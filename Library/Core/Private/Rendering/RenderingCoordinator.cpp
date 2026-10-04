@@ -1926,6 +1926,25 @@ namespace NorvesLib::Core::Rendering
         // デルタタイム計算
         float deltaTime = static_cast<float>(currentTime - m_LastFrameTime);
         m_LastFrameTime = currentTime;
+
+        // 決定的な撮影: 壁時計を使わず 1/60 秒の固定刻みにし、エポックの 0 番のフレームから数え直す。
+        bool bTemporalEpochStart = false;
+        if (m_bDeterministicCapture)
+        {
+            deltaTime = 1.0f / 60.0f;
+            if (m_bDeterministicEpochPending)
+            {
+                m_bDeterministicEpochPending = false;
+                m_bDeterministicEpochActive = true;
+                m_DeterministicEpochFrames = 0u;
+                m_TotalTime = 0.0;
+                bTemporalEpochStart = true;
+            }
+            else if (m_bDeterministicEpochActive)
+            {
+                ++m_DeterministicEpochFrames;
+            }
+        }
         m_TotalTime += deltaTime;
 
         // ST経路ではReadyパケットがRTに消費されないため、フレーム開始時に再利用する。
@@ -1947,6 +1966,9 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->FrameNumber = m_GameThreadStats.FrameNumber;
             m_CurrentPacket->DeltaTime = deltaTime;
             m_CurrentPacket->TotalTime = m_TotalTime;
+            m_CurrentPacket->bDeterministicCapture = m_bDeterministicCapture;
+            m_CurrentPacket->bTemporalEpochStart = bTemporalEpochStart;
+            m_CurrentPacket->EpochFrameIndex = m_bDeterministicEpochActive ? m_DeterministicEpochFrames : 0u;
         }
 
         m_GameThreadStats.DeltaTime = deltaTime;
@@ -2674,8 +2696,21 @@ namespace NorvesLib::Core::Rendering
         // SceneRendererフレーム開始
         m_SceneRenderer.BeginFrame();
 
+        // VT のストリーマを進める（タイルの読み込み完了の取り込み・ページの結び付け・コピーの積み込み）。
+        // BindSparse は提出の直列化の下で呼ぶ必要があるので、RenderThread のこの位置（BeginRetireFrame の後）で行う。
+        if (m_RenderResources)
+        {
+            m_RenderResources->UpdateVirtualTextureStreaming();
+        }
+
         // コマンド録画開始
         m_CommandList->BeginRecording();
+        // ステージングのリングに置いたタイル・ミップテイルのデータを、描画のコマンドの先頭でテクスチャの領域へコピーする
+        // （GPU を待たない。render pass の外で、他の記録より前）。
+        if (m_RenderResources)
+        {
+            m_RenderResources->RecordTileUploads(*m_CommandList);
+        }
         PublishCompletedGPUTimestampResults();
         ScopedGPUTimestampFrameRecording gpuTimestampFrameGuard(
             m_CommandList.get(),
@@ -2759,6 +2794,13 @@ namespace NorvesLib::Core::Rendering
         viewContext.RenderHeight = m_RenderHeight;
         viewContext.DeltaTime = m_PreviousCompletedTotalFrameTimeMs * 0.001f;
         viewContext.TotalTime = packet->TotalTime;
+        viewContext.bDeterministicCapture = packet->bDeterministicCapture;
+        viewContext.bTemporalEpochStart = packet->bTemporalEpochStart;
+        viewContext.TemporalFrameIndex = packet->bDeterministicCapture ? packet->EpochFrameIndex : packet->FrameNumber;
+        if (packet->bDeterministicCapture)
+        {
+            viewContext.DeltaTime = packet->DeltaTime;
+        }
         if (m_RenderResources)
         {
             viewContext.Resources.Gpu = &m_RenderResources->Gpu();
@@ -3053,6 +3095,12 @@ namespace NorvesLib::Core::Rendering
             }
         }
         executionResult.CaptureSources.Reset();
+
+        // VT の要求のバッファへのシェーダーの書き込みを、ホストの読み取りへ見せる（最後の書き込みの後・提出の前）
+        if (m_RenderResources)
+        {
+            m_RenderResources->RecordVirtualTextureFeedbackBarrier(*m_CommandList);
+        }
 
         // コマンド録画終了
 #if NORVES_ENABLE_STATS

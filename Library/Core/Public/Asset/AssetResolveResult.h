@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Asset/AssetBlob.h"
 #include "Asset/AssetManifest.h"
@@ -78,5 +78,21 @@ namespace NorvesLib::Core::Asset
         {
             return FallbackDecision.bRequiresExplicitLog;
         }
+    };
+
+    /**
+     * @brief クック済みのエントリのパッケージファイル内の位置。ファイルの範囲読みで一部だけ読むときに使う。
+     *
+     * 圧縮していないエントリだけが対象（圧縮したエントリは範囲で切り出せない）。
+     */
+    struct AssetCookedRange
+    {
+        /** @brief パッケージのファイルを指す読み込みの要求（アセット root からの相対パス） */
+        AssetReadRequest Request;
+        /** @brief エントリの先頭のファイル内の位置（バイト） */
+        uint64_t BaseOffset = 0;
+        /** @brief エントリのバイト数 */
+        uint64_t Size = 0;
+        AssetCookedReference Reference;
     };
 }

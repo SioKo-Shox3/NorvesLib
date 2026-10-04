@@ -6,6 +6,7 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
+#include <atomic>
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -15,6 +16,10 @@ namespace NorvesLib::RHI::Vulkan
     using ::NorvesLib::Core::Container::TWeakPtr;
 
     class VulkanDevice;
+
+    // テクスチャ作成と同じ形式・用途の変換（sparse の可否照会を実際の作成条件で行うために公開する）
+    vk::Format ConvertToVkFormat(Format format);
+    vk::ImageUsageFlags ConvertToVkImageUsageFlags(ResourceUsage usage);
 
     /**
      * @brief テクスチャの Vulkan 実装 (vulkan.hpp使用)
@@ -53,6 +58,37 @@ namespace NorvesLib::RHI::Vulkan
         virtual bool IsCubemap() const override { return m_desc.IsCubemap; }
         virtual void Update(const void *data, uint32_t rowPitch, uint32_t slicePitch,
                             uint32_t mipLevel = 0, uint32_t arrayIndex = 0) override;
+
+        // sparse（部分常駐）テクスチャ
+        bool IsSparse() const override { return m_desc.bSparse; }
+        bool GetSparseInfo(SparseTextureInfo &outInfo) const override;
+        uint64_t GetSparseBoundBytes() const override { return m_sparseBoundBytes.load(std::memory_order_relaxed); }
+
+        /**
+         * @brief 結んだ物理メモリの量を増減する（タイルの結び付け・外しが呼ぶ。VRAM の台帳が読む）
+         * @param deltaBytes 結んだ分は正、外した分は負
+         */
+        void AddSparseBoundBytes(int64_t deltaBytes);
+
+        // sparse の結び付け（VulkanDevice::BindSparse が使う）。状態の更新は結び付けの提出側が直列に呼ぶ。
+        uint32_t GetSparseMemoryTypeBits() const { return m_sparseMemoryTypeBits; }
+        uint64_t GetSparseMemoryAlignment() const { return m_sparseMemoryAlignment; }
+        const SparseTextureInfo &GetSparseInfoRef() const { return m_sparseInfo; }
+
+        /** @brief ミップテイルのページ数（ミップテイルが無ければ 0） */
+        uint32_t GetSparseMipTailPageCount() const;
+
+        /** @brief タイルがミップ・x・y の範囲内か（ミップテイルのミップは範囲外） */
+        bool IsValidSparseTile(uint32_t mipLevel, uint32_t tileX, uint32_t tileY) const;
+
+        /**
+         * @brief タイルの結び付け状態を更新し、変わったときだけ結んだ量を増減する
+         * @param bBound 結んだら true、外したら false
+         */
+        void CommitSparseTileBinding(uint32_t mipLevel, uint32_t tileX, uint32_t tileY, bool bBound);
+
+        /** @brief ミップテイルのページの結び付け状態を更新し、変わったときだけ結んだ量を増減する */
+        void CommitSparseMipTailBinding(uint32_t pageIndex, bool bBound);
 
         // per-mip ImageView
         uint64_t GetMipImageViewHandle(uint32_t mipLevel) const override;
@@ -93,6 +129,7 @@ namespace NorvesLib::RHI::Vulkan
 
     private:
         void CreateTexture();
+        void CreateSparseTexture(vk::ImageCreateInfo &imageInfo);
         void CreateImageView();
         void InitializeSubresourceLayouts(vk::ImageLayout layout);
         uint32_t GetTotalArrayLayerCount() const;
@@ -112,6 +149,14 @@ namespace NorvesLib::RHI::Vulkan
         NorvesLib::Core::Container::VariableArray<vk::ImageLayout> m_subresourceLayouts;
         vk::ImageLayout m_currentLayout = vk::ImageLayout::eUndefined;
         bool m_bOwnsImage = true;
+        SparseTextureInfo m_sparseInfo;
+        std::atomic<uint64_t> m_sparseBoundBytes{0};
+        uint32_t m_sparseMemoryTypeBits = 0;
+        uint64_t m_sparseMemoryAlignment = 0;
+        // タイルとミップテイルのページごとの結び付け状態（二重に結ぶ・外すで結んだ量がずれないようにする）
+        NorvesLib::Core::Container::VariableArray<uint8_t> m_sparseTileBound;
+        NorvesLib::Core::Container::VariableArray<uint32_t> m_sparseTileBase;
+        NorvesLib::Core::Container::VariableArray<uint8_t> m_sparseMipTailBound;
     };
 
 } // namespace NorvesLib::RHI::Vulkan

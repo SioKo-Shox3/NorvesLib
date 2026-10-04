@@ -7,11 +7,20 @@
 # （https://api.polyhaven.com/files/<id>）から引き、既にあって MD5 が一致するファイルは落とし直さない。
 # 素材の並びは Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp の地面の区画の表と同じにする。
 #
+# -StressSet を付けると、テクスチャの負荷モード（Game の --stress-textures）が使う負荷用の材質の組
+# （地面・壁・木・金属・屋根などの CC0 の材質 24 種、4K）も落とす。負荷用は色・法線・粗さ・AO の4枚
+# （高さは使わない）で、保存先は同じ Assets/Textures/PolyHaven/<id>/。全部で約 0.8 GB になる。
+# 負荷用の材質の並びは Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp の kStressMaterials・
+# Assets/AssetSets/Rendering3DTestStressTextures.json と同じにする。
+#
 # 終了コード: すべてそろえば0、どれかを落とせない・MD5が合わなければ1。
 [CmdletBinding()]
 param(
     # 既にあるファイルも落とし直す
-    [switch]$Force
+    [switch]$Force,
+
+    # 負荷モード用の材質の組も落とす
+    [switch]$StressSet
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,14 +38,60 @@ $assetIds = @(
     'snow_02',
     'marble_01'
 )
-# API の地図の名前 → 使う解像度と形式
-$maps = @('Diffuse', 'nor_dx', 'Rough', 'AO', 'Displacement')
+# 負荷モード用の材質（-StressSet のときだけ落とす）
+$stressAssetIds = @(
+    'aerial_rocks_02',
+    'coast_sand_rocks_02',
+    'dry_ground_rocks',
+    'gravel_ground_01',
+    'forest_ground_04',
+    'rock_04',
+    'castle_brick_01',
+    'concrete_wall_003',
+    'quarry_wall',
+    'mossy_stone_wall',
+    'brown_planks_03',
+    'dark_planks',
+    'herringbone_parquet',
+    'bark_brown_01',
+    'cobblestone_floor_01',
+    'brick_floor',
+    'concrete_floor_worn_001',
+    'terracotta_floor_tiles',
+    'corrugated_iron',
+    'rusty_metal_02',
+    'metal_plate',
+    'clay_roof_tiles',
+    'roof_slates_02',
+    'grey_roof_tiles'
+)
+# API の地図の名前 → ファイル名の接尾辞（Game とクックの一覧が <id>_<接尾辞>_4k.jpg の名前で読むため、合わない素材は失敗にする）
+$mapSuffixes = @{ Diffuse = 'diff'; nor_dx = 'nor_dx'; Rough = 'rough'; AO = 'ao'; Displacement = 'disp' }
+# API の地図の名前 → 使う解像度と形式。見本の区画は高さも使い、負荷用は使わない。
+$swatchMaps = @('Diffuse', 'nor_dx', 'Rough', 'AO', 'Displacement')
+$stressMaps = @('Diffuse', 'nor_dx', 'Rough', 'AO')
+$targets = @($assetIds | ForEach-Object { [pscustomobject]@{ Id = $_; Maps = $swatchMaps } })
+if ($StressSet)
+{
+    $targets += @($stressAssetIds | ForEach-Object { [pscustomobject]@{ Id = $_; Maps = $stressMaps } })
+}
 $resolution = '4k'
 $format = 'jpg'
 
 function Get-FileMd5([string]$Path)
 {
-    return (Get-FileHash -LiteralPath $Path -Algorithm MD5).Hash.ToLowerInvariant()
+    # 実行の仕方によっては Get-FileHash のモジュールが読めないため、.NET で求める
+    $md5 = [System.Security.Cryptography.MD5]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try
+    {
+        return ([System.BitConverter]::ToString($md5.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+    }
+    finally
+    {
+        $stream.Dispose()
+        $md5.Dispose()
+    }
 }
 
 $failures = New-Object System.Collections.Generic.List[string]
@@ -44,8 +99,9 @@ $downloadedBytes = 0L
 $skippedCount = 0
 $downloadedCount = 0
 
-foreach ($assetId in $assetIds)
+foreach ($target in $targets)
 {
+    $assetId = $target.Id
     try
     {
         $files = Invoke-RestMethod -Uri "https://api.polyhaven.com/files/$assetId" -UseBasicParsing
@@ -59,7 +115,7 @@ foreach ($assetId in $assetIds)
     $assetDirectory = Join-Path $destinationRoot $assetId
     New-Item -ItemType Directory -Force -Path $assetDirectory | Out-Null
 
-    foreach ($map in $maps)
+    foreach ($map in $target.Maps)
     {
         $entry = $files.$map.$resolution.$format
         if ($null -eq $entry)
@@ -69,6 +125,12 @@ foreach ($assetId in $assetIds)
         }
 
         $fileName = Split-Path -Leaf ([Uri]$entry.url).AbsolutePath
+        $expectedFileName = "${assetId}_$($mapSuffixes[$map])_${resolution}.${format}"
+        if ($fileName -ne $expectedFileName)
+        {
+            $failures.Add("${assetId}: $map のファイル名が想定と違う（期待 $expectedFileName、実際 $fileName）。別の素材に替える")
+            continue
+        }
         $destination = Join-Path $assetDirectory $fileName
         if (-not $Force -and (Test-Path -LiteralPath $destination) -and (Get-FileMd5 $destination) -eq $entry.md5)
         {

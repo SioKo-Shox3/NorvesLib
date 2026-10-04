@@ -1,5 +1,7 @@
 ﻿#include "Rendering/MegaGeometryPass.h"
 #include "Rendering/FrameCommand.h"
+#include "Rendering/SparseResidencyShading.h"
+#include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
@@ -32,6 +34,12 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        // VT の要求のバッファの binding（megageometry.frag の VT_FEEDBACK_BINDING と同じ。材質のテクスチャ 1-6 の次）
+        constexpr uint32_t VirtualTextureFeedbackBindingIndex = 7;
+    } // namespace
+
     using namespace Container;
 
     namespace
@@ -996,7 +1004,8 @@ namespace NorvesLib::Core::Rendering
                 float PreviousView[16];
                 float PreviousProjection[16];
                 float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
-                float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）
+                float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
+                float VtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=未使用
             };
             static_assert(sizeof(PerObjectUBO) <= 512u);
 
@@ -1048,18 +1057,37 @@ namespace NorvesLib::Core::Rendering
             perObject.MaterialParams[0] = orm ? 1.0f : 0.0f;
             perObject.MaterialParams[1] = mat.bNormalTwoChannel ? 1.0f : 0.0f;
 
-            drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
-
-            drawDescriptorSet->BindConstantBuffer(0, drawUniformBuffer, 0,
-                                                  static_cast<uint32_t>(sizeof(PerObjectUBO)));
-
-            // PBRテクスチャバインド
+            // PBRテクスチャ
             auto albedo = resolveTexture(mat.AlbedoTexture, m_DefaultWhiteTexture);
             auto normal = resolveTexture(mat.NormalTexture, m_DefaultFlatNormalTexture);
             auto metallic = orm ? orm : resolveTexture(mat.MetallicTexture, m_DefaultBlackTexture);
             auto roughness = orm ? orm : resolveTexture(mat.RoughnessTexture, m_DefaultWhiteTexture);
             auto ao = orm ? orm : resolveTexture(mat.AOTexture, m_DefaultWhiteTexture);
             auto height = resolveTexture(mat.HeightTexture, m_DefaultBlackTexture);
+
+            // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
+            perObject.MaterialParams[2] = AnySparseTexture(albedo, normal, metallic, roughness, ao, height) ? 1.0f : 0.0f;
+            // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）。
+            // アルベドが VT のとき、シェーダーがこのフレームの要求を書く（24bit 以下の整数は float に正確に載る）
+            const TextureResources::VirtualTextureFeedbackTarget feedbackTarget =
+                command.Textures ? command.Textures->GetVirtualTextureFeedbackTarget()
+                                 : TextureResources::VirtualTextureFeedbackTarget{};
+            perObject.MaterialParams[3] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.AlbedoTexture, albedo.get(), feedbackTarget));
+            // 法線・ORM・高さも VT のとき、それぞれの表の番号で要求を書く（ORM の枠は metallic に張ったテクスチャ）
+            perObject.VtFeedbackParams[0] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.NormalTexture, normal.get(), feedbackTarget));
+            perObject.VtFeedbackParams[1] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.ORMTexture, orm.get(), feedbackTarget));
+            perObject.VtFeedbackParams[2] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.HeightTexture, height.get(), feedbackTarget));
+
+            drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
+
+            drawDescriptorSet->BindConstantBuffer(0, drawUniformBuffer, 0,
+                                                  static_cast<uint32_t>(sizeof(PerObjectUBO)));
+
+            // PBRテクスチャバインド
 
             drawDescriptorSet->BindTexture(1, albedo);
             drawDescriptorSet->BindSampler(1, m_DefaultLinearSampler);
@@ -1073,6 +1101,7 @@ namespace NorvesLib::Core::Rendering
             drawDescriptorSet->BindSampler(5, m_DefaultLinearSampler);
             drawDescriptorSet->BindTexture(6, height);
             drawDescriptorSet->BindSampler(6, m_DefaultLinearSampler);
+            BindVirtualTextureFeedback(*drawDescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
 
             drawDescriptorSet->Update();
             DrawableInstance drawableInstance;
@@ -1543,6 +1572,10 @@ namespace NorvesLib::Core::Rendering
             texBinding.stages = RHI::ShaderStage::Pixel;
             dsDesc.bindings.push_back(texBinding);
         }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(dsDesc, VirtualTextureFeedbackBindingIndex);
+        }
 
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
@@ -1659,6 +1692,10 @@ namespace NorvesLib::Core::Rendering
             texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             texBinding.stages = RHI::ShaderStage::Pixel;
             drawDsDesc.bindings.push_back(texBinding);
+        }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(drawDsDesc, VirtualTextureFeedbackBindingIndex);
         }
 
         while (m_CullUniformBuffers.size() < requiredCount)

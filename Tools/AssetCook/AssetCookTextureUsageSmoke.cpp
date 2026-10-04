@@ -105,23 +105,31 @@ namespace
             }
         }
 
-        // 1 ブロックに収まる大きさだけを扱う(8x8 で 136 バイト)。
+        // 無圧縮ブロックは 1 つが 65535 バイトまでなので、収まらない大きさは複数のブロックに分ける。
         ByteArray zlib;
         zlib.push_back(0x78);
         zlib.push_back(0x01);
-        zlib.push_back(1); // 最終ブロック・無圧縮
-        zlib.push_back(static_cast<uint8_t>(raw.size() & 0xff));
-        zlib.push_back(static_cast<uint8_t>(raw.size() >> 8));
-        zlib.push_back(static_cast<uint8_t>(~raw.size() & 0xff));
-        zlib.push_back(static_cast<uint8_t>((~raw.size() >> 8) & 0xff));
         uint32_t adlerA = 1;
         uint32_t adlerB = 0;
-        for (const uint8_t value : raw)
+        size_t blockStart = 0;
+        do
         {
-            zlib.push_back(value);
-            adlerA = (adlerA + value) % 65521u;
-            adlerB = (adlerB + adlerA) % 65521u;
-        }
+            const size_t blockSize = raw.size() - blockStart < 65535 ? raw.size() - blockStart : 65535;
+            const bool bFinal = blockStart + blockSize == raw.size();
+            zlib.push_back(bFinal ? 1 : 0); // 無圧縮ブロック（最後だけ最終ブロックの印）
+            zlib.push_back(static_cast<uint8_t>(blockSize & 0xff));
+            zlib.push_back(static_cast<uint8_t>((blockSize >> 8) & 0xff));
+            zlib.push_back(static_cast<uint8_t>(~blockSize & 0xff));
+            zlib.push_back(static_cast<uint8_t>((~blockSize >> 8) & 0xff));
+            for (size_t i = 0; i < blockSize; ++i)
+            {
+                const uint8_t value = raw[blockStart + i];
+                zlib.push_back(value);
+                adlerA = (adlerA + value) % 65521u;
+                adlerB = (adlerB + adlerA) % 65521u;
+            }
+            blockStart += blockSize;
+        } while (blockStart < raw.size());
         AppendBe32(zlib, (adlerB << 16) | adlerA);
 
         ByteArray header;
@@ -383,6 +391,76 @@ namespace
         }
     }
 
+    // v0.2 のタイル配置: R16 は可逆なので、タイルの中身を元の画素から独立に作った期待と照合できる。
+    // 512x256 の R16 はタイルが 256x128 texel で、段 0 は 2x2、段 1（256x128）は 1 枚、段 2 からミップテイル。
+    void RunHeight16Tiles()
+    {
+        constexpr uint32_t width = 512;
+        constexpr uint32_t height = 256;
+        NorvesLib::Core::Container::VariableArray<uint16_t> values;
+        for (uint32_t y = 0; y < height; ++y)
+        {
+            for (uint32_t x = 0; x < width; ++x)
+            {
+                values.push_back(static_cast<uint16_t>((x * 131u + y * 257u + (x ^ y) * 7u) & 0xffffu));
+            }
+        }
+        const ByteArray image16 = MakeGray16Png(width, height, values);
+
+        TextureCookResult result;
+        CookedTextureParseResult parsed;
+        if (!Cook(TextureUsage::Height16, Source(image16, "height16_tiles"), OrmSourceImages{}, result, parsed))
+        {
+            return;
+        }
+
+        const auto &texture = parsed.Texture;
+        Check(texture.bTiled && texture.VersionMinor == 2, "クックした NVTEX が v0.2 ではない");
+        Check(texture.Tiling.TileWidth == 256 && texture.Tiling.TileHeight == 128, "R16 のタイルの形状が 256x128 ではない");
+        Check(texture.Tiling.FirstTailMip == 2, "R16 のミップテイルの先頭が 2 ではない");
+        Check(texture.Tiling.Tiles.size() == 5, "R16 のタイルの数が 5 ではない");
+
+        const Span<const uint8_t> all = texture.SourceBlob.GetSpan();
+        for (uint32_t tileY = 0; tileY < 2; ++tileY)
+        {
+            for (uint32_t tileX = 0; tileX < 2; ++tileX)
+            {
+                NorvesLib::Core::Asset::CookedTextureTile tile;
+                if (!texture.FindTile(0, 0, tileX, tileY, tile))
+                {
+                    Check(false, "段 0 のタイルを表から引けない");
+                    continue;
+                }
+
+                Check(tile.DataSize == 256u * 128u * 2u, "R16 のタイルが 64 KiB ではない");
+                bool bSame = tile.DataOffset + tile.DataSize <= all.size();
+                for (uint32_t row = 0; bSame && row < 128; ++row)
+                {
+                    for (uint32_t column = 0; column < 256; ++column)
+                    {
+                        const uint16_t expected = values[(tileY * 128 + row) * width + tileX * 256 + column];
+                        const uint8_t *actual = all.data() + tile.DataOffset + (row * 256 + column) * 2;
+                        if (actual[0] != (expected & 0xffu) || actual[1] != (expected >> 8))
+                        {
+                            bSame = false;
+                            break;
+                        }
+                    }
+                }
+                Check(bSame, "R16 のタイルの中身が元の画素と一致しない");
+            }
+        }
+
+        // 行優先への展開も元の画素に戻る。
+        const Span<const uint8_t> mip0 = texture.GetMipBytes(0);
+        bool bMip0Same = mip0.size() == static_cast<size_t>(width) * height * 2;
+        for (size_t index = 0; bMip0Same && index < values.size(); ++index)
+        {
+            bMip0Same = mip0[index * 2] == (values[index] & 0xffu) && mip0[index * 2 + 1] == (values[index] >> 8);
+        }
+        Check(bMip0Same, "R16 の段 0 を行優先へ展開した結果が元の画素と一致しない");
+    }
+
     void RunSingleAndAlbedo()
     {
         TextureCookResult result;
@@ -445,6 +523,7 @@ int main()
     RunOrmPacking();
     RunNormalMips();
     RunHeight16Precision();
+    RunHeight16Tiles();
     RunSingleAndAlbedo();
     RunInvalidUsage();
 

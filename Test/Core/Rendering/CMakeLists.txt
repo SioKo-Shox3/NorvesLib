@@ -332,6 +332,64 @@ set_tests_properties(RHIBlockCompressedTextureVulkanTest PROPERTIES
 
 add_test(NAME VideoMemoryBudgetLogGateTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetLogGateTest)
 
+add_test(NAME SparseCapabilitiesVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseCapabilitiesVulkanTest)
+set_tests_properties(SparseCapabilitiesVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+add_test(NAME SparseTextureVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseTextureVulkanTest)
+set_tests_properties(SparseTextureVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# sparse テクスチャへ物理ページを結び・外す（ミップテイルと2タイル）。結んだタイルへ書いた色を計算シェーダーで読み戻し、
+# 外したページが GpuRetireQueue を通ってプールの空きへ戻ることを確かめる。
+add_test(NAME SparseBindVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseBindVulkanTest)
+set_tests_properties(SparseBindVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ステージングのリング経由で、sparse テクスチャのタイル・ミップテイルへ GPU を待たずに書く（TileUploader）。
+# 連続フレームで書いて読み戻し、その間に WaitIdle を呼ばないこと、リングの区画が提出の完了まで再利用されないこと、
+# 1フレームのコピー量の上限、提出しなかったフレームの出し直しを確かめる。
+add_test(NAME SparseTileUploadVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseTileUploadVulkanTest)
+set_tests_properties(SparseTileUploadVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ミップ0のタイル1枚とミップテイルだけを結んだ sparse テクスチャを、材質のシェーダーの標本関数（常駐しなければ粗いミップへ逃げる）で
+# 引く。結んでいない領域が粗いミップの色になり、黒や未定義の値にならないこと、ミップ1を結ぶと1段だけ下げて止まることを確かめる。
+add_test(NAME VirtualTextureResidencyVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VirtualTextureResidencyVulkanTest)
+set_tests_properties(VirtualTextureResidencyVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 材質のシェーダーと同じ関数で sparse テクスチャを既知の UV の面に描き、タイルの要求（フィードバック）が GPU のバッファへ書かれることを確かめる。
+# 常駐の領域は 4x4 画素のうち巡回する 1 画素だけが書き、非常駐で粗いミップへ逃げた領域は全画素が書くこと、同じタイルの要求が 1 件に減ること、
+# パラメータ 0 では書かないこと、capacity を超えた件数が溢れた件数に残ることを確かめる。
+add_test(NAME VirtualTextureFeedbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VirtualTextureFeedbackVulkanTest)
+set_tests_properties(VirtualTextureFeedbackVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME VideoMemoryBudgetVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetVulkanTest)
 set_tests_properties(VideoMemoryBudgetVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -347,6 +405,12 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
     MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
+    MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
+    MEMBER SparseTextureVulkanTest SparseTextureVulkanTest.cpp
+    MEMBER SparseBindVulkanTest SparseBindVulkanTest.cpp
+    MEMBER SparseTileUploadVulkanTest SparseTileUploadVulkanTest.cpp
+    MEMBER VirtualTextureResidencyVulkanTest VirtualTextureResidencyVulkanTest.cpp
+    MEMBER VirtualTextureFeedbackVulkanTest VirtualTextureFeedbackVulkanTest.cpp
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
@@ -1675,7 +1739,10 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER RenderResourcesDomainContractTest RenderResourcesDomainContractTest.cpp
     MEMBER MeshResourcesProceduralGpuTest MeshResourcesProceduralGpuTest.cpp
     MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
+    MEMBER VideoMemoryBudgetManagerTest VideoMemoryBudgetManagerTest.cpp
     MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
+    MEMBER VirtualTextureRequestSetTest VirtualTextureRequestSetTest.cpp
+    MEMBER VirtualTextureStreamerTest VirtualTextureStreamerTest.cpp
     MEMBER RHIBlockCompressedFormatTest RHIBlockCompressedFormatTest.cpp
 )
 target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
@@ -1687,7 +1754,12 @@ add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainCon
 
 add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContractTest --test=MeshResourcesProceduralGpuTest)
 add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
+add_test(NAME VideoMemoryBudgetManagerTest COMMAND RenderResourcesDomainContractTest --test=VideoMemoryBudgetManagerTest)
 add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)
+# 1語へ詰めた VT の要求の復号・重複の除去・溢れた件数と、3つのバッファのリングが完了したものだけを GPU を待たずに読み戻すこと。
+add_test(NAME VirtualTextureRequestSetTest COMMAND RenderResourcesDomainContractTest --test=VirtualTextureRequestSetTest)
+# 要求の集合から未常駐のタイルを優先度順に読み、ページを結び、コピーを積んで常駐させること。1 フレームの上限・同じタイルの二重の要求・読み込みの失敗・プールが尽きたときの扱い。
+add_test(NAME VirtualTextureStreamerTest COMMAND RenderResourcesDomainContractTest --test=VirtualTextureStreamerTest)
 add_test(NAME RHIBlockCompressedFormatTest COMMAND RenderResourcesDomainContractTest --test=RHIBlockCompressedFormatTest)
 
 add_executable(MeshResourcesPrimitiveTest

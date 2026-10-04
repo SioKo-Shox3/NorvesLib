@@ -1,4 +1,7 @@
 ﻿#version 450
+#ifdef NORVES_SPARSE_RESIDENCY_SHADING
+#extension GL_ARB_sparse_texture2 : require
+#endif
 
 layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
@@ -24,7 +27,8 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousView;
     mat4 previousProjection;
     vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV。0なら変位なし）, w=fragDebugPayload がLODの段か（1/0）
-    vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）
+    vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
+    vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -36,6 +40,10 @@ layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/SparseResidencySampling.glsl"
+#define VT_FEEDBACK_BINDING 7
+#include "Common/VirtualTextureFeedback.glsl"
+#include "Common/PbrMaterialTextureSampling.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
 #include "Common/PreExposedEmissive.glsl"
 
@@ -111,7 +119,8 @@ vec3 RemoveDisplacedNormalSlope(vec3 tangentNormal, vec2 texCoord, float displac
     float vertexMip = log2(max(displacementUVSpacing * float(textureSize(normalTexture, 0).x), 1.0)) + lodLevel;
     float coarseMip = max(vertexMip, textureQueryLod(normalTexture, texCoord).y);
     // 粗い傾きも標本は2チャンネル（BC5）の法線を復号して引く（B は0なので RGB のままでは Z が負になる）。
-    vec3 coarseNormal = DecodePbrTangentNormal(textureLod(normalTexture, texCoord, coarseMip), mvp.materialParams.y > 0.5);
+    vec3 coarseNormal = DecodePbrTangentNormal(SampleMaterialTextureLod(normalTexture, texCoord, coarseMip, mvp.materialParams.z > 0.5),
+                                               mvp.materialParams.y > 0.5);
     vec2 detailSlope = tangentNormal.xy / max(tangentNormal.z, 0.1) - coarseNormal.xy / max(coarseNormal.z, 0.1);
     return normalize(vec3(detailSlope, 1.0));
 }
@@ -148,6 +157,7 @@ void main()
     // POMパラメータ取得
     float heightScale = mvp.pomParams.x;
     float hasHeightMap = mvp.pomParams.y;
+    bool bVirtualTexture = mvp.materialParams.z > 0.5;
 
     // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
     mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
@@ -156,13 +166,26 @@ void main()
     vec2 texCoord = fragTexCoord;
     if (hasHeightMap > 0.5)
     {
-        texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, fragViewDir, heightScale);
+        texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, fragViewDir, heightScale, bVirtualTexture);
     }
 
     // テクスチャサンプリング × オブジェクトカラー（POM補正済みUV使用）
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
-        mvp.materialParams.x > 0.5, mvp.materialParams.y > 0.5);
+        mvp.materialParams.x > 0.5, mvp.materialParams.y > 0.5, bVirtualTexture);
+    // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
+    // 高さだけは POM の前の元の UV で書く。
+    WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.materialParams.w),
+                                g_VirtualTextureAlbedoEscaped);
+    WriteVirtualTextureFeedback(normalTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.x),
+                                g_VirtualTextureNormalEscaped);
+    WriteVirtualTextureFeedback(metallicTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.y),
+                                g_VirtualTextureOrmEscaped);
+    if (hasHeightMap > 0.5)
+    {
+        WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord,
+                                          DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z));
+    }
     outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples), textureSamples.Albedo.a);
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）

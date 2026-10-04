@@ -85,6 +85,17 @@ namespace NorvesLib::Core::Rendering
         /** @brief 次のフレームに使える履歴があるか。 */
         bool HasValidHistory() const { return m_History.IsValid(); }
 
+        /**
+         * @brief 決定的な撮影のエポックで、ジッタの列を先頭へ戻して履歴を捨てる。
+         *
+         * 次の BeginFrame が 1 番目のジッタを返し、そのフレームは現在の色だけを使う。
+         */
+        void ResetForDeterministicEpoch()
+        {
+            m_JitterIndex = 0u;
+            m_History.Invalidate();
+        }
+
     private:
         bool PrepareResources(const RHI::TexturePtr& sceneColor);
         void ReleaseSizedResources();

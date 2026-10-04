@@ -127,6 +127,14 @@ namespace Game
         // --night: 起動画面を夜にする（空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす。値を取らない）。
         constexpr const TCHAR *kNightOption = TEXT("--night");
         bool s_bRendering3DTestNight = false;
+        // --virtual-texture=on|off: 起動画面の材質のアルベド・法線・ORM・高さを VT（sparse）で描くか。既定は on（sparse に対応しない GPU は全常駐へ戻る）。
+        // off は VT を使わず、段1の全常駐で描く（見た目・VRAM の比較用）。
+        constexpr const TCHAR *kVirtualTextureOption = TEXT("--virtual-texture=");
+        bool s_bRendering3DTestVirtualTexture = true;
+        // --stress-textures: テクスチャの負荷モード。起動画面の地面の外側へ、負荷用の材質（4K、24 種）を貼った板を格子に並べ、
+        // カメラの軸を格子の中心へ移す。--vram-budget-mb と併せて、VT が目標の中で描けることを確かめる。
+        constexpr const TCHAR *kStressTexturesOption = TEXT("--stress-textures");
+        bool s_bRendering3DTestStressTextures = false;
         bool s_bRendering3DTestHasHeightFogDensity = false;
         float s_Rendering3DTestHeightFogDensity = 0.0f;
         bool s_bRendering3DTestHasHeightFogFalloff = false;
@@ -461,6 +469,7 @@ namespace Game
         s_VramBudgetCapMb = 0;
         s_bRendering3DTestDebugDrawTestLines = false;
         s_bRendering3DTestNight = false;
+        s_bRendering3DTestVirtualTexture = true;
         String captureSequencePrefix;
         VariableArray<uint64_t> captureSequenceRenderedFrames;
         bool bHasRendering3DTestBoardSmokeCount = false;
@@ -601,6 +610,31 @@ namespace Game
             if (args[i] == kNightOption)
             {
                 s_bRendering3DTestNight = true;
+                continue;
+            }
+
+            if (args[i] == kStressTexturesOption)
+            {
+                s_bRendering3DTestStressTextures = true;
+                continue;
+            }
+
+            String virtualTextureValue;
+            if (TryStripPrefix(args[i], kVirtualTextureOption, virtualTextureValue))
+            {
+                if (virtualTextureValue == String(TEXT("on")))
+                {
+                    s_bRendering3DTestVirtualTexture = true;
+                }
+                else if (virtualTextureValue == String(TEXT("off")))
+                {
+                    s_bRendering3DTestVirtualTexture = false;
+                }
+                else
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --virtual-texture は on か off で指定する");
+                    return false;
+                }
                 continue;
             }
 
@@ -1764,6 +1798,8 @@ namespace Game
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
+                mode->GetData().m_bVirtualTexture = s_bRendering3DTestVirtualTexture;
+                mode->GetData().m_bStressTextures = s_bRendering3DTestStressTextures;
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
                 mode->GetData().m_IsTextureCooked = [this](const String &logicalPath)
                 {

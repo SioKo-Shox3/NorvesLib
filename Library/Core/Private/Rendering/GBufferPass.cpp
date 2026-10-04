@@ -9,6 +9,8 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SparseResidencyShading.h"
+#include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Debug/DebugConfig.h"
 #include "RHI/IDevice.h"
@@ -26,6 +28,11 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        // VT の要求のバッファの binding（gbuffer.frag の VT_FEEDBACK_BINDING と同じ。スキニングの binding 8-10 の次）
+        constexpr uint32_t VirtualTextureFeedbackBindingIndex = 11;
+    } // namespace
 
     GBufferPass::GBufferPass(const GBufferPassSettings& settings)
         : m_Settings(settings)
@@ -88,8 +95,9 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBOレイアウト: current/previous view-projection(256) + cameraPos/emissive/POM/velocity(64) = 320 bytes
-            constexpr uint32_t UBO_SIZE = 320;
+            // UBOレイアウト: current/previous view-projection(256) + cameraPos/emissive/POM/velocity(64)
+            // + VT のフィードバックのパラメータ（法線・ORM・高さ。16） = 336 bytes（描画側の PerObjectUBO の大きさと同じ）
+            constexpr uint32_t UBO_SIZE = 336;
             constexpr uint32_t MAX_OBJECTS = 256; // 1フレームあたりの最大オブジェクト数
 
             RHI::DescriptorSetDesc uboDescSetDesc;
@@ -133,6 +141,12 @@ namespace NorvesLib::Core::Rendering
             previousPaletteBinding.type = RHI::ResourceBindType::StructuredBuffer;
             previousPaletteBinding.stages = RHI::ShaderStage::Vertex;
             uboDescSetDesc.bindings.push_back(previousPaletteBinding);
+
+            // VT の要求のバッファ（対応するデバイスだけ。gbuffer.frag の VT_FEEDBACK_BINDING）
+            if (UsesVirtualTextureFeedbackBinding(m_Device))
+            {
+                AddVirtualTextureFeedbackBinding(uboDescSetDesc, VirtualTextureFeedbackBindingIndex);
+            }
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
             {
@@ -533,8 +547,10 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float emissiveChromaticityAndLuminanceNits[4];
             float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=ORMの1枚を metallic の枠に張ったか(0 or 1), w=法線が2チャンネルか(0 or 1)
-            float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ
+            float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
+            float vtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=未使用
         };
+        static_assert(sizeof(PerObjectUBO) == 336u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
@@ -560,6 +576,9 @@ namespace NorvesLib::Core::Rendering
         frameTemplate.frameParams[1] = ResolveSceneColorPreExposure(activeCamera);
 
         auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
+
+        // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）
+        const TextureResources::VirtualTextureFeedbackTarget feedbackTarget = textures->GetVirtualTextureFeedbackTarget();
 
         // Execute-local by design: descriptors contain view/frame constants, and allocator slot lifetime
         // assumes this GBufferPass instance is executed once per frame.
@@ -644,8 +663,6 @@ namespace NorvesLib::Core::Rendering
             uboData.pomParams[2] = ormTex ? 1.0f : 0.0f;
             uboData.pomParams[3] = bMatNormalTwoChannel ? 1.0f : 0.0f;
 
-            allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
-
             RHI::TexturePtr albedoTex = ResolveTexture(matAlbedo, m_DefaultWhiteTexture);
             RHI::TexturePtr normalTex = ResolveTexture(matNormal, m_DefaultFlatNormalTexture);
             // テクスチャが無く材質のスカラー値があるときは、その値の 1x1 テクスチャを既定値の代わりに使う。
@@ -676,6 +693,21 @@ namespace NorvesLib::Core::Rendering
                 aoTex = ormTex;
             }
             RHI::TexturePtr heightTex = ResolveTexture(matHeight, m_DefaultBlackTexture);
+
+            // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
+            uboData.frameParams[2] =
+                AnySparseTexture(albedoTex, normalTex, metallicTex, roughnessTex, aoTex, heightTex) ? 1.0f : 0.0f;
+            // アルベドが VT のとき、シェーダーがこのフレームの要求を書く（24bit 以下の整数は float に正確に載る）
+            uboData.frameParams[3] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matAlbedo, albedoTex.get(), feedbackTarget));
+            // 法線・ORM・高さも VT のとき、それぞれの表の番号で要求を書く（ORM の枠は metallic に張ったテクスチャ）
+            uboData.vtFeedbackParams[0] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matNormal, normalTex.get(), feedbackTarget));
+            uboData.vtFeedbackParams[1] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matORM, ormTex.get(), feedbackTarget));
+            uboData.vtFeedbackParams[2] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matHeight, heightTex.get(), feedbackTarget));
+            allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
 
             allocation.DescriptorSet->BindTexture(1, albedoTex);
             allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
@@ -715,6 +747,7 @@ namespace NorvesLib::Core::Rendering
             {
                 return nullptr;
             }
+            BindVirtualTextureFeedback(*allocation.DescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
             allocation.DescriptorSet->Update();
 
             return allocation.DescriptorSet;
@@ -1436,6 +1469,10 @@ namespace NorvesLib::Core::Rendering
             storageBinding.stages = RHI::ShaderStage::Vertex;
             dsDesc.bindings.push_back(storageBinding);
         }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(dsDesc, VirtualTextureFeedbackBindingIndex);
+        }
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         outPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
@@ -1532,6 +1569,10 @@ namespace NorvesLib::Core::Rendering
             storageBinding.type = RHI::ResourceBindType::StructuredBuffer;
             storageBinding.stages = RHI::ShaderStage::Vertex;
             descriptorSet.bindings.push_back(storageBinding);
+        }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(descriptorSet, VirtualTextureFeedbackBindingIndex);
         }
         pipelineDesc.descriptorSetLayouts.push_back(descriptorSet);
 

@@ -1,4 +1,7 @@
 ﻿#version 450
+#ifdef NORVES_SPARSE_RESIDENCY_SHADING
+#extension GL_ARB_sparse_texture2 : require
+#endif
 
 layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
@@ -22,8 +25,11 @@ layout(set = 0, binding = 0) uniform MVPData
     uint bIBLEnabled;
     uint prefilteredSpecularMipLevels;
     float iblIntensity;
-    uint padding0;
-    uint padding1;
+    uint bVirtualTexture; // 材質のテクスチャが sparse（VT）か（1/0）
+    uint virtualTextureFeedbackParam; // VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
+    uint virtualTextureFeedbackNormalParam; // 同じく法線
+    uint virtualTextureFeedbackOrmParam; // 同じく ORM（metallicTexture の枠）
+    uint virtualTextureFeedbackHeightParam; // 同じく高さ
     uint padding2;
     vec4 cameraForward;
 } mvp;
@@ -59,6 +65,10 @@ layout(set = 0, binding = 14) uniform samplerCubeArray pointShadowCubes;
 layout(location = 0) out vec4 outColor;
 
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/SparseResidencySampling.glsl"
+#define VT_FEEDBACK_BINDING 15
+#include "Common/VirtualTextureFeedback.glsl"
+#include "Common/PbrMaterialTextureSampling.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
 #include "Common/PointShadow.glsl"
 
@@ -214,15 +224,26 @@ void main()
     // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
     mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
     vec3 viewDirection = normalize(mvp.cameraPosition.xyz - fragWorldPos);
+    bool bVirtualTexture = mvp.bVirtualTexture != 0u;
     if (mvp.pomParams.y > 0.5)
     {
         texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, viewDirection,
-                                                 mvp.pomParams.x);
+                                                 mvp.pomParams.x, bVirtualTexture);
     }
 
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
-        mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5);
+        mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5, bVirtualTexture);
+    // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（アルベドのテクスチャが VT の表の番号を持つ）。
+    // discard より前に呼ぶ（画面微分を使うので、discard の後の非一様な制御フローでは呼べない）。
+    // 法線・ORM も POM の後の UV、高さだけ POM の前の元の UV で書く。
+    WriteVirtualTextureFeedback(albedoTexture, texCoord, mvp.virtualTextureFeedbackParam, g_VirtualTextureAlbedoEscaped);
+    WriteVirtualTextureFeedback(normalTexture, texCoord, mvp.virtualTextureFeedbackNormalParam, g_VirtualTextureNormalEscaped);
+    WriteVirtualTextureFeedback(metallicTexture, texCoord, mvp.virtualTextureFeedbackOrmParam, g_VirtualTextureOrmEscaped);
+    if (mvp.pomParams.y > 0.5)
+    {
+        WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord, mvp.virtualTextureFeedbackHeightParam);
+    }
     vec4 texColor = textureSamples.Albedo;
     vec3 baseColor = texColor.rgb * fragObjectColor.rgb;
     float alpha = texColor.a * fragObjectColor.a;

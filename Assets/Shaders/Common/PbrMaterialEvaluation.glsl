@@ -49,37 +49,6 @@ vec3 DecodePbrOrmSample(vec4 ormSample)
     return vec3(ormSample.b, ormSample.g, ormSample.r);
 }
 
-// bHasORM のとき ORM は metallicSampler の枠に張られており、その1枚だけを引く
-// （roughnessSampler・aoSampler は引かない）。無いときは別々の枠を引く従来の経路。
-PbrMaterialTextureSamples SamplePbrMaterialTextures(
-    sampler2D albedoSampler,
-    sampler2D normalSampler,
-    sampler2D metallicSampler,
-    sampler2D roughnessSampler,
-    sampler2D aoSampler,
-    vec2 texCoord,
-    bool bHasORM,
-    bool bNormalTwoChannel)
-{
-    vec3 material;
-    if (bHasORM)
-    {
-        material = DecodePbrOrmSample(texture(metallicSampler, texCoord));
-    }
-    else
-    {
-        material = vec3(texture(metallicSampler, texCoord).r,
-                        texture(roughnessSampler, texCoord).r,
-                        texture(aoSampler, texCoord).r);
-    }
-    return DecodePbrMaterialTextureSamples(texture(albedoSampler, texCoord),
-                                           texture(normalSampler, texCoord),
-                                           material.x,
-                                           material.y,
-                                           material.z,
-                                           bNormalTwoChannel);
-}
-
 // 表面のアルベド。instance色×アルベドtextureで、材質のBaseColorは使わない。
 vec3 ComposePbrSurfaceAlbedo(vec3 objectColor, PbrMaterialTextureSamples samples)
 {

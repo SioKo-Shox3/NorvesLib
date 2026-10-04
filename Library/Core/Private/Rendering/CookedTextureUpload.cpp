@@ -213,9 +213,10 @@ namespace NorvesLib::Core::Rendering
     CookedTextureUploadStatus BuildCookedTextureCreateInfo(
         const Asset::CookedTextureData &texture,
         const Container::String &debugName,
-        TextureCreateInfo &outCreateInfo)
+        TextureCreateInfo &outCreateInfo,
+        bool bRequireSourceBlob)
     {
-        if (!texture.SourceBlob.IsValid())
+        if (bRequireSourceBlob && !texture.SourceBlob.IsValid())
         {
             return CookedTextureUploadStatus::InvalidTexture;
         }

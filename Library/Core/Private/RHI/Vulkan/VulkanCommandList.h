@@ -540,6 +540,8 @@ namespace NorvesLib::RHI::Vulkan
         void CopyTextureToBuffer(TexturePtr src, BufferPtr dst,
                                  uint32_t width, uint32_t height, uint64_t bufferOffset = 0,
                                  uint32_t mipLevel = 0, uint32_t arrayIndex = 0) override;
+        bool CopyBufferToTextureRegion(BufferPtr src, TexturePtr dst, const TextureRegionCopy& region) override;
+        bool CopyTextureRegionToBuffer(TexturePtr src, BufferPtr dst, const TextureRegionCopy& region) override;
         void CopyTexture(TexturePtr src, TexturePtr dst,
                          uint32_t width, uint32_t height,
                          uint32_t srcMipLevel = 0, uint32_t srcArrayIndex = 0,

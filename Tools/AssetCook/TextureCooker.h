@@ -35,7 +35,7 @@ namespace NorvesLib::Tools::AssetCook
 
     [[nodiscard]] bool ParseTextureUsage(Core::Container::AnsiStringView text, TextureUsage &outUsage) noexcept;
     [[nodiscard]] const char *GetTextureUsageName(TextureUsage usage) noexcept;
-    // マニフェストの format 欄に書く名前(例: nvtex.v0.1.bc7.srgb)。
+    // マニフェストの format 欄に書く名前(例: nvtex.v0.2.bc7.srgb)。
     [[nodiscard]] const char *GetTextureUsageManifestFormat(TextureUsage usage) noexcept;
 
     struct TextureSourceImage
@@ -64,7 +64,7 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t ThreadCount = 0;
     };
 
-    // 用途に応じて元画像を焼く。Orm は orm の 3 枠を、それ以外は source を読む。NVTEX v0.1 を書く。
+    // 用途に応じて元画像を焼く。Orm は orm の 3 枠を、それ以外は source を読む。NVTEX v0.2(タイル配置)を書く。
     [[nodiscard]] bool CookTextureForUsage(const TextureSourceImage &source,
                                            const OrmSourceImages &orm,
                                            const TextureUsageCookParams &params,

@@ -11,6 +11,7 @@
 #include "Rendering/RenderTypes.h"
 #include "Rendering/TextureAssetTypes.h"
 #include "Rendering/TextureAsyncTypes.h"
+#include "Rendering/VideoMemoryBudgetManager.h"
 #include "Rendering/VertexLayout.h"
 #include "Container/PointerTypes.h"
 #include "Delegate/Delegate.h"
@@ -21,6 +22,7 @@
 namespace NorvesLib::RHI
 {
     class IBuffer;
+    class ICommandList;
     class IDevice;
     class IShader;
     class ITexture;
@@ -39,6 +41,11 @@ namespace NorvesLib::Core::Rendering
     class ModelAssetRuntime;
     class TextureAssetRuntime;
     class RenderWorld;
+    class SparsePagePool;
+    class TileUploader;
+    class VirtualTextureFeedbackRing;
+    class VirtualTextureRequestSet;
+    class VirtualTextureStreamer;
 
     class GpuResources
     {
@@ -120,6 +127,46 @@ namespace NorvesLib::Core::Rendering
 
         RHI::ITexture *GetRHITexture(TextureHandle handle) const;
         Container::TSharedPtr<RHI::ITexture> GetRHITexturePtr(TextureHandle handle) const;
+
+        // クック済み（NVTEX v0.2）の材質のテクスチャを、sparse の VT として作る。作成時にファイルのメタデータと
+        // ミップテイルだけを範囲読みし、タイルは要求に応じてストリーマが読む。
+        // ミップテイルは次の UpdateVirtualTextureStreaming で結ぶので、IsVirtualTextureReady が true になるまで
+        // 材質でサンプルしてはいけない。sparse に対応しないデバイス・v0.2 でないテクスチャ・マニフェストに無いパスは
+        // 無効なハンドルを返す。フィードバックを有効にできないときも、VT を解放して無効なハンドルを返す。
+        // pOutVirtualTextureIndex には VT の表の添字（フィードバックの要求が指す番号）を返す。
+        TextureHandle CreateVirtualTexture(const Container::String &path, uint32_t *pOutVirtualTextureIndex = nullptr);
+        // VT のミップテイルが常駐してサンプルできるか。VT でないハンドルは false
+        bool IsVirtualTextureReady(TextureHandle handle) const;
+        // デバイスが sparse の VT に対応していて、CreateVirtualTexture を試せるか
+        // （材質のシェーダーが要求を書けるフィードバックの対応も含む。false のデバイスは全常駐で読む）
+        bool SupportsVirtualTexture() const;
+        // CreateVirtualTexture で作り、ミップテイルが常駐してサンプルできるようになったら callback をメインスレッドで呼ぶ
+        // （FlushCompletedTextureLoads で呼ばれる。読み込み中は GetPendingAsyncLoadCount に数える）。
+        // 作れなかったときは false を返し、callback は呼ばない（呼び出し側が全常駐の LoadTextureAsync へ戻す）。
+        // 一定のフレームの間にミップテイルが常駐しなければ VT を解放し、無効なハンドルで callback を呼ぶ。
+        bool CreateVirtualTextureAsync(const Container::String &path,
+                                       NorvesLib::Core::Delegate<void, TextureHandle> callback);
+        // VT のストリーマが落ち着いているか（要求済み・読み込み中・結び待ちのタイルが無い）。VT が無いときは true。
+        // 起動画面の決定的な撮影が、タイルがそろってから撮るために使う。
+        bool IsVirtualTextureStreamingIdle() const;
+        // VT の表の添字を取る。VT でないハンドルは false
+        bool TryGetVirtualTextureIndex(TextureHandle handle, uint32_t &outIndex) const;
+
+        // 材質のシェーダーが VT の要求（フィードバック）を書く先。このフレームの descriptor に束ねる（RenderThread）。
+        struct VirtualTextureFeedbackTarget
+        {
+            // 束ねるバッファ。デバイスがフィードバックに対応していれば常に有効（今のフレームのバッファが無いときは、書かれない
+            // 小さな代替）。対応しないデバイス（材質のシェーダーに binding が入らない）では null
+            Container::TSharedPtr<RHI::IBuffer> Buffer;
+            uint64_t Bytes = 0;
+            // このフレームの要求のバッファを獲得できている（材質が要求を書いてよい）か
+            bool bWriting = false;
+            // 材質のパラメータの巡回の位相を決めるフレームの番号
+            uint64_t Frame = 0;
+        };
+        VirtualTextureFeedbackTarget GetVirtualTextureFeedbackTarget() const;
+        // 対応するデバイスなら、要求のバッファのリングを有効にする（最初の VT の作成で呼ばれる。何度呼んでもよい）。有効にできたら true
+        bool EnableVirtualTextureFeedback();
 
     private:
         friend class RenderResources;
@@ -255,13 +302,19 @@ namespace NorvesLib::Core::Rendering
         bool IsInitialized() const;
 
         // VRAM の上限（MB。0 は上限なし）。起動引数 --vram-budget-mb から渡される。
-        // 予算をプールへ割り振る処理は後続の段で足す。ここでは値を保持してログに出すだけ。
         void SetVideoMemoryCapMb(uint64_t capMb);
         uint64_t GetVideoMemoryCapMb() const;
 
-        // GameThread から毎フレーム呼ぶ。初回と、その後は約1秒ごとに予算か使用量が
-        // 1% 以上変わったときだけ VRAM_BUDGET をログへ出す。
+        // GameThread から毎フレーム呼ぶ。初回と、その後は約1秒ごとに予算を取得して、
+        // プールへ割り振る量（VideoMemoryBudgetManager）を計算し、VT のプールの上限へ反映する。
+        // 予算か使用量が 1% 以上変わったときだけ VRAM_BUDGET を、割り振りが変わったときだけ VRAM_POOLS をログへ出す。
         void PollVideoMemoryBudget();
+
+        // 直近の PollVideoMemoryBudget の割り振り結果（GameThread から読む。まだ計算していなければ全て 0・上限なし）。
+        // 後の段のジオメトリ・VSM のプールも、ここからそれぞれの目標の大きさを受け取る。
+        const VideoMemoryBudgetResult &GetVideoMemoryBudgetResult() const;
+        // プールの取り分の重みを決める（既定は VT が全て）。
+        void SetVideoMemoryPoolShare(VideoMemoryPool pool, uint32_t weight);
 
         // GPU が使い終わるまで RHI 資源の破棄を待つ仕組み（ReleaseTexture・ReleaseBuffer が使う）。
         // RenderThread が、フレームの記録の開始（完了済みの提出 serial を渡す）・提出・中止の
@@ -271,6 +324,34 @@ namespace NorvesLib::Core::Rendering
         void AbortRetireFrame();
         // 破棄を待っている RHI 資源の数（観測用）。
         size_t GetPendingRetireCount() const;
+
+        // sparse テクスチャへ結ぶ物理メモリのページのプール。sparse に対応しないデバイス・未初期化では nullptr。
+        SparsePagePool *GetSparsePagePool() const;
+
+        // 積んであるタイル・ミップテイルのコピーを、フレームのコマンドの先頭へ記録する（RenderThread。
+        // render pass の外で、BeginRetireFrame の後・コマンドを開いた直後に呼ぶ）。記録したコピーの数を返す。
+        // sparse に対応しないデバイス・未初期化では何もせず 0。
+        uint32_t RecordTileUploads(RHI::ICommandList &commandList);
+        // ステージングのリング経由でテクスチャの領域へ書く経路。sparse に対応しないデバイス・未初期化では nullptr。
+        TileUploader *GetTileUploader() const;
+
+        // VT の要求（材質のシェーダーが書くタイルの要求）を、3つのバッファのリングで数フレーム遅れて読み戻して集計する仕組み。
+        // 提出が完了したバッファだけを GPU を待たずに読むので、RenderThread は止まらない。BeginRetireFrame・CommitRetireFrame・
+        // AbortRetireFrame で一緒に進む。sparse に対応しないデバイス・未初期化では nullptr。初期状態は無効（SetEnabled で有効にする）。
+        VirtualTextureFeedbackRing *GetVirtualTextureFeedback() const;
+        // 溜まった要求の集計を out へ渡し、こちらは空に戻す（VT のストリーマが毎フレーム呼ぶ。どのスレッドからでもよい）。
+        // 要求も溢れた件数も無いとき・リングが無いときは false で、out は変えない。
+        bool TakeVirtualTextureRequests(VirtualTextureRequestSet &out);
+        // このフレームの要求のバッファへの書き込みを、ホストの読み取りへ見せるバリアを記録する。最後の書き込みの後・
+        // render pass の外・コマンドの終了より前に RenderThread が呼ぶ。バッファが無い（無効・空き無し）フレームでは何もしない。
+        void RecordVirtualTextureFeedbackBarrier(RHI::ICommandList &commandList);
+
+        // VT のストリーマ。タイルの読み込み・ページの結び付け・コピーの積み込みを進める。sparse に対応しないデバイス・
+        // 未初期化では nullptr。
+        VirtualTextureStreamer *GetVirtualTextureStreamer() const;
+        // 溜まった要求を取り出して、ストリーマを1フレーム進める（RenderThread。BeginRetireFrame の後・コマンドを開く前に呼ぶ。
+        // BindSparse はコマンドの送信と同じ直列化の下で呼ぶ必要がある）。VT が1枚も無いときは何もしない。
+        void UpdateVirtualTextureStreaming();
 
         bool ReloadAssetRuntimeSnapshot(
             const Container::String& assetRoot,

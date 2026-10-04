@@ -78,6 +78,10 @@ namespace NorvesLib::Core::Rendering
         /// ミップごとの大きさは各形式のブロック単位（BC は 4x4 画素のブロックを切り上げ）で数える。
         bool bInitialDataHasAllMips = false;
 
+        /// sparse（部分常駐）のテクスチャにするか。物理メモリを結ばずに全ミップを作り、タイルごとに結ぶ。
+        /// 対応しない GPU・形式・用途（レンダーターゲット・深度・配列）では作成が失敗する。初期データは渡せない。
+        bool bSparse = false;
+
         TextureType Type = TextureType::Texture2D;
 
         bool bRenderTarget = false;
@@ -170,5 +174,9 @@ namespace NorvesLib::Core::Rendering
         size_t TotalBufferMemory = 0;
         size_t TotalTextureMemory = 0;
         size_t TextureBytes = 0; // 所有するテクスチャの確保量の合計（TotalTextureMemory と同じ値）
+        // sparse の物理メモリのプール（SparsePagePool）が持つ量と、貸し出し中の量。sparse テクスチャは
+        // 結んだ量（= 貸し出し中のページ）が TextureBytes に入るので、UsedBytes は TextureBytes の内数になる。
+        size_t SparsePoolCapacityBytes = 0;
+        size_t SparsePoolUsedBytes = 0;
     };
 }

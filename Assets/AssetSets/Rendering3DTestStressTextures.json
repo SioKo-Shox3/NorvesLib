@@ -1,0 +1,537 @@
+{
+  "version": 1,
+  "name": "Rendering3DTestStressTextures",
+  "package_root": "Cooked/Stress",
+  "default_variant": "default",
+  "cook_assets": true,
+  "textures": [
+    {
+      "logical_path": "Assets/Textures/PolyHaven/aerial_rocks_02/aerial_rocks_02_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/aerial_rocks_02/aerial_rocks_02_diff_4k.jpg",
+      "package_name": "PolyHaven/aerial_rocks_02/aerial_rocks_02_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/aerial_rocks_02/aerial_rocks_02_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/aerial_rocks_02/aerial_rocks_02_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/aerial_rocks_02/aerial_rocks_02_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/aerial_rocks_02/aerial_rocks_02_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/aerial_rocks_02/aerial_rocks_02_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/aerial_rocks_02/aerial_rocks_02_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/aerial_rocks_02/aerial_rocks_02_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/aerial_rocks_02/aerial_rocks_02_rough_4k.jpg",
+      "package_name": "PolyHaven/aerial_rocks_02/aerial_rocks_02_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/aerial_rocks_02/aerial_rocks_02_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_diff_4k.jpg",
+      "package_name": "PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_rough_4k.jpg",
+      "package_name": "PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/coast_sand_rocks_02/coast_sand_rocks_02_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_diff_4k.jpg",
+      "package_name": "PolyHaven/dry_ground_rocks/dry_ground_rocks_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/dry_ground_rocks/dry_ground_rocks_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_rough_4k.jpg",
+      "package_name": "PolyHaven/dry_ground_rocks/dry_ground_rocks_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/dry_ground_rocks/dry_ground_rocks_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/gravel_ground_01/gravel_ground_01_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/gravel_ground_01/gravel_ground_01_diff_4k.jpg",
+      "package_name": "PolyHaven/gravel_ground_01/gravel_ground_01_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/gravel_ground_01/gravel_ground_01_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/gravel_ground_01/gravel_ground_01_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/gravel_ground_01/gravel_ground_01_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/gravel_ground_01/gravel_ground_01_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/gravel_ground_01/gravel_ground_01_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/gravel_ground_01/gravel_ground_01_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/gravel_ground_01/gravel_ground_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/gravel_ground_01/gravel_ground_01_rough_4k.jpg",
+      "package_name": "PolyHaven/gravel_ground_01/gravel_ground_01_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/gravel_ground_01/gravel_ground_01_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_diff_4k.jpg",
+      "package_name": "PolyHaven/forest_ground_04/forest_ground_04_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/forest_ground_04/forest_ground_04_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_rough_4k.jpg",
+      "package_name": "PolyHaven/forest_ground_04/forest_ground_04_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/forest_ground_04/forest_ground_04_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/rock_04/rock_04_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/rock_04/rock_04_diff_4k.jpg",
+      "package_name": "PolyHaven/rock_04/rock_04_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/rock_04/rock_04_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/rock_04/rock_04_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/rock_04/rock_04_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/rock_04/rock_04_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/rock_04/rock_04_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/rock_04/rock_04_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/rock_04/rock_04_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/rock_04/rock_04_rough_4k.jpg",
+      "package_name": "PolyHaven/rock_04/rock_04_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/rock_04/rock_04_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_diff_4k.jpg",
+      "package_name": "PolyHaven/castle_brick_01/castle_brick_01_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/castle_brick_01/castle_brick_01_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_rough_4k.jpg",
+      "package_name": "PolyHaven/castle_brick_01/castle_brick_01_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/castle_brick_01/castle_brick_01_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/concrete_wall_003/concrete_wall_003_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/concrete_wall_003/concrete_wall_003_diff_4k.jpg",
+      "package_name": "PolyHaven/concrete_wall_003/concrete_wall_003_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/concrete_wall_003/concrete_wall_003_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/concrete_wall_003/concrete_wall_003_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/concrete_wall_003/concrete_wall_003_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/concrete_wall_003/concrete_wall_003_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/concrete_wall_003/concrete_wall_003_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/concrete_wall_003/concrete_wall_003_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/concrete_wall_003/concrete_wall_003_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/concrete_wall_003/concrete_wall_003_rough_4k.jpg",
+      "package_name": "PolyHaven/concrete_wall_003/concrete_wall_003_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/concrete_wall_003/concrete_wall_003_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/quarry_wall/quarry_wall_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/quarry_wall/quarry_wall_diff_4k.jpg",
+      "package_name": "PolyHaven/quarry_wall/quarry_wall_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/quarry_wall/quarry_wall_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/quarry_wall/quarry_wall_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/quarry_wall/quarry_wall_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/quarry_wall/quarry_wall_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/quarry_wall/quarry_wall_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/quarry_wall/quarry_wall_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/quarry_wall/quarry_wall_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/quarry_wall/quarry_wall_rough_4k.jpg",
+      "package_name": "PolyHaven/quarry_wall/quarry_wall_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/quarry_wall/quarry_wall_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/mossy_stone_wall/mossy_stone_wall_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/mossy_stone_wall/mossy_stone_wall_diff_4k.jpg",
+      "package_name": "PolyHaven/mossy_stone_wall/mossy_stone_wall_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/mossy_stone_wall/mossy_stone_wall_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/mossy_stone_wall/mossy_stone_wall_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/mossy_stone_wall/mossy_stone_wall_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/mossy_stone_wall/mossy_stone_wall_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/mossy_stone_wall/mossy_stone_wall_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/mossy_stone_wall/mossy_stone_wall_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/mossy_stone_wall/mossy_stone_wall_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/mossy_stone_wall/mossy_stone_wall_rough_4k.jpg",
+      "package_name": "PolyHaven/mossy_stone_wall/mossy_stone_wall_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/mossy_stone_wall/mossy_stone_wall_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_diff_4k.jpg",
+      "package_name": "PolyHaven/brown_planks_03/brown_planks_03_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/brown_planks_03/brown_planks_03_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_rough_4k.jpg",
+      "package_name": "PolyHaven/brown_planks_03/brown_planks_03_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/brown_planks_03/brown_planks_03_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/dark_planks/dark_planks_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/dark_planks/dark_planks_diff_4k.jpg",
+      "package_name": "PolyHaven/dark_planks/dark_planks_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/dark_planks/dark_planks_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/dark_planks/dark_planks_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/dark_planks/dark_planks_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/dark_planks/dark_planks_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/dark_planks/dark_planks_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/dark_planks/dark_planks_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/dark_planks/dark_planks_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/dark_planks/dark_planks_rough_4k.jpg",
+      "package_name": "PolyHaven/dark_planks/dark_planks_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/dark_planks/dark_planks_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/herringbone_parquet/herringbone_parquet_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/herringbone_parquet/herringbone_parquet_diff_4k.jpg",
+      "package_name": "PolyHaven/herringbone_parquet/herringbone_parquet_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/herringbone_parquet/herringbone_parquet_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/herringbone_parquet/herringbone_parquet_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/herringbone_parquet/herringbone_parquet_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/herringbone_parquet/herringbone_parquet_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/herringbone_parquet/herringbone_parquet_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/herringbone_parquet/herringbone_parquet_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/herringbone_parquet/herringbone_parquet_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/herringbone_parquet/herringbone_parquet_rough_4k.jpg",
+      "package_name": "PolyHaven/herringbone_parquet/herringbone_parquet_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/herringbone_parquet/herringbone_parquet_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/bark_brown_01/bark_brown_01_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/bark_brown_01/bark_brown_01_diff_4k.jpg",
+      "package_name": "PolyHaven/bark_brown_01/bark_brown_01_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/bark_brown_01/bark_brown_01_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/bark_brown_01/bark_brown_01_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/bark_brown_01/bark_brown_01_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/bark_brown_01/bark_brown_01_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/bark_brown_01/bark_brown_01_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/bark_brown_01/bark_brown_01_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/bark_brown_01/bark_brown_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/bark_brown_01/bark_brown_01_rough_4k.jpg",
+      "package_name": "PolyHaven/bark_brown_01/bark_brown_01_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/bark_brown_01/bark_brown_01_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/cobblestone_floor_01/cobblestone_floor_01_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/cobblestone_floor_01/cobblestone_floor_01_diff_4k.jpg",
+      "package_name": "PolyHaven/cobblestone_floor_01/cobblestone_floor_01_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/cobblestone_floor_01/cobblestone_floor_01_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/cobblestone_floor_01/cobblestone_floor_01_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/cobblestone_floor_01/cobblestone_floor_01_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/cobblestone_floor_01/cobblestone_floor_01_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/cobblestone_floor_01/cobblestone_floor_01_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/cobblestone_floor_01/cobblestone_floor_01_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/cobblestone_floor_01/cobblestone_floor_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/cobblestone_floor_01/cobblestone_floor_01_rough_4k.jpg",
+      "package_name": "PolyHaven/cobblestone_floor_01/cobblestone_floor_01_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/cobblestone_floor_01/cobblestone_floor_01_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/brick_floor/brick_floor_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/brick_floor/brick_floor_diff_4k.jpg",
+      "package_name": "PolyHaven/brick_floor/brick_floor_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/brick_floor/brick_floor_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/brick_floor/brick_floor_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/brick_floor/brick_floor_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/brick_floor/brick_floor_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/brick_floor/brick_floor_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/brick_floor/brick_floor_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/brick_floor/brick_floor_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/brick_floor/brick_floor_rough_4k.jpg",
+      "package_name": "PolyHaven/brick_floor/brick_floor_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/brick_floor/brick_floor_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_diff_4k.jpg",
+      "package_name": "PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_rough_4k.jpg",
+      "package_name": "PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/concrete_floor_worn_001/concrete_floor_worn_001_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_diff_4k.jpg",
+      "package_name": "PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_rough_4k.jpg",
+      "package_name": "PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/terracotta_floor_tiles/terracotta_floor_tiles_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/corrugated_iron/corrugated_iron_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/corrugated_iron/corrugated_iron_diff_4k.jpg",
+      "package_name": "PolyHaven/corrugated_iron/corrugated_iron_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/corrugated_iron/corrugated_iron_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/corrugated_iron/corrugated_iron_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/corrugated_iron/corrugated_iron_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/corrugated_iron/corrugated_iron_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/corrugated_iron/corrugated_iron_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/corrugated_iron/corrugated_iron_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/corrugated_iron/corrugated_iron_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/corrugated_iron/corrugated_iron_rough_4k.jpg",
+      "package_name": "PolyHaven/corrugated_iron/corrugated_iron_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/corrugated_iron/corrugated_iron_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/rusty_metal_02/rusty_metal_02_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/rusty_metal_02/rusty_metal_02_diff_4k.jpg",
+      "package_name": "PolyHaven/rusty_metal_02/rusty_metal_02_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/rusty_metal_02/rusty_metal_02_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/rusty_metal_02/rusty_metal_02_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/rusty_metal_02/rusty_metal_02_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/rusty_metal_02/rusty_metal_02_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/rusty_metal_02/rusty_metal_02_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/rusty_metal_02/rusty_metal_02_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/rusty_metal_02/rusty_metal_02_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/rusty_metal_02/rusty_metal_02_rough_4k.jpg",
+      "package_name": "PolyHaven/rusty_metal_02/rusty_metal_02_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/rusty_metal_02/rusty_metal_02_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/metal_plate/metal_plate_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/metal_plate/metal_plate_diff_4k.jpg",
+      "package_name": "PolyHaven/metal_plate/metal_plate_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/metal_plate/metal_plate_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/metal_plate/metal_plate_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/metal_plate/metal_plate_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/metal_plate/metal_plate_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/metal_plate/metal_plate_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/metal_plate/metal_plate_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/metal_plate/metal_plate_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/metal_plate/metal_plate_rough_4k.jpg",
+      "package_name": "PolyHaven/metal_plate/metal_plate_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/metal_plate/metal_plate_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/clay_roof_tiles/clay_roof_tiles_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/clay_roof_tiles/clay_roof_tiles_diff_4k.jpg",
+      "package_name": "PolyHaven/clay_roof_tiles/clay_roof_tiles_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/clay_roof_tiles/clay_roof_tiles_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/clay_roof_tiles/clay_roof_tiles_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/clay_roof_tiles/clay_roof_tiles_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/clay_roof_tiles/clay_roof_tiles_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/clay_roof_tiles/clay_roof_tiles_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/clay_roof_tiles/clay_roof_tiles_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/clay_roof_tiles/clay_roof_tiles_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/clay_roof_tiles/clay_roof_tiles_rough_4k.jpg",
+      "package_name": "PolyHaven/clay_roof_tiles/clay_roof_tiles_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/clay_roof_tiles/clay_roof_tiles_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/roof_slates_02/roof_slates_02_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/roof_slates_02/roof_slates_02_diff_4k.jpg",
+      "package_name": "PolyHaven/roof_slates_02/roof_slates_02_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/roof_slates_02/roof_slates_02_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/roof_slates_02/roof_slates_02_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/roof_slates_02/roof_slates_02_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/roof_slates_02/roof_slates_02_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/roof_slates_02/roof_slates_02_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/roof_slates_02/roof_slates_02_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/roof_slates_02/roof_slates_02_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/roof_slates_02/roof_slates_02_rough_4k.jpg",
+      "package_name": "PolyHaven/roof_slates_02/roof_slates_02_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/roof_slates_02/roof_slates_02_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/grey_roof_tiles/grey_roof_tiles_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/grey_roof_tiles/grey_roof_tiles_diff_4k.jpg",
+      "package_name": "PolyHaven/grey_roof_tiles/grey_roof_tiles_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/grey_roof_tiles/grey_roof_tiles_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/grey_roof_tiles/grey_roof_tiles_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/grey_roof_tiles/grey_roof_tiles_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/grey_roof_tiles/grey_roof_tiles_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/grey_roof_tiles/grey_roof_tiles_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/grey_roof_tiles/grey_roof_tiles_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/grey_roof_tiles/grey_roof_tiles_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/grey_roof_tiles/grey_roof_tiles_rough_4k.jpg",
+      "package_name": "PolyHaven/grey_roof_tiles/grey_roof_tiles_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/grey_roof_tiles/grey_roof_tiles_orm_4k.nvtex"
+    }
+  ]
+}
