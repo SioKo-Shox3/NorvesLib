@@ -411,6 +411,13 @@
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 
+## VTG6-PT-VT-TEXTURES: パストレーサーの材質のテクスチャの配列でVTのテクスチャを読めるようにする
+- status: backlog
+- done-when: `PathTracingClosestHit.glsl` の `materialTextures[256]` の標本が、VT（sparse）のテクスチャでは非常駐のタイルを読まず粗いミップへ逃げる（VTG2-RESIDENCY-FALLBACK の共通の関数を使う）。パストレーサーを有効にした起動画面の撮影で、VT と全常駐の差を記録する。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingMaterialVulkanTest$"`
+- paths: Assets/Shaders/PathTracing, Assets/Shaders/Common, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-05 親が足した。段2の受入れの既知の限界（パストレーサーを有効にすると VT の非常駐のタイルを読みうる）。起動画面の既定（RTGI は GBuffer だけを読む）では使わない。段6の材質の解決パスと合わせて扱う。
+
 ## VTG6-RETIRE-GBUFFER-RASTER: 不透明のGBufferのラスタの経路を外す
 - status: backlog
 - done-when: 不透明の描画を GBufferPass のラスタから外し、ビジビリティバッファの経路だけにする。golden の差を測って記録し、その変更だけによる差なら再承認する。
