@@ -2398,3 +2398,9 @@
 - done-when: TString::replaceが同長/増加/縮小/末尾/自己参照の置換で意図したbyte列を保ち、終端は末尾だけに置く。
 - verify: 実Coreのchar/wchar/member契約、部分置換直後のsuffix先頭と全size、関連文字列試験。
 - stop-when: StringCopyの全呼出し規約を検証なしに変更、Windows CRTの動作を偽shimで合格扱い。
+
+## G2-S6-TEXTURE-BATCH: native --asset-setでv1を新規rootへcookする
+- status: doing
+- done-when: C++サービスとCLIがv1を全件cookし、PS5.1集約manifestをspec順に生成。存在しないRuntimeRootだけへ同volume no-replace renameで公開し、固定Silver2specの10fileと全byte一致する。
+- verify: 既存12CPU/7CLI/79byte一致、2spec各2回10byte一致、PS5.1 ASCII escape実probe、late画像不正/既存root/出力prefix衝突/公開先競合で不変。
+- stop-when: 既存root上書きやmanifest-lastを原子的と呼ぶ、genericrenameで競合先を置換、増分/モデルbatch/production caller移行を完了扱い。

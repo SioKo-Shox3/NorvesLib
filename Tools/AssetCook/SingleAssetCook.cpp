@@ -1,5 +1,6 @@
 ﻿// 再利用可能な単体cook。入力bufferを出力完了まで同じ呼出し内で保持する。
 #include "SingleAssetCook.h"
+#include "Asset/CookedSkeletalNameCodec.h"
 #include "AssetCookLegacyOptions.h"
 #include "AssetCookOutput.h"
 
@@ -133,11 +134,23 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
+            // source名は診断用でもACPへ縮約せず、native pathからUTF8へ明示変換する。
+            const auto& nativeSourceName=inputPath.native();
+            const NorvesLib::Core::Container::Span<const std::filesystem::path::value_type> sourceUnits{nativeSourceName.data(),nativeSourceName.size()};
+            const auto measuredName=NorvesLib::Core::Asset::MeasureSkeletalNameEncoding(2,sourceUnits);
+            NorvesLib::Core::Container::VariableArray<uint8_t> sourceNameUtf8;
+            if (!measuredName.Succeeded()) { error="texture source path cannot be encoded as UTF-8";return false; }
+            sourceNameUtf8.resize(measuredName.ByteCount);
+            if (!NorvesLib::Core::Asset::EncodeSkeletalWireName(2,sourceUnits,{sourceNameUtf8.data(),sourceNameUtf8.size()}).Succeeded())
+            { error="texture source path cannot be encoded as UTF-8";return false; }
+#if defined(_WIN32)
+            for (auto& byte:sourceNameUtf8) if (byte=='\\') byte='/';
+#endif
             NorvesLib::Tools::AssetCook::TextureCookResult textureResult;
             if (!NorvesLib::Tools::AssetCook::CookTextureToNvtex(inputBytes.data(),
                                                                  inputBytes.size(),
                                                                  options.Format,
-                                                                 inputPath.generic_string(),
+                                                                 std::string_view(reinterpret_cast<const char*>(sourceNameUtf8.data()),sourceNameUtf8.size()),
                                                                  textureResult,
                                                                  error))
             {

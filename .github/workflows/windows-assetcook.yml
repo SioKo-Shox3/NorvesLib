@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/windows-assetcook.yml'
       - 'Scripts/AssetCookCliParity.py'
+      - 'Scripts/VerifyTextureAssetSet.py'
+      - 'Docs/AssetCookTextureFrozenBaseline.json'
       - 'Library/**'
       - 'Tools/**'
       - 'Test/**'
@@ -88,6 +90,14 @@ jobs:
           print("Frozen 79-file snapshot and Windows recipe verified")
           '@ | python - 2>&1 | Tee-Object "$env:NORVES_CI_LOG/frozen-preflight.log"
           if ($LASTEXITCODE -ne 0) { throw 'Frozen baseline preflight failed' }
+      - name: 固定した旧texture spec基準を取得する
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          artifact-ids: '11303728946'
+          run-id: '37205025949'
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/NorvesTextureLegacyReference
       - name: 公式Vulkan SDKを検証して配置する
         run: |
           $ErrorActionPreference = 'Stop'
@@ -115,6 +125,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Comparator tests failed' }
           python -O Test/Tools/AssetCookCliParityTest.py -q 2>&1 | Tee-Object -Append "$env:NORVES_CI_LOG/comparator.log"
           if ($LASTEXITCODE -ne 0) { throw 'Optimized comparator tests failed' }
+      - name: native texture比較器の拒否契約を検証する
+        run: |
+          python -B Test/Tools/TextureAssetSetVerifyTest.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Texture comparator tests failed' }
+          python -B -O Test/Tools/TextureAssetSetVerifyTest.py -q
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized texture comparator tests failed' }
       - name: 実Coreを含む構成を生成する
         run: |
           cmake -S . -B build/windows-cli -G 'Visual Studio 17 2022' -A x64 -DNORVES_BUILD_TESTS=ON 2>&1 | Tee-Object "$env:NORVES_CI_LOG/configure.log"
@@ -140,7 +156,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Diagnostic byte parity failed' }
       - name: CPU契約を実行する
         run: |
-          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(CookedMeshTest|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
+          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(CookedMeshTest|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest|TextureAssetSetOutputTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
           if ($LASTEXITCODE -ne 0) { throw 'CPU contracts failed' }
       - name: 分割後の実CLI出力を採取する
         id: capture
@@ -159,6 +175,23 @@ jobs:
         run: |
           python Scripts/AssetCookCliParity.py compare "$env:RUNNER_TEMP/NorvesCliFrozenBefore/snapshot" "$env:NORVES_CI_CAPTURE/snapshot" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/parity.log"
           if ($LASTEXITCODE -ne 0) { throw 'CLI byte parity failed' }
+      - name: native asset-setを旧PS1の全出力と比較する
+        id: texture_parity
+        run: |
+          python -B Scripts/VerifyTextureAssetSet.py --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --reference "$env:RUNNER_TEMP/NorvesTextureLegacyReference" --output "$env:RUNNER_TEMP/NorvesTextureNative" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/texture-native.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Native texture asset-set contracts failed' }
+      - name: native asset-setの一致した出力と記録を保存する
+        if: steps.texture_parity.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: texture-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/NorvesTextureNative/native1/
+            ${{ runner.temp }}/NorvesTextureNative/verification.json
+            ${{ runner.temp }}/NorvesTextureNative/ascii-ps51.json
+            ${{ runner.temp }}/NorvesTextureNative/ascii-probe/manifest.json
       - name: 検証ログを保存する
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -168,6 +201,7 @@ jobs:
           if-no-files-found: warn
           path: |
             ${{ runner.temp }}/NorvesWindowsLogs/
+            ${{ runner.temp }}/NorvesTextureNative/logs/
             ${{ runner.temp }}/NorvesCliBefore-${{ github.run_id }}-${{ github.run_attempt }}/logs/
             build/windows-cli/CMakeCache.txt
             build/windows-cli/CMakeFiles/CMakeConfigureLog.yaml

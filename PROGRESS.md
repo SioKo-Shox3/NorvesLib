@@ -710,3 +710,5 @@
 - G2-S6-TEXTURE-SPEC実検証: 441eeed/run37206606155は実buildと既存11CPU/診断byte成功、新spec試験のJson生成helperで停止（実2spec試験へは未到達）。TString::replaceがmemmove後にstrncpy_sの終端NULでsuffix先頭を潰すことをsourceで特定。fixtureだけを3区間appendへ変更し、失敗時hex記録を追加。汎用文字列修正は別taskに起票。parser/fixture taskとも実再試験までdoing。
 
 - G2-S6-TEXTURE-SPEC/FIXTURE受入: f3100ed/run37207785735で実build、12CPU（実Silver2spec/8row全所有field・UTF8・失敗保持）、7CLI、79出力byte一致、診断5literal一致を確認。fixture修復後にparser本体無変更で全合格。両taskをdone。--asset-set実行/集約serializer/増分印は未接続、汎用String::replace修正は独立TODO。
+
+- G2-S6-TEXTURE-BATCH開始: CLI/サービス/PS5.1集約serializer/同volume no-replace新規root公開を実装。全入力先行検査、private stage、単体manifest所有、最終cooked-only再解決を接続。固定10file×2回と全ASCII PS実probe、failure/既存root/junction/競合検査をCIへ追加。Python比較器4件成功、実native検証前のためdoing。既存root増分とproduction caller切替は後続。

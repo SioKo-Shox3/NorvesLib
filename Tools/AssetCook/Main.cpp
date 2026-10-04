@@ -1,6 +1,7 @@
 #include "AssetCookLegacyOptions.h"
 #include "AssetCookOutput.h"
 #include "SingleAssetCook.h"
+#include "TextureAssetSetCook.h"
 
 namespace
 {
@@ -164,6 +165,7 @@ namespace
     {
         std::cerr
             << "Usage: AssetCook --inspect <model.gltf|model.glb>\n"
+            << "       AssetCook --asset-set <spec.json> --runtime-root <new-directory> [--source-root <directory>] [--manifest <file>]\n"
             << "       AssetCook --input <file> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind raw --entry <entry> --entry-type Raw "
             << "--format raw.v0 --variant default\n"
@@ -278,6 +280,8 @@ namespace
 
 int main(int argc, char **argv)
 {
+    int assetSetExitCode=0;
+    if (NorvesLib::Tools::AssetCook::RunTextureAssetSetCommand(argc,argv,assetSetExitCode)) return assetSetExitCode;
     std::filesystem::path inspectPath;
     const char* inspectError=nullptr;
     const auto inspect=NorvesLib::Tools::AssetCook::ParseInspectCommandLine(argc,argv,inspectPath,inspectError);
