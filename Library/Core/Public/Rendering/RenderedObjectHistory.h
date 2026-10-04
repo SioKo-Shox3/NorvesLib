@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Rendering/FramePacket.h"
+#include "Rendering/SkinnedPoseHistory.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
 
@@ -67,19 +68,13 @@ namespace NorvesLib::Core::Rendering
             m_FrameNumber = 0u;
             m_MeshWorlds.clear();
             m_MegaGeometryWorlds.clear();
-            m_SkinnedStates.clear();
+            m_SkinnedStates.Reset();
         }
 
         bool IsValid() const { return m_bValid; }
         uint64_t GetFrameNumber() const { return m_FrameNumber; }
 
     private:
-        struct SkinnedState
-        {
-            Math::Matrix4x4 WorldMatrix;
-            Container::VariableArray<Math::Matrix4x4> BonePalette;
-        };
-
         static uint64_t HashMatrixBytes(const float (&values)[16])
         {
             // FNV-1a（行列のビット列が同じものだけを同じ候補にする）。
@@ -156,28 +151,7 @@ namespace NorvesLib::Core::Rendering
                 proxy.PreviousWorldTransform =
                     found != m_MegaGeometryWorlds.end() ? found->second : proxy.WorldTransform;
             }
-            for (DrawCommand& command : packet.DrawCommands)
-            {
-                if (command.Draw.PayloadKind != DrawPayloadKind::Skinned)
-                {
-                    continue;
-                }
-                const auto found = m_SkinnedStates.find(command.Draw.SourceMeshComponentId);
-                // 骨の数が変わった（別のアセットに替わった）ときは前の値を使わない（GameThread と同じ）。
-                if (found != m_SkinnedStates.end() &&
-                    found->second.BonePalette.size() == command.Skinned.BonePalette.size())
-                {
-                    command.Skinned.PreviousWorldMatrix = found->second.WorldMatrix;
-                    command.Skinned.PreviousBonePalette = found->second.BonePalette;
-                    command.Skinned.bHasPrevious = true;
-                }
-                else
-                {
-                    command.Skinned.PreviousWorldMatrix = command.Draw.WorldMatrix;
-                    command.Skinned.PreviousBonePalette.clear();
-                    command.Skinned.bHasPrevious = false;
-                }
-            }
+            m_SkinnedStates.Apply(packet,true);
         }
 
         /**
@@ -242,16 +216,7 @@ namespace NorvesLib::Core::Rendering
             {
                 m_MegaGeometryWorlds[proxy.ComponentId] = proxy.WorldTransform;
             }
-            m_SkinnedStates.clear();
-            for (const DrawCommand& command : packet.DrawCommands)
-            {
-                if (command.Draw.PayloadKind == DrawPayloadKind::Skinned)
-                {
-                    SkinnedState& state = m_SkinnedStates[command.Draw.SourceMeshComponentId];
-                    state.WorldMatrix = command.Draw.WorldMatrix;
-                    state.BonePalette = command.Skinned.BonePalette;
-                }
-            }
+            m_SkinnedStates.Record(packet);
             m_FrameNumber = packet.FrameNumber;
             m_bValid = true;
         }
@@ -261,6 +226,6 @@ namespace NorvesLib::Core::Rendering
         // 最後に描いたフレームの変換（MeshProxy・MegaGeometry は ComponentId、スキニングは元の MeshComponent の ID ごと）。
         Container::UnorderedMap<uint64_t, Math::Matrix4x4> m_MeshWorlds;
         Container::UnorderedMap<uint64_t, Math::Matrix4x4> m_MegaGeometryWorlds;
-        Container::UnorderedMap<uint64_t, SkinnedState> m_SkinnedStates;
+        SkinnedPoseHistory m_SkinnedStates;
     };
 } // namespace NorvesLib::Core::Rendering

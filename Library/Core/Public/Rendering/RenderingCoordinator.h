@@ -560,13 +560,8 @@ namespace NorvesLib::Core::Rendering
 
         // 直前のゲームのフレームのパケットに書いた MegaGeometry の変換と、スキニングの変換・パレット
         // （ComponentId ごと）。次のパケットの前の値（velocity 用）にする。
-        struct PreviousSkinnedState
-        {
-            Math::Matrix4x4 WorldMatrix;
-            Container::VariableArray<Math::Matrix4x4> BonePalette;
-        };
         Container::UnorderedMap<uint64_t, Math::Matrix4x4> m_PreviousMegaGeometryWorlds;
-        Container::UnorderedMap<uint64_t, PreviousSkinnedState> m_PreviousSkinnedStates;
+        SkinnedPoseHistory m_PreviousSkinnedStates;
         uint64_t m_PreviousObjectStateFrameNumber = 0;
         bool m_bPreviousObjectStateValid = false;
 

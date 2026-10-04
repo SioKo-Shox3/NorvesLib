@@ -2225,7 +2225,7 @@
 - stop-when: material/submesh数でUBO枠が増える、faceを跨いだdescriptor上書き、GPU未検証を合格扱いする。
 
 ## G2-GR32-POSE-HISTORY-GENERATION: 前姿勢を資産世代へ束縛する
-- status: todo
+- status: done
 - done-when: GameThreadとRenderedObjectHistoryの前姿勢がcomponentIdに加えて資産handle/generation一致を要求し、同bone数の別資産を混同しない。component単位で履歴を記録する。
 - verify: 同bone数のreload・別資産・frame gap・複数submesh/viewportで前姿勢とfallbackを検査する。
 - stop-when: mutable Resource参照、別世代poseの流用、既存velocity基準の変更。

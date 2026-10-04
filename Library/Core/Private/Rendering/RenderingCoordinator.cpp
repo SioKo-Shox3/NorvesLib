@@ -1639,7 +1639,7 @@ namespace NorvesLib::Core::Rendering
         m_PreviousMainCamera = CameraProxy{};
         m_bPreviousMainCameraValid = false;
         m_PreviousMegaGeometryWorlds.clear();
-        m_PreviousSkinnedStates.clear();
+        m_PreviousSkinnedStates.Reset();
         m_bPreviousObjectStateValid = false;
         if (m_RenderedObjectRebasedFrameCount > 0u)
         {
@@ -2157,45 +2157,14 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
-        for (DrawCommand& command : packet.DrawCommands)
-        {
-            if (command.Draw.PayloadKind != DrawPayloadKind::Skinned)
-            {
-                continue;
-            }
-            command.Skinned.bHasPrevious = false;
-            command.Skinned.PreviousBonePalette.clear();
-            command.Skinned.PreviousWorldMatrix = command.Draw.WorldMatrix;
-            if (!bHasPrevious)
-            {
-                continue;
-            }
-            const auto found = m_PreviousSkinnedStates.find(command.Draw.SourceMeshComponentId);
-            // 骨の数が変わった（別のアセットに替わった）ときは前の値を使わない。
-            if (found != m_PreviousSkinnedStates.end() &&
-                found->second.BonePalette.size() == command.Skinned.BonePalette.size())
-            {
-                command.Skinned.PreviousWorldMatrix = found->second.WorldMatrix;
-                command.Skinned.PreviousBonePalette = found->second.BonePalette;
-                command.Skinned.bHasPrevious = true;
-            }
-        }
+        m_PreviousSkinnedStates.Apply(packet,bHasPrevious);
 
         m_PreviousMegaGeometryWorlds.clear();
         for (const MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
         {
             m_PreviousMegaGeometryWorlds[proxy.ComponentId] = proxy.WorldTransform;
         }
-        m_PreviousSkinnedStates.clear();
-        for (const DrawCommand& command : packet.DrawCommands)
-        {
-            if (command.Draw.PayloadKind == DrawPayloadKind::Skinned)
-            {
-                PreviousSkinnedState& state = m_PreviousSkinnedStates[command.Draw.SourceMeshComponentId];
-                state.WorldMatrix = command.Draw.WorldMatrix;
-                state.BonePalette = command.Skinned.BonePalette;
-            }
-        }
+        m_PreviousSkinnedStates.Record(packet);
         m_PreviousObjectStateFrameNumber = packet.FrameNumber;
         m_bPreviousObjectStateValid = true;
     }

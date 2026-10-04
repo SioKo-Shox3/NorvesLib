@@ -3,6 +3,8 @@
 #include "Rendering/SkinnedMeshGpuStore.h"
 #include "Rendering/SkinnedShadowComponentBindings.h"
 #include "Rendering/SkinnedShadowStorage.h"
+#include "Rendering/SkinnedPoseHistory.h"
+#include "Rendering/RenderedObjectHistory.h"
 #include "Math/MatrixUtils.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneRenderer.h"
@@ -778,6 +780,120 @@ namespace
         resources.SkinnedMeshes().AbortFrame();
         resources.Shutdown();
     }
+    void TestPoseHistoryAssetGeneration()
+    {
+        auto asset = MakeAsset(8,false,900);
+        const auto build = [&](FramePacket& packet, const auto& source, uint64_t number, float position, uint64_t component=501)
+        {
+            packet.FrameNumber = number;
+            auto proxy = MakeProxy(source,component);
+            proxy.WorldTransform.values[12] = position;
+            proxy.BonePalette[0].values[13] = position;
+            assert(AppendSkinnedDrawCommands(&packet,{proxy}).Count == 8);
+            assert(AppendSkinnedDrawCommands(&packet,{proxy}).Count == 8); // 2viewportのleaseを保持する。
+        };
+        const auto check = [](const FramePacket& packet, bool expected, float position)
+        {
+            for (const auto& command : packet.DrawCommands)
+            {
+                assert(command.Skinned.bHasPrevious == expected);
+                assert(command.Skinned.PreviousWorldMatrix.values[12] == position);
+                if (expected)
+                {
+                    assert(command.Skinned.PreviousBonePalette.size()==1 && command.Skinned.PreviousBonePalette[0].values[13]==position);
+                }
+                else
+                {
+                    assert(command.Skinned.PreviousBonePalette.empty());
+                }
+            }
+        };
+        FramePacket first;
+        build(first,asset,10,1);
+        SkinnedPoseHistory history;
+        history.Record(first);
+        FramePacket next;
+        build(next,asset,11,2);
+        history.Apply(next,true); check(next,true,1);
+        history.Apply(next,false); check(next,false,2);
+        auto reload = MakeAsset(8,false,900,2);
+        FramePacket changed;
+        build(changed,reload,11,2);
+        history.Apply(changed,true); check(changed,false,2);
+        auto foreign = MakeAsset(8,false,900,1);
+        FramePacket sameHandleOtherObject;
+        build(sameHandleOtherObject,foreign,11,2);
+        history.Apply(sameHandleOtherObject,true); check(sameHandleOtherObject,false,2);
+        auto otherAsset = MakeAsset(8,false,901,1);
+        FramePacket differentAsset;
+        build(differentAsset,otherAsset,11,2);
+        history.Apply(differentAsset,true); check(differentAsset,false,2);
+        FramePacket otherComponent;
+        build(otherComponent,asset,11,2,502);
+        history.Apply(otherComponent,true); check(otherComponent,false,2);
+        next.DrawCommands[0].Skinned.BonePalette.push_back(Math::Matrix4x4::Identity);
+        next.DrawCommands[1].Skinned.FrameLeaseIndex = UINT32_MAX;
+        history.Apply(next,true);
+        assert(!next.DrawCommands[0].Skinned.bHasPrevious && !next.DrawCommands[1].Skinned.bHasPrevious);
+        assert(next.DrawCommands[2].Skinned.bHasPrevious);
+        next.DrawCommands[0].Skinned.BonePalette.pop_back();
+        next.DrawCommands[1].Skinned.FrameLeaseIndex = 0;
+        first.DrawCommands[1].Draw.WorldMatrix.values[12] = 7;
+        history.Record(first);
+        history.Apply(next,true); check(next,false,2); // 同componentの衝突した履歴を使わない。
+        first.DrawCommands[1].Draw.WorldMatrix.values[12] = 1;
+        first.DrawCommands[1].Skinned.BonePalette[0].values[13] = 7;
+        history.Record(first);
+        history.Apply(next,true); check(next,false,2);
+        first.DrawCommands[1].Skinned.BonePalette[0].values[13] = 1;
+        auto firstFrame = first.SkinnedMeshFrameLeases[1];
+        first.SkinnedMeshFrameLeases[1] = Container::MakeShared<SkinnedMeshFrameLease>(reload,501);
+        history.Record(first);
+        history.Apply(next,true); check(next,false,2);
+        first.SkinnedMeshFrameLeases[1] = firstFrame;
+        history.Record(first);
+        auto savedFrame = next.SkinnedMeshFrameLeases[0];
+        next.SkinnedMeshFrameLeases[0].reset();
+        history.Apply(next,true);
+        assert(!next.DrawCommands[0].Skinned.bHasPrevious && next.DrawCommands[8].Skinned.bHasPrevious);
+        next.SkinnedMeshFrameLeases[0] = Container::MakeShared<SkinnedMeshFrameLease>(asset,777);
+        history.Apply(next,true);
+        assert(!next.DrawCommands[0].Skinned.bHasPrevious && next.DrawCommands[8].Skinned.bHasPrevious);
+        next.SkinnedMeshFrameLeases[0] = savedFrame;
+        FramePacket anonymous;
+        build(anonymous,asset,11,2);
+        for (auto& command : anonymous.DrawCommands)
+        {
+            command.Draw.SourceMeshComponentId = 0;
+        }
+        for (auto& frame : anonymous.SkinnedMeshFrameLeases)
+        {
+            frame = Container::MakeShared<SkinnedMeshFrameLease>(asset);
+        }
+        history.Apply(anonymous,true); check(anonymous,false,2);
+        history.Record(first);
+        history.Reset(); history.Apply(next,true); check(next,false,2);
+        // RenderThreadのframe gapも同じ資産照合を通り、別世代を同骨数だからと再利用しない。
+        RenderedObjectHistory rendered;
+        assert(!rendered.Apply(first,true).bRebased);
+        next.FrameNumber = 12;
+        assert(rendered.Apply(next,true).bRebased); check(next,true,1);
+        changed.FrameNumber = 14;
+        assert(rendered.Apply(changed,true).bRebased); check(changed,false,2);
+        FramePacket afterReload;
+        build(afterReload,reload,16,3);
+        assert(rendered.Apply(afterReload,true).bRebased); check(afterReload,true,2);
+        // 履歴がResource/packetの所有権を延命しない。
+        Container::TWeakPtr<SkinnedMeshAssetLease> weak;
+        {
+            auto temporary = MakeAsset(8,false,902);
+            weak = temporary;
+            FramePacket packet;
+            build(packet,temporary,20,4);
+            history.Record(packet);
+        }
+        assert(weak.expired());
+    }
 }
 int main()
 {
@@ -786,6 +902,7 @@ int main()
     TestPaletteSharingOrdersAndIdentity();
     TestPaletteFailureAndLifetime();
     TestPointShadowComponentBudget();
+    TestPoseHistoryAssetGeneration();
     std::cout << "SkinnedSubmeshDrawContractTest PASS: CPU commands_ranges_materials_shadow_forgery; GPU acceptance separate\n";
     return 0;
 }

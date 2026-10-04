@@ -628,3 +628,6 @@
 
 - G2-GR32-POINT-SHADOW-BUDGET: 点光源の各light/faceで16componentのUBO/descriptor表を共有し、submesh数で枠を増やさない。17番目は全範囲省略、失敗枠は再試行せず、epoch/handle/世代/palette/VB照合と旧匿名palette実体の区別を保持。全600枠の従来容量は不変、各face独立。実storage helperはpreviousを拒否し8current/9VBだけ設定。純16component×8範囲×6face・容量/失敗/identity/匿名テスト3mode成功、独立PASS。実Coreへ768draw/descriptor16face/binding10無しを登録、Windows.hでnative/GPU未実行。ShadowMapPass本体のUBO/faceData接続はソース確認のみ。
 - Next: GR32-POSE-HISTORY-GENERATION。前姿勢の資産世代を照合し同骨数reloadの混同を防ぐ。
+
+- G2-GR32-POSE-HISTORY-GENERATION: GT/RTの前姿勢を共通SkinnedPoseHistoryへ集約し、componentに加えてhandle/generation・immutable asset実体weak・骨数を照合。同骨数reload/別資産/不正frame/匿名をfallbackし、submesh/viewportは1回保存、一致しない混在は次frame不使用。GT直前frame/RTgapの時間条件とmesh/MegaGeometry経路は不変。2viewport8submesh・pose/資産混在・null/component不一致・gap/reset/weak寿命をnative登録、独立ソースレビュー2周PASS。Windows.h依存でnativecompile/実行/GPU未検証。
+- Next: GR32の描画受入れはWindows/Vulkan gateへ残す。承認済みGR82 Stage Aの複数clip取り込み/選択を進め、旧strict入口の拒否互換を保持する。
