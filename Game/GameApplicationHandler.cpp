@@ -127,7 +127,7 @@ namespace Game
         // --night: 起動画面を夜にする（空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす。値を取らない）。
         constexpr const TCHAR *kNightOption = TEXT("--night");
         bool s_bRendering3DTestNight = false;
-        // --virtual-texture=on|off: 起動画面の材質のアルベドを VT（sparse）で描くか。既定は on（sparse に対応しない GPU は全常駐へ戻る）。
+        // --virtual-texture=on|off: 起動画面の材質のアルベド・法線・ORM・高さを VT（sparse）で描くか。既定は on（sparse に対応しない GPU は全常駐へ戻る）。
         // off は VT を使わず、段1の全常駐で描く（見た目・VRAM の比較用）。
         constexpr const TCHAR *kVirtualTextureOption = TEXT("--virtual-texture=");
         bool s_bRendering3DTestVirtualTexture = true;
@@ -622,7 +622,7 @@ namespace Game
                 }
                 else
                 {
-                    LOG_ERROR("Rendering3DTest command line parse failed: --virtual-texture は on か off で指定する");
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --virtual-texture は on か off で指定する");
                     return false;
                 }
                 continue;

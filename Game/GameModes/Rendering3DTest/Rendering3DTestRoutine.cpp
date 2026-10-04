@@ -154,16 +154,23 @@ namespace Game::GameModes
         // 材質の枠の種類。読み込めた結果によって、後始末が変わる。
         enum class MaterialSlotKind
         {
-            Plain,  // 読み込めたハンドルをそのまま入れる
+            Plain,  // 読み込めたハンドルをそのまま入れる（VT にしない）
             Albedo, // クック済みなら VT（sparse）で作る。作れない・常駐しなければ全常駐で読み直す
-            Normal, // 読み込めた形式が BC5（2チャンネル）なら bNormalTwoChannel を立てる
-            Orm,    // 読み込めなければ、粗さ・AO・メタリックの別々の元画像を読む枠へ戻る
+            Normal, // VT を試す。読み込めた形式が BC5（2チャンネル）なら bNormalTwoChannel を立てる
+            Orm,    // VT を試す。読み込めなければ、粗さ・AO・メタリックの別々の元画像を読む枠へ戻る
+            Height, // VT を試す（視差の高さ）
         };
+
+        // 枠の種類が VT の対象か（アルベド・法線・ORM・高さ。ばらの粗さ・AO・メタリックは対象外）
+        bool IsVirtualTextureSlotKind(MaterialSlotKind kind)
+        {
+            return kind != MaterialSlotKind::Plain;
+        }
 
         // 材質1つ分の枠を1つ非同期で読む。結果は update->CreateData へ入れ、update->PendingTextureCount が 0 に
         // なったとき onComplete を呼ぶ。ORM が読めなかったときは、読み終わる前に別々の元画像の枠を数に足すので、
         // 数が途中で 0 になることはない（コールバックはメインスレッドで呼ばれる）。
-        // bTryVirtualTexture のとき（アルベドの枠だけ）は、先に VT で作り、ミップテイルが常駐したら材質へ入れる。
+        // bTryVirtualTexture のとき（アルベド・法線・ORM・高さの枠）は、先に VT で作り、ミップテイルが常駐したら材質へ入れる。
         // VT を作れない、または常駐しなかったときは、同じ枠を全常駐で読み直す。
         template <typename OnComplete>
         void LoadMaterialSlot(TextureResources &textures,
@@ -289,12 +296,12 @@ namespace Game::GameModes
                 addSlot(paths.Roughness, &MaterialCreateData::RoughnessTexture);
                 addSlot(paths.AO, &MaterialCreateData::AOTexture);
             }
-            addSlot(paths.Height, &MaterialCreateData::HeightTexture);
+            addSlot(paths.Height, &MaterialCreateData::HeightTexture, MaterialSlotKind::Height);
 
             update->PendingTextureCount = slotCount;
             for (uint32_t slotIndex = 0; slotIndex < slotCount; ++slotIndex)
             {
-                const bool bTryVirtualTexture = slots[slotIndex].Kind == MaterialSlotKind::Albedo &&
+                const bool bTryVirtualTexture = IsVirtualTextureSlotKind(slots[slotIndex].Kind) &&
                                                 data.m_bVirtualTexture && textures.SupportsVirtualTexture() &&
                                                 IsTextureCooked(data, *slots[slotIndex].Path);
                 LoadMaterialSlot(textures, update, paths, *slots[slotIndex].Path, slots[slotIndex].Member,

@@ -244,13 +244,22 @@
 - notes: 危険地帯（メモリ・寿命）。 2026-10-04 親（run `20261004-210106` の保留を解く）: `blocked/VTG2-VT-EVICT.md` の選択肢Aを採る。`paths:` に `Library/Core/Public/RHI`・`Library/Core/Private/RHI` を足した。描画用のタイムラインセマフォを1つ足し、描画の3つの提出箇所が値の割り当てと提出を同じミューテックスの下で行って通知する（提出が失敗したら値を戻す）。タイルを外す（unbind を含む）`BindSparse` だけがその時点の最新の値を待つ。結ぶだけの `BindSparse` と CPU は待たない。`SparseBindVulkanTest` に、描画で読んでいるタイルを外しても検証レイヤーの違反（`VUID_COUNT=0`）が出ず、`WaitIdle` を呼ばないケースを足す。
 
 ## VTG2-VT-STARTUP: 起動画面の材質をVTで描く
-- status: todo
+- status: done
 - done-when: sparse に対応する GPU では、起動画面の材質（銀・石畳・地面の見本6種）のテクスチャを VT（sparse・v0.2）で作り、フィードバック・ストリーマ・追い出しで描く（非対応なら段1の全常駐）。`--virtual-texture=off` で段1の全常駐へ戻せる。`-Deterministic` の撮影で、VT と全常駐（`--virtual-texture=off`）の各視点の PSNR が 45 dB 以上（差の出どころを記録する）、PNG を開いて黒・ぼけたタイル・ちらつきが見えない。撮影の `VRAM_LEDGER`・`VRAM_POOLS` で、材質のテクスチャの量（VT は結んだ量）が全常駐より減ることを記録する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game AssetCook CookAssets -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-VT-STARTUP -Configuration RelWithDebInfo -Deterministic`
 - stop-when: 撮影でタイルの出入りによるちらつきが残り、優先度・上限の調整で消えない場合は、測った値と撮影を記録して止める。
 - paths: Game, Scripts/CaptureStartupScene.ps1, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
 - notes: 起動画面の見た目を変えうる（絶対規則7）。全常駐との比較の撮影は `-ExtraArgs` のような引数がスクリプトに無ければ足す。 2026-10-04 親（run `20261004-210106` の保留を解く）: 評価の1周目（run `20261004-210106` の反復13）の4点を直す。(1) 完了条件の「全常駐を2回撮った揺らぎと同程度」は、ストリーミングの遅れで粗いミップが残りうる VT には厳しすぎるので、「`-Deterministic` の撮影で VT と全常駐の PSNR が各視点 45 dB 以上（評価のときは 62〜69 dB）」に親が直した。差の出どころ（粗いミップが残る区画、隣のタイルの不足など）は切り分けて記録する。(2) VT にする材質のテクスチャをアルベドだけでなく、法線・ORM・高さにも広げる（それぞれ要求・常駐の管理まで接続する）。(3) `SupportsVirtualTextureFeedback()` とフィードバックの有効化の成功を確かめ、失敗したら VT を解放して全常駐へ戻す。(4) VTG2-VT-EVICT の同期が入った後、VT のプールの目標を全常駐の量より小さくする `--vram-budget-mb` で、追い出しが起きる（`vt_evicted_tiles>0`）条件の連続撮影（カメラを動かす `-OrbitDegreesPerSecond` など）を開き、黒・ちらつきが出ないことを記録する。`GameApplicationHandler.cpp` の英語の説明句を日本語にする。
+
+## VTG2-VT-FALLBACK-TEST: VTの全常駐への復帰を偽デバイスの契約テストで確かめる
+- status: todo
+- done-when: `GpuRetireQueueTest`（偽デバイスで `RenderResources` を初期化するテスト）に、(1) sparse の2D部分常駐に対応してもフィードバック（`bFragmentStoresAndAtomics`・`bShaderResourceResidency`）に対応しないデバイスでは `Textures().SupportsVirtualTexture()` が false、(2) 4つの機能がそろうデバイスでは true、(3) 要求のバッファを作れず `EnableVirtualTextureFeedback()` が失敗するデバイスでは `CreateVirtualTexture` が VT を解放して無効なハンドルを返す、を足す。
+- verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^GpuRetireQueueTest$"`
+- stop-when: 偽デバイスでは (3) の失敗を作れない（要求のバッファの確保が常に成功する）場合は、(1)(2) だけにして理由を記録する。
+- paths: Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: VTG2-VT-STARTUP の評価（run `20261004-210106` 反復13）の3点目で、実機の確認は一時の環境変数で fragmentStoresAndAtomics を無いことにして行った（コミットしていない）。契約として残すための後追い。
 
 ## VTG2-STRESS-TEXTURES: テクスチャの負荷モードを足す
 - status: todo

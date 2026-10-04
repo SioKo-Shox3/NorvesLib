@@ -11,6 +11,20 @@ vec4 SampleMaterialTexture(sampler2D tex, vec2 uv, bool bVirtualTexture)
     return texture(tex, uv);
 }
 
+// 暗黙のミップで標本し、非常駐で粗いミップへ逃げたかを bEscaped へ返す（VT でなければ常に false）。
+// 画面微分を使うので、フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
+vec4 SampleMaterialTextureTracked(sampler2D tex, vec2 uv, bool bVirtualTexture, out bool bEscaped)
+{
+    bEscaped = false;
+#ifdef NORVES_SPARSE_RESIDENCY_SHADING
+    if (bVirtualTexture)
+    {
+        return SampleSparseResidentTracked(tex, uv, bEscaped);
+    }
+#endif
+    return texture(tex, uv);
+}
+
 // 材質の texture 群（sampler2D）を標本して材質値へ復号する。ラスタの材質シェーダー
 // （gbuffer.frag・megageometry.frag・forward_transparent.frag）が使う。
 // Common/PbrMaterialEvaluation.glsl と Common/SparseResidencySampling.glsl の後に取り込む。
@@ -33,7 +47,8 @@ PbrMaterialTextureSamples SamplePbrMaterialTextures(
     vec3 material;
     if (bHasORM)
     {
-        material = DecodePbrOrmSample(SampleMaterialTexture(metallicSampler, texCoord, bVirtualTexture));
+        material = DecodePbrOrmSample(
+            SampleMaterialTextureTracked(metallicSampler, texCoord, bVirtualTexture, g_VirtualTextureOrmEscaped));
     }
     else
     {
@@ -41,20 +56,11 @@ PbrMaterialTextureSamples SamplePbrMaterialTextures(
                         SampleMaterialTexture(roughnessSampler, texCoord, bVirtualTexture).r,
                         SampleMaterialTexture(aoSampler, texCoord, bVirtualTexture).r);
     }
-    // アルベドだけは、非常駐で粗いミップへ逃げたかを g_VirtualTextureAlbedoEscaped へ残す（VT のフィードバックが使う）。
-    vec4 albedo;
-#ifdef NORVES_SPARSE_RESIDENCY_SHADING
-    if (bVirtualTexture)
-    {
-        albedo = SampleSparseResidentTracked(albedoSampler, texCoord, g_VirtualTextureAlbedoEscaped);
-    }
-    else
-#endif
-    {
-        albedo = texture(albedoSampler, texCoord);
-    }
+    // アルベド・法線・ORM は、非常駐で粗いミップへ逃げたかを g_VirtualTexture*Escaped へ残す（VT のフィードバックが使う）。
+    vec4 albedo = SampleMaterialTextureTracked(albedoSampler, texCoord, bVirtualTexture, g_VirtualTextureAlbedoEscaped);
+    vec4 normalSample = SampleMaterialTextureTracked(normalSampler, texCoord, bVirtualTexture, g_VirtualTextureNormalEscaped);
     return DecodePbrMaterialTextureSamples(albedo,
-                                           SampleMaterialTexture(normalSampler, texCoord, bVirtualTexture),
+                                           normalSample,
                                            material.x,
                                            material.y,
                                            material.z,

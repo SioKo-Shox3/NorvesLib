@@ -22,7 +22,8 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=ORMの1枚が metallicTexture の枠に張られているか（1/0）, w=法線が2チャンネル（BC5）か（1/0）
-    vec4 frameParams; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（0 は書かない。VirtualTextureFeedback.glsl）
+    vec4 frameParams; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
+    vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -69,9 +70,19 @@ void main()
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
         mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5, bVirtualTexture);
-    // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（アルベドのテクスチャが VT の表の番号を持つ）
+    // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
+    // 高さだけは POM の前の元の UV で書く。
     WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.frameParams.w),
                                 g_VirtualTextureAlbedoEscaped);
+    WriteVirtualTextureFeedback(normalTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.x),
+                                g_VirtualTextureNormalEscaped);
+    WriteVirtualTextureFeedback(metallicTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.y),
+                                g_VirtualTextureOrmEscaped);
+    if (hasHeightMap > 0.5)
+    {
+        WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord,
+                                          DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z));
+    }
     outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
                      textureSamples.Albedo.a);
 

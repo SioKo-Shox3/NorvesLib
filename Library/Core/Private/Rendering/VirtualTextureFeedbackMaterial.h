@@ -44,23 +44,23 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief 材質の UBO に載せる、VT のフィードバックのパラメータ（シェーダーの WriteVirtualTextureFeedback の param）
      *
-     * アルベドのテクスチャが VT（sparse）で、このフレームの要求のバッファがあるときだけ 0 でない値を返す。
-     * 0 のときシェーダーは何も書かない。要求のテクスチャの番号はアルベドの VT の表の添字、タイルの大きさはそのテクスチャの
-     * sparse の標準ブロック形状。
+     * 材質のテクスチャ 1 枚（アルベド・法線・ORM・高さ。1 枚ごとに呼ぶ）が VT（sparse）で、このフレームの要求のバッファが
+     * あるときだけ 0 でない値を返す。0 のときシェーダーは何も書かない。要求のテクスチャの番号はそのテクスチャの VT の表の添字、
+     * タイルの大きさはそのテクスチャの sparse の標準ブロック形状。
      */
     inline uint32_t ResolveVirtualTextureFeedbackParam(const TextureResources *textures,
-                                                       TextureHandle albedoHandle,
-                                                       const RHI::ITexture *albedoTexture,
+                                                       TextureHandle textureHandle,
+                                                       const RHI::ITexture *rhiTexture,
                                                        const TextureResources::VirtualTextureFeedbackTarget &target)
     {
-        if (textures == nullptr || !target.bWriting || !albedoHandle.IsValid() || albedoTexture == nullptr ||
-            !albedoTexture->IsSparse())
+        if (textures == nullptr || !target.bWriting || !textureHandle.IsValid() || rhiTexture == nullptr ||
+            !rhiTexture->IsSparse())
         {
             return 0;
         }
         uint32_t index = 0;
         RHI::SparseTextureInfo info;
-        if (!textures->TryGetVirtualTextureIndex(albedoHandle, index) || !albedoTexture->GetSparseInfo(info))
+        if (!textures->TryGetVirtualTextureIndex(textureHandle, index) || !rhiTexture->GetSparseInfo(info))
         {
             return 0;
         }

@@ -10,9 +10,12 @@
 // 拡張の宣言（#extension GL_ARB_sparse_texture2）は取り込む側のシェーダーの先頭に書く。
 // VT でない材質は bVirtualTexture を false で呼ぶ（分岐は一様なので画面微分を壊さない）。
 
-// アルベドの標本が非常駐で粗いミップへ逃げたか（SamplePbrMaterialTextures が書く。VT のフィードバックが、
+// 材質のテクスチャごとの標本が、非常駐で粗いミップへ逃げたか（SamplePbrMaterialTextures が書く。VT のフィードバックが、
 // 巡回の画素でなくても要求を書くための印。VT でない材質・常駐の照会が使えないデバイスでは常に false）。
+// Orm は ORM を metallicTexture の枠に張った材質の、その1枚。高さは WriteVirtualTextureHeightFeedback が自分で調べる。
 bool g_VirtualTextureAlbedoEscaped = false;
+bool g_VirtualTextureNormalEscaped = false;
+bool g_VirtualTextureOrmEscaped = false;
 
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
 

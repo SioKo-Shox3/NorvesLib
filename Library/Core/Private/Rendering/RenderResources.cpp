@@ -610,8 +610,15 @@ namespace NorvesLib::Core::Rendering
                      static_cast<unsigned>(created ? created->GetFormat() : RHI::Format::UNKNOWN),
                      static_cast<unsigned>(registration.Format), static_cast<unsigned>(index));
         }
-        // 材質のシェーダーが要求を書けるデバイスなら、最初の VT でフィードバックのバッファを確保して有効にする
-        EnableVirtualTextureFeedback();
+        // 要求のバッファを確保して有効にする。有効にできないと材質が要求を書けず、ミップテイルより細かいタイルが
+        // 結ばれないままぼけるので、VT を解放して失敗として返す（呼び出し側が全常駐へ戻す）。
+        if (!EnableVirtualTextureFeedback())
+        {
+            NORVES_LOG_ERROR("RenderResources",
+                             "VTを作れません: フィードバックを有効にできないため、VTを解放します texture=%s", path.c_str());
+            ReleaseTexture(handle);
+            return TextureHandle::Invalid();
+        }
         if (pOutVirtualTextureIndex != nullptr)
         {
             *pOutVirtualTextureIndex = index;
@@ -678,7 +685,9 @@ namespace NorvesLib::Core::Rendering
     bool TextureResources::SupportsVirtualTexture() const
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
-        return impl && impl->bInitialized && impl->VtStreamer && impl->TextureAssets;
+        // 材質が要求を書けること（フィードバックの対応）も要る。無いデバイスの VT はミップテイルのまま粗く描かれ続ける。
+        return impl && impl->bInitialized && impl->VtStreamer && impl->TextureAssets && impl->VtFeedback && impl->Device &&
+               impl->Device->GetCapabilities().SupportsVirtualTextureFeedback();
     }
 
     bool TextureResources::CreateVirtualTextureAsync(const Container::String &path,

@@ -52,7 +52,10 @@ namespace NorvesLib::Core::Rendering
             uint32_t prefilteredSpecularMipLevels;
             float iblIntensity;
             uint32_t bVirtualTexture; // 材質のテクスチャが sparse（VT）か（1/0）
-            uint32_t virtualTextureFeedbackParam; // VT のフィードバックのパラメータ（0 は書かない）
+            uint32_t virtualTextureFeedbackParam; // VT のフィードバックのパラメータ（アルベド。0 は書かない）
+            uint32_t virtualTextureFeedbackNormalParam; // 同じく法線
+            uint32_t virtualTextureFeedbackOrmParam; // 同じく ORM（metallic の枠）
+            uint32_t virtualTextureFeedbackHeightParam; // 同じく高さ
             uint32_t padding2;
             alignas(16) float cameraForward[4];
         };
@@ -75,7 +78,10 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(TransparentForwardUBO, iblIntensity) == 756);
         static_assert(offsetof(TransparentForwardUBO, bVirtualTexture) == 760);
         static_assert(offsetof(TransparentForwardUBO, virtualTextureFeedbackParam) == 764);
-        static_assert(offsetof(TransparentForwardUBO, padding2) == 768);
+        static_assert(offsetof(TransparentForwardUBO, virtualTextureFeedbackNormalParam) == 768);
+        static_assert(offsetof(TransparentForwardUBO, virtualTextureFeedbackOrmParam) == 772);
+        static_assert(offsetof(TransparentForwardUBO, virtualTextureFeedbackHeightParam) == 776);
+        static_assert(offsetof(TransparentForwardUBO, padding2) == 780);
         static_assert(offsetof(TransparentForwardUBO, cameraForward) == 784);
         static_assert(sizeof(TransparentForwardUBO) == 800);
 
@@ -1364,6 +1370,13 @@ namespace NorvesLib::Core::Rendering
             // アルベドが VT のとき、シェーダーがこのフレームの要求を書く
             uboData.virtualTextureFeedbackParam =
                 ResolveVirtualTextureFeedbackParam(textures, matAlbedo, albedoTexture.get(), feedbackTarget);
+            // 法線・ORM・高さも VT のとき、それぞれの表の番号で要求を書く（ORM の枠は metallic に張ったテクスチャ）
+            uboData.virtualTextureFeedbackNormalParam =
+                ResolveVirtualTextureFeedbackParam(textures, matNormal, normalTexture.get(), feedbackTarget);
+            uboData.virtualTextureFeedbackOrmParam =
+                ResolveVirtualTextureFeedbackParam(textures, matORM, ormTexture.get(), feedbackTarget);
+            uboData.virtualTextureFeedbackHeightParam =
+                ResolveVirtualTextureFeedbackParam(textures, matHeight, heightTexture.get(), feedbackTarget);
             allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
 
             allocation.DescriptorSet->BindTexture(1, albedoTexture);

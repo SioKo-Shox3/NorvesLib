@@ -95,8 +95,9 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBOレイアウト: current/previous view-projection(256) + cameraPos/emissive/POM/velocity(64) = 320 bytes
-            constexpr uint32_t UBO_SIZE = 320;
+            // UBOレイアウト: current/previous view-projection(256) + cameraPos/emissive/POM/velocity(64)
+            // + VT のフィードバックのパラメータ（法線・ORM・高さ。16） = 336 bytes（描画側の PerObjectUBO の大きさと同じ）
+            constexpr uint32_t UBO_SIZE = 336;
             constexpr uint32_t MAX_OBJECTS = 256; // 1フレームあたりの最大オブジェクト数
 
             RHI::DescriptorSetDesc uboDescSetDesc;
@@ -546,8 +547,10 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float emissiveChromaticityAndLuminanceNits[4];
             float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=ORMの1枚を metallic の枠に張ったか(0 or 1), w=法線が2チャンネルか(0 or 1)
-            float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（0 は書かない）
+            float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
+            float vtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=未使用
         };
+        static_assert(sizeof(PerObjectUBO) == 336u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
@@ -697,6 +700,13 @@ namespace NorvesLib::Core::Rendering
             // アルベドが VT のとき、シェーダーがこのフレームの要求を書く（24bit 以下の整数は float に正確に載る）
             uboData.frameParams[3] = static_cast<float>(
                 ResolveVirtualTextureFeedbackParam(textures, matAlbedo, albedoTex.get(), feedbackTarget));
+            // 法線・ORM・高さも VT のとき、それぞれの表の番号で要求を書く（ORM の枠は metallic に張ったテクスチャ）
+            uboData.vtFeedbackParams[0] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matNormal, normalTex.get(), feedbackTarget));
+            uboData.vtFeedbackParams[1] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matORM, ormTex.get(), feedbackTarget));
+            uboData.vtFeedbackParams[2] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matHeight, heightTex.get(), feedbackTarget));
             allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
 
             allocation.DescriptorSet->BindTexture(1, albedoTex);

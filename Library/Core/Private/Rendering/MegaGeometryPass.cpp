@@ -1004,7 +1004,8 @@ namespace NorvesLib::Core::Rendering
                 float PreviousView[16];
                 float PreviousProjection[16];
                 float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
-                float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（0 は書かない）
+                float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
+                float VtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=未使用
             };
             static_assert(sizeof(PerObjectUBO) <= 512u);
 
@@ -1073,6 +1074,13 @@ namespace NorvesLib::Core::Rendering
                                  : TextureResources::VirtualTextureFeedbackTarget{};
             perObject.MaterialParams[3] = static_cast<float>(
                 ResolveVirtualTextureFeedbackParam(command.Textures, mat.AlbedoTexture, albedo.get(), feedbackTarget));
+            // 法線・ORM・高さも VT のとき、それぞれの表の番号で要求を書く（ORM の枠は metallic に張ったテクスチャ）
+            perObject.VtFeedbackParams[0] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.NormalTexture, normal.get(), feedbackTarget));
+            perObject.VtFeedbackParams[1] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.ORMTexture, orm.get(), feedbackTarget));
+            perObject.VtFeedbackParams[2] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.HeightTexture, height.get(), feedbackTarget));
 
             drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
 

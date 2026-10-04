@@ -132,11 +132,13 @@ namespace NorvesLib::Core::Rendering
         // ミップテイルだけを範囲読みし、タイルは要求に応じてストリーマが読む。
         // ミップテイルは次の UpdateVirtualTextureStreaming で結ぶので、IsVirtualTextureReady が true になるまで
         // 材質でサンプルしてはいけない。sparse に対応しないデバイス・v0.2 でないテクスチャ・マニフェストに無いパスは
-        // 無効なハンドルを返す。pOutVirtualTextureIndex には VT の表の添字（フィードバックの要求が指す番号）を返す。
+        // 無効なハンドルを返す。フィードバックを有効にできないときも、VT を解放して無効なハンドルを返す。
+        // pOutVirtualTextureIndex には VT の表の添字（フィードバックの要求が指す番号）を返す。
         TextureHandle CreateVirtualTexture(const Container::String &path, uint32_t *pOutVirtualTextureIndex = nullptr);
         // VT のミップテイルが常駐してサンプルできるか。VT でないハンドルは false
         bool IsVirtualTextureReady(TextureHandle handle) const;
         // デバイスが sparse の VT に対応していて、CreateVirtualTexture を試せるか
+        // （材質のシェーダーが要求を書けるフィードバックの対応も含む。false のデバイスは全常駐で読む）
         bool SupportsVirtualTexture() const;
         // CreateVirtualTexture で作り、ミップテイルが常駐してサンプルできるようになったら callback をメインスレッドで呼ぶ
         // （FlushCompletedTextureLoads で呼ばれる。読み込み中は GetPendingAsyncLoadCount に数える）。

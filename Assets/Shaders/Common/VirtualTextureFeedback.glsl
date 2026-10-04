@@ -52,6 +52,7 @@ uint DecodeVirtualTextureFeedbackParam(float value)
 // param: 0 なら何もしない。描画（UBO）ごとに一様な値なので、画面微分（textureQueryLod）を壊さない。
 //        下位から: タイル幅の log2（4bit）・タイル高さの log2（4bit）・フレームの巡回位相（4bit）・テクスチャの番号 + 1（12bit）
 // bEscaped: このテクスチャの標本が非常駐で粗いミップへ逃げたか
+// 法線・ORM・高さも、それぞれ自分の VT の表の番号を持つ param で同じ関数を呼ぶ（材質の UBO が 1 枚ごとに持つ）。
 // フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
 void WriteVirtualTextureFeedback(sampler2D tex, vec2 uv, uint param, bool bEscaped)
 {
@@ -110,5 +111,24 @@ void WriteVirtualTextureFeedback(sampler2D tex, vec2 uv, uint param, bool bEscap
     {
         vtFeedbackWords[VT_FEEDBACK_HEADER_WORDS + index] = word;
     }
+#endif
+}
+
+// 視差（POM）の高さのテクスチャ（heightTex。VT の表の番号が param に入っているテクスチャ）の要求を書く。
+// uv は POM の前の元の uv（マーチは元の uv の近くを引くので、そのミップ・タイルを求める）。
+// 高さは標本が POM のループの中にあって逃げた印を残せないので、ここで元の uv を引いて常駐を調べ、巡回の画素でなくても要求を書くか決める。
+// param が 0 のときは何もしない（描画ごとに一様）。フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
+void WriteVirtualTextureHeightFeedback(sampler2D heightTex, vec2 uv, uint param)
+{
+#if defined(NORVES_VT_FEEDBACK) && defined(NORVES_SPARSE_RESIDENCY_SHADING)
+    if (param == 0u)
+    {
+        return;
+    }
+    vec4 unusedColor;
+    bool bEscaped = !sparseTexelsResidentARB(sparseTextureARB(heightTex, uv, unusedColor));
+    WriteVirtualTextureFeedback(heightTex, uv, param, bEscaped);
+#else
+    WriteVirtualTextureFeedback(heightTex, uv, param, false);
 #endif
 }

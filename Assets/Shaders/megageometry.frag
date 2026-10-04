@@ -27,7 +27,8 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousView;
     mat4 previousProjection;
     vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV。0なら変位なし）, w=fragDebugPayload がLODの段か（1/0）
-    vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（0 は書かない。VirtualTextureFeedback.glsl）
+    vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない。VirtualTextureFeedback.glsl）
+    vec4 vtFeedbackParams; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallicTexture の枠）, z=高さ（0 は書かない）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -172,9 +173,19 @@ void main()
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
         mvp.materialParams.x > 0.5, mvp.materialParams.y > 0.5, bVirtualTexture);
-    // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（アルベドのテクスチャが VT の表の番号を持つ）
+    // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
+    // 高さだけは POM の前の元の UV で書く。
     WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.materialParams.w),
                                 g_VirtualTextureAlbedoEscaped);
+    WriteVirtualTextureFeedback(normalTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.x),
+                                g_VirtualTextureNormalEscaped);
+    WriteVirtualTextureFeedback(metallicTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.y),
+                                g_VirtualTextureOrmEscaped);
+    if (hasHeightMap > 0.5)
+    {
+        WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord,
+                                          DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z));
+    }
     outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples), textureSamples.Albedo.a);
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
