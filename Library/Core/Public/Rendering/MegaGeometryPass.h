@@ -138,6 +138,8 @@ namespace NorvesLib::Core::Rendering
         {
             // 「前のフレームで見えた」ビットを引き継ぐ鍵（プロキシのObjectId。0のインスタンスは並びの番号で代用する）
             uint64_t ObjectId = 0;
+            // コンポーネントの世代（作り直されたら変わる）。同じ ObjectId でも別のコンポーネントなら見えたビットを捨てる
+            uint64_t ComponentId = 0;
             MegaGeometry::MegaMeshHandle Handle;
             float WorldMatrix[16];
             float PreviousWorldMatrix[16];
@@ -252,6 +254,7 @@ namespace NorvesLib::Core::Rendering
         {
             uint64_t Key = 0;
             uint64_t MeshId = 0;
+            uint64_t ComponentId = 0;
             const void *ClusterBufferIdentity = nullptr;
             uint32_t ClusterCount = 0;
             uint64_t LastUsedFrame = 0;

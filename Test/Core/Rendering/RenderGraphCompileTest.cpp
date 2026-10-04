@@ -287,6 +287,8 @@ namespace
         uint32_t EndRenderPassCount = 0;
         uint32_t DrawCallCount = 0;
         uint32_t DispatchCount = 0;
+        // 「前のフレームで見えた」ビットのバッファを0で埋めた回数（作り直した、または捨てた回数）
+        uint32_t VisibilityFillCount = 0;
         // 呼ばれた順の記録（B=BeginRenderPass、E=EndRenderPass、D=Dispatch、I=間接描画）。パスの並びの検査用
         Container::VariableArray<char> CallSequence;
         uint32_t LastDrawIndexedInstancedIndexCount = 0;
@@ -421,7 +423,12 @@ namespace
         }
         void FillBuffer(RHI::BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value) override
         {
-            (void)buffer;
+            if (buffer &&
+                IsDebugName(static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName,
+                            "MegaGeometry_VisibleLastFrame"))
+            {
+                ++VisibilityFillCount;
+            }
             (void)offset;
             (void)size;
             (void)value;
@@ -2521,8 +2528,21 @@ namespace
         shaderManager.Shutdown();
     }
 
-    // 2つのMegaMeshインスタンスを持つパスのフレームコマンドを記録する（bOcclusionCulling=false は --mega-occlusion=off）
-    void RecordMegaGeometryTwoInstances(bool bOcclusionCulling, FakeCommandList &commandList)
+    // フレームごとに、描くインスタンスの並び（プロキシ）を入れ替える関数。a・b は最初のフレームのプロキシ
+    using MegaProxyScript = void (*)(uint32_t frameIndex,
+                                     const MegaGeometryProxy &a,
+                                     const MegaGeometryProxy &b,
+                                     Container::VariableArray<MegaGeometryProxy> &outProxies);
+
+    // 2つのMegaMeshインスタンスを持つパスのフレームコマンドを記録する（bOcclusionCulling=false は --mega-occlusion=off）。
+    // frameCount 回記録し、script があればフレームごとにプロキシを入れ替える。outVisibilityFills にはフレームごとの
+    // 「見えたビットを0で埋めた回数」を入れる。
+    void RecordMegaGeometryTwoInstances(bool bOcclusionCulling,
+                                        FakeCommandList &commandList,
+                                        float maxDepth = 1.0f,
+                                        uint32_t frameCount = 1,
+                                        MegaProxyScript script = nullptr,
+                                        Container::VariableArray<uint32_t> *outVisibilityFills = nullptr)
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -2595,12 +2615,16 @@ namespace
 
         Container::VariableArray<MegaGeometryProxy> proxies;
         MegaGeometryProxy proxyA;
+        proxyA.ObjectId = 1;
+        proxyA.ComponentId = 10;
         proxyA.MegaMeshHandle = megaMeshA;
         proxyA.WorldTransform = NorvesLib::Math::Matrix4x4::Identity;
         proxyA.WorldBounds = createInfo.TotalBounds;
         proxies.push_back(proxyA);
 
         MegaGeometryProxy proxyB = proxyA;
+        proxyB.ObjectId = 2;
+        proxyB.ComponentId = 20;
         proxyB.MegaMeshHandle = megaMeshB;
         proxies.push_back(proxyB);
 
@@ -2622,6 +2646,7 @@ namespace
         RHI::Viewport viewport;
         viewport.width = 128.0f;
         viewport.height = 64.0f;
+        viewport.maxDepth = maxDepth;
         RHI::ScissorRect scissor;
         scissor.right = 128;
         scissor.bottom = 64;
@@ -2633,7 +2658,21 @@ namespace
                                                                          viewport,
                                                                          scissor,
                                                                          DebugViewMode::Normal);
-        megaGeometryPass.RecordFrameCommand(frameCommand.MegaGeometry, &commandList);
+        for (uint32_t frameIndex = 0; frameIndex < frameCount; ++frameIndex)
+        {
+            if (script)
+            {
+                script(frameIndex, proxyA, proxyB, proxies);
+                megaGeometryPass.Setup(context);
+            }
+
+            const uint32_t fillsBefore = commandList.VisibilityFillCount;
+            megaGeometryPass.RecordFrameCommand(frameCommand.MegaGeometry, &commandList);
+            if (outVisibilityFills)
+            {
+                outVisibilityFills->push_back(commandList.VisibilityFillCount - fillsBefore);
+            }
+        }
 
         megaGeometryPass.Shutdown();
         renderResources.Shutdown();
@@ -2690,6 +2729,60 @@ namespace
         for (size_t i = middleBegin; i < middleEnd; ++i)
         {
             assert(sequence[i] == 'D');
+        }
+    }
+
+    // 深度の範囲が 0〜1 でないと、保存される深度は NDC の深度と一致せず HZB の判定が成り立たないので、従来の経路で描く
+    void TestMegaGeometryTwoPassFallsBackWhenDepthRangeIsNotUnit()
+    {
+        FakeCommandList commandList;
+        RecordMegaGeometryTwoInstances(true, commandList, 0.5f);
+
+        assert(commandList.BeginRenderPassCount == 1);
+        assert(commandList.EndRenderPassCount == 1);
+        assert(commandList.DrawCallCount == 2);
+    }
+
+    // 並びは A（ObjectId 1）と B（ObjectId 2）。見えたビットは、直前のフレームにも描かれた同じコンポーネントのインスタンスだけが引き継ぐ
+    void MegaVisibilityReaddScript(uint32_t frameIndex,
+                                   const MegaGeometryProxy &a,
+                                   const MegaGeometryProxy &b,
+                                   Container::VariableArray<MegaGeometryProxy> &outProxies)
+    {
+        outProxies.clear();
+        MegaGeometryProxy readded = a;
+        // 3・4: 同じ ObjectId・メッシュで新しいコンポーネント（ComponentId 11）。5: 描かれ続けたまま ComponentId だけ変わる。
+        // 7: 描かれなかった後の再追加（ComponentId は5と同じ）
+        if (frameIndex == 3 || frameIndex == 4)
+        {
+            readded.ComponentId = 11;
+        }
+        else if (frameIndex >= 5)
+        {
+            readded.ComponentId = 12;
+        }
+        const bool bHasA = frameIndex != 2 && frameIndex != 6;
+        if (bHasA)
+        {
+            outProxies.push_back(readded);
+        }
+        outProxies.push_back(b);
+    }
+
+    // 追加されたインスタンス・再追加・コンポーネントの作り直しでは、前のフレームで見えたビットを捨てる（0で埋め直す）
+    void TestMegaGeometryTwoPassDiscardsVisibilityOnReaddAndComponentChange()
+    {
+        FakeCommandList commandList;
+        Container::VariableArray<uint32_t> fills;
+        RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 8, &MegaVisibilityReaddScript, &fills);
+
+        assert(fills.size() == 8);
+        // 0: 2つとも新規 / 1: 引き継ぐ / 2: A が外れる / 3: A を再追加 / 4: 引き継ぐ /
+        // 5: ComponentId の変更 / 6: A が外れる / 7: A を同じ ComponentId で再追加
+        const uint32_t expected[8] = {2, 0, 0, 1, 0, 1, 0, 1};
+        for (uint32_t i = 0; i < 8; ++i)
+        {
+            assert(fills[i] == expected[i]);
         }
     }
 
@@ -6710,6 +6803,8 @@ int main()
     TestMegaGeometryPartialNamedGBufferFallsBackToLegacyAttachmentStates();
     TestMegaGeometryRecordFrameCommandBatchesInstancesInSingleRenderPass();
     TestMegaGeometryRecordFrameCommandRecordsTwoPassOcclusion();
+    TestMegaGeometryTwoPassFallsBackWhenDepthRangeIsNotUnit();
+    TestMegaGeometryTwoPassDiscardsVisibilityOnReaddAndComponentChange();
     TestGBufferNativeDeclareCreatesTransientOutputs();
     TestGBufferSSAONativeDeclareDependencies();
     TestGBufferSSAOLightingNativeDeclareDependencies();

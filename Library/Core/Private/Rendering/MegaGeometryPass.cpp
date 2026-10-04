@@ -375,6 +375,7 @@ namespace NorvesLib::Core::Rendering
 
                 MegaMeshInstance instance;
                 instance.ObjectId = proxy.ObjectId;
+                instance.ComponentId = proxy.ComponentId;
                 instance.Handle = proxy.MegaMeshHandle;
                 std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
                 std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
@@ -797,10 +798,8 @@ namespace NorvesLib::Core::Rendering
         // 使えないとき（--mega-occlusion=off・HZBが作れない・描く範囲が深度と一致しない）は、
         // 従来の1回の判定（遮蔽の判定なし）で描く。
         const bool bTwoPass = CanUseTwoPassOcclusion(command);
-        if (bTwoPass)
-        {
-            ++m_OcclusionFrameCount;
-        }
+        // 2パスでないフレームも数える（見えたビットは連続した2パスのフレームの間でだけ引き継ぐため）
+        ++m_OcclusionFrameCount;
 
         // 統計（MEGA_OCCLUSION）の書き込み先。読み戻しのあるビルド（開発）だけ取る
         StatsSlot *statsSlot = nullptr;
@@ -898,7 +897,7 @@ namespace NorvesLib::Core::Rendering
                                                                             drawableInstance.bClearVisibility);
                 if (!drawableInstance.VisibilityBuffer)
                 {
-                    NORVES_LOG_ERROR("MegaGeometryPass", "Failed to create the visibility buffer at slot %zu", instanceIndex);
+                    NORVES_LOG_ERROR("MegaGeometryPass", "見えたビットのバッファを作れませんでした（スロット %zu）", instanceIndex);
                     continue;
                 }
                 drawableInstance.SecondIndirectDrawBuffer = m_SecondInstanceIndirectDrawBuffers[instanceIndex];
@@ -2025,6 +2024,13 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 判定は保存される深度がNDCの深度そのもの（範囲が0〜1）であることを前提にする
+        if (viewport.minDepth != 0.0f || viewport.maxDepth != 1.0f)
+        {
+            logFallbackOnce("depth_range");
+            return false;
+        }
+
         if (!m_HiZ.Resize(depthWidth, depthHeight))
         {
             logFallbackOnce("hiz");
@@ -2050,9 +2056,14 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // 直前のフレームに描かれていたインスタンスだけが、見えたビットを引き継げる。
+        // 1フレームでも描かれなかった（スナップショットから外れた・メッシュが無かった・2パスでなかった）インスタンスや、
+        // コンポーネントが作り直されたインスタンスは、同じ ObjectId・メッシュでも別物として0から始める。
         const void *clusterBufferIdentity = gpuData.ClusterBuffer.get();
         if (found &&
             found->Buffer &&
+            found->LastUsedFrame + 1 == m_OcclusionFrameCount &&
+            found->ComponentId == instance.ComponentId &&
             found->MeshId == instance.Handle.Id &&
             found->ClusterBufferIdentity == clusterBufferIdentity &&
             found->ClusterCount == gpuData.ClusterCount)
@@ -2081,6 +2092,7 @@ namespace NorvesLib::Core::Rendering
                              "MegaGeometry_VisibleLastFrame");
         found->Buffer = m_Device->CreateBuffer(desc);
         found->MeshId = instance.Handle.Id;
+        found->ComponentId = instance.ComponentId;
         found->ClusterBufferIdentity = clusterBufferIdentity;
         found->ClusterCount = gpuData.ClusterCount;
         found->LastUsedFrame = m_OcclusionFrameCount;
