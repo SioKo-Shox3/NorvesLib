@@ -2241,3 +2241,15 @@
 - done-when: SkeletalAssetResourceで複数clipを保持しGetClipCount/GetClip(name)を追加。単数SetResources互換とGetAnimationClip先頭を維持。空/重複名は名前引きで曖昧拒否し資産自体を一律拒否しない。
 - verify: 単数互換/配列所有/子Load/不正子/Unload/名前欠落重複/強参照寿命/メモリ計上をnative登録。
 - stop-when: M9の複数clip guardを無断解除、制作alias規約を勝手に採用、Resource寿命破壊。
+
+## G2-GR79-IMPORT-POLICY-CORE: ARM百分位と発光の必須設定を固定する
+- status: done
+- done-when: AI生成profileのAO/metallic ignore・roughness auto、素材override、1〜99百分位幅での定数判定、emissiveFactor×strengthの非0判定とnits換算明示必須を純関数にする。asset-set単位のfallbackを受けるが高優先の不正値を無言fallbackしない。
+- verify: TRELLIS型B192〜255/Pixal型G249〜255外れ値、texture override/因子/正しいAO式、百分位rank境界、textureのみ/strength0/未設定/非有限/上限、設定優先順位を通常/O2/sanitizerで反証する。
+- stop-when: 発光textureだけで未設定拒否、AI犬の金属をautoへ戻す、max-minを定数判定に使う、asset/material名付き診断やasset-set実配線を未実装のままGR79全体完了扱いする。
+
+## G2-GR79-IMPORT-POLICY-CONNECTION: 材質設定と出所付き診断を接続する
+- status: todo
+- done-when: material/asset/asset-setの設定を解決し、発光換算の未設定拒否に資産名・材質名・emissiveNitsPerUnitを表示。AI生成profileを明示的に適用し素材単位overrideを保持する。canonical/hash/cacheとJSON/CLIへ接続する。
+- verify: asset-set単位指定/素材上書き/欠落・不正/発光textureのみ/診断名/設定差cache失効と旧非発光・v0互換を確認する。
+- stop-when: provenanceを拡張子だけで決める、sidecarよりasset-set設定を無言優先、非発光を不必要に拒否、見た目未確認を受入れ済みとする。

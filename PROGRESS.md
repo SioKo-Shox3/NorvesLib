@@ -637,3 +637,6 @@
 
 - G2-GR82-A2-CLIP-RESOURCES: SetClipResourcesでclip列をコピー所有し、単数SetResourcesと安定した先頭GetAnimationClipを維持。index/一意完全一致name引き、空/欠落/重複拒否、全子Loaded/Valid、Unloadとcapacityメモリ計上を接続。第1周でStringViewのNUL終端比較を検出し、長さ+全codeunitへ修正。実保持NUL後B/Cと誤一致/誤重複、子内容増加時の束メモリ不変も反証追加し第2周PASS。新SkeletalAssetResourceTestをMEMBER/CTest登録、旧LifetimeTest無変更。Windows.hでnativeコンパイル/実行は未検証。M9/SkinnedMeshComponent/選択alias/v1は未変更。
 - Next: ARM/nits既定は作者回答待ち。GR79 NVMESH v1の形式/検証を独立に進め、受理後の材質情報をruntimeで黙って捨てないよう接続gateを分離する。
+
+- G2-GR79-IMPORT-POLICY-CORE: 作者追加指定のAI profile AO/metallic ignore・roughness auto、素材mode上書き、histogram Type7のp1〜p99有効幅(既定4/255)で定数判定を純処理化。診断min/max/meanは維持し、AOは1+strength*(sample-1)。emissiveFactor×strengthの非0なら換算明示必須、textureだけ/strength0は非発光。素材>asset>asset-setの選択、不正高優先値のfallback拒否、Y正規化/physical nits/codec上限を固定。第1周の中間underflowをmax成分正規化+frexp/scalbnで修正、第2周PASS。通常/O2/ASanUBSan(LSan除外)3mode・MEMBER成功、300sorted列の独立百分位照合・巨大count・極小factor回復・byte恒等を確認。JSON/asset-set/CLIと資産名/材質名診断、実画像・撮影・runtimeは未接続/未検証。
+- Next: GR79 NVMESH v1の純wire検証 → reader/runtime明示gate → material設定/画像処理/診断・asset-set指定とwriterへの接続。生成元は明示profileで扱い、GLB拡張子だけで推測しない。

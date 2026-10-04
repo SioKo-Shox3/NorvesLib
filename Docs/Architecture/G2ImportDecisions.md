@@ -68,3 +68,15 @@ S2とS8のGLB部分は先に承認済み。S3/S5/S6/S7、およびS8のBVH/FBX�
 ## GR32 パレット共有（2026-10-04承認）
 
 1 component・1フレームあたりSkinnedPaletteの作成は1回。SkinnedPreviousPaletteはGBufferに描かれるcomponentだけ最大1回とする。影では前フレーム用を束縛せず、影先行・GBuffer先行の両方で現在パレットを共有する。サブメッシュ・パス・viewport数に比例して作成を増やさない。1本化のRHI改修は行わない。
+
+## GR79 ARM・発光（2026-10-04追加承認）
+
+- auto＋AO ignoreを既定とする。AI生成GLBではmetallicもignore（0）。金属素材だけ素材単位でtextureへ戻せる
+- 定数化の判定はmax−minではなく1〜99パーセンタイル幅。従来案の許容4/255はパラメータとして保持。最終の採否は撮影の見た目で行う
+- 作者の手元のTRELLIS.2犬はB192〜255でautoでは畳めずmetallic約0.93。Pixal3D犬G249〜255は外れ値が広げる幅への対処が必要。これらは作者の実測情報であり、この環境での実物再計測ではない
+- emissiveFactor×KHR_materials_emissive_strength.emissiveStrengthが非0ならemissiveNitsPerUnitを必須とし、未設定は警告から理由付き拒否へ変更
+- emissiveTextureだけでfactorが0の材質は通す。strength既定1・factor既定0を用い、textureの有無で発光を推測しない
+- 診断は資産名・材質名・設定名emissiveNitsPerUnitを含める。換算値はasset-set単位でも指定可能とし、素材/資産側の明示指定を優先する
+- asset-setでの換算指定は限定した例外であり、import設定全般の正本をsidecarから移す意味ではない
+
+[公式emissive_strength schema](https://raw.githubusercontent.com/KhronosGroup/glTF/main/extensions/2.0/Khronos/KHR_materials_emissive_strength/schema/material.KHR_materials_emissive_strength.schema.json)もstrength既定1・非負を定義する。
