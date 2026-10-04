@@ -12,7 +12,7 @@ DecideCookCacheは現要求を既存単体cookの規則で検査・正規化し�
 
 ## 安全な出力境界
 
-既存texture batchとWindows local-drive/ASCII出力名・reparse検査を共有する。既存fileをdirectoryとして辿る要求、device名、ADS、末尾dot/space、path正規化で別fileを指す要求、出力どうしのprefix、source/外部file/不在sidecar/他keyの出力への別名を拒否する。Windows大小文字・canonical pathと既存fileのhard linkを確認する。
+既存texture batchとWindows local-drive/ASCII出力名・reparse検査を共有する。rawのpackage/manifest locatorはabsolute化の前にも検査し、Windowsが末尾dot/spaceを除いたあとに別名を受理しない。既存fileをdirectoryとして辿る要求、device名、ADS、末尾dot/space、path正規化で別fileを指す要求、出力どうしのprefix、source/外部file/不在sidecar/他keyの出力への別名を拒否する。Windows大小文字・canonical pathと既存fileのhard linkを確認する。
 
 skeletal/audioにもstrictなMakeCookedPackageManifestPathを使う。旧skeletal helperのように物理Assets/を黙って除かない。モデルのsourceとoverrideは、現在のFingerprintModelCookSourceのnarrow path変換でlossless往復できるものだけを受ける。対応外は明示Errorにし、Unicode対応済みのtextureと依存snapshotを狭めない。モデルの完全なnative path対応は別の追補。
 

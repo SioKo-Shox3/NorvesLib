@@ -726,3 +726,5 @@
 - G2-S6-OUTPUT-PACKAGE受入: 7ba94fed/run37218137820の実Windowsで18CPU（新しい型別package検証とmesh v1拒否を含む）、7CLI/79byte/5診断、native texture2spec×2/10byte/16拒否が成功。単体cook全形式・派生画像3件・正常旧骨格版の拒否・padding印・失敗保持を実証。3 artifact ZIP SHAを確認しcandidate79file/2exeを独立検証。taskをdone。保存recordとの比較・共通Cook/Skip/Errorは未接続。
 
 - G2-S6-CACHE-DECISION開始: 単体要求の正規化を既存private境界へ集約し、現入力からの完全な出力一覧・値所有record・共通Cook/Skip/Errorを追加。保存pathは採用せず、source/不在sidecar/他keyのaliasを先行拒否し、依存を操作前後で再採取する。全kind・外部依存・manifest無関係変更・Windows alias・途中入力変更のnative契約を登録。永続化と既存root公開は未接続、実Windows前なのでdoing。
+
+- G2-S6-CACHE-DECISION実検証: 48bdd655/run37220986849は実buildと既存18CPU・5診断が成功、新cache試験の危険出力名拒否（line203）で停止。Windowsのabsolute化より前にraw物理名の検査を追加し、末尾dot/space等が正規化で消えてから検査される経路を塞ぐ。packageの各leaf診断とmanifest名の対称回帰を追加。判定条件は弱めず、79+10byte gateは未到達のためdoingを維持。

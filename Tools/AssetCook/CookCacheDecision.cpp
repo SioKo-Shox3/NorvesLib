@@ -170,10 +170,28 @@ namespace NorvesLib::Tools::AssetCook
             return true;
 #endif
         }
+        // Windowsのabsolute化で末尾dot/spaceが消える前に、要求そのものの物理名を検査する。
+        bool SafeRawOutputLocator(const std::filesystem::path& path)
+        {
+            AnsiString relative;
+            if (path.empty() || !NoNul(path) ||
+                (path.has_root_path() && !path.is_absolute()) ||
+                !Paths::AsciiPath(path.relative_path(), relative))
+            {
+                return false;
+            }
+            return Paths::SafeOutputName(relative);
+        }
         bool Prepare(const SingleAssetCookRequest& request,uint64_t revision,const AssetManifest* manifest,CurrentPlan& plan,AnsiString& error)
         {
-            if(!revision || !NoNul(request.InputPath) || !NoNul(request.PackagePath) || !NoNul(request.ManifestPath) ||
-                !NoNul(request.ImportSettingsOverridePath))return Fail(error,"invalid_revision_or_locator");
+            if (!revision || !NoNul(request.InputPath) || !NoNul(request.ImportSettingsOverridePath))
+            {
+                return Fail(error, "invalid_revision_or_locator");
+            }
+            if (!SafeRawOutputLocator(request.PackagePath) || !SafeRawOutputLocator(request.ManifestPath))
+            {
+                return Fail(error, "unsafe_output_spelling");
+            }
             if(!Detail::NormalizeCacheCookRequest(request,plan.Context.Request,error) ||
                 !CaptureCookDependencySnapshot(plan.Context.Request,revision,plan.Context.Dependencies,error) ||
                 !BuildInventory(plan,error) || !GuardTargets(plan,manifest,error))return false;

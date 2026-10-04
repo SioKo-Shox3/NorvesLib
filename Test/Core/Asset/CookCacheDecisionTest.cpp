@@ -200,7 +200,26 @@ int main()
     auto r=raw.Request;r.Format="bad";CHECK(Decide(r,nullptr,nullptr)==CookDecision::Error);
     r=raw.Request;r.InputPath=root/"missing";CHECK(Decide(r,nullptr,nullptr)==CookDecision::Error);CHECK(Decide(raw.Request,nullptr,nullptr,0)==CookDecision::Error);
     for(const char* leaf:{"CON.nvpkg","a:stream","a.","a ","x?/a","Assets/item.nvpkg"})
-    {r=raw.Request;r.PackagePath=r.ManifestPath.parent_path()/leaf;CHECK(Decide(r,nullptr,nullptr)==CookDecision::Error);}
+    {
+        r=raw.Request;r.PackagePath=r.ManifestPath.parent_path()/leaf;
+        SingleAssetCookRequest normalized;Text normalizeError,normalizedPath;
+        if (Detail::NormalizeCacheCookRequest(r,normalized,normalizeError))
+        {
+            CHECK(Detail::CookOutputPaths::AsciiPath(normalized.PackagePath,normalizedPath));
+            std::fprintf(stderr,"unsafe_leaf=%s normalized=%s\n",leaf,normalizedPath.c_str());
+        }
+        const auto decision=Decide(r,nullptr,nullptr);
+        if (decision!=CookDecision::Error)
+        {
+            std::fprintf(stderr,"unexpected_decision=%d unsafe_leaf=%s\n",static_cast<int>(decision),leaf);
+        }
+        CHECK(decision==CookDecision::Error);
+    }
+    for (const char* leaf:{"manifest.json.","manifest.json ","NUL.json"})
+    {
+        r=raw.Request;r.ManifestPath=r.ManifestPath.parent_path()/leaf;
+        CHECK(Decide(r,nullptr,nullptr)==CookDecision::Error);
+    }
     r=raw.Request;r.PackagePath=r.ManifestPath.parent_path()/"../outside.nvpkg";CHECK(Decide(r,nullptr,nullptr)==CookDecision::Error);
     r=raw.Request;r.ManifestPath=r.PackagePath/"manifest.json";CHECK(Decide(r,nullptr,nullptr)==CookDecision::Error);
     r=raw.Request;r.ManifestPath=root/"manifest.json";r.PackagePath=r.InputPath;CHECK(Decide(r,nullptr,nullptr)==CookDecision::Error);
