@@ -116,7 +116,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 読み込み中と読み込み済み（まだ GPU へ渡していない）のタイルの数の上限
          *
-         * ミップ単位で扱うテクスチャは、ミップの全タイルがこの数に収まらないと単位にしない（タイル単位へ戻す）。
+         * ミップ単位で扱うテクスチャは、ミップの全タイルがこの数に収まらないと登録を拒否する。
          */
         uint32_t MaxReadsInFlight = 128;
         /**
@@ -155,7 +155,7 @@ namespace NorvesLib::Core::Rendering
          * @brief 長辺（ミップ 0）がこの値以下のテクスチャは、ミップ全体を 1 単位として読み・結び・外す（0 で無効）
          *
          * 1 単位の読み込み数・コピー数・コピー量が 1 フレームの上限（MaxReadsInFlight・MaxCopiesPerFrame・
-         * MaxCopyBytesPerFrame）に収まらないテクスチャは、タイル単位のままにする。
+         * MaxCopyBytesPerFrame）に収まらないテクスチャは、永久に結べないので登録を拒否する（タイル単位へは戻さない）。
          */
         uint32_t MipGranularMaxDimension = 1024;
     };
@@ -779,7 +779,13 @@ namespace NorvesLib::Core::Rendering
                 outEntry.Texture.reset();
                 return false;
             }
-            outEntry.bMipGranular = CanUseMipUnits(outEntry);
+            outEntry.bMipGranular = m_Config.MipGranularMaxDimension != 0 &&
+                                    std::max(outEntry.Width, outEntry.Height) <= m_Config.MipGranularMaxDimension;
+            if (outEntry.bMipGranular && !ValidateMipUnitLimitsLocked(outEntry))
+            {
+                outEntry.Texture.reset();
+                return false;
+            }
             outEntry.TailData = std::move(registration.TailData);
             // ミップテイルの無いテクスチャは結ぶものが無い
             outEntry.bTailBound = outEntry.TailCopies.empty();
@@ -787,20 +793,18 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        // このテクスチャをミップ単位で扱えるか。長辺が小さく、どのミップも 1 単位が 1 フレームの上限
-        // （読み込み中の数・コピーの数と量）に収まるときだけ。収まらなければタイル単位のまま。
-        bool CanUseMipUnits(const Entry &entry) const
+        // ミップ単位で扱うテクスチャの、どのミップも 1 単位が 1 フレームの上限（読み込み中の数・コピーの数と量）に
+        // 収まるか。単位の全タイルは同じ BindSparse で結び、同じフレームにコピーするので、収まらないと永久に結べない。
+        // タイル単位へ戻すと「ミップ全体を 1 単位として扱う」約束が崩れるので、収まらない設定は登録を拒否する。
+        bool ValidateMipUnitLimitsLocked(const Entry &entry) const
         {
-            if (m_Config.MipGranularMaxDimension == 0 ||
-                std::max(entry.Width, entry.Height) > m_Config.MipGranularMaxDimension)
-            {
-                return false;
-            }
             for (uint32_t mip = 0; mip < entry.Info.MipTailFirstLevel; ++mip)
             {
                 const uint32_t tiles = MipTileCount(entry, mip);
                 if (tiles == 0 || tiles > m_Config.MaxReadsInFlight || tiles > m_Config.MaxCopiesPerFrame)
                 {
+                    LOG_ERROR("VirtualTextureStreamer: ミップ %u の 1 単位が読み込み中の数かコピーの数の上限を超えるので登録できない tiles=%u reads=%u copies=%u",
+                              mip, tiles, m_Config.MaxReadsInFlight, m_Config.MaxCopiesPerFrame);
                     return false;
                 }
                 uint64_t unitBytes = 0;
@@ -812,6 +816,7 @@ namespace NorvesLib::Core::Rendering
                         uint64_t tileBytes = 0;
                         if (!ComputeTileRegion(entry, mip, x, y, region, tileBytes))
                         {
+                            LOG_ERROR("VirtualTextureStreamer: タイルのコピーの大きさを求められない mip=%u", mip);
                             return false;
                         }
                         unitBytes += tileBytes;
@@ -819,6 +824,9 @@ namespace NorvesLib::Core::Rendering
                 }
                 if (unitBytes > m_Config.MaxCopyBytesPerFrame)
                 {
+                    LOG_ERROR("VirtualTextureStreamer: ミップ %u の 1 単位が 1 フレームのコピー量の上限を超えるので登録できない unit=%llu limit=%llu",
+                              mip, static_cast<unsigned long long>(unitBytes),
+                              static_cast<unsigned long long>(m_Config.MaxCopyBytesPerFrame));
                     return false;
                 }
             }
@@ -1095,6 +1103,12 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<PendingEvict> pendingEvicts;
             // 目標と比べるページの数（今フレームで結ぶ分を足し、外すと決めた分を引く）
             uint64_t livePages = CountLivePagesLocked();
+            // プールから借りているが、ストリーマの常駐に数えないページ（外して GPU の完了を待っているものなど）。
+            // 物理メモリは返るまで空かないので、新しく借りる前に目標へ足して比べる。
+            const uint64_t poolUsedPages = m_Pool.GetStats().UsedBytes / SparsePagePool::PageSizeBytes;
+            const uint64_t unreturnedPages = poolUsedPages > livePages ? poolUsedPages - livePages : 0;
+            // 今フレームで外すと決めたページ（リトアキューがあれば、GPU の完了まで返らない）
+            uint64_t evictedPages = 0;
 
             // 1) ミップテイル: 登録したテクスチャのうち、まだ全部を積んでいないもの
             for (uint32_t index = 0; index < m_Entries.size() && !bPoolExhausted && !bStageBlocked; ++index)
@@ -1206,6 +1220,12 @@ namespace NorvesLib::Core::Rendering
             // 外すタイルのページは今フレームでは誰にも渡さず（返すのは結び付けの成功の後）、結び付けと同じ BindSparse で外す。
             const bool bLimited = m_bBudgetLimited;
             const uint64_t targetPages = m_BudgetBytes / SparsePagePool::PageSizeBytes;
+            auto stageEviction = [&](const Victim &victim)
+            {
+                const uint64_t before = livePages;
+                StageEvictionLocked(victim, request, pendingEvicts, livePages);
+                evictedPages += before - livePages;
+            };
             Container::VariableArray<Victim> victims;
             size_t victimCursor = 0;
             bool bVictimsBuilt = false;
@@ -1222,12 +1242,13 @@ namespace NorvesLib::Core::Rendering
                 ensureVictims();
                 while (livePages > targetPages && victimCursor < victims.size())
                 {
-                    StageEvictionLocked(victims[victimCursor++], request, pendingEvicts, livePages);
+                    stageEviction(victims[victimCursor++]);
                 }
             }
             // 結びたい単位のページが目標に収まるよう、外せるものを外す。使われていないタイルはいつでも外してよい。
             // 使われているタイルは、結びたい単位より細かいミップのときだけ（要求の優先度が低い）。それ以外は外さず、
             // その単位は結ばずに待つ（外す順の先頭が外せなければ、後ろも外せない）。
+            // 外したページが返る前（リトアキューの待ち）は、プールの使用量が目標を超えるので、新しいページは借りずに待つ。
             auto makeRoom = [&](uint64_t pagesNeeded, uint32_t candidateMip) -> bool
             {
                 if (!bLimited)
@@ -1247,9 +1268,10 @@ namespace NorvesLib::Core::Rendering
                         return false;
                     }
                     ++victimCursor;
-                    StageEvictionLocked(victim, request, pendingEvicts, livePages);
+                    stageEviction(victim);
                 }
-                return true;
+                const uint64_t heldPages = livePages + unreturnedPages + (m_pRetireQueue != nullptr ? evictedPages : 0);
+                return heldPages + pagesNeeded <= targetPages;
             };
 
             // 3) 結ぶ: 読み込み済みの単位を優先度順に、1 フレームの予算の範囲で。

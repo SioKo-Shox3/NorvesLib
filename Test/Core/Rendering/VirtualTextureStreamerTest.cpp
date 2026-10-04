@@ -2138,14 +2138,19 @@ void TestRoomOnlyFromLowerPriorityTiles()
     Expect(h.Streamer.GetStats().BudgetBlockedFrames >= 1, "目標が足りず結べなかったフレームを数える");
     Expect(h.Gpu.UnboundTiles.empty(), "同じ優先度のタイルは外さない");
 
-    // ミップ 2 の Z が要求される。Z は X より粗いので、X を外して結ぶ。同じ BindSparse で
-    const int callsBefore = h.Gpu.BindCalls;
+    // ミップ 2 の Z が要求される。Z は X より粗いので、X を外す。外したページが返る前は新しいページを借りないので、
+    // Z を結ぶのは外した次のフレーム（プールの使用量が目標を超えない）
     StepRequesting(h, index, {{0, 0, 0}, {0, 1, 0}, {2, 0, 0}}, 3);
     StepRequesting(h, index, {{0, 0, 0}, {0, 1, 0}, {2, 0, 0}}, 4);
-    Expect(h.Streamer.GetTileState(MakeKey(index, 2, 0, 0)) == VirtualTextureTileState::Resident, "粗いミップの Z が結ばれる");
     Expect(h.Gpu.UnboundTiles.size() == 1 && IsUnbound(h.Gpu, 0, 0, 0, 0), "Z のために、より細かい X が外れる");
     Expect(h.Streamer.GetTileState(MakeKey(index, 0, 0, 0)) != VirtualTextureTileState::Resident, "X は常駐していない");
-    Expect(h.Gpu.BindCalls == callsBefore + 1, "外す X と結ぶ Z は同じ BindSparse");
+    Expect(h.Streamer.GetTileState(MakeKey(index, 2, 0, 0)) == VirtualTextureTileState::Ready,
+           "X のページが返る前は、Z は新しいページを借りずに待つ");
+    Expect(h.Pool.GetStats().UsedBytes <= 2 * PageBytes, "外したフレームでもプールの使用量が目標以下");
+    const int callsBefore = h.Gpu.BindCalls;
+    StepRequesting(h, index, {{0, 0, 0}, {0, 1, 0}, {2, 0, 0}}, 5);
+    Expect(h.Streamer.GetTileState(MakeKey(index, 2, 0, 0)) == VirtualTextureTileState::Resident, "粗いミップの Z が結ばれる");
+    Expect(h.Gpu.BindCalls == callsBefore + 1, "Z は 1 回の BindSparse で結ぶ");
     Expect(h.Streamer.GetResidentBytes() <= 2 * PageBytes && h.Pool.GetStats().UsedBytes <= 2 * PageBytes, "目標に収まる");
 
     // 結べないまま要求が途絶えた読み込み済みのタイルは、いつまでも枠を占めずに忘れる
@@ -2336,21 +2341,120 @@ void TestMipUnitBindsAndEvictsTogether()
     Expect(h.Streamer.IsMipTailResident(index), "ミップテイルは外さない");
 }
 
-// ミップ全体が上限（コピーの数）に収まらないテクスチャは、タイル単位のまま
-void TestMipUnitFallsBackToTilesWhenLimitsTooSmall()
+// ミップ全体が 1 フレームの上限に収まらない小さいテクスチャは、タイル単位へ戻さず、登録を拒否する
+void TestMipUnitLimitsRejectedAtRegistration()
+{
+    // コピーの数: ミップ 0 の 32 タイルが収まらない
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopiesPerFrame = 16;
+        Harness h(config, SparsePagePool::DefaultBlockBytes, 0, false, 1024);
+        Expect(h.Register() == VirtualTextureStreamer::InvalidIndex, "1 単位がコピーの数の上限を超える小さいテクスチャは登録できない");
+    }
+    // 読み込み中の数
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxReadsInFlight = 16;
+        Harness h(config, SparsePagePool::DefaultBlockBytes, 0, false, 1024);
+        Expect(h.Register() == VirtualTextureStreamer::InvalidIndex, "1 単位が読み込み中の数の上限を超える小さいテクスチャは登録できない");
+    }
+    // コピー量: ミップ 0 は 32 タイル分
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopyBytesPerFrame = 16ull * TestTileBytes;
+        Harness h(config, SparsePagePool::DefaultBlockBytes, 0, false, 1024);
+        Expect(h.Register() == VirtualTextureStreamer::InvalidIndex, "1 単位がコピー量の上限を超える小さいテクスチャは登録できない");
+    }
+    // 単位が収まる設定なら登録でき、ミップ全体を 1 単位として扱う
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopiesPerFrame = 32;
+        config.MaxReadsInFlight = 32;
+        Harness h(config, SparsePagePool::DefaultBlockBytes, 0, false, 1024);
+        const uint32_t index = h.RegisterAndMakeTailResident();
+        Expect(index != VirtualTextureStreamer::InvalidIndex, "1 単位が上限に収まれば登録できる");
+        StepRequesting(h, index, {{2, 0, 0}}, 1);
+        Expect(h.Source->Started.size() == 2, "ミップ全体（2 タイル）を 1 単位として読む");
+    }
+    // 長辺が閾値を超えるテクスチャは対象外で、同じ上限でもタイル単位で登録できる
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopiesPerFrame = 16;
+        Harness large(config, SparsePagePool::DefaultBlockBytes, 0, false, 512);
+        const uint32_t largeIndex = large.RegisterAndMakeTailResident();
+        Expect(largeIndex != VirtualTextureStreamer::InvalidIndex, "長辺が閾値を超えるテクスチャは上限に関わらず登録できる");
+        StepRequesting(large, largeIndex, {{2, 0, 0}}, 1);
+        Expect(large.Source->Started.size() == 1, "長辺が閾値を超えるテクスチャはタイル単位");
+    }
+}
+
+// 外したページが返る前（リトアキューの待ち）は、置き換えのタイルが新しいページを借りず、プールの使用量が目標を超えない
+void TestReplacementWaitsForReturnedPagesToStayWithinTarget()
 {
     VirtualTextureStreamerConfig config;
-    config.MaxCopiesPerFrame = 16; // ミップ 0 の 32 タイルが収まらない
-    Harness h(config, SparsePagePool::DefaultBlockBytes, 0, false, 1024);
-    const uint32_t index = h.RegisterAndMakeTailResident();
-    StepRequesting(h, index, {{2, 0, 0}}, 1);
-    Expect(h.Source->Started.size() == 1, "1 単位が上限に収まらないテクスチャは、要求されたタイルだけを読む");
+    config.EvictIdleFrames = 1000;
+    RealUploaderHarness h(config, 4); // 物理メモリは 4 ページ持てる（目標より多い）
+    RHI::TexturePtr texture;
 
-    // 長辺が閾値を超えるテクスチャも、タイル単位
-    Harness large(VirtualTextureStreamerConfig(), SparsePagePool::DefaultBlockBytes, 0, false, 512);
-    const uint32_t largeIndex = large.RegisterAndMakeTailResident();
-    StepRequesting(large, largeIndex, {{2, 0, 0}}, 1);
-    Expect(large.Source->Started.size() == 1, "長辺が閾値を超えるテクスチャはタイル単位");
+    h.BeginFrame(0);
+    const uint32_t index = h.Register(texture);
+    Expect(index != VirtualTextureStreamer::InvalidIndex, "登録できる");
+    h.Streamer.SetResidentBudget(true, 2 * PageBytes);
+    h.Update();
+    h.Record();
+    h.Commit(1);
+
+    // ミップテイル + A（ミップ 0）で目標の 2 ページ
+    h.BeginFrame(1);
+    {
+        VirtualTextureRequestSet requests;
+        AddRequest(requests, index, 0, 0, 0, 1);
+        h.Update(&requests);
+    }
+    h.Record();
+    h.Commit(2);
+    h.BeginFrame(2);
+    h.Update();
+    h.Record();
+    h.Commit(3);
+    Expect(h.Streamer.GetTileState(MakeKey(index, 0, 0, 0)) == VirtualTextureTileState::Resident, "A が常駐する");
+    Expect(h.Pool.GetStats().UsedBytes == 2 * PageBytes, "目標の 2 ページを使い切る");
+
+    // より粗い B が要求される。A は外すが、A のページが返るまで B は新しいページを借りない（物理メモリには空きがあっても）
+    size_t maxUsedBytes = 0;
+    const auto observe = [&]() { maxUsedBytes = std::max<size_t>(maxUsedBytes, static_cast<size_t>(h.Pool.GetStats().UsedBytes)); };
+    h.BeginFrame(2);
+    {
+        VirtualTextureRequestSet requests;
+        AddRequest(requests, index, 2, 0, 0, 9);
+        h.Update(&requests);
+    }
+    observe();
+    h.Record();
+    h.Commit(4);
+    for (int i = 0; i < 3; ++i)
+    {
+        h.BeginFrame(2); // 提出済みのフレームは完了していない
+        h.Update();
+        observe();
+        h.Record();
+        h.Commit(5 + static_cast<uint64_t>(i));
+    }
+    Expect(h.Streamer.GetTileState(MakeKey(index, 0, 0, 0)) == VirtualTextureTileState::None, "A は外れる");
+    Expect(h.Streamer.GetTileState(MakeKey(index, 2, 0, 0)) == VirtualTextureTileState::Ready,
+           "A のページが返るまで、B は読み込み済みのまま待つ");
+    Expect(maxUsedBytes <= 2 * PageBytes, "待っている間、プールの使用量が目標を超えない");
+    Expect(h.Streamer.GetStats().BudgetBlockedFrames >= 1, "目標のために結べなかったフレームを数える");
+
+    // A を外したフレーム（serial 5）の完了で、ページが返り、B が結ばれる
+    h.BeginFrame(5);
+    h.Update();
+    observe();
+    Expect(h.Streamer.GetTileState(MakeKey(index, 2, 0, 0)) == VirtualTextureTileState::Resident, "ページが返ったので B を結ぶ");
+    Expect(maxUsedBytes <= 2 * PageBytes && h.Pool.GetStats().UsedBytes == 2 * PageBytes,
+           "置き換えの後も、プールの使用量は目標以下");
+    h.Record();
+    h.Commit(8);
 }
 
 // ミップ単位の読み込みの枠: 始めた単位の残りの枠を確保し、読み込み中の数の上限を超えない
@@ -2420,7 +2524,8 @@ int RunTest()
     TestEvictionBindFailureKeepsTilesResident();
     TestEvictedPageWaitsForRetireAndStaleCopyIsCancelled();
     TestMipUnitBindsAndEvictsTogether();
-    TestMipUnitFallsBackToTilesWhenLimitsTooSmall();
+    TestMipUnitLimitsRejectedAtRegistration();
+    TestReplacementWaitsForReturnedPagesToStayWithinTarget();
     TestMipUnitReservesReadSlots();
 
     if (g_failures != 0)
