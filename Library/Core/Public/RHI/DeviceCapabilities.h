@@ -62,7 +62,8 @@ namespace NorvesLib::RHI
      * @brief DeviceLocal ヒープの予算と使用量（全 DeviceLocal ヒープの合計）
      *
      * VK_EXT_memory_budget のような取得手段が無いバックエンドでは bValid が false のまま返る。
-     * その場合 BudgetBytes と UsageBytes は意味を持たない。
+     * その場合 BudgetBytes と UsageBytes は意味を持たない。取得手段がある場合は bValid が true で、
+     * BudgetBytes が 0 のときは異常値として呼び出し側が扱う。
      */
     struct VideoMemoryBudget
     {
@@ -72,7 +73,7 @@ namespace NorvesLib::RHI
         /** @brief このプロセスが現在使っているビデオメモリ（バイト） */
         uint64_t UsageBytes = 0;
 
-        /** @brief 予算と使用量を取得できたか */
+        /** @brief 取得手段があり、予算と使用量を取得したか（無いバックエンドでは false） */
         bool bValid = false;
     };
 

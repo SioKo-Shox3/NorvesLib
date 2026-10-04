@@ -2,6 +2,7 @@
 
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/SkinnedMeshGpuStore.h"
+#include "Rendering/VideoMemoryBudgetLogGate.h"
 #include "Rendering/MegaGeometryResourceStore.h"
 #include "Rendering/ProceduralMeshGpuStore.h"
 #include "Rendering/RenderMaterialStore.h"
@@ -92,10 +93,7 @@ namespace NorvesLib::Core::Rendering
 
         // VRAM の上限（MB。0 は上限なし）と、予算ログの間引き状態（GameThread だけが触る）
         uint64_t VideoMemoryCapMb = 0;
-        bool bVideoMemoryBudgetLogged = false;
-        std::chrono::steady_clock::time_point VideoMemoryLastPollTime{};
-        uint64_t VideoMemoryLoggedBudgetBytes = 0;
-        uint64_t VideoMemoryLoggedUsageBytes = 0;
+        VideoMemoryBudgetLogGate VideoMemoryLogGate;
     };
 
     GpuResources::GpuResources(RenderResources *pOwner)
@@ -899,33 +897,21 @@ namespace NorvesLib::Core::Rendering
         }
 
         const auto now = std::chrono::steady_clock::now();
-        if (impl->bVideoMemoryBudgetLogged &&
-            now - impl->VideoMemoryLastPollTime < std::chrono::seconds(1))
+        if (!impl->VideoMemoryLogGate.IsPollDue(now))
         {
             return;
         }
-        impl->VideoMemoryLastPollTime = now;
+        impl->VideoMemoryLogGate.MarkPolled(now);
 
         const RHI::VideoMemoryBudget budget = impl->Device->GetVideoMemoryBudget();
         const uint64_t budgetBytes = budget.bValid ? budget.BudgetBytes : 0;
         const uint64_t usageBytes = budget.bValid ? budget.UsageBytes : 0;
 
         // 前回ログした値からの変化が 1% 未満なら出さない（初回は必ず出す）。
-        const auto changedByOnePercent = [](uint64_t previous, uint64_t current)
-        {
-            const uint64_t difference = previous > current ? previous - current : current - previous;
-            return difference * 100 >= (previous > 0 ? previous : 1);
-        };
-        if (impl->bVideoMemoryBudgetLogged &&
-            !changedByOnePercent(impl->VideoMemoryLoggedBudgetBytes, budgetBytes) &&
-            !changedByOnePercent(impl->VideoMemoryLoggedUsageBytes, usageBytes))
+        if (!impl->VideoMemoryLogGate.CommitIfChanged(budgetBytes, usageBytes))
         {
             return;
         }
-
-        impl->bVideoMemoryBudgetLogged = true;
-        impl->VideoMemoryLoggedBudgetBytes = budgetBytes;
-        impl->VideoMemoryLoggedUsageBytes = usageBytes;
 
         constexpr uint64_t kBytesPerMb = 1024ull * 1024ull;
         if (impl->VideoMemoryCapMb > 0)

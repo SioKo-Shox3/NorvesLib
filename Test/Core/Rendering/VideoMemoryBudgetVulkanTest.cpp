@@ -1,6 +1,6 @@
 ﻿// Vulkan デバイスの VRAM 予算・使用量の取得（IDevice::GetVideoMemoryBudget）の契約テスト。
 // VK_EXT_memory_budget のある GPU で budget>0・usage>0・usage<=budget を確かめる。
-// Vulkan デバイスが無い、または拡張が無い環境では 125（スキップ）を返す。
+// Vulkan デバイスが無い、または拡張が無い環境では 125（スキップ）を返す。拡張があるのに予算が 0 の場合は失敗にする。
 #include "CoreTypes.h"
 #include "RHI/RHIDeviceFactory.h"
 #include "RHI/IDevice.h"
@@ -42,7 +42,7 @@ int RunTest()
 {
     if (IsGpuTestSkipForced())
     {
-        return SkipGpuTest("NORVESLIB_FORCE_GPU_TEST_SKIP=1 was set.");
+        return SkipGpuTest("NORVESLIB_FORCE_GPU_TEST_SKIP=1 が指定された");
     }
 
     RHI::RHIDeviceDesc desc;
@@ -52,7 +52,7 @@ int RunTest()
     RHI::DevicePtr device = RHI::CreateRHIDevice(desc);
     if (!IsValid(device))
     {
-        return SkipGpuTest("no Vulkan device is available for the video memory budget test.");
+        return SkipGpuTest("Vulkan デバイスが無い");
     }
 
     // 使用量が 0 のままにならないよう、先に VRAM を使うテクスチャを1枚作っておく。
@@ -65,14 +65,14 @@ int RunTest()
     RHI::TexturePtr probeTexture = device->CreateTexture(textureDesc);
     if (!IsValid(probeTexture))
     {
-        std::cerr << "VideoMemoryBudgetVulkanTest failed: probe texture creation failed" << std::endl;
+        std::cerr << "VideoMemoryBudgetVulkanTest failed: 使用量を作るテクスチャの作成に失敗" << std::endl;
         return 1;
     }
 
     const RHI::VideoMemoryBudget budget = device->GetVideoMemoryBudget();
     if (!budget.bValid)
     {
-        return SkipGpuTest("VK_EXT_memory_budget is not available on this device.");
+        return SkipGpuTest("VK_EXT_memory_budget が無いデバイス");
     }
 
     std::cout << "VideoMemoryBudgetVulkanTest budget_bytes=" << budget.BudgetBytes
@@ -80,17 +80,17 @@ int RunTest()
 
     if (budget.BudgetBytes == 0)
     {
-        std::cerr << "VideoMemoryBudgetVulkanTest failed: budget is 0" << std::endl;
+        std::cerr << "VideoMemoryBudgetVulkanTest failed: 拡張があるのに予算が 0" << std::endl;
         return 1;
     }
     if (budget.UsageBytes == 0)
     {
-        std::cerr << "VideoMemoryBudgetVulkanTest failed: usage is 0" << std::endl;
+        std::cerr << "VideoMemoryBudgetVulkanTest failed: 使用量が 0（テクスチャ作成後に 0 は異常）" << std::endl;
         return 1;
     }
     if (budget.UsageBytes > budget.BudgetBytes)
     {
-        std::cerr << "VideoMemoryBudgetVulkanTest failed: usage exceeds budget" << std::endl;
+        std::cerr << "VideoMemoryBudgetVulkanTest failed: 使用量が予算を超えている" << std::endl;
         return 1;
     }
 

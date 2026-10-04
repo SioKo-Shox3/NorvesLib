@@ -321,6 +321,8 @@ set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+add_test(NAME VideoMemoryBudgetLogGateTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetLogGateTest)
+
 add_test(NAME VideoMemoryBudgetVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetVulkanTest)
 set_tests_properties(VideoMemoryBudgetVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -335,6 +337,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
+    MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE

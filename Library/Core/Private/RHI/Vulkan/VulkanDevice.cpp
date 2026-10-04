@@ -1545,7 +1545,7 @@ namespace NorvesLib::RHI::Vulkan
         {
             extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
             m_bMemoryBudgetExtensionEnabled = true;
-            NORVES_LOG_INFO("VulkanDevice", "Optional extension enabled: VK_EXT_memory_budget");
+            NORVES_LOG_INFO("VulkanDevice", "任意拡張を有効化: VK_EXT_memory_budget");
         }
 
         return extensions;
@@ -1575,7 +1575,8 @@ namespace NorvesLib::RHI::Vulkan
             }
         }
 
-        result.bValid = result.BudgetBytes > 0;
+        // 拡張が有効なら取得は成功とする。予算が0の場合も値の異常として呼び出し側（テスト）に見せる。
+        result.bValid = true;
         return result;
     }
 
