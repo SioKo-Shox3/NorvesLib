@@ -769,3 +769,5 @@
 
 - G2-S6-OWNER-ID開始: producer・schema・spec identity・FINAL root identity・relative manifestを長さ付きUTF8としてSHA-256へ渡し、先頭16byteをowner識別子にする。既存Windows CNGを使い私製hashを増やさない。SourceRoot変更は既存依存fingerprintが扱う入力選択としownerから除外する。物理canonicalとdrive-form保存bindingのresolver、lock/journal/公開は別境界として残す。
 - G2-S6-OWNER-ID検証準備: 実C++文字列literal4件を単独compileしてbyteを抽出し、独立Python hashlibの固定vectorと一致。比較器12件×通常/最適化も成功。独自UTF8 helperとcanonical manifest規約を共有し、26CPUへ登録。実Windows CNGと79+10byte gateは未実行。
+
+- G2-S6-OWNER-ID受入: f1c97437/run37243514075で実Windows build/CNG・26CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。固定SHA-256 vector、field区切り、UTF8/各4096byte上限/失敗保持、独立expected bindingのcodec照合を実証。3ZIPと79+10固定出力を独立確認しrootで再実行。値導出をdone。物理path resolver、state配置、lock/journal、production採用は未接続。

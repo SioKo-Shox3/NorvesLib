@@ -2460,7 +2460,7 @@
 - stop-when: unknown所有fileを採用する、出力命名を独自実装する、衝突確認なしでstage作成/公開をproductionへ接続する。
 
 ## G2-S6-OWNER-ID: 独立したtupleからowner識別子を導出する
-- status: doing
+- status: done
 - done-when: callerが独立に確定したspec/final-root/manifest identityから、versioned length-delimited UTF8 tupleとSHA-256で安定した128bit識別子を導出する。SourceRootや保存stateからownerを採用しない。
 - verify: 独立算出の固定vector、field境界/Unicode/上限/不正入力/失敗保持、state codecとの照合、Windows CPUと79+10byte gate。
 - stop-when: filesystem alias解決やroot作成を暗黙に行う、識別子を認証/既存root上書き許可と扱う、未確定のresolverをproductionへ接続する。
