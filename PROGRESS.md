@@ -777,3 +777,8 @@
 - 実装との照合: 目標の式 `max(min(全体/16, 32768), min(N, 131072))` は `CookMeshDag.cpp` 896〜897 行、`--fallback-min-triangles` の範囲（0〜1000000）と `--kind model` 必須は `Main.cpp`、`--check-package ... --fallback-min-triangles <N>` の引数の形は `AssetCookMeshSimplifySmoke.cpp` で確かめた。食い違いは無し。
 - 検証: `verify-VTG4-DAG-FALLBACK-DOC-1.txt`（`git diff --numstat` は 36 行追加・0 削除、`--ignore-cr-at-eol` と一致。文書は LF 主体のまま）。
 - Notes: 次は VTG4-POLYHAVEN-MODELS（VTG4-BIG-SPHERE-COOK は人の判断待ちの blocked）。
+
+## 反復 19（run 20261005-043300）: VTG4-DAG-FALLBACK-DOC（評価者の差し戻しへの対応、done）
+- 直した記述 2 点（実装と食い違っていたもの）: (1) 起動画面の岩・小屋は `fallback_min_triangles` を「指定しない」ではなく、`Rendering3DTestStartupModels.json` で岩 32768・小屋 4096 を明示している。「岩は 32768、小屋は 4096 の指定を維持する」へ直した。(2) 高さマップの入力条件は「16 ビットのグレーの PNG でなければ失敗」ではなく、`MeshCooker.cpp` が stb_image で 1 チャンネルの 16 ビットへ読むだけで元のビット深度・チャンネル数は検査しない（8 ビットは広げられ、カラーはグレーへ変換）。実際の拒否条件（読めない・正方形でない・2 の累乗でない・8 画素未満）を書き、起動画面で使う画像の形式と区別した。コードは触っていない。
+- 検証: `verify-VTG4-DAG-FALLBACK-DOC-3.txt`（`git diff --numstat` は 5 行追加・3 削除で、`--ignore-cr-at-eol` と一致）。
+- Notes: 次は VTG4-POLYHAVEN-MODELS（VTG4-BIG-SPHERE-COOK は人の判断待ちの blocked）。

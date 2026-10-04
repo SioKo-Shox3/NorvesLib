@@ -217,7 +217,7 @@ GPU のカリングで階層を選ぶ処理と、影・RT でのフォールバ�
    - 指定しなければ目標は従来どおり `min(全体 / 16, 32768)` で、`FallbackMaxTriangles`（32768）は変えていない。
      下限を上げるのは、石の盛り上がりや目地が数 cm の変位した大きな球のように、既定の粗さだと影・RT の形が実面から外れて
      自己遮蔽（近接の黒い斑点・目地の陰のずれ）を起こす資産だけ。起動画面では球が 131072 を指定し（フォールバックは
-     130,946 三角形、誤差 3.3 mm）、岩・小屋は指定しない（岩は 32768 のまま）。
+     130,946 三角形、誤差 3.3 mm）、岩は 32768、小屋は 4096 の指定を維持する（`Rendering3DTestStartupModels.json`）。
    - `AssetCookMeshSimplifySmoke --check-package <パッケージ> --fallback-min-triangles <N>` は、同じ下限までを目標内として検査する。
 
 クックのログに `MESH_COOK dag_levels=<段数> clusters=<クラスタ数> ms=<所要時間> rejected_groups=<残したグループ数>` を出す。
@@ -233,8 +233,10 @@ glTF を読まずに、起動画面の大きな球をクッカーが作って v1
 値は `displaced-sphere` だけ。形式は v1 だけで、v0 の形式名では失敗にする。一覧では `models` の項目に
 `"generate": "displaced-sphere"` を書き、`source_path` を高さマップにする（`Scripts/CookAssets.ps1` が `--generate` を渡す）。
 
-- 入力: `--input` は 2 の累乗の正方形の 16 ビットのグレーの PNG（石畳の `cobblestone_floor_09_disp_4k.png`）。
-  条件を満たさなければ失敗にする。
+- 入力: `--input` は 2 の累乗の正方形の画像。起動画面で使うのは 16 ビットのグレーの PNG
+  （石畳の `cobblestone_floor_09_disp_4k.png`）。クッカーは stb_image で 1 チャンネルの 16 ビットとして読むので、
+  元画像のビット深度やチャンネル数は検査しない（8 ビットは 16 ビットへ広げられ、カラーはグレーへ変換される）。
+  画像として読めない、正方形でない、2 の累乗でない、大きさが 8 画素（ミップ開始段 3）未満のときは失敗にする。
 - 球の仕様は `Library/Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h` に集め、実行時の生成（Game）とクッカーが
   同じ値を使う。半径 1 m、格子 1024×512（頂点の間隔は約 6.1 mm）、テクスチャの繰り返し 3×1.5、変位の深さ 0.03 m、
   高さマップのミップを作り始める段 3。クック済みのメッシュの論理パスは
