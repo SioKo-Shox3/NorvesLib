@@ -42,6 +42,10 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<RHI::SparseMemoryBlockPtr> Blocks;
             Container::VariableArray<FreePage> Free;
             uint64_t UsedPages = 0;
+            // 最後に VRAM_LEDGER へ出したときの値（変化したときだけ出し直す）
+            uint32_t LoggedBlockCount = 0;
+            uint64_t LoggedUsedPages = 0;
+            bool bLedgerLogged = false;
 
             void Return(RHI::SparseMemoryBlockPtr block, uint64_t offsetBytes)
             {
@@ -186,6 +190,25 @@ namespace NorvesLib::Core::Rendering
             return GetStatsLocked();
         }
 
+        /**
+         * @brief 塊の数か貸し出し数が前回の出力から変わっていれば、使用量を VRAM_LEDGER に出す
+         *
+         * 貸し借りのたびには出さない（1フレームに多数動くので）。フレーム境界から呼ぶ。
+         * @return 出したとき true
+         */
+        bool LogLedgerIfChanged()
+        {
+            Thread::ScopedLock lock(m_State->Mutex);
+            State &state = *m_State;
+            const uint32_t blockCount = static_cast<uint32_t>(state.Blocks.size());
+            if (state.bLedgerLogged && state.LoggedBlockCount == blockCount && state.LoggedUsedPages == state.UsedPages)
+            {
+                return false;
+            }
+            LogLedgerLocked();
+            return true;
+        }
+
     private:
         Stats GetStatsLocked() const
         {
@@ -225,13 +248,24 @@ namespace NorvesLib::Core::Rendering
             }
             state.Blocks.push_back(std::move(block));
 
+            LogLedgerLocked();
+            return true;
+        }
+
+        // 使用量を出して、出した値を覚える（呼び出し側がミューテックスを持っている）
+        void LogLedgerLocked()
+        {
+            State &state = *m_State;
             const Stats stats = GetStatsLocked();
             constexpr double BytesPerMb = 1024.0 * 1024.0;
-            LOG_INFO("VRAM_LEDGER sparse_pool blocks=%u capacity_mb=%.1f used_mb=%.1f",
+            LOG_INFO("VRAM_LEDGER sparse_pool blocks=%u capacity_mb=%.1f used_mb=%.1f free_mb=%.1f",
                      static_cast<unsigned>(stats.BlockCount),
                      static_cast<double>(stats.CapacityBytes) / BytesPerMb,
-                     static_cast<double>(stats.UsedBytes) / BytesPerMb);
-            return true;
+                     static_cast<double>(stats.UsedBytes) / BytesPerMb,
+                     static_cast<double>(stats.FreeBytes) / BytesPerMb);
+            state.LoggedBlockCount = stats.BlockCount;
+            state.LoggedUsedPages = state.UsedPages;
+            state.bLedgerLogged = true;
         }
 
         Container::TSharedPtr<State> m_State;

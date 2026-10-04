@@ -237,17 +237,26 @@ namespace NorvesLib::RHI::Vulkan
         vk::CommandBuffer cmdBuffer = vulkanCmdList->GetVkCommandBuffer();
 
         // セマフォ同期付きでサブミット
-        // 保留中の sparse の結び付けがあれば、その完了も待つ（結んだタイルを読む描画より前に結び付けを終える）
+        // 出してある sparse の結び付けの完了も待つ（結んだタイルを読む描画より前に結び付けを終える）。
+        // タイムラインの最新の値を待つので、送信に失敗しても戻す必要はない。
+        // 待つ値の配列は待つセマフォと同じ並びで、バイナリのセマフォの値は使われない。
         vk::Semaphore waitSemaphores[2] = {m_imageAvailableSemaphores[m_currentFrame], vk::Semaphore{}};
         vk::PipelineStageFlags waitStages[2] = {vk::PipelineStageFlagBits::eColorAttachmentOutput,
                                                 vk::PipelineStageFlagBits::eAllCommands};
+        uint64_t waitValues[2] = {0, 0};
         uint32_t waitCount = 1;
-        const bool bWaitsSparseBind = m_device->TakeSparseBindWait(waitSemaphores[1]);
-        if (bWaitsSparseBind)
+        if (m_device->GetSparseBindWait(waitSemaphores[1], waitValues[1]))
         {
             waitCount = 2;
         }
+        vk::TimelineSemaphoreSubmitInfo timelineInfo{};
+        timelineInfo.waitSemaphoreValueCount = waitCount;
+        timelineInfo.pWaitSemaphoreValues = waitValues;
         vk::SubmitInfo submitInfo;
+        if (waitCount == 2)
+        {
+            submitInfo.pNext = &timelineInfo;
+        }
         submitInfo.waitSemaphoreCount = waitCount;
         submitInfo.pWaitSemaphores = waitSemaphores;
         submitInfo.pWaitDstStageMask = waitStages;
@@ -281,11 +290,6 @@ namespace NorvesLib::RHI::Vulkan
                                m_inFlightFences[m_currentFrame]) == vk::Result::eSuccess;
                 },
                 submittedSerial);
-        // 送信できなかったときは、待てなかった sparse の結び付けの通知を戻す。
-        if (submissionStatus != Detail::GPUTimestampSubmissionSequenceStatus::Success && bWaitsSparseBind)
-        {
-            m_device->RestoreSparseBindWait();
-        }
         if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed)
         {
             result.Status = SwapChainEndFrameStatus::SubmissionSerialExhausted;

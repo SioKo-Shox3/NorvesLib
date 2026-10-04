@@ -848,15 +848,10 @@ namespace NorvesLib::RHI::Vulkan
         m_ResourceAllocator.reset();
 
         // sparse の結び付け用セマフォを破棄（WaitIdle の後なので使用中ではない）
-        if (m_sparseBindChainSemaphore)
+        if (m_sparseBindTimeline)
         {
-            m_device.destroySemaphore(m_sparseBindChainSemaphore);
-            m_sparseBindChainSemaphore = nullptr;
-        }
-        if (m_sparseBindGraphicsSemaphore)
-        {
-            m_device.destroySemaphore(m_sparseBindGraphicsSemaphore);
-            m_sparseBindGraphicsSemaphore = nullptr;
+            m_device.destroySemaphore(m_sparseBindTimeline);
+            m_sparseBindTimeline = nullptr;
         }
 
         // コマンドプールを破棄
@@ -1087,9 +1082,19 @@ namespace NorvesLib::RHI::Vulkan
         // 点光源のキューブシャドウはキューブ配列（samplerCubeArray）で読む。
         features2.features.imageCubeArray =
             physicalFeatures.imageCubeArray == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // Vulkan 1.2 機能: 対応している場合のみ drawIndirectCount などを有効化する（照会は sparse の判定でも使う）
+        vk::PhysicalDeviceVulkan12Features vulkan12Query{};
+        vk::PhysicalDeviceFeatures2 features2Query{};
+        features2Query.pNext = &vulkan12Query;
+        m_physicalDevice.getFeatures2(&features2Query);
+
         // sparse（部分常駐）テクスチャ。結び付け用のキューの族が見つかり、対応しているときだけ有効にする。
-        // 部分常駐の各機能は sparseBinding が前提。
-        if (m_sparseQueueFamilyIndex != UINT32_MAX && physicalFeatures.sparseBinding == VK_TRUE)
+        // 部分常駐の各機能は sparseBinding が前提。結び付けの順序付けにタイムラインセマフォ（Vulkan 1.2）も要る。
+        const bool bSparseTimelineSupported = m_deviceProperties.apiVersion >= VK_API_VERSION_1_2 &&
+                                              vulkan12Query.timelineSemaphore == VK_TRUE;
+        const bool bSparseTimelineEnabled = m_sparseQueueFamilyIndex != UINT32_MAX &&
+                                            physicalFeatures.sparseBinding == VK_TRUE && bSparseTimelineSupported;
+        if (bSparseTimelineEnabled)
         {
             features2.features.sparseBinding = VK_TRUE;
             features2.features.sparseResidencyImage2D =
@@ -1103,13 +1108,9 @@ namespace NorvesLib::RHI::Vulkan
         }
         m_enabledDeviceFeatures = features2.features;
 
-        // Vulkan 1.2 機能: 対応している場合のみ drawIndirectCount を有効化
-        vk::PhysicalDeviceVulkan12Features vulkan12Query{};
-        vk::PhysicalDeviceFeatures2 features2Query{};
-        features2Query.pNext = &vulkan12Query;
-        m_physicalDevice.getFeatures2(&features2Query);
-
         m_vulkan12Features = vk::PhysicalDeviceVulkan12Features{};
+        // sparse の結び付けの順序付けにタイムラインセマフォを使うので、有効にできたときだけ載せる
+        m_vulkan12Features.timelineSemaphore = bSparseTimelineEnabled ? VK_TRUE : VK_FALSE;
         m_vulkan12Features.drawIndirectCount =
             vulkan12Query.drawIndirectCount == VK_TRUE ? VK_TRUE : VK_FALSE;
         m_vulkan12Features.bufferDeviceAddress =
@@ -1380,27 +1381,22 @@ namespace NorvesLib::RHI::Vulkan
         {
             m_sparseBindingQueue = m_device.getQueue(m_sparseQueueFamilyIndex, 0);
 
-            // 結び付けの順序付けに使うセマフォ（結び付け同士・結び付けからグラフィックスの提出へ）
-            const vk::SemaphoreCreateInfo semaphoreInfo{};
-            const auto chainResult = m_device.createSemaphore(semaphoreInfo);
-            const auto graphicsResult = m_device.createSemaphore(semaphoreInfo);
-            if (chainResult.result == vk::Result::eSuccess && graphicsResult.result == vk::Result::eSuccess)
+            // 結び付けの順序付けに使うタイムラインセマフォ（結び付け同士・結び付けからグラフィックスの提出へ）。
+            // 結び付けごとに値を1つ進めて通知するので、待つ側の完了を待たずに次の通知を出してよい。
+            vk::SemaphoreTypeCreateInfo timelineInfo{};
+            timelineInfo.semaphoreType = vk::SemaphoreType::eTimeline;
+            timelineInfo.initialValue = 0;
+            vk::SemaphoreCreateInfo semaphoreInfo{};
+            semaphoreInfo.pNext = &timelineInfo;
+            const auto timelineResult = m_device.createSemaphore(semaphoreInfo);
+            if (timelineResult.result == vk::Result::eSuccess)
             {
-                m_sparseBindChainSemaphore = chainResult.value;
-                m_sparseBindGraphicsSemaphore = graphicsResult.value;
+                m_sparseBindTimeline = timelineResult.value;
             }
             else
             {
-                NORVES_LOG_ERROR("Vulkan", "sparseの結び付け用セマフォを作成できません: chain=%d graphics=%d",
-                                 static_cast<int>(chainResult.result), static_cast<int>(graphicsResult.result));
-                if (chainResult.result == vk::Result::eSuccess)
-                {
-                    m_device.destroySemaphore(chainResult.value);
-                }
-                if (graphicsResult.result == vk::Result::eSuccess)
-                {
-                    m_device.destroySemaphore(graphicsResult.value);
-                }
+                NORVES_LOG_ERROR("Vulkan", "sparseの結び付け用セマフォを作成できません: result=%d",
+                                 static_cast<int>(timelineResult.result));
             }
         }
     }
@@ -2759,7 +2755,7 @@ namespace NorvesLib::RHI::Vulkan
 
             // sparse は論理デバイスで有効にできたものだけを載せる（結び付け用のキューが無ければ全て無効）
             const bool bSparseEnabled =
-                m_enabledDeviceFeatures.sparseBinding == VK_TRUE && m_sparseBindingQueue;
+                m_enabledDeviceFeatures.sparseBinding == VK_TRUE && m_sparseBindingQueue && m_sparseBindTimeline;
             m_Capabilities.Sparse.bSparseBinding = bSparseEnabled;
             m_Capabilities.Sparse.bResidencyImage2D =
                 bSparseEnabled && m_enabledDeviceFeatures.sparseResidencyImage2D == VK_TRUE;
@@ -2913,22 +2909,16 @@ namespace NorvesLib::RHI::Vulkan
             m_device, allocResult.value, sizeBytes, memoryTypeIndex, static_cast<const void *>(this)));
     }
 
-    bool VulkanDevice::TakeSparseBindWait(vk::Semaphore &outSemaphore)
+    bool VulkanDevice::GetSparseBindWait(vk::Semaphore &outSemaphore, uint64_t &outValue)
     {
         NorvesLib::Thread::ScopedLock lock(m_sparseBindMutex);
-        if (!m_bSparseBindGraphicsPending)
+        if (m_sparseBindSubmittedValue == 0)
         {
             return false;
         }
-        outSemaphore = m_sparseBindGraphicsSemaphore;
-        m_bSparseBindGraphicsPending = false;
+        outSemaphore = m_sparseBindTimeline;
+        outValue = m_sparseBindSubmittedValue;
         return true;
-    }
-
-    void VulkanDevice::RestoreSparseBindWait()
-    {
-        NorvesLib::Thread::ScopedLock lock(m_sparseBindMutex);
-        m_bSparseBindGraphicsPending = true;
     }
 
     bool VulkanDevice::BindSparse(const SparseBindRequest &request)
@@ -2937,7 +2927,7 @@ namespace NorvesLib::RHI::Vulkan
         {
             return true;
         }
-        if (!m_sparseBindingQueue || !m_sparseBindChainSemaphore || !m_sparseBindGraphicsSemaphore)
+        if (!m_sparseBindingQueue || !m_sparseBindTimeline)
         {
             NORVES_LOG_ERROR("Vulkan", "sparseの結び付けを出せません: sparseBinding が有効ではありません");
             return false;
@@ -2982,7 +2972,9 @@ namespace NorvesLib::RHI::Vulkan
                 return nullptr;
             }
             const uint64_t alignment = texture.GetSparseMemoryAlignment();
-            if (page.OffsetBytes % SparsePageSizeBytes != 0 || page.OffsetBytes + SparsePageSizeBytes > block->GetSizeBytes() ||
+            // 加算するとオーバーフローで範囲内に見えるので、塊の大きさからの引き算で範囲を確かめる
+            if (page.OffsetBytes % SparsePageSizeBytes != 0 || block->GetSizeBytes() < SparsePageSizeBytes ||
+                page.OffsetBytes > block->GetSizeBytes() - SparsePageSizeBytes ||
                 alignment == 0 || page.OffsetBytes % alignment != 0)
             {
                 NORVES_LOG_ERROR("Vulkan",
@@ -3105,29 +3097,28 @@ namespace NorvesLib::RHI::Vulkan
         {
             NorvesLib::Thread::ScopedLock lock(m_sparseBindMutex);
 
-            // 前の結び付けの完了を待つ（結び付け同士の順序）。まだ描画が受け取っていない前の結び付けの
-            // 通知があれば、それも引き継いで再び通知する（待ってから信号を出す）。
-            vk::Semaphore waitSemaphores[2];
-            uint32_t waitCount = 0;
-            if (m_bSparseBindChainSignaled)
-            {
-                waitSemaphores[waitCount++] = m_sparseBindChainSemaphore;
-            }
-            if (m_bSparseBindGraphicsPending)
-            {
-                waitSemaphores[waitCount++] = m_sparseBindGraphicsSemaphore;
-            }
-            const vk::Semaphore signalSemaphores[2] = {m_sparseBindChainSemaphore, m_sparseBindGraphicsSemaphore};
+            // 前の結び付けの完了を待ち（結び付け同士の順序）、値を1つ進めて通知する。
+            // タイムラインなので、描画側がまだ待っていなくても、次の結び付けは重ねて通知できる
+            // （描画の提出は、その時点の最新の値を待つ）。
+            const uint64_t waitValue = m_sparseBindSubmittedValue;
+            const uint64_t signalValue = waitValue + 1;
+
+            vk::TimelineSemaphoreSubmitInfo timelineInfo{};
+            timelineInfo.waitSemaphoreValueCount = waitValue > 0 ? 1 : 0;
+            timelineInfo.pWaitSemaphoreValues = waitValue > 0 ? &waitValue : nullptr;
+            timelineInfo.signalSemaphoreValueCount = 1;
+            timelineInfo.pSignalSemaphoreValues = &signalValue;
 
             vk::BindSparseInfo bindInfo{};
-            bindInfo.waitSemaphoreCount = waitCount;
-            bindInfo.pWaitSemaphores = waitCount > 0 ? waitSemaphores : nullptr;
+            bindInfo.pNext = &timelineInfo;
+            bindInfo.waitSemaphoreCount = waitValue > 0 ? 1 : 0;
+            bindInfo.pWaitSemaphores = waitValue > 0 ? &m_sparseBindTimeline : nullptr;
             bindInfo.imageOpaqueBindCount = static_cast<uint32_t>(opaqueInfos.size());
             bindInfo.pImageOpaqueBinds = opaqueInfos.empty() ? nullptr : opaqueInfos.data();
             bindInfo.imageBindCount = static_cast<uint32_t>(imageInfos.size());
             bindInfo.pImageBinds = imageInfos.empty() ? nullptr : imageInfos.data();
-            bindInfo.signalSemaphoreCount = 2;
-            bindInfo.pSignalSemaphores = signalSemaphores;
+            bindInfo.signalSemaphoreCount = 1;
+            bindInfo.pSignalSemaphores = &m_sparseBindTimeline;
 
             const vk::Result bindResult = m_sparseBindingQueue.bindSparse(1, &bindInfo, nullptr);
             if (bindResult != vk::Result::eSuccess)
@@ -3140,8 +3131,7 @@ namespace NorvesLib::RHI::Vulkan
                 }
                 return false;
             }
-            m_bSparseBindChainSignaled = true;
-            m_bSparseBindGraphicsPending = true;
+            m_sparseBindSubmittedValue = signalValue;
         }
 
         // 提出できたので、テクスチャごとの結び付けの状態と結んだ量（台帳）を更新する

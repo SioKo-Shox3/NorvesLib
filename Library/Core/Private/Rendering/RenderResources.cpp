@@ -909,6 +909,11 @@ namespace NorvesLib::Core::Rendering
     void RenderResources::BeginRetireFrame(uint64_t completedSubmissionSerial)
     {
         m_Impl->RetireQueue.BeginFrame(completedSubmissionSerial);
+        // 期限の来たページがプールへ戻った後の使用量を、変わっていれば台帳へ出す
+        if (m_Impl->SparsePool)
+        {
+            m_Impl->SparsePool->LogLedgerIfChanged();
+        }
     }
 
     void RenderResources::CommitRetireFrame(uint64_t submissionSerial)

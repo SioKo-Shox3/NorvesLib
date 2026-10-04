@@ -140,10 +140,10 @@ namespace NorvesLib::RHI::Vulkan
         vk::Queue GetSparseBindingQueue() const { return m_sparseBindingQueue; }
 
         // sparse の結び付けは、次にグラフィックスのキューへ送る提出より前に終わらせる。
-        // 提出側は送信の直前にこれを呼び、保留中の結び付けがあればそのセマフォを待ちに加える
-        // （待ち段は全コマンド）。送信に失敗して待てなかったときは RestoreSparseBindWait で戻す。
-        bool TakeSparseBindWait(vk::Semaphore &outSemaphore);
-        void RestoreSparseBindWait();
+        // 提出側は送信の直前にこれを呼び、結び付けを出したことがあれば、そのタイムラインセマフォの
+        // 最新の値を待ちに加える（待ち段は全コマンド。タイムラインの待ちは消費されないので、
+        // 送信に失敗しても戻す必要はなく、続く結び付けの通知とも干渉しない）。
+        bool GetSparseBindWait(vk::Semaphore &outSemaphore, uint64_t &outValue);
 
         uint32_t GetGraphicsQueueFamilyIndex() const { return m_graphicsQueueFamilyIndex; }
         // VK_QUEUE_SPARSE_BINDING_BIT を持つ族（無ければ UINT32_MAX）。グラフィックスの族が持てばそれを使う。
@@ -228,13 +228,11 @@ namespace NorvesLib::RHI::Vulkan
         // キュー
         vk::Queue m_sparseBindingQueue;
 
-        // sparse の結び付けの順序付け。
-        // ・m_sparseBindChainSemaphore: 結び付け同士を提出順に並べる（次の結び付けが前の結び付けの完了を待つ）
-        // ・m_sparseBindGraphicsSemaphore: 結び付けの完了を、次のグラフィックスの提出へ伝える（提出が待って消費する）
-        vk::Semaphore m_sparseBindChainSemaphore;
-        vk::Semaphore m_sparseBindGraphicsSemaphore;
-        bool m_bSparseBindChainSignaled = false;
-        bool m_bSparseBindGraphicsPending = false;
+        // sparse の結び付けの順序付け。結び付けごとに値を1つ進めて通知するタイムラインセマフォ。
+        // 次の結び付けは前の値を待ち（結び付け同士の順序）、グラフィックスの提出は最新の値を待つ。
+        // m_sparseBindSubmittedValue は、これまでに出した結び付けの最新の値（0 は未提出）。
+        vk::Semaphore m_sparseBindTimeline;
+        uint64_t m_sparseBindSubmittedValue = 0;
         Thread::Mutex m_sparseBindMutex;
         // 論理デバイスで sparse イメージを結べるメモリタイプの集合（最初の塊の作成時に、見本のイメージで求める）
         uint32_t m_sparseMemoryTypeBits = 0;

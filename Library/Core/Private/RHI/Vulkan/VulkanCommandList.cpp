@@ -716,12 +716,17 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &m_commandBuffer;
 
-        // 保留中の sparse の結び付けがあれば、その完了を待ってから実行する（結んだタイルを読む描画より前に結び付けを終える）
+        // 出してある sparse の結び付けの完了を待ってから実行する（結んだタイルを読む描画より前に結び付けを終える）。
+        // タイムラインの最新の値を待つので、送信に失敗しても戻す必要はない。
         vk::Semaphore sparseBindWait;
+        uint64_t sparseBindWaitValue = 0;
         const vk::PipelineStageFlags sparseBindWaitStage = vk::PipelineStageFlagBits::eAllCommands;
-        const bool bWaitsSparseBind = m_device->TakeSparseBindWait(sparseBindWait);
-        if (bWaitsSparseBind)
+        vk::TimelineSemaphoreSubmitInfo sparseBindTimelineInfo{};
+        if (m_device->GetSparseBindWait(sparseBindWait, sparseBindWaitValue))
         {
+            sparseBindTimelineInfo.waitSemaphoreValueCount = 1;
+            sparseBindTimelineInfo.pWaitSemaphoreValues = &sparseBindWaitValue;
+            submitInfo.pNext = &sparseBindTimelineInfo;
             submitInfo.waitSemaphoreCount = 1;
             submitInfo.pWaitSemaphores = &sparseBindWait;
             submitInfo.pWaitDstStageMask = &sparseBindWaitStage;
@@ -752,18 +757,10 @@ namespace NorvesLib::RHI::Vulkan
                 submittedSerial);
         if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed)
         {
-            if (bWaitsSparseBind)
-            {
-                m_device->RestoreSparseBindWait();
-            }
             throw std::runtime_error("コマンド送信serialが枯渇しました");
         }
         if (submissionStatus != Detail::GPUTimestampSubmissionSequenceStatus::Success)
         {
-            if (bWaitsSparseBind)
-            {
-                m_device->RestoreSparseBindWait();
-            }
             throw std::runtime_error("コマンドの送信に失敗しました");
         }
 
@@ -773,10 +770,6 @@ namespace NorvesLib::RHI::Vulkan
         auto result = queue.submit(1, &submitInfo, m_fence);
         if (result != vk::Result::eSuccess)
         {
-            if (bWaitsSparseBind)
-            {
-                m_device->RestoreSparseBindWait();
-            }
             throw std::runtime_error("コマンドの送信に失敗しました");
         }
 #endif

@@ -571,6 +571,16 @@ namespace
             request.Tiles.push_back(tile);
             Expect(!device.BindSparse(request), "塊の外へはみ出すページは断られなければならない");
         }
+        // 位置の加算がオーバーフローして 0 に戻る、塊の外のページ
+        {
+            SparseBindRequest request;
+            SparseTileBind tile;
+            tile.Texture = texture.get();
+            tile.Page = lease.GetPage();
+            tile.Page.OffsetBytes = 0xffffffffffff0000ull;
+            request.Tiles.push_back(tile);
+            Expect(!device.BindSparse(request), "加算がオーバーフローして範囲内に見える位置のページは断られなければならない");
+        }
         // sparse でないテクスチャ
         {
             TextureDesc plainDesc;
@@ -602,6 +612,110 @@ namespace
         Expect(device.BindSparse(SparseBindRequest{}), "空の結び付けは成功しなければならない");
         device.WaitIdle();
         texture.reset();
+    }
+
+    // 結び付けと描画側の提出を、完了を待たずに交互に重ねて出す。
+    // セマフォの通知が、待つ側の消費より前に重なっても validation error が出ないこと（結び付けの待ちが
+    // 消費されない順序付け）を確かめる。
+    void TestOverlappedSubmits(IDevice& device, SparsePagePool& pool, GpuRetireQueue& queue, uint64_t& inOutSerial)
+    {
+        std::cout << TestName << " --- 完了を待たない連続提出 ---" << std::endl;
+        constexpr uint32_t TileCount = 4u;
+        constexpr uint32_t RoundCount = 24u;
+
+        TextureDesc desc;
+        desc.Width = 512;
+        desc.Height = 512;
+        desc.MipLevels = 10;
+        desc.TextureFormat = Format::BC7_UNORM;
+        desc.Usage = ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
+        desc.bSparse = true;
+        desc.DebugName = "SparseBindOverlappedTarget";
+        TexturePtr texture = device.CreateTexture(desc);
+        SparseTextureInfo info;
+        if (texture == nullptr || !texture->GetSparseInfo(info) || info.TilesX[0] * info.TilesY[0] < TileCount)
+        {
+            Expect(false, "連続提出のテストの準備（テクスチャ）に失敗");
+            return;
+        }
+
+        VariableArray<SparsePagePool::PageLease> leases;
+        for (uint32_t tile = 0; tile < TileCount; ++tile)
+        {
+            leases.push_back(pool.Acquire());
+            if (!leases.back().IsValid())
+            {
+                Expect(false, "連続提出のテストの準備（ページ）に失敗");
+                return;
+            }
+        }
+
+        // 結び付け(A) → 提出(待たない) → 結び付け(B) → 提出(待たない) … を WaitIdle なしで繰り返す
+        VariableArray<CommandListPtr> commandLists;
+        bool bAllBound = true;
+        bool bAllSubmitted = true;
+        for (uint32_t round = 0; round < RoundCount; ++round)
+        {
+            const uint32_t tile = round % TileCount;
+            SparseBindRequest request;
+            SparseTileBind bind;
+            bind.Texture = texture.get();
+            bind.MipLevel = 0;
+            bind.TileX = tile % info.TilesX[0];
+            bind.TileY = tile / info.TilesX[0];
+            bind.Page = leases[tile].GetPage();
+            request.Tiles.push_back(bind);
+            bAllBound = TimedBindSparse(device, request, "連続提出の結び付け") && bAllBound;
+
+            CommandListPtr commandList = device.CreateCommandList();
+            if (!commandList)
+            {
+                bAllSubmitted = false;
+                break;
+            }
+            commandList->Begin();
+            commandList->End();
+            commandList->Submit(false);
+            commandLists.push_back(std::move(commandList));
+        }
+        device.WaitIdle();
+        Expect(bAllBound, "連続提出の結び付けがすべて成功しなければならない");
+        Expect(bAllSubmitted, "連続提出の描画側の提出がすべて成功しなければならない");
+        commandLists.clear();
+
+        // 全部外して、完了を待ってからページを戻す
+        SparseBindRequest release;
+        for (uint32_t tile = 0; tile < TileCount; ++tile)
+        {
+            SparseTileBind unbind;
+            unbind.Texture = texture.get();
+            unbind.MipLevel = 0;
+            unbind.TileX = tile % info.TilesX[0];
+            unbind.TileY = tile / info.TilesX[0];
+            release.Tiles.push_back(unbind);
+        }
+        Expect(TimedBindSparse(device, release, "連続提出のあとに全部外す"), "連続提出のあとに外せなければならない");
+        device.WaitIdle();
+        queue.BeginFrame(inOutSerial);
+        queue.CommitFrame(inOutSerial + 1u);
+        ++inOutSerial;
+        for (SparsePagePool::PageLease& lease : leases)
+        {
+            queue.Retire(std::move(lease));
+        }
+        leases.clear();
+        queue.Collect(inOutSerial);
+        Expect(pool.GetStats().UsedBytes == 0, "連続提出のあとに外して完了を待つと、プールの貸し出しが 0 に戻る");
+        texture.reset();
+
+        // 台帳（VRAM_LEDGER）は、貸し出しが変わったときだけ出し直す（貸し借りのたびには出さない）
+        pool.LogLedgerIfChanged();
+        Expect(!pool.LogLedgerIfChanged(), "変わっていなければ台帳を出し直さない");
+        SparsePagePool::PageLease ledgerLease = pool.Acquire();
+        Expect(ledgerLease.IsValid() && pool.LogLedgerIfChanged(), "ページを借りたあとは台帳を出し直す");
+        Expect(!pool.LogLedgerIfChanged(), "出し直した直後は、変わるまで出さない");
+        ledgerLease.Reset();
+        Expect(pool.LogLedgerIfChanged(), "ページを返したあとは台帳を出し直す");
     }
 
     int RunTest()
@@ -695,6 +809,7 @@ namespace
             const bool bTail = RunCase(*device, resources, pool, queue, tailCase, serial);
             std::cout << tailCase.Name << (bTail ? " PASS" : " FAIL") << '\n';
             TestRejections(*device, pool);
+            TestOverlappedSubmits(*device, pool, queue, serial);
 
             device->WaitIdle();
             queue.Clear();
