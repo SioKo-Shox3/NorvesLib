@@ -1,5 +1,6 @@
 ﻿#include "Rendering/TextureAssetRuntime.h"
 
+#include "Asset/AssetSystem.h"
 #include "Rendering/CookedTextureUpload.h"
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/TextureAsyncLoadQueue.h"
@@ -334,6 +335,39 @@ namespace NorvesLib::Core::Rendering
         }
 
         return TextureAssetLoader::PrepareForWorker(plan, role, requestId);
+    }
+
+    bool TextureAssetRuntime::ResolveCookedTextureRange(
+        const Container::String &path,
+        Asset::AssetCookedRange &outRange,
+        Container::TSharedPtr<const Asset::AssetSystem> &outAssetSystem,
+        Container::String *pOutReason)
+    {
+        TextureAssetLoadPlan plan;
+        {
+            Thread::ScopedLock assetLock(m_TextureAssetMutex);
+            plan = GetTextureAssetResolverLocked().BuildTextureLoadPlan(path);
+        }
+        if (!plan.bPathValid || !plan.bUseAssetSystem || !plan.AssetSystem)
+        {
+            if (pOutReason != nullptr)
+            {
+                *pOutReason = Container::String("texture path cannot be resolved through the asset manifest");
+            }
+            return false;
+        }
+
+        Container::AnsiString reason;
+        if (!plan.AssetSystem->TryResolveCookedRange(plan.LogicalPath, Asset::AssetKind::Texture, outRange, &reason))
+        {
+            if (pOutReason != nullptr)
+            {
+                *pOutReason = Container::String(reason.c_str());
+            }
+            return false;
+        }
+        outAssetSystem = plan.AssetSystem;
+        return true;
     }
 
     bool TextureAssetRuntime::IsPreparedTextureAssetCurrent(const PreparedTextureAsset &prepared) const

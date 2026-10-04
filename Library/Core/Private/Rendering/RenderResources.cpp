@@ -1,10 +1,14 @@
 ﻿#include "Rendering/RenderResources.h"
 
+#include "Asset/AssetSystem.h"
+#include "Rendering/CookedVirtualTexture.h"
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/GpuRetireQueue.h"
 #include "Rendering/SparsePagePool.h"
 #include "Rendering/TileUploader.h"
 #include "Rendering/VirtualTextureFeedbackRing.h"
+#include "Rendering/VirtualTextureRequestSet.h"
+#include "Rendering/VirtualTextureStreamer.h"
 #include "Rendering/SkinnedMeshGpuStore.h"
 #include "Rendering/VideoMemoryBudgetLogGate.h"
 #include "Rendering/VideoMemoryBudgetManager.h"
@@ -96,6 +100,17 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<TileUploader> TileUpload;
         // VT の要求のバッファ（3つ）の読み戻しと集計。sparse に対応しないデバイスでは作らない。GPU が止まってから手放す。
         Container::TUniquePtr<VirtualTextureFeedbackRing> VtFeedback;
+        // VT のストリーマと、その結び付け・コピーの窓口。ページのプール・リング・RetireQueue より先に手放す。
+        Container::TUniquePtr<DeviceVirtualTextureGpu> VtGpu;
+        Container::TUniquePtr<VirtualTextureStreamer> VtStreamer;
+        // テクスチャのハンドルの番号から VT の表の添字へ
+        mutable Thread::Mutex VtMutex;
+        Container::UnorderedMap<uint64_t, uint32_t> VtIndexByTexture;
+        // ストリーマに渡すフレームの番号（RenderThread だけが進める）
+        uint64_t VtFrame = 0;
+        // VT_STREAMER ログの間引き（RenderThread だけが触る）
+        uint64_t VtLoggedFrame = 0;
+        uint64_t VtLoggedResident = 0;
         Container::TUniquePtr<SkinnedMeshGpuStore> SkinnedMeshes;
         Container::TUniquePtr<GpuResourceStore> GpuResources;
         Container::TUniquePtr<ProceduralMeshGpuStore> ProceduralMeshes;
@@ -426,10 +441,122 @@ namespace NorvesLib::Core::Rendering
     void TextureResources::ReleaseTexture(TextureHandle handle)
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (impl && impl->VtStreamer)
+        {
+            // VT なら先にストリーマの登録を解く（結んだページは最後に使った提出の完了までプールへ戻らない）
+            uint32_t virtualIndex = 0;
+            bool bVirtual = false;
+            {
+                Thread::ScopedLock lock(impl->VtMutex);
+                const auto it = impl->VtIndexByTexture.find(handle.Id);
+                if (it != impl->VtIndexByTexture.end())
+                {
+                    virtualIndex = it->second;
+                    bVirtual = true;
+                    impl->VtIndexByTexture.erase(it);
+                }
+            }
+            if (bVirtual)
+            {
+                impl->VtStreamer->UnregisterTexture(virtualIndex);
+            }
+        }
         if (impl && impl->GpuResources)
         {
             impl->GpuResources->ReleaseTexture(handle);
         }
+    }
+
+    TextureHandle TextureResources::CreateVirtualTexture(const Container::String &path, uint32_t *pOutVirtualTextureIndex)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (!impl || !impl->bInitialized || !impl->GpuResources || !impl->TextureAssets)
+        {
+            return TextureHandle::Invalid();
+        }
+        if (!impl->VtStreamer)
+        {
+            NORVES_LOG_ERROR("RenderResources",
+                             "VTを作れません: デバイスが sparse に対応していません texture=%s",
+                             path.c_str());
+            return TextureHandle::Invalid();
+        }
+
+        Asset::AssetCookedRange range;
+        Container::TSharedPtr<const Asset::AssetSystem> assetSystem;
+        Container::String reason;
+        if (!impl->TextureAssets->ResolveCookedTextureRange(path, range, assetSystem, &reason))
+        {
+            NORVES_LOG_ERROR("RenderResources",
+                             "VTを作れません: クック済みのテクスチャの位置を求められません texture=%s reason=%s",
+                             path.c_str(), reason.c_str());
+            return TextureHandle::Invalid();
+        }
+
+        CookedVirtualTexturePlan plan;
+        if (!PrepareCookedVirtualTexture(assetSystem->GetCookedFileReader(), range.Request, range.BaseOffset, range.Size,
+                                         path, plan, &reason))
+        {
+            NORVES_LOG_ERROR("RenderResources",
+                             "VTを作れません: クック済みのテクスチャを開けません texture=%s reason=%s",
+                             path.c_str(), reason.c_str());
+            return TextureHandle::Invalid();
+        }
+
+        const TextureHandle handle = impl->GpuResources->CreateTexture(plan.CreateInfo);
+        if (!handle.IsValid())
+        {
+            return TextureHandle::Invalid();
+        }
+
+        VirtualTextureRegistration registration;
+        registration.Texture = impl->GpuResources->GetRHITexturePtr(handle);
+        registration.Format = plan.Format;
+        registration.Width = plan.Width;
+        registration.Height = plan.Height;
+        registration.Source = std::move(plan.Source);
+        registration.TailData = std::move(plan.TailData);
+        const uint32_t index = impl->VtStreamer->RegisterTexture(std::move(registration));
+        if (index == VirtualTextureStreamer::InvalidIndex)
+        {
+            impl->GpuResources->ReleaseTexture(handle);
+            return TextureHandle::Invalid();
+        }
+
+        {
+            Thread::ScopedLock lock(impl->VtMutex);
+            impl->VtIndexByTexture[handle.Id] = index;
+        }
+        if (pOutVirtualTextureIndex != nullptr)
+        {
+            *pOutVirtualTextureIndex = index;
+        }
+        return handle;
+    }
+
+    bool TextureResources::TryGetVirtualTextureIndex(TextureHandle handle, uint32_t &outIndex) const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (!impl)
+        {
+            return false;
+        }
+        Thread::ScopedLock lock(impl->VtMutex);
+        const auto it = impl->VtIndexByTexture.find(handle.Id);
+        if (it == impl->VtIndexByTexture.end())
+        {
+            return false;
+        }
+        outIndex = it->second;
+        return true;
+    }
+
+    bool TextureResources::IsVirtualTextureReady(TextureHandle handle) const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        uint32_t index = 0;
+        return impl && impl->VtStreamer && TryGetVirtualTextureIndex(handle, index) &&
+               impl->VtStreamer->IsMipTailResident(index);
     }
 
     RHI::ITexture *TextureResources::GetRHITexture(TextureHandle handle) const
@@ -854,6 +981,9 @@ namespace NorvesLib::Core::Rendering
                 m_Impl->SparsePool = Container::MakeUnique<SparsePagePool>(m_Impl->Device);
                 m_Impl->TileUpload = Container::MakeUnique<TileUploader>(m_Impl->Device);
                 m_Impl->VtFeedback = Container::MakeUnique<VirtualTextureFeedbackRing>(m_Impl->Device);
+                m_Impl->VtGpu = Container::MakeUnique<DeviceVirtualTextureGpu>(m_Impl->Device, *m_Impl->TileUpload);
+                m_Impl->VtStreamer = Container::MakeUnique<VirtualTextureStreamer>(
+                    *m_Impl->SparsePool, *m_Impl->VtGpu, &m_Impl->RetireQueue);
             }
         }
         m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
@@ -888,7 +1018,10 @@ namespace NorvesLib::Core::Rendering
         {
             m_Impl->Device->WaitIdle();
         }
-        // GPU が止まったので、待っていた RHI 資源を期限を問わず全部破棄する。
+        // GPU が止まったので、ストリーマが持つページを RetireQueue へ渡して手放し、待っていた RHI 資源を期限を問わず全部破棄する。
+        m_Impl->VtStreamer.reset();
+        m_Impl->VtGpu.reset();
+        m_Impl->VtIndexByTexture.clear();
         m_Impl->RetireQueue.Clear();
         m_Impl->TileUpload.reset();
         m_Impl->VtFeedback.reset();
@@ -990,6 +1123,49 @@ namespace NorvesLib::Core::Rendering
         if (m_Impl->VtFeedback)
         {
             m_Impl->VtFeedback->RecordHostReadBarrier(commandList);
+        }
+    }
+
+    VirtualTextureStreamer *RenderResources::GetVirtualTextureStreamer() const
+    {
+        return m_Impl->VtStreamer.get();
+    }
+
+    void RenderResources::UpdateVirtualTextureStreaming()
+    {
+        Impl &impl = *m_Impl;
+        if (!impl.VtStreamer)
+        {
+            return;
+        }
+        {
+            Thread::ScopedLock lock(impl.VtMutex);
+            if (impl.VtIndexByTexture.empty())
+            {
+                return;
+            }
+        }
+
+        VirtualTextureRequestSet requests;
+        const bool bHasRequests = TakeVirtualTextureRequests(requests);
+        ++impl.VtFrame;
+        impl.VtStreamer->Update(impl.VtFrame, bHasRequests ? &requests : nullptr);
+
+        // 常駐するタイルの数が変わったときだけ、約1秒（60フレーム）に1回までログへ出す
+        constexpr uint64_t LogIntervalFrames = 60;
+        if (impl.VtFrame - impl.VtLoggedFrame >= LogIntervalFrames)
+        {
+            const VirtualTextureStreamerStats stats = impl.VtStreamer->GetStats();
+            if (stats.ResidentTiles != impl.VtLoggedResident)
+            {
+                LOG_INFO("VT_STREAMER textures=%u resident=%u reading=%u ready=%u wanted=%u failed=%u bind_failures=%llu",
+                         static_cast<unsigned>(stats.TextureCount), static_cast<unsigned>(stats.ResidentTiles),
+                         static_cast<unsigned>(stats.ReadingTiles), static_cast<unsigned>(stats.ReadyTiles),
+                         static_cast<unsigned>(stats.WantedTiles), static_cast<unsigned>(stats.FailedTiles),
+                         static_cast<unsigned long long>(stats.BindFailures));
+                impl.VtLoggedResident = stats.ResidentTiles;
+            }
+            impl.VtLoggedFrame = impl.VtFrame;
         }
     }
 
@@ -1261,6 +1437,14 @@ namespace NorvesLib::Core::Rendering
         if (m_Impl->MegaGeometryResources)
         {
             m_Impl->MegaGeometryResources->Clear();
+        }
+
+        if (m_Impl->VtStreamer)
+        {
+            // VT のテクスチャは GpuResources と一緒に消えるので、ストリーマの登録も解く（結んだページは GPU が使い終わるまで戻らない）
+            m_Impl->VtStreamer->Clear();
+            Thread::ScopedLock vtLock(m_Impl->VtMutex);
+            m_Impl->VtIndexByTexture.clear();
         }
 
         if (m_Impl->GpuResources)

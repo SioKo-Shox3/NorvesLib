@@ -45,6 +45,7 @@ namespace NorvesLib::Core::Rendering
     class TileUploader;
     class VirtualTextureFeedbackRing;
     class VirtualTextureRequestSet;
+    class VirtualTextureStreamer;
 
     class GpuResources
     {
@@ -126,6 +127,17 @@ namespace NorvesLib::Core::Rendering
 
         RHI::ITexture *GetRHITexture(TextureHandle handle) const;
         Container::TSharedPtr<RHI::ITexture> GetRHITexturePtr(TextureHandle handle) const;
+
+        // クック済み（NVTEX v0.2）の材質のテクスチャを、sparse の VT として作る。作成時にファイルのメタデータと
+        // ミップテイルだけを範囲読みし、タイルは要求に応じてストリーマが読む。
+        // ミップテイルは次の UpdateVirtualTextureStreaming で結ぶので、IsVirtualTextureReady が true になるまで
+        // 材質でサンプルしてはいけない。sparse に対応しないデバイス・v0.2 でないテクスチャ・マニフェストに無いパスは
+        // 無効なハンドルを返す。pOutVirtualTextureIndex には VT の表の添字（フィードバックの要求が指す番号）を返す。
+        TextureHandle CreateVirtualTexture(const Container::String &path, uint32_t *pOutVirtualTextureIndex = nullptr);
+        // VT のミップテイルが常駐してサンプルできるか。VT でないハンドルは false
+        bool IsVirtualTextureReady(TextureHandle handle) const;
+        // VT の表の添字を取る。VT でないハンドルは false
+        bool TryGetVirtualTextureIndex(TextureHandle handle, uint32_t &outIndex) const;
 
     private:
         friend class RenderResources;
@@ -304,6 +316,13 @@ namespace NorvesLib::Core::Rendering
         // このフレームの要求のバッファへの書き込みを、ホストの読み取りへ見せるバリアを記録する。最後の書き込みの後・
         // render pass の外・コマンドの終了より前に RenderThread が呼ぶ。バッファが無い（無効・空き無し）フレームでは何もしない。
         void RecordVirtualTextureFeedbackBarrier(RHI::ICommandList &commandList);
+
+        // VT のストリーマ。タイルの読み込み・ページの結び付け・コピーの積み込みを進める。sparse に対応しないデバイス・
+        // 未初期化では nullptr。
+        VirtualTextureStreamer *GetVirtualTextureStreamer() const;
+        // 溜まった要求を取り出して、ストリーマを1フレーム進める（RenderThread。BeginRetireFrame の後・コマンドを開く前に呼ぶ。
+        // BindSparse はコマンドの送信と同じ直列化の下で呼ぶ必要がある）。VT が1枚も無いときは何もしない。
+        void UpdateVirtualTextureStreaming();
 
         bool ReloadAssetRuntimeSnapshot(
             const Container::String& assetRoot,

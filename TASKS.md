@@ -216,7 +216,7 @@
 - notes: 計画書 4.2。段6でビジビリティバッファの材質の解決パスへまとめる。
 
 ## VTG2-FEEDBACK-READ: 要求を数フレーム遅れで読み戻して集計する
-- status: done
+- status: blocked
 - done-when: 要求のバッファを3つのリングで持ち、2フレーム前のものを GPU を待たずに読み戻して、テクスチャごとのタイルの要求の集合（同じタイルは1つ、最後に要求したフレームを持つ）にまとめる。RenderThread を止めない。集計の結果を `VirtualTextureRequestSet` として VT のストリーマへ渡す。CPU のテスト `VirtualTextureRequestSetTest`（`RenderResourcesDomainContractTest` の束）が、詰めた要求の復号・重複の除去・溢れた件数の数え方を確かめる。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureRequestSetTest|VirtualTextureFeedbackVulkanTest)$"`
@@ -225,7 +225,7 @@
 - notes: 危険地帯（RenderThread）。
 
 ## VTG2-VT-STREAMER: 要求からタイルを読み、結び付けて常駐させる
-- status: todo
+- status: done
 - done-when: `VirtualTextureStreamer`（RenderResources が持つ）が、要求の集合から未常駐のタイルを優先度（粗いミップ・画面の近くが先）順に選び、JobSystem の範囲読みで NVTEX v0.2 から読み、ステージングのリング（VTG2-TILE-UPLOAD）へ置き、ページを結び（VTG2-SPARSE-BIND）、コピーする。1フレームの上限（読み・コピー・結び付けの数）を持つ。ミップテイルは作成時に結んで常に常駐。材質のテクスチャを VT として作る入口（クック済みの v0.2 の材質のテクスチャを sparse で作る）を `TextureResources` に足す。CPU のテスト `VirtualTextureStreamerTest`（`RenderResourcesDomainContractTest` の束。読み込み・結び付けを偽物にする）が、優先度・上限・同じタイルの二重の要求・読み込みの失敗を確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureStreamerTest|VirtualTextureRequestSetTest|GpuRetireQueueTest)$"`

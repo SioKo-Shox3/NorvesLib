@@ -1,4 +1,4 @@
-#include "Asset/AssetSystem.h"
+﻿#include "Asset/AssetSystem.h"
 
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/AssetPath.h"
@@ -358,6 +358,42 @@ namespace NorvesLib::Core::Asset
         request.Variant = ToAnsiString(variant);
         request.FallbackMode = fallbackMode;
         return ResolveAsset(request);
+    }
+
+    bool AssetSystem::TryResolveCookedRange(Container::AnsiStringView logicalPath,
+                                            AssetKind kind,
+                                            AssetCookedRange &outRange,
+                                            Container::AnsiString *pOutReason,
+                                            Container::AnsiStringView variant) const
+    {
+        const AssetResolveResult resolved =
+            ResolveAsset(logicalPath, kind, variant, AssetFallbackMode::FailOnCookedFailure);
+        if (!resolved.UsedCooked())
+        {
+            if (pOutReason != nullptr)
+            {
+                *pOutReason = resolved.Reason.empty() ? Container::AnsiString("cooked entry is not available")
+                                                      : resolved.Reason;
+            }
+            return false;
+        }
+        if (resolved.Entry.Compression != AssetPackageCompression::None)
+        {
+            if (pOutReason != nullptr)
+            {
+                *pOutReason = "cooked entry is compressed and cannot be read by range";
+            }
+            return false;
+        }
+
+        outRange = AssetCookedRange();
+        outRange.Request.InputPath = resolved.CookedReference.CookedPackage;
+        outRange.Request.AssetRoot = {};
+        outRange.Request.bAllowAbsolutePath = false;
+        outRange.BaseOffset = static_cast<uint64_t>(resolved.Entry.DataOffset);
+        outRange.Size = static_cast<uint64_t>(resolved.Entry.StoredSize);
+        outRange.Reference = resolved.CookedReference;
+        return true;
     }
 
     size_t AssetSystem::GetAssetCount() const noexcept

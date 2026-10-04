@@ -2696,6 +2696,13 @@ namespace NorvesLib::Core::Rendering
         // SceneRendererフレーム開始
         m_SceneRenderer.BeginFrame();
 
+        // VT のストリーマを進める（タイルの読み込み完了の取り込み・ページの結び付け・コピーの積み込み）。
+        // BindSparse は提出の直列化の下で呼ぶ必要があるので、RenderThread のこの位置（BeginRetireFrame の後）で行う。
+        if (m_RenderResources)
+        {
+            m_RenderResources->UpdateVirtualTextureStreaming();
+        }
+
         // コマンド録画開始
         m_CommandList->BeginRecording();
         // ステージングのリングに置いたタイル・ミップテイルのデータを、描画のコマンドの先頭でテクスチャの領域へコピーする
