@@ -410,7 +410,7 @@
 - notes: VTG4-BIG-SPHERE-COOK の paths に `Docs/Architecture` が無かったので、文書の更新だけ分けた。
 
 ## VTG4-POLYHAVEN-MODELS: Poly Havenの高ポリのスキャン資産を起動画面に足す
-- status: todo
+- status: done
 - done-when: `Scripts/FetchPolyHavenModels.ps1`（新規。Poly Haven の API の CC0 のモデルを MD5 で照合して落とす。git に入れない）が、高ポリのスキャン資産を 3〜5 点（岩・切り株・像など。合計 100 万三角形以上）落とし、`CookAssets` が NVMESH v1 とテクスチャ（BC・VT）に焼く。起動画面の既定の視点で、今の天球・地面・球・岩・小屋・見本の帯を隠さない位置（地面の外周の石畳の上など）に並べる（資産が無ければ置かずに警告）。`-Deterministic` で、近くから遠くへカメラを引く連続撮影（`-OrbitDegreesPerSecond` か距離を変える視点の列）を開き、段の切り替わりで割れ目・ちらつき・穴が無いことを確かめ、選ばれたクラスタの数（`MEGA_OCCLUSION` などのログ）が距離で減ることを記録する。
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook CookAssets Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG4-POLYHAVEN-MODELS -Configuration RelWithDebInfo -Deterministic`

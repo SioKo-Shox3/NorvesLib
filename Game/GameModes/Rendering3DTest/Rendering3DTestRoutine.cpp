@@ -62,8 +62,10 @@
 
 #include "stb_image.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -518,6 +520,44 @@ namespace Game::GameModes
             return paths;
         }
 
+        // 起動画面の地面の外周（石畳の帯）に並べる高ポリのスキャン資産（Poly Haven、CC0）。
+        // Scripts/FetchPolyHavenModels.ps1 が Assets/Models/PolyHaven/<id>/ へ落とし、
+        // Assets/AssetSets/Rendering3DTestStartupScanProps.json が NVMESH v1・BC・VT へ焼く（並びは両方と同じにする）。
+        // 既定の視点は原点から約 10 m 引いて +Z 側から見る。見本の帯（|x| <= 14）・球・岩・小屋（x ±6.2、z -25.4〜-10.6）を
+        // 隠さないよう、帯の外の石畳（|x| > 14）の奥寄り（z -10 より奥）へ置く。
+        // クック済みの資産が無いときは glTF の経路へ戻さず、置かずに警告する。
+        struct StartupScanPropSpec
+        {
+            const char *AssetId;
+            float X;
+            float Z;
+            float YawDegrees;
+            float Scale;
+        };
+        constexpr StartupScanPropSpec kStartupScanProps[] = {
+            {"coast_land_rocks_03", -20.0f, -16.0f, 25.0f, 1.0f},
+            {"coast_rocks_05", 17.5f, -13.0f, -30.0f, 1.0f},
+            {"sand_rocks_small_01", 22.0f, -21.0f, 70.0f, 1.0f},
+        };
+        constexpr uint32_t kStartupScanPropCount = static_cast<uint32_t>(sizeof(kStartupScanProps) / sizeof(kStartupScanProps[0]));
+        // 地面（Y=-1）へわずかに埋める深さ（m）
+        constexpr float kStartupScanPropSink = 0.03f;
+
+        String MakeStartupScanPropMeshPath(const StartupScanPropSpec &spec)
+        {
+            return String("Assets/Models/PolyHaven/") + spec.AssetId + "/" + spec.AssetId + "_4k.gltf";
+        }
+
+        MaterialTexturePaths MakeStartupScanPropTexturePaths(const StartupScanPropSpec &spec)
+        {
+            const String cookedPrefix = String("Assets/Models/PolyHaven/") + spec.AssetId + "/cooked/" + spec.AssetId;
+            MaterialTexturePaths paths;
+            paths.Albedo = cookedPrefix + "_albedo";
+            paths.Normal = cookedPrefix + "_normal";
+            paths.Orm = cookedPrefix + "_orm";
+            return paths;
+        }
+
         // 起動画面の岩・小屋のクック済みメッシュ（NVMESH）を解決・解析し、材質のテクスチャ（VT）の読み込みを始める。
         // メッシュのクック済みが無い・解析できないときは何も始めずに false を返す（呼び出し側が glTF の経路へ戻す）。
         // 成功したら、材質がそろうのを FinishCookedStartupModels が待ち、MegaMesh を作って state を埋める。
@@ -527,7 +567,8 @@ namespace Game::GameModes
                                          const char *meshPath,
                                          const MaterialTexturePaths &paths,
                                          bool bBoulder,
-                                         const TSharedPtr<BoulderAsyncState> &state)
+                                         const TSharedPtr<BoulderAsyncState> &state,
+                                         bool bAllowGltfFallback = true)
         {
             if (!data.m_GetAssetSystem.IsBound())
             {
@@ -564,8 +605,19 @@ namespace Game::GameModes
             load.DebugName = debugName;
             load.LogicalPath = meshPath;
             load.bBoulder = bBoulder;
+            load.bAllowGltfFallback = bAllowGltfFallback;
             load.Mesh = MakeShared<Asset::CookedMeshData>(std::move(parsed.Mesh));
             load.State = state;
+            if (state)
+            {
+                // 最下点の Y（スキャン資産を地面へ据えるのに使う）。
+                float minY = std::numeric_limits<float>::max();
+                for (const Asset::CookedMeshVertex &vertex : load.Mesh->Vertices)
+                {
+                    minY = std::min(minY, vertex.Position.Y);
+                }
+                state->m_BoundsMinY = load.Mesh->Vertices.empty() ? 0.0f : minY;
+            }
             load.Material = MakeShared<PendingMaterialUpdate>();
             load.Material->CreateData.DebugName = debugName;
 
@@ -639,8 +691,9 @@ namespace Game::GameModes
                 {
                     NORVES_LOG_WARNING("Rendering3DTest",
                                        "COOKED_MODEL_TEXTURES_FAILED path=%s 材質のクック済みのテクスチャを読めないため、"
-                                       "glTF の実行時の経路で読みます（albedo=%d normal=%d orm=%d）",
+                                       "%s（albedo=%d normal=%d orm=%d）",
                                        load.LogicalPath.c_str(),
+                                       load.bAllowGltfFallback ? "glTF の実行時の経路で読みます" : "この資産は置きません",
                                        loadedMaterial.AlbedoTexture.IsValid() ? 1 : 0,
                                        loadedMaterial.NormalTexture.IsValid() ? 1 : 0,
                                        loadedMaterial.ORMTexture.IsValid() ? 1 : 0);
@@ -655,9 +708,16 @@ namespace Game::GameModes
                     }
                     const String logicalPath = load.LogicalPath;
                     const TSharedPtr<BoulderAsyncState> state = load.State;
+                    const bool bAllowGltfFallback = load.bAllowGltfFallback;
                     uint32_t &requestId = load.bBoulder ? data.m_BoulderLoadRequestId : data.m_CottageLoadRequestId;
                     loads.erase(loads.begin() + static_cast<std::ptrdiff_t>(index));
-                    if (state)
+                    if (state && !bAllowGltfFallback)
+                    {
+                        // glTF の経路を持たない資産（スキャン資産）は、失敗として state を埋める（置かない）。
+                        state->m_bLoaded = false;
+                        state->m_bCompleted.Store(true);
+                    }
+                    else if (state)
                     {
                         StartGltfStartupModelLoad(ctx, logicalPath, state, requestId);
                     }
@@ -714,6 +774,82 @@ namespace Game::GameModes
                     megaGeometry.ReleaseModel(modelHandle);
                 }
                 loads.erase(loads.begin() + static_cast<std::ptrdiff_t>(index));
+            }
+        }
+
+        // 地面の外周に並べるスキャン資産のクック済みの読み込みを始める。クック済みが無い資産は、警告して置かない。
+        void StartStartupScanPropLoads(GameModeContext &ctx, Rendering3DTestData &data)
+        {
+            data.m_ScanPropLoads.clear();
+            for (uint32_t propIndex = 0; propIndex < kStartupScanPropCount; ++propIndex)
+            {
+                const StartupScanPropSpec &spec = kStartupScanProps[propIndex];
+                const String meshPath = MakeStartupScanPropMeshPath(spec);
+                auto state = MakeShared<BoulderAsyncState>();
+                if (!StartCookedStartupModelLoad(ctx, data, spec.AssetId, meshPath.c_str(), MakeStartupScanPropTexturePaths(spec),
+                                                 false, state, false))
+                {
+                    NORVES_LOG_WARNING("Rendering3DTest",
+                                       "SCAN_PROP_MISSING id=%s クック済みのスキャン資産が無いため置きません"
+                                       "（Scripts/FetchPolyHavenModels.ps1 で落とし、CookAssets の対象を実行すると焼けます）",
+                                       spec.AssetId);
+                    continue;
+                }
+                StartupScanPropLoad load;
+                load.SpecIndex = propIndex;
+                load.State = state;
+                data.m_ScanPropLoads.push_back(std::move(load));
+            }
+        }
+
+        // 読み込みが終わったスキャン資産を、最下点を地面（Y=-1）へ据えて World へ置く。失敗したものは警告して置かない。
+        void PlaceFinishedScanProps(GameModeContext &ctx, Rendering3DTestData &data)
+        {
+            auto &loads = data.m_ScanPropLoads;
+            for (size_t index = 0; index < loads.size();)
+            {
+                StartupScanPropLoad &load = loads[index];
+                if (!load.State || !load.State->m_bCompleted.Load() || load.State->m_bCancelled.Load())
+                {
+                    ++index;
+                    continue;
+                }
+
+                const StartupScanPropSpec &spec = kStartupScanProps[load.SpecIndex];
+                const TSharedPtr<BoulderAsyncState> state = load.State;
+                loads.erase(loads.begin() + static_cast<std::ptrdiff_t>(index));
+
+                auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
+                MegaMeshHandle megaMeshHandle;
+                if (state->m_bLoaded)
+                {
+                    megaMeshHandle = megaGeometry.GetModelMegaMeshHandle(state->m_Handle);
+                    if (!megaMeshHandle.IsValid())
+                    {
+                        megaGeometry.ReleaseModel(state->m_Handle);
+                    }
+                }
+                if (!megaMeshHandle.IsValid())
+                {
+                    NORVES_LOG_WARNING("Rendering3DTest", "SCAN_PROP_FAILED id=%s スキャン資産を読めなかったため置きません", spec.AssetId);
+                    continue;
+                }
+
+                auto &world = ctx.WorldRef;
+                Entity *object = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(object);
+                const float positionY = -1.0f - state->m_BoundsMinY * spec.Scale - kStartupScanPropSink;
+                object->SetPosition(spec.X, positionY, spec.Z);
+                object->SetScale(spec.Scale, spec.Scale, spec.Scale);
+                const NorvesLib::Math::Vector3 yAxis(0.0f, 1.0f, 0.0f);
+                object->SetRotation(NorvesLib::Math::Quaternion(yAxis, spec.YawDegrees * (3.14159265f / 180.0f)));
+                auto *component = world.CreateComponent<Component::MegaGeometryComponent>(object);
+                component->SetMegaMeshHandle(megaMeshHandle);
+                component->SetCastShadow(true);
+                // 消費したモデルはスコープに解放を委ねる。
+                ctx.ScopeRef.TrackModel(state->m_Handle);
+                NORVES_LOG_INFO("Rendering3DTest", "SCAN_PROP_PLACED id=%s x=%.1f y=%.3f z=%.1f scale=%.2f", spec.AssetId, spec.X,
+                                positionY, spec.Z, spec.Scale);
             }
         }
 
@@ -987,8 +1123,8 @@ namespace Game::GameModes
                     return false;
                 }
             }
-            return !data.m_BoulderAsyncState && !data.m_CottageAsyncState && !data.m_pBigSphereMegaData &&
-                   !data.m_BigSphereBuildTask;
+            return !data.m_BoulderAsyncState && !data.m_CottageAsyncState && data.m_ScanPropLoads.empty() &&
+                   !data.m_pBigSphereMegaData && !data.m_BigSphereBuildTask;
         }
 
         // 起動画面の組み立てが、VT のタイルがそろうまで含めてすべて終わったか。
@@ -2712,6 +2848,13 @@ namespace Game::GameModes
                     NORVES_LOG_ERROR("Rendering3DTest", "小屋のモデルの非同期ロード開始に失敗しました");
                 }
             }
+
+            // 地面の外周のスキャン資産は、既定のクック済みの経路のときだけ読む（glTF の経路は持たない）。
+            data.m_ScanPropLoads.clear();
+            if (!data.m_bUseCookedModel && !data.m_bStartupModelsFromGltf && data.m_bStartupScanProps)
+            {
+                StartStartupScanPropLoads(ctx, data);
+            }
         }
 
 #if defined(NORVES_GAME_AUDIO)
@@ -3249,6 +3392,9 @@ namespace Game::GameModes
             }
         }
 
+        // 地面の外周のスキャン資産: 読み込みが終わったものから World へ置く。
+        PlaceFinishedScanProps(ctx, data);
+
         // 大きな球: 石畳のテクスチャがそろったら高ポリのMegaGeometryを作り、仮の球と差し替える。
         if (data.m_pBigSphereMegaData && data.m_CobbleStoneMaterialUpdate &&
             data.m_CobbleStoneMaterialUpdate->PendingTextureCount == 0)
@@ -3380,6 +3526,21 @@ namespace Game::GameModes
             Resource::GLTFAnalyzer::CancelModelLoad(data.m_CottageLoadRequestId);
             data.m_CottageLoadRequestId = 0;
         }
+
+        // 地面の外周のスキャン資産の読み込みも閉じる（置く前に完了していたモデルは解放する）。
+        for (StartupScanPropLoad &load : data.m_ScanPropLoads)
+        {
+            if (!load.State)
+            {
+                continue;
+            }
+            load.State->m_bCancelled.Store(true);
+            if (load.State->m_bCompleted.Load() && load.State->m_bLoaded && load.State->m_Handle.IsValid())
+            {
+                ctx.RenderResourcesRef.MegaGeometry().ReleaseModel(load.State->m_Handle);
+            }
+        }
+        data.m_ScanPropLoads.clear();
 
         // 2) 追跡済みリソース（球体/地面/光源球体/ディレクショナル/placeholder/
         //    boulder の各オブジェクト・3 メッシュ・boulder モデル）の解放は

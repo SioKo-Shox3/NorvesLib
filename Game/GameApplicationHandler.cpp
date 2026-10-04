@@ -121,6 +121,10 @@ namespace Game
         // デバッグ描画が最終解像度でジッタ無しに描かれることを撮影で確かめるのに使う。
         constexpr const TCHAR *kDebugDrawTestLinesOption = TEXT("--debug-draw-test-lines");
         bool s_bRendering3DTestDebugDrawTestLines = false;
+        // --startup-scan-props=on|off: 起動画面の地面の外周に並べる高ポリのスキャン資産（Poly Haven）を置くか（既定は on）。
+        // off は、スキャン資産を足す前と同じ描画量を撮って、足した分を差し引くための基準に使う。
+        constexpr const TCHAR *kStartupScanPropsOption = TEXT("--startup-scan-props=");
+        bool s_bRendering3DTestScanProps = true;
         // --capture-sequence=<接頭辞> と --capture-sequence-rendered-frames=<n1,n2,...>: 1回の起動の中で、
         // アセットが落ち着いてから n 枚目の描画フレームの最終出力を <接頭辞><n>.png に保存する。
         constexpr const TCHAR *kCaptureSequenceOption = TEXT("--capture-sequence=");
@@ -482,6 +486,7 @@ namespace Game
         s_Rendering3DTestRenderScale = 1.0f;
         s_VramBudgetCapMb = 0;
         s_bRendering3DTestDebugDrawTestLines = false;
+        s_bRendering3DTestScanProps = true;
         s_bRendering3DTestNight = false;
         s_bRendering3DTestVirtualTexture = true;
         s_bRendering3DTestModelSourceGltf = false;
@@ -743,6 +748,25 @@ namespace Game
             if (args[i] == kDebugDrawTestLinesOption)
             {
                 s_bRendering3DTestDebugDrawTestLines = true;
+                continue;
+            }
+
+            String startupScanPropsValue;
+            if (TryStripPrefix(args[i], kStartupScanPropsOption, startupScanPropsValue))
+            {
+                if (startupScanPropsValue == String(TEXT("on")))
+                {
+                    s_bRendering3DTestScanProps = true;
+                }
+                else if (startupScanPropsValue == String(TEXT("off")))
+                {
+                    s_bRendering3DTestScanProps = false;
+                }
+                else
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --startup-scan-props は on か off で指定する");
+                    return false;
+                }
                 continue;
             }
 
@@ -1872,6 +1896,7 @@ namespace Game
                 mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
                 mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
+                mode->GetData().m_bStartupScanProps = s_bRendering3DTestScanProps;
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
                 mode->GetData().m_bVirtualTexture = s_bRendering3DTestVirtualTexture;
