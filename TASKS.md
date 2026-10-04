@@ -300,7 +300,7 @@
 - notes: 計画書 4.3。行列の要素を直接触らず Math の抽象 API を使う（`no-direct-matrix-element-access` の方針）。
 
 ## VTG3-TWO-PASS-OCCLUSION: 2パスの遮蔽カリングを入れて既定で有効にする
-- status: blocked
+- status: todo
 - done-when: MegaGeometry のインスタンスごとに、クラスタごとの「前のフレームで見えた」ビットの持続のバッファを持つ。1パス目は前のフレームで見えたクラスタだけを（視錐台・法線のコーン・LOD の判定はするが遮蔽の判定はせずに）描き、その時点の深度（GBufferPass の不透明＋1パス目）から HZB を作る（VTG3-HIZ-PYRAMID）。2パス目は1パス目で描かなかったクラスタを HZB で判定し（VTG3-HIZ-CONSERVATIVE）、見えたものを描く。2パス目は1パス目で描いたクラスタも HZB で判定し直してビットを更新する（次のフレームのため）。インスタンスの追加・LOD の切り替え・メッシュの差し替えでビットを捨てる。`--mega-occlusion=off` で従来の経路（遮蔽の判定なし）に戻せる。`MEGA_OCCLUSION pass1=<n> pass2_tested=<n> pass2_drawn=<n> occluded=<n>` を撮影のログに出す。`RenderGraphCompileTest` の MegaGeometry の記録の検査を新しいパスの並びに合わせる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest|HiZOcclusionTestVulkanTest|HiZPyramidVulkanTest)$"`
@@ -308,7 +308,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG3-TWO-PASS-OCCLUSION -Configuration RelWithDebInfo -Deterministic`
 - stop-when: 1パス目と2パス目の間で GBuffer へ描く順序を変えると、MegaGeometry の Velocity・Emissive の書き込みの契約が崩れる場合は、理由を記録して止める。
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 計画書 4.3。危険地帯（描画パス・RenderThread）。影（CSM・点光源）の描画には遮蔽の判定を掛けない（カメラの視点の深度で影のキャスターを省くと影が欠ける）。
+- notes: 計画書 4.3。危険地帯（描画パス・RenderThread）。影（CSM・点光源）の描画には遮蔽の判定を掛けない（カメラの視点の深度で影のキャスターを省くと影が欠ける）。 2026-10-05 親（run `20261005-014448` の保留を解く）: 評価2周の残り1件を直す。描画のスナップショットからインスタンスが消えたフレーム（全インスタンスが消えて `Execute` が記録を省くフレームを含む）で、そのインスタンスの可視ビットの履歴を無効にする（`Setup` でスナップショットから脱落した履歴を捨てるのが最小。`RecordFrameCommand` の中だけでカウンタを動かしても、記録を省く経路は直らない）。`RenderGraphCompileTest` に、同じ ObjectId・ComponentId・メッシュで「A → 空 → A」としたとき、再追加でビットが初期化される（初期化の回数が [1,0,1]）回帰のケースを足す。
 
 ## VTG3-OCCLUSION-ORBIT: 旋回するカメラで遮蔽カリングの穴・遅れが出ないことを確かめる
 - status: done
