@@ -84,12 +84,18 @@ namespace NorvesLib::Core::Rendering
         }
 
         // マニフェストを読んだのにクック済みの項目が無い、またはクック済みを使えずばらへ戻したときの警告。
-        // マニフェストが無い従来の経路（LooseFallbackManifestMissing）では出さない。
+        // マニフェストが無い従来の経路（LooseFallbackManifestMissing）では出さない。ただしクック済みを使う前提の設定
+        // （AssetSystem::IsCookedExpected）でマニフェストを読めなかったときは、ばらで読んだ各パスに出す。
         void WarnCookedMissingOnce(const Container::TSharedPtr<TextureCookedMissingLog> &log,
+                                   const Container::TSharedPtr<const Asset::AssetSystem> &assetSystem,
                                    const Asset::AssetResolveResult &resolveResult,
                                    const Container::AnsiString &logicalPath)
         {
-            if (resolveResult.ManifestStatus == Asset::AssetManifestResolveStatus::LooseFallbackVariantMissing ||
+            const bool bManifestMissingButExpected =
+                resolveResult.ManifestStatus == Asset::AssetManifestResolveStatus::LooseFallbackManifestMissing &&
+                assetSystem && assetSystem->IsCookedExpected();
+            if (bManifestMissingButExpected ||
+                resolveResult.ManifestStatus == Asset::AssetManifestResolveStatus::LooseFallbackVariantMissing ||
                 resolveResult.Source == Asset::AssetResolveSource::DebugLooseFallback)
             {
                 WarnCookedUnusableOnce(log, logicalPath);
@@ -688,7 +694,7 @@ namespace NorvesLib::Core::Rendering
             Asset::AssetManifest::DefaultVariant,
             plan.FallbackMode);
         const double resolveMs = LoadProfileElapsedMs(resolveStartTime);
-        WarnCookedMissingOnce(plan.CookedMissingLog, resolveResult, plan.LogicalPath);
+        WarnCookedMissingOnce(plan.CookedMissingLog, plan.AssetSystem, resolveResult, plan.LogicalPath);
         NORVES_LOG_INFO("AssetLoadProfile",
                         "stage=texture_asset_resolve role=caller path=\"%s\" logical_path=\"%s\" source=%s resolve_ms=%.3f status=%s manifest_status=%u success=%d explicit_fallback=%d",
                         plan.RequestPath.c_str(),
@@ -778,7 +784,7 @@ namespace NorvesLib::Core::Rendering
             Asset::AssetManifest::DefaultVariant,
             plan.FallbackMode);
         const double resolveMs = LoadProfileElapsedMs(resolveStartTime);
-        WarnCookedMissingOnce(plan.CookedMissingLog, resolveResult, plan.LogicalPath);
+        WarnCookedMissingOnce(plan.CookedMissingLog, plan.AssetSystem, resolveResult, plan.LogicalPath);
         NORVES_LOG_INFO("AssetLoadProfile",
                         "stage=texture_asset_resolve role=worker path=\"%s\" logical_path=\"%s\" source=%s resolve_ms=%.3f status=%s manifest_status=%u success=%d explicit_fallback=%d",
                         result.Path.c_str(),
@@ -961,6 +967,10 @@ namespace NorvesLib::Core::Rendering
         case Asset::AssetManifestResolveStatus::CookedReferenceFound:
             break;
         case Asset::AssetManifestResolveStatus::LooseFallbackManifestMissing:
+            if (workingPlan.AssetSystem && workingPlan.AssetSystem->IsCookedExpected())
+            {
+                WarnCookedUnusableOnce(workingPlan.CookedMissingLog, workingPlan.Prepared.LogicalPath);
+            }
             return finish(PreparedTextureAssetStatus::ManifestMissingLooseFallback, "asset manifest is not loaded");
         case Asset::AssetManifestResolveStatus::LooseFallbackVariantMissing:
             WarnCookedUnusableOnce(workingPlan.CookedMissingLog, workingPlan.Prepared.LogicalPath);

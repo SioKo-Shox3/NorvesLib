@@ -34,6 +34,11 @@ namespace NorvesLib::Core::Asset
         void SetTreatSrgbTexturesAsLinear(bool bTreatAsLinear) noexcept { m_bTreatSrgbTexturesAsLinear = bTreatAsLinear; }
         [[nodiscard]] bool GetTreatSrgbTexturesAsLinear() const noexcept { return m_bTreatSrgbTexturesAsLinear; }
 
+        // クック済みを使う前提の設定で、マニフェスト自体を読めなかったことを示す。立てておくと、マニフェストが無いために
+        // ばらのファイルで読んだテクスチャも、クック済みが無いテクスチャとして警告の対象になる（既定は無効）。
+        void SetCookedExpected(bool bCookedExpected) noexcept { m_bCookedExpected = bCookedExpected; }
+        [[nodiscard]] bool IsCookedExpected() const noexcept { return m_bCookedExpected; }
+
         void ResetManifest();
         void SetManifest(const AssetManifest &manifest);
         [[nodiscard]] bool LoadManifestFromJsonText(const Container::String &jsonText, Container::AnsiStringView sourceName = {});
@@ -63,5 +68,6 @@ namespace NorvesLib::Core::Asset
         Container::AnsiString m_AssetRoot;
         Container::AnsiString m_LooseAssetRoot;
         bool m_bTreatSrgbTexturesAsLinear = false;
+        bool m_bCookedExpected = false;
     };
 }

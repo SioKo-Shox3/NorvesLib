@@ -52,6 +52,7 @@
 #include "GameModes/Rendering3DTest/SkySunControl.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
 #include "Core/Public/Asset/AssetFileReader.h"
+#include "Core/Public/RHI/ITexture.h"
 #include "Core/Public/Thread/JobSystem.h"
 #include "Core/Public/Thread/Task.h"
 
@@ -150,10 +151,77 @@ namespace Game::GameModes
             return !path.empty() && data.m_IsTextureCooked.IsBound() && data.m_IsTextureCooked.Invoke(path);
         }
 
-        // 材質1つ分のテクスチャを非同期で読み、そろったら onComplete を呼ぶ。枠ごとにクック済みの有無を見て、
-        // クック済みの ORM があれば AO・粗さ・メタリックの3枠の代わりにそれを読み（無ければ別々のばらの元画像）、
-        // クック済みの法線は BC5 の2チャンネルとして印を付ける。アルベド・法線・高さは、クック済みもばらも同じ名前で読む
-        // （クック済みがマニフェストに無いものはエンジンがばらの元画像を無圧縮で読み、TEXTURE_COOKED_MISSING を警告する）。
+        // 材質の枠の種類。読み込めた結果によって、後始末が変わる。
+        enum class MaterialSlotKind
+        {
+            Plain,  // 読み込めたハンドルをそのまま入れる
+            Normal, // 読み込めた形式が BC5（2チャンネル）なら bNormalTwoChannel を立てる
+            Orm,    // 読み込めなければ、粗さ・AO・メタリックの別々の元画像を読む枠へ戻る
+        };
+
+        // 材質1つ分の枠を1つ非同期で読む。結果は update->CreateData へ入れ、update->PendingTextureCount が 0 に
+        // なったとき onComplete を呼ぶ。ORM が読めなかったときは、読み終わる前に別々の元画像の枠を数に足すので、
+        // 数が途中で 0 になることはない（コールバックはメインスレッドで呼ばれる）。
+        template <typename OnComplete>
+        void LoadMaterialSlot(TextureResources &textures,
+                              const TSharedPtr<PendingMaterialUpdate> &update,
+                              const MaterialTexturePaths &paths,
+                              const String &path,
+                              TextureHandle MaterialCreateData::*member,
+                              MaterialSlotKind kind,
+                              OnComplete onComplete)
+        {
+            textures.LoadTextureAsync(
+                path,
+                [&textures, update, paths, path, member, kind, onComplete](TextureHandle handle)
+                {
+                    update->CreateData.*member = handle;
+                    if (kind == MaterialSlotKind::Normal)
+                    {
+                        // クック済みの法線は BC5。ばらの元画像へ戻ったときは RGBA8 なので立てない。
+                        const NorvesLib::RHI::ITexture *rhiTexture = handle.IsValid() ? textures.GetRHITexture(handle) : nullptr;
+                        update->CreateData.bNormalTwoChannel =
+                            rhiTexture != nullptr && rhiTexture->GetFormat() == NorvesLib::RHI::Format::BC5_UNORM;
+                    }
+                    else if (kind == MaterialSlotKind::Orm && !handle.IsValid())
+                    {
+                        NORVES_LOG_WARNING("Rendering3DTest",
+                                           "MATERIAL_ORM_FALLBACK path=%s クック済みの ORM を読めないため、"
+                                           "粗さ・AO・メタリックのばらの元画像を読みます",
+                                           path.c_str());
+                        struct LooseSlot
+                        {
+                            const String *Path;
+                            TextureHandle MaterialCreateData::*Member;
+                        };
+                        const LooseSlot looseSlots[] = {
+                            {&paths.Metallic, &MaterialCreateData::MetallicTexture},
+                            {&paths.Roughness, &MaterialCreateData::RoughnessTexture},
+                            {&paths.AO, &MaterialCreateData::AOTexture},
+                        };
+                        for (const LooseSlot &looseSlot : looseSlots)
+                        {
+                            if (!looseSlot.Path->empty())
+                            {
+                                ++update->PendingTextureCount;
+                                LoadMaterialSlot(textures, update, paths, *looseSlot.Path, looseSlot.Member,
+                                                 MaterialSlotKind::Plain, onComplete);
+                            }
+                        }
+                    }
+
+                    if (--update->PendingTextureCount == 0)
+                    {
+                        onComplete();
+                    }
+                });
+        }
+
+        // 材質1つ分のテクスチャを非同期で読み、そろったら onComplete を呼ぶ。マニフェストにクック済みの ORM が
+        // あればまずそれを読み（AO・粗さ・メタリックの3枠の代わり。読めなければ別々のばらの元画像へ戻る）、
+        // 無ければ最初から別々のばらの元画像を読む。法線は、読めた形式が BC5 のときだけ2チャンネルの印を付ける。
+        // アルベド・法線・高さは、クック済みもばらも同じ名前で読む
+        // （クック済みを使えないものはエンジンがばらの元画像を無圧縮で読み、TEXTURE_COOKED_MISSING を警告する）。
         template <typename OnComplete>
         void RequestMaterialTextures(const Rendering3DTestData &data,
                                      TextureResources &textures,
@@ -165,25 +233,29 @@ namespace Game::GameModes
             {
                 const String *Path = nullptr;
                 TextureHandle MaterialCreateData::*Member = nullptr;
+                MaterialSlotKind Kind = MaterialSlotKind::Plain;
             };
             Slot slots[8];
             uint32_t slotCount = 0;
-            auto addSlot = [&slots, &slotCount](const String &path, TextureHandle MaterialCreateData::*member)
+            auto addSlot = [&slots, &slotCount](const String &path,
+                                                TextureHandle MaterialCreateData::*member,
+                                                MaterialSlotKind kind = MaterialSlotKind::Plain)
             {
                 if (!path.empty())
                 {
                     slots[slotCount].Path = &path;
                     slots[slotCount].Member = member;
+                    slots[slotCount].Kind = kind;
                     ++slotCount;
                 }
             };
 
             addSlot(paths.Albedo, &MaterialCreateData::AlbedoTexture);
-            addSlot(paths.Normal, &MaterialCreateData::NormalTexture);
-            update->CreateData.bNormalTwoChannel = IsTextureCooked(data, paths.Normal);
+            addSlot(paths.Normal, &MaterialCreateData::NormalTexture, MaterialSlotKind::Normal);
+            update->CreateData.bNormalTwoChannel = false;
             if (IsTextureCooked(data, paths.Orm))
             {
-                addSlot(paths.Orm, &MaterialCreateData::ORMTexture);
+                addSlot(paths.Orm, &MaterialCreateData::ORMTexture, MaterialSlotKind::Orm);
             }
             else
             {
@@ -196,16 +268,8 @@ namespace Game::GameModes
             update->PendingTextureCount = slotCount;
             for (uint32_t slotIndex = 0; slotIndex < slotCount; ++slotIndex)
             {
-                TextureHandle MaterialCreateData::*const member = slots[slotIndex].Member;
-                textures.LoadTextureAsync(*slots[slotIndex].Path,
-                                          [update, onComplete, member](TextureHandle handle)
-                                          {
-                                              update->CreateData.*member = handle;
-                                              if (--update->PendingTextureCount == 0)
-                                              {
-                                                  onComplete();
-                                              }
-                                          });
+                LoadMaterialSlot(textures, update, paths, *slots[slotIndex].Path, slots[slotIndex].Member,
+                                 slots[slotIndex].Kind, onComplete);
             }
         }
 

@@ -1005,7 +1005,7 @@ namespace Game
         const bool bHasManifest = !m_TextureAssetManifestPath.empty();
         if (!bHasRoot && bHasManifest)
         {
-            LOG_ERROR("Texture asset command line parse failed: --texture-asset-manifest requires --texture-asset-root");
+            LOG_ERROR("テクスチャ資産の引数を解析できません: --texture-asset-manifest には --texture-asset-root の指定も必要です");
             return false;
         }
 
@@ -1055,6 +1055,9 @@ namespace Game
                 LOG_WARNING_F("COOKED_ASSETS_MISSING manifest=\"%s\" ばらの元画像を無圧縮で読みます"
                               "（ビルド対象 CookAssets でクック済みを作れます）",
                               cookedManifest.c_str());
+                // 読む各パスに TEXTURE_COOKED_MISSING を出すため、ばらの元画像の root を持ち、起動後に入れ直す。
+                m_TextureLooseAssetRoot = String(NORVES_SOURCE_ASSET_DIR);
+                m_bCookedManifestUnavailable = true;
             }
         }
 #endif
@@ -1246,6 +1249,7 @@ namespace Game
             {
                 // 既定のクック済みの設定が読めないときは、終了せずばらの元画像で続ける。
                 LOG_WARNING("COOKED_ASSETS_UNUSABLE クック済みのマニフェストを読めないため、ばらの元画像を無圧縮で読みます");
+                m_bCookedManifestUnavailable = true;
             }
             else
             {
@@ -1255,6 +1259,11 @@ namespace Game
                 }
                 return;
             }
+        }
+
+        if (m_bCookedManifestUnavailable)
+        {
+            InstallCookedManifestUnavailableAssetSystem();
         }
 
         if (m_M9WorldAcceptance && !PrepareM9WorldAssets())
@@ -1405,6 +1414,26 @@ namespace Game
                  m_TextureAssetRoot.c_str(),
                  m_TextureAssetManifestPath.c_str());
         return true;
+    }
+
+    void GameApplicationHandler::InstallCookedManifestUnavailableAssetSystem()
+    {
+        if (m_TextureLooseAssetRoot.empty() || !NorvesLib::Core::Engine::GEngine)
+        {
+            return;
+        }
+
+        // マニフェストが無いのでクック済みは引けず、全パスをばらの元画像で読む。クック済みを使う前提の印を付け、
+        // 読んだ各パスに TEXTURE_COOKED_MISSING を1回ずつ警告させる。
+        auto candidate = MakeShared<Asset::AssetSystem>(AnsiString(m_TextureLooseAssetRoot.c_str()));
+        candidate->SetCookedExpected(true);
+        TSharedPtr<const Asset::AssetSystem> immutableCandidate = candidate;
+        if (!NorvesLib::Core::Engine::GEngine->GetRenderResources().ReloadAssetRuntimeSnapshot(
+                m_TextureLooseAssetRoot,
+                immutableCandidate))
+        {
+            LOG_WARNING("COOKED_MISSING_WARN_NOT_SET マニフェストが無いときの警告の設定を反映できませんでした");
+        }
     }
 
     TSharedPtr<const Asset::AssetSystem> GameApplicationHandler::GetAssetSystemSnapshot() const

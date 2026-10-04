@@ -95,6 +95,12 @@ namespace Game
          */
         bool ReloadConfiguredAssetManifest();
 
+        /**
+         * @brief クック済みのマニフェストを使えないとき、マニフェストの無い AssetSystem を「クック済みを使う前提」で入れる。
+         * @note ばらの元画像の root（m_TextureLooseAssetRoot）を読み、読んだ各パスに TEXTURE_COOKED_MISSING を1回ずつ警告する。
+         */
+        void InstallCookedManifestUnavailableAssetSystem();
+
         bool PrepareM9WorldAssets();
 
         /**
@@ -136,6 +142,9 @@ namespace Game
         // 既定の build/CookedAssets/ を root にしたとき、マニフェストに無いテクスチャをばらで読む場所（Assets/）。
         // 空のときは root と同じ場所を読む（--texture-asset-root で明示したときの従来の動き）。
         NorvesLib::Core::Container::String m_TextureLooseAssetRoot;
+        // 既定のクック済みの設定が使えず（マニフェストが無い・読めない）、全テクスチャをばらの元画像で読むとき true。
+        // 読み込む各パスに TEXTURE_COOKED_MISSING を警告するため、マニフェストの無い AssetSystem を入れ直す。
+        bool m_bCookedManifestUnavailable = false;
         NorvesLib::Core::Container::String m_TextureAssetRoot;
         NorvesLib::Core::Container::String m_TextureAssetManifestPath;
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem> m_AssetSystemSnapshot;
