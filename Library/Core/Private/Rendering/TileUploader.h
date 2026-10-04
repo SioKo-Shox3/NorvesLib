@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -27,7 +28,9 @@ namespace NorvesLib::Core::Rendering
      * - リングの区画は、それをコピーしたフレームの提出 serial が完了するまで再利用しない
      *   （BeginFrame に完了済みの serial を渡すと、期限の来た区画が空く）。
      * - 1フレームにコピーする量には上限（既定 24 MiB）がある。超える分は次のフレームへ持ち越す。
-     *   先頭の1件が上限より大きくても、そのフレームの最初の1件は必ずコピーする（詰まらないように）。
+     *   上限より大きい1件は Enqueue が拒否するので、どのフレームも上限を超えない。
+     * - 同じテクスチャの同じミップ・配列要素で矩形が重なるコピーは、同じフレームに積まず次のフレームへ送る
+     *   （コピー同士の書込み順をバリアなしに保証できないため。フレームをまたげば遷移のバリアが順序を作る）。
      * - コピーは Enqueue した順に記録する。フレームを提出できなかったとき（AbortFrame）は、記録した分を
      *   未記録へ戻して次のフレームで出し直す。
      * - 対象のテクスチャは、記録の前後とも ShaderResource の状態にあるものとして扱う。最初に
@@ -105,7 +108,8 @@ namespace NorvesLib::Core::Rendering
          * データはここでリングへ複写するので、呼び出しの後で元のバッファは手放してよい。
          * region の BufferOffset は無視する（リング内の位置をこちらで決める）。
          * @return 積めたら true。リングに空きが無い（GPU が使っているコピーの完了待ち）、バッファを作れない、
-         *         引数が不正（大きさ 0・リングより大きい・矩形が空）のときは false（何も積まない）。
+         *         引数が不正（大きさ 0・リングまたはフレームのコピー量の上限より大きい・矩形が空）のときは
+         *         false（何も積まない）。
          *         空きが無いときは、フレームが進んだあとにもう一度呼ぶ。
          */
         bool EnqueueTile(RHI::TexturePtr texture, const RHI::TextureRegionCopy &region, const void *data, uint64_t bytes)
@@ -120,6 +124,13 @@ namespace NorvesLib::Core::Rendering
             {
                 LOG_ERROR("TileUploader: データがリングより大きい bytes=%llu ring=%llu",
                           static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(m_Config.RingBytes));
+                return false;
+            }
+            if (bytes > m_Config.FrameCopyLimitBytes)
+            {
+                LOG_ERROR("TileUploader: データがフレームのコピー量の上限より大きい bytes=%llu limit=%llu",
+                          static_cast<unsigned long long>(bytes),
+                          static_cast<unsigned long long>(m_Config.FrameCopyLimitBytes));
                 return false;
             }
             if (!EnsureRingLocked())
@@ -207,16 +218,31 @@ namespace NorvesLib::Core::Rendering
             }
             size_t endPending = firstPending;
             uint64_t copiedBytes = m_FrameCopiedBytes;
+            Container::VariableArray<const Op *> selectedCopies;
             while (endPending < m_Ops.size())
             {
                 const Op &op = m_Ops[endPending];
                 if (op.bCopy)
                 {
-                    // このフレームの最初の1件は、上限より大きくてもコピーする
-                    if (copiedBytes > 0 && copiedBytes + op.DataBytes > m_Config.FrameCopyLimitBytes)
+                    if (copiedBytes + op.DataBytes > m_Config.FrameCopyLimitBytes)
                     {
                         break;
                     }
+                    // 先に選んだコピーと領域が重なるものは次のフレームへ送る（後続も順序を保つため一緒に送る）
+                    bool bOverlaps = false;
+                    for (const Op *selected : selectedCopies)
+                    {
+                        if (OverlapsRegion(*selected, op))
+                        {
+                            bOverlaps = true;
+                            break;
+                        }
+                    }
+                    if (bOverlaps)
+                    {
+                        break;
+                    }
+                    selectedCopies.push_back(&op);
                     copiedBytes += op.DataBytes;
                 }
                 ++endPending;
@@ -373,6 +399,13 @@ namespace NorvesLib::Core::Rendering
         uint64_t GetFrameCopyLimitBytes() const { return m_Config.FrameCopyLimitBytes; }
         uint64_t GetRingBytes() const { return m_Config.RingBytes; }
 
+        /** @brief リングのバッファ（まだ作っていなければ null）。メモリ属性の検査などに使う。 */
+        RHI::BufferPtr GetRingBuffer() const
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            return m_Ring;
+        }
+
     private:
         enum class OpState : uint8_t
         {
@@ -393,6 +426,22 @@ namespace NorvesLib::Core::Rendering
             uint64_t Serial = 0;
             OpState State = OpState::Pending;
         };
+
+        // 同じテクスチャの同じミップ・配列要素で、書込み先の矩形が重なるか
+        static bool OverlapsRegion(const Op &a, const Op &b)
+        {
+            if (a.Texture.get() != b.Texture.get() || a.Region.MipLevel != b.Region.MipLevel ||
+                a.Region.ArrayIndex != b.Region.ArrayIndex)
+            {
+                return false;
+            }
+            const uint64_t aRight = static_cast<uint64_t>(a.Region.OffsetX) + a.Region.Width;
+            const uint64_t bRight = static_cast<uint64_t>(b.Region.OffsetX) + b.Region.Width;
+            const uint64_t aBottom = static_cast<uint64_t>(a.Region.OffsetY) + a.Region.Height;
+            const uint64_t bBottom = static_cast<uint64_t>(b.Region.OffsetY) + b.Region.Height;
+            return a.Region.OffsetX < bRight && b.Region.OffsetX < aRight && a.Region.OffsetY < bBottom &&
+                   b.Region.OffsetY < aBottom;
+        }
 
         static constexpr uint64_t AlignUp(uint64_t value, uint64_t alignment)
         {
@@ -415,8 +464,18 @@ namespace NorvesLib::Core::Rendering
             {
                 return false;
             }
-            m_Ring = m_Device->CreateBuffer(
-                RHI::BufferDesc(m_Config.RingBytes, RHI::ResourceUsage::TransferSrc, true, "TileUploadRing"));
+            // DeviceLocal でない host-visible のメモリを要求する（選べなければ作成が失敗する）
+            RHI::BufferDesc ringDesc(m_Config.RingBytes, RHI::ResourceUsage::TransferSrc, true, "TileUploadRing");
+            ringDesc.bExcludeDeviceLocal = true;
+            try
+            {
+                m_Ring = m_Device->CreateBuffer(ringDesc);
+            }
+            catch (const std::exception &exception)
+            {
+                LOG_ERROR("TileUploader: ステージングのリングの作成が例外で失敗した: %s", exception.what());
+                m_Ring.reset();
+            }
             if (!m_Ring)
             {
                 LOG_ERROR("TileUploader: ステージングのリングを作れなかった bytes=%llu",

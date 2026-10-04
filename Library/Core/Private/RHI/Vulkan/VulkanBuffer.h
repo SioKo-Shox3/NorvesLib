@@ -48,6 +48,8 @@ namespace NorvesLib::RHI::Vulkan
         vk::DeviceMemory GetVkDeviceMemory() const { return m_deviceMemory; }
         bool IsHostVisible() const { return m_desc.CPUAccessible; }
         uint64_t GetDeviceAddress() const override { return m_deviceAddress; }
+        // 実際に選ばれたメモリタイプの属性（VkMemoryPropertyFlags）
+        uint32_t GetMemoryPropertyFlags() const { return static_cast<uint32_t>(m_memoryPropertyFlags); }
 
     private:
         friend class VulkanAccelerationStructure;
@@ -57,6 +59,7 @@ namespace NorvesLib::RHI::Vulkan
         vk::Buffer m_buffer;
         vk::DeviceMemory m_deviceMemory;
         uint64_t m_deviceAddress = 0;
+        vk::MemoryPropertyFlags m_memoryPropertyFlags{};
 
         bool m_bIsMapped = false;
         void *m_mappedData = nullptr;

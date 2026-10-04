@@ -32,6 +32,7 @@ void BeginVulkanValidationErrorCaptureForTesting() noexcept;
 void EndVulkanValidationErrorCaptureForTesting() noexcept;
 uint32_t GetVulkanValidationErrorCaptureHitCountForTesting() noexcept;
 uint64_t GetVulkanDeviceWaitIdleCallCountForTesting() noexcept;
+uint32_t GetVulkanBufferMemoryPropertyFlagsForTesting(const IBuffer* buffer) noexcept;
 }
 
 namespace
@@ -54,6 +55,10 @@ namespace
     constexpr uint64_t TestRingBytes = 4u * Page;
     constexpr uint64_t TestFrameLimitBytes = 2u * Page;
     constexpr uint64_t SlotReadbackBytes = 4u * Page;
+    // VkMemoryPropertyFlagBits の値（Vulkan のヘッダに依存しないテストのため）
+    constexpr uint32_t VkMemoryDeviceLocalBit = 0x1u;
+    constexpr uint32_t VkMemoryHostVisibleBit = 0x2u;
+    constexpr uint32_t VkMemoryHostCoherentBit = 0x4u;
 
     int g_failures = 0;
 
@@ -278,8 +283,7 @@ namespace
             const uint32_t recorded = uploader.RecordCopies(*commandList);
             const TileUploader::Stats stats = uploader.GetStats();
             Expect(recorded <= pendingBefore, "記録した数が積んだ数を超えてはならない");
-            Expect(recorded == 1u || stats.FrameCopiedBytes <= TestFrameLimitBytes,
-                   "1フレームにコピーする量は上限を超えてはならない（先頭の1件を除く）");
+            Expect(stats.FrameCopiedBytes <= TestFrameLimitBytes, "1フレームにコピーする量は上限を超えてはならない");
             if (recorded < pendingBefore)
             {
                 ++deferredFrames;
@@ -379,15 +383,37 @@ namespace
         VariableArray<uint8_t> tooBig;
         tooBig.resize(static_cast<size_t>(TestRingBytes + 1u));
         Expect(!uploader.EnqueueTile(harness.Texture, spec.Region, tooBig.data(), tooBig.size()), "リングより大きいデータは断る");
+        {
+            // フレームのコピー量の上限より大きい1件は、リングに収まっても断る
+            TileUploader::Config tightConfig;
+            tightConfig.RingBytes = TestRingBytes;
+            tightConfig.FrameCopyLimitBytes = Page / 2u;
+            TileUploader tight(harness.Device, tightConfig);
+            Expect(!tight.EnqueueTile(harness.Texture, spec.Region, data.data(), data.size()),
+                   "フレームのコピー量の上限より大きい1件は断る");
+            Expect(tight.GetStats().PendingCopies == 0u, "断った依頼は積まれない");
+        }
         TextureRegionCopy emptyRegion = spec.Region;
         emptyRegion.Width = 0;
         Expect(!uploader.EnqueueTile(harness.Texture, emptyRegion, data.data(), spec.Bytes), "矩形が空のコピーは断る");
         Expect(uploader.GetStats().RingBytes == 0, "断った Enqueue ではリングを作らない");
 
-        // 4タイル分を詰め込むとリングが満杯になる（テクスチャは連続フレームのテストで初期化済み）
+        // 4タイル分を詰め込むとリングが満杯になる（テクスチャは連続フレームのテストで初期化済み）。
+        // 領域が重なるコピーは同じフレームへ積めないので、4件は別々のタイルへ書く。
         for (uint32_t index = 0; index < 4u; ++index)
         {
-            Expect(uploader.EnqueueTile(harness.Texture, spec.Region, data.data(), data.size()), "リングの空きがある間は積める");
+            Expect(uploader.EnqueueTile(harness.Texture, harness.Regions[index].Region, data.data(), data.size()),
+                   "リングの空きがある間は積める");
+        }
+        {
+            // リングは DeviceLocal でない host-visible のメモリでなければならない
+            const BufferPtr ring = uploader.GetRingBuffer();
+            Expect(ring != nullptr, "最初の Enqueue でリングを作る");
+            const uint32_t flags = RHI::Vulkan::GetVulkanBufferMemoryPropertyFlagsForTesting(ring.get());
+            std::cout << TestName << " ring_memory_flags=0x" << std::hex << flags << std::dec << std::endl;
+            Expect((flags & VkMemoryHostVisibleBit) != 0u && (flags & VkMemoryHostCoherentBit) != 0u,
+                   "リングは host-visible・host-coherent でなければならない");
+            Expect((flags & VkMemoryDeviceLocalBit) == 0u, "リングは DeviceLocal のメモリであってはならない");
         }
         Expect(!uploader.EnqueueTile(harness.Texture, spec.Region, data.data(), data.size()), "満杯のリングへは積めない");
         Expect(uploader.GetStats().RingUsedBytes == TestRingBytes, "満杯のとき使用量はリングの大きさ");
@@ -409,7 +435,8 @@ namespace
         Expect(uploader.GetStats().RingUsedBytes == 0, "serial 10 の完了で区画が空く");
         for (uint32_t index = 0; index < 4u; ++index)
         {
-            Expect(uploader.EnqueueTile(harness.Texture, spec.Region, data.data(), data.size()), "空いた区画へまた積める（リングを回す）");
+            Expect(uploader.EnqueueTile(harness.Texture, harness.Regions[index].Region, data.data(), data.size()),
+                   "空いた区画へまた積める（リングを回す）");
         }
 
         // 提出しなかったフレームは、記録を未記録へ戻して次のフレームで出し直す
@@ -435,37 +462,152 @@ namespace
         uploader.BeginFrame(11u);
         Expect(uploader.GetStats().RingUsedBytes == 0, "出し直した分も完了で区画が空く");
 
-        // 上限（ここでは 1 タイル未満）より大きい先頭の1件は、そのフレームの最初の1件なので必ずコピーする
+        // 上限が 1.5 タイル分なら、1フレームに入るのは1件まで（2件目で上限を超える）
         TileUploader::Config smallLimit;
         smallLimit.RingBytes = TestRingBytes;
-        smallLimit.FrameCopyLimitBytes = Page / 2u;
+        smallLimit.FrameCopyLimitBytes = Page + Page / 2u;
         TileUploader limited(harness.Device, smallLimit);
         for (uint32_t index = 0; index < 3u; ++index)
         {
-            Expect(limited.EnqueueTile(harness.Texture, spec.Region, data.data(), data.size()), "上限の小さい構成でも積める");
+            Expect(limited.EnqueueTile(harness.Texture, harness.Regions[index].Region, data.data(), data.size()),
+                   "上限に収まる1件ずつは積める");
         }
+        for (uint32_t frame = 0; frame < 3u; ++frame)
         {
             CommandListPtr commandList = harness.Device->CreateCommandList();
             commandList->Begin();
-            limited.BeginFrame(0u);
-            Expect(limited.RecordCopies(*commandList) == 1u, "上限より大きくても、フレームの最初の1件だけはコピーする");
+            limited.BeginFrame(frame);
+            Expect(limited.RecordCopies(*commandList) == 1u, "上限を超えない1件だけを1フレームに記録する");
+            Expect(limited.GetStats().FrameCopiedBytes <= smallLimit.FrameCopyLimitBytes, "フレームのコピー量は上限以下");
             commandList->End();
             commandList->Submit(true);
-            limited.CommitFrame(1u);
-        }
-        {
-            CommandListPtr commandList = harness.Device->CreateCommandList();
-            commandList->Begin();
-            limited.BeginFrame(1u);
-            Expect(limited.RecordCopies(*commandList) == 1u, "次のフレームでまた1件ずつ進む");
-            commandList->End();
-            commandList->Submit(true);
-            limited.CommitFrame(2u);
+            limited.CommitFrame(frame + 1u);
         }
         harness.Device->WaitIdle();
         uploader.Clear();
         limited.Clear();
         Expect(uploader.GetStats().RingBytes == 0 && uploader.GetStats().RingUsedBytes == 0, "Clear でリングと使用量を手放す");
+    }
+
+    // 領域を最後に書いた内容を、別のコマンドで読み戻して確かめる
+    bool RegionEquals(Harness& harness, const RegionSpec& spec, const VariableArray<uint8_t>& expected)
+    {
+        BufferPtr readback = harness.Device->CreateBuffer(
+            BufferDesc(SlotReadbackBytes, ResourceUsage::TransferDst, true, "SparseTileUploadOverlapReadback"));
+        if (!readback)
+        {
+            return false;
+        }
+        CommandListPtr commandList = harness.Device->CreateCommandList();
+        commandList->Begin();
+        commandList->TextureBarrier(harness.Texture, ResourceState::ShaderResource, ResourceState::CopySource);
+        TextureRegionCopy region = spec.Region;
+        region.BufferOffset = 0;
+        const bool bRecorded = commandList->CopyTextureRegionToBuffer(harness.Texture, readback, region);
+        commandList->TextureBarrier(harness.Texture, ResourceState::CopySource, ResourceState::ShaderResource);
+        commandList->BufferBarrier(readback, ResourceState::CopyDest, ResourceState::HostRead, 0u, spec.Bytes);
+        commandList->End();
+        commandList->Submit(true);
+        const uint8_t* mapped = static_cast<const uint8_t*>(readback->Map(0u, spec.Bytes));
+        const bool bSame = bRecorded && mapped != nullptr && expected.size() == spec.Bytes &&
+                           std::memcmp(mapped, expected.data(), static_cast<size_t>(spec.Bytes)) == 0;
+        if (mapped != nullptr)
+        {
+            readback->Unmap();
+        }
+        return bSame;
+    }
+
+    // 同じ領域へ異なる内容を続けて積んでも、後に積んだ内容が残る。
+    // 領域が重なるコピーは同じフレームへ入らず、重ならないコピーは同じフレームへ入る。
+    void TestOverlappingWrites(Harness& harness)
+    {
+        std::cout << TestName << " --- 同じ領域への連続コピー ---" << std::endl;
+        TileUploader::Config config;
+        config.RingBytes = TestRingBytes;
+        config.FrameCopyLimitBytes = 8u * Page;
+        TileUploader uploader(harness.Device, config);
+        const RegionSpec& r0 = harness.Regions[0];
+        const RegionSpec& r1 = harness.Regions[1];
+        const RegionSpec& r2 = harness.Regions[2];
+        const VariableArray<uint8_t> first = MakeData(1001u, r0.Bytes);
+        const VariableArray<uint8_t> second = MakeData(1002u, r0.Bytes);
+        const VariableArray<uint8_t> other = MakeData(1003u, r1.Bytes);
+
+        // 重ならない（辺が接するだけの）3領域は、同じフレームへ入る
+        Expect(uploader.EnqueueTile(harness.Texture, r0.Region, first.data(), first.size()), "r0 を積む");
+        Expect(uploader.EnqueueTile(harness.Texture, r1.Region, other.data(), other.size()), "r1 を積む");
+        Expect(uploader.EnqueueTile(harness.Texture, r2.Region, other.data(), other.size()), "r2 を積む");
+        {
+            CommandListPtr commandList = harness.Device->CreateCommandList();
+            commandList->Begin();
+            uploader.BeginFrame(0u);
+            Expect(uploader.RecordCopies(*commandList) == 3u, "重ならない3件は同じフレームへ記録する");
+            commandList->End();
+            commandList->Submit(true);
+            uploader.CommitFrame(1u);
+        }
+
+        // r0 へ first→second の順、間に r1 を挟む。r0 の2件目は次のフレームへ送り、順序を保つ
+        uploader.BeginFrame(1u);
+        Expect(uploader.EnqueueTile(harness.Texture, r0.Region, first.data(), first.size()), "r0 に first を積む");
+        Expect(uploader.EnqueueTile(harness.Texture, r1.Region, other.data(), other.size()), "r1 を積む");
+        Expect(uploader.EnqueueTile(harness.Texture, r0.Region, second.data(), second.size()), "r0 に second を積む");
+        Expect(uploader.EnqueueTile(harness.Texture, r2.Region, other.data(), other.size()), "r2 を積む");
+        uint64_t serial = 2u;
+        uint32_t frames = 0;
+        uint32_t firstFrameCopies = 0;
+        while (uploader.GetStats().PendingCopies > 0u && frames < 8u)
+        {
+            CommandListPtr commandList = harness.Device->CreateCommandList();
+            commandList->Begin();
+            uploader.BeginFrame(serial - 1u);
+            const uint32_t recorded = uploader.RecordCopies(*commandList);
+            if (frames == 0u)
+            {
+                firstFrameCopies = recorded;
+            }
+            Expect(recorded > 0u, "積んだコピーは必ず進む（重なりで詰まらない）");
+            commandList->End();
+            commandList->Submit(true);
+            uploader.CommitFrame(serial);
+            ++serial;
+            ++frames;
+        }
+        std::cout << TestName << " overlap_frames=" << frames << " first_frame_copies=" << firstFrameCopies << std::endl;
+        Expect(firstFrameCopies == 2u, "最初のフレームは r0・r1 の2件で、r0 の2件目で区切る");
+        Expect(frames == 2u, "重なる2件は2フレームに分かれる");
+        Expect(RegionEquals(harness, r0, second), "同じ領域へ続けて積んだときは後の内容が残る");
+        Expect(RegionEquals(harness, r1, other), "挟んだ別領域の内容も保たれる");
+
+        harness.Device->WaitIdle();
+        uploader.Clear();
+    }
+
+    // 既存の VulkanTexture::Update（キューの完了待ちを含む経路）を、計数が検出できることの確認。
+    // これが 0 のままなら「WaitIdle を呼ばない」ことの検査として意味を持たない。
+    void TestWaitIdleCounterDetectsUpdate(Harness& harness)
+    {
+        std::cout << TestName << " --- 完了待ちの計数が既存の Update を検出する ---" << std::endl;
+        TextureDesc desc;
+        desc.Width = 4u;
+        desc.Height = 4u;
+        desc.TextureFormat = Format::R8G8B8A8_UNORM;
+        desc.Usage = ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
+        desc.DebugName = "SparseTileUploadWaitProbe";
+        TexturePtr probe = harness.Device->CreateTexture(desc);
+        if (!probe)
+        {
+            Expect(false, "計数の確認用テクスチャを作れなければならない");
+            return;
+        }
+        uint8_t pixels[4u * 4u * 4u] = {};
+        const uint64_t before = RHI::Vulkan::GetVulkanDeviceWaitIdleCallCountForTesting();
+        probe->Update(pixels, 4u * 4u, sizeof(pixels), 0u, 0u);
+        const uint64_t after = RHI::Vulkan::GetVulkanDeviceWaitIdleCallCountForTesting();
+        std::cout << TestName << " update_wait_calls=" << (after - before) << std::endl;
+        Expect(after > before, "既存の Update 経路の完了待ちを、計数が検出できなければならない");
+        harness.Device->WaitIdle();
     }
 
     int RunTest()
@@ -604,6 +746,8 @@ namespace
             TestContinuousFrames(harness);
             TestFinalContents(harness);
             TestRingContract(harness);
+            TestOverlappingWrites(harness);
+            TestWaitIdleCounterDetectsUpdate(harness);
 
             device->WaitIdle();
             for (BufferPtr& readback : harness.Readback)

@@ -62,6 +62,8 @@ namespace NorvesLib::RHI::Vulkan
         std::atomic<uint32_t> g_safeDeviceTeardownLeakCount{0};
         // vkDeviceWaitIdle を呼んだ回数（GPU を待たない経路のテスト用）
         std::atomic<uint64_t> g_waitIdleCallCount{0};
+        // vkQueueWaitIdle（単発コマンドの完了待ち）を呼んだ回数。VulkanTexture::Update などの経路を検出する
+        std::atomic<uint64_t> g_queueWaitIdleCallCount{0};
         thread_local vk::Device g_textureUpdateSyncScopeDevice{};
         thread_local vk::Device g_registeredTextureUpdateStagingDevice{};
         thread_local vk::Buffer g_registeredTextureUpdateStagingBuffer{};
@@ -269,7 +271,9 @@ namespace NorvesLib::RHI::Vulkan
 
     uint64_t GetVulkanDeviceWaitIdleCallCountForTesting() noexcept
     {
-        return g_waitIdleCallCount.load(std::memory_order_relaxed);
+        // vkDeviceWaitIdle に加えて、単発コマンドの完了待ち（vkQueueWaitIdle）も数える
+        return g_waitIdleCallCount.load(std::memory_order_relaxed) +
+               g_queueWaitIdleCallCount.load(std::memory_order_relaxed);
     }
 
     uint32_t GetVulkanSafeDeviceTeardownLeakCountForTesting() noexcept
@@ -1727,12 +1731,13 @@ namespace NorvesLib::RHI::Vulkan
     }
 
     // メモリタイプのインデックス検索
-    uint32_t VulkanDevice::FindMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const
+    uint32_t VulkanDevice::FindMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties,
+                                          vk::MemoryPropertyFlags excluded) const
     {
         for (uint32_t i = 0; i < m_memoryProperties.memoryTypeCount; i++)
         {
-            if ((typeFilter & (1 << i)) &&
-                (m_memoryProperties.memoryTypes[i].propertyFlags & properties) == properties)
+            const vk::MemoryPropertyFlags flags = m_memoryProperties.memoryTypes[i].propertyFlags;
+            if ((typeFilter & (1 << i)) && (flags & properties) == properties && !(flags & excluded))
             {
                 return i;
             }
@@ -1848,6 +1853,7 @@ namespace NorvesLib::RHI::Vulkan
         const bool bInjectWaitFailure =
             failurePoint == static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::Wait) ||
             failurePoint == static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::WaitAndFallback);
+        g_queueWaitIdleCallCount.fetch_add(1, std::memory_order_relaxed);
         const vk::Result queueWaitResult = bInjectWaitFailure
             ? vk::Result::eErrorOutOfHostMemory
             : m_graphicsQueue.waitIdle();

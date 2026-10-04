@@ -152,7 +152,13 @@ namespace NorvesLib::RHI::Vulkan
         uint32_t GetTransferQueueFamilyIndex() const { return m_transferQueueFamilyIndex; }
 
         // メモリ管理
-        uint32_t FindMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
+        // excluded に含まれる属性を持つメモリタイプは選ばない
+        uint32_t FindMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties,
+                                vk::MemoryPropertyFlags excluded = {}) const;
+        vk::MemoryPropertyFlags GetMemoryTypeFlags(uint32_t memoryTypeIndex) const
+        {
+            return m_memoryProperties.memoryTypes[memoryTypeIndex].propertyFlags;
+        }
 
         // コマンドプール
         vk::CommandPool GetCommandPool() const { return m_commandPool; }

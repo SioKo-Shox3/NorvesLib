@@ -200,7 +200,14 @@ namespace NorvesLib::RHI::Vulkan
         vk::MemoryRequirements memRequirements = vkDevice.getBufferMemoryRequirements(m_buffer);
 
         // メモリタイプのインデックスを取得
-        uint32_t memoryTypeIndex = m_device->FindMemoryType(memRequirements.memoryTypeBits, properties);
+        const vk::MemoryPropertyFlags excludedProps =
+            m_desc.bExcludeDeviceLocal ? vk::MemoryPropertyFlagBits::eDeviceLocal : vk::MemoryPropertyFlags{};
+        uint32_t memoryTypeIndex = m_device->FindMemoryType(memRequirements.memoryTypeBits, properties, excludedProps);
+        m_memoryPropertyFlags = m_device->GetMemoryTypeFlags(memoryTypeIndex);
+        if (m_desc.bExcludeDeviceLocal && (m_memoryPropertyFlags & vk::MemoryPropertyFlagBits::eDeviceLocal))
+        {
+            throw std::runtime_error("DeviceLocal を除外したバッファに DeviceLocal のメモリが選ばれました");
+        }
 
         // メモリ割り当て情報
         vk::MemoryAllocateInfo allocInfo{};
@@ -298,6 +305,14 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         return usage;
+    }
+
+
+    // テスト用: バッファの実際のメモリ属性（VkMemoryPropertyFlags）。Vulkan のバッファでなければ 0
+    uint32_t GetVulkanBufferMemoryPropertyFlagsForTesting(const IBuffer *buffer) noexcept
+    {
+        const auto *vulkanBuffer = dynamic_cast<const VulkanBuffer *>(buffer);
+        return vulkanBuffer != nullptr ? vulkanBuffer->GetMemoryPropertyFlags() : 0u;
     }
 
 } // namespace NorvesLib::RHI::Vulkan
