@@ -256,6 +256,35 @@ void TestClearReleasesEverything()
     Expect(queue.GetPendingCount() == 0, "Clear の後は待ち行列が空");
 }
 
+void TestClearResetsSerialsForReinitialization()
+{
+    GpuRetireQueue queue;
+    queue.BeginFrame(0);
+    queue.CommitFrame(5);
+    // 記録中のまま（提出も中止もしないで）終わった状態から再初期化する。
+    queue.BeginFrame(5);
+    queue.Clear();
+
+    // 新しい提出系列は serial が 1 から始まる。古い 5 が残っていると 1 が完了済みと誤判定される。
+    queue.BeginFrame(0);
+    queue.CommitFrame(1);
+    queue.Retire(MakeFakeTexture());
+    queue.Retire(MakeFakeBuffer());
+    Expect(g_liveTextures == 1 && g_liveBuffers == 1, "再初期化後の提出が完了するまで破棄されない");
+
+    queue.Collect(0);
+    Expect(g_liveTextures == 1 && g_liveBuffers == 1, "新しい系列の serial が届く前は破棄されない");
+    queue.Collect(1);
+    Expect(g_liveTextures == 0 && g_liveBuffers == 0, "新しい系列の serial が届いたら破棄される");
+
+    // 記録中の印も残らない: Clear の後に頼んだ解放は、提出前なら即座に破棄される。
+    GpuRetireQueue open;
+    open.BeginFrame(0);
+    open.Clear();
+    open.Retire(MakeFakeTexture());
+    Expect(g_liveTextures == 0, "Clear の後は記録中の印が残らず、何も提出していなければ即座に破棄される");
+}
+
 void TestDestructorReleasesEverything()
 {
     {
@@ -333,6 +362,7 @@ int RunTest()
     TestRetiredDuringRecordingWaitsForThatFrame();
     TestAbortedFrameFallsBackToLastSubmitted();
     TestClearReleasesEverything();
+    TestClearResetsSerialsForReinitialization();
     TestDestructorReleasesEverything();
     TestRenderResourcesRetiresReleasedResources();
 
@@ -345,8 +375,8 @@ int RunTest()
     return 0;
 }
 
-} // namespace
-} // namespace NorvesLib
+} // 無名名前空間の終わり
+} // NorvesLib 名前空間の終わり
 
 int main()
 {

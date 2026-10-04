@@ -98,7 +98,12 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        /** @brief GPU が完全に止まった後（WaitIdle の後）に、期限を問わず全部破棄する。 */
+        /**
+         * @brief GPU が完全に止まった後（WaitIdle の後）に、期限を問わず全部破棄して初期状態へ戻す。
+         *
+         * 提出・完了の serial と記録中の印も振り出しに戻す。残すと、再初期化後の新しい提出系列で
+         * 古い serial が「完了済み」と判定され、GPU の使用中に資源を破棄してしまう。
+         */
         void Clear()
         {
             Container::VariableArray<Entry> released;
@@ -106,6 +111,9 @@ namespace NorvesLib::Core::Rendering
                 Thread::ScopedLock lock(m_Mutex);
                 released = std::move(m_Entries);
                 m_Entries.clear();
+                m_LastSubmittedSerial = 0;
+                m_CompletedSerial = 0;
+                m_bFrameOpen = false;
             }
         }
 
