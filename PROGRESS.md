@@ -607,3 +607,6 @@
 
 - G2-GR32-V02-WRITER: 1primitiveもslot名を保持し、統一0.2/320B/表/UTF-8/new hashを生成、再parseで表と名前を照合。旧空表は全index/Default slotへ具体化、静止頂点boundsは最終scale後に計算。cacheはminor2必須として旧0/1はload互換のみ。第1周で共通JSONのsurrogate未結合を発見し、pure escape/scalar部品で結合・不正拒否・4byte UTF-8を修正、第2周PASS。pure bounds/layout・JSON各3mode計6runと実MEMBER2件、wire/name回帰成功。全scalarのUTF8黄金hash、cache fixture JSON/配置も独立確認。raw/GLB→cook/parse・単一slot/Unicode名・旧cachemiss/新hit・出力保持はnative登録、Windows.hで本体/CLI未実行。M9新表guardはResource/描画接続まで維持。
 - Next: GR32-RESOURCE-TABLES → COMPONENT-SLOTS → DRAW-RANGES。CPU契約と描画実装の接続を進め、Windows/GPU受入れはblockedの別gateに保持する。
+
+- G2-GR32-RESOURCE-TABLES: SkinnedMeshResourceがsubmesh/slot名を所有し、geometry/有限bounds/頂点範囲/名前をLoad・Refreshで検査して不変leaseへコピーする。旧3引数/空表互換と、generation/非active/Unload後のsnapshot寿命を維持。新表FrameLeaseは範囲draw接続まで明示拒否し、情報を単一drawへ落とさない。純実index/metadata/layout3mode・MEMBER成功、独立PASS。native1/2/8表・不正slot/NUL・直前generation比較・明示表Unload後保持を登録、Windows.hでResource/Core/描画実行は未検証。
+- Next: GR32-COMPONENT-SLOTS。材質slotの名前/index API、旧材質fallback、世代差し替え時の安全なbindingとframe値所有を接続する。

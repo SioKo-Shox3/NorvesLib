@@ -119,6 +119,28 @@ int main()
     assert(!ComputeSkeletalSubmeshBounds({},3,read,bounds));
     assert(!ComputeSkeletalSubmeshBounds({nullptr,3},3,read,bounds));
     assert(!ComputeSkeletalSubmeshBounds(ids,0,read,bounds));
+    uint32_t actualIndices[] = {0,1,2,0,2,1};
+    SkeletalSubMesh actualRanges[] = {{0,3,0},{3,3,1}};
+    assert(ValidateSkeletalSubmeshData({},actualIndices,3,0).Succeeded());
+    assert(ValidateSkeletalSubmeshData(actualRanges,actualIndices,3,2).Succeeded());
+    AssertFailure(ValidateSkeletalSubmeshData(actualRanges,{nullptr,6},3,2),Status::InvalidVertexData);
+    AssertFailure(ValidateSkeletalSubmeshData(actualRanges,actualIndices,0,2),Status::InvalidVertexData);
+    actualIndices[5] = 3;
+    AssertFailure(ValidateSkeletalSubmeshData(actualRanges,actualIndices,3,2),Status::InvalidVertexData);
+    actualIndices[5] = 1;
+    actualRanges[1].VertexCount = 2;
+    AssertFailure(ValidateSkeletalSubmeshData(actualRanges,actualIndices,3,2),Status::InvalidVertexData);
+    actualRanges[1].VertexCount = 4;
+    AssertFailure(ValidateSkeletalSubmeshData(actualRanges,actualIndices,3,2),Status::InvalidVertexData);
+    actualRanges[1].VertexCount = 3;
+    actualRanges[1].BoundsRadius = -1;
+    AssertFailure(ValidateSkeletalSubmeshData(actualRanges,actualIndices,3,2),Status::InvalidMetadata);
+    actualRanges[1].BoundsRadius = 1;
+    actualRanges[0].BoundsCenter[2] = std::numeric_limits<float>::infinity();
+    AssertFailure(ValidateSkeletalSubmeshData(actualRanges,actualIndices,3,2),Status::InvalidMetadata);
+    actualRanges[0].BoundsCenter[2] = 0;
+    actualRanges[1].bNoShadow = true;
+    assert(ValidateSkeletalSubmeshData(actualRanges,actualIndices,3,2).Succeeded() && actualRanges[1].bNoShadow);
     std::cout << "SkeletalSubmeshLayoutTest PASS: packed_ranges_slots_legacy_empty_limits_atomic_readonly\n";
     return 0;
 }

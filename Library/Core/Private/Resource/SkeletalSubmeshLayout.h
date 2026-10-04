@@ -15,7 +15,9 @@ namespace NorvesLib::Core::Skeletal
         SubmeshLimitExceeded,
         MaterialSlotLimitExceeded,
         InvalidIndexRange,
-        InvalidMaterialSlot
+        InvalidMaterialSlot,
+        InvalidVertexData,
+        InvalidMetadata
     };
     struct SkeletalSubmeshLayoutResult
     {
@@ -34,4 +36,8 @@ namespace NorvesLib::Core::Skeletal
     // indexの実値/頂点範囲、slot名の妥当性/重複、wireのreservedは別の検証責務。
     [[nodiscard]] SkeletalSubmeshLayoutResult ResolveSkeletalSubmeshLayout(
         Container::Span<const SkeletalSubMesh> submeshes, uint64_t totalIndexCount, uint64_t materialSlotCount) noexcept;
+    // layoutに加えて実index/任意頂点範囲/有限boundsを検査する。名前は所有境界で検査する。
+    [[nodiscard]] SkeletalSubmeshLayoutResult ValidateSkeletalSubmeshData(
+        Container::Span<const SkeletalSubMesh> submeshes, Container::Span<const uint32_t> indices,
+        uint64_t vertexCount, uint64_t materialSlotCount) noexcept;
 } // namespace NorvesLib::Core::Skeletal

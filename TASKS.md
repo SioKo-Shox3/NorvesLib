@@ -2176,7 +2176,7 @@
 - stop-when: table/nameを失う、旧cacheを新writer済み扱い、Resource/描画の未接続を成功と偽る。
 
 ## G2-GR32-RESOURCE-TABLES: 所有資産と不変leaseへsubmesh表を保持する
-- status: todo
+- status: done
 - done-when: SkinnedMeshResourceがsubmesh/slot名を所有・検証し、不変AssetLeaseへ世代単位で保持する。旧空表/3引数lease互換を保ち、未対応描画への新表の無言破棄はguardする。
 - verify: 旧互換/1・2・8表/片側空/範囲/名前保持/世代とlease寿命/不正時の非公開をCPU契約へ登録する。native未実行は明記する。
 - stop-when: RenderThreadがmutable Resourceを参照、表の無言破棄、旧frame leaseの内容を後から書換える。

@@ -25,6 +25,11 @@ namespace NorvesLib::Core
 
         void SetVertices(Container::VariableArray<Skeletal::SkeletalVertex>&& vertices);
         void SetIndices(Container::VariableArray<uint32_t>&& indices);
+        // Load/Refresh時に両表とgeometryをまとめて検査する。既存leaseはrefreshまで不変。
+        void SetSubmeshTables(Container::VariableArray<Skeletal::SkeletalSubMesh>&& submeshes,
+                              Container::VariableArray<Skeletal::SkeletalMaterialSlot>&& slots);
+        const Container::VariableArray<Skeletal::SkeletalSubMesh>& GetSubMeshes() const;
+        const Container::VariableArray<Skeletal::SkeletalMaterialSlot>& GetMaterialSlots() const;
         void SetMeshNodeGlobalTransform(const Container::FixedArray<float, 16>& transform);
 
         Rendering::SkinnedMeshHandle GetRenderMeshHandle() const;
@@ -40,6 +45,8 @@ namespace NorvesLib::Core
         uint64_t m_RenderAssetGeneration = 0;
         Container::VariableArray<Skeletal::SkeletalVertex> m_Vertices;
         Container::VariableArray<uint32_t> m_Indices;
+        Container::VariableArray<Skeletal::SkeletalSubMesh> m_SubMeshes;
+        Container::VariableArray<Skeletal::SkeletalMaterialSlot> m_MaterialSlots;
         Container::FixedArray<float, 16> m_MeshNodeGlobalTransform{
             1.0f, 0.0f, 0.0f, 0.0f,
             0.0f, 1.0f, 0.0f, 0.0f,

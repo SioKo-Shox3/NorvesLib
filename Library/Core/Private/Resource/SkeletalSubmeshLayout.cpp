@@ -1,4 +1,5 @@
 ﻿#include "Resource/SkeletalSubmeshLayout.h"
+#include <cmath>
 #include "Resource/SkeletalLimits.h"
 #include <limits>
 
@@ -67,5 +68,59 @@ namespace NorvesLib::Core::Skeletal
         result.SubmeshCount = static_cast<uint32_t>(submeshes.size());
         result.MaterialSlotCount = static_cast<uint32_t>(materialSlotCount);
         return result;
+    }
+    SkeletalSubmeshLayoutResult ValidateSkeletalSubmeshData(
+        Container::Span<const SkeletalSubMesh> submeshes, Container::Span<const uint32_t> indices,
+        uint64_t vertexCount, uint64_t materialSlotCount) noexcept
+    {
+        const auto layout = ResolveSkeletalSubmeshLayout(submeshes, indices.size(), materialSlotCount);
+        if (!layout.Succeeded())
+        {
+            return layout;
+        }
+        SkeletalSubmeshLayoutResult failure;
+        failure.Status = SkeletalSubmeshLayoutStatus::InvalidVertexData;
+        if (!indices.data() || vertexCount == 0 || vertexCount > UINT32_MAX)
+        {
+            return failure;
+        }
+        for (uint32_t index : indices)
+        {
+            if (index >= vertexCount)
+            {
+                return failure;
+            }
+        }
+        for (const auto& submesh : submeshes)
+        {
+            if (submesh.VertexCount > vertexCount)
+            {
+                return failure;
+            }
+            if (submesh.VertexCount != 0)
+            {
+                for (size_t index = submesh.IndexStart; index < size_t(submesh.IndexStart) + submesh.IndexCount; ++index)
+                {
+                    if (indices[index] >= submesh.VertexCount)
+                    {
+                        return failure;
+                    }
+                }
+            }
+            failure.Status = SkeletalSubmeshLayoutStatus::InvalidMetadata;
+            if (!std::isfinite(submesh.BoundsRadius) || submesh.BoundsRadius < 0.0f)
+            {
+                return failure;
+            }
+            for (float center : submesh.BoundsCenter)
+            {
+                if (!std::isfinite(center))
+                {
+                    return failure;
+                }
+            }
+            failure.Status = SkeletalSubmeshLayoutStatus::InvalidVertexData;
+        }
+        return layout;
     }
 } // namespace NorvesLib::Core::Skeletal

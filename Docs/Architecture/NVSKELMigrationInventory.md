@@ -142,3 +142,18 @@ Windows.hに依存するためこのLinux環境では登録・静的照合に留
 submeshのflags/bounds/任意VertexCountを所有型へ残し、未接続M9経路は表付き資産を明示拒否する。
 writerは統一0.2へ切替え、単一primitiveのslot名も保存する。cacheはminor2を要求し、旧版は通常loadのみ維持する。
 readerのnative回帰は登録済みだがWindows/Core全体の実行は未検証。描画受入れも未完。
+
+## Resourceと不変leaseの表保持
+
+SkinnedMeshResourceのSetSubmeshTablesはsubmesh/slot名を所有する。Load/Refreshでgeometryと表をまとめて検査し、
+名前は0.2と同じUTF-8/code unit条件で検査する。旧両表空は従来の全index/単一材質経路を保つ。
+slot名の空/重複は保持し、名前APIが曖昧な名前を勝手に選ぶことは許さない（名前APIは次工程）。
+
+成功したleaseは表と名前をコピー所有し、resourceの後続変更・Unload後も取得済みsnapshotの内容を変えない。
+refreshで旧leaseは非activeになり、新しい有効データに別generationを割り当てる。不正表は新leaseとして公開しない。
+GetMemorySizeにはresource側の表とslot名の所有サイズを加える。
+
+現段階のFrameLeaseは明示表付き資産を範囲draw未対応として拒否する。旧3引数AssetLeaseと空表FrameLeaseは従来通り。
+このguardをDRAW-RANGESで範囲検証に置き換えるまで、新表のCPU保持を描画完了とは扱わない。
+純layout/実index/頂点範囲/有限bounds検査を実行し、Resourceの1/2/8表・不正名/範囲・世代・Unload寿命はnative回帰へ登録する。
+native Resource/Core/描画のWindows実行はまだ未検証。

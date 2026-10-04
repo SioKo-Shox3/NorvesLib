@@ -1,4 +1,6 @@
 ﻿#include "Resource/SkinnedMeshResource.h"
+#include "Resource/SkeletalSubmeshLayout.h"
+#include "Asset/CookedSkeletalNameCodec.h"
 
 #include <utility>
 
@@ -51,13 +53,21 @@ namespace NorvesLib::Core
         ReleaseRenderAssetLease();
         m_Vertices.clear();
         m_Indices.clear();
+        m_SubMeshes.clear();
+        m_MaterialSlots.clear();
         SetResourceState(ResourceState::Unloaded);
     }
 
     size_t SkinnedMeshResource::GetMemorySize() const
     {
-        return sizeof(SkinnedMeshResource) + m_Vertices.size() * sizeof(Skeletal::SkeletalVertex) +
-               m_Indices.size() * sizeof(uint32_t);
+        size_t size = sizeof(SkinnedMeshResource) + m_Vertices.size() * sizeof(Skeletal::SkeletalVertex) +
+            m_Indices.size() * sizeof(uint32_t) + m_SubMeshes.size() * sizeof(Skeletal::SkeletalSubMesh) +
+            m_MaterialSlots.size() * sizeof(Skeletal::SkeletalMaterialSlot);
+        for (const auto& slot : m_MaterialSlots)
+        {
+            size += slot.Name.size() * sizeof(Container::String::value_type);
+        }
+        return size;
     }
 
     void SkinnedMeshResource::SetVertices(Container::VariableArray<Skeletal::SkeletalVertex>&& vertices)
@@ -68,6 +78,23 @@ namespace NorvesLib::Core
     void SkinnedMeshResource::SetIndices(Container::VariableArray<uint32_t>&& indices)
     {
         m_Indices = std::move(indices);
+    }
+
+    void SkinnedMeshResource::SetSubmeshTables(Container::VariableArray<Skeletal::SkeletalSubMesh>&& submeshes,
+        Container::VariableArray<Skeletal::SkeletalMaterialSlot>&& slots)
+    {
+        m_SubMeshes = std::move(submeshes);
+        m_MaterialSlots = std::move(slots);
+    }
+
+    const Container::VariableArray<Skeletal::SkeletalSubMesh>& SkinnedMeshResource::GetSubMeshes() const
+    {
+        return m_SubMeshes;
+    }
+
+    const Container::VariableArray<Skeletal::SkeletalMaterialSlot>& SkinnedMeshResource::GetMaterialSlots() const
+    {
+        return m_MaterialSlots;
     }
 
     void SkinnedMeshResource::SetMeshNodeGlobalTransform(const Container::FixedArray<float, 16>& transform)
@@ -107,12 +134,21 @@ namespace NorvesLib::Core
         {
             return;
         }
-        for (uint32_t index : m_Indices)
+        if (!Skeletal::ValidateSkeletalSubmeshData({m_SubMeshes.data(), m_SubMeshes.size()},
+                {m_Indices.data(), m_Indices.size()}, m_Vertices.size(), m_MaterialSlots.size()).Succeeded())
         {
-            if (static_cast<size_t>(index) >= m_Vertices.size())
+            return;
+        }
+        Container::VariableArray<Container::String> slotNames;
+        slotNames.reserve(m_MaterialSlots.size());
+        for (const auto& slot : m_MaterialSlots)
+        {
+            if (!Asset::MeasureSkeletalNameEncoding<Container::String::value_type>(2,
+                    {slot.Name.data(), slot.Name.size()}).Succeeded())
             {
                 return;
             }
+            slotNames.push_back(slot.Name);
         }
 
         Container::VariableArray<Rendering::SkinnedMeshVertex> renderVertices;
@@ -137,6 +173,7 @@ namespace NorvesLib::Core
         }
 
         Container::VariableArray<uint32_t> renderIndices = m_Indices;
+        Container::VariableArray<Skeletal::SkeletalSubMesh> renderSubmeshes = m_SubMeshes;
         Rendering::SkinnedMeshHandle handle;
         handle.Id = GetResourceId();
         ++m_RenderAssetGeneration;
@@ -148,7 +185,9 @@ namespace NorvesLib::Core
         m_RenderAssetLease = Container::MakeShared<Rendering::SkinnedMeshAssetLease>(
             handle,
             std::move(renderVertices),
-            std::move(renderIndices));
+            std::move(renderIndices),
+            std::move(renderSubmeshes),
+            std::move(slotNames));
     }
 
     void SkinnedMeshResource::ReleaseRenderAssetLease()

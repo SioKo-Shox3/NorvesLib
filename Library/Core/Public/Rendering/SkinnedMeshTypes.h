@@ -8,6 +8,7 @@
 #include "Rendering/RenderTypes.h"
 #include "RHI/RHITypes.h"
 #include "Thread/Atomic.h"
+#include "Resource/SkeletalSubMesh.h"
 
 #include <cstdint>
 #include <utility>
@@ -68,6 +69,26 @@ namespace NorvesLib::Core::Rendering
         {
         }
 
+        SkinnedMeshAssetLease(SkinnedMeshHandle handle,
+                              Container::VariableArray<SkinnedMeshVertex>&& vertices,
+                              Container::VariableArray<uint32_t>&& indices,
+                              Container::VariableArray<Skeletal::SkeletalSubMesh>&& submeshes,
+                              Container::VariableArray<Container::String>&& slotNames)
+            : m_Handle(handle), m_Vertices(std::move(vertices)), m_Indices(std::move(indices)),
+              m_SubMeshes(std::move(submeshes)), m_MaterialSlotNames(std::move(slotNames))
+        {
+        }
+
+        [[nodiscard]] const Container::VariableArray<Skeletal::SkeletalSubMesh>& GetSubMeshes() const
+        {
+            return m_SubMeshes;
+        }
+
+        [[nodiscard]] const Container::VariableArray<Container::String>& GetMaterialSlotNames() const
+        {
+            return m_MaterialSlotNames;
+        }
+
         [[nodiscard]] SkinnedMeshHandle GetHandle() const
         {
             return m_Handle;
@@ -97,6 +118,8 @@ namespace NorvesLib::Core::Rendering
         SkinnedMeshHandle m_Handle;
         Container::VariableArray<SkinnedMeshVertex> m_Vertices;
         Container::VariableArray<uint32_t> m_Indices;
+        Container::VariableArray<Skeletal::SkeletalSubMesh> m_SubMeshes;
+        Container::VariableArray<Container::String> m_MaterialSlotNames;
         Thread::Atomic<bool> m_bAssetLeaseActive{true};
     };
 
@@ -109,8 +132,10 @@ namespace NorvesLib::Core::Rendering
 
         [[nodiscard]] bool IsValid() const
         {
+            // 中間段階では新表を単一drawへ落とさない。範囲draw接続時にこのguardを置き換える。
             return AssetLease && AssetLease->GetHandle().IsValid() &&
-                   !AssetLease->GetVertices().empty() && !AssetLease->GetIndices().empty();
+                   !AssetLease->GetVertices().empty() && !AssetLease->GetIndices().empty() &&
+                   AssetLease->GetSubMeshes().empty() && AssetLease->GetMaterialSlotNames().empty();
         }
 
         Container::TSharedPtr<const SkinnedMeshAssetLease> AssetLease;
