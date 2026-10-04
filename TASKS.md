@@ -216,7 +216,7 @@
 - notes: 計画書 4.2。段6でビジビリティバッファの材質の解決パスへまとめる。 2026-10-04 親（run `20261004-164924` の保留を解く）: `blocked/VTG2-FEEDBACK-WRITE.md` の選択肢1を承認する。`paths:` に `Library/Core/Public/RHI`・`Library/Core/Private/RHI` を足した。`fragmentStoresAndAtomics` を対応しているときだけ有効化して `DeviceCapabilities` に載せ、非対応の GPU ではフィードバックを無効にする（材質は従来どおり描ける）。実装のメモは blocked の文書のとおり。VT の表の番号は VTG2-VT-STREAMER（`217a284f`・`8e6ed661`）で入った表に合わせる。
 
 ## VTG2-FEEDBACK-READ: 要求を数フレーム遅れで読み戻して集計する
-- status: todo
+- status: done
 - done-when: 要求のバッファを3つのリングで持ち、2フレーム前のものを GPU を待たずに読み戻して、テクスチャごとのタイルの要求の集合（同じタイルは1つ、最後に要求したフレームを持つ）にまとめる。RenderThread を止めない。集計の結果を `VirtualTextureRequestSet` として VT のストリーマへ渡す。CPU のテスト `VirtualTextureRequestSetTest`（`RenderResourcesDomainContractTest` の束）が、詰めた要求の復号・重複の除去・溢れた件数の数え方を確かめる。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureRequestSetTest|VirtualTextureFeedbackVulkanTest)$"`
