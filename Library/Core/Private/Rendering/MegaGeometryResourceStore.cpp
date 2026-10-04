@@ -97,7 +97,7 @@ namespace NorvesLib::Core::Rendering
                 if (cluster.VertexOffset < 0 || indexEnd > createInfo.IndexCount ||
                     vertexEnd > createInfo.VertexCount || !bErrorValid)
                 {
-                    NORVES_LOG_ERROR("MegaGeometryResources", "Invalid baked LOD cluster: %s",
+                    NORVES_LOG_ERROR("MegaGeometryResources", "焼き込み済みLOD階層のクラスタが不正です: %s",
                                      createInfo.DebugName.c_str());
                     return MegaGeometry::MegaMeshHandle::Invalid();
                 }
