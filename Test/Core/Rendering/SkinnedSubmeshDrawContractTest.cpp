@@ -1,6 +1,8 @@
 ﻿// 既存の停止中テストとは別exe。実Coreと小さなRHI test doubleでCPU記録契約を検査する。
 #include "Rendering/SkinnedDrawCommands.h"
 #include "Rendering/SkinnedMeshGpuStore.h"
+#include "Rendering/SkinnedShadowComponentBindings.h"
+#include "Rendering/SkinnedShadowStorage.h"
 #include "Math/MatrixUtils.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneRenderer.h"
@@ -386,7 +388,7 @@ namespace
         RHI::DeviceCapabilities Capabilities;
         Container::VariableArray<Container::TSharedPtr<FakeBuffer>> CreatedBuffers;
     };
-    Container::TSharedPtr<SkinnedMeshAssetLease> MakeAsset(uint32_t count, bool legacy = false, uint64_t id = 100, uint64_t generation = 1)
+    Container::TSharedPtr<SkinnedMeshAssetLease> MakeAsset(uint32_t count, bool legacy = false, uint64_t id = 100, uint64_t generation = 1, bool noShadow = true)
     {
         Container::VariableArray<SkinnedMeshVertex> vertices(count*3);
         Container::VariableArray<uint32_t> indices;
@@ -405,7 +407,7 @@ namespace
         for (uint32_t index = 0; index < count; ++index)
         {
             Skeletal::SkeletalSubMesh part{index*3,3,index};
-            part.bNoShadow = index == 1;
+            part.bNoShadow = noShadow && index == 1;
             submeshes.push_back(part);
             names.push_back(index == 0 ? "Body" : "Part");
         }
@@ -710,6 +712,72 @@ namespace
         assert(store.MarkLastUse(prepared,anonymous));
         store.AbortFrame();
     }
+    void TestPointShadowComponentBudget()
+    {
+        auto asset = MakeAsset(8,false,700,1,false);
+        Container::VariableArray<SkinnedMeshProxy> proxies;
+        for (uint64_t component=1;component<=17;++component)
+        {
+            proxies.push_back(MakeProxy(asset,component));
+        }
+        FramePacket packet;
+        assert(AppendSkinnedDrawCommands(&packet,proxies).Count == 17*8);
+        auto device = Container::MakeShared<FakeDevice>();
+        RenderResources resources;
+        assert(resources.Initialize(device));
+        resources.SkinnedMeshes().BeginFrame(0);
+        SceneRenderer renderer;
+        FakeCommandList list;
+        auto pipeline = Container::MakeShared<FakePipeline>();
+        Container::VariableArray<RHI::DescriptorSetPtr> setsKept;
+        for (uint32_t face=0;face<6;++face)
+        {
+            SkinnedShadowComponentBindings<RHI::DescriptorSetPtr> bindings;
+            for (uint32_t part=0;part<8;++part)
+            {
+                for (uint32_t component=0;component<17;++component)
+                {
+                    auto command = packet.DrawCommands[component*8+part];
+                    command.Skinned.FrameLease = packet.SkinnedMeshFrameLeases[component];
+                    command.Skinned.PassKind = SkinnedMeshPassKind::Shadow;
+                    command.Pipeline = pipeline;
+                    assert(resources.SkinnedMeshes().PrepareDraw(command.Skinned.FrameLease,command.Skinned.BonePalette,
+                        command.Draw.WorldMatrix,command.Skinned.Prepared));
+                    const auto& prepared = command.Skinned.Prepared;
+                    const SkinnedShadowBindingKey key{prepared.ComponentId,prepared.PreparationEpoch,
+                        prepared.MeshHandle.Id,prepared.MeshHandle.Generation,prepared.PaletteBuffer.get(),prepared.VertexBuffer.get()};
+                    const auto create = [&]() -> RHI::DescriptorSetPtr
+                    {
+                        auto descriptor = Container::MakeShared<FakeDescriptorSet>();
+                        assert(BindSkinnedShadowStorage(prepared,descriptor.get()));
+                        assert(descriptor->StorageBuffers.size()==2 && descriptor->StorageBuffers.find(10)==descriptor->StorageBuffers.end());
+                        assert(descriptor->StorageBuffers[8]==prepared.PaletteBuffer && descriptor->StorageBuffers[9]==prepared.VertexBuffer);
+                        setsKept.push_back(descriptor);
+                        return descriptor;
+                    };
+                    const bool accepted = bindings.TryGet(key,create,command.DescriptorSet);
+                    assert(accepted == (component<16));
+                    if (accepted)
+                    {
+                        assert(command.DescriptorSet == setsKept[face*16+component]);
+                        assert(renderer.RecordSkinnedDrawCall(command,&list,&resources.SkinnedMeshes(),command.DescriptorSet));
+                        assert(list.LastIndexOffset == part*3 && list.LastIndexCount == 3);
+                    }
+                }
+            }
+            assert(bindings.Count()==16 && setsKept.size()==(face+1)*16);
+            assert(list.DrawIndexedCount==(face+1)*128);
+        }
+        assert(device->CurrentCreates==17 && device->PreviousCreates==0);
+        auto bad = packet.DrawCommands[0];
+        SkinnedMeshPreparedDraw prepared;
+        assert(resources.SkinnedMeshes().PrepareDraw(packet.SkinnedMeshFrameLeases[0],bad.Skinned.BonePalette,
+            bad.Draw.WorldMatrix,prepared,&bad.Skinned.BonePalette,&bad.Draw.WorldMatrix));
+        FakeDescriptorSet rejected;
+        assert(!BindSkinnedShadowStorage(prepared,&rejected) && rejected.StorageBuffers.empty());
+        resources.SkinnedMeshes().AbortFrame();
+        resources.Shutdown();
+    }
 }
 int main()
 {
@@ -717,6 +785,7 @@ int main()
     TestRecordedRangesAndForgery();
     TestPaletteSharingOrdersAndIdentity();
     TestPaletteFailureAndLifetime();
+    TestPointShadowComponentBudget();
     std::cout << "SkinnedSubmeshDrawContractTest PASS: CPU commands_ranges_materials_shadow_forgery; GPU acceptance separate\n";
     return 0;
 }

@@ -2219,7 +2219,7 @@
 - stop-when: ARM既定やemissive nits既定を採用したと扱う、未知flag/予約を黙って無視、native/GPU未実行を受入れ済みとする。
 
 ## G2-GR32-POINT-SHADOW-BUDGET: 点光源影のUBO消費をcomponent単位に共有する
-- status: todo
+- status: done
 - done-when: 各light/faceで同componentの全submeshが同じUBO/descriptorを共有し、16componentの容量で途中の部位だけを落とさない。影にpreviousを束縛しない。
 - verify: 8submesh×16component、17番目の全体省略、face分離、旧匿名fallback、binding10無しをCPU契約へ登録する。
 - stop-when: material/submesh数でUBO枠が増える、faceを跨いだdescriptor上書き、GPU未検証を合格扱いする。

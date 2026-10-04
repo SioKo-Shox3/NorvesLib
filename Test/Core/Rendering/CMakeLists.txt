@@ -1835,3 +1835,11 @@ target_include_directories(SkinnedSubmeshDrawContractTest PRIVATE
 set_target_properties(SkinnedSubmeshDrawContractTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SkinnedSubmeshDrawContractTest COMMAND SkinnedSubmeshDrawContractTest)
 set_tests_properties(SkinnedSubmeshDrawContractTest PROPERTIES LABELS "CPU" TIMEOUT 60)
+
+# RHI非依存のcomponent枠契約。実draw契約は上の独立exeで検査する。
+add_executable(SkinnedShadowComponentBindingsTest SkinnedShadowComponentBindingsTest.cpp)
+target_include_directories(SkinnedShadowComponentBindingsTest PRIVATE ${CMAKE_SOURCE_DIR}/Library/Core/Private)
+target_compile_features(SkinnedShadowComponentBindingsTest PRIVATE cxx_std_23)
+set_target_properties(SkinnedShadowComponentBindingsTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SkinnedShadowComponentBindingsTest COMMAND SkinnedShadowComponentBindingsTest)
+set_tests_properties(SkinnedShadowComponentBindingsTest PROPERTIES LABELS "CPU" TIMEOUT 60)

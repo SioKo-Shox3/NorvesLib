@@ -625,3 +625,6 @@
 
 - G2-GR32-PALETTE-SHARING: 作者訂正のcurrent1/previousはGBufferのみ最大1に沿い、componentとepochでcurrentを共有しpreviousを遅延作成。影のpreparedは常にprevious無し、両順序で同currentを再利用。pose/handle/世代/asset実体一致、失敗時再作成禁止、全登録viewport leaseとsubmitted serialの寿命、tagged epoch/パス/使用flag照合、旧匿名跨frame互換を保持。独立ソースレビュー2周PASS。両順序・8範囲・viewport・別component/pose/世代・失敗回数・current/previous保持解放・偽装拒否を独立native契約へ追加。既存pure範囲3mode回帰PASS。新cache本体の実行はWindows.hで未検証、GPU受入れも未実施。計画の旧CreateBuffer総数2箇所を訂正。
 - Next: GR32-POINT-SHADOW-BUDGET → POSE-HISTORY-GENERATION。GR32全体/GPU gateは未完了。
+
+- G2-GR32-POINT-SHADOW-BUDGET: 点光源の各light/faceで16componentのUBO/descriptor表を共有し、submesh数で枠を増やさない。17番目は全範囲省略、失敗枠は再試行せず、epoch/handle/世代/palette/VB照合と旧匿名palette実体の区別を保持。全600枠の従来容量は不変、各face独立。実storage helperはpreviousを拒否し8current/9VBだけ設定。純16component×8範囲×6face・容量/失敗/identity/匿名テスト3mode成功、独立PASS。実Coreへ768draw/descriptor16face/binding10無しを登録、Windows.hでnative/GPU未実行。ShadowMapPass本体のUBO/faceData接続はソース確認のみ。
+- Next: GR32-POSE-HISTORY-GENERATION。前姿勢の資産世代を照合し同骨数reloadの混同を防ぐ。

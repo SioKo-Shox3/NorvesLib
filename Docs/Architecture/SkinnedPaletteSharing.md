@@ -24,4 +24,15 @@ Abortはsubmitted serialを進めない。ForceClearAfterWaitIdleでもepochを�
 
 独立SkinnedSubmeshDrawContractTestへ、両パス順序・1/2/8範囲・複数viewport・別component・pose/世代衝突・失敗時作成回数・epoch失効・全leaseとGPU serialの寿命・旧匿名互換を登録する。
 このクラウドではCoreのWindows.h依存によりnative実行は未検証。CPU RHI doubleはGPU表示・readbackの代用にはしない。
-点光源影のcomponent単位UBO枠と前姿勢の世代照合は別の接続工程で扱う。
+前姿勢の世代照合は別の接続工程で扱う。
+
+## 点光源影のcomponent枠
+
+light/faceごとに16component枠を持ち、同componentの全submeshが1個のUBO/descriptorを共有する。
+17番目以降はcomponent全体を省略する。確保失敗も枠を予約して後続submeshで再試行しない。
+同componentのepoch/mesh世代/current palette/VBが異なる場合は共有を拒否する。
+匿名の旧preparedはpalette実体で区別し、ComponentId=0を一括共有しない。
+faceを跨いで表は再利用せず、descriptorの行列を後から別faceへ上書きしない。
+影用storage設定はbinding8=current、9=VBのみ。previous使用preparedは設定前に拒否する。
+純共有表は16component×8submesh×6face、容量超過、失敗固定、identity/旧匿名を通常・最適化・ASan/UBSan（LSan除外）で検証。
+実Coreの独立契約へ6face×128 DrawIndexed・descriptor16/face・binding10無しも登録するが、Windows依存でnative/GPUは未実行。

@@ -192,7 +192,7 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_PointShadowFragmentShader;
         RHI::PipelinePtr m_PointShadowPipeline;
         RHI::PipelinePtr m_SkinnedPointShadowPipeline;
-        // 面ごとのUBO（非スキンの描画は面ごとに1つを共有し、スキンの描画は描画ごとに取る）
+        // 面ごとのUBO（非スキンの描画は面ごとに1つを共有し、スキンの描画はcomponentごと・面ごとに共有する）
         DynamicUniformAllocator m_PointShadowUniformAllocator;
         bool m_bPointShadowResourcesReady = false;
         bool m_bPointShadowResourcesFailed = false;
