@@ -383,6 +383,34 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // スナップショットから外れたインスタンスの見えたビットは、全インスタンスが消えて記録を省くフレームでも
+        // 捨てる（記録の中だけで連続性を見ると、空のフレームを挟んだ再追加が引き継ぎに見える）。
+        for (InstanceVisibility &entry : m_InstanceVisibilities)
+        {
+            if (!entry.Buffer)
+            {
+                continue;
+            }
+
+            bool bPresent = false;
+            for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
+            {
+                const uint64_t objectId = m_Instances[instanceIndex].ObjectId;
+                const uint64_t key = objectId != 0 ? objectId : (0x8000000000000000ull | instanceIndex);
+                if (key == entry.Key)
+                {
+                    bPresent = true;
+                    break;
+                }
+            }
+
+            if (!bPresent)
+            {
+                m_RetiredBuffers.push_back(RetiredBuffer{entry.Buffer, m_OcclusionFrameCount});
+                entry.Buffer.reset();
+            }
+        }
+
         const bool bNeedsDrawPipeline = !m_Instances.empty() && m_CullPipeline;
         const bool bNeedsAttachmentTransitionPass = m_bPreferRenderGraphGBufferResources;
         if (!bNeedsDrawPipeline && !bNeedsAttachmentTransitionPass)

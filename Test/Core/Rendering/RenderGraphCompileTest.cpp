@@ -2786,6 +2786,35 @@ namespace
         }
     }
 
+    // 全インスタンスが一度消える（A → 空 → A）。同じ ObjectId・ComponentId・メッシュでも、再追加でビットを捨てる
+    void MegaVisibilityEmptyGapScript(uint32_t frameIndex,
+                                      const MegaGeometryProxy &a,
+                                      const MegaGeometryProxy &,
+                                      Container::VariableArray<MegaGeometryProxy> &outProxies)
+    {
+        outProxies.clear();
+        if (frameIndex != 1)
+        {
+            outProxies.push_back(a);
+        }
+    }
+
+    // 空のフレームは記録を省くので、記録の中だけで連続性を見ると再追加が引き継ぎに見える。Setup で脱落を検出して捨てる
+    void TestMegaGeometryTwoPassDiscardsVisibilityWhenAllInstancesVanish()
+    {
+        FakeCommandList commandList;
+        Container::VariableArray<uint32_t> fills;
+        RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 3, &MegaVisibilityEmptyGapScript, &fills);
+
+        assert(fills.size() == 3);
+        // 0: A が新規 / 1: 空（記録なし） / 2: A を同じ ObjectId・ComponentId・メッシュで再追加
+        const uint32_t expected[3] = {1, 0, 1};
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            assert(fills[i] == expected[i]);
+        }
+    }
+
     void TestMegaGeometryNativeExecuteSkipsWhenNoInstances()
     {
         auto device = RHI::MakeShared<FakeDevice>();
@@ -6805,6 +6834,7 @@ int main()
     TestMegaGeometryRecordFrameCommandRecordsTwoPassOcclusion();
     TestMegaGeometryTwoPassFallsBackWhenDepthRangeIsNotUnit();
     TestMegaGeometryTwoPassDiscardsVisibilityOnReaddAndComponentChange();
+    TestMegaGeometryTwoPassDiscardsVisibilityWhenAllInstancesVanish();
     TestGBufferNativeDeclareCreatesTransientOutputs();
     TestGBufferSSAONativeDeclareDependencies();
     TestGBufferSSAOLightingNativeDeclareDependencies();

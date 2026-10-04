@@ -625,3 +625,9 @@
 - 画像確認: 球の旋回の f54〜f69（16枚連続。`.harness/runs/startup-capture/VTG3-OCCLUSION-ORBIT-sheets/fill-sphere-54-69.png`。球の右上の切り出し）で、岩（橙色の円）が毎フレーム少しずつ球の陰から出て大きくなり、飛び・ちらつき・欠けがない。f54・f55・f56・f57 の全体の画像も開き、岩が球の右上に出ていて欠けがないことを確かめた。小屋の旋回の f54〜f69（`fill-cottage-54-69.png`）も毎フレーム滑らかに回り、欠け・ちらつきがない（この区間は球と岩が小屋の陰で画面に写らないので、見える物の欠けだけを見ている）。
 - 訂正: 反復8の「LightingPass の差は 0.03 ms 以内」は occ-cottage-edge の 0.068 ms 増と合わなかったので、上の GPU 時間の行を直した。
 - 起動画面: コード（ソース・Game・シェーダー）は反復8から変えていない（この反復は撮影の検証のみ）。
+
+## 反復 1（run 20261005-034826）: VTG3-TWO-PASS-OCCLUSION（再開した差し戻しへの対応、done）
+- 差し戻し（全インスタンスが一度消えて戻る A → 空 → A）: 空のフレームは `Execute` が記録を省き、記録の中のフレーム数も進まないので、再追加で `LastUsedFrame + 1 == m_OcclusionFrameCount` が成り立ち、同じ ObjectId・ComponentId・メッシュだと古い見えたビットを引き継いでいた。`MegaGeometryPass::Setup` で、スナップショットから脱落したインスタンス（鍵が今回の `m_Instances` に無い）の見えたバッファを退避（`m_RetiredBuffers`）して手放すようにした。`Setup` は空のフレームでも `Execute(resources, context)` から毎フレーム呼ばれるので、記録を省く経路でも履歴が捨てられる。再追加では `AcquireVisibilityBuffer` が新しいバッファを作って 0 で埋め直す。
+- テスト（`RenderGraphCompileTest`）: `TestMegaGeometryTwoPassDiscardsVisibilityWhenAllInstancesVanish` を足した。同じ ObjectId・ComponentId・メッシュの A だけを「A → 空 → A」と3フレーム記録し、0 で埋め直した回数が {1,0,1} になる。`Setup` の脱落の検出を無効にする変異では ctest が `fills[i] == expected[i]` で落ちる（`verify-VTG3-TWO-PASS-OCCLUSION-21-mutation.txt`。元に戻して通過）。
+- 検証: `verify-VTG3-TWO-PASS-OCCLUSION-19.txt`（Debug のビルド BUILD_EXIT_CODE=0）、`-20.txt`（ctest 5/5 passed）、`-22.txt`・`-23.txt`（変異を戻した後の再ビルドと ctest 5/5 passed）、`-24.txt`（RelWithDebInfo の Game のビルド BUILD_EXIT_CODE=0）、`-25-capture.txt`（`-Deterministic` の撮影 pass。平均輝度 124.306・123.727・126.005 で反復5・7と同じ、`MEGA_OCCLUSION` の値も同じ）。`default.png` を開いて小屋・球・岩・材質見本・空が欠けなく出ていることを確かめた。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
+- Notes: (1) Git Bash の `sed -i` は CRLF のファイルの行末を LF に書き換えるので、変異・復元のあとは行末の修復（HEAD の行末を残して差分だけ CRLF）をした。(2) `blocked/VTG3-TWO-PASS-OCCLUSION.md` に書かれていた未対応は、この反復で解消した。

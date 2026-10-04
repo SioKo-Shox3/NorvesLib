@@ -300,7 +300,7 @@
 - notes: 計画書 4.3。行列の要素を直接触らず Math の抽象 API を使う（`no-direct-matrix-element-access` の方針）。
 
 ## VTG3-TWO-PASS-OCCLUSION: 2パスの遮蔽カリングを入れて既定で有効にする
-- status: todo
+- status: done
 - done-when: MegaGeometry のインスタンスごとに、クラスタごとの「前のフレームで見えた」ビットの持続のバッファを持つ。1パス目は前のフレームで見えたクラスタだけを（視錐台・法線のコーン・LOD の判定はするが遮蔽の判定はせずに）描き、その時点の深度（GBufferPass の不透明＋1パス目）から HZB を作る（VTG3-HIZ-PYRAMID）。2パス目は1パス目で描かなかったクラスタを HZB で判定し（VTG3-HIZ-CONSERVATIVE）、見えたものを描く。2パス目は1パス目で描いたクラスタも HZB で判定し直してビットを更新する（次のフレームのため）。インスタンスの追加・LOD の切り替え・メッシュの差し替えでビットを捨てる。`--mega-occlusion=off` で従来の経路（遮蔽の判定なし）に戻せる。`MEGA_OCCLUSION pass1=<n> pass2_tested=<n> pass2_drawn=<n> occluded=<n>` を撮影のログに出す。`RenderGraphCompileTest` の MegaGeometry の記録の検査を新しいパスの並びに合わせる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest|HiZOcclusionTestVulkanTest|HiZPyramidVulkanTest)$"`
