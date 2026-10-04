@@ -2164,7 +2164,7 @@
 - stop-when: 旧版で非ASCIIを受理、壊れた文字列を置換して成功、UTF-16単位数を保存byte長と混同する。
 
 ## G2-GR32-V02-READER: 版別の骨格表とclip所有を読み込む
-- status: todo
+- status: done
 - done-when: 旧0.0/0.1を保持して0.2の320B/submesh/名前slot/版別文字列を所有dataへ読む。record値/reserved/padding/範囲/hashとclip/channel/sampleの一意所有を検査する。新表を未対応下流が捨てないよう明示ガードを置く。
 - verify: 手書き0.2/複数clip/旧golden、重複/隙間/跨ぎ/不正flags/bounds/文字列、失敗Data非公開。
 - stop-when: 旧clipCount拒否を緩和、同minorで表を読み分ける裏分岐、部分資産公開、未対応runtimeへ無言で流す。

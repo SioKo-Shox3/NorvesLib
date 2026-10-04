@@ -1,5 +1,8 @@
 ﻿#include "Asset/CookedSkeletalFormat.h"
 #include "Resource/SkeletalLimits.h"
+#include "Asset/CookedSkeletalNameCodec.h"
+#include "Asset/CookedSkeletalWireValidation.h"
+#include "Resource/SkeletalSubmeshLayout.h"
 
 #include <cmath>
 #include <cstring>
@@ -156,27 +159,44 @@ namespace NorvesLib::Core::Asset
             return CheckedAdd(offset, count, end) && end <= total;
         }
 
-        bool ReadString(const uint8_t* data,
-                        const Section& stringSection,
-                        size_t offset,
-                        size_t length,
-                        Container::String& out)
+        bool IsZero(const uint8_t* bytes, size_t count)
         {
-            if (!ValidateRange(offset, length, stringSection.Size))
+            for (size_t index = 0; index < count; ++index)
             {
-                return false;
-            }
-            out.clear();
-            out.reserve(length);
-            for (size_t index = 0; index < length; ++index)
-            {
-                const uint8_t character = data[stringSection.Offset + offset + index];
-                if (character < 0x20u || character > 0x7eu)
+                if (bytes[index] != 0)
                 {
                     return false;
                 }
-                out.push_back(static_cast<Container::String::value_type>(character));
             }
+            return true;
+        }
+
+        bool ReadString(const uint8_t* data, const Section& stringSection, uint16_t minor,
+                        uint64_t offset, uint32_t length, Container::String& out)
+        {
+            const auto view = ResolveSkeletalWireName(minor, {data + stringSection.Offset, stringSection.Size}, offset, length);
+            if (!view.Succeeded())
+            {
+                return false;
+            }
+            using Char = Container::String::value_type;
+            const auto measure = MeasureSkeletalNameDecoding<Char>(minor, view.Bytes);
+            if (!measure.Succeeded())
+            {
+                return false;
+            }
+            Container::VariableArray<Char> characters(measure.CodeUnitCount);
+            if (!DecodeSkeletalWireName<Char>(minor, view.Bytes, {characters.data(), characters.size()}).Succeeded())
+            {
+                return false;
+            }
+            Container::String name;
+            name.reserve(characters.size());
+            for (Char character : characters)
+            {
+                name.push_back(character);
+            }
+            out = std::move(name);
             return true;
         }
 
@@ -210,11 +230,21 @@ namespace NorvesLib::Core::Asset
         }
         const uint16_t versionMinor = ReadLe16(data, HeaderOffset::VersionMinor);
         if (ReadLe16(data, HeaderOffset::VersionMajor) != Format::VersionMajor ||
-            (versionMinor != Format::LegacyVersionMinor && versionMinor != Format::VersionMinor))
+            versionMinor > CookedSkeletalFormatV02::VersionMinor)
         {
             return Fail(CookedSkeletalParseStatus::UnsupportedVersion);
         }
-        if (ReadLe32(data, HeaderOffset::HeaderSize) != Format::HeaderSize ||
+        CookedSkeletalWireProfile profile;
+        if (ResolveCookedSkeletalWireProfile(Format::VersionMajor, versionMinor,
+                ReadLe32(data, HeaderOffset::HeaderSize), profile) != CookedSkeletalWireStatus::Success)
+        {
+            return Fail(CookedSkeletalParseStatus::InvalidHeader);
+        }
+        if (blob.GetSize() < profile.HeaderSize)
+        {
+            return Fail(CookedSkeletalParseStatus::HeaderTooSmall);
+        }
+        if (
             ReadLe32(data, HeaderOffset::EndianMarker) != Format::EndianMarker ||
             ReadLe32(data, HeaderOffset::VertexRecordSize) != Format::VertexRecordSize ||
             ReadLe32(data, HeaderOffset::JointRecordSize) != Format::JointRecordSize ||
@@ -231,6 +261,14 @@ namespace NorvesLib::Core::Asset
             return Fail(CookedSkeletalParseStatus::FileSizeMismatch);
         }
 
+        CookedSkeletalV02Extension extension;
+        if (profile.bHasSubmeshTables && ReadCookedSkeletalV02Extension(
+                {data + 256, 64}, declaredFileSize, extension) != CookedSkeletalWireStatus::Success)
+        {
+            return Fail(CookedSkeletalParseStatus::InvalidHeader);
+        }
+        const Section submeshSection{static_cast<size_t>(extension.Submeshes.Offset), static_cast<size_t>(extension.Submeshes.Size)};
+        const Section slotSection{static_cast<size_t>(extension.MaterialSlots.Offset), static_cast<size_t>(extension.MaterialSlots.Size)};
         Section vertexSection;
         Section indexSection;
         Section jointSection;
@@ -288,17 +326,24 @@ namespace NorvesLib::Core::Asset
             !ValidateRecordSection(jointSection, jointCount, Format::JointRecordSize) ||
             !ValidateRecordSection(clipSection, clipCount, Format::ClipRecordSize) ||
             !ValidateRecordSection(channelSection, channelCount, Format::ChannelRecordSize) ||
-            !ValidateRecordSection(sampleSection, sampleCount, Format::SampleRecordSize) || clipCount != 1 ||
+            !ValidateRecordSection(sampleSection, sampleCount, Format::SampleRecordSize) ||
+            (profile.bAllowsMultipleClips ? (clipCount == 0 || clipCount > channelCount) : clipCount != 1) ||
             vertexCount == 0 || indexCount == 0 || indexCount % 3 != 0 || jointCount == 0 || jointCount > Skeletal::LegacyMaximumJointCount ||
             channelCount == 0 || sampleCount == 0)
         {
             return Fail(CookedSkeletalParseStatus::InvalidRecord);
         }
 
-        size_t expectedSectionOffset = Format::HeaderSize;
-        const Section sections[] = {
-            vertexSection, indexSection, jointSection, clipSection, channelSection, sampleSection, stringSection};
-        for (size_t sectionIndex = 0; sectionIndex < sizeof(sections) / sizeof(sections[0]); ++sectionIndex)
+        size_t expectedSectionOffset = profile.HeaderSize;
+        Section sections[9] = {vertexSection, indexSection, jointSection, clipSection, channelSection, sampleSection};
+        const size_t sectionCount = profile.bHasSubmeshTables ? 9 : 7;
+        if (profile.bHasSubmeshTables)
+        {
+            sections[6] = submeshSection;
+            sections[7] = slotSection;
+        }
+        sections[sectionCount - 1] = stringSection;
+        for (size_t sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex)
         {
             const Section& section = sections[sectionIndex];
             if (section.Offset != expectedSectionOffset ||
@@ -306,10 +351,10 @@ namespace NorvesLib::Core::Asset
             {
                 return Fail(CookedSkeletalParseStatus::InvalidRecord);
             }
-            if (sectionIndex + 1 < sizeof(sections) / sizeof(sections[0]))
+            if (sectionIndex + 1 < sectionCount)
             {
                 const size_t sectionEnd = expectedSectionOffset;
-                if (!AlignUp(sectionEnd, Format::SectionAlignment, expectedSectionOffset))
+                if (!AlignUp(sectionEnd, Format::SectionAlignment, expectedSectionOffset) || expectedSectionOffset > declaredFileSize)
                 {
                     return Fail(CookedSkeletalParseStatus::InvalidRecord);
                 }
@@ -324,11 +369,12 @@ namespace NorvesLib::Core::Asset
         }
 
         const uint64_t expectedHash = ReadLe64(data, HeaderOffset::PayloadHash);
-        const uint64_t actualHash = versionMinor == Format::LegacyVersionMinor
-            ? ComputeCookedSkeletalPayloadHash(data + Format::HeaderSize, declaredFileSize - Format::HeaderSize)
-            : ComputeCookedSkeletalV01Hash(data + HeaderOffset::MeshNodeGlobalTransform,
-                                           data + Format::HeaderSize,
-                                           declaredFileSize - Format::HeaderSize);
+        uint64_t actualHash = 0;
+        if (TryComputeCookedSkeletalWireHash(Format::VersionMajor, versionMinor, profile.HeaderSize,
+                {data, declaredFileSize}, actualHash) != CookedSkeletalWireStatus::Success)
+        {
+            return Fail(CookedSkeletalParseStatus::InvalidHeader);
+        }
         if (expectedHash != actualHash)
         {
             return Fail(CookedSkeletalParseStatus::PayloadHashMismatch);
@@ -424,9 +470,13 @@ namespace NorvesLib::Core::Asset
         {
             const size_t record = jointSection.Offset + jointIndex * Format::JointRecordSize;
             Skeletal::SkeletalJoint& joint = skeletal.Joints[jointIndex];
+            if (profile.bHasSubmeshTables && !IsZero(data + record + 12, 4))
+            {
+                return Fail(CookedSkeletalParseStatus::InvalidRecord);
+            }
             joint.ParentIndex = static_cast<int32_t>(ReadLe32(data, record + Format::JointOffset::ParentIndex));
             if (joint.ParentIndex < -1 || joint.ParentIndex >= static_cast<int32_t>(jointCount) ||
-                !ReadString(data, stringSection,
+                !ReadString(data, stringSection, versionMinor,
                             ReadLe32(data, record + Format::JointOffset::NameOffset),
                             ReadLe32(data, record + Format::JointOffset::NameSize), joint.Name))
             {
@@ -473,9 +523,7 @@ namespace NorvesLib::Core::Asset
         }
 
         Container::VariableArray<Skeletal::SkeletalAnimationChannel> channels(channelCount);
-        Container::VariableArray<uint8_t> animatedPaths(jointCount * 3, 0);
         size_t expectedFirstSample = 0;
-        float maximumSampleTime = 0.0f;
         for (size_t channelIndex = 0; channelIndex < channelCount; ++channelIndex)
         {
             const size_t record = channelSection.Offset + channelIndex * Format::ChannelRecordSize;
@@ -494,12 +542,10 @@ namespace NorvesLib::Core::Asset
             }
             channel.Path = static_cast<Skeletal::SkeletalAnimationPath>(path);
             channel.Interpolation = static_cast<Skeletal::SkeletalAnimationInterpolation>(interpolation);
-            const size_t uniquePathIndex = static_cast<size_t>(channel.JointIndex) * 3 + path;
-            if (animatedPaths[uniquePathIndex] != 0)
+            if (profile.bHasSubmeshTables && !IsZero(data + record + 20, 12))
             {
                 return Fail(CookedSkeletalParseStatus::InvalidRecord);
             }
-            animatedPaths[uniquePathIndex] = 1;
             channel.Samples.resize(channelSampleCount);
             for (size_t sampleIndex = 0; sampleIndex < channelSampleCount; ++sampleIndex)
             {
@@ -518,7 +564,10 @@ namespace NorvesLib::Core::Asset
                 {
                     return Fail(CookedSkeletalParseStatus::InvalidRecord);
                 }
-                maximumSampleTime = std::fmax(maximumSampleTime, sample.TimeSeconds);
+                if (profile.bHasSubmeshTables && !IsZero(data + sampleRecord + 20, 12))
+                {
+                    return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                }
             }
             expectedFirstSample += channelSampleCount;
         }
@@ -527,13 +576,14 @@ namespace NorvesLib::Core::Asset
             return Fail(CookedSkeletalParseStatus::InvalidRecord);
         }
 
+        size_t expectedFirstChannel = 0;
         for (size_t clipIndex = 0; clipIndex < clipCount; ++clipIndex)
         {
             const size_t record = clipSection.Offset + clipIndex * Format::ClipRecordSize;
             Skeletal::SkeletalAnimationClip& clip = skeletal.Clips[clipIndex];
             const uint64_t nameOffsetValue = ReadLe64(data, record + Format::ClipOffset::NameOffset);
             if (nameOffsetValue > std::numeric_limits<size_t>::max() ||
-                !ReadString(data, stringSection, static_cast<size_t>(nameOffsetValue),
+                !ReadString(data, stringSection, versionMinor, static_cast<size_t>(nameOffsetValue),
                             ReadLe32(data, record + Format::ClipOffset::NameSize), clip.Name))
             {
                 return Fail(CookedSkeletalParseStatus::InvalidRecord);
@@ -541,12 +591,31 @@ namespace NorvesLib::Core::Asset
             clip.DurationSeconds = ReadFloat(data, record + Format::ClipOffset::Duration);
             const size_t firstChannel = ReadLe32(data, record + Format::ClipOffset::ChannelOffset);
             const size_t clipChannelCount = ReadLe32(data, record + Format::ClipOffset::ChannelCount);
-            if (!std::isfinite(clip.DurationSeconds) || clip.DurationSeconds < 0.0f || firstChannel != 0 ||
-                clipChannelCount != channelCount || !ValidateRange(firstChannel, clipChannelCount, channelCount) ||
-                std::fabs(clip.DurationSeconds - maximumSampleTime) > 0.000001f)
+            if (!std::isfinite(clip.DurationSeconds) || clip.DurationSeconds < 0.0f ||
+                firstChannel != expectedFirstChannel || clipChannelCount == 0 ||
+                !ValidateRange(firstChannel, clipChannelCount, channelCount) ||
+                (profile.bHasSubmeshTables && !IsZero(data + record + 24, 8)))
             {
                 return Fail(CookedSkeletalParseStatus::InvalidRecord);
             }
+            Container::VariableArray<uint8_t> animatedPaths(jointCount * 3, 0);
+            float maximumSampleTime = 0.0f;
+            for (size_t channelIndex = 0; channelIndex < clipChannelCount; ++channelIndex)
+            {
+                const auto& channel = channels[firstChannel + channelIndex];
+                const size_t pathIndex = channel.JointIndex * 3 + static_cast<uint32_t>(channel.Path);
+                if (animatedPaths[pathIndex] != 0)
+                {
+                    return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                }
+                animatedPaths[pathIndex] = 1;
+                maximumSampleTime = std::fmax(maximumSampleTime, channel.Samples.back().TimeSeconds);
+            }
+            if (std::fabs(clip.DurationSeconds - maximumSampleTime) > 0.000001f)
+            {
+                return Fail(CookedSkeletalParseStatus::InvalidRecord);
+            }
+            expectedFirstChannel += clipChannelCount;
             clip.Channels.reserve(clipChannelCount);
             for (size_t channelIndex = 0; channelIndex < clipChannelCount; ++channelIndex)
             {
@@ -554,8 +623,55 @@ namespace NorvesLib::Core::Asset
             }
         }
 
+        if (expectedFirstChannel != channelCount)
+        {
+            return Fail(CookedSkeletalParseStatus::InvalidRecord);
+        }
+        if (profile.bHasSubmeshTables)
+        {
+            skeletal.SubMeshes.resize(extension.SubmeshCount);
+            skeletal.MaterialSlots.resize(extension.MaterialSlotCount);
+            for (size_t index = 0; index < extension.SubmeshCount; ++index)
+            {
+                const size_t record = submeshSection.Offset + index * CookedSkeletalFormatV02::SubmeshRecordSize;
+                if (ReadCookedSkeletalV02Submesh({data + record, CookedSkeletalFormatV02::SubmeshRecordSize},
+                        vertexCount, skeletal.SubMeshes[index]) != CookedSkeletalWireStatus::Success)
+                {
+                    return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                }
+            }
+            if (!Skeletal::ResolveSkeletalSubmeshLayout({skeletal.SubMeshes.data(), skeletal.SubMeshes.size()},
+                    indexCount, skeletal.MaterialSlots.size()).Succeeded())
+            {
+                return Fail(CookedSkeletalParseStatus::InvalidRecord);
+            }
+            for (const auto& submesh : skeletal.SubMeshes)
+            {
+                if (submesh.VertexCount != 0)
+                {
+                    for (size_t index = submesh.IndexStart; index < size_t(submesh.IndexStart) + submesh.IndexCount; ++index)
+                    {
+                        if (skeletal.Indices[index] >= submesh.VertexCount)
+                        {
+                            return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                        }
+                    }
+                }
+            }
+            for (size_t index = 0; index < extension.MaterialSlotCount; ++index)
+            {
+                const size_t record = slotSection.Offset + index * CookedSkeletalFormatV02::MaterialSlotRecordSize;
+                if (!IsZero(data + record + 12, 52) || !ReadString(data, stringSection, versionMinor,
+                        ReadLe64(data, record), ReadLe32(data, record + 8), skeletal.MaterialSlots[index].Name))
+                {
+                    return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                }
+            }
+        }
+
         CookedSkeletalParseResult result;
         result.Status = CookedSkeletalParseStatus::Success;
+        result.Data.VersionMinor = versionMinor;
         result.Data.SourceBlob = blob;
         result.Data.PayloadHash = expectedHash;
         result.Data.Skeletal = std::move(skeletal);

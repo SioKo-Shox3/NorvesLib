@@ -601,3 +601,6 @@
 
 - G2-GR32-V02-TEXT: minor0/1 printable ASCIIとminor2厳密UTF-8/NUL拒否、UTF-16/32とCore Charのcode unit/byte数を区別する名前codecを追加。参照差分境界・overflow/alignment・全out alias拒否・全入力先行検証で失敗時出力保持。全1,112,063 scalar/4,382,591Bを独立Python UTF-8黄金hashと照合し通常/O2-NDEBUG/ASan・UBSan（LSan除外）全3mode・実MEMBER compile成功。旧wire/layout回帰も成功、独立PASS。実reader/writerおよびWindows/Core全体は未変更・未検証。
 - Next: GR32-V02-READERで版別表・予約/padding・clip別所有と名前を接続し、未対応下流への黙示的な情報欠落を防ぐ。
+
+- G2-GR32-V02-READER: 旧0.0/0.1を維持して統一0.2の320B/表/UTF-8・予約byte・packed padding/hashを接続。submeshのVertexCount/NoShadow/boundsを保持し絶対index範囲を検査。clipごとにjoint/path重複とdurationを検査し、channel/sampleを表順一意所有、失敗Dataは非公開。未接続M9は新表/複数clipを明示拒否。pure wire/record・layout各3modeと実MEMBER成功、独立レビューPASS。手書き2clip/2submesh/UTF8と破損回帰をnative登録、独立Pythonは配置/名前/所有/時刻だけ照合。native/Core全体はWindows.hで未検証。UTF8は長さだけでなく再encodeした7byte一致も試験する。
+- Next: GR32-V02-WRITER。統一0.2生成・旧空表具体化・再parse照合とcurrent writer minorによるcache移行を接続する。Resource/描画の実使用は引き続き別工程。

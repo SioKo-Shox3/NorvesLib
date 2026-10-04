@@ -20,7 +20,7 @@
 - S7: 1mesh/Nprimitiveを採用
 - ARM/emissiveの既定、S5/S6、BVH/FBXは引き続き未選定
 
-0.2/v1はまだ実装済みではない。以下の整理だけで現行の受理条件を変更しない。
+以下は棚卸し時点の旧版依存を示す。0.2の段階的な接続状態は本書末尾を参照し、v1は引き続き未実装。
 オオカミ/シ者の作り分けや共通土台の張り直しは未定であり、移行の前提にしない。
 
 ## GR32 / GR82 Stage Aの変更箇所
@@ -135,3 +135,10 @@ MorphTargetWidth（JSONのmesh_target_width）はmesh/node初期weightsおよび
 raw/legacy/file/GLB、2/8primitive、名前衝突/順序/省略、local index越境、全体Reduce prefix、全体fit、
 morphの総数/幅/対象なしprimitiveと幅不一致、および旧writerの出力保持をnative試験へ登録する。
 Windows.hに依存するためこのLinux環境では登録・静的照合に留まり、実行済みの純JSON/範囲検査とは区別する。
+
+## 0.2 readerの段階接続
+
+旧0.0/0.1を維持して320B/表/UTF-8とclip別所有検査を接続する。
+submeshのflags/bounds/任意VertexCountを所有型へ残し、未接続M9経路は表付き資産を明示拒否する。
+writerはまだ0.1で新表を拒否し、cacheのcurrent writer minor判定もwriter切替時に追加する。
+readerのnative回帰は登録済みだがWindows/Core全体の実行は未検証。描画受入れも未完。

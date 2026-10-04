@@ -1,5 +1,6 @@
 ﻿#include "Asset/AssetPackageFormat.h"
 #include "Asset/CookedSkeletalFormat.h"
+#include "Asset/CookedSkeletalNameCodec.h"
 #include "FileStream/FileStream.h"
 #include "FileStream/Package.h"
 #include "Rendering/VertexLayout.h"
@@ -275,13 +276,155 @@ namespace
     {
         const uint64_t hash = bytes[14] == 0
             ? Asset::ComputeCookedSkeletalPayloadHash(bytes.data() + 256, bytes.size() - 256)
-            : Asset::ComputeCookedSkeletalV01Hash(bytes.data() + 192, bytes.data() + 256, bytes.size() - 256);
+            : bytes[14] == 2
+                ? Asset::ComputeCookedSkeletalV02Hash(bytes.data() + 192, bytes.data() + 256, bytes.data() + 320, bytes.size() - 320)
+                : Asset::ComputeCookedSkeletalV01Hash(bytes.data() + 192, bytes.data() + 256, bytes.size() - 256);
         WriteLe64(bytes, 160, hash);
     }
 
     Asset::AssetBlob MakeBlob(const ByteArray& bytes)
     {
         return Asset::AssetBlob::CopyBytes(Container::Span<const uint8_t>(bytes.data(), bytes.size()), "memory.nvskel");
+    }
+
+    // writerと独立した0.2配置。2clipは同joint/pathを別々に所有する。
+    ByteArray BuildGoldenSkeletalV02()
+    {
+        const auto old = BuildGoldenSkeletal();
+        ByteArray bytes(1436, 0);
+        std::memcpy(bytes.data(), old.data(), 256);
+        WriteLe32(bytes, 8, 320);
+        WriteLe16(bytes, 14, 2);
+        WriteLe64(bytes, 40, 1436);
+        const uint64_t offsets[] = {320, 512, 544, 704, 768, 896, 1408};
+        const uint64_t sizes[] = {192, 24, 160, 64, 128, 256, 28};
+        for (size_t index = 0; index < 7; ++index)
+        {
+            WriteLe64(bytes, 48 + index * 16, offsets[index]);
+            WriteLe64(bytes, 56 + index * 16, sizes[index]);
+        }
+        WriteLe32(bytes, 172, 6);
+        WriteLe32(bytes, 180, 2);
+        WriteLe32(bytes, 184, 4);
+        WriteLe32(bytes, 188, 8);
+        WriteLe32(bytes, 256, 64);
+        WriteLe32(bytes, 260, 64);
+        WriteLe64(bytes, 264, 1152);
+        WriteLe64(bytes, 272, 128);
+        WriteLe64(bytes, 280, 1280);
+        WriteLe64(bytes, 288, 128);
+        WriteLe32(bytes, 296, 2);
+        WriteLe32(bytes, 300, 2);
+        std::memcpy(bytes.data() + 320, old.data() + 256, 192);
+        std::memcpy(bytes.data() + 512, old.data() + 448, 12);
+        std::memcpy(bytes.data() + 524, old.data() + 448, 12);
+        std::memcpy(bytes.data() + 544, old.data() + 464, 160);
+        std::memcpy(bytes.data() + 704, old.data() + 624, 32);
+        std::memcpy(bytes.data() + 736, old.data() + 624, 32);
+        WriteLe64(bytes, 736, 13);
+        WriteLe32(bytes, 744, 7);
+        WriteFloat(bytes, 748, 1.0f);
+        WriteLe32(bytes, 752, 2);
+        std::memcpy(bytes.data() + 768, old.data() + 656, 64);
+        std::memcpy(bytes.data() + 832, old.data() + 656, 64);
+        WriteLe32(bytes, 844, 4);
+        WriteLe32(bytes, 876, 6);
+        std::memcpy(bytes.data() + 896, old.data() + 720, 128);
+        std::memcpy(bytes.data() + 1024, old.data() + 720, 128);
+        WriteFloat(bytes, 1056, 1.0f);
+        WriteFloat(bytes, 1120, 1.0f);
+        for (size_t index = 0; index < 2; ++index)
+        {
+            const size_t record = 1152 + index * 64;
+            WriteLe32(bytes, record, static_cast<uint32_t>(index * 3));
+            WriteLe32(bytes, record + 4, 3);
+            WriteLe32(bytes, record + 12, 3);
+            WriteLe32(bytes, record + 16, static_cast<uint32_t>(index));
+            WriteLe32(bytes, record + 20, static_cast<uint32_t>(index));
+            WriteFloat(bytes, record + 24, 0.5f);
+            WriteFloat(bytes, record + 36, 2.0f);
+            WriteLe64(bytes, 1280 + index * 64, 20 + index * 4);
+            WriteLe32(bytes, 1288 + index * 64, 4);
+        }
+        const uint8_t names[] = {'R','o','o','t','C','h','i','l','d','W','a','v','e',
+            0xe9,0xaa,0xa8,0xf0,0x9f,0x90,0xba,'B','o','d','y','E','y','e','s'};
+        std::memcpy(bytes.data() + 1408, names, sizeof(names));
+        RecomputeSkeletalHash(bytes);
+        return bytes;
+    }
+
+    void RunV02ReaderContract()
+    {
+        const auto golden = BuildGoldenSkeletalV02();
+        const auto parsed = Asset::ParseCookedSkeletal(MakeBlob(golden));
+        assert(parsed.Succeeded() && parsed.Data.VersionMinor == 2);
+        const auto& data = parsed.Data.Skeletal;
+        assert(data.SubMeshes.size() == 2 && data.MaterialSlots.size() == 2 && data.Clips.size() == 2);
+        assert(data.SubMeshes[1].IndexStart == 3 && data.SubMeshes[1].IndexCount == 3 &&
+            data.SubMeshes[1].VertexCount == 3 && data.SubMeshes[1].bNoShadow &&
+            data.SubMeshes[1].BoundsCenter[0] == 0.5f && data.SubMeshes[1].BoundsRadius == 2.0f);
+        assert(data.MaterialSlots[0].Name == "Body" && data.MaterialSlots[1].Name == "Eyes");
+        assert(data.Clips[0].DurationSeconds == 2.0f && data.Clips[1].DurationSeconds == 1.0f &&
+            data.Clips[0].Channels.size() == 2 && data.Clips[1].Channels.size() == 2);
+        assert(data.Clips[0].Channels[0].Samples.back().TimeSeconds == 2.0f &&
+            data.Clips[1].Channels[0].Samples.back().TimeSeconds == 1.0f);
+        const auto utf = Asset::MeasureSkeletalNameEncoding<Container::String::value_type>(2,
+            {data.Clips[1].Name.data(), data.Clips[1].Name.size()});
+        assert(utf.Succeeded() && utf.ByteCount == 7);
+        uint8_t encodedName[7]{};
+        const uint8_t expectedName[] = {0xe9, 0xaa, 0xa8, 0xf0, 0x9f, 0x90, 0xba};
+        assert(Asset::EncodeSkeletalWireName<Container::String::value_type>(2,
+            {data.Clips[1].Name.data(), data.Clips[1].Name.size()}, encodedName).Succeeded());
+        assert(std::memcmp(encodedName, expectedName, sizeof(expectedName)) == 0);
+        const auto reject = [](ByteArray bytes, size_t offset, uint32_t value)
+        {
+            WriteLe32(bytes, offset, value);
+            RecomputeSkeletalHash(bytes);
+            const auto result = Asset::ParseCookedSkeletal(MakeBlob(bytes));
+            assert(!result.Succeeded() && result.Data.Skeletal.Vertices.empty() &&
+                result.Data.Skeletal.Clips.empty() && result.Data.Skeletal.SubMeshes.empty() && !result.Data.SourceBlob.IsValid());
+        };
+        // range/予約/flags/bounds/所有/padding/UTF-8の不正をhash再計算後にも拒否する。
+        reject(golden, 1216, 2);
+        reject(golden, 1168, 2);
+        reject(golden, 1160, 1);
+        reject(golden, 1164, 2);
+        reject(golden, 1172, 2);
+        reject(golden, 1176, 0x7fc00000);
+        reject(golden, 1188, 0xbf800000);
+        reject(golden, 1192, 1);
+        reject(golden, 1292, 1);
+        reject(golden, 1296, 1);
+        reject(golden, 1280, UINT32_MAX);
+        reject(golden, 1288, UINT32_MAX);
+        reject(golden, 752, 1); // clip所有が重複。
+        reject(golden, 756, 1); // 最後のchannelが未所有。
+        reject(golden, 716, 0x3f800000); // clip0のdurationだけ違う。
+        reject(golden, 748, 0x40000000); // clip1は他clipの最大時刻を使えない。
+        reject(golden, 844, 2); // sample所有が重複。
+        auto duplicate = golden;
+        WriteLe32(duplicate, 800, 1);
+        reject(duplicate, 804, 0);
+        reject(golden, 556, 1); // joint予約。
+        reject(golden, 728, 1); // clip予約。
+        reject(golden, 788, 1); // channel予約。
+        reject(golden, 916, 1); // sample予約。
+        reject(golden, 536, 1); // index後padding。
+        reject(golden, 1421, 0); // 名前へNUL。
+        reject(golden, 1421, 0x808080c0); // overlong。
+        reject(golden, 304, 1); // extra vertex未対応。
+        auto badHash = golden;
+        badHash[160] ^= 1;
+        assert(Asset::ParseCookedSkeletal(MakeBlob(badHash)).Status == Asset::CookedSkeletalParseStatus::PayloadHashMismatch);
+        auto truncated = golden;
+        truncated.resize(319);
+        assert(Asset::ParseCookedSkeletal(MakeBlob(truncated)).Status == Asset::CookedSkeletalParseStatus::HeaderTooSmall);
+        auto emptyNames = golden;
+        WriteLe32(emptyNames, 744, 0);
+        WriteLe32(emptyNames, 1288, 0);
+        RecomputeSkeletalHash(emptyNames);
+        assert(Asset::ParseCookedSkeletal(MakeBlob(emptyNames)).Succeeded());
+        std::cout << "V02 reader contract passed\n";
     }
 
     ByteArray BuildLooseFixtureBuffer()
@@ -1955,6 +2098,7 @@ int main(int argc, char** argv)
         RunMorphDropContract();
         RunMultiPrimitiveContract();
         RunUnitContract();
+        RunV02ReaderContract();
     }
     else
     {

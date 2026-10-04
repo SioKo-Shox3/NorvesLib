@@ -2,8 +2,8 @@
 
 ## 状態と版の境界
 
-現行のreader/writerは0.0/0.1の契約を維持している。0.2はここで統一する仕様と純検証部品の段階であり、
-本書の追加だけではreader/writer/decoderの受理範囲を切り替えない。
+readerは旧0.0/0.1を維持して0.2の所有表/複数clip検査を接続済み。writerはまだ0.1のままで、
+新しいsubmesh/slot表付きdataのcookを明示拒否する。Resource/描画の接続も未完。
 0.2はGR32のsubmesh/名前slotとGR82 Stage Aの複数clipを同じ定義へ載せる。別のminor=2を作らない。
 
 | 項目 | 0.0 | 0.1 | 0.2 |
@@ -142,3 +142,20 @@ UTF-8は[RFC 3629](https://www.rfc-editor.org/rfc/rfc3629)のscalar範囲/最短
 純試験ではUTF-8/UTF-16/UTF-32とホストwchar_tを照合し、NULとsurrogateを除く全1,112,063 scalarを往復する。
 保存byte列4,382,591BのFNV値をPython標準UTF-8で独立生成した固定値と照合する。
 このcodec追加だけでは実reader/writerを切り替えず、Windows/Core全体やWindows TCHAR経路の実行済みを意味しない。
+
+## 0.2 readerの接続状態
+
+ParseCookedSkeletalは旧0.0/0.1と統一0.2を版別に読み、VersionMinorを結果へ保持する。
+0.2のsubmeshは範囲/slotに加えてVertexCount、NoShadow、boundsも所有dataへ保持する。
+VertexOffsetは0必須で、VertexCountが非0の場合は各絶対indexが[0,VertexCount)内であることも検査する。
+0.2だけjoint/clip/channel/sampleの予約byteも0必須とし、旧版の受理条件を変えない。
+clip名/slot名の空や重複はwireでは表現できる。名前選択・一意名生成はStage A/authoring側の責務とし、readerで勝手に改名しない。
+
+0.2の複数clipはchannel/sampleを表順に一意所有し、joint/path重複とdurationをclip単位で検査する。
+エラー時は部分的なSkeletalやSourceBlobを公開しない。
+M9の起動側はまだ単一clip/全index描画なので、新表付き・複数clipを明示拒否する。
+writer/cacheの切替とResource/描画の接続は未完で、readerの受理だけをゲームでの使用可能と扱わない。
+
+検証は純wire/submesh recordの通常・最適化・sanitizer試験と、手書き0.2のnative回帰登録を分ける。
+native回帰には2clip/2submesh/UTF-8、旧golden、範囲/予約/padding/hash/clip跨ぎと失敗出力を含めるが、
+このLinux環境ではWindows.h依存により実readerを含むCore全体の試験は未実行。

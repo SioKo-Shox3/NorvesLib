@@ -1270,6 +1270,14 @@ namespace Game
             return false;
         }
 
+        // 中間段階では単一clip/全index描画のみ。新表を捨てて成功させない。
+        if (skeletal.Data.Skeletal.Clips.size() != 1 || !skeletal.Data.Skeletal.SubMeshes.empty() ||
+            !skeletal.Data.Skeletal.MaterialSlots.empty())
+        {
+            LOG_ERROR("M9_WORLD_SMOKE: 複数clip/材質slotの描画接続は未対応です");
+            return false;
+        }
+
         auto& resources = NorvesLib::Core::GEngine.GetResourceRegistry();
         auto mesh = resources.CreateTransient<SkinnedMeshResource>("M9WorldSkinnedMesh");
         auto skeleton = resources.CreateTransient<SkeletonResource>("M9WorldSkeleton");

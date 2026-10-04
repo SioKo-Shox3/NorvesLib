@@ -1,6 +1,8 @@
 ﻿#include "Asset/CookedSkeletalWireValidation.h"
 #include "Resource/SkeletalLimits.h"
 #include <limits>
+#include <bit>
+#include <cmath>
 
 namespace NorvesLib::Core::Asset
 {
@@ -18,6 +20,48 @@ namespace NorvesLib::Core::Asset
         {
             return section.Offset >= headerSize && section.Offset % 16 == 0 && section.Offset <= fileSize && section.Size <= fileSize - section.Offset;
         }
+    }
+
+    CookedSkeletalWireStatus ReadCookedSkeletalV02Submesh(Container::Span<const uint8_t> record,
+        uint64_t totalVertices, Skeletal::SkeletalSubMesh& outSubmesh) noexcept
+    {
+        if (!record.data() || record.size() != CookedSkeletalFormatV02::SubmeshRecordSize ||
+            totalVertices == 0 || totalVertices > UINT32_MAX)
+        {
+            return CookedSkeletalWireStatus::InvalidInput;
+        }
+        const auto* data = record.data();
+        Skeletal::SkeletalSubMesh submesh;
+        submesh.IndexStart = ReadU32(data);
+        submesh.IndexCount = ReadU32(data + 4);
+        submesh.VertexCount = ReadU32(data + 12);
+        submesh.MaterialSlot = ReadU32(data + 16);
+        const uint32_t flags = ReadU32(data + 20);
+        submesh.bNoShadow = (flags & CookedSkeletalFormatV02::SubmeshFlagNoShadow) != 0;
+        submesh.BoundsRadius = std::bit_cast<float>(ReadU32(data + 36));
+        if (ReadU32(data + 8) != 0 || submesh.VertexCount > totalVertices ||
+            (flags & ~CookedSkeletalFormatV02::SubmeshFlagNoShadow) != 0 ||
+            !std::isfinite(submesh.BoundsRadius) || submesh.BoundsRadius < 0.0f)
+        {
+            return CookedSkeletalWireStatus::InvalidRecord;
+        }
+        for (size_t index = 40; index < 64; ++index)
+        {
+            if (data[index] != 0)
+            {
+                return CookedSkeletalWireStatus::InvalidRecord;
+            }
+        }
+        for (size_t axis = 0; axis < 3; ++axis)
+        {
+            submesh.BoundsCenter[axis] = std::bit_cast<float>(ReadU32(data + 24 + axis * 4));
+            if (!std::isfinite(submesh.BoundsCenter[axis]))
+            {
+                return CookedSkeletalWireStatus::InvalidRecord;
+            }
+        }
+        outSubmesh = submesh;
+        return CookedSkeletalWireStatus::Success;
     }
 
     CookedSkeletalWireStatus ResolveCookedSkeletalWireProfile(uint16_t major, uint16_t minor,

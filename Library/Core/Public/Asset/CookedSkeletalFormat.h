@@ -29,6 +29,7 @@ namespace NorvesLib::Core::Asset
         AssetBlob SourceBlob;
         uint64_t PayloadHash = 0;
         Skeletal::SkeletalGltfData Skeletal;
+        uint16_t VersionMinor = 0;
     };
 
     struct CookedSkeletalParseResult

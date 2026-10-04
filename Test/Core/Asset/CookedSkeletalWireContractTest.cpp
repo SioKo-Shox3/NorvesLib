@@ -160,6 +160,41 @@ int main()
     std::memcpy(blob+256,payload,31);
     assert(TryComputeCookedSkeletalWireHash(0,0,256,{blob,287},hash) == Status::Success && hash == 0xa0b2c92400105b19ull);
     assert(TryComputeCookedSkeletalWireHash(0,1,256,{blob,287},hash) == Status::Success && hash == 0x94d5d17771c416d9ull);
+    uint8_t subrecord[64]{};
+    U32(subrecord + 4, 3);
+    U32(subrecord + 12, 3);
+    U32(subrecord + 16, 1);
+    U32(subrecord + 20, 1);
+    U32(subrecord + 24, 0x3f800000); // 中心x=1。
+    U32(subrecord + 36, 0x40000000); // 半径2。
+    NorvesLib::Core::Skeletal::SkeletalSubMesh parsed;
+    assert(ReadCookedSkeletalV02Submesh(subrecord, 3, parsed) == Status::Success);
+    assert(parsed.IndexStart == 0 && parsed.IndexCount == 3 && parsed.VertexCount == 3 &&
+        parsed.MaterialSlot == 1 && parsed.bNoShadow && parsed.BoundsCenter[0] == 1.0f && parsed.BoundsRadius == 2.0f);
+    const size_t offsets[] = {8, 12, 20, 24, 28, 32, 36, 40, 63};
+    const uint32_t values[] = {1, 4, 2, 0x7f800000, 0x7fc00000, 0xff800000, 0xbf800000, 1, 1};
+    for (size_t mutation = 0; mutation < 9; ++mutation)
+    {
+        uint8_t bad[64];
+        std::memcpy(bad, subrecord, 64);
+        if (offsets[mutation] == 63)
+        {
+            bad[63] = 1;
+        }
+        else
+        {
+            U32(bad + offsets[mutation], values[mutation]);
+        }
+        assert(ReadCookedSkeletalV02Submesh(bad, 3, parsed) == Status::InvalidRecord);
+        assert(parsed.IndexCount == 3 && parsed.bNoShadow && parsed.BoundsRadius == 2.0f);
+    }
+    assert(ReadCookedSkeletalV02Submesh({subrecord, 63}, 3, parsed) == Status::InvalidInput);
+    assert(ReadCookedSkeletalV02Submesh({nullptr, 64}, 3, parsed) == Status::InvalidInput);
+    assert(ReadCookedSkeletalV02Submesh(subrecord, 0, parsed) == Status::InvalidInput);
+    assert(ReadCookedSkeletalV02Submesh(subrecord, uint64_t(UINT32_MAX) + 1, parsed) == Status::InvalidInput);
+    U32(subrecord + 12, 0);
+    U32(subrecord + 20, 0);
+    assert(ReadCookedSkeletalV02Submesh(subrecord, 3, parsed) == Status::Success && !parsed.bNoShadow && parsed.VertexCount == 0);
     std::cout << "CookedSkeletalWireContractTest PASS: legacy_v02_profiles_counts_sections_extension_hash_atomicity\n";
     return 0;
 }
