@@ -1,0 +1,30 @@
+{
+  "run_url": "https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37200047966",
+  "run_id": 37200047966,
+  "sha": "d1307c32ec86ec187c7cfb3959d5452760059543",
+  "configuration": "Release",
+  "runner_image": "windows-2022 20260927.320.1",
+  "cmake": "3.31.6",
+  "python": "3.12.10",
+  "powershell": "7.6.6",
+  "sdk": {
+    "version": "1.4.309.0",
+    "platform": "windows",
+    "file": "VulkanSDK-1.4.309.0-Installer.exe",
+    "sha": "48b132169b64fe65cdb0f20970195335a65354e73f1ea5373032c2a8bbad4297"
+  },
+  "before_artifact_id": 11302304928,
+  "before_zip_sha256": "7491b7178b1be87f79269624c337183629e770145b41ea6ca8477521f642d385",
+  "snapshot_sha256": "09af3262f55ce75cf512cfb9086c0dbf3b81cd8344233b5f10ebda8e87f36c85",
+  "snapshot_file_count": 79,
+  "asset_cook_sha256": "7ac890ce40434bf9e1c062ca0fe0ee0f5f2b49d79fbf40ca7b81662a01b50079",
+  "test_executable_sha256": "93b8d1dfc012bcb4afeffdefd4eca356bf2d709dead2bd76cf6ab4bbbeaf0c48",
+  "recipe_crlf_note": "31項目中20項目はgit blobと同一、11項目はWindows checkoutのLF→CRLF変換後byte。正規化しない。",
+  "diagnostic_utf8_hex": [
+    "e9aaa8e6a0bce381aee8a1a8e695b0e9878f6d65746164617461e3818ce4b88de6ada3e381a7e38199",
+    "e9aaa8e6a0bc496d706f72745265706f7274e381aee6b8ace5ae9ae580a4e3818ce4b88de6ada3e381a7e381990a",
+    "e8ada6e5918a3a20e884b1e890bd776569676874e3818ce68c87e5ae9ae381aee8ada6e5918ae996bee580a4e38292e8b685e38188e3819fe9a082e782b9e3818ce38182e3828ae381bee381990a",
+    "e8ada6e5918a3a20435542494353504c494e45e38292e8a8b1e5aeb9e8aaa4e5b7aee58685e381ae4c494e454152e58897e381b8e5a489e68f9be38197e381bee38197e3819f0a",
+    "e8ada6e5918a3a206d6f727068e38292e999a4e58ebbe38197e381bee38197e3819fe38082e58583e383a1e38383e382b7e383a5e381b8e381aee784bce4bb98e38191e381afe8a18ce381a3e381a6e38184e381bee3819be382930a"
+  ]
+}

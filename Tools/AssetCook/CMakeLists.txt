@@ -1,5 +1,10 @@
 # CLIと直接リンクする試験で同じcooker実装を共有する。
 add_library(AssetCookLib STATIC
+    AssetCookOutput.cpp
+    AssetCookOutput.h
+    AssetCookLegacyOptions.h
+    SingleAssetCook.cpp
+    SingleAssetCook.h
     AudioCooker.cpp
     AudioCooker.h
     MeshCooker.cpp

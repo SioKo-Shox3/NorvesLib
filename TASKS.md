@@ -2327,7 +2327,7 @@
 - stop-when: byte拡幅だけや符号修正だけでdecode済みとする、path用ToCoreStringをJSON修正で一括変更、native実行未実施を合格扱いする。
 
 ## G2-S6-WINDOWS-CLI-CI: Windowsで実CLIの分割前基準を採取する
-- status: doing
+- status: done
 - done-when: feature限定の標準Windows runnerで公式Vulkan SDKと実Core/AssetCook/CookedMeshTestをビルドし、固定7smokeの実exe出力・manifest・ログを保存。before baselineを実成功確認する。--asset-set比較とMain分割後比較は後続gateとして残す。
 - verify: 最小権限workflow、固定SDK/debug component、実run結果と各caseログ・snapshotを開いて確認。GPU検証と混同しない。
 - stop-when: mainへ変更、課金/権限を拡大、失敗を成功扱い、Mainを基準採取前に分割。
@@ -2358,13 +2358,19 @@
 - stop-when: OS/ユーザーの恒久環境を変更、manifest比較を弱化、実再試験前に環境原因の確定/全smoke合格を主張。
 
 ## G2-MATERIAL-IMPORT-PLAN: sidecarと元材質の解決結果を値所有する
-- status: doing
+- status: done
 - done-when: 幾何設定52Bを維持した新document/loaderが資産layerと素材selector+layer+surfaceを厳密解析。glTF元index/name catalogを所有し、全selectorを共通関数1回で解決、ARM/発光設定とSurfaceNameを値所有planへ届ける。旧loader/v0受理は拡張せず、実cook接続は次の垂直slice。
 - verify: raw無名/Material_0/入替/同名警告情報/未一致/二重target/Unicode/JSON寿命後所有/失敗保持、旧幾何APIの拒否互換、sidecarfile入口。native testをCIで実行する。
 - stop-when: SurfaceNameをreportだけでruntime対応とする、未対応cookに設定を捨てて渡す、resolver照合を複製、元indexを生成slotへ置換。
 
 ## G2-S6-SKELETAL-FIXTURE-URI: 骨格GLB試験の置換対象URIを明示する
-- status: doing
+- status: done
 - done-when: ChangeBufferUriが期待する外部URIを引数で受け、ExtraZeroInfluencesのextra_zero.binだけを正しく除去する。従来fixture.binの既定とちょうど1件の置換assertを維持する。
 - verify: 既存JSON/binaryは無変更、抽出後JSONとbuffer長を確認。実Skeletal unit/CLIを再実行し、失敗時出力保持やInfluenceLimitExceededの期待を変更しない。
 - stop-when: URIの不一致を黙殺、JSON全体を正規化、エンジン判定やassertを弱化、実全7smoke前に基準採取完了とする。
+
+## G2-S6-MAIN-SPLIT: 単体cookを再利用できる境界へMainを分割する
+- status: doing
+- done-when: d1307c32の実Windows基準（run37200047966）を固定し、CLI外殻と再利用可能な単体cookを分ける。新機能/型体系の全面変更を混ぜず、分割後の実7smoke package/manifest79件が全byte一致する。
+- verify: 同じWindows checkout byte/driver/fixture、既存10CPUと単体cook境界1契約、7smoke、保存済みbeforeとafterのraw比較。recipe31項目のうち11はWindowsCRLFであることに注意する。
+- stop-when: 条件を弱化/正規化して差を消す、比較未実施で分割完了、baseline期限切れを黙認、asset-set実装を同じ差分へ混ぜる。

@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: windows-assetcook-${{ github.ref }}
@@ -56,6 +57,37 @@ jobs:
           python --version | Tee-Object -FilePath "$log/provenance.txt" -Append
           if ($LASTEXITCODE -ne 0) { throw 'python unavailable' }
           $PSVersionTable.PSVersion.ToString() | Add-Content "$log/provenance.txt"
+      - name: 固定した分割前基準を取得する
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          artifact-ids: '11302304928'
+          run-id: '37200047966'
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/NorvesCliFrozenBefore
+      - name: 基準snapshotと実行ファイルを固定hashで照合する
+        run: |
+          $receipt = Get-Content Docs/AssetCookCliFrozenBaseline.json -Raw | ConvertFrom-Json
+          $reference = Join-Path $env:RUNNER_TEMP 'NorvesCliFrozenBefore'
+          if ($receipt.run_id -ne 37200047966 -or $receipt.before_artifact_id -ne 11302304928) { throw 'Frozen baseline identity mismatch' }
+          if ((Get-FileHash "$reference/snapshot/snapshot.json" -Algorithm SHA256).Hash -ne $receipt.snapshot_sha256) { throw 'Frozen snapshot hash mismatch' }
+          if ((Get-FileHash "$reference/AssetCook.exe" -Algorithm SHA256).Hash -ne $receipt.asset_cook_sha256) { throw 'Frozen AssetCook hash mismatch' }
+          if ((Get-FileHash "$reference/CookedMeshTest.exe" -Algorithm SHA256).Hash -ne $receipt.test_executable_sha256) { throw 'Frozen test executable hash mismatch' }
+      - name: 基準payloadとWindows入力recipeを先行検証する
+        run: |
+          @'
+          import os, runpy
+          from pathlib import Path
+          p = runpy.run_path("Scripts/AssetCookCliParity.py")
+          source = Path.cwd()
+          meta, files = p["load_snapshot"](Path(os.environ["RUNNER_TEMP"]) / "NorvesCliFrozenBefore/snapshot")
+          scripts = [source / "Tools/AssetCook" / f"AssetCook{x}Smoke.cmake.in" for x in p["SMOKES"]]
+          scripts.append(source / "Test/Core/Asset/CookedSkeletalAssetTest.cmake.in")
+          if len(files) != 79 or meta["recipe"] != p["build_recipe"](source, scripts):
+              raise SystemExit("Frozen recipe or payload inventory mismatch")
+          print("Frozen 79-file snapshot and Windows recipe verified")
+          '@ | python - 2>&1 | Tee-Object "$env:NORVES_CI_LOG/frozen-preflight.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen baseline preflight failed' }
       - name: 公式Vulkan SDKを検証して配置する
         run: |
           $ErrorActionPreference = 'Stop'
@@ -91,11 +123,26 @@ jobs:
         run: |
           cmake --build build/windows-cli --config Release --target AssetCook CookedMeshTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
           if ($LASTEXITCODE -ne 0) { throw 'Native build failed' }
+      - name: 移動した日本語診断のUTF-8 byteを照合する
+        run: |
+          @'
+          import json, os
+          from pathlib import Path
+          receipt = json.loads(Path("Docs/AssetCookCliFrozenBaseline.json").read_text(encoding="utf-8"))
+          before = (Path(os.environ["RUNNER_TEMP"]) / "NorvesCliFrozenBefore/AssetCook.exe").read_bytes()
+          after = Path("build/windows-cli/Tools/AssetCook/Release/AssetCook.exe").read_bytes()
+          for encoded in receipt["diagnostic_utf8_hex"]:
+              literal = bytes.fromhex(encoded) + b"\0"
+              if before.count(literal) != 1 or after.count(literal) != 1:
+                  raise SystemExit("Moved diagnostic UTF-8 byte mismatch")
+          print("All 5 moved diagnostic literals preserve frozen UTF-8 bytes")
+          '@ | python - 2>&1 | Tee-Object "$env:NORVES_CI_LOG/diagnostic-parity.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic byte parity failed' }
       - name: CPU契約を実行する
         run: |
-          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(CookedMeshTest|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|JsonUnicodeInputTest|MaterialImportDocumentTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
+          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(CookedMeshTest|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
           if ($LASTEXITCODE -ne 0) { throw 'CPU contracts failed' }
-      - name: 分割前の実CLI出力を採取する
+      - name: 分割後の実CLI出力を採取する
         id: capture
         run: |
           python Scripts/AssetCookCliParity.py capture --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --skeletal-test-exe build/windows-cli/Test/Core/Asset/Release/CookedMeshTest.exe --output "$env:NORVES_CI_CAPTURE" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/capture.log"
@@ -107,6 +154,11 @@ jobs:
           New-Item -ItemType Directory "$env:NORVES_CI_BASELINE" | Out-Null
           Copy-Item "$env:NORVES_CI_CAPTURE/snapshot" "$env:NORVES_CI_BASELINE/snapshot" -Recurse
           Copy-Item $exe,$test,"$env:NORVES_CI_LOG/provenance.txt","$env:NORVES_CI_LOG/sdk-checksum.json" "$env:NORVES_CI_BASELINE/"
+      - name: 分割前後の全出力をbyte比較する
+        id: parity
+        run: |
+          python Scripts/AssetCookCliParity.py compare "$env:RUNNER_TEMP/NorvesCliFrozenBefore/snapshot" "$env:NORVES_CI_CAPTURE/snapshot" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/parity.log"
+          if ($LASTEXITCODE -ne 0) { throw 'CLI byte parity failed' }
       - name: 検証ログを保存する
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -120,11 +172,11 @@ jobs:
             build/windows-cli/CMakeCache.txt
             build/windows-cli/CMakeFiles/CMakeConfigureLog.yaml
             build/windows-cli/Testing/Temporary/LastTest.log
-      - name: 成功した分割前基準を保存する
-        if: success() && steps.capture.outcome == 'success'
+      - name: 7smoke成功時の比較対象を保存する
+        if: always() && steps.capture.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: windows-cli-before-Release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          retention-days: 90
+          name: windows-cli-candidate-${{ steps.parity.outcome }}-Release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
           if-no-files-found: error
           path: ${{ env.NORVES_CI_BASELINE }}/

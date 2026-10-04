@@ -693,3 +693,8 @@
 - run37198756161でCore/AssetCook/CookedMeshTestビルドと9CPU試験成功を確認。G2-JSON-UNICODE-INPUTはnative ANSI/TCHAR経路も合格してdone（Core全体UNICODE構成は未検証）。PSModulePath修正でGlb/Importも通り環境修正taskはdone。全7smokeはSkeletalのfixture helperがextra_zero.binにfixture.bin固定needleを当てて停止し未完。出力/受入れ条件は緩めず別修正する。
 
 - G2-S6-SKELETAL-FIXTURE-URI: 実run37198756161の最終Skeletal停止を特定。ChangeBufferUri呼出順の先行fixtureはすべてpretty fixture.bin、ExtraZeroInfluencesだけextra_zero.binで固定needleに不一致。期待URI引数（既定fixture.bin）と一意一致assertを設け、該当callだけextra_zero.binを指定。source fixture/binary/エンジン判定は無変更。実再試験まではdoing。
+
+- run37200047966/d1307c32: 実Windows ReleaseでCore/AssetCook/CookedMeshTest、12+12比較器試験、10CPU契約、Raw/Texture/Audio/Mesh/Glb/Import/Skeletal全7CLI成功。before artifact11302304928（SHA256 7491b7178b1be87f79269624c337183629e770145b41ea6ca8477521f642d385）を外部検証storageへ保存し、79file=50package+29JSON全hash/size/一覧と2exe hashを独立検証＋root再確認。recipe31項目はgit blob直接20/WindowsCRLF11で説明可能。Main分割前gateを閉じ、材質import-plan・fixtureURI・WindowsCI基盤taskをdone。分割後byte比較、--asset-setとorigin/main2spec比較、依存hashは未完。
+- Next: G2-S6-MAIN-SPLIT。argv/help/inspect外殻と単体cookサービスの境界を設け、同一79出力を実比較する。現Mainの2993行・振る舞いは基準採取時まで不変。
+
+- G2-S6-MAIN-SPLIT: Mainを317行のargv/help/inspect外殻へ縮小し、単体cookサービスとprivate出力処理へ既存bodyを移動。公開requestは値所有、既存validation/dispatchを保持。機械的body照合・比較器12件・行末確認成功。固定before取得/recipe照合/79出力比較と日本語診断5literalのbyte照合をCIへ接続。実after検証前なのでdoing。

@@ -48,3 +48,9 @@ run 37196379322はビルド/指定7CPU契約/Raw・Texture・Audio・Meshを通�
 smoke command・fixture・package/manifestのbyte条件は変更しない。成功baseline未作成の段階でdriverを修正し、そのdriver hashを含めて基準を採取する。実再試験の成功前に原因確定とは扱わない。CIのPythonはUTF8 modeを明示し、pipeへの日本語ログがrunner既定codepageへ依存しないようにする。
 
 根拠: [MicrosoftのPSModulePath説明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath?view=powershell-7.5#starting-windows-powershell-from-powershell-7)
+
+## 採用した分割前基準
+
+[run 37200047966](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37200047966)、commit d1307c32ec86ec187c7cfb3959d5452760059543、Releaseを採用した。実ビルド・10CPU契約・7CLI smoke成功。before artifact 11302304928、ZIP SHA256は7491b7178b1be87f79269624c337183629e770145b41ea6ca8477521f642d385。79出力（50package/29JSON）の一覧・size・SHA256と2exeのsnapshot記載hash一致を検証し、保持期限に依存しない検証用storageへ保存済み。
+
+recipe31項目の11件にはWindows checkoutのLF→CRLF変換がある（raw_sample.binも含む）。分割後も同じ実入力byteで比較し、fixtureやJSONの正規化を挟まない。artifactの期限は2027-01-02。CIから過去runのartifactを使う場合は固定run/artifactを選び、取得不可なら比較をskipせず失敗させる。
