@@ -18,6 +18,8 @@
 //      画素のタイルは (lx >= 2, ly >= 2)。
 //      非常駐で粗いミップへ逃げるので、位相によらず 16 画素すべてが書く（ミップ 0 の 4 タイルすべてが要求になる）。
 // 材質のパラメータ（巡回の位相・テクスチャの番号・タイルの大きさ）は UBO の u_Params.x。0 のときは何も書かない。
+// u_Params.y が 0 でないときは、材質の UBO と同じく float の bit 列として受け取り、DecodeVirtualTextureFeedbackParam で戻した値を使う
+// （GBuffer・MegaGeometry の経路。24bit の整数が float を経由しても変わらないことを確かめる）。
 // ========================================
 
 #include "Common/SparseResidencySampling.glsl"
@@ -57,6 +59,7 @@ void main()
     vec2 uv = (baseTexel + local * stepTexels) * TEXEL;
     bool bEscaped = false;
     vec4 color = SampleSparseResidentTracked(u_Texture, uv, bEscaped);
-    WriteVirtualTextureFeedback(u_Texture, uv, u_Params.x, bEscaped);
+    uint param = u_Params.y != 0u ? DecodeVirtualTextureFeedbackParam(uintBitsToFloat(u_Params.y)) : u_Params.x;
+    WriteVirtualTextureFeedback(u_Texture, uv, param, bEscaped);
     outColor = color;
 }

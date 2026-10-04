@@ -2668,9 +2668,8 @@ namespace NorvesLib::RHI::Vulkan
         auto compiler = MakeShared<VulkanShaderCompiler>();
         // sparse の常駐を問い合わせる材質シェーダーは、デバイスが shaderResourceResidency を有効にしたときだけ使う。
         compiler->SetSparseResidencyShadingEnabled(m_enabledDeviceFeatures.shaderResourceResidency == VK_TRUE);
-        // VT の要求を書く材質シェーダーは、常駐の照会に加えて、フラグメントシェーダーの storage buffer への書き込みが有効なときだけ使う。
-        compiler->SetVirtualTextureFeedbackEnabled(m_enabledDeviceFeatures.shaderResourceResidency == VK_TRUE &&
-                                                   m_enabledDeviceFeatures.fragmentStoresAndAtomics == VK_TRUE);
+        // VT の要求を書く材質シェーダーは、descriptor に要求のバッファを束ねられるデバイス（SupportsVirtualTextureFeedback）だけ使う。
+        compiler->SetVirtualTextureFeedbackEnabled(m_Capabilities.SupportsVirtualTextureFeedback());
         return StaticPointerCast<IShaderCompiler>(compiler);
     }
 

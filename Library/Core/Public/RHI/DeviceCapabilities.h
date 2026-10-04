@@ -289,13 +289,15 @@ namespace NorvesLib::RHI
         /**
          * @brief 材質のシェーダーが VT のタイルの要求（フィードバック）を書けるか
          *
-         * VT は sparse の常駐の照会（shaderResourceResidency）を前提にし、要求の書き込みは
-         * フラグメントシェーダーの storage buffer への書き込みとアトミック操作が要る。
+         * VT は sparse の結び付けと 2D の部分常駐（要求のバッファのリングを作る条件）、常駐の照会
+         * （shaderResourceResidency）を前提にし、要求の書き込みはフラグメントシェーダーの storage buffer への
+         * 書き込みとアトミック操作が要る。
          * false のデバイスでは材質のシェーダーにフィードバックのコードも binding も入らない（材質は従来どおり描ける）。
          */
         bool SupportsVirtualTextureFeedback() const
         {
-            return bFragmentStoresAndAtomics && Sparse.bShaderResourceResidency;
+            return bFragmentStoresAndAtomics && Sparse.bSparseBinding && Sparse.bResidencyImage2D &&
+                   Sparse.bShaderResourceResidency;
         }
     };
 

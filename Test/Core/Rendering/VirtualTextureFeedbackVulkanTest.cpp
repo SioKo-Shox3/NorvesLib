@@ -200,8 +200,9 @@ namespace
 
     // 1 フレーム分: リングからこのフレームのバッファを得て、パラメータ param で描き、読み戻し用のバリアを積んで提出する。
     // 提出後に完了を待ち、リングを進めて（2 フレーム分の空回し）、読み戻した要求を out へ受け取る。
+    // bViaFloat が true のときは、材質の UBO と同じく param を float にして渡す（シェーダーが DecodeVirtualTextureFeedbackParam で戻す）。
     bool RunFrame(ProbeResources& resources, VirtualTextureFeedbackRing& ring, const TexturePtr& texture, uint32_t param,
-                  uint64_t& inOutSerial, VirtualTextureRequestSet& out)
+                  uint64_t& inOutSerial, VirtualTextureRequestSet& out, bool bViaFloat = false)
     {
         ring.BeginFrame(inOutSerial);
         BufferPtr feedbackBuffer = ring.GetCurrentBuffer();
@@ -211,7 +212,13 @@ namespace
             return false;
         }
 
-        const uint32_t params[4] = {param, 0u, 0u, 0u};
+        uint32_t params[4] = {param, 0u, 0u, 0u};
+        if (bViaFloat)
+        {
+            const float floatParam = static_cast<float>(param);
+            params[0] = 0u;
+            std::memcpy(&params[1], &floatParam, sizeof(floatParam));
+        }
         resources.ParamBuffer->Update(params, sizeof(params), 0u);
 
         DescriptorSetPtr descriptorSet = resources.Device->CreateDescriptorSet(MakeDescriptorSetDesc());
@@ -265,10 +272,10 @@ namespace
         return true;
     }
 
-    bool HasTile(const VirtualTextureRequestSet& set, uint32_t mip, uint32_t x, uint32_t y)
+    bool HasTile(const VirtualTextureRequestSet& set, uint32_t textureIndex, uint32_t mip, uint32_t x, uint32_t y)
     {
         VirtualTextureTileKey key;
-        key.TextureIndex = TextureIndex;
+        key.TextureIndex = textureIndex;
         key.Mip = mip;
         key.X = x;
         key.Y = y;
@@ -284,12 +291,13 @@ namespace
     };
 
     // 要求の集合が期待のタイルと過不足なく一致し、どのタイルも 1 件（ハッシュの表で重複が消えている）であることを確かめる。
-    void ExpectExactly(const char* phase, const VirtualTextureRequestSet& set, const ExpectedTile* tiles, uint32_t tileCount)
+    void ExpectExactly(const char* phase, const VirtualTextureRequestSet& set, uint32_t expectedTextureIndex,
+                       const ExpectedTile* tiles, uint32_t tileCount)
     {
         bool bAllFound = true;
         for (uint32_t i = 0; i < tileCount; ++i)
         {
-            const bool bFound = HasTile(set, tiles[i].Mip, tiles[i].X, tiles[i].Y);
+            const bool bFound = HasTile(set, expectedTextureIndex, tiles[i].Mip, tiles[i].X, tiles[i].Y);
             if (!bFound)
             {
                 std::cerr << TestName << " " << phase << " 期待のタイルが無い mip=" << tiles[i].Mip << " x=" << tiles[i].X
@@ -303,7 +311,7 @@ namespace
         uint32_t totalHits = 0;
         for (uint32_t textureIndex : set.GetTextureIndices())
         {
-            Expect(textureIndex == TextureIndex, "要求のテクスチャの番号が材質のパラメータの番号と一致しなければならない");
+            Expect(textureIndex == expectedTextureIndex, "要求のテクスチャの番号が材質のパラメータの番号と一致しなければならない");
             for (const VirtualTextureTileRequest& request : set.GetRequests(textureIndex))
             {
                 totalHits += request.HitCount;
@@ -474,12 +482,44 @@ namespace
                 // 確認 2: ミップ 0 の 4 タイルすべて。確認 0 が(1, 1)なら確認 1 と同じ要求なので 1 件に減る。
                 const uint32_t phaseTileX = (phase & 3u) >= 2u ? 1u : 0u;
                 const uint32_t phaseTileY = (phase >> 2u) >= 2u ? 1u : 0u;
-                const ExpectedTile expected[6] = {{1, phaseTileX, phaseTileY}, {1, 1, 1}, {0, 0, 0},
-                                                  {0, 1, 0},                   {0, 0, 1}, {0, 1, 1}};
-                const bool bSameAsProbe1 = phaseTileX == 1u && phaseTileY == 1u;
+                // 期待の集合は重複を除いて作る（確認 0 が確認 1 と同じタイルなら 5 種類、違えば 6 種類）。
+                ExpectedTile expected[6];
+                uint32_t expectedCount = 0;
+                const ExpectedTile candidates[6] = {{1, phaseTileX, phaseTileY}, {1, 1, 1}, {0, 0, 0},
+                                                    {0, 1, 0},                   {0, 0, 1}, {0, 1, 1}};
+                for (const ExpectedTile& candidate : candidates)
+                {
+                    bool bDuplicate = false;
+                    for (uint32_t i = 0; i < expectedCount; ++i)
+                    {
+                        bDuplicate = bDuplicate || (expected[i].Mip == candidate.Mip && expected[i].X == candidate.X &&
+                                                    expected[i].Y == candidate.Y);
+                    }
+                    if (!bDuplicate)
+                    {
+                        expected[expectedCount++] = candidate;
+                    }
+                }
                 std::cout << TestName << " phase=" << phase << " tiles=" << requests.GetRequestCount()
-                          << " expected=" << (bSameAsProbe1 ? 5u : 6u) << std::endl;
-                ExpectExactly("位相", requests, expected, bSameAsProbe1 ? 5u : 6u);
+                          << " expected=" << expectedCount << std::endl;
+                ExpectExactly("位相", requests, TextureIndex, expected, expectedCount);
+            }
+
+            // ---- float の UBO 経由（GBuffer・MegaGeometry の経路）: 24bit のパラメータが float で変わらず戻る ----
+            // 番号 + 1 が 2^11 以上でパラメータが 2^23 を超え、幅の log2 が奇数（タイル幅 128）なので奇数になる。
+            // 丸めが入ると幅の log2 がずれて、タイルの x が変わる。タイルの大きさは確認用の値（実際の 256 texel とは別）。
+            {
+                constexpr uint32_t HighTextureIndex = 2047u;
+                const uint32_t param = VirtualTextureFeedback::PackMaterialParam(HighTextureIndex, 128u, 256u, 0u);
+                Expect(param > (1u << 23) && (param & 1u) == 1u, "float 経由の確認のパラメータは 2^23 を超える奇数でなければならない");
+                if (!RunFrame(resources, ring, texture, param, serial, requests, true))
+                {
+                    return 1;
+                }
+                // 確認 0: 位相 0 の画素の標本はミップ 1 の texel (253, 253) でタイル(1, 0)。確認 1: texel (400, 400) でタイル(3, 1)。
+                // 確認 2: 非常駐でミップ 0 の標本の texel (253|255|256|258) が全画素で書き、タイル x は 1・1・2・2、y は 0・0・1・1。
+                const ExpectedTile expected[6] = {{1, 1, 0}, {1, 3, 1}, {0, 1, 0}, {0, 2, 0}, {0, 1, 1}, {0, 2, 1}};
+                ExpectExactly("float 経由", requests, HighTextureIndex, expected, 6u);
             }
 
             // ---- パラメータ 0（VT でない材質）は何も書かない ----

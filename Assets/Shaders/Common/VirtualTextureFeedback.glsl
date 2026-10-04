@@ -1,7 +1,7 @@
 ﻿// VT（sparse の仮想テクスチャ）のフィードバック。材質のサンプルの箇所が、欲しいタイルの要求を GPU のバッファへ書く。
 // 材質のシェーダー（gbuffer.frag・megageometry.frag・forward_transparent.frag）が共有する。
 //
-// NORVES_VT_FEEDBACK が定義されているとき（デバイスが fragmentStoresAndAtomics と shaderResourceResidency を有効にしたとき。
+// NORVES_VT_FEEDBACK が定義されているとき（デバイスが fragmentStoresAndAtomics・shaderResourceResidency・sparse の 2D 部分常駐を有効にしたとき。
 // シェーダーコンパイラが定義する）だけ、要求のバッファ（storage buffer）へ書く。定義されていないときは何もしない。
 // 取り込む側のシェーダーが、この文書より前に VT_FEEDBACK_BINDING（バッファの binding）を定義する
 // （VT_FEEDBACK_SET を定義しなければ set 0）。
@@ -39,10 +39,10 @@ const uint VT_FEEDBACK_HASH_PROBE_LIMIT = 8u;
 #endif
 
 // 材質の UBO のパラメータ（C++ の VirtualTextureFeedback::PackMaterialParam）を、float の UBO 要素から取り出す。
-// 24bit 以下の整数は float に正確に載る。
+// 24bit 以下の整数は float に正確に載るので、切り捨ての変換でそのまま戻る（0.5 を足すと 2^23 以上で丸めが狂う）。
 uint DecodeVirtualTextureFeedbackParam(float value)
 {
-    return uint(value + 0.5);
+    return uint(value);
 }
 
 // 材質のテクスチャ 1 枚（tex。VT の表の番号が param に入っているテクスチャ）の uv（POM の後）から、
