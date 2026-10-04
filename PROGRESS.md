@@ -737,3 +737,5 @@
 
 - G2-S6-MODEL-NATIVE-PATH開始: source/sidecar locatorをnative pathのままfingerprint・実cook・検査・骨格decodeへ通し、文字列化を診断境界だけへ限定。日本語/非BMPの静的・骨格glTF/GLBと外部依存・sidecar・cache・失敗保持のWindows契約を追加。既存narrow APIはASCII互換として残し、argv/外部URI leaf/runtime論理pathの規約は拡張しない。実Windows前のためdoing。
 - G2-S6-MODEL-NATIVE-PATH検証準備: 既存sidecar結合試験をnative path比較へ変更し、Windows対象を21CPUへ拡張。比較器12件×通常/最適化とportable native UTF8 locatorの空/日本語/非BMP/NUL/不正byte検査が成功。Linuxで全test TUをcompileする試行はWindows.h不在で未実施扱い。実Windowsと79+10byte gateは未確認。
+
+- G2-S6-MODEL-NATIVE-PATH実検証: 4b9fd5b8/run37228182164でCore/AssetCook buildは成功、追加testのmainで局所alias TextとCore::Text、およびDetail名前空間が曖昧となりbundle compile失敗。test aliasをNativeTextへ変更し、診断encoderのnamespaceを明示する。production実装/試験値は変更せず、21CPU・79+10byteは未到達のためdoingを維持。

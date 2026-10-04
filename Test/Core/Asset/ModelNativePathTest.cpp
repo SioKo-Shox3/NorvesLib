@@ -31,7 +31,7 @@ using namespace NorvesLib::Tools::AssetCook;
 namespace
 {
     using Bytes = Container::VariableArray<uint8_t>;
-    using Text = Container::AnsiString;
+    using NativeText = Container::AnsiString;
     constexpr const char* MeshFormat = "nvmesh.v0.mesh3d.pnt.u32.clustered";
     constexpr const char* RigFormat = "nvskel.v0.skinned.pnujiw.u32";
     Bytes Read(const std::filesystem::path& path)
@@ -96,13 +96,13 @@ namespace
     }
     Bytes RigGlb(const Bytes& json, const Bytes& bin)
     {
-        Text text;
+        NativeText text;
         text.append(reinterpret_cast<const char*>(json.data()), json.size());
         const char* needle = "\"uri\": \"fixture.bin\",";
         const auto found = std::strstr(text.c_str(), needle);
         CHECK(found);
         const size_t prefix = static_cast<size_t>(found - text.c_str());
-        Text embedded;
+        NativeText embedded;
         embedded.append(text.data(), prefix);
         embedded.append(text.data() + prefix + std::strlen(needle), text.size() - prefix - std::strlen(needle));
         while (embedded.size() % 4)
@@ -138,7 +138,7 @@ namespace
     }
     void CheckStatic(const std::filesystem::path& path, const Bytes& bytes, const std::filesystem::path& ascii)
     {
-        Text error;
+        NativeText error;
         MeshCookResult cooked, baseline;
         ModelCookFingerprint fingerprint;
         ModelInspection inspection;
@@ -188,7 +188,7 @@ namespace
     }
     void CheckRig(const std::filesystem::path& path, const Bytes& bytes)
     {
-        Text error;
+        NativeText error;
         SkeletalCookResult cooked;
         ModelCookFingerprint fingerprint;
         Gltf::BufferSet buffers;
@@ -234,7 +234,7 @@ namespace
         request.EntryTypeText = bRig ? "Skl0" : "Msh0";
         request.Format = bRig ? RigFormat : MeshFormat;
         request.Variant = "default";
-        Text error;
+        NativeText error;
         CookDecisionContext before;
         CookOutputRecord record;
         CHECK(DecideCookCache(request, 7, true, nullptr, nullptr, before, error) == CookDecision::Cook);
@@ -312,7 +312,7 @@ int main()
     Write(asciiGlb, embedded);
     CheckStatic(glb, embedded, asciiGlb);
     MeshCookResult emptyPath;
-    Text error;
+    NativeText error;
     CHECK(CookGltfToNvmesh(embedded.data(), embedded.size(), MeshFormat, {}, "Test/model", emptyPath, error));
     CHECK(emptyPath.EmbeddedImages.size() == 3);
     const auto skeleton = native / std::filesystem::path(u8"骨格\U0001f43a.gltf");
@@ -330,8 +330,8 @@ int main()
     CheckCache(glb, root / "out-glb", false);
     CheckCache(skeleton, root / "out-rig", true, native / "fixture.bin");
     CheckCache(skeletonGlb, root / "out-rig-glb", true);
-    Text display;
-    CHECK(Detail::EncodeCookPathUtf8(glb, display));
+    NativeText display;
+    CHECK(NorvesLib::Tools::AssetCook::Detail::EncodeCookPathUtf8(glb, display));
     const auto expected = glb.generic_u8string();
     CHECK(display.size() == expected.size() && std::memcmp(display.data(), expected.data(), display.size()) == 0);
     const std::filesystem::path::value_type nulUnits[] = {'x', 0, 'z'};
@@ -355,7 +355,7 @@ int main()
                                       &invalidOverride));
     CHECK(Equal(held, emptyPath.NvmeshBytes));
     display = "held";
-    CHECK(!Detail::EncodeCookPathUtf8(nulPath, display) && display == "held");
+    CHECK(!NorvesLib::Tools::AssetCook::Detail::EncodeCookPathUtf8(nulPath, display) && display == "held");
 #if defined(_WIN32)
     const auto handle =
         CreateFileW(glb.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
