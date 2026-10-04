@@ -17,12 +17,16 @@ namespace NorvesLib::Core::AssetImport
         ImportSettings Settings;
         std::filesystem::path Path;
         bool bPresent = false;
+        // 検証した同じreadの生byte。増分判定用であり、runtime SourceHashは従来通り設定値を使う。
+        Container::VariableArray<uint8_t> RawSourceBytes;
     };
     struct LoadedImportSettingsDocument
     {
         ImportSettingsDocument Settings;
         std::filesystem::path Path;
         bool bPresent = false;
+        // 検証した同じreadの生byte。増分判定用であり、runtime SourceHashは従来通り設定値を使う。
+        Container::VariableArray<uint8_t> RawSourceBytes;
     };
     enum class SettingsFileResult : uint8_t
     {

@@ -714,3 +714,5 @@
 - G2-S6-TEXTURE-BATCH開始: CLI/サービス/PS5.1集約serializer/同volume no-replace新規root公開を実装。全入力先行検査、private stage、単体manifest所有、最終cooked-only再解決を接続。固定10file×2回と全ASCII PS実probe、failure/既存root/junction/競合検査をCIへ追加。Python比較器4件成功、実native検証前のためdoing。既存root増分とproduction caller切替は後続。
 
 - G2-S6-TEXTURE-BATCH受入: 79d019d/run37210701091の実Windowsで13CPU、単体7CLI/79byte/5診断、native2spec×2/10file、全ASCII PS5.1実probe成功。25native起動=9成功/16拒否を確認し、日本語source/cwd、junction、既存root、late画像不正、prefix衝突、公開先競合を検証。native artifact11306368465（SHA2568797453fad3cf42e8bc354300726984c24fa2a704885e97858bbe3a158ef368f）の10file296408686byteを独立全byte比較しroot再確認。新規root用v1 sliceをdone、既存root増分とglTF/sidecar stampは未完。
+
+- G2-S6-DEPENDENCY-SNAPSHOT開始: source/glTF外部buffer・image/選択sidecarの生byte・presenceと要求/revisionを印へ集約。sidecar loaderに同じreadのRawSourceBytesを保持し、外部readerのcanonical path出力を共有。root/設定/URIの既存runtime SourceHashは不変。実file変更・不在復帰・policy・permission・失敗保持のnative契約を登録、実Windows前なのでdoing。Skip決定と既存root公開は未接続。

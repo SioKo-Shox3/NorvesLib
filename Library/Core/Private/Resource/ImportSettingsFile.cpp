@@ -100,6 +100,7 @@ namespace NorvesLib::Core::AssetImport
             return {SettingsFileResult::InvalidSettings, validation};
         }
         candidate.bPresent = true;
+        candidate.RawSourceBytes = std::move(bytes);
         outSettings = std::move(candidate);
         return {};
     }

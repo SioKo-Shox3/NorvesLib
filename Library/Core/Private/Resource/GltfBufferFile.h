@@ -10,6 +10,9 @@ namespace NorvesLib::Core::Gltf
     {
         std::filesystem::path SourceFile;
     };
+    // 同じ解決/readに使ったcanonical pathも成功時だけ返す。bytesの失敗規則は標準readerと同じ。
+    [[nodiscard]] ExternalBufferReadResult ReadBufferFileWithPath(Container::Span<const uint8_t> decodedUri,
+        Container::VariableArray<uint8_t>& bytes, void* context, std::filesystem::path* outResolvedPath);
     // BufferSetの標準reader。相対URIとcanonical component境界を検証して全fileを読む。
     // contextはBufferFileContext、URIはbytesの所有storageを参照しないこと。
     [[nodiscard]] ExternalBufferReadResult ReadBufferFile(Container::Span<const uint8_t> decodedUri,

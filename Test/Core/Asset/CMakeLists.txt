@@ -46,6 +46,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SingleAssetCookServiceTest SingleAssetCookServiceTest.cpp
     MEMBER TextureAssetSetSpecTest TextureAssetSetSpecTest.cpp
     MEMBER TextureAssetSetOutputTest TextureAssetSetOutputTest.cpp
+    MEMBER CookDependencySnapshotTest CookDependencySnapshotTest.cpp
     MEMBER ArmModeTokenTest ArmModeTokenTest.cpp
     MEMBER UnicodeTextTest UnicodeTextTest.cpp
     MEMBER JsonUnicodeInputTest JsonUnicodeInputTest.cpp
@@ -199,3 +200,6 @@ add_test(NAME TextureAssetSetSpecTest COMMAND CookedMeshTest --test=TextureAsset
 set_tests_properties(TextureAssetSetSpecTest PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
 add_test(NAME TextureAssetSetOutputTest COMMAND CookedMeshTest --test=TextureAssetSetOutputTest)
+
+add_test(NAME CookDependencySnapshotTest COMMAND CookedMeshTest --test=CookDependencySnapshotTest)
+set_tests_properties(CookDependencySnapshotTest PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")

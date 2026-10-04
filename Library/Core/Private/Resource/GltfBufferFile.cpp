@@ -8,6 +8,11 @@ namespace NorvesLib::Core::Gltf
     ExternalBufferReadResult ReadBufferFile(Container::Span<const uint8_t> uri,
         Container::VariableArray<uint8_t>& bytes, void* context)
     {
+        return ReadBufferFileWithPath(uri, bytes, context, nullptr);
+    }
+    ExternalBufferReadResult ReadBufferFileWithPath(Container::Span<const uint8_t> uri,
+        Container::VariableArray<uint8_t>& bytes, void* context, std::filesystem::path* outResolvedPath)
+    {
         bytes.clear();
         if (!context || !IsValidRelativeBufferUri(uri))
         {
@@ -81,6 +86,7 @@ namespace NorvesLib::Core::Gltf
                 return ExternalBufferReadResult::ReadFailed;
             }
         }
+        if (outResolvedPath) *outResolvedPath = candidate;
         return ExternalBufferReadResult::Success;
     }
 }

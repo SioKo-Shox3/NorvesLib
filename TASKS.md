@@ -2404,3 +2404,9 @@
 - done-when: C++サービスとCLIがv1を全件cookし、PS5.1集約manifestをspec順に生成。存在しないRuntimeRootだけへ同volume no-replace renameで公開し、固定Silver2specの10fileと全byte一致する。
 - verify: 既存12CPU/7CLI/79byte一致、2spec各2回10byte一致、PS5.1 ASCII escape実probe、late画像不正/既存root/出力prefix衝突/公開先競合で不変。
 - stop-when: 既存root上書きやmanifest-lastを原子的と呼ぶ、genericrenameで競合先を置換、増分/モデルbatch/production caller移行を完了扱い。
+
+## G2-S6-DEPENDENCY-SNAPSHOT: cook入力の依存fileと生byte印を共通化する
+- status: doing
+- done-when: 単体要求からsource/glTF外部buffer・image/選択sidecarのlocator・presence・全raw byteを値所有metadataへ集め、正規化optionとcooker revisionを含む増分用fingerprintを生成する。sidecar/URIの既存解決を共有し、runtime SourceHashやcooked bytesを変えない。
+- verify: raw/texture/modelGLTF/GLB、buffer余剰byte/image変更・欠落復帰、percentURI、sidecar空白変更・auto不在/required/disabled/override移動、revision/option変更、失敗時出力保持。既存13CPU/7CLI79byte/native2spec10byteを回帰。
+- stop-when: これだけでSkip/既存root公開を完了扱い、hashだけで出力を信頼、disabled sidecarを読む、不在とpermission errorを混同、競合編集のatomic snapshotを主張。
