@@ -36,3 +36,7 @@
 この基準採取だけでは G2-S6 は完了しない。Main.cpp 分割後に同じ手順・fixtureで再採取し、出力を生byteで比較する。`--asset-set` は別途実装し、origin/main の CookTextureAssetSet.ps1 と Rendering3DTestSilverTextures / Rendering3DTestSilverGltfTextures の出力にも一致させる。比較時の main commit と PowerShell版を固定し、manifest の空白・キー順・BOM・改行を正規化しない。
 
 glTF外部ファイルと sidecar の増分依存、未一致材質設定のpreflight拒否も別の受入れ条件として保持する。
+
+## 初回取得URLの修正
+
+初回 run 37194998794 は汎用名 `vulkan_sdk.exe.json` が404となり、SDK実行前に停止した。公式downloadページに掲載された実ファイル名 `VulkanSDK-1.4.309.0-Installer.exe` を使う。公式 `vulkan.lunarg.com/sdk/sha/1.4.309.0/windows/VulkanSDK-1.4.309.0-Installer.exe.json` のHTTP200と、同ページのSHA256 `48b132169b64fe65cdb0f20970195335a65354e73f1ea5373032c2a8bbad4297` の一致を確認した。receiptの版・platform・file・固定hashを照合してからダウンロード実体を検証する。SDKの版や導入componentは変更しない。

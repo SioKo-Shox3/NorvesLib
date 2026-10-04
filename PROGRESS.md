@@ -675,3 +675,4 @@
 
 - G2-S6-WINDOWS-CLI-CI: 作者10:02承認に基づきfeature限定Windows2022 workflowを準備。最小read権限/credential非永続、公式固定Vulkan SDK checksum検証+debug/copy_only導入、実Core/AssetCook/CookedMeshTestのReleaseビルド、CPU契約と既存7smoke capture、exe hash照合/明示artifact保存。YAML構造と比較器10単体は確認済み。初回run/実build/7smoke/保存物は未確認でdoingを維持。
 - 独立workflowレビューPASS。alwaysログの未設定env参照を固定runner.temp/runId/attemptへ修正。実行成功の証明はpush後のrunで確認する。
+- Windows CI初回run37194998794はSDK汎用名checksum APIの404で導入前停止。公式掲載の実ファイル名と固定SHAへ修正し、公式vulkanホストの実名receipt HTTP200/値一致を確認。ビルド/試験未到達、baseline未生成。

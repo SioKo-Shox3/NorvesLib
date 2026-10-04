@@ -59,11 +59,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $version = $env:SDK_VERSION
-          $receipt = Invoke-RestMethod "https://sdk.lunarg.com/sdk/sha/$version/windows/vulkan_sdk.exe.json"
-          if ($receipt.version -ne $version -or $receipt.platform -ne 'windows' -or $receipt.sha -notmatch '^[0-9a-fA-F]{64}$') { throw 'Invalid SDK checksum receipt' }
+          $file = "VulkanSDK-$version-Installer.exe"
+          $expectedSha = '48b132169b64fe65cdb0f20970195335a65354e73f1ea5373032c2a8bbad4297'
+          $receipt = Invoke-RestMethod "https://vulkan.lunarg.com/sdk/sha/$version/windows/$file.json"
+          if ($receipt.version -ne $version -or $receipt.platform -ne 'windows' -or $receipt.file -ne $file -or $receipt.sha -ne $expectedSha) { throw 'Invalid SDK checksum receipt' }
           $receipt | ConvertTo-Json | Set-Content "$env:NORVES_CI_LOG/sdk-checksum.json"
           $installer = Join-Path $env:RUNNER_TEMP 'vulkan_sdk.exe'
-          Invoke-WebRequest "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe" -OutFile $installer
+          Invoke-WebRequest "https://sdk.lunarg.com/sdk/download/$version/windows/$file" -OutFile $installer
           if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $receipt.sha) { throw 'SDK checksum mismatch' }
           # 2026-10-04作者承認済み。copy_onlyでシステム登録やPATHの恒久変更を避ける。
           $install = Start-Process -FilePath $installer -ArgumentList @('--root', $env:SDK_ROOT, '--accept-licenses', '--default-answer', '--confirm-command', 'install', 'com.lunarg.vulkan.debug', 'copy_only=1') -Wait -PassThru -RedirectStandardOutput "$env:NORVES_CI_LOG/sdk-install.stdout.log" -RedirectStandardError "$env:NORVES_CI_LOG/sdk-install.stderr.log"
