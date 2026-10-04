@@ -657,25 +657,18 @@ namespace NorvesLib::Core::ResourceIO
                 NORVES_LOG_ERROR("GLTFAnalyzer", "Invalid glTF/GLB container or JSON bytes");
                 return false;
             }
-            // JSONだけ文字列へ移し、BINはこのscopeのsourceBytesから借用する。
-            String jsonContent;
-            jsonContent.reserve(container.Json.size());
-            for (const uint8_t value : container.Json)
-            {
-                jsonContent.push_back(static_cast<String::value_type>(value));
-            }
-
+            // JSONを厳密UTF8で解析し、BINはsourceBytesから借用する。
             JsonDocument document;
             String parseError;
             auto jsonParseStartTime = LoadProfileNow();
-            if (!JsonDocument::TryParse(jsonContent, document, &parseError))
+            if (!JsonDocument::TryParseUtf8(container.Json, document, &parseError))
             {
                 NORVES_LOG_INFO("AssetLoadProfile",
                                 "stage=gltf_json_parse role=%s request_id=%u path=\"%s\" json_bytes=%zu ms=%.3f success=0",
                                 role,
                                 static_cast<unsigned int>(requestId),
                                 resolvedGltfPath.c_str(),
-                                jsonContent.size(),
+                                container.Json.size(),
                                 LoadProfileElapsedMs(jsonParseStartTime));
                 NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to parse glTF JSON: %s", parseError.c_str());
                 return false;
@@ -685,7 +678,7 @@ namespace NorvesLib::Core::ResourceIO
                             role,
                             static_cast<unsigned int>(requestId),
                             resolvedGltfPath.c_str(),
-                            jsonContent.size(),
+                            container.Json.size(),
                             LoadProfileElapsedMs(jsonParseStartTime));
 
             JsonValue root = document.GetRoot();

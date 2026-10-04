@@ -24,8 +24,8 @@ int main()
     uint32_t scratch[128], rows[8];
     const auto reset = [&]() { for (auto& value:rows) { value=12345; } };
     const auto held = [&]() { for (auto value:rows) { CHECK(value==12345); } };
-    MaterialIdentityView catalog[]={{1,Name("Body")},{0,Name("骨🐺")},{2,Name("Body [0]")}};
-    MaterialSelectorView queries[]={Named("骨🐺"),Indexed(1,"Body"),Named("Body [0]")};
+    MaterialIdentityView catalog[]={{1,Name("Body")},{0,Name(reinterpret_cast<const char*>(u8"骨🐺"))},{2,Name("Body [0]")}};
+    MaterialSelectorView queries[]={Named(reinterpret_cast<const char*>(u8"骨🐺")),Indexed(1,"Body"),Named("Body [0]")};
     reset();
     auto result=ResolveMaterialSelection(Domain::SourceMaterial,catalog,queries,scratch,rows);
     CHECK(result.Succeeded() && rows[0]==1 && rows[1]==0 && rows[2]==2 && rows[3]==12345);

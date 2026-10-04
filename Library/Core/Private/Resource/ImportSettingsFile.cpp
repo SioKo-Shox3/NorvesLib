@@ -88,18 +88,8 @@ namespace NorvesLib::Core::AssetImport
         {
             start = 3;
         }
-        Container::String text;
-        text.reserve(bytes.size() - start);
-        for (size_t index = start; index < bytes.size(); ++index)
-        {
-            if (bytes[index] == 0)
-            {
-                return fail(SettingsFileResult::InvalidJson);
-            }
-            text.push_back(static_cast<Container::String::value_type>(bytes[index]));
-        }
         JsonDocument document;
-        if (!JsonDocument::TryParse(text, document))
+        if (!JsonDocument::TryParseUtf8({bytes.data() ? bytes.data() + start : nullptr, bytes.size() - start}, document))
         {
             return fail(SettingsFileResult::InvalidJson);
         }

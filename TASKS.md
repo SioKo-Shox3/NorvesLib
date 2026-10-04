@@ -2321,7 +2321,7 @@
 - stop-when: 生成slot名を元名に復元扱い、別関数へ解決ルールを複製、同名swapを検出可能と主張、未一致を無視して成功。
 
 ## G2-JSON-UNICODE-INPUT: UTF8入口とnative文字幅を整合する
-- status: todo
+- status: doing
 - done-when: JSON bytes入口を厳密UTF8→nativeの共通APIへ接続し、lexerのchar縮約/数値tokenのwide型不整合を修正。ANSI/UTF16/UTF32のraw/escape/native同名性を契約化し、material resolverで推測修復しない。
 - verify: 骨+狼emoji/Latin、構文文字と同じ下位byteのUnicode、invalidUTF8/surrogate/NUL、ASCII/数値互換を純helperと実native登録で検証。Corewideの実compile/実行未確認を明示。
 - stop-when: byte拡幅だけや符号修正だけでdecode済みとする、path用ToCoreStringをJSON修正で一括変更、native実行未実施を合格扱いする。
@@ -2346,7 +2346,7 @@
 - stop-when: 元材質番号と生成slot番号を混同、NUL前方一致、GR79/GR78接続まで済みとする。
 
 ## G2-S6-NATIVE-TEST-COMPILE: 実Windowsで判明した2件のテスト不備を直す
-- status: doing
+- status: done
 - done-when: CookedMeshV1TestのAnsiStringView/literal不正比較と、CookedSkeletalAssetTestのWindows nearマクロ衝突を修正し、テストの値域/厳しさを維持する。
 - verify: 差分の意味不変・名前衝突回帰、Windows CIでCookedMeshTestビルドと既存CLI smokeを再検証。Core/AssetCookはrun37195379624でビルド成功、テスト/CLI実行は未到達。
 - stop-when: assertionを削除/弱化して通す、エンジン実装の挙動を巻き込む、未再実行のnative成功を主張。

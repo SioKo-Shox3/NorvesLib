@@ -1689,8 +1689,7 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             JsonDocument document;
-            const AnsiStringView json(reinterpret_cast<const char*>(container.Json.data()),container.Json.size());
-            if (!JsonDocument::TryParse(ToCoreString(json),document) || !ValidateRequiredExtensions(document.GetRoot(),error))
+            if (!JsonDocument::TryParseUtf8(container.Json,document) || !ValidateRequiredExtensions(document.GetRoot(),error))
             {
                 error="invalid inspect glTF document";
                 return false;
@@ -1850,8 +1849,7 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             JsonDocument document;
-            const AnsiStringView json(reinterpret_cast<const char*>(container.Json.data()),container.Json.size());
-            if (!JsonDocument::TryParse(ToCoreString(json),document) || !ValidateRequiredExtensions(document.GetRoot(),error))
+            if (!JsonDocument::TryParseUtf8(container.Json,document) || !ValidateRequiredExtensions(document.GetRoot(),error))
             {
                 error = "invalid glTF document for fingerprint";
                 return false;
@@ -2000,12 +1998,10 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            // JSONだけを文字列にし、BINは元sourceの寿命内で借用する。hashにはBOMも残す。
-            const AnsiString jsonText(AnsiStringView(reinterpret_cast<const char*>(container.Json.data()),
-                                                     container.Json.size()));
+            // JSONだけを厳密UTF8で解析し、BINは元sourceから借用する。hashにはBOMも残す。
             JsonDocument document;
             NorvesLib::Core::Container::String parseError;
-            if (!JsonDocument::TryParse(ToCoreString(AnsiStringView(jsonText)), document, &parseError))
+            if (!JsonDocument::TryParseUtf8(container.Json, document, &parseError))
             {
                 error = "failed to parse glTF JSON";
                 return false;

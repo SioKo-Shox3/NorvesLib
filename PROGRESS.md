@@ -681,3 +681,6 @@
 - Next: GR79設定とGR78SurfaceNameのcatalog/selector接続。WindowsCIの基準採取結果も確認継続。
 
 - G2-S6-NATIVE-TEST-COMPILE: run37195379624の実WindowsログでCore.libとAssetCook.exe生成成功を確認。CookedMeshTestはAnsiStringView==literalのtemplate推論不可(C2678)とWindows nearマクロによるlambda名消失(C2513)の2件で停止。前者を長さ3+memcmp、後者をisNearへ変更し、逆差分が親とbyte一致することを確認。値/許容幅/検証対象は維持。実再ビルド・CLI smokeは未確認のためdoing。
+
+- G2-JSON-UNICODE-INPUT: strict UTF8 byte入口とUTF8/16/32 native検証をJsonDocumentへ追加し、lexerのchar縮約/広い空白判定/数値String型を修正。glTF/GLB/sidecar/cookのJSON入口6か所を接続、BOM/container/BIN借用/path変換は維持。第1周でescaped NUL後のTString容量拡張破損を指摘され、文字列単位のsource上限を事前scan/reserveして長いkey/value/node増加回帰を追加、第2周PASS。全Unicode scalar3幅の通常/O2/ASanUBSan(LSan除外)/MEMBER compileと独立JSON fixture確認成功。実JsonUnicodeInputTestとCI登録済み、native実行前なのでdoingを維持。Core全体のUNICODE構成成功とは区別する。
+- G2-S6-NATIVE-TEST-COMPILE: run37196379322で2件修正後のCore/AssetCook/CookedMeshTestビルドと指定7CPU契約成功を確認し、この修正taskはdone。実CLIはRaw/Texture/Audio/Mesh成功、Glbのverify.ps1内Get-FileHash不在で停止。基準snapshotは未生成、Main分割gateは未達のまま。

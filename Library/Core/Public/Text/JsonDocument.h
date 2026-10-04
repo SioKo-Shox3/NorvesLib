@@ -131,6 +131,10 @@ namespace NorvesLib::Core
          */
         static bool TryParse(const Container::String& text, JsonDocument& outDocument,
                              Container::String* pOutError = nullptr);
+        // 厳密UTF8 bytesをnative文字へ変換して解析する。BOMは入口側で処理する。
+        // 既存TryParseと同様、失敗時outDocumentをResetする。
+        static bool TryParseUtf8(Container::Span<const uint8_t> text, JsonDocument& outDocument,
+                                 Container::String* pOutError = nullptr);
 
         /**
          * @brief Resets the document.

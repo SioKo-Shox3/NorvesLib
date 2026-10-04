@@ -53,6 +53,7 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
     Private/Text/JsonDocument.cpp
+    Private/Text/UnicodeText.h
     Private/Text/JsonUnicodeScalar.h
     Private/Text/Base64.h
     Private/Text/Base64.cpp

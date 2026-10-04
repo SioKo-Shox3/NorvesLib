@@ -2305,15 +2305,9 @@ namespace NorvesLib::Core::Skeletal
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidJson);
         }
-        Container::String text;
-        text.reserve(container.Json.size());
-        for (const uint8_t value : container.Json)
-        {
-            text.push_back(static_cast<Container::String::value_type>(value));
-        }
         JsonDocument document;
         Container::String error;
-        if (!JsonDocument::TryParse(text, document, &error))
+        if (!JsonDocument::TryParseUtf8(container.Json, document, &error))
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidJson);
         }
