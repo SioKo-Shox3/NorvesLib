@@ -16,7 +16,7 @@ add_library(AssetCookBlockCompressor STATIC
     BlockCompressor.cpp
     BlockCompressor.h
 )
-target_link_libraries(AssetCookBlockCompressor PUBLIC NorvesThirdParty_Bc7Enc)
+target_link_libraries(AssetCookBlockCompressor PUBLIC NorvesThirdParty_Bc7Enc Core)
 target_include_directories(AssetCookBlockCompressor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(AssetCookBlockCompressor PROPERTIES FOLDER "Tools")
 

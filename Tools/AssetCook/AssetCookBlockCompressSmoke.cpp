@@ -7,8 +7,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <string>
-#include <vector>
 
 namespace
 {
@@ -35,9 +33,9 @@ namespace
 
     // 滑らかな勾配と低周波の模様に、硬い縁を持つ円と矩形を重ねた決定的な画像。
     // withAlpha が false のときアルファは 255。
-    std::vector<uint8_t> MakeImage(uint32_t width, uint32_t height, bool withAlpha)
+    ByteArray MakeImage(uint32_t width, uint32_t height, bool withAlpha)
     {
-        std::vector<uint8_t> rgba(static_cast<size_t>(width) * height * 4);
+        ByteArray rgba(static_cast<size_t>(width) * height * 4);
         for (uint32_t y = 0; y < height; ++y)
         {
             for (uint32_t x = 0; x < width; ++x)
@@ -74,7 +72,7 @@ namespace
     }
 
     // 先頭の channelCount チャンネルだけを比べた PSNR(dB)。
-    double ComputePsnr(const std::vector<uint8_t> &a, const std::vector<uint8_t> &b, uint32_t channelCount)
+    double ComputePsnr(const ByteArray &a, const ByteArray &b, uint32_t channelCount)
     {
         double squaredError = 0.0;
         size_t samples = 0;
@@ -101,14 +99,14 @@ namespace
                  uint32_t comparedChannels,
                  double minimumPsnr)
     {
-        const std::vector<uint8_t> source = MakeImage(ImageSize, ImageSize, withAlpha);
+        const ByteArray source = MakeImage(ImageSize, ImageSize, withAlpha);
 
         BlockCompressParams params;
         params.Format = format;
         params.Quality = BlockQuality::Normal;
 
-        std::string error;
-        std::vector<uint8_t> blocks;
+        ErrorString error;
+        ByteArray blocks;
         if (!CompressRGBA8(source.data(), ImageSize, ImageSize, params, blocks, error))
         {
             std::printf("BLOCK_COMPRESS_SMOKE_FAIL %s: 圧縮に失敗: %s\n", name, error.c_str());
@@ -117,7 +115,7 @@ namespace
         }
         Check(blocks.size() == ComputeCompressedSize(format, ImageSize, ImageSize), "圧縮後のバイト数が見積りと違う");
 
-        std::vector<uint8_t> decoded;
+        ByteArray decoded;
         if (!DecompressToRGBA8(blocks.data(), blocks.size(), ImageSize, ImageSize, format, decoded, error))
         {
             std::printf("BLOCK_COMPRESS_SMOKE_FAIL %s: 復号に失敗: %s\n", name, error.c_str());
@@ -136,7 +134,7 @@ namespace
 
     void RunThreadDeterminism()
     {
-        const std::vector<uint8_t> source = MakeImage(ImageSize, ImageSize, true);
+        const ByteArray source = MakeImage(ImageSize, ImageSize, true);
         const BlockFormat formats[] = {BlockFormat::BC1, BlockFormat::BC4, BlockFormat::BC5, BlockFormat::BC7};
         for (BlockFormat format : formats)
         {
@@ -146,9 +144,9 @@ namespace
             BlockCompressParams multi = single;
             multi.ThreadCount = 5;
 
-            std::string error;
-            std::vector<uint8_t> a;
-            std::vector<uint8_t> b;
+            ErrorString error;
+            ByteArray a;
+            ByteArray b;
             const bool okA = CompressRGBA8(source.data(), ImageSize, ImageSize, single, a, error);
             const bool okB = CompressRGBA8(source.data(), ImageSize, ImageSize, multi, b, error);
             Check(okA && okB, "スレッド数を変えた圧縮に失敗");
@@ -160,16 +158,16 @@ namespace
     {
         constexpr uint32_t width = 30;
         constexpr uint32_t height = 18;
-        const std::vector<uint8_t> source = MakeImage(width, height, false);
+        const ByteArray source = MakeImage(width, height, false);
         const BlockFormat formats[] = {BlockFormat::BC1, BlockFormat::BC4, BlockFormat::BC5, BlockFormat::BC7};
         const uint32_t channels[] = {3, 1, 2, 3};
         for (size_t i = 0; i < 4; ++i)
         {
             BlockCompressParams params;
             params.Format = formats[i];
-            std::string error;
-            std::vector<uint8_t> blocks;
-            std::vector<uint8_t> decoded;
+            ErrorString error;
+            ByteArray blocks;
+            ByteArray decoded;
             const bool ok = CompressRGBA8(source.data(), width, height, params, blocks, error) &&
                             DecompressToRGBA8(blocks.data(), blocks.size(), width, height, formats[i], decoded, error);
             Check(ok, "4 の倍数でない大きさの往復に失敗");
@@ -186,16 +184,16 @@ namespace
     void RunInvalidInputs()
     {
         BlockCompressParams params;
-        std::string error;
-        std::vector<uint8_t> blocks;
-        const std::vector<uint8_t> source = MakeImage(8, 8, false);
+        ErrorString error;
+        ByteArray blocks;
+        const ByteArray source = MakeImage(8, 8, false);
 
         Check(!CompressRGBA8(nullptr, 8, 8, params, blocks, error), "null の入力を受け付けた");
         Check(!CompressRGBA8(source.data(), 0, 8, params, blocks, error), "幅 0 を受け付けた");
         Check(!CompressRGBA8(source.data(), 8, 0, params, blocks, error), "高さ 0 を受け付けた");
 
-        std::vector<uint8_t> rgba;
-        const std::vector<uint8_t> shortBlocks(15, 0);
+        ByteArray rgba;
+        const ByteArray shortBlocks(15, 0);
         Check(!DecompressToRGBA8(shortBlocks.data(), shortBlocks.size(), 8, 8, BlockFormat::BC7, rgba, error),
               "バイト数の足りないブロック列を復号した");
     }

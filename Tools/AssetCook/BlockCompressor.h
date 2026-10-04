@@ -1,12 +1,16 @@
 ﻿#pragma once
 
+#include "Container/String.h"
+#include "Container/VariableArray.h"
+
 #include <cstddef>
 #include <cstdint>
-#include <string>
-#include <vector>
 
 namespace NorvesLib::Tools::AssetCook
 {
+    using ByteArray = Core::Container::VariableArray<uint8_t>;
+    using ErrorString = Core::Container::AnsiString;
+
     // クッカーが焼くブロック圧縮の形式。エンコーダの実体(bc7enc_rdo)はこの境界の内側に閉じる。
     enum class BlockFormat : uint8_t
     {
@@ -44,8 +48,8 @@ namespace NorvesLib::Tools::AssetCook
                                      uint32_t width,
                                      uint32_t height,
                                      const BlockCompressParams &params,
-                                     std::vector<uint8_t> &outBlocks,
-                                     std::string &error);
+                                     ByteArray &outBlocks,
+                                     ErrorString &error);
 
     // ブロック列を RGBA8 へ戻す(検証用)。BC4 は R のみ、BC5 は R・G のみ値が入り、残りは 0、アルファは 255。
     [[nodiscard]] bool DecompressToRGBA8(const uint8_t *blocks,
@@ -53,6 +57,6 @@ namespace NorvesLib::Tools::AssetCook
                                          uint32_t width,
                                          uint32_t height,
                                          BlockFormat format,
-                                         std::vector<uint8_t> &outRgba,
-                                         std::string &error);
+                                         ByteArray &outRgba,
+                                         ErrorString &error);
 }

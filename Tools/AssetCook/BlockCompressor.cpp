@@ -4,11 +4,12 @@
 #include "bc7enc.h"
 #include "rgbcx.h"
 
+#include "Thread/Thread.h"
+
 #include <algorithm>
 #include <cstring>
 #include <limits>
 #include <mutex>
-#include <thread>
 
 namespace NorvesLib::Tools::AssetCook
 {
@@ -209,8 +210,8 @@ namespace NorvesLib::Tools::AssetCook
                        uint32_t width,
                        uint32_t height,
                        const BlockCompressParams &params,
-                       std::vector<uint8_t> &outBlocks,
-                       std::string &error)
+                       ByteArray &outBlocks,
+                       ErrorString &error)
     {
         outBlocks.clear();
         if (rgba == nullptr)
@@ -235,7 +236,7 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t threadCount = params.ThreadCount;
         if (threadCount == 0)
         {
-            threadCount = std::max(1u, std::thread::hardware_concurrency());
+            threadCount = std::max(1u, NorvesLib::Thread::Thread::GetHardwareConcurrency());
         }
         threadCount = std::min(threadCount, blocksY);
 
@@ -246,7 +247,7 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         // ブロックの行を連続した帯に分け、帯ごとに別のスレッドで焼く。書き込み先は帯ごとに交わらない。
-        std::vector<std::thread> workers;
+        Core::Container::VariableArray<NorvesLib::Thread::Thread> workers;
         workers.reserve(threadCount);
         for (uint32_t i = 0; i < threadCount; ++i)
         {
@@ -256,9 +257,9 @@ namespace NorvesLib::Tools::AssetCook
                 EncodeBand(rgba, width, height, blocksX, firstRow, endRow, params, outBlocks.data());
             });
         }
-        for (std::thread &worker : workers)
+        for (NorvesLib::Thread::Thread &worker : workers)
         {
-            worker.join();
+            worker.Join();
         }
         return true;
     }
@@ -268,8 +269,8 @@ namespace NorvesLib::Tools::AssetCook
                            uint32_t width,
                            uint32_t height,
                            BlockFormat format,
-                           std::vector<uint8_t> &outRgba,
-                           std::string &error)
+                           ByteArray &outRgba,
+                           ErrorString &error)
     {
         outRgba.clear();
         if (blocks == nullptr)
