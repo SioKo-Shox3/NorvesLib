@@ -649,3 +649,7 @@
 
 - G2-RESOURCE-IO-NAMESPACE: Core::Resource基底クラスと読込namespaceの既存衝突をResourceIOへ分離。29既存ソースは逆置換でHEADとbyte一致、基底/反射/継承実装は不変。全追跡sourceの旧namespace残存ゼロ、両include順の実native契約をMEMBER/CTest登録。独立レビューPASS、行末/diff検査正常。Windows.hでnative compileは未実行。独立言語例の両順成功は実Core成功とは扱わない。
 - Next: GR79材質設定のtyped/JSON/hashと接続を具体化。G2-S6 Aは作者が追加条件付き承認、単体CLI分割前後および旧ps1 spec v1の実byte一致は未検証gateとして保持する。
+
+- G2-S6-CLI-BYTE-SMOKE: 既存raw/texture/audio/mesh/GLB/import/骨格の7 smokeを変更せず実行するcaptureとpackage/manifestの非正規化snapshot比較を追加。既存出力拒否・case全成功/生成物必須・recipe固定/実行中変更拒否・改竄/一覧/byte差を検査。比較器10 unittest通常/O成功、独立第2周PASS。CMakeのsource列挙は分割で変わるためrecipeから除外し、rawコマンドはdriverSHAで固定。Windows実CLI/前後byte比較は未実行でMain分割gateは未達。
+- G2-S6作者訂正: origin/main CookTextureAssetSet.ps1とSilverTextures/SilverGltfTexturesの2specを比較元に確定。手元確認用CookAssets.ps1/StartupMaterialsは対象外、比較元未発見の保留は解除。glTF外部ファイルとsidecarを増分印へ含める。実texture spec v1互換確認は未実行。
+- Next: GR79材質設定の解決/JSON/hashへ進み、一括cook実byte受入れは別gateで保持する。

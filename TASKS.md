@@ -2271,3 +2271,15 @@
 - done-when: Core::Resourceの基底クラスを維持し、GLTFAnalyzer/ModelStaging/loader群の名前空間だけをResourceIOへ分ける。全参照を更新し、同TUで骨格Resourceと共存する。wire/アルゴリズム/既定描画は変更しない。
 - verify: 宣言/参照の列挙、旧namespace残存ゼロ・class参照不変、置換を戻したsourceの同一性、両include順のnative compile契約登録、実Windows未実行を区別する。
 - stop-when: Resource基底クラス/反射名を変更、loader参照の取り残し、文字列置換で本体の挙動を変える、独立言語例をnative成功扱いする。
+
+## G2-S6-CLI-BYTE-SMOKE: 単体CLI分割前後のバイト比較手順を固定する
+- status: done
+- done-when: 既存raw/texture/audio/model/GLB/import/骨格smokeを変更せず実行し、成功した全caseのpackage/manifestを正規化せず保存・比較するツールと反証テストを追加する。Main分割は実smokeと前後byte一致確認まで保留。
+- verify: 比較器の一致/追加/欠落/byte差/JSON空白/recipe差/改竄/空出力/pathをPythonで検証。実AssetCookとWindows smokeは別の未実行gateとして記録する。
+- stop-when: 比較器の単体成功をCLIの実成功扱い、JSON正規化で差を消す、既存出力を上書き、Mainを先に分割する。
+
+## G2-S6-ASSET-SET: C++一括cookと増分判定を接続する
+- status: todo
+- done-when: AssetCook --asset-setへ一括cookと増分判定を集約。origin/main CookTextureAssetSet.ps1 + Rendering3DTestSilverTextures/Rendering3DTestSilverGltfTexturesに対してcooked/manifestのbyte一致を確認。glTF外部ファイルとsidecarを印に含む。
+- verify: 単体CLIの分割前後比較、旧texture spec v1の2spec同値、外部buffer/画像/sidecarの変更・不在・復帰・破損で正しい再cook/拒否、失敗時出力保持。
+- stop-when: 手元確認用CookAssets.ps1/StartupMaterialsを対象に戻す、PS側へ増分判定を重複実装、Windows実byte比較を未実施で完了とする。
