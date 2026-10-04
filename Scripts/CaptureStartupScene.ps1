@@ -50,8 +50,13 @@
 # （描画は GameThread で1フレームずつ行う）。metrics.json に deterministic=true を書く。
 # 同じコードの2回の撮影は -CompareDeterministicWith で比べる: 後の撮影に前の出力先を与えると、視点ごとの平均輝度の差
 # （既定 0.1 以下）と PSNR（既定 45 dB 以上）を deterministic_comparison として metrics.json へ書く。
-# 撮り直さず既存の2つの出力先だけを比べるときは -CompareOnly を足す。-OrbitDegreesPerSecond・
+# 撮り直さず既存の2つの出力先だけを比べるときは -CompareOnly を足す。
 # -StillRenderedFrames・-GpuTimingFrames（連続撮影・計測）とは併用しない。
+# -OrbitDegreesPerSecond とは併用できる: 旋回の角度は読み込み完了（エポック）からの固定刻みの時間で決まるので、
+# -OrbitRenderedFrames の各時点を同じ画像で撮り直せ、-MegaOcclusion Off の撮影と画素で比べられる（-CompareDeterministicWith）。
+#
+# -OcclusionViews を足すと、遮蔽カリングの確認用の視点 occ-sphere（大きな球が岩を隠す）・occ-cottage（小屋が球と岩を隠す）・
+# occ-cottage-edge（小屋の端が球の一部を隠す）と、旋回の出発点 occ-sphere-orbit・occ-cottage-orbit を撮る視点へ加える（-ViewNames にこれらの名前を直接与えてもよい）。
 #
 # -StressTextures でテクスチャの負荷モード（--stress-textures: 地面の外側へ、負荷用の材質 24 種を貼った板を格子に並べ、
 # カメラの軸を格子の中心へ移す）の default・low と、格子を見下ろす top（0,80,70）を撮る。負荷用のテクスチャは
@@ -116,6 +121,8 @@ param(
     [switch]$Deterministic,
     # テクスチャの負荷モード（--stress-textures）で default・low・top の3視点を撮る。-ViewNames で絞れる。
     [switch]$StressTextures,
+    # 遮蔽カリングの確認用の視点（occ-sphere・occ-cottage・occ-cottage-edge・旋回の出発点 occ-sphere-orbit・occ-cottage-orbit）を撮る視点へ加える。
+    [switch]$OcclusionViews,
     # VRAM の上限（MB。--vram-budget-mb）。0 は渡さない。
     [ValidateRange(0, 1048576)]
     [int]$VramBudgetMb = 0,
@@ -183,6 +190,25 @@ if ($DefaultCamera -ne '')
 {
     $views[0].Camera = $DefaultCamera
 }
+# 遮蔽カリングの確認用の視点（カメラの軸は原点の大きな球、岩は (3,-0.93,0)、小屋は (0,-1,-18) を中心とする
+# 幅12.4 m・奥行き14.7 m・高さ6.8 m。小屋の外から見るので腕の長さは小屋の奥の面（z=-25.4）より長くする）。
+# 既定では撮らず、-OcclusionViews か -ViewNames で名前を与えたときだけ撮る（既存の撮影の視点の並びを変えない）。
+$occlusionViewList = @(
+    # 球の -X 側の低い位置から +X の向きに見る。岩が球の真後ろに入り、球に隠れる。
+    [pscustomobject]@{ Name = 'occ-sphere'; Camera = '-90,4,9'; NoiseRegions = @() },
+    # 小屋の奥（-Z 側）から +Z の向きに見る。球と岩が小屋の真後ろに入り、小屋に隠れる。
+    [pscustomobject]@{ Name = 'occ-cottage'; Camera = '182,3,29'; NoiseRegions = @() },
+    # 球の中心と小屋の角（6.2,-10.65）を結ぶ線の延長から見る。小屋の端が球の一部を隠す（隠れる・見えるの境目）。
+    [pscustomobject]@{ Name = 'occ-cottage-edge'; Camera = '150,3,29'; NoiseRegions = @() },
+    # 旋回（-OrbitDegreesPerSecond）の出発点。旋回の途中で、岩が球の陰に入る・出る向き（球の -X 側）から始める。
+    [pscustomobject]@{ Name = 'occ-sphere-orbit'; Camera = '-100,4,9'; NoiseRegions = @() },
+    # 旋回の途中で、球と岩が小屋の端の陰に入る向きから始める。
+    [pscustomobject]@{ Name = 'occ-cottage-orbit'; Camera = '146,3,29'; NoiseRegions = @() }
+)
+if ($OcclusionViews)
+{
+    $views = @($views) + $occlusionViewList
+}
 if ($StressTextures)
 {
     # 負荷モードはカメラの軸が格子の中心なので、近接（球が無い）は撮らず、格子の全体を見下ろす視点を足す。
@@ -192,10 +218,12 @@ if ($StressTextures)
 $viewNameList = @(($ViewNames -join ',').Split(',', [StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
 if ($viewNameList.Count -gt 0)
 {
+    # 遮蔽カリングの確認用の視点は名前を与えれば撮れる（-OcclusionViews を併せて与えなくてよい）。
+    $views = @($views) + @($occlusionViewList | Where-Object { $_.Name -in $viewNameList -and $_.Name -notin @($views | ForEach-Object { $_.Name }) })
     $unknownViews = @($viewNameList | Where-Object { $_ -notin $views.Name })
     if ($unknownViews.Count -gt 0)
     {
-        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low・top）"
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low・top・occ-sphere・occ-cottage・occ-cottage-edge・occ-sphere-orbit・occ-cottage-orbit）"
         exit 1
     }
     $views = @($views | Where-Object { $_.Name -in $viewNameList })
@@ -234,9 +262,9 @@ if ($GpuTimingFrames -gt 0 -and $Configuration -eq 'Release')
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=gpu_timing_without_stats（Release は統計が無効で GPU のタイムスタンプを取れない。-Configuration RelWithDebInfo で測る）"
     exit 1
 }
-if ($Deterministic -and ($stillFrameList.Count -gt 0 -or $OrbitDegreesPerSecond -ne 0.0 -or $GpuTimingFrames -gt 0))
+if ($Deterministic -and ($stillFrameList.Count -gt 0 -or $GpuTimingFrames -gt 0))
 {
-    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=deterministic_with_sequence（-Deterministic は -OrbitDegreesPerSecond・-StillRenderedFrames・-GpuTimingFrames と併用しない）"
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=deterministic_with_sequence（-Deterministic は -StillRenderedFrames・-GpuTimingFrames と併用しない）"
     exit 1
 }
 if ($CompareOnly -and $CompareDeterministicWith -eq '')
