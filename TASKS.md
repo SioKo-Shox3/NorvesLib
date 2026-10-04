@@ -82,7 +82,7 @@
 - notes: ユーザー承認済みの外部依存（計画書 1）。取り込み方は tinyexr（`Library/Core/CMakeLists.txt:529-546` の独立の静的ライブラリ）と angelscript の `UPSTREAM.json` に倣う。
 
 ## VTG1-COOKER-USAGE: クッカーが用途ごとにBCへ焼き、ORMを1枚に詰める
-- status: done
+- status: blocked
 - done-when: `TextureCooker` に `--usage albedo|normal|orm|single|height16` を足す。albedo→BC7 sRGB、normal→BC5（入力は DirectX の向き、ミップは非正規化ベクトルの平均→再正規化）、orm→BC7 linear（`--orm-ao`・`--orm-roughness`・`--orm-metallic` の別々の元画像を R・G・B に詰め、無い枠は AO=1・粗さ=1・メタリック=0）、single→BC4、height16→R16（16bit の PNG の精度を保つ。8bit の入力は拡大）。NVTEX v0.1 を書く。`AssetCookTextureSmoke` を用途ごとに回し、ヘッダの形式・ミップ数・バイト数を確かめる。4096² の BC7 のクック時間を `TEXTURE_COOK usage=<u> format=<f> size=<w>x<h> ms=<n>` で出す。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(AssetCookTextureSmoke|AssetCookBlockCompressSmoke|CookedTextureTest)$"`
@@ -91,7 +91,7 @@
 - notes: 計画書 2・4.2。視差の高さを R16 にするか BC4 にするかは VTG1-STARTUP-COOKED で縞の出方を見て決める（両方焼けるようにしておく）。
 
 ## VTG1-COOK-TARGET: 差分クックのビルド対象を足す
-- status: todo
+- status: done
 - done-when: CMake の対象 `CookAssets`（ALL に含めない）が、`Assets/AssetSets/` の一覧（起動画面の材質の一覧を足す: 銀・石畳・Poly Haven の地面の見本6種。元画像が無いものは飛ばして `COOK_ASSETS missing=<path>` を出す）から `build/CookedAssets/` へ NVTEX とマニフェストを書く。元画像・一覧・AssetCook のどれかが変わったものだけを焼き、2回続けて実行すると2回目は `COOK_ASSETS cooked=0 skipped=<n>` になる。`Scripts/FetchPolyHavenTextures.ps1` の最後にクックの案内を出す。
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target CookAssets -- /m:1`

@@ -91,3 +91,19 @@ add_test(NAME AssetCookAudioSmoke
         -DSMOKE_DIR=${ASSET_COOK_AUDIO_SMOKE_DIR}
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookAudioSmoke.cmake.in"
 )
+
+# 起動画面の材質などを差分クックして build/CookedAssets/ へ書く(ALL に含めない)。
+# 差分の判定(元画像・一覧の項目・AssetCook の実行ファイル)は Scripts/CookAssets.ps1 が項目ごとの印で行い、
+# 変わらない項目は焼き直さない。AssetCook が変わったら全項目を焼き直す。
+add_custom_target(CookAssets
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_SOURCE_DIR}/Scripts/CookAssets.ps1"
+        -AssetCookExe "$<TARGET_FILE:AssetCook>"
+        -SpecDir "${CMAKE_SOURCE_DIR}/Assets/AssetSets"
+        -RuntimeRoot "${CMAKE_BINARY_DIR}/CookedAssets"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "AssetSets の一覧を build/CookedAssets へ差分クックする"
+    VERBATIM
+)
+add_dependencies(CookAssets AssetCook)
+set_target_properties(CookAssets PROPERTIES FOLDER "Tools")
