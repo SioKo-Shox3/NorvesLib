@@ -1926,6 +1926,25 @@ namespace NorvesLib::Core::Rendering
         // デルタタイム計算
         float deltaTime = static_cast<float>(currentTime - m_LastFrameTime);
         m_LastFrameTime = currentTime;
+
+        // 決定的な撮影: 壁時計を使わず 1/60 秒の固定刻みにし、エポックの 0 番のフレームから数え直す。
+        bool bTemporalEpochStart = false;
+        if (m_bDeterministicCapture)
+        {
+            deltaTime = 1.0f / 60.0f;
+            if (m_bDeterministicEpochPending)
+            {
+                m_bDeterministicEpochPending = false;
+                m_bDeterministicEpochActive = true;
+                m_DeterministicEpochFrames = 0u;
+                m_TotalTime = 0.0;
+                bTemporalEpochStart = true;
+            }
+            else if (m_bDeterministicEpochActive)
+            {
+                ++m_DeterministicEpochFrames;
+            }
+        }
         m_TotalTime += deltaTime;
 
         // ST経路ではReadyパケットがRTに消費されないため、フレーム開始時に再利用する。
@@ -1947,6 +1966,9 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->FrameNumber = m_GameThreadStats.FrameNumber;
             m_CurrentPacket->DeltaTime = deltaTime;
             m_CurrentPacket->TotalTime = m_TotalTime;
+            m_CurrentPacket->bDeterministicCapture = m_bDeterministicCapture;
+            m_CurrentPacket->bTemporalEpochStart = bTemporalEpochStart;
+            m_CurrentPacket->EpochFrameIndex = m_bDeterministicEpochActive ? m_DeterministicEpochFrames : 0u;
         }
 
         m_GameThreadStats.DeltaTime = deltaTime;
@@ -2759,6 +2781,13 @@ namespace NorvesLib::Core::Rendering
         viewContext.RenderHeight = m_RenderHeight;
         viewContext.DeltaTime = m_PreviousCompletedTotalFrameTimeMs * 0.001f;
         viewContext.TotalTime = packet->TotalTime;
+        viewContext.bDeterministicCapture = packet->bDeterministicCapture;
+        viewContext.bTemporalEpochStart = packet->bTemporalEpochStart;
+        viewContext.TemporalFrameIndex = packet->bDeterministicCapture ? packet->EpochFrameIndex : packet->FrameNumber;
+        if (packet->bDeterministicCapture)
+        {
+            viewContext.DeltaTime = packet->DeltaTime;
+        }
         if (m_RenderResources)
         {
             viewContext.Resources.Gpu = &m_RenderResources->Gpu();

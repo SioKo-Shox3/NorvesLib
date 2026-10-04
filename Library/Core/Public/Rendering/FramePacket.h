@@ -163,6 +163,15 @@ namespace NorvesLib::Core::Rendering
         float DeltaTime = 0.0f;   // 前フレームからの経過時間
         double TotalTime = 0.0;   // アプリケーション開始からの経過時間
 
+        /** @brief 決定的な撮影（--capture-deterministic）のフレームか。経過時間は 1/60 秒の固定刻み。 */
+        bool bDeterministicCapture = false;
+
+        /** @brief 決定的な撮影のエポックの最初のフレームか。時間的な状態を捨てて数え直す合図。 */
+        bool bTemporalEpochStart = false;
+
+        /** @brief 決定的な撮影のエポックの最初のフレームから数えたフレーム数（エポック前は 0）。 */
+        uint64_t EpochFrameIndex = 0;
+
         /** @brief RTGIの明示的な有効化。資源が不完全ならfallbackへ戻る。 */
         bool bRTGIEnabled = true;
 
@@ -267,6 +276,9 @@ namespace NorvesLib::Core::Rendering
             FrameNumber = 0;
             DeltaTime = 0.0f;
             TotalTime = 0.0;
+            bDeterministicCapture = false;
+            bTemporalEpochStart = false;
+            EpochFrameIndex = 0;
             bRTGIEnabled = true;
             SceneRevision = 0;
             LightRevision = 0;

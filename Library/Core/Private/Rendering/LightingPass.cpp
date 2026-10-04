@@ -3220,6 +3220,14 @@ namespace NorvesLib::Core::Rendering
             InvalidateRTGIHistory();
             return false;
         };
+        // 決定的な撮影のエポックの最初のフレーム: 履歴と、標本の列（低食い違い列）の番号を先頭へ戻す。
+        if (context.bTemporalEpochStart)
+        {
+            InvalidateRTGIHistory();
+            m_RTGISampleIndex = 0u;
+            m_RTGISampleFrameNumber = 0u;
+            m_bRTGISampleFrameNumberValid = false;
+        }
         if (m_bRTGIDenoiserUnavailable || !context.CommandList || !context.Device ||
             !context.bRTGIEnabled ||
             !context.bRTGITLASAvailable || !context.RTGICapability.IsUsable() ||
@@ -4391,8 +4399,10 @@ namespace NorvesLib::Core::Rendering
             if (bProjectionJittered)
             {
                 // TAAの履歴が別の段の位置の結果を混ぜるよう、雑音をフレームごとにずらす
+                const uint64_t noiseFrameNumber =
+                    context.bDeterministicCapture ? context.TemporalFrameIndex : context.FrameNumber;
                 const float frame =
-                    static_cast<float>(context.FrameNumber % CONTACT_SHADOW_TEMPORAL_NOISE_PERIOD);
+                    static_cast<float>(noiseFrameNumber % CONTACT_SHADOW_TEMPORAL_NOISE_PERIOD);
                 params.contactShadowParams[1] =
                     frame * CONTACT_SHADOW_TEMPORAL_NOISE_STEP -
                     std::floor(frame * CONTACT_SHADOW_TEMPORAL_NOISE_STEP);

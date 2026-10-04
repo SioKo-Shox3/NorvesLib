@@ -43,6 +43,15 @@
 # （--no-cooked-textures。クック済みとの見た目の比較用）。各撮影のログから VRAM_LEDGER の texture_mb と、
 # クック済みが無くばらで読んだ数（TEXTURE_COOKED_MISSING）を metrics.json へ書く。
 # -DefaultCamera で既定視点のカメラを替え（例: 変更前の版の既定 0,30,5）、-ViewNames で撮る視点を絞る（例: default）。
+#
+# -Deterministic で Game を --capture-deterministic 付きで起動し、同じコードを2回撮ると一致する画像を撮る。
+# Game は読み込みと大きな球の生成が終わるまで待ってから、経過時間を 1/60 秒の固定刻みにして、TAA の揺らしの列・
+# RTGI の乱数の列と履歴・自動露出の順応・大きな球の自転をそこから数え直し、決まった描画フレーム数の後に撮る
+# （描画は GameThread で1フレームずつ行う）。metrics.json に deterministic=true を書く。
+# 同じコードの2回の撮影は -CompareDeterministicWith で比べる: 後の撮影に前の出力先を与えると、視点ごとの平均輝度の差
+# （既定 0.1 以下）と PSNR（既定 45 dB 以上）を deterministic_comparison として metrics.json へ書く。
+# 撮り直さず既存の2つの出力先だけを比べるときは -CompareOnly を足す。-OrbitDegreesPerSecond・
+# -StillRenderedFrames・-GpuTimingFrames（連続撮影・計測）とは併用しない。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -96,6 +105,17 @@ param(
     [string[]]$ViewNames = @(),
     # クック済みのテクスチャを使わず、ばらの元画像を無圧縮で読んで撮る（--no-cooked-textures。比べる側の撮影用）。
     [switch]$LooseTextures,
+    # 決定的な撮影（--capture-deterministic）で撮る。同じコードを2回撮ると一致する（見た目の保全を数値で比べる用）。
+    [switch]$Deterministic,
+    # 同じコードを -Deterministic で撮った別の出力先。各視点の平均輝度の差と PSNR を求めて metrics.json へ書き、
+    # 平均輝度の差が -DeterministicMeanLuminanceLimit を超えるか PSNR が -DeterministicPsnrLimit を下回れば失敗にする。
+    [string]$CompareDeterministicWith = '',
+    [ValidateRange(0.0, 255.0)]
+    [double]$DeterministicMeanLuminanceLimit = 0.1,
+    [ValidateRange(0.0, 100.0)]
+    [double]$DeterministicPsnrLimit = 45.0,
+    # 撮影せず、OutDir に撮った既存の画像を -CompareDeterministicWith と比べて metrics.json へ書き足す。
+    [switch]$CompareOnly,
     # Game へそのまま渡す引数（空白で区切る。例: --texture-asset-root と --texture-asset-manifest で別のクック済みの出力を使う）。
     [string[]]$ExtraGameArguments = @()
 )
@@ -190,6 +210,21 @@ if ($GpuTimingFrames -gt 0 -and $GpuTimingFrames -lt 100)
 if ($GpuTimingFrames -gt 0 -and $Configuration -eq 'Release')
 {
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=gpu_timing_without_stats（Release は統計が無効で GPU のタイムスタンプを取れない。-Configuration RelWithDebInfo で測る）"
+    exit 1
+}
+if ($Deterministic -and ($stillFrameList.Count -gt 0 -or $OrbitDegreesPerSecond -ne 0.0 -or $GpuTimingFrames -gt 0))
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=deterministic_with_sequence（-Deterministic は -OrbitDegreesPerSecond・-StillRenderedFrames・-GpuTimingFrames と併用しない）"
+    exit 1
+}
+if ($CompareOnly -and $CompareDeterministicWith -eq '')
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=compare_only_without_target（-CompareOnly は -CompareDeterministicWith と併せて使う）"
+    exit 1
+}
+if ($CompareDeterministicWith -ne '' -and -not $Deterministic)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=compare_without_deterministic（-CompareDeterministicWith は -Deterministic と併せて使う）"
     exit 1
 }
 if ($stillFrameList.Count -eq 1)
@@ -327,6 +362,69 @@ public static class StartupCaptureMetrics
         }
     }
 
+    // 同じ大きさの2枚の画像の違い。{ 平均輝度A, 平均輝度B, PSNR（dB。R・G・B の 8bit。同一なら 100）,
+    // 一致しない画素の割合, 1チャンネルの最大の絶対差 }。
+    public static double[] Compare(string pathA, string pathB)
+    {
+        using (var bitmapA = new Bitmap(pathA))
+        using (var bitmapB = new Bitmap(pathB))
+        {
+            if (bitmapA.Width != bitmapB.Width || bitmapA.Height != bitmapB.Height)
+            {
+                throw new ArgumentException("画像の寸法が揃っていない: " + pathA + " / " + pathB);
+            }
+            int width = bitmapA.Width;
+            int height = bitmapA.Height;
+            var rect = new Rectangle(0, 0, width, height);
+            BitmapData dataA = bitmapA.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData dataB = bitmapB.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                byte[] bytesA = new byte[dataA.Stride * height];
+                byte[] bytesB = new byte[dataB.Stride * height];
+                Marshal.Copy(dataA.Scan0, bytesA, 0, bytesA.Length);
+                Marshal.Copy(dataB.Scan0, bytesB, 0, bytesB.Length);
+                double sumA = 0.0;
+                double sumB = 0.0;
+                double squaredError = 0.0;
+                long mismatched = 0;
+                int maxDifference = 0;
+                for (int y = 0; y < height; ++y)
+                {
+                    for (int x = 0; x < width; ++x)
+                    {
+                        int ia = y * dataA.Stride + x * 4;
+                        int ib = y * dataB.Stride + x * 4;
+                        bool differs = false;
+                        for (int c = 0; c < 3; ++c)
+                        {
+                            int d = bytesA[ia + c] - bytesB[ib + c];
+                            if (d != 0)
+                            {
+                                differs = true;
+                                squaredError += (double)d * d;
+                                int magnitude = d < 0 ? -d : d;
+                                if (magnitude > maxDifference) { maxDifference = magnitude; }
+                            }
+                        }
+                        if (differs) { ++mismatched; }
+                        sumA += 0.2126 * bytesA[ia + 2] + 0.7152 * bytesA[ia + 1] + 0.0722 * bytesA[ia];
+                        sumB += 0.2126 * bytesB[ib + 2] + 0.7152 * bytesB[ib + 1] + 0.0722 * bytesB[ib];
+                    }
+                }
+                double count = (double)width * height;
+                double meanSquaredError = squaredError / (count * 3.0);
+                double psnr = meanSquaredError <= 0.0 ? 100.0 : Math.Min(100.0, 10.0 * Math.Log10(255.0 * 255.0 / meanSquaredError));
+                return new double[] { sumA / count, sumB / count, psnr, mismatched / count, maxDifference };
+            }
+            finally
+            {
+                bitmapA.UnlockBits(dataA);
+                bitmapB.UnlockBits(dataB);
+            }
+        }
+    }
+
     // 画像を Rec.709 の重みの輝度へ読む（display=true なら 8bit の表示値 0〜255、false なら sRGB から戻したリニア 0〜1）。
     static double[] ReadLuminance(string path, bool display, out int width, out int height)
     {
@@ -444,7 +542,7 @@ function Stop-OwnedProcessTree([int]$ProcessId)
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
 }
 
-if (-not (Test-Path -LiteralPath $gamePath))
+if (-not $CompareOnly -and -not (Test-Path -LiteralPath $gamePath))
 {
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=game_missing path=$gamePath"
     exit 1
@@ -453,6 +551,20 @@ New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 
 $failures = @()
 $results = @()
+if ($CompareOnly)
+{
+    # 撮り直さず、OutDir の既存の撮影（metrics.json の views）を比べる。
+    $existingMetricsPath = Join-Path $outRoot 'metrics.json'
+    if (-not (Test-Path -LiteralPath $existingMetricsPath))
+    {
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=compare_only_metrics_missing path=$existingMetricsPath"
+        exit 1
+    }
+    $existingMetrics = Get-Content -LiteralPath $existingMetricsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $results = @($existingMetrics.views)
+    $failures = @($existingMetrics.failures | Where-Object { $_ })
+    $shots = @()
+}
 $temporalNoise = @()
 $gpuTiming = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
@@ -523,6 +635,10 @@ foreach ($view in $shots)
     if ($LooseTextures)
     {
         $arguments += '--no-cooked-textures'
+    }
+    if ($Deterministic)
+    {
+        $arguments += '--capture-deterministic'
     }
     foreach ($extraArgument in (($ExtraGameArguments -join ' ').Split(@(' ', ','), [StringSplitOptions]::RemoveEmptyEntries)))
     {
@@ -890,9 +1006,61 @@ if ($CompareNoiseWith -ne '')
     }
 }
 
+# 同じコードを -Deterministic で撮った別の撮影と、視点ごとに平均輝度の差と PSNR を求める。
+$deterministicComparison = @()
+if ($CompareDeterministicWith -ne '')
+{
+    $compareImageRoot = if ([IO.Path]::IsPathRooted($CompareDeterministicWith)) { $CompareDeterministicWith } else { Join-Path $repoRoot $CompareDeterministicWith }
+    if (-not (Test-Path -LiteralPath (Join-Path $compareImageRoot 'metrics.json')))
+    {
+        $failures += "比べる撮影の metrics.json が無い: $compareImageRoot"
+    }
+    else
+    {
+        foreach ($entry in $results)
+        {
+            $thisPng = Join-Path $outRoot $entry.png
+            $otherPng = Join-Path $compareImageRoot $entry.png
+            if (-not (Test-Path -LiteralPath $thisPng) -or -not (Test-Path -LiteralPath $otherPng))
+            {
+                $failures += "$($entry.view): 比べる画像が揃っていない（$thisPng / $otherPng）"
+                continue
+            }
+            $difference = [StartupCaptureMetrics]::Compare($thisPng, $otherPng)
+            $meanDifference = [math]::Abs($difference[0] - $difference[1])
+            $withinLimits = ($meanDifference -le $DeterministicMeanLuminanceLimit) -and ($difference[2] -ge $DeterministicPsnrLimit)
+            $comparison = [ordered]@{
+                view = $entry.view
+                png = $entry.png
+                mean_luminance = [math]::Round($difference[0], 4)
+                compare_mean_luminance = [math]::Round($difference[1], 4)
+                mean_luminance_difference = [math]::Round($meanDifference, 4)
+                psnr_db = [math]::Round($difference[2], 3)
+                mismatched_pixel_ratio = [math]::Round($difference[3], 6)
+                max_channel_difference = [int]$difference[4]
+                within_limits = $withinLimits
+            }
+            $deterministicComparison += [pscustomobject]$comparison
+            Write-Output ("CAPTURE_STARTUP_SCENE deterministic_comparison view={0} mean_luminance={1} compare_mean_luminance={2} mean_luminance_difference={3} (limit {4}) psnr_db={5} (limit {6}) mismatched_pixel_ratio={7} max_channel_difference={8} within_limits={9}" -f `
+                $comparison.view, $comparison.mean_luminance, $comparison.compare_mean_luminance, $comparison.mean_luminance_difference,
+                $DeterministicMeanLuminanceLimit, $comparison.psnr_db, $DeterministicPsnrLimit, $comparison.mismatched_pixel_ratio,
+                $comparison.max_channel_difference, $comparison.within_limits)
+            if (-not $withinLimits)
+            {
+                $failures += "$($entry.view): 同じコードの2回の撮影が一致しない（平均輝度の差 $($comparison.mean_luminance_difference) / 上限 $DeterministicMeanLuminanceLimit、PSNR $($comparison.psnr_db) dB / 下限 $DeterministicPsnrLimit dB）"
+            }
+        }
+    }
+}
+
 $metricsPath = Join-Path $outRoot 'metrics.json'
 $metrics = [ordered]@{
     configuration = $Configuration
+    deterministic = [bool]$Deterministic
+    compare_deterministic_with = $CompareDeterministicWith
+    deterministic_mean_luminance_limit = $DeterministicMeanLuminanceLimit
+    deterministic_psnr_limit = $DeterministicPsnrLimit
+    deterministic_comparison = $deterministicComparison
     orbit_degrees_per_second = $OrbitDegreesPerSecond
     orbit_rendered_frames = $orbitFrameList
     anti_aliasing = $AntiAliasing

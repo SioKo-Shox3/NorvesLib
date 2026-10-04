@@ -348,6 +348,12 @@ namespace NorvesLib::Core::Rendering
         void SetStaticEnvironmentIntensityScale(float scale);
         float GetStaticEnvironmentIntensityScale() const { return m_StaticEnvironmentIntensityScale; }
 
+        /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
+        void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
+
+        /** @brief 決定的な撮影のエポックを始める（GameThread）。次の FramePacket が経過 0 番になる */
+        void BeginDeterministicEpoch() { m_bDeterministicEpochPending = m_bDeterministicCapture; }
+
         /**
          * @brief メインカメラを取得
          */
@@ -655,6 +661,12 @@ namespace NorvesLib::Core::Rendering
         // フレームタイミング
         double m_LastFrameTime = 0.0;
         double m_TotalTime = 0.0;
+
+        // 決定的な撮影（GameThread専用）。エポックの 0 番のフレームから数えたフレーム数を FramePacket へ載せる。
+        bool m_bDeterministicCapture = false;
+        bool m_bDeterministicEpochPending = false;
+        bool m_bDeterministicEpochActive = false;
+        uint64_t m_DeterministicEpochFrames = 0u;
 
         // 状態
         bool m_bInitialized = false;

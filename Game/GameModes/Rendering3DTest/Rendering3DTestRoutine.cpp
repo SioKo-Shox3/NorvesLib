@@ -579,6 +579,21 @@ namespace Game::GameModes
             return value == nullptr || std::strcmp(value, "0") != 0;
         }
 
+        // 起動画面の組み立て（材質のテクスチャ・岩と小屋のモデル・大きな球の生成）が非同期の読み込みを含めて
+        // すべて終わったか。決定的な撮影（--capture-deterministic）はこれが真になった時点から時間を数え直す。
+        bool IsStartupSceneAssembled(const Rendering3DTestData &data)
+        {
+            for (const TSharedPtr<PendingMaterialUpdate> &update : data.m_PendingMaterialUpdates)
+            {
+                if (update && update->PendingTextureCount != 0)
+                {
+                    return false;
+                }
+            }
+            return !data.m_BoulderAsyncState && !data.m_CottageAsyncState && !data.m_pBigSphereMegaData &&
+                   !data.m_BigSphereBuildTask;
+        }
+
         // 起動画面の高さフォグ（R3）。地面での密度（1/m、0で無効）と、高さ方向の減衰（1/m）。
         // 減衰を上限の 1/m にして地面すれすれの薄い層にし、遠くの地面へ向かう浅い視線だけが厚く霞む
         // ようにする。密度は太陽 45° の撮り比べ（0.02〜0.1）で、地面すれすれの低角度視点でも近くの各球の
@@ -2132,6 +2147,9 @@ namespace Game::GameModes
         }
 #endif
 
+        // 決定的な撮影では、組み立てが終わるまで読み込み中として扱う（最初の Tick が判定する）。
+        ctx.EngineRef.GetDeterministicCapture().SetSceneReady(false);
+
         return GameModeEnterResult::Succeeded;
     }
 
@@ -2640,10 +2658,21 @@ namespace Game::GameModes
         if (data.m_pSphereObject && (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested))
         {
             static const bool bSphereSpin = ReadStartupSphereSpinEnabled();
-            float angle = bSphereSpin ? data.m_ElapsedTime * data.m_RotationSpeed : 0.0f;
+            // 決定的な撮影では、自転を壁時計ではなく、読み込み完了の時点から数えた固定刻みの時間に従わせる。
+            const auto &deterministicCapture = ctx.EngineRef.GetDeterministicCapture();
+            const float spinSeconds = deterministicCapture.IsEnabled()
+                                          ? static_cast<float>(deterministicCapture.GetEpochSeconds())
+                                          : data.m_ElapsedTime;
+            float angle = bSphereSpin ? spinSeconds * data.m_RotationSpeed : 0.0f;
             NorvesLib::Math::Vector3 yAxis(0.0f, 1.0f, 0.0f);
             NorvesLib::Math::Quaternion rotation(yAxis, angle);
             data.m_pSphereObject->SetRotation(rotation);
+        }
+
+        // 決定的な撮影は、組み立てが終わった時点（この Tick の大きな球の生成まで含む）から数え直す。
+        if (ctx.EngineRef.GetDeterministicCapture().IsEnabled())
+        {
+            ctx.EngineRef.GetDeterministicCapture().SetSceneReady(IsStartupSceneAssembled(data));
         }
 
     }

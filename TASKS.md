@@ -133,7 +133,7 @@
 - notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG2-CAPTURE-DETERMINISTIC: 同じコードを2回撮ると一致する撮影の方式を足す
-- status: todo
+- status: done
 - done-when: Game に撮影用の `--capture-deterministic` を足す。テクスチャ・モデル・大きな球の生成の非同期の読み込みがすべて終わってから、シミュレーションの時間を 1/60 秒の固定刻みにし、TAA の揺らしの列・RTGI の乱数の種・自動露出・時間的な履歴を「読み込み完了の時点」から数え直して、決まった描画フレーム数の後に撮る。大きな球の自転は撮影の時間に従う（壁時計に依らない）。`Scripts/CaptureStartupScene.ps1` に `-Deterministic` を足してこれを付ける。同じコードを `-Deterministic` で2回撮った各視点の平均輝度の差が 0.1 以下、PSNR が 45 dB 以上になる（3視点、`metrics.json` に `deterministic=true` と両方の値を記録する）。付けないときの既定の描画経路と見た目は変えない。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-CAPTURE-DETERMINISTIC-a -Configuration RelWithDebInfo -Deterministic`

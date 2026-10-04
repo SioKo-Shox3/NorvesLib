@@ -503,6 +503,12 @@ namespace
         return true;
     }
 
+    // --capture-deterministic: 同じコードを2回撮ると一致する撮影（値を取らない。--capture-png と併せて使う）。
+    bool IsCaptureDeterministicOption(const String& argument)
+    {
+        return argument == String(TEXT("--capture-deterministic"));
+    }
+
     // 撮影の終了条件（アセットが落ち着いてから描いたフレーム数）の既定値。時間方向に積む効果の収束を待つ。
     constexpr uint64_t kCapturePngDefaultSettledRenderedFrames = 60;
     // 撮影を要求してから結果が戻るまで待つ描画フレーム数の上限。超えたら失敗として終了する。
@@ -902,6 +908,7 @@ namespace NorvesLib::Core::Engine
         m_bCaptureRequested = false;
         Detail::ExitFrameOptionsAccumulator exitFrameOptions{};
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
+        bool bCaptureDeterministic = false;
         bool bEnableCanvasView = false;
         bool bBoardInstanceBatchingEnabled = true;
         Rendering::RenderingMainViewRenderer mainViewRenderer = Rendering::RenderingMainViewRenderer::Raster;
@@ -1099,6 +1106,32 @@ namespace NorvesLib::Core::Engine
             {
                 LOG_WARNING("ApplicationProcessor runtime option --capture-png ignored: path must not be empty");
             }
+
+            if (IsCaptureDeterministicOption(args[i]))
+            {
+                bCaptureDeterministic = true;
+            }
+        }
+
+        // 決定的な撮影: 経過時間を 1/60 秒に固定し、描画は1フレームずつGameThreadで行う（RenderThread が
+        // フレームを飛ばしたり遅れたりして、撮る瞬間の履歴が変わらないようにする）。
+        if (bCaptureDeterministic)
+        {
+            if (m_CapturePngPath.empty())
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --capture-deterministic ignored without --capture-png");
+                bCaptureDeterministic = false;
+            }
+            else
+            {
+                GEngine->GetDeterministicCapture().Enable();
+                if (bEnableMultiThreadedRendering)
+                {
+                    bEnableMultiThreadedRendering = false;
+                }
+                LOG_INFO("ApplicationProcessor runtime option capture_deterministic=1 render_thread=st fixed_delta_s=%.6f",
+                         static_cast<double>(DeterministicCapture::FixedDeltaSeconds));
+            }
         }
 
         // 撮影はアセットの読み込みが落ち着いた後の画面を取る。描画フレーム数の指定が無ければ既定値を使う。
@@ -1197,6 +1230,10 @@ namespace NorvesLib::Core::Engine
                 return false;
             }
             GApplicationLifecycleState.bRenderWorld = true;
+            if (bCaptureDeterministic)
+            {
+                GEngine->GetRenderWorld().SetDeterministicCapture(true);
+            }
             LOG_INFO("RenderWorld initialized successfully");
 
             auto &coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
@@ -1546,9 +1583,15 @@ namespace NorvesLib::Core::Engine
         }
 #endif
 
-        const int64_t rawDeltaNanoseconds = CalculateRawDeltaTimeNanoseconds();
+        // 決定的な撮影では壁時計を使わず、毎フレーム 1/60 秒進める。
+        DeterministicCapture &deterministicCapture = GEngine->GetDeterministicCapture();
+        const bool bDeterministicCapture = deterministicCapture.IsEnabled();
+        const int64_t measuredDeltaNanoseconds = CalculateRawDeltaTimeNanoseconds();
+        const int64_t rawDeltaNanoseconds =
+            bDeterministicCapture ? DeterministicCapture::FixedDeltaNanoseconds : measuredDeltaNanoseconds;
         const float deltaTime = ClampVariableDeltaTime(rawDeltaNanoseconds);
         GEngine->SetDeltaTime(deltaTime);
+        deterministicCapture.AdvanceFrame();
 
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
@@ -1646,10 +1689,13 @@ namespace NorvesLib::Core::Engine
             auto &renderWorld = GEngine->GetRenderWorld();
             if (renderWorld.IsInitialized())
             {
+                // 決定的な撮影では、GameMode が読み込み後の組み立て（大きな球の生成など）を終えるまでを
+                // 読み込み中として数える。
+                const bool bSceneAssembling = bDeterministicCapture && !deterministicCapture.IsSceneReady();
                 if (m_bWaitForAssetSettle)
                 {
                     Detail::ObservePendingAssets(
-                        renderWorld.HasPendingAsyncAssets(),
+                        renderWorld.HasPendingAsyncAssets() || bSceneAssembling,
                         m_bObservedPendingAssets,
                         m_bAssetSettleBaselineLatched);
                 }
@@ -1668,7 +1714,7 @@ namespace NorvesLib::Core::Engine
                         const bool bWasLatched = m_bAssetSettleBaselineLatched;
                         const uint64_t previousBaseline = m_AssetSettleRenderedBaseline;
                         bRenderedExitReached = Detail::EvaluateSettledRenderedExit(
-                            renderWorld.HasPendingAsyncAssets(),
+                            renderWorld.HasPendingAsyncAssets() || bSceneAssembling,
                             renderedFrameCount,
                             m_ExitAfterRenderedFrames,
                             m_bObservedPendingAssets,
@@ -1679,6 +1725,14 @@ namespace NorvesLib::Core::Engine
                         {
                             LOG_INFO("ApplicationProcessor asset settle baseline rendered=%llu",
                                      static_cast<unsigned long long>(m_AssetSettleRenderedBaseline));
+                            if (bDeterministicCapture)
+                            {
+                                // 読み込み完了の時点から、時間・TAA・RTGI・自動露出を数え直す（次のフレームが 0 番）。
+                                deterministicCapture.BeginEpoch();
+                                renderWorld.BeginDeterministicEpoch();
+                                LOG_INFO("ApplicationProcessor capture_deterministic epoch begin rendered=%llu",
+                                         static_cast<unsigned long long>(renderedFrameCount));
+                            }
                         }
                     }
                     else

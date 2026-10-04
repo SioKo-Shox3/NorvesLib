@@ -675,6 +675,20 @@ namespace NorvesLib::Core::Rendering
         m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size());
         m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size());
 
+        // 決定的な撮影のエポックの最初のフレーム: 時間的な状態（TAA のジッタの列と履歴・自動露出の順応）を捨てて
+        // 数え直す。RTGI の乱数の列と履歴は LightingPass が同じ合図で捨てる。
+        if (context.bTemporalEpochStart)
+        {
+            if (TemporalAAPass *temporalAAPass = FindTemporalAAPass(GetPostProcessStack()))
+            {
+                temporalAAPass->ResetForDeterministicEpoch();
+            }
+            if (AutoExposurePass *autoExposurePass = FindAutoExposurePass(GetPostProcessStack()))
+            {
+                autoExposurePass->ResetForDeterministicEpoch();
+            }
+        }
+
         // 自動露出のカメラは、この View を描く間だけ露出を写したカメラの複製へ差し替える
         // （FramePacket のカメラは書き換えない）
         CameraProxy autoExposedCamera;

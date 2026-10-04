@@ -951,6 +951,19 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief アプリケーション開始からの経過時間（秒） */
         double TotalTime = 0.0;
+
+        /**
+         * @brief 決定的な撮影（--capture-deterministic）のフレームか
+         *
+         * 真の間、DeltaTime・TotalTime は 1/60 秒の固定刻みで、TemporalFrameIndex がエポックからの番号になる。
+         */
+        bool bDeterministicCapture = false;
+
+        /** @brief 決定的な撮影のエポックの最初のフレーム。時間的な状態（履歴・乱数の列・順応）を捨てて数え直す */
+        bool bTemporalEpochStart = false;
+
+        /** @brief 時間方向に動かす雑音の位相に使うフレーム番号。通常は FrameNumber、決定的な撮影ではエポックからの番号 */
+        uint64_t TemporalFrameIndex = 0;
     };
 
 } // namespace NorvesLib::Core::Rendering
