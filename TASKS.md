@@ -82,13 +82,13 @@
 - notes: ユーザー承認済みの外部依存（計画書 1）。取り込み方は tinyexr（`Library/Core/CMakeLists.txt:529-546` の独立の静的ライブラリ）と angelscript の `UPSTREAM.json` に倣う。
 
 ## VTG1-COOKER-USAGE: クッカーが用途ごとにBCへ焼き、ORMを1枚に詰める
-- status: blocked
+- status: todo
 - done-when: `TextureCooker` に `--usage albedo|normal|orm|single|height16` を足す。albedo→BC7 sRGB、normal→BC5（入力は DirectX の向き、ミップは非正規化ベクトルの平均→再正規化）、orm→BC7 linear（`--orm-ao`・`--orm-roughness`・`--orm-metallic` の別々の元画像を R・G・B に詰め、無い枠は AO=1・粗さ=1・メタリック=0）、single→BC4、height16→R16（16bit の PNG の精度を保つ。8bit の入力は拡大）。NVTEX v0.1 を書く。`AssetCookTextureSmoke` を用途ごとに回し、ヘッダの形式・ミップ数・バイト数を確かめる。4096² の BC7 のクック時間を `TEXTURE_COOK usage=<u> format=<f> size=<w>x<h> ms=<n>` で出す。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(AssetCookTextureSmoke|AssetCookBlockCompressSmoke|CookedTextureTest)$"`
 - stop-when: 4096² の BC7 のクックが RelWithDebInfo で1枚60秒を超え、エンコーダの設定で縮まない場合は、測った値を記録して止める。
 - paths: Tools/AssetCook, Library/Core/Public/Asset, Test/Core/Asset, TASKS.md, PROGRESS.md
-- notes: 計画書 2・4.2。視差の高さを R16 にするか BC4 にするかは VTG1-STARTUP-COOKED で縞の出方を見て決める（両方焼けるようにしておく）。
+- notes: 計画書 2・4.2。視差の高さを R16 にするか BC4 にするかは VTG1-STARTUP-COOKED で縞の出方を見て決める（両方焼けるようにしておく）。2026-10-04 親: 実装と verify は済んでいる（run `20261004-105824`、評価2周で blocked）。残りは評価の指摘だけ: この項目で足した `Tools/AssetCook/Main.cpp` の `Usage`・`Quality` と用途別の引数の検証の `error`（`std::string`）、`TextureCooker.h` の `ParseTextureUsage`（`std::string_view`）を独自型（`AnsiString`・`AnsiStringView`・`ErrorString` など）にし、既存の CLI との変換は呼び出しの境界だけにする。英語のまま足したエラーの説明（`TextureCooker.cpp` の用途の検証、`AssetCookTextureUsageSmoke.cpp` の失敗の表示）を日本語にする。既存のコードの標準型は直さない。
 
 ## VTG1-COOK-TARGET: 差分クックのビルド対象を足す
 - status: done
@@ -101,29 +101,29 @@
 - notes: 計画書 1（差分クックはユーザーの決定）。既存の `Scripts/CookTextureAssetSet.ps1` と `Assets/AssetSets/*.json` の形に合わせる。出力は git に入れない。
 
 ## VTG1-MATERIAL-ORM: 材質にORMの1枚の枠を足し、BC5の法線のZを戻す
-- status: blocked
-- done-when: `MaterialCreateData`・`MaterialResourceData` に ORM の1枚の枠（R=AO・G=粗さ・B=メタリック）と、法線が2チャンネル（BC5）である印を足す。`gbuffer.frag`・`megageometry.frag`・`forward_transparent.frag` と PT の材質は、ORM があればそれを、無ければ従来の別々の枠を読む。2チャンネルの法線のときだけ Z を XY から戻す（RGBA8 の法線は従来どおり）。Indoor/Outdoor の golden が不変、`MaterialResourcesTest`・`GBufferMaterialDescriptorCacheTest`・`PathTracingMaterialVulkanTest` pass、起動画面の撮影の平均輝度の差が各視点 0.5 以下。
+- status: todo
+- done-when: `MaterialCreateData`・`MaterialResourceData` に ORM の1枚の枠（R=AO・G=粗さ・B=メタリック）と、法線が2チャンネル（BC5）である印を足す。`gbuffer.frag`・`megageometry.frag`・`forward_transparent.frag` と PT の材質は、ORM があればそれを、無ければ従来の別々の枠を読む。2チャンネルの法線のときだけ Z を XY から戻す（RGBA8 の法線は従来どおり）。Indoor/Outdoor の golden が不変（決定的）、`MaterialResourcesTest`・`GBufferMaterialDescriptorCacheTest`・`PathTracingMaterialVulkanTest` pass。起動画面の撮影の平均輝度の変更前との差が、各視点で、同じセッションで同じコードを2回撮った揺らぎ以内（両方の値を記録する）。
 - verify: `cmake --build build --config Debug --target MaterialResourcesTest RenderingGoldenImageTest PathTracingMaterialVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MaterialResourcesTest|GBufferMaterialDescriptorCacheTest|PathTracingMaterialVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG1-MATERIAL-ORM -Configuration RelWithDebInfo`
 - stop-when: descriptor の binding を増やすと既存の材質の descriptor のキャッシュの契約を崩す場合は、理由を記録して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 計画書 2。
+- notes: 計画書 2。2026-10-04 親: 元の「平均輝度の差 0.5 以下」は、同じコードを撮り直すだけで1視点あたり最大2.6動く（RTGI・TAA の履歴）ため判定できず blocked になった（`blocked/VTG1-MATERIAL-ORM.md` の選択肢2を採った）。実装と golden・テストは run `20261004-105824` で済んでいる。決定的な撮影は VTG2-CAPTURE-DETERMINISTIC で作る。
 
 ## VTG1-STARTUP-COOKED: 起動画面をクック済みのBCのテクスチャで描く
-- status: blocked
-- done-when: Game は既定で `build/CookedAssets/`（コンパイル時の既定の場所。`--texture-asset-root` で上書きできる）を asset root とマニフェストにし、起動画面の材質（銀・石畳・地面の見本6種）をクック済みの BC と ORM で読む。クック済みが無いテクスチャはばらのファイルを無圧縮で読み、`TEXTURE_COOKED_MISSING path=<p>` を1回だけ警告する。撮影で `VRAM_LEDGER` の texture_mb が VTG1-VRAM-LEDGER の基準値の1/4以下になる。見た目は、同じ視点のばらの撮影と比べた PSNR を視点ごとに記録し（目安 35 dB 以上）、PNG を開いて違いが目立たないことを確かめる。視差の高さを R16 にするか BC4 にするかを、近接・低角度の撮影の縞で決めて記録する。
+- status: todo
+- done-when: Game は既定で `build/CookedAssets/`（コンパイル時の既定の場所。`--texture-asset-root` で上書きできる）を asset root とマニフェストにし、起動画面の材質（銀・石畳・地面の見本6種）をクック済みの BC と ORM で読む。クック済みが無いテクスチャはばらのファイルを無圧縮で読み、`TEXTURE_COOKED_MISSING path=<p>` を1回だけ警告する。撮影の `VRAM_LEDGER` で、クック済みにした材質のテクスチャの量が同じ材質のばらの量の1/4以下になる（全体の texture_mb と、段4で焼く岩・小屋の glTF のテクスチャの残りの内訳も記録する）。見た目は、同じ視点のばらの撮影と比べた PSNR を視点ごとに記録し（目安 35 dB 以上。同じコードのばら同士の揺らぎが目安を下回る視点は、その揺らぎと並べて記録する）、PNG を開いて違いが目立たないことを確かめる。視差の高さを R16 にするか BC4 にするかを、近接・低角度の撮影の縞で決めて記録する。
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target CookAssets -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG1-STARTUP-COOKED -Configuration RelWithDebInfo`
 - stop-when: クック済みとばらの経路で材質の作り方を分けないと読めない場合は、理由を記録して止める。
-- paths: Game, Library/Core/Public/Asset, Library/Core/Private/Asset, Library/Core/Private/Rendering, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
-- notes: 起動画面の見た目を変えうる（絶対規則7）。小屋・岩の glTF の中のテクスチャは段4で扱う。
+- paths: Game, Library/Core/Public/Asset, Library/Core/Private/Asset, Library/Core/Private/Rendering, Assets/AssetSets, Assets/Shaders/megageometry.frag, Scripts, TASKS.md, PROGRESS.md
+- notes: 起動画面の見た目を変えうる（絶対規則7）。小屋・岩の glTF の中のテクスチャは段4で扱う。2026-10-04 親: 実装は `0a63286b` で済んでいる（材質のクック済みは約560 MiB、ばらでは約3200 MiB で約0.18。全体は 3609.6→969.6 MiB で、残りは岩・小屋の glTF の無圧縮のテクスチャ約409 MiB）。元の「全体の1/4以下」は段4の範囲を含んでいたので、`blocked/VTG1-STARTUP-COOKED.md` の選択肢1で条件を材質の比に直した。`megageometry.frag` の1行（粗い傾きの標本の BC5 の復号）は VTG1-MATERIAL-ORM の取りこぼしの修正として受け入れる。
 
 ## VTG1-ACCEPT: 段1（BC圧縮）の受入れを記録する
 - status: todo
-- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md`（新規）の段1の節に、テクスチャの VRAM（移行前後の `VRAM_LEDGER`）、視点ごとの PSNR、朝10°・昼45°・夕3°・夜の起動画面の撮影（開いて確かめた所見）、golden、関係するテストの結果、既知の限界を書く。
+- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md`（新規）の段1の節に、テクスチャの VRAM（移行前後の `VRAM_LEDGER` の全体と、クック済みにした材質のばらとの比。岩・小屋の glTF のテクスチャは段4で焼く残りとして内訳を書く）、視点ごとの PSNR（同じコードの撮影の揺らぎと並べる）、朝10°・昼45°・夕3°・夜の起動画面の撮影（開いて確かめた所見）、golden、関係するテストの結果、既知の限界を書く。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest CookedMeshTest CookedTextureUploadTest MaterialResourcesTest RenderingGoldenImageTest AssetCook -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VideoMemoryBudgetVulkanTest|TextureMemoryLedgerTest|GpuRetireQueueTest|RHIBlockCompressedFormatTest|RHIBlockCompressedTextureVulkanTest|CookedTextureTest|CookedTextureUploadTest|AssetCookBlockCompressSmoke|AssetCookTextureSmoke|MaterialResourcesTest|GBufferMaterialDescriptorCacheTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG1-ACCEPT -Configuration RelWithDebInfo -SunElevations 10,45,3`
@@ -131,6 +131,13 @@
 - stop-when: 受入れの数値が段1の受入れ（計画書 5）を満たさない場合は、測った値を記録して止める。
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: この段の後、親が main へマージしてプッシュする。
+
+## VTG2-CAPTURE-DETERMINISTIC: 同じコードを2回撮ると一致する撮影の方式を足す
+- status: backlog
+- done-when: 撮影スクリプトに、テクスチャ・モデルの読み込みが終わってから決まったフレーム数だけ描き、TAA・RTGI・自動露出の履歴と乱数の種を読み込み完了の時点から数えて固定する方式を足す。同じコードを2回撮った平均輝度の差が各視点 0.1 以下、PSNR 45 dB 以上になる。既定の描画経路は変えない（撮影の方式のときだけ働く）。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-CAPTURE-DETERMINISTIC -Configuration RelWithDebInfo`
+- paths: Scripts/CaptureStartupScene.ps1, Game, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Engine, TASKS.md, PROGRESS.md
+- notes: 2026-10-04 親が足した。VTG1-MATERIAL-ORM で、同じコードを撮り直すだけで1視点あたり最大2.6動き、見た目の保全を数値で判定できなかった。段2以降（VT・ビジビリティバッファ）の見た目の比較はこの方式で撮る。
 
 ## VTG2-SPARSE-CAPS: sparseの機能とキューを照会して有効化する
 - status: backlog
