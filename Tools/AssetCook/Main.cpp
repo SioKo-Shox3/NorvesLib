@@ -69,8 +69,8 @@ namespace
         std::string Format;
         std::string Variant;
         // 用途ごとのテクスチャのクック(--kind texture)。指定すると Format は用途から決まる。
-        std::string Usage;
-        std::string Quality;
+        NorvesLib::Core::Container::AnsiString Usage;
+        NorvesLib::Core::Container::AnsiString Quality;
         std::filesystem::path OrmAoPath;
         std::filesystem::path OrmRoughnessPath;
         std::filesystem::path OrmMetallicPath;
@@ -1525,7 +1525,7 @@ namespace
     }
 
     // --usage と、それに付く引数の組み合わせを確かめ、Format を用途から決める。
-    bool ResolveTextureUsageOptions(CookOptions &options, std::string &error)
+    bool ResolveTextureUsageOptions(CookOptions &options, NorvesLib::Tools::AssetCook::ErrorString &error)
     {
         const bool bHasOrmSource = !options.OrmAoPath.empty() ||
                                    !options.OrmRoughnessPath.empty() ||
@@ -1695,7 +1695,7 @@ namespace
                 {
                     return false;
                 }
-                outOptions.Usage = value;
+                outOptions.Usage = NorvesLib::Core::Container::AnsiString(value.c_str());
             }
             else if (argument == "--quality")
             {
@@ -1703,7 +1703,7 @@ namespace
                 {
                     return false;
                 }
-                outOptions.Quality = value;
+                outOptions.Quality = NorvesLib::Core::Container::AnsiString(value.c_str());
             }
             else if (argument == "--orm-ao")
             {
@@ -1736,8 +1736,11 @@ namespace
             }
         }
 
-        if (!ResolveTextureUsageOptions(outOptions, error))
+        // 用途別の引数の検証は独自型でエラーを返すので、既存の CLI の std::string へは境界で変換する。
+        NorvesLib::Tools::AssetCook::ErrorString usageError;
+        if (!ResolveTextureUsageOptions(outOptions, usageError))
         {
+            error = ToStdString(usageError);
             return false;
         }
 

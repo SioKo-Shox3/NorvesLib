@@ -398,7 +398,7 @@ namespace NorvesLib::Tools::AssetCook
                 uint64_t rowCount = 0;
                 if (!ComputeCookedTextureMipLayout(pixelFormat, mip.Width, mip.Height, rowBytes, rowCount))
                 {
-                    error = "texture format has no mip layout";
+                    error = "この形式にはミップの並びを決められません";
                     return false;
                 }
 
@@ -1038,7 +1038,7 @@ namespace NorvesLib::Tools::AssetCook
         TextureFormatInfo formatInfo;
         if (!ParseTextureFormat(format, formatInfo))
         {
-            error = ErrorString("unsupported texture format: ") + ErrorString(AnsiStringView(format.data(), format.size()));
+            error = ErrorString("未対応のテクスチャ形式です: ") + ErrorString(AnsiStringView(format.data(), format.size()));
             return false;
         }
 
@@ -1070,29 +1070,29 @@ namespace NorvesLib::Tools::AssetCook
         return true;
     }
 
-    bool ParseTextureUsage(std::string_view text, TextureUsage &outUsage) noexcept
+    bool ParseTextureUsage(Core::Container::AnsiStringView text, TextureUsage &outUsage) noexcept
     {
-        if (text == "albedo")
+        if (text == Core::Container::AnsiStringView("albedo"))
         {
             outUsage = TextureUsage::Albedo;
             return true;
         }
-        if (text == "normal")
+        if (text == Core::Container::AnsiStringView("normal"))
         {
             outUsage = TextureUsage::Normal;
             return true;
         }
-        if (text == "orm")
+        if (text == Core::Container::AnsiStringView("orm"))
         {
             outUsage = TextureUsage::Orm;
             return true;
         }
-        if (text == "single")
+        if (text == Core::Container::AnsiStringView("single"))
         {
             outUsage = TextureUsage::Single;
             return true;
         }
-        if (text == "height16")
+        if (text == Core::Container::AnsiStringView("height16"))
         {
             outUsage = TextureUsage::Height16;
             return true;

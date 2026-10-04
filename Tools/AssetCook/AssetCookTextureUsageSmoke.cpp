@@ -171,7 +171,7 @@ namespace
         ErrorString error;
         if (!CookTextureForUsage(source, orm, params, outResult, error))
         {
-            std::printf("TEXTURE_USAGE_SMOKE_FAIL cook failed: usage=%s error=%s\n", GetTextureUsageName(usage), error.c_str());
+            std::printf("TEXTURE_USAGE_SMOKE_FAIL クックに失敗: usage=%s error=%s\n", GetTextureUsageName(usage), error.c_str());
             ++g_failures;
             return false;
         }
@@ -180,7 +180,7 @@ namespace
         outParsed = NorvesLib::Core::Asset::ParseCookedTexture(AssetBlob::CopyBytes(span, "usage smoke"));
         if (!outParsed.Succeeded())
         {
-            std::printf("TEXTURE_USAGE_SMOKE_FAIL cooked texture does not parse: usage=%s status=%d\n",
+            std::printf("TEXTURE_USAGE_SMOKE_FAIL クック済みテクスチャを解釈できない: usage=%s status=%d\n",
                         GetTextureUsageName(usage), static_cast<int>(outParsed.Status));
             ++g_failures;
             return false;

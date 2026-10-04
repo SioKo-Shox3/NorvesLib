@@ -3,6 +3,7 @@
 #include "BlockCompressor.h"
 
 #include "Container/String.h"
+#include "Container/StringView.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -32,7 +33,7 @@ namespace NorvesLib::Tools::AssetCook
         Height16, // R16 linear(非圧縮)。16bit の入力の精度を保つ
     };
 
-    [[nodiscard]] bool ParseTextureUsage(std::string_view text, TextureUsage &outUsage) noexcept;
+    [[nodiscard]] bool ParseTextureUsage(Core::Container::AnsiStringView text, TextureUsage &outUsage) noexcept;
     [[nodiscard]] const char *GetTextureUsageName(TextureUsage usage) noexcept;
     // マニフェストの format 欄に書く名前(例: nvtex.v0.1.bc7.srgb)。
     [[nodiscard]] const char *GetTextureUsageManifestFormat(TextureUsage usage) noexcept;
