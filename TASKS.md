@@ -271,7 +271,7 @@
 - notes: 計画書 1（検証は起動画面に足し、重い負荷は別モード）。負荷用のテクスチャは git に入れない。撮影スクリプトに負荷モードの引数が無ければ足す。
 
 ## VTG2-ACCEPT: 段2（sparseのVT）の受入れを記録する
-- status: todo
+- status: done
 - done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段2の節に、`-Deterministic` の撮影（朝・昼・夕・夜 × 3視点、VT と全常駐の PSNR と同じコードの揺らぎ）、材質のテクスチャの量（段1の全常駐・VT）、負荷モードの `--vram-budget-mb` での `VRAM_POOLS`、golden、関係するテストの結果、既知の限界（sparse の無い GPU の扱いを含む）を書く。8GB 級を模す上限（`--vram-budget-mb 6500`）で負荷モードが溢れずに描けることを記録する。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest CookedMeshTest RenderingGoldenImageTest MaterialResourcesTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(SparseCapabilitiesVulkanTest|SparseTextureVulkanTest|SparseBindVulkanTest|SparseTileUploadVulkanTest|VirtualTextureResidencyVulkanTest|VirtualTextureFeedbackVulkanTest|VirtualTextureRequestSetTest|VirtualTextureStreamerTest|VideoMemoryBudgetManagerTest|CookedTextureTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
