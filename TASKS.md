@@ -143,7 +143,7 @@
 - notes: 2026-10-04 親が足した。VTG1-MATERIAL-ORM で、同じコードを撮り直すだけで1視点あたり最大2.6動き、見た目の保全を数値で判定できなかった。段2以降（VT・ビジビリティバッファ）の見た目の比較は `-Deterministic` で撮る。2枚の PNG の PSNR は既存の比較の道具（`VTG1-ACCEPT` で使ったもの）か、小さな PowerShell の関数で測る。
 
 ## VTG2-SPARSE-CAPS: sparseの機能とキューを照会して有効化する
-- status: todo
+- status: done
 - done-when: Vulkan のデバイスの作成で `sparseBinding`・`sparseResidencyImage2D`・`sparseResidencyAliased`・`shaderResourceResidency`・`shaderResourceMinLod` を照会し、対応時に有効化する。`VK_QUEUE_SPARSE_BINDING_BIT` を持つキューの族を探し（グラフィックスの族が持てばそれを使う）、sparse の結び付けに使うキューを持つ。`DeviceCapabilities` に sparse の可否（2D の residency・shader の residency・MinLod）と、形式ごとの標準ブロック形状（`vkGetPhysicalDeviceSparseImageFormatProperties` の imageGranularity と標準形状か否か）を照会する API を載せる。GPU のテスト `SparseCapabilitiesVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）が、開発機（RTX 4080）で BC7・BC5・BC4・R16 の 2D の sparse が使え、64 KiB のタイル（BC7・BC5 は 256×256 texel、BC4 は 512×256、R16 は 256×128）であることを確かめる（Vulkan が無ければ 125、sparse が無ければ理由を出して 125）。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(SparseCapabilitiesVulkanTest|VideoMemoryBudgetVulkanTest|RHIBlockCompressedTextureVulkanTest)$"`

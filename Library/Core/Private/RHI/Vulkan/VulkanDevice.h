@@ -133,8 +133,12 @@ namespace NorvesLib::RHI::Vulkan
         vk::Queue GetPresentQueue() const { return m_presentQueue; }
         vk::Queue GetComputeQueue() const { return m_computeQueue; }
         vk::Queue GetTransferQueue() const { return m_transferQueue; }
+        // sparse の結び付け（vkQueueBindSparse）に使うキュー。sparseBinding が無効なら空のハンドル。
+        vk::Queue GetSparseBindingQueue() const { return m_sparseBindingQueue; }
 
         uint32_t GetGraphicsQueueFamilyIndex() const { return m_graphicsQueueFamilyIndex; }
+        // VK_QUEUE_SPARSE_BINDING_BIT を持つ族（無ければ UINT32_MAX）。グラフィックスの族が持てばそれを使う。
+        uint32_t GetSparseBindingQueueFamilyIndex() const { return m_sparseQueueFamilyIndex; }
         uint32_t GetComputeQueueFamilyIndex() const { return m_computeQueueFamilyIndex; }
         uint32_t GetTransferQueueFamilyIndex() const { return m_transferQueueFamilyIndex; }
 
@@ -210,8 +214,10 @@ namespace NorvesLib::RHI::Vulkan
         uint32_t m_computeQueueFamilyIndex = UINT32_MAX;
         uint32_t m_transferQueueFamilyIndex = UINT32_MAX;
         uint32_t m_presentQueueFamilyIndex = UINT32_MAX;
+        uint32_t m_sparseQueueFamilyIndex = UINT32_MAX;
 
         // キュー
+        vk::Queue m_sparseBindingQueue;
         vk::Queue m_graphicsQueue;
         vk::Queue m_computeQueue;
         vk::Queue m_transferQueue;
@@ -242,6 +248,7 @@ namespace NorvesLib::RHI::Vulkan
         void CreateCommandPool();
         void InitFormatMaps();
         void DetectCapabilities();
+        void DetectSparseFormatProperties();
 
         // ヘルパー
         bool IsDeviceSuitable(vk::PhysicalDevice device);

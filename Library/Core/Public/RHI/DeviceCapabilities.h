@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "RHITypes.h"
+
 namespace NorvesLib::RHI
 {
 
@@ -75,6 +77,82 @@ namespace NorvesLib::RHI
 
         /** @brief 取得手段があり、予算と使用量を取得したか（無いバックエンドでは false） */
         bool bValid = false;
+    };
+
+    /**
+     * @brief 形式ごとの sparse（部分常駐）2D テクスチャの標準ブロック形状
+     *
+     * vkGetPhysicalDeviceSparseImageFormatProperties の imageGranularity と標準形状の印。
+     * 標準形状なら 64 KiB のタイルが 1 つの結び付け単位になる。
+     */
+    struct SparseFormatProperties
+    {
+        /** @brief 照会した形式 */
+        Format TextureFormat = Format::UNKNOWN;
+
+        /** @brief 2D・最適タイリング・サンプル数1で sparse のテクスチャを作れるか */
+        bool bSupported = false;
+
+        /** @brief 結び付け単位（タイル）の幅（texel） */
+        uint32_t GranularityWidth = 0;
+
+        /** @brief 結び付け単位（タイル）の高さ（texel） */
+        uint32_t GranularityHeight = 0;
+
+        /** @brief 標準のブロック形状（64 KiB のタイル）か。非標準なら false */
+        bool bStandardBlockShape = false;
+
+        /** @brief ミップの末尾（mip tail）が全ミップで1つにまとまるか */
+        bool bSingleMipTail = false;
+    };
+
+    /**
+     * @brief 論理デバイスで有効になった sparse（部分常駐）テクスチャの機能
+     *
+     * いずれも論理デバイスで有効にできたものだけ true。結び付けに使うキューが無ければ
+     * bSparseBinding も false になる（その場合 VT は使わず BC の全常駐で描く）。
+     */
+    struct SparseCapabilities
+    {
+        /** @brief 照会する形式の最大数 */
+        static constexpr uint32_t MaxFormats = 12;
+
+        /** @brief sparseBinding が有効で、結び付け用のキューも見つかったか */
+        bool bSparseBinding = false;
+
+        /** @brief 2D の部分常駐（sparseResidencyImage2D）が有効か */
+        bool bResidencyImage2D = false;
+
+        /** @brief 別名付けの部分常駐（sparseResidencyAliased）が有効か */
+        bool bResidencyAliased = false;
+
+        /** @brief シェーダーで常駐の照会ができる（shaderResourceResidency）か */
+        bool bShaderResourceResidency = false;
+
+        /** @brief シェーダーで最小LODを指定できる（shaderResourceMinLod）か */
+        bool bShaderResourceMinLod = false;
+
+        /** @brief 照会済みの形式の数 */
+        uint32_t FormatCount = 0;
+
+        /** @brief 形式ごとの標準ブロック形状 */
+        SparseFormatProperties Formats[MaxFormats] = {};
+
+        /**
+         * @brief 形式の標準ブロック形状を引く
+         * @return 照会していない形式は nullptr
+         */
+        const SparseFormatProperties* FindFormat(Format format) const
+        {
+            for (uint32_t i = 0; i < FormatCount; ++i)
+            {
+                if (Formats[i].TextureFormat == format)
+                {
+                    return &Formats[i];
+                }
+            }
+            return nullptr;
+        }
     };
 
     /**
@@ -201,6 +279,9 @@ namespace NorvesLib::RHI
 
         /** @brief BC1/BC4/BC5/BC7 のブロック圧縮テクスチャ（textureCompressionBC）が論理デバイスで有効か */
         bool bTextureCompressionBC = false;
+
+        /** @brief sparse（部分常駐）テクスチャの機能と形式ごとの標準ブロック形状 */
+        SparseCapabilities Sparse;
     };
 
 } // namespace NorvesLib::RHI

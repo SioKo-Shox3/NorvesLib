@@ -1040,6 +1040,12 @@ namespace NorvesLib::RHI::Vulkan
             uniqueQueueFamilies.insert(m_transferQueueFamilyIndex);
         }
 
+        // sparse の結び付け用の族（グラフィックスの族が持てば既に入っている）
+        if (m_sparseQueueFamilyIndex != UINT32_MAX)
+        {
+            uniqueQueueFamilies.insert(m_sparseQueueFamilyIndex);
+        }
+
         // キュー作成情報
         float queuePriority = 1.0f;
         VariableArray<vk::DeviceQueueCreateInfo> queueCreateInfos;
@@ -1068,6 +1074,20 @@ namespace NorvesLib::RHI::Vulkan
         // 点光源のキューブシャドウはキューブ配列（samplerCubeArray）で読む。
         features2.features.imageCubeArray =
             physicalFeatures.imageCubeArray == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // sparse（部分常駐）テクスチャ。結び付け用のキューの族が見つかり、対応しているときだけ有効にする。
+        // 部分常駐の各機能は sparseBinding が前提。
+        if (m_sparseQueueFamilyIndex != UINT32_MAX && physicalFeatures.sparseBinding == VK_TRUE)
+        {
+            features2.features.sparseBinding = VK_TRUE;
+            features2.features.sparseResidencyImage2D =
+                physicalFeatures.sparseResidencyImage2D == VK_TRUE ? VK_TRUE : VK_FALSE;
+            features2.features.sparseResidencyAliased =
+                physicalFeatures.sparseResidencyAliased == VK_TRUE ? VK_TRUE : VK_FALSE;
+            features2.features.shaderResourceResidency =
+                physicalFeatures.shaderResourceResidency == VK_TRUE ? VK_TRUE : VK_FALSE;
+            features2.features.shaderResourceMinLod =
+                physicalFeatures.shaderResourceMinLod == VK_TRUE ? VK_TRUE : VK_FALSE;
+        }
         m_enabledDeviceFeatures = features2.features;
 
         // Vulkan 1.2 機能: 対応している場合のみ drawIndirectCount を有効化
@@ -1341,6 +1361,11 @@ namespace NorvesLib::RHI::Vulkan
         else
         {
             m_transferQueue = m_graphicsQueue;
+        }
+
+        if (m_enabledDeviceFeatures.sparseBinding == VK_TRUE)
+        {
+            m_sparseBindingQueue = m_device.getQueue(m_sparseQueueFamilyIndex, 0);
         }
     }
 
@@ -1633,6 +1658,25 @@ namespace NorvesLib::RHI::Vulkan
         if (m_computeQueueFamilyIndex == UINT32_MAX)
         {
             m_computeQueueFamilyIndex = m_graphicsQueueFamilyIndex;
+        }
+
+        // sparse の結び付けキュー: グラフィックスの族が持てばそれを使い、無ければ持つ最初の族
+        m_sparseQueueFamilyIndex = UINT32_MAX;
+        if (m_graphicsQueueFamilyIndex != UINT32_MAX &&
+            (queueFamilies[m_graphicsQueueFamilyIndex].queueFlags & vk::QueueFlagBits::eSparseBinding))
+        {
+            m_sparseQueueFamilyIndex = m_graphicsQueueFamilyIndex;
+        }
+        else
+        {
+            for (uint32_t i = 0; i < queueFamilies.size(); i++)
+            {
+                if (queueFamilies[i].queueFlags & vk::QueueFlagBits::eSparseBinding)
+                {
+                    m_sparseQueueFamilyIndex = i;
+                    break;
+                }
+            }
         }
     }
 
@@ -2665,6 +2709,23 @@ namespace NorvesLib::RHI::Vulkan
             m_Capabilities.bTextureCompressionBC =
                 (m_enabledDeviceFeatures.textureCompressionBC == VK_TRUE);
 
+            // sparse は論理デバイスで有効にできたものだけを載せる（結び付け用のキューが無ければ全て無効）
+            const bool bSparseEnabled =
+                m_enabledDeviceFeatures.sparseBinding == VK_TRUE && m_sparseBindingQueue;
+            m_Capabilities.Sparse.bSparseBinding = bSparseEnabled;
+            m_Capabilities.Sparse.bResidencyImage2D =
+                bSparseEnabled && m_enabledDeviceFeatures.sparseResidencyImage2D == VK_TRUE;
+            m_Capabilities.Sparse.bResidencyAliased =
+                bSparseEnabled && m_enabledDeviceFeatures.sparseResidencyAliased == VK_TRUE;
+            m_Capabilities.Sparse.bShaderResourceResidency =
+                bSparseEnabled && m_enabledDeviceFeatures.shaderResourceResidency == VK_TRUE;
+            m_Capabilities.Sparse.bShaderResourceMinLod =
+                bSparseEnabled && m_enabledDeviceFeatures.shaderResourceMinLod == VK_TRUE;
+            if (m_Capabilities.Sparse.bResidencyImage2D)
+            {
+                DetectSparseFormatProperties();
+            }
+
             if (m_Capabilities.bDrawIndirectCount)
             {
                 NORVES_LOG_INFO("VulkanDevice", "DrawIndirectCount enabled (Vulkan 1.2 core)");
@@ -2681,7 +2742,8 @@ namespace NorvesLib::RHI::Vulkan
         NORVES_LOG_INFO("VulkanDevice", "Device Capabilities: GPU=%s, NVIDIA=%s, "
                                         "NeuralShaders=%s, MegaGeometry=%s, AccelerationStructure=%s, "
                                         "RayQuery=%s, RayTracingPipeline=%s, DrawIndirectCount=%s, DrawIndirectFirstInstance=%s, "
-                                        "TextureCompressionBC=%s",
+                                        "TextureCompressionBC=%s, SparseBinding=%s, SparseResidencyImage2D=%s, "
+                                        "ShaderResourceResidency=%s, ShaderResourceMinLod=%s",
                         deviceName,
                         m_Capabilities.bIsNvidia ? "Yes" : "No",
                         m_Capabilities.NeuralShaders.bSupported ? "Yes" : "No",
@@ -2691,7 +2753,66 @@ namespace NorvesLib::RHI::Vulkan
                         m_Capabilities.RayTracing.bRayTracingPipeline ? "Yes" : "No",
                         m_Capabilities.bDrawIndirectCount ? "Yes" : "No",
                         m_Capabilities.bDrawIndirectFirstInstance ? "Yes" : "No",
-                        m_Capabilities.bTextureCompressionBC ? "Yes" : "No");
+                        m_Capabilities.bTextureCompressionBC ? "Yes" : "No",
+                        m_Capabilities.Sparse.bSparseBinding ? "Yes" : "No",
+                        m_Capabilities.Sparse.bResidencyImage2D ? "Yes" : "No",
+                        m_Capabilities.Sparse.bShaderResourceResidency ? "Yes" : "No",
+                        m_Capabilities.Sparse.bShaderResourceMinLod ? "Yes" : "No");
+    }
+
+    // 形式ごとの sparse 2D テクスチャの標準ブロック形状を照会する
+    void VulkanDevice::DetectSparseFormatProperties()
+    {
+        // VT の対象になる形式（BC 圧縮と、高さマップ等の R16、非圧縮の予備）
+        const Format sparseFormats[] = {
+            Format::BC1_UNORM, Format::BC1_SRGB, Format::BC4_UNORM, Format::BC5_UNORM,
+            Format::BC7_UNORM, Format::BC7_SRGB, Format::R16_UNORM, Format::R16_FLOAT,
+            Format::R8G8B8A8_UNORM};
+
+        SparseCapabilities &sparse = m_Capabilities.Sparse;
+        sparse.FormatCount = 0;
+        for (const Format format : sparseFormats)
+        {
+            if (sparse.FormatCount >= SparseCapabilities::MaxFormats)
+            {
+                break;
+            }
+
+            SparseFormatProperties &entry = sparse.Formats[sparse.FormatCount];
+            entry = SparseFormatProperties{};
+            entry.TextureFormat = format;
+
+            const vk::Format vkFormat = ToVkFormat(format);
+            if (vkFormat != vk::Format::eUndefined)
+            {
+                const auto properties = m_physicalDevice.getSparseImageFormatProperties(
+                    vkFormat, vk::ImageType::e2D, vk::SampleCountFlagBits::e1,
+                    vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+                    vk::ImageTiling::eOptimal);
+                for (const auto &property : properties)
+                {
+                    if (!(property.aspectMask & vk::ImageAspectFlagBits::eColor))
+                    {
+                        continue;
+                    }
+                    entry.bSupported = true;
+                    entry.GranularityWidth = property.imageGranularity.width;
+                    entry.GranularityHeight = property.imageGranularity.height;
+                    entry.bStandardBlockShape =
+                        !(property.flags & vk::SparseImageFormatFlagBits::eNonstandardBlockSize);
+                    entry.bSingleMipTail =
+                        (property.flags & vk::SparseImageFormatFlagBits::eSingleMiptail) ==
+                        vk::SparseImageFormatFlagBits::eSingleMiptail;
+                    break;
+                }
+            }
+
+            NORVES_LOG_INFO("VulkanDevice", "Sparse format: format=%d supported=%s granularity=%ux%u standard=%s",
+                            static_cast<int32_t>(format), entry.bSupported ? "Yes" : "No",
+                            entry.GranularityWidth, entry.GranularityHeight,
+                            entry.bStandardBlockShape ? "Yes" : "No");
+            ++sparse.FormatCount;
+        }
     }
 
 } // namespace NorvesLib::RHI::Vulkan
