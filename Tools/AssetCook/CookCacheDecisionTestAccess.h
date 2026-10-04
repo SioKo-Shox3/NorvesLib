@@ -3,9 +3,11 @@
 #include "CookCacheDecision.h"
 namespace NorvesLib::Tools::AssetCook::Detail
 {
-    CookDecision DecideCookCacheWithProbe(const SingleAssetCookRequest& request,uint64_t revision,bool allowSkip,
-        const CookOutputRecord* previous,const Core::Asset::AssetManifest* manifest,CookDecisionContext& out,
-        Core::Container::AnsiString& error,void(*afterPrepare)(void*),void* probeContext);
-    bool CaptureCookOutputRecordWithProbe(const CookDecisionContext& before,const Core::Asset::AssetManifest& manifest,
-        CookOutputRecord& out,Core::Container::AnsiString& error,void(*afterPrepare)(void*),void* probeContext);
-}
+    CookDecision DecideCookCacheWithProbe(const SingleAssetCookRequest& request, uint64_t revision, bool bAllowSkip,
+                                          const CookOutputRecord* previous, const Core::Asset::AssetManifest* manifest,
+                                          CookDecisionContext& out, Core::Container::AnsiString& error,
+                                          void (*afterPrepare)(void*), void* probeContext);
+    bool CaptureCookOutputRecordWithProbe(const CookDecisionContext& before, const Core::Asset::AssetManifest& manifest,
+                                          CookOutputRecord& out, Core::Container::AnsiString& error,
+                                          void (*afterPrepare)(void*), void* probeContext);
+} // namespace NorvesLib::Tools::AssetCook::Detail

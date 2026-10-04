@@ -2428,3 +2428,9 @@
 - done-when: model fingerprint/cookの外部URIとsidecar探索が同じnative filesystem pathを使い、narrow変換で失われるUnicode source/overrideを黙って別fileへ変えない。既存ASCII入出力のbyte互換を保つ。
 - verify: Windowsの日本語・非BMP source/base/overrideと外部buffer・image、cacheと実cookの一致、失敗保持、既存79+10byte gate。
 - stop-when: ANSI文字化けを許容、runtime asset logical pathの規約を同時に変更、実Windows未検証のままUTF対応と宣言する。
+
+## G2-S6-COOK-STYLE: 新規cook検証コードの書式を揃える
+- status: doing
+- done-when: 新しい出力検証・共通増分判断とその試験をAllman/制御文brace/bool命名へ揃え、headerのusing namespaceを明示修飾へ置換する。既存単体cooker本体は新設adapter範囲以外を整形しない。
+- verify: 明示した識別子・名前修飾の変更後はbrace以外のC++ token一致、文字列literal不変、BOM/CRLF/numstat、既存19CPU/79+10byte gate。
+- stop-when: cook/hash/path判断式やserialized文字列を変える、既存全fileの無関係な整形、実検証なしの互換宣言。

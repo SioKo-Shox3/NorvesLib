@@ -4,7 +4,7 @@ DecideCookCacheは現要求を既存単体cookの規則で検査・正規化し�
 
 ## 現要求と記録
 
-- allowSkipは単体CLIのmodel専用flagとは独立。返す実行要求のbSkipIfUnchangedは常にfalseで、将来batchが共通判断後に古いcacheを二重判定しない
+- bAllowSkipは単体CLIのmodel専用flagとは独立。返す実行要求のbSkipIfUnchangedは常にfalseで、将来batchが共通判断後に古いcacheを二重判定しない
 - logical/entryのAssets prefix・slash・dotは既存AssetPathで正規化してから依存印を採る。非骨格で使われない骨格optionは既定へ正規化する
 - recordはschema、依存schema、cooker revision、依存fingerprint、出力ごとの値所有manifest参照とpackage全体size/hashを持つ。絶対stage pathや集約manifest全体hashは持たない
 - 期待出力は現要求から独立に導く。primaryが先で、static modelの参照された内包画像だけをImageIndex順に続ける。外部画像は依存だが追加packageではない

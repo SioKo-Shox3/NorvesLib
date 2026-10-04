@@ -730,3 +730,5 @@
 - G2-S6-CACHE-DECISION実検証: 48bdd655/run37220986849は実buildと既存18CPU・5診断が成功、新cache試験の危険出力名拒否（line203）で停止。Windowsのabsolute化より前にraw物理名の検査を追加し、末尾dot/space等が正規化で消えてから検査される経路を塞ぐ。packageの各leaf診断とmanifest名の対称回帰を追加。判定条件は弱めず、79+10byte gateは未到達のためdoingを維持。
 
 - G2-S6-CACHE-DECISION受入: cc9aa9e1/run37222258176で実Windows19CPU・7CLI/79byte・5診断・native2spec×2/10byte/16拒否が成功。保存record→Skip、全kind、外部依存・sidecar・他key、hardlink/case/junction、Cook/Skip中とrecord採取中の入力変更・保持を実証。実traceでa.とa空白がraw/aへ、CONがdevice pathへ、a:streamがdrive pathへ変わることを確認し、raw表記を先に拒否する修正も合格。3ZIP SHAと固定79+10出力の直接byte比較を独立検証。共通in-memory判断をdone、state永続化・既存root公開・旧CLI cache移行は未完。
+
+- G2-S6-COOK-STYLE開始: 新規出力/cache検証10fileを規約の制御文brace/Allmanへ整理。bool識別子とheaderの明示修飾以外はbraceを除くtoken一致を確認。旧単体cookerは新設adapter範囲だけを対象とする。挙動の受入れは既存Windows gateで再確認する。

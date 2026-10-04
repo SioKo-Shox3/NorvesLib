@@ -1035,23 +1035,34 @@ namespace NorvesLib::Tools::AssetCook
     }
     namespace Detail
     {
-        bool MakeCachePackagePath(const std::filesystem::path& package,const std::filesystem::path& parent,
-            Core::Container::AnsiString& relative,Core::Container::AnsiString& outError)
+        bool MakeCachePackagePath(const std::filesystem::path& package, const std::filesystem::path& parent,
+                                  Core::Container::AnsiString& relative, Core::Container::AnsiString& outError)
         {
-            std::string value,error;
-            if (!MakeCookedPackageManifestPath(package,parent,value,error))
-            { outError=Core::Container::AnsiString(Core::Container::AnsiStringView(error.data(),error.size()));return false; }
-            relative=Core::Container::AnsiString(Core::Container::AnsiStringView(value.data(),value.size()));return true;
+            std::string value, error;
+            if (!MakeCookedPackageManifestPath(package, parent, value, error))
+            {
+                outError = Core::Container::AnsiString(Core::Container::AnsiStringView(error.data(), error.size()));
+                return false;
+            }
+            relative = Core::Container::AnsiString(Core::Container::AnsiStringView(value.data(), value.size()));
+            return true;
         }
-        bool MakeLosslessModelPath(const std::filesystem::path& path,Core::Container::AnsiString& text)
+        bool MakeLosslessModelPath(const std::filesystem::path& path, Core::Container::AnsiString& text)
         {
             try
             {
-                const auto narrow=path.generic_string();
-                if (std::filesystem::path(narrow).lexically_normal()!=path.lexically_normal()) return false;
-                text=Core::Container::AnsiString(Core::Container::AnsiStringView(narrow.data(),narrow.size()));return true;
+                const auto narrow = path.generic_string();
+                if (std::filesystem::path(narrow).lexically_normal() != path.lexically_normal())
+                {
+                    return false;
+                }
+                text = Core::Container::AnsiString(Core::Container::AnsiStringView(narrow.data(), narrow.size()));
+                return true;
             }
-            catch (const std::exception&) { return false; }
+            catch (const std::exception&)
+            {
+                return false;
+            }
         }
         CookOptions MakeLegacyCookOptions(const SingleAssetCookRequest& request)
         {
@@ -1072,27 +1083,42 @@ namespace NorvesLib::Tools::AssetCook
             options.SkeletalImport.Decode = request.SkeletalDecode;
             return options;
         }
-        bool NormalizeCacheCookRequest(const SingleAssetCookRequest& request,SingleAssetCookRequest& out,Core::Container::AnsiString& outError)
+        bool NormalizeCacheCookRequest(const SingleAssetCookRequest& request, SingleAssetCookRequest& out,
+                                       Core::Container::AnsiString& outError)
         {
-            auto options=MakeLegacyCookOptions(request);options.bSkipIfUnchanged=false;
-            std::string error,logical,entry,type;
-            AssetPackageFourCC parsedType=0;
-            const auto finish=[&](bool success)
-            { outError=Core::Container::AnsiString(Core::Container::AnsiStringView(error.data(),error.size()));return success; };
-            if (!ValidateCookOptions(options,error) ||
-                !MakeAbsolutePath(options.InputPath,options.InputPath,error) ||
-                !MakeAbsolutePath(options.PackagePath,options.PackagePath,error) ||
-                !MakeAbsolutePath(options.ManifestPath,options.ManifestPath,error) ||
-                (!options.ImportSettings.OverridePath.empty() && !MakeAbsolutePath(options.ImportSettings.OverridePath,options.ImportSettings.OverridePath,error)) ||
-                !NormalizeManifestPathField("logical_path",options.LogicalPath,logical,error) ||
-                !NormalizeManifestPathField("entry_name",options.EntryName,entry,error) ||
-                !ValidateAsciiJsonField("variant",options.Variant,error) ||
-                !ValidateAsciiJsonField("format",options.Format,error) ||
-                !ParseEntryType(options.EntryTypeText,parsedType,type,error)) return finish(false);
-            options.LogicalPath=std::move(logical);options.EntryName=std::move(entry);options.EntryTypeText=std::move(type);
+            auto options = MakeLegacyCookOptions(request);
+            options.bSkipIfUnchanged = false;
+            std::string error, logical, entry, type;
+            AssetPackageFourCC parsedType = 0;
+            const auto finish = [&](bool bSuccess)
+            {
+                outError = Core::Container::AnsiString(Core::Container::AnsiStringView(error.data(), error.size()));
+                return bSuccess;
+            };
+            if (!ValidateCookOptions(options, error) ||
+                !MakeAbsolutePath(options.InputPath, options.InputPath, error) ||
+                !MakeAbsolutePath(options.PackagePath, options.PackagePath, error) ||
+                !MakeAbsolutePath(options.ManifestPath, options.ManifestPath, error) ||
+                (!options.ImportSettings.OverridePath.empty() &&
+                 !MakeAbsolutePath(options.ImportSettings.OverridePath, options.ImportSettings.OverridePath, error)) ||
+                !NormalizeManifestPathField("logical_path", options.LogicalPath, logical, error) ||
+                !NormalizeManifestPathField("entry_name", options.EntryName, entry, error) ||
+                !ValidateAsciiJsonField("variant", options.Variant, error) ||
+                !ValidateAsciiJsonField("format", options.Format, error) ||
+                !ParseEntryType(options.EntryTypeText, parsedType, type, error))
+            {
+                return finish(false);
+            }
+            options.LogicalPath = std::move(logical);
+            options.EntryName = std::move(entry);
+            options.EntryTypeText = std::move(type);
             // 非骨格で使われない設定は正規化時に除く。単体CLIの挙動は変更しない。
-            if (!IsSupportedSkeletalCookFormat(options.Format)) options.SkeletalImport.Decode={};
-            out=MakeSingleCookRequest(options);return finish(true);
+            if (!IsSupportedSkeletalCookFormat(options.Format))
+            {
+                options.SkeletalImport.Decode = {};
+            }
+            out = MakeSingleCookRequest(options);
+            return finish(true);
         }
         bool ValidateCookOptions(const CookOptions& outOptions, std::string& error)
         {
