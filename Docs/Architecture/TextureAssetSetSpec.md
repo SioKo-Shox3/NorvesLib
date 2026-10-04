@@ -11,3 +11,5 @@ manifestに出るlogical/package/entry/variant/formatは既存単体CLIのASCII�
 既知fieldの重複、型違い、NUL、空の必須文字列、空texturesを拒否する。成功時だけ出力specを置換する。cookサービス・CLI --asset-set・旧manifest serializer・増分印は後続の接続で実装する。
 
 空白だけの必須値とpath前後の空白は[.NET Char.IsWhiteSpace](https://learn.microsoft.com/en-us/dotnet/api/system.char.iswhitespace)の集合で判定する。単独Assetsは旧PowerShell比較どおり大文字小文字を無視して拒否する一方、Assets/ prefixの除去は完全一致時だけ行う。
+
+2026-10-04実受入: f3100edb564182d82d03851be1c1afed8bb1ce1e / run37207785735のWindowsでCore/tools build、12CPU、既存7CLI/79byte一致を確認。TextureAssetSetSpecTestは実2specの5+3row全所有fieldと入力破棄後の保持を検証する。試験fixtureの構築は3区間appendで行い、汎用String::replaceの別件不具合へ依存しない。
