@@ -169,6 +169,12 @@ void TestNonSparseAndRejections(RHI::IDevice& device)
     RHI::TextureDesc tooManyMips = MakeSparseDesc(4096, 4096, RHI::SparseTextureInfo::MaxMipLevels + 1, RHI::Format::BC7_UNORM,
                                                   "SparseTextureTestTooManyMips");
     Expect(device.CreateTexture(tooManyMips) == nullptr, "持てるミップ数を超える sparse は作成が失敗しなければならない");
+
+    // 形式は sparse に対応していても、実際の用途（ストレージ書き込み）との組が非対応なら作成が失敗する。
+    // 例外で落ちず nullptr を返すこと（BC 形式はストレージ用途に対応しない）。
+    RHI::TextureDesc storageDesc = MakeSparseDesc(4096, 4096, 13, RHI::Format::BC7_UNORM, "SparseTextureTestStorage");
+    storageDesc.Usage = storageDesc.Usage | RHI::ResourceUsage::ShaderWrite;
+    Expect(device.CreateTexture(storageDesc) == nullptr, "ストレージ用途を足した BC7 の sparse は作成が失敗しなければならない");
 }
 
 int RunTest()

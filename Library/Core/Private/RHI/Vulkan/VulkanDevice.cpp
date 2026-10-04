@@ -2818,6 +2818,57 @@ namespace NorvesLib::RHI::Vulkan
             return false;
         }
 
+        // 用途によって sparse に対応しない組がある（例: ストレージ用途）ため、
+        // 実際に作る usage・flags で形式の対応・標準ブロック形状・大きさの上限を照会する
+        const vk::Format vkFormat = ConvertToVkFormat(desc.TextureFormat);
+        const vk::ImageUsageFlags usage = ConvertToVkImageUsageFlags(desc.Usage);
+        const vk::ImageCreateFlags createFlags =
+            vk::ImageCreateFlagBits::eSparseBinding | vk::ImageCreateFlagBits::eSparseResidency;
+
+        // 非対応は異常ではないので、assert する値返し版ではなく Result を返す版で照会する
+        vk::ImageFormatProperties limits;
+        const vk::Result formatResult = m_physicalDevice.getImageFormatProperties(
+            vkFormat, vk::ImageType::e2D, vk::ImageTiling::eOptimal, usage, createFlags, &limits);
+        if (formatResult != vk::Result::eSuccess)
+        {
+            NORVES_LOG_ERROR("Vulkan",
+                             "sparseテクスチャを作れません: この形式と用途の組は sparse に対応していません "
+                             "format=%d usage=0x%x name=%s",
+                             static_cast<int>(desc.TextureFormat), static_cast<uint32_t>(usage), name);
+            return false;
+        }
+        if (desc.Width > limits.maxExtent.width || desc.Height > limits.maxExtent.height ||
+            desc.MipLevels > limits.maxMipLevels)
+        {
+            NORVES_LOG_ERROR("Vulkan",
+                             "sparseテクスチャを作れません: 大きさかミップ数が上限を超えています "
+                             "size=%ux%u mips=%u 上限=%ux%u/%u name=%s",
+                             desc.Width, desc.Height, desc.MipLevels, limits.maxExtent.width,
+                             limits.maxExtent.height, limits.maxMipLevels, name);
+            return false;
+        }
+
+        bool bStandardColor = false;
+        const auto sparseProperties = m_physicalDevice.getSparseImageFormatProperties(
+            vkFormat, vk::ImageType::e2D, vk::SampleCountFlagBits::e1, usage, vk::ImageTiling::eOptimal);
+        for (const auto &property : sparseProperties)
+        {
+            if ((property.aspectMask & vk::ImageAspectFlagBits::eColor) &&
+                !(property.flags & vk::SparseImageFormatFlagBits::eNonstandardBlockSize))
+            {
+                bStandardColor = true;
+                break;
+            }
+        }
+        if (!bStandardColor)
+        {
+            NORVES_LOG_ERROR("Vulkan",
+                             "sparseテクスチャを作れません: この用途では標準ブロック形状の sparse になりません "
+                             "format=%d usage=0x%x name=%s",
+                             static_cast<int>(desc.TextureFormat), static_cast<uint32_t>(usage), name);
+            return false;
+        }
+
         return true;
     }
 

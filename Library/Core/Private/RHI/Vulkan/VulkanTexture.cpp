@@ -1,6 +1,7 @@
 ﻿#include "VulkanTexture.h"
 #include "VulkanDevice.h"
 #include "Thread/Mutex.h"
+#include "Logging/LogMacros.h"
 #include <stdexcept>
 #include <algorithm>
 #include <cstring>
@@ -535,6 +536,9 @@ namespace NorvesLib::RHI::Vulkan
         auto createResult = vkDevice.createImage(imageInfo);
         if (createResult.result != vk::Result::eSuccess)
         {
+            NORVES_LOG_ERROR("Vulkan", "イメージの作成に失敗しました: result=%d sparse=%s name=%s",
+                             static_cast<int>(createResult.result), m_desc.bSparse ? "Yes" : "No",
+                             m_desc.DebugName != nullptr ? m_desc.DebugName : "");
             throw std::runtime_error("イメージの作成に失敗しました");
         }
         m_image = createResult.value;
@@ -587,13 +591,20 @@ namespace NorvesLib::RHI::Vulkan
         vk::Device vkDevice = m_device->GetVkDevice();
 
         // 色の面のタイル形状とミップテイルを照会する（2D・配列1枚・単一の色の面だけを作るので要求は1件）
-        const auto requirements = vkDevice.getImageSparseMemoryRequirements(m_image);
-        const vk::SparseImageMemoryRequirements *colorRequirements = nullptr;
-        for (const vk::SparseImageMemoryRequirements &requirement : requirements)
+        uint32_t requirementCount = 0;
+        vkDevice.getImageSparseMemoryRequirements(m_image, &requirementCount, nullptr);
+        VariableArray<vk::SparseImageMemoryRequirements> requirements;
+        requirements.resize(requirementCount);
+        if (requirementCount > 0)
         {
-            if (requirement.formatProperties.aspectMask & vk::ImageAspectFlagBits::eColor)
+            vkDevice.getImageSparseMemoryRequirements(m_image, &requirementCount, requirements.data());
+        }
+        const vk::SparseImageMemoryRequirements *colorRequirements = nullptr;
+        for (uint32_t i = 0; i < requirementCount; ++i)
+        {
+            if (requirements[i].formatProperties.aspectMask & vk::ImageAspectFlagBits::eColor)
             {
-                colorRequirements = &requirement;
+                colorRequirements = &requirements[i];
                 break;
             }
         }

@@ -17,6 +17,10 @@ namespace NorvesLib::RHI::Vulkan
 
     class VulkanDevice;
 
+    // テクスチャ作成と同じ形式・用途の変換（sparse の可否照会を実際の作成条件で行うために公開する）
+    vk::Format ConvertToVkFormat(Format format);
+    vk::ImageUsageFlags ConvertToVkImageUsageFlags(ResourceUsage usage);
+
     /**
      * @brief テクスチャの Vulkan 実装 (vulkan.hpp使用)
      */
