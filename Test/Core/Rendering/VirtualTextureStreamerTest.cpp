@@ -597,6 +597,12 @@ public:
 
     uint64_t GetCopyBytesAvailable() const override { return CopyBytesAvailable; }
 
+    void GetPendingCopies(uint32_t& outCount, uint64_t& outBytes) const override
+    {
+        outCount = PendingCopyCount;
+        outBytes = PendingCopyBytes;
+    }
+
     // 積んだ依頼（初期化・コピー）を後ろから count 件取り消す
     void DiscardEnqueued(uint32_t count) override
     {
@@ -657,6 +663,9 @@ public:
     int CopyBudget = -1;
     // 次の記録で確実にコピーできる量（アップローダの残りの量）
     uint64_t CopyBytesAvailable = ~0ull;
+    // 積んだがまだ記録していないコピー（Abort で未記録へ戻ったものなど）
+    uint32_t PendingCopyCount = 0;
+    uint64_t PendingCopyBytes = 0;
     // 直前の結び付けの後ろの位置（結ぶ前に積まれたコピーを数える起点）
     size_t LastBindEventCount = 0;
     int UncopiedBindViolations = 0;
@@ -761,12 +770,12 @@ void AddRequest(VirtualTextureRequestSet& set,
 // すぐ別のテクスチャが借り直す。ストリーマより長く生きる物を先に宣言する。
 struct RealUploaderHarness
 {
-    RealUploaderHarness()
+    explicit RealUploaderHarness(const VirtualTextureStreamerConfig& config = VirtualTextureStreamerConfig())
         : Device(MakeShared<FakeDevice>()),
           Pool(Device, 2 * SparsePagePool::PageSizeBytes),
           Uploader(Device, MakeUploaderConfig()),
           Gpu(Device, Uploader),
-          Streamer(Pool, Gpu, &Retire)
+          Streamer(Pool, Gpu, &Retire, config)
     {
         Pool.SetCapacityLimitBytes(2 * SparsePagePool::PageSizeBytes);
     }
@@ -1798,6 +1807,149 @@ void TestAbortedCopiesAreRerecordedWhileRegistered()
     Expect(h.Streamer.GetTileState(MakeKey(indexA, 2, 0, 0)) == VirtualTextureTileState::Resident, "常駐のまま");
 }
 
+// Abort で未記録へ戻ったコピーも、次のフレームの上限に算入する。偽の窓口で数の算入を、実物のアップローダで
+// 「記録 → Abort → 次のフレーム」で上限を超えて記録されないことを確かめる。
+void TestPendingCopiesCountAgainstFrameLimits()
+{
+    // 偽の窓口: 持ち越したコピーの分だけ、今フレームで積める数が減る
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopiesPerFrame = 8;
+        Harness h(config);
+        const uint32_t index = h.Register();
+        h.Gpu.PendingCopyCount = 1;
+        const VirtualTextureFrameResult first = h.Step();
+        Expect(first.CopiesEnqueued == 7 && !h.Streamer.IsMipTailResident(index),
+               "持ち越したコピーが 1 件あると、積める段は 8 から 1 引いた 7 段で、積み切るまで使えない");
+        h.Gpu.PendingCopyCount = 0;
+        Expect(h.Step().CopiesEnqueued == 1 && h.Streamer.IsMipTailResident(index), "持ち越しが無くなれば、残りの 1 段を積んで使える");
+    }
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopyBytesPerFrame = MakeTailData().size();
+        Harness h(config);
+        h.Register();
+        h.Gpu.PendingCopyBytes = 1;
+        h.Step();
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Copy) < 8,
+               "持ち越したコピーの量だけ、今フレームで積める量が減る（1 フレームで 8 段を積み切れない）");
+    }
+
+    // 実物のアップローダ: 1 フレームに 1 件の上限で、記録 → Abort → 次のフレームでも記録は 1 件を超えない
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopiesPerFrame = 1;
+        RealUploaderHarness h(config);
+        RHI::TexturePtr texture;
+
+        h.BeginFrame(0);
+        const uint32_t index = h.Register(texture);
+        Expect(index != VirtualTextureStreamer::InvalidIndex, "1 段が 1 件に入る設定は登録できる");
+        h.Update();
+        {
+            const FakeCommandList commands = h.Record();
+            Expect(commands.Copies.size() == 1, "最初のフレームは 1 段だけ記録する");
+        }
+        h.Abort();
+
+        // 捨てたフレームの 1 段が未記録へ戻っている。次のフレームはそれを出し直すだけで、新しい段を足さない
+        h.BeginFrame(0);
+        h.Update();
+        {
+            const FakeCommandList commands = h.Record();
+            Expect(commands.Copies.size() == 1, "Abort で戻った 1 段と新しい段を合わせて、上限の 1 件を超えて記録しない");
+        }
+        h.Commit(1);
+        Expect(!h.Streamer.IsMipTailResident(index), "全部の段を積み終えるまで、ミップテイルは使えない");
+
+        // 以降も 1 フレームに 1 段ずつ進み、8 段を積み終えたら使える
+        uint64_t serial = 1;
+        for (int frame = 0; frame < 16 && !h.Streamer.IsMipTailResident(index); ++frame)
+        {
+            h.BeginFrame(serial);
+            h.Update();
+            const FakeCommandList commands = h.Record();
+            Expect(commands.Copies.size() <= 1, "どのフレームも記録は 1 件以内");
+            h.Commit(++serial);
+        }
+        Expect(h.Streamer.IsMipTailResident(index), "段を 1 件ずつ積み終えると、ミップテイルが常駐する");
+    }
+}
+
+// 「コピーを記録 → Abort → 登録解除 → ページの再取得 → 次のフレーム」の順（登録解除が Abort より後）でも、
+// 古いコピーが再利用されたページへ記録されない。
+void TestAbortThenUnregisterNeverReachesReusedPages()
+{
+    RealUploaderHarness h;
+    RHI::TexturePtr textureA;
+
+    h.BeginFrame(0);
+    const uint32_t indexA = h.Register(textureA);
+    h.Update();
+    h.Record();
+    h.Commit(1);
+
+    h.BeginFrame(1);
+    VirtualTextureRequestSet requests;
+    AddRequest(requests, indexA, 2, 0, 0, 1);
+    h.Update(&requests);
+    h.Record();
+    h.Commit(2);
+
+    // フレーム 3: タイルのコピーを記録し、フレームを捨て（未記録へ戻る）、そのあとで登録を解除する
+    h.BeginFrame(2);
+    h.Update();
+    {
+        const FakeCommandList commands = h.Record();
+        Expect(commands.CountCopiesTo(textureA.get()) == 1, "タイルのコピーを記録した（まだ提出していない）");
+    }
+    h.Abort();
+    Expect(h.Uploader.GetStats().PendingCopies == 1, "Abort で記録済みのコピーが未記録へ戻る");
+    h.Streamer.UnregisterTexture(indexA);
+    Expect(h.Uploader.GetStats().PendingCopies == 0, "解除すると、未記録へ戻ったコピーは無効になる");
+
+    // フレーム 4: 解除したページが戻り、別のテクスチャが借り直す
+    h.BeginFrame(2);
+    Expect(h.Pool.GetStats().UsedBytes == 0, "解除したページは、使った提出の完了でプールへ戻る");
+    RHI::TexturePtr textureB;
+    const uint32_t indexB = h.Register(textureB);
+    Expect(indexB != VirtualTextureStreamer::InvalidIndex, "別のテクスチャを登録できる");
+    h.Update();
+
+    VariableArray<FakeDevice::BoundPage> pagesOfA;
+    for (const FakeDevice::BoundPage& page : h.Device->BoundPages)
+    {
+        if (page.Texture == textureA.get())
+        {
+            pagesOfA.push_back(page);
+        }
+    }
+    bool bReused = false;
+    for (const FakeDevice::BoundPage& page : h.Device->BoundPages)
+    {
+        if (page.Texture != textureB.get())
+        {
+            continue;
+        }
+        for (const FakeDevice::BoundPage& old : pagesOfA)
+        {
+            bReused = bReused || (old.Block == page.Block && old.OffsetBytes == page.OffsetBytes);
+        }
+    }
+    Expect(pagesOfA.size() == 2 && bReused, "B は A が使っていたページを再び結ぶ");
+
+    {
+        const FakeCommandList commands = h.Record();
+        Expect(commands.CountCopiesTo(textureA.get()) == 0, "解除したテクスチャ宛ての古いコピーは、再利用されたページへ記録されない");
+        Expect(commands.CountCopiesTo(textureB.get()) == 8 && commands.Copies.size() == 8,
+               "記録されるのは B のミップテイルの 8 段だけ");
+    }
+    h.Commit(3);
+    Expect(h.Uploader.GetStats().PendingCopies == 0 && h.Uploader.GetStats().InFlightCopies == 8,
+           "提出したのは B の 8 件だけで、未記録のコピーが残らない");
+    Expect(h.Streamer.IsMipTailResident(indexB), "B のミップテイルが常駐する");
+}
+
 int RunTest()
 {
     TestRegistrationRejectsInvalid();
@@ -1824,6 +1976,8 @@ int RunTest()
     TestUnregisterAbandonsPendingCopies();
     TestAbortedCopiesNeverReachReusedPages();
     TestAbortedCopiesAreRerecordedWhileRegistered();
+    TestPendingCopiesCountAgainstFrameLimits();
+    TestAbortThenUnregisterNeverReachesReusedPages();
     TestClearReleasesEverything();
 
     if (g_failures != 0)

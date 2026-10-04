@@ -194,6 +194,27 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
+         * @brief 積んだがまだ記録していないコピーの数と量（バイト）
+         *
+         * AbortFrame で未記録へ戻ったコピーも含む。呼び出し側（VT のストリーマ）が、次の記録で出るコピーを
+         * 自分のフレームの上限に算入するために使う。
+         */
+        void GetPendingCopyLoad(uint32_t &outCount, uint64_t &outBytes) const
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            outCount = 0;
+            outBytes = 0;
+            for (const Op &op : m_Ops)
+            {
+                if (op.bCopy && !op.bCancelled && op.State == OpState::Pending)
+                {
+                    ++outCount;
+                    outBytes += op.DataBytes;
+                }
+            }
+        }
+
+        /**
          * @brief 最後に積んだ count 件（遷移の依頼を含む）を、記録する前に取り消す
          *
          * 結び付けに失敗したときなど、積んだコピーを無かったことにする。リングの区画も元へ戻す。

@@ -85,6 +85,13 @@ namespace NorvesLib::Core::Rendering
         /** @brief 次のコマンドの記録で確実にコピーできる量の残り（バイト）。これを超えて積まない */
         virtual uint64_t GetCopyBytesAvailable() const = 0;
 
+        /**
+         * @brief 積んだがまだ記録していないコピーの数と量（バイト）
+         *
+         * 前のフレームを提出できず（Abort）に未記録へ戻ったコピーも含む。今フレームの上限に算入する。
+         */
+        virtual void GetPendingCopies(uint32_t &outCount, uint64_t &outBytes) const = 0;
+
         /** @brief 最後に積んだ count 件（EnqueueInitialize・EnqueueTile の合計）を、記録する前に取り消す */
         virtual void DiscardEnqueued(uint32_t count) = 0;
 
@@ -834,6 +841,8 @@ namespace NorvesLib::Core::Rendering
         {
             FrameBudget budget;
             budget.UploaderBytes = m_Gpu.GetCopyBytesAvailable();
+            // 記録されないまま持ち越したコピー（Abort で未記録へ戻ったもの）も、次の記録で出るので今フレームの上限に算入する
+            m_Gpu.GetPendingCopies(budget.Copies, budget.Bytes);
 
             RHI::SparseBindRequest request;
             Container::VariableArray<PendingTailStep> tailSteps;

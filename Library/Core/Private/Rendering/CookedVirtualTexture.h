@@ -80,6 +80,11 @@ namespace NorvesLib::Core::Rendering
 
         uint64_t GetCopyBytesAvailable() const override { return m_Uploader.GetRecordableCopyBytes(); }
 
+        void GetPendingCopies(uint32_t &outCount, uint64_t &outBytes) const override
+        {
+            m_Uploader.GetPendingCopyLoad(outCount, outBytes);
+        }
+
         void DiscardEnqueued(uint32_t count) override { m_Uploader.DiscardLastEnqueued(count); }
 
         void AbandonTexture(const RHI::TexturePtr &texture) override { m_Uploader.AbandonTexture(texture); }
