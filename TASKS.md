@@ -2386,3 +2386,15 @@
 - done-when: 固定2specとv1必須field/default variant/Assets prefix/順序を保持した値所有型へ解析する。整数version、重複/未一致型/unsafe出力pathを拒否し、失敗時の出力を保持する。未知fieldとusageは旧仕様どおり無視。
 - verify: 実JsonDocumentで2spec相当・寿命・default/override・case-insensitive重複・traversal・version literal・NUL/type不正を検証。既存11CPU/7CLI/79byte一致を回帰。
 - stop-when: runtime cook/増分/serializerを未接続なのに--asset-set完了とする、独自型でない公開所有containerを増やす。
+
+## G2-S6-TEXTURE-SPEC-FIXTURE: JSON派生fixtureをbyte安全に構築する
+- status: doing
+- done-when: TString::replaceの終端NULによるsuffix先頭破損を試験入力へ持ち込まないよう、prefix/replacement/suffixをappendする。失敗時は全fixture byteを記録する。parserの検査条件は維持。
+- verify: 全Changed needleはBaseに1回だけ、置換後JSONを独立確認し、実Windows12CPU/7CLI/79byte一致を再実行。
+- stop-when: malformed fixtureをparserが通すよう変更、試験をskip、汎用TString修正を同じ差分に混ぜる。
+
+## CORE-STRING-REPLACE-TERMINATOR: 部分置換によるsuffixのNUL破損を修正する
+- status: todo
+- done-when: TString::replaceが同長/増加/縮小/末尾/自己参照の置換で意図したbyte列を保ち、終端は末尾だけに置く。
+- verify: 実Coreのchar/wchar/member契約、部分置換直後のsuffix先頭と全size、関連文字列試験。
+- stop-when: StringCopyの全呼出し規約を検証なしに変更、Windows CRTの動作を偽shimで合格扱い。

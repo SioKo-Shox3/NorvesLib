@@ -15,14 +15,25 @@ namespace
     JsonDocument Json(const Container::AnsiString& text)
     {
         JsonDocument doc;
-        CHECK(JsonDocument::TryParseUtf8({reinterpret_cast<const uint8_t*>(text.data()),text.size()},doc));
+        const bool parsed=JsonDocument::TryParseUtf8({reinterpret_cast<const uint8_t*>(text.data()),text.size()},doc);
+        if (!parsed)
+        {
+            std::fprintf(stderr,"fixture_json_bytes=%zu:",text.size());
+            for (const unsigned char byte:text) std::fprintf(stderr,"%02x",byte);
+            std::fprintf(stderr,"\n");
+        }
+        CHECK(parsed);
         return doc;
     }
     Container::AnsiString Changed(const char* before, const char* after)
     {
-        Container::AnsiString text=Base;
-        const auto* found=std::strstr(text.c_str(),before);CHECK(found);
-        text.replace(static_cast<size_t>(found-text.c_str()),std::strlen(before),after);
+        // 部分置換の終端NULにfixtureを依存させず、3区間を明示連結する。
+        const auto* found=std::strstr(Base,before);CHECK(found);
+        CHECK(std::strstr(found+std::strlen(before),before)==nullptr);
+        Container::AnsiString text;
+        text.append(Base,static_cast<size_t>(found-Base));
+        text.append(after);
+        text.append(found+std::strlen(before));
         return text;
     }
     void Reject(const Container::AnsiString& text, TextureAssetSetError code)
@@ -107,7 +118,7 @@ int main()
     Reject(Changed("Assets/Textures/a.png","Assets"),TextureAssetSetError::UnsafePath);
     Reject(Changed("Assets/Textures/a.png","assets"),TextureAssetSetError::UnsafePath);
     for (const char* blank:{"\\u000b", "\\u000c", "\\u0085", "\\u00a0", "\\u3000"})
-        Reject(Changed("set",blank),TextureAssetSetError::InvalidValue);
+        Reject(Changed("\"name\":\"set\"",(Container::AnsiString("\"name\":\"")+blank+"\"").c_str()),TextureAssetSetError::InvalidValue);
     doc=Json(Changed("Assets/Textures/a.png","\\u3000Assets/Textures/a.png\\u00a0"));
     CHECK(ParseTextureAssetSetSpec(doc.GetRoot(),spec).Succeeded() && Equals(spec.Textures[0].LogicalPath,"Textures/a.png"));
     const char* duplicate=R"(},{"logical_path":"assets/Textures/A.png","source_path":"b.png","format":"f","package_name":"b.nvpkg","entry_name":"b"}]})";

@@ -706,3 +706,5 @@
 - G2-S6-TEXTURE-BASELINE受入: 0893a213/run37205025949の実Windowsで固定旧PS1・2spec各2回cook成功、合計16texture cook。Windows PowerShell5.1.20348.5622、11入力blob/checkout、固定exe不変、8package+2manifestの2回byte一致を確認。保存artifact11303728946の全10file=296408686byteを独立検証＋root hash再確認。texture v1互換の比較元が確定、native --asset-setとの比較は次工程。
 
 - G2-S6-TEXTURE-SPEC開始: v1の値所有parserと独立Json整数token情報を追加。旧variant/prefix/usage無視を保持、出力path安全制約とO(NlogN)重複検査、実2spec/寿命/失敗保持のnative契約を登録。単体CLI比較器12件は成功。実native parser試験前なのでdoing。
+
+- G2-S6-TEXTURE-SPEC実検証: 441eeed/run37206606155は実buildと既存11CPU/診断byte成功、新spec試験のJson生成helperで停止（実2spec試験へは未到達）。TString::replaceがmemmove後にstrncpy_sの終端NULでsuffix先頭を潰すことをsourceで特定。fixtureだけを3区間appendへ変更し、失敗時hex記録を追加。汎用文字列修正は別taskに起票。parser/fixture taskとも実再試験までdoing。
