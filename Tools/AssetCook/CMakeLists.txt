@@ -4,6 +4,8 @@ add_library(AssetCookLib STATIC
     AudioCooker.h
     MeshCooker.cpp
     MeshCooker.h
+    MaterialImport.cpp
+    MaterialImport.h
     SkeletalImportReport.cpp
     SkeletalImportReport.h
     ModelInspection.h

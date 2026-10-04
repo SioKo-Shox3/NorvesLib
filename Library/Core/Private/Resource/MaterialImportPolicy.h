@@ -27,6 +27,7 @@ namespace NorvesLib::Core::AssetImport
         double EffectivePercentileWidth = 0;
         double Scalar = 0;
         bool UseTexture = false;
+        uint8_t QuantizedScalar = 0; // 定数texture用。正規化の往復を避けbyte領域で丸める。
     };
     // 256binは元のlinear UNORM8。percentileは(n-1)*pの隣接順位を線形補間するType 7、定数値は全pixel平均にfactorを適用。
     // Constantは最終値のoverride。IgnoreはAO/roughness=1、metallic=0。失敗時outは保持。

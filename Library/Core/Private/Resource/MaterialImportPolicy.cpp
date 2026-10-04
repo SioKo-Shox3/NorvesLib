@@ -92,13 +92,35 @@ namespace NorvesLib::Core::AssetImport
         result.EffectivePercentileWidth=(double(result.Percentile99)-result.Percentile1)/255*factor;
         result.UseTexture=policy.Mode==ArmMode::Texture || (policy.Mode==ArmMode::Auto && result.EffectivePercentileWidth>policy.AutoWidth);
         result.Scalar=Apply(result.Mean,channel,factor);
+        // 平均を0..1へ正規化してから255へ戻すと、半端値が1ULP下へずれる。
+        // 単色はpixelと同じ経路、混色は整数和へfactorを掛けてからcountで割る。
+        double byteValue = 0;
+        if (result.Minimum == result.Maximum)
+        {
+            uint8_t value = 0;
+            if (BakeArmByte(result.Minimum, channel, factor, value) != MaterialPolicyStatus::Success)
+            {
+                return MaterialPolicyStatus::InvalidInput;
+            }
+            result.QuantizedScalar = value;
+        }
+        else
+        {
+            const double count = static_cast<double>(result.SampleCount);
+            const double rawSum = static_cast<double>(sum);
+            byteValue = channel == ArmChannel::Occlusion ?
+                ((1.0 - factor) * 255.0 * count + factor * rawSum) / count : factor * rawSum / count;
+            result.QuantizedScalar = static_cast<uint8_t>(std::floor(byteValue + 0.5));
+        }
         if (policy.Mode==ArmMode::Ignore)
         {
             result.Scalar=channel==ArmChannel::Metallic ? 0 : 1;
+            result.QuantizedScalar=channel==ArmChannel::Metallic ? 0 : 255;
         }
         else if (policy.Mode==ArmMode::Constant)
         {
             result.Scalar=policy.Constant;
+            result.QuantizedScalar=static_cast<uint8_t>(std::floor(policy.Constant*255+0.5));
         }
         out=result;
         return MaterialPolicyStatus::Success;
@@ -109,8 +131,9 @@ namespace NorvesLib::Core::AssetImport
         {
             return MaterialPolicyStatus::InvalidInput;
         }
-        const double value=Apply(double(sample)/255,channel,factor);
-        out=static_cast<uint8_t>(std::floor(value*255+0.5));
+        // UNORM8のbyte領域で直接計算し、sample/255の丸めを挟まない。
+        const double value=channel==ArmChannel::Occlusion ? (1.0-factor)*255.0+factor*sample : factor*sample;
+        out=static_cast<uint8_t>(std::floor(value+0.5));
         return MaterialPolicyStatus::Success;
     }
     EmissiveScale SelectEmissiveScale(EmissiveScale material, EmissiveScale asset, EmissiveScale assetSet) noexcept

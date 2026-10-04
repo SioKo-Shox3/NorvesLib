@@ -80,3 +80,26 @@ constant値はASCII浮動小数（指数表記も可）として全消費し、�
 
 素材の対象指定とsidecar全体の接続は別工程。既存ParseSettings/LoadImportSettingsFileは変更せず、非空material blockをまだ受理しない。
 ARM tokenの純テストは実行済み。実JsonDocumentによるJSON契約はnative MEMBER/CTestへ登録したが、Windows.h依存のため実行は未検証。
+
+## RGBA8の判定・焼込
+
+Tools/AssetCook/MaterialImport のAnalyzeArmImages/BakeArmImagesは解凍済みlinear RGBA8を扱う。
+AO画像のR、metallicRoughness画像のG/Bからhistogramを作り、前述の百分位・factor・modeで判定する。
+存在する画像は密なwidth×height×4 bytesが必要。省略されたtextureはglTFの白sampleで代え、HasSourceImage=falseで実測と区別する。
+texture modeでも元textureが無いchannelはスカラーにする。全channelが定数ならByteCount=0でARM画像を出さない。
+
+textureとして残るAO/MR画像だけ同じ寸法が必要。不一致を勝手にリサイズせず拒否する。
+定数化した画像の寸法が異なっても、残るtextureと混ぜる必要がないため許可する。
+残すchannelにはAOの1+strength×(sample−1)、G/Bのfactor×sampleを焼き、定数channelには判定済みスカラーのUNORM8値を詰める。
+ARMで使わないalphaはactiveなMR画像、MRを使わなければactiveなAO画像の元値を保持する。
+同じRGBAをAO/MRとして使うtexture mode・factor1では、alphaを含む全byteが一致する。
+
+出力前に入力・寸法・factor/policy・容量・storage重複を検査する。失敗時はplanと出力pixelを保持し、成功時も余剰末尾を変更しない。
+入力pixelだけでなくpolicy/factor/画像view本体、出力planとのaliasも拒否する。呼出中に入力を変更してはならない。
+
+合成100×100画像で、G=249の外れ値1画素を含むG=254/255の畳み込みと、AI既定のmetallic ignore、素材texture overrideを検証した。
+これは作者の実物GLBを測定した結果ではない。画像IO、NVTEX/manifest出力、実cook/runtime接続、実物撮影は未実施。
+
+焼込と定数textureの量子化はbyte領域で行い、sample/255→係数→255の往復誤差を避ける。
+ArmChannelDecision.Scalarは解析用の連続値、QuantizedScalarは定数texture用のUNORM8値。定数画像や1x1 textureを作る側は後者を使い、Scalarから再量子化しない。
+単色histogramはpixelと同じ計算で量子化し、混色は整数和に係数を掛けてから画素数で割る。factor=1/4・1/2・3/4の全256値×全texture maskを整数参照式と照合する。

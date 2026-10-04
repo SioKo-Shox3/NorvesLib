@@ -2307,3 +2307,21 @@
 - done-when: GR79(6)のdoubleSided=autoは単なるsource復帰ではなく閉鎖性に応じた判断を後段で行うmodeとして保持する。private enum FromSourceをAutoへ訂正しJSON/既定/説明/テストを整合。geometry判定はこの値層で捏造せず未接続を明示する。
 - verify: enum値/canonical67B/hashのbyte不変、親forceから素材autoへ戻ること、未判定のautoをsource値確定と扱わないこと。
 - stop-when: autoを無条件にsourceと同義にする、境界辺しきい値を値parserに埋める、未実装topologyを実装済みとする。
+
+## G2-GR79-ARM-PIXELS: RGBA8からARM判定と焼込を生成する
+- status: done
+- done-when: linear RGBA8のAO/MR画像から実histogramを作り、profile済みchannel policyとfactorで畳み込みを判定。全定数なら画像なし、textureが残る場合だけ同寸法を要求して係数焼込RGBAを生成。入力/出力保持とalias拒否を保証。
+- verify: 合成AI犬の外れ値/metallic ignore・texture override、factor1同byte/factor焼込、source無し既定・実測区別、異寸法のactive/folded、overflow/不正/出力不足/aliasを通常/O2/sanitizerとMEMBERで反証。
+- stop-when: absent textureを実測扱い、画像alphaの不必要な変更、異寸法を黙って誤結合、失敗時部分出力、画像IO/実物/GPU/cook接続まで済みとする。
+
+## G2-MATERIAL-SELECTION-SHARED: 材質識別の共通関数を実装する
+- status: todo
+- done-when: 作者09:00承認通り一意元名/番号+元名を共通resolverへ集約、未一致/同targetへの二重指定拒否、同名警告情報を返す。SourceMaterialとGeneratedSlotのcatalogを区別し、GR79/GR78/GR32へ接続可能な単一の照合規則を固定する。
+- verify: 無名1材質/Material_0・同名・番号/名前両指定・逆primitive順・生成名衝突・期待名不一致・invalidUTF8/NUL・失敗保持。旧GR32番号はslot番号のまま。
+- stop-when: 生成slot名を元名に復元扱い、別関数へ解決ルールを複製、同名swapを検出可能と主張、未一致を無視して成功。
+
+## G2-JSON-UNICODE-INPUT: UTF8入口とnative文字幅を整合する
+- status: todo
+- done-when: JSON bytes入口を厳密UTF8→nativeの共通APIへ接続し、lexerのchar縮約/数値tokenのwide型不整合を修正。ANSI/UTF16/UTF32のraw/escape/native同名性を契約化し、material resolverで推測修復しない。
+- verify: 骨+狼emoji/Latin、構文文字と同じ下位byteのUnicode、invalidUTF8/surrogate/NUL、ASCII/数値互換を純helperと実native登録で検証。Corewideの実compile/実行未確認を明示。
+- stop-when: byte拡幅だけや符号修正だけでdecode済みとする、path用ToCoreStringをJSON修正で一括変更、native実行未実施を合格扱いする。
