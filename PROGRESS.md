@@ -698,3 +698,5 @@
 - Next: G2-S6-MAIN-SPLIT。argv/help/inspect外殻と単体cookサービスの境界を設け、同一79出力を実比較する。現Mainの2993行・振る舞いは基準採取時まで不変。
 
 - G2-S6-MAIN-SPLIT: Mainを317行のargv/help/inspect外殻へ縮小し、単体cookサービスとprivate出力処理へ既存bodyを移動。公開requestは値所有、既存validation/dispatchを保持。機械的body照合・比較器12件・行末確認成功。固定before取得/recipe照合/79出力比較と日本語診断5literalのbyte照合をCIへ接続。実after検証前なのでdoing。
+
+- G2-S6-MAIN-SPLIT受入: e8ac121ce8d2e9b92a5469ec321adb00b8a92ff3/run37203280358で実Core/AssetCook/CookedMeshTest build、11CPU、7CLI成功。保存したcandidate artifact11304570033とbeforeの全79file=50package+29JSONを独立raw byte比較し完全一致、recipe31項目・5診断literalも一致。rootで比較器を再実行して一致確認。単体分割taskをdone。--asset-set/texture v1/増分依存は別gateのまま。

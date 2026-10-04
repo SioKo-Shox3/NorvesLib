@@ -2370,7 +2370,7 @@
 - stop-when: URIの不一致を黙殺、JSON全体を正規化、エンジン判定やassertを弱化、実全7smoke前に基準採取完了とする。
 
 ## G2-S6-MAIN-SPLIT: 単体cookを再利用できる境界へMainを分割する
-- status: doing
+- status: done
 - done-when: d1307c32の実Windows基準（run37200047966）を固定し、CLI外殻と再利用可能な単体cookを分ける。新機能/型体系の全面変更を混ぜず、分割後の実7smoke package/manifest79件が全byte一致する。
 - verify: 同じWindows checkout byte/driver/fixture、既存10CPUと単体cook境界1契約、7smoke、保存済みbeforeとafterのraw比較。recipe31項目のうち11はWindowsCRLFであることに注意する。
 - stop-when: 条件を弱化/正規化して差を消す、比較未実施で分割完了、baseline期限切れを黙認、asset-set実装を同じ差分へ混ぜる。
