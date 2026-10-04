@@ -340,7 +340,7 @@
 - notes: ユーザー承認済みの外部依存（計画書 1）。取り込み方は bc7enc_rdo（`Library/ThirdParty/bc7enc_rdo`、VTG1-BC7ENC-VENDOR）に倣う。
 
 ## VTG4-NVMESH-V1: NVMESH v1（LODの階層を持つクラスタの記録）を足す
-- status: todo
+- status: done
 - done-when: `CookedMeshFormat` に v1 を足す。cluster record は 128B（自分の境界球と誤差、親のグループの境界球と誤差、グループの番号、LOD の段、頂点・インデックスの位置と数、法線のコーン、ページの番号（段5まで 0））。グループの表（グループの境界球・誤差・クラスタの範囲）と、RT・影のための常駐の粗い段（フォールバック）のインデックスの範囲を持つ。v0 も読む（v0 は従来の1段のメッシュとして扱う）。読み込み側（`CookedMeshLoader`）が v1 を検証し（範囲・数の不整合・壊れた表を拒否）、MegaGeometry の `MegaMeshCreateInfo` へ渡せる形にする。`Docs/Architecture/NVMESHv1.md` に形式を書く。`CookedMeshTest` に v1 の書き出し・読み込みの往復、v0 の読み込み、壊れた入力の拒否を足す。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedMeshTest|AssetCookMeshSmoke|CookedTextureTest)$"`

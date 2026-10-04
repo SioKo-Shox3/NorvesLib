@@ -120,6 +120,33 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
         // マテリアル
         uint32_t MaterialIndex = 0;
+
+        // 焼き込み済みのLOD階層（NVMESH v1）の親のグループ。Bounds・LODError が自分の境界球と誤差で、
+        // ParentBounds・ParentError が「このクラスタを含むグループを簡略化した結果」の境界球と誤差。
+        // 根（親のグループが無い）は GroupId が INVALID_CLUSTER_GROUP_ID で、ParentError が最大値。
+        // 実行時に構築した階層と v0 のクラスタでは使わない（既定のまま）。
+        BoundingSphere ParentBounds;
+        float ParentError = 3.402823466e+38f;
+        uint32_t GroupId = 0xFFFFFFFFu;
+        uint32_t PageId = 0; // ページのストリーミング（段5）まで 0
+    };
+
+    /** @brief クラスタのグループが無いことを表す番号（焼き込み済みの階層の根） */
+    constexpr uint32_t INVALID_CLUSTER_GROUP_ID = 0xFFFFFFFFu;
+
+    /**
+     * @brief 焼き込み済みの階層のクラスタのグループ
+     *
+     * 同じグループのクラスタは同じ親の境界球と誤差を持ち、同じ判断で描く・描かないが決まる。
+     * メンバのクラスタは MegaMeshCreateInfo::Clusters の連続した範囲に並ぶ。
+     */
+    struct MeshClusterGroup
+    {
+        BoundingSphere Bounds;
+        float Error = 0.0f;
+        uint32_t ClusterOffset = 0;
+        uint32_t ClusterCount = 0;
+        uint32_t LODLevel = 0;
     };
 
     // ========================================
@@ -248,6 +275,26 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
         /** @brief 影とレイトレーシングに使うLODの段（その段のクラスタが統合インデックスで連続している必要がある） */
         uint32_t ShadowLODLevel = 0;
+
+        /**
+         * @brief 焼き込み済みのLOD階層（NVMESH v1）を渡すとき true
+         *
+         * true なら Clusters は全段のクラスタ（ParentBounds・ParentError・GroupId つき）で、ClusterGroups が
+         * グループの表。bBuildLODHierarchy は false のまま。IndexData には、クラスタのインデックスの後ろに
+         * フォールバックの段のインデックスが続く。
+         */
+        bool bBakedLODHierarchy = false;
+        VariableArray<MeshClusterGroup> ClusterGroups;
+        uint32_t BakedLODLevelCount = 1;
+
+        /**
+         * @brief RTと影のための常駐の粗い段のインデックスの範囲（IndexData の要素の位置と数。基点の頂点は 0）
+         *
+         * Count が 0 なら無し（従来の段の選び方）。FallbackError はその段のローカル空間の誤差。
+         */
+        uint32_t FallbackIndexOffset = 0;
+        uint32_t FallbackIndexCount = 0;
+        float FallbackError = 0.0f;
 
         // マテリアル
         MegaMeshMaterial Material;
