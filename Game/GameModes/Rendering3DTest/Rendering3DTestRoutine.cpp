@@ -2495,6 +2495,20 @@ namespace Game::GameModes
             if (data.m_OrbitDegreesPerSecond != 0.0f)
             {
                 float yaw = data.m_pSpringArmComponent->GetYaw() + data.m_OrbitDegreesPerSecond * deltaTime;
+                const auto &orbitDeterministicCapture = ctx.EngineRef.GetDeterministicCapture();
+                if (orbitDeterministicCapture.IsEnabled())
+                {
+                    // 決定的な撮影では、読み込みにかかったフレーム数に依らないよう、旋回の角度を
+                    // エポックからの固定刻みの時間で決める（エポック前は最初の向きのまま）。
+                    if (!data.m_bOrbitBaseYawLatched)
+                    {
+                        data.m_OrbitBaseYaw = data.m_pSpringArmComponent->GetYaw();
+                        data.m_bOrbitBaseYawLatched = true;
+                    }
+                    yaw = data.m_OrbitBaseYaw +
+                          static_cast<float>(static_cast<double>(data.m_OrbitDegreesPerSecond) *
+                                             orbitDeterministicCapture.GetEpochSeconds());
+                }
                 yaw = std::fmod(yaw, 360.0f);
                 data.m_pSpringArmComponent->SetYaw(yaw);
             }

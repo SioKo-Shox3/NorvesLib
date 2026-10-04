@@ -3,11 +3,20 @@
 // ========================================
 // Mega Geometry クラスタカリング コンピュートシェーダー
 //
-// 入力: クラスタデータSSBO + カメラ情報UBO
+// 入力: クラスタデータSSBO + カメラ情報UBO（+ 2パス時は「前のフレームで見えた」ビットとHi-Z）
 // 出力: IndirectDrawコマンドバッファ + 可視クラスタ数カウンタ
+//
+// 遮蔽の判定は2パスで行う（cullPass）:
+//   1パス目: 視錐台・法線のコーン・LODの判定を通り、前のフレームで見えたクラスタだけを描く（遮蔽の判定はしない）。
+//   2パス目: 1パス目の深度から作ったHi-Zで、判定を通った全クラスタを遮蔽の判定にかける。
+//            1パス目で描かなかったクラスタのうち遮蔽されないものを描き、
+//            全クラスタの「見えた」ビットを更新する（次のフレームの1パス目が使う）。
+//   0: 従来の1回の判定（遮蔽の判定なし。--mega-occlusion=off）。
 // ========================================
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#include "Common/HiZOcclusion.glsl"
 
 // ========================================
 // GPU構造体（MegaGeometryTypes.hと一致）
@@ -46,16 +55,25 @@ layout(set = 0, binding = 0) uniform CullUniforms
     float lodBias;           // LOD選択バイアス（ピクセル単位の許容誤差）
     float screenHeight;      // スクリーン高さ（ピクセル）
     float projectionFactor;  // screenHeight / (2 * tan(fov/2))
-    uint hiZWidth;           // Hi-Zテクスチャ幅（mip 0）
-    uint hiZHeight;          // Hi-Zテクスチャ高さ（mip 0）
+    uint hiZWidth;           // Hi-Zの元になった深度の幅（Hi-Zのミップ0はその半分）
+    uint hiZHeight;          // Hi-Zの元になった深度の高さ（Hi-Zのミップ0はその半分）
     uint hiZMipCount;        // Hi-Zミップレベル数
     uint bHiZEnabled;        // Hi-Z有効フラグ
     uint debugPayloadMode;     // 0=none, 1=clusterIndex, 2=lodLevel
-    uint padding1;
-    uint padding2;
+    uint cullPass;           // 0=従来（遮蔽の判定なし）, 1=1パス目, 2=2パス目
+    uint bStatsEnabled;      // 1なら統計（binding 6）へ数える
     mat4 worldMatrix;
     vec4 lodSphere;          // LODの選択に使うメッシュ共通の境界球（ローカル。w<=0ならクラスタごとの中心で選ぶ）
 } cullData;
+
+const uint CULL_PASS_SINGLE = 0u;
+const uint CULL_PASS_FIRST = 1u;
+const uint CULL_PASS_SECOND = 2u;
+
+const uint STAT_PASS1_DRAWN = 0u;
+const uint STAT_PASS2_TESTED = 1u;
+const uint STAT_PASS2_DRAWN = 2u;
+const uint STAT_OCCLUDED = 3u;
 
 const uint DEBUG_PAYLOAD_MODE_NONE = 0u;
 const uint DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
@@ -81,6 +99,19 @@ layout(std430, set = 0, binding = 3) buffer DrawCountBuffer
 
 // set 0, binding 4: Hi-Z深度ピラミッド（オクルージョンカリング用）
 layout(set = 0, binding = 4) uniform sampler2D u_HiZTexture;
+
+// set 0, binding 5: クラスタごとの「前のフレームで見えた」ビット（インスタンスごとに持続する。1=見えた）。
+// 1パス目は読むだけ、2パス目は全クラスタが自分の要素だけを書く（競合しない）。cullPass=0 では使わない。
+layout(std430, set = 0, binding = 5) buffer VisibleLastFrameBuffer
+{
+    uint visibleLastFrame[];
+};
+
+// set 0, binding 6: 統計（STAT_*。1フレームの全インスタンスの合計）。bStatsEnabled=0 では使わない。
+layout(std430, set = 0, binding = 6) buffer StatsBuffer
+{
+    uint stats[4];
+};
 
 // ========================================
 // カリング関数
@@ -155,8 +186,9 @@ float ComputeWorldRadiusScale()
 /**
  * @brief Hi-Z深度ピラミッドによるオクルージョンカリング
  *
- * クラスタのバウンディング球をスクリーン空間に射影し、
- * Hi-Zテクスチャと比較して完全に遮蔽されているかを判定。
+ * クラスタの境界の球を包む AABB の8点を画面へ投影した矩形と最も手前の深度を、
+ * Hi-Zの該当範囲の最大（最も遠い深度）と比べて、完全に遮蔽されているかを保守的に判定する。
+ * 判定の本体は Common/HiZOcclusion.glsl（GPUのテストが同じ関数を確かめる）。
  * @return true = カリング（完全に遮蔽）
  */
 bool OcclusionCullSphere(vec3 center, float radius)
@@ -166,53 +198,12 @@ bool OcclusionCullSphere(vec3 center, float radius)
         return false;
     }
 
-    // クリップ空間へ射影
-    vec4 clipCenter = cullData.projectionMatrix * cullData.viewMatrix * vec4(center, 1.0);
-    if (clipCenter.w <= 0.0)
-    {
-        return false; // カメラ背面
-    }
-
-    // NDC変換
-    vec3 ndc = clipCenter.xyz / clipCenter.w;
-
-    // スクリーン空間での半径を推定
-    float dist = distance(center, cullData.cameraPosition.xyz);
-    if (dist < 0.001)
-    {
-        return false;
-    }
-    float screenRadius = radius * cullData.projectionFactor / dist;
-
-    // NDC [-1,1] → UV [0,1]
-    vec2 screenCenter = ndc.xy * 0.5 + 0.5;
-    vec2 hiZSize = vec2(cullData.hiZWidth, cullData.hiZHeight);
-    vec2 pixelRadius = vec2(screenRadius) / hiZSize * hiZSize;
-
-    vec2 screenMin = screenCenter - screenRadius / hiZSize;
-    vec2 screenMax = screenCenter + screenRadius / hiZSize;
-
-    // 画面外なら遮蔽判定しない
-    if (screenMax.x < 0.0 || screenMin.x > 1.0 ||
-        screenMax.y < 0.0 || screenMin.y > 1.0)
-    {
-        return false;
-    }
-
-    // AABBサイズから適切なミップレベルを決定
-    vec2 aabbSizePixels = (screenMax - screenMin) * hiZSize;
-    float mipLevel = ceil(log2(max(aabbSizePixels.x, aabbSizePixels.y)));
-    mipLevel = clamp(mipLevel, 0.0, float(cullData.hiZMipCount - 1));
-
-    // Hi-Zサンプリング（AABB中心で保守的に1点サンプル）
-    vec2 sampleUV = clamp((screenMin + screenMax) * 0.5, vec2(0.0), vec2(1.0));
-    float hiZDepth = textureLod(u_HiZTexture, sampleUV, mipLevel).r;
-
-    // 球の最近深度を計算
-    float sphereNearZ = ndc.z - radius * abs(cullData.projectionMatrix[2][2]) / clipCenter.w;
-
-    // 球の最近深度がHi-Zより遠い → 完全に遮蔽
-    return sphereNearZ > hiZDepth;
+    return HiZIsSphereOccluded(u_HiZTexture,
+                               ivec2(int(cullData.hiZWidth), int(cullData.hiZHeight)),
+                               int(cullData.hiZMipCount),
+                               cullData.projectionMatrix * cullData.viewMatrix,
+                               center,
+                               radius);
 }
 
 /**
@@ -349,6 +340,31 @@ uint ComputeDebugPayload(uint clusterIndex, GPUClusterData cluster)
 // メインカーネル
 // ========================================
 
+/**
+ * @brief 描画するクラスタのIndirectDrawコマンドを1つ積む
+ */
+void EmitDrawCommand(uint clusterIndex, GPUClusterData cluster)
+{
+    uint drawIndex = atomicAdd(visibleClusterCount, 1);
+
+    if (drawIndex < cullData.maxDrawCount)
+    {
+        drawCommands[drawIndex].indexCount = cluster.indexInfo.y;     // IndexCount
+        drawCommands[drawIndex].instanceCount = 1;
+        drawCommands[drawIndex].firstIndex = cluster.indexInfo.x;     // IndexOffset
+        drawCommands[drawIndex].vertexOffset = int(cluster.indexInfo.z); // VertexOffset
+        drawCommands[drawIndex].firstInstance = ComputeDebugPayload(clusterIndex, cluster);
+    }
+}
+
+void CountStat(uint statIndex)
+{
+    if (cullData.bStatsEnabled != 0u)
+    {
+        atomicAdd(stats[statIndex], 1u);
+    }
+}
+
 void main()
 {
     uint clusterIndex = gl_GlobalInvocationID.x;
@@ -365,39 +381,57 @@ void main()
     vec3 center = TransformClusterCenterToWorld(localCenter);
     float radius = localRadius * ComputeWorldRadiusScale();
 
-    // 視錐台カリング
-    if (FrustumCullSphere(center, radius))
+    // 視錐台・法線のコーン・LODの判定（遮蔽の判定の前。1パス目と2パス目で同じ式なので、
+    // 1パス目で描いたクラスタは2パス目でも必ずここを通る）
+    bool bPassesBasicTests =
+        !FrustumCullSphere(center, radius) &&
+        !NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius) &&
+        ShouldDrawCluster(cluster, center);
+
+    if (cullData.cullPass == CULL_PASS_FIRST)
     {
+        // 前のフレームで見えたクラスタだけを描く。遮蔽の判定はしない（この描画の深度から2パス目のHi-Zを作る）
+        if (bPassesBasicTests && visibleLastFrame[clusterIndex] != 0u)
+        {
+            EmitDrawCommand(clusterIndex, cluster);
+            CountStat(STAT_PASS1_DRAWN);
+        }
         return;
     }
 
-    // バックフェースカリング（法線コーン）
-    if (NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius))
+    if (cullData.cullPass == CULL_PASS_SECOND)
     {
+        // 1パス目で描いたか（描くのは「前のフレームで見えた」かつ判定を通ったクラスタ）。ビットを書き換える前に読む
+        bool bDrawnInFirstPass = bPassesBasicTests && visibleLastFrame[clusterIndex] != 0u;
+
+        // 判定を通った全クラスタを、1パス目の深度のHi-Zで判定し直す
+        bool bOccluded = false;
+        if (bPassesBasicTests)
+        {
+            CountStat(STAT_PASS2_TESTED);
+            bOccluded = OcclusionCullSphere(center, radius);
+            if (bOccluded)
+            {
+                CountStat(STAT_OCCLUDED);
+            }
+        }
+
+        // 次のフレームのために、見えたかを全クラスタぶん書く。判定に落ちた・LODで選ばれなかった
+        // クラスタは0に戻すので、LODが切り替わったときに古いビットが残らない
+        bool bVisible = bPassesBasicTests && !bOccluded;
+        visibleLastFrame[clusterIndex] = bVisible ? 1u : 0u;
+
+        if (bVisible && !bDrawnInFirstPass)
+        {
+            EmitDrawCommand(clusterIndex, cluster);
+            CountStat(STAT_PASS2_DRAWN);
+        }
         return;
     }
 
-    // LOD DAGカット判定
-    if (!ShouldDrawCluster(cluster, center))
+    // 従来の経路: 遮蔽の判定なしの1回の判定（bHiZEnabled=0）
+    if (bPassesBasicTests && !OcclusionCullSphere(center, radius))
     {
-        return;
-    }
-
-    // Hi-Zオクルージョンカリング
-    if (OcclusionCullSphere(center, radius))
-    {
-        return;
-    }
-
-    // 可視クラスタ → IndirectDrawコマンドを生成
-    uint drawIndex = atomicAdd(visibleClusterCount, 1);
-
-    if (drawIndex < cullData.maxDrawCount)
-    {
-        drawCommands[drawIndex].indexCount = cluster.indexInfo.y;     // IndexCount
-        drawCommands[drawIndex].instanceCount = 1;
-        drawCommands[drawIndex].firstIndex = cluster.indexInfo.x;     // IndexOffset
-        drawCommands[drawIndex].vertexOffset = int(cluster.indexInfo.z); // VertexOffset
-        drawCommands[drawIndex].firstInstance = ComputeDebugPayload(clusterIndex, cluster);
+        EmitDrawCommand(clusterIndex, cluster);
     }
 }

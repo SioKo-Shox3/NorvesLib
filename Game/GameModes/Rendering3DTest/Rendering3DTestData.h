@@ -220,6 +220,9 @@ namespace Game::GameModes
         // --orbit-degrees-per-second で指定したカメラの周回の速さ（度/秒、0で止まったまま）。撮影で
         // 動くカメラの TAA の残像を確かめるのに使う。
         float m_OrbitDegreesPerSecond = 0.0f;
+        // 決定的な撮影の旋回は、最初に回した時点のヨー（度）に、エポックからの時間に比例した角度を足して決める。
+        float m_OrbitBaseYaw = 0.0f;
+        bool m_bOrbitBaseYawLatched = false;
         // --render-scale で指定した内部解像度の倍率（0.5〜1、既定は1で画面解像度のまま描く）。
         float m_StartupRenderScale = 1.0f;
         // --debug-draw-test-lines の指定で true にする。大きな球を囲む箱をデバッグの線で毎フレーム描く。

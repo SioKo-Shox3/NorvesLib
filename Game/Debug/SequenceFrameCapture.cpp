@@ -115,6 +115,22 @@ namespace Game::Debug
             return true;
         }
 
+        // 決定的な撮影（--capture-deterministic）では、ApplicationProcessor と同じく、GameMode が読み込み後の
+        // 組み立て（大きな球の生成など）を終えるまでも読み込み中として数える（落ち着いた時点を --capture-png と揃える）。
+        bool IsAssetLoading(NorvesLib::Core::Rendering::RenderWorld& renderWorld)
+        {
+            if (renderWorld.HasPendingAsyncAssets())
+            {
+                return true;
+            }
+            if (!NorvesLib::Core::Engine::GEngine)
+            {
+                return false;
+            }
+            const auto& deterministicCapture = NorvesLib::Core::Engine::GEngine->GetDeterministicCapture();
+            return deterministicCapture.IsEnabled() && !deterministicCapture.IsSceneReady();
+        }
+
         void RequestFailureExit()
         {
             if (NorvesLib::Core::Engine::GEngine)
@@ -146,7 +162,7 @@ namespace Game::Debug
             return;
         }
         // ApplicationProcessor と同じく、描画の前にも読み込み中のアセットを見て、落ち着いた時点を数え直す。
-        if (renderWorld.HasPendingAsyncAssets())
+        if (IsAssetLoading(renderWorld))
         {
             m_bObservedPendingAssets = true;
             m_bBaselineLatched = false;
@@ -164,7 +180,7 @@ namespace Game::Debug
         if (!m_bCaptureRequested)
         {
             // 落ち着いた時点（--capture-png の数え方と同じ）: 読み込み中を一度見た後、読み込み中でない最初の描画。
-            if (renderWorld.HasPendingAsyncAssets())
+            if (IsAssetLoading(renderWorld))
             {
                 m_bObservedPendingAssets = true;
                 m_bBaselineLatched = false;

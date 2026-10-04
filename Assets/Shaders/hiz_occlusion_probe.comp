@@ -1,0 +1,47 @@
+﻿#version 450
+
+// ========================================
+// Hi-Z の遮蔽の判定の確認用コンピュートシェーダー
+//
+// クラスタのカリングが使う共通の関数（Common/HiZOcclusion.glsl）を、合成した HZB と球の組へ当てて、
+// 球ごとの判定（1=隠れている, 0=隠れていない）をストレージバッファへ書く。
+// GPU のテスト（HiZOcclusionTestVulkanTest）が、見えているものを隠れていると判定しないことを確かめるために使う。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#include "Common/HiZOcclusion.glsl"
+
+const uint MAX_PROBE_SPHERES = 256u;
+
+layout(set = 0, binding = 0) uniform sampler2D u_HiZTexture;
+
+layout(set = 0, binding = 1) uniform ProbeParams
+{
+    mat4 viewProjection;
+    ivec4 info;                       // x,y = 深度の解像度, z = HZB のミップ数, w = 球の数
+    vec4 spheres[MAX_PROBE_SPHERES];  // xyz = 中心（ワールド）, w = 半径
+} params;
+
+layout(std430, set = 0, binding = 2) buffer ProbeResults
+{
+    uint occluded[MAX_PROBE_SPHERES];
+} results;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= uint(params.info.w))
+    {
+        return;
+    }
+
+    vec4 sphere = params.spheres[index];
+    bool bOccluded = HiZIsSphereOccluded(u_HiZTexture,
+                                         params.info.xy,
+                                         params.info.z,
+                                         params.viewProjection,
+                                         sphere.xyz,
+                                         sphere.w);
+    results.occluded[index] = bOccluded ? 1u : 0u;
+}

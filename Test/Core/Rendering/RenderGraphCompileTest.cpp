@@ -1,5 +1,6 @@
 ﻿#include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/HiZPyramidPass.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/BloomPass.h"
 #include "Rendering/FXAAPass.h"
@@ -285,6 +286,11 @@ namespace
         uint32_t BeginRenderPassCount = 0;
         uint32_t EndRenderPassCount = 0;
         uint32_t DrawCallCount = 0;
+        uint32_t DispatchCount = 0;
+        // 「前のフレームで見えた」ビットのバッファを0で埋めた回数（作り直した、または捨てた回数）
+        uint32_t VisibilityFillCount = 0;
+        // 呼ばれた順の記録（B=BeginRenderPass、E=EndRenderPass、D=Dispatch、I=間接描画）。パスの並びの検査用
+        Container::VariableArray<char> CallSequence;
         uint32_t LastDrawIndexedInstancedIndexCount = 0;
         uint32_t LastDrawIndexedInstancedStartIndexLocation = 0;
         int32_t LastDrawIndexedInstancedBaseVertexLocation = 0;
@@ -297,8 +303,13 @@ namespace
             assert(renderPass);
             assert(framebuffer);
             ++BeginRenderPassCount;
+            CallSequence.push_back('B');
         }
-        void EndRenderPass() override { ++EndRenderPassCount; }
+        void EndRenderPass() override
+        {
+            ++EndRenderPassCount;
+            CallSequence.push_back('E');
+        }
         void SetViewport(const RHI::Viewport& viewport) override { (void)viewport; }
         void SetScissor(const RHI::ScissorRect& scissor) override { (void)scissor; }
         void SetPipeline(RHI::PipelinePtr pipeline) override { (void)pipeline; }
@@ -391,6 +402,7 @@ namespace
             (void)stride;
             PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
+            CallSequence.push_back('I');
         }
         void DrawIndexedIndirectCount(RHI::BufferPtr indirectBuffer,
                                       uint64_t indirectOffset,
@@ -407,10 +419,16 @@ namespace
             (void)stride;
             PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
+            CallSequence.push_back('I');
         }
         void FillBuffer(RHI::BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value) override
         {
-            (void)buffer;
+            if (buffer &&
+                IsDebugName(static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName,
+                            "MegaGeometry_VisibleLastFrame"))
+            {
+                ++VisibilityFillCount;
+            }
             (void)offset;
             (void)size;
             (void)value;
@@ -422,6 +440,8 @@ namespace
             (void)threadGroupCountX;
             (void)threadGroupCountY;
             (void)threadGroupCountZ;
+            ++DispatchCount;
+            CallSequence.push_back('D');
         }
         void CopyBuffer(RHI::BufferPtr src,
                         RHI::BufferPtr dst,
@@ -2508,7 +2528,21 @@ namespace
         shaderManager.Shutdown();
     }
 
-    void TestMegaGeometryRecordFrameCommandBatchesInstancesInSingleRenderPass()
+    // フレームごとに、描くインスタンスの並び（プロキシ）を入れ替える関数。a・b は最初のフレームのプロキシ
+    using MegaProxyScript = void (*)(uint32_t frameIndex,
+                                     const MegaGeometryProxy &a,
+                                     const MegaGeometryProxy &b,
+                                     Container::VariableArray<MegaGeometryProxy> &outProxies);
+
+    // 2つのMegaMeshインスタンスを持つパスのフレームコマンドを記録する（bOcclusionCulling=false は --mega-occlusion=off）。
+    // frameCount 回記録し、script があればフレームごとにプロキシを入れ替える。outVisibilityFills にはフレームごとの
+    // 「見えたビットを0で埋めた回数」を入れる。
+    void RecordMegaGeometryTwoInstances(bool bOcclusionCulling,
+                                        FakeCommandList &commandList,
+                                        float maxDepth = 1.0f,
+                                        uint32_t frameCount = 1,
+                                        MegaProxyScript script = nullptr,
+                                        Container::VariableArray<uint32_t> *outVisibilityFills = nullptr)
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -2517,6 +2551,7 @@ namespace
 
         RenderResources renderResources;
         assert(renderResources.Initialize(device));
+        renderResources.MegaGeometry().SetOcclusionCullingEnabled(bOcclusionCulling);
 
         SharedResourceRegistry sharedResources;
         auto albedoTexture = device->CreateTexture(
@@ -2580,12 +2615,16 @@ namespace
 
         Container::VariableArray<MegaGeometryProxy> proxies;
         MegaGeometryProxy proxyA;
+        proxyA.ObjectId = 1;
+        proxyA.ComponentId = 10;
         proxyA.MegaMeshHandle = megaMeshA;
         proxyA.WorldTransform = NorvesLib::Math::Matrix4x4::Identity;
         proxyA.WorldBounds = createInfo.TotalBounds;
         proxies.push_back(proxyA);
 
         MegaGeometryProxy proxyB = proxyA;
+        proxyB.ObjectId = 2;
+        proxyB.ComponentId = 20;
         proxyB.MegaMeshHandle = megaMeshB;
         proxies.push_back(proxyB);
 
@@ -2607,6 +2646,7 @@ namespace
         RHI::Viewport viewport;
         viewport.width = 128.0f;
         viewport.height = 64.0f;
+        viewport.maxDepth = maxDepth;
         RHI::ScissorRect scissor;
         scissor.right = 128;
         scissor.bottom = 64;
@@ -2618,16 +2658,161 @@ namespace
                                                                          viewport,
                                                                          scissor,
                                                                          DebugViewMode::Normal);
+        for (uint32_t frameIndex = 0; frameIndex < frameCount; ++frameIndex)
+        {
+            if (script)
+            {
+                script(frameIndex, proxyA, proxyB, proxies);
+                megaGeometryPass.Setup(context);
+            }
+
+            const uint32_t fillsBefore = commandList.VisibilityFillCount;
+            megaGeometryPass.RecordFrameCommand(frameCommand.MegaGeometry, &commandList);
+            if (outVisibilityFills)
+            {
+                outVisibilityFills->push_back(commandList.VisibilityFillCount - fillsBefore);
+            }
+        }
+
+        megaGeometryPass.Shutdown();
+        renderResources.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    // 遮蔽カリングを使わない（--mega-occlusion=off）と、従来どおり全インスタンスを1回のカリングと1回のrender passで描く
+    void TestMegaGeometryRecordFrameCommandBatchesInstancesInSingleRenderPass()
+    {
         FakeCommandList commandList;
-        megaGeometryPass.RecordFrameCommand(frameCommand.MegaGeometry, &commandList);
+        RecordMegaGeometryTwoInstances(false, commandList);
 
         assert(commandList.BeginRenderPassCount == 1);
         assert(commandList.EndRenderPassCount == 1);
         assert(commandList.DrawCallCount == 2);
 
-        megaGeometryPass.Shutdown();
-        renderResources.Shutdown();
-        shaderManager.Shutdown();
+        // 並び: 2インスタンスのカリング → render pass 1つの中で2インスタンスを描く
+        const char expected[] = {'D', 'D', 'B', 'I', 'I', 'E'};
+        assert(commandList.CallSequence.size() == sizeof(expected));
+        for (size_t i = 0; i < sizeof(expected); ++i)
+        {
+            assert(commandList.CallSequence[i] == expected[i]);
+        }
+    }
+
+    // 遮蔽カリング（既定）は2パス: 1パス目のカリングと描画 → HZBの生成 → 2パス目のカリングと描画
+    void TestMegaGeometryRecordFrameCommandRecordsTwoPassOcclusion()
+    {
+        FakeCommandList commandList;
+        RecordMegaGeometryTwoInstances(true, commandList);
+
+        assert(commandList.BeginRenderPassCount == 2);
+        assert(commandList.EndRenderPassCount == 2);
+        // インスタンスごとに、1パス目と2パス目で1回ずつ描く
+        assert(commandList.DrawCallCount == 4);
+
+        // 並び: [1パス目のカリング×2] [render pass: 描画×2] [HZBの各ミップ（Dispatchだけ）] [2パス目のカリング×2] [render pass: 描画×2]
+        const auto &sequence = commandList.CallSequence;
+        const char head[] = {'D', 'D', 'B', 'I', 'I', 'E'};
+        const char tail[] = {'D', 'D', 'B', 'I', 'I', 'E'};
+        assert(sequence.size() > sizeof(head) + sizeof(tail));
+        for (size_t i = 0; i < sizeof(head); ++i)
+        {
+            assert(sequence[i] == head[i]);
+        }
+        for (size_t i = 0; i < sizeof(tail); ++i)
+        {
+            assert(sequence[sequence.size() - sizeof(tail) + i] == tail[i]);
+        }
+        // 間は HZB の生成で、描画なしのディスパッチだけ（128x64 の深度は、ミップ0 が 64x32 の7段）
+        const size_t middleBegin = sizeof(head);
+        const size_t middleEnd = sequence.size() - sizeof(tail);
+        assert(middleEnd - middleBegin == 7);
+        for (size_t i = middleBegin; i < middleEnd; ++i)
+        {
+            assert(sequence[i] == 'D');
+        }
+    }
+
+    // 深度の範囲が 0〜1 でないと、保存される深度は NDC の深度と一致せず HZB の判定が成り立たないので、従来の経路で描く
+    void TestMegaGeometryTwoPassFallsBackWhenDepthRangeIsNotUnit()
+    {
+        FakeCommandList commandList;
+        RecordMegaGeometryTwoInstances(true, commandList, 0.5f);
+
+        assert(commandList.BeginRenderPassCount == 1);
+        assert(commandList.EndRenderPassCount == 1);
+        assert(commandList.DrawCallCount == 2);
+    }
+
+    // 並びは A（ObjectId 1）と B（ObjectId 2）。見えたビットは、直前のフレームにも描かれた同じコンポーネントのインスタンスだけが引き継ぐ
+    void MegaVisibilityReaddScript(uint32_t frameIndex,
+                                   const MegaGeometryProxy &a,
+                                   const MegaGeometryProxy &b,
+                                   Container::VariableArray<MegaGeometryProxy> &outProxies)
+    {
+        outProxies.clear();
+        MegaGeometryProxy readded = a;
+        // 3・4: 同じ ObjectId・メッシュで新しいコンポーネント（ComponentId 11）。5: 描かれ続けたまま ComponentId だけ変わる。
+        // 7: 描かれなかった後の再追加（ComponentId は5と同じ）
+        if (frameIndex == 3 || frameIndex == 4)
+        {
+            readded.ComponentId = 11;
+        }
+        else if (frameIndex >= 5)
+        {
+            readded.ComponentId = 12;
+        }
+        const bool bHasA = frameIndex != 2 && frameIndex != 6;
+        if (bHasA)
+        {
+            outProxies.push_back(readded);
+        }
+        outProxies.push_back(b);
+    }
+
+    // 追加されたインスタンス・再追加・コンポーネントの作り直しでは、前のフレームで見えたビットを捨てる（0で埋め直す）
+    void TestMegaGeometryTwoPassDiscardsVisibilityOnReaddAndComponentChange()
+    {
+        FakeCommandList commandList;
+        Container::VariableArray<uint32_t> fills;
+        RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 8, &MegaVisibilityReaddScript, &fills);
+
+        assert(fills.size() == 8);
+        // 0: 2つとも新規 / 1: 引き継ぐ / 2: A が外れる / 3: A を再追加 / 4: 引き継ぐ /
+        // 5: ComponentId の変更 / 6: A が外れる / 7: A を同じ ComponentId で再追加
+        const uint32_t expected[8] = {2, 0, 0, 1, 0, 1, 0, 1};
+        for (uint32_t i = 0; i < 8; ++i)
+        {
+            assert(fills[i] == expected[i]);
+        }
+    }
+
+    // 全インスタンスが一度消える（A → 空 → A）。同じ ObjectId・ComponentId・メッシュでも、再追加でビットを捨てる
+    void MegaVisibilityEmptyGapScript(uint32_t frameIndex,
+                                      const MegaGeometryProxy &a,
+                                      const MegaGeometryProxy &,
+                                      Container::VariableArray<MegaGeometryProxy> &outProxies)
+    {
+        outProxies.clear();
+        if (frameIndex != 1)
+        {
+            outProxies.push_back(a);
+        }
+    }
+
+    // 空のフレームは記録を省くので、記録の中だけで連続性を見ると再追加が引き継ぎに見える。Setup で脱落を検出して捨てる
+    void TestMegaGeometryTwoPassDiscardsVisibilityWhenAllInstancesVanish()
+    {
+        FakeCommandList commandList;
+        Container::VariableArray<uint32_t> fills;
+        RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 3, &MegaVisibilityEmptyGapScript, &fills);
+
+        assert(fills.size() == 3);
+        // 0: A が新規 / 1: 空（記録なし） / 2: A を同じ ObjectId・ComponentId・メッシュで再追加
+        const uint32_t expected[3] = {1, 0, 1};
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            assert(fills[i] == expected[i]);
+        }
     }
 
     void TestMegaGeometryNativeExecuteSkipsWhenNoInstances()
@@ -6446,6 +6631,178 @@ namespace
 
         renderResources.Shutdown();
     }
+
+    // GBuffer 深度を読むだけの HZB のパス。深度の Load/Store の宣言には触れず（版が増えず）、GBuffer の後ろに並ぶ。
+    void TestHiZPyramidNativeDeclareReadsGBufferDepthWithoutWritingIt()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        GBufferPass gbufferPass;
+        HiZPyramidPass hizPass;
+
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        const uint32_t gbufferPassIndex = graph.AddPass(&gbufferPass);
+        const uint32_t hizPassIndex = graph.AddPass(&hizPass);
+
+        assert(graph.Compile(context));
+
+        // 深度の読み取りと、完了を表す論理資源の書き込みだけ
+        assert(graph.GetDeclaredPassAccessCount(hizPassIndex) == 2);
+        bool bReadsDepth = false;
+        bool bWritesComplete = false;
+        for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(hizPassIndex); ++accessIndex)
+        {
+            RGResourceHandle resource;
+            RGAccessMode mode = RGAccessMode::Read;
+            RHI::ResourceState state = RHI::ResourceState::Undefined;
+            RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            assert(graph.TryGetDeclaredPassAccess(hizPassIndex, accessIndex, resource, mode, state, finalState));
+            if (resource == gbufferPass.GetDepthHandle())
+            {
+                bReadsDepth = mode == RGAccessMode::Read && state == RHI::ResourceState::ShaderResource;
+            }
+            else if (resource == hizPass.GetCompleteHandle())
+            {
+                bWritesComplete = mode == RGAccessMode::Write;
+            }
+        }
+        assert(bReadsDepth);
+        assert(bWritesComplete);
+
+        uint32_t depthVersion = 0;
+        assert(graph.TryGetNamedResourceVersion(RenderGraphResourceNames::GBufferDepth, depthVersion));
+        // GBufferPass が作った版（0）のまま。書き込みなら版が進む
+        assert(depthVersion == 0);
+
+        const auto& order = graph.GetCompiledPassOrder();
+        assert(order.size() == 2);
+        assert(order[0] == gbufferPassIndex);
+        assert(order[1] == hizPassIndex);
+    }
+
+    // 深度の名前付き資源が無い構成では、何も宣言せず（完了の論理資源も作らず）、ピラミッドも作らない。
+    void TestHiZPyramidNativeDeclareWithoutDepthDeclaresNothing()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ViewRenderContext context;
+        context.Device = device.get();
+
+        HiZPyramidPass hizPass;
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        const uint32_t hizPassIndex = graph.AddPass(&hizPass);
+        assert(graph.Compile(context));
+        assert(graph.GetDeclaredPassAccessCount(hizPassIndex) == 0);
+        assert(!hizPass.GetCompleteHandle().IsValid());
+        assert(!hizPass.GetPyramidTexture());
+    }
+
+    // 深度を作るだけの何もしないパス（HZB のパスの実行を確かめるための入力）
+    class HiZTestDepthProducerPass final : public IRenderGraphPass
+    {
+    public:
+        HiZTestDepthProducerPass(uint32_t width, uint32_t height) : m_Width(width), m_Height(height) {}
+
+        const char* GetName() const override { return "HiZTestDepthProducerPass"; }
+
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            builder.WriteTextureAttachment(RenderGraphResourceNames::GBufferDepth,
+                                           RGTextureDesc::DepthStencil(m_Width, m_Height, RHI::Format::D32_FLOAT, "HiZTestDepth"),
+                                           RGAttachmentKind::DepthStencil,
+                                           RHI::AttachmentLoadOp::Clear,
+                                           RHI::AttachmentStoreOp::Store,
+                                           RHI::ResourceState::DepthWrite,
+                                           RHI::ResourceState::ShaderResource);
+            builder.PreserveInsertionOrder();
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+    private:
+        uint32_t m_Width;
+        uint32_t m_Height;
+    };
+
+    // 奇数の深度（37x23）から、半分（切り上げ）の 19x12・5 段の HZB を、全ミップ UnorderedAccess のまま作って
+    // 最後に ShaderResource へ遷移する。ミップごとに 1 つ前の書き込みを待つバリアを 1 つずつ置き、ディスパッチは 5 回。
+    void TestHiZPyramidNativeExecuteBuildsAllMipsInOneSubmission()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        HiZTestDepthProducerPass depthPass(37, 23);
+        HiZPyramidPass hizPass;
+        graph.AddPass(&depthPass);
+        graph.AddPass(&hizPass);
+
+        FakeCommandList commandList;
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.ShaderMgr = &shaderManager;
+        context.RenderWidth = 37;
+        context.RenderHeight = 23;
+
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+
+        RHI::TexturePtr pyramid = hizPass.GetPyramidTexture();
+        assert(pyramid);
+        assert(pyramid->GetWidth() == 19);
+        assert(pyramid->GetHeight() == 12);
+        assert(pyramid->GetMipLevels() == 5);
+        assert(hizPass.GetMipCount() == 5);
+        assert(commandList.DispatchCount == 5);
+
+        Container::VariableArray<BarrierEvent> pyramidBarriers;
+        for (const BarrierEvent& event : commandList.Barriers)
+        {
+            if (event.Kind == RGBarrierKind::Texture && event.Texture == pyramid.get())
+            {
+                pyramidBarriers.push_back(event);
+            }
+        }
+        assert(pyramidBarriers.size() == 6);
+        assert(pyramidBarriers[0].BeforeState == RHI::ResourceState::Undefined);
+        assert(pyramidBarriers[0].AfterState == RHI::ResourceState::UnorderedAccess);
+        for (size_t index = 1; index < 5; ++index)
+        {
+            assert(pyramidBarriers[index].BeforeState == RHI::ResourceState::UnorderedAccess);
+            assert(pyramidBarriers[index].AfterState == RHI::ResourceState::UnorderedAccess);
+        }
+        assert(pyramidBarriers[5].BeforeState == RHI::ResourceState::UnorderedAccess);
+        assert(pyramidBarriers[5].AfterState == RHI::ResourceState::ShaderResource);
+
+        hizPass.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
 } // namespace
 
 int main()
@@ -6468,10 +6825,16 @@ int main()
     TestNeuralDecodeNativeDeclareWritesLogicalCompletion();
     TestMegaGeometryNativeDeclareImportsPersistentBuffers();
     TestMegaGeometryNativeDeclareUsesNamedGBufferAttachments();
+    TestHiZPyramidNativeDeclareReadsGBufferDepthWithoutWritingIt();
+    TestHiZPyramidNativeDeclareWithoutDepthDeclaresNothing();
     TestMegaGeometryNativeExecuteEnqueuesEmptyAttachmentPass();
     TestMegaGeometryNativeExecuteRecreatesRenderPassWhenAttachmentStateModeChanges();
     TestMegaGeometryPartialNamedGBufferFallsBackToLegacyAttachmentStates();
     TestMegaGeometryRecordFrameCommandBatchesInstancesInSingleRenderPass();
+    TestMegaGeometryRecordFrameCommandRecordsTwoPassOcclusion();
+    TestMegaGeometryTwoPassFallsBackWhenDepthRangeIsNotUnit();
+    TestMegaGeometryTwoPassDiscardsVisibilityOnReaddAndComponentChange();
+    TestMegaGeometryTwoPassDiscardsVisibilityWhenAllInstancesVanish();
     TestGBufferNativeDeclareCreatesTransientOutputs();
     TestGBufferSSAONativeDeclareDependencies();
     TestGBufferSSAOLightingNativeDeclareDependencies();
@@ -6492,6 +6855,7 @@ int main()
     TestShadowMapNativeExecuteRegistersBridge();
     TestNeuralDecodeNativeExecuteSkipsUnsupportedPath();
     TestMegaGeometryNativeExecuteSkipsWhenNoInstances();
+    TestHiZPyramidNativeExecuteBuildsAllMipsInOneSubmission();
     TestGBufferNativeExecuteClearsWhenOpaqueCommandsEmpty();
     TestRecordMeshDrawCallUsesDrawCommandRangesAndFallback();
     TestSSAONativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();

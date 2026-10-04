@@ -131,6 +131,10 @@ namespace Game
         // off は VT を使わず、段1の全常駐で描く（見た目・VRAM の比較用）。
         constexpr const TCHAR *kVirtualTextureOption = TEXT("--virtual-texture=");
         bool s_bRendering3DTestVirtualTexture = true;
+        // --mega-occlusion=on|off: MegaGeometry（岩・小屋など）の遮蔽カリング（2パス）を使うか。既定は on。
+        // off は遮蔽の判定なしの従来の1回の判定で描く（見た目・描画数の比較用）。
+        constexpr const TCHAR *kMegaOcclusionOption = TEXT("--mega-occlusion=");
+        bool s_bMegaOcclusion = true;
         // --stress-textures: テクスチャの負荷モード。起動画面の地面の外側へ、負荷用の材質（4K、24 種）を貼った板を格子に並べ、
         // カメラの軸を格子の中心へ移す。--vram-budget-mb と併せて、VT が目標の中で描けることを確かめる。
         constexpr const TCHAR *kStressTexturesOption = TEXT("--stress-textures");
@@ -470,6 +474,7 @@ namespace Game
         s_bRendering3DTestDebugDrawTestLines = false;
         s_bRendering3DTestNight = false;
         s_bRendering3DTestVirtualTexture = true;
+        s_bMegaOcclusion = true;
         String captureSequencePrefix;
         VariableArray<uint64_t> captureSequenceRenderedFrames;
         bool bHasRendering3DTestBoardSmokeCount = false;
@@ -633,6 +638,25 @@ namespace Game
                 else
                 {
                     LOG_ERROR("Rendering3DTest の引数の解析に失敗: --virtual-texture は on か off で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String megaOcclusionValue;
+            if (TryStripPrefix(args[i], kMegaOcclusionOption, megaOcclusionValue))
+            {
+                if (megaOcclusionValue == String(TEXT("on")))
+                {
+                    s_bMegaOcclusion = true;
+                }
+                else if (megaOcclusionValue == String(TEXT("off")))
+                {
+                    s_bMegaOcclusion = false;
+                }
+                else
+                {
+                    LOG_ERROR("Game command line parse failed: --mega-occlusion は on か off で指定する");
                     return false;
                 }
                 continue;
@@ -1275,6 +1299,8 @@ namespace Game
         if (NorvesLib::Core::Engine::GEngine)
         {
             NorvesLib::Core::Engine::GEngine->GetRenderResources().SetVideoMemoryCapMb(s_VramBudgetCapMb);
+            // --mega-occlusion の指定（既定は有効）を MegaGeometry へ渡す
+            NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetOcclusionCullingEnabled(s_bMegaOcclusion);
         }
 
         if (m_bHasTextureAssetRuntimeConfig && !ReloadConfiguredAssetManifest())

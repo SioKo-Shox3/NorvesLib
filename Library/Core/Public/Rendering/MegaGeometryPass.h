@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Rendering/HiZPyramidPass.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/RenderTypes.h"
@@ -47,6 +48,13 @@ namespace NorvesLib::Core::Rendering
      *    b. クラスタカリングコンピュートシェーダーをディスパッチ
      *    c. バリア: Compute → IndirectDraw
      *    d. GBufferレンダーパス内でDrawIndexedIndirectを発行
+     *
+     * 遮蔽カリング（既定で有効。--mega-occlusion=off で上の従来の1回の判定に戻る）は2パスで行う:
+     * 1. 1パス目: 視錐台・法線のコーン・LODの判定を通り、前のフレームで見えたクラスタだけを描く（遮蔽の判定はしない）。
+     * 2. その時点の深度（GBufferPassの不透明＋1パス目）からHZBを作る。
+     * 3. 2パス目: 判定を通った全クラスタをHZBで判定し直し、1パス目で描かなかったもののうち遮蔽されないものを描く。
+     *    全クラスタの「見えた」ビット（インスタンスごとに持続する）を更新し、次のフレームの1パス目が使う。
+     * 影（CSM・点光源）はこのパスを通らず、カメラの深度で省かない。
      *
      * MegaMeshが未登録の場合はパスが自動的にスキップされます。
      */
@@ -112,12 +120,13 @@ namespace NorvesLib::Core::Rendering
             float LODBias;
             float ScreenHeight;     // スクリーン高さ（ピクセル）
             float ProjectionFactor; // screenHeight / (2 * tan(fov/2))
-            uint32_t HiZWidth;      // Hi-Zテクスチャ幅（mip 0）
-            uint32_t HiZHeight;     // Hi-Zテクスチャ高さ（mip 0）
+            uint32_t HiZWidth;      // Hi-Zの元になった深度の幅（Hi-Zのミップ0はその半分）
+            uint32_t HiZHeight;     // Hi-Zの元になった深度の高さ（Hi-Zのミップ0はその半分）
             uint32_t HiZMipCount;   // ミップレベル数
             uint32_t bHiZEnabled;   // Hi-Z有効フラグ（1=有効, 0=無効）
             uint32_t DebugPayloadMode; // firstInstanceへ書き込むデバッグpayload種別
-            uint32_t Padding[2];    // std140でmat4を16バイト境界に揃える
+            uint32_t CullPass;      // 0=従来（遮蔽の判定なし）, 1=1パス目, 2=2パス目
+            uint32_t bStatsEnabled; // 1なら統計バッファへ数える
             float WorldMatrix[16];
             float LODSphere[4];     // LODの選択に使うメッシュ共通の境界球（ローカル。半径0ならクラスタごと）
         };
@@ -127,6 +136,10 @@ namespace NorvesLib::Core::Rendering
          */
         struct MegaMeshInstance
         {
+            // 「前のフレームで見えた」ビットを引き継ぐ鍵（プロキシのObjectId。0のインスタンスは並びの番号で代用する）
+            uint64_t ObjectId = 0;
+            // コンポーネントの世代（作り直されたら変わる）。同じ ObjectId でも別のコンポーネントなら見えたビットを捨てる
+            uint64_t ComponentId = 0;
             MegaGeometry::MegaMeshHandle Handle;
             float WorldMatrix[16];
             float PreviousWorldMatrix[16];
@@ -159,14 +172,30 @@ namespace NorvesLib::Core::Rendering
         bool EnsurePerInstanceBindings(uint32_t requiredCount);
 
         /**
-         * @brief Hi-Z深度ピラミッドのリソースを作成・再作成
+         * @brief 2パスの遮蔽カリングで描けるか。描けるときはHZBを深度の大きさに合わせる
+         *
+         * 無効（--mega-occlusion=off）・HZBが作れない・描く範囲が深度の全体と一致しない（遮蔽の判定は深度の
+         * 全体を画面と見る）ときは false で、従来の1回の判定で描く。
          */
-        bool CreateHiZResources(ViewRenderContext &context);
+        bool CanUseTwoPassOcclusion(const MegaGeometryPassCommand &command);
 
         /**
-         * @brief Hi-Z深度ピラミッドを生成（GBuffer深度からダウンサンプル）
+         * @brief 1パス目で読み、2パス目で更新する「前のフレームで見えた」ビットのバッファ
+         *
+         * インスタンスごとに持続する。インスタンスの追加・メッシュの差し替え（ハンドルかクラスタの数が変わる）で
+         * 作り直して0に戻す（outNeedsClear が true）。LODの切り替えでは、選ばれなくなったクラスタを2パス目が
+         * 0に書き戻すので、古いビットは残らない。
          */
-        void GenerateHiZPyramid(RHI::ICommandList *cmdList);
+        RHI::BufferPtr AcquireVisibilityBuffer(uint64_t key,
+                                               const MegaMeshInstance &instance,
+                                               const MegaGeometry::MegaMeshGPUData &gpuData,
+                                               bool &outNeedsClear);
+
+        /** @brief 使われなくなったビットのバッファと、手放した古いバッファを、GPUが使い終わった後に破棄する */
+        void ReleaseStaleVisibilityBuffers();
+
+        /** @brief 統計（MEGA_OCCLUSION）の読み戻しのスロットを用意する。作れなければ統計は取らない */
+        void EnsureStatsSlots();
 
         // 設定
         MegaGeometryPassSettings m_Settings;
@@ -203,6 +232,57 @@ namespace NorvesLib::Core::Rendering
         RHI::RenderPassPtr m_GBufferRenderPass;
         RHI::FramebufferPtr m_GBufferFramebuffer;
 
+        // 2パス目のGBuffer描画用レンダーパス・フレームバッファ。1パス目の描画の後に続けて開くので、
+        // 全てのアタッチメントが ShaderResource の状態から始まる（1パス目の終わりの状態）。
+        RHI::RenderPassPtr m_SecondGBufferRenderPass;
+        RHI::FramebufferPtr m_SecondGBufferFramebuffer;
+
+        // 遮蔽カリング（2パス）
+        HiZPyramid m_HiZ;
+        bool m_bHiZReady = false;
+        // 2パス目の、インスタンスごとのIndirectDrawバッファ・カリング用UBO・DescriptorSet
+        // （記録中に1パス目の内容を書き換えないよう、パスごとに別に持つ）
+        Container::VariableArray<RHI::BufferPtr> m_SecondInstanceIndirectDrawBuffers;
+        Container::VariableArray<RHI::BufferPtr> m_SecondInstanceDrawCountBuffers;
+        Container::VariableArray<RHI::BufferPtr> m_SecondCullUniformBuffers;
+        Container::VariableArray<RHI::DescriptorSetPtr> m_SecondCullDescriptorSets;
+        // 従来の経路が binding 5・6 に結ぶ代わりのバッファ（シェーダーは触らない）
+        RHI::BufferPtr m_DummyVisibilityBuffer;
+        RHI::BufferPtr m_DummyStatsBuffer;
+
+        struct InstanceVisibility
+        {
+            uint64_t Key = 0;
+            uint64_t MeshId = 0;
+            uint64_t ComponentId = 0;
+            const void *ClusterBufferIdentity = nullptr;
+            uint32_t ClusterCount = 0;
+            uint64_t LastUsedFrame = 0;
+            RHI::BufferPtr Buffer; // uint32_t[ClusterCount]。1=前のフレームで見えた
+        };
+        struct RetiredBuffer
+        {
+            RHI::BufferPtr Buffer;
+            uint64_t RetiredFrame = 0;
+        };
+        Container::VariableArray<InstanceVisibility> m_InstanceVisibilities;
+        Container::VariableArray<RetiredBuffer> m_RetiredBuffers;
+        uint64_t m_OcclusionFrameCount = 0;
+
+        // 統計（MEGA_OCCLUSION）。ホストが読めるバッファを数フレームずつ遅らせて読み戻す（GPUを待たない）。
+        struct StatsSlot
+        {
+            RHI::BufferPtr Buffer;
+            const uint32_t *Mapped = nullptr;
+            uint64_t Frame = 0;
+            bool bPending = false;
+        };
+        static constexpr uint32_t StatsSlotCount = 4;
+        StatsSlot m_StatsSlots[StatsSlotCount];
+        bool m_bStatsSlotsTried = false;
+        bool m_bStatsLoggedOnce = false;
+        bool m_bOcclusionFallbackLogged = false;
+
         // GBufferテクスチャ参照（GBufferPassが作成したものをSharedResourcesから取得）
         RHI::TexturePtr m_AlbedoTexture;
         RHI::TexturePtr m_NormalTexture;
@@ -227,15 +307,6 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultFlatNormalTexture; // 1x1 フラット法線 (128,128,255) — Normalデフォルト
         RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 — Metallic/Heightデフォルト
         RHI::SamplerPtr m_DefaultLinearSampler;     // Linear/Wrapサンプラー
-
-        // Hi-Z 深度ピラミッド
-        RHI::TexturePtr m_HiZTexture;               // R32_FLOAT ミップチェーン
-        RHI::ShaderPtr m_HiZShader;                 // hiz_generate.comp
-        RHI::PipelinePtr m_HiZPipeline;             // Hi-Zダウンサンプルパイプライン
-        RHI::DescriptorSetPtr m_HiZDescriptorSet;   // Hi-Z生成用ディスクリプタ
-        RHI::BufferPtr m_HiZParamsBuffer;            // HiZParams UBO
-        RHI::SamplerPtr m_HiZNearestSampler;        // Nearest/Clampサンプラー
-        uint32_t m_HiZMipCount = 0;                 // Hi-Zミップレベル数
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;

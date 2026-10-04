@@ -398,6 +398,26 @@ set_tests_properties(VideoMemoryBudgetVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 今のフレームの深度から作る HZB（R32_FLOAT の全ミップ、2x2 の最大で縮める）の全ミップを読み戻す。奇数の大きさ（37x23 など）で、
+# 各 texel が覆う深度の最大と一致し（はみ出す行・列も含める）、深度の入れ替え・解像度の変更でも作り直されることを確かめる。
+add_test(NAME HiZPyramidVulkanTest COMMAND RHITextureUpdateVulkanTest --test=HiZPyramidVulkanTest)
+set_tests_properties(HiZPyramidVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# Hi-Z による遮蔽の判定（Common/HiZOcclusion.glsl）を、合成した HZB と球の組（完全に隠れる・一部見える・近平面をまたぐ・
+# 画面の端・小さくて 1 texel に収まる・乱数の場面）で確かめる。見えているものを隠れていると判定する誤りが 0 件であること。
+add_test(NAME HiZOcclusionTestVulkanTest COMMAND RHITextureUpdateVulkanTest --test=HiZOcclusionTestVulkanTest)
+set_tests_properties(HiZOcclusionTestVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
@@ -412,6 +432,8 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER VirtualTextureResidencyVulkanTest VirtualTextureResidencyVulkanTest.cpp
     MEMBER VirtualTextureFeedbackVulkanTest VirtualTextureFeedbackVulkanTest.cpp
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
+    MEMBER HiZPyramidVulkanTest HiZPyramidVulkanTest.cpp
+    MEMBER HiZOcclusionTestVulkanTest HiZOcclusionTestVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE
