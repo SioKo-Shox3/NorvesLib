@@ -945,6 +945,7 @@ namespace NorvesLib::Core::Asset
         clusters.reserve(clusterCount);
         const size_t clusterTableOffset = static_cast<size_t>(sections[2].Offset);
         uint32_t rootCount = 0;
+        Container::VariableArray<uint32_t> levelClusterCounts(lodLevelCount, 0);
         for (uint32_t clusterIndex = 0; clusterIndex < clusterCount; ++clusterIndex)
         {
             const size_t recordOffset = clusterTableOffset + static_cast<size_t>(clusterIndex) * ClusterRecordSize;
@@ -1019,6 +1020,13 @@ namespace NorvesLib::Core::Asset
                 return Fail(CookedMeshParseStatus::InvalidLODGraph);
             }
 
+            // 根は最も粗い段にだけ存在する。根でないクラスタは親の段（自分の段 + 1）が必ず存在する
+            if (cluster.bIsRoot != (cluster.LODLevel + 1 == lodLevelCount))
+            {
+                return Fail(CookedMeshParseStatus::InvalidLODGraph);
+            }
+            ++levelClusterCounts[cluster.LODLevel];
+
             if (cluster.bIsRoot)
             {
                 if (!IsZero(cluster.ParentBoundsCenter) || cluster.ParentBoundsRadius != 0.0f)
@@ -1045,6 +1053,15 @@ namespace NorvesLib::Core::Asset
         if (rootCount == 0)
         {
             return Fail(CookedMeshParseStatus::InvalidLODGraph);
+        }
+
+        // 宣言した段数と実際の段構成が一致する（空の段は無い）
+        for (const uint32_t levelClusterCount : levelClusterCounts)
+        {
+            if (levelClusterCount == 0)
+            {
+                return Fail(CookedMeshParseStatus::InvalidLODGraph);
+            }
         }
 
         Container::VariableArray<CookedMeshClusterGroup> groups;

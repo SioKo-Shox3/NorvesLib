@@ -1147,6 +1147,26 @@ int main()
     ExpectV1Mutation(
         [](ByteArray& bytes) { WriteFloat(bytes, V1ClusterOffset(bytes, 2) + V1::ClusterRecordOffset::ParentRadius, 1.0f); },
         CookedMeshParseStatus::InvalidLODGraph);
+    // 段の構成: 非根のクラスタが最上位の段にある（親の段が無い）
+    ExpectV1Mutation(
+        [](ByteArray& bytes)
+        {
+            WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::LODLevel, 1);
+            WriteLe32(bytes, V1ClusterOffset(bytes, 1) + V1::ClusterRecordOffset::LODLevel, 1);
+            WriteLe32(bytes, V1GroupOffset(bytes, 0) + V1::GroupRecordOffset::LODLevel, 1);
+        },
+        CookedMeshParseStatus::InvalidLODGraph);
+    // 宣言した段数だけが増え、最上位に空の段ができる
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::LODLevelCount, 3); },
+                     CookedMeshParseStatus::InvalidLODGraph);
+    // 根が最も粗い段にあり、途中の段（段1）が空
+    ExpectV1Mutation(
+        [](ByteArray& bytes)
+        {
+            WriteLe32(bytes, V1::HeaderOffset::LODLevelCount, 3);
+            WriteLe32(bytes, V1ClusterOffset(bytes, 2) + V1::ClusterRecordOffset::LODLevel, 2);
+        },
+        CookedMeshParseStatus::InvalidLODGraph);
 
     // グループの表
     ExpectV1Mutation(

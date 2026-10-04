@@ -669,3 +669,10 @@
 - テスト（`CookedMeshTest`）: v1 の往復（フィールドの一致と、読んだ内容から組み直したバイト列の一致）、材質の3種の文字列、グループ無しの1段の v1、v0 の読み込み、`MegaMeshCreateInfo` への変換（v0・v1）、壊れた入力 50 件の拒否（ヘッダ・hash・版・詰め物・フォールバック・クラスタ・階層・グループを1つずつ壊し、拒否の理由を確かめる）。変異（グループのメンバ総数の検査を `false &&` で無効化）では「グループの `ClusterCount` を 1 に壊す」ケースが status 25（InvalidGroupTable）の期待に対して成功となって落ちた（`verify-VTG4-NVMESH-V1-3-mutation.txt`）。変異は戻して再ビルド済み。
 - 検証: `verify-VTG4-NVMESH-V1-1.txt`（Debug の AssetCook・CookedMeshTest のビルド BUILD_EXIT_CODE=0）、`-2.txt`（ctest 3/3 passed）、`-4.txt`（変異を戻した後の再ビルド BUILD_EXIT_CODE=0。`CookedMeshLoader.cpp` が再コンパイルされている）、`-5.txt`（ctest 3/3 passed）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - Notes: (1) 現行の `BuildModelStagingFromCookedMesh`（`Library/Core/Private/Resource/ModelAssetLoader.cpp`。この項目の paths の外）は `FormatMajor` を見ないので、v1 を通すと全段のクラスタを1組として描く。`AssetCook` はまだ v0 しか出さず（VTG4-DAG-BAKE で v1 を出す）、v1 を読む経路は VTG4-DAG-SELECT-GPU で `FormatMajor` により分岐する。(2) `ModelAssetResolver` などはマニフェストの `format` 文字列を検査していない（`nvmesh.v1.mesh3d.pnt.u32.lodgraph` は予定の値）。(3) Git Bash の heredoc に日本語の長い文を渡すと失敗することがあるので、スクリプトと本文は Write で scratchpad のファイルにして python で挿入した。cmake の `-- /m:1` は PowerShell で実行した。(4) 次は VTG4-DAG-BAKE。
+
+## 反復 4（run 20261005-043300）: VTG4-NVMESH-V1（評価者の差し戻しへの対応、done）
+- 差し戻し: ローダーが LOD の段の構成を検査しておらず、`LODLevelCount=2` で最上位の段 1 に非根のクラスタ（親の段 2 が無い）を置いた入力や、`LODLevelCount` だけ 3 に増やして最上位が空の入力が `Success` になっていた。
+- 対応: `ParseCookedMeshV1` に、根は最も粗い段（`LODLevelCount - 1`）にだけ置き、根でないクラスタは最も粗い段に置けない（親の段が必ず存在する）検査と、どの段にもクラスタが 1 つ以上ある検査を足した（いずれも `InvalidLODGraph`）。`Docs/Architecture/NVMESHv1.md` の拒否の節にも書いた。`CookedMeshTest` の拒否に 3 件（非根が最上位の段・段数だけ増やした空の最上位・途中の段が空）を足した。
+- 検証: `verify-VTG4-NVMESH-V1-6.txt`（Debug のビルド BUILD_EXIT_CODE=0）、`-7.txt`（ctest 3/3 passed）。変異（2つの検査を `false &&` で無効化）では新しいケースが status 26（InvalidLODGraph）の期待に対して成功となり CookedMeshTest が落ちた（`-8-mutation.txt`）。変異を戻して再ビルド（`-9.txt` BUILD_EXIT_CODE=0）、ctest 3/3 passed（`-10.txt`）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
+- Notes: 変異を戻すとき、バックアップからのコピーは更新時刻が古いままで再ビルドされない（変異のままの exe で ctest が落ちた）。戻したあとはファイルの更新時刻を更新してからビルドする。次は VTG4-DAG-BAKE。
+
