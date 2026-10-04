@@ -117,6 +117,10 @@ param(
     [string[]]$ViewNames = @(),
     # クック済みのテクスチャを使わず、ばらの元画像を無圧縮で読んで撮る（--no-cooked-textures。比べる側の撮影用）。
     [switch]$LooseTextures,
+    # 岩・小屋の読み方（--rendering3dtest-model-source）。省略時は Game の既定（クック済みの NVMESH v1・BC・VT）。
+    # gltf は glTF の実行時の経路で読む（クック済みの経路との見た目・VRAM の比較用）。
+    [ValidateSet('', 'cooked', 'gltf')]
+    [string]$ModelSource = '',
     # 決定的な撮影（--capture-deterministic）で撮る。同じコードを2回撮ると一致する（見た目の保全を数値で比べる用）。
     [switch]$Deterministic,
     # テクスチャの負荷モード（--stress-textures）で default・low・top の3視点を撮る。-ViewNames で絞れる。
@@ -685,6 +689,10 @@ foreach ($view in $shots)
     if ($LooseTextures)
     {
         $arguments += '--no-cooked-textures'
+    }
+    if ($ModelSource -ne '')
+    {
+        $arguments += "--rendering3dtest-model-source=$ModelSource"
     }
     if ($Deterministic)
     {

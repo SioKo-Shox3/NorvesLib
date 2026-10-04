@@ -732,3 +732,14 @@
 - 検証: `verify-VTG4-FALLBACK-LEVEL-1.txt`（ビルド成功）・`-2.txt`（ctest 4 件全て Passed）・`-3-rt-direct.txt`（RT テストの直接実行。スキップではなく実行された）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - 未実施: 完了条件の「v1 の岩を一時的に読む起動画面の撮影で影・RTGI が崩れないこと」。撮影は GPU の重い処理で、岩を v1 で読む変更は `Game/` 側（この任務の `paths:` の外）になるため回していない。起動画面はまだ v1 を使わないので、見た目は変わらない。次の VTG4-COOK-STARTUP-MODELS（岩・小屋を v1 で読む）の撮影（`CaptureStartupScene.ps1`）で、影と RTGI の見た目を初めて確かめる。そこで崩れたら、この反復のフォールバックの範囲を疑う。
 - Next: VTG4-COOK-STARTUP-MODELS。
+
+## 反復 14（run 20261005-043300）: VTG4-COOK-STARTUP-MODELS（done）
+- VTG4-COOK-STARTUP-MODELS: 起動画面の岩・小屋を、既定でクック済み（メッシュは NVMESH v1 の階層つき、材質のテクスチャは BC の VT）で読むようにした。実装の大半は直前の「作業途中の保存」コミット（`Game/`・`Scripts/CookAssets.ps1`・`Tools/AssetCook`）にあり、この反復で一覧 `Assets/AssetSets/Rendering3DTestStartupModels.json` を確定し、撮影スクリプトに `-ModelSource cooked|gltf`（`--rendering3dtest-model-source`）を足して、検証・比較を回した。
+- 焼き方: メッシュは `CookAssets` が一覧の `models` から NVMESH v1 へ（岩 13 段・1451 クラスタ、小屋 4 段・128 クラスタ。どちらも 1 材質に収まったので stop-when には当たらない）。テクスチャは色 BC7 sRGB、法線 BC5（岩の `nor_gl` は `flip_normal_y` で DirectX の向きへ）、ARM は BC7 linear（詰め済みの R=AO・G=粗さ・B=メタリックをそのまま ORM として）。材質の論理パスは glTF の経路が読むばらの元画像の名前と別にしてある（`.../cooked/...`）。
+- 直したこと（岩）: 既定のフォールバックの段（全体の 1/16 ≒ 4072 三角形）だと、影・RT に使う粗い岩が実面より張り出して自己遮蔽し、近接で岩に黒い斑点が出た（glTF の経路の岩には無い）。法線の向きの反転の有無では変わらなかった（`flip` を外した撮影でも同じ斑点）。岩の一覧項目に `fallback_min_triangles: 32768` を付け（フォールバック 98052 インデックス ≒ 32684 三角形）、斑点が消えた。小屋は元から 4096 のまま。
+- VRAM（`VRAM_LEDGER textures`）: glTF の経路 41 枚・411.5 MiB → クック済み 37 枚・2.5 MiB（岩・小屋の無圧縮のテクスチャ約 409 MiB が無くなった。VT のタイルは別のプールで `vt_used_mb=11` 程度）。
+- 画素の比較（`-Deterministic`、クック済み対 `--rendering3dtest-model-source=gltf`）: default 39.79 dB・near 46.52 dB・low 42.94 dB。default だけ目安の 40 dB をわずかに下回る。差は小屋の屋根の縞（高周波の ARM・アルベド）と岩の細かい模様で、形・位置・影の向きは同じ。小屋の屋根の縞は、クック済み（VT）のほうがやわらかく、glTF（ばらの元画像）のほうが縞が濃い。岩は PNG を開いて、形・模様・凹凸の陰の向き（法線）が同じに見えることを確かめた。原因の切り分け（VT のミップ選択か BC の圧縮か）は未実施で、既知の限界として残す。
+- フォールバックの確認: クックのマニフェストを一時的に外して撮影すると、`COOKED_MODEL_MISSING`（警告）を出して glTF の経路で読み、撮影は通る。
+- VTG4-FALLBACK-LEVEL の撮影条件（v1 の岩を読む起動画面で影・RTGI が崩れないこと）は、この撮影で確かめた: default/near/low の 3 視点で影の向き・形が glTF の経路と同じで、RTGI（`indirect_lighting=rtgi`）も崩れていない。最初の撮影で岩に出た黒い斑点はフォールバックの段の粗さが原因で、上の直しで消えた。
+- 検証: `verify-VTG4-COOK-STARTUP-MODELS-4.txt`（AssetCook・CookAssets・Game のビルド BUILD_EXIT_CODE=0）、`-5-capture.txt`（`-Deterministic` の撮影 result=pass、出力は `.harness/runs/startup-capture/VTG4-COOK-STARTUP-MODELS/`）、`-6-psnr-vs-gltf.txt`（glTF の経路との PSNR。`.harness/runs/startup-capture/VTG4-COOK-STARTUP-MODELS-gltf/` が glTF の撮影）。`-3-gltf-compare.txt` は直す前の PSNR（38.6〜39.4 dB。岩の斑点あり）。
+- Notes: (1) Git Bash の `sed -i` は一覧の JSON の CRLF を LF に直してしまったので、最後に CRLF へ戻した。Edit ツールも CRLF 主体のファイルの LF の行を CRLF へ変えるので、`CaptureStartupScene.ps1` は元のコミットと行ごとに突き合わせて元の行末へ戻した（numstat は `git diff` と `--ignore-cr-at-eol` で一致）。(2) `$TEMP` に `inspect.py` という名前の紛らわしいファイルがあり、そこから python を走らせると numpy が壊れる。画像の比較用のスクリプトは scratchpad に置いた。(3) 次は VTG4-BIG-SPHERE-COOK。

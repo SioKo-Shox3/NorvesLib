@@ -384,7 +384,7 @@
 - notes: 計画書 1（RT は焼いた粗い段を常駐）。影は段8・9で VSM に置き換えるまでのつなぎ。危険地帯（RT・影）。
 
 ## VTG4-COOK-STARTUP-MODELS: 起動画面の岩と小屋をクック済み（NVMESH v1・BC・VT）で読む
-- status: todo
+- status: done
 - done-when: `CookAssets` が岩（`boulder_01_4k.gltf`）と小屋（`Cottage_Clean`）のメッシュを NVMESH v1（階層つき）に、テクスチャを BC（色 BC7 sRGB、法線 BC5。岩の `nor_gl` は OpenGL の向きなので Y を反転して DirectX の向きにする、ARM は R=AO・G=粗さ・B=メタリックで ORM と同じ並びなので BC7 linear）に焼く。Game は既定でクック済みの岩・小屋を読み（材質のテクスチャは段2の VT）、クック済みが無ければ従来の glTF の実行時の経路へ戻して警告する。撮影の `VRAM_LEDGER` で、岩・小屋の無圧縮のテクスチャ（409.6 MiB）が無くなることを記録する。`-Deterministic` の撮影で、glTF の経路（`--rendering3dtest-model-source=gltf` など）と比べた PSNR を視点ごとに記録し（階層の段の違いで差が出うる。目安 40 dB 以上）、PNG を開いて岩・小屋の形・模様・法線の向き（凹凸の陰の向き）が同じに見えることを確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook CookAssets Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG4-COOK-STARTUP-MODELS -Configuration RelWithDebInfo -Deterministic`
