@@ -4,8 +4,6 @@ add_executable(AssetCook
     Main.cpp
     MeshCooker.cpp
     MeshCooker.h
-    TextureCooker.cpp
-    TextureCooker.h
 )
 
 # BC エンコーダ(bc7enc_rdo)は AssetCook だけがリンクする。Core・Game には入れない。
@@ -20,7 +18,19 @@ target_link_libraries(AssetCookBlockCompressor PUBLIC NorvesThirdParty_Bc7Enc Co
 target_include_directories(AssetCookBlockCompressor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(AssetCookBlockCompressor PROPERTIES FOLDER "Tools")
 
-target_link_libraries(AssetCook PRIVATE Core AssetCookBlockCompressor)
+# テクスチャのクック(用途ごとの形式・ミップ・NVTEX の書き出し)。スモークからも使えるよう独立の静的ライブラリにする。
+add_library(AssetCookTextureCooker STATIC
+    TextureCooker.cpp
+    TextureCooker.h
+)
+target_link_libraries(AssetCookTextureCooker PUBLIC AssetCookBlockCompressor Core)
+target_include_directories(AssetCookTextureCooker
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    PRIVATE ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+)
+set_target_properties(AssetCookTextureCooker PROPERTIES FOLDER "Tools")
+
+target_link_libraries(AssetCook PRIVATE Core AssetCookBlockCompressor AssetCookTextureCooker)
 target_include_directories(AssetCook PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
@@ -34,6 +44,12 @@ target_link_libraries(AssetCookBlockCompressSmoke PRIVATE AssetCookBlockCompress
 set_target_properties(AssetCookBlockCompressSmoke PROPERTIES FOLDER "Tools")
 add_dependencies(AssetCook AssetCookBlockCompressSmoke)
 add_test(NAME AssetCookBlockCompressSmoke COMMAND $<TARGET_FILE:AssetCookBlockCompressSmoke>)
+
+# 用途ごとのクックの中身(ORM の詰め方・法線のミップ・R16 の精度など)を確かめる。AssetCookTextureSmoke から呼ぶ。
+add_executable(AssetCookTextureUsageSmoke AssetCookTextureUsageSmoke.cpp)
+target_link_libraries(AssetCookTextureUsageSmoke PRIVATE AssetCookTextureCooker)
+set_target_properties(AssetCookTextureUsageSmoke PROPERTIES FOLDER "Tools")
+add_dependencies(AssetCook AssetCookTextureUsageSmoke)
 
 set(ASSET_COOK_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>")
 add_test(NAME AssetCookRawSmoke
@@ -53,6 +69,7 @@ set(ASSET_COOK_TEXTURE_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/T
 add_test(NAME AssetCookTextureSmoke
     COMMAND ${CMAKE_COMMAND}
         -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DUSAGE_SMOKE_EXE=$<TARGET_FILE:AssetCookTextureUsageSmoke>
         -DSMOKE_DIR=${ASSET_COOK_TEXTURE_SMOKE_DIR}
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookTextureSmoke.cmake.in"
 )
