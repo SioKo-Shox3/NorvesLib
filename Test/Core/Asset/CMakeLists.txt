@@ -49,6 +49,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER CookOutputSetGuardTest CookOutputSetGuardTest.cpp
     MEMBER CookOutputPlanTest CookOutputPlanTest.cpp
     MEMBER CookStateFileTest CookStateFileTest.cpp
+    MEMBER CookOwnerBindingTest CookOwnerBindingTest.cpp
     MEMBER CookOwnedStateTest CookOwnedStateTest.cpp
     MEMBER ModelNativePathTest ModelNativePathTest.cpp
     MEMBER CookCacheDecisionTest CookCacheDecisionTest.cpp
@@ -231,3 +232,5 @@ set_tests_properties(CookOutputPlanTest PROPERTIES WORKING_DIRECTORY "${CMAKE_SO
 
 add_test(NAME CookOutputSetGuardTest COMMAND CookedMeshTest --test=CookOutputSetGuardTest)
 set_tests_properties(CookOutputSetGuardTest PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+add_test(NAME CookOwnerBindingTest COMMAND CookedMeshTest --test=CookOwnerBindingTest)

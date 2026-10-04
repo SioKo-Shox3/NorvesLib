@@ -766,3 +766,6 @@
 - G2-S6-OUTPUT-SET-GUARD補強: 共通manifestはcase-fold path一致だけで統合せず、存在状態と既存file ID、不在時はcanonical native表記の完全一致を要求する。case-sensitive directoryの別endpointを誤って1件へ縮約しない。対応する値レベル反証と実不在pathのcase差分試験を追加。
 
 - G2-S6-OUTPUT-SET-GUARD受入: 38a2c4b6/run37241681312で実Windows build・25CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。集合guard試験13.27秒、実8.3 aliasフラグ1。fresh全依存・primary/派生key・prefix・file ID・hardlink・manifest同一性・4096plan/65536保護出現/metadata予算を確認。3ZIPと79+10固定出力の直接byte一致を独立確認しrootで再実行。読み取り専用guardをdone。所有binding/lock/journal/production公開は未接続。
+
+- G2-S6-OWNER-ID開始: producer・schema・spec identity・FINAL root identity・relative manifestを長さ付きUTF8としてSHA-256へ渡し、先頭16byteをowner識別子にする。既存Windows CNGを使い私製hashを増やさない。SourceRoot変更は既存依存fingerprintが扱う入力選択としownerから除外する。物理canonicalとdrive-form保存bindingのresolver、lock/journal/公開は別境界として残す。
+- G2-S6-OWNER-ID検証準備: 実C++文字列literal4件を単独compileしてbyteを抽出し、独立Python hashlibの固定vectorと一致。比較器12件×通常/最適化も成功。独自UTF8 helperとcanonical manifest規約を共有し、26CPUへ登録。実Windows CNGと79+10byte gateは未実行。

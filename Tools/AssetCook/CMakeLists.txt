@@ -3,6 +3,8 @@ add_library(AssetCookLib STATIC
     CookStateFile.cpp
     CookStateFile.h
     CookStateFileTestAccess.h
+    CookOwnerBinding.cpp
+    CookOwnerBinding.h
     CookOwnedState.cpp
     CookOwnedState.h
     NativeCookPath.h
@@ -51,6 +53,9 @@ add_library(AssetCookLib STATIC
 )
 
 target_link_libraries(AssetCookLib PUBLIC Core)
+if(WIN32)
+    target_link_libraries(AssetCookLib PRIVATE bcrypt)
+endif()
 target_include_directories(AssetCookLib
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE

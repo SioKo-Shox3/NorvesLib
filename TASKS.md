@@ -2458,3 +2458,9 @@
 - done-when: 検証済みplan集合のprimary/派生key・物理path・prefixを、他assetの全依存/spec/control locatorと照合する。書込/所有取得を行わず、単体命名・増分判断を複製しない。
 - verify: primary/派生/variantの衝突、case/short alias/hardlink/prefix罠、他asset入力/外部file/不在sidecarとの衝突、無関係file保持、規模上限/計算量、Windowsと既存byte gate。
 - stop-when: unknown所有fileを採用する、出力命名を独自実装する、衝突確認なしでstage作成/公開をproductionへ接続する。
+
+## G2-S6-OWNER-ID: 独立したtupleからowner識別子を導出する
+- status: doing
+- done-when: callerが独立に確定したspec/final-root/manifest identityから、versioned length-delimited UTF8 tupleとSHA-256で安定した128bit識別子を導出する。SourceRootや保存stateからownerを採用しない。
+- verify: 独立算出の固定vector、field境界/Unicode/上限/不正入力/失敗保持、state codecとの照合、Windows CPUと79+10byte gate。
+- stop-when: filesystem alias解決やroot作成を暗黙に行う、識別子を認証/既存root上書き許可と扱う、未確定のresolverをproductionへ接続する。
