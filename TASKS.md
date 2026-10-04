@@ -291,7 +291,7 @@
 - notes: 計画書 4.3。Hi-Z は 2026-05 の `4d1e6a37` で過剰カリングのため無効にされた（AABB の中心1点・解像度の不整合）。危険地帯（描画パスの構造）。
 
 ## VTG3-HIZ-CONSERVATIVE: クラスタの遮蔽の判定を保守的な矩形の判定に作り直す
-- status: todo
+- status: done
 - done-when: `cluster_cull.comp` の Hi-Z の判定を、クラスタの境界（球、またはそれを包む AABB の8点）を画面へ投影した矩形と最も手前の深度で行う形に置き換える。矩形が 2×2 texel 以内に収まる HZB のミップを選び、その範囲の4 texel の最大と、境界の最も手前の深度を比べる（手前の深度 > 範囲の最大なら隠れている）。境界が近平面をまたぐ・カメラの後ろにかかるときは隠れていない扱い。HZB のミップ0 が深度の半分の解像度であることを投影の計算に正しく入れる。判定は共通の GLSL の関数にし、GPU のテスト `HiZOcclusionTestVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、合成した HZB と境界の組（完全に隠れる・一部見える・近平面をまたぐ・画面の端にかかる・小さくて1 texel に収まる）で期待どおりの判定になることを確かめる（見えているものを隠れていると判定する誤りが0件）。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(HiZOcclusionTestVulkanTest|HiZPyramidVulkanTest|MegaGeometryResourcesTest)$"`

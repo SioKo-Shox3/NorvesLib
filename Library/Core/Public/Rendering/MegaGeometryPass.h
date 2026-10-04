@@ -112,8 +112,8 @@ namespace NorvesLib::Core::Rendering
             float LODBias;
             float ScreenHeight;     // スクリーン高さ（ピクセル）
             float ProjectionFactor; // screenHeight / (2 * tan(fov/2))
-            uint32_t HiZWidth;      // Hi-Zテクスチャ幅（mip 0）
-            uint32_t HiZHeight;     // Hi-Zテクスチャ高さ（mip 0）
+            uint32_t HiZWidth;      // Hi-Zの元になった深度の幅（Hi-Zのミップ0はその半分）
+            uint32_t HiZHeight;     // Hi-Zの元になった深度の高さ（Hi-Zのミップ0はその半分）
             uint32_t HiZMipCount;   // ミップレベル数
             uint32_t bHiZEnabled;   // Hi-Z有効フラグ（1=有効, 0=無効）
             uint32_t DebugPayloadMode; // firstInstanceへ書き込むデバッグpayload種別
