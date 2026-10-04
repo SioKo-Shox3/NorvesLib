@@ -103,7 +103,7 @@ void TestPackUnpack()
     Expect(!Feedback::Unpack(0, ignored), "0 は書かれていない語");
     Expect(!Feedback::Unpack(0x000FFFFFu, ignored), "テクスチャの欄が 0 の語は書かれていない語");
 
-    Expect(Feedback::GetBufferBytes(Feedback::DefaultCapacity) == (4u + 65536u) * 4u, "既定のバッファの大きさ");
+    Expect(Feedback::GetBufferBytes(Feedback::DefaultCapacity) == (4u + 65536u + 4096u) * 4u, "既定のバッファの大きさはヘッダ + 要求 + ハッシュの表");
 }
 
 void TestDecodeAndDeduplicate()
@@ -417,7 +417,7 @@ void TestRingEnableFailureLeavesNoBuffers()
     Expect(ring.SetEnabled(true), "作れるようになれば有効にできる");
     Expect(device->CreatedDescs.size() == VirtualTextureFeedbackRing::SlotCount, "バッファは 3 つ作る");
     const RHI::BufferDesc& desc = device->CreatedDescs[0];
-    Expect(desc.Size == Feedback::GetBufferBytes(RingCapacity), "バッファの大きさはヘッダ + capacity 語");
+    Expect(desc.Size == Feedback::GetBufferBytes(RingCapacity), "バッファの大きさはヘッダ + capacity 語 + ハッシュの表");
     Expect(desc.CPUAccessible, "バッファは CPU から読める");
     Expect((desc.Usage & RHI::ResourceUsage::StorageBuffer) == RHI::ResourceUsage::StorageBuffer,
            "バッファは storage buffer");
@@ -434,8 +434,9 @@ void TestRingReadsBackWithoutWaiting()
     RHI::BufferPtr frame1 = ring.GetCurrentBuffer();
     Expect(frame1 != nullptr, "有効ならバッファを獲得する");
     const uint32_t* frame1Words = static_cast<const uint32_t*>(frame1->Map(0, 0));
-    Expect(frame1Words[0] == 0 && frame1Words[Feedback::HeaderWords + RingCapacity - 1] == 0,
-           "獲得したバッファは前の内容が消えている");
+    Expect(frame1Words[0] == 0 && frame1Words[Feedback::HeaderWords + RingCapacity - 1] == 0 &&
+               frame1Words[Feedback::HeaderWords + RingCapacity + Feedback::HashWords - 1] == 0,
+           "獲得したバッファは前の内容（要求とハッシュの表）が消えている");
     WriteFrame(frame1, 1, Tiles(MakeKey(1, 0, 4, 5)));
     ring.CommitFrame(1);
 

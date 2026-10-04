@@ -379,6 +379,17 @@ set_tests_properties(VirtualTextureResidencyVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 材質のシェーダーと同じ関数で sparse テクスチャを既知の UV の面に描き、タイルの要求（フィードバック）が GPU のバッファへ書かれることを確かめる。
+# 常駐の領域は 4x4 画素のうち巡回する 1 画素だけが書き、非常駐で粗いミップへ逃げた領域は全画素が書くこと、同じタイルの要求が 1 件に減ること、
+# パラメータ 0 では書かないこと、capacity を超えた件数が溢れた件数に残ることを確かめる。
+add_test(NAME VirtualTextureFeedbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VirtualTextureFeedbackVulkanTest)
+set_tests_properties(VirtualTextureFeedbackVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME VideoMemoryBudgetVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetVulkanTest)
 set_tests_properties(VideoMemoryBudgetVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -399,6 +410,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER SparseBindVulkanTest SparseBindVulkanTest.cpp
     MEMBER SparseTileUploadVulkanTest SparseTileUploadVulkanTest.cpp
     MEMBER VirtualTextureResidencyVulkanTest VirtualTextureResidencyVulkanTest.cpp
+    MEMBER VirtualTextureFeedbackVulkanTest VirtualTextureFeedbackVulkanTest.cpp
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)

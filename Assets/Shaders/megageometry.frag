@@ -27,7 +27,7 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 previousView;
     mat4 previousProjection;
     vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV。0なら変位なし）, w=fragDebugPayload がLODの段か（1/0）
-    vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）
+    vec4 materialParams; // x=ORMの1枚が metallicTexture の枠に張られているか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（0 は書かない。VirtualTextureFeedback.glsl）
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -40,6 +40,8 @@ layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SparseResidencySampling.glsl"
+#define VT_FEEDBACK_BINDING 7
+#include "Common/VirtualTextureFeedback.glsl"
 #include "Common/PbrMaterialTextureSampling.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
 #include "Common/PreExposedEmissive.glsl"
@@ -170,6 +172,9 @@ void main()
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
         mvp.materialParams.x > 0.5, mvp.materialParams.y > 0.5, bVirtualTexture);
+    // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（アルベドのテクスチャが VT の表の番号を持つ）
+    WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.materialParams.w),
+                                g_VirtualTextureAlbedoEscaped);
     outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples), textureSamples.Albedo.a);
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）

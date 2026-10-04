@@ -87,6 +87,10 @@ namespace NorvesLib::RHI::Vulkan
         {
             options.AddMacroDefinition("NORVES_SPARSE_RESIDENCY_SHADING", "1");
         }
+        if (m_bVirtualTextureFeedback)
+        {
+            options.AddMacroDefinition("NORVES_VT_FEEDBACK", "1");
+        }
 
         shaderc_shader_kind kind = ToShadercKind(stage);
 

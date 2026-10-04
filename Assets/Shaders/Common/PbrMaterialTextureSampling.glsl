@@ -41,7 +41,19 @@ PbrMaterialTextureSamples SamplePbrMaterialTextures(
                         SampleMaterialTexture(roughnessSampler, texCoord, bVirtualTexture).r,
                         SampleMaterialTexture(aoSampler, texCoord, bVirtualTexture).r);
     }
-    return DecodePbrMaterialTextureSamples(SampleMaterialTexture(albedoSampler, texCoord, bVirtualTexture),
+    // アルベドだけは、非常駐で粗いミップへ逃げたかを g_VirtualTextureAlbedoEscaped へ残す（VT のフィードバックが使う）。
+    vec4 albedo;
+#ifdef NORVES_SPARSE_RESIDENCY_SHADING
+    if (bVirtualTexture)
+    {
+        albedo = SampleSparseResidentTracked(albedoSampler, texCoord, g_VirtualTextureAlbedoEscaped);
+    }
+    else
+#endif
+    {
+        albedo = texture(albedoSampler, texCoord);
+    }
+    return DecodePbrMaterialTextureSamples(albedo,
                                            SampleMaterialTexture(normalSampler, texCoord, bVirtualTexture),
                                            material.x,
                                            material.y,

@@ -435,7 +435,9 @@ namespace NorvesLib::RHI
         GenericRead,
         RayTracingStorage,
         // CPU から写像して読むバッファ（GPU の書き込みの後にホストの読み取りへ見せる。テクスチャには使わない）
-        HostRead
+        HostRead,
+        // フラグメントシェーダーが storage buffer へ書く（VT の要求など。UnorderedAccess はコンピュート段の対応で、フラグメント段を含まない）
+        PixelShaderWrite
     };
 
     /**

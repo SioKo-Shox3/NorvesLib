@@ -26,7 +26,7 @@ layout(set = 0, binding = 0) uniform MVPData
     uint prefilteredSpecularMipLevels;
     float iblIntensity;
     uint bVirtualTexture; // 材質のテクスチャが sparse（VT）か（1/0）
-    uint padding1;
+    uint virtualTextureFeedbackParam; // VT のフィードバックのパラメータ（0 は書かない。VirtualTextureFeedback.glsl）
     uint padding2;
     vec4 cameraForward;
 } mvp;
@@ -63,6 +63,8 @@ layout(location = 0) out vec4 outColor;
 
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/SparseResidencySampling.glsl"
+#define VT_FEEDBACK_BINDING 15
+#include "Common/VirtualTextureFeedback.glsl"
 #include "Common/PbrMaterialTextureSampling.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
 #include "Common/PointShadow.glsl"
@@ -229,6 +231,9 @@ void main()
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
         mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5, bVirtualTexture);
+    // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（アルベドのテクスチャが VT の表の番号を持つ）。
+    // discard より前に呼ぶ（画面微分を使うので、discard の後の非一様な制御フローでは呼べない）。
+    WriteVirtualTextureFeedback(albedoTexture, texCoord, mvp.virtualTextureFeedbackParam, g_VirtualTextureAlbedoEscaped);
     vec4 texColor = textureSamples.Albedo;
     vec3 baseColor = texColor.rgb * fragObjectColor.rgb;
     float alpha = texColor.a * fragObjectColor.a;

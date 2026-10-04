@@ -10,6 +10,10 @@
 // 拡張の宣言（#extension GL_ARB_sparse_texture2）は取り込む側のシェーダーの先頭に書く。
 // VT でない材質は bVirtualTexture を false で呼ぶ（分岐は一様なので画面微分を壊さない）。
 
+// アルベドの標本が非常駐で粗いミップへ逃げたか（SamplePbrMaterialTextures が書く。VT のフィードバックが、
+// 巡回の画素でなくても要求を書くための印。VT でない材質・常駐の照会が使えないデバイスでは常に false）。
+bool g_VirtualTextureAlbedoEscaped = false;
+
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
 
 // ミップを明示して標本する。常駐していなければ、1段ずつ粗いミップへ下げる（最初の読みで常駐していればそのミップ）。
@@ -48,16 +52,25 @@ vec4 SampleSparseResidentGrad(sampler2D tex, vec2 uv, vec2 uvDx, vec2 uvDy, floa
 // 暗黙の勾配（画面微分）で標本する。フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
 // 常駐していなければ、実際に標本したミップ（異方性・バイアス込みの textureQueryLOD）から1段ずつ粗いミップへ下げて読み直す。
 // textureQueryLOD も画面微分を使うので、分岐の外（一様な位置）で先に求める。
-vec4 SampleSparseResident(sampler2D tex, vec2 uv)
+// bEscaped には、常駐していなくて粗いミップへ逃げたかを返す。
+vec4 SampleSparseResidentTracked(sampler2D tex, vec2 uv, out bool bEscaped)
 {
     float sampledLod = textureQueryLOD(tex, uv).y;
     vec4 color = vec4(0.0);
     int code = sparseTextureARB(tex, uv, color);
     if (sparseTexelsResidentARB(code))
     {
+        bEscaped = false;
         return color;
     }
+    bEscaped = true;
     return SampleSparseResidentLod(tex, uv, floor(max(sampledLod, 0.0)));
+}
+
+vec4 SampleSparseResident(sampler2D tex, vec2 uv)
+{
+    bool bEscaped;
+    return SampleSparseResidentTracked(tex, uv, bEscaped);
 }
 
 #endif

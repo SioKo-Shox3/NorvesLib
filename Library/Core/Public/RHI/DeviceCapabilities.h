@@ -280,8 +280,23 @@ namespace NorvesLib::RHI
         /** @brief BC1/BC4/BC5/BC7 のブロック圧縮テクスチャ（textureCompressionBC）が論理デバイスで有効か */
         bool bTextureCompressionBC = false;
 
+        /** @brief フラグメントシェーダーから storage buffer へ書く・アトミック操作をする（fragmentStoresAndAtomics）が論理デバイスで有効か */
+        bool bFragmentStoresAndAtomics = false;
+
         /** @brief sparse（部分常駐）テクスチャの機能と形式ごとの標準ブロック形状 */
         SparseCapabilities Sparse;
+
+        /**
+         * @brief 材質のシェーダーが VT のタイルの要求（フィードバック）を書けるか
+         *
+         * VT は sparse の常駐の照会（shaderResourceResidency）を前提にし、要求の書き込みは
+         * フラグメントシェーダーの storage buffer への書き込みとアトミック操作が要る。
+         * false のデバイスでは材質のシェーダーにフィードバックのコードも binding も入らない（材質は従来どおり描ける）。
+         */
+        bool SupportsVirtualTextureFeedback() const
+        {
+            return bFragmentStoresAndAtomics && Sparse.bShaderResourceResidency;
+        }
     };
 
 } // namespace NorvesLib::RHI

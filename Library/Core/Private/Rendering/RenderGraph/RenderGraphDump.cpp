@@ -96,6 +96,8 @@ namespace NorvesLib::Core::Rendering
                 return "Present";
             case RHI::ResourceState::HostRead:
                 return "HostRead";
+            case RHI::ResourceState::PixelShaderWrite:
+                return "PixelShaderWrite";
             default:
                 return "Unknown";
             }

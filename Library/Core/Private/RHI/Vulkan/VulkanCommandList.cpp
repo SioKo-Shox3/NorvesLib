@@ -122,6 +122,8 @@ namespace NorvesLib::RHI::Vulkan
             return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
         case ResourceState::RayTracingStorage:
             return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+        case ResourceState::PixelShaderWrite:
+            return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
         case ResourceState::IndirectArgument:
             return vk::AccessFlagBits::eIndirectCommandRead;
         case ResourceState::CopySource:
@@ -168,6 +170,8 @@ namespace NorvesLib::RHI::Vulkan
         }
         case ResourceState::UnorderedAccess:
             return vk::PipelineStageFlagBits::eComputeShader;
+        case ResourceState::PixelShaderWrite:
+            return vk::PipelineStageFlagBits::eFragmentShader;
         case ResourceState::RayTracingStorage:
             return bRayTracingPipelineEnabled
                        ? vk::PipelineStageFlagBits::eRayTracingShaderKHR

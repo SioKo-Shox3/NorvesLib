@@ -187,9 +187,49 @@ namespace NorvesLib::Core::Rendering
             {
                 return false;
             }
-            commandList.BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::HostRead);
+            // 書くのは材質のフラグメントシェーダー。UnorderedAccess はコンピュート段の対応なので、フラグメント段の書き込みを src にする
+            commandList.BufferBarrier(buffer, RHI::ResourceState::PixelShaderWrite, RHI::ResourceState::HostRead);
             return true;
         }
+
+        /** @brief 今のフレームの番号（BeginFrame ごとに 1 進む。材質のパラメータの巡回の位相に使う） */
+        uint64_t GetFrameCounter() const
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            return m_FrameCounter;
+        }
+
+        /**
+         * @brief 要求を書かないときに材質のシェーダーへ束ねる、小さな代替のバッファ
+         *
+         * 材質のシェーダーは要求のバッファの binding を常に使う（NORVES_VT_FEEDBACK のとき）ので、今のフレームのバッファが
+         * 無い（無効・空きなし）フレームや、VT でない材質の descriptor には、これを束ねる。パラメータが 0 の材質は書かない。
+         * 初回の呼び出しで作る（RenderThread）。作れなかったときは null。
+         */
+        RHI::BufferPtr GetIdleBuffer()
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            if (!m_IdleBuffer && m_Device)
+            {
+                try
+                {
+                    m_IdleBuffer = m_Device->CreateBuffer(
+                        RHI::BufferDesc(IdleBufferBytes, RHI::ResourceUsage::StorageBuffer, false, "VirtualTextureFeedbackIdle"));
+                }
+                catch (const std::exception &exception)
+                {
+                    LOG_ERROR("VirtualTextureFeedbackRing: 代替のバッファの作成が例外で失敗した: %s", exception.what());
+                    m_IdleBuffer.reset();
+                }
+            }
+            return m_IdleBuffer;
+        }
+
+        /** @brief 要求のバッファ 1 枚の大きさ（バイト） */
+        uint64_t GetBufferBytes() const { return VirtualTextureFeedback::GetBufferBytes(m_Config.Capacity); }
+
+        /** @brief GetIdleBuffer が返すバッファの大きさ（バイト） */
+        static constexpr uint64_t IdleBufferBytes = 64;
 
         /** @brief フレームを serial で提出した。獲得していたスロットは、その serial の完了後に読み戻す */
         void CommitFrame(uint64_t submissionSerial)
@@ -256,6 +296,7 @@ namespace NorvesLib::Core::Rendering
             m_CurrentSlot = InvalidSlot;
             m_CompletedSerial = 0;
             m_bEnabled = false;
+            m_IdleBuffer.reset();
         }
 
     private:
@@ -358,6 +399,7 @@ namespace NorvesLib::Core::Rendering
         Config m_Config;
         mutable Thread::Mutex m_Mutex;
         Slot m_Slots[SlotCount];
+        RHI::BufferPtr m_IdleBuffer;
         uint32_t m_CurrentSlot = InvalidSlot;
         bool m_bEnabled = false;
         uint64_t m_FrameCounter = 0;

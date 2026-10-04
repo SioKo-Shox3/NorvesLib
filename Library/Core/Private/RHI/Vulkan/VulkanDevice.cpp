@@ -1090,6 +1090,9 @@ namespace NorvesLib::RHI::Vulkan
         // BC圧縮テクスチャは、対応しているデバイスだけで有効にする。
         features2.features.textureCompressionBC =
             physicalFeatures.textureCompressionBC == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // VT の要求（フィードバック）は材質のフラグメントシェーダーが storage buffer へ書く。対応しているデバイスだけで有効にする。
+        features2.features.fragmentStoresAndAtomics =
+            physicalFeatures.fragmentStoresAndAtomics == VK_TRUE ? VK_TRUE : VK_FALSE;
         // 点光源のキューブシャドウはキューブ配列（samplerCubeArray）で読む。
         features2.features.imageCubeArray =
             physicalFeatures.imageCubeArray == VK_TRUE ? VK_TRUE : VK_FALSE;
@@ -2665,6 +2668,9 @@ namespace NorvesLib::RHI::Vulkan
         auto compiler = MakeShared<VulkanShaderCompiler>();
         // sparse の常駐を問い合わせる材質シェーダーは、デバイスが shaderResourceResidency を有効にしたときだけ使う。
         compiler->SetSparseResidencyShadingEnabled(m_enabledDeviceFeatures.shaderResourceResidency == VK_TRUE);
+        // VT の要求を書く材質シェーダーは、常駐の照会に加えて、フラグメントシェーダーの storage buffer への書き込みが有効なときだけ使う。
+        compiler->SetVirtualTextureFeedbackEnabled(m_enabledDeviceFeatures.shaderResourceResidency == VK_TRUE &&
+                                                   m_enabledDeviceFeatures.fragmentStoresAndAtomics == VK_TRUE);
         return StaticPointerCast<IShaderCompiler>(compiler);
     }
 
@@ -2768,6 +2774,8 @@ namespace NorvesLib::RHI::Vulkan
                 (m_enabledDeviceFeatures.drawIndirectFirstInstance == VK_TRUE);
             m_Capabilities.bTextureCompressionBC =
                 (m_enabledDeviceFeatures.textureCompressionBC == VK_TRUE);
+            m_Capabilities.bFragmentStoresAndAtomics =
+                (m_enabledDeviceFeatures.fragmentStoresAndAtomics == VK_TRUE);
 
             // sparse は論理デバイスで有効にできたものだけを載せる（結び付け用のキューが無ければ全て無効）
             const bool bSparseEnabled =

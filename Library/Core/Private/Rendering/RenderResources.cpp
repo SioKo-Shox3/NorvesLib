@@ -527,6 +527,8 @@ namespace NorvesLib::Core::Rendering
             Thread::ScopedLock lock(impl->VtMutex);
             impl->VtIndexByTexture[handle.Id] = index;
         }
+        // 材質のシェーダーが要求を書けるデバイスなら、最初の VT でフィードバックのバッファを確保して有効にする
+        EnableVirtualTextureFeedback();
         if (pOutVirtualTextureIndex != nullptr)
         {
             *pOutVirtualTextureIndex = index;
@@ -549,6 +551,37 @@ namespace NorvesLib::Core::Rendering
         }
         outIndex = it->second;
         return true;
+    }
+
+    bool TextureResources::EnableVirtualTextureFeedback()
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (!impl || !impl->VtFeedback || !impl->Device || !impl->Device->GetCapabilities().SupportsVirtualTextureFeedback())
+        {
+            return false;
+        }
+        return impl->VtFeedback->SetEnabled(true);
+    }
+
+    TextureResources::VirtualTextureFeedbackTarget TextureResources::GetVirtualTextureFeedbackTarget() const
+    {
+        VirtualTextureFeedbackTarget target;
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (!impl || !impl->VtFeedback || !impl->Device || !impl->Device->GetCapabilities().SupportsVirtualTextureFeedback())
+        {
+            return target;
+        }
+        target.Buffer = impl->VtFeedback->GetCurrentBuffer();
+        if (target.Buffer)
+        {
+            target.bWriting = true;
+            target.Bytes = impl->VtFeedback->GetBufferBytes();
+            target.Frame = impl->VtFeedback->GetFrameCounter();
+            return target;
+        }
+        target.Buffer = impl->VtFeedback->GetIdleBuffer();
+        target.Bytes = VirtualTextureFeedbackRing::IdleBufferBytes;
+        return target;
     }
 
     bool TextureResources::IsVirtualTextureReady(TextureHandle handle) const

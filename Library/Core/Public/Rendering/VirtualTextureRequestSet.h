@@ -6,6 +6,7 @@
 //   [0]   書き込もうとした件数（atomicAdd の結果。capacity を超えた分も数える）
 //   [1-3] 予約（0）
 //   [4..] 要求 1 件 = 32bit 1 語（Pack の並び）
+//   [4 + capacity ..] 重複を減らす小さなハッシュの表（HashWords 語。シェーダーだけが使う。読み戻しは見ない）
 // 要求の語は、テクスチャの番号に +1 して詰めるので、0 は「書かれていない」を表す。
 // 時刻もデバイスも持たない計算だけの型なので、GPU を使わずにテストできる。
 
@@ -37,6 +38,10 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DefaultCapacity = 65536;
         /** @brief 要求の前にあるヘッダの語数 */
         constexpr uint32_t HeaderWords = 4;
+        /** @brief 要求の後ろに続く、重複を減らすハッシュの表の語数（2 の冪。シェーダーの VT_FEEDBACK_HASH_WORDS と同じ） */
+        constexpr uint32_t HashWords = 4096;
+        /** @brief ハッシュの表で、衝突したときに次の語へ進んで探す回数の上限（超えたら重複を許して書く） */
+        constexpr uint32_t HashProbeLimit = 8;
 
         // 語の並び（上位から）: テクスチャの番号 + 1（12bit）・ミップ（4bit）・y（8bit）・x（8bit）
         constexpr uint32_t TextureBits = 12;
@@ -47,10 +52,10 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t MaxMip = (1u << MipBits) - 1u;
         constexpr uint32_t MaxTileCoord = (1u << TileBits) - 1u;
 
-        /** @brief 要求のバッファ全体の大きさ（バイト） */
+        /** @brief 要求のバッファ全体の大きさ（バイト。ヘッダ + 要求 + ハッシュの表） */
         constexpr uint64_t GetBufferBytes(uint32_t capacity)
         {
-            return (static_cast<uint64_t>(HeaderWords) + capacity) * sizeof(uint32_t);
+            return (static_cast<uint64_t>(HeaderWords) + capacity + HashWords) * sizeof(uint32_t);
         }
 
         /** @brief 印が 1 語に収まるか（テクスチャの番号・ミップ・x・y の範囲） */
@@ -84,6 +89,50 @@ namespace NorvesLib::Core::Rendering
             outKey.Y = (word >> TileBits) & MaxTileCoord;
             outKey.X = word & MaxTileCoord;
             return true;
+        }
+
+        // ---- 材質の UBO がシェーダーへ渡すパラメータ（float の1要素に収めるので 24bit。0 は「要求を書かない」） ----
+        // 下位から: タイル幅の log2（4bit）・タイル高さの log2（4bit）・フレームの巡回位相（4bit）・テクスチャの番号 + 1（12bit）。
+        // シェーダーの Common/VirtualTextureFeedback.glsl が同じ並びで読む。
+        constexpr uint32_t ParamLog2Bits = 4;
+        constexpr uint32_t ParamPhaseBits = 4;
+        constexpr uint32_t ParamPhaseShift = 2u * ParamLog2Bits;
+        constexpr uint32_t ParamTextureShift = ParamPhaseShift + ParamPhaseBits;
+        /** @brief 4×4 の画素のうち、フレームごとに巡回する位相の数 */
+        constexpr uint32_t PhaseCount = 16;
+
+        /** @brief 2 の冪の値の log2。2 の冪でない・0・範囲外は 0xFFFFFFFF */
+        constexpr uint32_t Log2OfPowerOfTwo(uint32_t value)
+        {
+            if (value == 0 || (value & (value - 1u)) != 0)
+            {
+                return 0xFFFFFFFFu;
+            }
+            uint32_t log2 = 0;
+            while ((value >> log2) > 1u)
+            {
+                ++log2;
+            }
+            return log2;
+        }
+
+        /**
+         * @brief 材質の UBO のパラメータを詰める
+         * @param textureIndex VT の表の添字
+         * @param tileWidth・tileHeight 形式の標準ブロック形状（texel。2 の冪）
+         * @param frame フレームの番号（下位 4bit が巡回の位相になる）
+         * @return 詰めた値（24bit。float に正確に載る）。収まらないとき（テクスチャの番号・タイルの大きさ）は 0
+         */
+        constexpr uint32_t PackMaterialParam(uint32_t textureIndex, uint32_t tileWidth, uint32_t tileHeight, uint64_t frame)
+        {
+            const uint32_t log2Width = Log2OfPowerOfTwo(tileWidth);
+            const uint32_t log2Height = Log2OfPowerOfTwo(tileHeight);
+            if (textureIndex > MaxTextureIndex || log2Width >= (1u << ParamLog2Bits) || log2Height >= (1u << ParamLog2Bits))
+            {
+                return 0;
+            }
+            return ((textureIndex + 1u) << ParamTextureShift) | (static_cast<uint32_t>(frame % PhaseCount) << ParamPhaseShift) |
+                   (log2Height << ParamLog2Bits) | log2Width;
         }
     } // namespace VirtualTextureFeedback
 

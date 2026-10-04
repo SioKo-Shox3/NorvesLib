@@ -13,6 +13,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SparseResidencyShading.h"
+#include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDescriptorSet.h"
@@ -30,6 +31,9 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        // VT の要求のバッファの binding（forward_transparent.frag の VT_FEEDBACK_BINDING と同じ。点光源のキューブシャドウ 14 の次）
+        constexpr uint32_t VirtualTextureFeedbackBindingIndex = 15;
+
         struct alignas(16) TransparentForwardUBO
         {
             float view[16];
@@ -48,7 +52,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t prefilteredSpecularMipLevels;
             float iblIntensity;
             uint32_t bVirtualTexture; // 材質のテクスチャが sparse（VT）か（1/0）
-            uint32_t padding1;
+            uint32_t virtualTextureFeedbackParam; // VT のフィードバックのパラメータ（0 は書かない）
             uint32_t padding2;
             alignas(16) float cameraForward[4];
         };
@@ -70,7 +74,7 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(TransparentForwardUBO, prefilteredSpecularMipLevels) == 752);
         static_assert(offsetof(TransparentForwardUBO, iblIntensity) == 756);
         static_assert(offsetof(TransparentForwardUBO, bVirtualTexture) == 760);
-        static_assert(offsetof(TransparentForwardUBO, padding1) == 764);
+        static_assert(offsetof(TransparentForwardUBO, virtualTextureFeedbackParam) == 764);
         static_assert(offsetof(TransparentForwardUBO, padding2) == 768);
         static_assert(offsetof(TransparentForwardUBO, cameraForward) == 784);
         static_assert(sizeof(TransparentForwardUBO) == 800);
@@ -241,6 +245,12 @@ namespace NorvesLib::Core::Rendering
                 lightingTextureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
                 lightingTextureBinding.stages = RHI::ShaderStage::Pixel;
                 descriptorSetDesc.bindings.push_back(lightingTextureBinding);
+            }
+
+            // VT の要求のバッファ（対応するデバイスだけ。forward_transparent.frag の VT_FEEDBACK_BINDING）
+            if (UsesVirtualTextureFeedbackBinding(m_Device))
+            {
+                AddVirtualTextureFeedbackBinding(descriptorSetDesc, VirtualTextureFeedbackBindingIndex);
             }
 
             constexpr uint32_t UBO_SIZE = sizeof(TransparentForwardUBO);
@@ -838,6 +848,10 @@ namespace NorvesLib::Core::Rendering
             lightingTextureBinding.stages = RHI::ShaderStage::Pixel;
             descriptorSetDesc.bindings.push_back(lightingTextureBinding);
         }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(descriptorSetDesc, VirtualTextureFeedbackBindingIndex);
+        }
 
         pipelineDesc.descriptorSetLayouts.push_back(descriptorSetDesc);
 
@@ -1185,6 +1199,10 @@ namespace NorvesLib::Core::Rendering
         m_UniformAllocator.Reset();
         m_WorldBoardUniformAllocator.Reset();
 
+        // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）
+        const TextureResources::VirtualTextureFeedbackTarget feedbackTarget =
+            textures ? textures->GetVirtualTextureFeedbackTarget() : TextureResources::VirtualTextureFeedbackTarget{};
+
         WorldBoardForwardUBO worldBoardFrameUBO{};
         std::memcpy(worldBoardFrameUBO.view, viewData, sizeof(viewData));
         std::memcpy(worldBoardFrameUBO.projection, projectionData, sizeof(projectionData));
@@ -1343,6 +1361,9 @@ namespace NorvesLib::Core::Rendering
             uboData.bVirtualTexture =
                 AnySparseTexture(albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture,
                                  heightTexture) ? 1u : 0u;
+            // アルベドが VT のとき、シェーダーがこのフレームの要求を書く
+            uboData.virtualTextureFeedbackParam =
+                ResolveVirtualTextureFeedbackParam(textures, matAlbedo, albedoTexture.get(), feedbackTarget);
             allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
 
             allocation.DescriptorSet->BindTexture(1, albedoTexture);
@@ -1395,6 +1416,7 @@ namespace NorvesLib::Core::Rendering
                 14,
                 bPointShadowCubesPublished ? physicalLighting.PointShadowCubeSampler
                                            : m_DefaultLinearSampler);
+            BindVirtualTextureFeedback(*allocation.DescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
             allocation.DescriptorSet->Update();
 
             DrawCommand drawCommand = cmd;

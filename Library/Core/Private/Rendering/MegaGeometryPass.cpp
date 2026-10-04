@@ -1,6 +1,7 @@
 ﻿#include "Rendering/MegaGeometryPass.h"
 #include "Rendering/FrameCommand.h"
 #include "Rendering/SparseResidencyShading.h"
+#include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
@@ -33,6 +34,12 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        // VT の要求のバッファの binding（megageometry.frag の VT_FEEDBACK_BINDING と同じ。材質のテクスチャ 1-6 の次）
+        constexpr uint32_t VirtualTextureFeedbackBindingIndex = 7;
+    } // namespace
+
     using namespace Container;
 
     namespace
@@ -997,7 +1004,7 @@ namespace NorvesLib::Core::Rendering
                 float PreviousView[16];
                 float PreviousProjection[16];
                 float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
-                float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）
+                float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（0 は書かない）
             };
             static_assert(sizeof(PerObjectUBO) <= 512u);
 
@@ -1059,6 +1066,13 @@ namespace NorvesLib::Core::Rendering
 
             // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
             perObject.MaterialParams[2] = AnySparseTexture(albedo, normal, metallic, roughness, ao, height) ? 1.0f : 0.0f;
+            // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）。
+            // アルベドが VT のとき、シェーダーがこのフレームの要求を書く（24bit 以下の整数は float に正確に載る）
+            const TextureResources::VirtualTextureFeedbackTarget feedbackTarget =
+                command.Textures ? command.Textures->GetVirtualTextureFeedbackTarget()
+                                 : TextureResources::VirtualTextureFeedbackTarget{};
+            perObject.MaterialParams[3] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.AlbedoTexture, albedo.get(), feedbackTarget));
 
             drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
 
@@ -1079,6 +1093,7 @@ namespace NorvesLib::Core::Rendering
             drawDescriptorSet->BindSampler(5, m_DefaultLinearSampler);
             drawDescriptorSet->BindTexture(6, height);
             drawDescriptorSet->BindSampler(6, m_DefaultLinearSampler);
+            BindVirtualTextureFeedback(*drawDescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
 
             drawDescriptorSet->Update();
             DrawableInstance drawableInstance;
@@ -1549,6 +1564,10 @@ namespace NorvesLib::Core::Rendering
             texBinding.stages = RHI::ShaderStage::Pixel;
             dsDesc.bindings.push_back(texBinding);
         }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(dsDesc, VirtualTextureFeedbackBindingIndex);
+        }
 
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
@@ -1665,6 +1684,10 @@ namespace NorvesLib::Core::Rendering
             texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             texBinding.stages = RHI::ShaderStage::Pixel;
             drawDsDesc.bindings.push_back(texBinding);
+        }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(drawDsDesc, VirtualTextureFeedbackBindingIndex);
         }
 
         while (m_CullUniformBuffers.size() < requiredCount)

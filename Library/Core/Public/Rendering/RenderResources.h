@@ -139,6 +139,22 @@ namespace NorvesLib::Core::Rendering
         // VT の表の添字を取る。VT でないハンドルは false
         bool TryGetVirtualTextureIndex(TextureHandle handle, uint32_t &outIndex) const;
 
+        // 材質のシェーダーが VT の要求（フィードバック）を書く先。このフレームの descriptor に束ねる（RenderThread）。
+        struct VirtualTextureFeedbackTarget
+        {
+            // 束ねるバッファ。デバイスがフィードバックに対応していれば常に有効（今のフレームのバッファが無いときは、書かれない
+            // 小さな代替）。対応しないデバイス（材質のシェーダーに binding が入らない）では null
+            Container::TSharedPtr<RHI::IBuffer> Buffer;
+            uint64_t Bytes = 0;
+            // このフレームの要求のバッファを獲得できている（材質が要求を書いてよい）か
+            bool bWriting = false;
+            // 材質のパラメータの巡回の位相を決めるフレームの番号
+            uint64_t Frame = 0;
+        };
+        VirtualTextureFeedbackTarget GetVirtualTextureFeedbackTarget() const;
+        // 対応するデバイスなら、要求のバッファのリングを有効にする（最初の VT の作成で呼ばれる。何度呼んでもよい）。有効にできたら true
+        bool EnableVirtualTextureFeedback();
+
     private:
         friend class RenderResources;
 

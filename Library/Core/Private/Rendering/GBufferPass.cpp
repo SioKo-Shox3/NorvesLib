@@ -10,6 +10,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SparseResidencyShading.h"
+#include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Debug/DebugConfig.h"
 #include "RHI/IDevice.h"
@@ -27,6 +28,11 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        // VT の要求のバッファの binding（gbuffer.frag の VT_FEEDBACK_BINDING と同じ。スキニングの binding 8-10 の次）
+        constexpr uint32_t VirtualTextureFeedbackBindingIndex = 11;
+    } // namespace
 
     GBufferPass::GBufferPass(const GBufferPassSettings& settings)
         : m_Settings(settings)
@@ -134,6 +140,12 @@ namespace NorvesLib::Core::Rendering
             previousPaletteBinding.type = RHI::ResourceBindType::StructuredBuffer;
             previousPaletteBinding.stages = RHI::ShaderStage::Vertex;
             uboDescSetDesc.bindings.push_back(previousPaletteBinding);
+
+            // VT の要求のバッファ（対応するデバイスだけ。gbuffer.frag の VT_FEEDBACK_BINDING）
+            if (UsesVirtualTextureFeedbackBinding(m_Device))
+            {
+                AddVirtualTextureFeedbackBinding(uboDescSetDesc, VirtualTextureFeedbackBindingIndex);
+            }
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
             {
@@ -534,7 +546,7 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float emissiveChromaticityAndLuminanceNits[4];
             float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=ORMの1枚を metallic の枠に張ったか(0 or 1), w=法線が2チャンネルか(0 or 1)
-            float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）
+            float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（0 は書かない）
         };
 
         // ビュー・プロジェクション行列を事前変換
@@ -561,6 +573,9 @@ namespace NorvesLib::Core::Rendering
         frameTemplate.frameParams[1] = ResolveSceneColorPreExposure(activeCamera);
 
         auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
+
+        // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）
+        const TextureResources::VirtualTextureFeedbackTarget feedbackTarget = textures->GetVirtualTextureFeedbackTarget();
 
         // Execute-local by design: descriptors contain view/frame constants, and allocator slot lifetime
         // assumes this GBufferPass instance is executed once per frame.
@@ -679,6 +694,9 @@ namespace NorvesLib::Core::Rendering
             // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
             uboData.frameParams[2] =
                 AnySparseTexture(albedoTex, normalTex, metallicTex, roughnessTex, aoTex, heightTex) ? 1.0f : 0.0f;
+            // アルベドが VT のとき、シェーダーがこのフレームの要求を書く（24bit 以下の整数は float に正確に載る）
+            uboData.frameParams[3] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matAlbedo, albedoTex.get(), feedbackTarget));
             allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
 
             allocation.DescriptorSet->BindTexture(1, albedoTex);
@@ -719,6 +737,7 @@ namespace NorvesLib::Core::Rendering
             {
                 return nullptr;
             }
+            BindVirtualTextureFeedback(*allocation.DescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
             allocation.DescriptorSet->Update();
 
             return allocation.DescriptorSet;
@@ -1440,6 +1459,10 @@ namespace NorvesLib::Core::Rendering
             storageBinding.stages = RHI::ShaderStage::Vertex;
             dsDesc.bindings.push_back(storageBinding);
         }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(dsDesc, VirtualTextureFeedbackBindingIndex);
+        }
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         outPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
@@ -1536,6 +1559,10 @@ namespace NorvesLib::Core::Rendering
             storageBinding.type = RHI::ResourceBindType::StructuredBuffer;
             storageBinding.stages = RHI::ShaderStage::Vertex;
             descriptorSet.bindings.push_back(storageBinding);
+        }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(descriptorSet, VirtualTextureFeedbackBindingIndex);
         }
         pipelineDesc.descriptorSetLayouts.push_back(descriptorSet);
 
