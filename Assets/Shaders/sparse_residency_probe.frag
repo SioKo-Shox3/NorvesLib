@@ -13,6 +13,8 @@
 //   1: 結んでいない領域・勾配 (4, 1) テクセル（異方性 4 倍のときの標本ミップは 0）
 //   2: 結んでいない領域・勾配 4 テクセル（等方。標本ミップ 2 はミップテイルの中）
 //   3: 結んだタイル・勾配 1 テクセル（逃げない）
+//   4: 結んだタイル・勾配 (8, 1) テクセル（異方性の上限 4 倍を超える）を、POM と同じ形（textureQueryLOD で実際の標本ミップを
+//      先に取り、明示勾配の関数へ渡す）で引く。標本ミップは 1（ミップ0へ戻ってはならない）
 // 結果は quad の画素 (quad * 2, 0) の色を読む。
 // ========================================
 
@@ -48,8 +50,19 @@ void main()
     {
         baseUv = RESIDENT_UV;
     }
+    else if (probe == 4)
+    {
+        baseUv = RESIDENT_UV;
+        uvStep = vec2(8.0 * TEXEL, TEXEL);
+    }
 
     // quad の中の勾配は uvStep になる。標本は分岐の外で行う（画面微分を壊さない）。
     vec2 uv = baseUv + local * uvStep;
+    if (probe == 4)
+    {
+        float sampledLod = textureQueryLOD(u_Texture, uv).y;
+        outColor = SampleMaterialTextureGrad(u_Texture, uv, dFdx(uv), dFdy(uv), sampledLod, true);
+        return;
+    }
     outColor = SampleMaterialTexture(u_Texture, uv, true);
 }

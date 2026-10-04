@@ -56,6 +56,7 @@ vec3 NormalizeTangentAxis(vec3 axis)
  * 接空間のビュー方向は正規化した T・B への射影と N·V から作る。
  * マーチ中のサンプルは、分岐の前に取った元のUVの勾配で textureGrad を使う。
  * bVirtualTexture のとき（高さが sparse）は、常駐していないタイルを読まず粗いミップへ逃げる。
+ * 逃げ始めのミップは、分岐・ループの前に元のUVの textureQueryLOD で取った実際の標本ミップ（異方性の上限を含む）にする。
  *
  * @param tangentFrame CalculateCotangentFrame で元のUVから作った基底
  * @param viewDirWS    表面からカメラへ向かうワールド方向
@@ -70,6 +71,8 @@ vec2 ApplyParallaxOcclusionMapping(sampler2D heightSampler,
 {
     vec2 uvDx = dFdx(texCoord);
     vec2 uvDy = dFdy(texCoord);
+    // textureQueryLOD も画面微分を使うので、早期 return やループより前の一様な位置で取る（bVirtualTexture は一様）。
+    float sampledLod = bVirtualTexture ? textureQueryLOD(heightSampler, texCoord).y : 0.0;
 
     vec3 V = normalize(viewDirWS);
     float nDotV = clamp(dot(tangentFrame[2], V), 0.0, 1.0);
@@ -96,18 +99,18 @@ vec2 ApplyParallaxOcclusionMapping(sampler2D heightSampler,
 
     vec2 currentTexCoords = texCoord;
     float currentLayerDepth = 0.0;
-    float currentDepth = 1.0 - SampleMaterialTextureGrad(heightSampler, currentTexCoords, uvDx, uvDy, bVirtualTexture).r;
+    float currentDepth = 1.0 - SampleMaterialTextureGrad(heightSampler, currentTexCoords, uvDx, uvDy, sampledLod, bVirtualTexture).r;
     for (int layer = 0; layer <= int(kMaxLayers) && currentLayerDepth < currentDepth; ++layer)
     {
         currentTexCoords -= deltaTexCoords;
-        currentDepth = 1.0 - SampleMaterialTextureGrad(heightSampler, currentTexCoords, uvDx, uvDy, bVirtualTexture).r;
+        currentDepth = 1.0 - SampleMaterialTextureGrad(heightSampler, currentTexCoords, uvDx, uvDy, sampledLod, bVirtualTexture).r;
         currentLayerDepth += layerDepth;
     }
 
     // 交差の前後2サンプルの間を線形補間する。
     vec2 previousTexCoords = currentTexCoords + deltaTexCoords;
     float afterDepth = currentDepth - currentLayerDepth;
-    float beforeDepth = (1.0 - SampleMaterialTextureGrad(heightSampler, previousTexCoords, uvDx, uvDy, bVirtualTexture).r) -
+    float beforeDepth = (1.0 - SampleMaterialTextureGrad(heightSampler, previousTexCoords, uvDx, uvDy, sampledLod, bVirtualTexture).r) -
                         (currentLayerDepth - layerDepth);
     float denominator = afterDepth - beforeDepth;
     float weight = abs(denominator) > 1.0e-6 ? clamp(afterDepth / denominator, 0.0, 1.0) : 0.0;

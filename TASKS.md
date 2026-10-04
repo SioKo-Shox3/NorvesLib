@@ -189,7 +189,7 @@
 - notes: 危険地帯（アセットロード）。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残りを直す。`Test/Core/Asset/CookedTextureTest.cpp` に足した範囲読みのテストの2か所（`BuildTexture` の戻り値を受ける変数）を独自型の `ByteArray` で受ける（既存の補助関数は変えない）。この項目で足した・変えた利用者向けのエラーの説明（評価が挙げた `AssetFileReader.cpp`・`CookedTextureLoader.cpp`・`TextureCooker.cpp` の行）を日本語にする（エラーコード・ログのキーは英語のまま）。
 
 ## VTG2-BUDGET-MANAGER: VRAMの予算をプールへ割り振る
-- status: doing
+- status: blocked
 - done-when: `VideoMemoryBudgetManager`（RenderResources が持つ。シングルトン禁止）が、上限 = min(heapBudget, `--vram-budget-mb`) − VT 以外の使用量（ヒープの情報があれば heapUsage からプールの確保量を引いた値、無ければ上限の30%の見込み）を約1秒ごとに計算し、VT のプール（`SparsePagePool`）の目標の大きさを決める（後の段のジオメトリ・VSM のプールの枠も持つ）。変化したときだけ `VRAM_POOLS cap_mb=<n> non_pool_mb=<n> vt_target_mb=<n>` を出す。CPU のテスト `VideoMemoryBudgetManagerTest`（`RenderResourcesDomainContractTest` の束）が、上限・予算外の使用量・上限の引数の組み合わせで目標の大きさが期待どおりで、負にならないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VideoMemoryBudgetManagerTest|TextureMemoryLedgerTest)$"`
@@ -198,7 +198,7 @@
 - notes: 計画書 4.1。 2026-10-04 親（run `20261004-164924` の保留を解く）: `blocked/VTG2-BUDGET-MANAGER.md` の選択肢Bを採る（台帳の作り直しはしない）。`VK_EXT_memory_budget` は主要な GPU で使えるので、ヒープの情報があるときは `non_pool = heapUsage − SparsePagePool が確保している全ページの量`（結んだ量・貸した量ではなく、プールの塊として確保した量）で決める。ヒープの情報が無いときは、上限（`--vram-budget-mb`、無ければ DeviceLocal のヒープの大きさ）の30%を VT 以外へ見込む保守的な近似にし、`VRAM_POOLS` に `source=estimate` を出す。台帳（`VRAM_LEDGER`）が解放待ちの資源と、パスが直接作るテクスチャを数えない点は既知の限界として段2の受入れに書く。
 
 ## VTG2-RESIDENCY-FALLBACK: 常駐していないタイルを読まず、粗いミップへ逃げる
-- status: todo
+- status: done
 - done-when: VT のテクスチャ（材質の Albedo・Normal・ORM・Height の枠）のサンプルを、`GL_ARB_sparse_texture2` の `sparseTextureARB` で行い、常駐していない（residency の符号が非常駐）ときは `sparseTextureLodARB` で1段ずつ粗いミップへ下げて読み直す（ミップテイルは常に常駐なので必ず終わる）。POM の高さのサンプルも同じ。`gbuffer.frag`・`megageometry.frag`・`forward_transparent.frag` が共通の関数（`Common/` の GLSL）を使い、材質が VT でないときは従来の `texture()` のまま（golden 不変）。GPU のテスト `VirtualTextureResidencyVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、ミップテイルと一部のタイルだけを結んだテクスチャで、結んでいない領域が粗いミップの色になり、黒や未定義の値にならないことを確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderingGoldenImageTest MaterialResourcesTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureResidencyVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|MaterialResourcesTest|GBufferMaterialDescriptorCacheTest)$"`

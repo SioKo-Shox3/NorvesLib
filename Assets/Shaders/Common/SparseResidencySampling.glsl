@@ -30,10 +30,11 @@ vec4 SampleSparseResidentLod(sampler2D tex, vec2 uv, float lod)
     return color;
 }
 
-// 画面微分（勾配）を明示して標本する。常駐していなければ、勾配から求めたミップから1段ずつ粗いミップへ下げて読み直す。
-// 異方性の最大倍率はシェーダーから分からないので、開始ミップは「異方性が最大のときの標本ミップ」
-// （長軸 / ceil(長軸 / 短軸) の大きさから求める、実際の標本ミップ以下の値）にして、常駐している中間のミップを飛ばさない。
-vec4 SampleSparseResidentGrad(sampler2D tex, vec2 uv, vec2 uvDx, vec2 uvDy)
+// 画面微分（勾配）を明示して標本する。常駐していなければ、sampledLod（実際の標本ミップ）から1段ずつ粗いミップへ下げて読み直す。
+// 実際の標本ミップは、サンプラーの異方性の上限・バイアス・クランプを含むのでシェーダーでは求め切れない。
+// 呼び出し側が、同じ勾配を持つ UV の textureQueryLOD(tex, uv).y を、画面微分の使える一様な位置で先に取って渡す
+// （コンピュートなど画面微分が無い場所では、実際の標本ミップが分かる値を渡す）。
+vec4 SampleSparseResidentGrad(sampler2D tex, vec2 uv, vec2 uvDx, vec2 uvDy, float sampledLod)
 {
     vec4 color = vec4(0.0);
     int code = sparseTextureGradARB(tex, uv, uvDx, uvDy, color);
@@ -41,14 +42,7 @@ vec4 SampleSparseResidentGrad(sampler2D tex, vec2 uv, vec2 uvDx, vec2 uvDy)
     {
         return color;
     }
-    vec2 size = vec2(textureSize(tex, 0));
-    vec2 texelDx = uvDx * size;
-    vec2 texelDy = uvDy * size;
-    float lengthMax = max(max(length(texelDx), length(texelDy)), 1.0e-4);
-    float lengthMin = max(min(length(texelDx), length(texelDy)), 1.0e-4);
-    float anisotropyMax = ceil(lengthMax / lengthMin - 1.0e-3);
-    float lowerBoundLod = max(log2(lengthMax / max(anisotropyMax, 1.0)), 0.0);
-    return SampleSparseResidentLod(tex, uv, floor(lowerBoundLod));
+    return SampleSparseResidentLod(tex, uv, floor(max(sampledLod, 0.0)));
 }
 
 // 暗黙の勾配（画面微分）で標本する。フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
@@ -68,13 +62,14 @@ vec4 SampleSparseResident(sampler2D tex, vec2 uv)
 
 #endif
 
-// 勾配を明示して標本する（POM のマーチ用）。
-vec4 SampleMaterialTextureGrad(sampler2D tex, vec2 uv, vec2 uvDx, vec2 uvDy, bool bVirtualTexture)
+// 勾配を明示して標本する（POM のマーチ用）。sampledLod は、その勾配で実際に標本されるミップ
+// （textureQueryLOD(tex, 元の uv).y。bVirtualTexture のときだけ使う。非常駐のときの逃げ始めのミップ）。
+vec4 SampleMaterialTextureGrad(sampler2D tex, vec2 uv, vec2 uvDx, vec2 uvDy, float sampledLod, bool bVirtualTexture)
 {
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
     if (bVirtualTexture)
     {
-        return SampleSparseResidentGrad(tex, uv, uvDx, uvDy);
+        return SampleSparseResidentGrad(tex, uv, uvDx, uvDy, sampledLod);
     }
 #endif
     return textureGrad(tex, uv, uvDx, uvDy);

@@ -471,3 +471,7 @@
 
 ## 反復 4（run 20261004-210106）: VTG2-BUDGET-MANAGER 評価2周目の指摘への対応（BLOCKED）
 - VTG2-BUDGET-MANAGER: 評価2周目の指摘は「ヒープの情報も `--vram-budget-mb` も無いときの上限（DeviceLocal のヒープの大きさ）が未実装」。直すには `RHI::VideoMemoryBudget` に欄を足し `VulkanDevice::GetVideoMemoryBudget` を変える必要があり、`paths:` の外（RHI/Vulkan は危険地帯）で、評価も2周を使い切ったため、コードは変えず `blocked/VTG2-BUDGET-MANAGER.md` に選択肢（A: RHI に足す・推奨、B: 上限なしを仕様にする）を書いて BLOCKED にした。
+
+- VTG2-RESIDENCY-FALLBACK 再差し戻し対応（run 20261004-210106 反復5、done）: 評価者の「POM の明示勾配版が初回より細かいミップへ戻る」を直した。`SampleSparseResidentGrad` / `SampleMaterialTextureGrad` が、自前の式で開始LODを求めるのをやめ、呼び出し側が渡す `sampledLod`（実際の標本ミップ）から `SampleSparseResidentLod` で1段ずつ下げる。`ApplyParallaxOcclusionMapping` は、早期 return・ループより前の一様な位置で、元のUVの `textureQueryLOD(heightSampler, texCoord).y`（異方性の上限込み。bVirtualTexture のときだけ）を取って渡す。評価が挙げた反例（512²、ミップ0のタイル(0,0)とミップテイルだけ常駐、UV (0.25,0.25)、勾配 (8/512,0)・(0,1/512)、異方性の上限4）を `VirtualTextureResidencyVulkanTest` に足した: コンピュート probe=7（標本ミップ 1 を明示して渡す。ミップ1未結合でミップ2の青、結合でミップ1の緑）と、描画 probe=4（POM と同じ形 = textureQueryLOD→明示勾配版。同じ2状態）。
+- 再差し戻し対応の証拠: `.harness/runs/20261004-210106/verify-VTG2-RESIDENCY-FALLBACK-1-build.txt`（Debug の3対象ビルド EXIT_CODE=0）・`-1-ctest.txt`（指定5件 100% passed。Indoor・Outdoor の golden も合格）・`-1-direct.txt`（直接実行。26標本すべて max_diff=0・VUID_COUNT=0・RESULT=PASS。新しい probe 7（コンピュート）と probe 4（描画）も両状態で期待色）。
+- Notes: コンピュートの probe は画面微分が無いので `sampledLod` を直接渡す（textureQueryLOD はコンピュートで使えない）。1つの POM 呼び出しの中では勾配が元のUVのものなので、標本ミップはマーチの全標本で共通。

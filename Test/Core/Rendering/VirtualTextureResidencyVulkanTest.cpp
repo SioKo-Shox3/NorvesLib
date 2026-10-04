@@ -5,6 +5,8 @@
 //   - 結んでいない領域は、常駐している最も細かいミップ（ミップ1も結んでいなければミップテイルの中のミップ2）の色。
 //   - ミップ1のタイルを結ぶと、同じ領域がミップ1の色へ変わる（1段だけ下げて止まる）。
 //   - 異方性 4 倍の勾配（実際の標本ミップは 0）でも、常駐しているミップ1を飛ばさず、ミップ1を結んでいなければミップ2になる。
+//   - 異方性の上限（4 倍）を超える勾配（8:1。実際の標本ミップは 1）で、ミップ0のタイルが常駐していても、実際の標本ミップより
+//     細かいミップ0へ戻らず、ミップ1を結んでいなければミップ2、結べばミップ1になる（POM の明示勾配と同じ形）。
 //     勾配を明示する関数（コンピュート）と、暗黙の勾配で引く関数（描画。sparseTextureARB で標本する）の両方で確かめる。
 // どの標本も、黒や未定義の値（読み戻しの初期値の -1 を含む）にならないことを確かめる。
 // Vulkan デバイスが無い、sparse の結び付け・BC7・shaderResourceResidency が使えない環境では 125（スキップ）を返す。
@@ -45,9 +47,9 @@ namespace
 
     constexpr const char* TestName = "VirtualTextureResidencyVulkanTest";
     constexpr int GpuTestSkipReturnCode = 125;
-    constexpr uint32_t ProbeCount = 7u;
+    constexpr uint32_t ProbeCount = 8u;
     // 暗黙の勾配で引く確認の数（sparse_residency_probe.frag の quad ごと）と、その描画先の大きさ（quad 1つが 2x2 画素）
-    constexpr uint32_t FragmentProbeCount = 4u;
+    constexpr uint32_t FragmentProbeCount = 5u;
     constexpr uint32_t FragmentTargetWidth = FragmentProbeCount * 2u;
     constexpr uint32_t FragmentTargetHeight = 2u;
     constexpr uint32_t FragmentReadbackBytes = FragmentTargetWidth * FragmentTargetHeight * 4u;
@@ -610,6 +612,8 @@ namespace
                 ExpectProbe("ミップ1未結合", 4, "結んだタイルは勾配明示でもミップ0の色（逃げない）", colors[4], mip0Color);
                 ExpectProbe("ミップ1未結合", 5, "ミップ2相当の勾配はミップテイルの中のミップ2の色", colors[5], mip2Color);
                 ExpectProbe("ミップ1未結合", 6, "異方性 4 倍の勾配でも、結んでいない領域はミップ2の色へ逃げる", colors[6], mip2Color);
+                ExpectProbe("ミップ1未結合", 7, "異方性の上限を超える 8:1 の勾配は、標本ミップ1から逃げてミップ2の色（ミップ0へ戻らない）",
+                            colors[7], mip2Color);
             }
 
             float fragmentColors[FragmentProbeCount][4] = {};
@@ -623,6 +627,8 @@ namespace
                 ExpectProbe("ミップ1未結合(暗黙)", 2, "標本ミップ 2 はミップテイルの中なので逃げずミップ2の色", fragmentColors[2],
                             mip2Color);
                 ExpectProbe("ミップ1未結合(暗黙)", 3, "結んだタイルはミップ0の色（逃げない）", fragmentColors[3], mip0Color);
+                ExpectProbe("ミップ1未結合(暗黙)", 4, "8:1 の勾配を POM と同じ形で引くと、標本ミップ1から逃げてミップ2の色",
+                            fragmentColors[4], mip2Color);
             }
 
             // ---- ミップ1のタイルを結んで、ミップ1の色を書く ----
@@ -675,6 +681,7 @@ namespace
                 ExpectProbe("ミップ1結合", 4, "結んだタイルは勾配明示でもミップ0の色（変わらない）", colors[4], mip0Color);
                 ExpectProbe("ミップ1結合", 5, "ミップ2相当の勾配はミップテイルの中のミップ2の色（変わらない）", colors[5], mip2Color);
                 ExpectProbe("ミップ1結合", 6, "異方性 4 倍の勾配は常駐しているミップ1を飛ばさずミップ1の色", colors[6], mip1Color);
+                ExpectProbe("ミップ1結合", 7, "異方性の上限を超える 8:1 の勾配は標本ミップ1の色", colors[7], mip1Color);
             }
 
             bFragmentRead = ReadFragmentProbeColors(fragmentResources, texture, fragmentColors);
@@ -687,6 +694,7 @@ namespace
                 ExpectProbe("ミップ1結合(暗黙)", 2, "標本ミップ 2 はミップテイルの中なのでミップ2の色（変わらない）",
                             fragmentColors[2], mip2Color);
                 ExpectProbe("ミップ1結合(暗黙)", 3, "結んだタイルはミップ0の色（変わらない）", fragmentColors[3], mip0Color);
+                ExpectProbe("ミップ1結合(暗黙)", 4, "8:1 の勾配を POM と同じ形で引くと標本ミップ1の色", fragmentColors[4], mip1Color);
             }
 
             // ---- 後片付け: 全部外して完了を待ってから、ページを返す（先にテクスチャを破棄する） ----

@@ -16,7 +16,7 @@ layout(local_size_x = 8, local_size_y = 1, local_size_z = 1) in;
 
 #include "Common/SparseResidencySampling.glsl"
 
-const uint PROBE_COUNT = 7u;
+const uint PROBE_COUNT = 8u;
 
 layout(set = 0, binding = 0) uniform sampler2D u_Texture;
 
@@ -52,7 +52,7 @@ void main()
     else if (index == 2u)
     {
         // 結んでいないタイルを、1テクセルの勾配で引く（粗いミップへ逃げる）。
-        color = SampleMaterialTextureGrad(u_Texture, UNBOUND_UV, vec2(TEXEL, 0.0), vec2(0.0, TEXEL), true);
+        color = SampleMaterialTextureGrad(u_Texture, UNBOUND_UV, vec2(TEXEL, 0.0), vec2(0.0, TEXEL), 0.0, true);
     }
     else if (index == 3u)
     {
@@ -62,18 +62,25 @@ void main()
     else if (index == 4u)
     {
         // 結んだタイルを、1テクセルの勾配で引く（逃げない）。
-        color = SampleMaterialTextureGrad(u_Texture, RESIDENT_UV, vec2(TEXEL, 0.0), vec2(0.0, TEXEL), true);
+        color = SampleMaterialTextureGrad(u_Texture, RESIDENT_UV, vec2(TEXEL, 0.0), vec2(0.0, TEXEL), 0.0, true);
     }
     else if (index == 5u)
     {
         // 結んでいない領域を、ミップ2相当（4テクセル）の勾配で引く（ミップテイルの中なので逃げない）。
-        color = SampleMaterialTextureGrad(u_Texture, UNBOUND_UV, vec2(4.0 * TEXEL, 0.0), vec2(0.0, 4.0 * TEXEL), true);
+        color = SampleMaterialTextureGrad(u_Texture, UNBOUND_UV, vec2(4.0 * TEXEL, 0.0), vec2(0.0, 4.0 * TEXEL), 2.0, true);
     }
-    else
+    else if (index == 6u)
     {
         // 結んでいない領域を、異方性 4 倍の勾配（4, 1 テクセル）で引く。実際の標本ミップは 0 なので、
         // ミップ1が常駐していればミップ1の色、無ければミップ2の色になる（常駐している中間のミップを飛ばさない）。
-        color = SampleMaterialTextureGrad(u_Texture, UNBOUND_UV, vec2(4.0 * TEXEL, 0.0), vec2(0.0, TEXEL), true);
+        color = SampleMaterialTextureGrad(u_Texture, UNBOUND_UV, vec2(4.0 * TEXEL, 0.0), vec2(0.0, TEXEL), 0.0, true);
+    }
+    else
+    {
+        // 異方性の上限（4 倍）を超える勾配（8, 1 テクセル）を、ミップ0のタイルが常駐する位置で引く。
+        // 実際の標本ミップは log2(8 / 4) = 1。ミップ1が常駐していればミップ1の色、無ければミップ2の色になる
+        // （標本ミップより細かいミップ0へ戻ってはならない）。
+        color = SampleMaterialTextureGrad(u_Texture, RESIDENT_UV, vec2(8.0 * TEXEL, 0.0), vec2(0.0, TEXEL), 1.0, true);
     }
     results.colors[index] = color;
 }
