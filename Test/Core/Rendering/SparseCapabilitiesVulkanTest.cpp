@@ -33,7 +33,7 @@ bool IsGpuTestSkipForced()
 
 int SkipGpuTest(const char* reason)
 {
-    std::cout << "SparseCapabilitiesVulkanTest skipped: " << reason << std::endl;
+    std::cout << "SparseCapabilitiesVulkanTest スキップ: " << reason << std::endl;
     return GpuTestSkipReturnCode;
 }
 
@@ -78,7 +78,7 @@ int RunTest()
     // 開発機（RTX 4080）では shader の residency と MinLod も使える。
     if (!sparse.bShaderResourceResidency || !sparse.bShaderResourceMinLod)
     {
-        std::cerr << "SparseCapabilitiesVulkanTest failed: shaderResourceResidency / shaderResourceMinLod が無効" << std::endl;
+        std::cerr << "SparseCapabilitiesVulkanTest 失敗: shaderResourceResidency / shaderResourceMinLod が無効" << std::endl;
         return 1;
     }
 
@@ -96,7 +96,7 @@ int RunTest()
         const RHI::SparseFormatProperties* format = sparse.FindFormat(expected.TextureFormat);
         if (format == nullptr)
         {
-            std::cerr << "SparseCapabilitiesVulkanTest failed: " << expected.Name << " を照会していない" << std::endl;
+            std::cerr << "SparseCapabilitiesVulkanTest 失敗: " << expected.Name << " を照会していない" << std::endl;
             return 1;
         }
 
@@ -106,17 +106,17 @@ int RunTest()
 
         if (!format->bSupported)
         {
-            std::cerr << "SparseCapabilitiesVulkanTest failed: " << expected.Name << " の 2D の sparse が使えない" << std::endl;
+            std::cerr << "SparseCapabilitiesVulkanTest 失敗: " << expected.Name << " の 2D の sparse が使えない" << std::endl;
             return 1;
         }
         if (!format->bStandardBlockShape)
         {
-            std::cerr << "SparseCapabilitiesVulkanTest failed: " << expected.Name << " が標準のブロック形状ではない" << std::endl;
+            std::cerr << "SparseCapabilitiesVulkanTest 失敗: " << expected.Name << " が標準のブロック形状ではない" << std::endl;
             return 1;
         }
         if (format->GranularityWidth != expected.Width || format->GranularityHeight != expected.Height)
         {
-            std::cerr << "SparseCapabilitiesVulkanTest failed: " << expected.Name << " のタイルが期待の "
+            std::cerr << "SparseCapabilitiesVulkanTest 失敗: " << expected.Name << " のタイルが期待の "
                       << expected.Width << "x" << expected.Height << " ではない" << std::endl;
             return 1;
         }
@@ -124,11 +124,11 @@ int RunTest()
 
     if (sparse.FindFormat(RHI::Format::UNKNOWN) != nullptr)
     {
-        std::cerr << "SparseCapabilitiesVulkanTest failed: 未知の形式を引けてしまう" << std::endl;
+        std::cerr << "SparseCapabilitiesVulkanTest 失敗: 未知の形式を引けてしまう" << std::endl;
         return 1;
     }
 
-    std::cout << "SparseCapabilitiesVulkanTest passed" << std::endl;
+    std::cout << "SparseCapabilitiesVulkanTest 合格" << std::endl;
     return 0;
 }
 

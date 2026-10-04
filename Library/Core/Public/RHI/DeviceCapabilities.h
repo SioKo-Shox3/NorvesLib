@@ -102,7 +102,7 @@ namespace NorvesLib::RHI
         /** @brief 標準のブロック形状（64 KiB のタイル）か。非標準なら false */
         bool bStandardBlockShape = false;
 
-        /** @brief ミップの末尾（mip tail）が全ミップで1つにまとまるか */
+        /** @brief ミップの末尾（mip tail）が全配列レイヤーで1つにまとまるか（VK_SPARSE_IMAGE_FORMAT_SINGLE_MIPTAIL_BIT） */
         bool bSingleMipTail = false;
     };
 

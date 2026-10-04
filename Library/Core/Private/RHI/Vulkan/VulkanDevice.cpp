@@ -1618,6 +1618,13 @@ namespace NorvesLib::RHI::Vulkan
     // キューファミリーのインデックス取得
     void VulkanDevice::FindQueueFamilies(vk::PhysicalDevice device)
     {
+        // 前の候補（デバイス選定で不採用の GPU）の族番号を持ち越さない
+        m_graphicsQueueFamilyIndex = UINT32_MAX;
+        m_computeQueueFamilyIndex = UINT32_MAX;
+        m_transferQueueFamilyIndex = UINT32_MAX;
+        m_presentQueueFamilyIndex = UINT32_MAX;
+        m_sparseQueueFamilyIndex = UINT32_MAX;
+
         // キューファミリーのプロパティ取得
         auto queueFamilies = device.getQueueFamilyProperties();
 
