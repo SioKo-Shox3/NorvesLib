@@ -659,3 +659,6 @@
 
 - G2-GR79-MATERIAL-SETTINGS-JSON: 設定block用の実JsonDocument parserを追加し資産profile/ARM各mode・constant/両面/alpha/nitsを厳密に型・範囲・未知・重複検査、全成功時だけprofile/layer置換。素材blockのprofile指定は拒否、空/省略は継承、換算不在は保持。pure ARM tokenのASCII全消費・finite0..1/非終端span/NUL/末尾余剰を通常/O2/ASanUBSan(LSan除外)/MEMBERと独立guard-pageで反証PASS。30JSON fixture構文をPython確認、native JSON MEMBER/CTest登録はWindows.hで未コンパイル/未実行。旧ParseSettings/LoadImportSettingsFile/Mainはbyte不変、sidecar非空materialの明示拒否を維持。独立レビューPASS。
 - Next: 素材selectorは08:06作者回答待ち。一方glTF sourceの材質係数/発光strength/texture参照の読み取りは独立して進められる。sidecar/cook/cache/asset-setの実接続・Windows実比較・実物撮影は未完のまま保持する。
+
+- G2-GR79-GLTF-MATERIAL-SOURCE: glTF PBR/normal/AO/emissiveFactor+KHR emissiveStrength/alpha/両面と5texture参照をdouble source値へ読み取るAPIを追加。既知field重複/型/範囲/キー・name NUL/参照範囲を検査し成功時だけ公開。texCoord0限定・textureInfo.extensions存在拒否は旧cooker同様。optional未知材質拡張はobject検査後fallback、document必須拡張gateは不変。公式schemaのnormalScale負/alphaCutoff>1/strength0以上を保持。純数値/参照/極小factorからの発光回復を通常/O2/ASanUBSan(LSan除外)/MEMBERと独立実行でPASS。nativeJson42fixture構文確認・MEMBER/CTest登録、Windows.hにより実JSONコンパイル/実行は未検証。独立レビューPASS。旧cook/profile/emission policy無変更。
+- Next: GR79(6)再読でdoubleSided autoをFromSourceと名付けた値層の不整合を発見。別taskでAutoと明示し、geometry判定待ちのmodeを保持する。素材selectorは作者回答待ち、source→cookの実接続は続く工程。

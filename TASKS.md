@@ -2295,3 +2295,15 @@
 - done-when: ARM mode/constant、profile、両面、alpha、換算値のJSON blockを重複/未知/型/値域の拒否と失敗保持で解析。素材selectorは作者回答待ち、既存sidecar APIは未接続のmaterialを引き続き拒否する。
 - verify: ARM token通常/O2/sanitizer/MEMBER、実JsonDocumentの省略/空/正常/未知/重複/null/非ASCII/NUL/後段失敗をnative登録。旧sidecar受理条件とMainのbyte不変を確認。
 - stop-when: parserの用意だけでsidecar/CLIに接続済みと言う、素材識別方式を先取り、警告だけで発光換算未設定を通す。
+
+## G2-GR79-GLTF-MATERIAL-SOURCE: glTF材質の係数と参照を読み取る
+- status: done
+- done-when: glTF標準PBR/normal/AO/emissive/alpha/両面とKHR emissiveStrengthをdouble精度のsource値へ読み、重複/型/値/texture範囲/UV・texture拡張を検査して失敗時出力保持。既存cook経路の受理はまだ変更しない。
+- verify: 純source値域/default/texture/発光factor×strengthを通常/O2/sanitizerとMEMBERで検証。実JsonDocumentの読込/失敗保持をnative登録しWindows未実行を区別する。公式glTF schemaのnormalScale符号・cutoff>1・strength既定1/最小0と整合。
+- stop-when: texture有無で発光判定、normalScale負やcutoff>1を誤拒否、source doubleを換算前にfloatへ縮める、optional拡張のfallbackと必須拡張の受理を混同、wire/cook/描画へ接続済みとする。
+
+## G2-GR79-DOUBLE-SIDED-AUTO: 両面autoの意味を閉鎖性判定待ちとして保持する
+- status: todo
+- done-when: GR79(6)のdoubleSided=autoは単なるsource復帰ではなく閉鎖性に応じた判断を後段で行うmodeとして保持する。private enum FromSourceをAutoへ訂正しJSON/既定/説明/テストを整合。geometry判定はこの値層で捏造せず未接続を明示する。
+- verify: enum値/canonical67B/hashのbyte不変、親forceから素材autoへ戻ること、未判定のautoをsource値確定と扱わないこと。
+- stop-when: autoを無条件にsourceと同義にする、境界辺しきい値を値parserに埋める、未実装topologyを実装済みとする。

@@ -23,6 +23,8 @@ set(PRIVATE_SOURCES
     Private/Resource/MaterialImportPolicy.cpp
     Private/Resource/MaterialImportSettings.cpp
     Private/Resource/MaterialImportSettingsJson.cpp
+    Private/Resource/GltfMaterialSource.cpp
+    Private/Resource/GltfMaterialSourceJson.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/AssetManifest.cpp
