@@ -702,3 +702,5 @@
 - G2-S6-MAIN-SPLIT受入: e8ac121ce8d2e9b92a5469ec321adb00b8a92ff3/run37203280358で実Core/AssetCook/CookedMeshTest build、11CPU、7CLI成功。保存したcandidate artifact11304570033とbeforeの全79file=50package+29JSONを独立raw byte比較し完全一致、recipe31項目・5診断literalも一致。rootで比較器を再実行して一致確認。単体分割taskをdone。--asset-set/texture v1/増分依存は別gateのまま。
 
 - G2-S6-TEXTURE-BASELINE開始: upstream main b8c5df1のPS1/2spec/8source画像をblob固定。分割前exeとWindows PowerShell5.1を明示した専用job、2回全byte照合と10file snapshot採取器を追加。純拒否契約11件の通常/最適化とYAML parse成功。実Windows採取は未実行のためdoing。
+
+- G2-S6-TEXTURE-BASELINE受入: 0893a213/run37205025949の実Windowsで固定旧PS1・2spec各2回cook成功、合計16texture cook。Windows PowerShell5.1.20348.5622、11入力blob/checkout、固定exe不変、8package+2manifestの2回byte一致を確認。保存artifact11303728946の全10file=296408686byteを独立検証＋root hash再確認。texture v1互換の比較元が確定、native --asset-setとの比較は次工程。

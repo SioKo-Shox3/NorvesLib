@@ -23,3 +23,5 @@ Scripts/CaptureTextureAssetSetBaseline.pyが採取器、Test/Tools/TextureAssetS
 ## 残る検証
 
 この基準はtexture spec v1のみ。GltfTexturesも3枚の画像をcookするだけで、モデル自体の外部buffer・外部image・sidecarの増分印は別のmodel-capable batch試験で検証する。旧スクリプトが無視するusageは基準採取時に解釈し直さない。
+
+2026-10-04受入: run37205025949 / feature SHA0893a213d8a278f65ca77895ea0cf8e681225f11。固定した2spec各2回の実cook成功、合計10出力296408686byteを保存した。Windows PowerShell5.1.20348.5622 Desktop、manifestはBOM無しCRLF・末尾改行無し（Silver3283byte、SilverGltf2160byte）。基準artifact/hashはAssetCookTextureFrozenBaseline.jsonに固定する。反復2の作業tree自体は保存せず、hash固定した実採取器内での全byte比較成功をsnapshotのreceiptとログで記録する。
