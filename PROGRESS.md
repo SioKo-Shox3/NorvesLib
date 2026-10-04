@@ -586,3 +586,9 @@
 
 - G2-GR32-GR82-MIGRATION-INVENTORY: 現行minor0/1・256B、1primitive/1clip、cooker/loader/resource/component/起動側の単一clip依存を実ソースで棚卸しした。NVSKELMigrationInventory.mdへ統一0.2への変更境界と旧版/中間/Stage A試験、v1作成時restの現在の欠落箇所・取得→変換→cook→parse→bind→reloadの追跡と必須拒否/明示許可試験を整理。コード/wire/受理契約は未変更。S3(a)/S7とARM/emissive/S5/S6を未決のまま維持した。
 - Next: 現G2の自律的に進められる実装/準備は一区切り。S3(a)/S7の回答後にGR32/GR79/GR82の次taskを具体化する。未実行native/実物、surface保留、v1 rest guardは引き続き未完として保持する。
+
+- G2-S3(a)/S7: 2026-10-04作者がNVMESH v1/128B材質/旧v0併読と1mesh/Nprimitive案Aを承認。決定記録/元Plans/選定taskを反映し、ARM/emissive/S5/S6/BVH/FBXは別途保留を維持した。
+- In progress: GR32のplain submesh型とpacked範囲検証。受理拡張・wire・描画の接続前に、旧空表互換と1..8範囲/slotのCPU契約を固定する。
+
+- G2-GR32-SUBMESH-CONTRACT: Rendering非依存のplain SkeletalSubMeshと名前slotをSkeletalGltfData末尾へ追加し、1..8のpacked三角形範囲/slot/u32制限を純kernelで検査。両表空は旧互換1範囲/slot0、片側空拒否、失敗数量0と入力非変更を維持。通常/O2-NDEBUG/ASan・UBSan（LSan除外）と実MEMBER wrapper compile成功。第1周でCTest登録抜けを修正し第2周PASS。decoder/wire/resource/描画の受理は未変更。native全体は未実行。
+- Next: GR32-V02-SCHEMA。0.2の64B名前slotとGR79/v1の128B材質を分離し、header320Bと旧版互換・複数clip所有契約を固定してから接続する。

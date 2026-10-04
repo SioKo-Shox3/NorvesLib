@@ -175,6 +175,8 @@ set(PRIVATE_SOURCES
     Private/Resource/SkeletalInfluenceReduction.cpp
     Private/Resource/SkeletalImportPolicy.h
     Private/Resource/SkeletalImportPolicy.cpp
+    Private/Resource/SkeletalSubmeshLayout.h
+    Private/Resource/SkeletalSubmeshLayout.cpp
     Private/Resource/SkeletalCubicBounds.h
     Private/Resource/SkeletalCubicBounds.cpp
     Private/Resource/SkeletalCubicBake.h
@@ -490,6 +492,7 @@ set(PUBLIC_HEADERS
     Public/Resource/SkeletalGltfData.h
     Public/Resource/SkeletalImportOptions.h
     Public/Resource/SkeletalLimits.h
+    Public/Resource/SkeletalSubMesh.h
     Public/Resource/SkinnedMeshResource.h
     Public/Resource/FontAtlas.h
     # Component

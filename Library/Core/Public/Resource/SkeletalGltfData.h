@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "Resource/SkeletalSubMesh.h"
+
 #include "Resource/SkeletalImportOptions.h"
 
 #include "Container/Containers.h"
@@ -79,6 +81,12 @@ namespace NorvesLib::Core::Skeletal
         Container::VariableArray<SkeletalAnimationChannel> Channels;
     };
 
+    // slot名のみを所有する。材質係数/textureの共有recordはGR79/v1で扱う。
+    struct SkeletalMaterialSlot
+    {
+        Container::String Name;
+    };
+
     struct SkeletalGltfData
     {
         Container::FixedArray<float, 16> MeshNodeGlobalTransform{
@@ -90,6 +98,9 @@ namespace NorvesLib::Core::Skeletal
         Container::VariableArray<uint32_t> Indices;
         Container::VariableArray<SkeletalJoint> Joints;
         Container::VariableArray<SkeletalAnimationClip> Clips;
+        // 両表空は旧データの全index/slot0を表す。片側だけ空は不正。
+        Container::VariableArray<SkeletalSubMesh> SubMeshes;
+        Container::VariableArray<SkeletalMaterialSlot> MaterialSlots;
     };
 
     enum class SkeletalGltfDecodeStatus : uint8_t

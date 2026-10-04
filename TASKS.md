@@ -2120,17 +2120,39 @@
 - stop-when: Windows/GPU/実物assetの受入れを未実行のまま合格とする、GR86後半256まで完了と扱う。
 
 ## G2-SELECT-S3-MATERIAL-FORMAT: 共通材質レコードの載せ先を確定する
-- status: blocked
+- status: done
 - done-when: S3(a)のNVMESH v1/128B材質レコード/v0併読案と代案を作者へ確認し、GR79/GR32/GR82の共有仕様へ反映する。
 - notes: S1のNVSKEL版承認はS3の材質選定承認を含まない。ARM既定とemissive nitsは別判断として保留する。
 
+- decision: 2026-10-04作者承認。S3(a)はNVMESH v1/128B材質/v0併読、S7は1mesh/Nprimitiveの案A。ARM/emissive既定は別途保留。
+
 ## G2-SELECT-S7-MESH-PROFILE: 骨格mesh数の受理範囲を確定する
-- status: blocked
+- status: done
 - done-when: S7の1mesh/Nprimitiveまたは同skin・同transform複数mesh案を作者へ確認してGR32へ反映する。
 - notes: S1承認だけでmesh/node契約は緩和しない。
+
+- decision: 2026-10-04作者承認。S3(a)はNVMESH v1/128B材質/v0併読、S7は1mesh/Nprimitiveの案A。ARM/emissive既定は別途保留。
 
 ## G2-GR32-GR82-MIGRATION-INVENTORY: 承認済み形式移行の変更箇所を整理する
 - status: done
 - done-when: 現行0.0/0.1の単一primitive/clip契約、統一0.2への影響箇所、v1作成時restの現在の欠落箇所と必須試験を棚卸しする。未選定S3/S7の結論・wire詳細を先取りしない。
 - verify: 実header/decoder/cooker/loader/resource/component/testと作者の決定記録を照合する。
 - stop-when: 受理条件/API/wireを変更、比較空間や閾値を未決のまま固定、未実装0.2/v1を実装済みと表現する。
+
+## G2-GR32-SUBMESH-CONTRACT: 素のsubmesh型とpacked範囲検証を定義する
+- status: done
+- done-when: Asset/Resource層でRenderingに依存しないSubMesh/MaterialSlot型を持ち、1..8の三角形範囲が全indexを昇順・隙間/重複なしで覆うこととslot境界を検査する。両表空は旧互換の1範囲/slot0へ解釈し、片側空は拒否する。まだdecoder/wire/描画の受理は変えない。
+- verify: pure kernelの正常1/2/8範囲、欠落/重複/隙間/逆順/非三角形/u32境界/片側空/null入力/失敗結果、MEMBER compileと既存pure回帰。
+- stop-when: 0.2を書き始める、複数meshを受理、Render型へ依存、旧形式の判定/頂点ABI/描画既定を変更。
+
+## G2-GR32-V02-SCHEMA: 統一0.2の版別wire契約を固定する
+- status: todo
+- done-when: 旧0.0/0.1の256B/hash/単一clip契約を保ち、0.2の320B、submesh64B、Name16B+予約48Bのslot64B、複数clipの所有範囲と128関節を同じschemaへ定義する。版別header/hash/節検証のpure部品を用意し、writer/loaderの受理はまだ切り替えない。
+- verify: 固定byte/独立hash golden、版別定数/節境界/overflow/reserved/未対応版、旧hash不変、MEMBER/CTest登録。
+- stop-when: 同じminor2の予約を後でtextureへ転用、0.2へ共有128B材質を暗黙追加、旧版判定の全面緩和、writerを先に切り替える。
+
+## G2-GR32-PRIMITIVE-DECODE: 1mesh内の複数primitiveを所有表へ変換する
+- status: todo
+- done-when: 1mesh/1skin/1mesh-nodeを維持して1..8primitiveを連結し、local index検証後にbaseVertexを加えた絶対indexとpacked submesh/一意slot名を返す。Reduce/Morph/Bake/scaleの資産集計を保ち、下流未接続時は黙って材質を落とさず拒否する。
+- verify: 2/8primitiveの連結/巻き/材質省略とindex0の区別、範囲/9件/複数mesh拒否、Reduce全体prefix/Morph幅と総数/fitを登録する。
+- stop-when: primitiveを跨いだindex越境を許す、scale二重適用、未接続cook/runtimeが成功して表を失う。

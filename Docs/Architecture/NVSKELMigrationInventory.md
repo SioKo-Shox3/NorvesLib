@@ -14,11 +14,11 @@
 - v1のSkeletonIdにrest poseを含めない。clip作成時restを保持し、現在restとの差が許容超過なら既定拒否する
 - 明示許可でのみrest差を許し、差量/超過関節/閾値と許可した事実を報告する
 
-判断待ち:
+2026-10-04追加承認:
 
-- S3(a): NVMESH v1の128B材質レコード/v0併読か、manifest metadata案か
-- S7: 1mesh/Nprimitiveか、同skin・同変換の複数meshを受けるか
-- ARM/emissiveの既定、S5/S6、BVH/FBXは別の未選定事項
+- S3(a): NVMESH v1の128B材質レコード/v0併読を採用
+- S7: 1mesh/Nprimitiveを採用
+- ARM/emissiveの既定、S5/S6、BVH/FBXは引き続き未選定
 
 0.2/v1はまだ実装済みではない。以下の整理だけで現行の受理条件を変更しない。
 オオカミ/シ者の作り分けや共通土台の張り直しは未定であり、移行の前提にしない。
@@ -28,14 +28,14 @@
 | 境界 | 現行ソースの事実 | 0.2へ向けた確認点 |
 |---|---|---|
 | wire定数 | `Library/Core/Public/Asset/CookedSkeletalFormat.h` はmajor=0、minor=0/1、header=256、頂点64B | 旧0.0/0.1の解釈と、新0.2の320B/表/整列/hash範囲を版別に整理する。現行定数だけを置換しない |
-| glTF primitive | `SkeletalGltfDecode.cpp` のParsePrimitiveは1mesh/1primitive、PrimitiveInfoも単一範囲 | S7の回答後に複数primitiveの所有範囲、頂点/indexの再基準化、材質slot対応を確定する |
+| glTF primitive | `SkeletalGltfDecode.cpp` のParsePrimitiveは1mesh/1primitive、PrimitiveInfoも単一範囲 | 承認済みS7 Aに沿って複数primitiveの所有範囲、頂点/indexの再基準化、材質slot対応を確定する |
 | glTF clip | 同ファイルのParseAnimationContractは1clip限定 | Stage Aで複数clipを検証・保持する単位、clip名/重複名と失敗診断を整理する |
 | cooked生成 | `Tools/AssetCook/MeshCooker.cpp` はClips.size()!=1を拒否する。一方、後続集計・書込にはclipループがある | ガード除去だけで完了にせず、各clipのchannel/sample/string範囲とcount積/和の検証を再確認する |
 | cooked読込 | `Library/Core/Private/Asset/CookedSkeletalLoader.cpp` はminor0/1、256B、clipCount==1を要求 | 旧形式の拒否条件を保持し、新形式だけの表と複数clip検査を分離する |
 | runtime資産 | `Library/Core/Public/Animation/SkeletalAssetResource.h` はmesh/skeleton/単一AnimationClipを保持 | clip集合の所有権、名前等による選択、旧呼出しとの互換を設計する |
 | component | `SkinnedMeshComponent.cpp` のTick/EvaluatePose/HasValidPoseResources/HasCurrentPoseは単一GetAnimationClipに依存 | clip変更時の時間・dirty状態・pose cache・resource参照の更新を漏らさない |
 | 起動側接続 | `Game/GameApplicationHandler.cpp` はClips[0]を渡す | 無言の先頭固定を残さず、既定シーンを維持できる明示選択へ移す |
-| 材質共有 | 現骨格形式には新しい共有材質レコード/slot表が無い | S3(a)の決定前にslotやMATSレコードの具体的wireを確定しない |
+| 材質共有 | 現骨格形式には新しい共有材質レコード/slot表が無い | 承認済みS3(a)と0.2のslot表/v1のMATSを混同せず具体化する |
 
 GR32とGR82はdecoder/cooker/loaderを共有する。GR32でprimitive受理だけを先行する中間状態と、
 Stage Aで複数clipまで到達した状態を区別する。GR79の材質方針を飛ばして、v1のMATS等を先に実装しない。
@@ -46,7 +46,7 @@ Stage Aで複数clipまで到達した状態を区別する。GR79の材質方�
 - 新0.2: 320B header、submesh/index/slot/clip/channel/sample/stringの範囲・整列・所有関係を検査する
 - GR32中間段階: 複数primitiveの成功/不正slot/壊れたindex範囲を追加し、まだ未接続ならTwoClips拒否を維持する
 - Stage A到達段階: 複数clipの読込/cook/parse/resource選択を成功ケースへ変え、clip間の範囲混入・重複/欠落名・空clipを検査する
-- S7未決の間は複数meshの成功を既定の期待値にしない
+- S7 Aに従い、複数meshの拒否を維持する
 - 128の境界と129の拒否は0.2でも維持し、v1の256試験と混ぜない
 - Reduce/Bake/Dropの数量・予算・失敗診断を、primitive/clipの集計拡張でも維持する。現在1clip/1mesh前提のJSON検証も同時に見直す
 - 失敗時は部分的な資産/出力を成功として返さない。cache鍵には形式・policy・変更後の設定を含める
@@ -95,5 +95,21 @@ G3のイベント・マーカー・ソケットの置き場を確保すること
 
 ## 次の適用条件
 
-S3(a)/S7の回答後、まずGR32の受理profileと共通材質/0.2の変更表を確定し、関連taskの完了条件へ展開する。
-それまではこの棚卸しを準備資料として扱い、実装・schema・テストの受理条件を変更しない。
+S3(a)/S7は2026-10-04に承認済み。まずGR32の受理profileと共通材質/0.2の変更表を確定し、関連taskの完了条件へ展開する。
+この棚卸し自体はwire/API確定仕様ではなく、後続の実装仕様と試験で具体化する。
+
+## GR32最初のCPU契約
+
+SkeletalSubMeshはIndexStart/IndexCount/MaterialSlotのplain型とし、SkeletalGltfDataにSubMeshesと
+名前を持つMaterialSlotsを追加する。Rendering/RHI型をAssetデータへ混ぜない。
+ResolveSkeletalSubmeshLayoutは非0・3の倍数・u32内の総index数と、1〜8のpacked範囲/slot境界を検査する。
+両表空だけは旧データとして全index・slot0の1件へ解釈する。片側空は不正で、実配列は書き換えない。
+slot名の妥当性/重複、実indexの頂点境界、bounds、wireのreserved/flagsは後続の検査責務とする。
+この部品の追加時点ではdecoder/writer/loader/resource/描画の受理範囲は変えない。
+
+後続の設計注意:
+- 0.2の64B名前slotとGR79/v1の128B PBR材質を同一recordとしない。0.2の予約48Bを同じminorの途中で別用途へ転用しない
+- GR79のNVMESH v1とGR80のcluster拡張も、初回schema時にrecordSize/版の関係を固定する
+- Nprimitive化でReduceの頂点prefixとMorphのprimitive別target総数/mesh-level target幅を区別し、JSONも合わせる
+- 0.2 writerへの切替後、旧0.0/0.1は通常loadで読めても最新cookのcache hitとして残さない
+- 下流未接続の複数submeshを黙って単一材質へ平坦化しない。段階移行中は未対応箇所を明示拒否する

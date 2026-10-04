@@ -79,5 +79,5 @@ GitHubの当該commitのcombined statusは空であり、CI成功の証拠にも
 - morph検査は完全glTF validatorではない。POSITION boundsのfloat32範囲/実値一致、weight入力min/maxまでは検査せず、構造不正の理由はInvalidAccessorへまとめる
 - 実物大型GLB、描画、v1/256、retarget/GR84・GR85、全体の制作フロー受入れは未完
 
-G2-S3(a)の材質レコード載せ先とG2-S7のmesh数受理範囲は作者の選定待ち。
+G2-S3(a)の材質レコード載せ先とG2-S7のmesh数受理範囲は2026-10-04に作者承認済み（G2ImportDecisions.md）。
 この検証記録は、未選定のARM/emissive既定やS5/S6を承認済みとするものではない。
