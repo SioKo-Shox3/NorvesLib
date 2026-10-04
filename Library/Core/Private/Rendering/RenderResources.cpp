@@ -6,6 +6,7 @@
 #include "Rendering/TileUploader.h"
 #include "Rendering/SkinnedMeshGpuStore.h"
 #include "Rendering/VideoMemoryBudgetLogGate.h"
+#include "Rendering/VideoMemoryBudgetManager.h"
 #include "Rendering/MegaGeometryResourceStore.h"
 #include "Rendering/ProceduralMeshGpuStore.h"
 #include "Rendering/RenderMaterialStore.h"
@@ -105,6 +106,9 @@ namespace NorvesLib::Core::Rendering
         // VRAM の上限（MB。0 は上限なし）と、予算ログの間引き状態（GameThread だけが触る）
         uint64_t VideoMemoryCapMb = 0;
         VideoMemoryBudgetLogGate VideoMemoryLogGate;
+        // 予算をプールへ割り振る計算と、その直近の結果（GameThread だけが触る）
+        VideoMemoryBudgetManager VideoMemoryBudget;
+        VideoMemoryBudgetResult VideoMemoryBudgetLast;
     };
 
     GpuResources::GpuResources(RenderResources *pOwner)
@@ -993,32 +997,93 @@ namespace NorvesLib::Core::Rendering
         const uint64_t budgetBytes = budget.bValid ? budget.BudgetBytes : 0;
         const uint64_t usageBytes = budget.bValid ? budget.UsageBytes : 0;
 
+        constexpr uint64_t kBytesPerMb = 1024ull * 1024ull;
+
         // 前回ログした値からの変化が 1% 未満なら出さない（初回は必ず出す）。
-        if (!impl->VideoMemoryLogGate.CommitIfChanged(budgetBytes, usageBytes))
+        if (impl->VideoMemoryLogGate.CommitIfChanged(budgetBytes, usageBytes))
         {
-            return;
+            if (impl->VideoMemoryCapMb > 0)
+            {
+                NORVES_LOG_INFO(
+                    "RenderResources",
+                    "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=%llu source=%s",
+                    static_cast<unsigned long long>(budgetBytes / kBytesPerMb),
+                    static_cast<unsigned long long>(usageBytes / kBytesPerMb),
+                    static_cast<unsigned long long>(impl->VideoMemoryCapMb),
+                    budget.bValid ? "ext" : "none");
+            }
+            else
+            {
+                NORVES_LOG_INFO(
+                    "RenderResources",
+                    "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=none source=%s",
+                    static_cast<unsigned long long>(budgetBytes / kBytesPerMb),
+                    static_cast<unsigned long long>(usageBytes / kBytesPerMb),
+                    budget.bValid ? "ext" : "none");
+            }
         }
 
-        constexpr uint64_t kBytesPerMb = 1024ull * 1024ull;
-        if (impl->VideoMemoryCapMb > 0)
+        // 予算をプールへ割り振る。ヒープの使用量が取れないときは、台帳（バッファ + プール以外のテクスチャ）で代える。
+        VideoMemoryBudgetInput input;
+        input.bHeapValid = budget.bValid;
+        input.HeapBudgetBytes = budget.BudgetBytes;
+        input.HeapUsageBytes = budget.UsageBytes;
+        input.CapBytes = impl->VideoMemoryCapMb * kBytesPerMb;
+        uint64_t poolUsedBytes = 0;
+        if (impl->SparsePool)
         {
-            NORVES_LOG_INFO(
-                "RenderResources",
-                "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=%llu source=%s",
-                static_cast<unsigned long long>(budgetBytes / kBytesPerMb),
-                static_cast<unsigned long long>(usageBytes / kBytesPerMb),
-                static_cast<unsigned long long>(impl->VideoMemoryCapMb),
-                budget.bValid ? "ext" : "none");
+            const SparsePagePool::Stats pool = impl->SparsePool->GetStats();
+            input.PoolCapacityBytes[static_cast<uint32_t>(VideoMemoryPool::VirtualTexture)] = pool.CapacityBytes;
+            poolUsedBytes = pool.UsedBytes;
         }
-        else
+        if (!budget.bValid && impl->GpuResources)
         {
-            NORVES_LOG_INFO(
-                "RenderResources",
-                "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=none source=%s",
-                static_cast<unsigned long long>(budgetBytes / kBytesPerMb),
-                static_cast<unsigned long long>(usageBytes / kBytesPerMb),
-                budget.bValid ? "ext" : "none");
+            // sparse テクスチャの結んだ量は TextureBytes に入っているので、プールの貸し出し分を引く。
+            const ResourceStats ledger = impl->GpuResources->GetResourceStats();
+            const uint64_t textureBytes = static_cast<uint64_t>(ledger.TextureBytes);
+            input.LedgerNonPoolBytes = static_cast<uint64_t>(ledger.TotalBufferMemory) +
+                                       (textureBytes > poolUsedBytes ? textureBytes - poolUsedBytes : 0);
         }
+
+        const VideoMemoryBudgetResult result = impl->VideoMemoryBudget.Compute(input);
+        impl->VideoMemoryBudgetLast = result;
+
+        // VT のプールの上限へ反映する。プールの 0 は「上限なし」なので、割り振りが 0 のときは 1 バイトで塞ぐ。
+        if (impl->SparsePool)
+        {
+            const uint64_t vtTarget = result.GetTargetBytes(VideoMemoryPool::VirtualTexture);
+            impl->SparsePool->SetCapacityLimitBytes(result.bLimited ? (vtTarget > 0 ? vtTarget : 1) : 0);
+        }
+
+        if (impl->VideoMemoryBudget.CommitLogIfChanged(result))
+        {
+            if (result.bLimited)
+            {
+                NORVES_LOG_INFO(
+                    "RenderResources",
+                    "VRAM_POOLS cap_mb=%llu non_pool_mb=%llu vt_target_mb=%llu",
+                    static_cast<unsigned long long>(result.CeilingBytes / kBytesPerMb),
+                    static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb),
+                    static_cast<unsigned long long>(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) / kBytesPerMb));
+            }
+            else
+            {
+                NORVES_LOG_INFO(
+                    "RenderResources",
+                    "VRAM_POOLS cap_mb=none non_pool_mb=%llu vt_target_mb=none",
+                    static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb));
+            }
+        }
+    }
+
+    const VideoMemoryBudgetResult &RenderResources::GetVideoMemoryBudgetResult() const
+    {
+        return m_Impl->VideoMemoryBudgetLast;
+    }
+
+    void RenderResources::SetVideoMemoryPoolShare(VideoMemoryPool pool, uint32_t weight)
+    {
+        m_Impl->VideoMemoryBudget.SetPoolShare(pool, weight);
     }
 
     bool RenderResources::ReloadAssetRuntimeSnapshot(

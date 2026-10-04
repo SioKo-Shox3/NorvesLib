@@ -1716,6 +1716,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER RenderResourcesDomainContractTest RenderResourcesDomainContractTest.cpp
     MEMBER MeshResourcesProceduralGpuTest MeshResourcesProceduralGpuTest.cpp
     MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
+    MEMBER VideoMemoryBudgetManagerTest VideoMemoryBudgetManagerTest.cpp
     MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
     MEMBER RHIBlockCompressedFormatTest RHIBlockCompressedFormatTest.cpp
 )
@@ -1728,6 +1729,7 @@ add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainCon
 
 add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContractTest --test=MeshResourcesProceduralGpuTest)
 add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
+add_test(NAME VideoMemoryBudgetManagerTest COMMAND RenderResourcesDomainContractTest --test=VideoMemoryBudgetManagerTest)
 add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)
 add_test(NAME RHIBlockCompressedFormatTest COMMAND RenderResourcesDomainContractTest --test=RHIBlockCompressedFormatTest)
 

@@ -11,6 +11,7 @@
 #include "Rendering/RenderTypes.h"
 #include "Rendering/TextureAssetTypes.h"
 #include "Rendering/TextureAsyncTypes.h"
+#include "Rendering/VideoMemoryBudgetManager.h"
 #include "Rendering/VertexLayout.h"
 #include "Container/PointerTypes.h"
 #include "Delegate/Delegate.h"
@@ -258,13 +259,19 @@ namespace NorvesLib::Core::Rendering
         bool IsInitialized() const;
 
         // VRAM の上限（MB。0 は上限なし）。起動引数 --vram-budget-mb から渡される。
-        // 予算をプールへ割り振る処理は後続の段で足す。ここでは値を保持してログに出すだけ。
         void SetVideoMemoryCapMb(uint64_t capMb);
         uint64_t GetVideoMemoryCapMb() const;
 
-        // GameThread から毎フレーム呼ぶ。初回と、その後は約1秒ごとに予算か使用量が
-        // 1% 以上変わったときだけ VRAM_BUDGET をログへ出す。
+        // GameThread から毎フレーム呼ぶ。初回と、その後は約1秒ごとに予算を取得して、
+        // プールへ割り振る量（VideoMemoryBudgetManager）を計算し、VT のプールの上限へ反映する。
+        // 予算か使用量が 1% 以上変わったときだけ VRAM_BUDGET を、割り振りが変わったときだけ VRAM_POOLS をログへ出す。
         void PollVideoMemoryBudget();
+
+        // 直近の PollVideoMemoryBudget の割り振り結果（GameThread から読む。まだ計算していなければ全て 0・上限なし）。
+        // 後の段のジオメトリ・VSM のプールも、ここからそれぞれの目標の大きさを受け取る。
+        const VideoMemoryBudgetResult &GetVideoMemoryBudgetResult() const;
+        // プールの取り分の重みを決める（既定は VT が全て）。
+        void SetVideoMemoryPoolShare(VideoMemoryPool pool, uint32_t weight);
 
         // GPU が使い終わるまで RHI 資源の破棄を待つ仕組み（ReleaseTexture・ReleaseBuffer が使う）。
         // RenderThread が、フレームの記録の開始（完了済みの提出 serial を渡す）・提出・中止の
