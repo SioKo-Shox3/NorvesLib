@@ -16,6 +16,11 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
         uint32_t ClusterCount = 0;
+        // 書き出した NVMESH の主版(0 か 1)。1 のときだけ下の LOD の階層の項目に値が入る。
+        uint32_t FormatMajor = 0;
+        uint32_t LODLevelCount = 1;
+        // LOD の階層の焼き込み(溶接・クラスタ化・簡略化・書き出し・自己検証)にかかった時間
+        uint32_t DagMilliseconds = 0;
     };
 
     struct SkeletalCookResult

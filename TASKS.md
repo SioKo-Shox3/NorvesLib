@@ -349,13 +349,21 @@
 - notes: 計画書 4.3。既存の設計案は `Docs/Plans/GameFeatureRoadmap.md` の GR80 P3（3061 行付近）。危険地帯（アセットロード）。
 
 ## VTG4-DAG-BAKE: クッカーでLODの階層を焼く
-- status: todo
+- status: done
 - done-when: `MeshCooker` が、頂点の溶接（位置と属性）→ 128三角形・128頂点のクラスタ化 → 「約4クラスタのグループ化（隣接で）→ グループの境界の頂点を固定して属性（UV・法線）を保つ簡略化で半分に → 再クラスタ化」の繰り返しで、根（クラスタ数が数個）まで階層を作り、NVMESH v1 に書く。親の誤差は子の誤差の最大と簡略化の誤差の和（単調）、親の境界球は子の境界球を包む。フォールバックの段は、全体の三角形がおよそ 1/16 か 32K 以下になる誤差で切ったクラスタの集まり。性質のテスト（`CookedMeshTest` か AssetCook のスモーク）: 閉じた入力（緯度経度の球）で (1) 誤差がどの子から親へも単調、(2) 親の境界球が子を包む、(3) 誤差のしきい値を5通りに変えて切った各メッシュで、すべての辺がちょうど2つの三角形に共有される（穴・割れ目が無い）、(4) フォールバックの三角形数が範囲内。岩（`boulder_01`）の glTF を焼いた時間をログ（`MESH_COOK dag_levels=<n> clusters=<n> ms=<n>`）に出す。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedMeshTest|AssetCookMeshSmoke|AssetCookMeshSimplifySmoke)$"`
 - stop-when: 境界を固定した簡略化で半分に届かず、階層が根まで縮まらない入力が起動画面の資産にある場合は、その資産と値を記録して止める。
 - paths: Tools/AssetCook, Library/Core/Public/Asset, Library/Core/Private/Asset, Test/Core/Asset, TASKS.md, PROGRESS.md
 - notes: 計画書 4.3。既存の `LODHierarchyBuilder`（実行時。未使用・n² の疑い）は使わない。
+
+## VTG4-DAG-BAKE-DOC: NVMESH v1 の文書を焼き込みの実装に合わせる
+- status: todo
+- done-when: `Docs/Architecture/NVMESHv1.md` の「v1 を書くのは クッカー（… まだ v0 だけを出す）」を実装に合わせて直し、焼き込み（クッカー）の手順・既知の限界・試験の節を足す。内容は `PROGRESS.md` の「反復 5（run 20261005-043300）」の記録に書いた実装の事実（形式名 `nvmesh.v1.mesh3d.pnt.u32.lodgraph`・`cooked_version` 1・溶接/クラスタ化/グループ化/境界固定の簡略化/許容モードの再試行/打ち切り/フォールバックの選び方・実測値・「つまみ」の限界）に従う。コードは触らない。
+- verify: `git diff --numstat -- Docs/Architecture/NVMESHv1.md`
+- stop-when: 記録と実装（`Tools/AssetCook/CookMeshDag.cpp`）が食い違うときは、実装を正として文書に書く。
+- paths: Docs/Architecture, TASKS.md, PROGRESS.md
+- notes: VTG4-DAG-BAKE の paths に `Docs/Architecture` が無かったので、文書の更新だけ分けた。
 
 ## VTG4-DAG-SELECT-GPU: GPUのカリングで階層の切り方を選ぶ
 - status: todo

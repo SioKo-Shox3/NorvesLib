@@ -66,9 +66,14 @@ namespace NorvesLib::Tools::AssetCook
             error = "CookMeshOptimizer: 固定フラグの大きさが頂点数と合いません";
             return false;
         }
+        if (params.AttributeCount > 32 || params.Attributes.size() != vertexCount * params.AttributeCount ||
+            params.AttributeWeights.size() != params.AttributeCount)
+        {
+            error = "CookMeshOptimizer: 属性の数が 32 を超えるか、属性・重みの大きさが頂点数と合いません";
+            return false;
+        }
 
         outResult.Indices.assign(indexCount, 0u);
-        float relativeError = 0.0f;
         // 上流は flag & 1 で固定を判定するので、0 でない値は meshopt_SimplifyVertex_Lock へ正規化して渡す。
         Core::Container::VariableArray<unsigned char> lockFlags;
         const unsigned char* lock = nullptr;
@@ -81,24 +86,40 @@ namespace NorvesLib::Tools::AssetCook
             }
             lock = lockFlags.data();
         }
-        const size_t resultCount = meshopt_simplifyWithAttributes(outResult.Indices.data(),
-                                                                  indices,
-                                                                  indexCount,
-                                                                  positions,
-                                                                  vertexCount,
-                                                                  positionStrideBytes,
-                                                                  nullptr,
-                                                                  0,
-                                                                  nullptr,
-                                                                  0,
-                                                                  lock,
-                                                                  params.TargetIndexCount,
-                                                                  params.TargetErrorRelative,
-                                                                  0,
-                                                                  &relativeError);
+        const bool bHasAttributes = params.AttributeCount != 0;
+        unsigned int options = 0;
+        options |= params.bErrorAbsolute ? meshopt_SimplifyErrorAbsolute : 0u;
+        options |= params.bPermissive ? meshopt_SimplifyPermissive : 0u;
+        options |= params.bClampAttributeError ? meshopt_SimplifyErrorClamped : 0u;
+        float resultError = 0.0f;
+        const size_t resultCount =
+            meshopt_simplifyWithAttributes(outResult.Indices.data(),
+                                           indices,
+                                           indexCount,
+                                           positions,
+                                           vertexCount,
+                                           positionStrideBytes,
+                                           bHasAttributes ? params.Attributes.data() : nullptr,
+                                           bHasAttributes ? params.AttributeCount * sizeof(float) : 0,
+                                           bHasAttributes ? params.AttributeWeights.data() : nullptr,
+                                           params.AttributeCount,
+                                           lock,
+                                           params.TargetIndexCount,
+                                           params.TargetErrorRelative,
+                                           options,
+                                           &resultError);
         outResult.Indices.resize(resultCount);
-        outResult.ErrorRelative = relativeError;
-        outResult.ErrorAbsolute = relativeError * meshopt_simplifyScale(positions, vertexCount, positionStrideBytes);
+        const float scale = meshopt_simplifyScale(positions, vertexCount, positionStrideBytes);
+        if (params.bErrorAbsolute)
+        {
+            outResult.ErrorAbsolute = resultError;
+            outResult.ErrorRelative = scale > 0.0f ? resultError / scale : 0.0f;
+        }
+        else
+        {
+            outResult.ErrorRelative = resultError;
+            outResult.ErrorAbsolute = resultError * scale;
+        }
         return true;
     }
 

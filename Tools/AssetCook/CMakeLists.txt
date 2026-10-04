@@ -23,6 +23,8 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/meshoptimizer
     ${CMAKE_BINARY_DIR}/ThirdParty/meshoptimizer)
 
 add_library(AssetCookMeshOptimizer STATIC
+    CookMeshDag.cpp
+    CookMeshDag.h
     CookMeshOptimizer.cpp
     CookMeshOptimizer.h
 )
@@ -57,7 +59,7 @@ set_target_properties(AssetCookBlockCompressSmoke PROPERTIES FOLDER "Tools")
 add_dependencies(AssetCook AssetCookBlockCompressSmoke)
 add_test(NAME AssetCookBlockCompressSmoke COMMAND $<TARGET_FILE:AssetCookBlockCompressSmoke>)
 
-# メッシュ簡略化の境界のスモーク(緯度経度の球を縁を固定して半分にする)。
+# メッシュ簡略化の境界と、LOD の階層の焼き込み(閉じた球から階層を作り、切り口に穴が無いことなど)のスモーク。
 add_executable(AssetCookMeshSimplifySmoke AssetCookMeshSimplifySmoke.cpp)
 target_link_libraries(AssetCookMeshSimplifySmoke PRIVATE AssetCookMeshOptimizer)
 set_target_properties(AssetCookMeshSimplifySmoke PROPERTIES FOLDER "Tools")
@@ -99,6 +101,7 @@ add_test(NAME AssetCookMeshSmoke
         -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -DSMOKE_DIR=${ASSET_COOK_MESH_SMOKE_DIR}
+        -DDAG_SMOKE_EXE=$<TARGET_FILE:AssetCookMeshSimplifySmoke>
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookMeshSmoke.cmake.in"
 )
 

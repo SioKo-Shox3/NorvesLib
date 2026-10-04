@@ -1,6 +1,7 @@
 ﻿#include "MeshCooker.h"
 
 #include "Asset/CookedMeshFormat.h"
+#include "CookMeshDag.h"
 #include "Asset/CookedSkeletalFormat.h"
 #include "Container/FixedArray.h"
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <bit>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -51,6 +53,8 @@ namespace NorvesLib::Tools::AssetCook
         constexpr size_t GltfMinimumByteStride = 4;
         constexpr size_t GltfMaximumByteStride = 252;
         constexpr AnsiStringView SupportedMeshFormat = "nvmesh.v0.mesh3d.pnt.u32.clustered";
+        // LOD の階層(クラスタの DAG)を焼く NVMESH v1。v0 の形式名を指定した従来のクックは変わらない。
+        constexpr AnsiStringView SupportedMeshFormatV1 = "nvmesh.v1.mesh3d.pnt.u32.lodgraph";
         constexpr AnsiStringView SupportedSkeletalFormat = "nvskel.v0.skinned.pnujiw.u32";
 
         using MeshByteArray = NorvesLib::Core::Container::VariableArray<uint8_t>;
@@ -1586,11 +1590,72 @@ namespace NorvesLib::Tools::AssetCook
             WriteLe64(outBytes, HeaderOffset::PayloadHash, payloadHash);
             return true;
         }
+        // LOD の階層を焼いて NVMESH v1 を作る。頂点の溶接・クラスタ化・簡略化の繰り返しは CookMeshDag が行い、
+        // ここでは入力の変換・材質の参照・書き出し・読み込みでの自己検証を受け持つ。
+        bool CookLodGraphMesh(const VariableArray<MeshVertexPnt>& vertices, const VariableArray<uint32_t>& indices,
+                              const MaterialReferences& materialReferences, MeshCookResult& outResult,
+                              AnsiString& error)
+        {
+            const auto bakeStart = std::chrono::steady_clock::now();
+
+            VariableArray<NorvesLib::Core::Asset::CookedMeshVertex> cookedVertices;
+            cookedVertices.reserve(vertices.size());
+            for (const MeshVertexPnt& vertex : vertices)
+            {
+                NorvesLib::Core::Asset::CookedMeshVertex cooked;
+                cooked.Position = {vertex.Position[0], vertex.Position[1], vertex.Position[2]};
+                cooked.Normal = {vertex.Normal[0], vertex.Normal[1], vertex.Normal[2]};
+                cooked.TexCoord = {vertex.TexCoord[0], vertex.TexCoord[1]};
+                cookedVertices.push_back(cooked);
+            }
+
+            CookMeshDagResult dag;
+            AnsiString dagError;
+            if (!BakeMeshLodDag(cookedVertices.data(), cookedVertices.size(), indices.data(), indices.size(), dag,
+                                dagError))
+            {
+                error = AnsiString("LOD hierarchy bake failed: ") + dagError;
+                return false;
+            }
+            dag.Output.AlbedoTexture = AnsiStringView(materialReferences.Albedo);
+            dag.Output.NormalTexture = AnsiStringView(materialReferences.Normal);
+            dag.Output.ArmTexture = AnsiStringView(materialReferences.Arm);
+
+            MeshCookResult result;
+            if (!NorvesLib::Core::Asset::SerializeCookedMeshV1(dag.Output, result.NvmeshBytes))
+            {
+                error = "NVMESH v1 exceeds the 32-bit count limit";
+                return false;
+            }
+
+            const NorvesLib::Core::Container::Span<const uint8_t> meshSpan(result.NvmeshBytes.data(),
+                                                                           result.NvmeshBytes.size());
+            const auto parseResult = ParseCookedMesh(AssetBlob::CopyBytes(meshSpan, "AssetCook mesh self-validation"));
+            if (!parseResult.Succeeded())
+            {
+                error = AnsiString("generated NVMESH v1 failed self-validation: status=") +
+                        FormatInteger(static_cast<int>(parseResult.Status));
+                return false;
+            }
+
+            result.FormatMajor = 1;
+            result.LODLevelCount = dag.Stats.LODLevelCount;
+            result.VertexCount = static_cast<uint32_t>(dag.Output.Vertices.size());
+            result.IndexCount =
+                static_cast<uint32_t>(dag.Output.ClusterIndices.size() + dag.Output.FallbackIndices.size());
+            result.ClusterCount = dag.Stats.ClusterCount;
+            result.DagMilliseconds = static_cast<uint32_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - bakeStart)
+                    .count());
+            outResult = std::move(result);
+            return true;
+        }
+
         bool CookGltfToNvmeshInternal(const uint8_t* sourceBytes, size_t sourceSize, AnsiStringView format,
                                       AnsiStringView sourcePath, AnsiStringView logicalPath, MeshCookResult& outResult,
                                       AnsiString& error)
         {
-            if (format != SupportedMeshFormat)
+            if (format != SupportedMeshFormat && format != SupportedMeshFormatV1)
             {
                 error = AnsiString("unsupported mesh format: ") + AnsiString(format);
                 return false;
@@ -1670,6 +1735,18 @@ namespace NorvesLib::Tools::AssetCook
             if (!ResolveMaterialReferences(root, primitive, logicalPath, materialReferences, error))
             {
                 return false;
+            }
+
+            if (format == SupportedMeshFormatV1)
+            {
+                MeshCookResult v1Result;
+                if (!CookLodGraphMesh(vertices, indices, materialReferences, v1Result, error))
+                {
+                    return false;
+                }
+                v1Result.SourceHash = ComputeGltfSourceHash(sourceBytes, sourceSize, bufferBytes);
+                outResult = std::move(v1Result);
+                return true;
             }
 
             VariableArray<MeshCluster> coarseClusters;
@@ -2051,7 +2128,7 @@ namespace NorvesLib::Tools::AssetCook
 
     bool IsSupportedMeshCookFormat(NorvesLib::Core::Container::AnsiStringView format) noexcept
     {
-        return format == SupportedMeshFormat;
+        return format == SupportedMeshFormat || format == SupportedMeshFormatV1;
     }
 
     bool CookGltfToNvmesh(const uint8_t* sourceBytes, size_t sourceSize,

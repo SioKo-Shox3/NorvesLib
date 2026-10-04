@@ -835,7 +835,8 @@ namespace
                            const std::string &entryTypeText,
                            uint64_t cookedHash,
                            std::string &outJson,
-                           std::string &error)
+                           std::string &error,
+                           uint32_t cookedVersion = 0)
     {
         const std::pair<const char *, const std::string *> fields[] = {
             {"logical_path", &logicalPath},
@@ -878,7 +879,7 @@ namespace
         AppendJsonStringField(outJson, "entry_type", entryTypeText, true);
         outJson += "\n      ";
         AppendJsonStringField(outJson, "cooked_hash", ToStdString(FormatAssetHashHex(cookedHash)), true);
-        outJson += "\n      \"cooked_version\":0\n";
+        outJson += "\n      \"cooked_version\":" + std::to_string(cookedVersion) + "\n";
         outJson += "    }\n";
         outJson += "  ]\n";
         outJson += "}\n";
@@ -1847,6 +1848,7 @@ namespace
             << "--logical <path> --kind model --entry <entry.nvmesh> --entry-type Msh0 "
             << "--format nvmesh.v0.mesh3d.pnt.u32.clustered "
             << "--variant default\n"
+            << "       (--format nvmesh.v1.mesh3d.pnt.u32.lodgraph で LOD の階層を持つ NVMESH v1 を焼く)\n"
             << "       AssetCook --input <model.gltf> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind model --entry <entry.nvskel> --entry-type Skl0 "
             << "--format nvskel.v0.skinned.pnujiw.u32 "
@@ -2244,7 +2246,8 @@ namespace
                                entryTypeText,
                                cookedHash,
                                manifestJson,
-                               error))
+                               error,
+                               meshResult.FormatMajor))
         {
             return false;
         }
@@ -2280,6 +2283,14 @@ namespace
                   << " indices=" << meshResult.IndexCount
                   << " clusters=" << meshResult.ClusterCount
                   << "\n";
+        if (meshResult.FormatMajor == 1)
+        {
+            // LOD の階層を焼いた時間(溶接・クラスタ化・簡略化の繰り返し・書き出し・自己検証)の記録
+            std::cerr << "MESH_COOK dag_levels=" << meshResult.LODLevelCount
+                      << " clusters=" << meshResult.ClusterCount
+                      << " ms=" << meshResult.DagMilliseconds
+                      << "\n";
+        }
         return true;
     }
 
