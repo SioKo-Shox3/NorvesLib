@@ -253,7 +253,7 @@
 - notes: 起動画面の見た目を変えうる（絶対規則7）。全常駐との比較の撮影は `-ExtraArgs` のような引数がスクリプトに無ければ足す。 2026-10-04 親（run `20261004-210106` の保留を解く）: 評価の1周目（run `20261004-210106` の反復13）の4点を直す。(1) 完了条件の「全常駐を2回撮った揺らぎと同程度」は、ストリーミングの遅れで粗いミップが残りうる VT には厳しすぎるので、「`-Deterministic` の撮影で VT と全常駐の PSNR が各視点 45 dB 以上（評価のときは 62〜69 dB）」に親が直した。差の出どころ（粗いミップが残る区画、隣のタイルの不足など）は切り分けて記録する。(2) VT にする材質のテクスチャをアルベドだけでなく、法線・ORM・高さにも広げる（それぞれ要求・常駐の管理まで接続する）。(3) `SupportsVirtualTextureFeedback()` とフィードバックの有効化の成功を確かめ、失敗したら VT を解放して全常駐へ戻す。(4) VTG2-VT-EVICT の同期が入った後、VT のプールの目標を全常駐の量より小さくする `--vram-budget-mb` で、追い出しが起きる（`vt_evicted_tiles>0`）条件の連続撮影（カメラを動かす `-OrbitDegreesPerSecond` など）を開き、黒・ちらつきが出ないことを記録する。`GameApplicationHandler.cpp` の英語の説明句を日本語にする。
 
 ## VTG2-VT-FALLBACK-TEST: VTの全常駐への復帰を偽デバイスの契約テストで確かめる
-- status: todo
+- status: done
 - done-when: `GpuRetireQueueTest`（偽デバイスで `RenderResources` を初期化するテスト）に、(1) sparse の2D部分常駐に対応してもフィードバック（`bFragmentStoresAndAtomics`・`bShaderResourceResidency`）に対応しないデバイスでは `Textures().SupportsVirtualTexture()` が false、(2) 4つの機能がそろうデバイスでは true、(3) 要求のバッファを作れず `EnableVirtualTextureFeedback()` が失敗するデバイスでは `CreateVirtualTexture` が VT を解放して無効なハンドルを返す、を足す。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^GpuRetireQueueTest$"`

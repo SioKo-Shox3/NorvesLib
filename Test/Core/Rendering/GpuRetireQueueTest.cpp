@@ -4,8 +4,16 @@
 // 提出の serial が完了するまで RHI 資源が破棄されないこと、完了したら破棄されること、
 // 記録中のフレームで頼まれた解放はそのフレームの serial まで延びること、Shutdown で全部破棄されることを、
 // GPU を使わない偽デバイスで確かめる。
+// VT（仮想テクスチャ）が使えるかは、sparse の結び付け・2D の部分常駐・常駐の照会・フラグメントからの storage buffer の
+// 書き込みの4つがそろうデバイスだけで、要求のバッファを確保して有効にできないときは VT を解放して失敗を返す（全常駐へ戻る）。
+#include "Asset/AssetManifest.h"
+#include "Asset/AssetPackageFormat.h"
+#include "Asset/CookedTextureFormat.h"
+#include "Container/VariableArray.h"
 #include "Rendering/GpuRetireQueue.h"
 #include "Rendering/RenderResources.h"
+#include "Rendering/VirtualTextureFeedbackRing.h"
+#include "Rendering/VirtualTextureStreamer.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "RHI/IFramebuffer.h"
@@ -18,8 +26,13 @@
 #include "RHI/ISwapChain.h"
 #include "RHI/ITexture.h"
 
+#include <chrono>
 #include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <string>
 
 namespace NorvesLib
 {
@@ -34,6 +47,9 @@ using Core::Rendering::RenderResources;
 using Core::Rendering::SparsePagePool;
 using Core::Rendering::TextureCreateInfo;
 using Core::Rendering::TextureHandle;
+namespace Asset = Core::Asset;
+namespace PackageV1 = Core::Asset::AssetPackageFormatV1;
+namespace TextureV0 = Core::Asset::CookedTextureFormatV0;
 
 int g_failures = 0;
 // 生きている偽資源の数（破棄されたかどうかの観測に使う）
@@ -42,6 +58,10 @@ int g_liveBuffers = 0;
 int g_liveSparseBlocks = 0;
 // true の間、偽デバイスは sparse の塊を作れない
 bool g_failSparseBlockCreation = false;
+// true の間、偽デバイスは VT の要求のバッファ（CPU から常時写像する storage buffer）を作れない
+bool g_failFeedbackBufferCreation = false;
+// true の間、偽デバイスの VT の要求のバッファは CPU から写像できる（false では Map が null を返す）
+bool g_mapFeedbackBuffers = false;
 
 void Expect(bool condition, const char* message)
 {
@@ -71,6 +91,34 @@ public:
     RHI::ResourceUsage GetUsage() const override { return Desc.Usage; }
     bool IsCubemap() const override { return Desc.IsCubemap; }
     void Update(const void*, uint32_t, uint32_t, uint32_t = 0, uint32_t = 0) override {}
+    bool IsSparse() const override { return Desc.bSparse; }
+
+    // sparse の偽テクスチャは R8 の標準ブロック形状（256x256 の 64 KiB）として答える
+    bool GetSparseInfo(RHI::SparseTextureInfo& outInfo) const override
+    {
+        if (!Desc.bSparse)
+        {
+            return false;
+        }
+        constexpr Asset::CookedTexturePixelFormat Format = Asset::CookedTexturePixelFormat::R8UNorm;
+        RHI::SparseTextureInfo info;
+        info.TileWidth = 256;
+        info.TileHeight = 256;
+        info.TileSizeBytes = 65536;
+        info.MipLevels = Desc.MipLevels;
+        info.MipTailFirstLevel = Asset::ComputeCookedTextureFirstTailMip(Format, Desc.Width, Desc.Height);
+        info.MipTailSize = 65536;
+        for (uint32_t mip = 0; mip < info.MipTailFirstLevel; ++mip)
+        {
+            if (!Asset::ComputeCookedTextureTileGrid(Format, Desc.Width >> mip, Desc.Height >> mip, info.TilesX[mip],
+                                                     info.TilesY[mip]))
+            {
+                return false;
+            }
+        }
+        outInfo = info;
+        return true;
+    }
 
     RHI::TextureDesc Desc;
 };
@@ -87,13 +135,15 @@ public:
     ~RetireFakeBuffer() override { --g_liveBuffers; }
 
     uint64_t GetSize() const override { return Size; }
-    void* Map(uint64_t, uint64_t) override { return nullptr; }
+    void* Map(uint64_t, uint64_t) override { return Backing.empty() ? nullptr : Backing.data(); }
     void Unmap() override {}
     void Update(const void*, uint64_t, uint64_t) override {}
     RHI::ResourceUsage GetUsage() const override { return Usage; }
 
     uint64_t Size;
     RHI::ResourceUsage Usage;
+    // 写像できる偽バッファだけが持つ実体
+    Core::Container::VariableArray<uint8_t> Backing;
 };
 
 class RetireFakeSampler final : public RHI::ISampler
@@ -136,7 +186,18 @@ class RetireFakeDevice final : public RHI::IDevice
 public:
     RHI::BufferPtr CreateBuffer(const RHI::BufferDesc& desc) override
     {
-        return MakeShared<RetireFakeBuffer>(desc.Size, desc.Usage);
+        // VT の要求のバッファは、CPU から常時写像する storage buffer（代替のバッファは CPU から触らない）
+        const bool bFeedbackBuffer = desc.Usage == RHI::ResourceUsage::StorageBuffer && desc.CPUAccessible;
+        if (bFeedbackBuffer && g_failFeedbackBufferCreation)
+        {
+            return nullptr;
+        }
+        auto buffer = MakeShared<RetireFakeBuffer>(desc.Size, desc.Usage);
+        if (bFeedbackBuffer && g_mapFeedbackBuffers)
+        {
+            buffer->Backing.assign(static_cast<size_t>(desc.Size), 0);
+        }
+        return buffer;
     }
 
     RHI::TexturePtr CreateTexture(const RHI::TextureDesc& desc) override
@@ -550,6 +611,308 @@ void TestRenderResourcesOwnsSparsePool()
     Expect(g_liveSparseBlocks == 0 && manager.GetSparsePagePool() == nullptr, "Shutdown でプールの塊が破棄される");
 }
 
+// VT が使えるのは、sparse の結び付け・2D の部分常駐・常駐の照会・フラグメントからの storage buffer の書き込みの
+// 4つがそろうデバイスだけ。1つでも欠けると、材質が要求を書けず VT はミップテイルのまま粗く描かれ続けるので、全常駐で描く。
+void TestVirtualTextureNeedsFeedbackCapabilities()
+{
+    struct Case
+    {
+        bool bFragmentStoresAndAtomics;
+        bool bSparseBinding;
+        bool bResidencyImage2D;
+        bool bShaderResourceResidency;
+        bool bExpectSupported;
+        const char* Message;
+    };
+    const Case cases[] = {
+        {false, true, true, true, false, "sparse の2D部分常駐に対応しても、フラグメントの storage buffer 書き込みが無ければ VT は使えない"},
+        {true, false, true, true, false, "sparse の結び付けが無ければ VT は使えない"},
+        {true, true, false, true, false, "2D の部分常駐が無ければ VT は使えない"},
+        {true, true, true, false, false, "常駐の照会が無ければ VT は使えない"},
+        {true, true, true, true, true, "4つの機能がそろうデバイスでは VT が使える"},
+    };
+
+    for (const Case& testCase : cases)
+    {
+        RenderResources manager;
+        auto device = MakeShared<RetireFakeDevice>();
+        device->Capabilities.bFragmentStoresAndAtomics = testCase.bFragmentStoresAndAtomics;
+        device->Capabilities.Sparse.bSparseBinding = testCase.bSparseBinding;
+        device->Capabilities.Sparse.bResidencyImage2D = testCase.bResidencyImage2D;
+        device->Capabilities.Sparse.bShaderResourceResidency = testCase.bShaderResourceResidency;
+        Expect(manager.Initialize(device), "VT の対応を確かめる偽デバイスで RenderResources が初期化できなければならない");
+        Expect(manager.Textures().SupportsVirtualTexture() == testCase.bExpectSupported, testCase.Message);
+        manager.Shutdown();
+    }
+}
+
+// ---- クック済みの VT（NVTEX v0.2）を偽デバイスへ作るための部品 ----
+
+// R8 の 64x64 は、どの段もタイル（256x256）より小さいので、全ミップがミップテイルでタイルの表は空になる。
+constexpr uint32_t VtTestSize = 64;
+const char* const VtTestLogicalPath = "Textures/Cooked.tga";
+
+void WriteLe16(Core::Container::VariableArray<uint8_t>& bytes, size_t offset, uint16_t value)
+{
+    bytes[offset + 0] = static_cast<uint8_t>(value & 0xffu);
+    bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
+}
+
+void WriteLe32(Core::Container::VariableArray<uint8_t>& bytes, size_t offset, uint32_t value)
+{
+    for (size_t i = 0; i < 4; ++i)
+    {
+        bytes[offset + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xffu);
+    }
+}
+
+void WriteLe64(Core::Container::VariableArray<uint8_t>& bytes, size_t offset, uint64_t value)
+{
+    WriteLe32(bytes, offset, static_cast<uint32_t>(value & 0xffffffffull));
+    WriteLe32(bytes, offset + 4, static_cast<uint32_t>(value >> 32));
+}
+
+size_t AlignUp(size_t value, size_t alignment)
+{
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
+Core::Container::VariableArray<uint8_t> BuildTailOnlyTiledTexture()
+{
+    const uint32_t mipCount = Asset::ComputeCookedTextureFullMipCount(VtTestSize, VtTestSize);
+    const size_t mipTableSize = static_cast<size_t>(mipCount) * TextureV0::MipRecordSize;
+    const size_t metadataSize = TextureV0::HeaderSizeTiled + mipTableSize;
+
+    Core::Container::VariableArray<uint8_t> payload;
+    Core::Container::VariableArray<uint64_t> mipOffsets;
+    Core::Container::VariableArray<uint64_t> mipSizes;
+    for (uint32_t mip = 0; mip < mipCount; ++mip)
+    {
+        const uint32_t dimension = (VtTestSize >> mip) == 0 ? 1 : (VtTestSize >> mip);
+        const size_t bytes = static_cast<size_t>(dimension) * dimension;
+        mipOffsets.push_back(metadataSize + payload.size());
+        mipSizes.push_back(bytes);
+        for (size_t i = 0; i < bytes; ++i)
+        {
+            payload.push_back(static_cast<uint8_t>(mip + i));
+        }
+    }
+
+    const size_t fileSize = metadataSize + payload.size();
+    Core::Container::VariableArray<uint8_t> bytes(fileSize, 0);
+    std::memcpy(bytes.data() + TextureV0::HeaderOffset::Magic, TextureV0::Magic, TextureV0::MagicSize);
+    WriteLe32(bytes, TextureV0::HeaderOffset::HeaderSize, static_cast<uint32_t>(TextureV0::HeaderSizeTiled));
+    WriteLe16(bytes, TextureV0::HeaderOffset::VersionMajor, TextureV0::VersionMajor);
+    WriteLe16(bytes, TextureV0::HeaderOffset::VersionMinor, TextureV0::VersionMinorTiled);
+    WriteLe32(bytes, TextureV0::HeaderOffset::EndianMarker, TextureV0::EndianMarker);
+    WriteLe32(bytes, TextureV0::HeaderOffset::MipRecordSize, static_cast<uint32_t>(TextureV0::MipRecordSize));
+    WriteLe64(bytes, TextureV0::HeaderOffset::FileSize, fileSize);
+    WriteLe64(bytes, TextureV0::HeaderOffset::MipTableOffset, TextureV0::HeaderSizeTiled);
+    WriteLe64(bytes, TextureV0::HeaderOffset::MipTableSize, mipTableSize);
+    WriteLe64(bytes, TextureV0::HeaderOffset::PayloadOffset, metadataSize);
+    WriteLe64(bytes, TextureV0::HeaderOffset::PayloadSize, payload.size());
+    WriteLe32(bytes, TextureV0::HeaderOffset::Width, VtTestSize);
+    WriteLe32(bytes, TextureV0::HeaderOffset::Height, VtTestSize);
+    WriteLe32(bytes, TextureV0::HeaderOffset::LayerCount, 1);
+    WriteLe32(bytes, TextureV0::HeaderOffset::MipCount, mipCount);
+    WriteLe32(bytes, TextureV0::HeaderOffset::PixelFormat, static_cast<uint32_t>(Asset::CookedTexturePixelFormat::R8UNorm));
+    WriteLe32(bytes, TextureV0::HeaderOffset::ColorSpace, static_cast<uint32_t>(Asset::CookedTextureColorSpace::Linear));
+    WriteLe32(bytes, TextureV0::TiledHeaderOffset::TileWidth, 256);
+    WriteLe32(bytes, TextureV0::TiledHeaderOffset::TileHeight, 256);
+    WriteLe32(bytes, TextureV0::TiledHeaderOffset::FirstTailMip, 0);
+    WriteLe32(bytes, TextureV0::TiledHeaderOffset::TileDataBytes, 65536);
+    WriteLe64(bytes, TextureV0::TiledHeaderOffset::TileTableOffset, metadataSize);
+    WriteLe64(bytes, TextureV0::TiledHeaderOffset::TileTableSize, 0);
+    WriteLe64(bytes, TextureV0::TiledHeaderOffset::TailOffset, metadataSize);
+    WriteLe64(bytes, TextureV0::TiledHeaderOffset::TailSize, payload.size());
+    for (uint32_t mip = 0; mip < mipCount; ++mip)
+    {
+        const size_t recordOffset = TextureV0::HeaderSizeTiled + static_cast<size_t>(mip) * TextureV0::MipRecordSize;
+        const uint32_t dimension = (VtTestSize >> mip) == 0 ? 1 : (VtTestSize >> mip);
+        WriteLe64(bytes, recordOffset + TextureV0::MipRecordOffset::DataOffset, mipOffsets[mip]);
+        WriteLe64(bytes, recordOffset + TextureV0::MipRecordOffset::DataSize, mipSizes[mip]);
+        WriteLe32(bytes, recordOffset + TextureV0::MipRecordOffset::Width, dimension);
+        WriteLe32(bytes, recordOffset + TextureV0::MipRecordOffset::Height, dimension);
+    }
+    std::memcpy(bytes.data() + metadataSize, payload.data(), payload.size());
+    WriteLe64(bytes, TextureV0::HeaderOffset::PayloadHash,
+              Asset::ComputeCookedTexturePayloadHash(payload.data(), payload.size()));
+    return bytes;
+}
+
+// 1 件だけを入れた .nvpkg
+Core::Container::VariableArray<uint8_t> BuildSingleEntryPackage(const std::string& name,
+                                                                const Core::Container::VariableArray<uint8_t>& payload)
+{
+    const size_t alignment = PackageV1::MinimumAlignment;
+    const size_t entryTableOffset = PackageV1::HeaderSize;
+    const size_t entryTableSize = PackageV1::EntryRecordSize;
+    const size_t nameTableOffset = AlignUp(entryTableOffset + entryTableSize, alignment);
+    const size_t blobDataOffset = AlignUp(nameTableOffset + name.size(), alignment);
+    const size_t dataOffset = AlignUp(blobDataOffset, alignment);
+    const size_t packageSize = dataOffset + payload.size();
+
+    Core::Container::VariableArray<uint8_t> bytes(packageSize, 0);
+    std::memcpy(bytes.data() + PackageV1::HeaderOffset::Magic, PackageV1::Magic, PackageV1::MagicSize);
+    WriteLe32(bytes, PackageV1::HeaderOffset::HeaderSize, static_cast<uint32_t>(PackageV1::HeaderSize));
+    WriteLe16(bytes, PackageV1::HeaderOffset::VersionMajor, PackageV1::VersionMajor);
+    WriteLe16(bytes, PackageV1::HeaderOffset::VersionMinor, PackageV1::VersionMinor);
+    WriteLe32(bytes, PackageV1::HeaderOffset::EndianMarker, PackageV1::EndianMarker);
+    WriteLe32(bytes, PackageV1::HeaderOffset::EntryRecordSize, static_cast<uint32_t>(PackageV1::EntryRecordSize));
+    WriteLe64(bytes, PackageV1::HeaderOffset::PackageSize, packageSize);
+    WriteLe32(bytes, PackageV1::HeaderOffset::EntryCount, 1);
+    WriteLe64(bytes, PackageV1::HeaderOffset::EntryTableOffset, entryTableOffset);
+    WriteLe64(bytes, PackageV1::HeaderOffset::EntryTableSize, entryTableSize);
+    WriteLe64(bytes, PackageV1::HeaderOffset::NameTableOffset, nameTableOffset);
+    WriteLe64(bytes, PackageV1::HeaderOffset::NameTableSize, name.size());
+    WriteLe64(bytes, PackageV1::HeaderOffset::BlobDataOffset, blobDataOffset);
+    WriteLe32(bytes, PackageV1::HeaderOffset::Alignment, static_cast<uint32_t>(alignment));
+
+    std::memcpy(bytes.data() + nameTableOffset, name.data(), name.size());
+    std::memcpy(bytes.data() + dataOffset, payload.data(), payload.size());
+
+    const size_t record = entryTableOffset;
+    WriteLe64(bytes, record + PackageV1::EntryOffset::NameOffset, nameTableOffset);
+    WriteLe32(bytes, record + PackageV1::EntryOffset::NameSize, static_cast<uint32_t>(name.size()));
+    WriteLe32(bytes, record + PackageV1::EntryOffset::Type, Asset::MakeAssetPackageFourCC('T', 'e', 'x', '0'));
+    WriteLe32(bytes, record + PackageV1::EntryOffset::Compression, static_cast<uint32_t>(Asset::AssetPackageCompression::None));
+    WriteLe64(bytes, record + PackageV1::EntryOffset::DataOffset, dataOffset);
+    WriteLe64(bytes, record + PackageV1::EntryOffset::StoredSize, payload.size());
+    WriteLe64(bytes, record + PackageV1::EntryOffset::UncompressedSize, payload.size());
+    WriteLe64(bytes, record + PackageV1::EntryOffset::PayloadHash,
+              Asset::ComputeAssetPackagePayloadHash(payload.data(), payload.size()));
+    return bytes;
+}
+
+Core::Container::String ToCoreString(const std::string& text)
+{
+#if defined(UNICODE)
+    std::wstring wide;
+    wide.reserve(text.size());
+    for (char character : text)
+    {
+        wide.push_back(static_cast<wchar_t>(static_cast<unsigned char>(character)));
+    }
+    return Core::Container::String(wide.c_str());
+#else
+    return Core::Container::String(text.c_str());
+#endif
+}
+
+// クック済みの VT を1つ置いた一時のアセットの根。デストラクタで消す。
+class VtAssetRoot
+{
+public:
+    VtAssetRoot()
+    {
+        const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+        m_Root = std::filesystem::temp_directory_path() / ("NorvesLibGpuRetireQueueTest_Vt_" + std::to_string(now));
+        std::filesystem::remove_all(m_Root);
+        std::filesystem::create_directories(m_Root / "Cooked");
+
+        m_Texture = BuildTailOnlyTiledTexture();
+        const Core::Container::VariableArray<uint8_t> package = BuildSingleEntryPackage("Textures/Cooked.nvtex", m_Texture);
+        std::ofstream output(m_Root / "Cooked" / "Textures.nvpkg", std::ios::binary | std::ios::trunc);
+        output.write(reinterpret_cast<const char*>(package.data()), static_cast<std::streamsize>(package.size()));
+    }
+    ~VtAssetRoot() { std::filesystem::remove_all(m_Root); }
+
+    VtAssetRoot(const VtAssetRoot&) = delete;
+    VtAssetRoot& operator=(const VtAssetRoot&) = delete;
+
+    // 根とマニフェストを RenderResources に設定する。設定できたら true。
+    bool Configure(RenderResources& manager) const
+    {
+        const std::string hash = std::string(
+            Asset::FormatAssetHashHex(Asset::ComputeAssetPackagePayloadHash(m_Texture.data(), m_Texture.size())).c_str());
+        const std::string entryType =
+            std::string(Asset::FormatAssetPackageFourCCText(Asset::MakeAssetPackageFourCC('T', 'e', 'x', '0')).c_str());
+        const std::string manifest = std::string("{\"version\":1,\"assets\":[{\"logical_path\":\"") + VtTestLogicalPath +
+                                     "\",\"kind\":\"texture\",\"source_hash\":\"0000000000000001\","
+                                     "\"variant\":\"default\",\"format\":\"nvtex.v0.r8.linear\","
+                                     "\"cooked_package\":\"Cooked/Textures.nvpkg\","
+                                     "\"entry_name\":\"Textures/Cooked.nvtex\",\"entry_type\":\"" +
+                                     entryType + "\",\"cooked_hash\":\"" + hash + "\",\"cooked_version\":0}]}";
+        return manager.Textures().SetTextureAssetRoot(ToCoreString(m_Root.generic_string())) &&
+               manager.Textures().LoadTextureAssetManifestFromJsonText(ToCoreString(manifest));
+    }
+
+private:
+    std::filesystem::path m_Root;
+    Core::Container::VariableArray<uint8_t> m_Texture;
+};
+
+// VT に必要な4つの機能と R8 の sparse の標準ブロック形状がそろう偽デバイス
+Core::Container::TSharedPtr<RetireFakeDevice> MakeVirtualTextureDevice()
+{
+    auto device = MakeShared<RetireFakeDevice>();
+    device->Capabilities.bFragmentStoresAndAtomics = true;
+    RHI::SparseCapabilities& sparse = device->Capabilities.Sparse;
+    sparse.bSparseBinding = true;
+    sparse.bResidencyImage2D = true;
+    sparse.bShaderResourceResidency = true;
+    sparse.FormatCount = 1;
+    sparse.Formats[0].TextureFormat = RHI::Format::R8_UNORM;
+    sparse.Formats[0].bSupported = true;
+    sparse.Formats[0].GranularityWidth = 256;
+    sparse.Formats[0].GranularityHeight = 256;
+    sparse.Formats[0].bStandardBlockShape = true;
+    return device;
+}
+
+// 要求のバッファを確保して有効にできなければ、VT を解放して無効なハンドルを返す（呼び出し側が全常駐へ戻す）。
+void TestCreateVirtualTextureReleasesWhenFeedbackFails()
+{
+    const VtAssetRoot assetRoot;
+    const Core::Container::String path = ToCoreString(VtTestLogicalPath);
+
+    // 対照: 要求のバッファを作って写像できるデバイスなら、同じクック済みのテクスチャが VT として作れる。
+    {
+        g_mapFeedbackBuffers = true;
+        RenderResources manager;
+        auto device = MakeVirtualTextureDevice();
+        Expect(manager.Initialize(device), "VT に対応する偽デバイスで RenderResources が初期化できなければならない");
+        Expect(assetRoot.Configure(manager), "クック済みのテクスチャのアセットの根とマニフェストを設定できなければならない");
+        Expect(manager.Textures().SupportsVirtualTexture(), "VT に必要な4つの機能がそろえば VT が使える");
+
+        const TextureHandle handle = manager.Textures().CreateVirtualTexture(path);
+        Expect(handle.IsValid(), "要求のバッファを作れるデバイスでは VT を作れる");
+        Core::Rendering::VirtualTextureStreamer* streamer = manager.GetVirtualTextureStreamer();
+        Core::Rendering::VirtualTextureFeedbackRing* feedback = manager.GetVirtualTextureFeedback();
+        Expect(streamer != nullptr && streamer->GetStats().TextureCount == 1, "作った VT はストリーマに1件登録される");
+        Expect(feedback != nullptr && feedback->GetStats().bEnabled, "作った VT の要求のバッファは有効になる");
+        manager.Shutdown();
+        g_mapFeedbackBuffers = false;
+        Expect(g_liveTextures == 0, "対照のデバイスの Shutdown でテクスチャが全部破棄される");
+    }
+
+    // 要求のバッファを作れないデバイスでは、VT を解放して無効なハンドルを返す。
+    {
+        g_failFeedbackBufferCreation = true;
+        RenderResources manager;
+        auto device = MakeVirtualTextureDevice();
+        Expect(manager.Initialize(device), "VT に対応する偽デバイスで RenderResources が初期化できなければならない");
+        Expect(assetRoot.Configure(manager), "クック済みのテクスチャのアセットの根とマニフェストを設定できなければならない");
+        Expect(manager.Textures().SupportsVirtualTexture(), "4つの機能がそろえば、要求のバッファを作る前の段階では VT が使える");
+
+        const TextureHandle handle = manager.Textures().CreateVirtualTexture(path);
+        Expect(!handle.IsValid(), "要求のバッファを作れなければ VT は無効なハンドルを返す");
+        Core::Rendering::VirtualTextureStreamer* streamer = manager.GetVirtualTextureStreamer();
+        Core::Rendering::VirtualTextureFeedbackRing* feedback = manager.GetVirtualTextureFeedback();
+        Expect(streamer != nullptr && streamer->GetStats().TextureCount == 0, "失敗した VT はストリーマの登録から外れる");
+        Expect(feedback != nullptr && !feedback->GetStats().bEnabled, "要求のバッファを作れなければフィードバックは無効のまま");
+        Expect(manager.GetResourceStats().TextureCount == 0, "失敗した VT のテクスチャは台帳に残らない");
+        Expect(g_liveTextures == 0, "失敗した VT の RHI テクスチャは破棄される");
+
+        Expect(!manager.Textures().CreateVirtualTextureAsync(path, Core::Delegate<void, TextureHandle>()),
+               "非同期の作成も、要求のバッファを作れなければ false を返す（全常駐へ戻す）");
+        Expect(streamer->GetStats().TextureCount == 0 && g_liveTextures == 0, "非同期の作成の失敗も何も残さない");
+
+        manager.Shutdown();
+        g_failFeedbackBufferCreation = false;
+    }
+}
+
 int RunTest()
 {
     TestNothingSubmittedReleasesImmediately();
@@ -563,6 +926,8 @@ int RunTest()
     TestSparsePagePoolLeaseAndGrow();
     TestSparsePageReturnedAfterSerial();
     TestRenderResourcesOwnsSparsePool();
+    TestVirtualTextureNeedsFeedbackCapabilities();
+    TestCreateVirtualTextureReleasesWhenFeedbackFails();
 
     if (g_failures != 0)
     {
