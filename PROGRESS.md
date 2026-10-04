@@ -712,3 +712,5 @@
 - G2-S6-TEXTURE-SPEC/FIXTURE受入: f3100ed/run37207785735で実build、12CPU（実Silver2spec/8row全所有field・UTF8・失敗保持）、7CLI、79出力byte一致、診断5literal一致を確認。fixture修復後にparser本体無変更で全合格。両taskをdone。--asset-set実行/集約serializer/増分印は未接続、汎用String::replace修正は独立TODO。
 
 - G2-S6-TEXTURE-BATCH開始: CLI/サービス/PS5.1集約serializer/同volume no-replace新規root公開を実装。全入力先行検査、private stage、単体manifest所有、最終cooked-only再解決を接続。固定10file×2回と全ASCII PS実probe、failure/既存root/junction/競合検査をCIへ追加。Python比較器4件成功、実native検証前のためdoing。既存root増分とproduction caller切替は後続。
+
+- G2-S6-TEXTURE-BATCH受入: 79d019d/run37210701091の実Windowsで13CPU、単体7CLI/79byte/5診断、native2spec×2/10file、全ASCII PS5.1実probe成功。25native起動=9成功/16拒否を確認し、日本語source/cwd、junction、既存root、late画像不正、prefix衝突、公開先競合を検証。native artifact11306368465（SHA2568797453fad3cf42e8bc354300726984c24fa2a704885e97858bbe3a158ef368f）の10file296408686byteを独立全byte比較しroot再確認。新規root用v1 sliceをdone、既存root増分とglTF/sidecar stampは未完。

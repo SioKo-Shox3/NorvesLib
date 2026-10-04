@@ -29,3 +29,5 @@ Windows CIで13CPU、既存7CLI/79出力一致、新規2spec各2回/10出力一�
 ローカルdrive判定はdrive letterの表記だけでなくGetDriveTypeWで実種別を確認し、mapped network driveと不明なrootを拒否する。textureの診断用source名もnative pathからUTF8へ変換し、JSON内のUnicode filenameとUnicode cwdを実Windowsで検証する。CLIのnarrow argv文字コード制約は別に残る。
 
 stage/親directoryを外部の悪意あるprocessが実行中に差し替えない、信頼された作業領域を前提とする。pathによるreparse検査は敵対的な同時substitutionへの完全な保護ではない。
+
+2026-10-04実受入: commit79d019d8ae5dba5a27e23cd2cfac97437e84aacc / run37210701091で13CPU、単体7CLI/79出力、native2spec各2回、PS5.1全printable ASCII probeが成功。保存native artifact11306368465の10file296408686byteは旧PS1基準と全byte一致。25回のnative起動（9成功/16意図した拒否）に日本語source/cwd、junction、late画像不正、既存root・prefix衝突を含む。受入範囲は新規root v1に限る。
