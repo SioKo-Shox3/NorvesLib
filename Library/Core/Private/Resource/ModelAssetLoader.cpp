@@ -23,6 +23,14 @@ namespace NorvesLib::Core::Resource
         ModelStaging::ModelStagingData& outStaging)
     {
         outStaging = {};
+        // 手組みv0の空表互換は維持する。v1の係数や複数材質をpathだけへ黙って落とさない。
+        if (cooked.VersionMajor!=0 || cooked.Submeshes.size()>1 || cooked.Materials.size()>1)
+        {
+            NORVES_LOG_ERROR("ModelAsset", "NVMESH v%u・submesh=%zu・material=%zuのruntime材質接続は未対応です",
+                static_cast<unsigned>(cooked.VersionMajor),cooked.Submeshes.size(),cooked.Materials.size());
+            return false;
+        }
+
         outStaging.Vertices.reserve(cooked.Vertices.size());
         for (const Asset::CookedMeshVertex& cookedVertex : cooked.Vertices)
         {

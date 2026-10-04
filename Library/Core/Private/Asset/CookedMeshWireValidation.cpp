@@ -223,4 +223,88 @@ namespace NorvesLib::Core::Asset
         out=value;
         return Status::Success;
     }
+    CookedMeshWireStatus ValidateCookedMeshV1Partitions(Container::Span<const CookedMeshWireSubmesh> submeshes,
+        Container::Span<const CookedMeshLod0Cluster> clusters, Container::Span<const uint32_t> indices,
+        uint32_t vertexCount,uint32_t materialCount) noexcept
+    {
+        if (submeshes.empty() || clusters.empty() || indices.empty() || !vertexCount || !materialCount ||
+            submeshes.size()>UINT32_MAX || clusters.size()>UINT32_MAX || indices.size()>UINT32_MAX || indices.size()%3!=0)
+        {
+            return Status::InvalidCounts;
+        }
+        if (submeshes.size()>SIZE_MAX/sizeof(CookedMeshWireSubmesh) || clusters.size()>SIZE_MAX/sizeof(CookedMeshLod0Cluster) ||
+            indices.size()>SIZE_MAX/sizeof(uint32_t) || !Storage(submeshes.data(),submeshes.size()*sizeof(CookedMeshWireSubmesh)) ||
+            !Storage(clusters.data(),clusters.size()*sizeof(CookedMeshLod0Cluster)) || !Storage(indices.data(),indices.size()*sizeof(uint32_t)))
+        {
+            return Status::InvalidInput;
+        }
+        for (uint32_t vertex : indices)
+        {
+            if (vertex>=vertexCount)
+            {
+                return Status::InvalidIndexRange;
+            }
+        }
+        uint64_t nextIndex=0,nextCluster=0;
+        for (const auto& submesh : submeshes)
+        {
+            const uint64_t indexEnd=uint64_t(submesh.IndexOffset)+submesh.IndexCount;
+            const uint64_t clusterEnd=uint64_t(submesh.ClusterOffset)+submesh.ClusterCount;
+            if (submesh.IndexOffset!=nextIndex || submesh.IndexCount==0 || submesh.IndexCount%3!=0 || indexEnd>indices.size() ||
+                submesh.VertexCount>vertexCount || submesh.MaterialIndex>=materialCount)
+            {
+                return Status::InvalidIndexRange;
+            }
+            if (submesh.ClusterOffset!=nextCluster || submesh.ClusterCount==0 || clusterEnd>clusters.size())
+            {
+                return Status::InvalidClusterRange;
+            }
+            uint64_t clusterIndexCursor=nextIndex;
+            for (uint64_t index=nextCluster;index<clusterEnd;++index)
+            {
+                const auto& cluster=clusters[static_cast<size_t>(index)];
+                const uint64_t end=uint64_t(cluster.IndexOffset)+cluster.IndexCount;
+                if (cluster.IndexOffset!=clusterIndexCursor || cluster.IndexCount==0 || cluster.IndexCount%3!=0 ||
+                    cluster.IndexCount>CookedMeshFormatV1::ClusterMaxTriangles*3 || end>indexEnd ||
+                    cluster.MaterialIndex!=submesh.MaterialIndex || cluster.VertexCount>vertexCount)
+                {
+                    return Status::InvalidClusterRange;
+                }
+                uint32_t unique[CookedMeshFormatV1::ClusterMaxVertices]{};
+                uint32_t uniqueCount=0;
+                for (uint64_t at=cluster.IndexOffset;at<end;++at)
+                {
+                    const uint32_t vertex=indices[static_cast<size_t>(at)];
+                    if (submesh.VertexCount!=0 && vertex>=submesh.VertexCount)
+                    {
+                        return Status::InvalidIndexRange;
+                    }
+                    if (cluster.VertexCount!=0 && vertex>=cluster.VertexCount)
+                    {
+                        return Status::InvalidClusterRange;
+                    }
+                    bool present=false;
+                    for (uint32_t known=0;known<uniqueCount;++known)
+                    {
+                        present=present || unique[known]==vertex;
+                    }
+                    if (!present)
+                    {
+                        if (uniqueCount==CookedMeshFormatV1::ClusterMaxVertices)
+                        {
+                            return Status::InvalidClusterRange;
+                        }
+                        unique[uniqueCount++]=vertex;
+                    }
+                }
+                clusterIndexCursor=end;
+            }
+            if (clusterIndexCursor!=indexEnd)
+            {
+                return Status::InvalidClusterRange;
+            }
+            nextIndex=indexEnd; nextCluster=clusterEnd;
+        }
+        return nextIndex==indices.size() && nextCluster==clusters.size() ? Status::Success : Status::InvalidClusterRange;
+    }
 }

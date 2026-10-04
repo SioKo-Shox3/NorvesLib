@@ -643,3 +643,6 @@
 
 - G2-GR79-MESH-V1-WIRE: v0定数blockをbyte不変の純headerへ分離し、NVMESHv1/major1minor0/Header256/Material128/Cluster128/8B整列を定義。外枠のprofile/節範囲・packed/padding/FNV/予約/有限boundsとLOD0 clusterを純検証。第1周でVertexCountの絶対index上限をunique128と混同していた制限を修正し、Multi goldenもcap6へ訂正、第2周PASS。独立Python580/692/1120B、通常/O2/ASanUBSan(LSan除外)3mode・MEMBER成功、cap129/三角形128境界・Multi実index照合を追跡。旧full parser/cookerはv0のまま、v1 reader/runtime/GPU未接続。
 - Next: GR79 v0/v1 readerとruntime gate。v1単材質も係数adapter未接続では受理しない。全submesh/index/clusterの所有と材質対応、unique頂点数128と任意絶対上限を分けて検査する。
+
+- G2-GR79-MESH-V1-READER: v0の受理条件を保ちPbr既定/ARM3chへ昇格、v1を4ref/Pbr/全finite/表所有/材質対応/実indexとunique128付きで読込。全成功時だけBlob所有を公開。ModelAssetLoaderはv1(単材質含む)/N>1をログ拒否し、旧手組み空submeshの搬送は維持。pure partition3mode/MEMBER成功、wire回帰成功。独立第2周PASS、nativefixtureは4異なるpath/相対offset0,3,6,9・係数bit・寿命・不正群・runtimeguardを登録、Windows.hで未実行。v1 writer/manifest/runtime adapterは未接続。
+- Next: 既存Core::Resource class/namespace衝突を別taskで修正。CookedSkeletalAssetTestの同TUincludeに既存の衝突があり、言語最小例でも拒否を確認。新V1Testはそのclassをincludeせず今回の新規衝突ではないが、bundle全体のbuildを妨げるため先に除く。S6 C++asset-set方式は作者回答待ち。

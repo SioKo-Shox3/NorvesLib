@@ -3,7 +3,7 @@
 ## 現在の接続範囲
 
 CookedMeshWireFormat/Validationは、外枠とLOD0 clusterをCoreのWindows依存から分離した検証部品。
-現ParseCookedMeshとcookerは引き続きv0だけを受理・生成する。v1のruntime受理はまだ公開しない。
+ParseCookedMeshはv0/v1を受理する。cookerは引き続きv0を生成し、v1のruntime受理はまだ公開しない。
 外枠の成功は、頂点/index・submesh所有・材質参照の意味やruntime対応を保証しない。
 
 ## 固定配置
@@ -34,14 +34,14 @@ MaterialはCookedMaterialFormatV1の共有128B配置をそのまま使う。
 拡張値の意味を推測して適用せず、将来LODの値が来たらUnsupportedFeatureにする。Reserved72/120とFlags68は0必須。
 VertexOffset=0。IndexOffset/Countは絶対index列の三角形範囲で、IndexCountは1〜128三角形。
 VertexCountは0（未指定）またはglobal vertex数以下の絶対index上限。unique頂点数ではないため128で制限しない。実indexがこの上限未満か、unique頂点数がalgorithmの128以内かはfull readerで別々に検査する。
-MaterialIndexはmaterial数未満。所属submeshとの一致・全clusterの連続所有は次のreader接続で検証する。
+MaterialIndexはmaterial数未満。所属submeshとの一致・全clusterの連続所有はfull readerで検証する。
 Bounds/Coneは有限、radiusは非負。契約上0のfieldは純検証の出力へ複製しない。
 
 ## v0互換
 
 CookedMeshFormatV0の定数blockはbyte単位で不変のまま純headerへ移した。
 v0は旧magic/version、Material64/Cluster80、submesh/material各1の外枠を維持する。
-旧full readerは無変更。純cluster部品も旧版の0件range/未指定VertexCountを勝手に新規則へ狭めない。
+旧v0読込の受理条件は維持し、成功値だけ共有材質へ昇格する。純cluster部品も旧版の0件range/未指定VertexCountを勝手に新規則へ狭めない。
 旧v0を将来の共通値へ昇格するときは、従来の見えを維持する値を別途明記する。
 
 ## 検証と残作業
@@ -51,5 +51,25 @@ v0は旧magic/version、Material64/Cluster80、submesh/material各1の外枠を�
 通常/O2-NDEBUG/ASan・UBSan（LSan除外）とMEMBER wrapperを実行し、CTestへ登録する。
 Windows/Core全体・full v1 reader/writer・runtime/GPUはこの検査の対象外。
 
-次の接続では、v0/v1 reader、4材質参照、N submeshのindex/cluster所有と材質対応、v0昇格、runtime N>1の明示拒否を揃える。
+v0/v1 reader・4参照・表所有・v0昇格・runtime拒否は下記の接続範囲。writerと材質runtime adapterは残る。
 v1単材質も係数を受け渡すadapterができるまではruntime受理を開かない。
+
+## full readerの接続
+
+v1は4つのtexture参照と共有Pbr recordを保持する。string節は既存のprintable ASCII・安全な論理path検査を使う。
+空StringRefはoffset/lengthとも0を要求する。共有record codecのbyte範囲検査より厳しい、containerのcanonical path条件である。
+submeshは全index/clusterを表順に隙間・重複なく分割し、clusterのMaterialIndexは所属submeshと一致する。
+すべてのindexはglobal vertex数未満で、非0のsubmesh/cluster VertexCountを絶対上限として満たす。
+unique頂点数128は実index集合から別に検査する。VertexCountが129以上でも、unique数が上限内なら正当である。
+頂点属性・bounds/cone・材質の有限性/予約/数値範囲を検証し、全成功時だけSourceBlobと値を公開する。
+文字列はSourceBlobを保持して借用するため、元の入力配列が破棄されてもGetStringで取得できる。
+
+v0はBaseColor=1、emission=0、Metallic/Roughness=-1、AO/NormalScale=1、Opaque/片面、wireDefaultLit=0へ昇格。
+ARM参照があれば従来どおり3ch使用flagを立てる。新規AI素材のmetallic ignoreを過去のv0へ遡及しない。
+
+ModelAssetLoaderはv1（単材質も含む）と複数submesh/materialをログ付きで拒否する。
+v1係数をpathだけへ落とす受理はしない。従来テストの手組みv0・空submesh表の搬送互換は維持する。
+共通材質→runtimeとv1 manifest/cookerの接続は残る。材質情報のCPU読込成功を描画成功と扱わない。
+
+pure partition試験は通常/O2/ASan・UBSan（LSan除外）を実行。
+CookedMeshV1Testへv0昇格、係数bit/4参照/Blob寿命、N表と不正所有、runtime拒否をMEMBER/CTest登録するが、Windows依存でnative未実行。

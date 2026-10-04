@@ -1,4 +1,5 @@
 ﻿#include "Asset/CookedMeshFormat.h"
+#include "Asset/CookedMeshWireValidation.h"
 
 #include <bit>
 #include <cmath>
@@ -225,7 +226,7 @@ namespace NorvesLib::Core::Asset
         return Container::AnsiStringView(reinterpret_cast<const char*>(stringData), stringRef.StringLength);
     }
 
-    CookedMeshParseResult ParseCookedMesh(AssetBlob sourceBlob)
+    static CookedMeshParseResult ParseCookedMeshV0Impl(AssetBlob sourceBlob)
     {
         using namespace CookedMeshFormatV0;
 
@@ -496,6 +497,15 @@ namespace NorvesLib::Core::Asset
             return Fail(stringStatus);
         }
 
+        // v0の見えは変えない。参照ありARMは従来どおり3チャンネルを使用する。
+        material.Pbr.Albedo={material.AlbedoTexture.StringOffset,static_cast<uint32_t>(material.AlbedoTexture.StringLength)};
+        material.Pbr.Normal={material.NormalTexture.StringOffset,static_cast<uint32_t>(material.NormalTexture.StringLength)};
+        material.Pbr.Arm={material.ArmTexture.StringOffset,static_cast<uint32_t>(material.ArmTexture.StringLength)};
+        if (material.ArmTexture.StringLength!=0)
+        {
+            material.Pbr.Flags=CookedMaterialFormatV1::ArmUseMask;
+        }
+
         Container::VariableArray<CookedMeshCluster> clusters;
         clusters.reserve(clusterCount);
         const size_t clusterTableOffset = static_cast<size_t>(sections[2].Offset);
@@ -639,5 +649,180 @@ namespace NorvesLib::Core::Asset
         result.Mesh.Clusters = std::move(clusters);
         result.Mesh.Indices = std::move(indices);
         return result;
+    }
+    namespace
+    {
+        CookedMeshParseStatus MeshWireFailure(CookedMeshWireStatus status)
+        {
+            using W=CookedMeshWireStatus;
+            using P=CookedMeshParseStatus;
+            switch (status)
+            {
+            case W::Success: return P::Success;
+            case W::BadMagic: return P::BadMagic;
+            case W::UnsupportedVersion: return P::UnsupportedVersion;
+            case W::InvalidInput: return P::HeaderTooSmall;
+            case W::InvalidHeader: return P::HeaderSizeMismatch;
+            case W::InvalidRecordSize: return P::RecordSizeMismatch;
+            case W::InvalidFileSize: return P::FileSizeMismatch;
+            case W::InvalidCounts: return P::InvalidCounts;
+            case W::IntegerOverflow: return P::IntegerOverflow;
+            case W::InvalidRange: return P::SectionOutOfRange;
+            case W::InvalidAlignment: return P::SectionMisalignment;
+            case W::InvalidPacking: return P::SectionPackingMismatch;
+            case W::InvalidPadding: return P::PaddingByteNonZero;
+            case W::InvalidHash: return P::PayloadHashMismatch;
+            case W::InvalidReserved: return P::ReservedFieldNonZero;
+            case W::InvalidBounds: return P::InvalidFloatOrBounds;
+            case W::UnsupportedFeature: return P::UnsupportedV1Feature;
+            case W::InvalidClusterRange: return P::InvalidClusterRange;
+            case W::InvalidIndexRange: return P::InvalidIndexRange;
+            }
+            return P::UnsupportedV1Feature;
+        }
+        CookedMeshParseResult ParseCookedMeshV1Impl(AssetBlob sourceBlob)
+        {
+            using namespace CookedMeshFormatV1;
+            const auto bytes=sourceBlob.GetSpan();
+            if (bytes.size()<HeaderSize)
+            {
+                return Fail(CookedMeshParseStatus::HeaderTooSmall);
+            }
+            const uint8_t* data=bytes.data();
+            if (ReadLe32(data,HeaderOffset::EndianMarker)!=EndianMarker)
+            {
+                return Fail(CookedMeshParseStatus::EndianMismatch);
+            }
+            CookedMeshWireEnvelope envelope;
+            const auto wire=ValidateCookedMeshWireEnvelope(bytes,envelope);
+            if (wire!=CookedMeshWireStatus::Success)
+            {
+                return Fail(MeshWireFailure(wire));
+            }
+            CookedMeshData mesh;
+            mesh.VersionMajor=1;
+            mesh.TotalBoundsCenter={envelope.BoundsCenter[0],envelope.BoundsCenter[1],envelope.BoundsCenter[2]};
+            mesh.TotalBoundsRadius=envelope.BoundsRadius;
+            mesh.PayloadHash=ReadLe64(data,HeaderOffset::PayloadHash);
+            mesh.StringTableOffset=static_cast<size_t>(envelope.Sections[3].Offset);
+            mesh.StringTableSize=static_cast<size_t>(envelope.Sections[3].Size);
+            if (!IsPrintableAscii(data+mesh.StringTableOffset,mesh.StringTableSize))
+            {
+                return Fail(CookedMeshParseStatus::InvalidStringTable);
+            }
+            mesh.Materials.reserve(envelope.MaterialCount);
+            for (uint32_t index=0;index<envelope.MaterialCount;++index)
+            {
+                const size_t offset=static_cast<size_t>(envelope.Sections[1].Offset)+size_t(index)*MaterialRecordSize;
+                CookedMeshMaterial material;
+                const auto status=ReadCookedMaterialRecord({data+offset,MaterialRecordSize},mesh.StringTableSize,material.Pbr);
+                if (status!=CookedMaterialStatus::Success)
+                {
+                    return Fail(status==CookedMaterialStatus::InvalidReserved ? CookedMeshParseStatus::ReservedFieldNonZero :
+                        CookedMeshParseStatus::InvalidMaterialRecord);
+                }
+                CookedMeshStringRef* refs[]{&material.AlbedoTexture,&material.NormalTexture,&material.ArmTexture,&material.EmissiveTexture};
+                for (size_t ref=0;ref<4;++ref)
+                {
+                    const auto result=ParseStringReference(data,offset+ref*16,mesh.StringTableOffset,mesh.StringTableSize,*refs[ref]);
+                    if (result!=CookedMeshParseStatus::Success)
+                    {
+                        return Fail(result);
+                    }
+                }
+                mesh.Materials.push_back(material);
+            }
+            Container::VariableArray<CookedMeshWireSubmesh> ranges;
+            ranges.reserve(envelope.SubmeshCount);
+            mesh.Submeshes.reserve(envelope.SubmeshCount);
+            for (uint32_t index=0;index<envelope.SubmeshCount;++index)
+            {
+                const size_t offset=static_cast<size_t>(envelope.Sections[0].Offset)+size_t(index)*SubmeshRecordSize;
+                if (ReadLe32(data,offset+28)!=0 || ReadLe64(data,offset+48)!=0 || ReadLe64(data,offset+56)!=0)
+                {
+                    return Fail(CookedMeshParseStatus::ReservedFieldNonZero);
+                }
+                if (ReadLe32(data,offset+8)!=0)
+                {
+                    return Fail(CookedMeshParseStatus::UnsupportedV1Feature);
+                }
+                CookedMeshSubmesh sub;
+                sub.IndexOffset=ReadLe32(data,offset); sub.IndexCount=ReadLe32(data,offset+4);
+                sub.VertexCount=ReadLe32(data,offset+12); sub.MaterialIndex=ReadLe32(data,offset+16);
+                sub.ClusterOffset=ReadLe32(data,offset+20); sub.ClusterCount=ReadLe32(data,offset+24);
+                sub.BoundsCenter={ReadLeFloat(data,offset+32),ReadLeFloat(data,offset+36),ReadLeFloat(data,offset+40)};
+                sub.BoundsRadius=ReadLeFloat(data,offset+44);
+                if (!IsFinite(sub.BoundsCenter) || !std::isfinite(sub.BoundsRadius) || sub.BoundsRadius<0)
+                {
+                    return Fail(CookedMeshParseStatus::InvalidFloatOrBounds);
+                }
+                ranges.push_back({sub.IndexOffset,sub.IndexCount,sub.VertexCount,sub.MaterialIndex,sub.ClusterOffset,sub.ClusterCount});
+                mesh.Submeshes.push_back(sub);
+            }
+            Container::VariableArray<CookedMeshLod0Cluster> clusters;
+            clusters.reserve(envelope.ClusterCount);
+            mesh.Clusters.reserve(envelope.ClusterCount);
+            for (uint32_t index=0;index<envelope.ClusterCount;++index)
+            {
+                const size_t offset=static_cast<size_t>(envelope.Sections[2].Offset)+size_t(index)*ClusterRecordSize;
+                CookedMeshLod0Cluster decoded;
+                const auto status=ReadCookedMeshLod0Cluster({data+offset,ClusterRecordSize},1,envelope.VertexCount,
+                    envelope.IndexCount,envelope.MaterialCount,decoded);
+                if (status!=CookedMeshWireStatus::Success)
+                {
+                    return Fail(MeshWireFailure(status));
+                }
+                CookedMeshCluster cluster;
+                cluster.BoundsCenter={decoded.BoundsCenter[0],decoded.BoundsCenter[1],decoded.BoundsCenter[2]};
+                cluster.BoundsRadius=decoded.BoundsRadius;
+                cluster.ConeAxis={decoded.ConeAxis[0],decoded.ConeAxis[1],decoded.ConeAxis[2]}; cluster.ConeCutoff=decoded.ConeCutoff;
+                cluster.IndexOffset=decoded.IndexOffset; cluster.IndexCount=decoded.IndexCount;
+                cluster.VertexCount=decoded.VertexCount; cluster.MaterialIndex=decoded.MaterialIndex;
+                mesh.Clusters.push_back(cluster); clusters.push_back(decoded);
+            }
+            mesh.Vertices.reserve(envelope.VertexCount);
+            for (uint32_t index=0;index<envelope.VertexCount;++index)
+            {
+                const size_t offset=static_cast<size_t>(envelope.Sections[4].Offset)+size_t(index)*VertexRecordSize;
+                CookedMeshVertex vertex;
+                vertex.Position={ReadLeFloat(data,offset),ReadLeFloat(data,offset+4),ReadLeFloat(data,offset+8)};
+                vertex.Normal={ReadLeFloat(data,offset+12),ReadLeFloat(data,offset+16),ReadLeFloat(data,offset+20)};
+                vertex.TexCoord={ReadLeFloat(data,offset+24),ReadLeFloat(data,offset+28)};
+                if (!IsFinite(vertex.Position) || !IsFinite(vertex.Normal) || !IsFinite(vertex.TexCoord))
+                {
+                    return Fail(CookedMeshParseStatus::InvalidFloatOrBounds);
+                }
+                mesh.Vertices.push_back(vertex);
+            }
+            mesh.Indices.reserve(envelope.IndexCount);
+            for (uint32_t index=0;index<envelope.IndexCount;++index)
+            {
+                mesh.Indices.push_back(ReadLe32(data,static_cast<size_t>(envelope.Sections[5].Offset)+size_t(index)*4));
+            }
+            const auto layout=ValidateCookedMeshV1Partitions({ranges.data(),ranges.size()},{clusters.data(),clusters.size()},
+                {mesh.Indices.data(),mesh.Indices.size()},envelope.VertexCount,envelope.MaterialCount);
+            if (layout!=CookedMeshWireStatus::Success)
+            {
+                return Fail(MeshWireFailure(layout));
+            }
+            mesh.SourceBlob=std::move(sourceBlob);
+            CookedMeshParseResult result;
+            result.Status=CookedMeshParseStatus::Success;
+            result.Mesh=std::move(mesh);
+            return result;
+        }
+    }
+    CookedMeshParseResult ParseCookedMesh(AssetBlob sourceBlob)
+    {
+        if (sourceBlob.IsValid())
+        {
+            const auto bytes=sourceBlob.GetSpan();
+            if (bytes.size()>=CookedMeshFormatV1::MagicSize &&
+                std::memcmp(bytes.data(),CookedMeshFormatV1::Magic,CookedMeshFormatV1::MagicSize)==0)
+            {
+                return ParseCookedMeshV1Impl(std::move(sourceBlob));
+            }
+        }
+        return ParseCookedMeshV0Impl(std::move(sourceBlob));
     }
 } // namespace NorvesLib::Core::Asset

@@ -8,7 +8,7 @@ namespace NorvesLib::Core::Asset
     {
         Success, InvalidInput, BadMagic, UnsupportedVersion, InvalidHeader, InvalidRecordSize,
         InvalidFileSize, InvalidCounts, IntegerOverflow, InvalidRange, InvalidAlignment, InvalidPacking,
-        InvalidPadding, InvalidHash, InvalidReserved, InvalidBounds, UnsupportedFeature, InvalidClusterRange
+        InvalidPadding, InvalidHash, InvalidReserved, InvalidBounds, UnsupportedFeature, InvalidClusterRange, InvalidIndexRange
     };
     struct CookedMeshWireSection { uint64_t Offset=0, Size=0; };
     struct CookedMeshWireEnvelope
@@ -25,6 +25,14 @@ namespace NorvesLib::Core::Asset
         float BoundsCenter[3]{}, BoundsRadius=0, ConeAxis[3]{}, ConeCutoff=0;
         uint32_t IndexOffset=0, IndexCount=0, VertexCount=0, MaterialIndex=0;
     };
+    struct CookedMeshWireSubmesh
+    {
+        uint32_t IndexOffset=0, IndexCount=0, VertexCount=0, MaterialIndex=0, ClusterOffset=0, ClusterCount=0;
+    };
+    // v1専用の意味検証。全index/clusterをsubmesh順に一意所有し、材質・絶対上限・unique数を照合。
+    [[nodiscard]] CookedMeshWireStatus ValidateCookedMeshV1Partitions(Container::Span<const CookedMeshWireSubmesh> submeshes,
+        Container::Span<const CookedMeshLod0Cluster> clusters, Container::Span<const uint32_t> indices,
+        uint32_t vertexCount, uint32_t materialCount) noexcept;
     // 失敗時out保持、入力とoutの領域重複は拒否。受理版はv0.0/v1.0のみ。
     [[nodiscard]] CookedMeshWireStatus ValidateCookedMeshWireEnvelope(Container::Span<const uint8_t> bytes,
         CookedMeshWireEnvelope& out) noexcept;

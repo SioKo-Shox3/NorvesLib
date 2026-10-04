@@ -2259,3 +2259,15 @@
 - done-when: v0定数を不変の純headerへ分離し、v1.0 Magic/Header256/Material128/Cluster128を定義。外枠のversion/サイズ/予約/整列/packed節/hashとLOD0 clusterを純検証する。旧parser/cooker受理は変えない。
 - verify: 独立byte golden、v0定数無変更、v1サイズ/未知版/予約/overflow/整列/padding/hash/LOD予約・範囲、失敗保持/alias拒否を通常/O2/sanitizerとMEMBERで検証。
 - stop-when: 未接続のv1 runtimeを受理済み扱い、material係数を無言で捨てる、GR80用の拡張48Bを別用途へ転用、旧v0受理契約を破壊する。
+
+## G2-GR79-MESH-V1-READER: v1材質と複数submeshを所有読込する
+- status: done
+- done-when: v0既存読込を維持し、v1の材質128/4参照/cluster128を意味検証して保持する。submeshが全index/clusterを一意分割し材質対応・実index/絶対上限・unique128を検査。v0は従来値へ昇格。runtimeは係数adapter未接続のv1とN>1を明示拒否し黙示的な情報欠落を防ぐ。
+- verify: v0/v1/複数材質golden、係数bit/4path/寿命/不正所有とreserved/数値、pure partition通常/O2/sanitizer、native登録。既存v0手組みstaging互換を保つ。
+- stop-when: v0の受理や見えを変更、v1材質をpathだけへ落とす、full readerとGPU受入れを混同、unique数をVertexCount fieldと混同。
+
+## G2-RESOURCE-IO-NAMESPACE: 読込名前空間とResource基底クラスの衝突を解消する
+- status: todo
+- done-when: Core::Resourceの基底クラスを維持し、GLTFAnalyzer/ModelStaging/loader群の名前空間だけをResourceIOへ分ける。全参照を更新し、同TUで骨格Resourceと共存する。wire/アルゴリズム/既定描画は変更しない。
+- verify: 宣言/参照の列挙、旧namespace残存ゼロ・class参照不変、置換を戻したsourceの同一性、両include順のnative compile契約登録、実Windows未実行を区別する。
+- stop-when: Resource基底クラス/反射名を変更、loader参照の取り残し、文字列置換で本体の挙動を変える、独立言語例をnative成功扱いする。

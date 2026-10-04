@@ -39,7 +39,9 @@ namespace NorvesLib::Core::Asset
         InvalidPath,
         InvalidMaterialTextureReference,
         UnsupportedV0Feature,
-        IntegerOverflow
+        IntegerOverflow,
+        UnsupportedV1Feature,
+        InvalidMaterialRecord
     };
 
     struct CookedMeshFloat2
@@ -86,6 +88,8 @@ namespace NorvesLib::Core::Asset
         CookedMeshStringRef AlbedoTexture;
         CookedMeshStringRef NormalTexture;
         CookedMeshStringRef ArmTexture;
+        CookedMeshStringRef EmissiveTexture;
+        CookedMaterialRecord Pbr;
     };
 
     struct CookedMeshCluster
@@ -118,6 +122,7 @@ namespace NorvesLib::Core::Asset
         Container::VariableArray<CookedMeshMaterial> Materials;
         Container::VariableArray<CookedMeshCluster> Clusters;
         Container::VariableArray<uint32_t> Indices;
+        uint16_t VersionMajor = 0;
 
         [[nodiscard]] Container::AnsiStringView GetString(const CookedMeshStringRef& stringRef) const noexcept;
     };
