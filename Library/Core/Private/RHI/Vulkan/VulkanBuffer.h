@@ -66,6 +66,9 @@ namespace NorvesLib::RHI::Vulkan
 
         bool ShouldEnableDeviceAddress() const;
 
+        // 作成済みの VkBuffer とメモリを破棄する（デストラクタと、コンストラクタ失敗時の後始末で共有）
+        void ReleaseHandles() noexcept;
+
         // バッファとメモリの作成
         void CreateBuffer(vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties);
 

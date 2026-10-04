@@ -1,12 +1,21 @@
 ﻿#include "VulkanBuffer.h"
 #include "VulkanDevice.h"
 #include <stdexcept>
+#include <atomic>
+#include <cstdint>
 #include <cstring>
 
 namespace NorvesLib::RHI::Vulkan
 {
 
     using namespace NorvesLib::Core::Container;
+
+    namespace
+    {
+        // 生きている VkBuffer・バッファ用メモリの数（失敗時の後始末をテストで確かめるための計数）
+        std::atomic<int64_t> g_liveBufferCount{0};
+        std::atomic<int64_t> g_liveBufferMemoryCount{0};
+    } // namespace
 
     // コンストラクタ
     VulkanBuffer::VulkanBuffer(
@@ -32,14 +41,23 @@ namespace NorvesLib::RHI::Vulkan
             memProps = vk::MemoryPropertyFlagBits::eDeviceLocal;
         }
 
-        // バッファとメモリを作成
-        CreateBuffer(usage, memProps);
-
-        if (ShouldEnableDeviceAddress())
+        // バッファとメモリを作成。コンストラクタが例外で抜けるとデストラクタは呼ばれないので、
+        // 作成済みのハンドルはここで破棄してから再送出する（失敗時の後始末はここ1か所）
+        try
         {
-            vk::BufferDeviceAddressInfo addressInfo{};
-            addressInfo.buffer = m_buffer;
-            m_deviceAddress = m_device->GetVkDevice().getBufferAddress(addressInfo);
+            CreateBuffer(usage, memProps);
+
+            if (ShouldEnableDeviceAddress())
+            {
+                vk::BufferDeviceAddressInfo addressInfo{};
+                addressInfo.buffer = m_buffer;
+                m_deviceAddress = m_device->GetVkDevice().getBufferAddress(addressInfo);
+            }
+        }
+        catch (...)
+        {
+            ReleaseHandles();
+            throw;
         }
     }
 
@@ -52,18 +70,28 @@ namespace NorvesLib::RHI::Vulkan
             Unmap();
         }
 
+        ReleaseHandles();
+    }
+
+    // 作成済みの VkBuffer とメモリを破棄する（未作成のハンドルは何もしない）
+    void VulkanBuffer::ReleaseHandles() noexcept
+    {
         auto vkDevice = m_device->GetVkDevice();
 
         // バッファを破棄
         if (m_buffer)
         {
             vkDevice.destroyBuffer(m_buffer);
+            m_buffer = nullptr;
+            g_liveBufferCount.fetch_sub(1, std::memory_order_relaxed);
         }
 
         // メモリを解放
         if (m_deviceMemory)
         {
             vkDevice.freeMemory(m_deviceMemory);
+            m_deviceMemory = nullptr;
+            g_liveBufferMemoryCount.fetch_sub(1, std::memory_order_relaxed);
         }
     }
 
@@ -191,6 +219,7 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("Vulkanバッファの作成に失敗しました");
         }
         m_buffer = createResult.value;
+        g_liveBufferCount.fetch_add(1, std::memory_order_relaxed);
         m_device->SetDebugObjectName(
             vk::ObjectType::eBuffer,
             reinterpret_cast<uint64_t>(static_cast<VkBuffer>(m_buffer)),
@@ -228,6 +257,7 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("バッファメモリの割り当てに失敗しました");
         }
         m_deviceMemory = allocResult.value;
+        g_liveBufferMemoryCount.fetch_add(1, std::memory_order_relaxed);
 
         // メモリをバッファにバインド
         auto bindResult = vkDevice.bindBufferMemory(m_buffer, m_deviceMemory, 0);
@@ -313,6 +343,18 @@ namespace NorvesLib::RHI::Vulkan
     {
         const auto *vulkanBuffer = dynamic_cast<const VulkanBuffer *>(buffer);
         return vulkanBuffer != nullptr ? vulkanBuffer->GetMemoryPropertyFlags() : 0u;
+    }
+
+    // テスト用: 生きている VkBuffer の数。作成の失敗後に増えたままでないことを確かめる
+    int64_t GetVulkanLiveBufferCountForTesting() noexcept
+    {
+        return g_liveBufferCount.load(std::memory_order_relaxed);
+    }
+
+    // テスト用: 生きているバッファ用メモリの数
+    int64_t GetVulkanLiveBufferMemoryCountForTesting() noexcept
+    {
+        return g_liveBufferMemoryCount.load(std::memory_order_relaxed);
     }
 
 } // namespace NorvesLib::RHI::Vulkan

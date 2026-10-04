@@ -33,6 +33,8 @@ void EndVulkanValidationErrorCaptureForTesting() noexcept;
 uint32_t GetVulkanValidationErrorCaptureHitCountForTesting() noexcept;
 uint64_t GetVulkanDeviceWaitIdleCallCountForTesting() noexcept;
 uint32_t GetVulkanBufferMemoryPropertyFlagsForTesting(const IBuffer* buffer) noexcept;
+int64_t GetVulkanLiveBufferCountForTesting() noexcept;
+int64_t GetVulkanLiveBufferMemoryCountForTesting() noexcept;
 }
 
 namespace
@@ -706,6 +708,52 @@ namespace
         harness.Device->WaitIdle();
     }
 
+    // バッファの作成が（メモリの種類の選択で）失敗したとき、作成済みの VkBuffer を残さないことの確認。
+    // CPUAccessible=false は DeviceLocal を要求し、bExcludeDeviceLocal=true はそれを除外するので、選択は必ず失敗する。
+    void TestBufferCreateFailureCleansUp(Harness& harness)
+    {
+        std::cout << TestName << " --- バッファ作成の失敗後に VkBuffer が残らない ---" << std::endl;
+        constexpr uint32_t Attempts = 16u;
+        const int64_t buffersBefore = RHI::Vulkan::GetVulkanLiveBufferCountForTesting();
+        const int64_t memoriesBefore = RHI::Vulkan::GetVulkanLiveBufferMemoryCountForTesting();
+
+        // 正常な作成は計数を増やし、破棄で戻ることも確かめる（計数が動かないままの偽の合格を避ける）
+        {
+            BufferPtr normal = harness.Device->CreateBuffer(BufferDesc(256u, ResourceUsage::TransferSrc, true, "SparseTileUploadCountProbe"));
+            Expect(normal != nullptr, "正常なバッファは作れなければならない");
+            Expect(RHI::Vulkan::GetVulkanLiveBufferCountForTesting() == buffersBefore + 1, "作成したバッファは計数に入る");
+            Expect(RHI::Vulkan::GetVulkanLiveBufferMemoryCountForTesting() == memoriesBefore + 1, "作成したメモリは計数に入る");
+        }
+        Expect(RHI::Vulkan::GetVulkanLiveBufferCountForTesting() == buffersBefore, "破棄したバッファは計数から出る");
+
+        uint32_t failures = 0;
+        for (uint32_t attempt = 0; attempt < Attempts; ++attempt)
+        {
+            BufferDesc desc(256u, ResourceUsage::TransferSrc, false, "SparseTileUploadFailingBuffer");
+            desc.bExcludeDeviceLocal = true;
+            BufferPtr buffer;
+            try
+            {
+                buffer = harness.Device->CreateBuffer(desc);
+            }
+            catch (const std::exception&)
+            {
+                buffer.reset();
+            }
+            if (!buffer)
+            {
+                ++failures;
+            }
+        }
+        const int64_t buffersAfter = RHI::Vulkan::GetVulkanLiveBufferCountForTesting();
+        const int64_t memoriesAfter = RHI::Vulkan::GetVulkanLiveBufferMemoryCountForTesting();
+        std::cout << TestName << " create_failures=" << failures << " live_buffers=" << buffersBefore << "->" << buffersAfter
+                  << " live_memories=" << memoriesBefore << "->" << memoriesAfter << std::endl;
+        Expect(failures == Attempts, "DeviceLocal を要求して除外したバッファの作成は必ず失敗する");
+        Expect(buffersAfter == buffersBefore, "作成に失敗しても VkBuffer が残ってはならない");
+        Expect(memoriesAfter == memoriesBefore, "作成に失敗してもバッファ用メモリが残ってはならない");
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -845,6 +893,7 @@ namespace
             TestDiscardAndAbandon(harness);
             TestOverlappingWrites(harness);
             TestWaitIdleCounterDetectsUpdate(harness);
+            TestBufferCreateFailureCleansUp(harness);
 
             device->WaitIdle();
             for (BufferPtr& readback : harness.Readback)
