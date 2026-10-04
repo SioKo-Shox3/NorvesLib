@@ -601,3 +601,8 @@
 - 英語の説明文: `MegaGeometryPass.cpp` のログ「見えたビットのバッファを作れませんでした」を日本語にした。`GameApplicationHandler.cpp` の `Rendering3DTest command line parse failed:` は既存の全行共通のログの接頭辞（機械が照合する文字列）なので触っていない。
 - 検証: `verify-VTG3-TWO-PASS-OCCLUSION-10.txt`（Debug のビルド BUILD_EXIT_CODE=0）、`-11.txt`（ctest 5/5 passed）、`-13.txt`（RelWithDebInfo の Game のビルド BUILD_EXIT_CODE=0）、`-14-capture.txt`（`-Deterministic` の撮影 pass。平均輝度 124.306・123.727・126.005、`MEGA_OCCLUSION` の値は反復5と同じ）。`default.png` を開いて小屋・球・岩・地面・空が欠けなく出ていることを確かめた。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - Notes: (1) bash の heredoc に日本語や引用符を含む Python を渡すと失敗することがあるので、スクリプトはファイルに書いて実行した。(2) 同一ObjectIdのコンポーネントが1フレームの中で作り直された場合は `ComponentId` の違いで検出する（フレームをまたぐ不在は連続性の条件で検出する）。
+
+## 反復 7（run 20261005-014448）: VTG3-TWO-PASS-OCCLUSION（再検証の失敗への対応、done）
+- 再検証で `RenderGraphCompileTest` が `fills[i] == expected[i]`（埋め直しの回数）で落ちた原因は、コードの欠陥ではなく **Core の `MegaGeometryPass.cpp` のオブジェクトが古かった**こと。フレーム 3・5・7 の埋め直しが 0 になり（実測 {2,0,0,0,0,0,0,0}）、変異（引き継ぎの2条件を外す）の確認のあとにソースを戻した状態とオブジェクトが食い違っていたと推定する。`MegaGeometryPass.cpp`・`MegaGeometryPass.h`・`RenderGraphCompileTest.cpp` を再コンパイルさせると {2,0,0,1,0,1,0,1} で通る。ソース・テストは変更していない。
+- 検証: `verify-VTG3-TWO-PASS-OCCLUSION-15.txt`（Debug のビルド BUILD_EXIT_CODE=0）、`-16.txt`（ctest 5/5 passed）、`-17.txt`（RelWithDebInfo の Game のビルド BUILD_EXIT_CODE=0）、`-18-capture.txt`（`-Deterministic` の撮影 pass。平均輝度 124.306・123.727・126.005、`MEGA_OCCLUSION` は default 541/574/6/30・near 3692/4307/36/596・low 1752/1865/7/110）。`default.png` を開いて小屋・球・岩・地面・空が欠けなく出ていることを確かめた。
+- Notes: 変異テストのあとにソースを戻したら、戻した直後に対象ターゲットを再ビルドして、古いオブジェクトが残らないことを確かめる（`git checkout` で戻したファイルの更新時刻が古いオブジェクトより前だと MSBuild が再コンパイルしないことがある）。
