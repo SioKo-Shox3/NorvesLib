@@ -669,3 +669,6 @@
 - G2-GR79-ARM-PIXELS: 解凍linearRGBA8 AO(R)/MR(G,B)を実histogramへつなぎ、全定数ならARMなし、残るtextureのみ同寸法検査してfactorを焼込。省略textureは白sample/HasSourceImage=false、実測と区別。activeMR/なければAOのalphaを保持、factor1全textureで全RGBA byte不変。input/policy/factor/view/planのalias・範囲/overflow・不足出力を先行拒否し失敗保持。第1周で半端量子化の1byte下振れを発見、byte領域BakeとQuantizedScalarへ修正し、素材定数も正規化往復しない。通常/O2/ASanUBSan(LSan除外)/MEMBER成功、第2周PASS。全256値×全8mask×quarter factorsと独立混色312120例/constant768例、合成AI犬の外れ値/metallicignore/textureoverrideを確認。画像IO/NVTEX/manifest/実cook/実物/GPUは未接続・未検証。
 - 作者09:00追加条件: 共通selectorをGR79/GR78 SurfaceName/GR32 slot名へ共用、未一致・同材質への名前/番号の二重指定拒否、同名GLBへ改名推奨警告。TRELLIS/Pixal素は無名1、Blender経由Material_0。元indexとslot初出index、元名と生成名は分けて扱う。
 - Next: 共通resolver。raw/escape名のTCHAR幅問題も別taskへ追加。現ANSIではUTF8 bytes一致、wideには既存JSON数値tokenのcompile問題とbyte拡幅/char lexer縮約がある（実native実行でなく実ソースと純helper言語例の確認）。
+
+- G2-MATERIAL-SELECTION-SHARED（GR79/GR78/GR32共通核）: strictUTF8/NUL拒否の一意元名・番号+期待元名をResolveMaterialSelectionへ集約。元catalogと生成slotを別domainとし、行順とidentity順を区別。未一致/曖昧/同target二重指定拒否、全catalog同名警告情報、失敗時出力保持/alias検査。第1周で後続未一致の診断に前行が残る問題を修正、回帰追加で第2周PASS。通常/O2/ASanUBSan(LSan除外)/実MEMBER wrapper compile成功、独立100000例とroot20000例の総当たり参照比較一致。nativeCore/GR79設定/GR78SurfaceName/GR32component接続は次工程で未完。
+- Next: 作者10:02承認のWindows標準CIで実CLI基準採取を準備し、common resolverの設定/runtime接続も続ける。Main分割前baseline、--asset-setと旧main2specの実byte一致は未達。

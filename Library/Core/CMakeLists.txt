@@ -20,6 +20,7 @@ set(PRIVATE_SOURCES
     Private/Asset/CookedSkeletalNameCodec.h
     Private/Asset/CookedSkeletalNameCodec.cpp
     Private/Asset/CookedMaterialFormat.cpp
+    Private/Resource/MaterialSelection.cpp
     Private/Resource/MaterialImportPolicy.cpp
     Private/Resource/MaterialImportSettings.cpp
     Private/Resource/MaterialImportSettingsJson.cpp

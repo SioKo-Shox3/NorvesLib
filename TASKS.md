@@ -2315,7 +2315,7 @@
 - stop-when: absent textureを実測扱い、画像alphaの不必要な変更、異寸法を黙って誤結合、失敗時部分出力、画像IO/実物/GPU/cook接続まで済みとする。
 
 ## G2-MATERIAL-SELECTION-SHARED: 材質識別の共通関数を実装する
-- status: todo
+- status: done
 - done-when: 作者09:00承認通り一意元名/番号+元名を共通resolverへ集約、未一致/同targetへの二重指定拒否、同名警告情報を返す。SourceMaterialとGeneratedSlotのcatalogを区別し、GR79/GR78/GR32へ接続可能な単一の照合規則を固定する。
 - verify: 無名1材質/Material_0・同名・番号/名前両指定・逆primitive順・生成名衝突・期待名不一致・invalidUTF8/NUL・失敗保持。旧GR32番号はslot番号のまま。
 - stop-when: 生成slot名を元名に復元扱い、別関数へ解決ルールを複製、同名swapを検出可能と主張、未一致を無視して成功。
@@ -2325,3 +2325,16 @@
 - done-when: JSON bytes入口を厳密UTF8→nativeの共通APIへ接続し、lexerのchar縮約/数値tokenのwide型不整合を修正。ANSI/UTF16/UTF32のraw/escape/native同名性を契約化し、material resolverで推測修復しない。
 - verify: 骨+狼emoji/Latin、構文文字と同じ下位byteのUnicode、invalidUTF8/surrogate/NUL、ASCII/数値互換を純helperと実native登録で検証。Corewideの実compile/実行未確認を明示。
 - stop-when: byte拡幅だけや符号修正だけでdecode済みとする、path用ToCoreStringをJSON修正で一括変更、native実行未実施を合格扱いする。
+
+## G2-S6-WINDOWS-CLI-CI: Windowsで実CLIの分割前基準を採取する
+- status: todo
+- done-when: feature限定の標準Windows runnerで公式Vulkan SDKと実Core/AssetCook/CookedMeshTestをビルドし、固定7smokeの実exe出力・manifest・ログを保存。before baselineを実成功確認する。--asset-set比較とMain分割後比較は後続gateとして残す。
+- verify: 最小権限workflow、固定SDK/debug component、実run結果と各caseログ・snapshotを開いて確認。GPU検証と混同しない。
+- stop-when: mainへ変更、課金/権限を拡大、失敗を成功扱い、Mainを基準採取前に分割。
+- notes: 2026-10-04 10:02 UTC 作者がWindows CI新設・公式Vulkan SDKライセンス同意/導入を承認。既存workflow/run/checkは確認できなかった。
+
+## G2-MATERIAL-SELECTION-INTEGRATION: 共通照合を設定とslot名へ接続する
+- status: todo
+- done-when: GR79 ARM/発光、GR78 材質→SurfaceName、GR32 slot名が同じResolveMaterialSelectionを使う。元catalog/生成slotを明示し、全設定の未一致/二重指定をcookと増分preflight双方で拒否。同名GLBは元での改名推奨を資産名付きで警告する。
+- verify: raw無名1/Blender Material_0、逆primitive順/同名/生成名衝突、name+index二重指定、不在、unicode名、incremental skipの検証迂回なし、設定値/SurfaceName/slotへの実到達。
+- stop-when: 未実装SurfaceNameを受理して捨てる、共通核の存在だけで全接続完了とする、元indexとslotindexの混同、旧wire予約領域へ勝手に保存。
