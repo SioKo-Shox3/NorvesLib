@@ -29,6 +29,11 @@ namespace
     constexpr uint32_t CutRings = 3;
     constexpr double Pi = 3.14159265358979323846;
 
+    // クックが --fallback-min-triangles で上げたフォールバックの段の下限（--check-package で指定。0 は指定なし）と、
+    // その上限（Tools/AssetCook/CookMeshDag.cpp の FallbackMinOverrideMaxTriangles と同じ値）。
+    uint32_t g_fallbackMinTriangles = 0;
+    constexpr size_t FallbackMinOverrideMaxTriangles = 131072;
+
     int g_failures = 0;
 
     void Check(bool condition, const char* message)
@@ -721,10 +726,13 @@ namespace
         Check(distinctCounts >= 3, "しきい値を変えても切り口がほとんど変わらない");
         Check(CutTriangles(mesh, 0.0f).size() / 3 == sourceTriangles, "しきい値 0 の切り口が段 0 の三角形数と違う");
 
-        // (4) フォールバックの段: 三角形数が 1 以上で、目標(全体の 1/16)以下。粗すぎない(目標の 1/4 以上)。閉じている。
+        // (4) フォールバックの段: 三角形数が 1 以上で、目標(全体の 1/16。クックが fallback_min_triangles で下限を上げた
+        //     ときは、その下限の方)以下。粗すぎない(目標の 1/4 以上)。閉じている。
         const size_t fallbackTriangles = mesh.FallbackIndexCount / 3;
+        const size_t fallbackTarget = std::max<size_t>(sourceTriangles / 16,
+                                                       std::min<size_t>(g_fallbackMinTriangles, FallbackMinOverrideMaxTriangles));
         Check(fallbackTriangles >= 1, "フォールバックの段が空");
-        Check(fallbackTriangles <= sourceTriangles / 16, "フォールバックの段の三角形が全体の 1/16 を超える");
+        Check(fallbackTriangles <= fallbackTarget, "フォールバックの段の三角形が目標(全体の 1/16 か指定した下限)を超える");
         Check(fallbackTriangles >= sourceTriangles / 64, "フォールバックの段が粗すぎる");
         VariableArray<uint32_t> fallback;
         for (uint32_t k = 0; k < mesh.FallbackIndexCount; ++k)
@@ -898,6 +906,10 @@ int main(int argc, char** argv)
 {
     if (argc >= 3 && std::strcmp(argv[1], "--check-package") == 0)
     {
+        if (argc >= 5 && std::strcmp(argv[3], "--fallback-min-triangles") == 0)
+        {
+            g_fallbackMinTriangles = static_cast<uint32_t>(std::strtoul(argv[4], nullptr, 10));
+        }
         RunCheckPackage(argv[2]);
         if (g_failures != 0)
         {

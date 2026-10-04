@@ -78,6 +78,9 @@ namespace
         bool bFlipNormalY = false;
         // --kind model（NVMESH v1）で、フォールバックの段の三角形数の目標の下限（0 は指定なし）。
         uint32_t FallbackMinTriangles = 0;
+        // --generate displaced-sphere: --input の高さマップ（16 ビットのグレーの PNG）から、起動画面の大きな球を作って焼く。
+        // 空なら --input の glTF を焼く。
+        std::string Generate;
     };
 
     std::string ToStdString(const NorvesLib::Core::Container::AnsiString &value)
@@ -1743,6 +1746,19 @@ namespace
                 }
                 outOptions.FallbackMinTriangles = static_cast<uint32_t>(parsed);
             }
+            else if (argument == "--generate")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                if (value != "displaced-sphere")
+                {
+                    error = "--generate は displaced-sphere だけを指定できます";
+                    return false;
+                }
+                outOptions.Generate = value;
+            }
             else if (argument == "--flip-normal-y")
             {
                 outOptions.bFlipNormalY = true;
@@ -1773,6 +1789,12 @@ namespace
         if (outOptions.bFlipNormalY && outOptions.Usage != "normal")
         {
             error = "--flip-normal-y は --usage normal と一緒に指定してください";
+            return false;
+        }
+
+        if (!outOptions.Generate.empty() && outOptions.Kind != "model")
+        {
+            error = "--generate は --kind model と一緒に指定してください";
             return false;
         }
 
@@ -1891,6 +1913,8 @@ namespace
             << "--format nvmesh.v0.mesh3d.pnt.u32.clustered "
             << "--variant default\n"
             << "       (--format nvmesh.v1.mesh3d.pnt.u32.lodgraph で LOD の階層を持つ NVMESH v1 を焼く)\n"
+            << "       (--generate displaced-sphere を足すと、--input の高さマップ（16 ビットのグレーの PNG）で変位した"
+               "起動画面の大きな球を作って v1 に焼く)\n"
             << "       AssetCook --input <model.gltf> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind model --entry <entry.nvskel> --entry-type Skl0 "
             << "--format nvskel.v0.skinned.pnujiw.u32 "
@@ -2236,14 +2260,24 @@ namespace
 
         NorvesLib::Tools::AssetCook::MeshCookResult meshResult;
         NorvesLib::Core::Container::AnsiString meshError;
-        if (!NorvesLib::Tools::AssetCook::CookGltfToNvmesh(inputBytes.data(),
-                                                           inputBytes.size(),
-                                                           options.Format,
-                                                           inputPath.generic_string(),
-                                                           logicalPath,
-                                                           meshResult,
-                                                           meshError,
-                                                           options.FallbackMinTriangles))
+        const bool bCooked =
+            options.Generate == "displaced-sphere"
+                ? NorvesLib::Tools::AssetCook::CookDisplacedSphereToNvmesh(inputBytes.data(),
+                                                                          inputBytes.size(),
+                                                                          options.Format,
+                                                                          logicalPath,
+                                                                          meshResult,
+                                                                          meshError,
+                                                                          options.FallbackMinTriangles)
+                : NorvesLib::Tools::AssetCook::CookGltfToNvmesh(inputBytes.data(),
+                                                                inputBytes.size(),
+                                                                options.Format,
+                                                                inputPath.generic_string(),
+                                                                logicalPath,
+                                                                meshResult,
+                                                                meshError,
+                                                                options.FallbackMinTriangles);
+        if (!bCooked)
         {
             error = ToStdString(meshError);
             return false;

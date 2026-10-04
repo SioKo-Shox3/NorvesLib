@@ -121,6 +121,10 @@ param(
     # gltf は glTF の実行時の経路で読む（クック済みの経路との見た目・VRAM の比較用）。
     [ValidateSet('', 'cooked', 'gltf')]
     [string]$ModelSource = '',
+    # 大きな球の作り方（--rendering3dtest-big-sphere-source）。省略時は Game の既定（クック済みの NVMESH v1）。
+    # runtime は起動時に実行時の生成で作る（クック済みの球との見た目・起動時間の比較用）。
+    [ValidateSet('', 'cooked', 'runtime')]
+    [string]$BigSphereSource = '',
     # 決定的な撮影（--capture-deterministic）で撮る。同じコードを2回撮ると一致する（見た目の保全を数値で比べる用）。
     [switch]$Deterministic,
     # テクスチャの負荷モード（--stress-textures）で default・low・top の3視点を撮る。-ViewNames で絞れる。
@@ -693,6 +697,10 @@ foreach ($view in $shots)
     if ($ModelSource -ne '')
     {
         $arguments += "--rendering3dtest-model-source=$ModelSource"
+    }
+    if ($BigSphereSource -ne '')
+    {
+        $arguments += "--rendering3dtest-big-sphere-source=$BigSphereSource"
     }
     if ($Deterministic)
     {

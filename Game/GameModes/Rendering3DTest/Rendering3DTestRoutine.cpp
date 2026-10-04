@@ -55,6 +55,7 @@
 #include "Core/Public/Asset/AssetSystem.h"
 #include "Core/Public/Asset/CookedMeshFormat.h"
 #include "Core/Public/Rendering/MegaGeometry/CookedMeshMegaMeshAdapter.h"
+#include "Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h"
 #include "Core/Public/RHI/ITexture.h"
 #include "Core/Public/Thread/JobSystem.h"
 #include "Core/Public/Thread/Task.h"
@@ -90,15 +91,16 @@ namespace Game::GameModes
         // 勾配×深さと最小二乗で一致する深さ（1枚約2.09 mで横2.95 cm・縦3.07 cm）にし、作り直した法線と法線マップの
         // 傾きの大きさをそろえる。今のPOM（高さの尺度0.03×1枚2.09 m＝真上から見て6.3 cm、オフセットを抑える
         // 近似のため45°で4.4 cm・60°で3.1 cm相当）の見た目の範囲にも入る。
-        constexpr float kBigSphereDisplacementDepth = 0.03f;
+        constexpr float kBigSphereDisplacementDepth = MegaGeometry::StartupBigSphere::kDisplacementDepth;
         // 高さマップのミップを作り始める段（4096画素なら512画素。LOD0の頂点の間隔は約12画素でミップ3.58）
-        constexpr uint32_t kBigSphereHeightFieldFirstMip = 3u;
+        constexpr uint32_t kBigSphereHeightFieldFirstMip = MegaGeometry::StartupBigSphere::kHeightFieldFirstMip;
         // LOD0の格子（経度×緯度）。頂点の間隔は約6.1 mmで、変位の凹凸（石1つ約10〜15 cm、目地の幅約1〜3 cm）を形に持つ。
         // 近接視点ではLOD0が選ばれ、1280×640（約164万三角形）では三角形が約1.3画素と細かすぎて MegaGeometryPass が
         // 中央値 6〜7 ms になり、1フレームのGPUの時間が予算16.6 msに近づくため1段下げる。
-        constexpr uint32_t kBigSphereSegments = 1024u;
-        constexpr uint32_t kBigSphereRings = 512u;
-        constexpr const char *kBigSphereHeightMapRelativePath = "Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png";
+        // クック済みの球（Tools/AssetCook の --generate displaced-sphere）と同じ値を使う（StartupBigSphereSpec.h が共有）。
+        constexpr uint32_t kBigSphereSegments = MegaGeometry::StartupBigSphere::kSegments;
+        constexpr uint32_t kBigSphereRings = MegaGeometry::StartupBigSphere::kRings;
+        constexpr const char *kBigSphereHeightMapRelativePath = MegaGeometry::StartupBigSphere::kHeightMapRelativePath;
 
         // 地面（60 m 四方、y=-1）。石畳のテクスチャは 2 m ごとに繰り返す。
         constexpr float kGroundSize = 60.0f;
@@ -429,8 +431,11 @@ namespace Game::GameModes
 
             const auto meshStartTime = std::chrono::steady_clock::now();
             ProceduralMegaSphereSettings sphereSettings{};
+            sphereSettings.Radius = MegaGeometry::StartupBigSphere::kRadius;
             sphereSettings.Segments = kBigSphereSegments;
             sphereSettings.Rings = kBigSphereRings;
+            sphereSettings.TexCoordRepeatU = MegaGeometry::StartupBigSphere::kTexCoordRepeatU;
+            sphereSettings.TexCoordRepeatV = MegaGeometry::StartupBigSphere::kTexCoordRepeatV;
             if (bHeightFieldOk)
             {
                 sphereSettings.HeightField = &heightField;
@@ -712,13 +717,75 @@ namespace Game::GameModes
             }
         }
 
-        // 起動時に作った大きな球の頂点・クラスタから、石畳の材質を付けたMegaMeshを作り、仮に置いていた
-        // 通常のメッシュの球（32×16）と差し替える。作れなければ仮の球を残す。
+        // 大きな球のクック済みのメッシュ（NVMESH v1。AssetSets の一覧が焼く）を解決・解析して outCooked に入れる。
+        // クック済みが無い・解析できないときは outCooked を空のまま false を返す（呼び出し側が実行時の生成へ戻す）。
+        // 別スレッドで走る（約 77 MB の読み込みと検証を、メインスレッドと石畳のテクスチャの読み込みから外すため）。
+        // assetSystem はマニフェストの変更が走っていない読み取り専用のスナップショットなので、並行に引ける。
+        bool TryLoadCookedBigSphere(const TSharedPtr<const Asset::AssetSystem> &assetSystem,
+                                    Asset::CookedMeshData &outCooked)
+        {
+            const auto loadStartTime = std::chrono::steady_clock::now();
+            const char *meshPath = MegaGeometry::StartupBigSphere::kCookedMeshLogicalPath;
+            if (!assetSystem)
+            {
+                return false;
+            }
+            const Asset::AssetResolveResult resolved = assetSystem->ResolveAsset(meshPath, Asset::AssetKind::Model);
+            if (!resolved.UsedCooked())
+            {
+                NORVES_LOG_WARNING("Rendering3DTest",
+                                   "COOKED_BIG_SPHERE_MISSING path=%s クック済みの大きな球が無いため、実行時に生成します",
+                                   meshPath);
+                return false;
+            }
+            Asset::CookedMeshParseResult parsed = Asset::ParseCookedMesh(resolved.Blob);
+            if (!parsed.Succeeded() || parsed.Mesh.Clusters.empty() || parsed.Mesh.FormatMajor < 1)
+            {
+                NORVES_LOG_WARNING("Rendering3DTest",
+                                   "COOKED_BIG_SPHERE_INVALID path=%s status=%u クック済みの大きな球を解析できないため、"
+                                   "実行時に生成します",
+                                   meshPath,
+                                   static_cast<unsigned int>(parsed.Status));
+                return false;
+            }
+            outCooked = std::move(parsed.Mesh);
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=cooked_big_sphere_load load_ms=%.1f format_major=%u vertices=%u indices=%u clusters=%u "
+                            "lod_levels=%u fallback_indices=%u",
+                            ElapsedMilliseconds(loadStartTime),
+                            static_cast<unsigned int>(outCooked.FormatMajor),
+                            static_cast<unsigned int>(outCooked.Vertices.size()),
+                            static_cast<unsigned int>(outCooked.Indices.size()),
+                            static_cast<unsigned int>(outCooked.Clusters.size()),
+                            static_cast<unsigned int>(outCooked.LODLevelCount),
+                            static_cast<unsigned int>(outCooked.FallbackIndexCount));
+            return true;
+        }
+
+        // 大きな球のメッシュを用意するジョブの中身。既定はクック済みを読み、読めなければ（警告して）実行時に生成する。
+        // どちらか一方だけが outCooked / outRuntime に入る（クック済みを読めたら outCooked が空でなくなる）。
+        void PrepareBigSphereMeshData(bool bTryCooked,
+                                      const TSharedPtr<const Asset::AssetSystem> &assetSystem,
+                                      Asset::CookedMeshData &outCooked,
+                                      ProceduralMegaSphereData &outRuntime)
+        {
+            if (bTryCooked && TryLoadCookedBigSphere(assetSystem, outCooked))
+            {
+                return;
+            }
+            BuildBigSphereMegaData(outRuntime);
+        }
+
+        // 起動時に作った（クック済みを読んだ、または実行時に生成した）大きな球の頂点・クラスタから、石畳の材質を付けた
+        // MegaMeshを作り、仮に置いていた通常のメッシュの球（32×16）と差し替える。作れなければ仮の球を残す。
         void CreateBigSphereMegaGeometry(GameModeContext &ctx, Rendering3DTestData &data)
         {
             TSharedPtr<ProceduralMegaSphereData> sphereData = data.m_pBigSphereMegaData;
+            const TSharedPtr<Asset::CookedMeshData> cookedSphere = data.m_pBigSphereCooked;
             data.m_pBigSphereMegaData.reset();
-            if (!sphereData || sphereData->Vertices.empty() || !data.m_CobbleStoneMaterialUpdate)
+            data.m_pBigSphereCooked.reset();
+            const bool bCooked = cookedSphere && !cookedSphere->Clusters.empty();
+            if (!data.m_CobbleStoneMaterialUpdate || (!bCooked && (!sphereData || sphereData->Vertices.empty())))
             {
                 return;
             }
@@ -728,28 +795,45 @@ namespace Game::GameModes
             const MaterialCreateData &cobble = data.m_CobbleStoneMaterialUpdate->CreateData;
 
             MegaMeshCreateInfo createInfo;
-            createInfo.VertexData = sphereData->Vertices.data();
-            createInfo.VertexDataSize = sphereData->Vertices.size() * sizeof(Mesh3DVertex);
-            createInfo.VertexCount = static_cast<uint32_t>(sphereData->Vertices.size());
-            createInfo.VertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
-            createInfo.IndexData = sphereData->Indices.data();
-            createInfo.IndexCount = static_cast<uint32_t>(sphereData->Indices.size());
-            createInfo.Clusters = sphereData->Clusters;
-            createInfo.TotalBounds = sphereData->Bounds;
-            // どの段も閉じた球なので、メッシュ全体で同じ段を選ばせて段の境目の割れ目を防ぐ。
-            createInfo.LODBounds = sphereData->Bounds;
-            createInfo.bBuildLODHierarchy = false;
-            createInfo.ShadowLODLevel = kBigSphereShadowLODLevel;
+            float displacementUVSpacing = 0.0f;
+            if (bCooked)
+            {
+                // クック済みは階層（クラスタの DAG）をクッカーが焼いてあり、段の選び方は GPU のカリングが誤差で決める。
+                // 影・レイトレは常駐のフォールバックの段を使う。球は常に変位しているので、頂点の間隔は仕様から求める。
+                if (!BuildMegaMeshCreateInfoFromCookedMesh(*cookedSphere, createInfo))
+                {
+                    NORVES_LOG_ERROR("Rendering3DTest",
+                                     "クック済みの大きな球からMegaMeshの入力を作れませんでした（仮の球のまま）");
+                    return;
+                }
+                displacementUVSpacing = MegaGeometry::StartupBigSphere::DisplacementUVSpacing();
+            }
+            else
+            {
+                createInfo.VertexData = sphereData->Vertices.data();
+                createInfo.VertexDataSize = sphereData->Vertices.size() * sizeof(Mesh3DVertex);
+                createInfo.VertexCount = static_cast<uint32_t>(sphereData->Vertices.size());
+                createInfo.VertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+                createInfo.IndexData = sphereData->Indices.data();
+                createInfo.IndexCount = static_cast<uint32_t>(sphereData->Indices.size());
+                createInfo.Clusters = sphereData->Clusters;
+                createInfo.TotalBounds = sphereData->Bounds;
+                // どの段も閉じた球なので、メッシュ全体で同じ段を選ばせて段の境目の割れ目を防ぐ。
+                createInfo.LODBounds = sphereData->Bounds;
+                createInfo.bBuildLODHierarchy = false;
+                createInfo.ShadowLODLevel = kBigSphereShadowLODLevel;
+                displacementUVSpacing = sphereData->DisplacementUVSpacing;
+            }
             createInfo.Material.AlbedoTexture = cobble.AlbedoTexture;
             createInfo.Material.NormalTexture = cobble.NormalTexture;
             createInfo.Material.RoughnessTexture = cobble.RoughnessTexture;
             createInfo.Material.AOTexture = cobble.AOTexture;
             createInfo.Material.ORMTexture = cobble.ORMTexture;
             createInfo.Material.bNormalTwoChannel = cobble.bNormalTwoChannel;
-            if (sphereData->DisplacementUVSpacing > 0.0f)
+            if (displacementUVSpacing > 0.0f)
             {
                 // 凹凸は形（変位）で出すので POM は切る。法線マップは形が持つ粗い傾きを差し引いて細部だけ載せる。
-                createInfo.Material.DisplacementUVSpacing = sphereData->DisplacementUVSpacing;
+                createInfo.Material.DisplacementUVSpacing = displacementUVSpacing;
             }
             else
             {
@@ -795,7 +879,8 @@ namespace Game::GameModes
             data.m_pSphereMegaGeometryComponent->SetCastShadow(true);
 
             NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=big_sphere_megamesh_create create_ms=%.1f vertices=%u triangles=%u clusters=%u",
+                            "stage=big_sphere_megamesh_create cooked=%d create_ms=%.1f vertices=%u triangles=%u clusters=%u",
+                            bCooked ? 1 : 0,
                             createMs,
                             createInfo.VertexCount,
                             createInfo.IndexCount / 3u,
@@ -1523,21 +1608,29 @@ namespace Game::GameModes
 
             data.m_bMeshesRegistered = bSphereOk && bGroundOk;
 
-            // 大きな球の高ポリのMegaGeometry（BuildBigSphereMegaData）の頂点・変位・クラスタを別スレッドで作り始め、
-            // 石畳のテクスチャがそろったら MegaMesh にして、上の通常のメッシュの球（仮の球）と差し替える。
-            // ジョブを投げられなければここで作る。
+            // 大きな球の高ポリのMegaGeometry。既定はクック済み（NVMESH v1。クッカーが変位した球の階層を焼いてある）を
+            // 別スレッドで読み、クック済みが無ければ同じジョブの中で BuildBigSphereMegaData の頂点・変位・クラスタを作る。
+            // どちらも石畳のテクスチャがそろったら MegaMesh にして、上の通常のメッシュの球（仮の球）と差し替える。
+            // ジョブを投げられなければここで用意する。
             {
                 auto sphereData = MakeShared<ProceduralMegaSphereData>();
+                auto cookedSphere = MakeShared<Asset::CookedMeshData>();
                 data.m_pBigSphereMegaData = sphereData;
-                NorvesLib::Thread::TaskPtr buildTask =
-                    NorvesLib::Thread::Task::Create([sphereData]() { BuildBigSphereMegaData(*sphereData); });
+                data.m_pBigSphereCooked = cookedSphere;
+                const bool bTryCooked = !data.m_bBigSphereFromRuntime;
+                const TSharedPtr<const Asset::AssetSystem> assetSystem =
+                    bTryCooked && data.m_GetAssetSystem.IsBound() ? data.m_GetAssetSystem.Invoke()
+                                                                  : TSharedPtr<const Asset::AssetSystem>();
+                NorvesLib::Thread::TaskPtr buildTask = NorvesLib::Thread::Task::Create(
+                    [sphereData, cookedSphere, assetSystem, bTryCooked]()
+                    { PrepareBigSphereMeshData(bTryCooked, assetSystem, *cookedSphere, *sphereData); });
                 if (buildTask && NorvesLib::Thread::JobSystem::Get().SubmitTask(buildTask))
                 {
                     data.m_BigSphereBuildTask = buildTask;
                 }
                 else
                 {
-                    BuildBigSphereMegaData(*sphereData);
+                    PrepareBigSphereMeshData(bTryCooked, assetSystem, *cookedSphere, *sphereData);
                 }
             }
 
@@ -3298,6 +3391,7 @@ namespace Game::GameModes
         data.m_pSphereMeshComponent = nullptr;
         data.m_pSphereMegaGeometryComponent = nullptr;
         data.m_pBigSphereMegaData.reset();
+        data.m_pBigSphereCooked.reset();
         // 走行中のジョブは自分の参照で球のデータを持ち続けるので、ここでは待たずに手放す。
         data.m_BigSphereBuildTask.reset();
         data.m_CobbleStoneMaterialUpdate.reset();

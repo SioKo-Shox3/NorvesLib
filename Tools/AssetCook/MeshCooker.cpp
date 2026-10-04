@@ -5,6 +5,8 @@
 #include "Asset/CookedSkeletalFormat.h"
 #include "Container/FixedArray.h"
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
+#include "Rendering/MegaGeometry/ProceduralMegaSphere.h"
+#include "Rendering/MegaGeometry/StartupBigSphereSpec.h"
 #include "Resource/SkeletalGltfDecode.h"
 #include "Text/JsonDocument.h"
 
@@ -19,6 +21,8 @@
 #include <limits>
 #include <system_error>
 #include <utility>
+
+#include "stb_image.h"
 
 namespace NorvesLib::Tools::AssetCook
 {
@@ -1795,6 +1799,112 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        // 起動画面の大きな球（石畳の高さマップで変位した緯度経度の球）を作って、LOD の階層を焼く。
+        // 球の仕様（半径・分割・繰り返し・変位の深さ）は実行時の生成と共有の StartupBigSphereSpec.h にある。
+        // 実行時の生成が作る 5 段の LOD は使わず、最も細かい段（LOD0）だけを入れて階層を焼く。
+        bool CookDisplacedSphereInternal(const uint8_t* heightMapBytes, size_t heightMapSize, AnsiStringView format,
+                                         AnsiStringView logicalPath, MeshCookResult& outResult, AnsiString& error,
+                                         uint32_t fallbackMinTriangles)
+        {
+            namespace Spec = NorvesLib::Core::Rendering::MegaGeometry::StartupBigSphere;
+            using NorvesLib::Core::Rendering::MegaGeometry::BuildProceduralMegaSphere;
+            using NorvesLib::Core::Rendering::MegaGeometry::BuildProceduralMegaSphereHeightField;
+            using NorvesLib::Core::Rendering::MegaGeometry::ProceduralMegaSphereData;
+            using NorvesLib::Core::Rendering::MegaGeometry::ProceduralMegaSphereHeightField;
+            using NorvesLib::Core::Rendering::MegaGeometry::ProceduralMegaSphereSettings;
+
+            if (format != SupportedMeshFormatV1)
+            {
+                error = "displaced-sphere は NVMESH v1 の形式（nvmesh.v1.mesh3d.pnt.u32.lodgraph）だけを焼けます";
+                return false;
+            }
+            if (heightMapBytes == nullptr || heightMapSize == 0 || heightMapSize > static_cast<size_t>(0x7fffffff))
+            {
+                error = "高さマップの入力が空か、大きすぎます";
+                return false;
+            }
+            if (!ValidateRelativePath(logicalPath, "model logical path", error))
+            {
+                return false;
+            }
+
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            stbi_us* pixels = stbi_load_16_from_memory(heightMapBytes, static_cast<int>(heightMapSize), &width, &height,
+                                                       &channels, 1);
+            if (pixels == nullptr)
+            {
+                error = AnsiString("高さマップを読めません: ") + AnsiString(stbi_failure_reason());
+                return false;
+            }
+            ProceduralMegaSphereHeightField heightField;
+            const bool bHeightFieldOk =
+                width > 0 && width == height &&
+                BuildProceduralMegaSphereHeightField(pixels, static_cast<uint32_t>(width), Spec::kHeightFieldFirstMip,
+                                                     heightField);
+            stbi_image_free(pixels);
+            if (!bHeightFieldOk)
+            {
+                error = "高さマップは 2 の累乗の正方形の 16 ビットのグレーにしてください";
+                return false;
+            }
+
+            ProceduralMegaSphereSettings settings{};
+            settings.Radius = Spec::kRadius;
+            settings.Segments = Spec::kSegments;
+            settings.Rings = Spec::kRings;
+            settings.LODLevelCount = 1;
+            settings.TexCoordRepeatU = Spec::kTexCoordRepeatU;
+            settings.TexCoordRepeatV = Spec::kTexCoordRepeatV;
+            settings.HeightField = &heightField;
+            settings.DisplacementDepth = Spec::kDisplacementDepth;
+            ProceduralMegaSphereData sphere;
+            if (!BuildProceduralMegaSphere(settings, sphere) || sphere.Indices.empty())
+            {
+                error = "変位した球を作れませんでした";
+                return false;
+            }
+
+            VariableArray<MeshVertexPnt> vertices;
+            vertices.reserve(sphere.Vertices.size());
+            for (const auto& source : sphere.Vertices)
+            {
+                MeshVertexPnt vertex;
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    vertex.Position[axis] = source.Position[axis];
+                    vertex.Normal[axis] = source.Normal[axis];
+                }
+                vertex.TexCoord[0] = source.TexCoord[0];
+                vertex.TexCoord[1] = source.TexCoord[1];
+                vertices.push_back(vertex);
+            }
+
+            // 材質は Game が石畳の材質を当てるので、メッシュには材質の参照を持たせない。
+            MaterialReferences materialReferences;
+            MeshCookResult v1Result;
+            if (!CookLodGraphMesh(vertices, sphere.Indices, materialReferences, v1Result, error, fallbackMinTriangles))
+            {
+                return false;
+            }
+
+            // 元は高さマップの内容と球の仕様。仕様の値を変えたら焼き直されるよう、値もハッシュに入れる。
+            uint64_t hash = Format::Fnv1a64OffsetBasis;
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(heightMapSize));
+            hash = Fnv1a64Update(hash, heightMapBytes, heightMapSize);
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(Spec::kSegments));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(Spec::kRings));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(Spec::kHeightFieldFirstMip));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kRadius)));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kDisplacementDepth)));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kTexCoordRepeatU)));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kTexCoordRepeatV)));
+            v1Result.SourceHash = hash;
+            outResult = std::move(v1Result);
+            return true;
+        }
+
         struct SkeletalStringReference
         {
             uint64_t Offset = 0;
@@ -2143,6 +2253,24 @@ namespace NorvesLib::Tools::AssetCook
                                       fallbackMinTriangles))
         {
             error = internalError.c_str();
+            return false;
+        }
+        return true;
+    }
+
+    bool CookDisplacedSphereToNvmesh(const uint8_t* heightMapBytes,
+                                     size_t heightMapSize,
+                                     NorvesLib::Core::Container::AnsiStringView format,
+                                     NorvesLib::Core::Container::AnsiStringView logicalPath,
+                                     MeshCookResult& outResult,
+                                     NorvesLib::Core::Container::AnsiString& error,
+                                     uint32_t fallbackMinTriangles)
+    {
+        AnsiString internalError;
+        if (!CookDisplacedSphereInternal(heightMapBytes, heightMapSize, format, logicalPath, outResult, internalError,
+                                         fallbackMinTriangles))
+        {
+            error = internalError;
             return false;
         }
         return true;

@@ -65,6 +65,14 @@
       "fallback_min_triangles": 4096,
       "package_name": "Cottage/Cottage_Clean.nvpkg",
       "entry_name": "Assets/Models/Cottage_Clean/Cottage_Clean.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/BigCobbleSphere/BigCobbleSphere.generated",
+      "source_path": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
+      "generate": "displaced-sphere",
+      "fallback_min_triangles": 131072,
+      "package_name": "BigCobbleSphere/BigCobbleSphere.nvpkg",
+      "entry_name": "Assets/Models/BigCobbleSphere/BigCobbleSphere.nvmesh"
     }
   ]
 }

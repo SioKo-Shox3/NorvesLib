@@ -5,7 +5,9 @@
 # source_path の詰め済みの1枚（glTF の ARM。R=AO・G=粗さ・B=メタリック）のどちらか。
 # 一覧の "models"（省略可）の各項目は logical_path・source_path・package_name・entry_name・format（省略時は NVMESH v1）と、
 # 変更の検出に含める "extra_sources"（glTF が読む .bin など。省略可）と、フォールバックの段の三角形数の目標の下限
-# "fallback_min_triangles"（省略可。小さなメッシュで根の段までの粗さが影・RT の形を崩すときに上げる）を持つ。
+# "fallback_min_triangles"（省略可。小さなメッシュで根の段までの粗さが影・RT の形を崩すときに上げる）と、
+# glTF を読まずにメッシュを作らせる "generate"（省略可。displaced-sphere は source_path の高さマップで変位した
+# 起動画面の大きな球。仕様は Library/Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h）を持つ。
 #
 # 差分クック: 元画像の内容・一覧の項目・AssetCook の実行ファイルのどれかが変わったものだけを焼き、変わらないものは
 # 前回の結果（<RuntimeRoot>/.cookstate/ に項目ごとの印とマニフェスト項目を残す）をそのまま使う。
@@ -430,6 +432,15 @@ foreach ($specFile in $specFiles) {
                 throw "$context の fallback_min_triangles は 0 以上の整数にしてください"
             }
             $cookArguments += @("--fallback-min-triangles", [string]$fallbackMin)
+        }
+        # "generate": "displaced-sphere" は、source_path の高さマップ（16 ビットのグレーの PNG）で変位した起動画面の大きな球を
+        # AssetCook に作らせて焼く（glTF は読まない）。
+        if (Test-PropertyExists -Object $model -Name "generate") {
+            $generate = Get-StringField -Object $model -Name "generate" -Context $context
+            if ($generate -ne "displaced-sphere") {
+                throw "$context の generate は displaced-sphere だけを指定できます"
+            }
+            $cookArguments += @("--generate", $generate)
         }
         $asset = Invoke-CookEntry -SetName $setName -PackageRootName $packageRoot -Variant $variant -Kind "model" `
             -LogicalPath $logicalPath -CookedPackage $cookedPackage -EntryName $entryName -Item $model `

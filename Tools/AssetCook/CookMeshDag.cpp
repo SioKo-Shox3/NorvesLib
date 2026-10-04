@@ -38,6 +38,9 @@ namespace NorvesLib::Tools::AssetCook
         constexpr size_t AttributeCount = 5;
         constexpr uint32_t InvalidIndex = 0xffffffffu;
         constexpr size_t FallbackMaxTriangles = 32768;
+        // 呼び出し側が fallbackMinTriangles で明示した下限の上限。既定の目標（FallbackMaxTriangles）では影・レイトレが
+        // 実面からずれて自己遮蔽を起こす、変位した大きな球（石の盛り上がりと目地が数 cm）のためにある。
+        constexpr size_t FallbackMinOverrideMaxTriangles = 131072;
         constexpr size_t FallbackReductionDivisor = 16;
         // 1 段で三角形がこの割合(%)も減らない段は、簡略化が進まないので、そこを根の段として打ち切る。
         constexpr uint64_t MinProgressPercent = 15;
@@ -891,7 +894,7 @@ namespace NorvesLib::Tools::AssetCook
         const VariableArray<uint64_t> parentCumulative = makeCumulative(parentEdges);
         const uint64_t target = std::max<uint64_t>(
             std::min<uint64_t>(totalTriangles / FallbackReductionDivisor, FallbackMaxTriangles),
-            std::min<uint64_t>(fallbackMinTriangles, FallbackMaxTriangles));
+            std::min<uint64_t>(fallbackMinTriangles, FallbackMinOverrideMaxTriangles));
         float threshold = candidates.back();
         for (const float candidate : candidates)
         {

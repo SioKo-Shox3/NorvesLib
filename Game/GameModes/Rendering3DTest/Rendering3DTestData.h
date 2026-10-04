@@ -270,6 +270,12 @@ namespace Game::GameModes
         // 起動画面の岩・小屋をクック済み（NVMESH v1・BC・VT）で読むか。false が既定で、クック済みが無ければ glTF の実行時の経路へ戻して警告する。
         // true（--rendering3dtest-model-source=gltf、--no-cooked-textures）は、最初から glTF の経路で読む（見た目・VRAM の比較用）。
         bool m_bStartupModelsFromGltf = false;
+        // 起動画面の大きな球をクック済み（NVMESH v1。クッカーが変位した球の階層を焼いてある）で読むか。false が既定で、
+        // クック済みが無ければ実行時の生成（約3.6秒）へ戻して警告する。true（--rendering3dtest-big-sphere-source=runtime、
+        // --no-cooked-textures）は、最初から実行時に生成する（見た目・起動時間の比較用）。
+        bool m_bBigSphereFromRuntime = false;
+        // 読み込んだクック済みの大きな球（石畳の材質がそろって MegaMesh を作るまで持つ）
+        TSharedPtr<NorvesLib::Core::Asset::CookedMeshData> m_pBigSphereCooked;
         // クック済みのメッシュ（NVMESH）を解決する AssetSystem（無ければ null。クック済みのマニフェストを読んでいないとき）。
         NorvesLib::Core::Delegate<NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>> m_GetAssetSystem;
         // クック済みで読んでいる岩・小屋の、材質（VT）がそろうのを待っている状態。そろったら MegaMesh を作って取り除く。
