@@ -622,3 +622,6 @@
 
 - G2-GR79-MATERIAL-WIRE: 共有128B材質recordをRendering非依存の明示little-endian codecへ固定。4StringRef/予約/flags/alpha/係数/発光の有限・範囲・Yとraw/再正規化後の65504上限を検査し、失敗時出力保持とalias拒否を保証。独立Python128B golden、通常/O2-NDEBUG/ASan・UBSan（LSan除外）3modeとMEMBER compile成功。独立レビュー第2周PASS。現container/parser/runtimeは未接続でARM/nits既定も未決。Windows/native/GPUは未実行。
 - Next: 作者承認済みのGR32 palette共有。currentはcomponent・frameで1回、previousはGBufferのみ最大1回、影はprevious無し、パス順序非依存。
+
+- G2-GR32-PALETTE-SHARING: 作者訂正のcurrent1/previousはGBufferのみ最大1に沿い、componentとepochでcurrentを共有しpreviousを遅延作成。影のpreparedは常にprevious無し、両順序で同currentを再利用。pose/handle/世代/asset実体一致、失敗時再作成禁止、全登録viewport leaseとsubmitted serialの寿命、tagged epoch/パス/使用flag照合、旧匿名跨frame互換を保持。独立ソースレビュー2周PASS。両順序・8範囲・viewport・別component/pose/世代・失敗回数・current/previous保持解放・偽装拒否を独立native契約へ追加。既存pure範囲3mode回帰PASS。新cache本体の実行はWindows.hで未検証、GPU受入れも未実施。計画の旧CreateBuffer総数2箇所を訂正。
+- Next: GR32-POINT-SHADOW-BUDGET → POSE-HISTORY-GENERATION。GR32全体/GPU gateは未完了。

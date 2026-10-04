@@ -1,0 +1,27 @@
+# スキン描画パレットのフレーム内共有
+
+## 作成単位
+
+非0 ComponentIdごとに、BeginFrameからCommit/Abortまでを1準備epochとする。
+同componentのasset handle/generation・asset lease実体・world・bone行列のビット列が一致するときだけ現在パレットを共有する。
+異なる値を同epochへ混在させた場合は拒否し、2個目を作らない。
+SkinnedPaletteは1回作成。SkinnedPreviousPaletteはGBufferが初めてpreviousを要求した時に最大1回作成する。
+影はpreviousを要求せず、GBufferが先に作成済みでも影のpreparedへは渡さない。
+影→GBuffer→影記録、GBuffer→影の両方で現在パレットを共有する。
+previousの値は要求する呼び出し間でだけ一致を確認する。作成失敗は当epochで再試行せず、currentが成功済みなら影は継続できる。
+RHIとshaderのbinding配置は変更しない。
+
+## 寿命と記録
+
+共有recordには、Prepare成功した全frame leaseをweak参照で登録する。
+別viewportが作ったleaseもPrepareを経由すれば共有可能。未登録leaseへの差し替えは拒否する。
+preparedのcomponent/epoch・使用有無・buffer組とVB/IB/count/asset実体を記録前に照合する。
+非0componentの古いepochは記録できない。ComponentId=0は既存の非共有経路と跨フレームprepared互換を維持する。
+Begin/Commit/Abortで準備表を破棄しても、全frame lease消滅と最後のsubmitted serial完了の両方までGPU資源を保持する。
+Abortはsubmitted serialを進めない。ForceClearAfterWaitIdleでもepochを巻き戻さない。
+
+## 検証範囲
+
+独立SkinnedSubmeshDrawContractTestへ、両パス順序・1/2/8範囲・複数viewport・別component・pose/世代衝突・失敗時作成回数・epoch失効・全leaseとGPU serialの寿命・旧匿名互換を登録する。
+このクラウドではCoreのWindows.h依存によりnative実行は未検証。CPU RHI doubleはGPU表示・readbackの代用にはしない。
+点光源影のcomponent単位UBO枠と前姿勢の世代照合は別の接続工程で扱う。

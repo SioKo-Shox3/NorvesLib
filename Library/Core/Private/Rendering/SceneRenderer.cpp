@@ -524,6 +524,13 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // tagged preparedはパスの使用契約も照合する。旧匿名GBufferは従来互換を保つ。
+        if (command.Skinned.Prepared.ComponentId != 0 &&
+            (command.Skinned.Prepared.bUsesPreviousPalette != (command.Skinned.PassKind == SkinnedMeshPassKind::GBuffer)))
+        {
+            return false;
+        }
+
         if (!skinnedMeshResources->MarkLastUse(command.Skinned.Prepared, command.Skinned.FrameLease))
         {
             return false;

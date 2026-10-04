@@ -1,5 +1,7 @@
 ﻿// 既存の停止中テストとは別exe。実Coreと小さなRHI test doubleでCPU記録契約を検査する。
 #include "Rendering/SkinnedDrawCommands.h"
+#include "Rendering/SkinnedMeshGpuStore.h"
+#include "Math/MatrixUtils.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneRenderer.h"
 #include "RHI/IBuffer.h"
@@ -294,6 +296,22 @@ namespace
     public:
         RHI::BufferPtr CreateBuffer(const RHI::BufferDesc& desc) override
         {
+            if (desc.DebugName && std::strcmp(desc.DebugName,"SkinnedPalette") == 0)
+            {
+                ++CurrentCreates;
+                if (FailCurrent)
+                {
+                    return {};
+                }
+            }
+            if (desc.DebugName && std::strcmp(desc.DebugName,"SkinnedPreviousPalette") == 0)
+            {
+                ++PreviousCreates;
+                if (FailPrevious)
+                {
+                    return {};
+                }
+            }
             auto buffer = Container::MakeShared<FakeBuffer>(desc);
             CreatedBuffers.push_back(buffer);
             return buffer;
@@ -361,10 +379,14 @@ namespace
         {
             return value;
         }
+        uint32_t CurrentCreates = 0;
+        uint32_t PreviousCreates = 0;
+        bool FailCurrent = false;
+        bool FailPrevious = false;
         RHI::DeviceCapabilities Capabilities;
         Container::VariableArray<Container::TSharedPtr<FakeBuffer>> CreatedBuffers;
     };
-    Container::TSharedPtr<SkinnedMeshAssetLease> MakeAsset(uint32_t count, bool legacy = false, uint64_t id = 100)
+    Container::TSharedPtr<SkinnedMeshAssetLease> MakeAsset(uint32_t count, bool legacy = false, uint64_t id = 100, uint64_t generation = 1)
     {
         Container::VariableArray<SkinnedMeshVertex> vertices(count*3);
         Container::VariableArray<uint32_t> indices;
@@ -378,7 +400,7 @@ namespace
         }
         if (legacy)
         {
-            return Container::MakeShared<SkinnedMeshAssetLease>(SkinnedMeshHandle{id,1},std::move(vertices),std::move(indices));
+            return Container::MakeShared<SkinnedMeshAssetLease>(SkinnedMeshHandle{id,generation},std::move(vertices),std::move(indices));
         }
         for (uint32_t index = 0; index < count; ++index)
         {
@@ -387,7 +409,7 @@ namespace
             submeshes.push_back(part);
             names.push_back(index == 0 ? "Body" : "Part");
         }
-        return Container::MakeShared<SkinnedMeshAssetLease>(SkinnedMeshHandle{id,1},std::move(vertices),std::move(indices),
+        return Container::MakeShared<SkinnedMeshAssetLease>(SkinnedMeshHandle{id,generation},std::move(vertices),std::move(indices),
             std::move(submeshes),std::move(names));
     }
     SkinnedMeshProxy MakeProxy(const Container::TSharedPtr<SkinnedMeshAssetLease>& asset, uint64_t component = 501)
@@ -494,9 +516,20 @@ namespace
             invalid.Skinned.FrameLease = Container::MakeShared<SkinnedMeshFrameLease>(asset,501);
             reject(invalid); // 同componentでも準備に関連付いたframe以外へ差し替えない。
             invalid = command; invalid.Skinned.Prepared.PreviousPaletteBuffer.reset(); reject(invalid);
+            invalid = command; invalid.Skinned.Prepared.PreparationEpoch += 1; reject(invalid);
+            invalid = command; invalid.Skinned.Prepared.ComponentId += 1; reject(invalid);
+            invalid = command; invalid.Skinned.PassKind = SkinnedMeshPassKind::Shadow; reject(invalid);
+            invalid = command;
+            invalid.Skinned.Prepared.bUsesPreviousPalette = false;
+            invalid.Skinned.Prepared.PreviousPaletteBuffer.reset();
+            reject(invalid);
+
             RHI::BufferDesc desc; desc.Size = 64;
             invalid = command; invalid.Skinned.Prepared.VertexBuffer = Container::MakeShared<FakeBuffer>(desc); reject(invalid);
             command.Skinned.PassKind = SkinnedMeshPassKind::Shadow;
+            assert(resources.SkinnedMeshes().PrepareDraw(command.Skinned.FrameLease,command.Skinned.BonePalette,
+                command.Draw.WorldMatrix,command.Skinned.Prepared));
+            assert(!command.Skinned.Prepared.PreviousPaletteBuffer && !command.Skinned.Prepared.bUsesPreviousPalette);
             if (index == 1)
             {
                 reject(command);
@@ -508,6 +541,7 @@ namespace
                 assert(renderer.RecordSkinnedDrawCall(command,&list,&resources.SkinnedMeshes(),descriptor));
             }
         }
+        assert(device->CurrentCreates == 1 && device->PreviousCreates == 1);
         assert(renderer.GetStats().SkinnedGBufferDrawCallCount == 3 && renderer.GetStats().SkinnedShadowDrawCallCount == 2);
         assert(renderer.GetStats().TriangleCount == 5);
         auto oldAsset = MakeAsset(1,true,300);
@@ -532,11 +566,157 @@ namespace
         resources.SkinnedMeshes().AbortFrame();
         resources.Shutdown();
     }
+    void TestPaletteSharingOrdersAndIdentity()
+    {
+        for (bool gbufferFirst : {false,true})
+        {
+            auto device = Container::MakeShared<FakeDevice>();
+            SkinnedMeshGpuStore store(device);
+            auto asset = MakeAsset(8);
+            auto frame = Container::MakeShared<SkinnedMeshFrameLease>(asset,501);
+            auto viewport = Container::MakeShared<SkinnedMeshFrameLease>(asset,501);
+            Container::VariableArray<Math::Matrix4x4> bones{Math::Matrix4x4::Identity};
+            auto previousBones = bones;
+            previousBones[0].values[12] = 2;
+            auto world = Math::Matrix4x4::Identity;
+            auto previousWorld = world; previousWorld.values[13] = 3;
+            store.BeginFrame(0);
+            SkinnedMeshPreparedDraw shadow,gbuffer;
+            const auto prepareShadow = [&]()
+            {
+                assert(store.PrepareDraw(frame,bones,world,shadow));
+                assert(!shadow.PreviousPaletteBuffer && !shadow.bUsesPreviousPalette);
+            };
+            const auto prepareGBuffer = [&]()
+            {
+                assert(store.PrepareDraw(viewport,bones,world,gbuffer,&previousBones,&previousWorld));
+                assert(gbuffer.PreviousPaletteBuffer && gbuffer.bUsesPreviousPalette);
+            };
+            if (gbufferFirst)
+            {
+                prepareGBuffer(); prepareShadow();
+            }
+            else
+            {
+                prepareShadow();
+                assert(device->CurrentCreates == 1 && device->PreviousCreates == 0);
+                prepareGBuffer();
+            }
+            assert(shadow.PaletteBuffer == gbuffer.PaletteBuffer);
+            assert(store.MarkLastUse(shadow,frame) && store.MarkLastUse(gbuffer,viewport));
+            // 後からpreviousが追加されても、先行した影preparedは有効なまま。
+            for (uint32_t part = 0; part < 8; ++part)
+            {
+                prepareShadow(); prepareGBuffer();
+                assert(store.MarkLastUse(shadow,frame));
+            }
+            assert(device->CurrentCreates == 1 && device->PreviousCreates == 1);
+            auto* previous = static_cast<FakeBuffer*>(gbuffer.PreviousPaletteBuffer.get());
+            float expected[32];
+            Math::MatrixUtils::CopyToShaderData(previousWorld,expected);
+            Math::MatrixUtils::CopyToShaderData(previousBones[0],expected+16);
+            assert(previous->Bytes.size() == sizeof(expected) && std::memcmp(previous->Bytes.data(),expected,sizeof(expected)) == 0);
+            auto fresh = Container::MakeShared<SkinnedMeshFrameLease>(asset,501);
+            assert(!store.MarkLastUse(shadow,fresh));
+            SkinnedMeshPreparedDraw rejected;
+            auto changed = bones; changed[0].values[12] = 8;
+            assert(!store.PrepareDraw(frame,changed,world,rejected));
+            auto changedWorld = world; changedWorld.values[13] = 8;
+            assert(!store.PrepareDraw(frame,bones,changedWorld,rejected));
+            assert(!store.PrepareDraw(frame,bones,world,rejected,&changed,&previousWorld));
+            auto changedAsset = MakeAsset(8,false,100,2);
+            auto changedFrame = Container::MakeShared<SkinnedMeshFrameLease>(changedAsset,501);
+            assert(!store.PrepareDraw(changedFrame,bones,world,rejected));
+            assert(device->CurrentCreates == 1 && device->PreviousCreates == 1);
+            auto other = Container::MakeShared<SkinnedMeshFrameLease>(asset,502);
+            SkinnedMeshPreparedDraw otherPrepared;
+            assert(store.PrepareDraw(other,bones,world,otherPrepared));
+            assert(otherPrepared.PaletteBuffer != shadow.PaletteBuffer && device->CurrentCreates == 2);
+            assert(store.CommitSubmittedFrame(7));
+            store.BeginFrame(0);
+            assert(!store.MarkLastUse(shadow,frame));
+            assert(store.PrepareDraw(frame,bones,world,rejected));
+            assert(rejected.PaletteBuffer != shadow.PaletteBuffer && device->CurrentCreates == 3);
+            store.AbortFrame();
+            store.BeginFrame(7);
+            assert(!store.MarkLastUse(rejected,frame));
+            assert(store.PrepareDraw(changedFrame,bones,world,rejected));
+            assert(device->CurrentCreates == 4);
+            store.AbortFrame();
+        }
+    }
+    void TestPaletteFailureAndLifetime()
+    {
+        auto device = Container::MakeShared<FakeDevice>();
+        SkinnedMeshGpuStore store(device);
+        auto asset = MakeAsset(2);
+        auto frame = Container::MakeShared<SkinnedMeshFrameLease>(asset,501);
+        auto viewport = Container::MakeShared<SkinnedMeshFrameLease>(asset,501);
+        Container::VariableArray<Math::Matrix4x4> bones{Math::Matrix4x4::Identity};
+        auto world = Math::Matrix4x4::Identity;
+        store.BeginFrame(0);
+        device->FailPrevious = true;
+        SkinnedMeshPreparedDraw prepared;
+        assert(!store.PrepareDraw(frame,bones,world,prepared,&bones,&world));
+        assert(!store.PrepareDraw(frame,bones,world,prepared,&bones,&world));
+        assert(device->CurrentCreates == 1 && device->PreviousCreates == 1);
+        assert(store.PrepareDraw(frame,bones,world,prepared) && store.MarkLastUse(prepared,frame));
+        assert(store.PrepareDraw(viewport,bones,world,prepared) && store.MarkLastUse(prepared,viewport));
+        assert(device->CurrentCreates == 1 && !prepared.PreviousPaletteBuffer);
+        Container::TWeakPtr<RHI::IBuffer> weak = prepared.PaletteBuffer;
+        prepared = {};
+        device->CreatedBuffers.clear();
+        assert(store.CommitSubmittedFrame(9));
+        frame.reset();
+        store.BeginFrame(9); store.CollectReleasedResources();
+        assert(!weak.expired()); // 別viewportのleaseが残る。
+        viewport.reset(); store.CollectReleasedResources();
+        assert(weak.expired());
+        store.AbortFrame();
+        frame = Container::MakeShared<SkinnedMeshFrameLease>(asset,501);
+        store.BeginFrame(9);
+        device->FailCurrent = true;
+        assert(!store.PrepareDraw(frame,bones,world,prepared));
+        assert(!store.PrepareDraw(frame,bones,world,prepared));
+        assert(device->CurrentCreates == 2);
+        store.AbortFrame();
+        device->FailCurrent = false;
+        device->FailPrevious = false;
+        store.BeginFrame(9);
+        assert(store.PrepareDraw(frame,bones,world,prepared));
+        weak = prepared.PaletteBuffer;
+        assert(store.MarkLastUse(prepared,frame));
+        assert(store.CommitSubmittedFrame(12));
+        prepared = {}; frame.reset(); device->CreatedBuffers.clear();
+        store.BeginFrame(11); store.CollectReleasedResources();
+        assert(!weak.expired()); // 全lease破棄済みでもGPU完了前は保持。
+        store.BeginFrame(12); store.CollectReleasedResources();
+        assert(weak.expired());
+        // 成功したcurrent/previousも同じleaseとserial条件まで両方保持する。
+        frame = Container::MakeShared<SkinnedMeshFrameLease>(asset,501);
+        assert(store.PrepareDraw(frame,bones,world,prepared,&bones,&world));
+        Container::TWeakPtr<RHI::IBuffer> pairCurrent = prepared.PaletteBuffer;
+        Container::TWeakPtr<RHI::IBuffer> pairPrevious = prepared.PreviousPaletteBuffer;
+        assert(store.MarkLastUse(prepared,frame) && store.CommitSubmittedFrame(15));
+        prepared = {}; device->CreatedBuffers.clear();
+        store.BeginFrame(15); store.CollectReleasedResources();
+        assert(!pairCurrent.expired() && !pairPrevious.expired());
+        frame.reset(); store.CollectReleasedResources();
+        assert(pairCurrent.expired() && pairPrevious.expired());
+        // 匿名の旧APIはBeginFrameを跨いでも互換を保つ。
+        auto anonymous = Container::MakeShared<SkinnedMeshFrameLease>(asset);
+        assert(store.PrepareDraw(anonymous,bones,world,prepared));
+        store.BeginFrame(12);
+        assert(store.MarkLastUse(prepared,anonymous));
+        store.AbortFrame();
+    }
 }
 int main()
 {
     TestCommandsAndInvalidLeases();
     TestRecordedRangesAndForgery();
+    TestPaletteSharingOrdersAndIdentity();
+    TestPaletteFailureAndLifetime();
     std::cout << "SkinnedSubmeshDrawContractTest PASS: CPU commands_ranges_materials_shadow_forgery; GPU acceptance separate\n";
     return 0;
 }

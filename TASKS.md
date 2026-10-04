@@ -2207,10 +2207,9 @@
 - stop-when: mock/source確認を実GPU合格と扱う、ユーザー指定を変えて別環境へ無断移動する。
 
 ## G2-GR32-PALETTE-SHARING: component単位のpalette共有を接続する
-- status: blocked
+- status: done
 - done-when: GBuffer/CSM/点光源影/viewport/submeshで同componentの準備を共有し、別component・世代・フレームや異なるposeを混同しない。frame leaseとsubmitted serialの寿命を保つ。
-- verify: 配置の確定後、独立draw契約で生成回数/現・前pose/順序/別component/abort/寿命を確認する。
-- blocked-by: 計画のcomponentあたりCreateBuffer1回と、現行velocity ABIの現在/前フレーム2本が衝突。2026-10-04に「2本1組を一度準備して共有」を推奨として作者確認中。承認までbuffer数の契約を変更しない。
+- verify: 1component・1frameのSkinnedPalette作成1回、SkinnedPreviousPaletteはGBuffer対象だけ最大1回。影はprevious非束縛を維持し、両パス順序・複数submesh/viewport・世代/別pose・abort/寿命を独立draw契約で検査する。
 - stop-when: 他component/古いframeのpaletteを流用、prepared tokenを寿命検査なしに使う、参照中またはGPU使用中のbufferを解放する。
 
 ## G2-GR79-MATERIAL-WIRE: 共有128B材質レコードの純codecを固定する
@@ -2218,3 +2217,15 @@
 - done-when: 承認済み128B配置/4StringRef/係数/flagsをRendering非依存の共通型とlittle-endian codecへ固定し、予約/参照境界/数値を検査する。wireのDefaultLit=0とruntime enumを混同しない。ARM方針やnits換算既定は決めず、現reader/writerへまだ接続しない。
 - verify: 独立byte golden、flags/alpha/負の未指定係数、非有限/不正reserved/参照overflow/失敗保持、通常/O2/sanitizer、MEMBER/CTest登録。
 - stop-when: ARM既定やemissive nits既定を採用したと扱う、未知flag/予約を黙って無視、native/GPU未実行を受入れ済みとする。
+
+## G2-GR32-POINT-SHADOW-BUDGET: 点光源影のUBO消費をcomponent単位に共有する
+- status: todo
+- done-when: 各light/faceで同componentの全submeshが同じUBO/descriptorを共有し、16componentの容量で途中の部位だけを落とさない。影にpreviousを束縛しない。
+- verify: 8submesh×16component、17番目の全体省略、face分離、旧匿名fallback、binding10無しをCPU契約へ登録する。
+- stop-when: material/submesh数でUBO枠が増える、faceを跨いだdescriptor上書き、GPU未検証を合格扱いする。
+
+## G2-GR32-POSE-HISTORY-GENERATION: 前姿勢を資産世代へ束縛する
+- status: todo
+- done-when: GameThreadとRenderedObjectHistoryの前姿勢がcomponentIdに加えて資産handle/generation一致を要求し、同bone数の別資産を混同しない。component単位で履歴を記録する。
+- verify: 同bone数のreload・別資産・frame gap・複数submesh/viewportで前姿勢とfallbackを検査する。
+- stop-when: mutable Resource参照、別世代poseの流用、既存velocity基準の変更。

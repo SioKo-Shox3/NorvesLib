@@ -152,6 +152,10 @@ namespace NorvesLib::Core::Rendering
         // 前の値を求めなかった描画（影など）では空。
         RHI::BufferPtr PreviousPaletteBuffer;
         uint32_t IndexCount = 0;
+        // 非0 componentだけフレーム内共有する。旧匿名preparedの跨フレーム互換は維持する。
+        uint64_t ComponentId = 0;
+        uint64_t PreparationEpoch = 0;
+        bool bUsesPreviousPalette = false;
 
         [[nodiscard]] bool IsValid() const
         {

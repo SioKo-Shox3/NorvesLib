@@ -64,3 +64,7 @@ S2とS8のGLB部分は先に承認済み。S3/S5/S6/S7、およびS8のBVH/FBX�
 - GR32は上記のprofileに沿って進め、GR82 Stage Aの複数clipと統一NVSKEL0.2（320B）へ整合させる
 - ARMの既定とemissive nitsの既定、S5/S6、BVH/FBXは今回の承認に含まれない
 - この承認は造形/骨格共有/共通土台の制作案を採用した意味ではなく、既存のv1 clip作成時rest安全契約も変更しない
+
+## GR32 パレット共有（2026-10-04承認）
+
+1 component・1フレームあたりSkinnedPaletteの作成は1回。SkinnedPreviousPaletteはGBufferに描かれるcomponentだけ最大1回とする。影では前フレーム用を束縛せず、影先行・GBuffer先行の両方で現在パレットを共有する。サブメッシュ・パス・viewport数に比例して作成を増やさない。1本化のRHI改修は行わない。

@@ -1270,6 +1270,10 @@ namespace NorvesLib::Core::Rendering
 
         const auto& frameLease =
             (*context.SnapshotSkinnedMeshFrameLeases)[source.Skinned.FrameLeaseIndex];
+        if (!frameLease || (frameLease->ComponentId != 0 && frameLease->ComponentId != source.Draw.SourceMeshComponentId))
+        {
+            return false;
+        }
         SkinnedMeshPreparedDraw prepared;
         if (!context.SkinnedMeshes->PrepareDraw(frameLease,
                                                 source.Skinned.BonePalette,
