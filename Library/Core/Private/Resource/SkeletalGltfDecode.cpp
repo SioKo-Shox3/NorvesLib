@@ -4,6 +4,7 @@
 #include "Resource/SkeletalInfluenceReduction.h"
 #include "Resource/SkeletalImportPolicy.h"
 #include "Resource/SkeletalCubicBake.h"
+#include "Resource/SkeletalSubmeshLayout.h"
 
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
@@ -64,6 +65,8 @@ namespace NorvesLib::Core::Skeletal
             uint32_t Weights = InvalidIndex;
             uint32_t Indices = InvalidIndex;
             Container::VariableArray<SkeletalInfluenceSet> InfluenceSets;
+            uint32_t MaterialSlot = 0;
+            uint32_t VertexCount = 0;
         };
 
         using MatrixValues = Container::FixedArray<float, 16>;
@@ -778,23 +781,9 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
-        bool ParsePrimitive(const JsonValue& root, PrimitiveInfo& outPrimitive, SkeletalGltfDecodeStatus& outStatus,
+        bool ParsePrimitive(const JsonValue& primitive, PrimitiveInfo& outPrimitive, SkeletalGltfDecodeStatus& outStatus,
             const SkeletalGltfDecodeOptions& options)
         {
-            const JsonValue meshes = root.FindMember("meshes");
-            if (!meshes.IsArray() || meshes.GetArraySize() != 1)
-            {
-                outStatus = SkeletalGltfDecodeStatus::UnsupportedMeshCount;
-                return false;
-            }
-            const JsonValue primitives = meshes.GetArrayElement(0).FindMember("primitives");
-            if (!primitives.IsArray() || primitives.GetArraySize() != 1)
-            {
-                outStatus = SkeletalGltfDecodeStatus::UnsupportedPrimitiveCount;
-                return false;
-            }
-
-            const JsonValue primitive = primitives.GetArrayElement(0);
             if (!primitive.IsObject())
             {
                 outStatus = SkeletalGltfDecodeStatus::InvalidDocument;
@@ -842,6 +831,187 @@ namespace NorvesLib::Core::Skeletal
                 !TryReadRequiredUInt32(primitive, "indices", outPrimitive.Indices))
             {
                 outStatus = SkeletalGltfDecodeStatus::InvalidAccessor;
+                return false;
+            }
+            return true;
+        }
+
+        Container::String DecimalSlotIndex(uint64_t value)
+        {
+            char digits[20];
+            size_t count = 0;
+            do
+            {
+                digits[count++] = static_cast<char>('0' + value % 10);
+                value /= 10;
+            } while (value != 0);
+            Container::String result;
+            while (count != 0)
+            {
+                result.push_back(static_cast<Container::String::value_type>(digits[--count]));
+            }
+            return result;
+        }
+
+        bool AssignMaterialSlots(const JsonValue& root, const JsonValue& primitives,
+            Container::VariableArray<PrimitiveInfo>& descriptions, Container::VariableArray<SkeletalMaterialSlot>& slots)
+        {
+            const auto materials = root.FindMember("materials");
+            if (root.HasMember("materials") && !materials.IsArray())
+            {
+                return false;
+            }
+            Container::VariableArray<uint64_t> sources;
+            Container::VariableArray<Container::String> bases;
+            for (size_t index = 0; index < descriptions.size(); ++index)
+            {
+                const auto primitive = primitives.GetArrayElement(index);
+                uint64_t source = UINT64_MAX; // material省略と、実material[0]を混同しない。
+                if (primitive.HasMember("material"))
+                {
+                    uint32_t material = 0;
+                    if (!TryReadUInt32(primitive.FindMember("material"), material) || material >= materials.GetArraySize())
+                    {
+                        return false;
+                    }
+                    source = material;
+                }
+                size_t slot = 0;
+                for (; slot < sources.size(); ++slot)
+                {
+                    if (sources[slot] == source)
+                    {
+                        break;
+                    }
+                }
+                if (slot == sources.size())
+                {
+                    if (slots.size() >= MaximumMaterialSlotCount)
+                    {
+                        return false;
+                    }
+                    Container::String name;
+                    if (source == UINT64_MAX)
+                    {
+                        name = "Default";
+                    }
+                    else
+                    {
+                        const auto material = materials.GetArrayElement(static_cast<size_t>(source));
+                        if (!material.IsObject() || (material.HasMember("name") && !material.FindMember("name").IsString()))
+                        {
+                            return false;
+                        }
+                        name = material.FindMember("name").AsString();
+                        for (const auto character : name)
+                        {
+                            if (character == 0)
+                            {
+                                return false;
+                            }
+                        }
+                        if (name.empty())
+                        {
+                            name = "Material_";
+                            name += DecimalSlotIndex(source);
+                        }
+                    }
+                    sources.push_back(source);
+                    bases.push_back(std::move(name));
+                    slots.push_back({});
+                }
+                descriptions[index].MaterialSlot = static_cast<uint32_t>(slot);
+            }
+            // 名前の解決順はsource identity順。primitive順を変えても同名材質の名前を取り違えない。
+            Container::FixedArray<size_t, MaximumMaterialSlotCount> order{};
+            for (size_t slot = 0; slot < slots.size(); ++slot)
+            {
+                order[slot] = slot;
+            }
+            std::sort(order.begin(), order.begin() + slots.size(), [&](size_t a, size_t b) { return sources[a] < sources[b]; });
+            for (size_t position = 0; position < slots.size(); ++position)
+            {
+                const size_t slot = order[position];
+                size_t matches = 0;
+                for (const auto& name : bases)
+                {
+                    matches += name == bases[slot];
+                }
+                if (matches == 1)
+                {
+                    slots[slot].Name = bases[slot];
+                    continue;
+                }
+                Container::String stem = bases[slot];
+                stem += " [";
+                stem += sources[slot] == UINT64_MAX ? Container::String("default") : DecimalSlotIndex(sources[slot]);
+                stem += "]";
+                bool bAssigned = false;
+                for (uint32_t suffix = 0; suffix <= MaximumMaterialSlotCount * 2; ++suffix)
+                {
+                    auto candidate = stem;
+                    if (suffix != 0)
+                    {
+                        candidate += "_";
+                        candidate += DecimalSlotIndex(suffix);
+                    }
+                    bool bConflict = false;
+                    for (const auto& name : bases)
+                    {
+                        bConflict = bConflict || name == candidate;
+                    }
+                    for (const auto& existing : slots)
+                    {
+                        bConflict = bConflict || existing.Name == candidate;
+                    }
+                    if (!bConflict)
+                    {
+                        slots[slot].Name = std::move(candidate);
+                        bAssigned = true;
+                        break;
+                    }
+                }
+                if (!bAssigned)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool ParsePrimitives(const JsonValue& root, Container::VariableArray<PrimitiveInfo>& outPrimitives,
+            Container::VariableArray<SkeletalMaterialSlot>& outSlots, SkeletalGltfDecodeStatus& status,
+            const SkeletalGltfDecodeOptions& options)
+        {
+            const auto meshes = root.FindMember("meshes");
+            if (!meshes.IsArray() || meshes.GetArraySize() != 1)
+            {
+                status = SkeletalGltfDecodeStatus::UnsupportedMeshCount;
+                return false;
+            }
+            const auto primitives = meshes.GetArrayElement(0).FindMember("primitives");
+            if (!primitives.IsArray() || primitives.GetArraySize() == 0)
+            {
+                status = SkeletalGltfDecodeStatus::UnsupportedPrimitiveCount;
+                return false;
+            }
+            if (primitives.GetArraySize() > MaximumSubmeshCount)
+            {
+                status = SkeletalGltfDecodeStatus::SubmeshLimitExceeded;
+                return false;
+            }
+            outPrimitives.resize(primitives.GetArraySize());
+            for (size_t index = 0; index < outPrimitives.size(); ++index)
+            {
+                if (!ParsePrimitive(primitives.GetArrayElement(index), outPrimitives[index], status, options))
+                {
+                    return false;
+                }
+            }
+            // 0.2 writer接続前の中間段階では、単一primitiveの従来の空表/バイト互換を維持する。
+            if (outPrimitives.size() > 1 && !AssignMaterialSlots(root, primitives, outPrimitives, outSlots))
+            {
+                status = SkeletalGltfDecodeStatus::InvalidSubMesh;
                 return false;
             }
             return true;
@@ -972,9 +1142,9 @@ namespace NorvesLib::Core::Skeletal
             const Container::VariableArray<InfluenceSetLayout>& layouts,
             const SkeletalGltfDecodeOptions& options, Container::VariableArray<SkinInfluence>& input,
             Container::VariableArray<SkinInfluence>& workspace, SkeletalVertex& vertex,
-            SkeletalGltfDecodeReport& report, SkeletalGltfDecodeStatus& status)
+            SkeletalGltfDecodeReport& report, SkeletalGltfDecodeStatus& status, uint64_t reportVertexOffset)
         {
-            report.FailedVertexIndex = vertexIndex;
+            report.FailedVertexIndex = reportVertexOffset + vertexIndex;
             uint64_t rawSum65535 = 0;
             bool allInteger = true;
             for (size_t setIndex = 0; setIndex < layouts.size(); ++setIndex)
@@ -1110,15 +1280,23 @@ namespace NorvesLib::Core::Skeletal
             Container::VariableArray<SkinInfluence> influenceWorkspace;
             if (reduce)
             {
-                report.TotalVertexCount = position->Count;
                 if (!PrepareInfluenceLayouts(primitive, accessors, bufferViews, buffers, position->Count, influenceLayouts)) return false;
                 inputInfluences.resize(influenceLayouts.size() * 4);
                 influenceWorkspace.resize(inputInfluences.size());
             }
-            outData.Vertices.resize(position->Count);
+            const size_t baseVertex = outData.Vertices.size();
+            const size_t baseIndex = outData.Indices.size();
+            if (position->Count > UINT32_MAX - uint64_t(baseVertex) || indices->Count > UINT32_MAX - uint64_t(baseIndex) ||
+                uint64_t(baseVertex) + position->Count > std::numeric_limits<size_t>::max() / sizeof(SkeletalVertex) ||
+                uint64_t(baseIndex) + indices->Count > std::numeric_limits<size_t>::max() / sizeof(uint32_t))
+            {
+                status = SkeletalGltfDecodeStatus::InvalidSubMesh;
+                return false;
+            }
+            outData.Vertices.resize(baseVertex + position->Count);
             for (size_t vertexIndex = 0; vertexIndex < position->Count; ++vertexIndex)
             {
-                SkeletalVertex& vertex = outData.Vertices[vertexIndex];
+                SkeletalVertex& vertex = outData.Vertices[baseVertex + vertexIndex];
                 const uint8_t* positionData = positionLayout.Data + vertexIndex * positionLayout.Stride;
                 const uint8_t* normalData = normalLayout.Data + vertexIndex * normalLayout.Stride;
                 const uint8_t* texCoordData = texCoordLayout.Data + vertexIndex * texCoordLayout.Stride;
@@ -1137,7 +1315,7 @@ namespace NorvesLib::Core::Skeletal
                 if (reduce)
                 {
                     if (!ReduceVertexInfluences(vertexIndex, jointCount, influenceLayouts, options,
-                        inputInfluences, influenceWorkspace, vertex, report, status)) return false;
+                        inputInfluences, influenceWorkspace, vertex, report, status, baseVertex)) return false;
                 }
                 else
                 {
@@ -1177,19 +1355,19 @@ namespace NorvesLib::Core::Skeletal
                 }
             }
 
-            if (reduce) report.bInfluenceScanComplete = true;
-            outData.Indices.resize(indices->Count);
+            if (reduce) report.bInfluenceScanComplete = report.ProcessedVertexCount == report.TotalVertexCount;
+            outData.Indices.resize(baseIndex + indices->Count);
             const size_t indexComponentSize = GetComponentSize(indices->ComponentType);
             for (size_t index = 0; index < indices->Count; ++index)
             {
-                outData.Indices[index] = ReadUnsignedComponent(
-                    indexLayout.Data + index * indexLayout.Stride, indices->ComponentType);
-                if (outData.Indices[index] >= outData.Vertices.size())
+                const uint32_t localIndex = ReadUnsignedComponent(indexLayout.Data + index * indexLayout.Stride, indices->ComponentType);
+                if (localIndex >= position->Count)
                 {
                     return false;
                 }
+                outData.Indices[baseIndex + index] = static_cast<uint32_t>(baseVertex + localIndex);
             }
-            for (size_t index = 0; index < outData.Indices.size(); index += 3)
+            for (size_t index = baseIndex; index < outData.Indices.size(); index += 3)
             {
                 std::swap(outData.Indices[index + 1], outData.Indices[index + 2]);
             }
@@ -1435,12 +1613,10 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
-        bool ValidateMorphDrop(const JsonValue& root, const JsonValue& animation, const NodeContract& nodes,
+        bool ValidatePrimitiveMorphTargets(const JsonValue& root, const JsonValue& primitive, uint32_t vertexCount,
             const Container::VariableArray<AccessorInfo>& accessors, const Container::VariableArray<BufferViewInfo>& views,
-            const Gltf::BufferSet& buffers, uint32_t vertexCount, SkeletalGltfDecodeReport& report)
+            const Gltf::BufferSet& buffers, uint32_t& targetWidth, uint64_t& totalTargets)
         {
-            const auto mesh = root.FindMember("meshes").GetArrayElement(0);
-            const auto primitive = mesh.FindMember("primitives").GetArrayElement(0);
             const auto attributes = primitive.FindMember("attributes");
             const auto targets = primitive.FindMember("targets");
             uint32_t targetCount = 0;
@@ -1451,6 +1627,11 @@ namespace NorvesLib::Core::Skeletal
                     return false;
                 }
                 targetCount = static_cast<uint32_t>(targets.GetArraySize());
+                if (targetWidth != 0 && targetWidth != targetCount)
+                {
+                    return false;
+                }
+                targetWidth = targetCount;
             }
             for (size_t index = 0; index < targetCount; ++index)
             {
@@ -1514,6 +1695,26 @@ namespace NorvesLib::Core::Skeletal
                             }
                         }
                     }
+                }
+            }
+            totalTargets += targetCount;
+            return true;
+        }
+
+        bool ValidateMorphDrop(const JsonValue& root, const JsonValue& animation, const NodeContract& nodes,
+            const Container::VariableArray<AccessorInfo>& accessors, const Container::VariableArray<BufferViewInfo>& views,
+            const Gltf::BufferSet& buffers, Container::Span<const PrimitiveInfo> descriptions, SkeletalGltfDecodeReport& report)
+        {
+            const auto mesh = root.FindMember("meshes").GetArrayElement(0);
+            const auto primitiveValues = mesh.FindMember("primitives");
+            uint32_t targetCount = 0;
+            uint64_t totalTargets = 0;
+            for (size_t index = 0; index < descriptions.size(); ++index)
+            {
+                if (!ValidatePrimitiveMorphTargets(root, primitiveValues.GetArrayElement(index), descriptions[index].VertexCount,
+                    accessors, views, buffers, targetCount, totalTargets))
+                {
+                    return false;
                 }
             }
             uint64_t meshWeights = 0, nodeWeights = 0;
@@ -1581,7 +1782,8 @@ namespace NorvesLib::Core::Skeletal
                 }
                 ++weightChannels;
             }
-            report.DroppedMorphTargetCount = targetCount;
+            report.DroppedMorphTargetCount = totalTargets;
+            report.MorphTargetWidth = targetCount;
             report.DroppedMorphMeshWeightCount = meshWeights;
             report.DroppedMorphNodeWeightCount = nodeWeights;
             report.DroppedMorphAnimationChannelCount = weightChannels;
@@ -1915,9 +2117,10 @@ namespace NorvesLib::Core::Skeletal
                 selectedImport = &discoveredImport;
             }
 
-            PrimitiveInfo primitive;
+            Container::VariableArray<PrimitiveInfo> primitives;
+            Container::VariableArray<SkeletalMaterialSlot> materialSlots;
             SkeletalGltfDecodeStatus status = SkeletalGltfDecodeStatus::InvalidDocument;
-            if (!ParsePrimitive(root, primitive, status, options))
+            if (!ParsePrimitives(root, primitives, materialSlots, status, options))
             {
                 return Fail(status);
             }
@@ -1950,6 +2153,7 @@ namespace NorvesLib::Core::Skeletal
             }
 
             SkeletalGltfData data;
+            data.MaterialSlots = std::move(materialSlots);
             Container::VariableArray<int32_t> nodeToJoint;
             NodeContract nodeContract;
             if (!ParseNodeContract(root, nodeContract))
@@ -1959,11 +2163,45 @@ namespace NorvesLib::Core::Skeletal
             data.MeshNodeGlobalTransform = nodeContract.MeshNodeGlobal;
             const size_t skinJointCount = skin.FindMember("joints").GetArraySize();
             SkeletalGltfDecodeReport report;
-            status = SkeletalGltfDecodeStatus::InvalidAccessor;
-            if (!ExtractMesh(primitive, accessors, bufferViews, buffers, data,
-                static_cast<uint32_t>(skinJointCount), options, report, status))
+            uint64_t totalVertices = 0;
+            for (auto& primitive : primitives)
             {
-                auto failure = Fail(status);
+                const AccessorInfo* position = nullptr;
+                AccessorLayout positionLayout;
+                if (!GetAccessor(accessors, primitive.Position, "VEC3", FloatComponent, bufferViews, buffers, position, positionLayout) || position->Count == 0)
+                {
+                    return Fail(SkeletalGltfDecodeStatus::InvalidAccessor);
+                }
+                primitive.VertexCount = position->Count;
+                totalVertices += primitive.VertexCount;
+                if (totalVertices > UINT32_MAX)
+                {
+                    return Fail(SkeletalGltfDecodeStatus::InvalidSubMesh);
+                }
+            }
+            if (options.InfluencePolicy == SkeletalInfluencePolicy::ReduceToFour)
+            {
+                report.TotalVertexCount = totalVertices;
+            }
+            status = SkeletalGltfDecodeStatus::InvalidAccessor;
+            for (const auto& primitive : primitives)
+            {
+                const size_t baseIndex = data.Indices.size();
+                if (!ExtractMesh(primitive, accessors, bufferViews, buffers, data,
+                    static_cast<uint32_t>(skinJointCount), options, report, status))
+                {
+                    auto failure = Fail(status);
+                    failure.Report = report;
+                    return failure;
+                }
+                if (primitives.size() > 1)
+                {
+                    data.SubMeshes.push_back({static_cast<uint32_t>(baseIndex), static_cast<uint32_t>(data.Indices.size() - baseIndex), primitive.MaterialSlot});
+                }
+            }
+            if (!ResolveSkeletalSubmeshLayout({data.SubMeshes.data(), data.SubMeshes.size()}, data.Indices.size(), data.MaterialSlots.size()).Succeeded())
+            {
+                auto failure = Fail(SkeletalGltfDecodeStatus::InvalidSubMesh);
                 failure.Report = report;
                 return failure;
             }
@@ -1988,7 +2226,7 @@ namespace NorvesLib::Core::Skeletal
                 return failWithReport(SkeletalGltfDecodeStatus::InvalidSkeleton);
             }
             if (options.MorphPolicy == SkeletalMorphPolicy::Drop &&
-                !ValidateMorphDrop(root, animation, nodeContract, accessors, bufferViews, buffers, static_cast<uint32_t>(data.Vertices.size()), report))
+                !ValidateMorphDrop(root, animation, nodeContract, accessors, bufferViews, buffers, {primitives.data(), primitives.size()}, report))
             {
                 return failWithReport(SkeletalGltfDecodeStatus::InvalidAccessor);
             }

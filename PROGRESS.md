@@ -595,3 +595,6 @@
 
 - G2-GR32-V02-SCHEMA: 旧定数/hashの5498Bを内容不変でpure公開headerへ分離し、統一0.2の320B/64B submesh/64B名前slot/複数clip所有契約をNVSKELv0.mdへ固定。版別profile/count/packed節/拡張header/raw hash入力長の純検証を追加。旧0.0/0.1の単一clip/256B/hashと現reader/writerは未変更。通常/O2-NDEBUG/ASan・UBSan（LSan除外）/実MEMBER成功、独立Python4hashと原文一致確認、独立PASS。Core全体はWindows.hで未実行。record値/文字列/padding/clip所有の実読込検査はIO接続時に残る。旧名ASCIIを維持し0.2のUTF-8/NUL拒否はwriter公開前に接続する。
 - Next: GR32-PRIMITIVE-DECODE。1mesh/1skin/1mesh-node/1clipを維持したままprimitiveを連結し、slot割当とReduce/Morphの資産集計を整合させる。未接続の下流は表を捨てず拒否する。
+
+- G2-GR32-PRIMITIVE-DECODE: 2〜8primitiveを連結し、local index境界→絶対番号化、追加範囲のみ巻き順交換、所有表/初出slotとsource identity順の名前衝突解決を接続。material省略とindex0は別。Reduceの全体prefix、morphの総target数/共通幅（mesh_target_width）を分離し、全geometry後に一度だけfit/Bake。preflightも全primitiveを検査。単一primitiveは中間段階の旧空表互換、旧writerは新表を明示拒否。nativeに2/8/9・全入口・名前/順序/省略・越境・prefix4/6・fit・morph幅を登録、Windows.hで未実行。純report3mode/54JSON独立解析とlayout/wire/policy回帰成功、独立PASS。
+- Next: 0.2 IO接続に向けた版別文字列/参照検証→reader→writer/cache移行。新表付き資産のcookはwriter接続まで意図的に失敗する。

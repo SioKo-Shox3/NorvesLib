@@ -264,7 +264,7 @@ bMorphScanCompleteを定義する。完了前のゼロは未測定であり、�
 
 明示DropはPOSITION/NORMAL/TANGENTのtargetを検証して取り除き、base geometryとTRS clipを維持する。
 初期mesh/node weightsとanimationのweights channelも取り除く。初期値をbaseへ適用しない。
-現在の1mesh/1primitive/1mesh-node/1clip profileを維持し、UV/色/拡張semanticのmorphは未対応として拒否する。
+現在の1mesh/1mesh-node/1clip profileを維持し、GR32で1〜8primitiveへ拡張する。UV/色/拡張semanticのmorphは未対応として拒否する。
 既定Rejectはtargetsだけでなく初期weights/weights channelの存在も拒否する。
 cook前fingerprintも同じ存在gateを通し、古いcacheからの無言無視を防ぐ。
 
@@ -300,8 +300,13 @@ ImportReport version1はDrop時だけskin内にmorph_policy=dropとmorph_scanを
 node_weight_values、animation_channelsとscan_complete=trueを持つ。対象無しを検査した場合のみ各数が0になる。
 morph検査後にTRS等の別段階で失敗しても、検査済み数量はoutcome=failedとともに残す。asset成功を意味しない。
 Reject時の既存JSONは不変。Reduce/Bake/Dropは同じskinにそれぞれの単位と診断を持つ。
-現profileは1mesh/1primitive/1mesh-node/1clipなので、初期weight数は0またはtarget数、weight channelは0または1として検査する。
+現profileは1mesh/1〜8primitive/1mesh-node/1clip。初期weight数は0またはmesh-level target幅、weight channelは0または1として検査する。
 
 純parser/JSON試験とは別にnative smokeへ、明示成功/既定拒否/不正入力で出力保持、設定同値cache hit/差分miss、
 除去警告と未測定null/実測0件を登録する。native unitはLINEAR/STEP weight、複数target、weightだけのclip拒否、
 morph検査後のTRS失敗の数量保持も補強する。Windows.h/CMake/PowerShellに依存する実行は未確認。
+
+GR32のNprimitive decode接続以降、morph_scanへmesh_target_widthを追加する。
+dropped_targetsは対象を持つ全primitiveのtarget配列数の合計であり、mesh_target_widthとは異なる。
+初期mesh/node weightsとweight channelは共通幅で検査する。総数は幅の1〜8倍（幅0なら総数0）。
+現段階はraw decodeのみ複数primitiveを受理し、旧0.1 writerはその表を落とさず失敗する。

@@ -168,6 +168,7 @@ int main()
     Print(input); // 検査途中の失敗は未測定。
     input.Diagnostics.Report.bMorphScanComplete = true;
     input.Diagnostics.Report.DroppedMorphTargetCount = 2;
+    input.Diagnostics.Report.MorphTargetWidth = 2;
     input.Diagnostics.Report.DroppedMorphMeshWeightCount = 2;
     input.Diagnostics.Report.DroppedMorphNodeWeightCount = 2;
     input.Diagnostics.Report.DroppedMorphAnimationChannelCount = 1;
@@ -190,6 +191,7 @@ int main()
     input.Options.MorphPolicy = SkeletalMorphPolicy::Drop;
     input.Diagnostics.Report.bMorphScanComplete = true;
     input.Diagnostics.Report.DroppedMorphTargetCount = 1;
+    input.Diagnostics.Report.MorphTargetWidth = 1;
     Print(input); // Bakeとの組合せでも両方の単位/数量を失わない。
     const auto combinedJson = BuildSkeletalImportReport(input);
     assert(std::strstr(combinedJson.Bytes, "\"cubic_scan\":{") && std::strstr(combinedJson.Bytes, "\"morph_scan\":{"));
@@ -209,6 +211,15 @@ int main()
         }
         assert(!BuildSkeletalImportReport(input).bValid);
     }
+    input = morphFailed;
+    input.Diagnostics.Report.DroppedMorphTargetCount = 4;
+    const auto multiMorph = BuildSkeletalImportReport(input);
+    assert(multiMorph.bValid && std::strstr(multiMorph.Bytes, "\"mesh_target_width\":2") &&
+        std::strstr(multiMorph.Bytes, "\"dropped_targets\":4"));
+    input.Diagnostics.Report.DroppedMorphTargetCount = 3;
+    assert(!BuildSkeletalImportReport(input).bValid);
+    input.Diagnostics.Report.DroppedMorphTargetCount = 18;
+    assert(!BuildSkeletalImportReport(input).bValid);
     std::cout << "SkeletalImportReportTest PASS: json_stages_measurements_prefix_failure_finite_bounds\n";
     return 0;
 }

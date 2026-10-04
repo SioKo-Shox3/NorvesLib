@@ -1,5 +1,6 @@
 ﻿#include "SkeletalImportReport.h"
 #include "Resource/SkeletalImportPolicy.h"
+#include "Resource/SkeletalLimits.h"
 #include <charconv>
 #include <cmath>
 #include <cstring>
@@ -41,19 +42,23 @@ namespace NorvesLib::Tools::AssetCook
         {
             if (!report.bMorphScanComplete)
             {
-                if (ready || report.DroppedMorphTargetCount != 0 || report.DroppedMorphMeshWeightCount != 0 ||
+                if (ready || report.DroppedMorphTargetCount != 0 || report.MorphTargetWidth != 0 || report.DroppedMorphMeshWeightCount != 0 ||
                     report.DroppedMorphNodeWeightCount != 0 || report.DroppedMorphAnimationChannelCount != 0)
                 {
                     return {};
                 }
             }
-            else if (!diagnostics.bDecodeAttempted || report.DroppedMorphTargetCount > UINT32_MAX ||
-                (report.DroppedMorphMeshWeightCount != 0 && report.DroppedMorphMeshWeightCount != report.DroppedMorphTargetCount) ||
-                (report.DroppedMorphNodeWeightCount != 0 && report.DroppedMorphNodeWeightCount != report.DroppedMorphTargetCount) ||
+            else if (!diagnostics.bDecodeAttempted || report.MorphTargetWidth > UINT32_MAX ||
+                (report.MorphTargetWidth == 0 && report.DroppedMorphTargetCount != 0) ||
+                (report.MorphTargetWidth != 0 && (report.DroppedMorphTargetCount < report.MorphTargetWidth ||
+                    report.DroppedMorphTargetCount % report.MorphTargetWidth != 0 ||
+                    report.DroppedMorphTargetCount / report.MorphTargetWidth > MaximumSubmeshCount)) ||
+                (report.DroppedMorphMeshWeightCount != 0 && report.DroppedMorphMeshWeightCount != report.MorphTargetWidth) ||
+                (report.DroppedMorphNodeWeightCount != 0 && report.DroppedMorphNodeWeightCount != report.MorphTargetWidth) ||
                 report.DroppedMorphAnimationChannelCount > 1 ||
-                (report.DroppedMorphTargetCount == 0 && report.DroppedMorphAnimationChannelCount != 0))
+                (report.MorphTargetWidth == 0 && report.DroppedMorphAnimationChannelCount != 0))
             {
-                // 現行1mesh/1primitive/1mesh-node/1clipの検証結果だけを受け付ける。
+                // 1mesh/1..8primitive/1mesh-node/1clip。target幅は各primitiveで共通。
                 return {};
             }
         }
@@ -243,6 +248,7 @@ namespace NorvesLib::Tools::AssetCook
             else
             {
                 text("{\"dropped_targets\":"); number(report.DroppedMorphTargetCount);
+                text(",\"mesh_target_width\":"); number(report.MorphTargetWidth);
                 text(",\"mesh_weight_values\":"); number(report.DroppedMorphMeshWeightCount);
                 text(",\"node_weight_values\":"); number(report.DroppedMorphNodeWeightCount);
                 text(",\"animation_channels\":"); number(report.DroppedMorphAnimationChannelCount);

@@ -113,3 +113,25 @@ slot名の妥当性/重複、実indexの頂点境界、bounds、wireのreserved/
 - Nprimitive化でReduceの頂点prefixとMorphのprimitive別target総数/mesh-level target幅を区別し、JSONも合わせる
 - 0.2 writerへの切替後、旧0.0/0.1は通常loadで読めても最新cookのcache hitとして残さない
 - 下流未接続の複数submeshを黙って単一材質へ平坦化しない。段階移行中は未対応箇所を明示拒否する
+
+## GR32 Nprimitive decodeの中間段階
+
+1mesh/1skin/1mesh-node/1clipを維持して2〜8primitiveを連結し、所有SubMeshes/MaterialSlotsを返す。
+各primitiveのlocal indexをそのprimitiveのvertex数で検査してからbaseVertexを加え、巻き順交換も追加範囲だけへ行う。
+scale/fitは全primitiveを連結した後に一度だけ解決する。新表を保存できない旧writerは新表付きdataを明示拒否する。
+現段階の1primitiveは従来の空表互換を維持し、既存cookのバイトを変えない。1primitiveの名前slot具体化は0.2 IO接続と同時に行う。
+
+material省略は実material[0]とは別の既定材質identity。参照されたsource materialごとに最初の出現順でslotを作る。
+未指定はDefault、名前無しはMaterial_<source index>を候補とする。名前が参照材質間で重複する場合は
+source identity順に「候補 [source index]」（未指定は[default]）を割り当て、元候補/確定名と衝突した場合は_1以降を付ける。
+一意の元候補はそのまま保持する。大小文字/Unicode正規化はせず、埋込NULは拒否する。
+primitiveの順序を入れ替えても、同じ参照材質集合のsource identityと確定名の対応は変えない。
+
+ReduceのTotalVertexCount/ProcessedVertexCount/FailedVertexIndexは連結資産全体の座標で報告する。
+morphはprimitiveごとのdelta数を各primitiveのvertex数で検査し、mesh内のtarget幅は共通とする。
+対象を持たないprimitiveはゼロdelta相当として許す。DroppedMorphTargetCountは全primitiveの除去target総数、
+MorphTargetWidth（JSONのmesh_target_width）はmesh/node初期weightsおよびweight animationの幅であり、別に報告する。
+
+raw/legacy/file/GLB、2/8primitive、名前衝突/順序/省略、local index越境、全体Reduce prefix、全体fit、
+morphの総数/幅/対象なしprimitiveと幅不一致、および旧writerの出力保持をnative試験へ登録する。
+Windows.hに依存するためこのLinux環境では登録・静的照合に留まり、実行済みの純JSON/範囲検査とは区別する。

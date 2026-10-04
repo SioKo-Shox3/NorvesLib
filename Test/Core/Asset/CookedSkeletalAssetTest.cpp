@@ -1109,20 +1109,8 @@ namespace
         assert(badCount.Status==SkeletalGltfDecodeStatus::InvalidAnimation && !badCount.Report.bHasCubicBakeFailure);
     }
 
-    void RunMorphDropContract()
+    ByteArray BuildMorphFixtureBuffer()
     {
-        using namespace Skeletal;
-        using namespace NorvesLib::Tools::AssetCook;
-        LooseFixture fixture;
-        const auto source = ReadFixtureJson(ToCorePath(FindFixtureRoot() / "MorphDrop.gltf"));
-        const auto replaceOnce = [](Container::AnsiString& text, Container::AnsiStringView from, Container::AnsiStringView to)
-        {
-            const size_t offset = text.find(from);
-            assert(offset != Container::AnsiString::npos && text.find(from, offset + from.size()) == Container::AnsiString::npos);
-            text = Container::AnsiString(text.substr(0, offset)) + Container::AnsiString(to) + Container::AnsiString(text.substr(offset + from.size()));
-        };
-        const auto bytes = TextBytes(source);
-        const auto path = ToCorePath(fixture.Root / "MorphDrop.gltf");
         ByteArray binary(596, 0);
         const auto base = BuildLooseFixtureBuffer();
         std::memcpy(binary.data(), base.data(), base.size());
@@ -1137,6 +1125,24 @@ namespace
         {
             WriteFloat(binary, 572 + index * 4, weightKeys[index]);
         }
+        return binary;
+    }
+
+    void RunMorphDropContract()
+    {
+        using namespace Skeletal;
+        using namespace NorvesLib::Tools::AssetCook;
+        LooseFixture fixture;
+        const auto source = ReadFixtureJson(ToCorePath(FindFixtureRoot() / "MorphDrop.gltf"));
+        const auto replaceOnce = [](Container::AnsiString& text, Container::AnsiStringView from, Container::AnsiStringView to)
+        {
+            const size_t offset = text.find(from);
+            assert(offset != Container::AnsiString::npos && text.find(from, offset + from.size()) == Container::AnsiString::npos);
+            text = Container::AnsiString(text.substr(0, offset)) + Container::AnsiString(to) + Container::AnsiString(text.substr(offset + from.size()));
+        };
+        const auto bytes = TextBytes(source);
+        const auto path = ToCorePath(fixture.Root / "MorphDrop.gltf");
+        auto binary = BuildMorphFixtureBuffer();
         WriteFixtureBytes(fixture.Root / "fixture.bin", binary);
         WriteFixtureBytes(fixture.Root / "MorphDrop.gltf", bytes);
         auto embeddedText = source;
@@ -1290,6 +1296,179 @@ namespace
         assert(DecodeSkeletalGltf(TextBytes(weightsOnly), path).Status == SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
         const auto weightsBytes = TextBytes(weightsOnly);
         assert(!FingerprintModelCookSource(weightsBytes.data(), weightsBytes.size(), format, cookPath, "MorphDrop", fingerprint, error));
+    }
+
+    void RunMultiPrimitiveContract()
+    {
+        using namespace Skeletal;
+        using namespace NorvesLib::Tools::AssetCook;
+        LooseFixture fixture;
+        const auto source = ReadFixtureJson(ToCorePath(FindFixtureRoot() / "TwoMaterials.gltf"));
+        const auto path = ToCorePath(fixture.Root / "TwoMaterials.gltf");
+        const auto replaceOnce = [](Container::AnsiString& text, Container::AnsiStringView from, Container::AnsiStringView to)
+        {
+            const size_t offset = text.find(from);
+            assert(offset != Container::AnsiString::npos && text.find(from, offset + from.size()) == Container::AnsiString::npos);
+            text = Container::AnsiString(text.substr(0, offset)) + Container::AnsiString(to) + Container::AnsiString(text.substr(offset + from.size()));
+        };
+        ByteArray binary(508,0);
+        const auto base = BuildLooseFixtureBuffer();
+        std::memcpy(binary.data(),base.data(),base.size());
+        constexpr float positions[] = {2,0,0, 3,0,0, 2,1,0};
+        for (size_t index=0; index<9; ++index)
+        {
+            WriteFloat(binary,416+index*4,positions[index]);
+        }
+        WriteLe16(binary,452,0); WriteLe16(binary,454,1); WriteLe16(binary,456,2);
+        std::memcpy(binary.data()+460,base.data()+132,48);
+        WriteFixtureBytes(fixture.Root/"fixture.bin",binary);
+        WriteFixtureBytes(fixture.Root/"TwoMaterials.gltf",TextBytes(source));
+        Gltf::BufferSet buffers;
+        const auto decoded = DecodeSkeletalGltf(TextBytes(source),path,&buffers);
+        assert(decoded.Succeeded() && buffers.GetCount()==1 && decoded.Data.Vertices.size()==6 && decoded.Data.Indices.size()==6);
+        constexpr uint32_t indices[] = {0,2,1,3,5,4};
+        for (size_t index=0;index<6;++index)
+        {
+            assert(decoded.Data.Indices[index]==indices[index]);
+        }
+        assert(decoded.Data.Vertices[3].Position.X==2 && decoded.Data.Vertices[4].Position.X==3);
+        const auto checkTables = [](const SkeletalGltfData& data)
+        {
+            assert(data.SubMeshes.size()==2 && data.MaterialSlots.size()==2);
+            assert(data.SubMeshes[0].IndexStart==0 && data.SubMeshes[0].IndexCount==3 && data.SubMeshes[0].MaterialSlot==0);
+            assert(data.SubMeshes[1].IndexStart==3 && data.SubMeshes[1].IndexCount==3 && data.SubMeshes[1].MaterialSlot==1);
+            assert(data.MaterialSlots[0].Name=="Body" && data.MaterialSlots[1].Name=="Eyes");
+        };
+        checkTables(decoded.Data);
+        SkeletalGltfSourceBuffers legacyBuffers;
+        const auto legacy = DecodeSkeletalGltf(CoreText(source),path,&legacyBuffers);
+        auto embeddedText=source; replaceOnce(embeddedText,"\"uri\":\"fixture.bin\",","");
+        const auto glb=MakeSkeletalGlb(embeddedText,binary);
+        const auto embedded=DecodeSkeletalGltf(glb,path);
+        const auto file=Resource::GLTFAnalyzer::AnalyzeSkeletal(path);
+        assert(legacy.Succeeded() && embedded.Succeeded() && file.Succeeded() && legacyBuffers.size()==1);
+        AssertEquivalent(decoded.Data,legacy.Data); AssertEquivalent(decoded.Data,embedded.Data); AssertEquivalent(decoded.Data,file.Data);
+        checkTables(legacy.Data); checkTables(embedded.Data); checkTables(file.Data);
+        const Container::AnsiString cookPath((fixture.Root/"TwoMaterials.gltf").generic_string().c_str());
+        constexpr Container::AnsiStringView format="nvskel.v0.skinned.pnujiw.u32";
+        SkeletalCookResult retained; retained.SourceHash=123; retained.VertexCount=456;
+        Container::AnsiString error;
+        SkeletalCookDiagnostics diagnostics;
+        const auto sourceBytes=TextBytes(source);
+        assert(!CookGltfToNvskel(sourceBytes.data(),sourceBytes.size(),format,cookPath,retained,error,nullptr,nullptr,&diagnostics));
+        assert(retained.SourceHash==123 && retained.VertexCount==456 && diagnostics.bDecodeAttempted && diagnostics.DecodeStatus==0);
+        assert(error.find("NVSKEL0.2")!=Container::AnsiString::npos); // 未接続writerは表を捨てない。
+        ModelCookFingerprint fingerprint;
+        assert(FingerprintModelCookSource(sourceBytes.data(),sourceBytes.size(),format,cookPath,"Models/two.gltf",fingerprint,error));
+        const Container::AnsiString primitiveA=R"json({"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2,"JOINTS_0":3,"WEIGHTS_0":5},"indices":8,"mode":4,"material":0})json";
+        const Container::AnsiString primitiveB=R"json({"attributes":{"POSITION":13,"NORMAL":1,"TEXCOORD_0":2,"JOINTS_0":3,"WEIGHTS_0":15},"indices":14,"mode":4,"material":1})json";
+        const Container::AnsiString originalList=R"json("primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2,"JOINTS_0":3,"WEIGHTS_0":5},"indices":8,"mode":4,"material":0},{"attributes":{"POSITION":13,"NORMAL":1,"TEXCOORD_0":2,"JOINTS_0":3,"WEIGHTS_0":15},"indices":14,"mode":4,"material":1}])json";
+        for (size_t count : {size_t{8},size_t{9}})
+        {
+            Container::AnsiString list="\"primitives\":[";
+            for (size_t index=0;index<count;++index)
+            {
+                if(index!=0)
+                {
+                    list+=",";
+                }
+                list += index%2==0 ? primitiveA : primitiveB;
+            }
+            list+="]";
+            auto text=source; replaceOnce(text,originalList,list);
+            const auto result=DecodeSkeletalGltf(TextBytes(text),path);
+            if(count==9)
+            {
+                assert(result.Status==SkeletalGltfDecodeStatus::SubmeshLimitExceeded && result.Data.Vertices.empty());
+            }
+            else
+            {
+                assert(result.Succeeded() && result.Data.SubMeshes.size()==8 && result.Data.Vertices.size()==24 && result.Data.Indices.size()==24);
+                for(size_t index=0;index<8;++index)
+                {
+                    assert(result.Data.SubMeshes[index].IndexStart==index*3 && result.Data.SubMeshes[index].MaterialSlot==index%2);
+                    assert(result.Data.Indices[index*3]==index*3 && result.Data.Indices[index*3+1]==index*3+2);
+                }
+            }
+        }
+        auto single=source; replaceOnce(single,originalList,Container::AnsiString("\"primitives\":[")+primitiveA+"]");
+        const auto singleDecoded=DecodeSkeletalGltf(TextBytes(single),path);
+        assert(singleDecoded.Succeeded() && singleDecoded.Data.SubMeshes.empty() && singleDecoded.Data.MaterialSlots.empty());
+        auto duplicateNames=source; replaceOnce(duplicateNames,"\"name\":\"Eyes\"","\"name\":\"Body\"");
+        auto duplicate=DecodeSkeletalGltf(TextBytes(duplicateNames),path);
+        assert(duplicate.Succeeded() && duplicate.Data.MaterialSlots[0].Name=="Body [0]" && duplicate.Data.MaterialSlots[1].Name=="Body [1]");
+        replaceOnce(duplicateNames,originalList,Container::AnsiString("\"primitives\":[")+primitiveB+","+primitiveA+"]");
+        const auto reversed=DecodeSkeletalGltf(TextBytes(duplicateNames),path);
+        assert(reversed.Succeeded() && reversed.Data.MaterialSlots[0].Name=="Body [1]" && reversed.Data.MaterialSlots[1].Name=="Body [0]");
+        auto noMaterial=source; replaceOnce(noMaterial,",\"material\":1","");
+        const auto defaultSlot=DecodeSkeletalGltf(TextBytes(noMaterial),path);
+        assert(defaultSlot.Succeeded() && defaultSlot.Data.MaterialSlots.size()==2 && defaultSlot.Data.MaterialSlots[1].Name=="Default");
+        auto sameMaterial=source; replaceOnce(sameMaterial,"\"material\":1","\"material\":0");
+        const auto shared=DecodeSkeletalGltf(TextBytes(sameMaterial),path);
+        assert(shared.Succeeded() && shared.Data.MaterialSlots.size()==1 && shared.Data.SubMeshes[1].MaterialSlot==0);
+        auto collision=source;
+        replaceOnce(collision,"\"materials\":[{\"name\":\"Body\"},{\"name\":\"Eyes\"}]","\"materials\":[{\"name\":\"Body\"},{\"name\":\"Body\"},{\"name\":\"Body [0]\"}]");
+        auto third=primitiveA; replaceOnce(third,"\"material\":0","\"material\":2");
+        replaceOnce(collision,originalList,Container::AnsiString("\"primitives\":[")+primitiveA+","+primitiveB+","+third+"]");
+        const auto disambiguated=DecodeSkeletalGltf(TextBytes(collision),path);
+        assert(disambiguated.Succeeded() && disambiguated.Data.MaterialSlots[0].Name=="Body [0]_1" && disambiguated.Data.MaterialSlots[1].Name=="Body [1]" && disambiguated.Data.MaterialSlots[2].Name=="Body [0]");
+        for(const char* invalid : {"99","-1","0.5"})
+        {
+            auto text=source; replaceOnce(text,"\"material\":1",Container::AnsiString("\"material\":")+invalid);
+            assert(DecodeSkeletalGltf(TextBytes(text),path).Status==SkeletalGltfDecodeStatus::InvalidSubMesh);
+        }
+        auto wrongName=source; replaceOnce(wrongName,"\"name\":\"Eyes\"","\"name\":42");
+        assert(DecodeSkeletalGltf(TextBytes(wrongName),path).Status==SkeletalGltfDecodeStatus::InvalidSubMesh);
+        auto outOfPrimitive=binary; WriteLe16(outOfPrimitive,456,3); WriteFixtureBytes(fixture.Root/"fixture.bin",outOfPrimitive);
+        assert(DecodeSkeletalGltf(sourceBytes,path).Status==SkeletalGltfDecodeStatus::InvalidAccessor);
+        WriteFixtureBytes(fixture.Root/"fixture.bin",binary);
+        SkeletalGltfDecodeOptions options; options.InfluencePolicy=SkeletalInfluencePolicy::ReduceToFour;
+        options.CubicSplinePolicy=SkeletalCubicSplinePolicy::Bake; options.MorphPolicy=SkeletalMorphPolicy::Drop;
+        const auto reduced=DecodeSkeletalGltf(sourceBytes,path,nullptr,nullptr,&options);
+        assert(reduced.Succeeded() && reduced.Report.TotalVertexCount==6 && reduced.Report.ProcessedVertexCount==6 && reduced.Report.bInfluenceScanComplete);
+        AssertEquivalent(decoded.Data,reduced.Data); checkTables(reduced.Data);
+        auto invalidWeight=binary; WriteFloat(invalidWeight,476,-.5f); WriteFixtureBytes(fixture.Root/"fixture.bin",invalidWeight);
+        const auto prefix=DecodeSkeletalGltf(sourceBytes,path,&buffers,nullptr,&options);
+        assert(prefix.Status==SkeletalGltfDecodeStatus::InvalidAccessor && prefix.Data.Vertices.empty() && buffers.GetCount()==0);
+        assert(prefix.Report.TotalVertexCount==6 && prefix.Report.ProcessedVertexCount==4 && prefix.Report.FailedVertexIndex==4 && !prefix.Report.bInfluenceScanComplete);
+        SkeletalImportReportInput report;
+        report.Options=options; report.Diagnostics.bDecodeAttempted=true; report.Diagnostics.DecodeStatus=static_cast<uint32_t>(prefix.Status); report.Diagnostics.Report=prefix.Report;
+        assert(BuildSkeletalImportReport(report).bValid);
+        WriteFixtureBytes(fixture.Root/"fixture.bin",binary);
+        WriteFixtureBytes(fixture.Root/"TwoMaterials.gltf.import.json",TextBytes("{\"version\":1,\"units\":{\"fit\":{\"axis\":\"longest\",\"meters\":0.6}}}"));
+        const auto fitted=DecodeSkeletalGltf(sourceBytes,path,nullptr,nullptr,&options);
+        assert(fitted.Succeeded() && std::abs(fitted.Data.Vertices[4].Position.X-.6f)<1e-6f);
+        assert(std::abs(fitted.Data.Clips[0].Channels[0].Samples[0].Value.Y-.2f)<1e-6f && std::abs(fitted.Data.MeshNodeGlobalTransform[12]-1.0f)<1e-6f);
+        assert(std::filesystem::remove(fixture.Root/"TwoMaterials.gltf.import.json"));
+        auto extraInfluence=source; replaceOnce(extraInfluence,"\"WEIGHTS_0\":15","\"WEIGHTS_0\":15,\"JOINTS_1\":3");
+        const auto extraBytes=TextBytes(extraInfluence);
+        assert(DecodeSkeletalGltf(extraBytes,path).Status==SkeletalGltfDecodeStatus::InfluenceLimitExceeded);
+        assert(!FingerprintModelCookSource(extraBytes.data(),extraBytes.size(),format,cookPath,"Models/two.gltf",fingerprint,error));
+        // 2primitiveのdelta総数2とmesh-level target幅1を区別する。
+        auto morphSource=ReadFixtureJson(ToCorePath(FindFixtureRoot()/"MorphDrop.gltf"));
+        const Container::AnsiString morphPrimitive=R"json({"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2,"JOINTS_0":3,"WEIGHTS_0":5,"TANGENT":15},"indices":8,"mode":4,"targets":[{"POSITION":13,"NORMAL":14,"TANGENT":16}]})json";
+        replaceOnce(morphSource,Container::AnsiString("\"primitives\":[")+morphPrimitive+"]",Container::AnsiString("\"primitives\":[")+morphPrimitive+","+morphPrimitive+"]");
+        WriteFixtureBytes(fixture.Root/"fixture.bin",BuildMorphFixtureBuffer());
+        SkeletalGltfDecodeOptions drop; drop.MorphPolicy=SkeletalMorphPolicy::Drop;
+        const auto morph=DecodeSkeletalGltf(TextBytes(morphSource),path,nullptr,nullptr,&drop);
+        assert(morph.Succeeded() && morph.Data.Vertices.size()==6 && morph.Report.bMorphScanComplete && morph.Report.DroppedMorphTargetCount==2 && morph.Report.MorphTargetWidth==1);
+        assert(morph.Report.DroppedMorphMeshWeightCount==1 && morph.Report.DroppedMorphNodeWeightCount==1 && morph.Report.DroppedMorphAnimationChannelCount==1);
+        report={}; report.Outcome=SkeletalImportOutcome::PayloadReady; report.Options=drop; report.Diagnostics.bDecodeAttempted=true; report.Diagnostics.Report=morph.Report;
+        const auto json=BuildSkeletalImportReport(report);
+        assert(json.bValid && std::strstr(json.Bytes,"\"mesh_target_width\":1") && std::strstr(json.Bytes,"\"dropped_targets\":2"));
+        const Container::AnsiString targetList="\"targets\":[{\"POSITION\":13,\"NORMAL\":14,\"TANGENT\":16}]";
+        auto noTargets=morphPrimitive; replaceOnce(noTargets,Container::AnsiString(",")+targetList,"");
+        auto optionalMorph=ReadFixtureJson(ToCorePath(FindFixtureRoot()/"MorphDrop.gltf"));
+        replaceOnce(optionalMorph,Container::AnsiString("\"primitives\":[")+morphPrimitive+"]",Container::AnsiString("\"primitives\":[")+morphPrimitive+","+noTargets+"]");
+        const auto partialMorph=DecodeSkeletalGltf(TextBytes(optionalMorph),path,nullptr,nullptr,&drop);
+        assert(partialMorph.Succeeded() && partialMorph.Report.DroppedMorphTargetCount==1 && partialMorph.Report.MorphTargetWidth==1);
+        auto mismatchedPrimitive=morphPrimitive;
+        replaceOnce(mismatchedPrimitive,targetList,"\"targets\":[{\"POSITION\":13},{\"NORMAL\":14}]");
+        auto mismatchedMorph=ReadFixtureJson(ToCorePath(FindFixtureRoot()/"MorphDrop.gltf"));
+        replaceOnce(mismatchedMorph,Container::AnsiString("\"primitives\":[")+morphPrimitive+"]",Container::AnsiString("\"primitives\":[")+morphPrimitive+","+mismatchedPrimitive+"]");
+        const auto wrongWidth=DecodeSkeletalGltf(TextBytes(mismatchedMorph),path,nullptr,nullptr,&drop);
+        assert(!wrongWidth.Succeeded() && !wrongWidth.Report.bMorphScanComplete && wrongWidth.Data.Vertices.empty());
+
     }
 
     void RunUnitContract()
@@ -1774,6 +1953,7 @@ int main(int argc, char** argv)
         RunInfluenceReductionContract();
         RunCubicBakeContract();
         RunMorphDropContract();
+        RunMultiPrimitiveContract();
         RunUnitContract();
     }
     else

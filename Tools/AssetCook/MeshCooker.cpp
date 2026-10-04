@@ -1874,23 +1874,38 @@ namespace NorvesLib::Tools::AssetCook
                     error = "骨格morphは既定で拒否します。除去する場合は明示Dropが必要です";
                     return false;
                 }
-                const auto attributes=root.FindMember("meshes").GetArrayElement(0).FindMember("primitives").GetArrayElement(0).FindMember("attributes");
-                if (options.InfluencePolicy == Core::Skeletal::SkeletalInfluencePolicy::Strict)
+                const auto meshes = root.FindMember("meshes");
+                if (!meshes.IsArray() || meshes.GetArraySize() != 1)
                 {
-                    const auto strict = Core::Skeletal::ValidateStrictInfluenceAttributes(attributes);
-                    if (strict != Core::Skeletal::StrictInfluenceStatus::Success)
-                    {
-                        error = "skeletal strict influences rejected: status=" + FormatInteger(static_cast<int>(strict));
-                        return false;
-                    }
+                    error = "骨格mesh数は1件である必要があります";
+                    return false;
                 }
-                else
+                const auto primitives = meshes.GetArrayElement(0).FindMember("primitives");
+                if (!primitives.IsArray() || primitives.GetArraySize() == 0 || primitives.GetArraySize() > Core::Skeletal::MaximumSubmeshCount)
                 {
-                    VariableArray<Core::Skeletal::SkeletalInfluenceSet> sets;
-                    if (Core::Skeletal::CollectSkeletalInfluenceSets(attributes, sets) != Core::Skeletal::InfluenceSetCollectionStatus::Success)
+                    error = "骨格primitive数は1〜8件である必要があります";
+                    return false;
+                }
+                for (size_t primitiveIndex = 0; primitiveIndex < primitives.GetArraySize(); ++primitiveIndex)
+                {
+                    const auto attributes = primitives.GetArrayElement(primitiveIndex).FindMember("attributes");
+                    if (options.InfluencePolicy == Core::Skeletal::SkeletalInfluencePolicy::Strict)
                     {
-                        error = "骨格のjoint/weightセット記述が不正です";
-                        return false;
+                        const auto strict = Core::Skeletal::ValidateStrictInfluenceAttributes(attributes);
+                        if (strict != Core::Skeletal::StrictInfluenceStatus::Success)
+                        {
+                            error = "skeletal strict influences rejected: status=" + FormatInteger(static_cast<int>(strict));
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        VariableArray<Core::Skeletal::SkeletalInfluenceSet> sets;
+                        if (Core::Skeletal::CollectSkeletalInfluenceSets(attributes, sets) != Core::Skeletal::InfluenceSetCollectionStatus::Success)
+                        {
+                            error = "骨格のjoint/weightセット記述が不正です";
+                            return false;
+                        }
                     }
                 }
             }
@@ -2157,6 +2172,11 @@ namespace NorvesLib::Tools::AssetCook
         {
             namespace SkeletalFormat = NorvesLib::Core::Asset::CookedSkeletalFormatV0;
             namespace SkeletalHeader = SkeletalFormat::HeaderOffset;
+            if (!skeletal.SubMeshes.empty() || !skeletal.MaterialSlots.empty())
+            {
+                error = "複数primitiveの表を保存するNVSKEL0.2 writerは未接続です";
+                return false;
+            }
             if (skeletal.Vertices.empty() || skeletal.Indices.empty() || skeletal.Joints.empty() ||
                 skeletal.Clips.size() != 1 || skeletal.Joints.size() > Core::Skeletal::LegacyMaximumJointCount ||
                 skeletal.Vertices.size() > UINT32_MAX || skeletal.Indices.size() > UINT32_MAX)

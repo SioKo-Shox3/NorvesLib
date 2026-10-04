@@ -123,7 +123,10 @@ namespace NorvesLib::Core::Skeletal
         InfluenceLimitExceeded,
         InvalidImportOptions,
         InfluenceReductionExceeded,
-        CubicBakeFailed
+        CubicBakeFailed,
+        SubmeshLimitExceeded,
+        MaterialSlotLimitExceeded,
+        InvalidSubMesh
     };
 
     struct SkeletalGltfDecodeResult

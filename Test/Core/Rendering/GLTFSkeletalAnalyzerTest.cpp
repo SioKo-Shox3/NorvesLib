@@ -780,7 +780,11 @@ int main()
 
     ExpectReject(fixture, "OutOfRangeJoint.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
     ExpectReject(fixture, "TwoSkins.gltf", Skeletal::SkeletalGltfDecodeStatus::UnsupportedSkinCount);
-    ExpectReject(fixture, "TwoPrimitives.gltf", Skeletal::SkeletalGltfDecodeStatus::UnsupportedPrimitiveCount);
+    const auto twoPrimitives = Gltf::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path("TwoPrimitives.gltf"));
+    assert(twoPrimitives.Succeeded() && twoPrimitives.Data.Vertices.size() == 6 && twoPrimitives.Data.Indices.size() == 6);
+    assert(twoPrimitives.Data.SubMeshes.size() == 2 && twoPrimitives.Data.MaterialSlots.size() == 1);
+    assert(twoPrimitives.Data.SubMeshes[1].IndexStart == 3 && twoPrimitives.Data.Indices[3] == 3 && twoPrimitives.Data.Indices[4] == 5);
+
     ExpectReject(fixture, "TwoClips.gltf", Skeletal::SkeletalGltfDecodeStatus::UnsupportedClipCount);
     ExpectReject(fixture, "CubicSpline.gltf", Skeletal::SkeletalGltfDecodeStatus::UnsupportedInterpolation);
     ExpectReject(fixture, "MorphTarget.gltf", Skeletal::SkeletalGltfDecodeStatus::UnsupportedMorphTargets);

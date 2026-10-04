@@ -2152,7 +2152,25 @@
 - stop-when: 同じminor2の予約を後でtextureへ転用、0.2へ共有128B材質を暗黙追加、旧版判定の全面緩和、writerを先に切り替える。
 
 ## G2-GR32-PRIMITIVE-DECODE: 1mesh内の複数primitiveを所有表へ変換する
-- status: todo
+- status: done
 - done-when: 1mesh/1skin/1mesh-nodeを維持して1..8primitiveを連結し、local index検証後にbaseVertexを加えた絶対indexとpacked submesh/一意slot名を返す。Reduce/Morph/Bake/scaleの資産集計を保ち、下流未接続時は黙って材質を落とさず拒否する。
 - verify: 2/8primitiveの連結/巻き/材質省略とindex0の区別、範囲/9件/複数mesh拒否、Reduce全体prefix/Morph幅と総数/fitを登録する。
 - stop-when: primitiveを跨いだindex越境を許す、scale二重適用、未接続cook/runtimeが成功して表を失う。
+
+## G2-GR32-V02-TEXT: 0.2の名前byte列と参照境界を検証する
+- status: todo
+- done-when: 0.0/0.1のprintable ASCIIを維持し、0.2のUTF-8/NUL拒否とbyte単位StringRefを共通部品で検査する。CoreのTCHARと保存byteの変換契約を明確にし、失敗出力保持を満たす。writer/readerはまだ切り替えない。
+- verify: ASCII/多byte/境界codepoint/不正UTF-8/overlong/surrogate/NUL/範囲overflow/失敗保持の純試験とMEMBER/CTest登録。
+- stop-when: 旧版で非ASCIIを受理、壊れた文字列を置換して成功、UTF-16単位数を保存byte長と混同する。
+
+## G2-GR32-V02-READER: 版別の骨格表とclip所有を読み込む
+- status: todo
+- done-when: 旧0.0/0.1を保持して0.2の320B/submesh/名前slot/版別文字列を所有dataへ読む。record値/reserved/padding/範囲/hashとclip/channel/sampleの一意所有を検査する。新表を未対応下流が捨てないよう明示ガードを置く。
+- verify: 手書き0.2/複数clip/旧golden、重複/隙間/跨ぎ/不正flags/bounds/文字列、失敗Data非公開。
+- stop-when: 旧clipCount拒否を緩和、同minorで表を読み分ける裏分岐、部分資産公開、未対応runtimeへ無言で流す。
+
+## G2-GR32-V02-WRITER: 統一0.2をcookして旧cacheを再生成する
+- status: todo
+- done-when: submesh/slot/複数clip共通schemaの0.2を生成し再parseで照合する。1primitiveも名前slotへ具体化し、旧空表は互換1件へ変換する。cacheはcurrent writer minorを検査し旧版のままskipしない。既存出力保護を保つ。
+- verify: raw/GLB/cook/parseの表一致、旧版loadとcache再生成、slot/UTF-8/範囲、CLI metadata/失敗保持。
+- stop-when: table/nameを失う、旧cacheを新writer済み扱い、Resource/描画の未接続を成功と偽る。

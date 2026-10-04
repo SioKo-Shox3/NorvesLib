@@ -2781,6 +2781,7 @@ namespace
         {
             const auto& report = skeletalResult.DecodeReport;
             std::cerr << "morph=drop dropped_targets=" << report.DroppedMorphTargetCount
+                << " mesh_target_width=" << report.MorphTargetWidth
                 << " mesh_weight_values=" << report.DroppedMorphMeshWeightCount
                 << " node_weight_values=" << report.DroppedMorphNodeWeightCount
                 << " animation_channels=" << report.DroppedMorphAnimationChannelCount << "\n";

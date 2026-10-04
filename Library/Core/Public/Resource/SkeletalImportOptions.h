@@ -80,6 +80,8 @@ namespace NorvesLib::Core::Skeletal
         // 検証済みの除去対象数。scan完了前は未測定であり、ゼロ件と報告しない。
         // weight数は初期値配列の要素数、animationはweight channelの数。
         uint64_t DroppedMorphTargetCount = 0;
+        // mesh-levelのweight幅。primitive全体の除去target総数とは区別する。
+        uint64_t MorphTargetWidth = 0;
         uint64_t DroppedMorphMeshWeightCount = 0;
         uint64_t DroppedMorphNodeWeightCount = 0;
         uint64_t DroppedMorphAnimationChannelCount = 0;
