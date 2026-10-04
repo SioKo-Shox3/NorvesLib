@@ -2212,3 +2212,9 @@
 - verify: 配置の確定後、独立draw契約で生成回数/現・前pose/順序/別component/abort/寿命を確認する。
 - blocked-by: 計画のcomponentあたりCreateBuffer1回と、現行velocity ABIの現在/前フレーム2本が衝突。2026-10-04に「2本1組を一度準備して共有」を推奨として作者確認中。承認までbuffer数の契約を変更しない。
 - stop-when: 他component/古いframeのpaletteを流用、prepared tokenを寿命検査なしに使う、参照中またはGPU使用中のbufferを解放する。
+
+## G2-GR79-MATERIAL-WIRE: 共有128B材質レコードの純codecを固定する
+- status: done
+- done-when: 承認済み128B配置/4StringRef/係数/flagsをRendering非依存の共通型とlittle-endian codecへ固定し、予約/参照境界/数値を検査する。wireのDefaultLit=0とruntime enumを混同しない。ARM方針やnits換算既定は決めず、現reader/writerへまだ接続しない。
+- verify: 独立byte golden、flags/alpha/負の未指定係数、非有限/不正reserved/参照overflow/失敗保持、通常/O2/sanitizer、MEMBER/CTest登録。
+- stop-when: ARM既定やemissive nits既定を採用したと扱う、未知flag/予約を黙って無視、native/GPU未実行を受入れ済みとする。

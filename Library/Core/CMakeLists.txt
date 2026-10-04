@@ -18,6 +18,7 @@ set(PRIVATE_SOURCES
     Private/Asset/CookedSkeletalWireValidation.cpp
     Private/Asset/CookedSkeletalNameCodec.h
     Private/Asset/CookedSkeletalNameCodec.cpp
+    Private/Asset/CookedMaterialFormat.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/AssetManifest.cpp
@@ -308,6 +309,7 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
     Public/Asset/CookedSkeletalFormat.h
+    Public/Asset/CookedMaterialFormat.h
     Public/Asset/CookedSkeletalWireFormat.h
     Public/Asset/CookedTextureFormat.h
     Public/Asset/AssetFileReader.h
