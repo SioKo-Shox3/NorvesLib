@@ -1234,26 +1234,18 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // 予算をプールへ割り振る。ヒープの使用量が取れないときは、台帳（バッファ + プール以外のテクスチャ）で代える。
+        // 予算をプールへ割り振る。ヒープの使用量が取れないときは、台帳が解放待ちの資源とパスが直接作るテクスチャを
+        // 数えないので、上限の一定割合をプール以外へ見込む（VideoMemoryBudgetManager::Compute）。
         VideoMemoryBudgetInput input;
         input.bHeapValid = budget.bValid;
         input.HeapBudgetBytes = budget.BudgetBytes;
         input.HeapUsageBytes = budget.UsageBytes;
         input.CapBytes = impl->VideoMemoryCapMb * kBytesPerMb;
-        uint64_t poolUsedBytes = 0;
         if (impl->SparsePool)
         {
+            // 貸し出し量ではなく、プールの塊として確保した量を渡す（ヒープの使用量にはその全部が入っている）
             const SparsePagePool::Stats pool = impl->SparsePool->GetStats();
             input.PoolCapacityBytes[static_cast<uint32_t>(VideoMemoryPool::VirtualTexture)] = pool.CapacityBytes;
-            poolUsedBytes = pool.UsedBytes;
-        }
-        if (!budget.bValid && impl->GpuResources)
-        {
-            // sparse テクスチャの結んだ量は TextureBytes に入っているので、プールの貸し出し分を引く。
-            const ResourceStats ledger = impl->GpuResources->GetResourceStats();
-            const uint64_t textureBytes = static_cast<uint64_t>(ledger.TextureBytes);
-            input.LedgerNonPoolBytes = static_cast<uint64_t>(ledger.TotalBufferMemory) +
-                                       (textureBytes > poolUsedBytes ? textureBytes - poolUsedBytes : 0);
         }
 
         const VideoMemoryBudgetResult result = impl->VideoMemoryBudget.Compute(input);
@@ -1272,10 +1264,11 @@ namespace NorvesLib::Core::Rendering
             {
                 NORVES_LOG_INFO(
                     "RenderResources",
-                    "VRAM_POOLS cap_mb=%llu non_pool_mb=%llu vt_target_mb=%llu",
+                    "VRAM_POOLS cap_mb=%llu non_pool_mb=%llu vt_target_mb=%llu source=%s",
                     static_cast<unsigned long long>(result.CeilingBytes / kBytesPerMb),
                     static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb),
-                    static_cast<unsigned long long>(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) / kBytesPerMb));
+                    static_cast<unsigned long long>(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) / kBytesPerMb),
+                    result.bNonPoolEstimated ? "estimate" : "heap");
             }
             else
             {

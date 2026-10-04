@@ -189,7 +189,7 @@
 - notes: 危険地帯（アセットロード）。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残りを直す。`Test/Core/Asset/CookedTextureTest.cpp` に足した範囲読みのテストの2か所（`BuildTexture` の戻り値を受ける変数）を独自型の `ByteArray` で受ける（既存の補助関数は変えない）。この項目で足した・変えた利用者向けのエラーの説明（評価が挙げた `AssetFileReader.cpp`・`CookedTextureLoader.cpp`・`TextureCooker.cpp` の行）を日本語にする（エラーコード・ログのキーは英語のまま）。
 
 ## VTG2-BUDGET-MANAGER: VRAMの予算をプールへ割り振る
-- status: todo
+- status: done
 - done-when: `VideoMemoryBudgetManager`（RenderResources が持つ。シングルトン禁止）が、上限 = min(heapBudget, `--vram-budget-mb`) − VT 以外の使用量（ヒープの情報があれば heapUsage からプールの確保量を引いた値、無ければ上限の30%の見込み）を約1秒ごとに計算し、VT のプール（`SparsePagePool`）の目標の大きさを決める（後の段のジオメトリ・VSM のプールの枠も持つ）。変化したときだけ `VRAM_POOLS cap_mb=<n> non_pool_mb=<n> vt_target_mb=<n>` を出す。CPU のテスト `VideoMemoryBudgetManagerTest`（`RenderResourcesDomainContractTest` の束）が、上限・予算外の使用量・上限の引数の組み合わせで目標の大きさが期待どおりで、負にならないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VideoMemoryBudgetManagerTest|TextureMemoryLedgerTest)$"`

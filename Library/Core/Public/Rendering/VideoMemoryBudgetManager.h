@@ -2,6 +2,8 @@
 
 // VRAM の予算をプールへ割り振る計算。
 // 上限 = min(ヒープの予算, --vram-budget-mb) から、プール以外の使用量を引いた残りを、プールごとの取り分で分ける。
+// プール以外の使用量は、ヒープの使用量が取れるときは「ヒープの使用量 − プールの確保分」で決める。
+// 取れないときは台帳で数えきれない確保（解放待ち・パスが直接作るテクスチャ）があるので、上限の一定割合を見込む近似にする。
 // 時刻もデバイスも持たない計算だけの型なので、予算値を制御したテストから境界を確かめられる。
 // 呼ぶ間隔（約1秒）は呼び出し側（RenderResources::PollVideoMemoryBudget）が決める。
 
@@ -34,8 +36,6 @@ namespace NorvesLib::Core::Rendering
         uint64_t CapBytes = 0;
         /** @brief プールごとに確保済みの物理メモリの量（バイト）。ヒープの使用量から引いてプール以外を出す */
         uint64_t PoolCapacityBytes[VideoMemoryPoolCount] = {};
-        /** @brief 台帳が数えるプール以外の確保量（バイト）。ヒープの使用量が取れないときの代わりに使う */
-        uint64_t LedgerNonPoolBytes = 0;
     };
 
     /** @brief 予算の計算結果 */
@@ -47,6 +47,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t CeilingBytes = 0;
         /** @brief プール以外の使用量（バイト） */
         uint64_t NonPoolBytes = 0;
+        /** @brief プール以外の使用量が見込みか（ヒープの使用量が取れず、上限の一定割合で代えた） */
+        bool bNonPoolEstimated = false;
         /** @brief プール全体へ割り振れる量（バイト）。上限 − プール以外の使用量で、負にはならず 0 で止まる */
         uint64_t AvailableBytes = 0;
         /** @brief プールごとの目標の大きさ（バイト）。bLimited が false のとき全て 0 */
@@ -66,6 +68,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 前回ログした値からこの割合（%）以上変わったら再びログを出す */
         static constexpr uint64_t ChangePercentThreshold = 1;
+
+        /** @brief ヒープの使用量が取れないとき、プール以外へ見込む上限の割合（%） */
+        static constexpr uint64_t EstimatedNonPoolPercent = 30;
 
         /** @brief 既定では VT のプールがすべてを受け取り、ジオメトリ・VSM は取り分を持たない */
         VideoMemoryBudgetManager()
@@ -95,14 +100,10 @@ namespace NorvesLib::Core::Rendering
                 poolSum += input.PoolCapacityBytes[i];
             }
 
-            // プール以外の使用量: ヒープの使用量が取れるときはそこからプールの確保分を引く。取れないときは台帳の値
+            // プール以外の使用量: ヒープの使用量が取れるときはそこからプールの確保分を引く
             if (input.bHeapValid)
             {
                 result.NonPoolBytes = input.HeapUsageBytes > poolSum ? input.HeapUsageBytes - poolSum : 0;
-            }
-            else
-            {
-                result.NonPoolBytes = input.LedgerNonPoolBytes;
             }
 
             const bool bHeapCeiling = input.bHeapValid && input.HeapBudgetBytes > 0;
@@ -120,6 +121,13 @@ namespace NorvesLib::Core::Rendering
             else
             {
                 result.CeilingBytes = bHeapCeiling ? input.HeapBudgetBytes : input.CapBytes;
+            }
+            if (!input.bHeapValid)
+            {
+                // 取れないときは上限の一定割合を見込む（商と余りに分けて 64bit を溢れさせない）
+                result.bNonPoolEstimated = true;
+                result.NonPoolBytes = result.CeilingBytes / 100 * EstimatedNonPoolPercent +
+                                      result.CeilingBytes % 100 * EstimatedNonPoolPercent / 100;
             }
             result.AvailableBytes = result.CeilingBytes > result.NonPoolBytes ? result.CeilingBytes - result.NonPoolBytes : 0;
 
@@ -146,7 +154,7 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief 計算結果を VRAM_POOLS に出すべきか判定し、出すなら前回値として記録する
-         * @return 初回、上限の有無が変わったとき、または上限・プール以外の使用量・VT の目標のどれかが
+         * @return 初回、上限の有無・見込みか否かが変わったとき、または上限・プール以外の使用量・VT の目標のどれかが
          *         前回ログした値から 1% 以上変わったとき true
          */
         bool CommitLogIfChanged(const VideoMemoryBudgetResult &result)
@@ -154,6 +162,7 @@ namespace NorvesLib::Core::Rendering
             const uint64_t vtTarget = result.GetTargetBytes(VideoMemoryPool::VirtualTexture);
             if (m_bLogged &&
                 m_bLoggedLimited == result.bLimited &&
+                m_bLoggedEstimated == result.bNonPoolEstimated &&
                 !HasChanged(m_LoggedCeilingBytes, result.CeilingBytes) &&
                 !HasChanged(m_LoggedNonPoolBytes, result.NonPoolBytes) &&
                 !HasChanged(m_LoggedVtTargetBytes, vtTarget))
@@ -163,6 +172,7 @@ namespace NorvesLib::Core::Rendering
 
             m_bLogged = true;
             m_bLoggedLimited = result.bLimited;
+            m_bLoggedEstimated = result.bNonPoolEstimated;
             m_LoggedCeilingBytes = result.CeilingBytes;
             m_LoggedNonPoolBytes = result.NonPoolBytes;
             m_LoggedVtTargetBytes = vtTarget;
@@ -179,6 +189,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_ShareWeights[VideoMemoryPoolCount] = {};
         bool m_bLogged = false;
         bool m_bLoggedLimited = false;
+        bool m_bLoggedEstimated = false;
         uint64_t m_LoggedCeilingBytes = 0;
         uint64_t m_LoggedNonPoolBytes = 0;
         uint64_t m_LoggedVtTargetBytes = 0;

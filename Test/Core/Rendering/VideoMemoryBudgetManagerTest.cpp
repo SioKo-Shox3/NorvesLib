@@ -100,21 +100,46 @@ void TestCapOnlyWithoutHeap()
     const VideoMemoryBudgetManager manager;
     VideoMemoryBudgetInput input;
     input.bHeapValid = false;
-    input.CapBytes = 2048 * Mb;
-    input.LedgerNonPoolBytes = 600 * Mb;
+    input.CapBytes = 2000 * Mb;
     const VideoMemoryBudgetResult result = manager.Compute(input);
     Expect(result.bLimited, "引数の上限だけでも上限がある");
-    Expect(result.CeilingBytes == 2048 * Mb, "上限は引数");
-    Expect(result.NonPoolBytes == 600 * Mb, "ヒープの使用量が取れないときは台帳の値");
-    Expect(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) == (2048 - 600) * Mb, "目標 = 引数の上限 - 台帳");
+    Expect(result.CeilingBytes == 2000 * Mb, "上限は引数");
+    Expect(result.bNonPoolEstimated, "ヒープの使用量が取れないときは見込み");
+    Expect(result.NonPoolBytes == 600 * Mb, "ヒープの使用量が取れないときは上限の30%を見込む");
+    Expect(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) == 1400 * Mb, "目標 = 引数の上限 - 見込み");
 
-    // ヒープの使用量が取れるときは台帳の値を使わない
+    // プールを確保していても見込みは変わらない（プール以外は上限の割合で決まる）
+    input.PoolCapacityBytes[VtIndex] = 500 * Mb;
+    const VideoMemoryBudgetResult withPool = manager.Compute(input);
+    Expect(withPool.NonPoolBytes == 600 * Mb, "見込みはプールの確保分に依らない");
+
+    // ヒープの使用量が取れるときは見込みを使わない
     input.bHeapValid = true;
     input.HeapBudgetBytes = 0;
     input.HeapUsageBytes = 700 * Mb;
     const VideoMemoryBudgetResult heapUsage = manager.Compute(input);
-    Expect(heapUsage.NonPoolBytes == 700 * Mb, "ヒープの使用量が取れるときはそれを使う");
-    Expect(heapUsage.CeilingBytes == 2048 * Mb, "予算 0 は異常値として上限に使わない");
+    Expect(heapUsage.NonPoolBytes == 200 * Mb, "ヒープの使用量が取れるときはそこからプールの確保分を引く");
+    Expect(!heapUsage.bNonPoolEstimated, "ヒープの使用量が取れるときは見込みではない");
+    Expect(heapUsage.CeilingBytes == 2000 * Mb, "予算 0 は異常値として上限に使わない");
+}
+
+void TestEstimateNeverNegativeOrOverflow()
+{
+    const VideoMemoryBudgetManager manager;
+    VideoMemoryBudgetInput input;
+    input.bHeapValid = false;
+
+    // 端数のある上限でも、見込みは上限を超えず目標は負にならない
+    input.CapBytes = 1;
+    const VideoMemoryBudgetResult tiny = manager.Compute(input);
+    Expect(tiny.NonPoolBytes <= tiny.CeilingBytes, "見込みは上限を超えない");
+    Expect(tiny.AvailableBytes == tiny.CeilingBytes - tiny.NonPoolBytes, "割り振れる量 = 上限 - 見込み");
+
+    // 巨大な上限でも掛け算が溢れない
+    input.CapBytes = UINT64_MAX;
+    const VideoMemoryBudgetResult huge = manager.Compute(input);
+    Expect(huge.NonPoolBytes <= UINT64_MAX / 100 * 30 + 30, "巨大な上限でも見込みが溢れない");
+    Expect(huge.NonPoolBytes + huge.AvailableBytes == UINT64_MAX, "見込みと割り振れる量の和は上限");
 }
 
 void TestUnlimited()
@@ -122,12 +147,11 @@ void TestUnlimited()
     const VideoMemoryBudgetManager manager;
     VideoMemoryBudgetInput input;
     input.bHeapValid = false;
-    input.LedgerNonPoolBytes = 100 * Mb;
     const VideoMemoryBudgetResult result = manager.Compute(input);
     Expect(!result.bLimited, "取得手段も引数も無ければ上限なし");
     Expect(result.CeilingBytes == 0 && result.AvailableBytes == 0, "上限なしでは上限も割り振りも 0");
     Expect(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) == 0, "上限なしでは目標を持たない");
-    Expect(result.NonPoolBytes == 100 * Mb, "上限なしでもプール以外は数える");
+    Expect(result.NonPoolBytes == 0 && !result.bNonPoolEstimated, "上限が無ければ見込む元が無く、プール以外は 0");
 }
 
 void TestShares()
@@ -185,6 +209,14 @@ void TestLogGate()
     const VideoMemoryBudgetResult capped = manager.Compute(MakeInput(8000, 3500, 4096, 1000));
     Expect(manager.CommitLogIfChanged(capped), "上限が変われば出す");
 
+    // 同じ上限・同じ大きさでも、ヒープの値から見込みへ変わればログへ出す（source が変わる）
+    VideoMemoryBudgetInput estimateInput;
+    estimateInput.CapBytes = 4096 * Mb;
+    estimateInput.bHeapValid = false;
+    const VideoMemoryBudgetResult estimated = manager.Compute(estimateInput);
+    Expect(manager.CommitLogIfChanged(estimated), "見込みへ変われば出す");
+    Expect(!manager.CommitLogIfChanged(estimated), "見込みのままなら出さない");
+
     VideoMemoryBudgetInput unlimitedInput;
     const VideoMemoryBudgetResult unlimited = manager.Compute(unlimitedInput);
     Expect(manager.CommitLogIfChanged(unlimited), "上限の有無が変われば出す");
@@ -198,6 +230,7 @@ int RunTest()
     TestNonPoolExceedsCeiling();
     TestPoolLargerThanUsage();
     TestCapOnlyWithoutHeap();
+    TestEstimateNeverNegativeOrOverflow();
     TestUnlimited();
     TestShares();
     TestLogGate();
