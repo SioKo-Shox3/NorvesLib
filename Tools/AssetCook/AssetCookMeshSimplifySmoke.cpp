@@ -223,6 +223,32 @@ namespace
         }
         std::printf("MESH_SIMPLIFY_CONTROL unlocked_lost=%zu\n", freeLost);
         Check(freeLost > 0, "固定しない対照でも縁の頂点が消えなかった");
+
+        // 固定フラグは 0 でなければ固定(1 以外の値でも固定される)。上流は最下位ビットだけを見るので、2 と 255 で確かめる。
+        for (const uint8_t flagValue : {static_cast<uint8_t>(2), static_cast<uint8_t>(255)})
+        {
+            CookSimplifyParams valueParams = params;
+            for (size_t v = 0; v < valueParams.VertexLock.size(); ++v)
+            {
+                valueParams.VertexLock[v] = boundary[v] != 0 ? flagValue : static_cast<uint8_t>(0);
+            }
+            CookSimplifyResult valueResult;
+            Check(SimplifyMeshTriangles(mesh.Positions.data(), vertexCount, sizeof(float) * 3, mesh.Indices.data(),
+                                        mesh.Indices.size(), valueParams, valueResult, error),
+                  "固定値が 1 以外の簡略化が失敗した");
+            const VariableArray<uint8_t> usedValue = MarkReferenced(valueResult.Indices, vertexCount);
+            size_t valueLost = 0;
+            for (size_t v = 0; v < vertexCount; ++v)
+            {
+                if (boundary[v] != 0 && usedIn[v] != 0 && usedValue[v] == 0)
+                {
+                    ++valueLost;
+                }
+            }
+            std::printf("MESH_SIMPLIFY_LOCK_VALUE flag=%u lost=%zu\n", static_cast<unsigned>(flagValue), valueLost);
+            Check(valueLost == 0, "固定値が 1 以外の頂点が出力から消えた");
+            Check(valueResult.Indices.size() == locked.Indices.size(), "固定値が 1 の結果と 1 以外の結果が違う");
+        }
     }
 
     void RunInvalidInputs()

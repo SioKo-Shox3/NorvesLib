@@ -69,7 +69,18 @@ namespace NorvesLib::Tools::AssetCook
 
         outResult.Indices.assign(indexCount, 0u);
         float relativeError = 0.0f;
-        const unsigned char* lock = params.VertexLock.empty() ? nullptr : params.VertexLock.data();
+        // 上流は flag & 1 で固定を判定するので、0 でない値は meshopt_SimplifyVertex_Lock へ正規化して渡す。
+        Core::Container::VariableArray<unsigned char> lockFlags;
+        const unsigned char* lock = nullptr;
+        if (!params.VertexLock.empty())
+        {
+            lockFlags.resize(vertexCount);
+            for (size_t v = 0; v < vertexCount; ++v)
+            {
+                lockFlags[v] = params.VertexLock[v] != 0 ? static_cast<unsigned char>(meshopt_SimplifyVertex_Lock) : 0;
+            }
+            lock = lockFlags.data();
+        }
         const size_t resultCount = meshopt_simplifyWithAttributes(outResult.Indices.data(),
                                                                   indices,
                                                                   indexCount,

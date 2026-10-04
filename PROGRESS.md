@@ -653,3 +653,9 @@
 - スモーク `AssetCookMeshSimplifySmoke`（`Tools/AssetCook/CMakeLists.txt` の add_test）: 緯度経度の球（144×72、頂点の継ぎ目と極を複製）の北極側 3 帯を切り落として縁を作る。三角形 19728 → 9864（目標どおり半分）、誤差は相対 0.00058・絶対 0.00116（独立に求めた外形の大きさ × 相対と一致）、簡略化した面の重心の球面からのへこみは最大 0.0020。縁の頂点 145 個（切り口の輪と継ぎ目の複製）を固定すると 145 個とも出力に残り（lost=0）、固定しない対照では 108 個が消える（固定の検査が何も区別しないものになっていないことの確認）。不正な入力 6 種は失敗する。
 - 検証: `verify-VTG4-MESHOPT-VENDOR-3.txt`（Debug の AssetCook のビルド BUILD_EXIT_CODE=0）、`-4.txt`（ctest 2/2 passed。AssetCookMeshSimplifySmoke・AssetCookMeshSmoke）、`-5-smoke-output.txt`（スモークの実測値）。`-1.txt` は最初のビルド（成功）、`-2.txt` は最初の ctest で、スモークのメッシュ生成の不備（継ぎ目と極の座標が浮動小数の丸めで一致せず溶接されず、縁が 568 個と数えられた）で失敗したもの。継ぎ目の列を最初の列と同じ座標にし、極の x・z を 0 にして直した。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - Notes: (1) Git Bash の `python - <<heredoc` に `< /dev/null` を重ねると止まるので、python のスクリプトは scratchpad のファイルにして PowerShell から実行した（cmake の `-- /m:1` も PowerShell）。(2) 新規ソースと第三者の `CMakeLists.txt` は UTF-8 + BOM + CRLF、`Tools/AssetCook/CMakeLists.txt` は既存どおり LF のまま。(3) 次は VTG4-NVMESH-V1。
+
+## 反復 2（run 20261005-043300）: VTG4-MESHOPT-VENDOR（評価者の差し戻しへの対応、done）
+- 差し戻し: `CookSimplifyParams::VertexLock` は「0 でない頂点は固定」としていたが、実装は値をそのまま上流へ渡していた。上流は `flag & 1`（`meshopt_SimplifyVertex_Lock`）で判定するので、`2` などは固定されなかった。
+- 対応: `SimplifyMeshTriangles` で 0 でない値を `meshopt_SimplifyVertex_Lock` に正規化した配列を作って渡すようにした。スモークに、縁の固定値を `2` と `255` にした簡略化を足し、1 のときと同じ索引数で、縁の頂点が出力から消えない（lost=0）ことを確かめる。
+- 検証: `verify-VTG4-MESHOPT-VENDOR-10.txt`（Debug の AssetCook のビルド BUILD_EXIT_CODE=0）、`-11.txt`（ctest 2/2 passed）、`-8-smoke-output.txt`（実測: flag=2・255 とも lost=0、三角形 9864、誤差は前回と同じ）。変異（正規化を外す）では flag=2 が lost=108 で落ちる（`-9-mutation.txt`、ctest 失敗）。変異は戻して再ビルドし、numstat が `git diff` と `--ignore-cr-at-eol` で一致（12/1・26/0）。
+- Notes: python の heredoc に書いたバックスラッシュ + n は改行そのものに化けるので、C の文字列の改行の記号は `bytes([92])` で組んで入れた。
