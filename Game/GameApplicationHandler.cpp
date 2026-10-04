@@ -1003,13 +1003,32 @@ namespace Game
 
         const bool bHasRoot = !m_TextureAssetRoot.empty();
         const bool bHasManifest = !m_TextureAssetManifestPath.empty();
-        if (bHasRoot != bHasManifest)
+        if (!bHasRoot && bHasManifest)
         {
-            LOG_ERROR("Texture asset command line parse failed: --texture-asset-root and --texture-asset-manifest must be specified together");
+            LOG_ERROR("Texture asset command line parse failed: --texture-asset-manifest requires --texture-asset-root");
             return false;
         }
 
-        m_bHasTextureAssetRuntimeConfig = bHasRoot && bHasManifest;
+        if (bHasRoot && !bHasManifest)
+        {
+            // root だけの指定は、クック済みの置き場の差し替えとして扱う（マニフェストは <root>/manifest.json）。
+            // 既定と同じく、足りない項目はばらの元画像で読み、クック済みの色は元画像と同じ標本値で描く。
+            String rootPrefix = m_TextureAssetRoot;
+            while (!rootPrefix.empty() &&
+                   (rootPrefix[rootPrefix.size() - 1] == '/' || rootPrefix[rootPrefix.size() - 1] == '\\'))
+            {
+                rootPrefix = rootPrefix.substr(0, rootPrefix.size() - 1);
+            }
+            m_TextureAssetManifestPath = rootPrefix + "/manifest.json";
+#if defined(NORVES_SOURCE_ASSET_DIR)
+            if (!m_bNoCookedTextures)
+            {
+                m_TextureLooseAssetRoot = String(NORVES_SOURCE_ASSET_DIR);
+            }
+#endif
+        }
+
+        m_bHasTextureAssetRuntimeConfig = !m_TextureAssetRoot.empty() && !m_TextureAssetManifestPath.empty();
         if (m_bRendering3DTestUseCookedModel &&
             (!m_bHasTextureAssetRuntimeConfig || m_Rendering3DTestModelPath.empty()))
         {
@@ -1372,6 +1391,13 @@ namespace Game
                         m_TextureAssetRoot.c_str(),
                         m_TextureAssetManifestPath.c_str());
             return false;
+        }
+
+        if (!m_TextureLooseAssetRoot.empty() &&
+            !NorvesLib::Core::Engine::GEngine->GetRenderResources().Textures().SetTextureAssetFallbackMode(
+                NorvesLib::Core::Rendering::TextureAssetFallbackMode::DebugAllowLooseFallback))
+        {
+            LOG_WARNING("COOKED_FALLBACK_NOT_SET クック済みのパッケージが無いときにばらの元画像へ戻す設定を反映できませんでした");
         }
 
         m_AssetSystemSnapshot = immutableCandidate;
