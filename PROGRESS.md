@@ -757,3 +757,5 @@
 - G2-S6-STAGED-OUTPUT-PLAN検証準備: 既存cache実装のprefixは新header include以外のbyte一致を確認。全kindのstage再cookと元package印の一致を24CPUへ登録し、8.3別表記/reparse拒否も追加。drive root自体は支持範囲外と明記。比較器12件と行末検査は成功、実Windowsと既存byte gateは未確認。
 
 - G2-S6-STAGED-OUTPUT-PLAN実検証: e4a3181d/run37237085524で実build/5診断と既存23CPUが成功。追加testは余分なfragmentを作るfixtureで停止。raw単体writerはmanifest追記でなく置換するため、2つの実cook rowを結合して有効な2件fragmentを作る試験へ訂正する。production実装は不変、残りのfreshness試験と79+10byte gateは未確認のためdoing。
+
+- G2-S6-STAGED-OUTPUT-PLAN受入: 62e8c81e/run37238379793で実Windows build・24CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。元snapshotを保持した全kind stage再cook/capture、意味変更・raw sidecar/外部file変化・余分fragmentの拒否を実証。staged_short_alias_distinct=1を確認。fixtureだけの訂正後にproduction実装は不変。3ZIPと固定79+10出力の直接byte比較を独立確認しroot再実行。taskをdone、集合横断guardとproduction transactionは未接続。

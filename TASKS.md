@@ -2448,7 +2448,7 @@
 - stop-when: locked journalなしでproduction rootとstateを別々に公開、unknown ownershipの自動採用、atomic reader/powerloss耐久性を保証する。
 
 ## G2-S6-STAGED-OUTPUT-PLAN: 出力一覧とstage捕捉の境界を共有する
-- status: doing
+- status: done
 - done-when: 共通Prepare/BuildInventory由来の値所有planを公開し、final→stageの変更を出力rootだけへ限定する。始点snapshot・要求意味・fragment全件を照合して共通record採取へ渡す。
 - verify: 全kind/派生画像一覧、実stage cook/捕捉、始点後のsource/外部file/sidecar変化とout保持、要求/fragmentの差し替え拒否、read-only計画、Windows CPUと79+10byte/16拒否 gate。
 - stop-when: 別の命名/増分authorityを作る、新snapshotで途中変更を黙認する、stage locatorを保存stateへ入れる、lock/journalなしでproduction公開や既存root採用を始める。
