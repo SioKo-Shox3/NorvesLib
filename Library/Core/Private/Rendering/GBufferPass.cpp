@@ -9,6 +9,7 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SparseResidencyShading.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Debug/DebugConfig.h"
 #include "RHI/IDevice.h"
@@ -533,7 +534,7 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float emissiveChromaticityAndLuminanceNits[4];
             float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=ORMの1枚を metallic の枠に張ったか(0 or 1), w=法線が2チャンネルか(0 or 1)
-            float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ
+            float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）
         };
 
         // ビュー・プロジェクション行列を事前変換
@@ -644,8 +645,6 @@ namespace NorvesLib::Core::Rendering
             uboData.pomParams[2] = ormTex ? 1.0f : 0.0f;
             uboData.pomParams[3] = bMatNormalTwoChannel ? 1.0f : 0.0f;
 
-            allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
-
             RHI::TexturePtr albedoTex = ResolveTexture(matAlbedo, m_DefaultWhiteTexture);
             RHI::TexturePtr normalTex = ResolveTexture(matNormal, m_DefaultFlatNormalTexture);
             // テクスチャが無く材質のスカラー値があるときは、その値の 1x1 テクスチャを既定値の代わりに使う。
@@ -676,6 +675,11 @@ namespace NorvesLib::Core::Rendering
                 aoTex = ormTex;
             }
             RHI::TexturePtr heightTex = ResolveTexture(matHeight, m_DefaultBlackTexture);
+
+            // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
+            uboData.frameParams[2] =
+                AnySparseTexture(albedoTex, normalTex, metallicTex, roughnessTex, aoTex, heightTex) ? 1.0f : 0.0f;
+            allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
 
             allocation.DescriptorSet->BindTexture(1, albedoTex);
             allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);

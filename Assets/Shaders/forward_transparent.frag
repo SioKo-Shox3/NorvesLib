@@ -1,4 +1,7 @@
 ﻿#version 450
+#ifdef NORVES_SPARSE_RESIDENCY_SHADING
+#extension GL_ARB_sparse_texture2 : require
+#endif
 
 layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
@@ -22,7 +25,7 @@ layout(set = 0, binding = 0) uniform MVPData
     uint bIBLEnabled;
     uint prefilteredSpecularMipLevels;
     float iblIntensity;
-    uint padding0;
+    uint bVirtualTexture; // 材質のテクスチャが sparse（VT）か（1/0）
     uint padding1;
     uint padding2;
     vec4 cameraForward;
@@ -59,6 +62,8 @@ layout(set = 0, binding = 14) uniform samplerCubeArray pointShadowCubes;
 layout(location = 0) out vec4 outColor;
 
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/SparseResidencySampling.glsl"
+#include "Common/PbrMaterialTextureSampling.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
 #include "Common/PointShadow.glsl"
 
@@ -214,15 +219,16 @@ void main()
     // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
     mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
     vec3 viewDirection = normalize(mvp.cameraPosition.xyz - fragWorldPos);
+    bool bVirtualTexture = mvp.bVirtualTexture != 0u;
     if (mvp.pomParams.y > 0.5)
     {
         texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, viewDirection,
-                                                 mvp.pomParams.x);
+                                                 mvp.pomParams.x, bVirtualTexture);
     }
 
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
-        mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5);
+        mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5, bVirtualTexture);
     vec4 texColor = textureSamples.Albedo;
     vec3 baseColor = texColor.rgb * fragObjectColor.rgb;
     float alpha = texColor.a * fragObjectColor.a;

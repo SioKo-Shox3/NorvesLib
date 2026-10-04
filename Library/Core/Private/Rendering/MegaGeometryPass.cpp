@@ -1,5 +1,6 @@
 ﻿#include "Rendering/MegaGeometryPass.h"
 #include "Rendering/FrameCommand.h"
+#include "Rendering/SparseResidencyShading.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
@@ -996,7 +997,7 @@ namespace NorvesLib::Core::Rendering
                 float PreviousView[16];
                 float PreviousProjection[16];
                 float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
-                float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）
+                float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）
             };
             static_assert(sizeof(PerObjectUBO) <= 512u);
 
@@ -1048,18 +1049,23 @@ namespace NorvesLib::Core::Rendering
             perObject.MaterialParams[0] = orm ? 1.0f : 0.0f;
             perObject.MaterialParams[1] = mat.bNormalTwoChannel ? 1.0f : 0.0f;
 
-            drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
-
-            drawDescriptorSet->BindConstantBuffer(0, drawUniformBuffer, 0,
-                                                  static_cast<uint32_t>(sizeof(PerObjectUBO)));
-
-            // PBRテクスチャバインド
+            // PBRテクスチャ
             auto albedo = resolveTexture(mat.AlbedoTexture, m_DefaultWhiteTexture);
             auto normal = resolveTexture(mat.NormalTexture, m_DefaultFlatNormalTexture);
             auto metallic = orm ? orm : resolveTexture(mat.MetallicTexture, m_DefaultBlackTexture);
             auto roughness = orm ? orm : resolveTexture(mat.RoughnessTexture, m_DefaultWhiteTexture);
             auto ao = orm ? orm : resolveTexture(mat.AOTexture, m_DefaultWhiteTexture);
             auto height = resolveTexture(mat.HeightTexture, m_DefaultBlackTexture);
+
+            // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
+            perObject.MaterialParams[2] = AnySparseTexture(albedo, normal, metallic, roughness, ao, height) ? 1.0f : 0.0f;
+
+            drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
+
+            drawDescriptorSet->BindConstantBuffer(0, drawUniformBuffer, 0,
+                                                  static_cast<uint32_t>(sizeof(PerObjectUBO)));
+
+            // PBRテクスチャバインド
 
             drawDescriptorSet->BindTexture(1, albedo);
             drawDescriptorSet->BindSampler(1, m_DefaultLinearSampler);

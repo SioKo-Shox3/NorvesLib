@@ -2663,6 +2663,8 @@ namespace NorvesLib::RHI::Vulkan
     ShaderCompilerPtr VulkanDevice::CreateShaderCompiler()
     {
         auto compiler = MakeShared<VulkanShaderCompiler>();
+        // sparse の常駐を問い合わせる材質シェーダーは、デバイスが shaderResourceResidency を有効にしたときだけ使う。
+        compiler->SetSparseResidencyShadingEnabled(m_enabledDeviceFeatures.shaderResourceResidency == VK_TRUE);
         return StaticPointerCast<IShaderCompiler>(compiler);
     }
 

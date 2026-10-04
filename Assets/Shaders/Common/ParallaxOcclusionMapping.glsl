@@ -1,6 +1,7 @@
 ﻿// 余接フレームと視差オクルージョンマッピング（POM）。
 // ラスタの材質シェーダー（gbuffer.frag・forward_transparent.frag・megageometry.frag）が共有する。
 // IsCotangentFrameDegenerate を使うため、Common/PbrMaterialEvaluation.glsl の後に取り込む。
+// 高さのサンプルは Common/SparseResidencySampling.glsl の関数を使うので、それも先に取り込む。
 // 画面微分を使うので、どちらの関数も動的に一様な制御フローで呼ぶ。
 
 /**
@@ -54,15 +55,18 @@ vec3 NormalizeTangentAxis(vec3 axis)
  * 正規直交でないため、転置での変換は z が N·V より大きくなり輪郭のフェードが効かなくなる。
  * 接空間のビュー方向は正規化した T・B への射影と N·V から作る。
  * マーチ中のサンプルは、分岐の前に取った元のUVの勾配で textureGrad を使う。
+ * bVirtualTexture のとき（高さが sparse）は、常駐していないタイルを読まず粗いミップへ逃げる。
  *
  * @param tangentFrame CalculateCotangentFrame で元のUVから作った基底
  * @param viewDirWS    表面からカメラへ向かうワールド方向
+ * @param bVirtualTexture 高さのテクスチャが sparse か
  */
 vec2 ApplyParallaxOcclusionMapping(sampler2D heightSampler,
                                    vec2 texCoord,
                                    mat3 tangentFrame,
                                    vec3 viewDirWS,
-                                   float heightScale)
+                                   float heightScale,
+                                   bool bVirtualTexture)
 {
     vec2 uvDx = dFdx(texCoord);
     vec2 uvDy = dFdy(texCoord);
@@ -92,18 +96,18 @@ vec2 ApplyParallaxOcclusionMapping(sampler2D heightSampler,
 
     vec2 currentTexCoords = texCoord;
     float currentLayerDepth = 0.0;
-    float currentDepth = 1.0 - textureGrad(heightSampler, currentTexCoords, uvDx, uvDy).r;
+    float currentDepth = 1.0 - SampleMaterialTextureGrad(heightSampler, currentTexCoords, uvDx, uvDy, bVirtualTexture).r;
     for (int layer = 0; layer <= int(kMaxLayers) && currentLayerDepth < currentDepth; ++layer)
     {
         currentTexCoords -= deltaTexCoords;
-        currentDepth = 1.0 - textureGrad(heightSampler, currentTexCoords, uvDx, uvDy).r;
+        currentDepth = 1.0 - SampleMaterialTextureGrad(heightSampler, currentTexCoords, uvDx, uvDy, bVirtualTexture).r;
         currentLayerDepth += layerDepth;
     }
 
     // 交差の前後2サンプルの間を線形補間する。
     vec2 previousTexCoords = currentTexCoords + deltaTexCoords;
     float afterDepth = currentDepth - currentLayerDepth;
-    float beforeDepth = (1.0 - textureGrad(heightSampler, previousTexCoords, uvDx, uvDy).r) -
+    float beforeDepth = (1.0 - SampleMaterialTextureGrad(heightSampler, previousTexCoords, uvDx, uvDy, bVirtualTexture).r) -
                         (currentLayerDepth - layerDepth);
     float denominator = afterDepth - beforeDepth;
     float weight = abs(denominator) > 1.0e-6 ? clamp(afterDepth / denominator, 0.0, 1.0) : 0.0;

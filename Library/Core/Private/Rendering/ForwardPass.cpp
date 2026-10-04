@@ -12,6 +12,7 @@
 #include "Rendering/SceneView.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/SparseResidencyShading.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDescriptorSet.h"
@@ -46,7 +47,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t bIBLEnabled;
             uint32_t prefilteredSpecularMipLevels;
             float iblIntensity;
-            uint32_t padding0;
+            uint32_t bVirtualTexture; // 材質のテクスチャが sparse（VT）か（1/0）
             uint32_t padding1;
             uint32_t padding2;
             alignas(16) float cameraForward[4];
@@ -68,7 +69,7 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(TransparentForwardUBO, bIBLEnabled) == 748);
         static_assert(offsetof(TransparentForwardUBO, prefilteredSpecularMipLevels) == 752);
         static_assert(offsetof(TransparentForwardUBO, iblIntensity) == 756);
-        static_assert(offsetof(TransparentForwardUBO, padding0) == 760);
+        static_assert(offsetof(TransparentForwardUBO, bVirtualTexture) == 760);
         static_assert(offsetof(TransparentForwardUBO, padding1) == 764);
         static_assert(offsetof(TransparentForwardUBO, padding2) == 768);
         static_assert(offsetof(TransparentForwardUBO, cameraForward) == 784);
@@ -1329,22 +1330,32 @@ namespace NorvesLib::Core::Rendering
             uboData.pomParams[2] = ormTexture ? 1.0f : 0.0f;
             uboData.pomParams[3] = bMatNormalTwoChannel ? 1.0f : 0.0f;
 
+            const RHI::TexturePtr albedoTexture = resolveTexture(matAlbedo, m_DefaultWhiteTexture);
+            const RHI::TexturePtr normalTexture = resolveTexture(matNormal, m_DefaultFlatNormalTexture);
+            const RHI::TexturePtr metallicTexture =
+                ormTexture ? ormTexture : resolveTexture(matMetallic, m_DefaultBlackTexture);
+            const RHI::TexturePtr roughnessTexture =
+                ormTexture ? ormTexture : resolveTexture(matRoughness, m_DefaultMidGrayTexture);
+            const RHI::TexturePtr aoTexture = ormTexture ? ormTexture : resolveTexture(matAO, m_DefaultWhiteTexture);
+            const RHI::TexturePtr heightTexture = resolveTexture(matHeight, m_DefaultBlackTexture);
+
+            // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
+            uboData.bVirtualTexture =
+                AnySparseTexture(albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture,
+                                 heightTexture) ? 1u : 0u;
             allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
 
-            allocation.DescriptorSet->BindTexture(1, resolveTexture(matAlbedo, m_DefaultWhiteTexture));
+            allocation.DescriptorSet->BindTexture(1, albedoTexture);
             allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(2, resolveTexture(matNormal, m_DefaultFlatNormalTexture));
+            allocation.DescriptorSet->BindTexture(2, normalTexture);
             allocation.DescriptorSet->BindSampler(2, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(
-                3, ormTexture ? ormTexture : resolveTexture(matMetallic, m_DefaultBlackTexture));
+            allocation.DescriptorSet->BindTexture(3, metallicTexture);
             allocation.DescriptorSet->BindSampler(3, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(
-                4, ormTexture ? ormTexture : resolveTexture(matRoughness, m_DefaultMidGrayTexture));
+            allocation.DescriptorSet->BindTexture(4, roughnessTexture);
             allocation.DescriptorSet->BindSampler(4, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(
-                5, ormTexture ? ormTexture : resolveTexture(matAO, m_DefaultWhiteTexture));
+            allocation.DescriptorSet->BindTexture(5, aoTexture);
             allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindTexture(6, resolveTexture(matHeight, m_DefaultBlackTexture));
+            allocation.DescriptorSet->BindTexture(6, heightTexture);
             allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
             allocation.DescriptorSet->BindStorageBuffer(7,
                                                         context.InstanceDataBuffer,

@@ -189,7 +189,7 @@
 - notes: 危険地帯（アセットロード）。
 
 ## VTG2-BUDGET-MANAGER: VRAMの予算をプールへ割り振る
-- status: doing
+- status: blocked
 - done-when: `VideoMemoryBudgetManager`（RenderResources が持つ。シングルトン禁止）が、上限 = min(heapBudget − VT 以外の使用量, `--vram-budget-mb` − VT 以外の使用量) を約1秒ごとに計算し、VT のプール（`SparsePagePool`）の目標の大きさを決める（後の段のジオメトリ・VSM のプールの枠も持つ）。変化したときだけ `VRAM_POOLS cap_mb=<n> non_pool_mb=<n> vt_target_mb=<n>` を出す。CPU のテスト `VideoMemoryBudgetManagerTest`（`RenderResourcesDomainContractTest` の束）が、上限・予算外の使用量・上限の引数の組み合わせで目標の大きさが期待どおりで、負にならないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VideoMemoryBudgetManagerTest|TextureMemoryLedgerTest)$"`
@@ -198,7 +198,7 @@
 - notes: 計画書 4.1。
 
 ## VTG2-RESIDENCY-FALLBACK: 常駐していないタイルを読まず、粗いミップへ逃げる
-- status: todo
+- status: done
 - done-when: VT のテクスチャ（材質の Albedo・Normal・ORM・Height の枠）のサンプルを、`GL_ARB_sparse_texture2` の `sparseTextureARB` で行い、常駐していない（residency の符号が非常駐）ときは `sparseTextureLodARB` で1段ずつ粗いミップへ下げて読み直す（ミップテイルは常に常駐なので必ず終わる）。POM の高さのサンプルも同じ。`gbuffer.frag`・`megageometry.frag`・`forward_transparent.frag` が共通の関数（`Common/` の GLSL）を使い、材質が VT でないときは従来の `texture()` のまま（golden 不変）。GPU のテスト `VirtualTextureResidencyVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、ミップテイルと一部のタイルだけを結んだテクスチャで、結んでいない領域が粗いミップの色になり、黒や未定義の値にならないことを確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderingGoldenImageTest MaterialResourcesTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureResidencyVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|MaterialResourcesTest|GBufferMaterialDescriptorCacheTest)$"`

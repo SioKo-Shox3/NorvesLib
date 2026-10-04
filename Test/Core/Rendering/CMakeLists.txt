@@ -369,6 +369,16 @@ set_tests_properties(SparseTileUploadVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# ミップ0のタイル1枚とミップテイルだけを結んだ sparse テクスチャを、材質のシェーダーの標本関数（常駐しなければ粗いミップへ逃げる）で
+# 引く。結んでいない領域が粗いミップの色になり、黒や未定義の値にならないこと、ミップ1を結ぶと1段だけ下げて止まることを確かめる。
+add_test(NAME VirtualTextureResidencyVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VirtualTextureResidencyVulkanTest)
+set_tests_properties(VirtualTextureResidencyVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME VideoMemoryBudgetVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetVulkanTest)
 set_tests_properties(VideoMemoryBudgetVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -388,6 +398,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER SparseTextureVulkanTest SparseTextureVulkanTest.cpp
     MEMBER SparseBindVulkanTest SparseBindVulkanTest.cpp
     MEMBER SparseTileUploadVulkanTest SparseTileUploadVulkanTest.cpp
+    MEMBER VirtualTextureResidencyVulkanTest VirtualTextureResidencyVulkanTest.cpp
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
