@@ -1212,8 +1212,8 @@ int main()
 
     // v0.0・v0.1 の範囲読みの解析は通り、タイルは無い。
     {
-        const auto bytes = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
-                                                        VersionMinorBlockCompressed);
+        const ByteArray bytes(BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
+                              VersionMinorBlockCompressed));
         const size_t metadataSize = HeaderSize + 4 * MipRecordSize;
         const CookedTextureParseResult layout =
             ParseCookedTextureLayout(Span<const uint8_t>(bytes.data(), metadataSize), bytes.size());
@@ -1276,8 +1276,8 @@ int main()
                CookedTextureParseStatus::ReadFailed);
 
         // v0.0・v0.1 のファイルのタイルは読めない。
-        const auto legacy = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
-                                                         VersionMinorBlockCompressed);
+        const ByteArray legacy(BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
+                               VersionMinorBlockCompressed));
         const std::filesystem::path legacyPath = root / "legacy.nvtex";
         WriteFileBytes(legacyPath, legacy);
         const AssetReadRequest legacyRequest = MakeRequest(legacyPath);

@@ -983,7 +983,7 @@ namespace NorvesLib::Core::Asset
             if (!AddChecked64(baseOffset, offset, fileOffset) || size == 0 ||
                 size > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
             {
-                return MakeInvalidRange("range is invalid");
+                return MakeInvalidRange("範囲が不正である");
             }
 
             return reader.ReadRange(request, fileOffset, static_cast<size_t>(size));
@@ -1002,7 +1002,7 @@ namespace NorvesLib::Core::Asset
         CookedTextureTile tile;
         if (!layout.FindTile(mipIndex, layerIndex, tileX, tileY, tile))
         {
-            return MakeInvalidRange("tile is not in the tile table");
+            return MakeInvalidRange("タイルがタイルの表に無い");
         }
 
         return ReadNvtexRange(reader, request, baseOffset, tile.DataOffset, tile.DataSize);
@@ -1015,7 +1015,7 @@ namespace NorvesLib::Core::Asset
     {
         if (!layout.bTiled)
         {
-            return MakeInvalidRange("texture has no mip tail block");
+            return MakeInvalidRange("テクスチャにミップテイルの塊が無い");
         }
 
         return ReadNvtexRange(reader, request, baseOffset, layout.Tiling.TailOffset, layout.Tiling.TailSize);

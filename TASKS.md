@@ -179,7 +179,7 @@
 - notes: 危険地帯（RHI/Vulkan・RenderThread）。後の段のジオメトリのページのアップロードもこのリングを使う。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残り1件だけ直す。`VulkanBuffer` の作成で、メモリの種類の選択・確保・結び付けのどれかに失敗したとき、作成済みの `VkBuffer`（と確保済みのメモリ）を破棄してから失敗を返す（例外の経路を含め、失敗時の後始末を1か所にまとめる）。`CPUAccessible=false`・`bExcludeDeviceLocal=true` の小さな `TransferSrc` のバッファの作成の失敗を繰り返しても、作成と破棄の数（または検証レイヤーの未解放の報告）が増えないことを GPU のテストで確かめる。
 
 ## VTG2-NVTEX-TILED: クック済みのテクスチャをタイルの並びで書き、1タイルずつ読めるようにする
-- status: todo
+- status: done
 - done-when: NVTEX v0.2 として、クッカーが形式の標準ブロック形状のタイル単位（ミップごと、行優先）に並べたデータと、ミップテイル（タイルより小さい段）をまとめた塊を書き、タイルの表（ファイル内のオフセット・大きさ）を持つ。v0.0・v0.1 も読む。読み込み側は、ファイルの範囲読みで1タイル・ミップテイルを取り出せる（全体を読まない）。`CookAssets` の起動画面の材質は v0.2 で焼く。`CookedTextureTest` に v0.2 のタイルの表・範囲読み・壊れた表の拒否を、`AssetCookTextureSmoke` に v0.2 の書き出しを足す。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest CookedTextureUploadTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedTextureTest|CookedTextureUploadTest|AssetCookTextureSmoke)$"`

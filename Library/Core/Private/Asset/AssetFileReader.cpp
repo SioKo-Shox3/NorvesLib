@@ -236,13 +236,13 @@ namespace NorvesLib::Core::Asset
                 const uint64_t fileSize64 = static_cast<uint64_t>(fileSize);
                 if (*rangeOffset > fileSize64 || static_cast<uint64_t>(*rangeSize) > fileSize64 - *rangeOffset)
                 {
-                    return MakeFailure(AssetReadStatus::ReadFailed, assetPath, "range is outside the file", fileSize);
+                    return MakeFailure(AssetReadStatus::ReadFailed, assetPath, "範囲がファイルの外にある", fileSize);
                 }
 
                 if (stream->Seek(static_cast<int64_t>(*rangeOffset), NorvesLib::FileStream::SeekOrigin::Begin) !=
                     static_cast<int64_t>(*rangeOffset))
                 {
-                    return MakeFailure(AssetReadStatus::ReadFailed, assetPath, "failed to seek", fileSize);
+                    return MakeFailure(AssetReadStatus::ReadFailed, assetPath, "シークに失敗した", fileSize);
                 }
 
                 targetSize = *rangeSize;
@@ -303,7 +303,7 @@ namespace NorvesLib::Core::Asset
     {
         if (size == 0)
         {
-            return MakeFailure(AssetReadStatus::InvalidRequest, AssetPath::Invalid(request.InputPath), "range size is zero");
+            return MakeFailure(AssetReadStatus::InvalidRequest, AssetPath::Invalid(request.InputPath), "範囲の大きさが0である");
         }
 
         const RangeSpec range{offset, size};

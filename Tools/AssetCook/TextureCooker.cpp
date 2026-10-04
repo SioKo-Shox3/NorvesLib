@@ -405,7 +405,7 @@ namespace NorvesLib::Tools::AssetCook
             {
                 if (mipCount != ComputeCookedTextureFullMipCount(mips.front().Width, mips.front().Height))
                 {
-                    error = "texture mip chain must be complete for tiled layout";
+                    error = "タイルの並びで書くにはミップの連なりが完全である必要がある";
                     return false;
                 }
 
@@ -419,7 +419,7 @@ namespace NorvesLib::Tools::AssetCook
                         !CheckedMultiply(static_cast<size_t>(tilesX), static_cast<size_t>(tilesY), mipTiles) ||
                         !CheckedAdd(tileCount, mipTiles, tileCount))
                     {
-                        error = "texture tile count overflow";
+                        error = "テクスチャのタイル数が溢れた";
                         return false;
                     }
                 }
@@ -428,7 +428,7 @@ namespace NorvesLib::Tools::AssetCook
             size_t tileTableSize = 0;
             if (!CheckedMultiply(tileCount, Format::TileRecordSize, tileTableSize))
             {
-                error = "texture tile table size overflow";
+                error = "テクスチャのタイルの表の大きさが溢れた";
                 return false;
             }
 
@@ -534,7 +534,7 @@ namespace NorvesLib::Tools::AssetCook
                             CookedTextureTileRect rect;
                             if (!ComputeCookedTextureTileRect(pixelFormat, mip.Width, mip.Height, tileX, tileY, rect))
                             {
-                                error = "texture tile rect is invalid";
+                                error = "テクスチャのタイルの矩形が不正である";
                                 return false;
                             }
 
@@ -555,7 +555,7 @@ namespace NorvesLib::Tools::AssetCook
 
                     if (tileCursor != payloadCursor + mip.Bytes.size())
                     {
-                        error = "texture tiles do not cover the mip";
+                        error = "テクスチャのタイルがミップを覆っていない";
                         return false;
                     }
                 }
@@ -575,7 +575,7 @@ namespace NorvesLib::Tools::AssetCook
             {
                 if (tileRecordIndex != tileCount || tailOffset == 0)
                 {
-                    error = "texture tile table is inconsistent";
+                    error = "テクスチャのタイルの表が矛盾している";
                     return false;
                 }
 
