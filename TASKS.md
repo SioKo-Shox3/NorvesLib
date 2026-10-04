@@ -101,7 +101,7 @@
 - notes: 計画書 1（差分クックはユーザーの決定）。既存の `Scripts/CookTextureAssetSet.ps1` と `Assets/AssetSets/*.json` の形に合わせる。出力は git に入れない。
 
 ## VTG1-MATERIAL-ORM: 材質にORMの1枚の枠を足し、BC5の法線のZを戻す
-- status: doing
+- status: blocked
 - done-when: `MaterialCreateData`・`MaterialResourceData` に ORM の1枚の枠（R=AO・G=粗さ・B=メタリック）と、法線が2チャンネル（BC5）である印を足す。`gbuffer.frag`・`megageometry.frag`・`forward_transparent.frag` と PT の材質は、ORM があればそれを、無ければ従来の別々の枠を読む。2チャンネルの法線のときだけ Z を XY から戻す（RGBA8 の法線は従来どおり）。Indoor/Outdoor の golden が不変、`MaterialResourcesTest`・`GBufferMaterialDescriptorCacheTest`・`PathTracingMaterialVulkanTest` pass、起動画面の撮影の平均輝度の差が各視点 0.5 以下。
 - verify: `cmake --build build --config Debug --target MaterialResourcesTest RenderingGoldenImageTest PathTracingMaterialVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MaterialResourcesTest|GBufferMaterialDescriptorCacheTest|PathTracingMaterialVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
@@ -112,7 +112,7 @@
 - notes: 計画書 2。
 
 ## VTG1-STARTUP-COOKED: 起動画面をクック済みのBCのテクスチャで描く
-- status: todo
+- status: blocked
 - done-when: Game は既定で `build/CookedAssets/`（コンパイル時の既定の場所。`--texture-asset-root` で上書きできる）を asset root とマニフェストにし、起動画面の材質（銀・石畳・地面の見本6種）をクック済みの BC と ORM で読む。クック済みが無いテクスチャはばらのファイルを無圧縮で読み、`TEXTURE_COOKED_MISSING path=<p>` を1回だけ警告する。撮影で `VRAM_LEDGER` の texture_mb が VTG1-VRAM-LEDGER の基準値の1/4以下になる。見た目は、同じ視点のばらの撮影と比べた PSNR を視点ごとに記録し（目安 35 dB 以上）、PNG を開いて違いが目立たないことを確かめる。視差の高さを R16 にするか BC4 にするかを、近接・低角度の撮影の縞で決めて記録する。
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target CookAssets -- /m:1`

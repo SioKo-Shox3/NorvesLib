@@ -58,7 +58,7 @@
     },
     {
       "logical_path": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
-      "cook_usage": "height16",
+      "cook_usage": "single",
       "source_path": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
       "package_name": "CobbleStoneFloor/cobblestone_floor_09_disp.nvpkg",
       "entry_name": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.nvtex"
@@ -87,7 +87,7 @@
     },
     {
       "logical_path": "Assets/Textures/PolyHaven/snow_02/snow_02_disp_4k.jpg",
-      "cook_usage": "height16",
+      "cook_usage": "single",
       "source_path": "Assets/Textures/PolyHaven/snow_02/snow_02_disp_4k.jpg",
       "package_name": "PolyHaven/snow_02/snow_02_disp.nvpkg",
       "entry_name": "Assets/Textures/PolyHaven/snow_02/snow_02_disp_4k.nvtex"
@@ -116,7 +116,7 @@
     },
     {
       "logical_path": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_disp_4k.jpg",
-      "cook_usage": "height16",
+      "cook_usage": "single",
       "source_path": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_disp_4k.jpg",
       "package_name": "PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_disp.nvpkg",
       "entry_name": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_disp_4k.nvtex"
@@ -145,7 +145,7 @@
     },
     {
       "logical_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_disp_4k.jpg",
-      "cook_usage": "height16",
+      "cook_usage": "single",
       "source_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_disp_4k.jpg",
       "package_name": "PolyHaven/forrest_ground_01/forrest_ground_01_disp.nvpkg",
       "entry_name": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_disp_4k.nvtex"
@@ -196,7 +196,7 @@
     },
     {
       "logical_path": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_disp_4k.jpg",
-      "cook_usage": "height16",
+      "cook_usage": "single",
       "source_path": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_disp_4k.jpg",
       "package_name": "PolyHaven/asphalt_02/asphalt_02_disp.nvpkg",
       "entry_name": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_disp_4k.nvtex"
@@ -225,7 +225,7 @@
     },
     {
       "logical_path": "Assets/Textures/PolyHaven/sand_01/sand_01_disp_4k.jpg",
-      "cook_usage": "height16",
+      "cook_usage": "single",
       "source_path": "Assets/Textures/PolyHaven/sand_01/sand_01_disp_4k.jpg",
       "package_name": "PolyHaven/sand_01/sand_01_disp.nvpkg",
       "entry_name": "Assets/Textures/PolyHaven/sand_01/sand_01_disp_4k.nvtex"

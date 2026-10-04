@@ -110,7 +110,8 @@ vec3 RemoveDisplacedNormalSlope(vec3 tangentNormal, vec2 texCoord, float displac
     float lodLevel = mvp.frameParams.w > 0.5 ? float(fragDebugPayload) : 0.0;
     float vertexMip = log2(max(displacementUVSpacing * float(textureSize(normalTexture, 0).x), 1.0)) + lodLevel;
     float coarseMip = max(vertexMip, textureQueryLod(normalTexture, texCoord).y);
-    vec3 coarseNormal = textureLod(normalTexture, texCoord, coarseMip).rgb * 2.0 - 1.0;
+    // 粗い傾きも標本は2チャンネル（BC5）の法線を復号して引く（B は0なので RGB のままでは Z が負になる）。
+    vec3 coarseNormal = DecodePbrTangentNormal(textureLod(normalTexture, texCoord, coarseMip), mvp.materialParams.y > 0.5);
     vec2 detailSlope = tangentNormal.xy / max(tangentNormal.z, 0.1) - coarseNormal.xy / max(coarseNormal.z, 0.1);
     return normalize(vec3(detailSlope, 1.0));
 }

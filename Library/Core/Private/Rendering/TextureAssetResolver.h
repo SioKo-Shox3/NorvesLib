@@ -1,9 +1,10 @@
-#pragma once
+﻿#pragma once
 
 #include "Asset/AssetManifest.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Rendering/TextureAssetTypes.h"
+#include "Thread/Mutex.h"
 
 #include <cstdint>
 
@@ -18,6 +19,22 @@ namespace NorvesLib::Core::Rendering
     class TextureAssetRuntime;
     struct AssetRuntimeSnapshotReloadTestAccess;
 
+    /**
+     * @brief マニフェストにクック済みが無いテクスチャを、論理パスごとに1回だけ警告するための記録。
+     *
+     * リゾルバが1つ持ち、作った計画へ共有ポインタで渡す。ワーカースレッドからも呼ばれるので内部で排他する。
+     */
+    class TextureCookedMissingLog
+    {
+    public:
+        // 初めて見る論理パスのときだけ true を返す。
+        [[nodiscard]] bool TryMarkWarned(const Container::AnsiString &logicalPath);
+
+    private:
+        Thread::Mutex m_Mutex;
+        Container::VariableArray<Container::AnsiString> m_WarnedPaths;
+    };
+
     struct TextureAssetLoadPlan
     {
         bool bUseAssetSystem = false;
@@ -29,6 +46,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t Generation = 0;
         Asset::AssetFallbackMode FallbackMode = Asset::AssetFallbackMode::FailOnCookedFailure;
         Container::TSharedPtr<const Asset::AssetSystem> AssetSystem;
+        Container::TSharedPtr<TextureCookedMissingLog> CookedMissingLog;
     };
 
     struct PreparedTextureAssetPlan
@@ -36,6 +54,7 @@ namespace NorvesLib::Core::Rendering
         PreparedTextureAsset Prepared;
         Container::AnsiString AssetRoot;
         Container::TSharedPtr<const Asset::AssetSystem> AssetSystem;
+        Container::TSharedPtr<TextureCookedMissingLog> CookedMissingLog;
         PreparedTextureAssetStatus BlockedStatus = PreparedTextureAssetStatus::InvalidRequest;
         const char *BlockedReason = "";
         bool bReadyForManifest = false;
@@ -76,6 +95,8 @@ namespace NorvesLib::Core::Rendering
             Container::TSharedPtr<const Asset::AssetSystem> candidate);
         [[nodiscard]] Container::TSharedPtr<const Asset::AssetSystem> CreateSystemSnapshot() const;
         [[nodiscard]] Container::String ResolveLoosePath(const Container::String &path) const;
+        // ばらのファイルを読む root。AssetSystem に別の root があればそれ、無ければクック済みと同じ root。
+        [[nodiscard]] Container::AnsiString GetLooseAssetRoot() const;
 
         [[nodiscard]] static Container::AnsiString ToAnsiString(const Container::String &value);
         [[nodiscard]] static Container::String ToString(const Container::AnsiString &value);
@@ -91,5 +112,6 @@ namespace NorvesLib::Core::Rendering
         Asset::AssetFallbackMode m_FallbackMode = Asset::AssetFallbackMode::FailOnCookedFailure;
         uint64_t m_Generation = 1;
         Container::TSharedPtr<const Asset::AssetSystem> m_System;
+        Container::TSharedPtr<TextureCookedMissingLog> m_CookedMissingLog;
     };
 }

@@ -122,6 +122,8 @@ namespace Game
         // --vram-budget-mb=<MB>: VRAM の上限（0 は上限なし）。RenderResources へ渡し、VRAM_BUDGET のログに出す。
         constexpr const TCHAR *kVramBudgetOption = TEXT("--vram-budget-mb=");
         uint32_t s_VramBudgetCapMb = 0;
+        // --no-cooked-textures: クック済みのテクスチャ（build/CookedAssets/）を使わず、ばらの元画像を読む。
+        constexpr const TCHAR *kNoCookedTexturesOption = TEXT("--no-cooked-textures");
         // --night: 起動画面を夜にする（空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす。値を取らない）。
         constexpr const TCHAR *kNightOption = TEXT("--night");
         bool s_bRendering3DTestNight = false;
@@ -433,6 +435,8 @@ namespace Game
 
         m_bHasTextureAssetRuntimeConfig = false;
         m_bRendering3DTestUseCookedModel = false;
+        m_bNoCookedTextures = false;
+        m_TextureLooseAssetRoot = {};
 #if defined(NORVES_ENABLE_IMGUI)
         m_bImGuiRequested = false;
 #endif
@@ -619,6 +623,12 @@ namespace Game
                     LOG_ERROR("Game command line parse failed: --vram-budget-mb は 0 以上の整数（MB）で指定する");
                     return false;
                 }
+                continue;
+            }
+
+            if (args[i] == kNoCookedTexturesOption)
+            {
+                m_bNoCookedTextures = true;
                 continue;
             }
 
@@ -1006,6 +1016,29 @@ namespace Game
             LOG_ERROR("Rendering3DTest command line parse failed: --rendering3dtest-use-cooked-model requires --texture-asset-root, --texture-asset-manifest, and --rendering3dtest-model");
             return false;
         }
+#if defined(NORVES_COOKED_ASSET_DIR) && defined(NORVES_SOURCE_ASSET_DIR)
+        if (!m_bHasTextureAssetRuntimeConfig && !m_bNoCookedTextures)
+        {
+            // 既定は build/CookedAssets/（CookAssets 対象が焼く）。マニフェストが無ければ従来どおりばらの元画像を読む。
+            // マニフェストにない項目は Assets/ のばらの元画像を無圧縮で読む。
+            const String cookedRoot(NORVES_COOKED_ASSET_DIR);
+            const String cookedManifest = cookedRoot + "/manifest.json";
+            std::error_code manifestError;
+            if (std::filesystem::is_regular_file(ToFilesystemPath(cookedManifest), manifestError) && !manifestError)
+            {
+                m_TextureAssetRoot = cookedRoot;
+                m_TextureAssetManifestPath = cookedManifest;
+                m_TextureLooseAssetRoot = String(NORVES_SOURCE_ASSET_DIR);
+                m_bHasTextureAssetRuntimeConfig = true;
+            }
+            else
+            {
+                LOG_WARNING_F("COOKED_ASSETS_MISSING manifest=\"%s\" ばらの元画像を無圧縮で読みます"
+                              "（ビルド対象 CookAssets でクック済みを作れます）",
+                              cookedManifest.c_str());
+            }
+        }
+#endif
         if (m_bHasTextureAssetRuntimeConfig)
         {
             LOG_INFO_F("Texture asset runtime config parsed root=\"%s\" manifest=\"%s\"",
@@ -1190,11 +1223,19 @@ namespace Game
 
         if (m_bHasTextureAssetRuntimeConfig && !ReloadConfiguredAssetManifest())
         {
-            if (NorvesLib::Core::Engine::GEngine)
+            if (!m_TextureLooseAssetRoot.empty())
             {
-                NorvesLib::Core::Engine::GEngine->RequestExit(1);
+                // 既定のクック済みの設定が読めないときは、終了せずばらの元画像で続ける。
+                LOG_WARNING("COOKED_ASSETS_UNUSABLE クック済みのマニフェストを読めないため、ばらの元画像を無圧縮で読みます");
             }
-            return;
+            else
+            {
+                if (NorvesLib::Core::Engine::GEngine)
+                {
+                    NorvesLib::Core::Engine::GEngine->RequestExit(1);
+                }
+                return;
+            }
         }
 
         if (m_M9WorldAcceptance && !PrepareM9WorldAssets())
@@ -1315,6 +1356,13 @@ namespace Game
             return false;
         }
 
+        if (!m_TextureLooseAssetRoot.empty())
+        {
+            // 既定のクック済みの設定: 足りない項目はばらの元画像で読み、クック済みの色は元画像と同じ標本値で描く。
+            candidate->SetLooseAssetRoot(AnsiString(m_TextureLooseAssetRoot.c_str()));
+            candidate->SetTreatSrgbTexturesAsLinear(true);
+        }
+
         TSharedPtr<const Asset::AssetSystem> immutableCandidate = candidate;
         if (!NorvesLib::Core::Engine::GEngine->GetRenderResources().ReloadAssetRuntimeSnapshot(
                 m_TextureAssetRoot,
@@ -1336,6 +1384,17 @@ namespace Game
     TSharedPtr<const Asset::AssetSystem> GameApplicationHandler::GetAssetSystemSnapshot() const
     {
         return m_AssetSystemSnapshot;
+    }
+
+    bool GameApplicationHandler::IsTextureCooked(const String &logicalPath) const
+    {
+        if (!m_AssetSystemSnapshot || logicalPath.empty())
+        {
+            return false;
+        }
+
+        const AnsiString ansiPath(logicalPath.c_str());
+        return m_AssetSystemSnapshot->FindCookedVariant(ansiPath, Asset::AssetKind::Texture).ShouldUseCooked();
     }
 
     bool GameApplicationHandler::PrepareM9WorldAssets()
@@ -1620,7 +1679,7 @@ namespace Game
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
         stateMachine->Registry().Register(
             Rendering3DTest,
-            [bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
+            [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
                 mode->GetData().m_ModelPath = params.ModelPath;
@@ -1651,6 +1710,10 @@ namespace Game
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
+                mode->GetData().m_IsTextureCooked = [this](const String &logicalPath)
+                {
+                    return IsTextureCooked(logicalPath);
+                };
                 return mode;
             });
         stateMachine->Registry().Register(

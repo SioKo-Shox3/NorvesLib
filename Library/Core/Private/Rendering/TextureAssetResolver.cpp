@@ -1,4 +1,4 @@
-#include "Rendering/TextureAssetResolver.h"
+﻿#include "Rendering/TextureAssetResolver.h"
 
 #include "Asset/AssetPath.h"
 #include "Asset/AssetSystem.h"
@@ -7,8 +7,24 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    bool TextureCookedMissingLog::TryMarkWarned(const Container::AnsiString &logicalPath)
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        for (const Container::AnsiString &warned : m_WarnedPaths)
+        {
+            if (warned == logicalPath)
+            {
+                return false;
+            }
+        }
+
+        m_WarnedPaths.push_back(logicalPath);
+        return true;
+    }
+
     TextureAssetResolver::TextureAssetResolver()
         : m_AssetRoot(GetDefaultAssetRoot())
+        , m_CookedMissingLog(Container::MakeShared<TextureCookedMissingLog>())
     {
         m_System = CreateSystemSnapshot();
     }
@@ -76,14 +92,17 @@ namespace NorvesLib::Core::Rendering
 
         if (assetPath.IsValid() && assetPath.HasLogicalPath() && !assetPath.IsAbsolute())
         {
+            // 解決済みパスはばらのファイルの場所（ログとデバッグ用のフォールバックが使う）なので、ばらの root で求める。
+            const Asset::AssetPath loosePath = Asset::AssetPath::Normalize(ToAnsiString(requestPath), GetLooseAssetRoot());
             plan.bUseAssetSystem = true;
             plan.bPathValid = true;
             plan.LogicalPath = assetPath.GetLogicalPath();
-            plan.ResolvedPath = assetPath.HasResolvedPath()
-                                    ? ToString(assetPath.GetResolvedPath())
+            plan.ResolvedPath = loosePath.HasResolvedPath()
+                                    ? ToString(loosePath.GetResolvedPath())
                                     : ResolveLoosePath(requestPath);
             plan.CacheKey = MakeAssetTextureCacheKey(plan.Generation, plan.LogicalPath);
             plan.AssetSystem = m_System;
+            plan.CookedMissingLog = m_CookedMissingLog;
             return plan;
         }
 
@@ -136,10 +155,12 @@ namespace NorvesLib::Core::Rendering
 
         plan.Prepared.LogicalPath = assetPath.GetLogicalPath();
         plan.Prepared.CacheKey = MakeAssetTextureCacheKey(plan.Prepared.Generation, plan.Prepared.LogicalPath);
+        plan.CookedMissingLog = m_CookedMissingLog;
         if (plan.Prepared.ResolvedFallbackPath.empty())
         {
-            plan.Prepared.ResolvedFallbackPath = assetPath.HasResolvedPath()
-                                                    ? ToString(assetPath.GetResolvedPath())
+            const Asset::AssetPath loosePath = Asset::AssetPath::Normalize(ToAnsiString(requestPath), GetLooseAssetRoot());
+            plan.Prepared.ResolvedFallbackPath = loosePath.HasResolvedPath()
+                                                    ? ToString(loosePath.GetResolvedPath())
                                                     : ResolveLoosePath(requestPath);
         }
 
@@ -233,6 +254,11 @@ namespace NorvesLib::Core::Rendering
         }
 #endif
         return resolvedPath;
+    }
+
+    Container::AnsiString TextureAssetResolver::GetLooseAssetRoot() const
+    {
+        return m_System ? m_System->GetLooseAssetRoot() : m_AssetRoot;
     }
 
     Container::AnsiString TextureAssetResolver::ToAnsiString(const Container::String &value)

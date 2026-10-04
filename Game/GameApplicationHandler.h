@@ -105,6 +105,12 @@ namespace Game
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>
         GetAssetSystemSnapshot() const;
 
+        /**
+         * @brief クック済みのマニフェストに、テクスチャの論理パス（"Assets/..." でもよい）の項目があるか。
+         * @note マニフェストを読んでいない（クック済みを使わない）ときは常に false。
+         */
+        bool IsTextureCooked(const NorvesLib::Core::Container::String &logicalPath) const;
+
     private:
         /**
          * @brief --bridge-port を解析する（OnPreInitialize から呼ぶ）。無効値は
@@ -125,6 +131,11 @@ namespace Game
         bool m_bIsPaused = false;
         bool m_bHasTextureAssetRuntimeConfig = false;
         bool m_bRendering3DTestUseCookedModel = false;
+        // --no-cooked-textures: クック済みを使わず、ばらの元画像を無圧縮で読む（見た目の比較用）。
+        bool m_bNoCookedTextures = false;
+        // 既定の build/CookedAssets/ を root にしたとき、マニフェストに無いテクスチャをばらで読む場所（Assets/）。
+        // 空のときは root と同じ場所を読む（--texture-asset-root で明示したときの従来の動き）。
+        NorvesLib::Core::Container::String m_TextureLooseAssetRoot;
         NorvesLib::Core::Container::String m_TextureAssetRoot;
         NorvesLib::Core::Container::String m_TextureAssetManifestPath;
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem> m_AssetSystemSnapshot;
