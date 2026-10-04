@@ -33,6 +33,7 @@ namespace NorvesLib::Core::Rendering
             double MipgenMs = 0.0;
             bool bTextureFound = false;
             bool bUploadAttempted = false;
+            bool bUploadSucceeded = false;
             bool bMipgenSuccess = true;
         };
 

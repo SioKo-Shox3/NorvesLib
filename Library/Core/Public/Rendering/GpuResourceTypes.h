@@ -63,8 +63,20 @@ namespace NorvesLib::Core::Rendering
             R8_UNORM,
             RG8_UNORM,
             D24_S8,
-            D32_FLOAT
+            D32_FLOAT,
+            R16_UNORM,
+            BC1_UNORM,
+            BC1_SRGB,
+            BC4_UNORM,
+            BC5_UNORM,
+            BC7_UNORM,
+            BC7_SRGB
         } PixelFormat = Format::RGBA8_UNORM;
+
+        /// 初期データが全ミップを含むか。BC 形式は常に全ミップを含む（実行時に縮小できない）。
+        /// 含むとき、初期データはミップ0から順に詰めた1つの塊で、ミップごとにアップロードし、ミップ生成はしない。
+        /// ミップごとの大きさは各形式のブロック単位（BC は 4x4 画素のブロックを切り上げ）で数える。
+        bool bInitialDataHasAllMips = false;
 
         TextureType Type = TextureType::Texture2D;
 

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -70,6 +71,20 @@ namespace NorvesLib::Core::Rendering
                 return RHI::Format::D24_UNORM_S8_UINT;
             case TextureCreateInfo::Format::D32_FLOAT:
                 return RHI::Format::D32_FLOAT;
+            case TextureCreateInfo::Format::R16_UNORM:
+                return RHI::Format::R16_UNORM;
+            case TextureCreateInfo::Format::BC1_UNORM:
+                return RHI::Format::BC1_UNORM;
+            case TextureCreateInfo::Format::BC1_SRGB:
+                return RHI::Format::BC1_SRGB;
+            case TextureCreateInfo::Format::BC4_UNORM:
+                return RHI::Format::BC4_UNORM;
+            case TextureCreateInfo::Format::BC5_UNORM:
+                return RHI::Format::BC5_UNORM;
+            case TextureCreateInfo::Format::BC7_UNORM:
+                return RHI::Format::BC7_UNORM;
+            case TextureCreateInfo::Format::BC7_SRGB:
+                return RHI::Format::BC7_SRGB;
             default:
                 return RHI::Format::R8G8B8A8_UNORM;
             }
@@ -88,6 +103,78 @@ namespace NorvesLib::Core::Rendering
             return RHI::EstimateTextureSize(desc);
         }
 
+        // 初期データが全ミップを詰めた塊として渡されるか（BC は実行時にミップを作れないので常にそう）
+        bool HasPackedMipChain(const TextureCreateInfo &createInfo)
+        {
+            return createInfo.bInitialDataHasAllMips ||
+                   RHI::IsBlockCompressedFormat(ToRHITextureFormat(createInfo.PixelFormat));
+        }
+
+        // ミップ0から順に詰めた初期データを、ミップごとのコピー領域でテクスチャへ上げる。
+        // 1ミップの大きさは形式のブロック単位（端は切り上げ）で数え、各ミップは詰めたまま続く。
+        bool UploadPackedMipChain(RHI::ITexture &texture,
+                                  const TextureCreateInfo &createInfo,
+                                  const void *data,
+                                  size_t dataSize)
+        {
+            if (createInfo.ArraySize != 1 || createInfo.Depth != 1)
+            {
+                NORVES_LOG_ERROR("RenderResources",
+                                 "全ミップの初期データは配列・3Dテクスチャに未対応です: texture=%s",
+                                 createInfo.DebugName.c_str());
+                return false;
+            }
+
+            const RHI::FormatBlockInfo block = RHI::GetFormatBlockInfo(texture.GetFormat());
+            const uint32_t mipLevels = texture.GetMipLevels();
+
+            // 足りないデータを途中まで上げないよう、先に必要量を数える
+            size_t required = 0;
+            uint32_t width = texture.GetWidth();
+            uint32_t height = texture.GetHeight();
+            for (uint32_t mip = 0; mip < mipLevels; ++mip)
+            {
+                const size_t blocksX = (static_cast<size_t>(width) + block.BlockWidth - 1) / block.BlockWidth;
+                const size_t blocksY = (static_cast<size_t>(height) + block.BlockHeight - 1) / block.BlockHeight;
+                required += blocksX * blocksY * block.BlockBytes;
+                width = std::max(1u, width / 2);
+                height = std::max(1u, height / 2);
+            }
+            if (dataSize < required)
+            {
+                NORVES_LOG_ERROR("RenderResources",
+                                 "全ミップの初期データが足りません: texture=%s 必要=%zu 渡された量=%zu",
+                                 createInfo.DebugName.c_str(), required, dataSize);
+                return false;
+            }
+
+            const uint8_t *cursor = static_cast<const uint8_t *>(data);
+            width = texture.GetWidth();
+            height = texture.GetHeight();
+            try
+            {
+                for (uint32_t mip = 0; mip < mipLevels; ++mip)
+                {
+                    const uint32_t blocksX = (width + block.BlockWidth - 1) / block.BlockWidth;
+                    const uint32_t blocksY = (height + block.BlockHeight - 1) / block.BlockHeight;
+                    const uint32_t rowPitch = blocksX * block.BlockBytes;
+                    const uint32_t slicePitch = rowPitch * blocksY;
+                    texture.Update(cursor, rowPitch, slicePitch, mip, 0);
+                    cursor += slicePitch;
+                    width = std::max(1u, width / 2);
+                    height = std::max(1u, height / 2);
+                }
+            }
+            catch (const std::exception &exception)
+            {
+                NORVES_LOG_ERROR("RenderResources",
+                                 "ミップごとのアップロードに失敗しました: texture=%s %s",
+                                 createInfo.DebugName.c_str(), exception.what());
+                return false;
+            }
+            return true;
+        }
+
         uint32_t GetTextureBytesPerPixel(TextureCreateInfo::Format format)
         {
             switch (format)
@@ -95,6 +182,7 @@ namespace NorvesLib::Core::Rendering
             case TextureCreateInfo::Format::R8_UNORM:
                 return 1;
             case TextureCreateInfo::Format::RG8_UNORM:
+            case TextureCreateInfo::Format::R16_UNORM:
                 return 2;
             case TextureCreateInfo::Format::RGBA8_UNORM:
             case TextureCreateInfo::Format::RGBA8_SRGB:
@@ -234,8 +322,29 @@ namespace NorvesLib::Core::Rendering
         desc.MipLevels = mipLevels;
         desc.ArraySize = createInfo.ArraySize;
         desc.TextureFormat = ToRHITextureFormat(createInfo.PixelFormat);
+
+        // BC に対応しないデバイスでは作らない（CPU で展開する逃げ道は作らない）
+        if (RHI::IsBlockCompressedFormat(desc.TextureFormat))
+        {
+            if (!m_Device->GetCapabilities().bTextureCompressionBC)
+            {
+                NORVES_LOG_ERROR("RenderResources",
+                                 "BCテクスチャを作れません: デバイスが textureCompressionBC に対応していません texture=%s",
+                                 createInfo.DebugName.c_str());
+                return TextureHandle::Invalid();
+            }
+            if (createInfo.bRenderTarget || createInfo.bDepthStencil)
+            {
+                NORVES_LOG_ERROR("RenderResources",
+                                 "BCテクスチャはレンダーターゲット・深度にできません: texture=%s",
+                                 createInfo.DebugName.c_str());
+                return TextureHandle::Invalid();
+            }
+        }
+
         desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
-        if (mipLevels > 1)
+        // ミップ生成（ブリット）で元のミップを読むときだけ転送元が要る。全ミップを渡すテクスチャは生成しない。
+        if (mipLevels > 1 && !HasPackedMipChain(createInfo))
         {
             desc.Usage = desc.Usage | RHI::ResourceUsage::TransferSrc;
         }
@@ -281,7 +390,13 @@ namespace NorvesLib::Core::Rendering
         auto handle = CreateTexture(createInfo);
         if (handle.IsValid() && data && dataSize > 0)
         {
-            UploadTextureData(handle, createInfo, data, dataSize);
+            const TextureUploadResult result = UploadTextureData(handle, createInfo, data, dataSize);
+            // 全ミップを渡すテクスチャは、上げきれていない中身を描かせない
+            if (HasPackedMipChain(createInfo) && !result.bUploadSucceeded)
+            {
+                ReleaseTexture(handle);
+                return TextureHandle::Invalid();
+            }
         }
         return handle;
     }
@@ -308,6 +423,16 @@ namespace NorvesLib::Core::Rendering
         }
 
         result.bTextureFound = true;
+
+        if (HasPackedMipChain(createInfo))
+        {
+            auto uploadStartTime = StoreNow();
+            result.bUploadAttempted = true;
+            result.bUploadSucceeded = UploadPackedMipChain(*it->second.RHITexture, createInfo, data, dataSize);
+            result.UploadMs = StoreElapsedMs(uploadStartTime);
+            return result;
+        }
+
         uint32_t bytesPerPixel = GetTextureBytesPerPixel(createInfo.PixelFormat);
         uint32_t rowPitch = createInfo.Width * bytesPerPixel;
         uint32_t slicePitch = rowPitch * createInfo.Height;
@@ -316,6 +441,7 @@ namespace NorvesLib::Core::Rendering
         it->second.RHITexture->Update(data, rowPitch, slicePitch);
         result.UploadMs = StoreElapsedMs(uploadStartTime);
         result.bUploadAttempted = true;
+        result.bUploadSucceeded = true;
 
         if (effectiveMipLevels > 1)
         {

@@ -321,6 +321,15 @@ set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# BC1・BC4・BC5・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
+add_test(NAME RHIBlockCompressedTextureVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIBlockCompressedTextureVulkanTest)
+set_tests_properties(RHIBlockCompressedTextureVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME VideoMemoryBudgetLogGateTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetLogGateTest)
 
 add_test(NAME VideoMemoryBudgetVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetVulkanTest)
@@ -336,12 +345,17 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
+    MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(RHITextureUpdateVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
 add_test(NAME RHITextureUpdateVulkanTest COMMAND RHITextureUpdateVulkanTest)
 set_tests_properties(RHITextureUpdateVulkanTest PROPERTIES

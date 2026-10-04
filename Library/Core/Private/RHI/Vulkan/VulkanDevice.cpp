@@ -2163,6 +2163,14 @@ namespace NorvesLib::RHI::Vulkan
 
     TexturePtr VulkanDevice::CreateTexture(const TextureDesc &desc)
     {
+        // BC 形式は textureCompressionBC を有効にした論理デバイスでだけ作れる（CPU で展開する逃げ道は作らない）
+        if (IsBlockCompressedFormat(desc.TextureFormat) && !m_Capabilities.bTextureCompressionBC)
+        {
+            NORVES_LOG_ERROR("Vulkan", "BCテクスチャを作れません: textureCompressionBC が有効ではありません name=%s",
+                             desc.DebugName != nullptr ? desc.DebugName : "");
+            return nullptr;
+        }
+
         auto texture = MakeShared<VulkanTexture>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
         return StaticPointerCast<ITexture>(texture);

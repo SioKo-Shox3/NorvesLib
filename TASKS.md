@@ -55,7 +55,7 @@
 - notes: 計画書 4.2。`ImpostorBake` など形式の switch を持つ箇所も漏れなく更新する（コンパイラの警告で拾う）。危険地帯（RHI/Vulkan）。
 
 ## VTG1-BC-UPLOAD: 圧縮済みの全ミップをGPUへ上げて描けるようにする
-- status: todo
+- status: done
 - done-when: `TextureCreateInfo` と `GpuResourceStore` が BC と R16 の全ミップの初期データ（ミップ0から順に詰めた1つの塊）を受け取り、ミップごとのコピー領域でアップロードする（`GenerateMipmaps` は呼ばない）。BC に対応しないデバイスでは作成が失敗し、理由をログに出す（CPU で展開する逃げ道は作らない）。GPU のテスト `RHIBlockCompressedTextureVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、既知のブロック（単色のブロックを手で組む）で作った BC1・BC4・BC5・BC7 の 8×8・2段のテクスチャを計算シェーダーでミップごとにサンプルし、期待の色（許容 2/255）を読み戻す。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RHIBlockCompressedTextureVulkanTest|RHITextureUpdateVulkanTest|RHITextureToBufferReadbackVulkanTest)$"`
