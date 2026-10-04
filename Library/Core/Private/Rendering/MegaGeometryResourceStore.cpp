@@ -102,6 +102,27 @@ namespace NorvesLib::Core::Rendering
                     return MegaGeometry::MegaMeshHandle::Invalid();
                 }
             }
+
+            // フォールバックの段は、影とレイトレーシングが1回の範囲で描くので、範囲が三角形の単位で
+            // インデックスの中に収まり、全ての頂点の番号が頂点の数より小さいことを確かめる。
+            if (createInfo.FallbackIndexCount > 0u)
+            {
+                const uint64_t fallbackEnd =
+                    static_cast<uint64_t>(createInfo.FallbackIndexOffset) + createInfo.FallbackIndexCount;
+                bool bFallbackValid = createInfo.IndexData != nullptr && createInfo.FallbackIndexCount % 3u == 0u &&
+                                      createInfo.FallbackIndexOffset % 3u == 0u && fallbackEnd <= createInfo.IndexCount &&
+                                      std::isfinite(createInfo.FallbackError) && createInfo.FallbackError >= 0.0f;
+                for (uint32_t i = 0; bFallbackValid && i < createInfo.FallbackIndexCount; ++i)
+                {
+                    bFallbackValid = createInfo.IndexData[createInfo.FallbackIndexOffset + i] < createInfo.VertexCount;
+                }
+                if (!bFallbackValid)
+                {
+                    NORVES_LOG_ERROR("MegaGeometryResources", "焼き込み済みLOD階層のフォールバックの段が不正です: %s",
+                                     createInfo.DebugName.c_str());
+                    return MegaGeometry::MegaMeshHandle::Invalid();
+                }
+            }
         }
 
         if (createInfo.bBuildLODHierarchy && !createInfo.bBakedLODHierarchy && createInfo.Clusters.size() > 1)
@@ -348,6 +369,21 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // 焼き込み済みの階層は、段のクラスタが全体の頂点の中に散らばるので1回の範囲では描けない。代わりに
+        // 常駐のフォールバックの段（頂点の基点が0の1つの範囲）を最も粗い段として足し、影とレイトレーシングは
+        // その範囲を使う（BLAS のキーは同じバッファの範囲なので、別のバッファは要らない）。
+        if (createInfo.bBakedLODHierarchy && createInfo.FallbackIndexCount > 0u)
+        {
+            MegaGeometry::MegaMeshLevelRange fallbackRange;
+            fallbackRange.FirstIndex = createInfo.FallbackIndexOffset;
+            fallbackRange.IndexCount = createInfo.FallbackIndexCount;
+            fallbackRange.Error = createInfo.FallbackError;
+            gpuData.ShadowLODLevel = static_cast<uint32_t>(gpuData.LevelRanges.size());
+            gpuData.ShadowFirstIndex = fallbackRange.FirstIndex;
+            gpuData.ShadowIndexCount = fallbackRange.IndexCount;
+            gpuData.LevelRanges.push_back(fallbackRange);
+        }
+
         // クラスタの大きさ（1クラスタあたりの三角形数）を段ごとに記録する。極端に小さいと
         // カリングと間接描画の1件あたりの手間に対して描く量が少なくなる。
         {
@@ -387,7 +423,7 @@ namespace NorvesLib::Core::Rendering
                             lod0Clusters > 0u ? static_cast<double>(lod0Triangles) / static_cast<double>(lod0Clusters)
                                               : 0.0,
                             static_cast<unsigned long long>(lod0SmallClusters),
-                            shadowLODLevel,
+                            gpuData.ShadowLODLevel,
                             gpuData.ShadowIndexCount / 3u,
                             gpuData.LODBounds.IsValid() ? 1 : 0,
                             createInfo.bBakedLODHierarchy ? 1 : 0,

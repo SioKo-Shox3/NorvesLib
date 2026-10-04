@@ -351,9 +351,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t ShadowFirstIndex = 0;
         /** @brief 影とレイトレーシングで使うLODの段のインデックス数（0なら影へ描かない） */
         uint32_t ShadowIndexCount = 0;
-        /** @brief 影に使う最も細かい段（MegaMeshCreateInfo::ShadowLODLevel） */
+        /** @brief 影に使う最も細かい段（MegaMeshCreateInfo::ShadowLODLevel。焼き込み済みの階層ではフォールバックの段） */
         uint32_t ShadowLODLevel = 0;
-        /** @brief 段ごとの描画の範囲と誤差（添え字が段。影へテクセルに見合う段を選ぶのに使う） */
+        /** @brief 段ごとの描画の範囲と誤差（添え字が段。影へテクセルに見合う段を選ぶのに使う。焼き込み済みの階層では末尾にフォールバックの段が付く） */
         VariableArray<MegaMeshLevelRange> LevelRanges;
 
         BoundingSphere TotalBounds;

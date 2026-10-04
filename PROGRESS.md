@@ -723,3 +723,12 @@
 - 変異: 親の判定で自分の球を使うと、読み戻し経路でも `drawnCount == 1` の検査で落ちる（`verify-VTG4-DAG-SELECT-GPU-9-mutation.txt`）。戻して再ビルドした。
 - 検証: `verify-VTG4-DAG-SELECT-GPU-7.txt`・`-8.txt`（変更直後のビルド BUILD_EXIT_CODE=0 と ctest 4/4 passed）、`-10.txt`・`-11.txt`（変異を戻した後のビルドと ctest 4/4 passed）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - Notes: 次は VTG4-FALLBACK-LEVEL。
+
+## 反復 11（run 20261005-043300）: VTG4-FALLBACK-LEVEL（done）
+- VTG4-FALLBACK-LEVEL: v1（焼き込み済み）のメッシュの影・RT が使う範囲を、常駐のフォールバックの段にした。`MegaGeometryResourceStore::CreateMegaMesh` で、`bBakedLODHierarchy` かつ `FallbackIndexCount > 0` のとき、`LevelRanges` の末尾にフォールバックの段（`FirstIndex=FallbackIndexOffset`・`IndexCount`・`Error=FallbackError`）を足し、`ShadowLODLevel` をその段の番号、`ShadowFirstIndex/ShadowIndexCount` をその範囲にした。焼いた段のクラスタは全体の頂点の中に散らばり 1 回の範囲では描けない（`IndexCount=0`）ので、従来は v1 のメッシュに影・RT の範囲が無かった。
+- 経路は変えていない: CSM・点光源の影（`ShadowMapPass` の `ResolveMegaShadowRange`）と RT（`RayTracingSceneSubsystem::BuildFrameSnapshot`）は元から `ShadowFirstIndex/ShadowIndexCount` とメッシュの頂点・インデックスのバッファをそのまま読むので、コードは無変更。フォールバックは同じインデックスバッファの後ろにあり、頂点の基点は 0（全体の頂点の番号）なので、BLAS のキー（バッファのポインタと範囲）は別のバッファ無しで成り立つ（stop-when に当たらない）。影の段の選び方は `ShadowLODLevel` が最も粗い段なので、距離・テクセルによらずフォールバックのまま。v0・手続きの球・フォールバック無し（件数 0）のメッシュは従来どおり。
+- 検査（ストア）: フォールバックの範囲が三角形の単位でインデックスの中に収まり、全ての頂点の番号が頂点の数より小さく、誤差が有限で非負であることを確かめ、外れたら何も作らず Invalid を返す（RT の BLAS と影の描画が範囲外を読まない）。
+- テスト: `MegaGeometryResourcesTest` の焼き込み済みの立方体で、`LevelRanges` が 4 段（焼いた 3 段は `IndexCount=0`、末尾がフォールバック）・`ShadowLODLevel=3`・`ShadowFirstIndex/Count` がフォールバックの範囲・`SelectShadowLODLevel` が距離によらず 3、壊れたフォールバック 4 種（範囲が終端越え・3 の倍数でない・頂点の番号が範囲外・誤差が負）が何も作らないこと、フォールバック無しが従来どおり（3 段・影の範囲 0）なことを足した。`RayTracingSceneSnapshotTest` に、クラスタ（先頭 3 インデックス）の後ろにフォールバック（6 インデックス）を置いた v1 のメッシュで、`RayTracingSceneInstanceSnapshot` の `IndexOffset/IndexCount` がフォールバック（3/6）で、頂点・インデックスのバッファがメッシュのもので、BLAS/TLAS が組み上がることを足した（実 GPU で走る。`baked_mesh_instance_uses_fallback_range=true`）。
+- 検証: `verify-VTG4-FALLBACK-LEVEL-1.txt`（ビルド成功）・`-2.txt`（ctest 4 件全て Passed）・`-3-rt-direct.txt`（RT テストの直接実行。スキップではなく実行された）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
+- 未実施: 完了条件の「v1 の岩を一時的に読む起動画面の撮影で影・RTGI が崩れないこと」。撮影は GPU の重い処理で、岩を v1 で読む変更は `Game/` 側（この任務の `paths:` の外）になるため回していない。起動画面はまだ v1 を使わないので、見た目は変わらない。次の VTG4-COOK-STARTUP-MODELS（岩・小屋を v1 で読む）の撮影（`CaptureStartupScene.ps1`）で、影と RTGI の見た目を初めて確かめる。そこで崩れたら、この反復のフォールバックの範囲を疑う。
+- Next: VTG4-COOK-STARTUP-MODELS。

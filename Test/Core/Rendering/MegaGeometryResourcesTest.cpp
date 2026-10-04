@@ -1135,10 +1135,29 @@ namespace
         assert(gpuData->ClusterCount == clusterCount);
         assert(gpuData->VertexCount == dag.Parsed.Mesh.Vertices.size());
         assert(gpuData->IndexCount == dag.Parsed.Mesh.Indices.size());
-        assert(gpuData->LevelRanges.size() == 3u);
+        // 段の範囲は焼いた3段（クラスタが散らばるので1回の範囲では描けない）と、最も粗い常駐のフォールバックの段
+        assert(gpuData->LevelRanges.size() == 4u);
         assert(gpuData->LevelRanges[0].Error == 0.0f);
         assert(gpuData->LevelRanges[1].Error == BakedCubeDag::FaceError);
         assert(gpuData->LevelRanges[2].Error == BakedCubeDag::RootGroupError);
+        for (uint32_t level = 0; level < 3u; ++level)
+        {
+            assert(gpuData->LevelRanges[level].IndexCount == 0u);
+        }
+        // 影とレイトレーシングは、クックした「フォールバックの段」の範囲をそのまま使う
+        assert(dag.CreateInfo.FallbackIndexCount == 36u);
+        assert(gpuData->LevelRanges[3].FirstIndex == dag.CreateInfo.FallbackIndexOffset);
+        assert(gpuData->LevelRanges[3].IndexCount == dag.CreateInfo.FallbackIndexCount);
+        assert(gpuData->LevelRanges[3].Error == dag.CreateInfo.FallbackError);
+        assert(gpuData->ShadowLODLevel == 3u);
+        assert(gpuData->ShadowFirstIndex == dag.CreateInfo.FallbackIndexOffset);
+        assert(gpuData->ShadowIndexCount == dag.CreateInfo.FallbackIndexCount);
+        assert(static_cast<uint64_t>(gpuData->ShadowFirstIndex) + gpuData->ShadowIndexCount <= gpuData->IndexCount);
+        // どの距離・テクセルでも、影の段はフォールバックのまま（クラスタの段へ細かくならない）
+        for (const float texel : {0.001f, 0.1f, 10.0f})
+        {
+            assert(Mega::SelectShadowLODLevel(*gpuData, 1.0f, texel, 1.0f) == 3u);
+        }
         assert(device->CreatedBuffers.size() == 3);
         assert(device->CreatedBuffers[0]->LastUpdateSize == dag.Parsed.Mesh.Vertices.size() * sizeof(Mesh3DVertex));
         assert(device->CreatedBuffers[1]->LastUpdateSize == dag.Parsed.Mesh.Indices.size() * sizeof(uint32_t));
@@ -1200,6 +1219,54 @@ namespace
             assert(brokenManager.Initialize(brokenDevice));
             assert(!brokenManager.MegaGeometry().CreateMegaMesh(broken).IsValid());
             assert(brokenDevice->CreatedBufferDescs.empty());
+        }
+
+        // 壊れたフォールバックの段（範囲外・三角形の単位でない・頂点の番号が範囲外・誤差が負）も何も作らない
+        for (int variant = 0; variant < 4; ++variant)
+        {
+            Mega::MegaMeshCreateInfo broken = dag.CreateInfo;
+            Container::VariableArray<uint32_t> brokenIndices(broken.IndexCount);
+            std::memcpy(brokenIndices.data(), broken.IndexData, broken.IndexCount * sizeof(uint32_t));
+            if (variant == 0)
+            {
+                broken.FallbackIndexOffset = broken.IndexCount - 3u; // 範囲が終端を越える
+            }
+            else if (variant == 1)
+            {
+                broken.FallbackIndexCount = 35u; // 3の倍数でない
+            }
+            else if (variant == 2)
+            {
+                // フォールバックの頂点の番号が頂点の数以上になる（クラスタのインデックスは触らない）
+                brokenIndices[broken.FallbackIndexOffset + 5u] = broken.VertexCount;
+                broken.IndexData = brokenIndices.data();
+            }
+            else
+            {
+                broken.FallbackError = -1.0f;
+            }
+            RenderResources brokenManager;
+            auto brokenDevice = MakeShared<FakeDevice>();
+            assert(brokenManager.Initialize(brokenDevice));
+            assert(!brokenManager.MegaGeometry().CreateMegaMesh(broken).IsValid());
+            assert(brokenDevice->CreatedBufferDescs.empty());
+        }
+
+        // フォールバックの段が無い（0件）なら、段は焼いた3段のままで影・RTへは描かない（従来どおり）
+        {
+            Mega::MegaMeshCreateInfo noFallback = dag.CreateInfo;
+            noFallback.FallbackIndexOffset = 0;
+            noFallback.FallbackIndexCount = 0;
+            noFallback.FallbackError = 0.0f;
+            RenderResources noFallbackManager;
+            auto noFallbackDevice = MakeShared<FakeDevice>();
+            assert(noFallbackManager.Initialize(noFallbackDevice));
+            const auto noFallbackHandle = noFallbackManager.MegaGeometry().CreateMegaMesh(noFallback);
+            assert(noFallbackHandle.IsValid());
+            const auto *noFallbackData = noFallbackManager.MegaGeometry().GetMegaMeshGPUData(noFallbackHandle);
+            assert(noFallbackData != nullptr);
+            assert(noFallbackData->LevelRanges.size() == 3u);
+            assert(noFallbackData->ShadowIndexCount == 0u);
         }
     }
 
