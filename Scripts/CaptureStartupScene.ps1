@@ -119,6 +119,10 @@ param(
     # VRAM の上限（MB。--vram-budget-mb）。0 は渡さない。
     [ValidateRange(0, 1048576)]
     [int]$VramBudgetMb = 0,
+    # MegaGeometry（岩・小屋など）の遮蔽カリング（2パス。既定は有効）。Off は遮蔽の判定なしの従来の経路で撮る
+    # （--mega-occlusion=off。見た目の比較用）。各撮影のログの MEGA_OCCLUSION を metrics.json の mega_occlusion へ書く。
+    [ValidateSet('On', 'Off')]
+    [string]$MegaOcclusion = 'On',
     # 同じコードを -Deterministic で撮った別の出力先。各視点の平均輝度の差と PSNR を求めて metrics.json へ書き、
     # 平均輝度の差が -DeterministicMeanLuminanceLimit を超えるか PSNR が -DeterministicPsnrLimit を下回れば失敗にする。
     [string]$CompareDeterministicWith = '',
@@ -666,6 +670,11 @@ foreach ($view in $shots)
     {
         $arguments += "--vram-budget-mb=$VramBudgetMb"
     }
+    # 遮蔽カリングは既定で有効なので、Off のときだけ引数を渡す。
+    if ($MegaOcclusion -eq 'Off')
+    {
+        $arguments += '--mega-occlusion=off'
+    }
     foreach ($extraArgument in (($ExtraGameArguments -join ' ').Split(@(' ', ','), [StringSplitOptions]::RemoveEmptyEntries)))
     {
         $arguments += $extraArgument
@@ -743,6 +752,7 @@ foreach ($view in $shots)
     $vramLedgerTextureMb = $null
     $cookedMissingCount = $null
     $vramPools = $null
+    $occlusionStats = $null
     $stressMaterials = $null
     if (Test-Path -LiteralPath $viewLogPath)
     {
@@ -761,6 +771,22 @@ foreach ($view in $shots)
                 vt_used_mb_max = [uint64]$maxUsed
                 vt_evicted_tiles = [uint64]$lastPool[5].Value
                 lines = $poolLines.Count
+            }
+        }
+        # MEGA_OCCLUSION（遮蔽カリングの1フレームの数。1パス目で描いた数・2パス目で判定した数・描いた数・隠れていた数）。最後の値と、
+        # 描いた数・隠れていた数の最大を残す。遮蔽カリングを使えない撮影（--mega-occlusion=off など）はログが無い。
+        $occlusionLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'MEGA_OCCLUSION pass1=(\d+) pass2_tested=(\d+) pass2_drawn=(\d+) occluded=(\d+)')
+        if ($occlusionLines.Count -gt 0)
+        {
+            $lastOcclusion = $occlusionLines[$occlusionLines.Count - 1].Matches[0].Groups
+            $maxOccluded = ($occlusionLines | ForEach-Object { [uint64]$_.Matches[0].Groups[4].Value } | Measure-Object -Maximum).Maximum
+            $occlusionStats = [ordered]@{
+                pass1 = [uint64]$lastOcclusion[1].Value
+                pass2_tested = [uint64]$lastOcclusion[2].Value
+                pass2_drawn = [uint64]$lastOcclusion[3].Value
+                occluded = [uint64]$lastOcclusion[4].Value
+                occluded_max = [uint64]$maxOccluded
+                lines = $occlusionLines.Count
             }
         }
         $stressLine = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_TEXTURES materials=(\d+) of (\d+)')
@@ -848,6 +874,7 @@ foreach ($view in $shots)
             vram_ledger_texture_mb = $vramLedgerTextureMb
             cooked_missing_count = $cookedMissingCount
             vram_pools = $vramPools
+            mega_occlusion = $occlusionStats
             stress_materials = $stressMaterials
         }
         $results += [pscustomobject]$result

@@ -48,6 +48,17 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
         constexpr uint32_t DEBUG_PAYLOAD_MODE_LOD_LEVEL = 2u;
 
+        // cluster_cull.comp の cullPass（CULL_PASS_* と同じ値）
+        constexpr uint32_t CULL_PASS_SINGLE = 0u; // 従来の1回の判定（遮蔽の判定なし）
+        constexpr uint32_t CULL_PASS_FIRST = 1u;  // 1パス目: 前のフレームで見えたクラスタだけ
+        constexpr uint32_t CULL_PASS_SECOND = 2u; // 2パス目: HZB で判定して残りを描き、見えたビットを更新
+
+        // 統計（cluster_cull.comp の stats[4]: pass1・pass2_tested・pass2_drawn・occluded）のバイト数
+        constexpr uint32_t StatsBufferBytes = 4u * sizeof(uint32_t);
+
+        // 使われなくなった「見えた」ビットのバッファを手放すまでのフレーム数（GPUはこれより前に使い終わっている）
+        constexpr uint64_t VisibilityStaleFrames = 64;
+
         bool IsMegaGeometryDebugPayloadMode(DebugViewMode mode)
         {
             return mode == DebugViewMode::MegaGeometryClusters ||
@@ -178,6 +189,18 @@ namespace NorvesLib::Core::Rendering
             hiZBinding.stages = RHI::ShaderStage::Compute;
             cullDsDesc.bindings.push_back(hiZBinding);
 
+            RHI::DescriptorBinding visibilityBinding;
+            visibilityBinding.binding = 5;
+            visibilityBinding.type = RHI::ResourceBindType::RWBuffer;
+            visibilityBinding.stages = RHI::ShaderStage::Compute;
+            cullDsDesc.bindings.push_back(visibilityBinding);
+
+            RHI::DescriptorBinding statsBinding;
+            statsBinding.binding = 6;
+            statsBinding.type = RHI::ResourceBindType::RWBuffer;
+            statsBinding.stages = RHI::ShaderStage::Compute;
+            cullDsDesc.bindings.push_back(statsBinding);
+
             cullPipelineDesc.descriptorSetLayouts.push_back(cullDsDesc);
         }
         m_CullPipeline = m_Device->CreateComputePipeline(cullPipelineDesc);
@@ -186,6 +209,9 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("MegaGeometryPass", "カリングパイプラインの作成に失敗");
             return false;
         }
+
+        // 遮蔽カリング（2パス）の HZB。作れなければ従来の1回の判定で描く
+        m_bHiZReady = m_HiZ.Initialize(m_Device, context.ShaderMgr);
 
         // GBuffer描画用シェーダーの読み込み（MegaGeometry専用GBuffer互換シェーダー）
         if (context.ShaderMgr)
@@ -267,6 +293,28 @@ namespace NorvesLib::Core::Rendering
         m_InstanceDrawCountBuffers.clear();
         m_CullUniformBuffers.clear();
         m_CullDescriptorSets.clear();
+        m_SecondInstanceIndirectDrawBuffers.clear();
+        m_SecondInstanceDrawCountBuffers.clear();
+        m_SecondCullUniformBuffers.clear();
+        m_SecondCullDescriptorSets.clear();
+        m_DummyVisibilityBuffer.reset();
+        m_DummyStatsBuffer.reset();
+        m_InstanceVisibilities.clear();
+        m_RetiredBuffers.clear();
+        m_OcclusionFrameCount = 0;
+        for (StatsSlot &slot : m_StatsSlots)
+        {
+            if (slot.Buffer && slot.Mapped)
+            {
+                slot.Buffer->Unmap();
+            }
+            slot = StatsSlot{};
+        }
+        m_bStatsSlotsTried = false;
+        m_bStatsLoggedOnce = false;
+        m_bOcclusionFallbackLogged = false;
+        m_HiZ.Shutdown();
+        m_bHiZReady = false;
 
         m_DrawPipeline.reset();
         m_DrawWireframePipeline.reset();
@@ -277,6 +325,8 @@ namespace NorvesLib::Core::Rendering
 
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
+        m_SecondGBufferRenderPass.reset();
+        m_SecondGBufferFramebuffer.reset();
         m_AlbedoTexture.reset();
         m_NormalTexture.reset();
         m_MaterialTexture.reset();
@@ -324,6 +374,7 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 MegaMeshInstance instance;
+                instance.ObjectId = proxy.ObjectId;
                 instance.Handle = proxy.MegaMeshHandle;
                 std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
                 std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
@@ -739,27 +790,68 @@ namespace NorvesLib::Core::Rendering
             MatrixUtils::ExtractClipSpaceFrustumPlanes(cameraConstants.ViewProjectionMatrix,
                                                        ClipSpaceDepthRange::ZeroToOne);
 
+        // ========================================
+        // 遮蔽カリングの経路を決める
+        // ========================================
+        // 2パス: 1パス目（前のフレームで見えたクラスタ）→ HZB（その時点の深度から）→ 2パス目（残りを遮蔽の判定で選ぶ）。
+        // 使えないとき（--mega-occlusion=off・HZBが作れない・描く範囲が深度と一致しない）は、
+        // 従来の1回の判定（遮蔽の判定なし）で描く。
+        const bool bTwoPass = CanUseTwoPassOcclusion(command);
+        if (bTwoPass)
+        {
+            ++m_OcclusionFrameCount;
+        }
+
+        // 統計（MEGA_OCCLUSION）の書き込み先。読み戻しのあるビルド（開発）だけ取る
+        StatsSlot *statsSlot = nullptr;
+#if NORVES_ENABLE_STATS
+        if (bTwoPass)
+        {
+            EnsureStatsSlots();
+            StatsSlot &slot = m_StatsSlots[m_OcclusionFrameCount % StatsSlotCount];
+            if (slot.Buffer && slot.Mapped)
+            {
+                if (slot.bPending)
+                {
+                    // StatsSlotCount フレーム前の統計。そのフレームの提出は完了している（フレームの飛行数は2以下）
+                    if (!m_bStatsLoggedOnce || slot.Frame % 30 == 0)
+                    {
+                        NORVES_LOG_INFO("MegaGeometryPass",
+                                        "MEGA_OCCLUSION pass1=%u pass2_tested=%u pass2_drawn=%u occluded=%u",
+                                        slot.Mapped[0],
+                                        slot.Mapped[1],
+                                        slot.Mapped[2],
+                                        slot.Mapped[3]);
+                        m_bStatsLoggedOnce = true;
+                    }
+                    slot.bPending = false;
+                }
+                statsSlot = &slot;
+            }
+        }
+#endif
+
         struct DrawableInstance
         {
             size_t InstanceIndex = 0;
             const MegaGeometry::MegaMeshGPUData *GpuData = nullptr;
+            // 1パス目（遮蔽の判定なしの従来の経路ではその1回）のIndirectDrawバッファ
             RHI::BufferPtr IndirectDrawBuffer;
             RHI::BufferPtr DrawCountBuffer;
+            // 2パス目のIndirectDrawバッファ
+            RHI::BufferPtr SecondIndirectDrawBuffer;
+            RHI::BufferPtr SecondDrawCountBuffer;
             RHI::DescriptorSetPtr DrawDescriptorSet;
+            // 「前のフレームで見えた」ビット（2パスのときだけ）
+            RHI::BufferPtr VisibilityBuffer;
+            bool bClearVisibility = false;
         };
 
         VariableArray<DrawableInstance> drawableInstances;
         drawableInstances.reserve(m_Instances.size());
 
         // ========================================
-        // Hi-Z 深度ピラミッド生成（オクルージョンカリング用）
-        // ========================================
-        // 現状のMegaGeometryは、クラスタ球ベースのHi-Z判定が角度・距離依存で過剰カリングを起こし、
-        // モデル全体の消失や穴あきに繋がるため一旦無効化する。
-        // 専用の深度プレパスや、より保守的な遮蔽判定が整うまではFrustum/Backfaceのみで描画安定性を優先する。
-
-        // ========================================
-        // 各MegaMeshインスタンスに対してカリングを実行し、描画入力を準備
+        // 各MegaMeshインスタンスの描画入力（PerObject UBO・テクスチャ）を準備
         // ========================================
         for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
         {
@@ -770,129 +862,48 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
 
-            auto cullUniformBuffer = m_CullUniformBuffers[instanceIndex];
-            auto cullDescriptorSet = m_CullDescriptorSets[instanceIndex];
             auto drawUniformBuffer = m_DrawUniformBuffers[instanceIndex];
             auto drawDescriptorSet = m_DrawDescriptorSets[instanceIndex];
             auto indirectDrawBuffer = m_InstanceIndirectDrawBuffers[instanceIndex];
             auto drawCountBuffer = m_InstanceDrawCountBuffers[instanceIndex];
 
-            if (!cullUniformBuffer ||
-                !cullDescriptorSet ||
+            if (!m_CullUniformBuffers[instanceIndex] ||
+                !m_CullDescriptorSets[instanceIndex] ||
                 !drawUniformBuffer ||
                 !drawDescriptorSet ||
                 !indirectDrawBuffer ||
-                !drawCountBuffer)
+                !drawCountBuffer ||
+                (bTwoPass &&
+                 (!m_SecondCullUniformBuffers[instanceIndex] ||
+                  !m_SecondCullDescriptorSets[instanceIndex] ||
+                  !m_SecondInstanceIndirectDrawBuffers[instanceIndex] ||
+                  !m_SecondInstanceDrawCountBuffers[instanceIndex])))
             {
                 NORVES_LOG_ERROR("MegaGeometryPass", "Invalid per-instance MegaGeometry binding at slot %zu", instanceIndex);
                 return;
             }
 
-            // ----------------------------------------
-            // 1. DrawCountバッファをゼロクリア
-            // ----------------------------------------
-            cmdList->BufferBarrier(drawCountBuffer,
-                                   RHI::ResourceState::Common,
-                                   RHI::ResourceState::CopyDest);
-            cmdList->FillBuffer(drawCountBuffer, 0, sizeof(uint32_t), 0);
-            cmdList->BufferBarrier(drawCountBuffer,
-                                   RHI::ResourceState::CopyDest,
-                                   RHI::ResourceState::UnorderedAccess);
-
-            // IndirectDrawバッファもゼロクリアしてからUAV状態にする
-            cmdList->BufferBarrier(indirectDrawBuffer,
-                                   RHI::ResourceState::Common,
-                                   RHI::ResourceState::CopyDest);
-            cmdList->FillBuffer(indirectDrawBuffer,
-                                0,
-                                static_cast<uint64_t>(m_Settings.MaxDrawCount) *
-                                    sizeof(MegaGeometry::DrawIndexedIndirectCommand),
-                                0);
-            cmdList->BufferBarrier(indirectDrawBuffer,
-                                   RHI::ResourceState::CopyDest,
-                                   RHI::ResourceState::UnorderedAccess);
-
-            // ----------------------------------------
-            // 2. カリングユニフォーム更新
-            // ----------------------------------------
-            CullUniformData uniformData{};
-
-            cameraConstants.CopyShaderView(uniformData.ViewMatrix);
-            cameraConstants.CopyShaderProjection(uniformData.ProjectionMatrix);
-            cameraConstants.CopyCameraPosition(uniformData.CameraPosition);
-            uniformData.CameraPosition[3] = 0.0f;
-
-            frustumPlanes.CopyToShaderData(uniformData.FrustumPlanes);
-
-            uniformData.TotalClusterCount = gpuData->ClusterCount;
-            uniformData.MaxDrawCount = m_Settings.MaxDrawCount;
-            uniformData.LODBias = m_Settings.LODBias;
-            uniformData.ScreenHeight = static_cast<float>(m_CurrentHeight);
-
-            // projectionFactor = screenHeight / (2 * tan(fov/2))
-            float halfFovTan = std::tan(cameraConstants.FieldOfViewRadians * 0.5f);
-            uniformData.ProjectionFactor = (halfFovTan > 1e-6f)
-                                               ? static_cast<float>(m_CurrentHeight) / (2.0f * halfFovTan)
-                                               : 1.0f;
-
-            // Hi-Zオクルージョンカリングは現状のクラスタ球近似が攻めすぎているため無効化
-            uniformData.HiZWidth = 0;
-            uniformData.HiZHeight = 0;
-            uniformData.HiZMipCount = 0;
-            uniformData.bHiZEnabled = 0;
-            uniformData.DebugPayloadMode = debugPayloadMode;
-
-            std::memcpy(uniformData.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
-            if (gpuData->LODBounds.IsValid())
+            DrawableInstance drawableInstance;
+            drawableInstance.InstanceIndex = instanceIndex;
+            drawableInstance.GpuData = gpuData;
+            drawableInstance.IndirectDrawBuffer = indirectDrawBuffer;
+            drawableInstance.DrawCountBuffer = drawCountBuffer;
+            if (bTwoPass)
             {
-                uniformData.LODSphere[0] = gpuData->LODBounds.CenterX;
-                uniformData.LODSphere[1] = gpuData->LODBounds.CenterY;
-                uniformData.LODSphere[2] = gpuData->LODBounds.CenterZ;
-                uniformData.LODSphere[3] = gpuData->LODBounds.Radius;
-                LogUniformLODSelection(instance, *gpuData, uniformData);
+                const uint64_t visibilityKey =
+                    instance.ObjectId != 0 ? instance.ObjectId : (0x8000000000000000ull | instanceIndex);
+                drawableInstance.VisibilityBuffer = AcquireVisibilityBuffer(visibilityKey,
+                                                                            instance,
+                                                                            *gpuData,
+                                                                            drawableInstance.bClearVisibility);
+                if (!drawableInstance.VisibilityBuffer)
+                {
+                    NORVES_LOG_ERROR("MegaGeometryPass", "Failed to create the visibility buffer at slot %zu", instanceIndex);
+                    continue;
+                }
+                drawableInstance.SecondIndirectDrawBuffer = m_SecondInstanceIndirectDrawBuffers[instanceIndex];
+                drawableInstance.SecondDrawCountBuffer = m_SecondInstanceDrawCountBuffers[instanceIndex];
             }
-            cullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
-
-            // ----------------------------------------
-            // 3. カリングディスクリプタセット更新
-            // ----------------------------------------
-            cullDescriptorSet->BindConstantBuffer(0, cullUniformBuffer, 0,
-                                                  static_cast<uint32_t>(sizeof(CullUniformData)));
-            cullDescriptorSet->BindStorageBuffer(1, gpuData->ClusterBuffer, 0,
-                                                 static_cast<uint32_t>(gpuData->ClusterCount * sizeof(MegaGeometry::GPUClusterData)));
-            cullDescriptorSet->BindStorageBuffer(2, indirectDrawBuffer, 0,
-                                                 static_cast<uint32_t>(m_Settings.MaxDrawCount * sizeof(MegaGeometry::DrawIndexedIndirectCommand)));
-            cullDescriptorSet->BindStorageBuffer(3, drawCountBuffer, 0,
-                                                 sizeof(uint32_t));
-
-            // binding 4 の Hi-Z は、遮蔽の判定（bHiZEnabled=1）をつなぐまで使われない。HZB は HiZPyramidPass が作る。
-            cullDescriptorSet->BindTexture(4, m_DefaultBlackTexture);
-            cullDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
-
-            cullDescriptorSet->Update();
-
-            // ----------------------------------------
-            // 4. カリングコンピュートディスパッチ
-            // ----------------------------------------
-            cmdList->SetPipeline(m_CullPipeline);
-            cmdList->SetDescriptorSet(cullDescriptorSet, 0);
-
-            uint32_t groupCount = (gpuData->ClusterCount + 63) / 64;
-            cmdList->Dispatch(groupCount, 1, 1);
-
-            // ----------------------------------------
-            // 5. バリア: Compute UAV → IndirectArgument
-            // ----------------------------------------
-            cmdList->BufferBarrier(indirectDrawBuffer,
-                                   RHI::ResourceState::UnorderedAccess,
-                                   RHI::ResourceState::IndirectArgument);
-            cmdList->BufferBarrier(drawCountBuffer,
-                                   RHI::ResourceState::UnorderedAccess,
-                                   RHI::ResourceState::IndirectArgument);
-
-            // ----------------------------------------
-            // 6. GBuffer描画用ディスクリプタ更新
-            // ----------------------------------------
 
             // PerObject UBO更新（ワールド変換行列）
             struct PerObjectUBO
@@ -1008,11 +1019,6 @@ namespace NorvesLib::Core::Rendering
             BindVirtualTextureFeedback(*drawDescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
 
             drawDescriptorSet->Update();
-            DrawableInstance drawableInstance;
-            drawableInstance.InstanceIndex = instanceIndex;
-            drawableInstance.GpuData = gpuData;
-            drawableInstance.IndirectDrawBuffer = indirectDrawBuffer;
-            drawableInstance.DrawCountBuffer = drawCountBuffer;
             drawableInstance.DrawDescriptorSet = drawDescriptorSet;
             drawableInstances.push_back(drawableInstance);
         }
@@ -1024,49 +1030,283 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ========================================
-        // GBuffer render pass は frame command ごとに1回だけ開く
+        // クラスタカリングの記録（パスごと）
         // ========================================
-        cmdList->BeginRenderPass(m_GBufferRenderPass, m_GBufferFramebuffer);
-        cmdList->SetViewport(command.Viewport);
-        cmdList->SetScissor(command.Scissor);
-        cmdList->SetPipeline(SelectDrawPipeline(command.DebugMode));
+        // カリング用ユニフォームの、インスタンスによらない部分
+        CullUniformData baseUniform{};
+        cameraConstants.CopyShaderView(baseUniform.ViewMatrix);
+        cameraConstants.CopyShaderProjection(baseUniform.ProjectionMatrix);
+        cameraConstants.CopyCameraPosition(baseUniform.CameraPosition);
+        baseUniform.CameraPosition[3] = 0.0f;
+        frustumPlanes.CopyToShaderData(baseUniform.FrustumPlanes);
+        baseUniform.MaxDrawCount = m_Settings.MaxDrawCount;
+        baseUniform.LODBias = m_Settings.LODBias;
+        baseUniform.ScreenHeight = static_cast<float>(m_CurrentHeight);
+        // projectionFactor = screenHeight / (2 * tan(fov/2))
+        const float halfFovTan = std::tan(cameraConstants.FieldOfViewRadians * 0.5f);
+        baseUniform.ProjectionFactor = (halfFovTan > 1e-6f)
+                                           ? static_cast<float>(m_CurrentHeight) / (2.0f * halfFovTan)
+                                           : 1.0f;
+        baseUniform.DebugPayloadMode = debugPayloadMode;
 
-        for (const DrawableInstance &drawableInstance : drawableInstances)
+        RHI::BufferPtr statsBuffer = m_DummyStatsBuffer;
+        if (statsSlot)
         {
-            const auto *gpuData = drawableInstance.GpuData;
-            if (!gpuData)
+            statsBuffer = statsSlot->Buffer;
+            // 1フレームぶんの統計を0から数える（前に使ったのはホストが読んだ後）
+            cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
+            cmdList->FillBuffer(statsBuffer, 0, StatsBufferBytes, 0);
+            cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+            statsSlot->Frame = m_OcclusionFrameCount;
+            statsSlot->bPending = true;
+        }
+
+        // cullPass: 0=従来の1回の判定、1=1パス目、2=2パス目。hiZTexture は2パス目の遮蔽の判定が読む HZB（null なら判定しない）
+        auto recordCull = [&](const DrawableInstance &drawable, uint32_t cullPass, const RHI::TexturePtr &hiZTexture) -> void
+        {
+            const auto &instance = m_Instances[drawable.InstanceIndex];
+            const auto *gpuData = drawable.GpuData;
+            const bool bSecond = cullPass == CULL_PASS_SECOND;
+
+            const RHI::BufferPtr &indirectDrawBuffer = bSecond ? drawable.SecondIndirectDrawBuffer : drawable.IndirectDrawBuffer;
+            const RHI::BufferPtr &drawCountBuffer = bSecond ? drawable.SecondDrawCountBuffer : drawable.DrawCountBuffer;
+            const RHI::BufferPtr &cullUniformBuffer =
+                bSecond ? m_SecondCullUniformBuffers[drawable.InstanceIndex] : m_CullUniformBuffers[drawable.InstanceIndex];
+            const RHI::DescriptorSetPtr &cullDescriptorSet =
+                bSecond ? m_SecondCullDescriptorSets[drawable.InstanceIndex] : m_CullDescriptorSets[drawable.InstanceIndex];
+
+            // ----------------------------------------
+            // 1. DrawCountバッファをゼロクリア
+            // ----------------------------------------
+            cmdList->BufferBarrier(drawCountBuffer,
+                                   RHI::ResourceState::Common,
+                                   RHI::ResourceState::CopyDest);
+            cmdList->FillBuffer(drawCountBuffer, 0, sizeof(uint32_t), 0);
+            cmdList->BufferBarrier(drawCountBuffer,
+                                   RHI::ResourceState::CopyDest,
+                                   RHI::ResourceState::UnorderedAccess);
+
+            // IndirectDrawバッファもゼロクリアしてからUAV状態にする
+            cmdList->BufferBarrier(indirectDrawBuffer,
+                                   RHI::ResourceState::Common,
+                                   RHI::ResourceState::CopyDest);
+            cmdList->FillBuffer(indirectDrawBuffer,
+                                0,
+                                static_cast<uint64_t>(m_Settings.MaxDrawCount) *
+                                    sizeof(MegaGeometry::DrawIndexedIndirectCommand),
+                                0);
+            cmdList->BufferBarrier(indirectDrawBuffer,
+                                   RHI::ResourceState::CopyDest,
+                                   RHI::ResourceState::UnorderedAccess);
+
+            // 「前のフレームで見えた」ビット。1パス目が読む前に、前のフレームの2パス目の書き込みを見せる
+            // （作り直した直後は0で埋める）
+            if (cullPass == CULL_PASS_FIRST)
             {
-                continue;
+                if (drawable.bClearVisibility)
+                {
+                    cmdList->BufferBarrier(drawable.VisibilityBuffer,
+                                           RHI::ResourceState::Common,
+                                           RHI::ResourceState::CopyDest);
+                    cmdList->FillBuffer(drawable.VisibilityBuffer, 0, drawable.VisibilityBuffer->GetSize(), 0);
+                    cmdList->BufferBarrier(drawable.VisibilityBuffer,
+                                           RHI::ResourceState::CopyDest,
+                                           RHI::ResourceState::UnorderedAccess);
+                }
+                else
+                {
+                    cmdList->BufferBarrier(drawable.VisibilityBuffer,
+                                           RHI::ResourceState::UnorderedAccess,
+                                           RHI::ResourceState::UnorderedAccess);
+                }
             }
 
-            cmdList->SetDescriptorSet(drawableInstance.DrawDescriptorSet, 0);
+            // ----------------------------------------
+            // 2. カリングユニフォーム更新
+            // ----------------------------------------
+            CullUniformData uniformData = baseUniform;
+            uniformData.TotalClusterCount = gpuData->ClusterCount;
+            uniformData.CullPass = cullPass;
+            uniformData.bStatsEnabled = (statsSlot && cullPass != CULL_PASS_SINGLE) ? 1u : 0u;
 
-            // 頂点/インデックスバッファ設定
-            cmdList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
-            cmdList->SetIndexBuffer(gpuData->IndexBuffer, 0);
-
-            // IndirectDraw発行
-            // DrawIndirectCount対応の場合はGPU側カウントを参照し、
-            // 実際に可視なクラスタ数だけドローコールを発行する。
-            // 非対応の場合はMaxDrawCountをそのまま使用（instanceCount=0で空振り）。
-            if (caps.bDrawIndirectCount)
+            // 遮蔽の判定（2パス目だけ）。HZB の元の深度の解像度を渡す（HZB のミップ0 はその半分）
+            if (bSecond && hiZTexture && m_DepthTexture)
             {
-                cmdList->DrawIndexedIndirectCount(
-                    drawableInstance.IndirectDrawBuffer, 0,
-                    drawableInstance.DrawCountBuffer, 0,
-                    m_Settings.MaxDrawCount,
-                    sizeof(MegaGeometry::DrawIndexedIndirectCommand));
+                uniformData.HiZWidth = m_DepthTexture->GetWidth();
+                uniformData.HiZHeight = m_DepthTexture->GetHeight();
+                uniformData.HiZMipCount = m_HiZ.GetMipCount();
+                uniformData.bHiZEnabled = 1;
+            }
+
+            std::memcpy(uniformData.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
+            if (gpuData->LODBounds.IsValid())
+            {
+                uniformData.LODSphere[0] = gpuData->LODBounds.CenterX;
+                uniformData.LODSphere[1] = gpuData->LODBounds.CenterY;
+                uniformData.LODSphere[2] = gpuData->LODBounds.CenterZ;
+                uniformData.LODSphere[3] = gpuData->LODBounds.Radius;
+                if (!bSecond)
+                {
+                    LogUniformLODSelection(instance, *gpuData, uniformData);
+                }
+            }
+            cullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
+
+            // ----------------------------------------
+            // 3. カリングディスクリプタセット更新
+            // ----------------------------------------
+            cullDescriptorSet->BindConstantBuffer(0, cullUniformBuffer, 0,
+                                                  static_cast<uint32_t>(sizeof(CullUniformData)));
+            cullDescriptorSet->BindStorageBuffer(1, gpuData->ClusterBuffer, 0,
+                                                 static_cast<uint32_t>(gpuData->ClusterCount * sizeof(MegaGeometry::GPUClusterData)));
+            cullDescriptorSet->BindStorageBuffer(2, indirectDrawBuffer, 0,
+                                                 static_cast<uint32_t>(m_Settings.MaxDrawCount * sizeof(MegaGeometry::DrawIndexedIndirectCommand)));
+            cullDescriptorSet->BindStorageBuffer(3, drawCountBuffer, 0,
+                                                 sizeof(uint32_t));
+
+            // binding 4 の HZB は2パス目の遮蔽の判定（bHiZEnabled=1）だけが読む
+            cullDescriptorSet->BindTexture(4, (bSecond && hiZTexture) ? hiZTexture : m_DefaultBlackTexture);
+            cullDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
+
+            // binding 5・6: 「前のフレームで見えた」ビットと統計。従来の経路は触らないので代わりのバッファを結ぶ
+            if (drawable.VisibilityBuffer && cullPass != CULL_PASS_SINGLE)
+            {
+                cullDescriptorSet->BindStorageBuffer(5, drawable.VisibilityBuffer, 0,
+                                                     static_cast<uint32_t>(drawable.VisibilityBuffer->GetSize()));
             }
             else
             {
-                cmdList->DrawIndexedIndirect(
-                    drawableInstance.IndirectDrawBuffer, 0,
-                    m_Settings.MaxDrawCount,
-                    sizeof(MegaGeometry::DrawIndexedIndirectCommand));
+                cullDescriptorSet->BindStorageBuffer(5, m_DummyVisibilityBuffer, 0,
+                                                     static_cast<uint32_t>(m_DummyVisibilityBuffer->GetSize()));
+            }
+            cullDescriptorSet->BindStorageBuffer(6, statsBuffer, 0, StatsBufferBytes);
+
+            cullDescriptorSet->Update();
+
+            // ----------------------------------------
+            // 4. カリングコンピュートディスパッチ
+            // ----------------------------------------
+            cmdList->SetPipeline(m_CullPipeline);
+            cmdList->SetDescriptorSet(cullDescriptorSet, 0);
+
+            uint32_t groupCount = (gpuData->ClusterCount + 63) / 64;
+            cmdList->Dispatch(groupCount, 1, 1);
+
+            // ----------------------------------------
+            // 5. バリア: Compute UAV → IndirectArgument
+            // ----------------------------------------
+            cmdList->BufferBarrier(indirectDrawBuffer,
+                                   RHI::ResourceState::UnorderedAccess,
+                                   RHI::ResourceState::IndirectArgument);
+            cmdList->BufferBarrier(drawCountBuffer,
+                                   RHI::ResourceState::UnorderedAccess,
+                                   RHI::ResourceState::IndirectArgument);
+            if (cullPass == CULL_PASS_FIRST)
+            {
+                // 1パス目の読み取りを、2パス目の書き込みより前に済ませる
+                cmdList->BufferBarrier(drawable.VisibilityBuffer,
+                                       RHI::ResourceState::UnorderedAccess,
+                                       RHI::ResourceState::UnorderedAccess);
+            }
+            if (uniformData.bStatsEnabled != 0)
+            {
+                // 統計のカウンタへ、次のディスパッチが続けて足す
+                cmdList->BufferBarrier(statsBuffer,
+                                       RHI::ResourceState::UnorderedAccess,
+                                       RHI::ResourceState::UnorderedAccess);
+            }
+        };
+
+        // 描画（GBuffer render pass をパスごとに1回だけ開く）
+        auto recordDraws = [&](const RHI::RenderPassPtr &renderPass,
+                               const RHI::FramebufferPtr &framebuffer,
+                               bool bSecond) -> void
+        {
+            cmdList->BeginRenderPass(renderPass, framebuffer);
+            cmdList->SetViewport(command.Viewport);
+            cmdList->SetScissor(command.Scissor);
+            cmdList->SetPipeline(SelectDrawPipeline(command.DebugMode));
+
+            for (const DrawableInstance &drawableInstance : drawableInstances)
+            {
+                const auto *gpuData = drawableInstance.GpuData;
+                if (!gpuData)
+                {
+                    continue;
+                }
+
+                const RHI::BufferPtr &indirectDrawBuffer =
+                    bSecond ? drawableInstance.SecondIndirectDrawBuffer : drawableInstance.IndirectDrawBuffer;
+                const RHI::BufferPtr &drawCountBuffer =
+                    bSecond ? drawableInstance.SecondDrawCountBuffer : drawableInstance.DrawCountBuffer;
+
+                cmdList->SetDescriptorSet(drawableInstance.DrawDescriptorSet, 0);
+
+                // 頂点/インデックスバッファ設定
+                cmdList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
+                cmdList->SetIndexBuffer(gpuData->IndexBuffer, 0);
+
+                // IndirectDraw発行
+                // DrawIndirectCount対応の場合はGPU側カウントを参照し、
+                // 実際に可視なクラスタ数だけドローコールを発行する。
+                // 非対応の場合はMaxDrawCountをそのまま使用（instanceCount=0で空振り）。
+                if (caps.bDrawIndirectCount)
+                {
+                    cmdList->DrawIndexedIndirectCount(
+                        indirectDrawBuffer, 0,
+                        drawCountBuffer, 0,
+                        m_Settings.MaxDrawCount,
+                        sizeof(MegaGeometry::DrawIndexedIndirectCommand));
+                }
+                else
+                {
+                    cmdList->DrawIndexedIndirect(
+                        indirectDrawBuffer, 0,
+                        m_Settings.MaxDrawCount,
+                        sizeof(MegaGeometry::DrawIndexedIndirectCommand));
+                }
+            }
+
+            cmdList->EndRenderPass();
+        };
+
+        if (!bTwoPass)
+        {
+            // 従来の経路: 全インスタンスを1回の判定（遮蔽の判定なし）で選び、1回の render pass で描く
+            for (const DrawableInstance &drawableInstance : drawableInstances)
+            {
+                recordCull(drawableInstance, CULL_PASS_SINGLE, nullptr);
+            }
+            recordDraws(m_GBufferRenderPass, m_GBufferFramebuffer, false);
+        }
+        else
+        {
+            // 1パス目: 前のフレームで見えたクラスタだけを描く
+            for (const DrawableInstance &drawableInstance : drawableInstances)
+            {
+                recordCull(drawableInstance, CULL_PASS_FIRST, nullptr);
+            }
+            recordDraws(m_GBufferRenderPass, m_GBufferFramebuffer, false);
+
+            // GBufferPass の不透明＋1パス目の深度から HZB を作る（深度は1パス目の終わりで ShaderResource）。
+            // 作れなかったときは遮蔽の判定をしない（1パス目で描かなかったクラスタを全て描く）
+            const bool bHiZBuilt = m_HiZ.Build(cmdList, m_DepthTexture);
+
+            // 2パス目: 判定を通った全クラスタを HZB で判定し、1パス目で描かなかった見えるものを描く
+            for (const DrawableInstance &drawableInstance : drawableInstances)
+            {
+                recordCull(drawableInstance, CULL_PASS_SECOND, bHiZBuilt ? m_HiZ.GetTexture() : RHI::TexturePtr{});
+            }
+            recordDraws(m_SecondGBufferRenderPass, m_SecondGBufferFramebuffer, true);
+
+            if (statsSlot)
+            {
+                // 統計のシェーダーの書き込みを、ホストの読み取りへ見せる
+                cmdList->BufferBarrier(statsSlot->Buffer,
+                                       RHI::ResourceState::UnorderedAccess,
+                                       RHI::ResourceState::HostRead);
             }
         }
-
-        cmdList->EndRenderPass();
 
         // IndirectDrawバッファを次のフレーム用に戻す
         for (const DrawableInstance &drawableInstance : drawableInstances)
@@ -1077,6 +1317,20 @@ namespace NorvesLib::Core::Rendering
             cmdList->BufferBarrier(drawableInstance.DrawCountBuffer,
                                    RHI::ResourceState::IndirectArgument,
                                    RHI::ResourceState::Common);
+            if (bTwoPass)
+            {
+                cmdList->BufferBarrier(drawableInstance.SecondIndirectDrawBuffer,
+                                       RHI::ResourceState::IndirectArgument,
+                                       RHI::ResourceState::Common);
+                cmdList->BufferBarrier(drawableInstance.SecondDrawCountBuffer,
+                                       RHI::ResourceState::IndirectArgument,
+                                       RHI::ResourceState::Common);
+            }
+        }
+
+        if (bTwoPass)
+        {
+            ReleaseStaleVisibilityBuffers();
         }
     }
 
@@ -1242,6 +1496,24 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 従来の経路が binding 5・6 に結ぶ代わりのバッファ（シェーダーは触らない）
+        RHI::BufferDesc dummyVisibilityDesc(
+            4u * sizeof(uint32_t),
+            RHI::ResourceUsage::StorageBuffer,
+            false,
+            "MegaGeometry_DummyVisibility");
+        m_DummyVisibilityBuffer = device->CreateBuffer(dummyVisibilityDesc);
+        RHI::BufferDesc dummyStatsDesc(
+            StatsBufferBytes,
+            RHI::ResourceUsage::StorageBuffer,
+            false,
+            "MegaGeometry_DummyStats");
+        m_DummyStatsBuffer = device->CreateBuffer(dummyStatsDesc);
+        if (!m_DummyVisibilityBuffer || !m_DummyStatsBuffer)
+        {
+            return false;
+        }
+
         m_InstanceIndirectDrawBuffers.clear();
         m_InstanceDrawCountBuffers.clear();
         return true;
@@ -1358,6 +1630,36 @@ namespace NorvesLib::Core::Rendering
         {
             NORVES_LOG_ERROR("MegaGeometryPass", "フレームバッファの作成に失敗");
             return false;
+        }
+
+        // 2パス目のレンダーパス・フレームバッファ。1パス目の描画の後に続けて開くので、全てのアタッチメントが
+        // 1パス目の終わりの状態（ShaderResource）から始まる。作れなければ2パスの遮蔽カリングは使わない。
+        m_SecondGBufferRenderPass.reset();
+        m_SecondGBufferFramebuffer.reset();
+        {
+            RHI::RenderPassDesc secondRenderPassDesc = rpDesc;
+            for (RHI::AttachmentDesc &attachment : secondRenderPassDesc.colorAttachments)
+            {
+                attachment.initialState = RHI::ResourceState::ShaderResource;
+            }
+            secondRenderPassDesc.depthStencilAttachment.initialState = RHI::ResourceState::ShaderResource;
+
+            RHI::RenderPassPtr secondRenderPass = m_Device->CreateRenderPass(secondRenderPassDesc);
+            if (secondRenderPass)
+            {
+                RHI::FramebufferDesc secondFbDesc = fbDesc;
+                secondFbDesc.renderPass = secondRenderPass;
+                RHI::FramebufferPtr secondFramebuffer = m_Device->CreateFramebuffer(secondFbDesc);
+                if (secondFramebuffer)
+                {
+                    m_SecondGBufferRenderPass = secondRenderPass;
+                    m_SecondGBufferFramebuffer = secondFramebuffer;
+                }
+            }
+            if (!m_SecondGBufferRenderPass || !m_SecondGBufferFramebuffer)
+            {
+                NORVES_LOG_WARNING("MegaGeometryPass", "2パス目のGBuffer互換レンダーパスの作成に失敗。遮蔽カリングは使いません");
+            }
         }
 
         m_bGBufferRenderPassUsesRenderGraphAttachmentStates = bUseRenderGraphAttachmentStates;
@@ -1523,6 +1825,29 @@ namespace NorvesLib::Core::Rendering
             m_InstanceDrawCountBuffers.push_back(m_DrawCountBuffer);
         }
 
+        // 2パス目のIndirectDrawバッファ（1パス目の描画が読み終わる前に書き換えないよう、別に持つ）
+        while (m_SecondInstanceIndirectDrawBuffers.size() < requiredCount)
+        {
+            RHI::BufferDesc indirectDesc(
+                static_cast<uint64_t>(m_Settings.MaxDrawCount) * sizeof(MegaGeometry::DrawIndexedIndirectCommand),
+                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
+                false,
+                "MegaGeometry_IndirectDraw_SecondPass");
+            RHI::BufferDesc countDesc(
+                sizeof(uint32_t),
+                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
+                false,
+                "MegaGeometry_DrawCount_SecondPass");
+            auto indirectDrawBuffer = m_Device->CreateBuffer(indirectDesc);
+            auto drawCountBuffer = m_Device->CreateBuffer(countDesc);
+            if (!indirectDrawBuffer || !drawCountBuffer)
+            {
+                return false;
+            }
+            m_SecondInstanceIndirectDrawBuffers.push_back(indirectDrawBuffer);
+            m_SecondInstanceDrawCountBuffers.push_back(drawCountBuffer);
+        }
+
         while (m_InstanceIndirectDrawBuffers.size() < requiredCount)
         {
             const uint64_t indirectSize =
@@ -1582,6 +1907,18 @@ namespace NorvesLib::Core::Rendering
         hiZBinding.stages = RHI::ShaderStage::Compute;
         cullDsDesc.bindings.push_back(hiZBinding);
 
+        RHI::DescriptorBinding visibilityBinding;
+        visibilityBinding.binding = 5;
+        visibilityBinding.type = RHI::ResourceBindType::RWBuffer;
+        visibilityBinding.stages = RHI::ShaderStage::Compute;
+        cullDsDesc.bindings.push_back(visibilityBinding);
+
+        RHI::DescriptorBinding statsBinding;
+        statsBinding.binding = 6;
+        statsBinding.type = RHI::ResourceBindType::RWBuffer;
+        statsBinding.stages = RHI::ShaderStage::Compute;
+        cullDsDesc.bindings.push_back(statsBinding);
+
         RHI::DescriptorSetDesc drawDsDesc;
         RHI::DescriptorBinding drawUboBinding;
         drawUboBinding.binding = 0;
@@ -1629,13 +1966,177 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
+            // 2パス目のカリング用UBO・DescriptorSet（1パス目と同じ並びで、パスごとに別の値を持つ）
+            RHI::BufferDesc secondCullUboDesc(
+                sizeof(CullUniformData),
+                RHI::ResourceUsage::ConstantBuffer,
+                true,
+                "MegaGeometry_CullUBO_SecondPass");
+            auto secondCullUniformBuffer = m_Device->CreateBuffer(secondCullUboDesc);
+            auto secondCullDescriptorSet = m_Device->CreateDescriptorSet(cullDsDesc);
+            if (!secondCullUniformBuffer || !secondCullDescriptorSet)
+            {
+                return false;
+            }
+
             m_CullUniformBuffers.push_back(cullUniformBuffer);
             m_CullDescriptorSets.push_back(cullDescriptorSet);
+            m_SecondCullUniformBuffers.push_back(secondCullUniformBuffer);
+            m_SecondCullDescriptorSets.push_back(secondCullDescriptorSet);
             m_DrawUniformBuffers.push_back(drawUniformBuffer);
             m_DrawDescriptorSets.push_back(drawDescriptorSet);
         }
 
         return true;
+    }
+
+    bool MegaGeometryPass::CanUseTwoPassOcclusion(const MegaGeometryPassCommand &command)
+    {
+        auto logFallbackOnce = [this](const char *reason) -> void
+        {
+            if (!m_bOcclusionFallbackLogged)
+            {
+                NORVES_LOG_INFO("MegaGeometryPass", "MEGA_OCCLUSION_OFF reason=%s", reason);
+                m_bOcclusionFallbackLogged = true;
+            }
+        };
+
+        if (!command.MegaGeometry || !command.MegaGeometry->IsOcclusionCullingEnabled())
+        {
+            logFallbackOnce("disabled");
+            return false;
+        }
+        if (!m_bHiZReady || !m_DepthTexture || !m_SecondGBufferRenderPass || !m_SecondGBufferFramebuffer ||
+            !m_DummyVisibilityBuffer || !m_DummyStatsBuffer)
+        {
+            logFallbackOnce("unavailable");
+            return false;
+        }
+
+        // 遮蔽の判定は深度の全体を画面（UV の 0〜1）と見るので、描く範囲が深度の全体と一致するときだけ使う
+        const uint32_t depthWidth = m_DepthTexture->GetWidth();
+        const uint32_t depthHeight = m_DepthTexture->GetHeight();
+        const RHI::Viewport &viewport = command.Viewport;
+        if (viewport.x != 0.0f ||
+            std::fabs(viewport.width - static_cast<float>(depthWidth)) > 0.5f ||
+            std::fabs(std::fabs(viewport.height) - static_cast<float>(depthHeight)) > 0.5f)
+        {
+            logFallbackOnce("viewport");
+            return false;
+        }
+
+        if (!m_HiZ.Resize(depthWidth, depthHeight))
+        {
+            logFallbackOnce("hiz");
+            return false;
+        }
+        return true;
+    }
+
+    RHI::BufferPtr MegaGeometryPass::AcquireVisibilityBuffer(uint64_t key,
+                                                             const MegaMeshInstance &instance,
+                                                             const MegaGeometry::MegaMeshGPUData &gpuData,
+                                                             bool &outNeedsClear)
+    {
+        outNeedsClear = false;
+
+        InstanceVisibility *found = nullptr;
+        for (InstanceVisibility &entry : m_InstanceVisibilities)
+        {
+            if (entry.Key == key)
+            {
+                found = &entry;
+                break;
+            }
+        }
+
+        const void *clusterBufferIdentity = gpuData.ClusterBuffer.get();
+        if (found &&
+            found->Buffer &&
+            found->MeshId == instance.Handle.Id &&
+            found->ClusterBufferIdentity == clusterBufferIdentity &&
+            found->ClusterCount == gpuData.ClusterCount)
+        {
+            found->LastUsedFrame = m_OcclusionFrameCount;
+            return found->Buffer;
+        }
+
+        // 追加されたインスタンス、またはメッシュの差し替え: ビットを捨てて0から始める。
+        // 古いバッファは、GPUが使い終わるまで保持してから破棄する。
+        if (!found)
+        {
+            m_InstanceVisibilities.push_back(InstanceVisibility{});
+            found = &m_InstanceVisibilities.back();
+            found->Key = key;
+        }
+        else if (found->Buffer)
+        {
+            m_RetiredBuffers.push_back(RetiredBuffer{found->Buffer, m_OcclusionFrameCount});
+            found->Buffer.reset();
+        }
+
+        RHI::BufferDesc desc(static_cast<uint64_t>(gpuData.ClusterCount) * sizeof(uint32_t),
+                             RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                             false,
+                             "MegaGeometry_VisibleLastFrame");
+        found->Buffer = m_Device->CreateBuffer(desc);
+        found->MeshId = instance.Handle.Id;
+        found->ClusterBufferIdentity = clusterBufferIdentity;
+        found->ClusterCount = gpuData.ClusterCount;
+        found->LastUsedFrame = m_OcclusionFrameCount;
+        outNeedsClear = true;
+        return found->Buffer;
+    }
+
+    void MegaGeometryPass::ReleaseStaleVisibilityBuffers()
+    {
+        // 一定のフレーム使われなかったインスタンスのバッファは、GPUがとうに使い終わっているので手放す
+        for (size_t index = 0; index < m_InstanceVisibilities.size();)
+        {
+            InstanceVisibility &entry = m_InstanceVisibilities[index];
+            if (m_OcclusionFrameCount - entry.LastUsedFrame > VisibilityStaleFrames)
+            {
+                m_InstanceVisibilities[index] = m_InstanceVisibilities.back();
+                m_InstanceVisibilities.pop_back();
+                continue;
+            }
+            ++index;
+        }
+
+        for (size_t index = 0; index < m_RetiredBuffers.size();)
+        {
+            if (m_OcclusionFrameCount - m_RetiredBuffers[index].RetiredFrame > VisibilityStaleFrames)
+            {
+                m_RetiredBuffers[index] = m_RetiredBuffers.back();
+                m_RetiredBuffers.pop_back();
+                continue;
+            }
+            ++index;
+        }
+    }
+
+    void MegaGeometryPass::EnsureStatsSlots()
+    {
+        if (m_bStatsSlotsTried || !m_Device)
+        {
+            return;
+        }
+        m_bStatsSlotsTried = true;
+
+        // シェーダーが storage buffer として直接数え、ホストが数フレーム後に読む（host-visible・host-coherent）。
+        // 作れない・写像できないデバイスでは、統計だけ取らない。
+        for (StatsSlot &slot : m_StatsSlots)
+        {
+            RHI::BufferDesc desc(StatsBufferBytes,
+                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                 true,
+                                 "MegaGeometry_OcclusionStats");
+            slot.Buffer = m_Device->CreateBuffer(desc);
+            if (slot.Buffer)
+            {
+                slot.Mapped = static_cast<const uint32_t *>(slot.Buffer->Map(0, 0));
+            }
+        }
     }
 
 } // namespace NorvesLib::Core::Rendering

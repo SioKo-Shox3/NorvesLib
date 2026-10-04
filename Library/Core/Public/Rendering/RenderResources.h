@@ -278,6 +278,11 @@ namespace NorvesLib::Core::Rendering
         MegaGeometry::MegaMeshHandle GetModelMegaMeshHandle(ModelHandle handle) const;
         void ReleaseModel(ModelHandle handle);
 
+        // MegaGeometry の遮蔽カリング（2パス）を使うか。既定は有効。起動引数 --mega-occlusion=off で無効にすると、
+        // 遮蔽の判定なしの従来の1回の判定で描く。起動時（最初のフレームの前）に設定する。
+        void SetOcclusionCullingEnabled(bool bEnabled) { m_bOcclusionCullingEnabled = bEnabled; }
+        bool IsOcclusionCullingEnabled() const { return m_bOcclusionCullingEnabled; }
+
     private:
         friend class RenderResources;
         friend class ModelAssetRuntime;
@@ -286,6 +291,7 @@ namespace NorvesLib::Core::Rendering
         void ReleaseModelUnmanaged(ModelHandle handle);
 
         RenderResources *m_pOwner = nullptr;
+        bool m_bOcclusionCullingEnabled = true;
     };
 
     class RenderResources

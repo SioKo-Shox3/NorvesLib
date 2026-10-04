@@ -3,8 +3,15 @@
 // ========================================
 // Mega Geometry クラスタカリング コンピュートシェーダー
 //
-// 入力: クラスタデータSSBO + カメラ情報UBO
+// 入力: クラスタデータSSBO + カメラ情報UBO（+ 2パス時は「前のフレームで見えた」ビットとHi-Z）
 // 出力: IndirectDrawコマンドバッファ + 可視クラスタ数カウンタ
+//
+// 遮蔽の判定は2パスで行う（cullPass）:
+//   1パス目: 視錐台・法線のコーン・LODの判定を通り、前のフレームで見えたクラスタだけを描く（遮蔽の判定はしない）。
+//   2パス目: 1パス目の深度から作ったHi-Zで、判定を通った全クラスタを遮蔽の判定にかける。
+//            1パス目で描かなかったクラスタのうち遮蔽されないものを描き、
+//            全クラスタの「見えた」ビットを更新する（次のフレームの1パス目が使う）。
+//   0: 従来の1回の判定（遮蔽の判定なし。--mega-occlusion=off）。
 // ========================================
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -53,11 +60,20 @@ layout(set = 0, binding = 0) uniform CullUniforms
     uint hiZMipCount;        // Hi-Zミップレベル数
     uint bHiZEnabled;        // Hi-Z有効フラグ
     uint debugPayloadMode;     // 0=none, 1=clusterIndex, 2=lodLevel
-    uint padding1;
-    uint padding2;
+    uint cullPass;           // 0=従来（遮蔽の判定なし）, 1=1パス目, 2=2パス目
+    uint bStatsEnabled;      // 1なら統計（binding 6）へ数える
     mat4 worldMatrix;
     vec4 lodSphere;          // LODの選択に使うメッシュ共通の境界球（ローカル。w<=0ならクラスタごとの中心で選ぶ）
 } cullData;
+
+const uint CULL_PASS_SINGLE = 0u;
+const uint CULL_PASS_FIRST = 1u;
+const uint CULL_PASS_SECOND = 2u;
+
+const uint STAT_PASS1_DRAWN = 0u;
+const uint STAT_PASS2_TESTED = 1u;
+const uint STAT_PASS2_DRAWN = 2u;
+const uint STAT_OCCLUDED = 3u;
 
 const uint DEBUG_PAYLOAD_MODE_NONE = 0u;
 const uint DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
@@ -83,6 +99,19 @@ layout(std430, set = 0, binding = 3) buffer DrawCountBuffer
 
 // set 0, binding 4: Hi-Z深度ピラミッド（オクルージョンカリング用）
 layout(set = 0, binding = 4) uniform sampler2D u_HiZTexture;
+
+// set 0, binding 5: クラスタごとの「前のフレームで見えた」ビット（インスタンスごとに持続する。1=見えた）。
+// 1パス目は読むだけ、2パス目は全クラスタが自分の要素だけを書く（競合しない）。cullPass=0 では使わない。
+layout(std430, set = 0, binding = 5) buffer VisibleLastFrameBuffer
+{
+    uint visibleLastFrame[];
+};
+
+// set 0, binding 6: 統計（STAT_*。1フレームの全インスタンスの合計）。bStatsEnabled=0 では使わない。
+layout(std430, set = 0, binding = 6) buffer StatsBuffer
+{
+    uint stats[4];
+};
 
 // ========================================
 // カリング関数
@@ -311,6 +340,31 @@ uint ComputeDebugPayload(uint clusterIndex, GPUClusterData cluster)
 // メインカーネル
 // ========================================
 
+/**
+ * @brief 描画するクラスタのIndirectDrawコマンドを1つ積む
+ */
+void EmitDrawCommand(uint clusterIndex, GPUClusterData cluster)
+{
+    uint drawIndex = atomicAdd(visibleClusterCount, 1);
+
+    if (drawIndex < cullData.maxDrawCount)
+    {
+        drawCommands[drawIndex].indexCount = cluster.indexInfo.y;     // IndexCount
+        drawCommands[drawIndex].instanceCount = 1;
+        drawCommands[drawIndex].firstIndex = cluster.indexInfo.x;     // IndexOffset
+        drawCommands[drawIndex].vertexOffset = int(cluster.indexInfo.z); // VertexOffset
+        drawCommands[drawIndex].firstInstance = ComputeDebugPayload(clusterIndex, cluster);
+    }
+}
+
+void CountStat(uint statIndex)
+{
+    if (cullData.bStatsEnabled != 0u)
+    {
+        atomicAdd(stats[statIndex], 1u);
+    }
+}
+
 void main()
 {
     uint clusterIndex = gl_GlobalInvocationID.x;
@@ -327,39 +381,57 @@ void main()
     vec3 center = TransformClusterCenterToWorld(localCenter);
     float radius = localRadius * ComputeWorldRadiusScale();
 
-    // 視錐台カリング
-    if (FrustumCullSphere(center, radius))
+    // 視錐台・法線のコーン・LODの判定（遮蔽の判定の前。1パス目と2パス目で同じ式なので、
+    // 1パス目で描いたクラスタは2パス目でも必ずここを通る）
+    bool bPassesBasicTests =
+        !FrustumCullSphere(center, radius) &&
+        !NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius) &&
+        ShouldDrawCluster(cluster, center);
+
+    if (cullData.cullPass == CULL_PASS_FIRST)
     {
+        // 前のフレームで見えたクラスタだけを描く。遮蔽の判定はしない（この描画の深度から2パス目のHi-Zを作る）
+        if (bPassesBasicTests && visibleLastFrame[clusterIndex] != 0u)
+        {
+            EmitDrawCommand(clusterIndex, cluster);
+            CountStat(STAT_PASS1_DRAWN);
+        }
         return;
     }
 
-    // バックフェースカリング（法線コーン）
-    if (NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius))
+    if (cullData.cullPass == CULL_PASS_SECOND)
     {
+        // 1パス目で描いたか（描くのは「前のフレームで見えた」かつ判定を通ったクラスタ）。ビットを書き換える前に読む
+        bool bDrawnInFirstPass = bPassesBasicTests && visibleLastFrame[clusterIndex] != 0u;
+
+        // 判定を通った全クラスタを、1パス目の深度のHi-Zで判定し直す
+        bool bOccluded = false;
+        if (bPassesBasicTests)
+        {
+            CountStat(STAT_PASS2_TESTED);
+            bOccluded = OcclusionCullSphere(center, radius);
+            if (bOccluded)
+            {
+                CountStat(STAT_OCCLUDED);
+            }
+        }
+
+        // 次のフレームのために、見えたかを全クラスタぶん書く。判定に落ちた・LODで選ばれなかった
+        // クラスタは0に戻すので、LODが切り替わったときに古いビットが残らない
+        bool bVisible = bPassesBasicTests && !bOccluded;
+        visibleLastFrame[clusterIndex] = bVisible ? 1u : 0u;
+
+        if (bVisible && !bDrawnInFirstPass)
+        {
+            EmitDrawCommand(clusterIndex, cluster);
+            CountStat(STAT_PASS2_DRAWN);
+        }
         return;
     }
 
-    // LOD DAGカット判定
-    if (!ShouldDrawCluster(cluster, center))
+    // 従来の経路: 遮蔽の判定なしの1回の判定（bHiZEnabled=0）
+    if (bPassesBasicTests && !OcclusionCullSphere(center, radius))
     {
-        return;
-    }
-
-    // Hi-Zオクルージョンカリング
-    if (OcclusionCullSphere(center, radius))
-    {
-        return;
-    }
-
-    // 可視クラスタ → IndirectDrawコマンドを生成
-    uint drawIndex = atomicAdd(visibleClusterCount, 1);
-
-    if (drawIndex < cullData.maxDrawCount)
-    {
-        drawCommands[drawIndex].indexCount = cluster.indexInfo.y;     // IndexCount
-        drawCommands[drawIndex].instanceCount = 1;
-        drawCommands[drawIndex].firstIndex = cluster.indexInfo.x;     // IndexOffset
-        drawCommands[drawIndex].vertexOffset = int(cluster.indexInfo.z); // VertexOffset
-        drawCommands[drawIndex].firstInstance = ComputeDebugPayload(clusterIndex, cluster);
+        EmitDrawCommand(clusterIndex, cluster);
     }
 }

@@ -287,6 +287,8 @@ namespace
         uint32_t EndRenderPassCount = 0;
         uint32_t DrawCallCount = 0;
         uint32_t DispatchCount = 0;
+        // 呼ばれた順の記録（B=BeginRenderPass、E=EndRenderPass、D=Dispatch、I=間接描画）。パスの並びの検査用
+        Container::VariableArray<char> CallSequence;
         uint32_t LastDrawIndexedInstancedIndexCount = 0;
         uint32_t LastDrawIndexedInstancedStartIndexLocation = 0;
         int32_t LastDrawIndexedInstancedBaseVertexLocation = 0;
@@ -299,8 +301,13 @@ namespace
             assert(renderPass);
             assert(framebuffer);
             ++BeginRenderPassCount;
+            CallSequence.push_back('B');
         }
-        void EndRenderPass() override { ++EndRenderPassCount; }
+        void EndRenderPass() override
+        {
+            ++EndRenderPassCount;
+            CallSequence.push_back('E');
+        }
         void SetViewport(const RHI::Viewport& viewport) override { (void)viewport; }
         void SetScissor(const RHI::ScissorRect& scissor) override { (void)scissor; }
         void SetPipeline(RHI::PipelinePtr pipeline) override { (void)pipeline; }
@@ -393,6 +400,7 @@ namespace
             (void)stride;
             PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
+            CallSequence.push_back('I');
         }
         void DrawIndexedIndirectCount(RHI::BufferPtr indirectBuffer,
                                       uint64_t indirectOffset,
@@ -409,6 +417,7 @@ namespace
             (void)stride;
             PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
+            CallSequence.push_back('I');
         }
         void FillBuffer(RHI::BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value) override
         {
@@ -425,6 +434,7 @@ namespace
             (void)threadGroupCountY;
             (void)threadGroupCountZ;
             ++DispatchCount;
+            CallSequence.push_back('D');
         }
         void CopyBuffer(RHI::BufferPtr src,
                         RHI::BufferPtr dst,
@@ -2511,7 +2521,8 @@ namespace
         shaderManager.Shutdown();
     }
 
-    void TestMegaGeometryRecordFrameCommandBatchesInstancesInSingleRenderPass()
+    // 2つのMegaMeshインスタンスを持つパスのフレームコマンドを記録する（bOcclusionCulling=false は --mega-occlusion=off）
+    void RecordMegaGeometryTwoInstances(bool bOcclusionCulling, FakeCommandList &commandList)
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -2520,6 +2531,7 @@ namespace
 
         RenderResources renderResources;
         assert(renderResources.Initialize(device));
+        renderResources.MegaGeometry().SetOcclusionCullingEnabled(bOcclusionCulling);
 
         SharedResourceRegistry sharedResources;
         auto albedoTexture = device->CreateTexture(
@@ -2621,16 +2633,64 @@ namespace
                                                                          viewport,
                                                                          scissor,
                                                                          DebugViewMode::Normal);
-        FakeCommandList commandList;
         megaGeometryPass.RecordFrameCommand(frameCommand.MegaGeometry, &commandList);
+
+        megaGeometryPass.Shutdown();
+        renderResources.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    // 遮蔽カリングを使わない（--mega-occlusion=off）と、従来どおり全インスタンスを1回のカリングと1回のrender passで描く
+    void TestMegaGeometryRecordFrameCommandBatchesInstancesInSingleRenderPass()
+    {
+        FakeCommandList commandList;
+        RecordMegaGeometryTwoInstances(false, commandList);
 
         assert(commandList.BeginRenderPassCount == 1);
         assert(commandList.EndRenderPassCount == 1);
         assert(commandList.DrawCallCount == 2);
 
-        megaGeometryPass.Shutdown();
-        renderResources.Shutdown();
-        shaderManager.Shutdown();
+        // 並び: 2インスタンスのカリング → render pass 1つの中で2インスタンスを描く
+        const char expected[] = {'D', 'D', 'B', 'I', 'I', 'E'};
+        assert(commandList.CallSequence.size() == sizeof(expected));
+        for (size_t i = 0; i < sizeof(expected); ++i)
+        {
+            assert(commandList.CallSequence[i] == expected[i]);
+        }
+    }
+
+    // 遮蔽カリング（既定）は2パス: 1パス目のカリングと描画 → HZBの生成 → 2パス目のカリングと描画
+    void TestMegaGeometryRecordFrameCommandRecordsTwoPassOcclusion()
+    {
+        FakeCommandList commandList;
+        RecordMegaGeometryTwoInstances(true, commandList);
+
+        assert(commandList.BeginRenderPassCount == 2);
+        assert(commandList.EndRenderPassCount == 2);
+        // インスタンスごとに、1パス目と2パス目で1回ずつ描く
+        assert(commandList.DrawCallCount == 4);
+
+        // 並び: [1パス目のカリング×2] [render pass: 描画×2] [HZBの各ミップ（Dispatchだけ）] [2パス目のカリング×2] [render pass: 描画×2]
+        const auto &sequence = commandList.CallSequence;
+        const char head[] = {'D', 'D', 'B', 'I', 'I', 'E'};
+        const char tail[] = {'D', 'D', 'B', 'I', 'I', 'E'};
+        assert(sequence.size() > sizeof(head) + sizeof(tail));
+        for (size_t i = 0; i < sizeof(head); ++i)
+        {
+            assert(sequence[i] == head[i]);
+        }
+        for (size_t i = 0; i < sizeof(tail); ++i)
+        {
+            assert(sequence[sequence.size() - sizeof(tail) + i] == tail[i]);
+        }
+        // 間は HZB の生成で、描画なしのディスパッチだけ（128x64 の深度は、ミップ0 が 64x32 の7段）
+        const size_t middleBegin = sizeof(head);
+        const size_t middleEnd = sequence.size() - sizeof(tail);
+        assert(middleEnd - middleBegin == 7);
+        for (size_t i = middleBegin; i < middleEnd; ++i)
+        {
+            assert(sequence[i] == 'D');
+        }
     }
 
     void TestMegaGeometryNativeExecuteSkipsWhenNoInstances()
@@ -6649,6 +6709,7 @@ int main()
     TestMegaGeometryNativeExecuteRecreatesRenderPassWhenAttachmentStateModeChanges();
     TestMegaGeometryPartialNamedGBufferFallsBackToLegacyAttachmentStates();
     TestMegaGeometryRecordFrameCommandBatchesInstancesInSingleRenderPass();
+    TestMegaGeometryRecordFrameCommandRecordsTwoPassOcclusion();
     TestGBufferNativeDeclareCreatesTransientOutputs();
     TestGBufferSSAONativeDeclareDependencies();
     TestGBufferSSAOLightingNativeDeclareDependencies();
