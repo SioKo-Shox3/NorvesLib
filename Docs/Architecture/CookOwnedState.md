@@ -32,3 +32,5 @@ fileのMissing / Loaded / Error、新規排他保存、tempの検証とno-replac
 ## 検証
 
 CookOwnedStateTestでschema全階層・uint64境界・copy/move後の値所有・scope不一致・alias/prefix・過大入力と失敗保持を検証する。CookCacheDecisionTestの全kindの実cook→record採取にcodec往復を挟み、同じDecideCookCacheでSkipへ戻ることを確認する。Windows CPU契約と固定79+10byte gateの実結果は受入れ時に記録する。
+
+af63b209c20b433eece01d7bbbf2b1a3d35bbf35の[Windows run37231239763](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37231239763)で22 CPU契約と固定79+10出力・5診断のbyte互換が成功。全kindの実record→codec→共通Skipも合格した。これは値形式の受入れであり、実file保存・既存root公開の受入れではない。

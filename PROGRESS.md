@@ -744,3 +744,5 @@
 
 - G2-S6-STATE-CODEC開始: 永続化の前段として、owner/root/manifest bindingと共通CookOutputRecordを厳密JSONへ値所有で写す。uint64は固定hex、重複/未知field・所有衝突・過大入力を拒否する。file新規保存と既存root transactionは別taskに分け、codecの成功を上書き権限として扱わない。
 - G2-S6-STATE-CODEC検証準備: JSON拒否fixtureの3文字列をC++ UCNではなくJSON escape byteへ訂正し、literalだけの独立compileでbackslash列を確認。全kind実cook recordへcodec往復を追加、22CPUへ登録。比較器12件と独立prefix順序10000例が成功。native Windows/79+10は未実行。DOM前node予算は未実装の制約として明記。
+
+- G2-S6-STATE-CODEC受入: af63b209/run37231239763で実Windows build・22CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。全kindの実recordをJSON往復して共通Skipへ戻り、strict schema・uint64境界・scope・alias/prefix・失敗保持を実証。3ZIPと79+10固定出力の直接byte一致を独立確認しroot再実行。値codecをdone。実file保存/読込と既存root transactionは未接続。

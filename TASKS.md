@@ -2436,7 +2436,7 @@
 - stop-when: cook/hash/path判断式やserialized文字列を変える、既存全fileの無関係な整形、実検証なしの互換宣言。
 
 ## G2-S6-STATE-CODEC: cookの所有recordを厳密な保存形式にする
-- status: doing
+- status: done
 - done-when: owner/root/manifestの現在bindingに結び付いた値所有stateを無損失で解析/直列化し、未知/重複field・危険path・所有衝突・過大入力を拒否する。保存値からfileを開かず、増分判断は既存C++へ渡す。
 - verify: 実cook recordの往復とSkip、uint64境界、寿命/失敗保持、全階層schema/所有alias拒否、Windows CPUと79+10byte gate。
 - stop-when: stateを所有権の認証と扱う、record欠落を既存fileの上書き許可にする、runtime manifestを変更、file公開とtransactionを未検証で接続する。
