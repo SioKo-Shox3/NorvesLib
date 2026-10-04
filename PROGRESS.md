@@ -718,3 +718,5 @@
 - G2-S6-DEPENDENCY-SNAPSHOT開始: source/glTF外部buffer・image/選択sidecarの生byte・presenceと要求/revisionを印へ集約。sidecar loaderに同じreadのRawSourceBytesを保持し、外部readerのcanonical path出力を共有。root/設定/URIの既存runtime SourceHashは不変。実file変更・不在復帰・policy・permission・失敗保持のnative契約を登録、実Windows前なのでdoing。Skip決定と既存root公開は未接続。
 
 - G2-S6-DEPENDENCY-SNAPSHOT実検証: edc9a5c/run37213672528は実build/診断と15CPU成功、新依存試験がbuffer解決失敗で停止。コピーしたM9Skinnedに必須fixture.bin（416byte）が無いことを確認。既存skeletal試験の生成bodyをbyte書込callback付き共通headerへ機械移動し、新依存試験でも同じbufferを生成する。既存bodyの逆置換一致を確認。依存実装は変更せず、失敗時source表示を追加して再検証する。
+
+- G2-S6-DEPENDENCY-SNAPSHOT受入: f96dc155/run37215038245の実Windowsで16CPU（snapshot/sidecar loader/外部buffer readerを含む）、単体7CLI/79byte/5診断、native2spec×2/10fileとPS5.1・Unicode・16拒否契約が成功。logs/native archive SHAと実行driverを確認。fixture補完後に依存collectorを変更せず合格しtaskをdone。Cook/Skip/Errorの共通決定、stamp永続化、既存root増分公開は別gate。

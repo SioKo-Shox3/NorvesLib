@@ -27,3 +27,9 @@ Data URIとGLB BIN/imageはrootやbufferに既に含まれ、外部fileとして
 成功時だけsnapshotを置換する。不在と読込失敗を混同せず、途中まで列挙した依存を返さない。これは複数fileのatomic source snapshotではなく、並行編集に対する完全な保護でもない。公開前に再採取して印が変わっていれば中止するのが後続decision/publisherの契約。
 
 既存TrySkipModelCookは未移行。後続の共通Cook/Skip/Error決定を接続する際、batchがCookを決めた後のCookSingleAssetにはbSkipIfUnchanged=falseを渡し、古いcanonical-only cacheを二重判定させない。
+
+## 実Windows検証
+
+f96dc15517d2d03efd2a8e32a2e5ecb86d5665d3の[run37215038245](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37215038245)で16 CPU契約が成功。実file変更、sidecar空白・不在・exclusive lock、Unicode override、GLB、外部URIを検証した。単体7 CLIの79出力と診断5 literal、およびtexture v1の2 spec各2回・10出力の生byte互換も維持している。
+
+この結果は依存採取の検証であり、保存済み出力の採否や既存rootへの増分公開の完了を意味しない。
