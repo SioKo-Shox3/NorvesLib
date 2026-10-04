@@ -1,11 +1,14 @@
 ﻿#include "CookCacheDecision.h"
 #include "CookOutputPlan.h"
+#include "CookOutputSetGuardTestAccess.h"
+#include "CookPathIdentity.h"
 #include "CookCacheDecisionTestAccess.h"
 #include "CookOutputPaths.h"
 #include "AssetCookLegacyOptions.h"
 #include "MeshCooker.h"
 #include "Asset/AssetPath.h"
 #include <charconv>
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <exception>
@@ -841,5 +844,365 @@ namespace NorvesLib::Tools::AssetCook
         {
             return Fail(error, "capture_staging_exception");
         }
+    }
+
+    namespace
+    {
+        enum class SetRole
+        {
+            Package,
+            Manifest,
+            Protected
+        };
+        struct SetEndpoint
+        {
+            std::filesystem::path Locator;
+            size_t IdentityIndex = 0;
+            SetRole Role = SetRole::Protected;
+            int ExpectedPresence = -1;
+        };
+        struct SetObservation
+        {
+            Detail::CookPathIdentity Identity;
+            size_t Outputs = 0, Protected = 0;
+        };
+        struct SetKey
+        {
+            size_t Plan = 0, Output = 0;
+        };
+        bool Budget(size_t amount, size_t& total, AnsiString& error)
+        {
+            if (amount > MaximumCookSetMetadataBytes - total)
+            {
+                return Fail(error, "set_metadata_limit");
+            }
+            total += amount;
+            return true;
+        }
+        bool AddSetEndpoint(VariableArray<SetEndpoint>& endpoints, const std::filesystem::path& path, SetRole role,
+                            int presence, size_t& budget, AnsiString& error)
+        {
+            SetEndpoint candidate;
+            candidate.Role = role;
+            candidate.ExpectedPresence = presence;
+            if (!Detail::NormalizeCookGuardLocator(path, candidate.Locator, error) ||
+                !Budget(candidate.Locator.native().size() * sizeof(std::filesystem::path::value_type), budget, error))
+            {
+                return false;
+            }
+            endpoints.push_back(std::move(candidate));
+            return true;
+        }
+        int CompareKeyText(AnsiStringView a, AnsiStringView b)
+        {
+            const size_t n = std::min(a.size(), b.size());
+            const int result = n ? std::memcmp(a.data(), b.data(), n) : 0;
+            if (result)
+            {
+                return result;
+            }
+            return a.size() == b.size() ? 0 : (a.size() < b.size() ? -1 : 1);
+        }
+        bool AggregatePaths(VariableArray<SetEndpoint>& endpoints, VariableArray<SetObservation>& observations,
+                            Detail::CookOutputSetGuardStats& stats, size_t& budget, AnsiString& error)
+        {
+            VariableArray<size_t> ordered;
+            ordered.reserve(endpoints.size());
+            for (size_t i = 0; i < endpoints.size(); ++i)
+            {
+                ordered.push_back(i);
+            }
+            std::sort(ordered.begin(), ordered.end(),
+                      [&](size_t a, size_t b)
+                      {
+                          return endpoints[a].Locator.native() < endpoints[b].Locator.native();
+                      });
+            for (size_t position = 0; position < ordered.size();)
+            {
+                const auto first = ordered[position];
+                size_t end = position + 1;
+                while (end < ordered.size() &&
+                       endpoints[ordered[end]].Locator.native() == endpoints[first].Locator.native())
+                {
+                    ++end;
+                }
+                SetObservation observed;
+                ++stats.AggregateIdentityObservations;
+                if (!Detail::ObserveCookPathIdentity(endpoints[first].Locator, observed.Identity, error) ||
+                    !Budget(observed.Identity.Canonical.native().size() * sizeof(std::filesystem::path::value_type),
+                            budget, error) ||
+                    !Budget(observed.Identity.Components.size() * sizeof(Detail::CookPathComponent), budget, error))
+                {
+                    return false;
+                }
+                const size_t index = observations.size();
+                observations.push_back(std::move(observed));
+                ++stats.UniqueLocators;
+                for (size_t i = position; i < end; ++i)
+                {
+                    endpoints[ordered[i]].IdentityIndex = index;
+                }
+                position = end;
+            }
+            bool bManifestSeen = false;
+            size_t manifestIdentity = 0;
+            for (const auto& endpoint : endpoints)
+            {
+                auto& observed = observations[endpoint.IdentityIndex];
+                if (endpoint.ExpectedPresence != -1 && observed.Identity.bPresent != (endpoint.ExpectedPresence == 1))
+                {
+                    return Fail(error, "set_dependency_presence_changed");
+                }
+                if (endpoint.Role == SetRole::Manifest)
+                {
+                    if (bManifestSeen)
+                    {
+                        if (!Detail::SameCookManifestEndpoint(observations[manifestIdentity].Identity, observed.Identity))
+                        {
+                            return Fail(error, "set_requires_one_manifest_path");
+                        }
+                        continue;
+                    }
+                    bManifestSeen = true;
+                    manifestIdentity = endpoint.IdentityIndex;
+                }
+                if (endpoint.Role == SetRole::Protected)
+                {
+                    ++observed.Protected;
+                }
+                else
+                {
+                    ++observed.Outputs;
+                    if (observed.Identity.bPresent && observed.Identity.LinkCount > 1)
+                    {
+                        return Fail(error, "set_output_hardlink_not_supported");
+                    }
+                }
+            }
+            return true;
+        }
+        bool RoleConflict(size_t outputs, size_t protectedCount)
+        {
+            return outputs > 1 || (outputs && protectedCount);
+        }
+        bool CheckSetPaths(const VariableArray<SetObservation>& observed, AnsiString& error)
+        {
+            VariableArray<size_t> order;
+            for (size_t i = 0; i < observed.size(); ++i)
+            {
+                if (observed[i].Outputs || observed[i].Protected)
+                {
+                    order.push_back(i);
+                }
+            }
+            std::sort(order.begin(), order.end(),
+                      [&](size_t a, size_t b)
+                      {
+                          return Detail::CompareCookPhysicalPath(observed[a].Identity, observed[b].Identity) < 0;
+                      });
+            struct Group
+            {
+                size_t Identity = 0, Outputs = 0, Protected = 0;
+            };
+            VariableArray<Group> groups;
+            for (size_t i = 0; i < order.size();)
+            {
+                Group group{order[i]};
+                size_t j = i;
+                while (j < order.size() &&
+                       Detail::CompareCookPhysicalPath(observed[order[i]].Identity, observed[order[j]].Identity) == 0)
+                {
+                    group.Outputs += observed[order[j]].Outputs;
+                    group.Protected += observed[order[j]].Protected;
+                    ++j;
+                }
+                if (RoleConflict(group.Outputs, group.Protected))
+                {
+                    return Fail(error, "set_physical_path_alias");
+                }
+                groups.push_back(group);
+                i = j;
+            }
+            // component順なのでa/a/xは隣接subtreeとなる。祖先stackはa!による見落としを作らない。
+            VariableArray<size_t> ancestors;
+            size_t outputAncestors = 0;
+            for (size_t i = 0; i < groups.size(); ++i)
+            {
+                const auto& current = groups[i];
+                while (!ancestors.empty() &&
+                       !Detail::CookPhysicalAncestor(observed[groups[ancestors.back()].Identity].Identity,
+                                                     observed[current.Identity].Identity))
+                {
+                    if (groups[ancestors.back()].Outputs)
+                    {
+                        --outputAncestors;
+                    }
+                    ancestors.pop_back();
+                }
+                if ((current.Outputs && !ancestors.empty()) || (current.Protected && outputAncestors))
+                {
+                    return Fail(error, "set_file_directory_prefix");
+                }
+                ancestors.push_back(i);
+                if (current.Outputs)
+                {
+                    ++outputAncestors;
+                }
+            }
+            order.clear();
+            for (size_t i = 0; i < observed.size(); ++i)
+            {
+                if (observed[i].Identity.bPresent && (observed[i].Outputs || observed[i].Protected))
+                {
+                    order.push_back(i);
+                }
+            }
+            std::sort(order.begin(), order.end(),
+                      [&](size_t a, size_t b)
+                      {
+                          return Detail::CompareCookFileIdentity(observed[a].Identity, observed[b].Identity) < 0;
+                      });
+            for (size_t i = 0; i < order.size();)
+            {
+                size_t outputs = 0, protectedCount = 0, j = i;
+                while (j < order.size() &&
+                       Detail::CompareCookFileIdentity(observed[order[i]].Identity, observed[order[j]].Identity) == 0)
+                {
+                    outputs += observed[order[j]].Outputs;
+                    protectedCount += observed[order[j]].Protected;
+                    ++j;
+                }
+                if (RoleConflict(outputs, protectedCount))
+                {
+                    return Fail(error, "set_file_id_alias");
+                }
+                i = j;
+            }
+            return true;
+        }
+    } // namespace
+    bool Detail::ValidateCookOutputSetForTest(Core::Container::Span<const CookPreparedPlan> plans,
+                                              Core::Container::Span<const std::filesystem::path> controls,
+                                              CookOutputSetGuardStats& stats, AnsiString& error,
+                                              void (*afterObservation)(void*), void* probeContext)
+    {
+        error.clear();
+        stats = {};
+#if !defined(_WIN32)
+        (void)plans;
+        (void)controls;
+        (void)afterObservation;
+        (void)probeContext;
+        return Fail(error, "Windows_output_boundary_required");
+#else
+        try
+        {
+            if (plans.empty() || !plans.data() || plans.size() > MaximumCookSetPlans ||
+                (controls.size() && !controls.data()) || controls.size() > MaximumCookSetProtectedOccurrences)
+            {
+                return Fail(error, "set_input_limit");
+            }
+            VariableArray<CurrentPlan> current;
+            current.reserve(plans.size());
+            VariableArray<SetEndpoint> endpoints;
+            VariableArray<SetKey> keys;
+            size_t outputs = 0, protectedCount = controls.size(), budget = 0;
+            for (size_t i = 0; i < plans.size(); ++i)
+            {
+                CurrentPlan plan;
+                if (!Reprepare(plans[i], plan, error))
+                {
+                    return false;
+                }
+                if (plan.Expected.size() > MaximumCookSetOutputs - outputs ||
+                    plan.Context.Dependencies.Files.size() > MaximumCookSetProtectedOccurrences - protectedCount)
+                {
+                    return Fail(error, "set_occurrence_limit");
+                }
+                outputs += plan.Expected.size();
+                protectedCount += plan.Context.Dependencies.Files.size();
+                for (size_t j = 0; j < plan.Expected.size(); ++j)
+                {
+                    const auto& key = plan.Expected[j];
+                    if (!Budget(key.LogicalPath.size(), budget, error) || !Budget(key.Variant.size(), budget, error) ||
+                        !AddSetEndpoint(endpoints, plan.Packages[j], SetRole::Package, -1, budget, error))
+                    {
+                        return false;
+                    }
+                    keys.push_back({i, j});
+                }
+                if (!AddSetEndpoint(endpoints, plan.Context.Request.ManifestPath, SetRole::Manifest, -1, budget, error))
+                {
+                    return false;
+                }
+                // 公開planのFilesではなく、同じauthorityで今採取した依存を使う。
+                for (const auto& dependency : plan.Context.Dependencies.Files)
+                {
+                    if (!AddSetEndpoint(endpoints, dependency.Path, SetRole::Protected, dependency.bPresent ? 1 : 0,
+                                        budget, error))
+                    {
+                        return false;
+                    }
+                }
+                current.push_back(std::move(plan));
+            }
+            for (const auto& path : controls)
+            {
+                if (!AddSetEndpoint(endpoints, path, SetRole::Protected, -1, budget, error))
+                {
+                    return false;
+                }
+            }
+            std::sort(keys.begin(), keys.end(),
+                      [&](const SetKey& a, const SetKey& b)
+                      {
+                          const auto& x = current[a.Plan].Expected[a.Output];
+                          const auto& y = current[b.Plan].Expected[b.Output];
+                          if (x.Kind != y.Kind)
+                          {
+                              return static_cast<uint8_t>(x.Kind) < static_cast<uint8_t>(y.Kind);
+                          }
+                          const int path = CompareKeyText(x.LogicalPath, y.LogicalPath);
+                          return path ? path < 0 : CompareKeyText(x.Variant, y.Variant) < 0;
+                      });
+            for (size_t i = 1; i < keys.size(); ++i)
+            {
+                const auto& a = keys[i - 1];
+                const auto& b = keys[i];
+                if (SameKey(current[a.Plan].Expected[a.Output], current[b.Plan].Expected[b.Output]))
+                {
+                    return Fail(error, "set_duplicate_output_key");
+                }
+            }
+            stats.LocatorOccurrences = endpoints.size();
+            VariableArray<SetObservation> observations;
+            if (!AggregatePaths(endpoints, observations, stats, budget, error) || !CheckSetPaths(observations, error))
+            {
+                return false;
+            }
+            if (afterObservation)
+            {
+                afterObservation(probeContext);
+            }
+            for (const auto& plan : current)
+            {
+                if (!Stable(plan, error))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        catch (const std::exception&)
+        {
+            return Fail(error, "set_guard_exception");
+        }
+#endif
+    }
+    bool ValidateCookOutputSet(Core::Container::Span<const CookPreparedPlan> plans,
+                               Core::Container::Span<const std::filesystem::path> controls, AnsiString& error)
+    {
+        Detail::CookOutputSetGuardStats stats;
+        return Detail::ValidateCookOutputSetForTest(plans, controls, stats, error, nullptr, nullptr);
     }
 } // namespace NorvesLib::Tools::AssetCook

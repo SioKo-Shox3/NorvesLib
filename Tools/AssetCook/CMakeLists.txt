@@ -9,6 +9,10 @@ add_library(AssetCookLib STATIC
     CookCacheDecision.cpp
     CookCacheDecision.h
     CookOutputPlan.h
+    CookOutputSetGuard.h
+    CookOutputSetGuardTestAccess.h
+    CookPathIdentity.cpp
+    CookPathIdentity.h
     CookCacheDecisionTestAccess.h
     CookOutputPaths.h
     CookOutputPackage.cpp

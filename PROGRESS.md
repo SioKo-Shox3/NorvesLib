@@ -759,3 +759,8 @@
 - G2-S6-STAGED-OUTPUT-PLAN実検証: e4a3181d/run37237085524で実build/5診断と既存23CPUが成功。追加testは余分なfragmentを作るfixtureで停止。raw単体writerはmanifest追記でなく置換するため、2つの実cook rowを結合して有効な2件fragmentを作る試験へ訂正する。production実装は不変、残りのfreshness試験と79+10byte gateは未確認のためdoing。
 
 - G2-S6-STAGED-OUTPUT-PLAN受入: 62e8c81e/run37238379793で実Windows build・24CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。元snapshotを保持した全kind stage再cook/capture、意味変更・raw sidecar/外部file変化・余分fragmentの拒否を実証。staged_short_alias_distinct=1を確認。fixtureだけの訂正後にproduction実装は不変。3ZIPと固定79+10出力の直接byte比較を独立確認しroot再実行。taskをdone、集合横断guardとproduction transactionは未接続。
+
+- G2-S6-OUTPUT-SET-GUARD開始: 各planを既存authorityで再準備し、fresh依存と全targetを平坦化して、構造key・物理component・volume/file IDのsortで集合横断の衝突を調べる。集約passは同一locatorを1回だけ観測し、全件pairwiseのfilesystem queryを増やさない。現在の単体出力上限4件の既存guardは維持し、source byte再読込の費用と区別する。production採用/公開は行わない。
+
+- G2-S6-OUTPUT-SET-GUARD検証準備: 共通Prepare由来の全依存とprimary/派生keyを再採取し、volume GUID/file ID・component順prefix・hardlinkを集合単位で照合する読み取り専用APIを追加。4096plan/65536 protected出現/32MiB metadata上限と集約identity観測数の試験を登録し25CPUへ拡張。既存CookCacheDecision実装prefixはinclude以外byte不変。比較器12件×通常/最適化、独立prefix順序モデル10000例が成功。実Windows/79+10byte gateは未実行。
+- G2-S6-OUTPUT-SET-GUARD補強: 共通manifestはcase-fold path一致だけで統合せず、存在状態と既存file ID、不在時はcanonical native表記の完全一致を要求する。case-sensitive directoryの別endpointを誤って1件へ縮約しない。対応する値レベル反証と実不在pathのcase差分試験を追加。

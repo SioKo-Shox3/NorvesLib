@@ -46,6 +46,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SingleAssetCookServiceTest SingleAssetCookServiceTest.cpp
     MEMBER TextureAssetSetSpecTest TextureAssetSetSpecTest.cpp
     MEMBER TextureAssetSetOutputTest TextureAssetSetOutputTest.cpp
+    MEMBER CookOutputSetGuardTest CookOutputSetGuardTest.cpp
     MEMBER CookOutputPlanTest CookOutputPlanTest.cpp
     MEMBER CookStateFileTest CookStateFileTest.cpp
     MEMBER CookOwnedStateTest CookOwnedStateTest.cpp
@@ -227,3 +228,6 @@ set_tests_properties(CookStateFileTest PROPERTIES WORKING_DIRECTORY "${CMAKE_SOU
 
 add_test(NAME CookOutputPlanTest COMMAND CookedMeshTest --test=CookOutputPlanTest)
 set_tests_properties(CookOutputPlanTest PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+add_test(NAME CookOutputSetGuardTest COMMAND CookedMeshTest --test=CookOutputSetGuardTest)
+set_tests_properties(CookOutputSetGuardTest PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")

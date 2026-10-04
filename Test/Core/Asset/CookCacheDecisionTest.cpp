@@ -1,6 +1,7 @@
 ﻿// 実cook出力の増分判断と、現在要求から独立に導く出力一覧・安全境界を検証する。
 #include "Tools/AssetCook/CookCacheDecision.h"
 #include "Tools/AssetCook/CookOutputPlan.h"
+#include "Tools/AssetCook/CookOutputSetGuard.h"
 #include "Tools/AssetCook/CookOwnedState.h"
 #include "Tools/AssetCook/CookStateFile.h"
 #include "Tools/AssetCook/CookCacheDecisionTestAccess.h"
@@ -205,6 +206,7 @@ namespace
         CookPreparedPlan finalPlan, stagedPlan;
         CHECK(PrepareCookOutputPlan(r, 7, &f.Live, finalPlan, error));
         CHECK(finalPlan.Outputs.size() == f.Record.Outputs.size());
+        CHECK(ValidateCookOutputSet({&finalPlan, 1}, {}, error));
         for (size_t i = 0; i < finalPlan.Outputs.size(); ++i)
         {
             CHECK(finalPlan.Outputs[i].ExpectedIdentity.LogicalPath == f.Record.Outputs[i].Reference.LogicalPath);
