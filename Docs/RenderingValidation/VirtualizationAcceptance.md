@@ -200,3 +200,111 @@ VT の撮影の PNG（`VTG2-ACCEPT/low-sun10.png` ほか）を開いて確かめ
 - **フィードバックの要求は画素の中心のタイルの1件**だけで、異方性・トライリニアが見る隣のタイルは、使われるまで要求されない（上の PSNR の差の原因の推定）。
 - **開発機での実測だけ**: 追い出しと予算の割り振りは RTX 4080 で確かめた。ほかの GPU・ドライバでの `vkQueueBindSparse` の遅さ・差は未測定（計画 7 のリスク）。
 - 負荷用のテクスチャ（約 0.8 GB）は git に入れず、`Scripts/FetchPolyHavenTextures.ps1 -StressSet` で取得するので、取得していない環境では `--stress-textures` の撮影を回せない。
+
+## 段3（遮蔽カリング）
+
+判定日: 2026-10-05。ブランチ `feature/vtg-stage3-occlusion`（コミット `d6794128` の上）。段3の受入れ（計画 5）は、小屋の陰のクラスタが省かれ（数を記録）、過剰カリング（穴・消失）が撮影で出ないこと。
+
+撮影はすべて RelWithDebInfo の Game（1280×720、TAA・RTGI 有効の起動画面の既定）を `-Deterministic`（`--capture-deterministic`。描画を ST にして同じコードの2回の撮影が一致する）で撮った。
+「あり」は既定（`--mega-occlusion=on`。MegaGeometry の2パスの遮蔽カリング）、「なし」は `--mega-occlusion=off`（段2までと同じ、視錐台・法線のコーン・LOD の判定だけの1回のカリング）。
+証拠は `.harness/runs/20261005-034826/verify-VTG3-ACCEPT-<n>-*.txt`、撮影の出力は `.harness/runs/startup-capture/VTG3-ACCEPT*/`（`metrics.json`・PNG・各視点の `*.Game.log`）。旋回の1フレームごとの所見は `.harness/runs/20261005-014448/verify-VTG3-OCCLUSION-ORBIT-*.txt` と `.harness/runs/startup-capture/VTG3-OCCLUSION-ORBIT-sheets/`。
+
+### 結果の一覧
+
+| 項目 | 検査 | 結果 |
+|---|---|---|
+| 関係ターゲットの Debug ビルド | `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest MegaGeometryResourcesTest RenderingGoldenImageTest -- /m:1` | BUILD_EXIT_CODE=0（`-1.txt`） |
+| 関係する ctest（6本） | `HiZPyramidVulkanTest`・`HiZOcclusionTestVulkanTest`・`RenderGraphCompileTest`・`MegaGeometryResourcesTest`・`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 6/6 passed（`-2.txt`） |
+| golden | 上の `RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 2本とも pass。基準画像・閾値は段3で変えていない（`git diff main...HEAD --name-only` に golden の基準画像・閾値の変更なし）ので再承認なし |
+| 朝10°・昼45°・夕3° × 既定・近接・低角度（あり） | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG3-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3` | 9枚、result=pass（`-3-capture-day-on.txt`）。白飛び・黒つぶれの画素率は全視点 0 |
+| 夜 × 既定・近接・低角度（あり） | `... -OutDir .harness/runs/startup-capture/VTG3-ACCEPT-night ... -Deterministic -Night` | 3枚、result=pass（`-4-capture-night-on.txt`）。白飛び・黒つぶれの画素率は 0 |
+| 比べる「なし」の撮影 | 同じ引数に `-MegaOcclusion Off` と `-CompareDeterministicWith <あり の出力先>`（出力先 `VTG3-ACCEPT-off`・`-night-off`） | 朝・昼・夕・夜の12視点とも result=pass（`-5`・`-6`） |
+| 隠し合う視点 occ-sphere・occ-cottage・occ-cottage-edge（昼・夜） | 同じ引数に `-ViewNames occ-sphere,occ-cottage,occ-cottage-edge`（夜は `-Night`）。あり・なしの出力先 `VTG3-ACCEPT-occ`・`-occ-off`・`-occ-night`・`-occ-night-off` | 6視点とも result=pass（`-7`〜`-10`） |
+| 旋回（20度/秒、フレーム 3,6,…,111,120 の38枚 × 球・小屋） | `-ViewNames occ-sphere-orbit`（`occ-cottage-orbit`）`-OrbitDegreesPerSecond 20 -OrbitRenderedFrames <38枚>` の あり・なし | 球・小屋とも 38/38 枚が 100 dB・最大差 0（`-14-orbit-sphere.txt`・`-14-orbit-cottage.txt`） |
+| GPU 時間 | `-GpuTimingFrames 400 -ViewNames default,near,low,occ-sphere,occ-cottage,occ-cottage-edge` の なし・あり | 下の表（`-11-gpu-off.txt`・`-12-gpu-on.txt`・`-13-gpu-summary.txt`） |
+
+### 見た目（PSNR）
+
+同じ視点の「あり」と「なし」の 1280×720 RGB の PSNR（dB。100 は完全一致）。目安は 60 dB 以上（VTG3-OCCLUSION-ORBIT の完了条件）。スクリプトの既定の下限（`-DeterministicPsnrLimit`）は 45 dB で、全視点とも通っている。
+
+| 視点 | あり 対 なし | 最大差（/255） | 不一致の画素率 |
+|---|---|---|---|
+| 既定・朝10° / 昼45° / 夕3° / 夜 | 100 / 100 / 100 / 100 | 0 | 0 |
+| 近接・朝10° / 昼45° / 夕3° / 夜 | 100 / 100 / 100 / 100 | 0 | 0 |
+| 低角度・朝10° | 100 | 1 | 1e-6（約1画素） |
+| 低角度・昼45° | 99.537 | 3 | 7e-6（約6画素） |
+| 低角度・夕3° | 100 | 1 | 1e-6（約1画素） |
+| 低角度・夜 | 100 | 0 | 0 |
+| occ-sphere（昼・夜） | 100 / 100 | 0 | 0 |
+| occ-cottage（昼・夜） | 100 / 100 | 0 | 0 |
+| occ-cottage-edge（昼・夜） | 100 / 100 | 0 | 0 |
+
+- 18視点（昼夜の既定・近接・低角度の 12 と、隠し合う視点の昼夜 6）のうち最小は低角度・昼45° の 99.537 dB で、目安の 60 dB を 39 dB 以上上回る。平均輝度の差は 18視点とも 0（`-5`・`-6`・`-8`・`-10` の `deterministic_comparison` はすべて within_limits=True）。
+- 12視点の平均輝度は 昼 118.498・124.437・87.693（既定の朝・昼・夕）、119.365・123.946・89.654（近接）、120.885・126.343・95.439（低角度）、夜 56.965（既定）・13.8（近接）・67.579（低角度）。
+- 低角度の 3 視点の差（最大 3/255、約 1〜6 画素）は、深度が同じ境界での描画順（先着）の違いによる ±1〜3 と推定している（確かめていない）。同じ遮蔽ありの撮影を2回撮ると全て 100 dB で一致する（旋回の検証 `verify-VTG3-OCCLUSION-ORBIT-6-repeat-on-vs-on.txt`）ので、撮影の揺らぎではない。穴・欠けではない。
+
+### `MEGA_OCCLUSION`（省いたクラスタの数）
+
+撮影ログの最後の `MEGA_OCCLUSION pass1=<n> pass2_tested=<n> pass2_drawn=<n> occluded=<n>`（開発ビルドだけ。30フレームに1回）。「pass2_tested」は2パス目で HZB で判定したクラスタの数、「occluded」は隠れていて描かなかった数。
+
+| 視点 | pass1 | pass2_tested | pass2_drawn | occluded（最大） | 省いた割合 |
+|---|---|---|---|---|---|
+| 既定 | 541 | 574 | 6 | 30（36） | 5% |
+| 近接 | 3692 | 4307 | 36 | 596（602） | 14% |
+| 低角度 | 1752 | 1865 | 7 | 110（122） | 6% |
+| occ-sphere（球が岩を隠す） | 62 | 542 | 0 | 481（481） | 89% |
+| occ-cottage（小屋が球と岩を隠す） | 30 | 572 | 0 | 542（545） | 95% |
+| occ-cottage-edge（小屋の端が球の一部を隠す） | 546 | 570 | 5 | 22（24） | 4% |
+
+- 値は太陽の高度・昼夜で変わらない（影は別のシェーダーで描くので、このパスの判定の対象外）。
+- 隠し合う視点では、小屋の陰で 542 クラスタ（95%）、球の陰で 481 クラスタ（89%）を省く。受入れの「小屋の陰のクラスタが省かれる」を満たす。同じ視点で あり・なしが画素まで一致するので（上の表）、省いたクラスタは見えない部分だった。
+- 静止カメラでも `pass2_drawn` が 0〜36 残るのは、TAA のジッタで境界のクラスタの判定が揺れるため（そのクラスタは次のフレームの1パス目から描く）。
+
+### GPU 時間
+
+`-GpuTimingFrames 400`・RelWithDebInfo・中央値（ms）、窓は各 340 フレーム。`MegaGeometryPass` は2パスと HZB の構築を含む。「なし → あり」。
+
+| 視点 | FrameGPU 中央値 | FrameGPU p95 | MegaGeometryPass | LightingPass |
+|---|---|---|---|---|
+| 既定 | 2.867 → 2.977 | 3.294 → 3.556 | 0.135 → 0.223 | 0.759 → 0.772 |
+| 近接 | 3.988 → 4.086 | 4.563 → 4.683 | 1.870 → 1.955 | 0.624 → 0.628 |
+| 低角度 | 2.907 → 2.976 | 3.641 → 3.708 | 0.567 → 0.644 | 0.573 → 0.573 |
+| occ-sphere | 2.574 → 2.493 | 4.653 → 4.814 | 0.135 → 0.208 | 0.574 → 0.565 |
+| occ-cottage | 2.819 → 2.892 | 5.698 → 3.180 | 0.207 → 0.293 | 0.637 → 0.626 |
+| occ-cottage-edge | 2.382 → 2.592 | 4.970 → 3.038 | 0.145 → 0.245 | 0.511 → 0.561 |
+
+- クラスタが少ない視点（既定・低角度・隠し合う視点）では、HZB の構築と2回の判定で `MegaGeometryPass` が 0.07〜0.10 ms 増える。FrameGPU の中央値の変化は -0.08〜+0.21 ms で、いずれも 16.6 ms の予算の 1.3% 以下。
+- 近接（クラスタが 4307）でも、省いた割合が 14% なので `MegaGeometryPass` は 1.870 → 1.955 とほぼ同じ。VTG3-OCCLUSION-ORBIT の計測（`.harness/runs/20261005-014448/verify-VTG3-OCCLUSION-ORBIT-8-gpu-summary.txt`）では同じ視点が 2.049 → 1.855 と減っており、近接の増減は約 ±0.2 ms の計測のばらつきの内で、遮蔽による減少は今の起動画面の規模では測れない。
+- 隠し合う視点（クラスタの 89〜95% を省く）でも、省いたクラスタの描画の負荷が元々小さいので FrameGPU は変わらない（-0.08〜+0.21 ms）。**段3の単体では GPU 時間の削減は測定できず、起動画面の規模では HZB の構築の約 0.08 ms 分がわずかに増える**。段3の受入れは見た目と省いたクラスタの数で、時間の削減は求めていない。
+
+### 旋回の連続フレームの所見
+
+20度/秒の旋回（`-OrbitDegreesPerSecond 20`。決定的な撮影では最初のヨーが固定刻みで決まるので、フレーム番号が同じなら同じ画像）の、遮蔽あり・なしの画素比較。
+- 段3の VTG3-OCCLUSION-ORBIT（`.harness/runs/20261005-014448/verify-VTG3-OCCLUSION-ORBIT-4`・`-5`・`-10`・`-11`）: 目標フレームを +1・+2 ずらした3本の撮影を合わせて、球・小屋のどちらも f3〜f111 の全フレーム（欠番なし）で あり・なしを比べた。球は全フレーム 100 dB・最大差 0。小屋は最小 96.637 dB（f108）・最大差 1・不一致は最大 4.2e-5（約39画素）で、すべて 60 dB 以上。
+- 画像を開いた確認: 球の旋回の f54〜f69（16枚連続）で、岩が毎フレーム少しずつ球の陰から出て大きくなり、飛び・ちらつき・欠けが無い。小屋の旋回の f54〜f69 も毎フレーム滑らかに回り、欠け・ちらつきがない。1フレームの遅れがあれば現れる あり・なしの差は、岩の出現前後を含めどのフレームにも無い。
+- 今回（全インスタンスが消えて戻る場合の見えたビットの破棄を直した後のコードで）: 同じ旋回を球・小屋とも あり・なしで撮り直した（f3,6,…,111,120 の38枚。`-14-orbit-sphere.txt`・`-14-orbit-cottage.txt`）。球・小屋とも 38 枚すべて 100 dB・最大差 0・不一致 0 で、within_limits=True。小屋で以前の撮影に出ていた ±1 の差（最小 96.637 dB）は、今回は出ていない（同じ深度の境界での先着が実行ごとに変わると推定している。確かめていない）。
+
+### 起動画面の撮影の所見
+
+「あり」の撮影の PNG を開いて確かめた。
+- `VTG3-ACCEPT/default-sun45.png`: 小屋・金色の球の列・石畳の球・岩・材質の帯・空・太陽が欠けなく出ている。穴・消失・ちらつきは見えない。
+- `VTG3-ACCEPT-occ/occ-cottage.png`: 小屋が球と岩を隠す視点。屋根・煙突・窓・柵・階段が欠けなく出ている。
+- `VTG3-ACCEPT-night/near-night.png`: 夜の近接。石畳の球が欠けなく出ている。球の表面の赤い点は、遮蔽なしの撮影と画素まで一致する（100 dB）ので遮蔽による欠けではなく、この視点の既存の描画。
+- 全視点で白飛び・黒つぶれの画素率は 0。
+
+### 段3の受入れの判定
+
+- 「小屋の陰のクラスタが省かれ（数を記録）」: 満たす。occ-cottage で 542/572 クラスタ（95%）、occ-sphere で 481/542（89%）を省く。既定・近接・低角度でも 30・596・110 を省く。
+- 「過剰カリング（穴・消失）が撮影で出ない」: 満たす。昼・夜 18 視点と旋回 76 枚（38枚 × 球・小屋）の あり・なしの比較は、全て 99.537 dB 以上（以前の小屋の旋回の撮影を含めた最小は 96.637 dB）で目安の 60 dB を上回り、画像でも穴・欠け・ちらつきは見えない。golden 不変。
+
+### 既知の限界
+
+- **GPU 時間の削減は測れない**: 上の GPU 時間の節のとおり、起動画面の規模ではクラスタが少なく、省いても時間は減らない。HZB の構築と2回の判定で `MegaGeometryPass` が約 0.07〜0.10 ms 増える。クラスタの数が多い場面（段4以降のクラスタの階層・段6のビジビリティバッファ）で改めて測る。
+- **判定は保守的**: 隠れていると言えるのは、遮蔽物が対象の投影矩形より HZB の texel の粒度（ミップ m で 2^(m+1) 画素）ほど大きいときだけ。境目の視点（occ-cottage-edge）では 546 のうち 22 しか省かない。完全性より健全性（穴を出さない）を優先した結果。
+- **あり・なしの差が ±1〜3 出うる**: 低角度・昼45° が 99.537 dB（最大差 3、約 6 画素）、以前の小屋の旋回が最小 96.637 dB（最大差 1、約 39 画素）。同じ深度の境界での描画順の違いと推定しているが、確かめていない。穴・欠けではない。
+- **影は対象外**: CSM・点光源の影は `ShadowMapPass` が別のシェーダーで描くので、カメラの視点の深度による遮蔽の判定を掛けていない（掛けると影のキャスターが欠ける）。影の描画のクラスタの数は減らない。
+- **2パスにならない条件**: `--mega-occlusion=off`・HZB が作れない・描く範囲が深度の全体と一致しない・深度範囲が 0〜1 でないとき（`MEGA_OCCLUSION_OFF reason=...` を1回出す）は従来の1回の判定で描く。深度範囲が 0〜1 でない経路の GPU の撮影は無く、契約テスト（`RenderGraphCompileTest`）だけで確かめている。
+- **見えたビットの寿命**: 追加・再追加・メッシュの差し替え・コンポーネントの作り直し・全インスタンスが消えて戻る場合は、見えたビットを捨てて全部を2パス目で描く（最初の1フレームは遮蔽の利益が無い）。これらは `RenderGraphCompileTest` の記録の並びで確かめ、実機では全インスタンスが消えて戻る撮影を試していない。
+- **`HiZPyramidPass`（RenderGraph のパス）は製品の経路で使っていない**: 2パスの途中で `HiZPyramid` を直接呼んで作る（render pass の途中にコンピュートを挟めないため）。パスの形はテスト（`HiZPyramidVulkanTest`・`RenderGraphCompileTest`）のためだけに残っている。
+- **開発機での実測だけ**: RTX 4080 で確かめた。ほかの GPU・ドライバでの深度のコピー・HZB の構築の時間は未測定（計画 7 のリスク）。
+- **`MEGA_OCCLUSION` の数は開発ビルド専用**: 省いたクラスタの数は開発ビルド（RelWithDebInfo の撮影）でだけ数えて出す。Release にはデバッグ機能を入れない方針に従う。

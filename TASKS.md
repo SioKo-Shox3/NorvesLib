@@ -320,7 +320,7 @@
 - notes: 起動画面の見た目を変えうる（絶対規則7）。
 
 ## VTG3-ACCEPT: 段3（遮蔽カリング）の受入れを記録する
-- status: todo
+- status: done
 - done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段3の節に、遮蔽あり・なしの `-Deterministic` の撮影（朝・昼・夕・夜 × 既定・近接・低角度と、隠し合う視点）の PSNR、`MEGA_OCCLUSION` の省いたクラスタの数、GPU 時間の前後、旋回の連続フレームの所見、golden、関係するテストの結果、既知の限界を書く。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest MegaGeometryResourcesTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(HiZPyramidVulkanTest|HiZOcclusionTestVulkanTest|RenderGraphCompileTest|MegaGeometryResourcesTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
