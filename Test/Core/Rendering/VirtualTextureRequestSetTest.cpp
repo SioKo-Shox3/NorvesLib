@@ -494,6 +494,43 @@ void TestRingOverflowAndAbort()
     Expect(!ring.TakeRequests(afterClear), "Clear で溜まった集計も消える");
 }
 
+void TestRingReadsOnlyAfterMinAge()
+{
+    auto device = MakeShared<FakeDevice>();
+    VirtualTextureFeedbackRing ring(device, MakeRingConfig());
+    Expect(ring.SetEnabled(true), "有効にできる");
+
+    // フレーム 1 を serial 1 で提出する。飛行数 1 のエンジンのように、次のフレームの開始時には完了している。
+    ring.BeginFrame(0);
+    WriteFrame(ring.GetCurrentBuffer(), 1, Tiles(MakeKey(3, 0, 1, 2)));
+    ring.CommitFrame(1);
+
+    // フレーム 2: serial 1 は完了済みでも、1 フレームしか経っていないので渡さない
+    ring.BeginFrame(1);
+    VirtualTextureRequestSet early;
+    Expect(!ring.TakeRequests(early), "完了が早くても、翌フレームには読み戻さない");
+    WriteFrame(ring.GetCurrentBuffer(), 0, VariableArray<VirtualTextureTileKey>());
+    ring.CommitFrame(2);
+    Expect(ring.GetStats().BuffersRead == 0, "2 フレーム経つまで読み戻したバッファは無い");
+
+    // フレーム 3: 書いたフレーム 1 から 2 フレーム経った。完了済みなので読み戻す。
+    ring.BeginFrame(2);
+    VirtualTextureRequestSet ready;
+    uint64_t frame = 0;
+    Expect(ring.TakeRequests(ready) && ready.Find(MakeKey(3, 0, 1, 2), frame) && frame == 1,
+           "2 フレーム経って完了していれば、フレーム 1 の要求が渡る");
+    Expect(ring.GetStats().BuffersRead == 1, "フレーム 1 だけ読み戻した（フレーム 2 は完了していても 1 フレームしか経っていない）");
+    Expect(device->WaitIdleCalls == 0, "待たずに読み戻す");
+
+    // 2 フレーム経っていても、完了していなければ待たずに残す
+    ring.CommitFrame(3);
+    ring.BeginFrame(2);
+    ring.CommitFrame(4);
+    ring.BeginFrame(2);
+    VirtualTextureRequestSet pending;
+    Expect(!ring.TakeRequests(pending), "serial が未完了なら 2 フレーム経っても読み戻さない");
+}
+
 int RunTest()
 {
     TestPackUnpack();
@@ -505,6 +542,7 @@ int RunTest()
     TestRingEnableFailureLeavesNoBuffers();
     TestRingReadsBackWithoutWaiting();
     TestRingOverflowAndAbort();
+    TestRingReadsOnlyAfterMinAge();
 
     if (g_failures != 0)
     {

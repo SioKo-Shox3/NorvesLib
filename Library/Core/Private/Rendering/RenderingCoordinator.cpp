@@ -3089,6 +3089,12 @@ namespace NorvesLib::Core::Rendering
         }
         executionResult.CaptureSources.Reset();
 
+        // VT の要求のバッファへのシェーダーの書き込みを、ホストの読み取りへ見せる（最後の書き込みの後・提出の前）
+        if (m_RenderResources)
+        {
+            m_RenderResources->RecordVirtualTextureFeedbackBarrier(*m_CommandList);
+        }
+
         // コマンド録画終了
 #if NORVES_ENABLE_STATS
         if (bTraceActive && m_CommandList->SupportsGPUTimestamps())

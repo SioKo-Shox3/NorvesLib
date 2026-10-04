@@ -985,6 +985,14 @@ namespace NorvesLib::Core::Rendering
         return m_Impl->VtFeedback ? m_Impl->VtFeedback->TakeRequests(out) : false;
     }
 
+    void RenderResources::RecordVirtualTextureFeedbackBarrier(RHI::ICommandList &commandList)
+    {
+        if (m_Impl->VtFeedback)
+        {
+            m_Impl->VtFeedback->RecordHostReadBarrier(commandList);
+        }
+    }
+
     SparsePagePool *RenderResources::GetSparsePagePool() const
     {
         return m_Impl->SparsePool.get();

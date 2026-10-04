@@ -301,6 +301,9 @@ namespace NorvesLib::Core::Rendering
         // 溜まった要求の集計を out へ渡し、こちらは空に戻す（VT のストリーマが毎フレーム呼ぶ。どのスレッドからでもよい）。
         // 要求も溢れた件数も無いとき・リングが無いときは false で、out は変えない。
         bool TakeVirtualTextureRequests(VirtualTextureRequestSet &out);
+        // このフレームの要求のバッファへの書き込みを、ホストの読み取りへ見せるバリアを記録する。最後の書き込みの後・
+        // render pass の外・コマンドの終了より前に RenderThread が呼ぶ。バッファが無い（無効・空き無し）フレームでは何もしない。
+        void RecordVirtualTextureFeedbackBarrier(RHI::ICommandList &commandList);
 
         bool ReloadAssetRuntimeSnapshot(
             const Container::String& assetRoot,

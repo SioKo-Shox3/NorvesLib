@@ -4,6 +4,7 @@
 #include "Container/PointerTypes.h"
 #include "Logging/LogMacros.h"
 #include "RHI/IBuffer.h"
+#include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "Rendering/VirtualTextureRequestSet.h"
 #include "Thread/Mutex.h"
@@ -25,8 +26,11 @@ namespace NorvesLib::Core::Rendering
      *
      * スロットの流れ: Free →（BeginFrame で獲得。CPU が 0 で埋める）Recording →（CommitFrame）InFlight(serial) →
      * （BeginFrame に渡された完了済みの serial が追いつく）読み戻して集計 → Free。
-     * - 読み戻しは完了済みの serial との比較だけで決める。完了していないスロットは、フェンスも WaitIdle も
-     *   待たずにそのまま残し、次のフレームで見直す。RenderThread は止まらない。
+     * - 読み戻しは「提出の serial が完了済み」かつ「書いたフレームから MinReadAgeFrames 以上経った」ことの
+     *   比較だけで決める。どちらかが満たされないスロットは、フェンスも WaitIdle も待たずにそのまま残し、
+     *   次のフレームで見直す。RenderThread は止まらない。完了が早くても、翌フレームには渡さない。
+     * - GPU の書き込みをホストの読み取りへ見せるバリア（RecordHostReadBarrier）を、そのフレームの最後の書き込みの
+     *   後・提出の前に、描画のコマンドへ記録する。完了 serial だけを可視性の根拠にしない。
      * - 3つとも使用中（GPU の提出が重なって読み戻しが間に合っていない）のフレームは、バッファを持たない
      *   （GetCurrentBuffer が null）。そのフレームの要求は取らずに進む。
      * - フレームの飛行数が 2 のエンジンでは、フレーム N の開始時にフレーム N-2 の提出は完了済みなので、
@@ -44,6 +48,8 @@ namespace NorvesLib::Core::Rendering
     {
     public:
         static constexpr uint32_t SlotCount = 3;
+        // 書いたフレームから、これだけ経ったスロットだけを読み戻す（飛行数が 1 のエンジンでも 2 フレーム遅れにする）
+        static constexpr uint64_t MinReadAgeFrames = 2;
 
         struct Config
         {
@@ -119,7 +125,8 @@ namespace NorvesLib::Core::Rendering
                 for (uint32_t i = 0; i < SlotCount; ++i)
                 {
                     Slot &slot = m_Slots[i];
-                    if (slot.State == SlotState::InFlight && slot.Serial <= m_CompletedSerial)
+                    if (slot.State == SlotState::InFlight && slot.Serial <= m_CompletedSerial &&
+                        acquireFrame - slot.Frame >= MinReadAgeFrames)
                     {
                         slot.State = SlotState::Reading;
                         readable.push_back(i);
@@ -164,6 +171,24 @@ namespace NorvesLib::Core::Rendering
         {
             Thread::ScopedLock lock(m_Mutex);
             return m_CurrentSlot == InvalidSlot ? RHI::BufferPtr{} : m_Slots[m_CurrentSlot].Buffer;
+        }
+
+        /**
+         * @brief このフレームのバッファへのシェーダーの書き込みを、ホストの読み取りへ見せるバリアを記録する
+         *
+         * 最後の書き込みの後・render pass の外・コマンドの終了より前に、RenderThread が 1 回呼ぶ。
+         * 獲得できなかった（無効・空きなし）フレームでは何も記録しない。
+         * @return バリアを記録したら true
+         */
+        bool RecordHostReadBarrier(RHI::ICommandList &commandList)
+        {
+            RHI::BufferPtr buffer = GetCurrentBuffer();
+            if (!buffer)
+            {
+                return false;
+            }
+            commandList.BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::HostRead);
+            return true;
         }
 
         /** @brief フレームを serial で提出した。獲得していたスロットは、その serial の完了後に読み戻す */
