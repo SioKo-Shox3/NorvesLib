@@ -54,3 +54,5 @@ WriteNewは事前serialize後、自分のsibling tempをCREATE_NEWで排他作�
 CookStateFileTestはnative成功と、共有lock・junction・既存宛先・公開直前競合・実2thread・大きさ・失敗時保持を検証する。private probeの故障注入は失敗経路とcleanupの検証であり、注入したflush/renameが実OSで成功した証拠にはしない。8.3別名と別volumeの利用可否は試験receiptへ明示する。CookCacheDecisionTestでは全kindの実recordをsave/loadし、同じ共通判断でSkipへ戻す。
 
 参照: [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[GetFinalPathNameByHandleW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)、[SetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle)、[FILE_RENAME_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info)、[FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers)
+
+state file操作は375a7dc64c585e85a376439de69da36a73591403の[Windows run37234005425](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37234005425)で受入れ済み。23 CPU契約、固定79+10出力と5診断のbyte互換が成功。8.3別名は実際に異なる表記を使用し、別volume拒否も実行した。productionの一括公開・既存state世代の置換・lock/journalの受入れとは区別する。

@@ -2442,7 +2442,13 @@
 - stop-when: stateを所有権の認証と扱う、record欠落を既存fileの上書き許可にする、runtime manifestを変更、file公開とtransactionを未検証で接続する。
 
 ## G2-S6-STATE-FILE: 所有stateを安全に新規保存して読み戻す
-- status: doing
+- status: done
 - done-when: caller指定のRuntimeRoot外の同volume stateを排他新規保存し、Missing/Loaded/Errorを区別して読む。既存stateを置換せず、自分のtemp以外を採用/削除しない。
 - verify: cook→capture→save→load→共通Skip、write/flush/verify/renameの失敗、既存file/directory/junction/競合、out保持、Windowsと既存byte gate。
 - stop-when: locked journalなしでproduction rootとstateを別々に公開、unknown ownershipの自動採用、atomic reader/powerloss耐久性を保証する。
+
+## G2-S6-STAGED-OUTPUT-PLAN: 全出力一覧とstage捕捉の境界を共有する
+- status: todo
+- done-when: 共通Prepare/BuildInventory由来の値所有planを公開し、final→stageの変更を出力rootだけへ限定する。始点snapshot・要求意味・fragment全件を照合して共通record採取へ渡し、全assetのkey/path/prefix/依存/spec/control path衝突を書込前に拒否する。
+- verify: 全kind/派生画像一覧、実stage cook/捕捉、始点後のsource/外部file/sidecar変化とout保持、cross-asset alias/順序罠、read-only計画、Windows CPUと79+10byte/16拒否 gate。
+- stop-when: 別の命名/増分authorityを作る、新snapshotで途中変更を黙認する、stage locatorを保存stateへ入れる、lock/journalなしでproduction公開や既存root採用を始める。
