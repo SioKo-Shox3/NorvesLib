@@ -662,3 +662,6 @@
 
 - G2-GR79-GLTF-MATERIAL-SOURCE: glTF PBR/normal/AO/emissiveFactor+KHR emissiveStrength/alpha/両面と5texture参照をdouble source値へ読み取るAPIを追加。既知field重複/型/範囲/キー・name NUL/参照範囲を検査し成功時だけ公開。texCoord0限定・textureInfo.extensions存在拒否は旧cooker同様。optional未知材質拡張はobject検査後fallback、document必須拡張gateは不変。公式schemaのnormalScale負/alphaCutoff>1/strength0以上を保持。純数値/参照/極小factorからの発光回復を通常/O2/ASanUBSan(LSan除外)/MEMBERと独立実行でPASS。nativeJson42fixture構文確認・MEMBER/CTest登録、Windows.hにより実JSONコンパイル/実行は未検証。独立レビューPASS。旧cook/profile/emission policy無変更。
 - Next: GR79(6)再読でdoubleSided autoをFromSourceと名付けた値層の不整合を発見。別taskでAutoと明示し、geometry判定待ちのmodeを保持する。素材selectorは作者回答待ち、source→cookの実接続は続く工程。
+
+- G2-GR79-DOUBLE-SIDED-AUTO: GR79(6)へ整合させprivate DoubleSidedSettingのFromSourceをAutoへ訂正。元値復帰ではなく後段の位置溶接・閉鎖性判定待ちmodeを保持する説明に修正。alphaのFromSource、enum数値1、67B canonical/FNVは不変。4source/testは逆rename+comment除去でHEADとbyte一致、通常/O2/ASanUBSan(LSan除外)3mode PASS、独立静的review PASS。geometry判定・JSON実行・cook/renderer接続は追加していない。
+- Next: 素材selector回答待ちの間、ARMの画像pixelからhistogramと焼込出力を作る処理を接続する。glTF読込sourceと設定値の準備は済み、cook/cache/runtimeの受入れは未完。

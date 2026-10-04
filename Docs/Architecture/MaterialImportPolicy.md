@@ -50,7 +50,8 @@ texture override/256byteの恒等性、AOの式、発光textureのみ・strength
 
 MaterialImportSettings は生成元profileを明示で受け取り、資産の設定に素材の指定を上書きする。
 ARMは各channelの存在maskを持ち、未指定のchannelだけ既定値を継承する。
-両面・alphaは Inherit と FromSource を分け、素材側の FromSource で資産側の強制指定を解除できる。
+両面は Inherit と Auto、alphaは Inherit と FromSource を分ける。素材側のautoは親の強制指定を解除し、形状に応じた判定へ戻す。
+両面Autoは位置溶接後の閉鎖性を使う後段処理の指定であり、単なるsource値復帰ではない。この値層では判定せずmodeを保持する。
 発光換算は素材 > 資産 > asset-set。存在する不正値は上位指定で隠さず拒否する。
 換算不在はこの段階で拒否せず、ImportEmission が source factor/strength を見て発光時だけ拒否する。
 
@@ -69,7 +70,7 @@ ParseAssetMaterialSettings は material block の値を受け、profile: source 
 ParseMaterialSettingsLayer は同じ設定値を解析するが、profile の素材単位上書きは拒否する。
 
 - arm: occlusion / roughness / metallic ごとに texture / ignore / auto / constant:<0..1> の文字列
-- doubleSided: auto / force_true / force_false。auto は元材質へ戻す指定であり、継承はfield省略で表す
+- doubleSided: auto / force_true / force_false。auto は後段の閉鎖性判定を使う指定であり、継承はfield省略で表す
 - alphaMode: from_source / force_opaque。継承はfield省略
 - emissiveNitsPerUnit: 正の有限number。未指定は発光判定時まで保持する
 

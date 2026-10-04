@@ -109,7 +109,7 @@ namespace NorvesLib::Core::AssetImport
                 const auto& text = sided.AsString();
                 if (Equals(text, "auto"))
                 {
-                    layer.DoubleSided = DoubleSidedSetting::FromSource;
+                    layer.DoubleSided = DoubleSidedSetting::Auto;
                 }
                 else if (Equals(text, "force_true"))
                 {

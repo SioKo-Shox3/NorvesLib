@@ -8,7 +8,8 @@
 namespace NorvesLib::Core::AssetImport
 {
     enum class MaterialSourceProfile : uint8_t { Source, AiGenerated };
-    enum class DoubleSidedSetting : uint8_t { Inherit, FromSource, ForceTrue, ForceFalse };
+    // Autoは後段の位置溶接後の閉鎖性判定を使う指定。元材質の値へ確定する意味ではない。
+    enum class DoubleSidedSetting : uint8_t { Inherit, Auto, ForceTrue, ForceFalse };
     enum class AlphaModeSetting : uint8_t { Inherit, FromSource, ForceOpaque };
     struct MaterialSettingsLayer
     {
@@ -23,7 +24,7 @@ namespace NorvesLib::Core::AssetImport
         MaterialSourceProfile Profile = MaterialSourceProfile::Source;
         ArmImportPolicy Arm = DefaultArmImportPolicy(false);
         EmissiveScale Emission;
-        DoubleSidedSetting DoubleSided = DoubleSidedSetting::FromSource;
+        DoubleSidedSetting DoubleSided = DoubleSidedSetting::Auto;
         AlphaModeSetting AlphaMode = AlphaModeSetting::FromSource;
     };
     enum class MaterialSettingsStatus : uint8_t

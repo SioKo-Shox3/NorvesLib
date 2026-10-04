@@ -65,7 +65,7 @@ int main()
         assert(after.Size==before.Size && std::memcmp(before.Bytes,after.Bytes,before.Size)==0);
     }
     assert(Parse(R"({"doubleSided":"auto","alphaMode":"from_source","arm":{}})",profile,layer,false)==SettingsResult::Success);
-    assert(layer.ArmMask==0 && layer.DoubleSided==DoubleSidedSetting::FromSource && layer.AlphaMode==AlphaModeSetting::FromSource && !layer.Emission.Present);
+    assert(layer.ArmMask==0 && layer.DoubleSided==DoubleSidedSetting::Auto && layer.AlphaMode==AlphaModeSetting::FromSource && !layer.Emission.Present);
     assert(Parse(R"({"profile":"source"})",profile,layer,false)==SettingsResult::UnknownField);
     assert(ParseMaterialSettingsLayer({},layer)==SettingsResult::Success && layer.ArmMask==0);
     std::puts("MaterialImportSettingsJsonTest PASS: strict_fields_profile_layers_atomic");

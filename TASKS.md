@@ -2303,7 +2303,7 @@
 - stop-when: texture有無で発光判定、normalScale負やcutoff>1を誤拒否、source doubleを換算前にfloatへ縮める、optional拡張のfallbackと必須拡張の受理を混同、wire/cook/描画へ接続済みとする。
 
 ## G2-GR79-DOUBLE-SIDED-AUTO: 両面autoの意味を閉鎖性判定待ちとして保持する
-- status: todo
+- status: done
 - done-when: GR79(6)のdoubleSided=autoは単なるsource復帰ではなく閉鎖性に応じた判断を後段で行うmodeとして保持する。private enum FromSourceをAutoへ訂正しJSON/既定/説明/テストを整合。geometry判定はこの値層で捏造せず未接続を明示する。
 - verify: enum値/canonical67B/hashのbyte不変、親forceから素材autoへ戻ること、未判定のautoをsource値確定と扱わないこと。
 - stop-when: autoを無条件にsourceと同義にする、境界辺しきい値を値parserに埋める、未実装topologyを実装済みとする。
