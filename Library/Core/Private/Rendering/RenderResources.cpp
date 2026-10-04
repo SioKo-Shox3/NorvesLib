@@ -3,6 +3,7 @@
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/GpuRetireQueue.h"
 #include "Rendering/SparsePagePool.h"
+#include "Rendering/TileUploader.h"
 #include "Rendering/SkinnedMeshGpuStore.h"
 #include "Rendering/VideoMemoryBudgetLogGate.h"
 #include "Rendering/MegaGeometryResourceStore.h"
@@ -88,6 +89,9 @@ namespace NorvesLib::Core::Rendering
         // sparse テクスチャへ結ぶ物理メモリのページ。sparse に対応しないデバイスでは作らない。
         // 期限の来た返却は RetireQueue を通ってここへ戻るので、Shutdown では RetireQueue を片付けてから手放す。
         Container::TUniquePtr<SparsePagePool> SparsePool;
+        // タイル・ミップテイルのデータをステージングのリング経由でテクスチャの領域へ書く経路。sparse に対応しないデバイスでは作らない。
+        // リングのバッファは GPU が止まってから手放す（Shutdown の WaitIdle の後）。
+        Container::TUniquePtr<TileUploader> TileUpload;
         Container::TUniquePtr<SkinnedMeshGpuStore> SkinnedMeshes;
         Container::TUniquePtr<GpuResourceStore> GpuResources;
         Container::TUniquePtr<ProceduralMeshGpuStore> ProceduralMeshes;
@@ -841,6 +845,7 @@ namespace NorvesLib::Core::Rendering
             if (sparse.bSparseBinding && sparse.bResidencyImage2D)
             {
                 m_Impl->SparsePool = Container::MakeUnique<SparsePagePool>(m_Impl->Device);
+                m_Impl->TileUpload = Container::MakeUnique<TileUploader>(m_Impl->Device);
             }
         }
         m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
@@ -877,6 +882,7 @@ namespace NorvesLib::Core::Rendering
         }
         // GPU が止まったので、待っていた RHI 資源を期限を問わず全部破棄する。
         m_Impl->RetireQueue.Clear();
+        m_Impl->TileUpload.reset();
         m_Impl->SparsePool.reset();
         if (m_Impl->SkinnedMeshes)
         {
@@ -909,6 +915,10 @@ namespace NorvesLib::Core::Rendering
     void RenderResources::BeginRetireFrame(uint64_t completedSubmissionSerial)
     {
         m_Impl->RetireQueue.BeginFrame(completedSubmissionSerial);
+        if (m_Impl->TileUpload)
+        {
+            m_Impl->TileUpload->BeginFrame(completedSubmissionSerial);
+        }
         // 期限の来たページがプールへ戻った後の使用量を、変わっていれば台帳へ出す
         if (m_Impl->SparsePool)
         {
@@ -919,11 +929,29 @@ namespace NorvesLib::Core::Rendering
     void RenderResources::CommitRetireFrame(uint64_t submissionSerial)
     {
         m_Impl->RetireQueue.CommitFrame(submissionSerial);
+        if (m_Impl->TileUpload)
+        {
+            m_Impl->TileUpload->CommitFrame(submissionSerial);
+        }
     }
 
     void RenderResources::AbortRetireFrame()
     {
         m_Impl->RetireQueue.AbortFrame();
+        if (m_Impl->TileUpload)
+        {
+            m_Impl->TileUpload->AbortFrame();
+        }
+    }
+
+    uint32_t RenderResources::RecordTileUploads(RHI::ICommandList &commandList)
+    {
+        return m_Impl->TileUpload ? m_Impl->TileUpload->RecordCopies(commandList) : 0u;
+    }
+
+    TileUploader *RenderResources::GetTileUploader() const
+    {
+        return m_Impl->TileUpload.get();
     }
 
     SparsePagePool *RenderResources::GetSparsePagePool() const

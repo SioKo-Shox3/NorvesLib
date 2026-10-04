@@ -358,6 +358,17 @@ set_tests_properties(SparseBindVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# ステージングのリング経由で、sparse テクスチャのタイル・ミップテイルへ GPU を待たずに書く（TileUploader）。
+# 連続フレームで書いて読み戻し、その間に WaitIdle を呼ばないこと、リングの区画が提出の完了まで再利用されないこと、
+# 1フレームのコピー量の上限、提出しなかったフレームの出し直しを確かめる。
+add_test(NAME SparseTileUploadVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseTileUploadVulkanTest)
+set_tests_properties(SparseTileUploadVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME VideoMemoryBudgetVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetVulkanTest)
 set_tests_properties(VideoMemoryBudgetVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -376,6 +387,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
     MEMBER SparseTextureVulkanTest SparseTextureVulkanTest.cpp
     MEMBER SparseBindVulkanTest SparseBindVulkanTest.cpp
+    MEMBER SparseTileUploadVulkanTest SparseTileUploadVulkanTest.cpp
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)

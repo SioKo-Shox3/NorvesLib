@@ -2698,6 +2698,12 @@ namespace NorvesLib::Core::Rendering
 
         // コマンド録画開始
         m_CommandList->BeginRecording();
+        // ステージングのリングに置いたタイル・ミップテイルのデータを、描画のコマンドの先頭でテクスチャの領域へコピーする
+        // （GPU を待たない。render pass の外で、他の記録より前）。
+        if (m_RenderResources)
+        {
+            m_RenderResources->RecordTileUploads(*m_CommandList);
+        }
         PublishCompletedGPUTimestampResults();
         ScopedGPUTimestampFrameRecording gpuTimestampFrameGuard(
             m_CommandList.get(),

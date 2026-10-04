@@ -170,7 +170,7 @@
 - notes: 危険地帯（RHI/Vulkan・メモリ・寿命）。
 
 ## VTG2-TILE-UPLOAD: ステージングのリングからタイルへGPUを待たずに書く
-- status: todo
+- status: done
 - done-when: 毎フレームのステージングのリング（既定 32 MiB、DeviceLocal でない host-visible）に置いたタイル・ミップテイルのデータを、描画のコマンドの先頭でバッファからイメージの領域へコピーする経路を作る（`VulkanTexture::Update` の waitIdle の経路は使わない）。リングの区画は、その提出の serial が完了するまで再利用しない。1フレームにコピーする量の上限（既定 24 MiB）を持つ。GPU のテスト `SparseTileUploadVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、連続する複数フレームでタイルを書いて読み戻し、その間に `WaitIdle` を呼ばないことを確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(SparseTileUploadVulkanTest|SparseBindVulkanTest|RHITextureUpdateVulkanTest)$"`

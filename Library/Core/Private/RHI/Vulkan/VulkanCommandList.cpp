@@ -1494,6 +1494,63 @@ namespace NorvesLib::RHI::Vulkan
             &region);
     }
 
+    namespace
+    {
+        // 矩形コピーの領域を Vulkan の記述へ変換する。バッファ側は行を詰めて並べる。
+        vk::BufferImageCopy MakeBufferImageCopyRegion(const TextureRegionCopy& region)
+        {
+            vk::BufferImageCopy copy;
+            copy.bufferOffset = region.BufferOffset;
+            copy.bufferRowLength = 0;
+            copy.bufferImageHeight = 0;
+            copy.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+            copy.imageSubresource.mipLevel = region.MipLevel;
+            copy.imageSubresource.baseArrayLayer = region.ArrayIndex;
+            copy.imageSubresource.layerCount = 1;
+            copy.imageOffset = vk::Offset3D{static_cast<int32_t>(region.OffsetX), static_cast<int32_t>(region.OffsetY), 0};
+            copy.imageExtent = vk::Extent3D{region.Width, region.Height, 1};
+            return copy;
+        }
+    } // namespace
+
+    bool VulkanCommandList::CopyBufferToTextureRegion(BufferPtr src, TexturePtr dst, const TextureRegionCopy& region)
+    {
+        auto vkSrc = DynamicPointerCast<VulkanBuffer>(src);
+        auto vkDst = DynamicPointerCast<VulkanTexture>(dst);
+        if (!vkSrc || !vkDst || region.Width == 0 || region.Height == 0)
+        {
+            return false;
+        }
+
+        const vk::BufferImageCopy copy = MakeBufferImageCopyRegion(region);
+        m_commandBuffer.copyBufferToImage(
+            vkSrc->GetVkBuffer(),
+            vkDst->GetVkImage(),
+            vk::ImageLayout::eTransferDstOptimal,
+            1,
+            &copy);
+        return true;
+    }
+
+    bool VulkanCommandList::CopyTextureRegionToBuffer(TexturePtr src, BufferPtr dst, const TextureRegionCopy& region)
+    {
+        auto vkSrc = DynamicPointerCast<VulkanTexture>(src);
+        auto vkDst = DynamicPointerCast<VulkanBuffer>(dst);
+        if (!vkSrc || !vkDst || region.Width == 0 || region.Height == 0)
+        {
+            return false;
+        }
+
+        const vk::BufferImageCopy copy = MakeBufferImageCopyRegion(region);
+        m_commandBuffer.copyImageToBuffer(
+            vkSrc->GetVkImage(),
+            vk::ImageLayout::eTransferSrcOptimal,
+            vkDst->GetVkBuffer(),
+            1,
+            &copy);
+        return true;
+    }
+
     void VulkanCommandList::CopyTexture(TexturePtr src, TexturePtr dst,
                                         uint32_t width, uint32_t height,
                                         uint32_t srcMipLevel, uint32_t srcArrayIndex,

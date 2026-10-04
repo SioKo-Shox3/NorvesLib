@@ -60,6 +60,8 @@ namespace NorvesLib::RHI::Vulkan
         std::atomic<bool> g_validationErrorCaptureActive{false};
         std::atomic<uint32_t> g_validationErrorCaptureHitCount{0};
         std::atomic<uint32_t> g_safeDeviceTeardownLeakCount{0};
+        // vkDeviceWaitIdle を呼んだ回数（GPU を待たない経路のテスト用）
+        std::atomic<uint64_t> g_waitIdleCallCount{0};
         thread_local vk::Device g_textureUpdateSyncScopeDevice{};
         thread_local vk::Device g_registeredTextureUpdateStagingDevice{};
         thread_local vk::Buffer g_registeredTextureUpdateStagingBuffer{};
@@ -263,6 +265,11 @@ namespace NorvesLib::RHI::Vulkan
     uint32_t GetVulkanValidationErrorCaptureHitCountForTesting() noexcept
     {
         return g_validationErrorCaptureHitCount.load(std::memory_order_relaxed);
+    }
+
+    uint64_t GetVulkanDeviceWaitIdleCallCountForTesting() noexcept
+    {
+        return g_waitIdleCallCount.load(std::memory_order_relaxed);
     }
 
     uint32_t GetVulkanSafeDeviceTeardownLeakCountForTesting() noexcept
@@ -2510,6 +2517,7 @@ namespace NorvesLib::RHI::Vulkan
 
     VkResult VulkanDevice::WaitIdleInternal() noexcept
     {
+        g_waitIdleCallCount.fetch_add(1, std::memory_order_relaxed);
         VkResult result = VK_SUCCESS;
         if (g_waitIdleFailureDevice == this && g_waitIdleFailuresRemaining > 0)
         {

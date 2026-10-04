@@ -21,6 +21,7 @@
 namespace NorvesLib::RHI
 {
     class IBuffer;
+    class ICommandList;
     class IDevice;
     class IShader;
     class ITexture;
@@ -40,6 +41,7 @@ namespace NorvesLib::Core::Rendering
     class TextureAssetRuntime;
     class RenderWorld;
     class SparsePagePool;
+    class TileUploader;
 
     class GpuResources
     {
@@ -275,6 +277,13 @@ namespace NorvesLib::Core::Rendering
 
         // sparse テクスチャへ結ぶ物理メモリのページのプール。sparse に対応しないデバイス・未初期化では nullptr。
         SparsePagePool *GetSparsePagePool() const;
+
+        // 積んであるタイル・ミップテイルのコピーを、フレームのコマンドの先頭へ記録する（RenderThread。
+        // render pass の外で、BeginRetireFrame の後・コマンドを開いた直後に呼ぶ）。記録したコピーの数を返す。
+        // sparse に対応しないデバイス・未初期化では何もせず 0。
+        uint32_t RecordTileUploads(RHI::ICommandList &commandList);
+        // ステージングのリング経由でテクスチャの領域へ書く経路。sparse に対応しないデバイス・未初期化では nullptr。
+        TileUploader *GetTileUploader() const;
 
         bool ReloadAssetRuntimeSnapshot(
             const Container::String& assetRoot,
