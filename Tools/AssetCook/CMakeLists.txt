@@ -8,13 +8,32 @@ add_executable(AssetCook
     TextureCooker.h
 )
 
-target_link_libraries(AssetCook PRIVATE Core)
+# BC エンコーダ(bc7enc_rdo)は AssetCook だけがリンクする。Core・Game には入れない。
+add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/bc7enc_rdo
+    ${CMAKE_BINARY_DIR}/ThirdParty/bc7enc_rdo)
+
+add_library(AssetCookBlockCompressor STATIC
+    BlockCompressor.cpp
+    BlockCompressor.h
+)
+target_link_libraries(AssetCookBlockCompressor PUBLIC NorvesThirdParty_Bc7Enc)
+target_include_directories(AssetCookBlockCompressor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(AssetCookBlockCompressor PROPERTIES FOLDER "Tools")
+
+target_link_libraries(AssetCook PRIVATE Core AssetCookBlockCompressor)
 target_include_directories(AssetCook PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
 )
 
 set_target_properties(AssetCook PROPERTIES FOLDER "Tools")
+
+# ブロック圧縮のスモーク。AssetCook をビルドするときに一緒にビルドされるよう依存を張る。
+add_executable(AssetCookBlockCompressSmoke AssetCookBlockCompressSmoke.cpp)
+target_link_libraries(AssetCookBlockCompressSmoke PRIVATE AssetCookBlockCompressor)
+set_target_properties(AssetCookBlockCompressSmoke PROPERTIES FOLDER "Tools")
+add_dependencies(AssetCook AssetCookBlockCompressSmoke)
+add_test(NAME AssetCookBlockCompressSmoke COMMAND $<TARGET_FILE:AssetCookBlockCompressSmoke>)
 
 set(ASSET_COOK_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>")
 add_test(NAME AssetCookRawSmoke

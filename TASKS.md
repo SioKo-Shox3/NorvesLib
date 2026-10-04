@@ -73,7 +73,7 @@
 - notes: 計画書 4.2。glTF の ARM の分割（`TrySplitPreparedCookedTextureMip0RGBA8UNormLinear`）は RGBA8 のときだけ通し、BC では通さない（呼ばれたら理由を返して失敗する）。危険地帯（アセットロード）。
 
 ## VTG1-BC7ENC-VENDOR: bc7enc_rdoを取り込み、クッカーの圧縮の境界を作る
-- status: todo
+- status: done
 - done-when: `Library/ThirdParty/bc7enc_rdo/` に固定した commit のソースと `LICENSE`、`UPSTREAM.json`（版・commit・取得元・sha256・SPDX）を置き、独立の静的ライブラリ `NorvesThirdParty_Bc7Enc` を作って `AssetCook` にだけリンクする（Core・Game はリンクしない）。`Tools/AssetCook` に `BlockCompressor`（RGBA8 から BC1・BC4・BC5・BC7 のブロックを作る薄い境界。並列はスレッドで画像を帯に分ける）を足す。スモーク `AssetCookBlockCompressSmoke`（`Tools/AssetCook/CMakeLists.txt` の add_test）が、64×64 の既知の画像を各形式で圧縮し bc7enc_rdo の復号で戻した PSNR（BC7・BC5・BC4 ≥ 40 dB、BC1 ≥ 32 dB）を確かめる。
 - verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(AssetCookBlockCompressSmoke|AssetCookTextureSmoke)$"`
