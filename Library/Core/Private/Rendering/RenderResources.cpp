@@ -4,6 +4,7 @@
 #include "Rendering/GpuRetireQueue.h"
 #include "Rendering/SparsePagePool.h"
 #include "Rendering/TileUploader.h"
+#include "Rendering/VirtualTextureFeedbackRing.h"
 #include "Rendering/SkinnedMeshGpuStore.h"
 #include "Rendering/VideoMemoryBudgetLogGate.h"
 #include "Rendering/VideoMemoryBudgetManager.h"
@@ -93,6 +94,8 @@ namespace NorvesLib::Core::Rendering
         // タイル・ミップテイルのデータをステージングのリング経由でテクスチャの領域へ書く経路。sparse に対応しないデバイスでは作らない。
         // リングのバッファは GPU が止まってから手放す（Shutdown の WaitIdle の後）。
         Container::TUniquePtr<TileUploader> TileUpload;
+        // VT の要求のバッファ（3つ）の読み戻しと集計。sparse に対応しないデバイスでは作らない。GPU が止まってから手放す。
+        Container::TUniquePtr<VirtualTextureFeedbackRing> VtFeedback;
         Container::TUniquePtr<SkinnedMeshGpuStore> SkinnedMeshes;
         Container::TUniquePtr<GpuResourceStore> GpuResources;
         Container::TUniquePtr<ProceduralMeshGpuStore> ProceduralMeshes;
@@ -850,6 +853,7 @@ namespace NorvesLib::Core::Rendering
             {
                 m_Impl->SparsePool = Container::MakeUnique<SparsePagePool>(m_Impl->Device);
                 m_Impl->TileUpload = Container::MakeUnique<TileUploader>(m_Impl->Device);
+                m_Impl->VtFeedback = Container::MakeUnique<VirtualTextureFeedbackRing>(m_Impl->Device);
             }
         }
         m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
@@ -887,6 +891,7 @@ namespace NorvesLib::Core::Rendering
         // GPU が止まったので、待っていた RHI 資源を期限を問わず全部破棄する。
         m_Impl->RetireQueue.Clear();
         m_Impl->TileUpload.reset();
+        m_Impl->VtFeedback.reset();
         m_Impl->SparsePool.reset();
         if (m_Impl->SkinnedMeshes)
         {
@@ -923,6 +928,10 @@ namespace NorvesLib::Core::Rendering
         {
             m_Impl->TileUpload->BeginFrame(completedSubmissionSerial);
         }
+        if (m_Impl->VtFeedback)
+        {
+            m_Impl->VtFeedback->BeginFrame(completedSubmissionSerial);
+        }
         // 期限の来たページがプールへ戻った後の使用量を、変わっていれば台帳へ出す
         if (m_Impl->SparsePool)
         {
@@ -937,6 +946,10 @@ namespace NorvesLib::Core::Rendering
         {
             m_Impl->TileUpload->CommitFrame(submissionSerial);
         }
+        if (m_Impl->VtFeedback)
+        {
+            m_Impl->VtFeedback->CommitFrame(submissionSerial);
+        }
     }
 
     void RenderResources::AbortRetireFrame()
@@ -945,6 +958,10 @@ namespace NorvesLib::Core::Rendering
         if (m_Impl->TileUpload)
         {
             m_Impl->TileUpload->AbortFrame();
+        }
+        if (m_Impl->VtFeedback)
+        {
+            m_Impl->VtFeedback->AbortFrame();
         }
     }
 
@@ -956,6 +973,16 @@ namespace NorvesLib::Core::Rendering
     TileUploader *RenderResources::GetTileUploader() const
     {
         return m_Impl->TileUpload.get();
+    }
+
+    VirtualTextureFeedbackRing *RenderResources::GetVirtualTextureFeedback() const
+    {
+        return m_Impl->VtFeedback.get();
+    }
+
+    bool RenderResources::TakeVirtualTextureRequests(VirtualTextureRequestSet &out)
+    {
+        return m_Impl->VtFeedback ? m_Impl->VtFeedback->TakeRequests(out) : false;
     }
 
     SparsePagePool *RenderResources::GetSparsePagePool() const

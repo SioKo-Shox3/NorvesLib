@@ -207,7 +207,7 @@
 - notes: 2026-10-04 親: 計画書 4.2 の「常駐ミップの地図＋ MinLod」から、residency の符号で粗いミップへ逃げる方式に変えた（材質ごとの地図の binding を増やさずに済み、非常駐は過渡的なので追加のサンプルは一時的）。異方性フィルタは逃げた画素だけ失う。
 
 ## VTG2-FEEDBACK-WRITE: 材質のサンプルの箇所からタイルの要求をGPUのバッファへ書く
-- status: todo
+- status: blocked
 - done-when: VT の材質の UBO にテクスチャの番号（VT の表の添字）を持たせ、3つの frag が、4×4 の画素のうちフレームごとに巡回する1画素で、`textureQueryLod` から欲しいミップ（POM の後の UV）と、そのミップのタイルの x・y を求め、フレームの要求のバッファ（storage buffer、既定 64K 件、32bit に詰めた番号・ミップ・x・y）へ書く。重複は小さなハッシュの表（atomicCompSwap）で減らす。非常駐で粗いミップへ逃げた画素は巡回によらず要求を書く。GPU のテスト `VirtualTextureFeedbackVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、既知の UV の面を描いて期待のタイルの要求が書かれることを確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureFeedbackVulkanTest|VirtualTextureResidencyVulkanTest|RenderGraphCompileTest)$"`
@@ -216,7 +216,7 @@
 - notes: 計画書 4.2。段6でビジビリティバッファの材質の解決パスへまとめる。
 
 ## VTG2-FEEDBACK-READ: 要求を数フレーム遅れで読み戻して集計する
-- status: todo
+- status: done
 - done-when: 要求のバッファを3つのリングで持ち、2フレーム前のものを GPU を待たずに読み戻して、テクスチャごとのタイルの要求の集合（同じタイルは1つ、最後に要求したフレームを持つ）にまとめる。RenderThread を止めない。集計の結果を `VirtualTextureRequestSet` として VT のストリーマへ渡す。CPU のテスト `VirtualTextureRequestSetTest`（`RenderResourcesDomainContractTest` の束）が、詰めた要求の復号・重複の除去・溢れた件数の数え方を確かめる。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureRequestSetTest|VirtualTextureFeedbackVulkanTest)$"`

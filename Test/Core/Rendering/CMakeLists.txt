@@ -1729,6 +1729,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
     MEMBER VideoMemoryBudgetManagerTest VideoMemoryBudgetManagerTest.cpp
     MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
+    MEMBER VirtualTextureRequestSetTest VirtualTextureRequestSetTest.cpp
     MEMBER RHIBlockCompressedFormatTest RHIBlockCompressedFormatTest.cpp
 )
 target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
@@ -1742,6 +1743,8 @@ add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContra
 add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
 add_test(NAME VideoMemoryBudgetManagerTest COMMAND RenderResourcesDomainContractTest --test=VideoMemoryBudgetManagerTest)
 add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)
+# 1語へ詰めた VT の要求の復号・重複の除去・溢れた件数と、3つのバッファのリングが完了したものだけを GPU を待たずに読み戻すこと。
+add_test(NAME VirtualTextureRequestSetTest COMMAND RenderResourcesDomainContractTest --test=VirtualTextureRequestSetTest)
 add_test(NAME RHIBlockCompressedFormatTest COMMAND RenderResourcesDomainContractTest --test=RHIBlockCompressedFormatTest)
 
 add_executable(MeshResourcesPrimitiveTest

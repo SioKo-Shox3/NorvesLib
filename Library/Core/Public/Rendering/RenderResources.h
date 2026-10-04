@@ -43,6 +43,8 @@ namespace NorvesLib::Core::Rendering
     class RenderWorld;
     class SparsePagePool;
     class TileUploader;
+    class VirtualTextureFeedbackRing;
+    class VirtualTextureRequestSet;
 
     class GpuResources
     {
@@ -291,6 +293,14 @@ namespace NorvesLib::Core::Rendering
         uint32_t RecordTileUploads(RHI::ICommandList &commandList);
         // ステージングのリング経由でテクスチャの領域へ書く経路。sparse に対応しないデバイス・未初期化では nullptr。
         TileUploader *GetTileUploader() const;
+
+        // VT の要求（材質のシェーダーが書くタイルの要求）を、3つのバッファのリングで数フレーム遅れて読み戻して集計する仕組み。
+        // 提出が完了したバッファだけを GPU を待たずに読むので、RenderThread は止まらない。BeginRetireFrame・CommitRetireFrame・
+        // AbortRetireFrame で一緒に進む。sparse に対応しないデバイス・未初期化では nullptr。初期状態は無効（SetEnabled で有効にする）。
+        VirtualTextureFeedbackRing *GetVirtualTextureFeedback() const;
+        // 溜まった要求の集計を out へ渡し、こちらは空に戻す（VT のストリーマが毎フレーム呼ぶ。どのスレッドからでもよい）。
+        // 要求も溢れた件数も無いとき・リングが無いときは false で、out は変えない。
+        bool TakeVirtualTextureRequests(VirtualTextureRequestSet &out);
 
         bool ReloadAssetRuntimeSnapshot(
             const Container::String& assetRoot,
