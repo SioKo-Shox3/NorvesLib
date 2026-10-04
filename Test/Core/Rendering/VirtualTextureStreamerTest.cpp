@@ -1,15 +1,21 @@
 ﻿// VT のストリーマ（VirtualTextureStreamer）の契約テスト。
 // 要求の集合から未常駐のタイルを優先度順に選んで読み、ページを結び、コピーを積んで常駐させること、
-// 1 フレームの上限（読み・結び付け・コピーの数と量。ミップテイルも同じ予算）、同じタイルの二重の要求、
+// 1 フレームの上限（読み・結び付け・コピーの数と量。ミップテイルも最初の 1 件も同じ予算で、収まらないテイルは
+// 公開しないまま複数フレームに分けて書く。処理できない上限の設定は登録で拒否する）、同じタイルの二重の要求、
 // 読み込みの失敗と再試行、結び付けの前にコピーを積むこと（結んだページが未コピーのまま残らない）、
 // 結び付けの失敗・コピーを積めないとき・プールが尽きたときの扱い、解除したページの遅延返却と
-// 解除したテクスチャ宛てのコピーの無効化、要求の件数による優先度を、読み込みも GPU も偽物にして確かめる。
+// 解除したテクスチャ宛てのコピーの無効化、優先度（粗いミップ → 要求の件数 → 最近）を、読み込みも GPU も偽物にして確かめる。
+// 解除したテクスチャ宛てのコピーの無効化は、実物の TileUploader・GpuRetireQueue・本番の窓口でも確かめる
+// （記録 → Abort → 登録解除 → ページの再取得 → 次のフレーム）。
 #include "Asset/CookedTextureFormat.h"
+#include "Rendering/CookedVirtualTexture.h"
 #include "Rendering/GpuRetireQueue.h"
 #include "Rendering/SparsePagePool.h"
+#include "Rendering/TileUploader.h"
 #include "Rendering/VirtualTextureRequestSet.h"
 #include "Rendering/VirtualTextureStreamer.h"
 #include "RHI/IBuffer.h"
+#include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/IFramebuffer.h"
 #include "RHI/IGPUResourceAllocator.h"
@@ -23,6 +29,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <utility>
 
 namespace NorvesLib
 {
@@ -32,10 +39,12 @@ namespace
 using Core::Container::MakeShared;
 using Core::Container::TSharedPtr;
 using Core::Container::VariableArray;
+using Core::Rendering::DeviceVirtualTextureGpu;
 using Core::Rendering::GpuRetireQueue;
 using Core::Rendering::IVirtualTextureGpu;
 using Core::Rendering::IVirtualTextureTileSource;
 using Core::Rendering::SparsePagePool;
+using Core::Rendering::TileUploader;
 using Core::Rendering::VirtualTextureFrameResult;
 using Core::Rendering::VirtualTextureRegistration;
 using Core::Rendering::VirtualTextureRequestSet;
@@ -117,10 +126,296 @@ public:
     uint64_t SizeBytes;
 };
 
+// ---- 偽物: バッファ（TileUploader のリング）----
+
+class FakeBuffer final : public RHI::IBuffer
+{
+public:
+    explicit FakeBuffer(const RHI::BufferDesc& desc) : Desc(desc), Bytes(static_cast<size_t>(desc.Size), 0u) {}
+    uint64_t GetSize() const override { return Desc.Size; }
+    void* Map(uint64_t offset = 0, uint64_t = 0) override
+    {
+        return offset < Bytes.size() ? Bytes.data() + static_cast<size_t>(offset) : nullptr;
+    }
+    void Unmap() override {}
+    void Update(const void*, uint64_t, uint64_t = 0) override {}
+    RHI::ResourceUsage GetUsage() const override { return Desc.Usage; }
+
+    RHI::BufferDesc Desc;
+    VariableArray<uint8_t> Bytes;
+};
+
+// ---- 偽物: コマンドリスト（TileUploader::RecordCopies の記録先）----
+
+class FakeCommandList final : public RHI::ICommandList
+{
+public:
+    struct CopyRecord
+    {
+        const RHI::ITexture* Texture = nullptr;
+        RHI::TextureRegionCopy Region;
+    };
+
+    bool CopyBufferToTextureRegion(RHI::BufferPtr, RHI::TexturePtr dst, const RHI::TextureRegionCopy& region) override
+    {
+        CopyRecord record;
+        record.Texture = dst.get();
+        record.Region = region;
+        Copies.push_back(record);
+        return true;
+    }
+
+    // 記録されたコピーのうち、texture 宛ての数
+    size_t CountCopiesTo(const RHI::ITexture* texture) const
+    {
+        size_t count = 0;
+        for (const CopyRecord& record : Copies)
+        {
+            if (record.Texture == texture)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    VariableArray<CopyRecord> Copies;
+
+    void Begin() override {}
+    void End() override {}
+    void Submit(bool waitForCompletion = false) override { (void)waitForCompletion; }
+    void BeginRenderPass(RHI::RenderPassPtr renderPass, RHI::FramebufferPtr framebuffer) override
+    {
+        (void)renderPass;
+        (void)framebuffer;
+    }
+    void EndRenderPass() override {}
+    void SetViewport(const RHI::Viewport& viewport) override { (void)viewport; }
+    void SetScissor(const RHI::ScissorRect& scissor) override { (void)scissor; }
+    void SetPipeline(RHI::PipelinePtr pipeline) override { (void)pipeline; }
+    void SetVertexBuffer(RHI::BufferPtr buffer, uint64_t offset = 0, uint32_t slot = 0) override
+    {
+        (void)buffer;
+        (void)offset;
+        (void)slot;
+    }
+    void SetIndexBuffer(RHI::BufferPtr buffer, uint64_t offset = 0, RHI::IndexType = RHI::IndexType::Uint32) override
+    {
+        (void)buffer;
+        (void)offset;
+    }
+    void SetConstantBuffer(RHI::BufferPtr buffer, uint32_t slot, RHI::ShaderStage stage) override
+    {
+        (void)buffer;
+        (void)slot;
+        (void)stage;
+    }
+    void SetTexture(RHI::TexturePtr texture, uint32_t slot, RHI::ShaderStage stage) override
+    {
+        (void)texture;
+        (void)slot;
+        (void)stage;
+    }
+    void SetSampler(RHI::SamplerPtr sampler, uint32_t slot, RHI::ShaderStage stage) override
+    {
+        (void)sampler;
+        (void)slot;
+        (void)stage;
+    }
+    void SetDescriptorSet(RHI::DescriptorSetPtr descriptorSet, uint32_t slot = 0) override
+    {
+        (void)descriptorSet;
+        (void)slot;
+    }
+    void DrawIndexed(uint32_t indexCount, uint32_t startIndexLocation = 0, int32_t baseVertexLocation = 0) override
+    {
+        (void)indexCount;
+        (void)startIndexLocation;
+        (void)baseVertexLocation;
+    }
+    void Draw(uint32_t vertexCount, uint32_t startVertexLocation = 0) override
+    {
+        (void)vertexCount;
+        (void)startVertexLocation;
+    }
+    void DrawIndexedInstanced(uint32_t indexCount,
+                              uint32_t instanceCount,
+                              uint32_t startIndexLocation = 0,
+                              int32_t baseVertexLocation = 0,
+                              uint32_t startInstanceLocation = 0) override
+    {
+        (void)indexCount;
+        (void)instanceCount;
+        (void)startIndexLocation;
+        (void)baseVertexLocation;
+        (void)startInstanceLocation;
+    }
+    void DrawInstanced(uint32_t vertexCount,
+                       uint32_t instanceCount,
+                       uint32_t startVertexLocation = 0,
+                       uint32_t startInstanceLocation = 0) override
+    {
+        (void)vertexCount;
+        (void)instanceCount;
+        (void)startVertexLocation;
+        (void)startInstanceLocation;
+    }
+    void DrawIndexedIndirect(RHI::BufferPtr indirectBuffer,
+                             uint64_t offset,
+                             uint32_t drawCount,
+                             uint32_t stride) override
+    {
+        (void)indirectBuffer;
+        (void)offset;
+        (void)drawCount;
+        (void)stride;
+    }
+    void DrawIndexedIndirectCount(RHI::BufferPtr indirectBuffer,
+                                  uint64_t indirectOffset,
+                                  RHI::BufferPtr countBuffer,
+                                  uint64_t countOffset,
+                                  uint32_t maxDrawCount,
+                                  uint32_t stride) override
+    {
+        (void)indirectBuffer;
+        (void)indirectOffset;
+        (void)countBuffer;
+        (void)countOffset;
+        (void)maxDrawCount;
+        (void)stride;
+    }
+    void FillBuffer(RHI::BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value) override
+    {
+        (void)buffer;
+        (void)offset;
+        (void)size;
+        (void)value;
+    }
+    void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) override
+    {
+        (void)threadGroupCountX;
+        (void)threadGroupCountY;
+        (void)threadGroupCountZ;
+    }
+    void CopyBuffer(RHI::BufferPtr src,
+                    RHI::BufferPtr dst,
+                    uint64_t size = 0,
+                    uint64_t srcOffset = 0,
+                    uint64_t dstOffset = 0) override
+    {
+        (void)src;
+        (void)dst;
+        (void)size;
+        (void)srcOffset;
+        (void)dstOffset;
+    }
+    void CopyBufferToTexture(RHI::BufferPtr src,
+                             RHI::TexturePtr dst,
+                             uint32_t width,
+                             uint32_t height,
+                             uint64_t bufferOffset = 0,
+                             uint32_t mipLevel = 0,
+                             uint32_t arrayIndex = 0) override
+    {
+        (void)src;
+        (void)dst;
+        (void)width;
+        (void)height;
+        (void)bufferOffset;
+        (void)mipLevel;
+        (void)arrayIndex;
+    }
+    void CopyTextureToBuffer(RHI::TexturePtr src,
+                             RHI::BufferPtr dst,
+                             uint32_t width,
+                             uint32_t height,
+                             uint64_t bufferOffset = 0,
+                             uint32_t mipLevel = 0,
+                             uint32_t arrayIndex = 0) override
+    {
+        (void)src;
+        (void)dst;
+        (void)width;
+        (void)height;
+        (void)bufferOffset;
+        (void)mipLevel;
+        (void)arrayIndex;
+    }
+    void CopyTexture(RHI::TexturePtr src,
+                     RHI::TexturePtr dst,
+                     uint32_t width,
+                     uint32_t height,
+                     uint32_t srcMipLevel = 0,
+                     uint32_t srcArrayIndex = 0,
+                     uint32_t dstMipLevel = 0,
+                     uint32_t dstArrayIndex = 0) override
+    {
+        (void)src;
+        (void)dst;
+        (void)width;
+        (void)height;
+        (void)srcMipLevel;
+        (void)srcArrayIndex;
+        (void)dstMipLevel;
+        (void)dstArrayIndex;
+    }
+    void GenerateMipmaps(RHI::TexturePtr texture) override { (void)texture; }
+    void BufferBarrier(RHI::BufferPtr buffer,
+                       RHI::ResourceState beforeState,
+                       RHI::ResourceState afterState,
+                       uint64_t offset = 0,
+                       uint64_t size = 0) override
+    {
+        (void)buffer;
+        (void)beforeState;
+        (void)afterState;
+        (void)offset;
+        (void)size;
+    }
+    void TextureBarrier(RHI::TexturePtr texture,
+                        RHI::ResourceState beforeState,
+                        RHI::ResourceState afterState,
+                        uint32_t mipLevel = 0,
+                        uint32_t arrayIndex = 0,
+                        uint32_t mipCount = 0,
+                        uint32_t arrayCount = 0) override
+    {
+        (void)texture;
+        (void)beforeState;
+        (void)afterState;
+        (void)mipLevel;
+        (void)arrayIndex;
+        (void)mipCount;
+        (void)arrayCount;
+    }
+};
+
 class FakeDevice final : public RHI::IDevice
 {
 public:
-    RHI::BufferPtr CreateBuffer(const RHI::BufferDesc&) override { return {}; }
+    // BindSparse で結ばれたページ（どのテクスチャへどのページを結んだか）
+    struct BoundPage
+    {
+        const RHI::ITexture* Texture = nullptr;
+        const RHI::ISparseMemoryBlock* Block = nullptr;
+        uint64_t OffsetBytes = 0;
+        bool bTail = false;
+    };
+
+    RHI::BufferPtr CreateBuffer(const RHI::BufferDesc& desc) override { return MakeShared<FakeBuffer>(desc); }
+    bool BindSparse(const RHI::SparseBindRequest& request) override
+    {
+        ++BindSparseCalls;
+        for (const RHI::SparseTileBind& tile : request.Tiles)
+        {
+            BoundPages.push_back({tile.Texture, tile.Page.Block, tile.Page.OffsetBytes, false});
+        }
+        for (const RHI::SparseMipTailBind& tail : request.MipTails)
+        {
+            BoundPages.push_back({tail.Texture, tail.Page.Block, tail.Page.OffsetBytes, true});
+        }
+        return true;
+    }
     RHI::TexturePtr CreateTexture(const RHI::TextureDesc&) override { return {}; }
     RHI::SamplerPtr CreateSampler(const RHI::SamplerDesc&) override { return {}; }
     RHI::SparseMemoryBlockPtr CreateSparseMemoryBlock(uint64_t sizeBytes, const char*) override
@@ -146,6 +441,8 @@ public:
     }
 
     RHI::DeviceCapabilities Capabilities;
+    int BindSparseCalls = 0;
+    VariableArray<BoundPage> BoundPages;
 };
 
 // ---- 偽物: 読み込みの窓口 ----
@@ -458,6 +755,98 @@ void AddRequest(VirtualTextureRequestSet& set,
 {
     set.Add(MakeKey(texture, mip, x, y), frame, hits);
 }
+
+// 実物の TileUploader・GpuRetireQueue・本番の窓口（DeviceVirtualTextureGpu）につないだ道具一式。
+// 結び付けとコピーの記録先だけが偽物（デバイスとコマンドリスト）。プールは 2 ページだけ持てて、解除したページを
+// すぐ別のテクスチャが借り直す。ストリーマより長く生きる物を先に宣言する。
+struct RealUploaderHarness
+{
+    RealUploaderHarness()
+        : Device(MakeShared<FakeDevice>()),
+          Pool(Device, 2 * SparsePagePool::PageSizeBytes),
+          Uploader(Device, MakeUploaderConfig()),
+          Gpu(Device, Uploader),
+          Streamer(Pool, Gpu, &Retire)
+    {
+        Pool.SetCapacityLimitBytes(2 * SparsePagePool::PageSizeBytes);
+    }
+
+    static TileUploader::Config MakeUploaderConfig()
+    {
+        TileUploader::Config config;
+        config.RingBytes = 1ull * 1024ull * 1024ull;
+        config.FrameCopyLimitBytes = 512ull * 1024ull;
+        return config;
+    }
+
+    // テクスチャを作って登録する（番号と、こちらでも持つテクスチャを返す）
+    uint32_t Register(RHI::TexturePtr& outTexture)
+    {
+        outTexture = MakeShared<FakeSparseTexture>();
+        VirtualTextureRegistration registration;
+        registration.Texture = outTexture;
+        registration.Format = TestFormat;
+        registration.Width = TestWidth;
+        registration.Height = TestHeight;
+        registration.Source = Source;
+        registration.TailData = MakeTailData();
+        return Streamer.RegisterTexture(std::move(registration));
+    }
+
+    // RenderThread のフレームの流れ: 開始 → Update → 記録 →（提出か Abort）
+    void BeginFrame(uint64_t completedSerial)
+    {
+        Retire.BeginFrame(completedSerial);
+        Uploader.BeginFrame(completedSerial);
+    }
+
+    VirtualTextureFrameResult Update(const VirtualTextureRequestSet* requests = nullptr)
+    {
+        return Streamer.Update(++Frame, requests);
+    }
+
+    FakeCommandList Record()
+    {
+        FakeCommandList commandList;
+        Uploader.RecordCopies(commandList);
+        return commandList;
+    }
+
+    void Commit(uint64_t serial)
+    {
+        Uploader.CommitFrame(serial);
+        Retire.CommitFrame(serial);
+    }
+
+    void Abort()
+    {
+        Uploader.AbortFrame();
+        Retire.AbortFrame();
+    }
+
+    // texture へ結んだページ（ブロックとオフセット）の数
+    size_t CountBoundPages(const RHI::ITexture* texture) const
+    {
+        size_t count = 0;
+        for (const FakeDevice::BoundPage& page : Device->BoundPages)
+        {
+            if (page.Texture == texture)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    TSharedPtr<FakeDevice> Device;
+    SparsePagePool Pool;
+    GpuRetireQueue Retire;
+    TileUploader Uploader;
+    DeviceVirtualTextureGpu Gpu;
+    TSharedPtr<FakeSource> Source = MakeShared<FakeSource>();
+    VirtualTextureStreamer Streamer;
+    uint64_t Frame = 0;
+};
 
 // ---- テスト ----
 
@@ -957,24 +1346,153 @@ void TestTailSharesFrameBudget()
         Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Bind) == 1 && one.CopiesEnqueued == 8,
                "コピーの数の上限を超えるミップテイルは次のフレームへ");
     }
-    // 1 件が上限より大きくても、そのフレームの最初の 1 件は通す（永久に進まなくなるのを防ぐ）
+}
+
+// 1 フレームの上限は最初の 1 件にも掛かる。上限を超えるミップテイルは、公開しないまま数フレームに分けて書く。
+void TestTailSplitsAcrossFramesWithoutPublishing()
+{
+    const uint64_t tailBytes = MakeTailData().size();
+
+    // コピーの数: ミップテイルは 8 段なので、1 フレームに 3 件までなら 3 + 3 + 2 に分かれる
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopiesPerFrame = 3;
+        Harness h(config);
+        const uint32_t index = h.Register();
+
+        VirtualTextureRequestSet requests;
+        AddRequest(requests, index, 2, 0, 0, 1);
+
+        const VirtualTextureFrameResult first = h.Step(&requests);
+        Expect(first.CopiesEnqueued == 3, "最初の 1 フレームでも上限の 3 件までしかコピーを積まない");
+        Expect(!h.Streamer.IsMipTailResident(index), "全部を積み終えるまで、ミップテイルは使えない");
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Bind) == 1 && h.Gpu.Events.back().Tails == 1,
+               "最初の段階でページを結ぶ");
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Init) == 1, "初期化の遷移は最初の段階で 1 回");
+
+        const VirtualTextureFrameResult second = h.Step(&requests);
+        Expect(second.CopiesEnqueued == 3 && !h.Streamer.IsMipTailResident(index), "続きのフレームも上限の 3 件まで");
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Bind) == 1, "続きのフレームではページを結び直さない");
+        Expect(h.Streamer.GetTileState(MakeKey(index, 2, 0, 0)) == VirtualTextureTileState::None,
+               "公開前の要求は取り込まない");
+
+        const VirtualTextureFrameResult third = h.Step(&requests);
+        Expect(third.CopiesEnqueued == 2 && h.Streamer.IsMipTailResident(index), "残りの 2 件を積んだら使える");
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Bind) == 1 && h.Gpu.CountEvents(FakeGpu::EventKind::Init) == 1,
+               "結び付けも初期化も 1 回だけ");
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Copy) == 8, "8 段をちょうど 1 回ずつコピーする");
+        Expect(h.Pool.GetStats().UsedBytes == SparsePagePool::PageSizeBytes, "ミップテイルは 1 ページ");
+        Expect(h.Gpu.UncopiedBindViolations == 0, "結ぶ前に初期化と最初のコピーを積んである");
+
+        h.Step(&requests);
+        Expect(h.Streamer.GetTileState(MakeKey(index, 2, 0, 0)) == VirtualTextureTileState::Reading,
+               "公開してからの要求は取り込む");
+    }
+    // コピーの数が 1 でも、1 フレーム 1 件ずつ進んで常駐する
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopiesPerFrame = 1;
+        Harness h(config);
+        const uint32_t index = h.Register();
+        for (int frame = 0; frame < 7; ++frame)
+        {
+            const VirtualTextureFrameResult step = h.Step();
+            Expect(step.CopiesEnqueued == 1 && !h.Streamer.IsMipTailResident(index), "1 フレームに 1 件ずつ積む");
+        }
+        Expect(h.Step().CopiesEnqueued == 1 && h.Streamer.IsMipTailResident(index), "8 フレーム目で全部積み終える");
+    }
+    // コピーの量: 1 枚目の後の残りに 2 枚目の最初の 2 段（32768 + 8192）だけが入る
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopyBytesPerFrame = tailBytes + 32768 + 8192;
+        Harness h(config);
+        const uint32_t first = h.Register();
+        const uint32_t second = h.Register();
+        const VirtualTextureFrameResult one = h.Step();
+        Expect(one.CopiedBytes == config.MaxCopyBytesPerFrame && one.CopiesEnqueued == 10,
+               "2 枚目は上限に収まる最初の 2 段だけを積む");
+        Expect(h.Streamer.IsMipTailResident(first) && !h.Streamer.IsMipTailResident(second), "2 枚目は残りを次のフレームで積む");
+        const VirtualTextureFrameResult two = h.Step();
+        Expect(two.CopiesEnqueued == 6 && h.Streamer.IsMipTailResident(second), "次のフレームで残りの 6 段を積んで使える");
+        Expect(h.Gpu.BindCalls == 1 && h.Gpu.Events[h.Gpu.Events.size() - 1].Kind == FakeGpu::EventKind::Copy,
+               "結び付けは最初のフレームの 1 回だけ（続きはコピーだけ）");
+    }
+    // 続きのコピーを積めないときは、積み直す（カーソルを進めない）
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopiesPerFrame = 4;
+        Harness h(config);
+        const uint32_t index = h.Register();
+        h.Step();
+        h.Gpu.CopyBudget = 0;
+        const VirtualTextureFrameResult blocked = h.Step();
+        Expect(blocked.CopiesEnqueued == 0 && !h.Streamer.IsMipTailResident(index), "コピーを積めないフレームは進まない");
+        h.Gpu.CopyBudget = -1;
+        h.Step();
+        Expect(h.Streamer.IsMipTailResident(index) && h.Gpu.CountEvents(FakeGpu::EventKind::Copy) == 8,
+               "積めるようになったら残りを積み、二重にならない");
+    }
+    // 結び付けに失敗したら、最初の段階で積んだコピーも取り消す
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopiesPerFrame = 4;
+        Harness h(config);
+        const uint32_t index = h.Register();
+        h.Gpu.bFailBind = true;
+        h.Step();
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Copy) == 0 && h.Gpu.CountEvents(FakeGpu::EventKind::Init) == 0,
+               "結び付けに失敗したら、積んだ初期化とコピーを取り消す");
+        Expect(h.Pool.GetStats().UsedBytes == 0 && !h.Streamer.IsMipTailResident(index), "ページも返る");
+        h.Gpu.bFailBind = false;
+        h.Step();
+        h.Step();
+        Expect(h.Streamer.IsMipTailResident(index) && h.Gpu.CountEvents(FakeGpu::EventKind::Copy) == 8, "次から最初からやり直す");
+    }
+}
+
+// 処理できない上限の設定は、登録で明示的に拒否する（黙って進まない、上限を越えて通す、のどちらにもしない）。
+void TestUnprocessableLimitsRejectedAtRegistration()
+{
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopiesPerFrame = 0;
+        Harness h(config);
+        Expect(h.Register() == VirtualTextureStreamer::InvalidIndex, "コピーの数の上限が 0 なら登録を拒否する");
+        h.Step();
+        Expect(h.Gpu.BindCalls == 0 && h.Pool.GetStats().UsedBytes == 0 && h.Streamer.GetStats().TextureCount == 0,
+               "拒否したテクスチャは何も結ばず、ページも借りない");
+    }
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxBindsPerFrame = 0;
+        Harness h(config);
+        Expect(h.Register() == VirtualTextureStreamer::InvalidIndex, "結び付けの数の上限が 0 なら登録を拒否する");
+    }
+    {
+        // 1 タイル（64 KiB）が入らない量
+        VirtualTextureStreamerConfig config;
+        config.MaxCopyBytesPerFrame = TestTileBytes - 1;
+        Harness h(config);
+        Expect(h.Register() == VirtualTextureStreamer::InvalidIndex, "1 タイルが入らないコピー量の上限なら登録を拒否する");
+    }
     {
         VirtualTextureStreamerConfig config;
         config.MaxCopyBytesPerFrame = 100;
         config.MaxCopiesPerFrame = 1;
         Harness h(config);
-        const uint32_t index = h.Register();
+        Expect(h.Register() == VirtualTextureStreamer::InvalidIndex, "1 件が上限を超える設定を、最初の 1 件だけ通すことはしない");
         h.Step();
-        Expect(h.Streamer.IsMipTailResident(index), "上限より大きくても、最初の 1 件のミップテイルは結ぶ");
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Copy) == 0, "コピーを 1 件も積まない");
     }
-    // 結び付けの数を 0 にすると、ミップテイルも結ばない
     {
+        // ちょうど 1 タイルが入る量なら登録できて、常駐する
         VirtualTextureStreamerConfig config;
-        config.MaxBindsPerFrame = 0;
+        config.MaxCopyBytesPerFrame = TestTileBytes;
         Harness h(config);
         const uint32_t index = h.Register();
+        Expect(index != VirtualTextureStreamer::InvalidIndex, "1 タイルが入る上限なら登録できる");
         h.Step();
-        Expect(!h.Streamer.IsMipTailResident(index) && h.Gpu.BindCalls == 0, "結び付けの上限が 0 なら何も結ばない");
+        Expect(h.Streamer.IsMipTailResident(index), "ミップテイルも上限の中で常駐する");
     }
 }
 
@@ -1105,6 +1623,181 @@ void TestClearReleasesEverything()
     Expect(h.Pool.GetStats().UsedBytes == 0, "retireQueue が無ければ即座にプールへ戻る");
 }
 
+// 優先度（粗いミップ → 要求の件数 → 最近）。要求の件数は、GPU が書いたバッファを復号した語の数で、
+// 同じタイルの語が多いほど（画面に大きく映るほど）先に読む。
+void TestPriorityUsesDecodedRequestCount()
+{
+    namespace Feedback = Core::Rendering::VirtualTextureFeedback;
+
+    VirtualTextureStreamerConfig config;
+    config.MaxReadsStartedPerFrame = 1;
+    Harness h(config);
+    const uint32_t index = h.RegisterAndMakeTailResident();
+
+    // ヘッダ + 要求の語から成るバッファを作って集合へ足す（tile の語を count 個並べる）
+    VirtualTextureRequestSet requests;
+    auto addBuffer = [&](const VirtualTextureTileKey& tile, uint32_t count, uint64_t frame)
+    {
+        VariableArray<uint32_t> words(Feedback::HeaderWords + count, 0u);
+        words[0] = count;
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            words[Feedback::HeaderWords + i] = Feedback::Pack(tile);
+        }
+        requests.AddFeedbackBuffer(words.data(), count, frame);
+    };
+    addBuffer(MakeKey(index, 1, 0, 0), 1, 90);  // 最近だが、1 画素ぶん
+    addBuffer(MakeKey(index, 1, 1, 0), 3, 10);  // 古いが、3 画素ぶん
+    addBuffer(MakeKey(index, 1, 0, 1), 3, 50);  // 3 画素ぶんで、B より新しい
+    addBuffer(MakeKey(index, 2, 0, 0), 1, 1);   // 粗いミップは画素の数が少なくても先
+
+    uint32_t hitsOfSmall = 0;
+    uint32_t hitsOfLarge = 0;
+    for (const Core::Rendering::VirtualTextureTileRequest& request : requests.GetRequests(index))
+    {
+        if (request.Mip == 1 && request.X == 0 && request.Y == 0)
+        {
+            hitsOfSmall = request.HitCount;
+        }
+        if (request.Mip == 1 && request.X == 1 && request.Y == 0)
+        {
+            hitsOfLarge = request.HitCount;
+        }
+    }
+    Expect(hitsOfSmall == 1 && hitsOfLarge == 3, "復号した要求の語の数が、そのタイルの要求の件数になる");
+
+    h.Step(&requests);
+    for (int i = 0; i < 3; ++i)
+    {
+        h.Step();
+    }
+    Expect(h.Source->Started.size() == 4, "4 件を 1 フレームに 1 件ずつ始める");
+    Expect(h.Source->Started[0] == MakeKey(index, 2, 0, 0), "最も粗いミップが先");
+    Expect(h.Source->Started[1] == MakeKey(index, 1, 0, 1), "同じミップでは件数が多く、最近のものが先");
+    Expect(h.Source->Started[2] == MakeKey(index, 1, 1, 0), "件数が同じなら、古いほうが後");
+    Expect(h.Source->Started[3] == MakeKey(index, 1, 0, 0), "件数が少ないものは、最近でも最後");
+}
+
+// 実物の TileUploader・GpuRetireQueue・本番の窓口を使い、「コピーを記録 → Abort → 登録解除 → ページの再取得 → 次のフレーム」
+// で、古いコピーが再利用されたページへ記録されないことを確かめる。
+void TestAbortedCopiesNeverReachReusedPages()
+{
+    RealUploaderHarness h;
+    RHI::TexturePtr textureA;
+
+    // フレーム 1: 登録 → ミップテイルのコピーを積む → 記録 → 提出（serial 1）
+    h.BeginFrame(0);
+    const uint32_t indexA = h.Register(textureA);
+    Expect(indexA != VirtualTextureStreamer::InvalidIndex, "登録できる");
+    h.Update();
+    {
+        const FakeCommandList commands = h.Record();
+        Expect(commands.CountCopiesTo(textureA.get()) == 8, "ミップテイルの 8 段を記録する");
+    }
+    h.Commit(1);
+    Expect(h.Streamer.IsMipTailResident(indexA), "ミップテイルが常駐する");
+
+    // フレーム 2: タイルを要求して読み始める（serial 2）
+    h.BeginFrame(1);
+    VirtualTextureRequestSet requests;
+    AddRequest(requests, indexA, 2, 0, 0, 1);
+    h.Update(&requests);
+    h.Record();
+    h.Commit(2);
+
+    // フレーム 3: タイルを結んでコピーを積み、記録する。ここでフレームを提出せずに捨て（Abort）、
+    // その前にテクスチャの登録を解除する
+    h.BeginFrame(2);
+    h.Update();
+    Expect(h.Streamer.GetTileState(MakeKey(indexA, 2, 0, 0)) == VirtualTextureTileState::Resident, "タイルを結んだ");
+    {
+        const FakeCommandList commands = h.Record();
+        Expect(commands.CountCopiesTo(textureA.get()) == 1, "タイルのコピーを記録した（まだ提出していない）");
+    }
+    Expect(h.Pool.GetStats().UsedBytes == 2 * SparsePagePool::PageSizeBytes, "ミップテイルとタイルでプールの 2 ページを使い切る");
+    h.Streamer.UnregisterTexture(indexA);
+    h.Abort();
+
+    // フレーム 4: 直前までに提出済みの serial 2 が完了している。解除したページは戻り、別のテクスチャが借り直す
+    h.BeginFrame(2);
+    Expect(h.Pool.GetStats().UsedBytes == 0, "解除したページは、使った提出の完了でプールへ戻る");
+    RHI::TexturePtr textureB;
+    const uint32_t indexB = h.Register(textureB);
+    Expect(indexB != VirtualTextureStreamer::InvalidIndex, "別のテクスチャを登録できる");
+    h.Update();
+
+    // B のミップテイルのページは、A が使っていたページを借り直したもの
+    VariableArray<FakeDevice::BoundPage> pagesOfA;
+    for (const FakeDevice::BoundPage& page : h.Device->BoundPages)
+    {
+        if (page.Texture == textureA.get())
+        {
+            pagesOfA.push_back(page);
+        }
+    }
+    bool bReused = false;
+    for (const FakeDevice::BoundPage& page : h.Device->BoundPages)
+    {
+        if (page.Texture != textureB.get())
+        {
+            continue;
+        }
+        for (const FakeDevice::BoundPage& old : pagesOfA)
+        {
+            bReused = bReused || (old.Block == page.Block && old.OffsetBytes == page.OffsetBytes);
+        }
+    }
+    Expect(pagesOfA.size() == 2 && bReused, "B は A が使っていたページを再び結ぶ");
+
+    {
+        const FakeCommandList commands = h.Record();
+        Expect(commands.CountCopiesTo(textureA.get()) == 0, "解除したテクスチャ宛ての古いコピーは、再利用されたページへ記録されない");
+        Expect(commands.CountCopiesTo(textureB.get()) == 8 && commands.Copies.size() == 8,
+               "記録されるのは B のミップテイルの 8 段だけ");
+    }
+    h.Commit(3);
+    Expect(h.Uploader.GetStats().PendingCopies == 0 && h.Uploader.GetStats().InFlightCopies == 8,
+           "提出したのは B の 8 件だけで、未記録のコピーが残らない");
+    Expect(h.Streamer.IsMipTailResident(indexB), "B のミップテイルが常駐する");
+}
+
+// 上のテストの対照: 登録したままフレームを Abort すると、積んだコピーは出し直される（記録を観測できている証拠）。
+void TestAbortedCopiesAreRerecordedWhileRegistered()
+{
+    RealUploaderHarness h;
+    RHI::TexturePtr textureA;
+
+    h.BeginFrame(0);
+    const uint32_t indexA = h.Register(textureA);
+    h.Update();
+    h.Record();
+    h.Commit(1);
+
+    h.BeginFrame(1);
+    VirtualTextureRequestSet requests;
+    AddRequest(requests, indexA, 2, 0, 0, 1);
+    h.Update(&requests);
+    h.Record();
+    h.Commit(2);
+
+    h.BeginFrame(2);
+    h.Update();
+    {
+        const FakeCommandList commands = h.Record();
+        Expect(commands.CountCopiesTo(textureA.get()) == 1, "タイルのコピーを記録した");
+    }
+    h.Abort();
+
+    h.BeginFrame(2);
+    h.Update();
+    {
+        const FakeCommandList commands = h.Record();
+        Expect(commands.CountCopiesTo(textureA.get()) == 1, "登録したままなら、捨てたフレームのコピーを次のフレームで出し直す");
+    }
+    h.Commit(3);
+    Expect(h.Streamer.GetTileState(MakeKey(indexA, 2, 0, 0)) == VirtualTextureTileState::Resident, "常駐のまま");
+}
+
 int RunTest()
 {
     TestRegistrationRejectsInvalid();
@@ -1120,12 +1813,17 @@ int RunTest()
     TestCopyNotEnqueuedKeepsPagesUnbound();
     TestPartialStagingBindsOnlyCopiedTiles();
     TestTailSharesFrameBudget();
+    TestTailSplitsAcrossFramesWithoutPublishing();
+    TestUnprocessableLimitsRejectedAtRegistration();
     TestUploaderAvailabilityLimitsStaging();
     TestPriorityPrefersMoreHitsInSameMip();
+    TestPriorityUsesDecodedRequestCount();
     TestInvalidRequestsIgnored();
     TestStaleWantedDropped();
     TestUnregisterRetiresPages();
     TestUnregisterAbandonsPendingCopies();
+    TestAbortedCopiesNeverReachReusedPages();
+    TestAbortedCopiesAreRerecordedWhileRegistered();
     TestClearReleasesEverything();
 
     if (g_failures != 0)

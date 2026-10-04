@@ -9,11 +9,13 @@
 //   1) 要求を取り込む（範囲外・ミップテイルの要求は捨て、同じタイルは 1 つにまとめる）
 //   2) 完了した読み込みを集める（失敗・大きさの食い違いは再試行の待ちへ）
 //   3) ミップテイル、続いて優先度の高い順に読み込み済みのタイルについて、先にコピーをステージングへ積み、
-//      積めたものだけページを結ぶ（1 回の BindSparse にまとめる。ミップテイルもタイルも同じ予算）
+//      積めたものだけページを結ぶ（1 回の BindSparse にまとめる。ミップテイルもタイルも同じ予算）。
+//      ミップテイルが 1 フレームの上限に収まらないときは、数フレームに分けて書き、全部書き終えてから使えるようにする
 //   4) 優先度の高い順に、未常駐のタイルの読み込みを始める
 // 結び付けの前にコピーを積むのは、結んだ時点でハードウェアの常駐判定が「常駐」になり、描画がそのページを読めて
 // しまうため。積んだコピーは同じフレームのコマンドの先頭で記録される（アップローダが記録できる量の範囲でだけ積む）。
-// どの段にも 1 フレームの上限があり、超える分は次のフレームへ持ち越す。
+// どの段にも 1 フレームの上限があり、超える分は次のフレームへ持ち越す。上限は最初の 1 件にも掛かる
+// （1 件が上限より大きくなる設定は、登録の時点で拒否する）。
 
 #include "Asset/CookedTextureFormat.h"
 #include "Container/Containers.h"
@@ -96,15 +98,23 @@ namespace NorvesLib::Core::Rendering
         uint32_t MaxReadsStartedPerFrame = 16;
         /** @brief 読み込み中と読み込み済み（まだ GPU へ渡していない）のタイルの数の上限 */
         uint32_t MaxReadsInFlight = 32;
-        /** @brief 1 フレームにページを結ぶタイルとミップテイルの数（ミップテイルは 1 枚のテクスチャで 1 件） */
+        /**
+         * @brief 1 フレームにページを結ぶタイルとミップテイルの数（ミップテイルは 1 枚のテクスチャで 1 件）
+         *
+         * 1 以上にする。0 では何も結べないので、登録を拒否する。
+         */
         uint32_t MaxBindsPerFrame = 32;
-        /** @brief 1 フレームに積むコピーの数（ミップテイルは段ごとに 1 件） */
+        /**
+         * @brief 1 フレームに積むコピーの数（ミップテイルは段ごとに 1 件）
+         *
+         * 1 以上にする。0 では何もコピーできないので、登録を拒否する。
+         */
         uint32_t MaxCopiesPerFrame = 128;
         /**
          * @brief 1 フレームにコピーするデータの量（バイト）。TileUploader のフレームの上限以下にする
          *
-         * タイルもミップテイルも数える。そのフレームの最初の 1 件だけは、この量を超えていても通す
-         * （1 件がこれより大きいと永久に進まなくなるため）。
+         * タイルもミップテイルも数える。最初の 1 件にも掛かるので、1 件のタイル、またはミップテイルの 1 段より
+         * 小さい値は永久に進まなくなる。そのようなテクスチャは登録を拒否する。
          */
         uint64_t MaxCopyBytesPerFrame = 4ull * 1024ull * 1024ull;
         /** @brief 読み込みに失敗したタイルを諦めるまでの失敗の回数 */
@@ -184,8 +194,10 @@ namespace NorvesLib::Core::Rendering
      * RenderThread（コマンドの送信と同じ直列化の下）から呼ぶこと。登録・解除は GameThread からでもよい
      * （ミップテイルの結び付けは次の Update で行う）。
      *
-     * ミップテイルは次の Update 以降で、コピーを積んでから結ぶ（予算に入らなければ持ち越す）。それまでテクスチャは
-     * 使えない（IsMipTailResident が true になってから材質へ出す）。ミップテイルは外さない。
+     * ミップテイルは次の Update 以降で、コピーを積んでから結ぶ（予算に入らなければ持ち越す）。1 フレームの上限に
+     * 収まらない大きさのときは、最初の Update でページを結んで一部のコピーを積み、残りを続くフレームで積む。
+     * どちらも、全部のコピーを積み終えるまでテクスチャは使えない（IsMipTailResident が true になってから材質へ出す）。
+     * ミップテイルは外さない。
      *
      * pool・gpu・retireQueue はストリーマより長く生きること。
      */
@@ -392,7 +404,11 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<uint8_t> TailData;
             Container::VariableArray<TailCopy> TailCopies;
             Container::VariableArray<SparsePagePool::PageLease> TailPages;
-            // ミップテイルの初期化とコピーを積み、ページを結び終えた（ミップテイルが無いテクスチャは最初から true）
+            // ミップテイルのページを結んだ（コピーは TailCursor 件目まで積んである。全部積むまでは使えない）
+            bool bTailPagesBound = false;
+            // 次に積むミップテイルのコピーの添字
+            uint32_t TailCursor = 0;
+            // ミップテイルの初期化とコピーを全部積み、ページを結び終えた（ミップテイルが無いテクスチャは最初から true）
             bool bTailBound = false;
             Container::UnorderedMap<uint32_t, TileRecord> Tiles;
         };
@@ -423,9 +439,12 @@ namespace NorvesLib::Core::Rendering
             SparsePagePool::PageLease Page;
         };
 
-        struct PendingTailBind
+        // 今フレームで進めるミップテイルの 1 段階（最初の段階はページを結び、続きはコピーだけを積む）
+        struct PendingTailStep
         {
             uint32_t TextureIndex = 0;
+            bool bStart = false;
+            uint32_t NextCursor = 0;
             Container::VariableArray<SparsePagePool::PageLease> Pages;
         };
 
@@ -449,9 +468,9 @@ namespace NorvesLib::Core::Rendering
 
         static bool IsTailDone(const Entry &entry) { return entry.bTailBound; }
 
-        // 優先度: 粗いミップが先、同じミップでは画面で目立つ（要求の件数が多い）ものが先、次に最近要求されたものが先、
-        // 最後に決定的な順にそろえる。要求の語には画面上の位置が無いので、画面の近さは要求の件数（画面に占める
-        // 面積の目安）で表す。
+        // 優先度: 粗いミップが先、同じミップでは要求の件数（HitCount。画面に占める大きさの目安）が多いものが先、
+        // 次に最後に要求したフレームが新しいものが先、最後に決定的な順にそろえる。
+        // 要求の語にはカメラからの距離や画面上の位置が無いので、「画面の近く」は要求の件数で表す。
         static bool HigherPriority(const Candidate &a, const Candidate &b)
         {
             if (a.Mip != b.Mip)
@@ -580,10 +599,51 @@ namespace NorvesLib::Core::Rendering
                 outEntry.Texture.reset();
                 return false;
             }
+            if (!ValidateFrameLimitsLocked(outEntry))
+            {
+                outEntry.Texture.reset();
+                return false;
+            }
             outEntry.TailData = std::move(registration.TailData);
             // ミップテイルの無いテクスチャは結ぶものが無い
             outEntry.bTailBound = outEntry.TailCopies.empty();
             outEntry.bActive = true;
+            return true;
+        }
+
+        // 1 フレームの上限で、このテクスチャのコピーが 1 件ずつでも進められるか。進められない設定は登録を拒否する
+        // （上限は最初の 1 件にも掛かるので、1 件が入らない設定では永久に常駐しない）。
+        bool ValidateFrameLimitsLocked(const Entry &entry) const
+        {
+            if (m_Config.MaxBindsPerFrame == 0 || m_Config.MaxCopiesPerFrame == 0)
+            {
+                LOG_ERROR("VirtualTextureStreamer: 1 フレームの結び付けまたはコピーの上限が 0 なので登録できない binds=%u copies=%u",
+                          m_Config.MaxBindsPerFrame, m_Config.MaxCopiesPerFrame);
+                return false;
+            }
+            uint64_t largestCopyBytes = 0;
+            for (const TailCopy &copy : entry.TailCopies)
+            {
+                largestCopyBytes = std::max(largestCopyBytes, copy.Bytes);
+            }
+            if (entry.Info.MipTailFirstLevel > 0)
+            {
+                RHI::TextureRegionCopy region;
+                uint64_t tileBytes = 0;
+                if (!ComputeTileRegion(entry, 0, 0, 0, region, tileBytes))
+                {
+                    LOG_ERROR("VirtualTextureStreamer: タイルのコピーの大きさを求められない");
+                    return false;
+                }
+                largestCopyBytes = std::max(largestCopyBytes, tileBytes);
+            }
+            if (largestCopyBytes > m_Config.MaxCopyBytesPerFrame)
+            {
+                LOG_ERROR("VirtualTextureStreamer: 1 件のコピーが 1 フレームのコピー量の上限を超えるので登録できない copy=%llu limit=%llu",
+                          static_cast<unsigned long long>(largestCopyBytes),
+                          static_cast<unsigned long long>(m_Config.MaxCopyBytesPerFrame));
+                return false;
+            }
             return true;
         }
 
@@ -738,26 +798,29 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // 1 件（結び付け 1 つ・コピー copies 件・bytes バイト）が今フレームの予算に収まるか。
-        // そのフレームの最初の 1 件は、1 件が上限より大きくても通す（永久に進まなくなるのを防ぐ）。
-        // ただしアップローダが確実に記録できる量に収まらなければ通さない。
-        bool FitsBudget(const FrameBudget &budget, uint32_t copies, uint64_t bytes) const
+        // 結び付け（bNewBind なら 1 件）・コピー copies 件・bytes バイトが今フレームの予算に収まるか。
+        // 最初の 1 件にも上限を掛ける（1 件が上限より大きいテクスチャは登録の時点で拒否してある）。
+        // アップローダが確実に記録できる量に収まらなければ通さない。
+        bool FitsBudget(const FrameBudget &budget, bool bNewBind, uint32_t copies, uint64_t bytes) const
         {
-            if (m_Config.MaxBindsPerFrame == 0 || bytes > budget.UploaderBytes)
+            if (bytes > budget.UploaderBytes)
             {
                 return false;
             }
-            if (budget.Binds == 0)
+            if (bNewBind && budget.Binds >= m_Config.MaxBindsPerFrame)
             {
-                return true;
+                return false;
             }
-            return budget.Binds < m_Config.MaxBindsPerFrame && budget.Copies + copies <= m_Config.MaxCopiesPerFrame &&
+            return budget.Copies + copies <= m_Config.MaxCopiesPerFrame &&
                    budget.Bytes + bytes <= m_Config.MaxCopyBytesPerFrame;
         }
 
-        static void TakeBudget(FrameBudget &budget, uint32_t copies, uint64_t bytes)
+        static void TakeBudget(FrameBudget &budget, bool bNewBind, uint32_t copies, uint64_t bytes)
         {
-            ++budget.Binds;
+            if (bNewBind)
+            {
+                ++budget.Binds;
+            }
             budget.Copies += copies;
             budget.Bytes += bytes;
             budget.UploaderBytes -= bytes;
@@ -765,14 +828,15 @@ namespace NorvesLib::Core::Rendering
 
         // ミップテイルとタイルを、先にコピーを積んでから 1 回の BindSparse で結ぶ。
         // 結び付けに失敗したら積んだコピーを取り消すので、結ばれていないページへのコピーも、コピーされない
-        // 結ばれたページも残らない。
+        // 結ばれたページも残らない。ミップテイルは 1 フレームの予算に収まる分ずつ積み、全部積み終えるまで使えるように
+        // しない（最初の段階でページを結び、続きのフレームはコピーだけを積む）。
         void StageAndBindLocked(VirtualTextureFrameResult &result)
         {
             FrameBudget budget;
             budget.UploaderBytes = m_Gpu.GetCopyBytesAvailable();
 
             RHI::SparseBindRequest request;
-            Container::VariableArray<PendingTailBind> tailBinds;
+            Container::VariableArray<PendingTailStep> tailSteps;
             Container::VariableArray<PendingTileBind> tileBinds;
             // この Update でアップローダへ積んだ件数（結び付けに失敗したときに取り消す）
             uint32_t stagedOps = 0;
@@ -781,7 +845,7 @@ namespace NorvesLib::Core::Rendering
             bool bPoolExhausted = false;
             bool bStageBlocked = false;
 
-            // 1) ミップテイル: 登録したテクスチャのうち、まだ結んでいないもの
+            // 1) ミップテイル: 登録したテクスチャのうち、まだ全部を積んでいないもの
             for (uint32_t index = 0; index < m_Entries.size() && !bPoolExhausted && !bStageBlocked; ++index)
             {
                 if (m_Entries[index] == nullptr || m_Entries[index]->bTailBound)
@@ -789,43 +853,68 @@ namespace NorvesLib::Core::Rendering
                     continue;
                 }
                 Entry &entry = *m_Entries[index];
-                const uint32_t tailCopyCount = static_cast<uint32_t>(entry.TailCopies.size());
-                const uint64_t tailBytes = entry.TailData.size();
-                if (!FitsBudget(budget, tailCopyCount, tailBytes))
+                const bool bStart = !entry.bTailPagesBound;
+                const uint32_t tailTotal = static_cast<uint32_t>(entry.TailCopies.size());
+
+                // 予算に収まる限りの段を、順番に数える（入らない段で止める）
+                FrameBudget trial = budget;
+                uint32_t count = 0;
+                uint64_t bytes = 0;
+                while (entry.TailCursor + count < tailTotal)
+                {
+                    const uint64_t copyBytes = entry.TailCopies[entry.TailCursor + count].Bytes;
+                    const bool bNewBind = bStart && count == 0;
+                    if (!FitsBudget(trial, bNewBind, 1, copyBytes))
+                    {
+                        break;
+                    }
+                    TakeBudget(trial, bNewBind, 1, copyBytes);
+                    ++count;
+                    bytes += copyBytes;
+                }
+                if (count == 0)
                 {
                     continue;
                 }
 
+                PendingTailStep step;
+                step.TextureIndex = index;
+                step.bStart = bStart;
                 const uint64_t pageCount =
                     (entry.Info.MipTailSize + SparsePagePool::PageSizeBytes - 1) / SparsePagePool::PageSizeBytes;
-                PendingTailBind bind;
-                bind.TextureIndex = index;
-                for (uint64_t page = 0; page < pageCount; ++page)
+                if (bStart)
                 {
-                    SparsePagePool::PageLease lease = m_Pool.Acquire();
-                    if (!lease.IsValid())
+                    for (uint64_t page = 0; page < pageCount; ++page)
                     {
-                        bPoolExhausted = true;
+                        SparsePagePool::PageLease lease = m_Pool.Acquire();
+                        if (!lease.IsValid())
+                        {
+                            bPoolExhausted = true;
+                            break;
+                        }
+                        step.Pages.push_back(std::move(lease));
+                    }
+                    if (bPoolExhausted)
+                    {
+                        // 一部だけ結んだミップテイルは使えないので、借りた分は返す（step が破棄されると戻る）
                         break;
                     }
-                    bind.Pages.push_back(std::move(lease));
-                }
-                if (bPoolExhausted)
-                {
-                    // 一部だけ結んだミップテイルは使えないので、借りた分は返す（bind が破棄されると戻る）
-                    break;
                 }
 
-                // 初期化の遷移 → 各段のコピーの順に積む。途中で積めなければ、このテクスチャの分だけ取り消す。
+                // 最初の段階は初期化の遷移 → 各段のコピーの順に積む。途中で積めなければ、このテクスチャの分だけ取り消す。
                 uint32_t tailOps = 0;
-                bool bStaged = m_Gpu.EnqueueInitialize(entry.Texture);
-                if (bStaged)
+                bool bStaged = true;
+                if (bStart)
                 {
-                    ++tailOps;
+                    bStaged = m_Gpu.EnqueueInitialize(entry.Texture);
+                    if (bStaged)
+                    {
+                        ++tailOps;
+                    }
                 }
-                for (size_t copyIndex = 0; bStaged && copyIndex < entry.TailCopies.size(); ++copyIndex)
+                for (uint32_t offset = 0; bStaged && offset < count; ++offset)
                 {
-                    const TailCopy &copy = entry.TailCopies[copyIndex];
+                    const TailCopy &copy = entry.TailCopies[entry.TailCursor + offset];
                     bStaged = m_Gpu.EnqueueTile(entry.Texture, copy.Region, entry.TailData.data() + copy.Offset, copy.Bytes);
                     if (bStaged)
                     {
@@ -839,19 +928,23 @@ namespace NorvesLib::Core::Rendering
                     break;
                 }
                 stagedOps += tailOps;
-                stagedCopies += tailCopyCount;
-                stagedBytes += tailBytes;
-                TakeBudget(budget, tailCopyCount, tailBytes);
+                stagedCopies += count;
+                stagedBytes += bytes;
+                budget = trial;
+                step.NextCursor = entry.TailCursor + count;
 
-                for (uint64_t page = 0; page < pageCount; ++page)
+                if (bStart)
                 {
-                    RHI::SparseMipTailBind tail;
-                    tail.Texture = entry.Texture.get();
-                    tail.PageIndex = static_cast<uint32_t>(page);
-                    tail.Page = bind.Pages[static_cast<size_t>(page)].GetPage();
-                    request.MipTails.push_back(tail);
+                    for (uint64_t page = 0; page < pageCount; ++page)
+                    {
+                        RHI::SparseMipTailBind tail;
+                        tail.Texture = entry.Texture.get();
+                        tail.PageIndex = static_cast<uint32_t>(page);
+                        tail.Page = step.Pages[static_cast<size_t>(page)].GetPage();
+                        request.MipTails.push_back(tail);
+                    }
                 }
-                tailBinds.push_back(std::move(bind));
+                tailSteps.push_back(std::move(step));
             }
 
             // 2) タイル: 読み込み済みのものを優先度順に、1 フレームの予算の範囲で
@@ -882,7 +975,7 @@ namespace NorvesLib::Core::Rendering
                 Entry &entry = *m_Entries[candidate.TextureIndex];
                 TileRecord &record = entry.Tiles.find(candidate.TileKey)->second;
                 const uint64_t tileBytes = record.Data.size();
-                if (!FitsBudget(budget, 1, tileBytes))
+                if (!FitsBudget(budget, true, 1, tileBytes))
                 {
                     break;
                 }
@@ -911,7 +1004,7 @@ namespace NorvesLib::Core::Rendering
                 ++stagedOps;
                 ++stagedCopies;
                 stagedBytes += tileBytes;
-                TakeBudget(budget, 1, tileBytes);
+                TakeBudget(budget, true, 1, tileBytes);
 
                 RHI::SparseTileBind tile;
                 tile.Texture = entry.Texture.get();
@@ -936,13 +1029,10 @@ namespace NorvesLib::Core::Rendering
             {
                 ++m_Stats.CopyBlockedFrames;
             }
-            if (request.IsEmpty())
-            {
-                return;
-            }
 
             // 3) 1 回の BindSparse にまとめる。失敗したら何も結ばれていないので、借りたページは返り、積んだコピーは取り消す。
-            if (!m_Gpu.BindSparse(request))
+            // 続きのコピーだけのフレーム（結ぶものが無い）は、結び付けを出さない。
+            if (!request.IsEmpty() && !m_Gpu.BindSparse(request))
             {
                 m_Gpu.DiscardEnqueued(stagedOps);
                 ++m_Stats.BindFailures;
@@ -951,14 +1041,23 @@ namespace NorvesLib::Core::Rendering
                 return;
             }
 
-            // 4) 結べた。コピーは積み済みなので、結んだものをそのまま常駐として記録する。
-            for (PendingTailBind &bind : tailBinds)
+            // 4) 結べた。コピーは積み済みなので、結んだものをそのまま記録する。
+            for (PendingTailStep &step : tailSteps)
             {
-                Entry &entry = *m_Entries[bind.TextureIndex];
-                entry.TailPages = std::move(bind.Pages);
-                entry.bTailBound = true;
-                entry.TailData.clear();
-                entry.TailData.shrink_to_fit();
+                Entry &entry = *m_Entries[step.TextureIndex];
+                if (step.bStart)
+                {
+                    entry.TailPages = std::move(step.Pages);
+                    entry.bTailPagesBound = true;
+                }
+                entry.TailCursor = step.NextCursor;
+                if (entry.TailCursor >= entry.TailCopies.size())
+                {
+                    // 全部のコピーを積んだ。ここで初めてミップテイルを使えるようにする
+                    entry.bTailBound = true;
+                    entry.TailData.clear();
+                    entry.TailData.shrink_to_fit();
+                }
             }
             for (PendingTileBind &bind : tileBinds)
             {
