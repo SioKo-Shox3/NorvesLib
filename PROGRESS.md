@@ -722,3 +722,5 @@
 - G2-S6-DEPENDENCY-SNAPSHOT受入: f96dc155/run37215038245の実Windowsで16CPU（snapshot/sidecar loader/外部buffer readerを含む）、単体7CLI/79byte/5診断、native2spec×2/10fileとPS5.1・Unicode・16拒否契約が成功。logs/native archive SHAと実行driverを確認。fixture補完後に依存collectorを変更せず合格しtaskをdone。Cook/Skip/Errorの共通決定、stamp永続化、既存root増分公開は別gate。
 
 - G2-S6-OUTPUT-PACKAGE開始: 共通decisionに先立ち、読み込み済みpackageの型別照合を小さく分離。V1単一entry/数値hash/4texture形式/audio/mesh v0/骨格v0.2と6数量、全wrapper印を検証する。実単体cook、版別既存golden、padding差・失敗保持のnative契約を追加。純比較器12件成功、実Windows前なのでdoing。既存cache/Skip/path解決は変更しない。
+
+- G2-S6-OUTPUT-PACKAGE受入: 7ba94fed/run37218137820の実Windowsで18CPU（新しい型別package検証とmesh v1拒否を含む）、7CLI/79byte/5診断、native texture2spec×2/10byte/16拒否が成功。単体cook全形式・派生画像3件・正常旧骨格版の拒否・padding印・失敗保持を実証。3 artifact ZIP SHAを確認しcandidate79file/2exeを独立検証。taskをdone。保存recordとの比較・共通Cook/Skip/Errorは未接続。

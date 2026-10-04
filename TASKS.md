@@ -2412,7 +2412,7 @@
 - stop-when: これだけでSkip/既存root公開を完了扱い、hashだけで出力を信頼、disabled sidecarを読む、不在とpermission errorを混同、競合編集のatomic snapshotを主張。
 
 ## G2-S6-OUTPUT-PACKAGE: 増分照合の共通package検証を作る
-- status: doing
+- status: done
 - done-when: callerが渡すpackage bytesと期待manifest参照を照合し、V1単一entry・payload hash・kind/formatの実parse・骨格metadataを検証する。成功時に全packageのsize/hashを返す。ファイルpath解決・所有権・Skip決定は含めない。
 - verify: 実単体cookのraw/custom FourCC/texture4形式/audio/static+派生画像/skeletalを受理し、不正table/payload/format/metadata/複数entryを拒否する。失敗時出力保持、padding差の全体hash検出、既存16CPU/79+10byte gateを維持。
 - stop-when: 型parseをpayload hashだけで代用、v1を現v0として受理、source freshness/安全path/ownershipを検証したと主張する。

@@ -23,4 +23,4 @@ SourceHash、logical key、variant、CookedPackageが指す実fileの関係は�
 
 実CookSingleAssetからraw/custom FourCC/空raw、texture4形式、audio、内包画像付きstatic model、skeletalを生成する。wrapper/payload/hash/type/format/6数量/失敗時出力保持とpadding差を検証する。既存の正常mesh v1とskeletal v0.0/v0.1 goldenをpackageに包み、parserでは成功するが現cook出力としては拒否することも確認する。
 
-実Windowsの合格はCI結果確認後に記録する。
+7ba94fed97aff8da26eb4950979c96d1171b197aの[Windows run37218137820](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37218137820)で18 CPU契約と単体7 CLIが成功。正常mesh v1・skeletal v0.0/v0.1の拒否、実全profile、派生画像3件も検証した。固定79出力とtexture v1の10出力のbyte互換を維持している。record比較や共通Skip決定の完了ではない。
