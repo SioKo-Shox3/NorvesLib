@@ -16,6 +16,7 @@
 #include "Resource/ModelAssetRuntime.h"
 #include "Thread/Atomic.h"
 
+#include <chrono>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -88,6 +89,13 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<ModelAssetRuntime> ModelAssets;
         bool bInitialized = false;
         bool bShuttingDown = false;
+
+        // VRAM の上限（MB。0 は上限なし）と、予算ログの間引き状態（GameThread だけが触る）
+        uint64_t VideoMemoryCapMb = 0;
+        bool bVideoMemoryBudgetLogged = false;
+        std::chrono::steady_clock::time_point VideoMemoryLastPollTime{};
+        uint64_t VideoMemoryLoggedBudgetBytes = 0;
+        uint64_t VideoMemoryLoggedUsageBytes = 0;
     };
 
     GpuResources::GpuResources(RenderResources *pOwner)
@@ -870,6 +878,75 @@ namespace NorvesLib::Core::Rendering
     bool RenderResources::IsInitialized() const
     {
         return m_Impl->bInitialized;
+    }
+
+    void RenderResources::SetVideoMemoryCapMb(uint64_t capMb)
+    {
+        m_Impl->VideoMemoryCapMb = capMb;
+    }
+
+    uint64_t RenderResources::GetVideoMemoryCapMb() const
+    {
+        return m_Impl->VideoMemoryCapMb;
+    }
+
+    void RenderResources::PollVideoMemoryBudget()
+    {
+        Impl* impl = m_Impl.get();
+        if (!impl || !impl->bInitialized || !impl->Device)
+        {
+            return;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (impl->bVideoMemoryBudgetLogged &&
+            now - impl->VideoMemoryLastPollTime < std::chrono::seconds(1))
+        {
+            return;
+        }
+        impl->VideoMemoryLastPollTime = now;
+
+        const RHI::VideoMemoryBudget budget = impl->Device->GetVideoMemoryBudget();
+        const uint64_t budgetBytes = budget.bValid ? budget.BudgetBytes : 0;
+        const uint64_t usageBytes = budget.bValid ? budget.UsageBytes : 0;
+
+        // 前回ログした値からの変化が 1% 未満なら出さない（初回は必ず出す）。
+        const auto changedByOnePercent = [](uint64_t previous, uint64_t current)
+        {
+            const uint64_t difference = previous > current ? previous - current : current - previous;
+            return difference * 100 >= (previous > 0 ? previous : 1);
+        };
+        if (impl->bVideoMemoryBudgetLogged &&
+            !changedByOnePercent(impl->VideoMemoryLoggedBudgetBytes, budgetBytes) &&
+            !changedByOnePercent(impl->VideoMemoryLoggedUsageBytes, usageBytes))
+        {
+            return;
+        }
+
+        impl->bVideoMemoryBudgetLogged = true;
+        impl->VideoMemoryLoggedBudgetBytes = budgetBytes;
+        impl->VideoMemoryLoggedUsageBytes = usageBytes;
+
+        constexpr uint64_t kBytesPerMb = 1024ull * 1024ull;
+        if (impl->VideoMemoryCapMb > 0)
+        {
+            NORVES_LOG_INFO(
+                "RenderResources",
+                "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=%llu source=%s",
+                static_cast<unsigned long long>(budgetBytes / kBytesPerMb),
+                static_cast<unsigned long long>(usageBytes / kBytesPerMb),
+                static_cast<unsigned long long>(impl->VideoMemoryCapMb),
+                budget.bValid ? "ext" : "none");
+        }
+        else
+        {
+            NORVES_LOG_INFO(
+                "RenderResources",
+                "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=none source=%s",
+                static_cast<unsigned long long>(budgetBytes / kBytesPerMb),
+                static_cast<unsigned long long>(usageBytes / kBytesPerMb),
+                budget.bValid ? "ext" : "none");
+        }
     }
 
     bool RenderResources::ReloadAssetRuntimeSnapshot(

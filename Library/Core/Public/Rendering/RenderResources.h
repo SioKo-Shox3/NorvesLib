@@ -253,6 +253,16 @@ namespace NorvesLib::Core::Rendering
         bool Initialize(Container::TSharedPtr<RHI::IDevice> device);
         void Shutdown();
         bool IsInitialized() const;
+
+        // VRAM の上限（MB。0 は上限なし）。起動引数 --vram-budget-mb から渡される。
+        // 予算をプールへ割り振る処理は後続の段で足す。ここでは値を保持してログに出すだけ。
+        void SetVideoMemoryCapMb(uint64_t capMb);
+        uint64_t GetVideoMemoryCapMb() const;
+
+        // GameThread から毎フレーム呼ぶ。初回と、その後は約1秒ごとに予算か使用量が
+        // 1% 以上変わったときだけ VRAM_BUDGET をログへ出す。
+        void PollVideoMemoryBudget();
+
         bool ReloadAssetRuntimeSnapshot(
             const Container::String& assetRoot,
             Container::TSharedPtr<const Asset::AssetSystem> candidate);

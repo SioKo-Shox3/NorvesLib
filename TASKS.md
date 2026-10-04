@@ -15,7 +15,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## VTG1-VRAM-BUDGET: VRAMの予算と使用量をVulkanから取り、上限の起動引数を足す
-- status: todo
+- status: done
 - done-when: `RHI::VideoMemoryBudget`（DeviceLocal ヒープの budget・usage の合計と、取得できたかの印）を `IDevice::GetVideoMemoryBudget()` が返す（既定実装は無効値を返す非純粋仮想）。Vulkan は `VK_EXT_memory_budget` を任意拡張として有効化し、あれば `vkGetPhysicalDeviceMemoryProperties2` の budget を返す。Game は `--vram-budget-mb=<MB>` を読んで RenderResources 側へ渡し（GEngine のメンバ経由。シングルトンにしない）、起動後に1回と、その後は約1秒ごとに値が1%以上変わったときだけ `VRAM_BUDGET heap_budget_mb=<n> heap_usage_mb=<n> cap_mb=<n|none> source=<ext|none>` をログへ出す。GPU のテスト `VideoMemoryBudgetVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）が、拡張のある GPU で budget>0・usage>0・usage≤budget を確かめる（Vulkan が無ければ 125）。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^VideoMemoryBudgetVulkanTest$"`

@@ -119,6 +119,9 @@ namespace Game
         // アセットが落ち着いてから n 枚目の描画フレームの最終出力を <接頭辞><n>.png に保存する。
         constexpr const TCHAR *kCaptureSequenceOption = TEXT("--capture-sequence=");
         constexpr const TCHAR *kCaptureSequenceRenderedFramesOption = TEXT("--capture-sequence-rendered-frames=");
+        // --vram-budget-mb=<MB>: VRAM の上限（0 は上限なし）。RenderResources へ渡し、VRAM_BUDGET のログに出す。
+        constexpr const TCHAR *kVramBudgetOption = TEXT("--vram-budget-mb=");
+        uint32_t s_VramBudgetCapMb = 0;
         // --night: 起動画面を夜にする（空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす。値を取らない）。
         constexpr const TCHAR *kNightOption = TEXT("--night");
         bool s_bRendering3DTestNight = false;
@@ -451,6 +454,7 @@ namespace Game
         s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
         s_bRendering3DTestTemporalAA = true;
         s_Rendering3DTestRenderScale = 1.0f;
+        s_VramBudgetCapMb = 0;
         s_bRendering3DTestDebugDrawTestLines = false;
         s_bRendering3DTestNight = false;
         String captureSequencePrefix;
@@ -602,6 +606,17 @@ namespace Game
                 if (!TryParseBoundedFloat(renderScaleValue, 0.5f, 1.0f, s_Rendering3DTestRenderScale))
                 {
                     LOG_ERROR("Rendering3DTest command line parse failed: --render-scale は 0.5〜1 で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String vramBudgetValue;
+            if (TryStripPrefix(args[i], kVramBudgetOption, vramBudgetValue))
+            {
+                if (!TryParseUInt32(vramBudgetValue, s_VramBudgetCapMb))
+                {
+                    LOG_ERROR("Game command line parse failed: --vram-budget-mb は 0 以上の整数（MB）で指定する");
                     return false;
                 }
                 continue;
@@ -1166,6 +1181,12 @@ namespace Game
     void GameApplicationHandler::OnPostInitialize()
     {
         LOG_INFO("GameApplicationHandler::OnPostInitialize()");
+
+        // --vram-budget-mb の上限を RenderResources へ渡す（0 は上限なし）。
+        if (NorvesLib::Core::Engine::GEngine)
+        {
+            NorvesLib::Core::Engine::GEngine->GetRenderResources().SetVideoMemoryCapMb(s_VramBudgetCapMb);
+        }
 
         if (m_bHasTextureAssetRuntimeConfig && !ReloadConfiguredAssetManifest())
         {

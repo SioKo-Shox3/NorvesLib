@@ -1539,7 +1539,44 @@ namespace NorvesLib::RHI::Vulkan
         }
 #endif
 
+        // VK_EXT_memory_budget（DeviceLocal ヒープの予算と使用量の取得。無くても動作する）
+        m_bMemoryBudgetExtensionEnabled = false;
+        if (hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME))
+        {
+            extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+            m_bMemoryBudgetExtensionEnabled = true;
+            NORVES_LOG_INFO("VulkanDevice", "Optional extension enabled: VK_EXT_memory_budget");
+        }
+
         return extensions;
+    }
+
+    // DeviceLocal ヒープの予算と使用量（拡張が無効なら bValid=false）
+    VideoMemoryBudget VulkanDevice::GetVideoMemoryBudget() const
+    {
+        VideoMemoryBudget result;
+        if (!m_bMemoryBudgetExtensionEnabled || !m_physicalDevice)
+        {
+            return result;
+        }
+
+        vk::PhysicalDeviceMemoryBudgetPropertiesEXT budgetProperties{};
+        vk::PhysicalDeviceMemoryProperties2 memoryProperties2{};
+        memoryProperties2.pNext = &budgetProperties;
+        m_physicalDevice.getMemoryProperties2(&memoryProperties2);
+
+        const uint32_t heapCount = memoryProperties2.memoryProperties.memoryHeapCount;
+        for (uint32_t i = 0; i < heapCount && i < VK_MAX_MEMORY_HEAPS; ++i)
+        {
+            if (memoryProperties2.memoryProperties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal)
+            {
+                result.BudgetBytes += budgetProperties.heapBudget[i];
+                result.UsageBytes += budgetProperties.heapUsage[i];
+            }
+        }
+
+        result.bValid = result.BudgetBytes > 0;
+        return result;
     }
 
     // キューファミリーのインデックス取得

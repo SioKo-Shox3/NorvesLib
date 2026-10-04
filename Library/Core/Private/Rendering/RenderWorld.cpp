@@ -183,6 +183,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // VRAM の予算と使用量を、初回と変化があったときだけログへ出す。
+        m_RenderResources.PollVideoMemoryBudget();
+
         bool bRenderThreadQuiesced = false;
 
         // 保留中のリサイズをフレーム開始時に安全に適用する

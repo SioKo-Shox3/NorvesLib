@@ -113,6 +113,8 @@ namespace NorvesLib::RHI::Vulkan
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
         const DeviceCapabilities &GetCapabilities() const override { return m_Capabilities; }
+        // VK_EXT_memory_budget が有効なときだけ DeviceLocal ヒープの予算と使用量を返す。
+        VideoMemoryBudget GetVideoMemoryBudget() const override;
         Math::Matrix4x4 AdjustProjectionForClipSpace(
             const Math::Matrix4x4 &projection, bool bApplyYFlip = true) const override;
 
@@ -169,6 +171,9 @@ namespace NorvesLib::RHI::Vulkan
 
         // デバイス能力情報
         DeviceCapabilities m_Capabilities{};
+
+        // VK_EXT_memory_budget を論理デバイスで有効にしたか（任意拡張）
+        bool m_bMemoryBudgetExtensionEnabled = false;
 
         // Cooperative Vector 機能構造体（Features2チェーン用）
         vk::PhysicalDeviceCooperativeVectorFeaturesNV m_cooperativeVectorFeatures{};
