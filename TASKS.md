@@ -170,68 +170,68 @@
 - notes: 危険地帯（RHI/Vulkan・メモリ・寿命）。
 
 ## VTG2-TILE-UPLOAD: ステージングのリングからタイルへGPUを待たずに書く
-- status: blocked
+- status: todo
 - done-when: 毎フレームのステージングのリング（既定 32 MiB、DeviceLocal でない host-visible）に置いたタイル・ミップテイルのデータを、描画のコマンドの先頭でバッファからイメージの領域へコピーする経路を作る（`VulkanTexture::Update` の waitIdle の経路は使わない）。リングの区画は、その提出の serial が完了するまで再利用しない。1フレームにコピーする量の上限（既定 24 MiB）を持つ。GPU のテスト `SparseTileUploadVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、連続する複数フレームでタイルを書いて読み戻し、その間に `WaitIdle` を呼ばないことを確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(SparseTileUploadVulkanTest|SparseBindVulkanTest|RHITextureUpdateVulkanTest)$"`
 - stop-when: 描画のコマンドの先頭へコピーを差し込むと RenderGraph の資源の状態の追跡と食い違う場合は、理由を記録して止める。
 - paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯（RHI/Vulkan・RenderThread）。後の段のジオメトリのページのアップロードもこのリングを使う。
+- notes: 危険地帯（RHI/Vulkan・RenderThread）。後の段のジオメトリのページのアップロードもこのリングを使う。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残り1件だけ直す。`VulkanBuffer` の作成で、メモリの種類の選択・確保・結び付けのどれかに失敗したとき、作成済みの `VkBuffer`（と確保済みのメモリ）を破棄してから失敗を返す（例外の経路を含め、失敗時の後始末を1か所にまとめる）。`CPUAccessible=false`・`bExcludeDeviceLocal=true` の小さな `TransferSrc` のバッファの作成の失敗を繰り返しても、作成と破棄の数（または検証レイヤーの未解放の報告）が増えないことを GPU のテストで確かめる。
 
 ## VTG2-NVTEX-TILED: クック済みのテクスチャをタイルの並びで書き、1タイルずつ読めるようにする
-- status: blocked
+- status: todo
 - done-when: NVTEX v0.2 として、クッカーが形式の標準ブロック形状のタイル単位（ミップごと、行優先）に並べたデータと、ミップテイル（タイルより小さい段）をまとめた塊を書き、タイルの表（ファイル内のオフセット・大きさ）を持つ。v0.0・v0.1 も読む。読み込み側は、ファイルの範囲読みで1タイル・ミップテイルを取り出せる（全体を読まない）。`CookAssets` の起動画面の材質は v0.2 で焼く。`CookedTextureTest` に v0.2 のタイルの表・範囲読み・壊れた表の拒否を、`AssetCookTextureSmoke` に v0.2 の書き出しを足す。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest CookedTextureUploadTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedTextureTest|CookedTextureUploadTest|AssetCookTextureSmoke)$"`
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook CookAssets -- /m:1`
 - stop-when: タイルの形状がデバイスごとに違い、クックの時点で1つに決められない場合は、標準ブロック形状に限る理由を記録して止める。
 - paths: Tools/AssetCook, Library/Core/Public/Asset, Library/Core/Private/Asset, Library/Core/Private/Rendering, Test/Core/Asset, Docs/Architecture, TASKS.md, PROGRESS.md
-- notes: 危険地帯（アセットロード）。
+- notes: 危険地帯（アセットロード）。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残りを直す。`Test/Core/Asset/CookedTextureTest.cpp` に足した範囲読みのテストの2か所（`BuildTexture` の戻り値を受ける変数）を独自型の `ByteArray` で受ける（既存の補助関数は変えない）。この項目で足した・変えた利用者向けのエラーの説明（評価が挙げた `AssetFileReader.cpp`・`CookedTextureLoader.cpp`・`TextureCooker.cpp` の行）を日本語にする（エラーコード・ログのキーは英語のまま）。
 
 ## VTG2-BUDGET-MANAGER: VRAMの予算をプールへ割り振る
-- status: blocked
-- done-when: `VideoMemoryBudgetManager`（RenderResources が持つ。シングルトン禁止）が、上限 = min(heapBudget − VT 以外の使用量, `--vram-budget-mb` − VT 以外の使用量) を約1秒ごとに計算し、VT のプール（`SparsePagePool`）の目標の大きさを決める（後の段のジオメトリ・VSM のプールの枠も持つ）。変化したときだけ `VRAM_POOLS cap_mb=<n> non_pool_mb=<n> vt_target_mb=<n>` を出す。CPU のテスト `VideoMemoryBudgetManagerTest`（`RenderResourcesDomainContractTest` の束）が、上限・予算外の使用量・上限の引数の組み合わせで目標の大きさが期待どおりで、負にならないことを確かめる。
+- status: todo
+- done-when: `VideoMemoryBudgetManager`（RenderResources が持つ。シングルトン禁止）が、上限 = min(heapBudget, `--vram-budget-mb`) − VT 以外の使用量（ヒープの情報があれば heapUsage からプールの確保量を引いた値、無ければ上限の30%の見込み）を約1秒ごとに計算し、VT のプール（`SparsePagePool`）の目標の大きさを決める（後の段のジオメトリ・VSM のプールの枠も持つ）。変化したときだけ `VRAM_POOLS cap_mb=<n> non_pool_mb=<n> vt_target_mb=<n>` を出す。CPU のテスト `VideoMemoryBudgetManagerTest`（`RenderResourcesDomainContractTest` の束）が、上限・予算外の使用量・上限の引数の組み合わせで目標の大きさが期待どおりで、負にならないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VideoMemoryBudgetManagerTest|TextureMemoryLedgerTest)$"`
 - stop-when: 予算外の使用量（VT 以外の確保）を数える手段が台帳に無い場合は、理由を記録して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 計画書 4.1。
+- notes: 計画書 4.1。 2026-10-04 親（run `20261004-164924` の保留を解く）: `blocked/VTG2-BUDGET-MANAGER.md` の選択肢Bを採る（台帳の作り直しはしない）。`VK_EXT_memory_budget` は主要な GPU で使えるので、ヒープの情報があるときは `non_pool = heapUsage − SparsePagePool が確保している全ページの量`（結んだ量・貸した量ではなく、プールの塊として確保した量）で決める。ヒープの情報が無いときは、上限（`--vram-budget-mb`、無ければ DeviceLocal のヒープの大きさ）の30%を VT 以外へ見込む保守的な近似にし、`VRAM_POOLS` に `source=estimate` を出す。台帳（`VRAM_LEDGER`）が解放待ちの資源と、パスが直接作るテクスチャを数えない点は既知の限界として段2の受入れに書く。
 
 ## VTG2-RESIDENCY-FALLBACK: 常駐していないタイルを読まず、粗いミップへ逃げる
-- status: blocked
+- status: todo
 - done-when: VT のテクスチャ（材質の Albedo・Normal・ORM・Height の枠）のサンプルを、`GL_ARB_sparse_texture2` の `sparseTextureARB` で行い、常駐していない（residency の符号が非常駐）ときは `sparseTextureLodARB` で1段ずつ粗いミップへ下げて読み直す（ミップテイルは常に常駐なので必ず終わる）。POM の高さのサンプルも同じ。`gbuffer.frag`・`megageometry.frag`・`forward_transparent.frag` が共通の関数（`Common/` の GLSL）を使い、材質が VT でないときは従来の `texture()` のまま（golden 不変）。GPU のテスト `VirtualTextureResidencyVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、ミップテイルと一部のタイルだけを結んだテクスチャで、結んでいない領域が粗いミップの色になり、黒や未定義の値にならないことを確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderingGoldenImageTest MaterialResourcesTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureResidencyVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|MaterialResourcesTest|GBufferMaterialDescriptorCacheTest)$"`
 - stop-when: シェーダーのコンパイル（shaderc）が sparse の拡張を通さない場合は、理由を記録して止める。
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-04 親: 計画書 4.2 の「常駐ミップの地図＋ MinLod」から、residency の符号で粗いミップへ逃げる方式に変えた（材質ごとの地図の binding を増やさずに済み、非常駐は過渡的なので追加のサンプルは一時的）。異方性フィルタは逃げた画素だけ失う。
+- notes: 2026-10-04 親: 計画書 4.2 の「常駐ミップの地図＋ MinLod」から、residency の符号で粗いミップへ逃げる方式に変えた（材質ごとの地図の binding を増やさずに済み、非常駐は過渡的なので追加のサンプルは一時的）。異方性フィルタは逃げた画素だけ失う。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残りを直す。POM の明示勾配の版で、再試行の開始 LOD を自前の式で求めず、POM の分岐・ループの前に元の UV の `textureQueryLod` で実際の標本の LOD を取り、明示勾配の版へ渡す（異方性の上限のせいで細かいミップへ戻らない）。評価が挙げた反例（512²、ミップ0 のタイル(0,0) とミップテイルだけ常駐、ミップ1 は非常駐、UV (0.25,0.25)、勾配 (8/512,0)・(0,1/512)、異方性の上限4 → 期待はミップ2）を `VirtualTextureResidencyVulkanTest` のケースに足す。
 
 ## VTG2-FEEDBACK-WRITE: 材質のサンプルの箇所からタイルの要求をGPUのバッファへ書く
-- status: blocked
+- status: todo
 - done-when: VT の材質の UBO にテクスチャの番号（VT の表の添字）を持たせ、3つの frag が、4×4 の画素のうちフレームごとに巡回する1画素で、`textureQueryLod` から欲しいミップ（POM の後の UV）と、そのミップのタイルの x・y を求め、フレームの要求のバッファ（storage buffer、既定 64K 件、32bit に詰めた番号・ミップ・x・y）へ書く。重複は小さなハッシュの表（atomicCompSwap）で減らす。非常駐で粗いミップへ逃げた画素は巡回によらず要求を書く。GPU のテスト `VirtualTextureFeedbackVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、既知の UV の面を描いて期待のタイルの要求が書かれることを確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureFeedbackVulkanTest|VirtualTextureResidencyVulkanTest|RenderGraphCompileTest)$"`
 - stop-when: 要求のバッファを3つの frag の descriptor に足すと RenderGraph の資源の宣言の契約を崩す場合は、理由を記録して止める。
-- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 計画書 4.2。段6でビジビリティバッファの材質の解決パスへまとめる。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.2。段6でビジビリティバッファの材質の解決パスへまとめる。 2026-10-04 親（run `20261004-164924` の保留を解く）: `blocked/VTG2-FEEDBACK-WRITE.md` の選択肢1を承認する。`paths:` に `Library/Core/Public/RHI`・`Library/Core/Private/RHI` を足した。`fragmentStoresAndAtomics` を対応しているときだけ有効化して `DeviceCapabilities` に載せ、非対応の GPU ではフィードバックを無効にする（材質は従来どおり描ける）。実装のメモは blocked の文書のとおり。VT の表の番号は VTG2-VT-STREAMER（`217a284f`・`8e6ed661`）で入った表に合わせる。
 
 ## VTG2-FEEDBACK-READ: 要求を数フレーム遅れで読み戻して集計する
-- status: blocked
+- status: todo
 - done-when: 要求のバッファを3つのリングで持ち、2フレーム前のものを GPU を待たずに読み戻して、テクスチャごとのタイルの要求の集合（同じタイルは1つ、最後に要求したフレームを持つ）にまとめる。RenderThread を止めない。集計の結果を `VirtualTextureRequestSet` として VT のストリーマへ渡す。CPU のテスト `VirtualTextureRequestSetTest`（`RenderResourcesDomainContractTest` の束）が、詰めた要求の復号・重複の除去・溢れた件数の数え方を確かめる。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureRequestSetTest|VirtualTextureFeedbackVulkanTest)$"`
 - stop-when: 読み戻しに GPU の完了待ちが要る場合は、理由を記録して止める。
-- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯（RenderThread）。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RenderThread）。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残りを直す。(1) RHI のバリアにフラグメントシェーダーの storage の書き込みを表す状態を足し、`FRAGMENT_SHADER / SHADER_WRITE → HOST / HOST_READ` を記録する（完了の serial で待たない読み戻しは保つ）。(2) VTG2-FEEDBACK-WRITE の GPU のテスト `VirtualTextureFeedbackVulkanTest` に、frag が既知の要求を書き、バリアとリングを経て2フレーム後に回収されるケースを足して ctest に登録し、verify に加える。`paths:` に `Library/Core/Public/RHI`・`Library/Core/Private/RHI` を足した。
 
 ## VTG2-VT-STREAMER: 要求からタイルを読み、結び付けて常駐させる
-- status: blocked
+- status: todo
 - done-when: `VirtualTextureStreamer`（RenderResources が持つ）が、要求の集合から未常駐のタイルを優先度（粗いミップ・画面の近くが先）順に選び、JobSystem の範囲読みで NVTEX v0.2 から読み、ステージングのリング（VTG2-TILE-UPLOAD）へ置き、ページを結び（VTG2-SPARSE-BIND）、コピーする。1フレームの上限（読み・コピー・結び付けの数）を持つ。ミップテイルは作成時に結んで常に常駐。材質のテクスチャを VT として作る入口（クック済みの v0.2 の材質のテクスチャを sparse で作る）を `TextureResources` に足す。CPU のテスト `VirtualTextureStreamerTest`（`RenderResourcesDomainContractTest` の束。読み込み・結び付けを偽物にする）が、優先度・上限・同じタイルの二重の要求・読み込みの失敗を確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureStreamerTest|VirtualTextureRequestSetTest|GpuRetireQueueTest)$"`
 - stop-when: 範囲読みの JobSystem の経路が無く、アセットの読み込みの経路を作り直す必要がある場合は、理由を記録して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Asset, Library/Core/Private/Asset, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯（アセットロード・寿命・RenderThread）。
+- notes: 危険地帯（アセットロード・寿命・RenderThread）。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残り3件を直す。(1) コピーの1フレームの上限（件数・バイト数）を最初の1件にも掛ける。ミップテイルが上限を超えるときは、テイルを公開しないまま複数フレームに分けて書き、書き終えてから使う。上限0など処理できない設定は作成時に明示的に拒否する。(2) 優先度を「粗いミップが先 → 同じミップなら要求した画素の数（画面上の大きさ）が多い方 → 最後に要求したフレームが新しい方」と定義し直す（元の「画面の近くが先」は、カメラからの距離を要求に載せる手段が無いため、親がこの定義に置き換えた）。`HitCount` が画素の数を表すことをテストで確かめる。(3) 実際の `TileUploader` と `GpuRetireQueue` を使い、「コピーを記録 → Abort → 登録解除 → ページの再取得 → 次のフレーム」で古いコピーが記録されない回帰テストを足し、実行の証拠を残す。
 
 ## VTG2-VT-EVICT: LRUで追い出し、プールの予算に収める
 - status: todo
