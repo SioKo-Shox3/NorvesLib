@@ -45,3 +45,20 @@ MaterialImportPolicyTestはTRELLIS型の広いBとAI既定ignore、Pixal型Gの�
 texture override/256byteの恒等性、AOの式、発光textureのみ・strength0・換算欠落/優先順位・非有限・保存上限を検証する。
 通常/O2-NDEBUG/ASan・UBSan（LSan除外）を実行し、MEMBER/CTestへ登録する。
 実画像・CLI・runtime・撮影の確認はこれに含めない。
+
+## 設定の階層解決と正規形
+
+MaterialImportSettings は生成元profileを明示で受け取り、資産の設定に素材の指定を上書きする。
+ARMは各channelの存在maskを持ち、未指定のchannelだけ既定値を継承する。
+両面・alphaは Inherit と FromSource を分け、素材側の FromSource で資産側の強制指定を解除できる。
+発光換算は素材 > 資産 > asset-set。存在する不正値は上位指定で隠さず拒否する。
+換算不在はこの段階で拒否せず、ImportEmission が source factor/strength を見て発光時だけ拒否する。
+
+解決済み材質1件のcanonicalは67B。u32版1、u8 profile、3組の(u8 ARM mode、f64 constant、f64 auto幅)、
+u8両面、u8 alpha、u8換算存在、f64 nits/unit。LE/IEEE binary64でpaddingを含めない。
+未使用constant/幅、不在換算値は0、-0は+0に揃える。
+既存hashへASCII NVMATERIALSETTINGS、u64 canonical長、canonical bytesをFNV-1a64で連結する。
+材質列を処理するときはsource material index順を固定する。旧幾何52Bや旧v0経路には自動適用しない。
+
+この部品は解決済み値の契約であり、JSONの素材選択、設定ファイル、asset-set driver、cook/cacheの実呼出しは未接続。
+素材名・資産名を付けた診断は呼出元で補う必要がある。設定名はMaterialSettingsErrorKeyで取得する。

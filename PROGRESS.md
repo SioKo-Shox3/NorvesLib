@@ -653,3 +653,6 @@
 - G2-S6-CLI-BYTE-SMOKE: 既存raw/texture/audio/mesh/GLB/import/骨格の7 smokeを変更せず実行するcaptureとpackage/manifestの非正規化snapshot比較を追加。既存出力拒否・case全成功/生成物必須・recipe固定/実行中変更拒否・改竄/一覧/byte差を検査。比較器10 unittest通常/O成功、独立第2周PASS。CMakeのsource列挙は分割で変わるためrecipeから除外し、rawコマンドはdriverSHAで固定。Windows実CLI/前後byte比較は未実行でMain分割gateは未達。
 - G2-S6作者訂正: origin/main CookTextureAssetSet.ps1とSilverTextures/SilverGltfTexturesの2specを比較元に確定。手元確認用CookAssets.ps1/StartupMaterialsは対象外、比較元未発見の保留は解除。glTF外部ファイルとsidecarを増分印へ含める。実texture spec v1互換確認は未実行。
 - Next: GR79材質設定の解決/JSON/hashへ進み、一括cook実byte受入れは別gateで保持する。
+
+- G2-GR79-MATERIAL-SETTINGS-VALUE: 明示profileとchannel存在mask、素材>資産>既定、発光換算の素材>資産>asset-setを解決し、存在する不正下位値も先行拒否/出力保持。両面・alphaのInherit/FromSourceを区別して親強制から復帰可能。換算不在はImportEmissionの発光判定まで許容。解決済み67B canonical（未使用値/-0正規化）とdomain/長さ付きFNVを追加。独立Python golden/FNVff4637ca142e511e、通常/O2/ASanUBSan(LSan除外)3mode/MEMBER、独立5283反証PASS。旧幾何52B/hash/file/Mainはbyte不変。JSON/素材selector/file/asset-set/cook/cacheへの実接続は未実装。
+- Next: GR79材質設定の厳密JSONと素材指定の照合を接続し、未知/重複/名前不一致を無言適用しない。実CLIのMain分割前gateとWindows実比較は未達のまま保持。

@@ -2283,3 +2283,9 @@
 - done-when: AssetCook --asset-setへ一括cookと増分判定を集約。origin/main CookTextureAssetSet.ps1 + Rendering3DTestSilverTextures/Rendering3DTestSilverGltfTexturesに対してcooked/manifestのbyte一致を確認。glTF外部ファイルとsidecarを印に含む。
 - verify: 単体CLIの分割前後比較、旧texture spec v1の2spec同値、外部buffer/画像/sidecarの変更・不在・復帰・破損で正しい再cook/拒否、失敗時出力保持。
 - stop-when: 手元確認用CookAssets.ps1/StartupMaterialsを対象に戻す、PS側へ増分判定を重複実装、Windows実byte比較を未実施で完了とする。
+
+## G2-GR79-MATERIAL-SETTINGS-VALUE: 材質設定の解決と正規形を固定する
+- status: done
+- done-when: profileと素材/資産/asset-setの設定を失敗保持で解決し、解決済み材質の独立canonical/hashを用意。幾何52Bと旧v0経路を変更しない。
+- verify: AI既定と素材上書き/明示source復帰/不正下位値拒否/換算不在許可、canonical独立golden/bit/未使用値/-0、設定差hashを通常/O2/sanitizerとMEMBERで検証。
+- stop-when: 未接続JSON/CLI/asset-set/素材識別子を実装済みとする、発光の有無を見る前に換算不在だけで拒否、旧hashを変更する。

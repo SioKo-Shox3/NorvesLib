@@ -21,6 +21,7 @@ set(PRIVATE_SOURCES
     Private/Asset/CookedSkeletalNameCodec.cpp
     Private/Asset/CookedMaterialFormat.cpp
     Private/Resource/MaterialImportPolicy.cpp
+    Private/Resource/MaterialImportSettings.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/AssetManifest.cpp
