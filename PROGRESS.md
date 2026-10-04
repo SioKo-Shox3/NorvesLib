@@ -739,3 +739,5 @@
 - G2-S6-MODEL-NATIVE-PATH検証準備: 既存sidecar結合試験をnative path比較へ変更し、Windows対象を21CPUへ拡張。比較器12件×通常/最適化とportable native UTF8 locatorの空/日本語/非BMP/NUL/不正byte検査が成功。Linuxで全test TUをcompileする試行はWindows.h不在で未実施扱い。実Windowsと79+10byte gateは未確認。
 
 - G2-S6-MODEL-NATIVE-PATH実検証: 4b9fd5b8/run37228182164でCore/AssetCook buildは成功、追加testのmainで局所alias TextとCore::Text、およびDetail名前空間が曖昧となりbundle compile失敗。test aliasをNativeTextへ変更し、診断encoderのnamespaceを明示する。production実装/試験値は変更せず、21CPU・79+10byteは未到達のためdoingを維持。
+
+- G2-S6-MODEL-NATIVE-PATH受入: d2556d3c/run37229272949で実Windows build・21CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。test名衝突の修正後production実装は不変。日本語/非BMPの静的・骨格glTF/GLB、source/base/override、外部依存、共通record→Skip、lock/不在/不正locatorの拒否を実証。3ZIPのdigestと79+10固定出力の直接byte一致を独立確認しroot再実行。taskをdone。argv/非ASCII外部URI/runtime出力path拡張は含めない。

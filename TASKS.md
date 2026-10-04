@@ -2424,7 +2424,7 @@
 - stop-when: recordに書かれた任意pathを開く、別keyのfileやsourceを上書き可能な要求をCookにする、全manifest hashをentry cache identityにする、永続化/既存root公開を完了扱い。
 
 ## G2-S6-MODEL-NATIVE-PATH: modelのfile locatorをnative pathで共有する
-- status: doing
+- status: done
 - done-when: model fingerprint/cookの外部URIとsidecar探索が同じnative filesystem pathを使い、narrow変換で失われるUnicode source/overrideを黙って別fileへ変えない。既存ASCII入出力のbyte互換を保つ。
 - verify: Windowsの日本語・非BMP source/base/overrideと外部buffer・image、cacheと実cookの一致、失敗保持、既存79+10byte gate。
 - stop-when: ANSI文字化けを許容、runtime asset logical pathの規約を同時に変更、実Windows未検証のままUTF対応と宣言する。
