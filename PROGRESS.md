@@ -716,3 +716,5 @@
 - G2-S6-TEXTURE-BATCH受入: 79d019d/run37210701091の実Windowsで13CPU、単体7CLI/79byte/5診断、native2spec×2/10file、全ASCII PS5.1実probe成功。25native起動=9成功/16拒否を確認し、日本語source/cwd、junction、既存root、late画像不正、prefix衝突、公開先競合を検証。native artifact11306368465（SHA2568797453fad3cf42e8bc354300726984c24fa2a704885e97858bbe3a158ef368f）の10file296408686byteを独立全byte比較しroot再確認。新規root用v1 sliceをdone、既存root増分とglTF/sidecar stampは未完。
 
 - G2-S6-DEPENDENCY-SNAPSHOT開始: source/glTF外部buffer・image/選択sidecarの生byte・presenceと要求/revisionを印へ集約。sidecar loaderに同じreadのRawSourceBytesを保持し、外部readerのcanonical path出力を共有。root/設定/URIの既存runtime SourceHashは不変。実file変更・不在復帰・policy・permission・失敗保持のnative契約を登録、実Windows前なのでdoing。Skip決定と既存root公開は未接続。
+
+- G2-S6-DEPENDENCY-SNAPSHOT実検証: edc9a5c/run37213672528は実build/診断と15CPU成功、新依存試験がbuffer解決失敗で停止。コピーしたM9Skinnedに必須fixture.bin（416byte）が無いことを確認。既存skeletal試験の生成bodyをbyte書込callback付き共通headerへ機械移動し、新依存試験でも同じbufferを生成する。既存bodyの逆置換一致を確認。依存実装は変更せず、失敗時source表示を追加して再検証する。

@@ -1,5 +1,7 @@
 ﻿// 依存印のraw byte・不在・policy・失敗保持を実file/Json/glTF resolverで検証する。
 #include "Tools/AssetCook/CookDependencySnapshot.h"
+#include "M9LooseFixture.h"
+#include <bit>
 #include "Resource/ImportSettingsFile.h"
 #include "Resource/GltfBufferFile.h"
 #include "Asset/AssetPackageFormat.h"
@@ -30,8 +32,24 @@ namespace
     CookDependencySnapshot Capture(const SingleAssetCookRequest& request,uint64_t revision=1)
     {
         CookDependencySnapshot out;Container::AnsiString error;
-        if(!CaptureCookDependencySnapshot(request,revision,out,error)) { std::fprintf(stderr,"capture error: %s\n",error.c_str());CHECK(false); }
+        if(!CaptureCookDependencySnapshot(request,revision,out,error)) { std::fprintf(stderr,"capture source=%s error: %s\n",request.InputPath.generic_string().c_str(),error.c_str());CHECK(false); }
         return out;
+    }
+    Bytes SkeletalBuffer()
+    {
+        const auto writeFloat=[](Bytes& bytes,size_t offset,float value)
+        {
+            const auto bits=std::bit_cast<uint32_t>(value);
+            for (size_t i=0;i<4;++i) bytes[offset+i]=static_cast<uint8_t>(bits>>(i*8));
+        };
+        const auto writeShort=[](Bytes& bytes,size_t offset,uint16_t value)
+        { bytes[offset]=static_cast<uint8_t>(value);bytes[offset+1]=static_cast<uint8_t>(value>>8); };
+        const auto writeMatrix=[&](Bytes& bytes,size_t offset,float inverseY)
+        {
+            for (const size_t diagonal:{0,5,10,15}) writeFloat(bytes,offset+diagonal*sizeof(float),1.0f);
+            writeFloat(bytes,offset+13*sizeof(float),inverseY);
+        };
+        return NorvesLib::Tests::AssetFixtures::BuildM9LooseBuffer<Bytes>(writeFloat,writeShort,writeMatrix);
     }
     void Reject(const SingleAssetCookRequest& request,uint64_t revision=1)
     {
@@ -115,6 +133,7 @@ int main()
     const auto originalGlb=Read(glb);auto truncated=originalGlb;truncated.pop_back();Write(glb,truncated);Reject(Model(glb));Write(glb,originalGlb);
     CHECK(Capture(Model(glb)).Fingerprint==embedded.Fingerprint);
     std::filesystem::copy("Assets/Models/M9Skinned",root/"skeletal",std::filesystem::copy_options::recursive);
+    const auto skeletalBytes=SkeletalBuffer();CHECK(skeletalBytes.size()==416);Write(root/"skeletal/fixture.bin",skeletalBytes);
     auto skeletal=Model(root/"skeletal/ValidU8Float.gltf");skeletal.EntryTypeText="Skl0";skeletal.Format="nvskel.v0.skinned.pnujiw.u32";
     CHECK(Count(Capture(skeletal),CookDependencyRole::ExternalBuffer)==1);
     // URI復号とcanonical境界は既存readerを通す。画像byteはここでは完全decodeしない。

@@ -1,4 +1,5 @@
-﻿#include "Asset/AssetPackageFormat.h"
+﻿#include "M9LooseFixture.h"
+#include "Asset/AssetPackageFormat.h"
 #include "Asset/CookedSkeletalFormat.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include "FileStream/FileStream.h"
@@ -431,47 +432,7 @@ namespace
 
     ByteArray BuildLooseFixtureBuffer()
     {
-        ByteArray bytes(416, 0);
-        constexpr float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
-        constexpr float normals[9] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
-        constexpr float texCoords[6] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
-        constexpr uint8_t joints[12] = {0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0};
-        constexpr float weights[12] = {
-            0.75f, 0.25f, 0.0f, 0.0f,
-            0.5f, 0.5f, 0.0f, 0.0f,
-            1.0f, 0.0f, 0.0f, 0.0f};
-        for (size_t index = 0; index < 9; ++index)
-        {
-            WriteFloat(bytes, index * sizeof(float), positions[index]);
-            WriteFloat(bytes, 36 + index * sizeof(float), normals[index]);
-        }
-        for (size_t index = 0; index < 6; ++index)
-        {
-            WriteFloat(bytes, 72 + index * sizeof(float), texCoords[index]);
-        }
-        for (size_t index = 0; index < 12; ++index)
-        {
-            bytes[96 + index] = joints[index];
-            WriteFloat(bytes, 132 + index * sizeof(float), weights[index]);
-        }
-        WriteLe16(bytes, 216, 0);
-        WriteLe16(bytes, 218, 1);
-        WriteLe16(bytes, 220, 2);
-        WriteMatrix(bytes, 224, 0.0f);
-        WriteMatrix(bytes, 288, -1.0f);
-        WriteFloat(bytes, 352, 0.0f);
-        WriteFloat(bytes, 356, 2.0f);
-        constexpr float translations[6] = {0.0f, 1.0f, 0.0f, 0.0f, 3.0f, 0.0f};
-        constexpr float rotations[8] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f};
-        for (size_t index = 0; index < 6; ++index)
-        {
-            WriteFloat(bytes, 360 + index * sizeof(float), translations[index]);
-        }
-        for (size_t index = 0; index < 8; ++index)
-        {
-            WriteFloat(bytes, 384 + index * sizeof(float), rotations[index]);
-        }
-        return bytes;
+        return NorvesLib::Tests::AssetFixtures::BuildM9LooseBuffer<ByteArray>(WriteFloat, WriteLe16, WriteMatrix);
     }
 
     class LooseFixture final
