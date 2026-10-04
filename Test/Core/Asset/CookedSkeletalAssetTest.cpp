@@ -538,11 +538,16 @@ namespace
         stream->Close();
         return Container::AnsiString(Container::AnsiStringView(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
     }
-    Container::AnsiString ChangeBufferUri(Container::AnsiStringView text, Container::AnsiStringView replacement)
+    // 既知fixtureのURIを1件だけ置換する。JSONの表記自体は正規化しない。
+    Container::AnsiString ChangeBufferUri(Container::AnsiStringView text, Container::AnsiStringView replacement,
+                                         Container::AnsiStringView expectedUri = "fixture.bin")
     {
-        constexpr Container::AnsiStringView needle = "\"uri\": \"fixture.bin\",";
+        const Container::AnsiString needleText = Container::AnsiString("\"uri\": \"") +
+            Container::AnsiString(expectedUri) + "\",";
+        const Container::AnsiStringView needle(needleText.data(), needleText.size());
         const size_t offset = text.find(needle);
         assert(offset != Container::AnsiStringView::npos);
+        assert(text.find(needle, offset + needle.size()) == Container::AnsiStringView::npos);
         return Container::AnsiString(text.substr(0, offset)) + Container::AnsiString(replacement) +
             Container::AnsiString(text.substr(offset + needle.size()));
     }
@@ -2017,7 +2022,7 @@ namespace
             const auto zeroExtraText=ReadFixtureJson(ToCorePath(FindFixtureRoot()/"ExtraZeroInfluences.gltf"));
             ByteArray zeroExtraBinary=binary; zeroExtraBinary.resize(464,0);
             WriteFixtureBytes(fixture.Root/"extra_zero.bin",zeroExtraBinary);
-            const auto zeroExtraGlb=MakeSkeletalGlb(ChangeBufferUri(zeroExtraText,""),zeroExtraBinary);
+            const auto zeroExtraGlb=MakeSkeletalGlb(ChangeBufferUri(zeroExtraText,"","extra_zero.bin"),zeroExtraBinary);
             assert(Skeletal::DecodeSkeletalGltf(zeroExtraGlb,fixture.Path()).Status==
                 Skeletal::SkeletalGltfDecodeStatus::InfluenceLimitExceeded);
             assert(!cook(zeroExtraGlb,externalCook) && externalCook.SourceHash==retainedExtraHash && externalCook.NvskelBytes==retainedExtraPayload);

@@ -2362,3 +2362,9 @@
 - done-when: 幾何設定52Bを維持した新document/loaderが資産layerと素材selector+layer+surfaceを厳密解析。glTF元index/name catalogを所有し、全selectorを共通関数1回で解決、ARM/発光設定とSurfaceNameを値所有planへ届ける。旧loader/v0受理は拡張せず、実cook接続は次の垂直slice。
 - verify: raw無名/Material_0/入替/同名警告情報/未一致/二重target/Unicode/JSON寿命後所有/失敗保持、旧幾何APIの拒否互換、sidecarfile入口。native testをCIで実行する。
 - stop-when: SurfaceNameをreportだけでruntime対応とする、未対応cookに設定を捨てて渡す、resolver照合を複製、元indexを生成slotへ置換。
+
+## G2-S6-SKELETAL-FIXTURE-URI: 骨格GLB試験の置換対象URIを明示する
+- status: doing
+- done-when: ChangeBufferUriが期待する外部URIを引数で受け、ExtraZeroInfluencesのextra_zero.binだけを正しく除去する。従来fixture.binの既定とちょうど1件の置換assertを維持する。
+- verify: 既存JSON/binaryは無変更、抽出後JSONとbuffer長を確認。実Skeletal unit/CLIを再実行し、失敗時出力保持やInfluenceLimitExceededの期待を変更しない。
+- stop-when: URIの不一致を黙殺、JSON全体を正規化、エンジン判定やassertを弱化、実全7smoke前に基準採取完了とする。

@@ -691,3 +691,5 @@
 
 - G2-MATERIAL-IMPORT-PLAN: 新document/元index+UTF8名catalog/解決済みplanを値所有化。幾何52Bと旧loaderの拒否を維持し、新file入口だけが材質設定を読む。全rowのARM/発光/surfaceを共通resolver1回へ渡し、名前/番号二重指定・不在を拒否。無名/Material_0・catalog順とsource順・重複診断source index・寿命/後段失敗保持・legacy/BOMをnative試験へ登録。45JSON literal構文確認、独立review PASS、非blockingの不正手組みcatalog/後続layerとsurface失敗保持も補強。実nativeは未実行のためdoing。CLI/v1 cook/cache/SurfaceName永続化は未接続。
 - run37198756161でCore/AssetCook/CookedMeshTestビルドと9CPU試験成功を確認。G2-JSON-UNICODE-INPUTはnative ANSI/TCHAR経路も合格してdone（Core全体UNICODE構成は未検証）。PSModulePath修正でGlb/Importも通り環境修正taskはdone。全7smokeはSkeletalのfixture helperがextra_zero.binにfixture.bin固定needleを当てて停止し未完。出力/受入れ条件は緩めず別修正する。
+
+- G2-S6-SKELETAL-FIXTURE-URI: 実run37198756161の最終Skeletal停止を特定。ChangeBufferUri呼出順の先行fixtureはすべてpretty fixture.bin、ExtraZeroInfluencesだけextra_zero.binで固定needleに不一致。期待URI引数（既定fixture.bin）と一意一致assertを設け、該当callだけextra_zero.binを指定。source fixture/binary/エンジン判定は無変更。実再試験まではdoing。
