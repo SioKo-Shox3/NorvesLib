@@ -11,7 +11,7 @@
 #include <iostream>
 
 using namespace NorvesLib::Core;
-namespace Staging = NorvesLib::Core::Resource::ModelStaging;
+namespace Staging = NorvesLib::Core::ResourceIO::ModelStaging;
 
 namespace
 {

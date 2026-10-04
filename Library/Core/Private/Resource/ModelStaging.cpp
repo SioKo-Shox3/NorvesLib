@@ -14,7 +14,7 @@
 
 #include "stb_image.h"
 
-namespace NorvesLib::Core::Resource::ModelStaging
+namespace NorvesLib::Core::ResourceIO::ModelStaging
 {
     using namespace NorvesLib::Core::Container;
 
@@ -864,4 +864,4 @@ namespace NorvesLib::Core::Resource::ModelStaging
                         LoadProfileElapsedMs(totalStartTime));
         return modelHandle;
     }
-} // namespace NorvesLib::Core::Resource::ModelStaging
+} // namespace NorvesLib::Core::ResourceIO::ModelStaging

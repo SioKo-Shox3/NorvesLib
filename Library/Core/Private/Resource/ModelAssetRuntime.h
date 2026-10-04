@@ -30,12 +30,12 @@ namespace NorvesLib::Core::Rendering
         [[nodiscard]] bool IsBound() const;
         [[nodiscard]] bool SetAssetSystem(Container::TSharedPtr<const Asset::AssetSystem> assetSystem);
         uint32_t LoadModelAsync(const Container::String& logicalPath,
-                                Resource::ModelAsyncLoadQueue::Callback callback);
+                                ResourceIO::ModelAsyncLoadQueue::Callback callback);
         uint32_t FlushCompletedModelLoads(uint32_t maxLoadsPerFrame);
         void CancelModelLoad(uint32_t requestId);
         [[nodiscard]] bool CancelPendingModelLoadsAndWait();
         [[nodiscard]] uint32_t GetPendingAsyncModelLoadCount() const;
-        [[nodiscard]] Resource::ModelCacheReleaseResult ReleaseManagedModel(ModelHandle handle);
+        [[nodiscard]] ResourceIO::ModelCacheReleaseResult ReleaseManagedModel(ModelHandle handle);
 
         void CloseAndDrain();
         void ReopenAfterClear();
@@ -50,14 +50,14 @@ namespace NorvesLib::Core::Rendering
         friend struct ModelAssetRuntimeShutdownTestAccess;
 
         [[nodiscard]] bool CanReloadSnapshotLocked() const;
-        [[nodiscard]] Resource::ModelCacheHandleBatch ApplyReloadSnapshotLocked(
+        [[nodiscard]] ResourceIO::ModelCacheHandleBatch ApplyReloadSnapshotLocked(
             const Container::String& assetRoot,
             const Container::TSharedPtr<const Asset::AssetSystem>& assetSystem);
-        void ReleaseRetiredAfterReload(Resource::ModelCacheHandleBatch batch);
+        void ReleaseRetiredAfterReload(ResourceIO::ModelCacheHandleBatch batch);
         [[nodiscard]] bool TryBuildPlan(const Container::String& logicalPath,
-                                        Resource::CookedModelLoadPlan& outPlan) const;
-        [[nodiscard]] bool IsRequestCurrent(const Resource::ModelAsyncLoadQueue::RequestPtr& request) const;
-        void ReleaseHandles(Resource::ModelCacheHandleBatch batch);
+                                        ResourceIO::CookedModelLoadPlan& outPlan) const;
+        [[nodiscard]] bool IsRequestCurrent(const ResourceIO::ModelAsyncLoadQueue::RequestPtr& request) const;
+        void ReleaseHandles(ResourceIO::ModelCacheHandleBatch batch);
         void ReleaseHandles(Container::VariableArray<ModelHandle> handles);
         void CloseForResourceClear();
 
@@ -72,8 +72,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bClosing = false;
         bool m_bTerminallyQuiesced = false;
         Delegate<void> m_AdmissionCloseHookForTesting;
-        Resource::ModelAsyncLoadQueue m_Queue;
-        Resource::ModelHandleCache m_Cache;
+        ResourceIO::ModelAsyncLoadQueue m_Queue;
+        ResourceIO::ModelHandleCache m_Cache;
         Thread::Atomic<uint32_t> m_NextCacheHitRequestId{0x80000000u};
     };
 } // namespace NorvesLib::Core::Rendering

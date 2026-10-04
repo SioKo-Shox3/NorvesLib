@@ -49,7 +49,7 @@ namespace Container = NorvesLib::Core::Container;
 namespace FileStream = NorvesLib::FileStream;
 namespace Rendering = NorvesLib::Core::Rendering;
 namespace Gltf = NorvesLib::Core::Gltf;
-namespace Resource = NorvesLib::Core::Resource;
+namespace ResourceIO = NorvesLib::Core::ResourceIO;
 namespace Skeletal = NorvesLib::Core::Skeletal;
 namespace Math = NorvesLib::Math;
 namespace Animation = NorvesLib::Core::Animation;
@@ -940,7 +940,7 @@ namespace
         const auto legacy = DecodeSkeletalGltf(CoreText(source), sourcePath, &legacyBuffers, nullptr, &options);
         assert(legacy.Succeeded() && legacyBuffers.size() == 1);
         AssertEquivalent(decoded.Data, legacy.Data); checkReport(legacy.Report);
-        const auto file = Resource::GLTFAnalyzer::AnalyzeSkeletal(sourcePath, &options);
+        const auto file = ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(sourcePath, &options);
         assert(file.Succeeded()); AssertEquivalent(decoded.Data, file.Data); checkReport(file.Report);
         const auto glb = MakeSkeletalGlb(ChangeBufferUri(source, ""), binary);
         const auto embedded = DecodeSkeletalGltf({glb.data(), glb.size()}, sourcePath, nullptr, nullptr, &options);
@@ -1027,7 +1027,7 @@ namespace
         assert(failedLegacy.Status == failed.Status && legacyBuffers.empty()); checkEmpty(failedLegacy);
         const auto failedGlb = DecodeSkeletalGltf({glb.data(), glb.size()}, sourcePath, nullptr, nullptr, &limited);
         assert(failedGlb.Status == failed.Status); checkEmpty(failedGlb);
-        assert(Resource::GLTFAnalyzer::AnalyzeSkeletal(sourcePath, &limited).Status == failed.Status);
+        assert(ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(sourcePath, &limited).Status == failed.Status);
         auto invalidOptions = options; invalidOptions.WarnDroppedWeight = 0.5;
         assert(DecodeSkeletalGltf({sourceBytes.data(), sourceBytes.size()}, sourcePath, nullptr, nullptr, &invalidOptions).Status == SkeletalGltfDecodeStatus::InvalidImportOptions);
         // 成功prefixの統計から失敗頂点を除外する。0番は通常成功、1番だけ脱落量超過。
@@ -1214,7 +1214,7 @@ namespace
         SkeletalGltfSourceBuffers legacySources;
         const auto legacy=DecodeSkeletalGltf(CoreText(text),path,&legacySources,nullptr,&options);
         const auto embedded=DecodeSkeletalGltf(glb,path,nullptr,nullptr,&options);
-        const auto file=Resource::GLTFAnalyzer::AnalyzeSkeletal(path,&options);
+        const auto file=ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(path,&options);
         assert(legacy.Succeeded() && embedded.Succeeded() && file.Succeeded() && legacySources.size()==1);
         AssertEquivalent(decoded.Data,legacy.Data); AssertEquivalent(decoded.Data,embedded.Data); AssertEquivalent(decoded.Data,file.Data);
         AssertCubicFixture(legacy.Data,legacy.Report,options,1); AssertCubicFixture(embedded.Data,embedded.Report,options,1);
@@ -1257,7 +1257,7 @@ namespace
             failure.Report.FailedAnimationChannelIndex==0 && failure.Report.bHasCubicBakeFailure &&
             failure.Report.FailedCubicBakeStatus==static_cast<uint32_t>(CubicBakeStatus::SampleLimitExceeded));
         assert(DecodeSkeletalGltf(CoreText(text),path,&legacySources,nullptr,&limited).Status==failure.Status && legacySources.empty());
-        assert(Resource::GLTFAnalyzer::AnalyzeSkeletal(path,&limited).Status==failure.Status);
+        assert(ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(path,&limited).Status==failure.Status);
         assert(!cook(source,limited,cooked) && diagnostics.DecodeStatus==static_cast<uint32_t>(failure.Status));
         assert(cooked.NvskelBytes==retained.NvskelBytes && cooked.SourceHash==retained.SourceHash);
         limited=options; limited.CubicMaximumSamplesPerAsset=2;
@@ -1274,8 +1274,8 @@ namespace
         {
             WriteFixtureBytes(fixture.Root/"ValidU8Float.gltf.import.json",TextBytes(fit ?
                 "{\"version\":1,\"units\":{\"fit\":{\"axis\":\"up\",\"meters\":0.6}}}" : "{\"version\":1,\"units\":{\"scale\":2}}"));
-            const auto oldLinear=Resource::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
-            const auto bakedLinear=Resource::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path(),&options);
+            const auto oldLinear=ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
+            const auto bakedLinear=ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path(),&options);
             assert(oldLinear.Succeeded() && bakedLinear.Succeeded());
             AssertEquivalent(oldLinear.Data,bakedLinear.Data);
             assert(bakedLinear.Report.bCubicScanComplete && bakedLinear.Report.BakedCubicChannelCount==0);
@@ -1368,7 +1368,7 @@ namespace
         SkeletalGltfSourceBuffers legacySources;
         const auto legacy = DecodeSkeletalGltf(CoreText(source), path, &legacySources, nullptr, &drop);
         const auto embedded = DecodeSkeletalGltf(glb, path, nullptr, nullptr, &drop);
-        const auto file = Resource::GLTFAnalyzer::AnalyzeSkeletal(path, &drop);
+        const auto file = ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(path, &drop);
         assert(legacy.Succeeded() && embedded.Succeeded() && file.Succeeded() && legacySources.size() == 1);
         AssertEquivalent(decoded.Data, legacy.Data); AssertEquivalent(decoded.Data, embedded.Data); AssertEquivalent(decoded.Data, file.Data);
         checkReport(legacy.Report); checkReport(embedded.Report); checkReport(file.Report);
@@ -1542,7 +1542,7 @@ namespace
         auto embeddedText=source; replaceOnce(embeddedText,"\"uri\":\"fixture.bin\",","");
         const auto glb=MakeSkeletalGlb(embeddedText,binary);
         const auto embedded=DecodeSkeletalGltf(glb,path);
-        const auto file=Resource::GLTFAnalyzer::AnalyzeSkeletal(path);
+        const auto file=ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(path);
         assert(legacy.Succeeded() && embedded.Succeeded() && file.Succeeded() && legacyBuffers.size()==1);
         AssertEquivalent(decoded.Data,legacy.Data); AssertEquivalent(decoded.Data,embedded.Data); AssertEquivalent(decoded.Data,file.Data);
         checkTables(legacy.Data); checkTables(embedded.Data); checkTables(file.Data);
@@ -1734,7 +1734,7 @@ namespace
         WriteFixtureBytes(fixture.Root/"fixture.bin",binary);
         WriteFixtureBytes(fixture.Root/"ThreeClips.gltf",bytes);
         assert(DecodeSkeletalGltf(bytes,path).Status==SkeletalGltfDecodeStatus::UnsupportedClipCount);
-        assert(Resource::GLTFAnalyzer::AnalyzeSkeletal(path).Status==SkeletalGltfDecodeStatus::UnsupportedClipCount);
+        assert(ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(path).Status==SkeletalGltfDecodeStatus::UnsupportedClipCount);
         Gltf::BufferSet sources;
         const auto decoded = DecodeRigGltf(bytes,path,&sources);
         assert(decoded.Succeeded() && sources.GetCount()==1 && decoded.Data.Clips.size()==3 && decoded.Data.SubMeshes.size()==2);
@@ -1880,7 +1880,7 @@ namespace
 
         {
             LooseFixture fixture;
-            const Skeletal::SkeletalGltfDecodeResult loose = Resource::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
+            const Skeletal::SkeletalGltfDecodeResult loose = ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
             assert(loose.Succeeded());
             AssertEquivalent(loose.Data, retainedResult.Data.Skeletal);
             const Container::AnsiString text = ReadFixtureJson(fixture.Path());
@@ -1938,7 +1938,7 @@ namespace
             }
             const auto glbPath = fixture.Root / "embedded.glb";
             WriteFixtureBytes(glbPath, glb);
-            const auto looseGlb = Resource::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(glbPath));
+            const auto looseGlb = ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(glbPath));
             assert(looseGlb.Succeeded());
             AssertEquivalent(looseGlb.Data, loose.Data);
 
@@ -2033,7 +2033,7 @@ namespace
             AssertScaledSample(loose.Data,scaled.Data,2.0f);
             const auto scaledLegacy = Skeletal::DecodeSkeletalGltf(CoreText(text),fixture.Path());
             assert(scaledLegacy.Succeeded()); AssertEquivalent(scaled.Data,scaledLegacy.Data);
-            const auto scaledLoose = Resource::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
+            const auto scaledLoose = ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(fixture.Path());
             assert(scaledLoose.Succeeded()); AssertEquivalent(scaled.Data,scaledLoose.Data);
             SkeletalCookResult scaledCook;
             assert(cook(external,scaledCook) && scaledCook.bHasImportSettings && scaledCook.SourceHash!=externalCook.SourceHash);
@@ -2046,7 +2046,7 @@ namespace
             // .glbも同じデータ/設定を適用し、BINを別途hashしない。
             auto glbSidecar=glbPath; glbSidecar+=".import.json";
             WriteFixtureBytes(glbSidecar,TextBytes("{\"version\":1,\"units\":{\"scale\":2}}"));
-            const auto scaledGlb=Resource::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(glbPath));
+            const auto scaledGlb=ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(glbPath));
             assert(scaledGlb.Succeeded()); AssertEquivalent(scaled.Data,scaledGlb.Data);
 
             NorvesLib::Core::AssetImport::ImportSettingsFileOptions disabledImport;
@@ -2301,7 +2301,7 @@ namespace
         AssertLiteralCookedData(cooked.Data);
 
         const Skeletal::SkeletalGltfDecodeResult loose =
-            Resource::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(std::filesystem::path(gltfPath)));
+            ResourceIO::GLTFAnalyzer::AnalyzeSkeletal(ToCorePath(std::filesystem::path(gltfPath)));
         assert(loose.Succeeded());
         AssertEquivalent(loose.Data, cooked.Data.Skeletal);
     }

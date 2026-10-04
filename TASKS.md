@@ -2267,7 +2267,7 @@
 - stop-when: v0の受理や見えを変更、v1材質をpathだけへ落とす、full readerとGPU受入れを混同、unique数をVertexCount fieldと混同。
 
 ## G2-RESOURCE-IO-NAMESPACE: 読込名前空間とResource基底クラスの衝突を解消する
-- status: todo
+- status: done
 - done-when: Core::Resourceの基底クラスを維持し、GLTFAnalyzer/ModelStaging/loader群の名前空間だけをResourceIOへ分ける。全参照を更新し、同TUで骨格Resourceと共存する。wire/アルゴリズム/既定描画は変更しない。
 - verify: 宣言/参照の列挙、旧namespace残存ゼロ・class参照不変、置換を戻したsourceの同一性、両include順のnative compile契約登録、実Windows未実行を区別する。
 - stop-when: Resource基底クラス/反射名を変更、loader参照の取り残し、文字列置換で本体の挙動を変える、独立言語例をnative成功扱いする。

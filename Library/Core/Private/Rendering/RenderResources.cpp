@@ -672,7 +672,7 @@ namespace NorvesLib::Core::Rendering
             return ModelHandle::Invalid();
         }
 
-        return Resource::LoadCookedModel(
+        return ResourceIO::LoadCookedModel(
             assetSystem,
             logicalPath,
             ModelLoadResourceContext{m_pOwner->Textures(), *this});
@@ -752,7 +752,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        Resource::ModelCacheReleaseResult released = impl->ModelAssets->ReleaseManagedModel(handle);
+        ResourceIO::ModelCacheReleaseResult released = impl->ModelAssets->ReleaseManagedModel(handle);
         if (!released.bManaged)
         {
             ReleaseModelUnmanaged(handle);
@@ -899,7 +899,7 @@ namespace NorvesLib::Core::Rendering
 
         TextureAssetRuntime& textureRuntime = *m_Impl->TextureAssets;
         ModelAssetRuntime& modelRuntime = *m_Impl->ModelAssets;
-        Resource::ModelCacheHandleBatch retired;
+        ResourceIO::ModelCacheHandleBatch retired;
         const char* pRejectedReason = nullptr;
         uint64_t textureGeneration = 0;
         uint64_t modelGeneration = 0;

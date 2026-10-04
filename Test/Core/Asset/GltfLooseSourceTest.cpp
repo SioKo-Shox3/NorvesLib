@@ -11,7 +11,7 @@
 #include <iostream>
 
 using namespace NorvesLib::Core::Container;
-namespace Staging = NorvesLib::Core::Resource::ModelStaging;
+namespace Staging = NorvesLib::Core::ResourceIO::ModelStaging;
 namespace
 {
     using Bytes = VariableArray<uint8_t>;

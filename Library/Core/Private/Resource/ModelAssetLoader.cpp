@@ -6,7 +6,7 @@
 #include "Logging/LogMacros.h"
 #include "Resource/ModelAssetResolver.h"
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     namespace
     {
@@ -205,4 +205,4 @@ namespace NorvesLib::Core::Resource
             outResult.Staging);
         return outResult.bSuccess;
     }
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO

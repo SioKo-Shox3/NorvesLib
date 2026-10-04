@@ -17,8 +17,8 @@
     } while (false)
 using namespace NorvesLib::Core::Asset;
 namespace Container=NorvesLib::Core::Container;
-namespace Model=NorvesLib::Core::Resource;
-namespace Staging=NorvesLib::Core::Resource::ModelStaging;
+namespace Model=NorvesLib::Core::ResourceIO;
+namespace Staging=NorvesLib::Core::ResourceIO::ModelStaging;
 namespace
 {
     constexpr uint8_t V0[]={

@@ -24,7 +24,7 @@
     } while (false)
 
 namespace Container = NorvesLib::Core::Container;
-namespace Gltf = NorvesLib::Core::Resource;
+namespace Gltf = NorvesLib::Core::ResourceIO;
 namespace Skeletal = NorvesLib::Core::Skeletal;
 namespace FileStream = NorvesLib::FileStream;
 

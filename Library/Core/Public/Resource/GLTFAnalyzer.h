@@ -11,7 +11,7 @@ namespace NorvesLib::Core::Rendering
     class RenderWorld;
 }
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     struct GLTFAnalyzerShutdownTestAccess;
     /**
@@ -85,4 +85,4 @@ namespace NorvesLib::Core::Resource
         [[nodiscard]] static bool IsAsyncAssetLoadAdmissionOpen();
     };
 
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO

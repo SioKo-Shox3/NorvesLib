@@ -33,8 +33,8 @@
 using namespace NorvesLib::Core::Rendering;
 using NorvesLib::Core::Container::MakeShared;
 namespace CookedModelSupport = NorvesLib::Test::CookedModelSupport;
-namespace ModelAssetLoader = NorvesLib::Core::Resource;
-namespace ModelStaging = NorvesLib::Core::Resource::ModelStaging;
+namespace ModelAssetLoader = NorvesLib::Core::ResourceIO;
+namespace ModelStaging = NorvesLib::Core::ResourceIO::ModelStaging;
 
 namespace
 {

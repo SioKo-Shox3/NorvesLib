@@ -646,3 +646,6 @@
 
 - G2-GR79-MESH-V1-READER: v0の受理条件を保ちPbr既定/ARM3chへ昇格、v1を4ref/Pbr/全finite/表所有/材質対応/実indexとunique128付きで読込。全成功時だけBlob所有を公開。ModelAssetLoaderはv1(単材質含む)/N>1をログ拒否し、旧手組み空submeshの搬送は維持。pure partition3mode/MEMBER成功、wire回帰成功。独立第2周PASS、nativefixtureは4異なるpath/相対offset0,3,6,9・係数bit・寿命・不正群・runtimeguardを登録、Windows.hで未実行。v1 writer/manifest/runtime adapterは未接続。
 - Next: 既存Core::Resource class/namespace衝突を別taskで修正。CookedSkeletalAssetTestの同TUincludeに既存の衝突があり、言語最小例でも拒否を確認。新V1Testはそのclassをincludeせず今回の新規衝突ではないが、bundle全体のbuildを妨げるため先に除く。S6 C++asset-set方式は作者回答待ち。
+
+- G2-RESOURCE-IO-NAMESPACE: Core::Resource基底クラスと読込namespaceの既存衝突をResourceIOへ分離。29既存ソースは逆置換でHEADとbyte一致、基底/反射/継承実装は不変。全追跡sourceの旧namespace残存ゼロ、両include順の実native契約をMEMBER/CTest登録。独立レビューPASS、行末/diff検査正常。Windows.hでnative compileは未実行。独立言語例の両順成功は実Core成功とは扱わない。
+- Next: GR79材質設定のtyped/JSON/hashと接続を具体化。G2-S6 Aは作者が追加条件付き承認、単体CLI分割前後および旧ps1 spec v1の実byte一致は未検証gateとして保持する。

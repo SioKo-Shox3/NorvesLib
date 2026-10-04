@@ -1399,7 +1399,7 @@ namespace Game::GameModes
             }
             else
             {
-                data.m_BoulderLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
+                data.m_BoulderLoadRequestId = ResourceIO::GLTFAnalyzer::LoadModelAsync(
                     modelPath,
                     modelLoadContext,
                     std::move(modelLoadedCallback));
@@ -1422,7 +1422,7 @@ namespace Game::GameModes
             {
                 auto cottageState = MakeShared<BoulderAsyncState>();
                 data.m_CottageAsyncState = cottageState;
-                data.m_CottageLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
+                data.m_CottageLoadRequestId = ResourceIO::GLTFAnalyzer::LoadModelAsync(
                     String("Assets/Models/Cottage_Clean/Cottage_Clean.gltf"),
                     modelLoadContext,
                     [cottageState](ModelHandle handle)
@@ -2048,7 +2048,7 @@ namespace Game::GameModes
             }
             else
             {
-                Resource::GLTFAnalyzer::CancelModelLoad(data.m_BoulderLoadRequestId);
+                ResourceIO::GLTFAnalyzer::CancelModelLoad(data.m_BoulderLoadRequestId);
             }
             data.m_BoulderLoadRequestId = 0;
         }
@@ -2066,7 +2066,7 @@ namespace Game::GameModes
         }
         if (data.m_CottageLoadRequestId != 0)
         {
-            Resource::GLTFAnalyzer::CancelModelLoad(data.m_CottageLoadRequestId);
+            ResourceIO::GLTFAnalyzer::CancelModelLoad(data.m_CottageLoadRequestId);
             data.m_CottageLoadRequestId = 0;
         }
 

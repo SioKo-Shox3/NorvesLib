@@ -15,7 +15,7 @@
 #include <iostream>
 using namespace NorvesLib::Core::Container;
 using namespace NorvesLib::Tools::AssetCook;
-namespace Staging = NorvesLib::Core::Resource::ModelStaging;
+namespace Staging = NorvesLib::Core::ResourceIO::ModelStaging;
 namespace Import = NorvesLib::Core::AssetImport;
 namespace Asset = NorvesLib::Core::Asset;
 namespace

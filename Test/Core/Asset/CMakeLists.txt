@@ -37,6 +37,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER CookedMaterialFormatTest CookedMaterialFormatTest.cpp
     MEMBER CookedMeshWireContractTest CookedMeshWireContractTest.cpp
     MEMBER CookedMeshV1LayoutTest CookedMeshV1LayoutTest.cpp
+    MEMBER ResourceIONamespaceCompileTest ResourceIONamespaceCompileTest.cpp
     MEMBER CookedMeshV1Test CookedMeshV1Test.cpp
     MEMBER MaterialImportPolicyTest MaterialImportPolicyTest.cpp
     MEMBER GeometryInspectionTest GeometryInspectionTest.cpp
@@ -159,3 +160,5 @@ add_test(NAME SkeletalImportReportTest COMMAND CookedMeshTest --test=SkeletalImp
 add_test(NAME SkeletalCubicBoundsTest COMMAND CookedMeshTest --test=SkeletalCubicBoundsTest)
 
 add_test(NAME SkeletalCubicBakeTest COMMAND CookedMeshTest --test=SkeletalCubicBakeTest)
+
+add_test(NAME ResourceIONamespaceCompileTest COMMAND CookedMeshTest --test=ResourceIONamespaceCompileTest)

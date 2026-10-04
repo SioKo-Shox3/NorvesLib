@@ -17,7 +17,7 @@ namespace NorvesLib::Core::AssetImport
     struct ImportSettingsFileOptions;
 }
 
-namespace NorvesLib::Core::Resource::ModelStaging
+namespace NorvesLib::Core::ResourceIO::ModelStaging
 {
     struct TextureReference
     {
@@ -129,4 +129,4 @@ namespace NorvesLib::Core::Resource::ModelStaging
                                                 Rendering::ModelLoadResourceContext resources,
                                                 const char* role,
                                                 uint32_t requestId);
-} // namespace NorvesLib::Core::Resource::ModelStaging
+} // namespace NorvesLib::Core::ResourceIO::ModelStaging

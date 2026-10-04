@@ -29,10 +29,10 @@
 #include <filesystem>
 #include <utility>
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     using namespace NorvesLib::Core::Container;
-    using namespace NorvesLib::Core::Resource::ModelStaging;
+    using namespace NorvesLib::Core::ResourceIO::ModelStaging;
 
     namespace
     {
@@ -1347,4 +1347,4 @@ namespace NorvesLib::Core::Resource
         return g_bAsyncModelLoadAdmissionOpen;
     }
 
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO
