@@ -375,7 +375,7 @@
 - notes: 計画書 4.3。危険地帯（描画パス・アセットロード）。
 
 ## VTG4-FALLBACK-LEVEL: RTと影はフォールバックの段を使う
-- status: todo
+- status: done
 - done-when: v1 のメッシュでは、CSM・点光源の影の描画（`ShadowLODLevel`・`LevelRanges` の「1つのインデックスの範囲で描ける段」）と、レイトレの加速構造（`RayTracingSceneInstanceSnapshot` と BLAS のキー）が、常駐のフォールバックの段の範囲を使う。v0・手続きの球は従来どおり。`MegaGeometryResourcesTest`・`RayTracingSceneSnapshotTest` に、v1 のメッシュの影・RT の範囲がフォールバックを指すケースを足す。起動画面の撮影で、影と RTGI が崩れないことを確かめる（VTG4-COOK-STARTUP-MODELS の後の、v1 の岩・小屋を既定で読む撮影で確かめる）。
 - verify: `cmake --build build --config Debug --target MegaGeometryResourcesTest RayTracingSceneSnapshotTest DirectionalShadowLightMatricesTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RayTracingSceneSnapshotTest|DirectionalShadowLightMatricesTest|RayTracingCapabilityContractTest)$"`

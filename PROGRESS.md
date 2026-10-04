@@ -790,3 +790,10 @@
 - クラスタ数（`MEGA_OCCLUSION` の pass1 + pass2_drawn から、資産を置かない基準を引いた資産分）: d08=1583、d13=2249、d18=1650、d28=1238、d38=1028、d56=891、d78=726。d13 まで増えるのは、引くにつれて残りの 2 点が視野へ入るため（d08 は 1 点だけ）。d13 以降は距離とともに単調に減り、d13 から d78 で約 3.1 分の 1。
 - 検証: `verify-VTG4-POLYHAVEN-MODELS-10.txt`（ビルド・クックの verify 1 本目。BUILD_EXIT_CODE=0、COOK_ASSETS cooked=0 skipped=124）、`-11.txt`（verify 2 本目。`-Deterministic` の既定・近接・低角度の 3 視点が pass）、`-7`/`-8`（距離の連続撮影と基準）、`-9`（クラスタ数の表）、`-12`（資産が無いときの警告）。`-1`〜`-6` は途中の確認。撮影の画像は `.harness/runs/startup-capture/VTG4-POLYHAVEN-MODELS{,-scan,-scan-off,-missing}/`。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - Notes: (1) 切り株・像は 4K 版の三角形が少ない（dead_tree_trunk_02 の .bin は 1.9 MB）ので、完了条件の高ポリに合う岩の 3 点にした。 (2) 距離の撮影で資産が画面の外へ出ないよう、カメラの軸が原点の固定なので資産の先から低い pitch（3°）で見る（高い pitch だと近い資産が画面の下へ外れる）。 (3) Python の `sed -i` は CRLF 混在のファイルを LF へ書き換えるので、混在のファイルの直しは difflib で行末を戻した。
+
+## 反復 1（run 20261005-084356）: VTG4-FALLBACK-LEVEL（評価者の差し戻しへの対応、done）
+- 差し戻し: 完了条件の起動画面の撮影（v1 の岩・小屋を読む状態で影・RTGI が崩れないこと）の証拠が、この run の証拠ディレクトリに無かった。実装とテストは `beb6a07e` で済んでおり、コードは触っていない。
+- 撮影: v1 の岩・小屋・クック済みの球・Poly Haven の岩 3 点を既定で読む現在の起動画面を、RelWithDebInfo の `-Deterministic` で RTGI On / `-Rtgi Off` の 2 通り・3 視点（default/near/low）撮った（どちらも result=pass）。ログで COOKED_MODEL ×5・`cooked_big_sphere_load format_major=1`・SCAN_PROP_PLACED ×3 を確認（v1 を読んでいる）。
+- 画像を開いた結果: 球・黄色い球・岩・小屋の影の向きと形は On/Off で同じで、黒い斑点・影の欠け・自己遮蔽の縞は無い（反復 14 で岩に出た斑点は `fallback_min_triangles` の直しで消えたまま）。RTGI の On/Off の差（PSNR default 36.60・near 33.42・low 38.59 dB）は、球・岩の接地の周りの間接光の回り込みと石畳の目地に集まり、ブロック・穴・ちらつきは無い。
+- 検証: `verify-VTG4-FALLBACK-LEVEL-1.txt`（Debug のテスト 3 本のビルド BUILD_EXIT_CODE=0）、`-2.txt`（ctest 4/4 pass）、`-3-build.txt`（AssetCook・CookAssets・Game の RelWithDebInfo ビルド BUILD_EXIT_CODE=0）、`-4-capture-On.txt`・`-4-capture-Off.txt`（撮影 EXIT=0）、`-5-visual-check.txt`（確認結果のまとめ）。画像は `.harness/runs/startup-capture/VTG4-FALLBACK-LEVEL-{On,Off}/`。
+- Notes: (1) `$TEMP` の `inspect.py` の罠を再び踏んだ（比較スクリプトを `$TEMP` に置いたまま python を走らせた）。スクリプトは scratchpad に置く。(2) 次の未完は TASKS.md の先頭の todo を参照（VTG4-BIG-SPHERE-COOK は人の判断待ちの blocked）。
