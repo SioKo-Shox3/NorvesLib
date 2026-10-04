@@ -103,7 +103,7 @@ void TestPackUnpack()
     Expect(!Feedback::Unpack(0, ignored), "0 は書かれていない語");
     Expect(!Feedback::Unpack(0x000FFFFFu, ignored), "テクスチャの欄が 0 の語は書かれていない語");
 
-    Expect(Feedback::GetBufferBytes(Feedback::DefaultCapacity) == (4u + 65536u + 4096u) * 4u, "既定のバッファの大きさはヘッダ + 要求 + ハッシュの表");
+    Expect(Feedback::GetBufferBytes(Feedback::DefaultCapacity) == (4u + 65536u + 2u * 4096u) * 4u, "既定のバッファの大きさはヘッダ + 要求 + ハッシュの表 + 件数の表");
 }
 
 void TestDecodeAndDeduplicate()
@@ -203,6 +203,53 @@ void TestHitCountAccumulatesAndSaturates()
     saturated.Add(MakeKey(0, 0, 0, 0), 1, 0xFFFFFFF0u);
     saturated.Add(MakeKey(0, 0, 0, 0), 2, 100);
     Expect(saturated.GetRequests(0)[0].HitCount == 0xFFFFFFFFu, "件数は上限で頭打ちになる");
+}
+
+// GPU のハッシュの表で重なった要求の件数が、同じタイルの件数（要求した画素の数）へ足される。
+// 件数の表の枠 i は、ハッシュの表の枠 i の語の「2 件目以降の件数」。
+void WriteRepeat(uint32_t* words, uint32_t capacity, uint32_t slot, const VirtualTextureTileKey& key, uint32_t repeats)
+{
+    words[Feedback::HeaderWords + capacity + slot] = Feedback::Pack(key);
+    words[Feedback::HeaderWords + capacity + Feedback::HashWords + slot] = repeats;
+}
+
+void TestRepeatCountsFeedHitCount()
+{
+    const uint32_t capacity = 8;
+    VariableArray<uint32_t> words(Feedback::HeaderWords + capacity + Feedback::TableWords, 0u);
+    // 要求の列: 面積の大きいタイル A（最初の 1 件）・小さいタイル B（最初の 1 件）・重なりの無いタイル C
+    words[0] = 3;
+    words[Feedback::HeaderWords + 0] = Feedback::Pack(MakeKey(1, 0, 0, 0));
+    words[Feedback::HeaderWords + 1] = Feedback::Pack(MakeKey(1, 0, 1, 0));
+    words[Feedback::HeaderWords + 2] = Feedback::Pack(MakeKey(1, 0, 2, 0));
+    WriteRepeat(words.data(), capacity, 0, MakeKey(1, 0, 0, 0), 8); // A: 1 + 8 = 9 画素
+    WriteRepeat(words.data(), capacity, 7, MakeKey(1, 0, 1, 0), 2); // B: 1 + 2 = 3 画素
+    // 要求の列が溢れて捨てられたタイルの件数は、新しいタイルとして足さない
+    WriteRepeat(words.data(), capacity, 100, MakeKey(1, 0, 3, 0), 5);
+    // 別のテクスチャの印は、集合に無ければ足さない
+    WriteRepeat(words.data(), capacity, 200, MakeKey(9, 0, 0, 0), 4);
+
+    VirtualTextureRequestSet set;
+    set.AddFeedbackBuffer(words.data(), capacity, 5);
+    const uint64_t added = set.AddFeedbackRepeatCounts(words.data(), capacity);
+    Expect(added == 10, "既にあるタイルへ足した件数の合計（8 + 2）");
+    Expect(set.GetRequestCount() == 3, "件数の表だけにあるタイルは増えない");
+    for (const VirtualTextureTileRequest& request : set.GetRequests(1))
+    {
+        if (request.X == 0)
+        {
+            Expect(request.HitCount == 9, "タイル A は最初の 1 件 + 重なり 8 件 = 9");
+        }
+        else if (request.X == 1)
+        {
+            Expect(request.HitCount == 3, "タイル B は最初の 1 件 + 重なり 2 件 = 3");
+        }
+        else
+        {
+            Expect(request.X == 2 && request.HitCount == 1, "重なりの無いタイル C は 1");
+        }
+    }
+    Expect(set.AddFeedbackRepeatCounts(nullptr, capacity) == 0, "null のバッファは何も足さない");
 }
 
 void TestLastRequestedFrame()
@@ -423,6 +470,29 @@ void TestRingEnableFailureLeavesNoBuffers()
            "バッファは storage buffer");
 }
 
+void TestRingFoldsRepeatCounts()
+{
+    auto device = MakeShared<FakeDevice>();
+    VirtualTextureFeedbackRing ring(device, MakeRingConfig());
+    Expect(ring.SetEnabled(true), "有効にできる");
+
+    ring.BeginFrame(0);
+    RHI::BufferPtr buffer = ring.GetCurrentBuffer();
+    Expect(buffer != nullptr, "有効ならバッファを獲得する");
+    WriteFrame(buffer, 1, Tiles(MakeKey(1, 0, 4, 5)));
+    WriteRepeat(static_cast<uint32_t*>(buffer->Map(0, 0)), RingCapacity, 3, MakeKey(1, 0, 4, 5), 6);
+    ring.CommitFrame(1);
+
+    // 書いたフレームから 2 フレーム経ってから読み戻す（途中のフレームは何も書かないので中止する）
+    ring.BeginFrame(1);
+    ring.AbortFrame();
+    ring.BeginFrame(1);
+    VirtualTextureRequestSet taken;
+    Expect(ring.TakeRequests(taken), "完了したフレームの要求が渡る");
+    const VariableArray<VirtualTextureTileRequest> requests = taken.GetRequests(1);
+    Expect(requests.size() == 1 && requests[0].HitCount == 7, "読み戻しは重なった要求の件数を HitCount へ渡す（1 + 6）");
+}
+
 void TestRingReadsBackWithoutWaiting()
 {
     auto device = MakeShared<FakeDevice>();
@@ -435,8 +505,8 @@ void TestRingReadsBackWithoutWaiting()
     Expect(frame1 != nullptr, "有効ならバッファを獲得する");
     const uint32_t* frame1Words = static_cast<const uint32_t*>(frame1->Map(0, 0));
     Expect(frame1Words[0] == 0 && frame1Words[Feedback::HeaderWords + RingCapacity - 1] == 0 &&
-               frame1Words[Feedback::HeaderWords + RingCapacity + Feedback::HashWords - 1] == 0,
-           "獲得したバッファは前の内容（要求とハッシュの表）が消えている");
+               frame1Words[Feedback::HeaderWords + RingCapacity + Feedback::TableWords - 1] == 0,
+           "獲得したバッファは前の内容（要求・ハッシュの表・件数の表）が消えている");
     WriteFrame(frame1, 1, Tiles(MakeKey(1, 0, 4, 5)));
     ring.CommitFrame(1);
 
@@ -587,12 +657,14 @@ int RunTest()
     TestPackUnpack();
     TestDecodeAndDeduplicate();
     TestHitCountAccumulatesAndSaturates();
+    TestRepeatCountsFeedHitCount();
     TestLastRequestedFrame();
     TestOverflowCount();
     TestMerge();
     TestRingDisabledByDefault();
     TestRingEnableFailureLeavesNoBuffers();
     TestRingReadsBackWithoutWaiting();
+    TestRingFoldsRepeatCounts();
     TestRingOverflowAndAbort();
     TestRingReadsOnlyAfterMinAge();
 

@@ -336,6 +336,8 @@ namespace NorvesLib::Core::Rendering
             VirtualTextureRequestSet decoded;
             const VirtualTextureFeedbackDecodeResult result = decoded.AddFeedbackBuffer(
                 static_cast<const uint32_t *>(slot.Mapped), m_Config.Capacity, slot.Frame);
+            // ハッシュの表で重なった要求の件数（画素の数）を、同じタイルの件数へ足す
+            decoded.AddFeedbackRepeatCounts(static_cast<const uint32_t *>(slot.Mapped), m_Config.Capacity);
 
             Thread::ScopedLock lock(m_Mutex);
             m_Pending.Merge(decoded);

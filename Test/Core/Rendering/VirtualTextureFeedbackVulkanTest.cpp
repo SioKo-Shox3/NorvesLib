@@ -5,7 +5,8 @@
 //   - 常駐している領域: 4×4 の画素のうち、フレームごとに巡回する 1 画素だけが、その画素の UV の欲しいミップとタイルを書く。
 //     タイル境界をまたぐ画素の並びで、位相 0〜15 の画素が別々のタイルを書くこと、ミップ・x・y・テクスチャの番号が正しく詰まることを確かめる。
 //   - 非常駐で粗いミップへ逃げた領域: 巡回によらず全画素が書く（欲しいミップのタイルすべてが要求になる）。
-//   - 同じタイルの要求は、ハッシュの表で 1 件に減る（読み戻した各タイルの件数が 1）。
+//   - 同じタイルの要求は、ハッシュの表で要求の列の 1 語に減り、重なった件数は件数の表へ足される。
+//     読み戻した各タイルの件数（HitCount）は、そのタイルを要求した画素の数になる（面積の違う 4 タイルで 5・7・7・13 の順）。
 //   - パラメータ 0（VT でない材質）は何も書かない。
 //   - 要求の件数が capacity を超えたとき、溢れた件数がヘッダに残る（capacity はバッファの語数から求める）。
 // Vulkan デバイスが無い、sparse の結び付け・BC7・shaderResourceResidency・fragmentStoresAndAtomics が使えない環境では 125（スキップ）を返す。
@@ -49,7 +50,7 @@ namespace
     constexpr uint64_t Page = RHI::SparsePageSizeBytes;
 
     // 確認（4×4 画素）の数と、描画先の大きさ
-    constexpr uint32_t ProbeCount = 3u;
+    constexpr uint32_t ProbeCount = 4u;
     constexpr uint32_t TargetWidth = ProbeCount * 4u;
     constexpr uint32_t TargetHeight = 4u;
     // 要求に載せるテクスチャの番号（0 でない値で、番号の詰め方を確かめる）
@@ -288,9 +289,11 @@ namespace
         uint32_t Mip;
         uint32_t X;
         uint32_t Y;
+        /** 期待の件数（そのタイルを要求した画素の数） */
+        uint32_t Hits;
     };
 
-    // 要求の集合が期待のタイルと過不足なく一致し、どのタイルも 1 件（ハッシュの表で重複が消えている）であることを確かめる。
+    // 要求の集合が期待のタイルと過不足なく一致し、各タイルの件数が期待の画素の数と一致することを確かめる。
     void ExpectExactly(const char* phase, const VirtualTextureRequestSet& set, uint32_t expectedTextureIndex,
                        const ExpectedTile* tiles, uint32_t tileCount)
     {
@@ -307,24 +310,41 @@ namespace
         }
         Expect(bAllFound, "期待のタイルの要求がすべて書かれていなければならない");
 
-        // 重複は 1 件に減るので、要求の種類の数 = 集合のタイルの数 = 件数の合計
+        // 重複は要求の列の 1 語と件数の表へ減るので、集合のタイルの数 = 期待のタイルの数、各タイルの件数 = 要求した画素の数
         uint32_t totalHits = 0;
+        uint32_t expectedTotalHits = 0;
+        for (uint32_t i = 0; i < tileCount; ++i)
+        {
+            expectedTotalHits += tiles[i].Hits;
+        }
         for (uint32_t textureIndex : set.GetTextureIndices())
         {
             Expect(textureIndex == expectedTextureIndex, "要求のテクスチャの番号が材質のパラメータの番号と一致しなければならない");
             for (const VirtualTextureTileRequest& request : set.GetRequests(textureIndex))
             {
                 totalHits += request.HitCount;
-                Expect(request.HitCount == 1u, "同じタイルの要求はハッシュの表で 1 件に減らなければならない");
+                for (uint32_t i = 0; i < tileCount; ++i)
+                {
+                    if (tiles[i].Mip == request.Mip && tiles[i].X == request.X && tiles[i].Y == request.Y)
+                    {
+                        if (request.HitCount != tiles[i].Hits)
+                        {
+                            std::cerr << TestName << " " << phase << " 件数が違う mip=" << request.Mip << " x=" << request.X
+                                      << " y=" << request.Y << " hits=" << request.HitCount << " expected=" << tiles[i].Hits
+                                      << std::endl;
+                        }
+                        Expect(request.HitCount == tiles[i].Hits, "タイルの件数は、そのタイルを要求した画素の数と同じでなければならない");
+                    }
+                }
             }
         }
-        if (set.GetRequestCount() != tileCount || totalHits != tileCount)
+        if (set.GetRequestCount() != tileCount || totalHits != expectedTotalHits)
         {
             std::cerr << TestName << " " << phase << " 件数が違う tiles=" << set.GetRequestCount() << " hits=" << totalHits
-                      << " expected=" << tileCount << std::endl;
+                      << " expected=" << expectedTotalHits << std::endl;
         }
         Expect(set.GetRequestCount() == tileCount, "余計なタイルの要求が書かれてはならない");
-        Expect(totalHits == tileCount, "書かれた件数は期待のタイルの数と同じでなければならない");
+        Expect(totalHits == expectedTotalHits, "書かれた件数の合計は期待の画素の数の合計と同じでなければならない");
         Expect(set.GetOverflowCount() == 0, "capacity に収まる要求で溢れてはならない");
     }
 
@@ -479,21 +499,25 @@ namespace
                 }
 
                 // 確認 0: 位相の画素 (phase & 3, phase >> 2) のタイル。確認 1: ミップ 1 のタイル(1, 1)。
-                // 確認 2: ミップ 0 の 4 タイルすべて。確認 0 が(1, 1)なら確認 1 と同じ要求なので 1 件に減る。
+                // 確認 2: ミップ 0 の 4 タイルすべて（4 画素ずつ）。確認 3: 同じ 4 タイルを 1・3・3・9 画素ずつ。
+                // 確認 0 が(1, 1)なら確認 1 と同じ要求なので件数が 2 になる。
                 const uint32_t phaseTileX = (phase & 3u) >= 2u ? 1u : 0u;
                 const uint32_t phaseTileY = (phase >> 2u) >= 2u ? 1u : 0u;
-                // 期待の集合は重複を除いて作る（確認 0 が確認 1 と同じタイルなら 5 種類、違えば 6 種類）。
+                // 期待の集合は重複を除き、同じタイルの件数を足して作る（確認 0 が確認 1 と同じタイルなら 5 種類、違えば 6 種類）。
                 ExpectedTile expected[6];
                 uint32_t expectedCount = 0;
-                const ExpectedTile candidates[6] = {{1, phaseTileX, phaseTileY}, {1, 1, 1}, {0, 0, 0},
-                                                    {0, 1, 0},                   {0, 0, 1}, {0, 1, 1}};
+                const ExpectedTile candidates[6] = {{1, phaseTileX, phaseTileY, 1}, {1, 1, 1, 1}, {0, 0, 0, 5},
+                                                    {0, 1, 0, 7},                   {0, 0, 1, 7}, {0, 1, 1, 13}};
                 for (const ExpectedTile& candidate : candidates)
                 {
                     bool bDuplicate = false;
                     for (uint32_t i = 0; i < expectedCount; ++i)
                     {
-                        bDuplicate = bDuplicate || (expected[i].Mip == candidate.Mip && expected[i].X == candidate.X &&
-                                                    expected[i].Y == candidate.Y);
+                        if (expected[i].Mip == candidate.Mip && expected[i].X == candidate.X && expected[i].Y == candidate.Y)
+                        {
+                            expected[i].Hits += candidate.Hits;
+                            bDuplicate = true;
+                        }
                     }
                     if (!bDuplicate)
                     {
@@ -503,6 +527,19 @@ namespace
                 std::cout << TestName << " phase=" << phase << " tiles=" << requests.GetRequestCount()
                           << " expected=" << expectedCount << std::endl;
                 ExpectExactly("位相", requests, TextureIndex, expected, expectedCount);
+
+                // 面積の大きいタイルほど件数が多い（読み込みの優先度が画面上の大きさの順になる）
+                uint32_t hitsByTile[2][2] = {};
+                for (const VirtualTextureTileRequest& request : requests.GetRequests(TextureIndex))
+                {
+                    if (request.Mip == 0u && request.X < 2u && request.Y < 2u)
+                    {
+                        hitsByTile[request.Y][request.X] = request.HitCount;
+                    }
+                }
+                Expect(hitsByTile[0][0] < hitsByTile[0][1] && hitsByTile[0][1] == hitsByTile[1][0] &&
+                           hitsByTile[1][0] < hitsByTile[1][1],
+                       "面積が 1・3・3・9 のタイルの件数は面積の順（小さいタイルほど少ない）でなければならない");
             }
 
             // ---- float の UBO 経由（GBuffer・MegaGeometry の経路）: 24bit のパラメータが float で変わらず戻る ----
@@ -517,8 +554,10 @@ namespace
                     return 1;
                 }
                 // 確認 0: 位相 0 の画素の標本はミップ 1 の texel (253, 253) でタイル(1, 0)。確認 1: texel (400, 400) でタイル(3, 1)。
-                // 確認 2: 非常駐でミップ 0 の標本の texel (253|255|256|258) が全画素で書き、タイル x は 1・1・2・2、y は 0・0・1・1。
-                const ExpectedTile expected[6] = {{1, 1, 0}, {1, 3, 1}, {0, 1, 0}, {0, 2, 0}, {0, 1, 1}, {0, 2, 1}};
+                // 確認 2: 非常駐でミップ 0 の標本の texel (253|255|256|258) が全画素で書き、タイル x は 1・1・2・2、y は 0・0・1・1（4 画素ずつ）。
+                // 確認 3: texel (255|256|258|259) で、タイル x は 1・2・2・2、y は 0・1・1・1（1・3・3・9 画素）。
+                const ExpectedTile expected[6] = {{1, 1, 0, 1}, {1, 3, 1, 1}, {0, 1, 0, 5},
+                                                  {0, 2, 0, 7}, {0, 1, 1, 7}, {0, 2, 1, 13}};
                 ExpectExactly("float 経由", requests, HighTextureIndex, expected, 6u);
             }
 

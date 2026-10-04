@@ -6,7 +6,9 @@
 //   [0]   書き込もうとした件数（atomicAdd の結果。capacity を超えた分も数える）
 //   [1-3] 予約（0）
 //   [4..] 要求 1 件 = 32bit 1 語（Pack の並び）
-//   [4 + capacity ..] 重複を減らす小さなハッシュの表（HashWords 語。シェーダーだけが使う。読み戻しは見ない）
+//   [4 + capacity ..] 重複を減らす小さなハッシュの表（HashWords 語。要求の語そのもの）
+//   [4 + capacity + HashWords ..] ハッシュの表の各枠の「2 件目以降の要求の件数」（HashWords 語。同じ枠の語に重なった要求の数）
+//                    読み戻しは、要求の列の語を 1 件ずつ数え、この件数を同じ枠のタイルへ足す（AddFeedbackRepeatCounts）。
 // 要求の語は、テクスチャの番号に +1 して詰めるので、0 は「書かれていない」を表す。
 // 時刻もデバイスも持たない計算だけの型なので、GPU を使わずにテストできる。
 
@@ -52,10 +54,13 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t MaxMip = (1u << MipBits) - 1u;
         constexpr uint32_t MaxTileCoord = (1u << TileBits) - 1u;
 
-        /** @brief 要求のバッファ全体の大きさ（バイト。ヘッダ + 要求 + ハッシュの表） */
+        /** @brief 要求の後ろに続く、ハッシュの表と件数の表を合わせた語数（シェーダーの 2 * VT_FEEDBACK_HASH_WORDS） */
+        constexpr uint32_t TableWords = HashWords * 2u;
+
+        /** @brief 要求のバッファ全体の大きさ（バイト。ヘッダ + 要求 + ハッシュの表 + 件数の表） */
         constexpr uint64_t GetBufferBytes(uint32_t capacity)
         {
-            return (static_cast<uint64_t>(HeaderWords) + capacity + HashWords) * sizeof(uint32_t);
+            return (static_cast<uint64_t>(HeaderWords) + capacity + TableWords) * sizeof(uint32_t);
         }
 
         /** @brief 印が 1 語に収まるか（テクスチャの番号・ミップ・x・y の範囲） */
@@ -147,10 +152,9 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 集合に取り込んだ要求の件数（同じタイルの要求を足し合わせた数）
          *
-         * 復号した要求 1 語につき 1 件を足す。バッファに同じタイルの要求が画素の数だけ並んでいれば、その数になる
-         * （画面に占める大きさの目安）。ただし GPU 側はハッシュの表で重複を 1 件に減らしてから書くので、
-         * 実際のバッファでは 1 枚につき 1 件で、足し合わせた件数は「要求が見られたバッファの数」になる
-         * （画素の数そのものではなく、見え続けている度合い）。読み込みの優先度で、同じミップの中の順に使う。
+         * 復号した要求 1 語につき 1 件を足し、GPU のハッシュの表で重なった要求の件数（AddFeedbackRepeatCounts）も足す。
+         * 実際のバッファでは、そのタイルを要求した画素の数（画面に占める大きさ。ただし書く画素は巡回の位相の画素と
+         * 非常駐で逃げた画素だけ）になる。読み込みの優先度で、同じミップの中の順に使う。
          */
         uint32_t HitCount = 0;
     };
@@ -216,6 +220,48 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             return result;
+        }
+
+        /**
+         * @brief ハッシュの表の件数（重なった要求の数）を、同じバッファの要求として既に集合にあるタイルの件数へ足す
+         *
+         * AddFeedbackBuffer の後に、同じバッファで呼ぶ。件数の表の枠が 0 でなければ、同じ枠のハッシュの表の語を印へ戻し、
+         * 集合に既にあるタイルの件数へ足す（要求の列が溢れて捨てられたタイルは、捨てたままにして新しく足さない）。
+         * @param words バッファの先頭。null のときは何もしない
+         * @param capacity バッファの要求の件数（ヘッダを除く）
+         * @return 足した件数の合計
+         */
+        uint64_t AddFeedbackRepeatCounts(const uint32_t *words, uint32_t capacity)
+        {
+            if (words == nullptr)
+            {
+                return 0;
+            }
+            const uint32_t *hashTable = words + VirtualTextureFeedback::HeaderWords + capacity;
+            const uint32_t *countTable = hashTable + VirtualTextureFeedback::HashWords;
+            uint64_t added = 0;
+            for (uint32_t i = 0; i < VirtualTextureFeedback::HashWords; ++i)
+            {
+                const uint32_t repeats = countTable[i];
+                VirtualTextureTileKey key;
+                if (repeats == 0 || !VirtualTextureFeedback::Unpack(hashTable[i], key))
+                {
+                    continue;
+                }
+                const auto texture = m_Textures.find(key.TextureIndex);
+                if (texture == m_Textures.end())
+                {
+                    continue;
+                }
+                const auto tile = texture->second.find(MakeTileKey(key));
+                if (tile == texture->second.end())
+                {
+                    continue;
+                }
+                tile->second.Hits = AddSaturated(tile->second.Hits, repeats);
+                added += repeats;
+            }
+            return added;
         }
 
         /**

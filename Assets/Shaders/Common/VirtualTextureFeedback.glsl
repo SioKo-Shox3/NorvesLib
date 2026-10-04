@@ -10,8 +10,10 @@
 //   [0]                             書き込もうとした件数（atomicAdd。capacity を超えた分も数える）
 //   [1-3]                           予約
 //   [4 .. 4 + capacity)             要求 1 件 = 1 語: テクスチャの番号 + 1（12bit）・ミップ（4bit）・y（8bit）・x（8bit）
-//   [4 + capacity .. 末尾)          重複を減らすハッシュの表（VT_FEEDBACK_HASH_WORDS 語。atomicCompSwap。フレームの先頭で 0）
-// capacity はバッファの語数からヘッダとハッシュの表を引いて求める。
+//   [4 + capacity .. + HASH_WORDS)  重複を減らすハッシュの表（VT_FEEDBACK_HASH_WORDS 語。atomicCompSwap。フレームの先頭で 0）
+//   [.. + HASH_WORDS 語 .. 末尾)    ハッシュの表の各枠の「2 件目以降の要求の件数」（同じ枠の語が既にあったときに atomicAdd。フレームの先頭で 0）。
+//                                   最初の 1 件は要求の列に 1 語で残るので、タイルごとの要求した画素の数 = 要求の列の件数 + この枠の件数。
+// capacity はバッファの語数からヘッダとハッシュの表と件数の表を引いて求める。
 //
 // 要求を書く画素は、4×4 の画素のうち、フレームごとに巡回する 1 画素（param の位相）。
 // ただし、非常駐で粗いミップへ逃げた画素（bEscaped）は巡回によらず書く。
@@ -70,11 +72,11 @@ void WriteVirtualTextureFeedback(sampler2D tex, vec2 uv, uint param, bool bEscap
     }
 
     uint totalWords = uint(vtFeedbackWords.length());
-    if (totalWords <= VT_FEEDBACK_HEADER_WORDS + VT_FEEDBACK_HASH_WORDS)
+    if (totalWords <= VT_FEEDBACK_HEADER_WORDS + 2u * VT_FEEDBACK_HASH_WORDS)
     {
         return;
     }
-    uint capacity = totalWords - VT_FEEDBACK_HEADER_WORDS - VT_FEEDBACK_HASH_WORDS;
+    uint capacity = totalWords - VT_FEEDBACK_HEADER_WORDS - 2u * VT_FEEDBACK_HASH_WORDS;
 
     int mip = clamp(int(floor(lod)), 0, min(textureQueryLevels(tex) - 1, 15));
     ivec2 mipSize = textureSize(tex, mip);
@@ -83,14 +85,18 @@ void WriteVirtualTextureFeedback(sampler2D tex, vec2 uv, uint param, bool bEscap
     uvec2 tile = min(texel >> uvec2(param & 15u, (param >> 4u) & 15u), uvec2(255u));
     uint word = ((param >> 12u) << 20u) | (uint(mip) << 16u) | (tile.y << 8u) | tile.x;
 
-    // 同じ要求は、ハッシュの表で 1 件に減らす。表が埋まっていて見つからないときは、重複を許して書く（読み戻しが重複を除く）。
+    // 同じ要求は、ハッシュの表で要求の列の 1 語に減らし、2 件目以降は枠の件数へ足す（要求した画素の数を残す）。
+    // 表が埋まっていて見つからないときは、重複を許して要求の列へ書く（読み戻しが重複を除く）。
     uint hashBase = VT_FEEDBACK_HEADER_WORDS + capacity;
+    uint countBase = hashBase + VT_FEEDBACK_HASH_WORDS;
     uint slot = (word * 2654435761u) >> 20u;
     for (uint probe = 0u; probe < VT_FEEDBACK_HASH_PROBE_LIMIT; ++probe)
     {
-        uint previous = atomicCompSwap(vtFeedbackWords[hashBase + ((slot + probe) & (VT_FEEDBACK_HASH_WORDS - 1u))], 0u, word);
+        uint slotIndex = (slot + probe) & (VT_FEEDBACK_HASH_WORDS - 1u);
+        uint previous = atomicCompSwap(vtFeedbackWords[hashBase + slotIndex], 0u, word);
         if (previous == word)
         {
+            atomicAdd(vtFeedbackWords[countBase + slotIndex], 1u);
             return;
         }
         if (previous == 0u)

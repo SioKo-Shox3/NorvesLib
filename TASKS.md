@@ -225,7 +225,7 @@
 - notes: 危険地帯（RenderThread）。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残りを直す。(1) RHI のバリアにフラグメントシェーダーの storage の書き込みを表す状態を足し、`FRAGMENT_SHADER / SHADER_WRITE → HOST / HOST_READ` を記録する（完了の serial で待たない読み戻しは保つ）。(2) VTG2-FEEDBACK-WRITE の GPU のテスト `VirtualTextureFeedbackVulkanTest` に、frag が既知の要求を書き、バリアとリングを経て2フレーム後に回収されるケースを足して ctest に登録し、verify に加える。`paths:` に `Library/Core/Public/RHI`・`Library/Core/Private/RHI` を足した。
 
 ## VTG2-VT-STREAMER: 要求からタイルを読み、結び付けて常駐させる
-- status: todo
+- status: done
 - done-when: `VirtualTextureStreamer`（RenderResources が持つ）が、要求の集合から未常駐のタイルを優先度（粗いミップ・画面の近くが先）順に選び、JobSystem の範囲読みで NVTEX v0.2 から読み、ステージングのリング（VTG2-TILE-UPLOAD）へ置き、ページを結び（VTG2-SPARSE-BIND）、コピーする。1フレームの上限（読み・コピー・結び付けの数）を持つ。ミップテイルは作成時に結んで常に常駐。材質のテクスチャを VT として作る入口（クック済みの v0.2 の材質のテクスチャを sparse で作る）を `TextureResources` に足す。CPU のテスト `VirtualTextureStreamerTest`（`RenderResourcesDomainContractTest` の束。読み込み・結び付けを偽物にする）が、優先度・上限・同じタイルの二重の要求・読み込みの失敗を確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureStreamerTest|VirtualTextureRequestSetTest|GpuRetireQueueTest)$"`
