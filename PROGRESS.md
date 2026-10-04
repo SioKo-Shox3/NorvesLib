@@ -541,3 +541,8 @@
 - 偽デバイスは (3) の失敗を作れた（`stop-when` には該当しない）。偽バッファの `Map` は既定で null のまま、対照の間だけ実体を返す。
 - 検証: `verify-VTG2-VT-FALLBACK-TEST-4.txt`（Debug の `RenderResourcesDomainContractTest` のビルド成功）、`-5.txt`（`GpuRetireQueueTest` 合格）、`-6-related-ctest.txt`（`RenderResourcesDomainContractTest`・`TextureMemoryLedgerTest`・`VirtualTextureStreamerTest` 合格）。変異テスト `-3-mutation.txt`: `SupportsVirtualTexture` からフィードバック対応の条件を外すと (1) の2件が、`CreateVirtualTexture` の失敗経路から `ReleaseTexture(handle)` を外すと (3) の4件が失敗することを確かめ、実装は `git checkout` で戻した。
 - Notes: (1) 製品コードは変えていない（テストだけ）。(2) bash から cmake の `-- /m:1` はパス変換されるので PowerShell で実行する。(3) `RenderResources.cpp` は LF が大半の混在行末なので、変異は LF のバイト列で当てた。
+
+## 反復 7（run 20261004-233408）: VTG2-VT-FALLBACK-TEST（評価の差し戻しへの対応、done）
+- 差し戻し（独自型ルール違反）: `GpuRetireQueueTest.cpp` に新規に入れた `std::string`・`std::wstring` を `Core::Container::AnsiString`・`String` に置き換えた（`BuildSingleEntryPackage` の引数、`ToCoreString` の引数と UNICODE 変換、`VtAssetRoot::Configure` のハッシュ・entry_type・マニフェストの組み立て）。`rg 'std::(string|wstring)'` は 0 件。テストの中身（検証内容）は変えていない。
+- 検証: `verify-VTG2-VT-FALLBACK-TEST-7.txt`（Debug の `RenderResourcesDomainContractTest` のビルド exit=0・`GpuRetireQueueTest` 1/1 passed）。
+- Notes: bash から cmake の `-- /m:1` はパス変換で失敗するので PowerShell で実行する（最初の bash 実行は MSB1008 で失敗し、同じ出力の ctest は古い exe を走らせていた。PowerShell で再ビルドしてから確認した）。

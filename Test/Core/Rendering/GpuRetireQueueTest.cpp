@@ -741,7 +741,7 @@ Core::Container::VariableArray<uint8_t> BuildTailOnlyTiledTexture()
 }
 
 // 1 件だけを入れた .nvpkg
-Core::Container::VariableArray<uint8_t> BuildSingleEntryPackage(const std::string& name,
+Core::Container::VariableArray<uint8_t> BuildSingleEntryPackage(const Core::Container::AnsiString& name,
                                                                 const Core::Container::VariableArray<uint8_t>& payload)
 {
     const size_t alignment = PackageV1::MinimumAlignment;
@@ -784,16 +784,16 @@ Core::Container::VariableArray<uint8_t> BuildSingleEntryPackage(const std::strin
     return bytes;
 }
 
-Core::Container::String ToCoreString(const std::string& text)
+Core::Container::String ToCoreString(const Core::Container::AnsiString& text)
 {
 #if defined(UNICODE)
-    std::wstring wide;
+    Core::Container::String wide;
     wide.reserve(text.size());
-    for (char character : text)
+    for (size_t i = 0; i < text.size(); ++i)
     {
-        wide.push_back(static_cast<wchar_t>(static_cast<unsigned char>(character)));
+        wide.push_back(static_cast<wchar_t>(static_cast<unsigned char>(text[i])));
     }
-    return Core::Container::String(wide.c_str());
+    return wide;
 #else
     return Core::Container::String(text.c_str());
 #endif
@@ -823,17 +823,17 @@ public:
     // 根とマニフェストを RenderResources に設定する。設定できたら true。
     bool Configure(RenderResources& manager) const
     {
-        const std::string hash = std::string(
-            Asset::FormatAssetHashHex(Asset::ComputeAssetPackagePayloadHash(m_Texture.data(), m_Texture.size())).c_str());
-        const std::string entryType =
-            std::string(Asset::FormatAssetPackageFourCCText(Asset::MakeAssetPackageFourCC('T', 'e', 'x', '0')).c_str());
-        const std::string manifest = std::string("{\"version\":1,\"assets\":[{\"logical_path\":\"") + VtTestLogicalPath +
+        const Core::Container::AnsiString hash =
+            Asset::FormatAssetHashHex(Asset::ComputeAssetPackagePayloadHash(m_Texture.data(), m_Texture.size()));
+        const Core::Container::AnsiString entryType =
+            Asset::FormatAssetPackageFourCCText(Asset::MakeAssetPackageFourCC('T', 'e', 'x', '0'));
+        const Core::Container::AnsiString manifest = Core::Container::AnsiString("{\"version\":1,\"assets\":[{\"logical_path\":\"") + VtTestLogicalPath +
                                      "\",\"kind\":\"texture\",\"source_hash\":\"0000000000000001\","
                                      "\"variant\":\"default\",\"format\":\"nvtex.v0.r8.linear\","
                                      "\"cooked_package\":\"Cooked/Textures.nvpkg\","
                                      "\"entry_name\":\"Textures/Cooked.nvtex\",\"entry_type\":\"" +
                                      entryType + "\",\"cooked_hash\":\"" + hash + "\",\"cooked_version\":0}]}";
-        return manager.Textures().SetTextureAssetRoot(ToCoreString(m_Root.generic_string())) &&
+        return manager.Textures().SetTextureAssetRoot(ToCoreString(m_Root.generic_string().c_str())) &&
                manager.Textures().LoadTextureAssetManifestFromJsonText(ToCoreString(manifest));
     }
 
