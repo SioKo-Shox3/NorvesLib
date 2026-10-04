@@ -132,6 +132,9 @@ namespace
         assert(mesh->Load());
         component.SetSkeletalAsset(asset);
         assert(component.GetMaterialSlotCount() == 2 && component.FindMaterialSlot("Eyes") == 1);
+        const Container::String::value_type nulName[] = {'E','y','e','s',0,'X'};
+        assert(component.FindMaterialSlot({nulName,6}) == -1);
+        assert(!component.SetSlotMaterial(Container::StringView(nulName,6),MaterialHandle{99}));
         assert(component.TryGetSlotMaterial(0,material) && material.Id == 20); // slot0は旧APIと同じcomponent材質として保持。
         assert(component.SetSlotMaterial("Body",MaterialHandle{30}) && component.SetSlotMaterial("Eyes",MaterialHandle{40}));
         component.SetMaterial(MaterialHandle{15});

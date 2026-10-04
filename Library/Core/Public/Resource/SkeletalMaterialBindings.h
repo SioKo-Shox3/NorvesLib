@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Resource/SkeletalLimits.h"
+#include "Resource/MaterialSelection.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Skeletal
@@ -59,26 +60,19 @@ namespace NorvesLib::Core::Skeletal
         uint64_t m_Overrides[MaximumMaterialSlotCount]{};
     };
 
-    // 名前照合を所有層へ委ねる。0件/不在/重複は-1で、曖昧な名前を先頭slotへ割り当てない。
-    template<typename Matches>
-    [[nodiscard]] int32_t FindUniqueSkeletalMaterialSlot(uint32_t count, Matches matches)
+    // UTF8への変換と所有は呼出側、照合規則は共通resolverだけに置く。
+    [[nodiscard]] inline int32_t FindSkeletalMaterialSlot(
+        Container::Span<const MaterialIdentityView> slots, Container::Span<const uint8_t> name) noexcept
     {
-        if (count == 0 || count > MaximumMaterialSlotCount)
+        if (slots.empty() || slots.size() > MaximumMaterialSlotCount)
         {
             return -1;
         }
-        int32_t found = -1;
-        for (uint32_t slot = 0; slot < count; ++slot)
-        {
-            if (matches(slot))
-            {
-                if (found != -1)
-                {
-                    return -1;
-                }
-                found = static_cast<int32_t>(slot);
-            }
-        }
-        return found;
+        uint32_t scratch[MaximumMaterialSlotCount + 2]{};
+        uint32_t rows[1]{};
+        const MaterialSelectorView query{MaterialSelectorKind::UniqueName, 0, name, false};
+        const auto result = ResolveMaterialSelection(MaterialIdentityDomain::GeneratedSlot,
+            slots, {&query, 1}, scratch, rows);
+        return result.Succeeded() ? static_cast<int32_t>(slots[rows[0]].IdentityIndex) : -1;
     }
 } // namespace NorvesLib::Core::Skeletal

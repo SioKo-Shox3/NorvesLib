@@ -676,3 +676,6 @@
 - G2-S6-WINDOWS-CLI-CI: 作者10:02承認に基づきfeature限定Windows2022 workflowを準備。最小read権限/credential非永続、公式固定Vulkan SDK checksum検証+debug/copy_only導入、実Core/AssetCook/CookedMeshTestのReleaseビルド、CPU契約と既存7smoke capture、exe hash照合/明示artifact保存。YAML構造と比較器10単体は確認済み。初回run/実build/7smoke/保存物は未確認でdoingを維持。
 - 独立workflowレビューPASS。alwaysログの未設定env参照を固定runner.temp/runId/attemptへ修正。実行成功の証明はpush後のrunで確認する。
 - Windows CI初回run37194998794はSDK汎用名checksum APIの404で導入前停止。公式掲載の実ファイル名と固定SHAへ修正し、公式vulkanホストの実名receipt HTTP200/値一致を確認。ビルド/試験未到達、baseline未生成。
+
+- G2-GR32-MATERIAL-SELECTION-ADAPTER: SkinnedMeshComponentのslot検索をstrict native→UTF8変換+GeneratedSlot共通resolverへ接続。元番号とは混ぜず、返るcatalog行をslot IdentityIndexへ変換。独立callback照合を廃止し、Default/一意空名/最大8/重複拒否、番号APIと世代fallbackを維持。純bindings通常/O2/ASanUBSan(LSan除外)/MEMBER wrapper compile成功、native snapshotへNUL query拒否を追加、独立review PASS。実component/native試験は未実行（現在のWindows runにはこの差分は含まれない）。公開旧helperをリポ外利用するコードは新UTF8catalog APIへの移行が必要。
+- Next: GR79設定とGR78SurfaceNameのcatalog/selector接続。WindowsCIの基準採取結果も確認継続。

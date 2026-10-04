@@ -2338,3 +2338,9 @@
 - done-when: GR79 ARM/発光、GR78 材質→SurfaceName、GR32 slot名が同じResolveMaterialSelectionを使う。元catalog/生成slotを明示し、全設定の未一致/二重指定をcookと増分preflight双方で拒否。同名GLBは元での改名推奨を資産名付きで警告する。
 - verify: raw無名1/Blender Material_0、逆primitive順/同名/生成名衝突、name+index二重指定、不在、unicode名、incremental skipの検証迂回なし、設定値/SurfaceName/slotへの実到達。
 - stop-when: 未実装SurfaceNameを受理して捨てる、共通核の存在だけで全接続完了とする、元indexとslotindexの混同、旧wire予約領域へ勝手に保存。
+
+## G2-GR32-MATERIAL-SELECTION-ADAPTER: slot名検索を共通resolverへ接続する
+- status: done
+- done-when: SkinnedMeshComponentのslot名検索が厳密UTF8変換後ResolveMaterialSelectionを呼び、独立したcallback照合を廃止。番号API/世代fallback/Default/一意空slot名は保持し、重複/NUL/不正Unicodeを拒否する。
+- verify: 純adapterの行順とslotindex/Default/重複/空名/NUL/不正UTF8を3mode、native componentの既存fallback+NUL入力拒否。実Core実行はWindowsCI結果と区別。
+- stop-when: 元材質番号と生成slot番号を混同、NUL前方一致、GR79/GR78接続まで済みとする。

@@ -3,6 +3,7 @@
 #include "Math/MatrixUtils.h"
 #include "Math/QuaternionUtils.h"
 #include "Object/Entity.h"
+#include "Asset/CookedSkeletalNameCodec.h"
 
 #include <cmath>
 
@@ -237,15 +238,49 @@ namespace NorvesLib::Core::Component
             return -1;
         }
         const auto& names = lease->GetMaterialSlotNames();
-        const uint32_t count = names.empty() ? 1u : static_cast<uint32_t>(names.size());
-        return Skeletal::FindUniqueSkeletalMaterialSlot(count, [&names, name](uint32_t slot)
+        if (names.size() > Skeletal::MaximumMaterialSlotCount)
         {
+            return -1;
+        }
+        // native文字幅はここでUTF8へ揃える。名前の照合や正規化は行わない。
+        const auto encode = [](Container::StringView input, Container::VariableArray<uint8_t>& bytes)
+        {
+            using Char = Container::String::value_type;
+            const Container::Span<const Char> source{input.data(), input.size()};
+            const auto measured = Asset::MeasureSkeletalNameEncoding(2, source);
+            if (!measured.Succeeded())
+            {
+                return false;
+            }
+            bytes.resize(measured.ByteCount);
+            return Asset::EncodeSkeletalWireName(2, source, {bytes.data(), bytes.size()}).Succeeded();
+        };
+        Container::VariableArray<uint8_t> query;
+        if (!encode(name, query))
+        {
+            return -1;
+        }
+        const uint32_t count = names.empty() ? 1u : static_cast<uint32_t>(names.size());
+        MaterialIdentityView slots[Skeletal::MaximumMaterialSlotCount]{};
+        Container::VariableArray<uint8_t> encoded[Skeletal::MaximumMaterialSlotCount];
+        constexpr uint8_t defaultName[] = {'D','e','f','a','u','l','t'};
+        for (uint32_t slot = 0; slot < count; ++slot)
+        {
+            slots[slot].IdentityIndex = slot;
             if (names.empty())
             {
-                return name == Container::StringView("Default");
+                slots[slot].Name = {defaultName, sizeof(defaultName)};
             }
-            return name == Container::StringView(names[slot].data(), names[slot].size());
-        });
+            else
+            {
+                if (!encode({names[slot].data(), names[slot].size()}, encoded[slot]))
+                {
+                    return -1;
+                }
+                slots[slot].Name = {encoded[slot].data(), encoded[slot].size()};
+            }
+        }
+        return Skeletal::FindSkeletalMaterialSlot({slots, count}, {query.data(), query.size()});
     }
 
     bool SkinnedMeshComponent::SetSlotMaterial(uint32_t slot, Rendering::MaterialHandle material)

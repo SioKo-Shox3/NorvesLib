@@ -1,6 +1,6 @@
 # 材質識別の共通契約（GR79 / GR78 / GR32）
 
-ResolveMaterialSelection を唯一の照合処理とする。現在は共通核を実装した段階で、GR79 の ARM/発光設定、GR78 の SurfaceName、GR32 の component API への接続は後続工程。
+ResolveMaterialSelection を唯一の照合処理とする。共通核に加え、GR32 の SkinnedMeshComponent::FindMaterialSlot を接続した。GR79 の ARM/発光設定と GR78 の SurfaceName への接続は後続工程。
 
 - SourceMaterial: glTF materials 配列の元番号と元名。primitive の初出順や生成 slot 名から復元しない
 - GeneratedSlot: runtime が保持する slot 番号と slot 名。元材質番号とは別の catalog
@@ -28,3 +28,11 @@ scratch は N + 2S 個の uint32_t。入力名を含む全借用領域と書込�
 MaterialSelectionTest を standalone と Core test bundle に登録。Linux の実共通核・実名前 codec による通常/O2 NDEBUG/ASan+UBSan（LSan除外）は検証対象。Windows Core 全体、JSON 入口、cook/runtime 接続、実 GLB 警告表示はこのテストの成功に含めない。
 
 独立の総当たり型参照実装とのランダム比較で、成功判定・行出力・二重指定・失敗保持を確認。範囲外指定で直前の成功行が診断へ残る問題を修正し、未一致の CatalogRow は UINT32_MAX とする回帰を追加した。
+
+## GR32 の slot 名 adapter
+
+FindMaterialSlot は全 slot 名と検索名を native 文字幅から厳密UTF-8へ変換し、GeneratedSlot catalogを共通resolverへ渡す。旧 callback 型の独立した一致判定は廃止し、FindSkeletalMaterialSlot が成功行を slot identity に変換する。番号指定の SetSlotMaterial は従来通り slot 番号を受け取る。
+
+旧meshの空 slot 表は Default 1件として扱う。一意の明示空名は保持する。同名、NUL入り検索名、不正Unicodeは -1 となり、名前指定の材質設定も失敗する。骨格wireと素材overrideの世代/fallback規則は変更しない。
+
+公開helper FindUniqueSkeletalMaterialSlot(count, callback) は廃止した。リポ外で直接利用していた場合は、UTF-8 catalog を受ける FindSkeletalMaterialSlot へ移行して再ビルドする。component の公開 FindMaterialSlot / SetSlotMaterial の署名は維持する。

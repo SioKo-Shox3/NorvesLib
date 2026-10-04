@@ -35,18 +35,25 @@ int main()
     assert(bindings.TryGet(2,3,8,7,10,out) && out == 40);
     bindings.Clear();
     assert(bindings.TryGet(2,3,8,7,10,out) && out == 10);
-    const auto match = [](uint32_t index)
-    {
-        return index == 1;
-    };
-    assert(FindUniqueSkeletalMaterialSlot(2,match) == 1);
-    assert(FindUniqueSkeletalMaterialSlot(1,match) == -1);
-    assert(FindUniqueSkeletalMaterialSlot(0,match) == -1);
-    assert(FindUniqueSkeletalMaterialSlot(9,match) == -1);
-    assert(FindUniqueSkeletalMaterialSlot(2,[](uint32_t)
-    {
-        return true;
-    }) == -1);
+    using namespace NorvesLib::Core;
+    const uint8_t body[] = {'B','o','d','y'}, eyes[] = {'E','y','e','s'};
+    MaterialIdentityView slots[] = {{1,{eyes,4}},{0,{body,4}}};
+    assert(FindSkeletalMaterialSlot(slots,{eyes,4}) == 1);
+    assert(FindSkeletalMaterialSlot(slots,{body,4}) == 0);
+    assert(FindSkeletalMaterialSlot({},{body,4}) == -1);
+    MaterialIdentityView tooMany[9]{};
+    assert(FindSkeletalMaterialSlot(tooMany,{body,4}) == -1);
+    slots[0].Name = {body,4};
+    assert(FindSkeletalMaterialSlot(slots,{body,4}) == -1);
+    slots[0].Name = {};
+    assert(FindSkeletalMaterialSlot(slots,{}) == 1);
+    const uint8_t nul[] = {'B','o','d','y',0,'X'};
+    assert(FindSkeletalMaterialSlot(slots,{nul,6}) == -1);
+    const uint8_t bad[] = {0xc0,0x80};
+    assert(FindSkeletalMaterialSlot(slots,{bad,2}) == -1);
+    const uint8_t defaultName[] = {'D','e','f','a','u','l','t'};
+    MaterialIdentityView legacy[] = {{0,{defaultName,7}}};
+    assert(FindSkeletalMaterialSlot(legacy,{defaultName,7}) == 0);
     std::cout << "SkeletalMaterialBindingsTest PASS: scope_generation_fallback_clear_failure_unique_name\n";
     return 0;
 }
