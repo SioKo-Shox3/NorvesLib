@@ -679,3 +679,5 @@
 
 - G2-GR32-MATERIAL-SELECTION-ADAPTER: SkinnedMeshComponentのslot検索をstrict native→UTF8変換+GeneratedSlot共通resolverへ接続。元番号とは混ぜず、返るcatalog行をslot IdentityIndexへ変換。独立callback照合を廃止し、Default/一意空名/最大8/重複拒否、番号APIと世代fallbackを維持。純bindings通常/O2/ASanUBSan(LSan除外)/MEMBER wrapper compile成功、native snapshotへNUL query拒否を追加、独立review PASS。実component/native試験は未実行（現在のWindows runにはこの差分は含まれない）。公開旧helperをリポ外利用するコードは新UTF8catalog APIへの移行が必要。
 - Next: GR79設定とGR78SurfaceNameのcatalog/selector接続。WindowsCIの基準採取結果も確認継続。
+
+- G2-S6-NATIVE-TEST-COMPILE: run37195379624の実WindowsログでCore.libとAssetCook.exe生成成功を確認。CookedMeshTestはAnsiStringView==literalのtemplate推論不可(C2678)とWindows nearマクロによるlambda名消失(C2513)の2件で停止。前者を長さ3+memcmp、後者をisNearへ変更し、逆差分が親とbyte一致することを確認。値/許容幅/検証対象は維持。実再ビルド・CLI smokeは未確認のためdoing。

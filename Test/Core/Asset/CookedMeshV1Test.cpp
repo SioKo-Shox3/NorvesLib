@@ -248,7 +248,8 @@ int main()
     }
     assert(material.Pbr.Normal.Offset==3 && material.Pbr.Arm.Offset==6 && material.Pbr.Emissive.Offset==9);
     auto retained=std::move(result.Mesh); result={};bytes.clear();
-    assert(retained.GetString(retained.Materials[0].EmissiveTexture)=="t/e");
+    const auto emissiveName=retained.GetString(retained.Materials[0].EmissiveTexture);
+    assert(emissiveName.size()==3 && std::memcmp(emissiveName.data(),"t/e",3)==0);
     auto multiple=Parse(Bytes(Multi,Multi+sizeof(Multi)));
     assert(multiple.Succeeded() && multiple.Mesh.Submeshes.size()==2 && multiple.Mesh.Materials.size()==2 &&
         multiple.Mesh.Clusters[1].MaterialIndex==1 && multiple.Mesh.Clusters[1].VertexCount==6);

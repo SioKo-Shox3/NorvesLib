@@ -2344,3 +2344,9 @@
 - done-when: SkinnedMeshComponentのslot名検索が厳密UTF8変換後ResolveMaterialSelectionを呼び、独立したcallback照合を廃止。番号API/世代fallback/Default/一意空slot名は保持し、重複/NUL/不正Unicodeを拒否する。
 - verify: 純adapterの行順とslotindex/Default/重複/空名/NUL/不正UTF8を3mode、native componentの既存fallback+NUL入力拒否。実Core実行はWindowsCI結果と区別。
 - stop-when: 元材質番号と生成slot番号を混同、NUL前方一致、GR79/GR78接続まで済みとする。
+
+## G2-S6-NATIVE-TEST-COMPILE: 実Windowsで判明した2件のテスト不備を直す
+- status: doing
+- done-when: CookedMeshV1TestのAnsiStringView/literal不正比較と、CookedSkeletalAssetTestのWindows nearマクロ衝突を修正し、テストの値域/厳しさを維持する。
+- verify: 差分の意味不変・名前衝突回帰、Windows CIでCookedMeshTestビルドと既存CLI smokeを再検証。Core/AssetCookはrun37195379624でビルド成功、テスト/CLI実行は未到達。
+- stop-when: assertionを削除/弱化して通す、エンジン実装の挙動を巻き込む、未再実行のnative成功を主張。

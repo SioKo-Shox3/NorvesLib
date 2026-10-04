@@ -777,15 +777,18 @@ namespace
     void AssertScaledSkeletal(const Skeletal::SkeletalGltfData& before,
                               const Skeletal::SkeletalGltfData& after, float scale)
     {
-        const auto near = [](float a, float b) { return std::abs(a - b) < 1e-4f; };
+        const auto isNear = [](float a, float b)
+        {
+            return std::abs(a - b) < 1e-4f;
+        };
         assert(before.Vertices.size() == after.Vertices.size() && before.Joints.size() == after.Joints.size());
         assert(before.Indices == after.Indices && before.Clips.size() == after.Clips.size());
         for (size_t index = 0; index < before.Vertices.size(); ++index)
         {
             const auto& a = before.Vertices[index];
             const auto& b = after.Vertices[index];
-            assert(near(b.Position.X, a.Position.X * scale) && near(b.Position.Y, a.Position.Y * scale) &&
-                near(b.Position.Z, a.Position.Z * scale));
+            assert(isNear(b.Position.X, a.Position.X * scale) && isNear(b.Position.Y, a.Position.Y * scale) &&
+                isNear(b.Position.Z, a.Position.Z * scale));
             assert(b.Normal.X == a.Normal.X && b.Normal.Y == a.Normal.Y && b.Normal.Z == a.Normal.Z);
             assert(b.TexCoord.U == a.TexCoord.U && b.TexCoord.V == a.TexCoord.V);
             assert(b.JointIndices == a.JointIndices && b.JointWeights == a.JointWeights);
@@ -799,7 +802,7 @@ namespace
             {
                 if (element >= 12 && element < 15)
                 {
-                    assert(near(b.InverseBindMatrix[element], a.InverseBindMatrix[element] * scale));
+                    assert(isNear(b.InverseBindMatrix[element], a.InverseBindMatrix[element] * scale));
                 }
                 else
                 {
@@ -811,7 +814,7 @@ namespace
         {
             if (element >= 12 && element < 15)
             {
-                assert(near(after.MeshNodeGlobalTransform[element], before.MeshNodeGlobalTransform[element] * scale));
+                assert(isNear(after.MeshNodeGlobalTransform[element], before.MeshNodeGlobalTransform[element] * scale));
             }
             else
             {
@@ -835,7 +838,7 @@ namespace
                     assert(a.Samples[sample].TimeSeconds == b.Samples[sample].TimeSeconds);
                     const auto& x = a.Samples[sample].Value;
                     const auto& y = b.Samples[sample].Value;
-                    assert(near(y.X,x.X*factor) && near(y.Y,x.Y*factor) && near(y.Z,x.Z*factor) && y.W == x.W);
+                    assert(isNear(y.X,x.X*factor) && isNear(y.Y,x.Y*factor) && isNear(y.Z,x.Z*factor) && y.W == x.W);
                     if (a.Path != Skeletal::SkeletalAnimationPath::Translation)
                     {
                         assert(y.X==x.X && y.Y==x.Y && y.Z==x.Z);
