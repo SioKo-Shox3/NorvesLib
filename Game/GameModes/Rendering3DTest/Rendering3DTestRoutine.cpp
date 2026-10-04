@@ -521,6 +521,7 @@ namespace Game::GameModes
                                          const char *debugName,
                                          const char *meshPath,
                                          const MaterialTexturePaths &paths,
+                                         bool bBoulder,
                                          const TSharedPtr<BoulderAsyncState> &state)
         {
             if (!data.m_GetAssetSystem.IsBound())
@@ -557,6 +558,7 @@ namespace Game::GameModes
             CookedStartupModelLoad load;
             load.DebugName = debugName;
             load.LogicalPath = meshPath;
+            load.bBoulder = bBoulder;
             load.Mesh = MakeShared<Asset::CookedMeshData>(std::move(parsed.Mesh));
             load.State = state;
             load.Material = MakeShared<PendingMaterialUpdate>();
@@ -579,6 +581,32 @@ namespace Game::GameModes
             return true;
         }
 
+        // 起動画面の岩・小屋を従来の glTF の実行時の経路で読み始める。結果は state へ入れる
+        // （岩・小屋の組み立てが、クック済みの経路と同じ手順で受け取る）。要求番号は outRequestId に入る。
+        void StartGltfStartupModelLoad(GameModeContext &ctx,
+                                       const String &logicalPath,
+                                       const TSharedPtr<BoulderAsyncState> &state,
+                                       uint32_t &outRequestId)
+        {
+            ModelLoadResourceContext loadContext{ctx.RenderResourcesRef.Textures(), ctx.RenderResourcesRef.MegaGeometry()};
+            outRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
+                logicalPath,
+                loadContext,
+                [state](ModelHandle handle)
+                {
+                    state->m_Handle = handle;
+                    state->m_bLoaded = handle.IsValid();
+                    state->m_bCompleted.Store(true);
+                });
+            if (outRequestId == 0)
+            {
+                state->m_bLoaded = false;
+                state->m_bCompleted.Store(true);
+                NORVES_LOG_ERROR("Rendering3DTest", "glTF の経路へ戻したモデルの非同期ロード開始に失敗しました: %s",
+                                 logicalPath.c_str());
+            }
+        }
+
         // クック済みで読んでいる岩・小屋のうち、材質のテクスチャがそろったものの MegaMesh を作り、モデルとして登録して
         // state を埋める（岩・小屋の組み立てが、従来の非同期の読み込みと同じ手順で受け取る）。作れなければ失敗として埋める。
         void FinishCookedStartupModels(GameModeContext &ctx, Rendering3DTestData &data)
@@ -595,6 +623,39 @@ namespace Game::GameModes
                 if (!load.Material || load.Material->PendingTextureCount != 0)
                 {
                     ++index;
+                    continue;
+                }
+
+                // 必須のテクスチャ（アルベド・法線・ORM）が読めなかった（パッケージの欠け・壊れ）ときは、
+                // 無効なハンドルのままメッシュを作らず、警告して従来の glTF の経路へ戻す。
+                const MaterialCreateData &loadedMaterial = load.Material->CreateData;
+                if (!loadedMaterial.AlbedoTexture.IsValid() || !loadedMaterial.NormalTexture.IsValid() ||
+                    !loadedMaterial.ORMTexture.IsValid())
+                {
+                    NORVES_LOG_WARNING("Rendering3DTest",
+                                       "COOKED_MODEL_TEXTURES_FAILED path=%s 材質のクック済みのテクスチャを読めないため、"
+                                       "glTF の実行時の経路で読みます（albedo=%d normal=%d orm=%d）",
+                                       load.LogicalPath.c_str(),
+                                       loadedMaterial.AlbedoTexture.IsValid() ? 1 : 0,
+                                       loadedMaterial.NormalTexture.IsValid() ? 1 : 0,
+                                       loadedMaterial.ORMTexture.IsValid() ? 1 : 0);
+                    auto &textures = ctx.RenderResourcesRef.Textures();
+                    for (const TextureHandle handle : {loadedMaterial.AlbedoTexture, loadedMaterial.NormalTexture,
+                                                       loadedMaterial.ORMTexture})
+                    {
+                        if (handle.IsValid())
+                        {
+                            textures.ReleaseTexture(handle);
+                        }
+                    }
+                    const String logicalPath = load.LogicalPath;
+                    const TSharedPtr<BoulderAsyncState> state = load.State;
+                    uint32_t &requestId = load.bBoulder ? data.m_BoulderLoadRequestId : data.m_CottageLoadRequestId;
+                    loads.erase(loads.begin() + static_cast<std::ptrdiff_t>(index));
+                    if (state)
+                    {
+                        StartGltfStartupModelLoad(ctx, logicalPath, state, requestId);
+                    }
                     continue;
                 }
 
@@ -2467,7 +2528,7 @@ namespace Game::GameModes
             if (!data.m_bUseCookedModel && !data.m_bStartupModelsFromGltf && modelPath == String(kStartupBoulderMeshPath))
             {
                 bBoulderCooked = StartCookedStartupModelLoad(ctx, data, "Boulder", kStartupBoulderMeshPath,
-                                                             MakeStartupBoulderTexturePaths(), asyncState);
+                                                             MakeStartupBoulderTexturePaths(), true, asyncState);
                 if (!bBoulderCooked)
                 {
                     NORVES_LOG_WARNING("Rendering3DTest",
@@ -2526,7 +2587,7 @@ namespace Game::GameModes
             {
                 auto cookedCottageState = MakeShared<BoulderAsyncState>();
                 bCottageCooked = StartCookedStartupModelLoad(ctx, data, "Cottage", kStartupCottageMeshPath,
-                                                             MakeStartupCottageTexturePaths(), cookedCottageState);
+                                                             MakeStartupCottageTexturePaths(), false, cookedCottageState);
                 if (bCottageCooked)
                 {
                     data.m_CottageAsyncState = cookedCottageState;

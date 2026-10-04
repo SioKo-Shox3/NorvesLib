@@ -107,7 +107,8 @@ namespace Game::GameModes
     struct CookedStartupModelLoad
     {
         String DebugName;
-        String LogicalPath; ///< メッシュの論理パス（"Assets/Models/...gltf"）
+        String LogicalPath; ///< メッシュの論理パス（"Assets/Models/...gltf"）。テクスチャが読めないとき glTF の経路へ戻すのに使う
+        bool bBoulder = false; ///< 岩か（false なら小屋）。glTF の経路へ戻すとき、どちらの要求番号を更新するか決める
         TSharedPtr<NorvesLib::Core::Asset::CookedMeshData> Mesh;
         TSharedPtr<PendingMaterialUpdate> Material;
         TSharedPtr<BoulderAsyncState> State;
