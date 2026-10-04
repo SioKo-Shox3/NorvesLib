@@ -2,6 +2,7 @@
 
 #include "Asset/AssetPath.h"
 #include "Text/JsonDocument.h"
+#include "Resource/SkeletalLimits.h"
 
 #include <algorithm>
 #include <cctype>
@@ -456,6 +457,22 @@ namespace NorvesLib::Core::Asset
                     SetParseFailure(AssetManifestParseStatus::InvalidField,
                                     Container::AnsiStringView("skeletal metadata is incomplete or invalid"));
                     return false;
+                }
+                const bool bHasSubmesh = metadata.FindMember("submesh_count").IsValid();
+                const bool bHasSlots = metadata.FindMember("material_slot_count").IsValid();
+                if (bHasSubmesh || bHasSlots)
+                {
+                    if (!bHasSubmesh || !bHasSlots ||
+                        !TryReadUInt32Member(metadata, "submesh_count", reference.SkeletalMetadata.SubmeshCount) ||
+                        !TryReadUInt32Member(metadata, "material_slot_count", reference.SkeletalMetadata.MaterialSlotCount) ||
+                        !Skeletal::IsValidSkeletalTableMetadata(reference.SkeletalMetadata.SubmeshCount,
+                            reference.SkeletalMetadata.MaterialSlotCount, reference.SkeletalMetadata.IndexCount))
+                    {
+                        SetParseFailure(AssetManifestParseStatus::InvalidField,
+                            Container::AnsiStringView("骨格submesh/材質slotの数量metadataが不正です"));
+                        return false;
+                    }
+                    reference.SkeletalMetadata.bHasSubmeshCounts = true;
                 }
                 reference.bHasSkeletalMetadata = true;
             }

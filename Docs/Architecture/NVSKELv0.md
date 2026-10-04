@@ -183,3 +183,13 @@ Windows依存のwriter/loader/cache/CLI統合は未実行で、GPU描画受入�
 孤立surrogate・途中切れ・不正な組合せはJsonDocumentで拒否し、有効な非BMP文字は4byte UTF-8になる。
 この修正は共通JSON parserにも適用する。純試験は全scalarのescape読取・UTF-8黄金hashとUTF-16/32出力を照合し、
 JsonDocument本体とAssetCookでのescape名の往復はnative回帰へ登録する（この環境では未実行）。
+
+## manifestの表数量metadata
+
+新しい骨格cookはmetadataにsubmesh_count/material_slot_countを保存する。数量は生成payloadを再parseした所有表から取得する。
+2項目は組で任意とし、存在する場合は1〜8・三角形index総数との整合を検査する。
+旧manifestの省略はbHasSubmeshCounts=false/数量0の「未知」として保持し、1件と推測して表示しない。
+他資産の追記mergeでも、既知の数量は保持し、旧省略は省略のまま残す。
+source hashや通常loadの互換は変更しない。既存0.2 cacheのmanifestに数量がない場合も、未知として扱い勝手に補完しない。
+純数量条件と既存layoutを検査し、manifest解析/1・2・8primitive cook/CLI/merge回帰を登録する。
+Windows依存のnative/CLI/CMake/PowerShell実行はこの環境では未実行。

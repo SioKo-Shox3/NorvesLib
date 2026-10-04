@@ -16,6 +16,7 @@
 #include "Asset/AssetSystem.h"
 #include "Container/Span.h"
 #include "Resource/GltfImageSource.h"
+#include "Resource/SkeletalLimits.h"
 #include "FileStream/Package.h"
 
 #include <algorithm>
@@ -828,6 +829,8 @@ namespace
         uint32_t IndexCount = 0;
         uint32_t JointCount = 0;
         uint32_t ClipCount = 0;
+        uint32_t SubmeshCount = 0;
+        uint32_t MaterialSlotCount = 0;
     };
 
     bool BuildManifestJson(const std::string &logicalPath,
@@ -949,6 +952,12 @@ namespace
                                    NorvesLib::Core::Container::AnsiString& outJson,
                                    auto& error)
     {
+        if (!NorvesLib::Core::Skeletal::IsValidSkeletalTableMetadata(
+                metadata.SubmeshCount, metadata.MaterialSlotCount, metadata.IndexCount))
+        {
+            error = "骨格の表数量metadataが不正です";
+            return false;
+        }
         if (!ValidateSkeletalAsciiField(logicalPath, error) ||
             !ValidateSkeletalAsciiField(variant, error) ||
             !ValidateSkeletalAsciiField(format, error) ||
@@ -986,7 +995,11 @@ namespace
         outJson += "\n        ";
         AppendSkeletalJsonUInt32Field(outJson, "joint_count", metadata.JointCount, true);
         outJson += "\n        ";
-        AppendSkeletalJsonUInt32Field(outJson, "clip_count", metadata.ClipCount, false);
+        AppendSkeletalJsonUInt32Field(outJson, "clip_count", metadata.ClipCount, true);
+        outJson += "\n        ";
+        AppendSkeletalJsonUInt32Field(outJson, "submesh_count", metadata.SubmeshCount, true);
+        outJson += "\n        ";
+        AppendSkeletalJsonUInt32Field(outJson, "material_slot_count", metadata.MaterialSlotCount, false);
         outJson += "\n      },\n      \"cooked_version\":0\n    }\n  ]\n}\n";
         return true;
     }
@@ -1119,7 +1132,14 @@ namespace
                     outJson, "joint_count", reference.SkeletalMetadata.JointCount, true);
                 outJson += "\n        ";
                 AppendSkeletalJsonUInt32Field(
-                    outJson, "clip_count", reference.SkeletalMetadata.ClipCount, false);
+                    outJson, "clip_count", reference.SkeletalMetadata.ClipCount, reference.SkeletalMetadata.bHasSubmeshCounts);
+                if (reference.SkeletalMetadata.bHasSubmeshCounts)
+                {
+                    outJson += "\n        ";
+                    AppendSkeletalJsonUInt32Field(outJson, "submesh_count", reference.SkeletalMetadata.SubmeshCount, true);
+                    outJson += "\n        ";
+                    AppendSkeletalJsonUInt32Field(outJson, "material_slot_count", reference.SkeletalMetadata.MaterialSlotCount, false);
+                }
                 outJson += "\n      },\n      ";
             }
             AppendSkeletalJsonUInt32Field(outJson, "cooked_version", reference.CookedVersion, false);
@@ -2701,6 +2721,8 @@ namespace
             .IndexCount = skeletalResult.IndexCount,
             .JointCount = skeletalResult.JointCount,
             .ClipCount = skeletalResult.ClipCount,
+            .SubmeshCount = skeletalResult.SubmeshCount,
+            .MaterialSlotCount = skeletalResult.MaterialSlotCount,
         };
         NorvesLib::Core::Container::AnsiString manifestJson;
         if (!BuildSkeletalManifestJson(logicalPath,
@@ -2799,6 +2821,8 @@ namespace
                   << " indices=" << skeletalResult.IndexCount
                   << " joints=" << skeletalResult.JointCount
                   << " clips=" << skeletalResult.ClipCount
+                  << " submeshes=" << skeletalResult.SubmeshCount
+                  << " material_slots=" << skeletalResult.MaterialSlotCount
                   << "\n";
         return true;
     }

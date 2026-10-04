@@ -22,7 +22,9 @@ set(skeletal_manifest [=[{
         "vertex_count":24,
         "index_count":36,
         "joint_count":4,
-        "clip_count":2
+        "clip_count":2,
+        "submesh_count":2,
+        "material_slot_count":2
       },
       "cooked_version":0
     }
@@ -87,7 +89,9 @@ foreach(metadata_field IN ITEMS
         "\"vertex_count\":24"
         "\"index_count\":36"
         "\"joint_count\":4"
-        "\"clip_count\":2")
+        "\"clip_count\":2"
+        "\"submesh_count\":2"
+        "\"material_slot_count\":2")
     string(FIND "${manifest_ab}" "${metadata_field}" metadata_position)
     if(metadata_position EQUAL -1)
         message(FATAL_ERROR "audio manifest merge discarded skeletal metadata: ${metadata_field}")

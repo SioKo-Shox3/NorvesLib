@@ -2654,6 +2654,8 @@ namespace NorvesLib::Tools::AssetCook
             result.IndexCount = static_cast<uint32_t>(decoded.Data.Indices.size());
             result.JointCount = static_cast<uint32_t>(decoded.Data.Joints.size());
             result.ClipCount = static_cast<uint32_t>(decoded.Data.Clips.size());
+            result.SubmeshCount = static_cast<uint32_t>(parsed.Data.Skeletal.SubMeshes.size());
+            result.MaterialSlotCount = static_cast<uint32_t>(parsed.Data.Skeletal.MaterialSlots.size());
             outResult = std::move(result);
             return true;
         }

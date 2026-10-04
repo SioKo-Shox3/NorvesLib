@@ -2188,7 +2188,7 @@
 - stop-when: mutable componentを描画threadが読む、曖昧な名前を無言で別slotへ適用、既存材質を破壊する。
 
 ## G2-GR32-COOK-METADATA: cook metadataへ表数量を記録する
-- status: todo
+- status: done
 - done-when: 新cookのmanifest metadataへsubmesh_count/material_slot_countを保存し、旧manifestの省略を未知として保持する。既存項目/merge/cacheを壊さず、欠落を1件と捏造しない。
 - verify: 1/2/8表の数量、旧省略/不正値、manifest再読込/merge、既存CLI metadata回帰を登録する。
 - stop-when: 旧省略から件数を推測して表示、wireとmetadataが不一致、既存metadataをmergeで失う。

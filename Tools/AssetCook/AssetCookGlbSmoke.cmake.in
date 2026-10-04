@@ -65,6 +65,10 @@ if ($preserved.Count -ne 1 -or $preserved[0].metadata.vertex_count -ne 24 -or
     $preserved[0].metadata.clip_count -ne 2 -or $preserved[0].cooked_hash -ne '0000000000000002') {
     throw 'unrelated skeletal metadata changed'
 }
+if ($preserved[0].metadata.PSObject.Properties.Name -contains 'submesh_count' -or
+    $preserved[0].metadata.PSObject.Properties.Name -contains 'material_slot_count') {
+    throw 'omitted skeletal table counts must stay unknown during merge'
+}
 $model = @($assets | Where-Object { $_.logical_path -eq 'Models/embedded_tri.glb' })
 if ($model.Count -ne 1 -or $model[0].kind -ne 'model' -or $model[0].entry_type -ne 'Msh0') { throw 'missing model' }
 $textures = @()

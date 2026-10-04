@@ -181,6 +181,11 @@ endif()
 
 file(READ "${OUTPUT_MANIFEST}" first_manifest_json)
 string(JSON first_source_hash GET "${first_manifest_json}" assets 0 source_hash)
+string(JSON first_submeshes GET "${first_manifest_json}" assets 0 metadata submesh_count)
+string(JSON first_slots GET "${first_manifest_json}" assets 0 metadata material_slot_count)
+if(NOT first_submeshes EQUAL 1 OR NOT first_slots EQUAL 1)
+    message(FATAL_ERROR "skeletal table metadata does not match the single-primitive payload")
+endif()
 
 execute_process(
     COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${MUTATE_SCRIPT}" "${SOURCE_BIN}" position

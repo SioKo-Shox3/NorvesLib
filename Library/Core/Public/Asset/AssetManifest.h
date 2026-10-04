@@ -72,6 +72,10 @@ namespace NorvesLib::Core::Asset
         uint32_t IndexCount = 0;
         uint32_t JointCount = 0;
         uint32_t ClipCount = 0;
+        // 旧manifestの省略は未知。数量が判明している場合だけtrue。
+        bool bHasSubmeshCounts = false;
+        uint32_t SubmeshCount = 0;
+        uint32_t MaterialSlotCount = 0;
     };
 
     struct AssetCookedReference

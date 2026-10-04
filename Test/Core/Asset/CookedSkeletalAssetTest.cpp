@@ -1551,6 +1551,7 @@ namespace
         const auto sourceBytes=TextBytes(source);
         assert(CookGltfToNvskel(sourceBytes.data(),sourceBytes.size(),format,cookPath,retained,error,nullptr,nullptr,&diagnostics));
         assert(retained.VertexCount==6 && diagnostics.bDecodeAttempted && diagnostics.DecodeStatus==0);
+        assert(retained.SubmeshCount == 2 && retained.MaterialSlotCount == 2);
         const auto cookedTables = Asset::ParseCookedSkeletal(MakeBlob(retained.NvskelBytes));
         assert(cookedTables.Succeeded() && cookedTables.Data.VersionMinor == 2);
         checkTables(cookedTables.Data.Skeletal);
@@ -1587,6 +1588,10 @@ namespace
             else
             {
                 assert(result.Succeeded() && result.Data.SubMeshes.size()==8 && result.Data.Vertices.size()==24 && result.Data.Indices.size()==24);
+                const auto bytes = TextBytes(text);
+                SkeletalCookResult eightCook;
+                assert(CookGltfToNvskel(bytes.data(),bytes.size(),format,cookPath,eightCook,error));
+                assert(eightCook.SubmeshCount == 8 && eightCook.MaterialSlotCount == 2);
                 for(size_t index=0;index<8;++index)
                 {
                     assert(result.Data.SubMeshes[index].IndexStart==index*3 && result.Data.SubMeshes[index].MaterialSlot==index%2);
@@ -1601,6 +1606,7 @@ namespace
         const auto singleBytes = TextBytes(single);
         SkeletalCookResult singleCook;
         assert(CookGltfToNvskel(singleBytes.data(),singleBytes.size(),format,cookPath,singleCook,error));
+        assert(singleCook.SubmeshCount == 1 && singleCook.MaterialSlotCount == 1);
         const auto singleParsed = Asset::ParseCookedSkeletal(MakeBlob(singleCook.NvskelBytes));
         assert(singleParsed.Succeeded() && singleParsed.Data.VersionMinor == 2 &&
             singleParsed.Data.Skeletal.MaterialSlots[0].Name == "Body");

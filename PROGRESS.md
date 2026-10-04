@@ -613,3 +613,6 @@
 
 - G2-GR32-COMPONENT-SLOTS: index/名前APIと旧slot0別名を接続し、未割当slotはslot0へfallback、slot1以降のoverrideをmesh世代へ束縛。固定Materials[8]/MaterialCountをproxyへ値コピーし、SceneRevisionも材質列を反映。第1周でnative snapshotの既存null device・packet検証不足を確認し、実CPU生成をcapabilities引数へ分け、再同期/世代差し替え/破棄後の2slot保持を追加。原文のslot0/固定配列仕様へ整合させ第2周PASS。純binding3mode・MEMBER成功。native Component/packet/RevisionとGPUはWindows.hで未実行。
 - Next: GR32のcook metadataへ表数量を追記し、範囲drawへ進む。palette共有は現/前フレーム2本1組の解釈を作者確認中で別taskに保留し、独立した部分を継続する。
+
+- G2-GR32-COOK-METADATA: 再parse済みpayloadの表数量をcook結果/CLI/manifestへ保存。submesh_count/material_slot_countは組で任意、存在時は1〜8/index三角形数と照合し、旧省略はbool=false/0の未知として保持。mergeで既知数量を落とさず旧省略を捏造しない。純数量/layout3mode・MEMBER、既知/未知fixture JSON独立確認、独立PASS。native parser1/2/8・不正型/片側欠落、cook1/2/8、CLI1/1、audio merge既知保持/GLB merge省略保持を登録。Windows.hでnative/CLI/CMake/PowerShell未実行。
+- Next: GR32-DRAW-RANGES。palette allocationの作者回答を待ちながら、独立した範囲draw/材質slot/NoShadowと検証へ進む。

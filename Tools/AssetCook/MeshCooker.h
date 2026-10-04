@@ -69,6 +69,8 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t JointCount = 0;
         uint32_t ClipCount = 0;
         Core::Skeletal::SkeletalGltfDecodeReport DecodeReport;
+        uint32_t SubmeshCount = 0;
+        uint32_t MaterialSlotCount = 0;
     };
 
     struct ModelImageFingerprint

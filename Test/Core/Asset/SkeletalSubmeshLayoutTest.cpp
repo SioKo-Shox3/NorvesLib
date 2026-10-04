@@ -25,6 +25,16 @@ int main()
 {
     static_assert(std::is_standard_layout_v<SkeletalSubMesh> && std::is_trivially_copyable_v<SkeletalSubMesh>);
     using Status = SkeletalSubmeshLayoutStatus;
+    static_assert(IsValidSkeletalTableMetadata(1,1,3));
+    static_assert(IsValidSkeletalTableMetadata(2,8,6));
+    static_assert(IsValidSkeletalTableMetadata(8,8,24));
+    static_assert(!IsValidSkeletalTableMetadata(0,1,3));
+    static_assert(!IsValidSkeletalTableMetadata(1,0,3));
+    static_assert(!IsValidSkeletalTableMetadata(9,1,27));
+    static_assert(!IsValidSkeletalTableMetadata(1,9,3));
+    static_assert(!IsValidSkeletalTableMetadata(2,1,3));
+    static_assert(!IsValidSkeletalTableMetadata(1,1,4));
+    static_assert(!IsValidSkeletalTableMetadata(1,1,uint64_t(UINT32_MAX)+1));
     const auto legacy = ResolveSkeletalSubmeshLayout({}, 6, 0);
     assert(legacy.Succeeded() && legacy.SubmeshCount == 1 && legacy.MaterialSlotCount == 1 && legacy.bUsesImplicitSingleSubmesh);
     assert(legacy.ImplicitSubmesh.IndexStart == 0 && legacy.ImplicitSubmesh.IndexCount == 6 && legacy.ImplicitSubmesh.MaterialSlot == 0);
