@@ -43,6 +43,28 @@ The direct Rendering3DTest Silver asset set cooks these five textures from
 
 `stb_image` is still used at cook time by `AssetCook` to decode source images. Runtime smoke validation expects cooked `nvtex` loads and rejects loose `stb_image` fallback for these paths.
 
+## NVTEX v0.1（ブロック圧縮と R16）
+
+`CookedTextureFormatV0`（`Library/Core/Public/Asset/CookedTextureFormat.h`）の VersionMinor 1 は、v0.0 の上位互換で PixelFormat を足した版。
+ヘッダ・ミップ表のレイアウトと、ミップを全段（フルチェーン）必須とする規則は v0.0 と同じ。ローダーは v0.0 と v0.1 のどちらも読む。
+クッカーは当面 v0.0 のまま書き、v0.1 を書くクッカーは別タスクで足す。
+
+| PixelFormat | 値 | 1 ブロック | ColorSpace |
+| --- | --- | --- | --- |
+| R8UNorm / RG8UNorm / RGBA8UNorm | 1 / 2 / 3 | 1x1 画素（1 / 2 / 4 バイト） | RGBA8 のみ sRGB 可（v0.0 から） |
+| BC1 | 4 | 4x4 画素・8 バイト | Linear / sRGB |
+| BC4 | 5 | 4x4 画素・8 バイト | Linear のみ |
+| BC5 | 6 | 4x4 画素・16 バイト | Linear のみ |
+| BC7 | 7 | 4x4 画素・16 バイト | Linear / sRGB |
+| R16UNorm | 8 | 1x1 画素・2 バイト | Linear のみ |
+
+- BC1/BC4/BC5/BC7/R16UNorm は VersionMinor 1 でだけ有効。v0.0 のヘッダにこれらの値があれば `UnknownPixelFormat` で拒否する。
+- ミップのデータサイズは、ブロック単位で `ceil(width / 4) * ceil(height / 4) * ブロックのバイト数 * レイヤー数`。
+  1x1 や 2x2 のミップも最小 1 ブロック分を持つ。ミップの幅・高さのレコードは画素単位のまま（`max(1, base >> mip)`）。
+- 実行時は `MapCookedTextureFormat`（`CookedTextureUpload.cpp`）が RHI の形式（`BC1_UNORM`/`BC1_SRGB`/`BC4_UNORM`/`BC5_UNORM`/`BC7_UNORM`/`BC7_SRGB`/`R16_UNORM`）へ写し、
+  ミップごとにブロック単位の行ピッチ・スライスピッチでアップロードする。`textureCompressionBC` に対応しないデバイスでは `TextureCreationFailed` になる。
+- glTF の ARM の分割（`TrySplitPreparedCookedTextureMip0RGBA8UNormLinear`）は RGBA8 のときだけ通す。BC は理由（`unsupported pixel format`）を返して失敗する。
+
 ## Direct Runtime Contract
 
 The direct Silver workflow loads texture assets through the runtime manifest and package files before creating RHI textures. For cooked-ready entries the expected runtime profile stages are:

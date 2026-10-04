@@ -64,7 +64,7 @@
 - notes: 危険地帯（RHI/Vulkan）。`VulkanTexture::Update` が呼び出しごとに待つ件は段2で扱う。
 
 ## VTG1-NVTEX-V01: NVTEX v0.1でBCとR16を表し、クック済みのBCを読み込めるようにする
-- status: todo
+- status: done
 - done-when: `CookedTextureFormat` の VersionMinor 1 で PixelFormat に BC1・BC4・BC5・BC7（sRGB の有無）・R16 を表し、v0.0 も読む。ミップの検証はブロック単位（最小1ブロック）で、全段必須のまま。`MapCookedTextureFormat` が RHI の形式へ写し、クック済みの BC を `TextureResources` から読み込んで GPU に置ける。`CookedTextureTest` に v0.1 の BC のヘッダ・ミップのバイト数・壊れた入力（ブロック数の不足・未知の形式）の拒否を、`CookedTextureUploadTest` に BC7 のクック済みの読み込みを足す。`Docs/Architecture/` の NVTEX の形式の文書があれば v0.1 を追記する。
 - verify: `cmake --build build --config Debug --target CookedMeshTest CookedTextureUploadTest TextureResourcesTextureAssetTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedTextureTest|CookedTextureUploadTest|TextureResourcesTextureAssetTest)$"`

@@ -1,4 +1,4 @@
-#include "Asset/AssetPackageFormat.h"
+﻿#include "Asset/AssetPackageFormat.h"
 #include "Asset/AssetManifest.h"
 #include "Asset/CookedTextureFormat.h"
 #include "Rendering/RenderResources.h"
@@ -213,13 +213,19 @@ namespace
         return TextureV0::HeaderSize + mipIndex * TextureV0::MipRecordSize;
     }
 
-    std::vector<uint8_t> BuildCookedTextureBytes(uint32_t width, uint32_t height)
+    // BC7 は 4x4 画素 16 バイトのブロック、RGBA8 は 1 画素 4 バイト。テスト側で独立に持つ。
+    std::vector<uint8_t> BuildCookedTextureBytes(uint32_t width,
+                                                 uint32_t height,
+                                                 CookedTexturePixelFormat pixelFormat = CookedTexturePixelFormat::RGBA8UNorm,
+                                                 CookedTextureColorSpace colorSpace = CookedTextureColorSpace::SRGB,
+                                                 uint16_t versionMinor = TextureV0::VersionMinor)
     {
         const uint32_t layerCount = 1;
-        const CookedTexturePixelFormat pixelFormat = CookedTexturePixelFormat::RGBA8UNorm;
-        const CookedTextureColorSpace colorSpace = CookedTextureColorSpace::SRGB;
         const uint32_t mipCount = ComputeCookedTextureFullMipCount(width, height);
-        const size_t bytesPerPixel = GetCookedTextureBytesPerPixel(pixelFormat);
+        const bool bBlock = pixelFormat == CookedTexturePixelFormat::BC7;
+        assert(bBlock || pixelFormat == CookedTexturePixelFormat::RGBA8UNorm);
+        const uint32_t blockSize = bBlock ? 4 : 1;
+        const size_t blockBytes = bBlock ? 16 : 4;
         const size_t mipTableOffset = TextureV0::HeaderSize;
         const size_t mipTableSize = static_cast<size_t>(mipCount) * TextureV0::MipRecordSize;
         const size_t payloadOffset = mipTableOffset + mipTableSize;
@@ -233,10 +239,9 @@ namespace
         {
             const uint32_t mipWidth = ExpectedMipDimension(width, mipIndex);
             const uint32_t mipHeight = ExpectedMipDimension(height, mipIndex);
-            const size_t dataSize = static_cast<size_t>(mipWidth) *
-                                    static_cast<size_t>(mipHeight) *
-                                    layerCount *
-                                    bytesPerPixel;
+            const size_t blocksX = (mipWidth + blockSize - 1) / blockSize;
+            const size_t blocksY = (mipHeight + blockSize - 1) / blockSize;
+            const size_t dataSize = blocksX * blocksY * layerCount * blockBytes;
             std::vector<uint8_t> mipBytes(dataSize);
             for (uint8_t &value : mipBytes)
             {
@@ -251,7 +256,7 @@ namespace
         std::memcpy(bytes.data() + TextureV0::HeaderOffset::Magic, TextureV0::Magic, TextureV0::MagicSize);
         WriteLe32(bytes, TextureV0::HeaderOffset::HeaderSize, static_cast<uint32_t>(TextureV0::HeaderSize));
         WriteLe16(bytes, TextureV0::HeaderOffset::VersionMajor, TextureV0::VersionMajor);
-        WriteLe16(bytes, TextureV0::HeaderOffset::VersionMinor, TextureV0::VersionMinor);
+        WriteLe16(bytes, TextureV0::HeaderOffset::VersionMinor, versionMinor);
         WriteLe32(bytes, TextureV0::HeaderOffset::EndianMarker, TextureV0::EndianMarker);
         WriteLe32(bytes, TextureV0::HeaderOffset::MipRecordSize, static_cast<uint32_t>(TextureV0::MipRecordSize));
         WriteLe64(bytes, TextureV0::HeaderOffset::FileSize, static_cast<uint64_t>(fileSize));
@@ -522,6 +527,42 @@ namespace
         std::filesystem::remove_all(root);
     }
 
+    // クック済みの v0.1 BC7 を TextureResources から読み込み、BC7 の RHI テクスチャへ全ミップをブロック単位で上げる
+    void TestSyncCookedBc7Path()
+    {
+        const std::filesystem::path root = CreateTestRoot("SyncCookedBc7");
+        const std::vector<uint8_t> textureBytes = BuildCookedTextureBytes(
+            8, 8, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::SRGB, TextureV0::VersionMinorBlockCompressed);
+        WriteCookedPackage(root, textureBytes);
+
+        auto device = MakeShared<FakeDevice>();
+        RenderResources manager;
+        assert(manager.Initialize(device));
+        ConfigureRoot(manager, root);
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
+            BuildManifest(ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size()))));
+
+        const TextureHandle handle = manager.Textures().LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        assert(handle.IsValid());
+        assert(device->CreatedTextureDescs.size() == 1);
+        assert(device->CreatedTextureDescs[0].TextureFormat == NorvesLib::RHI::Format::BC7_SRGB);
+        assert(device->CreatedTextureDescs[0].Width == 8);
+        assert(device->CreatedTextureDescs[0].MipLevels == 4);
+        assert(device->LastTexture);
+        assert(device->LastTexture->Updates.size() == 4);
+        const uint32_t expectedRowPitch[] = {32, 16, 16, 16};
+        const uint32_t expectedSlicePitch[] = {64, 16, 16, 16};
+        for (uint32_t mip = 0; mip < 4; ++mip)
+        {
+            assert(device->LastTexture->Updates[mip].MipLevel == mip);
+            assert(device->LastTexture->Updates[mip].RowPitch == expectedRowPitch[mip]);
+            assert(device->LastTexture->Updates[mip].SlicePitch == expectedSlicePitch[mip]);
+        }
+
+        manager.Shutdown();
+        std::filesystem::remove_all(root);
+    }
+
     void TestAsyncCookedPathAndPendingGenerationGuard()
     {
         const std::filesystem::path root = CreateTestRoot("AsyncCooked");
@@ -753,6 +794,7 @@ int main()
     TestShutdownTextureAssetDelegatesReturnInvalidOrZero();
     TestReinitializePreservesConfigAndClearsTextureAssetCache();
     TestSyncCookedPathDoesNotNeedLooseFile();
+    TestSyncCookedBc7Path();
     TestAsyncCookedPathAndPendingGenerationGuard();
     TestAsyncCacheHitCallbackRunsAfterCacheLockRelease();
     TestManifestMissingUsesLooseFallback();

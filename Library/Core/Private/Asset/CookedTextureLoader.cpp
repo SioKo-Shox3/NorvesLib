@@ -1,4 +1,4 @@
-#include "Asset/CookedTextureFormat.h"
+﻿#include "Asset/CookedTextureFormat.h"
 
 #include <cstring>
 #include <limits>
@@ -98,11 +98,26 @@ namespace NorvesLib::Core::Asset
                    std::memcmp(bytes.data(), CookedTextureFormatV0::Magic, CookedTextureFormatV0::MagicSize) == 0;
         }
 
-        bool IsKnownPixelFormat(uint32_t rawPixelFormat)
+        // 版ごとに使える形式が違う。v0.0 は非圧縮の 3 形式だけで、v0.1 はそれに BC と R16 が加わる。
+        bool IsKnownPixelFormat(uint16_t versionMinor, uint32_t rawPixelFormat)
         {
-            return rawPixelFormat == CookedTextureFormatV0::PixelFormatR8UNorm ||
-                   rawPixelFormat == CookedTextureFormatV0::PixelFormatRG8UNorm ||
-                   rawPixelFormat == CookedTextureFormatV0::PixelFormatRGBA8UNorm;
+            if (rawPixelFormat == CookedTextureFormatV0::PixelFormatR8UNorm ||
+                rawPixelFormat == CookedTextureFormatV0::PixelFormatRG8UNorm ||
+                rawPixelFormat == CookedTextureFormatV0::PixelFormatRGBA8UNorm)
+            {
+                return true;
+            }
+
+            if (versionMinor < CookedTextureFormatV0::VersionMinorBlockCompressed)
+            {
+                return false;
+            }
+
+            return rawPixelFormat == CookedTextureFormatV0::PixelFormatBC1 ||
+                   rawPixelFormat == CookedTextureFormatV0::PixelFormatBC4 ||
+                   rawPixelFormat == CookedTextureFormatV0::PixelFormatBC5 ||
+                   rawPixelFormat == CookedTextureFormatV0::PixelFormatBC7 ||
+                   rawPixelFormat == CookedTextureFormatV0::PixelFormatR16UNorm;
         }
 
         bool IsKnownColorSpace(uint32_t rawColorSpace)
@@ -119,19 +134,28 @@ namespace NorvesLib::Core::Asset
             }
 
             return colorSpace == CookedTextureColorSpace::SRGB &&
-                   pixelFormat == CookedTexturePixelFormat::RGBA8UNorm;
+                   (pixelFormat == CookedTexturePixelFormat::RGBA8UNorm ||
+                    pixelFormat == CookedTexturePixelFormat::BC1 ||
+                    pixelFormat == CookedTexturePixelFormat::BC7);
         }
 
-        bool ComputeExpectedMipPayloadSize(uint32_t width,
+        // 1 ミップ（全レイヤー）のバイト数。ブロック圧縮の形式はブロック単位で、端は切り上げ、最小 1 ブロック。
+        bool ComputeExpectedMipPayloadSize(CookedTexturePixelFormat pixelFormat,
+                                           uint32_t width,
                                            uint32_t height,
                                            uint32_t layerCount,
-                                           size_t bytesPerPixel,
                                            uint64_t &outSize)
         {
-            uint64_t value = width;
-            if (!MultiplyChecked64(value, height, value) ||
-                !MultiplyChecked64(value, layerCount, value) ||
-                !MultiplyChecked64(value, bytesPerPixel, value))
+            uint64_t rowBytes = 0;
+            uint64_t rowCount = 0;
+            if (!ComputeCookedTextureMipLayout(pixelFormat, width, height, rowBytes, rowCount))
+            {
+                return false;
+            }
+
+            uint64_t value = rowBytes;
+            if (!MultiplyChecked64(value, rowCount, value) ||
+                !MultiplyChecked64(value, layerCount, value))
             {
                 return false;
             }
@@ -205,7 +229,8 @@ namespace NorvesLib::Core::Asset
         const uint32_t reserved0 = ReadLe32(data, HeaderOffset::Reserved0);
         const uint64_t reserved1 = ReadLe64(data, HeaderOffset::Reserved1);
 
-        if (versionMajor != VersionMajor || versionMinor != VersionMinor)
+        if (versionMajor != VersionMajor ||
+            (versionMinor != VersionMinor && versionMinor != VersionMinorBlockCompressed))
         {
             return Fail(CookedTextureParseStatus::UnsupportedVersion);
         }
@@ -250,7 +275,7 @@ namespace NorvesLib::Core::Asset
             return Fail(CookedTextureParseStatus::InvalidPayloadSize);
         }
 
-        if (!IsKnownPixelFormat(rawPixelFormat))
+        if (!IsKnownPixelFormat(versionMinor, rawPixelFormat))
         {
             return Fail(CookedTextureParseStatus::UnknownPixelFormat);
         }
@@ -313,7 +338,6 @@ namespace NorvesLib::Core::Asset
         Container::VariableArray<CookedTextureMip> mips;
         mips.reserve(mipCount);
 
-        const size_t bytesPerPixel = GetCookedTextureBytesPerPixel(pixelFormat);
         size_t expectedPayloadCursor = payloadOffset;
         for (uint32_t mipIndex = 0; mipIndex < mipCount; ++mipIndex)
         {
@@ -340,7 +364,7 @@ namespace NorvesLib::Core::Asset
             }
 
             uint64_t expectedDataSize64 = 0;
-            if (!ComputeExpectedMipPayloadSize(mipWidth, mipHeight, layerCount, bytesPerPixel, expectedDataSize64))
+            if (!ComputeExpectedMipPayloadSize(pixelFormat, mipWidth, mipHeight, layerCount, expectedDataSize64))
             {
                 return Fail(CookedTextureParseStatus::IntegerOverflow);
             }
