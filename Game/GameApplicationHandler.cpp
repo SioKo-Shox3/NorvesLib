@@ -1270,11 +1270,10 @@ namespace Game
             return false;
         }
 
-        // 中間段階では単一clip/全index描画のみ。新表を捨てて成功させない。
-        if (skeletal.Data.Skeletal.Clips.size() != 1 || !skeletal.Data.Skeletal.SubMeshes.empty() ||
-            !skeletal.Data.Skeletal.MaterialSlots.empty())
+        // 複数clipの選択はGR82で接続する。
+        if (skeletal.Data.Skeletal.Clips.size() != 1)
         {
-            LOG_ERROR("M9_WORLD_SMOKE: 複数clip/材質slotの描画接続は未対応です");
+            LOG_ERROR("M9_WORLD_SMOKE: 複数clipの選択は未対応です");
             return false;
         }
 
@@ -1290,6 +1289,7 @@ namespace Game
         mesh->SetMeshNodeGlobalTransform(skeletal.Data.Skeletal.MeshNodeGlobalTransform);
         mesh->SetVertices(std::move(skeletal.Data.Skeletal.Vertices));
         mesh->SetIndices(std::move(skeletal.Data.Skeletal.Indices));
+        mesh->SetSubmeshTables(std::move(skeletal.Data.Skeletal.SubMeshes),std::move(skeletal.Data.Skeletal.MaterialSlots));
         skeleton->SetJoints(std::move(skeletal.Data.Skeletal.Joints));
         clip->SetClip(std::move(skeletal.Data.Skeletal.Clips[0]));
         if (!mesh->Load() || !skeleton->Load() || !clip->Load())

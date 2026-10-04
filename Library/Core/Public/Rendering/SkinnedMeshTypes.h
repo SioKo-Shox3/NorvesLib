@@ -62,21 +62,15 @@ namespace NorvesLib::Core::Rendering
     public:
         SkinnedMeshAssetLease(SkinnedMeshHandle handle,
                               Container::VariableArray<SkinnedMeshVertex>&& vertices,
-                              Container::VariableArray<uint32_t>&& indices)
-            : m_Handle(handle),
-              m_Vertices(std::move(vertices)),
-              m_Indices(std::move(indices))
-        {
-        }
-
+                              Container::VariableArray<uint32_t>&& indices);
         SkinnedMeshAssetLease(SkinnedMeshHandle handle,
                               Container::VariableArray<SkinnedMeshVertex>&& vertices,
                               Container::VariableArray<uint32_t>&& indices,
                               Container::VariableArray<Skeletal::SkeletalSubMesh>&& submeshes,
-                              Container::VariableArray<Container::String>&& slotNames)
-            : m_Handle(handle), m_Vertices(std::move(vertices)), m_Indices(std::move(indices)),
-              m_SubMeshes(std::move(submeshes)), m_MaterialSlotNames(std::move(slotNames))
+                              Container::VariableArray<Container::String>&& slotNames);
+        [[nodiscard]] bool HasValidRenderData() const
         {
+            return m_bValidRenderData;
         }
 
         [[nodiscard]] const Container::VariableArray<Skeletal::SkeletalSubMesh>& GetSubMeshes() const
@@ -120,25 +114,25 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<uint32_t> m_Indices;
         Container::VariableArray<Skeletal::SkeletalSubMesh> m_SubMeshes;
         Container::VariableArray<Container::String> m_MaterialSlotNames;
+        bool m_bValidRenderData = false;
         Thread::Atomic<bool> m_bAssetLeaseActive{true};
     };
 
     struct SkinnedMeshFrameLease
     {
-        explicit SkinnedMeshFrameLease(Container::TSharedPtr<const SkinnedMeshAssetLease> assetLease)
-            : AssetLease(std::move(assetLease))
+        explicit SkinnedMeshFrameLease(Container::TSharedPtr<const SkinnedMeshAssetLease> assetLease, uint64_t componentId = 0)
+            : AssetLease(std::move(assetLease)), ComponentId(componentId)
         {
         }
 
         [[nodiscard]] bool IsValid() const
         {
-            // 中間段階では新表を単一drawへ落とさない。範囲draw接続時にこのguardを置き換える。
-            return AssetLease && AssetLease->GetHandle().IsValid() &&
-                   !AssetLease->GetVertices().empty() && !AssetLease->GetIndices().empty() &&
-                   AssetLease->GetSubMeshes().empty() && AssetLease->GetMaterialSlotNames().empty();
+            // 完了待ちのframeはasset非active化後も値を保持する。
+            return AssetLease && AssetLease->GetHandle().IsValid() && AssetLease->HasValidRenderData();
         }
 
         Container::TSharedPtr<const SkinnedMeshAssetLease> AssetLease;
+        uint64_t ComponentId = 0; // 0は従来の手組みframe互換。
     };
 
     enum class SkinnedMeshPassKind : uint8_t

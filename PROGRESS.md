@@ -616,3 +616,6 @@
 
 - G2-GR32-COOK-METADATA: 再parse済みpayloadの表数量をcook結果/CLI/manifestへ保存。submesh_count/material_slot_countは組で任意、存在時は1〜8/index三角形数と照合し、旧省略はbool=false/0の未知として保持。mergeで既知数量を落とさず旧省略を捏造しない。純数量/layout3mode・MEMBER、既知/未知fixture JSON独立確認、独立PASS。native parser1/2/8・不正型/片側欠落、cook1/2/8、CLI1/1、audio merge既知保持/GLB merge省略保持を登録。Windows.hでnative/CLI/CMake/PowerShell未実行。
 - Next: GR32-DRAW-RANGES。palette allocationの作者回答を待ちながら、独立した範囲draw/材質slot/NoShadowと検証へ進む。
+
+- G2-GR32-DRAW-RANGES: immutable lease生成時に全表/名前を検証し、private appenderで1proxy/1frame leaseからsubmeshごとの範囲・材質・NoShadow commandを発行。記録前にtable/範囲/base0/component/prepared VB・IB・総数・前palette組を照合しDrawIndexed(count,start,0)、統計も範囲数へ。旧空表count0の全mesh互換、同handle別assetのupload混入拒否、tagged preparedのframe関連付けを維持。M9は表をResourceへ渡し、複数clipだけ保留。独立PASS、純range3mode/MEMBERとlayout/binding回帰成功。別exeのCPU RHI double契約に1/2/8・旧実記録・材質fallback・影・偽装拒否を登録、nativeはWindows.hで未実行。GPU readback/画素互換/M9実行は未検証。palette共有は未実装・作者回答待ちでGR32全体完了にはしない。
+- Next: paletteの2本1組共有は作者判断待ち。Windows/GPU受入れも保留し、次のGR79の未決条件と共有材質wireを確認して、判断不要の準備を先に進める。

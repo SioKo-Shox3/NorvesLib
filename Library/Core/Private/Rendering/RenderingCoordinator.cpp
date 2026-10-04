@@ -1,4 +1,5 @@
 ﻿#include "Rendering/RenderingCoordinator.h"
+#include "Rendering/SkinnedDrawCommands.h"
 #include "Rendering/CanvasView.h"
 #include "Rendering/RenderingCoordinatorDiagnostics.h"
 #include "Rendering/CompositePass.h"
@@ -479,58 +480,6 @@ namespace NorvesLib::Core::Rendering
                 command.Draw.InstanceDataOffset += baseInstance;
             }
 
-            return range;
-        }
-
-        CommandRange AppendSkinnedDrawCommands(
-            FramePacket* packet,
-            const Container::VariableArray<SkinnedMeshProxy>& proxies)
-        {
-            CommandRange range;
-            if (!packet || proxies.empty())
-            {
-                return range;
-            }
-
-            range.First = static_cast<uint32_t>(packet->DrawCommands.size());
-            for (const SkinnedMeshProxy& proxy : proxies)
-            {
-                if (!proxy.IsValid())
-                {
-                    continue;
-                }
-
-                Container::TSharedPtr<const SkinnedMeshAssetLease> assetLease = proxy.AssetLease.lock();
-                if (!assetLease)
-                {
-                    continue;
-                }
-                auto frameLease = Container::MakeShared<SkinnedMeshFrameLease>(assetLease);
-                if (!frameLease || !frameLease->IsValid())
-                {
-                    continue;
-                }
-
-                const uint32_t frameLeaseIndex =
-                    static_cast<uint32_t>(packet->SkinnedMeshFrameLeases.size());
-                packet->SkinnedMeshFrameLeases.push_back(frameLease);
-
-                DrawCommand command = DrawCommand::CreateDrawIndexed();
-                command.Draw.PayloadKind = DrawPayloadKind::Skinned;
-                command.Draw.MaterialHandle = proxy.Material;
-                command.Draw.MaterialBlendMode = BlendMode::Opaque;
-                command.Draw.ObjectId = proxy.ObjectId;
-                command.Draw.SourceMeshComponentId = proxy.ComponentId;
-                command.Draw.WorldMatrix = proxy.WorldTransform;
-                command.Draw.InstanceCount = 1;
-                command.Draw.FirstInstance = 0;
-                command.Draw.bInstanced = false;
-                command.Draw.bCastShadow = proxy.bCastShadow;
-                command.Skinned.FrameLeaseIndex = frameLeaseIndex;
-                command.Skinned.BonePalette = proxy.BonePalette;
-                packet->DrawCommands.push_back(command);
-                ++range.Count;
-            }
             return range;
         }
 

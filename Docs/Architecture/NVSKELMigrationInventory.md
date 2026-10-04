@@ -139,7 +139,7 @@ Windows.hに依存するためこのLinux環境では登録・静的照合に留
 ## 0.2 readerの段階接続
 
 旧0.0/0.1を維持して320B/表/UTF-8とclip別所有検査を接続する。
-submeshのflags/bounds/任意VertexCountを所有型へ残し、未接続M9経路は表付き資産を明示拒否する。
+submeshのflags/bounds/任意VertexCountを所有型へ残す。M9は現在Resourceへ表を渡し、複数clip選択だけ明示拒否する。
 writerは統一0.2へ切替え、単一primitiveのslot名も保存する。cacheはminor2を要求し、旧版は通常loadのみ維持する。
 readerのnative回帰は登録済みだがWindows/Core全体の実行は未検証。描画受入れも未完。
 
@@ -153,8 +153,8 @@ slot名の空/重複は保持し、名前APIが曖昧な名前を勝手に選ぶ
 refreshで旧leaseは非activeになり、新しい有効データに別generationを割り当てる。不正表は新leaseとして公開しない。
 GetMemorySizeにはresource側の表とslot名の所有サイズを加える。
 
-現段階のFrameLeaseは明示表付き資産を範囲draw未対応として拒否する。旧3引数AssetLeaseと空表FrameLeaseは従来通り。
-このguardをDRAW-RANGESで範囲検証に置き換えるまで、新表のCPU保持を描画完了とは扱わない。
+FrameLeaseは生成時検証済みのimmutable表を受理する。旧3引数AssetLeaseと空表FrameLeaseも保持する。
+範囲drawのコード接続は済んでも、palette共有とWindows/GPU受入れが済むまでGR32描画完了とは扱わない。
 純layout/実index/頂点範囲/有限bounds検査を実行し、Resourceの1/2/8表・不正名/範囲・世代・Unload寿命はnative回帰へ登録する。
 native Resource/Core/描画のWindows実行はまだ未検証。
 
@@ -170,7 +170,7 @@ slot1以降のoverrideはmesh id/generation/slot数へ束縛し、世代が変�
 
 SkinnedMeshProxyは解決済みMaterials[8]/MaterialCountを値コピーし、旧単一draw用Materialにはslot0を入れる。
 FramePacket/SceneViewの値所有コピーで後続のcomponent設定変更から独立する。SceneRevisionはslot数/各material idも含める。
-範囲draw未接続のFrameLease guardは継続し、ここだけで複数材質がGPU表示できたとは扱わない。
+FrameLeaseは検証済み表を範囲drawへ渡すが、ここだけで複数材質のGPU表示を検証済みとは扱わない。
 
 世代/fallback/無効入力/曖昧名の純binding試験を通常/最適化/sanitizerで実行する。
 Component API・snapshot・SceneRevisionのnative回帰は登録済みだがWindows.hにより未実行。
@@ -179,3 +179,21 @@ packetのnative回帰はSceneViewから実GenerateDrawCommandsへ通し、compon
 CPU packet生成はDeviceCapabilitiesを受け取るprivate overloadへ分離し、本番入口は実deviceから渡す。
 試験は実capability値を渡すため、未設定deviceのnull参照やFakeDevice/Core差し替えを検証経路に使わない。
 このnative回帰もWindows依存で未実行であり、GPU描画の証拠にはしない。
+
+## 範囲drawの接続
+
+SkinnedMeshAssetLeaseの生成時に全index/表/metadata/名前を一度だけ検査し、FrameLeaseではその結果を参照する。
+旧空表は全index/slot0として解釈する。assetを非activeにしても取得済みframeの内容を無効化しない。
+
+AppendSkinnedDrawCommandsをprivate部品へ分離し、proxyのhandleとimmutable leaseを照合して、1proxyにつき1frame leaseを登録する。
+submeshごとにIndexOffset/IndexCount/SubMeshIndex/MaterialIndexを指定し、VertexOffset=0、Opaque、非instancedを保持する。
+未割当材質はslot0へ落ち、影はcomponentのbCastShadowとsubmeshのNoShadowの両方を反映する。
+
+RecordSkinnedDrawCallはGPU記録前に選択recordとcommandの範囲/slot/baseVertexを照合し、DrawIndexed(count,start,0)を発行する。
+旧空表のIndexCount=0だけ全meshへ解決する。予約したtableの外の部分範囲を勝手に描かない。
+preparedのhandle/VB/IB/総index数/前paletteの組を照合し、component付きframeはそのpreparedを作ったframeにだけ使用する。
+同じhandle/generationを名乗る別assetオブジェクトをGPU upload cacheへ混入させない。
+
+SkinnedSubmeshDrawContractTestは既存停止テストと別exeにし、実CoreとCPU RHI test doubleでcommand/記録/不正入力を検査する。
+この環境ではnativeコンパイルはWindows.hで未実行。共有のない現段階のpalette生成回数は合格扱いせず、別taskの作者判断待ち。
+実GPUの2材質readback・旧画素一致・M9実行も未検証。静止boundsを全animationのboundsとしてcullingへ流用しない。

@@ -135,11 +135,21 @@ namespace NorvesLib::Core::Rendering
         }
 
         Entry& entry = entryIt->second;
-        TrackFrameLease(entry, frameLease);
+        if (entry.VertexBuffer != prepared.VertexBuffer || entry.IndexBuffer != prepared.IndexBuffer || entry.IndexCount != prepared.IndexCount ||
+            entry.AssetLease.lock().get() != frameLease->AssetLease.get())
+        {
+            return false;
+        }
         for (PaletteUse& paletteUse : entry.PaletteUses)
         {
             if (paletteUse.Buffer == prepared.PaletteBuffer)
             {
+                if (paletteUse.PreviousBuffer != prepared.PreviousPaletteBuffer ||
+                    (frameLease->ComponentId != 0 && paletteUse.FrameLease.lock().get() != frameLease.get()))
+                {
+                    return false;
+                }
+                TrackFrameLease(entry, frameLease);
                 for (const PendingUse& pending : m_PendingUses)
                 {
                     if (pending.Handle == prepared.MeshHandle &&
@@ -253,7 +263,7 @@ namespace NorvesLib::Core::Rendering
         auto entryIt = m_Entries.find(handle);
         if (entryIt != m_Entries.end())
         {
-            return &entryIt->second;
+            return entryIt->second.AssetLease.lock().get() == assetLease.get() ? &entryIt->second : nullptr;
         }
 
         const auto& vertices = assetLease->GetVertices();

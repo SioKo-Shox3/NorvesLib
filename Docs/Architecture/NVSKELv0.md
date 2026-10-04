@@ -3,7 +3,7 @@
 ## 状態と版の境界
 
 readerは旧0.0/0.1を維持して0.2の所有表/複数clip検査を接続済み。writerも統一0.2を生成し、
-旧cacheは再生成対象になる。Resource/描画の接続は未完で、M9経路は新表付き資産を明示拒否する。
+旧cacheは再生成対象になる。Resource/範囲drawへ接続し、palette共有とWindows/GPU受入れは未完。
 0.2はGR32のsubmesh/名前slotとGR82 Stage Aの複数clipを同じ定義へ載せる。別のminor=2を作らない。
 
 | 項目 | 0.0 | 0.1 | 0.2 |
@@ -153,8 +153,8 @@ clip名/slot名の空や重複はwireでは表現できる。名前選択・一�
 
 0.2の複数clipはchannel/sampleを表順に一意所有し、joint/path重複とdurationをclip単位で検査する。
 エラー時は部分的なSkeletalやSourceBlobを公開しない。
-M9の起動側はまだ単一clip/全index描画なので、新表付き・複数clipを明示拒否する。
-Resource/描画の接続は未完で、reader/writerの受理だけをゲームでの使用可能と扱わない。
+M9は表をResourceへ渡して範囲drawへ接続する。複数clipの選択は未対応なので明示拒否する。
+範囲drawのコード接続後もpalette共有/GPU受入れは未完で、reader/writerの受理だけを描画検証済みと扱わない。
 
 検証は純wire/submesh recordの通常・最適化・sanitizer試験と、手書き0.2のnative回帰登録を分ける。
 native回帰には2clip/2submesh/UTF-8、旧golden、範囲/予約/padding/hash/clip跨ぎと失敗出力を含めるが、

@@ -2194,7 +2194,7 @@
 - stop-when: 旧省略から件数を推測して表示、wireとmetadataが不一致、既存metadataをmergeで失う。
 
 ## G2-GR32-DRAW-RANGES: submesh別描画とcomponent単位palette共有を接続する
-- status: todo
+- status: done
 - done-when: AppendSkinnedDrawCommandsとRecordSkinnedDrawCallが絶対index範囲/baseVertex0/slot/NoShadowを使う。途中guardを接続済み経路で解除し、palette共有は別taskへ分ける。
 - verify: 計画指定の独立SkinnedSubmeshDrawContractTestへdraw数/範囲/影flag/palette共有を登録する。GPU受入れは別gateに残す。
 - stop-when: submeshごとに重いskinning準備を複製、範囲外draw、既定描画/シェーダーABIを変更、GPU実行無しでGR32全体完了を宣言。

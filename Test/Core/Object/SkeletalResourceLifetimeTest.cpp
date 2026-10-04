@@ -133,7 +133,7 @@ namespace
             assert(lease->GetMaterialSlotNames()[0] == "Body" && lease->GetSubMeshes()[0].BoundsCenter[0] == 7);
             assert(mesh->GetSubMeshes().size() == count && mesh->GetMaterialSlots()[0].Name == "Body");
             Rendering::SkinnedMeshFrameLease frame(lease);
-            assert(!frame.IsValid()); // 範囲drawの接続前は新表を明示拒否。
+            assert(frame.IsValid()); // 検証済みimmutable表を範囲drawへ渡せる。
             const auto handle = lease->GetHandle();
             previousHandle = handle;
             retainedTables = lease;

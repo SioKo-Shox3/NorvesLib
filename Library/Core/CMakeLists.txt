@@ -121,6 +121,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/ImpostorMath.cpp
     Private/Rendering/TextureAssetRuntime.cpp
     Private/Rendering/SkinnedMeshGpuStore.cpp
+    Private/Rendering/SkinnedMeshTypes.cpp
+    Private/Rendering/SkinnedDrawCommands.cpp
+    Private/Rendering/SkinnedDrawCommands.h
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
     Private/Rendering/RenderMaterialStore.cpp
@@ -183,6 +186,8 @@ set(PRIVATE_SOURCES
     Private/Resource/SkeletalSubmeshLayout.h
     Private/Resource/SkeletalSubmeshBounds.h
     Private/Resource/SkeletalSubmeshLayout.cpp
+    Private/Resource/SkeletalDrawRange.cpp
+    Private/Resource/SkeletalDrawRange.h
     Private/Resource/SkeletalCubicBounds.h
     Private/Resource/SkeletalCubicBounds.cpp
     Private/Resource/SkeletalCubicBake.h

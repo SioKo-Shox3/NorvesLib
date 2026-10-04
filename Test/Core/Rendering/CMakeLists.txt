@@ -1824,3 +1824,14 @@ set(NORVES_REFERENCE_TESTS
 foreach(test_name IN LISTS NORVES_REFERENCE_TESTS)
     set_property(TEST ${test_name} APPEND PROPERTY LABELS Reference)
 endforeach()
+
+# 停止中のSkinnedRenderPathContractTestと分離したGR32のCPU契約。
+add_executable(SkinnedSubmeshDrawContractTest SkinnedSubmeshDrawContractTest.cpp)
+target_link_libraries(SkinnedSubmeshDrawContractTest PRIVATE Core)
+target_include_directories(SkinnedSubmeshDrawContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(SkinnedSubmeshDrawContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SkinnedSubmeshDrawContractTest COMMAND SkinnedSubmeshDrawContractTest)
+set_tests_properties(SkinnedSubmeshDrawContractTest PROPERTIES LABELS "CPU" TIMEOUT 60)
