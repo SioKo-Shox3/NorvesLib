@@ -78,6 +78,9 @@ namespace NorvesLib::Tools::AssetCook::Detail
         uint32_t MaterialSlotCount = 0;
     };
 
+    // 診断専用。filesystem I/Oへはこの文字列を戻さずnative pathを使う。
+    std::string DescribeCookPath(const std::filesystem::path& path, bool bGenericSeparators = true);
+
     std::string ToStdString(const NorvesLib::Core::Container::AnsiString &value);
 
     NorvesLib::Core::Container::String ToCoreString(const std::string &value);

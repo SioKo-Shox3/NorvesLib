@@ -1,4 +1,5 @@
 ﻿#include "Resource/SkeletalGltfDecode.h"
+#include "Resource/GltfNativePath.h"
 #include "Resource/SkeletalLimits.h"
 #include "Resource/SkeletalInfluenceAttributes.h"
 #include "Resource/SkeletalInfluenceReduction.h"
@@ -2070,10 +2071,14 @@ namespace NorvesLib::Core::Skeletal
         }
 
         SkeletalGltfDecodeResult DecodeResolvedDocument(const JsonValue& root, const Gltf::ContainerView& container,
-            const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
+            const std::filesystem::path& sourcePath, Gltf::BufferSet* outSourceBuffers,
         const AssetImport::LoadedImportSettings* importSettings,
         const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips)
         {
+            if (!Gltf::IsValidNativeSourcePath(sourcePath))
+            {
+                return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
+            }
             const SkeletalGltfDecodeOptions options = decodeOptions != nullptr ? *decodeOptions : SkeletalGltfDecodeOptions{};
             if (!IsValidSkeletalGltfDecodeOptions(options)) return Fail(SkeletalGltfDecodeStatus::InvalidImportOptions);
             if (!root.IsObject())
@@ -2095,7 +2100,7 @@ namespace NorvesLib::Core::Skeletal
             if (selectedImport == nullptr)
             {
                 if (!sourcePath.empty() &&
-                    AssetImport::LoadImportSettingsFile(std::filesystem::path(sourcePath.c_str()), {}, discoveredImport).Result !=
+                    AssetImport::LoadImportSettingsFile(sourcePath, {}, discoveredImport).Result !=
                         AssetImport::SettingsFileResult::Success)
                 {
                     return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
@@ -2142,7 +2147,7 @@ namespace NorvesLib::Core::Skeletal
             Container::VariableArray<AccessorInfo> accessors;
             Container::VariableArray<BufferViewInfo> bufferViews;
             Gltf::BufferSet buffers;
-            Gltf::BufferFileContext fileContext{std::filesystem::path(sourcePath.c_str())};
+            Gltf::BufferFileContext fileContext{sourcePath};
             status = SkeletalGltfDecodeStatus::InvalidAccessor;
             if (!ParseAccessors(root, accessors, status))
             {
@@ -2286,13 +2291,17 @@ namespace NorvesLib::Core::Skeletal
     } // namespace
 
     static SkeletalGltfDecodeResult DecodeGltfBytes(Container::Span<const uint8_t> sourceBytes,
-        const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
+        const std::filesystem::path& sourcePath, Gltf::BufferSet* outSourceBuffers,
         const AssetImport::LoadedImportSettings* importSettings,
         const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips)
     {
         if (outSourceBuffers != nullptr)
         {
             outSourceBuffers->Reset();
+        }
+        if (!Gltf::IsValidNativeSourcePath(sourcePath))
+        {
+            return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
         }
         Gltf::ContainerView container;
         const auto parsed = Gltf::ParseContainer(sourceBytes, container);
@@ -2315,23 +2324,40 @@ namespace NorvesLib::Core::Skeletal
     }
 
     SkeletalGltfDecodeResult DecodeSkeletalGltf(Container::Span<const uint8_t> sourceBytes,
-        const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
-        const AssetImport::LoadedImportSettings* importSettings, const SkeletalGltfDecodeOptions* decodeOptions)
+                                                const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
+                                                const AssetImport::LoadedImportSettings* importSettings,
+                                                const SkeletalGltfDecodeOptions* decodeOptions)
     {
-        return DecodeGltfBytes(sourceBytes,sourcePath,outSourceBuffers,importSettings,decodeOptions,false);
+        return DecodeGltfBytes(sourceBytes,
+                               (sourcePath.empty() ? std::filesystem::path{}
+                                                   : std::filesystem::path(sourcePath.begin(), sourcePath.end())),
+                               outSourceBuffers, importSettings, decodeOptions, false);
     }
 
     SkeletalGltfDecodeResult DecodeRigGltf(Container::Span<const uint8_t> sourceBytes,
-        const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
-        const AssetImport::LoadedImportSettings* importSettings, const SkeletalGltfDecodeOptions* decodeOptions)
+                                           const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
+                                           const AssetImport::LoadedImportSettings* importSettings,
+                                           const SkeletalGltfDecodeOptions* decodeOptions)
     {
-        return DecodeGltfBytes(sourceBytes,sourcePath,outSourceBuffers,importSettings,decodeOptions,true);
+        return DecodeGltfBytes(sourceBytes,
+                               (sourcePath.empty() ? std::filesystem::path{}
+                                                   : std::filesystem::path(sourcePath.begin(), sourcePath.end())),
+                               outSourceBuffers, importSettings, decodeOptions, true);
     }
 
-    SkeletalGltfDecodeResult DecodeSkeletalGltf(const Container::String& jsonText,
-        const Container::String& sourcePath, SkeletalGltfSourceBuffers* outSourceBuffers,
-        const AssetImport::LoadedImportSettings* importSettings,
-        const SkeletalGltfDecodeOptions* decodeOptions)
+    SkeletalGltfDecodeResult DecodeRigGltfNativePath(Container::Span<const uint8_t> sourceBytes,
+                                                     const std::filesystem::path& sourcePath,
+                                                     Gltf::BufferSet* outSourceBuffers,
+                                                     const AssetImport::LoadedImportSettings* importSettings,
+                                                     const SkeletalGltfDecodeOptions* decodeOptions)
+    {
+        return DecodeGltfBytes(sourceBytes, sourcePath, outSourceBuffers, importSettings, decodeOptions, true);
+    }
+
+    SkeletalGltfDecodeResult DecodeSkeletalGltf(const Container::String& jsonText, const Container::String& sourcePath,
+                                                SkeletalGltfSourceBuffers* outSourceBuffers,
+                                                const AssetImport::LoadedImportSettings* importSettings,
+                                                const SkeletalGltfDecodeOptions* decodeOptions)
     {
         if (outSourceBuffers != nullptr)
         {
@@ -2344,7 +2370,10 @@ namespace NorvesLib::Core::Skeletal
             return Fail(SkeletalGltfDecodeStatus::InvalidJson);
         }
         Gltf::BufferSet buffers;
-        auto result = DecodeResolvedDocument(document.GetRoot(), {}, sourcePath,
+        auto result = DecodeResolvedDocument(
+            document.GetRoot(), {},
+            (sourcePath.empty() ? std::filesystem::path{}
+                                : std::filesystem::path(sourcePath.begin(), sourcePath.end())),
             outSourceBuffers != nullptr ? &buffers : nullptr, importSettings, decodeOptions, false);
         if (result.Succeeded() && outSourceBuffers != nullptr)
         {

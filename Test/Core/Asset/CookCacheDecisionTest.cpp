@@ -379,17 +379,8 @@ int main()
     CHECK(Decide(required, nullptr, nullptr) == CookDecision::Error);
     const auto unicodeModel = root / std::filesystem::path(L"\u72ac.glb");
     std::filesystem::copy_file(glb, unicodeModel);
-    Text narrowModel;
-    auto modelUnicode = mesh.Request;
-    modelUnicode.InputPath = unicodeModel;
-    if (!Detail::MakeLosslessModelPath(unicodeModel, narrowModel))
-    {
-        CHECK(Decide(modelUnicode, nullptr, nullptr) == CookDecision::Error);
-    }
-    else
-    {
-        CHECK(Decide(modelUnicode, nullptr, nullptr) == CookDecision::Cook);
-    }
+    auto modelUnicode = Make(root, "unicode-model", unicodeModel, "model", "Msh0", mesh.Request.Format.c_str());
+    CHECK(Decide(modelUnicode.Request, &modelUnicode.Record, &modelUnicode.Live) == CookDecision::Skip);
     // 外部imageは生成package一覧へ足さないが、未使用分も依存印に含める。
     std::filesystem::copy("Assets/Models/Rendering3DTestSilverGltf", root / "external-source",
                           std::filesystem::copy_options::recursive);

@@ -14,7 +14,7 @@ DecideCookCacheは現要求を既存単体cookの規則で検査・正規化し�
 
 既存texture batchとWindows local-drive/ASCII出力名・reparse検査を共有する。rawのpackage/manifest locatorはabsolute化の前にも検査し、Windowsが末尾dot/spaceを除いたあとに別名を受理しない。既存fileをdirectoryとして辿る要求、device名、ADS、末尾dot/space、path正規化で別fileを指す要求、出力どうしのprefix、source/外部file/不在sidecar/他keyの出力への別名を拒否する。Windows大小文字・canonical pathと既存fileのhard linkを確認する。
 
-skeletal/audioにもstrictなMakeCookedPackageManifestPathを使う。旧skeletal helperのように物理Assets/を黙って除かない。モデルのsourceとoverrideは、現在のFingerprintModelCookSourceのnarrow path変換でlossless往復できるものだけを受ける。対応外は明示Errorにし、Unicode対応済みのtextureと依存snapshotを狭めない。モデルの完全なnative path対応は別の追補。
+skeletal/audioにもstrictなMakeCookedPackageManifestPathを使う。旧skeletal helperのように物理Assets/を黙って除かない。モデルのsourceとoverrideはnative filesystem pathのままfingerprint・静的/骨格cook・検査・骨格decodeへ渡す。ImportSettingsPathもnative locatorを所有し、診断表示だけでUTF8へ符号化する。不正Unicode/NULはI/O前に拒否する。旧narrow APIはASCII呼出し互換として残す。char** argvのUnicode取得、非ASCIIの外部URI leaf、runtime論理pathと出力rootの規約拡張はこの変更に含めない。
 
 ## 判断と採取
 
@@ -31,3 +31,5 @@ CaptureCookOutputRecordはcook前のcontext、成功cook後のmanifestと実pack
 実Windowsで全kindのcook→record→Skip、派生画像、外部buffer/image/未使用image、sidecar、無関係なmanifest変更、package padding、hard link・case alias・junction、危険path、判定途中の入力変更と出力保持を検証する。private probeはこの途中変更試験だけに使い、production入口はprobe無しで呼ぶ。
 
 cc9aa9e169098be51bda334cf30cb3c887f9ab78の[Windows run37222258176](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37222258176)で19 CPU契約、7 CLI、固定79出力とtexture v1の10出力のbyte互換が成功。実traceで末尾dot/spaceがabsolute化時に消えることを確認し、正規化前の拒否を検証した。保存state・既存root公開・旧CLI cache移行は引き続き別工程。
+
+ModelNativePathTestは日本語・非BMPのsource/base/overrideを静的/骨格glTF/GLBで検証し、外部buffer/image・自動/明示sidecar・共通増分record・不在/lock・不正locatorと失敗保持を確認する。新経路の実Windows結果は別途記録する。

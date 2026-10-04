@@ -198,7 +198,7 @@ int main()
         Write(sidecar,Copy(R"({"version":1})"));
         MeshCookResult identity;
         assert(cook(identity) && identity.bHasImportSettings && identity.SourceHash!=baseline.SourceHash);
-        assert(identity.ImportSettingsPath==sidecar.generic_string().c_str());
+        assert(identity.ImportSettingsPath==sidecar);
         SamePayload(baseline,identity);
         Import::ImportSettingsFileOptions disabled; disabled.bDisabled=true;
         MeshCookResult disabledCook;

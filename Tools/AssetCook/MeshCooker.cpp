@@ -1,4 +1,5 @@
 ﻿#include "MeshCooker.h"
+#include "Resource/GltfNativePath.h"
 #include "ModelInspection.h"
 
 #include "Asset/CookedMeshFormat.h"
@@ -263,20 +264,6 @@ namespace NorvesLib::Tools::AssetCook
                    (static_cast<uint32_t>(pData[2]) << 16) | (static_cast<uint32_t>(pData[3]) << 24);
         }
 
-        String ToCoreString(AnsiStringView value)
-        {
-            String result;
-            result.reserve(value.size());
-#if defined(UNICODE)
-            for (const unsigned char character : value)
-            {
-                result.push_back(static_cast<wchar_t>(character));
-            }
-#else
-            result.append(value.data(), value.size());
-#endif
-            return result;
-        }
 
         template <typename T>
         AnsiString FormatInteger(T value)
@@ -590,10 +577,32 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool ResolveCookBuffers(const JsonValue& root, const Gltf::ContainerView& container,
-                                AnsiStringView sourcePath, Gltf::BufferSet& buffers, AnsiString& error)
+        std::filesystem::path LegacyModelLocator(AnsiStringView sourcePath)
         {
-            Gltf::BufferFileContext context{std::filesystem::path(sourcePath.begin(), sourcePath.end())};
+            if (sourcePath.empty())
+            {
+                return {};
+            }
+            return std::filesystem::path(sourcePath.begin(), sourcePath.end());
+        }
+
+        bool ValidateNativeCookPaths(const std::filesystem::path& sourcePath,
+                                     const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                                     AnsiString& error)
+        {
+            if (!Core::Gltf::IsValidNativeSourcePath(sourcePath) ||
+                (importOptions && !Core::Gltf::IsValidNativeSourcePath(importOptions->OverridePath)))
+            {
+                error = "model locator contains invalid Unicode or NUL";
+                return false;
+            }
+            return true;
+        }
+
+        bool ResolveCookBuffers(const JsonValue& root, const Gltf::ContainerView& container,
+                                const std::filesystem::path& sourcePath, Gltf::BufferSet& buffers, AnsiString& error)
+        {
+            Gltf::BufferFileContext context{sourcePath};
             const auto outcome = Gltf::ResolveJsonBuffers(root, container, Gltf::ReadBufferFile, &context, buffers);
             if (outcome.Result == Gltf::BufferResolveResult::Success)
             {
@@ -1672,7 +1681,7 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool InspectGltfModelInternal(const uint8_t* sourceBytes,size_t sourceSize,AnsiStringView sourcePath,
+        bool InspectGltfModelInternal(const uint8_t* sourceBytes,size_t sourceSize,const std::filesystem::path& sourcePath,
             ModelInspection& outInspection,AnsiString& error)
         {
             if (!sourceBytes || sourceSize==0)
@@ -1729,7 +1738,7 @@ namespace NorvesLib::Tools::AssetCook
                 error="inspect images must be an array";
                 return false;
             }
-            Gltf::BufferFileContext imageContext{std::filesystem::path(sourcePath.begin(),sourcePath.end())};
+            Gltf::BufferFileContext imageContext{sourcePath};
             for (size_t index=0;index<images.GetArraySize();++index)
             {
                 Gltf::ImageSource image;
@@ -1790,7 +1799,7 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool LoadCookImportSettings(AnsiStringView sourcePath,
+        bool LoadCookImportSettings(const std::filesystem::path& sourcePath,
             const AssetImport::ImportSettingsFileOptions* importOptions,
             AssetImport::LoadedImportSettings& loadedImport, AnsiString& error)
         {
@@ -1801,7 +1810,7 @@ namespace NorvesLib::Tools::AssetCook
             if (!sourcePath.empty() || effectiveImport.bRequired || !effectiveImport.OverridePath.empty())
             {
                 outcome = AssetImport::LoadImportSettingsFile(
-                    std::filesystem::path(sourcePath.begin(), sourcePath.end()), effectiveImport, loadedImport);
+                    sourcePath, effectiveImport, loadedImport);
             }
             if (outcome.Result != AssetImport::SettingsFileResult::Success)
             {
@@ -1814,7 +1823,7 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         bool FingerprintModelCookSourceInternal(const uint8_t* sourceBytes, size_t sourceSize,
-            AnsiStringView format, AnsiStringView sourcePath, AnsiStringView logicalPath,
+            AnsiStringView format, const std::filesystem::path& sourcePath, AnsiStringView logicalPath,
             ModelCookFingerprint& outResult, AnsiString& error,
             const AssetImport::ImportSettingsFileOptions* importOptions,
             const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
@@ -1951,7 +1960,7 @@ namespace NorvesLib::Tools::AssetCook
             }
             result.SourceHash = policyHash.Value;
             result.bHasImportSettings=settings.bPresent;
-            result.ImportSettingsPath=AnsiString(settings.Path.generic_string().c_str());
+            result.ImportSettingsPath=settings.Path;
             if (settings.bPresent)
             {
                 result.ImportSettingsHash=AssetImport::AppendImportSettingsHash(
@@ -1962,7 +1971,7 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         bool CookGltfToNvmeshInternal(const uint8_t* sourceBytes, size_t sourceSize, AnsiStringView format,
-                                      AnsiStringView sourcePath, AnsiStringView logicalPath, MeshCookResult& outResult,
+                                      const std::filesystem::path& sourcePath, AnsiStringView logicalPath, MeshCookResult& outResult,
                                       AnsiString& error, const AssetImport::ImportSettingsFileOptions* importOptions)
         {
             if (format != SupportedMeshFormat)
@@ -2121,7 +2130,7 @@ namespace NorvesLib::Tools::AssetCook
             }
             result.SourceHash = sourceHash.Value;
             result.bHasImportSettings = loadedImport.bPresent;
-            result.ImportSettingsPath = AnsiString(loadedImport.Path.generic_string().c_str());
+            result.ImportSettingsPath = loadedImport.Path;
             if (loadedImport.bPresent)
             {
                 result.ImportSettingsHash = AssetImport::AppendImportSettingsHash(
@@ -2484,7 +2493,7 @@ namespace NorvesLib::Tools::AssetCook
         bool CookGltfToNvskelInternal(const uint8_t* sourceBytes,
                                       size_t sourceSize,
                                       AnsiStringView format,
-                                      AnsiStringView sourcePath,
+                                      const std::filesystem::path& sourcePath,
                                       SkeletalCookResult& outResult,
                                       AnsiString& error,
                           const Core::AssetImport::ImportSettingsFileOptions* importOptions,
@@ -2517,8 +2526,8 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             Gltf::BufferSet sourceBuffers;
-            const auto decoded = NorvesLib::Core::Skeletal::DecodeRigGltf(
-                {sourceBytes, sourceSize}, ToCoreString(sourcePath), &sourceBuffers, &loadedImport, &options);
+            const auto decoded = NorvesLib::Core::Skeletal::DecodeRigGltfNativePath(
+                {sourceBytes, sourceSize}, sourcePath, &sourceBuffers, &loadedImport, &options);
             diagnostics.bDecodeAttempted = true;
             diagnostics.DecodeStatus = static_cast<uint32_t>(decoded.Status);
             diagnostics.Report = decoded.Report;
@@ -2640,7 +2649,7 @@ namespace NorvesLib::Tools::AssetCook
             result.SourceHash = policyHash.Value;
             result.DecodeReport = decoded.Report;
             result.bHasImportSettings = loadedImport.bPresent;
-            result.ImportSettingsPath = AnsiString(loadedImport.Path.generic_string().c_str());
+            result.ImportSettingsPath = loadedImport.Path;
             if (loadedImport.bPresent)
             {
                 result.ImportSettingsHash = AssetImport::AppendImportSettingsHash(
@@ -2713,36 +2722,46 @@ namespace NorvesLib::Tools::AssetCook
         return !m_BorrowedBytes.empty();
     }
 
-    bool InspectGltfModel(const uint8_t* sourceBytes,size_t sourceSize,Core::Container::AnsiStringView sourcePath,
-        ModelInspection& outInspection,Core::Container::AnsiString& error)
+    bool InspectGltfModelNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+                                    const std::filesystem::path& sourcePath, ModelInspection& outInspection,
+                                    Core::Container::AnsiString& error)
     {
-        return InspectGltfModelInternal(sourceBytes,sourceSize,sourcePath,outInspection,error);
+        if (!ValidateNativeCookPaths(sourcePath, nullptr, error))
+        {
+            return false;
+        }
+        return InspectGltfModelInternal(sourceBytes, sourceSize, sourcePath, outInspection, error);
     }
 
-    bool FingerprintModelCookSource(const uint8_t* sourceBytes, size_t sourceSize,
-        Core::Container::AnsiStringView format, Core::Container::AnsiStringView sourcePath,
-        Core::Container::AnsiStringView logicalPath, ModelCookFingerprint& outResult,
-        Core::Container::AnsiString& error, const Core::AssetImport::ImportSettingsFileOptions* importOptions,
-        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+    bool FingerprintModelCookSourceNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+                                              Core::Container::AnsiStringView format,
+                                              const std::filesystem::path& sourcePath,
+                                              Core::Container::AnsiStringView logicalPath,
+                                              ModelCookFingerprint& outResult, Core::Container::AnsiString& error,
+                                              const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                                              const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
     {
-        return FingerprintModelCookSourceInternal(sourceBytes,sourceSize,format,sourcePath,logicalPath,
-            outResult,error,importOptions,decodeOptions);
+        if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
+        {
+            return false;
+        }
+        return FingerprintModelCookSourceInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult,
+                                                  error, importOptions, decodeOptions);
     }
 
-    bool IsSupportedMeshCookFormat(NorvesLib::Core::Container::AnsiStringView format) noexcept
+    bool CookGltfToNvmeshNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+                                    Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
+                                    Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
+                                    Core::Container::AnsiString& error,
+                                    const Core::AssetImport::ImportSettingsFileOptions* importOptions)
     {
-        return format == SupportedMeshFormat;
-    }
-
-    bool CookGltfToNvmesh(const uint8_t* sourceBytes, size_t sourceSize,
-                          NorvesLib::Core::Container::AnsiStringView format,
-                          NorvesLib::Core::Container::AnsiStringView sourcePath,
-                          NorvesLib::Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
-                          NorvesLib::Core::Container::AnsiString& error,
-                          const Core::AssetImport::ImportSettingsFileOptions* importOptions)
-    {
+        if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
+        {
+            return false;
+        }
         AnsiString internalError;
-        if (!CookGltfToNvmeshInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult, internalError, importOptions))
+        if (!CookGltfToNvmeshInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult,
+                                      internalError, importOptions))
         {
             error = internalError.c_str();
             return false;
@@ -2750,29 +2769,86 @@ namespace NorvesLib::Tools::AssetCook
         return true;
     }
 
-    bool IsSupportedSkeletalCookFormat(NorvesLib::Core::Container::AnsiStringView format) noexcept
+    bool CookGltfToNvskelNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+                                    Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
+                                    SkeletalCookResult& outResult, Core::Container::AnsiString& error,
+                                    const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                                    const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+                                    SkeletalCookDiagnostics* outDiagnostics)
+    {
+        if (outDiagnostics)
+        {
+            *outDiagnostics = {};
+        }
+        if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
+        {
+            return false;
+        }
+        AnsiString internalError;
+        SkeletalCookDiagnostics diagnostics;
+        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError,
+                                      importOptions, decodeOptions, diagnostics))
+        {
+            if (outDiagnostics)
+            {
+                *outDiagnostics = diagnostics;
+            }
+            error = internalError;
+            return false;
+        }
+        if (outDiagnostics)
+        {
+            *outDiagnostics = diagnostics;
+        }
+        return true;
+    }
+
+    // 既存narrow呼出元のASCII互換境界。native APIと同名overloadを増やさず、literal/{}を曖昧にしない。
+    bool InspectGltfModel(const uint8_t* sourceBytes, size_t sourceSize, Core::Container::AnsiStringView sourcePath,
+                          ModelInspection& outInspection, Core::Container::AnsiString& error)
+    {
+        return InspectGltfModelNativePath(sourceBytes, sourceSize, LegacyModelLocator(sourcePath), outInspection,
+                                          error);
+    }
+
+    bool FingerprintModelCookSource(const uint8_t* sourceBytes, size_t sourceSize,
+                                    Core::Container::AnsiStringView format, Core::Container::AnsiStringView sourcePath,
+                                    Core::Container::AnsiStringView logicalPath, ModelCookFingerprint& outResult,
+                                    Core::Container::AnsiString& error,
+                                    const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                                    const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+    {
+        return FingerprintModelCookSourceNativePath(sourceBytes, sourceSize, format, LegacyModelLocator(sourcePath),
+                                                    logicalPath, outResult, error, importOptions, decodeOptions);
+    }
+
+    bool IsSupportedMeshCookFormat(Core::Container::AnsiStringView format) noexcept
+    {
+        return format == SupportedMeshFormat;
+    }
+
+    bool CookGltfToNvmesh(const uint8_t* sourceBytes, size_t sourceSize, Core::Container::AnsiStringView format,
+                          Core::Container::AnsiStringView sourcePath, Core::Container::AnsiStringView logicalPath,
+                          MeshCookResult& outResult, Core::Container::AnsiString& error,
+                          const Core::AssetImport::ImportSettingsFileOptions* importOptions)
+    {
+        return CookGltfToNvmeshNativePath(sourceBytes, sourceSize, format, LegacyModelLocator(sourcePath), logicalPath,
+                                          outResult, error, importOptions);
+    }
+
+    bool IsSupportedSkeletalCookFormat(Core::Container::AnsiStringView format) noexcept
     {
         return format == SupportedSkeletalFormat;
     }
 
-    bool CookGltfToNvskel(const uint8_t* sourceBytes,
-                          size_t sourceSize,
-                          NorvesLib::Core::Container::AnsiStringView format,
-                          NorvesLib::Core::Container::AnsiStringView sourcePath,
-                          SkeletalCookResult& outResult,
-                          NorvesLib::Core::Container::AnsiString& error,
+    bool CookGltfToNvskel(const uint8_t* sourceBytes, size_t sourceSize, Core::Container::AnsiStringView format,
+                          Core::Container::AnsiStringView sourcePath, SkeletalCookResult& outResult,
+                          Core::Container::AnsiString& error,
                           const Core::AssetImport::ImportSettingsFileOptions* importOptions,
-                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions, SkeletalCookDiagnostics* outDiagnostics)
+                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+                          SkeletalCookDiagnostics* outDiagnostics)
     {
-        AnsiString internalError;
-        SkeletalCookDiagnostics diagnostics;
-        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError, importOptions, decodeOptions, diagnostics))
-        {
-            if (outDiagnostics) *outDiagnostics = diagnostics;
-            error = internalError;
-            return false;
-        }
-        if (outDiagnostics) *outDiagnostics = diagnostics;
-        return true;
+        return CookGltfToNvskelNativePath(sourceBytes, sourceSize, format, LegacyModelLocator(sourcePath), outResult,
+                                          error, importOptions, decodeOptions, outDiagnostics);
     }
 } // namespace NorvesLib::Tools::AssetCook

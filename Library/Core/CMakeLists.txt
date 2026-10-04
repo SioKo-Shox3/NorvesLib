@@ -220,6 +220,7 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfBufferSource.cpp
     Private/Resource/GltfBufferSet.h
     Private/Resource/GltfBufferSet.cpp
+    Private/Resource/GltfNativePath.h
     Private/Resource/GltfBufferFile.h
     Private/Resource/GltfBufferFile.cpp
     Private/Resource/GltfBufferJson.h

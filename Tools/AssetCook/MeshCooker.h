@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 
 namespace NorvesLib::Core::AssetImport
 {
@@ -48,7 +49,7 @@ namespace NorvesLib::Tools::AssetCook
     {
         Core::Container::VariableArray<uint8_t> NvmeshBytes;
         Core::Container::VariableArray<MeshEmbeddedImage> EmbeddedImages;
-        Core::Container::AnsiString ImportSettingsPath;
+        std::filesystem::path ImportSettingsPath;
         uint64_t ImportSettingsHash = 0;
         bool bHasImportSettings = false;
         uint64_t SourceHash = 0;
@@ -60,7 +61,7 @@ namespace NorvesLib::Tools::AssetCook
     struct SkeletalCookResult
     {
         Core::Container::VariableArray<uint8_t> NvskelBytes;
-        Core::Container::AnsiString ImportSettingsPath;
+        std::filesystem::path ImportSettingsPath;
         uint64_t ImportSettingsHash = 0;
         bool bHasImportSettings = false;
         uint64_t SourceHash = 0;
@@ -85,7 +86,7 @@ namespace NorvesLib::Tools::AssetCook
         uint64_t SourceHash = 0;
         uint64_t ImportSettingsHash = 0;
         bool bHasImportSettings = false;
-        Core::Container::AnsiString ImportSettingsPath;
+        std::filesystem::path ImportSettingsPath;
         Core::Container::VariableArray<ModelImageFingerprint> EmbeddedImages;
     };
     // 入力/設定のcache照合用。geometry検証・変換・画像decode・cookは行わない。
@@ -121,4 +122,23 @@ namespace NorvesLib::Tools::AssetCook
                                         const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
                                         const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr,
                                         SkeletalCookDiagnostics* outDiagnostics = nullptr);
+
+    // I/Oのsource/sidecar locatorをnativeで渡す。既存narrow入口はASCII互換のwrapperとして残す。
+    [[nodiscard]] bool FingerprintModelCookSourceNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+        Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
+        Core::Container::AnsiStringView logicalPath, ModelCookFingerprint& outResult,
+        Core::Container::AnsiString& error,
+        const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+    [[nodiscard]] bool CookGltfToNvmeshNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+        Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
+        Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
+        Core::Container::AnsiString& error,
+        const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr);
+    [[nodiscard]] bool CookGltfToNvskelNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+        Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
+        SkeletalCookResult& outResult, Core::Container::AnsiString& error,
+        const Core::AssetImport::ImportSettingsFileOptions* importOptions = nullptr,
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions = nullptr,
+        SkeletalCookDiagnostics* outDiagnostics = nullptr);
 } // namespace NorvesLib::Tools::AssetCook

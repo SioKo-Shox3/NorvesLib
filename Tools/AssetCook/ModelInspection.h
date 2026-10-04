@@ -5,6 +5,7 @@
 #include "Container/String.h"
 #include "Container/StringView.h"
 #include "Container/VariableArray.h"
+#include <filesystem>
 
 namespace NorvesLib::Tools::AssetCook
 {
@@ -35,5 +36,8 @@ namespace NorvesLib::Tools::AssetCook
     // 失敗時outを保持し、成功結果は入力や内部JSON/bufferへ借用しない。
     [[nodiscard]] bool InspectGltfModel(const uint8_t* sourceBytes, size_t sourceSize,
         Core::Container::AnsiStringView sourcePath, ModelInspection& outInspection,
+        Core::Container::AnsiString& error);
+    [[nodiscard]] bool InspectGltfModelNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+        const std::filesystem::path& sourcePath, ModelInspection& outInspection,
         Core::Container::AnsiString& error);
 } // namespace NorvesLib::Tools::AssetCook

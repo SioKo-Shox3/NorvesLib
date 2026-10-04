@@ -1,8 +1,19 @@
 ﻿// 単体cookのpackage/manifest/IO/自己検証。bodyのbyte生成規則は従来通り。
 #include "AssetCookOutput.h"
+#include "NativeCookPath.h"
 
 namespace NorvesLib::Tools::AssetCook::Detail
 {
+    std::string DescribeCookPath(const std::filesystem::path& path, bool bGenericSeparators)
+    {
+        NorvesLib::Core::Container::AnsiString text;
+        if (!EncodeCookPathUtf8(path, text, bGenericSeparators))
+        {
+            return "<invalid-unicode-path>";
+        }
+        return ToStdString(text);
+    }
+
     std::string ToStdString(const NorvesLib::Core::Container::AnsiString &value)
     {
         return std::string(value.data(), value.size());
@@ -457,7 +468,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
         std::ifstream input(path, std::ios::binary);
         if (!input.is_open())
         {
-            error = "failed to open input file: " + path.string();
+            error = "failed to open input file: " + DescribeCookPath(path, false);
             return false;
         }
 
@@ -465,14 +476,14 @@ namespace NorvesLib::Tools::AssetCook::Detail
         const std::streamoff fileSize = input.tellg();
         if (fileSize < 0)
         {
-            error = "failed to query input file size: " + path.string();
+            error = "failed to query input file size: " + DescribeCookPath(path, false);
             return false;
         }
 
         if (static_cast<uint64_t>(fileSize) > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
             static_cast<uint64_t>(fileSize) > static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max()))
         {
-            error = "input file is too large: " + path.string();
+            error = "input file is too large: " + DescribeCookPath(path, false);
             return false;
         }
 
@@ -483,7 +494,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
             input.read(reinterpret_cast<char *>(outBytes.data()), static_cast<std::streamsize>(outBytes.size()));
             if (input.gcount() != static_cast<std::streamsize>(outBytes.size()))
             {
-                error = "failed to read input file: " + path.string();
+                error = "failed to read input file: " + DescribeCookPath(path, false);
                 return false;
             }
         }
@@ -682,11 +693,17 @@ namespace NorvesLib::Tools::AssetCook::Detail
             return false;
         }
 
+        if (!NorvesLib::Core::Gltf::IsValidNativeSourcePath(path))
+        {
+            error = "file path contains invalid Unicode or NUL";
+            return false;
+        }
+
         std::error_code errorCode;
         std::filesystem::path absolutePath = std::filesystem::absolute(path, errorCode);
         if (errorCode)
         {
-            error = "failed to make absolute path: " + path.string();
+            error = "failed to make absolute path: " + DescribeCookPath(path, false);
             return false;
         }
 

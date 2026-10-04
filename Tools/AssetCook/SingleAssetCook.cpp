@@ -1,5 +1,6 @@
 ﻿// 再利用可能な単体cook。入力bufferを出力完了まで同じ呼出し内で保持する。
 #include "SingleAssetCook.h"
+#include "NativeCookPath.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include "AssetCookLegacyOptions.h"
 #include "AssetCookOutput.h"
@@ -135,22 +136,17 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             // source名は診断用でもACPへ縮約せず、native pathからUTF8へ明示変換する。
-            const auto& nativeSourceName=inputPath.native();
-            const NorvesLib::Core::Container::Span<const std::filesystem::path::value_type> sourceUnits{nativeSourceName.data(),nativeSourceName.size()};
-            const auto measuredName=NorvesLib::Core::Asset::MeasureSkeletalNameEncoding(2,sourceUnits);
-            NorvesLib::Core::Container::VariableArray<uint8_t> sourceNameUtf8;
-            if (!measuredName.Succeeded()) { error="texture source path cannot be encoded as UTF-8";return false; }
-            sourceNameUtf8.resize(measuredName.ByteCount);
-            if (!NorvesLib::Core::Asset::EncodeSkeletalWireName(2,sourceUnits,{sourceNameUtf8.data(),sourceNameUtf8.size()}).Succeeded())
-            { error="texture source path cannot be encoded as UTF-8";return false; }
-#if defined(_WIN32)
-            for (auto& byte:sourceNameUtf8) if (byte=='\\') byte='/';
-#endif
+            NorvesLib::Core::Container::AnsiString sourceNameUtf8;
+            if (!EncodeCookPathUtf8(inputPath, sourceNameUtf8))
+            {
+                error = "texture source path cannot be encoded as UTF-8";
+                return false;
+            }
             NorvesLib::Tools::AssetCook::TextureCookResult textureResult;
             if (!NorvesLib::Tools::AssetCook::CookTextureToNvtex(inputBytes.data(),
                                                                  inputBytes.size(),
                                                                  options.Format,
-                                                                 std::string_view(reinterpret_cast<const char*>(sourceNameUtf8.data()),sourceNameUtf8.size()),
+                                                                 std::string_view(sourceNameUtf8.data(),sourceNameUtf8.size()),
                                                                  textureResult,
                                                                  error))
             {
@@ -347,7 +343,7 @@ namespace NorvesLib::Tools::AssetCook
             {
                 auto& item = pending[index];
                 if (mesh.bHasImportSettings && !GuardImportSettingsOutput(item.Path,
-                        std::filesystem::path(mesh.ImportSettingsPath.begin(), mesh.ImportSettingsPath.end()), error))
+                        mesh.ImportSettingsPath, error))
                 {
                     return false;
                 }
@@ -508,9 +504,8 @@ namespace NorvesLib::Tools::AssetCook
             }
             NorvesLib::Tools::AssetCook::ModelCookFingerprint fingerprint;
             NorvesLib::Core::Container::AnsiString fingerprintError;
-            const NorvesLib::Core::Container::AnsiString sourcePath(inputPath.generic_string().c_str());
-            if (!NorvesLib::Tools::AssetCook::FingerprintModelCookSource(source.data(),source.size(),
-                options.Format.c_str(),sourcePath,logicalPath,fingerprint,fingerprintError,&options.ImportSettings,
+            if (!NorvesLib::Tools::AssetCook::FingerprintModelCookSourceNativePath(source.data(),source.size(),
+                options.Format.c_str(),inputPath,logicalPath,fingerprint,fingerprintError,&options.ImportSettings,
                 NorvesLib::Tools::AssetCook::IsSupportedSkeletalCookFormat(options.Format) ? &options.SkeletalImport.Decode : nullptr))
             {
                 error.assign(fingerprintError.data(),fingerprintError.size());
@@ -518,7 +513,7 @@ namespace NorvesLib::Tools::AssetCook
             }
             if (fingerprint.bHasImportSettings)
             {
-                const std::filesystem::path sidecar(fingerprint.ImportSettingsPath.begin(),fingerprint.ImportSettingsPath.end());
+                const auto& sidecar = fingerprint.ImportSettingsPath;
                 if (!GuardImportSettingsOutput(packagePath,sidecar,error) || !GuardImportSettingsOutput(manifestPath,sidecar,error))
                 {
                     return false;
@@ -528,7 +523,7 @@ namespace NorvesLib::Tools::AssetCook
                 logicalPath,options.Variant.c_str(),options.Format.c_str(),entryName,fingerprint);
             if (bSkipped)
             {
-                std::cout << "sidecar: " << (fingerprint.bHasImportSettings ? ToStdString(fingerprint.ImportSettingsPath) : "none")
+                std::cout << "sidecar: " << (fingerprint.bHasImportSettings ? DescribeCookPath(fingerprint.ImportSettingsPath) : "none")
                     << " settings_hash=" << ToStdString(FormatAssetHashHex(fingerprint.ImportSettingsHash)) << "\n";
                 if (NorvesLib::Tools::AssetCook::IsSupportedSkeletalCookFormat(options.Format))
                 {
@@ -596,10 +591,10 @@ namespace NorvesLib::Tools::AssetCook
 
             NorvesLib::Tools::AssetCook::MeshCookResult meshResult;
             NorvesLib::Core::Container::AnsiString meshError;
-            if (!NorvesLib::Tools::AssetCook::CookGltfToNvmesh(inputBytes.data(),
+            if (!NorvesLib::Tools::AssetCook::CookGltfToNvmeshNativePath(inputBytes.data(),
                                                                inputBytes.size(),
                                                                options.Format,
-                                                               inputPath.generic_string(),
+                                                               inputPath,
                                                                logicalPath,
                                                                meshResult,
                                                                meshError,
@@ -611,7 +606,7 @@ namespace NorvesLib::Tools::AssetCook
 
             if (meshResult.bHasImportSettings)
             {
-                const std::filesystem::path sidecar(meshResult.ImportSettingsPath.begin(), meshResult.ImportSettingsPath.end());
+                const auto& sidecar = meshResult.ImportSettingsPath;
                 if (!GuardImportSettingsOutput(packagePath, sidecar, error) ||
                     !GuardImportSettingsOutput(manifestPath, sidecar, error))
                 {
@@ -619,7 +614,7 @@ namespace NorvesLib::Tools::AssetCook
                 }
             }
 
-            std::cout << "sidecar: " << (meshResult.bHasImportSettings ? ToStdString(meshResult.ImportSettingsPath) : "none")
+            std::cout << "sidecar: " << (meshResult.bHasImportSettings ? DescribeCookPath(meshResult.ImportSettingsPath) : "none")
                       << " settings_hash=" << ToStdString(FormatAssetHashHex(meshResult.ImportSettingsHash)) << "\n";
 
             if (!meshResult.EmbeddedImages.empty())
@@ -759,12 +754,11 @@ namespace NorvesLib::Tools::AssetCook
 
             NorvesLib::Tools::AssetCook::SkeletalCookResult skeletalResult;
             NorvesLib::Core::Container::AnsiString skeletalError;
-            const NorvesLib::Core::Container::AnsiString sourcePath(inputPath.generic_string().c_str());
             NorvesLib::Tools::AssetCook::SkeletalCookDiagnostics diagnostics;
-            const bool cooked = NorvesLib::Tools::AssetCook::CookGltfToNvskel(inputBytes.data(),
+            const bool cooked = NorvesLib::Tools::AssetCook::CookGltfToNvskelNativePath(inputBytes.data(),
                                                                inputBytes.size(),
                                                                format,
-                                                               sourcePath,
+                                                               inputPath,
                                                                skeletalResult,
                                                                skeletalError,
                                                                &options.ImportSettings,
@@ -784,14 +778,14 @@ namespace NorvesLib::Tools::AssetCook
 
             if (skeletalResult.bHasImportSettings)
             {
-                const std::filesystem::path sidecar(skeletalResult.ImportSettingsPath.begin(), skeletalResult.ImportSettingsPath.end());
+                const auto& sidecar = skeletalResult.ImportSettingsPath;
                 if (!GuardImportSettingsOutput(packagePath, sidecar, error) ||
                     !GuardImportSettingsOutput(manifestPath, sidecar, error))
                 {
                     return false;
                 }
             }
-            std::cout << "sidecar: " << (skeletalResult.bHasImportSettings ? ToStdString(skeletalResult.ImportSettingsPath) : "none")
+            std::cout << "sidecar: " << (skeletalResult.bHasImportSettings ? DescribeCookPath(skeletalResult.ImportSettingsPath) : "none")
                       << " settings_hash=" << ToStdString(FormatAssetHashHex(skeletalResult.ImportSettingsHash)) << "\n";
 
             if (!ValidateCookedSkeletalPayload(skeletalResult.NvskelBytes, error))
@@ -1046,23 +1040,6 @@ namespace NorvesLib::Tools::AssetCook
             }
             relative = Core::Container::AnsiString(Core::Container::AnsiStringView(value.data(), value.size()));
             return true;
-        }
-        bool MakeLosslessModelPath(const std::filesystem::path& path, Core::Container::AnsiString& text)
-        {
-            try
-            {
-                const auto narrow = path.generic_string();
-                if (std::filesystem::path(narrow).lexically_normal() != path.lexically_normal())
-                {
-                    return false;
-                }
-                text = Core::Container::AnsiString(Core::Container::AnsiStringView(narrow.data(), narrow.size()));
-                return true;
-            }
-            catch (const std::exception&)
-            {
-                return false;
-            }
         }
         CookOptions MakeLegacyCookOptions(const SingleAssetCookRequest& request)
         {

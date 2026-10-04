@@ -3,6 +3,7 @@
 #include "Container/String.h"
 #include "Container/Span.h"
 #include "Resource/SkeletalGltfData.h"
+#include <filesystem>
 
 namespace NorvesLib::Core::Gltf
 {
@@ -29,6 +30,12 @@ namespace NorvesLib::Core::Skeletal
     // Armatureの中間親やmesh無しclipはまだ受けない。出力所有/失敗時buffer契約も上記と同じ。
     [[nodiscard]] SkeletalGltfDecodeResult DecodeRigGltf(Container::Span<const uint8_t> sourceBytes,
         const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers = nullptr,
+        const AssetImport::LoadedImportSettings* importSettings = nullptr,
+        const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+
+    // native locatorの多clip入口。TCHAR/narrow文字列を経由せず、同じI/O境界へ渡す。
+    [[nodiscard]] SkeletalGltfDecodeResult DecodeRigGltfNativePath(Container::Span<const uint8_t> sourceBytes,
+        const std::filesystem::path& sourcePath, Gltf::BufferSet* outSourceBuffers = nullptr,
         const AssetImport::LoadedImportSettings* importSettings = nullptr,
         const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
 

@@ -218,19 +218,12 @@ namespace NorvesLib::Tools::AssetCook
             ModelCookFingerprint fingerprint;
             if (primary.Kind == AssetKind::Model)
             {
-                AnsiString source, overrideText;
-                if (!Detail::MakeLosslessModelPath(r.InputPath, source) ||
-                    (!r.ImportSettingsOverridePath.empty() &&
-                     !Detail::MakeLosslessModelPath(r.ImportSettingsOverridePath, overrideText)))
-                {
-                    return Fail(error, "model_native_path_not_lossless");
-                }
                 Core::AssetImport::ImportSettingsFileOptions settings;
                 settings.OverridePath = r.ImportSettingsOverridePath;
                 settings.bDisabled = r.bNoSidecar;
                 settings.bRequired = r.bRequireSidecar;
                 const auto* decode = IsSupportedSkeletalCookFormat(r.Format) ? &r.SkeletalDecode : nullptr;
-                if (!FingerprintModelCookSource(bytes.data(), bytes.size(), r.Format, source, r.LogicalPath,
+                if (!FingerprintModelCookSourceNativePath(bytes.data(), bytes.size(), r.Format, r.InputPath, r.LogicalPath,
                                                 fingerprint, error, &settings, decode))
                 {
                     return false;

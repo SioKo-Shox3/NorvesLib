@@ -205,8 +205,7 @@ namespace
         }
         NorvesLib::Tools::AssetCook::ModelInspection result;
         NorvesLib::Core::Container::AnsiString inspectError;
-        const NorvesLib::Core::Container::AnsiString sourcePath(path.generic_string().c_str());
-        if (!NorvesLib::Tools::AssetCook::InspectGltfModel(bytes.data(),bytes.size(),sourcePath,result,inspectError))
+        if (!NorvesLib::Tools::AssetCook::InspectGltfModelNativePath(bytes.data(),bytes.size(),path,result,inspectError))
         {
             error.assign(inspectError.data(),inspectError.size());
             return false;

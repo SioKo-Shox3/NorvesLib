@@ -734,3 +734,6 @@
 - G2-S6-COOK-STYLE開始: 新規出力/cache検証10fileを規約の制御文brace/Allmanへ整理。bool識別子とheaderの明示修飾以外はbraceを除くtoken一致を確認。旧単体cookerは新設adapter範囲だけを対象とする。挙動の受入れは既存Windows gateで再確認する。
 
 - G2-S6-COOK-STYLE受入: e3c919e9/run37224909032で実Windows19CPU、7CLI/79byte/5診断、native2spec×2/10byte/16拒否が成功。3 artifact ZIPと79+10出力の固定基準との直接byte一致を独立確認。書式と明示名修正がcook/増分判定の挙動を変えていないことを確認しtaskをdone。
+
+- G2-S6-MODEL-NATIVE-PATH開始: source/sidecar locatorをnative pathのままfingerprint・実cook・検査・骨格decodeへ通し、文字列化を診断境界だけへ限定。日本語/非BMPの静的・骨格glTF/GLBと外部依存・sidecar・cache・失敗保持のWindows契約を追加。既存narrow APIはASCII互換として残し、argv/外部URI leaf/runtime論理pathの規約は拡張しない。実Windows前のためdoing。
+- G2-S6-MODEL-NATIVE-PATH検証準備: 既存sidecar結合試験をnative path比較へ変更し、Windows対象を21CPUへ拡張。比較器12件×通常/最適化とportable native UTF8 locatorの空/日本語/非BMP/NUL/不正byte検査が成功。Linuxで全test TUをcompileする試行はWindows.h不在で未実施扱い。実Windowsと79+10byte gateは未確認。
