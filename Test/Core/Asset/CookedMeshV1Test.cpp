@@ -1,4 +1,5 @@
-﻿#include "Asset/CookedMeshFormat.h"
+﻿#include "CookOutputVersionFixture.h"
+#include "Asset/CookedMeshFormat.h"
 #include "Resource/ModelAssetLoader.h"
 #include <bit>
 #include <cassert>
@@ -236,6 +237,7 @@ int main()
     Put32(bytes,320+116,59);Hash(bytes);
     auto result=Parse(bytes);
     assert(result.Succeeded() && result.Mesh.VersionMajor==1);
+    assert(NorvesLib::Tests::AssetFixtures::RejectCookOutputVersion(bytes,false));
     const auto& pbr=result.Mesh.Materials[0].Pbr;
     assert(std::bit_cast<uint32_t>(pbr.BaseColor[0])==0x80000000u && pbr.EmissiveNits==2 && pbr.Metallic==.125f &&
         pbr.Roughness==.75f && pbr.NormalScale==-2 && pbr.AlphaCutoff==1.25f && pbr.Flags==59);

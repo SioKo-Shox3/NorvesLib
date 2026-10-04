@@ -720,3 +720,5 @@
 - G2-S6-DEPENDENCY-SNAPSHOT実検証: edc9a5c/run37213672528は実build/診断と15CPU成功、新依存試験がbuffer解決失敗で停止。コピーしたM9Skinnedに必須fixture.bin（416byte）が無いことを確認。既存skeletal試験の生成bodyをbyte書込callback付き共通headerへ機械移動し、新依存試験でも同じbufferを生成する。既存bodyの逆置換一致を確認。依存実装は変更せず、失敗時source表示を追加して再検証する。
 
 - G2-S6-DEPENDENCY-SNAPSHOT受入: f96dc155/run37215038245の実Windowsで16CPU（snapshot/sidecar loader/外部buffer readerを含む）、単体7CLI/79byte/5診断、native2spec×2/10fileとPS5.1・Unicode・16拒否契約が成功。logs/native archive SHAと実行driverを確認。fixture補完後に依存collectorを変更せず合格しtaskをdone。Cook/Skip/Errorの共通決定、stamp永続化、既存root増分公開は別gate。
+
+- G2-S6-OUTPUT-PACKAGE開始: 共通decisionに先立ち、読み込み済みpackageの型別照合を小さく分離。V1単一entry/数値hash/4texture形式/audio/mesh v0/骨格v0.2と6数量、全wrapper印を検証する。実単体cook、版別既存golden、padding差・失敗保持のnative契約を追加。純比較器12件成功、実Windows前なのでdoing。既存cache/Skip/path解決は変更しない。

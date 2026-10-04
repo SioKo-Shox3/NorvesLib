@@ -1,4 +1,5 @@
-﻿#include "M9LooseFixture.h"
+﻿#include "CookOutputVersionFixture.h"
+#include "M9LooseFixture.h"
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/CookedSkeletalFormat.h"
 #include "Asset/CookedSkeletalNameCodec.h"
@@ -1829,6 +1830,7 @@ namespace
         assert(retainedResult.Succeeded());
         assert(retainedResult.Status == Asset::CookedSkeletalParseStatus::Success);
         AssertLiteralCookedData(retainedResult.Data, goldenHash);
+        assert(NorvesLib::Tests::AssetFixtures::RejectCookOutputVersion(goldenBytes,true));
 
         {
             ByteArray legacyBytes = goldenBytes;
@@ -1840,6 +1842,7 @@ namespace
             RecomputeSkeletalHash(legacyBytes);
             const Asset::CookedSkeletalParseResult legacy = Asset::ParseCookedSkeletal(MakeBlob(legacyBytes));
             assert(legacy.Succeeded());
+            assert(NorvesLib::Tests::AssetFixtures::RejectCookOutputVersion(legacyBytes,true));
             assert(legacy.Data.Skeletal.MeshNodeGlobalTransform[0] == 1.0f);
             assert(legacy.Data.Skeletal.MeshNodeGlobalTransform[5] == 1.0f);
             assert(legacy.Data.Skeletal.MeshNodeGlobalTransform[10] == 1.0f);
