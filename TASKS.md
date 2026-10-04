@@ -46,7 +46,7 @@
 - notes: 計画書 4.1。後の段の sparse のページ・ジオメトリのプールもこれで解放する。危険地帯（寿命・RenderThread）。
 
 ## VTG1-RHI-BC-FORMATS: RHIとVulkanにBC形式とR16を足す
-- status: todo
+- status: done
 - done-when: `RHI::Format` に BC1_UNORM・BC1_SRGB・BC4_UNORM・BC5_UNORM・BC7_UNORM・BC7_SRGB・R16_UNORM を足し、Vulkan の形式の対応表（2か所）、`textureCompressionBC` の照会と（対応時の）有効化、`DeviceCapabilities::bTextureCompressionBC` を足す。形式のブロックの幅・高さ・バイト数を返す関数を RHI に置き、ミップの最小は1ブロックとして数える。テクスチャの台帳（VTG1-VRAM-LEDGER）が BC を数える。CPU のテスト `RHIBlockCompressedFormatTest`（`RenderResourcesDomainContractTest` の束）が BC7・BC5 4096² 全ミップ = 22,369,648 B、BC4・BC1 = 11,184,824 B、R16 1024² 全ミップ = 2,796,202 B を確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RHIBlockCompressedFormatTest|TextureMemoryLedgerTest)$"`

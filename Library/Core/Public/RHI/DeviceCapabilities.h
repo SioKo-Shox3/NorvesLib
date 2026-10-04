@@ -198,6 +198,9 @@ namespace NorvesLib::RHI
 
         /** @brief 配列sampled imageを呼び出しごとに異なる添字で参照できるか（Vulkan 1.2 descriptor indexing） */
         bool bSampledImageArrayNonUniformIndexing = false;
+
+        /** @brief BC1/BC4/BC5/BC7 のブロック圧縮テクスチャ（textureCompressionBC）が論理デバイスで有効か */
+        bool bTextureCompressionBC = false;
     };
 
 } // namespace NorvesLib::RHI

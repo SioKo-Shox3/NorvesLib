@@ -1662,6 +1662,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER MeshResourcesProceduralGpuTest MeshResourcesProceduralGpuTest.cpp
     MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
     MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
+    MEMBER RHIBlockCompressedFormatTest RHIBlockCompressedFormatTest.cpp
 )
 target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
 target_include_directories(RenderResourcesDomainContractTest PRIVATE
@@ -1673,6 +1674,7 @@ add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainCon
 add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContractTest --test=MeshResourcesProceduralGpuTest)
 add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
 add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)
+add_test(NAME RHIBlockCompressedFormatTest COMMAND RenderResourcesDomainContractTest --test=RHIBlockCompressedFormatTest)
 
 add_executable(MeshResourcesPrimitiveTest
     MeshResourcesPrimitiveTest.cpp

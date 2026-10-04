@@ -44,8 +44,35 @@ namespace NorvesLib::RHI
         R32G32B32A32_FLOAT,
         D16_UNORM,
         D24_UNORM_S8_UINT,
-        D32_FLOAT
+        D32_FLOAT,
+        // 既存の値を変えないよう末尾へ足す。
+        R16_UNORM,
+        BC1_UNORM,
+        BC1_SRGB,
+        BC4_UNORM,
+        BC5_UNORM,
+        BC7_UNORM,
+        BC7_SRGB
     };
+
+    /**
+     * @brief ブロック圧縮（BC1/BC4/BC5/BC7）の形式か
+     */
+    inline bool IsBlockCompressedFormat(Format format)
+    {
+        switch (format)
+        {
+        case Format::BC1_UNORM:
+        case Format::BC1_SRGB:
+        case Format::BC4_UNORM:
+        case Format::BC5_UNORM:
+        case Format::BC7_UNORM:
+        case Format::BC7_SRGB:
+            return true;
+        default:
+            return false;
+        }
+    }
 
     /**
      * @brief presentation surface の working color space

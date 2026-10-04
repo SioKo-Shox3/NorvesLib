@@ -1062,6 +1062,9 @@ namespace NorvesLib::RHI::Vulkan
             physicalFeatures.drawIndirectFirstInstance == VK_TRUE ? VK_TRUE : VK_FALSE;
         features2.features.shaderInt64 =
             physicalFeatures.shaderInt64 == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // BC圧縮テクスチャは、対応しているデバイスだけで有効にする。
+        features2.features.textureCompressionBC =
+            physicalFeatures.textureCompressionBC == VK_TRUE ? VK_TRUE : VK_FALSE;
         // 点光源のキューブシャドウはキューブ配列（samplerCubeArray）で読む。
         features2.features.imageCubeArray =
             physicalFeatures.imageCubeArray == VK_TRUE ? VK_TRUE : VK_FALSE;
@@ -1376,6 +1379,13 @@ namespace NorvesLib::RHI::Vulkan
         m_formatMap[Format::D16_UNORM] = vk::Format::eD16Unorm;
         m_formatMap[Format::D24_UNORM_S8_UINT] = vk::Format::eD24UnormS8Uint;
         m_formatMap[Format::D32_FLOAT] = vk::Format::eD32Sfloat;
+        m_formatMap[Format::R16_UNORM] = vk::Format::eR16Unorm;
+        m_formatMap[Format::BC1_UNORM] = vk::Format::eBc1RgbaUnormBlock;
+        m_formatMap[Format::BC1_SRGB] = vk::Format::eBc1RgbaSrgbBlock;
+        m_formatMap[Format::BC4_UNORM] = vk::Format::eBc4UnormBlock;
+        m_formatMap[Format::BC5_UNORM] = vk::Format::eBc5UnormBlock;
+        m_formatMap[Format::BC7_UNORM] = vk::Format::eBc7UnormBlock;
+        m_formatMap[Format::BC7_SRGB] = vk::Format::eBc7SrgbBlock;
 
         // vk::Format → RHI Format (逆変換マップも作成)
         for (const auto &[rhiFormat, vkFormat] : m_formatMap)
@@ -2644,6 +2654,8 @@ namespace NorvesLib::RHI::Vulkan
                 m_vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE;
             m_Capabilities.bDrawIndirectFirstInstance =
                 (m_enabledDeviceFeatures.drawIndirectFirstInstance == VK_TRUE);
+            m_Capabilities.bTextureCompressionBC =
+                (m_enabledDeviceFeatures.textureCompressionBC == VK_TRUE);
 
             if (m_Capabilities.bDrawIndirectCount)
             {
@@ -2660,7 +2672,8 @@ namespace NorvesLib::RHI::Vulkan
         const char *deviceName = m_Capabilities.DeviceName;
         NORVES_LOG_INFO("VulkanDevice", "Device Capabilities: GPU=%s, NVIDIA=%s, "
                                         "NeuralShaders=%s, MegaGeometry=%s, AccelerationStructure=%s, "
-                                        "RayQuery=%s, RayTracingPipeline=%s, DrawIndirectCount=%s, DrawIndirectFirstInstance=%s",
+                                        "RayQuery=%s, RayTracingPipeline=%s, DrawIndirectCount=%s, DrawIndirectFirstInstance=%s, "
+                                        "TextureCompressionBC=%s",
                         deviceName,
                         m_Capabilities.bIsNvidia ? "Yes" : "No",
                         m_Capabilities.NeuralShaders.bSupported ? "Yes" : "No",
@@ -2669,7 +2682,8 @@ namespace NorvesLib::RHI::Vulkan
                         m_Capabilities.RayTracing.bRayQuery ? "Yes" : "No",
                         m_Capabilities.RayTracing.bRayTracingPipeline ? "Yes" : "No",
                         m_Capabilities.bDrawIndirectCount ? "Yes" : "No",
-                        m_Capabilities.bDrawIndirectFirstInstance ? "Yes" : "No");
+                        m_Capabilities.bDrawIndirectFirstInstance ? "Yes" : "No",
+                        m_Capabilities.bTextureCompressionBC ? "Yes" : "No");
     }
 
 } // namespace NorvesLib::RHI::Vulkan

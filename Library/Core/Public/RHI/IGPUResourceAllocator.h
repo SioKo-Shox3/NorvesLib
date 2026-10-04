@@ -82,7 +82,8 @@ namespace NorvesLib::RHI
 
     /**
      * @brief フォーマットの1画素あたりのバイト数を返す
-     * @note 圧縮フォーマットは扱わない（未知のフォーマットは 4 を返す）。
+     * @note ブロック圧縮フォーマットは1画素のバイト数で表せないので 0 を返す（GetFormatBlockInfo を使う）。
+     *       未知のフォーマットは 4 を返す。
      */
     inline size_t GetFormatBytesPerPixel(Format format)
     {
@@ -101,6 +102,7 @@ namespace NorvesLib::RHI
         case Format::D32_FLOAT:
             return 4;
         case Format::R16_FLOAT:
+        case Format::R16_UNORM:
         case Format::D16_UNORM:
             return 2;
         case Format::R16G16_FLOAT:
@@ -113,14 +115,55 @@ namespace NorvesLib::RHI
             return 12;
         case Format::R32G32B32A32_FLOAT:
             return 16;
+        case Format::BC1_UNORM:
+        case Format::BC1_SRGB:
+        case Format::BC4_UNORM:
+        case Format::BC5_UNORM:
+        case Format::BC7_UNORM:
+        case Format::BC7_SRGB:
+            return 0;
         default:
             return 4;
         }
     }
 
     /**
-     * @brief テクスチャの確保量（バイト）を、形式の1画素のバイト数 × 全ミップの画素数 × 配列数で見積もる
-     * @note 幅・高さ・深さは各ミップで半分（最小 1）にする。実装側のアライメントや余白は含めない。
+     * @brief 形式の1ブロックの大きさ
+     *
+     * 非圧縮の形式は 1x1 画素を1ブロックとして扱う（BlockBytes は1画素のバイト数）。
+     */
+    struct FormatBlockInfo
+    {
+        uint32_t BlockWidth = 1;  ///< ブロックの幅（画素）
+        uint32_t BlockHeight = 1; ///< ブロックの高さ（画素）
+        uint32_t BlockBytes = 0;  ///< 1ブロックのバイト数
+    };
+
+    /**
+     * @brief 形式の1ブロックの幅・高さ・バイト数を返す
+     * @note BC1/BC4 は 4x4 画素で 8 バイト、BC5/BC7 は 4x4 画素で 16 バイト。
+     */
+    inline FormatBlockInfo GetFormatBlockInfo(Format format)
+    {
+        switch (format)
+        {
+        case Format::BC1_UNORM:
+        case Format::BC1_SRGB:
+        case Format::BC4_UNORM:
+            return {4, 4, 8};
+        case Format::BC5_UNORM:
+        case Format::BC7_UNORM:
+        case Format::BC7_SRGB:
+            return {4, 4, 16};
+        default:
+            return {1, 1, static_cast<uint32_t>(GetFormatBytesPerPixel(format))};
+        }
+    }
+
+    /**
+     * @brief テクスチャの確保量（バイト）を、形式の1ブロックのバイト数 × 全ミップのブロック数 × 配列数で見積もる
+     * @note 幅・高さ・深さは各ミップで半分（最小 1）にし、ブロック圧縮では各ミップを最小 1 ブロックに切り上げて数える。
+     *       実装側のアライメントや余白は含めない。
      */
     inline size_t EstimateTextureSize(const TextureDesc &desc)
     {
@@ -130,15 +173,17 @@ namespace NorvesLib::RHI
         uint32_t depth = desc.Depth > 0 ? desc.Depth : 1;
         const uint32_t mipLevels = desc.MipLevels > 0 ? desc.MipLevels : 1;
         const size_t arraySize = desc.ArraySize > 0 ? desc.ArraySize : 1;
-        const size_t bytesPerPixel = GetFormatBytesPerPixel(desc.TextureFormat);
+        const FormatBlockInfo block = GetFormatBlockInfo(desc.TextureFormat);
 
         for (uint32_t mipLevel = 0; mipLevel < mipLevels; ++mipLevel)
         {
-            total += static_cast<size_t>(width) *
-                     static_cast<size_t>(height) *
+            const size_t blocksX = (static_cast<size_t>(width) + block.BlockWidth - 1) / block.BlockWidth;
+            const size_t blocksY = (static_cast<size_t>(height) + block.BlockHeight - 1) / block.BlockHeight;
+            total += blocksX *
+                     blocksY *
                      static_cast<size_t>(depth) *
                      arraySize *
-                     bytesPerPixel;
+                     block.BlockBytes;
 
             width = width > 1 ? width / 2 : 1;
             height = height > 1 ? height / 2 : 1;
