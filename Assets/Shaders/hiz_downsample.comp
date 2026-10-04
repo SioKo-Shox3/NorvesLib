@@ -1,0 +1,57 @@
+﻿#version 450
+
+// ========================================
+// HZB のミップ1以降を作るコンピュートシェーダー
+//
+// 1つ前のミップの 2x2 の最大で次のミップを作る。前のミップの幅・高さが奇数のとき、最後の列・行の texel は
+// はみ出す列・行も最大に含める（縮めた 1 texel が、それの覆う深度の最大以上になる）。
+// 前のミップはストレージ画像として読む（ミップごとに別のレイアウトにならず、全ミップを GENERAL のまま作れる）。
+// ========================================
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// 入力: 1つ前のミップ
+layout(set = 0, binding = 0, r32f) readonly uniform image2D u_SourceMip;
+
+// 出力: 次のミップ
+layout(set = 0, binding = 1, r32f) writeonly uniform image2D u_DestMip;
+
+layout(set = 0, binding = 2) uniform HiZParams
+{
+    ivec2 destSize; // 書き込み先ミップの解像度
+    ivec2 srcSize;  // 読み込み元（1つ前のミップ）の解像度
+} params;
+
+void main()
+{
+    ivec2 destCoord = ivec2(gl_GlobalInvocationID.xy);
+    if (destCoord.x >= params.destSize.x || destCoord.y >= params.destSize.y)
+    {
+        return;
+    }
+
+    ivec2 srcMax = max(params.srcSize - ivec2(1), ivec2(0));
+    ivec2 srcBegin = min(destCoord * 2, srcMax);
+    // 最後の列・行は、奇数ではみ出す列・行まで含めて読む
+    ivec2 srcEnd = srcBegin + ivec2(1);
+    if (destCoord.x == params.destSize.x - 1)
+    {
+        srcEnd.x = srcMax.x;
+    }
+    if (destCoord.y == params.destSize.y - 1)
+    {
+        srcEnd.y = srcMax.y;
+    }
+    srcEnd = min(srcEnd, srcMax);
+
+    float maxDepth = 0.0;
+    for (int y = srcBegin.y; y <= srcEnd.y; ++y)
+    {
+        for (int x = srcBegin.x; x <= srcEnd.x; ++x)
+        {
+            maxDepth = max(maxDepth, imageLoad(u_SourceMip, ivec2(x, y)).r);
+        }
+    }
+
+    imageStore(u_DestMip, destCoord, vec4(maxDepth, 0.0, 0.0, 0.0));
+}

@@ -1,49 +1,48 @@
 ﻿#version 450
 
 // ========================================
-// Hi-Z 深度ピラミッド生成 コンピュートシェーダー
+// HZB（階層的な深度ピラミッド）のミップ0を作るコンピュートシェーダー
 //
-// 前ミップレベルの2x2テクセルから最大深度を取得し、
-// 次のミップレベルに書き込む（保守的深度ダウンサンプル）。
-//
-// Standard Depth (closer = smaller): max reduction
+// 今のフレームの深度（Less の標準の向き: 手前ほど小さい）を 2x2 の最大で縮め、半分の解像度のミップ0へ書く。
+// 最大（遠い方）を残すので、縮めた 1 texel はそれが覆う深度のどれよりも遠いか等しい（遮蔽の判定が保守的になる）。
+// 深度の幅・高さが奇数のとき、ミップ0 は切り上げた大きさなので、はみ出す行・列は端の texel を繰り返して読む。
+// 以降のミップは hiz_downsample.comp が作る。
 // ========================================
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-// 入力: 前ミップレベル（sampler2Dとして読み取り）
-layout(set = 0, binding = 0) uniform sampler2D u_SourceMip;
+// 入力: 今のフレームの深度（ミップ0を texelFetch で読む）
+layout(set = 0, binding = 0) uniform sampler2D u_Depth;
 
-// 出力: 次ミップレベル（imageStoreで書き込み）
+// 出力: ミップ0
 layout(set = 0, binding = 1, r32f) writeonly uniform image2D u_DestMip;
 
-// パラメータ
 layout(set = 0, binding = 2) uniform HiZParams
 {
     ivec2 destSize; // 書き込み先ミップの解像度
+    ivec2 srcSize;  // 読み込み元の解像度
 } params;
 
 void main()
 {
     ivec2 destCoord = ivec2(gl_GlobalInvocationID.xy);
-
-    // 範囲外チェック
     if (destCoord.x >= params.destSize.x || destCoord.y >= params.destSize.y)
     {
         return;
     }
 
-    // 前ミップの対応する2x2領域の中心UVを計算
-    vec2 srcTexelSize = 1.0 / vec2(textureSize(u_SourceMip, 0));
-    vec2 srcUV = (vec2(destCoord) * 2.0 + 1.0) * srcTexelSize;
+    ivec2 srcMax = max(params.srcSize - ivec2(1), ivec2(0));
+    ivec2 srcBase = destCoord * 2;
 
-    // 2x2テクセルの最大深度を取得（保守的: 遠い方の深度を保持）
-    float d00 = texture(u_SourceMip, srcUV + vec2(-0.5, -0.5) * srcTexelSize).r;
-    float d10 = texture(u_SourceMip, srcUV + vec2( 0.5, -0.5) * srcTexelSize).r;
-    float d01 = texture(u_SourceMip, srcUV + vec2(-0.5,  0.5) * srcTexelSize).r;
-    float d11 = texture(u_SourceMip, srcUV + vec2( 0.5,  0.5) * srcTexelSize).r;
-
-    float maxDepth = max(max(d00, d10), max(d01, d11));
+    float maxDepth = 0.0;
+    for (int dy = 0; dy < 2; ++dy)
+    {
+        for (int dx = 0; dx < 2; ++dx)
+        {
+            ivec2 srcCoord = min(srcBase + ivec2(dx, dy), srcMax);
+            maxDepth = max(maxDepth, texelFetch(u_Depth, srcCoord, 0).r);
+        }
+    }
 
     imageStore(u_DestMip, destCoord, vec4(maxDepth, 0.0, 0.0, 0.0));
 }

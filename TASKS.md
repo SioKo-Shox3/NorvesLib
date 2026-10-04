@@ -282,7 +282,7 @@
 - notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG3-HIZ-PYRAMID: 今のフレームの深度からHZBの全ミップを作るパスを足す
-- status: todo
+- status: done
 - done-when: MegaGeometry の描画の途中（後の VTG3-TWO-PASS-OCCLUSION の1パス目の後）で呼べる、深度から HZB（R32_FLOAT、全ミップ、2×2 の最大で縮める。深度は Less の標準の向き）を作る RenderGraph のパスを足す。幅・高さが奇数の段は、はみ出す行・列も最大に含めて保守的にする（縮めた1 texel がそれの覆う深度の最大以上）。ミップ0 は深度の解像度の半分。既存の `hiz_generate.comp`・`GenerateHiZPyramid` を土台にし、使われていない資源の作成と寿命を整理する。GPU のテスト `HiZPyramidVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）が、既知の深度（奇数の大きさ 37×23 を含む）から作った各ミップの各 texel が、覆う深度の最大と一致することを読み戻して確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(HiZPyramidVulkanTest|RenderGraphCompileTest)$"`

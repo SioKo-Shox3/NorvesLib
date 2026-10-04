@@ -152,6 +152,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometry/ClusterGroupBuilder.cpp
     Private/Rendering/MegaGeometry/LODHierarchyBuilder.cpp
     Private/Rendering/MegaGeometryPass.cpp
+    Private/Rendering/HiZPyramidPass.cpp
     # Engine
     Private/Engine/AssetRegistry.cpp
     # Resource
@@ -393,6 +394,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/NeuralMaterialDecoder.h
     Public/Rendering/NeuralMaterialDecodePass.h
     Public/Rendering/MegaGeometryPass.h
+    Public/Rendering/HiZPyramidPass.h
     # MegaGeometry types
     Public/Rendering/MegaGeometry/MegaGeometryTypes.h
     Public/Rendering/MegaGeometry/MeshClusterizer.h

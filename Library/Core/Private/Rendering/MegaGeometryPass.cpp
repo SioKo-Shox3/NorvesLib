@@ -245,77 +245,6 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // Hi-Z 深度ピラミッド用リソース作成
-        if (context.ShaderMgr)
-        {
-            m_HiZShader = context.ShaderMgr->LoadShader(
-                "hiz_generate.comp", RHI::ShaderStage::Compute);
-        }
-        if (m_HiZShader)
-        {
-            RHI::ComputePipelineDesc hiZPipelineDesc;
-            hiZPipelineDesc.computeShader = m_HiZShader;
-            {
-                RHI::DescriptorSetDesc hiZDsDesc;
-
-                RHI::DescriptorBinding srcBinding;
-                srcBinding.binding = 0;
-                srcBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-                srcBinding.stages = RHI::ShaderStage::Compute;
-                hiZDsDesc.bindings.push_back(srcBinding);
-
-                RHI::DescriptorBinding dstBinding;
-                dstBinding.binding = 1;
-                dstBinding.type = RHI::ResourceBindType::RWTexture;
-                dstBinding.stages = RHI::ShaderStage::Compute;
-                hiZDsDesc.bindings.push_back(dstBinding);
-
-                RHI::DescriptorBinding paramBinding;
-                paramBinding.binding = 2;
-                paramBinding.type = RHI::ResourceBindType::ConstantBuffer;
-                paramBinding.stages = RHI::ShaderStage::Compute;
-                hiZDsDesc.bindings.push_back(paramBinding);
-
-                hiZPipelineDesc.descriptorSetLayouts.push_back(hiZDsDesc);
-            }
-            m_HiZPipeline = m_Device->CreateComputePipeline(hiZPipelineDesc);
-
-            // Hi-Z用Nearestサンプラー（Clamp）
-            RHI::SamplerDesc hiZSampDesc;
-            hiZSampDesc.filterMin = RHI::FilterMode::Point;
-            hiZSampDesc.filterMag = RHI::FilterMode::Point;
-            hiZSampDesc.filterMip = RHI::FilterMode::Point;
-            hiZSampDesc.addressU = RHI::TextureAddressMode::Clamp;
-            hiZSampDesc.addressV = RHI::TextureAddressMode::Clamp;
-            hiZSampDesc.addressW = RHI::TextureAddressMode::Clamp;
-            m_HiZNearestSampler = m_Device->CreateSampler(hiZSampDesc);
-
-            // Hi-ZパラメータUBO (ivec2 destSize = 8 bytes, pad to 16)
-            RHI::BufferDesc hiZUboDesc(
-                16,
-                RHI::ResourceUsage::ConstantBuffer,
-                true,
-                "MegaGeometry_HiZParamsUBO");
-            m_HiZParamsBuffer = m_Device->CreateBuffer(hiZUboDesc);
-
-            if (!m_HiZPipeline || !m_HiZNearestSampler || !m_HiZParamsBuffer)
-            {
-                NORVES_LOG_WARNING("MegaGeometryPass", "Hi-Zリソースの作成に失敗。オクルージョンカリング無効");
-                m_HiZPipeline.reset();
-                m_HiZShader.reset();
-                m_HiZNearestSampler.reset();
-                m_HiZParamsBuffer.reset();
-            }
-            else
-            {
-                NORVES_LOG_INFO("MegaGeometryPass", "Hi-Zオクルージョンカリング有効");
-            }
-        }
-        else
-        {
-            NORVES_LOG_WARNING("MegaGeometryPass", "Hi-Zシェーダーの読み込みに失敗。オクルージョンカリング無効");
-        }
-
         m_bInitialized = true;
         NORVES_LOG_INFO("MegaGeometryPass", "初期化完了 (MaxDrawCount: %u)", m_Settings.MaxDrawCount);
         return true;
@@ -365,14 +294,6 @@ namespace NorvesLib::Core::Rendering
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
         m_DefaultLinearSampler.reset();
-
-        m_HiZTexture.reset();
-        m_HiZShader.reset();
-        m_HiZPipeline.reset();
-        m_HiZDescriptorSet.reset();
-        m_HiZParamsBuffer.reset();
-        m_HiZNearestSampler.reset();
-        m_HiZMipCount = 0;
 
         m_Instances.clear();
         m_bPreferRenderGraphGBufferResources = false;
@@ -507,15 +428,6 @@ namespace NorvesLib::Core::Rendering
             {
                 NORVES_LOG_ERROR("MegaGeometryPass", "描画パイプラインの作成に失敗");
                 return;
-            }
-
-            // Hi-Z深度ピラミッドの作成・再作成
-            if (m_HiZPipeline)
-            {
-                if (!CreateHiZResources(context))
-                {
-                    NORVES_LOG_WARNING("MegaGeometryPass", "Hi-Zテクスチャの作成に失敗。オクルージョンカリング無効");
-                }
             }
         }
     }
@@ -953,17 +865,9 @@ namespace NorvesLib::Core::Rendering
             cullDescriptorSet->BindStorageBuffer(3, drawCountBuffer, 0,
                                                  sizeof(uint32_t));
 
-            // Hi-Zテクスチャバインド（無い場合はデフォルトテクスチャでフォールバック）
-            if (m_HiZTexture)
-            {
-                cullDescriptorSet->BindTexture(4, m_HiZTexture);
-                cullDescriptorSet->BindSampler(4, m_HiZNearestSampler);
-            }
-            else
-            {
-                cullDescriptorSet->BindTexture(4, m_DefaultBlackTexture);
-                cullDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
-            }
+            // binding 4 の Hi-Z は、遮蔽の判定（bHiZEnabled=1）をつなぐまで使われない。HZB は HiZPyramidPass が作る。
+            cullDescriptorSet->BindTexture(4, m_DefaultBlackTexture);
+            cullDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
 
             cullDescriptorSet->Update();
 
@@ -1732,162 +1636,6 @@ namespace NorvesLib::Core::Rendering
         }
 
         return true;
-    }
-
-    // ========================================
-    // Hi-Z 深度ピラミッドリソース作成
-    // ========================================
-
-    bool MegaGeometryPass::CreateHiZResources(ViewRenderContext &context)
-    {
-        if (!m_Device || !m_HiZPipeline || m_CurrentWidth == 0 || m_CurrentHeight == 0)
-        {
-            return false;
-        }
-
-        // 既存リソースをリセット
-        m_HiZTexture.reset();
-        m_HiZDescriptorSet.reset();
-
-        // Hi-Zテクスチャ: 半解像度ベース、ミップチェーン付き
-        uint32_t hiZWidth = (m_CurrentWidth + 1) / 2;
-        uint32_t hiZHeight = (m_CurrentHeight + 1) / 2;
-        uint32_t maxDim = (hiZWidth > hiZHeight) ? hiZWidth : hiZHeight;
-        m_HiZMipCount = static_cast<uint32_t>(std::floor(std::log2(static_cast<float>(maxDim)))) + 1;
-
-        RHI::TextureDesc hiZTexDesc;
-        hiZTexDesc.Width = hiZWidth;
-        hiZTexDesc.Height = hiZHeight;
-        hiZTexDesc.MipLevels = m_HiZMipCount;
-        hiZTexDesc.TextureFormat = RHI::Format::R32_FLOAT;
-        hiZTexDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::ShaderWrite;
-        hiZTexDesc.DebugName = "MegaGeometry_HiZPyramid";
-
-        m_HiZTexture = m_Device->CreateTexture(hiZTexDesc);
-        if (!m_HiZTexture)
-        {
-            NORVES_LOG_ERROR("MegaGeometryPass", "Hi-Zテクスチャの作成に失敗 (%ux%u, %u mips)", hiZWidth, hiZHeight, m_HiZMipCount);
-            m_HiZMipCount = 0;
-            return false;
-        }
-
-        // Hi-Z生成用ディスクリプタセット
-        // binding 0: ソースミップ (CombinedImageSampler)
-        // binding 1: デストミップ (RWTexture / StorageImage)
-        // binding 2: HiZParams UBO (ConstantBuffer)
-        RHI::DescriptorSetDesc hiZDsDesc;
-
-        RHI::DescriptorBinding srcBinding;
-        srcBinding.binding = 0;
-        srcBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        srcBinding.stages = RHI::ShaderStage::Compute;
-        hiZDsDesc.bindings.push_back(srcBinding);
-
-        RHI::DescriptorBinding dstBinding;
-        dstBinding.binding = 1;
-        dstBinding.type = RHI::ResourceBindType::RWTexture;
-        dstBinding.stages = RHI::ShaderStage::Compute;
-        hiZDsDesc.bindings.push_back(dstBinding);
-
-        RHI::DescriptorBinding paramBinding;
-        paramBinding.binding = 2;
-        paramBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        paramBinding.stages = RHI::ShaderStage::Compute;
-        hiZDsDesc.bindings.push_back(paramBinding);
-
-        m_HiZDescriptorSet = m_Device->CreateDescriptorSet(hiZDsDesc);
-        if (!m_HiZDescriptorSet)
-        {
-            NORVES_LOG_ERROR("MegaGeometryPass", "Hi-Zディスクリプタセットの作成に失敗");
-            m_HiZTexture.reset();
-            m_HiZMipCount = 0;
-            return false;
-        }
-
-        NORVES_LOG_INFO("MegaGeometryPass", "Hi-Z深度ピラミッド作成 (%ux%u, %u mips)", hiZWidth, hiZHeight, m_HiZMipCount);
-        return true;
-    }
-
-    // ========================================
-    // Hi-Z 深度ピラミッド生成
-    // ========================================
-
-    void MegaGeometryPass::GenerateHiZPyramid(RHI::ICommandList *cmdList)
-    {
-        if (!m_HiZTexture || !m_HiZPipeline || !m_HiZDescriptorSet || m_HiZMipCount == 0)
-        {
-            return;
-        }
-
-        // GBuffer深度テクスチャをシェーダーリソースとして使用（既にShaderResource状態のはず）
-        // Hi-Zテクスチャ全ミップをUAV状態に遷移
-        cmdList->TextureBarrier(m_HiZTexture,
-                                RHI::ResourceState::Undefined,
-                                RHI::ResourceState::UnorderedAccess,
-                                0, 0, m_HiZMipCount, 0);
-
-        cmdList->SetPipeline(m_HiZPipeline);
-
-        uint32_t srcWidth = m_CurrentWidth;
-        uint32_t srcHeight = m_CurrentHeight;
-
-        for (uint32_t mip = 0; mip < m_HiZMipCount; ++mip)
-        {
-            uint32_t destWidth = (m_HiZTexture->GetWidth() >> mip);
-            uint32_t destHeight = (m_HiZTexture->GetHeight() >> mip);
-            if (destWidth < 1) destWidth = 1;
-            if (destHeight < 1) destHeight = 1;
-
-            // HiZParams UBO更新
-            int32_t params[4] = {
-                static_cast<int32_t>(destWidth),
-                static_cast<int32_t>(destHeight),
-                0, 0
-            };
-            m_HiZParamsBuffer->Update(params, 16);
-
-            // ソースバインド
-            if (mip == 0)
-            {
-                // 初回: GBuffer深度テクスチャを読み取り
-                m_HiZDescriptorSet->BindTexture(0, m_DepthTexture);
-                m_HiZDescriptorSet->BindSampler(0, m_HiZNearestSampler);
-            }
-            else
-            {
-                // 前のミップをシェーダーリソースに遷移
-                cmdList->TextureBarrier(m_HiZTexture,
-                                        RHI::ResourceState::UnorderedAccess,
-                                        RHI::ResourceState::ShaderResource,
-                                        mip - 1, 0, 1, 0);
-
-                // 前のミップをソースとしてバインド
-                m_HiZDescriptorSet->BindTexture(0, m_HiZTexture);
-                m_HiZDescriptorSet->BindSampler(0, m_HiZNearestSampler);
-            }
-
-            // デストミップをストレージテクスチャとしてバインド
-            m_HiZDescriptorSet->BindStorageTexture(1, m_HiZTexture, mip);
-
-            // パラメータUBO
-            m_HiZDescriptorSet->BindConstantBuffer(2, m_HiZParamsBuffer, 0, 16);
-            m_HiZDescriptorSet->Update();
-            cmdList->SetDescriptorSet(m_HiZDescriptorSet, 0);
-
-            // ディスパッチ（8x8ワークグループ）
-            uint32_t groupX = (destWidth + 7) / 8;
-            uint32_t groupY = (destHeight + 7) / 8;
-            cmdList->Dispatch(groupX, groupY, 1);
-
-            srcWidth = destWidth;
-            srcHeight = destHeight;
-        }
-
-        // 最後のミップをシェーダーリソースに遷移
-        cmdList->TextureBarrier(m_HiZTexture,
-                                RHI::ResourceState::UnorderedAccess,
-                                RHI::ResourceState::ShaderResource,
-                                m_HiZMipCount - 1, 0, 1, 0);
     }
 
 } // namespace NorvesLib::Core::Rendering

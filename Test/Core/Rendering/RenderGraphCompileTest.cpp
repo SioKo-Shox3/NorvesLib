@@ -1,5 +1,6 @@
 ﻿#include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/HiZPyramidPass.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/BloomPass.h"
 #include "Rendering/FXAAPass.h"
@@ -285,6 +286,7 @@ namespace
         uint32_t BeginRenderPassCount = 0;
         uint32_t EndRenderPassCount = 0;
         uint32_t DrawCallCount = 0;
+        uint32_t DispatchCount = 0;
         uint32_t LastDrawIndexedInstancedIndexCount = 0;
         uint32_t LastDrawIndexedInstancedStartIndexLocation = 0;
         int32_t LastDrawIndexedInstancedBaseVertexLocation = 0;
@@ -422,6 +424,7 @@ namespace
             (void)threadGroupCountX;
             (void)threadGroupCountY;
             (void)threadGroupCountZ;
+            ++DispatchCount;
         }
         void CopyBuffer(RHI::BufferPtr src,
                         RHI::BufferPtr dst,
@@ -6446,6 +6449,178 @@ namespace
 
         renderResources.Shutdown();
     }
+
+    // GBuffer 深度を読むだけの HZB のパス。深度の Load/Store の宣言には触れず（版が増えず）、GBuffer の後ろに並ぶ。
+    void TestHiZPyramidNativeDeclareReadsGBufferDepthWithoutWritingIt()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        GBufferPass gbufferPass;
+        HiZPyramidPass hizPass;
+
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        const uint32_t gbufferPassIndex = graph.AddPass(&gbufferPass);
+        const uint32_t hizPassIndex = graph.AddPass(&hizPass);
+
+        assert(graph.Compile(context));
+
+        // 深度の読み取りと、完了を表す論理資源の書き込みだけ
+        assert(graph.GetDeclaredPassAccessCount(hizPassIndex) == 2);
+        bool bReadsDepth = false;
+        bool bWritesComplete = false;
+        for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(hizPassIndex); ++accessIndex)
+        {
+            RGResourceHandle resource;
+            RGAccessMode mode = RGAccessMode::Read;
+            RHI::ResourceState state = RHI::ResourceState::Undefined;
+            RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            assert(graph.TryGetDeclaredPassAccess(hizPassIndex, accessIndex, resource, mode, state, finalState));
+            if (resource == gbufferPass.GetDepthHandle())
+            {
+                bReadsDepth = mode == RGAccessMode::Read && state == RHI::ResourceState::ShaderResource;
+            }
+            else if (resource == hizPass.GetCompleteHandle())
+            {
+                bWritesComplete = mode == RGAccessMode::Write;
+            }
+        }
+        assert(bReadsDepth);
+        assert(bWritesComplete);
+
+        uint32_t depthVersion = 0;
+        assert(graph.TryGetNamedResourceVersion(RenderGraphResourceNames::GBufferDepth, depthVersion));
+        // GBufferPass が作った版（0）のまま。書き込みなら版が進む
+        assert(depthVersion == 0);
+
+        const auto& order = graph.GetCompiledPassOrder();
+        assert(order.size() == 2);
+        assert(order[0] == gbufferPassIndex);
+        assert(order[1] == hizPassIndex);
+    }
+
+    // 深度の名前付き資源が無い構成では、何も宣言せず（完了の論理資源も作らず）、ピラミッドも作らない。
+    void TestHiZPyramidNativeDeclareWithoutDepthDeclaresNothing()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ViewRenderContext context;
+        context.Device = device.get();
+
+        HiZPyramidPass hizPass;
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        const uint32_t hizPassIndex = graph.AddPass(&hizPass);
+        assert(graph.Compile(context));
+        assert(graph.GetDeclaredPassAccessCount(hizPassIndex) == 0);
+        assert(!hizPass.GetCompleteHandle().IsValid());
+        assert(!hizPass.GetPyramidTexture());
+    }
+
+    // 深度を作るだけの何もしないパス（HZB のパスの実行を確かめるための入力）
+    class HiZTestDepthProducerPass final : public IRenderGraphPass
+    {
+    public:
+        HiZTestDepthProducerPass(uint32_t width, uint32_t height) : m_Width(width), m_Height(height) {}
+
+        const char* GetName() const override { return "HiZTestDepthProducerPass"; }
+
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            builder.WriteTextureAttachment(RenderGraphResourceNames::GBufferDepth,
+                                           RGTextureDesc::DepthStencil(m_Width, m_Height, RHI::Format::D32_FLOAT, "HiZTestDepth"),
+                                           RGAttachmentKind::DepthStencil,
+                                           RHI::AttachmentLoadOp::Clear,
+                                           RHI::AttachmentStoreOp::Store,
+                                           RHI::ResourceState::DepthWrite,
+                                           RHI::ResourceState::ShaderResource);
+            builder.PreserveInsertionOrder();
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+    private:
+        uint32_t m_Width;
+        uint32_t m_Height;
+    };
+
+    // 奇数の深度（37x23）から、半分（切り上げ）の 19x12・5 段の HZB を、全ミップ UnorderedAccess のまま作って
+    // 最後に ShaderResource へ遷移する。ミップごとに 1 つ前の書き込みを待つバリアを 1 つずつ置き、ディスパッチは 5 回。
+    void TestHiZPyramidNativeExecuteBuildsAllMipsInOneSubmission()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        HiZTestDepthProducerPass depthPass(37, 23);
+        HiZPyramidPass hizPass;
+        graph.AddPass(&depthPass);
+        graph.AddPass(&hizPass);
+
+        FakeCommandList commandList;
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.ShaderMgr = &shaderManager;
+        context.RenderWidth = 37;
+        context.RenderHeight = 23;
+
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+
+        RHI::TexturePtr pyramid = hizPass.GetPyramidTexture();
+        assert(pyramid);
+        assert(pyramid->GetWidth() == 19);
+        assert(pyramid->GetHeight() == 12);
+        assert(pyramid->GetMipLevels() == 5);
+        assert(hizPass.GetMipCount() == 5);
+        assert(commandList.DispatchCount == 5);
+
+        Container::VariableArray<BarrierEvent> pyramidBarriers;
+        for (const BarrierEvent& event : commandList.Barriers)
+        {
+            if (event.Kind == RGBarrierKind::Texture && event.Texture == pyramid.get())
+            {
+                pyramidBarriers.push_back(event);
+            }
+        }
+        assert(pyramidBarriers.size() == 6);
+        assert(pyramidBarriers[0].BeforeState == RHI::ResourceState::Undefined);
+        assert(pyramidBarriers[0].AfterState == RHI::ResourceState::UnorderedAccess);
+        for (size_t index = 1; index < 5; ++index)
+        {
+            assert(pyramidBarriers[index].BeforeState == RHI::ResourceState::UnorderedAccess);
+            assert(pyramidBarriers[index].AfterState == RHI::ResourceState::UnorderedAccess);
+        }
+        assert(pyramidBarriers[5].BeforeState == RHI::ResourceState::UnorderedAccess);
+        assert(pyramidBarriers[5].AfterState == RHI::ResourceState::ShaderResource);
+
+        hizPass.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
 } // namespace
 
 int main()
@@ -6468,6 +6643,8 @@ int main()
     TestNeuralDecodeNativeDeclareWritesLogicalCompletion();
     TestMegaGeometryNativeDeclareImportsPersistentBuffers();
     TestMegaGeometryNativeDeclareUsesNamedGBufferAttachments();
+    TestHiZPyramidNativeDeclareReadsGBufferDepthWithoutWritingIt();
+    TestHiZPyramidNativeDeclareWithoutDepthDeclaresNothing();
     TestMegaGeometryNativeExecuteEnqueuesEmptyAttachmentPass();
     TestMegaGeometryNativeExecuteRecreatesRenderPassWhenAttachmentStateModeChanges();
     TestMegaGeometryPartialNamedGBufferFallsBackToLegacyAttachmentStates();
@@ -6492,6 +6669,7 @@ int main()
     TestShadowMapNativeExecuteRegistersBridge();
     TestNeuralDecodeNativeExecuteSkipsUnsupportedPath();
     TestMegaGeometryNativeExecuteSkipsWhenNoInstances();
+    TestHiZPyramidNativeExecuteBuildsAllMipsInOneSubmission();
     TestGBufferNativeExecuteClearsWhenOpaqueCommandsEmpty();
     TestRecordMeshDrawCallUsesDrawCommandRangesAndFallback();
     TestSSAONativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();

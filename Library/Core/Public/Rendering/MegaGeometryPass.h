@@ -158,16 +158,6 @@ namespace NorvesLib::Core::Rendering
          */
         bool EnsurePerInstanceBindings(uint32_t requiredCount);
 
-        /**
-         * @brief Hi-Z深度ピラミッドのリソースを作成・再作成
-         */
-        bool CreateHiZResources(ViewRenderContext &context);
-
-        /**
-         * @brief Hi-Z深度ピラミッドを生成（GBuffer深度からダウンサンプル）
-         */
-        void GenerateHiZPyramid(RHI::ICommandList *cmdList);
-
         // 設定
         MegaGeometryPassSettings m_Settings;
 
@@ -227,15 +217,6 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultFlatNormalTexture; // 1x1 フラット法線 (128,128,255) — Normalデフォルト
         RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 — Metallic/Heightデフォルト
         RHI::SamplerPtr m_DefaultLinearSampler;     // Linear/Wrapサンプラー
-
-        // Hi-Z 深度ピラミッド
-        RHI::TexturePtr m_HiZTexture;               // R32_FLOAT ミップチェーン
-        RHI::ShaderPtr m_HiZShader;                 // hiz_generate.comp
-        RHI::PipelinePtr m_HiZPipeline;             // Hi-Zダウンサンプルパイプライン
-        RHI::DescriptorSetPtr m_HiZDescriptorSet;   // Hi-Z生成用ディスクリプタ
-        RHI::BufferPtr m_HiZParamsBuffer;            // HiZParams UBO
-        RHI::SamplerPtr m_HiZNearestSampler;        // Nearest/Clampサンプラー
-        uint32_t m_HiZMipCount = 0;                 // Hi-Zミップレベル数
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;
