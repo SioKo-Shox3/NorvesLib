@@ -12,7 +12,7 @@
 
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
 
-// ミップを明示して標本する。常駐していなければ lod より粗いミップへ1段ずつ下げる。
+// ミップを明示して標本する。常駐していなければ、1段ずつ粗いミップへ下げる（最初の読みで常駐していればそのミップ）。
 vec4 SampleSparseResidentLod(sampler2D tex, vec2 uv, float lod)
 {
     float maxLod = float(textureQueryLevels(tex) - 1);
@@ -30,7 +30,9 @@ vec4 SampleSparseResidentLod(sampler2D tex, vec2 uv, float lod)
     return color;
 }
 
-// 画面微分（勾配）を明示して標本する。常駐していなければ、勾配から求めたミップの1段粗いミップから読み直す。
+// 画面微分（勾配）を明示して標本する。常駐していなければ、勾配から求めたミップから1段ずつ粗いミップへ下げて読み直す。
+// 異方性の最大倍率はシェーダーから分からないので、開始ミップは「異方性が最大のときの標本ミップ」
+// （長軸 / ceil(長軸 / 短軸) の大きさから求める、実際の標本ミップ以下の値）にして、常駐している中間のミップを飛ばさない。
 vec4 SampleSparseResidentGrad(sampler2D tex, vec2 uv, vec2 uvDx, vec2 uvDy)
 {
     vec4 color = vec4(0.0);
@@ -42,9 +44,26 @@ vec4 SampleSparseResidentGrad(sampler2D tex, vec2 uv, vec2 uvDx, vec2 uvDy)
     vec2 size = vec2(textureSize(tex, 0));
     vec2 texelDx = uvDx * size;
     vec2 texelDy = uvDy * size;
-    float footprint = max(max(dot(texelDx, texelDx), dot(texelDy, texelDy)), 1.0e-8);
-    float nominalLod = max(0.5 * log2(footprint), 0.0);
-    return SampleSparseResidentLod(tex, uv, floor(nominalLod) + 1.0);
+    float lengthMax = max(max(length(texelDx), length(texelDy)), 1.0e-4);
+    float lengthMin = max(min(length(texelDx), length(texelDy)), 1.0e-4);
+    float anisotropyMax = ceil(lengthMax / lengthMin - 1.0e-3);
+    float lowerBoundLod = max(log2(lengthMax / max(anisotropyMax, 1.0)), 0.0);
+    return SampleSparseResidentLod(tex, uv, floor(lowerBoundLod));
+}
+
+// 暗黙の勾配（画面微分）で標本する。フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
+// 常駐していなければ、実際に標本したミップ（異方性・バイアス込みの textureQueryLOD）から1段ずつ粗いミップへ下げて読み直す。
+// textureQueryLOD も画面微分を使うので、分岐の外（一様な位置）で先に求める。
+vec4 SampleSparseResident(sampler2D tex, vec2 uv)
+{
+    float sampledLod = textureQueryLOD(tex, uv).y;
+    vec4 color = vec4(0.0);
+    int code = sparseTextureARB(tex, uv, color);
+    if (sparseTexelsResidentARB(code))
+    {
+        return color;
+    }
+    return SampleSparseResidentLod(tex, uv, floor(max(sampledLod, 0.0)));
 }
 
 #endif

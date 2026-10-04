@@ -9,14 +9,14 @@
 // 材質のシェーダーが使う標本関数（Common/SparseResidencySampling.glsl）を、一部のタイルとミップテイルだけを
 // 結んだテクスチャへ当てて、結果をストレージバッファへ書く。GPU のテスト（VirtualTextureResidencyVulkanTest）が、
 // 結んでいない領域が粗いミップの色になり、黒や未定義の値にならないことを確かめるために使う。
-// ミップを明示する関数と勾配を明示する関数を引く（暗黙の勾配版は勾配を求めて後者を呼ぶだけ）。
+// ミップを明示する関数と勾配を明示する関数を引く（暗黙の勾配版は画面微分が要るので sparse_residency_probe.frag で確かめる）。
 // ========================================
 
 layout(local_size_x = 8, local_size_y = 1, local_size_z = 1) in;
 
 #include "Common/SparseResidencySampling.glsl"
 
-const uint PROBE_COUNT = 6u;
+const uint PROBE_COUNT = 7u;
 
 layout(set = 0, binding = 0) uniform sampler2D u_Texture;
 
@@ -64,10 +64,16 @@ void main()
         // 結んだタイルを、1テクセルの勾配で引く（逃げない）。
         color = SampleMaterialTextureGrad(u_Texture, RESIDENT_UV, vec2(TEXEL, 0.0), vec2(0.0, TEXEL), true);
     }
-    else
+    else if (index == 5u)
     {
         // 結んでいない領域を、ミップ2相当（4テクセル）の勾配で引く（ミップテイルの中なので逃げない）。
         color = SampleMaterialTextureGrad(u_Texture, UNBOUND_UV, vec2(4.0 * TEXEL, 0.0), vec2(0.0, 4.0 * TEXEL), true);
+    }
+    else
+    {
+        // 結んでいない領域を、異方性 4 倍の勾配（4, 1 テクセル）で引く。実際の標本ミップは 0 なので、
+        // ミップ1が常駐していればミップ1の色、無ければミップ2の色になる（常駐している中間のミップを飛ばさない）。
+        color = SampleMaterialTextureGrad(u_Texture, UNBOUND_UV, vec2(4.0 * TEXEL, 0.0), vec2(0.0, TEXEL), true);
     }
     results.colors[index] = color;
 }

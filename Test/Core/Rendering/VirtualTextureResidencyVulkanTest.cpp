@@ -4,6 +4,8 @@
 //   - 結んだタイルは、そのミップの色（逃げない）。
 //   - 結んでいない領域は、常駐している最も細かいミップ（ミップ1も結んでいなければミップテイルの中のミップ2）の色。
 //   - ミップ1のタイルを結ぶと、同じ領域がミップ1の色へ変わる（1段だけ下げて止まる）。
+//   - 異方性 4 倍の勾配（実際の標本ミップは 0）でも、常駐しているミップ1を飛ばさず、ミップ1を結んでいなければミップ2になる。
+//     勾配を明示する関数（コンピュート）と、暗黙の勾配で引く関数（描画。sparseTextureARB で標本する）の両方で確かめる。
 // どの標本も、黒や未定義の値（読み戻しの初期値の -1 を含む）にならないことを確かめる。
 // Vulkan デバイスが無い、sparse の結び付け・BC7・shaderResourceResidency が使えない環境では 125（スキップ）を返す。
 #include "Rendering/ShaderManager.h"
@@ -43,7 +45,12 @@ namespace
 
     constexpr const char* TestName = "VirtualTextureResidencyVulkanTest";
     constexpr int GpuTestSkipReturnCode = 125;
-    constexpr uint32_t ProbeCount = 6u;
+    constexpr uint32_t ProbeCount = 7u;
+    // 暗黙の勾配で引く確認の数（sparse_residency_probe.frag の quad ごと）と、その描画先の大きさ（quad 1つが 2x2 画素）
+    constexpr uint32_t FragmentProbeCount = 4u;
+    constexpr uint32_t FragmentTargetWidth = FragmentProbeCount * 2u;
+    constexpr uint32_t FragmentTargetHeight = 2u;
+    constexpr uint32_t FragmentReadbackBytes = FragmentTargetWidth * FragmentTargetHeight * 4u;
     constexpr uint32_t ProbeBufferBytes = 8u * 4u * sizeof(float);
     // 期待の色との許容差（2/255）
     constexpr float Tolerance = 2.0f / 255.0f;
@@ -215,6 +222,175 @@ namespace
         return true;
     }
 
+    // ---- 読み戻し（sparse_residency_probe.frag。暗黙の勾配で引く） ----
+
+    DescriptorSetDesc MakeFragmentProbeDescriptorSetDesc()
+    {
+        DescriptorSetDesc desc;
+        DescriptorBinding binding;
+        binding.binding = 0;
+        binding.type = ResourceBindType::CombinedImageSampler;
+        binding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(binding);
+        return desc;
+    }
+
+    struct FragmentProbeResources
+    {
+        DevicePtr Device;
+        RenderPassPtr RenderPass;
+        FramebufferPtr Framebuffer;
+        PipelinePtr Pipeline;
+        SamplerPtr Sampler;
+        TexturePtr Target;
+        BufferPtr ReadbackBuffer;
+    };
+
+    bool CreateFragmentProbeResources(FragmentProbeResources& resources, ShaderManager& shaderManager)
+    {
+        ShaderPtr vertexShader = shaderManager.LoadShader("fullscreen.vert", RHI::ShaderStage::Vertex);
+        ShaderPtr pixelShader = shaderManager.LoadShader("sparse_residency_probe.frag", RHI::ShaderStage::Pixel);
+        if (!vertexShader || !pixelShader)
+        {
+            // shaderc が GL_ARB_sparse_texture2 を通さない場合はここで失敗する（stop-when）。
+            std::cerr << "sparse_residency_probe.frag をコンパイルできませんでした\n";
+            return false;
+        }
+
+        TextureDesc targetDesc = TextureDesc::RenderTarget(FragmentTargetWidth, FragmentTargetHeight,
+                                                           Format::R8G8B8A8_UNORM, "VirtualTextureResidencyFragmentTarget");
+        targetDesc.Usage = targetDesc.Usage | ResourceUsage::TransferSrc;
+        resources.Target = resources.Device->CreateTexture(targetDesc);
+
+        RenderPassDesc renderPassDesc;
+        AttachmentDesc colorAttachment;
+        colorAttachment.format = Format::R8G8B8A8_UNORM;
+        colorAttachment.clear = true;
+        colorAttachment.loadOp = AttachmentLoadOp::Clear;
+        colorAttachment.storeOp = AttachmentStoreOp::Store;
+        colorAttachment.initialState = ResourceState::Undefined;
+        colorAttachment.finalState = ResourceState::ShaderResource;
+        renderPassDesc.colorAttachments.push_back(colorAttachment);
+        renderPassDesc.hasDepthStencil = false;
+        resources.RenderPass = resources.Device->CreateRenderPass(renderPassDesc);
+        if (!resources.Target || !resources.RenderPass)
+        {
+            std::cerr << "描画先またはレンダーパスを作れませんでした\n";
+            return false;
+        }
+
+        FramebufferDesc framebufferDesc;
+        framebufferDesc.renderPass = resources.RenderPass;
+        framebufferDesc.colorTargets.push_back(resources.Target);
+        framebufferDesc.width = FragmentTargetWidth;
+        framebufferDesc.height = FragmentTargetHeight;
+        resources.Framebuffer = resources.Device->CreateFramebuffer(framebufferDesc);
+
+        GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.vertexShader = vertexShader;
+        pipelineDesc.pixelShader = pixelShader;
+        pipelineDesc.primitiveTopology = PrimitiveTopology::TriangleList;
+        pipelineDesc.rasterState.polygonMode = PolygonMode::Fill;
+        pipelineDesc.rasterState.cullMode = CullMode::None;
+        pipelineDesc.rasterState.frontFace = FrontFace::CounterClockwise;
+        pipelineDesc.rasterState.lineWidth = 1.0f;
+        pipelineDesc.depthStencilState.depthTestEnable = false;
+        pipelineDesc.depthStencilState.depthWriteEnable = false;
+        BlendAttachmentDesc blendAttachment;
+        blendAttachment.blendEnable = false;
+        blendAttachment.colorWriteMask = ColorWriteMask::All;
+        pipelineDesc.blendState.attachments.push_back(blendAttachment);
+        pipelineDesc.renderPass = resources.RenderPass;
+        pipelineDesc.descriptorSetLayouts.push_back(MakeFragmentProbeDescriptorSetDesc());
+        resources.Pipeline = resources.Device->CreateGraphicsPipeline(pipelineDesc);
+
+        // 異方性 4 倍。ミップの間は補間せず（点）、色が1つのミップの色そのものになるようにする。
+        SamplerDesc samplerDesc;
+        samplerDesc.filterMin = FilterMode::Linear;
+        samplerDesc.filterMag = FilterMode::Linear;
+        samplerDesc.filterMip = FilterMode::Point;
+        samplerDesc.addressU = TextureAddressMode::Clamp;
+        samplerDesc.addressV = TextureAddressMode::Clamp;
+        samplerDesc.addressW = TextureAddressMode::Clamp;
+        samplerDesc.maxAnisotropy = 4;
+        resources.Sampler = resources.Device->CreateSampler(samplerDesc);
+
+        resources.ReadbackBuffer = resources.Device->CreateBuffer(
+            BufferDesc(FragmentReadbackBytes, ResourceUsage::TransferDst, true, "VirtualTextureResidencyFragmentReadback"));
+        if (!resources.Framebuffer || !resources.Pipeline || !resources.Sampler || !resources.ReadbackBuffer)
+        {
+            std::cerr << "描画の確認用の資源を作れませんでした\n";
+            return false;
+        }
+        return true;
+    }
+
+    // quad ごとの画素 (quad * 2, 0) の色を 0〜1 の浮動小数で読み戻す。
+    bool ReadFragmentProbeColors(FragmentProbeResources& resources, const TexturePtr& texture,
+                                 float outColors[FragmentProbeCount][4])
+    {
+        DescriptorSetPtr descriptorSet = resources.Device->CreateDescriptorSet(MakeFragmentProbeDescriptorSetDesc());
+        if (!descriptorSet)
+        {
+            std::cerr << "ディスクリプタセットを作れませんでした\n";
+            return false;
+        }
+        descriptorSet->BindTexture(0u, texture);
+        descriptorSet->BindSampler(0u, resources.Sampler);
+        descriptorSet->Update();
+
+        CommandListPtr commandList = resources.Device->CreateCommandList();
+        if (!commandList)
+        {
+            std::cerr << "コマンドリストを作れませんでした\n";
+            return false;
+        }
+        Viewport viewport;
+        viewport.width = static_cast<float>(FragmentTargetWidth);
+        viewport.height = static_cast<float>(FragmentTargetHeight);
+        ScissorRect scissor;
+        scissor.right = static_cast<int32_t>(FragmentTargetWidth);
+        scissor.bottom = static_cast<int32_t>(FragmentTargetHeight);
+
+        commandList->Begin();
+        commandList->BeginRenderPass(resources.RenderPass, resources.Framebuffer);
+        commandList->SetViewport(viewport);
+        commandList->SetScissor(scissor);
+        commandList->SetPipeline(resources.Pipeline);
+        commandList->SetDescriptorSet(descriptorSet);
+        commandList->Draw(3u);
+        commandList->EndRenderPass();
+        commandList->TextureBarrier(resources.Target, ResourceState::ShaderResource, ResourceState::CopySource);
+        commandList->BufferBarrier(resources.ReadbackBuffer, ResourceState::Undefined, ResourceState::CopyDest, 0u,
+                                   FragmentReadbackBytes);
+        commandList->CopyTextureToBuffer(resources.Target, resources.ReadbackBuffer, FragmentTargetWidth,
+                                         FragmentTargetHeight, 0u);
+        commandList->TextureBarrier(resources.Target, ResourceState::CopySource, ResourceState::ShaderResource);
+        commandList->BufferBarrier(resources.ReadbackBuffer, ResourceState::CopyDest, ResourceState::HostRead, 0u,
+                                   FragmentReadbackBytes);
+        commandList->End();
+        commandList->Submit(true);
+        resources.Device->WaitIdle();
+
+        const void* mapped = resources.ReadbackBuffer->Map(0u, FragmentReadbackBytes);
+        if (mapped == nullptr)
+        {
+            std::cerr << "読み戻しのバッファを写像できませんでした\n";
+            return false;
+        }
+        const uint8_t* bytes = static_cast<const uint8_t*>(mapped);
+        for (uint32_t probe = 0; probe < FragmentProbeCount; ++probe)
+        {
+            const uint8_t* pixel = bytes + probe * 2u * 4u;
+            for (uint32_t channel = 0; channel < 4u; ++channel)
+            {
+                outColors[probe][channel] = static_cast<float>(pixel[channel]) / 255.0f;
+            }
+        }
+        resources.ReadbackBuffer->Unmap();
+        return true;
+    }
+
     // 読み戻した色が期待の色と一致し、黒や未定義の値でないことを確かめる。
     void ExpectProbe(const char* phase, uint32_t probe, const char* what, const float color[4], const uint8_t expectedRgba[4])
     {
@@ -296,7 +472,8 @@ namespace
             pipelineDesc.descriptorSetLayouts.push_back(MakeProbeDescriptorSetDesc());
             resources.Pipeline = device->CreateComputePipeline(pipelineDesc);
 
-            // 点サンプルにして、色がミップの色そのものになるようにする。
+            // 点サンプルにして、色がミップの色そのものになるようにする。異方性は 4 倍（勾配を明示する関数で、
+            // 異方性の勾配の実際の標本ミップが細かい側になるようにする）。
             SamplerDesc samplerDesc;
             samplerDesc.filterMin = FilterMode::Point;
             samplerDesc.filterMag = FilterMode::Point;
@@ -304,6 +481,7 @@ namespace
             samplerDesc.addressU = TextureAddressMode::Clamp;
             samplerDesc.addressV = TextureAddressMode::Clamp;
             samplerDesc.addressW = TextureAddressMode::Clamp;
+            samplerDesc.maxAnisotropy = 4;
             resources.Sampler = device->CreateSampler(samplerDesc);
 
             BufferDesc resultDesc;
@@ -317,6 +495,13 @@ namespace
         if (!resources.Pipeline || !resources.Sampler || !resources.ResultBuffer || !resources.ReadbackBuffer)
         {
             std::cerr << "確認用の資源を作れませんでした\n";
+            return 1;
+        }
+
+        FragmentProbeResources fragmentResources;
+        fragmentResources.Device = device;
+        if (!CreateFragmentProbeResources(fragmentResources, shaderManager))
+        {
             return 1;
         }
 
@@ -424,6 +609,20 @@ namespace
                 ExpectProbe("ミップ1未結合", 3, "ミップテイルの中のミップ2はそのまま引ける", colors[3], mip2Color);
                 ExpectProbe("ミップ1未結合", 4, "結んだタイルは勾配明示でもミップ0の色（逃げない）", colors[4], mip0Color);
                 ExpectProbe("ミップ1未結合", 5, "ミップ2相当の勾配はミップテイルの中のミップ2の色", colors[5], mip2Color);
+                ExpectProbe("ミップ1未結合", 6, "異方性 4 倍の勾配でも、結んでいない領域はミップ2の色へ逃げる", colors[6], mip2Color);
+            }
+
+            float fragmentColors[FragmentProbeCount][4] = {};
+            bool bFragmentRead = ReadFragmentProbeColors(fragmentResources, texture, fragmentColors);
+            Expect(bFragmentRead, "描画で読み戻せなければならない");
+            if (bFragmentRead)
+            {
+                ExpectProbe("ミップ1未結合(暗黙)", 0, "結んでいない領域は粗いミップ（ミップ2）の色へ逃げる", fragmentColors[0], mip2Color);
+                ExpectProbe("ミップ1未結合(暗黙)", 1, "異方性 4 倍でも結んでいない領域はミップ2の色へ逃げる", fragmentColors[1],
+                            mip2Color);
+                ExpectProbe("ミップ1未結合(暗黙)", 2, "標本ミップ 2 はミップテイルの中なので逃げずミップ2の色", fragmentColors[2],
+                            mip2Color);
+                ExpectProbe("ミップ1未結合(暗黙)", 3, "結んだタイルはミップ0の色（逃げない）", fragmentColors[3], mip0Color);
             }
 
             // ---- ミップ1のタイルを結んで、ミップ1の色を書く ----
@@ -475,6 +674,19 @@ namespace
                 ExpectProbe("ミップ1結合", 3, "ミップテイルの中のミップ2は変わらない", colors[3], mip2Color);
                 ExpectProbe("ミップ1結合", 4, "結んだタイルは勾配明示でもミップ0の色（変わらない）", colors[4], mip0Color);
                 ExpectProbe("ミップ1結合", 5, "ミップ2相当の勾配はミップテイルの中のミップ2の色（変わらない）", colors[5], mip2Color);
+                ExpectProbe("ミップ1結合", 6, "異方性 4 倍の勾配は常駐しているミップ1を飛ばさずミップ1の色", colors[6], mip1Color);
+            }
+
+            bFragmentRead = ReadFragmentProbeColors(fragmentResources, texture, fragmentColors);
+            Expect(bFragmentRead, "ミップ1を結んだあとも描画で読み戻せなければならない");
+            if (bFragmentRead)
+            {
+                ExpectProbe("ミップ1結合(暗黙)", 0, "結んでいない領域は1段だけ粗いミップ1の色へ逃げる", fragmentColors[0], mip1Color);
+                ExpectProbe("ミップ1結合(暗黙)", 1, "異方性 4 倍でも常駐しているミップ1を飛ばさずミップ1の色", fragmentColors[1],
+                            mip1Color);
+                ExpectProbe("ミップ1結合(暗黙)", 2, "標本ミップ 2 はミップテイルの中なのでミップ2の色（変わらない）",
+                            fragmentColors[2], mip2Color);
+                ExpectProbe("ミップ1結合(暗黙)", 3, "結んだタイルはミップ0の色（変わらない）", fragmentColors[3], mip0Color);
             }
 
             // ---- 後片付け: 全部外して完了を待ってから、ページを返す（先にテクスチャを破棄する） ----
@@ -504,6 +716,7 @@ namespace
 
         device->WaitIdle();
         resources = ProbeResources{};
+        fragmentResources = FragmentProbeResources{};
         shaderManager.Shutdown();
 
         const uint32_t validationErrorCount = validationCapture.GetHitCount();

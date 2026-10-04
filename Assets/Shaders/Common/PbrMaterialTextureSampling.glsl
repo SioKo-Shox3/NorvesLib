@@ -1,11 +1,11 @@
 ﻿// 暗黙のミップで標本する。画面微分（dFdx・dFdy）を使うので、フラグメントシェーダー専用で、
-// 動的に一様な制御フローで呼ぶ。bVirtualTexture のときは勾配を明示した常駐フォールバック付きの標本になる。
+// 動的に一様な制御フローで呼ぶ。bVirtualTexture のときは sparseTextureARB で標本し、常駐していなければ粗いミップへ逃げる。
 vec4 SampleMaterialTexture(sampler2D tex, vec2 uv, bool bVirtualTexture)
 {
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
     if (bVirtualTexture)
     {
-        return SampleSparseResidentGrad(tex, uv, dFdx(uv), dFdy(uv));
+        return SampleSparseResident(tex, uv);
     }
 #endif
     return texture(tex, uv);
