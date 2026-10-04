@@ -2146,7 +2146,7 @@
 - stop-when: 0.2を書き始める、複数meshを受理、Render型へ依存、旧形式の判定/頂点ABI/描画既定を変更。
 
 ## G2-GR32-V02-SCHEMA: 統一0.2の版別wire契約を固定する
-- status: todo
+- status: done
 - done-when: 旧0.0/0.1の256B/hash/単一clip契約を保ち、0.2の320B、submesh64B、Name16B+予約48Bのslot64B、複数clipの所有範囲と128関節を同じschemaへ定義する。版別header/hash/節検証のpure部品を用意し、writer/loaderの受理はまだ切り替えない。
 - verify: 固定byte/独立hash golden、版別定数/節境界/overflow/reserved/未対応版、旧hash不変、MEMBER/CTest登録。
 - stop-when: 同じminor2の予約を後でtextureへ転用、0.2へ共有128B材質を暗黙追加、旧版判定の全面緩和、writerを先に切り替える。

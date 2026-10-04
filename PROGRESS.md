@@ -592,3 +592,6 @@
 
 - G2-GR32-SUBMESH-CONTRACT: Rendering非依存のplain SkeletalSubMeshと名前slotをSkeletalGltfData末尾へ追加し、1..8のpacked三角形範囲/slot/u32制限を純kernelで検査。両表空は旧互換1範囲/slot0、片側空拒否、失敗数量0と入力非変更を維持。通常/O2-NDEBUG/ASan・UBSan（LSan除外）と実MEMBER wrapper compile成功。第1周でCTest登録抜けを修正し第2周PASS。decoder/wire/resource/描画の受理は未変更。native全体は未実行。
 - Next: GR32-V02-SCHEMA。0.2の64B名前slotとGR79/v1の128B材質を分離し、header320Bと旧版互換・複数clip所有契約を固定してから接続する。
+
+- G2-GR32-V02-SCHEMA: 旧定数/hashの5498Bを内容不変でpure公開headerへ分離し、統一0.2の320B/64B submesh/64B名前slot/複数clip所有契約をNVSKELv0.mdへ固定。版別profile/count/packed節/拡張header/raw hash入力長の純検証を追加。旧0.0/0.1の単一clip/256B/hashと現reader/writerは未変更。通常/O2-NDEBUG/ASan・UBSan（LSan除外）/実MEMBER成功、独立Python4hashと原文一致確認、独立PASS。Core全体はWindows.hで未実行。record値/文字列/padding/clip所有の実読込検査はIO接続時に残る。旧名ASCIIを維持し0.2のUTF-8/NUL拒否はwriter公開前に接続する。
+- Next: GR32-PRIMITIVE-DECODE。1mesh/1skin/1mesh-node/1clipを維持したままprimitiveを連結し、slot割当とReduce/Morphの資産集計を整合させる。未接続の下流は表を捨てず拒否する。

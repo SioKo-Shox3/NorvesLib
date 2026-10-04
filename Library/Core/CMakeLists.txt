@@ -14,6 +14,8 @@ set(PRIVATE_SOURCES
     Private/Asset/CookedAudioLoader.cpp
     Private/Asset/CookedMeshLoader.cpp
     Private/Asset/CookedSkeletalLoader.cpp
+    Private/Asset/CookedSkeletalWireValidation.h
+    Private/Asset/CookedSkeletalWireValidation.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/AssetManifest.cpp
@@ -297,6 +299,7 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
     Public/Asset/CookedSkeletalFormat.h
+    Public/Asset/CookedSkeletalWireFormat.h
     Public/Asset/CookedTextureFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/AssetManifest.h
