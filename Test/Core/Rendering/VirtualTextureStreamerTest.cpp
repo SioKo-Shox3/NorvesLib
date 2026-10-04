@@ -1,8 +1,9 @@
 ﻿// VT のストリーマ（VirtualTextureStreamer）の契約テスト。
 // 要求の集合から未常駐のタイルを優先度順に選んで読み、ページを結び、コピーを積んで常駐させること、
-// 1 フレームの上限（読み・結び付け・コピーの量）、同じタイルの二重の要求、読み込みの失敗と再試行、
-// 結び付けの失敗・コピーを積めないとき・プールが尽きたときの扱い、解除したページの遅延返却を、
-// 読み込みも GPU も偽物にして確かめる。
+// 1 フレームの上限（読み・結び付け・コピーの数と量。ミップテイルも同じ予算）、同じタイルの二重の要求、
+// 読み込みの失敗と再試行、結び付けの前にコピーを積むこと（結んだページが未コピーのまま残らない）、
+// 結び付けの失敗・コピーを積めないとき・プールが尽きたときの扱い、解除したページの遅延返却と
+// 解除したテクスチャ宛てのコピーの無効化、要求の件数による優先度を、読み込みも GPU も偽物にして確かめる。
 #include "Asset/CookedTextureFormat.h"
 #include "Rendering/GpuRetireQueue.h"
 #include "Rendering/SparsePagePool.h"
@@ -225,11 +226,43 @@ public:
         {
             return false;
         }
+        // 結ぶタイルは、結ぶ前にコピーが積まれていること（結んだページが未コピーのまま描画から読めてはいけない）
+        for (const RHI::SparseTileBind& tile : request.Tiles)
+        {
+            bool bStaged = false;
+            for (size_t index = LastBindEventCount; index < Events.size(); ++index)
+            {
+                const Event& event = Events[index];
+                if (event.Kind == EventKind::Copy && event.Mip == tile.MipLevel && event.X == tile.TileX &&
+                    event.Y == tile.TileY)
+                {
+                    bStaged = true;
+                    break;
+                }
+            }
+            if (!bStaged)
+            {
+                ++UncopiedBindViolations;
+            }
+        }
+        if (!request.MipTails.empty())
+        {
+            bool bInitStaged = false;
+            for (size_t index = LastBindEventCount; index < Events.size(); ++index)
+            {
+                bInitStaged = bInitStaged || Events[index].Kind == EventKind::Init;
+            }
+            if (!bInitStaged)
+            {
+                ++UncopiedBindViolations;
+            }
+        }
         Event event;
         event.Kind = EventKind::Bind;
         event.Tiles = request.Tiles.size();
         event.Tails = request.MipTails.size();
         Events.push_back(event);
+        LastBindEventCount = Events.size();
         for (const RHI::SparseTileBind& tile : request.Tiles)
         {
             BoundTiles.push_back({tile.MipLevel, tile.TileX, tile.TileY});
@@ -263,6 +296,26 @@ public:
         event.Bytes = bytes;
         Events.push_back(event);
         return true;
+    }
+
+    uint64_t GetCopyBytesAvailable() const override { return CopyBytesAvailable; }
+
+    // 積んだ依頼（初期化・コピー）を後ろから count 件取り消す
+    void DiscardEnqueued(uint32_t count) override
+    {
+        for (uint32_t i = 0; i < count && !Events.empty() && Events.back().Kind != EventKind::Bind; ++i)
+        {
+            Events.pop_back();
+            ++DiscardedOps;
+        }
+    }
+
+    void AbandonTexture(const RHI::TexturePtr& texture) override
+    {
+        if (texture != nullptr)
+        {
+            ++AbandonedCount;
+        }
     }
 
     size_t CountEvents(EventKind kind) const
@@ -305,6 +358,13 @@ public:
     bool bFailBind = false;
     // 積めるコピーの残り数（負は無制限、0 でリングが満杯のように積めない）
     int CopyBudget = -1;
+    // 次の記録で確実にコピーできる量（アップローダの残りの量）
+    uint64_t CopyBytesAvailable = ~0ull;
+    // 直前の結び付けの後ろの位置（結ぶ前に積まれたコピーを数える起点）
+    size_t LastBindEventCount = 0;
+    int UncopiedBindViolations = 0;
+    int DiscardedOps = 0;
+    int AbandonedCount = 0;
 };
 
 // ---- 道具 ----
@@ -388,9 +448,15 @@ struct Harness
     uint64_t Frame = 0;
 };
 
-void AddRequest(VirtualTextureRequestSet& set, uint32_t texture, uint32_t mip, uint32_t x, uint32_t y, uint64_t frame)
+void AddRequest(VirtualTextureRequestSet& set,
+                uint32_t texture,
+                uint32_t mip,
+                uint32_t x,
+                uint32_t y,
+                uint64_t frame,
+                uint32_t hits = 1)
 {
-    set.Add(MakeKey(texture, mip, x, y), frame);
+    set.Add(MakeKey(texture, mip, x, y), frame, hits);
 }
 
 // ---- テスト ----
@@ -461,12 +527,13 @@ void TestMipTailBoundOnFirstUpdate()
            "ミップテイルが常駐する前の要求は取り込まない");
 
     Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Bind) == 1, "ミップテイルの結び付けは 1 回");
-    Expect(h.Gpu.Events.size() >= 3 && h.Gpu.Events[0].Kind == FakeGpu::EventKind::Bind &&
-               h.Gpu.Events[0].Tails == 1 && h.Gpu.Events[0].Tiles == 0,
-           "最初に結ぶのはミップテイルの 1 ページ");
-    Expect(h.Gpu.Events[1].Kind == FakeGpu::EventKind::Init, "結んだ後、コピーより先に初期化の遷移を積む");
+    Expect(h.Gpu.Events.size() >= 3 && h.Gpu.Events.back().Kind == FakeGpu::EventKind::Bind &&
+               h.Gpu.Events.back().Tails == 1 && h.Gpu.Events.back().Tiles == 0,
+           "結ぶのはミップテイルの 1 ページ");
+    Expect(h.Gpu.Events[0].Kind == FakeGpu::EventKind::Init, "結ぶ前に、コピーより先に初期化の遷移を積む");
+    Expect(h.Gpu.UncopiedBindViolations == 0, "ミップテイルは初期化とコピーを積んでから結ぶ");
     size_t tailCopies = 0;
-    for (size_t i = 2; i < h.Gpu.Events.size(); ++i)
+    for (size_t i = 1; i < h.Gpu.Events.size(); ++i)
     {
         if (h.Gpu.Events[i].Kind == FakeGpu::EventKind::Copy)
         {
@@ -528,9 +595,12 @@ void TestReadAndBindLifecycle()
     Expect(h.Gpu.BoundTiles.size() == 1 && h.Gpu.BoundTiles[0].Mip == 1 && h.Gpu.BoundTiles[0].X == 2 &&
                h.Gpu.BoundTiles[0].Y == 1,
            "要求したタイルを結ぶ");
-    Expect(h.Gpu.Events.back().Kind == FakeGpu::EventKind::Copy && h.Gpu.Events.back().Mip == 1 &&
-               h.Gpu.Events.back().X == 2 && h.Gpu.Events.back().Y == 1,
-           "結んだタイルの領域へコピーする");
+    const size_t eventCount = h.Gpu.Events.size();
+    Expect(eventCount >= 2 && h.Gpu.Events[eventCount - 1].Kind == FakeGpu::EventKind::Bind &&
+               h.Gpu.Events[eventCount - 2].Kind == FakeGpu::EventKind::Copy && h.Gpu.Events[eventCount - 2].Mip == 1 &&
+               h.Gpu.Events[eventCount - 2].X == 2 && h.Gpu.Events[eventCount - 2].Y == 1,
+           "結んだタイルの領域へのコピーを、結ぶ前に積む");
+    Expect(h.Gpu.UncopiedBindViolations == 0, "結ぶタイルは、結ぶ前にコピーを積んである");
     Expect(h.Pool.GetStats().UsedBytes == 2 * SparsePagePool::PageSizeBytes, "ミップテイルとタイルで 2 ページ");
     Expect(h.Streamer.GetStats().ResidentTiles == 1, "常駐のタイルの数");
 }
@@ -576,9 +646,9 @@ void TestPerFrameLimits()
         VirtualTextureStreamerConfig config;
         config.MaxReadsStartedPerFrame = 100;
         config.MaxReadsInFlight = 3;
-        config.MaxBindsPerFrame = 0; // 結ばない間は読み込み済みのタイルが溜まる
         Harness h(config);
         const uint32_t index = h.RegisterAndMakeTailResident();
+        h.Gpu.CopyBytesAvailable = 0; // コピーを積めない間は結ばないので、読み込み済みのタイルが溜まる
         VirtualTextureRequestSet requests;
         for (uint32_t x = 0; x < 6; ++x)
         {
@@ -604,7 +674,7 @@ void TestPerFrameLimits()
         }
         h.Step(&requests); // 読み込み開始（5 件）
         const VirtualTextureFrameResult first = h.Step();
-        Expect(first.TilesBound == 2, "1 フレームに結ぶのは上限の 2 タイル");
+        Expect(first.TilesBound == 2 && first.CopiesEnqueued == 2, "1 フレームに結ぶのは上限の 2 タイル");
         const VirtualTextureFrameResult second = h.Step();
         Expect(second.TilesBound == 2, "次のフレームでも上限の 2 タイル");
         const VirtualTextureFrameResult third = h.Step();
@@ -728,6 +798,8 @@ void TestBindFailureReturnsPages()
     h.Gpu.bFailBind = true;
     const VirtualTextureFrameResult failed = h.Step();
     Expect(failed.TilesBound == 0, "結び付けに失敗したフレームは結べない");
+    Expect(h.Gpu.CountTileCopies() == 0 && h.Gpu.DiscardedOps == 2,
+           "結び付けに失敗したら、結ぶ前に積んだコピーを取り消す");
     Expect(h.Streamer.GetStats().BindFailures == 1, "結び付けの失敗を数える");
     Expect(h.Streamer.GetStats().ReadyTiles == 2, "タイルは読み込み済みのまま残る");
     Expect(h.Pool.GetStats().UsedBytes == SparsePagePool::PageSizeBytes, "借りたページはプールへ返る（ミップテイルの 1 ページだけ）");
@@ -736,9 +808,10 @@ void TestBindFailureReturnsPages()
     const VirtualTextureFrameResult ok = h.Step();
     Expect(ok.TilesBound == 2, "次のフレームで結び直す");
     Expect(h.Streamer.GetStats().ResidentTiles == 2, "常駐する");
+    Expect(h.Gpu.CountTileCopies() == 2 && h.Gpu.UncopiedBindViolations == 0, "取り消したコピーは積み直され、二重にならない");
 }
 
-void TestCopyNotEnqueuedIsRetried()
+void TestCopyNotEnqueuedKeepsPagesUnbound()
 {
     Harness h;
     const uint32_t index = h.RegisterAndMakeTailResident();
@@ -747,30 +820,54 @@ void TestCopyNotEnqueuedIsRetried()
     AddRequest(requests, index, 0, 1, 0, 1);
     h.Step(&requests);
 
-    // リングが満杯でコピーを積めない: 結んだタイルは Bound のまま、新しい結び付けは止まる
+    // リングが満杯でコピーを積めない: コピーされないページを結ばない（結ぶと描画が未初期化のデータを読む）
     h.Gpu.CopyBudget = 0;
+    const size_t boundBefore = h.Gpu.BoundTiles.size();
     const VirtualTextureFrameResult blocked = h.Step();
-    Expect(blocked.TilesBound >= 1 && blocked.CopiesEnqueued == 0, "結べてもコピーは積めない");
-    Expect(h.Streamer.GetStats().BoundAwaitingCopyTiles == blocked.TilesBound, "コピー待ちの Bound として残る");
+    Expect(blocked.TilesBound == 0 && blocked.CopiesEnqueued == 0, "コピーを積めないフレームは結ばない");
+    Expect(h.Gpu.BoundTiles.size() == boundBefore, "コピーを積めないタイルのページは結ばない");
+    Expect(h.Streamer.GetStats().ReadyTiles == 2, "読み込み済みのまま次のフレームを待つ");
     Expect(h.Streamer.GetStats().ResidentTiles == 0, "コピーが積まれるまで常駐とは数えない");
+    Expect(h.Streamer.GetStats().CopyBlockedFrames == 1, "コピーを積めなかったフレームを数える");
+    Expect(h.Pool.GetStats().UsedBytes == SparsePagePool::PageSizeBytes, "借りたページは返る（ミップテイルの 1 ページだけ）");
 
-    // まだ積めない間は、新しいタイルを結ばない（コピーされないタイルを増やさない）
+    // 新しい要求が来ても同じ
     VirtualTextureRequestSet more;
     AddRequest(more, index, 0, 2, 0, 1);
     h.Step(&more);
     h.Step();
-    const size_t boundWhileBlocked = h.Gpu.BoundTiles.size();
-    h.Step();
-    Expect(h.Gpu.BoundTiles.size() == boundWhileBlocked, "コピーが積めない間は新しいタイルを結ばない");
+    Expect(h.Gpu.BoundTiles.size() == boundBefore, "積めない間は新しいタイルも結ばない");
 
-    // 積めるようになったら出し直して常駐する
+    // 積めるようになったら結んで常駐する
     h.Gpu.CopyBudget = -1;
     h.Step();
     h.Step();
-    h.Step();
-    Expect(h.Streamer.GetStats().BoundAwaitingCopyTiles == 0, "出し直してコピー待ちが無くなる");
     Expect(h.Streamer.GetStats().ResidentTiles == 3, "3 タイルとも常駐する");
     Expect(h.Gpu.CountTileCopies() == 3, "各タイルのコピーは 1 回ずつ");
+    Expect(h.Gpu.UncopiedBindViolations == 0, "結んだタイルは、結ぶ前にコピーを積んである");
+}
+
+void TestPartialStagingBindsOnlyCopiedTiles()
+{
+    Harness h;
+    const uint32_t index = h.RegisterAndMakeTailResident();
+    VirtualTextureRequestSet requests;
+    AddRequest(requests, index, 0, 0, 0, 5);
+    AddRequest(requests, index, 0, 1, 0, 4);
+    AddRequest(requests, index, 0, 2, 0, 3);
+    h.Step(&requests);
+
+    // コピーを 1 件だけ積めるとき、積めたタイルだけを結び、残りは次のフレームへ
+    h.Gpu.CopyBudget = 1;
+    const VirtualTextureFrameResult first = h.Step();
+    Expect(first.TilesBound == 1 && first.CopiesEnqueued == 1, "積めた 1 タイルだけ結ぶ");
+    Expect(h.Gpu.BoundTiles.size() == 1 && h.Gpu.BoundTiles[0].X == 0, "優先度の高いタイルから結ぶ");
+    Expect(h.Streamer.GetStats().ReadyTiles == 2, "残りは読み込み済みのまま待つ");
+
+    h.Gpu.CopyBudget = -1;
+    h.Step();
+    Expect(h.Streamer.GetStats().ResidentTiles == 3, "積めるようになれば残りも常駐する");
+    Expect(h.Gpu.UncopiedBindViolations == 0, "結んだタイルは、結ぶ前にコピーを積んである");
 }
 
 void TestInvalidRequestsIgnored()
@@ -813,6 +910,155 @@ void TestStaleWantedDropped()
     }
     Expect(h.Streamer.GetTileState(MakeKey(index, 0, 0, 0)) == VirtualTextureTileState::None, "要求が途絶えたまま期限を過ぎたら忘れる");
     Expect(h.Streamer.GetStats().StaleDropped == 1, "忘れた数を数える");
+}
+
+void TestTailSharesFrameBudget()
+{
+    const uint64_t tailBytes = MakeTailData().size();
+
+    // 結び付けの数: 1 フレームに結ぶのは 1 件で、ミップテイルも数える
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxBindsPerFrame = 1;
+        config.MaxCopyBytesPerFrame = 65536;
+        Harness h(config);
+        const uint32_t first = h.Register();
+        const uint32_t second = h.Register();
+        const VirtualTextureFrameResult one = h.Step();
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Bind) == 1 && h.Gpu.Events.back().Tails == 1,
+               "1 フレームに結ぶミップテイルは上限の 1 枚");
+        Expect(one.CopiesEnqueued == 8 && one.CopiedBytes == tailBytes, "結んだ 1 枚の分だけコピーする");
+        Expect(h.Streamer.IsMipTailResident(first) && !h.Streamer.IsMipTailResident(second), "後のテクスチャは次のフレームへ");
+        h.Step();
+        Expect(h.Streamer.IsMipTailResident(second), "次のフレームで 2 枚目のミップテイルを結ぶ");
+        Expect(h.Pool.GetStats().UsedBytes == 2 * SparsePagePool::PageSizeBytes, "2 枚で 2 ページ");
+    }
+    // コピーの量: 2 枚目を足すと上限を超えるので次のフレームへ
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopyBytesPerFrame = tailBytes + tailBytes / 2;
+        Harness h(config);
+        h.Register();
+        h.Register();
+        const VirtualTextureFrameResult one = h.Step();
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Bind) == 1 && one.CopiedBytes == tailBytes,
+               "コピーの量の上限を超えるミップテイルは次のフレームへ");
+        h.Step();
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Bind) == 2, "次のフレームで結ぶ");
+    }
+    // コピーの数: ミップテイルは段ごとに 1 件で数える
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopiesPerFrame = 8;
+        Harness h(config);
+        h.Register();
+        h.Register();
+        const VirtualTextureFrameResult one = h.Step();
+        Expect(h.Gpu.CountEvents(FakeGpu::EventKind::Bind) == 1 && one.CopiesEnqueued == 8,
+               "コピーの数の上限を超えるミップテイルは次のフレームへ");
+    }
+    // 1 件が上限より大きくても、そのフレームの最初の 1 件は通す（永久に進まなくなるのを防ぐ）
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxCopyBytesPerFrame = 100;
+        config.MaxCopiesPerFrame = 1;
+        Harness h(config);
+        const uint32_t index = h.Register();
+        h.Step();
+        Expect(h.Streamer.IsMipTailResident(index), "上限より大きくても、最初の 1 件のミップテイルは結ぶ");
+    }
+    // 結び付けの数を 0 にすると、ミップテイルも結ばない
+    {
+        VirtualTextureStreamerConfig config;
+        config.MaxBindsPerFrame = 0;
+        Harness h(config);
+        const uint32_t index = h.Register();
+        h.Step();
+        Expect(!h.Streamer.IsMipTailResident(index) && h.Gpu.BindCalls == 0, "結び付けの上限が 0 なら何も結ばない");
+    }
+}
+
+void TestUploaderAvailabilityLimitsStaging()
+{
+    const uint64_t tailBytes = MakeTailData().size();
+
+    // タイルのコピーは、アップローダが確実に記録できる量までしか積まない
+    {
+        Harness h;
+        const uint32_t index = h.RegisterAndMakeTailResident();
+        VirtualTextureRequestSet requests;
+        for (uint32_t x = 0; x < 4; ++x)
+        {
+            AddRequest(requests, index, 0, x, 0, 1);
+        }
+        h.Step(&requests);
+
+        h.Gpu.CopyBytesAvailable = 2ull * TestTileBytes;
+        const VirtualTextureFrameResult first = h.Step();
+        Expect(first.TilesBound == 2 && first.CopiedBytes == 2ull * TestTileBytes, "記録できる量の 2 タイルだけ積む");
+        h.Gpu.CopyBytesAvailable = TestTileBytes - 1;
+        Expect(h.Step().TilesBound == 0, "1 タイルに足りない量では積まない");
+        Expect(h.Streamer.GetStats().ReadyTiles == 2, "積めなかったタイルは読み込み済みのまま待つ");
+        h.Gpu.CopyBytesAvailable = ~0ull;
+        h.Step();
+        Expect(h.Streamer.GetStats().ResidentTiles == 4, "量が空いたら残りも常駐する");
+    }
+    // ミップテイルとタイルは同じ残りを分け合う
+    {
+        Harness h;
+        const uint32_t first = h.RegisterAndMakeTailResident();
+        VirtualTextureRequestSet requests;
+        AddRequest(requests, first, 0, 0, 0, 1);
+        AddRequest(requests, first, 0, 1, 0, 1);
+        h.Step(&requests);
+        const uint32_t second = h.Register();
+
+        h.Gpu.CopyBytesAvailable = tailBytes + TestTileBytes;
+        const VirtualTextureFrameResult result = h.Step();
+        Expect(h.Streamer.IsMipTailResident(second) && result.TilesBound == 1, "2 枚目のミップテイルと 1 タイルを積む");
+        Expect(result.CopiedBytes == tailBytes + TestTileBytes, "ミップテイルの分を引いた残りで、タイルを積む");
+        Expect(h.Gpu.UncopiedBindViolations == 0, "結んだものは、結ぶ前にコピーを積んである");
+    }
+}
+
+void TestUnregisterAbandonsPendingCopies()
+{
+    Harness h;
+    const uint32_t first = h.RegisterAndMakeTailResident();
+    const uint32_t second = h.Register();
+    h.Step();
+    Expect(h.Gpu.AbandonedCount == 0, "登録中は無効にしない");
+    h.Streamer.UnregisterTexture(first);
+    Expect(h.Gpu.AbandonedCount == 1, "解除したテクスチャ宛ての出していない依頼を無効にする");
+    h.Streamer.UnregisterTexture(first);
+    Expect(h.Gpu.AbandonedCount == 1, "解除済みの番号を再び解除しても何もしない");
+    h.Streamer.Clear();
+    Expect(h.Gpu.AbandonedCount == 2 && second != first, "全部の解除でも、残りのテクスチャ宛ての依頼を無効にする");
+}
+
+void TestPriorityPrefersMoreHitsInSameMip()
+{
+    VirtualTextureStreamerConfig config;
+    config.MaxReadsStartedPerFrame = 1;
+    Harness h(config);
+    const uint32_t index = h.RegisterAndMakeTailResident();
+
+    VirtualTextureRequestSet requests;
+    AddRequest(requests, index, 1, 0, 0, 90, 1);   // 最近だが、画面に占める量が少ない
+    AddRequest(requests, index, 1, 1, 0, 10, 50);  // 古いが、画面で目立つ
+    AddRequest(requests, index, 1, 0, 1, 20, 50);  // 同じ件数なら最近のものが先
+    AddRequest(requests, index, 2, 0, 0, 1, 1);    // 粗いミップは件数が少なくても先
+    h.Step(&requests);
+    for (int i = 0; i < 4; ++i)
+    {
+        h.Step();
+    }
+
+    Expect(h.Source->Started.size() == 4, "4 件を 1 フレームに 1 件ずつ始める");
+    Expect(h.Source->Started[0] == MakeKey(index, 2, 0, 0), "最も粗いミップが先");
+    Expect(h.Source->Started[1] == MakeKey(index, 1, 0, 1), "同じミップでは件数が多いものが先、同数なら最近のものが先");
+    Expect(h.Source->Started[2] == MakeKey(index, 1, 1, 0), "件数が同じなら最近のものが先");
+    Expect(h.Source->Started[3] == MakeKey(index, 1, 0, 0), "件数が少ないものは最近でも後");
 }
 
 void TestUnregisterRetiresPages()
@@ -871,10 +1117,15 @@ int RunTest()
     TestReadFailureAndRetry();
     TestWrongSizeAndBeginFailureAreFailures();
     TestBindFailureReturnsPages();
-    TestCopyNotEnqueuedIsRetried();
+    TestCopyNotEnqueuedKeepsPagesUnbound();
+    TestPartialStagingBindsOnlyCopiedTiles();
+    TestTailSharesFrameBudget();
+    TestUploaderAvailabilityLimitsStaging();
+    TestPriorityPrefersMoreHitsInSameMip();
     TestInvalidRequestsIgnored();
     TestStaleWantedDropped();
     TestUnregisterRetiresPages();
+    TestUnregisterAbandonsPendingCopies();
     TestClearReleasesEverything();
 
     if (g_failures != 0)

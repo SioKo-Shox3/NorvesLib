@@ -372,7 +372,7 @@ namespace NorvesLib::Core::Asset
         {
             if (pOutReason != nullptr)
             {
-                *pOutReason = resolved.Reason.empty() ? Container::AnsiString("cooked entry is not available")
+                *pOutReason = resolved.Reason.empty() ? Container::AnsiString("クック済みのエントリが使えない")
                                                       : resolved.Reason;
             }
             return false;
@@ -381,7 +381,7 @@ namespace NorvesLib::Core::Asset
         {
             if (pOutReason != nullptr)
             {
-                *pOutReason = "cooked entry is compressed and cannot be read by range";
+                *pOutReason = "クック済みのエントリが圧縮されていて範囲読みできない";
             }
             return false;
         }

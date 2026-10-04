@@ -153,6 +153,56 @@ void TestDecodeAndDeduplicate()
     }
     Expect(foundDecoded, "取り出した要求にミップ・x・y・フレームが入っている");
     Expect(set.GetTextureIndices().size() == 2, "テクスチャの番号の一覧は 2 枚");
+    for (const VirtualTextureTileRequest& request : texture0)
+    {
+        if (request.Mip == 1)
+        {
+            Expect(request.HitCount == 3, "同じタイルの要求の件数（3 件）を足し合わせて持つ");
+        }
+        else
+        {
+            Expect(request.HitCount == 1, "1 件だけの要求の件数は 1");
+        }
+    }
+}
+
+void TestHitCountAccumulatesAndSaturates()
+{
+    const uint32_t capacity = 8;
+    VariableArray<uint32_t> words;
+    words.push_back(Feedback::Pack(MakeKey(2, 0, 1, 1)));
+    words.push_back(Feedback::Pack(MakeKey(2, 0, 1, 1)));
+    const VariableArray<uint32_t> buffer = MakeBuffer(capacity, 2, words);
+
+    // 別のバッファから取り込んでも件数は足し合わさる
+    VirtualTextureRequestSet set;
+    set.AddFeedbackBuffer(buffer.data(), capacity, 10);
+    set.AddFeedbackBuffer(buffer.data(), capacity, 11);
+    Expect(set.GetRequests(2).size() == 1 && set.GetRequests(2)[0].HitCount == 4, "バッファをまたいで件数を足す");
+
+    // 別の集合を取り込んでも足し合わさり、最後のフレームは大きい方が残る
+    VirtualTextureRequestSet other;
+    other.Add(MakeKey(2, 0, 1, 1), 30, 5);
+    other.Add(MakeKey(2, 0, 2, 2), 7, 9);
+    set.Merge(other);
+    Expect(set.GetRequestCount() == 2, "集合の取り込みで新しいタイルが増える");
+    for (const VirtualTextureTileRequest& request : set.GetRequests(2))
+    {
+        if (request.X == 1)
+        {
+            Expect(request.HitCount == 9 && request.LastRequestedFrame == 30, "取り込んだ集合の件数も足す");
+        }
+        else
+        {
+            Expect(request.HitCount == 9 && request.LastRequestedFrame == 7, "新しいタイルは件数ごと取り込む");
+        }
+    }
+
+    // 件数は uint32_t で頭打ちにして、巻き戻らない
+    VirtualTextureRequestSet saturated;
+    saturated.Add(MakeKey(0, 0, 0, 0), 1, 0xFFFFFFF0u);
+    saturated.Add(MakeKey(0, 0, 0, 0), 2, 100);
+    Expect(saturated.GetRequests(0)[0].HitCount == 0xFFFFFFFFu, "件数は上限で頭打ちになる");
 }
 
 void TestLastRequestedFrame()
@@ -535,6 +585,7 @@ int RunTest()
 {
     TestPackUnpack();
     TestDecodeAndDeduplicate();
+    TestHitCountAccumulatesAndSaturates();
     TestLastRequestedFrame();
     TestOverflowCount();
     TestMerge();

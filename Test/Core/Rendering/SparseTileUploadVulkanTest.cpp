@@ -489,6 +489,102 @@ namespace
         Expect(uploader.GetStats().RingBytes == 0 && uploader.GetStats().RingUsedBytes == 0, "Clear でリングと使用量を手放す");
     }
 
+    // 取り消しと解除の契約: 積んだ依頼を記録する前に取り消せる。解除したテクスチャ宛ての依頼は GPU へ出さない。
+    // 記録できる量の残りは、まだ記録していない依頼の分だけ減る。
+    void TestDiscardAndAbandon(Harness& harness)
+    {
+        std::cout << TestName << " --- 取り消しと解除の契約 ---" << std::endl;
+        TileUploader::Config config;
+        config.RingBytes = TestRingBytes;
+        config.FrameCopyLimitBytes = 8u * Page;
+        TileUploader uploader(harness.Device, config);
+        const VariableArray<uint8_t> data = MakeData(7u, harness.Regions[0].Bytes);
+        const uint64_t bytes = data.size();
+
+        Expect(uploader.GetRecordableCopyBytes() == config.FrameCopyLimitBytes, "何も積んでいなければ、記録できる量は上限のまま");
+        Expect(uploader.DiscardLastEnqueued(1u) == 0u, "何も積んでいなければ取り消すものは無い");
+
+        // 取り消し: 後ろから取り消し、リングの区画と記録できる量が積む前へ戻る
+        Expect(uploader.EnqueueTile(harness.Texture, harness.Regions[0].Region, data.data(), bytes), "1件目を積む");
+        const uint64_t usedAfterOne = uploader.GetStats().RingUsedBytes;
+        Expect(uploader.EnqueueTile(harness.Texture, harness.Regions[1].Region, data.data(), bytes), "2件目を積む");
+        Expect(uploader.EnqueueTile(harness.Texture, harness.Regions[2].Region, data.data(), bytes), "3件目を積む");
+        Expect(uploader.GetRecordableCopyBytes() == config.FrameCopyLimitBytes - 3u * bytes, "積んだ分だけ記録できる量が減る");
+        Expect(uploader.DiscardLastEnqueued(2u) == 2u, "後ろから2件を取り消す");
+        Expect(uploader.GetStats().PendingCopies == 1u && uploader.GetStats().RingUsedBytes == usedAfterOne,
+               "取り消した分のリングの区画は積む前へ戻る");
+        Expect(uploader.GetRecordableCopyBytes() == config.FrameCopyLimitBytes - bytes, "取り消した分だけ記録できる量が戻る");
+        Expect(uploader.EnqueueTile(harness.Texture, harness.Regions[1].Region, data.data(), bytes), "取り消した後にまた積める");
+        {
+            CommandListPtr commandList = harness.Device->CreateCommandList();
+            commandList->Begin();
+            uploader.BeginFrame(0u);
+            Expect(uploader.RecordCopies(*commandList) == 2u, "取り消さなかった1件と積み直した1件を記録する");
+            commandList->End();
+            commandList->Submit(true);
+            uploader.CommitFrame(1u);
+        }
+        Expect(uploader.DiscardLastEnqueued(1u) == 0u, "記録を始めた依頼は取り消さない");
+        uploader.BeginFrame(1u);
+        Expect(uploader.GetStats().RingUsedBytes == 0u, "提出が完了したら区画が空く");
+
+        // 解除: 未記録の依頼はその場で無効になり、記録されず、区画は順番どおりに手放される
+        Expect(uploader.EnqueueTile(harness.Texture, harness.Regions[0].Region, data.data(), bytes), "解除前の依頼を積む");
+        Expect(uploader.EnqueueTile(harness.Texture, harness.Regions[1].Region, data.data(), bytes), "解除前の依頼をもう1件積む");
+        uploader.AbandonTexture(harness.Texture);
+        Expect(uploader.GetStats().PendingCopies == 0u, "解除したテクスチャ宛ての未記録の依頼は無効になる");
+        Expect(uploader.GetRecordableCopyBytes() == config.FrameCopyLimitBytes, "無効にした依頼は記録できる量を使わない");
+        {
+            CommandListPtr commandList = harness.Device->CreateCommandList();
+            commandList->Begin();
+            uploader.BeginFrame(1u);
+            Expect(uploader.RecordCopies(*commandList) == 0u, "無効にした依頼は記録しない");
+            commandList->End();
+            commandList->Submit(true);
+            uploader.CommitFrame(2u);
+        }
+        uploader.BeginFrame(1u);
+        Expect(uploader.GetStats().RingUsedBytes == 0u, "無効にした依頼の区画は、先頭から順に手放される");
+
+        // 解除: 記録中のフレームを提出できなかったときは、出し直さず無効にする
+        Expect(uploader.EnqueueTile(harness.Texture, harness.Regions[0].Region, data.data(), bytes), "記録する依頼を積む");
+        {
+            CommandListPtr commandList = harness.Device->CreateCommandList();
+            commandList->Begin();
+            uploader.BeginFrame(2u);
+            Expect(uploader.RecordCopies(*commandList) == 1u, "依頼を記録する");
+            uploader.AbandonTexture(harness.Texture);
+            commandList->End();
+            uploader.AbortFrame();
+            const TileUploader::Stats stats = uploader.GetStats();
+            Expect(stats.PendingCopies == 0u && stats.InFlightCopies == 0u,
+                   "記録中に解除して提出しなかった依頼は、未記録へ戻さず無効にする");
+        }
+        uploader.BeginFrame(2u);
+        Expect(uploader.GetStats().RingUsedBytes == 0u, "提出しなかった無効な依頼の区画も手放される");
+
+        // 解除: 記録中のフレームを提出したときは、そのフレームの完了まで区画を持つ
+        Expect(uploader.EnqueueTile(harness.Texture, harness.Regions[0].Region, data.data(), bytes), "もう一度、記録する依頼を積む");
+        {
+            CommandListPtr commandList = harness.Device->CreateCommandList();
+            commandList->Begin();
+            uploader.BeginFrame(2u);
+            Expect(uploader.RecordCopies(*commandList) == 1u, "依頼を記録する");
+            uploader.AbandonTexture(harness.Texture);
+            commandList->End();
+            commandList->Submit(true);
+            uploader.CommitFrame(3u);
+        }
+        uploader.BeginFrame(2u);
+        Expect(uploader.GetStats().InFlightCopies == 1u && uploader.GetStats().RingUsedBytes > 0u,
+               "記録中に解除して提出した依頼は、完了まで保持する");
+        uploader.BeginFrame(3u);
+        Expect(uploader.GetStats().RingUsedBytes == 0u, "提出の完了で区画が空く");
+
+        harness.Device->WaitIdle();
+        uploader.Clear();
+    }
+
     // 領域を最後に書いた内容を、別のコマンドで読み戻して確かめる
     bool RegionEquals(Harness& harness, const RegionSpec& spec, const VariableArray<uint8_t>& expected)
     {
@@ -746,6 +842,7 @@ namespace
             TestContinuousFrames(harness);
             TestFinalContents(harness);
             TestRingContract(harness);
+            TestDiscardAndAbandon(harness);
             TestOverlappingWrites(harness);
             TestWaitIdleCounterDetectsUpdate(harness);
 

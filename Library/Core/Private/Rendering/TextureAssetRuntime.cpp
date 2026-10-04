@@ -352,7 +352,7 @@ namespace NorvesLib::Core::Rendering
         {
             if (pOutReason != nullptr)
             {
-                *pOutReason = Container::String("texture path cannot be resolved through the asset manifest");
+                *pOutReason = Container::String("テクスチャのパスをアセットマニフェスト経由で解決できない");
             }
             return false;
         }

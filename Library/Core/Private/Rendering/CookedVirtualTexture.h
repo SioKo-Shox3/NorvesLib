@@ -78,6 +78,12 @@ namespace NorvesLib::Core::Rendering
             return m_Uploader.EnqueueTile(texture, region, data, bytes);
         }
 
+        uint64_t GetCopyBytesAvailable() const override { return m_Uploader.GetRecordableCopyBytes(); }
+
+        void DiscardEnqueued(uint32_t count) override { m_Uploader.DiscardLastEnqueued(count); }
+
+        void AbandonTexture(const RHI::TexturePtr &texture) override { m_Uploader.AbandonTexture(texture); }
+
     private:
         Container::TSharedPtr<RHI::IDevice> m_Device;
         TileUploader &m_Uploader;
@@ -199,22 +205,22 @@ namespace NorvesLib::Core::Rendering
         Asset::CookedTextureParseResult layout = Asset::ReadCookedTextureLayout(reader, request, baseOffset, nvtexSize);
         if (!layout.Succeeded())
         {
-            return fail("cooked texture layout read failed");
+            return fail("クック済みテクスチャのレイアウトを読めなかった");
         }
         Asset::CookedTextureData &texture = layout.Texture;
         if (!texture.bTiled)
         {
-            return fail("cooked texture is not NVTEX v0.2 (tiled)");
+            return fail("クック済みテクスチャが NVTEX v0.2（タイル分割）ではない");
         }
         if (texture.LayerCount != 1)
         {
-            return fail("virtual texture supports a single layer only");
+            return fail("VT は単一レイヤーのテクスチャにだけ対応する");
         }
 
         TextureCreateInfo createInfo;
         if (BuildCookedTextureCreateInfo(texture, debugName, createInfo, false) != CookedTextureUploadStatus::Success)
         {
-            return fail("cooked texture format is not supported");
+            return fail("クック済みテクスチャの形式に対応していない");
         }
         createInfo.bSparse = true;
 
@@ -226,7 +232,7 @@ namespace NorvesLib::Core::Rendering
                 Asset::ReadCookedTextureMipTail(reader, request, baseOffset, texture);
             if (!tail.Succeeded() || tail.Blob.GetSize() != texture.Tiling.TailSize)
             {
-                return fail("cooked texture mip tail read failed");
+                return fail("クック済みテクスチャのミップテイルを読めなかった");
             }
             const auto bytes = tail.Blob.GetSpan();
             tailData.assign(bytes.data(), bytes.data() + bytes.size());

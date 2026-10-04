@@ -166,10 +166,92 @@ namespace NorvesLib::Core::Rendering
             op.Region.BufferOffset = offset;
             op.DataBytes = bytes;
             op.RingBytes = ringBytes;
+            op.HeadBefore = m_Head;
             m_Ops.push_back(std::move(op));
             m_Head = offset + alignedBytes;
             m_UsedBytes += ringBytes;
             return true;
+        }
+
+        /**
+         * @brief 次の RecordCopies で確実に記録できるコピー量の残り（バイト）
+         *
+         * フレームのコピー量の上限から、記録済みの量と、まだ記録していないコピーの量を引いた値。
+         * 描画から読まれる前にコピーを済ませたい呼び出し側（VT のストリーマ）は、この範囲でだけ積む。
+         */
+        uint64_t GetRecordableCopyBytes() const
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            uint64_t used = m_FrameCopiedBytes;
+            for (const Op &op : m_Ops)
+            {
+                if (op.bCopy && !op.bCancelled && op.State == OpState::Pending)
+                {
+                    used += op.DataBytes;
+                }
+            }
+            return used >= m_Config.FrameCopyLimitBytes ? 0 : m_Config.FrameCopyLimitBytes - used;
+        }
+
+        /**
+         * @brief 最後に積んだ count 件（遷移の依頼を含む）を、記録する前に取り消す
+         *
+         * 結び付けに失敗したときなど、積んだコピーを無かったことにする。リングの区画も元へ戻す。
+         * 後ろから順に取り消し、記録を始めた依頼に当たったらそこで止める。
+         * @return 取り消した件数
+         */
+        uint32_t DiscardLastEnqueued(uint32_t count)
+        {
+            Container::VariableArray<RHI::TexturePtr> released;
+            uint32_t discarded = 0;
+            {
+                Thread::ScopedLock lock(m_Mutex);
+                while (discarded < count && !m_Ops.empty() && m_Ops.back().State == OpState::Pending &&
+                       !m_Ops.back().bCancelled)
+                {
+                    Op &back = m_Ops.back();
+                    if (back.bCopy)
+                    {
+                        m_UsedBytes -= back.RingBytes;
+                        m_Head = back.HeadBefore;
+                    }
+                    released.push_back(std::move(back.Texture));
+                    m_Ops.pop_back();
+                    ++discarded;
+                }
+            }
+            return discarded;
+        }
+
+        /**
+         * @brief あるテクスチャ宛ての、まだ GPU へ出していない依頼を無効にする（登録の解除）
+         *
+         * 解除したテクスチャのページは別のテクスチャへ使い回されるので、古いコピーが後から書き込まないようにする。
+         * 未記録の依頼はその場で無効にし、記録中のフレームの依頼は、そのフレームを提出できなかったとき
+         * （AbortFrame）に無効にする。提出済みの依頼は、ページの返却が提出の完了まで待つので何もしない。
+         */
+        void AbandonTexture(const RHI::TexturePtr &texture)
+        {
+            if (!texture)
+            {
+                return;
+            }
+            Thread::ScopedLock lock(m_Mutex);
+            for (Op &op : m_Ops)
+            {
+                if (op.Texture.get() != texture.get() || op.bCancelled)
+                {
+                    continue;
+                }
+                if (op.State == OpState::Pending)
+                {
+                    CancelLocked(op);
+                }
+                else if (op.State == OpState::Recorded)
+                {
+                    op.bAbandoned = true;
+                }
+            }
         }
 
         /**
@@ -222,6 +304,11 @@ namespace NorvesLib::Core::Rendering
             while (endPending < m_Ops.size())
             {
                 const Op &op = m_Ops[endPending];
+                if (op.bCancelled)
+                {
+                    ++endPending;
+                    continue;
+                }
                 if (op.bCopy)
                 {
                     if (copiedBytes + op.DataBytes > m_Config.FrameCopyLimitBytes)
@@ -257,6 +344,10 @@ namespace NorvesLib::Core::Rendering
             for (size_t index = firstPending; index < endPending; ++index)
             {
                 const Op &op = m_Ops[index];
+                if (op.bCancelled)
+                {
+                    continue;
+                }
                 if (!op.bCopy)
                 {
                     commandList.TextureBarrier(op.Texture, RHI::ResourceState::Undefined, RHI::ResourceState::ShaderResource);
@@ -285,6 +376,10 @@ namespace NorvesLib::Core::Rendering
             for (size_t index = firstPending; index < endPending; ++index)
             {
                 Op &op = m_Ops[index];
+                if (op.bCancelled)
+                {
+                    continue;
+                }
                 op.State = OpState::Recorded;
                 if (!op.bCopy)
                 {
@@ -325,13 +420,25 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        /** @brief フレームを提出せずに捨てた。記録した分は未記録へ戻し、次のフレームで出し直す。 */
+        /**
+         * @brief フレームを提出せずに捨てた。記録した分は未記録へ戻し、次のフレームで出し直す。
+         *
+         * 記録中に AbandonTexture で解除されたテクスチャの依頼は、出し直さず無効にする。
+         */
         void AbortFrame()
         {
             Thread::ScopedLock lock(m_Mutex);
             for (Op &op : m_Ops)
             {
-                if (op.State == OpState::Recorded)
+                if (op.State != OpState::Recorded)
+                {
+                    continue;
+                }
+                if (op.bAbandoned)
+                {
+                    CancelLocked(op);
+                }
+                else
                 {
                     op.State = OpState::Pending;
                 }
@@ -378,7 +485,7 @@ namespace NorvesLib::Core::Rendering
             stats.RingUsedBytes = m_UsedBytes;
             for (const Op &op : m_Ops)
             {
-                if (!op.bCopy)
+                if (!op.bCopy || op.bCancelled)
                 {
                     continue;
                 }
@@ -425,7 +532,22 @@ namespace NorvesLib::Core::Rendering
             uint64_t RingBytes = 0;
             uint64_t Serial = 0;
             OpState State = OpState::Pending;
+            // 積む前のリングの先頭の位置（DiscardLastEnqueued が戻す）
+            uint64_t HeadBefore = 0;
+            // 解除されたテクスチャ宛てで、記録中のフレームが捨てられたら無効にする
+            bool bAbandoned = false;
+            // 無効にした依頼。コマンドへ記録せず、区画だけを順番どおりに手放す（提出済みの完了済みとして扱う）
+            bool bCancelled = false;
         };
+
+        // 依頼を無効にする。区画は先頭から順に手放す決まりなので、完了済みの提出として並びに残す。ロックを持って呼ぶ。
+        static void CancelLocked(Op &op)
+        {
+            op.bCancelled = true;
+            op.bAbandoned = false;
+            op.State = OpState::InFlight;
+            op.Serial = 0;
+        }
 
         // 同じテクスチャの同じミップ・配列要素で、書込み先の矩形が重なるか
         static bool OverlapsRegion(const Op &a, const Op &b)

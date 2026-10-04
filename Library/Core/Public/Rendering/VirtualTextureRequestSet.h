@@ -95,6 +95,13 @@ namespace NorvesLib::Core::Rendering
         uint32_t Y = 0;
         /** @brief このタイルを最後に要求したフレーム */
         uint64_t LastRequestedFrame = 0;
+        /**
+         * @brief 集合に取り込んだ要求の件数（同じタイルの要求を足し合わせた数）
+         *
+         * フィードバックは画素ごとに 1 件を書くので、画面にそのタイルが占める面積の目安になる。
+         * 近くて大きく映るものほど大きい。読み込みの優先度で「画面で目立つ」順に使う。
+         */
+        uint32_t HitCount = 0;
     };
 
     /** @brief バッファ 1 枚を取り込んだときの内訳 */
@@ -152,7 +159,7 @@ namespace NorvesLib::Core::Rendering
                     continue;
                 }
                 ++result.Decoded;
-                if (!Add(key, frame))
+                if (!Add(key, frame, 1))
                 {
                     ++result.Duplicates;
                 }
@@ -161,11 +168,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
-         * @brief 1 タイルの要求を足す。新しいタイルなら true、既にあれば最後のフレームだけ進めて false
+         * @brief 1 タイルの要求を足す。新しいタイルなら true、既にあれば最後のフレームを進めて件数を足して false
          *
          * 1 語に収まらない印（CanPack が false）は、別のタイルと区別できなくなるので足さない（false）。
+         * @param hits このタイルの要求の件数（件数の合計は uint32_t で頭打ちにする）
          */
-        bool Add(const VirtualTextureTileKey &key, uint64_t frame)
+        bool Add(const VirtualTextureTileKey &key, uint64_t frame, uint32_t hits = 1)
         {
             if (!VirtualTextureFeedback::CanPack(key))
             {
@@ -176,14 +184,15 @@ namespace NorvesLib::Core::Rendering
             auto it = tiles.find(tileKey);
             if (it == tiles.end())
             {
-                tiles.emplace(tileKey, frame);
+                tiles.emplace(tileKey, TileEntry{frame, hits});
                 ++m_RequestCount;
                 return true;
             }
-            if (frame > it->second)
+            if (frame > it->second.Frame)
             {
-                it->second = frame;
+                it->second.Frame = frame;
             }
+            it->second.Hits = AddSaturated(it->second.Hits, hits);
             return false;
         }
 
@@ -199,7 +208,7 @@ namespace NorvesLib::Core::Rendering
                     key.Mip = (tile.first >> (2u * VirtualTextureFeedback::TileBits)) & VirtualTextureFeedback::MaxMip;
                     key.Y = (tile.first >> VirtualTextureFeedback::TileBits) & VirtualTextureFeedback::MaxTileCoord;
                     key.X = tile.first & VirtualTextureFeedback::MaxTileCoord;
-                    Add(key, tile.second);
+                    Add(key, tile.second.Frame, tile.second.Hits);
                 }
             }
             m_OverflowCount += other.m_OverflowCount;
@@ -237,7 +246,7 @@ namespace NorvesLib::Core::Rendering
             {
                 return false;
             }
-            outFrame = tile->second;
+            outFrame = tile->second.Frame;
             return true;
         }
 
@@ -269,15 +278,27 @@ namespace NorvesLib::Core::Rendering
                 request.Mip = (tile.first >> (2u * VirtualTextureFeedback::TileBits)) & VirtualTextureFeedback::MaxMip;
                 request.Y = (tile.first >> VirtualTextureFeedback::TileBits) & VirtualTextureFeedback::MaxTileCoord;
                 request.X = tile.first & VirtualTextureFeedback::MaxTileCoord;
-                request.LastRequestedFrame = tile.second;
+                request.LastRequestedFrame = tile.second.Frame;
+                request.HitCount = tile.second.Hits;
                 requests.push_back(request);
             }
             return requests;
         }
 
     private:
-        // テクスチャの欄を除いた語（ミップ・y・x）から最後に要求したフレームへ
-        using TileMap = Container::UnorderedMap<uint32_t, uint64_t>;
+        struct TileEntry
+        {
+            uint64_t Frame = 0;
+            uint32_t Hits = 0;
+        };
+
+        // テクスチャの欄を除いた語（ミップ・y・x）から、最後に要求したフレームと要求の件数へ
+        using TileMap = Container::UnorderedMap<uint32_t, TileEntry>;
+
+        static constexpr uint32_t AddSaturated(uint32_t a, uint32_t b)
+        {
+            return a > 0xFFFFFFFFu - b ? 0xFFFFFFFFu : a + b;
+        }
 
         static constexpr uint32_t MakeTileKey(const VirtualTextureTileKey &key)
         {
