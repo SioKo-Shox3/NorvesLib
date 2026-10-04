@@ -52,6 +52,13 @@
 # （既定 0.1 以下）と PSNR（既定 45 dB 以上）を deterministic_comparison として metrics.json へ書く。
 # 撮り直さず既存の2つの出力先だけを比べるときは -CompareOnly を足す。-OrbitDegreesPerSecond・
 # -StillRenderedFrames・-GpuTimingFrames（連続撮影・計測）とは併用しない。
+#
+# -StressTextures でテクスチャの負荷モード（--stress-textures: 地面の外側へ、負荷用の材質 24 種を貼った板を格子に並べ、
+# カメラの軸を格子の中心へ移す）の default・low と、格子を見下ろす top（0,80,70）を撮る。負荷用のテクスチャは
+# Scripts/FetchPolyHavenTextures.ps1 -StressSet で落とし、CookAssets で焼く。-VramBudgetMb（--vram-budget-mb）で
+# VRAM の上限を人工的に下げ、各撮影のログの VRAM_POOLS（cap_mb・vt_target_mb・vt_used_mb・vt_evicted_tiles）を
+# metrics.json へ書く。最後の VT の使用量（vt_used_mb_last）が目標（vt_target_mb）を超えたまま終わったか、負荷用の材質がそろっていなければ失敗にする
+# （目標が縮んだ直後の1回の確認の間だけ使用量が超えることがあるので、最大 vt_used_mb_max は失敗にせず書くだけ）。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -107,6 +114,11 @@ param(
     [switch]$LooseTextures,
     # 決定的な撮影（--capture-deterministic）で撮る。同じコードを2回撮ると一致する（見た目の保全を数値で比べる用）。
     [switch]$Deterministic,
+    # テクスチャの負荷モード（--stress-textures）で default・low・top の3視点を撮る。-ViewNames で絞れる。
+    [switch]$StressTextures,
+    # VRAM の上限（MB。--vram-budget-mb）。0 は渡さない。
+    [ValidateRange(0, 1048576)]
+    [int]$VramBudgetMb = 0,
     # 同じコードを -Deterministic で撮った別の出力先。各視点の平均輝度の差と PSNR を求めて metrics.json へ書き、
     # 平均輝度の差が -DeterministicMeanLuminanceLimit を超えるか PSNR が -DeterministicPsnrLimit を下回れば失敗にする。
     [string]$CompareDeterministicWith = '',
@@ -167,13 +179,19 @@ if ($DefaultCamera -ne '')
 {
     $views[0].Camera = $DefaultCamera
 }
+if ($StressTextures)
+{
+    # 負荷モードはカメラの軸が格子の中心なので、近接（球が無い）は撮らず、格子の全体を見下ろす視点を足す。
+    $views = @($views | Where-Object { $_.Name -ne 'near' })
+    $views += [pscustomobject]@{ Name = 'top'; Camera = '0,80,70'; NoiseRegions = @() }
+}
 $viewNameList = @(($ViewNames -join ',').Split(',', [StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
 if ($viewNameList.Count -gt 0)
 {
     $unknownViews = @($viewNameList | Where-Object { $_ -notin $views.Name })
     if ($unknownViews.Count -gt 0)
     {
-        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low）"
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low・top）"
         exit 1
     }
     $views = @($views | Where-Object { $_.Name -in $viewNameList })
@@ -640,6 +658,14 @@ foreach ($view in $shots)
     {
         $arguments += '--capture-deterministic'
     }
+    if ($StressTextures)
+    {
+        $arguments += '--stress-textures'
+    }
+    if ($VramBudgetMb -gt 0)
+    {
+        $arguments += "--vram-budget-mb=$VramBudgetMb"
+    }
     foreach ($extraArgument in (($ExtraGameArguments -join ' ').Split(@(' ', ','), [StringSplitOptions]::RemoveEmptyEntries)))
     {
         $arguments += $extraArgument
@@ -716,8 +742,34 @@ foreach ($view in $shots)
     $indirectLighting = $null
     $vramLedgerTextureMb = $null
     $cookedMissingCount = $null
+    $vramPools = $null
+    $stressMaterials = $null
     if (Test-Path -LiteralPath $viewLogPath)
     {
+        # VRAM_POOLS（予算の割り振りと VT の使用量）。数値は "none"（上限なし）のこともある。使用量は最大と最後の値を残す。
+        $poolLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'VRAM_POOLS cap_mb=(\w+) non_pool_mb=(\d+) vt_target_mb=(\w+) vt_used_mb=(\d+) vt_evicted_tiles=(\d+)')
+        if ($poolLines.Count -gt 0)
+        {
+            $lastPool = $poolLines[$poolLines.Count - 1].Matches[0].Groups
+            $maxUsed = ($poolLines | ForEach-Object { [uint64]$_.Matches[0].Groups[4].Value } | Measure-Object -Maximum).Maximum
+            $targetText = $lastPool[3].Value
+            $vramPools = [ordered]@{
+                cap_mb = $lastPool[1].Value
+                non_pool_mb = [uint64]$lastPool[2].Value
+                vt_target_mb = $targetText
+                vt_used_mb_last = [uint64]$lastPool[4].Value
+                vt_used_mb_max = [uint64]$maxUsed
+                vt_evicted_tiles = [uint64]$lastPool[5].Value
+                lines = $poolLines.Count
+            }
+        }
+        $stressLine = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_TEXTURES materials=(\d+) of (\d+)')
+        if ($stressLine.Count -gt 0)
+        {
+            $stressGroups = $stressLine[$stressLine.Count - 1].Matches[0].Groups
+            $stressMaterials = [ordered]@{ present = [int]$stressGroups[1].Value; total = [int]$stressGroups[2].Value }
+        }
+
         # テクスチャの VRAM（最後の VRAM_LEDGER）と、クック済みが無くばらで読んだテクスチャの数。
         $ledgerTextureMb = @(Select-String -LiteralPath $viewLogPath -Pattern 'VRAM_LEDGER textures=\d+ texture_mb=([0-9.]+)' |
             ForEach-Object { $_.Matches[0].Groups[1].Value })
@@ -737,6 +789,17 @@ foreach ($view in $shots)
         foreach ($line in $shaderFailures)
         {
             $failures += "$($view.Name): $($line.Line.Trim())"
+        }
+        if ($StressTextures)
+        {
+            if ($null -eq $stressMaterials -or $stressMaterials.present -ne $stressMaterials.total)
+            {
+                $failures += "$($view.Name): 負荷用の材質がそろっていない（STRESS_TEXTURES materials=$(if ($null -eq $stressMaterials) { 'なし' } else { "$($stressMaterials.present) of $($stressMaterials.total)" })。FetchPolyHavenTextures.ps1 -StressSet と CookAssets を実行する）"
+            }
+            if ($null -ne $vramPools -and $vramPools.vt_target_mb -ne 'none' -and $vramPools.vt_used_mb_last -gt [uint64]$vramPools.vt_target_mb)
+            {
+                $failures += "$($view.Name): VT の使用量が目標を超えたまま終わった（vt_used_mb_last=$($vramPools.vt_used_mb_last) vt_target_mb=$($vramPools.vt_target_mb)）"
+            }
         }
         if ($images.Count -gt 1)
         {
@@ -784,6 +847,8 @@ foreach ($view in $shots)
             indirect_lighting = $indirectLighting
             vram_ledger_texture_mb = $vramLedgerTextureMb
             cooked_missing_count = $cookedMissingCount
+            vram_pools = $vramPools
+            stress_materials = $stressMaterials
         }
         $results += [pscustomobject]$result
         Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5} indirect_lighting={6}" -f `

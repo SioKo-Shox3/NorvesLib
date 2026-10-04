@@ -262,7 +262,7 @@
 - notes: VTG2-VT-STARTUP の評価（run `20261004-210106` 反復13）の3点目で、実機の確認は一時の環境変数で fragmentStoresAndAtomics を無いことにして行った（コミットしていない）。契約として残すための後追い。
 
 ## VTG2-STRESS-TEXTURES: テクスチャの負荷モードを足す
-- status: todo
+- status: done
 - done-when: `Scripts/FetchPolyHavenTextures.ps1` に負荷用の材質の組（Poly Haven の CC0 の地面・壁・木などの材質 20種以上、4K）を `-StressSet` で足し、`CookAssets` が焼く（無ければ飛ばす）。Game の `--stress-textures` で、起動画面の地面の外側に負荷用の材質を貼った板を格子に並べた検証モードに入る。全常駐なら負荷用の材質の量が VT のプールの目標の2倍以上になる `--vram-budget-mb` で撮り、`VRAM_POOLS` の vt_used_mb が目標以下に収まり、撮影（既定・低角度と、格子の上を見下ろす視点）を開いて黒・未定義の色が見えないことを記録する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game CookAssets -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-STRESS-TEXTURES -Configuration RelWithDebInfo -Deterministic`

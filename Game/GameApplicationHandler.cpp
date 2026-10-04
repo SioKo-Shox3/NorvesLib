@@ -131,6 +131,10 @@ namespace Game
         // off は VT を使わず、段1の全常駐で描く（見た目・VRAM の比較用）。
         constexpr const TCHAR *kVirtualTextureOption = TEXT("--virtual-texture=");
         bool s_bRendering3DTestVirtualTexture = true;
+        // --stress-textures: テクスチャの負荷モード。起動画面の地面の外側へ、負荷用の材質（4K、24 種）を貼った板を格子に並べ、
+        // カメラの軸を格子の中心へ移す。--vram-budget-mb と併せて、VT が目標の中で描けることを確かめる。
+        constexpr const TCHAR *kStressTexturesOption = TEXT("--stress-textures");
+        bool s_bRendering3DTestStressTextures = false;
         bool s_bRendering3DTestHasHeightFogDensity = false;
         float s_Rendering3DTestHeightFogDensity = 0.0f;
         bool s_bRendering3DTestHasHeightFogFalloff = false;
@@ -606,6 +610,12 @@ namespace Game
             if (args[i] == kNightOption)
             {
                 s_bRendering3DTestNight = true;
+                continue;
+            }
+
+            if (args[i] == kStressTexturesOption)
+            {
+                s_bRendering3DTestStressTextures = true;
                 continue;
             }
 
@@ -1789,6 +1799,7 @@ namespace Game
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
                 mode->GetData().m_bVirtualTexture = s_bRendering3DTestVirtualTexture;
+                mode->GetData().m_bStressTextures = s_bRendering3DTestStressTextures;
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
                 mode->GetData().m_IsTextureCooked = [this](const String &logicalPath)
                 {

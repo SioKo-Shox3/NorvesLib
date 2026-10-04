@@ -108,6 +108,13 @@ namespace Game::GameModes
         // 見本の材質（Rendering3DTestRoutine.cpp の表と同じ並び。テクスチャが無い材質は無効のまま）
         VariableArray<NorvesLib::Core::Rendering::MaterialHandle> m_GroundSwatchMaterials;
 
+        // テクスチャの負荷モード（--stress-textures）。地面の外側へ、負荷用の材質を貼った板を格子に並べる。
+        // 板のメッシュは 200 から板ごとに1つずつ使う。材質は Rendering3DTestRoutine.cpp の kStressMaterials と同じ並びで、
+        // テクスチャが無い材質は無効のまま（その板は置かない）。
+        static constexpr uint32_t kStressPanelMeshHandleBase = 200u;
+        bool m_bStressTextures = false;
+        VariableArray<NorvesLib::Core::Rendering::MaterialHandle> m_StressMaterials;
+
         // テクスチャハンドル
         NorvesLib::Core::Rendering::TextureHandle m_CheckerTextureHandle;
         NorvesLib::Core::Rendering::TextureHandle m_F6AtlasTextureHandle;

@@ -336,6 +336,54 @@ namespace Game::GameModes
             return true;
         }
 
+        // テクスチャの負荷モード（--stress-textures）: 地面（60 m 四方）の外側の奥（+z）へ、負荷用の材質を貼った
+        // 12 m 四方の板を 6 列 × 4 行の格子（間隔 14 m）に並べる。4K の色・法線・ORM が 24 材質分（全常駐なら約 1.6 GB）で、
+        // VT のプールの目標より多くなる上限（--vram-budget-mb）で、VT が目標の中でタイルを入れ替えて描けることを確かめる。
+        // テクスチャは Scripts/FetchPolyHavenTextures.ps1 -StressSet が落とし、CookAssets が焼く（git の管理外）。
+        // 並びはスクリプトと Assets/AssetSets/Rendering3DTestStressTextures.json と同じ。
+        // 起動画面そのものは変えない（このモードのときだけ、カメラの軸を格子の中心へ移す）。
+        struct StressMaterialSpec
+        {
+            const char *AssetId; // Poly Haven の資産ID（フォルダ名・ファイル名の接頭辞）
+            float TileMeters;    // テクスチャ1枚の実寸（m）
+        };
+        constexpr StressMaterialSpec kStressMaterials[] = {
+            {"aerial_rocks_02", 2.0f},     {"coast_sand_rocks_02", 2.0f},     {"dry_ground_rocks", 2.0f},
+            {"gravel_ground_01", 2.0f},    {"forest_ground_04", 2.0f},        {"rock_04", 2.0f},
+            {"castle_brick_01", 2.0f},     {"concrete_wall_003", 2.0f},       {"quarry_wall", 3.0f},
+            {"mossy_stone_wall", 2.0f},    {"brown_planks_03", 1.5f},         {"dark_planks", 1.5f},
+            {"herringbone_parquet", 1.5f}, {"bark_brown_01", 2.0f},           {"cobblestone_floor_01", 2.0f},
+            {"brick_floor", 2.0f},         {"concrete_floor_worn_001", 3.0f}, {"terracotta_floor_tiles", 2.0f},
+            {"corrugated_iron", 2.0f},     {"rusty_metal_02", 2.0f},          {"metal_plate", 2.0f},
+            {"clay_roof_tiles", 2.0f},     {"roof_slates_02", 2.0f},          {"grey_roof_tiles", 2.0f},
+        };
+        constexpr uint32_t kStressMaterialCount =
+            static_cast<uint32_t>(sizeof(kStressMaterials) / sizeof(kStressMaterials[0]));
+        constexpr uint32_t kStressGridColumns = 6u;
+        constexpr float kStressPanelSize = 12.0f;
+        constexpr float kStressPanelPitch = 14.0f;
+        // 格子の中心（地面の端 z=30 から 10 m 空け、4行ぶんの奥行きの半分だけ奥）
+        constexpr float kStressGridCenterX = 0.0f;
+        constexpr float kStressGridCenterZ = 68.0f;
+
+        // i 番目の板の中心（x・z、m）
+        void GetStressPanelCenter(uint32_t index, float &outX, float &outZ)
+        {
+            const uint32_t rowCount = (kStressMaterialCount + kStressGridColumns - 1u) / kStressGridColumns;
+            outX = kStressGridCenterX +
+                   (static_cast<float>(index % kStressGridColumns) - 0.5f * static_cast<float>(kStressGridColumns - 1u)) *
+                       kStressPanelPitch;
+            outZ = kStressGridCenterZ +
+                   (static_cast<float>(index / kStressGridColumns) - 0.5f * static_cast<float>(rowCount - 1u)) *
+                       kStressPanelPitch;
+        }
+
+        // 負荷用の材質のテクスチャの読み込みパスの組み立てと存在の確認に、見本の区画と同じ関数を使うための表の項目
+        GroundSwatchSpec MakeStressTextureSpec(const StressMaterialSpec &spec)
+        {
+            return GroundSwatchSpec{spec.AssetId, 0.0f, spec.TileMeters, 0.0f};
+        }
+
         double ElapsedMilliseconds(std::chrono::steady_clock::time_point startTime)
         {
             return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime).count();
@@ -797,7 +845,15 @@ namespace Game::GameModes
                 return false;
             }
 
-            data.m_pCameraPivotObject->SetPosition(0.0f, 0.0f, 0.0f);
+            // 負荷モードは、カメラの軸を格子の中心へ移す（視点の引数はその周りの角度と距離になる）
+            if (data.m_bStressTextures)
+            {
+                data.m_pCameraPivotObject->SetPosition(kStressGridCenterX, 0.0f, kStressGridCenterZ);
+            }
+            else
+            {
+                data.m_pCameraPivotObject->SetPosition(0.0f, 0.0f, 0.0f);
+            }
             data.m_pSpringArmComponent =
                 ctx.WorldRef.CreateComponent<Component::SpringArmComponent>(data.m_pCameraObject);
             data.m_pCameraComponent =
@@ -1207,6 +1263,36 @@ namespace Game::GameModes
             }
             NORVES_LOG_INFO("Rendering3DTest", "Ground pieces registered: %zu pieces", data.m_GroundPieces.size());
 
+            // 負荷モードの板（12 m 四方の平面。UVは板の中心を原点にした位置をテクスチャ1枚の実寸で割った値）
+            if (data.m_bStressTextures)
+            {
+                for (uint32_t panelIndex = 0; panelIndex < kStressMaterialCount; ++panelIndex)
+                {
+                    const MeshDataHandle panelHandle{Rendering3DTestData::kStressPanelMeshHandleBase + panelIndex};
+                    VariableArray<Mesh3DVertex> panelVertices;
+                    VariableArray<uint32_t> panelIndices;
+                    ProceduralMeshGenerator::GeneratePlane(kStressPanelSize, kStressPanelSize, 4, 4, panelVertices, panelIndices);
+                    for (Mesh3DVertex &vertex : panelVertices)
+                    {
+                        vertex.TexCoord[0] = (vertex.Position[0] + kStressPanelSize * 0.5f) / kStressMaterials[panelIndex].TileMeters;
+                        vertex.TexCoord[1] = (vertex.Position[2] + kStressPanelSize * 0.5f) / kStressMaterials[panelIndex].TileMeters;
+                    }
+                    if (meshes.Register(panelHandle,
+                                        panelVertices.data(),
+                                        static_cast<uint32_t>(panelVertices.size() * sizeof(Mesh3DVertex)),
+                                        panelIndices.data(),
+                                        static_cast<uint32_t>(panelIndices.size())))
+                    {
+                        ctx.ScopeRef.TrackMesh(panelHandle);
+                    }
+                    else
+                    {
+                        NORVES_LOG_ERROR("Rendering3DTest", "負荷モードの板のメッシュを登録できませんでした: %s",
+                                         kStressMaterials[panelIndex].AssetId);
+                    }
+                }
+            }
+
             data.m_bMeshesRegistered = bSphereOk && bGroundOk;
 
             // 大きな球の高ポリのMegaGeometry（BuildBigSphereMegaData）の頂点・変位・クラスタを別スレッドで作り始め、
@@ -1442,6 +1528,53 @@ namespace Game::GameModes
                 }
             }
 
+            // --- 負荷モードの材質（見本の区画と同じ流れ。高さは使わない。テクスチャが無い材質は作らない） ---
+            data.m_StressMaterials.clear();
+            if (data.m_bStressTextures)
+            {
+                uint32_t stressPresentCount = 0;
+                for (uint32_t stressIndex = 0; stressIndex < kStressMaterialCount; ++stressIndex)
+                {
+                    const StressMaterialSpec &stressSpec = kStressMaterials[stressIndex];
+                    const GroundSwatchSpec textureSpec = MakeStressTextureSpec(stressSpec);
+                    if (!AreGroundSwatchTexturesPresent(data, textureSpec))
+                    {
+                        NORVES_LOG_WARNING("Rendering3DTest",
+                                           "負荷モードの材質のテクスチャが無いので、その板は置きません: %s"
+                                           "（Scripts/FetchPolyHavenTextures.ps1 -StressSet で落とし、CookAssets で焼けます）",
+                                           stressSpec.AssetId);
+                        data.m_StressMaterials.push_back(MaterialHandle::Invalid());
+                        continue;
+                    }
+
+                    MaterialCreateData stressMatInfo;
+                    stressMatInfo.DebugName = stressSpec.AssetId;
+                    const MaterialHandle stressMaterial = materials.Create(stressMatInfo);
+                    data.m_StressMaterials.push_back(stressMaterial);
+                    ++stressPresentCount;
+
+                    auto stressUpdate = MakeShared<PendingMaterialUpdate>();
+                    stressUpdate->TargetMaterial = stressMaterial;
+                    stressUpdate->CreateData = stressMatInfo;
+                    auto finishStress = [stressUpdate, &materials]()
+                    {
+                        materials.Update(stressUpdate->TargetMaterial, stressUpdate->CreateData);
+                    };
+
+                    MaterialTexturePaths stressPaths;
+                    stressPaths.Albedo = MakeGroundSwatchTexturePath(textureSpec, "diff");
+                    stressPaths.Normal = MakeGroundSwatchTexturePath(textureSpec, "nor_dx");
+                    stressPaths.Orm = String("Assets/Textures/PolyHaven/") + stressSpec.AssetId + "/" + stressSpec.AssetId + "_orm_4k";
+                    stressPaths.Roughness = MakeGroundSwatchTexturePath(textureSpec, "rough");
+                    stressPaths.AO = MakeGroundSwatchTexturePath(textureSpec, "ao");
+                    RequestMaterialTextures(data, textures, stressUpdate, stressPaths, finishStress);
+
+                    data.m_PendingMaterialUpdates.push_back(stressUpdate);
+                }
+                NORVES_LOG_INFO("Rendering3DTest", "STRESS_TEXTURES materials=%u of %u",
+                                static_cast<unsigned>(stressPresentCount), static_cast<unsigned>(kStressMaterialCount));
+            }
+
             // 光源球体マテリアル作成（エミッシブ、テクスチャ不要）
             MaterialCreateData lightSphereMatInfo;
             lightSphereMatInfo.EmissiveColor[0] = kLightBulbColor[0];
@@ -1549,6 +1682,35 @@ namespace Game::GameModes
             }
 
             LOG_INFO("Ground pieces created and added to World count=%zu", data.m_GroundPieces.size());
+
+            // --- 負荷モードの板（Y=-1.0。材質が作れた板だけ置く） ---
+            if (data.m_bStressTextures)
+            {
+                for (uint32_t panelIndex = 0; panelIndex < data.m_StressMaterials.size(); ++panelIndex)
+                {
+                    if (!data.m_StressMaterials[panelIndex].IsValid())
+                    {
+                        continue;
+                    }
+                    float panelX = 0.0f;
+                    float panelZ = 0.0f;
+                    GetStressPanelCenter(panelIndex, panelX, panelZ);
+                    Entity *panelObject = world.SpawnObject<Entity>();
+                    ctx.ScopeRef.TrackObject(panelObject);
+                    panelObject->SetPosition(panelX, -1.0f, panelZ);
+
+                    Component::MeshComponent *panelMeshComponent =
+                        world.CreateComponent<Component::MeshComponent>(panelObject);
+                    panelMeshComponent->SetMeshHandle(MeshDataHandle{Rendering3DTestData::kStressPanelMeshHandleBase + panelIndex});
+                    panelMeshComponent->SetCastShadow(false);
+                    panelMeshComponent->SetCustomData(0, 1.0f);
+                    panelMeshComponent->SetCustomData(1, 1.0f);
+                    panelMeshComponent->SetCustomData(2, 1.0f);
+                    panelMeshComponent->SetCustomData(3, 1.0f);
+                    panelMeshComponent->SetMaterial(0, data.m_StressMaterials[panelIndex]);
+                }
+                LOG_INFO("Stress panels created and added to World count=%zu", data.m_StressMaterials.size());
+            }
 
             // --- ポイントライト光源球体オブジェクト ---
             data.m_pLightSphereObject = world.SpawnObject<Entity>();
@@ -2857,6 +3019,7 @@ namespace Game::GameModes
         data.m_pGroundMeshComponent = nullptr;
         data.m_GroundPieces.clear();
         data.m_GroundSwatchMaterials.clear();
+        data.m_StressMaterials.clear();
         data.m_pLightSphereObject = nullptr;
         data.m_pLightSphereMeshComponent = nullptr;
         data.m_pPointLightComponent = nullptr;
