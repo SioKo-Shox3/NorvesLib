@@ -269,12 +269,30 @@ int main()
     RefuseCapture(final, tampered, restored);
     const char* empty = "{\"version\":1,\"assets\":[]}";
     RefuseCapture(final, stage, Parse({reinterpret_cast<const uint8_t*>(empty), std::strlen(empty)}));
-    // 単体writerに別keyを追記させ、有効だが余分なrowを持つfragmentを拒否する。
+    // raw単体writerはmanifestを置換するため、2つの実出力rowから余分なfragmentを構築する。
+    const auto originalFragment = Read(stage.Context.Request.ManifestPath);
+    PlanText originalJson;
+    originalJson.append(reinterpret_cast<const char*>(originalFragment.data()), originalFragment.size());
     auto extra = stage.Context.Request;
     extra.InputPath = source;
     extra.LogicalPath = "Test/foreign";
     extra.PackagePath = stage.Context.Request.PackagePath.parent_path() / "foreign.nvpkg";
     CHECK(CookSingleAsset(extra, error));
+    const auto foreignFragment = Read(stage.Context.Request.ManifestPath);
+    CHECK(Load(stage.Context.Request.ManifestPath).GetReferenceCount() == 1);
+    PlanText foreignJson;
+    foreignJson.append(reinterpret_cast<const char*>(foreignFragment.data()), foreignFragment.size());
+    const char* originalEnd = std::strrchr(originalJson.c_str(), ']');
+    const char* foreignBegin = std::strchr(foreignJson.c_str(), '[');
+    const char* foreignEnd = std::strrchr(foreignJson.c_str(), ']');
+    CHECK(originalEnd && foreignBegin && foreignEnd && foreignBegin < foreignEnd);
+    PlanText combined;
+    const size_t prefix = static_cast<size_t>(originalEnd - originalJson.c_str());
+    combined.append(originalJson.data(), prefix);
+    combined.append(",");
+    combined.append(foreignBegin + 1, static_cast<size_t>(foreignEnd - foreignBegin - 1));
+    combined.append(originalJson.data() + prefix, originalJson.size() - prefix);
+    Write(stage.Context.Request.ManifestPath, {reinterpret_cast<const uint8_t*>(combined.data()), combined.size()});
     const auto extraManifest = Load(stage.Context.Request.ManifestPath);
     CHECK(extraManifest.GetReferenceCount() == 2);
     RefuseCapture(final, stage, extraManifest);
