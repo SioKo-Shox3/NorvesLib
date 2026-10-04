@@ -24,7 +24,7 @@
 - notes: 計画書 4.1。予算をプールへ割り振る `VideoMemoryBudgetManager` は段2（VTG2-BUDGET-MANAGER）。危険地帯（RHI/Vulkan）。
 
 ## VTG1-VRAM-LEDGER: テクスチャのVRAMを形式とミップ込みで数え、ログに出す
-- status: todo
+- status: done
 - done-when: `GpuResourceStore` が各テクスチャの確保量（形式の1画素のバイト数 × 全ミップの画素数）を持ち、`ResourceStats` に `TextureBytes` を出す。`IGPUResourceAllocator` の `EstimateTextureSize` がミップを数える。Game は起動画面の非同期のテクスチャの読み込みが終わった後に1回 `VRAM_LEDGER textures=<n> texture_mb=<n.n> buffers_mb=<n.n>` をログへ出す。CPU のテスト `TextureMemoryLedgerTest`（`RenderResourcesDomainContractTest` の束の MEMBER）が RGBA8 4096² 全ミップ = 89,478,484 B、RGBA8 1×1 = 4 B、作成→解放で合計が戻ることを確かめる。起動画面の撮影のログで `VRAM_LEDGER` の値を記録する（地面の見本を含む今の状態の基準値）。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^TextureMemoryLedgerTest$"`

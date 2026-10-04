@@ -1512,6 +1512,38 @@ namespace Game
         {
             m_SequenceFrameCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
         }
+        LogVramLedgerOnce();
+    }
+
+    void GameApplicationHandler::LogVramLedgerOnce()
+    {
+        // 読み込み中を一度も見ない場合の待ち上限（描画フレーム数）。
+        constexpr uint32_t kVramLedgerFallbackFrames = 600u;
+
+        if (m_bVramLedgerLogged || !NorvesLib::Core::Engine::GEngine)
+        {
+            return;
+        }
+
+        ++m_VramLedgerFrameCount;
+        const bool bPending = NorvesLib::Core::Engine::GEngine->GetRenderWorld().HasPendingAsyncAssets();
+        if (bPending)
+        {
+            m_bVramLedgerSawPending = true;
+            return;
+        }
+        if (!m_bVramLedgerSawPending && m_VramLedgerFrameCount < kVramLedgerFallbackFrames)
+        {
+            return;
+        }
+
+        m_bVramLedgerLogged = true;
+        const auto stats = NorvesLib::Core::Engine::GEngine->GetRenderResources().GetResourceStats();
+        constexpr double kBytesPerMb = 1024.0 * 1024.0;
+        LOG_INFO("VRAM_LEDGER textures=%u texture_mb=%.1f buffers_mb=%.1f",
+                 static_cast<unsigned>(stats.TextureCount),
+                 static_cast<double>(stats.TextureBytes) / kBytesPerMb,
+                 static_cast<double>(stats.TotalBufferMemory) / kBytesPerMb);
     }
 
     bool GameApplicationHandler::ShouldAdvanceSimulation() const

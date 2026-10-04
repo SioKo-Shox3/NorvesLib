@@ -1,4 +1,4 @@
-#include "Rendering/GpuResourceStore.h"
+﻿#include "Rendering/GpuResourceStore.h"
 
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -71,6 +71,19 @@ namespace NorvesLib::Core::Rendering
             default:
                 return RHI::Format::R8G8B8A8_UNORM;
             }
+        }
+
+        // RHI テクスチャの実際の形式・ミップ数・配列数から確保量を数える。
+        size_t EstimateRHITextureBytes(const RHI::ITexture &texture)
+        {
+            RHI::TextureDesc desc;
+            desc.Width = texture.GetWidth();
+            desc.Height = texture.GetHeight();
+            desc.Depth = texture.GetDepth();
+            desc.MipLevels = texture.GetMipLevels();
+            desc.ArraySize = texture.GetArraySize();
+            desc.TextureFormat = texture.GetFormat();
+            return RHI::EstimateTextureSize(desc);
         }
 
         uint32_t GetTextureBytesPerPixel(TextureCreateInfo::Format format)
@@ -229,6 +242,7 @@ namespace NorvesLib::Core::Rendering
         data.Width = createInfo.Width;
         data.Height = createInfo.Height;
         data.Format = createInfo.PixelFormat;
+        data.Bytes = EstimateRHITextureBytes(*data.RHITexture);
         data.RefCount = 1;
         data.DebugName = createInfo.DebugName;
 
@@ -319,6 +333,7 @@ namespace NorvesLib::Core::Rendering
         data.Width = createInfo.Width;
         data.Height = createInfo.Height;
         data.Format = createInfo.PixelFormat;
+        data.Bytes = EstimateRHITextureBytes(*data.RHITexture);
         data.RefCount = 1;
         data.DebugName = createInfo.DebugName;
 
@@ -573,6 +588,13 @@ namespace NorvesLib::Core::Rendering
             (void)id;
             stats.TotalBufferMemory += data.Size;
         }
+
+        for (const auto &[id, data] : m_Textures)
+        {
+            (void)id;
+            stats.TextureBytes += data.Bytes;
+        }
+        stats.TotalTextureMemory = stats.TextureBytes;
 
         return stats;
     }

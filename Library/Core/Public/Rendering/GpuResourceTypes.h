@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Rendering/MaterialTypes.h"
 #include "Rendering/RenderTypes.h"
@@ -110,6 +110,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Width = 0;
         uint32_t Height = 0;
         TextureCreateInfo::Format Format;
+        size_t Bytes = 0; // 形式の1画素のバイト数 × 全ミップの画素数 × 配列数。外部登録は 0（所有しない）。
         uint32_t RefCount = 0;
         Container::String DebugName;
     };
@@ -156,5 +157,6 @@ namespace NorvesLib::Core::Rendering
         uint32_t SamplerCount = 0;
         size_t TotalBufferMemory = 0;
         size_t TotalTextureMemory = 0;
+        size_t TextureBytes = 0; // 所有するテクスチャの確保量の合計（TotalTextureMemory と同じ値）
     };
 }

@@ -1660,6 +1660,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     FOLDER "Test/Core/Rendering"
     MEMBER RenderResourcesDomainContractTest RenderResourcesDomainContractTest.cpp
     MEMBER MeshResourcesProceduralGpuTest MeshResourcesProceduralGpuTest.cpp
+    MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
 )
 target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
 target_include_directories(RenderResourcesDomainContractTest PRIVATE
@@ -1668,6 +1669,7 @@ target_include_directories(RenderResourcesDomainContractTest PRIVATE
 add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainContractTest)
 
 add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContractTest --test=MeshResourcesProceduralGpuTest)
+add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
 
 add_executable(MeshResourcesPrimitiveTest
     MeshResourcesPrimitiveTest.cpp

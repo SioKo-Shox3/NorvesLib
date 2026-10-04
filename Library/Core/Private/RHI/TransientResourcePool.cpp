@@ -5,65 +5,6 @@ namespace NorvesLib::RHI
 {
     namespace
     {
-        size_t GetFormatBytesPerPixel(Format format)
-        {
-            switch (format)
-            {
-            case Format::R8_UNORM:
-                return 1;
-            case Format::R8G8_UNORM:
-                return 2;
-            case Format::R8G8B8A8_UNORM:
-            case Format::R8G8B8A8_SRGB:
-            case Format::B8G8R8A8_UNORM:
-            case Format::B8G8R8A8_SRGB:
-            case Format::R32_FLOAT:
-            case Format::D24_UNORM_S8_UINT:
-            case Format::D32_FLOAT:
-                return 4;
-            case Format::R16_FLOAT:
-            case Format::D16_UNORM:
-                return 2;
-            case Format::R16G16_FLOAT:
-                return 4;
-            case Format::R16G16B16A16_FLOAT:
-                return 8;
-            case Format::R32G32_FLOAT:
-                return 8;
-            case Format::R32G32B32_FLOAT:
-                return 12;
-            case Format::R32G32B32A32_FLOAT:
-                return 16;
-            default:
-                return 4;
-            }
-        }
-
-        size_t EstimateTextureSize(const TextureDesc& desc)
-        {
-            size_t total = 0;
-            uint32_t width = desc.Width > 0 ? desc.Width : 1;
-            uint32_t height = desc.Height > 0 ? desc.Height : 1;
-            uint32_t depth = desc.Depth > 0 ? desc.Depth : 1;
-            const uint32_t mipLevels = desc.MipLevels > 0 ? desc.MipLevels : 1;
-            const size_t bytesPerPixel = GetFormatBytesPerPixel(desc.TextureFormat);
-
-            for (uint32_t mipLevel = 0; mipLevel < mipLevels; ++mipLevel)
-            {
-                total += static_cast<size_t>(width) *
-                         static_cast<size_t>(height) *
-                         static_cast<size_t>(depth) *
-                         static_cast<size_t>(desc.ArraySize) *
-                         bytesPerPixel;
-
-                width = width > 1 ? width / 2 : 1;
-                height = height > 1 ? height / 2 : 1;
-                depth = depth > 1 ? depth / 2 : 1;
-            }
-
-            return total;
-        }
-
         RenderTargetKey MakeRenderTargetKey(const TextureDesc& desc)
         {
             RenderTargetKey key;

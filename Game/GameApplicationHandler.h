@@ -115,6 +115,12 @@ namespace Game
         void ParseBridgePortOption(
             const NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Container::String>& args);
 
+        /**
+         * @brief 非同期の読み込みが落ち着いた最初の描画の後に、テクスチャとバッファの確保量を VRAM_LEDGER として1回ログへ出す。
+         * @note 読み込み中を一度も見ないまま一定フレームが過ぎたときも、その時点で1回出す。
+         */
+        void LogVramLedgerOnce();
+
         // ゲーム固有のメンバー変数
         bool m_bIsPaused = false;
         bool m_bHasTextureAssetRuntimeConfig = false;
@@ -127,6 +133,11 @@ namespace Game
         // --capture-sequence で、1回の起動の中の複数の描画フレームを撮る。
         Game::Debug::SequenceFrameCapture m_SequenceFrameCapture;
         NorvesLib::Core::Container::TSharedPtr<Game::GameModes::M9WorldAcceptanceConfig> m_M9WorldAcceptance;
+
+        // 起動画面の非同期の読み込みが終わった後に VRAM_LEDGER を1回だけログへ出すための状態。
+        bool m_bVramLedgerLogged = false;
+        bool m_bVramLedgerSawPending = false;
+        uint32_t m_VramLedgerFrameCount = 0;
 
         // Bridge（NorvesEditor 連携）。adapter は host より長生きする必要があるため、
         // 宣言順を adapter → host にしてデストラクト順（host → adapter）を保証する。
