@@ -191,6 +191,24 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
+         * @brief 上限の下で、プールが持てる物理メモリの量（バイト。上限なしは uint64_t の最大値）
+         *
+         * 塊の単位でしか増えないので、上限が塊の倍数でなければ端数は使えない。持っている分は上限を超えていても減らさない。
+         */
+        uint64_t GetReachableCapacityBytes() const
+        {
+            Thread::ScopedLock lock(m_State->Mutex);
+            const State &state = *m_State;
+            if (state.LimitBytes == 0)
+            {
+                return ~0ull;
+            }
+            const uint64_t capacityBytes = static_cast<uint64_t>(state.Blocks.size()) * state.BlockBytes;
+            const uint64_t growableBytes = state.LimitBytes / state.BlockBytes * state.BlockBytes;
+            return capacityBytes > growableBytes ? capacityBytes : growableBytes;
+        }
+
+        /**
          * @brief 塊の数か貸し出し数が前回の出力から変わっていれば、使用量を VRAM_LEDGER に出す
          *
          * 貸し借りのたびには出さない（1フレームに多数動くので）。フレーム境界から呼ぶ。

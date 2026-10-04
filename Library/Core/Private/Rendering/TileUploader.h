@@ -276,6 +276,43 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
+         * @brief あるテクスチャの領域宛ての、まだ GPU へ出していないコピーを無効にする（タイルの追い出し）
+         *
+         * 外したタイルのページは別のタイルへ使い回されるので、古いコピーが後から書き込まないようにする。
+         * 未記録のコピーはその場で無効にし、記録中のフレームのコピーは、そのフレームを提出できなかったとき
+         * （AbortFrame）に無効にする。提出済みのコピーは、ページの返却が提出の完了まで待つので何もしない。
+         * @return 無効にした（または記録中のため印を付けた）コピーの数
+         */
+        uint32_t AbandonRegion(const RHI::TexturePtr &texture, const RHI::TextureRegionCopy &region)
+        {
+            if (!texture)
+            {
+                return 0;
+            }
+            Thread::ScopedLock lock(m_Mutex);
+            uint32_t count = 0;
+            for (Op &op : m_Ops)
+            {
+                if (!op.bCopy || op.bCancelled || op.Texture.get() != texture.get() ||
+                    !OverlapsRegion(op, region))
+                {
+                    continue;
+                }
+                if (op.State == OpState::Pending)
+                {
+                    CancelLocked(op);
+                    ++count;
+                }
+                else if (op.State == OpState::Recorded)
+                {
+                    op.bAbandoned = true;
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        /**
          * @brief フレームの記録を始める（RenderThread。完了済みの serial を渡す）
          *
          * 提出が完了したコピーの区画とテクスチャの参照を手放し、フレームのコピー量を 0 に戻す。
@@ -584,6 +621,21 @@ namespace NorvesLib::Core::Rendering
             const uint64_t bBottom = static_cast<uint64_t>(b.Region.OffsetY) + b.Region.Height;
             return a.Region.OffsetX < bRight && b.Region.OffsetX < aRight && a.Region.OffsetY < bBottom &&
                    b.Region.OffsetY < aBottom;
+        }
+
+        // 依頼の書込み先が、同じテクスチャの領域 region（同じミップ・配列要素）と重なるか。テクスチャの一致は呼び出し側が確かめる
+        static bool OverlapsRegion(const Op &op, const RHI::TextureRegionCopy &region)
+        {
+            if (op.Region.MipLevel != region.MipLevel || op.Region.ArrayIndex != region.ArrayIndex)
+            {
+                return false;
+            }
+            const uint64_t opRight = static_cast<uint64_t>(op.Region.OffsetX) + op.Region.Width;
+            const uint64_t right = static_cast<uint64_t>(region.OffsetX) + region.Width;
+            const uint64_t opBottom = static_cast<uint64_t>(op.Region.OffsetY) + op.Region.Height;
+            const uint64_t bottom = static_cast<uint64_t>(region.OffsetY) + region.Height;
+            return op.Region.OffsetX < right && region.OffsetX < opRight && op.Region.OffsetY < bottom &&
+                   region.OffsetY < opBottom;
         }
 
         static constexpr uint64_t AlignUp(uint64_t value, uint64_t alignment)

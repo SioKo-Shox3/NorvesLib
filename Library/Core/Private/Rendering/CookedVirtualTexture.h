@@ -89,6 +89,11 @@ namespace NorvesLib::Core::Rendering
 
         void AbandonTexture(const RHI::TexturePtr &texture) override { m_Uploader.AbandonTexture(texture); }
 
+        void AbandonRegion(const RHI::TexturePtr &texture, const RHI::TextureRegionCopy &region) override
+        {
+            m_Uploader.AbandonRegion(texture, region);
+        }
+
     private:
         Container::TSharedPtr<RHI::IDevice> m_Device;
         TileUploader &m_Uploader;

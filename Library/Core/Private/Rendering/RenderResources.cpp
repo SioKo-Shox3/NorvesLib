@@ -111,6 +111,8 @@ namespace NorvesLib::Core::Rendering
         // VT_STREAMER ログの間引き（RenderThread だけが触る）
         uint64_t VtLoggedFrame = 0;
         uint64_t VtLoggedResident = 0;
+        // VRAM_POOLS に最後に出した VT の追い出し数（変わったときにも出し直す）
+        uint64_t VtLoggedEvictedTiles = 0;
         Container::TUniquePtr<SkinnedMeshGpuStore> SkinnedMeshes;
         Container::TUniquePtr<GpuResourceStore> GpuResources;
         Container::TUniquePtr<ProceduralMeshGpuStore> ProceduralMeshes;
@@ -1289,26 +1291,43 @@ namespace NorvesLib::Core::Rendering
         {
             const uint64_t vtTarget = result.GetTargetBytes(VideoMemoryPool::VirtualTexture);
             impl->SparsePool->SetCapacityLimitBytes(result.bLimited ? (vtTarget > 0 ? vtTarget : 1) : 0);
+
+            // ストリーマの常駐の目標も同じ値にする。プールは塊の単位でしか増えないので、実際に持てる量を超えない。
+            // 目標を超えたぶんは、ストリーマが次の Update で外す。
+            if (impl->VtStreamer)
+            {
+                const uint64_t reachable = impl->SparsePool->GetReachableCapacityBytes();
+                impl->VtStreamer->SetResidentBudget(result.bLimited, vtTarget < reachable ? vtTarget : reachable);
+            }
         }
 
-        if (impl->VideoMemoryBudget.CommitLogIfChanged(result))
+        // 予算の割り振りが変わったとき、または VT が新しくタイルを外したときに VRAM_POOLS を出す
+        const uint64_t evictedTiles = impl->VtStreamer ? impl->VtStreamer->GetStats().EvictedTiles : 0;
+        const bool bBudgetChanged = impl->VideoMemoryBudget.CommitLogIfChanged(result);
+        if (bBudgetChanged || evictedTiles != impl->VtLoggedEvictedTiles)
         {
+            impl->VtLoggedEvictedTiles = evictedTiles;
+            const uint64_t vtUsedBytes = impl->SparsePool ? impl->SparsePool->GetStats().UsedBytes : 0;
             if (result.bLimited)
             {
                 NORVES_LOG_INFO(
                     "RenderResources",
-                    "VRAM_POOLS cap_mb=%llu non_pool_mb=%llu vt_target_mb=%llu source=%s",
+                    "VRAM_POOLS cap_mb=%llu non_pool_mb=%llu vt_target_mb=%llu vt_used_mb=%llu vt_evicted_tiles=%llu source=%s",
                     static_cast<unsigned long long>(result.CeilingBytes / kBytesPerMb),
                     static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb),
                     static_cast<unsigned long long>(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) / kBytesPerMb),
+                    static_cast<unsigned long long>(vtUsedBytes / kBytesPerMb),
+                    static_cast<unsigned long long>(evictedTiles),
                     result.bNonPoolEstimated ? "estimate" : "heap");
             }
             else
             {
                 NORVES_LOG_INFO(
                     "RenderResources",
-                    "VRAM_POOLS cap_mb=none non_pool_mb=%llu vt_target_mb=none",
-                    static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb));
+                    "VRAM_POOLS cap_mb=none non_pool_mb=%llu vt_target_mb=none vt_used_mb=%llu vt_evicted_tiles=%llu",
+                    static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb),
+                    static_cast<unsigned long long>(vtUsedBytes / kBytesPerMb),
+                    static_cast<unsigned long long>(evictedTiles));
             }
         }
     }
