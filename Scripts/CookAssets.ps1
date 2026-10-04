@@ -240,7 +240,8 @@ foreach ($specFile in $specFiles) {
         }
 
         $packagePath = [System.IO.Path]::GetFullPath((Join-Path $ResolvedRuntimeRoot ($cookedPackage -replace '/', '\')))
-        $statePath = Join-Path $setStateDir (($packageName -replace '/', '__') + ".json")
+        # 状態ファイル名は出力先の相対パス全体のハッシュにする（"A/B" と "A__B" のような別パッケージが同じ名前にならない）
+        $statePath = Join-Path $setStateDir ((Get-TextSha256 $cookedPackage) + ".json")
 
         # 印: AssetCook・一覧の項目・一覧の共通設定・元画像の内容・品質のどれかが変われば変わる
         $stampSource = New-Object System.Text.StringBuilder
