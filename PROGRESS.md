@@ -640,3 +640,9 @@
 - 検証: `verify-VTG3-ACCEPT-1.txt`（Debug のビルド BUILD_EXIT_CODE=0）、`-2.txt`（ctest 6/6 passed。golden 室内・屋外を含む）、`-3-capture-day-on.txt`・`-4-capture-night-on.txt`（タスクの verify の `-Deterministic` の撮影。pass）、`-5`〜`-10`（なしの撮影との比較）、`-11`〜`-13`（GPU 時間）、`-14-orbit-*.txt`（旋回）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - 受入れの判定: 段3の受入れ（計画 5）の「小屋の陰のクラスタが省かれ（数を記録）」「過剰カリング（穴・消失）が撮影で出ない」を満たす。段3は完了。この段の後、親が main へマージしてプッシュする。
 - Notes: (1) 撮影の連続実行は PowerShell のスクリプトにまとめ、各出力を `verify-VTG3-ACCEPT-<n>-*.txt` に保存した。(2) bash から cmake の `-- /m:1` は渡せないので PowerShell で実行した。(3) 次の段4（VTG4-MESHOPT-VENDOR ほか）は backlog。
+
+## 反復 3（run 20261005-034826）: VTG3-ACCEPT（評価者の差し戻しへの対応、done）
+- 差し戻し: 受入れ記録の `occluded` を「描かなかった数」と書いていたが、`cluster_cull.comp` の2パス目は1パス目で描いたクラスタも HZB で判定し直して数えるので、描画を省いた数ではなかった。
+- 対応（記録の修正だけ。コード・撮影・再検証は無し）: `MEGA_OCCLUSION` の節で `occluded` を「HZB で遮蔽と判定した数」と書き直し、描画を省いた数（`pass2_tested − pass1 − pass2_drawn`）の列を足して割合・本文・判定・既知の限界を更新した。省いた数は 既定27・近接579・低角度106・occ-sphere 480・occ-cottage 542・occ-cottage-edge 19（割合 5%・13%・6%・89%・95%・3%）。受入れの小屋の 542（95%）は変わらない。
+- 軽微な指摘: PSNR の「100 は完全一致」を「上限を切っているのでほぼ一致、完全一致は最大差 0 で判断」に直し、「撮影はすべて `-Deterministic`」から GPU 時間の計測（保存値 `deterministic=false`）を除いた。
+- 検証: 検証の出力（`verify-VTG3-ACCEPT-1`〜`-14-*.txt`）はコードが反復2から変わらないので再実行していない。numstat は `git diff` と `--ignore-cr-at-eol` で一致（15/14）。
