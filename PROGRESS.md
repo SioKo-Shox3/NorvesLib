@@ -771,3 +771,9 @@
 - 起動時間: 時刻を3視点×2経路で出し直した（`-21-startup-timeline.txt`）。球は両経路とも約 0.9 秒で用意でき、石畳のテクスチャが約 8.0〜8.2 秒でそろうまで待たれない（`wait_ms=0.0`）。起動の律速は環境マップ（約 4.8 秒）とテクスチャで、球の焼き込みでは短縮できない。クック済みは転送が増える分 0〜0.2 秒長い。
 - 判断: 短縮を完了条件から外すかは仕様判断なので `blocked/VTG4-BIG-SPHERE-COOK.md` に選択肢と推奨を書き、BLOCKED にした。
 - Notes: 次は人の判断のあと。ほかの未完は VTG4-DAG-FALLBACK-DOC、VTG4-POLYHAVEN-MODELS。
+
+## 反復 18（run 20261005-043300）: VTG4-DAG-FALLBACK-DOC（done）
+- VTG4-DAG-FALLBACK-DOC: `Docs/Architecture/NVMESHv1.md` の「フォールバックの段」に、`fallback_min_triangles`（`--fallback-min-triangles`）で目標の下限を上げられること・その上限が 131072（`CookMeshDag.cpp` の `FallbackMinOverrideMaxTriangles`）・既定の目標（`min(全体 / 16, 32768)`）は変えていないことを書いた。新しい節「生成器（displaced-sphere）」に、`--generate displaced-sphere` の指定・入力の条件・球の仕様（`StartupBigSphereSpec.h`）・作り方（`LODLevelCount=1` で `BakeMeshLodDag`）・材質を持たせないこと・元のハッシュ・焼いた結果・Game の読み込みとフォールバックを書いた。コードは触っていない。
+- 実装との照合: 目標の式 `max(min(全体/16, 32768), min(N, 131072))` は `CookMeshDag.cpp` 896〜897 行、`--fallback-min-triangles` の範囲（0〜1000000）と `--kind model` 必須は `Main.cpp`、`--check-package ... --fallback-min-triangles <N>` の引数の形は `AssetCookMeshSimplifySmoke.cpp` で確かめた。食い違いは無し。
+- 検証: `verify-VTG4-DAG-FALLBACK-DOC-1.txt`（`git diff --numstat` は 36 行追加・0 削除、`--ignore-cr-at-eol` と一致。文書は LF 主体のまま）。
+- Notes: 次は VTG4-POLYHAVEN-MODELS（VTG4-BIG-SPHERE-COOK は人の判断待ちの blocked）。

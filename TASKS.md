@@ -393,7 +393,7 @@
 - notes: 段1の既知の限界（岩・小屋の glTF のテクスチャが無圧縮）をここで解く。起動画面の見た目を変えうる（絶対規則7）。危険地帯（アセットロード）。
 
 ## VTG4-BIG-SPHERE-COOK: 起動画面の大きな球をクッカーで生成して焼く
-- status: doing
+- status: blocked
 - done-when: クッカーに、石畳の高さマップ（`cobblestone_floor_09_disp_4k.png`）で変位した緯度経度の球（今の実行時の生成と同じ半径・分割・変位の量）を作る生成器（`--generate displaced-sphere`）を足し、`CookAssets` が NVMESH v1（階層つき）に焼く。Game は既定でそれを読み、実行時の生成（約 3.6 秒）をしない（クック済みが無ければ従来の実行時の生成へ戻して警告する）。`-Deterministic` の撮影で、実行時の生成（従来の5段の LOD）と比べた PSNR を視点ごとに記録し（目安 40 dB 以上）、近接の PNG を開いて石畳の凹凸・継ぎ目・割れ目が無いことを確かめる。起動から撮影までの時間の短縮を記録する。
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook CookAssets Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG4-BIG-SPHERE-COOK -Configuration RelWithDebInfo -Deterministic`
@@ -402,7 +402,7 @@
 - notes: 計画書 1（大きな球もクックで作るアセットにする）。起動画面の見た目を変えうる（絶対規則7）。
 
 ## VTG4-DAG-FALLBACK-DOC: NVMESH v1 の文書へ、フォールバックの下限の上限と変位した球の生成を書く
-- status: todo
+- status: done
 - done-when: `Docs/Architecture/NVMESHv1.md` のフォールバックの段の節（「目標は min(全体 / 16, 32768)」の記述）に、クックの `fallback_min_triangles`（`--fallback-min-triangles`）で下限を上げられること、その上限が 131072 であること（`Tools/AssetCook/CookMeshDag.cpp` の `FallbackMinOverrideMaxTriangles`）、既定の目標（32768 まで）はそのままなことを書く。クッカーの生成器 `--generate displaced-sphere`（`--input` の高さマップで変位した起動画面の大きな球を作って v1 に焼く。仕様は `Library/Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h`）の節を足す。内容は `PROGRESS.md` の「反復 16（run 20261005-043300）」の実装の事実に従い、コードは触らない。
 - verify: `git diff --numstat -- Docs/Architecture/NVMESHv1.md`
 - stop-when: 記録と実装（`Tools/AssetCook/CookMeshDag.cpp`・`MeshCooker.cpp`）が食い違うときは、実装を正として文書に書く。

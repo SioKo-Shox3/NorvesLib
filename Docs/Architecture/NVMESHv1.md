@@ -210,12 +210,48 @@ GPU のカリングで階層を選ぶ処理と、影・RT でのフォールバ�
    切り口のクラスタの自分の誤差の最大。切り口が空ならクックは失敗にする。
    目標以下になる T の候補が 1 つも無いときは、候補のうち最大の T（最大の自己誤差）の切り口を採る。
    このため、フォールバックの三角形数が目標以下になることは保証されない。
+   - 目標の下限は、クックの `fallback_min_triangles`（`AssetCook --fallback-min-triangles <N>`、`--kind model` と一緒に指定。
+     0〜1000000 の整数、0 は指定なし。一覧では `Rendering3DTestStartupModels.json` の項目の `fallback_min_triangles`）で上げられる。
+     目標は `max(min(全体 / 16, 32768), min(N, 131072))` になる。N の上限は 131072
+     （`Tools/AssetCook/CookMeshDag.cpp` の `FallbackMinOverrideMaxTriangles`）で、これを超える N は 131072 として扱う。
+   - 指定しなければ目標は従来どおり `min(全体 / 16, 32768)` で、`FallbackMaxTriangles`（32768）は変えていない。
+     下限を上げるのは、石の盛り上がりや目地が数 cm の変位した大きな球のように、既定の粗さだと影・RT の形が実面から外れて
+     自己遮蔽（近接の黒い斑点・目地の陰のずれ）を起こす資産だけ。起動画面では球が 131072 を指定し（フォールバックは
+     130,946 三角形、誤差 3.3 mm）、岩・小屋は指定しない（岩は 32768 のまま）。
+   - `AssetCookMeshSimplifySmoke --check-package <パッケージ> --fallback-min-triangles <N>` は、同じ下限までを目標内として検査する。
 
 クックのログに `MESH_COOK dag_levels=<段数> clusters=<クラスタ数> ms=<所要時間> rejected_groups=<残したグループ数>` を出す。
 
 実測（Debug）: 滑らかな UV の球は 9 段・356 クラスタ・根 1・簡略化を見送ったグループ 0。四角形ごとに UV の島が違う球
 （約 2 万三角形）は 10 段・717 クラスタ・根 1・許容モード 172 グループ。岩（`boulder_01`、約 6.6 万三角形。溶接後の頂点は
 位置の約 2 倍で、ほぼ全頂点が UV の継ぎ目）は 13 段・1451 クラスタ・345 グループ・根 1・見送り 13（約 1.4 秒）。
+
+## 生成器（displaced-sphere）
+
+glTF を読まずに、起動画面の大きな球をクッカーが作って v1 に焼く。`AssetCook --kind model --generate displaced-sphere
+--input <高さマップ> --format nvmesh.v1.mesh3d.pnt.u32.lodgraph ...`。`--generate` は `--kind model` と一緒に指定し、
+値は `displaced-sphere` だけ。形式は v1 だけで、v0 の形式名では失敗にする。一覧では `models` の項目に
+`"generate": "displaced-sphere"` を書き、`source_path` を高さマップにする（`Scripts/CookAssets.ps1` が `--generate` を渡す）。
+
+- 入力: `--input` は 2 の累乗の正方形の 16 ビットのグレーの PNG（石畳の `cobblestone_floor_09_disp_4k.png`）。
+  条件を満たさなければ失敗にする。
+- 球の仕様は `Library/Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h` に集め、実行時の生成（Game）とクッカーが
+  同じ値を使う。半径 1 m、格子 1024×512（頂点の間隔は約 6.1 mm）、テクスチャの繰り返し 3×1.5、変位の深さ 0.03 m、
+  高さマップのミップを作り始める段 3。クック済みのメッシュの論理パスは
+  `Assets/Models/BigCobbleSphere/BigCobbleSphere.generated`。値を変えるときは両方の経路が揃うよう、このヘッダだけを変える。
+- 作り方: `BuildProceduralMegaSphere` を `LODLevelCount=1`（実行時の生成が作る 5 段の LOD は使わず、最も細かい段だけ）で
+  呼び、その頂点・インデックスを `BakeMeshLodDag` に渡して階層とフォールバックを焼く。
+- 材質の参照は持たせない（Game が石畳の材質を当て、`DisplacementUVSpacing()` を仕様から求めて渡す）。
+- 元のハッシュ（`SourceHash`）は、高さマップの大きさと中身、球の仕様の値（分割・ミップ開始段・半径・変位の深さ・
+  テクスチャの繰り返し）から作る。仕様の値を変えると焼き直される。
+- 起動画面の項目は `fallback_min_triangles: 131072` を付ける（理由は「フォールバックの段」）。
+- 焼いた結果: 17 段・17984 クラスタ・グループ 4330・根 1・頂点 1,524,833・インデックス 6,694,752（フォールバック 392,838 を含む）、
+  パッケージ 78,084,048 バイト、焼く時間は約 7.8 秒。`MESH_COOK dag_levels=17 clusters=17984 ms=7842 rejected_groups=8`。
+  `AssetCookMeshSimplifySmoke --check-package` で、誤差の単調・親の球の包含・しきい値 7 通りの切り口が閉じていること
+  （穴 0・つまみ 0。経度 0/360 の継ぎ目と極を含む）・フォールバックが閉じていることを確かめた。
+- Game は既定でこのパッケージを読み（`BuildMegaMeshCreateInfoFromCookedMesh`）、無い・壊れているときは警告
+  （`COOKED_BIG_SPHERE_MISSING` / `COOKED_BIG_SPHERE_INVALID`）を出して実行時の生成へ戻る。比較用に
+  `--rendering3dtest-big-sphere-source=cooked|runtime`（撮影スクリプトは `-BigSphereSource`）で経路を選べる。
 
 ## 既知の限界
 
