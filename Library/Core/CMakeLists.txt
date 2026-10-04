@@ -13,6 +13,7 @@ set(PRIVATE_SOURCES
     Private/Asset/AssetBlob.cpp
     Private/Asset/CookedAudioLoader.cpp
     Private/Asset/CookedMeshLoader.cpp
+    Private/Asset/CookedMeshWireValidation.cpp
     Private/Asset/CookedSkeletalLoader.cpp
     Private/Asset/CookedSkeletalWireValidation.h
     Private/Asset/CookedSkeletalWireValidation.cpp

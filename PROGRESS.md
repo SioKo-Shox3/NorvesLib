@@ -640,3 +640,6 @@
 
 - G2-GR79-IMPORT-POLICY-CORE: 作者追加指定のAI profile AO/metallic ignore・roughness auto、素材mode上書き、histogram Type7のp1〜p99有効幅(既定4/255)で定数判定を純処理化。診断min/max/meanは維持し、AOは1+strength*(sample-1)。emissiveFactor×strengthの非0なら換算明示必須、textureだけ/strength0は非発光。素材>asset>asset-setの選択、不正高優先値のfallback拒否、Y正規化/physical nits/codec上限を固定。第1周の中間underflowをmax成分正規化+frexp/scalbnで修正、第2周PASS。通常/O2/ASanUBSan(LSan除外)3mode・MEMBER成功、300sorted列の独立百分位照合・巨大count・極小factor回復・byte恒等を確認。JSON/asset-set/CLIと資産名/材質名診断、実画像・撮影・runtimeは未接続/未検証。
 - Next: GR79 NVMESH v1の純wire検証 → reader/runtime明示gate → material設定/画像処理/診断・asset-set指定とwriterへの接続。生成元は明示profileで扱い、GLB拡張子だけで推測しない。
+
+- G2-GR79-MESH-V1-WIRE: v0定数blockをbyte不変の純headerへ分離し、NVMESHv1/major1minor0/Header256/Material128/Cluster128/8B整列を定義。外枠のprofile/節範囲・packed/padding/FNV/予約/有限boundsとLOD0 clusterを純検証。第1周でVertexCountの絶対index上限をunique128と混同していた制限を修正し、Multi goldenもcap6へ訂正、第2周PASS。独立Python580/692/1120B、通常/O2/ASanUBSan(LSan除外)3mode・MEMBER成功、cap129/三角形128境界・Multi実index照合を追跡。旧full parser/cookerはv0のまま、v1 reader/runtime/GPU未接続。
+- Next: GR79 v0/v1 readerとruntime gate。v1単材質も係数adapter未接続では受理しない。全submesh/index/clusterの所有と材質対応、unique頂点数128と任意絶対上限を分けて検査する。

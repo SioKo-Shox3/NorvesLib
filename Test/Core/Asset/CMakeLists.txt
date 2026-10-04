@@ -35,6 +35,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER CookedSkeletalWireContractTest CookedSkeletalWireContractTest.cpp
     MEMBER CookedSkeletalNameCodecTest CookedSkeletalNameCodecTest.cpp
     MEMBER CookedMaterialFormatTest CookedMaterialFormatTest.cpp
+    MEMBER CookedMeshWireContractTest CookedMeshWireContractTest.cpp
     MEMBER MaterialImportPolicyTest MaterialImportPolicyTest.cpp
     MEMBER GeometryInspectionTest GeometryInspectionTest.cpp
     MEMBER ImageInspectionTest ImageInspectionTest.cpp
@@ -81,6 +82,7 @@ add_test(NAME SkeletalDrawRangeTest COMMAND CookedMeshTest --test=SkeletalDrawRa
 add_test(NAME CookedSkeletalWireContractTest COMMAND CookedMeshTest --test=CookedSkeletalWireContractTest)
 add_test(NAME CookedSkeletalNameCodecTest COMMAND CookedMeshTest --test=CookedSkeletalNameCodecTest)
 add_test(NAME CookedMaterialFormatTest COMMAND CookedMeshTest --test=CookedMaterialFormatTest)
+add_test(NAME CookedMeshWireContractTest COMMAND CookedMeshTest --test=CookedMeshWireContractTest)
 add_test(NAME MaterialImportPolicyTest COMMAND CookedMeshTest --test=MaterialImportPolicyTest)
 
 add_test(NAME AudioCookedAssetTest COMMAND CookedMeshTest --test=AudioCookedAssetTest)

@@ -2253,3 +2253,9 @@
 - done-when: material/asset/asset-setの設定を解決し、発光換算の未設定拒否に資産名・材質名・emissiveNitsPerUnitを表示。AI生成profileを明示的に適用し素材単位overrideを保持する。canonical/hash/cacheとJSON/CLIへ接続する。
 - verify: asset-set単位指定/素材上書き/欠落・不正/発光textureのみ/診断名/設定差cache失効と旧非発光・v0互換を確認する。
 - stop-when: provenanceを拡張子だけで決める、sidecarよりasset-set設定を無言優先、非発光を不必要に拒否、見た目未確認を受入れ済みとする。
+
+## G2-GR79-MESH-V1-WIRE: NVMESH v1の外枠とLOD0レコードを固定する
+- status: done
+- done-when: v0定数を不変の純headerへ分離し、v1.0 Magic/Header256/Material128/Cluster128を定義。外枠のversion/サイズ/予約/整列/packed節/hashとLOD0 clusterを純検証する。旧parser/cooker受理は変えない。
+- verify: 独立byte golden、v0定数無変更、v1サイズ/未知版/予約/overflow/整列/padding/hash/LOD予約・範囲、失敗保持/alias拒否を通常/O2/sanitizerとMEMBERで検証。
+- stop-when: 未接続のv1 runtimeを受理済み扱い、material係数を無言で捨てる、GR80用の拡張48Bを別用途へ転用、旧v0受理契約を破壊する。
