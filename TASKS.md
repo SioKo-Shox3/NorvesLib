@@ -112,7 +112,7 @@
 - notes: 計画書 2。2026-10-04 親: 元の「平均輝度の差 0.5 以下」は、同じコードを撮り直すだけで1視点あたり最大2.6動く（RTGI・TAA の履歴）ため判定できず blocked になった（`blocked/VTG1-MATERIAL-ORM.md` の選択肢2を採った）。実装と golden・テストは run `20261004-105824` で済んでいる。決定的な撮影は VTG2-CAPTURE-DETERMINISTIC で作る。
 
 ## VTG1-STARTUP-COOKED: 起動画面をクック済みのBCのテクスチャで描く
-- status: todo
+- status: done
 - done-when: Game は既定で `build/CookedAssets/`（コンパイル時の既定の場所。`--texture-asset-root` で上書きできる）を asset root とマニフェストにし、起動画面の材質（銀・石畳・地面の見本6種）をクック済みの BC と ORM で読む。クック済みが無いテクスチャはばらのファイルを無圧縮で読み、`TEXTURE_COOKED_MISSING path=<p>` を1回だけ警告する。撮影の `VRAM_LEDGER` で、クック済みにした材質のテクスチャの量が同じ材質のばらの量の1/4以下になる（全体の texture_mb と、段4で焼く岩・小屋の glTF のテクスチャの残りの内訳も記録する）。見た目は、同じ視点のばらの撮影と比べた PSNR を視点ごとに記録し（目安 35 dB 以上。同じコードのばら同士の揺らぎが目安を下回る視点は、その揺らぎと並べて記録する）、PNG を開いて違いが目立たないことを確かめる。視差の高さを R16 にするか BC4 にするかを、近接・低角度の撮影の縞で決めて記録する。
 - verify: `cmake --build build --config RelWithDebInfo --target AssetCook Game -- /m:1`
 - verify: `cmake --build build --config RelWithDebInfo --target CookAssets -- /m:1`
