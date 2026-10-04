@@ -598,3 +598,6 @@
 
 - G2-GR32-PRIMITIVE-DECODE: 2〜8primitiveを連結し、local index境界→絶対番号化、追加範囲のみ巻き順交換、所有表/初出slotとsource identity順の名前衝突解決を接続。material省略とindex0は別。Reduceの全体prefix、morphの総target数/共通幅（mesh_target_width）を分離し、全geometry後に一度だけfit/Bake。preflightも全primitiveを検査。単一primitiveは中間段階の旧空表互換、旧writerは新表を明示拒否。nativeに2/8/9・全入口・名前/順序/省略・越境・prefix4/6・fit・morph幅を登録、Windows.hで未実行。純report3mode/54JSON独立解析とlayout/wire/policy回帰成功、独立PASS。
 - Next: 0.2 IO接続に向けた版別文字列/参照検証→reader→writer/cache移行。新表付き資産のcookはwriter接続まで意図的に失敗する。
+
+- G2-GR32-V02-TEXT: minor0/1 printable ASCIIとminor2厳密UTF-8/NUL拒否、UTF-16/32とCore Charのcode unit/byte数を区別する名前codecを追加。参照差分境界・overflow/alignment・全out alias拒否・全入力先行検証で失敗時出力保持。全1,112,063 scalar/4,382,591Bを独立Python UTF-8黄金hashと照合し通常/O2-NDEBUG/ASan・UBSan（LSan除外）全3mode・実MEMBER compile成功。旧wire/layout回帰も成功、独立PASS。実reader/writerおよびWindows/Core全体は未変更・未検証。
+- Next: GR32-V02-READERで版別表・予約/padding・clip別所有と名前を接続し、未対応下流への黙示的な情報欠落を防ぐ。

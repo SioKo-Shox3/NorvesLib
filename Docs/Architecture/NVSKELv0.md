@@ -124,3 +124,21 @@ writer切替後のcache判定はwriter minorを確認し、通常loadで許さ�
 
 v1/256関節、128B PBR材質の骨格MATS、作成時rest snapshot、イベント/マーカー/ソケットはStage B以降。
 S1で承認されたrest安全契約を不要にしたり、SkeletonId一致だけで互換としたりする仕様ではない。
+
+## 名前codecの境界
+
+CookedSkeletalNameCodecはminor0/1のprintable ASCIIとminor2のUTF-8を区別する。
+UTF-8は[RFC 3629](https://www.rfc-editor.org/rfc/rfc3629)のscalar範囲/最短形を検査し、
+孤立continuation、途中切れ、overlong、surrogate、U+10FFFF超過を拒否する。資産名の追加条件として埋込NULも拒否する。
+置換文字への自動置換、大小文字変換、Unicode正規化、BOM除去は行わない。空名は表現できる。
+
+- 1byte CharはUTF-8 byte列、2byteはUTF-16 code unit、4byteはUnicode scalar列として扱う
+- MeasureのByteCountは保存byte数。CodeUnitCountはencode元またはdecode先のChar単位数であり、名前の文字数ではない
+- ResolveSkeletalWireNameはstring節内のoffset/lengthを差分で検査し、成功時だけ借用viewを返す。lengthはu32内
+- encode/decodeは全入力と容量を先行検査し、失敗時はout全体を保持する。終端NULは書かない
+- 入力とout全領域（未使用末尾を含む）の重複、pointer/サイズのoverflow、不正alignmentを拒否する
+- 借用viewは元stringTableの寿命に従う。loaderは必要なCore Stringへ変換して所有する
+
+純試験ではUTF-8/UTF-16/UTF-32とホストwchar_tを照合し、NULとsurrogateを除く全1,112,063 scalarを往復する。
+保存byte列4,382,591BのFNV値をPython標準UTF-8で独立生成した固定値と照合する。
+このcodec追加だけでは実reader/writerを切り替えず、Windows/Core全体やWindows TCHAR経路の実行済みを意味しない。

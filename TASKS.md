@@ -2158,7 +2158,7 @@
 - stop-when: primitiveを跨いだindex越境を許す、scale二重適用、未接続cook/runtimeが成功して表を失う。
 
 ## G2-GR32-V02-TEXT: 0.2の名前byte列と参照境界を検証する
-- status: todo
+- status: done
 - done-when: 0.0/0.1のprintable ASCIIを維持し、0.2のUTF-8/NUL拒否とbyte単位StringRefを共通部品で検査する。CoreのTCHARと保存byteの変換契約を明確にし、失敗出力保持を満たす。writer/readerはまだ切り替えない。
 - verify: ASCII/多byte/境界codepoint/不正UTF-8/overlong/surrogate/NUL/範囲overflow/失敗保持の純試験とMEMBER/CTest登録。
 - stop-when: 旧版で非ASCIIを受理、壊れた文字列を置換して成功、UTF-16単位数を保存byte長と混同する。

@@ -16,6 +16,8 @@ set(PRIVATE_SOURCES
     Private/Asset/CookedSkeletalLoader.cpp
     Private/Asset/CookedSkeletalWireValidation.h
     Private/Asset/CookedSkeletalWireValidation.cpp
+    Private/Asset/CookedSkeletalNameCodec.h
+    Private/Asset/CookedSkeletalNameCodec.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/AssetManifest.cpp
