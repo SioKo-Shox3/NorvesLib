@@ -83,16 +83,16 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t TileHeight = 116;      // uint32, texel
             inline constexpr size_t FirstTailMip = 120;    // uint32, この段以降がミップテイル（タイルより小さい段）
             inline constexpr size_t TileDataBytes = 124;   // uint32, StandardTileBytes と一致
-            inline constexpr size_t TileTableOffset = 128; // uint64, absolute file offset（ミップ表の直後）
+            inline constexpr size_t TileTableOffset = 128; // uint64, ファイル先頭からの絶対オフセット（ミップ表の直後）
             inline constexpr size_t TileTableSize = 136;   // uint64
-            inline constexpr size_t TailOffset = 144;      // uint64, absolute file offset（ミップテイルの塊の先頭）
+            inline constexpr size_t TailOffset = 144;      // uint64, ファイル先頭からの絶対オフセット（ミップテイルの塊の先頭）
             inline constexpr size_t TailSize = 152;        // uint64
         }
 
         // タイルの表の 1 件。表の並びは「ミップ昇順 → レイヤー昇順 → タイルの行 → タイルの列」で、件数も位置も形式から決まる。
         namespace TileRecordOffset
         {
-            inline constexpr size_t DataOffset = 0;   // uint64, absolute file offset
+            inline constexpr size_t DataOffset = 0;   // uint64, ファイル先頭からの絶対オフセット
             inline constexpr size_t DataSize = 8;     // uint64
             inline constexpr size_t MipIndex = 16;    // uint32
             inline constexpr size_t LayerIndex = 20;  // uint32
@@ -102,7 +102,7 @@ namespace NorvesLib::Core::Asset
 
         namespace MipRecordOffset
         {
-            inline constexpr size_t DataOffset = 0;   // uint64, absolute file offset
+            inline constexpr size_t DataOffset = 0;   // uint64, ファイル先頭からの絶対オフセット
             inline constexpr size_t DataSize = 8;     // uint64
             inline constexpr size_t Width = 16;       // uint32
             inline constexpr size_t Height = 20;      // uint32

@@ -1,4 +1,5 @@
 ﻿#include "Asset/CookedTextureFormat.h"
+#include "Container/VariableArray.h"
 
 #include <algorithm>
 #include <cassert>
@@ -30,6 +31,8 @@
 using namespace NorvesLib::Core::Asset;
 using namespace NorvesLib::Core::Asset::CookedTextureFormatV0;
 using NorvesLib::Core::Container::Span;
+using NorvesLib::Core::Container::VariableArray;
+using ByteArray = VariableArray<uint8_t>;
 
 namespace
 {
@@ -76,13 +79,15 @@ namespace
     static_assert(static_cast<uint32_t>(CookedTextureColorSpace::Linear) == ColorSpaceLinear);
     static_assert(static_cast<uint32_t>(CookedTextureColorSpace::SRGB) == ColorSpaceSRGB);
 
-    void WriteLe16(std::vector<uint8_t> &bytes, size_t offset, uint16_t value)
+    template <typename TBytes>
+    void WriteLe16(TBytes &bytes, size_t offset, uint16_t value)
     {
         bytes[offset + 0] = static_cast<uint8_t>(value & 0xffu);
         bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
     }
 
-    void WriteLe32(std::vector<uint8_t> &bytes, size_t offset, uint32_t value)
+    template <typename TBytes>
+    void WriteLe32(TBytes &bytes, size_t offset, uint32_t value)
     {
         bytes[offset + 0] = static_cast<uint8_t>(value & 0xffu);
         bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
@@ -90,19 +95,22 @@ namespace
         bytes[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xffu);
     }
 
-    void WriteLe64(std::vector<uint8_t> &bytes, size_t offset, uint64_t value)
+    template <typename TBytes>
+    void WriteLe64(TBytes &bytes, size_t offset, uint64_t value)
     {
         WriteLe32(bytes, offset, static_cast<uint32_t>(value & 0xffffffffull));
         WriteLe32(bytes, offset + 4, static_cast<uint32_t>((value >> 32) & 0xffffffffull));
     }
 
-    uint16_t ReadLe16(const std::vector<uint8_t> &bytes, size_t offset)
+    template <typename TBytes>
+    uint16_t ReadLe16(const TBytes &bytes, size_t offset)
     {
         return static_cast<uint16_t>(static_cast<uint16_t>(bytes[offset]) |
                                      static_cast<uint16_t>(static_cast<uint16_t>(bytes[offset + 1]) << 8));
     }
 
-    uint32_t ReadLe32(const std::vector<uint8_t> &bytes, size_t offset)
+    template <typename TBytes>
+    uint32_t ReadLe32(const TBytes &bytes, size_t offset)
     {
         return static_cast<uint32_t>(bytes[offset]) |
                (static_cast<uint32_t>(bytes[offset + 1]) << 8) |
@@ -110,13 +118,15 @@ namespace
                (static_cast<uint32_t>(bytes[offset + 3]) << 24);
     }
 
-    uint64_t ReadLe64(const std::vector<uint8_t> &bytes, size_t offset)
+    template <typename TBytes>
+    uint64_t ReadLe64(const TBytes &bytes, size_t offset)
     {
         return static_cast<uint64_t>(ReadLe32(bytes, offset)) |
                (static_cast<uint64_t>(ReadLe32(bytes, offset + 4)) << 32);
     }
 
-    AssetBlob MakeBlob(const std::vector<uint8_t> &bytes)
+    template <typename TBytes>
+    AssetBlob MakeBlob(const TBytes &bytes)
     {
         return AssetBlob::CopyBytes(Span<const uint8_t>(bytes.data(), bytes.size()), "memory.nvtex");
     }
@@ -340,14 +350,14 @@ namespace
         uint32_t X = 0;
         uint32_t Y = 0;
         uint64_t Offset = 0;
-        std::vector<uint8_t> Data;
+        ByteArray Data;
     };
 
     struct BuiltTiled
     {
-        std::vector<uint8_t> Bytes;
-        std::vector<std::vector<uint8_t>> RowMajorMips;  // 段ごと（全レイヤー）の行優先
-        std::vector<TileExpect> Tiles;
+        ByteArray Bytes;
+        VariableArray<ByteArray> RowMajorMips;  // 段ごと（全レイヤー）の行優先
+        VariableArray<TileExpect> Tiles;
         uint32_t FirstTailMip = 0;
         uint64_t TailOffset = 0;
         uint64_t TailSize = 0;
@@ -373,7 +383,7 @@ namespace
             const uint32_t mipHeight = ExpectedMipDimension(height, mipIndex);
             const size_t blocksX = (mipWidth + block.Width - 1) / block.Width;
             const size_t blocksY = (mipHeight + block.Height - 1) / block.Height;
-            std::vector<uint8_t> mipBytes(blocksX * blocksY * layerCount * block.Bytes);
+            ByteArray mipBytes(blocksX * blocksY * layerCount * block.Bytes);
             for (size_t index = 0; index < mipBytes.size(); ++index)
             {
                 const uint32_t hash = static_cast<uint32_t>(index) * 2654435761u + mipIndex * 40503u;
@@ -405,12 +415,12 @@ namespace
         built.MetadataSize = built.TileTableOffset + tileCount * TileRecordSize;
 
         // ペイロード: タイルの段はタイルを表の順に、テイルの段は行優先のまま。
-        std::vector<uint8_t> payload;
-        std::vector<uint64_t> mipOffsets;
+        ByteArray payload;
+        VariableArray<uint64_t> mipOffsets;
         for (uint32_t mipIndex = 0; mipIndex < mipCount; ++mipIndex)
         {
             mipOffsets.push_back(built.MetadataSize + payload.size());
-            const std::vector<uint8_t> &mipBytes = built.RowMajorMips[mipIndex];
+            const ByteArray &mipBytes = built.RowMajorMips[mipIndex];
             if (mipIndex >= built.FirstTailMip)
             {
                 if (mipIndex == built.FirstTailMip)
@@ -464,7 +474,7 @@ namespace
 
         const size_t fileSize = built.MetadataSize + payload.size();
         built.Bytes.assign(fileSize, 0);
-        std::vector<uint8_t> &bytes = built.Bytes;
+        ByteArray &bytes = built.Bytes;
         std::memcpy(bytes.data() + HeaderOffset::Magic, Magic, MagicSize);
         WriteLe32(bytes, HeaderOffset::HeaderSize, static_cast<uint32_t>(HeaderSizeTiled));
         WriteLe16(bytes, HeaderOffset::VersionMajor, VersionMajor);
@@ -517,7 +527,8 @@ namespace
         return built;
     }
 
-    bool SameBytes(Span<const uint8_t> actual, const std::vector<uint8_t> &expected)
+    template <typename TBytes>
+    bool SameBytes(Span<const uint8_t> actual, const TBytes &expected)
     {
         return actual.size() == expected.size() &&
                (expected.empty() || std::memcmp(actual.data(), expected.data(), expected.size()) == 0);
@@ -560,7 +571,8 @@ namespace
         return root;
     }
 
-    void WriteFileBytes(const std::filesystem::path &path, const std::vector<uint8_t> &bytes)
+    template <typename TBytes>
+    void WriteFileBytes(const std::filesystem::path &path, const TBytes &bytes)
     {
         std::ofstream stream(path, std::ios::binary | std::ios::trunc);
         stream.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
@@ -1085,7 +1097,7 @@ int main()
         const size_t record0 = built.TileTableOffset;
         const size_t record3 = built.TileTableOffset + 3 * TileRecordSize;
 
-        std::vector<uint8_t> bytes = built.Bytes;
+        ByteArray bytes = built.Bytes;
         WriteLe64(bytes, record0 + TileRecordOffset::DataOffset, built.Tiles[0].Offset + 1);
         ExpectStatus(bytes, CookedTextureParseStatus::TileRecordMismatch);
 
@@ -1152,7 +1164,7 @@ int main()
         bytes = built.Bytes;
         WriteLe32(bytes, HeaderOffset::HeaderSize, static_cast<uint32_t>(HeaderSize));
         ExpectStatus(bytes, CookedTextureParseStatus::HeaderSizeMismatch);
-        bytes = BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        bytes = ByteArray(BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear, VersionMinorBlockCompressed));
         WriteLe32(bytes, HeaderOffset::HeaderSize, static_cast<uint32_t>(HeaderSizeTiled));
         ExpectStatus(bytes, CookedTextureParseStatus::HeaderSizeMismatch);
 
@@ -1169,7 +1181,7 @@ int main()
     // ペイロードの破損は全体読みのハッシュが止める。範囲読みの解析（メタデータだけ）は本体を読まないので通る。
     {
         const BuiltTiled built = BuildTiledTexture(1024, 512, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear);
-        std::vector<uint8_t> bytes = built.Bytes;
+        ByteArray bytes = built.Bytes;
         bytes[built.Tiles[2].Offset + 100] ^= 0xffu;
         ExpectStatus(bytes, CookedTextureParseStatus::PayloadHashMismatch);
 
@@ -1200,7 +1212,7 @@ int main()
 
     // v0.0・v0.1 の範囲読みの解析は通り、タイルは無い。
     {
-        const std::vector<uint8_t> bytes = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
+        const auto bytes = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
                                                         VersionMinorBlockCompressed);
         const size_t metadataSize = HeaderSize + 4 * MipRecordSize;
         const CookedTextureParseResult layout =
@@ -1221,7 +1233,7 @@ int main()
 
         // パッケージのエントリのように、.nvtex の前に別のバイト列がある場合（baseOffset）も読む。
         const uint64_t baseOffset = 37;
-        std::vector<uint8_t> fileBytes(baseOffset, 0xabu);
+        ByteArray fileBytes(baseOffset, 0xabu);
         fileBytes.insert(fileBytes.end(), built.Bytes.begin(), built.Bytes.end());
         const std::filesystem::path path = root / "tiled.bin";
         WriteFileBytes(path, fileBytes);
@@ -1264,7 +1276,7 @@ int main()
                CookedTextureParseStatus::ReadFailed);
 
         // v0.0・v0.1 のファイルのタイルは読めない。
-        const std::vector<uint8_t> legacy = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
+        const auto legacy = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7, CookedTextureColorSpace::Linear,
                                                          VersionMinorBlockCompressed);
         const std::filesystem::path legacyPath = root / "legacy.nvtex";
         WriteFileBytes(legacyPath, legacy);
@@ -1276,14 +1288,14 @@ int main()
 
         // ヘッダに満たないファイル・無いファイル。
         const std::filesystem::path shortPath = root / "short.nvtex";
-        WriteFileBytes(shortPath, std::vector<uint8_t>(50, 0));
+        WriteFileBytes(shortPath, ByteArray(50, 0));
         assert(ReadCookedTextureLayout(reader, MakeRequest(shortPath)).Status == CookedTextureParseStatus::HeaderTooSmall);
         assert(ReadCookedTextureLayout(reader, MakeRequest(root / "missing.nvtex")).Status == CookedTextureParseStatus::ReadFailed);
 
         // AssetFileReader::ReadRange 自体: 範囲の中身・範囲外・サイズ 0。
         const AssetReadResult middle = reader.ReadRange(request, baseOffset + 200, 64);
         assert(middle.Succeeded() && middle.BytesRead == 64);
-        assert(SameBytes(middle.Blob.GetSpan(), std::vector<uint8_t>(built.Bytes.begin() + 200, built.Bytes.begin() + 264)));
+        assert(SameBytes(middle.Blob.GetSpan(), ByteArray(built.Bytes.begin() + 200, built.Bytes.begin() + 264)));
         assert(reader.ReadRange(request, fileBytes.size() - 8, 8).Succeeded());
         assert(reader.ReadRange(request, fileBytes.size() - 8, 9).Status == AssetReadStatus::ReadFailed);
         assert(reader.ReadRange(request, fileBytes.size() + 1, 1).Status == AssetReadStatus::ReadFailed);
