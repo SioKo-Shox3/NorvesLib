@@ -2442,7 +2442,7 @@
 - stop-when: stateを所有権の認証と扱う、record欠落を既存fileの上書き許可にする、runtime manifestを変更、file公開とtransactionを未検証で接続する。
 
 ## G2-S6-STATE-FILE: 所有stateを安全に新規保存して読み戻す
-- status: todo
+- status: doing
 - done-when: caller指定のRuntimeRoot外の同volume stateを排他新規保存し、Missing/Loaded/Errorを区別して読む。既存stateを置換せず、自分のtemp以外を採用/削除しない。
 - verify: cook→capture→save→load→共通Skip、write/flush/verify/renameの失敗、既存file/directory/junction/競合、out保持、Windowsと既存byte gate。
 - stop-when: locked journalなしでproduction rootとstateを別々に公開、unknown ownershipの自動採用、atomic reader/powerloss耐久性を保証する。

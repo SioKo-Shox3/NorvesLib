@@ -1,6 +1,7 @@
 ﻿// 実cook出力の増分判断と、現在要求から独立に導く出力一覧・安全境界を検証する。
 #include "Tools/AssetCook/CookCacheDecision.h"
 #include "Tools/AssetCook/CookOwnedState.h"
+#include "Tools/AssetCook/CookStateFile.h"
 #include "Tools/AssetCook/CookCacheDecisionTestAccess.h"
 #include "Tools/AssetCook/AssetCookLegacyOptions.h"
 #include "Tools/AssetCook/CookOutputPaths.h"
@@ -190,6 +191,17 @@ namespace
         saved.clear();
         const auto* restored = FindCookOwnedRecord(loaded, owned.PrimaryKey);
         CHECK(restored && Decide(r, restored, &f.Live) == CookDecision::Skip);
+        CookStateFileRequest stateFile;
+        stateFile.RuntimeRoot = root / name;
+        Text stateName = name; stateName.append(".state.json");
+        stateFile.StatePath = root / std::filesystem::path(stateName.c_str());
+        stateFile.ExpectedBinding = state.Binding;
+        CHECK(WriteNewCookOwnedState(stateFile, state, error));
+        CookOwnedState fromFile;
+        CHECK(LoadCookOwnedState(stateFile, fromFile, error) == CookStateLoadResult::Loaded);
+        const auto* diskRecord = FindCookOwnedRecord(fromFile, owned.PrimaryKey);
+        CHECK(diskRecord && Decide(r, diskRecord, &f.Live) == CookDecision::Skip);
+
 
         CHECK(Decide(r, nullptr, &f.Live) == CookDecision::Cook);
         CHECK(Decide(r, &f.Record, &f.Live, 7, false) == CookDecision::Cook);

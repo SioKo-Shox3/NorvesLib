@@ -548,6 +548,10 @@ namespace NorvesLib::Tools::AssetCook
             }
         };
     } // namespace
+    bool IsValidCookStateBinding(const CookStateBinding& binding)
+    {
+        return BindingValid(binding);
+    }
     bool ParseCookOwnedState(Core::Container::Span<const uint8_t> bytes, const CookStateBinding& expected,
                              CookOwnedState& out, Core::Container::AnsiString& error)
     {

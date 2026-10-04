@@ -746,3 +746,7 @@
 - G2-S6-STATE-CODEC検証準備: JSON拒否fixtureの3文字列をC++ UCNではなくJSON escape byteへ訂正し、literalだけの独立compileでbackslash列を確認。全kind実cook recordへcodec往復を追加、22CPUへ登録。比較器12件と独立prefix順序10000例が成功。native Windows/79+10は未実行。DOM前node予算は未実装の制約として明記。
 
 - G2-S6-STATE-CODEC受入: af63b209/run37231239763で実Windows build・22CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。全kindの実recordをJSON往復して共通Skipへ戻り、strict schema・uint64境界・scope・alias/prefix・失敗保持を実証。3ZIPと79+10固定出力の直接byte一致を独立確認しroot再実行。値codecをdone。実file保存/読込と既存root transactionは未接続。
+
+- G2-S6-STATE-FILE開始: callerが保持するbindingとASCII絶対locatorを使い、RuntimeRoot外/同volumeをhandleの物理pathで照合する。新規tempをCREATE_NEWで排他取得し、write/flush/readback後に同じhandleでno-replace renameする案を採る。Missingは既存親の下の最終leaf不在だけ。所有handle以外をcleanupせず、production transactionへは未接続。
+- G2-S6-STATE-FILE境界調整: 不在runtimeの将来8.3 aliasがstate新規fileと衝突する余地を除くため、このprimitiveはRuntimeRootも既存directory必須へ限定する。新規rootと外部stateの順序/rollbackは後続transactionで扱う。root不在はMissingではなくErrorとして保存前に止める。
+- G2-S6-STATE-FILE検証準備: root不在試験は新しいstate leafを指定し、旧実装のMissing/新規保存を直接反証する形へ補強。既存file/directory/junction/sharing・実2writer・temp衝突・故障注入・orphan保持と全kind save/load→Skipを23CPUへ接続。比較器12件×通常/最適化とBOM/CRLF検査が成功。Win32 handle動作と79+10byte gateは未実行。

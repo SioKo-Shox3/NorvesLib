@@ -34,3 +34,23 @@ fileのMissing / Loaded / Error、新規排他保存、tempの検証とno-replac
 CookOwnedStateTestでschema全階層・uint64境界・copy/move後の値所有・scope不一致・alias/prefix・過大入力と失敗保持を検証する。CookCacheDecisionTestの全kindの実cook→record採取にcodec往復を挟み、同じDecideCookCacheでSkipへ戻ることを確認する。Windows CPU契約と固定79+10byte gateの実結果は受入れ時に記録する。
 
 af63b209c20b433eece01d7bbbf2b1a3d35bbf35の[Windows run37231239763](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37231239763)で22 CPU契約と固定79+10出力・5診断のbyte互換が成功。全kindの実record→codec→共通Skipも合格した。これは値形式の受入れであり、実file保存・既存root公開の受入れではない。
+
+## Windowsでの新規state file操作
+
+CookStateFileはcaller指定のASCII絶対StatePath / RuntimeRootとExpectedBindingを受け取る。state親とRuntimeRootは既存directoryが必要。未作成runtimeの将来の8.3 aliasは確定できないため、このprimitiveでは不在rootを扱わない。callerは同じOwnerIdを設定等で独立に保持し、読みたいstate自身から採用しない。
+
+- raw表記を正規化前に検査し、reparse・UNC/device・drive-relative・危険名を拒否する
+- 親の全成分の存在を確認し、directory handleを保持する。handleのvolume GUID付き正規pathで同volumeと双方向の包含衝突を検査する。drive文字や8.3表記だけで外側と判定しない
+- RuntimeRootIdentityはcallerのASCII表記との一致用、handle物理pathは実scope確認用。後者をstateへ保存しない
+- Loadはshare=0で最終fileを開き、regular/non-reparse・16MiB以下・完全read/EOF/size不変を確認してからcodecへ渡す。bindingは不在判断より先に検証する
+- Missingは全ての親が確認できた状態で最終leafだけがFILE_NOT_FOUNDとなった場合。PATH_NOT_FOUND・sharing/access失敗・directory/reparse・空file・破損JSONはError。Loaded時だけoutを変更する
+
+WriteNewは事前serialize後、自分のsibling tempをCREATE_NEWで排他作成する。GENERIC_READ / GENERIC_WRITE / DELETE、share=0で得た同じhandleへ全write、FlushFileBuffers、seek、readbackのbyte一致とparseを行い、FileRenameInfo（ReplaceIfExists=FALSE）で新規公開する。RootDirectory=NULLと絶対宛先を使い、相対directory-handle renameの動作には依存しない。公開成功直後にcleanupを解除し、その後のclose失敗でも公開済みfileを消さない。
+
+失敗時は取得済みの自分のhandleにだけFileDispositionInfoを設定して閉じる。CREATE_NEWが衝突した他者の名前は所有しない。cleanup自体の失敗はorphan path付きで返し、pathnameによる代替削除や再帰cleanupをしない。未知のtempは採用・削除しない。
+
+通常の同時writerでは排他作成とno-replace renameにより1件だけが成功する。保持handleはsource名のすり替えによる別objectの公開/削除を防ぐが、全祖先のhostileな差し替えや特権操作への耐性は保証しない。安定した親namespaceを前提とする。flush/readback成功は後続renameの電源断耐久性や、production rootとのtransactionを証明しない。
+
+CookStateFileTestはnative成功と、共有lock・junction・既存宛先・公開直前競合・実2thread・大きさ・失敗時保持を検証する。private probeの故障注入は失敗経路とcleanupの検証であり、注入したflush/renameが実OSで成功した証拠にはしない。8.3別名と別volumeの利用可否は試験receiptへ明示する。CookCacheDecisionTestでは全kindの実recordをsave/loadし、同じ共通判断でSkipへ戻す。
+
+参照: [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[GetFinalPathNameByHandleW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)、[SetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle)、[FILE_RENAME_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info)、[FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers)

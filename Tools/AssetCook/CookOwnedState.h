@@ -29,6 +29,7 @@ namespace NorvesLib::Tools::AssetCook
     inline constexpr size_t MaximumCookStateRecords = 4096;
     inline constexpr size_t MaximumCookStateOutputs = 16384;
     inline constexpr size_t MaximumCookStateStringBytes = 4096;
+    [[nodiscard]] bool IsValidCookStateBinding(const CookStateBinding& binding);
     // 全fieldを値所有する。expectedは現在のcaller設定であり、保存JSONから組み立てない。
     // 失敗時outは保持。fileを開かず、成功は既存出力の採用/上書き許可を意味しない。
     [[nodiscard]] bool ParseCookOwnedState(Core::Container::Span<const uint8_t> bytes, const CookStateBinding& expected,
