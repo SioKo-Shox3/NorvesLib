@@ -3,6 +3,8 @@
 // 期待は実装の縮め方を写さず、「ミップ m の texel が覆う深度の矩形」を直接取って最大を計算する。
 // 矩形は、長さ 2^(m+1) の幅で並び、最後の列・行だけは深度の端まで伸びる（奇数ではみ出す行・列を含めて保守的にする）。
 // 深度の入れ替えで結び直すこと、解像度の変更で作り直すことも続けて確かめる。
+// さらに、D32_FLOAT の深度を描画パスで描いた直後（同じコマンドリスト）に作る経路（MegaGeometry の描画のあとの呼び方）でも、
+// 全ミップが描いた深度と一致することを確かめる。
 #include "Rendering/HiZPyramidPass.h"
 #include "Rendering/ShaderManager.h"
 
@@ -52,7 +54,7 @@ namespace
 
     int SkipGpuTest(const char* reason)
     {
-        std::cout << TestName << " skipped: " << reason << std::endl;
+        std::cout << TestName << " スキップ: " << reason << std::endl;
         return GpuTestSkipReturnCode;
     }
 
@@ -150,7 +152,9 @@ namespace
                         const VariableArray<float>& depth,
                         uint32_t depthWidth,
                         uint32_t depthHeight,
-                        const char* label)
+                        const char* label,
+                        const RenderPassPtr& depthPass = nullptr,
+                        const FramebufferPtr& depthFramebuffer = nullptr)
     {
         CommandListPtr commandList = device->CreateCommandList();
         if (!commandList)
@@ -160,6 +164,12 @@ namespace
         }
 
         commandList->Begin();
+        if (depthPass && depthFramebuffer)
+        {
+            // 深度を描いた直後（同じコマンドリスト）に HZB を作る。MegaGeometry の描画のあとの呼び方と同じ。
+            commandList->BeginRenderPass(depthPass, depthFramebuffer);
+            commandList->EndRenderPass();
+        }
         if (!pyramid.Build(commandList.get(), depthTexture))
         {
             std::cerr << label << ": HZB の生成を記録できませんでした\n";
@@ -253,6 +263,57 @@ namespace
         return mismatchCount;
     }
 
+    // D32_FLOAT の深度を描画パスで一定値へクリアしてから、同じコマンドリストで HZB を作り、全 texel がその値になるか確かめる。
+    // 描画の深度書き込みから Compute の読み取りへの同期と、描画のあとの深度のレイアウトを確かめる（MegaGeometry の終了状態と同じ ShaderResource）。
+    int BuildAfterDepthRender(const DevicePtr& device,
+                              HiZPyramid& pyramid,
+                              uint32_t width,
+                              uint32_t height,
+                              float clearDepth,
+                              const char* label)
+    {
+        TextureDesc desc;
+        desc.Width = width;
+        desc.Height = height;
+        desc.MipLevels = 1;
+        desc.TextureFormat = Format::D32_FLOAT;
+        desc.Usage = ResourceUsage::DepthStencil | ResourceUsage::ShaderRead;
+        desc.DebugName = "HiZPyramidTestRenderedDepth";
+        TexturePtr depthTexture = device->CreateTexture(desc);
+
+        RenderPassDesc renderPassDesc;
+        renderPassDesc.hasDepthStencil = true;
+        renderPassDesc.depthStencilAttachment.format = Format::D32_FLOAT;
+        renderPassDesc.depthStencilAttachment.isDepthStencil = true;
+        renderPassDesc.depthStencilAttachment.clear = true;
+        renderPassDesc.depthStencilAttachment.clearDepth = clearDepth;
+        renderPassDesc.depthStencilAttachment.loadOp = AttachmentLoadOp::Clear;
+        renderPassDesc.depthStencilAttachment.storeOp = AttachmentStoreOp::Store;
+        renderPassDesc.depthStencilAttachment.initialState = ResourceState::Undefined;
+        renderPassDesc.depthStencilAttachment.finalState = ResourceState::ShaderResource;
+        RenderPassPtr renderPass = device->CreateRenderPass(renderPassDesc);
+
+        FramebufferDesc framebufferDesc;
+        framebufferDesc.renderPass = renderPass;
+        framebufferDesc.depthStencilTarget = depthTexture;
+        framebufferDesc.width = width;
+        framebufferDesc.height = height;
+        FramebufferPtr framebuffer = renderPass ? device->CreateFramebuffer(framebufferDesc) : nullptr;
+        if (!depthTexture || !renderPass || !framebuffer)
+        {
+            std::cerr << label << ": 深度の描画先を作れませんでした\n";
+            return -1;
+        }
+
+        VariableArray<float> expected;
+        expected.resize(static_cast<size_t>(width) * height);
+        for (float& value : expected)
+        {
+            value = clearDepth;
+        }
+        return BuildAndCompare(device, pyramid, depthTexture, expected, width, height, label, renderPass, framebuffer);
+    }
+
     struct SizeCase
     {
         uint32_t Width;
@@ -263,7 +324,7 @@ namespace
     {
         if (IsGpuTestSkipForced())
         {
-            return SkipGpuTest("NORVESLIB_FORCE_GPU_TEST_SKIP=1 was set.");
+            return SkipGpuTest("NORVESLIB_FORCE_GPU_TEST_SKIP=1 が設定されています");
         }
 
         VulkanValidationErrorCapture validationCapture;
@@ -320,6 +381,16 @@ namespace
                 const int nextMismatch = BuildAndCompare(device, pyramid, nextSource, nextDepth, sizeCase.Width, sizeCase.Height, "HZB(入れ替え)");
                 bPassed = bPassed && nextMismatch == 0;
                 ++seed;
+            }
+
+            // 実際に描いた D32 の深度（奇数の大きさ 37x23 を含む）から作る。クリア値を変えて2回ずつ。
+            const SizeCase renderedCases[] = {{37, 23}, {64, 32}};
+            for (const SizeCase& sizeCase : renderedCases)
+            {
+                const int clearMismatch = BuildAfterDepthRender(device, pyramid, sizeCase.Width, sizeCase.Height, 0.25f, "HZB(描画した深度 0.25)");
+                bPassed = bPassed && clearMismatch == 0;
+                const int nextClearMismatch = BuildAfterDepthRender(device, pyramid, sizeCase.Width, sizeCase.Height, 0.75f, "HZB(描画した深度 0.75)");
+                bPassed = bPassed && nextClearMismatch == 0;
             }
 
             device->WaitIdle();

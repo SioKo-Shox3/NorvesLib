@@ -266,6 +266,15 @@ namespace NorvesLib::Core::Rendering
             m_BoundDepth = depthTexture;
         }
 
+        // 描いたばかりの深度の書き込みを、この Compute の読み取りから見えるようにする。
+        // 描画パスの出力依存（EXTERNAL への依存）の宛先は Fragment 段までで Compute 段を含まないので、
+        // 宛先に Fragment 段・ShaderRead を含むその依存に、Fragment 段・ShaderRead から Compute 段・ShaderRead への
+        // バリアを連ねて、深度書き込み → Compute 読み取りの依存の連鎖を作る（レイアウトは ShaderResource のまま）。
+        commandList->TextureBarrier(depthTexture,
+                                    RHI::ResourceState::ShaderResource,
+                                    RHI::ResourceState::ShaderResource,
+                                    0, 0, 0, 0);
+
         // 全ミップを書き込める状態へ（前のフレームの内容は使わない）
         commandList->TextureBarrier(m_Pyramid,
                                     RHI::ResourceState::Undefined,
