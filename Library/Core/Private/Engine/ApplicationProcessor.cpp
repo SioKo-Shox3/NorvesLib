@@ -1119,7 +1119,7 @@ namespace NorvesLib::Core::Engine
         {
             if (m_CapturePngPath.empty())
             {
-                LOG_WARNING("ApplicationProcessor runtime option --capture-deterministic ignored without --capture-png");
+                LOG_WARNING("ApplicationProcessor runtime option --capture-deterministic は --capture-png が無いので無視する");
                 bCaptureDeterministic = false;
             }
             else

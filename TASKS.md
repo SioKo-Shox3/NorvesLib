@@ -137,7 +137,7 @@
 - done-when: Game に撮影用の `--capture-deterministic` を足す。テクスチャ・モデル・大きな球の生成の非同期の読み込みがすべて終わってから、シミュレーションの時間を 1/60 秒の固定刻みにし、TAA の揺らしの列・RTGI の乱数の種・自動露出・時間的な履歴を「読み込み完了の時点」から数え直して、決まった描画フレーム数の後に撮る。大きな球の自転は撮影の時間に従う（壁時計に依らない）。`Scripts/CaptureStartupScene.ps1` に `-Deterministic` を足してこれを付ける。同じコードを `-Deterministic` で2回撮った各視点の平均輝度の差が 0.1 以下、PSNR が 45 dB 以上になる（3視点、`metrics.json` に `deterministic=true` と両方の値を記録する）。付けないときの既定の描画経路と見た目は変えない。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-CAPTURE-DETERMINISTIC-a -Configuration RelWithDebInfo -Deterministic`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-CAPTURE-DETERMINISTIC-b -Configuration RelWithDebInfo -Deterministic`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG2-CAPTURE-DETERMINISTIC-b -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/VTG2-CAPTURE-DETERMINISTIC-a`
 - stop-when: GPU の処理の順序（アトミックの順など）で 45 dB に届かない場合は、測った値と原因の候補を記録して止める。
 - paths: Scripts/CaptureStartupScene.ps1, Game, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Engine, Library/Core/Public/Engine, TASKS.md, PROGRESS.md
 - notes: 2026-10-04 親が足した。VTG1-MATERIAL-ORM で、同じコードを撮り直すだけで1視点あたり最大2.6動き、見た目の保全を数値で判定できなかった。段2以降（VT・ビジビリティバッファ）の見た目の比較は `-Deterministic` で撮る。2枚の PNG の PSNR は既存の比較の道具（`VTG1-ACCEPT` で使ったもの）か、小さな PowerShell の関数で測る。
