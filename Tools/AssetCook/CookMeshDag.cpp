@@ -80,6 +80,8 @@ namespace NorvesLib::Tools::AssetCook
             uint64_t NextTriangles = 0;
             // 属性の継ぎ目をまたぐ統合を許さないと半分に届かず、許して簡略化したグループの数
             uint32_t PermissiveGroups = 0;
+            // 安全な簡略化が見つからず、簡略化せずに残したグループの数
+            uint32_t RejectedGroups = 0;
         };
 
         struct WeldedMesh
@@ -108,6 +110,10 @@ namespace NorvesLib::Tools::AssetCook
             VariableArray<float> LocalPositions;
             VariableArray<float> LocalAttributes;
             VariableArray<uint8_t> LocalLock;
+            // 段の入力全体の辺(ソート済み)。簡略化が作る新しい辺が、隣のグループの辺と重ならないかの確認に使う。
+            VariableArray<uint64_t> LevelInputEdges;
+            // 段で、これまでのグループが簡略化で新しく作った辺(ソート済み)
+            VariableArray<uint64_t> ClaimedEdges;
         };
 
         double DistanceBetween(const CookedMeshFloat3& a, const CookedMeshFloat3& b)
@@ -382,6 +388,72 @@ namespace NorvesLib::Tools::AssetCook
             return lockByPosition;
         }
 
+        // 三角形の辺を、位置が同じ頂点を同じ頂点として無向で列挙する(重複を残してソートする)。indices は局所の頂点番号で、
+        // localToGlobal が null なら通しの頂点番号として扱う。
+        void CollectPositionEdges(const WeldedMesh& mesh,
+                                  const uint32_t* localToGlobal,
+                                  const uint32_t* indices,
+                                  size_t indexCount,
+                                  VariableArray<uint64_t>& outEdges)
+        {
+            outEdges.clear();
+            outEdges.reserve(indexCount);
+            for (size_t i = 0; i + 2 < indexCount; i += 3)
+            {
+                for (size_t e = 0; e < 3; ++e)
+                {
+                    const uint32_t from = indices[i + e];
+                    const uint32_t to = indices[i + (e + 1) % 3];
+                    const uint32_t a = mesh.PositionRemap[localToGlobal != nullptr ? localToGlobal[from] : from];
+                    const uint32_t b = mesh.PositionRemap[localToGlobal != nullptr ? localToGlobal[to] : to];
+                    if (a != b)
+                    {
+                        outEdges.push_back((static_cast<uint64_t>(std::min(a, b)) << 32) | std::max(a, b));
+                    }
+                }
+            }
+            std::sort(outEdges.begin(), outEdges.end());
+        }
+
+        bool ContainsEdge(const VariableArray<uint64_t>& sortedEdges, uint64_t key)
+        {
+            return std::binary_search(sortedEdges.begin(), sortedEdges.end(), key);
+        }
+
+        // 簡略化の出力が、非多様体の辺(3 枚以上の三角形が共有する辺)を作らないか。
+        //   - グループの入力にある辺: 入力の共有数以下(縁の辺は 1 枚のまま)
+        //   - 入力にない新しい辺: 2 枚以下で、段の入力の辺(隣のグループの辺)や、先に簡略化したグループが作った辺と重ならない。
+        //     重なると、隣と並べた切り口で 1 本の辺に 4 枚が集まる。
+        bool IsOutputEdgeSafe(const VariableArray<uint64_t>& inputEdges,
+                              const VariableArray<uint64_t>& outputEdges,
+                              const SimplifyScratch& scratch)
+        {
+            for (size_t i = 0; i < outputEdges.size();)
+            {
+                size_t j = i + 1;
+                while (j < outputEdges.size() && outputEdges[j] == outputEdges[i])
+                {
+                    ++j;
+                }
+                const auto inputRange = std::equal_range(inputEdges.begin(), inputEdges.end(), outputEdges[i]);
+                const size_t inputCount = static_cast<size_t>(inputRange.second - inputRange.first);
+                if (inputCount > 0)
+                {
+                    if (j - i > inputCount)
+                    {
+                        return false;
+                    }
+                }
+                else if (j - i > 2 || ContainsEdge(scratch.LevelInputEdges, outputEdges[i]) ||
+                         ContainsEdge(scratch.ClaimedEdges, outputEdges[i]))
+                {
+                    return false;
+                }
+                i = j;
+            }
+            return true;
+        }
+
         // 1 グループ(メンバのクラスタ)を、境界の頂点を固定して半分に簡略化し、クラスタに分け直す。
         bool SimplifyGroup(const WeldedMesh& mesh,
                            const VariableArray<BuildCluster>& current,
@@ -431,7 +503,7 @@ namespace NorvesLib::Tools::AssetCook
 
             CookSimplifyParams params;
             const size_t triangleCount = scratch.LocalIndices.size() / 3;
-            params.TargetIndexCount = std::max<size_t>(3, (triangleCount / 2) * 3);
+            const size_t halfTarget = std::max<size_t>(3, (triangleCount / 2) * 3);
             // 絶対の誤差で扱うので、上限は外形の大きさ。目標の三角形数に届くところまで簡略化する。
             params.TargetErrorRelative = mesh.Scale;
             params.bErrorAbsolute = true;
@@ -439,35 +511,83 @@ namespace NorvesLib::Tools::AssetCook
             params.VertexLock = scratch.LocalLock;
             params.Attributes = scratch.LocalAttributes;
             params.AttributeCount = AttributeCount;
-            params.AttributeWeights = {AttributeWeightNormal * mesh.Scale, AttributeWeightNormal * mesh.Scale,
-                                       AttributeWeightNormal * mesh.Scale, AttributeWeightUv * mesh.Scale,
-                                       AttributeWeightUv * mesh.Scale};
-            CookSimplifyResult simplified;
-            if (!SimplifyMeshTriangles(scratch.LocalPositions.data(), localCount, sizeof(float) * 3,
-                                       scratch.LocalIndices.data(), scratch.LocalIndices.size(), params, simplified,
-                                       error))
-            {
-                return false;
-            }
+            // 属性の重みは無次元(簡略化は位置を外形の大きさで正規化するので、座標の単位に左右されない)
+            params.AttributeWeights = {AttributeWeightNormal, AttributeWeightNormal, AttributeWeightNormal,
+                                       AttributeWeightUv, AttributeWeightUv};
 
-            // 属性の継ぎ目を保つ簡略化で半分に届かないグループ(継ぎ目だらけのスキャン資産など)は、
-            // 属性の不連続をまたぐ統合も許して再試行し、三角形が減った方を採る。
-            const size_t targetTriangles = params.TargetIndexCount / 3;
-            if (simplified.Indices.size() / 3 * 4 > targetTriangles * 5)
-            {
-                params.bPermissive = true;
-                CookSimplifyResult permissive;
+            // 簡略化の出力のうち、辺を非多様体にしないものだけを候補にする
+            VariableArray<uint64_t> inputEdges;
+            VariableArray<uint64_t> outputEdges;
+            CollectPositionEdges(mesh, scratch.LocalToGlobal.data(), scratch.LocalIndices.data(),
+                                 scratch.LocalIndices.size(), inputEdges);
+            CookSimplifyResult simplified;
+            bool bHaveCandidate = false;
+            bool bCandidatePermissive = false;
+            const auto attempt = [&](size_t targetIndexCount, bool bPermissive) -> bool {
+                params.TargetIndexCount = targetIndexCount;
+                params.bPermissive = bPermissive;
+                CookSimplifyResult candidate;
                 if (!SimplifyMeshTriangles(scratch.LocalPositions.data(), localCount, sizeof(float) * 3,
-                                           scratch.LocalIndices.data(), scratch.LocalIndices.size(), params,
-                                           permissive, error))
+                                           scratch.LocalIndices.data(), scratch.LocalIndices.size(), params, candidate,
+                                           error))
                 {
                     return false;
                 }
-                if (permissive.Indices.size() < simplified.Indices.size())
+                CollectPositionEdges(mesh, scratch.LocalToGlobal.data(), candidate.Indices.data(),
+                                     candidate.Indices.size(), outputEdges);
+                if (IsOutputEdgeSafe(inputEdges, outputEdges, scratch) &&
+                    (!bHaveCandidate || candidate.Indices.size() < simplified.Indices.size()))
                 {
-                    simplified = std::move(permissive);
+                    simplified = std::move(candidate);
+                    bHaveCandidate = true;
+                    bCandidatePermissive = bPermissive;
+                }
+                return true;
+            };
+
+            if (!attempt(halfTarget, false))
+            {
+                return false;
+            }
+            // 属性の継ぎ目を保つ簡略化で半分に届かないグループ(継ぎ目だらけのスキャン資産など)は、
+            // 属性の不連続をまたぐ統合も許して再試行し、三角形が少ない方を採る。
+            const size_t targetTriangles = halfTarget / 3;
+            if (!bHaveCandidate || simplified.Indices.size() / 3 * 4 > targetTriangles * 5)
+            {
+                if (!attempt(halfTarget, true))
+                {
+                    return false;
+                }
+            }
+            // どちらも非多様体の辺を作るなら、控えめな目標でやり直す
+            if (!bHaveCandidate && !attempt(std::max<size_t>(3, (triangleCount * 3 / 4) * 3), false))
+            {
+                return false;
+            }
+            if (!bHaveCandidate)
+            {
+                // それでも安全な簡略化が無いグループは、簡略化せずそのまま残す(次の段で、近くのグループと合わせて再挑戦する)
+                simplified = CookSimplifyResult{};
+                simplified.Indices = scratch.LocalIndices;
+                ++output.RejectedGroups;
+            }
+            else
+            {
+                if (bCandidatePermissive)
+                {
                     ++output.PermissiveGroups;
                 }
+                // このグループが新しく作った辺を記録し、あとのグループが同じ辺を作らないようにする
+                CollectPositionEdges(mesh, scratch.LocalToGlobal.data(), simplified.Indices.data(),
+                                     simplified.Indices.size(), outputEdges);
+                for (size_t i = 0; i < outputEdges.size(); ++i)
+                {
+                    if ((i == 0 || outputEdges[i] != outputEdges[i - 1]) && !ContainsEdge(inputEdges, outputEdges[i]))
+                    {
+                        scratch.ClaimedEdges.push_back(outputEdges[i]);
+                    }
+                }
+                std::sort(scratch.ClaimedEdges.begin(), scratch.ClaimedEdges.end());
             }
             if (!std::isfinite(simplified.ErrorAbsolute) || simplified.ErrorAbsolute < 0.0f)
             {
@@ -539,6 +659,15 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             const VariableArray<uint8_t> lockByPosition = ComputeGroupBoundaryLocks(mesh, current, groupOfCluster);
+            scratch.LevelInputEdges.clear();
+            scratch.ClaimedEdges.clear();
+            for (const BuildCluster& cluster : current)
+            {
+                VariableArray<uint64_t> clusterEdges;
+                CollectPositionEdges(mesh, nullptr, cluster.Indices.data(), cluster.Indices.size(), clusterEdges);
+                scratch.LevelInputEdges.insert(scratch.LevelInputEdges.end(), clusterEdges.begin(), clusterEdges.end());
+            }
+            std::sort(scratch.LevelInputEdges.begin(), scratch.LevelInputEdges.end());
             for (LevelGroup& group : groups)
             {
                 if (group.Members.empty())
@@ -592,6 +721,7 @@ namespace NorvesLib::Tools::AssetCook
         VariableArray<CookedMeshClusterGroup> groups;
         uint32_t level = 0;
         uint32_t permissiveGroups = 0;
+        uint32_t rejectedGroups = 0;
         VariableArray<uint32_t> levelTriangles;
         while (true)
         {
@@ -631,6 +761,7 @@ namespace NorvesLib::Tools::AssetCook
 
             // この段のクラスタを、グループごとの連続した範囲に並べて確定する
             permissiveGroups += output.PermissiveGroups;
+            rejectedGroups += output.RejectedGroups;
             for (LevelGroup& group : output.Groups)
             {
                 const uint32_t groupId = static_cast<uint32_t>(groups.size());
@@ -803,6 +934,7 @@ namespace NorvesLib::Tools::AssetCook
         stats.GroupCount = static_cast<uint32_t>(out.Groups.size());
         stats.RootClusterCount = rootCount;
         stats.PermissiveGroupCount = permissiveGroups;
+        stats.RejectedGroupCount = rejectedGroups;
         stats.LevelTriangles = std::move(levelTriangles);
         stats.FallbackTriangles = fallbackTriangles;
         stats.FallbackTargetTriangles = static_cast<uint32_t>(target);

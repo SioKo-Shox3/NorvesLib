@@ -494,8 +494,7 @@ namespace
         return mesh;
     }
 
-    void CheckDagMesh(const CookedMeshData& mesh, const VertexMesh* source, size_t sourceTriangles,
-                      bool bRequireManifold);
+    void CheckDagMesh(const CookedMeshData& mesh, const VertexMesh* source, size_t sourceTriangles);
 
     void RunDagCase(const char* caseName, const VertexMesh& source, bool bExpectPermissive)
     {
@@ -515,9 +514,9 @@ namespace
               "LOD の階層の焼き込みが失敗した");
         const CookMeshDagStats& stats = baked.Stats;
         std::printf("MESH_DAG_BAKE source_triangles=%u welded_vertices=%u levels=%u clusters=%u groups=%u roots=%u "
-                    "permissive_groups=%u fallback_triangles=%u fallback_target=%u\n",
+                    "permissive_groups=%u rejected_groups=%u fallback_triangles=%u fallback_target=%u\n",
                     stats.SourceTriangles, stats.WeldedVertices, stats.LODLevelCount, stats.ClusterCount, stats.GroupCount,
-                    stats.RootClusterCount, stats.PermissiveGroupCount, stats.FallbackTriangles,
+                    stats.RootClusterCount, stats.PermissiveGroupCount, stats.RejectedGroupCount, stats.FallbackTriangles,
                     stats.FallbackTargetTriangles);
         std::printf("MESH_DAG_LEVELS");
         for (const uint32_t levelTriangles : stats.LevelTriangles)
@@ -530,6 +529,8 @@ namespace
         Check(stats.bReachedSingleRoot && stats.RootClusterCount == 1, "閉じた球の階層が 1 つの根まで縮まらなかった");
         // 継ぎ目だらけの入力は、継ぎ目を保ったままでは半分に届かず、許容モードの簡略化が使われる
         Check(!bExpectPermissive || stats.PermissiveGroupCount > 0, "継ぎ目だらけの入力で許容モードが使われなかった");
+        // 非多様体の辺を作らない簡略化が見つからず、簡略化を諦めたグループが無い
+        Check(stats.RejectedGroupCount == 0, "簡略化を諦めたグループがある");
 
         // NVMESH v1 として書き、読み直す。読み込みの検査(根の条件・グループの整合・境界球の包含など)も通る。
         VariableArray<uint8_t> bytes;
@@ -545,7 +546,7 @@ namespace
         }
         const CookedMeshData& mesh = parsed.Mesh;
         Check(mesh.FormatMajor == 1 && mesh.LODLevelCount == stats.LODLevelCount, "読み直した段数が焼いた値と違う");
-        CheckDagMesh(mesh, &source, sourceTriangles, true);
+        CheckDagMesh(mesh, &source, sourceTriangles);
 
         // 不正な入力は拒否する
         CookMeshDagResult rejected;
@@ -557,10 +558,9 @@ namespace
     }
 
     // 焼いて読み直したメッシュの性質を確かめる。source は入力(属性が保たれたかの確認に使う。null なら省く)で、
-    // sourceTriangles は段 0 の三角形数。bRequireManifold が false なら、穴・割れ目だけを失敗とし、面が辺で接する
-    // 「つまみ」(3 つ以上の三角形が辺を共有する。向きは釣り合う)は数えて報告するだけにする(実資産用)。
-    void CheckDagMesh(const CookedMeshData& mesh, const VertexMesh* source, size_t sourceTriangles,
-                      bool bRequireManifold)
+    // sourceTriangles は段 0 の三角形数。切り口の辺は、穴(割れ目)も「つまみ」(3 つ以上の三角形が 1 本の辺を共有する)も
+    // 無く、すべてちょうど 2 つの三角形に共有されていなければ失敗とする。
+    void CheckDagMesh(const CookedMeshData& mesh, const VertexMesh* source, size_t sourceTriangles)
     {
 
         // (1) 誤差が子から親へ単調: 根でないクラスタの親の誤差は自分の誤差以上、グループの誤差はメンバの誤差以上。
@@ -703,7 +703,7 @@ namespace
         {
             const VariableArray<uint32_t> cut = CutTriangles(mesh, thresholds[t]);
             const EdgeReport report = AnalyzeEdges(mesh.Vertices, cut);
-            const bool bClosed = report.Edges != 0 && report.Holes == 0 && (!bRequireManifold || report.Pinched == 0);
+            const bool bClosed = report.Edges != 0 && report.Holes == 0 && report.Pinched == 0;
             std::printf("MESH_DAG_CUT threshold=%.6f triangles=%zu edges=%zu holes=%zu pinched=%zu\n",
                         static_cast<double>(thresholds[t]), cut.size() / 3, report.Edges, report.Holes, report.Pinched);
             Check(bClosed, "誤差のしきい値で切ったメッシュに穴か割れ目がある");
@@ -733,17 +733,47 @@ namespace
         }
         const EdgeReport fallbackReport = AnalyzeEdges(mesh.Vertices, fallback);
         std::printf("MESH_DAG_FALLBACK_EDGES edges=%zu holes=%zu pinched=%zu\n", fallbackReport.Edges, fallbackReport.Holes, fallbackReport.Pinched);
-        Check(fallbackReport.Edges != 0 && fallbackReport.Holes == 0 && (!bRequireManifold || fallbackReport.Pinched == 0),
+        Check(fallbackReport.Edges != 0 && fallbackReport.Holes == 0 && fallbackReport.Pinched == 0,
               "フォールバックの段に穴か割れ目がある");
         std::printf("MESH_DAG_FALLBACK triangles=%zu error=%.6f\n", fallbackTriangles,
                     static_cast<double>(mesh.FallbackError));
+    }
+
+    // 座標の単位(1024 倍)を変えても、属性の重みの効き方が変わらず、同じ階層になる(2 のべき乗倍は浮動小数で厳密)
+    void RunDagScaleInvariance(const VertexMesh& source)
+    {
+        VertexMesh scaled = source;
+        for (CookedMeshVertex& vertex : scaled.Vertices)
+        {
+            vertex.Position.X *= 1024.0f;
+            vertex.Position.Y *= 1024.0f;
+            vertex.Position.Z *= 1024.0f;
+        }
+        CookMeshDagResult baseline;
+        CookMeshDagResult enlarged;
+        AnsiString error;
+        Check(BakeMeshLodDag(source.Vertices.data(), source.Vertices.size(), source.Indices.data(),
+                             source.Indices.size(), baseline, error),
+              "LOD の階層の焼き込みが失敗した(基準)");
+        Check(BakeMeshLodDag(scaled.Vertices.data(), scaled.Vertices.size(), scaled.Indices.data(),
+                             scaled.Indices.size(), enlarged, error),
+              "LOD の階層の焼き込みが失敗した(1024 倍)");
+        std::printf("MESH_DAG_SCALE levels=%u/%u clusters=%u/%u permissive=%u/%u\n", baseline.Stats.LODLevelCount,
+                    enlarged.Stats.LODLevelCount, baseline.Stats.ClusterCount, enlarged.Stats.ClusterCount,
+                    baseline.Stats.PermissiveGroupCount, enlarged.Stats.PermissiveGroupCount);
+        Check(baseline.Stats.LevelTriangles == enlarged.Stats.LevelTriangles,
+              "座標を拡大すると、段ごとの三角形数が変わった(属性の重みが単位に左右される)");
+        Check(baseline.Stats.PermissiveGroupCount == enlarged.Stats.PermissiveGroupCount,
+              "座標を拡大すると、許容モードのグループ数が変わった");
     }
 
     void RunDag()
     {
         const VertexMesh sphere = MakeClosedSphere(144, 72);
         RunDagCase("smooth_sphere", sphere, false);
-        RunDagCase("island_sphere", MakeIslandSphere(sphere), true);
+        const VertexMesh islandSphere = MakeIslandSphere(sphere);
+        RunDagCase("island_sphere", islandSphere, true);
+        RunDagScaleInvariance(islandSphere);
     }
 
     void RunInvalidInputs()
@@ -860,7 +890,7 @@ namespace
                     mesh.Vertices.size());
         Check(mesh.LODLevelCount >= 5, "実資産の階層の段数が少なすぎる");
         Check(rootCount <= 4, "実資産の階層が数個の根まで縮まらなかった");
-        CheckDagMesh(mesh, nullptr, level0Triangles, false);
+        CheckDagMesh(mesh, nullptr, level0Triangles);
     }
 }
 

@@ -21,6 +21,8 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t RootClusterCount = 0;
         // 属性の継ぎ目をまたぐ統合を許して簡略化したグループの数(0 なら、すべて継ぎ目を保ったまま半分にできた)
         uint32_t PermissiveGroupCount = 0;
+        // 簡略化の出力が非多様体の辺を作るので、簡略化せずに残したグループの数(0 が望ましい)
+        uint32_t RejectedGroupCount = 0;
         // フォールバックの段の三角形数と、その目標(全体の 1/16 か 32K の小さい方。根の段までしか粗くできなければ超える)
         uint32_t FallbackTriangles = 0;
         uint32_t FallbackTargetTriangles = 0;

@@ -21,6 +21,8 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t LODLevelCount = 1;
         // LOD の階層の焼き込み(溶接・クラスタ化・簡略化・書き出し・自己検証)にかかった時間
         uint32_t DagMilliseconds = 0;
+        // 安全な簡略化が見つからず、簡略化せずに残したグループの数(階層が粗くなりにくくなる。0 が望ましい)
+        uint32_t DagRejectedGroups = 0;
     };
 
     struct SkeletalCookResult

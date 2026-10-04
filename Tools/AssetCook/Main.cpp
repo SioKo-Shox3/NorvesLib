@@ -2289,6 +2289,7 @@ namespace
             std::cerr << "MESH_COOK dag_levels=" << meshResult.LODLevelCount
                       << " clusters=" << meshResult.ClusterCount
                       << " ms=" << meshResult.DagMilliseconds
+                      << " rejected_groups=" << meshResult.DagRejectedGroups
                       << "\n";
         }
         return true;

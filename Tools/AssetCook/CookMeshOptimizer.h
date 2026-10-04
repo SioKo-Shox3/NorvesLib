@@ -27,8 +27,8 @@ namespace NorvesLib::Tools::AssetCook
         // 頂点ごとの固定フラグ(0 でない頂点は消さない)。空なら固定しない。大きさは頂点数と同じ。
         Core::Container::VariableArray<uint8_t> VertexLock;
         // 頂点ごとの属性(法線・UV など)。AttributeCount 個の float を頂点の順にすき間なく並べる。空なら属性を見ない。
-        // 重みは位置に対する相対の優先度(AttributeWeights は AttributeCount 個)。bErrorAbsolute のときは、
-        // 位置と同じ絶対の単位で効くので、呼び出し側が外形の大きさを掛けて渡す。
+        // 重みは位置に対する相対の優先度(AttributeWeights は AttributeCount 個)。meshoptimizer は位置を頂点の外形の大きさで
+        // 正規化し、属性には重みをそのまま掛けるので、重みは無次元(座標の単位に左右されない)。bErrorAbsolute でも同じ。
         Core::Container::VariableArray<float> Attributes;
         Core::Container::VariableArray<float> AttributeWeights;
         size_t AttributeCount = 0;

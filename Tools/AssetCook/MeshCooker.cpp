@@ -1614,7 +1614,7 @@ namespace NorvesLib::Tools::AssetCook
             if (!BakeMeshLodDag(cookedVertices.data(), cookedVertices.size(), indices.data(), indices.size(), dag,
                                 dagError))
             {
-                error = AnsiString("LOD hierarchy bake failed: ") + dagError;
+                error = AnsiString("LOD の階層の焼き込みに失敗しました: ") + dagError;
                 return false;
             }
             dag.Output.AlbedoTexture = AnsiStringView(materialReferences.Albedo);
@@ -1624,7 +1624,7 @@ namespace NorvesLib::Tools::AssetCook
             MeshCookResult result;
             if (!NorvesLib::Core::Asset::SerializeCookedMeshV1(dag.Output, result.NvmeshBytes))
             {
-                error = "NVMESH v1 exceeds the 32-bit count limit";
+                error = "NVMESH v1 の個数が 32bit の上限を超えました";
                 return false;
             }
 
@@ -1633,7 +1633,7 @@ namespace NorvesLib::Tools::AssetCook
             const auto parseResult = ParseCookedMesh(AssetBlob::CopyBytes(meshSpan, "AssetCook mesh self-validation"));
             if (!parseResult.Succeeded())
             {
-                error = AnsiString("generated NVMESH v1 failed self-validation: status=") +
+                error = AnsiString("焼いた NVMESH v1 が自己検証に失敗しました: status=") +
                         FormatInteger(static_cast<int>(parseResult.Status));
                 return false;
             }
@@ -1644,6 +1644,7 @@ namespace NorvesLib::Tools::AssetCook
             result.IndexCount =
                 static_cast<uint32_t>(dag.Output.ClusterIndices.size() + dag.Output.FallbackIndices.size());
             result.ClusterCount = dag.Stats.ClusterCount;
+            result.DagRejectedGroups = dag.Stats.RejectedGroupCount;
             result.DagMilliseconds = static_cast<uint32_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - bakeStart)
                     .count());
