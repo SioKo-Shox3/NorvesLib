@@ -331,53 +331,87 @@
 - notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG4-MESHOPT-VENDOR: meshoptimizerを取り込む
-- status: backlog
-- done-when: `Library/ThirdParty/meshoptimizer/` に固定の commit のソースと `LICENSE`・`UPSTREAM.json` を置き、`AssetCook` にだけリンクする。
+- status: todo
+- done-when: `Library/ThirdParty/meshoptimizer/` に固定した commit（リリースのタグ）のソースと `LICENSE`（MIT）、`UPSTREAM.json`（版・commit・取得元・sha256・SPDX）を置き、独立の静的ライブラリ `NorvesThirdParty_MeshOptimizer` を作って `AssetCook` にだけリンクする（Core・Game はリンクしない）。`Tools/AssetCook` に薄い境界（`MeshSimplifier` の名前は既存と衝突するので `CookMeshOptimizer` などにする）を置き、スモーク `AssetCookMeshSimplifySmoke`（`Tools/AssetCook/CMakeLists.txt` の add_test）が、緯度経度の球（約 2 万三角形）を境界の頂点を固定して半分に簡略化し、三角形の数・誤差（相対）・固定した頂点が動かないことを確かめる。
 - verify: `cmake --build build --config Debug --target AssetCook -- /m:1`
-- paths: Library/ThirdParty/meshoptimizer, Tools/AssetCook, TASKS.md, PROGRESS.md
-- notes: 段4の開始時に親が詳しくする（計画書 4.3）。
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(AssetCookMeshSimplifySmoke|AssetCookMeshSmoke)$"`
+- stop-when: 取得元から入手できない、またはライセンスが MIT でない場合は、理由を記録して止める。
+- paths: Library/ThirdParty/meshoptimizer, Tools/AssetCook, CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: ユーザー承認済みの外部依存（計画書 1）。取り込み方は bc7enc_rdo（`Library/ThirdParty/bc7enc_rdo`、VTG1-BC7ENC-VENDOR）に倣う。
 
 ## VTG4-NVMESH-V1: NVMESH v1（LODの階層を持つクラスタの記録）を足す
-- status: backlog
-- done-when: cluster record 128B（自分と親の境界球と誤差、グループ番号、ページ番号、ページ内の位置）の v1 を足し、v0 も読む。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedMeshTest|AssetCookMeshSmoke)$"`
-- paths: Library/Core/Public/Asset, Library/Core/Private/Asset, Tools/AssetCook, Test/Core/Asset, Docs/Architecture, TASKS.md, PROGRESS.md
+- status: todo
+- done-when: `CookedMeshFormat` に v1 を足す。cluster record は 128B（自分の境界球と誤差、親のグループの境界球と誤差、グループの番号、LOD の段、頂点・インデックスの位置と数、法線のコーン、ページの番号（段5まで 0））。グループの表（グループの境界球・誤差・クラスタの範囲）と、RT・影のための常駐の粗い段（フォールバック）のインデックスの範囲を持つ。v0 も読む（v0 は従来の1段のメッシュとして扱う）。読み込み側（`CookedMeshLoader`）が v1 を検証し（範囲・数の不整合・壊れた表を拒否）、MegaGeometry の `MegaMeshCreateInfo` へ渡せる形にする。`Docs/Architecture/NVMESHv1.md` に形式を書く。`CookedMeshTest` に v1 の書き出し・読み込みの往復、v0 の読み込み、壊れた入力の拒否を足す。
+- verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedMeshTest|AssetCookMeshSmoke|CookedTextureTest)$"`
+- stop-when: v0 の読み込みを保てない形式の変更が要る場合は、理由を記録して止める。
+- paths: Library/Core/Public/Asset, Library/Core/Private/Asset, Library/Core/Public/Rendering/MegaGeometry, Tools/AssetCook, Test/Core/Asset, Docs/Architecture, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。既存の設計案は `Docs/Plans/GameFeatureRoadmap.md` の GR80 P3（3061 行付近）。危険地帯（アセットロード）。
 
 ## VTG4-DAG-BAKE: クッカーでLODの階層を焼く
-- status: backlog
-- done-when: meshoptimizer で、グループ化 → 境界を固定した属性を保つ簡略化 → 再クラスタ化を繰り返し、親の誤差が単調な階層を NVMESH v1 に書く。誤差の単調性・割れ目の無さをテストで確かめる。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(AssetCookMeshSmoke|CookedMeshTest)$"`
-- paths: Tools/AssetCook, Library/Core/Public/Asset, Test/Core/Asset, TASKS.md, PROGRESS.md
+- status: todo
+- done-when: `MeshCooker` が、頂点の溶接（位置と属性）→ 128三角形・128頂点のクラスタ化 → 「約4クラスタのグループ化（隣接で）→ グループの境界の頂点を固定して属性（UV・法線）を保つ簡略化で半分に → 再クラスタ化」の繰り返しで、根（クラスタ数が数個）まで階層を作り、NVMESH v1 に書く。親の誤差は子の誤差の最大と簡略化の誤差の和（単調）、親の境界球は子の境界球を包む。フォールバックの段は、全体の三角形がおよそ 1/16 か 32K 以下になる誤差で切ったクラスタの集まり。性質のテスト（`CookedMeshTest` か AssetCook のスモーク）: 閉じた入力（緯度経度の球）で (1) 誤差がどの子から親へも単調、(2) 親の境界球が子を包む、(3) 誤差のしきい値を5通りに変えて切った各メッシュで、すべての辺がちょうど2つの三角形に共有される（穴・割れ目が無い）、(4) フォールバックの三角形数が範囲内。岩（`boulder_01`）の glTF を焼いた時間をログ（`MESH_COOK dag_levels=<n> clusters=<n> ms=<n>`）に出す。
+- verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedMeshTest|AssetCookMeshSmoke|AssetCookMeshSimplifySmoke)$"`
+- stop-when: 境界を固定した簡略化で半分に届かず、階層が根まで縮まらない入力が起動画面の資産にある場合は、その資産と値を記録して止める。
+- paths: Tools/AssetCook, Library/Core/Public/Asset, Library/Core/Private/Asset, Test/Core/Asset, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。既存の `LODHierarchyBuilder`（実行時。未使用・n² の疑い）は使わない。
 
-## VTG4-DAG-SELECT-GPU: GPUのカリングで階層の段を選ぶ
-- status: backlog
-- done-when: `cluster_cull.comp` が「自分の誤差で描けて、親の誤差では描けない」でクラスタを選ぶ。古い LOD の段の経路を置き換える。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest)$"`
-- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+## VTG4-DAG-SELECT-GPU: GPUのカリングで階層の切り方を選ぶ
+- status: todo
+- done-when: クック済みの NVMESH v1 を MegaGeometry に読み込み（全段のクラスタを1組の頂点・インデックスに置く）、`cluster_cull.comp` が「自分の誤差を画面へ投影した値がしきい値以下で、親のグループの誤差を投影した値がしきい値を超える」クラスタだけを描く（同じグループのクラスタが同じ判断になるよう、親の判定はグループの境界球と誤差で行う）。段3の2パスの遮蔽（クラスタの番号ごとの可視ビット）と両立する。v0 と手続きの球は従来の段の選び方のまま。`MegaGeometryResourcesTest` に、v1 のメッシュで距離を変えたとき選ばれるクラスタの集まりが閉じたメッシュになる（CPU で同じ判定を写した検査）ケースを足す。
+- verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest|HiZOcclusionTestVulkanTest|CookedMeshTest)$"`
+- stop-when: 階層の切り方の判定と段3の可視ビットの番号の付け方が両立せず、遮蔽の履歴の作り直しが要る場合は、理由を記録して止める。
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Asset, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（描画パス・アセットロード）。
 
-## VTG4-FALLBACK-LEVEL: RTと影のための粗い段を常駐させる
-- status: backlog
-- done-when: 焼き込みで粗い段（フォールバックメッシュ）を作って常駐させ、加速構造と CSM（VSM までのつなぎ）がそれを使う。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RayTracingCapabilityContractTest)$"`
-- paths: Tools/AssetCook, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+## VTG4-FALLBACK-LEVEL: RTと影はフォールバックの段を使う
+- status: todo
+- done-when: v1 のメッシュでは、CSM・点光源の影の描画（`ShadowLODLevel`・`LevelRanges` の「1つのインデックスの範囲で描ける段」）と、レイトレの加速構造（`RayTracingSceneInstanceSnapshot` と BLAS のキー）が、常駐のフォールバックの段の範囲を使う。v0・手続きの球は従来どおり。`MegaGeometryResourcesTest`・`RayTracingSceneSnapshotTest` に、v1 のメッシュの影・RT の範囲がフォールバックを指すケースを足す。起動画面の撮影で、影と RTGI が崩れないことを確かめる（この時点では起動画面はまだ v1 を使わないので、v1 の岩を一時的に読む撮影で確かめる）。
+- verify: `cmake --build build --config Debug --target MegaGeometryResourcesTest RayTracingSceneSnapshotTest DirectionalShadowLightMatricesTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RayTracingSceneSnapshotTest|DirectionalShadowLightMatricesTest|RayTracingCapabilityContractTest)$"`
+- stop-when: BLAS のキーがバッファのポインタと範囲で、フォールバックを別のバッファに置かないと照合が崩れる場合は、理由を記録して止める。
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 1（RT は焼いた粗い段を常駐）。影は段8・9で VSM に置き換えるまでのつなぎ。危険地帯（RT・影）。
 
-## VTG4-COOK-STARTUP-MODELS: 起動画面の岩・小屋・大きな球をクック済みにする
-- status: backlog
-- done-when: 岩・小屋（glTF）と大きな球（クッカーの生成器で高さマップから作る）を `CookAssets` で NVMESH v1 に焼き、Game が既定でそれを読む（glTF の実行時の経路は予備）。撮影で見た目が変わらない。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG4-COOK-STARTUP-MODELS -Configuration RelWithDebInfo`
-- paths: Game, Tools/AssetCook, Assets/AssetSets, CMakeLists.txt, TASKS.md, PROGRESS.md
+## VTG4-COOK-STARTUP-MODELS: 起動画面の岩と小屋をクック済み（NVMESH v1・BC・VT）で読む
+- status: todo
+- done-when: `CookAssets` が岩（`boulder_01_4k.gltf`）と小屋（`Cottage_Clean`）のメッシュを NVMESH v1（階層つき）に、テクスチャを BC（色 BC7 sRGB、法線 BC5。岩の `nor_gl` は OpenGL の向きなので Y を反転して DirectX の向きにする、ARM は R=AO・G=粗さ・B=メタリックで ORM と同じ並びなので BC7 linear）に焼く。Game は既定でクック済みの岩・小屋を読み（材質のテクスチャは段2の VT）、クック済みが無ければ従来の glTF の実行時の経路へ戻して警告する。撮影の `VRAM_LEDGER` で、岩・小屋の無圧縮のテクスチャ（409.6 MiB）が無くなることを記録する。`-Deterministic` の撮影で、glTF の経路（`--rendering3dtest-model-source=gltf` など）と比べた PSNR を視点ごとに記録し（階層の段の違いで差が出うる。目安 40 dB 以上）、PNG を開いて岩・小屋の形・模様・法線の向き（凹凸の陰の向き）が同じに見えることを確かめる。
+- verify: `cmake --build build --config RelWithDebInfo --target AssetCook CookAssets Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG4-COOK-STARTUP-MODELS -Configuration RelWithDebInfo -Deterministic`
+- stop-when: glTF の材質（複数の submesh・材質）が NVMESH v1 の1材質に収まらない場合は、資産と理由を記録して止める。
+- paths: Game, Tools/AssetCook, Assets/AssetSets, Library/Core/Private/Asset, Library/Core/Public/Asset, Library/Core/Private/Resource, Library/Core/Private/Rendering, Scripts, TASKS.md, PROGRESS.md
+- notes: 段1の既知の限界（岩・小屋の glTF のテクスチャが無圧縮）をここで解く。起動画面の見た目を変えうる（絶対規則7）。危険地帯（アセットロード）。
+
+## VTG4-BIG-SPHERE-COOK: 起動画面の大きな球をクッカーで生成して焼く
+- status: todo
+- done-when: クッカーに、石畳の高さマップ（`cobblestone_floor_09_disp_4k.png`）で変位した緯度経度の球（今の実行時の生成と同じ半径・分割・変位の量）を作る生成器（`--generate displaced-sphere`）を足し、`CookAssets` が NVMESH v1（階層つき）に焼く。Game は既定でそれを読み、実行時の生成（約 3.6 秒）をしない（クック済みが無ければ従来の実行時の生成へ戻して警告する）。`-Deterministic` の撮影で、実行時の生成（従来の5段の LOD）と比べた PSNR を視点ごとに記録し（目安 40 dB 以上）、近接の PNG を開いて石畳の凹凸・継ぎ目・割れ目が無いことを確かめる。起動から撮影までの時間の短縮を記録する。
+- verify: `cmake --build build --config RelWithDebInfo --target AssetCook CookAssets Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG4-BIG-SPHERE-COOK -Configuration RelWithDebInfo -Deterministic`
+- stop-when: 階層の焼き込みで球の継ぎ目（経度0と360の境・極）に割れ目が出て、溶接で消えない場合は、撮影と値を記録して止める。
+- paths: Game, Tools/AssetCook, Assets/AssetSets, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Scripts, TASKS.md, PROGRESS.md
+- notes: 計画書 1（大きな球もクックで作るアセットにする）。起動画面の見た目を変えうる（絶対規則7）。
 
 ## VTG4-POLYHAVEN-MODELS: Poly Havenの高ポリのスキャン資産を起動画面に足す
-- status: backlog
-- done-when: 取得スクリプトが Poly Haven の高ポリのスキャン資産（数点）を落とし、`CookAssets` で焼き、起動画面に並べる（git に入れない）。距離で段が変わっても割れ目が出ない。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG4-POLYHAVEN-MODELS -Configuration RelWithDebInfo`
+- status: todo
+- done-when: `Scripts/FetchPolyHavenModels.ps1`（新規。Poly Haven の API の CC0 のモデルを MD5 で照合して落とす。git に入れない）が、高ポリのスキャン資産を 3〜5 点（岩・切り株・像など。合計 100 万三角形以上）落とし、`CookAssets` が NVMESH v1 とテクスチャ（BC・VT）に焼く。起動画面の既定の視点で、今の天球・地面・球・岩・小屋・見本の帯を隠さない位置（地面の外周の石畳の上など）に並べる（資産が無ければ置かずに警告）。`-Deterministic` で、近くから遠くへカメラを引く連続撮影（`-OrbitDegreesPerSecond` か距離を変える視点の列）を開き、段の切り替わりで割れ目・ちらつき・穴が無いことを確かめ、選ばれたクラスタの数（`MEGA_OCCLUSION` などのログ）が距離で減ることを記録する。
+- verify: `cmake --build build --config RelWithDebInfo --target AssetCook CookAssets Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG4-POLYHAVEN-MODELS -Configuration RelWithDebInfo -Deterministic`
+- stop-when: Poly Haven の API からモデルを取れない場合は、理由を記録して止める。
 - paths: Game, Scripts, Assets/AssetSets, .gitignore, TASKS.md, PROGRESS.md
+- notes: 計画書 1（検証は起動画面に高ポリの資産を足す）。起動画面の見た目を変える（ユーザー承認済みの追加）。
 
 ## VTG4-ACCEPT: 段4（LODの階層の焼き込み）の受入れを記録する
-- status: backlog
-- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段4の節。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|CookedMeshTest)$"`
+- status: todo
+- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段4の節に、焼き込みの性質のテスト、起動画面の `-Deterministic` の撮影（朝・昼・夕・夜 × 3視点、glTF・実行時の生成との PSNR）、テクスチャの VRAM（岩・小屋の 409.6 MiB が無くなった後の全体）、距離を変える撮影の所見（割れ目・ちらつき）、選ばれたクラスタの数、起動の時間、golden、関係するテストの結果、既知の限界を書く。
+- verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest MegaGeometryResourcesTest RayTracingSceneSnapshotTest RenderGraphCompileTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedMeshTest|AssetCookMeshSmoke|AssetCookMeshSimplifySmoke|MegaGeometryResourcesTest|RayTracingSceneSnapshotTest|RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG4-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG4-ACCEPT-night -Configuration RelWithDebInfo -Deterministic -Night`
+- stop-when: 受入れの数値が段4の受入れ（計画書 5）を満たさない場合は、測った値を記録して止める。
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG5-GEOM-POOL: ジオメトリの共有プールとサブアロケータを作る
 - status: backlog
