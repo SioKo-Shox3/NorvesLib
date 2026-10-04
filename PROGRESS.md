@@ -700,3 +700,5 @@
 - G2-S6-MAIN-SPLIT: Mainを317行のargv/help/inspect外殻へ縮小し、単体cookサービスとprivate出力処理へ既存bodyを移動。公開requestは値所有、既存validation/dispatchを保持。機械的body照合・比較器12件・行末確認成功。固定before取得/recipe照合/79出力比較と日本語診断5literalのbyte照合をCIへ接続。実after検証前なのでdoing。
 
 - G2-S6-MAIN-SPLIT受入: e8ac121ce8d2e9b92a5469ec321adb00b8a92ff3/run37203280358で実Core/AssetCook/CookedMeshTest build、11CPU、7CLI成功。保存したcandidate artifact11304570033とbeforeの全79file=50package+29JSONを独立raw byte比較し完全一致、recipe31項目・5診断literalも一致。rootで比較器を再実行して一致確認。単体分割taskをdone。--asset-set/texture v1/増分依存は別gateのまま。
+
+- G2-S6-TEXTURE-BASELINE開始: upstream main b8c5df1のPS1/2spec/8source画像をblob固定。分割前exeとWindows PowerShell5.1を明示した専用job、2回全byte照合と10file snapshot採取器を追加。純拒否契約11件の通常/最適化とYAML parse成功。実Windows採取は未実行のためdoing。

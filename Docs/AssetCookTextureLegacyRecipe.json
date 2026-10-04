@@ -1,0 +1,17 @@
+{
+  "upstream_sha": "b8c5df1dbf9c76d2cfcb36d1f82a889293969dde",
+  "asset_cook_sha256": "7ac890ce40434bf9e1c062ca0fe0ee0f5f2b49d79fbf40ca7b81662a01b50079",
+  "inputs": {
+    "Scripts/CookTextureAssetSet.ps1": "7ffd12bb2b85a58eabe8508674f4141550c390cc",
+    "Assets/AssetSets/Rendering3DTestSilverTextures.json": "bf9b20fc28a726fe59409fcb996d8a0dc88dbe25",
+    "Assets/Textures/Silver/silver_albedo.png": "34d3c95de5f30f7f1fbfba3c7fdc75fa7428aca9",
+    "Assets/Textures/Silver/silver_normal-ogl.png": "9b3fb988dd77405cb8500643f0d0712c3975d121",
+    "Assets/Textures/Silver/silver_metallic.png": "0dc6bc7835f3839fbc00c4ed84dce19ab0b2d8e3",
+    "Assets/Textures/Silver/silver_roughness.png": "6490a3eb8e0d548e996800afa2aae77b0f4f5657",
+    "Assets/Textures/Silver/silver_ao.png": "76bedc6494c883047092ea26d5e516d73c88f60b",
+    "Assets/AssetSets/Rendering3DTestSilverGltfTextures.json": "1ac9f35e000297ce16a05a679d3c7e5567325f44",
+    "Assets/Models/Rendering3DTestSilverGltf/textures/silver_albedo.png": "34d3c95de5f30f7f1fbfba3c7fdc75fa7428aca9",
+    "Assets/Models/Rendering3DTestSilverGltf/textures/silver_normal-ogl.png": "9b3fb988dd77405cb8500643f0d0712c3975d121",
+    "Assets/Models/Rendering3DTestSilverGltf/textures/silver_arm.png": "a90d36a97c8602383912a7557b0e22e90d195f78"
+  }
+}

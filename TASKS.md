@@ -2374,3 +2374,9 @@
 - done-when: d1307c32の実Windows基準（run37200047966）を固定し、CLI外殻と再利用可能な単体cookを分ける。新機能/型体系の全面変更を混ぜず、分割後の実7smoke package/manifest79件が全byte一致する。
 - verify: 同じWindows checkout byte/driver/fixture、既存10CPUと単体cook境界1契約、7smoke、保存済みbeforeとafterのraw比較。recipe31項目のうち11はWindowsCRLFであることに注意する。
 - stop-when: 条件を弱化/正規化して差を消す、比較未実施で分割完了、baseline期限切れを黙認、asset-set実装を同じ差分へ混ぜる。
+
+## G2-S6-TEXTURE-BASELINE: origin/mainのtexture spec v1出力を固定する
+- status: doing
+- done-when: 固定main b8c5df1のCookTextureAssetSet.ps1とSilverTextures/SilverGltfTexturesを、固定before AssetCook.exeと明示Windows PowerShell5.1で実行し8package+2manifestの生byteを保存する。
+- verify: 11入力のGit/checkout hash、exe hash、PowerShell実version/hash、全10file一覧/size/hash、終了コードと各5/3asset。2回の独立出力が全byte一致。
+- stop-when: PS serializerを推測/正規化、基準の実行失敗を成功扱い、withdrawn対象で代用、texture基準だけでmodel依存印まで完了とする。
