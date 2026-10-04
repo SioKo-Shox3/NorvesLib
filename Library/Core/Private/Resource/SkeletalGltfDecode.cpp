@@ -1040,16 +1040,9 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
-        bool ParseAnimationContract(const JsonValue& root, JsonValue& outAnimation, SkeletalGltfDecodeStatus& outStatus,
+        bool ParseAnimationContract(const JsonValue& outAnimation, SkeletalGltfDecodeStatus& outStatus,
             const SkeletalGltfDecodeOptions& options)
         {
-            const JsonValue animations = root.FindMember("animations");
-            if (!animations.IsArray() || animations.GetArraySize() != 1)
-            {
-                outStatus = SkeletalGltfDecodeStatus::UnsupportedClipCount;
-                return false;
-            }
-            outAnimation = animations.GetArrayElement(0);
             const JsonValue samplers = outAnimation.FindMember("samplers");
             const JsonValue channels = outAnimation.FindMember("channels");
             if (!outAnimation.IsObject() || !samplers.IsArray() || samplers.GetArraySize() == 0 ||
@@ -1703,36 +1696,43 @@ namespace NorvesLib::Core::Skeletal
 
         bool ValidateMorphDrop(const JsonValue& root, const JsonValue& animation, const NodeContract& nodes,
             const Container::VariableArray<AccessorInfo>& accessors, const Container::VariableArray<BufferViewInfo>& views,
-            const Gltf::BufferSet& buffers, Container::Span<const PrimitiveInfo> descriptions, SkeletalGltfDecodeReport& report)
+            const Gltf::BufferSet& buffers, Container::Span<const PrimitiveInfo> descriptions, SkeletalGltfDecodeReport& report, bool validateMesh)
         {
-            const auto mesh = root.FindMember("meshes").GetArrayElement(0);
-            const auto primitiveValues = mesh.FindMember("primitives");
-            uint32_t targetCount = 0;
-            uint64_t totalTargets = 0;
-            for (size_t index = 0; index < descriptions.size(); ++index)
+            uint32_t targetCount = static_cast<uint32_t>(report.MorphTargetWidth);
+            if (validateMesh)
             {
-                if (!ValidatePrimitiveMorphTargets(root, primitiveValues.GetArrayElement(index), descriptions[index].VertexCount,
-                    accessors, views, buffers, targetCount, totalTargets))
+                const auto mesh = root.FindMember("meshes").GetArrayElement(0);
+                const auto primitiveValues = mesh.FindMember("primitives");
+                uint64_t totalTargets = 0;
+                for (size_t index = 0; index < descriptions.size(); ++index)
                 {
-                    return false;
-                }
-            }
-            uint64_t meshWeights = 0, nodeWeights = 0;
-            if (!ValidateMorphWeights(mesh, targetCount, meshWeights))
-            {
-                return false;
-            }
-            const auto allNodes = root.FindMember("nodes");
-            for (size_t index = 0; index < allNodes.GetArraySize(); ++index)
-            {
-                const auto node = allNodes.GetArrayElement(index);
-                if (node.HasMember("weights"))
-                {
-                    if (index != nodes.MeshNodeIndex || !ValidateMorphWeights(node, targetCount, nodeWeights))
+                    if (!ValidatePrimitiveMorphTargets(root, primitiveValues.GetArrayElement(index), descriptions[index].VertexCount,
+                        accessors, views, buffers, targetCount, totalTargets))
                     {
                         return false;
                     }
                 }
+                uint64_t meshWeights = 0, nodeWeights = 0;
+                if (!ValidateMorphWeights(mesh, targetCount, meshWeights))
+                {
+                    return false;
+                }
+                const auto allNodes = root.FindMember("nodes");
+                for (size_t index = 0; index < allNodes.GetArraySize(); ++index)
+                {
+                    const auto node = allNodes.GetArrayElement(index);
+                    if (node.HasMember("weights"))
+                    {
+                        if (index != nodes.MeshNodeIndex || !ValidateMorphWeights(node, targetCount, nodeWeights))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                report.DroppedMorphTargetCount = totalTargets;
+                report.MorphTargetWidth = targetCount;
+                report.DroppedMorphMeshWeightCount = meshWeights;
+                report.DroppedMorphNodeWeightCount = nodeWeights;
             }
             const auto channels = animation.FindMember("channels"), samplers = animation.FindMember("samplers");
             uint64_t weightChannels = 0;
@@ -1782,12 +1782,7 @@ namespace NorvesLib::Core::Skeletal
                 }
                 ++weightChannels;
             }
-            report.DroppedMorphTargetCount = totalTargets;
-            report.MorphTargetWidth = targetCount;
-            report.DroppedMorphMeshWeightCount = meshWeights;
-            report.DroppedMorphNodeWeightCount = nodeWeights;
-            report.DroppedMorphAnimationChannelCount = weightChannels;
-            report.bMorphScanComplete = true;
+            report.DroppedMorphAnimationChannelCount += weightChannels;
             return true;
         }
 
@@ -1802,11 +1797,6 @@ namespace NorvesLib::Core::Skeletal
             const JsonValue samplers = animation.FindMember("samplers");
             const JsonValue channels = animation.FindMember("channels");
             const bool bBake = options.CubicSplinePolicy == SkeletalCubicSplinePolicy::Bake;
-            if (bBake)
-            {
-                report.TotalAnimationChannelCount = channels.GetArraySize();
-                report.bCubicScanStarted = true;
-            }
             SkeletalAnimationClip clip;
             clip.Name = animation.FindMember("name").AsString();
             clip.Channels.reserve(channels.GetArraySize());
@@ -1816,7 +1806,7 @@ namespace NorvesLib::Core::Skeletal
             {
                 if (bBake)
                 {
-                    report.FailedAnimationChannelIndex = channelIndex;
+                    report.FailedAnimationChannelIndex = report.ProcessedAnimationChannelCount;
                 }
                 const JsonValue channelValue = channels.GetArrayElement(channelIndex);
                 const JsonValue target = channelValue.FindMember("target");
@@ -1965,10 +1955,6 @@ namespace NorvesLib::Core::Skeletal
             {
                 return false;
             }
-            if (bBake)
-            {
-                report.bCubicScanComplete = true;
-            }
             outData.Clips.push_back(std::move(clip));
             return true;
         }
@@ -2086,7 +2072,7 @@ namespace NorvesLib::Core::Skeletal
         SkeletalGltfDecodeResult DecodeResolvedDocument(const JsonValue& root, const Gltf::ContainerView& container,
             const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
         const AssetImport::LoadedImportSettings* importSettings,
-        const SkeletalGltfDecodeOptions* decodeOptions)
+        const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips)
         {
             const SkeletalGltfDecodeOptions options = decodeOptions != nullptr ? *decodeOptions : SkeletalGltfDecodeOptions{};
             if (!IsValidSkeletalGltfDecodeOptions(options)) return Fail(SkeletalGltfDecodeStatus::InvalidImportOptions);
@@ -2131,10 +2117,26 @@ namespace NorvesLib::Core::Skeletal
                 return Fail(status);
             }
 
-            JsonValue animation;
-            if (!ParseAnimationContract(root, animation, status, options))
+            const JsonValue animations = root.FindMember("animations");
+            if (!animations.IsArray() || animations.GetArraySize() == 0 || animations.GetArraySize() > UINT32_MAX ||
+                (!allowMultipleClips && animations.GetArraySize() != 1))
             {
-                return Fail(status);
+                return Fail(SkeletalGltfDecodeStatus::UnsupportedClipCount);
+            }
+            uint64_t totalChannels = 0;
+            for (size_t index=0;index<animations.GetArraySize();++index)
+            {
+                const auto animation = animations.GetArrayElement(index);
+                if (!ParseAnimationContract(animation,status,options))
+                {
+                    return Fail(status);
+                }
+                const size_t count = animation.FindMember("channels").GetArraySize();
+                if (count > UINT32_MAX - totalChannels)
+                {
+                    return Fail(SkeletalGltfDecodeStatus::InvalidAnimation);
+                }
+                totalChannels += count;
             }
 
             Container::VariableArray<AccessorInfo> accessors;
@@ -2222,10 +2224,20 @@ namespace NorvesLib::Core::Skeletal
             {
                 return failWithReport(SkeletalGltfDecodeStatus::InvalidSkeleton);
             }
-            if (options.MorphPolicy == SkeletalMorphPolicy::Drop &&
-                !ValidateMorphDrop(root, animation, nodeContract, accessors, bufferViews, buffers, {primitives.data(), primitives.size()}, report))
+            if (options.MorphPolicy == SkeletalMorphPolicy::Drop)
             {
-                return failWithReport(SkeletalGltfDecodeStatus::InvalidAccessor);
+                // 全clipの検査完了まで除去数は未確定。失敗時に途中の数を完了済み扱いしない。
+                auto morphReport = report;
+                for (size_t index=0;index<animations.GetArraySize();++index)
+                {
+                    if (!ValidateMorphDrop(root,animations.GetArrayElement(index),nodeContract,accessors,bufferViews,buffers,
+                        {primitives.data(),primitives.size()},morphReport,index==0))
+                    {
+                        return failWithReport(SkeletalGltfDecodeStatus::InvalidAccessor);
+                    }
+                }
+                morphReport.bMorphScanComplete = true;
+                report = morphReport;
             }
             const bool bBake = options.CubicSplinePolicy == SkeletalCubicSplinePolicy::Bake;
             double translationScale = 1;
@@ -2234,10 +2246,22 @@ namespace NorvesLib::Core::Skeletal
                 return failWithReport(SkeletalGltfDecodeStatus::InvalidDocument);
             }
             status = SkeletalGltfDecodeStatus::InvalidAnimation;
-            if (!ExtractAnimation(animation, nodeToJoint, accessors, bufferViews, buffers, data,
-                options, translationScale, report, status))
+            if (bBake)
             {
-                return failWithReport(status);
+                report.TotalAnimationChannelCount = totalChannels;
+                report.bCubicScanStarted = true;
+            }
+            for (size_t index=0;index<animations.GetArraySize();++index)
+            {
+                if (!ExtractAnimation(animations.GetArrayElement(index),nodeToJoint,accessors,bufferViews,buffers,data,
+                    options,translationScale,report,status))
+                {
+                    return failWithReport(status);
+                }
+            }
+            if (bBake)
+            {
+                report.bCubicScanComplete = true;
             }
 
             if (selectedImport->bPresent)
@@ -2261,10 +2285,10 @@ namespace NorvesLib::Core::Skeletal
         }
     } // namespace
 
-    SkeletalGltfDecodeResult DecodeSkeletalGltf(Container::Span<const uint8_t> sourceBytes,
+    static SkeletalGltfDecodeResult DecodeGltfBytes(Container::Span<const uint8_t> sourceBytes,
         const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
         const AssetImport::LoadedImportSettings* importSettings,
-        const SkeletalGltfDecodeOptions* decodeOptions)
+        const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips)
     {
         if (outSourceBuffers != nullptr)
         {
@@ -2293,7 +2317,21 @@ namespace NorvesLib::Core::Skeletal
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidJson);
         }
-        return DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers, importSettings, decodeOptions);
+        return DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers, importSettings, decodeOptions, allowMultipleClips);
+    }
+
+    SkeletalGltfDecodeResult DecodeSkeletalGltf(Container::Span<const uint8_t> sourceBytes,
+        const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
+        const AssetImport::LoadedImportSettings* importSettings, const SkeletalGltfDecodeOptions* decodeOptions)
+    {
+        return DecodeGltfBytes(sourceBytes,sourcePath,outSourceBuffers,importSettings,decodeOptions,false);
+    }
+
+    SkeletalGltfDecodeResult DecodeRigGltf(Container::Span<const uint8_t> sourceBytes,
+        const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers,
+        const AssetImport::LoadedImportSettings* importSettings, const SkeletalGltfDecodeOptions* decodeOptions)
+    {
+        return DecodeGltfBytes(sourceBytes,sourcePath,outSourceBuffers,importSettings,decodeOptions,true);
     }
 
     SkeletalGltfDecodeResult DecodeSkeletalGltf(const Container::String& jsonText,
@@ -2313,7 +2351,7 @@ namespace NorvesLib::Core::Skeletal
         }
         Gltf::BufferSet buffers;
         auto result = DecodeResolvedDocument(document.GetRoot(), {}, sourcePath,
-            outSourceBuffers != nullptr ? &buffers : nullptr, importSettings, decodeOptions);
+            outSourceBuffers != nullptr ? &buffers : nullptr, importSettings, decodeOptions, false);
         if (result.Succeeded() && outSourceBuffers != nullptr)
         {
             SkeletalGltfSourceBuffers owned(buffers.GetCount());

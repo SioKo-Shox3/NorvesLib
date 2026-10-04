@@ -205,7 +205,7 @@ int main()
         case 2: input.Diagnostics.Report.DroppedMorphTargetCount = UINT64_MAX; break;
         case 3: input.Diagnostics.Report.DroppedMorphMeshWeightCount = 1; break;
         case 4: input.Diagnostics.Report.DroppedMorphNodeWeightCount = 1; break;
-        case 5: input.Diagnostics.Report.DroppedMorphAnimationChannelCount = 2; break;
+        case 5: input.Diagnostics.Report.DroppedMorphAnimationChannelCount = uint64_t{UINT32_MAX}+1; break;
         case 6: input.Diagnostics.Report = {}; input.Diagnostics.Report.bMorphScanComplete = true; input.Diagnostics.Report.DroppedMorphAnimationChannelCount = 1; break;
         case 7: input.Outcome = SkeletalImportOutcome::PayloadReady; input.Diagnostics.DecodeStatus = 0; input.Diagnostics.Report = {}; break;
         }
@@ -216,6 +216,10 @@ int main()
     const auto multiMorph = BuildSkeletalImportReport(input);
     assert(multiMorph.bValid && std::strstr(multiMorph.Bytes, "\"mesh_target_width\":2") &&
         std::strstr(multiMorph.Bytes, "\"dropped_targets\":4"));
+    input.Diagnostics.Report.DroppedMorphAnimationChannelCount = 3;
+    const auto multiClipMorph = BuildSkeletalImportReport(input);
+    Print(input);
+    assert(multiClipMorph.bValid && std::strstr(multiClipMorph.Bytes,"\"animation_channels\":3"));
     input.Diagnostics.Report.DroppedMorphTargetCount = 3;
     assert(!BuildSkeletalImportReport(input).bValid);
     input.Diagnostics.Report.DroppedMorphTargetCount = 18;

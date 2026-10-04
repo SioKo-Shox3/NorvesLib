@@ -2229,3 +2229,15 @@
 - done-when: GameThreadとRenderedObjectHistoryの前姿勢がcomponentIdに加えて資産handle/generation一致を要求し、同bone数の別資産を混同しない。component単位で履歴を記録する。
 - verify: 同bone数のreload・別資産・frame gap・複数submesh/viewportで前姿勢とfallbackを検査する。
 - stop-when: mutable Resource参照、別世代poseの流用、既存velocity基準の変更。
+
+## G2-GR82-A1-MULTI-CLIP-DECODE: Stage Aの複数clip取り込みを接続する
+- status: done
+- done-when: 新DecodeRigGltfのStage A入口で1mesh/1skin/1mesh-node・primitive8/joint128を維持しanimations1以上を取り込み、cookへ接続する。旧DecodeSkeletalGltf/AnalyzerのTwoClips/IntermediateNode拒否は維持。NVSKEL0.2は既存の統一定義を使う。
+- verify: 3clip glTF/GLB→cook→parseで名前/duration/channel一致、3本目失敗でData/source buffers非公開、Cubic全clip予算/global prefix、Morph root数量1回+全clip weight channels、scale1回を検証する。pure report試験とnative未実行を区別する。
+- stop-when: 旧strict入口を緩める、budgetをclipごとリセット、root morphをclip数倍、Stage BやM9まで対応済み扱いする。
+
+## G2-GR82-A2-CLIP-RESOURCES: 複数clipの保持と一意名前引きを接続する
+- status: todo
+- done-when: SkeletalAssetResourceで複数clipを保持しGetClipCount/GetClip(name)を追加。単数SetResources互換とGetAnimationClip先頭を維持。空/重複名は名前引きで曖昧拒否し資産自体を一律拒否しない。
+- verify: 単数互換/配列所有/子Load/不正子/Unload/名前欠落重複/強参照寿命/メモリ計上をnative登録。
+- stop-when: M9の複数clip guardを無断解除、制作alias規約を勝手に採用、Resource寿命破壊。

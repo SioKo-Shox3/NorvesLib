@@ -60,7 +60,7 @@ namespace NorvesLib::Core::Skeletal
         double FailedVertexDroppedWeight = 0;
         bool bHasFailedVertexDroppedWeight = false;
         bool bInfluenceScanComplete = false;
-        // animationの正常prefix。Bake処理前の拒否はbCubicScanStarted=falseで区別する。
+        // 全clipの順に連結したchannelの正常prefix。Bake前の拒否はbCubicScanStarted=false。
         uint64_t TotalAnimationChannelCount = 0;
         uint64_t ProcessedAnimationChannelCount = 0;
         uint64_t BakedCubicChannelCount = 0;

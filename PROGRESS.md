@@ -631,3 +631,6 @@
 
 - G2-GR32-POSE-HISTORY-GENERATION: GT/RTの前姿勢を共通SkinnedPoseHistoryへ集約し、componentに加えてhandle/generation・immutable asset実体weak・骨数を照合。同骨数reload/別資産/不正frame/匿名をfallbackし、submesh/viewportは1回保存、一致しない混在は次frame不使用。GT直前frame/RTgapの時間条件とmesh/MegaGeometry経路は不変。2viewport8submesh・pose/資産混在・null/component不一致・gap/reset/weak寿命をnative登録、独立ソースレビュー2周PASS。Windows.h依存でnativecompile/実行/GPU未検証。
 - Next: GR32の描画受入れはWindows/Vulkan gateへ残す。承認済みGR82 Stage Aの複数clip取り込み/選択を進め、旧strict入口の拒否互換を保持する。
+
+- G2-GR82-A1-MULTI-CLIP-DECODE: 新DecodeRigGltfだけanimations>=1を受けcookへ接続。旧bytes/String/GLTFAnalyzerのstrict TwoClips/中間親拒否は維持し、現128joint/1mesh/1skin/1mesh-node/8primitive範囲を保つ。全clip順のCubic total/prefix/失敗添字・共通出力予算、全clip成功時complete。Morph rootは1回・weight channelsは各clip検査し全成功後のみ報告公開。旧設定hash/JSONキー不変。3clip(2primitive/duration2・3・4)raw/GLB/cook/parse・3本目失敗保持・Cubic全体予算/scale・Morph集計/後続失敗をnative登録、AssertEquivalentも全clip比較。pure report通常/O2/ASanUBSan(LSan除外)3mode・各19JSON計57parse・MEMBERcompile成功、fixture宣言範囲独立確認、独立PASS。実Core/decoder/cook/GLBはWindows.hで未実行。
+- Next: GR82-A2-CLIP-RESOURCES。v1/restguard・M9複数clip接続は別工程。

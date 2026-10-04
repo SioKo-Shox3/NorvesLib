@@ -25,6 +25,13 @@ namespace NorvesLib::Core::Skeletal
         const AssetImport::LoadedImportSettings* importSettings = nullptr,
         const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
 
+    // GR82 Stage A: animations>=1。その他は旧入口と同じ1mesh/1skin/1mesh-node/128joint契約。
+    // Armatureの中間親やmesh無しclipはまだ受けない。出力所有/失敗時buffer契約も上記と同じ。
+    [[nodiscard]] SkeletalGltfDecodeResult DecodeRigGltf(Container::Span<const uint8_t> sourceBytes,
+        const Container::String& sourcePath, Gltf::BufferSet* outSourceBuffers = nullptr,
+        const AssetImport::LoadedImportSettings* importSettings = nullptr,
+        const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+
     // 旧String入口の互換用。出力buffer配列を求めた場合は全source bytesを所有コピーする。
     using SkeletalGltfSourceBuffers = Container::VariableArray<Container::VariableArray<uint8_t>>;
 

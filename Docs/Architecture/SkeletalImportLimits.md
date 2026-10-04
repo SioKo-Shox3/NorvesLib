@@ -201,7 +201,7 @@ bakerの数値/容量/深さ等の拒否はCubicBakeFailedと具体的なFailedC
 Reportは全animation channelの正常prefixと失敗channel、成功したCubicのinput/outputキー数・単位別上界を返す。
 Translation/Rotation/Scaleごとの焼込channel数も分け、未処理の種類を誤差ゼロ測定と混同しない。
 1channel途中の未認証キー列を公開しない。失敗Data/sourceは空で、cook resultは以前の成功値を保持する。
-channel/asset双方のsample予算を割当前に適用し、現在の単一clipに含まれるCubic出力の合計を制限する。
+channel/asset双方のsample予算を割当前に適用し、全clipに含まれるCubic出力の合計を制限する。
 
 CubicChannels.gltfはTranslation/Rotation/Scaleの正しいtripletを持つfixture（binaryはnative試験で生成）。
 raw/legacy/file/GLB/cook再parse、明示Bakeでも通常LINEAR/STEP不変、設定scale/fitで二重scaleなし、
@@ -264,7 +264,7 @@ bMorphScanCompleteを定義する。完了前のゼロは未測定であり、�
 
 明示DropはPOSITION/NORMAL/TANGENTのtargetを検証して取り除き、base geometryとTRS clipを維持する。
 初期mesh/node weightsとanimationのweights channelも取り除く。初期値をbaseへ適用しない。
-現在の1mesh/1mesh-node/1clip profileを維持し、GR32で1〜8primitiveへ拡張する。UV/色/拡張semanticのmorphは未対応として拒否する。
+1mesh/1mesh-node/1〜8primitiveを維持する。旧strict入口は1clip、GR82 Stage Aのcook入口は1clip以上を扱う。UV/色/拡張semanticのmorphは未対応として拒否する。
 既定Rejectはtargetsだけでなく初期weights/weights channelの存在も拒否する。
 cook前fingerprintも同じ存在gateを通し、古いcacheからの無言無視を防ぐ。
 
@@ -300,7 +300,7 @@ ImportReport version1はDrop時だけskin内にmorph_policy=dropとmorph_scanを
 node_weight_values、animation_channelsとscan_complete=trueを持つ。対象無しを検査した場合のみ各数が0になる。
 morph検査後にTRS等の別段階で失敗しても、検査済み数量はoutcome=failedとともに残す。asset成功を意味しない。
 Reject時の既存JSONは不変。Reduce/Bake/Dropは同じskinにそれぞれの単位と診断を持つ。
-現profileは1mesh/1〜8primitive/1mesh-node/1clip。初期weight数は0またはmesh-level target幅、weight channelは0または1として検査する。
+現profileは1mesh/1〜8primitive/1mesh-node。初期weight数は0またはmesh-level target幅、weight channelは各clipで0または1、全clip合計はu32以内として検査する。
 
 純parser/JSON試験とは別にnative smokeへ、明示成功/既定拒否/不正入力で出力保持、設定同値cache hit/差分miss、
 除去警告と未測定null/実測0件を登録する。native unitはLINEAR/STEP weight、複数target、weightだけのclip拒否、
@@ -310,3 +310,15 @@ GR32のNprimitive decode接続以降、morph_scanへmesh_target_widthを追加�
 dropped_targetsは対象を持つ全primitiveのtarget配列数の合計であり、mesh_target_widthとは異なる。
 初期mesh/node weightsとweight channelは共通幅で検査する。総数は幅の1〜8倍（幅0なら総数0）。
 raw decode/cook/parseが複数primitiveの表を保持する。writerは統一0.2、旧0.0/0.1は読込互換のみ維持する。Resource/描画接続は未完。
+
+## GR82 Stage Aの複数clip
+
+DecodeRigGltfはanimations>=1を受け、cookはこの入口を使う。DecodeSkeletalGltfのbytes/String入口とGLTFAnalyzerは1clip拒否を維持する。
+中間のArmature親・mesh無しclip・関節名束縛・256joint・v1は範囲外。
+全clipをソース配列順に取り込み、名前を改名しない。空/重複名はwireで保持でき、名前引きの曖昧拒否はResource側の契約。
+Cubicのtotal/processed/failed_channelは全clipのchannelを配列順に連結した添字。予算は全clip共通で、scan_completeは最後まで成功した時だけtrue。
+Morphのgeometry/初期weightは1回検証し、weight animationは全clipを検査して合計する。途中失敗時はmorph_scan未確定のままにし、root target数をclip数倍にしない。
+scale/fitはgeometryとclip translationへ各1回だけ適用する。失敗Dataとsource bufferは公開せず、cookの呼び出し側結果は保持する。
+JSON report v1のanimation_channelsは全clipの合計へ広がる。既存の単一clipの値・キー・canonical設定/hashは変えない。
+純report検証3mode/各19JSONは実行。3clipのraw/GLB・cook/parse・失敗prefix・Cubic全体予算・Morph集計・scale回帰をnativeへ登録するがWindows依存で未実行。
+M9の複数clip拒否はGR83まで維持する。

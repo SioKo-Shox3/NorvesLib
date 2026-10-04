@@ -726,24 +726,27 @@ namespace
                        cooked.Joints[jointIndex].InverseBindMatrix[element]);
             }
         }
-        assert(loose.Clips[0].Name == cooked.Clips[0].Name);
-        assert(loose.Clips[0].DurationSeconds == cooked.Clips[0].DurationSeconds);
-        assert(loose.Clips[0].Channels.size() == cooked.Clips[0].Channels.size());
-        for (size_t channelIndex = 0; channelIndex < loose.Clips[0].Channels.size(); ++channelIndex)
+        for (size_t clipIndex=0;clipIndex<loose.Clips.size();++clipIndex)
         {
-            const Skeletal::SkeletalAnimationChannel& a = loose.Clips[0].Channels[channelIndex];
-            const Skeletal::SkeletalAnimationChannel& b = cooked.Clips[0].Channels[channelIndex];
-            assert(a.JointIndex == b.JointIndex);
-            assert(a.Path == b.Path);
-            assert(a.Interpolation == b.Interpolation);
-            assert(a.Samples.size() == b.Samples.size());
-            for (size_t sampleIndex = 0; sampleIndex < a.Samples.size(); ++sampleIndex)
+            assert(loose.Clips[clipIndex].Name == cooked.Clips[clipIndex].Name);
+            assert(loose.Clips[clipIndex].DurationSeconds == cooked.Clips[clipIndex].DurationSeconds);
+            assert(loose.Clips[clipIndex].Channels.size() == cooked.Clips[clipIndex].Channels.size());
+            for (size_t channelIndex = 0; channelIndex < loose.Clips[clipIndex].Channels.size(); ++channelIndex)
             {
-                assert(a.Samples[sampleIndex].TimeSeconds == b.Samples[sampleIndex].TimeSeconds);
-                assert(a.Samples[sampleIndex].Value.X == b.Samples[sampleIndex].Value.X);
-                assert(a.Samples[sampleIndex].Value.Y == b.Samples[sampleIndex].Value.Y);
-                assert(a.Samples[sampleIndex].Value.Z == b.Samples[sampleIndex].Value.Z);
-                assert(a.Samples[sampleIndex].Value.W == b.Samples[sampleIndex].Value.W);
+                const Skeletal::SkeletalAnimationChannel& a = loose.Clips[clipIndex].Channels[channelIndex];
+                const Skeletal::SkeletalAnimationChannel& b = cooked.Clips[clipIndex].Channels[channelIndex];
+                assert(a.JointIndex == b.JointIndex);
+                assert(a.Path == b.Path);
+                assert(a.Interpolation == b.Interpolation);
+                assert(a.Samples.size() == b.Samples.size());
+                for (size_t sampleIndex = 0; sampleIndex < a.Samples.size(); ++sampleIndex)
+                {
+                    assert(a.Samples[sampleIndex].TimeSeconds == b.Samples[sampleIndex].TimeSeconds);
+                    assert(a.Samples[sampleIndex].Value.X == b.Samples[sampleIndex].Value.X);
+                    assert(a.Samples[sampleIndex].Value.Y == b.Samples[sampleIndex].Value.Y);
+                    assert(a.Samples[sampleIndex].Value.Z == b.Samples[sampleIndex].Value.Z);
+                    assert(a.Samples[sampleIndex].Value.W == b.Samples[sampleIndex].Value.W);
+                }
             }
         }
     }
@@ -1706,6 +1709,135 @@ namespace
 
     }
 
+    void RunMultiClipContract()
+    {
+        using namespace Skeletal;
+        using namespace NorvesLib::Tools::AssetCook;
+        LooseFixture fixture;
+        const auto source = ReadFixtureJson(ToCorePath(FindFixtureRoot()/"ThreeClips.gltf"));
+        const auto bytes = TextBytes(source);
+        const auto path = ToCorePath(fixture.Root/"ThreeClips.gltf");
+        const Container::AnsiString cookPath((fixture.Root/"ThreeClips.gltf").generic_string().c_str());
+        constexpr Container::AnsiStringView format = "nvskel.v0.skinned.pnujiw.u32";
+        ByteArray binary(524,0);
+        const auto base = BuildLooseFixtureBuffer();
+        std::memcpy(binary.data(),base.data(),base.size());
+        constexpr float positions[] = {2,0,0,3,0,0,2,1,0};
+        for (size_t index=0;index<9;++index)
+        {
+            WriteFloat(binary,416+index*4,positions[index]);
+        }
+        WriteLe16(binary,452,0); WriteLe16(binary,454,1); WriteLe16(binary,456,2);
+        std::memcpy(binary.data()+460,base.data()+132,48);
+        WriteFloat(binary,508,0); WriteFloat(binary,512,3);
+        WriteFloat(binary,516,0); WriteFloat(binary,520,4);
+        WriteFixtureBytes(fixture.Root/"fixture.bin",binary);
+        WriteFixtureBytes(fixture.Root/"ThreeClips.gltf",bytes);
+        assert(DecodeSkeletalGltf(bytes,path).Status==SkeletalGltfDecodeStatus::UnsupportedClipCount);
+        assert(Resource::GLTFAnalyzer::AnalyzeSkeletal(path).Status==SkeletalGltfDecodeStatus::UnsupportedClipCount);
+        Gltf::BufferSet sources;
+        const auto decoded = DecodeRigGltf(bytes,path,&sources);
+        assert(decoded.Succeeded() && sources.GetCount()==1 && decoded.Data.Clips.size()==3 && decoded.Data.SubMeshes.size()==2);
+        constexpr const char* names[] = {"Wave","Run","Idle"};
+        constexpr size_t channels[] = {2,1,2};
+        for (size_t index=0;index<3;++index)
+        {
+            assert(decoded.Data.Clips[index].Name==names[index]);
+            assert(decoded.Data.Clips[index].DurationSeconds==float(index+2));
+            assert(decoded.Data.Clips[index].Channels.size()==channels[index]);
+        }
+        const auto glb = MakeSkeletalGlb(ChangeBufferUri(source,""),binary);
+        const auto embedded = DecodeRigGltf(glb,path);
+        assert(embedded.Succeeded()); AssertEquivalent(decoded.Data,embedded.Data);
+        Container::AnsiString error;
+        SkeletalCookDiagnostics diagnostics;
+        SkeletalCookResult cooked,embeddedCook;
+        assert(CookGltfToNvskel(bytes.data(),bytes.size(),format,cookPath,cooked,error,nullptr,nullptr,&diagnostics));
+        assert(cooked.ClipCount==3);
+        const auto parsed = Asset::ParseCookedSkeletal(MakeBlob(cooked.NvskelBytes));
+        assert(parsed.Succeeded() && parsed.Data.VersionMinor==2); AssertEquivalent(decoded.Data,parsed.Data.Skeletal);
+        assert(CookGltfToNvskel(glb.data(),glb.size(),format,cookPath,embeddedCook,error));
+        assert(embeddedCook.NvskelBytes==cooked.NvskelBytes);
+        const auto invalid = TextBytes(ReadFixtureJson(ToCorePath(FindFixtureRoot()/"ThreeClipsInvalid.gltf")));
+        SkeletalGltfDecodeOptions bake; bake.CubicSplinePolicy=SkeletalCubicSplinePolicy::Bake;
+        const auto failed = DecodeRigGltf(invalid,path,&sources,nullptr,&bake);
+        assert(!failed.Succeeded() && failed.Data.Vertices.empty() && failed.Data.Clips.empty() && sources.GetCount()==0);
+        assert(failed.Report.bCubicScanStarted && !failed.Report.bCubicScanComplete &&
+            failed.Report.TotalAnimationChannelCount==5 && failed.Report.ProcessedAnimationChannelCount==3 &&
+            failed.Report.FailedAnimationChannelIndex==3);
+        SkeletalCookResult held; held.NvskelBytes={77};
+        assert(!CookGltfToNvskel(invalid.data(),invalid.size(),format,cookPath,held,error,nullptr,&bake,&diagnostics));
+        assert(held.NvskelBytes.size()==1 && held.NvskelBytes[0]==77);
+        WriteFixtureBytes(fixture.Root/"ThreeClips.gltf.import.json",TextBytes("{\"version\":1,\"units\":{\"scale\":2}}"));
+        const auto scaled = DecodeRigGltf(bytes,path);
+        assert(scaled.Succeeded());
+        for (size_t index=0;index<3;++index)
+        {
+            const auto& a=decoded.Data.Clips[index].Channels[0].Samples;
+            const auto& b=scaled.Data.Clips[index].Channels[0].Samples;
+            assert(a.size()==b.size());
+            for (size_t key=0;key<a.size();++key)
+            {
+                assert(b[key].Value.Y==a[key].Value.Y*2);
+            }
+        }
+        std::filesystem::remove(fixture.Root/"ThreeClips.gltf.import.json");
+        const auto cubicText=ReadFixtureJson(ToCorePath(FindFixtureRoot()/"ThreeCubicClips.gltf"));
+        const auto cubic=TextBytes(cubicText);
+        const auto cubicBinary=BuildCubicFixtureBuffer();
+        WriteFixtureBytes(fixture.Root/"fixture.bin",cubicBinary);
+        const auto single=DecodeSkeletalGltf(TextBytes(ReadFixtureJson(ToCorePath(FindFixtureRoot()/"CubicChannels.gltf"))),path,nullptr,nullptr,&bake);
+        const auto baked=DecodeRigGltf(cubic,path,nullptr,nullptr,&bake);
+        assert(single.Succeeded() && baked.Succeeded() && baked.Data.Clips.size()==3);
+        assert(baked.Report.bCubicScanComplete && baked.Report.TotalAnimationChannelCount==9 &&
+            baked.Report.ProcessedAnimationChannelCount==9 && baked.Report.BakedCubicChannelCount==9 &&
+            baked.Report.CubicOutputKeyCount==single.Report.CubicOutputKeyCount*3);
+        WriteFixtureBytes(fixture.Root/"ThreeClips.gltf.import.json",TextBytes("{\"version\":1,\"units\":{\"scale\":2}}"));
+        const auto scaledBaked=DecodeRigGltf(cubic,path,nullptr,nullptr,&bake);
+        assert(scaledBaked.Succeeded());
+        for (const auto& clip : scaledBaked.Data.Clips)
+        {
+            assert(clip.Channels[0].Samples.front().Value.Y==2 && clip.Channels[0].Samples.back().Value.Y==6);
+        }
+        std::filesystem::remove(fixture.Root/"ThreeClips.gltf.import.json");
+        auto limited=bake; limited.CubicMaximumSamplesPerAsset=static_cast<uint32_t>(single.Report.CubicOutputKeyCount*2);
+        const auto over=DecodeRigGltf(cubic,path,nullptr,nullptr,&limited);
+        assert(!over.Succeeded() && over.Data.Clips.empty() && over.Report.bHasCubicBakeFailure &&
+            !over.Report.bCubicScanComplete && over.Report.ProcessedAnimationChannelCount==6 &&
+            over.Report.FailedAnimationChannelIndex==6 && over.Report.CubicOutputKeyCount==limited.CubicMaximumSamplesPerAsset);
+        const auto cubicGlb=MakeSkeletalGlb(ChangeBufferUri(cubicText,""),cubicBinary);
+        const auto bakedGlb=DecodeRigGltf(cubicGlb,path,nullptr,nullptr,&bake);
+        assert(bakedGlb.Succeeded()); AssertEquivalent(baked.Data,bakedGlb.Data);
+        assert(CookGltfToNvskel(cubic.data(),cubic.size(),format,cookPath,cooked,error,nullptr,&bake));
+        const auto parsedCubic=Asset::ParseCookedSkeletal(MakeBlob(cooked.NvskelBytes));
+        assert(parsedCubic.Succeeded()); AssertEquivalent(baked.Data,parsedCubic.Data.Skeletal);
+        const auto morphText=ReadFixtureJson(ToCorePath(FindFixtureRoot()/"ThreeMorphClips.gltf"));
+        const auto morph=TextBytes(morphText);
+        const auto morphBinary=BuildMorphFixtureBuffer();
+        WriteFixtureBytes(fixture.Root/"fixture.bin",morphBinary);
+        auto drop=bake; drop.MorphPolicy=SkeletalMorphPolicy::Drop;
+        const auto dropped=DecodeRigGltf(morph,path,nullptr,nullptr,&drop);
+        assert(dropped.Succeeded() && dropped.Data.Clips.size()==3 && dropped.Report.bMorphScanComplete &&
+            dropped.Report.DroppedMorphTargetCount==1 && dropped.Report.MorphTargetWidth==1 &&
+            dropped.Report.DroppedMorphMeshWeightCount==1 && dropped.Report.DroppedMorphNodeWeightCount==1 &&
+            dropped.Report.DroppedMorphAnimationChannelCount==3 && dropped.Report.ProcessedAnimationChannelCount==9 &&
+            dropped.Report.TotalAnimationChannelCount==9 && dropped.Report.BakedCubicChannelCount==0);
+        assert(CookGltfToNvskel(morph.data(),morph.size(),format,cookPath,cooked,error,nullptr,&drop,&diagnostics));
+        const auto parsedMorph=Asset::ParseCookedSkeletal(MakeBlob(cooked.NvskelBytes));
+        assert(parsedMorph.Succeeded()); AssertEquivalent(dropped.Data,parsedMorph.Data.Skeletal);
+        const auto morphGlb=MakeSkeletalGlb(ChangeBufferUri(morphText,""),morphBinary);
+        const auto droppedGlb=DecodeRigGltf(morphGlb,path,nullptr,nullptr,&drop);
+        assert(droppedGlb.Succeeded()); AssertEquivalent(dropped.Data,droppedGlb.Data);
+        const auto badMorph=TextBytes(ReadFixtureJson(ToCorePath(FindFixtureRoot()/"ThreeMorphClipsInvalid.gltf")));
+        const auto morphFailure=DecodeRigGltf(badMorph,path,&sources,nullptr,&drop);
+        assert(!morphFailure.Succeeded() && morphFailure.Data.Clips.empty() && sources.GetCount()==0 &&
+            !morphFailure.Report.bMorphScanComplete && morphFailure.Report.DroppedMorphAnimationChannelCount==0 &&
+            morphFailure.Report.DroppedMorphTargetCount==0);
+        SkeletalImportReportInput reportInput;
+        reportInput.Options=drop; reportInput.Diagnostics=diagnostics; reportInput.Outcome=SkeletalImportOutcome::PayloadReady;
+        assert(BuildSkeletalImportReport(reportInput).bValid);
+    }
+
     void RunUnitContract()
     {
         AssertSkinnedVertexAbi();
@@ -2189,6 +2321,7 @@ int main(int argc, char** argv)
         RunCubicBakeContract();
         RunMorphDropContract();
         RunMultiPrimitiveContract();
+        RunMultiClipContract();
         RunUnitContract();
         RunV02ReaderContract();
     }

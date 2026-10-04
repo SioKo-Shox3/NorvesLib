@@ -2521,7 +2521,7 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             Gltf::BufferSet sourceBuffers;
-            const auto decoded = NorvesLib::Core::Skeletal::DecodeSkeletalGltf(
+            const auto decoded = NorvesLib::Core::Skeletal::DecodeRigGltf(
                 {sourceBytes, sourceSize}, ToCoreString(sourcePath), &sourceBuffers, &loadedImport, &options);
             diagnostics.bDecodeAttempted = true;
             diagnostics.DecodeStatus = static_cast<uint32_t>(decoded.Status);

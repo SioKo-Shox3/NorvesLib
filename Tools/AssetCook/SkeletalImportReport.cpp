@@ -55,10 +55,10 @@ namespace NorvesLib::Tools::AssetCook
                     report.DroppedMorphTargetCount / report.MorphTargetWidth > MaximumSubmeshCount)) ||
                 (report.DroppedMorphMeshWeightCount != 0 && report.DroppedMorphMeshWeightCount != report.MorphTargetWidth) ||
                 (report.DroppedMorphNodeWeightCount != 0 && report.DroppedMorphNodeWeightCount != report.MorphTargetWidth) ||
-                report.DroppedMorphAnimationChannelCount > 1 ||
+                report.DroppedMorphAnimationChannelCount > UINT32_MAX ||
                 (report.MorphTargetWidth == 0 && report.DroppedMorphAnimationChannelCount != 0))
             {
-                // 1mesh/1..8primitive/1mesh-node/1clip。target幅は各primitiveで共通。
+                // 1mesh/1..8primitive/1mesh-node/1..u32 clip。target幅は各primitiveで共通。
                 return {};
             }
         }

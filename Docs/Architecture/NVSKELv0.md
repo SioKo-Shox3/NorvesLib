@@ -173,7 +173,7 @@ submesh boundsは最終scale適用済みの参照頂点から計算する。floa
 
 cacheは通常parse成功に加えてminor=2を要求する。source hashやmanifestのcooked_version=0が一致していても、
 minor0/1 payloadを最新出力としてskipしない。通常loadでは旧版を引き続き読める。
-rawの複数clip生成はGR82の次工程であり、このwriter接続だけでraw TwoClipsを受理しない。
+GR82 Stage AのDecodeRigGltf/cookは複数clipをこの0.2へ保存する。旧DecodeSkeletalGltf/Analyzerはraw TwoClipsの拒否を維持する。
 
 純bounds/layoutの通常・最適化・sanitizerと名前/wire回帰を実行する。
 raw/GLB→cook→parseの表/Unicode保持・失敗出力保持、旧0.0/0.1 cache missと0.2 hitはnative回帰へ登録する。
