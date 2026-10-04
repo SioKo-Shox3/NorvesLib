@@ -234,6 +234,34 @@ expect_usage_failure("orm に --input" --input "${USAGE_PPM}" --usage orm --orm-
 expect_usage_failure("orm の元画像なし" --usage orm)
 expect_usage_failure("orm 以外に --orm-*" --input "${USAGE_PPM}" --usage albedo --orm-ao "${USAGE_PGM}")
 
+# 画像として復号できない入力は失敗し、エラーに入力のパスが残る(失効した名前を読んでいないことの確認)。
+set(BROKEN_INPUT "${SMOKE_DIR}/broken_input.bin")
+file(WRITE "${BROKEN_INPUT}" "this is not an image")
+foreach(broken_usage albedo height16)
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}"
+            --input "${BROKEN_INPUT}"
+            --out "${SMOKE_DIR}/Cooked/broken_${broken_usage}.nvpkg"
+            --manifest "${SMOKE_DIR}/broken_${broken_usage}_manifest.json"
+            --logical "Textures/broken_${broken_usage}.nvtex"
+            --kind texture
+            --entry "broken_${broken_usage}.nvtex"
+            --entry-type Tex0
+            --usage ${broken_usage}
+            --variant default
+        RESULT_VARIABLE broken_result
+        OUTPUT_VARIABLE broken_stdout
+        ERROR_VARIABLE broken_stderr
+    )
+    if(broken_result EQUAL 0)
+        message(FATAL_ERROR "復号できない入力が成功した: --usage ${broken_usage}")
+    endif()
+    string(FIND "${broken_stderr}" "broken_input.bin" broken_name_pos)
+    if(broken_name_pos EQUAL -1)
+        message(FATAL_ERROR "--usage ${broken_usage}: エラーに入力のパスが無い: ${broken_stderr}")
+    endif()
+endforeach()
+
 # ---- 用途ごとのクックの中身(色・ミップ・精度) ----
 if(DEFINED USAGE_SMOKE_EXE)
     execute_process(

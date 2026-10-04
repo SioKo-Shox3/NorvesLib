@@ -333,9 +333,10 @@ namespace
         }
     }
 
+    template <typename Bytes>
     bool BuildSingleEntryPackage(const std::string &entryName,
                                  AssetPackageFourCC entryType,
-                                 const std::vector<uint8_t> &payload,
+                                 const Bytes &payload,
                                  std::vector<uint8_t> &outBytes,
                                  uint64_t &outPayloadHash,
                                  std::string &error)
@@ -525,7 +526,8 @@ namespace
         return true;
     }
 
-    bool ReadBinaryFile(const std::filesystem::path &path, std::vector<uint8_t> &outBytes, std::string &error)
+    template <typename Bytes>
+    bool ReadBinaryFile(const std::filesystem::path &path, Bytes &outBytes, std::string &error)
     {
         std::ifstream input(path, std::ios::binary);
         if (!input.is_open())
@@ -1095,7 +1097,8 @@ namespace
         return true;
     }
 
-    bool CompareBytes(const uint8_t *actualData, size_t actualSize, const std::vector<uint8_t> &expected)
+    template <typename Bytes>
+    bool CompareBytes(const uint8_t *actualData, size_t actualSize, const Bytes &expected)
     {
         if (actualSize != expected.size())
         {
@@ -1128,10 +1131,11 @@ namespace
         return actualData != nullptr && std::memcmp(actualData, expected.data(), expected.size()) == 0;
     }
 
+    template <typename Bytes>
     bool ValidatePackageOutput(const std::filesystem::path &packagePath,
                                const std::string &entryName,
                                AssetPackageFourCC entryType,
-                               const std::vector<uint8_t> &expectedPayload,
+                               const Bytes &expectedPayload,
                                std::string &error)
     {
         std::vector<uint8_t> packageBytes;
@@ -1165,7 +1169,8 @@ namespace
         return true;
     }
 
-    bool ValidateCookedTexturePayload(const std::vector<uint8_t> &expectedPayload, std::string &error)
+    template <typename Bytes>
+    bool ValidateCookedTexturePayload(const Bytes &expectedPayload, std::string &error)
     {
         const NorvesLib::Core::Container::Span<const uint8_t> span(expectedPayload.data(), expectedPayload.size());
         const NorvesLib::Core::Asset::CookedTextureParseResult result =
@@ -1180,10 +1185,11 @@ namespace
         return true;
     }
 
+    template <typename Bytes>
     bool ValidateCookedTexturePackageOutput(const std::filesystem::path &packagePath,
                                             const std::string &entryName,
                                             AssetPackageFourCC entryType,
-                                            const std::vector<uint8_t> &expectedPayload,
+                                            const Bytes &expectedPayload,
                                             std::string &error)
     {
         std::vector<uint8_t> packageBytes;
@@ -1379,12 +1385,13 @@ namespace
         return true;
     }
 
+    template <typename Bytes>
     bool ValidateAssetSystemOutput(const std::filesystem::path &manifestPath,
                                    const std::string &manifestJson,
                                    const std::string &logicalPath,
                                    AssetKind kind,
                                    const std::string &variant,
-                                   const std::vector<uint8_t> &expectedPayload,
+                                   const Bytes &expectedPayload,
                                    std::string &error)
     {
         const std::filesystem::path manifestParent = manifestPath.parent_path();
@@ -1527,7 +1534,7 @@ namespace
         {
             if (bHasOrmSource || !options.Quality.empty())
             {
-                error = "--orm-* and --quality require --usage";
+                error = "--orm-* と --quality は --usage と一緒に指定してください";
                 return false;
             }
             return true;
@@ -1536,26 +1543,26 @@ namespace
         NorvesLib::Tools::AssetCook::TextureUsage usage{};
         if (!NorvesLib::Tools::AssetCook::ParseTextureUsage(options.Usage, usage))
         {
-            error = "--usage must be albedo, normal, orm, single, or height16";
+            error = "--usage は albedo・normal・orm・single・height16 のどれかです";
             return false;
         }
 
         if (options.Kind != "texture")
         {
-            error = "--usage requires --kind texture";
+            error = "--usage は --kind texture と一緒に指定してください";
             return false;
         }
 
         if (!options.Format.empty())
         {
-            error = "--usage decides the format; do not pass --format";
+            error = "--usage が形式を決めるので --format は指定しないでください";
             return false;
         }
         options.Format = NorvesLib::Tools::AssetCook::GetTextureUsageManifestFormat(usage);
 
         if (!options.Quality.empty() && options.Quality != "fast" && options.Quality != "normal" && options.Quality != "best")
         {
-            error = "--quality must be fast, normal, or best";
+            error = "--quality は fast・normal・best のどれかです";
             return false;
         }
 
@@ -1563,18 +1570,18 @@ namespace
         {
             if (!options.InputPath.empty())
             {
-                error = "--usage orm reads --orm-ao, --orm-roughness and --orm-metallic instead of --input";
+                error = "--usage orm は --input ではなく --orm-ao・--orm-roughness・--orm-metallic を読みます";
                 return false;
             }
             if (!bHasOrmSource)
             {
-                error = "--usage orm requires at least one of --orm-ao, --orm-roughness, --orm-metallic";
+                error = "--usage orm には --orm-ao・--orm-roughness・--orm-metallic のどれか 1 つが要ります";
                 return false;
             }
         }
         else if (bHasOrmSource)
         {
-            error = "--orm-* require --usage orm";
+            error = "--orm-* は --usage orm と一緒に指定してください";
             return false;
         }
 
@@ -1943,7 +1950,7 @@ namespace
             return false;
         }
 
-        std::vector<uint8_t> inputBytes;
+        NorvesLib::Tools::AssetCook::ByteArray inputBytes;
         if (!options.InputPath.empty() && !ReadBinaryFile(inputPath, inputBytes, error))
         {
             return false;
@@ -1974,18 +1981,20 @@ namespace
 
         NorvesLib::Tools::AssetCook::TextureCookResult textureResult;
         // 元画像のハッシュ。ORM は 3 枠をまとめて 1 つにする(枠ごとに有無・大きさ・中身を並べる)。
-        std::vector<uint8_t> sourceHashBytes;
-        std::string usageLogName;
+        NorvesLib::Tools::AssetCook::ByteArray sourceHashBytes;
         const auto cookStart = std::chrono::steady_clock::now();
+        NorvesLib::Tools::AssetCook::ErrorString cookError;
         if (options.Usage.empty())
         {
-            if (!NorvesLib::Tools::AssetCook::CookTextureToNvtex(inputBytes.data(),
-                                                                 inputBytes.size(),
-                                                                 options.Format,
-                                                                 inputPath.generic_string(),
-                                                                 textureResult,
-                                                                 error))
+            if (!NorvesLib::Tools::AssetCook::CookTextureToNvtex(
+                    inputBytes.data(),
+                    inputBytes.size(),
+                    options.Format,
+                    NorvesLib::Tools::AssetCook::ErrorString(inputPath.generic_string().c_str()),
+                    textureResult,
+                    cookError))
             {
+                error = ToStdString(cookError);
                 return false;
             }
             sourceHashBytes = inputBytes;
@@ -1996,10 +2005,9 @@ namespace
             TextureUsageCookParams cookParams;
             if (!ParseTextureUsage(options.Usage, cookParams.Usage))
             {
-                error = "--usage must be albedo, normal, orm, single, or height16";
+                error = "--usage は albedo・normal・orm・single・height16 のどれかです";
                 return false;
             }
-            usageLogName = options.Usage;
             if (options.Quality == "fast")
             {
                 cookParams.Quality = BlockQuality::Fast;
@@ -2011,8 +2019,8 @@ namespace
 
             TextureSourceImage mainSource;
             OrmSourceImages ormSources;
-            std::vector<uint8_t> ormBytes[3];
-            std::string ormNames[3];
+            ByteArray ormBytes[3];
+            ErrorString ormNames[3];
             if (cookParams.Usage == TextureUsage::Orm)
             {
                 const std::filesystem::path *ormPaths[3] = {&options.OrmAoPath, &options.OrmRoughnessPath, &options.OrmMetallicPath};
@@ -2032,7 +2040,7 @@ namespace
                         return false;
                     }
 
-                    ormNames[slot] = slotPath.generic_string();
+                    ormNames[slot] = ErrorString(slotPath.generic_string().c_str());
                     ormSlots[slot]->Bytes = ormBytes[slot].data();
                     ormSlots[slot]->Size = ormBytes[slot].size();
                     ormSlots[slot]->Name = ormNames[slot];
@@ -2049,12 +2057,13 @@ namespace
             {
                 mainSource.Bytes = inputBytes.data();
                 mainSource.Size = inputBytes.size();
-                mainSource.Name = inputPath.generic_string();
+                mainSource.Name = ErrorString(inputPath.generic_string().c_str());
                 sourceHashBytes = inputBytes;
             }
 
-            if (!CookTextureForUsage(mainSource, ormSources, cookParams, textureResult, error))
+            if (!CookTextureForUsage(mainSource, ormSources, cookParams, textureResult, cookError))
             {
+                error = ToStdString(cookError);
                 return false;
             }
         }
@@ -2126,10 +2135,10 @@ namespace
                   << " mips=" << textureResult.MipCount
                   << " bytes_per_pixel=" << textureResult.BytesPerPixel
                   << "\n";
-        if (!usageLogName.empty())
+        if (!options.Usage.empty())
         {
             // 計測の行は機械が拾うので英語のまま標準出力へ出す。時間は元画像の復号から圧縮までのクック分。
-            std::cout << "TEXTURE_COOK usage=" << usageLogName
+            std::cout << "TEXTURE_COOK usage=" << options.Usage
                       << " format=" << textureResult.PixelFormatName
                       << " size=" << textureResult.Width << "x" << textureResult.Height
                       << " ms=" << cookElapsedMs << "\n";

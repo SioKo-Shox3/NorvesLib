@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <string>
+#include <cstring>
 
 namespace
 {
@@ -34,13 +34,13 @@ namespace
     // PNM(P5/P6)を作る。maxval が 255 を超えるときは 16 ビットのビッグエンディアン。
     ByteArray MakePnm(char magic, uint32_t width, uint32_t height, uint32_t maxval, const ByteArray &samples)
     {
-        const std::string header = std::string("P") + magic + "\n" + std::to_string(width) + " " +
-                                   std::to_string(height) + "\n" + std::to_string(maxval) + "\n";
+        char header[64];
+        const int headerLength = std::snprintf(header, sizeof(header), "P%c\n%u %u\n%u\n", magic, width, height, maxval);
         ByteArray bytes;
-        bytes.reserve(header.size() + samples.size());
-        for (const char c : header)
+        bytes.reserve(static_cast<size_t>(headerLength) + samples.size());
+        for (int i = 0; i < headerLength; ++i)
         {
-            bytes.push_back(static_cast<uint8_t>(c));
+            bytes.push_back(static_cast<uint8_t>(header[i]));
         }
         for (const uint8_t value : samples)
         {
@@ -168,7 +168,7 @@ namespace
         TextureUsageCookParams params;
         params.Usage = usage;
         params.ThreadCount = 1;
-        std::string error;
+        ErrorString error;
         if (!CookTextureForUsage(source, orm, params, outResult, error))
         {
             std::printf("TEXTURE_USAGE_SMOKE_FAIL cook failed: usage=%s error=%s\n", GetTextureUsageName(usage), error.c_str());
@@ -282,7 +282,7 @@ namespace
         TextureUsageCookParams params;
         params.Usage = TextureUsage::Orm;
         params.ThreadCount = 1;
-        std::string error;
+        ErrorString error;
         Check(!CookTextureForUsage(TextureSourceImage{}, mismatched, params, result, error), "大きさの違う ORM の枠を受け付けた");
         Check(!CookTextureForUsage(TextureSourceImage{}, OrmSourceImages{}, params, result, error), "枠が無い ORM を受け付けた");
     }
@@ -432,10 +432,11 @@ namespace
         TextureCookResult result;
         TextureUsageCookParams params;
         params.Usage = TextureUsage::Albedo;
-        std::string error;
+        ErrorString error;
         Check(!CookTextureForUsage(TextureSourceImage{}, OrmSourceImages{}, params, result, error), "空の入力を受け付けた");
         const ByteArray garbage(32, 7);
         Check(!CookTextureForUsage(Source(garbage, "garbage"), OrmSourceImages{}, params, result, error), "画像でない入力を受け付けた");
+        Check(std::strstr(error.c_str(), "garbage") != nullptr, "復号の失敗に入力の名前が残らない");
     }
 }
 

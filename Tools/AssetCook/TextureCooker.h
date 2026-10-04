@@ -2,24 +2,24 @@
 
 #include "BlockCompressor.h"
 
+#include "Container/String.h"
+
 #include <cstddef>
 #include <cstdint>
-#include <string>
 #include <string_view>
-#include <vector>
 
 namespace NorvesLib::Tools::AssetCook
 {
     struct TextureCookResult
     {
-        std::vector<uint8_t> NvtexBytes;
+        ByteArray NvtexBytes;
         uint32_t Width = 0;
         uint32_t Height = 0;
         uint32_t MipCount = 0;
         // 非圧縮の形式の 1 画素のバイト数。ブロック圧縮の形式は 0。
         uint32_t BytesPerPixel = 0;
         // 書き出した形式の名前(BC7・BC5・BC4・R16 など)。ログと検証用。
-        std::string PixelFormatName;
+        ErrorString PixelFormatName;
     };
 
     // クッカーが用途ごとに焼く先。用途が形式・色空間・ミップの作り方を決める。
@@ -41,7 +41,8 @@ namespace NorvesLib::Tools::AssetCook
     {
         const uint8_t *Bytes = nullptr;
         size_t Size = 0;
-        std::string_view Name;
+        // 入力の名前(エラー文用)。ビューにすると、渡した一時文字列が消えたあとに読んでしまうので所有する。
+        ErrorString Name;
 
         [[nodiscard]] bool IsPresent() const noexcept { return Bytes != nullptr && Size != 0; }
     };
@@ -67,14 +68,14 @@ namespace NorvesLib::Tools::AssetCook
                                            const OrmSourceImages &orm,
                                            const TextureUsageCookParams &params,
                                            TextureCookResult &outResult,
-                                           std::string &error);
+                                           ErrorString &error);
 
     [[nodiscard]] bool IsSupportedTextureCookFormat(std::string_view format) noexcept;
 
     [[nodiscard]] bool CookTextureToNvtex(const uint8_t *sourceBytes,
                                           size_t sourceSize,
                                           std::string_view format,
-                                          std::string_view sourceName,
+                                          const ErrorString &sourceName,
                                           TextureCookResult &outResult,
-                                          std::string &error);
+                                          ErrorString &error);
 }

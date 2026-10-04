@@ -2,6 +2,8 @@
 
 #include "Asset/CookedTextureFormat.h"
 #include "BlockCompressor.h"
+#include "Container/PointerTypes.h"
+#include "Container/StringView.h"
 
 #include "stb_image.h"
 
@@ -15,6 +17,9 @@ namespace NorvesLib::Tools::AssetCook
 {
     namespace
     {
+        using NorvesLib::Core::Container::AnsiStringView;
+        using NorvesLib::Core::Container::TUniquePtr;
+        using NorvesLib::Core::Container::VariableArray;
         using NorvesLib::Core::Asset::ComputeCookedTextureFullMipCount;
         using NorvesLib::Core::Asset::ComputeCookedTexturePayloadHash;
         using NorvesLib::Core::Asset::CookedTextureColorSpace;
@@ -36,16 +41,16 @@ namespace NorvesLib::Tools::AssetCook
         {
             uint32_t Width = 0;
             uint32_t Height = 0;
-            std::vector<uint8_t> Bytes;
+            ByteArray Bytes;
         };
 
-        void WriteLe16(std::vector<uint8_t> &bytes, size_t offset, uint16_t value)
+        void WriteLe16(ByteArray &bytes, size_t offset, uint16_t value)
         {
             bytes[offset + 0] = static_cast<uint8_t>(value & 0xffu);
             bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
         }
 
-        void WriteLe32(std::vector<uint8_t> &bytes, size_t offset, uint32_t value)
+        void WriteLe32(ByteArray &bytes, size_t offset, uint32_t value)
         {
             bytes[offset + 0] = static_cast<uint8_t>(value & 0xffu);
             bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
@@ -53,7 +58,7 @@ namespace NorvesLib::Tools::AssetCook
             bytes[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xffu);
         }
 
-        void WriteLe64(std::vector<uint8_t> &bytes, size_t offset, uint64_t value)
+        void WriteLe64(ByteArray &bytes, size_t offset, uint64_t value)
         {
             WriteLe32(bytes, offset, static_cast<uint32_t>(value & 0xffffffffull));
             WriteLe32(bytes, offset + 4, static_cast<uint32_t>((value >> 32) & 0xffffffffull));
@@ -156,9 +161,9 @@ namespace NorvesLib::Tools::AssetCook
         bool DecodeSourceImage(const uint8_t *sourceBytes,
                                size_t sourceSize,
                                const TextureFormatInfo &format,
-                               std::string_view sourceName,
+                               const ErrorString &sourceName,
                                MipImage &outBaseMip,
-                               std::string &error)
+                               ErrorString &error)
         {
             if (sourceBytes == nullptr || sourceSize == 0)
             {
@@ -181,14 +186,14 @@ namespace NorvesLib::Tools::AssetCook
                                                      &height,
                                                      &sourceChannels,
                                                      4);
-            std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> decodedOwner(decoded, stbi_image_free);
+            TUniquePtr<stbi_uc, decltype(&stbi_image_free)> decodedOwner(decoded, stbi_image_free);
             if (decoded == nullptr)
             {
                 error = "failed to decode texture input";
                 if (!sourceName.empty())
                 {
                     error += ": ";
-                    error += std::string(sourceName);
+                    error += sourceName;
                 }
 
                 const char *reason = stbi_failure_reason();
@@ -322,8 +327,8 @@ namespace NorvesLib::Tools::AssetCook
 
         bool BuildMipChain(MipImage baseMip,
                            const TextureFormatInfo &format,
-                           std::vector<MipImage> &outMips,
-                           std::string &error)
+                           VariableArray<MipImage> &outMips,
+                           ErrorString &error)
         {
             outMips.clear();
             outMips.push_back(std::move(baseMip));
@@ -352,12 +357,12 @@ namespace NorvesLib::Tools::AssetCook
 
         // ミップの並びを NVTEX に詰める。各ミップのバイト数は形式のブロック単位の大きさと一致していなければならない。
         // ブロック圧縮と R16 は v0.1、それ以外は v0.0 で書く。
-        bool BuildNvtexBytes(const std::vector<MipImage> &mips,
+        bool BuildNvtexBytes(const VariableArray<MipImage> &mips,
                              CookedTexturePixelFormat pixelFormat,
                              CookedTextureColorSpace colorSpace,
                              uint16_t versionMinor,
-                             std::vector<uint8_t> &outBytes,
-                             std::string &error)
+                             ByteArray &outBytes,
+                             ErrorString &error)
         {
             if (mips.empty() || mips.front().Width == 0 || mips.front().Height == 0)
             {
@@ -481,7 +486,7 @@ namespace NorvesLib::Tools::AssetCook
         {
             uint32_t Width = 0;
             uint32_t Height = 0;
-            std::vector<uint16_t> Values;
+            VariableArray<uint16_t> Values;
         };
 
         // 3 成分 float のミップ(法線用)。xyz は -1..1 のベクトルで、最初のミップだけ非正規化のまま持つ。
@@ -489,16 +494,16 @@ namespace NorvesLib::Tools::AssetCook
         {
             uint32_t Width = 0;
             uint32_t Height = 0;
-            std::vector<float> Xyz;
+            VariableArray<float> Xyz;
         };
 
-        std::string MakeSourceError(const char *what, std::string_view sourceName)
+        ErrorString MakeSourceError(const char *what, const ErrorString &sourceName)
         {
-            std::string message = what;
+            ErrorString message = what;
             if (!sourceName.empty())
             {
                 message += ": ";
-                message += std::string(sourceName);
+                message += sourceName;
             }
             return message;
         }
@@ -513,13 +518,13 @@ namespace NorvesLib::Tools::AssetCook
         bool CompressMipImage(const MipImage &rgbaMip,
                               const BlockCompressParams &params,
                               MipImage &outCompressed,
-                              std::string &error)
+                              ErrorString &error)
         {
             ByteArray blocks;
             ErrorString compressError;
             if (!CompressRGBA8(rgbaMip.Bytes.data(), rgbaMip.Width, rgbaMip.Height, params, blocks, compressError))
             {
-                error = std::string(compressError.data(), compressError.size());
+                error = compressError;
                 return false;
             }
 
@@ -529,10 +534,10 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool CompressMipChain(const std::vector<MipImage> &rgbaMips,
+        bool CompressMipChain(const VariableArray<MipImage> &rgbaMips,
                               const BlockCompressParams &params,
-                              std::vector<MipImage> &outCompressed,
-                              std::string &error)
+                              VariableArray<MipImage> &outCompressed,
+                              ErrorString &error)
         {
             outCompressed.clear();
             outCompressed.reserve(rgbaMips.size());
@@ -549,9 +554,9 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         // 1 チャンネルのミップを、R に値を持つ RGBA8 に広げる(G・B は 0、A は 255)。BC4 は R だけを読む。
-        std::vector<MipImage> ExpandRChainToRgba8(const std::vector<MipImage> &r8Mips)
+        VariableArray<MipImage> ExpandRChainToRgba8(const VariableArray<MipImage> &r8Mips)
         {
-            std::vector<MipImage> expanded;
+            VariableArray<MipImage> expanded;
             expanded.reserve(r8Mips.size());
             for (const MipImage &r8 : r8Mips)
             {
@@ -571,17 +576,17 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         // 16 ビットで読み込み、1 チャンネルへ変換する。8 ビットの入力は 0..255 を 0..65535 へ拡大する(x * 257)。
-        bool DecodeSourceImage16(const TextureSourceImage &source, MipImage16 &outBase, std::string &error)
+        bool DecodeSourceImage16(const TextureSourceImage &source, MipImage16 &outBase, ErrorString &error)
         {
             if (!source.IsPresent())
             {
-                error = "texture input is empty";
+                error = "テクスチャの入力が空です";
                 return false;
             }
 
             if (source.Size > static_cast<size_t>(std::numeric_limits<int>::max()))
             {
-                error = "texture input is too large for stb_image";
+                error = "テクスチャの入力が stb_image の扱える大きさを超えています";
                 return false;
             }
 
@@ -594,10 +599,10 @@ namespace NorvesLib::Tools::AssetCook
                                                         &height,
                                                         &sourceChannels,
                                                         1);
-            std::unique_ptr<stbi_us, decltype(&stbi_image_free)> decodedOwner(decoded, stbi_image_free);
+            TUniquePtr<stbi_us, decltype(&stbi_image_free)> decodedOwner(decoded, stbi_image_free);
             if (decoded == nullptr)
             {
-                error = MakeSourceError("failed to decode texture input", source.Name);
+                error = MakeSourceError("テクスチャの入力を復号できません", source.Name);
                 const char *reason = stbi_failure_reason();
                 if (reason != nullptr)
                 {
@@ -609,14 +614,14 @@ namespace NorvesLib::Tools::AssetCook
 
             if (width <= 0 || height <= 0)
             {
-                error = "decoded texture has invalid dimensions";
+                error = "復号したテクスチャの大きさが不正です";
                 return false;
             }
 
             size_t pixelCount = 0;
             if (!CheckedMultiply(static_cast<size_t>(width), static_cast<size_t>(height), pixelCount))
             {
-                error = "decoded texture size overflow";
+                error = "復号したテクスチャの大きさが桁あふれしました";
                 return false;
             }
 
@@ -655,9 +660,9 @@ namespace NorvesLib::Tools::AssetCook
             }
         }
 
-        bool BuildHeight16Mips(MipImage16 base, std::vector<MipImage> &outMips, std::string &error)
+        bool BuildHeight16Mips(MipImage16 base, VariableArray<MipImage> &outMips, ErrorString &error)
         {
-            std::vector<MipImage16> chain;
+            VariableArray<MipImage16> chain;
             chain.push_back(std::move(base));
             while (chain.back().Width > 1 || chain.back().Height > 1)
             {
@@ -668,7 +673,7 @@ namespace NorvesLib::Tools::AssetCook
 
             if (chain.size() != ComputeCookedTextureFullMipCount(chain.front().Width, chain.front().Height))
             {
-                error = "texture mip generation did not produce a full mip chain";
+                error = "テクスチャのミップが最後まで作れませんでした";
                 return false;
             }
 
@@ -770,10 +775,10 @@ namespace NorvesLib::Tools::AssetCook
             }
         }
 
-        bool BuildNormalMips(const MipImage &baseRgba, std::vector<MipImage> &outRgbaMips, std::string &error)
+        bool BuildNormalMips(const MipImage &baseRgba, VariableArray<MipImage> &outRgbaMips, ErrorString &error)
         {
             const size_t pixelCount = static_cast<size_t>(baseRgba.Width) * baseRgba.Height;
-            std::vector<MipImageVec3> chain;
+            VariableArray<MipImageVec3> chain;
             MipImageVec3 base;
             base.Width = baseRgba.Width;
             base.Height = baseRgba.Height;
@@ -795,7 +800,7 @@ namespace NorvesLib::Tools::AssetCook
 
             if (chain.size() != ComputeCookedTextureFullMipCount(chain.front().Width, chain.front().Height))
             {
-                error = "texture mip generation did not produce a full mip chain";
+                error = "テクスチャのミップが最後まで作れませんでした";
                 return false;
             }
 
@@ -812,7 +817,7 @@ namespace NorvesLib::Tools::AssetCook
 
         // ORM の 3 枠を R(AO)・G(粗さ)・B(メタリック)に詰めた RGBA8 を作る。
         // 無い枠は AO=1・粗さ=1・メタリック=0。大きさは存在する枠で一致していなければならない。
-        bool PackOrmBase(const OrmSourceImages &orm, MipImage &outBase, std::string &error)
+        bool PackOrmBase(const OrmSourceImages &orm, MipImage &outBase, ErrorString &error)
         {
             const TextureSourceImage *slots[3] = {&orm.Ao, &orm.Roughness, &orm.Metallic};
             const uint8_t missingValues[3] = {255, 255, 0};
@@ -846,14 +851,14 @@ namespace NorvesLib::Tools::AssetCook
                 }
                 else if (decoded[slot].Width != width || decoded[slot].Height != height)
                 {
-                    error = MakeSourceError("ORM source images must have the same size", slots[slot]->Name);
+                    error = MakeSourceError("ORM の元画像は同じ大きさにしてください", slots[slot]->Name);
                     return false;
                 }
             }
 
             if (!bAnyPresent)
             {
-                error = "ORM texture requires at least one of AO, roughness or metallic";
+                error = "ORM には AO・粗さ・メタリックのどれか 1 枚が要ります";
                 return false;
             }
 
@@ -876,7 +881,7 @@ namespace NorvesLib::Tools::AssetCook
                                       const OrmSourceImages &orm,
                                       const TextureUsageCookParams &params,
                                       TextureCookResult &outResult,
-                                      std::string &error)
+                                      ErrorString &error)
         {
             BlockCompressParams compress;
             compress.Quality = params.Quality;
@@ -885,7 +890,7 @@ namespace NorvesLib::Tools::AssetCook
             CookedTexturePixelFormat pixelFormat = CookedTexturePixelFormat::BC7;
             CookedTextureColorSpace colorSpace = CookedTextureColorSpace::Linear;
             const char *pixelFormatName = "BC7";
-            std::vector<MipImage> sourceMips;
+            VariableArray<MipImage> sourceMips;
 
             switch (params.Usage)
             {
@@ -950,7 +955,7 @@ namespace NorvesLib::Tools::AssetCook
                 info.OutputChannels = 1;
 
                 MipImage base;
-                std::vector<MipImage> r8Mips;
+                VariableArray<MipImage> r8Mips;
                 if (!DecodeSourceImage(source.Bytes, source.Size, info, source.Name, base, error) ||
                     !BuildMipChain(std::move(base), info, r8Mips, error))
                 {
@@ -964,11 +969,11 @@ namespace NorvesLib::Tools::AssetCook
                 break;
             }
             case TextureUsage::Height16:
-                error = "height16 is not a block compressed usage";
+                error = "height16 はブロック圧縮の用途ではありません";
                 return false;
             }
 
-            std::vector<MipImage> compressedMips;
+            VariableArray<MipImage> compressedMips;
             if (!CompressMipChain(sourceMips, compress, compressedMips, error))
             {
                 return false;
@@ -990,10 +995,10 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool CookHeight16Usage(const TextureSourceImage &source, TextureCookResult &outResult, std::string &error)
+        bool CookHeight16Usage(const TextureSourceImage &source, TextureCookResult &outResult, ErrorString &error)
         {
             MipImage16 base;
-            std::vector<MipImage> mips;
+            VariableArray<MipImage> mips;
             if (!DecodeSourceImage16(source, base, error) ||
                 !BuildHeight16Mips(std::move(base), mips, error))
             {
@@ -1026,14 +1031,14 @@ namespace NorvesLib::Tools::AssetCook
     bool CookTextureToNvtex(const uint8_t *sourceBytes,
                             size_t sourceSize,
                             std::string_view format,
-                            std::string_view sourceName,
+                            const ErrorString &sourceName,
                             TextureCookResult &outResult,
-                            std::string &error)
+                            ErrorString &error)
     {
         TextureFormatInfo formatInfo;
         if (!ParseTextureFormat(format, formatInfo))
         {
-            error = "unsupported texture format: " + std::string(format);
+            error = ErrorString("unsupported texture format: ") + ErrorString(AnsiStringView(format.data(), format.size()));
             return false;
         }
 
@@ -1043,7 +1048,7 @@ namespace NorvesLib::Tools::AssetCook
             return false;
         }
 
-        std::vector<MipImage> mips;
+        VariableArray<MipImage> mips;
         if (!BuildMipChain(std::move(baseMip), formatInfo, mips, error))
         {
             return false;
@@ -1125,7 +1130,7 @@ namespace NorvesLib::Tools::AssetCook
                              const OrmSourceImages &orm,
                              const TextureUsageCookParams &params,
                              TextureCookResult &outResult,
-                             std::string &error)
+                             ErrorString &error)
     {
         if (params.Usage == TextureUsage::Height16)
         {
