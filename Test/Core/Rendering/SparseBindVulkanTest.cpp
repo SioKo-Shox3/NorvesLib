@@ -34,6 +34,7 @@ namespace NorvesLib::RHI::Vulkan
 void BeginVulkanValidationErrorCaptureForTesting() noexcept;
 void EndVulkanValidationErrorCaptureForTesting() noexcept;
 uint32_t GetVulkanValidationErrorCaptureHitCountForTesting() noexcept;
+uint64_t GetVulkanDeviceWaitIdleCallCountForTesting() noexcept;
 }
 
 namespace
@@ -614,6 +615,141 @@ namespace
         texture.reset();
     }
 
+    // 描画で読んでいるタイルを外す結び付けが、その描画の完了を待ってから外す（GPU 上の順序付け）。
+    // 読み出し（計算シェーダーの標本）を完了を待たずに出したまま、WaitIdle を呼ばずにそのタイルを外し、
+    // 結び直して、次の読み出しを重ねる。外しは描画の完了を通知するセマフォを待つので、CPU は止まらず、
+    // validation error も出ないこと（待つ値は必ず提出済みで、通知が消費されない順序付け）を確かめる。
+    void TestUnbindWhileReadInFlight(IDevice& device, ProbeResources& resources, SparsePagePool& pool)
+    {
+        std::cout << TestName << " --- 実行中の読み出しがあるタイルを外す ---" << std::endl;
+        constexpr uint32_t RoundCount = 12u;
+        constexpr uint64_t Page = RHI::SparsePageSizeBytes;
+
+        TextureDesc desc;
+        desc.Width = 256;
+        desc.Height = 256;
+        desc.MipLevels = 9;
+        desc.TextureFormat = Format::BC7_UNORM;
+        desc.Usage = ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
+        desc.bSparse = true;
+        desc.DebugName = "SparseBindUnbindInFlightTarget";
+
+        // 先に宣言したものが後に破棄される（ページを返す前にテクスチャを破棄する）。
+        VariableArray<SparsePagePool::PageLease> tailLeases;
+        SparsePagePool::PageLease tileLease;
+        TexturePtr texture = device.CreateTexture(desc);
+        SparseTextureInfo info;
+        if (texture == nullptr || !texture->GetSparseInfo(info))
+        {
+            Expect(false, "外しのテストの準備（テクスチャ）に失敗");
+            return;
+        }
+        const uint32_t tailPages = static_cast<uint32_t>((info.MipTailSize + Page - 1) / Page);
+        tileLease = pool.Acquire();
+        SparseBindRequest bindAll;
+        {
+            SparseTileBind tile;
+            tile.Texture = texture.get();
+            tile.Page = tileLease.GetPage();
+            bindAll.Tiles.push_back(tile);
+        }
+        for (uint32_t page = 0; page < tailPages; ++page)
+        {
+            tailLeases.push_back(pool.Acquire());
+            SparseMipTailBind tail;
+            tail.Texture = texture.get();
+            tail.PageIndex = page;
+            tail.Page = tailLeases.back().GetPage();
+            bindAll.MipTails.push_back(tail);
+        }
+        if (!tileLease.IsValid() || !TimedBindSparse(device, bindAll, "外しのテストの準備の結び付け"))
+        {
+            Expect(false, "外しのテストの準備（結び付け）に失敗");
+            return;
+        }
+
+        // 読める配置にする（中身は書かない。結んだページの中身は未定義だが、読み出しの順序付けだけを確かめる）。
+        CommandListPtr layout = device.CreateCommandList();
+        layout->Begin();
+        layout->TextureBarrier(texture, ResourceState::Undefined, ResourceState::ShaderResource);
+        layout->End();
+        layout->Submit(true);
+        device.WaitIdle();
+
+        const uint64_t idleBefore = RHI::Vulkan::GetVulkanDeviceWaitIdleCallCountForTesting();
+        VariableArray<DescriptorSetPtr> descriptorSets;
+        VariableArray<CommandListPtr> commandLists;
+        bool bAllSubmitted = true;
+        bool bAllUnbound = true;
+        bool bAllRebound = true;
+        for (uint32_t round = 0; round < RoundCount; ++round)
+        {
+            DescriptorSetPtr descriptorSet = device.CreateDescriptorSet(MakeProbeDescriptorSetDesc());
+            CommandListPtr commandList = device.CreateCommandList();
+            if (!descriptorSet || !commandList)
+            {
+                bAllSubmitted = false;
+                break;
+            }
+            descriptorSet->BindTexture(0u, texture);
+            descriptorSet->BindSampler(0u, resources.Sampler);
+            descriptorSet->BindStorageBuffer(1u, resources.ResultBuffer, 0u, ProbeBufferBytes);
+            descriptorSet->Update();
+
+            // 読み出しを出す（完了を待たない）
+            commandList->Begin();
+            commandList->BufferBarrier(resources.ResultBuffer, ResourceState::Undefined, ResourceState::UnorderedAccess,
+                                       0u, ProbeBufferBytes);
+            commandList->SetPipeline(resources.Pipeline);
+            commandList->SetDescriptorSet(descriptorSet);
+            commandList->Dispatch(1u, 1u, 1u);
+            commandList->End();
+            commandList->Submit(false);
+            descriptorSets.push_back(std::move(descriptorSet));
+            commandLists.push_back(std::move(commandList));
+
+            // 読み出しの完了を待たずに、読まれているタイルを外し、結び直す
+            SparseBindRequest unbind;
+            SparseTileBind unbindTile;
+            unbindTile.Texture = texture.get();
+            unbind.Tiles.push_back(unbindTile);
+            bAllUnbound = TimedBindSparse(device, unbind, "実行中の読み出しがあるタイルを外す") && bAllUnbound;
+
+            SparseBindRequest rebind;
+            SparseTileBind rebindTile;
+            rebindTile.Texture = texture.get();
+            rebindTile.Page = tileLease.GetPage();
+            rebind.Tiles.push_back(rebindTile);
+            bAllRebound = TimedBindSparse(device, rebind, "外したタイルを結び直す") && bAllRebound;
+        }
+        const uint64_t idleAfter = RHI::Vulkan::GetVulkanDeviceWaitIdleCallCountForTesting();
+        Expect(bAllSubmitted, "外しのテストの読み出しの提出がすべて成功しなければならない");
+        Expect(bAllUnbound, "実行中の読み出しがあっても、タイルを外せなければならない");
+        Expect(bAllRebound, "外したタイルを結び直せなければならない");
+        Expect(idleAfter == idleBefore, "タイルを外すために CPU が GPU の完了を待ってはならない（WaitIdle を呼ばない）");
+
+        device.WaitIdle();
+        commandLists.clear();
+        descriptorSets.clear();
+
+        SparseBindRequest releaseAll;
+        {
+            SparseTileBind tile;
+            tile.Texture = texture.get();
+            releaseAll.Tiles.push_back(tile);
+        }
+        for (uint32_t page = 0; page < tailPages; ++page)
+        {
+            SparseMipTailBind tail;
+            tail.Texture = texture.get();
+            tail.PageIndex = page;
+            releaseAll.MipTails.push_back(tail);
+        }
+        Expect(TimedBindSparse(device, releaseAll, "外しのテストの後片付け"), "後片付けの全部外しが成功しなければならない");
+        device.WaitIdle();
+        texture.reset();
+    }
+
     // 結び付けと描画側の提出を、完了を待たずに交互に重ねて出す。
     // セマフォの通知が、待つ側の消費より前に重なっても validation error が出ないこと（結び付けの待ちが
     // 消費されない順序付け）を確かめる。
@@ -810,6 +946,7 @@ namespace
             std::cout << tailCase.Name << (bTail ? " PASS" : " FAIL") << '\n';
             TestRejections(*device, pool);
             TestOverlappedSubmits(*device, pool, queue, serial);
+            TestUnbindWhileReadInFlight(*device, resources, pool);
 
             device->WaitIdle();
             queue.Clear();

@@ -239,21 +239,33 @@ namespace NorvesLib::RHI::Vulkan
         // セマフォ同期付きでサブミット
         // 出してある sparse の結び付けの完了も待つ（結んだタイルを読む描画より前に結び付けを終える）。
         // タイムラインの最新の値を待つので、送信に失敗しても戻す必要はない。
-        // 待つ値の配列は待つセマフォと同じ並びで、バイナリのセマフォの値は使われない。
+        // 描画の完了を通知する値の割り当てと提出は、結び付けの提出と同じミューテックスの下で行う
+        // （タイルを外す結び付けが、この描画の完了を待てるようにする。失敗したときは窓口の破棄で値が戻る）。
+        // 待つ値・通知する値の配列は、それぞれのセマフォと同じ並びで、バイナリのセマフォの値は使われない。
+        VulkanDevice::GraphicsSubmitScope submitScope(*m_device);
         vk::Semaphore waitSemaphores[2] = {m_imageAvailableSemaphores[m_currentFrame], vk::Semaphore{}};
         vk::PipelineStageFlags waitStages[2] = {vk::PipelineStageFlagBits::eColorAttachmentOutput,
                                                 vk::PipelineStageFlagBits::eAllCommands};
         uint64_t waitValues[2] = {0, 0};
         uint32_t waitCount = 1;
-        if (m_device->GetSparseBindWait(waitSemaphores[1], waitValues[1]))
+        if (submitScope.GetSparseBindWait(waitSemaphores[1], waitValues[1]))
         {
             waitCount = 2;
+        }
+        vk::Semaphore signalSemaphores[2] = {m_renderFinishedSemaphores[m_currentFrame], vk::Semaphore{}};
+        uint64_t signalValues[2] = {0, 0};
+        uint32_t signalCount = 1;
+        if (submitScope.AcquireRenderSignal(signalSemaphores[1], signalValues[1]))
+        {
+            signalCount = 2;
         }
         vk::TimelineSemaphoreSubmitInfo timelineInfo{};
         timelineInfo.waitSemaphoreValueCount = waitCount;
         timelineInfo.pWaitSemaphoreValues = waitValues;
+        timelineInfo.signalSemaphoreValueCount = signalCount;
+        timelineInfo.pSignalSemaphoreValues = signalValues;
         vk::SubmitInfo submitInfo;
-        if (waitCount == 2)
+        if (waitCount == 2 || signalCount == 2)
         {
             submitInfo.pNext = &timelineInfo;
         }
@@ -262,8 +274,8 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.pWaitDstStageMask = waitStages;
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &cmdBuffer;
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
+        submitInfo.signalSemaphoreCount = signalCount;
+        submitInfo.pSignalSemaphores = signalSemaphores;
 
         uint64_t submittedSerial = 0u;
         const Detail::GPUTimestampSubmissionSequenceStatus submissionStatus =
@@ -284,10 +296,15 @@ namespace NorvesLib::RHI::Vulkan
                 },
                 [&]()
                 {
-                    return m_device->GetGraphicsQueue().submit(
-                               1,
-                               &submitInfo,
-                               m_inFlightFences[m_currentFrame]) == vk::Result::eSuccess;
+                    const bool bSubmitted = m_device->GetGraphicsQueue().submit(
+                                                1,
+                                                &submitInfo,
+                                                m_inFlightFences[m_currentFrame]) == vk::Result::eSuccess;
+                    if (bSubmitted)
+                    {
+                        submitScope.Commit();
+                    }
+                    return bSubmitted;
                 },
                 submittedSerial);
         if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed)

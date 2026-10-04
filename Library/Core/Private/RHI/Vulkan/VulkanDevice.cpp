@@ -864,6 +864,11 @@ namespace NorvesLib::RHI::Vulkan
             m_device.destroySemaphore(m_sparseBindTimeline);
             m_sparseBindTimeline = nullptr;
         }
+        if (m_renderTimeline)
+        {
+            m_device.destroySemaphore(m_renderTimeline);
+            m_renderTimeline = nullptr;
+        }
 
         // コマンドプールを破棄
         if (m_commandPool)
@@ -1412,6 +1417,18 @@ namespace NorvesLib::RHI::Vulkan
                 NORVES_LOG_ERROR("Vulkan", "sparseの結び付け用セマフォを作成できません: result=%d",
                                  static_cast<int>(timelineResult.result));
             }
+
+            // 描画の完了を通知するタイムラインセマフォ。タイルを外す結び付けが、それまでに提出した描画の完了を待つ。
+            const auto renderTimelineResult = m_device.createSemaphore(semaphoreInfo);
+            if (renderTimelineResult.result == vk::Result::eSuccess)
+            {
+                m_renderTimeline = renderTimelineResult.value;
+            }
+            else
+            {
+                NORVES_LOG_ERROR("Vulkan", "描画の完了通知用セマフォを作成できません: result=%d",
+                                 static_cast<int>(renderTimelineResult.result));
+            }
         }
     }
 
@@ -1849,10 +1866,29 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffer;
 
+        // 描画の完了を通知する値の割り当てと提出を、結び付けの提出と同じミューテックスの下で行う
+        // （失敗したときは窓口の破棄で値が戻る）。
+        GraphicsSubmitScope submitScope(*this);
+        vk::Semaphore renderSignalSemaphore;
+        uint64_t renderSignalValue = 0;
+        vk::TimelineSemaphoreSubmitInfo renderTimelineInfo{};
+        if (submitScope.AcquireRenderSignal(renderSignalSemaphore, renderSignalValue))
+        {
+            renderTimelineInfo.signalSemaphoreValueCount = 1;
+            renderTimelineInfo.pSignalSemaphoreValues = &renderSignalValue;
+            submitInfo.pNext = &renderTimelineInfo;
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = &renderSignalSemaphore;
+        }
+
         const vk::Result submitResult = failurePoint ==
                 static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::Submit)
             ? vk::Result::eErrorUnknown
             : m_graphicsQueue.submit(1, &submitInfo, nullptr);
+        if (submitResult == vk::Result::eSuccess)
+        {
+            submitScope.Commit();
+        }
         if (submitResult != vk::Result::eSuccess)
         {
             CancelDeferredCommandBufferSlot();
@@ -2793,7 +2829,8 @@ namespace NorvesLib::RHI::Vulkan
 
             // sparse は論理デバイスで有効にできたものだけを載せる（結び付け用のキューが無ければ全て無効）
             const bool bSparseEnabled =
-                m_enabledDeviceFeatures.sparseBinding == VK_TRUE && m_sparseBindingQueue && m_sparseBindTimeline;
+                m_enabledDeviceFeatures.sparseBinding == VK_TRUE && m_sparseBindingQueue && m_sparseBindTimeline &&
+                m_renderTimeline;
             m_Capabilities.Sparse.bSparseBinding = bSparseEnabled;
             m_Capabilities.Sparse.bResidencyImage2D =
                 bSparseEnabled && m_enabledDeviceFeatures.sparseResidencyImage2D == VK_TRUE;
@@ -2947,16 +2984,63 @@ namespace NorvesLib::RHI::Vulkan
             m_device, allocResult.value, sizeBytes, memoryTypeIndex, static_cast<const void *>(this)));
     }
 
-    bool VulkanDevice::GetSparseBindWait(vk::Semaphore &outSemaphore, uint64_t &outValue)
+    VulkanDevice::GraphicsSubmitScope::GraphicsSubmitScope(VulkanDevice &device) : m_owner(device)
     {
-        NorvesLib::Thread::ScopedLock lock(m_sparseBindMutex);
-        if (m_sparseBindSubmittedValue == 0)
+        m_owner.m_sparseBindMutex.Lock();
+        m_bLocked = true;
+    }
+
+    VulkanDevice::GraphicsSubmitScope::~GraphicsSubmitScope()
+    {
+        if (!m_bLocked)
+        {
+            return;
+        }
+        // 割り当てた値が確定していない（提出が失敗した）ので、値を戻す。ロックの下なので、
+        // 他の提出や結び付けが、戻す前の値を見ることはない。
+        if (m_bAcquired)
+        {
+            m_owner.m_renderSubmittedValue = m_previousRenderValue;
+        }
+        m_owner.m_sparseBindMutex.Unlock();
+    }
+
+    bool VulkanDevice::GraphicsSubmitScope::GetSparseBindWait(vk::Semaphore &outSemaphore, uint64_t &outValue) const
+    {
+        if (m_owner.m_sparseBindSubmittedValue == 0)
         {
             return false;
         }
-        outSemaphore = m_sparseBindTimeline;
-        outValue = m_sparseBindSubmittedValue;
+        outSemaphore = m_owner.m_sparseBindTimeline;
+        outValue = m_owner.m_sparseBindSubmittedValue;
         return true;
+    }
+
+    bool VulkanDevice::GraphicsSubmitScope::AcquireRenderSignal(vk::Semaphore &outSemaphore, uint64_t &outValue)
+    {
+        if (!m_owner.m_renderTimeline)
+        {
+            return false;
+        }
+        if (!m_bAcquired)
+        {
+            m_previousRenderValue = m_owner.m_renderSubmittedValue;
+            m_owner.m_renderSubmittedValue = m_previousRenderValue + 1;
+            m_bAcquired = true;
+        }
+        outSemaphore = m_owner.m_renderTimeline;
+        outValue = m_owner.m_renderSubmittedValue;
+        return true;
+    }
+
+    void VulkanDevice::GraphicsSubmitScope::Commit()
+    {
+        m_bAcquired = false;
+        if (m_bLocked)
+        {
+            m_bLocked = false;
+            m_owner.m_sparseBindMutex.Unlock();
+        }
     }
 
     bool VulkanDevice::BindSparse(const SparseBindRequest &request)
@@ -2965,7 +3049,7 @@ namespace NorvesLib::RHI::Vulkan
         {
             return true;
         }
-        if (!m_sparseBindingQueue || !m_sparseBindTimeline)
+        if (!m_sparseBindingQueue || !m_sparseBindTimeline || !m_renderTimeline)
         {
             NORVES_LOG_ERROR("Vulkan", "sparseの結び付けを出せません: sparseBinding が有効ではありません");
             return false;
@@ -3132,6 +3216,18 @@ namespace NorvesLib::RHI::Vulkan
             }
         }
 
+        // タイルやミップテイルのページを外す要求は、外すページを読む描画が実行中でも未定義の読み出しにならないよう、
+        // それまでに提出した描画の完了を待ってから外す（結ぶだけの要求は何も待たない）。
+        bool bUnbind = false;
+        for (const SparseTileBind &bind : request.Tiles)
+        {
+            bUnbind = bUnbind || !bind.Page.IsValid();
+        }
+        for (const SparseMipTailBind &bind : request.MipTails)
+        {
+            bUnbind = bUnbind || !bind.Page.IsValid();
+        }
+
         {
             NorvesLib::Thread::ScopedLock lock(m_sparseBindMutex);
 
@@ -3140,17 +3236,36 @@ namespace NorvesLib::RHI::Vulkan
             // （描画の提出は、その時点の最新の値を待つ）。
             const uint64_t waitValue = m_sparseBindSubmittedValue;
             const uint64_t signalValue = waitValue + 1;
+            // 描画の提出は値の割り当てと提出を同じミューテックスの下で行うので、ここで読む最新の値までの描画は
+            // すべて提出済みで、通知されるのを待てる（待つ値が提出されない穴はできない）。
+            const uint64_t renderWaitValue = bUnbind ? m_renderSubmittedValue : 0;
+
+            vk::Semaphore waitSemaphores[2];
+            uint64_t waitValues[2] = {0, 0};
+            uint32_t waitCount = 0;
+            if (waitValue > 0)
+            {
+                waitSemaphores[waitCount] = m_sparseBindTimeline;
+                waitValues[waitCount] = waitValue;
+                ++waitCount;
+            }
+            if (renderWaitValue > 0)
+            {
+                waitSemaphores[waitCount] = m_renderTimeline;
+                waitValues[waitCount] = renderWaitValue;
+                ++waitCount;
+            }
 
             vk::TimelineSemaphoreSubmitInfo timelineInfo{};
-            timelineInfo.waitSemaphoreValueCount = waitValue > 0 ? 1 : 0;
-            timelineInfo.pWaitSemaphoreValues = waitValue > 0 ? &waitValue : nullptr;
+            timelineInfo.waitSemaphoreValueCount = waitCount;
+            timelineInfo.pWaitSemaphoreValues = waitCount > 0 ? waitValues : nullptr;
             timelineInfo.signalSemaphoreValueCount = 1;
             timelineInfo.pSignalSemaphoreValues = &signalValue;
 
             vk::BindSparseInfo bindInfo{};
             bindInfo.pNext = &timelineInfo;
-            bindInfo.waitSemaphoreCount = waitValue > 0 ? 1 : 0;
-            bindInfo.pWaitSemaphores = waitValue > 0 ? &m_sparseBindTimeline : nullptr;
+            bindInfo.waitSemaphoreCount = waitCount;
+            bindInfo.pWaitSemaphores = waitCount > 0 ? waitSemaphores : nullptr;
             bindInfo.imageOpaqueBindCount = static_cast<uint32_t>(opaqueInfos.size());
             bindInfo.pImageOpaqueBinds = opaqueInfos.empty() ? nullptr : opaqueInfos.data();
             bindInfo.imageBindCount = static_cast<uint32_t>(imageInfos.size());

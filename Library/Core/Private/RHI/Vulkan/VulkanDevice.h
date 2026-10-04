@@ -139,11 +139,38 @@ namespace NorvesLib::RHI::Vulkan
         // sparse の結び付け（vkQueueBindSparse）に使うキュー。sparseBinding が無効なら空のハンドル。
         vk::Queue GetSparseBindingQueue() const { return m_sparseBindingQueue; }
 
-        // sparse の結び付けは、次にグラフィックスのキューへ送る提出より前に終わらせる。
-        // 提出側は送信の直前にこれを呼び、結び付けを出したことがあれば、そのタイムラインセマフォの
-        // 最新の値を待ちに加える（待ち段は全コマンド。タイムラインの待ちは消費されないので、
-        // 送信に失敗しても戻す必要はなく、続く結び付けの通知とも干渉しない）。
-        bool GetSparseBindWait(vk::Semaphore &outSemaphore, uint64_t &outValue);
+        // グラフィックスのキューへ描画を提出する間の窓口（sparse の結び付けとの順序付け）。
+        //   ・結び付けは、次にグラフィックスのキューへ送る提出より前に終わらせる。提出側は送信の前に
+        //     GetSparseBindWait を呼び、結び付けを出したことがあれば、そのタイムラインセマフォの最新の値を
+        //     待ちに加える（待ち段は全コマンド。タイムラインの待ちは消費されないので、送信に失敗しても戻す必要はない）。
+        //   ・タイルを外す結び付けは、それより前に出した描画の完了を待つ（外すタイルを読む描画が実行中でも
+        //     未定義の読み出しにならない）。提出側は AcquireRenderSignal で描画用のタイムラインセマフォの値を
+        //     1つ割り当て、その値を提出で通知する。
+        // 値の割り当てと提出を結び付けの提出と同じミューテックスの下で行うので、結び付けが読む「最新の値」は
+        // 必ずその値までの提出が済んだ状態になる。提出が失敗したときは Commit せずに破棄すると値が戻る。
+        // 窓口を持っている間は BindSparse を呼ばないこと（同じミューテックスで待つ）。
+        class GraphicsSubmitScope
+        {
+        public:
+            explicit GraphicsSubmitScope(VulkanDevice &device);
+            ~GraphicsSubmitScope();
+            GraphicsSubmitScope(const GraphicsSubmitScope &) = delete;
+            GraphicsSubmitScope &operator=(const GraphicsSubmitScope &) = delete;
+
+            // 出してある結び付けの最新の値（無ければ false）
+            bool GetSparseBindWait(vk::Semaphore &outSemaphore, uint64_t &outValue) const;
+            // この提出が通知する描画用の値を割り当てる（描画用のセマフォが無ければ false）。
+            // 割り当て済みなら同じ値を返す。
+            bool AcquireRenderSignal(vk::Semaphore &outSemaphore, uint64_t &outValue);
+            // 提出が成功した。割り当てた値を確定してミューテックスを手放す。
+            void Commit();
+
+        private:
+            VulkanDevice &m_owner;
+            uint64_t m_previousRenderValue = 0;
+            bool m_bLocked = false;
+            bool m_bAcquired = false;
+        };
 
         uint32_t GetGraphicsQueueFamilyIndex() const { return m_graphicsQueueFamilyIndex; }
         // VK_QUEUE_SPARSE_BINDING_BIT を持つ族（無ければ UINT32_MAX）。グラフィックスの族が持てばそれを使う。
@@ -239,6 +266,11 @@ namespace NorvesLib::RHI::Vulkan
         // m_sparseBindSubmittedValue は、これまでに出した結び付けの最新の値（0 は未提出）。
         vk::Semaphore m_sparseBindTimeline;
         uint64_t m_sparseBindSubmittedValue = 0;
+        // 描画の完了を通知するタイムラインセマフォ。描画の提出ごとに値を1つ進めて通知し、
+        // タイルを外す結び付けが最新の値を待つ。m_renderSubmittedValue は、これまでに提出した描画の最新の値。
+        // 両方の値の読み書きと、結び付け・描画の提出は m_sparseBindMutex の下で行う。
+        vk::Semaphore m_renderTimeline;
+        uint64_t m_renderSubmittedValue = 0;
         Thread::Mutex m_sparseBindMutex;
         // 論理デバイスで sparse イメージを結べるメモリタイプの集合（最初の塊の作成時に、見本のイメージで求める）
         uint32_t m_sparseMemoryTypeBits = 0;

@@ -722,18 +722,35 @@ namespace NorvesLib::RHI::Vulkan
 
         // 出してある sparse の結び付けの完了を待ってから実行する（結んだタイルを読む描画より前に結び付けを終える）。
         // タイムラインの最新の値を待つので、送信に失敗しても戻す必要はない。
+        // 描画の完了を通知する値の割り当てと提出は、結び付けの提出と同じミューテックスの下で行う
+        // （タイルを外す結び付けが、この描画の完了を待てるようにする。失敗したときは窓口の破棄で値が戻る）。
+        VulkanDevice::GraphicsSubmitScope submitScope(*m_device);
         vk::Semaphore sparseBindWait;
         uint64_t sparseBindWaitValue = 0;
         const vk::PipelineStageFlags sparseBindWaitStage = vk::PipelineStageFlagBits::eAllCommands;
+        vk::Semaphore renderSignal;
+        uint64_t renderSignalValue = 0;
         vk::TimelineSemaphoreSubmitInfo sparseBindTimelineInfo{};
-        if (m_device->GetSparseBindWait(sparseBindWait, sparseBindWaitValue))
+        const bool bSparseBindWait = submitScope.GetSparseBindWait(sparseBindWait, sparseBindWaitValue);
+        const bool bRenderSignal = submitScope.AcquireRenderSignal(renderSignal, renderSignalValue);
+        if (bSparseBindWait)
         {
             sparseBindTimelineInfo.waitSemaphoreValueCount = 1;
             sparseBindTimelineInfo.pWaitSemaphoreValues = &sparseBindWaitValue;
-            submitInfo.pNext = &sparseBindTimelineInfo;
             submitInfo.waitSemaphoreCount = 1;
             submitInfo.pWaitSemaphores = &sparseBindWait;
             submitInfo.pWaitDstStageMask = &sparseBindWaitStage;
+        }
+        if (bRenderSignal)
+        {
+            sparseBindTimelineInfo.signalSemaphoreValueCount = 1;
+            sparseBindTimelineInfo.pSignalSemaphoreValues = &renderSignalValue;
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = &renderSignal;
+        }
+        if (bSparseBindWait || bRenderSignal)
+        {
+            submitInfo.pNext = &sparseBindTimelineInfo;
         }
 
         vk::Queue queue = m_device->GetGraphicsQueue();
@@ -756,7 +773,12 @@ namespace NorvesLib::RHI::Vulkan
                 },
                 [&]()
                 {
-                    return queue.submit(1, &submitInfo, m_fence) == vk::Result::eSuccess;
+                    const bool bSubmitted = queue.submit(1, &submitInfo, m_fence) == vk::Result::eSuccess;
+                    if (bSubmitted)
+                    {
+                        submitScope.Commit();
+                    }
+                    return bSubmitted;
                 },
                 submittedSerial);
         if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed)
@@ -776,6 +798,7 @@ namespace NorvesLib::RHI::Vulkan
         {
             throw std::runtime_error("コマンドの送信に失敗しました");
         }
+        submitScope.Commit();
 #endif
 
         CommitPendingAccelerationStructureBuilds(m_currentFrameIndex);

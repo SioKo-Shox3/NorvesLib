@@ -235,7 +235,7 @@
 - notes: 危険地帯（アセットロード・寿命・RenderThread）。 2026-10-04 親（run `20261004-164924` の保留を解く）: 評価2周の残り3件を直す。(1) コピーの1フレームの上限（件数・バイト数）を最初の1件にも掛ける。ミップテイルが上限を超えるときは、テイルを公開しないまま複数フレームに分けて書き、書き終えてから使う。上限0など処理できない設定は作成時に明示的に拒否する。(2) 優先度を「粗いミップが先 → 同じミップなら要求した画素の数（画面上の大きさ）が多い方 → 最後に要求したフレームが新しい方」と定義し直す（元の「画面の近くが先」は、カメラからの距離を要求に載せる手段が無いため、親がこの定義に置き換えた）。`HitCount` が画素の数を表すことをテストで確かめる。(3) 実際の `TileUploader` と `GpuRetireQueue` を使い、「コピーを記録 → Abort → 登録解除 → ページの再取得 → 次のフレーム」で古いコピーが記録されない回帰テストを足し、実行の証拠を残す。 2026-10-04 親（run `20261004-210106` の保留を解く）: `blocked/VTG2-VT-STREAMER.md` の選択肢1を採る。`paths:` に `Assets/Shaders` を足した。フィードバックのハッシュの表の各枠に件数の語を並べ、同じタイルの要求が重なったら `atomicAdd` で数え、読み戻しの復号が件数を `HitCount`（画面上で要求した画素の数）へ渡す。`VirtualTextureFeedbackVulkanTest` に、面積の違う2つのタイルで件数が面積の順になるケースを足す。
 
 ## VTG2-VT-EVICT: LRUで追い出し、プールの予算に収める
-- status: todo
+- status: done
 - done-when: 最後に要求されたフレームが古いタイルから LRU で外し、`SparsePagePool` の使用量を `VideoMemoryBudgetManager` の VT の目標以下に保つ。目標が足りないときは、細かいミップのタイルから外し、要求の優先度の低いものを結ばない。小さなテクスチャ（長辺 1024 以下）はミップ単位で同じ仕組みに乗る（ミップ全体を1単位として結ぶ・外す）。ミップテイルは外さない。`VRAM_POOLS` に vt_used_mb・vt_evicted_tiles を出す。`VirtualTextureStreamerTest` に、目標を下げたときの追い出しの順と、目標以下に収まることを足す。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualTextureStreamerTest|VideoMemoryBudgetManagerTest)$"`
