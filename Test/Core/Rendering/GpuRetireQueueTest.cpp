@@ -1,4 +1,6 @@
 ﻿// GPU 資源の遅延解放キュー（GpuRetireQueue）の契約テスト。
+// sparse の物理メモリのページ（SparsePagePool）が、貸し出し・返却・増設・上限のとおりに動き、
+// 外したページが最後に使った提出の serial の完了までプールへ戻らないことも確かめる。
 // 提出の serial が完了するまで RHI 資源が破棄されないこと、完了したら破棄されること、
 // 記録中のフレームで頼まれた解放はそのフレームの serial まで延びること、Shutdown で全部破棄されることを、
 // GPU を使わない偽デバイスで確かめる。
@@ -29,6 +31,7 @@ using Core::Rendering::BufferCreateInfo;
 using Core::Rendering::BufferHandle;
 using Core::Rendering::GpuRetireQueue;
 using Core::Rendering::RenderResources;
+using Core::Rendering::SparsePagePool;
 using Core::Rendering::TextureCreateInfo;
 using Core::Rendering::TextureHandle;
 
@@ -36,6 +39,9 @@ int g_failures = 0;
 // 生きている偽資源の数（破棄されたかどうかの観測に使う）
 int g_liveTextures = 0;
 int g_liveBuffers = 0;
+int g_liveSparseBlocks = 0;
+// true の間、偽デバイスは sparse の塊を作れない
+bool g_failSparseBlockCreation = false;
 
 void Expect(bool condition, const char* message)
 {
@@ -110,6 +116,21 @@ public:
     RHI::SamplerDesc Desc;
 };
 
+class RetireFakeSparseBlock final : public RHI::ISparseMemoryBlock
+{
+public:
+    explicit RetireFakeSparseBlock(uint64_t sizeBytes)
+        : SizeBytes(sizeBytes)
+    {
+        ++g_liveSparseBlocks;
+    }
+    ~RetireFakeSparseBlock() override { --g_liveSparseBlocks; }
+
+    uint64_t GetSizeBytes() const override { return SizeBytes; }
+
+    uint64_t SizeBytes;
+};
+
 class RetireFakeDevice final : public RHI::IDevice
 {
 public:
@@ -126,6 +147,15 @@ public:
     RHI::SamplerPtr CreateSampler(const RHI::SamplerDesc& desc) override
     {
         return MakeShared<RetireFakeSampler>(desc);
+    }
+
+    RHI::SparseMemoryBlockPtr CreateSparseMemoryBlock(uint64_t sizeBytes, const char*) override
+    {
+        if (g_failSparseBlockCreation)
+        {
+            return nullptr;
+        }
+        return MakeShared<RetireFakeSparseBlock>(sizeBytes);
     }
 
     RHI::ShaderPtr CreateShader(const RHI::ShaderDesc&) override { return {}; }
@@ -355,6 +385,171 @@ void TestRenderResourcesRetiresReleasedResources()
     Expect(g_liveTextures == 0 && g_liveBuffers == 0, "Shutdown は待っていた RHI 資源を全部破棄する");
 }
 
+// 1つの塊が 4 ページ（256 KiB）の小さなプールで、貸し出し・返却・増設・上限・確保の失敗を確かめる。
+void TestSparsePagePoolLeaseAndGrow()
+{
+    constexpr uint64_t Page = RHI::SparsePageSizeBytes;
+    auto device = MakeShared<RetireFakeDevice>();
+    {
+        SparsePagePool pool(device, 4 * Page);
+        Expect(pool.GetStats().BlockCount == 0 && g_liveSparseBlocks == 0, "作った直後は塊を持たない（必要になるまで確保しない）");
+
+        Core::Container::VariableArray<SparsePagePool::PageLease> leases;
+        for (int i = 0; i < 4; ++i)
+        {
+            leases.push_back(pool.Acquire());
+            Expect(leases.back().IsValid(), "空きがあるページは借りられる");
+        }
+        SparsePagePool::Stats stats = pool.GetStats();
+        Expect(stats.BlockCount == 1 && stats.CapacityBytes == 4 * Page && stats.UsedBytes == 4 * Page && stats.FreeBytes == 0,
+               "4ページ借りた時点で、塊は1つ・全部貸し出し中");
+
+        // ページは重ならず、64 KiB の倍数の位置で、塊の中にある。
+        bool bDistinct = true;
+        bool bAligned = true;
+        for (size_t a = 0; a < leases.size(); ++a)
+        {
+            const RHI::SparsePageRef pageA = leases[a].GetPage();
+            bAligned = bAligned && pageA.Block != nullptr && pageA.OffsetBytes % Page == 0 &&
+                       pageA.OffsetBytes + Page <= pageA.Block->GetSizeBytes();
+            for (size_t b = a + 1; b < leases.size(); ++b)
+            {
+                const RHI::SparsePageRef pageB = leases[b].GetPage();
+                bDistinct = bDistinct && !(pageA.Block == pageB.Block && pageA.OffsetBytes == pageB.OffsetBytes);
+            }
+        }
+        Expect(bDistinct, "貸し出し中のページは重ならない");
+        Expect(bAligned, "ページは 64 KiB の倍数の位置で、塊の中にある");
+
+        // 空きが無ければ塊を増やす。上限に達したら借りられない。
+        leases.push_back(pool.Acquire());
+        Expect(leases.back().IsValid() && pool.GetStats().BlockCount == 2, "空きが無ければ塊を1つ増やして貸す");
+        pool.SetCapacityLimitBytes(8 * Page);
+        for (int i = 0; i < 3; ++i)
+        {
+            leases.push_back(pool.Acquire());
+        }
+        SparsePagePool::PageLease overLimit = pool.Acquire();
+        Expect(!overLimit.IsValid() && pool.GetStats().BlockCount == 2, "上限を超える塊は作らず、借りられない");
+
+        // 返すとそのページを次に貸す。
+        const RHI::SparsePageRef returned = leases[1].GetPage();
+        leases[1].Reset();
+        Expect(!leases[1].IsValid() && pool.GetStats().UsedBytes == 7 * Page, "Reset でページがプールへ戻る");
+        SparsePagePool::PageLease reused = pool.Acquire();
+        Expect(reused.IsValid() && reused.GetPage().Block == returned.Block && reused.GetPage().OffsetBytes == returned.OffsetBytes,
+               "返したページは次に貸される");
+
+        // 移動しても返却は1回だけ。
+        SparsePagePool::PageLease moved = std::move(reused);
+        Expect(!reused.IsValid() && moved.IsValid(), "移動元は無効になる");
+        moved.Reset();
+        moved.Reset();
+        Expect(pool.GetStats().UsedBytes == 7 * Page, "二重に Reset しても返却は1回だけ");
+    }
+    Expect(g_liveSparseBlocks == 0, "プールと貸し出しがすべて無くなれば塊も破棄される");
+
+    // 塊を作れないデバイスでは、借りられず、状態も変わらない。
+    g_failSparseBlockCreation = true;
+    {
+        SparsePagePool pool(device, 4 * Page);
+        Expect(!pool.Acquire().IsValid() && pool.GetStats().BlockCount == 0, "塊を作れなければ借りられない");
+    }
+    g_failSparseBlockCreation = false;
+
+    // プールより長く生きる貸し出しは、プールを破棄した後に手放しても安全。
+    SparsePagePool::PageLease survivor;
+    {
+        SparsePagePool pool(device, 4 * Page);
+        survivor = pool.Acquire();
+        Expect(survivor.IsValid(), "プールの寿命より長い貸し出しを作れる");
+    }
+    Expect(g_liveSparseBlocks == 1, "貸し出しが残っている間は塊が生きている");
+    survivor.Reset();
+    Expect(g_liveSparseBlocks == 0, "最後の貸し出しを手放すと塊が破棄される");
+}
+
+// 外したページは、最後に使った提出の serial が完了するまでプールへ戻らない。
+void TestSparsePageReturnedAfterSerial()
+{
+    constexpr uint64_t Page = RHI::SparsePageSizeBytes;
+    auto device = MakeShared<RetireFakeDevice>();
+    SparsePagePool pool(device, 4 * Page);
+    GpuRetireQueue queue;
+
+    queue.Retire(SparsePagePool::PageLease());
+    Expect(queue.GetPendingCount() == 0, "無効なページの返却は積まない");
+
+    // 何も提出していなければ、すぐ戻る。
+    queue.Retire(pool.Acquire());
+    Expect(pool.GetStats().UsedBytes == 0 && queue.GetPendingCount() == 0, "何も提出していなければ外したページは即座に戻る");
+
+    // 提出済みの serial が完了するまで保持される。
+    queue.BeginFrame(0);
+    queue.CommitFrame(7);
+    queue.Retire(pool.Acquire());
+    Expect(pool.GetStats().UsedBytes == Page && queue.GetPendingCount() == 1, "提出した serial が完了するまで戻らない");
+    queue.Collect(6);
+    Expect(pool.GetStats().UsedBytes == Page, "完了の serial が届かない間は戻らない");
+    queue.Collect(7);
+    Expect(pool.GetStats().UsedBytes == 0 && pool.GetStats().FreeBytes == 4 * Page && queue.GetPendingCount() == 0,
+           "完了の serial が届いたらプールへ戻る");
+
+    // 記録中のフレームで外したページは、そのフレームの serial まで延びる。
+    queue.BeginFrame(7);
+    queue.Retire(pool.Acquire());
+    queue.CommitFrame(9);
+    queue.Collect(8);
+    Expect(pool.GetStats().UsedBytes == Page, "記録中に外したページは、そのフレームの serial まで戻らない");
+    queue.Collect(9);
+    Expect(pool.GetStats().UsedBytes == 0, "そのフレームの serial が完了したら戻る");
+
+    // Clear は期限を問わず全部返す。
+    queue.BeginFrame(9);
+    queue.CommitFrame(20);
+    queue.Retire(pool.Acquire());
+    queue.Retire(pool.Acquire());
+    Expect(pool.GetStats().UsedBytes == 2 * Page, "serial 20 が完了するまで2ページが待つ");
+    queue.Clear();
+    Expect(pool.GetStats().UsedBytes == 0, "Clear は待っているページを全部プールへ返す");
+}
+
+// RenderResources は sparse に対応するデバイスでだけプールを持ち、台帳へ量を出す。
+void TestRenderResourcesOwnsSparsePool()
+{
+    {
+        RenderResources manager;
+        auto device = MakeShared<RetireFakeDevice>();
+        Expect(manager.Initialize(device), "sparse に対応しない偽デバイスでも RenderResources が初期化できなければならない");
+        Expect(manager.GetSparsePagePool() == nullptr, "sparse に対応しないデバイスではプールを持たない");
+        Expect(manager.GetResourceStats().SparsePoolCapacityBytes == 0, "プールが無ければ台帳の量は 0");
+    }
+
+    RenderResources manager;
+    auto device = MakeShared<RetireFakeDevice>();
+    device->Capabilities.Sparse.bSparseBinding = true;
+    device->Capabilities.Sparse.bResidencyImage2D = true;
+    Expect(manager.Initialize(device), "sparse に対応する偽デバイスで RenderResources が初期化できなければならない");
+    SparsePagePool* pool = manager.GetSparsePagePool();
+    Expect(pool != nullptr, "sparse に対応するデバイスではプールを持つ");
+    if (pool != nullptr)
+    {
+        Expect(manager.GetResourceStats().SparsePoolCapacityBytes == 0 && g_liveSparseBlocks == 0,
+               "プールは必要になるまで塊を確保しない");
+        {
+            SparsePagePool::PageLease lease = pool->Acquire();
+            const Core::Rendering::ResourceStats stats = manager.GetResourceStats();
+            Expect(lease.IsValid() && stats.SparsePoolCapacityBytes == SparsePagePool::DefaultBlockBytes &&
+                       stats.SparsePoolUsedBytes == RHI::SparsePageSizeBytes,
+                   "既定の塊（64 MiB）の確保と、借りた1ページが台帳に出る");
+        }
+        Expect(manager.GetResourceStats().SparsePoolUsedBytes == 0, "返すと貸し出し中の量が 0 に戻る");
+    }
+
+    manager.Shutdown();
+    Expect(g_liveSparseBlocks == 0 && manager.GetSparsePagePool() == nullptr, "Shutdown でプールの塊が破棄される");
+}
+
 int RunTest()
 {
     TestNothingSubmittedReleasesImmediately();
@@ -365,6 +560,9 @@ int RunTest()
     TestClearResetsSerialsForReinitialization();
     TestDestructorReleasesEverything();
     TestRenderResourcesRetiresReleasedResources();
+    TestSparsePagePoolLeaseAndGrow();
+    TestSparsePageReturnedAfterSerial();
+    TestRenderResourcesOwnsSparsePool();
 
     if (g_failures != 0)
     {

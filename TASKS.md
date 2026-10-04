@@ -161,7 +161,7 @@
 - notes: 危険地帯（RHI/Vulkan）。
 
 ## VTG2-SPARSE-BIND: 物理ページのプールと、タイルの結び付け・外しを作る
-- status: todo
+- status: done
 - done-when: DeviceLocal の大きな塊（既定 64 MiB）から 64 KiB のページを切り出すプール（`SparsePagePool`。RenderResources が持つ）と、RHI の「タイル（ミップ・x・y）とミップテイルへページを結ぶ・外す」API を作る。結び付けは1フレーム分をまとめて `vkQueueBindSparse` 1回で出し、グラフィックスのキューとはセマフォで順序付ける（結んだタイルを読む描画より前に結び付けが終わる）。外したページは `GpuRetireQueue` で、最後に使った提出の serial が完了してからプールへ返す。プールの使用量を `VRAM_LEDGER` に出す。GPU のテスト `SparseBindVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、ミップテイルと2タイルを結び、結んだタイルへ書いた色を計算シェーダーのサンプルで読み戻し、外した後にプールの空きが戻ることを確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(SparseBindVulkanTest|SparseTextureVulkanTest|GpuRetireQueueTest)$"`

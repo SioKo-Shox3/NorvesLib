@@ -2,6 +2,7 @@
 #include "VulkanBuffer.h"
 #include "VulkanAccelerationStructure.h"
 #include "VulkanTexture.h"
+#include "VulkanSparseMemoryBlock.h"
 #include "VulkanSampler.h"
 #include "VulkanShader.h"
 #include "VulkanShaderCompiler.h"
@@ -846,6 +847,18 @@ namespace NorvesLib::RHI::Vulkan
 
         m_ResourceAllocator.reset();
 
+        // sparse の結び付け用セマフォを破棄（WaitIdle の後なので使用中ではない）
+        if (m_sparseBindChainSemaphore)
+        {
+            m_device.destroySemaphore(m_sparseBindChainSemaphore);
+            m_sparseBindChainSemaphore = nullptr;
+        }
+        if (m_sparseBindGraphicsSemaphore)
+        {
+            m_device.destroySemaphore(m_sparseBindGraphicsSemaphore);
+            m_sparseBindGraphicsSemaphore = nullptr;
+        }
+
         // コマンドプールを破棄
         if (m_commandPool)
         {
@@ -1366,6 +1379,29 @@ namespace NorvesLib::RHI::Vulkan
         if (m_enabledDeviceFeatures.sparseBinding == VK_TRUE)
         {
             m_sparseBindingQueue = m_device.getQueue(m_sparseQueueFamilyIndex, 0);
+
+            // 結び付けの順序付けに使うセマフォ（結び付け同士・結び付けからグラフィックスの提出へ）
+            const vk::SemaphoreCreateInfo semaphoreInfo{};
+            const auto chainResult = m_device.createSemaphore(semaphoreInfo);
+            const auto graphicsResult = m_device.createSemaphore(semaphoreInfo);
+            if (chainResult.result == vk::Result::eSuccess && graphicsResult.result == vk::Result::eSuccess)
+            {
+                m_sparseBindChainSemaphore = chainResult.value;
+                m_sparseBindGraphicsSemaphore = graphicsResult.value;
+            }
+            else
+            {
+                NORVES_LOG_ERROR("Vulkan", "sparseの結び付け用セマフォを作成できません: chain=%d graphics=%d",
+                                 static_cast<int>(chainResult.result), static_cast<int>(graphicsResult.result));
+                if (chainResult.result == vk::Result::eSuccess)
+                {
+                    m_device.destroySemaphore(chainResult.value);
+                }
+                if (graphicsResult.result == vk::Result::eSuccess)
+                {
+                    m_device.destroySemaphore(graphicsResult.value);
+                }
+            }
         }
     }
 
@@ -2770,6 +2806,355 @@ namespace NorvesLib::RHI::Vulkan
                         m_Capabilities.Sparse.bResidencyImage2D ? "Yes" : "No",
                         m_Capabilities.Sparse.bShaderResourceResidency ? "Yes" : "No",
                         m_Capabilities.Sparse.bShaderResourceMinLod ? "Yes" : "No");
+    }
+
+    bool VulkanDevice::FindSparseMemoryType(uint32_t &outMemoryTypeIndex)
+    {
+        NorvesLib::Thread::ScopedLock lock(m_sparseBindMutex);
+
+        if (m_sparseMemoryTypeBits == 0)
+        {
+            // 見本の sparse イメージ（BC7。BC が無ければ RGBA8）から、結べるメモリタイプの集合を求める
+            vk::ImageCreateInfo imageInfo{};
+            imageInfo.flags = vk::ImageCreateFlagBits::eSparseBinding | vk::ImageCreateFlagBits::eSparseResidency;
+            imageInfo.imageType = vk::ImageType::e2D;
+            imageInfo.format = m_Capabilities.bTextureCompressionBC ? vk::Format::eBc7UnormBlock
+                                                                    : vk::Format::eR8G8B8A8Unorm;
+            imageInfo.extent = vk::Extent3D{256, 256, 1};
+            imageInfo.mipLevels = 1;
+            imageInfo.arrayLayers = 1;
+            imageInfo.samples = vk::SampleCountFlagBits::e1;
+            imageInfo.tiling = vk::ImageTiling::eOptimal;
+            imageInfo.usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst;
+            imageInfo.sharingMode = vk::SharingMode::eExclusive;
+            imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+
+            const auto probe = m_device.createImage(imageInfo);
+            if (probe.result != vk::Result::eSuccess)
+            {
+                NORVES_LOG_ERROR("Vulkan", "sparseの塊のメモリタイプを求める見本のイメージを作れません: result=%d",
+                                 static_cast<int>(probe.result));
+                return false;
+            }
+            m_sparseMemoryTypeBits = m_device.getImageMemoryRequirements(probe.value).memoryTypeBits;
+            m_device.destroyImage(probe.value);
+        }
+
+        // DeviceLocal で、あればホストから見えないタイプ（ホストから見えるものは最後の手段）
+        int32_t fallback = -1;
+        for (uint32_t i = 0; i < m_memoryProperties.memoryTypeCount; ++i)
+        {
+            if ((m_sparseMemoryTypeBits & (1u << i)) == 0)
+            {
+                continue;
+            }
+            const vk::MemoryPropertyFlags flags = m_memoryProperties.memoryTypes[i].propertyFlags;
+            if (!(flags & vk::MemoryPropertyFlagBits::eDeviceLocal))
+            {
+                continue;
+            }
+            if (!(flags & vk::MemoryPropertyFlagBits::eHostVisible))
+            {
+                outMemoryTypeIndex = i;
+                return true;
+            }
+            if (fallback < 0)
+            {
+                fallback = static_cast<int32_t>(i);
+            }
+        }
+        if (fallback >= 0)
+        {
+            outMemoryTypeIndex = static_cast<uint32_t>(fallback);
+            return true;
+        }
+
+        NORVES_LOG_ERROR("Vulkan", "sparseの塊を置ける DeviceLocal のメモリタイプがありません: typeBits=0x%x",
+                         m_sparseMemoryTypeBits);
+        return false;
+    }
+
+    SparseMemoryBlockPtr VulkanDevice::CreateSparseMemoryBlock(uint64_t sizeBytes, const char *debugName)
+    {
+        const char *name = debugName != nullptr ? debugName : "";
+        if (!m_Capabilities.Sparse.bSparseBinding || !m_Capabilities.Sparse.bResidencyImage2D)
+        {
+            NORVES_LOG_ERROR("Vulkan", "sparseの塊を作れません: sparse の結び付けまたは 2D の residency が有効ではありません name=%s",
+                             name);
+            return nullptr;
+        }
+        if (sizeBytes == 0 || sizeBytes % SparsePageSizeBytes != 0)
+        {
+            NORVES_LOG_ERROR("Vulkan", "sparseの塊の大きさは 64 KiB の倍数でなければなりません: size=%llu name=%s",
+                             static_cast<unsigned long long>(sizeBytes), name);
+            return nullptr;
+        }
+
+        uint32_t memoryTypeIndex = 0;
+        if (!FindSparseMemoryType(memoryTypeIndex))
+        {
+            return nullptr;
+        }
+
+        vk::MemoryAllocateInfo allocInfo{};
+        allocInfo.allocationSize = sizeBytes;
+        allocInfo.memoryTypeIndex = memoryTypeIndex;
+        const auto allocResult = m_device.allocateMemory(allocInfo);
+        if (allocResult.result != vk::Result::eSuccess)
+        {
+            NORVES_LOG_ERROR("Vulkan", "sparseの塊のメモリを確保できません: result=%d size=%llu name=%s",
+                             static_cast<int>(allocResult.result), static_cast<unsigned long long>(sizeBytes), name);
+            return nullptr;
+        }
+
+        SetDebugObjectName(vk::ObjectType::eDeviceMemory,
+                           reinterpret_cast<uint64_t>(static_cast<VkDeviceMemory>(allocResult.value)), debugName);
+        return StaticPointerCast<ISparseMemoryBlock>(MakeShared<VulkanSparseMemoryBlock>(
+            m_device, allocResult.value, sizeBytes, memoryTypeIndex, static_cast<const void *>(this)));
+    }
+
+    bool VulkanDevice::TakeSparseBindWait(vk::Semaphore &outSemaphore)
+    {
+        NorvesLib::Thread::ScopedLock lock(m_sparseBindMutex);
+        if (!m_bSparseBindGraphicsPending)
+        {
+            return false;
+        }
+        outSemaphore = m_sparseBindGraphicsSemaphore;
+        m_bSparseBindGraphicsPending = false;
+        return true;
+    }
+
+    void VulkanDevice::RestoreSparseBindWait()
+    {
+        NorvesLib::Thread::ScopedLock lock(m_sparseBindMutex);
+        m_bSparseBindGraphicsPending = true;
+    }
+
+    bool VulkanDevice::BindSparse(const SparseBindRequest &request)
+    {
+        if (request.IsEmpty())
+        {
+            return true;
+        }
+        if (!m_sparseBindingQueue || !m_sparseBindChainSemaphore || !m_sparseBindGraphicsSemaphore)
+        {
+            NORVES_LOG_ERROR("Vulkan", "sparseの結び付けを出せません: sparseBinding が有効ではありません");
+            return false;
+        }
+
+        // 要求をテクスチャごとにまとめる（全部の検証が通ってから提出するので、途中で失敗しても何も変わらない）
+        struct TextureBinds
+        {
+            VulkanTexture *Texture = nullptr;
+            VariableArray<vk::SparseImageMemoryBind> ImageBinds;
+            VariableArray<vk::SparseMemoryBind> OpaqueBinds;
+        };
+        VariableArray<TextureBinds> groups;
+
+        auto findGroup = [&groups](ITexture *texture) -> TextureBinds *
+        {
+            VulkanTexture *vkTexture = dynamic_cast<VulkanTexture *>(texture);
+            if (vkTexture == nullptr || !vkTexture->IsSparse())
+            {
+                return nullptr;
+            }
+            for (TextureBinds &group : groups)
+            {
+                if (group.Texture == vkTexture)
+                {
+                    return &group;
+                }
+            }
+            TextureBinds added;
+            added.Texture = vkTexture;
+            groups.push_back(std::move(added));
+            return &groups.back();
+        };
+
+        // 結ぶページが、このデバイスの塊の中にあり、テクスチャの要件（整列・メモリタイプ）を満たすか
+        auto validatePage = [this](const VulkanTexture &texture, const SparsePageRef &page) -> VulkanSparseMemoryBlock *
+        {
+            VulkanSparseMemoryBlock *block = dynamic_cast<VulkanSparseMemoryBlock *>(page.Block);
+            if (block == nullptr || block->GetOwner() != static_cast<const void *>(this))
+            {
+                NORVES_LOG_ERROR("Vulkan", "sparseの結び付けに、このデバイスの塊ではないページが指定されました");
+                return nullptr;
+            }
+            const uint64_t alignment = texture.GetSparseMemoryAlignment();
+            if (page.OffsetBytes % SparsePageSizeBytes != 0 || page.OffsetBytes + SparsePageSizeBytes > block->GetSizeBytes() ||
+                alignment == 0 || page.OffsetBytes % alignment != 0)
+            {
+                NORVES_LOG_ERROR("Vulkan",
+                                 "sparseのページの位置が不正です: offset=%llu blockSize=%llu alignment=%llu",
+                                 static_cast<unsigned long long>(page.OffsetBytes),
+                                 static_cast<unsigned long long>(block->GetSizeBytes()),
+                                 static_cast<unsigned long long>(alignment));
+                return nullptr;
+            }
+            if ((texture.GetSparseMemoryTypeBits() & (1u << block->GetMemoryTypeIndex())) == 0)
+            {
+                NORVES_LOG_ERROR("Vulkan",
+                                 "sparseの塊のメモリタイプがテクスチャの要件に合いません: memoryType=%u typeBits=0x%x",
+                                 block->GetMemoryTypeIndex(), texture.GetSparseMemoryTypeBits());
+                return nullptr;
+            }
+            return block;
+        };
+
+        for (const SparseTileBind &bind : request.Tiles)
+        {
+            TextureBinds *group = findGroup(bind.Texture);
+            if (group == nullptr)
+            {
+                NORVES_LOG_ERROR("Vulkan", "sparseの結び付けの対象が sparse テクスチャではありません");
+                return false;
+            }
+            VulkanTexture &texture = *group->Texture;
+            const SparseTextureInfo &info = texture.GetSparseInfoRef();
+            if (!texture.IsValidSparseTile(bind.MipLevel, bind.TileX, bind.TileY) ||
+                info.TileSizeBytes != SparsePageSizeBytes)
+            {
+                NORVES_LOG_ERROR("Vulkan",
+                                 "sparseのタイルが範囲外です: mip=%u x=%u y=%u tailFirst=%u tileBytes=%u",
+                                 bind.MipLevel, bind.TileX, bind.TileY, info.MipTailFirstLevel, info.TileSizeBytes);
+                return false;
+            }
+
+            const uint32_t mipWidth = std::max(1u, texture.GetWidth() >> bind.MipLevel);
+            const uint32_t mipHeight = std::max(1u, texture.GetHeight() >> bind.MipLevel);
+            const uint32_t offsetX = bind.TileX * info.TileWidth;
+            const uint32_t offsetY = bind.TileY * info.TileHeight;
+
+            vk::SparseImageMemoryBind imageBind{};
+            imageBind.subresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+            imageBind.subresource.mipLevel = bind.MipLevel;
+            imageBind.subresource.arrayLayer = 0;
+            imageBind.offset = vk::Offset3D{static_cast<int32_t>(offsetX), static_cast<int32_t>(offsetY), 0};
+            imageBind.extent = vk::Extent3D{std::min(info.TileWidth, mipWidth - offsetX),
+                                            std::min(info.TileHeight, mipHeight - offsetY), 1};
+            if (bind.Page.IsValid())
+            {
+                VulkanSparseMemoryBlock *block = validatePage(texture, bind.Page);
+                if (block == nullptr)
+                {
+                    return false;
+                }
+                imageBind.memory = block->GetMemory();
+                imageBind.memoryOffset = bind.Page.OffsetBytes;
+            }
+            group->ImageBinds.push_back(imageBind);
+        }
+
+        for (const SparseMipTailBind &bind : request.MipTails)
+        {
+            TextureBinds *group = findGroup(bind.Texture);
+            if (group == nullptr)
+            {
+                NORVES_LOG_ERROR("Vulkan", "sparseの結び付けの対象が sparse テクスチャではありません");
+                return false;
+            }
+            VulkanTexture &texture = *group->Texture;
+            const SparseTextureInfo &info = texture.GetSparseInfoRef();
+            if (bind.PageIndex >= texture.GetSparseMipTailPageCount())
+            {
+                NORVES_LOG_ERROR("Vulkan", "sparseのミップテイルのページが範囲外です: page=%u pages=%u",
+                                 bind.PageIndex, texture.GetSparseMipTailPageCount());
+                return false;
+            }
+
+            const uint64_t pageOffset = static_cast<uint64_t>(bind.PageIndex) * SparsePageSizeBytes;
+            vk::SparseMemoryBind opaqueBind{};
+            opaqueBind.resourceOffset = info.MipTailOffset + pageOffset;
+            opaqueBind.size = std::min<uint64_t>(SparsePageSizeBytes, info.MipTailSize - pageOffset);
+            if (bind.Page.IsValid())
+            {
+                VulkanSparseMemoryBlock *block = validatePage(texture, bind.Page);
+                if (block == nullptr)
+                {
+                    return false;
+                }
+                opaqueBind.memory = block->GetMemory();
+                opaqueBind.memoryOffset = bind.Page.OffsetBytes;
+            }
+            group->OpaqueBinds.push_back(opaqueBind);
+        }
+
+        VariableArray<vk::SparseImageMemoryBindInfo> imageInfos;
+        VariableArray<vk::SparseImageOpaqueMemoryBindInfo> opaqueInfos;
+        for (const TextureBinds &group : groups)
+        {
+            if (!group.ImageBinds.empty())
+            {
+                vk::SparseImageMemoryBindInfo info{};
+                info.image = group.Texture->GetVkImage();
+                info.bindCount = static_cast<uint32_t>(group.ImageBinds.size());
+                info.pBinds = group.ImageBinds.data();
+                imageInfos.push_back(info);
+            }
+            if (!group.OpaqueBinds.empty())
+            {
+                vk::SparseImageOpaqueMemoryBindInfo info{};
+                info.image = group.Texture->GetVkImage();
+                info.bindCount = static_cast<uint32_t>(group.OpaqueBinds.size());
+                info.pBinds = group.OpaqueBinds.data();
+                opaqueInfos.push_back(info);
+            }
+        }
+
+        {
+            NorvesLib::Thread::ScopedLock lock(m_sparseBindMutex);
+
+            // 前の結び付けの完了を待つ（結び付け同士の順序）。まだ描画が受け取っていない前の結び付けの
+            // 通知があれば、それも引き継いで再び通知する（待ってから信号を出す）。
+            vk::Semaphore waitSemaphores[2];
+            uint32_t waitCount = 0;
+            if (m_bSparseBindChainSignaled)
+            {
+                waitSemaphores[waitCount++] = m_sparseBindChainSemaphore;
+            }
+            if (m_bSparseBindGraphicsPending)
+            {
+                waitSemaphores[waitCount++] = m_sparseBindGraphicsSemaphore;
+            }
+            const vk::Semaphore signalSemaphores[2] = {m_sparseBindChainSemaphore, m_sparseBindGraphicsSemaphore};
+
+            vk::BindSparseInfo bindInfo{};
+            bindInfo.waitSemaphoreCount = waitCount;
+            bindInfo.pWaitSemaphores = waitCount > 0 ? waitSemaphores : nullptr;
+            bindInfo.imageOpaqueBindCount = static_cast<uint32_t>(opaqueInfos.size());
+            bindInfo.pImageOpaqueBinds = opaqueInfos.empty() ? nullptr : opaqueInfos.data();
+            bindInfo.imageBindCount = static_cast<uint32_t>(imageInfos.size());
+            bindInfo.pImageBinds = imageInfos.empty() ? nullptr : imageInfos.data();
+            bindInfo.signalSemaphoreCount = 2;
+            bindInfo.pSignalSemaphores = signalSemaphores;
+
+            const vk::Result bindResult = m_sparseBindingQueue.bindSparse(1, &bindInfo, nullptr);
+            if (bindResult != vk::Result::eSuccess)
+            {
+                NORVES_LOG_ERROR("Vulkan", "vkQueueBindSparse に失敗しました: result=%d tiles=%zu tailPages=%zu",
+                                 static_cast<int>(bindResult), request.Tiles.size(), request.MipTails.size());
+                if (bindResult == vk::Result::eErrorDeviceLost)
+                {
+                    ReportDeviceFaultOnce();
+                }
+                return false;
+            }
+            m_bSparseBindChainSignaled = true;
+            m_bSparseBindGraphicsPending = true;
+        }
+
+        // 提出できたので、テクスチャごとの結び付けの状態と結んだ量（台帳）を更新する
+        for (const SparseTileBind &bind : request.Tiles)
+        {
+            static_cast<VulkanTexture *>(bind.Texture)->CommitSparseTileBinding(
+                bind.MipLevel, bind.TileX, bind.TileY, bind.Page.IsValid());
+        }
+        for (const SparseMipTailBind &bind : request.MipTails)
+        {
+            static_cast<VulkanTexture *>(bind.Texture)->CommitSparseMipTailBinding(bind.PageIndex, bind.Page.IsValid());
+        }
+        return true;
     }
 
     bool VulkanDevice::ValidateSparseTextureDesc(const TextureDesc &desc) const

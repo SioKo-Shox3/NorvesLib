@@ -174,5 +174,9 @@ namespace NorvesLib::Core::Rendering
         size_t TotalBufferMemory = 0;
         size_t TotalTextureMemory = 0;
         size_t TextureBytes = 0; // 所有するテクスチャの確保量の合計（TotalTextureMemory と同じ値）
+        // sparse の物理メモリのプール（SparsePagePool）が持つ量と、貸し出し中の量。sparse テクスチャは
+        // 結んだ量（= 貸し出し中のページ）が TextureBytes に入るので、UsedBytes は TextureBytes の内数になる。
+        size_t SparsePoolCapacityBytes = 0;
+        size_t SparsePoolUsedBytes = 0;
     };
 }

@@ -48,6 +48,71 @@ struct SparseTextureInfo
     uint32_t TilesY[MaxMipLevels] = {};
 };
 
+/** @brief sparse の結び付け単位（ページ）の大きさ。標準のブロック形状のタイルは 1 ページ */
+constexpr uint64_t SparsePageSizeBytes = 64 * 1024;
+
+/**
+ * @brief sparse テクスチャへ結ぶ物理メモリの塊（DeviceLocal）
+ *
+ * SparsePageSizeBytes のページに分けて使い、ページ単位でタイルやミップテイルへ結ぶ。
+ * 結んだテクスチャを GPU が使い終わるまで破棄してはならない（ページの回収は GpuRetireQueue が担う）。
+ */
+class ISparseMemoryBlock
+{
+public:
+    virtual ~ISparseMemoryBlock() = default;
+
+    /** @brief 塊の大きさ（バイト。SparsePageSizeBytes の倍数） */
+    virtual uint64_t GetSizeBytes() const = 0;
+};
+
+using SparseMemoryBlockPtr = TSharedPtr<ISparseMemoryBlock>;
+
+/** @brief 塊の中の 1 ページ。Block が null なら「結ばない（外す）」を表す */
+struct SparsePageRef
+{
+    ISparseMemoryBlock* Block = nullptr;
+
+    /** @brief 塊の先頭からのオフセット（バイト。SparsePageSizeBytes の倍数） */
+    uint64_t OffsetBytes = 0;
+
+    bool IsValid() const { return Block != nullptr; }
+};
+
+/** @brief タイル（ミップ・x・y）1つへの結び付け。Page が無効なら外す */
+struct SparseTileBind
+{
+    /** @brief 対象の sparse テクスチャ（要求を出している間と、結び付けの提出が済むまで生かしておく） */
+    ITexture* Texture = nullptr;
+    uint32_t MipLevel = 0;
+    uint32_t TileX = 0;
+    uint32_t TileY = 0;
+    SparsePageRef Page;
+};
+
+/** @brief ミップテイルの 1 ページ分への結び付け。Page が無効なら外す */
+struct SparseMipTailBind
+{
+    ITexture* Texture = nullptr;
+
+    /** @brief ミップテイルの先頭から数えたページの番号（ミップテイルの大きさ / SparsePageSizeBytes 未満） */
+    uint32_t PageIndex = 0;
+    SparsePageRef Page;
+};
+
+/**
+ * @brief 1回の vkQueueBindSparse にまとめる結び付け・外しの集合（1フレーム分）
+ *
+ * 同じタイル・ページを1つの要求の中で二度指定しない。
+ */
+struct SparseBindRequest
+{
+    Core::Container::VariableArray<SparseTileBind> Tiles;
+    Core::Container::VariableArray<SparseMipTailBind> MipTails;
+
+    bool IsEmpty() const { return Tiles.empty() && MipTails.empty(); }
+};
+
 /**
  * @brief テクスチャインターフェース
  * テクスチャは画像データを格納するリソースです。

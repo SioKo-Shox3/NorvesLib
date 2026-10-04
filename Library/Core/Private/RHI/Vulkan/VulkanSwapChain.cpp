@@ -237,11 +237,20 @@ namespace NorvesLib::RHI::Vulkan
         vk::CommandBuffer cmdBuffer = vulkanCmdList->GetVkCommandBuffer();
 
         // セマフォ同期付きでサブミット
-        vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        // 保留中の sparse の結び付けがあれば、その完了も待つ（結んだタイルを読む描画より前に結び付けを終える）
+        vk::Semaphore waitSemaphores[2] = {m_imageAvailableSemaphores[m_currentFrame], vk::Semaphore{}};
+        vk::PipelineStageFlags waitStages[2] = {vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                                                vk::PipelineStageFlagBits::eAllCommands};
+        uint32_t waitCount = 1;
+        const bool bWaitsSparseBind = m_device->TakeSparseBindWait(waitSemaphores[1]);
+        if (bWaitsSparseBind)
+        {
+            waitCount = 2;
+        }
         vk::SubmitInfo submitInfo;
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = &m_imageAvailableSemaphores[m_currentFrame];
-        submitInfo.pWaitDstStageMask = &waitStage;
+        submitInfo.waitSemaphoreCount = waitCount;
+        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitDstStageMask = waitStages;
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &cmdBuffer;
         submitInfo.signalSemaphoreCount = 1;
@@ -272,6 +281,11 @@ namespace NorvesLib::RHI::Vulkan
                                m_inFlightFences[m_currentFrame]) == vk::Result::eSuccess;
                 },
                 submittedSerial);
+        // 送信できなかったときは、待てなかった sparse の結び付けの通知を戻す。
+        if (submissionStatus != Detail::GPUTimestampSubmissionSequenceStatus::Success && bWaitsSparseBind)
+        {
+            m_device->RestoreSparseBindWait();
+        }
         if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed)
         {
             result.Status = SwapChainEndFrameStatus::SubmissionSerialExhausted;

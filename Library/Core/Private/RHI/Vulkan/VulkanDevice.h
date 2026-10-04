@@ -109,6 +109,9 @@ namespace NorvesLib::RHI::Vulkan
         ShaderCompilerPtr CreateShaderCompiler() override;
         ShaderCompilerPtr CreateSlangShaderCompiler() override;
         IGPUResourceAllocator* GetResourceAllocator() override;
+        SparseMemoryBlockPtr CreateSparseMemoryBlock(uint64_t sizeBytes, const char *debugName = nullptr) override;
+        // キューへの外部同期は呼出側で行う（コマンド送信・プレゼントと同じ直列化の下で呼ぶ）。
+        bool BindSparse(const SparseBindRequest &request) override;
         // 同一デバイスのコマンド送信・コマンドプール操作と呼出側で直列化する。
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
@@ -135,6 +138,12 @@ namespace NorvesLib::RHI::Vulkan
         vk::Queue GetTransferQueue() const { return m_transferQueue; }
         // sparse の結び付け（vkQueueBindSparse）に使うキュー。sparseBinding が無効なら空のハンドル。
         vk::Queue GetSparseBindingQueue() const { return m_sparseBindingQueue; }
+
+        // sparse の結び付けは、次にグラフィックスのキューへ送る提出より前に終わらせる。
+        // 提出側は送信の直前にこれを呼び、保留中の結び付けがあればそのセマフォを待ちに加える
+        // （待ち段は全コマンド）。送信に失敗して待てなかったときは RestoreSparseBindWait で戻す。
+        bool TakeSparseBindWait(vk::Semaphore &outSemaphore);
+        void RestoreSparseBindWait();
 
         uint32_t GetGraphicsQueueFamilyIndex() const { return m_graphicsQueueFamilyIndex; }
         // VK_QUEUE_SPARSE_BINDING_BIT を持つ族（無ければ UINT32_MAX）。グラフィックスの族が持てばそれを使う。
@@ -218,6 +227,17 @@ namespace NorvesLib::RHI::Vulkan
 
         // キュー
         vk::Queue m_sparseBindingQueue;
+
+        // sparse の結び付けの順序付け。
+        // ・m_sparseBindChainSemaphore: 結び付け同士を提出順に並べる（次の結び付けが前の結び付けの完了を待つ）
+        // ・m_sparseBindGraphicsSemaphore: 結び付けの完了を、次のグラフィックスの提出へ伝える（提出が待って消費する）
+        vk::Semaphore m_sparseBindChainSemaphore;
+        vk::Semaphore m_sparseBindGraphicsSemaphore;
+        bool m_bSparseBindChainSignaled = false;
+        bool m_bSparseBindGraphicsPending = false;
+        Thread::Mutex m_sparseBindMutex;
+        // 論理デバイスで sparse イメージを結べるメモリタイプの集合（最初の塊の作成時に、見本のイメージで求める）
+        uint32_t m_sparseMemoryTypeBits = 0;
         vk::Queue m_graphicsQueue;
         vk::Queue m_computeQueue;
         vk::Queue m_transferQueue;
@@ -252,6 +272,9 @@ namespace NorvesLib::RHI::Vulkan
 
         // sparse テクスチャを作れるか確かめる（作れない理由はログに出す）
         bool ValidateSparseTextureDesc(const TextureDesc &desc) const;
+
+        // sparse の塊を切り出す DeviceLocal のメモリタイプを選ぶ（失敗の理由はログに出す）
+        bool FindSparseMemoryType(uint32_t &outMemoryTypeIndex);
 
         // ヘルパー
         bool IsDeviceSuitable(vk::PhysicalDevice device);

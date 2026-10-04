@@ -2,6 +2,7 @@
 
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/GpuRetireQueue.h"
+#include "Rendering/SparsePagePool.h"
 #include "Rendering/SkinnedMeshGpuStore.h"
 #include "Rendering/VideoMemoryBudgetLogGate.h"
 #include "Rendering/MegaGeometryResourceStore.h"
@@ -84,6 +85,9 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::IDevice> Device;
         // GpuResources より先に宣言する（各ストアが破棄された後に最後まで残る）。
         GpuRetireQueue RetireQueue;
+        // sparse テクスチャへ結ぶ物理メモリのページ。sparse に対応しないデバイスでは作らない。
+        // 期限の来た返却は RetireQueue を通ってここへ戻るので、Shutdown では RetireQueue を片付けてから手放す。
+        Container::TUniquePtr<SparsePagePool> SparsePool;
         Container::TUniquePtr<SkinnedMeshGpuStore> SkinnedMeshes;
         Container::TUniquePtr<GpuResourceStore> GpuResources;
         Container::TUniquePtr<ProceduralMeshGpuStore> ProceduralMeshes;
@@ -233,9 +237,19 @@ namespace NorvesLib::Core::Rendering
     ResourceStats GpuResources::GetResourceStats() const
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
-        return impl && impl->GpuResources
-                   ? impl->GpuResources->GetResourceStats()
-                   : ResourceStats();
+        if (!impl || !impl->GpuResources)
+        {
+            return ResourceStats();
+        }
+
+        ResourceStats stats = impl->GpuResources->GetResourceStats();
+        if (impl->SparsePool)
+        {
+            const SparsePagePool::Stats pool = impl->SparsePool->GetStats();
+            stats.SparsePoolCapacityBytes = static_cast<size_t>(pool.CapacityBytes);
+            stats.SparsePoolUsedBytes = static_cast<size_t>(pool.UsedBytes);
+        }
+        return stats;
     }
 
     TextureResources::TextureResources(RenderResources *pOwner)
@@ -822,6 +836,13 @@ namespace NorvesLib::Core::Rendering
 
         m_Impl->GpuResources = Container::MakeUnique<GpuResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
         m_Impl->GpuResources->SetRetireQueue(&m_Impl->RetireQueue);
+        {
+            const RHI::SparseCapabilities &sparse = m_Impl->Device->GetCapabilities().Sparse;
+            if (sparse.bSparseBinding && sparse.bResidencyImage2D)
+            {
+                m_Impl->SparsePool = Container::MakeUnique<SparsePagePool>(m_Impl->Device);
+            }
+        }
         m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
         m_Impl->MegaGeometryResources =
             Container::MakeUnique<MegaGeometryResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
@@ -856,6 +877,7 @@ namespace NorvesLib::Core::Rendering
         }
         // GPU が止まったので、待っていた RHI 資源を期限を問わず全部破棄する。
         m_Impl->RetireQueue.Clear();
+        m_Impl->SparsePool.reset();
         if (m_Impl->SkinnedMeshes)
         {
             m_Impl->SkinnedMeshes->ForceClearAfterWaitIdle();
@@ -897,6 +919,11 @@ namespace NorvesLib::Core::Rendering
     void RenderResources::AbortRetireFrame()
     {
         m_Impl->RetireQueue.AbortFrame();
+    }
+
+    SparsePagePool *RenderResources::GetSparsePagePool() const
+    {
+        return m_Impl->SparsePool.get();
     }
 
     size_t RenderResources::GetPendingRetireCount() const

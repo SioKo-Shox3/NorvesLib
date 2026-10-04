@@ -716,6 +716,17 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &m_commandBuffer;
 
+        // 保留中の sparse の結び付けがあれば、その完了を待ってから実行する（結んだタイルを読む描画より前に結び付けを終える）
+        vk::Semaphore sparseBindWait;
+        const vk::PipelineStageFlags sparseBindWaitStage = vk::PipelineStageFlagBits::eAllCommands;
+        const bool bWaitsSparseBind = m_device->TakeSparseBindWait(sparseBindWait);
+        if (bWaitsSparseBind)
+        {
+            submitInfo.waitSemaphoreCount = 1;
+            submitInfo.pWaitSemaphores = &sparseBindWait;
+            submitInfo.pWaitDstStageMask = &sparseBindWaitStage;
+        }
+
         vk::Queue queue = m_device->GetGraphicsQueue();
 #if NORVES_ENABLE_STATS
         uint64_t submittedSerial = 0u;
@@ -741,10 +752,18 @@ namespace NorvesLib::RHI::Vulkan
                 submittedSerial);
         if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed)
         {
+            if (bWaitsSparseBind)
+            {
+                m_device->RestoreSparseBindWait();
+            }
             throw std::runtime_error("コマンド送信serialが枯渇しました");
         }
         if (submissionStatus != Detail::GPUTimestampSubmissionSequenceStatus::Success)
         {
+            if (bWaitsSparseBind)
+            {
+                m_device->RestoreSparseBindWait();
+            }
             throw std::runtime_error("コマンドの送信に失敗しました");
         }
 
@@ -754,6 +773,10 @@ namespace NorvesLib::RHI::Vulkan
         auto result = queue.submit(1, &submitInfo, m_fence);
         if (result != vk::Result::eSuccess)
         {
+            if (bWaitsSparseBind)
+            {
+                m_device->RestoreSparseBindWait();
+            }
             throw std::runtime_error("コマンドの送信に失敗しました");
         }
 #endif

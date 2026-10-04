@@ -348,6 +348,16 @@ set_tests_properties(SparseTextureVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# sparse テクスチャへ物理ページを結び・外す（ミップテイルと2タイル）。結んだタイルへ書いた色を計算シェーダーで読み戻し、
+# 外したページが GpuRetireQueue を通ってプールの空きへ戻ることを確かめる。
+add_test(NAME SparseBindVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseBindVulkanTest)
+set_tests_properties(SparseBindVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME VideoMemoryBudgetVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetVulkanTest)
 set_tests_properties(VideoMemoryBudgetVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -365,6 +375,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
     MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
     MEMBER SparseTextureVulkanTest SparseTextureVulkanTest.cpp
+    MEMBER SparseBindVulkanTest SparseBindVulkanTest.cpp
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)

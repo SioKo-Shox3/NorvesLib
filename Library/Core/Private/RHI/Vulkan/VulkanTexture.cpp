@@ -634,6 +634,22 @@ namespace NorvesLib::RHI::Vulkan
             info.TilesY[mip] = (mipHeight + granularity.height - 1) / granularity.height;
         }
         m_sparseInfo = info;
+
+        // 結ぶページの置き場（メモリタイプ・整列）の要件。物理メモリの塊はこれを満たすものから切り出す
+        const vk::MemoryRequirements memoryRequirements = vkDevice.getImageMemoryRequirements(m_image);
+        m_sparseMemoryTypeBits = memoryRequirements.memoryTypeBits;
+        m_sparseMemoryAlignment = memoryRequirements.alignment;
+
+        // タイルごとの結び付け状態（ミップ順に詰める）。ミップテイルはページごと
+        m_sparseTileBase.clear();
+        uint32_t tileCount = 0;
+        for (uint32_t mip = 0; mip < info.MipTailFirstLevel; ++mip)
+        {
+            m_sparseTileBase.push_back(tileCount);
+            tileCount += info.TilesX[mip] * info.TilesY[mip];
+        }
+        m_sparseTileBound.assign(tileCount, 0);
+        m_sparseMipTailBound.assign(GetSparseMipTailPageCount(), 0);
     }
 
     bool VulkanTexture::GetSparseInfo(SparseTextureInfo &outInfo) const
@@ -662,6 +678,57 @@ namespace NorvesLib::RHI::Vulkan
         {
             next = current > releaseBytes ? current - releaseBytes : 0;
         } while (!m_sparseBoundBytes.compare_exchange_weak(current, next, std::memory_order_relaxed));
+    }
+
+    uint32_t VulkanTexture::GetSparseMipTailPageCount() const
+    {
+        if (!m_desc.bSparse || m_sparseInfo.MipTailFirstLevel >= m_sparseInfo.MipLevels)
+        {
+            return 0;
+        }
+        return static_cast<uint32_t>((m_sparseInfo.MipTailSize + SparsePageSizeBytes - 1) / SparsePageSizeBytes);
+    }
+
+    bool VulkanTexture::IsValidSparseTile(uint32_t mipLevel, uint32_t tileX, uint32_t tileY) const
+    {
+        return m_desc.bSparse && mipLevel < m_sparseInfo.MipTailFirstLevel &&
+               tileX < m_sparseInfo.TilesX[mipLevel] && tileY < m_sparseInfo.TilesY[mipLevel];
+    }
+
+    void VulkanTexture::CommitSparseTileBinding(uint32_t mipLevel, uint32_t tileX, uint32_t tileY, bool bBound)
+    {
+        if (!IsValidSparseTile(mipLevel, tileX, tileY))
+        {
+            return;
+        }
+
+        uint8_t &state = m_sparseTileBound[m_sparseTileBase[mipLevel] + tileY * m_sparseInfo.TilesX[mipLevel] + tileX];
+        if ((state != 0) == bBound)
+        {
+            return;
+        }
+        state = bBound ? 1 : 0;
+        const int64_t tileBytes = static_cast<int64_t>(m_sparseInfo.TileSizeBytes);
+        AddSparseBoundBytes(bBound ? tileBytes : -tileBytes);
+    }
+
+    void VulkanTexture::CommitSparseMipTailBinding(uint32_t pageIndex, bool bBound)
+    {
+        if (pageIndex >= m_sparseMipTailBound.size())
+        {
+            return;
+        }
+
+        uint8_t &state = m_sparseMipTailBound[pageIndex];
+        if ((state != 0) == bBound)
+        {
+            return;
+        }
+        state = bBound ? 1 : 0;
+        // 最後のページがミップテイルの端数なら、その分だけを数える
+        const uint64_t pageOffset = static_cast<uint64_t>(pageIndex) * SparsePageSizeBytes;
+        const uint64_t pageBytes = std::min<uint64_t>(SparsePageSizeBytes, m_sparseInfo.MipTailSize - pageOffset);
+        AddSparseBoundBytes(bBound ? static_cast<int64_t>(pageBytes) : -static_cast<int64_t>(pageBytes));
     }
 
     void VulkanTexture::CreateImageView()

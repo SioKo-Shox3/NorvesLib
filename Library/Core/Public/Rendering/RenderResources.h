@@ -39,6 +39,7 @@ namespace NorvesLib::Core::Rendering
     class ModelAssetRuntime;
     class TextureAssetRuntime;
     class RenderWorld;
+    class SparsePagePool;
 
     class GpuResources
     {
@@ -271,6 +272,9 @@ namespace NorvesLib::Core::Rendering
         void AbortRetireFrame();
         // 破棄を待っている RHI 資源の数（観測用）。
         size_t GetPendingRetireCount() const;
+
+        // sparse テクスチャへ結ぶ物理メモリのページのプール。sparse に対応しないデバイス・未初期化では nullptr。
+        SparsePagePool *GetSparsePagePool() const;
 
         bool ReloadAssetRuntimeSnapshot(
             const Container::String& assetRoot,

@@ -3,6 +3,7 @@
 #include "RHITypes.h"
 #include "DeviceCapabilities.h"
 #include "IGPUResourceAllocator.h"
+#include "ITexture.h"
 #include "IDescriptorSet.h"
 #include "IPipeline.h"
 #include "IAccelerationStructure.h"
@@ -278,6 +279,37 @@ namespace NorvesLib::RHI
          * @return GPUリソースアロケーター。未対応の場合はnullptr
          */
         virtual IGPUResourceAllocator* GetResourceAllocator() = 0;
+
+        /**
+         * @brief sparse テクスチャへ結ぶ物理メモリの塊を作成（DeviceLocal）
+         * @param sizeBytes 大きさ（SparsePageSizeBytes の倍数）
+         * @param debugName デバッグ名
+         * @return 作成した塊。sparse に対応しないバックエンドや確保に失敗したときは nullptr
+         */
+        virtual SparseMemoryBlockPtr CreateSparseMemoryBlock(uint64_t sizeBytes, const char *debugName = nullptr)
+        {
+            (void)sizeBytes;
+            (void)debugName;
+            return nullptr;
+        }
+
+        /**
+         * @brief sparse テクスチャのタイル・ミップテイルへのページの結び付け・外しを1回の提出で出す
+         *
+         * 結び付けはグラフィックスのキューとセマフォで順序付けられ、次にグラフィックスのキューへ送る提出は
+         * この結び付けが終わってから始まる（結んだタイルを読む描画より前に結び付けが終わる）。
+         * 要求は全部が有効なときだけ提出し、1つでも不正なら何も変えずに false を返す。
+         * コマンドの送信・プレゼントと同じ呼び出し側の直列化の下で呼ぶ（キューへの外部同期）。
+         * タイルを結び直す・外すときは、そのタイルを読む提出中のフレームが無いことを呼び出し側が保証する
+         * （外したページの再利用は、使った提出の serial の完了まで GpuRetireQueue が止める）。
+         * @param request 結び付け・外しの集合
+         * @return 提出できたら true（空の要求も true）
+         */
+        virtual bool BindSparse(const SparseBindRequest &request)
+        {
+            (void)request;
+            return false;
+        }
 
         /**
          * @brief コマンドキューを待機

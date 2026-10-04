@@ -2,6 +2,7 @@
 
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Rendering/SparsePagePool.h"
 #include "RHI/RHITypes.h"
 #include "Thread/Mutex.h"
 
@@ -51,6 +52,22 @@ namespace NorvesLib::Core::Rendering
             {
                 Entry entry;
                 entry.Texture = std::move(texture);
+                Enqueue(std::move(entry));
+            }
+        }
+
+        /**
+         * @brief sparse テクスチャから外したページの返却を頼む（無効なページは無視）
+         *
+         * ページは、解放を頼んだ時点で最後に提出した serial が完了してからプールへ戻る
+         * （外す前に結んでいたタイルを読む提出がまだ GPU で動いているかもしれない）。
+         */
+        void Retire(SparsePagePool::PageLease page)
+        {
+            if (page.IsValid())
+            {
+                Entry entry;
+                entry.Page = std::move(page);
                 Enqueue(std::move(entry));
             }
         }
@@ -129,6 +146,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr Buffer;
             RHI::TexturePtr Texture;
+            SparsePagePool::PageLease Page;
             // この serial が完了するまで保持する。bAwaitingCommit のときは未確定。
             uint64_t Serial = 0;
             // 記録中のフレームの serial が決まるのを待っている。
