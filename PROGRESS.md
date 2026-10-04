@@ -797,3 +797,12 @@
 - 画像を開いた結果: 球・黄色い球・岩・小屋の影の向きと形は On/Off で同じで、黒い斑点・影の欠け・自己遮蔽の縞は無い（反復 14 で岩に出た斑点は `fallback_min_triangles` の直しで消えたまま）。RTGI の On/Off の差（PSNR default 36.60・near 33.42・low 38.59 dB）は、球・岩の接地の周りの間接光の回り込みと石畳の目地に集まり、ブロック・穴・ちらつきは無い。
 - 検証: `verify-VTG4-FALLBACK-LEVEL-1.txt`（Debug のテスト 3 本のビルド BUILD_EXIT_CODE=0）、`-2.txt`（ctest 4/4 pass）、`-3-build.txt`（AssetCook・CookAssets・Game の RelWithDebInfo ビルド BUILD_EXIT_CODE=0）、`-4-capture-On.txt`・`-4-capture-Off.txt`（撮影 EXIT=0）、`-5-visual-check.txt`（確認結果のまとめ）。画像は `.harness/runs/startup-capture/VTG4-FALLBACK-LEVEL-{On,Off}/`。
 - Notes: (1) `$TEMP` の `inspect.py` の罠を再び踏んだ（比較スクリプトを `$TEMP` に置いたまま python を走らせた）。スクリプトは scratchpad に置く。(2) 次の未完は TASKS.md の先頭の todo を参照（VTG4-BIG-SPHERE-COOK は人の判断待ちの blocked）。
+
+## 反復 2（run 20261005-084356）: VTG4-BIG-SPHERE-COOK（保留を解いて閉じる、done）
+- VTG4-BIG-SPHERE-COOK: 実装は反復 16〜17（`cdc090ea`・`b7f2b1e9`）で済んでおり、コードは触っていない。親が選択肢 1（短縮を完了条件から外し、起動の時間の内訳を記録して閉じる）を採ったので、この run の証拠として検証を取り直した。
+- 検証: `verify-VTG4-BIG-SPHERE-COOK-1-build.txt`（AssetCook・CookAssets・Game の RelWithDebInfo ビルド BUILD_EXIT_CODE=0）、`-2-capture.txt`（`-Deterministic` の撮影 result=pass、クック済みの球。出力 `.harness/runs/startup-capture/VTG4-BIG-SPHERE-COOK/`）、`-3-capture-runtime.txt`（`-BigSphereSource runtime` の撮影 result=pass。比較用）。ログで `cooked_big_sphere_load format_major=1 vertices=1524833 indices=6694752`・`MegaMesh created: BigCobbleSphere`・`lod_levels=17` を確認（クック済みを既定で読んでいる）。
+- 画素の比較（クック済み対実行時の生成。`-4-psnr-vs-runtime.txt`）: default 46.72 dB・near 37.62 dB・low 46.50 dB。near だけ目安の 40 dB を下回る（反復 16 と同じ。既定 1 画素の LOD 許容による階層の選択が約 2 dB、影・RT の形の違いが約 0.5 dB。`megageometry.frag` の法線補正の段の扱いの不一致は `paths:` の外で未確認の既知の限界）。
+- 画像を開いた結果（`-6-visual-check.txt`）: near・default・low のいずれにも、石畳の凹凸・継ぎ目（経度 0/360）・極に穴・割れ目・ちらつきは無く、影も欠けていない。stop-when には当たらない。
+- 起動の時間の内訳（`-5-startup-timeline.txt`。ログの先頭を 0 とした秒。1 回ずつの測定）: 球が使えるまで クック済み 1.00/1.00/0.98・実行時の生成 1.05/1.06/1.08（default/near/low。別スレッドで約 0.37〜0.38 秒）、環境マップ 8.84/8.83/8.95 対 8.69/8.95/9.08、石畳のテクスチャ 10.48/10.40/10.73 対 10.35/10.78/10.68、撮影の保存 14.17/14.08/13.86 対 14.08/14.78/13.95。球の待ちは両経路とも `wait_ms=0.0`。球は起動の律速でなく、焼き込みで起動の時間は短くならない（差は測定のばらつきの範囲）。今回は全体が反復 17 の測定（約 10 秒）より遅い（環境マップ・シェーダーのコンパイル側）が、両経路で同じ。
+- メモリ: 反復 16 の記録どおり、クック済みは実行時の生成より約 36.5 MB 多い（階層とフォールバックを含むため）。
+- Notes: (1) 次は未完の最優先を TASKS.md で確認する。(2) 分析用の python は scratchpad に置いた（`$TEMP` の `inspect.py` の罠を避ける）。
