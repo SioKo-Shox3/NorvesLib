@@ -1,0 +1,127 @@
+name: AssetCook Windows CLI
+
+on:
+  push:
+    branches: [feature/game-asset-import]
+    paths:
+      - '.github/workflows/windows-assetcook.yml'
+      - 'Scripts/AssetCookCliParity.py'
+      - 'Library/**'
+      - 'Tools/**'
+      - 'Test/**'
+      - 'Assets/**'
+      - '**/CMakeLists.txt'
+      - '.gitmodules'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-assetcook-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cli-baseline:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SDK_VERSION: 1.4.309.0
+      SDK_ROOT: C:\VulkanSDK\1.4.309.0
+    steps:
+      # 外部actionも版を固定し、checkoutの認証を作業treeに残さない。
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          submodules: recursive
+          fetch-depth: 1
+      - name: 検証環境を記録する
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'NorvesWindowsLogs'
+          New-Item -ItemType Directory -Path $log -Force | Out-Null
+          "NORVES_CI_LOG=$log" >> $env:GITHUB_ENV
+          $capture = Join-Path $env:RUNNER_TEMP "NorvesCliBefore-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          "NORVES_CI_CAPTURE=$capture" >> $env:GITHUB_ENV
+          "NORVES_CI_BASELINE=$(Join-Path $env:RUNNER_TEMP 'NorvesCliBaseline')" >> $env:GITHUB_ENV
+          "commit=$env:GITHUB_SHA`nimage=$env:ImageVersion`nconfiguration=Release" | Set-Content "$log/provenance.txt"
+          git rev-parse HEAD | Tee-Object -FilePath "$log/provenance.txt" -Append
+          if ($LASTEXITCODE -ne 0) { throw 'git rev-parse failed' }
+          git submodule status --recursive | Tee-Object -FilePath "$log/provenance.txt" -Append
+          if ($LASTEXITCODE -ne 0) { throw 'submodule status failed' }
+          cmake --version | Tee-Object -FilePath "$log/provenance.txt" -Append
+          if ($LASTEXITCODE -ne 0) { throw 'cmake unavailable' }
+          python --version | Tee-Object -FilePath "$log/provenance.txt" -Append
+          if ($LASTEXITCODE -ne 0) { throw 'python unavailable' }
+          $PSVersionTable.PSVersion.ToString() | Add-Content "$log/provenance.txt"
+      - name: 公式Vulkan SDKを検証して配置する
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:SDK_VERSION
+          $receipt = Invoke-RestMethod "https://sdk.lunarg.com/sdk/sha/$version/windows/vulkan_sdk.exe.json"
+          if ($receipt.version -ne $version -or $receipt.platform -ne 'windows' -or $receipt.sha -notmatch '^[0-9a-fA-F]{64}$') { throw 'Invalid SDK checksum receipt' }
+          $receipt | ConvertTo-Json | Set-Content "$env:NORVES_CI_LOG/sdk-checksum.json"
+          $installer = Join-Path $env:RUNNER_TEMP 'vulkan_sdk.exe'
+          Invoke-WebRequest "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe" -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $receipt.sha) { throw 'SDK checksum mismatch' }
+          # 2026-10-04作者承認済み。copy_onlyでシステム登録やPATHの恒久変更を避ける。
+          $install = Start-Process -FilePath $installer -ArgumentList @('--root', $env:SDK_ROOT, '--accept-licenses', '--default-answer', '--confirm-command', 'install', 'com.lunarg.vulkan.debug', 'copy_only=1') -Wait -PassThru -RedirectStandardOutput "$env:NORVES_CI_LOG/sdk-install.stdout.log" -RedirectStandardError "$env:NORVES_CI_LOG/sdk-install.stderr.log"
+          "sdk_exit=$($install.ExitCode)" | Add-Content "$env:NORVES_CI_LOG/provenance.txt"
+          if ($install.ExitCode -ne 0) { throw "SDK install failed: $($install.ExitCode)" }
+          foreach ($relative in @('Include/vulkan/vulkan.h','Lib/vulkan-1.lib','Lib/shaderc_combined.lib','Lib/shaderc_combinedd.lib')) {
+            if (!(Test-Path (Join-Path $env:SDK_ROOT $relative) -PathType Leaf)) { throw "Missing SDK file: $relative" }
+          }
+          "VULKAN_SDK=$env:SDK_ROOT" >> $env:GITHUB_ENV
+          "$env:SDK_ROOT/Bin" >> $env:GITHUB_PATH
+      - name: 比較器の単体試験を実行する
+        run: |
+          python Test/Tools/AssetCookCliParityTest.py -v 2>&1 | Tee-Object "$env:NORVES_CI_LOG/comparator.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Comparator tests failed' }
+          python -O Test/Tools/AssetCookCliParityTest.py -q 2>&1 | Tee-Object -Append "$env:NORVES_CI_LOG/comparator.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized comparator tests failed' }
+      - name: 実Coreを含む構成を生成する
+        run: |
+          cmake -S . -B build/windows-cli -G 'Visual Studio 17 2022' -A x64 -DNORVES_BUILD_TESTS=ON 2>&1 | Tee-Object "$env:NORVES_CI_LOG/configure.log"
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
+      - name: AssetCookとテストbundleをビルドする
+        run: |
+          cmake --build build/windows-cli --config Release --target AssetCook CookedMeshTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Native build failed' }
+      - name: CPU契約を実行する
+        run: |
+          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(CookedMeshTest|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
+          if ($LASTEXITCODE -ne 0) { throw 'CPU contracts failed' }
+      - name: 分割前の実CLI出力を採取する
+        id: capture
+        run: |
+          python Scripts/AssetCookCliParity.py capture --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --skeletal-test-exe build/windows-cli/Test/Core/Asset/Release/CookedMeshTest.exe --output "$env:NORVES_CI_CAPTURE" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/capture.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Actual CLI capture failed' }
+          $snapshot = Get-Content "$env:NORVES_CI_CAPTURE/snapshot/snapshot.json" -Raw | ConvertFrom-Json
+          $exe = 'build/windows-cli/Tools/AssetCook/Release/AssetCook.exe'
+          $test = 'build/windows-cli/Test/Core/Asset/Release/CookedMeshTest.exe'
+          if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $snapshot.metadata.asset_cook_sha256 -or (Get-FileHash $test -Algorithm SHA256).Hash -ne $snapshot.metadata.skeletal_test_sha256) { throw 'Captured executable hash changed' }
+          New-Item -ItemType Directory "$env:NORVES_CI_BASELINE" | Out-Null
+          Copy-Item "$env:NORVES_CI_CAPTURE/snapshot" "$env:NORVES_CI_BASELINE/snapshot" -Recurse
+          Copy-Item $exe,$test,"$env:NORVES_CI_LOG/provenance.txt","$env:NORVES_CI_LOG/sdk-checksum.json" "$env:NORVES_CI_BASELINE/"
+      - name: 検証ログを保存する
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-cli-logs-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/NorvesWindowsLogs/
+            ${{ runner.temp }}/NorvesCliBefore-${{ github.run_id }}-${{ github.run_attempt }}/logs/
+            build/windows-cli/CMakeCache.txt
+            build/windows-cli/CMakeFiles/CMakeConfigureLog.yaml
+            build/windows-cli/Testing/Temporary/LastTest.log
+      - name: 成功した分割前基準を保存する
+        if: success() && steps.capture.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-cli-before-Release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: ${{ env.NORVES_CI_BASELINE }}/

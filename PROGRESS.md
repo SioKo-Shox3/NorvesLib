@@ -672,3 +672,6 @@
 
 - G2-MATERIAL-SELECTION-SHARED（GR79/GR78/GR32共通核）: strictUTF8/NUL拒否の一意元名・番号+期待元名をResolveMaterialSelectionへ集約。元catalogと生成slotを別domainとし、行順とidentity順を区別。未一致/曖昧/同target二重指定拒否、全catalog同名警告情報、失敗時出力保持/alias検査。第1周で後続未一致の診断に前行が残る問題を修正、回帰追加で第2周PASS。通常/O2/ASanUBSan(LSan除外)/実MEMBER wrapper compile成功、独立100000例とroot20000例の総当たり参照比較一致。nativeCore/GR79設定/GR78SurfaceName/GR32component接続は次工程で未完。
 - Next: 作者10:02承認のWindows標準CIで実CLI基準採取を準備し、common resolverの設定/runtime接続も続ける。Main分割前baseline、--asset-setと旧main2specの実byte一致は未達。
+
+- G2-S6-WINDOWS-CLI-CI: 作者10:02承認に基づきfeature限定Windows2022 workflowを準備。最小read権限/credential非永続、公式固定Vulkan SDK checksum検証+debug/copy_only導入、実Core/AssetCook/CookedMeshTestのReleaseビルド、CPU契約と既存7smoke capture、exe hash照合/明示artifact保存。YAML構造と比較器10単体は確認済み。初回run/実build/7smoke/保存物は未確認でdoingを維持。
+- 独立workflowレビューPASS。alwaysログの未設定env参照を固定runner.temp/runId/attemptへ修正。実行成功の証明はpush後のrunで確認する。

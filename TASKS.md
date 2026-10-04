@@ -2327,7 +2327,7 @@
 - stop-when: byte拡幅だけや符号修正だけでdecode済みとする、path用ToCoreStringをJSON修正で一括変更、native実行未実施を合格扱いする。
 
 ## G2-S6-WINDOWS-CLI-CI: Windowsで実CLIの分割前基準を採取する
-- status: todo
+- status: doing
 - done-when: feature限定の標準Windows runnerで公式Vulkan SDKと実Core/AssetCook/CookedMeshTestをビルドし、固定7smokeの実exe出力・manifest・ログを保存。before baselineを実成功確認する。--asset-set比較とMain分割後比較は後続gateとして残す。
 - verify: 最小権限workflow、固定SDK/debug component、実run結果と各caseログ・snapshotを開いて確認。GPU検証と混同しない。
 - stop-when: mainへ変更、課金/権限を拡大、失敗を成功扱い、Mainを基準採取前に分割。
