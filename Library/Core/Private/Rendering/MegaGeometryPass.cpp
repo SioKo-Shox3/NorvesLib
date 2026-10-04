@@ -1034,12 +1034,24 @@ namespace NorvesLib::Core::Rendering
                                                   static_cast<uint32_t>(sizeof(PerObjectUBO)));
 
             // PBRテクスチャバインド（マテリアルテクスチャまたはデフォルトにフォールバック）
-            auto albedo = mat.AlbedoTexture ? mat.AlbedoTexture : m_DefaultWhiteTexture;
-            auto normal = mat.NormalTexture ? mat.NormalTexture : m_DefaultFlatNormalTexture;
-            auto metallic = mat.MetallicTexture ? mat.MetallicTexture : m_DefaultBlackTexture;
-            auto roughness = mat.RoughnessTexture ? mat.RoughnessTexture : m_DefaultWhiteTexture;
-            auto ao = mat.AOTexture ? mat.AOTexture : m_DefaultWhiteTexture;
-            auto height = mat.HeightTexture ? mat.HeightTexture : m_DefaultBlackTexture;
+            // 材質はハンドルしか持たないので、描画のたびに引き直す（解放済みならデフォルトに落ちる）。
+            auto resolveTexture = [&command](TextureHandle handle, const RHI::TexturePtr &fallback) -> RHI::TexturePtr
+            {
+                if (command.Textures && handle.IsValid())
+                {
+                    if (RHI::TexturePtr texture = command.Textures->GetRHITexturePtr(handle))
+                    {
+                        return texture;
+                    }
+                }
+                return fallback;
+            };
+            auto albedo = resolveTexture(mat.AlbedoTexture, m_DefaultWhiteTexture);
+            auto normal = resolveTexture(mat.NormalTexture, m_DefaultFlatNormalTexture);
+            auto metallic = resolveTexture(mat.MetallicTexture, m_DefaultBlackTexture);
+            auto roughness = resolveTexture(mat.RoughnessTexture, m_DefaultWhiteTexture);
+            auto ao = resolveTexture(mat.AOTexture, m_DefaultWhiteTexture);
+            auto height = resolveTexture(mat.HeightTexture, m_DefaultBlackTexture);
 
             drawDescriptorSet->BindTexture(1, albedo);
             drawDescriptorSet->BindSampler(1, m_DefaultLinearSampler);

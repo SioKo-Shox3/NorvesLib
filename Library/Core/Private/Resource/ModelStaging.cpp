@@ -221,7 +221,7 @@ namespace NorvesLib::Core::Resource::ModelStaging
                                      Rendering::TextureCreateInfo::Format format,
                                      const void* pPixelData,
                                      size_t pixelDataSize,
-                                     NorvesLib::RHI::TexturePtr& outTexture)
+                                     Rendering::TextureHandle& outTexture)
         {
             auto calculateMipCount = [](uint32_t textureWidth, uint32_t textureHeight) -> uint32_t
             {
@@ -248,8 +248,8 @@ namespace NorvesLib::Core::Resource::ModelStaging
                 return false;
             }
 
-            outTexture = textures.GetRHITexturePtr(textureHandle);
-            return static_cast<bool>(outTexture);
+            outTexture = textureHandle;
+            return true;
         }
 
         void SetStagedTextureData(StagedTextureData& outTexture,
@@ -434,7 +434,7 @@ namespace NorvesLib::Core::Resource::ModelStaging
     {
         bool CreateTextureFromStagedData(Rendering::TextureResources& textures,
                                          const StagedTextureData& stagedTexture,
-                                         NorvesLib::RHI::TexturePtr& outTexture,
+                                         Rendering::TextureHandle& outTexture,
                                          const char* role,
                                          uint32_t requestId)
         {
@@ -459,8 +459,8 @@ namespace NorvesLib::Core::Resource::ModelStaging
                     return false;
                 }
 
-                outTexture = textures.GetRHITexturePtr(textureHandle);
-                return static_cast<bool>(outTexture);
+                outTexture = textureHandle;
+                return true;
             }
 
             if (!stagedTexture.HasLoosePixelData())
@@ -482,7 +482,7 @@ namespace NorvesLib::Core::Resource::ModelStaging
         bool CreateStandardTextureFromReference(Rendering::TextureResources& textures,
                                                 const TextureReference& textureReference,
                                                 const String& debugName,
-                                                NorvesLib::RHI::TexturePtr& outTexture,
+                                                Rendering::TextureHandle& outTexture,
                                                 const char* role,
                                                 uint32_t requestId)
         {
@@ -515,8 +515,8 @@ namespace NorvesLib::Core::Resource::ModelStaging
                         return false;
                     }
 
-                    outTexture = textures.GetRHITexturePtr(textureHandle);
-                    return static_cast<bool>(outTexture);
+                    outTexture = textureHandle;
+                    return true;
                 }
 
                 if (!ShouldUseLooseFallbackForPreparedStatus(prepared.Status))
@@ -537,9 +537,9 @@ namespace NorvesLib::Core::Resource::ModelStaging
         bool CreateArmTexturesFromReference(Rendering::TextureResources& textures,
                                             const TextureReference& textureReference,
                                             const String& debugNamePrefix,
-                                            NorvesLib::RHI::TexturePtr& outAOTexture,
-                                            NorvesLib::RHI::TexturePtr& outRoughnessTexture,
-                                            NorvesLib::RHI::TexturePtr& outMetallicTexture,
+                                            Rendering::TextureHandle& outAOTexture,
+                                            Rendering::TextureHandle& outRoughnessTexture,
+                                            Rendering::TextureHandle& outMetallicTexture,
                                             const char* role,
                                             uint32_t requestId)
         {

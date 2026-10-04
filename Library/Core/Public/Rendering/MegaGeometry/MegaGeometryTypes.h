@@ -168,7 +168,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      * @brief MegaMeshマテリアル
      *
      * MegaMesh単位のPBRマテリアル設定。
-     * テクスチャが未設定（nullptr）の場合はデフォルトの1x1テクスチャが使用されます。
+     * テクスチャが未設定（無効なハンドル）の場合はデフォルトの1x1テクスチャが使用されます。
+     * テクスチャは強参照を持たず、描画のたびにハンドルから引き直す。解放済みのハンドルは
+     * 未設定と同じにデフォルトへ落ちるので、材質の持ち主が先にテクスチャを解放しても
+     * GPU が使っているテクスチャを巻き込まない。
      */
     struct MegaMeshMaterial
     {
@@ -176,13 +179,13 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};       // Y=1 chromaticity
         float EmissiveLuminanceNits = 0.0f;                 // 輝度(nits)
 
-        // PBRテクスチャ（nullptrの場合はデフォルトテクスチャを使用）
-        RHI::TexturePtr AlbedoTexture;
-        RHI::TexturePtr NormalTexture;
-        RHI::TexturePtr MetallicTexture;
-        RHI::TexturePtr RoughnessTexture;
-        RHI::TexturePtr AOTexture;
-        RHI::TexturePtr HeightTexture;
+        // PBRテクスチャ（無効なハンドルの場合はデフォルトテクスチャを使用）
+        TextureHandle AlbedoTexture;
+        TextureHandle NormalTexture;
+        TextureHandle MetallicTexture;
+        TextureHandle RoughnessTexture;
+        TextureHandle AOTexture;
+        TextureHandle HeightTexture;
 
         // POMパラメータ
         float HeightScale = 0.0f;

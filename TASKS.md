@@ -35,7 +35,7 @@
 - notes: BC のバイト数は VTG1-RHI-BC-FORMATS で足す。
 
 ## VTG1-RETIRE-QUEUE: テクスチャとバッファを提出のserialで遅延解放する
-- status: todo
+- status: done
 - done-when: `GpuRetireQueue`（RenderResources が持つ）が、`ReleaseTexture`・`ReleaseBuffer` で外れた RHI 資源を、解放を頼んだ時点で最後に提出した serial が完了する（`GetCompletedSubmissionSerial()`）まで保持してから破棄する。`SkinnedMeshGpuStore` の serial の扱いに合わせる。`MegaMeshMaterial` の `RHI::TexturePtr` の強参照を `TextureHandle` に置き換え、MegaGeometryPass は描画時に引き直す。CPU のテスト `GpuRetireQueueTest`（`RenderResourcesDomainContractTest` の束）が、完了の serial が届くまで破棄されない・届いたら破棄される・Shutdown で全部破棄されることを確かめる。`MegaGeometryResourcesTest` pass。起動画面の撮影で見た目が変わらない。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest MegaGeometryResourcesTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GpuRetireQueueTest|MegaGeometryResourcesTest|MeshResourcesProceduralGpuTest)$"`

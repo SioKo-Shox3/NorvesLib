@@ -1,5 +1,7 @@
 ﻿#include "Rendering/GpuResourceStore.h"
 
+#include "Rendering/GpuRetireQueue.h"
+
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -192,8 +194,28 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        Thread::ScopedLock lock(m_Mutex);
-        m_Buffers.erase(handle.Id);
+        // 外した RHI バッファは、GPU が使い終わるまでキューが保持する（ストアのロックの外で渡す）。
+        RHI::BufferPtr released;
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            auto it = m_Buffers.find(handle.Id);
+            if (it == m_Buffers.end())
+            {
+                return;
+            }
+            released = std::move(it->second.RHIBuffer);
+            m_Buffers.erase(it);
+        }
+
+        if (m_pRetireQueue)
+        {
+            m_pRetireQueue->Retire(std::move(released));
+        }
+    }
+
+    void GpuResourceStore::SetRetireQueue(GpuRetireQueue *retireQueue)
+    {
+        m_pRetireQueue = retireQueue;
     }
 
     TextureHandle GpuResourceStore::CreateTexture(const TextureCreateInfo &createInfo)
@@ -377,8 +399,23 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        Thread::ScopedLock lock(m_Mutex);
-        m_Textures.erase(handle.Id);
+        // 外した RHI テクスチャは、GPU が使い終わるまでキューが保持する（ストアのロックの外で渡す）。
+        RHI::TexturePtr released;
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            auto it = m_Textures.find(handle.Id);
+            if (it == m_Textures.end())
+            {
+                return;
+            }
+            released = std::move(it->second.RHITexture);
+            m_Textures.erase(it);
+        }
+
+        if (m_pRetireQueue)
+        {
+            m_pRetireQueue->Retire(std::move(released));
+        }
     }
 
     SamplerHandle GpuResourceStore::GetDefaultSampler()

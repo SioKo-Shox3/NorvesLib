@@ -848,6 +848,7 @@ namespace NorvesLib::Core::Rendering
                                                                         GetActiveLocalViewport(),
                                                                         GetActiveLocalScissor(),
                                                                         GetActiveDebugMode());
+            command.MegaGeometry.Textures = Resources.Textures;
             if (const CameraProxy *previousCamera = GetPreviousCamera())
             {
                 command.MegaGeometry.PreviousCamera = *previousCamera;

@@ -1661,15 +1661,18 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER RenderResourcesDomainContractTest RenderResourcesDomainContractTest.cpp
     MEMBER MeshResourcesProceduralGpuTest MeshResourcesProceduralGpuTest.cpp
     MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
+    MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
 )
 target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
 target_include_directories(RenderResourcesDomainContractTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
 add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainContractTest)
 
 add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContractTest --test=MeshResourcesProceduralGpuTest)
 add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
+add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)
 
 add_executable(MeshResourcesPrimitiveTest
     MeshResourcesPrimitiveTest.cpp

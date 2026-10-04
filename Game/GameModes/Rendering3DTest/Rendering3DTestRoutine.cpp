@@ -265,7 +265,6 @@ namespace Game::GameModes
             }
 
             const auto createStartTime = std::chrono::steady_clock::now();
-            auto &textures = ctx.RenderResourcesRef.Textures();
             auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             const MaterialCreateData &cobble = data.m_CobbleStoneMaterialUpdate->CreateData;
 
@@ -282,10 +281,10 @@ namespace Game::GameModes
             createInfo.LODBounds = sphereData->Bounds;
             createInfo.bBuildLODHierarchy = false;
             createInfo.ShadowLODLevel = kBigSphereShadowLODLevel;
-            createInfo.Material.AlbedoTexture = textures.GetRHITexturePtr(cobble.AlbedoTexture);
-            createInfo.Material.NormalTexture = textures.GetRHITexturePtr(cobble.NormalTexture);
-            createInfo.Material.RoughnessTexture = textures.GetRHITexturePtr(cobble.RoughnessTexture);
-            createInfo.Material.AOTexture = textures.GetRHITexturePtr(cobble.AOTexture);
+            createInfo.Material.AlbedoTexture = cobble.AlbedoTexture;
+            createInfo.Material.NormalTexture = cobble.NormalTexture;
+            createInfo.Material.RoughnessTexture = cobble.RoughnessTexture;
+            createInfo.Material.AOTexture = cobble.AOTexture;
             if (sphereData->DisplacementUVSpacing > 0.0f)
             {
                 // 凹凸は形（変位）で出すので POM は切る。法線マップは形が持つ粗い傾きを差し引いて細部だけ載せる。
@@ -293,9 +292,9 @@ namespace Game::GameModes
             }
             else
             {
-                createInfo.Material.HeightTexture = textures.GetRHITexturePtr(cobble.HeightTexture);
+                createInfo.Material.HeightTexture = cobble.HeightTexture;
                 createInfo.Material.HeightScale = kBigSphereHeightScale;
-                createInfo.Material.bHasHeightMap = static_cast<bool>(createInfo.Material.HeightTexture);
+                createInfo.Material.bHasHeightMap = createInfo.Material.HeightTexture.IsValid();
             }
             createInfo.DebugName = "BigCobbleSphere";
 

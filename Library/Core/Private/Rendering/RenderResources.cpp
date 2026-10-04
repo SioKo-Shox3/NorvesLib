@@ -1,6 +1,7 @@
 ﻿#include "Rendering/RenderResources.h"
 
 #include "Rendering/GpuResourceStore.h"
+#include "Rendering/GpuRetireQueue.h"
 #include "Rendering/SkinnedMeshGpuStore.h"
 #include "Rendering/VideoMemoryBudgetLogGate.h"
 #include "Rendering/MegaGeometryResourceStore.h"
@@ -81,6 +82,8 @@ namespace NorvesLib::Core::Rendering
 
         Thread::Atomic<uint64_t> NextHandleId{1};
         Container::TSharedPtr<RHI::IDevice> Device;
+        // GpuResources より先に宣言する（各ストアが破棄された後に最後まで残る）。
+        GpuRetireQueue RetireQueue;
         Container::TUniquePtr<SkinnedMeshGpuStore> SkinnedMeshes;
         Container::TUniquePtr<GpuResourceStore> GpuResources;
         Container::TUniquePtr<ProceduralMeshGpuStore> ProceduralMeshes;
@@ -818,6 +821,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_Impl->GpuResources = Container::MakeUnique<GpuResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
+        m_Impl->GpuResources->SetRetireQueue(&m_Impl->RetireQueue);
         m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
         m_Impl->MegaGeometryResources =
             Container::MakeUnique<MegaGeometryResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
@@ -850,6 +854,8 @@ namespace NorvesLib::Core::Rendering
         {
             m_Impl->Device->WaitIdle();
         }
+        // GPU が止まったので、待っていた RHI 資源を期限を問わず全部破棄する。
+        m_Impl->RetireQueue.Clear();
         if (m_Impl->SkinnedMeshes)
         {
             m_Impl->SkinnedMeshes->ForceClearAfterWaitIdle();
@@ -876,6 +882,26 @@ namespace NorvesLib::Core::Rendering
     bool RenderResources::IsInitialized() const
     {
         return m_Impl->bInitialized;
+    }
+
+    void RenderResources::BeginRetireFrame(uint64_t completedSubmissionSerial)
+    {
+        m_Impl->RetireQueue.BeginFrame(completedSubmissionSerial);
+    }
+
+    void RenderResources::CommitRetireFrame(uint64_t submissionSerial)
+    {
+        m_Impl->RetireQueue.CommitFrame(submissionSerial);
+    }
+
+    void RenderResources::AbortRetireFrame()
+    {
+        m_Impl->RetireQueue.AbortFrame();
+    }
+
+    size_t RenderResources::GetPendingRetireCount() const
+    {
+        return m_Impl->RetireQueue.GetPendingCount();
     }
 
     void RenderResources::SetVideoMemoryCapMb(uint64_t capMb)

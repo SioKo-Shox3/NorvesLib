@@ -263,6 +263,15 @@ namespace NorvesLib::Core::Rendering
         // 1% 以上変わったときだけ VRAM_BUDGET をログへ出す。
         void PollVideoMemoryBudget();
 
+        // GPU が使い終わるまで RHI 資源の破棄を待つ仕組み（ReleaseTexture・ReleaseBuffer が使う）。
+        // RenderThread が、フレームの記録の開始（完了済みの提出 serial を渡す）・提出・中止の
+        // それぞれで呼ぶ。呼ばれない環境（ヘッドレスのテスト等）では、解放は即座に破棄される。
+        void BeginRetireFrame(uint64_t completedSubmissionSerial);
+        void CommitRetireFrame(uint64_t submissionSerial);
+        void AbortRetireFrame();
+        // 破棄を待っている RHI 資源の数（観測用）。
+        size_t GetPendingRetireCount() const;
+
         bool ReloadAssetRuntimeSnapshot(
             const Container::String& assetRoot,
             Container::TSharedPtr<const Asset::AssetSystem> candidate);
