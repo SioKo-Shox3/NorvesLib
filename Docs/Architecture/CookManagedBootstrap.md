@@ -78,3 +78,11 @@ short alias、Unicode物理親のASCII alias、SUBSTは条件flagを残す。0�
 初回de680cd9/run37280393756と診断追加02aa146a/run37282610496は既存32CPUとbuild/5診断が成功したが、最初の新規bootstrapは未完了だった。診断で`set_requires_one_manifest_path`を確認した。asset別work directoryのfragment集合を、FINALの単一集約manifest用guardへ渡していたためである。
 
 FINALは従来の単一manifest条件を維持する。stage用入口は同じ集合検査coreを使い、manifestを統合せず独立した出力として数える。共有fragmentも衝突として拒否し、全source/controlとのalias、file ID、prefix、key、現在性の検査を省略しない。
+
+## 実行受入れ（2026-10-05）
+
+48a425c5866c5374b7465b2295b43bc1ba705ea2 / run37285943680で33CPU、17実child終了、bootstrap5条件flag全1、既存7CLI/79出力byte/5診断、native texture2spec×2/10出力byte/16拒否が成功した。3 ZIPのAPI SHA/size・CRC・safe exact inventory、frozen出力の直接byte比較、MSVC/x64 PEのBCryptHash/BCryptGenRandomを独立照合し、親側でも3検証scriptを再実行した。
+
+cross-sessionはflag0で未実測。Busy診断1行のerrorにraw ff×8を確認した。空のTString::c_str()がnposのアドレスを返す既存不具合に対応しており、ログ原本を変更せず当該行だけ可逆escapeした読取viewでreceiptを検査した。payload/ZIP比較は変更していない。別の基礎修正で解消する。
+
+この受入れは新規texture rootのcontroller APIとsource非依存復旧に限定する。既存root更新・production --asset-setへの統合・powerloss保証は含まない。
