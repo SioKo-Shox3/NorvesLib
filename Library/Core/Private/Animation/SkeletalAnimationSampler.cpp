@@ -1,6 +1,7 @@
 ﻿#include "Animation/SkeletalAnimationSampler.h"
 #include "Animation/SkeletalSamplingMath.h"
 #include "Animation/SkeletalBindRowMath.h"
+#include "Animation/SkeletalJointGlobalRowMath.h"
 
 #include "Animation/AnimationClipResource.h"
 #include "Animation/SkeletonResource.h"
@@ -192,44 +193,6 @@ namespace NorvesLib::Core::Animation
             return true;
         }
 
-        bool BuildJointGlobal(uint32_t jointIndex,
-                              const Container::VariableArray<Skeletal::SkeletalJoint>& joints,
-                              const Container::VariableArray<Math::Matrix4x4>& localMatrices,
-                              Container::VariableArray<Math::Matrix4x4>& globalMatrices,
-                              Container::VariableArray<uint8_t>& visitState)
-        {
-            if (visitState[jointIndex] == 2)
-            {
-                return true;
-            }
-            if (visitState[jointIndex] == 1)
-            {
-                return false;
-            }
-            visitState[jointIndex] = 1;
-
-            const int32_t parentIndex = joints[jointIndex].ParentIndex;
-            if (parentIndex >= 0)
-            {
-                const uint32_t parent = static_cast<uint32_t>(parentIndex);
-                if (parent >= joints.size() ||
-                    !BuildJointGlobal(parent, joints, localMatrices, globalMatrices, visitState))
-                {
-                    return false;
-                }
-                globalMatrices[jointIndex] = localMatrices[jointIndex] * globalMatrices[parent];
-            }
-            else
-            {
-                globalMatrices[jointIndex] = localMatrices[jointIndex];
-            }
-            if (!IsFiniteMatrix(globalMatrices[jointIndex]))
-            {
-                return false;
-            }
-            visitState[jointIndex] = 2;
-            return true;
-        }
     } // namespace
 
     bool SkeletalAnimationSampler::Sample(const SkeletonResource& skeleton,
@@ -320,9 +283,16 @@ namespace NorvesLib::Core::Animation
         }
 
         Container::VariableArray<uint8_t> visitState(jointCount, 0);
+        const auto parentIndexAt = [&joints](uint32_t index) noexcept -> int32_t
+        {
+            return joints[index].ParentIndex;
+        };
+        const Container::Span<const Math::Matrix4x4> localRows(localMatrices);
+        const Container::Span<Math::Matrix4x4> globalRows(jointGlobals);
+        const Container::Span<uint8_t> scratch(visitState);
         for (uint32_t jointIndex = 0; jointIndex < static_cast<uint32_t>(jointCount); ++jointIndex)
         {
-            if (!BuildJointGlobal(jointIndex, joints, localMatrices, jointGlobals, visitState))
+            if (!Detail::BuildJointGlobalRow(jointIndex, parentIndexAt, localRows, globalRows, scratch))
             {
                 outPose.Clear();
                 return false;

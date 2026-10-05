@@ -912,3 +912,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 bind共有の検証準備: 旧float算術をprivate helperへ移し、Samplerのbind導出から使用。新helperはalias/失敗out保持、旧Decomposeの途中nonfiniteを維持する。独立literal試験とinverse後段overflowのbit保持を追加。実基準2構成6095byte/receiptを保存し、別比較器が固定harness/compiler/SDK/options/source-build-project-binary結合を拒否優先で検査する。静的2round PASS、新比較17/旧採取19/旧12+4+7 Python normal/-O、BOM/EOL/YAML/harness hash不変を確認。host GCCは既存MatrixUtils Normalize<Quaternion>のscalar operator欠落でcompile不能のためruntime未実行。実Windows46CPU/構成別基準一致は次CIで未確認。
 
 - G2/GR84 bind共有受入: 430a6cbcf27ee1d174f5a9e0eea394d57559d8f9 / tree5239cf56c1deefd83435bb567776a84601400152 / run37379203280 attempt1 job111996430902。46CPU/旧全marker＋bind marker、Debug/Release各2回が旧6095byteと完全一致、旧89byte/managed/CLI/metadata/Python/MSVC/CNG/3ZIPを受入れ、親readonly再実行exit0/最終782file inventory一致。旧668file保全。検証chain更新の件数・歴史参照・stdoutの3誤りは失敗証拠を保持して有限差分修正し、全条件の一括照合を完了。実CI自体は1回で成功。次は現Samplerのjoint-global row FKをprivate共有し、parent配列の追加確保をせず借用getterで既存joint配列を読む。source BVHのdouble列FKとは別にする。
+
+- G2/GR84 joint-global row FK共有開始。既存joint配列のParentIndexを非throwの小さい借用getterで読み、local/global/visitStateは既存配列のSpanを渡す。旧再帰式と評価順を保ち、helper内で確保しない。内部global/visitStateはfalse時に部分更新され得るが、Sampleのfalse/Clear契約は変更しない。source BVHのdouble列FK・作者時rest snapshotとは別に扱う。
+
+- G2/GR84 joint-global FK共有の検証準備: parent getter/Spanと同じ再帰評価を接続し、旧配列以外の所有/確保は追加しない。47件目としてroot signed-zero bit、非可換/親順/分岐/cache、cycle/不正入力、finite非剛体、部分出力とscratch再開の独立試験を追加。凍結harness/比較器/6095byte基準は不変。Python17+19+12+4+7 normal/-O、BOM/EOL/YAMLを確認。hostの既存MatrixUtils.h制約は継続し、実Windows47CPU/構成別旧byte各2回は次CIで未確認。
