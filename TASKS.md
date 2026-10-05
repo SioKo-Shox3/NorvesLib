@@ -430,47 +430,105 @@
 - notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG5-GEOM-POOL: ジオメトリの共有プールとサブアロケータを作る
-- status: backlog
-- done-when: DeviceLocal の大きなバッファの中を区画に分けるサブアロケータを作り、MegaGeometry の頂点・インデックス・クラスタをそこへ置く。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GeometryPoolAllocatorTest|MegaGeometryResourcesTest)$"`
-- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 段5の開始時に親が詳しくする（計画書 4.3）。
+- status: todo
+- done-when: `GeometryPool`（RenderResources が持つ。シングルトン禁止）が、DeviceLocal の大きなバッファ（既定 256 MiB の塊。頂点・インデックス・storage として使える用途）を必要に応じて足し、その中を区画に分けるサブアロケータ（整列・隣の空きとの結合・断片化の統計）を持つ。区画の解放は `GpuRetireQueue` で、最後に使った提出の serial が完了してから空きに戻す。使用量を `VRAM_LEDGER geometry_pool` に、目標を `VideoMemoryBudgetManager` の Geometry の枠に出す（取り分の決め方は VTG5-PAGE-STREAMER で詰める。この項目では使用量の報告まで）。CPU のテスト `GeometryPoolAllocatorTest`（`RenderResourcesDomainContractTest` の束）が、確保・解放・結合・整列・塊の追加・確保できないときの失敗・遅延解放の順序を確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GeometryPoolAllocatorTest|GpuRetireQueueTest|VideoMemoryBudgetManagerTest)$"`
+- stop-when: RHI のバッファの用途の組み合わせ（頂点・インデックス・storage・転送先・BDA）が1つのバッファで作れない場合は、理由を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/RHI, Library/Core/Private/RHI, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（メモリ・寿命）。
 
-## VTG5-ASYNC-UPLOAD: ステージングのリングと非同期のアップロードを作る
-- status: backlog
-- done-when: ステージングのリングから転送でプールへコピーし、`GpuRetireQueue` で遅延解放する。アップロードで GPU を待たない。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^GpuUploadRingVulkanTest$"`
-- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+## VTG5-ASYNC-UPLOAD: ステージングのリングからバッファへGPUを待たずに書く
+- status: todo
+- done-when: 段2のタイルのアップロードのリング（`TileUploader`）を、テクスチャのタイルとバッファの区画の両方へ書ける共通の `GpuUploadRing` に広げる（または同じリングをバッファのコピーにも使えるようにする）。バッファへのコピーは描画のコマンドの先頭で行い、`WaitIdle` を呼ばない。1フレームの上限（バイト数）をテクスチャとバッファで共有する。GPU のテスト `GpuUploadRingVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、連続する複数フレームでプールの区画へ書いて計算シェーダーで読み戻し、その間に `WaitIdle` を呼ばないことを確かめる。既存の `SparseTileUploadVulkanTest` も通る。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GpuUploadRingVulkanTest|SparseTileUploadVulkanTest|GeometryPoolAllocatorTest)$"`
+- stop-when: テクスチャとバッファのコピーの同期（バリア）を1つのリングで表せない場合は、理由を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/RHI, Library/Core/Private/RHI, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（RHI/Vulkan・RenderThread）。
 
-## VTG5-BATCHED-CULL: インスタンスをまとめて1回のカリングと描画にする
-- status: backlog
-- done-when: MegaGeometry の全インスタンスを1回の compute と1回の間接描画で扱う。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest)$"`
-- paths: Assets/Shaders, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+## VTG5-MEGA-POOL-MIGRATE: MegaGeometryの頂点・インデックス・クラスタを共有プールへ移す
+- status: todo
+- done-when: `MegaGeometryResourceStore` が、メッシュごとの host-visible のバッファ3本をやめ、`GeometryPool` の区画（DeviceLocal）へ `GpuUploadRing` で書く。描画（`MegaGeometryPass` の間接描画・2パスの遮蔽）・影（フォールバックの範囲）・レイトレ（BLAS の頂点・インデックスのアドレスとキー）が、プールのバッファと区画のオフセットで動く。メッシュの解放は区画を遅延解放する。`MegaGeometryResourcesTest`・`RayTracingSceneSnapshotTest`・`RenderGraphCompileTest` が通り、`-Deterministic` の撮影が移行前と一致する（PSNR を記録。目安 60 dB 以上）。`VRAM_LEDGER` の geometry_pool で MegaGeometry の量を記録する。
+- verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RayTracingSceneSnapshotTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RayTracingSceneSnapshotTest|RenderGraphCompileTest|GeometryPoolAllocatorTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-MEGA-POOL-MIGRATE -Configuration RelWithDebInfo -Deterministic`
+- stop-when: BLAS の作成が区画のオフセットを表せず、加速構造の作り方を変える必要がある場合は、理由を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画パス・RT・寿命）。手続きの `ProceduralMeshGpuStore` はこの段では移さない。
+
+## VTG5-BATCHED-CULL: MegaGeometryのインスタンスをまとめて1回のカリングと材質ごとの間接描画にする
+- status: todo
+- done-when: MegaGeometry の全インスタンスの表（変換・前のフレームの変換・メッシュ・材質の番号）を1つの storage buffer に置き、カリング（2パスの遮蔽を含む）を1回の dispatch（1パスにつき）で全インスタンスに掛ける。描画は材質ごとの区間に分けた間接描画の列（材質の数だけ `DrawIndexedIndirectCount`）にし、インスタンスごとの 1.25 MB の IndirectDraw のバッファをやめる。`MEGA_OCCLUSION` の数と `-Deterministic` の撮影が移行前と一致する（PSNR を記録）。CPU のパスの記録の時間（`MegaGeometryPass` の RecordFrameCommand）と、インスタンスを 300 個にした負荷（VTG5-STRESS-GEOMETRY の前に、撮影スクリプトの引数か一時の起動引数で）での GPU 時間の前後を記録する。
+- verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RenderGraphCompileTest MegaGeometryFrameCommandDebugModeTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest|MegaGeometryFrameCommandDebugModeTest|HiZOcclusionTestVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-BATCHED-CULL -Configuration RelWithDebInfo -Deterministic`
+- stop-when: 2パスの遮蔽の可視ビットの番号の付け方がインスタンスの表と両立しない場合は、理由を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, Scripts/CaptureStartupScene.ps1, Game, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（描画パス）。材質の切り替えは段6のビジビリティバッファで不要になるが、それまでは材質ごとの区間で描く。
+
+## VTG5-PAGE-FORMAT: クラスタをページに詰めて焼き、根のページを決める
+- status: todo
+- done-when: クッカーが、階層のクラスタを 128 KiB のページに詰めて NVMESH v1.1 に書く（1つのグループは1つのページに収める。ページは頂点・インデックス・クラスタの記録を自分の中のオフセットで持つ）。ページの表（ファイル内のオフセット・大きさ・親のページの番号）と、常に常駐する根のページ（粗い段とフォールバックの段を含む）の印を持つ。cluster record のページの番号を埋める。v1.0 も読む。`CookedMeshTest` に、ページの表の往復、グループがページをまたがないこと、根のページだけで閉じたメッシュ（フォールバック）が描けること、壊れた表の拒否を足す。`Docs/Architecture/NVMESHv1.md` に追記する。
+- verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedMeshTest|AssetCookMeshSmoke|AssetCookMeshSimplifySmoke)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target AssetCook CookAssets -- /m:1`
+- stop-when: 1つのグループが 128 KiB に収まらない資産がある場合は、資産と大きさを記録して止める。
+- paths: Tools/AssetCook, Library/Core/Public/Asset, Library/Core/Private/Asset, Test/Core/Asset, Docs/Architecture, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（アセットロード）。
 
 ## VTG5-GROUP-BVH: クラスタのグループのBVHでカリングをたどる
-- status: backlog
-- done-when: クッカーがグループの BVH を焼き、GPU のカリングが BVH をたどってクラスタを選ぶ。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|CookedMeshTest)$"`
-- paths: Tools/AssetCook, Assets/Shaders, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- status: todo
+- done-when: クッカーがグループの BVH（節ごとに境界球と、子の中で最大の親の誤差）を NVMESH v1.1 に焼き、GPU のカリングが、平らなクラスタの列の代わりに BVH を段ごとの dispatch（または持続するスレッド）でたどってグループを選び、選んだグループのクラスタを判定する。BVH で枝を切る条件（視錐台・遮蔽・誤差）は、切った先のクラスタが選ばれないことが保証される保守的なもの。CPU で同じ判定を写した検査（`MegaGeometryResourcesTest`）で、BVH をたどった選択と平らな選択が一致することを確かめる。`-Deterministic` の撮影が移行前と一致する（PSNR を記録）。
+- verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest CookedMeshTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|CookedMeshTest|RenderGraphCompileTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game AssetCook CookAssets -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-GROUP-BVH -Configuration RelWithDebInfo -Deterministic`
+- stop-when: BVH の段の数がメッシュによって大きく違い、段ごとの dispatch の数が描画の予算を超える場合は、測った値を記録して止める。
+- paths: Tools/AssetCook, Library/Core/Public/Asset, Library/Core/Private/Asset, Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Asset, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（描画パス・アセットロード）。
 
-## VTG5-PAGE-STREAMER: クラスタのページを要求から読み込み、追い出す
-- status: backlog
-- done-when: ページ（128 KiB）に詰めて焼いたクラスタを、GPU のカリングの要求から範囲読みでプールへ入れ、LRU で追い出す。根のページは常駐。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^GeometryPageStreamerTest$"`
-- paths: Tools/AssetCook, Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Asset, Test/Core/Rendering, TASKS.md, PROGRESS.md
+## VTG5-PAGE-REQUEST: カリングが常駐していないページを要求し、親の段で描く
+- status: todo
+- done-when: ページの表（ページの番号 → プールの区画、または非常駐）を GPU に置き、カリングが「もっと細かい子のグループを描きたいが、そのページが常駐していない」ときは、親のグループのクラスタを描き（穴を作らない）、子のページの要求を要求のバッファ（重複はハッシュで減らす）へ書く。要求は2フレーム遅れで GPU を待たずに読み戻す（VT の `VirtualTextureFeedbackRing` に倣う）。GPU のテスト `GeometryPageRequestVulkanTest`（`RHITextureUpdateVulkanTest` の束）か `MegaGeometryResourcesTest` の CPU で写した判定で、子のページが非常駐のときに親が選ばれ、要求が書かれることを確かめる。
+- verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest|GeometryPageRequestVulkanTest)$"`
+- stop-when: 親で描く判定が2パスの遮蔽の可視ビットと食い違い、遮蔽の履歴を作り直す必要がある場合は、理由を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（描画パス・RenderThread）。
+
+## VTG5-PAGE-STREAMER: ページを要求から読み込み、予算の内で追い出す
+- status: todo
+- done-when: `GeometryPageStreamer`（RenderResources が持つ）が、ページの要求を優先度（粗い段が先・要求の数・新しさ）で選び、JobSystem の範囲読みで NVMESH v1.1 からページを読み、`GpuUploadRing` でプールの区画へ書いてからページの表を更新する（書き終える前に公開しない）。1フレームの上限（読み・コピーのバイト数）を持つ。根のページはメッシュの読み込み時に常駐させ、追い出さない。`VideoMemoryBudgetManager` の Geometry の枠の目標を超えたら、最後に要求されたフレームが古いページから LRU で外す（外したページの区画は、使っていた提出が完了してから再利用）。`VRAM_POOLS` に geometry_target_mb・geometry_used_mb・geometry_evicted_pages を出す。CPU のテスト `GeometryPageStreamerTest`（`RenderResourcesDomainContractTest` の束。読み込み・アップロードは偽物）が、優先度・上限・根の常駐・追い出しの順・目標以下に収まること・解除と再利用の順序を確かめる。起動画面の撮影で、ページのストリーミングあり（既定）と全常駐（`--geometry-streaming=off`）の PSNR を記録する（目安 45 dB 以上）。
+- verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest MegaGeometryResourcesTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GeometryPageStreamerTest|GeometryPoolAllocatorTest|MegaGeometryResourcesTest|VideoMemoryBudgetManagerTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-PAGE-STREAMER -Configuration RelWithDebInfo -Deterministic`
+- stop-when: 追い出したページを読む描画が出る経路を塞げない場合は、理由を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Asset, Library/Core/Private/Asset, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（メモリ・寿命・アセットロード・RenderThread）。VT のストリーマ（`VirtualTextureStreamer`）の作りに倣う。
 
 ## VTG5-STRESS-GEOMETRY: ジオメトリの負荷モードを足す
-- status: backlog
-- done-when: 検証モードが高ポリの資産を数百個並べ、予算の上限で溢れずに描ける。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-STRESS-GEOMETRY -Configuration RelWithDebInfo`
-- paths: Game, Scripts, TASKS.md, PROGRESS.md
+- status: todo
+- done-when: Game の `--stress-geometry` で、Poly Haven のスキャン資産（段4の3点）と岩・小屋・大きな球を数百個（既定 300）、変換を変えて地面の外側に並べる検証モードに入る（資産が無ければ置かずに警告）。全常駐ならジオメトリの量が Geometry の枠の目標の2倍以上になる `--vram-budget-mb` で撮り、`VRAM_POOLS` の geometry_used_mb が目標以下に収まり、`geometry_evicted_pages>0` で、撮影（上から・低い視点・旋回の連続フレーム）を開いて穴・割れ目・ちらつきが無いことを記録する。8GB 級を模す `--vram-budget-mb 6500` でも溢れずに描けることを記録する。GPU 時間（RelWithDebInfo）を記録する。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-STRESS-GEOMETRY -Configuration RelWithDebInfo -Deterministic`
+- stop-when: 数百個のインスタンスで1フレームのカリングが 16.6 ms を超え、まとめ方で縮まない場合は、測った値を記録して止める。
+- paths: Game, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 計画書 1（重い負荷は別モード）。撮影スクリプトに負荷モードの引数が無ければ足す。
 
 ## VTG5-ACCEPT: 段5（ジオメトリのページのストリーミング）の受入れを記録する
-- status: backlog
-- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段5の節。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^MegaGeometryResourcesTest$"`
+- status: todo
+- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段5の節に、起動画面の `-Deterministic` の撮影（朝・昼・夕・夜 × 3視点、ページのストリーミングあり・全常駐の PSNR）、ジオメトリの量（段4の全常駐・プール・ページ）、負荷モードの `--vram-budget-mb 6500` と絞った予算での `VRAM_POOLS`・追い出し・撮影の所見、GPU 時間と CPU の記録の時間、golden、関係するテストの結果、既知の限界を書く。
+- verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest CookedMeshTest MegaGeometryResourcesTest RayTracingSceneSnapshotTest RenderGraphCompileTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GeometryPoolAllocatorTest|GpuUploadRingVulkanTest|GeometryPageStreamerTest|CookedMeshTest|MegaGeometryResourcesTest|RayTracingSceneSnapshotTest|RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-ACCEPT-night -Configuration RelWithDebInfo -Deterministic -Night`
+- stop-when: 受入れの数値が段5の受入れ（計画書 5）を満たさない場合は、測った値を記録して止める。
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG6-VISBUFFER-RESOURCES: ビジビリティバッファの資源とIDの符号を決める
 - status: backlog
