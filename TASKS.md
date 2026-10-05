@@ -2482,3 +2482,9 @@
 - done-when: 独立ExpectedBinding・state scope・旧state・FINAL plan集合のkey/package対応を値として検査し、package/manifest/stateのbefore-image要件へ写す。初期profileは所有inventory固定、file I/O/Skip/publish許可は行わない。
 - verify: 全kind実recordの対応、順序差・値所有、binding/追加除去rename/primary派生/上限/失敗保持、世代上限で変更不可の明示、Windowsと79+10byte gate。
 - stop-when: 値の対応だけでfilesystem所有を証明する、未知fileを採用する、独自cook/cache判定を作る、journal discovery/locked再照合/実before-imageなしで公開へ使う。
+
+## G2-S6-MANAGED-STORE-OBSERVATION: 固定管理領域と物理祖先の中断状態を観測する
+- status: doing
+- done-when: volume lock内でownerを再解決し、物理workspace直下と全祖先の固定store名を列挙する。厳密header/indexと全active root IDを照合し、pending・入れ子・未知/置換storeを停止理由にする。成功は読み取り専用の値観測に限定する。
+- verify: 実Windowsでcase差/alias/SUBST/Unicode物理親、祖先active/pending、逆順unknown root、同階層と非関連store、壊れたclaim/保存path罠/型/reparse/上限/失敗保持・無変更、既存79+10byte gate。
+- stop-when: 保存絶対pathをI/Oへ渡す、観測だけでroot所有や公開を許す、未知既存store/rootを採用する、store初期化/復旧/ACL変更を同時に実装する。

@@ -801,3 +801,6 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-MANAGED-UPDATE-INVENTORY試験修正: c5c1c28/run37252065385は実build・5診断・28/29CPUが成功したが、専用fixtureのRaw FourCC末尾NULをcodecが拒否した。fixtureを共有RawEntryTypeへ訂正し、production実装は不変。後続79+10byte gateは未到達のため再実行する。
 
 - G2-S6-MANAGED-UPDATE-INVENTORY受入: e3244053/run37253796557で実Windows build・29CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。fixtureを共有RawEntryTypeへ合わせた後、順序非依存対応・固定inventory・世代上限・4096件/metadata予算・失敗保持・値所有と全実kindの接続を確認。3ZIPと79+10固定出力を独立確認しrootで再実行。純値対応表をdone、filesystem所有・復旧・production公開は未接続。
+
+- G2-S6-MANAGED-STORE-OBSERVATION開始: runtime直親を物理workspaceとし、固定.norves-assetcookと祖先storeを読み取り専用で検査する。協調writer・stable namespace・既存unknown root採用禁止の範囲で入れ子登録を防ぐ。固定pendingはowner/spec変更でも見落とさず、全active rootの欠落/置換を停止理由にする。store生成・journal・書込接続は別task。
+- G2-S6-MANAGED-STORE-OBSERVATION検証準備: 物理GUID祖先を列挙し、fixed long name/short alias・独立header ID・全root claimを照合する読み取り専用層を30CPUへ登録。共有lockが消す診断は独立値で保持し、列挙handleも例外時RAIIで閉じる。比較器12件×通常/最適化とGUID literalの単独compileが成功。実Windows/79+10byte gateは未実行。
