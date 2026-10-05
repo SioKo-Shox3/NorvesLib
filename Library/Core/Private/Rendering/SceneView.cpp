@@ -8,6 +8,7 @@
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/VisibilityRasterPass.h"
+#include "Rendering/GBufferDebugPass.h"
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/PathTracingPass.h"

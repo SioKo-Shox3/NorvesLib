@@ -698,7 +698,7 @@
 - notes: 2026-10-06 親が足した。2026-10-06 0:17 に Windows Update が NVIDIA のドライバを 591.86（32.0.15.9186）から 610.88（32.0.16.1088）へ入れ替えた（System のイベントログ WindowsUpdateClient の Id 43・19、`C:\Windows\INF\setupapi.dev.log`）。610.88 では、分岐・早期 return の後で呼ぶ `textureQueryLod` が多くのクアッドで −∞ 相当（.x=0、.y≤−8）を返し、フィードバックがほぼ全面でミップ 0 を要求して VT が約 9500 タイル（約 600MB）になる（GLSL では暗黙の微分は一様でない制御の中で未定義なので、これは今のシェーダーの不具合）。調査の実験（シェーダーの写しを書き換えて撮影。`.harness/runs/startup-capture/INVEST-*`、書き換えのスクリプトは親の scratchpad の `exp/`）で、4つの層の問い合わせを main の先頭へ移すと 198・503・315 タイルに戻り、2回の撮影が PSNR 105〜108dB で一致した。外れたのは GBuffer の材質のアルベド・法線（最初に標本する ORM と POM の先頭の高さは正しい）、MegaGeometry の3層（デバッグの早期 return の後）。発生源の分岐: `SparseResidencySampling.glsl` 28〜36 行付近の逃げのループ、`VirtualTextureFeedback.glsl` 94〜107 行付近の atomic のループと早期 return、MegaGeometry の早期 return。危険地帯（シェーダー・VT・アセットロード）。起動画面の見た目を変えうる（絶対規則7）。
 
 ## VTG6-RESOLVE-GEOMETRY-CAPTURE: 材質の解決（幾何）の on・off を起動画面で撮って比べる
-- status: todo
+- status: done
 - done-when: `-Deterministic` で `--visibility-buffer=on`・`off` の起動画面（既定・近接・低角度）を撮り、`GBuffer.Normal`・`Velocity` の差（デバッグの表示か GBuffer の読み戻し）が小さいことを記録する（深度・法線の向き・速度の符号が合う。on の `GBuffer.Albedo` はテクスチャなしの基本色なので最終画像の差は大きくてよい）。差の画素を開いて、物の輪郭の欠け・法線の反転・速度の符号の反転が無いことを確かめる。`off` の撮影が段6の前（`VTG6-VIS-RASTER` の撮影）と一致することを確かめる（既定の描画を変えていない）。`RenderingVelocity*VulkanTest` を on でも通す方法があれば足し、無ければ理由を PROGRESS に書く。`MEGA_OCCLUSION` の on・off の数を記録する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-RESOLVE-GEOMETRY-off -Configuration RelWithDebInfo -Deterministic`
@@ -706,6 +706,15 @@
 - stop-when: on で法線・速度の差が大きく、原因が解決の式（重心座標・接線の基底・速度）にある場合は、測った値と差の画像を記録して止める（VTG6-RESOLVE-GEOMETRY を doing に戻す）。
 - paths: Scripts/CaptureStartupScene.ps1, Game, Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 親が VTG6-RESOLVE-GEOMETRY から分けた（撮影と比較で1反復）。危険地帯（描画パス）。 2026-10-06 親（`4e0d409c` の評価の差し戻し）: off の撮影が段6の前と一致しなかった（VT の常駐が約 220 から約 9500 ページ、sparse のプールが 64MB から 640MB、撮影が毎回同じでなくなった）。原因は 2026-10-06 0:17 の NVIDIA のドライバの更新（591.86 → 610.88、Windows Update）で、分岐の後の `textureQueryLod` が多くのクアッドで外れた値を返すようになったこと（VTG6-VT-LOD-UNIFORM で直す）。VTG6-VT-LOD-UNIFORM の後に、on・off を撮り直して比べ直す。段6の前の撮影は旧ドライバなので、off の一致の基準は「VTG6-VT-LOD-UNIFORM の後の off を2回撮って一致する（決定的）こと」と「VT の常駐が旧ドライバの量（既定・近接・低角度で約 225・683・366 タイル）に近いこと」に置き換える。評価の残課題もあわせて直す: GBuffer の検証表示（`GBufferDebugPass`）が ID のラスタと無関係なのに公開ヘッダー `VisibilityRasterPass.h`（262〜318 行付近）にあり、クラスの本体が `#if NORVES_ENABLE_STATS` の外で Release の Core に入る → Private の独立したファイルへ移し、定義ごと `#if` で囲む。`VisibilityRasterPass.cpp`（1529 行付近）の記述子と UBO の枠が Execute の回数 % 2（`FrameUseRing` の形にする）。検証表示の PNG は後処理（TAA・露出・トーンマップ等）を通った色なので、PROGRESS の「xyz × 0.5 + 0.5」「8bit の差」の説明を直し、反転の数え方（空の色を基準にした符号）をやめる。屋根の法線の系統的な差（off 側の法線マップの接線の基底の偏りの疑い）を調べて記録する。
+
+## VTG6-DEBUG-PASS-FRAME-SLOTS: ID の検証表示（VisibilityDebugPass）の記述子と UBO の枠をフレームの枠にする
+- status: todo
+- done-when: `VisibilityRasterPass.cpp` の `VisibilityDebugPass::Execute` が、記述子と UBO の枠を Execute の回数 % 2 で選んでいる（`m_FrameCounter % 2u`）のを、`GBufferDebugPass` と同じ `FrameUseRing<Use>`（`context.FrameIndex` とフレームの通し番号で枠を選び、Execute のたびに次の 1 組を使う）へ変える。同じフレームに複数回 Execute しても提出前の資源を上書きしないことを、`RenderGraphCompileTest` などの実行される検査か、同じ形の既存のテストの流儀で確かめる。`--visibility-buffer=debug` の起動画面の撮影が変わらないことも確かめる。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-DEBUG-PASS-FRAME-SLOTS -Configuration RelWithDebInfo -Deterministic -ExtraGameArguments --visibility-buffer=debug`
+- stop-when: 検証表示の枠を変えると `--visibility-buffer=debug` の撮影が変わる場合は、差を記録して止める。
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 VTG6-RESOLVE-GEOMETRY-CAPTURE の反復で、`GBufferDebugPass` を `FrameUseRing` にしたときに見つけた。検証の表示だけの経路で、既定の描画には関係しない。低い優先度。
 
 ## VTG6-RESOLVE-TILE-DISPATCH: RHIに間接dispatchを足し、材質の解決を材質ごとのタイルの間接dispatchにする
 - status: todo

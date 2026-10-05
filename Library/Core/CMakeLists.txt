@@ -157,6 +157,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkinningComputePass.cpp
     Private/Rendering/MaterialTileClassifyPass.cpp
     Private/Rendering/VisibilityRasterPass.cpp
+    Private/Rendering/GBufferDebugPass.h
+    Private/Rendering/GBufferDebugPass.cpp
     Private/Rendering/VisibilityResolvePass.cpp
     Private/Rendering/VisibilityMaterialTable.cpp
     # Engine
