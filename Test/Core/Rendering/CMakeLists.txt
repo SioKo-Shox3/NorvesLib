@@ -488,6 +488,18 @@ set_tests_properties(VisibilityResolveVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 間接 dispatch（ICommandList::DispatchIndirect）を確認用の計算シェーダー（indirect_dispatch_probe.comp）で動かし、GPU 側の引数のとおりに
+# スレッドグループが走ることを読み戻して確かめる。計算シェーダーが書いた引数の GenericRead での読み取り・転送で書いた引数の IndirectArgument での読み取り・
+# 表の途中のオフセット・y への広げ（グループの番号 g = y * 数x + x）・x = 0・z > 1・不正な引数（false を返し何も記録しない）・
+# バリアの段（DRAW_INDIRECT・INDIRECT_COMMAND_READ）を含む。validation error 0 件。
+add_test(NAME IndirectDispatchVulkanTest COMMAND RHITextureUpdateVulkanTest --test=IndirectDispatchVulkanTest)
+set_tests_properties(IndirectDispatchVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
@@ -509,6 +521,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER ComputeSkinningVulkanTest ComputeSkinningVulkanTest.cpp
     MEMBER MaterialTileClassifyVulkanTest MaterialTileClassifyVulkanTest.cpp
     MEMBER VisibilityResolveVulkanTest VisibilityResolveVulkanTest.cpp
+    MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE

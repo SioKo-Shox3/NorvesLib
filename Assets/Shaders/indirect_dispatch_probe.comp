@@ -1,0 +1,85 @@
+﻿#version 450
+
+// ========================================
+// 間接 dispatch（ICommandList::DispatchIndirect）の確認用コンピュートシェーダー
+//
+// GPU のテスト（IndirectDispatchVulkanTest）が、間接引数のとおりにスレッドグループが走るかを確かめるために使う。
+//   モード 0（訪問）: グループごとに 1 回、グループの番号 g = (z * 数y + y) * 数x + x を求める。
+//     材質の解決が使う求め方（g = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x）に z を足した形。
+//     g が数える上限（params.a.y。材質のタイルの数にあたる）以上のグループは戻り、そうでなければ visits[g] を 1 増やす。
+//   モード 1（引数を書く）: 1 グループだけが、args へ (x, y, z) の 3 語を書く。計算シェーダーが書いた引数を
+//     間接 dispatch が読むときの、書き込みから読み取りへのバリアを確かめるのに使う。
+// ワークグループは 4x2。gl_NumWorkGroups は「グループの数」で、スレッドの数ではないことも確かめる。
+// ========================================
+
+layout(local_size_x = 4, local_size_y = 2, local_size_z = 1) in;
+
+// グループの番号ごとに、訪問した回数
+layout(std430, set = 0, binding = 0) buffer Visits
+{
+    uint visits[];
+};
+
+// 0..2: 見えた gl_NumWorkGroups の x・y・z、3: 走ったグループの数、4: 上限以上で戻ったグループの数、
+// 5: visits の外の番号だったグループの数
+layout(std430, set = 0, binding = 1) buffer Meta
+{
+    uint meta[];
+};
+
+layout(std140, set = 0, binding = 2) uniform ProbeParams
+{
+    // x: モード（0 = 訪問、1 = 引数を書く）、y: 数える上限、z: 書く引数の x、w: 書く引数の y
+    uvec4 a;
+    // x: 引数を書く位置（語）、y: visits の語の数、z: 書く引数の z
+    uvec4 b;
+} params;
+
+layout(std430, set = 0, binding = 3) buffer Args
+{
+    uint args[];
+};
+
+const uint MODE_WRITE_ARGS = 1u;
+
+const uint META_NUM_X = 0u;
+const uint META_NUM_Y = 1u;
+const uint META_NUM_Z = 2u;
+const uint META_RAN = 3u;
+const uint META_EARLY_RETURNS = 4u;
+const uint META_OUT_OF_RANGE = 5u;
+
+void main()
+{
+    if (gl_LocalInvocationIndex != 0u)
+    {
+        return;
+    }
+
+    if (params.a.x == MODE_WRITE_ARGS)
+    {
+        args[params.b.x + 0u] = params.a.z;
+        args[params.b.x + 1u] = params.a.w;
+        args[params.b.x + 2u] = params.b.z;
+        return;
+    }
+
+    atomicMax(meta[META_NUM_X], gl_NumWorkGroups.x);
+    atomicMax(meta[META_NUM_Y], gl_NumWorkGroups.y);
+    atomicMax(meta[META_NUM_Z], gl_NumWorkGroups.z);
+
+    const uint g = (gl_WorkGroupID.z * gl_NumWorkGroups.y + gl_WorkGroupID.y) * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (g >= params.a.y)
+    {
+        atomicAdd(meta[META_EARLY_RETURNS], 1u);
+        return;
+    }
+
+    atomicAdd(meta[META_RAN], 1u);
+    if (g >= params.b.y)
+    {
+        atomicAdd(meta[META_OUT_OF_RANGE], 1u);
+        return;
+    }
+    atomicAdd(visits[g], 1u);
+}

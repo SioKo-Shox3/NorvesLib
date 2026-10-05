@@ -716,16 +716,34 @@
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 VTG6-RESOLVE-GEOMETRY-CAPTURE の反復で、`GBufferDebugPass` を `FrameUseRing` にしたときに見つけた。検証の表示だけの経路で、既定の描画には関係しない。低い優先度。
 
-## VTG6-RESOLVE-TILE-DISPATCH: RHIに間接dispatchを足し、材質の解決を材質ごとのタイルの間接dispatchにする
+## VTG6-INDIRECT-DISPATCH-RHI: RHIに間接dispatchを足す
+- status: done
+- done-when: `ICommandList::DispatchIndirect(buffer, offset)`（Vulkan は `vkCmdDispatchIndirect`。引数が不正なら false で何も記録しない）を足し、引数のバッファの用途（`ResourceUsage::IndirectBuffer`）とバリアの段（`GenericRead`・`IndirectArgument` が `DRAW_INDIRECT` の段と `INDIRECT_COMMAND_READ` のアクセスを含むこと）を確かめる。GPU のテスト `IndirectDispatchVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、確認用の計算シェーダーを GPU 側の引数から間接 dispatch し、引数どおりにグループが走ること（計算シェーダーが書いた引数の `GenericRead` での読み取り・転送で書いた引数の `IndirectArgument` での読み取り・表の途中のオフセット・y への広げ（g = y * 数x + x）・x = 0・z > 1）と、不正な引数で false を返すことを確かめる。validation error 0 件。
+- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(IndirectDispatchVulkanTest|RenderGraphCompileTest|MaterialTileClassifyVulkanTest|VisibilityResolveVulkanTest|IntegerAttachmentVulkanTest)$"`
+- stop-when: 間接 dispatch を足すのに RHI の公開 API の形（引数のバッファの用途の列挙など）を大きく変える必要がある場合は、足す API の案を記録して止める。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 VTG6-RESOLVE-TILE-DISPATCH から分けた（1 反復で閉じない大きさのため。残りは VTG6-RESOLVE-TILE-SHADER と VTG6-RESOLVE-TILE-DISPATCH）。危険地帯（RHI の公開 API）。`DispatchIndirect` は `bool` を返し、対応しないコマンドリスト（既定の実装。テストの偽のコマンドリストなど）は false を返すだけにした（`BuildAccelerationStructure` と同じ流儀。純粋仮想にすると 17 のテストの偽のコマンドリストを全部直すことになるため）。`GenericRead` は既に `DRAW_INDIRECT` の段と `INDIRECT_COMMAND_READ` を含んでいた（`VulkanCommandList.cpp` の `ResourceStateToPipelineStageFlags`・`ResourceStateToAccessFlags`）ので、テストで固定しただけ。バッファの用途は `ResourceUsage::IndirectBuffer`（`VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT`）が既にあり、用途の列挙は変えていない。
+
+## VTG6-RESOLVE-TILE-SHADER: 材質の解決の計算シェーダーをタイルの一覧から走る形にし、画面全体の直接 dispatch と画素で一致させる
 - status: todo
-- done-when: `ICommandList` に間接 dispatch（`DispatchIndirect(buffer, offset)`。Vulkan は `vkCmdDispatchIndirect`）を足し、引数のバッファの用途（間接の引数）とバリアの段（`GenericRead` が `DRAW_INDIRECT` の段と `INDIRECT_COMMAND_READ` を含むこと）を確かめる。材質の解決（`VisibilityResolvePass`）を、`MaterialTileClassifyPass` が作る材質ごとのタイルの一覧と間接 dispatch の引数で、材質ごとに1回ずつ間接 dispatch する形にする（グループの番号は `g = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x`、`g >= タイルの数` は return、タイルは `tileList[先頭位置 + g]`）。分類のパスを on で有効にし、解決より前に足す。材質の数だけ dispatch を出す費用（起動画面は 17〜24 材質）を記録する。GPU のテスト（`RHITextureUpdateVulkanTest` の束）が、間接 dispatch の引数どおりにグループが走ること（y への広げを含む）と、タイルの解決の結果が画面全体の直接 dispatch の結果と画素で一致することを確かめる。`-Deterministic` の on の撮影が直接 dispatch の版と一致する（PSNR を記録）。既定（off）の描画は変えない。
+- done-when: 材質の解決（`Common/VisibilityResolve.glsl`・`VisibilityResolve::Record`）に、材質ごとのタイルの一覧から走る版を足す（新しいシェーダー `visbuffer_resolve_tiles.comp` か同じ本体のコンパイル時の分岐。製品の版と検証用の版の両方）。1 回の dispatch は 1 つの材質で、グループの番号は `g = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x`、`g >= その材質のタイルの数`（`MaterialTileClassify` の引数の `ARG_TILE_COUNT`）は return、タイルは `tileList[ARG_LIST_OFFSET + g]`（タイルの番号 = tileY * tilesX + tileX）で、そのタイルの 8×8 の画素を解決する。どの材質を処理するかは 1 回の dispatch ごとの定数（UBO。RHI に push constant が無い）で渡し、`FrameUseRing` の枠で 1 フレームに何回記録しても上書きしない。画面の端の部分タイルの画面の外は読み書きしない。`VisibilityResolve::Record` は、画面全体の直接 dispatch（今の形。材質のタイルが無いとき）と、材質ごとに 1 回ずつ `DispatchIndirect` する形（材質の数は引数の表の件数）を選べる。GPU のテスト `VisibilityResolveVulkanTest` が、合成した ID の画像を `MaterialTileClassify` で分類し、その一覧と引数で材質ごとの間接 dispatch の解決をした結果（GBuffer の Albedo・Normal・Velocity と、検証用の版の画素ごとの中間の値）が、画面全体の直接 dispatch の結果と画素でビット単位に一致することを確かめる（空のタイル・複数の材質が混じるタイル・部分タイルを含む。材質の表から引けない画素や上限以上の材質は直接版と同じ扱いか、違う点を記録する）。
+- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest|MaterialTileClassifyVulkanTest|IndirectDispatchVulkanTest)$"`
+- stop-when: 材質ごとの間接 dispatch の解決が直接版と画素で一致せず、原因が分類の一覧（`MaterialTileClassify` の出力）の側にある場合は、一致しない画素と値を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 VTG6-RESOLVE-TILE-DISPATCH から分けた。計画書 4.3。危険地帯（描画パス）。RenderGraph の配線（分類のパスを足す・解決のパスが引数と一覧を読む）は次の VTG6-RESOLVE-TILE-DISPATCH で行うので、この項目では `VisibilityResolvePass` の既定の経路（画面全体の直接 dispatch）を変えない。テストのコードでも標準ライブラリの型を使わない（`Container::VariableArray`）。
+
+## VTG6-RESOLVE-TILE-DISPATCH: 材質の解決のパスを材質ごとのタイルの間接dispatchにして、起動画面で確かめる
+- status: todo
+- done-when: `VisibilityResolvePass` を、`MaterialTileClassifyPass` が作る材質ごとのタイルの一覧と間接 dispatch の引数で、材質ごとに 1 回ずつ間接 dispatch する形にする（VTG6-INDIRECT-DISPATCH-RHI の `DispatchIndirect` と VTG6-RESOLVE-TILE-SHADER の材質ごとの解決を使う）。`--visibility-buffer=on` で、`SceneView` が分類のパスを有効にして、解決より前に足す（分類のパスは今は既定で無効。`VisibilityRasterPass` の後、`VisibilityResolvePass` の前）。解決のパスは分類の引数・一覧・統計を `GenericRead` で読み（RenderGraph の依存が組まれ、`MaterialTileClassifyPass` の最終のバリアの後に読む）、分類が記録できなかったフレーム（引数が 0）は何も走らせない。分類・解決のパスを足しても `off`（既定）の描画は変えない。`RenderGraphCompileTest` が、on の構成で分類 → 解決の順と、解決が材質の数だけ間接 dispatch を記録すること（偽のコマンドリストが `DispatchIndirect` を記録する）、分類を使えないとき（パイプラインが無い）の解決の扱い（直接 dispatch に戻るか何も走らせないか）を確かめる。材質の数だけ dispatch を出す費用（起動画面は 17〜24 材質）を記録する（dispatch の数・GPU の時間。`Debug/Stats.h` の統計かログ）。`-Deterministic` の on の撮影が、直接 dispatch の版（`VTG6-RESOLVE-GEOMETRY-CAPTURE` の on。HEAD = `80ec7662` の後の撮影か、この反復で撮り直した直接版）と一致する（PSNR を記録。一致しなければ差の出どころを記録）。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest|MaterialTileClassifyVulkanTest|IntegerAttachmentVulkanTest)$"`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-RESOLVE-TILE-DISPATCH -Configuration RelWithDebInfo -Deterministic -ExtraGameArguments --visibility-buffer=on`
 - stop-when: 間接 dispatch を足すのに RHI の公開 API の形（引数のバッファの用途の列挙など）を大きく変える必要がある場合は、足す API の案を記録して止める。
 - paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-06 親が足した（VTG6-RESOLVE-GEOMETRY の評価で、解決が材質ごとのタイルでなく画面全体の直接 dispatch になっていると分かった。`ICommandList` に間接 dispatch が無いため）。計画書 4.3。危険地帯（RHI の公開 API・描画パス）。後の VTG6-RESOLVE-MATERIALS は材質ごとの dispatch で材質ごとの descriptor を張る。
+- notes: 2026-10-06 親が足した（VTG6-RESOLVE-GEOMETRY の評価で、解決が材質ごとのタイルでなく画面全体の直接 dispatch になっていると分かった。`ICommandList` に間接 dispatch が無いため）。計画書 4.3。危険地帯（RHI の公開 API・描画パス）。後の VTG6-RESOLVE-MATERIALS は材質ごとの dispatch で材質ごとの descriptor を張る。 2026-10-06 反復: 1 反復で閉じない大きさなので、RHI の `DispatchIndirect`（VTG6-INDIRECT-DISPATCH-RHI。done）と、材質ごとの解決のシェーダーと直接版との画素の一致（VTG6-RESOLVE-TILE-SHADER）を前の単位に分けた。この項目は RenderGraph の配線と起動画面の撮影・費用の記録。
 
 ## VTG6-RESOLVE-MATERIALS: 材質の解決で材質のテクスチャ・ORM・BC5の法線・POM・VTの逃げ道を求める
 - status: todo

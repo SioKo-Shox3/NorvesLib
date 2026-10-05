@@ -195,7 +195,7 @@ namespace NorvesLib::RHI
         IndexBuffer = 1 << 7,
         ConstantBuffer = 1 << 8,
         StorageBuffer = 1 << 9,       // ストレージバッファ（SSBO）
-        IndirectBuffer = 1 << 10,     // 間接描画引数バッファ
+        IndirectBuffer = 1 << 10,     // 間接描画・間接ディスパッチの引数バッファ
         BufferDeviceAddress = 1 << 11, // バッファのdevice addressを要求
         ShaderResource = ShaderRead,  // エイリアス: 互換性のため
         UnorderedAccess = ShaderWrite // エイリアス: 互換性のため

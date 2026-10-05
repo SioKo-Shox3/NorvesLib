@@ -1169,6 +1169,21 @@ namespace NorvesLib::RHI::Vulkan
         m_commandBuffer.dispatch(threadGroupCountX, threadGroupCountY, threadGroupCountZ);
     }
 
+    bool VulkanCommandList::DispatchIndirect(BufferPtr indirectBuffer, uint64_t offset)
+    {
+        // VkDispatchIndirectCommand（uint32_t x 3）の大きさ。offset は 4 の倍数で、引数がバッファに収まること
+        constexpr uint64_t DispatchIndirectCommandBytes = 3u * sizeof(uint32_t);
+        auto vkBuffer = DynamicPointerCast<VulkanBuffer>(indirectBuffer);
+        if (!vkBuffer || (offset % 4u) != 0u || offset > vkBuffer->GetSize() ||
+            vkBuffer->GetSize() - offset < DispatchIndirectCommandBytes)
+        {
+            return false;
+        }
+
+        m_commandBuffer.dispatchIndirect(vkBuffer->GetVkBuffer(), offset);
+        return true;
+    }
+
     bool VulkanCommandList::BuildAccelerationStructure(const AccelerationStructureBuildDesc& desc)
     {
         return RecordTopLevelAccelerationStructureBuild(desc, AccelerationStructureBuildMode::Build);
