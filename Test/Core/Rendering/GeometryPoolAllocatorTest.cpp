@@ -3,6 +3,7 @@
 // 解放した区画が GpuRetireQueue を通って最後に使った提出の serial の完了まで空きへ戻らないこと（提出順に戻ること）を、
 // GPU を使わない偽のバッファで確かめる。
 #include "Container/PointerTypes.h"
+#include "Container/VariableArray.h"
 #include "Rendering/GeometryPool.h"
 #include "Rendering/GeometryPoolAllocator.h"
 #include "Rendering/GpuRetireQueue.h"
@@ -13,7 +14,6 @@
 #include <cstdint>
 #include <iostream>
 #include <thread>
-#include <vector>
 
 namespace NorvesLib
 {
@@ -22,6 +22,7 @@ namespace
 
 using Core::Container::MakeShared;
 using Core::Container::TSharedPtr;
+using Core::Container::VariableArray;
 using Core::Rendering::GeometryAllocation;
 using Core::Rendering::GeometryPool;
 using Core::Rendering::GeometryPoolAllocator;
@@ -415,11 +416,11 @@ void TestConcurrentAllocateAndFree()
         std::atomic<int> misaligned{0};
         constexpr int ThreadCount = 4;
         constexpr int Iterations = 3000;
-        std::vector<std::thread> threads;
+        VariableArray<std::thread> threads;
         for (int t = 0; t < ThreadCount; ++t)
         {
             threads.emplace_back([&pool, &misaligned, t]() {
-                std::vector<GeometryPool::RegionLease> held;
+                VariableArray<GeometryPool::RegionLease> held;
                 uint32_t seed = 12345u + static_cast<uint32_t>(t) * 977u;
                 for (int i = 0; i < Iterations; ++i)
                 {

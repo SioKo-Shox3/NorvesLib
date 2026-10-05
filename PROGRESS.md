@@ -824,3 +824,8 @@
 - stop-when: RHI のバッファの用途の組み合わせは `VulkanBuffer::GetVkBufferUsage` が各フラグを独立に Vulkan のフラグへ写すので、1 本で作れる（当たらない）。
 - 検証: `verify-VTG5-GEOM-POOL-1.txt`（Game・RenderResourcesDomainContractTest の Debug ビルド BUILD_EXIT_CODE=0）、`-2.txt`（ctest 3/3 pass）、`-3-direct.txt`（テストの束を直接実行して成功）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。新規ファイルは BOM+CRLF。
 - Notes: (1) GPU の実機の確保（256 MiB の塊を Vulkan で作る）は、この項目の完了条件がまだ使っていないので走らせていない（VTG5-MEGA-POOL-MIGRATE で初めて確保される）。DeviceLocal・用途の写しはコードで確認した。(2) `RHI::IDevice::CreateBuffer` は失敗で例外を投げるので、`DeviceGeometryBlockFactory` は捕まえて null を返す。(3) 次は VTG5-ASYNC-UPLOAD。
+
+## 反復 2（run 20261005-094208）: VTG5-GEOM-POOL 差し戻し対応（done）
+- 評価者の指摘（`GeometryPoolAllocatorTest.cpp` の並行テストにあった `std::vector` 2 箇所）を `VariableArray` へ置き換え、不要になった `<vector>` の include を外して `Container/VariableArray.h` を足した。テストの中身は変えていない。
+- 検証: `verify-VTG5-GEOM-POOL-3.txt`（Game・RenderResourcesDomainContractTest の Debug ビルド exit=0、ctest 3/3 pass）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
+- Notes: Git Bash は `/m:1` を変換してビルドが失敗するので PowerShell で回した。
