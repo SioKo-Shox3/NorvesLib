@@ -2550,7 +2550,9 @@
 - result: code17ce1e04/tree d3680dce/run37336768659 attempt1 job111853407017。実MSVCx64・41CPU/新旧3marker・17/29中断・79+10byte・25+15CLI/metadata12・Python12+4+7 normal/-O・3ZIP/CNGを独立受入し親も再実行exit0。先行2runのinclude阻害を修正し失敗証拠保持。GPU描画は未受入れ。旧v0/loose匿名texture所有の漏れは次の小修正へ残す。
 
 ## G2-GR79-LEGACY-TEXTURE-OWNERSHIP: 旧静的モデルの匿名texture所有を閉じる
-- status: doing
+- status: done
 - done-when: CreateTextureFromPixelsの匿名handleをptr取得後にregistryから解放してmodelへ移管し、CreateTexture(data)のupload例外でも作成済み登録を残さない。prepared/cookedの名前付きcache、byte/mip/upload/shader/既定表示は変更しない。
 - verify: 旧経路のalbedo/normal/ARM5roleの解放、後半texture作成失敗、upload例外、geometry失敗でregistryが基線へ戻りweakが失効する。public CreateTextureの通常戻り/空dataのhandle所有は維持。既存41CPU/79+10byte/managed復旧gate。実GPU画像の合格とは別。
 - stop-when: upload失敗時の戻り値仕様や広いcache設計まで変更する、v0の見た目やbyteを変える。
+
+- result: codea0faaa01/tree9215c4ed/run37343440486 attempt1 job111875985370。実MSVCx64・41CPU/新旧4marker・17/29中断・79+10byte・25+15CLI/metadata12・Python12+4+7 normal/-O・3ZIP/CNGを受入し親もreadonly再実行exit0。5role/例外/途中失敗/通常caller/named cacheの有限検証。GPU/cross-sessionは未実行。

@@ -874,3 +874,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR79 旧匿名texture所有修正を開始。今回の対象はmodelへ渡す匿名pixel textureとupload例外のcleanupだけ。named prepared/cooked cacheの所有・通常API戻り値・mip生成は維持する。
 
 - G2/GR79 旧匿名texture所有修正の検証準備: ptr取得後registry解除、作成元storeのRAII例外cleanupを実装。5role単独/併用、失敗作成数4/1/5、weak失効、通常/空data/非例外mip失敗のcaller所有、named cache保持を既存testへ追加。静的2roundでblockerなし、Python12+4+7 normal/-O合格。41CPUと旧gateの実Windows再検証は未実行。
+
+- G2/GR79 旧匿名texture所有修正受入: a0faaa015d1afb3680d1b06ca07fbb31a41c03af / tree9215c4ed8f6f8323f4d1bd0cf97cc93ef4cb7a0e / run37343440486 attempt1 job111875985370。41CPU/新旧4marker、Bootstrap17/Update29、79+10byte、7smoke/5診断、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを照合し親も全readonly verifier再実行exit0。GPU/cross-sessionは未実行。次はGR79複数primitive/material cookを優先し、N>1 runtime拒否を維持する。
