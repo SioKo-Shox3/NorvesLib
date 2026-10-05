@@ -369,6 +369,18 @@ set_tests_properties(SparseTileUploadVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# ステージングのリング経由で、ジオメトリのプール（DeviceLocal の大きなバッファ）の区画へ GPU を待たずに書く（TileUploader::EnqueueBufferCopy）。
+# 連続フレームで区画の途中へ書き、計算シェーダーで読み戻して一致を確かめる。その間に WaitIdle を呼ばないこと、
+# テクスチャとバッファがリングと1フレームの上限を共有すること、重なるバイト範囲が次のフレームへ送られること、
+# 解放した区画宛てのコピーが無効になることを確かめる。
+add_test(NAME GpuUploadRingVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GpuUploadRingVulkanTest)
+set_tests_properties(GpuUploadRingVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # ミップ0のタイル1枚とミップテイルだけを結んだ sparse テクスチャを、材質のシェーダーの標本関数（常駐しなければ粗いミップへ逃げる）で
 # 引く。結んでいない領域が粗いミップの色になり、黒や未定義の値にならないこと、ミップ1を結ぶと1段だけ下げて止まることを確かめる。
 add_test(NAME VirtualTextureResidencyVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VirtualTextureResidencyVulkanTest)
@@ -429,6 +441,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER SparseTextureVulkanTest SparseTextureVulkanTest.cpp
     MEMBER SparseBindVulkanTest SparseBindVulkanTest.cpp
     MEMBER SparseTileUploadVulkanTest SparseTileUploadVulkanTest.cpp
+    MEMBER GpuUploadRingVulkanTest GpuUploadRingVulkanTest.cpp
     MEMBER VirtualTextureResidencyVulkanTest VirtualTextureResidencyVulkanTest.cpp
     MEMBER VirtualTextureFeedbackVulkanTest VirtualTextureFeedbackVulkanTest.cpp
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp

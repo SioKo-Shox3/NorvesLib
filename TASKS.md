@@ -439,7 +439,7 @@
 - notes: 計画書 4.3。危険地帯（メモリ・寿命）。
 
 ## VTG5-ASYNC-UPLOAD: ステージングのリングからバッファへGPUを待たずに書く
-- status: todo
+- status: done
 - done-when: 段2のタイルのアップロードのリング（`TileUploader`）を、テクスチャのタイルとバッファの区画の両方へ書ける共通の `GpuUploadRing` に広げる（または同じリングをバッファのコピーにも使えるようにする）。バッファへのコピーは描画のコマンドの先頭で行い、`WaitIdle` を呼ばない。1フレームの上限（バイト数）をテクスチャとバッファで共有する。GPU のテスト `GpuUploadRingVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、連続する複数フレームでプールの区画へ書いて計算シェーダーで読み戻し、その間に `WaitIdle` を呼ばないことを確かめる。既存の `SparseTileUploadVulkanTest` も通る。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GpuUploadRingVulkanTest|SparseTileUploadVulkanTest|GeometryPoolAllocatorTest)$"`

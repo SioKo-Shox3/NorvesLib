@@ -153,6 +153,8 @@ namespace NorvesLib::Core::Rendering
 
             /** @brief 区画を持つ塊のバッファ（無効な RegionLease では null） */
             RHI::IBuffer *GetBuffer() const { return m_Buffer.get(); }
+            /** @brief 塊のバッファの共有ハンドル（アップロードのリングなど、コピー先として持ち続ける側へ渡す。無効なら null） */
+            const RHI::BufferPtr &GetBufferHandle() const { return m_Buffer; }
             uint32_t GetBlockIndex() const { return m_Allocation.BlockIndex; }
             /** @brief 塊のバッファの中での先頭のオフセット */
             uint64_t GetOffsetBytes() const { return m_Allocation.OffsetBytes; }
