@@ -1014,8 +1014,8 @@ namespace NorvesLib::Tools::AssetCook
             CookOwnedState BeforeState, AfterState;
             Core::Asset::AssetManifest Manifest;
         };
-        bool Validate(const CookManagedIntentDraft& d, const CookManagedControlDocuments& docs, ParsedDocuments& parsed,
-                      Text& error)
+        bool ReadControlDocuments(const CookManagedIntentDraft& d, const CookManagedControlDocuments& docs,
+                                  ParsedDocuments& parsed, Text& error)
         {
             if (!DraftShape(d, error))
             {
@@ -1037,10 +1037,6 @@ namespace NorvesLib::Tools::AssetCook
                     return Fail(error, "control_bytes_or_identity");
                 }
             }
-            if (!Matches(d.ManifestAfter, docs.ManifestAfter, MaximumCookStateBytes))
-            {
-                return Fail(error, "manifest_bytes_or_identity");
-            }
             if (!ParseCookManagedStoreIndex(docs.Controls[IndexBefore].Bytes, d.Anchor.StoreId, MaximumCookStoreRoots,
                                             parsed.BeforeIndex, error) ||
                 !ParseCookManagedStoreIndex(docs.Controls[IndexAfter].Bytes, d.Anchor.StoreId, MaximumCookStoreRoots,
@@ -1057,6 +1053,27 @@ namespace NorvesLib::Tools::AssetCook
             if (!CheckIndex(d, parsed.BeforeIndex, parsed.AfterIndex, error))
             {
                 return false;
+            }
+            const auto& after = parsed.AfterState;
+            const auto* before = d.Mode == CookManagedIntentMode::Update ? &parsed.BeforeState : nullptr;
+            if (after.Generation != d.StateGeneration ||
+                (before ? (before->Generation == UINT64_MAX || after.Generation != before->Generation + 1)
+                        : after.Generation != 1))
+            {
+                return Fail(error, "state_generation");
+            }
+            return true;
+        }
+        bool Validate(const CookManagedIntentDraft& d, const CookManagedControlDocuments& docs, ParsedDocuments& parsed,
+                      Text& error)
+        {
+            if (!ReadControlDocuments(d, docs, parsed, error))
+            {
+                return false;
+            }
+            if (!Matches(d.ManifestAfter, docs.ManifestAfter, MaximumCookStateBytes))
+            {
+                return Fail(error, "manifest_bytes_or_identity");
             }
             if (!ReadManifest(docs.ManifestAfter.Bytes, parsed.Manifest))
             {
@@ -1331,6 +1348,67 @@ namespace NorvesLib::Tools::AssetCook
         catch (const std::exception&)
         {
             return Fail(error, "envelope_exception");
+        }
+    }
+    bool ParseCookManagedRecoveryEnvelope(ByteView bytes, const CookManagedStorageAnchor& storage,
+                                          CookManagedTransactionEnvelope& out, Text& error)
+    {
+        error.clear();
+        try
+        {
+            if (!J::Token(storage.StoreId, 32) || !IdValid(storage.Workspace) || !IdValid(storage.Store) ||
+                !IdValid(storage.Pending))
+            {
+                return Fail(error, "recovery_storage_anchor");
+            }
+            CookManagedTransactionEnvelope candidate;
+            if (!Decode(bytes, candidate.m_Value, error))
+            {
+                return false;
+            }
+            const auto& a = candidate.m_Value.Anchor;
+            if (candidate.m_Value.Mode != CookManagedIntentMode::Bootstrap || a.StoreId != storage.StoreId ||
+                !IdEqual(a.Workspace, storage.Workspace) || !IdEqual(a.Store, storage.Store) ||
+                !IdEqual(a.Pending, storage.Pending))
+            {
+                return Fail(error, "recovery_storage_scope");
+            }
+            candidate.m_bValid = true;
+            out = std::move(candidate);
+            return true;
+        }
+        catch (const std::exception&)
+        {
+            return Fail(error, "recovery_envelope_exception");
+        }
+    }
+    bool BindCookManagedRecoveryReadScope(const CookManagedTransactionEnvelope& envelope,
+                                          const CookManagedControlDocuments& docs, CookManagedRecoveryReadScope& out,
+                                          Text& error)
+    {
+        error.clear();
+        try
+        {
+            if (!envelope.m_bValid || envelope.m_Value.Mode != CookManagedIntentMode::Bootstrap)
+            {
+                return Fail(error, "recovery_envelope_required");
+            }
+            ParsedDocuments parsed;
+            if (!ReadControlDocuments(envelope.m_Value, docs, parsed, error))
+            {
+                return false;
+            }
+            CookManagedRecoveryReadScope candidate;
+            candidate.RootLeaf = envelope.m_Value.Anchor.RootLeaf;
+            candidate.ManifestName = envelope.m_Value.Anchor.Binding.ManifestName;
+            candidate.Root = envelope.m_Value.Root;
+            candidate.ManifestAfter = envelope.m_Value.ManifestAfter;
+            out = std::move(candidate);
+            return true;
+        }
+        catch (const std::exception&)
+        {
+            return Fail(error, "recovery_scope_exception");
         }
     }
     bool ParseCookManagedTransactionIntent(const CookManagedTransactionEnvelope& envelope,

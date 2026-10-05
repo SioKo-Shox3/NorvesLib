@@ -83,6 +83,17 @@ namespace NorvesLib::Tools::AssetCook
         // Cookは共通capture、Skipは旧recordを渡す。source locatorやdecisionをwireへ保存しない。
         Core::Container::Span<const CookOwnedRecord> FinalRecords;
     };
+    struct CookManagedStorageAnchor
+    {
+        Core::Container::AnsiString StoreId;
+        CookManagedObjectId Workspace, Store, Pending;
+    };
+    struct CookManagedRecoveryReadScope
+    {
+        Core::Container::AnsiString RootLeaf, ManifestName;
+        CookManagedObjectId Root;
+        CookManagedFileImage ManifestAfter;
+    };
     class CookManagedTransactionIntent;
     class CookManagedTransactionEnvelope;
     inline constexpr size_t MaximumCookManagedIntentBytes = 32 * 1024 * 1024;
@@ -105,6 +116,16 @@ namespace NorvesLib::Tools::AssetCook
                                                          const CookManagedControlDocuments& documents,
                                                          CookManagedTransactionIntent& out,
                                                          Core::Container::AnsiString& error);
+    // bootstrap復旧専用。live header/store/pendingへ先に束縛し、元sourceのownerを再導出しない。
+    // 固定controlを読み終えるまではroot/manifestのhintも公開しない。新cookの所有許可ではない。
+    [[nodiscard]] bool ParseCookManagedRecoveryEnvelope(Core::Container::Span<const uint8_t> bytes,
+                                                        const CookManagedStorageAnchor& independentStorage,
+                                                        CookManagedTransactionEnvelope& out,
+                                                        Core::Container::AnsiString& error);
+    [[nodiscard]] bool BindCookManagedRecoveryReadScope(const CookManagedTransactionEnvelope& envelope,
+                                                        const CookManagedControlDocuments& fixedDocuments,
+                                                        CookManagedRecoveryReadScope& out,
+                                                        Core::Container::AnsiString& error);
     // receipt bodyはintent digestを含めず、作成前に生成できる。16KiB以下。
     [[nodiscard]] bool MakeCookManagedReceiptBody(const CookManagedIntentDraft& draft, Core::Container::AnsiString& out,
                                                   Core::Container::AnsiString& error);
@@ -207,6 +228,12 @@ namespace NorvesLib::Tools::AssetCook
       private:
         bool m_bValid = false;
         CookManagedIntentDraft m_Value;
+        friend bool ParseCookManagedRecoveryEnvelope(Core::Container::Span<const uint8_t>,
+                                                     const CookManagedStorageAnchor&, CookManagedTransactionEnvelope&,
+                                                     Core::Container::AnsiString&);
+        friend bool BindCookManagedRecoveryReadScope(const CookManagedTransactionEnvelope&,
+                                                     const CookManagedControlDocuments&, CookManagedRecoveryReadScope&,
+                                                     Core::Container::AnsiString&);
         friend bool ParseCookManagedTransactionEnvelope(Core::Container::Span<const uint8_t>,
                                                         const CookManagedStoreAnchor&, CookManagedTransactionEnvelope&,
                                                         Core::Container::AnsiString&);

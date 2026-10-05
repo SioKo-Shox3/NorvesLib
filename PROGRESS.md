@@ -819,3 +819,6 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-MANAGED-TRANSACTION-INTENT検証準備: 4固定controlのexact bytes/ID、共有index/state/manifest parser、固定key/package、Cook/Skip値、bootstrap directory閉包を32CPUへ接続。全kindは実stage/package/control IDでupdateと別不在rootのbootstrapを構成し、source不在parseも反証する。移動元wrapperを無効化し、深い共有prefixは親indexを一度だけ辿って検査時の文字列増幅を避ける。比較器12件×通常/最適化とliteral単独compileは成功、実Windows/79+10byteは未実行。
 
 - G2-S6-MANAGED-TRANSACTION-INTENT受入: af3609a7/run37272790699で実Windows build・32CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。15種の実cook fixtureでupdate/bootstrapのnative imagesとsource不在parse、250段共有prefix/2000末端の閉包、移動元無効化と失敗保持を確認。共有codec抽出73項目・71 source receipts・3ZIP・CNGを独立検証しrootで再実行。値契約をdone、実publication/rollback/CLI接続は未実装。
+
+- G2-S6-MANAGED-BOOTSTRAP-EXECUTOR開始: texture spec v1の共通prepare/captureと既知stageを、pending付きの実公開へ接続する。復旧はlive workspace/store/header/pendingで先に束縛し、固定after-index/stateのclaimを検証してから相対root/manifestを読む。元bindingをsource不在で独立再導出できるとは扱わない。receiptはpending内でcommitし、完全commit/rollback後だけpendingを退役。途中で必要なside原objectをdeleteせずrenameで保持する。
+- G2-S6-MANAGED-BOOTSTRAP-EXECUTOR検証準備: 共通texture cookからroot/state/indexを公開するcontrollerとstorage-bound recoveryを33CPUへ登録。17境界の実process終了、source/spec不在、原index ID/byte保持、未知entry/親/別IDの拒否、orphan保持、Busy、aliasと解除失敗の試験を追加した。native観測helperを共有し、claim照合はfold-name索引で全件再列挙を避ける。比較器12件×通常/最適化と347 literalの単独compileは成功、実Windows/79+10byteは未実行。

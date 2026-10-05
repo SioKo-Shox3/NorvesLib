@@ -2502,7 +2502,7 @@
 - stop-when: 永続file lineageやwhole-root update交換を導入する、unlistedを変更する、updateで親directoryを再作成する、beforeを再serializeしたJSONで代用する、source不在復旧でsourceを読む、値codecをwrite capabilityとみなす。
 
 ## G2-S6-MANAGED-BOOTSTRAP-EXECUTOR: 不在runtimeの公開とpending復旧を接続する
-- status: todo
-- done-when: controller自身が実cook/captureから既知stageとintentを作り、root/state/indexを同volume lock内で公開する。receiptはpending内で最後にcommitし、完全commitまたは完全rollbackを照合した後だけpendingを退役する。source/spec不在で固定pendingを安全に復旧できる。
+- status: doing
+- done-when: 初期profileは既存texture spec v1。controller自身が実cook/captureから既知stageとintentを作り、root/state/indexを同volume lock内で公開する。receiptはpending内で最後にcommitし、完全commitまたは完全rollbackを照合した後だけpendingを退役する。source/spec不在で固定pendingを安全に復旧できる。
 - verify: 実Windowsのnative IDとexact before bytes、各rename/receipt/rollback/退役境界の実process終了、ordinary/abandoned再開、同byte別ID/未知entry/親置換/side doc破損/no-replace競合/alias、既存32CPU・79+10byte・5診断。
 - stop-when: 保存absolute locatorをI/Oへ戻す、独立bindingを導出できると偽る、既存root採用/whole-root update交換/恒久file lineageを行う、未知orphanをprefixで掃除する、ordinary観測を弱める、powerloss/atomic reader保証が必要になる。
