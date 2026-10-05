@@ -120,6 +120,7 @@ add_executable(RayTracingSceneSnapshotTest
 target_link_libraries(RayTracingSceneSnapshotTest PRIVATE RenderingGpuTestSupport)
 target_include_directories(RayTracingSceneSnapshotTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
 )
 set_target_properties(RayTracingSceneSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")

@@ -857,6 +857,7 @@ namespace NorvesLib::Core::Rendering
                 instance.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
                 instance.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
                 instance.MegaMeshId = proxy.MegaMeshHandle.Id;
+                instance.GeometryRegionOwner = gpuData->RegionOwner;
                 instance.IndexOffset = gpuData->ShadowFirstIndex;
                 instance.IndexCount = gpuData->ShadowIndexCount;
                 instance.VertexOffset = 0;

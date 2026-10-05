@@ -1866,6 +1866,62 @@ namespace
                            sizeof(MeshFixture::Vertices)) == 0);
     }
 
+    // レイトレーシングのスナップショット（FramePacket）が区画の持ち主を持っている間は、元のメッシュを解放しても
+    // 区画が別のメッシュへ使い回されない。最後の参照が消え、提出の完了を待ってから空きへ戻る
+    void TestSnapshotOwnerKeepsReleasedRegionFromReuse()
+    {
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(InitializeWithSmallPool(manager, device));
+
+        MeshFixture meshA("SnapshotA");
+        meshA.Vertices[0] = 111.0f;
+        const auto handleA = manager.MegaGeometry().CreateMegaMesh(meshA.CreateInfo);
+        assert(handleA.IsValid());
+        assert(GeometryUpload::DrainGeometryUploads(manager));
+
+        // スナップショットが複製して持つ GPU データ（区画の持ち主を含む）
+        MegaGeometry::MegaMeshGPUData snapshotData = *manager.MegaGeometry().GetReadyMegaMeshGPUData(handleA);
+        assert(snapshotData.RegionOwner != nullptr);
+        const uint64_t regionOffsetA = snapshotData.ClusterBufferOffsetBytes;
+
+        // 元のメッシュを解放しても、スナップショットが持っている間は区画が使われたまま
+        manager.MegaGeometry().ReleaseMegaMesh(handleA);
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(handleA) == nullptr);
+        assert(manager.GetGeometryPool()->GetStats().AllocationCount == 1);
+
+        // 同じ大きさの別のメッシュは、保持中の区画ではなく別の区画へ置かれ、スナップショットの中身を汚さない
+        MeshFixture meshB("SnapshotB");
+        meshB.Vertices[0] = 222.0f;
+        const auto handleB = manager.MegaGeometry().CreateMegaMesh(meshB.CreateInfo);
+        assert(handleB.IsValid());
+        const MegaGeometry::MegaMeshGPUData *dataB = manager.MegaGeometry().GetMegaMeshGPUData(handleB);
+        assert(dataB != nullptr);
+        assert(dataB->ClusterBufferOffsetBytes != regionOffsetA);
+        assert(GeometryUpload::DrainGeometryUploads(manager));
+        assert(manager.GetGeometryPool()->GetStats().AllocationCount == 2);
+        assert(std::memcmp(PoolBytesAt(snapshotData, snapshotData.VertexBufferOffsetBytes),
+                           meshA.Vertices,
+                           sizeof(MeshFixture::Vertices)) == 0);
+
+        // 最後の参照が消えても、記録中のフレームの提出が完了するまでは空きへ戻らない
+        snapshotData.RegionOwner.reset();
+        assert(manager.GetGeometryPool()->GetStats().AllocationCount == 2);
+
+        GeometryUpload::CopyingCommandList commandList;
+        uint64_t serial = 1000;
+        GeometryUpload::StepFrame(manager, commandList, serial);
+        GeometryUpload::StepFrame(manager, commandList, serial);
+        assert(manager.GetGeometryPool()->GetStats().AllocationCount == 1);
+
+        // 戻った区画は次のメッシュが使う
+        MeshFixture meshC("SnapshotC");
+        meshC.Vertices[0] = 333.0f;
+        const auto handleC = manager.MegaGeometry().CreateMegaMesh(meshC.CreateInfo);
+        assert(handleC.IsValid());
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(handleC)->ClusterBufferOffsetBytes == regionOffsetA);
+    }
+
     // プールの塊より大きいメッシュと、1フレームの上限を超えるメッシュは、チャンクに分けて数フレームで書かれる
     void TestLargeMeshUploadsInChunksAcrossFrames()
     {
@@ -1961,6 +2017,7 @@ int main()
     TestCorruptCookedModelCreatesNoBuffers();
     TestMeshesShareOnePoolBlockWithoutOverlap();
     TestReleaseReturnsRegionAfterSubmissionAndReusesIt();
+    TestSnapshotOwnerKeepsReleasedRegionFromReuse();
     TestLargeMeshUploadsInChunksAcrossFrames();
     TestReleaseClearShutdown();
 

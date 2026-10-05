@@ -41,6 +41,55 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    // 区画の返却先の待ち行列への窓口。区画の持ち主がストア（と待ち行列）より長く生きても、閉じた後は触らない
+    struct MegaGeometryRetireSink
+    {
+        Thread::Mutex Mutex;
+        GpuRetireQueue *Queue = nullptr;
+    };
+
+    /**
+     * @brief プールの区画の共有の持ち主
+     *
+     * ストアのエントリと、区画を参照するレイトレーシングのスナップショットが共有する。最後の参照が消えたときに、
+     * 区画を GpuRetireQueue へ渡す（最後に使った提出の完了まで空きへ戻らない）。待ち行列が無ければすぐ返す。
+     */
+    class MegaGeometryRegionHolder final
+    {
+    public:
+        MegaGeometryRegionHolder(GeometryPool::RegionLease lease, Container::TSharedPtr<MegaGeometryRetireSink> sink)
+            : Lease(std::move(lease)),
+              m_Sink(std::move(sink))
+        {
+        }
+
+        ~MegaGeometryRegionHolder()
+        {
+            if (!Lease.IsValid())
+            {
+                return;
+            }
+            if (m_Sink)
+            {
+                Thread::ScopedLock lock(m_Sink->Mutex);
+                if (m_Sink->Queue)
+                {
+                    m_Sink->Queue->Retire(std::move(Lease));
+                    return;
+                }
+            }
+            Lease.Reset();
+        }
+
+        MegaGeometryRegionHolder(const MegaGeometryRegionHolder &) = delete;
+        MegaGeometryRegionHolder &operator=(const MegaGeometryRegionHolder &) = delete;
+
+        GeometryPool::RegionLease Lease;
+
+    private:
+        Container::TSharedPtr<MegaGeometryRetireSink> m_Sink;
+    };
+
     MegaGeometryResourceStore::MegaGeometryResourceStore(Container::TSharedPtr<RHI::IDevice> device,
                                                          Thread::Atomic<uint64_t> &nextHandleId,
                                                          GeometryPool *pool,
@@ -50,11 +99,18 @@ namespace NorvesLib::Core::Rendering
           m_NextHandleId(nextHandleId),
           m_Pool(pool),
           m_Uploader(uploader),
-          m_RetireQueue(retireQueue)
+          m_RetireQueue(retireQueue),
+          m_RetireSink(Container::MakeShared<MegaGeometryRetireSink>())
     {
+        m_RetireSink->Queue = retireQueue;
     }
 
-    MegaGeometryResourceStore::~MegaGeometryResourceStore() = default;
+    MegaGeometryResourceStore::~MegaGeometryResourceStore()
+    {
+        // 区画の持ち主がこの後まで生きても、破棄済みかもしれない待ち行列へは渡さない
+        Thread::ScopedLock lock(m_RetireSink->Mutex);
+        m_RetireSink->Queue = nullptr;
+    }
 
     MegaGeometry::MegaMeshHandle MegaGeometryResourceStore::CreateMegaMesh(
         const MegaGeometry::MegaMeshCreateInfo &createInfo)
@@ -198,7 +254,7 @@ namespace NorvesLib::Core::Rendering
                             static_cast<unsigned long long>(vertexBytes),
                             static_cast<unsigned long long>(indexBytes),
                             static_cast<unsigned long long>(clusterBytes));
-            NORVES_LOG_ERROR("MegaGeometryResources", "Failed to allocate MegaMesh region in the geometry pool: %s (%llu bytes)",
+            NORVES_LOG_ERROR("MegaGeometryResources", "ジオメトリのプールに MegaMesh の区画を確保できません: %s (%llu バイト)",
                              createInfo.DebugName.c_str(),
                              static_cast<unsigned long long>(regionBytes));
             return MegaGeometry::MegaMeshHandle::Invalid();
@@ -206,7 +262,7 @@ namespace NorvesLib::Core::Rendering
         // クラスタの storage buffer の範囲のオフセットは 32 ビット（ディスクリプタの更新の引数）に収める
         if (lease.GetOffsetBytes() + clusterRegionOffset + clusterBytes > UINT32_MAX)
         {
-            NORVES_LOG_ERROR("MegaGeometryResources", "MegaMesh cluster region is beyond the 32-bit offset range: %s",
+            NORVES_LOG_ERROR("MegaGeometryResources", "MegaMesh のクラスタ領域が 32 ビットのオフセットの範囲を超えています: %s",
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
@@ -266,12 +322,16 @@ namespace NorvesLib::Core::Rendering
         auto handle = AllocateHandle<MegaGeometry::MegaMeshHandle>();
 
         MegaGeometry::MegaMeshGPUData gpuData;
-        gpuData.VertexBuffer = lease.GetBufferHandle();
-        gpuData.IndexBuffer = lease.GetBufferHandle();
-        gpuData.ClusterBuffer = lease.GetBufferHandle();
-        gpuData.VertexBufferOffsetBytes = lease.GetOffsetBytes() + vertexRegionOffset;
-        gpuData.IndexBufferOffsetBytes = lease.GetOffsetBytes() + indexRegionOffset;
-        gpuData.ClusterBufferOffsetBytes = lease.GetOffsetBytes() + clusterRegionOffset;
+        // 区画の持ち主を先に作り、描画・影・RT のスナップショットが複製して持てるようにする
+        auto regionHolder = Container::MakeShared<MegaGeometryRegionHolder>(std::move(lease), m_RetireSink);
+        const GeometryPool::RegionLease &leaseRef = regionHolder->Lease;
+        gpuData.RegionOwner = regionHolder;
+        gpuData.VertexBuffer = leaseRef.GetBufferHandle();
+        gpuData.IndexBuffer = leaseRef.GetBufferHandle();
+        gpuData.ClusterBuffer = leaseRef.GetBufferHandle();
+        gpuData.VertexBufferOffsetBytes = leaseRef.GetOffsetBytes() + vertexRegionOffset;
+        gpuData.IndexBufferOffsetBytes = leaseRef.GetOffsetBytes() + indexRegionOffset;
+        gpuData.ClusterBufferOffsetBytes = leaseRef.GetOffsetBytes() + clusterRegionOffset;
         gpuData.VertexBufferBytes = vertexBytes;
         gpuData.IndexBufferBytes = indexBytes;
         gpuData.ClusterBufferBytes = clusterBytes;
@@ -423,7 +483,7 @@ namespace NorvesLib::Core::Rendering
         {
             MegaMeshEntry entry;
             entry.Data = std::move(gpuData);
-            entry.Lease = std::move(lease);
+            entry.Region = std::move(regionHolder);
             entry.StagedBytes = std::move(stagedBytes);
             Thread::ScopedLock lock(m_Mutex);
             m_MegaMeshes[handle.Id] = std::move(entry);
@@ -489,8 +549,9 @@ namespace NorvesLib::Core::Rendering
         }
         // 全てをリングへ積み終え、その範囲宛てのコピーが GPU で完了（リングの区画が手放された）してから読める
         if (!entry.bFullyEnqueued || !m_Uploader ||
-            m_Uploader->HasUnfinishedBufferCopies(entry.Lease.GetBufferHandle(), entry.Lease.GetOffsetBytes(),
-                                                  entry.Lease.GetSizeBytes()))
+            m_Uploader->HasUnfinishedBufferCopies(entry.Region->Lease.GetBufferHandle(),
+                                                  entry.Region->Lease.GetOffsetBytes(),
+                                                  entry.Region->Lease.GetSizeBytes()))
         {
             return false;
         }
@@ -523,7 +584,8 @@ namespace NorvesLib::Core::Rendering
             }
             MegaMeshEntry &entry = it->second;
             const uint64_t totalBytes = entry.StagedBytes.size();
-            const RHI::BufferPtr &buffer = entry.Lease.GetBufferHandle();
+            const GeometryPool::RegionLease &lease = entry.Region->Lease;
+            const RHI::BufferPtr &buffer = lease.GetBufferHandle();
             bool bBlocked = false;
             while (entry.EnqueuedBytes < totalBytes)
             {
@@ -533,7 +595,7 @@ namespace NorvesLib::Core::Rendering
                     bBlocked = true;
                     break;
                 }
-                if (!m_Uploader->EnqueueBufferCopy(buffer, entry.Lease.GetOffsetBytes() + entry.EnqueuedBytes,
+                if (!m_Uploader->EnqueueBufferCopy(buffer, lease.GetOffsetBytes() + entry.EnqueuedBytes,
                                                    entry.StagedBytes.data() + entry.EnqueuedBytes, chunkBytes))
                 {
                     // リングに空きが無い（フレームが進めば空く）。次のフレームでここから続ける
@@ -592,24 +654,19 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryResourceStore::RetireEntryLocked(MegaMeshEntry &entry)
     {
-        if (!entry.Lease.IsValid())
+        if (!entry.Region)
         {
             return;
         }
         // まだ GPU へ出していないコピーが、解放後に使い回される区画へ書き込まないようにする
         if (m_Uploader)
         {
-            m_Uploader->AbandonBufferRange(entry.Lease.GetBufferHandle(), entry.Lease.GetOffsetBytes(),
-                                           entry.Lease.GetSizeBytes());
+            const GeometryPool::RegionLease &lease = entry.Region->Lease;
+            m_Uploader->AbandonBufferRange(lease.GetBufferHandle(), lease.GetOffsetBytes(), lease.GetSizeBytes());
         }
-        if (m_RetireQueue)
-        {
-            m_RetireQueue->Retire(std::move(entry.Lease));
-        }
-        else
-        {
-            entry.Lease.Reset();
-        }
+        // ストアの参照を手放す。スナップショットなどが区画を参照している間は返却を待ち、最後の参照が消えたときに
+        // 持ち主が区画を GpuRetireQueue へ渡す（待ち行列が無ければその場で空きへ戻す）
+        entry.Region.reset();
     }
 
     void MegaGeometryResourceStore::ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle)

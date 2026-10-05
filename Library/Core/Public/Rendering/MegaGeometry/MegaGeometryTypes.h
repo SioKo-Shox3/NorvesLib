@@ -3,6 +3,7 @@
 #include "Rendering/RenderTypes.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
+#include "Container/PointerTypes.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering::MegaGeometry
@@ -357,6 +358,14 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint64_t VertexBufferBytes = 0;
         uint64_t IndexBufferBytes = 0;
         uint64_t ClusterBufferBytes = 0;
+
+        /**
+         * @brief プールの区画の共有の持ち主（型を消した参照）
+         *
+         * 区画はこの参照が全部消え、かつ最後に使った GPU の提出が完了するまで空きへ戻らない。
+         * FramePacket のレイトレーシングのスナップショットは、フレームが消えるまで区画を使うので、これを複製して持つ。
+         */
+        TSharedPtr<void> RegionOwner;
 
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;

@@ -1,4 +1,5 @@
 ﻿#include "Engine/NorvesEngine.h"
+#include "Rendering/GeometryPool.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RayTracingSceneSubsystem.h"
 #include "Rendering/RenderResources.h"
@@ -340,9 +341,23 @@ namespace
             }
             std::cout << "baked_mesh_instance_uses_fallback_range=true\n";
 
+            // スナップショットが区画の持ち主を持っている間は、元のメッシュを解放しても区画が空きへ戻らない
+            // （解放後に別のメッシュへ使い回されて、BLAS・RTGI が参照する頂点・インデックスが書き換わらない）
+            if (!megaInstance.GeometryRegionOwner || megaInstance.GeometryRegionOwner != megaData->RegionOwner)
+            {
+                std::cerr << "instanceが区画の持ち主を持っていません\n";
+                return 1;
+            }
+            renderResources.MegaGeometry().ReleaseMegaMesh(megaHandle);
+            if (renderResources.GetGeometryPool()->GetStats().AllocationCount != 1)
+            {
+                std::cerr << "スナップショットが持っている区画が、メッシュの解放で空きへ戻りました\n";
+                return 1;
+            }
+            std::cout << "snapshot_keeps_released_region=true\n";
+
             megaPacket.Clear();
             megaCommandList.reset();
-            renderResources.MegaGeometry().ReleaseMegaMesh(megaHandle);
         }
 
         CommandListPtr commandList = device->CreateCommandList();

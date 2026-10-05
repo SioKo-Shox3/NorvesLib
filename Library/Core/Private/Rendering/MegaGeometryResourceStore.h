@@ -19,6 +19,8 @@ namespace NorvesLib::Core::Rendering
 {
     class GpuRetireQueue;
     class TileUploader;
+    class MegaGeometryRegionHolder;
+    struct MegaGeometryRetireSink;
 
     struct ModelResourceData
     {
@@ -90,7 +92,8 @@ namespace NorvesLib::Core::Rendering
         struct MegaMeshEntry
         {
             MegaGeometry::MegaMeshGPUData Data;
-            GeometryPool::RegionLease Lease;
+            // 区画の持ち主。ストアとレイトレーシングのスナップショットが共有し、最後の参照が消えたときに区画を返却の待ち行列へ渡す
+            Container::TSharedPtr<MegaGeometryRegionHolder> Region;
             // 区画の中身（クラスタ・頂点・インデックスを並べたもの）。リングへ積み終えるまで持つ
             Container::VariableArray<uint8_t> StagedBytes;
             uint64_t EnqueuedBytes = 0;
@@ -107,7 +110,8 @@ namespace NorvesLib::Core::Rendering
             return handle;
         }
 
-        // 区画を GpuRetireQueue へ渡す（無ければすぐ返す）。未記録のコピーは無効にする。m_Mutex を持って呼ぶ
+        // 未記録のコピーを無効にして、ストアの持つ区画の参照を手放す。区画の返却は、スナップショットなどの参照も
+        // 全部消えたときに GpuRetireQueue へ渡る（無ければすぐ返す）。m_Mutex を持って呼ぶ
         void RetireEntryLocked(MegaMeshEntry &entry);
         bool IsEntryGpuReadyLocked(const MegaMeshEntry &entry) const;
 
@@ -116,6 +120,8 @@ namespace NorvesLib::Core::Rendering
         GeometryPool *m_Pool = nullptr;
         TileUploader *m_Uploader = nullptr;
         GpuRetireQueue *m_RetireQueue = nullptr;
+        // 区画の持ち主が、ストアより長く生きても返却先の待ち行列を触らないようにする窓口（デストラクタで閉じる）
+        Container::TSharedPtr<MegaGeometryRetireSink> m_RetireSink;
         Container::Map<uint64_t, MegaMeshEntry> m_MegaMeshes;
         // 中身をまだリングへ積み終えていないメッシュ（古い順）
         Container::VariableArray<uint64_t> m_PendingUploadIds;
