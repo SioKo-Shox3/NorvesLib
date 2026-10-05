@@ -25,7 +25,11 @@ namespace NorvesLib::Core::Rendering
         /** @brief 速度（現在の UV − 前の UV に倍率を掛け、0 が灰色 0.5。R = x、G = y） */
         Velocity = 1,
         /** @brief 深度（R = 深度、G = fract(深度 × 256)、B = fract(深度 × 65536)。細かい差が縞で見える） */
-        Depth = 2
+        Depth = 2,
+        /** @brief アルベド（GBuffer.Albedo の rgb をそのまま。発光や照明を通る前の材質の色） */
+        Albedo = 3,
+        /** @brief 材質（GBuffer.Material の rgb = 金属度・粗さ・AO をそのまま） */
+        Material = 4
     };
 
     /**

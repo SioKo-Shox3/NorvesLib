@@ -2,6 +2,7 @@
 
 #include "Logging/LogMacros.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -34,6 +35,10 @@ namespace NorvesLib::Core::Rendering
         // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 16 バイト）
         constexpr uint32_t TileParamsBytes = 4u * sizeof(uint32_t);
 
+        // 共通の束縛の数（0..8 と材質の GBuffer の 9。検証用の版はさらに 10 の書き出し）
+        constexpr uint32_t CommonBindingCount = 10u;
+        constexpr uint32_t DumpBindingIndex = 10u;
+
         RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump, bool bTiles)
         {
             RHI::DescriptorSetDesc desc;
@@ -47,9 +52,10 @@ namespace NorvesLib::Core::Rendering
                 RHI::ResourceBindType::RWTexture,            // 6 GBuffer.Albedo
                 RHI::ResourceBindType::RWTexture,            // 7 GBuffer.Normal
                 RHI::ResourceBindType::RWTexture,            // 8 GBuffer.Velocity
-                RHI::ResourceBindType::RWBuffer,             // 9 検証用の書き出し（検証用の版だけ）
+                RHI::ResourceBindType::RWTexture,            // 9 GBuffer.Material
+                RHI::ResourceBindType::RWBuffer,             // 10 検証用の書き出し（検証用の版だけ）
             };
-            const uint32_t commonCount = bDump ? 10u : 9u;
+            const uint32_t commonCount = bDump ? CommonBindingCount + 1u : CommonBindingCount;
             for (uint32_t bindingIndex = 0; bindingIndex < commonCount; ++bindingIndex)
             {
                 RHI::DescriptorBinding binding;
@@ -74,6 +80,16 @@ namespace NorvesLib::Core::Rendering
                     binding.stages = RHI::ShaderStage::Compute;
                     desc.bindings.push_back(binding);
                 }
+                // その材質のテクスチャ（アルベド・法線・金属度・粗さ・AO・高さ。シェーダーの VIS_TILE_BINDING + 3 から）
+                for (uint32_t textureBinding = 0; textureBinding < VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT;
+                     ++textureBinding)
+                {
+                    RHI::DescriptorBinding binding;
+                    binding.binding = commonCount + 3u + textureBinding;
+                    binding.type = RHI::ResourceBindType::CombinedImageSampler;
+                    binding.stages = RHI::ShaderStage::Compute;
+                    desc.bindings.push_back(binding);
+                }
             }
             return desc;
         }
@@ -89,6 +105,58 @@ namespace NorvesLib::Core::Rendering
         {
             const uint64_t size = buffer->GetSize();
             return ClampBindSize(usedBytes != 0 && usedBytes < size ? usedBytes : size);
+        }
+    } // namespace
+
+    namespace
+    {
+        // 材質の表のテクスチャのハンドル（64bit を下位・上位の 2 語で持つ）
+        TextureHandle LoadTextureHandle(const uint32_t* words)
+        {
+            TextureHandle handle;
+            handle.Id = static_cast<uint64_t>(words[0]) | (static_cast<uint64_t>(words[1]) << 32);
+            return handle;
+        }
+
+        RHI::TexturePtr ResolveMaterialTexture(const TextureResources* textures, TextureHandle handle)
+        {
+            if (!textures || !handle.IsValid())
+            {
+                return nullptr;
+            }
+            return textures->GetRHITexturePtr(handle);
+        }
+
+        // 材質の表の 1 件から、GBufferPass の材質の descriptor が張るのと同じテクスチャを引く
+        VisibilityResolveMaterial MakeResolveMaterial(const TextureResources* textures,
+                                                      const VisibilityBuffer::MaterialEntry& entry)
+        {
+            const TextureHandle albedo = LoadTextureHandle(&entry.TexturesA[0]);
+            const TextureHandle normal = LoadTextureHandle(&entry.TexturesA[2]);
+            const TextureHandle metallic = LoadTextureHandle(&entry.TexturesB[0]);
+            const TextureHandle roughness = LoadTextureHandle(&entry.TexturesB[2]);
+            const TextureHandle ao = LoadTextureHandle(&entry.TexturesC[0]);
+            const TextureHandle orm = LoadTextureHandle(&entry.TexturesC[2]);
+            const TextureHandle height = LoadTextureHandle(&entry.TexturesD[0]);
+
+            VisibilityResolveMaterial material;
+            material.Albedo = ResolveMaterialTexture(textures, albedo);
+            material.Normal = ResolveMaterialTexture(textures, normal);
+            material.Metallic = ResolveMaterialTexture(textures, metallic);
+            material.Roughness = ResolveMaterialTexture(textures, roughness);
+            material.AO = ResolveMaterialTexture(textures, ao);
+            material.ORM = ResolveMaterialTexture(textures, orm);
+            material.Height = ResolveMaterialTexture(textures, height);
+            // スカラー値は、そのテクスチャの指定（ハンドル）が無いときだけ 1x1 のテクスチャにする
+            if (entry.Scalars[0] >= 0.0f && !metallic.IsValid())
+            {
+                material.MetallicConstant = entry.Scalars[0];
+            }
+            if (entry.Scalars[1] >= 0.0f && !roughness.IsValid())
+            {
+                material.RoughnessConstant = entry.Scalars[1];
+            }
+            return material;
         }
     } // namespace
 
@@ -231,6 +299,12 @@ namespace NorvesLib::Core::Rendering
         m_Pipeline.reset();
         m_Sampler.reset();
         m_Placeholder.reset();
+        m_DefaultWhite.reset();
+        m_DefaultFlatNormal.reset();
+        m_DefaultBlack.reset();
+        m_DefaultMidGray.reset();
+        m_MaterialSampler.reset();
+        m_ConstantGrayTextures.clear();
         m_Shader.reset();
         m_Device = nullptr;
         m_bDump = false;
@@ -258,13 +332,104 @@ namespace NorvesLib::Core::Rendering
         return m_Placeholder != nullptr;
     }
 
+    bool VisibilityResolve::EnsureMaterialDefaults()
+    {
+        if (m_DefaultWhite && m_DefaultFlatNormal && m_DefaultBlack && m_DefaultMidGray && m_MaterialSampler)
+        {
+            return true;
+        }
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        // GBufferPass::Initialize の既定のテクスチャとサンプラーと同じ値（ラスタとテクスチャの枠の既定を揃える）
+        auto createDefault1x1 = [this](const char* debugName, uint8_t r, uint8_t g, uint8_t b, uint8_t a) -> RHI::TexturePtr
+        {
+            RHI::TextureDesc texDesc;
+            texDesc.Width = 1;
+            texDesc.Height = 1;
+            texDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+            texDesc.Usage = RHI::ResourceUsage::ShaderRead;
+            texDesc.DebugName = debugName;
+            RHI::TexturePtr texture = m_Device->CreateTexture(texDesc);
+            if (texture)
+            {
+                const uint8_t pixel[4] = {r, g, b, a};
+                texture->Update(pixel, 4, 4);
+            }
+            return texture;
+        };
+        if (!m_DefaultWhite)
+        {
+            m_DefaultWhite = createDefault1x1("VisibilityResolveDefaultWhite1x1", 255, 255, 255, 255);
+        }
+        if (!m_DefaultFlatNormal)
+        {
+            m_DefaultFlatNormal = createDefault1x1("VisibilityResolveDefaultFlatNormal1x1", 128, 128, 255, 255);
+        }
+        if (!m_DefaultBlack)
+        {
+            m_DefaultBlack = createDefault1x1("VisibilityResolveDefaultBlack1x1", 0, 0, 0, 255);
+        }
+        if (!m_DefaultMidGray)
+        {
+            m_DefaultMidGray = createDefault1x1("VisibilityResolveDefaultMidGray1x1", 128, 128, 128, 255);
+        }
+        if (!m_MaterialSampler)
+        {
+            RHI::SamplerDesc samplerDesc;
+            samplerDesc.filterMin = RHI::FilterMode::Anisotropic;
+            samplerDesc.filterMag = RHI::FilterMode::Anisotropic;
+            samplerDesc.filterMip = RHI::FilterMode::Anisotropic;
+            samplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+            samplerDesc.addressV = RHI::TextureAddressMode::Wrap;
+            samplerDesc.addressW = RHI::TextureAddressMode::Wrap;
+            samplerDesc.maxAnisotropy = 4;
+            m_MaterialSampler = m_Device->CreateSampler(samplerDesc);
+        }
+        return m_DefaultWhite && m_DefaultFlatNormal && m_DefaultBlack && m_DefaultMidGray && m_MaterialSampler;
+    }
+
+    RHI::TexturePtr VisibilityResolve::GetConstantGrayTexture(float value)
+    {
+        const float clamped = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+        const uint32_t level = static_cast<uint32_t>(clamped * 255.0f + 0.5f);
+        const auto found = m_ConstantGrayTextures.find(level);
+        if (found != m_ConstantGrayTextures.end())
+        {
+            return found->second;
+        }
+        if (!m_Device)
+        {
+            return nullptr;
+        }
+        RHI::TextureDesc texDesc;
+        texDesc.Width = 1;
+        texDesc.Height = 1;
+        texDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        texDesc.Usage = RHI::ResourceUsage::ShaderRead;
+        texDesc.DebugName = "VisibilityResolveConstantGray1x1";
+        RHI::TexturePtr texture = m_Device->CreateTexture(texDesc);
+        if (!texture)
+        {
+            return nullptr;
+        }
+        const uint8_t gray = static_cast<uint8_t>(level);
+        const uint8_t pixel[4] = {gray, gray, gray, 255};
+        texture->Update(pixel, 4, 4);
+        m_ConstantGrayTextures[level] = texture;
+        return texture;
+    }
+
     bool VisibilityResolve::Record(RHI::ICommandList* commandList, const VisibilityResolveDispatch& dispatch)
     {
         const VisibilityResolveGeometry::ResolveParams& params = dispatch.Params;
         const uint32_t width = params.Screen[0];
         const uint32_t height = params.Screen[1];
         if (!m_Device || !m_Pipeline || !commandList || !dispatch.IdTexture || !dispatch.RecordTable ||
-            !dispatch.MaterialTable || !dispatch.Albedo || !dispatch.Normal || !dispatch.Velocity || width == 0 ||
+            !dispatch.MaterialTable || !dispatch.Albedo || !dispatch.Normal || !dispatch.Material || !dispatch.Velocity ||
+            width == 0 ||
             height == 0 || (m_bDump && !dispatch.Dump))
         {
             return false;
@@ -274,6 +439,7 @@ namespace NorvesLib::Core::Rendering
         if (width > dispatch.IdTexture->GetWidth() || height > dispatch.IdTexture->GetHeight() ||
             width > dispatch.Albedo->GetWidth() || height > dispatch.Albedo->GetHeight() ||
             width > dispatch.Normal->GetWidth() || height > dispatch.Normal->GetHeight() ||
+            width > dispatch.Material->GetWidth() || height > dispatch.Material->GetHeight() ||
             width > dispatch.Velocity->GetWidth() || height > dispatch.Velocity->GetHeight())
         {
             return false;
@@ -340,9 +506,10 @@ namespace NorvesLib::Core::Rendering
         set.BindStorageTexture(6, dispatch.Albedo);
         set.BindStorageTexture(7, dispatch.Normal);
         set.BindStorageTexture(8, dispatch.Velocity);
+        set.BindStorageTexture(9, dispatch.Material);
         if (m_bDump)
         {
-            set.BindStorageBuffer(9, dispatch.Dump, 0, ClampBindSize(dispatch.Dump->GetSize()));
+            set.BindStorageBuffer(DumpBindingIndex, dispatch.Dump, 0, ClampBindSize(dispatch.Dump->GetSize()));
         }
     }
 
@@ -368,14 +535,72 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t width = dispatch.Params.Screen[0];
         const uint32_t tilesX = (width + VisibilityResolveGeometry::TILE_SIZE - 1) / VisibilityResolveGeometry::TILE_SIZE;
-        const uint32_t firstBinding = m_bDump ? 10u : 9u;
+        const uint32_t firstBinding = m_bDump ? CommonBindingCount + 1u : CommonBindingCount;
+        if (!EnsureMaterialDefaults())
+        {
+            return false;
+        }
 
         // 1 回の間接 dispatch ごとに、材質の番号を持つ別の UBO と別のディスクリプタセットを使う
         // （提出前に上書きしない。1 フレームに何回 Record しても枠の次の資源へ進む）。
         // コマンドリストへ記録する前に、全部の資源をそろえる（作れなければ何も記録せず false）
+        struct BoundMaterial
+        {
+            RHI::TexturePtr Textures[VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT];
+            uint32_t Flags = 0;
+        };
+        Container::VariableArray<BoundMaterial> boundMaterials;
         Container::VariableArray<Use*> uses;
         for (uint64_t material = 0; material < materialCount; ++material)
         {
+            // GBufferPass の材質の descriptor と同じ規則で、指定の無い枠を既定のテクスチャで埋める
+            const VisibilityResolveMaterial empty;
+            const VisibilityResolveMaterial& input =
+                material < dispatch.Materials.size() ? dispatch.Materials[static_cast<size_t>(material)] : empty;
+            BoundMaterial bound;
+            RHI::TexturePtr metallicDefault = m_DefaultBlack;
+            if (input.MetallicConstant >= 0.0f && !input.Metallic)
+            {
+                if (RHI::TexturePtr constant = GetConstantGrayTexture(input.MetallicConstant))
+                {
+                    metallicDefault = constant;
+                }
+            }
+            RHI::TexturePtr roughnessDefault = m_DefaultMidGray;
+            if (input.RoughnessConstant >= 0.0f && !input.Roughness)
+            {
+                if (RHI::TexturePtr constant = GetConstantGrayTexture(input.RoughnessConstant))
+                {
+                    roughnessDefault = constant;
+                }
+            }
+            bound.Textures[0] = input.Albedo ? input.Albedo : m_DefaultWhite;
+            bound.Textures[1] = input.Normal ? input.Normal : m_DefaultFlatNormal;
+            bound.Textures[2] = input.Metallic ? input.Metallic : metallicDefault;
+            bound.Textures[3] = input.Roughness ? input.Roughness : roughnessDefault;
+            bound.Textures[4] = input.AO ? input.AO : m_DefaultWhite;
+            if (input.ORM)
+            {
+                // シェーダーは ORM のとき金属度の枠だけを読むが、3 つの枠は同じテクスチャで埋める
+                bound.Textures[2] = input.ORM;
+                bound.Textures[3] = input.ORM;
+                bound.Textures[4] = input.ORM;
+                bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_ORM;
+            }
+            bound.Textures[5] = input.Height ? input.Height : m_DefaultBlack;
+            for (uint32_t index = 0; index < VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT; ++index)
+            {
+                if (!bound.Textures[index])
+                {
+                    return false;
+                }
+                if (bound.Textures[index]->IsSparse())
+                {
+                    bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_SPARSE;
+                }
+            }
+            boundMaterials.push_back(bound);
+
             Use& use = m_Uses.Acquire();
             if (!use.TileUniform)
             {
@@ -410,13 +635,19 @@ namespace NorvesLib::Core::Rendering
         for (uint64_t material = 0; material < materialCount; ++material)
         {
             Use& use = *uses[static_cast<size_t>(material)];
-            const uint32_t tileParams[4] = {tilesX, static_cast<uint32_t>(material), 0u, 0u};
+            const BoundMaterial& bound = boundMaterials[static_cast<size_t>(material)];
+            const uint32_t tileParams[4] = {tilesX, static_cast<uint32_t>(material), bound.Flags, 0u};
             use.TileUniform->Update(tileParams, TileParamsBytes);
             RHI::IDescriptorSet& set = *use.TileDescriptorSet;
             BindCommon(set, first.Uniform, dispatch);
             set.BindConstantBuffer(firstBinding, use.TileUniform, 0, TileParamsBytes);
             set.BindStorageBuffer(firstBinding + 1, dispatch.TileArgs, 0, ClampBindSize(dispatch.TileArgs->GetSize()));
             set.BindStorageBuffer(firstBinding + 2, dispatch.TileList, 0, ClampBindSize(dispatch.TileList->GetSize()));
+            for (uint32_t index = 0; index < VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT; ++index)
+            {
+                set.BindTexture(firstBinding + 3u + index, bound.Textures[index]);
+                set.BindSampler(firstBinding + 3u + index, m_MaterialSampler);
+            }
             set.Update();
 
             commandList->SetDescriptorSet(use.TileDescriptorSet, 0);
@@ -471,6 +702,7 @@ namespace NorvesLib::Core::Rendering
         m_IdHandle = {};
         m_AlbedoHandle = {};
         m_NormalHandle = {};
+        m_MaterialHandle = {};
         m_VelocityHandle = {};
         m_TileArgsHandle = {};
         m_TileListHandle = {};
@@ -517,6 +749,7 @@ namespace NorvesLib::Core::Rendering
         m_IdHandle = {};
         m_AlbedoHandle = {};
         m_NormalHandle = {};
+        m_MaterialHandle = {};
         m_VelocityHandle = {};
         m_TileArgsHandle = {};
         m_TileListHandle = {};
@@ -550,21 +783,25 @@ namespace NorvesLib::Core::Rendering
 
         RGTextureHandle albedo;
         RGTextureHandle normal;
+        RGTextureHandle material;
         RGTextureHandle velocity;
         if (!builder.TryGetTexture(RenderGraphResourceNames::GBufferAlbedo, albedo) ||
             !builder.TryGetTexture(RenderGraphResourceNames::GBufferNormal, normal) ||
+            !builder.TryGetTexture(RenderGraphResourceNames::GBufferMaterial, material) ||
             !builder.TryGetTexture(RenderGraphResourceNames::GBufferVelocity, velocity))
         {
             return;
         }
 
-        // GBuffer の 3 枚を storage image として書く。終わった後の状態も UnorderedAccess にして、後のパスの読み取りの前に
+        // GBuffer の 4 枚を storage image として書く。終わった後の状態も UnorderedAccess にして、後のパスの読み取りの前に
         // グラフが ShaderResource への遷移を足すようにする
         m_AlbedoHandle = albedo.ToResourceHandle();
         m_NormalHandle = normal.ToResourceHandle();
+        m_MaterialHandle = material.ToResourceHandle();
         m_VelocityHandle = velocity.ToResourceHandle();
         builder.Write(m_AlbedoHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         builder.Write(m_NormalHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        builder.Write(m_MaterialHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         builder.Write(m_VelocityHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
 
         // スキニングの変形した頂点（今・前）はデバイスアドレスで読む。計算シェーダーの書き込みを、この読み取りへ見せる
@@ -635,8 +872,9 @@ namespace NorvesLib::Core::Rendering
         dispatch.IdTexture = resources.GetTexture(m_IdHandle);
         dispatch.Albedo = resources.GetTexture(m_AlbedoHandle);
         dispatch.Normal = resources.GetTexture(m_NormalHandle);
+        dispatch.Material = resources.GetTexture(m_MaterialHandle);
         dispatch.Velocity = resources.GetTexture(m_VelocityHandle);
-        if (!dispatch.IdTexture || !dispatch.Albedo || !dispatch.Normal || !dispatch.Velocity)
+        if (!dispatch.IdTexture || !dispatch.Albedo || !dispatch.Normal || !dispatch.Material || !dispatch.Velocity)
         {
             return;
         }
@@ -649,6 +887,13 @@ namespace NorvesLib::Core::Rendering
         dispatch.MegaInstancesBytes = m_RasterPass->GetMegaInstanceBufferBytes();
         dispatch.DrawInstances = context.InstanceDataBuffer;
         dispatch.DrawInstancesBytes = context.InstanceDataBuffer ? context.InstanceDataBuffer->GetSize() : 0;
+
+        // 材質ごとの形が束ねる、材質の表の 1 件ごとのテクスチャ（ハンドル → RHI のテクスチャ）
+        const TextureResources* textures = context.Resources.Textures;
+        for (const VisibilityBuffer::MaterialEntry& entry : m_RasterPass->GetMaterialEntries())
+        {
+            dispatch.Materials.push_back(MakeResolveMaterial(textures, entry));
+        }
 
         // ラスタ（GBufferPass）と同じカメラの定数。前のカメラが無いときは速度を 0 にする
         const float aspect = context.GetActiveAspectRatio();

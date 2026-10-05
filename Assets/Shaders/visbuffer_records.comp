@@ -93,6 +93,7 @@ void main()
                           min(command.indexCount / 3u, VIS_MAX_TRIANGLES_PER_RECORD));
     record.source = uvec4(command.firstIndex, uint(command.vertexOffset), VIS_NO_PREVIOUS_TRANSFORM, 0u);
     record.address = addresses;
-    record.previous = uvec4(0u);
+    // 材質の解決が、変位した球の法線の補正に使う LOD の段（描画番号の payload）
+    record.previous = uvec4(0u, 0u, drawInfos[commandIndex].y, 0u);
     records[commandIndex + 1u] = record;
 }

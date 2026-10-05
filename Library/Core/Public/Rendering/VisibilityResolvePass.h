@@ -7,7 +7,11 @@
 //   - 画素の中心を通るカメラの光線と三角形の平面の交点で、透視の補正つきの重心座標を求める。
 //     隣の画素（x+1、y+1）の光線でも交わらせて、位置・UV の解析的な微分（前進差分）を得る。
 //   - 法線（補間して正規化）・接線の基底・前のフレームの頂点から求めた速度を作り、GBuffer へ書く。
-//     Albedo は材質の基本色（テクスチャなし。α = 1）。
+//   - 材質ごとの形では、その材質のテクスチャ（アルベド・法線・金属度・粗さ・AO・高さ。ORM の 1 枚も）を dispatch ごとの
+//     ディスクリプタセットへ束ね、ラスタの材質シェーダーと同じ標本・復号・POM の関数を、画面微分の代わりに三角形から求めた
+//     解析的な微分（textureGrad）で呼んで Albedo（インスタンスの色 × アルベド、α はテクスチャの α）・Normal（法線マップ適用後）・
+//     Material（金属度・粗さ・AO）を書く。VT（sparse）の材質は非常駐のタイルを読まず粗いミップへ逃げる。
+//     画面全体の直接 dispatch はテクスチャを束ねられないので、材質の定数（基本色・スカラー値）だけで書く。
 // GBuffer の形式・意味（Albedo.a、法線の格納、Velocity の式）は、ラスタの経路（gbuffer.frag）と同じ。
 //
 // 解決は 2 つの形で記録できる（VisibilityResolve::Record が dispatch の入力で選ぶ）。
@@ -47,6 +51,11 @@ namespace NorvesLib::Core::Rendering
     {
         /** @brief ResolveParams::Screen[2] のビット（シェーダーの RESOLVE_FLAG_* と同じ） */
         constexpr uint32_t FLAG_PREVIOUS_VALID = 1u;
+        /** @brief 材質ごとの形の dispatch の定数（ResolveTileParams::tile.z）のビット（シェーダーの VIS_TILE_FLAG_* と同じ） */
+        constexpr uint32_t TILE_FLAG_ORM = 1u;
+        constexpr uint32_t TILE_FLAG_SPARSE = 2u;
+        /** @brief 材質ごとの形が束ねる材質のテクスチャの数（アルベド・法線・金属度・粗さ・AO・高さ） */
+        constexpr uint32_t MATERIAL_TEXTURE_COUNT = 6;
         /** @brief ワークグループ（画面のタイル）の一辺の画素数（シェーダーの local_size と同じ） */
         constexpr uint32_t TILE_SIZE = 8;
         /** @brief 検証用の書き出しの、画素あたりの vec4 の数（シェーダーの VIS_RESOLVE_DUMP_STRIDE と同じ） */
@@ -132,6 +141,27 @@ namespace NorvesLib::Core::Rendering
         const char* GetFallbackReasonName(FallbackReason reason);
     } // namespace VisibilityResolveGeometry
 
+    /**
+     * @brief 材質ごとの形の 1 回の dispatch が束ねる、その材質のテクスチャ（材質の表の 1 件ぶん）
+     *
+     * 解決できなかった（指定が無い・RHI のテクスチャが引けない）ものは null。束ねるときに、GBufferPass の材質の
+     * descriptor と同じ規則で既定のテクスチャ（白・平坦な法線・黒・中間灰・スカラー値の 1x1）へ置き換える。
+     */
+    struct VisibilityResolveMaterial
+    {
+        RHI::TexturePtr Albedo;
+        RHI::TexturePtr Normal;
+        RHI::TexturePtr Metallic;
+        RHI::TexturePtr Roughness;
+        RHI::TexturePtr AO;
+        /** @brief ORM の 1 枚。あれば金属度・粗さ・AO の枠をすべてこれで埋める（シェーダーは金属度の枠だけを読む） */
+        RHI::TexturePtr ORM;
+        RHI::TexturePtr Height;
+        /** @brief 金属度・粗さのテクスチャの指定が無いときに使うスカラー値（1x1 のテクスチャにする）。負は未指定（既定の黒・中間灰） */
+        float MetallicConstant = -1.0f;
+        float RoughnessConstant = -1.0f;
+    };
+
     /** @brief 1 回の解決の入力と出力 */
     struct VisibilityResolveDispatch
     {
@@ -149,9 +179,10 @@ namespace NorvesLib::Core::Rendering
         /** @brief 描画のインスタンスの表（手続きメッシュ）。無ければ null（空の表を束ねる） */
         RHI::BufferPtr DrawInstances;
         uint64_t DrawInstancesBytes = 0;
-        /** @brief 出力（GBuffer の Albedo・Normal・Velocity）。呼び出し前に UnorderedAccess の状態で、終わっても UnorderedAccess のまま */
+        /** @brief 出力（GBuffer の Albedo・Normal・Material・Velocity）。呼び出し前に UnorderedAccess の状態で、終わっても UnorderedAccess のまま */
         RHI::TexturePtr Albedo;
         RHI::TexturePtr Normal;
+        RHI::TexturePtr Material;
         RHI::TexturePtr Velocity;
         /** @brief 検証用の版（Initialize の bDump）の出力。画素あたり DUMP_STRIDE_BYTES。製品の版では使わない */
         RHI::BufferPtr Dump;
@@ -167,6 +198,11 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr TileList;
         /** @brief 間接 dispatch する材質の数（材質の番号 0..N-1）。0 なら引数の表の件数（TileArgs の大きさ / 引数 1 つの大きさ）全部 */
         uint32_t TileMaterialCount = 0;
+        /**
+         * @brief 材質ごとの形が束ねる材質のテクスチャ（添え字が材質の表の番号）。短いとき・空のときは、足りない材質を
+         *        すべて既定のテクスチャで束ねる。画面全体の直接 dispatch では使わない
+         */
+        Container::VariableArray<VisibilityResolveMaterial> Materials;
     };
 
     /**
@@ -225,6 +261,9 @@ namespace NorvesLib::Core::Rendering
         };
 
         bool EnsurePlaceholder();
+        bool EnsureMaterialDefaults();
+        /** @brief 定数のスカラー値（8bit に丸めた値）の 1x1 のテクスチャ。GBufferPass の GetOrCreateConstantGrayTexture と同じ */
+        RHI::TexturePtr GetConstantGrayTexture(float value);
         void BindCommon(RHI::IDescriptorSet& set, const RHI::BufferPtr& paramsUniform, const VisibilityResolveDispatch& dispatch) const;
         bool RecordTiles(RHI::ICommandList* commandList, const VisibilityResolveDispatch& dispatch);
 
@@ -237,6 +276,13 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_Sampler;
         // 表を持たないフレームで束ねる、空の表（読まれない）
         RHI::BufferPtr m_Placeholder;
+        // 材質ごとの形が、テクスチャの指定が無い枠に束ねる既定のテクスチャ（GBufferPass と同じ値）とサンプラー（異方性 4、Wrap）
+        RHI::TexturePtr m_DefaultWhite;
+        RHI::TexturePtr m_DefaultFlatNormal;
+        RHI::TexturePtr m_DefaultBlack;
+        RHI::TexturePtr m_DefaultMidGray;
+        RHI::SamplerPtr m_MaterialSampler;
+        Container::UnorderedMap<uint32_t, RHI::TexturePtr> m_ConstantGrayTextures;
         bool m_bDump = false;
         FrameUseRing<Use> m_Uses;
     };
@@ -245,7 +291,7 @@ namespace NorvesLib::Core::Rendering
      * @brief VisBuffer.Id から GBuffer の Albedo・Normal・Velocity を解決する RenderGraph のパス
      *
      * VisibilityRasterPass が書いた ID と、同じパスが持つ記録の表・材質の表・インスタンスの表を読み、GBuffer の
-     * 3 枚を storage image として書く。GBufferPass・MegaGeometryPass はこのパスが有効なとき GBuffer の描画を止める
+     * Albedo・Normal・Material・Velocity の 4 枚を storage image として書く（発光は書かない）。GBufferPass・MegaGeometryPass はこのパスが有効なとき GBuffer の描画を止める
      * （GBuffer のクリアだけを行う）ので、描かれなかった画素はクリア値のまま。
      *
      * 有効なのは --visibility-buffer=on のときだけ（SceneView が足す）。使えないとき（GetFallbackReason が None 以外。装置が
@@ -309,6 +355,7 @@ namespace NorvesLib::Core::Rendering
         RGTextureHandle m_IdHandle;
         RGResourceHandle m_AlbedoHandle;
         RGResourceHandle m_NormalHandle;
+        RGResourceHandle m_MaterialHandle;
         RGResourceHandle m_VelocityHandle;
         // 分類の出力の読み取り（Declare が読むと宣言したときだけ有効）
         RGResourceHandle m_TileArgsHandle;

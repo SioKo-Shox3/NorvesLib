@@ -12,7 +12,10 @@
 // タイルには複数の材質が混じりうるので、各スレッドは自分の画素の材質がこの dispatch の材質と同じときだけ解決する
 // （画素は自分の材質の dispatch でちょうど 1 回だけ解決される）。画面の外の画素は何もしない。
 // 材質の番号が分類の上限以上の画素はどの材質の一覧にも入らないので、この版では解決されない（直接版は解決する）。
-// 追加の束縛は、検証用の書き出しがあれば binding 10 から、無ければ binding 9 から（VIS_TILE_BINDING）。
+// 追加の束縛は、検証用の書き出しがあれば binding 11 から、無ければ binding 10 から（VIS_TILE_BINDING）。
+// 材質ごとの形は、その材質のテクスチャ（アルベド・法線・金属度・粗さ・AO・高さの 6 枠。VIS_TILE_BINDING + 3 から）も束ねて、
+// 材質のテクスチャで GBuffer の Albedo・Normal・Material を書く（直接 dispatch の版は、テクスチャを束ねられないので
+// 材質の定数だけで書く）。
 //
 // 1 スレッドが 1 画素を受け持つ（8x8 のワークグループ = 画面のタイル）。
 //   1. VisBuffer.Id の画素から描画の記録と三角形の番号を引く（空・引けない画素は何も書かない）。
@@ -23,19 +26,30 @@
 //      隣の画素（x+1、y+1）の光線でも同じ三角形の平面と交わらせ、位置・UV の解析的な微分（前進差分）を得る。
 //   4. 法線（補間して正規化）・接線の基底（三角形の辺と UV。ラスタの CalculateCotangentFrame と同じ向きの規約）・
 //      速度（前のフレームの頂点から求めた前のクリップ座標）を求め、GBuffer へ書く。
+//   5. （材質ごとの形だけ）材質のテクスチャを、画面微分の代わりに三角形から求めた解析的な微分（textureGrad）で標本する。
+//      視差オクルージョンマッピング（POM）は三角形の接線の基底と解析的な UV の微分で行い、法線マップは POM の後の UV で標本して
+//      元の UV の接線の基底で変換する（ラスタの gbuffer.frag と同じ順序）。VT（sparse）の材質は、非常駐のタイルを読まず
+//      粗いミップへ逃げる（逃げ始めのミップは勾配から求める）。標本・復号・POM の式は、ラスタと共有する
+//      Common/PbrMaterialTextureSamplingCore.glsl・Common/ParallaxOcclusionMappingCore.glsl の関数をそのまま呼ぶ。
 //
 // 規約:
 //   - 光線はカメラ相対（原点がカメラの位置）で交わらせる。大きなワールド座標でも交点の精度が落ちない。
 //   - 微分の y 方向は、画素の y が増える向き（Vulkan の dFdy と同じ向き）の差分。接線の基底は CalculateCotangentFrame と
 //     同じく、位置と UV の dFdy を反転して作る。
 //   - GBuffer の形式・意味（Albedo.a、法線の格納、Velocity の式）はラスタの経路と同じ。
-//     Albedo = 材質の基本色（テクスチャなし。α = 1）、Normal = ワールド法線、Velocity = (現在の NDC - 前の NDC) * 0.5。
+//     Albedo = インスタンスの色 × アルベドのテクスチャ（α = テクスチャの α）、Normal = 法線マップを適用したワールド法線、
+//     Material = 金属度・粗さ・AO、Velocity = (現在の NDC - 前の NDC) * 0.5。
+//   - インスタンスの色は、MegaGeometry は材質の表の基本色（区間の材質の値）、手続きメッシュはインスタンスの表の色、
+//     スキニングは 1。
 //
-// 材質のテクスチャ・ORM・発光は、この関数が返す微分と接線の基底を使う別の解決が受け持つ。
+// 発光・VT のフィードバック・デバッグの表示は、別の解決が受け持つ。
 // ========================================
 
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_buffer_reference_uvec2 : require
+#if defined(NORVES_VISRESOLVE_TILES) && defined(NORVES_SPARSE_RESIDENCY_SHADING)
+#extension GL_ARB_sparse_texture2 : require
+#endif
 
 #ifndef NORVES_VISIBILITY_RESOLVE_GLSL
 #define NORVES_VISIBILITY_RESOLVE_GLSL
@@ -116,20 +130,25 @@ layout(std430, set = 0, binding = 5) readonly buffer DrawInstanceBuffer
 layout(set = 0, binding = 6, rgba8) writeonly uniform image2D albedoImage;
 layout(set = 0, binding = 7, rgba16f) writeonly uniform image2D normalImage;
 layout(set = 0, binding = 8, rg16f) writeonly uniform image2D velocityImage;
+layout(set = 0, binding = 9, rgba8) writeonly uniform image2D materialImage;
 
 #ifdef NORVES_VISRESOLVE_TILES
 #ifdef NORVES_VISRESOLVE_DUMP
-#define VIS_TILE_BINDING 10
+#define VIS_TILE_BINDING 11
 #else
-#define VIS_TILE_BINDING 9
+#define VIS_TILE_BINDING 10
 #endif
 
 // 1 回の dispatch ごとの定数（RHI に push constant が無いので UBO。dispatch ごとに別の UBO を束ねる）
 layout(std140, set = 0, binding = VIS_TILE_BINDING) uniform ResolveTileParams
 {
-    // x = 横のタイル数、y = この dispatch が解決する材質の番号
+    // x = 横のタイル数、y = この dispatch が解決する材質の番号、z = VIS_TILE_FLAG_*、w = 予約
     uvec4 tile;
 } tileParams;
+
+// tileParams.tile.z のビット（VisibilityResolvePass.h の TILE_FLAG_* と同じ）
+const uint VIS_TILE_FLAG_ORM = 1u;     // ORM の 1 枚が metallicTexture の枠に張られている
+const uint VIS_TILE_FLAG_SPARSE = 2u;  // 張ったテクスチャに sparse（VT）が 1 枚でもある
 
 // MaterialTileClassifyPass の引数（材質ごとに 8 語）と一覧（タイルの番号の並び）。MaterialTileClassifyPass.h と同じ並び
 layout(std430, set = 0, binding = VIS_TILE_BINDING + 1) readonly buffer ResolveTileArgs
@@ -145,16 +164,34 @@ layout(std430, set = 0, binding = VIS_TILE_BINDING + 2) readonly buffer ResolveT
 const uint VIS_TILE_ARGS_STRIDE_WORDS = 8u;
 const uint VIS_TILE_ARG_LIST_OFFSET = 3u;
 const uint VIS_TILE_ARG_TILE_COUNT = 4u;
+
+// この dispatch の材質のテクスチャ（GBufferPass の材質の descriptor の 1〜6 と同じ枠の並び。サンプラーは異方性 4）
+layout(set = 0, binding = VIS_TILE_BINDING + 3) uniform sampler2D albedoTexture;
+layout(set = 0, binding = VIS_TILE_BINDING + 4) uniform sampler2D normalTexture;
+layout(set = 0, binding = VIS_TILE_BINDING + 5) uniform sampler2D metallicTexture;
+layout(set = 0, binding = VIS_TILE_BINDING + 6) uniform sampler2D roughnessTexture;
+layout(set = 0, binding = VIS_TILE_BINDING + 7) uniform sampler2D aoTexture;
+layout(set = 0, binding = VIS_TILE_BINDING + 8) uniform sampler2D heightTexture;
+
+#include "Common/SparseResidencySampling.glsl"
+// 計算シェーダーには暗黙の勾配が無いので、VT でない標本も解析的な微分で textureGrad する
+#define NORVES_MATERIAL_SAMPLING_EXPLICIT_GRADIENT 1
+#include "Common/PbrMaterialTextureSamplingCore.glsl"
+#include "Common/ParallaxOcclusionMappingCore.glsl"
 #endif
 
 #ifdef NORVES_VISRESOLVE_DUMP
 // 画素ごとに VIS_RESOLVE_DUMP_STRIDE 個の vec4 を書く（並びは VisibilityResolvePass.h の ResolveDump と同じ）
-layout(std430, set = 0, binding = 9) writeonly buffer ResolveDump
+layout(std430, set = 0, binding = 10) writeonly buffer ResolveDump
 {
     vec4 dump[];
 };
 const uint VIS_RESOLVE_DUMP_STRIDE = 12u;
 #endif
+
+// 材質の表の MaterialEntry::Header[0] のビット（VisibilityMaterialTable.h の MATERIAL_FLAG_* と同じ）
+const uint VIS_MATERIAL_FLAG_NORMAL_TWO_CHANNEL = 1u;
+const uint VIS_MATERIAL_FLAG_HAS_HEIGHT = 2u;
 
 // ========================================
 // 頂点の読み出し（デバイスアドレスから）
@@ -404,6 +441,7 @@ struct VisResolvedPixel
     vec3 normal;         // 補間して正規化したワールド法線
     mat3 tangentFrame;   // T, B, N（CalculateCotangentFrame と同じ規約）
     vec4 previousClip;   // 前のフレームのカメラの、同じ点のクリップ座標
+    vec3 viewDir;        // 表面からカメラへ向かう単位のワールド方向（ラスタの fragViewDir と同じ作り方）
 };
 
 // pixelCenter は画素の中心（整数の画素の位置 + 0.5）
@@ -440,6 +478,12 @@ VisResolvedPixel VisResolveTriangle(VisTriangle triangle, vec2 pixelCenter)
     const vec3 previousPosition =
         VisInterpolate(triangle.previous[0], triangle.previous[1], triangle.previous[2], baryCenter);
     result.previousClip = params.previousViewProj * vec4(previousPosition, 1.0);
+
+    // 頂点ごとに正規化した視線を補間する（ラスタの頂点シェーダーの fragViewDir と同じ。POM が受け取って再び正規化する）
+    const vec3 view0 = normalize(cameraPosition - triangle.position[0]);
+    const vec3 view1 = normalize(cameraPosition - triangle.position[1]);
+    const vec3 view2 = normalize(cameraPosition - triangle.position[2]);
+    result.viewDir = VisInterpolate(view0, view1, view2, baryCenter);
     return result;
 }
 
@@ -459,6 +503,176 @@ vec2 VisComputeVelocity(vec2 pixelCenter, vec4 previousClip)
     }
     return velocity;
 }
+
+// ========================================
+// 材質の評価（GBuffer の Albedo・Normal・Material を作る）
+// ========================================
+
+// 材質の表の 1 件を引く。表の外なら false（entry は既定の値）
+bool VisLoadMaterial(uint materialIndex, out VisMaterialEntry entry)
+{
+    entry = VisMaterialEntry(vec4(1.0), vec4(0.0), vec4(-1.0, -1.0, 0.05, 0.0), uvec4(0u), uvec4(0u), uvec4(0u),
+                             uvec4(0u), uvec4(0u));
+    if (materialIndex >= uint(materials.length()))
+    {
+        return false;
+    }
+    entry = materials[materialIndex];
+    return true;
+}
+
+// ラスタの頂点シェーダーが fragObjectColor へ渡す色。MegaGeometry は区間の材質の基本色（材質の表の基本色）、
+// 手続きメッシュはインスタンスの表の色、スキニングは 1
+vec3 VisObjectColor(VisibilityDrawRecord record, VisMaterialEntry entry, bool bHasMaterial)
+{
+    const uint kind = VisRecordKind(record);
+    if (kind == VIS_KIND_PROCEDURAL_CHUNK)
+    {
+        const uint instanceIndex = VisRecordInstanceIndex(record);
+        return instanceIndex < uint(drawInstances.length()) ? drawInstances[instanceIndex].objectColor.rgb : vec3(1.0);
+    }
+    if (kind == VIS_KIND_SKINNED_CHUNK)
+    {
+        return vec3(1.0);
+    }
+    return bHasMaterial ? entry.baseColor.rgb : vec3(1.0);
+}
+
+// 画素の面の値（GBuffer の 3 枚に書くもの）
+struct VisMaterialSurface
+{
+    vec4 albedo;     // rgb = インスタンスの色 × アルベド、a = アルベドのテクスチャの α
+    vec3 normal;     // 法線マップを適用したワールド法線
+    vec3 material;   // 金属度・粗さ・AO
+};
+
+// 8bit の 1x1 テクスチャの値（ラスタは材質のスカラー値を 1x1 の UNORM テクスチャにして張る）
+float VisQuantize8(float value)
+{
+    return floor(clamp(value, 0.0, 1.0) * 255.0 + 0.5) / 255.0;
+}
+
+// 材質の定数だけで作る面（テクスチャを束ねられない直接 dispatch の版、表の外の材質）。
+// 金属度・粗さは表のスカラー値（負は未指定）か、ラスタの既定のテクスチャ（金属度 0・粗さ 128/255・AO 1）の値
+VisMaterialSurface VisFlatMaterialSurface(vec3 objectColor, VisMaterialEntry entry, bool bHasMaterial, VisResolvedPixel resolved)
+{
+    VisMaterialSurface surface;
+    surface.albedo = vec4(objectColor, 1.0);
+    surface.normal = resolved.normal;
+    const float metallic = (bHasMaterial && entry.scalars.x >= 0.0) ? VisQuantize8(entry.scalars.x) : 0.0;
+    const float roughness = (bHasMaterial && entry.scalars.y >= 0.0) ? VisQuantize8(entry.scalars.y) : 128.0 / 255.0;
+    surface.material = vec3(metallic, roughness, 1.0);
+    return surface;
+}
+
+#ifdef NORVES_VISRESOLVE_TILES
+// 材質のサンプラーの異方性の上限（GBufferPass の既定のサンプラー maxAnisotropy = 4 と同じ）
+const float VIS_MATERIAL_MAX_ANISOTROPY = 4.0;
+
+// 勾配から、textureQueryLOD(tex, uv).y 相当のミップ（Vulkan の異方性フィルタリングの式: N = min(ceil(Pmax / Pmin), 上限)、
+// λ = log2(Pmax / N)）を求める。計算シェーダーは textureQueryLOD の暗黙の微分を使えない。VT の非常駐の逃げ始めのミップにだけ使う
+float VisQueryLodFromGradient(sampler2D tex, vec2 uvDx, vec2 uvDy)
+{
+    const vec2 size = vec2(textureSize(tex, 0));
+    const float lengthX = length(uvDx * size);
+    const float lengthY = length(uvDy * size);
+    const float pMax = max(lengthX, lengthY);
+    const float pMin = min(lengthX, lengthY);
+    if (!(pMax > 0.0))
+    {
+        return 0.0;
+    }
+    const float ratio = pMin > 0.0 ? min(ceil(pMax / pMin), VIS_MATERIAL_MAX_ANISOTROPY) : VIS_MATERIAL_MAX_ANISOTROPY;
+    return clamp(log2(pMax / ratio), 0.0, float(textureQueryLevels(tex) - 1));
+}
+
+// 解析的な微分と、各テクスチャの標本ミップ（bQueryLods のとき）から標本の入力を作る（ラスタの QueryMaterialTextureFootprint の代わり）
+MaterialTextureFootprint VisMakeFootprint(vec2 uvDx, vec2 uvDy, bool bHasORM, bool bQueryLods)
+{
+    MaterialTextureFootprint footprint;
+    footprint.UvDx = uvDx;
+    footprint.UvDy = uvDy;
+    footprint.AlbedoLod = 0.0;
+    footprint.NormalLod = 0.0;
+    footprint.MetallicLod = 0.0;
+    footprint.RoughnessLod = 0.0;
+    footprint.AoLod = 0.0;
+    if (bQueryLods)
+    {
+        footprint.AlbedoLod = VisQueryLodFromGradient(albedoTexture, uvDx, uvDy);
+        footprint.NormalLod = VisQueryLodFromGradient(normalTexture, uvDx, uvDy);
+        footprint.MetallicLod = VisQueryLodFromGradient(metallicTexture, uvDx, uvDy);
+        if (!bHasORM)
+        {
+            footprint.RoughnessLod = VisQueryLodFromGradient(roughnessTexture, uvDx, uvDy);
+            footprint.AoLod = VisQueryLodFromGradient(aoTexture, uvDx, uvDy);
+        }
+    }
+    return footprint;
+}
+
+// 高さの場で変位させたメッシュ（MegaGeometry）の法線マップの補正（megageometry.frag の RemoveDisplacedNormalSlope と同じ式）。
+// lodLevel は描いているクラスタの LOD の段
+vec3 VisRemoveDisplacedNormalSlope(vec3 tangentNormal,
+                                   vec2 texCoord,
+                                   float displacementUVSpacing,
+                                   float normalLod,
+                                   float lodLevel,
+                                   bool bNormalTwoChannel,
+                                   bool bVirtualTexture)
+{
+    const float vertexMip = log2(max(displacementUVSpacing * float(textureSize(normalTexture, 0).x), 1.0)) + lodLevel;
+    const float coarseMip = max(vertexMip, normalLod);
+    const vec3 coarseNormal = DecodePbrTangentNormal(
+        SampleMaterialTextureLod(normalTexture, texCoord, coarseMip, bVirtualTexture), bNormalTwoChannel);
+    const vec2 detailSlope = tangentNormal.xy / max(tangentNormal.z, 0.1) - coarseNormal.xy / max(coarseNormal.z, 0.1);
+    return normalize(vec3(detailSlope, 1.0));
+}
+
+// 材質のテクスチャで画素の面を作る（gbuffer.frag・megageometry.frag の main と同じ順序: POM → 標本 → 法線マップ）。
+// 勾配は三角形から求めた解析的な微分（POM の前の UV の微分。ラスタは POM の後の UV の画面微分を使う）
+VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry entry, VisibilityDrawRecord record,
+                                              VisResolvedPixel resolved)
+{
+    const bool bHasORM = (tileParams.tile.z & VIS_TILE_FLAG_ORM) != 0u;
+    const bool bVirtualTexture = (tileParams.tile.z & VIS_TILE_FLAG_SPARSE) != 0u;
+    const bool bNormalTwoChannel = (entry.header.x & VIS_MATERIAL_FLAG_NORMAL_TWO_CHANNEL) != 0u;
+    const bool bHasHeight = (entry.header.x & VIS_MATERIAL_FLAG_HAS_HEIGHT) != 0u;
+    const float displacementUVSpacing = entry.scalars.w;
+    const bool bDisplaced = VisRecordKind(record) == VIS_KIND_MEGA_CLUSTER && displacementUVSpacing > 0.0;
+
+    vec2 texCoord = resolved.uv;
+    if (bHasHeight)
+    {
+        const float heightLod =
+            bVirtualTexture ? VisQueryLodFromGradient(heightTexture, resolved.duvdx, resolved.duvdy) : 0.0;
+        texCoord = ApplyParallaxOcclusionMappingGrad(heightTexture, resolved.uv, resolved.tangentFrame, resolved.viewDir,
+                                                     entry.scalars.z, bVirtualTexture, resolved.duvdx, resolved.duvdy,
+                                                     heightLod);
+    }
+
+    const MaterialTextureFootprint footprint =
+        VisMakeFootprint(resolved.duvdx, resolved.duvdy, bHasORM, bVirtualTexture || bDisplaced);
+    const PbrMaterialTextureSamples samples =
+        SamplePbrMaterialTextures(albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
+                                  footprint, bHasORM, bNormalTwoChannel, bVirtualTexture);
+
+    vec3 tangentNormal = samples.TangentNormal;
+    if (bDisplaced)
+    {
+        // 描画番号の payload が LOD の段でない（デバッグの表示用の番号を求められている）ときの大きな値は 31 で頭打ちにする
+        const float lodLevel = float(min(VisRecordLodPayload(record), 31u));
+        tangentNormal = VisRemoveDisplacedNormalSlope(tangentNormal, texCoord, displacementUVSpacing, footprint.NormalLod,
+                                                      lodLevel, bNormalTwoChannel, bVirtualTexture);
+    }
+
+    VisMaterialSurface surface;
+    surface.albedo = vec4(ComposePbrSurfaceAlbedo(objectColor, samples), samples.Albedo.a);
+    surface.normal = ApplyTangentSpaceNormal(resolved.tangentFrame, tangentNormal);
+    surface.material = samples.Material;
+    return surface;
+}
+#endif
 
 void main()
 {
@@ -511,16 +725,22 @@ void main()
     const VisResolvedPixel resolved = VisResolveTriangle(triangle, pixelCenter);
     const vec2 velocity = VisComputeVelocity(pixelCenter, resolved.previousClip);
 
-    // 材質の基本色（テクスチャなし）。表から引けない材質の番号は白
-    vec4 albedo = vec4(1.0);
+    // 材質の表から引けない材質の番号は、白・幾何の法線の面にする
     const uint materialIndex = VisRecordMaterialIndex(record);
-    if (materialIndex < uint(materials.length()))
-    {
-        albedo = vec4(materials[materialIndex].baseColor.rgb, 1.0);
-    }
+    VisMaterialEntry materialEntry;
+    const bool bHasMaterial = VisLoadMaterial(materialIndex, materialEntry);
+    const vec3 objectColor = VisObjectColor(record, materialEntry, bHasMaterial);
+#ifdef NORVES_VISRESOLVE_TILES
+    // 表から引ける材質の dispatch だけがテクスチャを束ねている（引けない材質の番号は定数の面）
+    const VisMaterialSurface surface = bHasMaterial ? VisEvaluateMaterialSurface(objectColor, materialEntry, record, resolved)
+                                                    : VisFlatMaterialSurface(objectColor, materialEntry, bHasMaterial, resolved);
+#else
+    const VisMaterialSurface surface = VisFlatMaterialSurface(objectColor, materialEntry, bHasMaterial, resolved);
+#endif
 
-    imageStore(albedoImage, ivec2(pixel), albedo);
-    imageStore(normalImage, ivec2(pixel), vec4(resolved.normal, 0.0));
+    imageStore(albedoImage, ivec2(pixel), surface.albedo);
+    imageStore(normalImage, ivec2(pixel), vec4(surface.normal, 0.0));
+    imageStore(materialImage, ivec2(pixel), vec4(surface.material, 0.0));
     imageStore(velocityImage, ivec2(pixel), vec4(velocity, 0.0, 0.0));
 
 #ifdef NORVES_VISRESOLVE_DUMP

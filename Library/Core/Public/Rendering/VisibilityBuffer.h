@@ -139,7 +139,9 @@ namespace NorvesLib::Core::Rendering
             uint64_t IndexAddress = 0;
 
             uint64_t PreviousVertexAddress = 0;
-            uint64_t Reserved = 0;
+            /** @brief MegaGeometry のクラスタの描画番号の payload（LOD の段。カリングが書く drawInfo.y）。他の種類は 0 */
+            uint32_t LodPayload = 0;
+            uint32_t Reserved = 0;
         };
 
         static_assert(sizeof(DrawRecord) == 64, "VisibilityBuffer.glsl の VisibilityDrawRecord と一致しなければならない");

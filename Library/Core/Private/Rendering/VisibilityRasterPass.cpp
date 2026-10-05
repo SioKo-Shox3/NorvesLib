@@ -703,6 +703,7 @@ namespace NorvesLib::Core::Rendering
         m_LastRecordTableBytes = 0;
         m_LastMaterialTable.reset();
         m_LastMaterialTableCount = 0;
+        m_LastMaterialEntries.clear();
         m_LastMegaInstanceBuffer.reset();
         m_LastMegaInstanceBytes = 0;
 
@@ -1001,6 +1002,7 @@ namespace NorvesLib::Core::Rendering
         m_LastRecordTableBytes = tableBytes;
         m_LastMaterialTable = slot.MaterialTable;
         m_LastMaterialTableCount = static_cast<uint32_t>(materialEntries.size());
+        m_LastMaterialEntries = materialEntries;
         if (bHasMegaDraw)
         {
             m_LastMegaInstanceBuffer = plan.InstanceBuffer;

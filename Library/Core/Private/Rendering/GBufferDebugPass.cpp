@@ -85,6 +85,16 @@ namespace NorvesLib::Core::Rendering
                 outView = GBufferDebugView::Depth;
                 bMatched = true;
             }
+            else if (std::strcmp(value, "albedo") == 0)
+            {
+                outView = GBufferDebugView::Albedo;
+                bMatched = true;
+            }
+            else if (std::strcmp(value, "material") == 0)
+            {
+                outView = GBufferDebugView::Material;
+                bMatched = true;
+            }
         }
         std::free(value);
         return bMatched;
@@ -162,7 +172,11 @@ namespace NorvesLib::Core::Rendering
         RGTextureHandle normalHandle;
         RGTextureHandle velocityHandle;
         RGTextureHandle depthHandle;
-        if (!builder.TryReadTexture(RenderGraphResourceNames::GBufferNormal, normalHandle, RHI::ResourceState::ShaderResource) ||
+        // 1 つ目の束縛（シェーダーの normalTexture）は、法線・アルベド・材質の表示ではそのテクスチャを読む
+        const auto firstSource = m_View == GBufferDebugView::Albedo     ? RenderGraphResourceNames::GBufferAlbedo
+                                     : m_View == GBufferDebugView::Material ? RenderGraphResourceNames::GBufferMaterial
+                                                                            : RenderGraphResourceNames::GBufferNormal;
+        if (!builder.TryReadTexture(firstSource, normalHandle, RHI::ResourceState::ShaderResource) ||
             !builder.TryReadTexture(RenderGraphResourceNames::GBufferVelocity, velocityHandle, RHI::ResourceState::ShaderResource) ||
             !builder.TryReadTexture(RenderGraphResourceNames::GBufferDepth, depthHandle, RHI::ResourceState::ShaderResource))
         {

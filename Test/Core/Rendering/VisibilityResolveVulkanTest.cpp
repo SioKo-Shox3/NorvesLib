@@ -1,6 +1,6 @@
 ﻿// ビジビリティバッファの幾何の解決（visbuffer_resolve.comp / VisibilityResolve）の GPU テスト。
 // 合成した VisBuffer.Id の画像（100x60。8 で割れない部分タイルを含む）・描画の記録の表・頂点とインデックスのバッファ・
-// 材質の表・インスタンスの表から、GBuffer の Albedo・Normal・Velocity と、画素ごとの中間の値（重心座標・UV・解析的な微分・
+// 材質の表・インスタンスの表から、GBuffer の Albedo・Normal・Material・Velocity と、画素ごとの中間の値（重心座標・UV・解析的な微分・
 // 位置の微分・接線の基底・前のクリップ座標）が、CPU の独立した参照と一致することを確かめる。
 //   参照はラスタライザと同じ式（頂点をクリップ座標へ投影し、画面上の重心座標を 1/w で透視補正する）で、倍精度で作る。
 //   シェーダーは光線と三角形の平面の交点で求めるので、式が違う 2 つの計算が合えば、カメラの規約（Y 反転・深度）も合っている。
@@ -13,9 +13,14 @@
 //   空の画素・引けない ID（表に無い記録・記録の三角形数以上の番号）は何も書かないこと。前のカメラが無いと速度は 0。
 //   製品の版と検証用の版（書き出しつき）の両方で、どちらも Vulkan の validation error が 0 件。
 //   材質ごとのタイルの一覧から走る形（MaterialTileClassify の引数と一覧で、材質ごとに 1 回ずつ DispatchIndirect）は、同じ ID の画像の
-//   画面全体の直接 dispatch の結果と、Albedo・Normal・Velocity と検証用の画素ごとの中間の値がビット単位で一致すること
+//   画面全体の直接 dispatch の結果と、Albedo・Material・Velocity と検証用の画素ごとの中間の値がビット単位で一致すること
 //   （空のタイル・3 つ以上の材質が混じるタイル・部分タイル・材質の表の外の材質・引けない ID・画面の外の画素・引数の x の上限を小さくして
 //    y へ広げた一覧を含む）。分類の上限以上の材質の画素は、一覧に入らないので解決されない（直接版は解決する。違う点として記録する）。
+//   Normal は、材質ごとの形がテクスチャの無い材質に既定の平坦な法線テクスチャ（128, 128, 255 の 8bit）を束ねるので、直接版（幾何の法線）と
+//   わずかに違う（接空間の (0.004, 0.004, 1) を傾ける。ラスタも同じ既定のテクスチャを使う）。許容を付けて比べる。
+//   材質ごとの形が材質のテクスチャを束ねて Albedo（インスタンスの色 × アルベド。α はテクスチャの α）・Normal（法線マップ。2 チャンネルの
+//   法線の Z の復元を含む）・Material（ORM の 1 枚、別々の枠、スカラー値の 1x1、既定）を書くことは、1x1 の単色のテクスチャ
+//   （標本が微分・ミップに依らない）を材質ごとに変えて、CPU の期待値と照合する。
 // Vulkan デバイスが無い環境、または解決に対応しない装置では 125（スキップ）を返す。
 #include "Container/Containers.h"
 #include "Rendering/CameraViewConstants.h"
@@ -62,6 +67,7 @@ namespace
     constexpr uint32_t ScreenHeight = 60;
     // 出力の画像の、何も書かれなかった画素の見張りの値
     constexpr uint8_t AlbedoGuard[4] = {0x12, 0x34, 0x56, 0x78};
+    constexpr uint8_t MaterialGuard[4] = {0x9A, 0xBC, 0xDE, 0xF0};
     constexpr uint16_t HalfGuard = 0xC700; // -7.0
 
     int g_failures = 0;
@@ -289,6 +295,8 @@ namespace
         uint32_t TriangleIndex = 0;
         uint32_t Material = 0;
         uint32_t Kind = 0;
+        /** @brief ラスタの fragObjectColor と同じ色（MegaGeometry は区間の材質の基本色、手続きメッシュはインスタンスの色、スキニングは 1） */
+        float ObjectColor[3] = {1.0f, 1.0f, 1.0f};
     };
 
     // 単位の四角形の 4 頂点（局所）。UV は [0, uvScale]、法線は頂点ごとに少しずつ傾ける（補間と正規化の検査）
@@ -344,11 +352,23 @@ namespace
                        const Vec3 pos[4],
                        const Vec3 prev[4],
                        const Vec3 nrm[4],
-                       const Vertex quad[4])
+                       const Vertex quad[4],
+                       const float* instanceColor = nullptr)
     {
         for (uint32_t triangle = 0; triangle < 2; ++triangle)
         {
             ReferenceTriangle ref;
+            for (int channel = 0; channel < 3; ++channel)
+            {
+                if (instanceColor)
+                {
+                    ref.ObjectColor[channel] = instanceColor[channel];
+                }
+                else if (kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::MegaGeometryCluster))
+                {
+                    ref.ObjectColor[channel] = scene.Materials[material].BaseColor[channel];
+                }
+            }
             for (uint32_t k = 0; k < 3; ++k)
             {
                 const uint32_t corner = QuadIndices[triangle * 3 + k];
@@ -416,6 +436,9 @@ namespace
             FillWorldMatrices(data, world, previousWorld);
             const float rows[12] = {0.95f, 0.05f, 0.0f, 0.0f, 0.0f, 1.1f, 0.1f, 0.0f, -0.1f, 0.0f, 0.9f, 0.0f};
             std::memcpy(data.NormalRows, rows, sizeof(rows));
+            // インスタンスの色は材質の基本色と違う値にする（Albedo はインスタンスの色を使い、材質の基本色は使わない）
+            const float instanceColor[4] = {0.30f, 0.60f, 0.90f, 1.0f};
+            std::memcpy(data.ObjectColor, instanceColor, sizeof(instanceColor));
             scene.DrawInstances.push_back(data); // 0
 
             Vec3 pos[4];
@@ -439,7 +462,7 @@ namespace
             record.VertexBase = 2;
             record.PreviousTransformIndex = 0;
             const uint32_t number = scene.Records.Add(record);
-            AddReferences(scene, number, record.Kind, record.MaterialIndex, pos, prev, nrm, quad);
+            AddReferences(scene, number, record.Kind, record.MaterialIndex, pos, prev, nrm, quad, instanceColor);
         }
 
         // ---- 手続きメッシュ 2: 16bit インデックス・奇数の先頭位置・前の変換は別のインスタンスの表の要素 ----
@@ -461,6 +484,8 @@ namespace
             const Mat4 previousWorldUsed = Multiply(Multiply(Translate(-0.9, -0.45, -0.4), RotateY(-0.35)), Scale(1.9, 1.6, 1.0));
             DrawInstanceData decoy = {};
             FillWorldMatrices(decoy, Multiply(Translate(50, 50, 50), Scale(1, 1, 1)), previousWorldUsed);
+            const float decoyColor[4] = {0.05f, 0.05f, 0.05f, 1.0f};
+            std::memcpy(decoy.ObjectColor, decoyColor, sizeof(decoyColor));
             const float identityRows[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
             std::memcpy(decoy.NormalRows, identityRows, sizeof(identityRows));
             scene.DrawInstances.push_back(decoy); // 1
@@ -469,6 +494,8 @@ namespace
             FillWorldMatrices(data, world, Multiply(Translate(-30, 0, 0), Scale(1, 1, 1)));
             const float rows[12] = {1.0f, 0.1f, 0.0f, 0.0f, 0.0f, 0.9f, 0.05f, 0.0f, 0.0f, -0.1f, 1.05f, 0.0f};
             std::memcpy(data.NormalRows, rows, sizeof(rows));
+            const float instanceColor[4] = {0.85f, 0.40f, 0.20f, 1.0f};
+            std::memcpy(data.ObjectColor, instanceColor, sizeof(instanceColor));
             scene.DrawInstances.push_back(data); // 2
 
             Vec3 pos[4];
@@ -493,7 +520,7 @@ namespace
             record.PreviousTransformIndex = 1;
             record.Flags = VisibilityBuffer::RECORD_FLAG_INDEX16;
             const uint32_t number = scene.Records.Add(record);
-            AddReferences(scene, number, record.Kind, record.MaterialIndex, pos, prev, nrm, quad);
+            AddReferences(scene, number, record.Kind, record.MaterialIndex, pos, prev, nrm, quad, instanceColor);
         }
 
         // ---- MegaGeometry のクラスタ: 先頭位置 4（3 の倍数でない）・頂点の基点 3・法線は変換の上 3x3 ----
@@ -842,6 +869,7 @@ namespace
     struct Readback
     {
         Container::VariableArray<uint8_t> Albedo;   // RGBA8
+        Container::VariableArray<uint8_t> Material; // RGBA8（金属度・粗さ・AO）
         Container::VariableArray<uint16_t> Normal;  // RGBA16F
         Container::VariableArray<uint16_t> Velocity; // RG16F
         Container::VariableArray<float> Dump;       // 画素あたり 12 * 4 個
@@ -997,7 +1025,8 @@ namespace
                         uint64_t frameSerial,
                         const TileRunOptions* tiles = nullptr,
                         uint32_t width = ScreenWidth,
-                        uint32_t height = ScreenHeight)
+                        uint32_t height = ScreenHeight,
+                        const Container::VariableArray<VisibilityResolveMaterial>* materials = nullptr)
     {
         Readback result;
         result.DumpPitch = width;
@@ -1013,6 +1042,7 @@ namespace
         TexturePtr albedo = CreateTexture(device, Format::R8G8B8A8_UNORM, 4, AlbedoGuard, outputUsage, "ResolveTestAlbedo");
         TexturePtr normal = CreateTexture(device, Format::R16G16B16A16_FLOAT, 8, halfGuardPixel, outputUsage, "ResolveTestNormal");
         TexturePtr velocity = CreateTexture(device, Format::R16G16_FLOAT, 4, halfGuardPixel, outputUsage, "ResolveTestVelocity");
+        TexturePtr materialImage = CreateTexture(device, Format::R8G8B8A8_UNORM, 4, MaterialGuard, outputUsage, "ResolveTestMaterial");
         const uint64_t dumpBytes =
             static_cast<uint64_t>(ScreenWidth) * ScreenHeight * VisibilityResolveGeometry::DUMP_STRIDE_BYTES;
         BufferPtr dump;
@@ -1024,7 +1054,7 @@ namespace
                                     "ResolveTestDump");
         }
         CommandListPtr commandList = device->CreateCommandList();
-        if (!albedo || !normal || !velocity || !commandList || (bDump && !dump))
+        if (!albedo || !normal || !materialImage || !velocity || !commandList || (bDump && !dump))
         {
             std::cerr << TestName << " 出力の資源を作れませんでした" << std::endl;
             return result;
@@ -1071,8 +1101,13 @@ namespace
         dispatch.DrawInstancesBytes = gpu.DrawInstances->GetSize();
         dispatch.Albedo = albedo;
         dispatch.Normal = normal;
+        dispatch.Material = materialImage;
         dispatch.Velocity = velocity;
         dispatch.Dump = dump;
+        if (materials)
+        {
+            dispatch.Materials = *materials;
+        }
         Viewport viewport;
         viewport.width = static_cast<float>(ScreenWidth);
         viewport.height = static_cast<float>(ScreenHeight);
@@ -1087,7 +1122,7 @@ namespace
 
         resolve.BeginFrame(0, frameSerial);
         commandList->Begin();
-        for (const TexturePtr& texture : {albedo, normal, velocity})
+        for (const TexturePtr& texture : {albedo, normal, materialImage, velocity})
         {
             commandList->TextureBarrier(texture, ResourceState::ShaderResource, ResourceState::UnorderedAccess, 0u, 0u, 0u, 0u);
         }
@@ -1163,6 +1198,10 @@ namespace
         }
         result.Normal.resize(bytes.size() / 2);
         std::memcpy(result.Normal.data(), bytes.data(), bytes.size());
+        if (!ReadTexture(device, materialImage, 4, result.Material))
+        {
+            return result;
+        }
         if (!ReadTexture(device, velocity, 4, bytes))
         {
             return result;
@@ -1220,6 +1259,7 @@ namespace
             return;
         }
         uint32_t badAlbedo = 0;
+        uint32_t badMaterial = 0;
         uint32_t badNormal = 0;
         uint32_t badVelocity = 0;
         uint32_t badGuard = 0;
@@ -1248,14 +1288,22 @@ namespace
                 const ReferenceTriangle& triangle = scene.References[ref.ReferenceIndex];
                 ++counters.PerRecordPixels[triangle.RecordNumber];
                 const VisibilityBuffer::MaterialEntry& material = scene.Materials[triangle.Material];
+                (void)material;
+                // Albedo はインスタンスの色（MegaGeometry は材質の基本色、スキニングは 1）で α = 1（直接 dispatch はテクスチャを使わない）
                 bool bAlbedoOk = albedo[3] == 255;
                 for (int channel = 0; channel < 3; ++channel)
                 {
-                    bAlbedoOk = bAlbedoOk && std::fabs(albedo[channel] / 255.0 - material.BaseColor[channel]) <= 1.0 / 255.0 + 1.0e-6;
+                    bAlbedoOk = bAlbedoOk && std::fabs(albedo[channel] / 255.0 - triangle.ObjectColor[channel]) <= 1.0 / 255.0 + 1.0e-6;
                 }
                 if (!bAlbedoOk)
                 {
                     ++badAlbedo;
+                }
+                // Material は材質の定数だけ（テクスチャも指定も無いので、金属度 0・粗さ 128/255・AO 1）
+                const uint8_t* materialPixel = readback.Material.data() + pixel * 4;
+                if (materialPixel[0] != 0 || materialPixel[1] != 128 || materialPixel[2] != 255)
+                {
+                    ++badMaterial;
                 }
                 const double normalError = std::max({std::fabs(HalfToFloat(normal[0]) - ref.Normal.X),
                                                      std::fabs(HalfToFloat(normal[1]) - ref.Normal.Y),
@@ -1276,12 +1324,13 @@ namespace
                 }
             }
         }
-        if (badAlbedo != 0 || badNormal != 0 || badVelocity != 0 || badGuard != 0)
+        if (badAlbedo != 0 || badMaterial != 0 || badNormal != 0 || badVelocity != 0 || badGuard != 0)
         {
             std::cerr << TestName << " " << label << " 不一致: Albedo=" << badAlbedo << " Normal=" << badNormal
                       << " Velocity=" << badVelocity << " 見張り(書かれてはならない画素)=" << badGuard << std::endl;
         }
-        Expect(badAlbedo == 0, "Albedo は材質の基本色（α = 1）でなければならない");
+        Expect(badAlbedo == 0, "Albedo はインスタンスの色（α = 1）でなければならない");
+        Expect(badMaterial == 0, "Material は材質の定数（金属度 0・粗さ 128/255・AO 1）でなければならない");
         Expect(badNormal == 0, "Normal は補間して正規化したワールド法線でなければならない");
         Expect(badVelocity == 0, "Velocity は前のフレームの頂点から求めた (現在の NDC - 前の NDC) * 0.5 でなければならない");
         Expect(badGuard == 0, "空の画素・引けない ID の画素は何も書かれてはならない");
@@ -1535,7 +1584,8 @@ namespace
         const uint16_t* normal = readback.Normal.data() + pixel * 4;
         const uint16_t* velocity = readback.Velocity.data() + pixel * 2;
         bool bGuard = std::memcmp(albedo, AlbedoGuard, 4) == 0 && normal[0] == HalfGuard && normal[1] == HalfGuard &&
-                      normal[2] == HalfGuard && normal[3] == HalfGuard && velocity[0] == HalfGuard && velocity[1] == HalfGuard;
+                      normal[2] == HalfGuard && normal[3] == HalfGuard && velocity[0] == HalfGuard && velocity[1] == HalfGuard &&
+                      std::memcmp(readback.Material.data() + pixel * 4, MaterialGuard, 4) == 0;
         size_t dumpPixel = 0;
         if (bGuard && !readback.Dump.empty() && DumpPixelIndex(readback, x, y, dumpPixel))
         {
@@ -1548,13 +1598,23 @@ namespace
         return bGuard;
     }
 
-    // 2 つの結果の画素がビット単位で一致するか（NaN の中身も含めて。Albedo・Normal・Velocity と、あれば検証用の中間の値）
+    // 材質ごとの形が、テクスチャの無い材質に既定の平坦な法線（128, 128, 255 の 8bit）を束ねたことによる法線のずれの許容
+    // （接空間の (0.0039, 0.0039, 1) を T・B で傾ける。長い方が 1 の T・B なので、ずれは 0.0055 rad 未満）
+    constexpr double DefaultFlatNormalTilt = 0.01;
+
+    // 2 つの結果の画素が一致するか（Albedo・Material・Velocity と、あれば検証用の中間の値はビット単位で NaN の中身も含めて。
+    // Normal は既定の平坦な法線の傾きぶんの許容つき）
     bool IsSamePixel(const Readback& a, const Readback& b, uint32_t x, uint32_t y)
     {
         const size_t pixel = static_cast<size_t>(y) * ScreenWidth + x;
         bool bSame = std::memcmp(a.Albedo.data() + pixel * 4, b.Albedo.data() + pixel * 4, 4) == 0 &&
-                     std::memcmp(a.Normal.data() + pixel * 4, b.Normal.data() + pixel * 4, 8) == 0 &&
+                     std::memcmp(a.Material.data() + pixel * 4, b.Material.data() + pixel * 4, 4) == 0 &&
                      std::memcmp(a.Velocity.data() + pixel * 2, b.Velocity.data() + pixel * 2, 4) == 0;
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            bSame = bSame && std::fabs(HalfToFloat(a.Normal[pixel * 4 + channel]) - HalfToFloat(b.Normal[pixel * 4 + channel])) <=
+                                 DefaultFlatNormalTilt;
+        }
         size_t dumpPixel = 0;
         if (!a.Dump.empty() && !b.Dump.empty() && DumpPixelIndex(a, x, y, dumpPixel))
         {
@@ -1636,6 +1696,246 @@ namespace
                 }
             }
         }
+    }
+
+    TexturePtr Create1x1Texture(const DevicePtr& device, uint8_t r, uint8_t g, uint8_t b, uint8_t a, const char* name)
+    {
+        TextureDesc desc;
+        desc.Width = 1;
+        desc.Height = 1;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.TextureFormat = Format::R8G8B8A8_UNORM;
+        desc.Dimension = TextureDimension::Texture2D;
+        desc.Usage = ResourceUsage::ShaderRead;
+        desc.DebugName = name;
+        TexturePtr texture = device->CreateTexture(desc);
+        if (texture)
+        {
+            const uint8_t pixel[4] = {r, g, b, a};
+            texture->Update(pixel, 4, 4);
+        }
+        return texture;
+    }
+
+    // ミップごとに色を変えた 256x256 のテクスチャ（レベル 0 = 赤、レベル 1 = 緑、それより粗いレベル = 青）。
+    // 勾配（ミップの選択）を使わずに標本すると、粗いミップを引くべき画素で赤（レベル 0 だけが持つ成分）が出る
+    TexturePtr CreateMipChainTexture(const DevicePtr& device)
+    {
+        constexpr uint32_t Size = 256;
+        constexpr uint32_t Levels = 9;
+        TextureDesc desc;
+        desc.Width = Size;
+        desc.Height = Size;
+        desc.MipLevels = Levels;
+        desc.ArraySize = 1;
+        desc.TextureFormat = Format::R8G8B8A8_UNORM;
+        desc.Dimension = TextureDimension::Texture2D;
+        desc.Usage = ResourceUsage::ShaderRead;
+        desc.DebugName = "ResolveTestMipChain";
+        TexturePtr texture = device->CreateTexture(desc);
+        if (!texture)
+        {
+            return nullptr;
+        }
+        for (uint32_t level = 0; level < Levels; ++level)
+        {
+            const uint32_t extent = Size >> level;
+            const uint8_t color[4] = {static_cast<uint8_t>(level == 0 ? 255 : 0), static_cast<uint8_t>(level == 1 ? 255 : 0),
+                                      static_cast<uint8_t>(level >= 2 ? 255 : 0), 255};
+            Container::VariableArray<uint8_t> pixels(static_cast<size_t>(extent) * extent * 4);
+            for (size_t pixel = 0; pixel < static_cast<size_t>(extent) * extent; ++pixel)
+            {
+                std::memcpy(pixels.data() + pixel * 4, color, 4);
+            }
+            texture->Update(pixels.data(), extent * 4, static_cast<uint32_t>(pixels.size()), level);
+        }
+        return texture;
+    }
+
+    // 材質ごとの形が材質のテクスチャを束ねて、Albedo・Normal・Material を書くことを確かめる。
+    // 1x1 の単色のテクスチャ（標本が微分・ミップ・異方性に依らない）を材質ごとに変え、画素の CPU の期待値と照合する:
+    //   材質 0: アルベド（α = 128）・法線（RGBA8。傾きあり）・ORM の 1 枚（金属度・粗さ・AO を 1 枚から）
+    //   材質 1: アルベド・2 チャンネルの法線（Z はシェーダーが戻す）・金属度・粗さ・AO の別々の枠
+    //   材質 2: テクスチャ無し。金属度・粗さのスカラー値（1x1 のテクスチャにする）
+    //   材質 3: アルベドだけ、ミップごとに色を変えた 256x256（勾配からミップを選ぶこと。法線・Material は既定のテクスチャ）
+    // 材質ごとに束ねるテクスチャが違うので、取り違える（別の材質のテクスチャを束ねる・枠をずらす・ORM の旗を外す）と落ちる。
+    void RunMaterialTextureCase(const DevicePtr& device,
+                                ShaderManager& shaderManager,
+                                const Scene& baseScene,
+                                const Container::VariableArray<uint32_t>& idImage,
+                                const Container::VariableArray<PixelReference>& references,
+                                const CameraSet& cameras)
+    {
+        Scene scene = baseScene;
+        // 材質 1 の法線は 2 チャンネル（BC5 相当。Z は単位長から戻す）
+        scene.Materials[1].Header[0] |= VisibilityBuffer::MATERIAL_FLAG_NORMAL_TWO_CHANNEL;
+        GpuScene gpu;
+        if (!BuildGpuScene(device, scene, idImage, gpu))
+        {
+            Expect(false, "材質のテクスチャの検査の GPU の資源を作れなければならない");
+            return;
+        }
+
+        Container::VariableArray<VisibilityResolveMaterial> materials(4);
+        materials[0].Albedo = Create1x1Texture(device, 200, 100, 50, 128, "ResolveTestM0Albedo");
+        materials[0].Normal = Create1x1Texture(device, 192, 128, 255, 255, "ResolveTestM0Normal");
+        materials[0].ORM = Create1x1Texture(device, 204, 77, 230, 255, "ResolveTestM0Orm");
+        materials[1].Albedo = Create1x1Texture(device, 30, 220, 90, 255, "ResolveTestM1Albedo");
+        materials[1].Normal = Create1x1Texture(device, 64, 160, 0, 255, "ResolveTestM1Normal");
+        materials[1].Metallic = Create1x1Texture(device, 64, 0, 0, 255, "ResolveTestM1Metallic");
+        materials[1].Roughness = Create1x1Texture(device, 191, 0, 0, 255, "ResolveTestM1Roughness");
+        materials[1].AO = Create1x1Texture(device, 102, 0, 0, 255, "ResolveTestM1Ao");
+        materials[2].MetallicConstant = 0.6f;
+        materials[2].RoughnessConstant = 0.25f;
+        materials[3].Albedo = CreateMipChainTexture(device);
+        if (!materials[3].Albedo)
+        {
+            Expect(false, "ミップつきのテクスチャを作れなければならない");
+            return;
+        }
+        for (size_t material = 0; material < 2; ++material)
+        {
+            const VisibilityResolveMaterial& input = materials[material];
+            if (!input.Albedo || !input.Normal)
+            {
+                Expect(false, "材質のテクスチャの検査の 1x1 のテクスチャを作れなければならない");
+                return;
+            }
+        }
+
+        TileRunOptions options;
+        const Readback readback =
+            RunResolve(device, shaderManager, gpu, cameras, false, true, 21, &options, ScreenWidth, ScreenHeight, &materials);
+        Expect(readback.bOk && readback.bRecorded && readback.bClassified, "材質のテクスチャつきの材質ごとの解決を記録して読み戻せなければならない");
+        if (!readback.bOk)
+        {
+            return;
+        }
+
+        // 材質ごとの期待値（8bit の値 → 0..1）
+        struct Expected
+        {
+            double AlbedoTexture[3];
+            double Alpha;
+            double TangentNormal[3];
+            double Material[3]; // 金属度・粗さ・AO
+        };
+        auto unorm = [](int value) { return value / 255.0; };
+        Expected expected[4] = {};
+        expected[0] = {{unorm(200), unorm(100), unorm(50)}, unorm(128),
+                       {unorm(192) * 2.0 - 1.0, unorm(128) * 2.0 - 1.0, 1.0}, {unorm(230), unorm(77), unorm(204)}};
+        {
+            const double nx = unorm(64) * 2.0 - 1.0;
+            const double ny = unorm(160) * 2.0 - 1.0;
+            expected[1] = {{unorm(30), unorm(220), unorm(90)}, 1.0, {nx, ny, std::sqrt(std::max(1.0 - nx * nx - ny * ny, 0.0))},
+                           {unorm(64), unorm(191), unorm(102)}};
+        }
+        // 材質 2 のスカラー値は 8bit に丸めた 1x1 のテクスチャの値（0.6 → 153、0.25 → 64）
+        expected[2] = {{1.0, 1.0, 1.0}, 1.0, {unorm(128) * 2.0 - 1.0, unorm(128) * 2.0 - 1.0, 1.0}, {unorm(153), unorm(64), 1.0}};
+        expected[3] = {{1.0, 1.0, 1.0}, 1.0, {unorm(128) * 2.0 - 1.0, unorm(128) * 2.0 - 1.0, 1.0}, {0.0, unorm(128), 1.0}};
+
+        uint32_t checked = 0;
+        uint32_t mipChecked = 0;
+        uint32_t badMip = 0;
+        uint32_t badAlbedo = 0;
+        uint32_t badMaterial = 0;
+        uint32_t badNormal = 0;
+        double maxNormalError = 0.0;
+        uint32_t perMaterial[4] = {};
+        for (uint32_t y = 0; y < ScreenHeight; ++y)
+        {
+            for (uint32_t x = 0; x < ScreenWidth; ++x)
+            {
+                const size_t pixel = static_cast<size_t>(y) * ScreenWidth + x;
+                const PixelReference& ref = references[pixel];
+                if (!ref.bCovered)
+                {
+                    continue;
+                }
+                const ReferenceTriangle& triangle = scene.References[ref.ReferenceIndex];
+                if (triangle.Material >= 4)
+                {
+                    continue;
+                }
+                ++checked;
+                ++perMaterial[triangle.Material];
+                const Expected& want = expected[triangle.Material];
+
+                // Albedo = インスタンスの色 × アルベド（8bit に丸めて ±1 の許容）、α = アルベドのテクスチャの α
+                const uint8_t* albedo = readback.Albedo.data() + pixel * 4;
+                bool bAlbedoOk = std::fabs(albedo[3] / 255.0 - want.Alpha) <= 1.0 / 255.0 + 1.0e-6;
+                if (triangle.Material == 3)
+                {
+                    // ミップごとに色の違うテクスチャ。CPU の UV の微分から、異方性で下がる前のミップ（log2 の最大の辺）が 3.5 以上の画素は、
+                    // 異方性の上限 4 を引いてもミップが 1.5 以上で、レベル 0 が混ざらない（赤が 0）はず。勾配を使わず
+                    // レベル 0 を引くと、赤が出る
+                    const double texelsPerPixelX = 256.0 * std::hypot(ref.DuvDx[0], ref.DuvDx[1]);
+                    const double texelsPerPixelY = 256.0 * std::hypot(ref.DuvDy[0], ref.DuvDy[1]);
+                    const double pMax = std::max(texelsPerPixelX, texelsPerPixelY);
+                    if (pMax > 0.0 && std::log2(pMax) >= 3.5)
+                    {
+                        ++mipChecked;
+                        if (albedo[0] > 1)
+                        {
+                            ++badMip;
+                        }
+                    }
+                }
+                else
+                {
+                    for (int channel = 0; channel < 3; ++channel)
+                    {
+                        const double value = triangle.ObjectColor[channel] * want.AlbedoTexture[channel];
+                        bAlbedoOk = bAlbedoOk && std::fabs(albedo[channel] / 255.0 - value) <= 1.0 / 255.0 + 1.0e-6;
+                    }
+                }
+                if (!bAlbedoOk)
+                {
+                    ++badAlbedo;
+                }
+
+                const uint8_t* materialPixel = readback.Material.data() + pixel * 4;
+                bool bMaterialOk = true;
+                for (int channel = 0; channel < 3; ++channel)
+                {
+                    bMaterialOk = bMaterialOk && std::fabs(materialPixel[channel] / 255.0 - want.Material[channel]) <= 1.0 / 255.0 + 1.0e-6;
+                }
+                if (!bMaterialOk)
+                {
+                    ++badMaterial;
+                }
+
+                // 法線 = 正規化(T * x + B * y + N * z)（接線の基底は幾何の解決の参照。法線マップは POM の前後に依らない 1x1）
+                double nx = ref.TangentT.X * want.TangentNormal[0] + ref.TangentB.X * want.TangentNormal[1] + ref.Normal.X * want.TangentNormal[2];
+                double ny = ref.TangentT.Y * want.TangentNormal[0] + ref.TangentB.Y * want.TangentNormal[1] + ref.Normal.Y * want.TangentNormal[2];
+                double nz = ref.TangentT.Z * want.TangentNormal[0] + ref.TangentB.Z * want.TangentNormal[1] + ref.Normal.Z * want.TangentNormal[2];
+                const double length = std::sqrt(nx * nx + ny * ny + nz * nz);
+                nx /= length;
+                ny /= length;
+                nz /= length;
+                const uint16_t* normal = readback.Normal.data() + pixel * 4;
+                const double normalError = std::max({std::fabs(HalfToFloat(normal[0]) - nx), std::fabs(HalfToFloat(normal[1]) - ny),
+                                                     std::fabs(HalfToFloat(normal[2]) - nz)});
+                maxNormalError = std::max(maxNormalError, normalError);
+                if (normalError > 8.0e-3)
+                {
+                    ++badNormal;
+                }
+            }
+        }
+        std::cout << TestName << " 材質のテクスチャ: 検査した画素=" << checked << " 材質ごと=[" << perMaterial[0] << "," << perMaterial[1]
+                  << "," << perMaterial[2] << "," << perMaterial[3] << "] 法線の最大誤差=" << maxNormalError << std::endl;
+        for (uint32_t material = 0; material < 4; ++material)
+        {
+            Expect(perMaterial[material] >= 20, "材質のテクスチャの検査は、4 つの材質すべてで十分な画素を確かめなければならない");
+        }
+        std::cout << TestName << " ミップの検査: 粗いミップを引くべき画素=" << mipChecked << " レベル 0 が混ざった画素=" << badMip << std::endl;
+        Expect(mipChecked >= 20, "ミップの検査は、粗いミップを引くべき画素を十分に確かめなければならない");
+        Expect(badMip == 0, "材質のテクスチャは、三角形から求めた微分で選んだミップで標本されなければならない（レベル 0 を引いてはならない）");
+        Expect(badAlbedo == 0, "Albedo はインスタンスの色 × アルベドのテクスチャで、α はテクスチャの α でなければならない");
+        Expect(badMaterial == 0, "Material は ORM の 1 枚・別々の枠・スカラー値の 1x1・既定のテクスチャの値でなければならない");
+        Expect(badNormal == 0, "Normal は法線マップ（2 チャンネルの Z の復元を含む）を接線の基底で変換した値でなければならない");
     }
 
     void RunTileEquivalence(const DevicePtr& device,
@@ -1927,6 +2227,9 @@ namespace
 
             // 材質ごとのタイルの一覧から走る形（間接 dispatch）は、同じ ID の画像の直接 dispatch の結果とビット単位で一致する
             RunTileEquivalence(device, shaderManager, gpu, idImage, cameras);
+
+            // 材質ごとの形は、材質のテクスチャで Albedo・Normal・Material を書く
+            RunMaterialTextureCase(device, shaderManager, scene, idImage, references, cameras);
 
             std::cout << TestName << " 覆われた画素=" << counters.CoveredPixels << " 記録ごと=[";
             for (uint32_t record = 1; record <= scene.Records.RecordCount(); ++record)

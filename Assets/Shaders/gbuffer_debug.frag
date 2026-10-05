@@ -7,6 +7,7 @@
 //   params.x = 0: 世界の法線（xyz × 0.5 + 0.5）
 //   params.x = 1: 速度（現在の UV − 前の UV）。R = x、G = y を params.y 倍して灰色 0.5 からの差にする
 //   params.x = 2: 深度。R = 深度、G = fract(深度 × 256)、B = fract(深度 × 65536)（細かい差が縞で見える）
+//   params.x = 3・4: アルベド・材質。1 つ目の束縛（normalTexture）にそのテクスチャを束ね、rgb をそのまま出す
 // ========================================
 
 layout(location = 0) in vec2 fragUV;
@@ -38,6 +39,12 @@ void main()
         const ivec2 pixel = clamp(ivec2(fragUV * vec2(size)), ivec2(0), size - ivec2(1));
         const vec2 velocity = texelFetch(velocityTexture, pixel, 0).xy;
         color = vec3(vec2(0.5) + velocity * debugParams.params.y, 0.5);
+    }
+    else if (mode >= 3)
+    {
+        const ivec2 size = textureSize(normalTexture, 0);
+        const ivec2 pixel = clamp(ivec2(fragUV * vec2(size)), ivec2(0), size - ivec2(1));
+        color = texelFetch(normalTexture, pixel, 0).rgb;
     }
     else
     {

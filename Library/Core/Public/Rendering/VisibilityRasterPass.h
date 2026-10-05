@@ -105,6 +105,15 @@ namespace NorvesLib::Core::Rendering
         const RHI::BufferPtr& GetMaterialTable() const { return m_LastMaterialTable; }
         /** @brief 材質の表の、使っている範囲の件数 */
         uint32_t GetMaterialTableCount() const { return m_LastMaterialTableCount; }
+        /**
+         * @brief 最後の Execute が GPU の表へ書いた材質の中身（CPU 側のコピー。添え字が GPU の表と同じ）
+         *
+         * 材質の解決が、材質ごとにテクスチャ（ハンドル → RHI のテクスチャ）を張るために引く。書かなかったフレームは空。
+         */
+        const Container::VariableArray<VisibilityBuffer::MaterialEntry>& GetMaterialEntries() const
+        {
+            return m_LastMaterialEntries;
+        }
 
         /**
          * @brief 最後の Execute が描いた MegaGeometry のインスタンスの表（書かなかった・MegaGeometry を描かなかったフレームは null）
@@ -207,6 +216,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_LastRecordTableBytes = 0;
         RHI::BufferPtr m_LastMaterialTable;
         uint32_t m_LastMaterialTableCount = 0;
+        Container::VariableArray<VisibilityBuffer::MaterialEntry> m_LastMaterialEntries;
         RHI::BufferPtr m_LastMegaInstanceBuffer;
         uint64_t m_LastMegaInstanceBytes = 0;
         // そのフレームの材質の表の積み上げ（Execute のたびに空にする）

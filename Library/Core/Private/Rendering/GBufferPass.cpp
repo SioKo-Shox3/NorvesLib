@@ -360,7 +360,7 @@ namespace NorvesLib::Core::Rendering
             height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
         }
 
-        // ビジビリティバッファの解決が書く 3 枚は、storage image としても使えるようにする
+        // ビジビリティバッファの解決が書く 4 枚（Albedo・Normal・Material・Velocity）は、storage image としても使えるようにする
         const bool bResolveWrites = context && ShouldSkipDraws(context->Device);
         const RHI::ResourceUsage resolveWriteUsage =
             bResolveWrites ? RHI::ResourceUsage::ShaderWrite : RHI::ResourceUsage::None;
@@ -388,9 +388,12 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
+        RGTextureDesc materialDesc =
+            RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material");
+        materialDesc.Usage = materialDesc.Usage | resolveWriteUsage;
         m_MaterialHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferMaterial,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"),
+            materialDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,

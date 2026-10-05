@@ -42,7 +42,7 @@ struct VisibilityDrawRecord
     uvec4 header;   // kind, instanceIndex, materialIndex, triangleCount
     uvec4 source;   // firstIndex, vertexBase, previousTransformIndex, flags
     uvec4 address;  // vertexAddress.xy, indexAddress.xy（x = 下位 32bit）
-    uvec4 previous; // previousVertexAddress.xy, reserved.xy
+    uvec4 previous; // previousVertexAddress.xy, lodPayload, reserved
 };
 
 uint VisRecordKind(VisibilityDrawRecord r) { return r.header.x; }
@@ -56,6 +56,8 @@ bool VisRecordHasIndex16(VisibilityDrawRecord r) { return (r.source.w & VIS_RECO
 uvec2 VisRecordVertexAddress(VisibilityDrawRecord r) { return r.address.xy; }
 uvec2 VisRecordIndexAddress(VisibilityDrawRecord r) { return r.address.zw; }
 uvec2 VisRecordPreviousVertexAddress(VisibilityDrawRecord r) { return r.previous.xy; }
+// MegaGeometry のクラスタの描画番号の payload（LOD の段。カリングが書く drawInfo.y）。他の種類は 0
+uint VisRecordLodPayload(VisibilityDrawRecord r) { return r.previous.z; }
 
 // ========================================
 // ID の符号化・復号
