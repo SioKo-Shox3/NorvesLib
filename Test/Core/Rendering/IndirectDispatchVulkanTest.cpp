@@ -9,7 +9,7 @@
 //   ケース D: 引数の x が 0 なら、グループは 1 つも走らないこと。
 //   ケース E: 転送（CopyBuffer）で書いた引数を CopyDest から IndirectArgument へ遷移させて読む。
 //   ケース F: z も 1 より大きい引数（2, 2, 2）で、8 グループが 1 回ずつ走ること。
-//   ケース G: 引数が不正（バッファが無い・オフセットが 4 の倍数でない・引数がバッファの外）なら false を返し、何も記録しないこと。
+//   ケース G: 引数が不正（バッファが無い・IndirectBuffer の用途が無い・オフセットが 4 の倍数でない・引数がバッファの外）なら false を返し、何も記録しないこと。
 //   バリアの段: GenericRead・IndirectArgument が、間接引数の読み取りの段（DRAW_INDIRECT）とアクセス
 //     （INDIRECT_COMMAND_READ）を含むこと。
 //   どのケースも Vulkan の validation error が 0 件（引数のバッファが IndirectBuffer の用途で作られていることも検査される）。
