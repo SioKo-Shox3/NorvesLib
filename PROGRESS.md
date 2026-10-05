@@ -863,3 +863,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR79 opaque runtime接続を開始。ロードマップ本文のR8 selected-channel/scalar1x1・shader無変更へ限定し、CPU/FakeDeviceの実装受入れと実GPU画像確認を分ける。
 
 - G2/GR79 opaque runtime実装を検証へ: 対応subsetをsync/worker/Finalizeで判定し、全mip R8選択uploadとscalar1x1 cacheを接続。round1の匿名texture registry所有残りをptr移管＋ReleaseTextureで修正し、解放/途中失敗/例外/geometry失敗のweak寿命試験を追加、round2静的PASS。Python12+4+7 normal/-Oは合格。旧38＋新runtime＋既存MegaGeometry/ModelResourceの計41CPUを次の実Windows CIで検証する。GPU画像受入れは未実行。
+
+- G2/GR79 opaque runtime初回run37332093729はbuild失敗。ModelStaging.cppのR8直接UpdateでITextureの完全定義include不足（C2027/C2039）。RHI/ITexture.hを明示includeし修正する。41CPUとbyte/CLI検証は初回では未実行で、再CIへ送る。

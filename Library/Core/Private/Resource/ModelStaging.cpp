@@ -1,6 +1,7 @@
 ﻿#include "Resource/ModelStaging.h"
 #include "Resource/ImportedOpaqueRuntime.h"
 #include "Rendering/TextureAssetLoader.h"
+#include "RHI/ITexture.h"
 #include "Resource/GltfImageSource.h"
 
 #include "FileStream/FileStream.h"
