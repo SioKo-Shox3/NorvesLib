@@ -529,7 +529,7 @@
 - notes: 計画書 4.3。危険地帯（メモリ・寿命・アセットロード・RenderThread）。VT のストリーマ（`VirtualTextureStreamer`）の作りに倣う。 2026-10-05 親: run `20261005-134836` の反復6が40分の時間切れになった。途中の変更は `9fc136b7`・`165138cb`・`c6b68001` にあり、親が確かめた時点で Debug の Game・RenderResourcesDomainContractTest・MegaGeometryResourcesTest のビルドは通る。その上から続ける。VTG5-PAGE-REQUEST の要求の持ち主・世代の修正の後に回る。ビルド・撮影はフォアグラウンドで回して完了を待つ。新しく作ったファイルは自分でコミットする（時間切れの途中保存では未追跡のファイルが残る）。 2026-10-05 親（run `20261005-154938` の保留を解く）: 評価2周の残りは「要求の新しさによる優先順位と LRU」。別々の `Update` で取り込んだ要求の発生フレームの新旧が、取り込んだフレームへ写されて失われる（再現: 読み込みの上限0で、ページ1の発生10を `Update(20)`、ページ2の発生11とページ3の発生12を `Update(21)` で取り込むと、上限を1件へ戻したときの選ぶ順が 3→1→2 になる。期待は 3→2→1。LRU も同じ）。その後の VTG5-PAGE-TOUCH の `01bba2de`・`1c5bb27e` で直っている可能性があるので、まず今のコードでこの再現を C++ のテスト（`GeometryPageStreamerTest` に、複数の `Update` をまたぐ優先順位と LRU のケース）にして確かめ、通らなければ優先順位・LRU には要求の発生フレームを持ち、期限の判定には取り込んだフレームを分けて持つ。
 
 ## VTG5-PAGE-TOUCH: 常駐ページの使用の印を LRU に渡す
-- status: todo
+- status: done
 - done-when: 描画で使われている常駐ページ（描いたクラスタのページ）の「最後に使われたフレーム」をストリーマへ渡し、LRU の追い出しが読み込んだ順でなく使われた順になる。`--vram-budget-mb 900`（ジオメトリの目標 54 MB。起動画面の作業集合が約 55 MB）の `-Deterministic` の撮影が、ページの入れ替わりを続けず落ち着いて完了し（`HasPendingPageStreaming` が false に戻る）、`geometry_evicted_pages` の増加が止まる。CPU のテスト（`GeometryPageStreamerTest`）が、使われ続けるページを新しい要求のために追い出さないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest MegaGeometryResourcesTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GeometryPageStreamerTest|MegaGeometryResourcesTest)$"`

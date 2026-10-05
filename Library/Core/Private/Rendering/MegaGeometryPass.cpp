@@ -1729,6 +1729,14 @@ namespace NorvesLib::Core::Rendering
             // 作れなかったときは遮蔽の判定をしない（1パス目で描かなかったクラスタを全て描く）
             const bool bHiZBuilt = m_HiZ.Build(cmdList, m_DepthTexture);
 
+            // 1パス目が描いたクラスタの使用の印（ページの表の要求の印と要求の列）を、2パス目の書き込みへ見せる。
+            // 同じフレームの印での重複の省略と、列の件数の加算が、パスをまたいで続くため
+            if (pageRequestCapacity != 0)
+            {
+                cmdList->BufferBarrier(frameSlot.PageTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                cmdList->BufferBarrier(pageRequestBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            }
+
             // 2パス目: 判定を通った全クラスタを HZB で判定し、1パス目で描かなかった見えるものを描く
             recordCull(CULL_PASS_SECOND, bHiZBuilt ? m_HiZ.GetTexture() : RHI::TexturePtr{});
             recordDraws(m_SecondGBufferRenderPass, m_SecondGBufferFramebuffer, 1);

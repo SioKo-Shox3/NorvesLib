@@ -13,7 +13,8 @@
 //    1 パス目で描かなかった（前のフレームで見えなかった）遮蔽されたクラスタは出さない。
 // 描いたクラスタは、自分のページへも使用の印を要求の列に出す（ホストの LRU を使われた順にするため。常駐でも出る）。
 // 各場合の期待は手で書いた集合で、CPU の写し（DecideBakedCluster）の結果とも一致すること。
-// BVH をたどる cluster_bvh_cull.comp が同じ共通の関数を取り込んでコンパイルできることも確かめる。
+// 8) BVH をたどる cluster_bvh_cull.comp でも、1 パス目 → 2 パス目の順に実行し、2 パス目で節ごと遮蔽されて枝が
+//    打ち切られても、1 パス目で描いたクラスタの自分のページの使用の印が残る。
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/MegaGeometry/GeometryPageRequestSet.h"
 #include "Rendering/MegaGeometry/GeometryPageTable.h"
@@ -129,6 +130,8 @@ namespace
     constexpr uint32_t PageCount = 4;
     constexpr uint32_t RequestCapacity = 8;
     constexpr uint32_t CommandCapacity = 32;
+    constexpr uint32_t BvhQueueBytes = 64;
+    constexpr uint32_t BvhCounterBytes = 256;
 
     struct Fixture
     {
@@ -283,11 +286,10 @@ namespace
         VariableArray<Mega::GeometryPageTable::Entry> Table;
     };
 
-    // 1 回の dispatch を実行する。regions はページの表の区画（PAGE_NON_RESIDENT で非常駐）、stampBase は表に残す要求の印
-    bool RunCase(Fixture& fixture, const uint32_t (&regions)[PageCount], const uint32_t (&stamps)[PageCount],
-                 float lodBias, uint32_t requestCapacity, uint32_t writeStamp, CaseResult& result)
+    // ページの表・要求の列・描画の書き込み先を初期化する（regions は区画。PAGE_NON_RESIDENT で非常駐、stamps は表に残す要求の印）
+    void ResetBuffers(Fixture& fixture, const uint32_t (&regions)[PageCount], const uint32_t (&stamps)[PageCount],
+                      uint32_t requestCapacity)
     {
-        // ページの表と、書き込み先を初期化する
         Mega::GeometryPageTable::Entry table[PageCount];
         for (uint32_t page = 0; page < PageCount; ++page)
         {
@@ -308,11 +310,11 @@ namespace
             VariableArray<uint32_t> zeroInfos(CommandCapacity * 2u, 0u);
             WriteBuffer(fixture.DrawInfos, zeroInfos.data(), zeroInfos.size() * sizeof(uint32_t));
         }
+    }
 
-        CullUniforms uniforms = fixture.Base;
-        uniforms.LODBias = lodBias;
-        uniforms.PageRequestCapacity = requestCapacity;
-        uniforms.VisibleWriteStamp = writeStamp;
+    // 1 回の dispatch を実行して完了を待つ（書き込み先は初期化済みで、dispatch の間は持ち越す）
+    bool DispatchOnce(Fixture& fixture, const PipelinePtr& pipeline, const CullUniforms& uniforms, uint32_t groupCount)
+    {
         WriteBuffer(fixture.Uniform, &uniforms, sizeof(CullUniforms));
 
         DescriptorSetPtr descriptorSet = fixture.Device->CreateDescriptorSet(MakeCullDescriptorSetDesc());
@@ -331,9 +333,9 @@ namespace
         descriptorSet->BindStorageBuffer(6u, fixture.Stats, 0u, 16u);
         descriptorSet->BindStorageBuffer(7u, fixture.Sections, 0u, 8u);
         descriptorSet->BindStorageBuffer(8u, fixture.DrawInfos, 0u, CommandCapacity * 8u);
-        descriptorSet->BindStorageBuffer(9u, fixture.BvhQueue, 0u, 64u);
-        descriptorSet->BindStorageBuffer(10u, fixture.BvhCounters, 0u, 256u);
-        descriptorSet->BindStorageBuffer(11u, fixture.PageTable, 0u, sizeof(table));
+        descriptorSet->BindStorageBuffer(9u, fixture.BvhQueue, 0u, BvhQueueBytes);
+        descriptorSet->BindStorageBuffer(10u, fixture.BvhCounters, 0u, BvhCounterBytes);
+        descriptorSet->BindStorageBuffer(11u, fixture.PageTable, 0u, sizeof(Mega::GeometryPageTable::Entry) * PageCount);
         descriptorSet->BindStorageBuffer(12u, fixture.PageRequests,
                                          0u,
                                          static_cast<uint32_t>(Mega::GeometryPageRequestBuffer::GetBufferBytes(RequestCapacity)));
@@ -345,15 +347,16 @@ namespace
             std::cerr << "コマンドリストを作れませんでした\n";
             return false;
         }
-        const BufferPtr written[] = {fixture.Commands, fixture.Counts, fixture.DrawInfos, fixture.PageTable, fixture.PageRequests};
+        const BufferPtr written[] = {fixture.Commands,     fixture.Counts,   fixture.DrawInfos,  fixture.PageTable,
+                                     fixture.PageRequests, fixture.Visible,  fixture.BvhQueue,   fixture.BvhCounters};
         commandList->Begin();
         for (const BufferPtr& buffer : written)
         {
             commandList->BufferBarrier(buffer, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, buffer->GetSize());
         }
-        commandList->SetPipeline(fixture.Pipeline);
+        commandList->SetPipeline(pipeline);
         commandList->SetDescriptorSet(descriptorSet, 0);
-        commandList->Dispatch(1u, 1u, 1u);
+        commandList->Dispatch(groupCount, 1u, 1u);
         for (const BufferPtr& buffer : written)
         {
             commandList->BufferBarrier(buffer, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, buffer->GetSize());
@@ -361,8 +364,12 @@ namespace
         commandList->End();
         commandList->Submit(true);
         fixture.Device->WaitIdle();
+        return true;
+    }
 
-        // 読み戻し
+    // 描かれたクラスタ・要求の列・ページの表を読み戻す
+    bool ReadResult(Fixture& fixture, uint32_t requestCapacity, CaseResult& result)
+    {
         result = CaseResult{};
         {
             const uint32_t* counts = static_cast<const uint32_t*>(fixture.Counts->Map(0u, 16u));
@@ -394,8 +401,8 @@ namespace
             fixture.PageRequests->Unmap();
         }
         {
-            const Mega::GeometryPageTable::Entry* entries =
-                static_cast<const Mega::GeometryPageTable::Entry*>(fixture.PageTable->Map(0u, sizeof(table)));
+            const Mega::GeometryPageTable::Entry* entries = static_cast<const Mega::GeometryPageTable::Entry*>(
+                fixture.PageTable->Map(0u, sizeof(Mega::GeometryPageTable::Entry) * PageCount));
             for (uint32_t page = 0; entries != nullptr && page < PageCount; ++page)
             {
                 result.Table.push_back(entries[page]);
@@ -403,6 +410,18 @@ namespace
             fixture.PageTable->Unmap();
         }
         return true;
+    }
+
+    // 平らな判定（cluster_cull.comp）を 1 回の dispatch で実行して読み戻す
+    bool RunCase(Fixture& fixture, const uint32_t (&regions)[PageCount], const uint32_t (&stamps)[PageCount],
+                 float lodBias, uint32_t requestCapacity, uint32_t writeStamp, CaseResult& result)
+    {
+        ResetBuffers(fixture, regions, stamps, requestCapacity);
+        CullUniforms uniforms = fixture.Base;
+        uniforms.LODBias = lodBias;
+        uniforms.PageRequestCapacity = requestCapacity;
+        uniforms.VisibleWriteStamp = writeStamp;
+        return DispatchOnce(fixture, fixture.Pipeline, uniforms, 1u) && ReadResult(fixture, requestCapacity, result);
     }
 
     // CPU の写し（DecideBakedCluster）で、同じ常駐のときに描かれるクラスタと要求するページ（子の要求と使用の印）を求める
@@ -499,7 +518,8 @@ namespace
         bool bPassed = true;
         {
             // BVH をたどるカリングが同じ共通の関数を取り込んでコンパイルできる
-            if (!shaderManager.LoadShader("cluster_bvh_cull.comp", RHI::ShaderStage::Compute))
+            ShaderPtr bvhShader = shaderManager.LoadShader("cluster_bvh_cull.comp", RHI::ShaderStage::Compute);
+            if (!bvhShader)
             {
                 std::cerr << "cluster_bvh_cull.comp をコンパイルできませんでした\n";
                 bPassed = false;
@@ -517,6 +537,19 @@ namespace
             pipelineDesc.computeShader = shader;
             pipelineDesc.descriptorSetLayouts.push_back(MakeCullDescriptorSetDesc());
             fixture.Pipeline = device->CreateComputePipeline(pipelineDesc);
+            PipelinePtr bvhPipeline;
+            if (bvhShader)
+            {
+                ComputePipelineDesc bvhPipelineDesc;
+                bvhPipelineDesc.computeShader = bvhShader;
+                bvhPipelineDesc.descriptorSetLayouts.push_back(MakeCullDescriptorSetDesc());
+                bvhPipeline = device->CreateComputePipeline(bvhPipelineDesc);
+                if (!bvhPipeline)
+                {
+                    std::cerr << "BVH のカリングのパイプラインを作れませんでした\n";
+                    bPassed = false;
+                }
+            }
 
             SamplerDesc samplerDesc;
             samplerDesc.filterMin = FilterMode::Point;
@@ -569,8 +602,8 @@ namespace
             fixture.Stats = CreateHostBuffer(device, 16u, storage, "GeometryPageRequestStats");
             fixture.Sections = CreateHostBuffer(device, 8u, storage, "GeometryPageRequestSections");
             fixture.DrawInfos = CreateHostBuffer(device, CommandCapacity * 8u, storage, "GeometryPageRequestDrawInfos");
-            fixture.BvhQueue = CreateHostBuffer(device, 64u, storage, "GeometryPageRequestBvhQueue");
-            fixture.BvhCounters = CreateHostBuffer(device, 256u, storage, "GeometryPageRequestBvhCounters");
+            fixture.BvhQueue = CreateHostBuffer(device, BvhQueueBytes, storage, "GeometryPageRequestBvhQueue");
+            fixture.BvhCounters = CreateHostBuffer(device, BvhCounterBytes, storage, "GeometryPageRequestBvhCounters");
             fixture.PageTable = CreateHostBuffer(device, sizeof(Mega::GeometryPageTable::Entry) * PageCount, storage,
                                                  "GeometryPageRequestTable");
             fixture.PageRequests = CreateHostBuffer(device, Mega::GeometryPageRequestBuffer::GetBufferBytes(RequestCapacity), storage,
@@ -806,6 +839,117 @@ namespace
                     const bool bCase = bMarks && result.DrawnCount == scenario.ExpectedDrawn &&
                                        result.RequestCount == scenario.ExpectedRequestCount &&
                                        result.RequestOverflow == 0 && SameValues(result.Requests, scenario.Requests);
+                    std::cout << "ケース「" << scenario.Name << "」描画=" << result.DrawnCount << " 要求=" << result.RequestCount
+                              << (bCase ? " OK" : " NG") << '\n';
+                    if (!bCase)
+                    {
+                        std::cerr << "ケース「" << scenario.Name << "」が期待と違います\n";
+                        PrintValues("要求", result.Requests);
+                        bPassed = false;
+                    }
+                }
+            }
+
+            // BVH をたどる経路（cluster_bvh_cull.comp）: 2パス目で節ごと遮蔽されて枝が打ち切られても、
+            // 1パス目で描いたクラスタの自分のページの使用の印が残る。1パス目 → 2パス目の順に、書き込み先を持ち越して実行する。
+            // 節: 0 = 全体の根（内部。子の節 1..3）、1..3 = 家族ごとの葉（クラスタ 0..4・5..9・10..14）
+            if (bvhPipeline)
+            {
+                constexpr uint32_t ReadStamp = 7;
+                constexpr uint32_t WriteStamp = 8;
+                constexpr uint32_t NodeCount = 4;
+                constexpr uint32_t LeafQueueBase = 3; // 段 1 の入力の列（3 件）の後ろ
+                const float noParentError = 3.402823466e+38f;
+
+                Mega::GPUGroupBVHNode nodes[NodeCount] = {};
+                nodes[0] = {0.0f, 0.0f, 12.0f, 9.5f, noParentError, 1u, 3u, 0u};
+                nodes[1] = {0.0f, 0.0f, 10.0f, 3.0f, noParentError, 0u, 5u, Mega::GPU_GROUP_BVH_NODE_FLAG_LEAF};
+                nodes[2] = {6.0f, 0.0f, 12.0f, 3.0f, noParentError, 5u, 5u, Mega::GPU_GROUP_BVH_NODE_FLAG_LEAF};
+                nodes[3] = {-6.0f, 0.0f, 14.0f, 3.0f, noParentError, 10u, 5u, Mega::GPU_GROUP_BVH_NODE_FLAG_LEAF};
+                BufferPtr nodeBuffer = CreateHostBuffer(device, sizeof(nodes), ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress,
+                                                        "GeometryPageRequestBvhNodes");
+                const uint64_t nodeAddress = nodeBuffer ? nodeBuffer->GetDeviceAddress() : 0ull;
+                if (nodeAddress == 0)
+                {
+                    std::cerr << "BVH の節のバッファを用意できませんでした\n";
+                    return 1;
+                }
+                WriteBuffer(nodeBuffer, nodes, sizeof(nodes));
+
+                TestInstance bvhInstance = instance;
+                bvhInstance.BvhInfo[0] = static_cast<uint32_t>(nodeAddress & 0xFFFFFFFFull);
+                bvhInstance.BvhInfo[1] = static_cast<uint32_t>(nodeAddress >> 32);
+                bvhInstance.BvhInfo[2] = NodeCount;
+                bvhInstance.BvhInfo[3] = 0;
+                WriteBuffer(fixture.Instances, &bvhInstance, sizeof(bvhInstance));
+
+                // 1 パスぶん（節の判定の 2 段 + 葉のクラスタの判定）を実行する。段のカウンタはパスごとに 0 へ戻す
+                const auto runBvhPass = [&](uint32_t cullPass) -> bool
+                {
+                    uint32_t zeroCounters[BvhCounterBytes / 4u] = {};
+                    WriteBuffer(fixture.BvhCounters, zeroCounters, sizeof(zeroCounters));
+                    CullUniforms uniforms = fixture.Base;
+                    uniforms.PageRequestCapacity = RequestCapacity;
+                    uniforms.CullPass = cullPass;
+                    uniforms.VisibleReadStamp = ReadStamp;
+                    uniforms.VisibleWriteStamp = WriteStamp;
+                    if (cullPass == 2)
+                    {
+                        uniforms.bHiZEnabled = 1;
+                        uniforms.HiZWidth = 2;
+                        uniforms.HiZHeight = 2;
+                        uniforms.HiZMipCount = 1;
+                    }
+                    uniforms.BvhRootCount = 1;
+                    uniforms.BvhLeafBase = LeafQueueBase;
+                    uniforms.BvhStage = 0;
+                    uniforms.BvhInputBase = 0;
+                    uniforms.BvhNextBase = 0;
+                    bool bOk = DispatchOnce(fixture, bvhPipeline, uniforms, 1u);
+                    uniforms.BvhStage = 1;
+                    uniforms.BvhInputBase = 0;
+                    uniforms.BvhNextBase = LeafQueueBase;
+                    bOk = bOk && DispatchOnce(fixture, bvhPipeline, uniforms, 1u);
+                    uniforms.BvhStage = 0xFFFFFFFFu; // BVH_STAGE_CLUSTERS
+                    return bOk && DispatchOnce(fixture, bvhPipeline, uniforms, 1u);
+                };
+
+                struct BvhScenario
+                {
+                    const char* Name;
+                    float HiZDepth;       // 0 = 全てが遮蔽される、1 = 遮蔽されない
+                    uint32_t VisibleLast; // 前のフレームの見えた印（ReadStamp = 1 パス目で描く、0 = 描かない）
+                    uint32_t ExpectedRequestCount;
+                    std::initializer_list<uint32_t> Requests;
+                    uint32_t ExpectedDrawn;
+                };
+                const BvhScenario bvhScenarios[] = {
+                    {"BVH・2パス目で節ごと遮蔽(1パス目で描画済み)", 0.0f, ReadStamp, 2, {2, 3}, 12},
+                    {"BVH・2パス目で節ごと遮蔽(1パス目で未描画)", 0.0f, 0u, 0, {}, 0},
+                    {"BVH・2パス目で可視(1パス目で描画済み)", 1.0f, ReadStamp, 2, {2, 3}, 12},
+                    {"BVH・2パス目で可視(1パス目で未描画)", 1.0f, 0u, 2, {2, 3}, 12},
+                };
+                for (const BvhScenario& scenario : bvhScenarios)
+                {
+                    const float depth[4] = {scenario.HiZDepth, scenario.HiZDepth, scenario.HiZDepth, scenario.HiZDepth};
+                    fixture.HiZ->Update(depth, 8u, 16u, 0, 0);
+                    uint32_t visible[ClusterCount];
+                    for (uint32_t& value : visible)
+                    {
+                        value = scenario.VisibleLast;
+                    }
+                    WriteBuffer(fixture.Visible, visible, sizeof(visible));
+                    const uint32_t allResident[PageCount] = {R, R, R, R};
+                    ResetBuffers(fixture, allResident, noStamps, RequestCapacity);
+
+                    CaseResult result;
+                    if (!runBvhPass(1) || !runBvhPass(2) || !ReadResult(fixture, RequestCapacity, result))
+                    {
+                        return 1;
+                    }
+                    const bool bCase = result.DrawnCount == scenario.ExpectedDrawn &&
+                                       result.RequestCount == scenario.ExpectedRequestCount && result.RequestOverflow == 0 &&
+                                       SameValues(result.Requests, scenario.Requests);
                     std::cout << "ケース「" << scenario.Name << "」描画=" << result.DrawnCount << " 要求=" << result.RequestCount
                               << (bCase ? " OK" : " NG") << '\n';
                     if (!bCase)

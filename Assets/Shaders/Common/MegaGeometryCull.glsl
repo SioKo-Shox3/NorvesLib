@@ -653,6 +653,9 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
         {
             EmitDrawCommand(instanceIndex, instance, clusterIndex, cluster);
             CountStat(STAT_PASS1_DRAWN);
+            // 描いた時点で自分のページの使用の印を出す。BVH の経路は2パス目で節ごと遮蔽されると枝を打ち切り、
+            // このクラスタが2パス目に届かないので、2パス目の使用の印に頼れない。子のページの要求は2パス目の可視の判定に任せる
+            RequestPage(instance.bvhInfo.w, ownPage);
         }
         return;
     }
@@ -691,7 +694,8 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
             RequestPage(instance.bvhInfo.w, requestPage);
         }
         // 描いたクラスタの自分のページへは使用の印を出す（常駐ページの最後に使われたフレームを、ホストの LRU へ渡す）。
-        // 1パス目で描いたものは、2パス目で遮蔽と判定されても実際に描かれているので、使用の印を出す
+        // 1パス目で描いたものは、1パス目が出し済み（同じフレームの印で重複は省かれる）。2パス目で遮蔽と判定されても
+        // 実際に描かれているので、ここでも出せば平らな経路の2パス目だけの判定が1パス目なしでも同じ結果になる
         if (bDrawnInFirstPass || bVisible)
         {
             RequestPage(instance.bvhInfo.w, ownPage);
