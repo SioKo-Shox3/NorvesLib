@@ -830,3 +830,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-EMPTY-STRING開始: Busyの空診断を通して、未確保TStringのdata/c_strがnposのアドレスを返す既存不具合を検出した。文字型ごとの静的ゼロ終端だけに修正し、所有pointer・layout・allocator・iteratorは維持する。既存LoggerSinkTest束へ専用回帰を追加し、実Windowsと従来byte gateで再確認する。
 
 - G2-S6-EMPTY-STRING検証束の修正: 8a25b8de/run37289884552ではAssetCook/CookedMeshTestと新規StringEmptyTestソースがcompile成功したが、新たにビルドしたLoggerSinkTest内の既存Input試験4fileで47件のcompile errorが発生し、実行gateは未到達。入力系の別修正へ範囲を広げず、StringEmptyTestを既存UnicodeTextTestと同じCookedMeshTest束へ移す。型修正と試験本文・34CPU条件・byte比較は不変。
+
+- G2-S6-EMPTY-STRING受入: abc68946/run37292183322で実Windows34CPUが成功。5文字型の空/clear/shrink/move/reuse/printf回帰、raw LastTestのstrict UTF8とBusy空診断1行、bootstrap17実中断/5条件flag全1を確認。既存79+10出力の直接byte一致、2spec×2/16拒否、5診断、3ZIP/API digest/CRC/inventory、MSVC/CNGを独立検証しrootで再実行した。旧受入/失敗証拠は保持。cross-session実測は従来どおり未実行。既存Inputテストの別compile不具合は保留し、既存rootの増分更新へ進む。

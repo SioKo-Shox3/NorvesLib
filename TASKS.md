@@ -2508,7 +2508,7 @@
 - stop-when: 保存absolute locatorをI/Oへ戻す、独立bindingを導出できると偽る、既存root採用/whole-root update交換/恒久file lineageを行う、未知orphanをprefixで掃除する、ordinary観測を弱める、powerloss/atomic reader保証が必要になる。
 
 ## G2-S6-EMPTY-STRING: 空文字のC文字列契約を修復する
-- status: doing
+- status: done
 - done-when: 未確保とムーブ元のTStringのdata/c_strが正しい文字型の静的ゼロ終端を返し、非空/割当/所有権/APIを変えない。
 - verify: 5文字型・既存alias・default/null/empty/clear/shrink/move/reuse、printf診断、Windows34CPU・17中断復旧・89byte互換。Busy診断をescapeなしstrict UTF8で読む。
 - stop-when: iterator/operator[]の別契約やTStringViewを同時変更する、テストだけで不正なc_strを隠す。
