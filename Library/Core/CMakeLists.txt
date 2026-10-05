@@ -218,6 +218,8 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfContainer.cpp
     Private/Resource/GltfBufferSource.h
     Private/Resource/GltfBufferSource.cpp
+    Private/Resource/BvhDecode.h
+    Private/Resource/BvhDecode.cpp
     Private/Resource/GltfBufferSet.h
     Private/Resource/GltfBufferSet.cpp
     Private/Resource/GltfNativePath.h

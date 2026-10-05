@@ -882,3 +882,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR79 複数primitive cook検証準備: 1mesh内Nprimitiveの局所index/全体transform/primitive別cluster、元材質順の共有表とimplicit default、64bit派生画像ID/pathと厳密共有を接続。既存testに2材質・再利用・逆順・default・9primitive・GLB・後半不正・別形状fit/pivot・全体閉鎖/force・2ARM/共有参照・cache miss・N>1 runtime拒否を追加。静的2roundでblockerなし、Python12+4+7 normal/-OとBOM/EOL差分検査PASS。Linuxのnative構文検査はWindows.h不在で未到達。実Windows41CPUと新marker/旧79+10byte/managed gateは次のCIで未確認。
 
 - G2/GR79 複数primitive/material cook受入: 02ec0e14cf3ceac95f0ea0fc26c4484ee9fb6499 / treee9377b2758027b2a4dc216e9a41c9c70d0e7ec34 / run37350305381 attempt1 job111899190790。41CPU/新multi＋旧4marker、Bootstrap17/Update29、79+10byte、7smoke/5診断、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを照合し親もreadonly再実行exit0。旧304証拠fileを保全、最新9pathsと累積27実装pathsを有限検証。GPU/cross-session/N>1描画は未受入れ。ロードマップ203の順序に従い、Stage A（済）後のGR84へ進み、まずraw BVH解析を独立した単位として接続する。
+
+- G2/GR84 raw BVH解析開始。元データの順序/名前/秒/degree値を保持するpure parserから進める。NVSKEL128/256と独立したDecodeLimitsを設定し、変換の可否は後続へ分ける。失敗時は既存out保持、名前は厳密UTF8 byte所有で自動改名しない。root以外の位置channelも捨てず保持する。回転行列/retarget/Blender実測/CLIはこの単位の完了条件に含めない。
+
+- G2/GR84 raw BVH解析の検証準備: 宣言順/親/UTF8名/OFFSET/End Site/生double frame列、有限値・行幅・末尾・明示limit・失敗時out保持を実装。6回転順、混在channel、257関節/深いstack、非BMP/C1、空行、limit境界/不正入力をliteralで追加。2round静的PASS、実2fileのg++ C++23 -Wall -Wextra構文検査、Python12+4+7 normal/-O、BOM/EOL検査PASS。確保故障注入は未実施でnothrow moveをcompile時固定。実Windows42CPU/新markerと既存89byte/managed gateは未確認。raw順序保持を回転行列/retarget受入れとは扱わない。

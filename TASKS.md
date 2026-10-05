@@ -2564,3 +2564,9 @@
 - stop-when: 複数mesh/node変換/スキン/LOD階層/描画N>1/モデルasset-setまで拡張する、unsupported材質設定を落とす、GPU受入れと扱う。
 
 - result: code02ec0e14/treee9377b27/run37350305381 attempt1 job111899190790。実Windows41CPU/新multi＋旧4marker、17/29中断、79+10byte、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを受入。親readonly再実行exit0/全stderr空。9pathsの差分と旧304証拠fileを保全。N>1 runtime/GPU/cross-sessionは未受入れ。
+
+## G2-GR84-BVH-DECODE: BVHの生データを厳密に解析し所有する
+- status: doing
+- done-when: 1ROOTの階層・親番号・OFFSET・CHANNELS宣言順・End Site・frame-majorの有限double値とFrame Timeを独立所有する。UTF8/数値/重複/行幅/末尾/明示上限を厳密検査し、失敗/確保例外では既存outを保持する。I/O・回転変換・リターゲット・fps推定・NVSKEL出力は行わない。
+- verify: 手書きliteralによる6回転順/位置混在/JOINT位置/静止関節/分岐/End Site有無/UTF8/BOM/CRLF/tab/指数の所有と値順、全拒否status・frame幅/数・名前・各limit境界と超過・不正UTF8・末尾・出力保持。実Windows42CPUと既存89byte/managed復旧gate、host構文検査は別記録。
+- stop-when: 実ライセンス制限付きBVHをfixtureへ入れる、Blender実装をコピーする、Euler補間/軸・単位推定/RootMotion/CLI/StageBを同時実装する、raw解析をGR84全体完了や行列一致と扱う。
