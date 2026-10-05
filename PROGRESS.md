@@ -774,3 +774,5 @@
 
 - G2-S6-OWNER-RESOLVER開始: 既存schemaを維持してphysical volume-GUID UTF8 identityとASCII drive-form expected bindingを分離する。specは既存regular、rootは既存directoryまたは既存直親下の不在leafに限定。不在候補は作成後の再解決・完全一致が必須であり、tunneling/将来aliasを予測した公開許可にしない。
 - G2-S6-OWNER-RESOLVER検証準備: file observerを同じprivate coreへ寄せ、file入口の型判定が従来と同値であることを確認。比較器12件×通常/最適化が成功。SUBST fixtureは専用例外でunwindし、自分のmappingだけをexact cleanupする。未使用driveの二段確認、強制例外後のmapping消失確認を追加。27CPU登録済み、実Windows/79+10byteは未実行。
+
+- G2-S6-OWNER-RESOLVER受入: f9dc88ad/run37245964420で実Windows build・27CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。8.3/Unicode物理親へのASCII alias/SUBST/例外時mapping清掃/case-sensitiveの各flagは全て1。shareなしspecの属性観測も1であり、content-read/公開許可とは区別する。不在rootの通常作成前後照合、同名spec置換、lexical state不一致拒否、失敗保持を確認。3ZIPと79+10固定出力を独立確認しrootで再実行。read-only resolverをdone。lock/journal/production採用は未接続。
