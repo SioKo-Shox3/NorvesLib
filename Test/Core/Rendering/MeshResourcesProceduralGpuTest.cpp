@@ -192,6 +192,98 @@ namespace
         world.SetSceneView(nullptr);
         resources.Meshes().Unregister(longMeshHandle);
     }
+
+    // 塊が全三角形をちょうど1回ずつ覆い、各塊が128三角形以下で、サブメッシュの境目をまたがない
+    void ExpectChunksCoverTrianglesOnce(const NorvesLib::Core::Container::VariableArray<MeshIndexChunk> &chunks,
+                                        uint32_t indexCount,
+                                        const SubMesh *subMeshes,
+                                        uint32_t subMeshCount)
+    {
+        const uint32_t triangleCount = indexCount / 3;
+        std::vector<uint32_t> coverCount(triangleCount, 0);
+        uint32_t nextFirstIndex = 0;
+        for (const MeshIndexChunk &chunk : chunks)
+        {
+            assert(chunk.IndexCount > 0);
+            assert(chunk.FirstIndex % 3 == 0 && chunk.IndexCount % 3 == 0);
+            assert(chunk.IndexCount / 3 <= MESH_CHUNK_MAX_TRIANGLES);
+            assert(chunk.FirstIndex == nextFirstIndex);
+            assert(chunk.FirstIndex + chunk.IndexCount <= triangleCount * 3);
+            for (uint32_t index = chunk.FirstIndex; index < chunk.FirstIndex + chunk.IndexCount; index += 3)
+            {
+                ++coverCount[index / 3];
+            }
+            nextFirstIndex = chunk.FirstIndex + chunk.IndexCount;
+            for (uint32_t i = 0; i < subMeshCount; ++i)
+            {
+                const uint32_t start = subMeshes[i].IndexStart;
+                const uint32_t end = start + subMeshes[i].IndexCount;
+                // 塊の内側（始まりより後ろ・終わりより前）にサブメッシュの境目があってはならない
+                assert(!(start > chunk.FirstIndex && start < chunk.FirstIndex + chunk.IndexCount));
+                assert(!(end > chunk.FirstIndex && end < chunk.FirstIndex + chunk.IndexCount));
+            }
+        }
+        for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
+        {
+            assert(coverCount[triangle] == 1);
+        }
+        assert(nextFirstIndex == triangleCount * 3);
+    }
+
+    void TestMeshIndexChunksCoverEveryTriangleOnce(RenderResources &resources)
+    {
+        const MeshDataHandle handle = MakeMeshHandle(90);
+        Mesh3DVertex vertices[3] = {};
+        const auto makeIndices = [](uint32_t indexCount)
+        {
+            std::vector<uint32_t> indices(indexCount);
+            for (uint32_t i = 0; i < indexCount; ++i)
+            {
+                indices[i] = i % 3;
+            }
+            return indices;
+        };
+
+        // 三角形の数が 1・128・129・300 のとき（128 ちょうどで割れ、129 で端の1三角形の塊ができる）
+        const uint32_t triangleCounts[] = {1, 128, 129, 300};
+        const uint32_t expectedChunkCounts[] = {1, 1, 2, 3};
+        for (size_t caseIndex = 0; caseIndex < 4; ++caseIndex)
+        {
+            const uint32_t indexCount = triangleCounts[caseIndex] * 3;
+            const std::vector<uint32_t> indices = makeIndices(indexCount);
+            assert(resources.Meshes().Register(handle, vertices, sizeof(vertices), indices.data(), indexCount));
+            const ProceduralMeshGPUData *gpuData = resources.Meshes().GetGPUData(handle);
+            assert(gpuData != nullptr);
+            assert(gpuData->Chunks.size() == expectedChunkCounts[caseIndex]);
+            ExpectChunksCoverTrianglesOnce(gpuData->Chunks, indexCount, nullptr, 0);
+        }
+
+        // 3で割り切れない余りのインデックスは三角形にならないので覆わない（7個 → 2三角形）
+        {
+            const std::vector<uint32_t> indices = makeIndices(7);
+            assert(resources.Meshes().Register(handle, vertices, sizeof(vertices), indices.data(), 7));
+            const ProceduralMeshGPUData *gpuData = resources.Meshes().GetGPUData(handle);
+            assert(gpuData != nullptr);
+            ExpectChunksCoverTrianglesOnce(gpuData->Chunks, 7, nullptr, 0);
+            assert(gpuData->Chunks.size() == 1 && gpuData->Chunks[0].IndexCount == 6);
+        }
+
+        // サブメッシュの境目（三角形 50 と 150）で塊を区切る。[0,50) [50,150) [150,200) はどれも128以下なので3塊
+        {
+            const uint32_t indexCount = 200 * 3;
+            const std::vector<uint32_t> indices = makeIndices(indexCount);
+            const SubMesh subMeshes[3] = {SubMesh(0, 150, 0, 0), SubMesh(150, 300, 0, 1), SubMesh(450, 150, 0, 2)};
+            assert(resources.Meshes().Register(
+                handle, vertices, sizeof(vertices), indices.data(), indexCount, subMeshes, 3));
+            const ProceduralMeshGPUData *gpuData = resources.Meshes().GetGPUData(handle);
+            assert(gpuData != nullptr);
+            assert(gpuData->Chunks.size() == 3);
+            ExpectChunksCoverTrianglesOnce(gpuData->Chunks, indexCount, subMeshes, 3);
+        }
+
+        resources.Meshes().Unregister(handle);
+        std::cout << "MeshIndexChunks cover every triangle once\n" << std::flush;
+    }
 }
 
 int main()
@@ -224,8 +316,16 @@ int main()
 
     assert(manager.Meshes().Register(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
     assert(device->CreatedBufferDescs.size() == 2);
-    assert(device->CreatedBufferDescs[0].Usage == NorvesLib::RHI::ResourceUsage::VertexBuffer);
-    assert(device->CreatedBufferDescs[1].Usage == NorvesLib::RHI::ResourceUsage::IndexBuffer);
+    // 描画の用途に加えて、計算シェーダー（storage）とアドレス参照（BDA）から読める用途を持つ
+    const auto hasUsage = [](NorvesLib::RHI::ResourceUsage usage, NorvesLib::RHI::ResourceUsage bits)
+    { return (usage & bits) == bits; };
+    const NorvesLib::RHI::ResourceUsage computeReadable = NorvesLib::RHI::ResourceUsage::StorageBuffer |
+                                                          NorvesLib::RHI::ResourceUsage::ShaderRead |
+                                                          NorvesLib::RHI::ResourceUsage::BufferDeviceAddress;
+    assert(hasUsage(device->CreatedBufferDescs[0].Usage, NorvesLib::RHI::ResourceUsage::VertexBuffer));
+    assert(hasUsage(device->CreatedBufferDescs[0].Usage, computeReadable));
+    assert(hasUsage(device->CreatedBufferDescs[1].Usage, NorvesLib::RHI::ResourceUsage::IndexBuffer));
+    assert(hasUsage(device->CreatedBufferDescs[1].Usage, computeReadable));
     assert(manager.GetResourceStats().BufferCount == 0);
 
     const ProceduralMeshGPUData *gpuData = manager.Meshes().GetGPUData(meshHandle);
@@ -279,6 +379,7 @@ int main()
     assert(localBounds.MinY == -1.0f && localBounds.MaxY == 3.0f);
     assert(localBounds.MinZ == -30.0f && localBounds.MaxZ == 4.0f);
     TestMeshProxyBoundsContainRotatedNonUniformScale(manager);
+    TestMeshIndexChunksCoverEveryTriangleOnce(manager);
     boundsVertices[1].Position[1] = std::numeric_limits<float>::infinity();
     assert(manager.Meshes().Register(boundsHandle, boundsVertices, sizeof(boundsVertices), indicesA, 3));
     assert(!manager.Meshes().TryGetLocalBounds(boundsHandle, localBounds));

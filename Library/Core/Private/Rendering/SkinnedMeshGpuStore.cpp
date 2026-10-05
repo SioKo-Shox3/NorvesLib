@@ -232,6 +232,19 @@ namespace NorvesLib::Core::Rendering
         return m_Entries.find(handle) != m_Entries.end();
     }
 
+    bool SkinnedMeshGpuStore::TryGetChunks(SkinnedMeshHandle handle,
+                                           Container::VariableArray<MeshIndexChunk>& out) const
+    {
+        out.clear();
+        const auto entryIt = m_Entries.find(handle);
+        if (entryIt == m_Entries.end())
+        {
+            return false;
+        }
+        out = entryIt->second.Chunks;
+        return true;
+    }
+
     void SkinnedMeshGpuStore::CollectReleasedResources()
     {
         CollectReleased();
@@ -262,7 +275,8 @@ namespace NorvesLib::Core::Rendering
         vertexDesc.Size = static_cast<uint64_t>(vertices.size() * sizeof(SkinnedMeshVertex));
         vertexDesc.Usage = RHI::ResourceUsage::VertexBuffer |
                            RHI::ResourceUsage::StorageBuffer |
-                           RHI::ResourceUsage::ShaderRead;
+                           RHI::ResourceUsage::ShaderRead |
+                           RHI::ResourceUsage::BufferDeviceAddress;
         vertexDesc.CPUAccessible = true;
         vertexDesc.DebugName = "SkinnedMeshVB";
         RHI::BufferPtr vertexBuffer = m_Device->CreateBuffer(vertexDesc);
@@ -274,7 +288,12 @@ namespace NorvesLib::Core::Rendering
 
         RHI::BufferDesc indexDesc;
         indexDesc.Size = static_cast<uint64_t>(indices.size() * sizeof(uint32_t));
-        indexDesc.Usage = RHI::ResourceUsage::IndexBuffer;
+        // 頂点と同じく、描画に加えて計算シェーダー（storage）とアドレス参照（BDA）から読めるようにする。
+        // BDA が使えないデバイスでは RHI 側が用途を無視する。
+        indexDesc.Usage = RHI::ResourceUsage::IndexBuffer |
+                          RHI::ResourceUsage::StorageBuffer |
+                          RHI::ResourceUsage::ShaderRead |
+                          RHI::ResourceUsage::BufferDeviceAddress;
         indexDesc.CPUAccessible = true;
         indexDesc.DebugName = "SkinnedMeshIB";
         RHI::BufferPtr indexBuffer = m_Device->CreateBuffer(indexDesc);
@@ -289,6 +308,7 @@ namespace NorvesLib::Core::Rendering
         entry.VertexBuffer = vertexBuffer;
         entry.IndexBuffer = indexBuffer;
         entry.IndexCount = static_cast<uint32_t>(indices.size());
+        BuildMeshIndexChunks(entry.IndexCount, nullptr, 0, entry.Chunks);
         entry.AssetLease = assetLease;
         m_Entries[handle] = std::move(entry);
         return &m_Entries.find(handle)->second;

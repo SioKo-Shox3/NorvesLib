@@ -983,6 +983,14 @@ namespace NorvesLib::Core::Rendering
         return impl && impl->SkinnedMeshes && impl->SkinnedMeshes->IsResident(handle);
     }
 
+    bool SkinnedMeshResources::TryGetChunks(SkinnedMeshHandle handle,
+                                            Container::VariableArray<MeshIndexChunk>& out) const
+    {
+        out.clear();
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->SkinnedMeshes && impl->SkinnedMeshes->TryGetChunks(handle, out);
+    }
+
     MegaGeometryResources::MegaGeometryResources(RenderResources *pOwner)
         : m_pOwner(pOwner)
     {

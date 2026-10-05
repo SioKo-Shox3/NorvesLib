@@ -971,6 +971,103 @@ namespace
         registry.Shutdown();
     }
 
+    // 登録時に、インデックスを128三角形以下の塊に分けて持つ（全三角形をちょうど1回ずつ覆う）。
+    // 頂点・インデックスのバッファは、描画に加えて計算シェーダー（storage）とアドレス参照（BDA）の用途を持つ。
+    void TestRegisteredMeshHasChunksAndComputeReadableBuffers()
+    {
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+        auto device = Container::MakeShared<FakeDevice>();
+        RenderResources resources;
+        assert(resources.Initialize(device));
+
+        // 1・128・129・300 三角形（128 ちょうどで割れ、129 で端の1三角形の塊ができる）
+        const uint32_t triangleCounts[] = {1, 128, 129, 300};
+        const uint32_t expectedChunkCounts[] = {1, 1, 2, 3};
+        for (size_t caseIndex = 0; caseIndex < 4; ++caseIndex)
+        {
+            const uint32_t triangleCount = triangleCounts[caseIndex];
+            auto mesh = registry.CreateTransient<SkinnedMeshResource>("SkinnedChunkMesh");
+            assert(mesh);
+            Container::VariableArray<Skeletal::SkeletalVertex> vertices(3);
+            vertices[0].Position = {0.0f, 0.0f, 0.0f};
+            vertices[1].Position = {1.0f, 0.0f, 0.0f};
+            vertices[2].Position = {0.0f, 1.0f, 0.0f};
+            for (Skeletal::SkeletalVertex& vertex : vertices)
+            {
+                vertex.Normal = {0.0f, 0.0f, 1.0f};
+                vertex.JointIndices[0] = 0;
+                vertex.JointWeights[0] = 1.0f;
+            }
+            Container::VariableArray<uint32_t> indices(static_cast<size_t>(triangleCount) * 3);
+            for (size_t i = 0; i < indices.size(); ++i)
+            {
+                indices[i] = static_cast<uint32_t>(i % 3);
+            }
+            mesh->SetVertices(std::move(vertices));
+            mesh->SetIndices(std::move(indices));
+            assert(mesh->Load());
+
+            Container::TSharedPtr<const SkinnedMeshAssetLease> assetLease = mesh->GetRenderAssetLease();
+            assert(assetLease && assetLease->IsAssetLeaseActive());
+            auto frameLease = Container::MakeShared<SkinnedMeshFrameLease>(assetLease);
+
+            resources.SkinnedMeshes().BeginFrame(0);
+            Container::VariableArray<Math::Matrix4x4> palette(1);
+            palette[0] = Math::Matrix4x4::Identity;
+            SkinnedMeshPreparedDraw prepared;
+            assert(resources.SkinnedMeshes().PrepareDraw(frameLease, palette, Math::Matrix4x4::Identity, prepared));
+            assert(prepared.IndexCount == triangleCount * 3);
+
+            const RHI::ResourceUsage computeReadable = RHI::ResourceUsage::StorageBuffer |
+                                                       RHI::ResourceUsage::ShaderRead |
+                                                       RHI::ResourceUsage::BufferDeviceAddress;
+            const RHI::ResourceUsage vertexUsage = prepared.VertexBuffer->GetUsage();
+            const RHI::ResourceUsage indexUsage = prepared.IndexBuffer->GetUsage();
+            assert((vertexUsage & RHI::ResourceUsage::VertexBuffer) == RHI::ResourceUsage::VertexBuffer);
+            assert((vertexUsage & computeReadable) == computeReadable);
+            assert((indexUsage & RHI::ResourceUsage::IndexBuffer) == RHI::ResourceUsage::IndexBuffer);
+            assert((indexUsage & computeReadable) == computeReadable);
+
+            Container::VariableArray<MeshIndexChunk> chunks;
+            assert(resources.SkinnedMeshes().TryGetChunks(prepared.MeshHandle, chunks));
+            assert(chunks.size() == expectedChunkCounts[caseIndex]);
+            Container::VariableArray<uint32_t> coverCount(triangleCount);
+            uint32_t nextFirstIndex = 0;
+            for (const MeshIndexChunk& chunk : chunks)
+            {
+                assert(chunk.IndexCount > 0 && chunk.IndexCount % 3 == 0 && chunk.FirstIndex % 3 == 0);
+                assert(chunk.IndexCount / 3 <= MESH_CHUNK_MAX_TRIANGLES);
+                assert(chunk.FirstIndex == nextFirstIndex);
+                for (uint32_t index = chunk.FirstIndex; index < chunk.FirstIndex + chunk.IndexCount; index += 3)
+                {
+                    ++coverCount[index / 3];
+                }
+                nextFirstIndex = chunk.FirstIndex + chunk.IndexCount;
+            }
+            assert(nextFirstIndex == triangleCount * 3);
+            for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
+            {
+                assert(coverCount[triangle] == 1);
+            }
+
+            // 未登録のハンドルは false で、出力は空
+            assert(!resources.SkinnedMeshes().TryGetChunks(SkinnedMeshHandle::Invalid(), chunks));
+            assert(chunks.empty());
+
+            resources.SkinnedMeshes().AbortFrame();
+            frameLease.reset();
+            assetLease.reset();
+            mesh->Unload();
+            mesh.reset();
+            registry.CollectGarbage();
+        }
+
+        resources.Shutdown();
+        registry.Shutdown();
+        std::cout << "SkinnedMesh chunks cover every triangle once\n" << std::flush;
+    }
+
     void TestShaderWeightAndNormalSemanticsMatchCpuReference()
     {
         ResourceRegistry registry;
@@ -1752,6 +1849,7 @@ int main()
     TestOutOfRangeIndexRejectsLeaseBeforeGpuStoreAndDraw();
     TestScreenPropagatesSubmissionAndCompletionSerialsForSingleAndMultiSlot();
     TestFrameLeaseAndPaletteUpload();
+    TestRegisteredMeshHasChunksAndComputeReadableBuffers();
     TestShaderWeightAndNormalSemanticsMatchCpuReference();
     TestSameIdReloadUsesGenerationAndActualCompletionTokens();
     TestRecordCountersInstancingRejectAndThreeConditionRelease();

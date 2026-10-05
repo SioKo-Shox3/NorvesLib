@@ -1060,3 +1060,12 @@
 - 検証: `verify-VTG6-RHI-INT-FORMATS-3.txt`（Debug の Game・RHITextureUpdateVulkanTest、BUILD_EXIT_CODE=0）、`-4.txt`（ctest 3/3 passed、IntegerAttachmentVulkanTest・RHIBlockCompressedTextureVulkanTest・SparseCapabilitiesVulkanTest）、`-5-direct.txt`（本体を直接実行: geometryShader=1、確認した三角形=12 を 2 形式、VUID_COUNT=0、RESULT=PASS）。`-1`・`-2` は失敗した試行（`-1` はビルド中の打ち切り、`-2` は Git Bash が `/m:1` を変換して MSBuild が拒否）。
 - Notes: (1) テストの `DeviceCapabilities` は Windows の `DeviceCapabilitiesA` マクロと衝突するため `const auto&` で受けた。 (2) ビルドは PowerShell で実行する（Git Bash は `/m:1` を壊す）。 (3) 整数の添付のブレンドは無効にする必要がある（テストで `blendEnable=false`）。パイプライン作成側で整数形式のブレンドを強制的に切る処理は足していない（呼び出し側の責任。VTG6 の本体で使うときに確かめる）。
 - Next: TASKS.md の次の未完（VTG6 の続き）。
+
+## 反復 3（run 20261005-191130）: VTG6-RASTER-CHUNKS（blocked。実装はコミット済み）
+- 内容: 三角形リストを128三角形以下の塊に分ける `Rendering/MeshIndexChunks.h`（`BuildMeshIndexChunks`。サブメッシュの境目で区切り、3で割り切れない余りは覆わない）を足し、手続きメッシュ（`ProceduralMeshGPUData::Chunks`。登録時にサブメッシュの始まり・終わりで区切る）とスキニング（`SkinnedMeshGpuStore::Entry::Chunks`。`SkinnedMeshResources::TryGetChunks`）が登録時に塊を持つようにした。手続きメッシュの頂点・インデックス、スキニングのインデックス（と頂点の BDA）のバッファに、storage・ShaderRead・BufferDeviceAddress の用途を足した（BDA が使えないデバイスでは RHI 側が無視する）。描画の経路は変えていない。
+- テスト: `MeshResourcesProceduralGpuTest` に、三角形数 1・128・129・300・余り付き・サブメッシュ3つのケース（全三角形をちょうど1回、各塊128以下、境目をまたがない）と、バッファの用途の検査を足した（既存の「用途が VertexBuffer だけ」の assert は新しい契約に合わせて直した）。`SkinnedRenderPathContractTest` に `TestRegisteredMeshHasChunksAndComputeReadableBuffers`（同じ三角形数、バッファの用途、未登録は false）を足した。
+- 検証: `verify-VTG6-RASTER-CHUNKS-3.txt`（Debug の Game・RenderResourcesDomainContractTest・SkinnedRenderPathContractTest、BUILD_EXIT_CODE=0。-1・-2 は constexpr と文字列の誤りで失敗した試行）、`-9-ctest-ok.txt`（MeshResourcesProceduralGpuTest・GeometryPoolAllocatorTest が 2/2 passed）、`-8-skinned-direct.txt`（スキニングの追加ケースが通った出力）。
+- 止まった理由: verify の ctest の `SkinnedRenderPathContractTest` は、このタスクと無関係な既知の失敗（TEST-SKINNED。`TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer` が `gBuffer.Initialize` で落ち、assert の後にプロセスが終了しない）で通らない。詳細・選択肢は `blocked/VTG6-RASTER-CHUNKS.md`。`TASKS.md` の status は変えていない。
+- Notes: (1) このツール環境では python のヒアドキュメント内の `
+` が実際の改行になるので、文字列リテラルは `chr(92)` で作る。 (2) `ResourceUsage` の `operator|` は constexpr ではないので `const` で持つ。
+- Next: TEST-SKINNED を直したあと、VTG6-RASTER-CHUNKS の status を `todo` に戻すと、ctest の確認だけで完了できる。

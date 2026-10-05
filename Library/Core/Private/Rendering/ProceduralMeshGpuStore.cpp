@@ -14,6 +14,17 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        // 描画に加えて、計算シェーダー（storage）とアドレス参照（BDA）から頂点・インデックスを読めるようにする。
+        // BDA が使えないデバイスでは RHI 側が用途を無視する。
+        const RHI::ResourceUsage kVertexBufferUsage = RHI::ResourceUsage::VertexBuffer |
+                                                       RHI::ResourceUsage::StorageBuffer |
+                                                       RHI::ResourceUsage::ShaderRead |
+                                                       RHI::ResourceUsage::BufferDeviceAddress;
+        const RHI::ResourceUsage kIndexBufferUsage = RHI::ResourceUsage::IndexBuffer |
+                                                      RHI::ResourceUsage::StorageBuffer |
+                                                      RHI::ResourceUsage::ShaderRead |
+                                                      RHI::ResourceUsage::BufferDeviceAddress;
+
         // 頂点の位置からローカル空間のAABBを求める。GBufferPass はこの置き場のメッシュを Mesh3DVertex の並びで
         // 描くので、その大きさで割り切れるときだけ位置を読む。非有限の位置があれば求めない。
         bool ComputeMesh3DVertexBounds(const void *vertices, size_t vertexSize, BoundingBox &outBounds)
@@ -83,7 +94,7 @@ namespace NorvesLib::Core::Rendering
 
         RHI::BufferDesc vbDesc(
             static_cast<uint64_t>(vertexSize),
-            RHI::ResourceUsage::VertexBuffer,
+            kVertexBufferUsage,
             true,
             "MeshVB");
         auto vertexBuffer = m_Device->CreateBuffer(vbDesc);
@@ -97,7 +108,7 @@ namespace NorvesLib::Core::Rendering
         const size_t ibSize = static_cast<size_t>(indexCount) * sizeof(uint32_t);
         RHI::BufferDesc ibDesc(
             static_cast<uint64_t>(ibSize),
-            RHI::ResourceUsage::IndexBuffer,
+            kIndexBufferUsage,
             true,
             "MeshIB");
         auto indexBuffer = m_Device->CreateBuffer(ibDesc);
@@ -114,13 +125,19 @@ namespace NorvesLib::Core::Rendering
         gpuData.IndexCount = indexCount;
         gpuData.bHasLocalBounds = ComputeMesh3DVertexBounds(vertices, vertexSize, gpuData.LocalBounds);
         gpuData.SubMeshCount = std::min(subMeshCount, MAX_MATERIAL_SLOTS);
+        Container::FixedArray<uint32_t, MAX_MATERIAL_SLOTS * 2> chunkBoundaries;
+        uint32_t chunkBoundaryCount = 0;
         for (uint32_t i = 0; i < gpuData.SubMeshCount; ++i)
         {
             gpuData.SubMeshes[i].IndexStart = subMeshes[i].IndexStart;
             gpuData.SubMeshes[i].IndexCount = subMeshes[i].IndexCount;
             gpuData.SubMeshes[i].VertexStart = subMeshes[i].VertexStart;
             gpuData.SubMeshes[i].MaterialIndex = subMeshes[i].MaterialIndex;
+            // サブメッシュの始まりと終わりで塊を区切り、1つの塊が複数の材質をまたがないようにする
+            chunkBoundaries[chunkBoundaryCount++] = subMeshes[i].IndexStart;
+            chunkBoundaries[chunkBoundaryCount++] = subMeshes[i].IndexStart + subMeshes[i].IndexCount;
         }
+        BuildMeshIndexChunks(indexCount, chunkBoundaries.data(), chunkBoundaryCount, gpuData.Chunks);
 
         {
             Thread::ScopedLock lock(m_Mutex);

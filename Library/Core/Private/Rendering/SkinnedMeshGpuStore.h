@@ -2,6 +2,7 @@
 
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Rendering/MeshIndexChunks.h"
 #include "Rendering/SkinnedMeshTypes.h"
 
 #include <cstdint>
@@ -36,6 +37,8 @@ namespace NorvesLib::Core::Rendering
         void AbortFrame();
         bool GetLifetimeSnapshot(SkinnedMeshHandle handle, SkinnedMeshGpuLifetimeSnapshot& outSnapshot) const;
         bool IsResident(SkinnedMeshHandle handle) const;
+        // 登録時に分けた128三角形以下の塊（未登録は false）。全三角形をちょうど1回ずつ覆う。
+        bool TryGetChunks(SkinnedMeshHandle handle, Container::VariableArray<MeshIndexChunk>& out) const;
         void CollectReleasedResources();
         void ForceClearAfterWaitIdle();
 
@@ -55,6 +58,7 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr VertexBuffer;
             RHI::BufferPtr IndexBuffer;
             uint32_t IndexCount = 0;
+            Container::VariableArray<MeshIndexChunk> Chunks;
             Container::TWeakPtr<const SkinnedMeshAssetLease> AssetLease;
             Container::VariableArray<Container::TWeakPtr<const SkinnedMeshFrameLease>> FrameLeases;
             Container::VariableArray<PaletteUse> PaletteUses;
