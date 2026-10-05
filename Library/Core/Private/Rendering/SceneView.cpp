@@ -976,6 +976,20 @@ namespace NorvesLib::Core::Rendering
             AddPass(std::move(visibilityDebugPass));
         }
 
+#if NORVES_ENABLE_STATS
+        // GBufferDebugPass: GBuffer の法線・速度・深度を最後のシーンの色へ書く（環境変数 NORVES_GBUFFER_DEBUG。on・off の比較用）。
+        // 統計が有効な構成（Debug・RelWithDebInfo）だけ。Release には検証表示を入れない。
+        {
+            GBufferDebugView gbufferDebugView = GBufferDebugView::Normal;
+            if (GBufferDebugPass::TryGetViewFromEnvironment(gbufferDebugView))
+            {
+                NORVES_LOG_INFO("SceneView", "GBUFFER_DEBUG NORVES_GBUFFER_DEBUG により GBuffer の検証表示を追加する（表示=%u）",
+                                static_cast<uint32_t>(gbufferDebugView));
+                AddPass(MakeUnique<GBufferDebugPass>(gbufferDebugView));
+            }
+        }
+#endif
+
         // PostProcessStack: TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw
         auto postProcessStack = MakeUnique<PostProcessStack>();
 

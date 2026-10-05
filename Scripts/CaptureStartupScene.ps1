@@ -173,6 +173,10 @@ param(
     # （--visibility-buffer=on。見た目は変わらない）。Debug は On に加えて、ID を色にして画面へ表示する（--visibility-buffer=debug。検証用）。
     [ValidateSet('Off', 'On', 'Debug')]
     [string]$VisibilityBuffer = 'Off',
+    # GBuffer の検証表示（既定は Off）。Normal・Velocity・Depth は最後のシーンの色を GBuffer の法線・速度・深度の色で置き換える
+    # （環境変数 NORVES_GBUFFER_DEBUG。統計が有効な Debug・RelWithDebInfo だけ）。-VisibilityBuffer On と Off で同じ値を撮り比べる用。
+    [ValidateSet('Off', 'Normal', 'Velocity', 'Depth')]
+    [string]$GBufferDebug = 'Off',
     # 同じコードを -Deterministic で撮った別の出力先。各視点の平均輝度の差と PSNR を求めて metrics.json へ書き、
     # 平均輝度の差が -DeterministicMeanLuminanceLimit を超えるか PSNR が -DeterministicPsnrLimit を下回れば失敗にする。
     [string]$CompareDeterministicWith = '',
@@ -838,6 +842,15 @@ foreach ($view in $shots)
 
     # RTGI を切るときは環境変数で起動画面へ伝える（起動した Game だけが受け継ぐよう、起動の直後に戻す）。
     $previousRtgiSetting = $env:NORVES_STARTUP_RTGI
+    $previousGBufferDebugSetting = $env:NORVES_GBUFFER_DEBUG
+    if ($GBufferDebug -ne 'Off')
+    {
+        $env:NORVES_GBUFFER_DEBUG = $GBufferDebug.ToLowerInvariant()
+    }
+    else
+    {
+        Remove-Item Env:NORVES_GBUFFER_DEBUG -ErrorAction SilentlyContinue
+    }
     if ($Rtgi -eq 'Off')
     {
         $env:NORVES_STARTUP_RTGI = '0'
@@ -855,6 +868,8 @@ foreach ($view in $shots)
     {
         if ($null -eq $previousRtgiSetting) { Remove-Item Env:NORVES_STARTUP_RTGI -ErrorAction SilentlyContinue }
         else { $env:NORVES_STARTUP_RTGI = $previousRtgiSetting }
+        if ($null -eq $previousGBufferDebugSetting) { Remove-Item Env:NORVES_GBUFFER_DEBUG -ErrorAction SilentlyContinue }
+        else { $env:NORVES_GBUFFER_DEBUG = $previousGBufferDebugSetting }
     }
     [void]$process.Handle
     $exitCode = $null
