@@ -27,6 +27,9 @@ namespace NorvesLib::Tools::AssetCook::Detail
     // 既存regular fileまたは不在file endpointを観測。reparse/dir leaf/不明identityは拒否する。
     [[nodiscard]] bool ObserveCookPathIdentity(const std::filesystem::path& locator, CookPathIdentity& out,
                                                Core::Container::AnsiString& error);
+    // directory endpoint用。既存directoryまたは既存直親の下の不在leafだけを観測する。
+    [[nodiscard]] bool ObserveCookDirectoryIdentity(const std::filesystem::path& locator, CookPathIdentity& out,
+                                                    Core::Container::AnsiString& error);
     [[nodiscard]] int CompareCookPhysicalPath(const CookPathIdentity& a, const CookPathIdentity& b);
     [[nodiscard]] bool CookPhysicalAncestor(const CookPathIdentity& ancestor, const CookPathIdentity& child);
     // 共通manifestの同一性。case-fold path一致だけでは別file/不在endpointを統合しない。

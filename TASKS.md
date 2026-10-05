@@ -2464,3 +2464,9 @@
 - done-when: callerが独立に確定したspec/final-root/manifest identityから、versioned length-delimited UTF8 tupleとSHA-256で安定した128bit識別子を導出する。SourceRootや保存stateからownerを採用しない。
 - verify: 独立算出の固定vector、field境界/Unicode/上限/不正入力/失敗保持、state codecとの照合、Windows CPUと79+10byte gate。
 - stop-when: filesystem alias解決やroot作成を暗黙に行う、識別子を認証/既存root上書き許可と扱う、未確定のresolverをproductionへ接続する。
+
+## G2-S6-OWNER-RESOLVER: owner identityとfile locatorを独立に解決する
+- status: doing
+- done-when: existing specとexisting root/既存直親下の不在rootから物理UTF8 owner identityを導出し、ASCII drive-form保存bindingとnative I/O locatorを分けて返す。read-onlyで失敗時outを保持する。
+- verify: 既存/不在から作成後の再照合、Unicode・case・8.3・SUBST、同名spec置換、危険raw名/type/reparse拒否・shareなしspecの属性観測、独立state保存読戻し、Windowsと79+10byte gate。conditional試験の未実行を明記する。
+- stop-when: 不在名の将来canonicalを無条件に保証する、保存ownerを採用する、lexical binding差を黙認する、lock/journalなしでroot/stateをproduction公開する。

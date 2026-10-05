@@ -187,125 +187,145 @@ namespace NorvesLib::Tools::AssetCook::Detail
         return true;
 #endif
     }
+    namespace
+    {
+        bool ObserveCookEndpointIdentity(const std::filesystem::path& locator, bool bDirectory, bool bImmediateParent,
+                                         CookPathIdentity& out, IdentityText& error)
+        {
+#if !defined(_WIN32)
+            (void)locator;
+            (void)bDirectory;
+            (void)bImmediateParent;
+            (void)out;
+            return Fail(error, "windows_required");
+#else
+            std::filesystem::path normalized;
+            if (!NormalizeCookGuardLocator(locator, normalized, error) || !CookOutputPaths::LocalDrivePath(normalized))
+            {
+                if (error.empty())
+                {
+                    Fail(error, "local_volume_required");
+                }
+                return false;
+            }
+            auto prefix = normalized.root_path(), existing = prefix;
+            const DWORD rootAttributes = GetFileAttributesW(prefix.c_str());
+            if (rootAttributes == INVALID_FILE_ATTRIBUTES || (rootAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+                (rootAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+            {
+                return Fail(error, "unsafe_root");
+            }
+            Core::Container::VariableArray<std::filesystem::path> missing;
+            bool bAbsent = false;
+            for (const auto& part : normalized.relative_path())
+            {
+                prefix /= part;
+                if (bAbsent)
+                {
+                    missing.push_back(part);
+                    continue;
+                }
+                const DWORD attributes = GetFileAttributesW(prefix.c_str());
+                if (attributes == INVALID_FILE_ATTRIBUTES)
+                {
+                    const DWORD code = GetLastError();
+                    if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND)
+                    {
+                        return Fail(error, "status_failed");
+                    }
+                    bAbsent = true;
+                    missing.push_back(part);
+                    continue;
+                }
+                if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+                {
+                    return Fail(error, "reparse_not_supported");
+                }
+                const bool bLeaf = prefix == normalized;
+                const bool bExpectedDirectory = !bLeaf || bDirectory;
+                if (((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) != bExpectedDirectory)
+                {
+                    return Fail(error, "endpoint_or_parent_type");
+                }
+                existing = prefix;
+            }
+            if (bImmediateParent && missing.size() > 1)
+            {
+                return Fail(error, "immediate_parent_required");
+            }
+            HANDLE h = CreateFileW(
+                existing.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT | ((bAbsent || bDirectory) ? FILE_FLAG_BACKUP_SEMANTICS : 0), nullptr);
+            if (h == INVALID_HANDLE_VALUE)
+            {
+                return Fail(error, "identity_open_failed");
+            }
+            struct Close
+            {
+                HANDLE Handle;
+                ~Close()
+                {
+                    CloseHandle(Handle);
+                }
+            } close{h};
+            FILE_ATTRIBUTE_TAG_INFO tag{};
+            if (GetFileType(h) != FILE_TYPE_DISK ||
+                !GetFileInformationByHandleEx(h, FileAttributeTagInfo, &tag, sizeof(tag)) ||
+                (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+                ((tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) != (bAbsent || bDirectory))
+            {
+                return Fail(error, "identity_type_failed");
+            }
+            const DWORD flags = FILE_NAME_NORMALIZED | VOLUME_NAME_GUID;
+            const DWORD required = GetFinalPathNameByHandleW(h, nullptr, 0, flags);
+            if (required == 0 || required > MaximumCookLocatorUnits)
+            {
+                return Fail(error, "final_name_failed");
+            }
+            Core::Container::VariableArray<wchar_t> buffer(static_cast<size_t>(required) + 1, 0);
+            const DWORD count = GetFinalPathNameByHandleW(h, buffer.data(), static_cast<DWORD>(buffer.size()), flags);
+            if (count == 0 || count >= buffer.size())
+            {
+                return Fail(error, "final_name_failed");
+            }
+            CookPathIdentity candidate;
+            candidate.Canonical = std::filesystem::path(buffer.data(), buffer.data() + count);
+            for (const auto& part : missing)
+            {
+                candidate.Canonical /= part;
+            }
+            candidate.Canonical.make_preferred();
+            candidate.bPresent = !bAbsent;
+            if (!bAbsent)
+            {
+                FILE_ID_INFO id{};
+                BY_HANDLE_FILE_INFORMATION info{};
+                if (!GetFileInformationByHandleEx(h, FileIdInfo, &id, sizeof(id)) ||
+                    !GetFileInformationByHandle(h, &info) || info.nNumberOfLinks == 0)
+                {
+                    return Fail(error, "file_id_not_supported");
+                }
+                candidate.VolumeSerial = id.VolumeSerialNumber;
+                candidate.LinkCount = info.nNumberOfLinks;
+                std::memcpy(candidate.FileId.data(), id.FileId.Identifier, 16);
+            }
+            if (!BuildComponents(candidate, error))
+            {
+                return false;
+            }
+            out = std::move(candidate);
+            return true;
+#endif
+        }
+    } // namespace
     bool ObserveCookPathIdentity(const std::filesystem::path& locator, CookPathIdentity& out, IdentityText& error)
     {
-#if !defined(_WIN32)
-        (void)locator;
-        (void)out;
-        return Fail(error, "windows_required");
-#else
-        std::filesystem::path normalized;
-        if (!NormalizeCookGuardLocator(locator, normalized, error) || !CookOutputPaths::LocalDrivePath(normalized))
-        {
-            if (error.empty())
-            {
-                Fail(error, "local_volume_required");
-            }
-            return false;
-        }
-        auto prefix = normalized.root_path(), existing = prefix;
-        const DWORD rootAttributes = GetFileAttributesW(prefix.c_str());
-        if (rootAttributes == INVALID_FILE_ATTRIBUTES || (rootAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
-            (rootAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
-        {
-            return Fail(error, "unsafe_root");
-        }
-        Core::Container::VariableArray<std::filesystem::path> missing;
-        bool bAbsent = false;
-        for (const auto& part : normalized.relative_path())
-        {
-            prefix /= part;
-            if (bAbsent)
-            {
-                missing.push_back(part);
-                continue;
-            }
-            const DWORD attributes = GetFileAttributesW(prefix.c_str());
-            if (attributes == INVALID_FILE_ATTRIBUTES)
-            {
-                const DWORD code = GetLastError();
-                if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND)
-                {
-                    return Fail(error, "status_failed");
-                }
-                bAbsent = true;
-                missing.push_back(part);
-                continue;
-            }
-            if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
-            {
-                return Fail(error, "reparse_not_supported");
-            }
-            const bool bLeaf = prefix == normalized;
-            if (((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) == bLeaf)
-            {
-                return Fail(error, "endpoint_or_parent_type");
-            }
-            existing = prefix;
-        }
-        HANDLE h = CreateFileW(existing.c_str(), FILE_READ_ATTRIBUTES,
-                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-                               FILE_FLAG_OPEN_REPARSE_POINT | (bAbsent ? FILE_FLAG_BACKUP_SEMANTICS : 0), nullptr);
-        if (h == INVALID_HANDLE_VALUE)
-        {
-            return Fail(error, "identity_open_failed");
-        }
-        struct Close
-        {
-            HANDLE Handle;
-            ~Close()
-            {
-                CloseHandle(Handle);
-            }
-        } close{h};
-        FILE_ATTRIBUTE_TAG_INFO tag{};
-        if (GetFileType(h) != FILE_TYPE_DISK ||
-            !GetFileInformationByHandleEx(h, FileAttributeTagInfo, &tag, sizeof(tag)) ||
-            (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
-            ((tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) != bAbsent)
-        {
-            return Fail(error, "identity_type_failed");
-        }
-        const DWORD flags = FILE_NAME_NORMALIZED | VOLUME_NAME_GUID;
-        const DWORD required = GetFinalPathNameByHandleW(h, nullptr, 0, flags);
-        if (required == 0 || required > MaximumCookLocatorUnits)
-        {
-            return Fail(error, "final_name_failed");
-        }
-        Core::Container::VariableArray<wchar_t> buffer(static_cast<size_t>(required) + 1, 0);
-        const DWORD count = GetFinalPathNameByHandleW(h, buffer.data(), static_cast<DWORD>(buffer.size()), flags);
-        if (count == 0 || count >= buffer.size())
-        {
-            return Fail(error, "final_name_failed");
-        }
-        CookPathIdentity candidate;
-        candidate.Canonical = std::filesystem::path(buffer.data(), buffer.data() + count);
-        for (const auto& part : missing)
-        {
-            candidate.Canonical /= part;
-        }
-        candidate.Canonical.make_preferred();
-        candidate.bPresent = !bAbsent;
-        if (!bAbsent)
-        {
-            FILE_ID_INFO id{};
-            BY_HANDLE_FILE_INFORMATION info{};
-            if (!GetFileInformationByHandleEx(h, FileIdInfo, &id, sizeof(id)) ||
-                !GetFileInformationByHandle(h, &info) || info.nNumberOfLinks == 0)
-            {
-                return Fail(error, "file_id_not_supported");
-            }
-            candidate.VolumeSerial = id.VolumeSerialNumber;
-            candidate.LinkCount = info.nNumberOfLinks;
-            std::memcpy(candidate.FileId.data(), id.FileId.Identifier, 16);
-        }
-        if (!BuildComponents(candidate, error))
-        {
-            return false;
-        }
-        out = std::move(candidate);
-        return true;
-#endif
+        return ObserveCookEndpointIdentity(locator, false, false, out, error);
+    }
+    bool ObserveCookDirectoryIdentity(const std::filesystem::path& locator, CookPathIdentity& out, IdentityText& error)
+    {
+        return ObserveCookEndpointIdentity(locator, true, true, out, error);
     }
     int CompareCookPhysicalPath(const CookPathIdentity& a, const CookPathIdentity& b)
     {

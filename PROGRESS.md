@@ -771,3 +771,6 @@
 - G2-S6-OWNER-ID検証準備: 実C++文字列literal4件を単独compileしてbyteを抽出し、独立Python hashlibの固定vectorと一致。比較器12件×通常/最適化も成功。独自UTF8 helperとcanonical manifest規約を共有し、26CPUへ登録。実Windows CNGと79+10byte gateは未実行。
 
 - G2-S6-OWNER-ID受入: f1c97437/run37243514075で実Windows build/CNG・26CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。固定SHA-256 vector、field区切り、UTF8/各4096byte上限/失敗保持、独立expected bindingのcodec照合を実証。3ZIPと79+10固定出力を独立確認しrootで再実行。値導出をdone。物理path resolver、state配置、lock/journal、production採用は未接続。
+
+- G2-S6-OWNER-RESOLVER開始: 既存schemaを維持してphysical volume-GUID UTF8 identityとASCII drive-form expected bindingを分離する。specは既存regular、rootは既存directoryまたは既存直親下の不在leafに限定。不在候補は作成後の再解決・完全一致が必須であり、tunneling/将来aliasを予測した公開許可にしない。
+- G2-S6-OWNER-RESOLVER検証準備: file observerを同じprivate coreへ寄せ、file入口の型判定が従来と同値であることを確認。比較器12件×通常/最適化が成功。SUBST fixtureは専用例外でunwindし、自分のmappingだけをexact cleanupする。未使用driveの二段確認、強制例外後のmapping消失確認を追加。27CPU登録済み、実Windows/79+10byteは未実行。

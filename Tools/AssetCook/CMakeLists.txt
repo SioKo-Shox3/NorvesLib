@@ -3,6 +3,8 @@ add_library(AssetCookLib STATIC
     CookStateFile.cpp
     CookStateFile.h
     CookStateFileTestAccess.h
+    CookOwnerResolver.cpp
+    CookOwnerResolver.h
     CookOwnerBinding.cpp
     CookOwnerBinding.h
     CookOwnedState.cpp
