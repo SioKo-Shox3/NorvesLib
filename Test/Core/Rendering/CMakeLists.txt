@@ -442,6 +442,17 @@ set_tests_properties(GeometryPageRequestVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# R32_UINT・R32G32_UINT の添付へ、フラグメントシェーダーが「描画の番号 << 7 | gl_PrimitiveID」（ビジビリティバッファの ID と同じ並び）を書き、
+# 読み戻して三角形ごとに期待の値になることを確かめる。覆われない画素は整数のクリア値（0xDEADBEEF）のままであること。
+# geometryShader（gl_PrimitiveID に要る）が無いデバイスでは理由を出して 125 を返す。
+add_test(NAME IntegerAttachmentVulkanTest COMMAND RHITextureUpdateVulkanTest --test=IntegerAttachmentVulkanTest)
+set_tests_properties(IntegerAttachmentVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
@@ -460,6 +471,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER HiZPyramidVulkanTest HiZPyramidVulkanTest.cpp
     MEMBER HiZOcclusionTestVulkanTest HiZOcclusionTestVulkanTest.cpp
     MEMBER GeometryPageRequestVulkanTest GeometryPageRequestVulkanTest.cpp
+    MEMBER IntegerAttachmentVulkanTest IntegerAttachmentVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE

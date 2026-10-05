@@ -52,8 +52,21 @@ namespace NorvesLib::RHI
         BC4_UNORM,
         BC5_UNORM,
         BC7_UNORM,
-        BC7_SRGB
+        BC7_SRGB,
+        // 整数形式（ビジビリティバッファの ID など。クリア値は整数で渡す）。
+        R32_UINT,
+        R32G32_UINT
     };
+
+    /**
+     * @brief 符号なし整数の形式か
+     *
+     * 整数のカラー添付はブレンドできず、クリア値も整数（AttachmentDesc::clearColorUint）で渡す。
+     */
+    inline bool IsUnsignedIntegerFormat(Format format)
+    {
+        return format == Format::R32_UINT || format == Format::R32G32_UINT;
+    }
 
     /**
      * @brief ブロック圧縮（BC1/BC4/BC5/BC7）の形式か

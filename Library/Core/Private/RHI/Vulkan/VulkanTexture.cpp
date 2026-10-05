@@ -331,6 +331,10 @@ namespace NorvesLib::RHI::Vulkan
             return vk::Format::eBc7UnormBlock;
         case Format::BC7_SRGB:
             return vk::Format::eBc7SrgbBlock;
+        case Format::R32_UINT:
+            return vk::Format::eR32Uint;
+        case Format::R32G32_UINT:
+            return vk::Format::eR32G32Uint;
         default:
             return vk::Format::eUndefined;
         }

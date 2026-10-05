@@ -290,6 +290,22 @@ namespace NorvesLib::RHI
         /** @brief フラグメントシェーダーから storage buffer へ書く・アトミック操作をする（fragmentStoresAndAtomics）が論理デバイスで有効か */
         bool bFragmentStoresAndAtomics = false;
 
+        /**
+         * @brief geometryShader が論理デバイスで有効か
+         *
+         * ジオメトリシェーダーは使わない。フラグメントシェーダーが gl_PrimitiveID を読むには SPIR-V の Geometry
+         * 機能が要り、Vulkan ではこの機能の有効化が前提になる（ビジビリティバッファが三角形の番号を書くのに使う）。
+         * false のデバイスでは gl_PrimitiveID を使う経路を使わず、従来の GBuffer の経路で描く。
+         */
+        bool bGeometryShader = false;
+
+        /**
+         * @brief shaderStorageImageExtendedFormats が論理デバイスで有効か
+         *
+         * RG16F などの形式を、formatless でなく形式を明示した storage image として読み書きできる。
+         */
+        bool bShaderStorageImageExtendedFormats = false;
+
         /** @brief sparse（部分常駐）テクスチャの機能と形式ごとの標準ブロック形状 */
         SparseCapabilities Sparse;
 

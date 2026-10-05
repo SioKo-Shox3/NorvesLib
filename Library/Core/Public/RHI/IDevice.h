@@ -128,6 +128,8 @@ namespace NorvesLib::RHI
         bool isDepthStencil = false;
         bool clear = true;
         float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        /** @brief 整数形式（IsUnsignedIntegerFormat）の添付のクリア値。浮動小数の clearColor は使わない */
+        uint32_t clearColorUint[4] = {0u, 0u, 0u, 0u};
         float clearDepth = 1.0f;
         uint32_t clearStencil = 0;
         AttachmentLoadOp loadOp = AttachmentLoadOp::Clear;
