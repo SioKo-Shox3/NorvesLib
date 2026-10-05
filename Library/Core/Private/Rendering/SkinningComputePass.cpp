@@ -282,11 +282,30 @@ namespace NorvesLib::Core::Rendering
         builder.PreserveInsertionOrder();
     }
 
+    void SkinningComputePass::RecordFinalBarriers(RHI::ICommandList* commandList,
+                                                  const RHI::BufferPtr& currentVertices,
+                                                  const RHI::BufferPtr& previousVertices)
+    {
+        // 宣言した最終の状態（GenericRead）へ渡す。RenderGraph は終わった状態を信じて、後のパスの読み取りの前に
+        // バリアを足さないので、書き込んだこのパスが遷移させる。
+        if (!commandList)
+        {
+            return;
+        }
+        for (const RHI::BufferPtr& buffer : {currentVertices, previousVertices})
+        {
+            if (buffer)
+            {
+                commandList->BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead,
+                                           0u, buffer->GetSize());
+            }
+        }
+    }
+
     void SkinningComputePass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
         m_Instances.clear();
-        if (m_Plan.empty() || !m_CurrentHandle.IsValid() || !m_PreviousHandle.IsValid() || !m_Compute.IsReady() ||
-            !context.CommandList || !context.SkinnedMeshes || !context.SnapshotSkinnedMeshFrameLeases)
+        if (m_Plan.empty() || !m_CurrentHandle.IsValid() || !m_PreviousHandle.IsValid() || !context.CommandList)
         {
             return;
         }
@@ -298,6 +317,18 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // 1 つも記録できないフレームでも、宣言したバッファは遷移させる（宣言した状態と実際の状態を合わせる）。
+        if (m_Compute.IsReady() && context.SkinnedMeshes && context.SnapshotSkinnedMeshFrameLeases)
+        {
+            RecordInstances(context, currentVertices, previousVertices);
+        }
+        RecordFinalBarriers(context.CommandList, currentVertices, previousVertices);
+    }
+
+    void SkinningComputePass::RecordInstances(ViewRenderContext& context,
+                                              const RHI::BufferPtr& currentVertices,
+                                              const RHI::BufferPtr& previousVertices)
+    {
         const DrawCommandView commands = context.GetActiveOpaqueCommands();
         m_Compute.BeginFrame(m_FrameCounter++);
         for (const PlannedInstance& planned : m_Plan)

@@ -1158,3 +1158,11 @@
 - 目視確認: `startup-capture/VTG6-VIS-RASTER/default.png`（起動画面は変わらず、家・岩・球・地面が出る）と `VTG6-VIS-RASTER-debug/default.png`（ID の表示で物の輪郭と三角形の塊が出る）を開いた。
 - Notes: bash から cmake に `/m:1` を渡すと MSYS のパス変換で壊れる。`MSYS_NO_PATHCONV=1` を付ける。
 - Next: 次の未完の項目。
+
+## 反復 1（run 20261005-215530）: VTG6-SKINNING-FINAL-BARRIER（done）
+- 内容: `SkinningComputePass::Execute` が、dispatch の後に今・前の頂点のバッファ（`Skinning.CurrentVertices`・`Skinning.PreviousVertices`）を `UnorderedAccess` から宣言した最終の状態 `GenericRead` へ `BufferBarrier` で遷移させる（`MaterialTileClassifyPass` と同じ形）。遷移は `static SkinningComputePass::RecordFinalBarriers` に出した。
+- 記録できなかったフレーム: 旧 `Execute` は計算パイプライン・`SkinnedMeshes`・スナップショットが無いと早期 return していたので、宣言したバッファが遷移しないままになった。dispatch の記録を `RecordInstances` に分け、バッファとコマンドリストが取れる限り、インスタンスが 0 でも遷移させる。
+- テスト: `RenderGraphCompileTest` に `TestSkinningComputeFinalBarriersTransitionToGenericRead` を足した（2 本が `UnorderedAccess` → `GenericRead`・サイズはバッファ全体・今 → 前の順。コマンドリストやバッファが無いときは何も出さない）。
+- 検証: `verify-VTG6-SKINNING-FINAL-BARRIER-1-build.txt`（Debug の Game・RHITextureUpdateVulkanTest・RenderGraphCompileTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（ComputeSkinningVulkanTest・RenderGraphCompileTest 2/2 passed）。
+- Notes: (1) stop-when は該当しない。`VisibilityRasterPass` は同じ資源を `Read` で宣言し、RenderGraph は書いたパスの最終の状態（GenericRead）を信じて読み取りの前にバリアを足さないので二重にならない（`TestWriteFinalStateSuppressesFollowupReadBarrier` と同じ規則）。 (2) パス自体を RenderGraph に載せた形（スキニングの描画コマンドと貸し出しが要る）のテストは足していない。ヘルパーの遷移だけを確かめた。 (3) 描画経路は変えていない（パスは既定で無効）ので起動画面の撮影は未実施。 (4) `RenderGraphCompileTest.cpp` は CRLF 主体の混在行末。python でバイト単位に挿入し、`git diff --numstat` と `--ignore-cr-at-eol` の一致を確かめた。
+- Next: TASKS.md の残りの未完の項目。

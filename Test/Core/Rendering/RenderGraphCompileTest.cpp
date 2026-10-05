@@ -24,6 +24,7 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SkinningComputePass.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/MaterialTileClassifyPass.h"
@@ -2308,6 +2309,36 @@ namespace
         assert(!scene.Classify.GetLayout().IsValid());
         assert(!scene.Classify.WasClassified());
         ShutdownVisibilityRasterScene(scene);
+    }
+
+    // スキニングの頂点のバッファ: 書いた今・前の2本を、dispatch の後に UnorderedAccess から宣言した最終の状態
+    // （GenericRead）へ遷移させる。RenderGraph は終わった状態を信じて後のパスの前にバリアを足さないので、
+    // 書いたパスが出す。記録できたインスタンスが無いフレームでも、宣言したバッファは遷移させる
+    void TestSkinningComputeFinalBarriersTransitionToGenericRead()
+    {
+        FakeCommandList commandList;
+        const RHI::ResourceUsage usage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead |
+                                         RHI::ResourceUsage::BufferDeviceAddress;
+        RHI::BufferPtr current = RHI::MakeShared<FakeBuffer>(RHI::BufferDesc(4096, usage, false, "Skinning_CurrentVertices"));
+        RHI::BufferPtr previous = RHI::MakeShared<FakeBuffer>(RHI::BufferDesc(4096, usage, false, "Skinning_PreviousVertices"));
+
+        SkinningComputePass::RecordFinalBarriers(&commandList, current, previous);
+
+        assert(commandList.Barriers.size() == 2);
+        for (const BarrierEvent& barrier : commandList.Barriers)
+        {
+            assert(barrier.Kind == RGBarrierKind::Buffer);
+            assert(barrier.BeforeState == RHI::ResourceState::UnorderedAccess);
+            assert(barrier.AfterState == RHI::ResourceState::GenericRead);
+            assert(barrier.BufferSize == 4096);
+        }
+        assert(commandList.Barriers[0].Buffer == current.get());
+        assert(commandList.Barriers[1].Buffer == previous.get());
+
+        // コマンドリストが無い・バッファが無いときは何も出さない
+        SkinningComputePass::RecordFinalBarriers(nullptr, current, previous);
+        SkinningComputePass::RecordFinalBarriers(&commandList, nullptr, nullptr);
+        assert(commandList.Barriers.size() == 2);
     }
 
     // 遮蔽カリングを使わない（1パスだけの）経路でも、その1パスのコマンドを描き直す
@@ -7624,6 +7655,7 @@ int main()
     TestMaterialTileClassifyWithoutRecordTableClearsArgs();
     TestMaterialTileClassifyAbsentWhenNotAdded();
     TestMaterialTileClassifyAddedButDisabledByDefault();
+    TestSkinningComputeFinalBarriersTransitionToGenericRead();
     TestVisibilityRasterOnSinglePassMegaGeometry();
     TestVisibilityRasterOffKeepsExistingMegaGeometryRecording();
     TestVisibilityRasterWithoutGBufferDepthDoesNothing();
