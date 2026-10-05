@@ -2590,7 +2590,9 @@
 - result: code585d7004/tree47a06216/run37368810439 attempt1 job111960454749。実Windows44CPU/旧7＋新index marker、17/29中断、79+10byte、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを受入。親readonly再実行exit0/全stderr空、旧604証拠file保全、最終641file inventory一致。厳密名前対応だけの受入で階層/rest/retarget/Sampler共有/CLI/StageB/GPU/実Blender/確保故障注入は未受入れ。
 
 ## G2-GR84-SAMPLER-BASELINE: 共有化前の実Sampler出力を構成別に固定する
-- status: doing
+- status: done
 - done-when: runtimeを変更せず既存SkeletalAnimationSamplingTestを実CoreのDebug/Releaseで実行し、固定fixtureの結果を構成別の明示little-endian snapshotと出自記録へ保存する。既存assertを全て実行し、失敗時Clear全体、同構成で反復byte一致、固定case数/順序/完了を確認する。
 - verify: bind非一様scale/回転、partial clip、時刻clamp/linear/step、非可換階層、空mesh、既知拒否群、親が後ろ/複数root、shear/反射/極大bind上書きの旧結果を記録。実Windows45CPU・Debug/Release direct capture・旧89byte/managed gate。runtimeの旧commit同一byteとfixture/toolchain/config/hashを記録。
 - stop-when: baselineを作るためにruntimeを直す、未知の入力の成功boolを数学的期待で捏造する、Debug対Release同一byteを要求する、captureだけでtarget bind/retarget/Blender/GPUの受入れとする。
+
+- result: code3cd8c479/tree48531542/run37373318284 attempt1 job111975595995。実Windows45CPU/旧8＋Sampler marker、Debug/Release各2回の30case採取、同構成repeat byte、旧89byte/managed全gate/3ZIPを受入。親readonly再実行exit0/全stderr空、旧642証拠保全、最終667file一致。snapshot各6095byte SHAa5b0a90496e9064c2808692706b69f8a11936fea9af3031f25eb909ab33e62d4。case22/23/25成功・24/26拒否は両構成で一致。cl/Core/exe hashはCI実計算receiptで、binary自体の親再hashは未実施。refactor/retarget/GPU/Blenderの受入れではない。
