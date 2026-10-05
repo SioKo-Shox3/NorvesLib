@@ -7,6 +7,7 @@
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
+#include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityRasterPass.h"
@@ -30,7 +31,10 @@ namespace NorvesLib::Core::Rendering
         // 空の表（読まれない）の大きさ。MegaInstance（192 バイト）・InstanceData（208 バイト）より大きい
         constexpr uint64_t PlaceholderBytes = 256;
 
-        RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump)
+        // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 16 バイト）
+        constexpr uint32_t TileParamsBytes = 4u * sizeof(uint32_t);
+
+        RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump, bool bTiles)
         {
             RHI::DescriptorSetDesc desc;
             const RHI::ResourceBindType types[] = {
@@ -45,14 +49,31 @@ namespace NorvesLib::Core::Rendering
                 RHI::ResourceBindType::RWTexture,            // 8 GBuffer.Velocity
                 RHI::ResourceBindType::RWBuffer,             // 9 検証用の書き出し（検証用の版だけ）
             };
-            const uint32_t bindingCount = bDump ? 10u : 9u;
-            for (uint32_t bindingIndex = 0; bindingIndex < bindingCount; ++bindingIndex)
+            const uint32_t commonCount = bDump ? 10u : 9u;
+            for (uint32_t bindingIndex = 0; bindingIndex < commonCount; ++bindingIndex)
             {
                 RHI::DescriptorBinding binding;
                 binding.binding = bindingIndex;
                 binding.type = types[bindingIndex];
                 binding.stages = RHI::ShaderStage::Compute;
                 desc.bindings.push_back(binding);
+            }
+            if (bTiles)
+            {
+                // 材質ごとの形の追加の束縛（シェーダーの VIS_TILE_BINDING から並ぶ）: 1 回の dispatch の定数・引数・一覧
+                const RHI::ResourceBindType tileTypes[] = {
+                    RHI::ResourceBindType::ConstantBuffer,
+                    RHI::ResourceBindType::StructuredBuffer,
+                    RHI::ResourceBindType::StructuredBuffer,
+                };
+                for (uint32_t tileBinding = 0; tileBinding < 3u; ++tileBinding)
+                {
+                    RHI::DescriptorBinding binding;
+                    binding.binding = commonCount + tileBinding;
+                    binding.type = tileTypes[tileBinding];
+                    binding.stages = RHI::ShaderStage::Compute;
+                    desc.bindings.push_back(binding);
+                }
             }
             return desc;
         }
@@ -135,7 +156,7 @@ namespace NorvesLib::Core::Rendering
         Shutdown();
     }
 
-    bool VisibilityResolve::Initialize(RHI::IDevice* device, ShaderManager* shaderManager, bool bDump)
+    bool VisibilityResolve::Initialize(RHI::IDevice* device, ShaderManager* shaderManager, bool bDump, bool bTiles)
     {
         Shutdown();
         if (!device || !shaderManager)
@@ -169,13 +190,32 @@ namespace NorvesLib::Core::Rendering
 
         RHI::ComputePipelineDesc pipelineDesc;
         pipelineDesc.computeShader = m_Shader;
-        pipelineDesc.descriptorSetLayouts.push_back(MakeDescriptorSetDesc(bDump));
+        pipelineDesc.descriptorSetLayouts.push_back(MakeDescriptorSetDesc(bDump, false));
         m_Pipeline = device->CreateComputePipeline(pipelineDesc);
         if (!m_Pipeline)
         {
             NORVES_LOG_WARNING("VisibilityResolve", "ビジビリティバッファの幾何の解決の計算パイプラインの作成に失敗");
             Shutdown();
             return false;
+        }
+
+        if (bTiles)
+        {
+            m_TileShader = shaderManager->LoadShader(
+                bDump ? "visbuffer_resolve_tiles_dump.comp" : "visbuffer_resolve_tiles.comp", RHI::ShaderStage::Compute);
+            if (m_TileShader)
+            {
+                RHI::ComputePipelineDesc tilePipelineDesc;
+                tilePipelineDesc.computeShader = m_TileShader;
+                tilePipelineDesc.descriptorSetLayouts.push_back(MakeDescriptorSetDesc(bDump, true));
+                m_TilePipeline = device->CreateComputePipeline(tilePipelineDesc);
+            }
+            if (!m_TilePipeline)
+            {
+                NORVES_LOG_WARNING("VisibilityResolve", "ビジビリティバッファの幾何の解決（材質ごとのタイル）の計算パイプラインの作成に失敗");
+                Shutdown();
+                return false;
+            }
         }
 
         m_Device = device;
@@ -186,6 +226,8 @@ namespace NorvesLib::Core::Rendering
     void VisibilityResolve::Shutdown()
     {
         m_Uses.Clear();
+        m_TilePipeline.reset();
+        m_TileShader.reset();
         m_Pipeline.reset();
         m_Sampler.reset();
         m_Placeholder.reset();
@@ -246,6 +288,11 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        if (dispatch.TileArgs && dispatch.TileList)
+        {
+            return RecordTiles(commandList, dispatch);
+        }
+
         Use& use = m_Uses.Acquire();
         if (!use.Uniform)
         {
@@ -254,7 +301,7 @@ namespace NorvesLib::Core::Rendering
         }
         if (!use.DescriptorSet)
         {
-            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(m_bDump));
+            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(m_bDump, false));
         }
         if (!use.Uniform || !use.DescriptorSet)
         {
@@ -262,8 +309,22 @@ namespace NorvesLib::Core::Rendering
         }
 
         use.Uniform->Update(&params, ParamsBytes);
-        RHI::IDescriptorSet& set = *use.DescriptorSet;
-        set.BindConstantBuffer(0, use.Uniform, 0, ParamsBytes);
+        BindCommon(*use.DescriptorSet, use.Uniform, dispatch);
+        use.DescriptorSet->Update();
+
+        const uint32_t tile = VisibilityResolveGeometry::TILE_SIZE;
+        commandList->SetPipeline(m_Pipeline);
+        commandList->SetDescriptorSet(use.DescriptorSet, 0);
+        commandList->Dispatch((width + tile - 1) / tile, (height + tile - 1) / tile, 1u);
+        return true;
+    }
+
+    // 直接版と材質ごとの版で共通の束縛（0..8 と、検証用の版の 9）
+    void VisibilityResolve::BindCommon(RHI::IDescriptorSet& set,
+                                       const RHI::BufferPtr& paramsUniform,
+                                       const VisibilityResolveDispatch& dispatch) const
+    {
+        set.BindConstantBuffer(0, paramsUniform, 0, ParamsBytes);
         set.BindStorageBuffer(1, dispatch.RecordTable, 0, BindBytes(dispatch.RecordTable, dispatch.RecordTableBytes));
         set.BindTexture(2, dispatch.IdTexture);
         set.BindSampler(2, m_Sampler);
@@ -283,12 +344,75 @@ namespace NorvesLib::Core::Rendering
         {
             set.BindStorageBuffer(9, dispatch.Dump, 0, ClampBindSize(dispatch.Dump->GetSize()));
         }
-        set.Update();
+    }
 
-        const uint32_t tile = VisibilityResolveGeometry::TILE_SIZE;
-        commandList->SetPipeline(m_Pipeline);
-        commandList->SetDescriptorSet(use.DescriptorSet, 0);
-        commandList->Dispatch((width + tile - 1) / tile, (height + tile - 1) / tile, 1u);
+    bool VisibilityResolve::RecordTiles(RHI::ICommandList* commandList, const VisibilityResolveDispatch& dispatch)
+    {
+        if (!m_TilePipeline)
+        {
+            return false;
+        }
+        // 引数の表に収まる材質の数（引数 1 つ = 材質 1 つ）
+        const uint64_t argsCapacity = dispatch.TileArgs->GetSize() / MaterialTiles::ARGS_STRIDE_BYTES;
+        const uint64_t materialCount =
+            dispatch.TileMaterialCount != 0 && dispatch.TileMaterialCount < argsCapacity ? dispatch.TileMaterialCount : argsCapacity;
+        if (materialCount == 0)
+        {
+            return false;
+        }
+
+        const uint32_t width = dispatch.Params.Screen[0];
+        const uint32_t tilesX = (width + VisibilityResolveGeometry::TILE_SIZE - 1) / VisibilityResolveGeometry::TILE_SIZE;
+        const uint32_t firstBinding = m_bDump ? 10u : 9u;
+
+        // 解決の定数（ResolveParams）は全部の dispatch で同じなので、最初の資源の UBO を共有して 1 回だけ書く
+        Use& first = m_Uses.Acquire();
+        if (!first.Uniform)
+        {
+            first.Uniform = m_Device->CreateBuffer(
+                RHI::BufferDesc(ParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisibilityResolveParams"));
+        }
+        if (!first.Uniform)
+        {
+            return false;
+        }
+        first.Uniform->Update(&dispatch.Params, ParamsBytes);
+
+        commandList->SetPipeline(m_TilePipeline);
+        for (uint64_t material = 0; material < materialCount; ++material)
+        {
+            // 1 回の間接 dispatch ごとに、材質の番号を持つ別の UBO と別のディスクリプタセットを使う
+            // （提出前に上書きしない。1 フレームに何回 Record しても枠の次の資源へ進む）
+            Use& use = material == 0 ? first : m_Uses.Acquire();
+            if (!use.TileUniform)
+            {
+                use.TileUniform = m_Device->CreateBuffer(
+                    RHI::BufferDesc(TileParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisibilityResolveTileParams"));
+            }
+            if (!use.TileDescriptorSet)
+            {
+                use.TileDescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(m_bDump, true));
+            }
+            if (!use.TileUniform || !use.TileDescriptorSet)
+            {
+                return false;
+            }
+
+            const uint32_t tileParams[4] = {tilesX, static_cast<uint32_t>(material), 0u, 0u};
+            use.TileUniform->Update(tileParams, TileParamsBytes);
+            RHI::IDescriptorSet& set = *use.TileDescriptorSet;
+            BindCommon(set, first.Uniform, dispatch);
+            set.BindConstantBuffer(firstBinding, use.TileUniform, 0, TileParamsBytes);
+            set.BindStorageBuffer(firstBinding + 1, dispatch.TileArgs, 0, ClampBindSize(dispatch.TileArgs->GetSize()));
+            set.BindStorageBuffer(firstBinding + 2, dispatch.TileList, 0, ClampBindSize(dispatch.TileList->GetSize()));
+            set.Update();
+
+            commandList->SetDescriptorSet(use.TileDescriptorSet, 0);
+            if (!commandList->DispatchIndirect(dispatch.TileArgs, material * MaterialTiles::ARGS_STRIDE_BYTES))
+            {
+                return false;
+            }
+        }
         return true;
     }
 

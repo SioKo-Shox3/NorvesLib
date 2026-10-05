@@ -5,6 +5,15 @@
 // 画素ごとの中間の値（重心座標・UV・微分・接線の基底・前のクリップ座標）を検証用のバッファ（binding 9）へも書く
 // （GPU のテストが CPU の参照と照合する。製品の経路は定義しない）。
 //
+// NORVES_VISRESOLVE_TILES を定義して取り込むと、画面全体の直接 dispatch の代わりに、材質ごとのタイルの一覧
+// （MaterialTileClassifyPass が作る引数と一覧）から走る版になる。1 回の dispatch は 1 つの材質（定数 ResolveTileParams.tile.y）で、
+//   グループの番号 g = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x（引数の x の上限によらず正しい）、
+//   g >= その材質のタイルの数なら return、そうでなければ一覧[先頭位置 + g] のタイル（番号 = tileY * tilesX + tileX）を処理する。
+// タイルには複数の材質が混じりうるので、各スレッドは自分の画素の材質がこの dispatch の材質と同じときだけ解決する
+// （画素は自分の材質の dispatch でちょうど 1 回だけ解決される）。画面の外の画素は何もしない。
+// 材質の番号が分類の上限以上の画素はどの材質の一覧にも入らないので、この版では解決されない（直接版は解決する）。
+// 追加の束縛は、検証用の書き出しがあれば binding 10 から、無ければ binding 9 から（VIS_TILE_BINDING）。
+//
 // 1 スレッドが 1 画素を受け持つ（8x8 のワークグループ = 画面のタイル）。
 //   1. VisBuffer.Id の画素から描画の記録と三角形の番号を引く（空・引けない画素は何も書かない）。
 //   2. 記録の頂点・インデックスのアドレスから 3 頂点（位置・法線・UV）を読み、ワールド空間にする。
@@ -107,6 +116,36 @@ layout(std430, set = 0, binding = 5) readonly buffer DrawInstanceBuffer
 layout(set = 0, binding = 6, rgba8) writeonly uniform image2D albedoImage;
 layout(set = 0, binding = 7, rgba16f) writeonly uniform image2D normalImage;
 layout(set = 0, binding = 8, rg16f) writeonly uniform image2D velocityImage;
+
+#ifdef NORVES_VISRESOLVE_TILES
+#ifdef NORVES_VISRESOLVE_DUMP
+#define VIS_TILE_BINDING 10
+#else
+#define VIS_TILE_BINDING 9
+#endif
+
+// 1 回の dispatch ごとの定数（RHI に push constant が無いので UBO。dispatch ごとに別の UBO を束ねる）
+layout(std140, set = 0, binding = VIS_TILE_BINDING) uniform ResolveTileParams
+{
+    // x = 横のタイル数、y = この dispatch が解決する材質の番号
+    uvec4 tile;
+} tileParams;
+
+// MaterialTileClassifyPass の引数（材質ごとに 8 語）と一覧（タイルの番号の並び）。MaterialTileClassifyPass.h と同じ並び
+layout(std430, set = 0, binding = VIS_TILE_BINDING + 1) readonly buffer ResolveTileArgs
+{
+    uint tileArgWords[];
+};
+
+layout(std430, set = 0, binding = VIS_TILE_BINDING + 2) readonly buffer ResolveTileList
+{
+    uint tileList[];
+};
+
+const uint VIS_TILE_ARGS_STRIDE_WORDS = 8u;
+const uint VIS_TILE_ARG_LIST_OFFSET = 3u;
+const uint VIS_TILE_ARG_TILE_COUNT = 4u;
+#endif
 
 #ifdef NORVES_VISRESOLVE_DUMP
 // 画素ごとに VIS_RESOLVE_DUMP_STRIDE 個の vec4 を書く（並びは VisibilityResolvePass.h の ResolveDump と同じ）
@@ -423,7 +462,25 @@ vec2 VisComputeVelocity(vec2 pixelCenter, vec4 previousClip)
 
 void main()
 {
+#ifdef NORVES_VISRESOLVE_TILES
+    const uint groupIndex = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    const uint argBase = tileParams.tile.y * VIS_TILE_ARGS_STRIDE_WORDS;
+    if (argBase + VIS_TILE_ARG_TILE_COUNT >= uint(tileArgWords.length()) ||
+        groupIndex >= tileArgWords[argBase + VIS_TILE_ARG_TILE_COUNT])
+    {
+        return;
+    }
+    const uint listIndex = tileArgWords[argBase + VIS_TILE_ARG_LIST_OFFSET] + groupIndex;
+    if (listIndex >= uint(tileList.length()))
+    {
+        return;
+    }
+    const uint tileIndex = tileList[listIndex];
+    const uint tilesX = max(tileParams.tile.x, 1u);
+    const uvec2 pixel = uvec2(tileIndex % tilesX, tileIndex / tilesX) * 8u + gl_LocalInvocationID.xy;
+#else
     const uvec2 pixel = gl_GlobalInvocationID.xy;
+#endif
     if (pixel.x >= params.screen.x || pixel.y >= params.screen.y)
     {
         return;
@@ -436,6 +493,13 @@ void main()
     {
         return;
     }
+#ifdef NORVES_VISRESOLVE_TILES
+    // タイルに混じる別の材質の画素は、その材質の dispatch が解決する
+    if (VisRecordMaterialIndex(record) != tileParams.tile.y)
+    {
+        return;
+    }
+#endif
 
     VisTriangle triangle;
     if (!VisLoadTriangle(record, triangleIndex, triangle))

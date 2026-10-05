@@ -12,9 +12,14 @@
 //       2 体目の位置・速度が 1 体目に取り違えられず、基点が二重に足されると範囲外を読んで落ちる）。
 //   空の画素・引けない ID（表に無い記録・記録の三角形数以上の番号）は何も書かないこと。前のカメラが無いと速度は 0。
 //   製品の版と検証用の版（書き出しつき）の両方で、どちらも Vulkan の validation error が 0 件。
+//   材質ごとのタイルの一覧から走る形（MaterialTileClassify の引数と一覧で、材質ごとに 1 回ずつ DispatchIndirect）は、同じ ID の画像の
+//   画面全体の直接 dispatch の結果と、Albedo・Normal・Velocity と検証用の画素ごとの中間の値がビット単位で一致すること
+//   （空のタイル・3 つ以上の材質が混じるタイル・部分タイル・材質の表の外の材質・引けない ID・画面の外の画素・引数の x の上限を小さくして
+//    y へ広げた一覧を含む）。分類の上限以上の材質の画素は、一覧に入らないので解決されない（直接版は解決する。違う点として記録する）。
 // Vulkan デバイスが無い環境、または解決に対応しない装置では 125（スキップ）を返す。
 #include "Container/Containers.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/VisibilityBuffer.h"
@@ -840,8 +845,18 @@ namespace
         Container::VariableArray<uint16_t> Normal;  // RGBA16F
         Container::VariableArray<uint16_t> Velocity; // RG16F
         Container::VariableArray<float> Dump;       // 画素あたり 12 * 4 個
+        Container::VariableArray<uint32_t> TileArgs; // 材質ごとのタイルの形のとき、分類が作った引数の表
+        uint32_t DumpPitch = ScreenWidth;           // 検証用の書き出しの 1 行の画素数（画面の幅。シェーダーは y * 幅 + x で書く）
+        bool bClassified = true;                    // 材質ごとのタイルの形のとき、分類を記録できたか
         bool bRecorded = false;
         bool bOk = false;
+    };
+
+    // 材質ごとのタイルの一覧から走る形（分類 + 材質ごとの間接 dispatch）で解決するときの設定
+    struct TileRunOptions
+    {
+        uint32_t MaxMaterials = 16;
+        uint32_t GroupCountXLimit = MaterialTiles::MAX_GROUP_COUNT_X;
     };
 
     bool ReadTexture(const DevicePtr& device,
@@ -979,11 +994,15 @@ namespace
                         const CameraSet& cameras,
                         bool bDump,
                         bool bPreviousCamera,
-                        uint64_t frameSerial)
+                        uint64_t frameSerial,
+                        const TileRunOptions* tiles = nullptr,
+                        uint32_t width = ScreenWidth,
+                        uint32_t height = ScreenHeight)
     {
         Readback result;
+        result.DumpPitch = width;
         VisibilityResolve resolve;
-        if (!resolve.Initialize(device.get(), &shaderManager, bDump))
+        if (!resolve.Initialize(device.get(), &shaderManager, bDump, tiles != nullptr))
         {
             std::cerr << TestName << " 幾何の解決を初期化できませんでした（dump=" << bDump << "）" << std::endl;
             return result;
@@ -1011,6 +1030,35 @@ namespace
             return result;
         }
 
+        // 材質ごとのタイルの形: 分類の出力（引数は間接 dispatch の引数としても読むので IndirectBuffer の用途）
+        MaterialTileClassify classify;
+        MaterialTiles::Layout tileLayout;
+        BufferPtr tileArgs;
+        BufferPtr tileList;
+        BufferPtr tileCursors;
+        BufferPtr tileStats;
+        if (tiles)
+        {
+            if (!classify.Initialize(device.get(), &shaderManager))
+            {
+                std::cerr << TestName << " 材質のタイルの分類を初期化できませんでした" << std::endl;
+                return result;
+            }
+            tileLayout = MaterialTiles::ComputeLayout(width, height, tiles->MaxMaterials, MaterialTiles::MAX_MATERIALS_PER_TILE,
+                                                      tiles->GroupCountXLimit);
+            const ResourceUsage tileUsage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
+            tileArgs = device->CreateBuffer(
+                BufferDesc(tileLayout.ArgsBytes(), tileUsage | ResourceUsage::IndirectBuffer, true, "ResolveTestTileArgs"));
+            tileList = device->CreateBuffer(BufferDesc(tileLayout.ListBytes(), tileUsage, true, "ResolveTestTileList"));
+            tileCursors = device->CreateBuffer(BufferDesc(tileLayout.CursorsBytes(), tileUsage, true, "ResolveTestTileCursors"));
+            tileStats = device->CreateBuffer(BufferDesc(MaterialTiles::STATS_BYTES, tileUsage, true, "ResolveTestTileStats"));
+            if (!tileLayout.IsValid() || !tileArgs || !tileList || !tileCursors || !tileStats)
+            {
+                std::cerr << TestName << " 材質のタイルの出力の資源を作れませんでした" << std::endl;
+                return result;
+            }
+        }
+
         VisibilityResolveDispatch dispatch;
         dispatch.IdTexture = gpu.IdTexture;
         dispatch.RecordTable = gpu.RecordTable;
@@ -1031,9 +1079,11 @@ namespace
         dispatch.Params = VisibilityResolveGeometry::BuildParams(cameras.Current,
                                                                  bPreviousCamera ? &cameras.Previous : nullptr,
                                                                  viewport,
-                                                                 ScreenWidth,
-                                                                 ScreenHeight,
+                                                                 width,
+                                                                 height,
                                                                  static_cast<uint32_t>(gpu.MaterialTable->GetSize() / sizeof(VisibilityBuffer::MaterialEntry)));
+        dispatch.TileArgs = tileArgs;
+        dispatch.TileList = tileList;
 
         resolve.BeginFrame(0, frameSerial);
         commandList->Begin();
@@ -1045,10 +1095,37 @@ namespace
         {
             commandList->BufferBarrier(dump, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, dumpBytes);
         }
+        if (tiles)
+        {
+            for (const BufferPtr& buffer : {tileArgs, tileList, tileCursors, tileStats})
+            {
+                commandList->BufferBarrier(buffer, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, buffer->GetSize());
+            }
+            MaterialTileClassifyDispatch classifyDispatch;
+            classifyDispatch.IdTexture = gpu.IdTexture;
+            classifyDispatch.RecordTable = gpu.RecordTable;
+            classifyDispatch.RecordTableBytes = gpu.Records.SizeInBytes();
+            classifyDispatch.Args = tileArgs;
+            classifyDispatch.List = tileList;
+            classifyDispatch.Cursors = tileCursors;
+            classifyDispatch.Stats = tileStats;
+            classifyDispatch.Width = width;
+            classifyDispatch.Height = height;
+            classifyDispatch.Layout = tileLayout;
+            classify.BeginFrame(0, frameSerial);
+            result.bClassified = classify.Record(commandList.get(), classifyDispatch);
+            // 引数は間接 dispatch の引数と解決のシェーダーの読み取りの両方で読む（GenericRead はどちらも含む）
+            commandList->BufferBarrier(tileArgs, ResourceState::UnorderedAccess, ResourceState::GenericRead, 0u, tileArgs->GetSize());
+            commandList->BufferBarrier(tileList, ResourceState::UnorderedAccess, ResourceState::GenericRead, 0u, tileList->GetSize());
+        }
         result.bRecorded = resolve.Record(commandList.get(), dispatch);
         if (bDump)
         {
             commandList->BufferBarrier(dump, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, dumpBytes);
+        }
+        if (tiles)
+        {
+            commandList->BufferBarrier(tileArgs, ResourceState::GenericRead, ResourceState::HostRead, 0u, tileArgs->GetSize());
         }
         commandList->End();
         commandList->Submit(true);
@@ -1063,6 +1140,16 @@ namespace
             }
             result.Dump.assign(mapped, mapped + dumpBytes / sizeof(float));
             dump->Unmap();
+        }
+        if (tiles)
+        {
+            const uint32_t* mapped = static_cast<const uint32_t*>(tileArgs->Map(0u, tileArgs->GetSize()));
+            if (mapped == nullptr)
+            {
+                return result;
+            }
+            result.TileArgs.assign(mapped, mapped + tileArgs->GetSize() / sizeof(uint32_t));
+            tileArgs->Unmap();
         }
 
         Container::VariableArray<uint8_t> bytes;
@@ -1314,6 +1401,404 @@ namespace
         Expect(badUntouched == 0, "空の画素・引けない ID の画素は書き出しにも触れてはならない");
     }
 
+    // ========================================
+    // 材質ごとのタイルの一覧から走る形（間接 dispatch）と、画面全体の直接 dispatch の一致
+    // ========================================
+
+    struct TileCase
+    {
+        const char* Name;
+        uint32_t MaxMaterials;
+        uint32_t GroupCountXLimit;
+        uint32_t Width;
+        uint32_t Height;
+    };
+
+    // 画面の中の画素 (x, y) の ID が解決できるか（表にある記録・三角形の番号が範囲内）と、その材質の番号
+    bool TryGetMaterial(const VisibilityBuffer::RecordTable& records, uint32_t id, uint32_t& outMaterial)
+    {
+        const VisibilityBuffer::DrawRecord* record = nullptr;
+        uint32_t triangleIndex = 0;
+        if (!records.TryResolve(id, record, triangleIndex))
+        {
+            return false;
+        }
+        outMaterial = record->MaterialIndex;
+        return true;
+    }
+
+    bool Contains(const Container::VariableArray<uint32_t>& values, uint32_t value)
+    {
+        for (const uint32_t existing : values)
+        {
+            if (existing == value)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ID の画像の CPU の分析（分類の参照）。画面は width x height
+    struct TileAnalysis
+    {
+        // 画面の中に解決できる画素が 1 つも無いタイルの数
+        uint32_t EmptyTiles = 0;
+        // 1 つのタイルに出る、分類の上限未満の材質の種類の最大
+        uint32_t MaxMaterialsInTile = 0;
+        // 一覧に入る（タイル, 材質）の数
+        uint32_t Entries = 0;
+        // 画面の端の部分タイルにある、画面の中の解決できる画素の数
+        uint32_t PartialTilePixels = 0;
+        // 解決できるが、材質の番号が分類の上限以上で一覧に入らない画素の数
+        uint32_t UnlistedPixels = 0;
+        // 画面の外にあるが、解決できる ID が書かれている画素の数
+        uint32_t OutsideIdPixels = 0;
+    };
+
+    TileAnalysis AnalyzeTiles(const VisibilityBuffer::RecordTable& records,
+                              const Container::VariableArray<uint32_t>& ids,
+                              uint32_t width,
+                              uint32_t height,
+                              uint32_t maxMaterials)
+    {
+        TileAnalysis analysis;
+        const uint32_t tile = VisibilityResolveGeometry::TILE_SIZE;
+        const uint32_t tilesX = (width + tile - 1) / tile;
+        const uint32_t tilesY = (height + tile - 1) / tile;
+        for (uint32_t tileY = 0; tileY < tilesY; ++tileY)
+        {
+            for (uint32_t tileX = 0; tileX < tilesX; ++tileX)
+            {
+                Container::VariableArray<uint32_t> materials;
+                bool bAnyResolvable = false;
+                for (uint32_t y = tileY * tile; y < tileY * tile + tile && y < ScreenHeight; ++y)
+                {
+                    for (uint32_t x = tileX * tile; x < tileX * tile + tile && x < ScreenWidth; ++x)
+                    {
+                        uint32_t material = 0;
+                        if (!TryGetMaterial(records, ids[static_cast<size_t>(y) * ScreenWidth + x], material))
+                        {
+                            continue;
+                        }
+                        if (x >= width || y >= height)
+                        {
+                            ++analysis.OutsideIdPixels;
+                            continue;
+                        }
+                        bAnyResolvable = true;
+                        if (width % tile != 0 && tileX == tilesX - 1)
+                        {
+                            ++analysis.PartialTilePixels;
+                        }
+                        else if (height % tile != 0 && tileY == tilesY - 1)
+                        {
+                            ++analysis.PartialTilePixels;
+                        }
+                        if (material >= maxMaterials)
+                        {
+                            ++analysis.UnlistedPixels;
+                        }
+                        else if (!Contains(materials, material))
+                        {
+                            materials.push_back(material);
+                        }
+                    }
+                }
+                if (!bAnyResolvable)
+                {
+                    ++analysis.EmptyTiles;
+                }
+                analysis.Entries += static_cast<uint32_t>(materials.size());
+                analysis.MaxMaterialsInTile = std::max(analysis.MaxMaterialsInTile, static_cast<uint32_t>(materials.size()));
+            }
+        }
+        return analysis;
+    }
+
+    // 検証用の書き出しの画素の位置（画面の幅が行の長さ）。画面の外の画素は書き出しの枠が無いので false
+    bool DumpPixelIndex(const Readback& readback, uint32_t x, uint32_t y, size_t& outIndex)
+    {
+        if (x >= readback.DumpPitch)
+        {
+            return false;
+        }
+        outIndex = static_cast<size_t>(y) * readback.DumpPitch + x;
+        return true;
+    }
+
+    // 出力の見張りのままか（何も書かれていない）。検証用の書き出しがあれば、それも見張りのままか
+    bool IsGuardPixel(const Readback& readback, uint32_t x, uint32_t y)
+    {
+        const size_t pixel = static_cast<size_t>(y) * ScreenWidth + x;
+        const uint8_t* albedo = readback.Albedo.data() + pixel * 4;
+        const uint16_t* normal = readback.Normal.data() + pixel * 4;
+        const uint16_t* velocity = readback.Velocity.data() + pixel * 2;
+        bool bGuard = std::memcmp(albedo, AlbedoGuard, 4) == 0 && normal[0] == HalfGuard && normal[1] == HalfGuard &&
+                      normal[2] == HalfGuard && normal[3] == HalfGuard && velocity[0] == HalfGuard && velocity[1] == HalfGuard;
+        size_t dumpPixel = 0;
+        if (bGuard && !readback.Dump.empty() && DumpPixelIndex(readback, x, y, dumpPixel))
+        {
+            const float* dump = readback.Dump.data() + dumpPixel * VisibilityResolveGeometry::DUMP_STRIDE_VEC4 * 4u;
+            for (uint32_t index = 0; index < VisibilityResolveGeometry::DUMP_STRIDE_VEC4 * 4u; ++index)
+            {
+                bGuard = bGuard && dump[index] == -7.0f;
+            }
+        }
+        return bGuard;
+    }
+
+    // 2 つの結果の画素がビット単位で一致するか（NaN の中身も含めて。Albedo・Normal・Velocity と、あれば検証用の中間の値）
+    bool IsSamePixel(const Readback& a, const Readback& b, uint32_t x, uint32_t y)
+    {
+        const size_t pixel = static_cast<size_t>(y) * ScreenWidth + x;
+        bool bSame = std::memcmp(a.Albedo.data() + pixel * 4, b.Albedo.data() + pixel * 4, 4) == 0 &&
+                     std::memcmp(a.Normal.data() + pixel * 4, b.Normal.data() + pixel * 4, 8) == 0 &&
+                     std::memcmp(a.Velocity.data() + pixel * 2, b.Velocity.data() + pixel * 2, 4) == 0;
+        size_t dumpPixel = 0;
+        if (!a.Dump.empty() && !b.Dump.empty() && DumpPixelIndex(a, x, y, dumpPixel))
+        {
+            const size_t floatCount = VisibilityResolveGeometry::DUMP_STRIDE_VEC4 * 4u;
+            bSame = bSame && std::memcmp(a.Dump.data() + dumpPixel * floatCount, b.Dump.data() + dumpPixel * floatCount,
+                                         floatCount * sizeof(float)) == 0;
+        }
+        return bSame;
+    }
+
+    struct EquivalenceCounters
+    {
+        uint32_t Compared = 0;
+        uint32_t Mismatched = 0;
+        // 直接版は解決するが、材質ごとの形は（分類の上限以上の材質なので）解決しない画素
+        uint32_t DesignDifferences = 0;
+        uint32_t UnexpectedDifferences = 0;
+        uint32_t GuardViolations = 0;
+    };
+
+    void CompareTileRun(const TileCase& testCase,
+                        const char* variant,
+                        const VisibilityBuffer::RecordTable& records,
+                        const Container::VariableArray<uint32_t>& ids,
+                        const Readback& direct,
+                        const Readback& tiled,
+                        EquivalenceCounters& counters)
+    {
+        Expect(direct.bOk && direct.bRecorded, "直接 dispatch の解決を記録して読み戻せなければならない");
+        Expect(tiled.bOk && tiled.bRecorded && tiled.bClassified, "材質ごとの間接 dispatch の解決（と分類）を記録して読み戻せなければならない");
+        if (!direct.bOk || !tiled.bOk)
+        {
+            return;
+        }
+        for (uint32_t y = 0; y < ScreenHeight; ++y)
+        {
+            for (uint32_t x = 0; x < ScreenWidth; ++x)
+            {
+                const size_t pixel = static_cast<size_t>(y) * ScreenWidth + x;
+                uint32_t material = 0;
+                const bool bInScreen = x < testCase.Width && y < testCase.Height;
+                const bool bResolvable = bInScreen && TryGetMaterial(records, ids[pixel], material);
+                if (!bResolvable)
+                {
+                    // 空・引けない ID・画面の外は、どちらも何も書かない
+                    if (!IsGuardPixel(direct, x, y) || !IsGuardPixel(tiled, x, y))
+                    {
+                        ++counters.GuardViolations;
+                    }
+                    continue;
+                }
+                if (IsGuardPixel(direct, x, y))
+                {
+                    ++counters.UnexpectedDifferences; // 直接版が解決していない（検査が成り立たない）
+                    continue;
+                }
+                if (material >= testCase.MaxMaterials)
+                {
+                    // 一覧に入らない材質は、材質ごとの形では解決されない（見張りのまま）
+                    if (IsGuardPixel(tiled, x, y))
+                    {
+                        ++counters.DesignDifferences;
+                    }
+                    else
+                    {
+                        ++counters.UnexpectedDifferences;
+                    }
+                    continue;
+                }
+                ++counters.Compared;
+                if (!IsSamePixel(direct, tiled, x, y))
+                {
+                    if (counters.Mismatched < 8)
+                    {
+                        std::cerr << TestName << " " << testCase.Name << " " << variant << " 不一致の画素 (" << x << "," << y
+                                  << ") 材質=" << material << std::endl;
+                    }
+                    ++counters.Mismatched;
+                }
+            }
+        }
+    }
+
+    void RunTileEquivalence(const DevicePtr& device,
+                            ShaderManager& shaderManager,
+                            const GpuScene& baseGpu,
+                            const Container::VariableArray<uint32_t>& baseIds,
+                            const CameraSet& cameras)
+    {
+        // 材質の表（4 件）の外の材質 7 を持つ記録（記録 1 の複製）を足した記録の表を作る
+        GpuScene gpu = baseGpu;
+        VisibilityBuffer::DrawRecord outOfTableRecord = baseGpu.Records.Data()[1];
+        outOfTableRecord.MaterialIndex = 7;
+        const uint32_t outOfTableNumber = gpu.Records.Add(outOfTableRecord);
+        Expect(outOfTableNumber == 6, "材質の表の外の材質を持つ記録は 6 番のはず");
+        gpu.RecordTable = CreateHostBuffer(device, gpu.Records.Data(), gpu.Records.SizeInBytes(),
+                                           ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead, "ResolveTestRecordsExtended");
+
+        // 分類の参照が混じるように、ID の画像へ画素を足す（直接版との一致だけを見るので、足した画素は幾何として一貫していなくてよい）
+        Container::VariableArray<uint32_t> ids = baseIds;
+        const uint32_t tile = VisibilityResolveGeometry::TILE_SIZE;
+        const uint32_t tilesX = (ScreenWidth + tile - 1) / tile;
+        const uint32_t tilesY = (ScreenHeight + tile - 1) / tile;
+        auto idOf = [](uint32_t recordNumber, uint32_t triangleIndex) -> uint32_t
+        {
+            uint32_t id = 0;
+            VisibilityBuffer::TryEncode(recordNumber, triangleIndex, id);
+            return id;
+        };
+        auto put = [&ids](uint32_t x, uint32_t y, uint32_t id) { ids[static_cast<size_t>(y) * ScreenWidth + x] = id; };
+
+        // 空のタイル（全部の画素が空。ID の画像の外れの画素を足す前に探す）のうち最後のものへ、材質 0・1・2・3・7 と引けない ID を混ぜる
+        uint32_t mixTileX = tilesX;
+        uint32_t mixTileY = tilesY;
+        for (uint32_t tileY = 0; tileY + 1 < tilesY; ++tileY)
+        {
+            for (uint32_t tileX = 0; tileX + 1 < tilesX; ++tileX)
+            {
+                bool bEmpty = true;
+                for (uint32_t y = tileY * tile; y < tileY * tile + tile; ++y)
+                {
+                    for (uint32_t x = tileX * tile; x < tileX * tile + tile; ++x)
+                    {
+                        bEmpty = bEmpty && ids[static_cast<size_t>(y) * ScreenWidth + x] == VisibilityBuffer::EMPTY_ID;
+                    }
+                }
+                if (bEmpty)
+                {
+                    mixTileX = tileX;
+                    mixTileY = tileY;
+                }
+            }
+        }
+        Expect(mixTileX < tilesX, "材質を混ぜるための空のタイルが場面に無い");
+        if (mixTileX < tilesX)
+        {
+            const uint32_t x0 = mixTileX * tile;
+            const uint32_t y0 = mixTileY * tile;
+            put(x0 + 0, y0, idOf(1, 0));
+            put(x0 + 1, y0, idOf(2, 1));
+            put(x0 + 2, y0, idOf(3, 0));
+            put(x0 + 3, y0, idOf(4, 0));
+            put(x0 + 4, y0, idOf(6, 0));
+            put(x0 + 5, y0, idOf(99, 0)); // 表に無い記録
+            put(x0 + 6, y0, idOf(1, 1));
+            put(x0 + 0, y0 + 1, idOf(5, 1));
+            put(x0 + 7, y0 + 7, idOf(3, 1));
+        }
+        // 右の端・下の端の部分タイル（幅 100 は 8 で割れず、高さ 60 も割れない）に、別の材質を混ぜる。画面の外になる画素も含む
+        put(98, 5, idOf(1, 0));
+        put(99, 5, idOf(2, 1));
+        put(99, 6, idOf(6, 1));
+        put(3, 59, idOf(3, 0));
+        put(4, 59, idOf(4, 1));
+        put(96, 57, idOf(1, 1));
+        put(99, 59, idOf(5, 0));
+        put(97, 2, idOf(3, 1));
+        put(96, 10, idOf(4, 0));
+        put(2, 58, idOf(2, 0));
+        put(5, 56, idOf(1, 0));
+        gpu.IdTexture = CreateIdTexture(device, ids);
+        if (!gpu.RecordTable || !gpu.IdTexture)
+        {
+            std::cerr << TestName << " 材質のタイルの一致の検査の資源を作れませんでした" << std::endl;
+            ++g_failures;
+            return;
+        }
+
+        const TileCase cases[] = {
+            {"A(既定)", 16, MaterialTiles::MAX_GROUP_COUNT_X, ScreenWidth, ScreenHeight},
+            {"B(引数の x の上限 3 で y へ広げる)", 16, 3, ScreenWidth, ScreenHeight},
+            {"C(分類の材質の上限 3)", 3, MaterialTiles::MAX_GROUP_COUNT_X, ScreenWidth, ScreenHeight},
+            {"D(画面 99x59 = 画面の外を読み書きしない)", 16, 4, ScreenWidth - 1, ScreenHeight - 1},
+        };
+        uint64_t frameSerial = 100;
+        for (const TileCase& testCase : cases)
+        {
+            const TileAnalysis analysis =
+                AnalyzeTiles(gpu.Records, ids, testCase.Width, testCase.Height, testCase.MaxMaterials);
+            TileRunOptions options;
+            options.MaxMaterials = testCase.MaxMaterials;
+            options.GroupCountXLimit = testCase.GroupCountXLimit;
+
+            EquivalenceCounters counters;
+            uint32_t wrappedMaterials = 0;
+            for (const bool bDump : {false, true})
+            {
+                const Readback direct =
+                    RunResolve(device, shaderManager, gpu, cameras, bDump, true, frameSerial++, nullptr, testCase.Width, testCase.Height);
+                const Readback tiled =
+                    RunResolve(device, shaderManager, gpu, cameras, bDump, true, frameSerial++, &options, testCase.Width, testCase.Height);
+                CompareTileRun(testCase, bDump ? "検証用の版" : "製品の版", gpu.Records, ids, direct, tiled, counters);
+
+                // 分類の引数（一覧に入る（タイル, 材質）の数が参照と一致すること。x の上限で y へ広がった材質の数）
+                uint32_t entries = 0;
+                wrappedMaterials = 0;
+                for (uint32_t material = 0; material < testCase.MaxMaterials; ++material)
+                {
+                    const size_t base = static_cast<size_t>(material) * MaterialTiles::ARGS_STRIDE_WORDS;
+                    if (base + MaterialTiles::ARG_TILE_COUNT >= tiled.TileArgs.size())
+                    {
+                        break;
+                    }
+                    entries += tiled.TileArgs[base + MaterialTiles::ARG_TILE_COUNT];
+                    wrappedMaterials += tiled.TileArgs[base + MaterialTiles::ARG_GROUP_Y] > 1u ? 1u : 0u;
+                }
+                Expect(entries == analysis.Entries, "分類が一覧へ入れた（タイル, 材質）の数が参照と一致しなければならない");
+            }
+
+            Expect(analysis.EmptyTiles >= 1, "空のタイルを含まなければならない");
+            Expect(analysis.PartialTilePixels >= 4, "部分タイルの解決できる画素を含まなければならない");
+            Expect(testCase.MaxMaterials < 8 || analysis.MaxMaterialsInTile >= 4, "4 つ以上の材質が混じるタイルを含まなければならない");
+            Expect(counters.Compared >= 700, "直接版と比べた画素が少なすぎる（場面が検査になっていない）");
+            Expect(counters.Mismatched == 0, "材質ごとの間接 dispatch の解決は、直接 dispatch の結果と画素でビット単位に一致しなければならない");
+            Expect(counters.GuardViolations == 0, "空・引けない ID・画面の外の画素は、どちらの形でも何も書かれてはならない");
+            Expect(counters.UnexpectedDifferences == 0, "直接版との違いは、分類の上限以上の材質の画素（一覧に入らない）だけでなければならない");
+            // 上限以上の材質の画素は、検証用の版・製品の版のそれぞれで数える（2 回）
+            Expect(counters.DesignDifferences == 2u * analysis.UnlistedPixels,
+                   "一覧に入らない（分類の材質の上限以上の）画素の数が参照と一致しなければならない");
+            if (testCase.MaxMaterials < 8)
+            {
+                Expect(analysis.UnlistedPixels > 0, "C は分類の上限以上の材質の画素を含まなければならない");
+            }
+            else
+            {
+                Expect(analysis.UnlistedPixels == 0, "分類の上限が材質の表の外の材質（7）以上なら、一覧に入らない画素は無いはず");
+            }
+            if (testCase.GroupCountXLimit < MaterialTiles::MAX_GROUP_COUNT_X)
+            {
+                Expect(wrappedMaterials > 0, "引数の x の上限を小さくしたとき、y へ広げる材質を含まなければならない");
+            }
+            if (testCase.Width < ScreenWidth)
+            {
+                Expect(analysis.OutsideIdPixels > 0, "D は画面の外に ID が書かれた画素を含まなければならない");
+            }
+
+            std::cout << TestName << " 材質のタイル " << testCase.Name << ": 比べた画素=" << counters.Compared
+                      << " 不一致=" << counters.Mismatched << " 一覧に入らない画素(違う点)=" << analysis.UnlistedPixels
+                      << " 画面の外のID=" << analysis.OutsideIdPixels << " 空のタイル=" << analysis.EmptyTiles
+                      << " 1タイルの最大の材質数=" << analysis.MaxMaterialsInTile << " 一覧の(タイル,材質)=" << analysis.Entries
+                      << " yへ広げた材質=" << wrappedMaterials << std::endl;
+        }
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -1439,6 +1924,9 @@ namespace
             {
                 Expect(counters.PerRecordPixels[record] >= 60, "記録ごとに十分な画素が覆われなければならない（2 体目のスキニングを含む）");
             }
+
+            // 材質ごとのタイルの一覧から走る形（間接 dispatch）は、同じ ID の画像の直接 dispatch の結果とビット単位で一致する
+            RunTileEquivalence(device, shaderManager, gpu, idImage, cameras);
 
             std::cout << TestName << " 覆われた画素=" << counters.CoveredPixels << " 記録ごと=[";
             for (uint32_t record = 1; record <= scene.Records.RecordCount(); ++record)

@@ -10,9 +10,11 @@
 //     Albedo は材質の基本色（テクスチャなし。α = 1）。
 // GBuffer の形式・意味（Albedo.a、法線の格納、Velocity の式）は、ラスタの経路（gbuffer.frag）と同じ。
 //
-// 材質ごとのタイルの分類（MaterialTileClassifyPass）の引数・一覧は、材質ごとに間接 dispatch する材質の解決が使う。
-// この解決は材質に依らない値（基本色の定数）だけを書くので、画面のタイル（8x8）を 1 回の直接 dispatch で処理する。
-// RHI の ICommandList に間接 dispatch が無い間は、材質ごとの dispatch はできない（材質のテクスチャを引く解決で扱う）。
+// 解決は 2 つの形で記録できる（VisibilityResolve::Record が dispatch の入力で選ぶ）。
+//   - 画面全体の直接 dispatch（既定）: 画面のタイル（8x8）を 1 回の dispatch で処理する。
+//   - 材質ごとのタイルの一覧から走る形: 材質ごとのタイルの分類（MaterialTileClassifyPass）の引数と一覧で、材質ごとに 1 回ずつ
+//     間接 dispatch する（visbuffer_resolve_tiles.comp）。どの材質の一覧にも入らない画素（分類の上限以上の材質）は解決されない。
+// 2 つの形は同じ本体（Common/VisibilityResolve.glsl）なので、解決される画素の結果は画素ごとにビット単位で一致する。
 
 #include "Container/Containers.h"
 #include "Rendering/FrameUseRing.h"
@@ -151,6 +153,17 @@ namespace NorvesLib::Core::Rendering
         /** @brief 検証用の版（Initialize の bDump）の出力。画素あたり DUMP_STRIDE_BYTES。製品の版では使わない */
         RHI::BufferPtr Dump;
         VisibilityResolveGeometry::ResolveParams Params;
+
+        /**
+         * @brief 材質ごとのタイルの一覧から走る形の入力（MaterialTileClassify の出力）。TileArgs と TileList の両方があれば、
+         *        材質ごとの間接 dispatch の形で記録する（Initialize の bTiles が必要）。どちらかが無ければ画面全体の直接 dispatch
+         *
+         * 引数は IndirectBuffer の用途で作り、一覧と一緒に GenericRead の状態にしてから渡す（Args の並びは MaterialTiles::ARGS_STRIDE_BYTES ごと）。
+         */
+        RHI::BufferPtr TileArgs;
+        RHI::BufferPtr TileList;
+        /** @brief 間接 dispatch する材質の数（材質の番号 0..N-1）。0 なら引数の表の件数（TileArgs の大きさ / 引数 1 つの大きさ）全部 */
+        uint32_t TileMaterialCount = 0;
     };
 
     /**
@@ -171,17 +184,27 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief シェーダーとパイプラインを作る。失敗したら false（以降の Record は何もしない）
          * @param bDump true なら画素ごとの中間の値を書き出す検証用の版（GPU のテスト用）
+         * @param bTiles true なら、材質ごとのタイルの一覧から走る形（visbuffer_resolve_tiles.comp）のパイプラインも作る。
+         *               作れなければ false（画面全体の直接 dispatch の分も使えない）
          */
-        bool Initialize(RHI::IDevice* device, ShaderManager* shaderManager, bool bDump = false);
+        bool Initialize(RHI::IDevice* device, ShaderManager* shaderManager, bool bDump = false, bool bTiles = false);
         void Shutdown();
         bool IsReady() const { return m_Pipeline != nullptr; }
+        /** @brief 材質ごとのタイルの一覧から走る形（TileArgs・TileList つきの Record）を使えるか */
+        bool IsTileReady() const { return m_TilePipeline != nullptr; }
 
         /** @brief 飛行中のフレームの番号の枠を選ぶ（FrameUseRing の BeginFrame と同じ） */
         void BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial);
 
         /**
-         * @brief 解決を記録する（画面のタイルごとに 1 グループの dispatch）
-         * @return 記録できたら true。入力・出力が足りない、出力が画面より小さいときは false で何も記録しない
+         * @brief 解決を記録する
+         *
+         * dispatch の TileArgs・TileList が無ければ、画面のタイルごとに 1 グループの直接 dispatch を 1 回。
+         * あれば、材質 0..N-1 について 1 回ずつ DispatchIndirect する（N は TileMaterialCount か引数の表の件数。
+         * 1 回の間接 dispatch が 1 組の資源を使うので、N が大きいと資源も N 組要る）。
+         * 間接 dispatch の間には UAV のバリアを入れない（各 dispatch は別の画素にだけ書き、出力を読まない）。
+         * @return 記録できたら true。入力・出力が足りない、出力が画面より小さい、タイルの形を使えない（IsTileReady が false）、
+         *         引数に 1 件も収まらないときは false で何も記録しない
          */
         bool Record(RHI::ICommandList* commandList, const VisibilityResolveDispatch& dispatch);
 
@@ -190,13 +213,21 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr Uniform;
             RHI::DescriptorSetPtr DescriptorSet;
+            // 材質ごとの形の、1 回の dispatch の定数（横のタイル数・材質の番号）とディスクリプタセット
+            RHI::BufferPtr TileUniform;
+            RHI::DescriptorSetPtr TileDescriptorSet;
         };
 
         bool EnsurePlaceholder();
+        void BindCommon(RHI::IDescriptorSet& set, const RHI::BufferPtr& paramsUniform, const VisibilityResolveDispatch& dispatch) const;
+        bool RecordTiles(RHI::ICommandList* commandList, const VisibilityResolveDispatch& dispatch);
 
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_Shader;
         RHI::PipelinePtr m_Pipeline;
+        // 材質ごとのタイルの一覧から走る形（Initialize の bTiles のときだけ）
+        RHI::ShaderPtr m_TileShader;
+        RHI::PipelinePtr m_TilePipeline;
         RHI::SamplerPtr m_Sampler;
         // 表を持たないフレームで束ねる、空の表（読まれない）
         RHI::BufferPtr m_Placeholder;
