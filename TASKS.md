@@ -2580,3 +2580,9 @@
 - stop-when: 入力の位置規約を自動推測する、Blender互換/実物照合済みと謳う、既存行ベクトルSamplerや骨格bindを同時変更する、retarget/RootMotion/補間/StageBまで広げる。
 
 - result: code6fbbbe8b/tree7d5cab88/run37362515658 attempt1 job111940266049。実Windows43CPU/旧6＋新FK marker、17/29中断、79+10byte、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを受入。親readonly再実行exit0/全stderr空、旧572証拠file保全。合成6順1e-9・2位置規約source FK/End Siteまで。target retarget/Sampler/実Blender/軸単位fps/RootMotion/CLI/StageB/GPU/確保故障注入は未受入れ。
+
+## G2-GR84-JOINT-NAME-INDEX: 関節名を厳密なUTF8所有索引で解決する
+- status: doing
+- done-when: Private/Animationの独立値型で非空/厳密UTF8/NULなし/重複なしのjoint名を所有し、完全byte一致で元配列番号を返す。native SkeletalJoint名は既存minor2 NameCodecで変換する。明示count/個別/総byte上限、構築/検索失敗時out保持、copy/moveの所有を保証する。既存Identity索引とSamplerは変えない。
+- verify: 入力順の異なる名前/日本語/非BMP/UTF8-16-32-native境界、case/prefix/colon/正規化違い、空/NUL/不正/重複/unknown/各limit/不正span、元入力破棄とcopy/move、失敗時出力保持。実Windows44CPUと既存89byte/managed復旧gate。
+- stop-when: runtimeの重複先頭勝ちを変更する、BVH token制約をtarget名へ強制する、名前解決を階層/rest互換とみなす、BoneMap JSON/retarget/Sampler共有/StageBを同時実装する。

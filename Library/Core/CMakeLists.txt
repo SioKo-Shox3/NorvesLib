@@ -48,6 +48,9 @@ set(PRIVATE_SOURCES
     Private/Particle/ParticleSystem.cpp
     # Animation
     Private/Animation/AnimationClipResource.cpp
+    Private/Animation/SkeletalJointIndex.h
+    Private/Animation/SkeletalJointIndex.cpp
+    Private/Animation/SkeletalJointIndexNative.cpp
     Private/Animation/SkeletalAnimationSampler.cpp
     Private/Animation/SkeletalSamplingMath.h
     Private/Animation/SkeletalAssetResource.cpp

@@ -894,3 +894,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 double姿勢評価の検証準備: 必須の位置規約、6順の右積、親FK/End Site、構造/selected frameの有限検査、未対応channel/overflow拒否、nothrow置換を接続。0初期化enumはUnspecifiedとして拒否する。2round静的PASS、実cpp+testのg++構文検査とPython12+4+7 normal/-O/BOM/EOLが成功。実sourceのprivate数学helperだけをallocator stubなしで通常/O2-NDEBUG/ASan・UBSan（LSan除外）実行し、6順とFK literalを確認。full Evaluate/Coreのhost実行ではない。実Windows43CPU/新marker/既存89byte/managed gateは次CIで未確認。
 
 - G2/GR84 source姿勢評価受入: 6fbbbe8b4bcfe7ccf592bc07d2a13be1652e6368 / tree7d5cab88c31be45955a7e34f2c9fbe9569d21bfc / run37362515658 attempt1 job111940266049。43CPU/旧6＋新FK marker、Bootstrap17/Update29、79+10byte、7smoke/5診断、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを照合し親readonly再実行exit0。旧572証拠file保全。synthetic6順1e-9と明示2位置規約source FK/末端まで受入れ、target/Sampler/Blender実測/変換clip/CLI/StageB等は残す。次は既存Identity索引の重複先頭勝ちを変えず、独立した厳密UTF8 joint-name indexを先に整える。
+
+- G2/GR84 厳密joint-name index開始。Core/AssetCook向け下準備としてPrivate/Animationへ置き、既存SkeletonResource::FindJointIndexのIdentity/hash・重複先頭勝ちは変更しない。UTF8 byte poolと元indexを所有し、target native名の変換は既存NameCodec minor2へ集約する。名前解決成功は階層/rest/retarget互換を保証しない。
+
+- G2/GR84 strict joint-name indexの検証準備: UTF8所有pool/完全一致/元番号、非空・重複・codec/上限/不正span検査、copy-and-swap/empty move、native minor2変換を接続。2round静的PASS、pure coreとgeneric test subsetのg++構文検査、既存NameCodecだけの通常/O2-NDEBUG/ASan・UBSan（LSan除外）、Python12+4+7 normal/-O、BOM/EOL検査PASS。native temporaryのmax_sizeをprepassへ追加し、misalignment/extent overflow/count/入力変更/失敗後設定保持も反証する。新index/NativeAdapter runtimeはhostで未実行で、次の実Windows44CPU/新marker/旧89byte/managed gateで検証する。

@@ -46,6 +46,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SingleAssetCookServiceTest SingleAssetCookServiceTest.cpp
     MEMBER ImportedOpaqueRuntimeTest ImportedOpaqueRuntimeTest.cpp
     MEMBER ImportedMaterialStagingTest ImportedMaterialStagingTest.cpp
+    MEMBER SkeletalJointIndexTest SkeletalJointIndexTest.cpp
     MEMBER BvhEvaluateTest BvhEvaluateTest.cpp
     MEMBER BvhDecodeTest BvhDecodeTest.cpp
     MEMBER GltfMaterialCookV1Test GltfMaterialCookV1Test.cpp
@@ -277,3 +278,5 @@ add_test(NAME ImportedOpaqueRuntimeTest COMMAND CookedMeshTest --test=ImportedOp
 add_test(NAME BvhDecodeTest COMMAND CookedMeshTest --test=BvhDecodeTest)
 
 add_test(NAME BvhEvaluateTest COMMAND CookedMeshTest --test=BvhEvaluateTest)
+
+add_test(NAME SkeletalJointIndexTest COMMAND CookedMeshTest --test=SkeletalJointIndexTest)
