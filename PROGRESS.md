@@ -817,3 +817,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 
 - G2-S6-MANAGED-TRANSACTION-INTENT開始: bootstrapは既知staged root、updateは宣言済みの変更fileだけを対象にし、root IDとunlistedを保持する。大きなstate/indexはinlineせず4固定roleのimage証拠とexact side bytesを検証する。index parserを共有化し、receiptは非循環の固定body＋既知object IDで照合する。NoChangeの判断と実publication/recoveryはcontroller側に残す。
 - G2-S6-MANAGED-TRANSACTION-INTENT検証準備: 4固定controlのexact bytes/ID、共有index/state/manifest parser、固定key/package、Cook/Skip値、bootstrap directory閉包を32CPUへ接続。全kindは実stage/package/control IDでupdateと別不在rootのbootstrapを構成し、source不在parseも反証する。移動元wrapperを無効化し、深い共有prefixは親indexを一度だけ辿って検査時の文字列増幅を避ける。比較器12件×通常/最適化とliteral単独compileは成功、実Windows/79+10byteは未実行。
+
+- G2-S6-MANAGED-TRANSACTION-INTENT受入: af3609a7/run37272790699で実Windows build・32CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。15種の実cook fixtureでupdate/bootstrapのnative imagesとsource不在parse、250段共有prefix/2000末端の閉包、移動元無効化と失敗保持を確認。共有codec抽出73項目・71 source receipts・3ZIP・CNGを独立検証しrootで再実行。値契約をdone、実publication/rollback/CLI接続は未実装。

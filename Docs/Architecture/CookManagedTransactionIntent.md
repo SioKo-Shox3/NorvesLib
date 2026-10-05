@@ -48,3 +48,11 @@ before state/indexの意味検査に再serializeしたbytesを代用しない。
 共有index codecは従来observerの全祖先合計4096claim予算を保持する。initializerの空index bytesは専用fixtureで固定する。共通reference/fixed-key比較をcacheとinventoryから抽出して同じ意味を再利用する。
 
 純値試験はbootstrap/update、固定集合、Cook/Skip、世代、同bytes別ID、型/未知field、失敗時out保持、入力寿命を反証する。全kindの実cook/capture試験では実native ID・生side bytes・source不在での読込を接続する。公開・rollback・実process中断・powerloss・GPUはこの値単位の合格範囲に含めない。
+
+## 実Windows受入れ
+
+af3609a7f9ff1871b966ad2252f2e7604095985b、[run 37272790699](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37272790699) attempt 1で実build・32CPU・5診断byte・既存7CLI/79出力byteとtexture spec v1の固定10出力byte一致を確認した。native textureは2spec×2実行・16拒否も成功。2回目の一致はrunner記録、直接比較は保存された初回10出力による。
+
+15個の実cook fixture（raw/custom/empty、srgb/linear/rg/r、Unicode texture、audio、mesh、skeletal、sidecar有効/無効、Unicode model、外部依存）から実native IDsと生side bytesを使うupdate/bootstrapを検証した。source不在parse、250段の共有prefixと2000末端directory/package、移動元wrapperの無効化、失敗時out保持も通った。共有helper抽出73項目、71 immutable source receipts、3ZIPのAPI digest/size・CRC・安全な完全inventoryとCNG importを独立検証し再実行した。
+
+既存initializerの8条件flagとobserverの5条件flagは全て1。lockのcross-sessionは従来どおり未実測。実資産の公開executor、中断rollback、production CLI接続の合格ではない。

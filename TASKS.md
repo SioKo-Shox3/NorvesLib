@@ -2496,7 +2496,13 @@
 - stop-when: 公開後の失敗でstoreを削除する、未確認orphanを名前だけで掃除/採用する、copy/replaceへfallbackする、runtime root/state/package/journalを同時公開する、ACL/privilege変更を要求する。
 
 ## G2-S6-MANAGED-TRANSACTION-INTENT: 相対slotの更新記録を厳密な値契約にする
-- status: doing
+- status: done
 - done-when: bootstrap/updateのimmutable intentを、独立store anchor・固定control side-documentの正確なbytes/IDs・共通state/index codec・manifest readerで構築/往復する。slotは型から導出し、保存absolute pathはI/Oへ渡さない。値の成功は公開許可ではない。
 - verify: 実cook/captureとnative before/after image、固定key/package対応、Cook/Skipの値整合、世代/上限/unknown/duplicate/slot escape/同byte別ID/入力寿命/失敗保持、既存Windows・79+10byte gate。
 - stop-when: 永続file lineageやwhole-root update交換を導入する、unlistedを変更する、updateで親directoryを再作成する、beforeを再serializeしたJSONで代用する、source不在復旧でsourceを読む、値codecをwrite capabilityとみなす。
+
+## G2-S6-MANAGED-BOOTSTRAP-EXECUTOR: 不在runtimeの公開とpending復旧を接続する
+- status: todo
+- done-when: controller自身が実cook/captureから既知stageとintentを作り、root/state/indexを同volume lock内で公開する。receiptはpending内で最後にcommitし、完全commitまたは完全rollbackを照合した後だけpendingを退役する。source/spec不在で固定pendingを安全に復旧できる。
+- verify: 実Windowsのnative IDとexact before bytes、各rename/receipt/rollback/退役境界の実process終了、ordinary/abandoned再開、同byte別ID/未知entry/親置換/side doc破損/no-replace競合/alias、既存32CPU・79+10byte・5診断。
+- stop-when: 保存absolute locatorをI/Oへ戻す、独立bindingを導出できると偽る、既存root採用/whole-root update交換/恒久file lineageを行う、未知orphanをprefixで掃除する、ordinary観測を弱める、powerloss/atomic reader保証が必要になる。
