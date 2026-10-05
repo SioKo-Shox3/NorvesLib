@@ -6,6 +6,7 @@
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/SkinningComputePass.h"
+#include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/VolumetricsPass.h"
@@ -823,8 +824,11 @@ namespace NorvesLib::Core::Rendering
     // パイプライン構築ヘルパー
     // ========================================
 
-    void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer, RasterDirectBrdf directBrdf)
+    void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer,
+                                          RasterDirectBrdf directBrdf,
+                                          VisibilityBufferMode visibilityBuffer)
     {
+        const bool bVisibilityBuffer = IsVisibilityBufferActive(visibilityBuffer);
         // 既存のパスをクリア
         while (GetPassCount() > 0)
         {
@@ -856,7 +860,8 @@ namespace NorvesLib::Core::Rendering
         // SkinningComputePass: スキニングの今・前のフレームの頂点を計算シェーダーで作る。
         // 今の GBuffer の経路は頂点シェーダーのスキニングのままなので、ビジビリティバッファを使うときまで無効にしておく。
         auto skinningComputePass = MakeUnique<SkinningComputePass>();
-        skinningComputePass->SetEnabled(false);
+        skinningComputePass->SetEnabled(bVisibilityBuffer);
+        SkinningComputePass *skinningComputePassPtr = skinningComputePass.get();
         AddPass(std::move(skinningComputePass));
 
         // GBufferPass: ジオメトリ→GBuffer MRT
@@ -872,7 +877,21 @@ namespace NorvesLib::Core::Rendering
         auto megaGeometryPass = MakeUnique<MegaGeometryPass>(megaGeoSettings);
         megaGeometryPass->SetSceneView(this);
         megaGeometryPass->SetSceneRenderer(sceneRenderer);
+        megaGeometryPass->SetVisibilityDrawPlanEnabled(bVisibilityBuffer);
+        MegaGeometryPass *megaGeometryPassPtr = megaGeometryPass.get();
         AddPass(std::move(megaGeometryPass));
+
+        // VisibilityRasterPass: 不透明の描画のすべて（MegaGeometry のクラスタ・手続きメッシュの塊・スキニングの塊）を、
+        // 今の GBuffer の描画に加えて VisBuffer.Id と GBuffer.Depth へ描く。--visibility-buffer=on|debug のときだけ足す。
+        VisibilityRasterPass *visibilityRasterPassPtr = nullptr;
+        if (bVisibilityBuffer)
+        {
+            auto visibilityRasterPass = MakeUnique<VisibilityRasterPass>();
+            visibilityRasterPass->SetMegaGeometryPass(megaGeometryPassPtr);
+            visibilityRasterPass->SetSkinningComputePass(skinningComputePassPtr);
+            visibilityRasterPassPtr = visibilityRasterPass.get();
+            AddPass(std::move(visibilityRasterPass));
+        }
 
         // SSAOPass: GBufferの深度・法線から画面空間AO（GTAO）を計算。半径は世界の長さ（m）で、
         // 球・岩の接地部や軒下（数十cm〜1 m）を拾い、部屋の大きさの壁全体は遮蔽にしない。
@@ -921,6 +940,14 @@ namespace NorvesLib::Core::Rendering
         transparentForwardPass->SetTransparentOnly(true);
         transparentForwardPass->SetRegisterOutputs(false);
         AddPass(std::move(transparentForwardPass));
+
+        // VisibilityDebugPass: ID を色にして最後のシーンの色へ書く（--visibility-buffer=debug の検証表示）
+        if (visibilityBuffer == VisibilityBufferMode::Debug && visibilityRasterPassPtr)
+        {
+            auto visibilityDebugPass = MakeUnique<VisibilityDebugPass>();
+            visibilityDebugPass->SetRasterPass(visibilityRasterPassPtr);
+            AddPass(std::move(visibilityDebugPass));
+        }
 
         // PostProcessStack: TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw
         auto postProcessStack = MakeUnique<PostProcessStack>();

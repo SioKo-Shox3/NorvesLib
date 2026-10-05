@@ -84,6 +84,7 @@ namespace NorvesLib::Core::Rendering
         coordSettings.PathTracingSampleBatch = settings.PathTracingSampleBatch;
         coordSettings.PathTracingDebug = settings.PathTracingDebug;
         coordSettings.RasterDirectBrdfMode = settings.RasterDirectBrdfMode;
+        coordSettings.VisibilityBuffer = settings.VisibilityBuffer;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))
         {

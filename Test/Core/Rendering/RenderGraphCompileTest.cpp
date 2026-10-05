@@ -26,6 +26,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/VisibilityBuffer.h"
+#include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Test/Core/Rendering/GeometryUploadTestSupport.h"
 #include "Container/PointerTypes.h"
@@ -944,6 +945,13 @@ namespace
         {
             m_Capabilities.bBufferDeviceAddress = true;
             m_Capabilities.bDrawIndirectFirstInstance = true;
+        }
+
+        // ビジビリティバッファの描画（フラグメントシェーダーの gl_PrimitiveID）が要る機能を表明する
+        void EnableVisibilityBufferCapabilities()
+        {
+            EnableMegaGeometryBatchCapabilities();
+            m_Capabilities.bGeometryShader = true;
         }
 
         Container::VariableArray<RHI::RenderPassDesc> CreatedRenderPassDescs;
@@ -1890,6 +1898,291 @@ namespace
         }
         assert(sawIdTarget);
         assert(sawRecordsWrite);
+    }
+
+    // ビジビリティバッファの描画（--visibility-buffer=on）の記録に使う、2つの MegaMesh インスタンスを持つシーンの一式。
+    // GBufferPass → MegaGeometryPass（描画の写しを作る）→ VisibilityRasterPass の順に RenderGraph で実行する
+    struct VisibilityRasterScene
+    {
+        RHI::TSharedPtr<FakeDevice> Device;
+        ShaderManager ShaderMgr;
+        MockAllocator Allocator;
+        RHI::TransientResourcePool Pool;
+        RenderResources Resources;
+        SceneRenderer Renderer;
+        RenderGraph Graph;
+        GBufferPass GBuffer;
+        MegaGeometryPass Mega;
+        VisibilityRasterPass Raster;
+        FakeCommandList CommandList;
+        Container::VariableArray<DrawCommand> OpaqueCommands;
+        Container::VariableArray<FrameCommand> PendingFrameCommands;
+        Container::VariableArray<MegaGeometryProxy> Proxies;
+        CameraProxy Camera;
+        ViewRenderContext Context;
+    };
+
+    // bVisibilityPlan=false は --visibility-buffer=off（MegaGeometryPass が描画の写しを作らず、VisibilityRasterPass も足さない）
+    void RunVisibilityRasterScene(VisibilityRasterScene& scene, bool bVisibilityPlan, bool bOcclusionCulling)
+    {
+        scene.Device = RHI::MakeShared<FakeDevice>();
+        scene.Device->EnableVisibilityBufferCapabilities();
+        assert(scene.ShaderMgr.Initialize(scene.Device.get(), TestShaderDirectory));
+        assert(scene.Pool.Initialize(&scene.Allocator, 1));
+        scene.Pool.BeginFrame(0);
+        assert(scene.Resources.Initialize(scene.Device));
+        scene.Resources.MegaGeometry().SetOcclusionCullingEnabled(bOcclusionCulling);
+        assert(scene.Renderer.Initialize(scene.Device.get(), nullptr, &scene.Pool));
+        assert(scene.Graph.Initialize(&scene.Pool));
+        scene.Graph.BeginFrame(0);
+        scene.GBuffer.SetSceneRenderer(&scene.Renderer);
+
+        float vertices[12] = {0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f};
+        uint32_t indices[3] = {0, 1, 2};
+        MegaGeometry::MeshCluster cluster;
+        cluster.IndexOffset = 0;
+        cluster.IndexCount = 3;
+        cluster.VertexOffset = 0;
+        cluster.VertexCount = 3;
+        cluster.Bounds.CenterX = 0.5f;
+        cluster.Bounds.CenterY = 0.5f;
+        cluster.Bounds.Radius = 0.75f;
+        cluster.ConeAxisZ = 1.0f;
+        cluster.ConeCutoff = 0.25f;
+        MegaGeometry::MegaMeshCreateInfo createInfo;
+        createInfo.VertexData = vertices;
+        createInfo.VertexDataSize = sizeof(vertices);
+        createInfo.VertexCount = 3;
+        createInfo.VertexStride = 4 * sizeof(float);
+        createInfo.IndexData = indices;
+        createInfo.IndexCount = 3;
+        createInfo.Clusters.push_back(cluster);
+        createInfo.TotalBounds.CenterX = 0.5f;
+        createInfo.TotalBounds.CenterY = 0.5f;
+        createInfo.TotalBounds.Radius = 1.25f;
+        createInfo.bBuildLODHierarchy = false;
+        createInfo.DebugName = "VisRasterMegaA";
+        const auto megaMeshA = scene.Resources.MegaGeometry().CreateMegaMesh(createInfo);
+        createInfo.DebugName = "VisRasterMegaB";
+        const auto megaMeshB = scene.Resources.MegaGeometry().CreateMegaMesh(createInfo);
+        assert(megaMeshA.IsValid() && megaMeshB.IsValid());
+        assert(NorvesLib::Test::GeometryUpload::DrainGeometryUploads(scene.Resources));
+
+        MegaGeometryProxy proxyA;
+        proxyA.ObjectId = 1;
+        proxyA.ComponentId = 10;
+        proxyA.MegaMeshHandle = megaMeshA;
+        proxyA.WorldTransform = NorvesLib::Math::Matrix4x4::Identity;
+        proxyA.WorldBounds = createInfo.TotalBounds;
+        scene.Proxies.push_back(proxyA);
+        MegaGeometryProxy proxyB = proxyA;
+        proxyB.ObjectId = 2;
+        proxyB.ComponentId = 20;
+        proxyB.MegaMeshHandle = megaMeshB;
+        scene.Proxies.push_back(proxyB);
+
+        scene.Camera.Viewport.Width = 128.0f;
+        scene.Camera.Viewport.Height = 64.0f;
+
+        ViewRenderContext& context = scene.Context;
+        context.CommandList = &scene.CommandList;
+        context.Device = scene.Device.get();
+        context.TransientPool = &scene.Pool;
+        context.ShaderMgr = &scene.ShaderMgr;
+        context.Renderer = &scene.Renderer;
+        context.PendingFrameCommands = &scene.PendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.MainCamera = &scene.Camera;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(scene.OpaqueCommands);
+        context.SnapshotMegaGeometryProxies = &scene.Proxies;
+        context.Resources.Textures = &scene.Resources.Textures();
+        context.Resources.Materials = &scene.Resources.Materials();
+        context.Resources.Meshes = &scene.Resources.Meshes();
+        context.Resources.MegaGeometry = &scene.Resources.MegaGeometry();
+
+        scene.Mega.SetVisibilityDrawPlanEnabled(bVisibilityPlan);
+        scene.Raster.SetMegaGeometryPass(&scene.Mega);
+        assert(scene.Mega.Initialize(context));
+        scene.Graph.AddPass(&scene.GBuffer);
+        scene.Graph.AddPass(&scene.Mega);
+        if (bVisibilityPlan)
+        {
+            assert(scene.Raster.Initialize(context));
+            scene.Graph.AddPass(&scene.Raster);
+        }
+        assert(scene.Graph.Compile(context));
+        const RenderGraphExecutionResult result = scene.Graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+    }
+
+    void ShutdownVisibilityRasterScene(VisibilityRasterScene& scene)
+    {
+        scene.Raster.Shutdown();
+        scene.Mega.Shutdown();
+        scene.GBuffer.Shutdown();
+        scene.Renderer.Shutdown();
+        scene.Resources.Shutdown();
+        scene.Graph.Shutdown();
+        scene.Pool.EndFrame();
+        scene.Pool.Shutdown();
+        scene.ShaderMgr.Shutdown();
+    }
+
+    // --visibility-buffer=on: MegaGeometry の2パスのコマンドを、そのまま ID と深度のレンダーパスで描き直す。
+    // コマンドは MegaGeometryPass が積んだ範囲（1パス目・2パス目）を使い、記録は GPU（計算）が1回の dispatch で書く。
+    void TestVisibilityRasterOnRecordsMegaDrawsAndIdPass()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true);
+        FakeCommandList& commandList = scene.CommandList;
+
+        // GBuffer（空）・MegaGeometry（2パス）・ビジビリティバッファ（ID）の4つのレンダーパス
+        assert(scene.Graph.GetLastExecutedPassCount() == 3);
+        assert(commandList.BeginRenderPassCount == 4);
+        assert(commandList.EndRenderPassCount == 4);
+
+        // 間接描画: MegaGeometry の 1・2 パス目（コマンドの範囲は 0 と 2 * 20 バイト）の後に、同じ範囲をもう一度
+        assert(commandList.IndirectDraws.size() == 4);
+        for (size_t drawIndex = 0; drawIndex < 2; ++drawIndex)
+        {
+            assert(commandList.IndirectDraws[2 + drawIndex].OffsetBytes == commandList.IndirectDraws[drawIndex].OffsetBytes);
+            assert(commandList.IndirectDraws[2 + drawIndex].MaxDrawCount == commandList.IndirectDraws[drawIndex].MaxDrawCount);
+        }
+        assert(commandList.IndirectDraws[3].OffsetBytes == 2 * 20);
+
+        // dispatch: カリング 2 回 + HZB 7 段 + 記録を書く計算 1 回
+        assert(commandList.DispatchCount == 10);
+
+        // 並びの最後は、記録を書く計算（D）→ ID のレンダーパス（B → 間接描画 2 回 → E）
+        const auto& sequence = commandList.CallSequence;
+        const char tail[] = {'D', 'B', 'I', 'I', 'E'};
+        assert(sequence.size() > sizeof(tail));
+        for (size_t i = 0; i < sizeof(tail); ++i)
+        {
+            assert(sequence[sequence.size() - sizeof(tail) + i] == tail[i]);
+        }
+
+        // 記録の枠: 0 番の空 + MegaGeometry のコマンド（1 パス 2 つ × 2 パス）。手続き・スキニングの描画は無い
+        const VisibilityRasterFrameStats& stats = scene.Raster.GetLastFrameStats();
+        assert(stats.bRendered);
+        assert(stats.MegaCommandSlots == 4);
+        assert(stats.ProceduralRecords == 0 && stats.SkinnedRecords == 0);
+        assert(stats.TotalSlots == 1 + 4);
+        assert(scene.Raster.GetRecordTable());
+        assert(scene.Raster.GetRecordTableBytes() == 5 * sizeof(VisibilityBuffer::DrawRecord));
+
+        // ID は R32_UINT の1枚のカラー添付（空の ID で消す）と、GBuffer が書いた深度の Load。どちらも ShaderResource で終わる
+        bool bFoundIdRenderPass = false;
+        for (const RHI::RenderPassDesc& desc : scene.Device->CreatedRenderPassDescs)
+        {
+            if (desc.colorAttachments.size() != 1 || desc.colorAttachments[0].format != RHI::Format::R32_UINT)
+            {
+                continue;
+            }
+            const RHI::AttachmentDesc& id = desc.colorAttachments[0];
+            assert(id.loadOp == RHI::AttachmentLoadOp::Clear);
+            assert(id.clearColorUint[0] == VisibilityBuffer::EMPTY_ID);
+            assert(id.initialState == RHI::ResourceState::RenderTarget);
+            assert(id.finalState == RHI::ResourceState::ShaderResource);
+            assert(desc.hasDepthStencil);
+            assert(desc.depthStencilAttachment.loadOp == RHI::AttachmentLoadOp::Load);
+            assert(desc.depthStencilAttachment.initialState == RHI::ResourceState::DepthWrite);
+            assert(desc.depthStencilAttachment.finalState == RHI::ResourceState::ShaderResource);
+            bFoundIdRenderPass = true;
+        }
+        assert(bFoundIdRenderPass);
+
+        // MegaGeometryPass が残した IndirectDraw・カウンタ・描画情報は、ID の描画の後に Common へ戻る（記録を書く計算のために
+        // コマンド・カウンタは GenericRead へ渡され、そこから戻る）。ID の描画より前には戻らない
+        size_t commonBarriers = 0;
+        for (const BarrierEvent& barrier : commandList.Barriers)
+        {
+            if (barrier.Kind == RGBarrierKind::Buffer && barrier.AfterState == RHI::ResourceState::Common &&
+                barrier.BeforeState == RHI::ResourceState::GenericRead)
+            {
+                const auto* fakeBuffer = static_cast<const FakeBuffer*>(barrier.Buffer);
+                const char* name = fakeBuffer->GetDesc().DebugName;
+                if (IsDebugName(name, "MegaGeometry_IndirectDraw") || IsDebugName(name, "MegaGeometry_DrawCount") ||
+                    IsDebugName(name, "MegaGeometry_DrawInfo"))
+                {
+                    ++commonBarriers;
+                }
+            }
+        }
+        assert(commonBarriers == 3);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 遮蔽カリングを使わない（1パスだけの）経路でも、その1パスのコマンドを描き直す
+    void TestVisibilityRasterOnSinglePassMegaGeometry()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, false);
+        FakeCommandList& commandList = scene.CommandList;
+
+        // GBuffer（空）・MegaGeometry（1パス）・ID
+        assert(commandList.BeginRenderPassCount == 3);
+        assert(commandList.IndirectDraws.size() == 2);
+        assert(commandList.IndirectDraws[1].OffsetBytes == commandList.IndirectDraws[0].OffsetBytes);
+        assert(commandList.IndirectDraws[1].MaxDrawCount == 2);
+        // カリング 1 回 + 記録を書く計算 1 回
+        assert(commandList.DispatchCount == 2);
+        assert(scene.Raster.GetLastFrameStats().MegaCommandSlots == 2);
+        assert(scene.Raster.GetLastFrameStats().TotalSlots == 3);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // --visibility-buffer=off: 描画の写しを作らず、MegaGeometry のバッファは今まで通りその場で Common へ戻る
+    void TestVisibilityRasterOffKeepsExistingMegaGeometryRecording()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, false, true);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(!scene.Mega.IsVisibilityDrawPlanEnabled());
+        assert(commandList.BeginRenderPassCount == 3); // GBuffer（空）・MegaGeometry 2 パス
+        assert(commandList.IndirectDraws.size() == 2);
+        assert(commandList.DispatchCount == 9);        // カリング 2 回 + HZB 7 段
+        MegaGeometryPass::VisibilityDrawPlan plan;
+        assert(!scene.Mega.TakeVisibilityDrawPlan(plan));
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // GBuffer の深度が無い構成（RenderGraph に深度が無い）では、VisibilityRasterPass は何も宣言せず何も描かない
+    void TestVisibilityRasterWithoutGBufferDepthDoesNothing()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+        device->EnableVisibilityBufferCapabilities();
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
+
+        FakeCommandList commandList;
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.CommandList = &commandList;
+        context.ShaderMgr = &shaderManager;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        VisibilityRasterPass pass;
+        assert(pass.Initialize(context));
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        graph.AddPass(&pass);
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+        assert(commandList.BeginRenderPassCount == 0);
+        assert(commandList.DrawCallCount == 0);
+        assert(!pass.GetLastFrameStats().bRendered);
+        uint32_t version = 0;
+        assert(!graph.TryGetNamedResourceVersion(RenderGraphResourceNames::VisBufferId, version));
+
+        pass.Shutdown();
+        shaderManager.Shutdown();
     }
 
     void TestShadowMapNativeDeclareImportsDepthOutput()
@@ -7131,6 +7424,10 @@ int main()
     TestCompileContextPassedToDeclare();
     TestWriteFinalStateSuppressesFollowupReadBarrier();
     TestVisibilityBufferResourcesDeclareAndRead();
+    TestVisibilityRasterOnRecordsMegaDrawsAndIdPass();
+    TestVisibilityRasterOnSinglePassMegaGeometry();
+    TestVisibilityRasterOffKeepsExistingMegaGeometryRecording();
+    TestVisibilityRasterWithoutGBufferDepthDoesNothing();
     TestShadowMapNativeDeclareImportsDepthOutput();
     TestNeuralDecodeNativeDeclareWritesLogicalCompletion();
     TestMegaGeometryNativeDeclareImportsPersistentBuffers();

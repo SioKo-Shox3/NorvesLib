@@ -457,6 +457,38 @@ namespace
         return false;
     }
 
+    // --visibility-buffer=off|on|debug
+    bool TryParseVisibilityBufferOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::VisibilityBufferMode& outMode,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--visibility-buffer=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("off"))
+        {
+            outMode = NorvesLib::Core::Rendering::VisibilityBufferMode::Off;
+            return true;
+        }
+        if (value == TEXT("on"))
+        {
+            outMode = NorvesLib::Core::Rendering::VisibilityBufferMode::On;
+            return true;
+        }
+        if (value == TEXT("debug"))
+        {
+            outMode = NorvesLib::Core::Rendering::VisibilityBufferMode::Debug;
+            return true;
+        }
+        return false;
+    }
+
     // --tone-map=aces|aces20-lut
     bool TryParseToneMapOption(
         const String& argument,
@@ -921,6 +953,7 @@ namespace NorvesLib::Core::Engine
         Rendering::PathTracingDebugOutput pathTracingDebugOutput =
             Rendering::PathTracingDebugOutput::None;
         Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Analytic;
+        Rendering::VisibilityBufferMode visibilityBufferMode = Rendering::VisibilityBufferMode::Off;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
         bool bToneMapOperatorRequested = false;
         float filmGrainStrength = 0.0f;
@@ -1056,6 +1089,17 @@ namespace NorvesLib::Core::Engine
             else if (bMatchedDirectBrdf)
             {
                 LOG_WARNING("ApplicationProcessor runtime option --raster-direct-brdf ignored: value must be 'neural' or 'analytic'");
+            }
+
+            bool bMatchedVisibilityBuffer = false;
+            if (TryParseVisibilityBufferOption(args[i], visibilityBufferMode, bMatchedVisibilityBuffer))
+            {
+                LOG_INFO("ApplicationProcessor runtime option visibility_buffer=%u",
+                         static_cast<unsigned int>(visibilityBufferMode));
+            }
+            else if (bMatchedVisibilityBuffer)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --visibility-buffer ignored: value must be 'off', 'on' or 'debug'");
             }
 
             bool bMatchedToneMap = false;
@@ -1223,6 +1267,7 @@ namespace NorvesLib::Core::Engine
             renderSettings.PathTracingSampleBatch = pathTracingSampleBatch;
             renderSettings.PathTracingDebug = pathTracingDebugOutput;
             renderSettings.RasterDirectBrdfMode = rasterDirectBrdf;
+            renderSettings.VisibilityBuffer = visibilityBufferMode;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {

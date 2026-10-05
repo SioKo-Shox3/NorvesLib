@@ -357,6 +357,7 @@ namespace NorvesLib::Core::Rendering
             instance.MeshHandle = prepared.MeshHandle;
             instance.ObjectId = source.Draw.ObjectId;
             instance.SourceMeshComponentId = source.Draw.SourceMeshComponentId;
+            instance.MaterialIndex = source.Draw.MaterialIndex;
             instance.VertexBase = planned.VertexBase;
             instance.VertexCount = planned.VertexCount;
             instance.IndexCount = prepared.IndexCount;

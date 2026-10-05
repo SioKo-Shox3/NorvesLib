@@ -870,6 +870,11 @@ namespace NorvesLib::Core::Rendering
         NORVES_PROFILE_SCOPE("MegaGeometryPass.RecordFrameCommand");
         ScopedGpuTimestamp gpuTimestamp(commandList, "MegaGeometry");
 
+        // 前のフレームの描画の写しのために残したバッファが戻されていなければ戻し、写しも捨てる
+        // （ビジビリティバッファのラスタが取り出さなかったフレームの後始末）
+        m_VisibilityPlan = VisibilityDrawPlan{};
+        ReleaseVisibilityDrawBuffers(commandList);
+
         if (m_Instances.empty() || !m_CullPipeline || !commandList || !command.MegaGeometry || !command.bHasMainCamera)
         {
             return;
@@ -1763,18 +1768,89 @@ namespace NorvesLib::Core::Rendering
             cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
         }
 
-        // IndirectDrawバッファ・カウンタ・描画情報を次のフレーム用に戻す
-        cmdList->BufferBarrier(m_IndirectDrawBuffer,
-                               RHI::ResourceState::IndirectArgument,
-                               RHI::ResourceState::Common);
-        cmdList->BufferBarrier(m_DrawCountBuffer,
-                               RHI::ResourceState::IndirectArgument,
-                               RHI::ResourceState::Common);
-        cmdList->BufferBarrier(m_DrawInfoBuffer,
-                               RHI::ResourceState::GenericRead,
-                               RHI::ResourceState::Common);
+        if (m_bVisibilityPlanEnabled)
+        {
+            // ビジビリティバッファのラスタが同じコマンドをもう一度描くので、バッファは戻さず、描画の写しを渡す
+            // （ラスタが使い終わった後に ReleaseVisibilityDrawBuffers で Common へ戻す）
+            VisibilityDrawPlan &plan = m_VisibilityPlan;
+            plan.bValid = true;
+            plan.PassCount = passCount;
+            plan.SectionCount = sectionCount;
+            plan.CommandsPerPass = static_cast<uint32_t>(commandsPerPass);
+            plan.CommandsTotal = static_cast<uint32_t>(commandsTotal);
+            plan.bUseIndirectCount = caps.bDrawIndirectCount;
+            plan.IndirectBuffer = m_IndirectDrawBuffer;
+            plan.CountBuffer = m_DrawCountBuffer;
+            plan.DrawInfoBuffer = m_DrawInfoBuffer;
+            plan.InstanceBuffer = frameSlot.InstanceBuffer;
+            plan.InstanceBufferBytes = static_cast<uint64_t>(instanceTable.size()) * sizeof(GPUMegaInstance);
+            plan.SectionBuffer = frameSlot.SectionBuffer;
+            plan.SectionBufferBytes = static_cast<uint64_t>(sectionCount) * passCount * 2u * sizeof(uint32_t);
+            for (const Section &section : sections)
+            {
+                VisibilityDrawPlan::Section planSection;
+                planSection.VertexBuffer = section.Representative->VertexBuffer;
+                planSection.IndexBuffer = section.Representative->IndexBuffer;
+                planSection.Capacity = section.Capacity;
+                planSection.CommandBase = section.CommandBase;
+                plan.Sections.push_back(planSection);
+            }
+            m_bVisibilityBuffersHeld = true;
+            m_HeldIndirectDrawBuffer = m_IndirectDrawBuffer;
+            m_HeldDrawCountBuffer = m_DrawCountBuffer;
+            m_HeldDrawInfoBuffer = m_DrawInfoBuffer;
+        }
+        else
+        {
+            // IndirectDrawバッファ・カウンタ・描画情報を次のフレーム用に戻す
+            cmdList->BufferBarrier(m_IndirectDrawBuffer,
+                                   RHI::ResourceState::IndirectArgument,
+                                   RHI::ResourceState::Common);
+            cmdList->BufferBarrier(m_DrawCountBuffer,
+                                   RHI::ResourceState::IndirectArgument,
+                                   RHI::ResourceState::Common);
+            cmdList->BufferBarrier(m_DrawInfoBuffer,
+                                   RHI::ResourceState::GenericRead,
+                                   RHI::ResourceState::Common);
+        }
 
         ReleaseStaleBuffers();
+    }
+
+    bool MegaGeometryPass::TakeVisibilityDrawPlan(VisibilityDrawPlan &outPlan)
+    {
+        const bool bValid = m_VisibilityPlan.bValid;
+        outPlan = std::move(m_VisibilityPlan);
+        m_VisibilityPlan = VisibilityDrawPlan{};
+        return bValid;
+    }
+
+    void MegaGeometryPass::ReleaseVisibilityDrawBuffers(RHI::ICommandList *commandList,
+                                                        RHI::ResourceState indirectState)
+    {
+        if (!m_bVisibilityBuffersHeld)
+        {
+            return;
+        }
+        m_bVisibilityBuffersHeld = false;
+        if (commandList)
+        {
+            if (m_HeldIndirectDrawBuffer)
+            {
+                commandList->BufferBarrier(m_HeldIndirectDrawBuffer, indirectState, RHI::ResourceState::Common);
+            }
+            if (m_HeldDrawCountBuffer)
+            {
+                commandList->BufferBarrier(m_HeldDrawCountBuffer, indirectState, RHI::ResourceState::Common);
+            }
+            if (m_HeldDrawInfoBuffer)
+            {
+                commandList->BufferBarrier(m_HeldDrawInfoBuffer, RHI::ResourceState::GenericRead, RHI::ResourceState::Common);
+            }
+        }
+        m_HeldIndirectDrawBuffer.reset();
+        m_HeldDrawCountBuffer.reset();
+        m_HeldDrawInfoBuffer.reset();
     }
 
     void MegaGeometryPass::LogUniformLODSelection(const MegaMeshInstance &instance,

@@ -125,6 +125,68 @@ namespace NorvesLib::Core::Rendering
          */
         void ClearMegaMeshInstances();
 
+        // ========================================
+        // ビジビリティバッファ連携
+        // ========================================
+
+        /**
+         * @brief そのフレームの描画（クラスタカリングの結果）をビジビリティバッファのラスタが引くための写し
+         *
+         * 1パス目・2パス目の IndirectDraw コマンド（区間ごとの連続した範囲）と、それを描くのに要るバッファ。
+         * RecordFrameCommand が、SetVisibilityDrawPlanEnabled(true) のときだけ作る。
+         */
+        struct VisibilityDrawPlan
+        {
+            /** @brief 材質の区間1つ分（頂点・インデックスはプールの塊の先頭から引く） */
+            struct Section
+            {
+                RHI::BufferPtr VertexBuffer;
+                RHI::BufferPtr IndexBuffer;
+                uint32_t Capacity = 0;    // 1パスのコマンドの最大数
+                uint32_t CommandBase = 0; // 1パスの範囲での先頭（コマンドの位置）
+            };
+
+            bool bValid = false;
+            uint32_t PassCount = 0;        // 1（従来の1回の判定）か 2（2パスの遮蔽）
+            uint32_t SectionCount = 0;
+            uint32_t CommandsPerPass = 0;  // 2パス目の範囲は、1パス目の範囲の後ろ
+            uint32_t CommandsTotal = 0;    // 全パスのコマンドの数（記録の番号は 1 + コマンドの通しの位置）
+            bool bUseIndirectCount = false;
+            RHI::BufferPtr IndirectBuffer; // DrawIndexedIndirectCommand[]（IndirectArgument の状態で渡す）
+            RHI::BufferPtr CountBuffer;    // 区間ごとのカウンタ（添え字は パス × 区間の数 + 区間。IndirectArgument の状態で渡す）
+            RHI::BufferPtr DrawInfoBuffer; // コマンドごとの描画情報（uvec2: インスタンスの番号・payload。GenericRead の状態で渡す）
+            RHI::BufferPtr InstanceBuffer; // インスタンスの表（GPUMegaInstance[]。ホストが書いたまま）
+            uint64_t InstanceBufferBytes = 0;
+            RHI::BufferPtr SectionBuffer;  // 区間の表（uvec2: コマンドの先頭・最大数。パス × 区間。ホストが書いたまま）
+            uint64_t SectionBufferBytes = 0;
+            Container::VariableArray<Section> Sections;
+        };
+
+        /**
+         * @brief ビジビリティバッファの描画の写しを作るか（既定は作らない）
+         *
+         * 作るとき、RecordFrameCommand は IndirectDraw・カウンタ・描画情報のバッファを次のフレーム用に戻さず、
+         * ビジビリティバッファのラスタが読めるまま残す（ラスタが使い終わったら ReleaseVisibilityDrawBuffers で戻す）。
+         */
+        void SetVisibilityDrawPlanEnabled(bool bEnabled) { m_bVisibilityPlanEnabled = bEnabled; }
+        bool IsVisibilityDrawPlanEnabled() const { return m_bVisibilityPlanEnabled; }
+
+        /**
+         * @brief 最後の RecordFrameCommand が作った描画の写しを取り出す（取り出すと空になる）
+         * @return 写しがあれば true。そのフレームに描いたクラスタが無い・写しを作らない設定なら false
+         */
+        bool TakeVisibilityDrawPlan(VisibilityDrawPlan &outPlan);
+
+        /**
+         * @brief 残してあった IndirectDraw・カウンタ・描画情報のバッファを、次のフレーム用の状態（Common）へ戻す
+         *
+         * ビジビリティバッファのラスタが使い終わった後に呼ぶ。次の RecordFrameCommand は、残っていれば自分で戻す。
+         * @param indirectState IndirectDraw・カウンタの今の状態（渡されたまま触らなければ IndirectArgument）。
+         *        描画情報は GenericRead
+         */
+        void ReleaseVisibilityDrawBuffers(RHI::ICommandList *commandList,
+                                          RHI::ResourceState indirectState = RHI::ResourceState::IndirectArgument);
+
         RGResourceHandle GetIndirectDrawBufferHandle() const { return m_IndirectDrawBufferHandle; }
         RGResourceHandle GetDrawCountBufferHandle() const { return m_DrawCountBufferHandle; }
         RGResourceHandle GetMegaGeometryCompleteHandle() const { return m_MegaGeometryCompleteHandle; }
@@ -453,6 +515,15 @@ namespace NorvesLib::Core::Rendering
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;
+
+        // ビジビリティバッファのラスタへ渡す描画の写し（TakeVisibilityDrawPlan が取り出す）
+        bool m_bVisibilityPlanEnabled = false;
+        VisibilityDrawPlan m_VisibilityPlan;
+        // 描画の写しを作ったフレームの IndirectDraw・カウンタ・描画情報のバッファが、Common へ戻されないまま残っているか
+        bool m_bVisibilityBuffersHeld = false;
+        RHI::BufferPtr m_HeldIndirectDrawBuffer;
+        RHI::BufferPtr m_HeldDrawCountBuffer;
+        RHI::BufferPtr m_HeldDrawInfoBuffer;
 
         // 現在のGBufferサイズ
         uint32_t m_CurrentWidth = 0;

@@ -111,6 +111,8 @@ namespace NorvesLib::Core::Rendering
         SkinnedMeshHandle MeshHandle;
         uint64_t ObjectId = 0;
         uint64_t SourceMeshComponentId = 0;
+        /** @brief 元の描画（DrawParams）の材質の番号 */
+        uint32_t MaterialIndex = 0;
         /** @brief 出力バッファの中の先頭の頂点番号と頂点数（今・前で同じ） */
         uint32_t VertexBase = 0;
         uint32_t VertexCount = 0;

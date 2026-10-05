@@ -169,6 +169,10 @@ param(
     # 各撮影のログの GEOMETRY_PAGES_STREAMED・GEOMETRY_PAGES を metrics.json の geometry_pages へ書く。
     [ValidateSet('On', 'Off')]
     [string]$GeometryStreaming = 'On',
+    # ビジビリティバッファ（既定は Off）。On は不透明の描画のすべてを、今の GBuffer の描画に加えて VisBuffer.Id と GBuffer.Depth へ描く
+    # （--visibility-buffer=on。見た目は変わらない）。Debug は On に加えて、ID を色にして画面へ表示する（--visibility-buffer=debug。検証用）。
+    [ValidateSet('Off', 'On', 'Debug')]
+    [string]$VisibilityBuffer = 'Off',
     # 同じコードを -Deterministic で撮った別の出力先。各視点の平均輝度の差と PSNR を求めて metrics.json へ書き、
     # 平均輝度の差が -DeterministicMeanLuminanceLimit を超えるか PSNR が -DeterministicPsnrLimit を下回れば失敗にする。
     [string]$CompareDeterministicWith = '',
@@ -797,6 +801,11 @@ foreach ($view in $shots)
     if ($GeometryStreaming -eq 'Off')
     {
         $arguments += '--geometry-streaming=off'
+    }
+    # ビジビリティバッファは既定で無効なので、On・Debug のときだけ引数を渡す。
+    if ($VisibilityBuffer -ne 'Off')
+    {
+        $arguments += "--visibility-buffer=$($VisibilityBuffer.ToLowerInvariant())"
     }
     foreach ($extraArgument in (($ExtraGameArguments -join ' ').Split(@(' ', ','), [StringSplitOptions]::RemoveEmptyEntries)))
     {

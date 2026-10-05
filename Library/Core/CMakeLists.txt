@@ -155,6 +155,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometryPass.cpp
     Private/Rendering/HiZPyramidPass.cpp
     Private/Rendering/SkinningComputePass.cpp
+    Private/Rendering/VisibilityRasterPass.cpp
     # Engine
     Private/Engine/AssetRegistry.cpp
     # Resource
@@ -398,6 +399,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/MegaGeometryPass.h
     Public/Rendering/HiZPyramidPass.h
     Public/Rendering/SkinningComputePass.h
+    Public/Rendering/VisibilityRasterPass.h
+    Public/Rendering/VisibilityBufferMode.h
     # MegaGeometry types
     Public/Rendering/MegaGeometry/MegaGeometryTypes.h
     Public/Rendering/MegaGeometry/MeshClusterizer.h
