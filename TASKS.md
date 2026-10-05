@@ -2490,7 +2490,7 @@
 - stop-when: 保存絶対pathをI/Oへ渡す、観測だけでroot所有や公開を許す、未知既存store/rootを採用する、store初期化/復旧/ACL変更を同時に実装する。
 
 ## G2-S6-MANAGED-STORE-INITIALIZATION: 新規管理領域を完全な状態でno-replace公開する
-- status: doing
+- status: done
 - done-when: 既存volume lock内で共通観測を再利用し、StoreMissing/不在rootだけにfresh stageを作る。CNG StoreId・実directory IDのheaderとgeneration1空indexをwrite/flush/readback/parseし、同handleのno-replace directory renameと公開後再観測を行う。
 - verify: 既存store/未知root/pending/alias拒否、stage衝突・未知child保持、各write/close/rename/公開後故障、実child process中断、ID維持、Created/PublishedButError/out保持、Windows31CPUと79+10byte gate。
 - stop-when: 公開後の失敗でstoreを削除する、未確認orphanを名前だけで掃除/採用する、copy/replaceへfallbackする、runtime root/state/package/journalを同時公開する、ACL/privilege変更を要求する。

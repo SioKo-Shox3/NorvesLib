@@ -50,3 +50,9 @@ stable namespaceと協調writerが前提。既定ACLの継承以外にACL/privil
 ## Windows公開形式の調整
 
 初回f0989617/run37263862034ではbuild・5診断・既存30CPUが通ったが、initializerの相対FileName＋RootDirectory形式のrenameがERROR_INVALID_PARAMETER (0x57)で拒否された。失敗時はstageを保持し、固定storeは未公開だった。公開方式をRootDirectory=NULLの絶対native名へ統一し、bufferにもsizeof構造体と終端の余裕を持たせる。実行時に別の方式へfallbackする処理ではない。0x57だけでは拒否条件の細部を断定しない。
+
+## 実Windows受入れ
+
+98ac19aba85aa23782d94795e1cde814920f4778、[run 37265719494](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37265719494) attempt 1で実build・31CPU・既存7CLIの79出力byte一致・5診断byte一致・texture spec v1の2spec×2実行/固定10出力byte一致/16拒否を確認した。3 ZIPのAPI digest/size、CRC、安全な完全inventory、61 immutable source receipts、BCryptGenRandomの実PE importを独立検証し再実行した。2回目のtexture一致はrunner記録、直接比較は保存された初回10出力による。
+
+process crash、short alias、SUBST、Unicode ASCII alias、stage作成時alias、store公開時alias、case-sensitive、reparseの8条件flagはすべて1。6境界の実子process終了、native IDとheader bytes、no-replace、既知handleだけのabort、orphan保持、PublishedButErrorを確認した。相対renameで失敗した初回runの証拠は保持し、修正版の合格と区別する。旧lockのcross-sessionは従来どおり未実測。資産本体やjournalの公開・回復の合格は含まない。
