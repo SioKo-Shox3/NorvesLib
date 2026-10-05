@@ -25,6 +25,7 @@
 #include "Rendering/SceneView.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/VisibilityBuffer.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Test/Core/Rendering/GeometryUploadTestSupport.h"
 #include "Container/PointerTypes.h"
@@ -1787,6 +1788,108 @@ namespace
         assert(order.size() == 2);
         assert(order[0] == 0);
         assert(order[1] == 1);
+    }
+
+    // ビジビリティバッファの資源（VisBuffer.Id と描画の記録の表）を名前つきで書くパス
+    class VisibilityBufferProducerPass final : public IRenderGraphPass
+    {
+    public:
+        const char* GetName() const override { return "VisibilityBufferProducerPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            const RGTextureHandle id = builder.WriteTextureAttachment(
+                RenderGraphResourceNames::VisBufferId,
+                VisibilityBuffer::MakeIdTextureDesc(64, 32),
+                RGAttachmentKind::Color,
+                RHI::AttachmentLoadOp::Clear,
+                RHI::AttachmentStoreOp::Store,
+                RHI::ResourceState::RenderTarget,
+                RHI::ResourceState::ShaderResource);
+            const RGBufferHandle records = builder.WriteBuffer(RenderGraphResourceNames::VisBufferDrawRecords,
+                                                               VisibilityBuffer::MakeRecordTableBufferDesc(16),
+                                                               RHI::ResourceState::UnorderedAccess,
+                                                               RHI::ResourceState::GenericRead);
+            assert(id.IsValid() && records.IsValid());
+            builder.PreserveInsertionOrder();
+        }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+    };
+
+    // 名前で VisBuffer.Id と記録の表を引いて読むパス（後の材質の分類・解決が同じ形で読む）
+    class VisibilityBufferConsumerPass final : public IRenderGraphPass
+    {
+    public:
+        explicit VisibilityBufferConsumerPass(bool* foundBoth)
+            : m_FoundBoth(foundBoth)
+        {
+        }
+
+        const char* GetName() const override { return "VisibilityBufferConsumerPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            RGTextureHandle id;
+            RGBufferHandle records;
+            *m_FoundBoth = builder.TryGetTexture(RenderGraphResourceNames::VisBufferId, id) &&
+                           builder.TryGetBuffer(RenderGraphResourceNames::VisBufferDrawRecords, records);
+            if (*m_FoundBoth)
+            {
+                builder.Read(id.ToResourceHandle(), RHI::ResourceState::ShaderResource);
+                builder.Read(records.ToResourceHandle(), RHI::ResourceState::GenericRead);
+            }
+        }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+    private:
+        bool* m_FoundBoth = nullptr;
+    };
+
+    void TestVisibilityBufferResourcesDeclareAndRead()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        bool consumerFoundBoth = false;
+        VisibilityBufferProducerPass producer;
+        VisibilityBufferConsumerPass consumer(&consumerFoundBoth);
+        const uint32_t producerIndex = graph.AddPass(&producer);
+        const uint32_t consumerIndex = graph.AddPass(&consumer);
+
+        assert(graph.Compile());
+        assert(consumerFoundBoth);
+
+        uint32_t version = 0;
+        assert(graph.TryGetNamedResourceVersion(RenderGraphResourceNames::VisBufferId, version));
+        assert(graph.TryGetNamedResourceVersion(RenderGraphResourceNames::VisBufferDrawRecords, version));
+
+        const auto& order = graph.GetCompiledPassOrder();
+        assert(order.size() == 2);
+        assert(order[0] == producerIndex);
+        assert(order[1] == consumerIndex);
+
+        // 書く側の最初の状態（添付・UAV）への遷移が積まれる。
+        bool sawIdTarget = false;
+        bool sawRecordsWrite = false;
+        for (const RGCompiledBarrier& barrier : graph.GetCompiledBarriers())
+        {
+            if (barrier.Kind == RGBarrierKind::Texture && barrier.AfterState == RHI::ResourceState::RenderTarget)
+            {
+                sawIdTarget = true;
+            }
+            if (barrier.Kind == RGBarrierKind::Buffer && barrier.AfterState == RHI::ResourceState::UnorderedAccess)
+            {
+                sawRecordsWrite = true;
+            }
+        }
+        assert(sawIdTarget);
+        assert(sawRecordsWrite);
     }
 
     void TestShadowMapNativeDeclareImportsDepthOutput()
@@ -7027,6 +7130,7 @@ int main()
     TestInvalidHandleRejected();
     TestCompileContextPassedToDeclare();
     TestWriteFinalStateSuppressesFollowupReadBarrier();
+    TestVisibilityBufferResourcesDeclareAndRead();
     TestShadowMapNativeDeclareImportsDepthOutput();
     TestNeuralDecodeNativeDeclareWritesLogicalCompletion();
     TestMegaGeometryNativeDeclareImportsPersistentBuffers();

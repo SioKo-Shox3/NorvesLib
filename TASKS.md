@@ -587,7 +587,7 @@
 - notes: 計画書 4.3。危険地帯（メモリ・寿命）。
 
 ## VTG6-COMPUTE-SKINNING: 計算シェーダーでスキニングした今と前のフレームの頂点を作る
-- status: todo
+- status: blocked
 - done-when: スキニングのインスタンスごとに、計算シェーダーが今のフレームのパレットと前のフレームのパレットで頂点（位置・法線・UV）を変形し、フレームごとのバッファ（今・前。storage・BDA）へ書くパスを足す（RenderGraph の資源として宣言し、後のビジビリティバッファのラスタと材質の解決が読む）。今の GBuffer の経路はまだ頂点シェーダーのスキニングのまま。GPU のテスト `ComputeSkinningVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、既知のボーンと重みの頂点で、計算シェーダーの結果が CPU で計算した値（今と前）と一致する（許容 1e-4）ことを確かめる。`RenderingVelocitySkinnedVulkanTest` が通る。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderingVelocityVulkanTest SkinnedRenderPathContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(ComputeSkinningVulkanTest|RenderingVelocitySkinnedVulkanTest|SkinnedRenderPathContractTest)$"`
@@ -596,7 +596,7 @@
 - notes: 計画書 4.3（スキニングは計算シェーダーで変形してからビジビリティバッファへ描く）。危険地帯（RenderThread・寿命）。
 
 ## VTG6-VISBUFFER-RESOURCES: ビジビリティバッファの資源と描画の記録の表を作る
-- status: todo
+- status: done
 - done-when: RenderGraph の資源 `VisBuffer.Id`（R32_UINT、画面の大きさ。深度は `GBuffer.Depth` を共有）と、フレームごとの描画の記録の表（storage buffer。1つの記録が、種類（MegaGeometry のクラスタ・手続きメッシュの塊・スキニングの塊）、インスタンスの番号、頂点・インデックスの基点とアドレス、材質の番号、前のフレームの変換か前のフレームの頂点のアドレスを持つ）を足す。ID は `(記録の番号 << 7) | 記録の中の三角形の番号`、0 は空（画素が何も描かれていない）。ID と記録を作る・読む関数を C++ と GLSL（`Common/VisibilityBuffer.glsl`）でそろえる。CPU のテスト `VisibilityBufferEncodingTest`（`RenderResourcesDomainContractTest` の束）が、符号化と復号の往復、記録の数の上限（2^25）、空の扱いを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VisibilityBufferEncodingTest|RenderGraphCompileTest)$"`

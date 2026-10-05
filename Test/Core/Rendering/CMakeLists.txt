@@ -1817,11 +1817,15 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER VirtualTextureRequestSetTest VirtualTextureRequestSetTest.cpp
     MEMBER VirtualTextureStreamerTest VirtualTextureStreamerTest.cpp
     MEMBER RHIBlockCompressedFormatTest RHIBlockCompressedFormatTest.cpp
+    MEMBER VisibilityBufferEncodingTest VisibilityBufferEncodingTest.cpp
 )
 target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
 target_include_directories(RenderResourcesDomainContractTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(RenderResourcesDomainContractTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
 add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainContractTest)
 
@@ -1840,6 +1844,8 @@ add_test(NAME VirtualTextureRequestSetTest COMMAND RenderResourcesDomainContract
 # 要求の集合から未常駐のタイルを優先度順に読み、ページを結び、コピーを積んで常駐させること。1 フレームの上限・同じタイルの二重の要求・読み込みの失敗・プールが尽きたときの扱い。
 add_test(NAME VirtualTextureStreamerTest COMMAND RenderResourcesDomainContractTest --test=VirtualTextureStreamerTest)
 add_test(NAME RHIBlockCompressedFormatTest COMMAND RenderResourcesDomainContractTest --test=RHIBlockCompressedFormatTest)
+# ビジビリティバッファの ID（(記録の番号 << 7) | 三角形の番号）の往復・記録の数の上限（2^25）・空（0）の扱い、描画の記録の表の追加・引き・容量、VisBuffer.Id と記録の表の RenderGraph の資源の記述、GLSL（Common/VisibilityBuffer.glsl）の定数の C++ との一致。
+add_test(NAME VisibilityBufferEncodingTest COMMAND RenderResourcesDomainContractTest --test=VisibilityBufferEncodingTest)
 
 add_executable(MeshResourcesPrimitiveTest
     MeshResourcesPrimitiveTest.cpp

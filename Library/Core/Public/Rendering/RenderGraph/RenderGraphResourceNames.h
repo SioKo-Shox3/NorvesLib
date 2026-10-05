@@ -15,6 +15,10 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
         Identity::Literal("Skinning.CurrentVertices", sizeof("Skinning.CurrentVertices") - 1);
     inline constexpr Identity SkinningPreviousVertices =
         Identity::Literal("Skinning.PreviousVertices", sizeof("Skinning.PreviousVertices") - 1);
+    // ビジビリティバッファ: 画素ごとの ID（R32_UINT。深度は GBuffer.Depth を共有）と、フレームごとの描画の記録の表
+    inline constexpr Identity VisBufferId = Identity::Literal("VisBuffer.Id", sizeof("VisBuffer.Id") - 1);
+    inline constexpr Identity VisBufferDrawRecords =
+        Identity::Literal("VisBuffer.DrawRecords", sizeof("VisBuffer.DrawRecords") - 1);
     inline constexpr Identity ShadowMap = Identity::Literal("ShadowMap", sizeof("ShadowMap") - 1);
     inline constexpr Identity PointShadowCubeMap =
         Identity::Literal("PointShadowCubeMap", sizeof("PointShadowCubeMap") - 1);
