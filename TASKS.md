@@ -2598,7 +2598,9 @@
 - result: code3cd8c479/tree48531542/run37373318284 attempt1 job111975595995。実Windows45CPU/旧8＋Sampler marker、Debug/Release各2回の30case採取、同構成repeat byte、旧89byte/managed全gate/3ZIPを受入。親readonly再実行exit0/全stderr空、旧642証拠保全、最終667file一致。snapshot各6095byte SHAa5b0a90496e9064c2808692706b69f8a11936fea9af3031f25eb909ab33e62d4。case22/23/25成功・24/26拒否は両構成で一致。cl/Core/exe hashはCI実計算receiptで、binary自体の親再hashは未実施。refactor/retarget/GPU/Blenderの受入れではない。
 
 ## G2-GR84-BIND-ROW-MATH: bind行列の導出だけを共有し旧Samplerのbit列を保つ
-- status: doing
+- status: done
 - done-when: private plain mathでIBMからbindGlobal、親からbindLocal、既存TRS分解を一元化しSamplerが共有関数を使う。公開Resource/PoseTypes・clip/FK/Compose/Palette/SkinVertex/Clearは変えない。基準run37373318284の固定fixtureと同compiler/config/FP条件でDebug/Release各snapshotが完全byte一致する。
 - verify: private helperのroot/parent/非可換/特異/非有限/overflow/alias/失敗out保持と旧TRS振舞い、実46CPU、構成別2回の旧6095byte基準比較、固定fixture hash/compiler/生成option・旧89byte/managed gate。基準は自動更新しない。
 - stop-when: shear/反射/途中TRS nonfiniteを新規拒否する、前後不一致を閾値へ緩める、world FK/Resource事前計算/GR12型/作者rest snapshot/retarget/StageBまで同時変更する。
+
+- result: code430a6cbc/tree5239cf56/run37379203280 attempt1 job111996430902。実Windows46CPU/旧marker＋bind marker、Debug/Release各2回の旧6095byte完全一致、旧89byte/managed全gate/3ZIPを受入。親readonly再実行exit0/最終782file inventory一致、旧668証拠保全。検証script更新時の3失敗attemptは保存し、条件を維持した有限差分で修復・一括再照合。cl/Core/Sampler.exeの実byte非保存、CI hash receiptのみの限界は維持。joint-global共有/retarget/GPU/Blenderは未完。
