@@ -2279,7 +2279,7 @@
 - stop-when: 比較器の単体成功をCLIの実成功扱い、JSON正規化で差を消す、既存出力を上書き、Mainを先に分割する。
 
 ## G2-S6-ASSET-SET: C++一括cookと増分判定を接続する
-- status: todo
+- status: doing
 - done-when: AssetCook --asset-setへ一括cookと増分判定を集約。origin/main CookTextureAssetSet.ps1 + Rendering3DTestSilverTextures/Rendering3DTestSilverGltfTexturesに対してcooked/manifestのbyte一致を確認。glTF外部ファイルとsidecarを印に含む。
 - verify: 単体CLIの分割前後比較、旧texture spec v1の2spec同値、外部buffer/画像/sidecarの変更・不在・復帰・破損で正しい再cook/拒否、失敗時出力保持。
 - stop-when: 手元確認用CookAssets.ps1/StartupMaterialsを対象に戻す、PS側へ増分判定を重複実装、Windows実byte比較を未実施で完了とする。
@@ -2472,7 +2472,7 @@
 - stop-when: 不在名の将来canonicalを無条件に保証する、保存ownerを採用する、lexical binding差を黙認する、lock/journalなしでroot/stateをproduction公開する。
 
 ## G2-S6-DESTINATION-LOCK: destination volume単位で協調writerを排他する
-- status: doing
+- status: done
 - done-when: FINALのcanonical volume GUIDだけでGlobal mutexを共有し、同期callbackの取得/再観測/解除を同一threadで閉じる。Busyは即時、abandonedを明示し、全取得で後段journal検査が必要とする。
 - verify: 実thread/process排他、同volume親子/sibling/case/作成前後、callback失敗/例外/再入、実process終了のabandonedとobject再作成、private故障注入、無書込、Windowsと79+10byte gate。cross-session実測は環境がある場合だけ。
 - stop-when: owner/spec/stateごとにlockを分ける、aliasや親子rootで同volume排他を回避する、永続crash印/transaction/認証を保証する、ACL/privilege変更やlockfile採用を始める。

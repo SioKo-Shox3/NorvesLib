@@ -1,5 +1,19 @@
 ﻿# PROGRESS — NorvesLib
 
+## G2全体の進捗（2026-10-05）
+
+G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・分離資産・安全な一括増分の実用経路を接続する中盤。小taskの完了数を全体の達成率には換算しない。
+
+- GR77/GR78: GLB/sidecar/変換をcook・loose・骨格へ接続済み。実物での最終受入れは残る。surface_centroidは承認済み保留。
+- GR86: 明示の影響数縮約/CUBICSPLINE焼込/morph dropと診断を接続済み。256関節はGR82 Stage Bと同時。
+- GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
+- GR79: 材質codec・reader・設定・source・ARM画像処理・材質選択planまで。v1 writer/cook/hash/cache/runtime係数接続は未完。
+- GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
+- GR83/GR84: 分離骨格資産ローダとBVH取り込みはこれから。
+- GR96: 単体7CLI/79file互換とtexture v1新規root/10file互換は実Windowsで受入済み。共通依存/cache/state/stage/集合guard/owner/volume排他の部品を受入済み。既存rootへの管理付き増分公開・journal/recovery・種別横断spec v2・report/予算/jobs同値は未完。
+
+S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
+
 ## Done
 
 - R0: `052a7dc`。描画検証基盤。
@@ -779,3 +793,5 @@
 
 - G2-S6-DESTINATION-LOCK開始: 初期profileは同volume全writerを直列化し、root名のcase/8.3/tunneling/親子包含によるlock抜けを避ける。volumeの複数GUID表記をmount managerのcanonical名へ統一し、Global mutex名へ使う。同期callback・待ち時間0・同thread再入拒否を採り、file/ACL/privilege変更は行わない。abandonedは永続印ではないためordinary取得でもjournal検査を省略しない。
 - G2-S6-DESTINATION-LOCK検証準備: 28CPUへ登録。Global名/volume GUIDの実C++literalを単独compileして区切りと長さを確認し、比較器12件×通常/最適化が成功。test bundleが--testを除去する実装に合わせてchild引数を調整。実thread/process、終了によるabandoned、全handle消滅後のordinary、例外/故障後の別thread再取得を試験化。実Windowsと79+10byteは未実行。
+
+- G2-S6-DESTINATION-LOCK受入: 6a9eeba2/run37248641417で実Windows build・28CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。実thread/processの排他、Busy、例外/故障後の解除、実process終了のabandonedと全handle消滅後ordinaryを確認。8.3/SUBST/Unicode alias/別volume/cross-processはflag1、cross-sessionは未実測の0。Release/Close注入は実cleanup後の失敗報告試験。3ZIPと79+10固定出力を独立確認しrootで再実行。primitiveをdone、production/journalは未接続。
