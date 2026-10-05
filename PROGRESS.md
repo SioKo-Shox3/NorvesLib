@@ -888,3 +888,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 raw BVH解析の検証準備: 宣言順/親/UTF8名/OFFSET/End Site/生double frame列、有限値・行幅・末尾・明示limit・失敗時out保持を実装。6回転順、混在channel、257関節/深いstack、非BMP/C1、空行、limit境界/不正入力をliteralで追加。2round静的PASS、実2fileのg++ C++23 -Wall -Wextra構文検査、Python12+4+7 normal/-O、BOM/EOL検査PASS。確保故障注入は未実施でnothrow moveをcompile時固定。実Windows42CPU/新markerと既存89byte/managed gateは未確認。raw順序保持を回転行列/retarget受入れとは扱わない。
 
 - G2/GR84 raw BVH解析受入: 9c62d3ba41093d7bfaa7c596bc95b2ac09247ab1 / tree4d6dc722031244dbb6c1f18290cb800629710cf2 / run37356979599 attempt1 job111921766216。42CPU/旧5＋新BVH marker、Bootstrap17/Update29、79+10byte、7smoke/5診断、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを照合し親readonly再実行exit0。旧538証拠file保全。raw順序/値の所有だけを受入れ、回転行列/retarget/Blender/CLI/StageB/確保故障注入は未受入れ。次はdoubleのlocal/world FKを独立単位にする。位置channelはOFFSET加算と絶対local置換の解釈が異なるため、必須の明示enumで指定しAutoを設けない。
+
+- G2/GR84 double姿勢評価開始。OffsetPlusChannels/AbsoluteLocalChannelsを必須引数とし、どちらもroot/nonrootの完全3位置成分へ同じ数学規則で適用する。位置なしはOFFSET。完全3回転は宣言順右積（数学的列vector）とし、部分成分/交錯/回転後の位置は明示拒否する。BVH解説とBlender ARMATUREの位置処理には差があるため、一般規格/Blender互換の断定をせず、二つの明示解釈を独立した期待値で検証する。
+
+- G2/GR84 double姿勢評価の検証準備: 必須の位置規約、6順の右積、親FK/End Site、構造/selected frameの有限検査、未対応channel/overflow拒否、nothrow置換を接続。0初期化enumはUnspecifiedとして拒否する。2round静的PASS、実cpp+testのg++構文検査とPython12+4+7 normal/-O/BOM/EOLが成功。実sourceのprivate数学helperだけをallocator stubなしで通常/O2-NDEBUG/ASan・UBSan（LSan除外）実行し、6順とFK literalを確認。full Evaluate/Coreのhost実行ではない。実Windows43CPU/新marker/既存89byte/managed gateは次CIで未確認。

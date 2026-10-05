@@ -2572,3 +2572,9 @@
 - stop-when: 実ライセンス制限付きBVHをfixtureへ入れる、Blender実装をコピーする、Euler補間/軸・単位推定/RootMotion/CLI/StageBを同時実装する、raw解析をGR84全体完了や行列一致と扱う。
 
 - result: code9c62d3ba/tree4d6dc722/run37356979599 attempt1 job111921766216。実Windows42CPU/旧5＋新BVH marker、17/29中断、79+10byte、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを受入。親readonly再実行exit0/全stderr空。旧538証拠file保全。raw解析のみの受入で、matrix/retarget/Blender/CLI/StageB/allocator故障注入は未受入れ。
+
+## G2-GR84-BVH-EVALUATE: 明示された位置規約でBVHのlocal/world姿勢を評価する
+- status: doing
+- done-when: degreeの宣言順回転をdoubleの列ベクトル行列へ合成し、親FKとEnd Site位置を返す。完全XYZ位置は必須enumでOFFSET加算/絶対local置換を選び、位置なしはOFFSETを使う。sourceを変更せず出力を所有、失敗時out保持。Sampler/retarget/軸・単位/fps/CLIを触らない。
+- verify: 6回転順の解析行列を1e-9比較、両位置規約のroot/child/End Site literal、非零OFFSET/静止/分岐/複数frame/度の周期性、rawで読めても非対応なpartial/交錯/rotation→position、壊れた親/範囲/enum/finite/overflowで拒否とout保持。実Windows43CPUと既存89byte/managed復旧gate。
+- stop-when: 入力の位置規約を自動推測する、Blender互換/実物照合済みと謳う、既存行ベクトルSamplerや骨格bindを同時変更する、retarget/RootMotion/補間/StageBまで広げる。

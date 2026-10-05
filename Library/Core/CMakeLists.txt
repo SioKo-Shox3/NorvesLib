@@ -219,6 +219,8 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfBufferSource.h
     Private/Resource/GltfBufferSource.cpp
     Private/Resource/BvhDecode.h
+    Private/Resource/BvhEvaluate.h
+    Private/Resource/BvhEvaluate.cpp
     Private/Resource/BvhDecode.cpp
     Private/Resource/GltfBufferSet.h
     Private/Resource/GltfBufferSet.cpp
