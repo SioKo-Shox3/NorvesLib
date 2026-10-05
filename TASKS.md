@@ -616,13 +616,13 @@
 - notes: 計画書 4.3。危険地帯（描画パス）。既定の描画（`off`）は変えない。 2026-10-05 親（run `20261005-191130` の保留を解く）: `blocked/VTG6-VIS-RASTER.md` の選択肢1を採った。この項目は今の実装（MegaGeometryPass の後に両パスの間接描画を `VisBuffer.Id`・`GBuffer.Depth` へ重ね描き）で完了とする。stop-when の「ビジビリティの1パス目の深度で HZB を作る」順序は、GBuffer への書き込みを外す VTG6-DEFAULT-ON で組む。スキニングを含む ID の表示の撮影も VTG6-DEFAULT-ON へ回した（起動画面にスキニングが無いので、スキニングの検証シーンを撮る経路をそこで足す）。評価の差し戻し（記録の頂点の基点の二重加算）は `31877048` で直っている。
 
 ## VTG6-MATERIAL-CLASSIFY: 画面のタイルを材質ごとに分ける
-- status: done
+- status: doing
 - done-when: `VisBuffer.Id` から 8×8 の画面のタイルごとに、そのタイルに出る材質の番号の集合を求め、材質ごとのタイルの一覧と、材質ごとの間接 dispatch の引数を作る計算シェーダーのパスを足す（空の画素だけのタイルはどの材質にも入れない）。GPU のテスト `MaterialTileClassifyVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、合成した ID の画像（3つの材質が混じるタイル、空のタイル）から、期待のタイルの一覧と引数を作ることを確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MaterialTileClassifyVulkanTest|RenderGraphCompileTest)$"`
 - stop-when: 1フレームの材質の数が間接 dispatch の引数の上限を超える場合は、測った値を記録して止める。
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 計画書 4.3。
+- notes: 計画書 4.3。 2026-10-05 親（`027a4ab4` の評価の差し戻し。評価者は Claude の別文脈）: 次を直す。(1) 必須: `MaterialTileClassifyVulkanTest.cpp` が `std::vector`（`#include <vector>`）を使っている。`Container::VariableArray` に置き換える（絶対規則1。テスト実行ファイルで許されるのは `std::cout` だけ）。(2) 統計の「見えた最大の材質の番号＋1」（`material_tile_classify.comp` の `atomicMax`）が、上限以上の材質で return した後にしか通らず、上限を超えた材質を数えない。上限の判定の前に `atomicMax` して、stop-when の値が統計から読めるようにする（テストのケース A で材質 12 が見えたら 13 になる）。(3) 材質ごとの間接 dispatch の x がタイル数そのもので、4K では Vulkan が保証する `maxComputeWorkGroupCount[0]` の最小値 65535 を超える。x を 65535 以下に抑え、超える分は y に広げる（消費側はタイルの番号を `y * 65535 + x` で得て、数を超えたグループは return する）。この形をヘッダーのコメントに書き、テストに x の上限を超える数（上限を小さくして試せるなら、それで）のケースを足す。(4) 画面の端の判定（`pixel < screen`）を反証できるよう、テストに「ID の画像が Width・Height より大きく、外に空でない ID がある」ケースを足す。`Record` で Width・Height が ID のテクスチャの大きさ以下であることを確かめる。(5) `RenderGraphCompileTest` の `TestMaterialTileClassifyAbsentByDefault` は、パスを足さない構成だけを見ていて落ちようがない。実際の既定（`SceneView` がパスを足し、無効のまま）を試すか、確かめていることに合わせて名前を直す。既知の限界として残す: 一覧の大きさが最悪（1タイル64材質）で取ってあり、1080p で約 8.3 MB・4K で約 33 MB（既定で無効の間は影響なし。VTG6-DEFAULT-ON で予算と照らす）。記録の材質の番号がフレームで一意でない件は VTG6-MATERIAL-TABLE で直す。
 
 ## VTG6-SKINNING-FINAL-BARRIER: スキニングの頂点のバッファを書いた後に、宣言した最終の状態へ遷移させる
 - status: todo
@@ -633,6 +633,17 @@
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-05 VTG6-MATERIAL-CLASSIFY の反復で見つけた。`SkinningComputePass` は最終の状態を `GenericRead` と宣言するが dispatch の後にバリアを出さず、`VisibilityRasterPass` の頂点シェーダーが読む前に書き込みが見えることが保証されない。危険地帯（描画パス・同期）。
 
+
+## VTG6-MATERIAL-TABLE: 描画の記録の材質の番号をフレームで一意な材質の表の番号にする
+- status: todo
+- done-when: ビジビリティバッファの描画の記録の材質の番号を、フレームごとの材質の表（storage buffer）の番号にする。表はそのフレームの不透明の描画が使う実物の材質（`Material` など、材質の解決が引くもの）ごとに1件で、同じ材質を使う MegaGeometry の区間・手続きメッシュの塊・スキニングの塊は同じ番号になり、違う材質は違う番号になる（今は MegaGeometry が区間の番号、手続き・スキニングがプロキシの中のスロットの番号を入れていて、別の材質が同じ番号にまとまる。`visbuffer_records.comp`・`VisibilityRasterPass.cpp`）。MegaGeometry の記録を GPU で作る経路には、インスタンスの区間から表の番号への対応を渡す。表の1件は、材質の解決が要る定数（基本色・係数・材質の種類の印など）と、後の VTG6-RESOLVE-MATERIALS がテクスチャを引くための材質の識別を持つ。番号は 0 から詰め、数は `VisibilityBuffer`・`MaterialTileClassifyPass` の材質の上限以下に収める（超えたら `VISBUFFER_MATERIAL_OVERFLOW` を1回出し、溢れた分は予備の番号へ寄せる）。`--visibility-buffer=on` の撮影のログに `VISBUFFER_MATERIALS unique=<n> limit=<n>` を出す。CPU のテスト `VisibilityMaterialTableTest`（`RenderResourcesDomainContractTest` の束）が、同じ材質の異なる描画が同じ番号に、違う材質が違う番号になること、番号が詰まっていること、上限を超えたときの寄せ方を確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VisibilityMaterialTableTest|VisibilityBufferEncodingTest|RenderGraphCompileTest|MaterialTileClassifyVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-MATERIAL-TABLE -Configuration RelWithDebInfo -Deterministic -ExtraGameArguments --visibility-buffer=on`
+- stop-when: 実物の材質を RenderThread で一意に識別する手段が FramePacket のスナップショットに無く、FramePacket の契約を変える必要がある場合は、理由と選択肢を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-05 親が足した（`027a4ab4` の評価で見つけた。材質のタイルの分類は記録の番号で分けるので、番号がフレームで一意でないと、後の材質の解決が別の材質を同じ dispatch で扱う）。起動画面の材質の数（`unique`）を測って PROGRESS に書き、VTG6-MATERIAL-CLASSIFY の stop-when（材質の数が上限を超えるか）をその値で確かめる。危険地帯（描画パス・RenderThread）。既定の描画（`--visibility-buffer=off`）は変えない。
 
 ## VTG6-RESOLVE-GEOMETRY: 材質の解決で三角形から重心座標・微分・法線・速度を求める
 - status: todo
