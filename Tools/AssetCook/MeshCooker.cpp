@@ -1,4 +1,5 @@
 ﻿#include "MeshCooker.h"
+#include "MeshMaterialV1Plan.h"
 #include "Resource/GltfNativePath.h"
 #include "ModelInspection.h"
 
@@ -67,6 +68,7 @@ namespace NorvesLib::Tools::AssetCook
         constexpr size_t GltfMinimumByteStride = 4;
         constexpr size_t GltfMaximumByteStride = 252;
         constexpr AnsiStringView SupportedMeshFormat = "nvmesh.v0.mesh3d.pnt.u32.clustered";
+        constexpr AnsiStringView SupportedMeshFormatV1 = "nvmesh.v1.mesh3d.pnt.u32.clustered";
         constexpr AnsiStringView SupportedSkeletalFormat = "nvskel.v0.skinned.pnujiw.u32";
 
         using MeshByteArray = NorvesLib::Core::Container::VariableArray<uint8_t>;
@@ -1381,8 +1383,13 @@ namespace NorvesLib::Tools::AssetCook
         bool BuildNvmeshBytes(const VariableArray<MeshVertexPnt>& vertices,
                               const NorvesLib::Core::Container::VariableArray<MeshCluster>& clusters,
                               const NorvesLib::Core::Container::VariableArray<uint32_t>& indices,
-                              const MaterialReferences& materialReferences, MeshByteArray& outBytes, AnsiString& error)
+                              const MaterialReferences& materialReferences, MeshByteArray& outBytes, AnsiString& error,
+                              const MeshMaterialV1Plan* materialV1 = nullptr)
         {
+            const size_t materialRecordSize =
+                materialV1 ? Core::Asset::CookedMaterialFormatV1::RecordSize : Format::MaterialRecordSize;
+            const size_t clusterRecordSize =
+                materialV1 ? Core::Asset::CookedMeshFormatV1::ClusterRecordSize : Format::ClusterRecordSize;
             if (vertices.empty() || vertices.size() > UINT32_MAX || clusters.empty() || clusters.size() > UINT32_MAX ||
                 indices.empty() || indices.size() > UINT32_MAX)
             {
@@ -1397,9 +1404,11 @@ namespace NorvesLib::Tools::AssetCook
             StringRefWire albedoReference;
             StringRefWire normalReference;
             StringRefWire armReference;
+            StringRefWire emissiveReference;
             if (!AppendStringReference(materialReferences.Albedo, stringTable, albedoReference, error) ||
                 !AppendStringReference(materialReferences.Normal, stringTable, normalReference, error) ||
-                !AppendStringReference(materialReferences.Arm, stringTable, armReference, error))
+                !AppendStringReference(materialReferences.Arm, stringTable, armReference, error) ||
+                (materialV1 && !AppendStringReference(materialV1->Textures[3], stringTable, emissiveReference, error)))
             {
                 return false;
             }
@@ -1413,7 +1422,7 @@ namespace NorvesLib::Tools::AssetCook
             size_t clusterTableSize = 0;
             size_t vertexPayloadSize = 0;
             size_t indexPayloadSize = 0;
-            if (!CheckedMultiply(clusters.size(), Format::ClusterRecordSize, clusterTableSize) ||
+            if (!CheckedMultiply(clusters.size(), clusterRecordSize, clusterTableSize) ||
                 !CheckedMultiply(vertices.size(), Format::VertexRecordSize, vertexPayloadSize) ||
                 !CheckedMultiply(indices.size(), sizeof(uint32_t), indexPayloadSize))
             {
@@ -1431,7 +1440,7 @@ namespace NorvesLib::Tools::AssetCook
             size_t sectionEnd = 0;
             if (!CheckedAdd(submeshTableOffset, Format::SubmeshRecordSize, sectionEnd) ||
                 !AlignUp(sectionEnd, Format::SectionAlignment, materialTableOffset) ||
-                !CheckedAdd(materialTableOffset, Format::MaterialRecordSize, sectionEnd) ||
+                !CheckedAdd(materialTableOffset, materialRecordSize, sectionEnd) ||
                 !AlignUp(sectionEnd, Format::SectionAlignment, clusterTableOffset) ||
                 !CheckedAdd(clusterTableOffset, clusterTableSize, sectionEnd) ||
                 !AlignUp(sectionEnd, Format::SectionAlignment, stringTableOffset) ||
@@ -1454,21 +1463,23 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             outBytes.assign(fileSize, 0);
-            std::memcpy(outBytes.data() + HeaderOffset::Magic, Format::Magic, Format::MagicSize);
+            std::memcpy(outBytes.data() + HeaderOffset::Magic,
+                        materialV1 ? Core::Asset::CookedMeshFormatV1::Magic : Format::Magic, Format::MagicSize);
             WriteLe32(outBytes, HeaderOffset::HeaderSize, static_cast<uint32_t>(Format::HeaderSize));
-            WriteLe16(outBytes, HeaderOffset::VersionMajor, Format::VersionMajor);
+            WriteLe16(outBytes, HeaderOffset::VersionMajor,
+                      materialV1 ? Core::Asset::CookedMeshFormatV1::VersionMajor : Format::VersionMajor);
             WriteLe16(outBytes, HeaderOffset::VersionMinor, Format::VersionMinor);
             WriteLe32(outBytes, HeaderOffset::EndianMarker, Format::EndianMarker);
             WriteLe32(outBytes, HeaderOffset::VertexRecordSize, static_cast<uint32_t>(Format::VertexRecordSize));
             WriteLe32(outBytes, HeaderOffset::SubmeshRecordSize, static_cast<uint32_t>(Format::SubmeshRecordSize));
-            WriteLe32(outBytes, HeaderOffset::MaterialRecordSize, static_cast<uint32_t>(Format::MaterialRecordSize));
-            WriteLe32(outBytes, HeaderOffset::ClusterRecordSize, static_cast<uint32_t>(Format::ClusterRecordSize));
+            WriteLe32(outBytes, HeaderOffset::MaterialRecordSize, static_cast<uint32_t>(materialRecordSize));
+            WriteLe32(outBytes, HeaderOffset::ClusterRecordSize, static_cast<uint32_t>(clusterRecordSize));
             WriteLe32(outBytes, HeaderOffset::StringRefRecordSize, static_cast<uint32_t>(Format::StringRefRecordSize));
             WriteLe64(outBytes, HeaderOffset::FileSize, static_cast<uint64_t>(fileSize));
             WriteLe64(outBytes, HeaderOffset::SubmeshTableOffset, static_cast<uint64_t>(submeshTableOffset));
             WriteLe64(outBytes, HeaderOffset::SubmeshTableSize, Format::SubmeshRecordSize);
             WriteLe64(outBytes, HeaderOffset::MaterialTableOffset, static_cast<uint64_t>(materialTableOffset));
-            WriteLe64(outBytes, HeaderOffset::MaterialTableSize, Format::MaterialRecordSize);
+            WriteLe64(outBytes, HeaderOffset::MaterialTableSize, materialRecordSize);
             WriteLe64(outBytes, HeaderOffset::ClusterTableOffset, static_cast<uint64_t>(clusterTableOffset));
             WriteLe64(outBytes, HeaderOffset::ClusterTableSize, static_cast<uint64_t>(clusterTableSize));
             WriteLe64(outBytes, HeaderOffset::StringTableOffset, static_cast<uint64_t>(stringTableOffset));
@@ -1505,14 +1516,34 @@ namespace NorvesLib::Tools::AssetCook
             WriteFloat32(outBytes, submeshTableOffset + SubmeshRecordOffset::BoundsCenterZ, totalBounds.CenterZ);
             WriteFloat32(outBytes, submeshTableOffset + SubmeshRecordOffset::BoundsRadius, totalBounds.Radius);
 
-            WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::AlbedoTexture, albedoReference);
-            WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::NormalTexture, normalReference);
-            WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::ArmTexture, armReference);
+            if (materialV1)
+            {
+                auto material = materialV1->Material;
+                material.Albedo = {albedoReference.Offset, albedoReference.Length};
+                material.Normal = {normalReference.Offset, normalReference.Length};
+                material.Arm = {armReference.Offset, armReference.Length};
+                material.Emissive = {emissiveReference.Offset, emissiveReference.Length};
+                if (Core::Asset::WriteCookedMaterialRecord(
+                        material, stringTable.size(), {outBytes.data() + materialTableOffset, materialRecordSize}) !=
+                    Core::Asset::CookedMaterialStatus::Success)
+                {
+                    error = "NVMESH v1 material writer rejected values";
+                    return false;
+                }
+            }
+            else
+            {
+                WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::AlbedoTexture,
+                                     albedoReference);
+                WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::NormalTexture,
+                                     normalReference);
+                WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::ArmTexture, armReference);
+            }
 
             for (size_t clusterIndex = 0; clusterIndex < clusters.size(); ++clusterIndex)
             {
                 const MeshCluster& cluster = clusters[clusterIndex];
-                const size_t recordOffset = clusterTableOffset + clusterIndex * Format::ClusterRecordSize;
+                const size_t recordOffset = clusterTableOffset + clusterIndex * clusterRecordSize;
                 WriteFloat32(outBytes, recordOffset + ClusterRecordOffset::BoundsCenterX, cluster.Bounds.CenterX);
                 WriteFloat32(outBytes, recordOffset + ClusterRecordOffset::BoundsCenterY, cluster.Bounds.CenterY);
                 WriteFloat32(outBytes, recordOffset + ClusterRecordOffset::BoundsCenterZ, cluster.Bounds.CenterZ);
@@ -1828,7 +1859,7 @@ namespace NorvesLib::Tools::AssetCook
             const AssetImport::ImportSettingsFileOptions* importOptions,
             const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
         {
-            if (format != SupportedMeshFormat && format != SupportedSkeletalFormat)
+            if (format != SupportedMeshFormat && format != SupportedMeshFormatV1 && format != SupportedSkeletalFormat)
             {
                 error = "unsupported model fingerprint format";
                 return false;
@@ -1865,6 +1896,34 @@ namespace NorvesLib::Tools::AssetCook
             }
             const auto root = document.GetRoot();
             Gltf::BufferSet buffers;
+            if (format == SupportedMeshFormatV1)
+            {
+                PrimitiveInfo primitive;
+                MeshMaterialV1Plan material;
+                if (!ResolveCookBuffers(root, container, sourcePath, buffers, error) ||
+                    !ParsePrimitive(root, primitive, error) ||
+                    !PrepareMeshMaterialV1(
+                        root, buffers, sourcePath, logicalPath, primitive.bHasMaterial, primitive.MaterialIndex,
+                        ComputeGltfSourceHash(sourceBytes, sourceSize, buffers), importOptions, material, error))
+                {
+                    return false;
+                }
+                ModelCookFingerprint result;
+                result.SourceHash = material.SourceHash;
+                result.ImportSettingsHash = material.SettingsHash;
+                result.bHasImportSettings = material.Import.bPresent;
+                result.ImportSettingsPath = material.Import.Path;
+                result.DuplicateMaterialNameGroups = material.Resolved.DuplicateNameGroups;
+                result.FirstDuplicateMaterialIndex = material.Resolved.FirstDuplicateMaterialIndex;
+                result.SecondDuplicateMaterialIndex = material.Resolved.SecondDuplicateMaterialIndex;
+                for (auto& image : material.Images)
+                {
+                    result.EmbeddedImages.push_back(
+                        {image.ImageIndex, std::move(image.LogicalPath), std::move(image.Format), image.SourceHash});
+                }
+                outResult = std::move(result);
+                return true;
+            }
             AssetImport::LoadedImportSettings settings;
             if (!ResolveCookBuffers(root,container,sourcePath,buffers,error) ||
                 !LoadCookImportSettings(sourcePath,importOptions,settings,error))
@@ -1974,7 +2033,7 @@ namespace NorvesLib::Tools::AssetCook
                                       const std::filesystem::path& sourcePath, AnsiStringView logicalPath, MeshCookResult& outResult,
                                       AnsiString& error, const AssetImport::ImportSettingsFileOptions* importOptions)
         {
-            if (format != SupportedMeshFormat)
+            if (format != SupportedMeshFormat && format != SupportedMeshFormatV1)
             {
                 error = AnsiString("unsupported mesh format: ") + AnsiString(format);
                 return false;
@@ -2049,8 +2108,22 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
+            const bool bV1 = format == SupportedMeshFormatV1;
+            MeshMaterialV1Plan materialV1;
             AssetImport::LoadedImportSettings loadedImport;
-            if (!LoadCookImportSettings(sourcePath, importOptions, loadedImport, error))
+            if (bV1)
+            {
+                if (!PrepareMeshMaterialV1(
+                        root, buffers, sourcePath, logicalPath, primitive.bHasMaterial, primitive.MaterialIndex,
+                        ComputeGltfSourceHash(sourceBytes, sourceSize, buffers), importOptions, materialV1, error))
+                {
+                    return false;
+                }
+                loadedImport.Settings = materialV1.Import.Settings.Geometry;
+                loadedImport.Path = materialV1.Import.Path;
+                loadedImport.bPresent = materialV1.Import.bPresent;
+            }
+            else if (!LoadCookImportSettings(sourcePath, importOptions, loadedImport, error))
             {
                 return false;
             }
@@ -2075,7 +2148,43 @@ namespace NorvesLib::Tools::AssetCook
 
             MeshCookResult result;
             MaterialReferences materialReferences;
-            if (!ResolveMaterialReferences(root, primitive, logicalPath, buffers, result.EmbeddedImages, materialReferences, error))
+            if (bV1)
+            {
+                materialReferences = {materialV1.Textures[0], materialV1.Textures[1], materialV1.Textures[2]};
+                result.EmbeddedImages = std::move(materialV1.Images);
+                result.VersionMajor = 1;
+                result.DuplicateMaterialNameGroups = materialV1.Resolved.DuplicateNameGroups;
+                result.FirstDuplicateMaterialIndex = materialV1.Resolved.FirstDuplicateMaterialIndex;
+                result.SecondDuplicateMaterialIndex = materialV1.Resolved.SecondDuplicateMaterialIndex;
+                if (materialV1.Sidedness == AssetImport::DoubleSidedSetting::Auto)
+                {
+                    VariableArray<InspectionVertex> inspect(vertices.size());
+                    for (size_t i = 0; i < vertices.size(); ++i)
+                    {
+                        for (size_t axis = 0; axis < 3; ++axis)
+                        {
+                            inspect[i].Position[axis] = vertices[i].Position[axis];
+                            inspect[i].Normal[axis] = vertices[i].Normal[axis];
+                        }
+                    }
+                    VariableArray<uint32_t> order(vertices.size()), representatives(vertices.size()),
+                        parents(vertices.size());
+                    VariableArray<GeometryClosureEdge> edges(indices.size());
+                    GeometryClosureInspection closed;
+                    if (!InspectGeometryClosure(inspect, indices, order, representatives, parents, edges,
+                                                materialV1.Closure, closed))
+                    {
+                        error = "NVMESH v1 doubleSided auto geometry analysis failed";
+                        return false;
+                    }
+                    if (!closed.bAlmostClosed)
+                    {
+                        materialV1.Material.Flags |= Core::Asset::CookedMaterialFormatV1::DoubleSided;
+                    }
+                }
+            }
+            else if (!ResolveMaterialReferences(root, primitive, logicalPath, buffers, result.EmbeddedImages,
+                                                materialReferences, error))
             {
                 return false;
             }
@@ -2106,7 +2215,8 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            if (!BuildNvmeshBytes(vertices, finalClusters, finalIndices, materialReferences, result.NvmeshBytes, error))
+            if (!BuildNvmeshBytes(vertices, finalClusters, finalIndices, materialReferences, result.NvmeshBytes, error,
+                                  bV1 ? &materialV1 : nullptr))
             {
                 return false;
             }
@@ -2128,13 +2238,17 @@ namespace NorvesLib::Tools::AssetCook
                 error = "invalid import settings hash";
                 return false;
             }
-            result.SourceHash = sourceHash.Value;
+            result.SourceHash = bV1 ? materialV1.SourceHash : sourceHash.Value;
             result.bHasImportSettings = loadedImport.bPresent;
             result.ImportSettingsPath = loadedImport.Path;
             if (loadedImport.bPresent)
             {
                 result.ImportSettingsHash = AssetImport::AppendImportSettingsHash(
                     Format::Fnv1a64OffsetBasis, true, loadedImport.Settings).Value;
+            }
+            if (bV1)
+            {
+                result.ImportSettingsHash = materialV1.SettingsHash;
             }
             result.VertexCount = static_cast<uint32_t>(vertices.size());
             result.IndexCount = static_cast<uint32_t>(finalIndices.size());
@@ -2679,6 +2793,9 @@ namespace NorvesLib::Tools::AssetCook
     {
         std::swap(ImageIndex, other.ImageIndex);
         std::swap(Roles, other.Roles);
+        std::swap(Payload, other.Payload);
+        std::swap(Width, other.Width);
+        std::swap(Height, other.Height);
         std::swap(LogicalPath, other.LogicalPath);
         std::swap(Format, other.Format);
         std::swap(SourceHash, other.SourceHash);
@@ -2711,6 +2828,21 @@ namespace NorvesLib::Tools::AssetCook
             m_OwnedBytes.swap(candidate);
             m_BorrowedBytes = {};
         }
+        Payload = MeshImagePayload::Encoded;
+        Width = Height = 0;
+        return true;
+    }
+    bool MeshEmbeddedImage::SetRawRgba8(Core::Container::Span<const uint8_t> bytes, uint32_t width, uint32_t height)
+    {
+        if (!width || !height || static_cast<size_t>(width) > std::numeric_limits<size_t>::max() / height ||
+            static_cast<size_t>(width) * height > std::numeric_limits<size_t>::max() / 4 ||
+            bytes.size() != static_cast<size_t>(width) * height * 4 || !SetBytes(bytes, false))
+        {
+            return false;
+        }
+        Payload = MeshImagePayload::RawRgba8;
+        Width = width;
+        Height = height;
         return true;
     }
     Core::Container::Span<const uint8_t> MeshEmbeddedImage::GetBytes() const noexcept
@@ -2824,7 +2956,7 @@ namespace NorvesLib::Tools::AssetCook
 
     bool IsSupportedMeshCookFormat(Core::Container::AnsiStringView format) noexcept
     {
-        return format == SupportedMeshFormat;
+        return format == SupportedMeshFormat || format == SupportedMeshFormatV1;
     }
 
     bool CookGltfToNvmesh(const uint8_t* sourceBytes, size_t sourceSize, Core::Container::AnsiStringView format,

@@ -814,7 +814,8 @@ namespace NorvesLib::Tools::AssetCook::Detail
         AppendJsonStringField(outJson, "entry_type", entryTypeText, true);
         outJson += "\n      ";
         AppendJsonStringField(outJson, "cooked_hash", ToStdString(FormatAssetHashHex(cookedHash)), true);
-        outJson += "\n      \"cooked_version\":0\n";
+        outJson += format == "nvmesh.v1.mesh3d.pnt.u32.clustered" ? "\n      \"cooked_version\":1\n"
+                                                                  : "\n      \"cooked_version\":0\n";
         outJson += "    }\n";
         outJson += "  ]\n";
         outJson += "}\n";

@@ -1,5 +1,7 @@
 ﻿// 再利用可能な単体cook。入力bufferを出力完了まで同じ呼出し内で保持する。
 #include "SingleAssetCook.h"
+#include "MeshMaterialV1Plan.h"
+#include "CookOutputSetGuard.h"
 #include "NativeCookPath.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include "AssetCookLegacyOptions.h"
@@ -282,23 +284,39 @@ namespace NorvesLib::Tools::AssetCook
             model.Reference.Format = options.Format.c_str();
             model.Reference.EntryName = AnsiString(entryName);
             model.Reference.EntryType = MakeAssetPackageFourCC('M', 's', 'h', '0');
+            model.Reference.CookedVersion = mesh.VersionMajor;
             pending.push_back(std::move(model));
 
-            // 全textureを変換してから書き始め、壊れた画像で途中まで出力しない。
+            // 全textureを変換してから書く。encodedと明示rawを混同しない。
             for (const auto& image : mesh.EmbeddedImages)
             {
                 const auto bytes = image.GetBytes();
-                const auto mime = NorvesLib::Core::Gltf::ProbeEmbeddedImageMime(bytes);
-                if (mime != NorvesLib::Core::Gltf::DataUriMime::Png && mime != NorvesLib::Core::Gltf::DataUriMime::Jpeg)
-                {
-                    error = "embedded image must contain PNG or JPEG bytes";
-                    return false;
-                }
                 NorvesLib::Tools::AssetCook::TextureCookResult texture;
-                if (!NorvesLib::Tools::AssetCook::CookTextureToNvtex(bytes.data(), bytes.size(), image.Format.c_str(),
-                        image.LogicalPath.c_str(), texture, error))
+                if (image.Payload == MeshImagePayload::RawRgba8)
                 {
-                    return false;
+                    AnsiString reason;
+                    if (!CookRgba8ToNvtex(bytes, image.Width, image.Height, image.Format, texture, reason))
+                    {
+                        error.assign(reason.data(), reason.size());
+                        return false;
+                    }
+                }
+                else
+                {
+                    const auto mime = NorvesLib::Core::Gltf::ProbeEmbeddedImageMime(bytes);
+                    if (image.Payload != MeshImagePayload::Encoded ||
+                        (mime != NorvesLib::Core::Gltf::DataUriMime::Png &&
+                         mime != NorvesLib::Core::Gltf::DataUriMime::Jpeg))
+                    {
+                        error = "embedded image must contain PNG or JPEG bytes";
+                        return false;
+                    }
+                    if (!NorvesLib::Tools::AssetCook::CookTextureToNvtex(bytes.data(), bytes.size(),
+                                                                         image.Format.c_str(),
+                                                                         image.LogicalPath.c_str(), texture, error))
+                    {
+                        return false;
+                    }
                 }
                 PendingPackage item;
                 char indexText[32] = {};
@@ -381,7 +399,6 @@ namespace NorvesLib::Tools::AssetCook
                 auto& reference = item.Reference;
                 reference.SourceHashHex = FormatAssetHashHex(reference.SourceHash);
                 reference.EntryTypeText = FormatAssetPackageFourCCText(reference.EntryType);
-                reference.CookedVersion = 0;
                 if (!MakeSkeletalCookedPackageManifestPath(item.Path, manifestPath.parent_path(), reference.CookedPackage, error) ||
                     !BuildSingleSkeletalEntryPackage(reference.EntryName, reference.EntryType, item.Payload,
                         item.PackageBytes, reference.CookedHash, error))
@@ -523,6 +540,9 @@ namespace NorvesLib::Tools::AssetCook
                 logicalPath,options.Variant.c_str(),options.Format.c_str(),entryName,fingerprint);
             if (bSkipped)
             {
+                WarnDuplicateMeshMaterials(logicalPath, fingerprint.DuplicateMaterialNameGroups,
+                                           fingerprint.FirstDuplicateMaterialIndex,
+                                           fingerprint.SecondDuplicateMaterialIndex);
                 std::cout << "sidecar: " << (fingerprint.bHasImportSettings ? DescribeCookPath(fingerprint.ImportSettingsPath) : "none")
                     << " settings_hash=" << ToStdString(FormatAssetHashHex(fingerprint.ImportSettingsHash)) << "\n";
                 if (NorvesLib::Tools::AssetCook::IsSupportedSkeletalCookFormat(options.Format))
@@ -538,7 +558,7 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool CookModelAsset(const CookOptions& options, std::string& error)
+        bool CookModelAsset(const CookOptions& options, std::string& error, const CookPreparedPlan* guardedV1 = nullptr)
         {
             std::filesystem::path inputPath;
             std::filesystem::path packagePath;
@@ -604,6 +624,31 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
+            if (guardedV1)
+            {
+                Core::Container::AnsiString reason;
+                if (!ValidateCookOutputSet({guardedV1, 1}, {}, reason) || guardedV1->Outputs.empty() ||
+                    meshResult.SourceHash != guardedV1->Outputs[0].ExpectedIdentity.SourceHash ||
+                    meshResult.EmbeddedImages.size() + 1 != guardedV1->Outputs.size())
+                {
+                    error = "NVMESH v1 source/inventory changed before output: ";
+                    error.append(reason.data(), reason.size());
+                    return false;
+                }
+                for (size_t i = 0; i < meshResult.EmbeddedImages.size(); ++i)
+                {
+                    const auto& actual = meshResult.EmbeddedImages[i];
+                    const auto& expected = guardedV1->Outputs[i + 1].ExpectedIdentity;
+                    if (actual.LogicalPath != expected.LogicalPath || actual.Format != expected.Format ||
+                        actual.SourceHash != expected.SourceHash)
+                    {
+                        error = "NVMESH v1 derived inventory changed before output";
+                        return false;
+                    }
+                }
+            }
+            WarnDuplicateMeshMaterials(logicalPath, meshResult.DuplicateMaterialNameGroups,
+                                       meshResult.FirstDuplicateMaterialIndex, meshResult.SecondDuplicateMaterialIndex);
             if (meshResult.bHasImportSettings)
             {
                 const auto& sidecar = meshResult.ImportSettingsPath;
@@ -1226,6 +1271,13 @@ namespace NorvesLib::Tools::AssetCook
             outError = Core::Container::AnsiString(Core::Container::AnsiStringView(error.data(), error.size()));
             return false;
         }
+        CookPreparedPlan guardedV1;
+        const bool bV1 = options.Format == "nvmesh.v1.mesh3d.pnt.u32.clustered";
+        if (bV1 && (!PrepareCookOutputPlan(request, 1, nullptr, guardedV1, outError) ||
+                    !ValidateCookOutputSet({&guardedV1, 1}, {}, outError)))
+        {
+            return false;
+        }
         bool bSucceeded = false;
         if (options.Kind == "raw")
         {
@@ -1243,7 +1295,7 @@ namespace NorvesLib::Tools::AssetCook
             }
             else
             {
-                bSucceeded = CookModelAsset(options, error);
+                bSucceeded = CookModelAsset(options, error, bV1 ? &guardedV1 : nullptr);
             }
         }
         else if (options.Kind == "audio")

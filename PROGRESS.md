@@ -10,7 +10,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR79: 材質codec・reader・設定・source・ARM画像処理・材質選択planまで。v1 writer/cook/hash/cache/runtime係数接続は未完。
 - GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
 - GR83/GR84: 分離骨格資産ローダとBVH取り込みはこれから。
-- GR96: 単体7CLI/79file互換とtexture v1新規root/10file互換は実Windowsで受入済み。共通依存/cache/state/stage/集合guard/owner/volume排他の部品を受入済み。既存rootへの管理付き増分公開・journal/recovery・種別横断spec v2・report/予算/jobs同値は未完。
+- GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
 
@@ -844,3 +844,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-MANAGED-TEXTURE-CLI検証準備: --asset-setを共通initializer/bootstrap/updateへ接続し、明示workspace復旧と36番目のCPU試験を追加。既存25実CLIを維持し、管理CLI15呼出しを別群、baseline metadata各4file＋原ID/byte receiptを可視managed/に保存する。レビュー2回の指摘（SourceRootのdot/末尾separator、headerのvolume UUID36形式）を修正し、directory表記回帰とmetadata純値fixtureを追加。比較器12+4、新証拠7件を通常/最適化で確認。実Windows36CPU/79+10byteとmetadata受入は未実行。
 
 - G2-S6-MANAGED-TEXTURE-CLI受入: 19128d41/run37303534756で実Windows36CPU、既存Update29/Bootstrap17実中断と全条件flag、strict UTF8/Busy空診断、79+10直接byte/7smoke/5診断が成功。旧25実CLI（9成功/16拒否）に別15実CLI（8成功/7拒否）、管理metadata12fileのfinite inventory/schema/native ID/owner tuple/package hash、3ZIP/API digest/CRC、両MSVC/x64 binaryのCNGを独立照合しrootで全verifier再実行。旧証拠216file不変。texture v1のCLI接続をdoneとし、GR96全体完了とはしない。ロードマップGR79→GR82の依存に戻り、次は明示NVMESH v1のwriter/cook接続を優先する。
+
+- G2-GR79-MESH-V1-WRITER-COOK開始: ロードマップのGR79→GR82へ戻る。shared reader/material codec/settings/ARM kernelを実NVMESH v1 cookへつなぎ、v0出力は不変にする。合成ARMは明示RawRgba8と共有texture cook入口、DoubleSided autoは位置溶接後のedge分類を必要とする。v1 fingerprintだけ画像解析が必要になるため、旧no-decode契約と分けて文書化する。runtime adapter/描画受入れは後続。
+
+- G2/GR79 writer/cook検証中: 明示NVMESH v1の128B材質/cluster writer、共有材質plan、ARM/発光/外部画像、版付きmanifest/cache/output guardを接続。GltfMaterialCookV1Testを37番目のCPU gateへ追加。静的レビューround1のcluster幅指摘を修正しround2 PASS。host閉鎖判定の実コードsmokeとPython12+4+7 normal/-Oは合格。Windows nativeと旧79+10 byte互換はこのコミットのCIで未確認。runtime v1拒否とGPU未受入れを維持。

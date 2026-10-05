@@ -55,8 +55,9 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             const auto& reference=resolved.Reference;
-            if (reference.SourceHash!=sourceHash || AnsiStringView(reference.Format)!=format ||
-                AnsiStringView(reference.EntryName)!=entryName || reference.EntryType!=entryType || reference.CookedVersion!=0)
+            if (reference.SourceHash != sourceHash || AnsiStringView(reference.Format) != format ||
+                AnsiStringView(reference.EntryName) != entryName || reference.EntryType != entryType ||
+                reference.CookedVersion != (format == "nvmesh.v1.mesh3d.pnt.u32.clustered" ? 1u : 0u))
             {
                 return false;
             }
@@ -83,7 +84,9 @@ namespace NorvesLib::Tools::AssetCook
             }
             if (entryType==MakeAssetPackageFourCC('M','s','h','0'))
             {
-                return ParseCookedMesh(payload).Succeeded();
+                const auto parsed = ParseCookedMesh(payload);
+                return IsSupportedMeshCookFormat(format) && parsed.Succeeded() &&
+                       parsed.Mesh.VersionMajor == (format == "nvmesh.v1.mesh3d.pnt.u32.clustered" ? 1 : 0);
             }
             if (entryType==CookedSkeletalFormatV0::EntryType)
             {

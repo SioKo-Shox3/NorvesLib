@@ -77,14 +77,17 @@ namespace NorvesLib::Tools::AssetCook
                 return (parsed.Succeeded() && parsed.Audio.BitsPerSample == 16) ||
                        Fail(error, "audio_payload_mismatch");
             }
-            if (row.Kind == AssetKind::Model && Equal(format, "nvmesh.v0.mesh3d.pnt.u32.clustered"))
+            if ((row.Kind == AssetKind::Model && (Equal(format, "nvmesh.v0.mesh3d.pnt.u32.clustered") ||
+                                                  Equal(format, "nvmesh.v1.mesh3d.pnt.u32.clustered"))))
             {
                 if (row.EntryType != MakeAssetPackageFourCC('M', 's', 'h', '0'))
                 {
                     return Fail(error, "mesh_type_mismatch");
                 }
                 const auto parsed = ParseCookedMesh(payload);
-                return (parsed.Succeeded() && parsed.Mesh.VersionMajor == 0) || Fail(error, "mesh_payload_mismatch");
+                return (parsed.Succeeded() &&
+                        parsed.Mesh.VersionMajor == (Equal(format, "nvmesh.v1.mesh3d.pnt.u32.clustered") ? 1 : 0)) ||
+                       Fail(error, "mesh_payload_mismatch");
             }
             if (row.Kind == AssetKind::Model && Equal(format, "nvskel.v0.skinned.pnujiw.u32"))
             {
@@ -116,7 +119,11 @@ namespace NorvesLib::Tools::AssetCook
         error.clear();
         try
         {
-            if (expected.CookedVersion != 0 || expected.EntryName.empty() || bytes.empty() || bytes.data() == nullptr)
+            const uint32_t version =
+                expected.Kind == AssetKind::Model && Equal(expected.Format, "nvmesh.v1.mesh3d.pnt.u32.clustered") ? 1u
+                                                                                                                  : 0u;
+            if (expected.CookedVersion != version || expected.EntryName.empty() || bytes.empty() ||
+                bytes.data() == nullptr)
             {
                 return Fail(error, "invalid_reference_or_bytes");
             }

@@ -156,4 +156,98 @@ namespace NorvesLib::Tools::AssetCook
         outInspection=result;
         return true;
     }
+    bool InspectGeometryClosure(Core::Container::Span<const InspectionVertex> vertices,
+                                Core::Container::Span<const uint32_t> indices, Core::Container::Span<uint32_t> order,
+                                Core::Container::Span<uint32_t> representatives,
+                                Core::Container::Span<uint32_t> parents,
+                                Core::Container::Span<GeometryClosureEdge> edges, const GeometryClosurePolicy& policy,
+                                GeometryClosureInspection& outInspection) noexcept
+    {
+        if (!std::isfinite(policy.MaximumBoundaryFraction) || policy.MaximumBoundaryFraction < 0 ||
+            policy.MaximumBoundaryFraction > 1 || !edges.data() || edges.size() < indices.size() ||
+            edges.size() > std::numeric_limits<size_t>::max() / sizeof(GeometryClosureEdge) ||
+            vertices.size() > std::numeric_limits<size_t>::max() / sizeof(InspectionVertex) ||
+            indices.size() > std::numeric_limits<size_t>::max() / sizeof(uint32_t) ||
+            order.size() > std::numeric_limits<size_t>::max() / sizeof(uint32_t) ||
+            representatives.size() > std::numeric_limits<size_t>::max() / sizeof(uint32_t) ||
+            parents.size() > std::numeric_limits<size_t>::max() / sizeof(uint32_t))
+        {
+            return false;
+        }
+        const ByteRange ranges[] = {
+            {reinterpret_cast<uintptr_t>(vertices.data()), vertices.size() * sizeof(InspectionVertex)},
+            {reinterpret_cast<uintptr_t>(indices.data()), indices.size() * sizeof(uint32_t)},
+            {reinterpret_cast<uintptr_t>(order.data()), order.size() * sizeof(uint32_t)},
+            {reinterpret_cast<uintptr_t>(representatives.data()), representatives.size() * sizeof(uint32_t)},
+            {reinterpret_cast<uintptr_t>(parents.data()), parents.size() * sizeof(uint32_t)},
+            {reinterpret_cast<uintptr_t>(edges.data()), edges.size() * sizeof(GeometryClosureEdge)},
+            {reinterpret_cast<uintptr_t>(&outInspection), sizeof(outInspection)},
+            {reinterpret_cast<uintptr_t>(&policy), sizeof(policy)}};
+        for (size_t a = 0; a < 8; ++a)
+        {
+            for (size_t b = a + 1; b < 8; ++b)
+            {
+                if (Overlaps(ranges[a], ranges[b]))
+                {
+                    return false;
+                }
+            }
+        }
+        GeometryInspection welded;
+        if (!InspectGeometry(vertices, indices, order, representatives, parents, welded))
+        {
+            return false;
+        }
+        GeometryClosureInspection result;
+        size_t count = 0;
+        for (size_t i = 0; i < indices.size(); i += 3)
+        {
+            const uint32_t ids[] = {representatives[indices[i]], representatives[indices[i + 1]],
+                                    representatives[indices[i + 2]]};
+            if (ids[0] == ids[1] || ids[1] == ids[2] || ids[2] == ids[0])
+            {
+                ++result.WeldedDegenerateTriangles;
+                continue;
+            }
+            for (size_t j = 0; j < 3; ++j)
+            {
+                const auto a = ids[j], b = ids[(j + 1) % 3];
+                edges[count++] = {std::min(a, b), std::max(a, b), a < b ? 1u : 0u};
+            }
+        }
+        std::sort(edges.begin(), edges.begin() + count,
+                  [](const auto& a, const auto& b)
+                  {
+                      return a.A < b.A || (a.A == b.A && a.B < b.B);
+                  });
+        for (size_t start = 0; start < count;)
+        {
+            size_t end = start + 1;
+            while (end < count && edges[end].A == edges[start].A && edges[end].B == edges[start].B)
+            {
+                ++end;
+            }
+            ++result.UniqueEdges;
+            if (end - start == 1)
+            {
+                ++result.BoundaryEdges;
+            }
+            else if (end - start != 2)
+            {
+                ++result.NonManifoldEdges;
+            }
+            else if (edges[start].Forward == edges[start + 1].Forward)
+            {
+                ++result.SameDirectionPairs;
+            }
+            start = end;
+        }
+        result.BoundaryFraction =
+            result.UniqueEdges ? static_cast<double>(result.BoundaryEdges) / result.UniqueEdges : 1;
+        result.bAlmostClosed = result.UniqueEdges != 0 && result.NonManifoldEdges == 0 &&
+                               result.SameDirectionPairs == 0 && result.WeldedDegenerateTriangles == 0 &&
+                               result.BoundaryFraction <= policy.MaximumBoundaryFraction;
+        outInspection = result;
+        return true;
+    }
 } // namespace NorvesLib::Tools::AssetCook

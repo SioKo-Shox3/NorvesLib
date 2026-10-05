@@ -101,7 +101,19 @@ namespace NorvesLib::Tools::AssetCook
                 Core::AssetImport::ImportSettingsFileOptions options;
                 options.OverridePath=request.ImportSettingsOverridePath;options.bDisabled=request.bNoSidecar;options.bRequired=request.bRequireSidecar;
                 Core::AssetImport::LoadedImportSettings loaded;
-                const auto result=Core::AssetImport::LoadImportSettingsFile(source,options,loaded);
+                Core::AssetImport::SettingsFileOutcome result;
+                if (request.Format == "nvmesh.v1.mesh3d.pnt.u32.clustered")
+                {
+                    Core::AssetImport::LoadedImportSettingsDocument document;
+                    result = Core::AssetImport::LoadImportSettingsDocument(source, options, document);
+                    loaded.Path = std::move(document.Path);
+                    loaded.bPresent = document.bPresent;
+                    loaded.RawSourceBytes = std::move(document.RawSourceBytes);
+                }
+                else
+                {
+                    result = Core::AssetImport::LoadImportSettingsFile(source, options, loaded);
+                }
                 if (result.Result!=Core::AssetImport::SettingsFileResult::Success) return Fail(error,"sidecar validation/read failed");
                 if (!loaded.Path.empty())
                 {

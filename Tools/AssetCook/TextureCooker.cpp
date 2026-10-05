@@ -35,16 +35,16 @@ namespace NorvesLib::Tools::AssetCook
         {
             uint32_t Width = 0;
             uint32_t Height = 0;
-            std::vector<uint8_t> Bytes;
+            Core::Container::VariableArray<uint8_t> Bytes;
         };
 
-        void WriteLe16(std::vector<uint8_t> &bytes, size_t offset, uint16_t value)
+        void WriteLe16(Core::Container::VariableArray<uint8_t>& bytes, size_t offset, uint16_t value)
         {
             bytes[offset + 0] = static_cast<uint8_t>(value & 0xffu);
             bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
         }
 
-        void WriteLe32(std::vector<uint8_t> &bytes, size_t offset, uint32_t value)
+        void WriteLe32(Core::Container::VariableArray<uint8_t>& bytes, size_t offset, uint32_t value)
         {
             bytes[offset + 0] = static_cast<uint8_t>(value & 0xffu);
             bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
@@ -52,7 +52,7 @@ namespace NorvesLib::Tools::AssetCook
             bytes[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xffu);
         }
 
-        void WriteLe64(std::vector<uint8_t> &bytes, size_t offset, uint64_t value)
+        void WriteLe64(Core::Container::VariableArray<uint8_t>& bytes, size_t offset, uint64_t value)
         {
             WriteLe32(bytes, offset, static_cast<uint32_t>(value & 0xffffffffull));
             WriteLe32(bytes, offset + 4, static_cast<uint32_t>((value >> 32) & 0xffffffffull));
@@ -319,10 +319,9 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool BuildMipChain(MipImage baseMip,
-                           const TextureFormatInfo &format,
-                           std::vector<MipImage> &outMips,
-                           std::string &error)
+        template <typename ErrorText>
+        bool BuildMipChain(MipImage baseMip, const TextureFormatInfo& format,
+                           Core::Container::VariableArray<MipImage>& outMips, ErrorText& error)
         {
             outMips.clear();
             outMips.push_back(std::move(baseMip));
@@ -349,10 +348,9 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool BuildNvtexBytes(const std::vector<MipImage> &mips,
-                             const TextureFormatInfo &format,
-                             std::vector<uint8_t> &outBytes,
-                             std::string &error)
+        template <typename ErrorText>
+        bool BuildNvtexBytes(const Core::Container::VariableArray<MipImage>& mips, const TextureFormatInfo& format,
+                             Core::Container::VariableArray<uint8_t>& outBytes, ErrorText& error)
         {
             if (mips.empty() || mips.front().Width == 0 || mips.front().Height == 0)
             {
@@ -497,7 +495,7 @@ namespace NorvesLib::Tools::AssetCook
             return false;
         }
 
-        std::vector<MipImage> mips;
+        Core::Container::VariableArray<MipImage> mips;
         if (!BuildMipChain(std::move(baseMip), formatInfo, mips, error))
         {
             return false;
@@ -514,6 +512,94 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         outResult = std::move(result);
+        return true;
+    }
+    bool DecodeTextureRgba8(Core::Container::Span<const uint8_t> encoded, DecodedTextureRgba8& out,
+                            Core::Container::AnsiString& error)
+    {
+        error.clear();
+        if (!encoded.data() || encoded.empty() || encoded.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        {
+            error = "material_image: invalid_encoded_input";
+            return false;
+        }
+        int width = 0, height = 0, channels = 0;
+        size_t count = 0, bytes = 0;
+        if (!stbi_info_from_memory(encoded.data(), static_cast<int>(encoded.size()), &width, &height, &channels) ||
+            width <= 0 || height <= 0 ||
+            !CheckedMultiply(static_cast<size_t>(width), static_cast<size_t>(height), count) ||
+            !CheckedMultiply(count, size_t{4}, bytes) || bytes > MaximumMaterialImageDecodedBytes)
+        {
+            error = "material_image: invalid_dimensions_or_limit";
+            return false;
+        }
+        struct Pixels
+        {
+            stbi_uc* Data = nullptr;
+            ~Pixels()
+            {
+                stbi_image_free(Data);
+            }
+            Pixels() = default;
+            Pixels(const Pixels&) = delete;
+            Pixels& operator=(const Pixels&) = delete;
+        } pixels;
+        int decodedWidth = 0, decodedHeight = 0;
+        pixels.Data = stbi_load_from_memory(encoded.data(), static_cast<int>(encoded.size()), &decodedWidth,
+                                            &decodedHeight, &channels, 4);
+        if (!pixels.Data || decodedWidth != width || decodedHeight != height)
+        {
+            error = "material_image: decode_failed_or_dimensions_changed";
+            return false;
+        }
+        DecodedTextureRgba8 candidate;
+        candidate.Width = static_cast<uint32_t>(width);
+        candidate.Height = static_cast<uint32_t>(height);
+        candidate.Pixels.assign(pixels.Data, pixels.Data + bytes);
+        out = std::move(candidate);
+        return true;
+    }
+    bool CookRgba8ToNvtex(Core::Container::Span<const uint8_t> pixels, uint32_t width, uint32_t height,
+                          Core::Container::AnsiStringView format, TextureCookResult& out,
+                          Core::Container::AnsiString& error)
+    {
+        error.clear();
+        size_t count = 0, bytes = 0, outputBytes = 0;
+        TextureFormatInfo info;
+        if (!width || !height || !pixels.data() || !CheckedMultiply(size_t{width}, size_t{height}, count) ||
+            !CheckedMultiply(count, size_t{4}, bytes) || bytes != pixels.size() ||
+            bytes > MaximumMaterialImageDecodedBytes || !ParseTextureFormat({format.data(), format.size()}, info) ||
+            !CheckedMultiply(count, size_t{info.OutputChannels}, outputBytes))
+        {
+            error = "material_image: invalid_raw_rgba_or_format";
+            return false;
+        }
+        MipImage base;
+        base.Width = width;
+        base.Height = height;
+        base.Bytes.resize(outputBytes);
+        for (size_t i = 0; i < count; ++i)
+        {
+            for (uint32_t channel = 0; channel < info.OutputChannels; ++channel)
+            {
+                base.Bytes[i * info.OutputChannels + channel] = pixels[i * 4 + channel];
+            }
+        }
+        Core::Container::VariableArray<MipImage> mips;
+        if (!BuildMipChain(std::move(base), info, mips, error))
+        {
+            return false;
+        }
+        TextureCookResult candidate;
+        candidate.Width = width;
+        candidate.Height = height;
+        candidate.MipCount = static_cast<uint32_t>(mips.size());
+        candidate.BytesPerPixel = info.OutputChannels;
+        if (!BuildNvtexBytes(mips, info, candidate.NvtexBytes, error))
+        {
+            return false;
+        }
+        out = std::move(candidate);
         return true;
     }
 }

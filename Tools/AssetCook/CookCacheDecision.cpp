@@ -210,6 +210,7 @@ namespace NorvesLib::Tools::AssetCook
                     return false;
                 }
                 primary.SourceHash = fingerprint.SourceHash;
+                primary.CookedVersion = r.Format == "nvmesh.v1.mesh3d.pnt.u32.clustered" ? 1u : 0u;
             }
             if (!AddExpected(plan, std::move(primary), r.PackagePath, error))
             {
