@@ -1042,3 +1042,12 @@
 - GPU 時間（`-GpuTimingFrames 300`、RelWithDebInfo、中央値 ms）。`MegaGeometryPass` は 起動画面の既定 0.305（default）/ 0.267（low）に対し、300 個で 0.844（default）/ 0.744（low）/ 0.952（top）。フレーム全体の GPU 時間: 起動画面 2.771 / 2.603、1100 MB 3.672 / 3.415 / 2.849（top）、6500 MB 3.608 / 3.312 / 2.834。CPU 中央値は 10.6〜10.7 ms で、300 個でも 16.6 ms の予算内（over_budget 0）。stop-when（カリングが 16.6 ms を超える）に該当しない。
 - 検証: `verify-VTG5-STRESS-GEOMETRY-1-build.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-2-capture.txt`（既定の起動画面の撮影 pass）、`-3-capture-1100.txt`・`-4-capture-resident.txt`・`-5-capture-6500.txt`・`-6-capture-orbit-1100.txt`・`-7-capture-orbit-resident.txt`（負荷モードの撮影、すべて pass・終了コード 0）、`-8-gpu-startup.txt`・`-9-gpu-stress-1100.txt`・`-10-gpu-stress-6500.txt`（GPU 時間）。画像は `.harness/runs/startup-capture/VTG5-STRESS-GEOMETRY-b0|b1100|b6500|b0-orbit|b1100-orbit|gpu-*`。TASKS.md は CRLF のまま、numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - Notes: (1) 静止画の 1100 MB では追い出しが起きない（作業集合 ≦ 目標）。追い出しの確認は low 旋回で行った。 (2) 起動画面の既定の撮影（`-Deterministic`）はこの変更で変わらない（平均輝度 124.173 / 123.952 / 126.022）。
+
+## 反復 5（run 20261005-175023）: VTG5-ACCEPT（done）
+- 内容: `Docs/RenderingValidation/VirtualizationAcceptance.md` に段5の節を足した（結果の一覧・全常駐との PSNR・起動画面の所見・ジオメトリの量・負荷モード・GPU 時間と CPU の記録の時間・判定・既知の限界）。コードは変えていない。
+- 判定: 受入れ（予算の上限で負荷モードが溢れずに描ける）を満たす。6500 MB（目標 1421 MB）・1100 MB（目標 71 MB = 全常駐の約 1/3.9）のどちらも `geometry_used_mb` ≦ 目標、失敗ページ 0、完走。1100 MB の低い視点の旋回で追い出し 33 ページ（以後増えない）。
+- 起動画面（`-Deterministic`、朝・昼・夕・夜 × 3視点）: 12視点とも pass、白飛び・黒つぶれ 0、平均輝度は段4と同じ。全常駐（`-GeometryStreaming Off`）との PSNR は 12視点とも 45 dB 以上（既定・低角度は大半が 100 dB、近接は 61.286〜78.361 dB）。ジオメトリの量は全常駐 274.6 MB（2 塊 512 MB）に対し、ストリーミングあり 54.3（既定）/ 68.9（近接）/ 39.5（低角度）MB（1 塊 256 MB）、追い出し 0、失敗 0。
+- GPU 時間・CPU の記録の時間は前の反復（VTG5-STRESS-GEOMETRY）の測定を表にした（その後ストリーマ・シェーダー・Game のコードは変わっていない）。300 個で `MegaGeometryPass` 0.73〜0.95 ms、CPU の記録 0.15〜0.16 ms、フレームの CPU 10.6〜10.7 ms（予算 16.6 ms 内）。
+- 検証: `verify-VTG5-ACCEPT-1-build.txt`（Debug の関係ターゲット、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（9/9 passed、golden の Indoor・Outdoor 含む）、`-3-build-rwdi.txt`（RelWithDebInfo の Game 0）、`-4-capture-day.txt`・`-5-capture-night.txt`（撮影 pass）、`-6-capture-off-day.txt`・`-7-capture-off-night.txt`（全常駐との PSNR、いずれも pass）。PNG は default-sun45・near-sun45・default-night と、負荷モードの low-orbit-f75（1100 MB）・top（6500 MB）を開いて穴・欠けが無いことを確認した。golden の基準画像・閾値の変更は無い。
+- 既知の限界: 近接の PSNR の揺れとストリーミングの影響の切り分け、全常駐との GPU 時間の比較、追い出し中の画素の再現性は未確認（節に記載）。
+- Notes: 次は TASKS.md の未完（VTG6 は backlog）。この段の後、親が main へマージしてプッシュする。

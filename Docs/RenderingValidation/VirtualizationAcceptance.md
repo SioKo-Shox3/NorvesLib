@@ -439,3 +439,108 @@ PNG を開いて確かめた（`VTG4-ACCEPT/default-sun45.png`・`near-sun45.png
 - **GPU 時間は測っていない**: 段4の受入れは見た目・クラスタ数・VRAM。階層の選択による GPU 時間の削減は段6以降（ビジビリティバッファ）で測る。
 - **`MEGA_OCCLUSION` の数は開発ビルド専用**（段3と同じ。Release にはデバッグ機能を入れない方針）。
 - **開発機での実測だけ**: RTX 4080 で確かめた。ほかの GPU・ドライバでの撮影は未実施。
+
+## 段5（ジオメトリのページのストリーミング）
+
+判定日: 2026-10-05。ブランチ `feature/vtg-stage5-geometry-streaming`（コミット `6a8e5b6a` の上）。段5の受入れ（計画 5）は、予算の上限で負荷モードが溢れずに描けること。
+
+撮影はすべて RelWithDebInfo の Game（1280×720、TAA・RTGI 有効の起動画面の既定）を `-Deterministic`（`--capture-deterministic`）で撮った。GPU 時間の計測（`-GpuTimingFrames`）は実時間の計測なので `-Deterministic` ではない。
+「ストリーミングあり」は既定（`--geometry-streaming` 既定。メッシュをページに分け、根のページだけを常駐させ、細かい段のページを要求から読む）、「全常駐」は `-GeometryStreaming Off`（`--geometry-streaming=off`。段4までと同じ、全ページを最初から常駐させる）。
+証拠は `.harness/runs/20261005-175023/verify-VTG5-ACCEPT-<n>-*.txt`（起動画面の撮影・全常駐との比較・ビルド・ctest）と、負荷モードの `verify-VTG5-STRESS-GEOMETRY-<n>-*.txt`。撮影の出力は `.harness/runs/startup-capture/VTG5-ACCEPT*/`（`metrics.json`・PNG・各視点の `*.Game.log`）と `VTG5-STRESS-GEOMETRY-*/`。
+負荷モードの撮影（VTG5-STRESS-GEOMETRY）の後、ストリーマ・シェーダー・Game のコードは変わっていない（`git log` で `6a8e5b6a` は `PROGRESS.md`・`TASKS.md` だけ）ので、同じコードの測定として並べる。
+
+### 結果の一覧
+
+| 項目 | 検査 | 結果 |
+|---|---|---|
+| 関係ターゲットの Debug ビルド | `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest CookedMeshTest MegaGeometryResourcesTest RayTracingSceneSnapshotTest RenderGraphCompileTest RenderingGoldenImageTest -- /m:1` | BUILD_EXIT_CODE=0（`-1-build.txt`） |
+| 関係する ctest（9本） | `GeometryPoolAllocatorTest`・`GpuUploadRingVulkanTest`・`GeometryPageStreamerTest`・`CookedMeshTest`・`MegaGeometryResourcesTest`・`RayTracingSceneSnapshotTest`・`RenderGraphCompileTest`・`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 9/9 passed（`-2-ctest.txt`） |
+| golden | 上の `RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 2本とも pass。`git diff main...HEAD --name-only` に golden の基準画像・閾値の変更なし（検証シーンは CSM のまま、段5は基準画像を動かさない）ので再承認なし |
+| RelWithDebInfo の Game のビルド | `cmake --build build --config RelWithDebInfo --target Game -- /m:1` | BUILD_EXIT_CODE=0（`-3-build-rwdi.txt`） |
+| 朝10°・昼45°・夕3° × 既定・近接・低角度（ストリーミングあり） | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3` | 9枚、result=pass（`-4-capture-day.txt`）。白飛び・黒つぶれの画素率は全視点 0 |
+| 夜 × 既定・近接・低角度（ストリーミングあり） | `... -OutDir .harness/runs/startup-capture/VTG5-ACCEPT-night ... -Deterministic -Night` | 3枚、result=pass（`-5-capture-night.txt`）。白飛び・黒つぶれの画素率は 0 |
+| 全常駐の撮影と PSNR | 同じ引数に `-GeometryStreaming Off -CompareDeterministicWith <ストリーミングありの出力先>`。出力先 `VTG5-ACCEPT-off`・`VTG5-ACCEPT-off-night` | 12視点とも pass、`within_limits=True`（`-6`・`-7`）。PSNR は下の表 |
+| 負荷モード（`--stress-geometry=300`） | `-StressGeometry` で 300 個を並べ、`--vram-budget-mb` 6500・1100 | 溢れず完走（下の節。証拠は `verify-VTG5-STRESS-GEOMETRY-3`〜`-7`） |
+
+### 見た目（PSNR）
+
+同じ視点の 1280×720 RGB の PSNR（dB）。ストリーミングあり対 全常駐。スクリプトの下限（`-DeterministicPsnrLimit` 既定 45）で比べ、12視点とも超えた。平均輝度の差は最大 0.0002（下限 0.1）。
+
+| 視点 | 朝10° | 昼45° | 夕3° | 夜 |
+|---|---|---|---|---|
+| 既定 | 100 | 100 | 100 | 100 |
+| 近接 | 64.003 | 61.286 | 69.665 | 78.361 |
+| 低角度 | 83.305 | 100 | 100 | 100 |
+
+- 100 dB は最大差 1/255 以内（不一致の画素は 0〜8E-06）。近接の差は、移行前の比較から記録している TAA・RTGI の揺れの水準で、最大差は 21/255（昼45°）。
+- 平均輝度は段4の記録と同じ（昼 118.572・124.296・87.687 / 119.667・124.181・89.855 / 120.916・126.361・95.453、夜 56.888・13.762・67.585）。ストリーミングで画が変わっていない。
+- 段4の golden（検証シーン）は変わっていない（基準画像の変更なし、2本とも pass）。
+
+### 起動画面の撮影の所見
+
+PNG を開いて確かめた（`VTG5-ACCEPT/default-sun45.png`・`near-sun45.png`、`VTG5-ACCEPT-night/default-night.png`）。
+- 既定・昼45°: 小屋・金色の球の列・石畳の球・岩・材質の帯・空・太陽が欠けなく出ている。地面の外周の左右の奥のスキャン資産の岩も出ている。天球・地面・球・岩は隠れていない。
+- 近接・昼45°: 石畳の球の煉瓦の並び・影が欠け・継ぎ目なく出ている。
+- 夜・既定: 点光源の光だまり・球と岩の影が出ている。
+- ログに `GEOMETRY_PAGES ... failed=0`、Vulkan の検証エラー（VUID）、`COOKED_MODEL_MISSING`・`SCAN_PROP_FAILED` は出ていない（昼9視点・夜3視点の全ログで 0 件）。
+
+### ジオメトリの量
+
+撮影ログの `VRAM_LEDGER geometry_pool`（プールの使用量）・`GEOMETRY_PAGES`・`VRAM_POOLS`。起動画面の既定の枠（`geometry_target_mb`=3649）の下の値。朝・昼・夕・夜で同じ（光の条件はジオメトリの量に効かない）。
+
+| 構成 | プールの塊 | 使用量（MB） | 常駐ページ | `resident_mb` | 追い出し | 失敗 |
+|---|---|---|---|---|---|---|
+| 全常駐（段4の経路） | 2 塊 / 容量 512 MB | 274.6（全視点） | （全ページ） | — | 0 | — |
+| ストリーミングあり・既定 | 1 塊 / 容量 256 MB | 54.3 | 316 | 34.05 | 0 | 0 |
+| 同・近接 | 同 | 68.9 | 446 | 48.63 | 0 | 0 |
+| 同・低角度 | 同 | 39.5 | 178 | 19.21 | 0 | 0 |
+
+- ストリーミングで使用量は全常駐の約 1/5（既定）・約 1/4（近接）・約 1/7（低角度）になる。プールの確保（容量）は 512 → 256 MB で、塊が 2 つから 1 つになった。使用量（プールの確保済みの区画の合計）は `resident_mb` より大きい。差は根のページなど常駐のままの区画と区画の端数と見ているが、内訳は確かめていない。
+- 既定の枠は広いので追い出しは起きない（0）。追い出しは枠を絞ったときに確かめる（次の節）。
+
+### 負荷モード（`--stress-geometry=300`）
+
+300 個（岩・小屋・大きな球・スキャン資産）が地面の外側へ格子状に並ぶ（`STRESS_GEOMETRY_PLACED`）。全常駐のジオメトリの量は `geometry_used_mb`=274 MB。`--vram-budget-mb 1100` の目標 `geometry_target_mb`=71 MB は全常駐の約 1/3.9、`--vram-budget-mb 6500`（8GB 級）の目標は 1421 MB。
+
+| 予算 | 撮影 | geometry_target_mb | geometry_used_mb | 追い出し（`geometry_evicted_pages`） | 常駐ページ | 失敗 |
+|---|---|---|---|---|---|---|
+| 指定なし・全常駐（`VRAM_POOLS cap_mb`=15280） | 3 視点 | 3616 | 274（全常駐） | 0 | — | — |
+| 6500 MB（8GB 級） | default / low / top | 1421 | 54 / 67 / 32 | 0 / 0 / 0 | 319 / 436 / 118 | 0 |
+| 1100 MB | default / low / top（静止） | 71 | 54 / 67 / 32 | 0 / 0 / 0 | 319 / 436 / 118 | 0 |
+| 1100 MB・旋回 20°/秒 | default / low / top | 71 | 54 / 71 / 32 | 0 / 33 / 0 | 326 / 465 / 122 | 0 |
+
+- どの予算でも `geometry_used_mb` ≦ `geometry_target_mb` で溢れない。1100 MB の低い視点の旋回だけ作業集合が目標に達して追い出しが起き（33 ページ）、以後は増えず落ち着いて撮影は完走した。静止画の視点は作業集合が目標に収まるので追い出しは起きない。
+- 追い出し中の画像（`VTG5-STRESS-GEOMETRY-b1100-orbit/low-orbit-f75.png`）と 8GB 級の上から見た画像（`VTG5-STRESS-GEOMETRY-b6500/top.png`）を開いた。穴・割れ目・欠けは無い。追い出し後の岩は一部がやや粗い段の輪郭になる。上から見た画は 300 個の格子全体が出ている。
+- 全常駐との画素比較（PSNR、いずれも 45 dB 以上）: 静止 default 67.2 / low 82.9 / top 69.1 dB（最大差 20 / 4 / 18）、旋回 9 枚は 63.5〜66.1 dB（最大差 10〜24）。連続フレームのちらつきは無い（差は TAA・RTGI の揺れの水準）。8GB 級は全常駐と平均輝度が同じ（121.845 / 123.211 / 125.014）。
+- 絞った予算の別の記録: `--vram-budget-mb 900`（目標 54 MB）の起動画面の撮影は 3 視点とも完了し、追い出しは default 1・near 130（目標が 62 → 54 へ下がった一度の分）・low 0 で、以後は増えない。
+
+### GPU 時間と CPU の記録の時間
+
+`-GpuTimingFrames 300`（窓 240 フレーム）、RelWithDebInfo、中央値（ms）。`MegaGeometryPass` の CPU の記録は `mega_record_cpu`（トレースの `MegaGeometryPass.RecordFrameCommand`）。予算は 16.6 ms。
+
+| 構成 | 視点 | フレーム全体の GPU | `MegaGeometryPass` の GPU | `MegaGeometryPass` の CPU の記録 | CPU のフレーム | 予算 |
+|---|---|---|---|---|---|---|
+| 起動画面（ストリーミングあり） | default / low | 2.771 / 2.603 | 0.305 / 0.267 | 0.123 / 0.114 | 10.611 / 10.593 | 内（超過 0） |
+| 負荷モード 1100 MB | default / low / top | 3.672 / 3.415 / 2.849 | 0.844 / 0.744 / 0.952 | 0.156 / 0.152 / 0.153 | 10.666 / 10.657 / 10.704 | 内（超過 0） |
+| 負荷モード 6500 MB | default / low / top | 3.608 / 3.312 / 2.834 | 0.837 / 0.733 / 0.951 | 0.157 / 0.155 / 0.159 | 10.668 / 10.652 / 10.702 | 内（超過 0） |
+
+- 300 個でも CPU の記録は 0.16 ms 前後で、起動画面の約 1.3 倍に収まる（個数に比例しない）。フレームの CPU は 10.6〜10.7 ms で、16.6 ms の予算内。
+- `MegaGeometryPass` の GPU は 300 個で 0.73〜0.95 ms（起動画面の 0.27〜0.31 ms の約 2.8〜3.1 倍）。予算を絞った 1100 MB と 8GB 級の 6500 MB で同じ値で、枠の違いは GPU 時間に効かない。段3の既定の視点の `MegaGeometryPass` 0.223 ms、まとめたカリング後（VTG5-BATCHED-CULL-PERF）の 0.300 ms と並べて、起動画面の 0.305 ms は同水準。
+- 使用の印（描いたクラスタの自分のページの要求）で足した処理は、描いたクラスタごとの `atomicExchange` 1 回と重複しなければ列への 1 書き込みで、上の値に含まれる。
+
+### 段5の受入れの判定
+
+- 「予算の上限で負荷モードが溢れずに描ける」: 満たす。`--vram-budget-mb` 6500（8GB 級）・1100（全常駐の約 1/3.9 の枠）のどちらも `geometry_used_mb` が目標以下で、失敗ページは 0、300 個の負荷モードを穴・割れ目なく完走する。1100 MB の低い視点の旋回では追い出しが起き、33 ページで落ち着く。
+- 起動画面（絶対規則 7）: 満たす。天球・地面・球・岩・小屋が欠けなく出て、全常駐との PSNR は 12 視点とも 45 dB 以上（既定・低角度は大半が 100 dB）。平均輝度は段4と同じ。
+- ジオメトリの量: 全常駐の 274.6 MB に対し、起動画面では 39.5〜68.9 MB（約 1/7〜1/4）。
+- 関係する ctest 9/9 pass、golden 不変。
+
+### 既知の限界
+
+- **PSNR が 100 dB でない近接の視点**: 近接は 61.3〜78.4 dB（最大差 21/255）。移行前の比較から記録している TAA・RTGI の揺れの水準だが、ストリーミングの影響との切り分け（同じ構成の2回の比較）は今回は未実施。
+- **追い出しの確認は旋回の 1 視点**: 静止画の視点は作業集合が目標に収まって追い出しが起きない。追い出しが起きたのは 1100 MB の低い視点の旋回（33 ページ）と 900 MB の起動画面（default 1・near 130）。追い出し中の画素の再現性は未確認。
+- **入れ替わりが続く負荷は待ちに数えない**: 目標が作業集合に足りず、追い出しの間隔が 120 Update 以内で 300 Update 以上続くと、`HasPendingWork()` が false を返す（読み込みは止めない）。落ち着くのを待っても落ち着かない撮影を終わらせるための判定で、追い出しが長く続きながら最終的に収束する場合も収束前に待ちを打ち切る。入れ替わりの最中に撮るので、常駐ページが撮影のフレームごとに変わりうる。
+- **ストリーミングしないメッシュの使用の印**: ページを複数持つが全て常駐するメッシュの使用の印は `InvalidRequests` に数えられる（統計のみ）。
+- **全常駐との GPU 時間の比較は未実施**: ページのストリーミングは VRAM の削減が目的で、GPU 時間は 1100 MB と 6500 MB（どちらもストリーミングあり）の比較だけ。全常駐（`-GeometryStreaming Off`）の 300 個の GPU 時間は測っていない。ほかの GPU・ドライバでの値も未測定。
+- **開発機での実測だけ**: RTX 4080 で確かめた。ほかの GPU・ドライバ・VRAM が少ない GPU での撮影は未実施。
+- **`GEOMETRY_PAGES`・`VRAM_POOLS` などの記録は開発ビルド専用**（Release にはデバッグ機能を入れない方針）。

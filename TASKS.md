@@ -558,7 +558,7 @@
 - notes: 計画書 1（重い負荷は別モード）。撮影スクリプトに負荷モードの引数が無ければ足す。 2026-10-05 親: run `20261005-154938` の反復7が40分の時間切れになった。途中の変更は `9abc9a06`（`--stress-geometry` の配置、撮影スクリプトの引数）。それまでに、300 個が並ぶこと（全常駐のページの総量 約 289 MB）、1000 MB の予算で目標以下に収まって追い出しが起き、穴・割れ目が無いことを確かめている。1100 MB の low の旋回で止まる件は VTG5-STREAM-HANG で直してから、その撮影を撮り直して閉じる。
 
 ## VTG5-ACCEPT: 段5（ジオメトリのページのストリーミング）の受入れを記録する
-- status: todo
+- status: done
 - done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段5の節に、起動画面の `-Deterministic` の撮影（朝・昼・夕・夜 × 3視点、ページのストリーミングあり・全常駐の PSNR）、ジオメトリの量（段4の全常駐・プール・ページ）、負荷モードの `--vram-budget-mb 6500` と絞った予算での `VRAM_POOLS`・追い出し・撮影の所見、GPU 時間と CPU の記録の時間、golden、関係するテストの結果、既知の限界を書く。
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest RHITextureUpdateVulkanTest CookedMeshTest MegaGeometryResourcesTest RayTracingSceneSnapshotTest RenderGraphCompileTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GeometryPoolAllocatorTest|GpuUploadRingVulkanTest|GeometryPageStreamerTest|CookedMeshTest|MegaGeometryResourcesTest|RayTracingSceneSnapshotTest|RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
