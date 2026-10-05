@@ -46,6 +46,13 @@ namespace NorvesLib::Core::Rendering
          * 環境変数 NORVES_MEGA_BVH が 0 か off なら false にする。
          */
         bool bUseGroupBVH = true;
+
+        /**
+         * @brief MEGA_OCCLUSION を30フレームごとではなく毎フレーム出すか（フレームごとの揺れを測る撮り比べ用）
+         *
+         * 環境変数 NORVES_MEGA_STATS_EVERY_FRAME が 1 なら true にする。
+         */
+        bool bStatsEveryFrame = false;
     };
 
     /**
@@ -396,9 +403,13 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr Buffer;
             const uint32_t *Mapped = nullptr;
             uint64_t Frame = 0;
+            uint64_t RenderFrame = 0;  // 描画のフレームの番号（ViewRenderContext::FrameNumber）
+            int64_t EpochFrame = -1;   // 決定的な撮影のエポックからの相対フレーム。エポック前は -1
             bool bPending = false;
         };
         static constexpr uint32_t StatsSlotCount = 4;
+        bool m_bStatsEpochActive = false;
+        bool m_bDropVisibilityContinuity = false; // 決定的な撮影のエポックの最初のフレーム: 見えたビットを引き継がない
         StatsSlot m_StatsSlots[StatsSlotCount];
         bool m_bStatsSlotsTried = false;
         bool m_bStatsLoggedOnce = false;

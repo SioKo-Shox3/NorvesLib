@@ -166,6 +166,19 @@ namespace NorvesLib::Core::Rendering
         {
             m_Settings.bUseGroupBVH = false;
         }
+
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char *statsEveryFrameValue = std::getenv("NORVES_MEGA_STATS_EVERY_FRAME");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (statsEveryFrameValue != nullptr && std::strcmp(statsEveryFrameValue, "1") == 0)
+        {
+            m_Settings.bStatsEveryFrame = true;
+        }
     }
 
     MegaGeometryPass::~MegaGeometryPass()
@@ -364,6 +377,8 @@ namespace NorvesLib::Core::Rendering
         }
         m_bStatsSlotsTried = false;
         m_bStatsLoggedOnce = false;
+        m_bStatsEpochActive = false;
+        m_bDropVisibilityContinuity = false;
         m_bOcclusionFallbackLogged = false;
         m_bBatchUnsupportedLogged = false;
         m_HiZ.Shutdown();
@@ -926,6 +941,16 @@ namespace NorvesLib::Core::Rendering
         bool bTwoPass = CanUseTwoPassOcclusion(command);
         // 2パスでないフレームも数える（見えたビットは連続した2パスのフレームの間でだけ引き継ぐため）
         ++m_OcclusionFrameCount;
+        // 決定的な撮影のエポック（読み込み完了）の最初のフレームから、統計の行に相対フレームの番号を付ける
+        // 見えたビットも時間的な状態なので、エポックの最初のフレームは引き継がずに0から始める（読み込み完了までの
+        // フレーム数の違いが、エポックの最初のフレームの1パス目の数に出ないようにする）
+        m_bDropVisibilityContinuity = command.bDeterministicCapture && command.bTemporalEpochStart;
+        if (m_bDropVisibilityContinuity)
+        {
+            m_bStatsEpochActive = true;
+        }
+        const int64_t epochFrame =
+            (command.bDeterministicCapture && m_bStatsEpochActive) ? static_cast<int64_t>(command.TemporalFrameIndex) : -1;
 
         // ========================================
         // 描くインスタンスと、材質の区間の収集
@@ -1167,10 +1192,14 @@ namespace NorvesLib::Core::Rendering
                 if (slot.bPending)
                 {
                     // StatsSlotCount フレーム前の統計。そのフレームの提出は完了している（フレームの飛行数は2以下）
-                    if (!m_bStatsLoggedOnce || slot.Frame % 30 == 0)
+                    // エポックが始まっていれば相対フレームが30の倍数のフレームで出す（撮影の間で同じ相対フレームを突き合わせられる）
+                    const bool bSampleFrame = slot.EpochFrame >= 0 ? (slot.EpochFrame % 30 == 0) : (slot.Frame % 30 == 0);
+                    if (!m_bStatsLoggedOnce || bSampleFrame || m_Settings.bStatsEveryFrame)
                     {
                         NORVES_LOG_INFO("MegaGeometryPass",
-                                        "MEGA_OCCLUSION pass1=%u pass2_tested=%u pass2_drawn=%u occluded=%u",
+                                        "MEGA_OCCLUSION frame=%llu epoch_frame=%lld pass1=%u pass2_tested=%u pass2_drawn=%u occluded=%u",
+                                        static_cast<unsigned long long>(slot.RenderFrame),
+                                        static_cast<long long>(slot.EpochFrame),
                                         slot.Mapped[0],
                                         slot.Mapped[1],
                                         slot.Mapped[2],
@@ -1386,6 +1415,8 @@ namespace NorvesLib::Core::Rendering
             cmdList->FillBuffer(statsBuffer, 0, StatsBufferBytes, 0);
             cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
             statsSlot->Frame = m_OcclusionFrameCount;
+            statsSlot->RenderFrame = command.FrameNumber;
+            statsSlot->EpochFrame = epochFrame;
             statsSlot->bPending = true;
         }
 
@@ -2508,7 +2539,7 @@ namespace NorvesLib::Core::Rendering
         // クラスタのバッファは全メッシュが共有するプールの塊なので、区画の位置も一致の条件に入れる
         auto isContinuing = [this](const VisibilityEntry &entry, const VisibilityRequest &request) -> bool
         {
-            return entry.LastUsedFrame + 1 == m_OcclusionFrameCount &&
+            return !m_bDropVisibilityContinuity && entry.LastUsedFrame + 1 == m_OcclusionFrameCount &&
                    entry.ComponentId == request.ComponentId &&
                    entry.MeshId == request.MeshId &&
                    entry.ClusterBufferIdentity == request.ClusterBufferIdentity &&
