@@ -6,6 +6,7 @@
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
 #include "Rendering/VisibilityBuffer.h"
+#include "Rendering/VisibilityMaterialTable.h"
 #include "RHI/IDevice.h"
 #include "RHI/RHITypes.h"
 
@@ -32,6 +33,12 @@ namespace NorvesLib::Core::Rendering
         uint32_t TotalSlots = 0;
         /** @brief 容量を超えた・使えない記録で描かなかった塊の数 */
         uint32_t DroppedChunks = 0;
+        /** @brief フレームの材質の表に足した、値の違う材質の数（上限を超えても数える） */
+        uint32_t MaterialUnique = 0;
+        /** @brief 材質の表の件数の上限（予備の番号を含む） */
+        uint32_t MaterialLimit = 0;
+        /** @brief 上限を超えて予備の番号へ寄せた、値の違う材質の数 */
+        uint32_t MaterialOverflowed = 0;
         /** @brief ID を書いたか（false なら何も描かずに戻った） */
         bool bRendered = false;
     };
@@ -81,6 +88,15 @@ namespace NorvesLib::Core::Rendering
         /** @brief 記録の表の、使っている範囲のバイト数 */
         uint64_t GetRecordTableBytes() const { return m_LastRecordTableBytes; }
 
+        /**
+         * @brief 最後の Execute が書いた、フレームの材質の表（VisibilityBuffer::MaterialEntry の並び。書かなかったフレームは null）
+         *
+         * 記録の MaterialIndex（0 から詰めた番号）がこの表の添え字。ホストが書いたままの storage buffer。
+         */
+        const RHI::BufferPtr& GetMaterialTable() const { return m_LastMaterialTable; }
+        /** @brief 材質の表の、使っている範囲の件数 */
+        uint32_t GetMaterialTableCount() const { return m_LastMaterialTableCount; }
+
         RGResourceHandle GetIdHandle() const { return m_IdHandle.ToResourceHandle(); }
         RGResourceHandle GetDepthHandle() const { return m_DepthHandle; }
 
@@ -109,24 +125,30 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr RecordParams;                 // 記録を書く計算: 区間の数・区間の表の要素数
             RHI::BufferPtr SectionAddresses;             // 記録を書く計算: 区間ごとの頂点・インデックスのアドレス
             uint32_t SectionAddressCapacity = 0;         // 要素数（uvec4）
+            RHI::BufferPtr SectionMaterials;             // 記録を書く計算: 区間ごとの材質の表の番号
+            uint32_t SectionMaterialCapacity = 0;        // 要素数（uint）
+            RHI::BufferPtr MaterialTable;                // フレームの材質の表（MaterialEntry。ホストが書く）
+            uint32_t MaterialTableCapacity = 0;          // 要素数（MaterialEntry）
             RHI::DescriptorSetPtr RecordSet;             // 記録を書く計算
         };
 
         bool CreateRenderPass();
         bool CreatePipelines(ViewRenderContext& context);
         bool EnsureFramebuffer(const RHI::TexturePtr& idTexture, const RHI::TexturePtr& depthTexture);
-        bool EnsureFrameSlot(FrameSlot& slot, uint32_t recordCapacity, uint32_t sectionCount);
+        bool EnsureFrameSlot(FrameSlot& slot, uint32_t recordCapacity, uint32_t sectionCount, uint32_t materialCount);
 
         /** @brief 塊に分けられなかった通知を、パスの寿命の中で一度だけ出す */
         void LogChunkFailureOnce();
-        /** @brief 不透明の描画から手続きメッシュの塊の記録と描画を集める */
+        /** @brief 不透明の描画から手続きメッシュの塊の記録と描画を集める（材質は materials へ足した番号で記録する） */
         void CollectProceduralChunks(ViewRenderContext& context,
                                      uint32_t recordBase,
+                                     VisibilityBuffer::MaterialTable& materials,
                                      Container::VariableArray<VisibilityBuffer::DrawRecord>& records,
                                      Container::VariableArray<ChunkDraw>& draws);
         /** @brief SkinningComputePass の変形結果からスキニングの塊の記録と描画を集める */
         void CollectSkinnedChunks(ViewRenderContext& context,
                                   uint32_t recordBase,
+                                  VisibilityBuffer::MaterialTable& materials,
                                   Container::VariableArray<VisibilityBuffer::DrawRecord>& records,
                                   Container::VariableArray<ChunkDraw>& draws);
 
@@ -165,6 +187,16 @@ namespace NorvesLib::Core::Rendering
         bool m_bLoggedStats = false;
         RHI::BufferPtr m_LastRecordTable;
         uint64_t m_LastRecordTableBytes = 0;
+        RHI::BufferPtr m_LastMaterialTable;
+        uint32_t m_LastMaterialTableCount = 0;
+        // そのフレームの材質の表の積み上げ（Execute のたびに空にする）
+        VisibilityBuffer::MaterialTable m_MaterialTable;
+        // 材質の表の件数を最後にログへ書いた値（変わったときだけ書く）
+        uint32_t m_LoggedMaterialUnique = 0;
+        uint32_t m_LoggedMaterialLimit = 0;
+        bool m_bLoggedMaterials = false;
+        // 材質の表が溢れた通知を一度だけ出すための印
+        bool m_bLoggedMaterialOverflow = false;
         bool m_bLoggedUnsupported = false;
         // 塊に分けられなかった通知を一度だけ出すための印
         bool m_bLoggedChunkFailure = false;

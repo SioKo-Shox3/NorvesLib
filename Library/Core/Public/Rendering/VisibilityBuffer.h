@@ -123,7 +123,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t Kind = 0;
             /** @brief 種類ごとのインスタンスの表の中の番号 */
             uint32_t InstanceIndex = 0;
-            /** @brief 材質の番号（材質の解決が材質ごとのタイルに分ける） */
+            /** @brief フレームの材質の表（VisibilityMaterialTable.h の MaterialEntry の並び）の番号。同じ材質は同じ番号で、0 から詰まる */
             uint32_t MaterialIndex = 0;
             /** @brief この記録が覆う三角形の数（1 以上 MAX_TRIANGLES_PER_RECORD 以下） */
             uint32_t TriangleCount = 0;

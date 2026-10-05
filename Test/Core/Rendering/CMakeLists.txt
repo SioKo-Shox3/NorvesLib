@@ -1830,6 +1830,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER VirtualTextureStreamerTest VirtualTextureStreamerTest.cpp
     MEMBER RHIBlockCompressedFormatTest RHIBlockCompressedFormatTest.cpp
     MEMBER VisibilityBufferEncodingTest VisibilityBufferEncodingTest.cpp
+    MEMBER VisibilityMaterialTableTest VisibilityMaterialTableTest.cpp
 )
 target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
 target_include_directories(RenderResourcesDomainContractTest PRIVATE
@@ -1858,6 +1859,8 @@ add_test(NAME VirtualTextureStreamerTest COMMAND RenderResourcesDomainContractTe
 add_test(NAME RHIBlockCompressedFormatTest COMMAND RenderResourcesDomainContractTest --test=RHIBlockCompressedFormatTest)
 # ビジビリティバッファの ID（(記録の番号 << 7) | 三角形の番号）の往復・記録の数の上限（2^25）・空（0）の扱い、描画の記録の表の追加・引き・容量、VisBuffer.Id と記録の表の RenderGraph の資源の記述、GLSL（Common/VisibilityBuffer.glsl）の定数の C++ との一致。
 add_test(NAME VisibilityBufferEncodingTest COMMAND RenderResourcesDomainContractTest --test=VisibilityBufferEncodingTest)
+# 記録の材質の番号がフレームで一意な材質の表の番号になること。同じ材質（MegaGeometry の区間・手続き・スキニングの描画）が同じ番号に、違う材質が違う番号に、番号が 0 から詰まること、上限を超えたときに予備の番号へ寄せること、記録を作る計算シェーダーが表の番号を書くこと。
+add_test(NAME VisibilityMaterialTableTest COMMAND RenderResourcesDomainContractTest --test=VisibilityMaterialTableTest)
 
 add_executable(MeshResourcesPrimitiveTest
     MeshResourcesPrimitiveTest.cpp

@@ -81,7 +81,7 @@ namespace NorvesLib::Core::Rendering
             return desc;
         }
 
-        // 記録を書く計算のディスクリプタセット（visbuffer_records.comp の binding 0〜6）
+        // 記録を書く計算のディスクリプタセット（visbuffer_records.comp の binding 0〜7）
         RHI::DescriptorSetDesc MakeRecordDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
@@ -91,6 +91,7 @@ namespace NorvesLib::Core::Rendering
                 AddBinding(desc, binding, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute);
             }
             AddBinding(desc, 6, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute);
+            AddBinding(desc, 7, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute);
             return desc;
         }
 
@@ -341,7 +342,10 @@ namespace NorvesLib::Core::Rendering
         return m_Framebuffer != nullptr;
     }
 
-    bool VisibilityRasterPass::EnsureFrameSlot(FrameSlot& slot, uint32_t recordCapacity, uint32_t sectionCount)
+    bool VisibilityRasterPass::EnsureFrameSlot(FrameSlot& slot,
+                                               uint32_t recordCapacity,
+                                               uint32_t sectionCount,
+                                               uint32_t materialCount)
     {
         if (!m_Device)
         {
@@ -380,6 +384,38 @@ namespace NorvesLib::Core::Rendering
             }
             slot.SectionAddresses = buffer;
             slot.SectionAddressCapacity = capacity;
+        }
+
+        if (!slot.SectionMaterials || slot.SectionMaterialCapacity < sectionCount)
+        {
+            const uint32_t capacity = std::max(16u, NextPowerOfTwo(sectionCount));
+            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * sizeof(uint32_t),
+                                 RHI::ResourceUsage::StorageBuffer,
+                                 true,
+                                 "VisBuffer_SectionMaterials");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.SectionMaterials = buffer;
+            slot.SectionMaterialCapacity = capacity;
+        }
+
+        if (!slot.MaterialTable || slot.MaterialTableCapacity < materialCount)
+        {
+            const uint32_t capacity = std::max(16u, NextPowerOfTwo(materialCount));
+            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * sizeof(VisibilityBuffer::MaterialEntry),
+                                 RHI::ResourceUsage::StorageBuffer,
+                                 true,
+                                 "VisBuffer_MaterialTable");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.MaterialTable = buffer;
+            slot.MaterialTableCapacity = capacity;
         }
 
         if (!slot.FrameUniform)
@@ -486,6 +522,7 @@ namespace NorvesLib::Core::Rendering
 
     void VisibilityRasterPass::CollectProceduralChunks(ViewRenderContext& context,
                                                        uint32_t recordBase,
+                                                       VisibilityBuffer::MaterialTable& materials,
                                                        VariableArray<VisibilityBuffer::DrawRecord>& records,
                                                        VariableArray<ChunkDraw>& draws)
     {
@@ -517,6 +554,13 @@ namespace NorvesLib::Core::Rendering
             const uint32_t vertexOffset = bHasRange ? command.Draw.VertexOffset : 0u;
             const uint32_t instanceCount = std::max(1u, command.Draw.InstanceCount);
 
+            // 実物の材質（GBuffer の経路が引くものと同じ）を、フレームの材質の表の番号にする
+            const MaterialResourceData* materialData =
+                (command.Draw.MaterialHandle.IsValid() && context.Resources.Materials)
+                    ? context.Resources.Materials->GetData(command.Draw.MaterialHandle)
+                    : nullptr;
+            const uint32_t materialIndex = materials.Add(VisibilityBuffer::MakeMaterialEntry(materialData));
+
             // 描画の範囲（サブメッシュ・インスタンス）ごとに範囲が違うので、塊は範囲から作る。
             // 登録時にメッシュ全体で分けた塊は持たない（範囲に合わないので読まない）
             if (!BuildMeshIndexChunks(indexCount, nullptr, 0, chunks))
@@ -540,7 +584,7 @@ namespace NorvesLib::Core::Rendering
 
                     VisibilityBuffer::DrawRecord record = MakeChunkRecord(VisibilityBuffer::RecordKind::ProceduralChunk,
                                                                           instanceIndex,
-                                                                          command.Draw.MaterialIndex,
+                                                                          materialIndex,
                                                                           chunk.IndexCount / 3u,
                                                                           firstIndex + chunk.FirstIndex,
                                                                           vertexOffset);
@@ -571,6 +615,7 @@ namespace NorvesLib::Core::Rendering
 
     void VisibilityRasterPass::CollectSkinnedChunks(ViewRenderContext& context,
                                                     uint32_t recordBase,
+                                                    VisibilityBuffer::MaterialTable& materials,
                                                     VariableArray<VisibilityBuffer::DrawRecord>& records,
                                                     VariableArray<ChunkDraw>& draws)
     {
@@ -601,6 +646,11 @@ namespace NorvesLib::Core::Rendering
             }
 
             const uint64_t indexAddress = instance.IndexBuffer->GetDeviceAddress();
+            const MaterialResourceData* materialData =
+                (instance.Material.IsValid() && context.Resources.Materials)
+                    ? context.Resources.Materials->GetData(instance.Material)
+                    : nullptr;
+            const uint32_t materialIndex = materials.Add(VisibilityBuffer::MakeMaterialEntry(materialData));
             for (const MeshIndexChunk& chunk : chunks)
             {
                 const uint32_t recordNumber = recordBase + static_cast<uint32_t>(records.size());
@@ -612,7 +662,7 @@ namespace NorvesLib::Core::Rendering
 
                 VisibilityBuffer::DrawRecord record = MakeChunkRecord(VisibilityBuffer::RecordKind::SkinnedChunk,
                                                                       instanceIndex,
-                                                                      instance.MaterialIndex,
+                                                                      materialIndex,
                                                                       chunk.IndexCount / 3u,
                                                                       chunk.FirstIndex,
                                                                       0u);
@@ -644,6 +694,8 @@ namespace NorvesLib::Core::Rendering
         m_Stats = VisibilityRasterFrameStats{};
         m_LastRecordTable.reset();
         m_LastRecordTableBytes = 0;
+        m_LastMaterialTable.reset();
+        m_LastMaterialTableCount = 0;
 
         // そのフレームの MegaGeometry の描画の写し。取り出すと、MegaGeometryPass が残したバッファの戻しはこのパスの責任になる
         MegaGeometryPass::VisibilityDrawPlan plan;
@@ -690,10 +742,22 @@ namespace NorvesLib::Core::Rendering
         VariableArray<VisibilityBuffer::DrawRecord> cpuRecords;
         VariableArray<ChunkDraw> meshDraws;
         VariableArray<ChunkDraw> skinnedDraws;
+
+        // フレームの材質の表: MegaGeometry の区間 → 手続き → スキニングの順に、実物の材質を 0 から詰めた番号にする
+        m_MaterialTable.Clear();
+        VariableArray<uint32_t> sectionMaterials;
+        if (bHasPlan && camera)
+        {
+            sectionMaterials.reserve(plan.Sections.size());
+            for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan.Sections)
+            {
+                sectionMaterials.push_back(m_MaterialTable.Add(VisibilityBuffer::MakeMaterialEntry(section.Material)));
+            }
+        }
         if (camera)
         {
-            CollectProceduralChunks(context, recordBase, cpuRecords, meshDraws);
-            CollectSkinnedChunks(context, recordBase, cpuRecords, skinnedDraws);
+            CollectProceduralChunks(context, recordBase, m_MaterialTable, cpuRecords, meshDraws);
+            CollectSkinnedChunks(context, recordBase, m_MaterialTable, cpuRecords, skinnedDraws);
         }
         const bool bHasMegaDraw = bHasPlan && camera && megaSlots > 0 && VisibilityBuffer::IsValidRecordNumber(megaSlots) &&
                                   plan.InstanceBuffer && plan.DrawInfoBuffer && plan.IndirectBuffer &&
@@ -716,7 +780,14 @@ namespace NorvesLib::Core::Rendering
 
         FrameSlot& slot = m_FrameSlots[m_FrameCounter % FrameSlotCount];
         ++m_FrameCounter;
-        if (!EnsureFrameSlot(slot, totalSlots, bHasMegaDraw ? plan.SectionCount : 1u))
+        const VariableArray<VisibilityBuffer::MaterialEntry> materialEntries = m_MaterialTable.BuildGpuEntries();
+        m_Stats.MaterialUnique = m_MaterialTable.GetUniqueCount();
+        m_Stats.MaterialLimit = m_MaterialTable.GetLimit();
+        m_Stats.MaterialOverflowed = m_MaterialTable.GetOverflowedCount();
+        if (!EnsureFrameSlot(slot,
+                             totalSlots,
+                             bHasMegaDraw ? plan.SectionCount : 1u,
+                             static_cast<uint32_t>(materialEntries.size())))
         {
             NORVES_LOG_ERROR("VisibilityRasterPass", "ビジビリティバッファの資源を用意できませんでした");
             bail();
@@ -742,6 +813,13 @@ namespace NorvesLib::Core::Rendering
         }
         const uint64_t tableBytes = static_cast<uint64_t>(totalSlots) * RecordBytes;
 
+        // 材質の表（ホストが書く。材質の解決が記録の MaterialIndex で引く）
+        if (!materialEntries.empty())
+        {
+            slot.MaterialTable->Update(materialEntries.data(),
+                                       static_cast<uint64_t>(materialEntries.size()) * sizeof(VisibilityBuffer::MaterialEntry));
+        }
+
         // MegaGeometry の記録は、そのフレームに積まれたコマンドから GPU が書く
         RHI::ResourceState indirectState = RHI::ResourceState::IndirectArgument;
         if (bHasMegaDraw)
@@ -766,6 +844,9 @@ namespace NorvesLib::Core::Rendering
             }
             slot.SectionAddresses->Update(addresses.data(), addresses.size() * sizeof(uint32_t));
 
+            // 区間ごとの材質の表の番号（plan.Sections と同じ並び）
+            slot.SectionMaterials->Update(sectionMaterials.data(), sectionMaterials.size() * sizeof(uint32_t));
+
             const uint32_t params[4] = {plan.SectionCount, plan.SectionCount * plan.PassCount, 0u, 0u};
             slot.RecordParams->Update(params, sizeof(params));
 
@@ -776,6 +857,7 @@ namespace NorvesLib::Core::Rendering
             slot.RecordSet->BindStorageBuffer(4, plan.DrawInfoBuffer, 0, ClampBindSize(plan.DrawInfoBuffer->GetSize()));
             slot.RecordSet->BindStorageBuffer(5, slot.SectionAddresses, 0, ClampBindSize(addresses.size() * sizeof(uint32_t)));
             slot.RecordSet->BindStorageBuffer(6, slot.RecordTable, 0, ClampBindSize(tableBytes));
+            slot.RecordSet->BindStorageBuffer(7, slot.SectionMaterials, 0, ClampBindSize(sectionMaterials.size() * sizeof(uint32_t)));
             slot.RecordSet->Update();
 
             commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::UnorderedAccess);
@@ -908,6 +990,32 @@ namespace NorvesLib::Core::Rendering
         m_Stats.bRendered = true;
         m_LastRecordTable = slot.RecordTable;
         m_LastRecordTableBytes = tableBytes;
+        m_LastMaterialTable = slot.MaterialTable;
+        m_LastMaterialTableCount = static_cast<uint32_t>(materialEntries.size());
+
+        // 材質の数は、変わったときだけログへ書く。上限を超えたら、通知を一度だけ出す
+        if (!m_bLoggedMaterials || m_LoggedMaterialUnique != m_Stats.MaterialUnique ||
+            m_LoggedMaterialLimit != m_Stats.MaterialLimit)
+        {
+            m_bLoggedMaterials = true;
+            m_LoggedMaterialUnique = m_Stats.MaterialUnique;
+            m_LoggedMaterialLimit = m_Stats.MaterialLimit;
+            NORVES_LOG_INFO("VisibilityRasterPass",
+                            "VISBUFFER_MATERIALS unique=%u limit=%u",
+                            m_Stats.MaterialUnique,
+                            m_Stats.MaterialLimit);
+        }
+        if (m_Stats.MaterialOverflowed > 0 && !m_bLoggedMaterialOverflow)
+        {
+            m_bLoggedMaterialOverflow = true;
+            NORVES_LOG_WARNING("VisibilityRasterPass",
+                               "VISBUFFER_MATERIAL_OVERFLOW unique=%u limit=%u overflowed=%u 材質の数が表の上限を超えました。"
+                               "溢れた材質は予備の番号（%u）へ寄せます",
+                               m_Stats.MaterialUnique,
+                               m_Stats.MaterialLimit,
+                               m_Stats.MaterialOverflowed,
+                               m_MaterialTable.GetFallbackIndex());
+        }
 
         // 描画の内訳が変わったときだけ記録する（毎フレームは書かない）
         if (!m_bLoggedStats || m_LoggedStats.MegaCommandSlots != m_Stats.MegaCommandSlots ||

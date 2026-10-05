@@ -1803,6 +1803,7 @@ namespace NorvesLib::Core::Rendering
                 planSection.IndexBuffer = section.Representative->IndexBuffer;
                 planSection.Capacity = section.Capacity;
                 planSection.CommandBase = section.CommandBase;
+                planSection.Material = section.Representative->Material;
                 plan.Sections.push_back(planSection);
             }
             m_bVisibilityBuffersHeld = true;

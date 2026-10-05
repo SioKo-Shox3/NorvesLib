@@ -145,6 +145,7 @@ namespace NorvesLib::Core::Rendering
                 RHI::BufferPtr IndexBuffer;
                 uint32_t Capacity = 0;    // 1パスのコマンドの最大数
                 uint32_t CommandBase = 0; // 1パスの範囲での先頭（コマンドの位置）
+                MegaGeometry::MegaMeshMaterial Material; // 区間の材質（値。ビジビリティバッファの材質の表が引く）
             };
 
             bool bValid = false;

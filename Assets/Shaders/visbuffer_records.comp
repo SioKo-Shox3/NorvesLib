@@ -59,6 +59,12 @@ layout(std430, set = 0, binding = 6) writeonly buffer RecordTableOut
     VisibilityDrawRecord records[];
 };
 
+// 区間ごとの、フレームの材質の表（VisibilityMaterialTable）の番号。同じ材質の区間は同じ番号
+layout(std430, set = 0, binding = 7) readonly buffer SectionMaterialBuffer
+{
+    uint sectionMaterials[];
+};
+
 void main()
 {
     const uint sectionSlot = gl_GlobalInvocationID.y;
@@ -83,7 +89,7 @@ void main()
     VisibilityDrawRecord record;
     record.header = uvec4(VIS_KIND_MEGA_CLUSTER,
                           drawInfos[commandIndex].x,
-                          sectionIndex,
+                          sectionMaterials[sectionIndex],
                           min(command.indexCount / 3u, VIS_MAX_TRIANGLES_PER_RECORD));
     record.source = uvec4(command.firstIndex, uint(command.vertexOffset), VIS_NO_PREVIOUS_TRANSFORM, 0u);
     record.address = addresses;

@@ -664,7 +664,7 @@
 - notes: 2026-10-05 親が足した（VTG6-COMPUTE-SKINNING の評価の残課題。評価は PASS）。有効にするとパレットを GBuffer の経路と2回アップロードする件は VTG6-DEFAULT-ON で扱う。
 
 ## VTG6-MATERIAL-TABLE: 描画の記録の材質の番号をフレームで一意な材質の表の番号にする
-- status: todo
+- status: done
 - done-when: ビジビリティバッファの描画の記録の材質の番号を、フレームごとの材質の表（storage buffer）の番号にする。表はそのフレームの不透明の描画が使う実物の材質（`Material` など、材質の解決が引くもの）ごとに1件で、同じ材質を使う MegaGeometry の区間・手続きメッシュの塊・スキニングの塊は同じ番号になり、違う材質は違う番号になる（今は MegaGeometry が区間の番号、手続き・スキニングがプロキシの中のスロットの番号を入れていて、別の材質が同じ番号にまとまる。`visbuffer_records.comp`・`VisibilityRasterPass.cpp`）。MegaGeometry の記録を GPU で作る経路には、インスタンスの区間から表の番号への対応を渡す。表の1件は、材質の解決が要る定数（基本色・係数・材質の種類の印など）と、後の VTG6-RESOLVE-MATERIALS がテクスチャを引くための材質の識別を持つ。番号は 0 から詰め、数は `VisibilityBuffer`・`MaterialTileClassifyPass` の材質の上限以下に収める（超えたら `VISBUFFER_MATERIAL_OVERFLOW` を1回出し、溢れた分は予備の番号へ寄せる）。`--visibility-buffer=on` の撮影のログに `VISBUFFER_MATERIALS unique=<n> limit=<n>` を出す。CPU のテスト `VisibilityMaterialTableTest`（`RenderResourcesDomainContractTest` の束）が、同じ材質の異なる描画が同じ番号に、違う材質が違う番号になること、番号が詰まっていること、上限を超えたときの寄せ方を確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VisibilityMaterialTableTest|VisibilityBufferEncodingTest|RenderGraphCompileTest|MaterialTileClassifyVulkanTest)$"`
