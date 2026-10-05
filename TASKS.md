@@ -874,7 +874,7 @@
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-HARDEN-MATERIAL-TABLE -Configuration RelWithDebInfo -Deterministic`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-06 VTG6-PRE-DEFAULT-HARDEN から分けた（元の項目の評価の残課題）。危険地帯（描画パス・寿命）。テストは標準ライブラリの型を使わず、配線を戻すと落ちる変異を確かめる。
+- notes: 2026-10-06 VTG6-PRE-DEFAULT-HARDEN から分けた（元の項目の評価の残課題）。危険地帯（描画パス・寿命）。テストは標準ライブラリの型を使わず、配線を戻すと落ちる変異を確かめる。 2026-10-06 親（VTG6-HARDEN-SKIN-CHUNK-FAIL の評価の残課題。あわせて直す）: `SkinnedMeshGpuStore.cpp`（329〜330 行付近）の警告文「ビジビリティバッファへは描かず」は事実と違う（`VisibilityRasterPass.cpp` 682 行付近が塊を分け直して描く。描画の集合が食い違うのは分け直しも失敗したときだけ）ので、文言と PROGRESS の Notes を事実に合わせる。`SkinnedRenderPathContractTest.cpp`（1483〜1488・1551 行付近）が共有の Logger を出力 None のまま戻さないのを直す。`RenderResources.h`（254 行付近）の `TryGetChunks` のコメントに、塊の失敗でも false になることを書く。
 
 ## VTG6-DEFAULT-ON: ビジビリティバッファを既定にし、今のGBufferのラスタを予備にする
 - status: todo
