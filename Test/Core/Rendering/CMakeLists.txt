@@ -453,6 +453,16 @@ set_tests_properties(IntegerAttachmentVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 計算シェーダーでのスキニング（skinning_compute.comp）を、実際の SkinnedMeshGpuStore が作る今・前のフレームのパレットで動かし、
+# 読み戻した今・前の頂点（位置・法線・UV。ワールド空間）が CPU で計算した値と許容 1e-4 で一致することを確かめる。
+# 骨 1〜4 本・重みの合計が 1 でない頂点・重み 0・範囲外の骨の番号・2 インスタンスの別の出力範囲・範囲外へ書かないこと・validation error 0 件。
+add_test(NAME ComputeSkinningVulkanTest COMMAND RHITextureUpdateVulkanTest --test=ComputeSkinningVulkanTest)
+set_tests_properties(ComputeSkinningVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
@@ -472,6 +482,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER HiZOcclusionTestVulkanTest HiZOcclusionTestVulkanTest.cpp
     MEMBER GeometryPageRequestVulkanTest GeometryPageRequestVulkanTest.cpp
     MEMBER IntegerAttachmentVulkanTest IntegerAttachmentVulkanTest.cpp
+    MEMBER ComputeSkinningVulkanTest ComputeSkinningVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE

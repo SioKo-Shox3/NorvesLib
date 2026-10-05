@@ -1,0 +1,201 @@
+﻿#version 450
+
+// ========================================
+// スキニングの頂点を計算シェーダーで変形し、今と前のフレームの頂点（ワールド空間）を書くシェーダー
+//
+// 1 スレッドが 1 頂点を受け持つ。同じ頂点を、今のフレームのパレットと直前のフレームのパレットでそれぞれ変形し、
+// フレームごとの出力バッファの「出力の先頭の頂点番号 + 頂点番号」の位置へ書く。
+//   今のフレーム: skinned_gbuffer.vert の SkinVertex と同じ重み・同じ手順（位置・法線・UV）
+//   直前のフレーム: skinned_gbuffer.vert の SkinPreviousPosition と同じ重みで位置を、法線は直前のパレットの
+//                   上 3x3 の逆転置で変形する（直前のパレットは位置の行列だけを持ち、法線の行列は持たない）
+// 出力はワールド空間（今: world・worldNormal、前: 直前の world）。後のビジビリティバッファのラスタと
+// 材質の解決は、変換を掛け直さずにこの頂点を読む。
+// 出力の 1 頂点は 8 個の float（位置 3・法線 3・UV 2）で、バッファのアドレスでも読めるよう詰めて並べる。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std140, set = 0, binding = 0) uniform SkinningParams
+{
+    // x: このインスタンスの頂点数、y: 出力バッファの中の先頭の頂点番号
+    uvec4 counts;
+} params;
+
+// 入力の頂点（SkinnedMeshVertex の 64 バイト = 16 ワード。位置 0-2、法線 3-5、UV 6-7、骨 8-11、重み 12-15）
+layout(std430, set = 0, binding = 1) readonly buffer SkinVertexWords
+{
+    uint words[];
+} skinVertices;
+
+// 今のフレームの変換と骨ごとの位置・法線の行列（SkinnedMeshGpuStore の PaletteBuffer）
+layout(std430, set = 0, binding = 2) readonly buffer CurrentSkinning
+{
+    mat4 world;
+    mat4 worldNormal;
+    mat4 paletteMatrices[];
+} current;
+
+// 直前のフレームの変換と骨ごとの位置の行列（SkinnedMeshGpuStore の PreviousPaletteBuffer）
+layout(std430, set = 0, binding = 3) readonly buffer PreviousSkinning
+{
+    mat4 world;
+    mat4 paletteMatrices[];
+} previous;
+
+layout(std430, set = 0, binding = 4) writeonly buffer CurrentVertices
+{
+    float values[];
+} currentOut;
+
+layout(std430, set = 0, binding = 5) writeonly buffer PreviousVertices
+{
+    float values[];
+} previousOut;
+
+const float DegenerateWeight = 0.000001;
+
+// 法線行列（上 3x3 の逆転置）。特異に近いときは単位行列（MatrixUtils::CreateNormalMatrix と同じ）。
+mat3 NormalMatrixOf(mat3 m)
+{
+    if (abs(determinant(m)) < 1.0e-6)
+    {
+        return mat3(1.0);
+    }
+    return transpose(inverse(m));
+}
+
+void WriteVertex(bool bCurrent, uint outputIndex, vec3 position, vec3 normal, vec2 texCoord)
+{
+    uint base = outputIndex * 8u;
+    if (bCurrent)
+    {
+        currentOut.values[base + 0u] = position.x;
+        currentOut.values[base + 1u] = position.y;
+        currentOut.values[base + 2u] = position.z;
+        currentOut.values[base + 3u] = normal.x;
+        currentOut.values[base + 4u] = normal.y;
+        currentOut.values[base + 5u] = normal.z;
+        currentOut.values[base + 6u] = texCoord.x;
+        currentOut.values[base + 7u] = texCoord.y;
+    }
+    else
+    {
+        previousOut.values[base + 0u] = position.x;
+        previousOut.values[base + 1u] = position.y;
+        previousOut.values[base + 2u] = position.z;
+        previousOut.values[base + 3u] = normal.x;
+        previousOut.values[base + 4u] = normal.y;
+        previousOut.values[base + 5u] = normal.z;
+        previousOut.values[base + 6u] = texCoord.x;
+        previousOut.values[base + 7u] = texCoord.y;
+    }
+}
+
+void main()
+{
+    uint vertexIndex = gl_GlobalInvocationID.x;
+    if (vertexIndex >= params.counts.x)
+    {
+        return;
+    }
+
+    uint wordOffset = vertexIndex * 16u;
+    vec3 inPosition = vec3(uintBitsToFloat(skinVertices.words[wordOffset + 0u]),
+                           uintBitsToFloat(skinVertices.words[wordOffset + 1u]),
+                           uintBitsToFloat(skinVertices.words[wordOffset + 2u]));
+    vec3 inNormal = vec3(uintBitsToFloat(skinVertices.words[wordOffset + 3u]),
+                         uintBitsToFloat(skinVertices.words[wordOffset + 4u]),
+                         uintBitsToFloat(skinVertices.words[wordOffset + 5u]));
+    vec2 texCoord = vec2(uintBitsToFloat(skinVertices.words[wordOffset + 6u]),
+                         uintBitsToFloat(skinVertices.words[wordOffset + 7u]));
+    uvec4 boneIndices = uvec4(skinVertices.words[wordOffset + 8u],
+                              skinVertices.words[wordOffset + 9u],
+                              skinVertices.words[wordOffset + 10u],
+                              skinVertices.words[wordOffset + 11u]);
+    vec4 boneWeights = vec4(uintBitsToFloat(skinVertices.words[wordOffset + 12u]),
+                            uintBitsToFloat(skinVertices.words[wordOffset + 13u]),
+                            uintBitsToFloat(skinVertices.words[wordOffset + 14u]),
+                            uintBitsToFloat(skinVertices.words[wordOffset + 15u]));
+    uint outputIndex = params.counts.y + vertexIndex;
+
+    // ---- 今のフレーム ----
+    {
+        vec3 position = vec3(0.0);
+        vec3 normal = vec3(0.0);
+        float totalWeight = 0.0;
+        uint boneCount = uint(current.paletteMatrices.length()) / 2u;
+        for (uint influenceIndex = 0u; influenceIndex < 4u; ++influenceIndex)
+        {
+            uint boneIndex = boneIndices[influenceIndex];
+            float weight = boneWeights[influenceIndex];
+            if (weight <= 0.0 || boneIndex >= boneCount)
+            {
+                continue;
+            }
+            mat4 positionMatrix = current.paletteMatrices[boneIndex * 2u];
+            mat4 normalMatrix = current.paletteMatrices[boneIndex * 2u + 1u];
+            position += (positionMatrix * vec4(inPosition, 1.0)).xyz * weight;
+            normal += (mat3(normalMatrix) * inNormal) * weight;
+            totalWeight += weight;
+        }
+        if (totalWeight <= DegenerateWeight)
+        {
+            position = inPosition;
+            normal = inNormal;
+        }
+        else
+        {
+            position /= totalWeight;
+            normal /= totalWeight;
+            if (dot(normal, normal) > DegenerateWeight)
+            {
+                normal = normalize(normal);
+            }
+        }
+
+        vec3 worldPosition = (current.world * vec4(position, 1.0)).xyz;
+        vec3 worldNormal = mat3(current.worldNormal) * normal;
+        worldNormal = dot(worldNormal, worldNormal) > DegenerateWeight ? normalize(worldNormal) : vec3(0.0);
+        WriteVertex(true, outputIndex, worldPosition, worldNormal, texCoord);
+    }
+
+    // ---- 直前のフレーム ----
+    {
+        vec3 position = vec3(0.0);
+        vec3 normal = vec3(0.0);
+        float totalWeight = 0.0;
+        uint boneCount = uint(previous.paletteMatrices.length());
+        for (uint influenceIndex = 0u; influenceIndex < 4u; ++influenceIndex)
+        {
+            uint boneIndex = boneIndices[influenceIndex];
+            float weight = boneWeights[influenceIndex];
+            if (weight <= 0.0 || boneIndex >= boneCount)
+            {
+                continue;
+            }
+            mat4 positionMatrix = previous.paletteMatrices[boneIndex];
+            position += (positionMatrix * vec4(inPosition, 1.0)).xyz * weight;
+            normal += (NormalMatrixOf(mat3(positionMatrix)) * inNormal) * weight;
+            totalWeight += weight;
+        }
+        if (totalWeight <= DegenerateWeight)
+        {
+            position = inPosition;
+            normal = inNormal;
+        }
+        else
+        {
+            position /= totalWeight;
+            normal /= totalWeight;
+            if (dot(normal, normal) > DegenerateWeight)
+            {
+                normal = normalize(normal);
+            }
+        }
+
+        vec3 worldPosition = (previous.world * vec4(position, 1.0)).xyz;
+        vec3 worldNormal = NormalMatrixOf(mat3(previous.world)) * normal;
+        worldNormal = dot(worldNormal, worldNormal) > DegenerateWeight ? normalize(worldNormal) : vec3(0.0);
+        WriteVertex(false, outputIndex, worldPosition, worldNormal, texCoord);
+    }
+}

@@ -10,6 +10,11 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity GBufferEmissive = Identity::Literal("GBuffer.Emissive", sizeof("GBuffer.Emissive") - 1);
     inline constexpr Identity GBufferVelocity = Identity::Literal("GBuffer.Velocity", sizeof("GBuffer.Velocity") - 1);
     inline constexpr Identity GBufferDepth = Identity::Literal("GBuffer.Depth", sizeof("GBuffer.Depth") - 1);
+    // 計算シェーダーでスキニングした今・前のフレームの頂点（ワールド空間。1 頂点 32 バイト）
+    inline constexpr Identity SkinningCurrentVertices =
+        Identity::Literal("Skinning.CurrentVertices", sizeof("Skinning.CurrentVertices") - 1);
+    inline constexpr Identity SkinningPreviousVertices =
+        Identity::Literal("Skinning.PreviousVertices", sizeof("Skinning.PreviousVertices") - 1);
     inline constexpr Identity ShadowMap = Identity::Literal("ShadowMap", sizeof("ShadowMap") - 1);
     inline constexpr Identity PointShadowCubeMap =
         Identity::Literal("PointShadowCubeMap", sizeof("PointShadowCubeMap") - 1);

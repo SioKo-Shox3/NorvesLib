@@ -5,6 +5,7 @@
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SkyAtmospherePass.h"
+#include "Rendering/SkinningComputePass.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/VolumetricsPass.h"
@@ -851,6 +852,12 @@ namespace NorvesLib::Core::Rendering
         neuralDecodePass->SetSceneView(this);
         neuralDecodePass->SetSceneRenderer(sceneRenderer);
         AddPass(std::move(neuralDecodePass));
+
+        // SkinningComputePass: スキニングの今・前のフレームの頂点を計算シェーダーで作る。
+        // 今の GBuffer の経路は頂点シェーダーのスキニングのままなので、ビジビリティバッファを使うときまで無効にしておく。
+        auto skinningComputePass = MakeUnique<SkinningComputePass>();
+        skinningComputePass->SetEnabled(false);
+        AddPass(std::move(skinningComputePass));
 
         // GBufferPass: ジオメトリ→GBuffer MRT
         GBufferPassSettings gbufferSettings;
