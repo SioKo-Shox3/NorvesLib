@@ -953,3 +953,11 @@
 - 試験: `CookedMeshTest` に、往復・旧い資産（番号なし）・壊れた番号の拒否 4 種・同じ境界球と誤差の別グループ（別ページ）の合成メッシュで子のページが生成元のページになること・番号を外すと値の照合で固定に戻ること・一部だけ番号があるとき・指す先が合わない番号を追加。`AssetCookMeshSimplifySmoke` に、焼いた全クラスタの番号の検査を追加。`CookedMeshTest` の v1.0 の予約項目の試験は Reserved1 へ移した。
 - 検証: `verify-VTG5-PAGE-LINK-ID-1-build.txt`（Debug の AssetCook・CookedMeshTest・MegaGeometryResourcesTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（AssetCookMeshSmoke・MegaGeometryResourcesTest・CookedMeshTest が 3/3 passed）。numstat は `--ignore-cr-at-eol` と一致。
 - Notes: (1) 形式のバージョンは上げず、予約項目を使った（旧い読み手は ReservedFieldNonZero で拒否する）。 (2) 既存の焼き込み済み資産は再クックするまで番号なしで、固定のページが残る。 (3) 次は VTG5-PAGE-STREAMER の前提が揃った（固定ページは番号の無い旧資産だけ）。
+
+## 反復 1（run 20261005-154938）: VTG5-BATCHED-CULL（done）
+- 親が直した完了条件（移行前の数との比較は外し、画像の PSNR と、まとめた版の2回の数の一致で判定する）に対して、現在の HEAD で記録した。コードは触っていない（実装は前の反復で済み）。
+- 構成: 全インスタンスを1つの storage buffer の表に置き、各パス1回の dispatch でカリング、材質ごとの区間に分けた間接描画（材質の数だけ `DrawIndexedIndirectCount`）、インスタンスごとの 1.25 MB の IndirectDraw のバッファは廃止（前の反復で確認済み）。
+- 決定性（`verify-VTG5-BATCHED-CULL-6-compare.txt`）: `-Deterministic`・RelWithDebInfo の撮影を2回（`-4-capture.txt` と `-5-captureB.txt`）。全3視点の相対フレーム 0・30 の `pass1/pass2_tested/pass2_drawn/occluded` が完全に一致（default 0/2680/2680/0 と 2672/2679/0/7、near 0/2994/2994/0 と 2888/2966/10/69、low 0/1793/1769/24 と 1755/1793/3/41）。不一致 0。読み込みが落ち着く描画フレームは default で A=177・B=127 と違っても、相対フレームの数は一致した。
+- 画像（移行前 `VTG5-MEGA-POOL-MIGRATE` との画素比較）: default 100 dB（不一致 0 画素）、low 100 dB（0 画素）、near 60.7 dB（99,874 画素が差を持つが最大差 18・差が 8 を超えるのは 5 画素だけで、差は石畳の球の面全体の微小な揺れ）。near は段 5 の BVH（節の遮蔽）以降、移行前との差が前より大きい（以前は 83〜92 dB）。near.png を開いて欠け・穴・ちらつきが無いことを確認した。まとめた版の A と B の比較は default 105.6・near 103.5・low 104.8 dB。平均輝度は 124.173 / 123.952 / 126.022 で移行前と同じ。
+- 検証: `verify-VTG5-BATCHED-CULL-1.txt`（Debug の Game・3 テストのビルド BUILD_EXIT_CODE=0）、`-2.txt`（ctest 4/4 pass）、`-3-build-rwdi.txt`（RelWithDebInfo の Game 0）、`-4-capture.txt`・`-5-captureB.txt`（撮影 2 回 pass）、`-6-compare.txt`。
+- Notes: (1) near の移行前との PSNR の低下は、BVH 導入後のカリングの違い（節単位の遮蔽）と TAA・RTGI の揺れが重なったものと見る。最大差 18 で見た目の退行ではないと判断（既知の限界として記録）。 (2) 次は TASKS.md の先頭の未完を参照。

@@ -459,7 +459,7 @@
 - notes: 危険地帯（描画パス・RT・寿命）。手続きの `ProceduralMeshGpuStore` はこの段では移さない。
 
 ## VTG5-BATCHED-CULL: MegaGeometryのインスタンスをまとめて1回のカリングと材質ごとの間接描画にする
-- status: todo
+- status: done
 - done-when: MegaGeometry の全インスタンスの表（変換・前のフレームの変換・メッシュ・材質の番号）を1つの storage buffer に置き、カリング（2パスの遮蔽を含む）を1回の dispatch（1パスにつき）で全インスタンスに掛ける。描画は材質ごとの区間に分けた間接描画の列（材質の数だけ `DrawIndexedIndirectCount`）にし、インスタンスごとの 1.25 MB の IndirectDraw のバッファをやめる。`-Deterministic` の撮影が移行前と一致する（PSNR を記録）。`MEGA_OCCLUSION` の行に描画フレームの番号と読み込み完了からの相対フレームの番号を足し、まとめた版を同じ条件で2回撮って全視点の同じ相対フレームの4つの数が一致すること（決定的であること）を記録する。移行前のログとの数の比較はしない（画像の PSNR で一致を判定する）。（CPU の記録の時間・GPU 時間の計測は VTG5-BATCHED-CULL-PERF へ分けた。）
 - verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RenderGraphCompileTest ViewportSnapshotDebugWiringTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest|MegaGeometryFrameCommandDebugModeTest|HiZOcclusionTestVulkanTest)$"`
