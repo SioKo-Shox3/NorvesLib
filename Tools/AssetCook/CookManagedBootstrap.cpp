@@ -1401,7 +1401,7 @@ namespace NorvesLib::Tools::AssetCook
                 workDirectories.push_back(std::move(directory));
                 stages.push_back(std::move(staged));
             }
-            if (!ValidateCookOutputSet(stages, {&owner.SpecLocator, 1}, op.Error))
+            if (!ValidateCookStagingOutputSet(stages, {&owner.SpecLocator, 1}, op.Error))
             {
                 return false;
             }

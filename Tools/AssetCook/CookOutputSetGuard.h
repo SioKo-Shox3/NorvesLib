@@ -11,4 +11,11 @@ namespace NorvesLib::Tools::AssetCook
     [[nodiscard]] bool ValidateCookOutputSet(Core::Container::Span<const CookPreparedPlan> finalPlans,
                                              Core::Container::Span<const std::filesystem::path> specAndControlFiles,
                                              Core::Container::AnsiString& error);
+    // asset別の独立fragmentを持つstage集合用。manifestを統合せず全て出力として数えるため、
+    // 同じfragmentの共有も拒否する。key/依存/control/物理path/file ID/prefix検査はFINALと共通。
+    // 各空stageの排他所有はcallerの責務。FINAL対応はPrepareCookStagingPlanで別途検査する。
+    // この成功も所有/公開許可を与えない。
+    [[nodiscard]] bool ValidateCookStagingOutputSet(Core::Container::Span<const CookPreparedPlan> stagePlans,
+                                                    Core::Container::Span<const std::filesystem::path> protectedFiles,
+                                                    Core::Container::AnsiString& error);
 } // namespace NorvesLib::Tools::AssetCook

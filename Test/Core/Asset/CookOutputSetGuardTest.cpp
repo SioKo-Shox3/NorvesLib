@@ -141,6 +141,31 @@ int main()
     const auto initial = Good({a, b}, {root / "spec.json"});
     CHECK(initial.LocatorOccurrences == 7 && initial.UniqueLocators == 6);
     CHECK(!std::filesystem::exists(root / "final") && std::filesystem::last_write_time(aSource) == stamp);
+    // FINALは単一manifest、asset別stageは互いに独立したfragment。契約を混ぜない。
+    {
+        const auto first = root / "stage-first", second = root / "stage-second";
+        CHECK(std::filesystem::create_directory(first) && std::filesystem::create_directory(second));
+        CookPreparedPlan stageA, stageB;
+        SetText error;
+        CHECK(PrepareCookStagingPlan(a, first, stageA, error));
+        CHECK(PrepareCookStagingPlan(b, second, stageB, error));
+        Plans fragments{stageA, stageB};
+        Locators controls{root / "spec.json"};
+        CHECK(!ValidateCookOutputSet(fragments, controls, error) &&
+              std::strstr(error.c_str(), "set_requires_one_manifest_path"));
+        CHECK(ValidateCookStagingOutputSet(fragments, controls, error) && error.empty());
+        Plans shared{a, b};
+        CHECK(!ValidateCookStagingOutputSet(shared, controls, error));
+        controls.push_back(stageA.Context.Request.ManifestPath);
+        CHECK(!ValidateCookStagingOutputSet(fragments, controls, error));
+        controls.pop_back();
+        CHECK(std::filesystem::create_directory(first / "Cooked"));
+        TextFile(stageA.Outputs[0].TargetPath, "protected stage source");
+        auto cross = stageB.Context.Request;
+        cross.InputPath = stageA.Outputs[0].TargetPath;
+        Plans crossed{stageA, Plan(cross)};
+        CHECK(!ValidateCookStagingOutputSet(crossed, controls, error));
+    }
     auto changed = bRequest;
     changed.LogicalPath = "A";
     Bad({a, Plan(changed)});

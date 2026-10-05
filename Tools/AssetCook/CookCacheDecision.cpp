@@ -881,7 +881,7 @@ namespace NorvesLib::Tools::AssetCook
             return a.size() == b.size() ? 0 : (a.size() < b.size() ? -1 : 1);
         }
         bool AggregatePaths(VariableArray<SetEndpoint>& endpoints, VariableArray<SetObservation>& observations,
-                            Detail::CookOutputSetGuardStats& stats, size_t& budget, AnsiString& error)
+                            Detail::CookOutputSetGuardStats& stats, size_t& budget, bool bSharedManifest, AnsiString& error)
         {
             VariableArray<size_t> ordered;
             ordered.reserve(endpoints.size());
@@ -930,7 +930,7 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     return Fail(error, "set_dependency_presence_changed");
                 }
-                if (endpoint.Role == SetRole::Manifest)
+                if (endpoint.Role == SetRole::Manifest && bSharedManifest)
                 {
                     if (bManifestSeen)
                     {
@@ -1058,123 +1058,143 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
     } // namespace
+    namespace
+    {
+        bool ValidateSetImpl(Core::Container::Span<const CookPreparedPlan> plans,
+                             Core::Container::Span<const std::filesystem::path> controls,
+                             Detail::CookOutputSetGuardStats& stats, bool bSharedManifest, AnsiString& error,
+                             void (*afterObservation)(void*), void* probeContext)
+        {
+            error.clear();
+            stats = {};
+#if !defined(_WIN32)
+            (void)plans;
+            (void)controls;
+            (void)afterObservation;
+            (void)probeContext;
+            (void)bSharedManifest;
+            return Fail(error, "Windows_output_boundary_required");
+#else
+            try
+            {
+                if (plans.empty() || !plans.data() || plans.size() > MaximumCookSetPlans ||
+                    (controls.size() && !controls.data()) || controls.size() > MaximumCookSetProtectedOccurrences)
+                {
+                    return Fail(error, "set_input_limit");
+                }
+                VariableArray<CurrentPlan> current;
+                current.reserve(plans.size());
+                VariableArray<SetEndpoint> endpoints;
+                VariableArray<SetKey> keys;
+                size_t outputs = 0, protectedCount = controls.size(), budget = 0;
+                for (size_t i = 0; i < plans.size(); ++i)
+                {
+                    CurrentPlan plan;
+                    if (!Reprepare(plans[i], plan, error))
+                    {
+                        return false;
+                    }
+                    if (plan.Expected.size() > MaximumCookSetOutputs - outputs ||
+                        plan.Context.Dependencies.Files.size() > MaximumCookSetProtectedOccurrences - protectedCount)
+                    {
+                        return Fail(error, "set_occurrence_limit");
+                    }
+                    outputs += plan.Expected.size();
+                    protectedCount += plan.Context.Dependencies.Files.size();
+                    for (size_t j = 0; j < plan.Expected.size(); ++j)
+                    {
+                        const auto& key = plan.Expected[j];
+                        if (!Budget(key.LogicalPath.size(), budget, error) ||
+                            !Budget(key.Variant.size(), budget, error) ||
+                            !AddSetEndpoint(endpoints, plan.Packages[j], SetRole::Package, -1, budget, error))
+                        {
+                            return false;
+                        }
+                        keys.push_back({i, j});
+                    }
+                    if (!AddSetEndpoint(endpoints, plan.Context.Request.ManifestPath, SetRole::Manifest, -1, budget,
+                                        error))
+                    {
+                        return false;
+                    }
+                    // 公開planのFilesではなく、同じauthorityで今採取した依存を使う。
+                    for (const auto& dependency : plan.Context.Dependencies.Files)
+                    {
+                        if (!AddSetEndpoint(endpoints, dependency.Path, SetRole::Protected, dependency.bPresent ? 1 : 0,
+                                            budget, error))
+                        {
+                            return false;
+                        }
+                    }
+                    current.push_back(std::move(plan));
+                }
+                for (const auto& path : controls)
+                {
+                    if (!AddSetEndpoint(endpoints, path, SetRole::Protected, -1, budget, error))
+                    {
+                        return false;
+                    }
+                }
+                std::sort(keys.begin(), keys.end(),
+                          [&](const SetKey& a, const SetKey& b)
+                          {
+                              const auto& x = current[a.Plan].Expected[a.Output];
+                              const auto& y = current[b.Plan].Expected[b.Output];
+                              if (x.Kind != y.Kind)
+                              {
+                                  return static_cast<uint8_t>(x.Kind) < static_cast<uint8_t>(y.Kind);
+                              }
+                              const int path = CompareKeyText(x.LogicalPath, y.LogicalPath);
+                              return path ? path < 0 : CompareKeyText(x.Variant, y.Variant) < 0;
+                          });
+                for (size_t i = 1; i < keys.size(); ++i)
+                {
+                    const auto& a = keys[i - 1];
+                    const auto& b = keys[i];
+                    if (SameKey(current[a.Plan].Expected[a.Output], current[b.Plan].Expected[b.Output]))
+                    {
+                        return Fail(error, "set_duplicate_output_key");
+                    }
+                }
+                stats.LocatorOccurrences = endpoints.size();
+                VariableArray<SetObservation> observations;
+                if (!AggregatePaths(endpoints, observations, stats, budget, bSharedManifest, error) ||
+                    !CheckSetPaths(observations, error))
+                {
+                    return false;
+                }
+                if (afterObservation)
+                {
+                    afterObservation(probeContext);
+                }
+                for (const auto& plan : current)
+                {
+                    if (!Stable(plan, error))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            catch (const std::exception&)
+            {
+                return Fail(error, "set_guard_exception");
+            }
+#endif
+        }
+    } // namespace
     bool Detail::ValidateCookOutputSetForTest(Core::Container::Span<const CookPreparedPlan> plans,
                                               Core::Container::Span<const std::filesystem::path> controls,
                                               CookOutputSetGuardStats& stats, AnsiString& error,
                                               void (*afterObservation)(void*), void* probeContext)
     {
-        error.clear();
-        stats = {};
-#if !defined(_WIN32)
-        (void)plans;
-        (void)controls;
-        (void)afterObservation;
-        (void)probeContext;
-        return Fail(error, "Windows_output_boundary_required");
-#else
-        try
-        {
-            if (plans.empty() || !plans.data() || plans.size() > MaximumCookSetPlans ||
-                (controls.size() && !controls.data()) || controls.size() > MaximumCookSetProtectedOccurrences)
-            {
-                return Fail(error, "set_input_limit");
-            }
-            VariableArray<CurrentPlan> current;
-            current.reserve(plans.size());
-            VariableArray<SetEndpoint> endpoints;
-            VariableArray<SetKey> keys;
-            size_t outputs = 0, protectedCount = controls.size(), budget = 0;
-            for (size_t i = 0; i < plans.size(); ++i)
-            {
-                CurrentPlan plan;
-                if (!Reprepare(plans[i], plan, error))
-                {
-                    return false;
-                }
-                if (plan.Expected.size() > MaximumCookSetOutputs - outputs ||
-                    plan.Context.Dependencies.Files.size() > MaximumCookSetProtectedOccurrences - protectedCount)
-                {
-                    return Fail(error, "set_occurrence_limit");
-                }
-                outputs += plan.Expected.size();
-                protectedCount += plan.Context.Dependencies.Files.size();
-                for (size_t j = 0; j < plan.Expected.size(); ++j)
-                {
-                    const auto& key = plan.Expected[j];
-                    if (!Budget(key.LogicalPath.size(), budget, error) || !Budget(key.Variant.size(), budget, error) ||
-                        !AddSetEndpoint(endpoints, plan.Packages[j], SetRole::Package, -1, budget, error))
-                    {
-                        return false;
-                    }
-                    keys.push_back({i, j});
-                }
-                if (!AddSetEndpoint(endpoints, plan.Context.Request.ManifestPath, SetRole::Manifest, -1, budget, error))
-                {
-                    return false;
-                }
-                // 公開planのFilesではなく、同じauthorityで今採取した依存を使う。
-                for (const auto& dependency : plan.Context.Dependencies.Files)
-                {
-                    if (!AddSetEndpoint(endpoints, dependency.Path, SetRole::Protected, dependency.bPresent ? 1 : 0,
-                                        budget, error))
-                    {
-                        return false;
-                    }
-                }
-                current.push_back(std::move(plan));
-            }
-            for (const auto& path : controls)
-            {
-                if (!AddSetEndpoint(endpoints, path, SetRole::Protected, -1, budget, error))
-                {
-                    return false;
-                }
-            }
-            std::sort(keys.begin(), keys.end(),
-                      [&](const SetKey& a, const SetKey& b)
-                      {
-                          const auto& x = current[a.Plan].Expected[a.Output];
-                          const auto& y = current[b.Plan].Expected[b.Output];
-                          if (x.Kind != y.Kind)
-                          {
-                              return static_cast<uint8_t>(x.Kind) < static_cast<uint8_t>(y.Kind);
-                          }
-                          const int path = CompareKeyText(x.LogicalPath, y.LogicalPath);
-                          return path ? path < 0 : CompareKeyText(x.Variant, y.Variant) < 0;
-                      });
-            for (size_t i = 1; i < keys.size(); ++i)
-            {
-                const auto& a = keys[i - 1];
-                const auto& b = keys[i];
-                if (SameKey(current[a.Plan].Expected[a.Output], current[b.Plan].Expected[b.Output]))
-                {
-                    return Fail(error, "set_duplicate_output_key");
-                }
-            }
-            stats.LocatorOccurrences = endpoints.size();
-            VariableArray<SetObservation> observations;
-            if (!AggregatePaths(endpoints, observations, stats, budget, error) || !CheckSetPaths(observations, error))
-            {
-                return false;
-            }
-            if (afterObservation)
-            {
-                afterObservation(probeContext);
-            }
-            for (const auto& plan : current)
-            {
-                if (!Stable(plan, error))
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-        catch (const std::exception&)
-        {
-            return Fail(error, "set_guard_exception");
-        }
-#endif
+        return ValidateSetImpl(plans, controls, stats, true, error, afterObservation, probeContext);
+    }
+    bool ValidateCookStagingOutputSet(Core::Container::Span<const CookPreparedPlan> plans,
+                                      Core::Container::Span<const std::filesystem::path> controls, AnsiString& error)
+    {
+        Detail::CookOutputSetGuardStats stats;
+        return ValidateSetImpl(plans, controls, stats, false, error, nullptr, nullptr);
     }
     bool ValidateCookOutputSet(Core::Container::Span<const CookPreparedPlan> plans,
                                Core::Container::Span<const std::filesystem::path> controls, AnsiString& error)

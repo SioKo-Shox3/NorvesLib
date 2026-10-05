@@ -72,3 +72,9 @@ stable namespaceと協調writerが前提。認証・悪意あるfilesystem write
 公開・receipt・rollback・退役の16境界の実child process終了に、keepalive mutexを残すabandoned再開を追加する。source/spec不在で原indexのbytes/IDを保ってrollbackまたはcommit確定する。Prepared/Retired残物と未知prefix directoryのID/bytes不変も検査する。Release/Close故障注入は実cleanup後の失敗報告であり、実OS故障の再現ではない。
 
 short alias、Unicode物理親のASCII alias、SUBSTは条件flagを残す。0は未実測として扱う。既存32CPU、単体7CLI/79出力byte、texture v1の固定10出力byteと5診断byteを維持し、新しいexecutor試験を含む33CPUを受入条件とする。
+
+## stage集合の検査契約
+
+初回de680cd9/run37280393756と診断追加02aa146a/run37282610496は既存32CPUとbuild/5診断が成功したが、最初の新規bootstrapは未完了だった。診断で`set_requires_one_manifest_path`を確認した。asset別work directoryのfragment集合を、FINALの単一集約manifest用guardへ渡していたためである。
+
+FINALは従来の単一manifest条件を維持する。stage用入口は同じ集合検査coreを使い、manifestを統合せず独立した出力として数える。共有fragmentも衝突として拒否し、全source/controlとのalias、file ID、prefix、key、現在性の検査を省略しない。
