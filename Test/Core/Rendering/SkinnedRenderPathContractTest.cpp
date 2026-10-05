@@ -1471,7 +1471,7 @@ namespace
         packet.DrawCommands.push_back(source);
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), NORVES_SOURCE_DIR "/Assets/Shaders"));
         SceneRenderer renderer;
         assert(renderer.Initialize(device.get(), nullptr));
         renderer.SetSkinnedMeshResources(&resources.SkinnedMeshes());
@@ -1529,25 +1529,33 @@ namespace
         lights[0].bCastShadows = true;
         lights[0].bVisible = true;
         context.SnapshotLightProxies = &lights;
+        // CSM の行列は有効なカメラが無いと作られず、影の描画が積まれない。
+        CameraProxy shadowCamera;
+        context.MainCamera = &shadowCamera;
 
         ShadowMapPass shadow;
         shadow.SetSceneRenderer(&renderer);
         assert(shadow.Initialize(context));
         shadow.Setup(context);
         shadow.Execute(context);
-        assert(pending.size() == 1);
-        assert(pending[0].GeometryPass.DrawCommands);
-        assert(pending[0].GeometryPass.DrawCommands->size() == 1);
-        const DrawCommand& shadowDraw = (*pending[0].GeometryPass.DrawCommands)[0];
-        assert(shadowDraw.Pipeline);
-        assert(shadowDraw.DescriptorSet);
-        auto shadowDescriptor = Container::DynamicPointerCast<FakeDescriptorSet>(shadowDraw.DescriptorSet);
-        assert(shadowDescriptor);
-        assert(shadowDescriptor->StorageBuffers.find(8) != shadowDescriptor->StorageBuffers.end());
-        assert(shadowDescriptor->StorageBuffers.find(9) != shadowDescriptor->StorageBuffers.end());
+        // 影はカスケードごとに GeometryPass を1件積み、どのカスケードにもスキニングの描画が1件入る。
+        assert(pending.size() == PhysicalLightingShadowCascadeCount);
+        for (uint32_t cascadeIndex = 0; cascadeIndex < PhysicalLightingShadowCascadeCount; ++cascadeIndex)
+        {
+            assert(pending[cascadeIndex].Type == FrameCommandType::GeometryPass);
+            assert(pending[cascadeIndex].GeometryPass.DrawCommands);
+            assert(pending[cascadeIndex].GeometryPass.DrawCommands->size() == 1);
+            const DrawCommand& shadowDraw = (*pending[cascadeIndex].GeometryPass.DrawCommands)[0];
+            assert(shadowDraw.Pipeline);
+            assert(shadowDraw.DescriptorSet);
+            auto shadowDescriptor = Container::DynamicPointerCast<FakeDescriptorSet>(shadowDraw.DescriptorSet);
+            assert(shadowDescriptor);
+            assert(shadowDescriptor->StorageBuffers.find(8) != shadowDescriptor->StorageBuffers.end());
+            assert(shadowDescriptor->StorageBuffers.find(9) != shadowDescriptor->StorageBuffers.end());
+        }
         renderer.ExecuteFrameCommands(pending, &commandList);
-        assert(commandList.DrawIndexedCount == 2);
-        assert(renderer.GetStats().SkinnedShadowDrawCallCount == 1);
+        assert(commandList.DrawIndexedCount == 1 + PhysicalLightingShadowCascadeCount);
+        assert(renderer.GetStats().SkinnedShadowDrawCallCount == PhysicalLightingShadowCascadeCount);
         assert(resources.SkinnedMeshes().CommitSubmittedFrame(1));
 
         shadow.Shutdown();
@@ -1669,15 +1677,19 @@ namespace
         proxy.bCastShadow = true;
         proxy.bVisible = true;
         packet.Scene.SkinnedMeshProxies.push_back(proxy);
+        // CSM の行列は有効なカメラが無いと作られず、影の描画が積まれない。
+        packet.Scene.MainCamera.Viewport.Width = static_cast<float>(settings.Width);
+        packet.Scene.MainCamera.Viewport.Height = static_cast<float>(settings.Height);
+        packet.bHasMainCamera = true;
         packet.SetState(FramePacketState::Reading);
 
         coordinator.RenderFrame(&packet);
         assert(swapChain->GetCompletedSubmissionSerial() == 0);
         assert(packet.Stats.SkinnedGBufferRecordedDraws == 1);
-        assert(packet.Stats.SkinnedShadowRecordedDraws == 1);
+        assert(packet.Stats.SkinnedShadowRecordedDraws == PhysicalLightingShadowCascadeCount);
         const RenderingCoordinatorStatsSnapshot diagnostics = coordinator.GetStatsSnapshot();
         assert(diagnostics.SkinnedGBufferRecordedDraws == 1);
-        assert(diagnostics.SkinnedShadowRecordedDraws == 1);
+        assert(diagnostics.SkinnedShadowRecordedDraws == PhysicalLightingShadowCascadeCount);
         assert(diagnostics.GeneratedDrawCommandCount == 1);
 
         SkinnedMeshGpuLifetimeSnapshot lifetime;
@@ -1848,6 +1860,9 @@ namespace
 int main()
 {
 #ifdef _WIN32
+    // assert が失敗したときに対話窓やクラッシュ報告で待たず、標準エラーへ出して即座に終わる。
+    _set_error_mode(_OUT_TO_STDERR);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif

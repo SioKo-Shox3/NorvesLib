@@ -807,7 +807,7 @@
 - notes: 2026-10-05 親が足した。段2の受入れの既知の限界（パストレーサーを有効にすると VT の非常駐のタイルを読みうる）。起動画面の既定（RTGI は GBuffer だけを読む）では使わない。
 
 ## TEST-SKINNED: SkinnedRenderPathContractTestの停止を直す
-- status: todo
+- status: done
 - done-when: `SkinnedRenderPathContractTest`がCPU 0のまま戻らない（2026-09-24にctest 1350秒で強制終了）原因を特定し、契約を弱めずに完走させる。R5-P12時点でもpending件数assertで失敗していた既存問題として扱う。
 - verify: `cmake --build build --config Debug --target SkinnedRenderPathContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error --timeout 300 -R "^SkinnedRenderPathContractTest$"`
