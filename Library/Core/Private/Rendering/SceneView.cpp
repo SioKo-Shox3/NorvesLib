@@ -5,6 +5,7 @@
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SkyAtmospherePass.h"
+#include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/LightingPass.h"
@@ -891,6 +892,15 @@ namespace NorvesLib::Core::Rendering
             visibilityRasterPass->SetSkinningComputePass(skinningComputePassPtr);
             visibilityRasterPassPtr = visibilityRasterPass.get();
             AddPass(std::move(visibilityRasterPass));
+        }
+
+        // MaterialTileClassifyPass: VisBuffer.Id から、材質ごとのタイルの一覧と間接 dispatch の引数を作る。
+        // 材質の解決が使うまで無効にしておく（既定の描画は変えない）。
+        if (visibilityRasterPassPtr)
+        {
+            auto materialTileClassifyPass = MakeUnique<MaterialTileClassifyPass>();
+            materialTileClassifyPass->SetRasterPass(visibilityRasterPassPtr);
+            AddPass(std::move(materialTileClassifyPass));
         }
 
         // SSAOPass: GBufferの深度・法線から画面空間AO（GTAO）を計算。半径は世界の長さ（m）で、

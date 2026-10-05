@@ -19,6 +19,15 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity VisBufferId = Identity::Literal("VisBuffer.Id", sizeof("VisBuffer.Id") - 1);
     inline constexpr Identity VisBufferDrawRecords =
         Identity::Literal("VisBuffer.DrawRecords", sizeof("VisBuffer.DrawRecords") - 1);
+    // 材質の解決の前段（MaterialTileClassifyPass）が作る、材質ごとのタイルの一覧と間接 dispatch の引数
+    inline constexpr Identity MaterialTileArgs =
+        Identity::Literal("MaterialTile.Args", sizeof("MaterialTile.Args") - 1);
+    inline constexpr Identity MaterialTileList =
+        Identity::Literal("MaterialTile.List", sizeof("MaterialTile.List") - 1);
+    inline constexpr Identity MaterialTileCursors =
+        Identity::Literal("MaterialTile.Cursors", sizeof("MaterialTile.Cursors") - 1);
+    inline constexpr Identity MaterialTileStats =
+        Identity::Literal("MaterialTile.Stats", sizeof("MaterialTile.Stats") - 1);
     inline constexpr Identity ShadowMap = Identity::Literal("ShadowMap", sizeof("ShadowMap") - 1);
     inline constexpr Identity PointShadowCubeMap =
         Identity::Literal("PointShadowCubeMap", sizeof("PointShadowCubeMap") - 1);

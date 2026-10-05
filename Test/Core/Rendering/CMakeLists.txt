@@ -464,6 +464,17 @@ set_tests_properties(ComputeSkinningVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 画面の 8x8 のタイルを材質ごとに分ける計算シェーダー（material_tile_classify.comp）を、合成した VisBuffer.Id の画像と描画の記録の表で動かし、
+# 材質ごとのタイルの一覧・間接 dispatch の引数・統計が期待どおりになることを確かめる。3 つの材質が混じるタイル・空のタイル・部分タイル・
+# 上限以上の材質・引けない ID・一覧が足りないときの切り詰めを含む。validation error 0 件。
+add_test(NAME MaterialTileClassifyVulkanTest COMMAND RHITextureUpdateVulkanTest --test=MaterialTileClassifyVulkanTest)
+set_tests_properties(MaterialTileClassifyVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
@@ -483,6 +494,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER GeometryPageRequestVulkanTest GeometryPageRequestVulkanTest.cpp
     MEMBER IntegerAttachmentVulkanTest IntegerAttachmentVulkanTest.cpp
     MEMBER ComputeSkinningVulkanTest ComputeSkinningVulkanTest.cpp
+    MEMBER MaterialTileClassifyVulkanTest MaterialTileClassifyVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE

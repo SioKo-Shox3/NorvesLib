@@ -26,6 +26,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/VisibilityBuffer.h"
+#include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Test/Core/Rendering/GeometryUploadTestSupport.h"
@@ -44,6 +45,7 @@
 #include "RHI/TransientResourcePool.h"
 #include <cassert>
 #include <cstddef>
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <utility>
@@ -316,6 +318,13 @@ namespace
         uint32_t EndRenderPassCount = 0;
         uint32_t DrawCallCount = 0;
         uint32_t DispatchCount = 0;
+        // 材質のタイル分類の資源（MaterialTile_ で始まる名前）への 0 埋めの記録（バッファの名前と大きさ）
+        struct MaterialTileFill
+        {
+            char BufferName[40] = {};
+            uint64_t SizeBytes = 0;
+        };
+        Container::VariableArray<MaterialTileFill> MaterialTileFills;
         // 「前のフレームで見えた」ビットのバッファへの0埋め（範囲）とコピー（古いバッファからの引き継ぎ）の記録
         struct VisibilityFill
         {
@@ -474,6 +483,17 @@ namespace
                             "MegaGeometry_VisibleLastFrame"))
             {
                 VisibilityFills.push_back(VisibilityFill{offset, size});
+            }
+            if (buffer)
+            {
+                const char* name = static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName;
+                if (name != nullptr && std::strncmp(name, "MaterialTile_", 13) == 0 && value == 0u)
+                {
+                    MaterialTileFill fill;
+                    std::memcpy(fill.BufferName, name, std::min(std::strlen(name), sizeof(fill.BufferName) - 1));
+                    fill.SizeBytes = size;
+                    MaterialTileFills.push_back(fill);
+                }
             }
             (void)value;
         }
@@ -1914,6 +1934,7 @@ namespace
         GBufferPass GBuffer;
         MegaGeometryPass Mega;
         VisibilityRasterPass Raster;
+        MaterialTileClassifyPass Classify;
         FakeCommandList CommandList;
         Container::VariableArray<DrawCommand> OpaqueCommands;
         Container::VariableArray<FrameCommand> PendingFrameCommands;
@@ -1922,8 +1943,21 @@ namespace
         ViewRenderContext Context;
     };
 
+    // 材質のタイル分類のパスの足し方
+    enum class ClassifyMode
+    {
+        None,
+        /** @brief 描画のパスから記録の表を受け取る */
+        LinkedToRaster,
+        /** @brief 記録の表の取り出し元を渡さない（分類できないときの安全側の動き） */
+        WithoutRaster,
+    };
+
     // bVisibilityPlan=false は --visibility-buffer=off（MegaGeometryPass が描画の写しを作らず、VisibilityRasterPass も足さない）
-    void RunVisibilityRasterScene(VisibilityRasterScene& scene, bool bVisibilityPlan, bool bOcclusionCulling)
+    void RunVisibilityRasterScene(VisibilityRasterScene& scene,
+                                  bool bVisibilityPlan,
+                                  bool bOcclusionCulling,
+                                  ClassifyMode classifyMode = ClassifyMode::None)
     {
         scene.Device = RHI::MakeShared<FakeDevice>();
         scene.Device->EnableVisibilityBufferCapabilities();
@@ -2010,6 +2044,16 @@ namespace
         {
             assert(scene.Raster.Initialize(context));
             scene.Graph.AddPass(&scene.Raster);
+            if (classifyMode != ClassifyMode::None)
+            {
+                scene.Classify.SetEnabled(true);
+                if (classifyMode == ClassifyMode::LinkedToRaster)
+                {
+                    scene.Classify.SetRasterPass(&scene.Raster);
+                }
+                assert(scene.Classify.Initialize(context));
+                scene.Graph.AddPass(&scene.Classify);
+            }
         }
         assert(scene.Graph.Compile(context));
         const RenderGraphExecutionResult result = scene.Graph.ExecuteWithResult(context);
@@ -2018,6 +2062,7 @@ namespace
 
     void ShutdownVisibilityRasterScene(VisibilityRasterScene& scene)
     {
+        scene.Classify.Shutdown();
         scene.Raster.Shutdown();
         scene.Mega.Shutdown();
         scene.GBuffer.Shutdown();
@@ -2112,6 +2157,128 @@ namespace
         }
         assert(commonBarriers == 3);
 
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 材質のタイル分類のパス: VisBuffer.Id を読み、引数・一覧・カーソル・統計を書く。3 回の dispatch で分類し、
+    // 引数は間接 dispatch の引数として読める用途と状態（GenericRead）で後のパスへ渡す
+    void TestMaterialTileClassifyDispatchesAndPublishesArgs()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::LinkedToRaster);
+        FakeCommandList& commandList = scene.CommandList;
+
+        // GBuffer（空）・MegaGeometry（2パス）・ビジビリティ・材質のタイル分類の4つのパス
+        assert(scene.Graph.GetLastExecutedPassCount() == 4);
+        // 記録を書く計算まで 10 回 + 分類の 3 回（数える・位置を決める・書き出す）
+        assert(commandList.DispatchCount == 13);
+        assert(scene.Classify.WasClassified());
+
+        // 画面は 128x64 なので 16x8 のタイル。一覧は 1 タイルが出せる材質の最大数ぶん
+        const MaterialTiles::Layout& layout = scene.Classify.GetLayout();
+        assert(layout.IsValid());
+        assert(layout.TilesX == 16 && layout.TilesY == 8 && layout.TileCount == 128);
+        assert(layout.MaxMaterials == MaterialTiles::DEFAULT_MAX_MATERIALS);
+        assert(layout.ListCapacity == 128 * MaterialTiles::MAX_MATERIALS_PER_TILE);
+        assert(layout.ArgsBytes() == static_cast<uint64_t>(MaterialTiles::DEFAULT_MAX_MATERIALS) * 16);
+
+        // 数え始める前に、引数と統計だけを 0 にする（一覧とカーソルは分類が書く範囲しか読まれない）
+        bool bArgsFilled = false;
+        bool bStatsFilled = false;
+        for (const FakeCommandList::MaterialTileFill& fill : commandList.MaterialTileFills)
+        {
+            if (IsDebugName(fill.BufferName, "MaterialTile_Args"))
+            {
+                assert(fill.SizeBytes == layout.ArgsBytes());
+                bArgsFilled = true;
+            }
+            else if (IsDebugName(fill.BufferName, "MaterialTile_Stats"))
+            {
+                assert(fill.SizeBytes == MaterialTiles::STATS_BYTES);
+                bStatsFilled = true;
+            }
+            else
+            {
+                assert(false);
+            }
+        }
+        assert(bArgsFilled && bStatsFilled);
+
+        // 引数と一覧は、後の材質の解決が読めるよう、このパスが GenericRead へ遷移させて渡す。引数のバッファは間接引数の用途を持つ
+        bool bArgsToGenericRead = false;
+        bool bListToGenericRead = false;
+        for (const BarrierEvent& barrier : commandList.Barriers)
+        {
+            if (barrier.Kind != RGBarrierKind::Buffer || barrier.BeforeState != RHI::ResourceState::UnorderedAccess ||
+                barrier.AfterState != RHI::ResourceState::GenericRead)
+            {
+                continue;
+            }
+            const auto* fakeBuffer = static_cast<const FakeBuffer*>(barrier.Buffer);
+            const char* name = fakeBuffer->GetDesc().DebugName;
+            if (IsDebugName(name, "MaterialTile_Args"))
+            {
+                assert((fakeBuffer->GetDesc().Usage & RHI::ResourceUsage::IndirectBuffer) == RHI::ResourceUsage::IndirectBuffer);
+                assert((fakeBuffer->GetDesc().Usage & RHI::ResourceUsage::StorageBuffer) == RHI::ResourceUsage::StorageBuffer);
+                bArgsToGenericRead = true;
+            }
+            else if (IsDebugName(name, "MaterialTile_List"))
+            {
+                bListToGenericRead = true;
+            }
+        }
+        assert(bArgsToGenericRead && bListToGenericRead);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 記録の表の取り出し元が無く分類できないときは、dispatch せずに引数と統計を 0 にして終える
+    // （後の材質の解決が、材質ごとの dispatch のグループ数 0 として安全に読める）
+    void TestMaterialTileClassifyWithoutRecordTableClearsArgs()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::WithoutRaster);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(scene.Graph.GetLastExecutedPassCount() == 4);
+        assert(!scene.Classify.WasClassified());
+        assert(commandList.DispatchCount == 10); // 分類の dispatch は無い
+
+        bool bArgsCleared = false;
+        bool bStatsCleared = false;
+        for (const FakeCommandList::MaterialTileFill& fill : commandList.MaterialTileFills)
+        {
+            bArgsCleared = bArgsCleared || IsDebugName(fill.BufferName, "MaterialTile_Args");
+            bStatsCleared = bStatsCleared || IsDebugName(fill.BufferName, "MaterialTile_Stats");
+        }
+        assert(bArgsCleared && bStatsCleared);
+        assert(commandList.MaterialTileFills.size() == 2);
+
+        // 分類できなくても、宣言した最終の状態（GenericRead）へ渡す
+        bool bArgsToGenericRead = false;
+        for (const BarrierEvent& barrier : commandList.Barriers)
+        {
+            if (barrier.Kind == RGBarrierKind::Buffer && barrier.BeforeState == RHI::ResourceState::UnorderedAccess &&
+                barrier.AfterState == RHI::ResourceState::GenericRead &&
+                IsDebugName(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName, "MaterialTile_Args"))
+            {
+                bArgsToGenericRead = true;
+            }
+        }
+        assert(bArgsToGenericRead);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 材質のタイル分類を足さない構成（既定）では、資源も dispatch も増えない
+    void TestMaterialTileClassifyAbsentByDefault()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true);
+        assert(scene.Graph.GetLastExecutedPassCount() == 3);
+        assert(scene.CommandList.DispatchCount == 10);
+        assert(scene.CommandList.MaterialTileFills.empty());
+        assert(!scene.Classify.GetLayout().IsValid());
         ShutdownVisibilityRasterScene(scene);
     }
 
@@ -7425,6 +7592,9 @@ int main()
     TestWriteFinalStateSuppressesFollowupReadBarrier();
     TestVisibilityBufferResourcesDeclareAndRead();
     TestVisibilityRasterOnRecordsMegaDrawsAndIdPass();
+    TestMaterialTileClassifyDispatchesAndPublishesArgs();
+    TestMaterialTileClassifyWithoutRecordTableClearsArgs();
+    TestMaterialTileClassifyAbsentByDefault();
     TestVisibilityRasterOnSinglePassMegaGeometry();
     TestVisibilityRasterOffKeepsExistingMegaGeometryRecording();
     TestVisibilityRasterWithoutGBufferDepthDoesNothing();

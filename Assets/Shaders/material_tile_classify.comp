@@ -1,0 +1,177 @@
+﻿#version 450
+
+// ========================================
+// 画面の 8x8 のタイルを材質ごとに分けるシェーダー（ビジビリティバッファの材質の解決の前段）
+//
+// VisBuffer.Id の画素から描画の記録（Common/VisibilityBuffer.glsl）を引き、記録の材質の番号を得る。
+// タイルに出る材質の番号の集合を求め、材質ごとに「そのタイルの番号」を並べた一覧と、材質ごとの間接 dispatch の引数を作る。
+// 空の画素（ID = 0）と、記録の表から引けない画素は、どの材質にも数えない。空の画素だけのタイルはどの材質にも入らない。
+//
+// 3 回の dispatch で作る（params.limits.z が段階）。いずれも同じ 8x8 のワークグループ。
+//   段階 0（数える）: タイルごとに 1 ワークグループ。材質ごとに「出るタイルの数」を argWords へ足し込む。
+//   段階 1（並べる位置を決める）: 1 ワークグループ。材質の番号の順に一覧の中の先頭位置を割り当て、引数を書く。
+//   段階 2（書き出す）: 段階 0 と同じ分類をやり直し、材質ごとの一覧へタイルの番号を書く。
+// 一覧の中の並びはアトミックの順で、実行ごとに変わりうる（材質ごとの集合は変わらない）。
+//
+// 引数（argWords）は材質ごとに 4 語: 0 = x（その材質のタイルの数 = 後の dispatch のグループ数）、1 = 1、2 = 1、
+// 3 = 一覧の中の先頭位置（dispatch の引数としては読まれない）。VkDispatchIndirectCommand と同じ並びで 16 バイトごと。
+// タイルの番号は tileY * tilesX + tileX。
+// ========================================
+
+#define VIS_RECORD_TABLE_SET 0
+#define VIS_RECORD_TABLE_BINDING 1
+#include "Common/VisibilityBuffer.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform usampler2D idTexture;
+
+// binding 1: 描画の記録の表（Common/VisibilityBuffer.glsl が宣言する）
+
+layout(std140, set = 0, binding = 2) uniform ClassifyParams
+{
+    // x: 画面の幅、y: 画面の高さ、z: 横のタイル数、w: 縦のタイル数
+    uvec4 screen;
+    // x: 材質の数の上限、y: 一覧の大きさ（タイルの番号の数）、z: 段階（0・1・2）
+    uvec4 limits;
+} params;
+
+layout(std430, set = 0, binding = 3) buffer MaterialTileArgs
+{
+    uint argWords[];
+};
+
+layout(std430, set = 0, binding = 4) buffer MaterialTileList
+{
+    uint tileList[];
+};
+
+// 段階 2 で、材質ごとの一覧へ何個書いたか
+layout(std430, set = 0, binding = 5) buffer MaterialTileCursors
+{
+    uint cursors[];
+};
+
+// 0: 一覧に入りきらず落としたタイルの数、1: 材質の番号が上限以上でどの材質にも入れなかった（タイル, 材質）の数、
+// 2: 記録の表から引けなかった画素の数、3: 見えた最大の材質の番号 + 1、4: 一覧に書いた（タイル, 材質）の数
+layout(std430, set = 0, binding = 6) buffer MaterialTileStats
+{
+    uint stats[];
+};
+
+const uint STAGE_COUNT = 0u;
+const uint STAGE_OFFSETS = 1u;
+const uint STAGE_SCATTER = 2u;
+
+const uint STAT_DROPPED = 0u;
+const uint STAT_MATERIAL_OUT_OF_RANGE = 1u;
+const uint STAT_UNRESOLVED_PIXELS = 2u;
+const uint STAT_MAX_MATERIAL_PLUS_ONE = 3u;
+const uint STAT_TOTAL_ENTRIES = 4u;
+
+const uint NO_MATERIAL = 0xFFFFFFFFu;
+
+shared uint sMaterials[64];
+
+void AssignOffsets()
+{
+    if (gl_LocalInvocationIndex != 0u)
+    {
+        return;
+    }
+    const uint maxMaterials = params.limits.x;
+    const uint capacity = params.limits.y;
+    uint offset = 0u;
+    uint dropped = 0u;
+    for (uint material = 0u; material < maxMaterials; ++material)
+    {
+        const uint count = argWords[material * 4u];
+        const uint room = capacity > offset ? capacity - offset : 0u;
+        const uint kept = min(count, room);
+        dropped += count - kept;
+        argWords[material * 4u + 0u] = kept;
+        argWords[material * 4u + 1u] = 1u;
+        argWords[material * 4u + 2u] = 1u;
+        argWords[material * 4u + 3u] = offset;
+        cursors[material] = 0u;
+        offset += kept;
+    }
+    stats[STAT_DROPPED] = dropped;
+    stats[STAT_TOTAL_ENTRIES] = offset;
+}
+
+void ClassifyTile(uint stage)
+{
+    const uint threadIndex = gl_LocalInvocationIndex;
+    const uvec2 pixel = gl_WorkGroupID.xy * 8u + gl_LocalInvocationID.xy;
+    const uint tileIndex = gl_WorkGroupID.y * params.screen.z + gl_WorkGroupID.x;
+
+    uint material = NO_MATERIAL;
+    if (pixel.x < params.screen.x && pixel.y < params.screen.y)
+    {
+        const uint id = texelFetch(idTexture, ivec2(pixel), 0).x;
+        if (!VisIsEmpty(id))
+        {
+            VisibilityDrawRecord record;
+            uint triangleIndex;
+            if (VisLoadRecord(id, record, triangleIndex))
+            {
+                material = VisRecordMaterialIndex(record);
+            }
+            else if (stage == STAGE_COUNT)
+            {
+                atomicAdd(stats[STAT_UNRESOLVED_PIXELS], 1u);
+            }
+        }
+    }
+
+    sMaterials[threadIndex] = material;
+    memoryBarrierShared();
+    barrier();
+
+    if (material == NO_MATERIAL)
+    {
+        return;
+    }
+    // 同じ材質の画素のうち、タイルの中で最初の画素だけが、その材質を 1 回だけ数える
+    for (uint other = 0u; other < threadIndex; ++other)
+    {
+        if (sMaterials[other] == material)
+        {
+            return;
+        }
+    }
+
+    if (material >= params.limits.x)
+    {
+        if (stage == STAGE_COUNT)
+        {
+            atomicAdd(stats[STAT_MATERIAL_OUT_OF_RANGE], 1u);
+        }
+        return;
+    }
+
+    if (stage == STAGE_COUNT)
+    {
+        atomicAdd(argWords[material * 4u], 1u);
+        atomicMax(stats[STAT_MAX_MATERIAL_PLUS_ONE], material + 1u);
+        return;
+    }
+
+    const uint slot = atomicAdd(cursors[material], 1u);
+    if (slot < argWords[material * 4u])
+    {
+        tileList[argWords[material * 4u + 3u] + slot] = tileIndex;
+    }
+}
+
+void main()
+{
+    const uint stage = params.limits.z;
+    if (stage == STAGE_OFFSETS)
+    {
+        AssignOffsets();
+        return;
+    }
+    ClassifyTile(stage);
+}

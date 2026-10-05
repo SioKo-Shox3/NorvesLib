@@ -605,7 +605,7 @@
 - notes: 計画書 4.3。
 
 ## VTG6-VIS-RASTER: 不透明のすべてをビジビリティバッファへ描くパスを足す（既定は無効）
-- status: doing
+- status: blocked
 - done-when: `--visibility-buffer=on` のとき、MegaGeometry のクラスタ（2パスの遮蔽・BVH・ページの経路のまま）、手続きメッシュの塊、スキニングの塊（VTG6-COMPUTE-SKINNING の変形済みの頂点）を、位置だけを読む頂点シェーダーと、ID（記録の番号は描画ごとの値、三角形は `gl_PrimitiveID`）を書く frag で、`VisBuffer.Id` と `GBuffer.Depth` へ描くパスを足す。描画の記録の表をそのフレームの描画から作る。この項目では GBuffer への書き込みはまだ今の経路のまま（`on` でも GBufferPass・MegaGeometryPass の GBuffer の描画は動かす）。`RenderGraphCompileTest` に `on` の記録を足す。デバッグの撮影（`--visibility-buffer=on` に、ID を色にして表示するデバッグの表示を足してよい）を開いて、物の輪郭と三角形の塊が正しく出ることを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MegaGeometryResourcesTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MegaGeometryResourcesTest|IntegerAttachmentVulkanTest|VisibilityBufferEncodingTest)$"`
@@ -616,13 +616,23 @@
 - notes: 計画書 4.3。危険地帯（描画パス）。既定の描画（`off`）は変えない。
 
 ## VTG6-MATERIAL-CLASSIFY: 画面のタイルを材質ごとに分ける
-- status: todo
+- status: done
 - done-when: `VisBuffer.Id` から 8×8 の画面のタイルごとに、そのタイルに出る材質の番号の集合を求め、材質ごとのタイルの一覧と、材質ごとの間接 dispatch の引数を作る計算シェーダーのパスを足す（空の画素だけのタイルはどの材質にも入れない）。GPU のテスト `MaterialTileClassifyVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、合成した ID の画像（3つの材質が混じるタイル、空のタイル）から、期待のタイルの一覧と引数を作ることを確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MaterialTileClassifyVulkanTest|RenderGraphCompileTest)$"`
 - stop-when: 1フレームの材質の数が間接 dispatch の引数の上限を超える場合は、測った値を記録して止める。
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 計画書 4.3。
+
+## VTG6-SKINNING-FINAL-BARRIER: スキニングの頂点のバッファを書いた後に、宣言した最終の状態へ遷移させる
+- status: todo
+- done-when: `SkinningComputePass::Execute` が、書いた今・前の頂点のバッファ（`Skinning.CurrentVertices`・`Skinning.PreviousVertices`）を、dispatch の後に `UnorderedAccess` から宣言した最終の状態 `GenericRead` へ `BufferBarrier` で遷移させる（RenderGraph は終わった状態を信じて、後のパスの読み取りの前にバリアを足さない。`MaterialTileClassifyPass` が同じ形で遷移させている）。記録できなかったインスタンスだけのフレームでも、宣言したバッファは遷移させる。`RenderGraphCompileTest` か `ComputeSkinningVulkanTest` の側で、その遷移が記録されることを確かめる。
+- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(ComputeSkinningVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: 遷移を足すと `VisibilityRasterPass` の読み取りの前に二重のバリアになる、または検証エラーが出る場合は、その状況を記録して止める。
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-05 VTG6-MATERIAL-CLASSIFY の反復で見つけた。`SkinningComputePass` は最終の状態を `GenericRead` と宣言するが dispatch の後にバリアを出さず、`VisibilityRasterPass` の頂点シェーダーが読む前に書き込みが見えることが保証されない。危険地帯（描画パス・同期）。
+
 
 ## VTG6-RESOLVE-GEOMETRY: 材質の解決で三角形から重心座標・微分・法線・速度を求める
 - status: todo
