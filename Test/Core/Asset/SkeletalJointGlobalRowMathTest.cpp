@@ -59,7 +59,7 @@ namespace
         M::Matrix4x4 local[1] = {Translation(3, 4, 5)};
         local[0].m01 = -0.0f;
         local[0].m20 = -0.0f;
-        M::Matrix4x4 global[1] = {M::Matrix4x4::Zero};
+        M::Matrix4x4 global[1] = {M::Matrix4x4::Identity};
         uint8_t state[1]{};
         CHECK(Evaluate(0, parents, local, global, state));
         Exact(global[0], local[0]);

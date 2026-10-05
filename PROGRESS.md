@@ -916,3 +916,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 joint-global row FK共有開始。既存joint配列のParentIndexを非throwの小さい借用getterで読み、local/global/visitStateは既存配列のSpanを渡す。旧再帰式と評価順を保ち、helper内で確保しない。内部global/visitStateはfalse時に部分更新され得るが、Sampleのfalse/Clear契約は変更しない。source BVHのdouble列FK・作者時rest snapshotとは別に扱う。
 
 - G2/GR84 joint-global FK共有の検証準備: parent getter/Spanと同じ再帰評価を接続し、旧配列以外の所有/確保は追加しない。47件目としてroot signed-zero bit、非可換/親順/分岐/cache、cycle/不正入力、finite非剛体、部分出力とscratch再開の独立試験を追加。凍結harness/比較器/6095byte基準は不変。Python17+19+12+4+7 normal/-O、BOM/EOL/YAMLを確認。hostの既存MatrixUtils.h制約は継続し、実Windows47CPU/構成別旧byte各2回は次CIで未確認。
+
+- G2/GR84 joint-global共有の初回native run37385295016（bcecc606、job112016967181）はMSVC Release bundle buildで失敗。新testがMatrix4x4::Zeroを初めて実体化し、既存Math/Matrix4x4.h:304の12要素initializerに対するC2661を検出。実runtime helperの変更ではなく、testの初期値をIdentityへ1行変更して再検証する。rootのtranslation/signed-zero期待値はIdentityと異なり、コピー検査は弱めない。既存Zero定数の修正は別件として記録し、この単位でpublic Mathを変更しない。初回capture/47CPUは未実行、失敗証拠を保存。
