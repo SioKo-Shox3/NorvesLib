@@ -13,17 +13,16 @@ layout(location = 6) flat in uint fragDebugPayload;
 layout(location = 7) in vec4 fragCurrentClip;
 layout(location = 8) in vec4 fragPreviousClip;
 
-// UBOからPOMパラメータを参照
+// UBOからPOMパラメータを参照（材質の区間ごとの定数。頂点シェーダーの MVPData と先頭が一致する。
+// ワールド変換はインスタンスの表にあり、頂点シェーダーが引く）
 layout(set = 0, binding = 0) uniform MVPData
 {
-    mat4 world;
     mat4 view;
     mat4 projection;
     vec4 cameraPosition;
     vec4 objectColor;
     vec4 emissiveColor;
     vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=debugMode, w=debugPayloadSupported
-    mat4 previousWorld;
     mat4 previousView;
     mat4 previousProjection;
     vec4 frameParams; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV。0なら変位なし）, w=fragDebugPayload がLODの段か（1/0）

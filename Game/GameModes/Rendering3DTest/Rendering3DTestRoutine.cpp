@@ -850,7 +850,54 @@ namespace Game::GameModes
                 ctx.ScopeRef.TrackModel(state->m_Handle);
                 NORVES_LOG_INFO("Rendering3DTest", "SCAN_PROP_PLACED id=%s x=%.1f y=%.3f z=%.1f scale=%.2f", spec.AssetId, spec.X,
                                 positionY, spec.Z, spec.Scale);
+
+                StressMegaInstanceSource source;
+                source.Handle = megaMeshHandle;
+                source.PositionY = positionY;
+                source.Scale = spec.Scale;
+                data.m_StressMegaSources.push_back(source);
             }
+        }
+
+        // --stress-mega-instances: スキャン資産の読み込みが終わったら、そのメッシュを指定の数だけ地面の奥へ格子に複製して置く
+        // （既定の視点は +Z 側から -Z 側を見るので、x -26〜26・z -5〜-27 に並べて視野に入れる）。
+        // 同じメッシュ・材質のインスタンスが増える負荷で、MegaGeometry のカリング・描画の時間を測るための一時の機構。
+        void PlaceStressMegaInstances(GameModeContext &ctx, Rendering3DTestData &data)
+        {
+            if (data.m_StressMegaInstanceCount == 0 || data.m_bStressMegaInstancesPlaced || !data.m_ScanPropLoads.empty())
+            {
+                return;
+            }
+            data.m_bStressMegaInstancesPlaced = true;
+            if (data.m_StressMegaSources.empty())
+            {
+                NORVES_LOG_WARNING("Rendering3DTest", "STRESS_MEGA_INSTANCES_SKIPPED スキャン資産が置かれていないため複製できません");
+                return;
+            }
+
+            constexpr uint32_t kColumns = 25u;
+            constexpr float kPitchX = 2.2f;
+            constexpr float kPitchZ = 2.0f;
+            auto &world = ctx.WorldRef;
+            const NorvesLib::Math::Vector3 yAxis(0.0f, 1.0f, 0.0f);
+            for (uint32_t index = 0; index < data.m_StressMegaInstanceCount; ++index)
+            {
+                const StressMegaInstanceSource &source = data.m_StressMegaSources[index % data.m_StressMegaSources.size()];
+                const float x = (static_cast<float>(index % kColumns) - 0.5f * static_cast<float>(kColumns - 1u)) * kPitchX;
+                const float z = -5.0f - static_cast<float>(index / kColumns) * kPitchZ;
+                const float yawDegrees = static_cast<float>((index * 37u) % 360u);
+
+                Entity *object = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(object);
+                object->SetPosition(x, source.PositionY, z);
+                object->SetScale(source.Scale, source.Scale, source.Scale);
+                object->SetRotation(NorvesLib::Math::Quaternion(yAxis, yawDegrees * (3.14159265f / 180.0f)));
+                auto *component = world.CreateComponent<Component::MegaGeometryComponent>(object);
+                component->SetMegaMeshHandle(source.Handle);
+                component->SetCastShadow(true);
+            }
+            NORVES_LOG_INFO("Rendering3DTest", "STRESS_MEGA_INSTANCES_PLACED count=%u sources=%zu",
+                            data.m_StressMegaInstanceCount, static_cast<size_t>(data.m_StressMegaSources.size()));
         }
 
         // 大きな球のクック済みのメッシュ（NVMESH v1。AssetSets の一覧が焼く）を解決・解析して outCooked に入れる。
@@ -3394,6 +3441,7 @@ namespace Game::GameModes
 
         // 地面の外周のスキャン資産: 読み込みが終わったものから World へ置く。
         PlaceFinishedScanProps(ctx, data);
+        PlaceStressMegaInstances(ctx, data);
 
         // 大きな球: 石畳のテクスチャがそろったら高ポリのMegaGeometryを作り、仮の球と差し替える。
         if (data.m_pBigSphereMegaData && data.m_CobbleStoneMaterialUpdate &&

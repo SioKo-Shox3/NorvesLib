@@ -129,6 +129,16 @@ namespace Game::GameModes
     };
 
     /**
+     * @brief --stress-mega-instances で複製する元（置いたスキャン資産のメッシュと据え方）
+     */
+    struct StressMegaInstanceSource
+    {
+        NorvesLib::Core::Rendering::MegaGeometry::MegaMeshHandle Handle;
+        float PositionY = 0.0f; ///< 最下点を地面へ据えた Y
+        float Scale = 1.0f;
+    };
+
+    /**
      * @brief 3Dレンダリングテストのデータクラス
      *
      * 球体と地面のEntityおよびメッシュハンドルを保持します。
@@ -265,6 +275,10 @@ namespace Game::GameModes
         bool m_bDebugDrawTestLines = false;
         // 地面の外周に高ポリのスキャン資産を置くか（--startup-scan-props=off で false。既定は true）。
         bool m_bStartupScanProps = true;
+        // --stress-mega-instances=<N> の個数（0 は置かない）。スキャン資産を置いた後、そのメッシュを N 個格子に複製する。
+        uint32_t m_StressMegaInstanceCount = 0;
+        bool m_bStressMegaInstancesPlaced = false;
+        VariableArray<StressMegaInstanceSource> m_StressMegaSources;
         // 起動時のアンチエイリアシングが TAA なら true（既定は TAA、--anti-aliasing=fxaa の指定で false）。
         bool m_bStartupTemporalAA = true;
         // --night の指定で true にする。空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす

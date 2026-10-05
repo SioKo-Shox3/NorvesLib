@@ -1,10 +1,18 @@
-﻿#version 450
+﻿#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
 
 // ========================================
 // Mega Geometry クラスタカリング コンピュートシェーダー
 //
-// 入力: クラスタデータSSBO + カメラ情報UBO（+ 2パス時は「前のフレームで見えた」ビットとHi-Z）
-// 出力: IndirectDrawコマンドバッファ + 可視クラスタ数カウンタ
+// 全インスタンスを1回の dispatch で処理する（1パスにつき1回）。
+// 入力: インスタンスの表SSBO（変換・メッシュのクラスタ配列のアドレス・材質の区間の番号など）+ カメラ情報UBO
+//       （+ 2パス時は「前のフレームで見えた」ビットとHi-Z）
+// 出力: 材質の区間ごとの IndirectDraw コマンド + 区間ごとの可視クラスタ数カウンタ + コマンドごとの描画情報
+//
+// ワークグループ（64スレッド）は1つのインスタンスの連続した64クラスタを受け持つ。ワークグループの通し番号から、
+// インスタンスの表の firstGroup（そのインスタンスの最初のワークグループの通し番号）を二分探索して、
+// 受け持つインスタンスとクラスタの番号を求める。
 //
 // 遮蔽の判定は2パスで行う（cullPass）:
 //   1パス目: 視錐台・法線のコーン・LODの判定を通り、前のフレームで見えたクラスタだけを描く（遮蔽の判定はしない）。
@@ -13,12 +21,18 @@
 //            全クラスタの「見えた」ビットを更新する（次のフレームの1パス目が使う）。
 //   0: 従来の1回の判定（遮蔽の判定なし。--mega-occlusion=off）。
 //
+// 「見えた」ビットは全インスタンスで1本の配列で、インスタンスの visibleOffset（そのインスタンスの区画の先頭）から
+// クラスタの番号ごとに並ぶ。区画の位置はインスタンスの表と一緒に毎フレーム CPU が決める。
+//
 // LODの段の選び方は2通り（クラスタの bakedInfo.x のビットで決まる）:
 //   焼き込み済みの階層（NVMESH v1）: 自分の誤差を自分の球から画面へ投影した値がしきい値以下で、
 //            親のグループの誤差を親の球から投影した値がしきい値を超えるクラスタを描く。
 //            同じグループのクラスタは球と誤差が同じなので同じ判断になり、どの切り方も閉じたメッシュになる。
 //   それ以外（v0・実行時に構築した階層・手続きの球）: 従来の段の選び方（ShouldDrawCluster）。
 // 「見えた」ビットはクラスタの番号（全段を1組に並べた配列の添え字）ごとなので、どちらの選び方とも両立する。
+//
+// クラスタ配列はジオメトリの共有プールの塊の中にあり、塊が複数あっても1回の dispatch で読めるよう、
+// インスタンスごとのデバイスアドレス（buffer_reference）で引く。
 // ========================================
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -26,7 +40,7 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 #include "Common/HiZOcclusion.glsl"
 
 // ========================================
-// GPU構造体（MegaGeometryTypes.hと一致）
+// GPU構造体（MegaGeometryTypes.h・MegaGeometryPass.h と一致）
 // ========================================
 
 struct GPUClusterData
@@ -41,6 +55,21 @@ struct GPUClusterData
 
 const uint CLUSTER_FLAG_BAKED_LOD = 1u;
 const uint INVALID_GROUP_ID = 0xFFFFFFFFu;
+
+// このメッシュのクラスタ配列（インスタンスの表の clusterInfo.xy のデバイスアドレスから引く）
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ClusterArray
+{
+    GPUClusterData clusters[];
+};
+
+struct MegaInstance
+{
+    mat4 world;
+    mat4 previousWorld;   // 頂点シェーダーが velocity に使う（ここでは読まない）
+    vec4 lodSphere;       // LODの選択に使うメッシュ共通の境界球（ローカル。w<=0ならクラスタごとの中心で選ぶ）
+    uvec4 clusterInfo;    // x,y = クラスタ配列のデバイスアドレス（下位・上位）, z = クラスタ数, w = 最初のワークグループの通し番号
+    uvec4 drawInfo;       // x = 材質の区間の番号, y = 頂点の基点（塊の先頭から。頂点単位）, z = インデックスの基点（塊の先頭から。インデックス単位）, w = 「見えた」ビットの先頭
+};
 
 struct DrawIndexedIndirectCommand
 {
@@ -62,8 +91,8 @@ layout(set = 0, binding = 0) uniform CullUniforms
     mat4 projectionMatrix;
     vec4 cameraPosition;     // xyz = pos, w = unused
     vec4 frustumPlanes[6];   // 6つの視錐台平面 (ax+by+cz+d=0, normal pointing inward)
-    uint totalClusterCount;
-    uint maxDrawCount;       // IndirectDrawバッファの最大エントリ数
+    uint instanceCount;      // インスタンスの表の要素数
+    uint totalGroupCount;    // 全インスタンスのワークグループの数
     float lodBias;           // LOD選択バイアス（ピクセル単位の許容誤差）
     float screenHeight;      // スクリーン高さ（ピクセル）
     float projectionFactor;  // screenHeight / (2 * tan(fov/2))
@@ -71,11 +100,10 @@ layout(set = 0, binding = 0) uniform CullUniforms
     uint hiZHeight;          // Hi-Zの元になった深度の高さ（Hi-Zのミップ0はその半分）
     uint hiZMipCount;        // Hi-Zミップレベル数
     uint bHiZEnabled;        // Hi-Z有効フラグ
-    uint debugPayloadMode;     // 0=none, 1=clusterIndex, 2=lodLevel
+    uint debugPayloadMode;   // 0=none, 1=clusterIndex, 2=lodLevel
     uint cullPass;           // 0=従来（遮蔽の判定なし）, 1=1パス目, 2=2パス目
     uint bStatsEnabled;      // 1なら統計（binding 6）へ数える
-    mat4 worldMatrix;
-    vec4 lodSphere;          // LODの選択に使うメッシュ共通の境界球（ローカル。w<=0ならクラスタごとの中心で選ぶ）
+    uint sectionBase;        // 区間の表・カウンタのうち、このパスの先頭（1パス目は0、2パス目は区間の数）
 } cullData;
 
 const uint CULL_PASS_SINGLE = 0u;
@@ -91,28 +119,28 @@ const uint DEBUG_PAYLOAD_MODE_NONE = 0u;
 const uint DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
 const uint DEBUG_PAYLOAD_MODE_LOD_LEVEL = 2u;
 
-// set 0, binding 1: クラスタデータ入力（読み取り専用）
-layout(std430, set = 0, binding = 1) readonly buffer ClusterBuffer
+// set 0, binding 1: インスタンスの表（読み取り専用）
+layout(std430, set = 0, binding = 1) readonly buffer InstanceBuffer
 {
-    GPUClusterData clusters[];
+    MegaInstance instances[];
 };
 
-// set 0, binding 2: IndirectDrawコマンド出力
+// set 0, binding 2: IndirectDrawコマンド出力（区間ごとに連続した範囲）
 layout(std430, set = 0, binding = 2) writeonly buffer IndirectDrawBuffer
 {
     DrawIndexedIndirectCommand drawCommands[];
 };
 
-// set 0, binding 3: 可視クラスタ数カウンタ（atomicAdd用）
+// set 0, binding 3: 区間ごとの可視クラスタ数カウンタ（atomicAdd用。添え字は sectionBase + 区間の番号）
 layout(std430, set = 0, binding = 3) buffer DrawCountBuffer
 {
-    uint visibleClusterCount;
+    uint sectionCounts[];
 };
 
 // set 0, binding 4: Hi-Z深度ピラミッド（オクルージョンカリング用）
 layout(set = 0, binding = 4) uniform sampler2D u_HiZTexture;
 
-// set 0, binding 5: クラスタごとの「前のフレームで見えた」ビット（インスタンスごとに持続する。1=見えた）。
+// set 0, binding 5: クラスタごとの「前のフレームで見えた」ビット（全インスタンスで1本。1=見えた）。
 // 1パス目は読むだけ、2パス目は全クラスタが自分の要素だけを書く（競合しない）。cullPass=0 では使わない。
 layout(std430, set = 0, binding = 5) buffer VisibleLastFrameBuffer
 {
@@ -124,6 +152,25 @@ layout(std430, set = 0, binding = 6) buffer StatsBuffer
 {
     uint stats[4];
 };
+
+// set 0, binding 7: 材質の区間の表（x = コマンドの先頭の位置（全パス通しの添え字）, y = 区間のコマンドの最大数）。
+// 添え字は sectionBase + 区間の番号。
+layout(std430, set = 0, binding = 7) readonly buffer SectionBuffer
+{
+    uvec2 sections[];
+};
+
+// set 0, binding 8: コマンドごとの描画情報（x = インスタンスの番号, y = デバッグ表示・LODの段の payload）。
+// コマンドの firstInstance がこの添え字（コマンドの通しの位置）なので、頂点シェーダーが gl_InstanceIndex で引く。
+layout(std430, set = 0, binding = 8) writeonly buffer DrawInfoBuffer
+{
+    uvec2 drawInfos[];
+};
+
+// このワークグループが受け持つインスタンスの変換・LODの球・クラスタ配列（main の最初に決める）
+mat4 g_WorldMatrix;
+vec4 g_LODSphere;
+ClusterArray g_Clusters;
 
 // ========================================
 // カリング関数
@@ -164,14 +211,14 @@ bool NormalConeCull(vec3 localConeAxis, float coneCutoff, vec3 localCenter, floa
         return false; // どこから見ても表向きの三角形を含みうる
     }
 
-    mat3 linearPart = mat3(cullData.worldMatrix);
+    mat3 linearPart = mat3(g_WorldMatrix);
     float det = determinant(linearPart);
     if (abs(det) <= 1e-12)
     {
         return false; // 潰れた変換ではローカルへ戻せない
     }
 
-    vec3 cameraLocal = inverse(linearPart) * (cullData.cameraPosition.xyz - cullData.worldMatrix[3].xyz);
+    vec3 cameraLocal = inverse(linearPart) * (cullData.cameraPosition.xyz - g_WorldMatrix[3].xyz);
     vec3 coneAxis = det < 0.0 ? -localConeAxis : localConeAxis;
 
     // 法線は全てコーン軸から半角以内にあるので、視線とコーン軸のなす角が 90°−半角 未満なら
@@ -184,14 +231,14 @@ bool NormalConeCull(vec3 localConeAxis, float coneCutoff, vec3 localCenter, floa
 
 vec3 TransformClusterCenterToWorld(vec3 localCenter)
 {
-    return (cullData.worldMatrix * vec4(localCenter, 1.0)).xyz;
+    return (g_WorldMatrix * vec4(localCenter, 1.0)).xyz;
 }
 
 float ComputeWorldRadiusScale()
 {
-    float scaleX = length(cullData.worldMatrix[0].xyz);
-    float scaleY = length(cullData.worldMatrix[1].xyz);
-    float scaleZ = length(cullData.worldMatrix[2].xyz);
+    float scaleX = length(g_WorldMatrix[0].xyz);
+    float scaleY = length(g_WorldMatrix[1].xyz);
+    float scaleZ = length(g_WorldMatrix[2].xyz);
     return max(scaleX, max(scaleY, scaleZ));
 }
 
@@ -315,11 +362,11 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
     // 視線から外れた点で透視投影が横のずれを伸ばす倍率 1/cos²α の上限を掛けた値を使う
     // （MegaGeometryLODSelection.h の ComputeLODSphereErrorPixelsPerMeter と同じ式）。
     float errorScale;
-    if (cullData.lodSphere.w > 0.0)
+    if (g_LODSphere.w > 0.0)
     {
         float worldScale = ComputeWorldRadiusScale();
-        vec3 lodCenter = TransformClusterCenterToWorld(cullData.lodSphere.xyz);
-        float lodRadius = cullData.lodSphere.w * worldScale;
+        vec3 lodCenter = TransformClusterCenterToWorld(g_LODSphere.xyz);
+        float lodRadius = g_LODSphere.w * worldScale;
         float centerDistance = distance(lodCenter, cullData.cameraPosition.xyz);
         float denominator = max(centerDistance * centerDistance - lodRadius * lodRadius, 1e-6);
         float angularScale = cullData.projectionFactor * centerDistance / denominator;
@@ -348,7 +395,7 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
         // 親の投影誤差をチェック: 親がlodBias以下なら親で十分 → 描画しない
         for (uint i = 0; i < parentCount; ++i)
         {
-            GPUClusterData parent = clusters[parentStart + i];
+            GPUClusterData parent = g_Clusters.clusters[parentStart + i];
             float parentError = uintBitsToFloat(parent.lodInfo.y);
             float parentProjectedError = parentError * errorScale;
             if (parentProjectedError <= cullData.lodBias)
@@ -375,7 +422,7 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
     // 親の投影誤差が許容範囲外なら、このレベルを描画
     for (uint i = 0; i < parentCount; ++i)
     {
-        GPUClusterData parent = clusters[parentStart + i];
+        GPUClusterData parent = g_Clusters.clusters[parentStart + i];
         float parentError = uintBitsToFloat(parent.lodInfo.y);
         float parentProjectedError = parentError * errorScale;
         if (parentProjectedError > cullData.lodBias)
@@ -408,19 +455,24 @@ uint ComputeDebugPayload(uint clusterIndex, GPUClusterData cluster)
 // ========================================
 
 /**
- * @brief 描画するクラスタのIndirectDrawコマンドを1つ積む
+ * @brief 描画するクラスタのIndirectDrawコマンドを、そのインスタンスの材質の区間へ1つ積む
  */
-void EmitDrawCommand(uint clusterIndex, GPUClusterData cluster)
+void EmitDrawCommand(uint instanceIndex, MegaInstance instance, uint clusterIndex, GPUClusterData cluster)
 {
-    uint drawIndex = atomicAdd(visibleClusterCount, 1);
+    uint sectionSlot = cullData.sectionBase + instance.drawInfo.x;
+    uvec2 section = sections[sectionSlot];
+    uint slot = atomicAdd(sectionCounts[sectionSlot], 1u);
 
-    if (drawIndex < cullData.maxDrawCount)
+    // 区間の最大数を超えた分は積まない（描画の数も区間の最大数で頭打ちになる）
+    if (slot < section.y)
     {
-        drawCommands[drawIndex].indexCount = cluster.indexInfo.y;     // IndexCount
-        drawCommands[drawIndex].instanceCount = 1;
-        drawCommands[drawIndex].firstIndex = cluster.indexInfo.x;     // IndexOffset
-        drawCommands[drawIndex].vertexOffset = int(cluster.indexInfo.z); // VertexOffset
-        drawCommands[drawIndex].firstInstance = ComputeDebugPayload(clusterIndex, cluster);
+        uint commandIndex = section.x + slot;
+        drawCommands[commandIndex].indexCount = cluster.indexInfo.y;                       // IndexCount
+        drawCommands[commandIndex].instanceCount = 1;
+        drawCommands[commandIndex].firstIndex = instance.drawInfo.z + cluster.indexInfo.x; // IndexOffset（塊の先頭から）
+        drawCommands[commandIndex].vertexOffset = int(instance.drawInfo.y) + int(cluster.indexInfo.z); // VertexOffset（塊の先頭から）
+        drawCommands[commandIndex].firstInstance = commandIndex;
+        drawInfos[commandIndex] = uvec2(instanceIndex, ComputeDebugPayload(clusterIndex, cluster));
     }
 }
 
@@ -434,14 +486,43 @@ void CountStat(uint statIndex)
 
 void main()
 {
-    uint clusterIndex = gl_GlobalInvocationID.x;
-
-    if (clusterIndex >= cullData.totalClusterCount)
+    // ワークグループの通し番号（dispatch は x 方向の上限を避けて 2 次元で出す）
+    uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (flatGroup >= cullData.totalGroupCount || cullData.instanceCount == 0u)
     {
         return;
     }
 
-    GPUClusterData cluster = clusters[clusterIndex];
+    // firstGroup が flatGroup 以下の最後のインスタンスを二分探索で求める（表は firstGroup の昇順）
+    uint low = 0u;
+    uint high = cullData.instanceCount - 1u;
+    while (low < high)
+    {
+        uint mid = (low + high + 1u) >> 1u;
+        if (instances[mid].clusterInfo.w <= flatGroup)
+        {
+            low = mid;
+        }
+        else
+        {
+            high = mid - 1u;
+        }
+    }
+
+    uint instanceIndex = low;
+    MegaInstance instance = instances[instanceIndex];
+    uint clusterIndex = (flatGroup - instance.clusterInfo.w) * 64u + gl_LocalInvocationID.x;
+    if (clusterIndex >= instance.clusterInfo.z)
+    {
+        return;
+    }
+
+    g_WorldMatrix = instance.world;
+    g_LODSphere = instance.lodSphere;
+    g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
+    uint visibleIndex = instance.drawInfo.w + clusterIndex;
+
+    GPUClusterData cluster = g_Clusters.clusters[clusterIndex];
 
     vec3 localCenter = cluster.boundsSphere.xyz;
     float localRadius = cluster.boundsSphere.w;
@@ -460,9 +541,9 @@ void main()
     if (cullData.cullPass == CULL_PASS_FIRST)
     {
         // 前のフレームで見えたクラスタだけを描く。遮蔽の判定はしない（この描画の深度から2パス目のHi-Zを作る）
-        if (bPassesBasicTests && visibleLastFrame[clusterIndex] != 0u)
+        if (bPassesBasicTests && visibleLastFrame[visibleIndex] != 0u)
         {
-            EmitDrawCommand(clusterIndex, cluster);
+            EmitDrawCommand(instanceIndex, instance, clusterIndex, cluster);
             CountStat(STAT_PASS1_DRAWN);
         }
         return;
@@ -471,7 +552,7 @@ void main()
     if (cullData.cullPass == CULL_PASS_SECOND)
     {
         // 1パス目で描いたか（描くのは「前のフレームで見えた」かつ判定を通ったクラスタ）。ビットを書き換える前に読む
-        bool bDrawnInFirstPass = bPassesBasicTests && visibleLastFrame[clusterIndex] != 0u;
+        bool bDrawnInFirstPass = bPassesBasicTests && visibleLastFrame[visibleIndex] != 0u;
 
         // 判定を通った全クラスタを、1パス目の深度のHi-Zで判定し直す
         bool bOccluded = false;
@@ -488,11 +569,11 @@ void main()
         // 次のフレームのために、見えたかを全クラスタぶん書く。判定に落ちた・LODで選ばれなかった
         // クラスタは0に戻すので、LODが切り替わったときに古いビットが残らない
         bool bVisible = bPassesBasicTests && !bOccluded;
-        visibleLastFrame[clusterIndex] = bVisible ? 1u : 0u;
+        visibleLastFrame[visibleIndex] = bVisible ? 1u : 0u;
 
         if (bVisible && !bDrawnInFirstPass)
         {
-            EmitDrawCommand(clusterIndex, cluster);
+            EmitDrawCommand(instanceIndex, instance, clusterIndex, cluster);
             CountStat(STAT_PASS2_DRAWN);
         }
         return;
@@ -501,6 +582,6 @@ void main()
     // 従来の経路: 遮蔽の判定なしの1回の判定（bHiZEnabled=0）
     if (bPassesBasicTests && !OcclusionCullSphere(center, radius))
     {
-        EmitDrawCommand(clusterIndex, cluster);
+        EmitDrawCommand(instanceIndex, instance, clusterIndex, cluster);
     }
 }

@@ -125,6 +125,10 @@ namespace Game
         // off は、スキャン資産を足す前と同じ描画量を撮って、足した分を差し引くための基準に使う。
         constexpr const TCHAR *kStartupScanPropsOption = TEXT("--startup-scan-props=");
         bool s_bRendering3DTestScanProps = true;
+        // --stress-mega-instances=<N>: 置いたスキャン資産のメッシュを N 個、地面の奥へ格子に複製して置く（0 は置かない）。
+        // MegaGeometry のインスタンスを増やしたときの GPU・CPU の時間を測るための一時の負荷（ジオメトリの負荷モードの前段）。
+        constexpr const TCHAR *kStressMegaInstancesOption = TEXT("--stress-mega-instances=");
+        uint32_t s_Rendering3DTestStressMegaInstances = 0;
         // --capture-sequence=<接頭辞> と --capture-sequence-rendered-frames=<n1,n2,...>: 1回の起動の中で、
         // アセットが落ち着いてから n 枚目の描画フレームの最終出力を <接頭辞><n>.png に保存する。
         constexpr const TCHAR *kCaptureSequenceOption = TEXT("--capture-sequence=");
@@ -487,6 +491,7 @@ namespace Game
         s_VramBudgetCapMb = 0;
         s_bRendering3DTestDebugDrawTestLines = false;
         s_bRendering3DTestScanProps = true;
+        s_Rendering3DTestStressMegaInstances = 0;
         s_bRendering3DTestNight = false;
         s_bRendering3DTestVirtualTexture = true;
         s_bRendering3DTestModelSourceGltf = false;
@@ -748,6 +753,18 @@ namespace Game
             if (args[i] == kDebugDrawTestLinesOption)
             {
                 s_bRendering3DTestDebugDrawTestLines = true;
+                continue;
+            }
+
+            String stressMegaInstancesValue;
+            if (TryStripPrefix(args[i], kStressMegaInstancesOption, stressMegaInstancesValue))
+            {
+                if (!TryParseUInt32(stressMegaInstancesValue, s_Rendering3DTestStressMegaInstances) ||
+                    s_Rendering3DTestStressMegaInstances > 4096u)
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --stress-mega-instances は 0〜4096 の整数で指定する");
+                    return false;
+                }
                 continue;
             }
 
@@ -1897,6 +1914,7 @@ namespace Game
                 mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
                 mode->GetData().m_bStartupScanProps = s_bRendering3DTestScanProps;
+                mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressMegaInstances;
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
                 mode->GetData().m_bVirtualTexture = s_bRendering3DTestVirtualTexture;

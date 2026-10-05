@@ -100,6 +100,8 @@ namespace
     };
 
     Container::VariableArray<FakeRenderEvent> GRenderEvents;
+    // MegaGeometryPass が毎フレーム書くインスタンスの表（"MegaGeometry_InstanceTable"）の更新の記録（更新ごとの中身）
+    Container::VariableArray<Container::VariableArray<uint8_t>> GMegaInstanceTableUpdates;
     Container::VariableArray<uint8_t> GLastDescriptorBinding4UpdateBytes;
     Container::VariableArray<uint8_t> GLastDescriptorBinding5UpdateBytes;
     RHI::IBuffer* GLastDescriptorBinding4Buffer = nullptr;
@@ -268,10 +270,24 @@ namespace
             {
                 PushRenderEvent(FakeRenderEvent::LightSsboUpdate);
             }
+            if (IsDebugName(m_Desc.DebugName, "MegaGeometry_InstanceTable"))
+            {
+                GMegaInstanceTableUpdates.push_back(LastUpdateBytes);
+            }
         }
         RHI::ResourceUsage GetUsage() const override
         {
             return m_Desc.Usage;
+        }
+        uint64_t GetDeviceAddress() const override
+        {
+            // ジオメトリの共有プールの塊だけが、まとめたカリングの引けるデバイスアドレスを持つ（実機の塊は
+            // BufferDeviceAddress の用途で作る）。他のバッファは従来どおり 0（要求されていない）
+            if (IsDebugName(m_Desc.DebugName, "GeometryPoolBlock"))
+            {
+                return 0x100000000ull + (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(this)) & 0xFFFFFFF0ull);
+            }
+            return 0;
         }
 
         const RHI::BufferDesc& GetDesc() const
@@ -298,8 +314,27 @@ namespace
         uint32_t EndRenderPassCount = 0;
         uint32_t DrawCallCount = 0;
         uint32_t DispatchCount = 0;
-        // 「前のフレームで見えた」ビットのバッファを0で埋めた回数（作り直した、または捨てた回数）
-        uint32_t VisibilityFillCount = 0;
+        // 「前のフレームで見えた」ビットのバッファへの0埋め（範囲）とコピー（古いバッファからの引き継ぎ）の記録
+        struct VisibilityFill
+        {
+            uint64_t OffsetBytes = 0;
+            uint64_t SizeBytes = 0;
+        };
+        struct VisibilityCopy
+        {
+            uint64_t SourceOffsetBytes = 0;
+            uint64_t DestinationOffsetBytes = 0;
+            uint64_t SizeBytes = 0;
+        };
+        Container::VariableArray<VisibilityFill> VisibilityFills;
+        Container::VariableArray<VisibilityCopy> VisibilityCopies;
+        // 間接描画の記録（コマンドの先頭のバイト位置と、描画の最大数）。区間ごとに1回ずつ呼ばれる
+        struct IndirectDrawRecord
+        {
+            uint64_t OffsetBytes = 0;
+            uint32_t MaxDrawCount = 0;
+        };
+        Container::VariableArray<IndirectDrawRecord> IndirectDraws;
         // 呼ばれた順の記録（B=BeginRenderPass、E=EndRenderPass、D=Dispatch、I=間接描画）。パスの並びの検査用
         Container::VariableArray<char> CallSequence;
         uint32_t LastDrawIndexedInstancedIndexCount = 0;
@@ -408,9 +443,8 @@ namespace
                                  uint32_t stride) override
         {
             (void)indirectBuffer;
-            (void)offset;
-            (void)drawCount;
             (void)stride;
+            IndirectDraws.push_back(IndirectDrawRecord{offset, drawCount});
             PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
             CallSequence.push_back('I');
@@ -423,11 +457,10 @@ namespace
                                       uint32_t stride) override
         {
             (void)indirectBuffer;
-            (void)indirectOffset;
             (void)countBuffer;
             (void)countOffset;
-            (void)maxDrawCount;
             (void)stride;
+            IndirectDraws.push_back(IndirectDrawRecord{indirectOffset, maxDrawCount});
             PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
             CallSequence.push_back('I');
@@ -438,10 +471,8 @@ namespace
                 IsDebugName(static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName,
                             "MegaGeometry_VisibleLastFrame"))
             {
-                ++VisibilityFillCount;
+                VisibilityFills.push_back(VisibilityFill{offset, size});
             }
-            (void)offset;
-            (void)size;
             (void)value;
         }
         void Dispatch(uint32_t threadGroupCountX,
@@ -461,10 +492,12 @@ namespace
                         uint64_t dstOffset = 0) override
         {
             (void)src;
-            (void)dst;
-            (void)size;
-            (void)srcOffset;
-            (void)dstOffset;
+            if (dst &&
+                IsDebugName(static_cast<const FakeBuffer*>(dst.get())->GetDesc().DebugName,
+                            "MegaGeometry_VisibleLastFrame"))
+            {
+                VisibilityCopies.push_back(VisibilityCopy{srcOffset, dstOffset, size});
+            }
         }
         void CopyBufferToTexture(RHI::BufferPtr src,
                                  RHI::TexturePtr dst,
@@ -902,6 +935,14 @@ namespace
         {
             (void)bApplyYFlip;
             return projection;
+        }
+
+        // MegaGeometryPass のまとめたカリング・描画が要るデバイスの機能（デバイスアドレス・firstInstance つきの間接描画）を
+        // 表明する。それ以外のテストの分岐を変えないよう、MegaGeometryPass を使うテストだけが呼ぶ
+        void EnableMegaGeometryBatchCapabilities()
+        {
+            m_Capabilities.bBufferDeviceAddress = true;
+            m_Capabilities.bDrawIndirectFirstInstance = true;
         }
 
         Container::VariableArray<RHI::RenderPassDesc> CreatedRenderPassDescs;
@@ -1894,6 +1935,7 @@ namespace
     void TestMegaGeometryNativeDeclareImportsPersistentBuffers()
     {
         auto device = RHI::MakeShared<FakeDevice>();
+        device->EnableMegaGeometryBatchCapabilities();
 
         ShaderManager shaderManager;
         assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
@@ -1958,6 +2000,7 @@ namespace
     void TestMegaGeometryNativeDeclareUsesNamedGBufferAttachments()
     {
         auto device = RHI::MakeShared<FakeDevice>();
+        device->EnableMegaGeometryBatchCapabilities();
 
         ShaderManager shaderManager;
         assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
@@ -2068,6 +2111,7 @@ namespace
     void TestMegaGeometryNativeExecuteEnqueuesEmptyAttachmentPass()
     {
         auto device = RHI::MakeShared<FakeDevice>();
+        device->EnableMegaGeometryBatchCapabilities();
 
         ShaderManager shaderManager;
         assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
@@ -2171,6 +2215,7 @@ namespace
     void TestMegaGeometryNativeExecuteRecreatesRenderPassWhenAttachmentStateModeChanges()
     {
         auto device = RHI::MakeShared<FakeDevice>();
+        device->EnableMegaGeometryBatchCapabilities();
 
         ShaderManager shaderManager;
         assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
@@ -2350,6 +2395,7 @@ namespace
     void TestMegaGeometryPartialNamedGBufferFallsBackToLegacyAttachmentStates()
     {
         auto device = RHI::MakeShared<FakeDevice>();
+        device->EnableMegaGeometryBatchCapabilities();
 
         ShaderManager shaderManager;
         assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
@@ -2548,17 +2594,26 @@ namespace
                                      const MegaGeometryProxy &b,
                                      Container::VariableArray<MegaGeometryProxy> &outProxies);
 
+    // 1フレームの記録が「前のフレームで見えた」ビットのバッファへ行った0埋め（範囲）とコピー（古いバッファからの引き継ぎ）
+    struct MegaVisibilityFrameRecord
+    {
+        Container::VariableArray<FakeCommandList::VisibilityFill> Fills;
+        Container::VariableArray<FakeCommandList::VisibilityCopy> Copies;
+    };
+
     // 2つのMegaMeshインスタンスを持つパスのフレームコマンドを記録する（bOcclusionCulling=false は --mega-occlusion=off）。
-    // frameCount 回記録し、script があればフレームごとにプロキシを入れ替える。outVisibilityFills にはフレームごとの
-    // 「見えたビットを0で埋めた回数」を入れる。
+    // frameCount 回記録し、script があればフレームごとにプロキシを入れ替える。outVisibilityFrames にはフレームごとの
+    // 見えたビットの0埋めとコピーを入れる。bSeparateMaterials なら2つ目のメッシュだけ別の材質（ベースカラー）にする。
     void RecordMegaGeometryTwoInstances(bool bOcclusionCulling,
                                         FakeCommandList &commandList,
                                         float maxDepth = 1.0f,
                                         uint32_t frameCount = 1,
                                         MegaProxyScript script = nullptr,
-                                        Container::VariableArray<uint32_t> *outVisibilityFills = nullptr)
+                                        Container::VariableArray<MegaVisibilityFrameRecord> *outVisibilityFrames = nullptr,
+                                        bool bSeparateMaterials = false)
     {
         auto device = RHI::MakeShared<FakeDevice>();
+        device->EnableMegaGeometryBatchCapabilities();
 
         ShaderManager shaderManager;
         assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
@@ -2624,6 +2679,10 @@ namespace
         assert(megaMeshA.IsValid());
 
         createInfo.DebugName = "RecordMegaB";
+        if (bSeparateMaterials)
+        {
+            createInfo.Material.BaseColor[0] = 0.25f;
+        }
         const auto megaMeshB = renderResources.MegaGeometry().CreateMegaMesh(createInfo);
         assert(megaMeshB.IsValid());
         assert(NorvesLib::Test::GeometryUpload::DrainGeometryUploads(renderResources));
@@ -2681,11 +2740,21 @@ namespace
                 megaGeometryPass.Setup(context);
             }
 
-            const uint32_t fillsBefore = commandList.VisibilityFillCount;
+            const size_t fillsBefore = commandList.VisibilityFills.size();
+            const size_t copiesBefore = commandList.VisibilityCopies.size();
             megaGeometryPass.RecordFrameCommand(frameCommand.MegaGeometry, &commandList);
-            if (outVisibilityFills)
+            if (outVisibilityFrames)
             {
-                outVisibilityFills->push_back(commandList.VisibilityFillCount - fillsBefore);
+                MegaVisibilityFrameRecord frameRecord;
+                for (size_t index = fillsBefore; index < commandList.VisibilityFills.size(); ++index)
+                {
+                    frameRecord.Fills.push_back(commandList.VisibilityFills[index]);
+                }
+                for (size_t index = copiesBefore; index < commandList.VisibilityCopies.size(); ++index)
+                {
+                    frameRecord.Copies.push_back(commandList.VisibilityCopies[index]);
+                }
+                outVisibilityFrames->push_back(frameRecord);
             }
         }
 
@@ -2694,7 +2763,8 @@ namespace
         shaderManager.Shutdown();
     }
 
-    // 遮蔽カリングを使わない（--mega-occlusion=off）と、従来どおり全インスタンスを1回のカリングと1回のrender passで描く
+    // 遮蔽カリングを使わない（--mega-occlusion=off）と、全インスタンスを1回のカリングで選び、1回のrender passで描く。
+    // 同じ材質・同じプールの塊のインスタンスは1つの区間にまとまり、区間ごとに1回の間接描画になる
     void TestMegaGeometryRecordFrameCommandBatchesInstancesInSingleRenderPass()
     {
         FakeCommandList commandList;
@@ -2702,18 +2772,87 @@ namespace
 
         assert(commandList.BeginRenderPassCount == 1);
         assert(commandList.EndRenderPassCount == 1);
-        assert(commandList.DrawCallCount == 2);
+        assert(commandList.DispatchCount == 1);
+        assert(commandList.DrawCallCount == 1);
 
-        // 並び: 2インスタンスのカリング → render pass 1つの中で2インスタンスを描く
-        const char expected[] = {'D', 'D', 'B', 'I', 'I', 'E'};
+        // 並び: 全インスタンスのカリング（1回）→ render pass 1つの中で区間ごとに1回描く
+        const char expected[] = {'D', 'B', 'I', 'E'};
         assert(commandList.CallSequence.size() == sizeof(expected));
         for (size_t i = 0; i < sizeof(expected); ++i)
         {
             assert(commandList.CallSequence[i] == expected[i]);
         }
+
+        // 区間のコマンドの最大数は、区間のインスタンスのクラスタ数の合計（1 + 1）
+        assert(commandList.IndirectDraws.size() == 1);
+        assert(commandList.IndirectDraws[0].OffsetBytes == 0);
+        assert(commandList.IndirectDraws[0].MaxDrawCount == 2);
     }
 
-    // 遮蔽カリング（既定）は2パス: 1パス目のカリングと描画 → HZBの生成 → 2パス目のカリングと描画
+    // 材質が違うインスタンスは別の区間になり、区間ごとに1回の間接描画を発行する。カリングは材質によらず全インスタンスで1回
+    void TestMegaGeometryRecordFrameCommandSplitsSectionsByMaterial()
+    {
+        FakeCommandList commandList;
+        RecordMegaGeometryTwoInstances(false, commandList, 1.0f, 1, nullptr, nullptr, true);
+
+        assert(commandList.BeginRenderPassCount == 1);
+        assert(commandList.DispatchCount == 1);
+        assert(commandList.DrawCallCount == 2);
+
+        const char expected[] = {'D', 'B', 'I', 'I', 'E'};
+        assert(commandList.CallSequence.size() == sizeof(expected));
+        for (size_t i = 0; i < sizeof(expected); ++i)
+        {
+            assert(commandList.CallSequence[i] == expected[i]);
+        }
+
+        // 区間のコマンドは連続した範囲（1つ目の区間のクラスタ数 1 の次から2つ目）。コマンドは20バイト
+        assert(commandList.IndirectDraws.size() == 2);
+        assert(commandList.IndirectDraws[0].OffsetBytes == 0);
+        assert(commandList.IndirectDraws[0].MaxDrawCount == 1);
+        assert(commandList.IndirectDraws[1].OffsetBytes == 20);
+        assert(commandList.IndirectDraws[1].MaxDrawCount == 1);
+    }
+
+    // インスタンスの表（1つの storage buffer）: 並びはインスタンスの並び。ワークグループ・区間・見えたビットの区画・
+    // 頂点とインデックスの基点（プールの塊の先頭から）が入る
+    void TestMegaGeometryRecordFrameCommandWritesInstanceTable()
+    {
+        GMegaInstanceTableUpdates.clear();
+        FakeCommandList commandList;
+        RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 1, nullptr, nullptr, true);
+
+        assert(GMegaInstanceTableUpdates.size() == 1);
+        const Container::VariableArray<uint8_t> &bytes = GMegaInstanceTableUpdates[0];
+        // MegaGeometryPass::GPUMegaInstance は 176 バイト（world 0・previousWorld 64・LODSphere 128・
+        // クラスタ配列のアドレス下位/上位・クラスタ数・最初のワークグループ 144〜156・区間・頂点の基点・インデックスの基点・見えたビットの先頭 160〜172）
+        constexpr size_t InstanceBytes = 176;
+        assert(bytes.size() == 2 * InstanceBytes);
+        auto readUint = [&bytes](size_t instanceIndex, size_t byteOffset) -> uint32_t
+        {
+            uint32_t value = 0;
+            std::memcpy(&value, bytes.data() + instanceIndex * InstanceBytes + byteOffset, sizeof(value));
+            return value;
+        };
+
+        for (size_t instanceIndex = 0; instanceIndex < 2; ++instanceIndex)
+        {
+            assert((readUint(instanceIndex, 144) | readUint(instanceIndex, 148)) != 0); // クラスタ配列のアドレス
+            assert(readUint(instanceIndex, 152) == 1);                                  // クラスタ数
+            // 1クラスタ = 1ワークグループなので、最初のワークグループの通し番号はインスタンスの番号
+            assert(readUint(instanceIndex, 156) == instanceIndex);
+            // 材質が違うので区間も別
+            assert(readUint(instanceIndex, 160) == instanceIndex);
+            // 見えたビットは、全インスタンスで1本の配列にクラスタ数ずつ詰める
+            assert(readUint(instanceIndex, 172) == instanceIndex);
+        }
+        // 2つのメッシュは同じプールの塊の中にあり、2つ目は1つ目の後ろ
+        assert(readUint(0, 164) < readUint(1, 164));
+        assert(readUint(0, 168) < readUint(1, 168));
+    }
+
+    // 遮蔽カリング（既定）は2パス: 1パス目のカリングと描画 → HZBの生成 → 2パス目のカリングと描画。
+    // どちらのパスも、カリングは全インスタンスで1回、描画は区間ごとに1回
     void TestMegaGeometryRecordFrameCommandRecordsTwoPassOcclusion()
     {
         FakeCommandList commandList;
@@ -2721,13 +2860,13 @@ namespace
 
         assert(commandList.BeginRenderPassCount == 2);
         assert(commandList.EndRenderPassCount == 2);
-        // インスタンスごとに、1パス目と2パス目で1回ずつ描く
-        assert(commandList.DrawCallCount == 4);
+        // 同じ材質の2インスタンスは1つの区間なので、1パス目と2パス目で1回ずつ描く
+        assert(commandList.DrawCallCount == 2);
 
-        // 並び: [1パス目のカリング×2] [render pass: 描画×2] [HZBの各ミップ（Dispatchだけ）] [2パス目のカリング×2] [render pass: 描画×2]
+        // 並び: [1パス目のカリング] [render pass: 描画] [HZBの各ミップ（Dispatchだけ）] [2パス目のカリング] [render pass: 描画]
         const auto &sequence = commandList.CallSequence;
-        const char head[] = {'D', 'D', 'B', 'I', 'I', 'E'};
-        const char tail[] = {'D', 'D', 'B', 'I', 'I', 'E'};
+        const char head[] = {'D', 'B', 'I', 'E'};
+        const char tail[] = {'D', 'B', 'I', 'E'};
         assert(sequence.size() > sizeof(head) + sizeof(tail));
         for (size_t i = 0; i < sizeof(head); ++i)
         {
@@ -2745,6 +2884,13 @@ namespace
         {
             assert(sequence[i] == 'D');
         }
+
+        // コマンドの範囲はパスごとに別（2パス目は1パス目の範囲の後ろ。1パスのコマンド数 2、1コマンド20バイト）
+        assert(commandList.IndirectDraws.size() == 2);
+        assert(commandList.IndirectDraws[0].OffsetBytes == 0);
+        assert(commandList.IndirectDraws[0].MaxDrawCount == 2);
+        assert(commandList.IndirectDraws[1].OffsetBytes == 2 * 20);
+        assert(commandList.IndirectDraws[1].MaxDrawCount == 2);
     }
 
     // 深度の範囲が 0〜1 でないと、保存される深度は NDC の深度と一致せず HZB の判定が成り立たないので、従来の経路で描く
@@ -2755,7 +2901,8 @@ namespace
 
         assert(commandList.BeginRenderPassCount == 1);
         assert(commandList.EndRenderPassCount == 1);
-        assert(commandList.DrawCallCount == 2);
+        assert(commandList.DispatchCount == 1);
+        assert(commandList.DrawCallCount == 1);
     }
 
     // 並びは A（ObjectId 1）と B（ObjectId 2）。見えたビットは、直前のフレームにも描かれた同じコンポーネントのインスタンスだけが引き継ぐ
@@ -2784,21 +2931,57 @@ namespace
         outProxies.push_back(b);
     }
 
-    // 追加されたインスタンス・再追加・コンポーネントの作り直しでは、前のフレームで見えたビットを捨てる（0で埋め直す）
+    // 追加されたインスタンス・再追加・コンポーネントの作り直しでは、前のフレームで見えたビットを捨てる（0で埋め直す）。
+    // 配置（インスタンスの並びとクラスタ数）が変わると、ぴったりの大きさで作り直して0で埋め、描かれ続けたインスタンスの
+    // 区画だけを古いバッファから写す。1インスタンスの区画は 1 クラスタぶん（4バイト）
     void TestMegaGeometryTwoPassDiscardsVisibilityOnReaddAndComponentChange()
     {
         FakeCommandList commandList;
-        Container::VariableArray<uint32_t> fills;
-        RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 8, &MegaVisibilityReaddScript, &fills);
+        Container::VariableArray<MegaVisibilityFrameRecord> frames;
+        RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 8, &MegaVisibilityReaddScript, &frames);
 
-        assert(fills.size() == 8);
-        // 0: 2つとも新規 / 1: 引き継ぐ / 2: A が外れる / 3: A を再追加 / 4: 引き継ぐ /
-        // 5: ComponentId の変更 / 6: A が外れる / 7: A を同じ ComponentId で再追加
-        const uint32_t expected[8] = {2, 0, 0, 1, 0, 1, 0, 1};
-        for (uint32_t i = 0; i < 8; ++i)
+        assert(frames.size() == 8);
+
+        auto expectWholeFill = [](const MegaVisibilityFrameRecord &frame, uint64_t sizeBytes) -> void
         {
-            assert(fills[i] == expected[i]);
-        }
+            assert(frame.Fills.size() == 1);
+            assert(frame.Fills[0].OffsetBytes == 0);
+            assert(frame.Fills[0].SizeBytes == sizeBytes);
+        };
+        auto expectCarriedOver = [](const MegaVisibilityFrameRecord &frame, uint64_t sourceOffset, uint64_t destinationOffset) -> void
+        {
+            assert(frame.Copies.size() == 1);
+            assert(frame.Copies[0].SourceOffsetBytes == sourceOffset);
+            assert(frame.Copies[0].DestinationOffsetBytes == destinationOffset);
+            assert(frame.Copies[0].SizeBytes == sizeof(uint32_t));
+        };
+
+        // 0: A・B が新規 → 作って0で埋める（引き継ぎ無し）
+        expectWholeFill(frames[0], 2 * sizeof(uint32_t));
+        assert(frames[0].Copies.empty());
+        // 1: 配置が同じで、2つとも引き継ぐ → 何もしない
+        assert(frames[1].Fills.empty());
+        assert(frames[1].Copies.empty());
+        // 2: A が外れる → [B] へ作り直し、B の区画（古い位置 4）を先頭へ写す
+        expectWholeFill(frames[2], sizeof(uint32_t));
+        expectCarriedOver(frames[2], 1 * sizeof(uint32_t), 0);
+        // 3: A を新しいコンポーネントで再追加 → [A, B] へ作り直し、B（古い位置 0）を2番目へ写す。A は0から
+        expectWholeFill(frames[3], 2 * sizeof(uint32_t));
+        expectCarriedOver(frames[3], 0, 1 * sizeof(uint32_t));
+        // 4: 引き継ぐ → 何もしない
+        assert(frames[4].Fills.empty());
+        assert(frames[4].Copies.empty());
+        // 5: 描かれ続けたまま ComponentId だけ変わる → 配置は同じで、A の区画（先頭の4バイト）だけ0に戻す。B は触らない
+        assert(frames[5].Fills.size() == 1);
+        assert(frames[5].Fills[0].OffsetBytes == 0);
+        assert(frames[5].Fills[0].SizeBytes == sizeof(uint32_t));
+        assert(frames[5].Copies.empty());
+        // 6: A が外れる → [B] へ作り直し、B を写す
+        expectWholeFill(frames[6], sizeof(uint32_t));
+        expectCarriedOver(frames[6], 1 * sizeof(uint32_t), 0);
+        // 7: 描かれなかった後の再追加 → [A, B] へ作り直し、B だけ写す（A は同じ ComponentId でも0から）
+        expectWholeFill(frames[7], 2 * sizeof(uint32_t));
+        expectCarriedOver(frames[7], 0, 1 * sizeof(uint32_t));
     }
 
     // 全インスタンスが一度消える（A → 空 → A）。同じ ObjectId・ComponentId・メッシュでも、再追加でビットを捨てる
@@ -2818,21 +3001,28 @@ namespace
     void TestMegaGeometryTwoPassDiscardsVisibilityWhenAllInstancesVanish()
     {
         FakeCommandList commandList;
-        Container::VariableArray<uint32_t> fills;
-        RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 3, &MegaVisibilityEmptyGapScript, &fills);
+        Container::VariableArray<MegaVisibilityFrameRecord> frames;
+        RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 3, &MegaVisibilityEmptyGapScript, &frames);
 
-        assert(fills.size() == 3);
-        // 0: A が新規 / 1: 空（記録なし） / 2: A を同じ ObjectId・ComponentId・メッシュで再追加
-        const uint32_t expected[3] = {1, 0, 1};
-        for (uint32_t i = 0; i < 3; ++i)
-        {
-            assert(fills[i] == expected[i]);
-        }
+        assert(frames.size() == 3);
+        // 0: A が新規 → 作って0で埋める
+        assert(frames[0].Fills.size() == 1);
+        assert(frames[0].Fills[0].SizeBytes == sizeof(uint32_t));
+        assert(frames[0].Copies.empty());
+        // 1: 空（記録なし）
+        assert(frames[1].Fills.empty());
+        assert(frames[1].Copies.empty());
+        // 2: A を同じ ObjectId・ComponentId・メッシュで再追加 → 配置は同じでも引き継がず、A の区画を0に戻す
+        assert(frames[2].Fills.size() == 1);
+        assert(frames[2].Fills[0].OffsetBytes == 0);
+        assert(frames[2].Fills[0].SizeBytes == sizeof(uint32_t));
+        assert(frames[2].Copies.empty());
     }
 
     void TestMegaGeometryNativeExecuteSkipsWhenNoInstances()
     {
         auto device = RHI::MakeShared<FakeDevice>();
+        device->EnableMegaGeometryBatchCapabilities();
 
         ShaderManager shaderManager;
         assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
@@ -6846,6 +7036,8 @@ int main()
     TestMegaGeometryNativeExecuteRecreatesRenderPassWhenAttachmentStateModeChanges();
     TestMegaGeometryPartialNamedGBufferFallsBackToLegacyAttachmentStates();
     TestMegaGeometryRecordFrameCommandBatchesInstancesInSingleRenderPass();
+    TestMegaGeometryRecordFrameCommandSplitsSectionsByMaterial();
+    TestMegaGeometryRecordFrameCommandWritesInstanceTable();
     TestMegaGeometryRecordFrameCommandRecordsTwoPassOcclusion();
     TestMegaGeometryTwoPassFallsBackWhenDepthRangeIsNotUnit();
     TestMegaGeometryTwoPassDiscardsVisibilityOnReaddAndComponentChange();
