@@ -539,7 +539,7 @@
 - notes: VTG5-PAGE-STREAMER の撮影で見つけた。ページの要求は「非常駐の子」だけに出るので、常駐したページの最後に要求されたフレームは読み込み前のまま進まず、LRU が読み込んだ順になる。作業集合が目標を少し超えると、使われているページを外して再読み込みする入れ替わりが続く（既定の目標 3649 MB では起きない）。VTG5-STRESS-GEOMETRY の前に入れるのが望ましい。 2026-10-05 親（run `20261005-154938` の保留を解く）: 評価2周の残り1件を直す。BVH の経路（`cluster_bvh_cull.comp`）で、2パス目に節ごと遮蔽されると枝を打ち切るため、1パス目で描いたクラスタのページの使用の印が出ない（平坦の経路は直っている）。1パス目で描画のコマンドを積む時点で、自分のページの使用の印を出す。子のページの要求は今の可視の条件のまま。パスの間の要求のバッファの同期を確かめる。BVH の節の判定から通す回帰のケースを GPU のテスト（`GeometryPageRequestVulkanTest`。今は BVH のシェーダーはコンパイルの確認だけ）に足す。`PROGRESS.md` の行末の記録（「一致」）の誤りも直す。
 
 ## VTG5-STREAM-HANG: 予算を絞った負荷モードの撮影で起動から約32秒で止まる原因を突き止めて直す
-- status: todo
+- status: done
 - done-when: VTG5-STRESS-GEOMETRY の撮影の途中で見つかった、`--stress-geometry` を `--vram-budget-mb 1100` で低い視点から旋回して撮ると、Game のログが起動から約32秒で止まる（ハングか異常終了）現象を再現し、原因（スレッドの待ち合いか、例外・アクセス違反か）を、プロセスが生きているかの確認、Windows のイベントログ（WER の Event 1000 と落ちた RVA）、ダンプ（`procdump -ma` が使えればそれ、無ければ `--render-thread=st` での再現と Visual Studio の `cdb`/`dumpbin` など手元の道具）で突き止めて直す。同じ条件の撮影を3回続けて最後まで撮れる（result=pass、ログが撮影の保存まで続く）ことを確かめ、原因と直し方を `PROGRESS.md` に記録する。原因の経路に回帰のテスト（CPU のストリーマ・プールの偽物で再現できればそれ）を足す。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target RenderResourcesDomainContractTest MegaGeometryResourcesTest -- /m:1`

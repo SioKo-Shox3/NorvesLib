@@ -877,6 +877,55 @@ void TestBudgetBlockedWhenNothingEvictable()
     Expect(!streamer.HasPendingWork(), "目標に収まらず進められないものは、落ち着かない待ちとして数えない");
 }
 
+// ---- 入れ替わりが続くとき（作業集合が目標を超え、視点が動き続ける）は、落ち着かない待ちとして数えない ----
+
+void TestChurnIsNotPendingWork()
+{
+    FakeBackend backend;
+    backend.MakeFlatPages(1, 14, 100, 2);
+    GeometryPageStreamer streamer(backend, RoomyConfig());
+    streamer.SetResidentBudget(true, 300); // 3 ページ分
+
+    // 視点が動き続け、使われないページが古くなって外され、次のページが読み込まれ続ける
+    uint64_t frame = 1;
+    bool bPendingEarly = false;
+    for (int i = 0; i < 280; ++i, ++frame)
+    {
+        GeometryPageRequestSet set = Requests(1, {static_cast<uint32_t>(1 + (i / 3) % 12)}, frame);
+        streamer.Update(frame, &set);
+        bPendingEarly = bPendingEarly || streamer.HasPendingWork();
+    }
+    Expect(bPendingEarly, "入れ替わりが始まったばかりの間は、待ちとして数える");
+    Expect(streamer.GetStats().EvictedPages > 50, "作業集合が目標を超えるので、追い出しが続く");
+
+    // 追い出しが続いて ChurnRunFrames を超えたら、読み込み中でも待ちに数えない（毎フレーム確かめる）
+    bool bPendingWhileChurning = false;
+    for (int i = 0; i < 400; ++i, ++frame)
+    {
+        GeometryPageRequestSet set = Requests(1, {static_cast<uint32_t>(1 + ((280 + i) / 3) % 12)}, frame);
+        streamer.Update(frame, &set);
+        if (i >= static_cast<int>(GeometryPageStreamer::ChurnRunFrames))
+        {
+            bPendingWhileChurning = bPendingWhileChurning || streamer.HasPendingWork();
+        }
+    }
+    Expect(!bPendingWhileChurning, "入れ替わりが続く間は、落ち着かない待ちとして数えない");
+    Expect(streamer.GetStats().ReadsStarted > 100, "読み込み自体は続けている（止めていない）");
+
+    // 追い出しが ChurnGapFrames 止まれば、新しい読み込みを待ちに数え直す
+    streamer.SetResidentBudget(true, 1300);
+    for (uint32_t i = 0; i <= GeometryPageStreamer::ChurnGapFrames + 2; ++i, ++frame)
+    {
+        streamer.Update(frame, nullptr);
+    }
+    GeometryPageRequestSet fresh = Requests(1, {13}, frame);
+    streamer.Update(frame, &fresh);
+    Expect(streamer.HasPendingWork(), "入れ替わりが止まったあとの読み込みは、待ちに数え直す");
+    frame = RunUntilIdle(streamer, frame + 1, nullptr);
+    Expect(!streamer.HasPendingWork() && streamer.GetPageState(1, 13) == GeometryPageState::Resident,
+           "読み込みが終われば落ち着く");
+}
+
 // ---- 外した区画の再利用の順序（本物のプールと GpuRetireQueue） ----
 
 class FakeBlockBuffer final : public RHI::IBuffer
@@ -1252,6 +1301,7 @@ int RunTest()
     TestRequestFrameKeepsRecencyAndLru();
     TestFirstPageObeysByteLimits();
     TestUsedPagesAreNotEvicted();
+    TestChurnIsNotPendingWork();
     TestRequestFrameOrderAcrossUpdates();
     TestRootPagesAreIgnored();
     TestPublishAfterUploadComplete();

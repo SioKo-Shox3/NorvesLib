@@ -1013,3 +1013,15 @@
 - 検証: `verify-VTG5-PAGE-TOUCH-1-build.txt`（Debug の Game・RenderResourcesDomainContractTest・MegaGeometryResourcesTest・RHITextureUpdateVulkanTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（GeometryPageStreamerTest・MegaGeometryResourcesTest・GeometryPageRequestVulkanTest が 3/3 passed）、`-3-build-rwdi.txt`（RelWithDebInfo の Game 0）、`-4-capture.txt`（900 MB の撮影 pass。平均輝度 124.173 / 123.723 / 126.022）、`-5-metrics.txt`。ログの `geometry_evicted_pages` は default 1・near 130・low 0 で、以後増えない（`HasPendingPageStreaming` が false に戻って撮影が完了）。near.png を開いて欠け・穴が無いことを確認した。
 - 行末: `Assets/Shaders/Common/MegaGeometryCull.glsl`・`Test/.../GeometryPageRequestVulkanTest.cpp`・`TASKS.md` は CRLF のまま。`MegaGeometryPass.cpp` は元から LF 主体（CRLF が 26 行混在）で、編集ツールが混在を LF に直したので元の行末へ戻した。コミット前の numstat は `git diff` と `--ignore-cr-at-eol` で一致させる。
 - Notes: カリング時間は測っていない（足した処理は、描いたクラスタごとの `atomicExchange` 1 回と重複しなければ列への 1 書き込みで、2パス目が出すものと同じ列・同じ印を使う。stop-when に該当する兆候は無い）。
+
+## 反復 3（run 20261005-175023）: VTG5-STREAM-HANG（done）
+- 結論: ハングでも異常終了でもなかった。再現（`--stress-geometry=300 --vram-budget-mb=1100 --startup-camera=20,-8,8 --orbit-degrees-per-second=20 --capture-deterministic`、RelWithDebInfo）では、プロセスは生存（CPU 時間は進み、スレッドは待ちか実行中）、WER の Event 1000 は無し、`Game.log` は10MBごとに `Game.1〜5.log` へローテーションして書き続けていた。「起動から約32秒でログが止まる」は、ローテーションの境目（10MiB 付近）で `Game.log` を写した断面の誤読。
+- 本当の症状: 撮影が永遠に終わらない。ジオメトリの枠は `geometry_target_mb=71`（`VRAM_POOLS`）で、低い視点の作業集合がそれを超え、`geometry_evicted_pages` が毎秒7〜8ページずつ増え続ける入れ替わりが続く。`GeometryPageStreamer::HasPendingWork()` が、読み込み中のページが出るたびに true になり（`RenderWorld::HasPendingAsyncAssets` → 撮影の設定待ち）、false→true の変わり目ごとに決定的な撮影のエポックが約60フレームごとに巻き戻る（ログの `asset settle baseline` / `capture_deterministic epoch begin` が際限なく繰り返し、2分でレンダリング14000フレームを超えても `capture-sequence` の60フレームに届かない）。
+- 直し方: `GeometryPageStreamer` に、入れ替わりの継続の判定を足した（`IsChurningLocked`）。追い出しの間隔が `ChurnGapFrames`（120 Update）以内で続き、その続きが `ChurnRunFrames`（300 Update）以上になったら、`HasPendingWork()` は false を返す（読み込み自体は止めない）。追い出しが `ChurnGapFrames` 止まれば数え直す。落ち着くのを待っても落ち着かない状態を、待ちとして数えないための判定で、既存の `StalledUploadFrames`・目標超過の判定と同じ考え方。
+- 検証: 同じ条件の撮影を3回続けて完走（各20秒、終了コード0、6枚 PNG とも保存、ログが `capture_png saved` まで続く: `verify-VTG5-STREAM-HANG-4-capture3.txt`）。撮影スクリプト（`-StressGeometry -ViewNames low -VramBudgetMb 1100 -OrbitDegreesPerSecond 20 -Deterministic`）も `result=pass`（`verify-VTG5-STREAM-HANG-5-script-capture.txt`）。修正前は同条件で2分待っても設定待ちが終わらなかった。
+- 回帰のテスト: `GeometryPageStreamerTest` の `TestChurnIsNotPendingWork`（CPU の偽物のバックエンド。目標3ページに対し視点が動いて追い出しが続くと、始まりは待ちに数え、`ChurnRunFrames` 後は読み込み中でも数えず、追い出しが止まれば数え直す）。判定を無効化すると落ちることを確かめた。
+- 既知の限界: 入れ替わりの最中に撮るので、ページの常駐が撮影のフレームごとに変わりうる（画素の再現性は未確認）。追い出しが長く続きながら最終的に収束する場合（300 Update を超える収束）も、収束前に待ちを打ち切る。いずれも目標が作業集合に足りない負荷の撮影に限る。
+- 補足: `Game.log` に `neural_material_decode.slang`（Slang SDK なし）のエラーが2行出るが、以前の撮影のログにもあり、この件とは無関係。
+- 検証: `verify-VTG5-STREAM-HANG-1-build.txt`（RelWithDebInfo の Game）・`-2-build-debug.txt`・`-3-ctest.txt`（3本とも合格）・`-4-capture3.txt`・`-5-script-capture.txt`
+- 触ったもの: `Library/Core/Private/Rendering/GeometryPageStreamer.h`・`Test/Core/Rendering/GeometryPageStreamerTest.cpp`・`TASKS.md`・`PROGRESS.md`
+- Next: VTG5-STRESS-GEOMETRY（撮影の続き。1100 MB の low の旋回も完走する）。

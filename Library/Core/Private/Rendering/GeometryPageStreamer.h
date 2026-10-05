@@ -235,6 +235,10 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 書き込みが空きを待って進まないまま、この数の Update が続いたら、落ち着かない待ちとして数えない */
         static constexpr uint32_t StalledUploadFrames = 120;
+        /** @brief 追い出しの間隔がこの数の Update 以内で続く限り、同じ入れ替わりの続きとして数える */
+        static constexpr uint32_t ChurnGapFrames = 120;
+        /** @brief 入れ替わりがこの数の Update 以上続いたら、落ち着かないものとして待ちに数えない */
+        static constexpr uint32_t ChurnRunFrames = 300;
 
         explicit GeometryPageStreamer(IGeometryPageBackend &backend, const Config &config = Config())
             : m_Backend(backend), m_Config(config)
@@ -312,11 +316,17 @@ namespace NorvesLib::Core::Rendering
          * 読み込み中・書き込み中のページがあれば true。要求済み・読み込み済みのページは、直前の Update が目標に収まらず
          * 進められなかった（外せるページも無い）とき、または書き込みが長く（StalledUploadFrames 以上）区画・リングの空きを
          * 待ち続けているときは数えない（待ち続けても落ち着かないので）。失敗は数えない。
+         * 作業集合が目標を超えて、追い出しと読み直しが ChurnRunFrames 以上続いている間も数えない
+         * （待つと永遠に落ち着かず、撮影の設定待ちが巻き戻り続けるため。追い出しが ChurnGapFrames 止まれば数え直す）。
          * 撮影が、ページが落ち着くのを待つのに使う。
          */
         bool HasPendingWork() const
         {
             Thread::ScopedLock lock(m_Mutex);
+            if (IsChurningLocked())
+            {
+                return false;
+            }
             for (const auto &pair : m_Records)
             {
                 switch (pair.second.State)
@@ -369,6 +379,8 @@ namespace NorvesLib::Core::Rendering
             m_bBudgetBlockedLastUpdate = false;
             const uint64_t uploadBlockedBefore = m_Stats.UploadBlockedFrames;
             const uint64_t pagesUploadedBefore = m_Stats.PagesUploaded;
+            const uint64_t evictedBefore = m_Stats.EvictedPages;
+            ++m_UpdateCount;
 
             DropDeadMeshesLocked();
             if (requests != nullptr)
@@ -390,6 +402,17 @@ namespace NorvesLib::Core::Rendering
             else if (m_Stats.PagesUploaded != pagesUploadedBefore)
             {
                 m_UploadBlockedStreak = 0;
+            }
+
+            // 追い出しが続いている間の長さ（間隔が ChurnGapFrames を超えたら新しい入れ替わりとして数え直す）
+            if (m_Stats.EvictedPages != evictedBefore)
+            {
+                if (!m_bEvictionRun || m_UpdateCount - m_LastEvictionUpdate > ChurnGapFrames)
+                {
+                    m_EvictionRunStartUpdate = m_UpdateCount;
+                    m_bEvictionRun = true;
+                }
+                m_LastEvictionUpdate = m_UpdateCount;
             }
             return result;
         }
@@ -684,6 +707,13 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        // 作業集合が目標を超えて、追い出しが途切れず続いているか
+        bool IsChurningLocked() const
+        {
+            return m_bEvictionRun && m_UpdateCount - m_LastEvictionUpdate <= ChurnGapFrames &&
+                   m_LastEvictionUpdate - m_EvictionRunStartUpdate >= ChurnRunFrames;
+        }
+
         // 5) 目標を超えた分を LRU で外す
         void EnforceBudgetLocked(GeometryPageFrameResult &result)
         {
@@ -950,5 +980,10 @@ namespace NorvesLib::Core::Rendering
         bool m_bBudgetBlockedLastUpdate = false;
         // 区画・リングの空きが無くて書き込みを見送った Update が、書き込みの進まないまま続いている数
         uint32_t m_UploadBlockedStreak = 0;
+        // Update の通し番号と、追い出しが途切れず続いている間の始まり・最後（IsChurningLocked が使う）
+        uint64_t m_UpdateCount = 0;
+        bool m_bEvictionRun = false;
+        uint64_t m_EvictionRunStartUpdate = 0;
+        uint64_t m_LastEvictionUpdate = 0;
     };
 } // namespace NorvesLib::Core::Rendering
