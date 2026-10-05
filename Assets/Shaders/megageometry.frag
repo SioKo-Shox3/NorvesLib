@@ -145,7 +145,7 @@ void main()
     bool bVirtualTexture = mvp.materialParams.z > 0.5;
     float displacementUVSpacing = mvp.frameParams.z;
 
-    // 画面微分を使う量（高さ・各層の標本ミップと POM の後の UV の勾配）は、デバッグ表示の早期 return（頂点ごとの値で分かれる）や
+    // 画面微分を使う量（高さ・各層の標本ミップと POM の後の UV の勾配）は、デバッグ表示の早期 return（描画ごとの UBO の値で分かれる）や
     // 分岐・ループより前の一様な位置で取る。画面微分は一様でない制御フローの中では未定義。
     // 高さのフィードバックの標本ミップは POM の前の元の UV で取る。
     float heightLod = 0.0;
