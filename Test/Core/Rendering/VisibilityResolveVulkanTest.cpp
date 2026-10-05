@@ -27,6 +27,7 @@
 // Vulkan デバイスが無い環境、または解決に対応しない装置では 125（スキップ）を返す。
 #include "Container/Containers.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
@@ -35,6 +36,7 @@
 #include "Rendering/VirtualTextureRequestSet.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityMaterialTable.h"
+#include "Rendering/VisibilityResolveMaterialBuild.h"
 #include "Rendering/VisibilityResolvePass.h"
 
 #include "RHI/DeviceCapabilities.h"
@@ -1980,6 +1982,362 @@ namespace
         Expect(badNormal == 0, "Normal は法線マップ（2 チャンネルの Z の復元を含む）を接線の基底で変換した値でなければならない");
     }
 
+    void ScaleVertexUv(Container::VariableArray<Vertex>& vertices, double factorU, double factorV)
+    {
+        for (Vertex& vertex : vertices)
+        {
+            vertex.Uv[0] = static_cast<float>(vertex.Uv[0] * factorU);
+            vertex.Uv[1] = static_cast<float>(vertex.Uv[1] * factorV);
+        }
+    }
+
+    // 場面の UV を、U・V で別の倍率に変えた場面（頂点と参照の三角形）。U と V の倍率が違うと、画面の上で UV の勾配の
+    // 長さが方向によって違う（異方性の比が大きい）画素ができる。画素ごとの参照は ComputeUvScaledReferences で計算し直す
+    Scene MakeUvScaledScene(const Scene& baseScene, double factorU, double factorV)
+    {
+        Scene scene = baseScene;
+        ScaleVertexUv(scene.ProceduralVertices1, factorU, factorV);
+        ScaleVertexUv(scene.ProceduralVertices2, factorU, factorV);
+        ScaleVertexUv(scene.MegaVertices, factorU, factorV);
+        ScaleVertexUv(scene.SkinnedCurrent, factorU, factorV);
+        ScaleVertexUv(scene.SkinnedPrevious, factorU, factorV);
+        for (ReferenceTriangle& triangle : scene.References)
+        {
+            for (int corner = 0; corner < 3; ++corner)
+            {
+                triangle.Uv[corner][0] *= factorU;
+                triangle.Uv[corner][1] *= factorV;
+            }
+        }
+        return scene;
+    }
+
+    Container::VariableArray<PixelReference> ComputeUvScaledReferences(const Scene& scaledScene,
+                                                                       const CameraSet& cameras,
+                                                                       const Container::VariableArray<PixelReference>& baseReferences)
+    {
+        Container::VariableArray<PixelReference> references(baseReferences.size());
+        for (uint32_t y = 0; y < ScreenHeight; ++y)
+        {
+            for (uint32_t x = 0; x < ScreenWidth; ++x)
+            {
+                const size_t pixel = static_cast<size_t>(y) * ScreenWidth + x;
+                if (baseReferences[pixel].bCovered)
+                {
+                    ComputePixelReference(scaledScene, cameras, baseReferences[pixel].ReferenceIndex, x, y, true, references[pixel]);
+                }
+            }
+        }
+        return references;
+    }
+
+    // 勾配から求めた、ミップごとに色を変えたテクスチャ（CreateMipChainTexture）の三線形フィルタの色の期待値
+    // （レベル 0 = 赤、1 = 緑、2 以降 = 青。ミップの小数部で隣のレベルと混ぜる）
+    void MipChainColor(double lod, double outColor[3])
+    {
+        const double clamped = std::min(std::max(lod, 0.0), 8.0);
+        const int level = static_cast<int>(std::floor(clamped));
+        const double fraction = clamped - level;
+        auto levelColor = [](int index, double color[3]) {
+            color[0] = index == 0 ? 1.0 : 0.0;
+            color[1] = index == 1 ? 1.0 : 0.0;
+            color[2] = index >= 2 ? 1.0 : 0.0;
+        };
+        double lower[3];
+        double upper[3];
+        levelColor(level, lower);
+        levelColor(level + 1, upper);
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            outColor[channel] = lower[channel] * (1.0 - fraction) + upper[channel] * fraction;
+        }
+    }
+
+    // 材質の表の 1 件から解決の入力を作る関数（VisibilityResolveGeometry::MakeResolveMaterial）が、各テクスチャの枠を用途どおりの
+    // 位置から引き、スカラー値・MegaGeometry の印を写すことを、実物の RenderResources（ハンドル → RHI のテクスチャ）で確かめる。
+    // 材質ごとの dispatch へ渡す前の段で、枠をずらす（金属度と粗さを取り違える等）と、他の検査（dispatch.Materials を直接渡す）では
+    // 見えない。7 つの枠に別々のテクスチャを登録し、それぞれの枠に別のテクスチャが入ることを見る
+    void RunMaterialSlotMappingCase(const DevicePtr& device)
+    {
+        RenderResources resources;
+        if (!resources.Initialize(device))
+        {
+            Expect(false, "枠の検査の RenderResources を初期化できなければならない");
+            return;
+        }
+        TextureResources& textures = resources.Textures();
+
+        constexpr uint32_t SlotCount = 7; // アルベド・法線・金属度・粗さ・AO・ORM・高さ
+        TexturePtr rhi[SlotCount];
+        TextureHandle handles[SlotCount];
+        for (uint32_t slot = 0; slot < SlotCount; ++slot)
+        {
+            rhi[slot] = Create1x1Texture(device, static_cast<uint8_t>(10 * (slot + 1)), 0, 0, 255, "ResolveTestSlot");
+            if (!rhi[slot])
+            {
+                Expect(false, "枠の検査の 1x1 のテクスチャを作れなければならない");
+                return;
+            }
+            handles[slot] = textures.RegisterExternalTexture(rhi[slot], "ResolveTestSlot");
+            Expect(handles[slot].IsValid(), "枠の検査のテクスチャを登録できなければならない");
+        }
+
+        MaterialResourceData data;
+        data.AlbedoTexture = handles[0];
+        data.NormalTexture = handles[1];
+        data.MetallicTexture = handles[2];
+        data.RoughnessTexture = handles[3];
+        data.AOTexture = handles[4];
+        data.ORMTexture = handles[5];
+        data.HeightTexture = handles[6];
+        data.Metallic = 0.6f;
+        data.Roughness = 0.25f;
+        MegaGeometry::MegaMeshMaterial mega;
+        mega.AlbedoTexture = handles[0];
+        mega.NormalTexture = handles[1];
+        mega.MetallicTexture = handles[2];
+        mega.RoughnessTexture = handles[3];
+        mega.AOTexture = handles[4];
+        mega.ORMTexture = handles[5];
+        mega.HeightTexture = handles[6];
+
+        const TextureResources::VirtualTextureFeedbackTarget target = textures.GetVirtualTextureFeedbackTarget();
+        const VisibilityBuffer::MaterialEntry entries[2] = {VisibilityBuffer::MakeMaterialEntry(&data),
+                                                            VisibilityBuffer::MakeMaterialEntry(mega)};
+        const char* const labels[2] = {"手続き・スキニングの材質の件", "MegaGeometry の材質の件"};
+        for (uint32_t kind = 0; kind < 2; ++kind)
+        {
+            const VisibilityResolveMaterial material = VisibilityResolveGeometry::MakeResolveMaterial(&textures, entries[kind], target);
+            const bool bSlotsOk = material.Albedo.get() == rhi[0].get() && material.Normal.get() == rhi[1].get() &&
+                                  material.Metallic.get() == rhi[2].get() && material.Roughness.get() == rhi[3].get() &&
+                                  material.AO.get() == rhi[4].get() && material.ORM.get() == rhi[5].get() &&
+                                  material.Height.get() == rhi[6].get();
+            std::cout << TestName << " 材質の表の件 → 解決の入力 " << labels[kind] << ": 枠が用途どおり=" << (bSlotsOk ? 1 : 0)
+                      << " 印=" << (material.bMegaGeometry ? 1 : 0) << std::endl;
+            Expect(bSlotsOk, "材質の表の件の各テクスチャは、アルベド・法線・金属度・粗さ・AO・ORM・高さの枠へ用途どおりに引かれなければならない");
+            Expect(material.bMegaGeometry == (kind == 1), "MegaGeometry の印は、MegaGeometry の材質の件だけが持たなければならない");
+            // テクスチャの指定がある用途は、スカラー値を採らない（金属度・粗さの 1x1 の定数にしない）
+            Expect(material.MetallicConstant < 0.0f && material.RoughnessConstant < 0.0f,
+                   "金属度・粗さのテクスチャを指定した件は、スカラー値を採ってはならない");
+            // VT でない（sparse でない）テクスチャは要求を書かない
+            Expect(material.FeedbackAlbedo == 0u && material.FeedbackNormal == 0u && material.FeedbackORM == 0u && material.FeedbackHeight == 0u,
+                   "VT でないテクスチャの枠は、要求のパラメータが 0 でなければならない");
+        }
+
+        // 指定の無い枠は null のまま（隣の枠のテクスチャが漏れない）。金属度・粗さのスカラー値は、そのテクスチャの指定が無いときだけ採る
+        MaterialResourceData sparse;
+        sparse.AlbedoTexture = handles[0];
+        sparse.Metallic = 0.6f;
+        sparse.Roughness = 0.25f;
+        const VisibilityResolveMaterial sparseMaterial =
+            VisibilityResolveGeometry::MakeResolveMaterial(&textures, VisibilityBuffer::MakeMaterialEntry(&sparse), target);
+        Expect(sparseMaterial.Albedo.get() == rhi[0].get() && !sparseMaterial.Normal && !sparseMaterial.Metallic &&
+                   !sparseMaterial.Roughness && !sparseMaterial.AO && !sparseMaterial.ORM && !sparseMaterial.Height,
+               "アルベドだけ指定した件は、アルベドの枠だけにテクスチャが入り、他の枠は null のままでなければならない");
+        Expect(sparseMaterial.MetallicConstant == 0.6f && sparseMaterial.RoughnessConstant == 0.25f,
+               "テクスチャの指定が無い金属度・粗さは、材質のスカラー値を採らなければならない");
+        MaterialResourceData roughnessOnly = sparse;
+        roughnessOnly.RoughnessTexture = handles[3];
+        const VisibilityResolveMaterial roughnessMaterial =
+            VisibilityResolveGeometry::MakeResolveMaterial(&textures, VisibilityBuffer::MakeMaterialEntry(&roughnessOnly), target);
+        Expect(roughnessMaterial.Roughness.get() == rhi[3].get() && roughnessMaterial.RoughnessConstant < 0.0f &&
+                   roughnessMaterial.MetallicConstant == 0.6f,
+               "粗さのテクスチャがある件は、粗さのスカラー値を採らず、金属度のスカラー値だけを採らなければならない");
+
+        // MegaGeometry の材質は金属度・粗さのスカラー値を持たない（未指定。粗さの既定は白）
+        MegaGeometry::MegaMeshMaterial bareMega;
+        const VisibilityResolveMaterial bareMaterial =
+            VisibilityResolveGeometry::MakeResolveMaterial(&textures, VisibilityBuffer::MakeMaterialEntry(bareMega), target);
+        Expect(bareMaterial.bMegaGeometry && bareMaterial.MetallicConstant < 0.0f && bareMaterial.RoughnessConstant < 0.0f &&
+                   !bareMaterial.Albedo && !bareMaterial.Roughness && !bareMaterial.ORM,
+               "テクスチャもスカラー値も無い MegaGeometry の材質は、印だけを持ち、粗さの既定（白）を使えなければならない");
+    }
+
+    constexpr double MegaMaterialUvScaleU = 0.35;
+    constexpr double MegaMaterialUvScaleV = 0.35 / 8.0;
+
+    // MegaGeometry の区間の材質（材質の表の MATERIAL_FLAG_MEGA_GEOMETRY と VisibilityResolveMaterial::bMegaGeometry）は、
+    // ラスタの MegaGeometryPass と同じ規則で解決する。違いは 2 つ:
+    //   (1) 粗さのテクスチャも ORM も無いときの粗さは白（1）。手続き・スキニング（GBufferPass）は中間灰（128/255）。
+    //       材質ごとの形（テクスチャを束ねる）と直接 dispatch（材質の定数だけ）の両方
+    //   (2) サンプラーは等方の Linear（maxAnisotropy 指定なし）。標本のミップは log2(Pmax) で、異方性 4 の log2(Pmax / N) より粗い
+    // 材質 0・2 を MegaGeometry の材質、材質 1・3 を手続きの材質にして、アルベドだけを張る（材質 2・3 はミップごとに色を変えた
+    // 256x256）。粗さ・金属度・AO・法線は指定しない
+    void RunMegaGeometryMaterialCase(const DevicePtr& device,
+                                     ShaderManager& shaderManager,
+                                     const Scene& baseScene,
+                                     const Container::VariableArray<uint32_t>& idImage,
+                                     const Container::VariableArray<PixelReference>& baseReferences,
+                                     const CameraSet& cameras)
+    {
+        // 異方性の比が大きい画素を作るため、V だけを縮めた場面（テクセルの上で U 方向に長い足跡になる）で回す
+        Scene scene = MakeUvScaledScene(baseScene, MegaMaterialUvScaleU, MegaMaterialUvScaleV);
+        const Container::VariableArray<PixelReference> references = ComputeUvScaledReferences(scene, cameras, baseReferences);
+        scene.Materials[0].Header[0] |= VisibilityBuffer::MATERIAL_FLAG_MEGA_GEOMETRY;
+        scene.Materials[2].Header[0] |= VisibilityBuffer::MATERIAL_FLAG_MEGA_GEOMETRY;
+        GpuScene gpu;
+        if (!BuildGpuScene(device, scene, idImage, gpu))
+        {
+            Expect(false, "MegaGeometry の材質の検査の GPU の資源を作れなければならない");
+            return;
+        }
+
+        Container::VariableArray<VisibilityResolveMaterial> materials(4);
+        materials[0].bMegaGeometry = true;
+        materials[0].Albedo = Create1x1Texture(device, 200, 100, 50, 255, "ResolveTestMegaM0Albedo");
+        materials[1].Albedo = Create1x1Texture(device, 30, 220, 90, 255, "ResolveTestMegaM1Albedo");
+        materials[2].bMegaGeometry = true;
+        materials[2].Albedo = CreateMipChainTexture(device);
+        materials[3].Albedo = CreateMipChainTexture(device);
+        for (size_t material = 0; material < 4; ++material)
+        {
+            if (!materials[material].Albedo)
+            {
+                Expect(false, "MegaGeometry の材質の検査のテクスチャを作れなければならない");
+                return;
+            }
+        }
+
+        TileRunOptions options;
+        const Readback tiled =
+            RunResolve(device, shaderManager, gpu, cameras, false, true, 31, &options, ScreenWidth, ScreenHeight, &materials);
+        // 材質のテクスチャを束ねない直接 dispatch（材質の定数だけで書く）
+        const Readback direct = RunResolve(device, shaderManager, gpu, cameras, false, true, 32);
+        Expect(tiled.bOk && tiled.bRecorded && tiled.bClassified, "MegaGeometry の材質つきの材質ごとの解決を記録して読み戻せなければならない");
+        Expect(direct.bOk && direct.bRecorded, "直接 dispatch を記録して読み戻せなければならない");
+        if (!tiled.bOk || !direct.bOk)
+        {
+            return;
+        }
+
+        uint32_t perMaterial[4] = {};
+        uint32_t badTiledRoughness = 0;
+        uint32_t badDirectRoughness = 0;
+        uint32_t badOther = 0;
+        // 等方か異方性ありかで標本のミップが大きく違い、色が見分けられる画素（材質 2 は等方、材質 3 は異方性ありのはず）
+        uint32_t discriminating = 0;
+        uint32_t megaMismatch = 0;
+        uint32_t proceduralFollowsIso = 0;
+        double megaMaxError = 0.0;
+        double minIsotropicLod = 1.0e9;
+        double maxIsotropicLod = -1.0e9;
+        double maxAnisotropyRatio = 0.0;
+        for (uint32_t y = 0; y < ScreenHeight; ++y)
+        {
+            for (uint32_t x = 0; x < ScreenWidth; ++x)
+            {
+                const size_t pixel = static_cast<size_t>(y) * ScreenWidth + x;
+                const PixelReference& ref = references[pixel];
+                if (!ref.bCovered)
+                {
+                    continue;
+                }
+                const ReferenceTriangle& triangle = scene.References[ref.ReferenceIndex];
+                if (triangle.Material >= 4)
+                {
+                    continue;
+                }
+                ++perMaterial[triangle.Material];
+                const bool bMega = triangle.Material == 0 || triangle.Material == 2;
+
+                // 粗さ: MegaGeometry は白（255）、手続きは中間灰（128）。金属度は 0、AO は 1
+                const uint8_t wantRoughness = bMega ? 255 : 128;
+                const uint8_t* tiledMaterial = tiled.Material.data() + pixel * 4;
+                const uint8_t* directMaterial = direct.Material.data() + pixel * 4;
+                if (tiledMaterial[1] != wantRoughness || tiledMaterial[0] != 0 || tiledMaterial[2] != 255)
+                {
+                    ++badTiledRoughness;
+                }
+                if (directMaterial[1] != wantRoughness || directMaterial[0] != 0 || directMaterial[2] != 255)
+                {
+                    ++badDirectRoughness;
+                }
+
+                const uint8_t* albedo = tiled.Albedo.data() + pixel * 4;
+                if (triangle.Material <= 1)
+                {
+                    // 1x1 の単色: 標本は異方性・ミップに依らない（インスタンスの色 × アルベド）
+                    const double texture0[3] = {200 / 255.0, 100 / 255.0, 50 / 255.0};
+                    const double texture1[3] = {30 / 255.0, 220 / 255.0, 90 / 255.0};
+                    const double* texture = triangle.Material == 0 ? texture0 : texture1;
+                    for (int channel = 0; channel < 3; ++channel)
+                    {
+                        if (std::fabs(albedo[channel] / 255.0 - triangle.ObjectColor[channel] * texture[channel]) > 1.0 / 255.0 + 1.0e-6)
+                        {
+                            ++badOther;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+
+                // 材質 2・3: 標本のミップの期待値。等方は log2(Pmax)、異方性ありは log2(Pmax / min(ceil(Pmax / Pmin), 4)) 付近
+                const double lengthX = 256.0 * std::hypot(ref.DuvDx[0], ref.DuvDx[1]);
+                const double lengthY = 256.0 * std::hypot(ref.DuvDy[0], ref.DuvDy[1]);
+                const double pMax = std::max(lengthX, lengthY);
+                const double pMin = std::min(lengthX, lengthY);
+                if (!(pMax > 0.0) || !(pMin > 0.0))
+                {
+                    continue;
+                }
+                const double isotropicLod = std::log2(pMax);
+                minIsotropicLod = std::min(minIsotropicLod, isotropicLod);
+                maxIsotropicLod = std::max(maxIsotropicLod, isotropicLod);
+                maxAnisotropyRatio = std::max(maxAnisotropyRatio, pMax / pMin);
+                const double anisotropicLod = std::log2(pMax / std::min(std::max(std::ceil(pMax / pMin), 1.0), 4.0));
+                double isotropicColor[3];
+                double anisotropicColor[3];
+                MipChainColor(isotropicLod, isotropicColor);
+                MipChainColor(anisotropicLod, anisotropicColor);
+                // 色の違い（インスタンスの色の掛け算後）が 0.4 以上ある画素だけが、等方と異方性ありを見分けられる
+                double separation = 0.0;
+                double isotropicError = 0.0;
+                for (int channel = 0; channel < 3; ++channel)
+                {
+                    const double scale = triangle.ObjectColor[channel];
+                    separation = std::max(separation, std::fabs(isotropicColor[channel] - anisotropicColor[channel]) * scale);
+                    isotropicError = std::max(isotropicError, std::fabs(albedo[channel] / 255.0 - isotropicColor[channel] * scale));
+                }
+                if (separation < 0.4)
+                {
+                    continue;
+                }
+                if (bMega)
+                {
+                    ++discriminating;
+                    megaMaxError = std::max(megaMaxError, isotropicError);
+                    if (isotropicError > 0.2)
+                    {
+                        ++megaMismatch;
+                    }
+                }
+                else if (isotropicError <= 0.2)
+                {
+                    // 手続きの材質（異方性 4 のサンプラー）が等方の色になってしまった画素
+                    ++proceduralFollowsIso;
+                }
+            }
+        }
+        std::cout << TestName << " MegaGeometry の材質: 画素 材質ごと=[" << perMaterial[0] << "," << perMaterial[1] << "," << perMaterial[2]
+                  << "," << perMaterial[3] << "] 等方と異方性ありを見分けられる画素(材質2)=" << discriminating
+                  << " 等方の期待との差の最大=" << megaMaxError << " 等方の期待と合った画素の数 (材質3)=" << proceduralFollowsIso
+                  << " 等方のミップの範囲=[" << minIsotropicLod << ", " << maxIsotropicLod << "] 異方性の比の最大=" << maxAnisotropyRatio
+                  << std::endl;
+        for (uint32_t material = 0; material < 4; ++material)
+        {
+            Expect(perMaterial[material] >= 20, "MegaGeometry の材質の検査は、4 つの材質すべてで十分な画素を確かめなければならない");
+        }
+        Expect(badTiledRoughness == 0,
+               "材質ごとの形は、粗さの指定が無いとき MegaGeometry の材質は白（1）・手続きの材質は中間灰（128/255）でなければならない");
+        Expect(badDirectRoughness == 0,
+               "直接 dispatch は、粗さの指定が無いとき MegaGeometry の材質は白（1）・手続きの材質は中間灰（128/255）でなければならない");
+        Expect(badOther == 0, "1x1 の単色のアルベドは、MegaGeometry の材質でも手続きの材質でもインスタンスの色 × アルベドでなければならない");
+        Expect(discriminating >= 20, "等方のサンプラーの検査は、等方と異方性ありを見分けられる画素を十分に確かめなければならない");
+        Expect(megaMismatch == 0, "MegaGeometry の材質は、等方の Linear のサンプラー（ミップ = log2(Pmax)）で標本されなければならない");
+        Expect(proceduralFollowsIso == 0 || proceduralFollowsIso < discriminating / 2u,
+               "手続きの材質は、異方性 4 のサンプラーで標本され、等方のミップの色にならない");
+    }
+
     // ========================================
     // VT の要求（フィードバック）
     // ========================================
@@ -1993,15 +2351,9 @@ namespace
     // 場面の UV を縮める倍率。材質 0 の画素の欲しいミップが 0〜2（ミップテイルはミップ 3 から）に収まり、
     // ミップテイルだけを結んだテクスチャでは全画素が非常駐になる
     constexpr double FeedbackUvScale = 1.0 / 40.0;
-
-    void ScaleVertexUv(Container::VariableArray<Vertex>& vertices, double factor)
-    {
-        for (Vertex& vertex : vertices)
-        {
-            vertex.Uv[0] = static_cast<float>(vertex.Uv[0] * factor);
-            vertex.Uv[1] = static_cast<float>(vertex.Uv[1] * factor);
-        }
-    }
+    // MegaGeometry の材質の検査で、FeedbackUvScale にさらに掛ける U・V の倍率
+    constexpr double FeedbackMegaUvScaleU = 0.9;
+    constexpr double FeedbackMegaUvScaleV = 0.9 / 8.0;
 
     struct ExpectedRequest
     {
@@ -2010,9 +2362,10 @@ namespace
         uint32_t Y = 0;
     };
 
-    // 画素の欲しいミップとタイル。ミップはシェーダーの VisQueryLodFromGradient（異方性の標本の数は floor(Pmax / Pmin)）、タイルは
-    // WriteVirtualTextureFeedbackAtPixel の式。outLod にはミップを切り捨てる前の値を返す
-    ExpectedRequest ExpectedRequestForPixel(const PixelReference& ref, double& outLod)
+    // 画素の欲しいミップとタイル。ミップはシェーダーの VisQueryLodFromGradient（異方性の標本の数は floor(Pmax / Pmin)。
+    // bIsotropic は MegaGeometry の等方のサンプラーで、標本の数は 1）、タイルは WriteVirtualTextureFeedbackAtPixel の式。
+    // outLod にはミップを切り捨てる前の値を返す
+    ExpectedRequest ExpectedRequestForPixel(const PixelReference& ref, double& outLod, bool bIsotropic = false)
     {
         const double lengthX = std::hypot(ref.DuvDx[0], ref.DuvDx[1]) * FeedbackTextureSize;
         const double lengthY = std::hypot(ref.DuvDy[0], ref.DuvDy[1]) * FeedbackTextureSize;
@@ -2021,7 +2374,7 @@ namespace
         double lod = 0.0;
         if (pMax > 0.0)
         {
-            const double ratio = pMin > 0.0 ? std::min(std::max(std::floor(pMax / pMin), 1.0), 4.0) : 4.0;
+            const double ratio = bIsotropic ? 1.0 : (pMin > 0.0 ? std::min(std::max(std::floor(pMax / pMin), 1.0), 4.0) : 4.0);
             lod = std::min(std::max(std::log2(pMax / ratio), 0.0), static_cast<double>(FeedbackMipLevels - 1));
         }
         outLod = lod;
@@ -2159,12 +2512,15 @@ namespace
     //   常駐のテクスチャ: 4×4 の画素のうち位相の 1 画素だけが書く（位相 0・5・15 で、書く画素の数と位置が変わる）
     //   非常駐（ミップテイルだけ）: 巡回によらず全画素が書く
     //   パラメータ 0: 非常駐でも何も書かない
+    // bMegaGeometry: 材質 0 を MegaGeometry の材質（等方のサンプラー・等方の欲しいミップの式）にして回す。
+    // 等方の欲しいミップは異方性ありより粗く（大きく）なるので、U の倍率を下げて欲しいミップを 0〜2 に収める
     void RunVirtualTextureFeedbackCase(const DevicePtr& device,
                                        ShaderManager& shaderManager,
                                        const Scene& baseScene,
                                        const Container::VariableArray<uint32_t>& idImage,
                                        const Container::VariableArray<PixelReference>& baseReferences,
-                                       const CameraSet& cameras)
+                                       const CameraSet& cameras,
+                                       bool bMegaGeometry = false)
     {
         const auto& capabilities = device->GetCapabilities();
         if (!capabilities.SupportsVirtualTextureFeedback() || !capabilities.Sparse.bSparseBinding ||
@@ -2175,38 +2531,23 @@ namespace
         }
 
         // UV を縮めた場面と、その画素ごとの参照
-        Scene scene = baseScene;
-        ScaleVertexUv(scene.ProceduralVertices1, FeedbackUvScale);
-        ScaleVertexUv(scene.ProceduralVertices2, FeedbackUvScale);
-        ScaleVertexUv(scene.MegaVertices, FeedbackUvScale);
-        ScaleVertexUv(scene.SkinnedCurrent, FeedbackUvScale);
-        ScaleVertexUv(scene.SkinnedPrevious, FeedbackUvScale);
-        for (ReferenceTriangle& triangle : scene.References)
+        // MegaGeometry の材質は V だけをさらに縮め、異方性の比が大きい画素（等方と異方性ありで欲しいミップが違う）を作る
+        const double uvScaleU = bMegaGeometry ? FeedbackUvScale * FeedbackMegaUvScaleU : FeedbackUvScale;
+        const double uvScaleV = bMegaGeometry ? FeedbackUvScale * FeedbackMegaUvScaleV : FeedbackUvScale;
+        const char* const kindLabel = bMegaGeometry ? " MegaGeometry" : "";
+        Scene scene = MakeUvScaledScene(baseScene, uvScaleU, uvScaleV);
+        if (bMegaGeometry)
         {
-            for (int corner = 0; corner < 3; ++corner)
-            {
-                triangle.Uv[corner][0] *= FeedbackUvScale;
-                triangle.Uv[corner][1] *= FeedbackUvScale;
-            }
+            scene.Materials[0].Header[0] |= VisibilityBuffer::MATERIAL_FLAG_MEGA_GEOMETRY;
         }
-        Container::VariableArray<PixelReference> references(baseReferences.size());
-        for (uint32_t y = 0; y < ScreenHeight; ++y)
-        {
-            for (uint32_t x = 0; x < ScreenWidth; ++x)
-            {
-                const size_t pixel = static_cast<size_t>(y) * ScreenWidth + x;
-                if (baseReferences[pixel].bCovered)
-                {
-                    ComputePixelReference(scene, cameras, baseReferences[pixel].ReferenceIndex, x, y, true, references[pixel]);
-                }
-            }
-        }
+        const Container::VariableArray<PixelReference> references = ComputeUvScaledReferences(scene, cameras, baseReferences);
 
         // 材質 0 の画素: 位相ごとの期待の要求。欲しいミップが 0〜2 に収まっていること（この検査が非常駐の領域を確かめる前提）
         Container::VariableArray<ExpectedRequest> allPixels;
         Container::VariableArray<ExpectedRequest> phasePixels[16];
         double minLod = 1.0e9;
         double maxLod = -1.0e9;
+        uint32_t isotropyDiffers = 0; // 等方の式と異方性ありの式で、欲しいミップの整数部が違う画素
         for (uint32_t y = 0; y < ScreenHeight; ++y)
         {
             for (uint32_t x = 0; x < ScreenWidth; ++x)
@@ -2217,16 +2558,25 @@ namespace
                     continue;
                 }
                 double lod = 0.0;
-                const ExpectedRequest request = ExpectedRequestForPixel(ref, lod);
+                const ExpectedRequest request = ExpectedRequestForPixel(ref, lod, bMegaGeometry);
+                if (bMegaGeometry)
+                {
+                    double otherLod = 0.0;
+                    isotropyDiffers += ExpectedRequestForPixel(ref, otherLod, false).Mip != request.Mip ? 1u : 0u;
+                }
                 minLod = std::min(minLod, lod);
                 maxLod = std::max(maxLod, lod);
                 allPixels.push_back(request);
                 phasePixels[(y & 3u) * 4u + (x & 3u)].push_back(request);
             }
         }
-        std::cout << TestName << " VT のフィードバック: 材質 0 の画素=" << allPixels.size() << " 欲しいミップの範囲=[" << minLod << ", "
-                  << maxLod << "]" << std::endl;
+        std::cout << TestName << " VT のフィードバック" << kindLabel << ": 材質 0 の画素=" << allPixels.size() << " 欲しいミップの範囲=["
+                  << minLod << ", " << maxLod << "] 等方と異方性ありでミップが違う画素=" << isotropyDiffers << std::endl;
         Expect(allPixels.size() >= 100, "VT の検査は、材質 0 の画素を十分に確かめなければならない");
+        if (bMegaGeometry)
+        {
+            Expect(isotropyDiffers >= 20, "MegaGeometry の VT の検査は、等方と異方性ありで欲しいミップが違う画素を十分に確かめなければならない");
+        }
         Expect(maxLod < 2.8, "欲しいミップは、ミップテイル（ミップ 3 から）の外に収まらなければならない");
         for (uint32_t phase : {0u, 5u, 15u})
         {
@@ -2261,6 +2611,7 @@ namespace
         uint64_t frameSerial = 40;
         auto run = [&](const TexturePtr& texture, bool bParamEnabled, uint32_t phase) {
             Container::VariableArray<VisibilityResolveMaterial> materials(1);
+            materials[0].bMegaGeometry = bMegaGeometry;
             materials[0].Albedo = texture;
             materials[0].FeedbackAlbedo =
                 bParamEnabled ? VirtualTextureFeedback::PackMaterialParam(FeedbackTextureIndex, FeedbackTileSize, FeedbackTileSize, phase)
@@ -2283,16 +2634,26 @@ namespace
         for (const PhaseCase& phaseCase : phaseCases)
         {
             run(residentTexture, true, phaseCase.Phase);
-            CheckFeedbackRequests(phaseCase.Label, feedback.Requests, phasePixels[phaseCase.Phase]);
+            String label(bMegaGeometry ? "MegaGeometry " : "");
+            label += phaseCase.Label;
+            CheckFeedbackRequests(label.c_str(), feedback.Requests, phasePixels[phaseCase.Phase]);
         }
 
         // 非常駐: 巡回によらず全画素が書く（位相 5 でも材質 0 の全画素）
         run(tailOnlyTexture, true, 5u);
-        CheckFeedbackRequests("非常駐 位相=5", feedback.Requests, allPixels);
+        {
+            String label(bMegaGeometry ? "MegaGeometry " : "");
+            label += "非常駐 位相=5";
+            CheckFeedbackRequests(label.c_str(), feedback.Requests, allPixels);
+        }
 
         // パラメータ 0（VT でない材質）は、非常駐のテクスチャでも何も書かない
         run(tailOnlyTexture, false, 5u);
-        CheckFeedbackRequests("パラメータ 0", feedback.Requests, Container::VariableArray<ExpectedRequest>());
+        {
+            String label(bMegaGeometry ? "MegaGeometry " : "");
+            label += "パラメータ 0";
+            CheckFeedbackRequests(label.c_str(), feedback.Requests, Container::VariableArray<ExpectedRequest>());
+        }
 
         device->WaitIdle();
     }
@@ -2590,8 +2951,16 @@ namespace
             // 材質ごとの形は、材質のテクスチャで Albedo・Normal・Material を書く
             RunMaterialTextureCase(device, shaderManager, scene, idImage, references, cameras);
 
+            // MegaGeometry の材質は、ラスタの MegaGeometryPass と同じ規則（等方のサンプラー・粗さの既定は白）で解決する
+            RunMegaGeometryMaterialCase(device, shaderManager, scene, idImage, references, cameras);
+
+            // 材質の表の件 → 材質ごとの dispatch の入力（テクスチャの枠・スカラー値・印）
+            RunMaterialSlotMappingCase(device);
+
             // 材質ごとの形は、VT の要求（フィードバック）も要求のバッファへ書く
             RunVirtualTextureFeedbackCase(device, shaderManager, scene, idImage, references, cameras);
+            // MegaGeometry の材質の VT の要求は、等方の欲しいミップで書く
+            RunVirtualTextureFeedbackCase(device, shaderManager, scene, idImage, references, cameras, true);
 
             std::cout << TestName << " 覆われた画素=" << counters.CoveredPixels << " 記録ごと=[";
             for (uint32_t record = 1; record <= scene.Records.RecordCount(); ++record)

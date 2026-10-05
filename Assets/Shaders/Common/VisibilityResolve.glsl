@@ -205,6 +205,8 @@ const uint VIS_RESOLVE_DUMP_STRIDE = 12u;
 // 材質の表の MaterialEntry::Header[0] のビット（VisibilityMaterialTable.h の MATERIAL_FLAG_* と同じ）
 const uint VIS_MATERIAL_FLAG_NORMAL_TWO_CHANNEL = 1u;
 const uint VIS_MATERIAL_FLAG_HAS_HEIGHT = 2u;
+// MegaGeometry の区間の材質。ラスタの MegaGeometryPass は等方の Linear のサンプラーで標本し、粗さが無いときは白（1）を張る
+const uint VIS_MATERIAL_FLAG_MEGA_GEOMETRY = 4u;
 
 // ========================================
 // 頂点の読み出し（デバイスアドレスから）
@@ -573,21 +575,26 @@ VisMaterialSurface VisFlatMaterialSurface(vec3 objectColor, VisMaterialEntry ent
     surface.albedo = vec4(objectColor, 1.0);
     surface.normal = resolved.normal;
     const float metallic = (bHasMaterial && entry.scalars.x >= 0.0) ? VisQuantize8(entry.scalars.x) : 0.0;
-    const float roughness = (bHasMaterial && entry.scalars.y >= 0.0) ? VisQuantize8(entry.scalars.y) : 128.0 / 255.0;
+    // 粗さの既定は、手続き・スキニング（GBufferPass）が中間灰、MegaGeometry（MegaGeometryPass）が白
+    const bool bMegaGeometry = bHasMaterial && (entry.header.x & VIS_MATERIAL_FLAG_MEGA_GEOMETRY) != 0u;
+    const float roughness = (bHasMaterial && entry.scalars.y >= 0.0) ? VisQuantize8(entry.scalars.y)
+                                                                      : (bMegaGeometry ? 1.0 : 128.0 / 255.0);
     surface.material = vec3(metallic, roughness, 1.0);
     return surface;
 }
 
 #ifdef NORVES_VISRESOLVE_TILES
-// 材質のサンプラーの異方性の上限（GBufferPass の既定のサンプラー maxAnisotropy = 4 と同じ）
+// 材質のサンプラーの異方性の上限（手続き・スキニングの GBufferPass の既定のサンプラー maxAnisotropy = 4 と同じ）。
+// MegaGeometry の材質は等方の Linear（異方性なし）なので、bIsotropic で標本の数を 1 にする
 const float VIS_MATERIAL_MAX_ANISOTROPY = 4.0;
 
 // 勾配から、textureQueryLOD(tex, uv).y 相当のミップ（λ = log2(Pmax / N)）を求める。計算シェーダーは textureQueryLOD の
 // 暗黙の微分を使えない。VT の非常駐の逃げ始めのミップと、VT のフィードバックの欲しいミップに使う。
+// bIsotropic（MegaGeometry の等方のサンプラー）のときは N = 1（λ = log2(Pmax)。Vulkan の異方性なしの式）。
 // N（異方性の標本の数）は、Vulkan の仕様の式 min(ceil(Pmax / Pmin), 上限) でなく clamp(floor(Pmax / Pmin), 1, 上限)。
 // 実測（NVIDIA 610.88、起動画面の 3 視点、常駐したタイルの数のラスタの経路との比）: ceil は 1.5〜2.0 倍、連続値は 1.22 倍、
 // 等方（N = 1）は 0.65 倍、floor は 1.02〜1.11 倍で、ラスタの textureQueryLOD に最も近い。別の装置では一致を前提にしない
-float VisQueryLodFromGradient(sampler2D tex, vec2 uvDx, vec2 uvDy)
+float VisQueryLodFromGradient(sampler2D tex, vec2 uvDx, vec2 uvDy, bool bIsotropic)
 {
     const vec2 size = vec2(textureSize(tex, 0));
     const float lengthX = length(uvDx * size);
@@ -598,12 +605,14 @@ float VisQueryLodFromGradient(sampler2D tex, vec2 uvDx, vec2 uvDy)
     {
         return 0.0;
     }
-    const float ratio = pMin > 0.0 ? clamp(floor(pMax / pMin), 1.0, VIS_MATERIAL_MAX_ANISOTROPY) : VIS_MATERIAL_MAX_ANISOTROPY;
+    const float ratio = bIsotropic ? 1.0
+                                   : (pMin > 0.0 ? clamp(floor(pMax / pMin), 1.0, VIS_MATERIAL_MAX_ANISOTROPY)
+                                                 : VIS_MATERIAL_MAX_ANISOTROPY);
     return clamp(log2(pMax / ratio), 0.0, float(textureQueryLevels(tex) - 1));
 }
 
 // 解析的な微分と、各テクスチャの標本ミップ（bQueryLods のとき）から標本の入力を作る（ラスタの QueryMaterialTextureFootprint の代わり）
-MaterialTextureFootprint VisMakeFootprint(vec2 uvDx, vec2 uvDy, bool bHasORM, bool bQueryLods)
+MaterialTextureFootprint VisMakeFootprint(vec2 uvDx, vec2 uvDy, bool bHasORM, bool bQueryLods, bool bIsotropic)
 {
     MaterialTextureFootprint footprint;
     footprint.UvDx = uvDx;
@@ -615,13 +624,13 @@ MaterialTextureFootprint VisMakeFootprint(vec2 uvDx, vec2 uvDy, bool bHasORM, bo
     footprint.AoLod = 0.0;
     if (bQueryLods)
     {
-        footprint.AlbedoLod = VisQueryLodFromGradient(albedoTexture, uvDx, uvDy);
-        footprint.NormalLod = VisQueryLodFromGradient(normalTexture, uvDx, uvDy);
-        footprint.MetallicLod = VisQueryLodFromGradient(metallicTexture, uvDx, uvDy);
+        footprint.AlbedoLod = VisQueryLodFromGradient(albedoTexture, uvDx, uvDy, bIsotropic);
+        footprint.NormalLod = VisQueryLodFromGradient(normalTexture, uvDx, uvDy, bIsotropic);
+        footprint.MetallicLod = VisQueryLodFromGradient(metallicTexture, uvDx, uvDy, bIsotropic);
         if (!bHasORM)
         {
-            footprint.RoughnessLod = VisQueryLodFromGradient(roughnessTexture, uvDx, uvDy);
-            footprint.AoLod = VisQueryLodFromGradient(aoTexture, uvDx, uvDy);
+            footprint.RoughnessLod = VisQueryLodFromGradient(roughnessTexture, uvDx, uvDy, bIsotropic);
+            footprint.AoLod = VisQueryLodFromGradient(aoTexture, uvDx, uvDy, bIsotropic);
         }
     }
     return footprint;
@@ -655,6 +664,8 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     const bool bVirtualTexture = (tileParams.tile.z & VIS_TILE_FLAG_SPARSE) != 0u;
     const bool bNormalTwoChannel = (entry.header.x & VIS_MATERIAL_FLAG_NORMAL_TWO_CHANNEL) != 0u;
     const bool bHasHeight = (entry.header.x & VIS_MATERIAL_FLAG_HAS_HEIGHT) != 0u;
+    // MegaGeometry の材質は、ラスタが等方の Linear のサンプラーで標本する（欲しいミップも等方の式）
+    const bool bIsotropic = (entry.header.x & VIS_MATERIAL_FLAG_MEGA_GEOMETRY) != 0u;
     const float displacementUVSpacing = entry.scalars.w;
     const bool bDisplaced = VisRecordKind(record) == VIS_KIND_MEGA_CLUSTER && displacementUVSpacing > 0.0;
 
@@ -663,14 +674,14 @@ VisMaterialSurface VisEvaluateMaterialSurface(vec3 objectColor, VisMaterialEntry
     float heightLod = 0.0;
     if (bHasHeight)
     {
-        heightLod = bVirtualTexture ? VisQueryLodFromGradient(heightTexture, resolved.duvdx, resolved.duvdy) : 0.0;
+        heightLod = bVirtualTexture ? VisQueryLodFromGradient(heightTexture, resolved.duvdx, resolved.duvdy, bIsotropic) : 0.0;
         texCoord = ApplyParallaxOcclusionMappingGrad(heightTexture, resolved.uv, resolved.tangentFrame, resolved.viewDir,
                                                      entry.scalars.z, bVirtualTexture, resolved.duvdx, resolved.duvdy,
                                                      heightLod);
     }
 
     const MaterialTextureFootprint footprint =
-        VisMakeFootprint(resolved.duvdx, resolved.duvdy, bHasORM, bVirtualTexture || bDisplaced);
+        VisMakeFootprint(resolved.duvdx, resolved.duvdy, bHasORM, bVirtualTexture || bDisplaced, bIsotropic);
     const PbrMaterialTextureSamples samples =
         SamplePbrMaterialTextures(albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
                                   footprint, bHasORM, bNormalTwoChannel, bVirtualTexture);

@@ -13,6 +13,7 @@
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/VisibilityRasterPass.h"
+#include "Rendering/VisibilityResolveMaterialBuild.h"
 #include "RHI/DeviceCapabilities.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -121,14 +122,6 @@ namespace NorvesLib::Core::Rendering
 
     namespace
     {
-        // 材質の表のテクスチャのハンドル（64bit を下位・上位の 2 語で持つ）
-        TextureHandle LoadTextureHandle(const uint32_t* words)
-        {
-            TextureHandle handle;
-            handle.Id = static_cast<uint64_t>(words[0]) | (static_cast<uint64_t>(words[1]) << 32);
-            return handle;
-        }
-
         RHI::TexturePtr ResolveMaterialTexture(const TextureResources* textures, TextureHandle handle)
         {
             if (!textures || !handle.IsValid())
@@ -138,20 +131,25 @@ namespace NorvesLib::Core::Rendering
             return textures->GetRHITexturePtr(handle);
         }
 
-        // 材質の表の 1 件から、GBufferPass の材質の descriptor が張るのと同じテクスチャを引く
+    } // namespace
+
+    namespace VisibilityResolveGeometry
+    {
         VisibilityResolveMaterial MakeResolveMaterial(const TextureResources* textures,
                                                       const VisibilityBuffer::MaterialEntry& entry,
                                                       const TextureResources::VirtualTextureFeedbackTarget& feedbackTarget)
         {
-            const TextureHandle albedo = LoadTextureHandle(&entry.TexturesA[0]);
-            const TextureHandle normal = LoadTextureHandle(&entry.TexturesA[2]);
-            const TextureHandle metallic = LoadTextureHandle(&entry.TexturesB[0]);
-            const TextureHandle roughness = LoadTextureHandle(&entry.TexturesB[2]);
-            const TextureHandle ao = LoadTextureHandle(&entry.TexturesC[0]);
-            const TextureHandle orm = LoadTextureHandle(&entry.TexturesC[2]);
-            const TextureHandle height = LoadTextureHandle(&entry.TexturesD[0]);
+            const VisibilityBuffer::MaterialTextureHandles handles = VisibilityBuffer::ReadMaterialTextureHandles(entry);
+            const TextureHandle albedo = handles.Albedo;
+            const TextureHandle normal = handles.Normal;
+            const TextureHandle metallic = handles.Metallic;
+            const TextureHandle roughness = handles.Roughness;
+            const TextureHandle ao = handles.AO;
+            const TextureHandle orm = handles.ORM;
+            const TextureHandle height = handles.Height;
 
             VisibilityResolveMaterial material;
+            material.bMegaGeometry = (entry.Header[0] & VisibilityBuffer::MATERIAL_FLAG_MEGA_GEOMETRY) != 0u;
             material.Albedo = ResolveMaterialTexture(textures, albedo);
             material.Normal = ResolveMaterialTexture(textures, normal);
             material.Metallic = ResolveMaterialTexture(textures, metallic);
@@ -178,10 +176,7 @@ namespace NorvesLib::Core::Rendering
                 ResolveVirtualTextureFeedbackParam(textures, height, material.Height.get(), feedbackTarget);
             return material;
         }
-    } // namespace
 
-    namespace VisibilityResolveGeometry
-    {
         ResolveParams BuildParams(const CameraViewConstants& current,
                                   const CameraViewConstants* previous,
                                   const RHI::Viewport& viewport,
@@ -326,6 +321,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultBlack.reset();
         m_DefaultMidGray.reset();
         m_MaterialSampler.reset();
+        m_MegaMaterialSampler.reset();
         m_ConstantGrayTextures.clear();
         m_Shader.reset();
         m_Device = nullptr;
@@ -357,7 +353,8 @@ namespace NorvesLib::Core::Rendering
 
     bool VisibilityResolve::EnsureMaterialDefaults()
     {
-        if (m_DefaultWhite && m_DefaultFlatNormal && m_DefaultBlack && m_DefaultMidGray && m_MaterialSampler)
+        if (m_DefaultWhite && m_DefaultFlatNormal && m_DefaultBlack && m_DefaultMidGray && m_MaterialSampler &&
+            m_MegaMaterialSampler)
         {
             return true;
         }
@@ -411,7 +408,20 @@ namespace NorvesLib::Core::Rendering
             samplerDesc.maxAnisotropy = 4;
             m_MaterialSampler = m_Device->CreateSampler(samplerDesc);
         }
-        return m_DefaultWhite && m_DefaultFlatNormal && m_DefaultBlack && m_DefaultMidGray && m_MaterialSampler;
+        if (!m_MegaMaterialSampler)
+        {
+            // MegaGeometryPass の既定のサンプラーと同じ作り（等方の Linear。maxAnisotropy は指定しない）
+            RHI::SamplerDesc samplerDesc;
+            samplerDesc.filterMin = RHI::FilterMode::Linear;
+            samplerDesc.filterMag = RHI::FilterMode::Linear;
+            samplerDesc.filterMip = RHI::FilterMode::Linear;
+            samplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+            samplerDesc.addressV = RHI::TextureAddressMode::Wrap;
+            samplerDesc.addressW = RHI::TextureAddressMode::Wrap;
+            m_MegaMaterialSampler = m_Device->CreateSampler(samplerDesc);
+        }
+        return m_DefaultWhite && m_DefaultFlatNormal && m_DefaultBlack && m_DefaultMidGray && m_MaterialSampler &&
+               m_MegaMaterialSampler;
     }
 
     RHI::TexturePtr VisibilityResolve::GetConstantGrayTexture(float value)
@@ -572,6 +582,7 @@ namespace NorvesLib::Core::Rendering
             RHI::TexturePtr Textures[VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT];
             uint32_t Flags = 0;
             uint32_t Feedback[4] = {};
+            bool bMegaGeometry = false;
         };
         Container::VariableArray<BoundMaterial> boundMaterials;
         Container::VariableArray<Use*> uses;
@@ -582,6 +593,7 @@ namespace NorvesLib::Core::Rendering
             const VisibilityResolveMaterial& input =
                 material < dispatch.Materials.size() ? dispatch.Materials[static_cast<size_t>(material)] : empty;
             BoundMaterial bound;
+            bound.bMegaGeometry = input.bMegaGeometry;
             RHI::TexturePtr metallicDefault = m_DefaultBlack;
             if (input.MetallicConstant >= 0.0f && !input.Metallic)
             {
@@ -590,7 +602,8 @@ namespace NorvesLib::Core::Rendering
                     metallicDefault = constant;
                 }
             }
-            RHI::TexturePtr roughnessDefault = m_DefaultMidGray;
+            // 粗さの既定は、手続き・スキニング（GBufferPass）が中間灰、MegaGeometry（MegaGeometryPass）が白
+            RHI::TexturePtr roughnessDefault = input.bMegaGeometry ? m_DefaultWhite : m_DefaultMidGray;
             if (input.RoughnessConstant >= 0.0f && !input.Roughness)
             {
                 if (RHI::TexturePtr constant = GetConstantGrayTexture(input.RoughnessConstant))
@@ -675,7 +688,7 @@ namespace NorvesLib::Core::Rendering
             for (uint32_t index = 0; index < VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT; ++index)
             {
                 set.BindTexture(firstBinding + 3u + index, bound.Textures[index]);
-                set.BindSampler(firstBinding + 3u + index, m_MaterialSampler);
+                set.BindSampler(firstBinding + 3u + index, bound.bMegaGeometry ? m_MegaMaterialSampler : m_MaterialSampler);
             }
             if (m_bFeedback)
             {
@@ -939,7 +952,7 @@ namespace NorvesLib::Core::Rendering
         dispatch.FeedbackBytes = feedbackTarget.Bytes;
         for (const VisibilityBuffer::MaterialEntry& entry : m_RasterPass->GetMaterialEntries())
         {
-            dispatch.Materials.push_back(MakeResolveMaterial(textures, entry, feedbackTarget));
+            dispatch.Materials.push_back(VisibilityResolveGeometry::MakeResolveMaterial(textures, entry, feedbackTarget));
         }
 
         // ラスタ（GBufferPass）と同じカメラの定数。前のカメラが無いときは速度を 0 にする

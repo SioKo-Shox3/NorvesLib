@@ -15,6 +15,14 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
             words[1] = static_cast<uint32_t>(id >> 32);
         }
 
+        // ハンドルの 64bit を、下位・上位の 2 語から戻す
+        TextureHandle LoadHandle(const uint32_t* words)
+        {
+            TextureHandle handle;
+            handle.Id = static_cast<uint64_t>(words[0]) | (static_cast<uint64_t>(words[1]) << 32);
+            return handle;
+        }
+
         bool SameBytes(const MaterialEntry& a, const MaterialEntry& b)
         {
             return std::memcmp(&a, &b, sizeof(MaterialEntry)) == 0;
@@ -74,7 +82,7 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         entry.Scalars[2] = material.HeightScale;
         entry.Scalars[3] = material.DisplacementUVSpacing;
         entry.Header[0] = (material.bNormalTwoChannel ? MATERIAL_FLAG_NORMAL_TWO_CHANNEL : 0u) |
-                          (material.bHasHeightMap ? MATERIAL_FLAG_HAS_HEIGHT : 0u);
+                          (material.bHasHeightMap ? MATERIAL_FLAG_HAS_HEIGHT : 0u) | MATERIAL_FLAG_MEGA_GEOMETRY;
         entry.Header[1] = static_cast<uint32_t>(ShadingModel::DefaultLit);
         entry.Header[2] = static_cast<uint32_t>(BlendMode::Opaque);
         StoreHandle(&entry.TexturesA[0], material.AlbedoTexture.Id);
@@ -85,6 +93,19 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
         StoreHandle(&entry.TexturesC[2], material.ORMTexture.Id);
         StoreHandle(&entry.TexturesD[0], material.HeightTexture.Id);
         return entry;
+    }
+
+    MaterialTextureHandles ReadMaterialTextureHandles(const MaterialEntry& entry)
+    {
+        MaterialTextureHandles handles;
+        handles.Albedo = LoadHandle(&entry.TexturesA[0]);
+        handles.Normal = LoadHandle(&entry.TexturesA[2]);
+        handles.Metallic = LoadHandle(&entry.TexturesB[0]);
+        handles.Roughness = LoadHandle(&entry.TexturesB[2]);
+        handles.AO = LoadHandle(&entry.TexturesC[0]);
+        handles.ORM = LoadHandle(&entry.TexturesC[2]);
+        handles.Height = LoadHandle(&entry.TexturesD[0]);
+        return handles;
     }
 
     MaterialTable::MaterialTable(uint32_t limit)

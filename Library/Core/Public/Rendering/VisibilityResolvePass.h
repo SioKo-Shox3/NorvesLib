@@ -163,6 +163,12 @@ namespace NorvesLib::Core::Rendering
         float MetallicConstant = -1.0f;
         float RoughnessConstant = -1.0f;
         /**
+         * @brief MegaGeometry の区間の材質（材質の表の MATERIAL_FLAG_MEGA_GEOMETRY）。ラスタの MegaGeometryPass と同じ
+         *        等方の Linear のサンプラーを束ね、粗さのテクスチャも ORM も無いときの粗さは白（1）にする。
+         *        シェーダーも同じ印（材質の表の件）で等方の LOD の式を使う
+         */
+        bool bMegaGeometry = false;
+        /**
          * @brief VT のフィードバックのパラメータ（ResolveVirtualTextureFeedbackParam の結果。0 は要求を書かない）。
          *        そのテクスチャが VT（sparse）で、このフレームの要求のバッファがあるときだけ 0 でない。ORM は金属度の枠
          */
@@ -292,12 +298,15 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_Sampler;
         // 表を持たないフレームで束ねる、空の表（読まれない）
         RHI::BufferPtr m_Placeholder;
-        // 材質ごとの形が、テクスチャの指定が無い枠に束ねる既定のテクスチャ（GBufferPass と同じ値）とサンプラー（異方性 4、Wrap）
+        // 材質ごとの形が、テクスチャの指定が無い枠に束ねる既定のテクスチャ（GBufferPass と同じ値）とサンプラー。
+        // m_MaterialSampler は手続き・スキニング用（GBufferPass と同じ異方性 4、Wrap）、m_MegaMaterialSampler は
+        // MegaGeometry 用（MegaGeometryPass と同じ等方の Linear、maxAnisotropy 指定なし、Wrap）
         RHI::TexturePtr m_DefaultWhite;
         RHI::TexturePtr m_DefaultFlatNormal;
         RHI::TexturePtr m_DefaultBlack;
         RHI::TexturePtr m_DefaultMidGray;
         RHI::SamplerPtr m_MaterialSampler;
+        RHI::SamplerPtr m_MegaMaterialSampler;
         Container::UnorderedMap<uint32_t, RHI::TexturePtr> m_ConstantGrayTextures;
         bool m_bDump = false;
         // 材質ごとの形のシェーダーが VT の要求のバッファの binding を持つか（デバイスが VT のフィードバックに対応するとき）

@@ -21,13 +21,22 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
     /** @brief MaterialEntry::Flags のビット（visbuffer_records.comp・材質の解決のシェーダーと一致） */
     constexpr uint32_t MATERIAL_FLAG_NORMAL_TWO_CHANNEL = 1u;
     constexpr uint32_t MATERIAL_FLAG_HAS_HEIGHT = 2u;
+    /**
+     * @brief MegaGeometry の区間の材質（MegaGeometryPass のラスタと同じ標本の規則で解決する印）
+     *
+     * MegaGeometryPass は等方の Linear のサンプラー（maxAnisotropy 指定なし）で標本し、粗さのテクスチャが無いときは白
+     * （粗さ 1）を張る。手続き・スキニングの GBufferPass は異方性 4 のサンプラーと中間灰（粗さ 128/255）。材質の解決は、
+     * この印のある件には等方のサンプラー・等方の LOD の式・白の既定の粗さを使う。
+     */
+    constexpr uint32_t MATERIAL_FLAG_MEGA_GEOMETRY = 4u;
 
     /**
      * @brief 材質の表の 1 件（storage buffer の 1 要素。128 バイト）
      *
      * 材質の解決が引く定数（基本色・発光・金属度と粗さのスカラー・高さの係数・種類の印）と、
      * テクスチャを引き直すための識別（テクスチャのハンドルの 64bit を下位・上位の 2 語で）を持つ。
-     * 同じ値の材質は 1 件にまとまる（MegaGeometry の材質は値で持つので、同じ値なら手続き・スキニングの材質と同じ件になる）。
+     * 同じ値の材質は 1 件にまとまる。MegaGeometry の材質は MATERIAL_FLAG_MEGA_GEOMETRY の印を持つので、値が同じでも
+     * 手続き・スキニングの材質とは別の件になる（標本の規則が違うため）。
      * パディングを持たない並びなので、まとめるかどうかはバイト列の一致で決める。
      */
     struct alignas(16) MaterialEntry
@@ -58,8 +67,23 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
     /** @brief 手続き・スキニングの描画が持つ材質（MaterialResourceData。null なら材質の解決と同じ既定の値）から表の 1 件を作る */
     MaterialEntry MakeMaterialEntry(const MaterialResourceData* data);
 
-    /** @brief MegaGeometry の区間の材質（値で持つ）から表の 1 件を作る */
+    /** @brief MegaGeometry の区間の材質（値で持つ）から表の 1 件を作る（MATERIAL_FLAG_MEGA_GEOMETRY の印が立つ） */
     MaterialEntry MakeMaterialEntry(const MegaGeometry::MegaMeshMaterial& material);
+
+    /** @brief 表の 1 件が持つテクスチャのハンドル（MakeMaterialEntry が詰めた枠を、同じ位置から読み出したもの） */
+    struct MaterialTextureHandles
+    {
+        TextureHandle Albedo;
+        TextureHandle Normal;
+        TextureHandle Metallic;
+        TextureHandle Roughness;
+        TextureHandle AO;
+        TextureHandle ORM;
+        TextureHandle Height;
+    };
+
+    /** @brief 表の 1 件のテクスチャの枠（TexturesA〜D）から、各用途のハンドルを読み出す */
+    MaterialTextureHandles ReadMaterialTextureHandles(const MaterialEntry& entry);
 
     /**
      * @brief フレームで一意な材質の表（CPU 側の積み上げ）
