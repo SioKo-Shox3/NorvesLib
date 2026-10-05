@@ -1995,6 +1995,31 @@ namespace
         assert(sawRecordsWrite);
     }
 
+    // 最後のシーンの色（Scene.Color）を書くだけのパス。VisibilityDebugPass が重ねて書く先を用意する
+    class SceneColorProducerPass final : public IRenderGraphPass
+    {
+    public:
+        const char* GetName() const override { return "SceneColorProducerPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            const RGTextureHandle color = builder.WriteTextureAttachment(
+                RenderGraphResourceNames::SceneColor,
+                RGTextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "Test_SceneColor"),
+                RGAttachmentKind::Color,
+                RHI::AttachmentLoadOp::Clear,
+                RHI::AttachmentStoreOp::Store,
+                RHI::ResourceState::RenderTarget,
+                RHI::ResourceState::RenderTarget);
+            assert(color.IsValid());
+            builder.PreserveInsertionOrder();
+        }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+    };
+
     // ビジビリティバッファの描画（--visibility-buffer=on）の記録に使う、2つの MegaMesh インスタンスを持つシーンの一式。
     // GBufferPass → MegaGeometryPass（描画の写しを作る）→ VisibilityRasterPass の順に RenderGraph で実行する
     struct VisibilityRasterScene
@@ -2012,6 +2037,8 @@ namespace
         MaterialTileClassifyPass Classify;
         SkinningComputePass Skinning;
         VisibilityResolvePass Resolve;
+        SceneColorProducerPass SceneColorProducer;
+        VisibilityDebugPass DebugView;
         FakeCommandList CommandList;
         Container::VariableArray<DrawCommand> OpaqueCommands;
         Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>> SkinnedLeases;
@@ -2058,6 +2085,8 @@ namespace
     // bMaterialDraws=true（bSkinning も true）は、実物の材質 A・B を作り、手続きメッシュの描画 3 件（A・A・B）と
     // 材質 A のスキニングの描画 1 件を足す。SkinnedMeshes を渡すので、スキニングの描画も記録になる。
     // 描画のコマンドの元の MaterialIndex は、記録の番号と取り違えないよう描画ごとに違う値（5・6・7・9）にする
+    // bDebugView=true（bVisibilityPlan も true）は、最後のシーンの色を書くパスと ID の検証表示（--visibility-buffer=debug）を
+    // 描画のパスの後ろ（分類・解決より後）に足す
     void RunVisibilityRasterScene(VisibilityRasterScene& scene,
                                   bool bVisibilityPlan,
                                   bool bOcclusionCulling,
@@ -2065,7 +2094,8 @@ namespace
                                   bool bSkinning = false,
                                   bool bMaterialDraws = false,
                                   ResolveMode resolveMode = ResolveMode::None,
-                                  uint32_t skinnedInstanceCount = 1)
+                                  uint32_t skinnedInstanceCount = 1,
+                                  bool bDebugView = false)
     {
         scene.Device = RHI::MakeShared<FakeDevice>();
         if (resolveMode == ResolveMode::Supported || resolveMode == ResolveMode::RasterPipelineUnavailable ||
@@ -2289,6 +2319,15 @@ namespace
                     scene.Graph.AddPass(&scene.Classify);
                 }
             }
+            if (bDebugView)
+            {
+                // SceneView と同じく、記録の表の取り出し元を渡して、最後のパスとして足す
+                scene.DebugView.SetRasterPass(&scene.Raster);
+                const bool bDebugReady = scene.DebugView.Initialize(context);
+                assert(bDebugReady);
+                scene.Graph.AddPass(&scene.SceneColorProducer);
+                scene.Graph.AddPass(&scene.DebugView);
+            }
         }
         assert(scene.Graph.Compile(context));
         const RenderGraphExecutionResult result = scene.Graph.ExecuteWithResult(context);
@@ -2297,6 +2336,7 @@ namespace
 
     void ShutdownVisibilityRasterScene(VisibilityRasterScene& scene)
     {
+        scene.DebugView.Shutdown();
         scene.Resolve.Shutdown();
         scene.Classify.Shutdown();
         scene.Raster.Shutdown();
@@ -3174,6 +3214,47 @@ namespace
         assert(CountBufferCreations(device, classifyUniform) ==
                MaterialTileClassify::DispatchesPerRecord * (ViewportsPerFrame + 1));
         assert(CountBufferCreations(device, megaFrameSlot) == ViewportsPerFrame + 1);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // ID の検証表示（VisibilityDebugPass）も同じ。1フレームに何回 Execute されても（複数のビューポート）、まだ提出していない
+    // パラメータの UBO とディスクリプタセットを上書きしない。枠の数（旧 FrameSlotCount = 2）を超える回数でも Execute ごとに別の資源を作り、
+    // 次のフレームではそれを使い回して増やさない。Execute の回数 % 2 で枠を選ぶ作りに戻すと、3 回目以降で増えず落ちる
+    void TestVisibilityDebugPassFrameResourcesAreNotReusedWithinAFrame()
+    {
+        constexpr uint32_t ViewportsPerFrame = 7;
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, false, false, ResolveMode::None, 1, true);
+        const FakeDevice& device = *scene.Device;
+        const char* const debugUniform = "VisBuffer_DebugParams";
+
+        // 1回目の Execute: 検証表示が描かれ（記録の表・パイプライン・サンプラーがそろった）、UBO は 1 組
+        assert(scene.Graph.GetLastExecutedPassCount() == 5);
+        assert(CountBufferCreations(device, debugUniform) == 1);
+
+        // 同じフレーム（同じ通し番号）のあと 6 回のビューポート: 毎回別の資源
+        for (uint32_t viewport = 1; viewport < ViewportsPerFrame; ++viewport)
+        {
+            assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
+            assert(CountBufferCreations(device, debugUniform) == viewport + 1);
+        }
+
+        // 次のフレーム: 同じ回数の Execute でも資源を作り足さない
+        scene.Context.RenderFrameSerial = scene.Context.ResolveRenderFrameSerial() + 1;
+        for (uint32_t viewport = 0; viewport < ViewportsPerFrame; ++viewport)
+        {
+            assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
+        }
+        assert(CountBufferCreations(device, debugUniform) == ViewportsPerFrame);
+
+        // さらに次のフレームで1回多く Execute すると、その1回ぶんだけ増える
+        scene.Context.RenderFrameSerial += 1;
+        for (uint32_t viewport = 0; viewport <= ViewportsPerFrame; ++viewport)
+        {
+            assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
+        }
+        assert(CountBufferCreations(device, debugUniform) == ViewportsPerFrame + 1);
 
         ShutdownVisibilityRasterScene(scene);
     }
@@ -8838,6 +8919,7 @@ int main()
     TestSkinningComputeGroupCountsAndBindingLimit();
     TestFrameUseRingGivesDistinctUsesWithinAFrameAndReusesNextFrame();
     TestComputePassFrameResourcesAreNotReusedWithinAFrame();
+    TestVisibilityDebugPassFrameResourcesAreNotReusedWithinAFrame();
     TestVisibilityRasterOnSinglePassMegaGeometry();
     TestVisibilityRasterRecordsFrameUniqueMaterialTableIndices();
     TestVisibilityResolveOnReplacesGBufferDrawsWithStorageImageWrites();
