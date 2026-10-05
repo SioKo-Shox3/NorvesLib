@@ -1087,16 +1087,9 @@ namespace NorvesLib::Core::Rendering
         samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
         samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
         m_Sampler = m_Device->CreateSampler(samplerDesc);
-        for (uint32_t index = 0; index < 2; ++index)
+        if (!m_Sampler)
         {
-            m_DescriptorSet[index] = m_Device->CreateDescriptorSet(MakeDebugDescriptorSetDesc());
-            m_ParamsUniform[index] = m_Device->CreateBuffer(
-                RHI::BufferDesc(DebugParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisBuffer_DebugParams"));
-        }
-        if (!m_Sampler || !m_DescriptorSet[0] || !m_DescriptorSet[1] || !m_ParamsUniform[0] || !m_ParamsUniform[1])
-        {
-            NORVES_LOG_WARNING("VisibilityDebugPass", "検証表示の資源の作成に失敗。このパスは何もしません");
-            m_Sampler.reset();
+            NORVES_LOG_WARNING("VisibilityDebugPass", "検証表示のサンプラーの作成に失敗。このパスは何もしません");
         }
         return true;
     }
@@ -1109,11 +1102,7 @@ namespace NorvesLib::Core::Rendering
         m_FramebufferColor = nullptr;
         m_ColorFormat = RHI::Format::UNKNOWN;
         m_Sampler.reset();
-        for (uint32_t index = 0; index < 2; ++index)
-        {
-            m_DescriptorSet[index].reset();
-            m_ParamsUniform[index].reset();
-        }
+        m_Uses.Clear();
         m_VertexShader.reset();
         m_FragmentShader.reset();
         m_ColorHandle = {};
@@ -1248,18 +1237,37 @@ namespace NorvesLib::Core::Rendering
 
         // 記録の表が無い（VisibilityRasterPass がこのフレームに書かなかった）ときは、色を触らずに添付の状態だけを進める
         const RHI::BufferPtr recordTable = m_RasterPass ? m_RasterPass->GetRecordTable() : RHI::BufferPtr{};
-        const uint32_t slotIndex = static_cast<uint32_t>(m_FrameCounter % 2u);
-        ++m_FrameCounter;
-        const bool bCanDraw = m_Pipeline && recordTable && m_Sampler && m_DescriptorSet[slotIndex] && m_ParamsUniform[slotIndex];
+        // 資源は Execute の回数ではなくフレームの枠で決める（同じフレームに何回 Execute されても提出前の資源を上書きしない）
+        m_Uses.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+        Use* use = nullptr;
+        if (m_Pipeline && recordTable && m_Sampler)
+        {
+            use = &m_Uses.Acquire();
+            if (!use->ParamsUniform)
+            {
+                use->ParamsUniform = m_Device->CreateBuffer(
+                    RHI::BufferDesc(DebugParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisBuffer_DebugParams"));
+            }
+            if (!use->DescriptorSet)
+            {
+                use->DescriptorSet = m_Device->CreateDescriptorSet(MakeDebugDescriptorSetDesc());
+            }
+            if (!use->ParamsUniform || !use->DescriptorSet)
+            {
+                NORVES_LOG_WARNING("VisibilityDebugPass", "検証表示の資源の作成に失敗。この描画は何もしません");
+                use = nullptr;
+            }
+        }
+        const bool bCanDraw = use != nullptr;
         if (bCanDraw)
         {
             const float params[4] = {1.0f, 0.0f, 0.0f, 0.0f};
-            m_ParamsUniform[slotIndex]->Update(params, sizeof(params));
-            RHI::DescriptorSetPtr& descriptorSet = m_DescriptorSet[slotIndex];
+            use->ParamsUniform->Update(params, sizeof(params));
+            RHI::DescriptorSetPtr& descriptorSet = use->DescriptorSet;
             descriptorSet->BindTexture(0, idTexture);
             descriptorSet->BindSampler(0, m_Sampler);
             descriptorSet->BindStorageBuffer(1, recordTable, 0, ClampBindSize(m_RasterPass->GetRecordTableBytes()));
-            descriptorSet->BindConstantBuffer(2, m_ParamsUniform[slotIndex], 0, DebugParamsBytes);
+            descriptorSet->BindConstantBuffer(2, use->ParamsUniform, 0, DebugParamsBytes);
             descriptorSet->Update();
         }
 
@@ -1270,7 +1278,7 @@ namespace NorvesLib::Core::Rendering
         if (bCanDraw)
         {
             commandList->SetPipeline(m_Pipeline);
-            commandList->SetDescriptorSet(m_DescriptorSet[slotIndex], 0);
+            commandList->SetDescriptorSet(use->DescriptorSet, 0);
             commandList->Draw(3, 0);
         }
         commandList->EndRenderPass();

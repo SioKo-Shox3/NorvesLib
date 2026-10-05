@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Containers.h"
+#include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/MeshIndexChunks.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
@@ -248,6 +249,13 @@ namespace NorvesLib::Core::Rendering
         void SetRasterPass(const VisibilityRasterPass* pass) { m_RasterPass = pass; }
 
     private:
+        // 1 回の Execute が使う資源（フレームの枠の中で、Execute のたびに次の 1 組を使う）
+        struct Use
+        {
+            RHI::DescriptorSetPtr DescriptorSet;
+            RHI::BufferPtr ParamsUniform;
+        };
+
         const VisibilityRasterPass* m_RasterPass = nullptr;
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_VertexShader;
@@ -255,12 +263,11 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_Pipeline;
         RHI::RenderPassPtr m_RenderPass;
         RHI::SamplerPtr m_Sampler;
-        RHI::DescriptorSetPtr m_DescriptorSet[2];
-        RHI::BufferPtr m_ParamsUniform[2];
         RHI::FramebufferPtr m_Framebuffer;
         RHI::ITexture* m_FramebufferColor = nullptr;
         RHI::Format m_ColorFormat = RHI::Format::UNKNOWN;
-        uint64_t m_FrameCounter = 0;
+        // 資源は Execute の回数ではなくフレームの枠で決める（同じフレームに何回 Execute されても提出前の資源を上書きしない）
+        FrameUseRing<Use> m_Uses;
 
         RGResourceHandle m_ColorHandle;
         RGTextureHandle m_IdHandle;
