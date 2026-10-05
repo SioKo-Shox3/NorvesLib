@@ -2369,8 +2369,9 @@ namespace
                       << " ms=" << meshResult.DagMilliseconds
                       << " rejected_groups=" << meshResult.DagRejectedGroups
                       << "\n";
-            // ページの詰め方(NVMESH v1.1)。根のページは常駐、通常のページは 128 KiB 以下
+            // ページの詰め方(NVMESH v1.1)。根のページ(常駐)も含めて全ページが 128 KiB 以下
             std::cerr << "MESH_COOK_PAGES pages=" << meshResult.PageCount
+                      << " root_pages=" << meshResult.RootPageCount
                       << " root_page_bytes=" << meshResult.RootPageBytes
                       << " root_page_clusters=" << meshResult.RootPageClusterCount
                       << " root_min_level=" << meshResult.RootPageMinLODLevel

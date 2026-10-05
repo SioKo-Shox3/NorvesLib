@@ -192,7 +192,7 @@ namespace NorvesLib::Core::Asset
 
         // v1.1: クラスタのグループをページ（128 KiB）に詰めた形式（VersionMinor=1）。形式は NVMESHv1.md の「v1.1」を参照。
         inline constexpr uint16_t VersionMinorPaged = 1;
-        // 通常のページの大きさの上限。根のページ（粗い段とフォールバックの段を持つ常駐の1ページ）はこの上限の対象外
+        // ページの大きさの上限。常駐する根のページ（粗い段とフォールバックの段を持つ）も同じ上限で、複数のページに分かれる
         inline constexpr size_t PageSize = 128 * 1024;
         inline constexpr size_t PageHeaderSize = 64;
         inline constexpr size_t PageTableRecordSize = 48;
@@ -475,8 +475,8 @@ namespace NorvesLib::Core::Asset
     };
 
     // v1.1 のページの表の1行。ページはクラスタのグループを詰めた128 KiB 以下の自己完結した範囲で、
-    // 頂点・インデックス・クラスタの記録を自分の中のオフセットで持つ。根のページ（0 番）だけは上限が無く、
-    // 粗い段のクラスタとフォールバックの段を持って常駐する。
+    // 頂点・インデックス・クラスタの記録を自分の中のオフセットで持つ。根のページ（bIsRoot）は、
+    // 粗い段のクラスタとフォールバックの段を持って常駐するページで、0 番から連続して並ぶ（1つ以上）。
     struct CookedMeshPage
     {
         // ファイルの先頭からのバイト位置と大きさ（範囲読みの単位）
@@ -586,15 +586,18 @@ namespace NorvesLib::Core::Asset
         Container::VariableArray<CookedMeshVertex> Vertices;
         // クラスタのインデックス（クラスタの頂点の範囲の先頭からの相対）
         Container::VariableArray<uint32_t> Indices;
-        // フォールバックのインデックス（根のページだけ。ページの頂点への添字）。これと Vertices だけで粗い形が描ける
+        // フォールバックのインデックス（根のページだけ。ページの頂点への添字）。根のページは、フォールバックの三角形の
+        // 一部（0 個以上）をこのページの頂点だけで持ち、全部の根のページを合わせると粗い形が閉じる
         Container::VariableArray<uint32_t> FallbackIndices;
     };
 
     // v1.1 のページのバイト列（ページの表の FileOffset・Size の範囲）を単独で読んで検査する。
     // 他のページや表を見ずに、ページの中の範囲・インデックス・クラスタの記録だけで検査できる。
     // lodLevelCount・groupCount は、ヘッダの値（クラスタの段・グループの番号の範囲の検査に使う）。
+    // bIsRoot は、ページの表の根の印（ページの先頭の flags と一致する）。
     [[nodiscard]] CookedMeshParseStatus ParseCookedMeshPage(Container::Span<const uint8_t> pageBytes,
                                                             uint32_t pageId,
+                                                            bool bIsRoot,
                                                             uint32_t lodLevelCount,
                                                             uint32_t groupCount,
                                                             CookedMeshPageContent& outContent);
@@ -604,8 +607,8 @@ namespace NorvesLib::Core::Asset
     {
         // 通常のページの大きさの上限（バイト）。既定は PageSize（128 KiB）
         uint32_t PageSizeBytes = static_cast<uint32_t>(CookedMeshFormatV1::PageSize);
-        // 根のページに入れる粗い段のクラスタの合計の目安（バイト）。最も粗い段（根）は常に入り、
-        // その下の段は、足して目安以内に収まる間だけ段ごとまとめて入る（フォールバックの段は別）
+        // 根のページ（常駐）に入れる粗い段のクラスタの合計の目安（バイト）。最も粗い段（根）は常に入り、
+        // その下の段は、足して目安以内に収まる間だけ段ごとまとめて入る（フォールバックの段は別に、根のページへ追加する）
         uint32_t RootClusterBudgetBytes = 512 * 1024;
     };
 
@@ -623,14 +626,16 @@ namespace NorvesLib::Core::Asset
     struct CookedMeshPagedWriteInfo
     {
         uint32_t PageCount = 0;
+        // 根のページ（常駐する、0 番から連続した全ページ）の数・大きさの合計・クラスタの数の合計
+        uint32_t RootPageCount = 0;
         uint32_t RootPageBytes = 0;
         uint32_t RootPageClusterCount = 0;
         // 根のページに入った最も細かい段（これ以上の段が常駐する）
         uint32_t RootPageMinLODLevel = 0;
-        // 根のページ以外のページの大きさの最大・合計
+        // 全ページの大きさの最大と、根のページ以外のページの大きさの合計
         uint32_t MaxPageBytes = 0;
         uint64_t NonRootPageBytes = 0;
-        // 最も大きいグループが占めるページ内のバイト数と、そのグループの番号（根のページに入るものを除く）。
+        // 最も大きいグループが占めるページ内のバイト数と、そのグループの番号（グループを持たない根のクラスタは、クラスタの番号）。
         // GroupExceedsPage のときは、収まらなかったグループ
         uint32_t LargestGroupBytes = 0;
         uint32_t LargestGroupIndex = 0;
@@ -638,7 +643,8 @@ namespace NorvesLib::Core::Asset
 
     // v1.1（ページに詰めた v1）のバイト列を組み立てる。入力は SerializeCookedMeshV1 と同じ（クラスタは段ごとに
     // グループのメンバが連続して並ぶ平らな表）で、ここで次を行う。
-    //   - 根のページ（0 番）: 最も粗い段と、収まる限りの粗い段のクラスタ、フォールバックの段（専用の頂点つき）
+    //   - 根のページ（0 番から連続した常駐のページ）: 最も粗い段と、収まる限りの粗い段のクラスタ、フォールバックの段
+    //     （専用の頂点つき。ページの上限を超えるときはクラスタを持たない根のページへ続ける）
     //   - 他のページ: 1つの段のグループを、1つのグループが1つのページに収まるように詰める（粗い段のページから順に）
     // クラスタは、ページの順（根のページ → 粗い段 → 細かい段）に並べ替えて書く。検査は ParseCookedMesh が行う。
     [[nodiscard]] CookedMeshPagedWriteStatus SerializeCookedMeshV1Paged(const CookedMeshV1WriteInput& input,

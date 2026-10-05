@@ -958,7 +958,7 @@ namespace NorvesLib::Core::Asset
         }
     } // namespace
 
-    CookedMeshParseStatus ParseCookedMeshPage(Container::Span<const uint8_t> pageBytes, uint32_t pageId,
+    CookedMeshParseStatus ParseCookedMeshPage(Container::Span<const uint8_t> pageBytes, uint32_t pageId, bool bIsRoot,
                                               uint32_t lodLevelCount, uint32_t groupCount,
                                               CookedMeshPageContent& outContent)
     {
@@ -971,7 +971,6 @@ namespace NorvesLib::Core::Asset
         }
 
         const uint8_t* data = pageBytes.data();
-        const bool bRoot = pageId == RootPageId;
         const uint32_t clusterCount = ReadLe32(data, PageHeaderOffset::ClusterCount);
         const uint32_t vertexCount = ReadLe32(data, PageHeaderOffset::VertexCount);
         const uint32_t indexCount = ReadLe32(data, PageHeaderOffset::IndexCount);
@@ -983,8 +982,10 @@ namespace NorvesLib::Core::Asset
             return CookedMeshParseStatus::ReservedFieldNonZero;
         }
 
+        // クラスタを持たないページは、フォールバックだけを持つ根のページに限る
         if (ReadLe32(data, PageHeaderOffset::PageId) != pageId ||
-            ReadLe32(data, PageHeaderOffset::Flags) != (bRoot ? PageFlagRoot : 0u) || clusterCount == 0)
+            ReadLe32(data, PageHeaderOffset::Flags) != (bIsRoot ? PageFlagRoot : 0u) ||
+            (clusterCount == 0 && !(bIsRoot && fallbackIndexCount != 0)))
         {
             return CookedMeshParseStatus::InvalidPageData;
         }
@@ -1013,8 +1014,8 @@ namespace NorvesLib::Core::Asset
             }
         }
 
-        // フォールバックは根のページだけが持つ（1 つ以上の三角形）
-        if (bRoot ? (fallbackIndexCount == 0 || fallbackIndexCount % 3 != 0) : (fallbackIndexCount != 0))
+        // フォールバックは根のページだけが持つ（0 個以上の三角形。全部の根のページを合わせて 1 つ以上は読み込みで検査する）
+        if (bIsRoot ? (fallbackIndexCount % 3 != 0) : (fallbackIndexCount != 0))
         {
             return CookedMeshParseStatus::InvalidFallbackRange;
         }
@@ -1072,6 +1073,110 @@ namespace NorvesLib::Core::Asset
 
     namespace
     {
+        // 親のクラスタを引く鍵。次の段のクラスタは自分の境界球・誤差としてグループの値を持つので、
+        // クラスタの「親の境界球と誤差」と一致する、1つ上の段のクラスタがその親になる
+        struct PageParentKey
+        {
+            uint32_t Level = 0;
+            float Center[3] = {0.0f, 0.0f, 0.0f};
+            float Radius = 0.0f;
+            float Error = 0.0f;
+            uint32_t ClusterIndex = 0;
+        };
+
+        bool IsSameParentTriple(const PageParentKey& left, const PageParentKey& right)
+        {
+            return left.Level == right.Level && left.Center[0] == right.Center[0] &&
+                   left.Center[1] == right.Center[1] && left.Center[2] == right.Center[2] &&
+                   left.Radius == right.Radius && left.Error == right.Error;
+        }
+
+        bool PageParentKeyLess(const PageParentKey& left, const PageParentKey& right)
+        {
+            if (left.Level != right.Level)
+            {
+                return left.Level < right.Level;
+            }
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                if (left.Center[axis] != right.Center[axis])
+                {
+                    return left.Center[axis] < right.Center[axis];
+                }
+            }
+            if (left.Radius != right.Radius)
+            {
+                return left.Radius < right.Radius;
+            }
+            if (left.Error != right.Error)
+            {
+                return left.Error < right.Error;
+            }
+            return left.ClusterIndex < right.ClusterIndex;
+        }
+
+        // 各ページの親のページを、クラスタの親の境界球・誤差から導く（書き出しと読み込みで同じ規則）。
+        // clusters はページの順に並んだ全体の表（PageId つき）。先頭の residentPageCount 個の根のページは親を持たない。
+        // 根でないページの親は、ページのクラスタの親（1つ上の段で、自分の親の境界球・誤差を自分の値として持つクラスタ）を
+        // 持つ、自分より前のページのうち最も小さい番号。見つからなければ根のページ（0 番）
+        void ComputePageParentPages(const Container::VariableArray<CookedMeshCluster>& clusters, size_t pageCount,
+                                    size_t residentPageCount, Container::VariableArray<uint32_t>& outParents)
+        {
+            using namespace CookedMeshFormatV1;
+
+            Container::VariableArray<PageParentKey> parentKeys;
+            parentKeys.reserve(clusters.size());
+            for (uint32_t clusterIndex = 0; clusterIndex < clusters.size(); ++clusterIndex)
+            {
+                const CookedMeshCluster& cluster = clusters[clusterIndex];
+                PageParentKey key;
+                key.Level = cluster.LODLevel;
+                key.Center[0] = cluster.BoundsCenter.X;
+                key.Center[1] = cluster.BoundsCenter.Y;
+                key.Center[2] = cluster.BoundsCenter.Z;
+                key.Radius = cluster.BoundsRadius;
+                key.Error = cluster.LODError;
+                key.ClusterIndex = clusterIndex;
+                parentKeys.push_back(key);
+            }
+            std::sort(parentKeys.begin(), parentKeys.end(), PageParentKeyLess);
+
+            outParents.assign(pageCount, InvalidPageId);
+            Container::VariableArray<uint32_t> nearestParent(pageCount, std::numeric_limits<uint32_t>::max());
+            for (const CookedMeshCluster& cluster : clusters)
+            {
+                if (cluster.bIsRoot || cluster.PageId < residentPageCount)
+                {
+                    continue;
+                }
+
+                PageParentKey probe;
+                probe.Level = cluster.LODLevel + 1;
+                probe.Center[0] = cluster.ParentBoundsCenter.X;
+                probe.Center[1] = cluster.ParentBoundsCenter.Y;
+                probe.Center[2] = cluster.ParentBoundsCenter.Z;
+                probe.Radius = cluster.ParentBoundsRadius;
+                probe.Error = cluster.ParentError;
+                probe.ClusterIndex = 0;
+                for (auto match = std::lower_bound(parentKeys.begin(), parentKeys.end(), probe, PageParentKeyLess);
+                     match != parentKeys.end() && IsSameParentTriple(*match, probe); ++match)
+                {
+                    const uint32_t matchPage = clusters[match->ClusterIndex].PageId;
+                    if (matchPage < cluster.PageId)
+                    {
+                        nearestParent[cluster.PageId] = std::min(nearestParent[cluster.PageId], matchPage);
+                    }
+                }
+            }
+            for (size_t pageIndex = residentPageCount; pageIndex < pageCount; ++pageIndex)
+            {
+                outParents[pageIndex] = nearestParent[pageIndex] < pageIndex ? nearestParent[pageIndex] : RootPageId;
+            }
+        }
+    } // namespace
+
+    namespace
+    {
         // v1.1 のページの表を読んで、各ページを検査しながら、v1.0 と同じ形の全体の配列（クラスタ・頂点・インデックス）へ
         // 組み直す。ページは表の順に並び、クラスタ・頂点・クラスタのインデックスはページごとに連続する。
         // クラスタの IndexOffset・VertexOffset は全体の位置へ直す（ページの中の位置は読み込みの間だけ）。
@@ -1088,6 +1193,15 @@ namespace NorvesLib::Core::Asset
             using namespace CookedMeshFormatV1;
 
             const uint64_t pageCount = tableSection.Size / PageTableRecordSize;
+
+            // 件数は壊れていてもよいので、確保する前に、ページの領域の大きさで収まる件数かを確かめる
+            // （各ページは先頭と、クラスタ・頂点・インデックスの実体を領域の中に持つ）
+            if (pageCount > regionSection.Size / PageHeaderSize || clusterCount > regionSection.Size / ClusterRecordSize ||
+                vertexCount > regionSection.Size / VertexRecordSize || indexCount > regionSection.Size / sizeof(uint32_t))
+            {
+                return CookedMeshParseStatus::InvalidCounts;
+            }
+
             outClusters.reserve(clusterCount);
             outVertices.reserve(vertexCount);
             outIndices.reserve(indexCount);
@@ -1120,23 +1234,24 @@ namespace NorvesLib::Core::Asset
                     return CookedMeshParseStatus::ReservedFieldNonZero;
                 }
 
-                // 根のページは 0 番だけ。根のページは親を持たず、それ以外は先に並ぶページを親にする
-                if ((flags & ~PageFlagRoot) != 0 || page.bIsRoot != (pageId == RootPageId) ||
+                // 根のページは 0 番から連続した先頭の1ページ以上。根のページは親を持たず、それ以外は先に並ぶページを親にする
+                if ((flags & ~PageFlagRoot) != 0 || (pageId == RootPageId && !page.bIsRoot) ||
+                    (page.bIsRoot && pageId != RootPageId && !outPages[pageId - 1].bIsRoot) ||
                     (page.bIsRoot ? page.ParentPageId != InvalidPageId : page.ParentPageId >= pageId))
                 {
                     return CookedMeshParseStatus::InvalidPageTable;
                 }
 
-                // ページはページの領域に隙間なく並ぶ。通常のページは 128 KiB 以下（根のページは上限なし）
+                // ページはページの領域に隙間なく並ぶ。根のページも含めて 128 KiB 以下
                 uint64_t pageEnd = 0;
                 if (page.FileOffset != cursor || page.Size < PageHeaderSize ||
                     !AddChecked64(page.FileOffset, page.Size, pageEnd) || pageEnd > regionSection.End ||
-                    (!page.bIsRoot && page.Size > PageSize))
+                    page.Size > PageSize)
                 {
                     return CookedMeshParseStatus::InvalidPageTable;
                 }
 
-                if (page.ClusterCount == 0 || page.FirstClusterIndex != clusterBase)
+                if ((page.ClusterCount == 0 && !page.bIsRoot) || page.FirstClusterIndex != clusterBase)
                 {
                     return CookedMeshParseStatus::InvalidPageTable;
                 }
@@ -1149,7 +1264,7 @@ namespace NorvesLib::Core::Asset
 
                 CookedMeshPageContent content;
                 const CookedMeshParseStatus pageStatus =
-                    ParseCookedMeshPage(pageBytes, pageId, lodLevelCount, groupCount, content);
+                    ParseCookedMeshPage(pageBytes, pageId, page.bIsRoot, lodLevelCount, groupCount, content);
                 if (pageStatus != CookedMeshParseStatus::Success)
                 {
                     return pageStatus;
@@ -1184,10 +1299,10 @@ namespace NorvesLib::Core::Asset
                 {
                     outIndices.push_back(index);
                 }
-                if (page.bIsRoot)
+                // 根のページのフォールバックのインデックスは、ページの頂点への添字から全体の頂点への添字へ直して並べる
+                for (const uint32_t localIndex : content.FallbackIndices)
                 {
-                    // 根のページは 0 番（頂点の基点 0）なので、フォールバックのインデックスはそのまま全体の頂点への添字
-                    fallbackIndices = std::move(content.FallbackIndices);
+                    fallbackIndices.push_back(localIndex + static_cast<uint32_t>(vertexBase));
                 }
 
                 clusterBase += page.ClusterCount;
@@ -1221,9 +1336,9 @@ namespace NorvesLib::Core::Asset
         }
 
         // v1.1 のページの表と、クラスタ・グループの整合を検査する。
-        //   - 根のクラスタは根のページ（0 番）に入る
+        //   - 根のクラスタは根のページ（常駐）に入る
         //   - 1つのグループのメンバは同じページに入る（ページをまたがない）
-        //   - 親のページは、このページの最も細かい段より粗い段のクラスタを持つ
+        //   - 親のページは、書き出しと同じ規則（ComputePageParentPages）で導いた番号と一致する
         CookedMeshParseStatus CheckV1PageConsistency(const Container::VariableArray<CookedMeshCluster>& clusters,
                                                      const Container::VariableArray<CookedMeshClusterGroup>& groups,
                                                      const Container::VariableArray<CookedMeshPage>& pages)
@@ -1232,7 +1347,7 @@ namespace NorvesLib::Core::Asset
 
             for (const CookedMeshCluster& cluster : clusters)
             {
-                if (cluster.bIsRoot && cluster.PageId != RootPageId)
+                if (cluster.bIsRoot && !pages[cluster.PageId].bIsRoot)
                 {
                     return CookedMeshParseStatus::InvalidPageTable;
                 }
@@ -1251,16 +1366,16 @@ namespace NorvesLib::Core::Asset
                 }
             }
 
-            Container::VariableArray<uint32_t> minLevels(pages.size(), std::numeric_limits<uint32_t>::max());
-            Container::VariableArray<uint32_t> maxLevels(pages.size(), 0);
-            for (const CookedMeshCluster& cluster : clusters)
+            size_t residentPageCount = 0;
+            while (residentPageCount < pages.size() && pages[residentPageCount].bIsRoot)
             {
-                minLevels[cluster.PageId] = std::min(minLevels[cluster.PageId], cluster.LODLevel);
-                maxLevels[cluster.PageId] = std::max(maxLevels[cluster.PageId], cluster.LODLevel);
+                ++residentPageCount;
             }
-            for (size_t pageIndex = 1; pageIndex < pages.size(); ++pageIndex)
+            Container::VariableArray<uint32_t> expectedParents;
+            ComputePageParentPages(clusters, pages.size(), residentPageCount, expectedParents);
+            for (size_t pageIndex = residentPageCount; pageIndex < pages.size(); ++pageIndex)
             {
-                if (maxLevels[pages[pageIndex].ParentPageId] <= minLevels[pageIndex])
+                if (pages[pageIndex].ParentPageId != expectedParents[pageIndex])
                 {
                     return CookedMeshParseStatus::InvalidPageTable;
                 }
@@ -1909,48 +2024,6 @@ namespace NorvesLib::Core::Asset
 
     namespace
     {
-        // 親のクラスタを引く鍵。次の段のクラスタは自分の境界球・誤差としてグループの値を持つので、
-        // クラスタの「親の境界球と誤差」と一致する、1つ上の段のクラスタがその親になる
-        struct PageParentKey
-        {
-            uint32_t Level = 0;
-            float Center[3] = {0.0f, 0.0f, 0.0f};
-            float Radius = 0.0f;
-            float Error = 0.0f;
-            uint32_t ClusterIndex = 0;
-        };
-
-        bool IsSameParentTriple(const PageParentKey& left, const PageParentKey& right)
-        {
-            return left.Level == right.Level && left.Center[0] == right.Center[0] &&
-                   left.Center[1] == right.Center[1] && left.Center[2] == right.Center[2] &&
-                   left.Radius == right.Radius && left.Error == right.Error;
-        }
-
-        bool PageParentKeyLess(const PageParentKey& left, const PageParentKey& right)
-        {
-            if (left.Level != right.Level)
-            {
-                return left.Level < right.Level;
-            }
-            for (int axis = 0; axis < 3; ++axis)
-            {
-                if (left.Center[axis] != right.Center[axis])
-                {
-                    return left.Center[axis] < right.Center[axis];
-                }
-            }
-            if (left.Radius != right.Radius)
-            {
-                return left.Radius < right.Radius;
-            }
-            if (left.Error != right.Error)
-            {
-                return left.Error < right.Error;
-            }
-            return left.ClusterIndex < right.ClusterIndex;
-        }
-
         // ページへ詰める単位。グループ（メンバは連続したクラスタ）か、グループを持たない1つのクラスタ（根）
         struct PageItem
         {
@@ -1962,13 +2035,18 @@ namespace NorvesLib::Core::Asset
             uint32_t GroupIndex = CookedMeshFormatV1::InvalidGroupId;
         };
 
-        // 1ページに入れるものの割り当て（items の連続した範囲）
+        // 1ページに入れるものの割り当て（items の連続した範囲と、根のページならフォールバックの三角形の連続した範囲）
         struct PageAssignment
         {
             uint32_t Level = 0;
             uint32_t ItemBegin = 0;
             uint32_t ItemEnd = 0;
+            // items の範囲のバイト数（クラスタの記録・頂点・インデックス）
             uint64_t ContentBytes = 0;
+            // フォールバックの三角形の範囲（三角形の番号。ページが持つ頂点を含めたバイト数も数える）
+            uint32_t FallbackTriangleBegin = 0;
+            uint32_t FallbackTriangleEnd = 0;
+            uint64_t FallbackBytes = 0;
         };
 
         uint64_t PageContentBytes(uint64_t clusterCount, uint64_t vertexCount, uint64_t indexCount,
@@ -2128,21 +2206,14 @@ namespace NorvesLib::Core::Asset
             ++rootItemCount;
         }
 
-        // 割り当て: 0 番が根のページ。残りは、1つの段のグループを、1つのグループが1つのページに収まるように
-        // 順に詰める（段が変わるか、入りきらなければ次のページ）
-        Container::VariableArray<PageAssignment> assignments;
-        {
-            PageAssignment root;
-            root.Level = topLevel;
-            root.ItemBegin = 0;
-            root.ItemEnd = rootItemCount;
-            assignments.push_back(root);
-        }
+        // 割り当て。0 番から連続する根のページ（常駐）→ 他のページの順に並べる。
+        //   - 根のページ: 根に入る段のグループを、1つのグループが1つのページに収まるように順に詰め、続けてフォールバックの
+        //     三角形を（その三角形が使う頂点つきで）空きから順に入れる。入りきらなければクラスタを持たない根のページを足す
+        //   - 他のページ: 1つの段のグループを順に詰める（段が変わるか、入りきらなければ次のページ）
         const auto alignedPageBytes = [](uint64_t contentBytes) -> uint64_t
         { return (contentBytes + SectionAlignment - 1) & ~static_cast<uint64_t>(SectionAlignment - 1); };
-        for (uint32_t itemIndex = rootItemCount; itemIndex < items.size(); ++itemIndex)
+        for (const PageItem& item : items)
         {
-            const PageItem& item = items[itemIndex];
             if (alignedPageBytes(PageHeaderSize + static_cast<uint64_t>(item.Bytes)) > options.PageSizeBytes)
             {
                 outInfo.LargestGroupBytes = item.Bytes;
@@ -2154,9 +2225,88 @@ namespace NorvesLib::Core::Asset
                 outInfo.LargestGroupBytes = item.Bytes;
                 outInfo.LargestGroupIndex = item.GroupIndex != InvalidGroupId ? item.GroupIndex : item.FirstCluster;
             }
+        }
 
+        Container::VariableArray<PageAssignment> assignments;
+        for (uint32_t itemIndex = 0; itemIndex < rootItemCount; ++itemIndex)
+        {
+            const PageItem& item = items[itemIndex];
+            if (assignments.empty() ||
+                alignedPageBytes(PageHeaderSize + assignments.back().ContentBytes + item.Bytes) > options.PageSizeBytes)
+            {
+                PageAssignment page;
+                page.Level = item.Level;
+                page.ItemBegin = itemIndex;
+                page.ItemEnd = itemIndex;
+                assignments.push_back(page);
+            }
+            assignments.back().ItemEnd = itemIndex + 1;
+            assignments.back().ContentBytes += item.Bytes;
+        }
+
+        // フォールバックの三角形を、根のページの空きへ順に入れる。ページごとに、使う頂点を1回だけ数える
+        {
+            const uint32_t fallbackTriangleCount = static_cast<uint32_t>(input.FallbackIndices.size() / 3);
+            Container::VariableArray<uint32_t> countedInPage(vertexCount, InvalidPageId);
+            const auto newVertexCount = [&](const uint32_t* triangle, size_t pageIndex) -> uint32_t
+            {
+                uint32_t count = 0;
+                for (int corner = 0; corner < 3; ++corner)
+                {
+                    const uint32_t vertex = triangle[corner];
+                    const bool bDuplicate = (corner >= 1 && vertex == triangle[0]) || (corner == 2 && vertex == triangle[1]);
+                    if (countedInPage[vertex] != pageIndex && !bDuplicate)
+                    {
+                        ++count;
+                    }
+                }
+                return count;
+            };
+            for (uint32_t triangleIndex = 0; triangleIndex < fallbackTriangleCount; ++triangleIndex)
+            {
+                const uint32_t* triangle = input.FallbackIndices.data() + static_cast<size_t>(triangleIndex) * 3;
+                size_t pageIndex = assignments.size() - 1;
+                uint64_t triangleBytes =
+                    3 * sizeof(uint32_t) + static_cast<uint64_t>(newVertexCount(triangle, pageIndex)) * VertexRecordSize;
+                if (alignedPageBytes(PageHeaderSize + assignments[pageIndex].ContentBytes +
+                                     assignments[pageIndex].FallbackBytes + triangleBytes) > options.PageSizeBytes)
+                {
+                    PageAssignment page;
+                    page.Level = topLevel;
+                    page.ItemBegin = rootItemCount;
+                    page.ItemEnd = rootItemCount;
+                    assignments.push_back(page);
+                    pageIndex = assignments.size() - 1;
+                    triangleBytes = 3 * sizeof(uint32_t) +
+                                    static_cast<uint64_t>(newVertexCount(triangle, pageIndex)) * VertexRecordSize;
+                    if (alignedPageBytes(PageHeaderSize + triangleBytes) > options.PageSizeBytes)
+                    {
+                        outInfo.LargestGroupBytes = static_cast<uint32_t>(triangleBytes);
+                        outInfo.LargestGroupIndex = triangleIndex;
+                        return CookedMeshPagedWriteStatus::GroupExceedsPage;
+                    }
+                }
+
+                PageAssignment& target = assignments[pageIndex];
+                if (target.FallbackTriangleBegin == target.FallbackTriangleEnd)
+                {
+                    target.FallbackTriangleBegin = triangleIndex;
+                }
+                target.FallbackTriangleEnd = triangleIndex + 1;
+                target.FallbackBytes += triangleBytes;
+                for (int corner = 0; corner < 3; ++corner)
+                {
+                    countedInPage[triangle[corner]] = static_cast<uint32_t>(pageIndex);
+                }
+            }
+        }
+
+        const size_t residentPageCount = assignments.size();
+        for (uint32_t itemIndex = rootItemCount; itemIndex < items.size(); ++itemIndex)
+        {
+            const PageItem& item = items[itemIndex];
             const bool bOpenNewPage =
-                assignments.size() == 1 || assignments.back().Level != item.Level ||
+                assignments.size() == residentPageCount || assignments.back().Level != item.Level ||
                 alignedPageBytes(PageHeaderSize + assignments.back().ContentBytes + item.Bytes) > options.PageSizeBytes;
             if (bOpenNewPage)
             {
@@ -2178,7 +2328,6 @@ namespace NorvesLib::Core::Asset
         const size_t pageCount = assignments.size();
         Container::VariableArray<uint32_t> newOrder;
         newOrder.reserve(clusterCount);
-        Container::VariableArray<uint32_t> pageOfCluster(clusterCount, 0);
         Container::VariableArray<uint32_t> newIndexOfCluster(clusterCount, 0);
         Container::VariableArray<uint32_t> pageFirstCluster(pageCount, 0);
         Container::VariableArray<uint32_t> pageClusterCount(pageCount, 0);
@@ -2191,7 +2340,6 @@ namespace NorvesLib::Core::Asset
                 const PageItem& item = items[itemIndex];
                 for (uint32_t member = item.FirstCluster; member < item.FirstCluster + item.ClusterCount; ++member)
                 {
-                    pageOfCluster[member] = static_cast<uint32_t>(pageIndex);
                     newIndexOfCluster[member] = static_cast<uint32_t>(newOrder.size());
                     newOrder.push_back(member);
                 }
@@ -2199,65 +2347,17 @@ namespace NorvesLib::Core::Asset
             pageClusterCount[pageIndex] = static_cast<uint32_t>(newOrder.size()) - pageFirstCluster[pageIndex];
         }
 
-        // 親のページ: ページのクラスタの親（1つ上の段で、自分の親の境界球・誤差を自分の値として持つクラスタ）を持つ
-        // ページのうち最も小さい番号。見つからなければ根のページ
-        Container::VariableArray<PageParentKey> parentKeys;
-        parentKeys.reserve(clusterCount);
-        for (uint32_t clusterIndex = 0; clusterIndex < clusterCount; ++clusterIndex)
-        {
-            const CookedMeshCluster& cluster = input.Clusters[clusterIndex];
-            PageParentKey key;
-            key.Level = cluster.LODLevel;
-            key.Center[0] = cluster.BoundsCenter.X;
-            key.Center[1] = cluster.BoundsCenter.Y;
-            key.Center[2] = cluster.BoundsCenter.Z;
-            key.Radius = cluster.BoundsRadius;
-            key.Error = cluster.LODError;
-            key.ClusterIndex = clusterIndex;
-            parentKeys.push_back(key);
-        }
-        std::sort(parentKeys.begin(), parentKeys.end(), PageParentKeyLess);
-
-        Container::VariableArray<uint32_t> parentPageOfPage(pageCount, InvalidPageId);
-        for (size_t pageIndex = 1; pageIndex < pageCount; ++pageIndex)
-        {
-            uint32_t parentPage = static_cast<uint32_t>(pageIndex);
-            for (uint32_t order = pageFirstCluster[pageIndex]; order < pageFirstCluster[pageIndex] + pageClusterCount[pageIndex];
-                 ++order)
-            {
-                const CookedMeshCluster& cluster = input.Clusters[newOrder[order]];
-                if (cluster.bIsRoot)
-                {
-                    continue;
-                }
-
-                PageParentKey probe;
-                probe.Level = cluster.LODLevel + 1;
-                probe.Center[0] = cluster.ParentBoundsCenter.X;
-                probe.Center[1] = cluster.ParentBoundsCenter.Y;
-                probe.Center[2] = cluster.ParentBoundsCenter.Z;
-                probe.Radius = cluster.ParentBoundsRadius;
-                probe.Error = cluster.ParentError;
-                probe.ClusterIndex = 0;
-                for (auto match = std::lower_bound(parentKeys.begin(), parentKeys.end(), probe, PageParentKeyLess);
-                     match != parentKeys.end() && IsSameParentTriple(*match, probe); ++match)
-                {
-                    const uint32_t matchPage = pageOfCluster[match->ClusterIndex];
-                    if (matchPage < pageIndex)
-                    {
-                        parentPage = std::min(parentPage, matchPage);
-                    }
-                }
-            }
-            parentPageOfPage[pageIndex] = parentPage < pageIndex ? parentPage : RootPageId;
-        }
-
         // 各ページのバイト列。ページの中でクラスタごとに自分の頂点・インデックスを連続して持ち、
         // クラスタの記録は、ページの中の位置を指す。根のページは、フォールバックの専用の頂点（使う頂点だけ）を持つ
         Container::VariableArray<Container::VariableArray<uint8_t>> pageBytes(pageCount);
         Container::VariableArray<uint32_t> pageVertexCount(pageCount, 0);
         Container::VariableArray<uint32_t> pageIndexCount(pageCount, 0);
-        Container::VariableArray<uint32_t> fallbackLocalIndex(vertexCount, InvalidPageId);
+        // フォールバックの頂点を、ページの中のどの位置へ置いたか（置いたページの番号と、その位置）
+        Container::VariableArray<uint32_t> fallbackPageOfVertex(vertexCount, InvalidPageId);
+        Container::VariableArray<uint32_t> fallbackLocalIndex(vertexCount, 0);
+        // 全ページのクラスタ（ページの順。親のページの導出に使う）
+        Container::VariableArray<CookedMeshCluster> orderedClusters;
+        orderedClusters.reserve(clusterCount);
         uint64_t totalVertices = 0;
         uint64_t regionSize = 0;
         for (size_t pageIndex = 0; pageIndex < pageCount; ++pageIndex)
@@ -2266,6 +2366,7 @@ namespace NorvesLib::Core::Asset
             Container::VariableArray<CookedMeshVertex> pageVertices;
             Container::VariableArray<uint32_t> pageIndices;
             Container::VariableArray<uint32_t> pageFallback;
+            const bool bResident = pageIndex < residentPageCount;
             pageClusters.reserve(pageClusterCount[pageIndex]);
             for (uint32_t order = pageFirstCluster[pageIndex]; order < pageFirstCluster[pageIndex] + pageClusterCount[pageIndex];
                  ++order)
@@ -2283,15 +2384,20 @@ namespace NorvesLib::Core::Asset
                 cluster.IndexOffset = static_cast<uint32_t>(pageIndices.size()) - cluster.IndexCount;
                 cluster.PageId = static_cast<uint32_t>(pageIndex);
                 pageClusters.push_back(cluster);
+                orderedClusters.push_back(cluster);
             }
 
-            if (pageIndex == RootPageId)
+            if (bResident)
             {
-                pageFallback.reserve(input.FallbackIndices.size());
-                for (const uint32_t sourceVertex : input.FallbackIndices)
+                const PageAssignment& assignment = assignments[pageIndex];
+                pageFallback.reserve(static_cast<size_t>(assignment.FallbackTriangleEnd - assignment.FallbackTriangleBegin) * 3);
+                for (size_t fallbackIndex = static_cast<size_t>(assignment.FallbackTriangleBegin) * 3;
+                     fallbackIndex < static_cast<size_t>(assignment.FallbackTriangleEnd) * 3; ++fallbackIndex)
                 {
-                    if (fallbackLocalIndex[sourceVertex] == InvalidPageId)
+                    const uint32_t sourceVertex = input.FallbackIndices[fallbackIndex];
+                    if (fallbackPageOfVertex[sourceVertex] != pageIndex)
                     {
+                        fallbackPageOfVertex[sourceVertex] = static_cast<uint32_t>(pageIndex);
                         fallbackLocalIndex[sourceVertex] = static_cast<uint32_t>(pageVertices.size());
                         pageVertices.push_back(input.Vertices[sourceVertex]);
                     }
@@ -2321,7 +2427,7 @@ namespace NorvesLib::Core::Asset
             WriteLe32(page, PageHeaderOffset::IndexOffset, static_cast<uint32_t>(indexOffset));
             WriteLe32(page, PageHeaderOffset::FallbackIndexOffset, static_cast<uint32_t>(fallbackOffset));
             WriteLe32(page, PageHeaderOffset::PageId, static_cast<uint32_t>(pageIndex));
-            WriteLe32(page, PageHeaderOffset::Flags, pageIndex == RootPageId ? PageFlagRoot : 0u);
+            WriteLe32(page, PageHeaderOffset::Flags, bResident ? PageFlagRoot : 0u);
             for (size_t clusterIndex = 0; clusterIndex < pageClusters.size(); ++clusterIndex)
             {
                 WriteV1ClusterRecord(page, clusterOffset + clusterIndex * ClusterRecordSize, pageClusters[clusterIndex]);
@@ -2345,14 +2451,14 @@ namespace NorvesLib::Core::Asset
             regionSize += pageSize;
             pageBytes[pageIndex] = std::move(page);
 
-            if (pageIndex == RootPageId)
+            outInfo.MaxPageBytes = std::max(outInfo.MaxPageBytes, static_cast<uint32_t>(pageSize));
+            if (bResident)
             {
-                outInfo.RootPageBytes = static_cast<uint32_t>(pageSize);
-                outInfo.RootPageClusterCount = static_cast<uint32_t>(pageClusters.size());
+                outInfo.RootPageBytes += static_cast<uint32_t>(pageSize);
+                outInfo.RootPageClusterCount += static_cast<uint32_t>(pageClusters.size());
             }
             else
             {
-                outInfo.MaxPageBytes = std::max(outInfo.MaxPageBytes, static_cast<uint32_t>(pageSize));
                 outInfo.NonRootPageBytes += pageSize;
             }
         }
@@ -2361,7 +2467,12 @@ namespace NorvesLib::Core::Asset
             return CookedMeshPagedWriteStatus::TooLarge;
         }
         outInfo.PageCount = static_cast<uint32_t>(pageCount);
+        outInfo.RootPageCount = static_cast<uint32_t>(residentPageCount);
         outInfo.RootPageMinLODLevel = rootMinLevel;
+
+        // 親のページ（読み込みが同じ規則で導いて、表の値と照合する）
+        Container::VariableArray<uint32_t> parentPageOfPage;
+        ComputePageParentPages(orderedClusters, pageCount, residentPageCount, parentPageOfPage);
 
         // ファイル全体: header -> submesh -> material -> page table -> group -> string -> page region
         const size_t submeshTableOffset = HeaderSize;
@@ -2451,7 +2562,8 @@ namespace NorvesLib::Core::Asset
             WriteLe64(bytes, recordOffset + PageTableRecordOffset::FileOffset, static_cast<uint64_t>(pageFileOffset));
             WriteLe32(bytes, recordOffset + PageTableRecordOffset::Size, static_cast<uint32_t>(page.size()));
             WriteLe32(bytes, recordOffset + PageTableRecordOffset::ParentPageId, parentPageOfPage[pageIndex]);
-            WriteLe32(bytes, recordOffset + PageTableRecordOffset::Flags, pageIndex == RootPageId ? PageFlagRoot : 0u);
+            WriteLe32(bytes, recordOffset + PageTableRecordOffset::Flags,
+                      pageIndex < residentPageCount ? PageFlagRoot : 0u);
             WriteLe32(bytes, recordOffset + PageTableRecordOffset::ClusterCount, pageClusterCount[pageIndex]);
             WriteLe32(bytes, recordOffset + PageTableRecordOffset::FirstClusterIndex, pageFirstCluster[pageIndex]);
             WriteLe32(bytes, recordOffset + PageTableRecordOffset::VertexCount, pageVertexCount[pageIndex]);

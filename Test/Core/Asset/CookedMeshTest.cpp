@@ -1417,7 +1417,8 @@ int main()
         const CookedMeshPagedWriteOptions options = SmallPageOptions();
         CookedMeshPagedWriteInfo info;
         const ByteArray bytes = SerializePaged(input, options, &info);
-        assert(info.PageCount == 4 && info.RootPageClusterCount == 3 && info.RootPageMinLODLevel == 2);
+        assert(info.PageCount == 4 && info.RootPageCount == 1 && info.RootPageClusterCount == 3 &&
+               info.RootPageMinLODLevel == 2);
         assert(info.MaxPageBytes <= options.PageSizeBytes && info.LargestGroupBytes == 472);
 
         const CookedMeshParseResult result = ParseCookedMesh(MakeBlob(bytes));
@@ -1547,7 +1548,7 @@ int main()
         const CookedMeshPage& rootPage = mesh.Pages[0];
         CookedMeshPageContent rootContent;
         assert(ParseCookedMeshPage(Span<const uint8_t>(bytes.data() + rootPage.FileOffset, rootPage.Size),
-                                   V1::RootPageId, mesh.LODLevelCount, static_cast<uint32_t>(mesh.Groups.size()),
+                                   V1::RootPageId, true, mesh.LODLevelCount, static_cast<uint32_t>(mesh.Groups.size()),
                                    rootContent) == CookedMeshParseStatus::Success);
         assert(rootContent.Clusters.size() == 3 && rootContent.FallbackIndices.size() == 24);
         assert(rootContent.Vertices.size() == 9 + 6);
@@ -1572,12 +1573,196 @@ int main()
         const CookedMeshPage& childPage = mesh.Pages[1];
         CookedMeshPageContent childContent;
         const Span<const uint8_t> childBytes(bytes.data() + childPage.FileOffset, childPage.Size);
-        assert(ParseCookedMeshPage(childBytes, 1, mesh.LODLevelCount, static_cast<uint32_t>(mesh.Groups.size()),
+        assert(ParseCookedMeshPage(childBytes, 1, false, mesh.LODLevelCount, static_cast<uint32_t>(mesh.Groups.size()),
                                    childContent) == CookedMeshParseStatus::Success);
         assert(childContent.FallbackIndices.empty() && childContent.Clusters.size() == 4);
-        assert(ParseCookedMeshPage(childBytes, V1::RootPageId, mesh.LODLevelCount,
+        assert(ParseCookedMeshPage(childBytes, V1::RootPageId, true, mesh.LODLevelCount,
                                    static_cast<uint32_t>(mesh.Groups.size()), childContent) !=
                CookedMeshParseStatus::Success);
+        assert(ParseCookedMeshPage(childBytes, 1, true, mesh.LODLevelCount, static_cast<uint32_t>(mesh.Groups.size()),
+                                   childContent) != CookedMeshParseStatus::Success);
+    }
+
+    // v1.1: 根のページ（常駐）も 128 KiB 以下で、複数のページに分かれる。フォールバックは根のページを合わせて閉じる
+    {
+        // フォールバックを、離れた 4 つの八面体（頂点 24・三角形 32）にして、ページの上限を小さくする。
+        // 根のクラスタ・段2 のグループ・フォールバックが、それぞれ別の根のページになる
+        CookedMeshV1WriteInput input = BuildPagedInput();
+        const CookedMeshFloat3 normal = {0.0f, 0.0f, 1.0f};
+        const CookedMeshFloat3 octahedron[6] = {{100.0f, 0.0f, 0.0f}, {-100.0f, 0.0f, 0.0f}, {0.0f, 100.0f, 0.0f},
+                                                {0.0f, -100.0f, 0.0f}, {0.0f, 0.0f, 100.0f}, {0.0f, 0.0f, -100.0f}};
+        const uint32_t octahedronIndices[24] = {0, 2, 4, 2, 1, 4, 1, 3, 4, 3, 0, 4, 2, 0, 5, 1, 2, 5, 3, 1, 5, 0, 3, 5};
+        input.Vertices.resize(45);
+        input.FallbackIndices.clear();
+        for (uint32_t copy = 0; copy < 4; ++copy)
+        {
+            const uint32_t baseVertex = static_cast<uint32_t>(input.Vertices.size());
+            for (const CookedMeshFloat3& position : octahedron)
+            {
+                input.Vertices.push_back(
+                    {{position.X + 1000.0f * static_cast<float>(copy), position.Y, position.Z}, normal, {0.0f, 0.0f}});
+            }
+            for (const uint32_t index : octahedronIndices)
+            {
+                input.FallbackIndices.push_back(baseVertex + index);
+            }
+        }
+
+        CookedMeshPagedWriteOptions options = SmallPageOptions();
+        options.PageSizeBytes = 600;
+        CookedMeshPagedWriteInfo info;
+        const ByteArray bytes = SerializePaged(input, options, &info);
+        assert(info.RootPageCount >= 4 && info.RootPageCount < info.PageCount);
+        assert(info.MaxPageBytes <= options.PageSizeBytes);
+
+        const CookedMeshParseResult result = ParseCookedMesh(MakeBlob(bytes));
+        assert(result.Succeeded());
+        const CookedMeshData& mesh = result.Mesh;
+        assert(mesh.Pages.size() == info.PageCount && mesh.FallbackIndexCount == 96);
+
+        // 根のページは 0 番から連続し、親を持たない。クラスタを持たない（フォールバックだけの）根のページもある
+        uint32_t residentPages = 0;
+        uint32_t residentBytes = 0;
+        bool bFallbackOnlyPage = false;
+        for (uint32_t pageId = 0; pageId < mesh.Pages.size(); ++pageId)
+        {
+            const CookedMeshPage& page = mesh.Pages[pageId];
+            assert(page.Size <= options.PageSizeBytes && page.Size <= V1::PageSize);
+            if (page.bIsRoot)
+            {
+                assert(pageId == residentPages && page.ParentPageId == V1::InvalidPageId);
+                ++residentPages;
+                residentBytes += page.Size;
+                bFallbackOnlyPage = bFallbackOnlyPage || page.ClusterCount == 0;
+            }
+            else
+            {
+                assert(page.ParentPageId < pageId);
+            }
+        }
+        assert(residentPages == info.RootPageCount && residentBytes == info.RootPageBytes && bFallbackOnlyPage);
+        for (const CookedMeshCluster& cluster : mesh.Clusters)
+        {
+            assert(!cluster.bIsRoot || mesh.Pages[cluster.PageId].bIsRoot);
+        }
+
+        // 根のページだけを1ページずつ読み、フォールバックを集める。どのページも自分の頂点だけを指し、
+        // 全部を合わせると元の八面体と同じ位置の、閉じた形になる
+        VariableArray<CookedMeshFloat3> positions;
+        VariableArray<uint32_t> positionIds;
+        for (uint32_t pageId = 0; pageId < residentPages; ++pageId)
+        {
+            const CookedMeshPage& page = mesh.Pages[pageId];
+            CookedMeshPageContent content;
+            assert(ParseCookedMeshPage(Span<const uint8_t>(bytes.data() + page.FileOffset, page.Size), pageId, true,
+                                       mesh.LODLevelCount, static_cast<uint32_t>(mesh.Groups.size()), content) ==
+                   CookedMeshParseStatus::Success);
+            for (const uint32_t index : content.FallbackIndices)
+            {
+                assert(index < content.Vertices.size());
+                const CookedMeshFloat3& position = content.Vertices[index].Position;
+                size_t found = 0;
+                while (found < positions.size() &&
+                       !(positions[found].X == position.X && positions[found].Y == position.Y &&
+                         positions[found].Z == position.Z))
+                {
+                    ++found;
+                }
+                if (found == positions.size())
+                {
+                    positions.push_back(position);
+                }
+                positionIds.push_back(static_cast<uint32_t>(found));
+            }
+        }
+        assert(positionIds.size() == 96 && positions.size() == 24 && IsClosedTriangleList(positionIds));
+        for (size_t index = 0; index < positionIds.size(); ++index)
+        {
+            const CookedMeshFloat3& source = input.Vertices[input.FallbackIndices[index]].Position;
+            assert(positions[positionIds[index]].X == source.X && positions[positionIds[index]].Y == source.Y &&
+                   positions[positionIds[index]].Z == source.Z);
+        }
+
+        // 読んだ全体のフォールバック（ページの頂点へ直した添字）も、元の位置の三角形を元の順に指す
+        for (size_t index = 0; index < 96; ++index)
+        {
+            const CookedMeshFloat3& page = mesh.Vertices[mesh.Indices[mesh.FallbackIndexOffset + index]].Position;
+            const CookedMeshFloat3& source = input.Vertices[input.FallbackIndices[index]].Position;
+            assert(page.X == source.X && page.Y == source.Y && page.Z == source.Z);
+        }
+
+        // 往復: 読んだ内容から組み直して、同じ設定で書くとバイト列が一致する
+        CookedMeshV1WriteInput rebuilt;
+        rebuilt.TotalBoundsCenter = mesh.TotalBoundsCenter;
+        rebuilt.TotalBoundsRadius = mesh.TotalBoundsRadius;
+        rebuilt.LODLevelCount = mesh.LODLevelCount;
+        rebuilt.FallbackError = mesh.FallbackError;
+        rebuilt.Vertices = mesh.Vertices;
+        rebuilt.Clusters = mesh.Clusters;
+        rebuilt.Groups = mesh.Groups;
+        for (size_t index = 0; index < mesh.FallbackIndexOffset; ++index)
+        {
+            rebuilt.ClusterIndices.push_back(mesh.Indices[index]);
+        }
+        for (size_t index = mesh.FallbackIndexOffset; index < mesh.Indices.size(); ++index)
+        {
+            rebuilt.FallbackIndices.push_back(mesh.Indices[index]);
+        }
+        rebuilt.AlbedoTexture = mesh.GetString(mesh.Materials[0].AlbedoTexture);
+        const ByteArray rebuiltBytes = SerializePaged(rebuilt, options);
+        assert(rebuiltBytes.size() == bytes.size());
+        assert(std::memcmp(rebuiltBytes.data(), bytes.data(), bytes.size()) == 0);
+    }
+
+    // v1.1: 既定の設定（128 KiB）で、大きなフォールバックを持つメッシュ。根のページも 128 KiB 以下に分かれる
+    {
+        CookedMeshV1WriteInput input = BuildPagedInput();
+        const CookedMeshFloat3 normal = {0.0f, 0.0f, 1.0f};
+        constexpr uint32_t Cells = 100;
+        constexpr uint32_t Stride = Cells + 1;
+        input.Vertices.resize(45);
+        input.FallbackIndices.clear();
+        for (uint32_t row = 0; row < Stride; ++row)
+        {
+            for (uint32_t column = 0; column < Stride; ++column)
+            {
+                input.Vertices.push_back({{static_cast<float>(column), static_cast<float>(row), 0.0f}, normal, {0.0f, 0.0f}});
+            }
+        }
+        for (uint32_t row = 0; row < Cells; ++row)
+        {
+            for (uint32_t column = 0; column < Cells; ++column)
+            {
+                const uint32_t v00 = 45 + row * Stride + column;
+                const uint32_t v10 = v00 + 1;
+                const uint32_t v01 = v00 + Stride;
+                const uint32_t v11 = v01 + 1;
+                for (const uint32_t index : {v00, v10, v01, v10, v11, v01})
+                {
+                    input.FallbackIndices.push_back(index);
+                }
+            }
+        }
+
+        CookedMeshPagedWriteInfo info;
+        const ByteArray bytes = SerializePaged(input, CookedMeshPagedWriteOptions{}, &info);
+        assert(info.RootPageCount >= 4 && info.RootPageBytes > V1::PageSize);
+        assert(info.MaxPageBytes <= V1::PageSize);
+
+        const CookedMeshParseResult result = ParseCookedMesh(MakeBlob(bytes));
+        assert(result.Succeeded());
+        const CookedMeshData& mesh = result.Mesh;
+        assert(mesh.FallbackIndexCount == 6 * Cells * Cells);
+        for (const CookedMeshPage& page : mesh.Pages)
+        {
+            assert(page.Size <= V1::PageSize);
+        }
+        for (size_t index = 0; index < input.FallbackIndices.size(); ++index)
+        {
+            const CookedMeshFloat3& page = mesh.Vertices[mesh.Indices[mesh.FallbackIndexOffset + index]].Position;
+            const CookedMeshFloat3& source = input.Vertices[input.FallbackIndices[index]].Position;
+            assert(page.X == source.X && page.Y == source.Y && page.Z == source.Z);
+        }
     }
 
     // v1.1: 全部が根のページに収まる小さなメッシュは 1 ページ
@@ -1598,13 +1783,14 @@ int main()
     // v1.1 の書き出しの失敗: グループがページに収まらない・入力の範囲の食い違い
     {
         CookedMeshPagedWriteOptions options = SmallPageOptions();
-        options.PageSizeBytes = 300;
+        options.PageSizeBytes = 400;
         ByteArray bytes;
         CookedMeshPagedWriteInfo info;
         assert(SerializeCookedMeshV1Paged(BuildPagedInput(), options, bytes, info) ==
                    CookedMeshPagedWriteStatus::GroupExceedsPage &&
                bytes.empty());
-        assert(info.LargestGroupBytes == 472 && info.LargestGroupIndex == 4);
+        // 収まらないのは、根のページに入る段2 のグループ（根のクラスタ 1 つは 300 バイトで収まる）
+        assert(info.LargestGroupBytes == 472 && info.LargestGroupIndex == 6);
 
         // 通常のページの上限（128 KiB）を超える設定と、ヘッダだけのページは受け付けない
         options.PageSizeBytes = static_cast<uint32_t>(V1::PageSize) + 8;
@@ -1664,6 +1850,39 @@ int main()
         ExpectPagedMutation(
             [](ByteArray& bytes) { WriteLe32(bytes, PagedTableRecord(bytes, 3) + V1::PageTableRecordOffset::ParentPageId, 2); },
             CookedMeshParseStatus::InvalidPageTable);
+        // 親のページの番号が、先に並ぶページだが実際の親のクラスタを持つページと違う（段0 のページ 2 の親は、段1 のページ 1）
+        ExpectPagedMutation(
+            [](ByteArray& bytes) { WriteLe32(bytes, PagedTableRecord(bytes, 2) + V1::PageTableRecordOffset::ParentPageId, 0); },
+            CookedMeshParseStatus::InvalidPageTable);
+        ExpectPagedMutation(
+            [](ByteArray& bytes) { WriteLe32(bytes, PagedTableRecord(bytes, 1) + V1::PageTableRecordOffset::ParentPageId, 1); },
+            CookedMeshParseStatus::InvalidPageTable);
+        // 根のページが先頭から連続しない（根でないページの後ろに根のページ）
+        ExpectPagedMutation(
+            [](ByteArray& bytes)
+            {
+                WriteLe32(bytes, PagedTableRecord(bytes, 2) + V1::PageTableRecordOffset::Flags, V1::PageFlagRoot);
+                WriteLe32(bytes, PagedTableRecord(bytes, 2) + V1::PageTableRecordOffset::ParentPageId, V1::InvalidPageId);
+            },
+            CookedMeshParseStatus::InvalidPageTable);
+        // 件数: ヘッダとサブメッシュの頂点数・クラスタ数を揃えて巨大にしても、ページの領域に収まらない件数は、
+        // 確保の前に拒否される（ファイル全体の hash は直す）
+        ExpectPagedMutation(
+            [](ByteArray& bytes)
+            {
+                const size_t submeshOffset = static_cast<size_t>(ReadLe64(bytes, V1::HeaderOffset::SubmeshTableOffset));
+                WriteLe32(bytes, V1::HeaderOffset::VertexCount, 0xffffffffu);
+                WriteLe32(bytes, submeshOffset + V1::SubmeshRecordOffset::VertexCount, 0xffffffffu);
+            },
+            CookedMeshParseStatus::InvalidCounts);
+        ExpectPagedMutation(
+            [](ByteArray& bytes)
+            {
+                const size_t submeshOffset = static_cast<size_t>(ReadLe64(bytes, V1::HeaderOffset::SubmeshTableOffset));
+                WriteLe32(bytes, V1::HeaderOffset::ClusterCount, 0x7fffffffu);
+                WriteLe32(bytes, submeshOffset + V1::SubmeshRecordOffset::ClusterCount, 0x7fffffffu);
+            },
+            CookedMeshParseStatus::InvalidCounts);
         // クラスタの範囲・件数が、ページの中の件数と食い違う
         ExpectPagedMutation(
             [](ByteArray& bytes)

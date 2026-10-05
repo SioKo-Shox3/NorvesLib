@@ -1625,7 +1625,7 @@ namespace NorvesLib::Tools::AssetCook
             dag.Output.NormalTexture = AnsiStringView(materialReferences.Normal);
             dag.Output.ArmTexture = AnsiStringView(materialReferences.Arm);
 
-            // クラスタのグループを 128 KiB のページに詰めて NVMESH v1.1 に書く(根のページに粗い段とフォールバックの段)
+            // クラスタのグループを 128 KiB のページに詰めて NVMESH v1.1 に書く(常駐の根のページ群に粗い段とフォールバックの段)
             MeshCookResult result;
             NorvesLib::Core::Asset::CookedMeshPagedWriteInfo pageInfo;
             const NorvesLib::Core::Asset::CookedMeshPagedWriteStatus pageStatus =
@@ -1665,6 +1665,7 @@ namespace NorvesLib::Tools::AssetCook
             result.ClusterCount = dag.Stats.ClusterCount;
             result.DagRejectedGroups = dag.Stats.RejectedGroupCount;
             result.PageCount = pageInfo.PageCount;
+            result.RootPageCount = pageInfo.RootPageCount;
             result.RootPageBytes = pageInfo.RootPageBytes;
             result.RootPageClusterCount = pageInfo.RootPageClusterCount;
             result.RootPageMinLODLevel = pageInfo.RootPageMinLODLevel;
