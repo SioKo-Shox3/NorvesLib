@@ -4,6 +4,7 @@
 #include "Tools/AssetCook/CookOutputSetGuard.h"
 #include "Tools/AssetCook/CookOwnedState.h"
 #include "Tools/AssetCook/CookStateFile.h"
+#include "Tools/AssetCook/CookManagedUpdateInventory.h"
 #include "Tools/AssetCook/CookCacheDecisionTestAccess.h"
 #include "Tools/AssetCook/AssetCookLegacyOptions.h"
 #include "Tools/AssetCook/CookOutputPaths.h"
@@ -207,6 +208,10 @@ namespace
         CHECK(PrepareCookOutputPlan(r, 7, &f.Live, finalPlan, error));
         CHECK(finalPlan.Outputs.size() == f.Record.Outputs.size());
         CHECK(ValidateCookOutputSet({&finalPlan, 1}, {}, error));
+        CookManagedUpdateInventory inventory;
+        CHECK(BuildCookManagedUpdateInventory(stateFile, fromFile, {&finalPlan, 1}, inventory, error));
+        CHECK(inventory.Assets.size() == 1 && inventory.Assets[0].Packages.size() == finalPlan.Outputs.size());
+        CHECK(inventory.PreviousState.Records[0].Record.Outputs[0].Reference.CookedHash == f.Record.Outputs[0].Reference.CookedHash);
         for (size_t i = 0; i < finalPlan.Outputs.size(); ++i)
         {
             CHECK(finalPlan.Outputs[i].ExpectedIdentity.LogicalPath == f.Record.Outputs[i].Reference.LogicalPath);

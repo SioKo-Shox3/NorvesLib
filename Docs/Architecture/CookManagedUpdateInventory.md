@@ -1,0 +1,51 @@
+# 管理済み更新のtarget対応表
+
+G2-S6 / GR96。BuildCookManagedUpdateInventoryは、独立したstate scope、旧CookOwnedState、新しいFINAL CookPreparedPlan集合の対応を値所有する。file I/O、Cook/Skip判定、stage作成、before-image保存、journal、公開、rollbackは行わない。
+
+## 入力と初期profile
+
+scope.ExpectedBindingは現在のowner resolver等から独立に得たものを渡し、旧stateから逆採用しない。bindingは厳密一致を要求する。旧stateの検証・正規化には既存state codecを往復して使い、derived hex文字列も再生成する。これは元state fileの生byte backupではない。
+
+初期profileはflat manifest（RuntimeRoot直下のfile名）と所有inventory固定。PrimaryKey、各出力のKind / LogicalPath / Variant、package相対名が同じ場合だけ対応付ける。追加・除去・rename・派生inventory変更は拒否する。SourceHash、dependency fingerprint、format、revisionの変更は同じ宣言targetへのrecook候補として保持するが、その新形式がcook可能だとは判定しない。
+
+現単体requestはmanifest親directoryを出力baseにするため、このunitではnested manifestを受け付けない。scopeのroot/stateはASCII local-drive絶対locatorを語彙検査し、rootのASCII drive-form表記とbindingを一致させる。stateがrootに含まれる等の明白なlexical衝突は拒否する。aliasを含む物理的なsame-volume/outside-root証明は、実際のCookStateFileと後段の再検証へ委ねる。
+
+要求とprimary出力のkey/format/entry/type、manifest path、package pathが矛盾するplanも拒否する。ただしmutableなplanの現在性や由来を認証するものではない。実cook前には必ず共通Prepare/ValidateCookOutputSetで再検証する。
+
+## 結果
+
+- Scope、codecで正規化したPreviousState
+- 入力plan順のAssetsと、旧recordのindex
+- 各plan出力順のpackage対応、旧output index、宣言されたFINAL target locator
+- 集約manifest targetと外部state target（Scope.StatePath）
+- package/manifestは実before-image取得または厳密な不在証明、stateは前のstate fileの正確なbefore-image取得が必要という要件
+- BaseGenerationと、変更する場合だけ使うProposedMutationGeneration
+
+keyの照合はsortしたindexで行い、row順の変更は許容する。全結果は値所有し、callerの旧state/planの寿命に依存しない。失敗時outを保持する。errorは入力/out内の文字列とは独立に渡す。
+
+uint64上限ではbCanAdvanceGeneration=false、ProposedMutationGeneration=0を返す。no-opが独立に確認できれば旧世代のまま維持できるが、変更が要る場合は必ず拒否する。0を新stateへ使えば既存codecも拒否する。no-opの判定自体は本unitでは行わない。
+
+## 上限
+
+4096 plans/records、16384 package出力、依存fileの延べ65536件を上限にする。旧stateは既存16MiB codec上限を引き継ぐ。旧state wireと保持するplan/path/key/targetの集計を32MiB以下に抑え、文字列4096byte、native locator32767 code unitsを検査する。32MiBは処理全体のheap上限ではなく、container/索引/codec DOM等は別である。package payloadをinline保持しない。
+
+## 成功しても未確認のもの
+
+このunitは存在しないfilesystemを宣言した値でも対応を返せる。実fileの所有・存在・内容・同時点snapshotを確認したことにはならず、出力locatorをそのまま書込許可として扱ってはいけない。
+
+後段では少なくとも次が必要。
+
+1. destination lock内でordinary/abandonedの別によらず回復状態を確認する
+2. ownerとstateを独立再解決・再読込し、世代とbindingを照合する
+3. 共通Prepare、ValidateCookOutputSet、DecideCookCacheを使う。単体backendのskipはfalse
+4. 最初のcook前に全stage plansを空stage上で用意する。cook直後のfragmentを共通Captureへ渡す
+5. package/manifest/stateの実before-imageとstage後像を取得し、spec/source/外部file/sidecarの始点を再照合する
+6. 完全なintent、commit receipt、条件付きrollbackの契約を満たす
+
+journal discoveryはまだ未解決。owner/rootだけのlookupをvolume全体の回復とみなさない。共通per-volume registryや、durable root claimとnested owner禁止を含む等価な探索・所有規則を別途検証する必要がある。stageからrenameしたobjectのfile ID等も確認し、同byteの後発fileを旧transactionの後像として削除しない。
+
+新規rootとexternal stateのbootstrapも別protocol。rootを公開してから独立にstateを書く接続は行わない。以上が閉じるまでproductionの管理済み差分公開へ接続しない。
+
+## 検証
+
+専用testは純値fixtureで順序、fixed inventory、primary/derived対応、世代上限、4096件、metadata予算、失敗保持・値所有・無I/Oを検査する。CookCacheDecisionTestでも全実profileのcook→capture→state保存読戻し→FINAL planから本対応表を作る。これらを合格しても実publicationの受入れとはしない。

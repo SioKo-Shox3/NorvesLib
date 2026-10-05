@@ -49,6 +49,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER CookOutputSetGuardTest CookOutputSetGuardTest.cpp
     MEMBER CookOutputPlanTest CookOutputPlanTest.cpp
     MEMBER CookStateFileTest CookStateFileTest.cpp
+    MEMBER CookManagedUpdateInventoryTest CookManagedUpdateInventoryTest.cpp
     MEMBER CookDestinationLockTest CookDestinationLockTest.cpp
     MEMBER CookOwnerResolverTest CookOwnerResolverTest.cpp
     MEMBER CookOwnerBindingTest CookOwnerBindingTest.cpp
@@ -240,3 +241,5 @@ add_test(NAME CookOwnerBindingTest COMMAND CookedMeshTest --test=CookOwnerBindin
 add_test(NAME CookOwnerResolverTest COMMAND CookedMeshTest --test=CookOwnerResolverTest)
 
 add_test(NAME CookDestinationLockTest COMMAND CookedMeshTest --test=CookDestinationLockTest)
+
+add_test(NAME CookManagedUpdateInventoryTest COMMAND CookedMeshTest --test=CookManagedUpdateInventoryTest)

@@ -795,3 +795,6 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-DESTINATION-LOCK検証準備: 28CPUへ登録。Global名/volume GUIDの実C++literalを単独compileして区切りと長さを確認し、比較器12件×通常/最適化が成功。test bundleが--testを除去する実装に合わせてchild引数を調整。実thread/process、終了によるabandoned、全handle消滅後のordinary、例外/故障後の別thread再取得を試験化。実Windowsと79+10byteは未実行。
 
 - G2-S6-DESTINATION-LOCK受入: 6a9eeba2/run37248641417で実Windows build・28CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。実thread/processの排他、Busy、例外/故障後の解除、実process終了のabandonedと全handle消滅後ordinaryを確認。8.3/SUBST/Unicode alias/別volume/cross-processはflag1、cross-sessionは未実測の0。Release/Close注入は実cleanup後の失敗報告試験。3ZIPと79+10固定出力を独立確認しrootで再実行。primitiveをdone、production/journalは未接続。
+
+- G2-S6-MANAGED-UPDATE-INVENTORY開始: 管理済み更新の前段として、旧stateに宣言されたkey/packageと新FINAL planの対応を値所有する。独立bindingと明示scopeを照合し、package/manifest/stateの実before-image取得を後段の必須要件へ分ける。初期profileはflat manifestと既存inventory固定。純値層のためlock/recovery/state再読込/共通plan再検証を省略する根拠にはしない。
+- G2-S6-MANAGED-UPDATE-INVENTORY検証準備: 旧state codecを共有し、sortしたindexでprimary/派生を対応付ける。新plan順と値寿命を保持、世代上限は変更用generation=0と不可flagで示す。全実kindのcache試験にも接続し29CPUへ登録。比較器12件×通常/最適化と差分衛生は成功、実Windows/79+10byte gateは未実行。
