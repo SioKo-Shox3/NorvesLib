@@ -44,6 +44,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER MaterialImportSettingsJsonTest MaterialImportSettingsJsonTest.cpp
     MEMBER MaterialImportDocumentTest MaterialImportDocumentTest.cpp
     MEMBER SingleAssetCookServiceTest SingleAssetCookServiceTest.cpp
+    MEMBER ImportedOpaqueRuntimeTest ImportedOpaqueRuntimeTest.cpp
     MEMBER ImportedMaterialStagingTest ImportedMaterialStagingTest.cpp
     MEMBER GltfMaterialCookV1Test GltfMaterialCookV1Test.cpp
     MEMBER TextureManagedCliTest TextureManagedCliTest.cpp
@@ -268,3 +269,5 @@ add_test(NAME TextureManagedCliTest COMMAND CookedMeshTest --test=TextureManaged
 add_test(NAME GltfMaterialCookV1Test COMMAND CookedMeshTest --test=GltfMaterialCookV1Test)
 
 add_test(NAME ImportedMaterialStagingTest COMMAND CookedMeshTest --test=ImportedMaterialStagingTest)
+
+add_test(NAME ImportedOpaqueRuntimeTest COMMAND CookedMeshTest --test=ImportedOpaqueRuntimeTest)

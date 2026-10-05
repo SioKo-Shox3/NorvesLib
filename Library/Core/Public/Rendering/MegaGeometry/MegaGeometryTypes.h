@@ -175,6 +175,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};     // ベースカラー RGBA
         float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};       // Y=1 chromaticity
         float EmissiveLuminanceNits = 0.0f;                 // 輝度(nits)
+        // 負のmetal/roughは従来の黒/白。textureがあればscalarを再乗算しない。
+        float Metallic = -1.0f, Roughness = -1.0f, OcclusionStrength = 1.0f;
 
         // PBRテクスチャ（nullptrの場合はデフォルトテクスチャを使用）
         RHI::TexturePtr AlbedoTexture;

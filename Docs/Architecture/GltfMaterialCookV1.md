@@ -33,3 +33,5 @@ JSONの順序ではなく解決済みの設定をhashする。一方、共通増
 GltfMaterialCookV1Testはreleaseでも有効なCHECKで実glTF/GLB、PNG decode、既存encoded/raw texture byte一致、材質codec往復、ARM、発光、selector、閉鎖判定、単体package/manifest、cache、入力alias拒否を検証する。
 既存の79 standalone出力と10 texture出力は凍結基準と別途byte比較する。managed CLI、中断復旧、CNGの既存gateも維持する。
 実Windows CIの受入れ結果はPROGRESS.mdに記録する。実画像/GPU描画の受入れは後続。
+
+後続のruntime対応subsetはImportedOpaqueRuntime.mdに記載する。この文書のcook単体受入れと、描画接続/GPU画像の受入れは別である。

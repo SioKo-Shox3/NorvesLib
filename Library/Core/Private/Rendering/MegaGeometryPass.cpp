@@ -1,4 +1,5 @@
 ﻿#include "Rendering/MegaGeometryPass.h"
+#include "Rendering/ConstantMaterialTextureCache.h"
 #include "Rendering/FrameCommand.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderResources.h"
@@ -336,6 +337,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
+        m_ConstantMaterialTextures.reset();
         m_DefaultLinearSampler.reset();
 
         m_HiZTexture.reset();
@@ -1001,9 +1003,32 @@ namespace NorvesLib::Core::Rendering
             // PBRテクスチャバインド（マテリアルテクスチャまたはデフォルトにフォールバック）
             auto albedo = mat.AlbedoTexture ? mat.AlbedoTexture : m_DefaultWhiteTexture;
             auto normal = mat.NormalTexture ? mat.NormalTexture : m_DefaultFlatNormalTexture;
-            auto metallic = mat.MetallicTexture ? mat.MetallicTexture : m_DefaultBlackTexture;
-            auto roughness = mat.RoughnessTexture ? mat.RoughnessTexture : m_DefaultWhiteTexture;
-            auto ao = mat.AOTexture ? mat.AOTexture : m_DefaultWhiteTexture;
+            if (!std::isfinite(mat.Metallic) || !std::isfinite(mat.Roughness) || !std::isfinite(mat.OcclusionStrength))
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "Non-finite material scalar");
+                continue;
+            }
+            const auto constant = [&](float value) -> RHI::TexturePtr
+            {
+                if (!m_ConstantMaterialTextures)
+                {
+                    m_ConstantMaterialTextures = Container::MakeUnique<ConstantMaterialTextureCache>();
+                }
+                return m_ConstantMaterialTextures->GetOrCreate(m_Device, value);
+            };
+            auto metallic = mat.MetallicTexture ? mat.MetallicTexture
+                                                : (mat.Metallic >= 0 ? constant(mat.Metallic) : m_DefaultBlackTexture);
+            auto roughness = mat.RoughnessTexture
+                                 ? mat.RoughnessTexture
+                                 : (mat.Roughness >= 0 ? constant(mat.Roughness) : m_DefaultWhiteTexture);
+            auto ao = mat.AOTexture
+                          ? mat.AOTexture
+                          : (mat.OcclusionStrength == 1 ? m_DefaultWhiteTexture : constant(mat.OcclusionStrength));
+            if (!metallic || !roughness || !ao)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "Failed to prepare material scalar textures");
+                continue;
+            }
             auto height = mat.HeightTexture ? mat.HeightTexture : m_DefaultBlackTexture;
 
             drawDescriptorSet->BindTexture(1, albedo);

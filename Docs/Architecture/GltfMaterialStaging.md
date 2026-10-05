@@ -15,3 +15,5 @@ ImportedMaterialStagingTestは値のbit保持、mask8×alpha3×両面2、所有/
 直近のruntime接続はGR79本文どおり、元ARMから使用maskのchannelだけをR8へ分割し、最終scalarは既存の1×1 texture方式で渡す。PackedArmV1は元のcook資産のlayoutを表し、GPUでの1枚bindingを意味しない。packed GPU化は後続の圧縮・streaming構想へ分離し、ここではshaderを変えない。GPU描画・alpha/両面/影・透明経路の合格はこのCPU試験で代替しない。
 
 範囲注意: 現在のNVMESH v1 readerはstring tableをASCII限定で検査する。UTF-8の所有保証は手組みCookedMeshDataからadapterまでで、Unicode cooked blobの製品ロード対応を意味しない。Finalizeはreleaseでも取得できるModelFinalizeStatusで未対応材質の早期拒否をresource失敗から区別する。
+
+後続の実runtime接続はImportedOpaqueRuntime.mdを参照。CPU adapter単体の受入れでは一律拒否していたv1について、後続taskが対応profileだけを開放し、未対応値の拒否を維持する。

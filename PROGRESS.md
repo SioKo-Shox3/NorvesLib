@@ -859,3 +859,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 
 - G2/GR79 CPU材質staging受入: c669322b1ab5955383baf4c33c54702ac9debdbd / treea7956787932a741ce966f2e51e2f4ae3d0bec646 / run37321891650 attempt1 job111802776013。38CPU、新旧marker、17/29中断、79+10byte、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG、3ZIPを独立検証し親も再実行exit0。全13float/48flagsは固定fixture有限検証。実cross-session未試験とGPU未受入れを維持。
 - G2/GR79 次段方針補正: 本文8534–8551は使用channelのR8分割＋scalar1x1＋shader変更なしを指定するため、まずこの範囲へ接続する。後続GRのpacked GPU構想を直近へ前倒しする案は採らない。CPU PackedArmV1は元資産layoutとして維持。Nits=0/色0のemissiveTextureは寄与0としてupload省略で受理、OPAQUEのfactor alphaは保持して無視できる。albedo画像alphaの背景判定漏れは別途検査する。
+
+- G2/GR79 opaque runtime接続を開始。ロードマップ本文のR8 selected-channel/scalar1x1・shader無変更へ限定し、CPU/FakeDeviceの実装受入れと実GPU画像確認を分ける。
+
+- G2/GR79 opaque runtime実装を検証へ: 対応subsetをsync/worker/Finalizeで判定し、全mip R8選択uploadとscalar1x1 cacheを接続。round1の匿名texture registry所有残りをptr移管＋ReleaseTextureで修正し、解放/途中失敗/例外/geometry失敗のweak寿命試験を追加、round2静的PASS。Python12+4+7 normal/-Oは合格。旧38＋新runtime＋既存MegaGeometry/ModelResourceの計41CPUを次の実Windows CIで検証する。GPU画像受入れは未実行。

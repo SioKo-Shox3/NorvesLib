@@ -1,4 +1,6 @@
 ﻿#include "Resource/ModelStaging.h"
+#include "Resource/ImportedOpaqueRuntime.h"
+#include "Rendering/TextureAssetLoader.h"
 #include "Resource/GltfImageSource.h"
 
 #include "FileStream/FileStream.h"
@@ -729,6 +731,128 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                    CreateTextureFromStagedData(textures, roughnessStaging, outRoughnessTexture, role, requestId) &&
                    CreateTextureFromStagedData(textures, metallicStaging, outMetallicTexture, role, requestId);
         }
+        bool FinalizeImportedMaterial(const ModelStagingData& staging, Rendering::TextureResources& textures,
+                                      Rendering::MegaGeometry::MegaMeshMaterial& material, const char* role,
+                                      uint32_t requestId, AnsiString& reason)
+        {
+            const auto& source = staging.ImportedMaterial;
+            if (!ValidateImportedOpaqueMaterial(source, reason))
+            {
+                return false;
+            }
+            Rendering::PreparedTextureAsset prepared[3];
+            const AnsiString* paths[] = {&source.AlbedoPath, &source.NormalPath, &source.ArmPath};
+            const char* roles[] = {"albedo", "normal", "arm"};
+            for (size_t i = 0; i < 3; ++i)
+            {
+                if (paths[i]->empty() || (i == 2 && source.ArmMask == 0))
+                {
+                    continue;
+                }
+                const String path(StringView(paths[i]->data(), paths[i]->size()));
+                prepared[i] = textures.PrepareTextureAssetForWorker(path, {}, role, requestId);
+                if (prepared[i].Status != Rendering::PreparedTextureAssetStatus::CookedReady || !prepared[i].Payload ||
+                    !textures.IsPreparedTextureAssetCurrent(prepared[i]))
+                {
+                    reason = "imported_opaque: cooked_texture_required role=";
+                    reason += roles[i];
+                    return false;
+                }
+                if (!ValidateImportedTexture(prepared[i].Payload->Texture,
+                                             i == 0 ? Asset::CookedTextureColorSpace::SRGB
+                                                    : Asset::CookedTextureColorSpace::Linear,
+                                             i == 0, reason))
+                {
+                    reason += " role=";
+                    reason += roles[i];
+                    return false;
+                }
+            }
+            ImportedArmChannels arm;
+            if (source.ArmMask && (!prepared[2].Payload || !SplitImportedArmChannels(prepared[2].Payload->Texture,
+                                                                                     source.ArmMask, arm, reason)))
+            {
+                return false;
+            }
+            // 全CPU検査を終えてからGPUを作る。画像の不正や未対応値で部分uploadしない。
+            for (const auto& texture : prepared)
+            {
+                if (texture.Payload && !textures.IsPreparedTextureAssetCurrent(texture))
+                {
+                    reason = "imported_opaque: texture_generation_changed";
+                    return false;
+                }
+            }
+            for (size_t i = 0; i < 4; ++i)
+            {
+                material.BaseColor[i] = source.BaseColor[i];
+            }
+            for (size_t i = 0; i < 3; ++i)
+            {
+                material.EmissiveColor[i] = source.EmissiveColor[i];
+            }
+            material.EmissiveLuminanceNits = source.EmissiveLuminanceNits;
+            material.Metallic = source.Metallic;
+            material.Roughness = source.Roughness;
+            material.OcclusionStrength = source.OcclusionStrength;
+            NorvesLib::RHI::TexturePtr* standard[] = {&material.AlbedoTexture, &material.NormalTexture};
+            for (size_t i = 0; i < 2; ++i)
+            {
+                if (!prepared[i].Payload)
+                {
+                    continue;
+                }
+                StagedTextureData staged;
+                staged.PreparedTexture = prepared[i];
+                staged.bHasPreparedTexture = true;
+                if (!CreateTextureFromStagedData(textures, staged, *standard[i], role, requestId))
+                {
+                    reason = "imported_opaque: texture_finalize role=";
+                    reason += roles[i];
+                    return false;
+                }
+            }
+            NorvesLib::RHI::TexturePtr* channels[] = {&material.AOTexture, &material.RoughnessTexture,
+                                                      &material.MetallicTexture};
+            const char* suffixes[] = {"_AO", "_Roughness", "_Metallic"};
+            for (size_t i = 0; i < 3; ++i)
+            {
+                if ((source.ArmMask & (1u << i)) == 0)
+                {
+                    continue;
+                }
+                Rendering::TextureCreateInfo info;
+                info.Width = arm.Mips[0].Width;
+                info.Height = arm.Mips[0].Height;
+                info.MipLevels = static_cast<uint32_t>(arm.Mips.size());
+                info.PixelFormat = Rendering::TextureCreateInfo::Format::R8_UNORM;
+                info.DebugName = staging.DebugName + suffixes[i];
+                const auto handle = textures.CreateTexture(info);
+                if (!handle.IsValid())
+                {
+                    reason = "imported_opaque: arm_channel_finalize";
+                    return false;
+                }
+                *channels[i] = textures.GetRHITexturePtr(handle);
+                // 派生textureはmodelだけが所有する。registryへ匿名handleを残さない。
+                textures.ReleaseTexture(handle);
+                if (!*channels[i])
+                {
+                    reason = "imported_opaque: arm_channel_pointer";
+                    return false;
+                }
+                // cook済み全mipを直接uploadし、mip0からのGPU再生成失敗を隠さない。
+                for (size_t level = 0; level < arm.Mips.size(); ++level)
+                {
+                    const auto& mip = arm.Mips[level];
+                    (*channels[i])
+                        ->Update(mip.Pixels[i].data(), mip.Width, static_cast<uint32_t>(mip.Pixels[i].size()),
+                                 static_cast<uint32_t>(level), 0);
+                }
+            }
+            // 発光画像は、正nitsならprofileで拒否済み、0nitsなら寄与0なので一切読み込まない。
+            return true;
+        }
     } // anonymous namespace
     Rendering::ModelHandle FinalizeModelStaging(const ModelStagingData& staging,
                                                 Rendering::ModelLoadResourceContext resources, const char* role,
@@ -738,13 +862,15 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
         {
             *outStatus = ModelFinalizeStatus::Failed;
         }
-        if (staging.ImportedMaterial.Layout != ImportedMaterialLayout::Absent)
+        const bool bImported = staging.ImportedMaterial.Layout != ImportedMaterialLayout::Absent;
+        AnsiString importedReason;
+        if (bImported && !ValidateImportedOpaqueMaterial(staging.ImportedMaterial, importedReason))
         {
             if (outStatus)
             {
                 *outStatus = ModelFinalizeStatus::UnsupportedImportedMaterial;
             }
-            NORVES_LOG_ERROR("ModelAsset", "GR79 imported packed material renderer is not connected");
+            NORVES_LOG_ERROR("ModelAsset", "asset=%s material=0 %s", staging.DebugName.c_str(), importedReason.c_str());
             return Rendering::ModelHandle::Invalid();
         }
         auto totalStartTime = LoadProfileNow();
@@ -760,6 +886,19 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
         bool bAOFinalizeSuccess = false;
         bool bRoughnessFinalizeSuccess = false;
         bool bMetallicFinalizeSuccess = false;
+        if (bImported)
+        {
+            Rendering::ScopedTextureCreateUploadProfileRole profileRole(role);
+            bAlbedoFinalizeSuccess = bNormalFinalizeSuccess = bAOFinalizeSuccess = bRoughnessFinalizeSuccess =
+                bMetallicFinalizeSuccess =
+                    FinalizeImportedMaterial(staging, resources.Textures, material, role, requestId, importedReason);
+            if (!bAlbedoFinalizeSuccess)
+            {
+                NORVES_LOG_ERROR("ModelAsset", "asset=%s material=0 %s", staging.DebugName.c_str(),
+                                 importedReason.c_str());
+            }
+        }
+        else
         {
             Rendering::ScopedTextureCreateUploadProfileRole profileRole(role);
             bAlbedoFinalizeSuccess = staging.AlbedoTexture.HasData()
