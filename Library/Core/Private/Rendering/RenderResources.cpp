@@ -2,6 +2,7 @@
 
 #include "Asset/AssetSystem.h"
 #include "Rendering/CookedVirtualTexture.h"
+#include "Rendering/GeometryPool.h"
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/GpuRetireQueue.h"
 #include "Rendering/SparsePagePool.h"
@@ -95,6 +96,9 @@ namespace NorvesLib::Core::Rendering
         // sparse テクスチャへ結ぶ物理メモリのページ。sparse に対応しないデバイスでは作らない。
         // 期限の来た返却は RetireQueue を通ってここへ戻るので、Shutdown では RetireQueue を片付けてから手放す。
         Container::TUniquePtr<SparsePagePool> SparsePool;
+        // ジオメトリが共有する DeviceLocal のバッファのプール。区画の期限の来た返却は RetireQueue を通ってここへ戻るので、
+        // SparsePool と同じく Shutdown では RetireQueue を片付けてから手放す。
+        Container::TUniquePtr<GeometryPool> GeometryBuffers;
         // タイル・ミップテイルのデータをステージングのリング経由でテクスチャの領域へ書く経路。sparse に対応しないデバイスでは作らない。
         // リングのバッファは GPU が止まってから手放す（Shutdown の WaitIdle の後）。
         Container::TUniquePtr<TileUploader> TileUpload;
@@ -1161,6 +1165,7 @@ namespace NorvesLib::Core::Rendering
                     *m_Impl->SparsePool, *m_Impl->VtGpu, &m_Impl->RetireQueue);
             }
         }
+        m_Impl->GeometryBuffers = Container::MakeUnique<GeometryPool>(m_Impl->Device);
         m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
         m_Impl->MegaGeometryResources =
             Container::MakeUnique<MegaGeometryResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
@@ -1202,6 +1207,7 @@ namespace NorvesLib::Core::Rendering
         m_Impl->TileUpload.reset();
         m_Impl->VtFeedback.reset();
         m_Impl->SparsePool.reset();
+        m_Impl->GeometryBuffers.reset();
         if (m_Impl->SkinnedMeshes)
         {
             m_Impl->SkinnedMeshes->ForceClearAfterWaitIdle();
@@ -1245,6 +1251,10 @@ namespace NorvesLib::Core::Rendering
         if (m_Impl->SparsePool)
         {
             m_Impl->SparsePool->LogLedgerIfChanged();
+        }
+        if (m_Impl->GeometryBuffers)
+        {
+            m_Impl->GeometryBuffers->LogLedgerIfChanged();
         }
     }
 
@@ -1350,6 +1360,11 @@ namespace NorvesLib::Core::Rendering
         return m_Impl->SparsePool.get();
     }
 
+    GeometryPool *RenderResources::GetGeometryPool() const
+    {
+        return m_Impl->GeometryBuffers.get();
+    }
+
     size_t RenderResources::GetPendingRetireCount() const
     {
         return m_Impl->RetireQueue.GetPendingCount();
@@ -1424,9 +1439,21 @@ namespace NorvesLib::Core::Rendering
             const SparsePagePool::Stats pool = impl->SparsePool->GetStats();
             input.PoolCapacityBytes[static_cast<uint32_t>(VideoMemoryPool::VirtualTexture)] = pool.CapacityBytes;
         }
+        if (impl->GeometryBuffers)
+        {
+            // ジオメトリのプールの塊も、ヒープの使用量に全部入っているので、プール以外から引くために渡す
+            input.PoolCapacityBytes[static_cast<uint32_t>(VideoMemoryPool::Geometry)] =
+                impl->GeometryBuffers->GetStats().CapacityBytes;
+        }
 
         const VideoMemoryBudgetResult result = impl->VideoMemoryBudget.Compute(input);
         impl->VideoMemoryBudgetLast = result;
+
+        // ジオメトリの枠の目標を、プールの台帳へ出す（取り分の決め方と、目標に合わせた確保・追い出しは後の段）。
+        if (impl->GeometryBuffers)
+        {
+            impl->GeometryBuffers->SetBudgetTarget(result.bLimited, result.GetTargetBytes(VideoMemoryPool::Geometry));
+        }
 
         // VT のプールの上限へ反映する。プールの 0 は「上限なし」なので、割り振りが 0 のときは 1 バイトで塞ぐ。
         if (impl->SparsePool)

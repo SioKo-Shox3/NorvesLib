@@ -430,7 +430,7 @@
 - notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG5-GEOM-POOL: ジオメトリの共有プールとサブアロケータを作る
-- status: todo
+- status: done
 - done-when: `GeometryPool`（RenderResources が持つ。シングルトン禁止）が、DeviceLocal の大きなバッファ（既定 256 MiB の塊。頂点・インデックス・storage として使える用途）を必要に応じて足し、その中を区画に分けるサブアロケータ（整列・隣の空きとの結合・断片化の統計）を持つ。区画の解放は `GpuRetireQueue` で、最後に使った提出の serial が完了してから空きに戻す。使用量を `VRAM_LEDGER geometry_pool` に、目標を `VideoMemoryBudgetManager` の Geometry の枠に出す（取り分の決め方は VTG5-PAGE-STREAMER で詰める。この項目では使用量の報告まで）。CPU のテスト `GeometryPoolAllocatorTest`（`RenderResourcesDomainContractTest` の束）が、確保・解放・結合・整列・塊の追加・確保できないときの失敗・遅延解放の順序を確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GeometryPoolAllocatorTest|GpuRetireQueueTest|VideoMemoryBudgetManagerTest)$"`

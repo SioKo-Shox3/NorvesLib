@@ -41,6 +41,7 @@ namespace NorvesLib::Core::Rendering
     class ModelAssetRuntime;
     class TextureAssetRuntime;
     class RenderWorld;
+    class GeometryPool;
     class SparsePagePool;
     class TileUploader;
     class VirtualTextureFeedbackRing;
@@ -333,6 +334,10 @@ namespace NorvesLib::Core::Rendering
 
         // sparse テクスチャへ結ぶ物理メモリのページのプール。sparse に対応しないデバイス・未初期化では nullptr。
         SparsePagePool *GetSparsePagePool() const;
+
+        // ジオメトリ（頂点・インデックス・クラスタ）が共有する DeviceLocal の大きなバッファのプール。未初期化では nullptr。
+        // 塊のバッファは最初の確保で作るので、使わなければ VRAM を取らない。
+        GeometryPool *GetGeometryPool() const;
 
         // 積んであるタイル・ミップテイルのコピーを、フレームのコマンドの先頭へ記録する（RenderThread。
         // render pass の外で、BeginRetireFrame の後・コマンドを開いた直後に呼ぶ）。記録したコピーの数を返す。

@@ -1763,6 +1763,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
     MEMBER VideoMemoryBudgetManagerTest VideoMemoryBudgetManagerTest.cpp
     MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
+    MEMBER GeometryPoolAllocatorTest GeometryPoolAllocatorTest.cpp
     MEMBER VirtualTextureRequestSetTest VirtualTextureRequestSetTest.cpp
     MEMBER VirtualTextureStreamerTest VirtualTextureStreamerTest.cpp
     MEMBER RHIBlockCompressedFormatTest RHIBlockCompressedFormatTest.cpp
@@ -1778,6 +1779,8 @@ add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContra
 add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
 add_test(NAME VideoMemoryBudgetManagerTest COMMAND RenderResourcesDomainContractTest --test=VideoMemoryBudgetManagerTest)
 add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)
+# ジオメトリの共有プールの区画の確保・解放・結合・整列・断片化の統計、塊の追加と上限・失敗、遅延解放（GpuRetireQueue）の提出順。
+add_test(NAME GeometryPoolAllocatorTest COMMAND RenderResourcesDomainContractTest --test=GeometryPoolAllocatorTest)
 # 1語へ詰めた VT の要求の復号・重複の除去・溢れた件数と、3つのバッファのリングが完了したものだけを GPU を待たずに読み戻すこと。
 add_test(NAME VirtualTextureRequestSetTest COMMAND RenderResourcesDomainContractTest --test=VirtualTextureRequestSetTest)
 # 要求の集合から未常駐のタイルを優先度順に読み、ページを結び、コピーを積んで常駐させること。1 フレームの上限・同じタイルの二重の要求・読み込みの失敗・プールが尽きたときの扱い。
