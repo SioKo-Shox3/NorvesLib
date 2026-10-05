@@ -1064,7 +1064,9 @@ namespace NorvesLib::Core::Rendering
             MegaGeometry::GeometryPageLayout::ComputePageRegionLayout(page.VertexCount, page.IndexCount);
         // 区画の大きさはプールの粒度へ切り上がる（目標との比較は、実際に借りる量で数える）
         out.RegionBytes = MegaGeometry::GeometryPageLayout::AlignUp(layout.RegionBytes, GeometryPoolAllocator::GranularityBytes);
-        out.ReadBytes = layout.VertexBytes + layout.IndexBytes;
+        out.DataBytes = layout.VertexBytes + layout.IndexBytes;
+        // 読みの量の上限は、実際に読むファイルの範囲（ヘッダ・クラスタの記録を含む）で数える
+        out.ReadBytes = streamed.Source ? std::max(streamed.Source->GetPageReadBytes(pageId), out.DataBytes) : out.DataBytes;
         out.CopyBytes = layout.RegionBytes +
                         static_cast<uint64_t>(page.ClusterCount) * sizeof(MegaGeometry::GPUClusterData);
         // 根のページは常駐のままなので、親子の関係には入れない

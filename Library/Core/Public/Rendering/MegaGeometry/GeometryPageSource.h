@@ -40,5 +40,16 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
         /** @brief 完了した読み込み（失敗も含む）を out へ足す。完了したものは二度返さない */
         virtual void CollectCompleted(VariableArray<GeometryPageReadResult> &out) = 0;
+
+        /**
+         * @brief ページの読み込みが実際に読むファイルの範囲の大きさ（バイト。ヘッダ・クラスタの記録を含む）
+         *
+         * 1 フレームの読みの量の上限はこの値で数える。分からなければ 0（呼び出し側は結果の中身の大きさで代える）。
+         */
+        virtual uint64_t GetPageReadBytes(uint32_t pageId) const
+        {
+            (void)pageId;
+            return 0;
+        }
     };
 } // namespace NorvesLib::Core::Rendering::MegaGeometry

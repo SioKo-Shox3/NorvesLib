@@ -108,6 +108,7 @@ public:
             GeometryPageDescriptor &desc = mesh.Pages[page];
             desc.bRoot = page == 0;
             desc.RegionBytes = regionBytes;
+            desc.DataBytes = regionBytes;
             desc.ReadBytes = regionBytes;
             desc.CopyBytes = regionBytes;
             desc.Level = level;
@@ -172,7 +173,7 @@ public:
             {
                 completion.bSucceeded = true;
                 const auto it = Meshes.find(read.MeshId);
-                completion.Data.assign(static_cast<size_t>(it->second.Pages[read.PageId].ReadBytes), 0);
+                completion.Data.assign(static_cast<size_t>(it->second.Pages[read.PageId].DataBytes), 0);
             }
             out.push_back(std::move(completion));
         }
@@ -182,7 +183,7 @@ public:
     GeometryPageUploadStart BeginUpload(uint64_t meshId, uint32_t pageId, const VariableArray<uint8_t> &data) override
     {
         const auto it = Meshes.find(meshId);
-        if (it == Meshes.end() || data.size() != it->second.Pages[pageId].ReadBytes)
+        if (it == Meshes.end() || data.size() != it->second.Pages[pageId].DataBytes)
         {
             return GeometryPageUploadStart::Rejected;
         }
@@ -341,7 +342,7 @@ void TestPriorityOrder()
     {
         GeometryPageDescriptor &desc = backend.Meshes[1].Pages[page];
         desc.bRoot = page == 0;
-        desc.RegionBytes = desc.ReadBytes = desc.CopyBytes = 100;
+        desc.RegionBytes = desc.DataBytes = desc.ReadBytes = desc.CopyBytes = 100;
         desc.Level = levels[page];
     }
 
@@ -440,6 +441,92 @@ void TestFrameLimits()
         streamer3.Update(1, &set3);
         Expect(streamer3.Update(2, nullptr).UploadsStarted == 1, "リングの空き（150）を超えて積まない");
         Expect(streamer3.GetStats().UploadBlockedFrames == 1, "空きが足りなくて見送ったフレームを数える");
+    }
+}
+
+// ---- 要求の発生フレーム・最初の 1 ページへの上限 ----
+
+void TestRequestFrameKeepsRecencyAndLru()
+{
+    // 要求のリングは複数フレームの結果をまとめて返す。要求が書かれたフレームが、取り込んだフレームで潰れないこと
+    {
+        FakeBackend backend;
+        backend.MakeFlatPages(1, 4, 100, 2);
+        GeometryPageStreamerConfig config = RoomyConfig();
+        config.MaxReadsStartedPerFrame = 1;
+        GeometryPageStreamer streamer(backend, config);
+        GeometryPageRequestSet set;
+        set.Add(FakeBackend::TableIndex(1, 1), 10, 1); // 古い要求
+        set.Add(FakeBackend::TableIndex(1, 2), 20, 1); // 新しい要求（同じ段・同じ回数）
+        streamer.Update(21, &set);
+        Expect(backend.Count(EventKind::BeginRead) == 1 && backend.PageOf(EventKind::BeginRead, 0) == 2,
+               "同じ段・同じ回数なら、新しく要求されたページを先に読む（取り込んだフレームで同順位にしない）");
+    }
+    // 古い要求のページから外す（LRU）
+    {
+        FakeBackend backend;
+        backend.MakeFlatPages(1, 4, 100, 2);
+        GeometryPageStreamer streamer(backend, RoomyConfig());
+        GeometryPageRequestSet set;
+        set.Add(FakeBackend::TableIndex(1, 1), 20, 1); // 新しい
+        set.Add(FakeBackend::TableIndex(1, 2), 10, 1); // 古い
+        set.Add(FakeBackend::TableIndex(1, 3), 15, 1);
+        uint64_t frame = RunUntilIdle(streamer, 21, &set);
+        Expect(streamer.GetResidentBytes() == 300, "3 ページが常駐する");
+        streamer.SetResidentBudget(true, 200);
+        streamer.Update(++frame, nullptr);
+        Expect(backend.Count(EventKind::Evict) == 1 && backend.PageOf(EventKind::Evict, 0) == 2,
+               "最も古いフレームに要求されたページから外す");
+    }
+}
+
+void TestFirstPageObeysByteLimits()
+{
+    // 1 ページだけで読みの上限（50）を超えるなら、最初の 1 件でも通さない
+    {
+        FakeBackend backend;
+        backend.MakeFlatPages(1, 3, 100, 2);
+        GeometryPageStreamerConfig config = RoomyConfig();
+        config.MaxReadBytesPerFrame = 50;
+        GeometryPageStreamer streamer(backend, config);
+        GeometryPageRequestSet set = Requests(1, {1});
+        const auto result = streamer.Update(1, &set);
+        Expect(result.ReadsStarted == 0 && result.ReadBytes == 0 && backend.Count(EventKind::BeginRead) == 0,
+               "上限より大きい最初のページの読み込みを始めない");
+        Expect(streamer.GetPageState(1, 1) == GeometryPageState::Failed && streamer.GetStats().OversizedPages == 1,
+               "上限を超えるページは諦めて数える");
+    }
+    // コピーの上限（50）: 読み（40 バイト）は通っても、積むコピー（100）は通さない
+    {
+        FakeBackend backend;
+        backend.MakeFlatPages(1, 3, 100, 2);
+        backend.Meshes[1].Pages[1].DataBytes = 40;
+        backend.Meshes[1].Pages[1].ReadBytes = 40;
+        GeometryPageStreamerConfig config = RoomyConfig();
+        config.MaxCopyBytesPerFrame = 50;
+        GeometryPageStreamer streamer(backend, config);
+        GeometryPageRequestSet set = Requests(1, {1});
+        RunUntilIdle(streamer, 1, &set);
+        Expect(backend.Count(EventKind::BeginUpload) == 0 && streamer.GetResidentBytes() == 0,
+               "上限より大きい最初のページのコピーを積まない");
+        Expect(streamer.GetPageState(1, 1) == GeometryPageState::Failed && streamer.GetStats().OversizedPages == 1,
+               "コピーの上限を超えるページは諦めて数える");
+    }
+    // 読みの量は、返すデータの大きさではなくファイルから読む範囲（ヘッダ・クラスタを含む 150）で数える
+    {
+        FakeBackend backend;
+        backend.MakeFlatPages(1, 4, 100, 2);
+        for (uint32_t page = 1; page < 4; ++page)
+        {
+            backend.Meshes[1].Pages[page].ReadBytes = 150;
+        }
+        GeometryPageStreamerConfig config = RoomyConfig();
+        config.MaxReadBytesPerFrame = 250;
+        backend.bHoldReads = true;
+        GeometryPageStreamer streamer(backend, config);
+        GeometryPageRequestSet set = Requests(1, {1, 2, 3});
+        const auto result = streamer.Update(1, &set);
+        Expect(result.ReadsStarted == 1 && result.ReadBytes == 150, "読みの量は範囲読みの大きさ（150）で数え、1 フレームに 1 件だけ");
     }
 }
 
@@ -1028,6 +1115,8 @@ int RunTest()
 {
     TestPriorityOrder();
     TestFrameLimits();
+    TestRequestFrameKeepsRecencyAndLru();
+    TestFirstPageObeysByteLimits();
     TestRootPagesAreIgnored();
     TestPublishAfterUploadComplete();
     TestParentsFirst();

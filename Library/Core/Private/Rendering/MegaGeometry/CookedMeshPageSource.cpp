@@ -115,6 +115,11 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                 return Thread::JobSystem::Get().SubmitTask(task);
             }
 
+            uint64_t GetPageReadBytes(uint32_t pageId) const override
+            {
+                return pageId < m_Shared->Pages.size() ? m_Shared->Pages[pageId].Size : 0;
+            }
+
             void CollectCompleted(VariableArray<GeometryPageReadResult> &out) override
             {
                 Thread::ScopedLock lock(m_Shared->Mutex);

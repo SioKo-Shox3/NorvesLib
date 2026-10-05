@@ -977,3 +977,10 @@
 - 既知の限界: ページの要求は「非常駐の子」にだけ出るので、常駐したページの最後に要求されたフレームは進まず、LRU が読み込んだ順になる。作業集合が目標を少し超えると、使われているページを外して読み直す入れ替わりが続く（既定の枠では起きない）。`TASKS.md` に VTG5-PAGE-TOUCH を積んだ（VTG5-STRESS-GEOMETRY の前）。
 - 検証: `verify-VTG5-PAGE-STREAMER-1-build.txt`（Debug の Game・RenderResourcesDomainContractTest・MegaGeometryResourcesTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（4/4 passed）、`-3-build-rwdi.txt`（RelWithDebInfo の Game 0）、`-4-capture.txt`（既定の撮影 pass）、`-5-capture-off-compare.txt`（全常駐との PSNR）。`-6`・`-7` は狭い予算の撮影（完走せず、上記の記録用）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - Notes: (1) 狭い予算の撮影は落ち着かないとき長くかかるので、Game.exe を止めて切り上げた。 (2) 次は TASKS.md の先頭の未完。
+
+## 反復 4（run 20261005-154938）: VTG5-PAGE-STREAMER 差し戻し対応（done）
+- 評価者の指摘 2 件。(1) 要求の発生フレームが、取り込んだフレームで上書きされ、複数フレーム分をまとめた集合で新旧が同順位になっていた。対応: 取り込みのとき、集合の中で最も新しい要求を今のストリーマのフレームとして、古い要求は同じだけ前のフレームへ写す（要求のリングの数え方とストリーマの Update の番号は別の時計なので、差だけを使う）。新しく作った記録は作成時のフレームでなく要求のフレームを持つ。優先度・LRU の両方がこれを使う。
+- (2) 最初の 1 ページが読み・コピーの上限を超えて通っていた。対応: 累積が 0 でも上限を適用する。1 ページだけで上限を超えるページは、いつまでも通せないので `RejectOversizedLocked` で諦め（ログ・`OversizedPages`・永久失敗）、次のページへ進む。読みの量は、返すデータ（`DataBytes`）と別にファイルから読む範囲（`ReadBytes`。ヘッダ・クラスタを含む `page.Size`）で数える。`IGeometryPageSource::GetPageReadBytes`（既定 0）を足し、`CookedMeshPageSource` が答え、`GetPageDescriptor` が使う。
+- 試験: `GeometryPageStreamerTest` に `TestRequestFrameKeepsRecencyAndLru`（発生フレームの違う要求の優先度・LRU）と `TestFirstPageObeysByteLimits`（100 バイトのページに上限 50 の読み・コピーで通さず諦めること、読みの量を範囲読みの大きさで数えること）を追加。
+- 検証: `verify-VTG5-PAGE-STREAMER-8-build.txt`・`-9-ctest.txt` は新試験の失敗（作成時のフレームで要求のフレームが潰れていた）の記録で、直した後が `-10-build.txt`（Debug の Game・RenderResourcesDomainContractTest・MegaGeometryResourcesTest、BUILD_EXIT_CODE=0）、`-11-ctest.txt`（4/4 passed）、`-12-build-rwdi.txt`（RelWithDebInfo の Game 0）、`-13-capture.txt`（既定の撮影 pass）、`-14-capture-off-compare.txt`（全常駐との PSNR: default 100 / near 60.72 / low 95.6 dB、いずれも 45 dB 以上）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
+- Notes: 既定の上限（4 MB）に対し実際のページは小さいので、既定の撮影・常駐の数は変わらない（平均輝度も同じ）。

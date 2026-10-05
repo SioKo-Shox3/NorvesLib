@@ -40,7 +40,9 @@ namespace NorvesLib::Core::Rendering
     {
         /** @brief 区画の大きさ（バイト）。常駐の量と目標の比較に数える */
         uint64_t RegionBytes = 0;
-        /** @brief 読み込むバイト数（読み込みの結果の Data の大きさと一致する） */
+        /** @brief 読み込みの結果の Data の大きさ（バイト。頂点とインデックス） */
+        uint64_t DataBytes = 0;
+        /** @brief 読み込みが実際に読むファイルの範囲（バイト。ヘッダ・クラスタの記録を含み、DataBytes 以上）。1 フレームの読みの量はこれで数える */
         uint64_t ReadBytes = 0;
         /** @brief 書き込みで積むコピーの量（バイト。ページの中身とクラスタの記録の書き換えの合計） */
         uint64_t CopyBytes = 0;
@@ -144,11 +146,11 @@ namespace NorvesLib::Core::Rendering
         uint32_t MaxReadsStartedPerFrame = 16;
         /** @brief 読み込み中と、読み込み済みでまだ書き込みを始めていないページの数の上限 */
         uint32_t MaxReadsInFlight = 64;
-        /** @brief 1 フレームに読み込みを始めるページの量（バイト）。最初の 1 件にも掛かるが、1 件は必ず通す */
+        /** @brief 1 フレームに読み込みを始めるページの量（バイト）。最初の 1 件にも掛かる。1 ページがこれを超えるなら読めないので諦める */
         uint64_t MaxReadBytesPerFrame = 4ull * 1024ull * 1024ull;
         /** @brief 1 フレームにコピーを積むページの数 */
         uint32_t MaxUploadsPerFrame = 32;
-        /** @brief 1 フレームに積むコピーの量（バイト）。TileUploader のフレームの上限以下にする。1 件は必ず通す */
+        /** @brief 1 フレームに積むコピーの量（バイト）。TileUploader のフレームの上限以下にする。最初の 1 件にも掛かる。1 ページがこれを超えるなら積めないので諦める */
         uint64_t MaxCopyBytesPerFrame = 4ull * 1024ull * 1024ull;
         /** @brief 読み込みに失敗したページを諦めるまでの失敗の回数 */
         uint32_t MaxRetries = 3;
@@ -197,6 +199,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t InvalidRequests = 0;
         uint64_t StaleDropped = 0;
         uint64_t PermanentFailures = 0;
+        /** @brief 1 フレームの読み・コピーの上限より大きく、1 度も通せないので諦めたページの数（PermanentFailures にも含む） */
+        uint64_t OversizedPages = 0;
         /** @brief 区画・リングに空きが無く、書き込みを見送ったフレームの数 */
         uint64_t UploadBlockedFrames = 0;
         /** @brief 目標に収まらず、外せるページも無くて書き込みを見送ったフレームの数 */
@@ -466,6 +470,13 @@ namespace NorvesLib::Core::Rendering
         // 2) 要求を取り込む
         void IngestRequestsLocked(const MegaGeometry::GeometryPageRequestSet &requests)
         {
+            // 要求のフレームの番号は、要求のリングの数え方（ストリーマの Update の番号とは別）。
+            // 集合の中で最も新しい要求を今のフレームとして、古い要求は同じだけ前のフレームへ写す（新しさの順を保つ）
+            uint64_t newestRequestFrame = 0;
+            for (const MegaGeometry::GeometryPageRequestSet::Request &request : requests.GetRequests())
+            {
+                newestRequestFrame = std::max(newestRequestFrame, request.LastRequestedFrame);
+            }
             for (const MegaGeometry::GeometryPageRequestSet::Request &request : requests.GetRequests())
             {
                 PageKey key;
@@ -480,7 +491,11 @@ namespace NorvesLib::Core::Rendering
                     ++m_Stats.InvalidRequests;
                     continue;
                 }
-                record->LastRequestedFrame = m_Frame;
+                const uint64_t age = newestRequestFrame - request.LastRequestedFrame;
+                const uint64_t requestedFrame = m_Frame > age ? m_Frame - age : 0;
+                // 作ったばかりの記録（要求の数 0）は作った時点のフレームを持つので、要求のフレームで置き換える
+                record->LastRequestedFrame =
+                    record->RequestCount == 0 ? requestedFrame : std::max(record->LastRequestedFrame, requestedFrame);
                 ++record->RequestCount;
             }
         }
@@ -518,7 +533,7 @@ namespace NorvesLib::Core::Rendering
                 }
                 Record &record = it->second;
                 ++m_Stats.ReadsCompleted;
-                if (!completion.bSucceeded || completion.Data.size() != record.Desc.ReadBytes)
+                if (!completion.bSucceeded || completion.Data.size() != record.Desc.DataBytes)
                 {
                     FailLocked(record);
                     continue;
@@ -543,6 +558,22 @@ namespace NorvesLib::Core::Rendering
             {
                 record.RetryFrame = m_Frame + static_cast<uint64_t>(m_Config.RetryDelayFrames) * record.Failures;
             }
+        }
+
+        // 1 フレームの上限より大きいページは、1 度も通せないので、読み込みの再試行もせず諦める
+        void RejectOversizedLocked(const PageKey &key, Record &record, const char *what, uint64_t bytes, uint64_t limit)
+        {
+            LOG_ERROR("GEOMETRY_PAGE_STREAMER ページが1フレームの%sの上限を超えるので読み込めません mesh=%llu page=%u bytes=%llu limit=%llu",
+                      what, static_cast<unsigned long long>(key.MeshId), static_cast<unsigned>(key.PageId),
+                      static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(limit));
+            record.Data = Container::VariableArray<uint8_t>();
+            record.State = GeometryPageState::Failed;
+            if (!record.bPermanentlyFailed)
+            {
+                record.bPermanentlyFailed = true;
+                ++m_Stats.PermanentFailures;
+            }
+            ++m_Stats.OversizedPages;
         }
 
         // 4) 書き込み中のページが GPU で書き終わったものを公開する
@@ -747,8 +778,13 @@ namespace NorvesLib::Core::Rendering
                 Record &record = it->second;
                 const uint64_t pageCopyBytes = record.Desc.CopyBytes;
 
-                // 1 フレームのコピーの量とリングの空き（最初の 1 件は上限に収まる前提で必ず通す）
-                if (copyBytes > 0 && copyBytes + pageCopyBytes > m_Config.MaxCopyBytesPerFrame)
+                // 1 フレームのコピーの量とリングの空き。1 ページだけで上限を超えるなら、いつまでも積めないので諦める
+                if (pageCopyBytes > m_Config.MaxCopyBytesPerFrame)
+                {
+                    RejectOversizedLocked(candidate.Key, record, "コピー", pageCopyBytes, m_Config.MaxCopyBytesPerFrame);
+                    continue;
+                }
+                if (copyBytes + pageCopyBytes > m_Config.MaxCopyBytesPerFrame)
                 {
                     break;
                 }
@@ -840,7 +876,12 @@ namespace NorvesLib::Core::Rendering
                     continue;
                 }
                 Record &record = it->second;
-                if (result.ReadBytes > 0 && result.ReadBytes + record.Desc.ReadBytes > m_Config.MaxReadBytesPerFrame)
+                if (record.Desc.ReadBytes > m_Config.MaxReadBytesPerFrame)
+                {
+                    RejectOversizedLocked(candidate.Key, record, "読み", record.Desc.ReadBytes, m_Config.MaxReadBytesPerFrame);
+                    continue;
+                }
+                if (result.ReadBytes + record.Desc.ReadBytes > m_Config.MaxReadBytesPerFrame)
                 {
                     break;
                 }
