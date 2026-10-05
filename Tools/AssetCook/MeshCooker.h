@@ -47,7 +47,7 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::Span<const uint8_t> GetBytes() const noexcept;
         bool IsBorrowed() const noexcept;
 
-        uint32_t ImageIndex = 0;
+        uint64_t ImageIndex = 0;
         uint8_t Roles = 0;
         MeshImagePayload Payload = MeshImagePayload::Encoded;
         uint32_t Width = 0, Height = 0;
@@ -93,7 +93,7 @@ namespace NorvesLib::Tools::AssetCook
 
     struct ModelImageFingerprint
     {
-        uint32_t ImageIndex = 0;
+        uint64_t ImageIndex = 0;
         Core::Container::AnsiString LogicalPath;
         Core::Container::AnsiString Format;
         uint64_t SourceHash = 0;

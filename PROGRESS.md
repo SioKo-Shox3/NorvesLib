@@ -876,3 +876,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR79 旧匿名texture所有修正の検証準備: ptr取得後registry解除、作成元storeのRAII例外cleanupを実装。5role単独/併用、失敗作成数4/1/5、weak失効、通常/空data/非例外mip失敗のcaller所有、named cache保持を既存testへ追加。静的2roundでblockerなし、Python12+4+7 normal/-O合格。41CPUと旧gateの実Windows再検証は未実行。
 
 - G2/GR79 旧匿名texture所有修正受入: a0faaa015d1afb3680d1b06ca07fbb31a41c03af / tree9215c4ed8f6f8323f4d1bd0cf97cc93ef4cb7a0e / run37343440486 attempt1 job111875985370。41CPU/新旧4marker、Bootstrap17/Update29、79+10byte、7smoke/5診断、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを照合し親も全readonly verifier再実行exit0。GPU/cross-sessionは未実行。次はGR79複数primitive/material cookを優先し、N>1 runtime拒否を維持する。
+
+- G2/GR79 複数primitive/material cook開始。材質表は参照元番号順（implicit defaultは独立の末尾）、primitive順は元のまま。doubleSided autoは材質境界を開口と誤認しないよう全meshの位置溶接で一度判定し、force指定は材質ごとに優先する。派生ARMのtool内IDを64bitへ拡げ、旧単primitiveのID/path/hashを保存しmultiだけ材質別namespaceへ分ける。
+
+- G2/GR79 複数primitive cook検証準備: 1mesh内Nprimitiveの局所index/全体transform/primitive別cluster、元材質順の共有表とimplicit default、64bit派生画像ID/pathと厳密共有を接続。既存testに2材質・再利用・逆順・default・9primitive・GLB・後半不正・別形状fit/pivot・全体閉鎖/force・2ARM/共有参照・cache miss・N>1 runtime拒否を追加。静的2roundでblockerなし、Python12+4+7 normal/-OとBOM/EOL差分検査PASS。Linuxのnative構文検査はWindows.h不在で未到達。実Windows41CPUと新marker/旧79+10byte/managed gateは次のCIで未確認。

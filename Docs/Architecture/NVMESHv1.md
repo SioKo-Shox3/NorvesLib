@@ -51,8 +51,7 @@ v0は旧magic/version、Material64/Cluster80、submesh/material各1の外枠を�
 通常/O2-NDEBUG/ASan・UBSan（LSan除外）とMEMBER wrapperを実行し、CTestへ登録する。
 Windows/Core全体・full v1 reader/writer・runtime/GPUはこの検査の対象外。
 
-v0/v1 reader・4参照・表所有・v0昇格・runtime拒否は下記の接続範囲。writerと材質runtime adapterは残る。
-v1単材質も係数を受け渡すadapterができるまではruntime受理を開かない。
+v0/v1 reader・4参照・表所有・v0昇格・明示v1 writer/cookを接続する。単材質runtimeの対応subsetはImportedOpaqueRuntime.mdで定義する。
 
 ## full readerの接続
 
@@ -67,9 +66,9 @@ unique頂点数128は実index集合から別に検査する。VertexCountが129�
 v0はBaseColor=1、emission=0、Metallic/Roughness=-1、AO/NormalScale=1、Opaque/片面、wireDefaultLit=0へ昇格。
 ARM参照があれば従来どおり3ch使用flagを立てる。新規AI素材のmetallic ignoreを過去のv0へ遡及しない。
 
-ModelAssetLoaderはv1（単材質も含む）と複数submesh/materialをログ付きで拒否する。
+ModelAssetLoaderは複数submesh/materialと、単材質でも未対応の描画profileをログ付きで拒否する。
 v1係数をpathだけへ落とす受理はしない。従来テストの手組みv0・空submesh表の搬送互換は維持する。
-共通材質→runtimeとv1 manifest/cookerの接続は残る。材質情報のCPU読込成功を描画成功と扱わない。
+単材質の全値staging・対応Opaque runtimeとv1 manifest/cookerを接続する。材質情報のCPU読込成功をGPU描画成功と扱わない。
 
 pure partition試験は通常/O2/ASan・UBSan（LSan除外）を実行。
-CookedMeshV1Testへv0昇格、係数bit/4参照/Blob寿命、N表と不正所有、runtime拒否をMEMBER/CTest登録するが、Windows依存でnative未実行。
+CookedMeshV1Testのv0昇格、係数bit/4参照/Blob寿命、N表と不正所有、runtime拒否はWindows CPU gateに含む。受入れcommit/runはPROGRESS.mdを参照する。

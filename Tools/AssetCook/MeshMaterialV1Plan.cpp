@@ -313,6 +313,104 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
     } // namespace
+    bool PrepareMeshMaterialV1Set(const Core::JsonValue& root, const G::BufferSet& buffers,
+                                  const std::filesystem::path& sourcePath, View logicalPath,
+                                  Core::Container::Span<const uint64_t> keys, uint64_t gltfSourceHash,
+                                  const I::ImportSettingsFileOptions* options, MeshMaterialV1SetPlan& out, Text& error)
+    {
+        if (keys.empty() || keys.size() > UINT32_MAX)
+        {
+            error = "mesh_material_set_v1: invalid_count";
+            return false;
+        }
+        MeshMaterialV1SetPlan set;
+        Hash sourceHash, settingsHash;
+        sourceHash.String("NorvesLib.NVMESH.multi-material.v1");
+        sourceHash.Integer(gltfSourceHash);
+        sourceHash.Integer(keys.size());
+        settingsHash.String("NorvesLib.NVMESH.multi-material-settings.v1");
+        settingsHash.Integer(keys.size());
+        for (size_t i = 0; i < keys.size(); ++i)
+        {
+            const auto key = keys[i];
+            if ((i && key <= keys[i - 1]) || (key != ImplicitMeshMaterialIndex && key >= UINT32_MAX))
+            {
+                error = "mesh_material_set_v1: invalid_source_material_order";
+                return false;
+            }
+            MeshMaterialV1Plan plan;
+            if (!PrepareMeshMaterialV1(root, buffers, sourcePath, logicalPath, key != ImplicitMeshMaterialIndex,
+                                       key == ImplicitMeshMaterialIndex ? 0 : static_cast<uint32_t>(key),
+                                       gltfSourceHash, options, plan, error))
+            {
+                return false;
+            }
+            sourceHash.Integer(key);
+            sourceHash.Integer(plan.SourceHash);
+            settingsHash.Integer(key);
+            settingsHash.Integer(plan.SettingsHash);
+            for (auto& image : plan.Images)
+            {
+                if (image.ImageIndex == SyntheticArmImageIndex)
+                {
+                    // sourceの32bit番号と単材質の既存IDを予約し、派生物だけ別領域を使う。
+                    image.ImageIndex =
+                        key == ImplicitMeshMaterialIndex ? (uint64_t{1} << 33) : uint64_t{UINT32_MAX} + 1 + key;
+                    image.LogicalPath = Text(logicalPath) + ".mat" +
+                                        (key == ImplicitMeshMaterialIndex ? Text("default") : Number(key)) +
+                                        ".arm.rgba8";
+                    plan.Textures[2] = image.LogicalPath;
+                }
+                const auto found = std::find_if(set.Images.begin(), set.Images.end(),
+                                                [&](const auto& existing)
+                                                {
+                                                    return existing.ImageIndex == image.ImageIndex;
+                                                });
+                if (found == set.Images.end())
+                {
+                    set.Images.push_back(std::move(image));
+                }
+                else
+                {
+                    const auto before = found->GetBytes(), after = image.GetBytes();
+                    if (found->LogicalPath != image.LogicalPath || found->Format != image.Format ||
+                        found->SourceHash != image.SourceHash || found->Payload != image.Payload ||
+                        found->Width != image.Width || found->Height != image.Height || before.size() != after.size() ||
+                        !std::equal(before.begin(), before.end(), after.begin()))
+                    {
+                        error = "mesh_material_set_v1: conflicting_shared_image";
+                        return false;
+                    }
+                    found->Roles |= image.Roles;
+                }
+            }
+            MeshMaterialV1Entry entry;
+            entry.Material = plan.Material;
+            entry.Sidedness = plan.Sidedness;
+            for (size_t role = 0; role < 4; ++role)
+            {
+                entry.Textures[role] = std::move(plan.Textures[role]);
+            }
+            set.Materials.push_back(std::move(entry));
+            if (i == 0)
+            {
+                set.Import = std::move(plan.Import);
+                set.Closure = plan.Closure;
+                set.DuplicateMaterialNameGroups = plan.Resolved.DuplicateNameGroups;
+                set.FirstDuplicateMaterialIndex = plan.Resolved.FirstDuplicateMaterialIndex;
+                set.SecondDuplicateMaterialIndex = plan.Resolved.SecondDuplicateMaterialIndex;
+            }
+        }
+        std::sort(set.Images.begin(), set.Images.end(),
+                  [](const auto& a, const auto& b)
+                  {
+                      return a.ImageIndex < b.ImageIndex;
+                  });
+        set.SourceHash = sourceHash.Value;
+        set.SettingsHash = settingsHash.Value;
+        out = std::move(set);
+        return true;
+    }
     bool PrepareMeshMaterialV1(const Core::JsonValue& root, const G::BufferSet& buffers,
                                const std::filesystem::path& sourcePath, View logicalPath, bool bHasMaterial,
                                uint32_t materialIndex, uint64_t gltfSourceHash,

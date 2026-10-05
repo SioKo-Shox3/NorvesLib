@@ -22,6 +22,31 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::VariableArray<MeshEmbeddedImage> Images;
         uint64_t SourceHash = 0, SettingsHash = 0;
     };
+    // 元材質の番号順。暗黙材質は番号0とは別の末尾slotとする。
+    inline constexpr uint64_t ImplicitMeshMaterialIndex = UINT64_MAX;
+    struct MeshMaterialV1Entry
+    {
+        Core::Asset::CookedMaterialRecord Material;
+        Core::AssetImport::DoubleSidedSetting Sidedness = Core::AssetImport::DoubleSidedSetting::Auto;
+        Core::Container::AnsiString Textures[4];
+    };
+    struct MeshMaterialV1SetPlan
+    {
+        Core::AssetImport::LoadedImportSettingsDocument Import;
+        GeometryClosurePolicy Closure;
+        Core::Container::VariableArray<MeshMaterialV1Entry> Materials;
+        Core::Container::VariableArray<MeshEmbeddedImage> Images;
+        uint32_t DuplicateMaterialNameGroups = 0, FirstDuplicateMaterialIndex = UINT32_MAX,
+                 SecondDuplicateMaterialIndex = UINT32_MAX;
+        uint64_t SourceHash = 0, SettingsHash = 0;
+    };
+    [[nodiscard]] bool PrepareMeshMaterialV1Set(const Core::JsonValue& root, const Core::Gltf::BufferSet& buffers,
+                                                const std::filesystem::path& sourcePath,
+                                                Core::Container::AnsiStringView logicalPath,
+                                                Core::Container::Span<const uint64_t> sortedMaterialIndices,
+                                                uint64_t gltfSourceHash,
+                                                const Core::AssetImport::ImportSettingsFileOptions* options,
+                                                MeshMaterialV1SetPlan& out, Core::Container::AnsiString& error);
     inline constexpr uint32_t SyntheticArmImageIndex = UINT32_MAX;
     [[nodiscard]] bool PrepareMeshMaterialV1(const Core::JsonValue& root, const Core::Gltf::BufferSet& buffers,
                                              const std::filesystem::path& sourcePath,

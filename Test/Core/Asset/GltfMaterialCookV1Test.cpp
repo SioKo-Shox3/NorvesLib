@@ -1,6 +1,7 @@
 ﻿// 明示NVMESH v1の材質cook・派生画像・cacheを実codecとPNG decodeで反証する。
 #include "Tools/AssetCook/MeshCooker.h"
 #include "Resource/ModelMaterialStaging.h"
+#include "Resource/ModelAssetLoader.h"
 #include "Tools/AssetCook/MeshMaterialV1Plan.h"
 #include "Tools/AssetCook/TextureCooker.h"
 #include "Tools/AssetCook/GeometryInspection.h"
@@ -346,9 +347,306 @@ namespace MaterialV1Test
         CHECK(assigned.SetBytes(png, false) && assigned.Payload == MeshImagePayload::Encoded && assigned.Width == 0 &&
               assigned.Height == 0);
     }
+    Text MultiJson(View firstMaterial, View secondMaterial, C::Span<const int> slots, View images = {},
+                   bool bGlb = false)
+    {
+        const auto original = Json(firstMaterial, images, bGlb, true, secondMaterial);
+        const auto begin = original.find("\"primitives\":[") + std::strlen("\"primitives\":[");
+        const auto end = original.find("]", begin);
+        CHECK(begin != Text::npos && end != Text::npos);
+        Text result;
+        result.append(original.data(), begin);
+        for (size_t i = 0; i < slots.size(); ++i)
+        {
+            if (i)
+            {
+                result.append(",");
+            }
+            result.append(R"({"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3)");
+            if (slots[i] >= 0)
+            {
+                CHECK(slots[i] <= 9);
+                result.append(",\"material\":");
+                result.push_back(static_cast<char>('0' + slots[i]));
+            }
+            result.append("}");
+        }
+        result.append(original.data() + end, original.size() - end);
+        return result;
+    }
+    void CheckMultiRanges(const A::CookedMeshData& mesh, C::Span<const uint32_t> slots)
+    {
+        CHECK(mesh.VersionMajor == 1 && mesh.Submeshes.size() == slots.size());
+        CHECK(mesh.Vertices.size() == slots.size() * 3 && mesh.Indices.size() == slots.size() * 3);
+        size_t clusterStart = 0;
+        for (size_t i = 0; i < slots.size(); ++i)
+        {
+            const auto& submesh = mesh.Submeshes[i];
+            CHECK(submesh.MaterialIndex == slots[i] && submesh.IndexOffset == i * 3 && submesh.IndexCount == 3);
+            CHECK(submesh.VertexOffset == 0 && submesh.VertexCount == mesh.Vertices.size());
+            CHECK(submesh.ClusterOffset == clusterStart && submesh.ClusterCount > 0);
+            for (size_t j = submesh.ClusterOffset; j < submesh.ClusterOffset + submesh.ClusterCount; ++j)
+            {
+                const auto& cluster = mesh.Clusters[j];
+                CHECK(cluster.MaterialIndex == slots[i] && cluster.IndexOffset >= submesh.IndexOffset &&
+                      cluster.IndexOffset + cluster.IndexCount <= submesh.IndexOffset + submesh.IndexCount);
+                for (size_t k = cluster.IndexOffset; k < cluster.IndexOffset + cluster.IndexCount; ++k)
+                {
+                    CHECK(mesh.Indices[k] >= i * 3 && mesh.Indices[k] < (i + 1) * 3);
+                }
+            }
+            clusterStart += submesh.ClusterCount;
+        }
+        CHECK(clusterStart == mesh.Clusters.size());
+        NorvesLib::Core::ResourceIO::ModelStaging::ModelStagingData staging;
+        CHECK(!NorvesLib::Core::ResourceIO::BuildModelStagingFromCookedMesh(mesh, "multi", "multi.nvmesh", staging));
+        CHECK(staging.Vertices.empty());
+    }
+    void MultiPrimitive(const std::filesystem::path& root)
+    {
+        Fixture f(root / "multi");
+        const char* first = R"({"name":"First","pbrMetallicRoughness":{"baseColorFactor":[0.2,0.3,0.4,1]}})";
+        const char* second = R"({"name":"Second","pbrMetallicRoughness":{"baseColorFactor":[0.8,0.7,0.6,1]}})";
+        const int reverse[] = {1, 0};
+        const uint32_t expected[] = {1, 0};
+        auto json = MultiJson(first, second, reverse);
+        Write(f.Source, Data(json));
+        const auto cooked = f.Cook();
+        const auto parsed = Parse(cooked);
+        CHECK(parsed.Succeeded() && parsed.Mesh.Materials.size() == 2);
+        CheckMultiRanges(parsed.Mesh, expected);
+        CHECK(Close(parsed.Mesh.Materials[0].Pbr.BaseColor[0], .2f));
+        CHECK(Close(parsed.Mesh.Materials[1].Pbr.BaseColor[0], .8f));
+        CHECK(f.Cook().NvmeshBytes == cooked.NvmeshBytes && f.Fingerprint().SourceHash == cooked.SourceHash);
+        const auto binary = Glb(MultiJson(first, second, reverse, {}, true));
+        MeshCookResult binaryCook;
+        Text binaryError;
+        CHECK(CookGltfToNvmeshNativePath(binary.data(), binary.size(), V1, f.Root / "model.glb", "Models/material.gltf",
+                                         binaryCook, binaryError));
+        CHECK(binaryCook.NvmeshBytes == cooked.NvmeshBytes);
+        const int repeated[] = {1, 1};
+        const uint32_t repeatedExpected[] = {0, 0};
+        Write(f.Source, Data(MultiJson(first, second, repeated)));
+        auto repeatedMesh = Parse(f.Cook());
+        CHECK(repeatedMesh.Succeeded() && repeatedMesh.Mesh.Materials.size() == 1);
+        CheckMultiRanges(repeatedMesh.Mesh, repeatedExpected);
+        CHECK(Close(repeatedMesh.Mesh.Materials[0].Pbr.BaseColor[0], .8f));
+        const int implicit[] = {-1, 0};
+        const uint32_t implicitExpected[] = {1, 0};
+        Write(f.Source, Data(MultiJson(first, second, implicit)));
+        auto implicitMesh = Parse(f.Cook());
+        CHECK(implicitMesh.Succeeded() && implicitMesh.Mesh.Materials.size() == 2);
+        CheckMultiRanges(implicitMesh.Mesh, implicitExpected);
+        CHECK(implicitMesh.Mesh.Materials[1].Pbr.BaseColor[0] == 1);
+        const int many[] = {0, 1, 0, 1, 0, 1, 0, 1, 0};
+        const uint32_t manyExpected[] = {0, 1, 0, 1, 0, 1, 0, 1, 0};
+        Write(f.Source, Data(MultiJson(first, second, many)));
+        const auto manyMesh = Parse(f.Cook());
+        CHECK(manyMesh.Succeeded());
+        CheckMultiRanges(manyMesh.Mesh, manyExpected);
+        // 後半primitiveのaccessor不正で出力を置き換えない。
+        const auto badAt = json.find("\"NORMAL\":1", json.find("\"NORMAL\":1") + 1);
+        CHECK(badAt != Text::npos);
+        json[badAt + std::strlen("\"NORMAL\":")] = '9';
+        MeshCookResult held;
+        held.SourceHash = 43;
+        held.NvmeshBytes = {1, 2, 3};
+        Text error;
+        CHECK(!CookGltfToNvmeshNativePath(reinterpret_cast<const uint8_t*>(json.data()), json.size(), V1, f.Source,
+                                          "Models/material.gltf", held, error));
+        CHECK(held.SourceHash == 43 && held.NvmeshBytes == Bytes({1, 2, 3}));
+        const auto valid = MultiJson(first, second, reverse);
+        CHECK(!CookGltfToNvmeshNativePath(reinterpret_cast<const uint8_t*>(valid.data()), valid.size(), V0, f.Source,
+                                          "Models/material.gltf", held, error));
+        // 外部indexが局所頂点数を越える場合、全体の頂点数には収まっていても拒否する。
+        Bytes badIndices(std::begin(Triangle), std::end(Triangle));
+        badIndices[100] = 3;
+        Write(f.Root / "triangle.bin", badIndices);
+        CHECK(!CookGltfToNvmeshNativePath(reinterpret_cast<const uint8_t*>(valid.data()), valid.size(), V1, f.Source,
+                                          "Models/material.gltf", held, error));
+        CHECK(held.SourceHash == 43 && held.NvmeshBytes == Bytes({1, 2, 3}));
+        Write(f.Root / "triangle.bin", Triangle);
+
+        Fixture transformed(root / "multi-transform");
+        Text transformedJson = MultiJson(first, second, reverse);
+        const auto substitute = [](Text& value, View from, View to)
+        {
+            const auto at = value.find(from);
+            CHECK(at != Text::npos);
+            Text replaced;
+            replaced.append(value.data(), at);
+            replaced.append(to);
+            replaced.append(value.data() + at + from.size(), value.size() - at - from.size());
+            value = std::move(replaced);
+        };
+        substitute(transformedJson, "\"byteLength\":102", "\"byteLength\":140");
+        substitute(transformedJson, "],\"accessors\":[",
+                   ",{\"buffer\":0,\"byteOffset\":104,\"byteLength\":36}],\"accessors\":[");
+        substitute(transformedJson, "],\"meshes\":[",
+                   ",{\"bufferView\":4,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}],\"meshes\":[");
+        const auto secondPosition = transformedJson.find("\"POSITION\":0", transformedJson.find("\"POSITION\":0") + 1);
+        CHECK(secondPosition != Text::npos);
+        transformedJson[secondPosition + std::strlen("\"POSITION\":")] = '4';
+        Bytes transformedBin(std::begin(Triangle), std::end(Triangle));
+        transformedBin.resize(104, 0);
+        const float displacedPositions[] = {10, 0, 0, 11, 0, 0, 10, 1, 0};
+        for (float value : displacedPositions)
+        {
+            uint32_t bits;
+            std::memcpy(&bits, &value, sizeof(bits));
+            U32(transformedBin, bits);
+        }
+        CHECK(transformedBin.size() == 140);
+        Write(transformed.Root / "triangle.bin", transformedBin);
+        Write(transformed.Source, Data(transformedJson));
+        Write(
+            transformed.Sidecar,
+            R"({"version":1,"units":{"fit":{"axis":"longest","meters":22}},"origin":{"mode":"bounds_center"},"material":{"doubleSided":"force_false"}})");
+        const auto moved = Parse(transformed.Cook());
+        CHECK(moved.Succeeded());
+        CheckMultiRanges(moved.Mesh, expected);
+        CHECK(Close(moved.Mesh.Vertices[0].Position.X, -11) && Close(moved.Mesh.Vertices[1].Position.X, -9));
+        CHECK(Close(moved.Mesh.Vertices[3].Position.X, 9) && Close(moved.Mesh.Vertices[4].Position.X, 11));
+        CHECK(Close(moved.Mesh.Vertices[0].Position.Y, -1) && Close(moved.Mesh.Vertices[2].Position.Y, 1));
+        CHECK(Close(moved.Mesh.Submeshes[0].BoundsCenter.X, -10) && Close(moved.Mesh.Submeshes[1].BoundsCenter.X, 10));
+        CHECK((moved.Mesh.Materials[0].Pbr.Flags & A::CookedMaterialFormatV1::DoubleSided) == 0 &&
+              (moved.Mesh.Materials[1].Pbr.Flags & A::CookedMaterialFormatV1::DoubleSided) == 0);
+
+        Fixture closed(root / "multi-closed");
+        Bytes tetra;
+        const float positions[] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
+        for (float value : positions)
+        {
+            uint32_t bits;
+            std::memcpy(&bits, &value, sizeof(bits));
+            U32(tetra, bits);
+        }
+        for (size_t i = 0; i < 4; ++i)
+        {
+            U32(tetra, 0);
+            U32(tetra, 0);
+            U32(tetra, 0x3f800000);
+        }
+        for (size_t i = 0; i < 8; ++i)
+        {
+            U32(tetra, 0);
+        }
+        const uint8_t tetraIndices[] = {0, 0, 2, 0, 1, 0, 0, 0, 1, 0, 3, 0, 1, 0, 2, 0, 3, 0, 2, 0, 0, 0, 3, 0};
+        tetra.insert(tetra.end(), std::begin(tetraIndices), std::end(tetraIndices));
+        CHECK(tetra.size() == 152);
+        Write(closed.Root / "triangle.bin", tetra);
+        Write(
+            closed.Source,
+            R"({"asset":{"version":"2.0"},"buffers":[{"byteLength":152,"uri":"triangle.bin"}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":48},{"buffer":0,"byteOffset":48,"byteLength":48},{"buffer":0,"byteOffset":96,"byteLength":32},{"buffer":0,"byteOffset":128,"byteLength":12},{"buffer":0,"byteOffset":140,"byteLength":12}],"accessors":[{"bufferView":0,"componentType":5126,"count":4,"type":"VEC3"},{"bufferView":1,"componentType":5126,"count":4,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":4,"type":"VEC2"},{"bufferView":3,"componentType":5123,"count":6,"type":"SCALAR"},{"bufferView":4,"componentType":5123,"count":6,"type":"SCALAR"}],"meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"material":0},{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":4,"material":1}]}],"materials":[{"name":"First"},{"name":"Second"}]})");
+        auto closedMesh = Parse(closed.Cook());
+        CHECK(closedMesh.Succeeded() && closedMesh.Mesh.Materials.size() == 2);
+        CHECK((closedMesh.Mesh.Materials[0].Pbr.Flags & A::CookedMaterialFormatV1::DoubleSided) == 0 &&
+              (closedMesh.Mesh.Materials[1].Pbr.Flags & A::CookedMaterialFormatV1::DoubleSided) == 0);
+        Write(closed.Sidecar, R"({"version":1,"materials":[{"name":"Second","doubleSided":"force_true"}]})");
+        closedMesh = Parse(closed.Cook());
+        CHECK(closedMesh.Succeeded());
+        CHECK((closedMesh.Mesh.Materials[0].Pbr.Flags & A::CookedMaterialFormatV1::DoubleSided) == 0 &&
+              (closedMesh.Mesh.Materials[1].Pbr.Flags & A::CookedMaterialFormatV1::DoubleSided) != 0);
+        // 後半だけの局所indexを4にする。連結後の8頂点に収まっても入力段階で拒否する。
+        tetra[150] = 4;
+        Write(closed.Root / "triangle.bin", tetra);
+        const auto invalidSecond = Read(closed.Source);
+        CHECK(!CookGltfToNvmeshNativePath(invalidSecond.data(), invalidSecond.size(), V1, closed.Source,
+                                          "Models/material.gltf", held, error));
+        CHECK(error.find("outside the vertex range") != Text::npos && held.SourceHash == 43);
+
+        Fixture textures(root / "multi-textures");
+        const char* one =
+            R"({"name":"First","pbrMetallicRoughness":{"baseColorTexture":{"index":0},"metallicRoughnessTexture":{"index":1}}})";
+        const char* two =
+            R"({"name":"Second","pbrMetallicRoughness":{"baseColorTexture":{"index":0},"metallicRoughnessTexture":{"index":2}}})";
+        const char* images =
+            R"("textures":[{"source":0},{"source":1},{"source":2}],"images":[{"uri":"base.png"},{"uri":"first.png"},{"uri":"second.png"}])";
+        Bytes pixels(16, 255), secondPixels(16, 128);
+        Write(textures.Root / "base.png", Png(2, 2, pixels));
+        Write(textures.Root / "first.png", Png(2, 2, pixels));
+        Write(textures.Root / "second.png", Png(2, 2, secondPixels));
+        Write(textures.Sidecar, R"({"version":1,"material":{"arm":{"roughness":"texture","metallic":"texture"}}})");
+        Write(textures.Source, Data(MultiJson(one, two, reverse, images)));
+        const auto imageCook = textures.Cook();
+        const auto imageFingerprint = textures.Fingerprint();
+        CHECK(imageCook.SourceHash == imageFingerprint.SourceHash && imageCook.EmbeddedImages.size() == 3);
+        CHECK(imageFingerprint.EmbeddedImages.size() == 3);
+        CHECK(imageCook.EmbeddedImages[0].ImageIndex == 0);
+        CHECK(imageCook.EmbeddedImages[1].ImageIndex == uint64_t{UINT32_MAX} + 1);
+        CHECK(imageCook.EmbeddedImages[2].ImageIndex == uint64_t{UINT32_MAX} + 2);
+        for (size_t i = 0; i < 3; ++i)
+        {
+            CHECK(imageCook.EmbeddedImages[i].ImageIndex == imageFingerprint.EmbeddedImages[i].ImageIndex &&
+                  imageCook.EmbeddedImages[i].LogicalPath == imageFingerprint.EmbeddedImages[i].LogicalPath &&
+                  imageCook.EmbeddedImages[i].SourceHash == imageFingerprint.EmbeddedImages[i].SourceHash);
+        }
+        CHECK(imageCook.EmbeddedImages[1].LogicalPath == "Models/material.gltf.mat0.arm.rgba8");
+        CHECK(imageCook.EmbeddedImages[2].LogicalPath == "Models/material.gltf.mat1.arm.rgba8");
+        CHECK(imageCook.EmbeddedImages[1].GetBytes()[1] == 255 && imageCook.EmbeddedImages[2].GetBytes()[1] == 128);
+        const auto imageParsed = Parse(imageCook);
+        CHECK(imageParsed.Succeeded());
+        CHECK(imageParsed.Mesh.GetString(imageParsed.Mesh.Materials[0].AlbedoTexture) ==
+              View("Models/material.gltf.img0.png"));
+        CHECK(imageParsed.Mesh.GetString(imageParsed.Mesh.Materials[1].AlbedoTexture) ==
+              View("Models/material.gltf.img0.png"));
+        CHECK(imageParsed.Mesh.GetString(imageParsed.Mesh.Materials[0].ArmTexture) ==
+              View("Models/material.gltf.mat0.arm.rgba8"));
+        CHECK(imageParsed.Mesh.GetString(imageParsed.Mesh.Materials[1].ArmTexture) ==
+              View("Models/material.gltf.mat1.arm.rgba8"));
+        CHECK(textures.Cook().NvmeshBytes == imageCook.NvmeshBytes);
+        SingleAssetCookRequest request;
+        request.InputPath = textures.Source;
+        request.PackagePath = textures.Root / "Cooked/model.nvpkg";
+        request.ManifestPath = textures.Root / "manifest.json";
+        request.LogicalPath = "Models/material.gltf";
+        request.Kind = "model";
+        request.EntryName = "__model__";
+        request.EntryTypeText = "Msh0";
+        request.Format = V1;
+        request.Variant = "default";
+        request.bSkipIfUnchanged = true;
+        CHECK(CookSingleAsset(request, error));
+        const auto oldPackage = Read(request.PackagePath), oldManifest = Read(request.ManifestPath);
+        CHECK(IsModelCookCacheCurrent(request.ManifestPath, request.PackagePath, request.LogicalPath, request.Variant,
+                                      request.Format, request.EntryName, imageFingerprint));
+        CHECK(CookSingleAsset(request, error));
+        CHECK(oldPackage == Read(request.PackagePath) && oldManifest == Read(request.ManifestPath));
+        const auto secondPackage = textures.Root / "Cooked/model.nvpkg.img4294967297.nvpkg";
+        auto corrupt = Read(secondPackage);
+        CHECK(!corrupt.empty());
+        corrupt.back() ^= 1;
+        Write(secondPackage, corrupt);
+        CHECK(!IsModelCookCacheCurrent(request.ManifestPath, request.PackagePath, request.LogicalPath, request.Variant,
+                                       request.Format, request.EntryName, imageFingerprint));
+        CHECK(CookSingleAsset(request, error));
+        secondPixels[1] = 64;
+        Write(textures.Root / "second.png", Png(2, 2, secondPixels));
+        CHECK(textures.Fingerprint().SourceHash != imageFingerprint.SourceHash);
+        CHECK(!IsModelCookCacheCurrent(request.ManifestPath, request.PackagePath, request.LogicalPath, request.Variant,
+                                       request.Format, request.EntryName, textures.Fingerprint()));
+        CHECK(CookSingleAsset(request, error));
+        const auto beforeSettings = textures.Fingerprint().SourceHash;
+        Write(
+            textures.Sidecar,
+            R"({"version":1,"material":{"arm":{"roughness":"texture","metallic":"texture"}},"materials":[{"name":"Second","arm":{"roughness":"ignore"}}]})");
+        CHECK(textures.Fingerprint().SourceHash != beforeSettings);
+        CHECK(!IsModelCookCacheCurrent(request.ManifestPath, request.PackagePath, request.LogicalPath, request.Variant,
+                                       request.Format, request.EntryName, textures.Fingerprint()));
+        // 異なる材質で同じsource画像をsRGB/linearに共有する指定も拒否する。
+        Write(textures.Source,
+              Data(MultiJson(one, R"({"name":"Second","normalTexture":{"index":0}})", reverse, images)));
+        const auto conflicting = Read(textures.Source);
+        CHECK(!CookGltfToNvmeshNativePath(conflicting.data(), conflicting.size(), V1, textures.Source,
+                                          "Models/material.gltf", held, error));
+        CHECK(error.find("conflicting_shared_image") != Text::npos && held.SourceHash == 43);
+        std::puts(
+            "GLTF_MULTI_MATERIAL_V1 result=pass primitive_ranges_material_slots_derived_inventory_cache_runtime_refusal");
+    }
     void Run(const std::filesystem::path& root)
     {
         GeometryAndRaw();
+        MultiPrimitive(root);
         {
             Fixture f(root / "scalars");
             const char* material =
