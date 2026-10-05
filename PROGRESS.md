@@ -1000,3 +1000,8 @@
 - 試験: `GeometryPageRequestVulkanTest`（GPU の実カリング）の期待が、前の反復の使用の印の追加で古くなって落ちていた（描いたクラスタの自分のページが要求に載る）ので、期待（要求の件数・集合、CPU の写し `CpuExpectation`）を使用の印を含む形に直した。2 パス目の 4 ケース（遮蔽×1パス目で描画済み／未描画、可視×同）を追加。旧条件へ戻すと「遮蔽・描画済み」だけが NG になることを確かめた。
 - 検証: `verify-VTG5-PAGE-TOUCH-6-build.txt`（Debug の Game・3 テスト・RHITextureUpdateVulkanTest、BUILD_EXIT_CODE=0）、`-7-ctest.txt`（GeometryPageStreamerTest・MegaGeometryResourcesTest・GeometryPageRequestVulkanTest の 3/3 passed）、`-8-build-rwdi.txt`（RelWithDebInfo の Game 0）、`-9-capture.txt`（900 MB の撮影 pass。evicted は default 1・near 130・low 0 で収束、平均輝度は 124.173 / 123.723 / 126.022 で前回と同じ）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
 - Notes: カリング時間は測っていない（足した処理は条件の変更のみで、`atomicExchange` の回数は 1 パス目で描いた遮蔽クラスタの分だけ増える）。
+
+## 反復 1（run 20261005-175023）: VTG5-PAGE-STREAMER（done）
+- 差し戻し（別々の Update で取り込んだ要求の新旧が失われる）は、VTG5-PAGE-TOUCH の時計の統一（`Update(frame)` を要求の `LastRequestedFrame` と同じ時計にし、取り込み時の写しを廃止）で解消済み。コードの追加は無し。評価者の再現手順どおりの `TestRequestFrameOrderAcrossUpdates`（優先度 3→2→1、LRU 3→1→2）が現行コードで通ることを確かめた。
+- 検証: `verify-VTG5-PAGE-STREAMER-1-build.txt`（Debug の Game・RenderResourcesDomainContractTest・MegaGeometryResourcesTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（4/4 passed）、`-3-build-rwdi.txt`（RelWithDebInfo の Game 0）、`-4-capture.txt`（既定の撮影 pass）、`-5-capture-off-compare.txt`（全常駐 `-GeometryStreaming Off` との PSNR: default 100 / near 60.733 / low 96.527 dB、いずれも 45 dB 以上。平均輝度は 124.173 / 123.952 / 126.022 で一致）。
+- Notes: near の 60.7 dB は移行前から記録している TAA・RTGI の揺れの水準（最大差 18）。次は TASKS.md の先頭の未完。
