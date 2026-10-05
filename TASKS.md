@@ -461,7 +461,7 @@
 ## VTG5-BATCHED-CULL: MegaGeometryのインスタンスをまとめて1回のカリングと材質ごとの間接描画にする
 - status: todo
 - done-when: MegaGeometry の全インスタンスの表（変換・前のフレームの変換・メッシュ・材質の番号）を1つの storage buffer に置き、カリング（2パスの遮蔽を含む）を1回の dispatch（1パスにつき）で全インスタンスに掛ける。描画は材質ごとの区間に分けた間接描画の列（材質の数だけ `DrawIndexedIndirectCount`）にし、インスタンスごとの 1.25 MB の IndirectDraw のバッファをやめる。`MEGA_OCCLUSION` の数と `-Deterministic` の撮影が移行前と一致する（PSNR を記録）。CPU のパスの記録の時間（`MegaGeometryPass` の RecordFrameCommand）と、インスタンスを 300 個にした負荷（VTG5-STRESS-GEOMETRY の前に、撮影スクリプトの引数か一時の起動引数で）での GPU 時間の前後を記録する。
-- verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RenderGraphCompileTest MegaGeometryFrameCommandDebugModeTest -- /m:1`
+- verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RenderGraphCompileTest ViewportSnapshotDebugWiringTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest|MegaGeometryFrameCommandDebugModeTest|HiZOcclusionTestVulkanTest)$"`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-BATCHED-CULL -Configuration RelWithDebInfo -Deterministic`
