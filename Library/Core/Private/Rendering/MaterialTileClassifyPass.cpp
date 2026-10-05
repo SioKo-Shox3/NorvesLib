@@ -124,43 +124,39 @@ namespace NorvesLib::Core::Rendering
 
     void MaterialTileClassify::Shutdown()
     {
-        for (Slot& slot : m_Slots)
-        {
-            slot = Slot{};
-        }
-        m_ActiveSlot = 0;
+        m_Uses.Clear();
         m_Pipeline.reset();
         m_Sampler.reset();
         m_Shader.reset();
         m_Device = nullptr;
     }
 
-    void MaterialTileClassify::BeginFrame(uint64_t frameIndex)
+    void MaterialTileClassify::BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
     {
-        m_ActiveSlot = static_cast<uint32_t>(frameIndex % FrameSlotCount);
-        m_Slots[m_ActiveSlot].Cursor = 0;
+        m_Uses.BeginFrame(inFlightIndex, frameSerial);
     }
 
     bool MaterialTileClassify::AcquireUses(Use* outUses)
     {
-        Slot& slot = m_Slots[m_ActiveSlot];
-        while (slot.Cursor + DispatchesPerRecord > slot.Uses.size())
+        // 資源の作成に失敗した Use は、次の分類が作り直す（位置は進める）
+        for (uint32_t index = 0; index < DispatchesPerRecord; ++index)
         {
-            Use use;
-            use.Uniform = m_Device->CreateBuffer(
-                RHI::BufferDesc(ParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "MaterialTileClassifyParams"));
-            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc());
+            Use& use = m_Uses.Acquire();
+            if (!use.Uniform)
+            {
+                use.Uniform = m_Device->CreateBuffer(
+                    RHI::BufferDesc(ParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "MaterialTileClassifyParams"));
+            }
+            if (!use.DescriptorSet)
+            {
+                use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc());
+            }
             if (!use.Uniform || !use.DescriptorSet)
             {
                 return false;
             }
-            slot.Uses.push_back(use);
+            outUses[index] = use;
         }
-        for (uint32_t index = 0; index < DispatchesPerRecord; ++index)
-        {
-            outUses[index] = slot.Uses[slot.Cursor + index];
-        }
-        slot.Cursor += DispatchesPerRecord;
         return true;
     }
 
@@ -427,7 +423,7 @@ namespace NorvesLib::Core::Rendering
                                                            m_Layout.GroupCountXLimit);
         }
 
-        m_Classify.BeginFrame(m_FrameCounter++);
+        m_Classify.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
         if (m_Classify.Record(context.CommandList, dispatch))
         {
             m_bClassified = true;

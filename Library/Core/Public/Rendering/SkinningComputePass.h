@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Containers.h"
+#include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
@@ -55,14 +56,14 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief スキニングの頂点を計算シェーダーで変形する本体（RenderGraph にも GPU のテストにも使う）
      *
-     * 1 dispatch ごとに UBO とディスクリプタセットを使うので、飛行中のフレームの数だけ枠を持つ。
-     * BeginFrame で枠を選んで使用済みの位置を戻し、Record を呼ぶたびに枠の次の資源を使う。
-     * 同じ枠を再び使うのは FrameSlotCount フレーム後で、その GPU の仕事は終わっている前提。
+     * 1 dispatch ごとに UBO とディスクリプタセットを使う。資源は FrameUseRing が持ち、BeginFrame で
+     * 飛行中のフレームの番号の枠を選ぶ。Record を呼ぶたびに枠の次の資源を使い、足りなければ増やす。
+     * 使用済みの位置が戻るのはフレームの通し番号が変わったときだけなので、1 フレームに何回 Record しても
+     * （同じパスが複数のビューポートで何回 Execute されても）、提出前の資源を上書きしない。
      */
     class SkinningCompute final
     {
     public:
-        static constexpr uint32_t FrameSlotCount = 2;
         static constexpr uint32_t ThreadsPerGroup = 64;
 
         SkinningCompute();
@@ -76,8 +77,15 @@ namespace NorvesLib::Core::Rendering
         void Shutdown();
         bool IsReady() const { return m_Pipeline != nullptr; }
 
-        /** @brief frameIndex に対応する枠を選び、その使用済みの位置を戻す */
-        void BeginFrame(uint64_t frameIndex);
+        /**
+         * @brief 飛行中のフレームの番号の枠を選ぶ。フレームの通し番号が前回と違えば、その枠の使用済みの位置を戻す
+         * @param inFlightIndex ViewRenderContext::FrameIndex
+         * @param frameSerial ViewRenderContext::ResolveRenderFrameSerial()（同じフレームの間は同じ値）
+         */
+        void BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial);
+
+        /** @brief 選んだ枠で、今のフレームにここまで使った資源の数（観測用） */
+        uint32_t GetUsedCount() const { return m_Uses.GetUsedCount(); }
 
         /**
          * @brief 1 インスタンスぶんの変形を記録する
@@ -92,17 +100,10 @@ namespace NorvesLib::Core::Rendering
             RHI::DescriptorSetPtr DescriptorSet;
         };
 
-        struct Slot
-        {
-            Container::VariableArray<Use> Uses;
-            uint32_t Cursor = 0;
-        };
-
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_Shader;
         RHI::PipelinePtr m_Pipeline;
-        Slot m_Slots[FrameSlotCount];
-        uint32_t m_ActiveSlot = 0;
+        FrameUseRing<Use> m_Uses;
     };
 
     /** @brief 計算シェーダーでスキニングしたインスタンス 1 つぶんの結果（後のパスが読む） */
@@ -173,7 +174,6 @@ namespace NorvesLib::Core::Rendering
         RGBufferHandle m_PreviousHandle;
         Container::VariableArray<PlannedInstance> m_Plan;
         Container::VariableArray<SkinningComputeInstance> m_Instances;
-        uint64_t m_FrameCounter = 0;
     };
 
 } // namespace NorvesLib::Core::Rendering

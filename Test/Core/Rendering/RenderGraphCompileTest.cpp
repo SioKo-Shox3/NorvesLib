@@ -1,4 +1,5 @@
 ﻿#include "Rendering/RenderGraph/RenderGraph.h"
+#include "Rendering/FrameUseRing.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/HiZPyramidPass.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -2406,6 +2407,135 @@ namespace
             assert(finalBarrierIndex > writeBarrierIndex);
             assert(followupReadBarriers == 0);
         }
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 名前のバッファを作った回数
+    uint32_t CountBufferCreations(const FakeDevice& device, const char* debugName)
+    {
+        uint32_t count = 0;
+        for (const BufferCreationRecord& record : device.CreatedBuffers)
+        {
+            if (IsDebugName(record.Desc.DebugName, debugName))
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    struct FrameUseRingProbe
+    {
+        uint32_t Id = 0;
+    };
+
+    // FrameUseRing: 1フレームに、枠の数（旧 FrameSlotCount = 2・MaxInFlightSlots）を超える回数を割り当てても全部が別の資源になり、
+    // 同じフレームの間は BeginFrame を呼び直しても位置が戻らず、次のフレーム（通し番号が変わる）で、GPU の完了の後に同じ資源を
+    // 最初から使い回す。飛行中のフレームの番号が違う枠は別の資源で、互いの位置に触らない
+    void TestFrameUseRingGivesDistinctUsesWithinAFrameAndReusesNextFrame()
+    {
+        FrameUseRing<FrameUseRingProbe> ring;
+        uint32_t nextId = 1;
+        constexpr uint32_t ManyCalls = 9;
+        static_assert(ManyCalls > FrameUseRing<FrameUseRingProbe>::MaxInFlightSlots);
+
+        uint32_t frame1[ManyCalls] = {};
+        for (uint32_t index = 0; index < ManyCalls; ++index)
+        {
+            // 複数のビューポートは同じ通し番号で BeginFrame を呼ぶ
+            ring.BeginFrame(0, 1);
+            FrameUseRingProbe& use = ring.Acquire();
+            assert(use.Id == 0);
+            use.Id = nextId++;
+            frame1[index] = use.Id;
+            assert(ring.GetUsedCount() == index + 1);
+        }
+        for (uint32_t first = 0; first < ManyCalls; ++first)
+        {
+            for (uint32_t second = first + 1; second < ManyCalls; ++second)
+            {
+                assert(frame1[first] != frame1[second]);
+            }
+        }
+        assert(ring.GetCapacity() == ManyCalls);
+
+        // 次のフレーム: 同じ資源を最初から使い回し、増やさない。足りなくなったときだけ増える
+        ring.BeginFrame(0, 2);
+        assert(ring.GetUsedCount() == 0);
+        for (uint32_t index = 0; index < ManyCalls; ++index)
+        {
+            assert(ring.Acquire().Id == frame1[index]);
+        }
+        assert(ring.GetCapacity() == ManyCalls);
+        assert(ring.Acquire().Id == 0);
+        assert(ring.GetCapacity() == ManyCalls + 1);
+
+        // 飛行中のフレームの番号が違う枠は別の資源。もう一方の枠の位置を戻さない
+        ring.BeginFrame(1, 3);
+        assert(ring.GetUsedCount() == 0);
+        FrameUseRingProbe& other = ring.Acquire();
+        assert(other.Id == 0);
+        other.Id = nextId++;
+        for (uint32_t index = 0; index < ManyCalls; ++index)
+        {
+            assert(other.Id != frame1[index]);
+        }
+        ring.BeginFrame(0, 4);
+        assert(ring.GetUsedCount() == 0);
+        assert(ring.Acquire().Id == frame1[0]);
+        ring.BeginFrame(1, 3);
+        assert(ring.GetUsedCount() == 1);
+
+        ring.Clear();
+        ring.BeginFrame(0, 1);
+        assert(ring.GetCapacity() == 0);
+        assert(ring.Acquire().Id == 0);
+    }
+
+    // 同じパスが1フレームに何回 Execute されても（複数のビューポート）、まだ提出していない UBO・ディスクリプタセット・
+    // ホストが書くバッファを上書きしない。枠の数（旧 FrameSlotCount = 2）を超える回数でも、Execute ごとに別の資源を作り、
+    // 次のフレームではそれを使い回して増やさない。Context::RenderFrameSerial がフレームの境目になる
+    void TestComputePassFrameResourcesAreNotReusedWithinAFrame()
+    {
+        constexpr uint32_t ViewportsPerFrame = 7;
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::LinkedToRaster);
+        const FakeDevice& device = *scene.Device;
+        const char* const classifyUniform = "MaterialTileClassifyParams";
+        const char* const megaFrameSlot = "MegaGeometry_InstanceTable";
+
+        // 1回目の Execute: 分類は 3 回の dispatch ぶん、MegaGeometry は 1 組
+        assert(CountBufferCreations(device, classifyUniform) == MaterialTileClassify::DispatchesPerRecord);
+        assert(CountBufferCreations(device, megaFrameSlot) == 1);
+
+        // 同じフレーム（同じ通し番号）のあと 6 回のビューポート: 毎回別の資源
+        for (uint32_t viewport = 1; viewport < ViewportsPerFrame; ++viewport)
+        {
+            assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
+            assert(CountBufferCreations(device, classifyUniform) ==
+                   MaterialTileClassify::DispatchesPerRecord * (viewport + 1));
+            assert(CountBufferCreations(device, megaFrameSlot) == viewport + 1);
+        }
+
+        // 次のフレーム: 同じ回数の Execute でも資源を作り足さない
+        scene.Context.RenderFrameSerial = scene.Context.ResolveRenderFrameSerial() + 1;
+        for (uint32_t viewport = 0; viewport < ViewportsPerFrame; ++viewport)
+        {
+            assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
+        }
+        assert(CountBufferCreations(device, classifyUniform) == MaterialTileClassify::DispatchesPerRecord * ViewportsPerFrame);
+        assert(CountBufferCreations(device, megaFrameSlot) == ViewportsPerFrame);
+
+        // さらに次のフレームで1回多く Execute すると、その1回ぶんだけ増える
+        scene.Context.RenderFrameSerial += 1;
+        for (uint32_t viewport = 0; viewport <= ViewportsPerFrame; ++viewport)
+        {
+            assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
+        }
+        assert(CountBufferCreations(device, classifyUniform) ==
+               MaterialTileClassify::DispatchesPerRecord * (ViewportsPerFrame + 1));
+        assert(CountBufferCreations(device, megaFrameSlot) == ViewportsPerFrame + 1);
+
         ShutdownVisibilityRasterScene(scene);
     }
 
@@ -7724,6 +7854,8 @@ int main()
     TestMaterialTileClassifyAbsentWhenNotAdded();
     TestMaterialTileClassifyAddedButDisabledByDefault();
     TestSkinningComputePassTransitionsDeclaredBuffersToGenericRead();
+    TestFrameUseRingGivesDistinctUsesWithinAFrameAndReusesNextFrame();
+    TestComputePassFrameResourcesAreNotReusedWithinAFrame();
     TestVisibilityRasterOnSinglePassMegaGeometry();
     TestVisibilityRasterOffKeepsExistingMegaGeometryRecording();
     TestVisibilityRasterWithoutGBufferDepthDoesNothing();

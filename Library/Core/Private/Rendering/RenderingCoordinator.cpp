@@ -2805,6 +2805,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.bRenderPassActive = false; // Deferredパスは独自のレンダーパスを使用
         viewContext.FrameIndex = frameIndex;
         viewContext.FrameNumber = packet->FrameNumber;
+        viewContext.RenderFrameSerial = ++m_RenderFrameSerial;
         viewContext.ScreenWidth = swapChain->GetWidth();
         viewContext.ScreenHeight = swapChain->GetHeight();
         viewContext.RenderWidth = m_RenderWidth;

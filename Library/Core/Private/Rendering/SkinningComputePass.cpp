@@ -115,20 +115,15 @@ namespace NorvesLib::Core::Rendering
 
     void SkinningCompute::Shutdown()
     {
-        for (Slot& slot : m_Slots)
-        {
-            slot = Slot{};
-        }
-        m_ActiveSlot = 0;
+        m_Uses.Clear();
         m_Pipeline.reset();
         m_Shader.reset();
         m_Device = nullptr;
     }
 
-    void SkinningCompute::BeginFrame(uint64_t frameIndex)
+    void SkinningCompute::BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
     {
-        m_ActiveSlot = static_cast<uint32_t>(frameIndex % FrameSlotCount);
-        m_Slots[m_ActiveSlot].Cursor = 0;
+        m_Uses.BeginFrame(inFlightIndex, frameSerial);
     }
 
     bool SkinningCompute::Record(RHI::ICommandList* commandList, const SkinningComputeDispatch& dispatch)
@@ -147,21 +142,21 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        Slot& slot = m_Slots[m_ActiveSlot];
-        if (slot.Cursor >= slot.Uses.size())
+        // 資源の作成に失敗した Use は、次の Record が作り直す（位置は進める）
+        Use& use = m_Uses.Acquire();
+        if (!use.Uniform)
         {
-            Use use;
             use.Uniform = m_Device->CreateBuffer(
                 RHI::BufferDesc(ParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "SkinningComputeParams"));
-            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc());
-            if (!use.Uniform || !use.DescriptorSet)
-            {
-                return false;
-            }
-            slot.Uses.push_back(use);
         }
-        Use& use = slot.Uses[slot.Cursor];
-        ++slot.Cursor;
+        if (!use.DescriptorSet)
+        {
+            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc());
+        }
+        if (!use.Uniform || !use.DescriptorSet)
+        {
+            return false;
+        }
 
         const uint32_t params[4] = {dispatch.VertexCount, dispatch.OutputVertexBase, 0u, 0u};
         use.Uniform->Update(params, ParamsBytes);
@@ -330,7 +325,7 @@ namespace NorvesLib::Core::Rendering
                                               const RHI::BufferPtr& previousVertices)
     {
         const DrawCommandView commands = context.GetActiveOpaqueCommands();
-        m_Compute.BeginFrame(m_FrameCounter++);
+        m_Compute.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
         for (const PlannedInstance& planned : m_Plan)
         {
             if (planned.CommandIndex >= commands.Count)

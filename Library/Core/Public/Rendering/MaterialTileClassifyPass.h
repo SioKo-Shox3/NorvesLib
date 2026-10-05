@@ -16,6 +16,7 @@
 // （y > 1 のとき x は x の上限に等しいので、この式は上限の値によらず正しい。上限の定数を式に書かない）。
 
 #include "Container/Containers.h"
+#include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
@@ -146,12 +147,13 @@ namespace NorvesLib::Core::Rendering
      * @brief 材質ごとのタイルの分類を計算シェーダーで記録する本体（RenderGraph にも GPU のテストにも使う）
      *
      * 1 回の分類は 3 回の dispatch で、それぞれ別の UBO（段階の値）とディスクリプタセットを使う。
-     * 飛行中のフレームの数だけ枠を持ち、BeginFrame で枠を選んで使用済みの位置を戻す。
+     * 資源は FrameUseRing が持ち、BeginFrame で飛行中のフレームの番号の枠を選ぶ。Record のたびに枠の次の 3 組を使い、
+     * 足りなければ増やす。使用済みの位置が戻るのはフレームの通し番号が変わったときだけなので、1 フレームに何回
+     * Record しても（同じパスが複数のビューポートで何回 Execute されても）、提出前の資源を上書きしない。
      */
     class MaterialTileClassify final
     {
     public:
-        static constexpr uint32_t FrameSlotCount = 2;
         static constexpr uint32_t DispatchesPerRecord = 3;
 
         MaterialTileClassify();
@@ -165,8 +167,15 @@ namespace NorvesLib::Core::Rendering
         void Shutdown();
         bool IsReady() const { return m_Pipeline != nullptr; }
 
-        /** @brief frameIndex に対応する枠を選び、その使用済みの位置を戻す */
-        void BeginFrame(uint64_t frameIndex);
+        /**
+         * @brief 飛行中のフレームの番号の枠を選ぶ。フレームの通し番号が前回と違えば、その枠の使用済みの位置を戻す
+         * @param inFlightIndex ViewRenderContext::FrameIndex
+         * @param frameSerial ViewRenderContext::ResolveRenderFrameSerial()（同じフレームの間は同じ値）
+         */
+        void BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial);
+
+        /** @brief 選んだ枠で、今のフレームにここまで使った資源（dispatch 1 回に 1 組）の数（観測用） */
+        uint32_t GetUsedCount() const { return m_Uses.GetUsedCount(); }
 
         /**
          * @brief 分類を記録する（引数・統計を 0 にしてから 3 回 dispatch する）
@@ -187,20 +196,13 @@ namespace NorvesLib::Core::Rendering
             RHI::DescriptorSetPtr DescriptorSet;
         };
 
-        struct Slot
-        {
-            Container::VariableArray<Use> Uses;
-            uint32_t Cursor = 0;
-        };
-
         bool AcquireUses(Use* outUses);
 
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_Shader;
         RHI::PipelinePtr m_Pipeline;
         RHI::SamplerPtr m_Sampler;
-        Slot m_Slots[FrameSlotCount];
-        uint32_t m_ActiveSlot = 0;
+        FrameUseRing<Use> m_Uses;
     };
 
     /**
@@ -250,7 +252,6 @@ namespace NorvesLib::Core::Rendering
         RGBufferHandle m_CursorsHandle;
         RGBufferHandle m_StatsHandle;
         bool m_bClassified = false;
-        uint64_t m_FrameCounter = 0;
     };
 
 } // namespace NorvesLib::Core::Rendering

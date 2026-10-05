@@ -644,7 +644,7 @@
 - notes: 2026-10-05 親が足した（VTG6-RASTER-CHUNKS の評価の残課題。評価は PASS）。スキニングの塊の追加のケースは `SkinnedRenderPathContractTest.exe` の直接実行の出力（そのケースの行）を証拠にする（TEST-SKINNED の既知の停止のため ctest では完走しない）。危険地帯（メモリ・寿命・RT）。
 
 ## VTG6-PASS-FRAME-SLOTS: 計算パスのUBOとdescriptorの枠を、1フレームに何回呼ばれても上書きしない形にする
-- status: todo
+- status: done
 - done-when: `SkinningComputePass`（`m_Compute.BeginFrame(m_FrameCounter++)`）・`MaterialTileClassifyPass`（同じ形）・`MegaGeometryPass`（`m_FrameSlots[m_OcclusionFrameCount % FrameSlotCount]`）が、枠の番号をフレームではなく Execute を呼んだ回数で決めている。同じパスのインスタンスが1フレームに何回 Execute されうるか（エディタの複数のビューポート・反射・キャプチャなど、同じ SceneView か別の SceneView か）を調べて PROGRESS に書き、1フレームに N 回（N がフレームの枠の数以上でも）呼ばれても、まだ提出していない・GPU が読み終えていない UBO・descriptor set・一時のバッファを上書きしない形にする（フレームごとに使った枠を数えて足りなければ増やす、GPU の完了で枠を返すリングにする等）。CPU のテスト（関係する束の MEMBER）が、1フレームに `FrameSlotCount` を超える回数の Execute（の枠の割り当て）で、全部が別の枠になり、次のフレームで GPU の完了の後に再利用されることを確かめる。既定の描画は変えない（`-Deterministic` の起動画面の撮影が前と一致する）。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MegaGeometryResourcesTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MegaGeometryResourcesTest|ComputeSkinningVulkanTest|MaterialTileClassifyVulkanTest)$"`

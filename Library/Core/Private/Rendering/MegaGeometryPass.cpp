@@ -357,10 +357,9 @@ namespace NorvesLib::Core::Rendering
         m_IndirectDrawBufferHandle = {};
         m_DrawCountBufferHandle = {};
         m_MegaGeometryCompleteHandle = {};
-        for (FrameSlot &slot : m_FrameSlots)
-        {
-            slot = FrameSlot{};
-        }
+        m_FrameSlots.Clear();
+        m_RenderFrameCount = 0;
+        m_LastRenderFrameSerial = 0;
         m_DummyVisibilityBuffer.reset();
         m_DummyStatsBuffer.reset();
         m_VisibilityBuffer.reset();
@@ -946,6 +945,13 @@ namespace NorvesLib::Core::Rendering
         bool bTwoPass = CanUseTwoPassOcclusion(command);
         // 2パスでないフレームも数える（見えたビットは連続した2パスのフレームの間でだけ引き継ぐため）
         ++m_OcclusionFrameCount;
+        // フレームごとの資源の組を選ぶ。1フレームの複数のビューポートは同じ通し番号なので、組が別々に渡る
+        if (m_RenderFrameCount == 0 || command.RenderFrameSerial != m_LastRenderFrameSerial)
+        {
+            ++m_RenderFrameCount;
+            m_LastRenderFrameSerial = command.RenderFrameSerial;
+        }
+        m_FrameSlots.BeginFrame(command.InFlightIndex, command.RenderFrameSerial);
         // 決定的な撮影のエポック（読み込み完了）の最初のフレームから、統計の行に相対フレームの番号を付ける
         // 見えたビットも時間的な状態なので、エポックの最初のフレームは引き継がずに0から始める（読み込み完了までの
         // フレーム数の違いが、エポックの最初のフレームの1パス目の数に出ないようにする）
@@ -1193,11 +1199,14 @@ namespace NorvesLib::Core::Rendering
         {
             EnsureStatsSlots();
             StatsSlot &slot = m_StatsSlots[m_OcclusionFrameCount % StatsSlotCount];
-            if (slot.Buffer && slot.Mapped)
+            // 同じフレームの別のビューポートや直前のフレームが書いた統計は、GPU が書き終えていないかもしれないので、
+            // 読まず・上書きせず、この記録の統計は取らない（2フレーム以上前なら完了している。フレームの飛行数は2以下）
+            const bool bSlotSettled = !slot.bPending || slot.RenderFrameCount + 2 <= m_RenderFrameCount;
+            if (slot.Buffer && slot.Mapped && bSlotSettled)
             {
                 if (slot.bPending)
                 {
-                    // StatsSlotCount フレーム前の統計。そのフレームの提出は完了している（フレームの飛行数は2以下）
+                    // 2フレーム以上前の統計。そのフレームの提出は完了している
                     // エポックが始まっていれば相対フレームが30の倍数のフレームで出す（撮影の間で同じ相対フレームを突き合わせられる）
                     const bool bSampleFrame = slot.EpochFrame >= 0 ? (slot.EpochFrame % 30 == 0) : (slot.Frame % 30 == 0);
                     if (!m_bStatsLoggedOnce || bSampleFrame || m_Settings.bStatsEveryFrame)
@@ -1239,7 +1248,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        FrameSlot &frameSlot = m_FrameSlots[m_OcclusionFrameCount % FrameSlotCount];
+        FrameSlot &frameSlot = m_FrameSlots.Acquire();
         if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal), sectionCount * passCount) ||
             !EnsureFrameSlot(frameSlot, static_cast<uint32_t>(instanceTable.size()), sectionCount * passCount, sectionCount) ||
             (bvhInstanceCount > 0 &&
@@ -1441,6 +1450,7 @@ namespace NorvesLib::Core::Rendering
             cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
             statsSlot->Frame = m_OcclusionFrameCount;
             statsSlot->RenderFrame = command.FrameNumber;
+            statsSlot->RenderFrameCount = m_RenderFrameCount;
             statsSlot->EpochFrame = epochFrame;
             statsSlot->bPending = true;
         }
@@ -2078,7 +2088,7 @@ namespace NorvesLib::Core::Rendering
         // 古い列は、直前のフレームのGPUがまだ使っているかもしれないので、しばらく保持してから破棄する
         if (m_BvhQueueBuffer)
         {
-            m_RetiredBuffers.push_back(RetiredBuffer{m_BvhQueueBuffer, m_OcclusionFrameCount});
+            m_RetiredBuffers.push_back(RetiredBuffer{m_BvhQueueBuffer, m_RenderFrameCount});
         }
         m_BvhQueueBuffer = queueBuffer;
         m_BvhCounterBuffer = counterBuffer;
@@ -2162,7 +2172,7 @@ namespace NorvesLib::Core::Rendering
         {
             if (*old)
             {
-                m_RetiredBuffers.push_back(RetiredBuffer{*old, m_OcclusionFrameCount});
+                m_RetiredBuffers.push_back(RetiredBuffer{*old, m_RenderFrameCount});
             }
         }
         m_IndirectDrawBuffer = indirectBuffer;
@@ -2245,7 +2255,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // 直前に使ったのは FrameSlotCount フレーム前で、そのGPUの仕事は終わっているので、作り直して置き換えてよい
+        // この組を直前に使ったのは前のフレーム（飛行中のフレームの番号が同じ）で、そのGPUの仕事は終わっているので、作り直して置き換えてよい
         if (!slot.InstanceBuffer || slot.InstanceCapacity < instanceCount)
         {
             const uint32_t capacity = std::max(64u, NextPowerOfTwo(instanceCount));
@@ -2338,7 +2348,7 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        // 直前に使ったのは FrameSlotCount フレーム前で、そのGPUの仕事は終わっているので、作り直して置き換えてよい
+        // この組を直前に使ったのは前のフレーム（飛行中のフレームの番号が同じ）で、そのGPUの仕事は終わっているので、作り直して置き換えてよい
         const uint32_t entryCount = static_cast<uint32_t>(entries.size());
         if (!slot.PageTableBuffer || slot.PageTableCapacity < entryCount)
         {
@@ -2851,7 +2861,7 @@ namespace NorvesLib::Core::Rendering
         // 古いバッファは、GPUが使い終わるまで保持してから破棄する
         if (m_VisibilityBuffer)
         {
-            m_RetiredBuffers.push_back(RetiredBuffer{m_VisibilityBuffer, m_OcclusionFrameCount});
+            m_RetiredBuffers.push_back(RetiredBuffer{m_VisibilityBuffer, m_RenderFrameCount});
         }
         m_VisibilityBuffer = newBuffer;
         m_VisibilityEntries.clear();
@@ -2868,7 +2878,7 @@ namespace NorvesLib::Core::Rendering
         // 手放したバッファは、一定のフレーム後にはGPUがとうに使い終わっているので破棄する
         for (size_t index = 0; index < m_RetiredBuffers.size();)
         {
-            if (m_OcclusionFrameCount - m_RetiredBuffers[index].RetiredFrame > RetiredBufferFrames)
+            if (m_RenderFrameCount - m_RetiredBuffers[index].RetiredFrame > RetiredBufferFrames)
             {
                 m_RetiredBuffers[index] = m_RetiredBuffers.back();
                 m_RetiredBuffers.pop_back();

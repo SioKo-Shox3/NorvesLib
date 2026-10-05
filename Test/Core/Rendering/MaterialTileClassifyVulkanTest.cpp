@@ -327,7 +327,7 @@ namespace
             buffer->Unmap();
         }
 
-        classify.BeginFrame(frameIndex);
+        classify.BeginFrame(0, frameIndex);
         MaterialTileClassifyDispatch dispatch;
         dispatch.IdTexture = idTexture;
         dispatch.RecordTable = recordTable;
@@ -739,7 +739,7 @@ namespace
                 bad.Width = ImageWidth;
                 bad.Height = ImageHeight;
                 bad.Layout = MaterialTiles::ComputeLayout(ImageWidth, ImageHeight, TestMaxMaterials);
-                classify.BeginFrame(3);
+                classify.BeginFrame(0, 3);
                 commandList->Begin();
                 Expect(!classify.Record(commandList.get(), bad), "出力のバッファが無い分類は記録してはならない");
 

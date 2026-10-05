@@ -582,7 +582,7 @@ namespace
                 return 1;
             }
 
-            compute.BeginFrame(0);
+            compute.BeginFrame(0, 1);
             commandList->Begin();
             commandList->BufferBarrier(currentOut, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, bufferBytes);
             commandList->BufferBarrier(previousOut, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, bufferBytes);

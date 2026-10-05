@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Rendering/FrameUseRing.h"
 #include "Rendering/HiZPyramidPass.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
@@ -304,7 +305,7 @@ namespace NorvesLib::Core::Rendering
             RHI::DescriptorSetPtr DescriptorSet;
         };
 
-        /** @brief ホストが毎フレーム書く資源の組。フレームごとに交互に使う */
+        /** @brief ホストが毎フレーム書く資源の組。1 回の記録（ビューポート）ごとに FrameUseRing から 1 組使う */
         struct FrameSlot
         {
             RHI::BufferPtr InstanceBuffer; // インスタンスの表（host-visible）
@@ -425,9 +426,13 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_DrawCountBufferHandle;
         RGResourceHandle m_MegaGeometryCompleteHandle;
 
-        // ホストが毎フレーム書く資源。フレームごとに交互に使う（直前のフレームのGPUがまだ読んでいるかもしれないため）
-        static constexpr uint32_t FrameSlotCount = 2;
-        FrameSlot m_FrameSlots[FrameSlotCount];
+        // ホストが毎フレーム書く資源。同じパスが1フレームに何回記録されても（複数のビューポート）、提出前・GPU が読み終わる前の
+        // 組を上書きしないよう、記録の回数ではなくフレームの通し番号で使用済みの位置を戻す（FrameUseRing）
+        FrameUseRing<FrameSlot> m_FrameSlots;
+        // 記録したフレームの数え（フレームの通し番号が変わるたびに 1 進む）。退避したバッファの寿命と統計の枠の判定に使う
+        // （m_OcclusionFrameCount は記録ごとに進むので、1フレームに複数回記録すると実時間が短くなる）
+        uint64_t m_RenderFrameCount = 0;
+        uint64_t m_LastRenderFrameSerial = 0;
 
         // GBuffer描画用グラフィックスパイプライン
         RHI::PipelinePtr m_DrawPipeline;
@@ -466,7 +471,7 @@ namespace NorvesLib::Core::Rendering
         struct RetiredBuffer
         {
             RHI::BufferPtr Buffer;
-            uint64_t RetiredFrame = 0;
+            uint64_t RetiredFrame = 0; // 退避したときの m_RenderFrameCount
         };
         RHI::BufferPtr m_VisibilityBuffer; // uint32_t[]。1=前のフレームで見えた
         Container::VariableArray<VisibilityEntry> m_VisibilityEntries;
@@ -480,6 +485,7 @@ namespace NorvesLib::Core::Rendering
             const uint32_t *Mapped = nullptr;
             uint64_t Frame = 0;
             uint64_t RenderFrame = 0;  // 描画のフレームの番号（ViewRenderContext::FrameNumber）
+            uint64_t RenderFrameCount = 0; // 書いたときの m_RenderFrameCount
             int64_t EpochFrame = -1;   // 決定的な撮影のエポックからの相対フレーム。エポック前は -1
             bool bPending = false;
         };
