@@ -343,7 +343,8 @@ namespace NorvesLib::Core::Rendering
             m_Plan.push_back(planned);
             totalVertices += vertexCount;
         }
-        // 外した数は RenderingCoordinator が毎フレームの統計（SkinningComputeDroppedInstances）へ設定する。ログは初回だけ。
+        // 外した数はフレームの通し番号ごとに持ち、RenderingCoordinator が GetDroppedInstanceCountForFrame の合算を
+        // 統計（SkinningComputeDroppedInstances）へ設定する。ログは初回だけ。
         // 同じフレームの別のビューポートの Declare とは通し番号で合算する。
         AccumulateFrameDroppedInstances(context->ResolveRenderFrameSerial(), m_DroppedInstanceCount);
         if (m_DroppedInstanceCount > 0 && !m_bLoggedDrop)

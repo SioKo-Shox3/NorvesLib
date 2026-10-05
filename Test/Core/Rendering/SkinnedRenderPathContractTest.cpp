@@ -1804,9 +1804,10 @@ namespace
         packet.bHasMainCamera = true;
         packet.SetState(FramePacketState::Reading);
 
-        // 計算スキニングから外した数の配線: 最初のフレーム（通し番号 1）に 2 つのビューポートの Declare が外した数を合算して置き、
-        // RenderFrame が統計（スナップショットと StatsManager）へ渡すことを確かめる。
-        // 古い通し番号の数（描かれなかったビューのもの）は足さない。
+        // 計算スキニングから外した数の統計への渡り（RenderFrame 側）: このテストは計算スキニングのパイプラインを持たず Declare が
+        // 数を置かないので、2 つのビューポートが最初のフレーム（通し番号 1）に外した数の合算を AccumulateFrameDroppedInstances で
+        // 直接置き、RenderFrame が UpdateRenderingStats より前に統計（スナップショットと StatsManager）へ設定することを確かめる。
+        // 古い通し番号の数（描かれなかったビューのもの）は足さない。Declare から数が置かれる配線は RenderGraphCompileTest で確かめる。
         auto* skinningPass = dynamic_cast<SkinningComputePass*>(
             coordinator.GetMainSceneView()->FindPass("SkinningComputePass"));
         assert(skinningPass != nullptr);

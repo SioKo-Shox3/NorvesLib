@@ -3022,7 +3022,8 @@ namespace
 #endif
 
     // 外したインスタンスの数は Declare のたびに数え直し（累計にしない）、ログはパスの寿命で 1 回だけ出す。
-    // 数は統計の欄・ToString・CSV に出る
+    // 統計へ渡る数は Declare がフレームの通し番号つきで置く（同じ通し番号の Declare は合算、別の番号は数え直し、
+    // Declare が無かった番号は 0）。数は統計の欄・ToString・CSV に出る
     void TestSkinningComputePassDropCountIsPerFrameAndLoggedOnce()
     {
 #if NORVES_ENABLE_LOGGING
@@ -3046,20 +3047,38 @@ namespace
 
         RunSkinningPassScene(scene, 8);
         assert(scene.Skinning.GetDroppedInstanceCount() == 2);
+        // Declare が最初のフレームの通し番号へ数を置く（置く行を消す・数える前へ動かす・別の通し番号で置くと 0 になる）
+        const uint64_t firstSerial = scene.Context.ResolveRenderFrameSerial();
+        assert(scene.Skinning.GetDroppedInstanceCountForFrame(firstSerial) == 2);
+        assert(scene.Skinning.GetDroppedInstanceCountForFrame(firstSerial + 1) == 0);
 #if NORVES_ENABLE_LOGGING
         assert(warnings.Count == 1);
 #endif
 
-        // 2 フレーム目: 同じ構成でも数は 2 のまま（累計の 4 にならない）、ログは増えない
+        // 同じ通し番号でもう一度 Declare（1 つの SceneView が 2 つ目のビューポートを描く形）: 1 回ごとの数は 2 のまま
+        // （累計の 4 にならない）、通し番号ごとの数は 2 つのビューポートの合算の 4。ログは増えない
         RunSkinningPassNextFrame(scene, 1);
         assert(scene.Skinning.GetDroppedInstanceCount() == 2);
         assert(scene.Skinning.GetInstances().size() == 2);
+        assert(scene.Skinning.GetDroppedInstanceCountForFrame(firstSerial) == 4);
+#if NORVES_ENABLE_LOGGING
+        assert(warnings.Count == 1);
+#endif
+
+        // 通し番号を進めたフレーム: 新しい番号で 2（前の番号の 4 を引き継がない）、古い番号は 0（描かれなかったビューが
+        // 古い数を足し続けない）
+        const uint64_t secondSerial = firstSerial + 1;
+        scene.Context.RenderFrameSerial = secondSerial;
+        RunSkinningPassNextFrame(scene, 2);
+        assert(scene.Skinning.GetDroppedInstanceCount() == 2);
+        assert(scene.Skinning.GetDroppedInstanceCountForFrame(secondSerial) == 2);
+        assert(scene.Skinning.GetDroppedInstanceCountForFrame(firstSerial) == 0);
 #if NORVES_ENABLE_LOGGING
         assert(warnings.Count == 1);
 #endif
 
 #if NORVES_ENABLE_STATS
-        // 統計: パスの数を欄へ設定して UpdateRenderingStats へ渡すと、フレームの後も欄が残り、ToString と CSV に出る
+        // 統計: 通し番号ごとの数を欄へ設定して UpdateRenderingStats へ渡すと、フレームの後も欄が残り、ToString と CSV に出る
         DebugStats::StatsManager& stats = DebugStats::StatsManager::Get();
         const char* tracePath = "RenderGraphCompileTest.skinning.trace.csv";
         std::remove(tracePath);
@@ -3067,7 +3086,7 @@ namespace
         assert(stats.StartTrace(tracePath));
         stats.BeginFrame(7, 0.016f);
         DebugStats::RenderingStats frameStats;
-        frameStats.SkinningComputeDroppedInstances = scene.Skinning.GetDroppedInstanceCount();
+        frameStats.SkinningComputeDroppedInstances = scene.Skinning.GetDroppedInstanceCountForFrame(secondSerial);
         stats.UpdateRenderingStats(frameStats);
         assert(stats.GetRenderingStats().SkinningComputeDroppedInstances == 2);
         const auto text = frameStats.ToString();
@@ -3103,16 +3122,20 @@ namespace
         std::remove(tracePath);
 #endif
 
-        // 3 フレーム目: 上限を上げれば全部収まり、数は 0 に戻る
+        // 次のフレーム: 上限を上げれば全部収まり、数は 0 に戻る
         scene.Skinning.SetMaxOutputVertices(100);
-        RunSkinningPassNextFrame(scene, 2);
+        scene.Context.RenderFrameSerial = secondSerial + 1;
+        RunSkinningPassNextFrame(scene, 3);
         assert(scene.Skinning.GetDroppedInstanceCount() == 0);
+        assert(scene.Skinning.GetDroppedInstanceCountForFrame(secondSerial + 1) == 0);
         assert(scene.Skinning.GetInstances().size() == 4);
 
-        // 4 フレーム目: 上限を戻せばまた外れる。ログはパスの寿命で 1 回のまま
+        // その次のフレーム: 上限を戻せばまた外れる。ログはパスの寿命で 1 回のまま
         scene.Skinning.SetMaxOutputVertices(8);
-        RunSkinningPassNextFrame(scene, 3);
+        scene.Context.RenderFrameSerial = secondSerial + 2;
+        RunSkinningPassNextFrame(scene, 4);
         assert(scene.Skinning.GetDroppedInstanceCount() == 2);
+        assert(scene.Skinning.GetDroppedInstanceCountForFrame(secondSerial + 2) == 2);
 #if NORVES_ENABLE_LOGGING
         assert(warnings.Count == 1);
         // 共有の Logger を、このテストが初期化し直す前の状態へ戻す（この実行ファイルは他で Logger を初期化しない = 未初期化）

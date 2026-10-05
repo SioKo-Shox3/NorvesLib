@@ -194,8 +194,9 @@ namespace NorvesLib::Core::Rendering
          * @brief 最後の Declare が、頂点の合計の上限か束縛の大きさの上限のために計算スキニングから外したインスタンスの数
          *
          * 外したインスタンスは、このパスの出力に載らない（GetInstances() にも入らない）。毎回の Declare で数え直す
-         * （累計ではない）。RenderingCoordinator がフレームの統計（RenderingStats::SkinningComputeDroppedInstances）へ
-         * 設定する。ログはパスの寿命で初めて外したときに 1 回だけ出す。
+         * （累計ではない）。統計へ渡る数ではない（1 つの SceneView が複数のビューポートを描くときは最後の Declare の数だけに
+         * なる）。統計は GetDroppedInstanceCountForFrame の合算を RenderingCoordinator が
+         * RenderingStats::SkinningComputeDroppedInstances へ設定する。ログはパスの寿命で初めて外したときに 1 回だけ出す。
          */
         uint32_t GetDroppedInstanceCount() const { return m_DroppedInstanceCount; }
 
@@ -211,7 +212,12 @@ namespace NorvesLib::Core::Rendering
             return m_FrameDroppedSerial == frameSerial ? m_FrameDroppedInstanceCount : 0;
         }
 
-        /** @brief Declare が外した数をフレームの通し番号へ足す（別の通し番号なら数え直す） */
+        /**
+         * @brief Declare が外した数をフレームの通し番号へ足す（別の通し番号なら数え直す）
+         *
+         * 本番の呼び出しは Declare だけ。public なのは、描画の装置（Vulkan）を持たない検査が Declare を通さずに
+         * 通し番号ごとの状態を作るため（Declare から呼ばれる配線は RenderGraphCompileTest が確かめる）。
+         */
         void AccumulateFrameDroppedInstances(uint64_t frameSerial, uint32_t count);
 
         /** @brief 最後の Execute で変形を記録したインスタンス（記録できなかったフレームは空） */

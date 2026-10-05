@@ -40,9 +40,9 @@ uint32_t SumSkinningComputeDroppedInstances(const Container::VariableArray<Conta
     return total;
 }
 
-void AccumulateSkinningComputeStats(Debug::RenderingStats& out,
-                                    const Container::VariableArray<Container::TSharedPtr<View>>& views,
-                                    uint64_t frameSerial)
+void AssignSkinningComputeStats(Debug::RenderingStats& out,
+                                const Container::VariableArray<Container::TSharedPtr<View>>& views,
+                                uint64_t frameSerial)
 {
     out.SkinningComputeDroppedInstances = SumSkinningComputeDroppedInstances(views, frameSerial);
 }

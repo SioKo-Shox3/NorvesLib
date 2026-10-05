@@ -2971,7 +2971,7 @@ namespace NorvesLib::Core::Rendering
         renderStats.RenderGraphBarrierCount = m_RenderGraph.GetLastCompiledBarrierCount();
         renderStats.RenderGraphTransientAcquireCount = m_RenderGraph.GetLastTransientAcquireCount();
         // 計算スキニングから外したインスタンスの数（フレームごと。このフレームに Declare された SceneView のパスの数を足す）
-        AccumulateSkinningComputeStats(renderStats, m_Views, viewContext.ResolveRenderFrameSerial());
+        AssignSkinningComputeStats(renderStats, m_Views, viewContext.ResolveRenderFrameSerial());
 
         RHI::TexturePtr finalPresentationTexture;
         if (executionResult.bComposite)

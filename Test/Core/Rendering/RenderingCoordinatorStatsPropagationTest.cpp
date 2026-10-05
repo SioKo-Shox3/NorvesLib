@@ -120,9 +120,9 @@ namespace NorvesLib::Core::Rendering
         // 前のフレームから残った値は上書きする（足さない）
         Debug::RenderingStats stats;
         stats.SkinningComputeDroppedInstances = 99;
-        AccumulateSkinningComputeStats(stats, views, 5);
+        AssignSkinningComputeStats(stats, views, 5);
         assert(stats.SkinningComputeDroppedInstances == 2);
-        AccumulateSkinningComputeStats(stats, views, 6);
+        AssignSkinningComputeStats(stats, views, 6);
         assert(stats.SkinningComputeDroppedInstances == 0);
     }
 
