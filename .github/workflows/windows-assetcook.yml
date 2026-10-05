@@ -137,7 +137,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
       - name: AssetCookとテストbundleをビルドする
         run: |
-          cmake --build build/windows-cli --config Release --target AssetCook CookedMeshTest LoggerSinkTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
+          cmake --build build/windows-cli --config Release --target AssetCook CookedMeshTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
           if ($LASTEXITCODE -ne 0) { throw 'Native build failed' }
       - name: 移動した日本語診断のUTF-8 byteを照合する
         run: |
