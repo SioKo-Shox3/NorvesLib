@@ -175,6 +175,7 @@ namespace ImportedRuntimeTest
         }
         H::CommandListPtr CreateCommandList() override
         {
+            ++CommandListAttempts;
             return {};
         }
         H::SwapChainPtr CreateSwapChain(const H::SwapChainDesc&) override
@@ -229,7 +230,7 @@ namespace ImportedRuntimeTest
         H::DeviceCapabilities Capabilities;
         Array<C::TSharedPtr<FakeTexture>> Textures;
         Array<C::TSharedPtr<FakeBuffer>> Buffers;
-        size_t TextureAttempts = 0;
+        size_t TextureAttempts = 0, CommandListAttempts = 0;
         bool bFailTexture = false, bFailBuffer = false, bThrowTextureUpdate = false;
         size_t FailTextureAttempt = 0;
     };
@@ -674,6 +675,198 @@ namespace ImportedRuntimeTest
         std::puts(
             "IMPORTED_OPAQUE_RUNTIME result=pass profile_alpha_zero_emission_selected_mips_scalar_cache_version_sync_worker_fake_device_no_gpu_claim");
     }
+    S::ModelStagingData LegacyStage(unsigned mask)
+    {
+        const Bytes bytes(Support::BuildCookedModelMesh());
+        const auto parsed = A::ParseCookedMesh(A::AssetBlob::CopyBytes(bytes));
+        CHECK(parsed.Succeeded() && parsed.Mesh.VersionMajor == 0);
+        S::ModelStagingData staging;
+        CHECK(M::BuildModelStagingFromCookedMesh(parsed.Mesh, "legacy", "legacy.nvmesh", staging));
+        S::StagedTextureData* roles[] = {&staging.AlbedoTexture, &staging.NormalTexture, &staging.AOTexture,
+                                         &staging.RoughnessTexture, &staging.MetallicTexture};
+        const char* names[] = {"LegacyAlbedo", "LegacyNormal", "LegacyAO", "LegacyRoughness", "LegacyMetallic"};
+        for (size_t role = 0; role < 5; ++role)
+        {
+            if ((mask & (1u << role)) == 0)
+            {
+                continue;
+            }
+            auto& texture = *roles[role];
+            texture.Width = texture.Height = 1;
+            texture.DebugName = names[role];
+            const auto value = static_cast<uint8_t>(50 + role);
+            if (role < 2)
+            {
+                texture.Format = R::TextureCreateInfo::Format::RGBA8_UNORM;
+                texture.PixelData = {value, static_cast<uint8_t>(value + 10), static_cast<uint8_t>(value + 20), 255};
+            }
+            else
+            {
+                texture.Format = R::TextureCreateInfo::Format::R8_UNORM;
+                texture.PixelData = {value};
+            }
+        }
+        return staging;
+    }
+    void LegacyLifetime(const std::filesystem::path& root)
+    {
+        for (unsigned mask : {1u, 2u, 4u, 8u, 16u, 31u})
+        {
+            R::RenderResources resources;
+            auto device = MakeShared<FakeDevice>();
+            CHECK(resources.Initialize(device));
+            const auto baseline = resources.GetResourceStats().TextureCount;
+            CHECK(device->Textures.empty());
+            auto staging = LegacyStage(mask);
+            const auto model =
+                S::FinalizeModelStaging(staging, {resources.Textures(), resources.MegaGeometry()}, "lifetime", 1);
+            CHECK(model.IsValid() && device->Textures.size() == std::popcount(mask));
+            CHECK(resources.GetResourceStats().TextureCount == baseline);
+            const auto mesh = resources.MegaGeometry().GetModelMegaMeshHandle(model);
+            const auto* gpu = resources.MegaGeometry().GetMegaMeshGPUData(mesh);
+            CHECK(gpu);
+            const H::ITexture* actual[] = {gpu->Material.AlbedoTexture.get(), gpu->Material.NormalTexture.get(),
+                                           gpu->Material.AOTexture.get(), gpu->Material.RoughnessTexture.get(),
+                                           gpu->Material.MetallicTexture.get()};
+            const S::StagedTextureData* source[] = {&staging.AlbedoTexture, &staging.NormalTexture, &staging.AOTexture,
+                                                    &staging.RoughnessTexture, &staging.MetallicTexture};
+            for (size_t role = 0; role < 5; ++role)
+            {
+                CHECK(static_cast<bool>(actual[role]) == ((mask & (1u << role)) != 0));
+                if (actual[role])
+                {
+                    const auto* texture = static_cast<const FakeTexture*>(actual[role]);
+                    CHECK(texture->Updates.size() == 1 && texture->Updates[0].Pixels == source[role]->PixelData);
+                }
+            }
+            Array<C::TWeakPtr<FakeTexture>> weak;
+            for (const auto& texture : device->Textures)
+            {
+                weak.push_back(texture);
+            }
+            device->Textures.clear();
+            for (const auto& texture : weak)
+            {
+                CHECK(!texture.expired());
+            }
+            resources.MegaGeometry().ReleaseModel(model);
+            for (const auto& texture : weak)
+            {
+                CHECK(texture.expired());
+            }
+            resources.Shutdown();
+        }
+        for (unsigned failure = 0; failure < 3; ++failure)
+        {
+            R::RenderResources resources;
+            auto device = MakeShared<FakeDevice>();
+            CHECK(resources.Initialize(device));
+            const auto baseline = resources.GetResourceStats().TextureCount;
+            auto staging = LegacyStage(31);
+            if (failure == 0)
+            {
+                device->FailTextureAttempt = 2;
+            }
+            if (failure == 1)
+            {
+                device->bThrowTextureUpdate = true;
+            }
+            if (failure == 2)
+            {
+                device->bFailBuffer = true;
+            }
+            bool bThrew = false;
+            R::ModelHandle model;
+            try
+            {
+                model =
+                    S::FinalizeModelStaging(staging, {resources.Textures(), resources.MegaGeometry()}, "lifetime", 1);
+            }
+            catch (const std::runtime_error&)
+            {
+                bThrew = true;
+            }
+            CHECK(!model.IsValid() && bThrew == (failure == 1));
+            CHECK(device->Textures.size() == (failure == 0 ? 4u : (failure == 1 ? 1u : 5u)));
+            CHECK(resources.GetResourceStats().TextureCount == baseline);
+            Array<C::TWeakPtr<FakeTexture>> weak;
+            for (const auto& texture : device->Textures)
+            {
+                weak.push_back(texture);
+            }
+            device->Textures.clear();
+            for (const auto& texture : weak)
+            {
+                CHECK(texture.expired());
+            }
+            resources.Shutdown();
+        }
+        // Public APIで通常返したhandleは引き続きcaller所有。空dataの早期戻りも維持する。
+        for (bool bData : {false, true})
+        {
+            R::RenderResources resources;
+            auto device = MakeShared<FakeDevice>();
+            CHECK(resources.Initialize(device));
+            R::TextureCreateInfo info;
+            info.PixelFormat = R::TextureCreateInfo::Format::R8_UNORM;
+            const uint8_t pixel = 73;
+            const auto handle = resources.Textures().CreateTexture(info, bData ? &pixel : nullptr, bData ? 1 : 0);
+            CHECK(handle.IsValid() && resources.GetResourceStats().TextureCount == 1);
+            C::TWeakPtr<H::ITexture> weak = resources.Textures().GetRHITexturePtr(handle);
+            device->Textures.clear();
+            CHECK(!weak.expired());
+            resources.Textures().ReleaseTexture(handle);
+            CHECK(weak.expired());
+            CHECK(resources.GetResourceStats().TextureCount == 0);
+            resources.Shutdown();
+        }
+        // 非例外のmip生成失敗でも、従来APIは有効handleをcallerへ返す。
+        {
+            R::RenderResources resources;
+            auto device = MakeShared<FakeDevice>();
+            CHECK(resources.Initialize(device));
+            R::TextureCreateInfo info;
+            info.Width = info.Height = 2;
+            info.MipLevels = 2;
+            info.PixelFormat = R::TextureCreateInfo::Format::R8_UNORM;
+            const uint8_t pixels[] = {11, 22, 33, 44};
+            const auto handle = resources.Textures().CreateTexture(info, pixels, sizeof(pixels));
+            CHECK(handle.IsValid() && device->CommandListAttempts == 1 &&
+                  resources.GetResourceStats().TextureCount == 1);
+            CHECK(device->Textures.size() == 1 && device->Textures[0]->Updates.size() == 1);
+            C::TWeakPtr<H::ITexture> weak = resources.Textures().GetRHITexturePtr(handle);
+            device->Textures.clear();
+            CHECK(!weak.expired());
+            resources.Textures().ReleaseTexture(handle);
+            CHECK(weak.expired());
+            resources.Shutdown();
+        }
+        // Prepared/cookedの名前付きcacheはmodelから独立して保持する従来の所有契約。
+        {
+            Bytes pixels(16, 255);
+            const auto row = Package(root, "legacy_named.nvpkg", "Textures/legacy_named", Nvtex(pixels));
+            R::RenderResources resources;
+            auto device = MakeShared<FakeDevice>();
+            CHECK(resources.Initialize(device));
+            SetupTextures(resources, root, row);
+            const auto prepared = resources.Textures().PrepareTextureAssetForWorker("Textures/legacy_named");
+            CHECK(prepared.Status == R::PreparedTextureAssetStatus::CookedReady);
+            auto staging = LegacyStage(0);
+            staging.AlbedoTexture.PreparedTexture = prepared;
+            staging.AlbedoTexture.bHasPreparedTexture = true;
+            const auto model =
+                S::FinalizeModelStaging(staging, {resources.Textures(), resources.MegaGeometry()}, "lifetime", 1);
+            CHECK(model.IsValid() && resources.GetResourceStats().TextureCount == 1 && device->Textures.size() == 1);
+            C::TWeakPtr<FakeTexture> weak = device->Textures[0];
+            device->Textures.clear();
+            resources.MegaGeometry().ReleaseModel(model);
+            CHECK(!weak.expired());
+            resources.Shutdown();
+            CHECK(weak.expired());
+        }
+        std::puts(
+            "LEGACY_MODEL_TEXTURE_LIFETIME result=pass five_roles_release_late_create_failure_upload_exception_geometry_failure_public_handles_named_cache");
+    }
 } // namespace ImportedRuntimeTest
 int main()
 {
@@ -688,6 +881,7 @@ int main()
     const auto root = std::filesystem::path(temp) / name;
     CHECK(std::filesystem::create_directory(root));
     ImportedRuntimeTest::Runtime(root);
+    ImportedRuntimeTest::LegacyLifetime(root);
     CHECK(std::filesystem::remove_all(root) > 0);
     return 0;
 #else

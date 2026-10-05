@@ -184,9 +184,27 @@ namespace NorvesLib::Core::Rendering
     {
         uint32_t effectiveMipLevels = std::max(1u, createInfo.MipLevels);
         auto createStartTime = LoadProfileNow();
-        TextureHandle handle = IsBound()
-                                   ? m_pGpuResources->CreateTexture(createInfo)
-                                   : TextureHandle::Invalid();
+        auto* const creationOwner = m_pGpuResources;
+        TextureHandle handle = IsBound() ? creationOwner->CreateTexture(createInfo) : TextureHandle::Invalid();
+        // uploadや診断が例外で抜けても、返していないhandleの登録を残さない。
+        struct CreationRegistration
+        {
+            GpuResourceStore* Owner;
+            TextureHandle Handle;
+            bool bReturned = false;
+            CreationRegistration(GpuResourceStore* owner, TextureHandle handle) : Owner(owner), Handle(handle)
+            {
+            }
+            CreationRegistration(const CreationRegistration&) = delete;
+            CreationRegistration& operator=(const CreationRegistration&) = delete;
+            ~CreationRegistration()
+            {
+                if (!bReturned && Owner && Handle.IsValid())
+                {
+                    Owner->ReleaseTexture(Handle);
+                }
+            }
+        } registration(creationOwner, handle);
         double textureCreateMs = LoadProfileElapsedMs(createStartTime);
         const char *profileRole = GetTextureCreateUploadProfileRoleForCurrentThread();
         if (!handle.IsValid() || !data || dataSize == 0)
@@ -199,6 +217,7 @@ namespace NorvesLib::Core::Rendering
                             effectiveMipLevels,
                             textureCreateMs,
                             handle.IsValid() ? 1 : 0);
+            registration.bReturned = true;
             return handle;
         }
 
@@ -221,6 +240,7 @@ namespace NorvesLib::Core::Rendering
                         uploadResult.UploadMs,
                         uploadResult.MipgenMs,
                         bSuccess ? 1 : 0);
+        registration.bReturned = true;
         return handle;
     }
 

@@ -870,3 +870,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 
 - G2/GR79 opaque runtime受入: 17ce1e04b64e7ab943e489da270ac367c4193030 / tree d3680dce4ccae80060a3dbf5f7004b62390492b9 / run37336768659 attempt1 job111853407017。41CPU/3marker、Bootstrap17/Update29、79+10直接byte、7smoke/5診断、25native+15managed CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを独立照合し親再実行exit0。失敗run37332093729/37334004766の証拠も保持。GPU画像・cross-sessionは未実行のまま。
 - G2/GR79 次優先: 現行v0/looseのCreateTextureFromPixelsにも匿名handleのregistry所有残りを確認したため、小さい所有移管/例外cleanupを先に閉じる。その後ロードマップ173の複数primitive/material cookを進め、N>1 runtime拒否を維持する。GR82 StageBへは飛ばず、StageA（済）後の既定GR84/GR83順を尊重する。
+
+- G2/GR79 旧匿名texture所有修正を開始。今回の対象はmodelへ渡す匿名pixel textureとupload例外のcleanupだけ。named prepared/cooked cacheの所有・通常API戻り値・mip生成は維持する。
+
+- G2/GR79 旧匿名texture所有修正の検証準備: ptr取得後registry解除、作成元storeのRAII例外cleanupを実装。5role単独/併用、失敗作成数4/1/5、weak失効、通常/空data/非例外mip失敗のcaller所有、named cache保持を既存testへ追加。静的2roundでblockerなし、Python12+4+7 normal/-O合格。41CPUと旧gateの実Windows再検証は未実行。

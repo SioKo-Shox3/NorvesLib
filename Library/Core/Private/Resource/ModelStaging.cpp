@@ -288,6 +288,8 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
             }
 
             outTexture = textures.GetRHITexturePtr(textureHandle);
+            // 匿名textureはmodelがptrで所有する。registryへhandleを残さない。
+            textures.ReleaseTexture(textureHandle);
             return static_cast<bool>(outTexture);
         }
 
