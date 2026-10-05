@@ -3,6 +3,7 @@
 #include "CookOutputSetGuard.h"
 #include "CookPathIdentity.h"
 #include "CookOutputPaths.h"
+#include "CookInventoryValues.h"
 #include <algorithm>
 #include <cstring>
 #include <exception>
@@ -16,42 +17,10 @@ namespace NorvesLib::Tools::AssetCook
         using InventoryView = Core::Container::AnsiStringView;
         using Core::Container::VariableArray;
         using Reference = Core::Asset::AssetCookedReference;
-        struct Key
-        {
-            Core::Asset::AssetKind Kind;
-            InventoryView Logical, Variant;
-        };
-        Key View(const CookStateKey& key)
-        {
-            return {key.Kind, key.LogicalPath, key.Variant};
-        }
-        Key View(const Reference& ref)
-        {
-            return {ref.Kind, ref.LogicalPath, ref.Variant};
-        }
-        int Compare(InventoryView a, InventoryView b)
-        {
-            const size_t n = std::min(a.size(), b.size());
-            const int c = n ? std::memcmp(a.data(), b.data(), n) : 0;
-            if (c)
-            {
-                return c;
-            }
-            return a.size() == b.size() ? 0 : a.size() < b.size() ? -1 : 1;
-        }
-        int Compare(Key a, Key b)
-        {
-            if (a.Kind != b.Kind)
-            {
-                return static_cast<unsigned>(a.Kind) < static_cast<unsigned>(b.Kind) ? -1 : 1;
-            }
-            const int c = Compare(a.Logical, b.Logical);
-            return c ? c : Compare(a.Variant, b.Variant);
-        }
-        bool Equal(InventoryView a, InventoryView b)
-        {
-            return Compare(a, b) == 0;
-        }
+        using Detail::CookInventoryValues::Key;
+        using Detail::CookInventoryValues::View;
+        using Detail::CookInventoryValues::Compare;
+        using Detail::CookInventoryValues::Equal;
         bool Fail(InventoryText& error, const char* reason)
         {
             error = "cook_managed_inventory: ";
@@ -316,8 +285,7 @@ namespace NorvesLib::Tools::AssetCook
                     const size_t oldOutput = before[j], newOutput = after[j];
                     const auto& previousRef = record.Record.Outputs[oldOutput].Reference;
                     const auto& currentRef = plan.Outputs[newOutput].ExpectedIdentity;
-                    if (Compare(View(previousRef), View(currentRef)) != 0 ||
-                        !Equal(previousRef.CookedPackage, currentRef.CookedPackage))
+                    if (!Detail::CookInventoryValues::SameFixedOutput(previousRef, currentRef))
                     {
                         return Fail(error, "output_key_or_package_changed");
                     }

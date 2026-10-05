@@ -814,3 +814,6 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-MANAGED-STORE-INITIALIZATION公開形式修正: f0989617/run37263862034はbuild・5診断・既存30CPUが成功したが、専用test初回の相対renameが0x57で拒否された。RootDirectory=NULLとlive workspace由来の絶対native名に方式を統一し、sizeofを満たすbufferへ変更する。copy/replace/実行時fallbackは増やさず、同handle/同volume/no-replace/公開後ID検査を維持する。31CPU/79+10byteは再実行待ち。
 
 - G2-S6-MANAGED-STORE-INITIALIZATION受入: 98ac19ab/run37265719494で実Windows build・31CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。8条件flagは全1で、6境界の実process終了、stage/store ID維持、新aliasの作成前後停止、no-replace競合、orphan保持と公開後失敗を確認。3ZIP・既存payload・CNG RNG import・証拠chainを独立確認しrootで再実行。fresh管理領域作成をdone、runtime/state/package/journalとCLI接続は未実装。
+
+- G2-S6-MANAGED-TRANSACTION-INTENT開始: bootstrapは既知staged root、updateは宣言済みの変更fileだけを対象にし、root IDとunlistedを保持する。大きなstate/indexはinlineせず4固定roleのimage証拠とexact side bytesを検証する。index parserを共有化し、receiptは非循環の固定body＋既知object IDで照合する。NoChangeの判断と実publication/recoveryはcontroller側に残す。
+- G2-S6-MANAGED-TRANSACTION-INTENT検証準備: 4固定controlのexact bytes/ID、共有index/state/manifest parser、固定key/package、Cook/Skip値、bootstrap directory閉包を32CPUへ接続。全kindは実stage/package/control IDでupdateと別不在rootのbootstrapを構成し、source不在parseも反証する。移動元wrapperを無効化し、深い共有prefixは親indexを一度だけ辿って検査時の文字列増幅を避ける。比較器12件×通常/最適化とliteral単独compileは成功、実Windows/79+10byteは未実行。

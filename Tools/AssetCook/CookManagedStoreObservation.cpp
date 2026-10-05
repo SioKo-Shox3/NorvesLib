@@ -1,5 +1,7 @@
 ﻿// 固定control領域の観測とfresh初期化。保存pathからの採用や資産本体の更新は行わない。
 #include "CookManagedStoreObservation.h"
+#include "CookManagedStoreIndex.h"
+#include "ManagedStoreJson.h"
 #include "CookManagedStoreInitialization.h"
 #include "CookManagedStoreInitializationTestAccess.h"
 #include "CookDestinationLockTestAccess.h"
@@ -296,169 +298,13 @@ namespace NorvesLib::Tools::AssetCook
             }
             return h.Close() || Fail(error, "control_close");
         }
-        bool Key(const Core::Container::String& value, const char* text)
-        {
-            if (value.size() != std::strlen(text))
-            {
-                return false;
-            }
-            for (size_t i = 0; i < value.size(); ++i)
-            {
-                if (value[i] != text[i])
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-        bool Shape(const JsonValue& v, std::initializer_list<const char*> fields)
-        {
-            if (!v.IsObject() || v.GetObjectSize() != fields.size())
-            {
-                return false;
-            }
-            uint32_t seen = 0;
-            for (size_t i = 0; i < v.GetObjectSize(); ++i)
-            {
-                size_t n = 0;
-                for (const char* f : fields)
-                {
-                    if (Key(v.GetMemberName(i), f))
-                    {
-                        break;
-                    }
-                    ++n;
-                }
-                if (n == fields.size() || (seen & (1u << n)))
-                {
-                    return false;
-                }
-                seen |= 1u << n;
-            }
-            return true;
-        }
-        bool String(const JsonValue& v, Text& out)
-        {
-            if (!v.IsString() || v.AsString().empty() || v.AsString().size() > 255)
-            {
-                return false;
-            }
-            for (auto c : v.AsString())
-            {
-                if (c < 32 || c >= 127)
-                {
-                    return false;
-                }
-                out.push_back(static_cast<char>(c));
-            }
-            return true;
-        }
-        bool Hex(const JsonValue& v, size_t count, Text& out, bool bNonzero = true)
-        {
-            if (!String(v, out) || out.size() != count)
-            {
-                return false;
-            }
-            bool bAny = false;
-            for (char c : out)
-            {
-                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
-                {
-                    return false;
-                }
-                bAny |= c != '0';
-            }
-            return bAny || !bNonzero;
-        }
-        unsigned Digit(char c)
-        {
-            return c <= '9' ? c - '0' : c - 'a' + 10;
-        }
-        bool ReadId(const JsonValue& v, Id& out)
-        {
-            Text s;
-            if (!Hex(v, 32, s))
-            {
-                return false;
-            }
-            for (size_t i = 0; i < 16; ++i)
-            {
-                out[i] = static_cast<uint8_t>(Digit(s[i * 2]) * 16 + Digit(s[i * 2 + 1]));
-            }
-            return true;
-        }
-        bool ReadU64(const JsonValue& v, uint64_t& out, bool bNonzero)
-        {
-            Text s;
-            if (!Hex(v, 16, s, bNonzero))
-            {
-                return false;
-            }
-            out = 0;
-            for (char c : s)
-            {
-                out = (out << 4) | Digit(c);
-            }
-            return true;
-        }
-        bool Json(const Bytes& bytes, Core::JsonDocument& out)
-        {
-            size_t depth = 0, tokens = 0;
-            bool bString = false, bEscape = false;
-            for (uint8_t c : bytes)
-            {
-                if (bString)
-                {
-                    if (bEscape)
-                    {
-                        bEscape = false;
-                    }
-                    else if (c == '\\')
-                    {
-                        bEscape = true;
-                    }
-                    else if (c == '"')
-                    {
-                        bString = false;
-                    }
-                }
-                else if (c == '"')
-                {
-                    bString = true;
-                    if (++tokens > 100000)
-                    {
-                        return false;
-                    }
-                }
-                else if (c == '{' || c == '[')
-                {
-                    if (++depth > 8 || ++tokens > 100000)
-                    {
-                        return false;
-                    }
-                }
-                else if (c == '}' || c == ']')
-                {
-                    if (!depth)
-                    {
-                        return false;
-                    }
-                    --depth;
-                }
-                else if (c == ',' || c == ':')
-                {
-                    if (++tokens > 100000)
-                    {
-                        return false;
-                    }
-                }
-            }
-            return !bString && !depth && Core::JsonDocument::TryParseUtf8(bytes, out);
-        }
-        bool Version(const JsonValue& v)
-        {
-            return v.IsIntegerLiteral() && v.AsNumber() == 1;
-        }
+        using Detail::ManagedStoreJson::Shape;
+        using Detail::ManagedStoreJson::String;
+        using Detail::ManagedStoreJson::Hex;
+        using Detail::ManagedStoreJson::ReadId;
+        using Detail::ManagedStoreJson::ReadU64;
+        using Detail::ManagedStoreJson::Json;
+        using Detail::ManagedStoreJson::Version;
         bool Header(const Bytes& bytes, const Identity& workspace, const Identity& store, const Text& volumeGuid,
                     CookManagedStoreView& out)
         {
@@ -484,94 +330,17 @@ namespace NorvesLib::Tools::AssetCook
             }
             return true;
         }
-        bool RootLeaf(const Text& leaf)
-        {
-            return Paths::SafeOutputName(leaf) && !std::strchr(leaf.c_str(), '/') &&
-                   !Fold(std::filesystem::path(leaf.c_str()), StoreLeaf);
-        }
         bool Index(const Bytes& bytes, CookManagedStoreView& out, Budget& budget)
         {
-            Core::JsonDocument doc;
-            if (!Json(bytes, doc))
+            CookManagedStoreIndex parsed;
+            Text error;
+            if (!ParseCookManagedStoreIndex(bytes, out.StoreId, MaximumCookStoreRoots - budget.Roots, parsed, error))
             {
                 return false;
             }
-            const auto v = doc.GetRoot();
-            Text id;
-            if (!Shape(v, {"schema", "store_id", "generation", "roots"}) || !Version(v.FindMember("schema")) ||
-                !Hex(v.FindMember("store_id"), 32, id) || id != out.StoreId ||
-                !ReadU64(v.FindMember("generation"), out.IndexGeneration, true))
-            {
-                return false;
-            }
-            const auto roots = v.FindMember("roots");
-            if (!roots.IsArray() || roots.GetArraySize() > MaximumCookStoreRoots - budget.Roots)
-            {
-                return false;
-            }
-            budget.Roots += roots.GetArraySize();
-            for (size_t i = 0; i < roots.GetArraySize(); ++i)
-            {
-                auto row = roots.GetArrayElement(i);
-                CookManagedRootClaim c;
-                if (!Shape(row, {"claim_id", "leaf", "directory_id", "owner_id"}) ||
-                    !Hex(row.FindMember("claim_id"), 32, c.ClaimId) || !String(row.FindMember("leaf"), c.RootLeaf) ||
-                    !RootLeaf(c.RootLeaf) || !ReadId(row.FindMember("directory_id"), c.DirectoryId) ||
-                    !Hex(row.FindMember("owner_id"), 32, c.OwnerId))
-                {
-                    return false;
-                }
-                out.Roots.push_back(std::move(c));
-            }
-            // 初期4096件の索引をsortして重複を拒否し、record順は保持する。
-            Core::Container::VariableArray<size_t> order;
-            for (size_t i = 0; i < out.Roots.size(); ++i)
-            {
-                order.push_back(i);
-            }
-            for (unsigned kind = 0; kind < 3; ++kind)
-            {
-                const auto compare = [&](size_t a, size_t b)
-                {
-                    const auto& x = out.Roots[a];
-                    const auto& y = out.Roots[b];
-                    if (kind == 0)
-                    {
-                        return std::strcmp(x.ClaimId.c_str(), y.ClaimId.c_str());
-                    }
-                    if (kind == 1)
-                    {
-                        return std::memcmp(x.DirectoryId.data(), y.DirectoryId.data(), 16);
-                    }
-                    const auto& aLeaf = x.RootLeaf;
-                    const auto& bLeaf = y.RootLeaf;
-                    for (size_t i = 0; i < std::min(aLeaf.size(), bLeaf.size()); ++i)
-                    {
-                        const auto lower = [](char c)
-                        {
-                            return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
-                        };
-                        const int delta = lower(aLeaf[i]) - lower(bLeaf[i]);
-                        if (delta)
-                        {
-                            return delta;
-                        }
-                    }
-                    return aLeaf.size() == bLeaf.size() ? 0 : (aLeaf.size() < bLeaf.size() ? -1 : 1);
-                };
-                std::sort(order.begin(), order.end(),
-                          [&](size_t a, size_t b)
-                          {
-                              return compare(a, b) < 0;
-                          });
-                for (size_t i = 1; i < order.size(); ++i)
-                {
-                    if (compare(order[i - 1], order[i]) == 0)
-                    {
-                        return false;
-                    }
-                }
-            }
+            budget.Roots += parsed.Roots.size();
+            out.IndexGeneration = parsed.Generation;
+            out.Roots = std::move(parsed.Roots);
             return true;
         }
         struct Work
@@ -1157,12 +926,11 @@ namespace NorvesLib::Tools::AssetCook
             out.push_back('}');
             return out;
         }
-        Text MakeIndex(const Text& storeId)
+        bool MakeIndex(const Text& storeId, Text& out, Text& error)
         {
-            Text out = "{\"schema\":1,";
-            AddField(out, "store_id", storeId);
-            out.append(",\"generation\":\"0000000000000001\",\"roots\":[]}");
-            return out;
+            CookManagedStoreIndex index;
+            index.StoreId = storeId;
+            return SerializeCookManagedStoreIndex(index, out, error);
         }
         bool WriteControl(InitOwner& owner, const wchar_t* leaf, const Text& text, Handle& file, bool& bKnown,
                           bool bHeader, InitFault fault, Bytes& verified, Text& error)
@@ -1324,8 +1092,10 @@ namespace NorvesLib::Tools::AssetCook
                 return InitResult::Error;
             }
             Point(work, InitPoint::HeaderWritten, owner);
-            if (!WriteControl(owner, L"roots.json", MakeIndex(storeId), owner.IndexFile, owner.bIndexKnown, false,
-                              fault, indexBytes, work.Reason))
+            Text indexJson;
+            if (!MakeIndex(storeId, indexJson, work.Reason) ||
+                !WriteControl(owner, L"roots.json", indexJson, owner.IndexFile, owner.bIndexKnown, false, fault,
+                              indexBytes, work.Reason))
             {
                 return InitResult::Error;
             }

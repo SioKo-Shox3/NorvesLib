@@ -1,16 +1,12 @@
 ﻿#pragma once
 #include "CookOwnerResolver.h"
+#include "CookManagedStoreIndex.h"
 #include "Container/FixedArray.h"
 #include "Container/VariableArray.h"
 #include <cstddef>
 #include <cstdint>
 namespace NorvesLib::Tools::AssetCook
 {
-    struct CookManagedRootClaim
-    {
-        Core::Container::AnsiString ClaimId, RootLeaf, OwnerId;
-        Core::Container::FixedArray<uint8_t, 16> DirectoryId;
-    };
     struct CookManagedStoreView
     {
         // handle由来の比較・診断用。保存locatorとして後のI/Oへ渡さない。
@@ -38,7 +34,6 @@ namespace NorvesLib::Tools::AssetCook
         Error
     };
     inline constexpr size_t MaximumCookStoreEntries = 65536;
-    inline constexpr size_t MaximumCookStoreRoots = 4096;
     inline constexpr size_t MaximumCookStoreMetadataBytes = 32 * 1024 * 1024;
     // 同volume lock内の読み取り専用観測。StoreMissing/Observedだけoutを更新する。
     // stable namespaceと協調writerが前提。全volumeの復旧・認証・書込許可を意味しない。

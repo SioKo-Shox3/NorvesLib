@@ -27,6 +27,7 @@
             std::abort();                                                                                              \
         }                                                                                                              \
     } while (false)
+#include "CookManagedIntentFixture.h"
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Asset;
 using namespace NorvesLib::Tools::AssetCook;
@@ -236,6 +237,9 @@ namespace
 
 
 
+        CookOwnedRecord stagedOwned = owned;
+        stagedOwned.Record = stagedRecord;
+        ManagedIntentFixture::VerifyUpdate(root, name, stateFile, fromFile, stagedOwned, finalPlan, stagedPlan);
         CHECK(Decide(r, nullptr, &f.Live) == CookDecision::Cook);
         CHECK(Decide(r, &f.Record, &f.Live, 7, false) == CookDecision::Cook);
         return f;

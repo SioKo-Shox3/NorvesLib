@@ -3,6 +3,13 @@ add_library(AssetCookLib STATIC
     CookStateFile.cpp
     CookStateFile.h
     CookStateFileTestAccess.h
+    CookManagedTransactionIntent.cpp
+    CookManagedTransactionIntent.h
+    CookInventoryValues.h
+    CookReferenceValues.h
+    CookManagedStoreIndex.cpp
+    CookManagedStoreIndex.h
+    ManagedStoreJson.h
     CookManagedStoreInitialization.h
     CookManagedStoreInitializationTestAccess.h
     CookManagedStoreObservation.cpp

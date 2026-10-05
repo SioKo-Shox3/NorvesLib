@@ -2494,3 +2494,9 @@
 - done-when: 既存volume lock内で共通観測を再利用し、StoreMissing/不在rootだけにfresh stageを作る。CNG StoreId・実directory IDのheaderとgeneration1空indexをwrite/flush/readback/parseし、同handleのno-replace directory renameと公開後再観測を行う。
 - verify: 既存store/未知root/pending/alias拒否、stage衝突・未知child保持、各write/close/rename/公開後故障、実child process中断、ID維持、Created/PublishedButError/out保持、Windows31CPUと79+10byte gate。
 - stop-when: 公開後の失敗でstoreを削除する、未確認orphanを名前だけで掃除/採用する、copy/replaceへfallbackする、runtime root/state/package/journalを同時公開する、ACL/privilege変更を要求する。
+
+## G2-S6-MANAGED-TRANSACTION-INTENT: 相対slotの更新記録を厳密な値契約にする
+- status: doing
+- done-when: bootstrap/updateのimmutable intentを、独立store anchor・固定control side-documentの正確なbytes/IDs・共通state/index codec・manifest readerで構築/往復する。slotは型から導出し、保存absolute pathはI/Oへ渡さない。値の成功は公開許可ではない。
+- verify: 実cook/captureとnative before/after image、固定key/package対応、Cook/Skipの値整合、世代/上限/unknown/duplicate/slot escape/同byte別ID/入力寿命/失敗保持、既存Windows・79+10byte gate。
+- stop-when: 永続file lineageやwhole-root update交換を導入する、unlistedを変更する、updateで親directoryを再作成する、beforeを再serializeしたJSONで代用する、source不在復旧でsourceを読む、値codecをwrite capabilityとみなす。
