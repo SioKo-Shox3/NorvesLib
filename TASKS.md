@@ -634,6 +634,35 @@
 - notes: 2026-10-05 VTG6-MATERIAL-CLASSIFY の反復で見つけた。`SkinningComputePass` は最終の状態を `GenericRead` と宣言するが dispatch の後にバリアを出さず、`VisibilityRasterPass` の頂点シェーダーが読む前に書き込みが見えることが保証されない。危険地帯（描画パス・同期）。
 
 
+## VTG6-CHUNKS-HARDEN: 三角形の塊の分け方の穴を塞ぎ、RTの経路の変化を確かめる
+- status: todo
+- done-when: (1) `MeshResourcesProceduralGpuTest.cpp` で `6b85c9b` が足した行（203・239・253・263・274 行付近）の `std::vector` を `Container::VariableArray` に置き換える（絶対規則1）。(2) `MeshIndexChunks.h` が 3 の倍数でない区切り（サブメッシュの最初のインデックス・数）を黙って無視して隣の区間と合わせた塊を作る（例: インデックス 13 個、区間 [0,7) と [7,13) で塊 (0,12) が2つの材質をまたぐ）のをやめ、検出して失敗を返し、呼び出し側が `LOG` で1回知らせる（区間を勝手に合わせない）。`first += maxIndicesPerChunk` の桁あふれで無限ループにならない形にする。(3) テストに、128 三角形を超えるサブメッシュ（区切りと 128 での分割が重なる）、インデックスが 1〜2 個（塊 0 個）、256・257 三角形、3 の倍数でない区切りの失敗、スキニングのメッシュを解放した後に `TryGetChunks` が false になることのケースを足す。(4) `VisibilityRasterPass.cpp`（510 行付近）が描画の範囲ごとに塊を作り直し、登録時に保存した `ProceduralMeshGPUData::Chunks` を読んでいない。保存した塊を読むか、作り直すなら登録時の保存をやめるか、どちらかに揃え、理由を PROGRESS に書く。(5) 手続きメッシュのバッファが BDA を持ったので、`RenderingCoordinator.cpp`（569 行付近）の `CreateAddressableMeshBuffer` がコピーを作らず元のバッファを返すようになった（RT の BLAS の入力と RTGI・DDGI のインスタンスのアドレスが元のバッファを直接読む）。`RayTracingSceneSnapshotTest` を走らせて BLAS の寿命の検査が通ることを確かめる。(6) `PROGRESS.md` の 6b85c9b の節で改行の記号が実際の改行になって割れた行と、274ca1e0 の節の「描画経路は変えていない（バッファの用途ビットの追加のみ）」を事実（RT の経路がコピーから直接の利用に変わった。撮影の画素比較で出力は一致）に直す。
+- verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest SkinnedRenderPathContractTest RayTracingSceneSnapshotTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MeshResourcesProceduralGpuTest|GeometryPoolAllocatorTest|RayTracingSceneSnapshotTest)$"`
+- stop-when: `RayTracingSceneSnapshotTest` が元のバッファの直接の利用で落ち、原因が BLAS とメッシュのバッファの寿命の契約にある場合は、落ちた検査と値を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-05 親が足した（VTG6-RASTER-CHUNKS の評価の残課題。評価は PASS）。スキニングの塊の追加のケースは `SkinnedRenderPathContractTest.exe` の直接実行の出力（そのケースの行）を証拠にする（TEST-SKINNED の既知の停止のため ctest では完走しない）。危険地帯（メモリ・寿命・RT）。
+
+## VTG6-PASS-FRAME-SLOTS: 計算パスのUBOとdescriptorの枠を、1フレームに何回呼ばれても上書きしない形にする
+- status: todo
+- done-when: `SkinningComputePass`（`m_Compute.BeginFrame(m_FrameCounter++)`）・`MaterialTileClassifyPass`（同じ形）・`MegaGeometryPass`（`m_FrameSlots[m_OcclusionFrameCount % FrameSlotCount]`）が、枠の番号をフレームではなく Execute を呼んだ回数で決めている。同じパスのインスタンスが1フレームに何回 Execute されうるか（エディタの複数のビューポート・反射・キャプチャなど、同じ SceneView か別の SceneView か）を調べて PROGRESS に書き、1フレームに N 回（N がフレームの枠の数以上でも）呼ばれても、まだ提出していない・GPU が読み終えていない UBO・descriptor set・一時のバッファを上書きしない形にする（フレームごとに使った枠を数えて足りなければ増やす、GPU の完了で枠を返すリングにする等）。CPU のテスト（関係する束の MEMBER）が、1フレームに `FrameSlotCount` を超える回数の Execute（の枠の割り当て）で、全部が別の枠になり、次のフレームで GPU の完了の後に再利用されることを確かめる。既定の描画は変えない（`-Deterministic` の起動画面の撮影が前と一致する）。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MegaGeometryResourcesTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MegaGeometryResourcesTest|ComputeSkinningVulkanTest|MaterialTileClassifyVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-PASS-FRAME-SLOTS -Configuration RelWithDebInfo -Deterministic`
+- stop-when: 枠を GPU の完了で返すのに要るフェンスの値が RenderGraph・RHI の公開 API から取れず、RHI の公開 API を足す必要がある場合は、足す API を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-05 親が足した（VTG6-COMPUTE-SKINNING の評価の残課題。同じ SceneView が1フレームに3つ以上のビューポートを描くと、3回目の `BeginFrame` が1回目の枠の位置に戻り、提出前の dispatch の UBO と descriptor set を上書きする）。MegaGeometryPass は既定で有効なので、既定の経路の撮影で一致を確かめる。危険地帯（RenderThread・同期・寿命）。
+
+## VTG6-SKINNING-HARDEN: 計算シェーダーのスキニングの閾値・上限・継続の検査を整える
+- status: todo
+- done-when: (1) `skinning_compute.comp` の `NormalMatrixOf` の特異と見なす閾値（1e-6）を `MatrixUtils::CreateNormalMatrix` の `Constants::EPSILON`（1.19e-7）にそろえ、コメントを事実に合わせる。`ComputeSkinningVulkanTest` の参照（198 行付近の `TransformNormal`）も同じ閾値にし、|det| が 1.19e-7 以上 1e-6 未満の骨（一様スケール 0.009 など）のケースを足す。(2) `SkinningComputePass.cpp`（241 行付近）が頂点の合計が上限を超えると残りのインスタンスを黙って捨てるのをやめ、捨てた数を `LOG` で1回と統計（`Debug/Stats.h`）に出す。1本の束縛が `maxStorageBufferRange` を超えないこと、1インスタンスの dispatch の x が 65535 を超えないこと（超えるなら y に広げるか分ける）を確かめる。(3) `Declare`/`Execute` の継続の検査を足す: 2つ以上のインスタンスの詰め方（2つ目以降の `VertexBase`）、前のフレームのパレットが無いときに今の値で代用すること、インスタンス描画のものを外すこと（`RenderGraphCompileTest` か `ComputeSkinningVulkanTest` の側）。(4) `ComputeSkinningVulkanTest.cpp`（176 行付近）の `Math::Matrix4x4::values` への memcpy を Math の抽象 API に置き換える（行列の要素を直接触らない方針）。
+- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(ComputeSkinningVulkanTest|RenderingVelocitySkinnedVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: 閾値をそろえると `RenderingVelocitySkinnedVulkanTest` の結果が変わり、原因が頂点シェーダーのスキニングの側の閾値にある場合は、比べた値を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-05 親が足した（VTG6-COMPUTE-SKINNING の評価の残課題。評価は PASS）。有効にするとパレットを GBuffer の経路と2回アップロードする件は VTG6-DEFAULT-ON で扱う。
+
 ## VTG6-MATERIAL-TABLE: 描画の記録の材質の番号をフレームで一意な材質の表の番号にする
 - status: todo
 - done-when: ビジビリティバッファの描画の記録の材質の番号を、フレームごとの材質の表（storage buffer）の番号にする。表はそのフレームの不透明の描画が使う実物の材質（`Material` など、材質の解決が引くもの）ごとに1件で、同じ材質を使う MegaGeometry の区間・手続きメッシュの塊・スキニングの塊は同じ番号になり、違う材質は違う番号になる（今は MegaGeometry が区間の番号、手続き・スキニングがプロキシの中のスロットの番号を入れていて、別の材質が同じ番号にまとまる。`visbuffer_records.comp`・`VisibilityRasterPass.cpp`）。MegaGeometry の記録を GPU で作る経路には、インスタンスの区間から表の番号への対応を渡す。表の1件は、材質の解決が要る定数（基本色・係数・材質の種類の印など）と、後の VTG6-RESOLVE-MATERIALS がテクスチャを引くための材質の識別を持つ。番号は 0 から詰め、数は `VisibilityBuffer`・`MaterialTileClassifyPass` の材質の上限以下に収める（超えたら `VISBUFFER_MATERIAL_OVERFLOW` を1回出し、溢れた分は予備の番号へ寄せる）。`--visibility-buffer=on` の撮影のログに `VISBUFFER_MATERIALS unique=<n> limit=<n>` を出す。CPU のテスト `VisibilityMaterialTableTest`（`RenderResourcesDomainContractTest` の束）が、同じ材質の異なる描画が同じ番号に、違う材質が違う番号になること、番号が詰まっていること、上限を超えたときの寄せ方を確かめる。
@@ -647,7 +676,7 @@
 
 ## VTG6-RESOLVE-GEOMETRY: 材質の解決で三角形から重心座標・微分・法線・速度を求める
 - status: todo
-- done-when: 材質ごとのタイルを処理する計算シェーダーが、ID から記録と三角形を引き、3頂点（ワールドの位置・法線・UV。MegaGeometry はプール、手続きはバッファ、スキニングは変形済みの頂点）から、画素のカメラの光線と三角形の交点で透視の補正つきの重心座標と、隣の画素への微分（解析的な dUV/dx・dUV/dy、dPos/dx・dPos/dy）を求める。法線（補間）・接線の基底（三角形の辺と UV から。今の `CalculateCotangentFrame` と同じ向きの規約）・速度（前のフレームの変換か前のフレームの頂点から前のクリップ座標）を求め、`GBuffer.Normal`・`GBuffer.Velocity` へ書き、`GBuffer.Albedo` には材質の基本色（テクスチャなしの定数の色。α=1）を書く。`--visibility-buffer=on` のとき、GBufferPass・MegaGeometryPass の GBuffer の描画を止め、この解決の出力を使う。`-Deterministic` で on・off を撮り、`GBuffer.Normal`・`Velocity` の差（デバッグの表示か GBuffer の読み戻し）が小さいことを記録する（深度・法線の向き・速度の符号が合う）。`RenderingVelocity*VulkanTest` を on でも通す方法があれば足す。
+- done-when: 材質ごとのタイルを処理する計算シェーダーが、ID から記録と三角形を引き、3頂点（ワールドの位置・法線・UV。MegaGeometry はプール、手続きはバッファ、スキニングは変形済みの頂点）から、画素のカメラの光線と三角形の交点で透視の補正つきの重心座標と、隣の画素への微分（解析的な dUV/dx・dUV/dy、dPos/dx・dPos/dy）を求める。法線（補間）・接線の基底（三角形の辺と UV から。今の `CalculateCotangentFrame` と同じ向きの規約）・速度（前のフレームの変換か前のフレームの頂点から前のクリップ座標）を求め、`GBuffer.Normal`・`GBuffer.Velocity` へ書き、`GBuffer.Albedo` には材質の基本色（テクスチャなしの定数の色。α=1）を書く。`--visibility-buffer=on` のとき、GBufferPass・MegaGeometryPass の GBuffer の描画を止め、この解決の出力を使う。`-Deterministic` で on・off を撮り、`GBuffer.Normal`・`Velocity` の差（デバッグの表示か GBuffer の読み戻し）が小さいことを記録する（深度・法線の向き・速度の符号が合う）。`RenderingVelocity*VulkanTest` を on でも通す方法があれば足す。スキニングのインスタンスが2体以上の場面（GPU のテストか検証の場面）で、2体目の解決の位置・速度が頂点シェーダーのスキニングの描画と合うことを確かめる（記録の頂点の基点の二重加算が戻れば落ちる形。1体だけの場面では基点が 0 になり検出できない）。`on` で MegaGeometryPass の GBuffer の描画を止めるとき、2パスの遮蔽の HZB の深度に MegaGeometry の1パス目が入る順序を保つか、入らない間は判定が保守側（隠れていない側）に倒れるだけであることを `MEGA_OCCLUSION` の数で確かめて PROGRESS に書く（順序の組み直しは VTG6-DEFAULT-ON）。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderingVelocityVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|RenderingVelocityStaticVulkanTest|RenderingVelocityObjectVulkanTest|RenderingVelocitySkinnedVulkanTest|MaterialTileClassifyVulkanTest)$"`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
@@ -703,7 +732,7 @@
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-DEFAULT-ON -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
 - stop-when: golden の差がこの変更だけでは説明できない場合は、測った値と分類を記録して止める。
-- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Test/Core/Rendering, Baselines/RenderingValidation, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, Baselines/RenderingValidation, Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-05 親: 元の VTG6-RETIRE-GBUFFER-RASTER（今のラスタを外す）を、`geometryShader` の無い GPU の予備として残す形に変えた。危険地帯（描画パス）。起動画面の見た目を変えうる（絶対規則7）。
 
 ## VTG6-ACCEPT: 段6（ビジビリティバッファ）の受入れを記録する
