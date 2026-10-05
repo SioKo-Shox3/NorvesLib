@@ -1,11 +1,13 @@
 ﻿// 実filesystemに独立schema fixtureを置き、観測が変更も採用も行わないことを検証する。
 #include "Tools/AssetCook/CookManagedStoreObservation.h"
 #include "Tools/AssetCook/CookDestinationLock.h"
+#include "Tools/AssetCook/NativeCookPath.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <exception>
 #include <fstream>
+#include <source_location>
 #if defined(_WIN32)
 #include <Windows.h>
 #endif
@@ -232,17 +234,33 @@ namespace StoreObservationTest
                   });
         return out;
     }
-    void Unchanged(const Array<SnapshotEntry>& a, const Array<SnapshotEntry>& b)
+    void Unchanged(const Array<SnapshotEntry>& a, const Array<SnapshotEntry>& b, uint_least32_t callerLine)
     {
         CHECK(a.size() == b.size());
         for (size_t i = 0; i < a.size(); ++i)
         {
-            CHECK(a[i].Path == b[i].Path && a[i].Stamp == b[i].Stamp && a[i].Hash == b[i].Hash &&
-                  a[i].Size == b[i].Size && a[i].bFile == b[i].bFile);
+            const bool bSame = a[i].Path == b[i].Path && a[i].Stamp == b[i].Stamp && a[i].Hash == b[i].Hash &&
+                               a[i].Size == b[i].Size && a[i].bFile == b[i].bFile;
+            if (!bSame)
+            {
+                Text before, after;
+                CHECK(NorvesLib::Tools::AssetCook::Detail::EncodeCookPathUtf8(a[i].Path, before, false));
+                CHECK(NorvesLib::Tools::AssetCook::Detail::EncodeCookPathUtf8(b[i].Path, after, false));
+                std::fprintf(
+                    stderr,
+                    "store_snapshot_difference caller_line=%u entry=%zu before=%s after=%s file=%d/%d size=%llu/%llu hash=%016llx/%016llx stamp=%lld/%lld\n",
+                    static_cast<unsigned>(callerLine), i, before.c_str(), after.c_str(), a[i].bFile, b[i].bFile,
+                    static_cast<unsigned long long>(a[i].Size), static_cast<unsigned long long>(b[i].Size),
+                    static_cast<unsigned long long>(a[i].Hash), static_cast<unsigned long long>(b[i].Hash),
+                    static_cast<long long>(a[i].Stamp.time_since_epoch().count()),
+                    static_cast<long long>(b[i].Stamp.time_since_epoch().count()));
+            }
+            CHECK(bSame);
         }
     }
     CookManagedStoreObservation Observe(const CookOwnerResolveRequest& r, Result expected,
-                                        const std::filesystem::path& snapshotRoot = {})
+                                        const std::filesystem::path& snapshotRoot = {},
+                                        std::source_location location = std::source_location::current())
     {
         auto before = snapshotRoot.empty() ? Array<SnapshotEntry>{} : Snapshot(snapshotRoot);
         CookManagedStoreObservation out;
@@ -265,7 +283,7 @@ namespace StoreObservationTest
         }
         if (!snapshotRoot.empty())
         {
-            Unchanged(before, Snapshot(snapshotRoot));
+            Unchanged(before, Snapshot(snapshotRoot), location.line());
         }
         return out;
     }
