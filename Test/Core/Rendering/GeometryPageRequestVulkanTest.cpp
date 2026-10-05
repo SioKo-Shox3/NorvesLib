@@ -9,6 +9,9 @@
 // 4) 2 つのページが非常駐で容量が 1: 件数は 2、溢れは 1 になり、書かれた要求は非常駐のページのどちらか。
 // 5) 自分の誤差が許容に収まる（遠い）なら、子のページが非常駐でも親が普通に描かれ、要求は出ない。
 // 6) 同じフレームの印で 2 回続けて判定すると、2 回目は要求を重ねて積まない。新しい印では積む。
+// 7) 2 パス目: 1 パス目で描いたクラスタは、2 パス目で遮蔽と判定されても自分のページの使用の印を出す。
+//    1 パス目で描かなかった（前のフレームで見えなかった）遮蔽されたクラスタは出さない。
+// 描いたクラスタは、自分のページへも使用の印を要求の列に出す（ホストの LRU を使われた順にするため。常駐でも出る）。
 // 各場合の期待は手で書いた集合で、CPU の写し（DecideBakedCluster）の結果とも一致すること。
 // BVH をたどる cluster_bvh_cull.comp が同じ共通の関数を取り込んでコンパイルできることも確かめる。
 #include "Rendering/CameraViewConstants.h"
@@ -402,7 +405,7 @@ namespace
         return true;
     }
 
-    // CPU の写し（DecideBakedCluster）で、同じ常駐のときに描かれるクラスタと要求するページを求める
+    // CPU の写し（DecideBakedCluster）で、同じ常駐のときに描かれるクラスタと要求するページ（子の要求と使用の印）を求める
     void CpuExpectation(const Fixture& fixture, const uint32_t (&regions)[PageCount], float lodBias,
                         VariableArray<uint32_t>& outDrawn, VariableArray<uint32_t>& outPages)
     {
@@ -421,6 +424,12 @@ namespace
                 continue;
             }
             outDrawn.push_back(index);
+            // 描いたクラスタの自分のページへの使用の印
+            const uint32_t ownPage = fixture.CpuClusters[index].PageId;
+            if (std::find(outPages.begin(), outPages.end(), ownPage) == outPages.end())
+            {
+                outPages.push_back(ownPage);
+            }
             if (decision == Mega::BakedClusterDecision::DrawnForMissingChild)
             {
                 const uint32_t page = fixture.CpuClusters[index].ChildPageId;
@@ -652,12 +661,13 @@ namespace
             };
             // クラスタの番号: A = 0(親) 1..4(子)、B = 5(親) 6..9(子)、C = 10(親) 11..14(子)
             const Scenario scenarios[] = {
-                {"全て常駐", {R, R, R, R}, 1.0f, RequestCapacity, {1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14}, 0, 0, {}},
-                {"ページ2が非常駐(AとBの子)", {R, R, N, R}, 1.0f, RequestCapacity, {0, 5, 11, 12, 13, 14}, 1, 0, {2}},
+                // 要求 = 子のページが非常駐のための要求と、描いたクラスタの自分のページへの使用の印（根の親はページ 0）
+                {"全て常駐(使用の印だけ)", {R, R, R, R}, 1.0f, RequestCapacity, {1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14}, 2, 0, {2, 3}},
+                {"ページ2が非常駐(AとBの子)", {R, R, N, R}, 1.0f, RequestCapacity, {0, 5, 11, 12, 13, 14}, 3, 0, {0, 2, 3}},
                 {"要求の容量が0", {R, R, N, R}, 1.0f, 0, {0, 5, 11, 12, 13, 14}, 0, 0, {}},
-                {"ページ2と3が非常駐", {R, R, N, N}, 1.0f, RequestCapacity, {0, 5, 10}, 2, 0, {2, 3}},
-                {"ページ2と3が非常駐・容量1", {R, R, N, N}, 1.0f, 1, {0, 5, 10}, 2, 1, {}},
-                {"誤差が許容に収まる(遠い)", {R, R, N, N}, 1000.0f, RequestCapacity, {0, 5, 10}, 0, 0, {}},
+                {"ページ2と3が非常駐", {R, R, N, N}, 1.0f, RequestCapacity, {0, 5, 10}, 3, 0, {0, 2, 3}},
+                {"ページ2と3が非常駐・容量1", {R, R, N, N}, 1.0f, 1, {0, 5, 10}, 3, 2, {}},
+                {"誤差が許容に収まる(遠い)", {R, R, N, N}, 1000.0f, RequestCapacity, {0, 5, 10}, 1, 0, {0}},
             };
 
             uint32_t stampCounter = 100;
@@ -681,8 +691,9 @@ namespace
                 }
                 else if (scenario.Capacity == 1)
                 {
-                    // 書かれた 1 件は、非常駐のどちらかのページ(2 か 3)
-                    bCase = bCase && result.Requests.size() == 1 && (result.Requests[0] == 2u || result.Requests[0] == 3u);
+                    // 書かれた 1 件は、要求されたページ(0・2・3)のどれか
+                    bCase = bCase && result.Requests.size() == 1 &&
+                            (result.Requests[0] == 0u || result.Requests[0] == 2u || result.Requests[0] == 3u);
                 }
                 else
                 {
@@ -727,14 +738,82 @@ namespace
                 {
                     return 1;
                 }
-                const bool bDedupe = first.RequestCount == 2 && second.RequestCount == 0 && third.RequestCount == 2 &&
-                                     SameValues(third.Requests, {2, 3});
+                const bool bDedupe = first.RequestCount == 3 && second.RequestCount == 0 && third.RequestCount == 3 &&
+                                     SameValues(third.Requests, {0, 2, 3});
                 std::cout << "ケース「同じ印で続けて判定」1回目=" << first.RequestCount << " 2回目=" << second.RequestCount
                           << " 新しい印=" << third.RequestCount << (bDedupe ? " OK" : " NG") << '\n';
                 if (!bDedupe)
                 {
                     std::cerr << "同じフレームの印での重複の省略が期待と違います\n";
                     bPassed = false;
+                }
+            }
+
+            // 2 パス目: 1 パス目で描いたクラスタは、2 パス目で遮蔽と判定されても使用の印を出す。
+            // 1 パス目で描かなかった遮蔽クラスタは出さない。遮蔽されなければ、1 パス目で描いたものは 2 パス目では描かず、使用の印だけ出る
+            {
+                constexpr uint32_t ReadStamp = 7;
+                constexpr uint32_t WriteStamp = 8;
+                struct PassTwoScenario
+                {
+                    const char* Name;
+                    float HiZDepth;      // 0 = 全てが遮蔽される、1 = 遮蔽されない
+                    uint32_t VisibleLast; // 前のフレームの見えた印（ReadStamp = 1 パス目で描いた、0 = 描かなかった）
+                    uint32_t ExpectedRequestCount;
+                    std::initializer_list<uint32_t> Requests;
+                    uint32_t ExpectedVisibleAfter; // 判定後の見えた印（遮蔽されたものは 0）
+                    uint32_t ExpectedDrawn;
+                };
+                const PassTwoScenario passTwoScenarios[] = {
+                    {"2パス目で遮蔽(1パス目で描画済み)", 0.0f, ReadStamp, 2, {2, 3}, 0u, 0},
+                    {"2パス目で遮蔽(1パス目で未描画)", 0.0f, 0u, 0, {}, 0u, 0},
+                    {"2パス目で可視(1パス目で描画済み)", 1.0f, ReadStamp, 2, {2, 3}, WriteStamp, 0},
+                    {"2パス目で可視(1パス目で未描画)", 1.0f, 0u, 2, {2, 3}, WriteStamp, 12},
+                };
+                for (const PassTwoScenario& scenario : passTwoScenarios)
+                {
+                    const float depth[4] = {scenario.HiZDepth, scenario.HiZDepth, scenario.HiZDepth, scenario.HiZDepth};
+                    fixture.HiZ->Update(depth, 8u, 16u, 0, 0);
+                    uint32_t visible[ClusterCount];
+                    for (uint32_t& value : visible)
+                    {
+                        value = scenario.VisibleLast;
+                    }
+                    WriteBuffer(fixture.Visible, visible, sizeof(visible));
+
+                    Fixture passTwo = fixture;
+                    passTwo.Base.CullPass = 2; // CULL_PASS_SECOND
+                    passTwo.Base.bHiZEnabled = 1;
+                    passTwo.Base.HiZWidth = 2;
+                    passTwo.Base.HiZHeight = 2;
+                    passTwo.Base.HiZMipCount = 1;
+                    passTwo.Base.VisibleReadStamp = ReadStamp;
+                    const uint32_t regions[PageCount] = {R, R, R, R};
+                    CaseResult result;
+                    if (!RunCase(passTwo, regions, noStamps, 1.0f, RequestCapacity, WriteStamp, result))
+                    {
+                        return 1;
+                    }
+                    // 子（番号 1..4・6..9・11..14）だけが基本の判定を通る（親は子が常駐しているので描かない）
+                    const uint32_t* marks = static_cast<const uint32_t*>(fixture.Visible->Map(0u, sizeof(visible)));
+                    bool bMarks = marks != nullptr;
+                    for (uint32_t index = 0; bMarks && index < ClusterCount; ++index)
+                    {
+                        const bool bChild = (index % 5u) != 0u;
+                        bMarks = marks[index] == (bChild ? scenario.ExpectedVisibleAfter : 0u);
+                    }
+                    fixture.Visible->Unmap();
+                    const bool bCase = bMarks && result.DrawnCount == scenario.ExpectedDrawn &&
+                                       result.RequestCount == scenario.ExpectedRequestCount &&
+                                       result.RequestOverflow == 0 && SameValues(result.Requests, scenario.Requests);
+                    std::cout << "ケース「" << scenario.Name << "」描画=" << result.DrawnCount << " 要求=" << result.RequestCount
+                              << (bCase ? " OK" : " NG") << '\n';
+                    if (!bCase)
+                    {
+                        std::cerr << "ケース「" << scenario.Name << "」が期待と違います\n";
+                        PrintValues("要求", result.Requests);
+                        bPassed = false;
+                    }
                 }
             }
 
@@ -752,11 +831,20 @@ namespace
                 const Mega::GeometryPageRequestDecodeResult decoded =
                     words != nullptr ? set.AddBuffer(words, RequestCapacity, 9, 5) : Mega::GeometryPageRequestDecodeResult{};
                 fixture.PageRequests->Unmap();
-                const bool bDecoded = words != nullptr && decoded.Accepted == 2 && decoded.Overflow == 0 &&
-                                      set.GetRequests().size() == 2 && set.GetRequests()[0].TableIndex == 2 &&
-                                      set.GetRequests()[1].TableIndex == 3 && set.GetRequests()[0].LastRequestedFrame == 9;
-                std::cout << "ケース「要求の読み取り」" << (bDecoded ? "OK" : "NG") << '\n';
-                if (!bDecoded)
+                const bool bDecoded = words != nullptr && decoded.Accepted == 3 && decoded.Overflow == 0 &&
+                                      set.GetRequests().size() == 3 && set.GetRequests()[0].LastRequestedFrame == 9;
+                bool bIndices = false;
+                if (bDecoded)
+                {
+                    uint32_t mask = 0;
+                    for (const auto& request : set.GetRequests())
+                    {
+                        mask |= request.TableIndex < 32u ? (1u << request.TableIndex) : 0u;
+                    }
+                    bIndices = mask == ((1u << 0) | (1u << 2) | (1u << 3)); // 並びは GPU のスレッドの順で決まらない
+                }
+                std::cout << "ケース「要求の読み取り」" << (bDecoded && bIndices ? "OK" : "NG") << '\n';
+                if (!bDecoded || !bIndices)
                 {
                     bPassed = false;
                 }

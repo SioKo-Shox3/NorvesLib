@@ -686,10 +686,14 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
         }
         // 子のページが無いために描いたクラスタは、見えているときだけ子のページを要求する。
         // 1パス目で描いたものも、2パス目が判定し直すのでここで要求が出る（1パス目では要求しない）
-        // 描いたクラスタの自分のページへは使用の印を出す（常駐ページの最後に使われたフレームを、ホストの LRU へ渡す）
         if (bVisible)
         {
             RequestPage(instance.bvhInfo.w, requestPage);
+        }
+        // 描いたクラスタの自分のページへは使用の印を出す（常駐ページの最後に使われたフレームを、ホストの LRU へ渡す）。
+        // 1パス目で描いたものは、2パス目で遮蔽と判定されても実際に描かれているので、使用の印を出す
+        if (bDrawnInFirstPass || bVisible)
+        {
             RequestPage(instance.bvhInfo.w, ownPage);
         }
         return;
