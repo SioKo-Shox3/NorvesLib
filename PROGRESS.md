@@ -1025,3 +1025,20 @@
 - 検証: `verify-VTG5-STREAM-HANG-1-build.txt`（RelWithDebInfo の Game）・`-2-build-debug.txt`・`-3-ctest.txt`（3本とも合格）・`-4-capture3.txt`・`-5-script-capture.txt`
 - 触ったもの: `Library/Core/Private/Rendering/GeometryPageStreamer.h`・`Test/Core/Rendering/GeometryPageStreamerTest.cpp`・`TASKS.md`・`PROGRESS.md`
 - Next: VTG5-STRESS-GEOMETRY（撮影の続き。1100 MB の low の旋回も完走する）。
+
+## 反復 4（run 20261005-175023）: VTG5-STRESS-GEOMETRY（done）
+- 実装は前の反復の `9abc9a06`（`--stress-geometry=<個数>` の配置、`CaptureStartupScene.ps1 -StressGeometry`）から変えていない。この反復は、ストリーマの直し（VTG5-PAGE-TOUCH・VTG5-STREAM-HANG）の後の現行コードで、done-when の撮影・計測をやり直して記録した。300 個（岩・小屋・大きな球・スキャン資産）が地面の外側へ並ぶ（`STRESS_GEOMETRY_PLACED`）。
+- 全常駐（`-GeometryStreaming Off`）のジオメトリの量は `geometry_used_mb`=274 MB。`--vram-budget-mb 1100` の目標は `geometry_target_mb`=71 MB で、全常駐の約 3.9 倍（2 倍以上）。
+- 1100 MB（`-Deterministic`、RelWithDebInfo、3 視点＋旋回 20 度/秒の 60/75/90 フレーム）:
+  | 撮影 | geometry_used_mb | target | evicted_pages | 常駐ページ |
+  |---|---|---|---|---|
+  | default / low / top（静止） | 54 / 67 / 32 | 71 | 0 / 0 / 0 | 319 / 436 / 118 |
+  | default 旋回 | 54 | 71 | 0 | 326 |
+  | low 旋回 | 71 | 71 | 33 | 465 |
+  | top 旋回 | 32 | 71 | 0 | 122 |
+  どれも `geometry_used_mb` ≦ 目標。追い出し（`geometry_evicted_pages>0`）は低い視点の旋回で起き（33 ページ）、失敗ページは 0、撮影は完走（`-VramBudgetMb 1100 -OrbitDegreesPerSecond 20` の low 旋回は前の反復までは終わらなかった）。静止画の視点は作業集合が目標に収まるので追い出しは起きない。
+- 画の確認: 1100 MB の `low-orbit-f75.png`（低い視点。岩・球が地面すれすれに並ぶ）・`top-orbit-f75.png`（上から。300 個の格子全体）、6500 MB の `default.png`（斜め。小屋・岩・球）を開いて、穴・割れ目・欠けが無いことを確認した。全常駐との画素比較（PSNR、いずれも 45 dB 以上）: 静止 default 67.2 / low 82.9 / top 69.1 dB（最大差 20 / 4 / 18）、旋回 9 枚は 63.5〜66.1 dB（最大差 10〜24）で、連続フレームのちらつきも無い（差は TAA・RTGI の揺れの水準）。
+- 8GB 級（`--vram-budget-mb 6500`、`geometry_target_mb`=1421）: 3 視点とも溢れず（used 54 / 67 / 32、evicted 0、失敗 0）、全常駐と平均輝度が同じ（121.845 / 123.211 / 125.014）。
+- GPU 時間（`-GpuTimingFrames 300`、RelWithDebInfo、中央値 ms）。`MegaGeometryPass` は 起動画面の既定 0.305（default）/ 0.267（low）に対し、300 個で 0.844（default）/ 0.744（low）/ 0.952（top）。フレーム全体の GPU 時間: 起動画面 2.771 / 2.603、1100 MB 3.672 / 3.415 / 2.849（top）、6500 MB 3.608 / 3.312 / 2.834。CPU 中央値は 10.6〜10.7 ms で、300 個でも 16.6 ms の予算内（over_budget 0）。stop-when（カリングが 16.6 ms を超える）に該当しない。
+- 検証: `verify-VTG5-STRESS-GEOMETRY-1-build.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-2-capture.txt`（既定の起動画面の撮影 pass）、`-3-capture-1100.txt`・`-4-capture-resident.txt`・`-5-capture-6500.txt`・`-6-capture-orbit-1100.txt`・`-7-capture-orbit-resident.txt`（負荷モードの撮影、すべて pass・終了コード 0）、`-8-gpu-startup.txt`・`-9-gpu-stress-1100.txt`・`-10-gpu-stress-6500.txt`（GPU 時間）。画像は `.harness/runs/startup-capture/VTG5-STRESS-GEOMETRY-b0|b1100|b6500|b0-orbit|b1100-orbit|gpu-*`。TASKS.md は CRLF のまま、numstat は `git diff` と `--ignore-cr-at-eol` で一致。
+- Notes: (1) 静止画の 1100 MB では追い出しが起きない（作業集合 ≦ 目標）。追い出しの確認は low 旋回で行った。 (2) 起動画面の既定の撮影（`-Deterministic`）はこの変更で変わらない（平均輝度 124.173 / 123.952 / 126.022）。

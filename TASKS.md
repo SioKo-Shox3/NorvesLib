@@ -549,7 +549,7 @@
 - notes: 2026-10-05 親が足した。run `20261005-154938` の反復7（VTG5-STRESS-GEOMETRY）が、1100 MB の low の旋回の撮影でログが 17:29:35（起動の約32秒後）に止まるのを見つけ、調べる途中で時間切れになった。途中の変更は `9abc9a06`。危険地帯（ストリーミング・RenderThread・寿命）。ビルド・撮影はフォアグラウンドで回して完了を待つ。調べる間に作業ツリーの版を動かさない（古い版の checkout はしない）。
 
 ## VTG5-STRESS-GEOMETRY: ジオメトリの負荷モードを足す
-- status: todo
+- status: done
 - done-when: Game の `--stress-geometry` で、Poly Haven のスキャン資産（段4の3点）と岩・小屋・大きな球を数百個（既定 300）、変換を変えて地面の外側に並べる検証モードに入る（資産が無ければ置かずに警告）。全常駐ならジオメトリの量が Geometry の枠の目標の2倍以上になる `--vram-budget-mb` で撮り、`VRAM_POOLS` の geometry_used_mb が目標以下に収まり、`geometry_evicted_pages>0` で、撮影（上から・低い視点・旋回の連続フレーム）を開いて穴・割れ目・ちらつきが無いことを記録する。8GB 級を模す `--vram-budget-mb 6500` でも溢れずに描けることを記録する。GPU 時間（RelWithDebInfo）を記録する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-STRESS-GEOMETRY -Configuration RelWithDebInfo -Deterministic`
