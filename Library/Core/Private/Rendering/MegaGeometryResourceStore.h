@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Rendering/GeometryPool.h"
+#include "Rendering/MegaGeometry/GeometryPageTable.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/RenderTypes.h"
 #include "Container/Containers.h"
@@ -86,6 +87,23 @@ namespace NorvesLib::Core::Rendering
         /** @brief 登録済みで、まだ GPU で読める状態になっていないメッシュがあるか */
         bool HasPendingGpuUploads() const;
 
+        /**
+         * @brief ページの表の写しを取る（表の版が inOutVersion と違うときだけ。GPU の表を書き直す判断に使う）
+         * @param inOutVersion 前に写した版。写したときは今の版に更新する
+         * @return 版が変わっていて out へ複製したら true
+         */
+        bool CopyPageTableIfChanged(uint64_t &inOutVersion,
+                                    Container::VariableArray<MegaGeometry::GeometryPageTable::Entry> &out) const;
+
+        /** @brief ページの表のグローバルな位置から、メッシュ（ハンドルの番号）とメッシュの中のページの番号を引く */
+        bool ResolvePageTableIndex(uint32_t globalIndex, uint64_t &outMeshId, uint32_t &outPageId) const;
+
+        /**
+         * @brief メッシュのページを区画 region に常駐させる（PAGE_NON_RESIDENT なら非常駐にする）。ストリーマが使う
+         * @return 未登録のメッシュ・範囲外のページなら false
+         */
+        bool SetMegaMeshPageRegion(MegaGeometry::MegaMeshHandle handle, uint32_t pageId, uint32_t region);
+
         void Clear();
 
     private:
@@ -123,6 +141,8 @@ namespace NorvesLib::Core::Rendering
         // 区画の持ち主が、ストアより長く生きても返却先の待ち行列を触らないようにする窓口（デストラクタで閉じる）
         Container::TSharedPtr<MegaGeometryRetireSink> m_RetireSink;
         Container::Map<uint64_t, MegaMeshEntry> m_MegaMeshes;
+        // メッシュごとのページの範囲と常駐の状態（m_Mutex で守る）
+        MegaGeometry::GeometryPageTable m_PageTable;
         // 中身をまだリングへ積み終えていないメッシュ（古い順）
         Container::VariableArray<uint64_t> m_PendingUploadIds;
         Container::Map<uint64_t, ModelResourceData> m_Models;

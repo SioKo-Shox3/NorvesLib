@@ -3,6 +3,8 @@
 #include "Rendering/GpuResourceTypes.h"
 #include "Rendering/ITextureHandleRegistrar.h"
 #include "Rendering/MaterialTypes.h"
+#include "Rendering/MegaGeometry/GeometryPageRequestSet.h"
+#include "Rendering/MegaGeometry/GeometryPageTable.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/NeuralMaterialResource.h"
 #include "Rendering/ProceduralMeshGPUData.h"
@@ -268,6 +270,23 @@ namespace NorvesLib::Core::Rendering
         // 登録済みで、まだ GPU から読める状態になっていないメッシュがあるか（読み込みの落ち着きの判定に使う）。
         bool HasPendingGpuUploads() const;
         void ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle);
+
+        // ---- ジオメトリのページ（常駐の表と、カリングが書く要求） ----
+        // ページの表の写し。表の版が inOutVersion と違うときだけ out へ複製して true を返し、版を更新する
+        // （描画のパスが、フレームの前に GPU の表を書き直すのに使う）。
+        bool CopyPageTableIfChanged(uint64_t &inOutVersion,
+                                    Container::VariableArray<MegaGeometry::GeometryPageTable::Entry> &out) const;
+        // ページの表のグローバルな位置から、メッシュ（ハンドルの番号）とメッシュの中のページの番号を引く。
+        bool ResolvePageTableIndex(uint32_t globalIndex, uint64_t &outMeshId, uint32_t &outPageId) const;
+        // メッシュのページを区画 region に常駐させる（PAGE_NON_RESIDENT なら非常駐にする）。ストリーマと試験が使う。
+        bool SetMegaMeshPageRegion(MegaGeometry::MegaMeshHandle handle, uint32_t pageId, uint32_t region);
+        // このフレームのカリングが要求を書くバッファと容量。獲得できなかったフレーム（無効・空きなし）は null と 0。
+        RHI::BufferPtr GetCurrentPageRequestBuffer() const;
+        uint32_t GetCurrentPageRequestCapacity() const;
+        // 要求のバッファへのシェーダーの書き込みを、ホストの読み取りへ見せるバリアを記録する（最後の書き込みの後に1回）。
+        bool RecordPageRequestHostBarrier(RHI::ICommandList &commandList);
+        // 数フレーム遅れで読み戻して溜めた要求を out へ渡す（ストリーマが読む）。無ければ false。
+        bool TakePageRequests(MegaGeometry::GeometryPageRequestSet &out);
 
         ModelHandle RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
                                   const Container::String &debugName = "",

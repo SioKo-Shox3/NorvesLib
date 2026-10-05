@@ -1,6 +1,7 @@
 ﻿#include "Rendering/MegaGeometryResourceStore.h"
 
 #include "Rendering/GpuRetireQueue.h"
+#include "Rendering/MegaGeometry/GeometryPageLinks.h"
 #include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
 #include "Rendering/MegaGeometry/MegaGeometryBvhSelection.h"
 #include "Rendering/MaterialTypes.h"
@@ -289,13 +290,34 @@ namespace NorvesLib::Core::Rendering
         }
         const double allocateMs = LoadProfileElapsedMs(stageStartTime);
 
+        // ページの親子の関係(クラスタごとの子のページ)とメッシュのページの数を、グループの表から求める。
+        // 焼き込み済みの階層だけがページを持つ。それ以外は 1 ページで常駐のまま
+        Container::VariableArray<uint32_t> childPageIds;
+        MegaGeometry::GeometryPageLinkResult pageLinks;
+        if (createInfo.bBakedLODHierarchy)
+        {
+            if (!MegaGeometry::ComputeGeometryPageLinks(*uploadClusters, createInfo.ClusterGroups, childPageIds, pageLinks))
+            {
+                NORVES_LOG_ERROR("MegaGeometryResources", "クラスタのページの番号が不正です: %s", createInfo.DebugName.c_str());
+                return MegaGeometry::MegaMeshHandle::Invalid();
+            }
+            if (pageLinks.SplitGroups > 0 || pageLinks.AmbiguousClusters > 0)
+            {
+                NORVES_LOG_WARNING("MegaGeometryResources",
+                                   "ページの親子の関係を決められない箇所があります: %s split_groups=%u ambiguous_clusters=%u",
+                                   createInfo.DebugName.c_str(), pageLinks.SplitGroups, pageLinks.AmbiguousClusters);
+            }
+        }
+
         // Create the cluster data SSBO.
         // Convert MeshCluster to GPUClusterData.
         Container::VariableArray<MegaGeometry::GPUClusterData> gpuClusters;
         gpuClusters.reserve(uploadClusters->size());
-        for (const auto &cluster : *uploadClusters)
+        for (size_t clusterIndex = 0; clusterIndex < uploadClusters->size(); ++clusterIndex)
         {
+            const auto &cluster = (*uploadClusters)[clusterIndex];
             MegaGeometry::GPUClusterData gpuCluster{};
+            gpuCluster.ChildPageId = MegaGeometry::INVALID_PAGE_ID;
             gpuCluster.BoundsCenterX = cluster.Bounds.CenterX;
             gpuCluster.BoundsCenterY = cluster.Bounds.CenterY;
             gpuCluster.BoundsCenterZ = cluster.Bounds.CenterZ;
@@ -323,6 +345,7 @@ namespace NorvesLib::Core::Rendering
                 gpuCluster.ParentError = cluster.ParentError;
                 gpuCluster.GroupId = cluster.GroupId;
                 gpuCluster.PageId = cluster.PageId;
+                gpuCluster.ChildPageId = childPageIds[clusterIndex];
             }
             gpuClusters.push_back(gpuCluster);
         }
@@ -520,6 +543,17 @@ namespace NorvesLib::Core::Rendering
             entry.Region = std::move(regionHolder);
             entry.StagedBytes = std::move(stagedBytes);
             Thread::ScopedLock lock(m_Mutex);
+            // ページの表の範囲。今は全ページが常駐の区画 0（ページごとの読み込みはストリーマが SetMegaMeshPageRegion で行う）
+            uint32_t pageTableBase = 0;
+            if (!m_PageTable.Allocate(handle.Id, pageLinks.PageCount, pageTableBase))
+            {
+                NORVES_LOG_ERROR("MegaGeometryResources", "ページの表に範囲を確保できません: %s pages=%u",
+                                 createInfo.DebugName.c_str(), pageLinks.PageCount);
+                RetireEntryLocked(entry);
+                return MegaGeometry::MegaMeshHandle::Invalid();
+            }
+            entry.Data.PageTableBase = pageTableBase;
+            entry.Data.PageCount = pageLinks.PageCount;
             m_MegaMeshes[handle.Id] = std::move(entry);
             m_PendingUploadIds.push_back(handle.Id);
         }
@@ -688,6 +722,13 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryResourceStore::RetireEntryLocked(MegaMeshEntry &entry)
     {
+        // ページの範囲を返す（描画は毎フレームの表の写しを引くので、返した範囲を次のメッシュが使ってよい）
+        if (entry.Data.PageCount > 0)
+        {
+            m_PageTable.Free(entry.Data.PageTableBase);
+            entry.Data.PageCount = 0;
+            entry.Data.PageTableBase = 0;
+        }
         if (!entry.Region)
         {
             return;
@@ -784,6 +825,45 @@ namespace NorvesLib::Core::Rendering
                     m_PendingUploadIds.end());
             }
         }
+    }
+
+    bool MegaGeometryResourceStore::CopyPageTableIfChanged(
+        uint64_t &inOutVersion, Container::VariableArray<MegaGeometry::GeometryPageTable::Entry> &out) const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        if (m_PageTable.GetVersion() == inOutVersion)
+        {
+            return false;
+        }
+        out = m_PageTable.GetEntries();
+        inOutVersion = m_PageTable.GetVersion();
+        return true;
+    }
+
+    bool MegaGeometryResourceStore::ResolvePageTableIndex(uint32_t globalIndex, uint64_t &outMeshId,
+                                                          uint32_t &outPageId) const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        MegaGeometry::GeometryPageTable::Location location;
+        if (!m_PageTable.Resolve(globalIndex, location))
+        {
+            return false;
+        }
+        outMeshId = location.OwnerId;
+        outPageId = location.PageId;
+        return true;
+    }
+
+    bool MegaGeometryResourceStore::SetMegaMeshPageRegion(MegaGeometry::MegaMeshHandle handle, uint32_t pageId,
+                                                          uint32_t region)
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        auto it = m_MegaMeshes.find(handle.Id);
+        if (it == m_MegaMeshes.end() || pageId >= it->second.Data.PageCount)
+        {
+            return false;
+        }
+        return m_PageTable.SetRegion(it->second.Data.PageTableBase, pageId, region);
     }
 
     void MegaGeometryResourceStore::Clear()

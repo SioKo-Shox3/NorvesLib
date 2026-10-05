@@ -67,11 +67,20 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t Flags;       // GPU_CLUSTER_FLAG_*
         float ParentError;    // 親のグループの誤差（根は使わない）
         uint32_t GroupId;     // 親のグループの番号（根は INVALID_CLUSTER_GROUP_ID）
-        uint32_t PageId;      // ページの番号（段5まで 0）
+        uint32_t PageId;      // このクラスタを持つページの番号（メッシュの中の番号。ページの表の添字は PageTableBase + PageId）
+
+        // このクラスタを作ったグループ（もっと細かい子のクラスタ）を持つページの番号。最も細かい段のクラスタは
+        // INVALID_PAGE_ID。もっと細かい子が欲しいのにこのページが常駐していないとき、このクラスタが代わりに描かれる
+        uint32_t ChildPageId;
+        uint32_t PageReserved[3];
     };
+    static_assert(sizeof(GPUClusterData) == 112, "Common/MegaGeometryCull.glsl の GPUClusterData と大きさが一致しません");
 
     /** @brief GPUClusterData::Flags: 焼き込み済みの階層のクラスタ（親のグループの球と誤差で段を選ぶ） */
     constexpr uint32_t GPU_CLUSTER_FLAG_BAKED_LOD = 1u;
+
+    /** @brief ページの番号が無いこと（最も細かい段のクラスタの ChildPageId）。Common/MegaGeometryCull.glsl の INVALID_PAGE_ID と同じ */
+    constexpr uint32_t INVALID_PAGE_ID = 0xFFFFFFFFu;
 
     /**
      * @brief クラスタのグループの BVH の1節（NVMESH v1.1 の CookedMeshGroupBVHNode と同じ内容。GPU の節の並び）
@@ -173,7 +182,13 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         BoundingSphere ParentBounds;
         float ParentError = 3.402823466e+38f;
         uint32_t GroupId = 0xFFFFFFFFu;
-        uint32_t PageId = 0; // ページのストリーミング（段5）まで 0
+        uint32_t PageId = 0; // このクラスタを持つページの番号（NVMESH v1.1 の Pages の添字。v1.0 以前は 0）
+        /**
+         * @brief このクラスタを作ったグループ（もっと細かい子のクラスタ）を持つページの番号。無ければ INVALID_PAGE_ID
+         *
+         * CreateMegaMesh がグループの表から求める（ComputeGeometryPageLinks）。呼び出し側は設定しない。
+         */
+        uint32_t ChildPageId = 0xFFFFFFFFu;
     };
 
     /** @brief クラスタのグループが無いことを表す番号（焼き込み済みの階層の根） */
@@ -406,6 +421,15 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t GroupBVHLeafCount = 0;
         /** @brief BVH の段ごとの節の数（添字が段。段 k の節は幅優先の並びで連続する。BVH が無ければ空） */
         VariableArray<uint32_t> GroupBVHLevelNodeCounts;
+
+        /**
+         * @brief ページの表（全メッシュ共通。GeometryPageTable）の中の、このメッシュのページの範囲
+         *
+         * メッシュの中のページの番号 p の表の位置は PageTableBase + p。PageCount はクラスタの PageId の最大 + 1
+         * （ページを持たないメッシュは 1 で、常駐のまま）。
+         */
+        uint32_t PageTableBase = 0;
+        uint32_t PageCount = 0;
 
         /**
          * @brief プールの区画の共有の持ち主（型を消した参照）

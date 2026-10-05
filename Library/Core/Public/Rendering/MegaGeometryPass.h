@@ -15,6 +15,7 @@ namespace NorvesLib::Core::Rendering
     class SceneView;
     class SceneRenderer;
     struct MegaGeometryPassCommand;
+    class MegaGeometryResources;
 
     /**
      * @brief MegaGeometryパス設定
@@ -160,7 +161,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t BvhNextBase;   // 次の段の列の先頭
             uint32_t BvhLeafBase;   // 葉の列の先頭
             uint32_t BvhRootCount;  // BVH を持つインスタンスの数（インスタンスの表の先頭からその数。段0の入力の数）
-            uint32_t BvhPad;
+            uint32_t PageRequestCapacity; // ページの要求の列の容量（0 ならこのフレームは要求を書かない）
         };
 
         /**
@@ -182,7 +183,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t BvhAddressLow;        // グループの BVH の節の配列のデバイスアドレス（BVH が無ければ 0）
             uint32_t BvhAddressHigh;
             uint32_t BvhNodeCount;
-            uint32_t Reserved;
+            uint32_t PageTableBase;        // ページの表の中の、このメッシュのページの範囲の先頭
         };
         static_assert(sizeof(GPUMegaInstance) == 192, "cluster_cull.comp の MegaInstance と大きさが一致しません");
 
@@ -248,6 +249,11 @@ namespace NorvesLib::Core::Rendering
             uint32_t InstanceCapacity = 0; // 要素数
             RHI::BufferPtr SectionBuffer;  // 区間の表（uvec2: コマンドの先頭・最大数。host-visible）
             uint32_t SectionCapacity = 0;  // 要素数
+            // ページの表（GeometryPageTable::Entry の並び。host-visible）。このフレームの常駐を固定して、
+            // 2パスの間で判定が食い違わないようにする。版が変わったときだけホストが書き直す（GPU は要求の印を書く）
+            RHI::BufferPtr PageTableBuffer;
+            uint32_t PageTableCapacity = 0; // 要素数
+            uint64_t PageTableVersion = 0;  // バッファの中身の版（PageTableBuffer が無いときは意味を持たない）
             RHI::BufferPtr CullUniform[2]; // パスごとのカリング用UBO
             RHI::DescriptorSetPtr CullDescriptorSet[2];
             // BVH のたどり: パスごとに、節の判定の段 + 葉のクラスタの判定の段の数だけ（段ごとにUBOの中身が違うため別々に持つ）
@@ -257,6 +263,14 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief フレームスロットに、このフレームのインスタンス・区間の数を収める資源を用意する */
         bool EnsureFrameSlot(FrameSlot &slot, uint32_t instanceCount, uint32_t sectionTableEntries, uint32_t sectionCount);
+
+        /**
+         * @brief フレームスロットのページの表を、今の常駐の状態に合わせる
+         *
+         * 表の版がスロットの写しと違うときだけ、バッファを（足りなければ作り直して）書き直す。
+         * @return false ならバッファを作れなかった（このフレームは描けない）
+         */
+        bool SyncPageTable(FrameSlot &slot, MegaGeometryResources &resources);
 
         /**
          * @brief IndirectDraw コマンド・区間のカウンタ・描画情報のバッファを、必要な数に収まる大きさにする

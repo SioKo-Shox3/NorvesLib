@@ -24,6 +24,14 @@
 //            同じグループのクラスタは球と誤差が同じなので同じ判断になり、どの切り方も閉じたメッシュになる。
 //   それ以外（v0・実行時に構築した階層・手続きの球）: 従来の段の選び方（ShouldDrawCluster）。
 //
+// ページの常駐（焼き込み済みの階層だけ）:
+//   頂点・インデックスの中身はページ（128 KiB）ごとに常駐し、ページの表（binding 11）が常駐を持つ。クラスタの記録と
+//   BVH の節は常駐したままなので、非常駐のページのクラスタも判定には読める（ただし描かない）。
+//   クラスタのページが非常駐なら描かない。自分の誤差では粗すぎる（もっと細かい子が欲しい）のに、子（このクラスタを
+//   作ったグループ）のページが非常駐なら、穴を作らず自分を描き、子のページを要求の列（binding 12）へ積む。
+//   子は1つのページに収まるので、子と親が重なって描かれることは無い。親のページが先に常駐している並びが前提。
+//   ページの表は1フレームの間は変わらない（ホストが記録の前に書く）ので、2パスの間で判定が食い違わない。
+//
 // クラスタ配列・グループのBVHの節の配列はジオメトリの共有プールの塊の中にあり、塊が複数あっても1回の dispatch で
 // 読めるよう、インスタンスごとのデバイスアドレス（buffer_reference）で引く。
 // ========================================
@@ -45,10 +53,14 @@ struct GPUClusterData
     uvec4 lodInfo;        // lodLevel, lodError(asfloat), parentStart, parentCount
     vec4 parentSphere;    // 焼き込み済みの階層: 親のグループの境界球 center.xyz + radius
     uvec4 bakedInfo;      // flags, parentError(asfloat), groupId, pageId
+    uvec4 pageInfo;       // x = このクラスタを作ったグループ（もっと細かい子）のページ。最も細かい段は INVALID_PAGE_ID
 };
 
 const uint CLUSTER_FLAG_BAKED_LOD = 1u;
 const uint INVALID_GROUP_ID = 0xFFFFFFFFu;
+const uint INVALID_PAGE_ID = 0xFFFFFFFFu;
+// ページの表の区画の値: 常駐していない（GeometryPageTable.h の PAGE_NON_RESIDENT と同じ）
+const uint PAGE_NON_RESIDENT = 0xFFFFFFFFu;
 
 // このメッシュのクラスタ配列（インスタンスの表の clusterInfo.xy のデバイスアドレスから引く）
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ClusterArray
@@ -78,7 +90,7 @@ struct MegaInstance
     vec4 lodSphere;       // LODの選択に使うメッシュ共通の境界球（ローカル。w<=0ならクラスタごとの中心で選ぶ）
     uvec4 clusterInfo;    // x,y = クラスタ配列のデバイスアドレス（下位・上位）, z = クラスタ数, w = 最初のワークグループの通し番号
     uvec4 drawInfo;       // x = 材質の区間の番号, y = 頂点の基点（塊の先頭から。頂点単位）, z = インデックスの基点（塊の先頭から。インデックス単位）, w = 「見えた」印の先頭
-    uvec4 bvhInfo;        // x,y = BVH の節の配列のデバイスアドレス（下位・上位。BVH が無ければ 0）, z = 節の数, w = 予約
+    uvec4 bvhInfo;        // x,y = BVH の節の配列のデバイスアドレス（下位・上位。BVH が無ければ 0）, z = 節の数, w = ページの表の先頭（このメッシュのページの範囲の先頭）
 };
 
 struct DrawIndexedIndirectCommand
@@ -121,7 +133,7 @@ layout(set = 0, binding = 0) uniform CullUniforms
     uint bvhNextBase;        // 次の段の列の先頭
     uint bvhLeafBase;        // 葉の列の先頭
     uint bvhRootCount;       // BVH を持つインスタンスの数（段0の入力の数。インスタンスの表の先頭からその数）
-    uint bvhPad;
+    uint pageRequestCapacity; // ページの要求の列の容量（0 ならこのフレームは要求を書かない）
 } cullData;
 
 const uint CULL_PASS_SINGLE = 0u;
@@ -196,6 +208,27 @@ layout(std430, set = 0, binding = 10) buffer BvhCounterBuffer
 {
     uint bvhCounters[];
 };
+
+// set 0, binding 11: ページの表（全メッシュ共通。添字は instance.bvhInfo.w + メッシュの中のページの番号）。
+// region: ページの中身を置いたプールの区画（PAGE_NON_RESIDENT なら常駐していない）。ホストがフレームの前に書く。
+// requestStamp: このページを要求した最後のフレームの印（cullData.visibleWriteStamp）。GPU が書き、同じフレームの重複を省く。
+struct PageEntry
+{
+    uint region;
+    uint requestStamp;
+};
+layout(std430, set = 0, binding = 11) buffer PageTableBuffer
+{
+    PageEntry pageTable[];
+};
+
+// set 0, binding 12: ページの要求の列（ホストが数フレーム遅れて読み戻す）。
+// [0] = 要求の数, [1] = 容量を超えて捨てた数, [2] = 容量, [3] = 予約, [PAGE_REQUEST_HEADER_WORDS..] = ページの表の位置
+layout(std430, set = 0, binding = 12) buffer PageRequestBuffer
+{
+    uint pageRequests[];
+};
+const uint PAGE_REQUEST_HEADER_WORDS = 4u;
 
 const uint BVH_LEAF_COUNTER = 16u;
 const uint BVH_STAGE_CLUSTERS = 0xFFFFFFFFu;
@@ -352,20 +385,79 @@ float ProjectBakedError(vec3 localCenter, float localRadius, float localError)
 }
 
 /**
- * @brief 焼き込み済みの階層（NVMESH v1）のLOD DAGカット判定
+ * @brief ページが常駐しているか（ページの表を引く。ページの番号が無い INVALID_PAGE_ID は常駐とみなす）
+ */
+bool IsPageResident(uint pageTableBase, uint pageId)
+{
+    if (pageId == INVALID_PAGE_ID)
+    {
+        return true;
+    }
+    return pageTable[pageTableBase + pageId].region != PAGE_NON_RESIDENT;
+}
+
+/**
+ * @brief 常駐していないページを要求する（同じフレームの同じページは1回だけ列へ積む）
+ *
+ * 印の交換で重複を省く: ページの表の requestStamp を今のフレームの印に替え、前の値が同じ印なら先に誰かが積んだ。
+ * 列が容量を超えたら積まず、捨てた数だけ数える（ホストが溢れを見る）。
+ */
+void RequestPage(uint pageTableBase, uint pageId)
+{
+    if (cullData.pageRequestCapacity == 0u || pageId == INVALID_PAGE_ID)
+    {
+        return;
+    }
+    uint tableIndex = pageTableBase + pageId;
+    if (atomicExchange(pageTable[tableIndex].requestStamp, cullData.visibleWriteStamp) == cullData.visibleWriteStamp)
+    {
+        return;
+    }
+    uint slot = atomicAdd(pageRequests[0], 1u);
+    if (slot < cullData.pageRequestCapacity)
+    {
+        pageRequests[PAGE_REQUEST_HEADER_WORDS + slot] = tableIndex;
+    }
+    else
+    {
+        atomicAdd(pageRequests[1], 1u);
+    }
+}
+
+/**
+ * @brief 焼き込み済みの階層（NVMESH v1）のLOD DAGカット判定（ページの常駐を含む）
  *
  * 自分の誤差の投影が許容以下で、親のグループの誤差の投影が許容を超えるときだけ描く。
  * 根（親のグループが無い）は自分の誤差だけで決まる。
  *
+ * ページの常駐:
+ *   - 自分のページが常駐していなければ描かない（親が代わりに描く）。
+ *   - 自分の誤差が許容を超える（もっと細かい子が欲しい）ときは、子のページが常駐していなければ穴を作らないよう自分を描き、
+ *     outRequestPage に子のページを返す（呼び出し側が、実際に描かれたときだけ要求する）。子のページが常駐していれば、
+ *     子が描くので自分は描かない。同じグループの子は同じページなので、子と親が重なって描かれることは無い。
+ *   - どちらも、親のグループの誤差が許容を超える（親では粗すぎる）ときだけ描く。
+ *
+ * @param outRequestPage 子のページが常駐していないために自分を描くとき、その子のページ。それ以外は INVALID_PAGE_ID
  * @return true = このクラスタを描画すべき
  */
-bool ShouldDrawBakedCluster(GPUClusterData cluster)
+bool ShouldDrawBakedCluster(GPUClusterData cluster, uint pageTableBase, out uint outRequestPage)
 {
+    outRequestPage = INVALID_PAGE_ID;
+    if (!IsPageResident(pageTableBase, cluster.bakedInfo.w))
+    {
+        return false; // 自分のページが無い → 親が代わりに描く
+    }
     float selfError = ProjectBakedError(cluster.boundsSphere.xyz, cluster.boundsSphere.w,
                                         uintBitsToFloat(cluster.lodInfo.y));
     if (selfError > cullData.lodBias)
     {
-        return false; // 自分の誤差が大きすぎる → より詳細な段を使う
+        // 自分の誤差が大きすぎる → より詳細な段を使う。ただし子のページが無いなら、穴を作らず自分を描く
+        uint childPage = cluster.pageInfo.x;
+        if (IsPageResident(pageTableBase, childPage))
+        {
+            return false;
+        }
+        outRequestPage = childPage;
     }
     if (cluster.bakedInfo.z == INVALID_GROUP_ID)
     {
@@ -539,12 +631,14 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
     float radius = localRadius * ComputeWorldRadiusScale();
 
     // 視錐台・法線のコーン・LODの判定（遮蔽の判定の前。1パス目と2パス目で同じ式なので、
-    // 1パス目で描いたクラスタは2パス目でも必ずここを通る）
+    // 1パス目で描いたクラスタは2パス目でも必ずここを通る。ページの表はフレームの間は変わらないので、
+    // ページの常駐の判定もパスの間で食い違わない）
+    uint requestPage = INVALID_PAGE_ID;
     bool bPassesBasicTests =
         !FrustumCullSphere(center, radius) &&
         !NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius) &&
         (((cluster.bakedInfo.x & CLUSTER_FLAG_BAKED_LOD) != 0u)
-             ? ShouldDrawBakedCluster(cluster)
+             ? ShouldDrawBakedCluster(cluster, instance.bvhInfo.w, requestPage)
              : ShouldDrawCluster(cluster, center));
 
     if (cullData.cullPass == CULL_PASS_FIRST)
@@ -585,6 +679,12 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
             EmitDrawCommand(instanceIndex, instance, clusterIndex, cluster);
             CountStat(STAT_PASS2_DRAWN);
         }
+        // 子のページが無いために描いたクラスタは、見えているときだけ子のページを要求する。
+        // 1パス目で描いたものも、2パス目が判定し直すのでここで要求が出る（1パス目では要求しない）
+        if (bVisible)
+        {
+            RequestPage(instance.bvhInfo.w, requestPage);
+        }
         return;
     }
 
@@ -592,6 +692,7 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
     if (bPassesBasicTests && !OcclusionCullSphere(center, radius))
     {
         EmitDrawCommand(instanceIndex, instance, clusterIndex, cluster);
+        RequestPage(instance.bvhInfo.w, requestPage);
     }
 }
 

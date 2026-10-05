@@ -86,47 +86,103 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
     namespace BvhSelectionDetail
     {
-        /** @brief クラスタの判定（視錐台・焼き込み済みの階層の段・遮蔽）。平らな列と葉の中で同じ */
-        template <typename OcclusionFn>
-        bool ClusterIsSelected(const MeshCluster &cluster, const float *worldMatrix, const BvhCullView &view,
-                               OcclusionFn &&isOccluded)
+        /** @brief 全ページが常駐している（ページを考えない従来の判定） */
+        struct AllPagesResident
+        {
+            bool operator()(uint32_t) const { return true; }
+        };
+
+        /**
+         * @brief クラスタの判定（視錐台・焼き込み済みの階層の段・ページの常駐・遮蔽）。平らな列と葉の中で同じ
+         * @return NotDrawn 以外なら選ばれる。DrawnForMissingChild は子のページを要求する描画
+         */
+        template <typename OcclusionFn, typename ResidentFn>
+        BakedClusterDecision DecideCluster(const MeshCluster &cluster, const float *worldMatrix,
+                                           const BvhCullView &view, OcclusionFn &&isOccluded,
+                                           ResidentFn &&isPageResident)
         {
             float center[3];
             float radius = 0.0f;
             TransformSphereToWorld(cluster.Bounds.CenterX, cluster.Bounds.CenterY, cluster.Bounds.CenterZ,
                                    cluster.Bounds.Radius, worldMatrix, center, radius);
-            return !IsWorldSphereOutsideFrustum(view.FrustumPlanes, center, radius) &&
-                   ShouldDrawBakedCluster(cluster, worldMatrix, view.Lod) && !isOccluded(center, radius);
+            if (IsWorldSphereOutsideFrustum(view.FrustumPlanes, center, radius))
+            {
+                return BakedClusterDecision::NotDrawn;
+            }
+            const BakedClusterDecision decision = DecideBakedCluster(cluster, worldMatrix, view.Lod, isPageResident);
+            if (decision == BakedClusterDecision::NotDrawn || isOccluded(center, radius))
+            {
+                return BakedClusterDecision::NotDrawn;
+            }
+            return decision;
+        }
+
+        /** @brief 選んだクラスタの子のページ要求を、重複なく昇順で集める（GPU の要求の重複を省く規則と同じ結果） */
+        inline void AddPageRequest(VariableArray<uint32_t> &requests, uint32_t pageId)
+        {
+            auto position = std::lower_bound(requests.begin(), requests.end(), pageId);
+            if (position == requests.end() || *position != pageId)
+            {
+                requests.insert(position, pageId);
+            }
         }
     } // namespace BvhSelectionDetail
 
-    /** @brief 平らなクラスタの列を全部判定して、選ばれるクラスタの番号を昇順で返す（cluster_cull.comp の経路） */
+    /**
+     * @brief 平らなクラスタの列を全部判定して、選ばれるクラスタの番号を昇順で返す（cluster_cull.comp の経路）
+     *
+     * ページの常駐を考える。もっと細かい子が欲しいのに子のページが常駐していないクラスタが選ばれたとき、
+     * その子のページの番号を outRequestedPages（重複なし・昇順）へ入れる。
+     */
+    template <typename OcclusionFn, typename ResidentFn>
+    void SelectClustersFlatPaged(const VariableArray<MeshCluster> &clusters, const float *worldMatrix,
+                                 const BvhCullView &view, OcclusionFn &&isOccluded, ResidentFn &&isPageResident,
+                                 VariableArray<uint32_t> &outSelected, VariableArray<uint32_t> &outRequestedPages)
+    {
+        outSelected.clear();
+        outRequestedPages.clear();
+        for (uint32_t index = 0; index < clusters.size(); ++index)
+        {
+            const BakedClusterDecision decision =
+                BvhSelectionDetail::DecideCluster(clusters[index], worldMatrix, view, isOccluded, isPageResident);
+            if (decision == BakedClusterDecision::NotDrawn)
+            {
+                continue;
+            }
+            outSelected.push_back(index);
+            if (decision == BakedClusterDecision::DrawnForMissingChild)
+            {
+                BvhSelectionDetail::AddPageRequest(outRequestedPages, clusters[index].ChildPageId);
+            }
+        }
+    }
+
+    /** @brief 平らなクラスタの列を全部判定して、選ばれるクラスタの番号を昇順で返す（全ページが常駐している判定） */
     template <typename OcclusionFn>
     void SelectClustersFlat(const VariableArray<MeshCluster> &clusters, const float *worldMatrix,
                             const BvhCullView &view, OcclusionFn &&isOccluded, VariableArray<uint32_t> &outSelected)
     {
-        outSelected.clear();
-        for (uint32_t index = 0; index < clusters.size(); ++index)
-        {
-            if (BvhSelectionDetail::ClusterIsSelected(clusters[index], worldMatrix, view, isOccluded))
-            {
-                outSelected.push_back(index);
-            }
-        }
+        VariableArray<uint32_t> requests;
+        SelectClustersFlatPaged(clusters, worldMatrix, view, isOccluded, BvhSelectionDetail::AllPagesResident{},
+                                outSelected, requests);
     }
 
     /**
      * @brief BVH をたどってグループを選び、葉のクラスタを判定して、選ばれるクラスタの番号を昇順で返す
      *
      * 節ごとに、視錐台（節の球）・遮蔽（節の球）・LOD（節の球から投影した親の誤差の最大）で枝を切る。
-     * 葉に届いたクラスタは平らな列と同じ判定にかける。
+     * 葉に届いたクラスタは平らな列と同じ判定（ページの常駐を含む）にかける。節の判定はページに依らない
+     * （ページが非常駐でもクラスタの記録は常駐していて、枝を切る条件は親の誤差だけで決まるため）。
      */
-    template <typename OcclusionFn>
-    void SelectClustersByBvh(const VariableArray<MeshCluster> &clusters, const VariableArray<GPUGroupBVHNode> &nodes,
-                             const float *worldMatrix, const BvhCullView &view, OcclusionFn &&isOccluded,
-                             VariableArray<uint32_t> &outSelected, BvhTraversalStats *outStats = nullptr)
+    template <typename OcclusionFn, typename ResidentFn>
+    void SelectClustersByBvhPaged(const VariableArray<MeshCluster> &clusters,
+                                  const VariableArray<GPUGroupBVHNode> &nodes, const float *worldMatrix,
+                                  const BvhCullView &view, OcclusionFn &&isOccluded, ResidentFn &&isPageResident,
+                                  VariableArray<uint32_t> &outSelected, VariableArray<uint32_t> &outRequestedPages,
+                                  BvhTraversalStats *outStats = nullptr)
     {
         outSelected.clear();
+        outRequestedPages.clear();
         BvhTraversalStats stats;
         if (!nodes.empty())
         {
@@ -163,9 +219,16 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                     for (uint32_t member = node.First; member < node.First + node.Count; ++member)
                     {
                         ++stats.ClustersTested;
-                        if (BvhSelectionDetail::ClusterIsSelected(clusters[member], worldMatrix, view, isOccluded))
+                        const BakedClusterDecision decision = BvhSelectionDetail::DecideCluster(
+                            clusters[member], worldMatrix, view, isOccluded, isPageResident);
+                        if (decision == BakedClusterDecision::NotDrawn)
                         {
-                            outSelected.push_back(member);
+                            continue;
+                        }
+                        outSelected.push_back(member);
+                        if (decision == BakedClusterDecision::DrawnForMissingChild)
+                        {
+                            BvhSelectionDetail::AddPageRequest(outRequestedPages, clusters[member].ChildPageId);
                         }
                     }
                 }
@@ -183,6 +246,17 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         {
             *outStats = stats;
         }
+    }
+
+    /** @brief BVH をたどって選ぶ（全ページが常駐している判定） */
+    template <typename OcclusionFn>
+    void SelectClustersByBvh(const VariableArray<MeshCluster> &clusters, const VariableArray<GPUGroupBVHNode> &nodes,
+                             const float *worldMatrix, const BvhCullView &view, OcclusionFn &&isOccluded,
+                             VariableArray<uint32_t> &outSelected, BvhTraversalStats *outStats = nullptr)
+    {
+        VariableArray<uint32_t> requests;
+        SelectClustersByBvhPaged(clusters, nodes, worldMatrix, view, isOccluded, BvhSelectionDetail::AllPagesResident{},
+                                 outSelected, requests, outStats);
     }
 
     /**

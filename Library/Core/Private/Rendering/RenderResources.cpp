@@ -2,6 +2,7 @@
 
 #include "Asset/AssetSystem.h"
 #include "Rendering/CookedVirtualTexture.h"
+#include "Rendering/GeometryPageRequestRing.h"
 #include "Rendering/GeometryPool.h"
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/GpuRetireQueue.h"
@@ -110,6 +111,8 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<TileUploader> TileUpload;
         // VT の要求のバッファ（3つ）の読み戻しと集計。sparse に対応しないデバイスでは作らない。GPU が止まってから手放す。
         Container::TUniquePtr<VirtualTextureFeedbackRing> VtFeedback;
+        // ジオメトリのページの要求のバッファ（3つ）の読み戻しと集計。GPU が止まってから手放す。
+        Container::TUniquePtr<GeometryPageRequestRing> GeometryPageFeedback;
         // VT のストリーマと、その結び付け・コピーの窓口。ページのプール・リング・RetireQueue より先に手放す。
         Container::TUniquePtr<DeviceVirtualTextureGpu> VtGpu;
         Container::TUniquePtr<VirtualTextureStreamer> VtStreamer;
@@ -985,7 +988,18 @@ namespace NorvesLib::Core::Rendering
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
 
-        return impl->MegaGeometryResources->CreateMegaMesh(createInfo);
+        const MegaGeometry::MegaMeshHandle handle = impl->MegaGeometryResources->CreateMegaMesh(createInfo);
+        // ページを2つ以上持つメッシュだけが、子のページを要求する。要求のバッファは最初のそのメッシュで確保する
+        // （作れなくても描画は続く。要求を取らないだけ）
+        if (handle.IsValid() && impl->GeometryPageFeedback)
+        {
+            const MegaGeometry::MegaMeshGPUData *gpuData = impl->MegaGeometryResources->GetMegaMeshGPUData(handle);
+            if (gpuData && gpuData->PageCount > 1)
+            {
+                impl->GeometryPageFeedback->SetEnabled(true);
+            }
+        }
+        return handle;
     }
 
     const MegaGeometry::MegaMeshGPUData *MegaGeometryResources::GetMegaMeshGPUData(
@@ -1019,6 +1033,54 @@ namespace NorvesLib::Core::Rendering
         {
             impl->MegaGeometryResources->ReleaseMegaMesh(handle);
         }
+    }
+
+    bool MegaGeometryResources::CopyPageTableIfChanged(
+        uint64_t &inOutVersion, Container::VariableArray<MegaGeometry::GeometryPageTable::Entry> &out) const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources &&
+               impl->MegaGeometryResources->CopyPageTableIfChanged(inOutVersion, out);
+    }
+
+    bool MegaGeometryResources::ResolvePageTableIndex(uint32_t globalIndex, uint64_t &outMeshId,
+                                                      uint32_t &outPageId) const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources &&
+               impl->MegaGeometryResources->ResolvePageTableIndex(globalIndex, outMeshId, outPageId);
+    }
+
+    bool MegaGeometryResources::SetMegaMeshPageRegion(MegaGeometry::MegaMeshHandle handle, uint32_t pageId,
+                                                      uint32_t region)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources &&
+               impl->MegaGeometryResources->SetMegaMeshPageRegion(handle, pageId, region);
+    }
+
+    RHI::BufferPtr MegaGeometryResources::GetCurrentPageRequestBuffer() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->GeometryPageFeedback ? impl->GeometryPageFeedback->GetCurrentBuffer() : RHI::BufferPtr{};
+    }
+
+    uint32_t MegaGeometryResources::GetCurrentPageRequestCapacity() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->GeometryPageFeedback ? impl->GeometryPageFeedback->GetCurrentCapacity() : 0u;
+    }
+
+    bool MegaGeometryResources::RecordPageRequestHostBarrier(RHI::ICommandList &commandList)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->GeometryPageFeedback && impl->GeometryPageFeedback->RecordHostReadBarrier(commandList);
+    }
+
+    bool MegaGeometryResources::TakePageRequests(MegaGeometry::GeometryPageRequestSet &out)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->GeometryPageFeedback && impl->GeometryPageFeedback->TakeRequests(out);
     }
 
     ModelHandle MegaGeometryResources::RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
@@ -1192,6 +1254,8 @@ namespace NorvesLib::Core::Rendering
         m_Impl->MegaGeometryResources = Container::MakeUnique<MegaGeometryResourceStore>(
             m_Impl->Device, m_Impl->NextHandleId, m_Impl->GeometryBuffers.get(), m_Impl->TileUpload.get(),
             &m_Impl->RetireQueue);
+        // ページの要求のバッファ。バッファは、ページを2つ以上持つメッシュを作るまで確保しない（CreateMegaMesh が有効にする）
+        m_Impl->GeometryPageFeedback = Container::MakeUnique<GeometryPageRequestRing>(m_Impl->Device);
         m_Impl->ProceduralMeshes = Container::MakeUnique<ProceduralMeshGpuStore>(m_Impl->Device);
         if (m_Impl->TextureAssets)
         {
@@ -1229,6 +1293,7 @@ namespace NorvesLib::Core::Rendering
         m_Impl->RetireQueue.Clear();
         m_Impl->TileUpload.reset();
         m_Impl->VtFeedback.reset();
+        m_Impl->GeometryPageFeedback.reset();
         m_Impl->SparsePool.reset();
         m_Impl->GeometryBuffers.reset();
         if (m_Impl->SkinnedMeshes)
@@ -1270,6 +1335,10 @@ namespace NorvesLib::Core::Rendering
         {
             m_Impl->VtFeedback->BeginFrame(completedSubmissionSerial);
         }
+        if (m_Impl->GeometryPageFeedback)
+        {
+            m_Impl->GeometryPageFeedback->BeginFrame(completedSubmissionSerial);
+        }
         // 期限の来たページがプールへ戻った後の使用量を、変わっていれば台帳へ出す
         if (m_Impl->SparsePool)
         {
@@ -1292,6 +1361,10 @@ namespace NorvesLib::Core::Rendering
         {
             m_Impl->VtFeedback->CommitFrame(submissionSerial);
         }
+        if (m_Impl->GeometryPageFeedback)
+        {
+            m_Impl->GeometryPageFeedback->CommitFrame(submissionSerial);
+        }
     }
 
     void RenderResources::AbortRetireFrame()
@@ -1304,6 +1377,10 @@ namespace NorvesLib::Core::Rendering
         if (m_Impl->VtFeedback)
         {
             m_Impl->VtFeedback->AbortFrame();
+        }
+        if (m_Impl->GeometryPageFeedback)
+        {
+            m_Impl->GeometryPageFeedback->AbortFrame();
         }
     }
 

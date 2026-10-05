@@ -8,6 +8,9 @@
 #include "Rendering/GeometryPool.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/MegaGeometry/CookedMeshMegaMeshAdapter.h"
+#include "Rendering/MegaGeometry/GeometryPageLinks.h"
+#include "Rendering/MegaGeometry/GeometryPageRequestSet.h"
+#include "Rendering/MegaGeometry/GeometryPageTable.h"
 #include "Rendering/MegaGeometry/MegaGeometryBvhSelection.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
 #include "Rendering/MegaGeometry/ProceduralMegaSphere.h"
@@ -218,7 +221,7 @@ namespace
 
     void AssertGPUClusterLayout()
     {
-        assert(sizeof(MegaGeometry::GPUClusterData) == 96);
+        assert(sizeof(MegaGeometry::GPUClusterData) == 112);
         assert(offsetof(MegaGeometry::GPUClusterData, BoundsCenterX) == 0);
         assert(offsetof(MegaGeometry::GPUClusterData, ConeAxisX) == 16);
         assert(offsetof(MegaGeometry::GPUClusterData, IndexOffset) == 32);
@@ -231,6 +234,7 @@ namespace
         assert(offsetof(MegaGeometry::GPUClusterData, ParentError) == 84);
         assert(offsetof(MegaGeometry::GPUClusterData, GroupId) == 88);
         assert(offsetof(MegaGeometry::GPUClusterData, PageId) == 92);
+        assert(offsetof(MegaGeometry::GPUClusterData, ChildPageId) == 96);
     }
 
     // 試験の偽バッファは塊の大きさのメモリを持つので、プールの塊を小さくして動かす
@@ -2003,6 +2007,477 @@ namespace
         }
     }
 
+    // ---- ジオメトリのページ（常駐の表・親での描画・要求） ----
+
+    // ページの表: 範囲の割り当て・返却（隣との結合・末尾の縮み）・常駐の切り替え・グローバルな位置からの引き直し
+    void TestGeometryPageTableRanges()
+    {
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+        Mega::GeometryPageTable table;
+        uint32_t a = 99;
+        uint32_t b = 99;
+        uint32_t c = 99;
+        assert(table.Allocate(10, 4, a) && a == 0);
+        assert(table.Allocate(11, 2, b) && b == 4);
+        assert(table.Allocate(12, 3, c) && c == 6);
+        assert(table.GetSize() == 9);
+        uint32_t none = 0;
+        assert(!table.Allocate(1, 0, none));
+
+        // 全ページが常駐の区画 0 で始まる。要求の印は 0
+        for (const Mega::GeometryPageTable::Entry &entry : table.GetEntries())
+        {
+            assert(entry.Region == 0 && entry.RequestStamp == 0);
+        }
+        Mega::GeometryPageTable::Location location;
+        assert(table.Resolve(5, location) && location.OwnerId == 11 && location.PageId == 1);
+        assert(table.Resolve(8, location) && location.OwnerId == 12 && location.PageId == 2);
+        assert(!table.Resolve(9, location));
+
+        // 常駐の切り替えは版を進める。同じ値の設定は進めない。範囲外・未割り当ては拒否する
+        uint64_t version = table.GetVersion();
+        assert(table.SetRegion(b, 1, Mega::PAGE_NON_RESIDENT));
+        assert(table.GetVersion() > version);
+        assert(!table.IsResident(b, 1) && table.IsResident(b, 0));
+        version = table.GetVersion();
+        assert(table.SetRegion(b, 1, Mega::PAGE_NON_RESIDENT));
+        assert(table.GetVersion() == version);
+        assert(!table.SetRegion(b, 2, 0));  // メッシュのページの数を超える
+        assert(!table.SetRegion(5, 0, 0));  // 範囲の先頭ではない
+        assert(!table.SetRegion(100, 0, 0));
+        assert(!table.IsResident(b, 2));
+
+        // 中間を返すと空きになり、最初に入る空きへ置く。入らない大きさは末尾へ伸ばす
+        assert(table.Free(b));
+        assert(!table.Free(b));
+        assert(!table.Resolve(4, location));
+        uint32_t d = 99;
+        uint32_t e = 99;
+        assert(table.Allocate(13, 2, d) && d == 4);
+        assert(table.Resolve(5, location) && location.OwnerId == 13);
+        assert(table.Allocate(14, 3, e) && e == 9);
+        assert(table.GetSize() == 12);
+
+        // 末尾を返すと表が縮む。前の空きとも結合する
+        assert(table.Free(e));
+        assert(table.GetSize() == 9);
+        assert(table.Free(d));
+        assert(table.Free(c));
+        assert(table.GetSize() == 4);
+        assert(table.Free(a));
+        assert(table.GetSize() == 0);
+        uint32_t f = 99;
+        assert(table.Allocate(15, 5, f) && f == 0 && table.GetSize() == 5);
+        // 返却した範囲の中身は次の割り当てで常駐に戻る
+        for (const Mega::GeometryPageTable::Entry &entry : table.GetEntries())
+        {
+            assert(entry.Region == 0);
+        }
+    }
+
+    // 要求のバッファの読み取り: 件数は容量で頭打ちにし、同じ位置は最新のフレームで 1 件にまとめ、溢れた件数を数える
+    void TestGeometryPageRequestSetDecodesBuffers()
+    {
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+        namespace Buffer = Mega::GeometryPageRequestBuffer;
+        static_assert(Buffer::GetBufferBytes(4) == (Buffer::HeaderWords + 4) * sizeof(uint32_t));
+
+        // [件数, 溢れ, 容量, 予約, 位置...]
+        uint32_t words[Buffer::HeaderWords + 4] = {3, 2, 4, 0, 7, 5, 7, 99};
+        Mega::GeometryPageRequestSet set;
+        Mega::GeometryPageRequestDecodeResult result = set.AddBuffer(words, 4, 10);
+        assert(!result.bInvalid && result.Accepted == 3 && result.Overflow == 2);
+        assert(set.GetRequests().size() == 2);
+        assert(set.GetRequests()[0].TableIndex == 5 && set.GetRequests()[0].LastRequestedFrame == 10);
+        assert(set.GetRequests()[1].TableIndex == 7 && set.GetRequests()[1].LastRequestedFrame == 10);
+        assert(set.GetOverflowTotal() == 2 && !set.IsEmpty());
+
+        // GPU は容量を超えた分も件数に足すので、読むのは容量まで（範囲外を読まない）
+        words[0] = 1000;
+        words[1] = 996;
+        Mega::GeometryPageRequestSet clamped;
+        result = clamped.AddBuffer(words, 4, 20);
+        assert(result.Accepted == 4 && result.Overflow == 996);
+        assert(clamped.GetRequests().size() == 3); // 7, 5, 99
+
+        // 新しいフレームの同じ位置は最後に要求されたフレームを進める。古いフレームでは戻さない
+        set.Merge(clamped);
+        assert(set.GetRequests().size() == 3);
+        for (const auto &request : set.GetRequests())
+        {
+            assert(request.LastRequestedFrame == (request.TableIndex == 99 || request.TableIndex == 5 || request.TableIndex == 7 ? 20u : 0u));
+        }
+        set.Add(5, 3);
+        assert(set.GetRequests()[0].TableIndex == 5 && set.GetRequests()[0].LastRequestedFrame == 20);
+
+        result = set.AddBuffer(nullptr, 4, 1);
+        assert(result.bInvalid);
+        result = set.AddBuffer(words, 0, 1);
+        assert(result.bInvalid);
+        set.Clear();
+        assert(set.IsEmpty());
+    }
+
+    // 1グループ1ページの割り当て: 根のクラスタ（グループ無し）は 0 番、グループ g のメンバは 1 + g 番
+    void AssignSyntheticPages(MegaGeometry::MegaMeshCreateInfo &info)
+    {
+        for (MegaGeometry::MeshCluster &cluster : info.Clusters)
+        {
+            cluster.PageId = cluster.GroupId == MegaGeometry::INVALID_CLUSTER_GROUP_ID ? 0u : 1u + cluster.GroupId;
+        }
+    }
+
+    // ページの親子の関係(ChildPageId)は、クラスタを作ったグループのメンバのページを指す。
+    // 常駐していない子のページがあるとき、カリングは穴を作らず親を描き、その子のページを要求する。
+    // 子のページが全部常駐なら従来の選択と一致し、非常駐の子と親が重ならず、どの葉から根への道も 1 つのクラスタで覆われる。
+    void TestPageLinksAndMissingChildFallback()
+    {
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+        SyntheticBvhMesh mesh;
+        BuildSyntheticQuadtreeMesh(mesh);
+        AssignSyntheticPages(mesh.CreateInfo);
+        auto &clusters = mesh.CreateInfo.Clusters;
+        const auto &groups = mesh.CreateInfo.ClusterGroups;
+        const auto &nodes = mesh.CreateInfo.GroupBVH;
+        assert(clusters.size() == 341 && groups.size() == 85);
+
+        Mega::GeometryPageLinkResult links;
+        assert(Mega::ApplyGeometryPageLinks(clusters, groups, links));
+        assert(links.PageCount == 86 && links.SplitGroups == 0 && links.AmbiguousClusters == 0);
+        assert(links.LinkedClusters == 85); // 最も細かい段(256)以外の全クラスタ
+
+        // 各クラスタの親（そのクラスタを含むグループを簡略化した結果のクラスタ）
+        Container::VariableArray<uint32_t> parentOf(clusters.size(), 0xFFFFFFFFu);
+        for (uint32_t index = 0; index < clusters.size(); ++index)
+        {
+            const Mega::MeshCluster &cluster = clusters[index];
+            if (cluster.GroupId == Mega::INVALID_CLUSTER_GROUP_ID)
+            {
+                continue;
+            }
+            const Mega::MeshClusterGroup &group = groups[cluster.GroupId];
+            uint32_t found = 0;
+            for (uint32_t other = 0; other < clusters.size(); ++other)
+            {
+                const Mega::MeshCluster &candidate = clusters[other];
+                if (candidate.LODLevel == cluster.LODLevel + 1u && candidate.Bounds.CenterX == group.Bounds.CenterX &&
+                    candidate.Bounds.CenterY == group.Bounds.CenterY &&
+                    candidate.Bounds.CenterZ == group.Bounds.CenterZ && candidate.Bounds.Radius == group.Bounds.Radius &&
+                    candidate.LODError == group.Error)
+                {
+                    parentOf[index] = other;
+                    ++found;
+                }
+            }
+            assert(found == 1);
+        }
+        // 子のページ = 親を作ったグループのメンバのページ。最も細かい段は子のページを持たない
+        for (uint32_t index = 0; index < clusters.size(); ++index)
+        {
+            if (clusters[index].LODLevel == 0)
+            {
+                assert(clusters[index].ChildPageId == Mega::INVALID_PAGE_ID);
+            }
+            if (parentOf[index] != 0xFFFFFFFFu)
+            {
+                assert(clusters[parentOf[index]].ChildPageId == clusters[index].PageId);
+            }
+        }
+
+        // グループのメンバが複数のページにまたがるとき、そのグループから作ったクラスタの子のページは決めない（穴を作らない側）
+        {
+            Container::VariableArray<Mega::MeshCluster> split = clusters;
+            const Mega::MeshClusterGroup &group = groups[0];
+            split[group.ClusterOffset + 1].PageId = 70;
+            Mega::GeometryPageLinkResult splitLinks;
+            assert(Mega::ApplyGeometryPageLinks(split, groups, splitLinks));
+            assert(splitLinks.SplitGroups == 1 && splitLinks.LinkedClusters == 84);
+            assert(split[parentOf[group.ClusterOffset]].ChildPageId == Mega::INVALID_PAGE_ID);
+            // ページの数が上限を超える番号は拒否する
+            split[0].PageId = 1u << 24;
+            assert(!Mega::ApplyGeometryPageLinks(split, groups, splitLinks));
+        }
+
+        // 葉から根への道ごとに、選ばれたクラスタを数える（ちょうど 1 なら切り口が閉じていて、穴も重なりも無い）
+        const auto countPathCoverage = [&](const Container::VariableArray<uint32_t> &selected, uint32_t &outHoles,
+                                           uint32_t &outOverlaps)
+        {
+            Container::VariableArray<uint8_t> isSelected(clusters.size(), 0);
+            for (const uint32_t index : selected)
+            {
+                isSelected[index] = 1;
+            }
+            outHoles = 0;
+            outOverlaps = 0;
+            for (uint32_t leaf = 0; leaf < clusters.size(); ++leaf)
+            {
+                if (clusters[leaf].LODLevel != 0)
+                {
+                    continue;
+                }
+                uint32_t count = 0;
+                for (uint32_t current = leaf; current != 0xFFFFFFFFu; current = parentOf[current])
+                {
+                    count += isSelected[current];
+                }
+                outHoles += count == 0 ? 1 : 0;
+                outOverlaps += count > 1 ? 1 : 0;
+            }
+        };
+
+        // 視錐台は全てを通し、遮蔽は無し
+        Mega::BvhCullView baseView;
+        for (auto &plane : baseView.FrustumPlanes)
+        {
+            plane[0] = plane[1] = plane[2] = 0.0f;
+            plane[3] = 1.0f;
+        }
+        const float fovY = 1.04719755f;
+        const float aspect = 16.0f / 9.0f;
+        baseView.Lod.TanHalfFovY = std::tan(0.5f * fovY);
+        baseView.Lod.TanHalfFovX = baseView.Lod.TanHalfFovY * aspect;
+        baseView.Lod.ProjectionFactor = 1080.0f / (2.0f * baseView.Lod.TanHalfFovY);
+        baseView.Lod.LODBias = 1.0f;
+        const float world[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        const auto neverOccluded = [](const float *, float) { return false; };
+
+        uint32_t seed = 12345u;
+        const auto nextRandom = [&seed]() -> uint32_t
+        {
+            seed = seed * 1664525u + 1013904223u;
+            return seed >> 8;
+        };
+
+        uint32_t caseCount = 0;
+        uint32_t casesWithRequests = 0;
+        uint32_t casesWithFallbackSelection = 0;
+        uint32_t casesWhereNaiveHasHoles = 0;
+        uint32_t coarseSelections = 0;
+        for (uint32_t trial = 0; trial < 24; ++trial)
+        {
+            // 非常駐のページ: 乱数で選び、「非常駐のページのクラスタの子のページも非常駐」になるまで広げる
+            // （ストリーマは子が常駐していれば親も常駐させ、外すときは子から外す）。0 番（根）は常駐のまま
+            Container::VariableArray<uint8_t> nonResident(links.PageCount, 0);
+            const uint32_t probabilityPercent = trial == 0 ? 0u : (trial % 4 == 3 ? 90u : 10u + (trial % 4) * 25u);
+            for (uint32_t page = 1; page < links.PageCount; ++page)
+            {
+                nonResident[page] = (nextRandom() % 100u) < probabilityPercent ? 1 : 0;
+            }
+            for (bool bChanged = true; bChanged;)
+            {
+                bChanged = false;
+                for (const Mega::MeshCluster &cluster : clusters)
+                {
+                    if (nonResident[cluster.PageId] != 0 && cluster.ChildPageId != Mega::INVALID_PAGE_ID &&
+                        nonResident[cluster.ChildPageId] == 0)
+                    {
+                        nonResident[cluster.ChildPageId] = 1;
+                        bChanged = true;
+                    }
+                }
+            }
+            assert(nonResident[0] == 0);
+            const auto isResident = [&nonResident](uint32_t page) { return nonResident[page] == 0; };
+
+            for (int step = 0; step <= 24; ++step)
+            {
+                const float distance = 4.0f * std::pow(600.0f / 4.0f, static_cast<float>(step) / 24.0f);
+                Mega::BvhCullView view = baseView;
+                view.Lod.CameraPosition[0] = (step % 2 == 0) ? 0.0f : 25.0f;
+                view.Lod.CameraPosition[1] = (step % 2 == 0) ? 0.0f : 12.0f;
+                view.Lod.CameraPosition[2] = -distance;
+                float forward[3] = {-view.Lod.CameraPosition[0], -view.Lod.CameraPosition[1], -view.Lod.CameraPosition[2]};
+                const float forwardLength = std::sqrt(forward[0] * forward[0] + forward[1] * forward[1] + forward[2] * forward[2]);
+                for (int a = 0; a < 3; ++a)
+                {
+                    view.Lod.Forward[a] = forward[a] / forwardLength;
+                }
+
+                Container::VariableArray<uint32_t> allResident;
+                Mega::SelectClustersFlat(clusters, world, view, neverOccluded, allResident);
+
+                Container::VariableArray<uint32_t> flat;
+                Container::VariableArray<uint32_t> flatRequests;
+                Mega::SelectClustersFlatPaged(clusters, world, view, neverOccluded, isResident, flat, flatRequests);
+                Container::VariableArray<uint32_t> viaBvh;
+                Container::VariableArray<uint32_t> bvhRequests;
+                Mega::SelectClustersByBvhPaged(clusters, nodes, world, view, neverOccluded, isResident, viaBvh,
+                                               bvhRequests);
+                ++caseCount;
+
+                // BVH をたどっても、平らな列でも、選択も要求も同じ
+                assert(flat == viaBvh);
+                assert(flatRequests == bvhRequests);
+
+                // 常駐していないページのクラスタは描かない
+                for (const uint32_t index : flat)
+                {
+                    assert(nonResident[clusters[index].PageId] == 0);
+                }
+
+                // 要求 = 自分の誤差では粗すぎるのに描かれたクラスタの、子のページ（全て非常駐）。重複なし・昇順
+                Container::VariableArray<uint32_t> expectedRequests;
+                for (const uint32_t index : flat)
+                {
+                    if (!Mega::IsBakedClusterWithinError(clusters[index], world, view.Lod))
+                    {
+                        const uint32_t page = clusters[index].ChildPageId;
+                        assert(page != Mega::INVALID_PAGE_ID && nonResident[page] != 0);
+                        if (std::find(expectedRequests.begin(), expectedRequests.end(), page) == expectedRequests.end())
+                        {
+                            expectedRequests.push_back(page);
+                        }
+                    }
+                }
+                std::sort(expectedRequests.begin(), expectedRequests.end());
+                assert(flatRequests == expectedRequests);
+                for (const uint32_t page : flatRequests)
+                {
+                    assert(nonResident[page] != 0);
+                }
+
+                // 切り口が閉じている: 穴も重なりも無い
+                uint32_t holes = 0;
+                uint32_t overlaps = 0;
+                countPathCoverage(flat, holes, overlaps);
+                assert(holes == 0 && overlaps == 0);
+                countPathCoverage(allResident, holes, overlaps);
+                assert(holes == 0 && overlaps == 0);
+
+                // 非常駐が無ければ従来の選択と一致し、要求も無い
+                bool bAnyNonResident = false;
+                for (const uint8_t flag : nonResident)
+                {
+                    bAnyNonResident = bAnyNonResident || flag != 0;
+                }
+                if (!bAnyNonResident)
+                {
+                    assert(flat == allResident && flatRequests.empty());
+                }
+                casesWithRequests += flatRequests.empty() ? 0 : 1;
+                casesWithFallbackSelection += flat != allResident ? 1 : 0;
+                for (const uint32_t index : flat)
+                {
+                    coarseSelections += clusters[index].LODLevel > 0 ? 1 : 0;
+                }
+
+                // 試験の感度: 親で描かずに、非常駐のクラスタを落とすだけでは、穴ができる視点がある
+                Container::VariableArray<uint32_t> naive;
+                for (const uint32_t index : allResident)
+                {
+                    if (nonResident[clusters[index].PageId] == 0)
+                    {
+                        naive.push_back(index);
+                    }
+                }
+                countPathCoverage(naive, holes, overlaps);
+                casesWhereNaiveHasHoles += holes > 0 ? 1 : 0;
+            }
+        }
+        assert(caseCount == 24u * 25u);
+        // 要求が書かれる視点・親で描き直す視点・親で描いたクラスタが、実際にある
+        assert(casesWithRequests > 20);
+        assert(casesWithFallbackSelection > 20);
+        assert(coarseSelections > 0);
+        assert(casesWhereNaiveHasHoles > 20);
+    }
+
+    // ストアは、メッシュごとにページの表の範囲を割り当て、クラスタの記録に PageId と ChildPageId を載せ、
+    // 常駐の切り替えを表の版に反映し、メッシュの解放で範囲を返す
+    void TestStoreAllocatesPageTableRangesAndUploadsPageLinks()
+    {
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+        SyntheticBvhMesh mesh;
+        BuildSyntheticQuadtreeMesh(mesh);
+        AssignSyntheticPages(mesh.CreateInfo);
+
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(InitializeWithSmallPool(manager, device));
+        const auto handle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
+        assert(handle.IsValid());
+        const auto *gpuData = manager.MegaGeometry().GetMegaMeshGPUData(handle);
+        assert(gpuData != nullptr);
+        assert(gpuData->PageCount == 86 && gpuData->PageTableBase == 0);
+
+        // ページを2つ以上持つメッシュを作ったので、要求のバッファ（3つ）が確保されている
+        const auto countRequestBuffers = [](const Container::TSharedPtr<FakeDevice> &target)
+        {
+            size_t count = 0;
+            for (const auto &desc : target->CreatedBufferDescs)
+            {
+                count += (desc.DebugName != nullptr && std::strcmp(desc.DebugName, "GeometryPageRequest") == 0) ? 1 : 0;
+            }
+            return count;
+        };
+        assert(countRequestBuffers(device) == 3);
+        // 1ページのメッシュだけなら、要求のバッファは確保しない
+        {
+            RenderResources singleManager;
+            auto singleDevice = MakeShared<FakeDevice>();
+            assert(InitializeWithSmallPool(singleManager, singleDevice));
+            MeshFixture single("PageSingle");
+            assert(singleManager.MegaGeometry().CreateMegaMesh(single.CreateInfo).IsValid());
+            assert(countRequestBuffers(singleDevice) == 0);
+        }
+
+        // アップロードされたクラスタの記録: PageId は渡した値、ChildPageId はグループの表から求めた値
+        Container::VariableArray<Mega::MeshCluster> expected = mesh.CreateInfo.Clusters;
+        Mega::GeometryPageLinkResult links;
+        assert(Mega::ApplyGeometryPageLinks(expected, mesh.CreateInfo.ClusterGroups, links));
+        assert(GeometryUpload::DrainGeometryUploads(manager));
+        const auto *uploaded =
+            reinterpret_cast<const Mega::GPUClusterData *>(PoolBytesAt(*gpuData, gpuData->ClusterBufferOffsetBytes));
+        for (size_t index = 0; index < expected.size(); ++index)
+        {
+            assert(uploaded[index].PageId == expected[index].PageId);
+            assert(uploaded[index].ChildPageId == expected[index].ChildPageId);
+        }
+
+        // 表の写し: 最初は全ページが常駐。版が同じなら写さない
+        uint64_t version = ~0ull;
+        Container::VariableArray<Mega::GeometryPageTable::Entry> entries;
+        assert(manager.MegaGeometry().CopyPageTableIfChanged(version, entries));
+        assert(entries.size() == 86);
+        for (const auto &entry : entries)
+        {
+            assert(entry.Region == 0);
+        }
+        assert(!manager.MegaGeometry().CopyPageTableIfChanged(version, entries));
+
+        // 常駐の切り替え
+        assert(manager.MegaGeometry().SetMegaMeshPageRegion(handle, 5, Mega::PAGE_NON_RESIDENT));
+        assert(manager.MegaGeometry().CopyPageTableIfChanged(version, entries));
+        assert(entries[gpuData->PageTableBase + 5].Region == Mega::PAGE_NON_RESIDENT);
+        assert(entries[gpuData->PageTableBase + 4].Region == 0);
+        assert(!manager.MegaGeometry().SetMegaMeshPageRegion(handle, 86, 0));
+        assert(!manager.MegaGeometry().SetMegaMeshPageRegion(MakeMegaMeshHandle(999999), 0, 0));
+
+        // 要求の位置から、メッシュとページを引き直す
+        uint64_t meshId = 0;
+        uint32_t pageId = 0;
+        assert(manager.MegaGeometry().ResolvePageTableIndex(gpuData->PageTableBase + 5, meshId, pageId));
+        assert(meshId == handle.Id && pageId == 5);
+        assert(!manager.MegaGeometry().ResolvePageTableIndex(86, meshId, pageId));
+
+        // 1ページのメッシュは表を 1 つ使う。解放すると範囲が返り、次のメッシュが先頭を再利用する
+        MeshFixture smallMesh("PageTableSmall");
+        const auto smallHandle = manager.MegaGeometry().CreateMegaMesh(smallMesh.CreateInfo);
+        assert(smallHandle.IsValid());
+        const auto *smallData = manager.MegaGeometry().GetMegaMeshGPUData(smallHandle);
+        assert(smallData != nullptr && smallData->PageCount == 1 && smallData->PageTableBase == 86);
+        manager.MegaGeometry().ReleaseMegaMesh(handle);
+        assert(manager.MegaGeometry().CopyPageTableIfChanged(version, entries));
+        assert(!manager.MegaGeometry().ResolvePageTableIndex(5, meshId, pageId));
+        MeshFixture another("PageTableReuse");
+        const auto anotherHandle = manager.MegaGeometry().CreateMegaMesh(another.CreateInfo);
+        assert(anotherHandle.IsValid());
+        const auto *anotherData = manager.MegaGeometry().GetMegaMeshGPUData(anotherHandle);
+        assert(anotherData != nullptr && anotherData->PageTableBase == 0 && anotherData->PageCount == 1);
+        assert(manager.MegaGeometry().CopyPageTableIfChanged(version, entries));
+        assert(entries.size() == 87 && entries[0].Region == 0);
+    }
+
     void TestSharedHandleCounter()
     {
         RenderResources manager;
@@ -2561,6 +3036,10 @@ int main()
     TestBakedLODSelectionKeepsClosedMeshAcrossDistances();
     TestGroupBvhSelectionMatchesFlatSelection();
     TestGroupBvhRegionIsUploadedAndValidated();
+    TestGeometryPageTableRanges();
+    TestGeometryPageRequestSetDecodesBuffers();
+    TestPageLinksAndMissingChildFallback();
+    TestStoreAllocatesPageTableRangesAndUploadsPageLinks();
     TestSharedHandleCounter();
     // バッファの作成はプールの塊の1回だけ（頂点・インデックス・クラスタのバッファは作らない）
     TestCreateFailureDoesNotRegister(1);

@@ -431,6 +431,17 @@ set_tests_properties(HiZOcclusionTestVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# ジオメトリのページの要求（Common/MegaGeometryCull.glsl のページの常駐の判定と要求の書き込み）を、実際のカリング（cluster_cull.comp）で確かめる。
+# 合成したクラスタとページの表を置いて 1 回判定し、子のページが非常駐のとき穴を作らず親が描かれて要求が書かれること、同じページの要求が 1 件に減ること、
+# 容量 0 では書かないこと、容量を超えた件数が溢れに残ること、自分の誤差が許容に収まる親は要求を出さないこと、同じフレームの印で重ねて積まないことを確かめる。
+add_test(NAME GeometryPageRequestVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GeometryPageRequestVulkanTest)
+set_tests_properties(GeometryPageRequestVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
@@ -448,6 +459,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
     MEMBER HiZPyramidVulkanTest HiZPyramidVulkanTest.cpp
     MEMBER HiZOcclusionTestVulkanTest HiZOcclusionTestVulkanTest.cpp
+    MEMBER GeometryPageRequestVulkanTest GeometryPageRequestVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE

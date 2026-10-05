@@ -1077,6 +1077,7 @@ namespace NorvesLib::Core::Rendering
             entry.SectionIndex = sectionIndex;
             entry.VertexBase = static_cast<uint32_t>(vertexBase);
             entry.IndexBase = static_cast<uint32_t>(indexBase);
+            entry.PageTableBase = gpuData->PageTableBase;
             if (canTraverseBvh(gpuData))
             {
                 // BVH をたどるインスタンスは、平らな判定のワークグループを持たない
@@ -1246,6 +1247,22 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // ページの表（常駐の状態）をこのフレームのスロットへ写す。フレームの間は変わらないので、2パスの判定が食い違わない
+        if (!SyncPageTable(frameSlot, *command.MegaGeometry))
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "ページの表のバッファを用意できませんでした");
+            recordEmptyRenderPass();
+            return;
+        }
+
+        // ページの要求を書くバッファ（このフレームのもの。獲得できなければ容量 0 で、統計用の代わりのバッファを束ねる）
+        RHI::BufferPtr pageRequestBuffer = command.MegaGeometry->GetCurrentPageRequestBuffer();
+        const uint32_t pageRequestCapacity = pageRequestBuffer ? command.MegaGeometry->GetCurrentPageRequestCapacity() : 0u;
+        if (!pageRequestBuffer || pageRequestCapacity == 0)
+        {
+            pageRequestBuffer = m_DummyStatsBuffer;
+        }
+
         // インスタンスの表と区間の表を書く（ホストが書き、カリングと頂点シェーダーが読む）
         frameSlot.InstanceBuffer->Update(instanceTable.data(), instanceTable.size() * sizeof(GPUMegaInstance));
         {
@@ -1396,6 +1413,7 @@ namespace NorvesLib::Core::Rendering
         baseUniform.VisibleReadStamp = static_cast<uint32_t>(m_OcclusionFrameCount);
         baseUniform.VisibleWriteStamp = static_cast<uint32_t>(m_OcclusionFrameCount) + 1u;
         baseUniform.BvhRootCount = bvhInstanceCount;
+        baseUniform.PageRequestCapacity = pageRequestCapacity;
 
         // メッシュ共通のLOD球を持つメッシュの選ばれる段を、変わったときに記録する
         for (const Drawable &drawable : drawables)
@@ -1505,6 +1523,11 @@ namespace NorvesLib::Core::Rendering
                 descriptorSet->BindStorageBuffer(9, m_BvhQueueBuffer, 0,
                                                  static_cast<uint32_t>(m_BvhQueueBuffer->GetSize()));
                 descriptorSet->BindStorageBuffer(10, m_BvhCounterBuffer, 0, BvhCounterBytes);
+                // binding 11・12: ページの表（このフレームの常駐）と、ページの要求の列
+                descriptorSet->BindStorageBuffer(11, frameSlot.PageTableBuffer, 0,
+                                                 static_cast<uint32_t>(frameSlot.PageTableBuffer->GetSize()));
+                descriptorSet->BindStorageBuffer(12, pageRequestBuffer, 0,
+                                                 static_cast<uint32_t>(pageRequestBuffer->GetSize()));
                 descriptorSet->Update();
             };
 
@@ -1548,6 +1571,12 @@ namespace NorvesLib::Core::Rendering
                     if (uniformData.bStatsEnabled != 0)
                     {
                         cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    }
+                    if (pageRequestCapacity != 0)
+                    {
+                        // ページの要求の印と列に、BVH の葉のクラスタの判定が続けて書く
+                        cmdList->BufferBarrier(frameSlot.PageTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                        cmdList->BufferBarrier(pageRequestBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
                     }
                 }
 
@@ -1709,6 +1738,12 @@ namespace NorvesLib::Core::Rendering
                                        RHI::ResourceState::UnorderedAccess,
                                        RHI::ResourceState::HostRead);
             }
+        }
+
+        // ページの要求の列へのシェーダーの書き込みを、ホストの読み取りへ見せる（数フレーム後に読み戻す）
+        if (pageRequestCapacity != 0)
+        {
+            command.MegaGeometry->RecordPageRequestHostBarrier(*cmdList);
         }
 
         // BVH のたどりの列・カウンタを次のフレーム用に戻す
@@ -2074,6 +2109,8 @@ namespace NorvesLib::Core::Rendering
         addBinding(8, RHI::ResourceBindType::RWBuffer);              // 描画情報
         addBinding(9, RHI::ResourceBindType::RWBuffer);              // BVH のたどりの列
         addBinding(10, RHI::ResourceBindType::RWBuffer);             // BVH のたどりのカウンタ
+        addBinding(11, RHI::ResourceBindType::RWBuffer);             // ページの表（常駐 + 要求の印）
+        addBinding(12, RHI::ResourceBindType::RWBuffer);             // ページの要求の列
         return desc;
     }
 
@@ -2196,6 +2233,48 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        return true;
+    }
+
+    bool MegaGeometryPass::SyncPageTable(FrameSlot &slot, MegaGeometryResources &resources)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        // バッファが無いスロットは、どの版とも一致しない版から始めて、必ず1回は書く
+        uint64_t version = slot.PageTableBuffer ? slot.PageTableVersion : ~0ull;
+        Container::VariableArray<MegaGeometry::GeometryPageTable::Entry> entries;
+        const bool bChanged = resources.CopyPageTableIfChanged(version, entries);
+        if (slot.PageTableBuffer && !bChanged)
+        {
+            return true;
+        }
+
+        // 直前に使ったのは FrameSlotCount フレーム前で、そのGPUの仕事は終わっているので、作り直して置き換えてよい
+        const uint32_t entryCount = static_cast<uint32_t>(entries.size());
+        if (!slot.PageTableBuffer || slot.PageTableCapacity < entryCount)
+        {
+            const uint32_t capacity = std::max(64u, NextPowerOfTwo(entryCount));
+            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * sizeof(MegaGeometry::GeometryPageTable::Entry),
+                                 RHI::ResourceUsage::StorageBuffer,
+                                 true,
+                                 "MegaGeometry_PageTable");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.PageTableBuffer = buffer;
+            slot.PageTableCapacity = capacity;
+        }
+        if (entryCount > 0)
+        {
+            slot.PageTableBuffer->Update(entries.data(),
+                                         static_cast<size_t>(entryCount) * sizeof(MegaGeometry::GeometryPageTable::Entry));
+        }
+        slot.PageTableVersion = version;
         return true;
     }
 
