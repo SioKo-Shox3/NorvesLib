@@ -885,7 +885,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-DEFAULT-ON -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
 - stop-when: golden の差がこの変更だけでは説明できない場合は、測った値と分類を記録して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, Baselines/RenderingValidation, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-05 親: 元の VTG6-RETIRE-GBUFFER-RASTER（今のラスタを外す）を、`geometryShader` の無い GPU の予備として残す形に変えた。危険地帯（描画パス）。起動画面の見た目を変えうる（絶対規則7）。
+- notes: 2026-10-05 親: 元の VTG6-RETIRE-GBUFFER-RASTER（今のラスタを外す）を、`geometryShader` の無い GPU の予備として残す形に変えた。危険地帯（描画パス）。起動画面の見た目を変えうる（絶対規則7）。 2026-10-06 親（段6の評価で持ち越した点。既定にするときに扱う）: (a) 予備の描画（`GetFallbackReason` が予備を選んだとき）に戻っている間も、ID のラスタと材質の分類が毎フレーム走って GPU の時間を使う（`VisibilityRasterPass.cpp` の Declare 523〜548 行付近）。予備のときは足さない・止める。(b) 材質の分類の一覧の大きさが最悪（1タイル64材質）で取ってあり、1080p で約 8.3 MB・4K で約 33 MB（`MaterialTileClassifyPass.h` 82 行付近）。VRAM の予算（8GB 級）と照らし、材質の表の上限・画面の大きさから求め直すか記録する。on の構成の分類は VRAM 約 5 MB・GPU 0.26〜0.29 ms。(c) スキニングを有効にすると、パレットを GBuffer の経路と計算スキニングで2回アップロードする（予備で GBuffer を描かないときは1回にする）。(d) 計算スキニングのパイプラインだけが作れない装置では、スキニングの無い場面でも予備（GBuffer の描画）になる（保守的。記録する）。(e) `--visibility-buffer` の既定を on にするとき、`CaptureStartupScene.ps1` の `-VisibilityBuffer` の既定、`--visibility-buffer=off` の撮影（予備の経路の確認）、撮影の VT の常駐の上限（既定 64MB）を見直す。on の VT の常駐は off より少なめ（0.73・0.66・0.95 倍。画像はぼけない）。(f) 大きい項目なので、1反復で閉じなければ閉じる単位に分ける（例: 既定の切り替えと予備の判定 / HZB をビジビリティの1パス目の深度から作る / スキニングの撮影の経路 / golden と起動画面の撮影）。
 
 ## VTG6-ACCEPT: 段6（ビジビリティバッファ）の受入れを記録する
 - status: todo
