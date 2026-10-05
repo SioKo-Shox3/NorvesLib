@@ -24,7 +24,7 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        constexpr uint32_t DebugParamsBytes = 16; // vec4 params
+        constexpr uint32_t DebugParamsBytes = 16; // 表示の引数（vec4）
 
         void AddBinding(RHI::DescriptorSetDesc& desc,
                         uint32_t binding,
