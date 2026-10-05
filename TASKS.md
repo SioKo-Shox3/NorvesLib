@@ -655,13 +655,13 @@
 - notes: 2026-10-05 親が足した（VTG6-COMPUTE-SKINNING の評価の残課題。同じ SceneView が1フレームに3つ以上のビューポートを描くと、3回目の `BeginFrame` が1回目の枠の位置に戻り、提出前の dispatch の UBO と descriptor set を上書きする）。MegaGeometryPass は既定で有効なので、既定の経路の撮影で一致を確かめる。危険地帯（RenderThread・同期・寿命）。
 
 ## VTG6-SKINNING-HARDEN: 計算シェーダーのスキニングの閾値・上限・継続の検査を整える
-- status: done
+- status: doing
 - done-when: (1) `skinning_compute.comp` の `NormalMatrixOf` の特異と見なす閾値（1e-6）を `MatrixUtils::CreateNormalMatrix` の `Constants::EPSILON`（1.19e-7）にそろえ、コメントを事実に合わせる。`ComputeSkinningVulkanTest` の参照（198 行付近の `TransformNormal`）も同じ閾値にし、|det| が 1.19e-7 以上 1e-6 未満の骨（一様スケール 0.009 など）のケースを足す。(2) `SkinningComputePass.cpp`（241 行付近）が頂点の合計が上限を超えると残りのインスタンスを黙って捨てるのをやめ、捨てた数を `LOG` で1回と統計（`Debug/Stats.h`）に出す。1本の束縛が `maxStorageBufferRange` を超えないこと、1インスタンスの dispatch の x が 65535 を超えないこと（超えるなら y に広げるか分ける）を確かめる。(3) `Declare`/`Execute` の継続の検査を足す: 2つ以上のインスタンスの詰め方（2つ目以降の `VertexBase`）、前のフレームのパレットが無いときに今の値で代用すること、インスタンス描画のものを外すこと（`RenderGraphCompileTest` か `ComputeSkinningVulkanTest` の側）。(4) `ComputeSkinningVulkanTest.cpp`（176 行付近）の `Math::Matrix4x4::values` への memcpy を Math の抽象 API に置き換える（行列の要素を直接触らない方針）。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(ComputeSkinningVulkanTest|RenderingVelocitySkinnedVulkanTest|RenderGraphCompileTest)$"`
 - stop-when: 閾値をそろえると `RenderingVelocitySkinnedVulkanTest` の結果が変わり、原因が頂点シェーダーのスキニングの側の閾値にある場合は、比べた値を記録して止める。
-- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-05 親が足した（VTG6-COMPUTE-SKINNING の評価の残課題。評価は PASS）。有効にするとパレットを GBuffer の経路と2回アップロードする件は VTG6-DEFAULT-ON で扱う。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Debug, Library/Core/Private/Debug, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-05 親が足した（VTG6-COMPUTE-SKINNING の評価の残課題。評価は PASS）。有効にするとパレットを GBuffer の経路と2回アップロードする件は VTG6-DEFAULT-ON で扱う。 2026-10-05 親（`e12e7457` の評価の差し戻し。評価者は Claude の別文脈）: (2) の「捨てた数を統計に出す」が満たされていない。`NORVES_STAT_ADD` で足した値は、同じ `RenderingCoordinator::RenderFrame` の中で `UpdateRenderingStats(renderStats)`（3181 行付近）が `m_RenderingStats = stats` で丸ごと上書きして消える。`renderStats` は `packet->Stats.GameThreadStats` から作られ、新しい欄 `SkinningComputeDroppedInstances` は誰も設定しないので常に 0（既存の `RenderGraphBarrierCount`・`RenderGraphTransientAcquireCount` は 2956 行付近で `renderStats` へ設定し直しているので残る）。CSV（`Stats.cpp` 500・534 行付近）と `ToString`（109〜114 行付近）にも欄が無い。直すこと: `UpdateRenderingStats` の前で `renderStats.SkinningComputeDroppedInstances` を設定する（毎フレームの数にする。累計にしない）。CSV と `ToString` に欄を足す（`Library/Core/Private/Debug` と `Library/Core/Public/Debug` を paths に足した）。`SkinningComputePass.cpp`（336 行付近）のログの文言を事実に合わせる。テストで、外したインスタンスがあるフレームの後に統計（`RenderingStats` の欄）が 0 より大きいこと、ログが2フレーム目に出ないことを確かめる。変異の確認の出力は cp932 で文字化けして中身が残らなかったので、出力を UTF-8 で保存するか終了コードと落ちた assert の行を残す。あわせて: y へ広げる経路は束縛の上限（2^27 バイト）から実運用では届かないので、`static_assert(SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedMeshVertex) / ThreadsPerGroup <= SKINNING_MAX_GROUP_COUNT)` のように不変条件として示す。
 
 ## VTG6-MATERIAL-TABLE: 描画の記録の材質の番号をフレームで一意な材質の表の番号にする
 - status: done
