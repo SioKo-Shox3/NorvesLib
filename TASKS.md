@@ -2606,7 +2606,9 @@
 - result: code430a6cbc/tree5239cf56/run37379203280 attempt1 job111996430902。実Windows46CPU/旧marker＋bind marker、Debug/Release各2回の旧6095byte完全一致、旧89byte/managed全gate/3ZIPを受入。親readonly再実行exit0/最終782file inventory一致、旧668証拠保全。検証script更新時の3失敗attemptは保存し、条件を維持した有限差分で修復・一括再照合。cl/Core/Sampler.exeの実byte非保存、CI hash receiptのみの限界は維持。joint-global共有/retarget/GPU/Blenderは未完。
 
 ## G2-GR84-JOINT-GLOBAL-ROW-MATH: 親子の行ベクトルFKを確保なしで共有する
-- status: doing
+- status: done
 - done-when: 現Samplerのjoint-global評価をprivate helperへ移し、parentを借用getter、local/global/scratchをSpanで受ける。追加所有配列/確保なしで親順任意・local*parent・visitState・有限検査を保つ。Sampleの公開false/Clearと固定2構成6095byteを維持する。
 - verify: rootのsigned zeroを含むbitコピー、非可換literal、親後置/逆順chain/分岐/複数root、cycle/親範囲/無効span、NaN/Inf/overflow、有限singular/shear/反射、cache再訪/失敗後scratchリセット。実47CPUとDebug/Release旧byte各2回比較・旧89byte/managed全gate。
 - stop-when: source BVHのdouble列FKへ統合する、helper失敗時の内部出力不変を約束する、毎回の親配列抽出を追加する、clip/Compose/Palette/Resource/GR12/StageB/retargetへ拡張する。
+
+- result: code0225e17f/tree62fe3239/run37387162803 attempt1 job112023133952。実Windows47CPU/旧marker＋FK marker、4実captureが旧6095byteと完全一致、旧89byte/managed/CLI/metadata/Python/MSVC/CNG/3ZIP全gateを受入。親readonly再実行exit0/最終774file inventory一致。旧受入783fileと初回失敗650file保全、累積9paths/runtime3/修正commit2pathsを区別。public Zero定数は別件保留、host runtime/retarget/GPU/Blenderは未受入れ。
