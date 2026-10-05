@@ -848,3 +848,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-GR79-MESH-V1-WRITER-COOK開始: ロードマップのGR79→GR82へ戻る。shared reader/material codec/settings/ARM kernelを実NVMESH v1 cookへつなぎ、v0出力は不変にする。合成ARMは明示RawRgba8と共有texture cook入口、DoubleSided autoは位置溶接後のedge分類を必要とする。v1 fingerprintだけ画像解析が必要になるため、旧no-decode契約と分けて文書化する。runtime adapter/描画受入れは後続。
 
 - G2/GR79 writer/cook検証中: 明示NVMESH v1の128B材質/cluster writer、共有材質plan、ARM/発光/外部画像、版付きmanifest/cache/output guardを接続。GltfMaterialCookV1Testを37番目のCPU gateへ追加。静的レビューround1のcluster幅指摘を修正しround2 PASS。host閉鎖判定の実コードsmokeとPython12+4+7 normal/-Oは合格。Windows nativeと旧79+10 byte互換はこのコミットのCIで未確認。runtime v1拒否とGPU未受入れを維持。
+
+- G2/GR79 native初回run37313863062はビルド失敗。ModelCookCache.cppの2か所でAnsiStringViewとliteralの比較がMSVC C2678。右辺を明示AnsiStringViewに修正。テスト37件・byte比較は初回では未実行。次commitのCIで改めて検証する。
