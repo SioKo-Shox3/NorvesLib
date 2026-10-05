@@ -789,9 +789,9 @@
 - notes: 計画書 4.3。VTG6-RESOLVE-FEEDBACK-EMISSIVE から分けた。変位した球の LOD の段の payload は、デバッグの表示用の番号（クラスタの番号）のとき LOD の段でないので、解決は `min(payload, 31)` で頭打ちにしている（既知の限界 (f)）。デバッグの表示のときはラスタと同じく LOD の段を 0 として扱う。 2026-10-06 反復: 実装して done。`Common/MegaGeometryDebugColor.glsl`（新規）へクラスタの色・LOD の段の色の関数を移し、`megageometry.frag` と解決が同じ関数を取り込む。解決は `ResolveParams.frame.y`（`VisibilityResolveGeometry::ResolveDebugViewCode`。1 = クラスタの色、2 = LOD の段）が 0 でないとき、MegaGeometry のクラスタの画素について材質を引かず VT の要求も書かず、描画の記録の payload から色を作って Albedo へ、Normal = 幾何の法線、Material = (0,1,1)、Emissive = 0 を書く（直接 dispatch・材質ごとの形の両方）。パスは `context.GetActiveDebugMode()` から値を渡す。撮影用に Game の `--debug-view=normal|clusters|lod`（development ビルドだけ適用）と `CaptureStartupScene.ps1 -DebugView Normal|Clusters|Lod` を足した。verify のビルドの対象 `VisibilityResolveVulkanTest` は独立した target でなく `RHITextureUpdateVulkanTest` の束なので直した。on vs off の PSNR は clusters 64.62・58.04・54.73 dB、lod 64.88・58.10・54.73 dB（default・near・low）。詳細は PROGRESS.md。
 
 ## VTG6-RESOLVE-WIREFRAME: ビジビリティバッファのラスタをワイヤーフレームの線の描き方にする
-- status: todo
+- status: done
 - done-when: `--visibility-buffer=on` でワイヤーフレームのデバッグの表示（`Wireframe`）を選んだとき、ビジビリティバッファのラスタ（VisibilityRasterPass）が三角形を線で描き（`PolygonMode::Line` のパイプライン。MegaGeometry・手続き・スキニングの 3 種）、解決が線の画素を GBuffer へ書く。off のワイヤーフレームと同じ線が見えることを撮影で確かめる。装置が線の描き方（fillModeNonSolid）に対応しないときは従来の GBuffer の描画へ戻す。
-- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest VisibilityResolveVulkanTest -- /m:1`
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest)$"`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - stop-when: 線の描き方のパイプラインが ID の書き込み（ジオメトリシェーダーの primitive の番号）と両立せず、ラスタの作りを大きく変えないと実現できない場合は、理由を記録して止める。

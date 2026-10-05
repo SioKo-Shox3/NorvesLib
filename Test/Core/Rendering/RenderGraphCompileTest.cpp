@@ -397,6 +397,8 @@ namespace
             uint32_t MaxDrawCount = 0;
         };
         Container::VariableArray<IndirectDrawRecord> IndirectDraws;
+        // SetPipeline に渡されたパイプライン（呼ばれた順）。線の描き方（PolygonMode::Line）で描いたかを確かめる
+        Container::VariableArray<RHI::PipelinePtr> SetPipelines;
         // 呼ばれた順の記録（B=BeginRenderPass、E=EndRenderPass、D=Dispatch、I=間接描画）。パスの並びの検査用
         Container::VariableArray<char> CallSequence;
         uint32_t LastDrawIndexedInstancedIndexCount = 0;
@@ -420,7 +422,7 @@ namespace
         }
         void SetViewport(const RHI::Viewport& viewport) override { (void)viewport; }
         void SetScissor(const RHI::ScissorRect& scissor) override { (void)scissor; }
-        void SetPipeline(RHI::PipelinePtr pipeline) override { (void)pipeline; }
+        void SetPipeline(RHI::PipelinePtr pipeline) override { SetPipelines.push_back(pipeline); }
         void SetVertexBuffer(RHI::BufferPtr buffer, uint64_t offset = 0, uint32_t slot = 0) override
         {
             (void)buffer;
@@ -786,17 +788,20 @@ namespace
     class FakePipeline final : public RHI::IPipeline
     {
     public:
-        FakePipeline(RHI::PipelineType type, uint32_t bindPointCount)
-            : m_Type(type), m_BindPointCount(bindPointCount)
+        FakePipeline(RHI::PipelineType type, uint32_t bindPointCount,
+                     RHI::PolygonMode polygonMode = RHI::PolygonMode::Fill)
+            : m_Type(type), m_BindPointCount(bindPointCount), m_PolygonMode(polygonMode)
         {
         }
 
         RHI::PipelineType GetPipelineType() const override { return m_Type; }
         uint32_t GetBindPointCount() const override { return m_BindPointCount; }
+        RHI::PolygonMode GetPolygonMode() const { return m_PolygonMode; }
 
     private:
         RHI::PipelineType m_Type = RHI::PipelineType::Graphics;
         uint32_t m_BindPointCount = 0;
+        RHI::PolygonMode m_PolygonMode = RHI::PolygonMode::Fill;
     };
 
     RHI::ITexture* GLastDescriptorBinding6Texture = nullptr;
@@ -997,13 +1002,15 @@ namespace
 
         RHI::PipelinePtr CreateGraphicsPipeline(const RHI::GraphicsPipelineDesc& desc) override
         {
-            if (bFailGraphicsPipelines)
+            if (bFailGraphicsPipelines ||
+                (bFailLineGraphicsPipelines && desc.rasterState.polygonMode == RHI::PolygonMode::Line))
             {
                 return nullptr;
             }
             LastGraphicsPipelineDescriptorSetLayouts = desc.descriptorSetLayouts;
             return RHI::MakeShared<FakePipeline>(RHI::PipelineType::Graphics,
-                                                static_cast<uint32_t>(desc.descriptorSetLayouts.size()));
+                                                static_cast<uint32_t>(desc.descriptorSetLayouts.size()),
+                                                desc.rasterState.polygonMode);
         }
 
         RHI::PipelinePtr CreateComputePipeline(const RHI::ComputePipelineDesc& desc) override
@@ -1084,6 +1091,8 @@ namespace
         uint32_t FailLightArraySSBOCreateIndex = 0;
         /** @brief true の間、グラフィックス・計算のパイプラインの作成が nullptr を返す（作れない装置の再現） */
         bool bFailGraphicsPipelines = false;
+        /** @brief true の間、線の描き方（PolygonMode::Line）のグラフィックスのパイプラインだけ作成が nullptr を返す */
+        bool bFailLineGraphicsPipelines = false;
         bool bFailComputePipelines = false;
         // 0 でなければ、数え始めてから n 番目の計算パイプラインの作成だけを失敗させる（ほかは作れる）
         uint32_t FailComputePipelineCreationNumber = 0;
@@ -2082,6 +2091,9 @@ namespace
         MaterialHandle MaterialA;
         MaterialHandle MaterialB;
         CameraProxy Camera;
+        /** @brief Normal 以外のときは、ビューポートの計画（表示だけを持つ）を現在のビューポートにして、この表示で描く */
+        DebugViewMode DebugMode = DebugViewMode::Normal;
+        ViewportRenderPlan ViewportPlan;
         ViewRenderContext Context;
     };
 
@@ -2118,6 +2130,8 @@ namespace
         RasterPipelineUnavailable,
         /** @brief 配線は同じで装置も対応するが、解決の計算パイプラインが作れない */
         ResolvePipelineUnavailable,
+        /** @brief 配線は同じで装置も対応し、塗りのパイプラインは作れるが、ID のラスタの線の描き方のパイプラインが作れない */
+        RasterWireframePipelineUnavailable,
     };
 
     // bVisibilityPlan=false は --visibility-buffer=off（MegaGeometryPass が描画の写しを作らず、VisibilityRasterPass も足さない）
@@ -2140,7 +2154,8 @@ namespace
     {
         scene.Device = RHI::MakeShared<FakeDevice>();
         if (resolveMode == ResolveMode::Supported || resolveMode == ResolveMode::RasterPipelineUnavailable ||
-            resolveMode == ResolveMode::ResolvePipelineUnavailable)
+            resolveMode == ResolveMode::ResolvePipelineUnavailable ||
+            resolveMode == ResolveMode::RasterWireframePipelineUnavailable)
         {
             scene.Device->EnableVisibilityResolveCapabilities();
         }
@@ -2308,6 +2323,14 @@ namespace
         context.Resources.Materials = &scene.Resources.Materials();
         context.Resources.Meshes = &scene.Resources.Meshes();
         context.Resources.MegaGeometry = &scene.Resources.MegaGeometry();
+        if (scene.DebugMode != DebugViewMode::Normal)
+        {
+            // 現在のビューポートがあると、描画のコマンドは Current* から取る。同じ描画を渡し、表示だけを変える
+            scene.ViewportPlan.DebugMode = scene.DebugMode;
+            context.CurrentViewport = &scene.ViewportPlan;
+            context.CurrentDrawCommands = DrawCommandView::FromArray(scene.OpaqueCommands);
+            context.CurrentOpaqueCommands = DrawCommandView::FromArray(scene.OpaqueCommands);
+        }
 
         scene.Mega.SetVisibilityDrawPlanEnabled(bVisibilityPlan);
         scene.Raster.SetMegaGeometryPass(&scene.Mega);
@@ -2325,8 +2348,10 @@ namespace
                 scene.Graph.AddPass(&scene.Skinning);
             }
             scene.Device->bFailGraphicsPipelines = resolveMode == ResolveMode::RasterPipelineUnavailable;
+            scene.Device->bFailLineGraphicsPipelines = resolveMode == ResolveMode::RasterWireframePipelineUnavailable;
             assert(scene.Raster.Initialize(context));
             scene.Device->bFailGraphicsPipelines = false;
+            scene.Device->bFailLineGraphicsPipelines = false;
             scene.Graph.AddPass(&scene.Raster);
 
             const bool bClassifyBeforeResolve = classifyMode == ClassifyMode::BeforeResolve ||
@@ -3587,6 +3612,82 @@ namespace
 
             ShutdownVisibilityRasterScene(scene);
         }
+    }
+
+    // SetPipeline に渡された、グラフィックスのパイプラインのうち、polygonMode が mode のものの数
+    size_t CountGraphicsPipelineSets(const FakeCommandList& commandList, RHI::PolygonMode mode)
+    {
+        size_t count = 0;
+        for (const RHI::PipelinePtr& pipeline : commandList.SetPipelines)
+        {
+            if (pipeline && pipeline->GetPipelineType() == RHI::PipelineType::Graphics &&
+                static_cast<const FakePipeline*>(pipeline.get())->GetPolygonMode() == mode)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    // --visibility-buffer=on でワイヤーフレームを選ぶと、ID のラスタは三角形を線で描き（MegaGeometry・手続き・スキニングの
+    // 3 種とも線のパイプライン）、GBuffer は描画を止めたまま解決が線の画素を書く。通常の表示では塗りの 3 種だけを使う。
+    // ラスタが表示で線のパイプラインを選ぶ配線、解決・GBufferPass・MegaGeometryPass が表示を渡す配線を外すと落ちる
+    void TestVisibilityRasterWireframeDrawsLinesAndResolveWritesThem()
+    {
+        {
+            VisibilityRasterScene normalScene;
+            RunVisibilityRasterScene(normalScene, true, true, ClassifyMode::None, true, true, ResolveMode::Supported);
+            assert(CountGraphicsPipelineSets(normalScene.CommandList, RHI::PolygonMode::Fill) == 3);
+            assert(CountGraphicsPipelineSets(normalScene.CommandList, RHI::PolygonMode::Line) == 0);
+            ShutdownVisibilityRasterScene(normalScene);
+        }
+
+        VisibilityRasterScene scene;
+        scene.DebugMode = DebugViewMode::Wireframe;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, ResolveMode::Supported);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(scene.Raster.IsDrawReady(DebugViewMode::Wireframe));
+        assert(scene.Resolve.CanResolve(scene.Device.get(), DebugViewMode::Wireframe));
+        assert(CountGraphicsPipelineSets(commandList, RHI::PolygonMode::Line) == 3);
+        assert(CountGraphicsPipelineSets(commandList, RHI::PolygonMode::Fill) == 0);
+
+        // GBuffer の描画は止まったまま（ID の描画だけが残り）、解決が GBuffer を書く
+        assert(CountDirectDraws(commandList) == SceneIdDirectDraws);
+        assert(commandList.IndirectDraws.size() == 2);
+        assert(scene.Resolve.WasResolved());
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 線のパイプラインが作れない装置では、ワイヤーフレームの表示だけ従来の GBuffer の描画（線）へ戻す。
+    // ID のラスタは塗りで描き続け、通常の表示では解決を使う。表示を解決へ問い合わせる配線を外す（表示を渡さない）と、
+    // GBuffer の描画が止まって線の画素を誰も書かなくなり、この検査が落ちる
+    void TestVisibilityRasterWireframeFallsBackToGBufferWhenLinePipelinesUnavailable()
+    {
+        const OnWithoutResolveBaseline baseline = MeasureOnWithoutResolve();
+
+        VisibilityRasterScene scene;
+        scene.DebugMode = DebugViewMode::Wireframe;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true,
+                                 ResolveMode::RasterWireframePipelineUnavailable);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(scene.Raster.IsDrawReady());
+        assert(!scene.Raster.IsDrawReady(DebugViewMode::Wireframe));
+        assert(scene.Resolve.GetFallbackReason(scene.Device.get(), DebugViewMode::Wireframe) ==
+               VisibilityResolveGeometry::FallbackReason::RasterUnavailable);
+        assert(scene.Resolve.GetFallbackReason(scene.Device.get()) == VisibilityResolveGeometry::FallbackReason::None);
+        assert(!scene.Resolve.WasResolved());
+
+        // GBufferPass・MegaGeometryPass は GBuffer へ描き続ける（解決を使わない On と同じ数の描画）
+        assert(CountDirectDraws(commandList) == baseline.DirectDraws);
+        assert(commandList.IndirectDraws.size() == baseline.IndirectDraws);
+        // GBuffer の描画は線のパイプライン。ID のラスタは塗りの 3 種のまま
+        assert(CountGraphicsPipelineSets(commandList, RHI::PolygonMode::Line) > 0);
+        assert(CountGraphicsPipelineSets(commandList, RHI::PolygonMode::Fill) >= 3);
+
+        ShutdownVisibilityRasterScene(scene);
     }
 
     // 材質ごとの解決の構成（分類を解決より前に足す）の dispatch の並びの検査。CallSequence の末尾は、分類の 3 回の dispatch（D）の
@@ -9195,6 +9296,8 @@ int main()
     TestVisibilityResolveFallsBackToDirectDispatchWhenIndirectDispatchRejected();
     TestVisibilityResolveUnsupportedDeviceKeepsGBufferDraws();
     TestVisibilityResolveFallsBackToGBufferDrawsWhenPipelinesAreUnavailable();
+    TestVisibilityRasterWireframeDrawsLinesAndResolveWritesThem();
+    TestVisibilityRasterWireframeFallsBackToGBufferWhenLinePipelinesUnavailable();
     TestVisibilityRasterSkinnedRecordsAddressEachBodyOnce();
     TestSceneViewWiresVisibilityResolveOnlyForOnMode();
     TestVisibilityRasterOffKeepsExistingMegaGeometryRecording();

@@ -772,7 +772,8 @@ namespace NorvesLib::Core::Rendering
         m_bInitialized = false;
     }
 
-    VisibilityResolveGeometry::FallbackReason VisibilityResolvePass::GetFallbackReason(const RHI::IDevice* device) const
+    VisibilityResolveGeometry::FallbackReason VisibilityResolvePass::GetFallbackReason(const RHI::IDevice* device,
+                                                                                       DebugViewMode mode) const
     {
         using VisibilityResolveGeometry::FallbackReason;
         if (!m_bEnabled || !m_bInitialized)
@@ -783,7 +784,7 @@ namespace NorvesLib::Core::Rendering
         {
             return FallbackReason::DeviceUnsupported;
         }
-        if (!m_RasterPass || !m_RasterPass->IsDrawReady())
+        if (!m_RasterPass || !m_RasterPass->IsDrawReady(mode))
         {
             return FallbackReason::RasterUnavailable;
         }
@@ -821,7 +822,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         // 対応しない装置では、GBufferPass・MegaGeometryPass が描画を止めていない。何も宣言しない
-        const VisibilityResolveGeometry::FallbackReason fallbackReason = GetFallbackReason(context->Device);
+        const VisibilityResolveGeometry::FallbackReason fallbackReason =
+            GetFallbackReason(context->Device, context->GetActiveDebugMode());
         if (fallbackReason != VisibilityResolveGeometry::FallbackReason::None)
         {
             if (!m_bLoggedFallback)

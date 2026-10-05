@@ -259,8 +259,9 @@ namespace NorvesLib::Core::Rendering
                                                              const RHI::TexturePtr& depth,
                                                              bool bUseRenderGraphInitialStates) const;
 
-        // ビジビリティバッファの解決が GBuffer を書く構成で、このパスが描画を止めるか（解決が実際に使えるときだけ）
-        bool ShouldSkipDraws(const RHI::IDevice* device) const;
+        // ビジビリティバッファの解決が GBuffer を書く構成で、このパスが描画を止めるか（解決が実際に使えるときだけ。
+        // mode は今のビューポートの表示。ワイヤーフレームで ID のラスタが線を描けないときは止めない）
+        bool ShouldSkipDraws(const RHI::IDevice* device, DebugViewMode mode) const;
 
         // 設定
         GBufferPassSettings m_Settings;

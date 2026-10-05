@@ -185,9 +185,10 @@ param(
     # （環境変数 NORVES_GBUFFER_DEBUG。統計が有効な Debug・RelWithDebInfo だけ）。-VisibilityBuffer On と Off で同じ値を撮り比べる用。
     [ValidateSet('Off', 'Normal', 'Velocity', 'Depth', 'Albedo', 'Material')]
     [string]$GBufferDebug = 'Off',
-    # 起動時のデバッグの表示（既定は Normal）。Clusters は MegaGeometry のクラスタの色、Lod は LOD の段（--debug-view=clusters|lod。
-    # F4・F5 と同じ表示。development ビルドだけ）。-VisibilityBuffer On と Off で同じ表示になることを撮り比べる用。
-    [ValidateSet('Normal', 'Clusters', 'Lod')]
+    # 起動時のデバッグの表示（既定は Normal）。Clusters は MegaGeometry のクラスタの色、Lod は LOD の段、Wireframe は三角形の線
+    # （--debug-view=clusters|lod|wireframe。F3・F4・F5 と同じ表示。development ビルドだけ）。
+    # -VisibilityBuffer On と Off で同じ表示になることを撮り比べる用。
+    [ValidateSet('Normal', 'Clusters', 'Lod', 'Wireframe')]
     [string]$DebugView = 'Normal',
     # 同じコードを -Deterministic で撮った別の出力先。各視点の平均輝度の差と PSNR を求めて metrics.json へ書き、
     # 平均輝度の差が -DeterministicMeanLuminanceLimit を超えるか PSNR が -DeterministicPsnrLimit を下回れば失敗にする。
@@ -823,7 +824,7 @@ foreach ($view in $shots)
     {
         $arguments += "--visibility-buffer=$($VisibilityBuffer.ToLowerInvariant())"
     }
-    # デバッグの表示は既定が Normal なので、Clusters・Lod のときだけ引数を渡す。
+    # デバッグの表示は既定が Normal なので、Clusters・Lod・Wireframe のときだけ引数を渡す。
     if ($DebugView -ne 'Normal')
     {
         $arguments += "--debug-view=$($DebugView.ToLowerInvariant())"

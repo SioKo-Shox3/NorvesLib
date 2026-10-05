@@ -179,15 +179,28 @@ namespace NorvesLib::Core::Rendering
             m_MeshPipeline.reset();
             m_SkinnedPipeline.reset();
             m_RecordsPipeline.reset();
+            m_MegaWireframePipeline.reset();
+            m_MeshWireframePipeline.reset();
+            m_SkinnedWireframePipeline.reset();
             NORVES_LOG_WARNING("VisibilityRasterPass", "ビジビリティバッファのパイプラインの作成に失敗。このパスは何もしません");
         }
         return true;
     }
 
-    bool VisibilityRasterPass::IsDrawReady() const
+    bool VisibilityRasterPass::IsDrawReady(DebugViewMode mode) const
     {
-        return m_bInitialized && m_RenderPass && m_MegaPipeline && m_MeshPipeline && m_SkinnedPipeline &&
-               m_RecordsPipeline;
+        const bool bFillReady = m_bInitialized && m_RenderPass && m_MegaPipeline && m_MeshPipeline &&
+                                m_SkinnedPipeline && m_RecordsPipeline;
+        return bFillReady && (mode != DebugViewMode::Wireframe || HasWireframePipelines());
+    }
+
+    bool VisibilityRasterPass::HasWireframePipelines() const
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        return m_MegaWireframePipeline && m_MeshWireframePipeline && m_SkinnedWireframePipeline;
+#else
+        return false;
+#endif
     }
 
     void VisibilityRasterPass::Shutdown()
@@ -200,6 +213,9 @@ namespace NorvesLib::Core::Rendering
         m_MeshPipeline.reset();
         m_SkinnedPipeline.reset();
         m_RecordsPipeline.reset();
+        m_MegaWireframePipeline.reset();
+        m_MeshWireframePipeline.reset();
+        m_SkinnedWireframePipeline.reset();
         m_MegaVertexShader.reset();
         m_MeshVertexShader.reset();
         m_SkinnedVertexShader.reset();
@@ -265,9 +281,11 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // 3種類の描画のパイプライン。ID を書く1枚のカラー添付と深度だけが違わず、頂点シェーダーと頂点入力だけが違う
+        // 3種類の描画のパイプライン。ID を書く1枚のカラー添付と深度だけが違わず、頂点シェーダーと頂点入力だけが違う。
+        // 線の描き方（ワイヤーフレーム）は polygonMode だけが違い、ID は塗りと同じく三角形の gl_PrimitiveID を書く
         const auto createGraphics = [this](const RHI::ShaderPtr& vertexShader,
                                            bool bVertexInput,
+                                           RHI::PolygonMode polygonMode,
                                            RHI::PipelinePtr& outPipeline) -> bool
         {
             RHI::GraphicsPipelineDesc pipelineDesc;
@@ -293,7 +311,7 @@ namespace NorvesLib::Core::Rendering
             }
 
             // ラスタライザは GBuffer と同じ（裏面を捨て、時計回りが表）
-            pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+            pipelineDesc.rasterState.polygonMode = polygonMode;
             pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
             pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
             pipelineDesc.rasterState.lineWidth = 1.0f;
@@ -316,12 +334,28 @@ namespace NorvesLib::Core::Rendering
             return outPipeline != nullptr;
         };
 
-        if (!createGraphics(m_MegaVertexShader, true, m_MegaPipeline) ||
-            !createGraphics(m_MeshVertexShader, true, m_MeshPipeline) ||
-            !createGraphics(m_SkinnedVertexShader, false, m_SkinnedPipeline))
+        if (!createGraphics(m_MegaVertexShader, true, RHI::PolygonMode::Fill, m_MegaPipeline) ||
+            !createGraphics(m_MeshVertexShader, true, RHI::PolygonMode::Fill, m_MeshPipeline) ||
+            !createGraphics(m_SkinnedVertexShader, false, RHI::PolygonMode::Fill, m_SkinnedPipeline))
         {
             return false;
         }
+
+#if NORVES_BUILD_DEVELOPMENT
+        // 線のパイプラインが作れなくても塗りの描画は使える。3 種が揃わないときは作れたぶんも捨て、
+        // IsDrawReady(Wireframe) を false にして GBuffer のワイヤーフレームの描画へ戻す
+        if (!createGraphics(m_MegaVertexShader, true, RHI::PolygonMode::Line, m_MegaWireframePipeline) ||
+            !createGraphics(m_MeshVertexShader, true, RHI::PolygonMode::Line, m_MeshWireframePipeline) ||
+            !createGraphics(m_SkinnedVertexShader, false, RHI::PolygonMode::Line, m_SkinnedWireframePipeline))
+        {
+            m_MegaWireframePipeline.reset();
+            m_MeshWireframePipeline.reset();
+            m_SkinnedWireframePipeline.reset();
+            NORVES_LOG_WARNING("VisibilityRasterPass",
+                               "VIS_RASTER_WIREFRAME_UNAVAILABLE 線の描き方のパイプラインを作れません。"
+                               "ワイヤーフレームの表示では従来の GBuffer の描画を使います");
+        }
+#endif
 
         RHI::ComputePipelineDesc computeDesc;
         computeDesc.computeShader = m_RecordsShader;
@@ -910,6 +944,13 @@ namespace NorvesLib::Core::Rendering
             slot.SkinnedSet->Update();
         }
 
+        // ワイヤーフレームの表示では、塗りの代わりに線のパイプラインで描く（GBuffer のワイヤーフレームと同じ線になる。
+        // 解決が線の画素を GBuffer へ書く）。線のパイプラインが揃わないときは、解決のパスが従来の GBuffer の描画へ戻している
+        const bool bWireframe = context.GetActiveDebugMode() == DebugViewMode::Wireframe && HasWireframePipelines();
+        const RHI::PipelinePtr& megaPipeline = bWireframe ? m_MegaWireframePipeline : m_MegaPipeline;
+        const RHI::PipelinePtr& meshPipeline = bWireframe ? m_MeshWireframePipeline : m_MeshPipeline;
+        const RHI::PipelinePtr& skinnedPipeline = bWireframe ? m_SkinnedWireframePipeline : m_SkinnedPipeline;
+
         // ID と深度へ描く
         commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
         commandList->SetViewport(viewport);
@@ -917,7 +958,7 @@ namespace NorvesLib::Core::Rendering
 
         if (bHasMegaDraw)
         {
-            commandList->SetPipeline(m_MegaPipeline);
+            commandList->SetPipeline(megaPipeline);
             commandList->SetDescriptorSet(slot.MegaSet, 0);
             for (uint32_t passIndex = 0; passIndex < plan.PassCount; ++passIndex)
             {
@@ -953,7 +994,7 @@ namespace NorvesLib::Core::Rendering
 
         if (bDrawMesh)
         {
-            commandList->SetPipeline(m_MeshPipeline);
+            commandList->SetPipeline(meshPipeline);
             commandList->SetDescriptorSet(slot.MeshSet, 0);
             const RHI::IBuffer* boundVertex = nullptr;
             const RHI::IBuffer* boundIndex = nullptr;
@@ -975,7 +1016,7 @@ namespace NorvesLib::Core::Rendering
 
         if (bDrawSkinned)
         {
-            commandList->SetPipeline(m_SkinnedPipeline);
+            commandList->SetPipeline(skinnedPipeline);
             commandList->SetDescriptorSet(slot.SkinnedSet, 0);
             const RHI::IBuffer* boundIndex = nullptr;
             for (const ChunkDraw& draw : skinnedDraws)

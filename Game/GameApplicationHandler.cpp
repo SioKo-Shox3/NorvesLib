@@ -148,8 +148,8 @@ namespace Game
         // --night: 起動画面を夜にする（空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす。値を取らない）。
         constexpr const TCHAR *kNightOption = TEXT("--night");
         bool s_bRendering3DTestNight = false;
-        // --debug-view=normal|clusters|lod: 起動時のデバッグの表示（F4・F5 で切り替えるものと同じ。既定は normal）。
-        // MegaGeometry のクラスタの色・LOD の段を、--visibility-buffer の on と off で撮り比べる用。
+        // --debug-view=normal|clusters|lod|wireframe: 起動時のデバッグの表示（F3・F4・F5 で切り替えるものと同じ。既定は normal）。
+        // MegaGeometry のクラスタの色・LOD の段・ワイヤーフレームを、--visibility-buffer の on と off で撮り比べる用。
         constexpr const TCHAR *kDebugViewOption = TEXT("--debug-view=");
         NorvesLib::Core::Rendering::DebugViewMode s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
         // --virtual-texture=on|off: 起動画面の材質のアルベド・法線・ORM・高さを VT（sparse）で描くか。既定は on（sparse に対応しない GPU は全常駐へ戻る）。
@@ -679,9 +679,13 @@ namespace Game
                 {
                     s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::LODLevel;
                 }
+                else if (debugViewValue == String(TEXT("wireframe")))
+                {
+                    s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Wireframe;
+                }
                 else
                 {
-                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --debug-view は normal・clusters・lod のどれかで指定する");
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --debug-view は normal・clusters・lod・wireframe のどれかで指定する");
                     return false;
                 }
                 continue;

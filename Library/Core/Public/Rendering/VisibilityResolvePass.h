@@ -387,11 +387,15 @@ namespace NorvesLib::Core::Rendering
          *
          * GBufferPass・MegaGeometryPass は、これが None のときだけ GBuffer の描画を止める。ID のラスタのパイプラインや解決の
          * パイプラインが作れていないのに描画を止めると、画面が空になるため。初期化（View が Declare の前に行う）の後に使う。
+         *
+         * mode は今のビューポートの表示。Wireframe のときは、ID のラスタが線のパイプラインを持たなければ RasterUnavailable になり
+         * （GBuffer の描画がワイヤーフレームを描く）、持てば解決が線の画素を GBuffer へ書く。
          */
-        VisibilityResolveGeometry::FallbackReason GetFallbackReason(const RHI::IDevice* device) const;
-        bool CanResolve(const RHI::IDevice* device) const
+        VisibilityResolveGeometry::FallbackReason GetFallbackReason(const RHI::IDevice* device,
+                                                                    DebugViewMode mode = DebugViewMode::Normal) const;
+        bool CanResolve(const RHI::IDevice* device, DebugViewMode mode = DebugViewMode::Normal) const
         {
-            return GetFallbackReason(device) == VisibilityResolveGeometry::FallbackReason::None;
+            return GetFallbackReason(device, mode) == VisibilityResolveGeometry::FallbackReason::None;
         }
 
     private:

@@ -6,6 +6,7 @@
 #include "Rendering/MeshIndexChunks.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
+#include "Rendering/RenderTypes.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityMaterialTable.h"
 #include "RHI/IDevice.h"
@@ -89,8 +90,12 @@ namespace NorvesLib::Core::Rendering
          *
          * false の間は Declare が ID を宣言せず、Execute も何も描かない。ID を読む解決は使えないので、
          * 解決が GBuffer を書く構成でもこの間は GBuffer の描画を止めてはならない。
+         *
+         * mode が Wireframe のときは、三角形を線で描くパイプライン（PolygonMode::Line。MegaGeometry・手続き・スキニングの
+         * 3 種）も揃っていることを求める。線のパイプラインが作れていない装置では false になり、従来の GBuffer の
+         * ワイヤーフレームの描画へ戻る（development ビルドだけ。Release は表示を Normal に丸めるので線のパイプラインを作らない）。
          */
-        bool IsDrawReady() const;
+        bool IsDrawReady(DebugViewMode mode = DebugViewMode::Normal) const;
 
         /** @brief 最後の Execute が書いた記録の表（GenericRead の状態。書かなかったフレームは null） */
         const RHI::BufferPtr& GetRecordTable() const { return m_LastRecordTable; }
@@ -161,6 +166,8 @@ namespace NorvesLib::Core::Rendering
 
         bool CreateRenderPass();
         bool CreatePipelines(ViewRenderContext& context);
+        /** @brief 3 種の線のパイプラインが揃っているか（development ビルド以外では常に false） */
+        bool HasWireframePipelines() const;
         bool EnsureFramebuffer(const RHI::TexturePtr& idTexture, const RHI::TexturePtr& depthTexture);
         bool EnsureFrameSlot(FrameSlot& slot, uint32_t recordCapacity, uint32_t sectionCount, uint32_t materialCount);
 
@@ -200,6 +207,10 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_MeshPipeline;
         RHI::PipelinePtr m_SkinnedPipeline;
         RHI::PipelinePtr m_RecordsPipeline;
+        // ワイヤーフレーム（DebugViewMode::Wireframe）の線の描き方。3 種とも揃ったときだけ使う（development ビルドだけ作る）
+        RHI::PipelinePtr m_MegaWireframePipeline;
+        RHI::PipelinePtr m_MeshWireframePipeline;
+        RHI::PipelinePtr m_SkinnedWireframePipeline;
 
         FrameSlot m_FrameSlots[FrameSlotCount];
         uint64_t m_FrameCounter = 0;
