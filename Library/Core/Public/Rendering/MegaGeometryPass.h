@@ -38,6 +38,14 @@ namespace NorvesLib::Core::Rendering
          * 変更前の段と同じで見た目の差が出ない。これより粗い段（低角度の LOD2）は目地の陰影が目に見えて変わる。
          */
         float LODBias = 1.0f;
+
+        /**
+         * @brief グループの BVH（NVMESH v1.1）を持つメッシュで、BVH をたどって判定するか
+         *
+         * false なら全メッシュを平らなクラスタの列で判定する（BVH をたどった選択と平らな選択の撮り比べ用）。
+         * 環境変数 NORVES_MEGA_BVH が 0 か off なら false にする。
+         */
+        bool bUseGroupBVH = true;
     };
 
     /**

@@ -152,6 +152,20 @@ namespace NorvesLib::Core::Rendering
                 m_Settings.LODBias = threshold;
             }
         }
+
+        // グループの BVH のたどりを切って、平らなクラスタの列だけで判定する（撮り比べ用）
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char *bvhValue = std::getenv("NORVES_MEGA_BVH");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (bvhValue != nullptr && (std::strcmp(bvhValue, "0") == 0 || std::strcmp(bvhValue, "off") == 0))
+        {
+            m_Settings.bUseGroupBVH = false;
+        }
     }
 
     MegaGeometryPass::~MegaGeometryPass()
@@ -942,7 +956,7 @@ namespace NorvesLib::Core::Rendering
         // BVH のインスタンスをインスタンスの表の先頭に並べる（平らな判定のワークグループは、後ろのインスタンスだけが持つ）
         const auto canTraverseBvh = [this](const MegaGeometry::MegaMeshGPUData *data) -> bool
         {
-            return m_BvhCullPipeline && m_BvhQueueBuffer && m_BvhCounterBuffer && data &&
+            return m_Settings.bUseGroupBVH && m_BvhCullPipeline && m_BvhQueueBuffer && m_BvhCounterBuffer && data &&
                    data->GroupBVHNodeCount > 0 && data->GroupBVHBufferBytes > 0 &&
                    !data->GroupBVHLevelNodeCounts.empty() &&
                    data->GroupBVHLevelNodeCounts.size() <= MegaGeometry::GROUP_BVH_MAX_LEVELS;
