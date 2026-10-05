@@ -397,7 +397,10 @@ bool IsPageResident(uint pageTableBase, uint pageId)
 }
 
 /**
- * @brief 常駐していないページを要求する（同じフレームの同じページは1回だけ列へ積む）
+ * @brief ページを要求する（同じフレームの同じページは1回だけ列へ積む）
+ *
+ * 常駐していない子のページの要求と、描いたクラスタの常駐ページの使用の印の両方に使う。
+ * どちらもページの表の位置を積むだけで、ホストが自分の記録から区別する（使用の印はホストの LRU を使われた順にする）。
  *
  * 印の交換で重複を省く: ページの表の requestStamp を今のフレームの印に替え、前の値が同じ印なら先に誰かが積んだ。
  * 列が容量を超えたら積まず、捨てた数だけ数える（ホストが溢れを見る）。
@@ -634,6 +637,8 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
     // 1パス目で描いたクラスタは2パス目でも必ずここを通る。ページの表はフレームの間は変わらないので、
     // ページの常駐の判定もパスの間で食い違わない）
     uint requestPage = INVALID_PAGE_ID;
+    // 描いたときに使用の印を出す、このクラスタ自身のページ（焼き込みの階層を持たないクラスタはページを持たない）
+    uint ownPage = ((cluster.bakedInfo.x & CLUSTER_FLAG_BAKED_LOD) != 0u) ? cluster.bakedInfo.w : INVALID_PAGE_ID;
     bool bPassesBasicTests =
         !FrustumCullSphere(center, radius) &&
         !NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius) &&
@@ -681,9 +686,11 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
         }
         // 子のページが無いために描いたクラスタは、見えているときだけ子のページを要求する。
         // 1パス目で描いたものも、2パス目が判定し直すのでここで要求が出る（1パス目では要求しない）
+        // 描いたクラスタの自分のページへは使用の印を出す（常駐ページの最後に使われたフレームを、ホストの LRU へ渡す）
         if (bVisible)
         {
             RequestPage(instance.bvhInfo.w, requestPage);
+            RequestPage(instance.bvhInfo.w, ownPage);
         }
         return;
     }
@@ -693,6 +700,7 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
     {
         EmitDrawCommand(instanceIndex, instance, clusterIndex, cluster);
         RequestPage(instance.bvhInfo.w, requestPage);
+        RequestPage(instance.bvhInfo.w, ownPage);
     }
 }
 

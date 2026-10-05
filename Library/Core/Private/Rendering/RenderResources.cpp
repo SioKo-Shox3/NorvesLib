@@ -1516,7 +1516,8 @@ namespace NorvesLib::Core::Rendering
 
         MegaGeometry::GeometryPageRequestSet requests;
         const bool bHasRequests = impl.GeometryPageFeedback->TakeRequests(requests);
-        ++impl.GeometryPageFrame;
+        // 要求の LastRequestedFrame と同じ時計（要求のリングのフレーム）で進める。要求の新旧が取り込んだ Update に依らず保たれる
+        impl.GeometryPageFrame = std::max(impl.GeometryPageFrame, impl.GeometryPageFeedback->GetFrameCounter());
         impl.GeometryPageStreaming->Update(impl.GeometryPageFrame, bHasRequests ? &requests : nullptr);
 
         // 常駐するページの数が変わったときだけ、約1秒（60フレーム）に1回までログへ出す。

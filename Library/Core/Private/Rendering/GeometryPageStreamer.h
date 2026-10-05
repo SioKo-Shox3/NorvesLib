@@ -17,6 +17,8 @@
 //   7) 優先度の高い順に、要求されたページの読み込みを始める（上限: 1 フレームの読みの量・件数・読み込み中の数）
 //
 // 優先度は「粗い段が先 → 要求されたフレームの数が多い → 最後に要求されたフレームが新しい」。
+// 要求には、描いたクラスタのページ（常駐のもの）の使用の印も入る。ストリーマは、使用の印で常駐ページの「最後に使われたフレーム」を進め、
+// 追い出し（LRU）は読み込んだ順でなく使われた順になる。
 //
 // ページの親子の関係を守る: 細かい側のページは、親（粗い側）のページが全て常駐していないと公開しない（親が無いと細かい側だけが
 // 描かれて穴になる）。親のページは、それを親に持つページが全て常駐していないときだけ外す（子から外す）。
@@ -355,8 +357,9 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief 1 フレーム分のストリーミングを進める（RenderThread）
-         * @param frame 増えていくフレームの番号（最後に要求されたフレームの基準）
-         * @param requests カリングが書いた要求。無ければ null
+         * @param frame 増えていくフレームの番号。要求の LastRequestedFrame と同じ時計（要求のリングのフレーム）を渡す。
+         *        要求の新旧は取り込んだ Update ではなく、この時計の値そのもので決まる
+         * @param requests カリングが書いた要求（未常駐の子のページの要求と、描いた常駐ページの使用の印）。無ければ null
          */
         GeometryPageFrameResult Update(uint64_t frame, const MegaGeometry::GeometryPageRequestSet *requests)
         {
@@ -470,13 +473,9 @@ namespace NorvesLib::Core::Rendering
         // 2) 要求を取り込む
         void IngestRequestsLocked(const MegaGeometry::GeometryPageRequestSet &requests)
         {
-            // 要求のフレームの番号は、要求のリングの数え方（ストリーマの Update の番号とは別）。
-            // 集合の中で最も新しい要求を今のフレームとして、古い要求は同じだけ前のフレームへ写す（新しさの順を保つ）
-            uint64_t newestRequestFrame = 0;
-            for (const MegaGeometry::GeometryPageRequestSet::Request &request : requests.GetRequests())
-            {
-                newestRequestFrame = std::max(newestRequestFrame, request.LastRequestedFrame);
-            }
+            // 要求のフレームの番号は Update の frame と同じ時計（要求のリングのフレーム）なので、そのまま新旧に使う。
+            // 要求には、未常駐の子のページの要求と、描いた常駐ページの使用の印（最後に使われたフレーム）が混ざる。
+            // 使用の印は常駐の記録の LastRequestedFrame を進めるので、LRU は読み込んだ順でなく使われた順になる
             for (const MegaGeometry::GeometryPageRequestSet::Request &request : requests.GetRequests())
             {
                 PageKey key;
@@ -485,23 +484,28 @@ namespace NorvesLib::Core::Rendering
                     ++m_Stats.InvalidRequests;
                     continue;
                 }
-                Record *record = FindOrCreateLocked(key);
+                bool bRoot = false;
+                Record *record = FindOrCreateLocked(key, &bRoot);
                 if (record == nullptr)
                 {
-                    ++m_Stats.InvalidRequests;
+                    // 根のページは常駐のままで毎フレーム使われるので、使用の印は黙って捨てる（無効の要求ではない）
+                    if (!bRoot)
+                    {
+                        ++m_Stats.InvalidRequests;
+                    }
                     continue;
                 }
-                const uint64_t age = newestRequestFrame - request.LastRequestedFrame;
-                const uint64_t requestedFrame = m_Frame > age ? m_Frame - age : 0;
                 // 作ったばかりの記録（要求の数 0）は作った時点のフレームを持つので、要求のフレームで置き換える
-                record->LastRequestedFrame =
-                    record->RequestCount == 0 ? requestedFrame : std::max(record->LastRequestedFrame, requestedFrame);
+                record->LastRequestedFrame = record->RequestCount == 0
+                                                 ? request.LastRequestedFrame
+                                                 : std::max(record->LastRequestedFrame, request.LastRequestedFrame);
                 ++record->RequestCount;
             }
         }
 
-        // 記録を探す。無ければ静的な情報を引いて、要求された状態で作る（根のページ・不正なページは作らず null）
-        Record *FindOrCreateLocked(const PageKey &key)
+        // 記録を探す。無ければ静的な情報を引いて、要求された状態で作る（根のページ・不正なページは作らず null。
+        // 根のページだったときは outRoot が true）
+        Record *FindOrCreateLocked(const PageKey &key, bool *outRoot = nullptr)
         {
             auto it = m_Records.find(key);
             if (it != m_Records.end())
@@ -509,8 +513,19 @@ namespace NorvesLib::Core::Rendering
                 return &it->second;
             }
             Record record;
-            if (!m_Backend.GetPageDescriptor(key.MeshId, key.PageId, record.Desc) || record.Desc.bRoot ||
-                record.Desc.RegionBytes == 0)
+            if (!m_Backend.GetPageDescriptor(key.MeshId, key.PageId, record.Desc))
+            {
+                return nullptr;
+            }
+            if (record.Desc.bRoot)
+            {
+                if (outRoot != nullptr)
+                {
+                    *outRoot = true;
+                }
+                return nullptr;
+            }
+            if (record.Desc.RegionBytes == 0)
             {
                 return nullptr;
             }
@@ -631,8 +646,9 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        // 最後に要求されたフレームが古いページから 1 つ外す。外せたら true
-        // （同じ古さなら細かい段が先。maxLastRequestedFrame より新しく要求されたページは外さない）
+        // 最後に要求（使用の印を含む）されたフレームが古いページから 1 つ外す。外せたら true
+        // （同じ古さなら細かい段が先。maxLastRequestedFrame 以降に使われたページは外さない:
+        //  読み込みたいページが要求されたのと同じフレームに描かれたページを外すと、使っているページを外して読み直す入れ替わりが続く）
         bool EvictOneLocked(const Container::VariableArray<uint32_t> *protectedPages, uint64_t meshOfProtected,
                             uint64_t maxLastRequestedFrame, GeometryPageFrameResult &result)
         {
@@ -640,7 +656,7 @@ namespace NorvesLib::Core::Rendering
             for (auto it = m_Records.begin(); it != m_Records.end(); ++it)
             {
                 const Record &record = it->second;
-                if (record.State != GeometryPageState::Resident || record.LastRequestedFrame > maxLastRequestedFrame)
+                if (record.State != GeometryPageState::Resident || record.LastRequestedFrame >= maxLastRequestedFrame)
                 {
                     continue;
                 }
