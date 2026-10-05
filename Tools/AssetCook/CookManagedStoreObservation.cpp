@@ -1,5 +1,9 @@
-﻿// 固定control領域の物理祖先探索。保存pathを開かず、変更・採用・回復は行わない。
+﻿// 固定control領域の観測とfresh初期化。保存pathからの採用や資産本体の更新は行わない。
 #include "CookManagedStoreObservation.h"
+#include "CookManagedStoreInitialization.h"
+#include "CookManagedStoreInitializationTestAccess.h"
+#include "CookDestinationLockTestAccess.h"
+#include "NativeCookPath.h"
 #include "CookDestinationLock.h"
 #include "CookPathIdentity.h"
 #include "CookOutputPaths.h"
@@ -9,9 +13,12 @@
 #include <cwchar>
 #include <exception>
 #include <initializer_list>
+#include <cstddef>
+#include <new>
 #include <utility>
 #if defined(_WIN32)
 #include <Windows.h>
+#include <bcrypt.h>
 #endif
 namespace NorvesLib::Tools::AssetCook
 {
@@ -571,12 +578,12 @@ namespace NorvesLib::Tools::AssetCook
         {
             const CookOwnerResolveRequest* Request = nullptr;
             CookManagedStoreObservation Candidate;
+            Identity WorkspaceSnapshot;
             Text Reason;
             Result Status = Result::Error;
         };
-        bool Inspect(const CookDestinationLockContext& lock, void* data, Text& error)
+        bool ObserveLocked(const CookDestinationLockContext& lock, Work& work, Text& error)
         {
-            auto& work = *static_cast<Work*>(data);
             auto& out = work.Candidate;
             Budget budget;
             if (!ResolveCookOwnerBinding(*work.Request, out.Owner, error))
@@ -798,8 +805,13 @@ namespace NorvesLib::Tools::AssetCook
                 return Fail(error, "owner_changed");
             }
             work.Status = bOwnStore ? Result::Observed : Result::StoreMissing;
+            work.WorkspaceSnapshot = workspace;
             error.clear();
             return true;
+        }
+        bool ObserveCallback(const CookDestinationLockContext& lock, void* data, Text& error)
+        {
+            return ObserveLocked(lock, *static_cast<Work*>(data), error);
         }
 #endif
     } // namespace
@@ -815,7 +827,7 @@ namespace NorvesLib::Tools::AssetCook
 #else
         Work work;
         work.Request = &request;
-        const auto status = WithCookDestinationLock({request.FinalRuntimeRoot}, Inspect, &work, error);
+        const auto status = WithCookDestinationLock({request.FinalRuntimeRoot}, ObserveCallback, &work, error);
         if (status == CookDestinationLockResult::Busy)
         {
             Fail(error, "volume_busy");
@@ -835,5 +847,641 @@ namespace NorvesLib::Tools::AssetCook
         }
         return work.Status;
 #endif
+    }
+
+    namespace
+    {
+        using InitResult = CookManagedStoreInitializationResult;
+        using InitFault = Detail::CookStoreInitFault;
+        using InitPoint = Detail::CookStoreInitPoint;
+        bool InitFail(Text& error, const char* reason)
+        {
+            error = "cook_store_initialization: ";
+            error.append(reason);
+            return false;
+        }
+#if defined(_WIN32)
+        constexpr char StagePrefix[] = ".assetcook-store-stage-";
+        struct InitWork
+        {
+            const CookOwnerResolveRequest* Request = nullptr;
+            const Detail::CookStoreInitProbe* Probe = nullptr;
+            CookManagedStoreObservation Candidate;
+            InitResult Status = InitResult::Error;
+            Text Reason, OrphanLocator;
+            bool bPublished = false, bCleanupIncomplete = false, bCloseFailed = false;
+        };
+        bool Dispose(HANDLE h)
+        {
+            FILE_DISPOSITION_INFO info{};
+            info.DeleteFile = TRUE;
+            return SetFileInformationByHandle(h, FileDispositionInfo, &info, sizeof(info)) != FALSE;
+        }
+        struct InitOwner
+        {
+            InitWork& Work;
+            Handle Workspace, Stage, HeaderFile, IndexFile;
+            Identity WorkspaceId, StageId;
+            std::filesystem::path StageLocator, Destination;
+            bool bStageCreated = false, bStageKnown = false, bHeaderKnown = false, bIndexKnown = false;
+            explicit InitOwner(InitWork& work) : Work(work)
+            {
+            }
+            ~InitOwner()
+            {
+                const bool bFault = Work.Probe && Work.Probe->Fault == InitFault::CleanupDisposition;
+                const bool bClosedChildren = (bHeaderKnown && HeaderFile.Value == INVALID_HANDLE_VALUE) ||
+                                             (bIndexKnown && IndexFile.Value == INVALID_HANDLE_VALUE);
+                // 開いたまま所有を確認できるobjectだけを消す。閉じたchildは再openせずorphanに残す。
+                if (!Work.bPublished)
+                {
+                    if (bHeaderKnown && HeaderFile.Value != INVALID_HANDLE_VALUE &&
+                        (bFault || !Dispose(HeaderFile.Value)))
+                    {
+                        Work.bCleanupIncomplete = true;
+                    }
+                    if (bIndexKnown && IndexFile.Value != INVALID_HANDLE_VALUE && (bFault || !Dispose(IndexFile.Value)))
+                    {
+                        Work.bCleanupIncomplete = true;
+                    }
+                }
+                if (!HeaderFile.Close())
+                {
+                    Work.bCloseFailed = true;
+                }
+                if (!IndexFile.Close())
+                {
+                    Work.bCloseFailed = true;
+                }
+                if (!Work.bPublished && bStageCreated)
+                {
+                    if (!bStageKnown || Stage.Value == INVALID_HANDLE_VALUE || bClosedChildren || bFault ||
+                        !Dispose(Stage.Value))
+                    {
+                        Work.bCleanupIncomplete = true;
+                    }
+                }
+                if (!Stage.Close())
+                {
+                    Work.bCloseFailed = true;
+                }
+                if (!Workspace.Close())
+                {
+                    Work.bCloseFailed = true;
+                }
+            }
+        };
+        Text HexBytes(const uint8_t* bytes, size_t size)
+        {
+            constexpr char digits[] = "0123456789abcdef";
+            Text out;
+            for (size_t i = 0; i < size; ++i)
+            {
+                out.push_back(digits[bytes[i] >> 4]);
+                out.push_back(digits[bytes[i] & 15]);
+            }
+            return out;
+        }
+        Text HexNumber(uint64_t number)
+        {
+            uint8_t bytes[8]{};
+            for (size_t i = 0; i < 8; ++i)
+            {
+                bytes[7 - i] = static_cast<uint8_t>(number >> (8 * i));
+            }
+            return HexBytes(bytes, 8);
+        }
+        bool InitFailWin32(Text& error, const char* reason)
+        {
+            const DWORD code = GetLastError();
+            InitFail(error, reason);
+            error.append("; win32_hex=");
+            error.append(HexNumber(code));
+            return false;
+        }
+        bool RandomToken(Text& out, InitFault fault, Text& error)
+        {
+            Core::Container::FixedArray<uint8_t, 16> bytes;
+            if (fault == InitFault::Rng || BCryptGenRandom(nullptr, bytes.data(), static_cast<ULONG>(bytes.size()),
+                                                           BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
+            {
+                return InitFail(error, "rng_failed");
+            }
+            bool bNonzero = false;
+            for (uint8_t b : bytes)
+            {
+                bNonzero |= b != 0;
+            }
+            if (!bNonzero)
+            {
+                return InitFail(error, "rng_zero_identifier");
+            }
+            out = HexBytes(bytes.data(), bytes.size());
+            return true;
+        }
+        bool StageLeafValid(const Text& text)
+        {
+            constexpr size_t prefix = sizeof(StagePrefix) - 1;
+            if (text.size() != prefix + 32 || std::memcmp(text.data(), StagePrefix, prefix) != 0)
+            {
+                return false;
+            }
+            for (size_t i = prefix; i < text.size(); ++i)
+            {
+                const char c = text[i];
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        void Point(InitWork& work, InitPoint point, const InitOwner& owner)
+        {
+            if (work.Probe && work.Probe->Checkpoint)
+            {
+                work.Probe->Checkpoint(point, owner.StageLocator, owner.Destination, work.Probe->Context);
+            }
+        }
+        bool OwnerEqual(const CookResolvedOwnerBinding& a, const CookResolvedOwnerBinding& b)
+        {
+            return a.bFinalRuntimeRootPresent == b.bFinalRuntimeRootPresent &&
+                   a.Identity.CanonicalSpecLocator == b.Identity.CanonicalSpecLocator &&
+                   a.Identity.CanonicalFinalRuntimeRootIdentity == b.Identity.CanonicalFinalRuntimeRootIdentity &&
+                   a.ExpectedBinding.OwnerId == b.ExpectedBinding.OwnerId &&
+                   a.ExpectedBinding.RuntimeRootIdentity == b.ExpectedBinding.RuntimeRootIdentity &&
+                   a.ExpectedBinding.ManifestName == b.ExpectedBinding.ManifestName;
+        }
+        Result RunObservation(const CookDestinationLockContext& lock, const CookOwnerResolveRequest& request,
+                              CookManagedStoreObservation& out, Identity& workspace, Text& error)
+        {
+            Work work;
+            work.Request = &request;
+            if (!ObserveLocked(lock, work, error))
+            {
+                return Result::Error;
+            }
+            if (work.Status == Result::Observed || work.Status == Result::StoreMissing)
+            {
+                out = std::move(work.Candidate);
+                workspace = std::move(work.WorkspaceSnapshot);
+                error.clear();
+            }
+            else
+            {
+                error = std::move(work.Reason);
+            }
+            return work.Status;
+        }
+        InitResult BeforeResult(Result result)
+        {
+            if (result == Result::Observed)
+            {
+                return InitResult::StoreExists;
+            }
+            if (result == Result::NeedsRecovery)
+            {
+                return InitResult::NeedsRecovery;
+            }
+            if (result == Result::Conflict)
+            {
+                return InitResult::Conflict;
+            }
+            return InitResult::Error;
+        }
+        bool RecheckMissing(const CookDestinationLockContext& lock, InitOwner& owner,
+                            const CookManagedStoreObservation& first, Text& error)
+        {
+            CookManagedStoreObservation current;
+            Identity workspace;
+            if (RunObservation(lock, *owner.Work.Request, current, workspace, error) != Result::StoreMissing ||
+                !OwnerEqual(first.Owner, current.Owner) || !Same(workspace, owner.WorkspaceId) ||
+                workspace.Canonical != owner.WorkspaceId.Canonical)
+            {
+                if (error.empty())
+                {
+                    InitFail(error, "scope_changed_before_publish");
+                }
+                return false;
+            }
+            Identity held;
+            return ObserveHandle(owner.Workspace.Value, true, held, error) && Same(held, owner.WorkspaceId) &&
+                   held.Canonical == owner.WorkspaceId.Canonical;
+        }
+        bool CreateStage(InitOwner& owner, InitFault fault, Text& error)
+        {
+            const auto parent = owner.Work.Request->FinalRuntimeRoot.parent_path();
+            if (owner.Work.Probe && !owner.Work.Probe->FirstStageLeaf.empty() &&
+                !StageLeafValid(owner.Work.Probe->FirstStageLeaf))
+            {
+                return InitFail(error, "invalid_stage_override");
+            }
+            for (size_t attempt = 0; attempt < 32; ++attempt)
+            {
+                Text leaf;
+                if (attempt == 0 && owner.Work.Probe && !owner.Work.Probe->FirstStageLeaf.empty())
+                {
+                    leaf = owner.Work.Probe->FirstStageLeaf;
+                }
+                else
+                {
+                    Text token;
+                    if (!RandomToken(token, fault, error))
+                    {
+                        return false;
+                    }
+                    leaf = StagePrefix;
+                    leaf.append(token);
+                }
+                owner.StageLocator = parent / std::filesystem::path(leaf.c_str());
+                if (owner.StageLocator.native().size() > Detail::MaximumCookLocatorUnits)
+                {
+                    return InitFail(error, "stage_path_limit");
+                }
+                if (!CreateDirectoryW(owner.StageLocator.c_str(), nullptr))
+                {
+                    const DWORD code = GetLastError();
+                    if (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS)
+                    {
+                        continue;
+                    }
+                    return InitFailWin32(error, "stage_create_failed");
+                }
+                owner.bStageCreated = true;
+                (void)Detail::EncodeCookPathUtf8(owner.StageLocator, owner.Work.OrphanLocator);
+                Point(owner.Work, InitPoint::StageCreated, owner);
+                if (fault == InitFault::StageOpen)
+                {
+                    return InitFail(error, "stage_open_injected");
+                }
+                owner.Stage.Value = CreateFileW(owner.StageLocator.c_str(), DELETE | FILE_READ_ATTRIBUTES,
+                                                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                                                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+                if (owner.Stage.Value == INVALID_HANDLE_VALUE || fault == InitFault::StageIdentity ||
+                    !ObserveHandle(owner.Stage.Value, true, owner.StageId, error) ||
+                    !Direct(owner.WorkspaceId, owner.StageId) ||
+                    owner.StageId.Canonical.filename().native() != owner.StageLocator.filename().native() ||
+                    !std::any_of(owner.StageId.FileId.begin(), owner.StageId.FileId.end(),
+                                 [](uint8_t b)
+                                 {
+                                     return b != 0;
+                                 }))
+                {
+                    return InitFail(error, "stage_identity_unverified");
+                }
+                owner.bStageKnown = true;
+                return true;
+            }
+            return InitFail(error, "stage_collision_limit");
+        }
+        void AddField(Text& out, const char* key, const Text& value)
+        {
+            out.push_back('"');
+            out.append(key);
+            out.append("\":\"");
+            out.append(value);
+            out.push_back('"');
+        }
+        Text MakeHeader(const InitOwner& owner, const Text& storeId, const Text& volumeGuid)
+        {
+            Text out = "{\"producer\":\"NorvesLib.AssetCook\",\"schema\":1,";
+            AddField(out, "store_id", storeId);
+            out.push_back(',');
+            AddField(out, "volume_guid", volumeGuid);
+            out.push_back(',');
+            AddField(out, "volume_serial", HexNumber(owner.WorkspaceId.Volume));
+            out.push_back(',');
+            AddField(out, "workspace_id", HexBytes(owner.WorkspaceId.FileId.data(), 16));
+            out.push_back(',');
+            AddField(out, "store_directory_id", HexBytes(owner.StageId.FileId.data(), 16));
+            out.push_back('}');
+            return out;
+        }
+        Text MakeIndex(const Text& storeId)
+        {
+            Text out = "{\"schema\":1,";
+            AddField(out, "store_id", storeId);
+            out.append(",\"generation\":\"0000000000000001\",\"roots\":[]}");
+            return out;
+        }
+        bool WriteControl(InitOwner& owner, const wchar_t* leaf, const Text& text, Handle& file, bool& bKnown,
+                          bool bHeader, InitFault fault, Bytes& verified, Text& error)
+        {
+            if (fault == (bHeader ? InitFault::HeaderCreate : InitFault::IndexCreate))
+            {
+                return InitFail(error, "control_create_injected");
+            }
+            const auto path = owner.StageId.Canonical / leaf;
+            file.Value = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE | DELETE, 0, nullptr, CREATE_NEW,
+                                     FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+            if (file.Value == INVALID_HANDLE_VALUE)
+            {
+                return InitFailWin32(error, "control_create_failed");
+            }
+            Identity identity;
+            FILE_STANDARD_INFO standard{};
+            if (!ObserveHandle(file.Value, false, identity, error) || !Direct(owner.StageId, identity) ||
+                identity.Canonical.filename().native() != leaf ||
+                !GetFileInformationByHandleEx(file.Value, FileStandardInfo, &standard, sizeof(standard)) ||
+                standard.NumberOfLinks != 1)
+            {
+                return InitFail(error, "created_control_identity");
+            }
+            bKnown = true;
+            size_t offset = 0;
+            while (offset < text.size())
+            {
+                const bool bPartial = fault == (bHeader ? InitFault::HeaderPartialWrite : InitFault::IndexPartialWrite);
+                DWORD wrote = 0;
+                const size_t count = bPartial ? std::max(size_t{1}, text.size() / 2) : text.size() - offset;
+                if (fault == InitFault::ZeroWrite ||
+                    !WriteFile(file.Value, text.data() + offset, static_cast<DWORD>(count), &wrote, nullptr) || !wrote)
+                {
+                    return InitFail(error, "write_failed_or_zero");
+                }
+                offset += wrote;
+                if (bPartial)
+                {
+                    return InitFail(error, "partial_write_injected");
+                }
+            }
+            if (fault == InitFault::Flush || !FlushFileBuffers(file.Value))
+            {
+                return InitFail(error, "flush_failed");
+            }
+            LARGE_INTEGER zero{}, size{};
+            if (fault == InitFault::Seek || !SetFilePointerEx(file.Value, zero, nullptr, FILE_BEGIN))
+            {
+                return InitFail(error, "seek_failed");
+            }
+            verified.resize(text.size());
+            DWORD got = 0;
+            uint8_t extra = 0;
+            DWORD tail = 0;
+            if (fault == InitFault::ReadBack ||
+                !ReadFile(file.Value, verified.data(), static_cast<DWORD>(verified.size()), &got, nullptr) ||
+                got != verified.size() || !ReadFile(file.Value, &extra, 1, &tail, nullptr) || tail != 0 ||
+                !GetFileSizeEx(file.Value, &size) || size.QuadPart < 0 ||
+                static_cast<uint64_t>(size.QuadPart) != text.size())
+            {
+                return InitFail(error, "readback_size_or_eof");
+            }
+            if (fault == InitFault::ByteMismatch)
+            {
+                verified[0] ^= 1;
+            }
+            if (std::memcmp(verified.data(), text.data(), text.size()) != 0)
+            {
+                return InitFail(error, "readback_mismatch");
+            }
+            Identity current;
+            if (!ObserveHandle(file.Value, false, current, error) || !Same(current, identity) ||
+                current.Canonical != identity.Canonical)
+            {
+                return InitFail(error, "control_changed");
+            }
+            return true;
+        }
+        bool OnlyOwnedChildren(InitOwner& owner, Text& error)
+        {
+            Entries entries;
+            Budget budget;
+            if (!Enumerate(owner.StageId, entries, budget, error))
+            {
+                return false;
+            }
+            const Entry *header = nullptr, *index = nullptr;
+            return entries.size() == 2 && Fixed(entries, L"header.json", true, header, error) &&
+                   Fixed(entries, L"roots.json", true, index, error);
+        }
+        bool RenameStage(InitOwner& owner)
+        {
+            constexpr wchar_t target[] = L".norves-assetcook";
+            constexpr size_t units = sizeof(target) / sizeof(wchar_t) - 1;
+            constexpr size_t bytes = offsetof(FILE_RENAME_INFO, FileName) + (units + 1) * sizeof(wchar_t);
+            Core::Container::VariableArray<std::max_align_t> storage((bytes + sizeof(std::max_align_t) - 1) /
+                                                                     sizeof(std::max_align_t));
+            std::memset(storage.data(), 0, storage.size() * sizeof(std::max_align_t));
+            auto* info = ::new (static_cast<void*>(storage.data())) FILE_RENAME_INFO{};
+            info->ReplaceIfExists = FALSE;
+            info->RootDirectory = owner.Workspace.Value;
+            info->FileNameLength = static_cast<DWORD>(units * sizeof(wchar_t));
+            std::memcpy(reinterpret_cast<uint8_t*>(storage.data()) + offsetof(FILE_RENAME_INFO, FileName), target,
+                        units * sizeof(wchar_t));
+            return SetFileInformationByHandle(owner.Stage.Value, FileRenameInfo, info, static_cast<DWORD>(bytes)) !=
+                   FALSE;
+        }
+        InitResult InitializeLocked(const CookDestinationLockContext& lock, InitWork& work)
+        {
+            const InitFault fault = work.Probe ? work.Probe->Fault : InitFault::None;
+            InitOwner owner(work);
+            CookManagedStoreObservation first;
+            const auto initial = RunObservation(lock, *work.Request, first, owner.WorkspaceId, work.Reason);
+            if (initial != Result::StoreMissing)
+            {
+                return BeforeResult(initial);
+            }
+            if (first.Owner.bFinalRuntimeRootPresent)
+            {
+                InitFail(work.Reason, "absent_root_required");
+                return InitResult::Conflict;
+            }
+            const auto parent = first.Owner.FinalRuntimeRootLocator.parent_path();
+            owner.Destination = parent / StoreLeaf;
+            owner.Workspace.Value =
+                CreateFileW(parent.c_str(), FILE_READ_ATTRIBUTES | FILE_TRAVERSE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+            Identity held;
+            if (owner.Workspace.Value == INVALID_HANDLE_VALUE ||
+                !ObserveHandle(owner.Workspace.Value, true, held, work.Reason) || !Same(held, owner.WorkspaceId) ||
+                held.Canonical != owner.WorkspaceId.Canonical)
+            {
+                InitFail(work.Reason, "workspace_changed");
+                return InitResult::Error;
+            }
+            Text storeId;
+            if (!RandomToken(storeId, fault, work.Reason) || !CreateStage(owner, fault, work.Reason) ||
+                !RecheckMissing(lock, owner, first, work.Reason))
+            {
+                return InitResult::Error;
+            }
+            if (fault == InitFault::CleanupDisposition)
+            {
+                InitFail(work.Reason, "cleanup_disposition_injected");
+                return InitResult::Error;
+            }
+            Bytes headerBytes, indexBytes;
+            if (!WriteControl(owner, L"header.json", MakeHeader(owner, storeId, lock.CanonicalVolumeGuid),
+                              owner.HeaderFile, owner.bHeaderKnown, true, fault, headerBytes, work.Reason))
+            {
+                return InitResult::Error;
+            }
+            Point(work, InitPoint::HeaderWritten, owner);
+            if (!WriteControl(owner, L"roots.json", MakeIndex(storeId), owner.IndexFile, owner.bIndexKnown, false,
+                              fault, indexBytes, work.Reason))
+            {
+                return InitResult::Error;
+            }
+            Point(work, InitPoint::IndexWritten, owner);
+            CookManagedStoreView parsed;
+            Budget budget;
+            if (fault == InitFault::Parse ||
+                !Header(headerBytes, owner.WorkspaceId, owner.StageId, lock.CanonicalVolumeGuid, parsed) ||
+                !Index(indexBytes, parsed, budget) || parsed.StoreId != storeId || parsed.IndexGeneration != 1 ||
+                !parsed.Roots.empty() || !OnlyOwnedChildren(owner, work.Reason))
+            {
+                InitFail(work.Reason, "stage_semantics_or_unknown_child");
+                return InitResult::Error;
+            }
+            const bool bHeaderClosed = owner.HeaderFile.Close(), bIndexClosed = owner.IndexFile.Close();
+            if (!bHeaderClosed || !bIndexClosed || fault == InitFault::ChildClose)
+            {
+                InitFail(work.Reason, "child_close_failed");
+                return InitResult::Error;
+            }
+            Point(work, InitPoint::ChildrenClosed, owner);
+            if (!RecheckMissing(lock, owner, first, work.Reason))
+            {
+                return InitResult::Error;
+            }
+            Point(work, InitPoint::BeforeRename, owner);
+            if (fault == InitFault::Rename)
+            {
+                InitFail(work.Reason, "rename_injected");
+                return InitResult::Error;
+            }
+            if (!RenameStage(owner))
+            {
+                InitFailWin32(work.Reason, "publish_no_replace_failed");
+                return InitResult::Error;
+            }
+            work.bPublished = true;
+            Point(work, InitPoint::Renamed, owner);
+            Identity published;
+            if (fault == InitFault::AfterPublishIdentity ||
+                !ObserveHandle(owner.Stage.Value, true, published, work.Reason) || !Same(published, owner.StageId) ||
+                !Direct(owner.WorkspaceId, published) || published.Canonical.filename().native() != StoreLeaf)
+            {
+                InitFail(work.Reason, "published_identity_failed");
+                return InitResult::PublishedButError;
+            }
+            // DELETE handleが残ると既存observerの共有規約と衝突する。検証後に閉じてから再観測する。
+            if (!owner.Stage.Close() || fault == InitFault::AfterPublishClose)
+            {
+                InitFail(work.Reason, "published_close_failed");
+                return InitResult::PublishedButError;
+            }
+            CookManagedStoreObservation after;
+            Identity afterWorkspace;
+            if (fault == InitFault::AfterPublishObservation ||
+                RunObservation(lock, *work.Request, after, afterWorkspace, work.Reason) != Result::Observed ||
+                !OwnerEqual(first.Owner, after.Owner) || !Same(afterWorkspace, owner.WorkspaceId) ||
+                afterWorkspace.Canonical != owner.WorkspaceId.Canonical)
+            {
+                InitFail(work.Reason, "published_observation_failed");
+                return InitResult::PublishedButError;
+            }
+            const CookManagedStoreView* current = nullptr;
+            for (const auto& view : after.Stores)
+            {
+                if (view.bCurrentWorkspace)
+                {
+                    current = &view;
+                    break;
+                }
+            }
+            if (!current || current->StoreId != storeId || current->VolumeSerial != owner.StageId.Volume ||
+                !SameId(current->StoreDirectoryId, owner.StageId.FileId) ||
+                !SameId(current->WorkspaceId, owner.WorkspaceId.FileId) || current->IndexGeneration != 1 ||
+                !current->Roots.empty())
+            {
+                InitFail(work.Reason, "published_store_mismatch");
+                return InitResult::PublishedButError;
+            }
+            work.Candidate = std::move(after);
+            work.Reason.clear();
+            return InitResult::Created;
+        }
+        bool InitializeCallback(const CookDestinationLockContext& lock, void* data, Text& error)
+        {
+            (void)error;
+            auto& work = *static_cast<InitWork*>(data);
+            work.Status = InitializeLocked(lock, work);
+            return true;
+        }
+#endif
+        InitResult InitializeImpl(const CookOwnerResolveRequest& request, const Detail::CookStoreInitProbe* probe,
+                                  CookManagedStoreObservation& out, Text& error)
+        {
+            error.clear();
+#if !defined(_WIN32)
+            (void)request;
+            (void)probe;
+            (void)out;
+            InitFail(error, "windows_required");
+            return InitResult::Error;
+#else
+            InitWork work;
+            work.Request = &request;
+            work.Probe = probe;
+            const auto lockFault = probe && probe->Fault == InitFault::MutexRelease ? Detail::CookLockFault::Release
+                                                                                    : Detail::CookLockFault::None;
+            const auto locked = Detail::WithCookDestinationLockForTest({request.FinalRuntimeRoot}, InitializeCallback,
+                                                                       &work, error, lockFault);
+            if (locked == CookDestinationLockResult::Busy)
+            {
+                InitFail(error, "volume_busy");
+                return InitResult::Busy;
+            }
+            InitResult result = work.Status;
+            if (locked != CookDestinationLockResult::Executed || work.bCloseFailed)
+            {
+                result = work.bPublished ? InitResult::PublishedButError : InitResult::Error;
+            }
+            if (result != InitResult::Created)
+            {
+                if (!work.Reason.empty())
+                {
+                    if (!error.empty())
+                    {
+                        error.append("; ");
+                    }
+                    error.append(work.Reason);
+                }
+                if (error.empty())
+                {
+                    InitFail(error, result == InitResult::StoreExists ? "store_exists" : "operation_failed");
+                }
+                if (work.bCloseFailed)
+                {
+                    error.append("; handle_close_failed");
+                }
+                if (work.bCleanupIncomplete)
+                {
+                    error.append("; orphan_preserved=");
+                    error.append(work.OrphanLocator);
+                }
+                if (work.bPublished)
+                {
+                    error.append("; published_store_preserved");
+                }
+                return result;
+            }
+            out = std::move(work.Candidate);
+            error.clear();
+            return result;
+#endif
+        }
+    } // namespace
+    CookManagedStoreInitializationResult InitializeNewCookManagedStore(const CookOwnerResolveRequest& request,
+                                                                       CookManagedStoreObservation& out, Text& error)
+    {
+        return InitializeImpl(request, nullptr, out, error);
+    }
+    CookManagedStoreInitializationResult Detail::InitializeNewCookManagedStoreForTest(
+        const CookOwnerResolveRequest& request, const CookStoreInitProbe& probe, CookManagedStoreObservation& out,
+        Text& error)
+    {
+        return InitializeImpl(request, &probe, out, error);
     }
 } // namespace NorvesLib::Tools::AssetCook

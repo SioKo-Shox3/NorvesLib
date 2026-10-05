@@ -808,3 +808,6 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-MANAGED-STORE-OBSERVATION時刻観測修正: 1f0b6c42/run37258373173で差を特定。sub directory作成直後の試験で、親runtime directoryの列挙由来write timeだけが変わり、path/type/size/hashは同じだった。列挙cacheではなく全entryのnative handleからFileBasicInfoを読むようにし、directoryを含む時刻比較は維持する。加えてvolume/file IDの一致も検査し、productionは変更しない。
 
 - G2-S6-MANAGED-STORE-OBSERVATION受入: 75926742/run37260128285で実Windows build・30CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。handle由来時刻とvolume/file IDを使うfixture修正後、入れ子/固定pending/全claim/未知root拒否/4096件/無変更を確認。storeの8.3/SUBST/Unicode alias/case-sensitive/reparseは全flag1。3ZIPと79+10固定出力を独立確認しrootで再実行。読み取り専用観測をdone、store作成・復旧・production公開は未接続。
+
+- G2-S6-MANAGED-STORE-INITIALIZATION開始: 共通のlocked観測を再利用し、fresh stageに完全headerと空indexを作ってからdirectory handleでno-replace公開する。公開後は元stageのID保持を同handleで確認し、DELETE handleを閉じてから全観測を再実行する。公開後の失敗はPublishedButErrorとして保持し、root/state/package公開は含めない。
+- G2-S6-MANAGED-STORE-INITIALIZATION検証準備: 初期化APIと31CPUを登録。共通観測をtyped private helperへ寄せ、root/ownerをstage作成後と公開後に再検査する。開いた既知handleだけをabort清掃し、閉じたchild/未知entryはorphanとして保持する。6境界の実process終了、公開前後の故障、ID維持と条件付きaliasを試験化。比較器12件×通常/最適化と差分衛生は成功、実Windows/79+10byteは未実行。
