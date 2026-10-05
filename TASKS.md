@@ -635,7 +635,7 @@
 
 
 ## VTG6-CHUNKS-HARDEN: 三角形の塊の分け方の穴を塞ぎ、RTの経路の変化を確かめる
-- status: todo
+- status: done
 - done-when: (1) `MeshResourcesProceduralGpuTest.cpp` で `6b85c9b` が足した行（203・239・253・263・274 行付近）の `std::vector` を `Container::VariableArray` に置き換える（絶対規則1）。(2) `MeshIndexChunks.h` が 3 の倍数でない区切り（サブメッシュの最初のインデックス・数）を黙って無視して隣の区間と合わせた塊を作る（例: インデックス 13 個、区間 [0,7) と [7,13) で塊 (0,12) が2つの材質をまたぐ）のをやめ、検出して失敗を返し、呼び出し側が `LOG` で1回知らせる（区間を勝手に合わせない）。`first += maxIndicesPerChunk` の桁あふれで無限ループにならない形にする。(3) テストに、128 三角形を超えるサブメッシュ（区切りと 128 での分割が重なる）、インデックスが 1〜2 個（塊 0 個）、256・257 三角形、3 の倍数でない区切りの失敗、スキニングのメッシュを解放した後に `TryGetChunks` が false になることのケースを足す。(4) `VisibilityRasterPass.cpp`（510 行付近）が描画の範囲ごとに塊を作り直し、登録時に保存した `ProceduralMeshGPUData::Chunks` を読んでいない。保存した塊を読むか、作り直すなら登録時の保存をやめるか、どちらかに揃え、理由を PROGRESS に書く。(5) 手続きメッシュのバッファが BDA を持ったので、`RenderingCoordinator.cpp`（569 行付近）の `CreateAddressableMeshBuffer` がコピーを作らず元のバッファを返すようになった（RT の BLAS の入力と RTGI・DDGI のインスタンスのアドレスが元のバッファを直接読む）。`RayTracingSceneSnapshotTest` を走らせて BLAS の寿命の検査が通ることを確かめる。(6) `PROGRESS.md` の 6b85c9b の節で改行の記号が実際の改行になって割れた行と、274ca1e0 の節の「描画経路は変えていない（バッファの用途ビットの追加のみ）」を事実（RT の経路がコピーから直接の利用に変わった。撮影の画素比較で出力は一致）に直す。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest SkinnedRenderPathContractTest RayTracingSceneSnapshotTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MeshResourcesProceduralGpuTest|GeometryPoolAllocatorTest|RayTracingSceneSnapshotTest)$"`

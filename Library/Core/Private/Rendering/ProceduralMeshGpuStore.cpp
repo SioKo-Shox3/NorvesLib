@@ -125,19 +125,13 @@ namespace NorvesLib::Core::Rendering
         gpuData.IndexCount = indexCount;
         gpuData.bHasLocalBounds = ComputeMesh3DVertexBounds(vertices, vertexSize, gpuData.LocalBounds);
         gpuData.SubMeshCount = std::min(subMeshCount, MAX_MATERIAL_SLOTS);
-        Container::FixedArray<uint32_t, MAX_MATERIAL_SLOTS * 2> chunkBoundaries;
-        uint32_t chunkBoundaryCount = 0;
         for (uint32_t i = 0; i < gpuData.SubMeshCount; ++i)
         {
             gpuData.SubMeshes[i].IndexStart = subMeshes[i].IndexStart;
             gpuData.SubMeshes[i].IndexCount = subMeshes[i].IndexCount;
             gpuData.SubMeshes[i].VertexStart = subMeshes[i].VertexStart;
             gpuData.SubMeshes[i].MaterialIndex = subMeshes[i].MaterialIndex;
-            // サブメッシュの始まりと終わりで塊を区切り、1つの塊が複数の材質をまたがないようにする
-            chunkBoundaries[chunkBoundaryCount++] = subMeshes[i].IndexStart;
-            chunkBoundaries[chunkBoundaryCount++] = subMeshes[i].IndexStart + subMeshes[i].IndexCount;
         }
-        BuildMeshIndexChunks(indexCount, chunkBoundaries.data(), chunkBoundaryCount, gpuData.Chunks);
 
         {
             Thread::ScopedLock lock(m_Mutex);

@@ -474,6 +474,16 @@ namespace NorvesLib::Core::Rendering
         builder.PreserveInsertionOrder();
     }
 
+    void VisibilityRasterPass::LogChunkFailureOnce()
+    {
+        if (m_bLoggedChunkFailure)
+        {
+            return;
+        }
+        m_bLoggedChunkFailure = true;
+        NORVES_LOG_WARNING("VisibilityRasterPass", "インデックスを塊に分けられないメッシュがあります。そのメッシュはビジビリティバッファへ描きません");
+    }
+
     void VisibilityRasterPass::CollectProceduralChunks(ViewRenderContext& context,
                                                        uint32_t recordBase,
                                                        VariableArray<VisibilityBuffer::DrawRecord>& records,
@@ -507,7 +517,13 @@ namespace NorvesLib::Core::Rendering
             const uint32_t vertexOffset = bHasRange ? command.Draw.VertexOffset : 0u;
             const uint32_t instanceCount = std::max(1u, command.Draw.InstanceCount);
 
-            BuildMeshIndexChunks(indexCount, nullptr, 0, chunks);
+            // 描画の範囲（サブメッシュ・インスタンス）ごとに範囲が違うので、塊は範囲から作る。
+            // 登録時にメッシュ全体で分けた塊は持たない（範囲に合わないので読まない）
+            if (!BuildMeshIndexChunks(indexCount, nullptr, 0, chunks))
+            {
+                LogChunkFailureOnce();
+                continue;
+            }
             const uint64_t vertexAddress = gpuData->VertexBuffer->GetDeviceAddress();
             const uint64_t indexAddress = gpuData->IndexBuffer->GetDeviceAddress();
             for (uint32_t instanceOffset = 0; instanceOffset < instanceCount; ++instanceOffset)
@@ -573,11 +589,15 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
 
-            // 登録時に分けた塊（サブメッシュの境目で区切る）を使い、無ければインデックスの全体を分ける
+            // 登録時に分けた塊を使い、無ければインデックスの全体を分ける
             if (!context.SkinnedMeshes || !context.SkinnedMeshes->TryGetChunks(instance.MeshHandle, chunks) ||
                 chunks.empty())
             {
-                BuildMeshIndexChunks(instance.IndexCount, nullptr, 0, chunks);
+                if (!BuildMeshIndexChunks(instance.IndexCount, nullptr, 0, chunks))
+                {
+                    LogChunkFailureOnce();
+                    continue;
+                }
             }
 
             const uint64_t indexAddress = instance.IndexBuffer->GetDeviceAddress();

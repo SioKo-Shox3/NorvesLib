@@ -200,7 +200,7 @@ namespace
                                         uint32_t subMeshCount)
     {
         const uint32_t triangleCount = indexCount / 3;
-        std::vector<uint32_t> coverCount(triangleCount, 0);
+        NorvesLib::Core::Container::VariableArray<uint32_t> coverCount(triangleCount, 0);
         uint32_t nextFirstIndex = 0;
         for (const MeshIndexChunk &chunk : chunks)
         {
@@ -230,58 +230,118 @@ namespace
         assert(nextFirstIndex == triangleCount * 3);
     }
 
-    void TestMeshIndexChunksCoverEveryTriangleOnce(RenderResources &resources)
+    // サブメッシュの区間（インデックス単位の始まりと終わり）を、塊の区切りの位置へ並べる
+    uint32_t CollectBoundaries(const SubMesh *subMeshes, uint32_t subMeshCount, uint32_t *outBoundaries)
     {
-        const MeshDataHandle handle = MakeMeshHandle(90);
-        Mesh3DVertex vertices[3] = {};
-        const auto makeIndices = [](uint32_t indexCount)
+        uint32_t count = 0;
+        for (uint32_t i = 0; i < subMeshCount; ++i)
         {
-            std::vector<uint32_t> indices(indexCount);
-            for (uint32_t i = 0; i < indexCount; ++i)
-            {
-                indices[i] = i % 3;
-            }
-            return indices;
-        };
+            outBoundaries[count++] = subMeshes[i].IndexStart;
+            outBoundaries[count++] = subMeshes[i].IndexStart + subMeshes[i].IndexCount;
+        }
+        return count;
+    }
 
-        // 三角形の数が 1・128・129・300 のとき（128 ちょうどで割れ、129 で端の1三角形の塊ができる）
-        const uint32_t triangleCounts[] = {1, 128, 129, 300};
-        const uint32_t expectedChunkCounts[] = {1, 1, 2, 3};
-        for (size_t caseIndex = 0; caseIndex < 4; ++caseIndex)
+    // 区切りなしで分けたときの塊の数と、全三角形を1回ずつ覆うことを確かめる
+    void ExpectUnboundedChunks(uint32_t triangleCount, size_t expectedChunkCount)
+    {
+        NorvesLib::Core::Container::VariableArray<MeshIndexChunk> chunks;
+        assert(BuildMeshIndexChunks(triangleCount * 3, nullptr, 0, chunks));
+        assert(chunks.size() == expectedChunkCount);
+        ExpectChunksCoverTrianglesOnce(chunks, triangleCount * 3, nullptr, 0);
+    }
+
+    void TestMeshIndexChunksCoverEveryTriangleOnce()
+    {
+        // 三角形の数が 1・128・129・256・257・300 のとき（128 ちょうどで割れ、129・257 で端の1三角形の塊ができる）
+        const uint32_t triangleCounts[] = {1, 128, 129, 256, 257, 300};
+        const size_t expectedChunkCounts[] = {1, 1, 2, 2, 3, 3};
+        for (size_t caseIndex = 0; caseIndex < 6; ++caseIndex)
         {
-            const uint32_t indexCount = triangleCounts[caseIndex] * 3;
-            const std::vector<uint32_t> indices = makeIndices(indexCount);
-            assert(resources.Meshes().Register(handle, vertices, sizeof(vertices), indices.data(), indexCount));
-            const ProceduralMeshGPUData *gpuData = resources.Meshes().GetGPUData(handle);
-            assert(gpuData != nullptr);
-            assert(gpuData->Chunks.size() == expectedChunkCounts[caseIndex]);
-            ExpectChunksCoverTrianglesOnce(gpuData->Chunks, indexCount, nullptr, 0);
+            ExpectUnboundedChunks(triangleCounts[caseIndex], expectedChunkCounts[caseIndex]);
+        }
+
+        // 三角形にならない数（0〜2個）は塊を作らず、成功として空を返す
+        for (uint32_t indexCount = 0; indexCount < 3; ++indexCount)
+        {
+            NorvesLib::Core::Container::VariableArray<MeshIndexChunk> chunks;
+            chunks.push_back(MeshIndexChunk{});
+            assert(BuildMeshIndexChunks(indexCount, nullptr, 0, chunks));
+            assert(chunks.empty());
         }
 
         // 3で割り切れない余りのインデックスは三角形にならないので覆わない（7個 → 2三角形）
         {
-            const std::vector<uint32_t> indices = makeIndices(7);
-            assert(resources.Meshes().Register(handle, vertices, sizeof(vertices), indices.data(), 7));
-            const ProceduralMeshGPUData *gpuData = resources.Meshes().GetGPUData(handle);
-            assert(gpuData != nullptr);
-            ExpectChunksCoverTrianglesOnce(gpuData->Chunks, 7, nullptr, 0);
-            assert(gpuData->Chunks.size() == 1 && gpuData->Chunks[0].IndexCount == 6);
+            NorvesLib::Core::Container::VariableArray<MeshIndexChunk> chunks;
+            assert(BuildMeshIndexChunks(7, nullptr, 0, chunks));
+            ExpectChunksCoverTrianglesOnce(chunks, 7, nullptr, 0);
+            assert(chunks.size() == 1 && chunks[0].IndexCount == 6);
         }
 
         // サブメッシュの境目（三角形 50 と 150）で塊を区切る。[0,50) [50,150) [150,200) はどれも128以下なので3塊
         {
             const uint32_t indexCount = 200 * 3;
-            const std::vector<uint32_t> indices = makeIndices(indexCount);
             const SubMesh subMeshes[3] = {SubMesh(0, 150, 0, 0), SubMesh(150, 300, 0, 1), SubMesh(450, 150, 0, 2)};
-            assert(resources.Meshes().Register(
-                handle, vertices, sizeof(vertices), indices.data(), indexCount, subMeshes, 3));
-            const ProceduralMeshGPUData *gpuData = resources.Meshes().GetGPUData(handle);
-            assert(gpuData != nullptr);
-            assert(gpuData->Chunks.size() == 3);
-            ExpectChunksCoverTrianglesOnce(gpuData->Chunks, indexCount, subMeshes, 3);
+            uint32_t boundaries[6] = {};
+            const uint32_t boundaryCount = CollectBoundaries(subMeshes, 3, boundaries);
+            NorvesLib::Core::Container::VariableArray<MeshIndexChunk> chunks;
+            assert(BuildMeshIndexChunks(indexCount, boundaries, boundaryCount, chunks));
+            assert(chunks.size() == 3);
+            ExpectChunksCoverTrianglesOnce(chunks, indexCount, subMeshes, 3);
         }
 
-        resources.Meshes().Unregister(handle);
+        // 128 三角形を超えるサブメッシュ。[0,150) は 128+22、[150,400) は 128+122 の計4塊
+        {
+            const uint32_t indexCount = 400 * 3;
+            const SubMesh subMeshes[2] = {SubMesh(0, 450, 0, 0), SubMesh(450, 750, 0, 1)};
+            uint32_t boundaries[4] = {};
+            const uint32_t boundaryCount = CollectBoundaries(subMeshes, 2, boundaries);
+            NorvesLib::Core::Container::VariableArray<MeshIndexChunk> chunks;
+            assert(BuildMeshIndexChunks(indexCount, boundaries, boundaryCount, chunks));
+            assert(chunks.size() == 4);
+            assert(chunks[0].IndexCount == 128 * 3 && chunks[1].FirstIndex == 128 * 3 && chunks[1].IndexCount == 22 * 3);
+            assert(chunks[2].FirstIndex == 450 && chunks[2].IndexCount == 128 * 3);
+            ExpectChunksCoverTrianglesOnce(chunks, indexCount, subMeshes, 2);
+        }
+
+        // 区切りと 128 での分割が重なる（[0,128) と [128,300)）。128 ちょうどの塊のあとに空の塊を作らない
+        {
+            const uint32_t indexCount = 300 * 3;
+            const SubMesh subMeshes[2] = {SubMesh(0, 384, 0, 0), SubMesh(384, 516, 0, 1)};
+            uint32_t boundaries[4] = {};
+            const uint32_t boundaryCount = CollectBoundaries(subMeshes, 2, boundaries);
+            NorvesLib::Core::Container::VariableArray<MeshIndexChunk> chunks;
+            assert(BuildMeshIndexChunks(indexCount, boundaries, boundaryCount, chunks));
+            assert(chunks.size() == 3);
+            assert(chunks[0].IndexCount == 384 && chunks[1].FirstIndex == 384 && chunks[1].IndexCount == 384);
+            assert(chunks[2].FirstIndex == 768 && chunks[2].IndexCount == 132);
+            ExpectChunksCoverTrianglesOnce(chunks, indexCount, subMeshes, 2);
+        }
+
+        // 3の倍数でない区切りは、隣の区間と合わせた塊（13 個を [0,7) [7,13) で分けて塊 (0,12) が2材質をまたぐ）を
+        // 作らず、失敗を返して出力を空にする
+        {
+            const uint32_t boundaries[4] = {0, 7, 7, 13};
+            NorvesLib::Core::Container::VariableArray<MeshIndexChunk> chunks;
+            chunks.push_back(MeshIndexChunk{});
+            assert(!BuildMeshIndexChunks(13, boundaries, 4, chunks));
+            assert(chunks.empty());
+            // インデックス数に届く位置・範囲外の位置は区切りにならないので、3の倍数でなくても失敗しない
+            const uint32_t outside[2] = {13, 99};
+            assert(BuildMeshIndexChunks(13, outside, 2, chunks));
+            assert(chunks.size() == 1 && chunks[0].IndexCount == 12);
+        }
+
+        // 末尾まで届く大きさでも、先頭の位置の加算が桁あふれして終わらなくならない（4G-1 個 → 11184811 塊）
+        {
+            NorvesLib::Core::Container::VariableArray<MeshIndexChunk> chunks;
+            assert(BuildMeshIndexChunks(std::numeric_limits<uint32_t>::max(), nullptr, 0, chunks));
+            assert(chunks.size() == 11184811);
+            const MeshIndexChunk &last = chunks[chunks.size() - 1];
+            assert(last.IndexCount == 255);
+            assert(static_cast<uint64_t>(last.FirstIndex) + last.IndexCount == std::numeric_limits<uint32_t>::max());
+        }
+
         std::cout << "MeshIndexChunks cover every triangle once\n" << std::flush;
     }
 }
@@ -379,7 +439,7 @@ int main()
     assert(localBounds.MinY == -1.0f && localBounds.MaxY == 3.0f);
     assert(localBounds.MinZ == -30.0f && localBounds.MaxZ == 4.0f);
     TestMeshProxyBoundsContainRotatedNonUniformScale(manager);
-    TestMeshIndexChunksCoverEveryTriangleOnce(manager);
+    TestMeshIndexChunksCoverEveryTriangleOnce();
     boundsVertices[1].Position[1] = std::numeric_limits<float>::infinity();
     assert(manager.Meshes().Register(boundsHandle, boundsVertices, sizeof(boundsVertices), indicesA, 3));
     assert(!manager.Meshes().TryGetLocalBounds(boundsHandle, localBounds));

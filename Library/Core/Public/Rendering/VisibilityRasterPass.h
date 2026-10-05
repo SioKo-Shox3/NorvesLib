@@ -117,6 +117,8 @@ namespace NorvesLib::Core::Rendering
         bool EnsureFramebuffer(const RHI::TexturePtr& idTexture, const RHI::TexturePtr& depthTexture);
         bool EnsureFrameSlot(FrameSlot& slot, uint32_t recordCapacity, uint32_t sectionCount);
 
+        /** @brief 塊に分けられなかった通知を、パスの寿命の中で一度だけ出す */
+        void LogChunkFailureOnce();
         /** @brief 不透明の描画から手続きメッシュの塊の記録と描画を集める */
         void CollectProceduralChunks(ViewRenderContext& context,
                                      uint32_t recordBase,
@@ -164,6 +166,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_LastRecordTable;
         uint64_t m_LastRecordTableBytes = 0;
         bool m_bLoggedUnsupported = false;
+        // 塊に分けられなかった通知を一度だけ出すための印
+        bool m_bLoggedChunkFailure = false;
     };
 
     /**

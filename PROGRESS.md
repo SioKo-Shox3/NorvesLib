@@ -1062,12 +1062,11 @@
 - Next: TASKS.md の次の未完（VTG6 の続き）。
 
 ## 反復 3（run 20261005-191130）: VTG6-RASTER-CHUNKS（blocked。実装はコミット済み）
-- 内容: 三角形リストを128三角形以下の塊に分ける `Rendering/MeshIndexChunks.h`（`BuildMeshIndexChunks`。サブメッシュの境目で区切り、3で割り切れない余りは覆わない）を足し、手続きメッシュ（`ProceduralMeshGPUData::Chunks`。登録時にサブメッシュの始まり・終わりで区切る）とスキニング（`SkinnedMeshGpuStore::Entry::Chunks`。`SkinnedMeshResources::TryGetChunks`）が登録時に塊を持つようにした。手続きメッシュの頂点・インデックス、スキニングのインデックス（と頂点の BDA）のバッファに、storage・ShaderRead・BufferDeviceAddress の用途を足した（BDA が使えないデバイスでは RHI 側が無視する）。描画の経路は変えていない。
+- 内容: 三角形リストを128三角形以下の塊に分ける `Rendering/MeshIndexChunks.h`（`BuildMeshIndexChunks`。サブメッシュの境目で区切り、3で割り切れない余りは覆わない）を足し、手続きメッシュ（`ProceduralMeshGPUData::Chunks`。登録時にサブメッシュの始まり・終わりで区切る）とスキニング（`SkinnedMeshGpuStore::Entry::Chunks`。`SkinnedMeshResources::TryGetChunks`）が登録時に塊を持つようにした。手続きメッシュの頂点・インデックス、スキニングのインデックス（と頂点の BDA）のバッファに、storage・ShaderRead・BufferDeviceAddress の用途を足した（BDA が使えないデバイスでは RHI 側が無視する）。RT の経路はコピーから直接の利用に変わった（手続きメッシュのバッファが BDA を持ったので、`RenderingCoordinator` の `CreateAddressableMeshBuffer` がコピーを作らず元のバッファを返し、RT の BLAS の入力と RTGI・DDGI のインスタンスのアドレスが元のバッファを直接読む。撮影の画素比較で出力は一致）。
 - テスト: `MeshResourcesProceduralGpuTest` に、三角形数 1・128・129・300・余り付き・サブメッシュ3つのケース（全三角形をちょうど1回、各塊128以下、境目をまたがない）と、バッファの用途の検査を足した（既存の「用途が VertexBuffer だけ」の assert は新しい契約に合わせて直した）。`SkinnedRenderPathContractTest` に `TestRegisteredMeshHasChunksAndComputeReadableBuffers`（同じ三角形数、バッファの用途、未登録は false）を足した。
 - 検証: `verify-VTG6-RASTER-CHUNKS-3.txt`（Debug の Game・RenderResourcesDomainContractTest・SkinnedRenderPathContractTest、BUILD_EXIT_CODE=0。-1・-2 は constexpr と文字列の誤りで失敗した試行）、`-9-ctest-ok.txt`（MeshResourcesProceduralGpuTest・GeometryPoolAllocatorTest が 2/2 passed）、`-8-skinned-direct.txt`（スキニングの追加ケースが通った出力）。
 - 止まった理由: verify の ctest の `SkinnedRenderPathContractTest` は、このタスクと無関係な既知の失敗（TEST-SKINNED。`TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer` が `gBuffer.Initialize` で落ち、assert の後にプロセスが終了しない）で通らない。詳細・選択肢は `blocked/VTG6-RASTER-CHUNKS.md`。`TASKS.md` の status は変えていない。
-- Notes: (1) このツール環境では python のヒアドキュメント内の `
-` が実際の改行になるので、文字列リテラルは `chr(92)` で作る。 (2) `ResourceUsage` の `operator|` は constexpr ではないので `const` で持つ。
+- Notes: (1) このツール環境では python のヒアドキュメント内の `\n` が実際の改行になるので、文字列リテラルは `chr(92)` で作る。 (2) `ResourceUsage` の `operator|` は constexpr ではないので `const` で持つ。
 - Next: TEST-SKINNED を直したあと、VTG6-RASTER-CHUNKS の status を `todo` に戻すと、ctest の確認だけで完了できる。
 
 ## 反復 4（run 20261005-191130）: VTG6-COMPUTE-SKINNING（blocked。実装はコミット済み）
@@ -1142,7 +1141,7 @@
 ## 反復 1（run 20261005-214551）: VTG6-RASTER-CHUNKS（done）
 - 内容: 実装は 6b85c9bd でコミット済み（手続きメッシュ・スキニングのインデックスを 128 三角形以下の塊に分けて持ち、頂点・インデックスを storage・BDA の用途にする）。この反復は、改訂された verify（`SkinnedRenderPathContractTest` を ctest から外した版）を新しい run で走らせ直して証拠を保存し、done にした。
 - 検証: `verify-VTG6-RASTER-CHUNKS-1-build.txt`（Debug の Game・RenderResourcesDomainContractTest・SkinnedRenderPathContractTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（MeshResourcesProceduralGpuTest・GeometryPoolAllocatorTest 2/2 passed）、`-4-ctest-verbose.txt`（「MeshIndexChunks cover every triangle once」）、`-3-skinned-direct.txt`（スキニングの追加ケースの出力「SkinnedMesh chunks cover every triangle once」。その後は既知の TEST-SKINNED（`gbuffer.vert` を読めず assert）で落ちて exit 3。今回は終わらずに abort した）。
-- Notes: (1) `--test=` は絞り込みにならず、塊のケースが先頭で走って出力される。 (2) 描画経路は変えていない（バッファの用途ビットの追加のみ）ので起動画面の撮影は未実施。 (3) Git Bash は `/m:1` をパスに変換するため、ビルドは PowerShell で走らせる。
+- Notes: (1) `--test=` は絞り込みにならず、塊のケースが先頭で走って出力される。 (2) RT の経路はコピーから直接の利用に変わった（手続きメッシュのバッファが BDA を持ったので、`RenderingCoordinator` の `CreateAddressableMeshBuffer` がコピーを作らず元のバッファを返し、RT の BLAS の入力と RTGI・DDGI のインスタンスのアドレスが元のバッファを直接読む。撮影の画素比較で出力は一致）。 ラスタの経路は変えていない。 (3) Git Bash は `/m:1` をパスに変換するため、ビルドは PowerShell で走らせる。
 - Next: VTG6-COMPUTE-SKINNING。
 
 ## 反復 1（run 20261005-214752）: VTG6-COMPUTE-SKINNING（done）
@@ -1165,4 +1164,10 @@
 - テスト: `RenderGraphCompileTest` に `TestSkinningComputeFinalBarriersTransitionToGenericRead` を足した（2 本が `UnorderedAccess` → `GenericRead`・サイズはバッファ全体・今 → 前の順。コマンドリストやバッファが無いときは何も出さない）。
 - 検証: `verify-VTG6-SKINNING-FINAL-BARRIER-1-build.txt`（Debug の Game・RHITextureUpdateVulkanTest・RenderGraphCompileTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（ComputeSkinningVulkanTest・RenderGraphCompileTest 2/2 passed）。
 - Notes: (1) stop-when は該当しない。`VisibilityRasterPass` は同じ資源を `Read` で宣言し、RenderGraph は書いたパスの最終の状態（GenericRead）を信じて読み取りの前にバリアを足さないので二重にならない（`TestWriteFinalStateSuppressesFollowupReadBarrier` と同じ規則）。 (2) パス自体を RenderGraph に載せた形（スキニングの描画コマンドと貸し出しが要る）のテストは足していない。ヘルパーの遷移だけを確かめた。 (3) 描画経路は変えていない（パスは既定で無効）ので起動画面の撮影は未実施。 (4) `RenderGraphCompileTest.cpp` は CRLF 主体の混在行末。python でバイト単位に挿入し、`git diff --numstat` と `--ignore-cr-at-eol` の一致を確かめた。
+- Next: TASKS.md の残りの未完の項目。
+
+## 反復 1（run 20261005-220157）: VTG6-CHUNKS-HARDEN（done）
+- 内容: (1) `MeshResourcesProceduralGpuTest.cpp` の塊の検査の `std::vector` を `Container::VariableArray` に置き換えた（絶対規則1）。 (2) `BuildMeshIndexChunks` が `bool` を返す（`[[nodiscard]]`）ようにし、範囲の内側にある3の倍数でない区切りは隣の区間と合わせず失敗を返して出力を空にする。`first += 384` の桁あふれで終わらなくなる形をやめ、区間の終わりを超えて進めない `while` に直した。呼び出し側（`SkinnedMeshGpuStore::FindOrUpload`・`VisibilityRasterPass`）は失敗を `NORVES_LOG_ERROR` / `NORVES_LOG_WARNING`（ラスタは `LogChunkFailureOnce` で1回）で知らせ、そのメッシュは登録・描画しない。 (3) テストに、128 を超えるサブメッシュ・区切りと 128 の分割の重なり・インデックス 0〜2 個・256/257 三角形・3の倍数でない区切りの失敗（13 個を [0,7) [7,13)）・4G-1 個での桁あふれ・スキニングのメッシュ解放後に `TryGetChunks` が false で出力が空、を足した。 (4) 手続きメッシュは描画の範囲（サブメッシュ・インスタンス）ごとに範囲が違い、登録時にメッシュ全体で分けた `ProceduralMeshGPUData::Chunks` は `VisibilityRasterPass` が読んでいなかったので、登録時の保存をやめて `Chunks` を削除した（ラスタは範囲から作り直す）。スキニングは登録時の塊を読むので保存を残した。 (5) `RayTracingSceneSnapshotTest` は元のバッファの直接の利用でも通った。 (6) 上の 6b85c9b の節の割れた行（`\n` を含む）と、274ca1e0 の節・6b85c9b の節の「描画経路は変えていない」を、RT の経路がコピーから直接の利用に変わった事実へ直した。
+- 検証: `verify-VTG6-CHUNKS-HARDEN-1.txt`（Debug の Game・RenderResourcesDomainContractTest・SkinnedRenderPathContractTest・RayTracingSceneSnapshotTest、BUILD_EXIT_CODE=0）、`-2.txt`（RayTracingSceneSnapshotTest・MeshResourcesProceduralGpuTest・GeometryPoolAllocatorTest 3/3 passed）、`-3-skinned.txt`（スキニングの追加ケースの行「SkinnedMesh chunks are gone after release」。その後は既知の TEST-SKINNED の `gBuffer.Initialize` で停止するのでプロセスを打ち切った）、`-3-build.txt`（直接実行の前に足した出力行を反映した SkinnedRenderPathContractTest の再ビルド、BUILD_EXIT_CODE=0）。
+- Notes: (1) stop-when は該当しない。 (2) 区切りの引数は今は本番の呼び出し側が使わない（手続きメッシュの保存をやめたため）が、タスクの契約どおり失敗を返す形を保ち、テストで固定した。 (3) Bash のヒアドキュメント内の `\n` は実際の改行になる既知の落とし穴を再び踏んだので、書き込みはスクリプトファイル＋`chr(92)` で行った。 (4) 直接実行したスキニングのテストは assert 後に終了しないので、`Start-Process` ＋ 待ち時間で打ち切る。
 - Next: TASKS.md の残りの未完の項目。

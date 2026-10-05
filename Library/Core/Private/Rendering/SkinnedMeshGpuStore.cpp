@@ -2,6 +2,7 @@
 
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
+#include "Logging/LogMacros.h"
 #include "Math/MatrixUtils.h"
 
 #include <cstring>
@@ -308,7 +309,12 @@ namespace NorvesLib::Core::Rendering
         entry.VertexBuffer = vertexBuffer;
         entry.IndexBuffer = indexBuffer;
         entry.IndexCount = static_cast<uint32_t>(indices.size());
-        BuildMeshIndexChunks(entry.IndexCount, nullptr, 0, entry.Chunks);
+        // 区切りの位置を与えないので失敗しないが、戻り値は必ず確かめる
+        if (!BuildMeshIndexChunks(entry.IndexCount, nullptr, 0, entry.Chunks))
+        {
+            NORVES_LOG_ERROR("SkinnedMeshGpuStore", "インデックスを塊に分けられませんでした");
+            return nullptr;
+        }
         entry.AssetLease = assetLease;
         m_Entries[handle] = std::move(entry);
         return &m_Entries.find(handle)->second;

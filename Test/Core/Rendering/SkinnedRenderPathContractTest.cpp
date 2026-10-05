@@ -1366,10 +1366,17 @@ namespace
 
         resources.SkinnedMeshes().BeginFrame(0);
         assert(resources.SkinnedMeshes().IsResident(lifetime.MeshHandle));
+        Container::VariableArray<MeshIndexChunk> residentChunks;
+        assert(resources.SkinnedMeshes().TryGetChunks(lifetime.MeshHandle, residentChunks));
+        assert(!residentChunks.empty());
         resources.ClearAllResources();
         assert(resources.SkinnedMeshes().IsResident(lifetime.MeshHandle));
         resources.SkinnedMeshes().BeginFrame(1);
         assert(!resources.SkinnedMeshes().IsResident(lifetime.MeshHandle));
+        // 解放したメッシュの塊は返さず、出力も空にする
+        assert(!resources.SkinnedMeshes().TryGetChunks(lifetime.MeshHandle, residentChunks));
+        assert(residentChunks.empty());
+        std::cout << "SkinnedMesh chunks are gone after release\n" << std::flush;
 
         resources.Shutdown();
         assert(device->WaitIdleCount == 1);
