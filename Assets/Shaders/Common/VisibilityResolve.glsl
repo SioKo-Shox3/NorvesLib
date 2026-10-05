@@ -605,7 +605,8 @@ const float VIS_MATERIAL_MAX_ANISOTROPY = 4.0;
 // bIsotropic（MegaGeometry の等方のサンプラー）のときは N = 1（λ = log2(Pmax)。Vulkan の異方性なしの式）。
 // N（異方性の標本の数）は、Vulkan の仕様の式 min(ceil(Pmax / Pmin), 上限) でなく clamp(floor(Pmax / Pmin), 1, 上限)。
 // 実測（NVIDIA 610.88、起動画面の 3 視点、常駐したタイルの数のラスタの経路との比）: ceil は 1.5〜2.0 倍、連続値は 1.22 倍、
-// 等方（N = 1）は 0.65 倍、floor は 1.02〜1.11 倍で、ラスタの textureQueryLOD に最も近い。別の装置では一致を前提にしない
+// 等方（N = 1）は 0.65 倍、floor は 1.02〜1.11 倍で、ラスタの textureQueryLOD に最も近い（MegaGeometry の材質も異方性の式だったときの測定。
+// MegaGeometry を等方にした後は 0.73・0.66・0.95 倍で、on の画像はぼけない）。別の装置では一致を前提にしない
 float VisQueryLodFromGradient(sampler2D tex, vec2 uvDx, vec2 uvDy, bool bIsotropic)
 {
     const vec2 size = vec2(textureSize(tex, 0));
