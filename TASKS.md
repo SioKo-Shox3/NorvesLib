@@ -448,7 +448,7 @@
 - notes: 危険地帯（RHI/Vulkan・RenderThread）。
 
 ## VTG5-MEGA-POOL-MIGRATE: MegaGeometryの頂点・インデックス・クラスタを共有プールへ移す
-- status: todo
+- status: done
 - done-when: `MegaGeometryResourceStore` が、メッシュごとの host-visible のバッファ3本をやめ、`GeometryPool` の区画（DeviceLocal）へ `GpuUploadRing` で書く。描画（`MegaGeometryPass` の間接描画・2パスの遮蔽）・影（フォールバックの範囲）・レイトレ（BLAS の頂点・インデックスのアドレスとキー）が、プールのバッファと区画のオフセットで動く。メッシュの解放は区画を遅延解放する。`MegaGeometryResourcesTest`・`RayTracingSceneSnapshotTest`・`RenderGraphCompileTest` が通り、`-Deterministic` の撮影が移行前と一致する（PSNR を記録。目安 60 dB 以上）。`VRAM_LEDGER` の geometry_pool で MegaGeometry の量を記録する。
 - verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RayTracingSceneSnapshotTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RayTracingSceneSnapshotTest|RenderGraphCompileTest|GeometryPoolAllocatorTest)$"`

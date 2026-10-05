@@ -260,7 +260,13 @@ namespace NorvesLib::Core::Rendering
     {
     public:
         MegaGeometry::MegaMeshHandle CreateMegaMesh(const MegaGeometry::MegaMeshCreateInfo &createInfo);
+        // 登録済みのメッシュの GPU データ。頂点・インデックス・クラスタはジオメトリのプールの区画にあり、
+        // 書き込みが GPU で完了したとは限らない（描画・影・レイトレーシングは GetReadyMegaMeshGPUData を使う）。
         const MegaGeometry::MegaMeshGPUData *GetMegaMeshGPUData(MegaGeometry::MegaMeshHandle handle) const;
+        // 区画へのコピーが全て GPU で完了し、GPU から読めるメッシュだけの GPU データ。未完了・未登録は nullptr。
+        const MegaGeometry::MegaMeshGPUData *GetReadyMegaMeshGPUData(MegaGeometry::MegaMeshHandle handle) const;
+        // 登録済みで、まだ GPU から読める状態になっていないメッシュがあるか（読み込みの落ち着きの判定に使う）。
+        bool HasPendingGpuUploads() const;
         void ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle);
 
         ModelHandle RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
@@ -338,12 +344,14 @@ namespace NorvesLib::Core::Rendering
         // ジオメトリ（頂点・インデックス・クラスタ）が共有する DeviceLocal の大きなバッファのプール。未初期化では nullptr。
         // 塊のバッファは最初の確保で作るので、使わなければ VRAM を取らない。
         GeometryPool *GetGeometryPool() const;
+        // プールの1つの塊の大きさ（バイト。既定 256 MiB）。Initialize の前に呼ぶ（デバイスを持たない試験が小さな塊で動かすため）。
+        void SetGeometryPoolBlockBytes(uint64_t blockBytes);
 
-        // 積んであるタイル・ミップテイルのコピーを、フレームのコマンドの先頭へ記録する（RenderThread。
+        // 積んであるタイル・ミップテイル・ジオメトリの区画のコピーを、フレームのコマンドの先頭へ記録する（RenderThread。
         // render pass の外で、BeginRetireFrame の後・コマンドを開いた直後に呼ぶ）。記録したコピーの数を返す。
-        // sparse に対応しないデバイス・未初期化では何もせず 0。
+        // 書き込み待ちのジオメトリの中身は、フレームごとの上限の範囲でここでリングへ積んでから記録する。未初期化では何もせず 0。
         uint32_t RecordTileUploads(RHI::ICommandList &commandList);
-        // ステージングのリング経由でテクスチャの領域へ書く経路。sparse に対応しないデバイス・未初期化では nullptr。
+        // ステージングのリング経由でテクスチャの領域・バッファの区画へ書く経路。未初期化では nullptr。
         TileUploader *GetTileUploader() const;
 
         // VT の要求（材質のシェーダーが書くタイルの要求）を、3つのバッファのリングで数フレーム遅れて読み戻して集計する仕組み。

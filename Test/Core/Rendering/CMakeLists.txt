@@ -1816,6 +1816,7 @@ add_executable(MegaGeometryResourcesTest
 target_link_libraries(MegaGeometryResourcesTest PRIVATE Core)
 target_include_directories(MegaGeometryResourcesTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
 set_target_properties(MegaGeometryResourcesTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME MegaGeometryResourcesTest COMMAND MegaGeometryResourcesTest)

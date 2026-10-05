@@ -26,6 +26,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Test/Core/Rendering/GeometryUploadTestSupport.h"
 #include "Container/PointerTypes.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -237,8 +238,17 @@ namespace
         uint64_t GetSize() const override { return m_Desc.Size; }
         void* Map(uint64_t offset = 0, uint64_t size = 0) override
         {
-            (void)offset;
             (void)size;
+            // ジオメトリの区画へ書くステージングのリングだけは、写像して書き込めるようにバイト列を持つ
+            if (IsDebugName(m_Desc.DebugName, "TileUploadRing") && m_Desc.Size > 0)
+            {
+                if (MappedBytes.empty())
+                {
+                    MappedBytes.resize(static_cast<size_t>(m_Desc.Size));
+                }
+                return offset < MappedBytes.size() ? MappedBytes.data() + offset : nullptr;
+            }
+            (void)offset;
             return nullptr;
         }
         void Unmap() override {}
@@ -273,6 +283,7 @@ namespace
         uint64_t LastUpdateSize = 0;
         uint32_t UpdateCallCount = 0;
         Container::VariableArray<uint8_t> LastUpdateBytes;
+        Container::VariableArray<uint8_t> MappedBytes;
 
     private:
         RHI::BufferDesc m_Desc;
@@ -2229,6 +2240,8 @@ namespace
         createInfo.DebugName = "CacheModeMega";
         const auto megaMesh = renderResources.MegaGeometry().CreateMegaMesh(createInfo);
         assert(megaMesh.IsValid());
+        // 区画への書き込みが GPU で完了したメッシュだけが描かれる
+        assert(NorvesLib::Test::GeometryUpload::DrainGeometryUploads(renderResources));
 
         Container::VariableArray<MegaGeometryProxy> proxies;
         MegaGeometryProxy proxy;
@@ -2405,6 +2418,7 @@ namespace
         createInfo.DebugName = "PartialFallbackMega";
         const auto megaMesh = renderResources.MegaGeometry().CreateMegaMesh(createInfo);
         assert(megaMesh.IsValid());
+        assert(NorvesLib::Test::GeometryUpload::DrainGeometryUploads(renderResources));
 
         Container::VariableArray<MegaGeometryProxy> proxies;
         MegaGeometryProxy proxy;
@@ -2612,6 +2626,7 @@ namespace
         createInfo.DebugName = "RecordMegaB";
         const auto megaMeshB = renderResources.MegaGeometry().CreateMegaMesh(createInfo);
         assert(megaMeshB.IsValid());
+        assert(NorvesLib::Test::GeometryUpload::DrainGeometryUploads(renderResources));
 
         Container::VariableArray<MegaGeometryProxy> proxies;
         MegaGeometryProxy proxyA;

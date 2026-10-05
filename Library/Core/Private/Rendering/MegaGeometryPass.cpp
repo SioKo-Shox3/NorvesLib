@@ -883,7 +883,8 @@ namespace NorvesLib::Core::Rendering
         for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
         {
             const auto &instance = m_Instances[instanceIndex];
-            const auto *gpuData = command.MegaGeometry->GetMegaMeshGPUData(instance.Handle);
+            // 区画へのコピーが GPU で完了したメッシュだけを描く（書き込み中の区画は読まない）
+            const auto *gpuData = command.MegaGeometry->GetReadyMegaMeshGPUData(instance.Handle);
             if (!gpuData || gpuData->ClusterCount == 0)
             {
                 continue;
@@ -1184,7 +1185,9 @@ namespace NorvesLib::Core::Rendering
             // ----------------------------------------
             cullDescriptorSet->BindConstantBuffer(0, cullUniformBuffer, 0,
                                                   static_cast<uint32_t>(sizeof(CullUniformData)));
-            cullDescriptorSet->BindStorageBuffer(1, gpuData->ClusterBuffer, 0,
+            // クラスタはジオメトリのプールの区画の中にあるので、塊のバッファのオフセットから結ぶ
+            cullDescriptorSet->BindStorageBuffer(1, gpuData->ClusterBuffer,
+                                                 static_cast<uint32_t>(gpuData->ClusterBufferOffsetBytes),
                                                  static_cast<uint32_t>(gpuData->ClusterCount * sizeof(MegaGeometry::GPUClusterData)));
             cullDescriptorSet->BindStorageBuffer(2, indirectDrawBuffer, 0,
                                                  static_cast<uint32_t>(m_Settings.MaxDrawCount * sizeof(MegaGeometry::DrawIndexedIndirectCommand)));
@@ -1270,8 +1273,8 @@ namespace NorvesLib::Core::Rendering
                 cmdList->SetDescriptorSet(drawableInstance.DrawDescriptorSet, 0);
 
                 // 頂点/インデックスバッファ設定
-                cmdList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
-                cmdList->SetIndexBuffer(gpuData->IndexBuffer, 0);
+                cmdList->SetVertexBuffer(gpuData->VertexBuffer, gpuData->VertexBufferOffsetBytes, 0);
+                cmdList->SetIndexBuffer(gpuData->IndexBuffer, gpuData->IndexBufferOffsetBytes);
 
                 // IndirectDraw発行
                 // DrawIndirectCount対応の場合はGPU側カウントを参照し、
@@ -2087,6 +2090,7 @@ namespace NorvesLib::Core::Rendering
         // 直前のフレームに描かれていたインスタンスだけが、見えたビットを引き継げる。
         // 1フレームでも描かれなかった（スナップショットから外れた・メッシュが無かった・2パスでなかった）インスタンスや、
         // コンポーネントが作り直されたインスタンスは、同じ ObjectId・メッシュでも別物として0から始める。
+        // クラスタのバッファは全メッシュが共有するプールの塊なので、区画の位置も一致の条件に入れる
         const void *clusterBufferIdentity = gpuData.ClusterBuffer.get();
         if (found &&
             found->Buffer &&
@@ -2094,6 +2098,7 @@ namespace NorvesLib::Core::Rendering
             found->ComponentId == instance.ComponentId &&
             found->MeshId == instance.Handle.Id &&
             found->ClusterBufferIdentity == clusterBufferIdentity &&
+            found->ClusterBufferOffsetBytes == gpuData.ClusterBufferOffsetBytes &&
             found->ClusterCount == gpuData.ClusterCount)
         {
             found->LastUsedFrame = m_OcclusionFrameCount;
@@ -2122,6 +2127,7 @@ namespace NorvesLib::Core::Rendering
         found->MeshId = instance.Handle.Id;
         found->ComponentId = instance.ComponentId;
         found->ClusterBufferIdentity = clusterBufferIdentity;
+        found->ClusterBufferOffsetBytes = gpuData.ClusterBufferOffsetBytes;
         found->ClusterCount = gpuData.ClusterCount;
         found->LastUsedFrame = m_OcclusionFrameCount;
         outNeedsClear = true;

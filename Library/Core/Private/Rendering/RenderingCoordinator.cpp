@@ -831,18 +831,19 @@ namespace NorvesLib::Core::Rendering
                 {
                     continue;
                 }
+                // 区画へのコピーが GPU で完了したメッシュだけを BLAS の入力にする（BLAS は同期で構築する）
                 const MegaGeometry::MegaMeshGPUData* gpuData =
-                    megaGeometryResources->GetMegaMeshGPUData(proxy.MegaMeshHandle);
+                    megaGeometryResources->GetReadyMegaMeshGPUData(proxy.MegaMeshHandle);
                 if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
                     gpuData->ShadowIndexCount < 3u || gpuData->ShadowIndexCount % 3u != 0u ||
                     gpuData->ShadowFirstIndex > gpuData->IndexCount ||
                     gpuData->ShadowIndexCount > gpuData->IndexCount - gpuData->ShadowFirstIndex ||
                     gpuData->VertexCount < 3u ||
                     static_cast<uint64_t>(gpuData->VertexCount) * vertexStride >
-                        gpuData->VertexBuffer->GetSize() ||
+                        gpuData->VertexBufferBytes ||
                     (static_cast<uint64_t>(gpuData->ShadowFirstIndex) + gpuData->ShadowIndexCount) *
                             sizeof(uint32_t) >
-                        gpuData->IndexBuffer->GetSize() ||
+                        gpuData->IndexBufferBytes ||
                     !IsFiniteRayTracingTransform(proxy.WorldTransform))
                 {
                     continue;
@@ -853,6 +854,9 @@ namespace NorvesLib::Core::Rendering
                 instance.ObjectInstanceIndex = 0;
                 instance.SourceVertexBuffer = gpuData->VertexBuffer;
                 instance.SourceIndexBuffer = gpuData->IndexBuffer;
+                instance.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
+                instance.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
+                instance.MegaMeshId = proxy.MegaMeshHandle.Id;
                 instance.IndexOffset = gpuData->ShadowFirstIndex;
                 instance.IndexCount = gpuData->ShadowIndexCount;
                 instance.VertexOffset = 0;
@@ -949,6 +953,9 @@ namespace NorvesLib::Core::Rendering
                 return candidate.MeshHandle == instance.MeshHandle &&
                        candidate.SourceVertexBuffer == instance.SourceVertexBuffer &&
                        candidate.SourceIndexBuffer == instance.SourceIndexBuffer &&
+                       candidate.VertexBufferOffsetBytes == instance.VertexBufferOffsetBytes &&
+                       candidate.IndexBufferOffsetBytes == instance.IndexBufferOffsetBytes &&
+                       candidate.MegaMeshId == instance.MegaMeshId &&
                        candidate.IndexOffset == instance.IndexOffset &&
                        candidate.IndexCount == instance.IndexCount &&
                        candidate.VertexOffset == instance.VertexOffset &&
@@ -985,6 +992,9 @@ namespace NorvesLib::Core::Rendering
                 entry.MeshHandle = instance.MeshHandle;
                 entry.SourceVertexBuffer = instance.SourceVertexBuffer;
                 entry.SourceIndexBuffer = instance.SourceIndexBuffer;
+                entry.VertexBufferOffsetBytes = instance.VertexBufferOffsetBytes;
+                entry.IndexBufferOffsetBytes = instance.IndexBufferOffsetBytes;
+                entry.MegaMeshId = instance.MegaMeshId;
                 entry.IndexOffset = instance.IndexOffset;
                 entry.IndexCount = instance.IndexCount;
                 entry.VertexOffset = instance.VertexOffset;
@@ -1025,13 +1035,13 @@ namespace NorvesLib::Core::Rendering
                 geometry.type = RHI::AccelerationStructureGeometryType::Triangles;
                 geometry.opaque = instance.bGeometryOpaque;
                 geometry.triangles.vertexBuffer = entry.VertexBuffer;
-                geometry.triangles.vertexOffset =
+                geometry.triangles.vertexOffset = instance.VertexBufferOffsetBytes +
                     static_cast<uint64_t>(instance.VertexOffset) * instance.VertexStride;
                 geometry.triangles.vertexCount = instance.VertexCount;
                 geometry.triangles.vertexStride = instance.VertexStride;
                 geometry.triangles.vertexFormat = RHI::Format::R32G32B32_FLOAT;
                 geometry.triangles.indexBuffer = entry.IndexBuffer;
-                geometry.triangles.indexOffset =
+                geometry.triangles.indexOffset = instance.IndexBufferOffsetBytes +
                     static_cast<uint64_t>(instance.IndexOffset) * sizeof(uint32_t);
                 geometry.triangles.indexCount = instance.IndexCount;
                 geometry.triangles.indexFormat = RHI::IndexType::Uint32;

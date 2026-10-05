@@ -95,6 +95,28 @@ namespace
         return true;
     }
 
+    // ジオメトリの区画への書き込みを、実デバイスのコマンドで完了させる（フレームごとに GPU の完了を待つ）
+    bool DrainGeometryUploads(const RHI::DevicePtr& device, RenderResources& resources, uint64_t& serial)
+    {
+        for (uint32_t frame = 0; frame < 64u && resources.MegaGeometry().HasPendingGpuUploads(); ++frame)
+        {
+            CommandListPtr uploadCommandList = device->CreateCommandList();
+            if (!uploadCommandList)
+            {
+                return false;
+            }
+            resources.BeginRetireFrame(serial);
+            uploadCommandList->Begin();
+            resources.RecordTileUploads(*uploadCommandList);
+            uploadCommandList->End();
+            uploadCommandList->Submit(true);
+            ++serial;
+            resources.CommitRetireFrame(serial);
+            resources.BeginRetireFrame(serial);
+        }
+        return !resources.MegaGeometry().HasPendingGpuUploads();
+    }
+
     int RunTest()
     {
         if (IsForcedGpuTestSkipRequested())
@@ -267,6 +289,25 @@ namespace
             proxy.ObjectId = 7;
             proxy.MegaMeshHandle = megaHandle;
             megaPacket.Scene.MegaGeometryProxies.push_back(proxy);
+
+            // 区画への書き込みが GPU で完了するまでは、BLAS の入力にしない（同期の BLAS 構築が未書き込みの区画を読まない）
+            if (!subsystem.BuildFrameSnapshot(&renderResources.Meshes(),
+                                              megaPacket,
+                                              nullptr,
+                                              &renderResources.MegaGeometry()) ||
+                !megaPacket.RayTracingScene.Instances.empty())
+            {
+                std::cerr << "書き込み前のメッシュがinstanceになっています\n";
+                return 1;
+            }
+            uint64_t uploadSerial = 0;
+            if (!DrainGeometryUploads(device, renderResources, uploadSerial))
+            {
+                std::cerr << "メッシュの区画への書き込みが完了しませんでした\n";
+                return 1;
+            }
+            std::cout << "mega_instance_waits_for_upload=true\n";
+
             if (!subsystem.BuildFrameSnapshot(&renderResources.Meshes(),
                                               megaPacket,
                                               nullptr,
@@ -280,11 +321,15 @@ namespace
             if (megaInstance.IndexOffset != 3u || megaInstance.IndexCount != 6u ||
                 megaInstance.VertexOffset != 0u || megaInstance.VertexCount != 7u ||
                 megaInstance.SourceVertexBuffer != megaData->VertexBuffer ||
-                megaInstance.SourceIndexBuffer != megaData->IndexBuffer)
+                megaInstance.SourceIndexBuffer != megaData->IndexBuffer ||
+                megaInstance.VertexBufferOffsetBytes != megaData->VertexBufferOffsetBytes ||
+                megaInstance.IndexBufferOffsetBytes != megaData->IndexBufferOffsetBytes ||
+                megaInstance.MegaMeshId != megaHandle.Id)
             {
                 std::cerr << "焼き込み済みメッシュのinstanceがフォールバックの範囲を指していません\n";
                 return 1;
             }
+            std::cout << "mega_instance_points_into_pool_region=true\n";
 
             CommandListPtr megaCommandList = device->CreateCommandList();
             if (!megaCommandList || !BuildAndSubmit(device, *megaCommandList, subsystem, 0, megaPacket) ||

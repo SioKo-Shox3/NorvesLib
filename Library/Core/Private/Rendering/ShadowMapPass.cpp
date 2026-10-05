@@ -68,6 +68,9 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr VertexBuffer;
             RHI::BufferPtr IndexBuffer;
+            // ジオメトリのプールの区画の、頂点・インデックスの先頭（塊のバッファの先頭からのバイト）
+            uint64_t VertexBufferOffsetBytes = 0;
+            uint64_t IndexBufferOffsetBytes = 0;
             uint32_t FirstIndex = 0;
             uint32_t IndexCount = 0;
             float World[16] = {};
@@ -197,8 +200,9 @@ namespace NorvesLib::Core::Rendering
                 {
                     continue;
                 }
+                // 区画へのコピーが GPU で完了したメッシュだけが影を落とす
                 const MegaGeometry::MegaMeshGPUData* gpuData =
-                    context.Resources.MegaGeometry->GetMegaMeshGPUData(proxy.MegaMeshHandle);
+                    context.Resources.MegaGeometry->GetReadyMegaMeshGPUData(proxy.MegaMeshHandle);
                 if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
                     gpuData->ShadowIndexCount == 0u)
                 {
@@ -207,6 +211,8 @@ namespace NorvesLib::Core::Rendering
                 MegaShadowCaster caster;
                 caster.VertexBuffer = gpuData->VertexBuffer;
                 caster.IndexBuffer = gpuData->IndexBuffer;
+                caster.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
+                caster.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
                 caster.FirstIndex = gpuData->ShadowFirstIndex;
                 caster.IndexCount = gpuData->ShadowIndexCount;
                 caster.GpuData = gpuData;
@@ -240,6 +246,8 @@ namespace NorvesLib::Core::Rendering
             command.Draw.bCastShadow = true;
             command.Mesh2D.VertexBuffer = caster.VertexBuffer;
             command.Mesh2D.IndexBuffer = caster.IndexBuffer;
+            command.Mesh2D.VertexBufferOffsetBytes = caster.VertexBufferOffsetBytes;
+            command.Mesh2D.IndexBufferOffsetBytes = caster.IndexBufferOffsetBytes;
             command.Mesh2D.IndexCount = range.IndexCount;
             command.Mesh2D.IndexOffset = range.FirstIndex;
             command.Mesh2D.VertexOffset = 0;

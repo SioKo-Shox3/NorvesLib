@@ -214,6 +214,12 @@ namespace NorvesLib::Core::Rendering
          */
         void QuiesceAsyncAssetProducersAndWait();
 
+        /**
+         * @brief 読み込み中の資産（非同期の読み込み・ジオメトリの GPU への書き込み）が残っているか
+         *
+         * 読み込みの落ち着きの判定に使う。ジオメトリの書き込みは描画フレームが進むと終わるので、
+         * 描画の GPU への反映の窓（FlushAndRender の判定）には含めない。
+         */
         [[nodiscard]] bool HasPendingAsyncAssets() const;
         [[nodiscard]] uint64_t GetRenderedFrameCount() const;
 
@@ -382,6 +388,9 @@ namespace NorvesLib::Core::Rendering
         bool IsShowBoundingBoxes() const { return m_bShowBoundingBoxes; }
 
     private:
+        // 非同期の読み込み（テクスチャ・モデル・glTF）が残っているか。ジオメトリの GPU への書き込みは含めない
+        [[nodiscard]] bool HasPendingAssetLoads() const;
+
         // コピー・ムーブ禁止
         RenderWorld(const RenderWorld &) = delete;
         RenderWorld &operator=(const RenderWorld &) = delete;

@@ -5,6 +5,7 @@
 #include "Container/Span.h"
 #include "Container/VariableArray.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/GeometryPool.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/MegaGeometry/CookedMeshMegaMeshAdapter.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
@@ -14,6 +15,7 @@
 #include "Library/Core/Private/Resource/ModelAssetLoader.h"
 #include "Library/Core/Private/Resource/ModelStaging.h"
 #include "Test/Core/Asset/CookedModelTestSupport.h"
+#include "Test/Core/Rendering/GeometryUploadTestSupport.h"
 
 #include <cassert>
 #include <chrono>
@@ -49,6 +51,7 @@ namespace AssetFormat = NorvesLib::Core::Asset;
 namespace CookedModelSupport = NorvesLib::Test::CookedModelSupport;
 namespace ModelAssetLoader = NorvesLib::Core::Resource;
 namespace ModelStaging = NorvesLib::Core::Resource::ModelStaging;
+namespace GeometryUpload = NorvesLib::Test::GeometryUpload;
 
 namespace
 {
@@ -229,30 +232,74 @@ namespace
         assert(offsetof(MegaGeometry::GPUClusterData, PageId) == 92);
     }
 
-    void AssertNoLodUploadBuffers(const FakeDevice &device)
+    // 試験の偽バッファは塊の大きさのメモリを持つので、プールの塊を小さくして動かす
+    constexpr uint64_t TestPoolBlockBytes = 1ull << 20;
+
+    bool InitializeWithSmallPool(RenderResources &manager, const Container::TSharedPtr<FakeDevice> &device)
+    {
+        manager.SetGeometryPoolBlockBytes(TestPoolBlockBytes);
+        return manager.Initialize(device);
+    }
+
+    // メッシュの領域（クラスタ・頂点・インデックス）の先頭の位置の、プールの塊のバイト列
+    const uint8_t *PoolBytesAt(const MegaGeometry::MegaMeshGPUData &gpuData, uint64_t offsetBytes)
+    {
+        const auto *buffer = static_cast<const FakeBuffer *>(gpuData.VertexBuffer.get());
+        assert(buffer != nullptr);
+        assert(offsetBytes <= buffer->Bytes.size());
+        return buffer->Bytes.data() + offsetBytes;
+    }
+
+    // 1つのメッシュの区画: 3つの領域は同じ塊の中に、256 バイト整列で重ならずに並ぶ
+    void AssertRegionLayout(const MegaGeometry::MegaMeshGPUData &gpuData)
+    {
+        assert(gpuData.VertexBuffer);
+        assert(gpuData.VertexBuffer.get() == gpuData.IndexBuffer.get());
+        assert(gpuData.VertexBuffer.get() == gpuData.ClusterBuffer.get());
+        assert(gpuData.ClusterBufferOffsetBytes % 256 == 0);
+        assert(gpuData.VertexBufferOffsetBytes % 256 == 0);
+        assert(gpuData.IndexBufferOffsetBytes % 256 == 0);
+        assert(gpuData.ClusterBufferOffsetBytes + gpuData.ClusterBufferBytes <= gpuData.VertexBufferOffsetBytes);
+        assert(gpuData.VertexBufferOffsetBytes + gpuData.VertexBufferBytes <= gpuData.IndexBufferOffsetBytes);
+        assert(gpuData.IndexBufferOffsetBytes + gpuData.IndexBufferBytes <= gpuData.VertexBuffer->GetSize());
+    }
+
+    // 作成の直後: メッシュごとのバッファは作らず、プールの塊を1つだけ作る（リングは最初の書き込みまで作らない）
+    void AssertNoLodUploadBuffers(const FakeDevice &device, const MegaGeometry::MegaMeshGPUData &gpuData)
     {
         AssertGPUClusterLayout();
 
-        assert(device.CreatedBufferDescs.size() == 3);
-        assert(device.CreatedBufferDescs[0].Size == sizeof(MeshFixture::Vertices));
-        assert(HasUsage(device.CreatedBufferDescs[0].Usage, NorvesLib::RHI::ResourceUsage::VertexBuffer));
-        assert(HasUsage(device.CreatedBufferDescs[0].Usage, NorvesLib::RHI::ResourceUsage::StorageBuffer));
+        assert(device.CreatedBufferDescs.size() == 1);
+        const NorvesLib::RHI::BufferDesc &pool = device.CreatedBufferDescs[0];
+        assert(pool.Size == TestPoolBlockBytes);
+        assert(!pool.CPUAccessible);
+        assert(HasUsage(pool.Usage, NorvesLib::RHI::ResourceUsage::VertexBuffer));
+        assert(HasUsage(pool.Usage, NorvesLib::RHI::ResourceUsage::IndexBuffer));
+        assert(HasUsage(pool.Usage, NorvesLib::RHI::ResourceUsage::StorageBuffer));
+        assert(HasUsage(pool.Usage, NorvesLib::RHI::ResourceUsage::TransferDst));
+        assert(HasUsage(pool.Usage, NorvesLib::RHI::ResourceUsage::BufferDeviceAddress));
 
-        assert(device.CreatedBufferDescs[1].Size == 3 * sizeof(uint32_t));
-        assert(HasUsage(device.CreatedBufferDescs[1].Usage, NorvesLib::RHI::ResourceUsage::IndexBuffer));
-        assert(HasUsage(device.CreatedBufferDescs[1].Usage, NorvesLib::RHI::ResourceUsage::StorageBuffer));
+        assert(gpuData.VertexBufferBytes == sizeof(MeshFixture::Vertices));
+        assert(gpuData.IndexBufferBytes == 3 * sizeof(uint32_t));
+        assert(gpuData.ClusterBufferBytes == sizeof(MegaGeometry::GPUClusterData));
+        AssertRegionLayout(gpuData);
+    }
 
-        assert(device.CreatedBufferDescs[2].Size == sizeof(MegaGeometry::GPUClusterData));
-        assert(device.CreatedBufferDescs[2].Usage == NorvesLib::RHI::ResourceUsage::StorageBuffer);
-
-        assert(device.CreatedBuffers.size() == 3);
-        assert(device.CreatedBuffers[0]->LastUpdateSize == sizeof(MeshFixture::Vertices));
-        assert(device.CreatedBuffers[1]->LastUpdateSize == 3 * sizeof(uint32_t));
-        assert(device.CreatedBuffers[2]->LastUpdateSize == sizeof(MegaGeometry::GPUClusterData));
+    // 書き込みが終わった後: ステージングのリングが1本増え、区画へ頂点・インデックス・クラスタが入っている
+    void AssertNoLodUploadContents(const FakeDevice &device, const MegaGeometry::MegaMeshGPUData &gpuData)
+    {
+        assert(device.CreatedBuffers.size() == 2);
+        const MeshFixture expected("ExpectedContents");
+        assert(std::memcmp(PoolBytesAt(gpuData, gpuData.VertexBufferOffsetBytes),
+                           expected.Vertices,
+                           sizeof(MeshFixture::Vertices)) == 0);
+        assert(std::memcmp(PoolBytesAt(gpuData, gpuData.IndexBufferOffsetBytes),
+                           expected.Indices,
+                           sizeof(MeshFixture::Indices)) == 0);
 
         MegaGeometry::GPUClusterData uploadedCluster{};
         std::memcpy(&uploadedCluster,
-                    device.CreatedBuffers[2]->Bytes.data(),
+                    PoolBytesAt(gpuData, gpuData.ClusterBufferOffsetBytes),
                     sizeof(MegaGeometry::GPUClusterData));
         assert(uploadedCluster.LODLevel == 2);
         assert(uploadedCluster.LODError == 0.125f);
@@ -286,7 +333,7 @@ namespace
     {
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
 
         MeshFixture mesh("InvalidMega");
         mesh.CreateInfo.VertexDataSize = 0;
@@ -330,7 +377,7 @@ namespace
     {
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
 
         MeshFixture mesh("MegaEmissiveBaseline");
         const auto zeroHandle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
@@ -389,18 +436,23 @@ namespace
     {
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
 
         MeshFixture mesh("NoLodMega");
         const auto handle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
         assert(handle.IsValid());
-        AssertNoLodUploadBuffers(*device);
 
         const auto *gpuData = manager.MegaGeometry().GetMegaMeshGPUData(handle);
         assert(gpuData != nullptr);
-        assert(gpuData->VertexBuffer);
-        assert(gpuData->IndexBuffer);
-        assert(gpuData->ClusterBuffer);
+        AssertNoLodUploadBuffers(*device, *gpuData);
+
+        // 書き込みが GPU で完了するまでは、描画・影・レイトレーシングへ渡さない
+        assert(manager.MegaGeometry().GetReadyMegaMeshGPUData(handle) == nullptr);
+        assert(manager.MegaGeometry().HasPendingGpuUploads());
+        assert(GeometryUpload::DrainGeometryUploads(manager));
+        assert(!manager.MegaGeometry().HasPendingGpuUploads());
+        assert(manager.MegaGeometry().GetReadyMegaMeshGPUData(handle) == gpuData);
+        AssertNoLodUploadContents(*device, *gpuData);
         assert(gpuData->VertexCount == mesh.CreateInfo.VertexCount);
         assert(gpuData->IndexCount == mesh.CreateInfo.IndexCount);
         assert(gpuData->ClusterCount == mesh.CreateInfo.Clusters.size());
@@ -668,7 +720,7 @@ namespace
 
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
         Mega::MegaMeshCreateInfo createInfo;
         createInfo.VertexData = sphere.Vertices.data();
         createInfo.VertexDataSize = sphere.Vertices.size() * sizeof(Mesh3DVertex);
@@ -1123,7 +1175,7 @@ namespace
 
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
         const auto handle = manager.MegaGeometry().CreateMegaMesh(dag.CreateInfo);
         assert(handle.IsValid());
         const auto *gpuData = manager.MegaGeometry().GetMegaMeshGPUData(handle);
@@ -1158,14 +1210,21 @@ namespace
         {
             assert(Mega::SelectShadowLODLevel(*gpuData, 1.0f, texel, 1.0f) == 3u);
         }
-        assert(device->CreatedBuffers.size() == 3);
-        assert(device->CreatedBuffers[0]->LastUpdateSize == dag.Parsed.Mesh.Vertices.size() * sizeof(Mesh3DVertex));
-        assert(device->CreatedBuffers[1]->LastUpdateSize == dag.Parsed.Mesh.Indices.size() * sizeof(uint32_t));
-        assert(device->CreatedBuffers[2]->LastUpdateSize == clusterCount * sizeof(Mega::GPUClusterData));
+        assert(gpuData->VertexBufferBytes == dag.Parsed.Mesh.Vertices.size() * sizeof(Mesh3DVertex));
+        assert(gpuData->IndexBufferBytes == dag.Parsed.Mesh.Indices.size() * sizeof(uint32_t));
+        assert(gpuData->ClusterBufferBytes == clusterCount * sizeof(Mega::GPUClusterData));
+        AssertRegionLayout(*gpuData);
+        assert(GeometryUpload::DrainGeometryUploads(manager));
+        assert(std::memcmp(PoolBytesAt(*gpuData, gpuData->VertexBufferOffsetBytes),
+                           dag.Parsed.Mesh.Vertices.data(),
+                           gpuData->VertexBufferBytes) == 0);
+        assert(std::memcmp(PoolBytesAt(*gpuData, gpuData->IndexBufferOffsetBytes),
+                           dag.Parsed.Mesh.Indices.data(),
+                           gpuData->IndexBufferBytes) == 0);
 
         Container::VariableArray<Mega::GPUClusterData> uploaded(clusterCount);
         std::memcpy(uploaded.data(),
-                    device->CreatedBuffers[2]->Bytes.data(),
+                    PoolBytesAt(*gpuData, gpuData->ClusterBufferOffsetBytes),
                     clusterCount * sizeof(Mega::GPUClusterData));
         for (uint32_t i = 0; i < clusterCount; ++i)
         {
@@ -1207,7 +1266,7 @@ namespace
             broken.Clusters[3].IndexCount = broken.IndexCount; // 範囲外
             RenderResources brokenManager;
             auto brokenDevice = MakeShared<FakeDevice>();
-            assert(brokenManager.Initialize(brokenDevice));
+            assert(InitializeWithSmallPool(brokenManager, brokenDevice));
             assert(!brokenManager.MegaGeometry().CreateMegaMesh(broken).IsValid());
             assert(brokenDevice->CreatedBufferDescs.empty());
         }
@@ -1216,7 +1275,7 @@ namespace
             broken.Clusters[5].LODError = 1.0f; // 親の誤差（0.05）より大きい
             RenderResources brokenManager;
             auto brokenDevice = MakeShared<FakeDevice>();
-            assert(brokenManager.Initialize(brokenDevice));
+            assert(InitializeWithSmallPool(brokenManager, brokenDevice));
             assert(!brokenManager.MegaGeometry().CreateMegaMesh(broken).IsValid());
             assert(brokenDevice->CreatedBufferDescs.empty());
         }
@@ -1247,7 +1306,7 @@ namespace
             }
             RenderResources brokenManager;
             auto brokenDevice = MakeShared<FakeDevice>();
-            assert(brokenManager.Initialize(brokenDevice));
+            assert(InitializeWithSmallPool(brokenManager, brokenDevice));
             assert(!brokenManager.MegaGeometry().CreateMegaMesh(broken).IsValid());
             assert(brokenDevice->CreatedBufferDescs.empty());
         }
@@ -1260,7 +1319,7 @@ namespace
             noFallback.FallbackError = 0.0f;
             RenderResources noFallbackManager;
             auto noFallbackDevice = MakeShared<FakeDevice>();
-            assert(noFallbackManager.Initialize(noFallbackDevice));
+            assert(InitializeWithSmallPool(noFallbackManager, noFallbackDevice));
             const auto noFallbackHandle = noFallbackManager.MegaGeometry().CreateMegaMesh(noFallback);
             assert(noFallbackHandle.IsValid());
             const auto *noFallbackData = noFallbackManager.MegaGeometry().GetMegaMeshGPUData(noFallbackHandle);
@@ -1396,7 +1455,7 @@ namespace
     {
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
 
         const BufferHandle buffer = manager.Gpu().CreateBuffer(MakeCounterBufferInfo());
         assert(buffer.IsValid());
@@ -1420,7 +1479,7 @@ namespace
     {
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
         device->FailBufferCreateIndex = failBufferCreateIndex;
 
         MeshFixture mesh("FailureMega");
@@ -1440,7 +1499,7 @@ namespace
     {
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
 
         MeshFixture mesh("ModelMega");
         const auto megaMesh = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
@@ -1462,7 +1521,7 @@ namespace
     {
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
 
         ModelStaging::ModelStagingData staging;
         staging.Vertices.push_back(Mesh3DVertex{{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}});
@@ -1504,19 +1563,19 @@ namespace
         const uint64_t expectedVertexBytes = staging.Vertices.size() * sizeof(Mesh3DVertex);
         const uint64_t expectedIndexBytes = staging.ClusterizedIndices.size() * sizeof(uint32_t);
         const uint64_t expectedClusterBytes = staging.Clusters.size() * sizeof(MegaGeometry::GPUClusterData);
-        assert(device->CreatedBufferDescs.size() == 3);
-        assert(device->CreatedBufferDescs[0].Size == expectedVertexBytes);
-        assert(device->CreatedBufferDescs[0].Usage ==
-               (NorvesLib::RHI::ResourceUsage::VertexBuffer | NorvesLib::RHI::ResourceUsage::StorageBuffer));
-        assert(device->CreatedBufferDescs[1].Size == expectedIndexBytes);
-        assert(device->CreatedBufferDescs[1].Usage ==
-               (NorvesLib::RHI::ResourceUsage::IndexBuffer | NorvesLib::RHI::ResourceUsage::StorageBuffer));
-        assert(device->CreatedBufferDescs[2].Size == expectedClusterBytes);
-        assert(device->CreatedBufferDescs[2].Usage == NorvesLib::RHI::ResourceUsage::StorageBuffer);
-        assert(device->CreatedBuffers.size() == 3);
-        assert(device->CreatedBuffers[0]->LastUpdateSize == expectedVertexBytes);
-        assert(device->CreatedBuffers[1]->LastUpdateSize == expectedIndexBytes);
-        assert(device->CreatedBuffers[2]->LastUpdateSize == expectedClusterBytes);
+        assert(device->CreatedBufferDescs.size() == 1);
+        const MegaGeometry::MegaMeshGPUData *stagedData = manager.MegaGeometry().GetMegaMeshGPUData(megaMesh);
+        assert(stagedData->VertexBufferBytes == expectedVertexBytes);
+        assert(stagedData->IndexBufferBytes == expectedIndexBytes);
+        assert(stagedData->ClusterBufferBytes == expectedClusterBytes);
+        AssertRegionLayout(*stagedData);
+        assert(GeometryUpload::DrainGeometryUploads(manager));
+        assert(std::memcmp(PoolBytesAt(*stagedData, stagedData->VertexBufferOffsetBytes),
+                           staging.Vertices.data(),
+                           expectedVertexBytes) == 0);
+        assert(std::memcmp(PoolBytesAt(*stagedData, stagedData->IndexBufferOffsetBytes),
+                           staging.ClusterizedIndices.data(),
+                           expectedIndexBytes) == 0);
 
         manager.MegaGeometry().ReleaseModel(model);
         assert(!manager.MegaGeometry().GetModelMegaMeshHandle(model).IsValid());
@@ -1639,7 +1698,7 @@ namespace
 
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
         const ModelHandle model = manager.MegaGeometry().LoadModel(assetSystem, "Models/Triangle.nvmesh");
         assert(model.IsValid());
 
@@ -1653,18 +1712,16 @@ namespace
         assert(gpuData->TotalBounds.CenterX == 0.5f);
         assert(gpuData->TotalBounds.CenterY == 0.5f);
         assert(gpuData->TotalBounds.Radius == 1.0f);
-        assert(device->CreatedBufferDescs.size() == 3);
-        assert(device->CreatedBuffers.size() == 3);
-        assert(device->CreatedBufferDescs[0].Size == 3 * sizeof(Mesh3DVertex));
-        assert(device->CreatedBufferDescs[1].Size == 3 * sizeof(uint32_t));
-        assert(device->CreatedBufferDescs[2].Size == sizeof(MegaGeometry::GPUClusterData));
-        assert(device->CreatedBuffers[0]->LastUpdateSize == 3 * sizeof(Mesh3DVertex));
-        assert(device->CreatedBuffers[1]->LastUpdateSize == 3 * sizeof(uint32_t));
-        assert(device->CreatedBuffers[2]->LastUpdateSize == sizeof(MegaGeometry::GPUClusterData));
+        assert(device->CreatedBufferDescs.size() == 1);
+        assert(gpuData->VertexBufferBytes == 3 * sizeof(Mesh3DVertex));
+        assert(gpuData->IndexBufferBytes == 3 * sizeof(uint32_t));
+        assert(gpuData->ClusterBufferBytes == sizeof(MegaGeometry::GPUClusterData));
+        AssertRegionLayout(*gpuData);
+        assert(GeometryUpload::DrainGeometryUploads(manager));
 
         MegaGeometry::GPUClusterData uploadedCluster{};
         std::memcpy(&uploadedCluster,
-                    device->CreatedBuffers[2]->Bytes.data(),
+                    PoolBytesAt(*gpuData, gpuData->ClusterBufferOffsetBytes),
                     sizeof(MegaGeometry::GPUClusterData));
         assert(uploadedCluster.IndexOffset == 0);
         assert(uploadedCluster.IndexCount == 3);
@@ -1697,7 +1754,7 @@ namespace
 
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
         const size_t bufferDescCount = device->CreatedBufferDescs.size();
         const size_t bufferCount = device->CreatedBuffers.size();
         const ModelHandle model = manager.MegaGeometry().LoadModel(assetSystem, "Models/Triangle.nvmesh");
@@ -1707,11 +1764,151 @@ namespace
         std::filesystem::remove_all(root);
     }
 
+    // 複数のメッシュは同じプールの塊を共有し、領域は重ならず、中身は混ざらない
+    void TestMeshesShareOnePoolBlockWithoutOverlap()
+    {
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(InitializeWithSmallPool(manager, device));
+
+        MeshFixture meshA("PoolShareA");
+        MeshFixture meshB("PoolShareB");
+        MeshFixture meshC("PoolShareC");
+        MeshFixture *meshes[3] = {&meshA, &meshB, &meshC};
+        MegaGeometry::MegaMeshHandle handles[3];
+        const MegaGeometry::MegaMeshGPUData *data[3] = {};
+        for (int i = 0; i < 3; ++i)
+        {
+            meshes[i]->Vertices[0] = static_cast<float>(10 + i);
+            handles[i] = manager.MegaGeometry().CreateMegaMesh(meshes[i]->CreateInfo);
+            assert(handles[i].IsValid());
+            data[i] = manager.MegaGeometry().GetMegaMeshGPUData(handles[i]);
+            assert(data[i] != nullptr);
+            AssertRegionLayout(*data[i]);
+            assert(data[i]->VertexBuffer.get() == data[0]->VertexBuffer.get());
+        }
+        // メッシュごとのバッファは作らない
+        assert(device->CreatedBufferDescs.size() == 1);
+
+        for (int i = 0; i < 3; ++i)
+        {
+            for (int j = i + 1; j < 3; ++j)
+            {
+                const uint64_t beginI = data[i]->ClusterBufferOffsetBytes;
+                const uint64_t endI = data[i]->IndexBufferOffsetBytes + data[i]->IndexBufferBytes;
+                const uint64_t beginJ = data[j]->ClusterBufferOffsetBytes;
+                const uint64_t endJ = data[j]->IndexBufferOffsetBytes + data[j]->IndexBufferBytes;
+                assert(endI <= beginJ || endJ <= beginI);
+            }
+        }
+
+        assert(GeometryUpload::DrainGeometryUploads(manager));
+        for (int i = 0; i < 3; ++i)
+        {
+            assert(std::memcmp(PoolBytesAt(*data[i], data[i]->VertexBufferOffsetBytes),
+                               meshes[i]->Vertices,
+                               sizeof(MeshFixture::Vertices)) == 0);
+            assert(manager.MegaGeometry().GetReadyMegaMeshGPUData(handles[i]) == data[i]);
+        }
+        assert(manager.GetGeometryPool()->GetStats().AllocationCount == 3);
+    }
+
+    // 解放した区画は、解放を頼んだ時点で最後に提出したフレームの完了まで空きへ戻らない。
+    // 戻った区画は次のメッシュが使い、そのメッシュの中身は前のメッシュの書き込みに汚されない
+    void TestReleaseReturnsRegionAfterSubmissionAndReusesIt()
+    {
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(InitializeWithSmallPool(manager, device));
+
+        MeshFixture meshA("ReuseA");
+        meshA.Vertices[0] = 111.0f;
+        const auto handleA = manager.MegaGeometry().CreateMegaMesh(meshA.CreateInfo);
+        assert(handleA.IsValid());
+        const uint64_t regionOffsetA = manager.MegaGeometry().GetMegaMeshGPUData(handleA)->ClusterBufferOffsetBytes;
+
+        uint32_t frames = 0;
+        assert(GeometryUpload::DrainGeometryUploads(manager, 512, &frames));
+        const GeometryPoolStats usedStats = manager.GetGeometryPool()->GetStats();
+        assert(usedStats.UsedBytes > 0);
+        assert(usedStats.AllocationCount == 1);
+
+        // 提出したがまだ完了していないフレームがあるときに解放する
+        GeometryUpload::CopyingCommandList commandList;
+        uint64_t serial = frames;
+        manager.BeginRetireFrame(serial);
+        manager.RecordTileUploads(commandList);
+        ++serial;
+        manager.CommitRetireFrame(serial);
+        manager.MegaGeometry().ReleaseMegaMesh(handleA);
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(handleA) == nullptr);
+        assert(manager.MegaGeometry().GetReadyMegaMeshGPUData(handleA) == nullptr);
+        assert(manager.GetGeometryPool()->GetStats().UsedBytes == usedStats.UsedBytes);
+
+        manager.BeginRetireFrame(serial);
+        const GeometryPoolStats freedStats = manager.GetGeometryPool()->GetStats();
+        assert(freedStats.UsedBytes == 0);
+        assert(freedStats.AllocationCount == 0);
+
+        // 同じ大きさのメッシュは同じ位置の区画を使い、書き込みの完了までは GPU へ渡らない
+        MeshFixture meshB("ReuseB");
+        meshB.Vertices[0] = 222.0f;
+        const auto handleB = manager.MegaGeometry().CreateMegaMesh(meshB.CreateInfo);
+        assert(handleB.IsValid());
+        const MegaGeometry::MegaMeshGPUData *dataB = manager.MegaGeometry().GetMegaMeshGPUData(handleB);
+        assert(dataB != nullptr);
+        assert(dataB->ClusterBufferOffsetBytes == regionOffsetA);
+        assert(manager.MegaGeometry().GetReadyMegaMeshGPUData(handleB) == nullptr);
+        assert(GeometryUpload::DrainGeometryUploads(manager));
+        assert(manager.MegaGeometry().GetReadyMegaMeshGPUData(handleB) == dataB);
+        assert(std::memcmp(PoolBytesAt(*dataB, dataB->VertexBufferOffsetBytes),
+                           meshB.Vertices,
+                           sizeof(MeshFixture::Vertices)) == 0);
+    }
+
+    // プールの塊より大きいメッシュと、1フレームの上限を超えるメッシュは、チャンクに分けて数フレームで書かれる
+    void TestLargeMeshUploadsInChunksAcrossFrames()
+    {
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(InitializeWithSmallPool(manager, device));
+
+        // 頂点 12 MiB（float4 × 786432）。塊（1 MiB）より大きいので、その大きさの塊を足す
+        constexpr size_t VertexCount = 786432;
+        Container::VariableArray<float> vertices(VertexCount * 4);
+        for (size_t i = 0; i < vertices.size(); ++i)
+        {
+            vertices[i] = static_cast<float>(i % 9973);
+        }
+        MeshFixture mesh("LargeChunked");
+        mesh.CreateInfo.VertexData = vertices.data();
+        mesh.CreateInfo.VertexDataSize = vertices.size() * sizeof(float);
+        mesh.CreateInfo.VertexCount = static_cast<uint32_t>(VertexCount);
+
+        const auto handle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
+        assert(handle.IsValid());
+        const MegaGeometry::MegaMeshGPUData *gpuData = manager.MegaGeometry().GetMegaMeshGPUData(handle);
+        assert(gpuData != nullptr);
+        assert(gpuData->VertexBufferBytes == vertices.size() * sizeof(float));
+        assert(gpuData->VertexBuffer->GetSize() > TestPoolBlockBytes);
+
+        uint32_t frames = 0;
+        GeometryUpload::CopyingCommandList commandList;
+        assert(GeometryUpload::DrainGeometryUploads(manager, 512, &frames, &commandList));
+        // 1フレームの上限（8 MiB）を超えるので複数のフレームに分かれ、チャンク（4 MiB）ごとにコピーされる
+        assert(frames >= 2);
+        assert(commandList.CopyBufferCount >= 3);
+        assert(commandList.CopiedBytes >= gpuData->VertexBufferBytes);
+        assert(std::memcmp(PoolBytesAt(*gpuData, gpuData->VertexBufferOffsetBytes),
+                           vertices.data(),
+                           gpuData->VertexBufferBytes) == 0);
+    }
+
     void TestReleaseClearShutdown()
     {
         RenderResources manager;
         auto device = MakeShared<FakeDevice>();
-        assert(manager.Initialize(device));
+        assert(InitializeWithSmallPool(manager, device));
 
         MeshFixture releaseMesh("ReleaseMega");
         const auto releaseHandle = manager.MegaGeometry().CreateMegaMesh(releaseMesh.CreateInfo);
@@ -1755,14 +1952,16 @@ int main()
     TestBakedLODUploadsParentSphereAndFlags();
     TestBakedLODSelectionKeepsClosedMeshAcrossDistances();
     TestSharedHandleCounter();
+    // バッファの作成はプールの塊の1回だけ（頂点・インデックス・クラスタのバッファは作らない）
     TestCreateFailureDoesNotRegister(1);
-    TestCreateFailureDoesNotRegister(2);
-    TestCreateFailureDoesNotRegister(3);
     TestModelRegisterAndReleaseCoupledMegaMesh();
     TestFinalizeModelStagingNoTextureSuccess();
     TestBuildModelStagingMapsCookedDataAndOwnsStrings();
     TestLoadCookedModelThroughPublicResources();
     TestCorruptCookedModelCreatesNoBuffers();
+    TestMeshesShareOnePoolBlockWithoutOverlap();
+    TestReleaseReturnsRegionAfterSubmissionAndReusesIt();
+    TestLargeMeshUploadsInChunksAcrossFrames();
     TestReleaseClearShutdown();
 
     std::cout << "MegaGeometryResourcesTest passed\n";

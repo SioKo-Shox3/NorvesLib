@@ -337,12 +337,26 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      * @brief MegaMesh GPUデータ
      *
      * GPU上のリソースハンドルを保持する内部構造体。
+     *
+     * 頂点・インデックス・クラスタは、ジオメトリの共有プール（GeometryPool）の1つの区画に並べて置く。
+     * 3つのバッファのハンドルはどれも同じプールの塊のバッファを指し、メッシュの領域はそれぞれ
+     * 〜OffsetBytes（塊のバッファの先頭からのバイト）と 〜Bytes（その領域の大きさ）で表す。
+     * バッファの GetSize() は塊の大きさなので、メッシュの大きさには使わない。
      */
     struct MegaMeshGPUData
     {
-        RHI::BufferPtr VertexBuffer;  // 統合頂点バッファ
-        RHI::BufferPtr IndexBuffer;   // 統合インデックスバッファ
-        RHI::BufferPtr ClusterBuffer; // クラスタデータSSBO
+        RHI::BufferPtr VertexBuffer;  // 統合頂点を持つプールの塊のバッファ
+        RHI::BufferPtr IndexBuffer;   // 統合インデックスを持つプールの塊のバッファ
+        RHI::BufferPtr ClusterBuffer; // クラスタデータ（SSBO）を持つプールの塊のバッファ
+
+        /** @brief 塊のバッファの中での各領域の先頭（バイト）。頂点は頂点バッファのオフセット、インデックスはインデックスバッファのオフセットに使う */
+        uint64_t VertexBufferOffsetBytes = 0;
+        uint64_t IndexBufferOffsetBytes = 0;
+        uint64_t ClusterBufferOffsetBytes = 0;
+        /** @brief 各領域の大きさ（バイト。パディングを含まない） */
+        uint64_t VertexBufferBytes = 0;
+        uint64_t IndexBufferBytes = 0;
+        uint64_t ClusterBufferBytes = 0;
 
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;

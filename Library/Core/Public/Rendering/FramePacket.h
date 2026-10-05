@@ -78,6 +78,16 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr SourceIndexBuffer;
         RHI::BufferPtr AccelerationStructureVertexBuffer;
         RHI::BufferPtr AccelerationStructureIndexBuffer;
+        /**
+         * @brief 頂点・インデックスが共有バッファ（ジオメトリのプール）の区画にあるときの、区画の先頭（バイト）
+         *
+         * VertexOffset・IndexOffset はこの先頭からの位置。専用のバッファを持つメッシュでは 0。
+         * 加速構造・シェーダーが見るアドレスは、バッファのアドレス + この先頭 + VertexOffset・IndexOffset の位置になる。
+         */
+        uint64_t VertexBufferOffsetBytes = 0;
+        uint64_t IndexBufferOffsetBytes = 0;
+        /** @brief 共有バッファの区画を持つ MegaMesh の番号（0 は無し）。区画が別のメッシュに使い回されたときに BLAS を取り違えない */
+        uint64_t MegaMeshId = 0;
         uint32_t IndexOffset = 0;
         uint32_t IndexCount = 0;
         uint32_t VertexOffset = 0;

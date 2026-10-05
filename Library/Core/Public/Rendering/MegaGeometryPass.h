@@ -256,6 +256,7 @@ namespace NorvesLib::Core::Rendering
             uint64_t MeshId = 0;
             uint64_t ComponentId = 0;
             const void *ClusterBufferIdentity = nullptr;
+            uint64_t ClusterBufferOffsetBytes = 0;
             uint32_t ClusterCount = 0;
             uint64_t LastUsedFrame = 0;
             RHI::BufferPtr Buffer; // uint32_t[ClusterCount]。1=前のフレームで見えた

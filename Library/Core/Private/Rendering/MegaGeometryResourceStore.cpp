@@ -1,7 +1,9 @@
 ﻿#include "Rendering/MegaGeometryResourceStore.h"
 
+#include "Rendering/GpuRetireQueue.h"
 #include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
 #include "Rendering/MaterialTypes.h"
+#include "Rendering/TileUploader.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "Logging/LogMacros.h"
@@ -9,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -26,12 +29,28 @@ namespace NorvesLib::Core::Rendering
         {
             return std::chrono::duration<double, std::milli>(LoadProfileClock::now() - startTime).count();
         }
+
+        // 1回にリングへ積むチャンクの大きさ。リング（32 MiB）とフレームのコピー量の上限より十分小さくする
+        constexpr uint64_t UploadChunkBytes = 4ull * 1024ull * 1024ull;
+        // 区画の中の各領域の整列。storage buffer の範囲のオフセット（minStorageBufferOffsetAlignment の上限 256）を満たす
+        constexpr uint64_t RegionAlignmentBytes = GeometryPool::DefaultAlignmentBytes;
+
+        constexpr uint64_t AlignUpBytes(uint64_t value, uint64_t alignment)
+        {
+            return (value + alignment - 1) / alignment * alignment;
+        }
     }
 
     MegaGeometryResourceStore::MegaGeometryResourceStore(Container::TSharedPtr<RHI::IDevice> device,
-                                                         Thread::Atomic<uint64_t> &nextHandleId)
+                                                         Thread::Atomic<uint64_t> &nextHandleId,
+                                                         GeometryPool *pool,
+                                                         TileUploader *uploader,
+                                                         GpuRetireQueue *retireQueue)
         : m_Device(std::move(device)),
-          m_NextHandleId(nextHandleId)
+          m_NextHandleId(nextHandleId),
+          m_Pool(pool),
+          m_Uploader(uploader),
+          m_RetireQueue(retireQueue)
     {
     }
 
@@ -40,7 +59,7 @@ namespace NorvesLib::Core::Rendering
     MegaGeometry::MegaMeshHandle MegaGeometryResourceStore::CreateMegaMesh(
         const MegaGeometry::MegaMeshCreateInfo &createInfo)
     {
-        if (!m_Device || !createInfo.VertexData || !createInfo.IndexData)
+        if (!m_Device || !m_Pool || !m_Uploader || !createInfo.VertexData || !createInfo.IndexData)
         {
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
@@ -158,59 +177,40 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // Create the vertex buffer.
-        double vertexUploadMs = 0.0;
-        double indexUploadMs = 0.0;
-        double clusterUploadMs = 0.0;
-        Container::String vbName = createInfo.DebugName + "_VB";
-        RHI::BufferDesc vbDesc(
-            static_cast<uint64_t>(uploadVertexDataSize),
-            RHI::ResourceUsage::VertexBuffer | RHI::ResourceUsage::StorageBuffer,
-            true,
-            vbName.c_str());
-        auto vertexUploadStartTime = LoadProfileNow();
-        auto vertexBuffer = m_Device->CreateBuffer(vbDesc);
-        if (!vertexBuffer)
-        {
-            vertexUploadMs = LoadProfileElapsedMs(vertexUploadStartTime);
-            NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%zu index_bytes=0 cluster_bytes=0 vertex_ms=%.3f index_ms=0.000 cluster_ms=0.000 success=0",
-                            createInfo.DebugName.c_str(),
-                            uploadVertexDataSize,
-                            vertexUploadMs);
-            NORVES_LOG_ERROR("MegaGeometryResources", "Failed to create MegaMesh vertex buffer: %s",
-                             createInfo.DebugName.c_str());
-            return MegaGeometry::MegaMeshHandle::Invalid();
-        }
-        vertexBuffer->Update(uploadVertexData, uploadVertexDataSize);
-        vertexUploadMs = LoadProfileElapsedMs(vertexUploadStartTime);
+        // 区画の大きさを決める。クラスタ・頂点・インデックスの順に 256 バイト整列で1つの区画へ並べる
+        // （クラスタは storage buffer の範囲として結ぶので、区画の先頭＝プールの整列の位置に置く）。
+        const uint64_t vertexBytes = static_cast<uint64_t>(uploadVertexDataSize);
+        const uint64_t indexBytes = static_cast<uint64_t>(uploadIndexCount) * sizeof(uint32_t);
+        const uint64_t clusterBytes =
+            static_cast<uint64_t>(uploadClusters->size()) * sizeof(MegaGeometry::GPUClusterData);
+        const uint64_t clusterRegionOffset = 0;
+        const uint64_t vertexRegionOffset = AlignUpBytes(clusterBytes, RegionAlignmentBytes);
+        const uint64_t indexRegionOffset = AlignUpBytes(vertexRegionOffset + vertexBytes, RegionAlignmentBytes);
+        const uint64_t regionBytes = indexRegionOffset + indexBytes;
 
-        // Create the index buffer.
-        size_t ibSize = static_cast<size_t>(uploadIndexCount) * sizeof(uint32_t);
-        Container::String ibName = createInfo.DebugName + "_IB";
-        RHI::BufferDesc ibDesc(
-            static_cast<uint64_t>(ibSize),
-            RHI::ResourceUsage::IndexBuffer | RHI::ResourceUsage::StorageBuffer,
-            true,
-            ibName.c_str());
-        auto indexUploadStartTime = LoadProfileNow();
-        auto indexBuffer = m_Device->CreateBuffer(ibDesc);
-        if (!indexBuffer)
+        auto stageStartTime = LoadProfileNow();
+        GeometryPool::RegionLease lease = m_Pool->Allocate(regionBytes, RegionAlignmentBytes);
+        if (!lease.IsValid())
         {
-            indexUploadMs = LoadProfileElapsedMs(indexUploadStartTime);
             NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%zu index_bytes=%zu cluster_bytes=0 vertex_ms=%.3f index_ms=%.3f cluster_ms=0.000 success=0",
+                            "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%llu index_bytes=%llu cluster_bytes=%llu vertex_ms=0.000 index_ms=0.000 cluster_ms=0.000 success=0",
                             createInfo.DebugName.c_str(),
-                            uploadVertexDataSize,
-                            ibSize,
-                            vertexUploadMs,
-                            indexUploadMs);
-            NORVES_LOG_ERROR("MegaGeometryResources", "Failed to create MegaMesh index buffer: %s",
+                            static_cast<unsigned long long>(vertexBytes),
+                            static_cast<unsigned long long>(indexBytes),
+                            static_cast<unsigned long long>(clusterBytes));
+            NORVES_LOG_ERROR("MegaGeometryResources", "Failed to allocate MegaMesh region in the geometry pool: %s (%llu bytes)",
+                             createInfo.DebugName.c_str(),
+                             static_cast<unsigned long long>(regionBytes));
+            return MegaGeometry::MegaMeshHandle::Invalid();
+        }
+        // クラスタの storage buffer の範囲のオフセットは 32 ビット（ディスクリプタの更新の引数）に収める
+        if (lease.GetOffsetBytes() + clusterRegionOffset + clusterBytes > UINT32_MAX)
+        {
+            NORVES_LOG_ERROR("MegaGeometryResources", "MegaMesh cluster region is beyond the 32-bit offset range: %s",
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
-        indexBuffer->Update(uploadIndexData, ibSize);
-        indexUploadMs = LoadProfileElapsedMs(indexUploadStartTime);
+        const double allocateMs = LoadProfileElapsedMs(stageStartTime);
 
         // Create the cluster data SSBO.
         // Convert MeshCluster to GPUClusterData.
@@ -250,41 +250,31 @@ namespace NorvesLib::Core::Rendering
             gpuClusters.push_back(gpuCluster);
         }
 
-        size_t clusterBufferSize = gpuClusters.size() * sizeof(MegaGeometry::GPUClusterData);
-        Container::String cbName = createInfo.DebugName + "_ClusterSSBO";
-        RHI::BufferDesc cbDesc(
-            static_cast<uint64_t>(clusterBufferSize),
-            RHI::ResourceUsage::StorageBuffer,
-            true,
-            cbName.c_str());
-        auto clusterUploadStartTime = LoadProfileNow();
-        auto clusterBuffer = m_Device->CreateBuffer(cbDesc);
-        if (!clusterBuffer)
-        {
-            clusterUploadMs = LoadProfileElapsedMs(clusterUploadStartTime);
-            NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%zu index_bytes=%zu cluster_bytes=%zu vertex_ms=%.3f index_ms=%.3f cluster_ms=%.3f success=0",
-                            createInfo.DebugName.c_str(),
-                            uploadVertexDataSize,
-                            ibSize,
-                            clusterBufferSize,
-                            vertexUploadMs,
-                            indexUploadMs,
-                            clusterUploadMs);
-            NORVES_LOG_ERROR("MegaGeometryResources", "Failed to create MegaMesh cluster buffer: %s",
-                             createInfo.DebugName.c_str());
-            return MegaGeometry::MegaMeshHandle::Invalid();
-        }
-        clusterBuffer->Update(gpuClusters.data(), clusterBufferSize);
-        clusterUploadMs = LoadProfileElapsedMs(clusterUploadStartTime);
+        // 区画の中身を CPU 側に組み立てる（リングへ積むまで持つ。呼び出し側の頂点・インデックスは返った後に手放される）
+        Container::VariableArray<uint8_t> stagedBytes(static_cast<size_t>(regionBytes));
+        auto clusterStageStartTime = LoadProfileNow();
+        std::memcpy(stagedBytes.data() + clusterRegionOffset, gpuClusters.data(), static_cast<size_t>(clusterBytes));
+        const double clusterUploadMs = LoadProfileElapsedMs(clusterStageStartTime);
+        auto vertexStageStartTime = LoadProfileNow();
+        std::memcpy(stagedBytes.data() + vertexRegionOffset, uploadVertexData, static_cast<size_t>(vertexBytes));
+        const double vertexUploadMs = LoadProfileElapsedMs(vertexStageStartTime) + allocateMs;
+        auto indexStageStartTime = LoadProfileNow();
+        std::memcpy(stagedBytes.data() + indexRegionOffset, uploadIndexData, static_cast<size_t>(indexBytes));
+        const double indexUploadMs = LoadProfileElapsedMs(indexStageStartTime);
 
         // Allocate the handle and register GPU data.
         auto handle = AllocateHandle<MegaGeometry::MegaMeshHandle>();
 
         MegaGeometry::MegaMeshGPUData gpuData;
-        gpuData.VertexBuffer = vertexBuffer;
-        gpuData.IndexBuffer = indexBuffer;
-        gpuData.ClusterBuffer = clusterBuffer;
+        gpuData.VertexBuffer = lease.GetBufferHandle();
+        gpuData.IndexBuffer = lease.GetBufferHandle();
+        gpuData.ClusterBuffer = lease.GetBufferHandle();
+        gpuData.VertexBufferOffsetBytes = lease.GetOffsetBytes() + vertexRegionOffset;
+        gpuData.IndexBufferOffsetBytes = lease.GetOffsetBytes() + indexRegionOffset;
+        gpuData.ClusterBufferOffsetBytes = lease.GetOffsetBytes() + clusterRegionOffset;
+        gpuData.VertexBufferBytes = vertexBytes;
+        gpuData.IndexBufferBytes = indexBytes;
+        gpuData.ClusterBufferBytes = clusterBytes;
         gpuData.VertexCount = uploadVertexCount;
         gpuData.IndexCount = uploadIndexCount;
         gpuData.ClusterCount = static_cast<uint32_t>(uploadClusters->size());
@@ -431,8 +421,13 @@ namespace NorvesLib::Core::Rendering
         }
 
         {
+            MegaMeshEntry entry;
+            entry.Data = std::move(gpuData);
+            entry.Lease = std::move(lease);
+            entry.StagedBytes = std::move(stagedBytes);
             Thread::ScopedLock lock(m_Mutex);
-            m_MegaMeshes[handle.Id] = std::move(gpuData);
+            m_MegaMeshes[handle.Id] = std::move(entry);
+            m_PendingUploadIds.push_back(handle.Id);
         }
 
         NORVES_LOG_INFO("MegaGeometryResources",
@@ -443,11 +438,11 @@ namespace NorvesLib::Core::Rendering
                         static_cast<uint32_t>(createInfo.Clusters.size()));
 
         NORVES_LOG_INFO("AssetLoadProfile",
-                        "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%zu index_bytes=%zu cluster_bytes=%zu vertex_ms=%.3f index_ms=%.3f cluster_ms=%.3f success=1",
+                        "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%llu index_bytes=%llu cluster_bytes=%llu vertex_ms=%.3f index_ms=%.3f cluster_ms=%.3f success=1",
                         createInfo.DebugName.c_str(),
-                        uploadVertexDataSize,
-                        ibSize,
-                        clusterBufferSize,
+                        static_cast<unsigned long long>(vertexBytes),
+                        static_cast<unsigned long long>(indexBytes),
+                        static_cast<unsigned long long>(clusterBytes),
                         vertexUploadMs,
                         indexUploadMs,
                         clusterUploadMs);
@@ -464,13 +459,171 @@ namespace NorvesLib::Core::Rendering
         {
             return nullptr;
         }
-        return &it->second;
+        return &it->second.Data;
+    }
+
+    const MegaGeometry::MegaMeshGPUData *MegaGeometryResourceStore::GetReadyMegaMeshGPUData(
+        MegaGeometry::MegaMeshHandle handle) const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        auto it = m_MegaMeshes.find(handle.Id);
+        if (it == m_MegaMeshes.end() || !IsEntryGpuReadyLocked(it->second))
+        {
+            return nullptr;
+        }
+        return &it->second.Data;
+    }
+
+    bool MegaGeometryResourceStore::IsMegaMeshGpuReady(MegaGeometry::MegaMeshHandle handle) const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        auto it = m_MegaMeshes.find(handle.Id);
+        return it != m_MegaMeshes.end() && IsEntryGpuReadyLocked(it->second);
+    }
+
+    bool MegaGeometryResourceStore::IsEntryGpuReadyLocked(const MegaMeshEntry &entry) const
+    {
+        if (entry.bGpuReady)
+        {
+            return true;
+        }
+        // 全てをリングへ積み終え、その範囲宛てのコピーが GPU で完了（リングの区画が手放された）してから読める
+        if (!entry.bFullyEnqueued || !m_Uploader ||
+            m_Uploader->HasUnfinishedBufferCopies(entry.Lease.GetBufferHandle(), entry.Lease.GetOffsetBytes(),
+                                                  entry.Lease.GetSizeBytes()))
+        {
+            return false;
+        }
+        entry.bGpuReady = true;
+        return true;
+    }
+
+    uint64_t MegaGeometryResourceStore::PumpUploads(uint64_t maxBytes)
+    {
+        if (!m_Uploader || maxBytes == 0)
+        {
+            return 0;
+        }
+
+        Thread::ScopedLock lock(m_Mutex);
+        if (m_PendingUploadIds.empty())
+        {
+            return 0;
+        }
+
+        uint64_t budget = std::min(maxBytes, m_Uploader->GetRecordableCopyBytes());
+        uint64_t enqueuedTotal = 0;
+        bool bAnyCompleted = false;
+        for (size_t index = 0; index < m_PendingUploadIds.size() && budget > 0; ++index)
+        {
+            auto it = m_MegaMeshes.find(m_PendingUploadIds[index]);
+            if (it == m_MegaMeshes.end())
+            {
+                continue;
+            }
+            MegaMeshEntry &entry = it->second;
+            const uint64_t totalBytes = entry.StagedBytes.size();
+            const RHI::BufferPtr &buffer = entry.Lease.GetBufferHandle();
+            bool bBlocked = false;
+            while (entry.EnqueuedBytes < totalBytes)
+            {
+                const uint64_t chunkBytes = std::min({UploadChunkBytes, totalBytes - entry.EnqueuedBytes, budget});
+                if (chunkBytes == 0)
+                {
+                    bBlocked = true;
+                    break;
+                }
+                if (!m_Uploader->EnqueueBufferCopy(buffer, entry.Lease.GetOffsetBytes() + entry.EnqueuedBytes,
+                                                   entry.StagedBytes.data() + entry.EnqueuedBytes, chunkBytes))
+                {
+                    // リングに空きが無い（フレームが進めば空く）。次のフレームでここから続ける
+                    bBlocked = true;
+                    break;
+                }
+                entry.EnqueuedBytes += chunkBytes;
+                budget -= chunkBytes;
+                enqueuedTotal += chunkBytes;
+            }
+            if (entry.EnqueuedBytes >= totalBytes)
+            {
+                entry.bFullyEnqueued = true;
+                entry.StagedBytes = Container::VariableArray<uint8_t>();
+                bAnyCompleted = true;
+                NORVES_LOG_INFO("MegaGeometryResources",
+                                "stage=megamesh_pool_upload_enqueued debug_name=\"%s\" region_bytes=%llu",
+                                entry.Data.DebugName.c_str(),
+                                static_cast<unsigned long long>(totalBytes));
+            }
+            if (bBlocked)
+            {
+                break;
+            }
+        }
+
+        // 積み終えたメッシュを待ち行列から外す（残りの順序は保つ）
+        if (bAnyCompleted)
+        {
+            Container::VariableArray<uint64_t> remaining;
+            for (size_t index = 0; index < m_PendingUploadIds.size(); ++index)
+            {
+                auto it = m_MegaMeshes.find(m_PendingUploadIds[index]);
+                if (it != m_MegaMeshes.end() && !it->second.bFullyEnqueued)
+                {
+                    remaining.push_back(m_PendingUploadIds[index]);
+                }
+            }
+            m_PendingUploadIds = std::move(remaining);
+        }
+        return enqueuedTotal;
+    }
+
+    bool MegaGeometryResourceStore::HasPendingGpuUploads() const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        for (const auto &pair : m_MegaMeshes)
+        {
+            if (!IsEntryGpuReadyLocked(pair.second))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void MegaGeometryResourceStore::RetireEntryLocked(MegaMeshEntry &entry)
+    {
+        if (!entry.Lease.IsValid())
+        {
+            return;
+        }
+        // まだ GPU へ出していないコピーが、解放後に使い回される区画へ書き込まないようにする
+        if (m_Uploader)
+        {
+            m_Uploader->AbandonBufferRange(entry.Lease.GetBufferHandle(), entry.Lease.GetOffsetBytes(),
+                                           entry.Lease.GetSizeBytes());
+        }
+        if (m_RetireQueue)
+        {
+            m_RetireQueue->Retire(std::move(entry.Lease));
+        }
+        else
+        {
+            entry.Lease.Reset();
+        }
     }
 
     void MegaGeometryResourceStore::ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle)
     {
         Thread::ScopedLock lock(m_Mutex);
-        m_MegaMeshes.erase(handle.Id);
+        auto it = m_MegaMeshes.find(handle.Id);
+        if (it == m_MegaMeshes.end())
+        {
+            return;
+        }
+        RetireEntryLocked(it->second);
+        m_MegaMeshes.erase(it);
+        m_PendingUploadIds.erase(std::remove(m_PendingUploadIds.begin(), m_PendingUploadIds.end(), handle.Id),
+                                 m_PendingUploadIds.end());
     }
 
     ModelHandle MegaGeometryResourceStore::RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
@@ -530,7 +683,15 @@ namespace NorvesLib::Core::Rendering
 
         if (megaMeshHandle.IsValid())
         {
-            m_MegaMeshes.erase(megaMeshHandle.Id);
+            auto meshIt = m_MegaMeshes.find(megaMeshHandle.Id);
+            if (meshIt != m_MegaMeshes.end())
+            {
+                RetireEntryLocked(meshIt->second);
+                m_MegaMeshes.erase(meshIt);
+                m_PendingUploadIds.erase(
+                    std::remove(m_PendingUploadIds.begin(), m_PendingUploadIds.end(), megaMeshHandle.Id),
+                    m_PendingUploadIds.end());
+            }
         }
     }
 
@@ -538,7 +699,12 @@ namespace NorvesLib::Core::Rendering
     {
         Thread::ScopedLock lock(m_Mutex);
         m_Models.clear();
+        for (auto &pair : m_MegaMeshes)
+        {
+            RetireEntryLocked(pair.second);
+        }
         m_MegaMeshes.clear();
+        m_PendingUploadIds.clear();
     }
 
 } // namespace NorvesLib::Core::Rendering

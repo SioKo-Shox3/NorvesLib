@@ -628,6 +628,31 @@ namespace NorvesLib::Core::Rendering
             return stats;
         }
 
+        /**
+         * @brief あるバッファの範囲宛てのコピーが、GPU で完了していないものを持っているか
+         *
+         * 積んだがまだ記録していない・記録した・提出して完了を待っているコピーのどれかが範囲に重なれば true。
+         * 無効にしたコピー（AbandonBufferRange）は数えない。範囲の中身が GPU から読める状態かを、
+         * BeginFrame に完了済みの serial を渡した後に確かめるのに使う（コピーを積んだ後 false になれば書き終わっている）。
+         */
+        bool HasUnfinishedBufferCopies(const RHI::BufferPtr &buffer, uint64_t offset, uint64_t bytes) const
+        {
+            if (!buffer || bytes == 0)
+            {
+                return false;
+            }
+            Thread::ScopedLock lock(m_Mutex);
+            for (const Op &op : m_Ops)
+            {
+                if (op.bCopy && !op.bCancelled && !op.bAbandoned && op.Buffer.get() == buffer.get() &&
+                    op.DstOffset < offset + bytes && offset < op.DstOffset + op.DataBytes)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         uint64_t GetFrameCopyLimitBytes() const { return m_Config.FrameCopyLimitBytes; }
         uint64_t GetRingBytes() const { return m_Config.RingBytes; }
 

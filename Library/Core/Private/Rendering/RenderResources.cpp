@@ -34,6 +34,10 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        // 1フレームにジオメトリの区画の中身をリングへ積む量の上限（バイト）。リング（32 MiB）に収まる提出中の
+        // 数フレーム分とテクスチャのタイルの分を残すため、フレームのコピー量の上限（24 MiB）より小さくする。
+        constexpr uint64_t MegaGeometryUploadBytesPerFrame = 8ull * 1024ull * 1024ull;
+
         bool IsPreparedTextureAssetLooseFallbackStatus(PreparedTextureAssetStatus status)
         {
             return status == PreparedTextureAssetStatus::ManifestMissingLooseFallback ||
@@ -99,8 +103,10 @@ namespace NorvesLib::Core::Rendering
         // ジオメトリが共有する DeviceLocal のバッファのプール。区画の期限の来た返却は RetireQueue を通ってここへ戻るので、
         // SparsePool と同じく Shutdown では RetireQueue を片付けてから手放す。
         Container::TUniquePtr<GeometryPool> GeometryBuffers;
-        // タイル・ミップテイルのデータをステージングのリング経由でテクスチャの領域へ書く経路。sparse に対応しないデバイスでは作らない。
-        // リングのバッファは GPU が止まってから手放す（Shutdown の WaitIdle の後）。
+        // プールの1つの塊の大きさ（Initialize の前に SetGeometryPoolBlockBytes で替えられる）
+        uint64_t GeometryPoolBlockBytes = GeometryPool::DefaultBlockBytes;
+        // タイル・ミップテイルのデータと、ジオメトリの区画の中身を、ステージングのリング経由でテクスチャの領域・バッファへ書く経路。
+        // リングのバッファは最初の書き込みまで作らない。GPU が止まってから手放す（Shutdown の WaitIdle の後）。
         Container::TUniquePtr<TileUploader> TileUpload;
         // VT の要求のバッファ（3つ）の読み戻しと集計。sparse に対応しないデバイスでは作らない。GPU が止まってから手放す。
         Container::TUniquePtr<VirtualTextureFeedbackRing> VtFeedback;
@@ -991,6 +997,21 @@ namespace NorvesLib::Core::Rendering
                    : nullptr;
     }
 
+    const MegaGeometry::MegaMeshGPUData *MegaGeometryResources::GetReadyMegaMeshGPUData(
+        MegaGeometry::MegaMeshHandle handle) const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources
+                   ? impl->MegaGeometryResources->GetReadyMegaMeshGPUData(handle)
+                   : nullptr;
+    }
+
+    bool MegaGeometryResources::HasPendingGpuUploads() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources && impl->MegaGeometryResources->HasPendingGpuUploads();
+    }
+
     void MegaGeometryResources::ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle)
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
@@ -1153,22 +1174,24 @@ namespace NorvesLib::Core::Rendering
 
         m_Impl->GpuResources = Container::MakeUnique<GpuResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
         m_Impl->GpuResources->SetRetireQueue(&m_Impl->RetireQueue);
+        // ステージングのリング。VT のタイルとジオメトリの区画の両方が使うので、sparse の対応に関わらず作る（リングのバッファは最初の書き込みまで作らない）
+        m_Impl->TileUpload = Container::MakeUnique<TileUploader>(m_Impl->Device);
         {
             const RHI::SparseCapabilities &sparse = m_Impl->Device->GetCapabilities().Sparse;
             if (sparse.bSparseBinding && sparse.bResidencyImage2D)
             {
                 m_Impl->SparsePool = Container::MakeUnique<SparsePagePool>(m_Impl->Device);
-                m_Impl->TileUpload = Container::MakeUnique<TileUploader>(m_Impl->Device);
                 m_Impl->VtFeedback = Container::MakeUnique<VirtualTextureFeedbackRing>(m_Impl->Device);
                 m_Impl->VtGpu = Container::MakeUnique<DeviceVirtualTextureGpu>(m_Impl->Device, *m_Impl->TileUpload);
                 m_Impl->VtStreamer = Container::MakeUnique<VirtualTextureStreamer>(
                     *m_Impl->SparsePool, *m_Impl->VtGpu, &m_Impl->RetireQueue);
             }
         }
-        m_Impl->GeometryBuffers = Container::MakeUnique<GeometryPool>(m_Impl->Device);
+        m_Impl->GeometryBuffers = Container::MakeUnique<GeometryPool>(m_Impl->Device, m_Impl->GeometryPoolBlockBytes);
         m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
-        m_Impl->MegaGeometryResources =
-            Container::MakeUnique<MegaGeometryResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
+        m_Impl->MegaGeometryResources = Container::MakeUnique<MegaGeometryResourceStore>(
+            m_Impl->Device, m_Impl->NextHandleId, m_Impl->GeometryBuffers.get(), m_Impl->TileUpload.get(),
+            &m_Impl->RetireQueue);
         m_Impl->ProceduralMeshes = Container::MakeUnique<ProceduralMeshGpuStore>(m_Impl->Device);
         if (m_Impl->TextureAssets)
         {
@@ -1286,6 +1309,11 @@ namespace NorvesLib::Core::Rendering
 
     uint32_t RenderResources::RecordTileUploads(RHI::ICommandList &commandList)
     {
+        // 書き込み待ちのジオメトリを、リングの空きとこのフレームの上限の範囲で積んでから、まとめて記録する
+        if (m_Impl->MegaGeometryResources)
+        {
+            m_Impl->MegaGeometryResources->PumpUploads(MegaGeometryUploadBytesPerFrame);
+        }
         return m_Impl->TileUpload ? m_Impl->TileUpload->RecordCopies(commandList) : 0u;
     }
 
@@ -1363,6 +1391,11 @@ namespace NorvesLib::Core::Rendering
     GeometryPool *RenderResources::GetGeometryPool() const
     {
         return m_Impl->GeometryBuffers.get();
+    }
+
+    void RenderResources::SetGeometryPoolBlockBytes(uint64_t blockBytes)
+    {
+        m_Impl->GeometryPoolBlockBytes = blockBytes;
     }
 
     size_t RenderResources::GetPendingRetireCount() const

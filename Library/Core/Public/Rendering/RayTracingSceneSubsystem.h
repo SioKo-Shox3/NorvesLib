@@ -66,6 +66,9 @@ namespace NorvesLib::Core::Rendering
             MeshDataHandle MeshHandle;
             RHI::BufferPtr SourceVertexBuffer;
             RHI::BufferPtr SourceIndexBuffer;
+            uint64_t VertexBufferOffsetBytes = 0;
+            uint64_t IndexBufferOffsetBytes = 0;
+            uint64_t MegaMeshId = 0;
             uint32_t IndexOffset = 0;
             uint32_t IndexCount = 0;
             uint32_t VertexOffset = 0;
