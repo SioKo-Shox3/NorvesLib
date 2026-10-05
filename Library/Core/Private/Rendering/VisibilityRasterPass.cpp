@@ -206,7 +206,8 @@ namespace NorvesLib::Core::Rendering
     void VisibilityRasterPass::Shutdown()
     {
         m_FrameSlots.Clear();
-        m_ChunkScratch = Container::VariableArray<MeshIndexChunk>{};
+        m_ProceduralChunkScratch = Container::VariableArray<MeshIndexChunk>{};
+        m_SkinnedChunkScratch = Container::VariableArray<MeshIndexChunk>{};
         m_MegaPipeline.reset();
         m_MeshPipeline.reset();
         m_SkinnedPipeline.reset();
@@ -573,7 +574,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         const DrawCommandView commands = context.GetActiveOpaqueCommands();
-        VariableArray<MeshIndexChunk>& chunks = m_ChunkScratch;
+        VariableArray<MeshIndexChunk>& chunks = m_ProceduralChunkScratch;
         for (uint32_t commandIndex = 0; commandIndex < commands.Count; ++commandIndex)
         {
             const DrawCommand& command = commands.Data[commandIndex];
@@ -665,7 +666,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         const VariableArray<SkinningComputeInstance>& instances = m_SkinningComputePass->GetInstances();
-        VariableArray<MeshIndexChunk>& chunks = m_ChunkScratch;
+        VariableArray<MeshIndexChunk>& chunks = m_SkinnedChunkScratch;
         for (uint32_t instanceIndex = 0; instanceIndex < instances.size(); ++instanceIndex)
         {
             const SkinningComputeInstance& instance = instances[instanceIndex];

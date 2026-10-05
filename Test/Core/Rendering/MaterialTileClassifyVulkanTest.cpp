@@ -327,7 +327,8 @@ namespace
             buffer->Unmap();
         }
 
-        classify.BeginFrame(0, frameIndex);
+        // FrameUseRing の通し番号 0 は未設定の予約値なので、呼び出しごとの番号に 1 を足して渡す
+        classify.BeginFrame(0, frameIndex + 1);
         MaterialTileClassifyDispatch dispatch;
         dispatch.IdTexture = idTexture;
         dispatch.RecordTable = recordTable;

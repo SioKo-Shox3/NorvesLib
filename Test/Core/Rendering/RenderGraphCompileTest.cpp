@@ -2703,7 +2703,7 @@ namespace
             {
                 ++barrierIndex;
                 if (barrier.Kind != RGBarrierKind::Buffer ||
-                    std::strcmp(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName, name) != 0)
+                    !IsDebugName(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName, name))
                 {
                     continue;
                 }
@@ -2874,7 +2874,7 @@ namespace
         for (const BarrierEvent& barrier : scene.CommandList.Barriers)
         {
             if (barrier.Kind == RGBarrierKind::Buffer && barrier.AfterState == RHI::ResourceState::GenericRead &&
-                std::strcmp(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName, name) == 0)
+                IsDebugName(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName, name))
             {
                 return barrier.BufferSize;
             }
@@ -3381,15 +3381,17 @@ namespace
         assert(scene.Raster.GetLastFrameStats().ProceduralRecords == 3);
         assert(scene.Raster.GetLastFrameStats().SkinnedRecords == 1);
         assert(CountBufferCreations(device, frameUniform) == 1);
-        const size_t scratchCapacity = scene.Raster.GetChunkScratchCapacity();
-        assert(scratchCapacity > 0);
+        const size_t proceduralScratchCapacity = scene.Raster.GetProceduralChunkScratchCapacity();
+        const size_t skinnedScratchCapacity = scene.Raster.GetSkinnedChunkScratchCapacity();
+        assert(proceduralScratchCapacity > 0 && skinnedScratchCapacity > 0);
 
         // 同じフレーム（同じ通し番号）のあと 6 回のビューポート: 毎回別の組
         for (uint32_t viewport = 1; viewport < ViewportsPerFrame; ++viewport)
         {
             assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
             assert(CountBufferCreations(device, frameUniform) == viewport + 1);
-            assert(scene.Raster.GetChunkScratchCapacity() == scratchCapacity);
+            assert(scene.Raster.GetProceduralChunkScratchCapacity() == proceduralScratchCapacity &&
+               scene.Raster.GetSkinnedChunkScratchCapacity() == skinnedScratchCapacity);
         }
 
         // 次のフレーム: 同じ回数の Execute でも組を作り足さず、作業配列の容量も増やさない
@@ -3398,7 +3400,8 @@ namespace
         {
             assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
             assert(scene.Raster.GetLastFrameStats().ProceduralRecords == 3);
-            assert(scene.Raster.GetChunkScratchCapacity() == scratchCapacity);
+            assert(scene.Raster.GetProceduralChunkScratchCapacity() == proceduralScratchCapacity &&
+               scene.Raster.GetSkinnedChunkScratchCapacity() == skinnedScratchCapacity);
         }
         assert(CountBufferCreations(device, frameUniform) == ViewportsPerFrame);
 
@@ -3409,7 +3412,8 @@ namespace
             assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
         }
         assert(CountBufferCreations(device, frameUniform) == ViewportsPerFrame + 1);
-        assert(scene.Raster.GetChunkScratchCapacity() == scratchCapacity);
+        assert(scene.Raster.GetProceduralChunkScratchCapacity() == proceduralScratchCapacity &&
+               scene.Raster.GetSkinnedChunkScratchCapacity() == skinnedScratchCapacity);
 
         ShutdownVisibilityRasterScene(scene);
     }
