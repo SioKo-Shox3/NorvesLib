@@ -49,3 +49,9 @@ journal discoveryはまだ未解決。owner/rootだけのlookupをvolume全体�
 ## 検証
 
 専用testは純値fixtureで順序、fixed inventory、primary/derived対応、世代上限、4096件、metadata予算、失敗保持・値所有・無I/Oを検査する。CookCacheDecisionTestでも全実profileのcook→capture→state保存読戻し→FINAL planから本対応表を作る。これらを合格しても実publicationの受入れとはしない。
+
+### 実Windows受入れ
+
+e3244053fb6cb253379f0516ad49c42ee0aa3892、[run 37253796557](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37253796557) attempt 1で29CPU、既存7CLIの79出力byte一致、5診断byte一致、texture spec v1の2spec×2実行・固定10出力byte一致・16拒否を確認した。3成果物ZIPのAPI digest/size・CRC・安全な完全inventoryを検査し、独立比較を再実行した。2回目のtexture実行の一致はrunner記録によるもので、独立比較は保存された初回10出力を対象とする。
+
+専用fixtureの不存在filesystem試験と、実cook全kindからの対応表作成を区別して受け入れる。先行run 37252065385はfixtureのRaw FourCC誤りで専用testが失敗し、後続byte gateは未実行だった。共有RawEntryTypeへの修正のみでproduction実装は変えていない。実publication、journal、rollbackの保証は含まない。

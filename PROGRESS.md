@@ -799,3 +799,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-MANAGED-UPDATE-INVENTORY開始: 管理済み更新の前段として、旧stateに宣言されたkey/packageと新FINAL planの対応を値所有する。独立bindingと明示scopeを照合し、package/manifest/stateの実before-image取得を後段の必須要件へ分ける。初期profileはflat manifestと既存inventory固定。純値層のためlock/recovery/state再読込/共通plan再検証を省略する根拠にはしない。
 - G2-S6-MANAGED-UPDATE-INVENTORY検証準備: 旧state codecを共有し、sortしたindexでprimary/派生を対応付ける。新plan順と値寿命を保持、世代上限は変更用generation=0と不可flagで示す。全実kindのcache試験にも接続し29CPUへ登録。比較器12件×通常/最適化と差分衛生は成功、実Windows/79+10byte gateは未実行。
 - G2-S6-MANAGED-UPDATE-INVENTORY試験修正: c5c1c28/run37252065385は実build・5診断・28/29CPUが成功したが、専用fixtureのRaw FourCC末尾NULをcodecが拒否した。fixtureを共有RawEntryTypeへ訂正し、production実装は不変。後続79+10byte gateは未到達のため再実行する。
+
+- G2-S6-MANAGED-UPDATE-INVENTORY受入: e3244053/run37253796557で実Windows build・29CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。fixtureを共有RawEntryTypeへ合わせた後、順序非依存対応・固定inventory・世代上限・4096件/metadata予算・失敗保持・値所有と全実kindの接続を確認。3ZIPと79+10固定出力を独立確認しrootで再実行。純値対応表をdone、filesystem所有・復旧・production公開は未接続。

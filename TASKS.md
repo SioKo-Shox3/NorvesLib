@@ -2478,7 +2478,7 @@
 - stop-when: owner/spec/stateごとにlockを分ける、aliasや親子rootで同volume排他を回避する、永続crash印/transaction/認証を保証する、ACL/privilege変更やlockfile採用を始める。
 
 ## G2-S6-MANAGED-UPDATE-INVENTORY: 旧stateと新planの更新対象対応を値所有する
-- status: doing
+- status: done
 - done-when: 独立ExpectedBinding・state scope・旧state・FINAL plan集合のkey/package対応を値として検査し、package/manifest/stateのbefore-image要件へ写す。初期profileは所有inventory固定、file I/O/Skip/publish許可は行わない。
 - verify: 全kind実recordの対応、順序差・値所有、binding/追加除去rename/primary派生/上限/失敗保持、世代上限で変更不可の明示、Windowsと79+10byte gate。
 - stop-when: 値の対応だけでfilesystem所有を証明する、未知fileを採用する、独自cook/cache判定を作る、journal discovery/locked再照合/実before-imageなしで公開へ使う。
