@@ -129,6 +129,13 @@ namespace Game
         // MegaGeometry のインスタンスを増やしたときの GPU・CPU の時間を測るための一時の負荷（ジオメトリの負荷モードの前段）。
         constexpr const TCHAR *kStressMegaInstancesOption = TEXT("--stress-mega-instances=");
         uint32_t s_Rendering3DTestStressMegaInstances = 0;
+        // --stress-geometry[=<N>]: ジオメトリの負荷モード。スキャン資産・岩・小屋・大きな球を、変換を変えて地面の外側へ
+        // N 個（既定 300）並べ、カメラの軸をその中心へ移す。ジオメトリのページのストリーミングと追い出しを、
+        // 絞った --vram-budget-mb で確かめるのに使う。0 は無効。
+        constexpr const TCHAR *kStressGeometryOption = TEXT("--stress-geometry");
+        constexpr const TCHAR *kStressGeometryValueOption = TEXT("--stress-geometry=");
+        constexpr uint32_t kStressGeometryDefaultCount = 300u;
+        uint32_t s_Rendering3DTestStressGeometryCount = 0;
         // --capture-sequence=<接頭辞> と --capture-sequence-rendered-frames=<n1,n2,...>: 1回の起動の中で、
         // アセットが落ち着いてから n 枚目の描画フレームの最終出力を <接頭辞><n>.png に保存する。
         constexpr const TCHAR *kCaptureSequenceOption = TEXT("--capture-sequence=");
@@ -496,6 +503,7 @@ namespace Game
         s_bRendering3DTestDebugDrawTestLines = false;
         s_bRendering3DTestScanProps = true;
         s_Rendering3DTestStressMegaInstances = 0;
+        s_Rendering3DTestStressGeometryCount = 0;
         s_bRendering3DTestNight = false;
         s_bRendering3DTestVirtualTexture = true;
         s_bRendering3DTestModelSourceGltf = false;
@@ -777,6 +785,24 @@ namespace Game
             if (args[i] == kDebugDrawTestLinesOption)
             {
                 s_bRendering3DTestDebugDrawTestLines = true;
+                continue;
+            }
+
+            if (args[i] == kStressGeometryOption)
+            {
+                s_Rendering3DTestStressGeometryCount = kStressGeometryDefaultCount;
+                continue;
+            }
+
+            String stressGeometryValue;
+            if (TryStripPrefix(args[i], kStressGeometryValueOption, stressGeometryValue))
+            {
+                if (!TryParseUInt32(stressGeometryValue, s_Rendering3DTestStressGeometryCount) ||
+                    s_Rendering3DTestStressGeometryCount == 0u || s_Rendering3DTestStressGeometryCount > 4096u)
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --stress-geometry は個数を付けるなら 1〜4096 の整数で指定する");
+                    return false;
+                }
                 continue;
             }
 
@@ -1941,6 +1967,11 @@ namespace Game
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
                 mode->GetData().m_bStartupScanProps = s_bRendering3DTestScanProps;
                 mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressMegaInstances;
+                if (s_Rendering3DTestStressGeometryCount > 0u)
+                {
+                    mode->GetData().m_bStressGeometry = true;
+                    mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressGeometryCount;
+                }
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
                 mode->GetData().m_bVirtualTexture = s_bRendering3DTestVirtualTexture;

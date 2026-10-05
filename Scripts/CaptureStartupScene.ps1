@@ -72,6 +72,14 @@
 # VRAM の上限を人工的に下げ、各撮影のログの VRAM_POOLS（cap_mb・vt_target_mb・vt_used_mb・vt_evicted_tiles）を
 # metrics.json へ書く。最後の VT の使用量（vt_used_mb_last）が目標（vt_target_mb）を超えたまま終わったか、負荷用の材質がそろっていなければ失敗にする
 # （目標が縮んだ直後の1回の確認の間だけ使用量が超えることがあるので、最大 vt_used_mb_max は失敗にせず書くだけ）。
+#
+# -StressGeometry でジオメトリの負荷モード（--stress-geometry=<-StressGeometryCount>。既定 300）で撮る。地面の外側（+Z 側）へ、
+# スキャン資産・岩・小屋・大きな球を、向きと拡大率を替えて格子に並べ、カメラの軸を格子の中心へ移す（資産が無ければ置かずに警告）。
+# 視点は default（0,25,45。格子の手前を斜めに見る）・low（20,-8,8。地面すれすれ）・top（0,70,200。格子の全体を見下ろす）。
+# 旋回の連続フレームは -OrbitDegreesPerSecond・-OrbitRenderedFrames と併せて撮る。-VramBudgetMb でジオメトリの枠（Geometry の目標）を
+# 絞ると、ページの追い出しが起きる。各撮影のログの STRESS_GEOMETRY_PLACED（並べた数・元の数）と VRAM_POOLS のジオメトリの枠
+# （geometry_target_mb・geometry_used_mb・geometry_evicted_pages）を metrics.json へ書き、並べた数が指定に満たない、または最後の
+# geometry_used_mb が目標を超えたまま終われば失敗にする。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -137,6 +145,11 @@ param(
     [switch]$Deterministic,
     # テクスチャの負荷モード（--stress-textures）で default・low・top の3視点を撮る。-ViewNames で絞れる。
     [switch]$StressTextures,
+    # ジオメトリの負荷モード（--stress-geometry）で default・low・top の3視点を撮る。-ViewNames で絞れる。
+    [switch]$StressGeometry,
+    # -StressGeometry で並べる個数。
+    [ValidateRange(1, 4096)]
+    [int]$StressGeometryCount = 300,
     # 遮蔽カリングの確認用の視点（occ-sphere・occ-cottage・occ-cottage-edge・旋回の出発点 occ-sphere-orbit・occ-cottage-orbit）を撮る視点へ加える。
     [switch]$OcclusionViews,
     # 地面の外周のスキャン資産（Poly Haven）を、近くから遠くへカメラを引いて見る視点（scan-d08 から scan-d78 までの 7 視点）を撮る視点へ加える。
@@ -256,6 +269,23 @@ if ($StressTextures)
     # 負荷モードはカメラの軸が格子の中心なので、近接（球が無い）は撮らず、格子の全体を見下ろす視点を足す。
     $views = @($views | Where-Object { $_.Name -ne 'near' })
     $views += [pscustomobject]@{ Name = 'top'; Camera = '0,80,70'; NoiseRegions = @() }
+}
+if ($StressGeometry)
+{
+    # 負荷モードはカメラの軸が格子の中心なので、近接（球が無い）は撮らず、既定・低角度の視点を格子向けに替え、全体を見下ろす視点を足す。
+    $views = @($views | Where-Object { $_.Name -ne 'near' })
+    foreach ($stressView in $views)
+    {
+        if ($stressView.Name -eq 'default')
+        {
+            $stressView.Camera = '0,25,45'
+        }
+        elseif ($stressView.Name -eq 'low')
+        {
+            $stressView.Camera = '20,-8,8'
+        }
+    }
+    $views += [pscustomobject]@{ Name = 'top'; Camera = '0,70,200'; NoiseRegions = @() }
 }
 $viewNameList = @(($ViewNames -join ',').Split(',', [StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
 if ($viewNameList.Count -gt 0)
@@ -750,6 +780,10 @@ foreach ($view in $shots)
     {
         $arguments += '--stress-textures'
     }
+    if ($StressGeometry)
+    {
+        $arguments += "--stress-geometry=$StressGeometryCount"
+    }
     if ($VramBudgetMb -gt 0)
     {
         $arguments += "--vram-budget-mb=$VramBudgetMb"
@@ -844,6 +878,7 @@ foreach ($view in $shots)
     $geometryPages = $null
     $occlusionStats = $null
     $stressMaterials = $null
+    $stressGeometryInfo = $null
     if (Test-Path -LiteralPath $viewLogPath)
     {
         # VRAM_POOLS（予算の割り振りと VT の使用量）。数値は "none"（上限なし）のこともある。使用量は最大と最後の値を残す。
@@ -915,6 +950,20 @@ foreach ($view in $shots)
             $stressMaterials = [ordered]@{ present = [int]$stressGroups[1].Value; total = [int]$stressGroups[2].Value }
         }
 
+        # ジオメトリの負荷モードの配置（並べた数・元の数）と、元の資産が揃わなかった警告・何も並べなかった警告
+        $stressGeometryPlaced = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_GEOMETRY_PLACED count=(\d+) sources=(\d+)')
+        $stressGeometryWarnings = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_GEOMETRY_(SKIPPED|SOURCES_PARTIAL)')
+        if ($stressGeometryPlaced.Count -gt 0 -or $stressGeometryWarnings.Count -gt 0)
+        {
+            $stressGeometryInfo = [ordered]@{ placed = 0; sources = 0; warnings = $stressGeometryWarnings.Count }
+            if ($stressGeometryPlaced.Count -gt 0)
+            {
+                $placedGroups = $stressGeometryPlaced[$stressGeometryPlaced.Count - 1].Matches[0].Groups
+                $stressGeometryInfo.placed = [int]$placedGroups[1].Value
+                $stressGeometryInfo.sources = [int]$placedGroups[2].Value
+            }
+        }
+
         # テクスチャの VRAM（最後の VRAM_LEDGER）と、クック済みが無くばらで読んだテクスチャの数。
         $ledgerTextureMb = @(Select-String -LiteralPath $viewLogPath -Pattern 'VRAM_LEDGER textures=\d+ texture_mb=([0-9.]+)' |
             ForEach-Object { $_.Matches[0].Groups[1].Value })
@@ -946,6 +995,18 @@ foreach ($view in $shots)
                 $failures += "$($view.Name): VT の使用量が目標を超えたまま終わった（vt_used_mb_last=$($vramPools.vt_used_mb_last) vt_target_mb=$($vramPools.vt_target_mb)）"
             }
         }
+        if ($StressGeometry)
+        {
+            if ($null -eq $stressGeometryInfo -or $stressGeometryInfo.placed -ne $StressGeometryCount)
+            {
+                $failures += "$($view.Name): 負荷用のジオメトリが指定の数だけ並んでいない（STRESS_GEOMETRY_PLACED count=$(if ($null -eq $stressGeometryInfo) { 'なし' } else { $stressGeometryInfo.placed }) 指定=$StressGeometryCount）"
+            }
+            if ($null -ne $vramPools -and $vramPools.Contains('geometry_target_mb') -and $vramPools.geometry_target_mb -ne 'none' -and
+                $vramPools.geometry_used_mb_last -gt [uint64]$vramPools.geometry_target_mb)
+            {
+                $failures += "$($view.Name): ジオメトリの使用量が目標を超えたまま終わった（geometry_used_mb_last=$($vramPools.geometry_used_mb_last) geometry_target_mb=$($vramPools.geometry_target_mb)）"
+            }
+        }
         if ($images.Count -gt 1)
         {
             # 連続撮影の数え始め（アセットが落ち着いた描画フレーム）は --capture-png と同じでなければならない。
@@ -953,8 +1014,17 @@ foreach ($view in $shots)
                 ForEach-Object { $_.Matches[0].Groups[1].Value })
             $sequenceBaseline = @(Select-String -LiteralPath $viewLogPath -Pattern 'SEQUENCE_CAPTURE baseline rendered=(\d+)' |
                 ForEach-Object { $_.Matches[0].Groups[1].Value })
-            if ($processorBaseline.Count -eq 0 -or $sequenceBaseline.Count -eq 0 -or
-                $processorBaseline[$processorBaseline.Count - 1] -ne $sequenceBaseline[$sequenceBaseline.Count - 1])
+            # ページのストリーミングが続く負荷では、連続撮影が終わった後も落ち着いた判定が立ち直るので（--capture-png の側だけ
+            # 数え始めが増える）、連続撮影の並びが --capture-png の並びの先頭と一致することを確かめる。
+            $baselineMismatch = $processorBaseline.Count -eq 0 -or $sequenceBaseline.Count -eq 0 -or $sequenceBaseline.Count -gt $processorBaseline.Count
+            for ($baselineIndex = 0; -not $baselineMismatch -and $baselineIndex -lt $sequenceBaseline.Count; ++$baselineIndex)
+            {
+                if ($processorBaseline[$baselineIndex] -ne $sequenceBaseline[$baselineIndex])
+                {
+                    $baselineMismatch = $true
+                }
+            }
+            if ($baselineMismatch)
             {
                 $failures += "$($view.Name): 連続撮影の数え始めが --capture-png と食い違う（capture_png=$($processorBaseline -join '/') sequence=$($sequenceBaseline -join '/')）"
             }
@@ -996,6 +1066,7 @@ foreach ($view in $shots)
             geometry_pages = $geometryPages
             mega_occlusion = $occlusionStats
             stress_materials = $stressMaterials
+            stress_geometry = $stressGeometryInfo
         }
         $results += [pscustomobject]$result
         Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5} indirect_lighting={6}" -f `

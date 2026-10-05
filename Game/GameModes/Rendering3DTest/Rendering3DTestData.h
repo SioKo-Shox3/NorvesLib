@@ -138,6 +138,11 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::MegaGeometry::MegaMeshHandle Handle;
         float PositionY = 0.0f; ///< 最下点を地面へ据えた Y
         float Scale = 1.0f;
+        // --stress-geometry で、拡大率を変えて据え直すための値。拡大率 s のとき Y = -1 - BoundsMinY * s - SinkMeters。
+        float BoundsMinY = 0.0f; ///< メッシュの最下点の Y（拡大前）
+        float SinkMeters = 0.0f; ///< 地面へ埋める深さ
+        float ScaleMin = 1.0f;   ///< --stress-geometry で振る拡大率の範囲
+        float ScaleMax = 1.0f;
     };
 
     /**
@@ -280,6 +285,9 @@ namespace Game::GameModes
         // --stress-mega-instances=<N> の個数（0 は置かない）。スキャン資産を置いた後、そのメッシュを N 個格子に複製する。
         uint32_t m_StressMegaInstanceCount = 0;
         bool m_bStressMegaInstancesPlaced = false;
+        // ジオメトリの負荷モード（--stress-geometry[=<N>]。N は既定 300）。スキャン資産・岩・小屋・大きな球を、変換を変えて
+        // 地面の外側の格子に N 個並べ、カメラの軸を格子の中心へ移す。個数は m_StressMegaInstanceCount に入る。
+        bool m_bStressGeometry = false;
         VariableArray<StressMegaInstanceSource> m_StressMegaSources;
         // 起動時のアンチエイリアシングが TAA なら true（既定は TAA、--anti-aliasing=fxaa の指定で false）。
         bool m_bStartupTemporalAA = true;

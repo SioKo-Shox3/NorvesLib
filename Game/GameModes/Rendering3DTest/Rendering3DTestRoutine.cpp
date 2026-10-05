@@ -374,6 +374,21 @@ namespace Game::GameModes
         constexpr float kStressGridCenterX = 0.0f;
         constexpr float kStressGridCenterZ = 68.0f;
 
+        // ジオメトリの負荷モード（--stress-geometry）: 地面（60 m 四方）の外側の +Z 側へ、N 個を格子に並べる。
+        // 1 列 20 個・間隔 12 m で、手前の行は地面の縁（z=30）から 12 m 離す。各個は格子の位置から ±1.5 m ずらし、
+        // 向きと拡大率を乱数（インデックスのハッシュ。実行ごとに同じ）で替える。カメラの軸は格子の中心へ移す。
+        constexpr uint32_t kStressGeometryColumns = 20u;
+        constexpr float kStressGeometryPitch = 12.0f;
+        constexpr float kStressGeometryJitter = 1.5f;
+        constexpr float kStressGeometryFirstRowZ = 42.0f;
+        constexpr float kStressGeometryGridCenterX = 0.0f;
+
+        float GetStressGeometryGridCenterZ(uint32_t instanceCount)
+        {
+            const uint32_t rowCount = (instanceCount + kStressGeometryColumns - 1u) / kStressGeometryColumns;
+            return kStressGeometryFirstRowZ + 0.5f * static_cast<float>(rowCount > 0u ? rowCount - 1u : 0u) * kStressGeometryPitch;
+        }
+
         // i 番目の板の中心（x・z、m）
         void GetStressPanelCenter(uint32_t index, float &outX, float &outZ)
         {
@@ -866,8 +881,75 @@ namespace Game::GameModes
                 source.Handle = megaMeshHandle;
                 source.PositionY = positionY;
                 source.Scale = spec.Scale;
+                source.BoundsMinY = state->m_BoundsMinY;
+                source.SinkMeters = kStartupScanPropSink;
+                source.ScaleMin = 0.7f;
+                source.ScaleMax = 1.6f;
                 data.m_StressMegaSources.push_back(source);
             }
+        }
+
+        // 整数のハッシュ（--stress-geometry の乱数。インデックスだけで決まり、実行ごとに同じ）。
+        uint32_t HashStressIndex(uint32_t value)
+        {
+            value ^= value >> 16;
+            value *= 0x7feb352du;
+            value ^= value >> 15;
+            value *= 0x846ca68bu;
+            value ^= value >> 16;
+            return value;
+        }
+
+        float StressUnitFloat(uint32_t hash)
+        {
+            return static_cast<float>(hash & 0xFFFFFFu) / 16777216.0f;
+        }
+
+        // --stress-geometry: 元になるメッシュ（スキャン資産・岩・小屋・大きな球のうち読めたもの）を、変換を変えて
+        // 地面の外側の格子へ N 個置く。拡大率は元ごとの範囲で振り、最下点を地面（Y=-1）へ据え直す。
+        void PlaceStressGeometryInstances(GameModeContext &ctx, Rendering3DTestData &data)
+        {
+            constexpr uint32_t kExpectedSourceCount = 6u; // スキャン資産 3 + 岩 + 小屋 + 大きな球
+            if (data.m_StressMegaSources.size() < kExpectedSourceCount)
+            {
+                NORVES_LOG_WARNING("Rendering3DTest", "STRESS_GEOMETRY_SOURCES_PARTIAL sources=%zu of %u 読めなかった資産は並べません",
+                                   static_cast<size_t>(data.m_StressMegaSources.size()), kExpectedSourceCount);
+            }
+
+            auto &world = ctx.WorldRef;
+            const NorvesLib::Math::Vector3 yAxis(0.0f, 1.0f, 0.0f);
+            const uint32_t sourceCount = static_cast<uint32_t>(data.m_StressMegaSources.size());
+            for (uint32_t index = 0; index < data.m_StressMegaInstanceCount; ++index)
+            {
+                const uint32_t hashSource = HashStressIndex(index * 5u + 1u);
+                const uint32_t hashScale = HashStressIndex(index * 5u + 2u);
+                const uint32_t hashYaw = HashStressIndex(index * 5u + 3u);
+                const uint32_t hashJitterX = HashStressIndex(index * 5u + 4u);
+                const uint32_t hashJitterZ = HashStressIndex(index * 5u + 5u);
+
+                const StressMegaInstanceSource &source = data.m_StressMegaSources[hashSource % sourceCount];
+                const float scale = source.ScaleMin + (source.ScaleMax - source.ScaleMin) * StressUnitFloat(hashScale);
+                const float yawDegrees = 360.0f * StressUnitFloat(hashYaw);
+                const uint32_t column = index % kStressGeometryColumns;
+                const uint32_t row = index / kStressGeometryColumns;
+                const float x = kStressGeometryGridCenterX +
+                                (static_cast<float>(column) - 0.5f * static_cast<float>(kStressGeometryColumns - 1u)) * kStressGeometryPitch +
+                                (StressUnitFloat(hashJitterX) - 0.5f) * 2.0f * kStressGeometryJitter;
+                const float z = kStressGeometryFirstRowZ + static_cast<float>(row) * kStressGeometryPitch +
+                                (StressUnitFloat(hashJitterZ) - 0.5f) * 2.0f * kStressGeometryJitter;
+                const float y = -1.0f - source.BoundsMinY * scale - source.SinkMeters;
+
+                Entity *object = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(object);
+                object->SetPosition(x, y, z);
+                object->SetScale(scale, scale, scale);
+                object->SetRotation(NorvesLib::Math::Quaternion(yAxis, yawDegrees * (3.14159265f / 180.0f)));
+                auto *component = world.CreateComponent<Component::MegaGeometryComponent>(object);
+                component->SetMegaMeshHandle(source.Handle);
+                component->SetCastShadow(true);
+            }
+            NORVES_LOG_INFO("Rendering3DTest", "STRESS_GEOMETRY_PLACED count=%u sources=%u",
+                            data.m_StressMegaInstanceCount, sourceCount);
         }
 
         // --stress-mega-instances: スキャン資産の読み込みが終わったら、そのメッシュを指定の数だけ地面の奥へ格子に複製して置く
@@ -879,10 +961,23 @@ namespace Game::GameModes
             {
                 return;
             }
+            if (data.m_bStressGeometry &&
+                (data.m_BoulderAsyncState || data.m_CottageAsyncState || data.m_pBigSphereMegaData || data.m_BigSphereBuildTask))
+            {
+                // 岩・小屋・大きな球の元がそろうまで待つ（読めなかったものは元に入らないまま、ここへ来る）。
+                return;
+            }
             data.m_bStressMegaInstancesPlaced = true;
             if (data.m_StressMegaSources.empty())
             {
-                NORVES_LOG_WARNING("Rendering3DTest", "STRESS_MEGA_INSTANCES_SKIPPED スキャン資産が置かれていないため複製できません");
+                NORVES_LOG_WARNING("Rendering3DTest", data.m_bStressGeometry
+                                                          ? "STRESS_GEOMETRY_SKIPPED 複製する資産が置かれていないため並べません"
+                                                          : "STRESS_MEGA_INSTANCES_SKIPPED スキャン資産が置かれていないため複製できません");
+                return;
+            }
+            if (data.m_bStressGeometry)
+            {
+                PlaceStressGeometryInstances(ctx, data);
                 return;
             }
 
@@ -1086,6 +1181,17 @@ namespace Game::GameModes
                 world.CreateComponent<Component::MegaGeometryComponent>(megaSphereObject);
             data.m_pSphereMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
             data.m_pSphereMegaGeometryComponent->SetCastShadow(true);
+            if (data.m_bStressGeometry)
+            {
+                // 大きな球は半径 1 で、原点に置くと最下点が地面（Y=-1）に接する。
+                StressMegaInstanceSource source;
+                source.Handle = megaMeshHandle;
+                source.PositionY = 0.0f;
+                source.BoundsMinY = -1.0f;
+                source.ScaleMin = 1.0f;
+                source.ScaleMax = 2.5f;
+                data.m_StressMegaSources.push_back(source);
+            }
 
             NORVES_LOG_INFO("AssetLoadProfile",
                             "stage=big_sphere_megamesh_create cooked=%d create_ms=%.1f vertices=%u triangles=%u clusters=%u",
@@ -1371,6 +1477,11 @@ namespace Game::GameModes
             if (data.m_bStressTextures)
             {
                 data.m_pCameraPivotObject->SetPosition(kStressGridCenterX, 0.0f, kStressGridCenterZ);
+            }
+            else if (data.m_bStressGeometry)
+            {
+                data.m_pCameraPivotObject->SetPosition(kStressGeometryGridCenterX, 0.0f,
+                                                       GetStressGeometryGridCenterZ(data.m_StressMegaInstanceCount));
             }
             else
             {
@@ -3415,6 +3526,19 @@ namespace Game::GameModes
                         data.m_pBoulderMegaGeometryComponent->SetCastShadow(true);
                     }
 
+                    if (data.m_bStressGeometry)
+                    {
+                        // 岩のモデルの最下点は Y=-0.074（据え方は上の -0.93 と同じ）。
+                        StressMegaInstanceSource source;
+                        source.Handle = megaMeshHandle;
+                        source.PositionY = -0.93f;
+                        source.BoundsMinY = -0.074f;
+                        source.SinkMeters = 0.004f;
+                        source.ScaleMin = 1.0f;
+                        source.ScaleMax = 2.5f;
+                        data.m_StressMegaSources.push_back(source);
+                    }
+
                     // 消費したモデルはスコープに解放を委ねる（成功パスのみ）。
                     // 失敗パスは即時 ReleaseModel 済みのため追跡してはならない。
                     ctx.ScopeRef.TrackModel(data.m_BoulderModelHandle);
@@ -3461,6 +3585,17 @@ namespace Game::GameModes
                     world.CreateComponent<Component::MegaGeometryComponent>(data.m_pCottageObject);
                 data.m_pCottageMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
                 data.m_pCottageMegaGeometryComponent->SetCastShadow(true);
+                if (data.m_bStressGeometry)
+                {
+                    // 小屋のモデルの最下点は Y=-0.016（据え方は上の -0.984 と同じ）。幅 12.4 m なので格子の間隔に収まるよう縮める。
+                    StressMegaInstanceSource source;
+                    source.Handle = megaMeshHandle;
+                    source.PositionY = -0.984f;
+                    source.BoundsMinY = -0.016f;
+                    source.ScaleMin = 0.45f;
+                    source.ScaleMax = 0.75f;
+                    data.m_StressMegaSources.push_back(source);
+                }
                 // 消費したモデルはスコープに解放を委ねる。
                 ctx.ScopeRef.TrackModel(data.m_CottageModelHandle);
                 NORVES_LOG_INFO("Rendering3DTest", "Cottage model loaded and added to World");
