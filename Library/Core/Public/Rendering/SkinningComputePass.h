@@ -155,15 +155,6 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle GetCurrentVerticesHandle() const { return m_CurrentHandle.ToResourceHandle(); }
         RGResourceHandle GetPreviousVerticesHandle() const { return m_PreviousHandle.ToResourceHandle(); }
 
-        /**
-         * @brief 書いた今・前の頂点のバッファを、UnorderedAccess から宣言した最終の状態（GenericRead）へ遷移させる
-         *
-         * RenderGraph は終わった状態を信じて後のパスの前にバリアを足さないので、このパスが dispatch の後に出す。
-         */
-        static void RecordFinalBarriers(RHI::ICommandList* commandList,
-                                        const RHI::BufferPtr& currentVertices,
-                                        const RHI::BufferPtr& previousVertices);
-
     private:
         void RecordInstances(ViewRenderContext& context,
                              const RHI::BufferPtr& currentVertices,

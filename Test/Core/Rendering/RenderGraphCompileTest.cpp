@@ -1936,8 +1936,10 @@ namespace
         MegaGeometryPass Mega;
         VisibilityRasterPass Raster;
         MaterialTileClassifyPass Classify;
+        SkinningComputePass Skinning;
         FakeCommandList CommandList;
         Container::VariableArray<DrawCommand> OpaqueCommands;
+        Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>> SkinnedLeases;
         Container::VariableArray<FrameCommand> PendingFrameCommands;
         Container::VariableArray<MegaGeometryProxy> Proxies;
         CameraProxy Camera;
@@ -1957,10 +1959,13 @@ namespace
     };
 
     // bVisibilityPlan=false は --visibility-buffer=off（MegaGeometryPass が描画の写しを作らず、VisibilityRasterPass も足さない）
+    // bSkinning=true は、スキニングの描画1件と貸し出しを渡して SkinningComputePass を足す。
+    // SkinnedMeshes は渡さない（変形を1つも記録できないフレーム）ので、dispatch は増えない
     void RunVisibilityRasterScene(VisibilityRasterScene& scene,
                                   bool bVisibilityPlan,
                                   bool bOcclusionCulling,
-                                  ClassifyMode classifyMode = ClassifyMode::None)
+                                  ClassifyMode classifyMode = ClassifyMode::None,
+                                  bool bSkinning = false)
     {
         scene.Device = RHI::MakeShared<FakeDevice>();
         scene.Device->EnableVisibilityBufferCapabilities();
@@ -2018,6 +2023,29 @@ namespace
         proxyB.MegaMeshHandle = megaMeshB;
         scene.Proxies.push_back(proxyB);
 
+        if (bSkinning)
+        {
+            Container::VariableArray<SkinnedMeshVertex> skinVertices;
+            skinVertices.resize(3);
+            for (SkinnedMeshVertex& vertex : skinVertices)
+            {
+                vertex.BoneWeights[0] = 1.0f;
+            }
+            Container::VariableArray<uint32_t> skinIndices;
+            skinIndices.push_back(0u);
+            skinIndices.push_back(1u);
+            skinIndices.push_back(2u);
+            auto assetLease = Container::MakeShared<SkinnedMeshAssetLease>(
+                SkinnedMeshHandle{1, 1}, std::move(skinVertices), std::move(skinIndices));
+            scene.SkinnedLeases.push_back(Container::MakeShared<SkinnedMeshFrameLease>(assetLease));
+
+            DrawCommand skinnedCommand;
+            skinnedCommand.Draw.PayloadKind = DrawPayloadKind::Skinned;
+            skinnedCommand.Skinned.FrameLeaseIndex = 0;
+            skinnedCommand.Skinned.BonePalette.push_back(NorvesLib::Math::Matrix4x4::Identity);
+            scene.OpaqueCommands.push_back(skinnedCommand);
+        }
+
         scene.Camera.Viewport.Width = 128.0f;
         scene.Camera.Viewport.Height = 64.0f;
 
@@ -2033,6 +2061,10 @@ namespace
         context.MainCamera = &scene.Camera;
         context.SnapshotOpaqueCommands = DrawCommandView::FromArray(scene.OpaqueCommands);
         context.SnapshotMegaGeometryProxies = &scene.Proxies;
+        if (bSkinning)
+        {
+            context.SnapshotSkinnedMeshFrameLeases = &scene.SkinnedLeases;
+        }
         context.Resources.Textures = &scene.Resources.Textures();
         context.Resources.Materials = &scene.Resources.Materials();
         context.Resources.Meshes = &scene.Resources.Meshes();
@@ -2045,6 +2077,14 @@ namespace
         scene.Graph.AddPass(&scene.Mega);
         if (bVisibilityPlan)
         {
+            if (bSkinning)
+            {
+                // SceneView と同じく、描画のパスへつないでからグラフへ足す（既定は無効なので、有効にする）
+                scene.Skinning.SetEnabled(true);
+                scene.Raster.SetSkinningComputePass(&scene.Skinning);
+                assert(scene.Skinning.Initialize(context));
+                scene.Graph.AddPass(&scene.Skinning);
+            }
             assert(scene.Raster.Initialize(context));
             scene.Graph.AddPass(&scene.Raster);
             if (classifyMode != ClassifyMode::None)
@@ -2074,6 +2114,7 @@ namespace
     {
         scene.Classify.Shutdown();
         scene.Raster.Shutdown();
+        scene.Skinning.Shutdown();
         scene.Mega.Shutdown();
         scene.GBuffer.Shutdown();
         scene.Renderer.Shutdown();
@@ -2311,34 +2352,61 @@ namespace
         ShutdownVisibilityRasterScene(scene);
     }
 
-    // スキニングの頂点のバッファ: 書いた今・前の2本を、dispatch の後に UnorderedAccess から宣言した最終の状態
-    // （GenericRead）へ遷移させる。RenderGraph は終わった状態を信じて後のパスの前にバリアを足さないので、
-    // 書いたパスが出す。記録できたインスタンスが無いフレームでも、宣言したバッファは遷移させる
-    void TestSkinningComputeFinalBarriersTransitionToGenericRead()
+    // スキニングの頂点のバッファ: SkinningComputePass が書いた今・前の2本を、Execute の中で dispatch の後に
+    // UnorderedAccess から宣言した最終の状態（GenericRead）へ遷移させる。RenderGraph は終わった状態を信じて後のパスの前に
+    // バリアを足さないので、書いたパスが出す。SkinnedMeshes を渡さない（変形を1つも記録できない）フレームでも、
+    // 宣言したバッファは遷移させる。後の VisibilityRasterPass の読み取りの前に、GenericRead 起点の二重のバリアは出ない
+    void TestSkinningComputePassTransitionsDeclaredBuffersToGenericRead()
     {
-        FakeCommandList commandList;
-        const RHI::ResourceUsage usage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead |
-                                         RHI::ResourceUsage::BufferDeviceAddress;
-        RHI::BufferPtr current = RHI::MakeShared<FakeBuffer>(RHI::BufferDesc(4096, usage, false, "Skinning_CurrentVertices"));
-        RHI::BufferPtr previous = RHI::MakeShared<FakeBuffer>(RHI::BufferDesc(4096, usage, false, "Skinning_PreviousVertices"));
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true);
 
-        SkinningComputePass::RecordFinalBarriers(&commandList, current, previous);
+        // GBuffer・MegaGeometry・SkinningCompute・VisibilityRaster
+        assert(scene.Graph.GetLastExecutedPassCount() == 4);
+        // 変形は1つも記録できないので、スキニングの dispatch は増えない（カリング 2 回 + HZB 7 段 + 記録を書く計算 1 回）
+        assert(scene.Skinning.GetInstances().empty());
+        assert(scene.CommandList.DispatchCount == 10);
+        assert(scene.Skinning.GetCurrentVerticesHandle().IsValid());
+        assert(scene.Skinning.GetPreviousVerticesHandle().IsValid());
 
-        assert(commandList.Barriers.size() == 2);
-        for (const BarrierEvent& barrier : commandList.Barriers)
+        for (const char* name : {"Skinning_CurrentVertices", "Skinning_PreviousVertices"})
         {
-            assert(barrier.Kind == RGBarrierKind::Buffer);
-            assert(barrier.BeforeState == RHI::ResourceState::UnorderedAccess);
-            assert(barrier.AfterState == RHI::ResourceState::GenericRead);
-            assert(barrier.BufferSize == 4096);
+            size_t finalBarriers = 0;
+            size_t followupReadBarriers = 0;
+            size_t writeBarrierIndex = 0;
+            size_t finalBarrierIndex = 0;
+            size_t barrierIndex = 0;
+            for (const BarrierEvent& barrier : scene.CommandList.Barriers)
+            {
+                ++barrierIndex;
+                if (barrier.Kind != RGBarrierKind::Buffer ||
+                    std::strcmp(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName, name) != 0)
+                {
+                    continue;
+                }
+                if (barrier.AfterState == RHI::ResourceState::UnorderedAccess)
+                {
+                    writeBarrierIndex = barrierIndex;
+                }
+                if (barrier.BeforeState == RHI::ResourceState::UnorderedAccess &&
+                    barrier.AfterState == RHI::ResourceState::GenericRead)
+                {
+                    ++finalBarriers;
+                    finalBarrierIndex = barrierIndex;
+                    assert(barrier.BufferSize == static_cast<const FakeBuffer*>(barrier.Buffer)->GetSize());
+                }
+                if (barrier.BeforeState == RHI::ResourceState::GenericRead)
+                {
+                    ++followupReadBarriers;
+                }
+            }
+            // 書く前の遷移（グラフ）→ 書いた後の GenericRead への遷移（パス）が1回ずつ。それ以外のバリアは出ない
+            assert(writeBarrierIndex != 0);
+            assert(finalBarriers == 1);
+            assert(finalBarrierIndex > writeBarrierIndex);
+            assert(followupReadBarriers == 0);
         }
-        assert(commandList.Barriers[0].Buffer == current.get());
-        assert(commandList.Barriers[1].Buffer == previous.get());
-
-        // コマンドリストが無い・バッファが無いときは何も出さない
-        SkinningComputePass::RecordFinalBarriers(nullptr, current, previous);
-        SkinningComputePass::RecordFinalBarriers(&commandList, nullptr, nullptr);
-        assert(commandList.Barriers.size() == 2);
+        ShutdownVisibilityRasterScene(scene);
     }
 
     // 遮蔽カリングを使わない（1パスだけの）経路でも、その1パスのコマンドを描き直す
@@ -7655,7 +7723,7 @@ int main()
     TestMaterialTileClassifyWithoutRecordTableClearsArgs();
     TestMaterialTileClassifyAbsentWhenNotAdded();
     TestMaterialTileClassifyAddedButDisabledByDefault();
-    TestSkinningComputeFinalBarriersTransitionToGenericRead();
+    TestSkinningComputePassTransitionsDeclaredBuffersToGenericRead();
     TestVisibilityRasterOnSinglePassMegaGeometry();
     TestVisibilityRasterOffKeepsExistingMegaGeometryRecording();
     TestVisibilityRasterWithoutGBufferDepthDoesNothing();

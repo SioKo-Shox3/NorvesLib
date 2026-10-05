@@ -50,6 +50,26 @@ namespace NorvesLib::Core::Rendering
             return size > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max()
                                                                : static_cast<uint32_t>(size);
         }
+
+        // 書いた今・前の頂点のバッファを、宣言した最終の状態（GenericRead）へ遷移させる。RenderGraph は終わった状態を
+        // 信じて、後のパスの読み取りの前にバリアを足さないので、書き込んだこのパスが dispatch の後に出す。
+        void RecordFinalBarriers(RHI::ICommandList* commandList,
+                                 const RHI::BufferPtr& currentVertices,
+                                 const RHI::BufferPtr& previousVertices)
+        {
+            if (!commandList)
+            {
+                return;
+            }
+            for (const RHI::BufferPtr& buffer : {currentVertices, previousVertices})
+            {
+                if (buffer)
+                {
+                    commandList->BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess,
+                                               RHI::ResourceState::GenericRead, 0u, buffer->GetSize());
+                }
+            }
+        }
     } // namespace
 
     // ========================================
@@ -280,26 +300,6 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         builder.PreserveInsertionOrder();
-    }
-
-    void SkinningComputePass::RecordFinalBarriers(RHI::ICommandList* commandList,
-                                                  const RHI::BufferPtr& currentVertices,
-                                                  const RHI::BufferPtr& previousVertices)
-    {
-        // 宣言した最終の状態（GenericRead）へ渡す。RenderGraph は終わった状態を信じて、後のパスの読み取りの前に
-        // バリアを足さないので、書き込んだこのパスが遷移させる。
-        if (!commandList)
-        {
-            return;
-        }
-        for (const RHI::BufferPtr& buffer : {currentVertices, previousVertices})
-        {
-            if (buffer)
-            {
-                commandList->BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead,
-                                           0u, buffer->GetSize());
-            }
-        }
     }
 
     void SkinningComputePass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
