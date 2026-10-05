@@ -2506,3 +2506,9 @@
 - done-when: 初期profileは既存texture spec v1。controller自身が実cook/captureから既知stageとintentを作り、root/state/indexを同volume lock内で公開する。receiptはpending内で最後にcommitし、完全commitまたは完全rollbackを照合した後だけpendingを退役する。source/spec不在で固定pendingを安全に復旧できる。
 - verify: 実Windowsのnative IDとexact before bytes、各rename/receipt/rollback/退役境界の実process終了、ordinary/abandoned再開、同byte別ID/未知entry/親置換/side doc破損/no-replace競合/alias、既存32CPU・79+10byte・5診断。
 - stop-when: 保存absolute locatorをI/Oへ戻す、独立bindingを導出できると偽る、既存root採用/whole-root update交換/恒久file lineageを行う、未知orphanをprefixで掃除する、ordinary観測を弱める、powerloss/atomic reader保証が必要になる。
+
+## G2-S6-EMPTY-STRING: 空文字のC文字列契約を修復する
+- status: doing
+- done-when: 未確保とムーブ元のTStringのdata/c_strが正しい文字型の静的ゼロ終端を返し、非空/割当/所有権/APIを変えない。
+- verify: 5文字型・既存alias・default/null/empty/clear/shrink/move/reuse、printf診断、Windows34CPU・17中断復旧・89byte互換。Busy診断をescapeなしstrict UTF8で読む。
+- stop-when: iterator/operator[]の別契約やTStringViewを同時変更する、テストだけで不正なc_strを隠す。

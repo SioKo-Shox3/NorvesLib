@@ -826,3 +826,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-MANAGED-BOOTSTRAP-EXECUTOR集合契約修正: 02aa146a/run37282610496でresult=Error、set_requires_one_manifest_pathを確認。asset別work directoryのfragment集合へ、FINAL用の単一manifest guardを呼んでいた。集合検査coreを共有した独立fragment入口を追加し、stageでは全manifestを別出力として数える。FINALの単一manifest条件は維持し、共有fragment拒否・cross-source/control衝突の反証を追加する。
 
 - G2-S6-MANAGED-BOOTSTRAP-EXECUTOR受入: 48a425c5/run37285943680で実Windows build・33CPU・17境界の実child終了/復旧・bootstrap条件5flag全1・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否を確認。3ZIP/API digest・MSVC/CNG・source/evidence chainを独立照合しrootで再実行した。cross-session実測は従来どおり未実行。Busy診断のraw ff×8は空TStringのc_str()がnposを返す既存不具合と特定し、raw証拠を保持。次にこの基礎不具合を直し、既存rootの増分更新へ進む。production CLI接続とG2-S6全体は未完了。
+
+- G2-S6-EMPTY-STRING開始: Busyの空診断を通して、未確保TStringのdata/c_strがnposのアドレスを返す既存不具合を検出した。文字型ごとの静的ゼロ終端だけに修正し、所有pointer・layout・allocator・iteratorは維持する。既存LoggerSinkTest束へ専用回帰を追加し、実Windowsと従来byte gateで再確認する。

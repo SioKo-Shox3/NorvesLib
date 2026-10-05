@@ -45,6 +45,7 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER InputBindingSetTest ${CMAKE_SOURCE_DIR}/Test/Core/Input/InputBindingSetTest.cpp
     MEMBER ModuleRegistryTest ${CMAKE_SOURCE_DIR}/Test/Core/Module/ModuleRegistryTest.cpp
     MEMBER IdentityLiteralTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/IdentityLiteralTest.cpp
+    MEMBER StringEmptyTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/StringEmptyTest.cpp
     MEMBER JsonWriterTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonWriterTest.cpp
     MEMBER JsonUnicodeScalarTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonUnicodeScalarTest.cpp
     SOURCES

@@ -45,6 +45,8 @@ namespace NorvesLib::Core::Container
         static constexpr size_type npos = static_cast<size_type>(-1);
 
     private:
+        // 未確保の空文字にも、正しい文字型のゼロ終端と静的寿命を与える。
+        inline static constexpr CharT s_emptyData[1] = {CharT{}};
         pointer m_data;
         size_type m_size;
         size_type m_capacity;
@@ -394,12 +396,12 @@ namespace NorvesLib::Core::Container
 
         const_pointer data() const noexcept
         {
-            return m_data ? m_data : reinterpret_cast<const_pointer>(&npos); // 空の場合の安全性
+            return m_data ? m_data : s_emptyData;
         }
 
         const_pointer c_str() const noexcept
         {
-            return m_data ? m_data : reinterpret_cast<const_pointer>(&npos); // 空の場合の安全性
+            return data();
         }
 
         // 容量
