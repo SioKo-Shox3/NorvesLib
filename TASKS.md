@@ -578,22 +578,22 @@
 - notes: 計画書 4.3（2026-10-05 親が段6の設計を詳しくした: ID は 32bit で「描画の記録の番号 << 7 | 記録の中の三角形の番号」、材質の解決は計算シェーダー、スキニングは計算シェーダーで変形、`geometryShader` の無い GPU では今の GBuffer の経路を予備に残す）。危険地帯（RHI/Vulkan）。
 
 ## VTG6-RASTER-CHUNKS: 手続きメッシュとスキニングを128三角形の塊に分け、頂点を計算シェーダーから読めるようにする
-- status: blocked
+- status: todo
 - done-when: 手続きメッシュ（`ProceduralMeshGpuStore`）とスキニングのメッシュ（`SkinnedMeshGpuStore`）が、登録時にインデックスを 128 三角形以下の連続した塊（最初のインデックス・数）に分けて持つ（MegaGeometry のクラスタと同じ大きさ。後のビジビリティバッファの ID の「記録の中の三角形の番号」が 7bit に収まる）。手続きメッシュの頂点・インデックスのバッファに storage と BDA の用途を足す（または `GeometryPool` に置く）。CPU のテスト（`MeshResourcesProceduralGpuTest` と `SkinnedRenderPathContractTest` にケースを足す）が、塊が全三角形をちょうど1回ずつ覆い、各塊が 128 以下であることを確かめる。今の描画は変えない（起動画面の撮影が一致する）。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest SkinnedRenderPathContractTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MeshResourcesProceduralGpuTest|SkinnedRenderPathContractTest|GeometryPoolAllocatorTest)$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MeshResourcesProceduralGpuTest|GeometryPoolAllocatorTest)$"`
 - stop-when: 手続きメッシュのバッファの用途を変えると今の描画の経路の契約が崩れる場合は、理由を記録して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 計画書 4.3。危険地帯（メモリ・寿命）。
+- notes: 計画書 4.3。危険地帯（メモリ・寿命）。 2026-10-05 親（run `20261005-191130` の保留を解く）: `blocked/VTG6-RASTER-CHUNKS.md` の選択肢2を採った。verify の ctest から、既知の失敗（TEST-SKINNED。`gbuffer.vert` を読めず assert の後に終わらない）で完走しない `SkinnedRenderPathContractTest` を外した（ビルドは残す）。スキニングの塊の検証は、`SkinnedRenderPathContractTest.exe --test=` などで追加のケースだけを直接走らせた出力（「SkinnedMesh chunks cover every triangle once」）を証拠にする。TEST-SKINNED は段6の中で別に直す。
 
 ## VTG6-COMPUTE-SKINNING: 計算シェーダーでスキニングした今と前のフレームの頂点を作る
-- status: blocked
+- status: todo
 - done-when: スキニングのインスタンスごとに、計算シェーダーが今のフレームのパレットと前のフレームのパレットで頂点（位置・法線・UV）を変形し、フレームごとのバッファ（今・前。storage・BDA）へ書くパスを足す（RenderGraph の資源として宣言し、後のビジビリティバッファのラスタと材質の解決が読む）。今の GBuffer の経路はまだ頂点シェーダーのスキニングのまま。GPU のテスト `ComputeSkinningVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、既知のボーンと重みの頂点で、計算シェーダーの結果が CPU で計算した値（今と前）と一致する（許容 1e-4）ことを確かめる。`RenderingVelocitySkinnedVulkanTest` が通る。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderingVelocityVulkanTest SkinnedRenderPathContractTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(ComputeSkinningVulkanTest|RenderingVelocitySkinnedVulkanTest|SkinnedRenderPathContractTest)$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(ComputeSkinningVulkanTest|RenderingVelocitySkinnedVulkanTest)$"`
 - stop-when: 前のフレームのパレットを RenderThread で保持する経路が無く、FramePacket の契約を変える必要がある場合は、理由を記録して止める。
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 計画書 4.3（スキニングは計算シェーダーで変形してからビジビリティバッファへ描く）。危険地帯（RenderThread・寿命）。
+- notes: 計画書 4.3（スキニングは計算シェーダーで変形してからビジビリティバッファへ描く）。危険地帯（RenderThread・寿命）。 2026-10-05 親（run `20261005-191130` の保留を解く）: `blocked/VTG6-COMPUTE-SKINNING.md` の選択肢2を採った。verify の ctest から `SkinnedRenderPathContractTest`（既知の失敗 TEST-SKINNED）を外した。`ComputeSkinningVulkanTest`・`RenderingVelocitySkinnedVulkanTest` の ctest を証拠にする。
 
 ## VTG6-VISBUFFER-RESOURCES: ビジビリティバッファの資源と描画の記録の表を作る
 - status: done
@@ -605,7 +605,7 @@
 - notes: 計画書 4.3。
 
 ## VTG6-VIS-RASTER: 不透明のすべてをビジビリティバッファへ描くパスを足す（既定は無効）
-- status: blocked
+- status: todo
 - done-when: `--visibility-buffer=on` のとき、MegaGeometry のクラスタ（2パスの遮蔽・BVH・ページの経路のまま）、手続きメッシュの塊、スキニングの塊（VTG6-COMPUTE-SKINNING の変形済みの頂点）を、位置だけを読む頂点シェーダーと、ID（記録の番号は描画ごとの値、三角形は `gl_PrimitiveID`）を書く frag で、`VisBuffer.Id` と `GBuffer.Depth` へ描くパスを足す。描画の記録の表をそのフレームの描画から作る。この項目では GBuffer への書き込みはまだ今の経路のまま（`on` でも GBufferPass・MegaGeometryPass の GBuffer の描画は動かす）。`RenderGraphCompileTest` に `on` の記録を足す。デバッグの撮影（`--visibility-buffer=on` に、ID を色にして表示するデバッグの表示を足してよい）を開いて、物の輪郭と三角形の塊が正しく出ることを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MegaGeometryResourcesTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MegaGeometryResourcesTest|IntegerAttachmentVulkanTest|VisibilityBufferEncodingTest)$"`
@@ -613,7 +613,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-VIS-RASTER -Configuration RelWithDebInfo -Deterministic`
 - stop-when: 2パスの遮蔽の HZB が、ビジビリティバッファの1パス目の深度で作れない場合は、理由を記録して止める。
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 計画書 4.3。危険地帯（描画パス）。既定の描画（`off`）は変えない。
+- notes: 計画書 4.3。危険地帯（描画パス）。既定の描画（`off`）は変えない。 2026-10-05 親（run `20261005-191130` の保留を解く）: `blocked/VTG6-VIS-RASTER.md` の選択肢1を採った。この項目は今の実装（MegaGeometryPass の後に両パスの間接描画を `VisBuffer.Id`・`GBuffer.Depth` へ重ね描き）で完了とする。stop-when の「ビジビリティの1パス目の深度で HZB を作る」順序は、GBuffer への書き込みを外す VTG6-DEFAULT-ON で組む。スキニングを含む ID の表示の撮影も VTG6-DEFAULT-ON へ回した（起動画面にスキニングが無いので、スキニングの検証シーンを撮る経路をそこで足す）。評価の差し戻し（記録の頂点の基点の二重加算）は `31877048` で直っている。
 
 ## VTG6-MATERIAL-CLASSIFY: 画面のタイルを材質ごとに分ける
 - status: done
@@ -675,9 +675,18 @@
 - paths: Assets/Shaders/PathTracing, Assets/Shaders/Common, Library/Core/Private/Rendering, Test/Core/Rendering, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 2026-10-05 親が足した。段2の受入れの既知の限界（パストレーサーを有効にすると VT の非常駐のタイルを読みうる）。起動画面の既定（RTGI は GBuffer だけを読む）では使わない。
 
+## TEST-SKINNED: SkinnedRenderPathContractTestの停止を直す
+- status: todo
+- done-when: `SkinnedRenderPathContractTest`がCPU 0のまま戻らない（2026-09-24にctest 1350秒で強制終了）原因を特定し、契約を弱めずに完走させる。R5-P12時点でもpending件数assertで失敗していた既存問題として扱う。
+- verify: `cmake --build build --config Debug --target SkinnedRenderPathContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error --timeout 300 -R "^SkinnedRenderPathContractTest$"`
+- stop-when: 停止がスキニングの実装不具合ではなくテストの待機条件による場合は、待機条件を明示的な上限付きにし、検証内容を減らさない。
+- paths: Test/Core/Rendering/CMakeLists.txt, Test/Core/Rendering/SkinnedRenderPathContractTest.cpp, Library/Core/Private/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-05 親が backlog から段6へ取り込んだ。段6はスキニングの経路（塊・計算シェーダーのスキニング・ビジビリティバッファ）を変えるので、この契約テストが完走しないまま VTG6-DEFAULT-ON で既定を切り替えない。分かっている停止の原因: `TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer` が `ShaderManager::Initialize(device, "")` の空のシェーダーのディレクトリで `gbuffer.vert` を読めず `assert(gBuffer.Initialize(context))` で落ち、assert の後にプロセスが終わらない（ctest は打ち切りまで待つ）。シェーダーのディレクトリを `NORVES_SOURCE_DIR "/Assets/Shaders"` にすると次の `assert(pending.size() == 1)`（1530行付近）で落ちる（R5-P12 からの pending 件数の assert）。assert の後に終わらない件（テストの assert の置き換えの仕方か、Debug の assert の対話窓）も直す。
+
 ## VTG6-DEFAULT-ON: ビジビリティバッファを既定にし、今のGBufferのラスタを予備にする
 - status: todo
-- done-when: `geometryShader` に対応する GPU では、ビジビリティバッファの経路を既定（`--visibility-buffer` の既定を on）にし、GBufferPass・MegaGeometryPass の GBuffer へのラスタは、`geometryShader` の無い GPU か `--visibility-buffer=off` のときの予備にだけ残す（`VISBUFFER_FALLBACK reason=<..>` を1回出す）。`RenderGraphCompileTest`・`SkinnedRenderPathContractTest`・`GBufferMaterialDescriptorCacheTest`・`MegaGeometryFrameCommandDebugModeTest`・`RenderingVelocity*`・`DebugViewModeStringTest` を新しい既定に合わせて通す（予備の経路の検査も残す）。Indoor/Outdoor の golden を回し、差が出たら差がこの変更（解析的な微分・三角形の接線の基底）だけによることを確かめて `Docs/RenderingValidation/GoldenBaselines.md` の手順で再承認し、根拠をコミットの本文に書く。起動画面の朝・昼・夕・夜の `-Deterministic` の撮影を開いて確かめる。
+- done-when: `geometryShader` に対応する GPU では、ビジビリティバッファの経路を既定（`--visibility-buffer` の既定を on）にし、GBufferPass・MegaGeometryPass の GBuffer へのラスタは、`geometryShader` の無い GPU か `--visibility-buffer=off` のときの予備にだけ残す（`VISBUFFER_FALLBACK reason=<..>` を1回出す）。`RenderGraphCompileTest`・`SkinnedRenderPathContractTest`・`GBufferMaterialDescriptorCacheTest`・`MegaGeometryFrameCommandDebugModeTest`・`RenderingVelocity*`・`DebugViewModeStringTest` を新しい既定に合わせて通す（予備の経路の検査も残す）。MegaGeometryPass の1パス目・2パス目の描画先をビジビリティバッファへ切り替え、2パスの遮蔽の HZB をビジビリティの1パス目の深度から作る（`ID・深度の1パス目 → HZB → 2パス目`。VTG6-VIS-RASTER から回した）。スキニングを含む検証シーン（`RenderingVelocitySkinnedVulkanTest` の場面など）をビジビリティバッファで撮る経路を足し、ID の表示と解決の結果を開いて確かめる。Indoor/Outdoor の golden を回し、差が出たら差がこの変更（解析的な微分・三角形の接線の基底）だけによることを確かめて `Docs/RenderingValidation/GoldenBaselines.md` の手順で再承認し、根拠をコミットの本文に書く。起動画面の朝・昼・夕・夜の `-Deterministic` の撮影を開いて確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest SkinnedRenderPathContractTest MaterialResourcesTest MegaGeometryResourcesTest RenderingVelocityVulkanTest ViewportSnapshotDebugWiringTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest|GBufferMaterialDescriptorCacheTest|MegaGeometryFrameCommandDebugModeTest|MegaGeometryResourcesTest|RenderingVelocityStaticVulkanTest|RenderingVelocityMotionVulkanTest|RenderingVelocityCameraVulkanTest|RenderingVelocityObjectVulkanTest|RenderingVelocitySkinnedVulkanTest|DebugViewModeStringTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
@@ -1848,14 +1857,6 @@
 - paths: Docs/RenderingValidation/R8Acceptance.md, Docs/RenderingValidation/R8ColorManagement.md, TASKS.md, PROGRESS.md
 - notes: 危険地帯を含む機能の完了判定。評価者を通す。
 - result: `Docs/RenderingValidation/R8Acceptance.md`。R8の変更の独立評価は1周目NEEDS_WORK（4件）、対応差分の2周目PASS。
-
-## TEST-SKINNED: SkinnedRenderPathContractTestの停止を直す
-- status: backlog
-- done-when: `SkinnedRenderPathContractTest`がCPU 0のまま戻らない（2026-09-24にctest 1350秒で強制終了）原因を特定し、契約を弱めずに完走させる。R5-P12時点でもpending件数assertで失敗していた既存問題として扱う。
-- verify: `cmake --build build --config Debug --target SkinnedRenderPathContractTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error --timeout 300 -R "^SkinnedRenderPathContractTest$"`
-- stop-when: 停止がスキニングの実装不具合ではなくテストの待機条件による場合は、待機条件を明示的な上限付きにし、検証内容を減らさない。
-- paths: Test/Core/Rendering/SkinnedRenderPathContractTest.cpp, Library/Core/Private/Rendering, TASKS.md, PROGRESS.md
 
 ## R6-P7: RTGIで発光三角形を光源標本する
 - status: done
