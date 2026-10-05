@@ -360,7 +360,7 @@ namespace NorvesLib::Core::Rendering
             height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
         }
 
-        // ビジビリティバッファの解決が書く 4 枚（Albedo・Normal・Material・Velocity）は、storage image としても使えるようにする
+        // ビジビリティバッファの解決が書く 5 枚（Albedo・Normal・Material・Velocity・Emissive）は、storage image としても使えるようにする
         const bool bResolveWrites = context && ShouldSkipDraws(context->Device);
         const RHI::ResourceUsage resolveWriteUsage =
             bResolveWrites ? RHI::ResourceUsage::ShaderWrite : RHI::ResourceUsage::None;
@@ -400,9 +400,11 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
+        RGTextureDesc emissiveDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive");
+        emissiveDesc.Usage = emissiveDesc.Usage | resolveWriteUsage;
         m_EmissiveHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferEmissive,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive"),
+            emissiveDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,

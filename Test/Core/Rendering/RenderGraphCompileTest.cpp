@@ -3462,7 +3462,7 @@ namespace
     }
 
     // --visibility-buffer=on: GBufferPass・MegaGeometryPass は GBuffer の描画を止め（クリアと添付の遷移だけ残す）、
-    // 幾何の解決のパスが GBuffer の Albedo・Normal・Velocity を storage image として書く。
+    // 幾何の解決のパスが GBuffer の Albedo・Normal・Material・Velocity・Emissive を storage image として書く。
     // 止める配線（SetVisibilityResolveActive・SetSkipGBufferDraw）や、storage image の使い道・書き込みの状態を戻すと落ちる
     void TestVisibilityResolveOnReplacesGBufferDrawsWithStorageImageWrites()
     {
@@ -3493,8 +3493,9 @@ namespace
         const FakeCommandList::DispatchSize& resolveGroups = commandList.DispatchGroups.back();
         assert(resolveGroups.X == 16 && resolveGroups.Y == 8 && resolveGroups.Z == 1);
 
-        // GBuffer の 4 枚（Albedo・Normal・Material・Velocity）が storage image の状態（UnorderedAccess）へ遷移し、
-        // 書き込みの使い道（ShaderWrite）を持つ。Albedo と Material はどちらも RGBA8 なので形式では区別できず、2 枚と数える
+        // GBuffer の 5 枚（Albedo・Normal・Material・Velocity・Emissive）が storage image の状態（UnorderedAccess）へ遷移し、
+        // 書き込みの使い道（ShaderWrite）を持つ。Albedo と Material はどちらも RGBA8、Normal と Emissive はどちらも RGBA16F なので
+        // 形式では区別できず、それぞれ 2 枚と数える
         uint32_t albedoWrites = 0;
         uint32_t normalWrites = 0;
         uint32_t velocityWrites = 0;
@@ -3519,7 +3520,7 @@ namespace
                 break;
             }
         }
-        assert(albedoWrites == 2 && normalWrites == 1 && velocityWrites == 1);
+        assert(albedoWrites == 2 && normalWrites == 2 && velocityWrites == 1);
         size_t velocityBarriers = 0;
         assert(VelocityTexturesHaveShaderWrite(commandList, velocityBarriers));
 

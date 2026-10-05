@@ -77,6 +77,9 @@ namespace
     constexpr uint8_t AlbedoGuard[4] = {0x12, 0x34, 0x56, 0x78};
     constexpr uint8_t MaterialGuard[4] = {0x9A, 0xBC, 0xDE, 0xF0};
     constexpr uint16_t HalfGuard = 0xC700; // -7.0
+    // 発光に掛けるプリエクスポージャ（2 のべきなので、期待値の積も fp16 へ丸める前は厳密）と、fp16 の最大値（発光の頭打ち）
+    constexpr float EmissivePreExposure = 0.25f;
+    constexpr double EmissiveMax = 65504.0;
 
     int g_failures = 0;
 
@@ -405,6 +408,15 @@ namespace
         return entry;
     }
 
+    // 材質の表の件に発光（色度と輝度 nits）を足す
+    void SetEmissive(VisibilityBuffer::MaterialEntry& entry, float r, float g, float b, float nits)
+    {
+        entry.Emissive[0] = r;
+        entry.Emissive[1] = g;
+        entry.Emissive[2] = b;
+        entry.Emissive[3] = nits;
+    }
+
     void FillWorldMatrices(DrawInstanceData& data, const Mat4& world, const Mat4& previousWorld)
     {
         ToFloats(world, data.World);
@@ -418,6 +430,11 @@ namespace
         scene.Materials.push_back(MakeMaterial(0.2f, 0.8f, 0.3f));
         scene.Materials.push_back(MakeMaterial(0.1f, 0.3f, 0.9f));
         scene.Materials.push_back(MakeMaterial(0.8f, 0.7f, 0.1f));
+        // 発光: 材質 0 は有限の値、材質 2 は 65504 を超える輝度（チャンネルによって頭打ち）、材質 3 は float の積が無限大になる
+        // 輝度（頭打ちが無いと、fp16 の格納が飽和するかどうかが装置まかせになる）、材質 1 は発光なし
+        SetEmissive(scene.Materials[0], 1.0f, 0.5f, 0.25f, 200.0f);
+        SetEmissive(scene.Materials[2], 0.2f, 1.0f, 0.0f, 1.0e6f);
+        SetEmissive(scene.Materials[3], 40.0f, 1.0f, 0.0f, 3.0e38f);
 
         Vertex quad[4];
 
@@ -880,6 +897,7 @@ namespace
         Container::VariableArray<uint8_t> Material; // RGBA8（金属度・粗さ・AO）
         Container::VariableArray<uint16_t> Normal;  // RGBA16F
         Container::VariableArray<uint16_t> Velocity; // RG16F
+        Container::VariableArray<uint16_t> Emissive; // RGBA16F
         Container::VariableArray<float> Dump;       // 画素あたり 12 * 4 個
         Container::VariableArray<uint32_t> TileArgs; // 材質ごとのタイルの形のとき、分類が作った引数の表
         uint32_t DumpPitch = ScreenWidth;           // 検証用の書き出しの 1 行の画素数（画面の幅。シェーダーは y * 幅 + x で書く）
@@ -1062,6 +1080,7 @@ namespace
         TexturePtr normal = CreateTexture(device, Format::R16G16B16A16_FLOAT, 8, halfGuardPixel, outputUsage, "ResolveTestNormal");
         TexturePtr velocity = CreateTexture(device, Format::R16G16_FLOAT, 4, halfGuardPixel, outputUsage, "ResolveTestVelocity");
         TexturePtr materialImage = CreateTexture(device, Format::R8G8B8A8_UNORM, 4, MaterialGuard, outputUsage, "ResolveTestMaterial");
+        TexturePtr emissive = CreateTexture(device, Format::R16G16B16A16_FLOAT, 8, halfGuardPixel, outputUsage, "ResolveTestEmissive");
         const uint64_t dumpBytes =
             static_cast<uint64_t>(ScreenWidth) * ScreenHeight * VisibilityResolveGeometry::DUMP_STRIDE_BYTES;
         BufferPtr dump;
@@ -1073,7 +1092,7 @@ namespace
                                     "ResolveTestDump");
         }
         CommandListPtr commandList = device->CreateCommandList();
-        if (!albedo || !normal || !materialImage || !velocity || !commandList || (bDump && !dump))
+        if (!albedo || !normal || !materialImage || !velocity || !emissive || !commandList || (bDump && !dump))
         {
             std::cerr << TestName << " 出力の資源を作れませんでした" << std::endl;
             return result;
@@ -1122,6 +1141,7 @@ namespace
         dispatch.Normal = normal;
         dispatch.Material = materialImage;
         dispatch.Velocity = velocity;
+        dispatch.Emissive = emissive;
         dispatch.Dump = dump;
         if (materials)
         {
@@ -1136,6 +1156,7 @@ namespace
                                                                  width,
                                                                  height,
                                                                  static_cast<uint32_t>(gpu.MaterialTable->GetSize() / sizeof(VisibilityBuffer::MaterialEntry)));
+        dispatch.Params.Frame[0] = EmissivePreExposure;
         dispatch.TileArgs = tileArgs;
         dispatch.TileList = tileList;
         if (feedback)
@@ -1148,7 +1169,7 @@ namespace
 
         resolve.BeginFrame(0, frameSerial);
         commandList->Begin();
-        for (const TexturePtr& texture : {albedo, normal, materialImage, velocity})
+        for (const TexturePtr& texture : {albedo, normal, materialImage, velocity, emissive})
         {
             commandList->TextureBarrier(texture, ResourceState::ShaderResource, ResourceState::UnorderedAccess, 0u, 0u, 0u, 0u);
         }
@@ -1252,6 +1273,12 @@ namespace
         }
         result.Velocity.resize(bytes.size() / 2);
         std::memcpy(result.Velocity.data(), bytes.data(), bytes.size());
+        if (!ReadTexture(device, emissive, 8, bytes))
+        {
+            return result;
+        }
+        result.Emissive.resize(bytes.size() / 2);
+        std::memcpy(result.Emissive.data(), bytes.data(), bytes.size());
         result.bOk = true;
         return result;
     }
@@ -1306,6 +1333,8 @@ namespace
         uint32_t badMaterial = 0;
         uint32_t badNormal = 0;
         uint32_t badVelocity = 0;
+        uint32_t badEmissive = 0;
+        uint32_t emissiveClampedPixels = 0;
         uint32_t badGuard = 0;
         for (uint32_t y = 0; y < ScreenHeight; ++y)
         {
@@ -1316,12 +1345,14 @@ namespace
                 const uint8_t* albedo = readback.Albedo.data() + pixel * 4;
                 const uint16_t* normal = readback.Normal.data() + pixel * 4;
                 const uint16_t* velocity = readback.Velocity.data() + pixel * 2;
+                const uint16_t* emissive = readback.Emissive.data() + pixel * 4;
                 if (!ref.bCovered)
                 {
                     // 書かれていない画素は見張りのまま
                     const bool bGuard = std::memcmp(albedo, AlbedoGuard, 4) == 0 && normal[0] == HalfGuard &&
                                         normal[1] == HalfGuard && normal[2] == HalfGuard && normal[3] == HalfGuard &&
-                                        velocity[0] == HalfGuard && velocity[1] == HalfGuard;
+                                        velocity[0] == HalfGuard && velocity[1] == HalfGuard && emissive[0] == HalfGuard &&
+                                        emissive[1] == HalfGuard && emissive[2] == HalfGuard && emissive[3] == HalfGuard;
                     if (!bGuard)
                     {
                         ++badGuard;
@@ -1332,7 +1363,21 @@ namespace
                 const ReferenceTriangle& triangle = scene.References[ref.ReferenceIndex];
                 ++counters.PerRecordPixels[triangle.RecordNumber];
                 const VisibilityBuffer::MaterialEntry& material = scene.Materials[triangle.Material];
-                (void)material;
+                // 発光は 色度 × 輝度 × プリエクスポージャ を 65504 で頭打ちにした値（α = 1）。fp16 の丸めぶんの相対誤差を許す
+                bool bEmissiveOk = HalfToFloat(emissive[3]) == 1.0f;
+                for (int channel = 0; channel < 3; ++channel)
+                {
+                    const double expected = std::min(static_cast<double>(material.Emissive[channel]) * material.Emissive[3] *
+                                                         EmissivePreExposure,
+                                                     EmissiveMax);
+                    const double actual = HalfToFloat(emissive[channel]);
+                    bEmissiveOk = bEmissiveOk && std::fabs(actual - expected) <= expected * 1.0e-3 + 1.0e-6;
+                    emissiveClampedPixels += expected >= EmissiveMax ? 1u : 0u;
+                }
+                if (!bEmissiveOk)
+                {
+                    ++badEmissive;
+                }
                 // Albedo はインスタンスの色（MegaGeometry は材質の基本色、スキニングは 1）で α = 1（直接 dispatch はテクスチャを使わない）
                 bool bAlbedoOk = albedo[3] == 255;
                 for (int channel = 0; channel < 3; ++channel)
@@ -1368,15 +1413,18 @@ namespace
                 }
             }
         }
-        if (badAlbedo != 0 || badMaterial != 0 || badNormal != 0 || badVelocity != 0 || badGuard != 0)
+        if (badAlbedo != 0 || badMaterial != 0 || badNormal != 0 || badVelocity != 0 || badEmissive != 0 || badGuard != 0)
         {
             std::cerr << TestName << " " << label << " 不一致: Albedo=" << badAlbedo << " Normal=" << badNormal
-                      << " Velocity=" << badVelocity << " 見張り(書かれてはならない画素)=" << badGuard << std::endl;
+                      << " Velocity=" << badVelocity << " Emissive=" << badEmissive
+                      << " 見張り(書かれてはならない画素)=" << badGuard << std::endl;
         }
         Expect(badAlbedo == 0, "Albedo はインスタンスの色（α = 1）でなければならない");
         Expect(badMaterial == 0, "Material は材質の定数（金属度 0・粗さ 128/255・AO 1）でなければならない");
         Expect(badNormal == 0, "Normal は補間して正規化したワールド法線でなければならない");
         Expect(badVelocity == 0, "Velocity は前のフレームの頂点から求めた (現在の NDC - 前の NDC) * 0.5 でなければならない");
+        Expect(badEmissive == 0, "Emissive は 色度 × 輝度 × プリエクスポージャ（65504 で頭打ち、α = 1）でなければならない");
+        Expect(emissiveClampedPixels > 0, "頭打ちになる発光の画素を含まなければならない（検査が頭打ちを確かめられる場面）");
         Expect(badGuard == 0, "空の画素・引けない ID の画素は何も書かれてはならない");
     }
 
@@ -1627,9 +1675,11 @@ namespace
         const uint8_t* albedo = readback.Albedo.data() + pixel * 4;
         const uint16_t* normal = readback.Normal.data() + pixel * 4;
         const uint16_t* velocity = readback.Velocity.data() + pixel * 2;
+        const uint16_t* emissive = readback.Emissive.data() + pixel * 4;
         bool bGuard = std::memcmp(albedo, AlbedoGuard, 4) == 0 && normal[0] == HalfGuard && normal[1] == HalfGuard &&
                       normal[2] == HalfGuard && normal[3] == HalfGuard && velocity[0] == HalfGuard && velocity[1] == HalfGuard &&
-                      std::memcmp(readback.Material.data() + pixel * 4, MaterialGuard, 4) == 0;
+                      emissive[0] == HalfGuard && emissive[1] == HalfGuard && emissive[2] == HalfGuard &&
+                      emissive[3] == HalfGuard && std::memcmp(readback.Material.data() + pixel * 4, MaterialGuard, 4) == 0;
         size_t dumpPixel = 0;
         if (bGuard && !readback.Dump.empty() && DumpPixelIndex(readback, x, y, dumpPixel))
         {
@@ -1646,14 +1696,15 @@ namespace
     // （接空間の (0.0039, 0.0039, 1) を T・B で傾ける。長い方が 1 の T・B なので、ずれは 0.0055 rad 未満）
     constexpr double DefaultFlatNormalTilt = 0.01;
 
-    // 2 つの結果の画素が一致するか（Albedo・Material・Velocity と、あれば検証用の中間の値はビット単位で NaN の中身も含めて。
+    // 2 つの結果の画素が一致するか（Albedo・Material・Velocity・Emissive と、あれば検証用の中間の値はビット単位で NaN の中身も含めて。
     // Normal は既定の平坦な法線の傾きぶんの許容つき）
     bool IsSamePixel(const Readback& a, const Readback& b, uint32_t x, uint32_t y)
     {
         const size_t pixel = static_cast<size_t>(y) * ScreenWidth + x;
         bool bSame = std::memcmp(a.Albedo.data() + pixel * 4, b.Albedo.data() + pixel * 4, 4) == 0 &&
                      std::memcmp(a.Material.data() + pixel * 4, b.Material.data() + pixel * 4, 4) == 0 &&
-                     std::memcmp(a.Velocity.data() + pixel * 2, b.Velocity.data() + pixel * 2, 4) == 0;
+                     std::memcmp(a.Velocity.data() + pixel * 2, b.Velocity.data() + pixel * 2, 4) == 0 &&
+                     std::memcmp(a.Emissive.data() + pixel * 4, b.Emissive.data() + pixel * 4, 8) == 0;
         for (int channel = 0; channel < 3; ++channel)
         {
             bSame = bSame && std::fabs(HalfToFloat(a.Normal[pixel * 4 + channel]) - HalfToFloat(b.Normal[pixel * 4 + channel])) <=

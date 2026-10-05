@@ -2,7 +2,7 @@
 // ビジビリティバッファの幾何の解決（画素の ID から三角形を引き、重心座標・微分・法線・速度を求める）
 //
 // 取り込む側（visbuffer_resolve.comp など）が先に #version 460 を書く。NORVES_VISRESOLVE_DUMP を定義して取り込むと、
-// 画素ごとの中間の値（重心座標・UV・微分・接線の基底・前のクリップ座標）を検証用のバッファ（binding 9）へも書く
+// 画素ごとの中間の値（重心座標・UV・微分・接線の基底・前のクリップ座標）を検証用のバッファ（binding 11）へも書く
 // （GPU のテストが CPU の参照と照合する。製品の経路は定義しない）。
 //
 // NORVES_VISRESOLVE_TILES を定義して取り込むと、画面全体の直接 dispatch の代わりに、材質ごとのタイルの一覧
@@ -12,7 +12,7 @@
 // タイルには複数の材質が混じりうるので、各スレッドは自分の画素の材質がこの dispatch の材質と同じときだけ解決する
 // （画素は自分の材質の dispatch でちょうど 1 回だけ解決される）。画面の外の画素は何もしない。
 // 材質の番号が分類の上限以上の画素はどの材質の一覧にも入らないので、この版では解決されない（直接版は解決する）。
-// 追加の束縛は、検証用の書き出しがあれば binding 11 から、無ければ binding 10 から（VIS_TILE_BINDING）。
+// 追加の束縛は、検証用の書き出しがあれば binding 12 から、無ければ binding 11 から（VIS_TILE_BINDING）。
 // 材質ごとの形は、その材質のテクスチャ（アルベド・法線・金属度・粗さ・AO・高さの 6 枠。VIS_TILE_BINDING + 3 から）も束ねて、
 // 材質のテクスチャで GBuffer の Albedo・Normal・Material を書く（直接 dispatch の版は、テクスチャを束ねられないので
 // 材質の定数だけで書く）。
@@ -42,11 +42,13 @@
 //     同じく、位置と UV の dFdy を反転して作る。
 //   - GBuffer の形式・意味（Albedo.a、法線の格納、Velocity の式）はラスタの経路と同じ。
 //     Albedo = インスタンスの色 × アルベドのテクスチャ（α = テクスチャの α）、Normal = 法線マップを適用したワールド法線、
-//     Material = 金属度・粗さ・AO、Velocity = (現在の NDC - 前の NDC) * 0.5。
+//     Material = 金属度・粗さ・AO、Velocity = (現在の NDC - 前の NDC) * 0.5、
+//     Emissive = 材質の表の発光（色度 × 輝度 × フレームのプリエクスポージャ。65504 で頭打ち。α = 1。表の外の材質は 0）。
+//     発光はテクスチャを引かず材質の表の件だけで決まるので、直接 dispatch・材質ごとの形のどちらも同じ式で書く。
 //   - インスタンスの色は、MegaGeometry は材質の表の基本色（区間の材質の値）、手続きメッシュはインスタンスの表の色、
 //     スキニングは 1。
 //
-// 発光・デバッグの表示は、別の解決が受け持つ。
+// デバッグの表示（クラスタの色・LOD の段・ワイヤーフレーム）は、別の解決が受け持つ。
 // ========================================
 
 #extension GL_EXT_buffer_reference : require
@@ -62,6 +64,7 @@
 #define VIS_RECORD_TABLE_BINDING 1
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/PreExposedEmissive.glsl"
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -73,6 +76,7 @@ layout(std140, set = 0, binding = 0) uniform ResolveParams
     vec4 cameraPosition;   // xyz = ワールドのカメラ位置
     vec4 viewport;         // x, y, 幅, 高さ（画素。ラスタの描画範囲）
     uvec4 screen;          // x = 画面の幅, y = 画面の高さ, z = フラグ, w = 材質の表の件数
+    vec4 frame;            // x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y と同じ値）
 } params;
 
 // params.screen.z のビット
@@ -135,12 +139,13 @@ layout(set = 0, binding = 6, rgba8) writeonly uniform image2D albedoImage;
 layout(set = 0, binding = 7, rgba16f) writeonly uniform image2D normalImage;
 layout(set = 0, binding = 8, rg16f) writeonly uniform image2D velocityImage;
 layout(set = 0, binding = 9, rgba8) writeonly uniform image2D materialImage;
+layout(set = 0, binding = 10, rgba16f) writeonly uniform image2D emissiveImage;
 
 #ifdef NORVES_VISRESOLVE_TILES
 #ifdef NORVES_VISRESOLVE_DUMP
-#define VIS_TILE_BINDING 11
+#define VIS_TILE_BINDING 12
 #else
-#define VIS_TILE_BINDING 10
+#define VIS_TILE_BINDING 11
 #endif
 
 // 1 回の dispatch ごとの定数（RHI に push constant が無いので UBO。dispatch ごとに別の UBO を束ねる）
@@ -195,7 +200,7 @@ layout(set = 0, binding = VIS_TILE_BINDING + 8) uniform sampler2D heightTexture;
 
 #ifdef NORVES_VISRESOLVE_DUMP
 // 画素ごとに VIS_RESOLVE_DUMP_STRIDE 個の vec4 を書く（並びは VisibilityResolvePass.h の ResolveDump と同じ）
-layout(std430, set = 0, binding = 10) writeonly buffer ResolveDump
+layout(std430, set = 0, binding = 11) writeonly buffer ResolveDump
 {
     vec4 dump[];
 };
@@ -784,6 +789,11 @@ void main()
     imageStore(normalImage, ivec2(pixel), vec4(surface.normal, 0.0));
     imageStore(materialImage, ivec2(pixel), vec4(surface.material, 0.0));
     imageStore(velocityImage, ivec2(pixel), vec4(velocity, 0.0, 0.0));
+    // 発光: 色度 × 輝度（nits）× プリエクスポージャ（ラスタの gbuffer.frag・megageometry.frag と同じ関数）。表から引けない材質は 0
+    const vec3 emissive = bHasMaterial ? ComputePreExposedEmissive(materialEntry.emissive.rgb, materialEntry.emissive.a,
+                                                                   params.frame.x)
+                                       : vec3(0.0);
+    imageStore(emissiveImage, ivec2(pixel), vec4(emissive, 1.0));
 
 #ifdef NORVES_VISRESOLVE_DUMP
     const uint base = (pixel.y * params.screen.x + pixel.x) * VIS_RESOLVE_DUMP_STRIDE;

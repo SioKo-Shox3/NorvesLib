@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-// ビジビリティバッファの幾何の解決: VisBuffer.Id の画素から三角形を引き、GBuffer の Albedo・Normal・Velocity を書く。
+// ビジビリティバッファの幾何の解決: VisBuffer.Id の画素から三角形を引き、GBuffer の Albedo・Normal・Material・Velocity・Emissive を書く。
 //
 // 計算シェーダー（visbuffer_resolve.comp。本体は Common/VisibilityResolve.glsl）が、1 スレッド 1 画素で次を行う。
 //   - ID から描画の記録（VisibilityBuffer.h）と三角形を引き、頂点・インデックスのデバイスアドレスから 3 頂点を読む。
@@ -14,6 +14,7 @@
 //     VT の要求（フィードバック）も、ラスタの材質シェーダーと同じ規則で要求のバッファへ書く（4×4 の巡回の 1 画素と、
 //     非常駐へ逃げた画素。欲しいミップは textureQueryLOD の代わりに解析的な微分から求める）。
 //     画面全体の直接 dispatch はテクスチャを束ねられないので、材質の定数（基本色・スカラー値）だけで書き、要求も書かない。
+//   - 発光（Emissive）は、材質の表の件の色度 × 輝度 × フレームのプリエクスポージャ（65504 で頭打ち）を、どちらの形でも書く。
 // GBuffer の形式・意味（Albedo.a、法線の格納、Velocity の式）は、ラスタの経路（gbuffer.frag）と同じ。
 //
 // 解決は 2 つの形で記録できる（VisibilityResolve::Record が dispatch の入力で選ぶ）。
@@ -87,7 +88,7 @@ namespace NorvesLib::Core::Rendering
             DumpMisc = 10,
         };
 
-        /** @brief シェーダーの ResolveParams（std140）と同じ 240 バイトの定数 */
+        /** @brief シェーダーの ResolveParams（std140）と同じ 256 バイトの定数 */
         struct alignas(16) ResolveParams
         {
             /** @brief ビュー空間 → ワールド（シェーダーの並び。列ごと） */
@@ -101,8 +102,10 @@ namespace NorvesLib::Core::Rendering
             float Viewport[4] = {};
             /** @brief x = 画面の幅、y = 画面の高さ、z = FLAG_*、w = 材質の表の件数 */
             uint32_t Screen[4] = {};
+            /** @brief x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y と同じ値。既定は 1） */
+            float Frame[4] = {1.0f, 0.0f, 0.0f, 0.0f};
         };
-        static_assert(sizeof(ResolveParams) == 240, "visbuffer_resolve の ResolveParams（std140）と一致しなければならない");
+        static_assert(sizeof(ResolveParams) == 256, "visbuffer_resolve の ResolveParams（std140）と一致しなければならない");
 
         /**
          * @brief ラスタと同じカメラの定数から ResolveParams を作る
@@ -200,6 +203,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr Normal;
         RHI::TexturePtr Material;
         RHI::TexturePtr Velocity;
+        /** @brief 発光の出力（GBuffer.Emissive。RGBA16F。ほかの出力と同じく UnorderedAccess の状態で渡す） */
+        RHI::TexturePtr Emissive;
         /** @brief 検証用の版（Initialize の bDump）の出力。画素あたり DUMP_STRIDE_BYTES。製品の版では使わない */
         RHI::BufferPtr Dump;
         /**
@@ -318,7 +323,7 @@ namespace NorvesLib::Core::Rendering
      * @brief VisBuffer.Id から GBuffer の Albedo・Normal・Velocity を解決する RenderGraph のパス
      *
      * VisibilityRasterPass が書いた ID と、同じパスが持つ記録の表・材質の表・インスタンスの表を読み、GBuffer の
-     * Albedo・Normal・Material・Velocity の 4 枚を storage image として書く（発光は書かない）。材質ごとの形では VT の要求も書く。GBufferPass・MegaGeometryPass はこのパスが有効なとき GBuffer の描画を止める
+     * Albedo・Normal・Material・Velocity・Emissive の 5 枚を storage image として書く。材質ごとの形では VT の要求も書く。GBufferPass・MegaGeometryPass はこのパスが有効なとき GBuffer の描画を止める
      * （GBuffer のクリアだけを行う）ので、描かれなかった画素はクリア値のまま。
      *
      * 有効なのは --visibility-buffer=on のときだけ（SceneView が足す）。使えないとき（GetFallbackReason が None 以外。装置が
@@ -384,6 +389,7 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_NormalHandle;
         RGResourceHandle m_MaterialHandle;
         RGResourceHandle m_VelocityHandle;
+        RGResourceHandle m_EmissiveHandle;
         // 分類の出力の読み取り（Declare が読むと宣言したときだけ有効）
         RGResourceHandle m_TileArgsHandle;
         RGResourceHandle m_TileListHandle;

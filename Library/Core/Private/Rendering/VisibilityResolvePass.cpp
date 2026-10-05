@@ -38,9 +38,9 @@ namespace NorvesLib::Core::Rendering
         // tile = 横のタイル数・材質の番号・フラグ・予約、vt = VT のフィードバックのパラメータ（アルベド・法線・ORM・高さ））
         constexpr uint32_t TileParamsBytes = 8u * sizeof(uint32_t);
 
-        // 共通の束縛の数（0..8 と材質の GBuffer の 9。検証用の版はさらに 10 の書き出し）
-        constexpr uint32_t CommonBindingCount = 10u;
-        constexpr uint32_t DumpBindingIndex = 10u;
+        // 共通の束縛の数（0..8、材質の GBuffer の 9、発光の GBuffer の 10。検証用の版はさらに 11 の書き出し）
+        constexpr uint32_t CommonBindingCount = 11u;
+        constexpr uint32_t DumpBindingIndex = 11u;
 
         // bFeedback: 材質ごとの形の最後に VT の要求のバッファ（シェーダーの VT_FEEDBACK_BINDING）を足す（bTiles のときだけ）
         RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump, bool bTiles, bool bFeedback)
@@ -57,7 +57,8 @@ namespace NorvesLib::Core::Rendering
                 RHI::ResourceBindType::RWTexture,            // 7 GBuffer.Normal
                 RHI::ResourceBindType::RWTexture,            // 8 GBuffer.Velocity
                 RHI::ResourceBindType::RWTexture,            // 9 GBuffer.Material
-                RHI::ResourceBindType::RWBuffer,             // 10 検証用の書き出し（検証用の版だけ）
+                RHI::ResourceBindType::RWTexture,            // 10 GBuffer.Emissive
+                RHI::ResourceBindType::RWBuffer,             // 11 検証用の書き出し（検証用の版だけ）
             };
             const uint32_t commonCount = bDump ? CommonBindingCount + 1u : CommonBindingCount;
             for (uint32_t bindingIndex = 0; bindingIndex < commonCount; ++bindingIndex)
@@ -462,7 +463,7 @@ namespace NorvesLib::Core::Rendering
         const uint32_t height = params.Screen[1];
         if (!m_Device || !m_Pipeline || !commandList || !dispatch.IdTexture || !dispatch.RecordTable ||
             !dispatch.MaterialTable || !dispatch.Albedo || !dispatch.Normal || !dispatch.Material || !dispatch.Velocity ||
-            width == 0 ||
+            !dispatch.Emissive || width == 0 ||
             height == 0 || (m_bDump && !dispatch.Dump))
         {
             return false;
@@ -473,7 +474,8 @@ namespace NorvesLib::Core::Rendering
             width > dispatch.Albedo->GetWidth() || height > dispatch.Albedo->GetHeight() ||
             width > dispatch.Normal->GetWidth() || height > dispatch.Normal->GetHeight() ||
             width > dispatch.Material->GetWidth() || height > dispatch.Material->GetHeight() ||
-            width > dispatch.Velocity->GetWidth() || height > dispatch.Velocity->GetHeight())
+            width > dispatch.Velocity->GetWidth() || height > dispatch.Velocity->GetHeight() ||
+            width > dispatch.Emissive->GetWidth() || height > dispatch.Emissive->GetHeight())
         {
             return false;
         }
@@ -518,7 +520,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    // 直接版と材質ごとの版で共通の束縛（0..8 と、検証用の版の 9）
+    // 直接版と材質ごとの版で共通の束縛（0..10 と、検証用の版の 11）
     void VisibilityResolve::BindCommon(RHI::IDescriptorSet& set,
                                        const RHI::BufferPtr& paramsUniform,
                                        const VisibilityResolveDispatch& dispatch) const
@@ -540,6 +542,7 @@ namespace NorvesLib::Core::Rendering
         set.BindStorageTexture(7, dispatch.Normal);
         set.BindStorageTexture(8, dispatch.Velocity);
         set.BindStorageTexture(9, dispatch.Material);
+        set.BindStorageTexture(10, dispatch.Emissive);
         if (m_bDump)
         {
             set.BindStorageBuffer(DumpBindingIndex, dispatch.Dump, 0, ClampBindSize(dispatch.Dump->GetSize()));
@@ -759,6 +762,7 @@ namespace NorvesLib::Core::Rendering
         m_NormalHandle = {};
         m_MaterialHandle = {};
         m_VelocityHandle = {};
+        m_EmissiveHandle = {};
         m_TileArgsHandle = {};
         m_TileListHandle = {};
         m_TileStatsHandle = {};
@@ -806,6 +810,7 @@ namespace NorvesLib::Core::Rendering
         m_NormalHandle = {};
         m_MaterialHandle = {};
         m_VelocityHandle = {};
+        m_EmissiveHandle = {};
         m_TileArgsHandle = {};
         m_TileListHandle = {};
         m_TileStatsHandle = {};
@@ -840,24 +845,28 @@ namespace NorvesLib::Core::Rendering
         RGTextureHandle normal;
         RGTextureHandle material;
         RGTextureHandle velocity;
+        RGTextureHandle emissive;
         if (!builder.TryGetTexture(RenderGraphResourceNames::GBufferAlbedo, albedo) ||
             !builder.TryGetTexture(RenderGraphResourceNames::GBufferNormal, normal) ||
             !builder.TryGetTexture(RenderGraphResourceNames::GBufferMaterial, material) ||
-            !builder.TryGetTexture(RenderGraphResourceNames::GBufferVelocity, velocity))
+            !builder.TryGetTexture(RenderGraphResourceNames::GBufferVelocity, velocity) ||
+            !builder.TryGetTexture(RenderGraphResourceNames::GBufferEmissive, emissive))
         {
             return;
         }
 
-        // GBuffer の 4 枚を storage image として書く。終わった後の状態も UnorderedAccess にして、後のパスの読み取りの前に
+        // GBuffer の 5 枚を storage image として書く。終わった後の状態も UnorderedAccess にして、後のパスの読み取りの前に
         // グラフが ShaderResource への遷移を足すようにする
         m_AlbedoHandle = albedo.ToResourceHandle();
         m_NormalHandle = normal.ToResourceHandle();
         m_MaterialHandle = material.ToResourceHandle();
         m_VelocityHandle = velocity.ToResourceHandle();
+        m_EmissiveHandle = emissive.ToResourceHandle();
         builder.Write(m_AlbedoHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         builder.Write(m_NormalHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         builder.Write(m_MaterialHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         builder.Write(m_VelocityHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        builder.Write(m_EmissiveHandle, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
 
         // スキニングの変形した頂点（今・前）はデバイスアドレスで読む。計算シェーダーの書き込みを、この読み取りへ見せる
         if (m_SkinningComputePass)
@@ -929,7 +938,9 @@ namespace NorvesLib::Core::Rendering
         dispatch.Normal = resources.GetTexture(m_NormalHandle);
         dispatch.Material = resources.GetTexture(m_MaterialHandle);
         dispatch.Velocity = resources.GetTexture(m_VelocityHandle);
-        if (!dispatch.IdTexture || !dispatch.Albedo || !dispatch.Normal || !dispatch.Material || !dispatch.Velocity)
+        dispatch.Emissive = resources.GetTexture(m_EmissiveHandle);
+        if (!dispatch.IdTexture || !dispatch.Albedo || !dispatch.Normal || !dispatch.Material || !dispatch.Velocity ||
+            !dispatch.Emissive)
         {
             return;
         }
@@ -970,6 +981,8 @@ namespace NorvesLib::Core::Rendering
                                                                  dispatch.IdTexture->GetWidth(),
                                                                  dispatch.IdTexture->GetHeight(),
                                                                  m_RasterPass->GetMaterialTableCount());
+        // 発光はプリエクスポージャ後の値で GBuffer_Emissive へ書く（GBufferPass・MegaGeometryPass・LightingPass と同じ値）
+        dispatch.Params.Frame[0] = ResolveSceneColorPreExposure(camera);
 
         // 材質ごとの形で解決できるかを決める。使えない理由があれば、画面全体の直接 dispatch へ戻す（画面を空にしない）
         const uint32_t materialCount = m_RasterPass->GetMaterialTableCount();
