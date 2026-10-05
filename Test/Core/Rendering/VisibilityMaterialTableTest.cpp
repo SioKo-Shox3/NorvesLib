@@ -311,6 +311,99 @@ void TestOverflowFoldsIntoReservedIndex()
            "既定の上限を超えた分を数える");
 }
 
+void TestLargeTableKeepsIndicesAcrossIndexGrowth()
+{
+    // 件数が多く、索引の枠が何度も倍になる（探索が線形の並びでなくハッシュの索引でも、番号は最初に見た順のまま）。
+    // 上限を超えた分は予備の番号へ寄り、溢れた件も索引に載って再び足しても数が増えない
+    constexpr uint32_t Limit = 300;
+    constexpr uint32_t Count = 1000;
+    VB::MaterialTable table(Limit);
+    const size_t initialSlots = table.GetIndexSlotCount();
+    for (uint32_t pass = 0; pass < 3; ++pass)
+    {
+        for (uint32_t seed = 0; seed < Count; ++seed)
+        {
+            const MaterialResourceData data = MakeResourceMaterial(seed);
+            const uint32_t expected = seed + 1u < Limit ? seed : Limit - 1u;
+            const uint32_t index = table.Add(VB::MakeMaterialEntry(&data));
+            if (index != expected)
+            {
+                Expect(false, "多数の材質でも、番号は最初に見た順で、溢れた材質は予備の番号");
+                return;
+            }
+        }
+    }
+    Expect(table.GetUniqueCount() == Count && table.GetOverflowedCount() == Count - (Limit - 1u),
+           "再び足しても値の違う材質の数は増えない");
+    Expect(table.GetIndexSlotCount() > initialSlots && table.GetIndexSlotCount() >= static_cast<size_t>(Count) * 2u,
+           "索引の枠は件数の 2 倍以上に広がる");
+    Expect((table.GetIndexSlotCount() & (table.GetIndexSlotCount() - 1u)) == 0u, "索引の枠の数は 2 の冪");
+
+    // 1 つのバイトだけが違う件も別の材質として区別される（ハッシュが同じ枠に当たっても、バイト列で見分ける）
+    VB::MaterialTable close(Limit);
+    VB::MaterialEntry base = VB::MakeMaterialEntry(static_cast<const MaterialResourceData*>(nullptr));
+    for (uint32_t variant = 0; variant < 200; ++variant)
+    {
+        VB::MaterialEntry entry = base;
+        entry.Header[3] = variant;
+        Expect(close.Add(entry) == variant, "予約の語だけが違う材質も別の番号");
+    }
+    for (uint32_t variant = 0; variant < 200; ++variant)
+    {
+        VB::MaterialEntry entry = base;
+        entry.Header[3] = variant;
+        Expect(close.Add(entry) == variant, "再び足すと同じ番号");
+    }
+}
+
+void TestTableReusesCapacityAcrossFrames()
+{
+    // フレームごとに Clear して同じ材質を足し直しても、件の配列・索引・GPU へ上げる並びの容量は 2 フレーム目から増えない
+    constexpr uint32_t Limit = 200;
+    constexpr uint32_t Count = 300;
+    VB::MaterialTable table(Limit);
+    Container::VariableArray<VB::MaterialEntry> gpuEntries;
+
+    const auto fillFrame = [&]() -> void
+    {
+        table.Clear();
+        for (uint32_t seed = 0; seed < Count; ++seed)
+        {
+            const MaterialResourceData data = MakeResourceMaterial(seed);
+            table.Add(VB::MakeMaterialEntry(&data));
+        }
+        table.BuildGpuEntriesInto(gpuEntries);
+    };
+
+    fillFrame();
+    const size_t entryCapacity = table.GetEntryCapacity();
+    const size_t slotCount = table.GetIndexSlotCount();
+    const size_t gpuCapacity = gpuEntries.capacity();
+    Expect(entryCapacity > 0 && slotCount > 0 && gpuCapacity >= Limit, "最初のフレームで容量を取る");
+    for (uint32_t frame = 0; frame < 3; ++frame)
+    {
+        table.Clear();
+        Expect(table.GetEntryCapacity() == entryCapacity && table.GetIndexSlotCount() == slotCount,
+               "Clear は件の配列と索引の容量を残す");
+        fillFrame();
+        Expect(table.GetEntryCapacity() == entryCapacity && table.GetIndexSlotCount() == slotCount &&
+                   gpuEntries.capacity() == gpuCapacity,
+               "次のフレームでは容量を増やさない（確保し直さない）");
+    }
+
+    // 詰めた並びは BuildGpuEntries と同じで、Clear の後の番号は 0 から詰まり直す
+    const Container::VariableArray<VB::MaterialEntry> fresh = table.BuildGpuEntries();
+    Expect(fresh.size() == gpuEntries.size() &&
+               std::memcmp(fresh.data(), gpuEntries.data(), fresh.size() * sizeof(VB::MaterialEntry)) == 0,
+           "BuildGpuEntriesInto は BuildGpuEntries と同じ並び");
+    table.Clear();
+    Expect(table.GetUniqueCount() == 0 && !table.HasOverflow(), "Clear は溢れも空にする");
+    const MaterialResourceData first = MakeResourceMaterial(250);
+    Expect(table.Add(VB::MakeMaterialEntry(&first)) == 0, "Clear の後は、前のフレームで溢れていた材質も 0 から詰める");
+    table.BuildGpuEntriesInto(gpuEntries);
+    Expect(gpuEntries.size() == 1, "置き換えるので前のフレームの件が残らない");
+}
+
 bool ReadWholeFile(const char* path, Container::VariableArray<char>& outText)
 {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -355,6 +448,8 @@ int RunTest()
     TestDifferentMaterialsGetDifferentIndices();
     TestIndicesAreDenseInFirstSeenOrder();
     TestOverflowFoldsIntoReservedIndex();
+    TestLargeTableKeepsIndicesAcrossIndexGrowth();
+    TestTableReusesCapacityAcrossFrames();
     TestRecordShaderWritesTableIndex();
 
     if (g_failures != 0)

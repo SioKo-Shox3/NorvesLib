@@ -3395,8 +3395,9 @@ namespace
 
     // ID のラスタ（VisibilityRasterPass）の本体の資源（定数・記録の表・ディスクリプタセット）も同じ。1フレームに何回 Execute されても
     // （複数のビューポート）、Execute ごとに別の組を作り、次のフレームでは使い回して増やさない。Execute の回数 % 2 で組を選ぶ作りに
-    // 戻すと、3 回目以降で増えず落ちる。塊の作業配列は最初の Execute で容量を取り、以降のフレームでは増やさない
-    // （毎フレームの確保をしない。呼ぶたびに作る作りに戻すと、容量が 0 のままで落ちる）
+    // 戻すと、3 回目以降で増えず落ちる。塊の作業配列・材質の表の作業配列（GPU へ上げる並び・区間ごとの表の番号）・表の積み上げの
+    // 件の配列と索引は最初の Execute で容量を取り、以降のフレームでは増やさない（毎フレームの確保をしない。呼ぶたびに作る作りに
+    // 戻すと、容量が 0 のままで落ちる）
     void TestVisibilityRasterFrameResourcesFollowFramesAndChunkScratchIsReused()
     {
         constexpr uint32_t ViewportsPerFrame = 7;
@@ -3412,12 +3413,26 @@ namespace
         const size_t proceduralScratchCapacity = scene.Raster.GetProceduralChunkScratchCapacity();
         const size_t skinnedScratchCapacity = scene.Raster.GetSkinnedChunkScratchCapacity();
         assert(proceduralScratchCapacity > 0 && skinnedScratchCapacity > 0);
+        const size_t materialEntryScratchCapacity = scene.Raster.GetMaterialEntryScratchCapacity();
+        const size_t sectionMaterialScratchCapacity = scene.Raster.GetSectionMaterialScratchCapacity();
+        const size_t materialTableEntryCapacity = scene.Raster.GetMaterialTableBuilder().GetEntryCapacity();
+        const size_t materialTableSlotCount = scene.Raster.GetMaterialTableBuilder().GetIndexSlotCount();
+        assert(materialEntryScratchCapacity > 0 && sectionMaterialScratchCapacity > 0 && materialTableEntryCapacity > 0 &&
+               materialTableSlotCount > 0);
+        const auto expectMaterialScratchStable = [&]() -> void
+        {
+            assert(scene.Raster.GetMaterialEntryScratchCapacity() == materialEntryScratchCapacity &&
+                   scene.Raster.GetSectionMaterialScratchCapacity() == sectionMaterialScratchCapacity &&
+                   scene.Raster.GetMaterialTableBuilder().GetEntryCapacity() == materialTableEntryCapacity &&
+                   scene.Raster.GetMaterialTableBuilder().GetIndexSlotCount() == materialTableSlotCount);
+        };
 
         // 同じフレーム（同じ通し番号）のあと 6 回のビューポート: 毎回別の組
         for (uint32_t viewport = 1; viewport < ViewportsPerFrame; ++viewport)
         {
             assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
             assert(CountBufferCreations(device, frameUniform) == viewport + 1);
+            expectMaterialScratchStable();
             assert(scene.Raster.GetProceduralChunkScratchCapacity() == proceduralScratchCapacity &&
                scene.Raster.GetSkinnedChunkScratchCapacity() == skinnedScratchCapacity);
         }
@@ -3432,6 +3447,7 @@ namespace
                scene.Raster.GetSkinnedChunkScratchCapacity() == skinnedScratchCapacity);
         }
         assert(CountBufferCreations(device, frameUniform) == ViewportsPerFrame);
+        expectMaterialScratchStable();
 
         // さらに次のフレームで 1 回多く Execute すると、その 1 回ぶんだけ増える
         scene.Context.RenderFrameSerial += 1;
@@ -3440,6 +3456,7 @@ namespace
             assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
         }
         assert(CountBufferCreations(device, frameUniform) == ViewportsPerFrame + 1);
+        expectMaterialScratchStable();
         assert(scene.Raster.GetProceduralChunkScratchCapacity() == proceduralScratchCapacity &&
                scene.Raster.GetSkinnedChunkScratchCapacity() == skinnedScratchCapacity);
 

@@ -97,10 +97,14 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
     public:
         explicit MaterialTable(uint32_t limit = MATERIAL_LIMIT);
 
-        /** @brief 空にする（上限は変えない） */
+        /** @brief 空にする（上限は変えない。件の配列と索引の容量は残し、次のフレームで確保し直さない） */
         void Clear();
 
-        /** @brief 材質を足して表の番号を返す。上限を超えて入らない材質は予備の番号を返す */
+        /**
+         * @brief 材質を足して表の番号を返す。上限を超えて入らない材質は予備の番号を返す
+         *
+         * 同じ値かどうかは、バイト列のハッシュを引く索引（開番地法）で探す。1 回の探索は件数に比例しない。
+         */
         uint32_t Add(const MaterialEntry& entry);
 
         /** @brief 表の件数の上限（予備の番号を含む） */
@@ -120,6 +124,18 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
          */
         Container::VariableArray<MaterialEntry> BuildGpuEntries() const;
 
+        /**
+         * @brief BuildGpuEntries と同じ並びを、渡された配列へ詰める（中身は置き換える）
+         *
+         * 渡した配列の容量を使い回すので、毎フレーム同じ配列を渡せば 2 フレーム目からは確保しない。
+         */
+        void BuildGpuEntriesInto(Container::VariableArray<MaterialEntry>& outEntries) const;
+
+        /** @brief 通常の材質の件の配列が持っている容量（毎フレームの確保をしない確認用） */
+        size_t GetEntryCapacity() const { return m_Entries.capacity(); }
+        /** @brief 同じ値を探す索引の枠の数（同上。2 の冪） */
+        size_t GetIndexSlotCount() const { return m_Slots.size(); }
+
     private:
         struct Stored
         {
@@ -129,10 +145,23 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
 
         static uint64_t HashEntry(const MaterialEntry& entry);
 
+        /** @brief 索引の枠の値。0 は空き、それ以外は「件の添え字 + 1」（溢れた件は OVERFLOW_BIT を足す） */
+        static constexpr uint32_t OVERFLOW_BIT = 0x80000000u;
+        static constexpr size_t INITIAL_SLOT_COUNT = 64;
+
+        /** @brief 同じ値の件を索引から探す。見つかれば枠の値（添え字 + 1、溢れた件は OVERFLOW_BIT つき）、無ければ 0 */
+        uint32_t FindEncoded(uint64_t hash, const MaterialEntry& entry) const;
+        /** @brief 件の配列へ足した件を索引へ登録する（足した後の件数が枠の半分を超えるなら、枠を倍にして全件を引き直す） */
+        void InsertEncoded(uint64_t hash, uint32_t encoded);
+        /** @brief 枠の数を倍にして、持っている件をすべて引き直す */
+        void GrowSlots();
+
         uint32_t m_Limit = MATERIAL_LIMIT;
         Container::VariableArray<MaterialEntry> m_Entries;
         Container::VariableArray<uint64_t> m_EntryHashes;
         Container::VariableArray<Stored> m_Overflowed;
+        // 同じ値の探索用の索引（枠の数は 2 の冪。Clear は枠を空にするだけで数は戻さない）
+        Container::VariableArray<uint32_t> m_Slots;
     };
 
 } // namespace NorvesLib::Core::Rendering::VisibilityBuffer

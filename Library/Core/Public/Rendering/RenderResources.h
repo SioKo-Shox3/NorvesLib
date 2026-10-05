@@ -251,7 +251,7 @@ namespace NorvesLib::Core::Rendering
         void AbortFrame();
         bool GetLifetimeSnapshot(SkinnedMeshHandle handle, SkinnedMeshGpuLifetimeSnapshot& outSnapshot) const;
         bool IsResident(SkinnedMeshHandle handle) const;
-        // 登録時に分けた128三角形以下の塊（未登録は false）
+        // 登録時に分けた128三角形以下の塊（未登録、または塊の作成に失敗したメッシュは false で、out は空）
         bool TryGetChunks(SkinnedMeshHandle handle, Container::VariableArray<MeshIndexChunk>& out) const;
         // 塊の作り方を差し替える（テスト用）
         void SetChunkBuilderForTesting(MeshIndexChunkBuilder builder);

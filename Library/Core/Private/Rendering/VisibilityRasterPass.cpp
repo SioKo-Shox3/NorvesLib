@@ -208,6 +208,8 @@ namespace NorvesLib::Core::Rendering
         m_FrameSlots.Clear();
         m_ProceduralChunkScratch = Container::VariableArray<MeshIndexChunk>{};
         m_SkinnedChunkScratch = Container::VariableArray<MeshIndexChunk>{};
+        m_MaterialEntryScratch = Container::VariableArray<VisibilityBuffer::MaterialEntry>{};
+        m_SectionMaterialScratch = Container::VariableArray<uint32_t>{};
         m_MegaPipeline.reset();
         m_MeshPipeline.reset();
         m_SkinnedPipeline.reset();
@@ -795,7 +797,8 @@ namespace NorvesLib::Core::Rendering
 
         // フレームの材質の表: MegaGeometry の区間 → 手続き → スキニングの順に、実物の材質を 0 から詰めた番号にする
         m_MaterialTable.Clear();
-        VariableArray<uint32_t> sectionMaterials;
+        VariableArray<uint32_t>& sectionMaterials = m_SectionMaterialScratch;
+        sectionMaterials.clear();
         if (bHasPlan && camera)
         {
             sectionMaterials.reserve(plan.Sections.size());
@@ -830,7 +833,8 @@ namespace NorvesLib::Core::Rendering
 
         m_FrameSlots.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
         FrameSlot& slot = m_FrameSlots.Acquire();
-        const VariableArray<VisibilityBuffer::MaterialEntry> materialEntries = m_MaterialTable.BuildGpuEntries();
+        m_MaterialTable.BuildGpuEntriesInto(m_MaterialEntryScratch);
+        const VariableArray<VisibilityBuffer::MaterialEntry>& materialEntries = m_MaterialEntryScratch;
         m_Stats.MaterialUnique = m_MaterialTable.GetUniqueCount();
         m_Stats.MaterialLimit = m_MaterialTable.GetLimit();
         m_Stats.MaterialOverflowed = m_MaterialTable.GetOverflowedCount();
@@ -1049,7 +1053,7 @@ namespace NorvesLib::Core::Rendering
         m_LastRecordTableBytes = tableBytes;
         m_LastMaterialTable = slot.MaterialTable;
         m_LastMaterialTableCount = static_cast<uint32_t>(materialEntries.size());
-        m_LastMaterialEntries = materialEntries;
+        m_LastMaterialEntries.assign(materialEntries.begin(), materialEntries.end());
         if (bHasMegaDraw)
         {
             m_LastMegaInstanceBuffer = plan.InstanceBuffer;

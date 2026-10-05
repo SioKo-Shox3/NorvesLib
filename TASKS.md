@@ -867,7 +867,7 @@
 - notes: 2026-10-06 VTG6-PRE-DEFAULT-HARDEN から分けた（元の項目の評価の残課題）。危険地帯（描画パス・寿命）。テストは標準ライブラリの型を使わず、配線を戻すと落ちる変異を確かめる。
 
 ## VTG6-HARDEN-MATERIAL-TABLE: 材質の表の毎フレームの費用（線形探索・確保）を減らす
-- status: todo
+- status: done
 - done-when: (6) `VisibilityMaterialTable.cpp` の `Add` の線形探索（描画数×材質数）と上限超えの一覧の線形探索をハッシュの索引にし、`VisibilityRasterPass` の `BuildGpuEntries()` と `sectionMaterials` の毎フレームの確保をやめる（パスのメンバの作業領域の再利用）。CPU のテストが、同じ材質は同じ番号・違う材質は違う番号・番号が 0 から詰まる・上限超えの扱いが今と同じであることと、2フレーム目に確保が増えないことを確かめる。既定の描画は変えない。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderResourcesDomainContractTest SkinnedRenderPathContractTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error --timeout 300 -R "^(RenderGraphCompileTest|MeshResourcesProceduralGpuTest|ComputeSkinningVulkanTest|MaterialTileClassifyVulkanTest|VisibilityResolveVulkanTest|SkinnedRenderPathContractTest)$"`

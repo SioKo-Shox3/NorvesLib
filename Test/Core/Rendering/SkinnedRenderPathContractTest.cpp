@@ -1552,6 +1552,8 @@ namespace
 #if NORVES_ENABLE_LOGGING
         assert(logCounter.Count == 1);
         logger.RemoveSink(&logCounter);
+        // この実行ファイルは他で Logger を初期化しないので、出力 None のまま残さず開始時の未初期化へ戻す
+        logger.Shutdown();
 #endif
 
         packet.Clear();

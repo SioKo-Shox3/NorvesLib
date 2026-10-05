@@ -317,7 +317,7 @@ namespace NorvesLib::Core::Rendering
         // 区切りの位置を与えないので失敗しないが、戻り値は必ず確かめる。
         // 失敗しても GBuffer・影の経路は頂点とインデックスだけで描けるので、メッシュは登録して塊だけを持たない
         // （登録しないと毎フレームやり直してエラーを出し、既定の GBuffer の経路からもメッシュが消える）。
-        // 塊を使うビジビリティバッファの側は、TryGetChunks が false のメッシュを自分で扱う。
+        // 塊を使うビジビリティバッファの側は、TryGetChunks が false のメッシュの塊を分け直して描く（分け直しも失敗したときだけ飛ばす）。
         entry.bChunksValid = m_ChunkBuilder ? m_ChunkBuilder(entry.IndexCount, entry.Chunks)
                                             : BuildMeshIndexChunks(entry.IndexCount, nullptr, 0, entry.Chunks);
         if (!entry.bChunksValid)
@@ -327,7 +327,7 @@ namespace NorvesLib::Core::Rendering
             {
                 m_bLoggedChunkFailure = true;
                 NORVES_LOG_WARNING("SkinnedMeshGpuStore",
-                                   "インデックスを塊に分けられないメッシュがあります。ビジビリティバッファへは描かず、GBuffer と影では描きます");
+                                   "インデックスを塊に分けられないメッシュがあります。GBuffer と影では描き続け、ビジビリティバッファは塊を分け直して描きます（分け直しも失敗したときだけ飛ばします）");
             }
         }
         entry.AssetLease = assetLease;

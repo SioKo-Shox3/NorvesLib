@@ -136,6 +136,12 @@ namespace NorvesLib::Core::Rendering
         size_t GetProceduralChunkScratchCapacity() const { return m_ProceduralChunkScratch.capacity(); }
         /** @brief スキニングのメッシュの塊の作業配列が持っている容量（同上） */
         size_t GetSkinnedChunkScratchCapacity() const { return m_SkinnedChunkScratch.capacity(); }
+        /** @brief 材質の表を GPU へ上げる並びの作業配列が持っている容量（同上） */
+        size_t GetMaterialEntryScratchCapacity() const { return m_MaterialEntryScratch.capacity(); }
+        /** @brief 区間から材質の表の番号への対応の作業配列が持っている容量（同上） */
+        size_t GetSectionMaterialScratchCapacity() const { return m_SectionMaterialScratch.capacity(); }
+        /** @brief フレームの材質の表（積み上げ）。件の配列・索引の容量の確認用 */
+        const VisibilityBuffer::MaterialTable& GetMaterialTableBuilder() const { return m_MaterialTable; }
 
     private:
         /** @brief 1回の描画（塊 1 つ） */
@@ -223,6 +229,9 @@ namespace NorvesLib::Core::Rendering
         // 手続き・スキニングの塊の作業配列（Collect*Chunks の間だけ使い、容量を毎フレーム使い回す）
         Container::VariableArray<MeshIndexChunk> m_ProceduralChunkScratch;
         Container::VariableArray<MeshIndexChunk> m_SkinnedChunkScratch;
+        // 材質の表を GPU へ上げる並びと、区間ごとの表の番号の作業配列（Execute の間だけ使い、容量を毎フレーム使い回す）
+        Container::VariableArray<VisibilityBuffer::MaterialEntry> m_MaterialEntryScratch;
+        Container::VariableArray<uint32_t> m_SectionMaterialScratch;
 
         RGTextureHandle m_IdHandle;
         RGResourceHandle m_DepthHandle;
