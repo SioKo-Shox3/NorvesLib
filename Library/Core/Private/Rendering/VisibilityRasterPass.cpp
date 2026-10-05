@@ -316,11 +316,12 @@ namespace NorvesLib::Core::Rendering
             pipelineDesc.rasterState.lineWidth = 1.0f;
 
             // 同じ値以下なら ID を書く（同じ式の位置は同じ深度になる）。GBuffer の描画（Less）と比較をそろえない理由:
-            //  - Debug（VisibilityBufferMode::Debug）は GBuffer が先に同じ形の深度を書くので、Less だと同じ深度の画素が
-            //    すべて落ち、ID が 1 つも書けない。LessOrEqual が必須。
-            //  - On は GBuffer が描かずクリアだけを行い、このパスだけが深度を書く。同じ深度（共有の辺・同一平面の面）では
-            //    後に描いた側が勝つ（GBuffer の Less は先に描いた側が勝つ）。パイプラインはモードごとに作り分けず、
-            //    差は共有の辺と同一平面の画素に限る。
+            //  - 解決を使わないとき（Debug と、On でも GetFallbackReason が予備を選んだとき）は、GBuffer が先に同じ式の位置の
+            //    深度を書き、このパスはその深度を Load して描く。Less だと手続きメッシュと MegaGeometry の同じ深度の画素の ID が
+            //    落ちる（スキニングは計算シェーダーで変形するので深度はビット単位では一致しない）。LessOrEqual が必須。
+            //  - 解決を使うときは GBuffer が描かずクリアだけを行い、このパスだけが深度を書く。同じ深度（共有の辺・同一平面の面）では
+            //    後に描いた側が勝つ（GBuffer の Less は先に描いた側が勝つ）。塗りでは top-left 規則で共有の辺が二重に塗られないので
+            //    起動画面の差は 0〜2 階調だが、ワイヤーフレームの表示では材質の境目の線の色が入れ替わる（約 50 階調）。
             pipelineDesc.depthStencilState.depthTestEnable = true;
             pipelineDesc.depthStencilState.depthWriteEnable = true;
             pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::LessOrEqual;
