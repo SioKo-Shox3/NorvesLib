@@ -1,6 +1,5 @@
 ﻿#include "Rendering/SkinningComputePass.h"
 
-#include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -45,6 +44,12 @@ namespace NorvesLib::Core::Rendering
             }
             return desc;
         }
+
+        // 1 インスタンスの入力の束縛（SKINNING_MAX_BINDING_BYTES）に収まる頂点数の dispatch は、x のグループ数の上限に必ず収まる。
+        // y へ広げる経路（ComputeGroupCounts）は、グループ数の上限の小さい GPU とテストでだけ通る。
+        static_assert(SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedMeshVertex) / SkinningCompute::ThreadsPerGroup <=
+                          SKINNING_MAX_GROUP_COUNT,
+                      "入力の束縛に収まる 1 インスタンスの dispatch が x のグループ数の上限を超える");
 
         // 束縛する範囲は SKINNING_MAX_BINDING_BYTES 以下に確かめてあるので、uint32_t に収まる
         uint32_t BindSize(const RHI::BufferPtr& buffer)
@@ -325,19 +330,15 @@ namespace NorvesLib::Core::Rendering
             m_Plan.push_back(planned);
             totalVertices += vertexCount;
         }
-        if (m_DroppedInstanceCount > 0)
+        // 外した数は RenderingCoordinator が毎フレームの統計（SkinningComputeDroppedInstances）へ設定する。ログは初回だけ。
+        if (m_DroppedInstanceCount > 0 && !m_bLoggedDrop)
         {
-            NORVES_STAT_ADD(NorvesLib::Debug::StatsManager::Get().GetRenderingStats().SkinningComputeDroppedInstances,
-                            m_DroppedInstanceCount);
-            if (!m_bLoggedDrop)
-            {
-                m_bLoggedDrop = true;
-                NORVES_LOG_WARNING("SkinningComputePass",
-                                   "頂点の合計の上限（%u 頂点）か束縛の上限（1 インスタンス %llu 頂点）を超えたので、%u 個のインスタンスを計算スキニングから外した（以降は統計にだけ出す）",
-                                   m_MaxOutputVertices,
-                                   static_cast<unsigned long long>(MaxInstanceVertices),
-                                   m_DroppedInstanceCount);
-            }
+            m_bLoggedDrop = true;
+            NORVES_LOG_WARNING("SkinningComputePass",
+                               "計算スキニングへ載せられないインスタンスを %u 個外した（頂点の合計の上限 %u 頂点、1 インスタンスの上限 %llu 頂点）。数は毎フレーム統計の SkinningComputeDroppedInstances に出す（このログは 1 回だけ）",
+                               m_DroppedInstanceCount,
+                               m_MaxOutputVertices,
+                               static_cast<unsigned long long>(MaxInstanceVertices));
         }
         if (m_Plan.empty() || totalVertices == 0)
         {

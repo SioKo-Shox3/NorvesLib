@@ -655,7 +655,7 @@
 - notes: 2026-10-05 親が足した（VTG6-COMPUTE-SKINNING の評価の残課題。同じ SceneView が1フレームに3つ以上のビューポートを描くと、3回目の `BeginFrame` が1回目の枠の位置に戻り、提出前の dispatch の UBO と descriptor set を上書きする）。MegaGeometryPass は既定で有効なので、既定の経路の撮影で一致を確かめる。危険地帯（RenderThread・同期・寿命）。
 
 ## VTG6-SKINNING-HARDEN: 計算シェーダーのスキニングの閾値・上限・継続の検査を整える
-- status: doing
+- status: done
 - done-when: (1) `skinning_compute.comp` の `NormalMatrixOf` の特異と見なす閾値（1e-6）を `MatrixUtils::CreateNormalMatrix` の `Constants::EPSILON`（1.19e-7）にそろえ、コメントを事実に合わせる。`ComputeSkinningVulkanTest` の参照（198 行付近の `TransformNormal`）も同じ閾値にし、|det| が 1.19e-7 以上 1e-6 未満の骨（一様スケール 0.009 など）のケースを足す。(2) `SkinningComputePass.cpp`（241 行付近）が頂点の合計が上限を超えると残りのインスタンスを黙って捨てるのをやめ、捨てた数を `LOG` で1回と統計（`Debug/Stats.h`）に出す。1本の束縛が `maxStorageBufferRange` を超えないこと、1インスタンスの dispatch の x が 65535 を超えないこと（超えるなら y に広げるか分ける）を確かめる。(3) `Declare`/`Execute` の継続の検査を足す: 2つ以上のインスタンスの詰め方（2つ目以降の `VertexBase`）、前のフレームのパレットが無いときに今の値で代用すること、インスタンス描画のものを外すこと（`RenderGraphCompileTest` か `ComputeSkinningVulkanTest` の側）。(4) `ComputeSkinningVulkanTest.cpp`（176 行付近）の `Math::Matrix4x4::values` への memcpy を Math の抽象 API に置き換える（行列の要素を直接触らない方針）。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(ComputeSkinningVulkanTest|RenderingVelocitySkinnedVulkanTest|RenderGraphCompileTest)$"`

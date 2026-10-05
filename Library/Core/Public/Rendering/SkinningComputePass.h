@@ -196,8 +196,9 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 最後の Declare が、頂点の合計の上限か束縛の大きさの上限のために計算スキニングから外したインスタンスの数
          *
-         * 外したインスタンスは、このパスの出力に載らない（GetInstances() にも入らない）。数は統計
-         * （RenderingStats::SkinningComputeDroppedInstances）にも足し、ログは初めて外したときに 1 回だけ出す。
+         * 外したインスタンスは、このパスの出力に載らない（GetInstances() にも入らない）。毎回の Declare で数え直す
+         * （累計ではない）。RenderingCoordinator がフレームの統計（RenderingStats::SkinningComputeDroppedInstances）へ
+         * 設定する。ログはパスの寿命で初めて外したときに 1 回だけ出す。
          */
         uint32_t GetDroppedInstanceCount() const { return m_DroppedInstanceCount; }
 

@@ -33,6 +33,8 @@
 #include "Rendering/ViewRenderContext.h"
 #include "Test/Core/Rendering/GeometryUploadTestSupport.h"
 #include "Container/PointerTypes.h"
+#include "Debug/Stats.h"
+#include "Logging/Logger.h"
 #include "Math/MatrixUtils.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -50,6 +52,9 @@
 #include <cstddef>
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <iostream>
 #include <utility>
 #ifdef _MSC_VER
@@ -59,6 +64,8 @@
 using namespace NorvesLib::Core::Rendering;
 namespace Container = NorvesLib::Core::Container;
 namespace RHI = NorvesLib::RHI;
+namespace DebugStats = NorvesLib::Debug;
+namespace Logging = NorvesLib::Core::Logging;
 
 namespace
 {
@@ -2551,6 +2558,18 @@ namespace
         assert(result.bSuccess);
     }
 
+    // RunSkinningPassScene の後の 2 フレーム目以降。同じ描画の構成のまま、グラフを組み直して Declare・Execute をやり直す
+    void RunSkinningPassNextFrame(SkinningPassScene& scene, uint64_t frameIndex)
+    {
+        scene.Pool.EndFrame();
+        scene.Pool.BeginFrame(frameIndex);
+        scene.Graph.BeginFrame(frameIndex);
+        scene.Graph.AddPass(&scene.Skinning);
+        assert(scene.Graph.Compile(scene.Context));
+        const RenderGraphExecutionResult result = scene.Graph.ExecuteWithResult(scene.Context);
+        assert(result.bSuccess);
+    }
+
     void ShutdownSkinningPassScene(SkinningPassScene& scene)
     {
         scene.Skinning.Shutdown();
@@ -2675,6 +2694,114 @@ namespace
         assert(fitting.Skinning.GetDroppedInstanceCount() == 0);
         assert(fitting.Skinning.GetInstances().size() == 2);
         ShutdownSkinningPassScene(fitting);
+    }
+
+#if NORVES_ENABLE_LOGGING
+    // 計算スキニングが出す警告（カテゴリ SkinningComputePass）の数を数える
+    struct SkinningWarningCounter final : Logging::ILogSink
+    {
+        uint32_t Count = 0;
+
+        void OnLog(const Logging::LogEntry& entry) override
+        {
+            if (entry.level == Logging::LogLevel::Warning && entry.category == "SkinningComputePass")
+            {
+                ++Count;
+            }
+        }
+    };
+#endif
+
+    // 外したインスタンスの数は Declare のたびに数え直し（累計にしない）、ログはパスの寿命で 1 回だけ出す。
+    // 数は統計の欄・ToString・CSV に出る
+    void TestSkinningComputePassDropCountIsPerFrameAndLoggedOnce()
+    {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        SkinningWarningCounter warnings;
+        logger.AddSink(&warnings);
+#endif
+
+        SkinningPassScene scene;
+        AddSkinnedCommand(scene, 1, 5, 1);
+        AddSkinnedCommand(scene, 2, 7, 1); // 5 + 7 > 8: 外れる
+        AddSkinnedCommand(scene, 3, 3, 1); // 5 + 3 = 8: 収まる
+        AddSkinnedCommand(scene, 4, 1, 1); // 8 + 1 > 8: 外れる
+
+        RunSkinningPassScene(scene, 8);
+        assert(scene.Skinning.GetDroppedInstanceCount() == 2);
+#if NORVES_ENABLE_LOGGING
+        assert(warnings.Count == 1);
+#endif
+
+        // 2 フレーム目: 同じ構成でも数は 2 のまま（累計の 4 にならない）、ログは増えない
+        RunSkinningPassNextFrame(scene, 1);
+        assert(scene.Skinning.GetDroppedInstanceCount() == 2);
+        assert(scene.Skinning.GetInstances().size() == 2);
+#if NORVES_ENABLE_LOGGING
+        assert(warnings.Count == 1);
+#endif
+
+#if NORVES_ENABLE_STATS
+        // 統計: パスの数を欄へ設定して UpdateRenderingStats へ渡すと、フレームの後も欄が残り、ToString と CSV に出る
+        DebugStats::StatsManager& stats = DebugStats::StatsManager::Get();
+        const char* tracePath = "RenderGraphCompileTest.skinning.trace.csv";
+        std::filesystem::remove(tracePath);
+        stats.ResetAll();
+        assert(stats.StartTrace(tracePath));
+        stats.BeginFrame(7, 0.016f);
+        DebugStats::RenderingStats frameStats;
+        frameStats.SkinningComputeDroppedInstances = scene.Skinning.GetDroppedInstanceCount();
+        stats.UpdateRenderingStats(frameStats);
+        assert(stats.GetRenderingStats().SkinningComputeDroppedInstances == 2);
+        const std::string text = frameStats.ToString().c_str();
+        assert(text.find("droppedInstances=2") != std::string::npos);
+        stats.EndFrame();
+        stats.StopTrace();
+        assert(stats.GetRenderingStats().SkinningComputeDroppedInstances == 2);
+
+        std::ifstream traceFile(tracePath);
+        std::string header;
+        std::getline(traceFile, header);
+        assert(header.find(",SkinningComputeDroppedInstances") != std::string::npos);
+        bool bFoundFrameLine = false;
+        for (std::string line; std::getline(traceFile, line);)
+        {
+            if (line.rfind("Frame,7,", 0) == 0)
+            {
+                bFoundFrameLine = true;
+                // 最後の欄が外したインスタンスの数
+                assert(line.size() >= 2 && line.compare(line.size() - 2, 2, ",2") == 0);
+            }
+        }
+        assert(bFoundFrameLine);
+        traceFile.close();
+        stats.ResetAll();
+        std::filesystem::remove(tracePath);
+#endif
+
+        // 3 フレーム目: 上限を上げれば全部収まり、数は 0 に戻る
+        scene.Skinning.SetMaxOutputVertices(100);
+        RunSkinningPassNextFrame(scene, 2);
+        assert(scene.Skinning.GetDroppedInstanceCount() == 0);
+        assert(scene.Skinning.GetInstances().size() == 4);
+
+        // 4 フレーム目: 上限を戻せばまた外れる。ログはパスの寿命で 1 回のまま
+        scene.Skinning.SetMaxOutputVertices(8);
+        RunSkinningPassNextFrame(scene, 3);
+        assert(scene.Skinning.GetDroppedInstanceCount() == 2);
+#if NORVES_ENABLE_LOGGING
+        assert(warnings.Count == 1);
+        logger.RemoveSink(&warnings);
+#endif
+        ShutdownSkinningPassScene(scene);
     }
 
     // dispatch のグループ数（1 次元目に収まらなければ 2 次元目へ広げる）と、束縛が maxStorageBufferRange の保証された
@@ -8192,6 +8319,7 @@ int main()
     TestSkinningComputePassTransitionsDeclaredBuffersToGenericRead();
     TestSkinningComputePassPacksInstancesAndSubstitutesMissingPrevious();
     TestSkinningComputePassCountsInstancesDroppedByVertexLimit();
+    TestSkinningComputePassDropCountIsPerFrameAndLoggedOnce();
     TestSkinningComputeGroupCountsAndBindingLimit();
     TestFrameUseRingGivesDistinctUsesWithinAFrameAndReusesNextFrame();
     TestComputePassFrameResourcesAreNotReusedWithinAFrame();
