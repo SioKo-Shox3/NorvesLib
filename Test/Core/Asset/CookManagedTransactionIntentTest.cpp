@@ -232,27 +232,21 @@ namespace IntentTest
             CookManagedStorageAnchor storage{f.Input.Draft.Anchor.StoreId, f.Input.Draft.Anchor.Workspace,
                                              f.Input.Draft.Anchor.Store, f.Input.Draft.Anchor.Pending};
             CookManagedTransactionEnvelope recovery;
-            if (bBootstrap)
-            {
-                CHECK(ParseCookManagedRecoveryEnvelope(Bytes(wire), storage, recovery, f.Error));
-                auto controls = f.Docs;
-                controls.ManifestAfter = {};
-                CookManagedRecoveryReadScope scope;
-                scope.RootLeaf = "held";
-                CHECK(BindCookManagedRecoveryReadScope(recovery, controls, scope, f.Error) &&
-                      scope.RootLeaf == "Runtime" && scope.ManifestName == "manifest.json");
-                auto changed = controls;
-                changed.Controls[3].ObservedObject = Id(777);
-                scope.RootLeaf = "held";
-                CHECK(!BindCookManagedRecoveryReadScope(recovery, changed, scope, f.Error) && scope.RootLeaf == "held");
-                storage.Store = Id(778);
-                CHECK(!ParseCookManagedRecoveryEnvelope(Bytes(wire), storage, recovery, f.Error) && recovery.IsValid());
-            }
-            else
-            {
-                CHECK(!ParseCookManagedRecoveryEnvelope(Bytes(wire), storage, recovery, f.Error) &&
-                      !recovery.IsValid());
-            }
+            CHECK(ParseCookManagedRecoveryEnvelope(Bytes(wire), storage, recovery, f.Error));
+            auto controls = f.Docs;
+            controls.ManifestAfter = {};
+            CookManagedRecoveryReadScope scope;
+            scope.RootLeaf = "held";
+            CHECK(BindCookManagedRecoveryReadScope(recovery, controls, scope, f.Error) &&
+                  scope.RootLeaf == "Runtime" && scope.ManifestName == "manifest.json" &&
+                  scope.Mode == (bBootstrap ? CookManagedIntentMode::Bootstrap : CookManagedIntentMode::Update));
+            CHECK(recovery.IsUpdate() == !bBootstrap);
+            auto changed = controls;
+            changed.Controls[3].ObservedObject = Id(777);
+            scope.RootLeaf = "held";
+            CHECK(!BindCookManagedRecoveryReadScope(recovery, changed, scope, f.Error) && scope.RootLeaf == "held");
+            storage.Store = Id(778);
+            CHECK(!ParseCookManagedRecoveryEnvelope(Bytes(wire), storage, recovery, f.Error) && recovery.IsValid());
         }
         // 値所有と入力寿命。envelopeは入力wireの領域を保持しない。
         wire.clear();

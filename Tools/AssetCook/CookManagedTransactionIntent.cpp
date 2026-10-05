@@ -1367,7 +1367,7 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             const auto& a = candidate.m_Value.Anchor;
-            if (candidate.m_Value.Mode != CookManagedIntentMode::Bootstrap || a.StoreId != storage.StoreId ||
+            if (a.StoreId != storage.StoreId ||
                 !IdEqual(a.Workspace, storage.Workspace) || !IdEqual(a.Store, storage.Store) ||
                 !IdEqual(a.Pending, storage.Pending))
             {
@@ -1389,7 +1389,7 @@ namespace NorvesLib::Tools::AssetCook
         error.clear();
         try
         {
-            if (!envelope.m_bValid || envelope.m_Value.Mode != CookManagedIntentMode::Bootstrap)
+            if (!envelope.m_bValid)
             {
                 return Fail(error, "recovery_envelope_required");
             }
@@ -1403,6 +1403,8 @@ namespace NorvesLib::Tools::AssetCook
             candidate.ManifestName = envelope.m_Value.Anchor.Binding.ManifestName;
             candidate.Root = envelope.m_Value.Root;
             candidate.ManifestAfter = envelope.m_Value.ManifestAfter;
+            candidate.ManifestBefore = envelope.m_Value.ManifestBefore;
+            candidate.Mode = envelope.m_Value.Mode;
             out = std::move(candidate);
             return true;
         }

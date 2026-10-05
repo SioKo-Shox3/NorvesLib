@@ -93,6 +93,8 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::AnsiString RootLeaf, ManifestName;
         CookManagedObjectId Root;
         CookManagedFileImage ManifestAfter;
+        CookManagedBeforeImage ManifestBefore;
+        CookManagedIntentMode Mode = CookManagedIntentMode::Bootstrap;
     };
     class CookManagedTransactionIntent;
     class CookManagedTransactionEnvelope;
@@ -116,7 +118,7 @@ namespace NorvesLib::Tools::AssetCook
                                                          const CookManagedControlDocuments& documents,
                                                          CookManagedTransactionIntent& out,
                                                          Core::Container::AnsiString& error);
-    // bootstrap復旧専用。live header/store/pendingへ先に束縛し、元sourceのownerを再導出しない。
+    // bootstrap/updateの固定pending復旧専用。live header/store/pendingへ先に束縛し、元sourceのownerを再導出しない。
     // 固定controlを読み終えるまではroot/manifestのhintも公開しない。新cookの所有許可ではない。
     [[nodiscard]] bool ParseCookManagedRecoveryEnvelope(Core::Container::Span<const uint8_t> bytes,
                                                         const CookManagedStorageAnchor& independentStorage,
@@ -209,6 +211,11 @@ namespace NorvesLib::Tools::AssetCook
         [[nodiscard]] bool IsValid() const noexcept
         {
             return m_bValid;
+        }
+        // 固定control slotの組だけを選ぶ。任意pathや書込権限は公開しない。
+        [[nodiscard]] bool IsUpdate() const noexcept
+        {
+            return m_bValid && m_Value.Mode == CookManagedIntentMode::Update;
         }
         [[nodiscard]] Core::Container::AnsiStringView ClaimId() const noexcept
         {

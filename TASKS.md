@@ -2512,3 +2512,9 @@
 - done-when: 未確保とムーブ元のTStringのdata/c_strが正しい文字型の静的ゼロ終端を返し、非空/割当/所有権/APIを変えない。
 - verify: 5文字型・既存alias・default/null/empty/clear/shrink/move/reuse、printf診断、Windows34CPU・17中断復旧・89byte互換。Busy診断をescapeなしstrict UTF8で読む。
 - stop-when: iterator/operator[]の別契約やTStringViewを同時変更する、テストだけで不正なc_strを隠す。
+
+## G2-S6-MANAGED-UPDATE-EXECUTOR: 既存rootの固定inventoryを増分更新し復旧する
+- status: doing
+- done-when: 共通DecideCookCacheだけでNoChange/Cookを決め、既存claim/root/Skip/unlistedを保持する。変更package・manifest・state・indexのexact before/afterを固定pendingで分類し、receipt最後のcommit/条件付きrollbackとsource不在復旧を接続する。
+- verify: 共通controller抽出後のbootstrap契約不変、変更なし世代上限、manifest-only更新、欠落/破損package、親置換/別ID/unknown slot拒否、28更新境界とabandonedの実中断、既存34CPU/17中断/89byte/5診断。
+- stop-when: 所有inventoryを追加除去する、親directoryを再作成する、root全体を交換/走査してunlistedを採用する、beforeを再serializeする、source不在復旧でsourceを読む、CLI統合やspec v2を同時に始める。

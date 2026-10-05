@@ -4,6 +4,11 @@ add_library(AssetCookLib STATIC
     CookStateFile.h
     CookStateFileTestAccess.h
     CookManagedBootstrap.cpp
+    CookManagedUpdate.cpp
+    CookManagedUpdate.h
+    CookManagedUpdateTestAccess.h
+    CookManagedTransactionController.cpp
+    CookManagedTransactionController.h
     CookManagedBootstrap.h
     CookManagedBootstrapTestAccess.h
     CookManagedStoreNative.h

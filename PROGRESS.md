@@ -832,3 +832,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-EMPTY-STRING検証束の修正: 8a25b8de/run37289884552ではAssetCook/CookedMeshTestと新規StringEmptyTestソースがcompile成功したが、新たにビルドしたLoggerSinkTest内の既存Input試験4fileで47件のcompile errorが発生し、実行gateは未到達。入力系の別修正へ範囲を広げず、StringEmptyTestを既存UnicodeTextTestと同じCookedMeshTest束へ移す。型修正と試験本文・34CPU条件・byte比較は不変。
 
 - G2-S6-EMPTY-STRING受入: abc68946/run37292183322で実Windows34CPUが成功。5文字型の空/clear/shrink/move/reuse/printf回帰、raw LastTestのstrict UTF8とBusy空診断1行、bootstrap17実中断/5条件flag全1を確認。既存79+10出力の直接byte一致、2spec×2/16拒否、5診断、3ZIP/API digest/CRC/inventory、MSVC/CNGを独立検証しrootで再実行した。旧受入/失敗証拠は保持。cross-session実測は従来どおり未実行。既存Inputテストの別compile不具合は保留し、既存rootの増分更新へ進む。
+
+- G2-S6-MANAGED-UPDATE-EXECUTOR開始: fixed inventoryの既存rootを、共通cache判断とfile単位の条件付き公開へ接続する。NoChangeはstage作成/世代加算より先に判定し、allSkipでもmanifest差があればmanifest-only更新する。native transaction/controllerをprivate実装へ寄せ、Bootstrap/Updateは準備を分離する。復旧は固定control検証後だけ相対対象を解決し、未関係fileとroot IDを保持する。
+
+- G2-S6-MANAGED-UPDATE-EXECUTOR検証準備: native transactionをprivate controllerへ抽出し、NoChange/manifest-only/固定inventory更新とsource非依存復旧を接続。新試験は2Cook/1Skipで16公開＋12rollback＋abandonedの29実process終了、root/Skip/unlisted/sibling/orphan保持とbefore復元を反証する。静的レビュー2回はPASS、比較器12+4件×通常/最適化、391 literalの単独compile、BOM/CRLF差分検査が成功。35CPUと既存79+10byteの実Windows gateは未実行。
