@@ -187,7 +187,12 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 画面の外の画素は ID の画像の外を読むことになるので、画面は ID のテクスチャの大きさ以下であること。
         // 画面がタイルの数に収まり、出力のバッファが Layout の大きさ以上であること
+        if (dispatch.Width > dispatch.IdTexture->GetWidth() || dispatch.Height > dispatch.IdTexture->GetHeight())
+        {
+            return false;
+        }
         const uint32_t tilesX = (dispatch.Width + MaterialTiles::TILE_SIZE - 1) / MaterialTiles::TILE_SIZE;
         const uint32_t tilesY = (dispatch.Height + MaterialTiles::TILE_SIZE - 1) / MaterialTiles::TILE_SIZE;
         if (tilesX != layout.TilesX || tilesY != layout.TilesY ||
@@ -209,8 +214,9 @@ namespace NorvesLib::Core::Rendering
         const uint32_t stages[DispatchesPerRecord] = {StageCount, StageOffsets, StageScatter};
         for (uint32_t index = 0; index < DispatchesPerRecord; ++index)
         {
-            const uint32_t params[8] = {dispatch.Width,       dispatch.Height, layout.TilesX, layout.TilesY,
-                                        layout.MaxMaterials,  layout.ListCapacity, stages[index], 0u};
+            const uint32_t params[8] = {dispatch.Width,      dispatch.Height,     layout.TilesX,
+                                        layout.TilesY,       layout.MaxMaterials, layout.ListCapacity,
+                                        stages[index],       layout.GroupCountXLimit};
             Use& use = uses[index];
             use.Uniform->Update(params, ParamsBytes);
             use.DescriptorSet->BindTexture(0, dispatch.IdTexture);
@@ -417,7 +423,8 @@ namespace NorvesLib::Core::Rendering
             dispatch.Layout = MaterialTiles::ComputeLayout(dispatch.Width,
                                                            dispatch.Height,
                                                            m_Layout.MaxMaterials,
-                                                           m_Layout.ListCapacity / m_Layout.TileCount);
+                                                           m_Layout.ListCapacity / m_Layout.TileCount,
+                                                           m_Layout.GroupCountXLimit);
         }
 
         m_Classify.BeginFrame(m_FrameCounter++);

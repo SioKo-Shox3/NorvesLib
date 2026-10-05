@@ -1951,6 +1951,8 @@ namespace
         LinkedToRaster,
         /** @brief 記録の表の取り出し元を渡さない（分類できないときの安全側の動き） */
         WithoutRaster,
+        /** @brief SceneView と同じく、記録の表の取り出し元を渡してグラフへ足すが、有効にしない（既定のまま） */
+        AddedDisabled,
     };
 
     // bVisibilityPlan=false は --visibility-buffer=off（MegaGeometryPass が描画の写しを作らず、VisibilityRasterPass も足さない）
@@ -2046,13 +2048,20 @@ namespace
             scene.Graph.AddPass(&scene.Raster);
             if (classifyMode != ClassifyMode::None)
             {
-                scene.Classify.SetEnabled(true);
-                if (classifyMode == ClassifyMode::LinkedToRaster)
+                if (classifyMode != ClassifyMode::AddedDisabled)
+                {
+                    scene.Classify.SetEnabled(true);
+                }
+                if (classifyMode == ClassifyMode::LinkedToRaster || classifyMode == ClassifyMode::AddedDisabled)
                 {
                     scene.Classify.SetRasterPass(&scene.Raster);
                 }
                 assert(scene.Classify.Initialize(context));
-                scene.Graph.AddPass(&scene.Classify);
+                // View::Render と同じく、無効なパスはグラフへ足さない
+                if (scene.Classify.IsEnabled())
+                {
+                    scene.Graph.AddPass(&scene.Classify);
+                }
             }
         }
         assert(scene.Graph.Compile(context));
@@ -2180,7 +2189,10 @@ namespace
         assert(layout.TilesX == 16 && layout.TilesY == 8 && layout.TileCount == 128);
         assert(layout.MaxMaterials == MaterialTiles::DEFAULT_MAX_MATERIALS);
         assert(layout.ListCapacity == 128 * MaterialTiles::MAX_MATERIALS_PER_TILE);
-        assert(layout.ArgsBytes() == static_cast<uint64_t>(MaterialTiles::DEFAULT_MAX_MATERIALS) * 16);
+        assert(layout.ArgsBytes() ==
+               static_cast<uint64_t>(MaterialTiles::DEFAULT_MAX_MATERIALS) * MaterialTiles::ARGS_STRIDE_BYTES);
+        // 引数の x は実機が保証する上限（65535）以下に抑える。超える分は y へ広げる
+        assert(layout.GroupCountXLimit == MaterialTiles::MAX_GROUP_COUNT_X);
 
         // 数え始める前に、引数と統計だけを 0 にする（一覧とカーソルは分類が書く範囲しか読まれない）
         bool bArgsFilled = false;
@@ -2270,8 +2282,8 @@ namespace
         ShutdownVisibilityRasterScene(scene);
     }
 
-    // 材質のタイル分類を足さない構成（既定）では、資源も dispatch も増えない
-    void TestMaterialTileClassifyAbsentByDefault()
+    // 材質のタイル分類を足さない構成では、資源も dispatch も増えない
+    void TestMaterialTileClassifyAbsentWhenNotAdded()
     {
         VisibilityRasterScene scene;
         RunVisibilityRasterScene(scene, true, true);
@@ -2279,6 +2291,22 @@ namespace
         assert(scene.CommandList.DispatchCount == 10);
         assert(scene.CommandList.MaterialTileFills.empty());
         assert(!scene.Classify.GetLayout().IsValid());
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 実際の既定: SceneView は --visibility-buffer=on|debug でパスを View へ足すが、有効にしない。
+    // View::Render は無効なパスをグラフへ足さないので、有効にするまでは資源も dispatch も増えず、起動画面の描画を変えない。
+    // パスの生成時の既定が無効でなくなると、グラフへ足されて 4 パスになりこのテストが落ちる
+    void TestMaterialTileClassifyAddedButDisabledByDefault()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::AddedDisabled);
+        assert(!scene.Classify.IsEnabled());
+        assert(scene.Graph.GetLastExecutedPassCount() == 3);
+        assert(scene.CommandList.DispatchCount == 10);
+        assert(scene.CommandList.MaterialTileFills.empty());
+        assert(!scene.Classify.GetLayout().IsValid());
+        assert(!scene.Classify.WasClassified());
         ShutdownVisibilityRasterScene(scene);
     }
 
@@ -7594,7 +7622,8 @@ int main()
     TestVisibilityRasterOnRecordsMegaDrawsAndIdPass();
     TestMaterialTileClassifyDispatchesAndPublishesArgs();
     TestMaterialTileClassifyWithoutRecordTableClearsArgs();
-    TestMaterialTileClassifyAbsentByDefault();
+    TestMaterialTileClassifyAbsentWhenNotAdded();
+    TestMaterialTileClassifyAddedButDisabledByDefault();
     TestVisibilityRasterOnSinglePassMegaGeometry();
     TestVisibilityRasterOffKeepsExistingMegaGeometryRecording();
     TestVisibilityRasterWithoutGBufferDepthDoesNothing();

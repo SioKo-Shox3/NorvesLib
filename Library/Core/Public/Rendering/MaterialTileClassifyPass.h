@@ -7,8 +7,14 @@
 //   - 材質ごとの間接 dispatch の引数（VkDispatchIndirectCommand と同じ並び: x = その材質のタイルの数、y = z = 1、
 //     w = 一覧の中の先頭位置）
 // を作る計算シェーダー（material_tile_classify.comp）のパス。空の画素（ID = 0）だけのタイルはどの材質にも入らない。
-// 材質の解決はこの引数で材質ごとに 1 回ずつ間接 dispatch し、グループ番号 g のタイルを
-// 一覧[引数.w + g] から引く（引数は材質の番号 m の分が 16 バイト × m の位置）。
+//
+// 引数は材質の番号 m の分が ARGS_STRIDE_BYTES × m の位置から 8 語（ARG_* の添字）:
+//   x = min(タイルの数, MAX_GROUP_COUNT_X)、y = ceil(タイルの数 / MAX_GROUP_COUNT_X)（タイルが 0 個でも 1）、z = 1、
+//   一覧の先頭位置、タイルの数、残りは 0。x は Vulkan が保証する maxComputeWorkGroupCount[0] の最小値（65535）以下に抑え、
+//   超える分は y に広げる（4K のタイル数 129600 は 1 材質だけでも x に収まらない）。
+// 材質の解決はこの引数で材質ごとに 1 回ずつ間接 dispatch し、グループの番号 g = WorkGroupID.y * MAX_GROUP_COUNT_X +
+// WorkGroupID.x を求め、g >= タイルの数のグループは何もせず return する。それ以外は一覧[一覧の先頭位置 + g] のタイルを処理する
+// （y > 1 のとき x は MAX_GROUP_COUNT_X に等しいので、g = WorkGroupID.y * 引数.x + WorkGroupID.x でもよい）。
 
 #include "Container/Containers.h"
 #include "Rendering/IViewPass.h"
@@ -38,8 +44,17 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t MAX_MATERIALS_PER_TILE = TILE_SIZE * TILE_SIZE;
         /** @brief 1 フレームで分けられる材質の番号の数（番号がこれ以上の材質はどのタイルにも入れない） */
         constexpr uint32_t DEFAULT_MAX_MATERIALS = 1024;
-        /** @brief 引数 1 つ（VkDispatchIndirectCommand + 一覧の先頭位置）のバイト数 */
-        constexpr uint32_t ARGS_STRIDE_BYTES = 16;
+        /** @brief 間接 dispatch の 1 次元目のグループ数の上限（Vulkan が保証する maxComputeWorkGroupCount[0] の最小値） */
+        constexpr uint32_t MAX_GROUP_COUNT_X = 65535;
+        /** @brief 引数 1 つ（VkDispatchIndirectCommand + 一覧の先頭位置 + タイルの数 + 予約 3 語）の語数とバイト数 */
+        constexpr uint32_t ARGS_STRIDE_WORDS = 8;
+        constexpr uint32_t ARGS_STRIDE_BYTES = ARGS_STRIDE_WORDS * sizeof(uint32_t);
+        /** @brief 引数の語の添字（シェーダーの定数と同じ並び） */
+        constexpr uint32_t ARG_GROUP_X = 0;
+        constexpr uint32_t ARG_GROUP_Y = 1;
+        constexpr uint32_t ARG_GROUP_Z = 2;
+        constexpr uint32_t ARG_LIST_OFFSET = 3;
+        constexpr uint32_t ARG_TILE_COUNT = 4;
         /** @brief 統計の語の数（シェーダーの stats と同じ並び） */
         constexpr uint32_t STATS_WORD_COUNT = 8;
         constexpr uint32_t STATS_BYTES = STATS_WORD_COUNT * sizeof(uint32_t);
@@ -53,27 +68,36 @@ namespace NorvesLib::Core::Rendering
             uint32_t MaxMaterials = 0;
             /** @brief 一覧に置けるタイルの番号の数（材質をまたいだ合計） */
             uint32_t ListCapacity = 0;
+            /** @brief 引数の x の上限（実機では MAX_GROUP_COUNT_X。小さくして、y へ広げる動きを試せる） */
+            uint32_t GroupCountXLimit = MAX_GROUP_COUNT_X;
 
             uint64_t ArgsBytes() const { return static_cast<uint64_t>(MaxMaterials) * ARGS_STRIDE_BYTES; }
             uint64_t ListBytes() const { return static_cast<uint64_t>(ListCapacity) * sizeof(uint32_t); }
             uint64_t CursorsBytes() const { return static_cast<uint64_t>(MaxMaterials) * sizeof(uint32_t); }
-            bool IsValid() const { return TileCount != 0 && MaxMaterials != 0 && ListCapacity != 0; }
+            bool IsValid() const
+            {
+                return TileCount != 0 && MaxMaterials != 0 && ListCapacity != 0 && GroupCountXLimit != 0 &&
+                       GroupCountXLimit <= MAX_GROUP_COUNT_X;
+            }
         };
 
         /**
          * @brief 画面の大きさから、タイルの数と一覧の大きさを決める
          * @param maxEntriesPerTile 1 タイルが一覧へ入れる材質の数の見込み。MAX_MATERIALS_PER_TILE なら一覧が足りなくなることはない
+         * @param groupCountXLimit 引数の x の上限。MAX_GROUP_COUNT_X を超える値は MAX_GROUP_COUNT_X に抑える
          */
         inline Layout ComputeLayout(uint32_t width,
                                     uint32_t height,
                                     uint32_t maxMaterials = DEFAULT_MAX_MATERIALS,
-                                    uint32_t maxEntriesPerTile = MAX_MATERIALS_PER_TILE)
+                                    uint32_t maxEntriesPerTile = MAX_MATERIALS_PER_TILE,
+                                    uint32_t groupCountXLimit = MAX_GROUP_COUNT_X)
         {
             Layout layout;
-            if (width == 0 || height == 0 || maxMaterials == 0 || maxEntriesPerTile == 0)
+            if (width == 0 || height == 0 || maxMaterials == 0 || maxEntriesPerTile == 0 || groupCountXLimit == 0)
             {
                 return layout;
             }
+            layout.GroupCountXLimit = groupCountXLimit < MAX_GROUP_COUNT_X ? groupCountXLimit : MAX_GROUP_COUNT_X;
             layout.TilesX = (width + TILE_SIZE - 1) / TILE_SIZE;
             layout.TilesY = (height + TILE_SIZE - 1) / TILE_SIZE;
             layout.TileCount = layout.TilesX * layout.TilesY;
@@ -92,7 +116,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t MaterialOutOfRange = 0;
             /** @brief 記録の表から引けなかった画素の数 */
             uint32_t UnresolvedPixels = 0;
-            /** @brief 見えた最大の材質の番号 + 1（材質が無ければ 0） */
+            /** @brief 見えた最大の材質の番号 + 1（材質が無ければ 0）。上限以上の材質も含む（上限を超えた測定値） */
             uint32_t MaxMaterialPlusOne = 0;
             /** @brief 一覧に書いた（タイル, 材質）の数 */
             uint32_t TotalEntries = 0;
@@ -112,7 +136,7 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr List;
         RHI::BufferPtr Cursors;
         RHI::BufferPtr Stats;
-        /** @brief 画面の大きさ（IdTexture の大きさ以下） */
+        /** @brief 画面の大きさ。画面の外の画素は読まないので IdTexture の大きさ以下でなければならない（超えると記録しない） */
         uint32_t Width = 0;
         uint32_t Height = 0;
         /** @brief 出力のバッファが収まる大きさ（Args・List・Cursors がこの Layout の大きさ以上でなければならない） */

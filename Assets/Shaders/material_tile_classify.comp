@@ -8,13 +8,17 @@
 // 空の画素（ID = 0）と、記録の表から引けない画素は、どの材質にも数えない。空の画素だけのタイルはどの材質にも入らない。
 //
 // 3 回の dispatch で作る（params.limits.z が段階）。いずれも同じ 8x8 のワークグループ。
-//   段階 0（数える）: タイルごとに 1 ワークグループ。材質ごとに「出るタイルの数」を argWords へ足し込む。
+//   段階 0（数える）: タイルごとに 1 ワークグループ。材質ごとに「出るタイルの数」を argWords のタイルの数の語へ足し込む。
 //   段階 1（並べる位置を決める）: 1 ワークグループ。材質の番号の順に一覧の中の先頭位置を割り当て、引数を書く。
 //   段階 2（書き出す）: 段階 0 と同じ分類をやり直し、材質ごとの一覧へタイルの番号を書く。
 // 一覧の中の並びはアトミックの順で、実行ごとに変わりうる（材質ごとの集合は変わらない）。
 //
-// 引数（argWords）は材質ごとに 4 語: 0 = x（その材質のタイルの数 = 後の dispatch のグループ数）、1 = 1、2 = 1、
-// 3 = 一覧の中の先頭位置（dispatch の引数としては読まれない）。VkDispatchIndirectCommand と同じ並びで 16 バイトごと。
+// 引数（argWords）は材質ごとに 8 語（ARGS_STRIDE_WORDS）: 0 = x、1 = y、2 = z（= 1）、3 = 一覧の中の先頭位置、
+// 4 = その材質のタイルの数、5..7 = 0。先頭の 3 語は VkDispatchIndirectCommand と同じ並びで、3 語目以降は dispatch の引数としては読まれない。
+// x = min(タイルの数, params.limits.w)、y = ceil(タイルの数 / params.limits.w)（タイルが 0 個でも 1）。limits.w は実機では
+// 65535（Vulkan が保証する maxComputeWorkGroupCount[0] の最小値）で、超える分は y に広げる。
+// 消費側（材質の解決）は g = gl_WorkGroupID.y * 65535 + gl_WorkGroupID.x を求め、g >= タイルの数なら return し、
+// そうでなければ tileList[先頭位置 + g] のタイルを処理する。
 // タイルの番号は tileY * tilesX + tileX。
 // ========================================
 
@@ -32,7 +36,7 @@ layout(std140, set = 0, binding = 2) uniform ClassifyParams
 {
     // x: 画面の幅、y: 画面の高さ、z: 横のタイル数、w: 縦のタイル数
     uvec4 screen;
-    // x: 材質の数の上限、y: 一覧の大きさ（タイルの番号の数）、z: 段階（0・1・2）
+    // x: 材質の数の上限、y: 一覧の大きさ（タイルの番号の数）、z: 段階（0・1・2）、w: 引数の x の上限（1 以上）
     uvec4 limits;
 } params;
 
@@ -53,7 +57,7 @@ layout(std430, set = 0, binding = 5) buffer MaterialTileCursors
 };
 
 // 0: 一覧に入りきらず落としたタイルの数、1: 材質の番号が上限以上でどの材質にも入れなかった（タイル, 材質）の数、
-// 2: 記録の表から引けなかった画素の数、3: 見えた最大の材質の番号 + 1、4: 一覧に書いた（タイル, 材質）の数
+// 2: 記録の表から引けなかった画素の数、3: 見えた最大の材質の番号 + 1（上限以上の材質も含む）、4: 一覧に書いた（タイル, 材質）の数
 layout(std430, set = 0, binding = 6) buffer MaterialTileStats
 {
     uint stats[];
@@ -69,6 +73,13 @@ const uint STAT_UNRESOLVED_PIXELS = 2u;
 const uint STAT_MAX_MATERIAL_PLUS_ONE = 3u;
 const uint STAT_TOTAL_ENTRIES = 4u;
 
+const uint ARGS_STRIDE_WORDS = 8u;
+const uint ARG_GROUP_X = 0u;
+const uint ARG_GROUP_Y = 1u;
+const uint ARG_GROUP_Z = 2u;
+const uint ARG_LIST_OFFSET = 3u;
+const uint ARG_TILE_COUNT = 4u;
+
 const uint NO_MATERIAL = 0xFFFFFFFFu;
 
 shared uint sMaterials[64];
@@ -81,18 +92,21 @@ void AssignOffsets()
     }
     const uint maxMaterials = params.limits.x;
     const uint capacity = params.limits.y;
+    const uint groupLimit = max(params.limits.w, 1u);
     uint offset = 0u;
     uint dropped = 0u;
     for (uint material = 0u; material < maxMaterials; ++material)
     {
-        const uint count = argWords[material * 4u];
+        const uint base = material * ARGS_STRIDE_WORDS;
+        const uint count = argWords[base + ARG_TILE_COUNT];
         const uint room = capacity > offset ? capacity - offset : 0u;
         const uint kept = min(count, room);
         dropped += count - kept;
-        argWords[material * 4u + 0u] = kept;
-        argWords[material * 4u + 1u] = 1u;
-        argWords[material * 4u + 2u] = 1u;
-        argWords[material * 4u + 3u] = offset;
+        argWords[base + ARG_GROUP_X] = min(kept, groupLimit);
+        argWords[base + ARG_GROUP_Y] = kept == 0u ? 1u : (kept + groupLimit - 1u) / groupLimit;
+        argWords[base + ARG_GROUP_Z] = 1u;
+        argWords[base + ARG_LIST_OFFSET] = offset;
+        argWords[base + ARG_TILE_COUNT] = kept;
         cursors[material] = 0u;
         offset += kept;
     }
@@ -142,6 +156,12 @@ void ClassifyTile(uint stage)
         }
     }
 
+    // 見えた最大の材質の番号は、上限以上の材質も含めて測る（上限を超えたかどうかを統計から読めるように）
+    if (stage == STAGE_COUNT)
+    {
+        atomicMax(stats[STAT_MAX_MATERIAL_PLUS_ONE], material + 1u);
+    }
+
     if (material >= params.limits.x)
     {
         if (stage == STAGE_COUNT)
@@ -151,17 +171,17 @@ void ClassifyTile(uint stage)
         return;
     }
 
+    const uint base = material * ARGS_STRIDE_WORDS;
     if (stage == STAGE_COUNT)
     {
-        atomicAdd(argWords[material * 4u], 1u);
-        atomicMax(stats[STAT_MAX_MATERIAL_PLUS_ONE], material + 1u);
+        atomicAdd(argWords[base + ARG_TILE_COUNT], 1u);
         return;
     }
 
     const uint slot = atomicAdd(cursors[material], 1u);
-    if (slot < argWords[material * 4u])
+    if (slot < argWords[base + ARG_TILE_COUNT])
     {
-        tileList[argWords[material * 4u + 3u] + slot] = tileIndex;
+        tileList[argWords[base + ARG_LIST_OFFSET] + slot] = tileIndex;
     }
 }
 

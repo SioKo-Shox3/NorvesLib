@@ -7,9 +7,13 @@
 //   ケース B（一覧が足りない）: 一覧の大きさを 15 にして、引数が一覧の中へ収まるよう切り詰められ、落とした数が統計に出て、
 //     一覧の外へ書かないこと。
 //   ケース C（全部が空）: どの材質にもタイルが入らず、統計が 0 のこと。
-//   RecordClear: 引数と統計を 0 にできること。
+//   ケース D（ID の画像が画面より大きい）: 画面の外に空でない ID があっても、画面の端のタイルの材質に数えないこと。
+//   ケース E（引数の x の上限）: 上限を小さくして、1 材質のタイルの数が上限を超えると、x が上限で頭打ちになり y へ広がること。
+//     消費側の番号（y * 上限 + x が数より小さいグループ）がちょうど一覧の数だけ得られること。
+//   RecordClear: 引数と統計を 0 にできること。画面が ID のテクスチャより大きい分類は記録しないこと。
 //   どのケースも Vulkan の validation error が 0 件。
 // Vulkan デバイスが無い環境では 125（スキップ）を返す。
+#include "Container/Containers.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/VisibilityBuffer.h"
@@ -27,7 +31,6 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
-#include <vector>
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -128,7 +131,7 @@ namespace
     }
 
     // タイル (tileX, tileY) の中の画素 (x, y) へ ID を置く（画像の外なら何もしない）
-    void SetPixel(std::vector<uint32_t>& image, uint32_t tileX, uint32_t tileY, uint32_t x, uint32_t y, uint32_t id)
+    void SetPixel(Container::VariableArray<uint32_t>& image, uint32_t tileX, uint32_t tileY, uint32_t x, uint32_t y, uint32_t id)
     {
         const uint32_t px = tileX * 8 + x;
         const uint32_t py = tileY * 8 + y;
@@ -139,7 +142,7 @@ namespace
     }
 
     // タイルの全画素を、記録の番号の並び（巡回）で埋める。三角形の番号は画素ごとに変える。記録の番号 0 は空の画素
-    void FillTile(std::vector<uint32_t>& image, uint32_t tileX, uint32_t tileY, const std::vector<uint32_t>& records)
+    void FillTile(Container::VariableArray<uint32_t>& image, uint32_t tileX, uint32_t tileY, const Container::VariableArray<uint32_t>& records)
     {
         uint32_t cursor = 0;
         for (uint32_t y = 0; y < 8; ++y)
@@ -155,9 +158,9 @@ namespace
     }
 
     // 5x3 のタイル（番号 = tileY * 5 + tileX）。ケース A の想定は冒頭のコメントと ExpectedLists を参照
-    std::vector<uint32_t> BuildImage()
+    Container::VariableArray<uint32_t> BuildImage()
     {
-        std::vector<uint32_t> image(ImageWidth * ImageHeight, VisibilityBuffer::EMPTY_ID);
+        Container::VariableArray<uint32_t> image(ImageWidth * ImageHeight, VisibilityBuffer::EMPTY_ID);
         // タイル 0: 材質 0・1・2 が混じる（記録 1・2・3）
         FillTile(image, 0, 0, {1, 2, 3});
         // タイル 1: 空
@@ -191,7 +194,7 @@ namespace
     }
 
     // 手で導いた材質ごとの一覧（ケース A。タイルの番号の昇順）
-    const std::vector<std::vector<uint32_t>> ExpectedLists = {
+    const Container::VariableArray<Container::VariableArray<uint32_t>> ExpectedLists = {
         {0, 3, 6, 10},  // 材質 0
         {0, 2, 6, 10},  // 材質 1
         {0, 5, 6, 12},  // 材質 2
@@ -209,13 +212,13 @@ namespace
 
     struct Reference
     {
-        std::vector<std::vector<uint32_t>> Lists; // 材質ごとのタイルの番号（昇順）
+        Container::VariableArray<Container::VariableArray<uint32_t>> Lists; // 材質ごとのタイルの番号（昇順）
         uint32_t OutOfRange = 0;
         uint32_t Unresolved = 0;
         uint32_t MaxMaterialPlusOne = 0;
     };
 
-    Reference BuildReference(const std::vector<uint32_t>& image, const VisibilityBuffer::RecordTable& table, uint32_t maxMaterials)
+    Reference BuildReference(const Container::VariableArray<uint32_t>& image, const VisibilityBuffer::RecordTable& table, uint32_t maxMaterials)
     {
         Reference reference;
         reference.Lists.resize(maxMaterials);
@@ -225,7 +228,7 @@ namespace
         {
             for (uint32_t tileX = 0; tileX < tilesX; ++tileX)
             {
-                std::vector<uint32_t> materials;
+                Container::VariableArray<uint32_t> materials;
                 for (uint32_t y = tileY * 8; y < std::min(tileY * 8 + 8, ImageHeight); ++y)
                 {
                     for (uint32_t x = tileX * 8; x < std::min(tileX * 8 + 8, ImageWidth); ++x)
@@ -250,13 +253,13 @@ namespace
                 }
                 for (const uint32_t material : materials)
                 {
+                    reference.MaxMaterialPlusOne = std::max(reference.MaxMaterialPlusOne, material + 1);
                     if (material >= maxMaterials)
                     {
                         ++reference.OutOfRange;
                         continue;
                     }
                     reference.Lists[material].push_back(tileY * tilesX + tileX);
-                    reference.MaxMaterialPlusOne = std::max(reference.MaxMaterialPlusOne, material + 1);
                 }
             }
         }
@@ -269,14 +272,14 @@ namespace
 
     struct Outputs
     {
-        std::vector<uint32_t> Args;
-        std::vector<uint32_t> List;
-        std::vector<uint32_t> Stats;
+        Container::VariableArray<uint32_t> Args;
+        Container::VariableArray<uint32_t> List;
+        Container::VariableArray<uint32_t> Stats;
         bool bRecorded = false;
     };
 
     // 4 つの出力バッファを作り（末尾に見張りを置く）、分類を記録して読み戻す。
-    // listCapacity は Layout の一覧の大きさ（タイルの番号の数）
+    // maxEntriesPerTile は Layout の一覧の大きさを決める見込み、groupCountXLimit は引数の x の上限
     bool RunClassify(const DevicePtr& device,
                      MaterialTileClassify& classify,
                      const TexturePtr& idTexture,
@@ -285,10 +288,11 @@ namespace
                      uint32_t maxEntriesPerTile,
                      uint64_t frameIndex,
                      Outputs& outputs,
-                     MaterialTiles::Layout& outLayout)
+                     MaterialTiles::Layout& outLayout,
+                     uint32_t groupCountXLimit = MaterialTiles::MAX_GROUP_COUNT_X)
     {
         const MaterialTiles::Layout layout =
-            MaterialTiles::ComputeLayout(ImageWidth, ImageHeight, TestMaxMaterials, maxEntriesPerTile);
+            MaterialTiles::ComputeLayout(ImageWidth, ImageHeight, TestMaxMaterials, maxEntriesPerTile, groupCountXLimit);
         outLayout = layout;
         const ResourceUsage usage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
         const uint64_t argsBytes = layout.ArgsBytes() + GuardWords * sizeof(uint32_t);
@@ -350,7 +354,7 @@ namespace
         commandList->Submit(true);
         device->WaitIdle();
 
-        auto readAll = [](const BufferPtr& buffer, std::vector<uint32_t>& out) -> bool
+        auto readAll = [](const BufferPtr& buffer, Container::VariableArray<uint32_t>& out) -> bool
         {
             const uint32_t* mapped = static_cast<const uint32_t*>(buffer->Map(0u, buffer->GetSize()));
             if (mapped == nullptr)
@@ -371,7 +375,7 @@ namespace
 
     uint32_t ArgWord(const Outputs& outputs, uint32_t material, uint32_t word)
     {
-        return outputs.Args[material * 4u + word];
+        return outputs.Args[material * MaterialTiles::ARGS_STRIDE_WORDS + word];
     }
 
     // 引数の外（末尾の見張り）が変わっていないこと
@@ -393,30 +397,54 @@ namespace
     void CheckAgainstLists(const char* label,
                            const Outputs& outputs,
                            const MaterialTiles::Layout& layout,
-                           const std::vector<std::vector<uint32_t>>& expectedLists,
+                           const Container::VariableArray<Container::VariableArray<uint32_t>>& expectedLists,
                            uint32_t expectedOutOfRange,
-                           uint32_t expectedUnresolved)
+                           uint32_t expectedUnresolved,
+                           uint32_t expectedMaxMaterialPlusOne)
     {
         Expect(outputs.bRecorded, "分類を記録できなければならない");
         uint32_t expectedOffset = 0;
         uint32_t totalEntries = 0;
-        uint32_t maxMaterialPlusOne = 0;
+        const uint32_t limit = layout.GroupCountXLimit;
         for (uint32_t material = 0; material < layout.MaxMaterials; ++material)
         {
-            const std::vector<uint32_t>& expected = expectedLists[material];
+            const Container::VariableArray<uint32_t>& expected = expectedLists[material];
             const uint32_t count = static_cast<uint32_t>(expected.size());
-            const bool bShapeOk = ArgWord(outputs, material, 0) == count && ArgWord(outputs, material, 1) == 1u &&
-                                  ArgWord(outputs, material, 2) == 1u && ArgWord(outputs, material, 3) == expectedOffset;
+            // x は上限で頭打ち、超える分は y へ広げる（タイルが 0 個のときも y は 1）
+            const uint32_t expectedX = std::min(count, limit);
+            const uint32_t expectedY = count == 0 ? 1u : (count + limit - 1) / limit;
+            const bool bShapeOk = ArgWord(outputs, material, MaterialTiles::ARG_GROUP_X) == expectedX &&
+                                  ArgWord(outputs, material, MaterialTiles::ARG_GROUP_Y) == expectedY &&
+                                  ArgWord(outputs, material, MaterialTiles::ARG_GROUP_Z) == 1u &&
+                                  ArgWord(outputs, material, MaterialTiles::ARG_LIST_OFFSET) == expectedOffset &&
+                                  ArgWord(outputs, material, MaterialTiles::ARG_TILE_COUNT) == count &&
+                                  ArgWord(outputs, material, 5) == 0u && ArgWord(outputs, material, 6) == 0u &&
+                                  ArgWord(outputs, material, 7) == 0u;
             if (!bShapeOk)
             {
                 std::cerr << TestName << " " << label << " 材質 " << material << " の引数が違う: GPU=("
                           << ArgWord(outputs, material, 0) << "," << ArgWord(outputs, material, 1) << ","
-                          << ArgWord(outputs, material, 2) << "," << ArgWord(outputs, material, 3) << ") 期待=(" << count
-                          << ",1,1," << expectedOffset << ")" << std::endl;
+                          << ArgWord(outputs, material, 2) << "," << ArgWord(outputs, material, 3) << ","
+                          << ArgWord(outputs, material, 4) << ") 期待=(" << expectedX << "," << expectedY << ",1,"
+                          << expectedOffset << "," << count << ")" << std::endl;
             }
-            Expect(bShapeOk, "材質ごとの引数（タイルの数, 1, 1, 一覧の先頭位置）が期待と一致しなければならない");
+            Expect(bShapeOk, "材質ごとの引数（x, y, 1, 一覧の先頭位置, タイルの数）が期待と一致しなければならない");
+            // 消費側の番号 g = y * 上限 + x のうち、タイルの数より小さいグループが、ちょうど一覧の数だけ得られる
+            uint32_t validGroups = 0;
+            for (uint32_t groupY = 0; groupY < ArgWord(outputs, material, MaterialTiles::ARG_GROUP_Y); ++groupY)
+            {
+                for (uint32_t groupX = 0; groupX < ArgWord(outputs, material, MaterialTiles::ARG_GROUP_X); ++groupX)
+                {
+                    if (groupY * limit + groupX < count)
+                    {
+                        ++validGroups;
+                    }
+                }
+            }
+            Expect(validGroups == count,
+                   "間接 dispatch のグループのうち、タイルの数より小さい番号がちょうど一覧の数だけ得られなければならない");
 
-            std::vector<uint32_t> actual;
+            Container::VariableArray<uint32_t> actual;
             for (uint32_t index = 0; index < count && expectedOffset + index < layout.ListCapacity; ++index)
             {
                 actual.push_back(outputs.List[expectedOffset + index]);
@@ -436,24 +464,26 @@ namespace
 
             expectedOffset += count;
             totalEntries += count;
-            if (count != 0)
-            {
-                maxMaterialPlusOne = material + 1;
-            }
         }
         Expect(outputs.Stats[0] == 0, "一覧に入りきらず落としたタイルが 0 のはず");
         Expect(outputs.Stats[1] == expectedOutOfRange, "上限以上の材質の（タイル, 材質）の数が期待と一致しなければならない");
         Expect(outputs.Stats[2] == expectedUnresolved, "記録から引けなかった画素の数が期待と一致しなければならない");
-        Expect(outputs.Stats[3] == maxMaterialPlusOne, "見えた最大の材質の番号 + 1 が期待と一致しなければならない");
+        Expect(outputs.Stats[3] == expectedMaxMaterialPlusOne,
+               "見えた最大の材質の番号 + 1（上限以上の材質を含む）が期待と一致しなければならない");
         Expect(outputs.Stats[4] == totalEntries, "一覧に書いた（タイル, 材質）の数が期待と一致しなければならない");
         Expect(GuardsIntact(outputs, layout), "引数・一覧の外（見張り）へ書いてはならない");
     }
 
-    TexturePtr CreateIdTexture(const DevicePtr& device, const std::vector<uint32_t>& image, const char* name)
+    // image は width x height の行を詰めた ID の画像
+    TexturePtr CreateIdTexture(const DevicePtr& device,
+                               const Container::VariableArray<uint32_t>& image,
+                               uint32_t width,
+                               uint32_t height,
+                               const char* name)
     {
         TextureDesc desc;
-        desc.Width = ImageWidth;
-        desc.Height = ImageHeight;
+        desc.Width = width;
+        desc.Height = height;
         desc.MipLevels = 1;
         desc.ArraySize = 1;
         desc.TextureFormat = Format::R32_UINT;
@@ -465,7 +495,7 @@ namespace
         {
             return nullptr;
         }
-        texture->Update(image.data(), ImageWidth * sizeof(uint32_t), ImageWidth * ImageHeight * sizeof(uint32_t));
+        texture->Update(image.data(), width * sizeof(uint32_t), width * height * sizeof(uint32_t));
         return texture;
     }
 
@@ -521,8 +551,8 @@ namespace
             std::memcpy(mappedTable, table.Data(), static_cast<size_t>(table.SizeInBytes()));
             recordTable->Unmap();
 
-            const std::vector<uint32_t> image = BuildImage();
-            TexturePtr idTexture = CreateIdTexture(device, image, "MaterialTileTestIds");
+            const Container::VariableArray<uint32_t> image = BuildImage();
+            TexturePtr idTexture = CreateIdTexture(device, image, ImageWidth, ImageHeight, "MaterialTileTestIds");
             if (!idTexture)
             {
                 std::cerr << TestName << " ID のテクスチャを作れませんでした" << std::endl;
@@ -543,8 +573,10 @@ namespace
                 Expect(reference.Lists == ExpectedLists, "CPU の参照が手で導いた一覧と一致しなければならない");
                 Expect(reference.Unresolved == ExpectedUnresolvedPixels, "CPU の参照の引けない画素の数が想定と違う");
                 Expect(reference.OutOfRange == 1, "上限以上の材質が出るタイルは 1 つのはず（タイル 6 の材質 12）");
+                Expect(reference.MaxMaterialPlusOne == 13, "上限以上の材質 12 も見えているので、最大の材質の番号 + 1 は 13 のはず");
 
-                CheckAgainstLists("A", outputs, layout, reference.Lists, reference.OutOfRange, reference.Unresolved);
+                CheckAgainstLists("A", outputs, layout, reference.Lists, reference.OutOfRange, reference.Unresolved,
+                                  reference.MaxMaterialPlusOne);
                 // 空のタイル（1・11・13）と引けない ID だけのタイル（7）は、どの材質の一覧にも出ない
                 for (uint32_t material = 0; material < TestMaxMaterials; ++material)
                 {
@@ -575,26 +607,30 @@ namespace
                 const uint32_t expectedOffsets[TestMaxMaterials] = {0, 4, 8, 12, 14, 15, 15, 15};
                 for (uint32_t material = 0; material < TestMaxMaterials; ++material)
                 {
-                    const bool bOk = ArgWord(outputs, material, 0) == expectedCounts[material] &&
-                                     ArgWord(outputs, material, 1) == 1u && ArgWord(outputs, material, 2) == 1u &&
-                                     ArgWord(outputs, material, 3) == expectedOffsets[material];
+                    const bool bOk = ArgWord(outputs, material, MaterialTiles::ARG_GROUP_X) == expectedCounts[material] &&
+                                     ArgWord(outputs, material, MaterialTiles::ARG_GROUP_Y) == 1u &&
+                                     ArgWord(outputs, material, MaterialTiles::ARG_GROUP_Z) == 1u &&
+                                     ArgWord(outputs, material, MaterialTiles::ARG_LIST_OFFSET) == expectedOffsets[material] &&
+                                     ArgWord(outputs, material, MaterialTiles::ARG_TILE_COUNT) == expectedCounts[material];
                     if (!bOk)
                     {
                         std::cerr << TestName << " ケース B 材質 " << material << " の引数が違う: GPU=("
-                                  << ArgWord(outputs, material, 0) << "," << ArgWord(outputs, material, 3) << ")" << std::endl;
+                                  << ArgWord(outputs, material, 0) << "," << ArgWord(outputs, material, 3) << ","
+                                  << ArgWord(outputs, material, 4) << ")" << std::endl;
                     }
                     Expect(bOk, "一覧が足りないとき、引数は一覧に収まる数へ切り詰められなければならない");
                     // 切り詰めた分も、書いたタイルは本来の一覧の部分集合
                     for (uint32_t index = 0; index < expectedCounts[material]; ++index)
                     {
                         const uint32_t tile = outputs.List[expectedOffsets[material] + index];
-                        const std::vector<uint32_t>& full = ExpectedLists[material];
+                        const Container::VariableArray<uint32_t>& full = ExpectedLists[material];
                         Expect(std::find(full.begin(), full.end(), tile) != full.end(),
                                "切り詰めた一覧のタイルは、その材質に出るタイルでなければならない");
                     }
                 }
                 Expect(outputs.Stats[0] == 8, "落としたタイルの数は 8 のはず（材質 4 が 1、材質 5 が 3、材質 6・7 が 2 ずつ）");
                 Expect(outputs.Stats[4] == 15, "一覧に書いた数は一覧の大きさのはず");
+                Expect(outputs.Stats[3] == 13, "一覧が足りなくても、見えた最大の材質の番号 + 1 は 13 のはず");
                 Expect(GuardsIntact(outputs, layout), "一覧が足りなくても、一覧の外へ書いてはならない");
                 std::cout << TestName << " ケース B: 一覧の大きさ=" << layout.ListCapacity << " 落とした数=" << outputs.Stats[0]
                           << std::endl;
@@ -602,8 +638,9 @@ namespace
 
             // ----- ケース C: 全部が空 -----
             {
-                const std::vector<uint32_t> emptyImage(ImageWidth * ImageHeight, VisibilityBuffer::EMPTY_ID);
-                TexturePtr emptyTexture = CreateIdTexture(device, emptyImage, "MaterialTileTestEmpty");
+                const Container::VariableArray<uint32_t> emptyImage(ImageWidth * ImageHeight, VisibilityBuffer::EMPTY_ID);
+                TexturePtr emptyTexture =
+                    CreateIdTexture(device, emptyImage, ImageWidth, ImageHeight, "MaterialTileTestEmpty");
                 if (!emptyTexture)
                 {
                     std::cerr << TestName << " 空の ID のテクスチャを作れませんでした" << std::endl;
@@ -616,8 +653,80 @@ namespace
                 {
                     return 1;
                 }
-                const std::vector<std::vector<uint32_t>> none(TestMaxMaterials);
-                CheckAgainstLists("C", outputs, layout, none, 0, 0);
+                const Container::VariableArray<Container::VariableArray<uint32_t>> none(TestMaxMaterials);
+                CheckAgainstLists("C", outputs, layout, none, 0, 0, 0);
+            }
+
+            // ----- ケース D: ID の画像が画面より大きい。画面の外の画素は数えない -----
+            {
+                // 画面（36x20）の外はすべて、画面の中のどのタイルにも出ない材質 7 の ID（記録 10）で埋める。
+                // 画面の端のタイル（4・9・14 の右、10・12・14 の下）は、外の画素と同じタイルに入っている
+                constexpr uint32_t BigWidth = 48;
+                constexpr uint32_t BigHeight = 32;
+                Container::VariableArray<uint32_t> bigImage(BigWidth * BigHeight, MakeId(10, 1));
+                for (uint32_t y = 0; y < ImageHeight; ++y)
+                {
+                    for (uint32_t x = 0; x < ImageWidth; ++x)
+                    {
+                        bigImage[y * BigWidth + x] = image[y * ImageWidth + x];
+                    }
+                }
+                TexturePtr bigTexture = CreateIdTexture(device, bigImage, BigWidth, BigHeight, "MaterialTileTestBig");
+                if (!bigTexture)
+                {
+                    std::cerr << TestName << " 大きい ID のテクスチャを作れませんでした" << std::endl;
+                    return 1;
+                }
+                Outputs outputs;
+                MaterialTiles::Layout layout;
+                if (!RunClassify(device, classify, bigTexture, recordTable, table.SizeInBytes(),
+                                 MaterialTiles::MAX_MATERIALS_PER_TILE, 4, outputs, layout))
+                {
+                    return 1;
+                }
+                // 期待は、画面の中だけのケース A と同じ（外の画素は無かったことになる）
+                const Reference reference = BuildReference(image, table, TestMaxMaterials);
+                Expect(reference.Lists == ExpectedLists, "ケース D の期待はケース A と同じはず");
+                CheckAgainstLists("D", outputs, layout, reference.Lists, reference.OutOfRange, reference.Unresolved,
+                                  reference.MaxMaterialPlusOne);
+            }
+
+            // ----- ケース E: 引数の x の上限。超える分は y へ広げる -----
+            {
+                // 上限 3 では材質 0・1・2（4 タイルずつ）が x = 3・y = 2 になる。上限 1 では 1 材質のタイルの数がそのまま y になる
+                const uint32_t limits[] = {3, 1};
+                uint64_t frameIndex = 5;
+                for (const uint32_t limit : limits)
+                {
+                    Outputs outputs;
+                    MaterialTiles::Layout layout;
+                    if (!RunClassify(device, classify, idTexture, recordTable, table.SizeInBytes(),
+                                     MaterialTiles::MAX_MATERIALS_PER_TILE, frameIndex++, outputs, layout, limit))
+                    {
+                        return 1;
+                    }
+                    Expect(layout.GroupCountXLimit == limit, "Layout が x の上限を持たなければならない");
+                    const Reference reference = BuildReference(image, table, TestMaxMaterials);
+                    CheckAgainstLists(limit == 3 ? "E(3)" : "E(1)", outputs, layout, reference.Lists, reference.OutOfRange,
+                                      reference.Unresolved, reference.MaxMaterialPlusOne);
+                    if (limit == 3)
+                    {
+                        Expect(ArgWord(outputs, 0, MaterialTiles::ARG_GROUP_X) == 3 && ArgWord(outputs, 0, MaterialTiles::ARG_GROUP_Y) == 2,
+                               "上限 3 で 4 タイルの材質は x = 3・y = 2 のはず");
+                    }
+                    else
+                    {
+                        Expect(ArgWord(outputs, 0, MaterialTiles::ARG_GROUP_X) == 1 && ArgWord(outputs, 0, MaterialTiles::ARG_GROUP_Y) == 4,
+                               "上限 1 で 4 タイルの材質は x = 1・y = 4 のはず");
+                    }
+                }
+
+                // 実機の上限（65535）は Layout が超えさせず、0 の上限は断る
+                Expect(MaterialTiles::ComputeLayout(ImageWidth, ImageHeight, TestMaxMaterials, 1, 100000).GroupCountXLimit ==
+                           MaterialTiles::MAX_GROUP_COUNT_X,
+                       "x の上限は MAX_GROUP_COUNT_X を超えてはならない");
+                Expect(!MaterialTiles::ComputeLayout(ImageWidth, ImageHeight, TestMaxMaterials, 1, 0).IsValid(),
+                       "x の上限 0 の Layout は無効のはず");
             }
 
             // ----- 範囲が合わない入力は記録しない -----
@@ -640,6 +749,19 @@ namespace
                 bad.Cursors = device->CreateBuffer(BufferDesc(16, usage, true, "MaterialTileTestSmallCursors"));
                 bad.Stats = device->CreateBuffer(BufferDesc(MaterialTiles::STATS_BYTES, usage, true, "MaterialTileTestStats2"));
                 Expect(!classify.Record(commandList.get(), bad), "Layout より小さいバッファへの分類は記録してはならない");
+
+                // 出力が足りていても、画面が ID のテクスチャより大きいと画像の外を読むので記録しない。
+                // 40x20 も 36x24 もタイルの数は 5x3 で Layout と同じなので、タイルの数の確認では断られない
+                const MaterialTiles::Layout okLayout = MaterialTiles::ComputeLayout(ImageWidth, ImageHeight, TestMaxMaterials);
+                bad.Args = device->CreateBuffer(BufferDesc(okLayout.ArgsBytes(), usage, true, "MaterialTileTestOkArgs"));
+                bad.List = device->CreateBuffer(BufferDesc(okLayout.ListBytes(), usage, true, "MaterialTileTestOkList"));
+                bad.Cursors = device->CreateBuffer(BufferDesc(okLayout.CursorsBytes(), usage, true, "MaterialTileTestOkCursors"));
+                bad.Layout = okLayout;
+                bad.Width = ImageWidth + 4;
+                Expect(!classify.Record(commandList.get(), bad), "画面の幅が ID のテクスチャより大きい分類は記録してはならない");
+                bad.Width = ImageWidth;
+                bad.Height = ImageHeight + 4;
+                Expect(!classify.Record(commandList.get(), bad), "画面の高さが ID のテクスチャより大きい分類は記録してはならない");
                 commandList->End();
             }
 

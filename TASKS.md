@@ -616,7 +616,7 @@
 - notes: 計画書 4.3。危険地帯（描画パス）。既定の描画（`off`）は変えない。 2026-10-05 親（run `20261005-191130` の保留を解く）: `blocked/VTG6-VIS-RASTER.md` の選択肢1を採った。この項目は今の実装（MegaGeometryPass の後に両パスの間接描画を `VisBuffer.Id`・`GBuffer.Depth` へ重ね描き）で完了とする。stop-when の「ビジビリティの1パス目の深度で HZB を作る」順序は、GBuffer への書き込みを外す VTG6-DEFAULT-ON で組む。スキニングを含む ID の表示の撮影も VTG6-DEFAULT-ON へ回した（起動画面にスキニングが無いので、スキニングの検証シーンを撮る経路をそこで足す）。評価の差し戻し（記録の頂点の基点の二重加算）は `31877048` で直っている。
 
 ## VTG6-MATERIAL-CLASSIFY: 画面のタイルを材質ごとに分ける
-- status: doing
+- status: done
 - done-when: `VisBuffer.Id` から 8×8 の画面のタイルごとに、そのタイルに出る材質の番号の集合を求め、材質ごとのタイルの一覧と、材質ごとの間接 dispatch の引数を作る計算シェーダーのパスを足す（空の画素だけのタイルはどの材質にも入れない）。GPU のテスト `MaterialTileClassifyVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、合成した ID の画像（3つの材質が混じるタイル、空のタイル）から、期待のタイルの一覧と引数を作ることを確かめる。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MaterialTileClassifyVulkanTest|RenderGraphCompileTest)$"`
