@@ -216,6 +216,8 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 最後の Execute で変形を記録したインスタンス（記録できなかったフレームは空） */
         const Container::VariableArray<SkinningComputeInstance>& GetInstances() const { return m_Instances; }
+        /** @brief 計算スキニングのパイプラインが作れているか（false のとき Declare は何も宣言せず、スキニングの頂点は作られない） */
+        bool IsComputeReady() const { return m_Compute.IsReady(); }
         RGResourceHandle GetCurrentVerticesHandle() const { return m_CurrentHandle.ToResourceHandle(); }
         RGResourceHandle GetPreviousVerticesHandle() const { return m_PreviousHandle.ToResourceHandle(); }
 

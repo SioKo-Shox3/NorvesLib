@@ -2132,6 +2132,8 @@ namespace
         ResolvePipelineUnavailable,
         /** @brief 配線は同じで装置も対応し、塗りのパイプラインは作れるが、ID のラスタの線の描き方のパイプラインが作れない */
         RasterWireframePipelineUnavailable,
+        /** @brief 配線は同じで装置も対応するが、計算スキニングのパイプラインだけが作れない（bSkinning と合わせて使う） */
+        SkinningComputePipelineUnavailable,
     };
 
     // bVisibilityPlan=false は --visibility-buffer=off（MegaGeometryPass が描画の写しを作らず、VisibilityRasterPass も足さない）
@@ -2153,9 +2155,7 @@ namespace
                                   bool bDebugView = false)
     {
         scene.Device = RHI::MakeShared<FakeDevice>();
-        if (resolveMode == ResolveMode::Supported || resolveMode == ResolveMode::RasterPipelineUnavailable ||
-            resolveMode == ResolveMode::ResolvePipelineUnavailable ||
-            resolveMode == ResolveMode::RasterWireframePipelineUnavailable)
+        if (resolveMode != ResolveMode::None && resolveMode != ResolveMode::UnsupportedDevice)
         {
             scene.Device->EnableVisibilityResolveCapabilities();
         }
@@ -2344,7 +2344,10 @@ namespace
                 // SceneView と同じく、描画のパスへつないでからグラフへ足す（既定は無効なので、有効にする）
                 scene.Skinning.SetEnabled(true);
                 scene.Raster.SetSkinningComputePass(&scene.Skinning);
+                scene.Device->bFailComputePipelines = resolveMode == ResolveMode::SkinningComputePipelineUnavailable;
                 assert(scene.Skinning.Initialize(context));
+                scene.Device->bFailComputePipelines = false;
+                assert(scene.Skinning.IsComputeReady() == (resolveMode != ResolveMode::SkinningComputePipelineUnavailable));
                 scene.Graph.AddPass(&scene.Skinning);
             }
             scene.Device->bFailGraphicsPipelines = resolveMode == ResolveMode::RasterPipelineUnavailable;
@@ -3678,6 +3681,101 @@ namespace
         }
     }
 
+#if NORVES_ENABLE_LOGGING
+    // 幾何の解決のフォールバックのログ（カテゴリ VisibilityResolvePass の VISBUFFER_FALLBACK）の数を数える
+    struct ResolveFallbackCounter final : Logging::ILogSink
+    {
+        uint32_t Count = 0;
+        uint32_t SkinningComputeCount = 0;
+
+        void OnLog(const Logging::LogEntry& entry) override
+        {
+            if (entry.level == Logging::LogLevel::Warning && entry.category == "VisibilityResolvePass" &&
+                std::strstr(entry.message.c_str(), "VISBUFFER_FALLBACK") != nullptr)
+            {
+                ++Count;
+                if (std::strstr(entry.message.c_str(), "reason=skinning_compute_unavailable") != nullptr)
+                {
+                    ++SkinningComputeCount;
+                }
+            }
+        }
+    };
+#endif
+
+    // 計算スキニングのパイプラインだけが作れないとき、解決へ進むとスキニングの頂点が無く、ID のラスタがスキニングの塊を描けない。
+    // 解決は使えない（SkinningComputeUnavailable）として、GBufferPass・MegaGeometryPass は描画を止めず、解決は何も記録しない。
+    // フォールバックのログ（VISBUFFER_FALLBACK）は、何フレーム Declare されても 1 回だけ。計算スキニングが作れている構成では出ない。
+    // 判定から計算スキニングの準備を外す、または SceneView が計算スキニングのパスを解決へ渡す配線を外すと落ちる
+    void TestVisibilityResolveFallsBackToGBufferDrawsWhenSkinningComputeUnavailable()
+    {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        ResolveFallbackCounter fallbackLogs;
+        logger.AddSink(&fallbackLogs);
+#endif
+
+        const OnWithoutResolveBaseline baseline = MeasureOnWithoutResolve();
+        {
+            // 対照: 計算スキニングが作れていれば解決を使い、フォールバックのログは出ない
+            VisibilityRasterScene supported;
+            RunVisibilityRasterScene(supported, true, true, ClassifyMode::None, true, true, ResolveMode::Supported);
+            assert(supported.Resolve.GetFallbackReason(supported.Device.get()) == VisibilityResolveGeometry::FallbackReason::None);
+            assert(supported.Resolve.WasResolved());
+#if NORVES_ENABLE_LOGGING
+            assert(fallbackLogs.Count == 0);
+#endif
+            ShutdownVisibilityRasterScene(supported);
+        }
+
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, ResolveMode::SkinningComputePipelineUnavailable);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(scene.Skinning.IsEnabled() && !scene.Skinning.IsComputeReady());
+        assert(scene.Resolve.GetFallbackReason(scene.Device.get()) ==
+               VisibilityResolveGeometry::FallbackReason::SkinningComputeUnavailable);
+        assert(!scene.Resolve.CanResolve(scene.Device.get()));
+        assert(!scene.Resolve.WasResolved());
+
+        // GBufferPass は従来どおり描画を積み、MegaGeometryPass も GBuffer への間接描画を止めない（スキニングの物も GBuffer に描かれる）。
+        // ID のラスタはスキニングの頂点が無いので、スキニングの塊を描かない（解決を使う On より 1 回少ない）
+        assert(commandList.IndirectDraws.size() == baseline.IndirectDraws);
+        assert(CountDirectDraws(commandList) == SceneGBufferDirectDraws + SceneIdDirectDraws - 1);
+        size_t velocityBarriers = 0;
+        assert(!VelocityTexturesHaveShaderWrite(commandList, velocityBarriers) && velocityBarriers > 0);
+#if NORVES_ENABLE_LOGGING
+        assert(fallbackLogs.Count == 1 && fallbackLogs.SkinningComputeCount == 1);
+#endif
+
+        // 続くフレームでも Declare は呼ばれるが、ログは増えない（解決のパスだけをグラフへ足して回す）
+        for (uint64_t frame = 1; frame <= 2; ++frame)
+        {
+            scene.Pool.EndFrame();
+            scene.Pool.BeginFrame(frame);
+            scene.Graph.BeginFrame(frame);
+            scene.Graph.AddPass(&scene.Resolve);
+            assert(scene.Graph.Compile(scene.Context));
+            const RenderGraphExecutionResult result = scene.Graph.ExecuteWithResult(scene.Context);
+            assert(result.bSuccess);
+            assert(!scene.Resolve.WasResolved());
+        }
+#if NORVES_ENABLE_LOGGING
+        assert(fallbackLogs.Count == 1 && fallbackLogs.SkinningComputeCount == 1);
+        // 共有の Logger を、このテストが初期化し直す前の状態へ戻す（この実行ファイルは他で Logger を初期化しない = 未初期化）
+        logger.RemoveSink(&fallbackLogs);
+        logger.Shutdown();
+#endif
+        ShutdownVisibilityRasterScene(scene);
+    }
+
     // SetPipeline に渡された、グラフィックスのパイプラインのうち、polygonMode が mode のものの数
     size_t CountGraphicsPipelineSets(const FakeCommandList& commandList, RHI::PolygonMode mode)
     {
@@ -3794,6 +3892,8 @@ namespace
         const uint32_t materialCount = scene.Raster.GetMaterialTableCount();
         assert(materialCount >= 2 && materialCount < MaterialTiles::DEFAULT_MAX_MATERIALS);
         assert(scene.Resolve.GetLastTileDispatchCount() == materialCount);
+        // 資源の並べ替えの作業配列は Record の外のメンバで、材質の数ぶんの容量を持つ（Record のたびに作り直す形へ戻すと 0 になる）
+        assert(scene.Resolve.GetTileUseScratchCapacity() >= materialCount);
         assert(commandList.IndirectDispatches.size() == materialCount);
         for (uint32_t material = 0; material < materialCount; ++material)
         {
@@ -3988,6 +4088,11 @@ namespace
             assert(gbuffer->IsVisibilityResolveActive() == expectation.bResolve);
             assert(mega->IsSkipGBufferDraw() == expectation.bResolve);
             assert((sceneView.FindPass("VisibilityResolvePass") != nullptr) == expectation.bResolve);
+            // 止める側は、解決のパスへ使えるかを問い合わせる（参照が無いと装置の機能だけの判定になり、パイプラインが作れない
+            // 構成でも描画を止めて画面が空になる）。Off・Debug は解決のパスが無いので参照も無い
+            const auto* resolvePass = static_cast<const VisibilityResolvePass*>(sceneView.FindPass("VisibilityResolvePass"));
+            assert(gbuffer->GetVisibilityResolvePass() == resolvePass);
+            assert(mega->GetVisibilityResolvePass() == resolvePass);
             assert((sceneView.FindPass("VisibilityRasterPass") != nullptr) == (expectation.Mode != VisibilityBufferMode::Off));
 
             // 材質のタイル分類: 解決を使う On だけ有効（debug は足しても無効のまま。既定の描画は変えない）。
@@ -4002,6 +4107,10 @@ namespace
             {
                 const auto* resolve = static_cast<const VisibilityResolvePass*>(sceneView.FindPass("VisibilityResolvePass"));
                 assert(resolve->GetClassifyPass() == classify);
+                // 解決の取り出し元（ID のラスタ・計算スキニング）。外すと、解決が何も読めない・スキニングの準備を見られない
+                assert(resolve->GetRasterPass() == sceneView.FindPass("VisibilityRasterPass"));
+                assert(resolve->GetSkinningComputePass() == sceneView.FindPass("SkinningComputePass"));
+                assert(resolve->GetSkinningComputePass() != nullptr);
                 int rasterIndex = -1;
                 int classifyIndex = -1;
                 int resolveIndex = -1;
@@ -9393,6 +9502,7 @@ int main()
     TestVisibilityResolveFallsBackToDirectDispatchWhenIndirectDispatchRejected();
     TestVisibilityResolveUnsupportedDeviceKeepsGBufferDraws();
     TestVisibilityResolveFallsBackToGBufferDrawsWhenPipelinesAreUnavailable();
+    TestVisibilityResolveFallsBackToGBufferDrawsWhenSkinningComputeUnavailable();
     TestVisibilityRasterWireframeDrawsLinesAndResolveWritesThem();
     TestVisibilityRasterWireframeFallsBackToGBufferWhenLinePipelinesUnavailable();
     TestVisibilityRasterSkinnedRecordsAddressEachBodyOnce();

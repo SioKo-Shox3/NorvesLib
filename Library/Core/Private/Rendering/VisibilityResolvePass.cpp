@@ -224,6 +224,8 @@ namespace NorvesLib::Core::Rendering
                 return "raster_unavailable";
             case FallbackReason::ResolveUnavailable:
                 return "resolve_unavailable";
+            case FallbackReason::SkinningComputeUnavailable:
+                return "skinning_compute_unavailable";
             }
             return "unknown";
         }
@@ -311,6 +313,7 @@ namespace NorvesLib::Core::Rendering
 
     void VisibilityResolve::Shutdown()
     {
+        m_TileUseScratch.clear();
         m_Uses.Clear();
         m_TilePipeline.reset();
         m_TileShader.reset();
@@ -588,7 +591,9 @@ namespace NorvesLib::Core::Rendering
             bool bMegaGeometry = false;
         };
         Container::VariableArray<BoundMaterial> boundMaterials;
-        Container::VariableArray<Use*> uses;
+        Container::VariableArray<Use*>& uses = m_TileUseScratch;
+        uses.clear();
+        uses.reserve(static_cast<size_t>(materialCount));
         for (uint64_t material = 0; material < materialCount; ++material)
         {
             // GBufferPass の材質の descriptor と同じ規則で、指定の無い枠を既定のテクスチャで埋める
@@ -792,6 +797,11 @@ namespace NorvesLib::Core::Rendering
         {
             return FallbackReason::ResolveUnavailable;
         }
+        // 計算スキニングが作れないと、スキニングの頂点が無く ID のラスタがスキニングの塊を描けない。解決へ進むとスキニングの物が消える
+        if (m_SkinningComputePass && m_SkinningComputePass->IsEnabled() && !m_SkinningComputePass->IsComputeReady())
+        {
+            return FallbackReason::SkinningComputeUnavailable;
+        }
         return FallbackReason::None;
     }
 
@@ -821,7 +831,8 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-        // 対応しない装置では、GBufferPass・MegaGeometryPass が描画を止めていない。何も宣言しない
+        // 使えない理由があるとき（装置の非対応・パイプラインが作れていない）は、GBufferPass・MegaGeometryPass が同じ判定で
+        // 描画を止めていない。何も宣言しない
         const VisibilityResolveGeometry::FallbackReason fallbackReason =
             GetFallbackReason(context->Device, context->GetActiveDebugMode());
         if (fallbackReason != VisibilityResolveGeometry::FallbackReason::None)
@@ -1033,7 +1044,8 @@ namespace NorvesLib::Core::Rendering
         bool bRecorded = m_Resolve.Record(context.CommandList, dispatch);
         if (!bRecorded && dispatch.TileArgs)
         {
-            // Record は断ったとき何も記録しないので、直接 dispatch でやり直せる
+            // 断られたとき、dispatch は 1 回も記録されていない（最初の間接 dispatch を断られたときに残るのは、
+            // パイプラインとディスクリプタセットの設定だけ。直接 dispatch が設定し直す）ので、直接 dispatch でやり直せる
             dispatch.TileArgs = {};
             dispatch.TileList = {};
             dispatch.TileMaterialCount = 0;

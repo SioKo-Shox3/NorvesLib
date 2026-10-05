@@ -139,7 +139,7 @@ namespace NorvesLib::Core::Rendering
          * true のとき（--visibility-buffer=on）、不透明の描画を GBuffer へ描かず、GBuffer のクリアだけを行う。
          * Albedo・Normal・Velocity は解決のパス（VisibilityResolvePass）が storage image として書くので、Declare がこの 3 枚に
          * 書き込みの使い道（ShaderWrite）を足す。解決が実際に使えないとき（SetVisibilityResolvePass の相手の
-         * GetFallbackReason が None 以外。装置の非対応・ID のラスタや解決のパイプラインが無い）は、true でも従来どおり描く。
+         * GetFallbackReason が None 以外。装置の非対応・ID のラスタや解決のパイプラインが無い・計算スキニングのパイプラインが無い）は、true でも従来どおり描く。
          * 相手を渡していないときは、装置の機能（VisibilityResolveGeometry::IsSupported）だけで判定する。
          */
         void SetVisibilityResolveActive(bool bActive)
@@ -149,6 +149,7 @@ namespace NorvesLib::Core::Rendering
         bool IsVisibilityResolveActive() const { return m_bVisibilityResolveActive; }
         /** @brief 解決が使えるかの問い合わせ先（同じ View の VisibilityResolvePass。null なら装置の機能だけで判定） */
         void SetVisibilityResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
+        const VisibilityResolvePass* GetVisibilityResolvePass() const { return m_ResolvePass; }
 
         // ========================================
         // GBufferアクセス

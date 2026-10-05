@@ -196,6 +196,7 @@ namespace NorvesLib::Core::Rendering
         size_t GetRetiredBufferCount() const { return m_RetiredBuffers.size(); }
         /** @brief 解決が使えるかの問い合わせ先（同じ View の VisibilityResolvePass。null なら装置の機能だけで判定） */
         void SetVisibilityResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
+        const VisibilityResolvePass* GetVisibilityResolvePass() const { return m_ResolvePass; }
 
         /**
          * @brief 最後の RecordFrameCommand が作った描画の写しを取り出す（取り出すと空になる）

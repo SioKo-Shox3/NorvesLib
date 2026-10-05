@@ -847,7 +847,7 @@
 - notes: 2026-10-06 VTG6-PRE-DEFAULT-HARDEN から分けた（元の項目の評価の残課題）。危険地帯（描画パス・寿命）。テストは標準ライブラリの型を使わず、配線を戻すと落ちる変異を確かめる。
 
 ## VTG6-HARDEN-RESOLVE-FALLBACK: 幾何の解決の予備の判定を、配線と計算スキニングの準備まで含めて検査する
-- status: todo
+- status: done
 - done-when: (8) `SceneView.cpp`（913〜914 行付近）の、解決のパスを GBufferPass・MegaGeometryPass へ渡す配線を外してもテストが落ちない。相手が null のときは装置の機能だけで判定する（`GBufferPass.cpp` 338 行・`MegaGeometryPass.cpp` 1680 行付近）ので、null のときは描画を止めない側に倒すか、SceneView のテストで渡されていることを確かめる。`GetFallbackReason` が計算スキニングの準備（`SkinningComputePass` の `IsReady`）を見ないので、計算スキニングだけが作れないとスキニングの物が消える。`VISBUFFER_FALLBACK` が1回だけ出ることを検査する。`VisibilityResolvePass.cpp`（371 行付近）・`.h`（211 行付近）のコメントを今の判定に合わせる。 (10) `VisibilityResolvePass.cpp`（376 行付近）の `Container::VariableArray<Use*> uses` を Record のたびに作って reserve せずに push_back している（メンバの作業用配列にする）。同じファイル 713 行付近のコメント「Record は断ったとき何も記録しないので」をヘッダー（212 行付近）の記述（最初の間接 dispatch を断られたときはパイプラインとディスクリプタセットの設定が残る）に合わせる。タイルの版の変異 MG（材質ごとの形のパイプラインが作れないとき）を、`BeforeResolveTilePipelineUnavailable` のケースで落ちることを切り分けて確かめる。既定の描画は変えない。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderResourcesDomainContractTest SkinnedRenderPathContractTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error --timeout 300 -R "^(RenderGraphCompileTest|MeshResourcesProceduralGpuTest|ComputeSkinningVulkanTest|MaterialTileClassifyVulkanTest|VisibilityResolveVulkanTest|SkinnedRenderPathContractTest)$"`

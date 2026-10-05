@@ -155,6 +155,11 @@ namespace NorvesLib::Core::Rendering
             RasterUnavailable,
             /** @brief 解決の計算パイプラインが作れていない */
             ResolveUnavailable,
+            /**
+             * @brief 計算スキニングのパスが有効なのにパイプラインが作れていない（スキニングの頂点が作られず、ID のラスタが
+             *        スキニングの塊を描けないので、解決へ進むとスキニングの物が消える）
+             */
+            SkinningComputeUnavailable,
         };
 
         /** @brief ログ（VISBUFFER_FALLBACK reason=...）に出す、機械が照合する理由の名前 */
@@ -273,6 +278,8 @@ namespace NorvesLib::Core::Rendering
         bool IsReady() const { return m_Pipeline != nullptr; }
         /** @brief 材質ごとのタイルの一覧から走る形（TileArgs・TileList つきの Record）を使えるか */
         bool IsTileReady() const { return m_TilePipeline != nullptr; }
+        /** @brief 材質ごとの形の記録が使い回す、資源の並べ替え用の作業配列の容量（検査用。Record のたびに作り直さないことの確認） */
+        size_t GetTileUseScratchCapacity() const { return m_TileUseScratch.capacity(); }
 
         /** @brief 飛行中のフレームの番号の枠を選ぶ（FrameUseRing の BeginFrame と同じ） */
         void BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial);
@@ -332,6 +339,9 @@ namespace NorvesLib::Core::Rendering
         // 材質ごとの形のシェーダーが VT の要求のバッファの binding を持つか（デバイスが VT のフィードバックに対応するとき）
         bool m_bFeedback = false;
         FrameUseRing<Use> m_Uses;
+        // RecordTiles が 1 回の間接 dispatch ごとの資源（m_Uses の要素）を並べる作業用の配列。Record のたびに作らず容量を使い回す
+        // （要素は m_Uses を指すだけ。次の Record の頭で空にする）
+        Container::VariableArray<Use*> m_TileUseScratch;
     };
 
     /**
@@ -342,8 +352,10 @@ namespace NorvesLib::Core::Rendering
      * （GBuffer のクリアだけを行う）ので、描かれなかった画素はクリア値のまま。
      *
      * 有効なのは --visibility-buffer=on のときだけ（SceneView が足す）。使えないとき（GetFallbackReason が None 以外。装置が
-     * 対応しない・ID のラスタや解決のパイプラインが作れていない）は、何も宣言せず、GBufferPass・MegaGeometryPass も描画を止めない
-     * （従来の GBuffer の描画のまま動く）。その旨を VISBUFFER_FALLBACK reason=<理由> で 1 回ログへ出す。
+     * 対応しない・ID のラスタや解決のパイプラインが作れていない・渡された計算スキニングのパスが有効なのにパイプラインが作れていない）は、
+     * 何も宣言せず、GBufferPass・MegaGeometryPass も描画を止めない（従来の GBuffer の描画のまま動く）。
+     * その旨を VISBUFFER_FALLBACK reason=<理由> で 1 回ログへ出す。GBufferPass・MegaGeometryPass はこのパスへの参照
+     * （SetVisibilityResolvePass）で同じ判定を問い合わせる。参照を渡さないと、装置の機能だけの判定になる。
      */
     class VisibilityResolvePass final : public IViewPass, public IRenderGraphPass
     {
@@ -363,8 +375,10 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 記録の表・材質の表・インスタンスの表の取り出し元（同じ View の VisibilityRasterPass） */
         void SetRasterPass(const VisibilityRasterPass* pass) { m_RasterPass = pass; }
+        const VisibilityRasterPass* GetRasterPass() const { return m_RasterPass; }
         /** @brief 変形した頂点（スキニング）の取り出し元（同じ View のパス）。頂点はデバイスアドレスで読むので、グラフの読み取りに足して書き込みを見せる */
         void SetSkinningComputePass(const SkinningComputePass* pass) { m_SkinningComputePass = pass; }
+        const SkinningComputePass* GetSkinningComputePass() const { return m_SkinningComputePass; }
         /**
          * @brief 材質ごとのタイルの分類のパス（同じ View のパス。グラフでこのパスより前に足し、有効にしておく）
          *
@@ -374,6 +388,8 @@ namespace NorvesLib::Core::Rendering
          */
         void SetClassifyPass(const MaterialTileClassifyPass* pass) { m_ClassifyPass = pass; }
         const MaterialTileClassifyPass* GetClassifyPass() const { return m_ClassifyPass; }
+        /** @brief 材質ごとの形の記録が使い回す作業配列の容量（検査用） */
+        size_t GetTileUseScratchCapacity() const { return m_Resolve.GetTileUseScratchCapacity(); }
 
         /** @brief 最後の Execute が解決を記録したか */
         bool WasResolved() const { return m_bResolved; }
@@ -386,7 +402,8 @@ namespace NorvesLib::Core::Rendering
          * @brief この装置・今の初期化の状態で、解決が GBuffer を書けない理由（書けるなら None）
          *
          * GBufferPass・MegaGeometryPass は、これが None のときだけ GBuffer の描画を止める。ID のラスタのパイプラインや解決の
-         * パイプラインが作れていないのに描画を止めると、画面が空になるため。初期化（View が Declare の前に行う）の後に使う。
+         * パイプライン、スキニングの頂点を作る計算パイプラインが作れていないのに描画を止めると、画面（スキニングの物）が空に
+         * なるため。初期化（View が Declare の前に行う）の後に使う。計算スキニングのパスは、渡されていて有効なときだけ見る。
          *
          * mode は今のビューポートの表示。Wireframe のときは、ID のラスタが線のパイプラインを持たなければ RasterUnavailable になり
          * （GBuffer の描画がワイヤーフレームを描く）、持てば解決が線の画素を GBuffer へ書く。

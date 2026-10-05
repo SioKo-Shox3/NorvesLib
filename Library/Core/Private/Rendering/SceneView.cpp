@@ -918,8 +918,8 @@ namespace NorvesLib::Core::Rendering
 
         // VisibilityResolvePass: VisBuffer.Id から三角形を引いて、GBuffer の Albedo・Normal・Velocity を書く（--visibility-buffer=on）。
         // 分類のパスの引数・一覧で、材質ごとに 1 回ずつ間接 dispatch する（分類を使えないフレームは画面全体の直接 dispatch）。
-        // 使えないとき（装置の非対応・ID のラスタや解決のパイプラインが無い）は何も宣言せず、GBufferPass・MegaGeometryPass も
-        // 描画を止めない。判定はこのパスに問い合わせる（GBufferPass・MegaGeometryPass が持つ）。
+        // 使えないとき（装置の非対応・ID のラスタや解決のパイプラインが無い・計算スキニングのパイプラインが無い）は何も宣言せず、
+        // GBufferPass・MegaGeometryPass も描画を止めない。判定はこのパスに問い合わせる（上の 2 つへ渡す参照）。
         if (visibilityRasterPassPtr && bVisibilityResolve)
         {
             auto visibilityResolvePass = MakeUnique<VisibilityResolvePass>();
