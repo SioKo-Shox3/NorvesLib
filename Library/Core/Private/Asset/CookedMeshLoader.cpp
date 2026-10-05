@@ -895,6 +895,58 @@ namespace NorvesLib::Core::Asset
             return CookedMeshParseStatus::Success;
         }
 
+        // グループの BVH の頭と節を読み、構造と保守的な条件を検査して、段ごとの節の数を返す
+        CookedMeshParseStatus ReadV1GroupBVH(const uint8_t* data, size_t bvhOffset, uint32_t nodeCount,
+                                             const Container::VariableArray<CookedMeshCluster>& clusters,
+                                             Container::VariableArray<CookedMeshGroupBVHNode>& outNodes,
+                                             Container::VariableArray<uint32_t>& outLevelNodeCounts)
+        {
+            using namespace CookedMeshFormatV1;
+
+            const uint32_t declaredLevelCount = ReadLe32(data, bvhOffset + GroupBVHHeaderOffset::LevelCount);
+            const uint32_t declaredLeafCount = ReadLe32(data, bvhOffset + GroupBVHHeaderOffset::LeafCount);
+            if (ReadLe32(data, bvhOffset + GroupBVHHeaderOffset::Reserved0) != 0)
+            {
+                return CookedMeshParseStatus::ReservedFieldNonZero;
+            }
+
+            outNodes.clear();
+            outNodes.reserve(nodeCount);
+            uint32_t leafCount = 0;
+            for (uint32_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex)
+            {
+                const size_t recordOffset =
+                    bvhOffset + GroupBVHHeaderSize + static_cast<size_t>(nodeIndex) * GroupBVHNodeRecordSize;
+                CookedMeshGroupBVHNode node;
+                node.BoundsCenter = {ReadLeFloat(data, recordOffset + GroupBVHNodeOffset::BoundsCenterX),
+                                     ReadLeFloat(data, recordOffset + GroupBVHNodeOffset::BoundsCenterY),
+                                     ReadLeFloat(data, recordOffset + GroupBVHNodeOffset::BoundsCenterZ)};
+                node.BoundsRadius = ReadLeFloat(data, recordOffset + GroupBVHNodeOffset::BoundsRadius);
+                node.MaxParentError = ReadLeFloat(data, recordOffset + GroupBVHNodeOffset::MaxParentError);
+                node.First = ReadLe32(data, recordOffset + GroupBVHNodeOffset::First);
+                node.Count = ReadLe32(data, recordOffset + GroupBVHNodeOffset::Count);
+                const uint32_t flags = ReadLe32(data, recordOffset + GroupBVHNodeOffset::Flags);
+                if ((flags & ~GroupBVHNodeFlagLeaf) != 0)
+                {
+                    return CookedMeshParseStatus::ReservedFieldNonZero;
+                }
+                node.bLeaf = (flags & GroupBVHNodeFlagLeaf) != 0;
+                leafCount += node.bLeaf ? 1u : 0u;
+                outNodes.push_back(node);
+            }
+
+            const CookedMeshParseStatus status = CheckCookedMeshGroupBVH(outNodes, clusters, outLevelNodeCounts);
+            if (status != CookedMeshParseStatus::Success)
+            {
+                return status;
+            }
+            if (declaredLevelCount != outLevelNodeCounts.size() || declaredLeafCount != leafCount)
+            {
+                return CookedMeshParseStatus::InvalidGroupBVH;
+            }
+            return CookedMeshParseStatus::Success;
+        }
+
         CookedMeshParseStatus ReadV1Vertices(const uint8_t* data, size_t vertexOffset, uint64_t vertexCount,
                                              Container::VariableArray<CookedMeshVertex>& outVertices)
         {
@@ -1443,10 +1495,13 @@ namespace NorvesLib::Core::Asset
             return Fail(CookedMeshParseStatus::FileSizeMismatch);
         }
 
-        if (ReadLe32(data, HeaderOffset::Flags) != 0)
+        // v1.1 だけが、グループの BVH を持つ（Flags の bit0）。それ以外のビットは予約
+        const uint32_t headerFlags = ReadLe32(data, HeaderOffset::Flags);
+        if ((headerFlags & ~HeaderFlagGroupBVH) != 0 || ((headerFlags & HeaderFlagGroupBVH) != 0 && !bPaged))
         {
             return Fail(CookedMeshParseStatus::ReservedFieldNonZero);
         }
+        const bool bGroupBVH = (headerFlags & HeaderFlagGroupBVH) != 0;
 
         if (submeshCount != 1 || materialCount != 1 || clusterCount == 0 || groupCount > clusterCount ||
             indexCount % 3 != 0 || lodLevelCount == 0 || lodLevelCount > MaxLODLevels)
@@ -1492,8 +1547,11 @@ namespace NorvesLib::Core::Asset
             expectedIndexSize = 0;
         }
 
+        // BVH を持つときのグループの節は、グループの記録の後ろに BVH の頭と節が続く（大きさは BVH の頭を読んでから検査する）
+        const bool bGroupSectionSizeValid =
+            bGroupBVH ? sections[3].Size >= expectedGroupSize + GroupBVHHeaderSize : sections[3].Size == expectedGroupSize;
         if (sections[0].Size != expectedSubmeshSize || sections[1].Size != expectedMaterialSize ||
-            sections[2].Size != expectedClusterSize || sections[3].Size != expectedGroupSize ||
+            sections[2].Size != expectedClusterSize || !bGroupSectionSizeValid ||
             sections[4].Size != stringByteCount || sections[5].Size != expectedVertexSize ||
             sections[6].Size != expectedIndexSize)
         {
@@ -1513,6 +1571,26 @@ namespace NorvesLib::Core::Asset
             if (section.Offset < HeaderSize || section.End > declaredFileSize)
             {
                 return Fail(CookedMeshParseStatus::SectionOutOfRange);
+            }
+        }
+
+        // グループの BVH の節の数（頭の値）が、グループの節の大きさと一致する
+        uint32_t groupBVHNodeCount = 0;
+        if (bGroupBVH)
+        {
+            const size_t bvhHeaderOffset = static_cast<size_t>(sections[3].Offset + expectedGroupSize);
+            groupBVHNodeCount = ReadLe32(data, bvhHeaderOffset + GroupBVHHeaderOffset::NodeCount);
+            uint64_t expectedBVHNodeBytes = 0;
+            if (!MultiplyChecked64(groupBVHNodeCount, GroupBVHNodeRecordSize, expectedBVHNodeBytes))
+            {
+                return Fail(CookedMeshParseStatus::IntegerOverflow);
+            }
+            // 葉の数は最大でクラスタ数で、内部の節は葉より少ない
+            if (groupBVHNodeCount == 0 ||
+                static_cast<uint64_t>(groupBVHNodeCount) > static_cast<uint64_t>(clusterCount) * 2 ||
+                sections[3].Size != expectedGroupSize + GroupBVHHeaderSize + expectedBVHNodeBytes)
+            {
+                return Fail(CookedMeshParseStatus::InvalidCounts);
             }
         }
 
@@ -1718,6 +1796,18 @@ namespace NorvesLib::Core::Asset
             return Fail(structureStatus);
         }
 
+        Container::VariableArray<CookedMeshGroupBVHNode> groupBVH;
+        Container::VariableArray<uint32_t> groupBVHLevelNodeCounts;
+        if (bGroupBVH)
+        {
+            structureStatus = ReadV1GroupBVH(data, groupTableOffset + static_cast<size_t>(groupCount) * GroupRecordSize,
+                                             groupBVHNodeCount, clusters, groupBVH, groupBVHLevelNodeCounts);
+            if (structureStatus != CookedMeshParseStatus::Success)
+            {
+                return Fail(structureStatus);
+            }
+        }
+
         if (!bPaged)
         {
             structureStatus = ReadV1Vertices(data, vertexPayloadOffset, vertexCount, vertices);
@@ -1775,6 +1865,8 @@ namespace NorvesLib::Core::Asset
         result.Mesh.Clusters = std::move(clusters);
         result.Mesh.Groups = std::move(groups);
         result.Mesh.Pages = std::move(pages);
+        result.Mesh.GroupBVH = std::move(groupBVH);
+        result.Mesh.GroupBVHLevelNodeCounts = std::move(groupBVHLevelNodeCounts);
         result.Mesh.Indices = std::move(indices);
         return result;
     }
@@ -2474,13 +2566,42 @@ namespace NorvesLib::Core::Asset
         Container::VariableArray<uint32_t> parentPageOfPage;
         ComputePageParentPages(orderedClusters, pageCount, residentPageCount, parentPageOfPage);
 
-        // ファイル全体: header -> submesh -> material -> page table -> group -> string -> page region
+        // グループの BVH（並べ替えた後のクラスタの番号で作る。葉の範囲が実際の並びを指す）
+        Container::VariableArray<CookedMeshClusterGroup> orderedGroups;
+        orderedGroups.reserve(groupCount);
+        for (size_t groupIndex = 0; groupIndex < groupCount; ++groupIndex)
+        {
+            CookedMeshClusterGroup group = input.Groups[groupIndex];
+            group.ClusterOffset = newIndexOfCluster[group.ClusterOffset];
+            orderedGroups.push_back(group);
+        }
+        Container::VariableArray<CookedMeshGroupBVHNode> groupBVH;
+        Container::VariableArray<uint32_t> groupBVHLevelNodeCounts;
+        if (!BuildCookedMeshGroupBVH(orderedClusters, orderedGroups, groupBVH))
+        {
+            return CookedMeshPagedWriteStatus::TooLarge;
+        }
+        if (CheckCookedMeshGroupBVH(groupBVH, orderedClusters, groupBVHLevelNodeCounts) != CookedMeshParseStatus::Success)
+        {
+            return CookedMeshPagedWriteStatus::InvalidInput;
+        }
+        uint32_t groupBVHLeafCount = 0;
+        for (const CookedMeshGroupBVHNode& node : groupBVH)
+        {
+            groupBVHLeafCount += node.bLeaf ? 1u : 0u;
+        }
+        outInfo.GroupBVHNodeCount = static_cast<uint32_t>(groupBVH.size());
+        outInfo.GroupBVHLeafCount = groupBVHLeafCount;
+        outInfo.GroupBVHLevelCount = static_cast<uint32_t>(groupBVHLevelNodeCounts.size());
+
+        // ファイル全体: header -> submesh -> material -> page table -> group（+ BVH） -> string -> page region
         const size_t submeshTableOffset = HeaderSize;
         const size_t materialTableOffset = AlignUp(submeshTableOffset + SubmeshRecordSize, SectionAlignment);
         const size_t pageTableOffset = AlignUp(materialTableOffset + MaterialRecordSize, SectionAlignment);
         const size_t pageTableSize = pageCount * PageTableRecordSize;
         const size_t groupTableOffset = AlignUp(pageTableOffset + pageTableSize, SectionAlignment);
-        const size_t groupTableSize = groupCount * GroupRecordSize;
+        const size_t groupRecordBytes = groupCount * GroupRecordSize;
+        const size_t groupTableSize = groupRecordBytes + GroupBVHHeaderSize + groupBVH.size() * GroupBVHNodeRecordSize;
         const size_t stringTableOffset = AlignUp(groupTableOffset + groupTableSize, SectionAlignment);
         const size_t pageRegionOffset = AlignUp(stringTableOffset + stringSize, SectionAlignment);
         const size_t fileSize = pageRegionOffset + static_cast<size_t>(regionSize);
@@ -2514,6 +2635,7 @@ namespace NorvesLib::Core::Asset
         WriteLe64(bytes, HeaderOffset::IndexPayloadSize, 0);
         WriteLe32(bytes, HeaderOffset::VertexCount, static_cast<uint32_t>(totalVertices));
         WriteLe32(bytes, HeaderOffset::IndexCount, static_cast<uint32_t>(indexTotal));
+        WriteLe32(bytes, HeaderOffset::Flags, HeaderFlagGroupBVH);
         WriteLe32(bytes, HeaderOffset::SubmeshCount, 1);
         WriteLe32(bytes, HeaderOffset::MaterialCount, 1);
         WriteLe32(bytes, HeaderOffset::ClusterCount, static_cast<uint32_t>(clusterCount));
@@ -2551,6 +2673,26 @@ namespace NorvesLib::Core::Asset
             WriteV1GroupRecord(bytes, groupTableOffset + groupIndex * GroupRecordSize, group);
         }
 
+        // グループの記録の後ろに、BVH の頭と節
+        {
+            const size_t bvhOffset = groupTableOffset + groupRecordBytes;
+            WriteLe32(bytes, bvhOffset + GroupBVHHeaderOffset::NodeCount, static_cast<uint32_t>(groupBVH.size()));
+            WriteLe32(bytes, bvhOffset + GroupBVHHeaderOffset::LevelCount,
+                      static_cast<uint32_t>(groupBVHLevelNodeCounts.size()));
+            WriteLe32(bytes, bvhOffset + GroupBVHHeaderOffset::LeafCount, groupBVHLeafCount);
+            for (size_t nodeIndex = 0; nodeIndex < groupBVH.size(); ++nodeIndex)
+            {
+                const CookedMeshGroupBVHNode& node = groupBVH[nodeIndex];
+                const size_t recordOffset = bvhOffset + GroupBVHHeaderSize + nodeIndex * GroupBVHNodeRecordSize;
+                WriteFloat3(bytes, recordOffset + GroupBVHNodeOffset::BoundsCenterX, node.BoundsCenter);
+                WriteLeFloat(bytes, recordOffset + GroupBVHNodeOffset::BoundsRadius, node.BoundsRadius);
+                WriteLeFloat(bytes, recordOffset + GroupBVHNodeOffset::MaxParentError, node.MaxParentError);
+                WriteLe32(bytes, recordOffset + GroupBVHNodeOffset::First, node.First);
+                WriteLe32(bytes, recordOffset + GroupBVHNodeOffset::Count, node.Count);
+                WriteLe32(bytes, recordOffset + GroupBVHNodeOffset::Flags, node.bLeaf ? GroupBVHNodeFlagLeaf : 0u);
+            }
+        }
+
         // ページの領域（ページを隙間なく並べる）とページの表
         size_t pageFileOffset = pageRegionOffset;
         for (size_t pageIndex = 0; pageIndex < pageCount; ++pageIndex)
@@ -2577,6 +2719,463 @@ namespace NorvesLib::Core::Asset
                   ComputeCookedMeshPayloadHash(bytes.data() + submeshTableOffset, fileSize - submeshTableOffset));
         outBytes = std::move(bytes);
         return CookedMeshPagedWriteStatus::Success;
+    }
+
+    // ========================================
+    // グループの BVH（v1.1）
+    // ========================================
+
+    namespace
+    {
+        // BVH の葉になる1単位（1つのグループ、または連続した根のクラスタの、メンバの連続した範囲）。
+        // 球は、メンバの境界球と（グループなら）親の境界球を包む。値は float で表せる値。
+        struct GroupBVHUnit
+        {
+            double Center[3] = {0.0, 0.0, 0.0};
+            double Radius = 0.0;
+            float MaxParentError = 0.0f;
+            uint32_t First = 0;
+            uint32_t Count = 0;
+        };
+
+        // 構築中の節。子は構築中の節の表の添字
+        struct GroupBVHBuildNode
+        {
+            double Center[3] = {0.0, 0.0, 0.0};
+            double Radius = 0.0;
+            float MaxParentError = 0.0f;
+            uint32_t First = 0;
+            uint32_t Count = 0;
+            bool bLeaf = false;
+            Container::VariableArray<uint32_t> Children;
+        };
+
+        // 球 a を、球 b も包むように広げる（どちらかが片方を含むなら大きい方）
+        void GrowSphere(double (&centerA)[3], double& radiusA, const double (&centerB)[3], double radiusB)
+        {
+            const double dx = centerB[0] - centerA[0];
+            const double dy = centerB[1] - centerA[1];
+            const double dz = centerB[2] - centerA[2];
+            const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (distance + radiusB <= radiusA)
+            {
+                return;
+            }
+            if (distance + radiusA <= radiusB)
+            {
+                centerA[0] = centerB[0];
+                centerA[1] = centerB[1];
+                centerA[2] = centerB[2];
+                radiusA = radiusB;
+                return;
+            }
+            const double newRadius = (distance + radiusA + radiusB) * 0.5;
+            const double t = (newRadius - radiusA) / distance;
+            centerA[0] += dx * t;
+            centerA[1] += dy * t;
+            centerA[2] += dz * t;
+            radiusA = newRadius;
+        }
+
+        // 球の中心を float で表せる値へ丸め、全ての子の球を（丸めた値のまま）包む半径にする。
+        // 浮動小数の丸めと、GPU が行列で変換する際の誤差の分だけ半径に余裕を足す
+        void FinalizeBVHSphere(double (&center)[3], double& radius, const double (*childCenters)[3],
+                               const double* childRadii, size_t childCount)
+        {
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                center[axis] = static_cast<double>(static_cast<float>(center[axis]));
+            }
+            double need = 0.0;
+            for (size_t child = 0; child < childCount; ++child)
+            {
+                const double dx = childCenters[child][0] - center[0];
+                const double dy = childCenters[child][1] - center[1];
+                const double dz = childCenters[child][2] - center[2];
+                need = std::max(need, std::sqrt(dx * dx + dy * dy + dz * dz) + childRadii[child]);
+            }
+            const double extent = std::fabs(center[0]) + std::fabs(center[1]) + std::fabs(center[2]) + need;
+            float rounded = static_cast<float>(need * (1.0 + 1.0e-5) + extent * 1.0e-7);
+            if (static_cast<double>(rounded) < need)
+            {
+                rounded = std::nextafter(rounded, std::numeric_limits<float>::infinity());
+            }
+            radius = static_cast<double>(rounded);
+        }
+
+        // 単位の並びの [begin, end) を、重心の最も広い軸の中央値で2つに分ける（同じ値は先頭のクラスタの番号で順を決める）
+        uint32_t SplitUnitsInHalf(const Container::VariableArray<GroupBVHUnit>& units,
+                                  Container::VariableArray<uint32_t>& order, uint32_t begin, uint32_t end)
+        {
+            double low[3] = {std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
+                             std::numeric_limits<double>::max()};
+            double high[3] = {std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest(),
+                              std::numeric_limits<double>::lowest()};
+            for (uint32_t index = begin; index < end; ++index)
+            {
+                const GroupBVHUnit& unit = units[order[index]];
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    low[axis] = std::min(low[axis], unit.Center[axis]);
+                    high[axis] = std::max(high[axis], unit.Center[axis]);
+                }
+            }
+            int widest = 0;
+            for (int axis = 1; axis < 3; ++axis)
+            {
+                if (high[axis] - low[axis] > high[widest] - low[widest])
+                {
+                    widest = axis;
+                }
+            }
+            const uint32_t middle = begin + (end - begin) / 2;
+            std::nth_element(order.begin() + begin, order.begin() + middle, order.begin() + end,
+                             [&units, widest](uint32_t left, uint32_t right)
+                             {
+                                 const GroupBVHUnit& a = units[left];
+                                 const GroupBVHUnit& b = units[right];
+                                 if (a.Center[widest] != b.Center[widest])
+                                 {
+                                     return a.Center[widest] < b.Center[widest];
+                                 }
+                                 return a.First < b.First;
+                             });
+            return middle;
+        }
+
+        // 単位の並びの [begin, end) から部分木を作り、根の節の番号を返す
+        uint32_t BuildGroupBVHSubtree(const Container::VariableArray<GroupBVHUnit>& units,
+                                      Container::VariableArray<uint32_t>& order, uint32_t begin, uint32_t end,
+                                      Container::VariableArray<GroupBVHBuildNode>& nodes)
+        {
+            using namespace CookedMeshFormatV1;
+
+            const auto makeLeaf = [&units, &nodes](uint32_t unitIndex) -> uint32_t
+            {
+                const GroupBVHUnit& unit = units[unitIndex];
+                GroupBVHBuildNode node;
+                node.Center[0] = unit.Center[0];
+                node.Center[1] = unit.Center[1];
+                node.Center[2] = unit.Center[2];
+                node.Radius = unit.Radius;
+                node.MaxParentError = unit.MaxParentError;
+                node.First = unit.First;
+                node.Count = unit.Count;
+                node.bLeaf = true;
+                nodes.push_back(std::move(node));
+                return static_cast<uint32_t>(nodes.size() - 1);
+            };
+
+            if (end - begin == 1)
+            {
+                return makeLeaf(order[begin]);
+            }
+
+            Container::VariableArray<uint32_t> children;
+            if (end - begin <= GroupBVHMaxChildren)
+            {
+                for (uint32_t index = begin; index < end; ++index)
+                {
+                    children.push_back(makeLeaf(order[index]));
+                }
+            }
+            else
+            {
+                // 中央値で3回分けて、最大 8 つの部分に分ける
+                Container::VariableArray<uint32_t> bounds;
+                bounds.push_back(begin);
+                bounds.push_back(end);
+                for (int round = 0; round < 3; ++round)
+                {
+                    Container::VariableArray<uint32_t> next;
+                    for (size_t part = 0; part + 1 < bounds.size(); ++part)
+                    {
+                        next.push_back(bounds[part]);
+                        if (bounds[part + 1] - bounds[part] >= 2)
+                        {
+                            next.push_back(SplitUnitsInHalf(units, order, bounds[part], bounds[part + 1]));
+                        }
+                    }
+                    next.push_back(end);
+                    bounds = std::move(next);
+                }
+                for (size_t part = 0; part + 1 < bounds.size(); ++part)
+                {
+                    children.push_back(BuildGroupBVHSubtree(units, order, bounds[part], bounds[part + 1], nodes));
+                }
+            }
+
+            GroupBVHBuildNode node;
+            node.bLeaf = false;
+            node.Count = static_cast<uint32_t>(children.size());
+            double centers[GroupBVHMaxChildren][3] = {};
+            double radii[GroupBVHMaxChildren] = {};
+            node.Center[0] = nodes[children[0]].Center[0];
+            node.Center[1] = nodes[children[0]].Center[1];
+            node.Center[2] = nodes[children[0]].Center[2];
+            node.Radius = nodes[children[0]].Radius;
+            node.MaxParentError = 0.0f;
+            for (size_t child = 0; child < children.size(); ++child)
+            {
+                const GroupBVHBuildNode& childNode = nodes[children[child]];
+                centers[child][0] = childNode.Center[0];
+                centers[child][1] = childNode.Center[1];
+                centers[child][2] = childNode.Center[2];
+                radii[child] = childNode.Radius;
+                GrowSphere(node.Center, node.Radius, centers[child], radii[child]);
+                node.MaxParentError = std::max(node.MaxParentError, childNode.MaxParentError);
+            }
+            FinalizeBVHSphere(node.Center, node.Radius, centers, radii, children.size());
+            node.Children = std::move(children);
+            nodes.push_back(std::move(node));
+            return static_cast<uint32_t>(nodes.size() - 1);
+        }
+    } // namespace
+
+    bool BuildCookedMeshGroupBVH(const Container::VariableArray<CookedMeshCluster>& clusters,
+                                 const Container::VariableArray<CookedMeshClusterGroup>& groups,
+                                 Container::VariableArray<CookedMeshGroupBVHNode>& outNodes)
+    {
+        using namespace CookedMeshFormatV1;
+
+        outNodes.clear();
+        if (clusters.empty())
+        {
+            return false;
+        }
+
+        // 葉の単位: グループのメンバ（最大 GroupBVHMaxLeafClusters 個ずつ）と、連続した根のクラスタ。
+        // 球は、メンバの球と、グループなら親の球（メンバの親の境界球）を包む
+        Container::VariableArray<GroupBVHUnit> units;
+        const auto addUnits = [&clusters, &units](uint32_t first, uint32_t count, bool bWithParentSphere,
+                                                  float maxParentError)
+        {
+            for (uint32_t offset = 0; offset < count; offset += GroupBVHMaxLeafClusters)
+            {
+                const uint32_t chunk = std::min(count - offset, GroupBVHMaxLeafClusters);
+                GroupBVHUnit unit;
+                unit.First = first + offset;
+                unit.Count = chunk;
+                unit.MaxParentError = maxParentError;
+
+                double centers[2 * GroupBVHMaxLeafClusters][3];
+                double radii[2 * GroupBVHMaxLeafClusters];
+                size_t spheres = 0;
+                for (uint32_t member = unit.First; member < unit.First + chunk; ++member)
+                {
+                    const CookedMeshCluster& cluster = clusters[member];
+                    centers[spheres][0] = cluster.BoundsCenter.X;
+                    centers[spheres][1] = cluster.BoundsCenter.Y;
+                    centers[spheres][2] = cluster.BoundsCenter.Z;
+                    radii[spheres] = cluster.BoundsRadius;
+                    ++spheres;
+                    if (bWithParentSphere)
+                    {
+                        centers[spheres][0] = cluster.ParentBoundsCenter.X;
+                        centers[spheres][1] = cluster.ParentBoundsCenter.Y;
+                        centers[spheres][2] = cluster.ParentBoundsCenter.Z;
+                        radii[spheres] = cluster.ParentBoundsRadius;
+                        ++spheres;
+                    }
+                }
+                unit.Center[0] = centers[0][0];
+                unit.Center[1] = centers[0][1];
+                unit.Center[2] = centers[0][2];
+                unit.Radius = radii[0];
+                for (size_t sphere = 1; sphere < spheres; ++sphere)
+                {
+                    GrowSphere(unit.Center, unit.Radius, centers[sphere], radii[sphere]);
+                }
+                FinalizeBVHSphere(unit.Center, unit.Radius, centers, radii, spheres);
+                units.push_back(unit);
+            }
+        };
+
+        Container::VariableArray<uint8_t> inGroup(clusters.size(), 0);
+        for (const CookedMeshClusterGroup& group : groups)
+        {
+            if (group.ClusterCount == 0 ||
+                static_cast<uint64_t>(group.ClusterOffset) + group.ClusterCount > clusters.size())
+            {
+                return false;
+            }
+            addUnits(group.ClusterOffset, group.ClusterCount, true, group.Error);
+            for (uint32_t member = group.ClusterOffset; member < group.ClusterOffset + group.ClusterCount; ++member)
+            {
+                inGroup[member] = 1;
+            }
+        }
+        for (uint32_t clusterIndex = 0; clusterIndex < clusters.size();)
+        {
+            if (inGroup[clusterIndex] != 0)
+            {
+                ++clusterIndex;
+                continue;
+            }
+            uint32_t runEnd = clusterIndex;
+            while (runEnd < clusters.size() && inGroup[runEnd] == 0)
+            {
+                ++runEnd;
+            }
+            addUnits(clusterIndex, runEnd - clusterIndex, false, RootParentError);
+            clusterIndex = runEnd;
+        }
+        if (units.empty() || units.size() > std::numeric_limits<uint32_t>::max() / 4)
+        {
+            return false;
+        }
+
+        Container::VariableArray<uint32_t> order;
+        order.reserve(units.size());
+        for (uint32_t unitIndex = 0; unitIndex < units.size(); ++unitIndex)
+        {
+            order.push_back(unitIndex);
+        }
+        Container::VariableArray<GroupBVHBuildNode> buildNodes;
+        buildNodes.reserve(units.size() * 2);
+        const uint32_t rootBuildIndex =
+            BuildGroupBVHSubtree(units, order, 0, static_cast<uint32_t>(units.size()), buildNodes);
+
+        // 幅優先に並べ直す（子が連続し、段ごとに連続する）
+        Container::VariableArray<uint32_t> bfs;
+        Container::VariableArray<uint32_t> levelOf;
+        bfs.reserve(buildNodes.size());
+        levelOf.reserve(buildNodes.size());
+        bfs.push_back(rootBuildIndex);
+        levelOf.push_back(0);
+        for (size_t position = 0; position < bfs.size(); ++position)
+        {
+            const GroupBVHBuildNode& node = buildNodes[bfs[position]];
+            for (const uint32_t child : node.Children)
+            {
+                bfs.push_back(child);
+                levelOf.push_back(levelOf[position] + 1);
+            }
+        }
+        if (bfs.size() != buildNodes.size() || levelOf.back() + 1 > GroupBVHMaxLevels)
+        {
+            return false;
+        }
+
+        outNodes.reserve(bfs.size());
+        uint32_t nextChild = 1;
+        for (size_t position = 0; position < bfs.size(); ++position)
+        {
+            const GroupBVHBuildNode& node = buildNodes[bfs[position]];
+            CookedMeshGroupBVHNode out;
+            out.BoundsCenter = {static_cast<float>(node.Center[0]), static_cast<float>(node.Center[1]),
+                                static_cast<float>(node.Center[2])};
+            out.BoundsRadius = static_cast<float>(node.Radius);
+            out.MaxParentError = node.MaxParentError;
+            out.Count = node.Count;
+            out.bLeaf = node.bLeaf;
+            if (node.bLeaf)
+            {
+                out.First = node.First;
+            }
+            else
+            {
+                out.First = nextChild;
+                nextChild += node.Count;
+            }
+            outNodes.push_back(out);
+        }
+        return true;
+    }
+
+    CookedMeshParseStatus CheckCookedMeshGroupBVH(const Container::VariableArray<CookedMeshGroupBVHNode>& nodes,
+                                                  const Container::VariableArray<CookedMeshCluster>& clusters,
+                                                  Container::VariableArray<uint32_t>& outLevelNodeCounts)
+    {
+        using namespace CookedMeshFormatV1;
+
+        outLevelNodeCounts.clear();
+        if (nodes.empty() || nodes.size() > std::numeric_limits<uint32_t>::max() / 2)
+        {
+            return CookedMeshParseStatus::InvalidGroupBVH;
+        }
+
+        Container::VariableArray<uint32_t> levelOf(nodes.size(), 0);
+        Container::VariableArray<uint8_t> covered(clusters.size(), 0);
+        uint64_t coveredTotal = 0;
+        uint64_t nextChild = 1;
+        for (size_t index = 0; index < nodes.size(); ++index)
+        {
+            const CookedMeshGroupBVHNode& node = nodes[index];
+            if (!IsFinite(node.BoundsCenter) || !std::isfinite(node.BoundsRadius) || node.BoundsRadius < 0.0f ||
+                !std::isfinite(node.MaxParentError) || node.MaxParentError < 0.0f)
+            {
+                return CookedMeshParseStatus::InvalidFloatOrBounds;
+            }
+
+            const uint32_t level = levelOf[index];
+            if (outLevelNodeCounts.size() <= level)
+            {
+                if (level >= GroupBVHMaxLevels)
+                {
+                    return CookedMeshParseStatus::InvalidGroupBVH;
+                }
+                outLevelNodeCounts.resize(level + 1, 0);
+            }
+            ++outLevelNodeCounts[level];
+
+            if (node.bLeaf)
+            {
+                if (node.Count == 0 || node.Count > GroupBVHMaxLeafClusters ||
+                    static_cast<uint64_t>(node.First) + node.Count > clusters.size())
+                {
+                    return CookedMeshParseStatus::InvalidGroupBVH;
+                }
+                const CookedMeshCluster& first = clusters[node.First];
+                for (uint32_t member = node.First; member < node.First + node.Count; ++member)
+                {
+                    const CookedMeshCluster& cluster = clusters[member];
+                    // 葉は、1つのグループ（または根のクラスタだけ）のメンバ。球はメンバと親の球を包み、
+                    // 親の誤差の最大はメンバの親の誤差以上
+                    if (covered[member] != 0 || cluster.GroupId != first.GroupId || cluster.bIsRoot != first.bIsRoot ||
+                        !IsSphereContained(cluster.BoundsCenter, cluster.BoundsRadius, node.BoundsCenter,
+                                           node.BoundsRadius) ||
+                        node.MaxParentError < cluster.ParentError)
+                    {
+                        return CookedMeshParseStatus::InvalidGroupBVH;
+                    }
+                    if (!cluster.bIsRoot && !IsSphereContained(cluster.ParentBoundsCenter, cluster.ParentBoundsRadius,
+                                                               node.BoundsCenter, node.BoundsRadius))
+                    {
+                        return CookedMeshParseStatus::InvalidGroupBVH;
+                    }
+                    covered[member] = 1;
+                    ++coveredTotal;
+                }
+                continue;
+            }
+
+            // 内部の節の子は、幅優先の並びで次に空いている位置から連続する
+            if (node.Count == 0 || node.Count > GroupBVHMaxChildren || node.First != nextChild ||
+                nextChild + node.Count > nodes.size())
+            {
+                return CookedMeshParseStatus::InvalidGroupBVH;
+            }
+            for (uint32_t child = node.First; child < node.First + node.Count; ++child)
+            {
+                const CookedMeshGroupBVHNode& childNode = nodes[child];
+                if (!IsSphereContained(childNode.BoundsCenter, childNode.BoundsRadius, node.BoundsCenter,
+                                       node.BoundsRadius) ||
+                    childNode.MaxParentError > node.MaxParentError)
+                {
+                    return CookedMeshParseStatus::InvalidGroupBVH;
+                }
+                levelOf[child] = level + 1;
+            }
+            nextChild += node.Count;
+        }
+
+        // 全ての節が根から届き、全クラスタがちょうど1つの葉に入る
+        if (nextChild != nodes.size() || coveredTotal != clusters.size())
+        {
+            return CookedMeshParseStatus::InvalidGroupBVH;
+        }
+        return CookedMeshParseStatus::Success;
     }
 
     CookedMeshParseResult ParseCookedMesh(AssetBlob sourceBlob)

@@ -26,6 +26,7 @@ struct MegaInstance
     vec4 lodSphere;
     uvec4 clusterInfo;
     uvec4 drawInfo;
+    uvec4 bvhInfo;        // グループの BVH の節の配列のアドレス・節の数（描画では使わない。配列の刻みを合わせるために持つ）
 };
 
 layout(std430, set = 0, binding = 8) readonly buffer InstanceBuffer

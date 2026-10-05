@@ -2824,9 +2824,10 @@ namespace
 
         assert(GMegaInstanceTableUpdates.size() == 1);
         const Container::VariableArray<uint8_t> &bytes = GMegaInstanceTableUpdates[0];
-        // MegaGeometryPass::GPUMegaInstance は 176 バイト（world 0・previousWorld 64・LODSphere 128・
-        // クラスタ配列のアドレス下位/上位・クラスタ数・最初のワークグループ 144〜156・区間・頂点の基点・インデックスの基点・見えたビットの先頭 160〜172）
-        constexpr size_t InstanceBytes = 176;
+        // MegaGeometryPass::GPUMegaInstance は 192 バイト（world 0・previousWorld 64・LODSphere 128・
+        // クラスタ配列のアドレス下位/上位・クラスタ数・最初のワークグループ 144〜156・区間・頂点の基点・インデックスの基点・見えたビットの先頭 160〜172・
+        // グループの BVH の節の配列のアドレス下位/上位・節の数・予約 176〜188）
+        constexpr size_t InstanceBytes = 192;
         assert(bytes.size() == 2 * InstanceBytes);
         auto readUint = [&bytes](size_t instanceIndex, size_t byteOffset) -> uint32_t
         {

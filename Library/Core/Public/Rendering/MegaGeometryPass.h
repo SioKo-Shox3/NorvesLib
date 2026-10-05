@@ -138,6 +138,14 @@ namespace NorvesLib::Core::Rendering
             uint32_t CullPass;      // 0=従来（遮蔽の判定なし）, 1=1パス目, 2=2パス目
             uint32_t bStatsEnabled; // 1なら統計バッファへ数える
             uint32_t SectionBase;   // 区間の表・カウンタのうちこのパスの先頭（1パス目は0、2パス目は区間の数）
+            uint32_t VisibleReadStamp;  // 1パス目が「前のフレームで見えた」とみなす印の値（前のフレームの2パス目が書いた値）
+            uint32_t VisibleWriteStamp; // 2パス目が見えたクラスタへ書く印の値
+            uint32_t BvhStage;      // BVH のたどり: 節の判定の段の番号（BvhStageClusters なら葉のクラスタの判定。平らな判定では使わない）
+            uint32_t BvhInputBase;  // この段の入力の列の先頭（要素）
+            uint32_t BvhNextBase;   // 次の段の列の先頭
+            uint32_t BvhLeafBase;   // 葉の列の先頭
+            uint32_t BvhRootCount;  // BVH を持つインスタンスの数（インスタンスの表の先頭からその数。段0の入力の数）
+            uint32_t BvhPad;
         };
 
         /**
@@ -156,8 +164,12 @@ namespace NorvesLib::Core::Rendering
             uint32_t VertexBase;           // 頂点の基点（プールの塊の先頭から。頂点単位）
             uint32_t IndexBase;            // インデックスの基点（プールの塊の先頭から。インデックス単位）
             uint32_t VisibleOffset;        // 「見えた」ビットの先頭（全インスタンス共通の配列の中の位置）
+            uint32_t BvhAddressLow;        // グループの BVH の節の配列のデバイスアドレス（BVH が無ければ 0）
+            uint32_t BvhAddressHigh;
+            uint32_t BvhNodeCount;
+            uint32_t Reserved;
         };
-        static_assert(sizeof(GPUMegaInstance) == 176, "cluster_cull.comp の MegaInstance と大きさが一致しません");
+        static_assert(sizeof(GPUMegaInstance) == 192, "cluster_cull.comp の MegaInstance と大きさが一致しません");
 
         /**
          * @brief MegaMeshインスタンス情報
@@ -207,6 +219,13 @@ namespace NorvesLib::Core::Rendering
             RHI::DescriptorSetPtr DescriptorSet; // 描画用（UBO・材質のテクスチャ・VTの要求・インスタンスの表・描画情報）
         };
 
+        /** @brief BVH のたどりの1段分の資源（カリング用UBOと、その UBO を結んだディスクリプタセット） */
+        struct BvhStageDraw
+        {
+            RHI::BufferPtr Uniform;
+            RHI::DescriptorSetPtr DescriptorSet;
+        };
+
         /** @brief ホストが毎フレーム書く資源の組。フレームごとに交互に使う */
         struct FrameSlot
         {
@@ -216,6 +235,8 @@ namespace NorvesLib::Core::Rendering
             uint32_t SectionCapacity = 0;  // 要素数
             RHI::BufferPtr CullUniform[2]; // パスごとのカリング用UBO
             RHI::DescriptorSetPtr CullDescriptorSet[2];
+            // BVH のたどり: パスごとに、節の判定の段 + 葉のクラスタの判定の段の数だけ（段ごとにUBOの中身が違うため別々に持つ）
+            Container::VariableArray<BvhStageDraw> BvhStages[2];
             Container::VariableArray<SectionDraw> Sections;
         };
 
@@ -228,6 +249,15 @@ namespace NorvesLib::Core::Rendering
          * 足りなければ作り直し、古いバッファは、GPUが使い終わった後に破棄する。
          */
         bool EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity);
+
+        /**
+         * @brief BVH のたどりの列とカウンタを、必要な数に収まる大きさにする（足りなければ作り直し、古いものは遅れて破棄）
+         * @param queueEntries 列の要素数（uvec2）。段ごとの列と葉の列を1本に並べた合計
+         */
+        bool EnsureBvhBuffers(uint32_t queueEntries);
+
+        /** @brief フレームスロットに、BVH のたどりの段 stageCount 個ぶんの UBO・ディスクリプタセットを用意する */
+        bool EnsureBvhStageResources(FrameSlot &slot, uint32_t passIndex, uint32_t stageCount);
 
         /**
          * @brief 2パスの遮蔽カリングで描けるか。描けるときはHZBを深度の大きさに合わせる
@@ -278,9 +308,20 @@ namespace NorvesLib::Core::Rendering
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;
 
-        // カリングコンピュートパイプライン
+        // カリングコンピュートパイプライン（m_CullPipeline = 平らなクラスタの列、m_BvhCullPipeline = グループの BVH をたどる）
         RHI::PipelinePtr m_CullPipeline;
         RHI::ShaderPtr m_CullShader;
+        RHI::PipelinePtr m_BvhCullPipeline;
+        RHI::ShaderPtr m_BvhCullShader;
+
+        // BVH のたどりの列（uvec2: インスタンスの番号・節の番号。段ごとの列と葉の列）とカウンタ。全インスタンス・全パスで共用する
+        RHI::BufferPtr m_BvhQueueBuffer;
+        RHI::BufferPtr m_BvhCounterBuffer;
+        uint32_t m_BvhQueueCapacity = 0; // m_BvhQueueBuffer の要素数
+        // 最後に記録した BVH のたどりの規模（変わったときだけ記録する）
+        uint32_t m_LoggedBvhInstances = 0xFFFFFFFFu;
+        uint32_t m_LoggedBvhLevels = 0xFFFFFFFFu;
+        uint32_t m_LoggedFlatInstances = 0xFFFFFFFFu;
 
         // カリング・描画用GPUバッファ（全インスタンス・全パスで1組。コマンドは区間ごとの連続した範囲で、
         // パスごとに別の範囲を使う。範囲の配置は区間の表が持つ）

@@ -74,6 +74,34 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     constexpr uint32_t GPU_CLUSTER_FLAG_BAKED_LOD = 1u;
 
     /**
+     * @brief クラスタのグループの BVH の1節（NVMESH v1.1 の CookedMeshGroupBVHNode と同じ内容。GPU の節の並び）
+     *
+     * 内部の節は子の節の連続した範囲（First から Count 個）を、葉はクラスタの連続した範囲（First から Count 個）を持つ。
+     * 節は幅優先の並びで、根が 0 番。境界球は下のクラスタの球と親の球をすべて包み、MaxParentError は下の
+     * クラスタの親の誤差の最大以上（根のクラスタを持つ節は最大値）。節の球から投影した MaxParentError が許容以下なら、
+     * 下のどのクラスタも描かれないので、枝ごと切れる。cluster_bvh_cull.comp の BvhNode と一致させる。
+     */
+    struct alignas(16) GPUGroupBVHNode
+    {
+        float BoundsCenterX;
+        float BoundsCenterY;
+        float BoundsCenterZ;
+        float BoundsRadius;
+        float MaxParentError;
+        uint32_t First;
+        uint32_t Count;
+        uint32_t Flags; // GPU_GROUP_BVH_NODE_FLAG_*
+    };
+    static_assert(sizeof(GPUGroupBVHNode) == 32, "cluster_bvh_cull.comp の BvhNode と大きさが一致しません");
+
+    /** @brief GPUGroupBVHNode::Flags: 葉（First から Count 個のクラスタを持つ） */
+    constexpr uint32_t GPU_GROUP_BVH_NODE_FLAG_LEAF = 1u;
+    /** @brief 葉が持つクラスタの最大数・内部の節が持つ子の最大数・BVH の段の最大数（NVMESH v1.1 と同じ） */
+    constexpr uint32_t GROUP_BVH_MAX_LEAF_CLUSTERS = 8;
+    constexpr uint32_t GROUP_BVH_MAX_CHILDREN = 8;
+    constexpr uint32_t GROUP_BVH_MAX_LEVELS = 16;
+
+    /**
      * @brief GPUインスタンスデータ
      *
      * Mega Geometryインスタンスごとのデータ。
@@ -305,6 +333,14 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t BakedLODLevelCount = 1;
 
         /**
+         * @brief クラスタのグループの BVH（NVMESH v1.1。焼き込み済みの階層だけ。空なら平らなクラスタの列で判定する）
+         *
+         * 幅優先の並びで、葉の範囲は Clusters の添字。構造（子の位置・葉の範囲・全クラスタがちょうど1つの葉に入ること）が
+         * 正しくなければ CreateMegaMesh が拒否する。
+         */
+        VariableArray<GPUGroupBVHNode> GroupBVH;
+
+        /**
          * @brief RTと影のための常駐の粗い段のインデックスの範囲（IndexData の要素の位置と数。基点の頂点は 0）
          *
          * Count が 0 なら無し（従来の段の選び方）。FallbackError はその段のローカル空間の誤差。
@@ -358,6 +394,18 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint64_t VertexBufferBytes = 0;
         uint64_t IndexBufferBytes = 0;
         uint64_t ClusterBufferBytes = 0;
+
+        /**
+         * @brief クラスタのグループの BVH の領域（塊のバッファの先頭からのバイトと大きさ。BVH が無ければ大きさ 0）
+         *
+         * クラスタ・頂点・インデックスと同じ塊のバッファにあり、GPU はデバイスアドレス（塊の先頭 + オフセット）で引く。
+         */
+        uint64_t GroupBVHBufferOffsetBytes = 0;
+        uint64_t GroupBVHBufferBytes = 0;
+        uint32_t GroupBVHNodeCount = 0;
+        uint32_t GroupBVHLeafCount = 0;
+        /** @brief BVH の段ごとの節の数（添字が段。段 k の節は幅優先の並びで連続する。BVH が無ければ空） */
+        VariableArray<uint32_t> GroupBVHLevelNodeCounts;
 
         /**
          * @brief プールの区画の共有の持ち主（型を消した参照）

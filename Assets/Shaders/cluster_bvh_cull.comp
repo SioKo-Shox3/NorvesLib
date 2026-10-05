@@ -1,0 +1,130 @@
+﻿#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+// ========================================
+// Mega Geometry クラスタカリング コンピュートシェーダー（グループの BVH をたどる経路）
+//
+// グループの BVH（NVMESH v1.1）を持つメッシュのインスタンスを、BVH の段ごとの dispatch でたどる（1パスにつき、
+// 段の数 + 葉のクラスタの判定の1回）。BVH を持たないメッシュは cluster_cull.comp が受け持つ。
+//
+// 節の判定の段（bvhStage = 段の番号）:
+//   入力の列（段0はインスタンスの表の先頭 bvhRootCount 個の根の節。段1以降は前の段が積んだ列）の各要素（インスタンス・節）を
+//   1スレッドが受け持ち、節の球で視錐台・遮蔽（2パス目だけ）・LOD（節の球から投影した親の誤差の最大が許容以下）の判定をする。
+//   どれかで落ちれば、その下のクラスタは選ばれないので枝ごと切る。残った内部の節は子の節を次の段の列へ積み、
+//   葉は葉の列へ積む。入力の数は bvhCounters[bvhStage]（段0は bvhRootCount）で、列の大きさ（dispatch の大きさ）は
+//   CPU が段ごとの節の数の合計から決める（各節の親は1つなので、段の列はあふれない）。
+// 葉のクラスタの判定（bvhStage = BVH_STAGE_CLUSTERS）:
+//   葉の列の1要素を BVH_LEAF_SLOTS 個のスレッドが1クラスタずつ受け持ち、cluster_cull.comp と同じ判定
+//   （ProcessCluster）にかけて描画コマンドを積む。
+//
+// 段の間は CPU が UAV のバリアを入れ、段ごとのカウンタ（bvhCounters）は各パスの先頭で0にする。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#include "Common/MegaGeometryCull.glsl"
+
+/**
+ * @brief 節の LOD の判定: 節の球から投影した親の誤差の最大が許容以下なら true（下のどのクラスタも描かれない）
+ *
+ * 親が十分に細かいので、下のクラスタは「親の誤差が許容を超える」条件を満たさない。節の球は下の球を包み、誤差は下の最大
+ * 以上なので、投影した値は下の値以上（単調）。丸めで下の値より僅かに小さく出ても葉で描かれるクラスタを切らないよう、
+ * BVH_LOD_PRUNE_MARGIN を掛けて比べる。NaN は切らない側。MegaGeometryBvhSelection.h の CanPruneBvhNodeByLOD と同じ。
+ */
+bool CanPruneBvhNodeByLOD(BvhNode node)
+{
+    return ProjectBakedError(node.sphere.xyz, node.sphere.w, uintBitsToFloat(node.info.x)) * BVH_LOD_PRUNE_MARGIN
+           <= cullData.lodBias;
+}
+
+void NodeStage()
+{
+    uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    uint thread = flatGroup * 64u + gl_LocalInvocationID.x;
+
+    uint inputCount = cullData.bvhStage == 0u ? cullData.bvhRootCount : bvhCounters[cullData.bvhStage];
+    if (thread >= inputCount)
+    {
+        return;
+    }
+    uvec2 entry = cullData.bvhStage == 0u ? uvec2(thread, 0u) : bvhQueue[cullData.bvhInputBase + thread];
+    uint instanceIndex = entry.x;
+    MegaInstance instance = instances[instanceIndex];
+
+    g_WorldMatrix = instance.world;
+    BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
+    BvhNode node = bvh.nodes[entry.y];
+
+    vec3 center = TransformClusterCenterToWorld(node.sphere.xyz);
+    float radius = node.sphere.w * ComputeWorldRadiusScale();
+    if (FrustumCullSphere(center, radius))
+    {
+        return;
+    }
+    // 遮蔽の判定は2パス目だけ（1パス目は遮蔽の判定をしない）。節の球が完全に隠れていれば、下のクラスタも隠れている
+    if (cullData.cullPass == CULL_PASS_SECOND && OcclusionCullSphere(center, radius))
+    {
+        return;
+    }
+    if (CanPruneBvhNodeByLOD(node))
+    {
+        return;
+    }
+
+    if ((node.info.w & BVH_NODE_FLAG_LEAF) != 0u)
+    {
+        uint slot = atomicAdd(bvhCounters[BVH_LEAF_COUNTER], 1u);
+        bvhQueue[cullData.bvhLeafBase + slot] = entry;
+    }
+    else
+    {
+        uint childCount = node.info.z;
+        uint firstSlot = atomicAdd(bvhCounters[cullData.bvhStage + 1u], childCount);
+        for (uint child = 0u; child < childCount; ++child)
+        {
+            bvhQueue[cullData.bvhNextBase + firstSlot + child] = uvec2(instanceIndex, node.info.y + child);
+        }
+    }
+}
+
+void ClusterStage()
+{
+    uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    uint thread = flatGroup * 64u + gl_LocalInvocationID.x;
+    uint leafSlot = thread / BVH_LEAF_SLOTS;
+    uint memberSlot = thread % BVH_LEAF_SLOTS;
+
+    if (leafSlot >= bvhCounters[BVH_LEAF_COUNTER])
+    {
+        return;
+    }
+    uvec2 entry = bvhQueue[cullData.bvhLeafBase + leafSlot];
+    uint instanceIndex = entry.x;
+    MegaInstance instance = instances[instanceIndex];
+
+    BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
+    BvhNode node = bvh.nodes[entry.y];
+    if (memberSlot >= node.info.z)
+    {
+        return;
+    }
+
+    g_WorldMatrix = instance.world;
+    g_LODSphere = instance.lodSphere;
+    g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
+
+    ProcessCluster(instanceIndex, instance, node.info.y + memberSlot);
+}
+
+void main()
+{
+    if (cullData.bvhStage == BVH_STAGE_CLUSTERS)
+    {
+        ClusterStage();
+    }
+    else
+    {
+        NodeStage();
+    }
+}

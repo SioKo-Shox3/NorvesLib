@@ -200,6 +200,42 @@ namespace NorvesLib::Core::Asset
         inline constexpr uint32_t InvalidPageId = 0xffffffffu;
         inline constexpr uint32_t PageFlagRoot = 1u;
 
+        // v1.1 のグループの BVH。ヘッダの Flags の bit0 が立つとき、グループの表の節の後ろに続く
+        // （節の大きさ = グループの記録 × 件数 + GroupBVHHeaderSize + 節の記録 × 節の数）。
+        // 頭（16B: 節の数・段の数・葉の数・予約 0）の後ろに、節（32B: 境界球・MaxParentError・First・Count・flags）が並ぶ。
+        // 節は幅優先の並び（根が 0 番。内部の節の子は連続し、段ごとに連続する）。葉はクラスタの連続した範囲で、
+        // 1つのグループの（または根のクラスタだけの）メンバだけを持つ。全クラスタがちょうど1つの葉に入る。
+        // 節の球は下のクラスタの球と親の球を包み、MaxParentError は下の最大以上（根のクラスタを持つ節は RootParentError）。
+        // カリングは節の球から投影した MaxParentError が許容以下なら枝ごと切る（下のクラスタは「親の誤差が許容を
+        // 超える」条件を満たさず描かれない）。視錐台・遮蔽は節の球で外れるなら下も外れる。読み込みはこれらの前提を検査する。
+        inline constexpr uint32_t HeaderFlagGroupBVH = 1u;
+        inline constexpr size_t GroupBVHHeaderSize = 16;
+        inline constexpr size_t GroupBVHNodeRecordSize = 32;
+        inline constexpr uint32_t GroupBVHMaxChildren = 8;
+        inline constexpr uint32_t GroupBVHMaxLeafClusters = 8;
+        inline constexpr uint32_t GroupBVHMaxLevels = 16;
+        inline constexpr uint32_t GroupBVHNodeFlagLeaf = 1u;
+
+        namespace GroupBVHHeaderOffset
+        {
+            inline constexpr size_t NodeCount = 0;
+            inline constexpr size_t LevelCount = 4;
+            inline constexpr size_t LeafCount = 8;
+            inline constexpr size_t Reserved0 = 12;
+        } // namespace GroupBVHHeaderOffset
+
+        namespace GroupBVHNodeOffset
+        {
+            inline constexpr size_t BoundsCenterX = 0;
+            inline constexpr size_t BoundsCenterY = 4;
+            inline constexpr size_t BoundsCenterZ = 8;
+            inline constexpr size_t BoundsRadius = 12;
+            inline constexpr size_t MaxParentError = 16;
+            inline constexpr size_t First = 20;
+            inline constexpr size_t Count = 24;
+            inline constexpr size_t Flags = 28;
+        } // namespace GroupBVHNodeOffset
+
         namespace HeaderOffset
         {
             inline constexpr size_t Magic = 0;
@@ -386,7 +422,9 @@ namespace NorvesLib::Core::Asset
         // v1.1（ページ）で足した拒否理由
         InvalidPageTable,
         InvalidPageData,
-        PageHashMismatch
+        PageHashMismatch,
+        // v1.1 のグループの BVH で足した拒否理由
+        InvalidGroupBVH
     };
 
     struct CookedMeshFloat2
@@ -474,6 +512,20 @@ namespace NorvesLib::Core::Asset
         uint32_t LODLevel = 0;
     };
 
+    // v1.1 のグループの BVH の1節。内部の節は子の節の連続した範囲（First から Count 個）を、葉はクラスタの連続した範囲
+    // （First から Count 個）を持つ。境界球は、下のクラスタの境界球と親の境界球をすべて包み、MaxParentError は
+    // 下のクラスタの親の誤差の最大（根のクラスタを含む葉は RootParentError）。
+    // GPU は、節の球から投影した MaxParentError が許容以下なら、下のどのクラスタも描かれない（親で足りる）ので枝を切る。
+    struct CookedMeshGroupBVHNode
+    {
+        CookedMeshFloat3 BoundsCenter;
+        float BoundsRadius = 0.0f;
+        float MaxParentError = 0.0f;
+        uint32_t First = 0;
+        uint32_t Count = 0;
+        bool bLeaf = false;
+    };
+
     // v1.1 のページの表の1行。ページはクラスタのグループを詰めた128 KiB 以下の自己完結した範囲で、
     // 頂点・インデックス・クラスタの記録を自分の中のオフセットで持つ。根のページ（bIsRoot）は、
     // 粗い段のクラスタとフォールバックの段を持って常駐するページで、0 番から連続して並ぶ（1つ以上）。
@@ -521,6 +573,9 @@ namespace NorvesLib::Core::Asset
         Container::VariableArray<CookedMeshClusterGroup> Groups;
         // v1.1 のページの表（v1.0・v0 は空）。クラスタの PageId はここへの添字
         Container::VariableArray<CookedMeshPage> Pages;
+        // v1.1 のグループの BVH（幅優先の並び。無ければ空で、GPU は平らなクラスタの列を判定する）と、段ごとの節の数
+        Container::VariableArray<CookedMeshGroupBVHNode> GroupBVH;
+        Container::VariableArray<uint32_t> GroupBVHLevelNodeCounts;
         Container::VariableArray<uint32_t> Indices;
 
         [[nodiscard]] Container::AnsiStringView GetString(const CookedMeshStringRef& stringRef) const noexcept;
@@ -552,6 +607,20 @@ namespace NorvesLib::Core::Asset
     {
         return ComputeCookedMeshPayloadHash(bytes.data(), bytes.size());
     }
+
+    // クラスタとグループの表（クラスタはグループのメンバが連続して並ぶ）から、グループの BVH を幅優先の並びで作る。
+    // 葉は1つのグループ（または連続した根のクラスタ）のメンバを最大 GroupBVHMaxLeafClusters 個ずつ持つ。
+    // 内部の節は最大 GroupBVHMaxChildren 個の子を持つ。段が GroupBVHMaxLevels を超えるときは false。
+    [[nodiscard]] bool BuildCookedMeshGroupBVH(const Container::VariableArray<CookedMeshCluster>& clusters,
+                                               const Container::VariableArray<CookedMeshClusterGroup>& groups,
+                                               Container::VariableArray<CookedMeshGroupBVHNode>& outNodes);
+
+    // グループの BVH の構造と、枝を切る条件が保守的であること（節の球が下の球を包む・MaxParentError が下の最大以上）、
+    // 全クラスタがちょうど1つの葉に入ることを検査し、段ごとの節の数を返す。
+    [[nodiscard]] CookedMeshParseStatus CheckCookedMeshGroupBVH(
+        const Container::VariableArray<CookedMeshGroupBVHNode>& nodes,
+        const Container::VariableArray<CookedMeshCluster>& clusters,
+        Container::VariableArray<uint32_t>& outLevelNodeCounts);
 
     // 先頭の magic で v0・v1 を判別して読む。v0 は従来の1段のメッシュとして返す。
     [[nodiscard]] CookedMeshParseResult ParseCookedMesh(AssetBlob sourceBlob);
@@ -639,6 +708,10 @@ namespace NorvesLib::Core::Asset
         // GroupExceedsPage のときは、収まらなかったグループ
         uint32_t LargestGroupBytes = 0;
         uint32_t LargestGroupIndex = 0;
+        // グループの BVH の節の数・葉の数・段の数
+        uint32_t GroupBVHNodeCount = 0;
+        uint32_t GroupBVHLeafCount = 0;
+        uint32_t GroupBVHLevelCount = 0;
     };
 
     // v1.1（ページに詰めた v1）のバイト列を組み立てる。入力は SerializeCookedMeshV1 と同じ（クラスタは段ごとに

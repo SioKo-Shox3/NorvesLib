@@ -1976,6 +1976,237 @@ int main()
             CookedMeshParseStatus::InvalidIndexRange);
     }
 
+    // ---- v1.1 のグループの BVH ----
+    {
+        // ページに詰めて書くと、グループの BVH が付く。グループ 7 つ（各 2 クラスタ）と根のクラスタ 1 つが葉の単位になり、
+        // 8 つの葉を 1 つの内部の節（根）がまとめる（2 段・9 節）
+        CookedMeshPagedWriteInfo info;
+        const ByteArray bytes = SerializePaged(BuildPagedInput(), SmallPageOptions(), &info);
+        assert(info.GroupBVHNodeCount == 9 && info.GroupBVHLeafCount == 8 && info.GroupBVHLevelCount == 2);
+        assert((ReadLe32(bytes, V1::HeaderOffset::Flags) & V1::HeaderFlagGroupBVH) != 0);
+
+        const CookedMeshParseResult result = ParseCookedMesh(MakeBlob(bytes));
+        assert(result.Succeeded() && result.Mesh.FormatMinor == 1);
+        const VariableArray<CookedMeshGroupBVHNode>& nodes = result.Mesh.GroupBVH;
+        assert(nodes.size() == 9);
+        assert(result.Mesh.GroupBVHLevelNodeCounts.size() == 2 && result.Mesh.GroupBVHLevelNodeCounts[0] == 1 &&
+               result.Mesh.GroupBVHLevelNodeCounts[1] == 8);
+        assert(!nodes[0].bLeaf && nodes[0].First == 1 && nodes[0].Count == 8);
+        // 根のクラスタを含む葉があるので、根の節は親の誤差で枝を切れない（最大値）
+        assert(nodes[0].MaxParentError == V1::RootParentError);
+
+        // 葉は全クラスタをちょうど 1 回ずつ覆い、1 つのグループ（または根）のメンバだけを持つ。読み込んだ並びで確かめる
+        VariableArray<uint32_t> coverage(result.Mesh.Clusters.size(), 0);
+        uint32_t groupLeaves = 0;
+        for (size_t nodeIndex = 1; nodeIndex < nodes.size(); ++nodeIndex)
+        {
+            const CookedMeshGroupBVHNode& node = nodes[nodeIndex];
+            assert(node.bLeaf && node.Count >= 1 && node.Count <= V1::GroupBVHMaxLeafClusters);
+            const CookedMeshCluster& first = result.Mesh.Clusters[node.First];
+            for (uint32_t member = node.First; member < node.First + node.Count; ++member)
+            {
+                const CookedMeshCluster& cluster = result.Mesh.Clusters[member];
+                assert(cluster.GroupId == first.GroupId && cluster.bIsRoot == first.bIsRoot);
+                ++coverage[member];
+                // 枝を切る条件が保守的: 葉の球はメンバの球と親の球を包み、親の誤差の最大はメンバ以上
+                assert(nodes[0].BoundsRadius >= 0.0f && node.MaxParentError >= cluster.ParentError);
+            }
+            if (!first.bIsRoot)
+            {
+                ++groupLeaves;
+                assert(node.MaxParentError == result.Mesh.Groups[first.GroupId].Error);
+            }
+        }
+        for (const uint32_t count : coverage)
+        {
+            assert(count == 1);
+        }
+        assert(groupLeaves == 7);
+
+        // 根の節の球は、全クラスタの球と親の球を包む
+        for (const CookedMeshCluster& cluster : result.Mesh.Clusters)
+        {
+            const double dx = static_cast<double>(cluster.BoundsCenter.X) - nodes[0].BoundsCenter.X;
+            const double dy = static_cast<double>(cluster.BoundsCenter.Y) - nodes[0].BoundsCenter.Y;
+            const double dz = static_cast<double>(cluster.BoundsCenter.Z) - nodes[0].BoundsCenter.Z;
+            assert(std::sqrt(dx * dx + dy * dy + dz * dz) + cluster.BoundsRadius <= nodes[0].BoundsRadius);
+        }
+    }
+
+    // 多数のグループ（600 クラスタ・300 グループ・根 1）から作る BVH は、複数の段になり、同じ入力から同じ並びが出る
+    {
+        VariableArray<CookedMeshCluster> clusters;
+        VariableArray<CookedMeshClusterGroup> groups;
+        for (uint32_t groupIndex = 0; groupIndex < 300; ++groupIndex)
+        {
+            CookedMeshClusterGroup group;
+            group.BoundsCenter = {static_cast<float>(groupIndex % 20) * 3.0f, static_cast<float>(groupIndex / 20) * 3.0f,
+                                  static_cast<float>(groupIndex % 3)};
+            group.BoundsRadius = 2.5f;
+            group.Error = 0.01f * static_cast<float>(1 + groupIndex % 7);
+            group.ClusterOffset = 2 * groupIndex;
+            group.ClusterCount = 2;
+            groups.push_back(group);
+            for (uint32_t member = 0; member < 2; ++member)
+            {
+                CookedMeshCluster cluster;
+                cluster.bIsRoot = false;
+                cluster.GroupId = groupIndex;
+                cluster.BoundsCenter = {group.BoundsCenter.X + (member == 0 ? -0.5f : 0.5f), group.BoundsCenter.Y,
+                                        group.BoundsCenter.Z};
+                cluster.BoundsRadius = 1.0f;
+                cluster.ParentBoundsCenter = group.BoundsCenter;
+                cluster.ParentBoundsRadius = group.BoundsRadius;
+                cluster.ParentError = group.Error;
+                clusters.push_back(cluster);
+            }
+        }
+        CookedMeshCluster root;
+        root.BoundsCenter = {30.0f, 20.0f, 1.0f};
+        root.BoundsRadius = 60.0f;
+        root.LODError = 1.0f;
+        clusters.push_back(root);
+
+        VariableArray<CookedMeshGroupBVHNode> nodes;
+        assert(BuildCookedMeshGroupBVH(clusters, groups, nodes));
+        VariableArray<CookedMeshGroupBVHNode> again;
+        assert(BuildCookedMeshGroupBVH(clusters, groups, again));
+        assert(nodes.size() == again.size());
+        for (size_t index = 0; index < nodes.size(); ++index)
+        {
+            assert(nodes[index].First == again[index].First && nodes[index].Count == again[index].Count &&
+                   nodes[index].bLeaf == again[index].bLeaf && nodes[index].BoundsRadius == again[index].BoundsRadius &&
+                   nodes[index].MaxParentError == again[index].MaxParentError);
+        }
+
+        VariableArray<uint32_t> levelCounts;
+        assert(CheckCookedMeshGroupBVH(nodes, clusters, levelCounts) == CookedMeshParseStatus::Success);
+        // 301 の葉を 8 分岐でまとめるので、根の下に 3 段以上の節がある
+        assert(levelCounts.size() >= 3 && levelCounts[0] == 1 && levelCounts.size() <= V1::GroupBVHMaxLevels);
+        uint32_t internalCount = 0;
+        uint32_t leafCount = 0;
+        for (const CookedMeshGroupBVHNode& node : nodes)
+        {
+            if (node.bLeaf)
+            {
+                ++leafCount;
+            }
+            else
+            {
+                ++internalCount;
+                assert(node.Count >= 1 && node.Count <= V1::GroupBVHMaxChildren);
+            }
+        }
+        assert(leafCount == 301 && internalCount + leafCount == nodes.size());
+
+        // 親の誤差の最大は、下の葉の最大。誤差の小さい枝（根のクラスタを含まない節）は、より小さい値で切れる
+        float smallest = V1::RootParentError;
+        for (const CookedMeshGroupBVHNode& node : nodes)
+        {
+            smallest = std::min(smallest, node.MaxParentError);
+        }
+        assert(nodes[0].MaxParentError == V1::RootParentError && smallest == 0.01f);
+        bool bPrunableInternal = false;
+        for (const CookedMeshGroupBVHNode& node : nodes)
+        {
+            bPrunableInternal |= !node.bLeaf && node.MaxParentError < V1::RootParentError;
+        }
+        assert(bPrunableInternal);
+
+        // 葉を持たない（クラスタが無い）入力や、範囲が表の外のグループは作らない
+        VariableArray<CookedMeshGroupBVHNode> none;
+        assert(!BuildCookedMeshGroupBVH(VariableArray<CookedMeshCluster>(), groups, none));
+        VariableArray<CookedMeshClusterGroup> outOfRange = groups;
+        outOfRange[5].ClusterOffset = 700;
+        assert(!BuildCookedMeshGroupBVH(clusters, outOfRange, none));
+    }
+
+    // 壊れたグループの BVH の拒否
+    {
+        const auto bvhOffset = [](const ByteArray& bytes)
+        {
+            return static_cast<size_t>(ReadLe64(bytes, V1::HeaderOffset::GroupTableOffset)) +
+                   static_cast<size_t>(ReadLe32(bytes, V1::HeaderOffset::GroupCount)) * V1::GroupRecordSize;
+        };
+        const auto nodeOffset = [&bvhOffset](const ByteArray& bytes, size_t nodeIndex)
+        { return bvhOffset(bytes) + V1::GroupBVHHeaderSize + nodeIndex * V1::GroupBVHNodeRecordSize; };
+
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteLe32(bytes, bvhOffset(bytes) + V1::GroupBVHHeaderOffset::NodeCount, 0); },
+                            CookedMeshParseStatus::InvalidCounts);
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteLe32(bytes, bvhOffset(bytes) + V1::GroupBVHHeaderOffset::NodeCount, 10); },
+                            CookedMeshParseStatus::InvalidCounts);
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteLe32(bytes, bvhOffset(bytes) + V1::GroupBVHHeaderOffset::Reserved0, 1); },
+                            CookedMeshParseStatus::ReservedFieldNonZero);
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteLe32(bytes, bvhOffset(bytes) + V1::GroupBVHHeaderOffset::LevelCount, 3); },
+                            CookedMeshParseStatus::InvalidGroupBVH);
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteLe32(bytes, bvhOffset(bytes) + V1::GroupBVHHeaderOffset::LeafCount, 7); },
+                            CookedMeshParseStatus::InvalidGroupBVH);
+        // 根の節の球が小さすぎて、子の球を包まない
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteFloat(bytes, nodeOffset(bytes, 0) + V1::GroupBVHNodeOffset::BoundsRadius, 0.5f); },
+                            CookedMeshParseStatus::InvalidGroupBVH);
+        // 葉の球がメンバの球を包まない
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteFloat(bytes, nodeOffset(bytes, 2) + V1::GroupBVHNodeOffset::BoundsRadius, 0.1f); },
+                            CookedMeshParseStatus::InvalidGroupBVH);
+        // 親の誤差の最大が、下より小さい（枝を切る条件が保守的でなくなる）
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteFloat(bytes, nodeOffset(bytes, 0) + V1::GroupBVHNodeOffset::MaxParentError, 0.05f); },
+                            CookedMeshParseStatus::InvalidGroupBVH);
+        for (const size_t leafIndex : {size_t{1}, size_t{4}, size_t{8}})
+        {
+            ExpectPagedMutation(
+                [&](ByteArray& bytes)
+                { WriteFloat(bytes, nodeOffset(bytes, leafIndex) + V1::GroupBVHNodeOffset::MaxParentError, 0.0f); },
+                CookedMeshParseStatus::InvalidGroupBVH);
+        }
+        // 子の位置が幅優先の並びと違う
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteLe32(bytes, nodeOffset(bytes, 0) + V1::GroupBVHNodeOffset::First, 2); },
+                            CookedMeshParseStatus::InvalidGroupBVH);
+        // 葉が空・クラスタを二重に覆う・範囲が外
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteLe32(bytes, nodeOffset(bytes, 3) + V1::GroupBVHNodeOffset::Count, 0); },
+                            CookedMeshParseStatus::InvalidGroupBVH);
+        ExpectPagedMutation(
+            [&](ByteArray& bytes)
+            {
+                const uint32_t other = ReadLe32(bytes, nodeOffset(bytes, 2) + V1::GroupBVHNodeOffset::First);
+                WriteLe32(bytes, nodeOffset(bytes, 3) + V1::GroupBVHNodeOffset::First, other);
+            },
+            CookedMeshParseStatus::InvalidGroupBVH);
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteLe32(bytes, nodeOffset(bytes, 3) + V1::GroupBVHNodeOffset::First, 15); },
+                            CookedMeshParseStatus::InvalidGroupBVH);
+        // 葉でない節の印を葉に付ける（子の範囲が空いている位置と合わなくなる）／予約のビット
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteLe32(bytes, nodeOffset(bytes, 5) + V1::GroupBVHNodeOffset::Flags, 0); },
+                            CookedMeshParseStatus::InvalidGroupBVH);
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteLe32(bytes, nodeOffset(bytes, 5) + V1::GroupBVHNodeOffset::Flags, 3); },
+                            CookedMeshParseStatus::ReservedFieldNonZero);
+        ExpectPagedMutation([&](ByteArray& bytes)
+                            { WriteFloat(bytes, nodeOffset(bytes, 6) + V1::GroupBVHNodeOffset::BoundsRadius, -1.0f); },
+                            CookedMeshParseStatus::InvalidFloatOrBounds);
+        // ヘッダの Flags の未定義のビット／BVH の印だけ消す（節の大きさが合わなくなる）
+        ExpectPagedMutation([&](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::Flags, 3); },
+                            CookedMeshParseStatus::ReservedFieldNonZero);
+        ExpectPagedMutation([&](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::Flags, 0); },
+                            CookedMeshParseStatus::InvalidCounts);
+        // v1.0 は BVH を持てない
+        {
+            ByteArray bytes = SerializeV1(BuildV1Input());
+            WriteLe32(bytes, V1::HeaderOffset::Flags, V1::HeaderFlagGroupBVH);
+            RefreshPayloadHash(bytes);
+            ExpectStatus(std::move(bytes), CookedMeshParseStatus::ReservedFieldNonZero);
+        }
+    }
+
     // v1.0 は v1.1 の読み込みを入れても従来どおりに読める（ページの表は空、副版は 0）
     {
         const CookedMeshParseResult result = ParseCookedMesh(MakeBlob(SerializeV1(BuildV1Input())));

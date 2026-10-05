@@ -2,6 +2,7 @@
 
 #include "Rendering/GpuRetireQueue.h"
 #include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
+#include "Rendering/MegaGeometry/MegaGeometryBvhSelection.h"
 #include "Rendering/MaterialTypes.h"
 #include "Rendering/TileUploader.h"
 #include "RHI/IBuffer.h"
@@ -200,6 +201,21 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // グループの BVH（NVMESH v1.1）。焼き込み済みの階層にだけ付き、GPU は節を段ごとの列へ積んでたどるので、
+        // 構造（幅優先の並び・全クラスタがちょうど1つの葉に入る）が正しいものだけを受ける
+        Container::VariableArray<uint32_t> groupBVHLevelNodeCounts;
+        uint32_t groupBVHLeafCount = 0;
+        if (!createInfo.GroupBVH.empty())
+        {
+            if (!createInfo.bBakedLODHierarchy ||
+                !MegaGeometry::AnalyzeGroupBVH(createInfo.GroupBVH, static_cast<uint32_t>(createInfo.Clusters.size()),
+                                               groupBVHLevelNodeCounts, groupBVHLeafCount))
+            {
+                NORVES_LOG_ERROR("MegaGeometryResources", "グループの BVH が不正です: %s", createInfo.DebugName.c_str());
+                return MegaGeometry::MegaMeshHandle::Invalid();
+            }
+        }
+
         if (createInfo.bBuildLODHierarchy && !createInfo.bBakedLODHierarchy && createInfo.Clusters.size() > 1)
         {
             MegaGeometry::LODBuildSettings lodSettings;
@@ -242,7 +258,12 @@ namespace NorvesLib::Core::Rendering
         const uint64_t clusterRegionOffset = 0;
         const uint64_t vertexRegionOffset = AlignUpBytes(clusterBytes, RegionAlignmentBytes);
         const uint64_t indexRegionOffset = AlignUpBytes(vertexRegionOffset + vertexBytes, RegionAlignmentBytes);
-        const uint64_t regionBytes = indexRegionOffset + indexBytes;
+        // グループの BVH は区画の末尾（BVH が無いメッシュの区画は従来のまま）
+        const uint64_t groupBVHBytes =
+            static_cast<uint64_t>(createInfo.GroupBVH.size()) * sizeof(MegaGeometry::GPUGroupBVHNode);
+        const uint64_t groupBVHRegionOffset =
+            groupBVHBytes > 0 ? AlignUpBytes(indexRegionOffset + indexBytes, RegionAlignmentBytes) : 0;
+        const uint64_t regionBytes = groupBVHBytes > 0 ? groupBVHRegionOffset + groupBVHBytes : indexRegionOffset + indexBytes;
 
         auto stageStartTime = LoadProfileNow();
         GeometryPool::RegionLease lease = m_Pool->Allocate(regionBytes, RegionAlignmentBytes);
@@ -316,6 +337,11 @@ namespace NorvesLib::Core::Rendering
         const double vertexUploadMs = LoadProfileElapsedMs(vertexStageStartTime) + allocateMs;
         auto indexStageStartTime = LoadProfileNow();
         std::memcpy(stagedBytes.data() + indexRegionOffset, uploadIndexData, static_cast<size_t>(indexBytes));
+        if (groupBVHBytes > 0)
+        {
+            std::memcpy(stagedBytes.data() + groupBVHRegionOffset, createInfo.GroupBVH.data(),
+                        static_cast<size_t>(groupBVHBytes));
+        }
         const double indexUploadMs = LoadProfileElapsedMs(indexStageStartTime);
 
         // Allocate the handle and register GPU data.
@@ -335,6 +361,14 @@ namespace NorvesLib::Core::Rendering
         gpuData.VertexBufferBytes = vertexBytes;
         gpuData.IndexBufferBytes = indexBytes;
         gpuData.ClusterBufferBytes = clusterBytes;
+        if (groupBVHBytes > 0)
+        {
+            gpuData.GroupBVHBufferOffsetBytes = leaseRef.GetOffsetBytes() + groupBVHRegionOffset;
+            gpuData.GroupBVHBufferBytes = groupBVHBytes;
+            gpuData.GroupBVHNodeCount = static_cast<uint32_t>(createInfo.GroupBVH.size());
+            gpuData.GroupBVHLeafCount = groupBVHLeafCount;
+            gpuData.GroupBVHLevelNodeCounts = groupBVHLevelNodeCounts;
+        }
         gpuData.VertexCount = uploadVertexCount;
         gpuData.IndexCount = uploadIndexCount;
         gpuData.ClusterCount = static_cast<uint32_t>(uploadClusters->size());

@@ -91,6 +91,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         }
 
         outCreateInfo.ClusterGroups.clear();
+        outCreateInfo.GroupBVH.clear();
         outCreateInfo.bBakedLODHierarchy = cooked.FormatMajor >= 1;
         outCreateInfo.BakedLODLevelCount = cooked.LODLevelCount;
         outCreateInfo.FallbackIndexOffset = 0;
@@ -112,6 +113,22 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             outCreateInfo.FallbackIndexOffset = cooked.FallbackIndexOffset;
             outCreateInfo.FallbackIndexCount = cooked.FallbackIndexCount;
             outCreateInfo.FallbackError = cooked.FallbackError;
+
+            // v1.1 のグループの BVH（v1.0 は空。空なら GPU は平らなクラスタの列を判定する）
+            outCreateInfo.GroupBVH.reserve(cooked.GroupBVH.size());
+            for (const Asset::CookedMeshGroupBVHNode &cookedNode : cooked.GroupBVH)
+            {
+                GPUGroupBVHNode node{};
+                node.BoundsCenterX = cookedNode.BoundsCenter.X;
+                node.BoundsCenterY = cookedNode.BoundsCenter.Y;
+                node.BoundsCenterZ = cookedNode.BoundsCenter.Z;
+                node.BoundsRadius = cookedNode.BoundsRadius;
+                node.MaxParentError = cookedNode.MaxParentError;
+                node.First = cookedNode.First;
+                node.Count = cookedNode.Count;
+                node.Flags = cookedNode.bLeaf ? GPU_GROUP_BVH_NODE_FLAG_LEAF : 0u;
+                outCreateInfo.GroupBVH.push_back(node);
+            }
         }
         return true;
     }
