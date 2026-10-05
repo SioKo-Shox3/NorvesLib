@@ -33,6 +33,7 @@
 #include "Rendering/ViewRenderContext.h"
 #include "Test/Core/Rendering/GeometryUploadTestSupport.h"
 #include "Container/PointerTypes.h"
+#include "Math/MatrixUtils.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -106,6 +107,13 @@ namespace
     };
 
     Container::VariableArray<FakeRenderEvent> GRenderEvents;
+    // スキニングのパレットのバッファ（"SkinnedPalette"・"SkinnedPreviousPalette"）の更新の記録（更新ごとの float の列）
+    struct SkinnedPaletteUpdate
+    {
+        bool bPrevious = false;
+        Container::VariableArray<float> Values;
+    };
+    Container::VariableArray<SkinnedPaletteUpdate> GSkinnedPaletteUpdates;
     // MegaGeometryPass が毎フレーム書くインスタンスの表（"MegaGeometry_InstanceTable"）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaInstanceTableUpdates;
     Container::VariableArray<uint8_t> GLastDescriptorBinding4UpdateBytes;
@@ -280,6 +288,19 @@ namespace
             {
                 GMegaInstanceTableUpdates.push_back(LastUpdateBytes);
             }
+            const bool bSkinnedPalette = IsDebugName(m_Desc.DebugName, "SkinnedPalette");
+            const bool bSkinnedPreviousPalette = IsDebugName(m_Desc.DebugName, "SkinnedPreviousPalette");
+            if (bSkinnedPalette || bSkinnedPreviousPalette)
+            {
+                SkinnedPaletteUpdate update;
+                update.bPrevious = bSkinnedPreviousPalette;
+                update.Values.resize(static_cast<size_t>(size / sizeof(float)));
+                if (size > 0)
+                {
+                    std::memcpy(update.Values.data(), data, update.Values.size() * sizeof(float));
+                }
+                GSkinnedPaletteUpdates.push_back(std::move(update));
+            }
         }
         RHI::ResourceUsage GetUsage() const override
         {
@@ -320,6 +341,14 @@ namespace
         uint32_t EndRenderPassCount = 0;
         uint32_t DrawCallCount = 0;
         uint32_t DispatchCount = 0;
+        // Dispatch に渡されたグループ数の記録
+        struct DispatchSize
+        {
+            uint32_t X = 0;
+            uint32_t Y = 0;
+            uint32_t Z = 0;
+        };
+        Container::VariableArray<DispatchSize> DispatchGroups;
         // 材質のタイル分類の資源（MaterialTile_ で始まる名前）への 0 埋めの記録（バッファの名前と大きさ）
         struct MaterialTileFill
         {
@@ -503,9 +532,7 @@ namespace
                       uint32_t threadGroupCountY,
                       uint32_t threadGroupCountZ) override
         {
-            (void)threadGroupCountX;
-            (void)threadGroupCountY;
-            (void)threadGroupCountZ;
+            DispatchGroups.push_back({threadGroupCountX, threadGroupCountY, threadGroupCountZ});
             ++DispatchCount;
             CallSequence.push_back('D');
         }
@@ -2408,6 +2435,315 @@ namespace
             assert(followupReadBarriers == 0);
         }
         ShutdownVisibilityRasterScene(scene);
+    }
+
+    // ---- スキニングの継続の検査（Declare / Execute の詰め方・代用・外し方、dispatch と束縛の上限） ----
+
+    NorvesLib::Math::Matrix4x4 MakeMarkedMatrix(float x, float y, float z)
+    {
+        return NorvesLib::Math::Matrix4x4(1.0f, 0.0f, 0.0f, 0.0f,
+                                          0.0f, 1.0f, 0.0f, 0.0f,
+                                          0.0f, 0.0f, 1.0f, 0.0f,
+                                          x, y, z, 1.0f);
+    }
+
+    // 行列をシェーダーへ渡す 16 個の float にした値（パレットのバッファの中身と比べる）
+    Container::VariableArray<float> ToShaderFloats(const NorvesLib::Math::Matrix4x4& matrix)
+    {
+        Container::VariableArray<float> values;
+        values.resize(16);
+        NorvesLib::Math::MatrixUtils::CopyToShaderData(matrix, values.data());
+        return values;
+    }
+
+    // パレットのバッファの更新の matrixIndex 番目の行列（16 個の float）が、行列と一致するか
+    bool PaletteMatrixEquals(const SkinnedPaletteUpdate& update, size_t matrixIndex, const NorvesLib::Math::Matrix4x4& matrix)
+    {
+        const Container::VariableArray<float> expected = ToShaderFloats(matrix);
+        if (update.Values.size() < (matrixIndex + 1) * 16)
+        {
+            return false;
+        }
+        return std::memcmp(update.Values.data() + matrixIndex * 16, expected.data(), 16 * sizeof(float)) == 0;
+    }
+
+    // SkinnedMeshes（パレットの貸し出し）を渡し、SkinningComputePass だけをグラフに載せて実行するシーン
+    struct SkinningPassScene
+    {
+        RHI::TSharedPtr<FakeDevice> Device;
+        ShaderManager ShaderMgr;
+        MockAllocator Allocator;
+        RHI::TransientResourcePool Pool;
+        RenderResources Resources;
+        RenderGraph Graph;
+        SkinningComputePass Skinning;
+        FakeCommandList CommandList;
+        Container::VariableArray<DrawCommand> OpaqueCommands;
+        Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>> SkinnedLeases;
+        CameraProxy Camera;
+        ViewRenderContext Context;
+    };
+
+    // 頂点数 vertexCount・骨 boneCount 本のスキニングの描画（非インスタンス、直前のフレームなし）を足し、その番号を返す。
+    // 現在の変換・骨の行列は handleIndex ごとに違う値の並進にして、パレットの中身を見分けられるようにする
+    uint32_t AddSkinnedCommand(SkinningPassScene& scene, uint32_t handleIndex, uint32_t vertexCount, uint32_t boneCount)
+    {
+        Container::VariableArray<SkinnedMeshVertex> skinVertices;
+        skinVertices.resize(vertexCount);
+        for (SkinnedMeshVertex& vertex : skinVertices)
+        {
+            vertex.BoneWeights[0] = 1.0f;
+        }
+        Container::VariableArray<uint32_t> skinIndices;
+        skinIndices.push_back(0u);
+        skinIndices.push_back(1u);
+        skinIndices.push_back(2u);
+        auto assetLease = Container::MakeShared<SkinnedMeshAssetLease>(
+            SkinnedMeshHandle{handleIndex, 1}, std::move(skinVertices), std::move(skinIndices));
+        scene.SkinnedLeases.push_back(Container::MakeShared<SkinnedMeshFrameLease>(assetLease));
+
+        DrawCommand command;
+        command.Draw.PayloadKind = DrawPayloadKind::Skinned;
+        command.Draw.ObjectId = 10 + handleIndex;
+        command.Draw.WorldMatrix = MakeMarkedMatrix(static_cast<float>(handleIndex) * 100.0f, 5.0f, 6.0f);
+        command.Skinned.FrameLeaseIndex = static_cast<uint32_t>(scene.SkinnedLeases.size() - 1);
+        for (uint32_t bone = 0; bone < boneCount; ++bone)
+        {
+            command.Skinned.BonePalette.push_back(
+                MakeMarkedMatrix(static_cast<float>(handleIndex * 10 + bone), 1.0f, 2.0f));
+        }
+        scene.OpaqueCommands.push_back(command);
+        return static_cast<uint32_t>(scene.OpaqueCommands.size() - 1);
+    }
+
+    void RunSkinningPassScene(SkinningPassScene& scene, uint32_t maxOutputVertices)
+    {
+        GSkinnedPaletteUpdates.clear();
+        scene.Device = RHI::MakeShared<FakeDevice>();
+        assert(scene.ShaderMgr.Initialize(scene.Device.get(), TestShaderDirectory));
+        assert(scene.Pool.Initialize(&scene.Allocator, 1));
+        scene.Pool.BeginFrame(0);
+        assert(scene.Resources.Initialize(scene.Device));
+        scene.Resources.SkinnedMeshes().BeginFrame(0);
+        assert(scene.Graph.Initialize(&scene.Pool));
+        scene.Graph.BeginFrame(0);
+
+        scene.Camera.Viewport.Width = 128.0f;
+        scene.Camera.Viewport.Height = 64.0f;
+        ViewRenderContext& context = scene.Context;
+        context.CommandList = &scene.CommandList;
+        context.Device = scene.Device.get();
+        context.TransientPool = &scene.Pool;
+        context.ShaderMgr = &scene.ShaderMgr;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.MainCamera = &scene.Camera;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(scene.OpaqueCommands);
+        context.SnapshotSkinnedMeshFrameLeases = &scene.SkinnedLeases;
+        context.SkinnedMeshes = &scene.Resources.SkinnedMeshes();
+
+        scene.Skinning.SetEnabled(true);
+        scene.Skinning.SetMaxOutputVertices(maxOutputVertices);
+        assert(scene.Skinning.Initialize(context));
+        scene.Graph.AddPass(&scene.Skinning);
+        assert(scene.Graph.Compile(context));
+        const RenderGraphExecutionResult result = scene.Graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+    }
+
+    void ShutdownSkinningPassScene(SkinningPassScene& scene)
+    {
+        scene.Skinning.Shutdown();
+        scene.Resources.Shutdown();
+        scene.Graph.Shutdown();
+        scene.Pool.EndFrame();
+        scene.Pool.Shutdown();
+        scene.ShaderMgr.Shutdown();
+    }
+
+    // パスが書いたバッファ（名前のもの）の大きさ。パスが最後に出す GenericRead への遷移のバリアから読む
+    uint64_t FindSkinningBufferSize(const SkinningPassScene& scene, const char* name)
+    {
+        for (const BarrierEvent& barrier : scene.CommandList.Barriers)
+        {
+            if (barrier.Kind == RGBarrierKind::Buffer && barrier.AfterState == RHI::ResourceState::GenericRead &&
+                std::strcmp(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName, name) == 0)
+            {
+                return barrier.BufferSize;
+            }
+        }
+        return 0;
+    }
+
+    // 2 つ以上のインスタンスの詰め方（2 つ目以降の VertexBase）、直前のパレットが無いとき・数が違うときに今の値で
+    // 代用すること、インスタンス描画のものを外すこと
+    void TestSkinningComputePassPacksInstancesAndSubstitutesMissingPrevious()
+    {
+        SkinningPassScene scene;
+        // 0: 5 頂点・骨 2 本・直前のフレームあり
+        const uint32_t withPrevious = AddSkinnedCommand(scene, 1, 5, 2);
+        scene.OpaqueCommands[withPrevious].Skinned.bHasPrevious = true;
+        scene.OpaqueCommands[withPrevious].Skinned.PreviousWorldMatrix = MakeMarkedMatrix(-7.0f, -8.0f, -9.0f);
+        scene.OpaqueCommands[withPrevious].Skinned.PreviousBonePalette.push_back(MakeMarkedMatrix(-1.0f, -2.0f, -3.0f));
+        scene.OpaqueCommands[withPrevious].Skinned.PreviousBonePalette.push_back(MakeMarkedMatrix(-4.0f, -5.0f, -6.0f));
+        // 1: 4 頂点・インスタンス描画（外れる）
+        const uint32_t instanced = AddSkinnedCommand(scene, 2, 4, 1);
+        scene.OpaqueCommands[instanced].Draw.bInstanced = true;
+        scene.OpaqueCommands[instanced].Draw.InstanceCount = 2;
+        // 2: 7 頂点・骨 1 本・直前のフレームなし
+        const uint32_t withoutPrevious = AddSkinnedCommand(scene, 3, 7, 1);
+        // 3: 3 頂点・骨 2 本・直前のパレットの数が違う（1 本）
+        const uint32_t mismatched = AddSkinnedCommand(scene, 4, 3, 2);
+        scene.OpaqueCommands[mismatched].Skinned.bHasPrevious = true;
+        scene.OpaqueCommands[mismatched].Skinned.PreviousWorldMatrix = MakeMarkedMatrix(-70.0f, -80.0f, -90.0f);
+        scene.OpaqueCommands[mismatched].Skinned.PreviousBonePalette.push_back(MakeMarkedMatrix(-10.0f, -20.0f, -30.0f));
+
+        RunSkinningPassScene(scene, SKINNING_MAX_OUTPUT_VERTICES);
+
+        assert(scene.Graph.GetLastExecutedPassCount() == 1);
+        assert(scene.Skinning.GetDroppedInstanceCount() == 0);
+
+        // 詰め方: 0 → [0, 5)、2 → [5, 12)、3 → [12, 15)。インスタンス描画（1）は外れる
+        const auto& instances = scene.Skinning.GetInstances();
+        assert(instances.size() == 3);
+        assert(instances[0].ObjectId == 11 && instances[0].VertexBase == 0 && instances[0].VertexCount == 5);
+        assert(instances[1].ObjectId == 13 && instances[1].VertexBase == 5 && instances[1].VertexCount == 7);
+        assert(instances[2].ObjectId == 14 && instances[2].VertexBase == 12 && instances[2].VertexCount == 3);
+        assert(scene.CommandList.DispatchCount == 3);
+        assert(FindSkinningBufferSize(scene, "Skinning_CurrentVertices") == 15u * sizeof(SkinnedOutputVertex));
+        assert(FindSkinningBufferSize(scene, "Skinning_PreviousVertices") == 15u * sizeof(SkinnedOutputVertex));
+
+        // パレットの更新は 1 インスタンスにつき（今, 前）の順。インスタンス描画のぶんは作られない
+        assert(GSkinnedPaletteUpdates.size() == 6);
+        for (size_t index = 0; index < GSkinnedPaletteUpdates.size(); ++index)
+        {
+            assert(GSkinnedPaletteUpdates[index].bPrevious == (index % 2 == 1));
+        }
+
+        // 今のパレット: 変換・法線の行列・骨ごとの（位置, 法線）の行列。骨 0 の位置の行列は行列 2
+        const SkinnedPaletteUpdate& currentOfFirst = GSkinnedPaletteUpdates[0];
+        const SkinnedPaletteUpdate& previousOfFirst = GSkinnedPaletteUpdates[1];
+        assert(PaletteMatrixEquals(currentOfFirst, 0, scene.OpaqueCommands[withPrevious].Draw.WorldMatrix));
+        assert(PaletteMatrixEquals(currentOfFirst, 2, scene.OpaqueCommands[withPrevious].Skinned.BonePalette[0]));
+        // 直前のフレームがあるときは、その変換・骨の行列（前のパレットは変換 + 骨ごとの位置の行列）
+        assert(previousOfFirst.Values.size() == 3u * 16u);
+        assert(PaletteMatrixEquals(previousOfFirst, 0, scene.OpaqueCommands[withPrevious].Skinned.PreviousWorldMatrix));
+        assert(PaletteMatrixEquals(previousOfFirst, 1, scene.OpaqueCommands[withPrevious].Skinned.PreviousBonePalette[0]));
+        assert(PaletteMatrixEquals(previousOfFirst, 2, scene.OpaqueCommands[withPrevious].Skinned.PreviousBonePalette[1]));
+
+        // 直前のフレームが無いときは、今の変換と今の骨の行列で代用する（動きは 0）
+        const SkinnedPaletteUpdate& previousOfSecond = GSkinnedPaletteUpdates[3];
+        assert(previousOfSecond.Values.size() == 2u * 16u);
+        assert(PaletteMatrixEquals(previousOfSecond, 0, scene.OpaqueCommands[withoutPrevious].Draw.WorldMatrix));
+        assert(PaletteMatrixEquals(previousOfSecond, 1, scene.OpaqueCommands[withoutPrevious].Skinned.BonePalette[0]));
+
+        // 直前のパレットの数が違うときも、今の値で代用する（前の値は使わない）
+        const SkinnedPaletteUpdate& previousOfThird = GSkinnedPaletteUpdates[5];
+        assert(previousOfThird.Values.size() == 3u * 16u);
+        assert(PaletteMatrixEquals(previousOfThird, 0, scene.OpaqueCommands[mismatched].Draw.WorldMatrix));
+        assert(PaletteMatrixEquals(previousOfThird, 1, scene.OpaqueCommands[mismatched].Skinned.BonePalette[0]));
+        assert(PaletteMatrixEquals(previousOfThird, 2, scene.OpaqueCommands[mismatched].Skinned.BonePalette[1]));
+
+        ShutdownSkinningPassScene(scene);
+    }
+
+    // 頂点の合計が上限を超えるインスタンスは黙って捨てず、数を数えて外す。大きいものを外しても、後ろの小さいものは詰める
+    void TestSkinningComputePassCountsInstancesDroppedByVertexLimit()
+    {
+        SkinningPassScene scene;
+        AddSkinnedCommand(scene, 1, 5, 1);
+        AddSkinnedCommand(scene, 2, 7, 1); // 5 + 7 > 8: 外れる
+        AddSkinnedCommand(scene, 3, 3, 1); // 5 + 3 = 8: 収まる
+        AddSkinnedCommand(scene, 4, 1, 1); // 8 + 1 > 8: 外れる
+
+        RunSkinningPassScene(scene, 8);
+
+        assert(scene.Skinning.GetDroppedInstanceCount() == 2);
+        const auto& instances = scene.Skinning.GetInstances();
+        assert(instances.size() == 2);
+        assert(instances[0].ObjectId == 11 && instances[0].VertexBase == 0 && instances[0].VertexCount == 5);
+        assert(instances[1].ObjectId == 13 && instances[1].VertexBase == 5 && instances[1].VertexCount == 3);
+        assert(scene.CommandList.DispatchCount == 2);
+        assert(FindSkinningBufferSize(scene, "Skinning_CurrentVertices") == 8u * sizeof(SkinnedOutputVertex));
+        ShutdownSkinningPassScene(scene);
+
+        // 上限に収まるときは 1 つも外さない
+        SkinningPassScene fitting;
+        AddSkinnedCommand(fitting, 1, 5, 1);
+        AddSkinnedCommand(fitting, 2, 3, 1);
+        RunSkinningPassScene(fitting, 8);
+        assert(fitting.Skinning.GetDroppedInstanceCount() == 0);
+        assert(fitting.Skinning.GetInstances().size() == 2);
+        ShutdownSkinningPassScene(fitting);
+    }
+
+    // dispatch のグループ数（1 次元目に収まらなければ 2 次元目へ広げる）と、束縛が maxStorageBufferRange の保証された
+    // 最小値を超える入力の拒否
+    void TestSkinningComputeGroupCountsAndBindingLimit()
+    {
+        uint32_t x = 0;
+        uint32_t y = 0;
+        assert(SkinningCompute::ComputeGroupCounts(1, SKINNING_MAX_GROUP_COUNT, x, y) && x == 1 && y == 1);
+        assert(SkinningCompute::ComputeGroupCounts(64, SKINNING_MAX_GROUP_COUNT, x, y) && x == 1 && y == 1);
+        assert(SkinningCompute::ComputeGroupCounts(65, SKINNING_MAX_GROUP_COUNT, x, y) && x == 2 && y == 1);
+        assert(SkinningCompute::ComputeGroupCounts(64u * 65535u, SKINNING_MAX_GROUP_COUNT, x, y) && x == 65535 && y == 1);
+        // 65535 グループを 1 つ超えると 2 行になる
+        assert(SkinningCompute::ComputeGroupCounts(64u * 65535u + 1u, SKINNING_MAX_GROUP_COUNT, x, y) && x == 65535 && y == 2);
+        // 上限を小さくすると 2 次元目へ広がる（10 グループ・上限 3 → 3 x 4）
+        assert(SkinningCompute::ComputeGroupCounts(640, 3, x, y) && x == 3 && y == 4);
+        // 上限は SKINNING_MAX_GROUP_COUNT を超えない
+        assert(SkinningCompute::ComputeGroupCounts(64u * 65535u + 1u, 1000000u, x, y) && x == 65535 && y == 2);
+        // 頂点が 0 個・上限が 0 は求められない。2 次元目も上限を超えるときも
+        assert(!SkinningCompute::ComputeGroupCounts(0, SKINNING_MAX_GROUP_COUNT, x, y) && x == 0 && y == 0);
+        assert(!SkinningCompute::ComputeGroupCounts(64, 0, x, y));
+        assert(!SkinningCompute::ComputeGroupCounts(0xFFFFFFFFu, 1, x, y));
+
+        auto device = RHI::MakeShared<FakeDevice>();
+        ShaderManager shaderMgr;
+        assert(shaderMgr.Initialize(device.get(), TestShaderDirectory));
+        SkinningCompute compute;
+        assert(compute.Initialize(device.get(), &shaderMgr));
+        compute.BeginFrame(0, 1);
+        FakeCommandList commandList;
+
+        const RHI::ResourceUsage usage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead;
+        auto makeBuffer = [&](uint64_t size) {
+            return RHI::BufferPtr(RHI::MakeShared<FakeBuffer>(RHI::BufferDesc(size, usage, false, "SkinningLimitProbe")));
+        };
+        auto makeDispatch = [&](uint32_t vertexCount, uint32_t groupCountXLimit) {
+            SkinningComputeDispatch dispatch;
+            dispatch.SkinVertices = makeBuffer(static_cast<uint64_t>(vertexCount) * sizeof(SkinnedMeshVertex));
+            dispatch.Palette = makeBuffer(256);
+            dispatch.PreviousPalette = makeBuffer(256);
+            dispatch.CurrentVertices = makeBuffer(static_cast<uint64_t>(vertexCount) * sizeof(SkinnedOutputVertex));
+            dispatch.PreviousVertices = makeBuffer(static_cast<uint64_t>(vertexCount) * sizeof(SkinnedOutputVertex));
+            dispatch.VertexCount = vertexCount;
+            dispatch.GroupCountXLimit = groupCountXLimit;
+            return dispatch;
+        };
+
+        // 小さい上限: 768 頂点 = 12 グループ、上限 5 → (5, 3)
+        assert(compute.Record(&commandList, makeDispatch(768, 5)));
+        assert(commandList.DispatchGroups.size() == 1);
+        assert(commandList.DispatchGroups[0].X == 5 && commandList.DispatchGroups[0].Y == 3 &&
+               commandList.DispatchGroups[0].Z == 1);
+
+        // 束縛の上限ちょうどの入力（2^27 バイト = 2,097,152 頂点）は記録でき、グループ数は 1 次元目に収まる
+        constexpr uint32_t MaxBoundVertices = static_cast<uint32_t>(SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedMeshVertex));
+        assert(compute.Record(&commandList, makeDispatch(MaxBoundVertices, SKINNING_MAX_GROUP_COUNT)));
+        assert(commandList.DispatchGroups.size() == 2);
+        assert(commandList.DispatchGroups[1].X == MaxBoundVertices / SkinningCompute::ThreadsPerGroup &&
+               commandList.DispatchGroups[1].Y == 1);
+
+        // 束縛の上限を 1 頂点でも超える入力は記録しない
+        assert(!compute.Record(&commandList, makeDispatch(MaxBoundVertices + 1u, SKINNING_MAX_GROUP_COUNT)));
+        // グループ数が上限に収まらない（上限 0）ときも記録しない
+        assert(!compute.Record(&commandList, makeDispatch(64, 0)));
+        assert(commandList.DispatchGroups.size() == 2);
+        assert(commandList.DispatchCount == 2);
+
+        compute.Shutdown();
+        shaderMgr.Shutdown();
     }
 
     // 名前のバッファを作った回数
@@ -7854,6 +8190,9 @@ int main()
     TestMaterialTileClassifyAbsentWhenNotAdded();
     TestMaterialTileClassifyAddedButDisabledByDefault();
     TestSkinningComputePassTransitionsDeclaredBuffersToGenericRead();
+    TestSkinningComputePassPacksInstancesAndSubstitutesMissingPrevious();
+    TestSkinningComputePassCountsInstancesDroppedByVertexLimit();
+    TestSkinningComputeGroupCountsAndBindingLimit();
     TestFrameUseRingGivesDistinctUsesWithinAFrameAndReusesNextFrame();
     TestComputePassFrameResourcesAreNotReusedWithinAFrame();
     TestVisibilityRasterOnSinglePassMegaGeometry();

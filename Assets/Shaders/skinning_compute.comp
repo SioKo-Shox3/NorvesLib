@@ -17,7 +17,8 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(std140, set = 0, binding = 0) uniform SkinningParams
 {
-    // x: このインスタンスの頂点数、y: 出力バッファの中の先頭の頂点番号
+    // x: このインスタンスの頂点数、y: 出力バッファの中の先頭の頂点番号、
+    // z: dispatch の 1 行ぶんのスレッド数（x 方向のグループ数 * 64。グループ数が x に収まらないときは y 方向へ広げる）
     uvec4 counts;
 } params;
 
@@ -54,10 +55,13 @@ layout(std430, set = 0, binding = 5) writeonly buffer PreviousVertices
 
 const float DegenerateWeight = 0.000001;
 
-// 法線行列（上 3x3 の逆転置）。特異に近いときは単位行列（MatrixUtils::CreateNormalMatrix と同じ）。
+// 特異と見なす行列式の絶対値の閾値。MatrixUtils::CreateNormalMatrix の Constants::EPSILON（1.192092896e-7）と同じ値。
+const float SingularDeterminant = 1.192092896e-7;
+
+// 法線行列（上 3x3 の逆転置）。|det| が SingularDeterminant 未満のときは単位行列（MatrixUtils::CreateNormalMatrix と同じ）。
 mat3 NormalMatrixOf(mat3 m)
 {
-    if (abs(determinant(m)) < 1.0e-6)
+    if (abs(determinant(m)) < SingularDeterminant)
     {
         return mat3(1.0);
     }
@@ -93,7 +97,7 @@ void WriteVertex(bool bCurrent, uint outputIndex, vec3 position, vec3 normal, ve
 
 void main()
 {
-    uint vertexIndex = gl_GlobalInvocationID.x;
+    uint vertexIndex = gl_GlobalInvocationID.y * params.counts.z + gl_GlobalInvocationID.x;
     if (vertexIndex >= params.counts.x)
     {
         return;

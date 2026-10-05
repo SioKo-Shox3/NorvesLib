@@ -35,6 +35,26 @@ namespace NorvesLib::Core::Rendering
 
     static_assert(sizeof(SkinnedOutputVertex) == 32, "skinning_compute.comp の出力の並びと一致しなければならない");
 
+    /**
+     * @brief dispatch の 1 次元目・2 次元目のグループ数の上限
+     *
+     * Vulkan が保証する maxComputeWorkGroupCount の最小値。1 インスタンスのグループ数がこれを超えるときは
+     * 2 次元目へ広げる。
+     */
+    constexpr uint32_t SKINNING_MAX_GROUP_COUNT = 65535;
+
+    /**
+     * @brief storage buffer 1 本の束縛の大きさの上限（バイト）
+     *
+     * Vulkan が保証する maxStorageBufferRange の最小値（2^27）。RHI は実機の値を公開していないので、保証された最小値で抑える。
+     * 出力の今・前のバッファ（1 頂点 32 バイト）はこの範囲に収まる頂点数まで、入力の頂点（1 頂点 64 バイト）も同じ。
+     */
+    constexpr uint64_t SKINNING_MAX_BINDING_BYTES = 1ull << 27;
+
+    /** @brief 出力のバッファ 1 本に詰められる頂点数の上限（Declare が合計を抑える値） */
+    constexpr uint32_t SKINNING_MAX_OUTPUT_VERTICES =
+        static_cast<uint32_t>(SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedOutputVertex));
+
     /** @brief 1 回の dispatch（1 インスタンスぶん）の入力と出力の範囲 */
     struct SkinningComputeDispatch
     {
@@ -51,6 +71,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t VertexCount = 0;
         /** @brief 出力バッファの中で、このインスタンスが書き始める頂点の番号 */
         uint32_t OutputVertexBase = 0;
+        /** @brief dispatch の 1 次元目のグループ数の上限（実機では SKINNING_MAX_GROUP_COUNT。小さくして 2 次元目へ広げる動きを試せる） */
+        uint32_t GroupCountXLimit = SKINNING_MAX_GROUP_COUNT;
     };
 
     /**
@@ -88,8 +110,19 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetUsedCount() const { return m_Uses.GetUsedCount(); }
 
         /**
+         * @brief 頂点数から dispatch のグループ数（x, y）を求める
+         *
+         * グループ数 g = ceil(vertexCount / ThreadsPerGroup) が groupCountXLimit に収まれば x = g、y = 1。
+         * 収まらなければ x = groupCountXLimit、y = ceil(g / x) に広げる（シェーダーは y * (x * 64) + x 方向の番号で頂点を求める）。
+         * @param groupCountXLimit 1 次元目の上限。SKINNING_MAX_GROUP_COUNT を超える値は SKINNING_MAX_GROUP_COUNT に抑える
+         * @return 求められたら true。頂点数が 0、上限が 0、y が SKINNING_MAX_GROUP_COUNT を超えるときは false
+         */
+        static bool ComputeGroupCounts(uint32_t vertexCount, uint32_t groupCountXLimit, uint32_t& outX, uint32_t& outY);
+
+        /**
          * @brief 1 インスタンスぶんの変形を記録する
-         * @return 記録できたら true。入力・出力が足りない、範囲が出力バッファに収まらないときは false
+         * @return 記録できたら true。入力・出力が足りない、範囲が出力バッファに収まらない、束縛が SKINNING_MAX_BINDING_BYTES を
+         *         超える、グループ数が dispatch の上限を超えるときは false
          */
         bool Record(RHI::ICommandList* commandList, const SkinningComputeDispatch& dispatch);
 
@@ -151,6 +184,21 @@ namespace NorvesLib::Core::Rendering
         void Declare(RenderGraphBuilder& builder) override;
         void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
 
+        /**
+         * @brief 出力バッファに詰める頂点の合計の上限（既定は SKINNING_MAX_OUTPUT_VERTICES。小さくして溢れた動きを試せる）
+         *
+         * 超える値は SKINNING_MAX_OUTPUT_VERTICES に抑える。
+         */
+        void SetMaxOutputVertices(uint32_t maxOutputVertices);
+
+        /**
+         * @brief 最後の Declare が、頂点の合計の上限か束縛の大きさの上限のために計算スキニングから外したインスタンスの数
+         *
+         * 外したインスタンスは、このパスの出力に載らない（GetInstances() にも入らない）。数は統計
+         * （RenderingStats::SkinningComputeDroppedInstances）にも足し、ログは初めて外したときに 1 回だけ出す。
+         */
+        uint32_t GetDroppedInstanceCount() const { return m_DroppedInstanceCount; }
+
         /** @brief 最後の Execute で変形を記録したインスタンス（記録できなかったフレームは空） */
         const Container::VariableArray<SkinningComputeInstance>& GetInstances() const { return m_Instances; }
         RGResourceHandle GetCurrentVerticesHandle() const { return m_CurrentHandle.ToResourceHandle(); }
@@ -170,6 +218,9 @@ namespace NorvesLib::Core::Rendering
         };
 
         SkinningCompute m_Compute;
+        uint32_t m_MaxOutputVertices = SKINNING_MAX_OUTPUT_VERTICES;
+        uint32_t m_DroppedInstanceCount = 0;
+        bool m_bLoggedDrop = false;
         RGBufferHandle m_CurrentHandle;
         RGBufferHandle m_PreviousHandle;
         Container::VariableArray<PlannedInstance> m_Plan;

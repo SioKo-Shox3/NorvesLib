@@ -1,10 +1,13 @@
 ﻿// 計算シェーダーでのスキニング（skinning_compute.comp / SkinningCompute）の GPU テスト。
-// 実際の SkinnedMeshGpuStore が作る今・前のフレームのパレットを使い、2 つのインスタンス（頂点数・骨の数・変換が違う）を
+// 実際の SkinnedMeshGpuStore が作る今・前のフレームのパレットを使い、3 つのインスタンス（頂点数・骨の数・変換が違う）を
 // 1 本の出力バッファの別の範囲へ書き、読み戻した今・前のフレームの頂点（位置・法線・UV）が CPU で計算した値と
 // 許容 1e-4 で一致することを確かめる。
 //   - インスタンス A: 150 頂点・骨 3 本（ワークグループ 64 を跨ぐ）。骨 1 本・2 本・4 本の影響、重みの合計が 1 でない頂点、
 //     重みが 0 の頂点（束縛の姿勢のまま）、範囲外の骨の番号、乱数の頂点を含む。法線行列が単位行列でない非一様スケールの骨を使う。
+//     dispatch の 1 次元目のグループ数を 2 に抑え、(2, 2) へ広げる。
 //   - インスタンス B: 9 頂点・骨 2 本（骨の番号 2 は範囲外）。出力の範囲は A の直後から始まる。
+//   - インスタンス C: 70 頂点・骨 2 本。|det| が 1.19e-7 以上 1e-6 未満（一様スケール 0.009 など）の骨と変換だけを使い、
+//     法線行列の特異の閾値が CPU（Constants::EPSILON）とシェーダーでそろっていることを確かめる。(1, 2) の dispatch。
 //   - 出力の範囲の外（前後の番号）は初期値のまま（範囲外へ書かない）。
 //   - 範囲が出力バッファに収まらない dispatch は記録されず false を返す。
 //   - Vulkan の validation error が 0 件であること。
@@ -173,11 +176,13 @@ namespace
         return m;
     }
 
+    // v は行優先（行 r・列 c が v[r * 4 + c]）。Matrix4x4 の 16 要素のコンストラクタは行ごとの並びで受け取る
     Math::Matrix4x4 ToEngine(const Mat4& m)
     {
-        Math::Matrix4x4 result;
-        std::memcpy(result.values, m.v, sizeof(m.v));
-        return result;
+        return Math::Matrix4x4(m.v[0], m.v[1], m.v[2], m.v[3],
+                               m.v[4], m.v[5], m.v[6], m.v[7],
+                               m.v[8], m.v[9], m.v[10], m.v[11],
+                               m.v[12], m.v[13], m.v[14], m.v[15]);
     }
 
     Vec3 TransformPoint(const Mat4& m, const Vec3& p)
@@ -187,7 +192,8 @@ namespace
                 p.x * m.v[2] + p.y * m.v[6] + p.z * m.v[10] + m.v[14]};
     }
 
-    // 法線の変換（行ベクトル × 上 3x3 の逆転置）。特異に近い行列は単位行列として扱う
+    // 法線の変換（行ベクトル × 上 3x3 の逆転置）。|det| が MatrixUtils::CreateNormalMatrix と同じ閾値
+    // （Constants::EPSILON）未満の行列は単位行列として扱う。シェーダーの SingularDeterminant も同じ値
     Vec3 TransformNormal(const Mat4& m, const Vec3& n)
     {
         const float a00 = m.v[0], a01 = m.v[1], a02 = m.v[2];
@@ -195,7 +201,7 @@ namespace
         const float a20 = m.v[8], a21 = m.v[9], a22 = m.v[10];
         const float determinant = a00 * (a11 * a22 - a12 * a21) - a01 * (a10 * a22 - a12 * a20) +
                                   a02 * (a10 * a21 - a11 * a20);
-        if (std::abs(determinant) < 1.0e-6f)
+        if (std::abs(determinant) < Math::Constants::EPSILON)
         {
             return n;
         }
@@ -380,6 +386,8 @@ namespace
         Container::TSharedPtr<const SkinnedMeshFrameLease> FrameLease;
         SkinnedMeshPreparedDraw Prepared;
         uint32_t VertexBase = 0;
+        // dispatch の 1 次元目のグループ数の上限。小さくして、グループ数を 2 次元目へ広げる動きを試す
+        uint32_t GroupCountXLimit = SKINNING_MAX_GROUP_COUNT;
     };
 
     void BuildInstanceA(InstanceCase& instance)
@@ -394,6 +402,8 @@ namespace
         instance.World = Mul(Mul(Scale(1.0f, 2.0f, 0.5f), RotateZ(0.3f)), Translate(5.0f, -2.0f, 1.0f));
         instance.PreviousWorld = Mul(Mul(Scale(1.0f, 2.0f, 0.5f), RotateZ(0.1f)), Translate(4.5f, -2.2f, 1.0f));
         instance.Handle = SkinnedMeshHandle{1, 1};
+        // 150 頂点は 3 グループ。x を 2 に抑えて (2, 2) の dispatch にする（最後の 1 グループは範囲外で何もしない）
+        instance.GroupCountXLimit = 2u;
     }
 
     void BuildInstanceB(InstanceCase& instance)
@@ -406,6 +416,42 @@ namespace
         instance.World = Mul(RotateY(1.0f), Translate(-3.0f, 0.5f, -4.0f));
         instance.PreviousWorld = Mul(RotateY(0.7f), Translate(-3.4f, 0.5f, -3.5f));
         instance.Handle = SkinnedMeshHandle{2, 1};
+    }
+
+    // インスタンス C: 法線行列の特異の閾値（Constants::EPSILON = 1.19e-7）と、以前のシェーダーの閾値（1e-6）の間に
+    // |det| が入る骨・変換だけを使う。閾値が食い違うと、法線が単位行列のまま（食い違った側）か逆転置（そろえた側）かで
+    // 方向が変わり、CPU の参照と一致しなくなる。
+    //   骨 0: 非一様スケール (0.01, 0.009, 0.008)         |det| = 7.2e-7
+    //   骨 1: 一様スケール 0.009                            |det| = 7.29e-7
+    //   変換: 非一様スケール (0.01, 0.009, 0.0095)         |det| = 8.55e-7
+    Container::VariableArray<SkinnedMeshVertex> MakeVerticesC()
+    {
+        Container::VariableArray<SkinnedMeshVertex> vertices;
+        // 骨 0 と骨 1 を半分ずつ（法線の大きさの違いが混ぜ合わせに効く）
+        vertices.push_back(MakeVertex({0.5f, 1.0f, -0.25f}, {0.3f, 1.0f, 0.2f}, 0.1f, 0.2f, {0, 1, 0, 0}, {0.5f, 0.5f, 0.0f, 0.0f}));
+        // 骨 0 だけ
+        vertices.push_back(MakeVertex({-1.0f, 0.5f, 0.75f}, {1.0f, 0.3f, 0.4f}, 0.3f, 0.4f, {0, 0, 0, 0}, {1.0f, 0.0f, 0.0f, 0.0f}));
+        // 骨 1 だけ
+        vertices.push_back(MakeVertex({0.2f, -0.8f, 1.2f}, {0.2f, 0.7f, 1.0f}, 0.5f, 0.6f, {1, 0, 0, 0}, {1.0f, 0.0f, 0.0f, 0.0f}));
+        while (vertices.size() < 70)
+        {
+            vertices.push_back(MakeRandomVertex(2u));
+        }
+        return vertices;
+    }
+
+    void BuildInstanceC(InstanceCase& instance)
+    {
+        instance.Vertices = MakeVerticesC();
+        instance.Palette.push_back(Mul(Mul(Scale(0.01f, 0.009f, 0.008f), RotateY(0.5f)), Translate(0.5f, 0.25f, -1.0f)));
+        instance.Palette.push_back(Mul(Mul(Scale(0.009f, 0.009f, 0.009f), RotateX(0.7f)), Translate(-0.5f, 1.0f, 0.5f)));
+        instance.PreviousPalette.push_back(Mul(Mul(Scale(0.0095f, 0.009f, 0.0085f), RotateY(0.3f)), Translate(0.4f, 0.2f, -0.9f)));
+        instance.PreviousPalette.push_back(Mul(Mul(Scale(0.0092f, 0.0092f, 0.0092f), RotateX(0.5f)), Translate(-0.6f, 0.9f, 0.4f)));
+        instance.World = Mul(Mul(Scale(0.01f, 0.009f, 0.0095f), RotateZ(0.4f)), Translate(2.0f, 1.0f, -3.0f));
+        instance.PreviousWorld = Mul(Mul(Scale(0.0098f, 0.0092f, 0.0094f), RotateZ(0.2f)), Translate(1.8f, 1.1f, -3.2f));
+        instance.Handle = SkinnedMeshHandle{3, 1};
+        // 70 頂点は 2 グループ。x を 1 に抑えて (1, 2) の dispatch にする
+        instance.GroupCountXLimit = 1u;
     }
 
     // 使う骨の行列を、エンジンの行列の配列へ（SkinnedMeshGpuStore::PrepareDraw の引数）
@@ -536,9 +582,10 @@ namespace
 
             SkinnedMeshGpuStore store(device);
             store.BeginFrame(0);
-            InstanceCase instances[2];
+            InstanceCase instances[3];
             BuildInstanceA(instances[0]);
             BuildInstanceB(instances[1]);
+            BuildInstanceC(instances[2]);
             uint32_t totalVertices = 0;
             for (InstanceCase& instance : instances)
             {
@@ -596,6 +643,7 @@ namespace
                 dispatch.PreviousVertices = previousOut;
                 dispatch.VertexCount = static_cast<uint32_t>(instance.Vertices.size());
                 dispatch.OutputVertexBase = GuardVertices + instance.VertexBase;
+                dispatch.GroupCountXLimit = instance.GroupCountXLimit;
                 Expect(compute.Record(commandList.get(), dispatch), "インスタンスの変形を記録できなければならない");
             }
 

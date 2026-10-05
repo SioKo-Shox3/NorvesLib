@@ -1,5 +1,6 @@
 ﻿#include "Rendering/SkinningComputePass.h"
 
+#include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -13,7 +14,7 @@
 #include "RHI/IDevice.h"
 #include "RHI/IPipeline.h"
 
-#include <limits>
+#include <algorithm>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -45,10 +46,10 @@ namespace NorvesLib::Core::Rendering
             return desc;
         }
 
-        uint32_t ClampBindSize(uint64_t size)
+        // 束縛する範囲は SKINNING_MAX_BINDING_BYTES 以下に確かめてあるので、uint32_t に収まる
+        uint32_t BindSize(const RHI::BufferPtr& buffer)
         {
-            return size > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max()
-                                                               : static_cast<uint32_t>(size);
+            return static_cast<uint32_t>(buffer->GetSize());
         }
 
         // 書いた今・前の頂点のバッファを、宣言した最終の状態（GenericRead）へ遷移させる。RenderGraph は終わった状態を
@@ -126,11 +127,57 @@ namespace NorvesLib::Core::Rendering
         m_Uses.BeginFrame(inFlightIndex, frameSerial);
     }
 
+    bool SkinningCompute::ComputeGroupCounts(uint32_t vertexCount,
+                                             uint32_t groupCountXLimit,
+                                             uint32_t& outX,
+                                             uint32_t& outY)
+    {
+        outX = 0;
+        outY = 0;
+        const uint32_t limitX = std::min(groupCountXLimit, SKINNING_MAX_GROUP_COUNT);
+        if (vertexCount == 0 || limitX == 0)
+        {
+            return false;
+        }
+        const uint64_t groups = (static_cast<uint64_t>(vertexCount) + ThreadsPerGroup - 1u) / ThreadsPerGroup;
+        const uint64_t groupsX = std::min<uint64_t>(groups, limitX);
+        const uint64_t groupsY = (groups + groupsX - 1u) / groupsX;
+        if (groupsY > SKINNING_MAX_GROUP_COUNT)
+        {
+            return false;
+        }
+        outX = static_cast<uint32_t>(groupsX);
+        outY = static_cast<uint32_t>(groupsY);
+        return true;
+    }
+
     bool SkinningCompute::Record(RHI::ICommandList* commandList, const SkinningComputeDispatch& dispatch)
     {
         if (!m_Device || !m_Pipeline || !commandList || dispatch.VertexCount == 0 || !dispatch.SkinVertices ||
             !dispatch.Palette || !dispatch.PreviousPalette || !dispatch.CurrentVertices || !dispatch.PreviousVertices)
         {
+            return false;
+        }
+
+        // 束縛が maxStorageBufferRange の保証された最小値を超えると、検証エラーか範囲外の読み書きになる
+        for (const RHI::BufferPtr& bound : {dispatch.SkinVertices, dispatch.Palette, dispatch.PreviousPalette,
+                                            dispatch.CurrentVertices, dispatch.PreviousVertices})
+        {
+            if (bound->GetSize() > SKINNING_MAX_BINDING_BYTES)
+            {
+                NORVES_LOG_WARNING("SkinningCompute", "storage buffer の束縛が上限（%llu バイト）を超えるので変形を記録しない: %llu バイト",
+                                   static_cast<unsigned long long>(SKINNING_MAX_BINDING_BYTES),
+                                   static_cast<unsigned long long>(bound->GetSize()));
+                return false;
+            }
+        }
+
+        uint32_t groupsX = 0;
+        uint32_t groupsY = 0;
+        if (!ComputeGroupCounts(dispatch.VertexCount, dispatch.GroupCountXLimit, groupsX, groupsY))
+        {
+            NORVES_LOG_WARNING("SkinningCompute", "頂点数 %u がグループ数の上限に収まらないので変形を記録しない",
+                               dispatch.VertexCount);
             return false;
         }
 
@@ -158,23 +205,21 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        const uint32_t params[4] = {dispatch.VertexCount, dispatch.OutputVertexBase, 0u, 0u};
+        // z は dispatch の 1 行ぶんのスレッド数（シェーダーが y 方向の行から頂点の番号を求める）
+        const uint32_t params[4] = {dispatch.VertexCount, dispatch.OutputVertexBase, groupsX * ThreadsPerGroup, 0u};
         use.Uniform->Update(params, ParamsBytes);
 
         use.DescriptorSet->BindConstantBuffer(0, use.Uniform, 0, ParamsBytes);
-        use.DescriptorSet->BindStorageBuffer(1, dispatch.SkinVertices, 0, ClampBindSize(dispatch.SkinVertices->GetSize()));
-        use.DescriptorSet->BindStorageBuffer(2, dispatch.Palette, 0, ClampBindSize(dispatch.Palette->GetSize()));
-        use.DescriptorSet->BindStorageBuffer(3, dispatch.PreviousPalette, 0,
-                                             ClampBindSize(dispatch.PreviousPalette->GetSize()));
-        use.DescriptorSet->BindStorageBuffer(4, dispatch.CurrentVertices, 0,
-                                             ClampBindSize(dispatch.CurrentVertices->GetSize()));
-        use.DescriptorSet->BindStorageBuffer(5, dispatch.PreviousVertices, 0,
-                                             ClampBindSize(dispatch.PreviousVertices->GetSize()));
+        use.DescriptorSet->BindStorageBuffer(1, dispatch.SkinVertices, 0, BindSize(dispatch.SkinVertices));
+        use.DescriptorSet->BindStorageBuffer(2, dispatch.Palette, 0, BindSize(dispatch.Palette));
+        use.DescriptorSet->BindStorageBuffer(3, dispatch.PreviousPalette, 0, BindSize(dispatch.PreviousPalette));
+        use.DescriptorSet->BindStorageBuffer(4, dispatch.CurrentVertices, 0, BindSize(dispatch.CurrentVertices));
+        use.DescriptorSet->BindStorageBuffer(5, dispatch.PreviousVertices, 0, BindSize(dispatch.PreviousVertices));
         use.DescriptorSet->Update();
 
         commandList->SetPipeline(m_Pipeline);
         commandList->SetDescriptorSet(use.DescriptorSet, 0);
-        commandList->Dispatch((dispatch.VertexCount + ThreadsPerGroup - 1u) / ThreadsPerGroup, 1u, 1u);
+        commandList->Dispatch(groupsX, groupsY, 1u);
         return true;
     }
 
@@ -211,6 +256,8 @@ namespace NorvesLib::Core::Rendering
         m_PreviousHandle = {};
         m_Plan.clear();
         m_Instances.clear();
+        m_DroppedInstanceCount = 0;
+        m_bLoggedDrop = false;
         m_bInitialized = false;
     }
 
@@ -223,11 +270,17 @@ namespace NorvesLib::Core::Rendering
         // RenderGraph 経由（Execute(resources, context)）でだけ動く。
     }
 
+    void SkinningComputePass::SetMaxOutputVertices(uint32_t maxOutputVertices)
+    {
+        m_MaxOutputVertices = std::min(maxOutputVertices, SKINNING_MAX_OUTPUT_VERTICES);
+    }
+
     void SkinningComputePass::Declare(RenderGraphBuilder& builder)
     {
         m_CurrentHandle = {};
         m_PreviousHandle = {};
         m_Plan.clear();
+        m_DroppedInstanceCount = 0;
 
         const ViewRenderContext* context = builder.GetContext();
         if (!context || !m_Compute.IsReady() || !context->SnapshotSkinnedMeshFrameLeases)
@@ -236,6 +289,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 不透明描画のうちスキニングの 1 描画（非インスタンス）を集め、頂点を詰めて出力の範囲を割り当てる。
+        // 入力の頂点 1 本の束縛と、出力の今・前のバッファの合計が上限を超えるインスタンスは外し、数を残す。
+        constexpr uint64_t MaxInstanceVertices = SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedMeshVertex);
         const DrawCommandView commands = context->GetActiveOpaqueCommands();
         uint64_t totalVertices = 0;
         for (uint32_t commandIndex = 0; commandIndex < commands.Count; ++commandIndex)
@@ -253,9 +308,14 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
             const uint64_t vertexCount = frameLease->AssetLease->GetVertices().size();
-            if (totalVertices + vertexCount > std::numeric_limits<uint32_t>::max() / OutputVertexBytes)
+            if (vertexCount == 0)
             {
-                break;
+                continue;
+            }
+            if (vertexCount > MaxInstanceVertices || totalVertices + vertexCount > m_MaxOutputVertices)
+            {
+                ++m_DroppedInstanceCount;
+                continue;
             }
 
             PlannedInstance planned;
@@ -264,6 +324,20 @@ namespace NorvesLib::Core::Rendering
             planned.VertexCount = static_cast<uint32_t>(vertexCount);
             m_Plan.push_back(planned);
             totalVertices += vertexCount;
+        }
+        if (m_DroppedInstanceCount > 0)
+        {
+            NORVES_STAT_ADD(NorvesLib::Debug::StatsManager::Get().GetRenderingStats().SkinningComputeDroppedInstances,
+                            m_DroppedInstanceCount);
+            if (!m_bLoggedDrop)
+            {
+                m_bLoggedDrop = true;
+                NORVES_LOG_WARNING("SkinningComputePass",
+                                   "頂点の合計の上限（%u 頂点）か束縛の上限（1 インスタンス %llu 頂点）を超えたので、%u 個のインスタンスを計算スキニングから外した（以降は統計にだけ出す）",
+                                   m_MaxOutputVertices,
+                                   static_cast<unsigned long long>(MaxInstanceVertices),
+                                   m_DroppedInstanceCount);
+            }
         }
         if (m_Plan.empty() || totalVertices == 0)
         {
