@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "Resource/ModelMaterialStaging.h"
+#include "ModelMaterialStaging.h"
 #include "Asset/CookedTextureFormat.h"
 namespace NorvesLib::Core::ResourceIO::ModelStaging
 {

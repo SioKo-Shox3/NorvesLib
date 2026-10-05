@@ -2,7 +2,7 @@
 #pragma once
 
 #include "Container/Containers.h"
-#include "Resource/ModelMaterialStaging.h"
+#include "ModelMaterialStaging.h"
 #include "Rendering/GpuResourceTypes.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/ProceduralMeshGenerator.h"
