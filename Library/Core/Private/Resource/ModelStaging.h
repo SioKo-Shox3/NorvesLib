@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Container/Containers.h"
+#include "Resource/ModelMaterialStaging.h"
 #include "Rendering/GpuResourceTypes.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/ProceduralMeshGenerator.h"
@@ -73,6 +74,7 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
         Container::String DebugName;
         Container::String ResolvedPath;
         MaterialTextureInfo TextureReferences;
+        ImportedMaterialStaging ImportedMaterial;
 
         StagedTextureData AlbedoTexture;
         StagedTextureData NormalTexture;
@@ -125,8 +127,14 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                         const char* role,
                         uint32_t requestId,
                         const char* stage);
+    enum class ModelFinalizeStatus : uint8_t
+    {
+        Failed,
+        Success,
+        UnsupportedImportedMaterial
+    };
+    // outStatusは呼出結果で置換する。未対応材質の早期拒否を、resource失敗と区別できる。
     Rendering::ModelHandle FinalizeModelStaging(const ModelStagingData& staging,
-                                                Rendering::ModelLoadResourceContext resources,
-                                                const char* role,
-                                                uint32_t requestId);
+                                                Rendering::ModelLoadResourceContext resources, const char* role,
+                                                uint32_t requestId, ModelFinalizeStatus* outStatus = nullptr);
 } // namespace NorvesLib::Core::ResourceIO::ModelStaging

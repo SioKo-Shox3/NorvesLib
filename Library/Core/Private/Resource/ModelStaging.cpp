@@ -731,10 +731,22 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
         }
     } // anonymous namespace
     Rendering::ModelHandle FinalizeModelStaging(const ModelStagingData& staging,
-                                                Rendering::ModelLoadResourceContext resources,
-                                                const char* role,
-                                                uint32_t requestId)
+                                                Rendering::ModelLoadResourceContext resources, const char* role,
+                                                uint32_t requestId, ModelFinalizeStatus* outStatus)
     {
+        if (outStatus)
+        {
+            *outStatus = ModelFinalizeStatus::Failed;
+        }
+        if (staging.ImportedMaterial.Layout != ImportedMaterialLayout::Absent)
+        {
+            if (outStatus)
+            {
+                *outStatus = ModelFinalizeStatus::UnsupportedImportedMaterial;
+            }
+            NORVES_LOG_ERROR("ModelAsset", "GR79 imported packed material renderer is not connected");
+            return Rendering::ModelHandle::Invalid();
+        }
         auto totalStartTime = LoadProfileNow();
         Rendering::MegaGeometry::MegaMeshMaterial material;
         material.BaseColor[0] = 1.0f;
@@ -862,6 +874,10 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                         GetStagedLooseTextureBytes(staging),
                         static_cast<unsigned int>(GetStagedPreparedTextureCount(staging)),
                         LoadProfileElapsedMs(totalStartTime));
+        if (outStatus)
+        {
+            *outStatus = ModelFinalizeStatus::Success;
+        }
         return modelHandle;
     }
 } // namespace NorvesLib::Core::ResourceIO::ModelStaging

@@ -852,3 +852,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR79 native初回run37313863062はビルド失敗。ModelCookCache.cppの2か所でAnsiStringViewとliteralの比較がMSVC C2678。右辺を明示AnsiStringViewに修正。テスト37件・byte比較は初回では未実行。次commitのCIで改めて検証する。
 
 - G2/GR79 writer/cook受入: 5de8b9f539bb3a0ecfa5f7acb8f361c5135559f7 / tree7fb1789450844242dccc661f8ef63a031d6317a7 / run37315777388 attempt1 job111782027052。37CPUとv1実fixture、Bootstrap17/Update29、79standalone+10texture byte一致、7smoke/5診断、25native+15managed CLI/metadata12、Python12+4+7 normal/-O、実MSVCx64/CNG、3ZIPを独立照合。親のreadonly再実行もexit0。初回compile失敗は別証拠を保存。従来cross-session未試験を維持し、GPU/renderer/model asset-setは完了としない。
+
+- G2/GR79 次の作業: packed ARMと全材質値の所有CPU adapter。単体cookの受入を起点とし、描画未接続の材質をFinalizeへ渡しても拒否する境界まで。runtime v1ロードはまだ開放しない。
+
+- G2/GR79 CPU staging検証準備: 全材質値/packed ARM mask/所有UTF8 pathを保持するadapter、ModelStagingDataの保持枠、未接続Finalizeのtyped拒否を追加。round1で早期拒否testの偽陽性を指摘され、release有効のModelFinalizeStatus assertへ修正。異なるcanonical emissive RGB/NUL/negative zeroも追加しround2静的PASS。Python12+4+7 normal/-O合格。38CPUと旧gateは次の実Windows CIで未確認。Unicode blob reader対応は含めない。

@@ -234,6 +234,7 @@ set(PRIVATE_SOURCES
     Private/Resource/ModelAsyncLoadQueue.cpp
     Private/Resource/ModelHandleCache.cpp
     Private/Resource/ModelAssetResolver.cpp
+    Private/Resource/ModelMaterialStaging.cpp
     Private/Resource/ModelStaging.cpp
     # Component
     Private/Component/Component.cpp

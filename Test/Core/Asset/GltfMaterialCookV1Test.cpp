@@ -1,5 +1,6 @@
 ﻿// 明示NVMESH v1の材質cook・派生画像・cacheを実codecとPNG decodeで反証する。
 #include "Tools/AssetCook/MeshCooker.h"
+#include "Resource/ModelMaterialStaging.h"
 #include "Tools/AssetCook/MeshMaterialV1Plan.h"
 #include "Tools/AssetCook/TextureCooker.h"
 #include "Tools/AssetCook/GeometryInspection.h"
@@ -363,6 +364,13 @@ namespace MaterialV1Test
             const auto parsed = Parse(cooked);
             CHECK(parsed.Succeeded() && parsed.Mesh.VersionMajor == 1);
             const auto& pbr = parsed.Mesh.Materials[0].Pbr;
+            NorvesLib::Core::ResourceIO::ModelStaging::ImportedMaterialStaging stagedMaterial;
+            CHECK(NorvesLib::Core::ResourceIO::ModelStaging::BuildImportedMaterialStaging(parsed.Mesh, 0,
+                                                                                          stagedMaterial) ==
+                  NorvesLib::Core::ResourceIO::ModelStaging::MaterialStagingStatus::Success);
+            CHECK(stagedMaterial.NormalScale == 2 && stagedMaterial.BaseColor[0] == pbr.BaseColor[0] &&
+                  stagedMaterial.NormalPath == cooked.EmbeddedImages[0].LogicalPath && stagedMaterial.ArmMask == 0);
+
             CHECK(Close(pbr.BaseColor[0], .2f) && Close(pbr.BaseColor[3], .5f) && Close(pbr.Metallic, .3f) &&
                   Close(pbr.Roughness, .6f));
             CHECK(pbr.NormalScale == 2 && Close(pbr.AlphaCutoff, .3f));
