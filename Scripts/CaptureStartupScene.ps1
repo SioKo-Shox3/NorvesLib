@@ -854,7 +854,8 @@ foreach ($view in $shots)
         }
         # MEGA_OCCLUSION（遮蔽カリングの1フレームの数。1パス目で描いた数・2パス目で判定した数・描いた数・隠れていた数）。最後の値と、
         # 描いた数・隠れていた数の最大を残す。遮蔽カリングを使えない撮影（--mega-occlusion=off など）はログが無い。
-        $occlusionLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'MEGA_OCCLUSION pass1=(\d+) pass2_tested=(\d+) pass2_drawn=(\d+) occluded=(\d+)')
+        # 行は描画フレームと相対フレームの番号（frame=… epoch_frame=…）を持つ版と、持たない旧版の両方を読む。
+        $occlusionLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'MEGA_OCCLUSION (?:frame=\d+ epoch_frame=-?\d+ )?pass1=(\d+) pass2_tested=(\d+) pass2_drawn=(\d+) occluded=(\d+)')
         if ($occlusionLines.Count -gt 0)
         {
             $lastOcclusion = $occlusionLines[$occlusionLines.Count - 1].Matches[0].Groups
