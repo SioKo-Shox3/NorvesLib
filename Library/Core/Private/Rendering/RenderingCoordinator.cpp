@@ -2970,20 +2970,8 @@ namespace NorvesLib::Core::Rendering
         }
         renderStats.RenderGraphBarrierCount = m_RenderGraph.GetLastCompiledBarrierCount();
         renderStats.RenderGraphTransientAcquireCount = m_RenderGraph.GetLastTransientAcquireCount();
-        // 計算スキニングから外したインスタンスの数（フレームごと。SceneView ごとのパスの最後の Declare の数を足す）
-        renderStats.SkinningComputeDroppedInstances = 0;
-        for (const auto &view : m_Views)
-        {
-            if (!view)
-            {
-                continue;
-            }
-            const auto *skinningPass = dynamic_cast<const SkinningComputePass *>(view->FindPass("SkinningComputePass"));
-            if (skinningPass && skinningPass->IsEnabled())
-            {
-                renderStats.SkinningComputeDroppedInstances += skinningPass->GetDroppedInstanceCount();
-            }
-        }
+        // 計算スキニングから外したインスタンスの数（フレームごと。このフレームに Declare された SceneView のパスの数を足す）
+        AccumulateSkinningComputeStats(renderStats, m_Views, viewContext.ResolveRenderFrameSerial());
 
         RHI::TexturePtr finalPresentationTexture;
         if (executionResult.bComposite)

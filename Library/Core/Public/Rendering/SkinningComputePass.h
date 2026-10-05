@@ -199,6 +199,21 @@ namespace NorvesLib::Core::Rendering
          */
         uint32_t GetDroppedInstanceCount() const { return m_DroppedInstanceCount; }
 
+        /**
+         * @brief フレームの通し番号 frameSerial の Declare で外したインスタンスの数の合計
+         *
+         * 1 つの SceneView が複数のビューポートを描くとき Declare はビューポートごとに呼ばれるので、同じ通し番号の数は足し合わせる。
+         * 通し番号が違う（このフレームに Declare が呼ばれなかった。ビューが無効・描ける大きさが無い・描画の失敗）ときは 0 を返し、
+         * 古い数を足し続けない。
+         */
+        uint32_t GetDroppedInstanceCountForFrame(uint64_t frameSerial) const
+        {
+            return m_FrameDroppedSerial == frameSerial ? m_FrameDroppedInstanceCount : 0;
+        }
+
+        /** @brief Declare が外した数をフレームの通し番号へ足す（別の通し番号なら数え直す） */
+        void AccumulateFrameDroppedInstances(uint64_t frameSerial, uint32_t count);
+
         /** @brief 最後の Execute で変形を記録したインスタンス（記録できなかったフレームは空） */
         const Container::VariableArray<SkinningComputeInstance>& GetInstances() const { return m_Instances; }
         RGResourceHandle GetCurrentVerticesHandle() const { return m_CurrentHandle.ToResourceHandle(); }
@@ -220,6 +235,8 @@ namespace NorvesLib::Core::Rendering
         SkinningCompute m_Compute;
         uint32_t m_MaxOutputVertices = SKINNING_MAX_OUTPUT_VERTICES;
         uint32_t m_DroppedInstanceCount = 0;
+        uint64_t m_FrameDroppedSerial = 0;
+        uint32_t m_FrameDroppedInstanceCount = 0;
         bool m_bLoggedDrop = false;
         RGBufferHandle m_CurrentHandle;
         RGBufferHandle m_PreviousHandle;

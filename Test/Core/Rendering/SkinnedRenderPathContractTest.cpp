@@ -1,5 +1,6 @@
 ﻿#include "Object/ResourceRegistry.h"
 #include "Animation/SkeletalAnimationSampler.h"
+#include "Debug/Stats.h"
 #include "Logging/Logger.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/DirectionalShadowLightMatrices.h"
@@ -13,6 +14,7 @@
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/ShadowMapPass.h"
+#include "Rendering/SkinningComputePass.h"
 #include "Resource/SkinnedMeshResource.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -33,6 +35,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdio>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -1801,7 +1804,33 @@ namespace
         packet.bHasMainCamera = true;
         packet.SetState(FramePacketState::Reading);
 
+        // 計算スキニングから外した数の配線: 最初のフレーム（通し番号 1）に 2 つのビューポートの Declare が外した数を合算して置き、
+        // RenderFrame が統計（スナップショットと StatsManager）へ渡すことを確かめる。
+        // 古い通し番号の数（描かれなかったビューのもの）は足さない。
+        auto* skinningPass = dynamic_cast<SkinningComputePass*>(
+            coordinator.GetMainSceneView()->FindPass("SkinningComputePass"));
+        assert(skinningPass != nullptr);
+        skinningPass->AccumulateFrameDroppedInstances(0, 100);
+        skinningPass->AccumulateFrameDroppedInstances(1, 2);
+        skinningPass->AccumulateFrameDroppedInstances(1, 3);
+#if NORVES_ENABLE_STATS
+        NorvesLib::Debug::StatsManager& statsManager = NorvesLib::Debug::StatsManager::Get();
+        const char* const statsTracePath = "SkinnedRenderPathContractTest.coordinator.trace.csv";
+        std::remove(statsTracePath);
+        statsManager.ResetAll();
+        assert(statsManager.StartTrace(statsTracePath));
+        statsManager.BeginFrame(packet.FrameNumber, 0.016f);
+#endif
+
         coordinator.RenderFrame(&packet);
+        assert(coordinator.GetStats().SkinningComputeDroppedInstances == 5);
+#if NORVES_ENABLE_STATS
+        assert(statsManager.GetRenderingStats().SkinningComputeDroppedInstances == 5);
+        statsManager.EndFrame();
+        statsManager.StopTrace();
+        statsManager.ResetAll();
+        std::remove(statsTracePath);
+#endif
         assert(swapChain->GetCompletedSubmissionSerial() == 0);
         assert(packet.Stats.SkinnedGBufferRecordedDraws == 1);
         assert(packet.Stats.SkinnedShadowRecordedDraws == PhysicalLightingShadowCascadeCount);

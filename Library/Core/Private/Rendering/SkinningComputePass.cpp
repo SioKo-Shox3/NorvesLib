@@ -263,6 +263,8 @@ namespace NorvesLib::Core::Rendering
         m_Plan.clear();
         m_Instances.clear();
         m_DroppedInstanceCount = 0;
+        m_FrameDroppedSerial = 0;
+        m_FrameDroppedInstanceCount = 0;
         m_bLoggedDrop = false;
         m_bInitialized = false;
     }
@@ -274,6 +276,16 @@ namespace NorvesLib::Core::Rendering
     void SkinningComputePass::Execute(ViewRenderContext& /*context*/)
     {
         // RenderGraph 経由（Execute(resources, context)）でだけ動く。
+    }
+
+    void SkinningComputePass::AccumulateFrameDroppedInstances(uint64_t frameSerial, uint32_t count)
+    {
+        if (m_FrameDroppedSerial != frameSerial)
+        {
+            m_FrameDroppedSerial = frameSerial;
+            m_FrameDroppedInstanceCount = 0;
+        }
+        m_FrameDroppedInstanceCount += count;
     }
 
     void SkinningComputePass::SetMaxOutputVertices(uint32_t maxOutputVertices)
@@ -332,6 +344,8 @@ namespace NorvesLib::Core::Rendering
             totalVertices += vertexCount;
         }
         // 外した数は RenderingCoordinator が毎フレームの統計（SkinningComputeDroppedInstances）へ設定する。ログは初回だけ。
+        // 同じフレームの別のビューポートの Declare とは通し番号で合算する。
+        AccumulateFrameDroppedInstances(context->ResolveRenderFrameSerial(), m_DroppedInstanceCount);
         if (m_DroppedInstanceCount > 0 && !m_bLoggedDrop)
         {
             m_bLoggedDrop = true;

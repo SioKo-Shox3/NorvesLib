@@ -837,7 +837,7 @@
 - notes: 2026-10-06 VTG6-PRE-DEFAULT-HARDEN から分けた（元の項目の評価の残課題）。危険地帯（描画パス・寿命）。テストは標準ライブラリの型を使わず、配線を戻すと落ちる変異を確かめる。 スキニングの塊の失敗のケースの証拠は `SkinnedRenderPathContractTest.exe` の直接実行の出力でよい。
 
 ## VTG6-HARDEN-COMPUTE-STATS: 計算スキニングの外した数の統計の集計を、Vulkan なしで検査できる形にする
-- status: todo
+- status: done
 - done-when: `RenderingCoordinator.cpp`（2959〜2972 行付近）の集計（各ビューのパスの数を `renderStats` へ足す）を、Vulkan なしで検査できる形（`RenderingCoordinatorStatsPropagation.inl` の自由関数と `RenderingCoordinatorStatsPropagationTest` と同じ形）に出して検査する（今は集計を消しても `UpdateRenderingStats` の後ろへ動かしてもテストが通る）。描かれなかったビュー（`viewPlan.bEnabled == false`・描ける大きさが無い・描画の失敗で `Declare` が呼ばれない）の古い数を足し続けないようにし、1つの SceneView が複数のビューポートを描くときは合算する。`RenderGraphCompileTest` の `TestSkinningComputePassDropCountIsPerFrameAndLoggedOnce` が共有の Logger を `LogOutput::None` で初期化し直したまま戻さないのを直す。配線を戻す変異（集計を消す・`UpdateRenderingStats` の後ろへ動かす）で落ちることを確かめる。既定の描画は変えない。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderResourcesDomainContractTest SkinnedRenderPathContractTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error --timeout 300 -R "^(RenderGraphCompileTest|MeshResourcesProceduralGpuTest|ComputeSkinningVulkanTest|MaterialTileClassifyVulkanTest|VisibilityResolveVulkanTest|SkinnedRenderPathContractTest)$"`

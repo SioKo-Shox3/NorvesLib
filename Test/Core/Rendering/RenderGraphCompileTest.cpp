@@ -3112,7 +3112,9 @@ namespace
         assert(scene.Skinning.GetDroppedInstanceCount() == 2);
 #if NORVES_ENABLE_LOGGING
         assert(warnings.Count == 1);
+        // 共有の Logger を、このテストが初期化し直す前の状態へ戻す（この実行ファイルは他で Logger を初期化しない = 未初期化）
         logger.RemoveSink(&warnings);
+        logger.Shutdown();
 #endif
         ShutdownSkinningPassScene(scene);
     }
