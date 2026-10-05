@@ -146,6 +146,7 @@ namespace NorvesLib::Core::Rendering
                     words[3] = 0;
                     slot.State = SlotState::Recording;
                     slot.Frame = acquireFrame;
+                    slot.TableVersion = 0;
                     m_CurrentSlot = i;
                     ++m_Stats.FramesRecorded;
                     return;
@@ -192,6 +193,21 @@ namespace NorvesLib::Core::Rendering
             }
             commandList.BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::HostRead);
             return true;
+        }
+
+        /**
+         * @brief 今のフレームのシェーダーが見るページの表の版を記録する（SyncPageTable の後に RenderThread が呼ぶ）
+         *
+         * 読み戻した要求は、この版の表の位置を指す。位置の範囲が後で別のメッシュに再利用されたかを、
+         * 集計した要求の版と比べて見分けるのに使う。獲得できなかったフレームでは何もしない。
+         */
+        void SetCurrentTableVersion(uint64_t tableVersion)
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            if (m_CurrentSlot != InvalidSlot)
+            {
+                m_Slots[m_CurrentSlot].TableVersion = tableVersion;
+            }
         }
 
         /** @brief 要求のバッファ 1 枚の大きさ（バイト） */
@@ -280,6 +296,8 @@ namespace NorvesLib::Core::Rendering
             SlotState State = SlotState::Free;
             uint64_t Frame = 0;
             uint64_t Serial = 0;
+            // このフレームのシェーダーが見たページの表の版（0 は未設定。どの範囲の割り当ても 0 より後なので全て棄却される）
+            uint64_t TableVersion = 0;
         };
 
         static constexpr uint32_t InvalidSlot = 0xFFFFFFFFu;
@@ -300,7 +318,8 @@ namespace NorvesLib::Core::Rendering
             Slot &slot = m_Slots[index];
             MegaGeometry::GeometryPageRequestSet decoded;
             const MegaGeometry::GeometryPageRequestDecodeResult result =
-                decoded.AddBuffer(static_cast<const uint32_t *>(slot.Mapped), m_Config.Capacity, slot.Frame);
+                decoded.AddBuffer(static_cast<const uint32_t *>(slot.Mapped), m_Config.Capacity, slot.Frame,
+                                  slot.TableVersion);
 
             Thread::ScopedLock lock(m_Mutex);
             m_Pending.Merge(decoded);

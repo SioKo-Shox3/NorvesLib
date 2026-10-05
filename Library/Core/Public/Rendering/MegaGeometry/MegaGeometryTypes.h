@@ -430,6 +430,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          */
         uint32_t PageTableBase = 0;
         uint32_t PageCount = 0;
+        /** @brief 常駐のまま固定したページの数（子のページの生成元を決められないグループのページ。GeometryPageLinks.h） */
+        uint32_t PinnedPageCount = 0;
 
         /**
          * @brief プールの区画の共有の持ち主（型を消した参照）

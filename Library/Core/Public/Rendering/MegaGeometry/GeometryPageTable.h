@@ -39,6 +39,12 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         {
             uint64_t OwnerId = 0;
             uint32_t PageId = 0;
+            /**
+             * @brief この範囲を割り当てたときの表の版。ある版の表を見て書かれた要求が、この範囲のものかの判定に使う
+             *
+             * 範囲は解放の後に別のメッシュへ再利用される。要求を書いた版より後に割り当てた範囲は、要求の持ち主ではない。
+             */
+            uint64_t AllocatedVersion = 0;
         };
 
         /**
@@ -76,7 +82,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                 placed.OwnerId = ownerId;
                 ResetEntries(base, pageCount);
                 outBase = base;
-                ++m_Version;
+                placed.AllocatedVersion = ++m_Version;
                 return true;
             }
 
@@ -89,7 +95,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             m_Entries.resize(m_Entries.size() + pageCount);
             ResetEntries(placed.Base, pageCount);
             outBase = placed.Base;
-            ++m_Version;
+            m_Ranges.back().AllocatedVersion = ++m_Version;
             return true;
         }
 
@@ -104,6 +110,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             Range &range = m_Ranges[index];
             range.bUsed = false;
             range.OwnerId = 0;
+            range.AllocatedVersion = 0;
             for (uint32_t offset = 0; offset < range.Count; ++offset)
             {
                 m_Entries[range.Base + offset] = Entry{PAGE_NON_RESIDENT, 0};
@@ -170,6 +177,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             }
             outLocation.OwnerId = m_Ranges[index].OwnerId;
             outLocation.PageId = globalIndex - m_Ranges[index].Base;
+            outLocation.AllocatedVersion = m_Ranges[index].AllocatedVersion;
             return true;
         }
 
@@ -187,6 +195,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             uint32_t Count = 0;
             bool bUsed = false;
             uint64_t OwnerId = 0;
+            uint64_t AllocatedVersion = 0;
         };
 
         static constexpr size_t InvalidIndex = static_cast<size_t>(-1);

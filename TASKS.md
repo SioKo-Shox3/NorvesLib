@@ -508,6 +508,15 @@
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 計画書 4.3。危険地帯（描画パス・RenderThread）。
 
+## VTG5-PAGE-LINK-ID: 親のクラスタが、作ったグループの番号を持つ
+- status: todo
+- done-when: クッカーが親のクラスタに「作ったグループの番号」を書き（NVMESH のクラスタの記録に項目を足す。v1.1 以前は読めて、番号が無いときは今の境界球・誤差の照合へ戻る）、`ComputeGeometryPageLinks` が値の照合の代わりに番号で子のページを決める。同じ値のグループが別のページにあっても固定するページが無くなる（`PinnedPages` は番号の無い旧資産のときだけ）。`CookedMeshTest` に、同じ境界球・誤差の別グループを持つ合成のメッシュで、親ごとの子のページが生成元のグループのページになることを足す。
+- verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest MegaGeometryResourcesTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedMeshTest|MegaGeometryResourcesTest|AssetCookMeshSmoke)$"`
+- stop-when: 記録の形式を変えると既存の焼き込み済みの資産が読めなくなる場合は、理由を記録して止める。
+- paths: Tools/AssetCook, Library/Core/Public/Asset, Library/Core/Private/Asset, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Docs/Architecture, Test/Core/Asset, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: VTG5-PAGE-REQUEST の評価で、値の照合は同じ値の別グループを区別できないと指摘された。暫定は、候補のページを常駐のまま固定する（ストリーマの追い出しの対象外）。VTG5-PAGE-STREAMER の前に入れるのが望ましいが、固定したページは `MegaMeshGPUData::PinnedPageCount` で見え、ストリーマは `SetMegaMeshPageRegion` の拒否に従えば安全に進められる。危険地帯（アセットロード）。
+
 ## VTG5-PAGE-STREAMER: ページを要求から読み込み、予算の内で追い出す
 - status: todo
 - done-when: `GeometryPageStreamer`（RenderResources が持つ）が、ページの要求を優先度（粗い段が先・要求の数・新しさ）で選び、JobSystem の範囲読みで NVMESH v1.1 からページを読み、`GpuUploadRing` でプールの区画へ書いてからページの表を更新する（書き終える前に公開しない）。1フレームの上限（読み・コピーのバイト数）を持つ。根のページはメッシュの読み込み時に常駐させ、追い出さない。`VideoMemoryBudgetManager` の Geometry の枠の目標を超えたら、最後に要求されたフレームが古いページから LRU で外す（外したページの区画は、使っていた提出が完了してから再利用）。`VRAM_POOLS` に geometry_target_mb・geometry_used_mb・geometry_evicted_pages を出す。CPU のテスト `GeometryPageStreamerTest`（`RenderResourcesDomainContractTest` の束。読み込み・アップロードは偽物）が、優先度・上限・根の常駐・追い出しの順・目標以下に収まること・解除と再利用の順序を確かめる。起動画面の撮影で、ページのストリーミングあり（既定）と全常駐（`--geometry-streaming=off`）の PSNR を記録する（目安 45 dB 以上）。

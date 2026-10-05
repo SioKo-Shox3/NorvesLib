@@ -1255,7 +1255,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // ページの要求を書くバッファ（このフレームのもの。獲得できなければ容量 0 で、統計用の代わりのバッファを束ねる）
+        // ページの要求を書くバッファ（このフレームのもの。獲得できなければ容量 0 で、統計用の代わりのバッファを束ねる）。
+        // 要求が指す表の位置を後で引き直せるよう、このフレームのシェーダーが見る表の版を結び付ける
+        command.MegaGeometry->SetCurrentPageTableVersion(frameSlot.PageTableVersion);
         RHI::BufferPtr pageRequestBuffer = command.MegaGeometry->GetCurrentPageRequestBuffer();
         const uint32_t pageRequestCapacity = pageRequestBuffer ? command.MegaGeometry->GetCurrentPageRequestCapacity() : 0u;
         if (!pageRequestBuffer || pageRequestCapacity == 0)

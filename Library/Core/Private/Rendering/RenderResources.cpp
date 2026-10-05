@@ -1043,12 +1043,12 @@ namespace NorvesLib::Core::Rendering
                impl->MegaGeometryResources->CopyPageTableIfChanged(inOutVersion, out);
     }
 
-    bool MegaGeometryResources::ResolvePageTableIndex(uint32_t globalIndex, uint64_t &outMeshId,
+    bool MegaGeometryResources::ResolvePageTableIndex(uint32_t globalIndex, uint64_t tableVersion, uint64_t &outMeshId,
                                                       uint32_t &outPageId) const
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
         return impl && impl->MegaGeometryResources &&
-               impl->MegaGeometryResources->ResolvePageTableIndex(globalIndex, outMeshId, outPageId);
+               impl->MegaGeometryResources->ResolvePageTableIndex(globalIndex, tableVersion, outMeshId, outPageId);
     }
 
     bool MegaGeometryResources::SetMegaMeshPageRegion(MegaGeometry::MegaMeshHandle handle, uint32_t pageId,
@@ -1069,6 +1069,15 @@ namespace NorvesLib::Core::Rendering
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
         return impl && impl->GeometryPageFeedback ? impl->GeometryPageFeedback->GetCurrentCapacity() : 0u;
+    }
+
+    void MegaGeometryResources::SetCurrentPageTableVersion(uint64_t tableVersion)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (impl && impl->GeometryPageFeedback)
+        {
+            impl->GeometryPageFeedback->SetCurrentTableVersion(tableVersion);
+        }
     }
 
     bool MegaGeometryResources::RecordPageRequestHostBarrier(RHI::ICommandList &commandList)

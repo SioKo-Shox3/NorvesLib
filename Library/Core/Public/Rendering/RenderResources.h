@@ -277,12 +277,17 @@ namespace NorvesLib::Core::Rendering
         bool CopyPageTableIfChanged(uint64_t &inOutVersion,
                                     Container::VariableArray<MegaGeometry::GeometryPageTable::Entry> &out) const;
         // ページの表のグローバルな位置から、メッシュ（ハンドルの番号）とメッシュの中のページの番号を引く。
-        bool ResolvePageTableIndex(uint32_t globalIndex, uint64_t &outMeshId, uint32_t &outPageId) const;
+        // tableVersion は要求を書いたフレームのシェーダーが見た表の版（GeometryPageRequestSet::Request::TableVersion）。
+        // その版より後に割り当てられた範囲（解放の後に別のメッシュが再利用したもの）は、要求の持ち主ではないので false。
+        bool ResolvePageTableIndex(uint32_t globalIndex, uint64_t tableVersion, uint64_t &outMeshId,
+                                   uint32_t &outPageId) const;
         // メッシュのページを区画 region に常駐させる（PAGE_NON_RESIDENT なら非常駐にする）。ストリーマと試験が使う。
         bool SetMegaMeshPageRegion(MegaGeometry::MegaMeshHandle handle, uint32_t pageId, uint32_t region);
         // このフレームのカリングが要求を書くバッファと容量。獲得できなかったフレーム（無効・空きなし）は null と 0。
         RHI::BufferPtr GetCurrentPageRequestBuffer() const;
         uint32_t GetCurrentPageRequestCapacity() const;
+        // このフレームのシェーダーが見るページの表の版を、要求のバッファへ結び付ける（SyncPageTable の後に1回）。
+        void SetCurrentPageTableVersion(uint64_t tableVersion);
         // 要求のバッファへのシェーダーの書き込みを、ホストの読み取りへ見せるバリアを記録する（最後の書き込みの後に1回）。
         bool RecordPageRequestHostBarrier(RHI::ICommandList &commandList);
         // 数フレーム遅れで読み戻して溜めた要求を out へ渡す（ストリーマが読む）。無ければ false。

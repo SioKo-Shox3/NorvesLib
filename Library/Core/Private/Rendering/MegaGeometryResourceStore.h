@@ -95,12 +95,17 @@ namespace NorvesLib::Core::Rendering
         bool CopyPageTableIfChanged(uint64_t &inOutVersion,
                                     Container::VariableArray<MegaGeometry::GeometryPageTable::Entry> &out) const;
 
-        /** @brief ページの表のグローバルな位置から、メッシュ（ハンドルの番号）とメッシュの中のページの番号を引く */
-        bool ResolvePageTableIndex(uint32_t globalIndex, uint64_t &outMeshId, uint32_t &outPageId) const;
+        /**
+         * @brief ページの表のグローバルな位置から、メッシュ（ハンドルの番号）とメッシュの中のページの番号を引く
+         * @param tableVersion 要求を書いたフレームのシェーダーが見た表の版。その版より後に割り当てられた範囲
+         *        （要求の後に解放されて別のメッシュが再利用した範囲）は、要求の持ち主ではないので false
+         */
+        bool ResolvePageTableIndex(uint32_t globalIndex, uint64_t tableVersion, uint64_t &outMeshId,
+                                   uint32_t &outPageId) const;
 
         /**
          * @brief メッシュのページを区画 region に常駐させる（PAGE_NON_RESIDENT なら非常駐にする）。ストリーマが使う
-         * @return 未登録のメッシュ・範囲外のページなら false
+         * @return 未登録のメッシュ・範囲外のページ・固定したページ（生成元を決められない子のページ）を非常駐にする指定なら false
          */
         bool SetMegaMeshPageRegion(MegaGeometry::MegaMeshHandle handle, uint32_t pageId, uint32_t region);
 
@@ -114,6 +119,8 @@ namespace NorvesLib::Core::Rendering
             Container::TSharedPtr<MegaGeometryRegionHolder> Region;
             // 区画の中身（クラスタ・頂点・インデックスを並べたもの）。リングへ積み終えるまで持つ
             Container::VariableArray<uint8_t> StagedBytes;
+            // 常駐のまま固定するページ（ページの番号で引く。1 が固定。ComputeGeometryPageLinks の PinnedPages）
+            Container::VariableArray<uint8_t> PinnedPages;
             uint64_t EnqueuedBytes = 0;
             bool bFullyEnqueued = false;
             // 全てのコピーが完了したと確かめた後は、問い合わせを省く

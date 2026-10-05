@@ -40,7 +40,14 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         bool bInvalid = false;
     };
 
-    /** @brief ページの要求の集合（ページの表の位置ごとに、最後に要求されたフレーム） */
+    /**
+     * @brief ページの要求の集合（ページの表の位置ごとに、最後に要求されたフレーム）
+     *
+     * 要求は表の位置だけを持つが、位置の範囲は解放の後に別のメッシュへ再利用される。
+     * そこで要求ごとに、書いたフレームのシェーダーが見た表の版（TableVersion）を持ち、
+     * 表の位置を引き直すときに、その版より後に割り当てられた範囲の要求を棄却できるようにする
+     * （MegaGeometryResourceStore::ResolvePageTableIndex）。
+     */
     class GeometryPageRequestSet
     {
     public:
@@ -50,6 +57,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             uint32_t TableIndex = 0;
             /** @brief このページを最後に要求したフレームの番号 */
             uint64_t LastRequestedFrame = 0;
+            /** @brief 最後に要求したフレームのシェーダーが見たページの表の版（GeometryPageTable::GetVersion） */
+            uint64_t TableVersion = 0;
         };
 
         /**
@@ -57,8 +66,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          * @param words バッファの全体（ヘッダ + capacity 語）
          * @param capacity バッファの容量（要求の件数）
          * @param frame このバッファを書いたフレームの番号
+         * @param tableVersion そのフレームのシェーダーが見たページの表の版
          */
-        GeometryPageRequestDecodeResult AddBuffer(const uint32_t *words, uint32_t capacity, uint64_t frame)
+        GeometryPageRequestDecodeResult AddBuffer(const uint32_t *words, uint32_t capacity, uint64_t frame,
+                                                  uint64_t tableVersion)
         {
             GeometryPageRequestDecodeResult result;
             if (words == nullptr || capacity == 0)
@@ -71,26 +82,36 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             result.Overflow = words[GeometryPageRequestBuffer::OverflowWord];
             for (uint32_t index = 0; index < count; ++index)
             {
-                Add(words[GeometryPageRequestBuffer::HeaderWords + index], frame);
+                Add(words[GeometryPageRequestBuffer::HeaderWords + index], frame, tableVersion);
                 ++result.Accepted;
             }
             m_OverflowTotal += result.Overflow;
             return result;
         }
 
-        /** @brief 1件足す（同じ位置は最後に要求されたフレームを新しいほうへ更新する） */
-        void Add(uint32_t tableIndex, uint64_t frame)
+        /**
+         * @brief 1件足す（同じ位置は、新しいフレームの要求とその版を残す）
+         *
+         * 表の版はフレームと共に進むので、新しいフレームの版が残れば、古い要求が指していた範囲が解放されていても
+         * 新しい要求の持ち主で引き直せる。
+         */
+        void Add(uint32_t tableIndex, uint64_t frame, uint64_t tableVersion)
         {
             auto position = std::lower_bound(m_Requests.begin(), m_Requests.end(), tableIndex,
                                              [](const Request &request, uint32_t value) { return request.TableIndex < value; });
             if (position != m_Requests.end() && position->TableIndex == tableIndex)
             {
-                position->LastRequestedFrame = std::max(position->LastRequestedFrame, frame);
+                if (frame >= position->LastRequestedFrame)
+                {
+                    position->LastRequestedFrame = frame;
+                    position->TableVersion = std::max(position->TableVersion, tableVersion);
+                }
                 return;
             }
             Request request;
             request.TableIndex = tableIndex;
             request.LastRequestedFrame = frame;
+            request.TableVersion = tableVersion;
             m_Requests.insert(position, request);
         }
 
@@ -98,7 +119,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         {
             for (const Request &request : other.m_Requests)
             {
-                Add(request.TableIndex, request.LastRequestedFrame);
+                Add(request.TableIndex, request.LastRequestedFrame, request.TableVersion);
             }
             m_OverflowTotal += other.m_OverflowTotal;
         }

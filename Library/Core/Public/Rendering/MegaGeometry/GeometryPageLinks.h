@@ -8,6 +8,10 @@
 // カリングは、もっと細かい子が欲しいのに子のページが常駐していないとき、穴を作らずに P を代わりに描き、子のページを要求する。
 // クラスタの配列は GPU に常駐したまま（ページごとに常駐するのは頂点とインデックスの中身）なので、
 // P からその子のページを引けるよう、ここで ChildPageId を埋める。
+//
+// 照合は境界球・誤差の値の一致で行うので、別のグループが同じ値を持つと（同じ形の部品の複製など）、P がどちらから
+// 作られたかを決められない。焼き込みの形式が P の生成元のグループを持たない間は、そのグループのページを
+// 「固定」して常駐のままにし（PinnedPages。ストアが非常駐への変更を拒否する）、穴と要求の漏れを作らない。
 
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 
@@ -26,8 +30,14 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t LinkedClusters = 0;
         /** @brief グループのメンバが複数のページにまたがって、子のページを決められなかったグループの数 */
         uint32_t SplitGroups = 0;
-        /** @brief 同じ段・同じ球・同じ誤差のグループが複数あって、先頭を採ったクラスタの数 */
+        /** @brief 同じ段・同じ球・同じ誤差のグループが複数あり、そのページが食い違うために、生成元を決められなかったクラスタの数 */
         uint32_t AmbiguousClusters = 0;
+        /**
+         * @brief 常駐のまま固定するページ（昇順）。生成元を決められない子のページと、複数のページにまたがるグループのページ
+         *
+         * 固定したページは非常駐にしない。子が常駐しているなら親は描かれないので、取り違えても穴にならない。
+         */
+        VariableArray<uint32_t> PinnedPages;
     };
 
     namespace GeometryPageLinksDetail
@@ -104,7 +114,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      *
      * グループを持たないメッシュ（v1.0 以前・実行時に構築した階層）は子のページが無い（INVALID_PAGE_ID）。
      * 1つのグループのメンバが複数のページにまたがるときは、そのグループから作られたクラスタの子のページを決められないので
-     * INVALID_PAGE_ID のままにする（常に自分の誤差で決まる、穴を作らない側）。
+     * INVALID_PAGE_ID のままにし、メンバのページを固定する。
+     * 同じ値のグループが複数あってページが食い違うときも、候補のページを全て固定する（ChildPageId は先頭の候補のページ）。
      */
     inline bool ComputeGeometryPageLinks(const VariableArray<MeshCluster> &clusters,
                                          const VariableArray<MeshClusterGroup> &groups,
@@ -134,6 +145,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             return true;
         }
 
+        // 固定するページ（ページの番号で引く）
+        VariableArray<uint8_t> pinned(outResult.PageCount, 0);
         // グループごとの子のページ（メンバが全て同じページのとき）。またがるグループは INVALID_PAGE_ID
         VariableArray<uint32_t> groupPage(groups.size(), INVALID_PAGE_ID);
         VariableArray<GroupKey> keys;
@@ -155,9 +168,16 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             if (!bSamePage)
             {
                 ++outResult.SplitGroups;
-                continue;
+                for (uint32_t member = 0; member < group.ClusterCount; ++member)
+                {
+                    pinned[clusters[group.ClusterOffset + member].PageId] = 1;
+                }
             }
-            groupPage[groupIndex] = page;
+            else
+            {
+                groupPage[groupIndex] = page;
+            }
+            // またがるグループも照合の候補に入れる（入れないと、同じ値の別のグループへ誤って結び付く）。
             // このグループから作られたクラスタは1つ粗い段（LODLevel + 1）にある
             keys.push_back(MakeKey(group.LODLevel + 1u, group.Bounds, group.Error, groupIndex));
         }
@@ -176,13 +196,36 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             {
                 continue;
             }
-            auto next = first + 1;
-            if (next != keys.end() && KeySameValue(*next, probe))
+            // 同じ値の候補が全て同じページなら、生成元が違っても子のページは決まる
+            auto last = first + 1;
+            bool bSameChildPage = true;
+            while (last != keys.end() && KeySameValue(*last, probe))
+            {
+                bSameChildPage = bSameChildPage && groupPage[last->GroupIndex] == groupPage[first->GroupIndex];
+                ++last;
+            }
+            if (!bSameChildPage)
             {
                 ++outResult.AmbiguousClusters;
+                for (auto candidate = first; candidate != last; ++candidate)
+                {
+                    const uint32_t page = groupPage[candidate->GroupIndex];
+                    if (page != INVALID_PAGE_ID)
+                    {
+                        pinned[page] = 1;
+                    }
+                }
             }
             outChildPages[clusterIndex] = groupPage[first->GroupIndex];
             ++outResult.LinkedClusters;
+        }
+
+        for (uint32_t page = 0; page < outResult.PageCount; ++page)
+        {
+            if (pinned[page] != 0)
+            {
+                outResult.PinnedPages.push_back(page);
+            }
         }
         return true;
     }

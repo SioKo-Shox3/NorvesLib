@@ -750,7 +750,7 @@ namespace
                 const uint32_t* words = static_cast<const uint32_t*>(fixture.PageRequests->Map(0u, bytes));
                 Mega::GeometryPageRequestSet set;
                 const Mega::GeometryPageRequestDecodeResult decoded =
-                    words != nullptr ? set.AddBuffer(words, RequestCapacity, 9) : Mega::GeometryPageRequestDecodeResult{};
+                    words != nullptr ? set.AddBuffer(words, RequestCapacity, 9, 5) : Mega::GeometryPageRequestDecodeResult{};
                 fixture.PageRequests->Unmap();
                 const bool bDecoded = words != nullptr && decoded.Accepted == 2 && decoded.Overflow == 0 &&
                                       set.GetRequests().size() == 2 && set.GetRequests()[0].TableIndex == 2 &&

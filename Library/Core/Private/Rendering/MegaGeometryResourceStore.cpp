@@ -304,13 +304,14 @@ namespace NorvesLib::Core::Rendering
             if (pageLinks.SplitGroups > 0 || pageLinks.AmbiguousClusters > 0)
             {
                 NORVES_LOG_WARNING("MegaGeometryResources",
-                                   "ページの親子の関係を決められない箇所があります: %s split_groups=%u ambiguous_clusters=%u",
-                                   createInfo.DebugName.c_str(), pageLinks.SplitGroups, pageLinks.AmbiguousClusters);
+                                   "ページの親子の関係を決められない箇所があります（該当のページは常駐のまま固定します）: %s split_groups=%u ambiguous_clusters=%u pinned_pages=%u",
+                                   createInfo.DebugName.c_str(), pageLinks.SplitGroups, pageLinks.AmbiguousClusters,
+                                   static_cast<uint32_t>(pageLinks.PinnedPages.size()));
             }
         }
 
-        // Create the cluster data SSBO.
-        // Convert MeshCluster to GPUClusterData.
+        // クラスタのデータの storage buffer を作る。
+        // MeshCluster を GPUClusterData へ変換する。
         Container::VariableArray<MegaGeometry::GPUClusterData> gpuClusters;
         gpuClusters.reserve(uploadClusters->size());
         for (size_t clusterIndex = 0; clusterIndex < uploadClusters->size(); ++clusterIndex)
@@ -542,6 +543,14 @@ namespace NorvesLib::Core::Rendering
             entry.Data = std::move(gpuData);
             entry.Region = std::move(regionHolder);
             entry.StagedBytes = std::move(stagedBytes);
+            if (!pageLinks.PinnedPages.empty())
+            {
+                entry.PinnedPages.assign(pageLinks.PageCount, 0);
+                for (const uint32_t page : pageLinks.PinnedPages)
+                {
+                    entry.PinnedPages[page] = 1;
+                }
+            }
             Thread::ScopedLock lock(m_Mutex);
             // ページの表の範囲。今は全ページが常駐の区画 0（ページごとの読み込みはストリーマが SetMegaMeshPageRegion で行う）
             uint32_t pageTableBase = 0;
@@ -554,6 +563,7 @@ namespace NorvesLib::Core::Rendering
             }
             entry.Data.PageTableBase = pageTableBase;
             entry.Data.PageCount = pageLinks.PageCount;
+            entry.Data.PinnedPageCount = static_cast<uint32_t>(pageLinks.PinnedPages.size());
             m_MegaMeshes[handle.Id] = std::move(entry);
             m_PendingUploadIds.push_back(handle.Id);
         }
@@ -840,12 +850,13 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool MegaGeometryResourceStore::ResolvePageTableIndex(uint32_t globalIndex, uint64_t &outMeshId,
-                                                          uint32_t &outPageId) const
+    bool MegaGeometryResourceStore::ResolvePageTableIndex(uint32_t globalIndex, uint64_t tableVersion,
+                                                          uint64_t &outMeshId, uint32_t &outPageId) const
     {
         Thread::ScopedLock lock(m_Mutex);
         MegaGeometry::GeometryPageTable::Location location;
-        if (!m_PageTable.Resolve(globalIndex, location))
+        // 要求を書いたフレームの表の版より後に割り当てた範囲は、解放の後の再利用で、要求の持ち主ではない
+        if (!m_PageTable.Resolve(globalIndex, location) || location.AllocatedVersion > tableVersion)
         {
             return false;
         }
@@ -860,6 +871,12 @@ namespace NorvesLib::Core::Rendering
         Thread::ScopedLock lock(m_Mutex);
         auto it = m_MegaMeshes.find(handle.Id);
         if (it == m_MegaMeshes.end() || pageId >= it->second.Data.PageCount)
+        {
+            return false;
+        }
+        // 固定したページは、親子の関係を決められない子のページの穴を防ぐため、常駐のまま保つ
+        if (region == MegaGeometry::PAGE_NON_RESIDENT && pageId < it->second.PinnedPages.size() &&
+            it->second.PinnedPages[pageId] != 0)
         {
             return false;
         }
