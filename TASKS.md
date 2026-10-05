@@ -2534,7 +2534,9 @@
 - result: code5de8b9f / tree7fb17894 / run37315777388 attempt1 job111782027052。37CPU、新v1実fixture、17/29中断、79+10byte、25+15CLI、metadata12、Python12+4+7 normal/-O、MSVCx64/CNG、3ZIPを独立検証し親も再実行PASS。初回run37313863062のC2678を修正。runtime/GPU・model asset-setは範囲外。
 
 ## G2-GR79-MATERIAL-STAGING: packed ARMと全材質値の所有CPU adapterを作る
-- status: doing
+- status: done
 - done-when: cooked v1の全係数/alpha/sidedness/ARM mask/4論理pathをCPU stagingに欠落なく所有する。wire DefaultLitをruntime enumへ明示写像する。係数の再乗算/ARM分割/nits再変換をせず、未接続材質のFinalizeと製品v1ロードは明示拒否を維持する。
 - verify: 新native CPU試験でmask8通り/alpha3通り/全float bit/Unicode path/元blob解放/不正値・参照・版・path時out保持を検証。CookedMeshV1Testのv1拒否とv0空表互換、既存37CPU/凍結79+10byte/managed復旧gateを維持。
 - stop-when: shader/descriptor/影/透明/複数材質runtimeまで広げる、CPU合格をGPU合格と扱う、既定v0材質を変える。
+
+- result: codec669322b/treea7956787/run37321891650 attempt1 job111802776013で実MSVCx64・38CPU/新旧marker・17/29中断・79+10byte・25+15CLI/metadata12・Python12+4+7 normal/-O・3ZIP/CNGを独立受入。親readonly再実行exit0。Unicodeは手組みdataからの有限保証、GPU未受入れ/製品v1拒否は維持。

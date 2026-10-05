@@ -856,3 +856,6 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR79 次の作業: packed ARMと全材質値の所有CPU adapter。単体cookの受入を起点とし、描画未接続の材質をFinalizeへ渡しても拒否する境界まで。runtime v1ロードはまだ開放しない。
 
 - G2/GR79 CPU staging検証準備: 全材質値/packed ARM mask/所有UTF8 pathを保持するadapter、ModelStagingDataの保持枠、未接続Finalizeのtyped拒否を追加。round1で早期拒否testの偽陽性を指摘され、release有効のModelFinalizeStatus assertへ修正。異なるcanonical emissive RGB/NUL/negative zeroも追加しround2静的PASS。Python12+4+7 normal/-O合格。38CPUと旧gateは次の実Windows CIで未確認。Unicode blob reader対応は含めない。
+
+- G2/GR79 CPU材質staging受入: c669322b1ab5955383baf4c33c54702ac9debdbd / treea7956787932a741ce966f2e51e2f4ae3d0bec646 / run37321891650 attempt1 job111802776013。38CPU、新旧marker、17/29中断、79+10byte、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG、3ZIPを独立検証し親も再実行exit0。全13float/48flagsは固定fixture有限検証。実cross-session未試験とGPU未受入れを維持。
+- G2/GR79 次段方針補正: 本文8534–8551は使用channelのR8分割＋scalar1x1＋shader変更なしを指定するため、まずこの範囲へ接続する。後続GRのpacked GPU構想を直近へ前倒しする案は採らない。CPU PackedArmV1は元資産layoutとして維持。Nits=0/色0のemissiveTextureは寄与0としてupload省略で受理、OPAQUEのfactor alphaは保持して無視できる。albedo画像alphaの背景判定漏れは別途検査する。

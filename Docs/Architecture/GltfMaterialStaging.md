@@ -12,6 +12,6 @@ cook済みNVMESH v1の材質をModelMaterialStagingのadapterで検査し、描�
 - 失敗時は出力を変更しない。CPU helperはtextureの読込/uploadやGPU作成を行わない
 
 ImportedMaterialStagingTestは値のbit保持、mask8×alpha3×両面2、所有/コピー、拒否と出力保持を検証する。GltfMaterialCookV1Testでは実cook→reader→adapterの接続を確認する。
-次段階でpacked ARMを1枚の全mipとしてuploadし、shaderがmaskに応じたchannel/scalarを読む。既存v0のR8分割互換は別に維持する。GPU描画・alpha/両面/影・透明経路の合格はこのCPU試験で代替しない。
+直近のruntime接続はGR79本文どおり、元ARMから使用maskのchannelだけをR8へ分割し、最終scalarは既存の1×1 texture方式で渡す。PackedArmV1は元のcook資産のlayoutを表し、GPUでの1枚bindingを意味しない。packed GPU化は後続の圧縮・streaming構想へ分離し、ここではshaderを変えない。GPU描画・alpha/両面/影・透明経路の合格はこのCPU試験で代替しない。
 
 範囲注意: 現在のNVMESH v1 readerはstring tableをASCII限定で検査する。UTF-8の所有保証は手組みCookedMeshDataからadapterまでで、Unicode cooked blobの製品ロード対応を意味しない。Finalizeはreleaseでも取得できるModelFinalizeStatusで未対応材質の早期拒否をresource失敗から区別する。
