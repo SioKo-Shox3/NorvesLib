@@ -315,7 +315,12 @@ namespace NorvesLib::Core::Rendering
             pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
             pipelineDesc.rasterState.lineWidth = 1.0f;
 
-            // GBuffer がすでに同じ形を書いた深度に対して、同じ値以下なら ID を書く（同じ式の位置は同じ深度になる）
+            // 同じ値以下なら ID を書く（同じ式の位置は同じ深度になる）。GBuffer の描画（Less）と比較をそろえない理由:
+            //  - Debug（VisibilityBufferMode::Debug）は GBuffer が先に同じ形の深度を書くので、Less だと同じ深度の画素が
+            //    すべて落ち、ID が 1 つも書けない。LessOrEqual が必須。
+            //  - On は GBuffer が描かずクリアだけを行い、このパスだけが深度を書く。同じ深度（共有の辺・同一平面の面）では
+            //    後に描いた側が勝つ（GBuffer の Less は先に描いた側が勝つ）。パイプラインはモードごとに作り分けず、
+            //    差は共有の辺と同一平面の画素に限る。
             pipelineDesc.depthStencilState.depthTestEnable = true;
             pipelineDesc.depthStencilState.depthWriteEnable = true;
             pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::LessOrEqual;

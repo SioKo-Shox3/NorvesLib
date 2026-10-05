@@ -857,7 +857,7 @@
 - notes: 2026-10-06 VTG6-PRE-DEFAULT-HARDEN から分けた（元の項目の評価の残課題）。危険地帯（描画パス・寿命）。テストは標準ライブラリの型を使わず、配線を戻すと落ちる変異を確かめる。
 
 ## VTG6-HARDEN-WIREFRAME-DEPTH: ワイヤーフレームの深度の比較をそろえるか理由を書き、記録を実測に合わせる
-- status: todo
+- status: done
 - done-when: (11) 深度の比較が、今の GBuffer の経路は `Less`（`GBufferPass.cpp` 1462 行・`MegaGeometryPass.cpp` 2621 行付近）、ID のラスタは `LessOrEqual`（`VisibilityRasterPass.cpp` 322 行付近）で、共有の辺・同じ深度の面で後に描いた側が勝つ。既定にする前にそろえるか、理由を書く。PROGRESS（1433 行付近）のワイヤーフレームの on・off の差の記録（「線の暗さの総和の差 0.6%」「法線」「画素の中心が三角形の外」）は、実測（線の画素の輝度差の p95 が 37.8、地面の放射状の線が約 50 ずれる）と合わないので、差の大きさと原因の候補（線のラスタの `dFdx` が辺の向きだけになるミップの選び方、深度の比較の違い）に書き直す。`VisibilityResolve.glsl`（51 行付近）の「デバッグの表示は別の解決が受け持つ」は今は逆なので直す。fillModeNonSolid の非対応の装置への戻り（`VisibilityRasterPass.cpp` 344〜358 行付近）は、`VulkanDevice.cpp`（1090 行付近）がこの機能を無条件に有効にするので到達しない — 記録だけでよい。深度の比較をそろえたときは、変更の前後で通常の表示（塗り）の撮影が変わらないことを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderResourcesDomainContractTest SkinnedRenderPathContractTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error --timeout 300 -R "^(RenderGraphCompileTest|MeshResourcesProceduralGpuTest|ComputeSkinningVulkanTest|MaterialTileClassifyVulkanTest|VisibilityResolveVulkanTest|SkinnedRenderPathContractTest)$"`
