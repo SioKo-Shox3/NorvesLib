@@ -578,7 +578,7 @@
 - notes: 計画書 4.3（2026-10-05 親が段6の設計を詳しくした: ID は 32bit で「描画の記録の番号 << 7 | 記録の中の三角形の番号」、材質の解決は計算シェーダー、スキニングは計算シェーダーで変形、`geometryShader` の無い GPU では今の GBuffer の経路を予備に残す）。危険地帯（RHI/Vulkan）。
 
 ## VTG6-RASTER-CHUNKS: 手続きメッシュとスキニングを128三角形の塊に分け、頂点を計算シェーダーから読めるようにする
-- status: todo
+- status: done
 - done-when: 手続きメッシュ（`ProceduralMeshGpuStore`）とスキニングのメッシュ（`SkinnedMeshGpuStore`）が、登録時にインデックスを 128 三角形以下の連続した塊（最初のインデックス・数）に分けて持つ（MegaGeometry のクラスタと同じ大きさ。後のビジビリティバッファの ID の「記録の中の三角形の番号」が 7bit に収まる）。手続きメッシュの頂点・インデックスのバッファに storage と BDA の用途を足す（または `GeometryPool` に置く）。CPU のテスト（`MeshResourcesProceduralGpuTest` と `SkinnedRenderPathContractTest` にケースを足す）が、塊が全三角形をちょうど1回ずつ覆い、各塊が 128 以下であることを確かめる。今の描画は変えない（起動画面の撮影が一致する）。
 - verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest SkinnedRenderPathContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MeshResourcesProceduralGpuTest|GeometryPoolAllocatorTest)$"`

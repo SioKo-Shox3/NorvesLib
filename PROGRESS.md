@@ -1138,3 +1138,9 @@
 - 既知の限界（残す）: 一覧の大きさが最悪（1 タイル 64 材質）で取ってあり、1080p で約 8.3 MB・4K で約 33 MB。既定で無効の間は影響がなく、VTG6-DEFAULT-ON で予算と照らす。記録の材質の番号がフレームで一意でない件は VTG6-MATERIAL-TABLE で直す。
 - Notes: (1) `Edit` ツールは混在行末のファイル（`RenderGraphCompileTest.cpp`）の全行を CRLF にしてしまうので、編集のあとに HEAD の行末へ戻すスクリプト（difflib）で直した。 (2) Git Bash のヒアドキュメントで python を書くと壊れるので、スクリプトをファイルに書いて実行した。
 - Next: VTG6-RESOLVE-GEOMETRY（`DispatchIndirect` の RHI への追加と VTG6-SKINNING-FINAL-BARRIER を先に片づけるのが望ましい）。
+
+## 反復 1（run 20261005-214551）: VTG6-RASTER-CHUNKS（done）
+- 内容: 実装は 6b85c9bd でコミット済み（手続きメッシュ・スキニングのインデックスを 128 三角形以下の塊に分けて持ち、頂点・インデックスを storage・BDA の用途にする）。この反復は、改訂された verify（`SkinnedRenderPathContractTest` を ctest から外した版）を新しい run で走らせ直して証拠を保存し、done にした。
+- 検証: `verify-VTG6-RASTER-CHUNKS-1-build.txt`（Debug の Game・RenderResourcesDomainContractTest・SkinnedRenderPathContractTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（MeshResourcesProceduralGpuTest・GeometryPoolAllocatorTest 2/2 passed）、`-4-ctest-verbose.txt`（「MeshIndexChunks cover every triangle once」）、`-3-skinned-direct.txt`（スキニングの追加ケースの出力「SkinnedMesh chunks cover every triangle once」。その後は既知の TEST-SKINNED（`gbuffer.vert` を読めず assert）で落ちて exit 3。今回は終わらずに abort した）。
+- Notes: (1) `--test=` は絞り込みにならず、塊のケースが先頭で走って出力される。 (2) 描画経路は変えていない（バッファの用途ビットの追加のみ）ので起動画面の撮影は未実施。 (3) Git Bash は `/m:1` をパスに変換するため、ビルドは PowerShell で走らせる。
+- Next: VTG6-COMPUTE-SKINNING。
