@@ -419,7 +419,7 @@
 - notes: 計画書 1（検証は起動画面に高ポリの資産を足す）。起動画面の見た目を変える（ユーザー承認済みの追加）。
 
 ## VTG4-ACCEPT: 段4（LODの階層の焼き込み）の受入れを記録する
-- status: todo
+- status: done
 - done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段4の節に、焼き込みの性質のテスト、起動画面の `-Deterministic` の撮影（朝・昼・夕・夜 × 3視点、glTF・実行時の生成との PSNR）、テクスチャの VRAM（岩・小屋の 409.6 MiB が無くなった後の全体）、距離を変える撮影の所見（割れ目・ちらつき）、選ばれたクラスタの数、起動の時間、golden、関係するテストの結果、既知の限界を書く。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest MegaGeometryResourcesTest RayTracingSceneSnapshotTest RenderGraphCompileTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedMeshTest|AssetCookMeshSmoke|AssetCookMeshSimplifySmoke|MegaGeometryResourcesTest|RayTracingSceneSnapshotTest|RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
