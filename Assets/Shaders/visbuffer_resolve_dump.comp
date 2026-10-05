@@ -1,0 +1,11 @@
+﻿#version 460
+
+// ========================================
+// visbuffer_resolve.comp に、画素ごとの中間の値の書き出し（binding 9）を足した検証用の版
+//
+// 重心座標・UV・解析的な微分・接線の基底・前のクリップ座標を読み戻して、GPU のテストが CPU の参照と照合する。
+// 製品の経路は使わない。
+// ========================================
+
+#define NORVES_VISRESOLVE_DUMP 1
+#include "Common/VisibilityResolve.glsl"
