@@ -11,6 +11,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -26,6 +27,8 @@
             std::exit(1);                                                                                              \
         }                                                                                                              \
     } while (false)
+
+bool CaptureSkeletalSamplerBaseline(const char* path);
 
 using namespace NorvesLib::Core;
 namespace Animation = NorvesLib::Core::Animation;
@@ -722,8 +725,12 @@ namespace
     }
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc != 1 && (argc != 3 || std::strcmp(argv[1], "--capture-pose-snapshot") != 0))
+    {
+        return 2;
+    }
     std::cout << "SkeletalAnimationSamplingTest start\n";
 
     AssertRowVectorTransformHelpersAreDistinctFromColumnVectorTransforms();
@@ -832,6 +839,11 @@ int main()
     AssertJointModelExcludesInverseBind();
     AssertJointNamesRebuild();
     AssertJointReadbackAndPoseStages();
+
+    if (!CaptureSkeletalSamplerBaseline(argc == 3 ? argv[2] : nullptr))
+    {
+        return 1;
+    }
 
     std::cout << "SkeletalAnimationSamplingTest passed\n";
     return 0;

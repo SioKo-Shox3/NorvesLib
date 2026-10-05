@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/windows-assetcook.yml'
       - 'Scripts/AssetCookCliParity.py'
+      - 'Scripts/SkeletalSamplerBaseline.py'
       - 'Scripts/VerifyTextureAssetSet.py'
       - 'Scripts/TextureManagedEvidence.py'
       - 'Scripts/VerifyManagedTextureCli.py'
@@ -143,8 +144,25 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
       - name: AssetCookとテストbundleをビルドする
         run: |
-          cmake --build build/windows-cli --config Release --target AssetCook CookedMeshTest MegaGeometryResourcesTest ModelResourcesAssetRuntimeTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
+          cmake --build build/windows-cli --config Release --target AssetCook CookedMeshTest MegaGeometryResourcesTest ModelResourcesAssetRuntimeTest SkeletalAnimationSamplingTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
           if ($LASTEXITCODE -ne 0) { throw 'Native build failed' }
+      - name: 共有化前SamplerのDebugとRelease出力を反復採取する
+        run: |
+          python -B Test/Tools/SkeletalSamplerBaselineTest.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Sampler snapshot verifier tests failed' }
+          python -B -O Test/Tools/SkeletalSamplerBaselineTest.py -q
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized sampler snapshot verifier tests failed' }
+          cmake --build build/windows-cli --config Debug --target SkeletalAnimationSamplingTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/sampler-build-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Sampler Debug build failed' }
+          foreach ($config in @('Debug', 'Release')) {
+            $exe = "build/windows-cli/Test/Core/Rendering/$config/SkeletalAnimationSamplingTest.exe"
+            foreach ($repeat in @(1, 2)) {
+              & $exe --capture-pose-snapshot "$env:NORVES_CI_LOG/sampler-$config-$repeat.bin" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/sampler-$config-$repeat.log"
+              if ($LASTEXITCODE -ne 0) { throw "Sampler $config capture failed" }
+            }
+            python -B Scripts/SkeletalSamplerBaseline.py --source . --build build/windows-cli --configuration $config --first "$env:NORVES_CI_LOG/sampler-$config-1.bin" --second "$env:NORVES_CI_LOG/sampler-$config-2.bin" --exe $exe --core "build/windows-cli/Library/Core/$config/Core.lib" --output "$env:NORVES_CI_LOG/sampler-$config-receipt.json" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/sampler-$config-receipt.log"
+            if ($LASTEXITCODE -ne 0) { throw "Sampler $config provenance failed" }
+          }
       - name: 移動した日本語診断のUTF-8 byteを照合する
         run: |
           @'
@@ -162,7 +180,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Diagnostic byte parity failed' }
       - name: CPU契約を実行する
         run: |
-          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(CookedMeshTest|CookedMeshV1Test|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|StringEmptyTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest|TextureManagedCliTest|SkeletalJointIndexTest|BvhEvaluateTest|BvhDecodeTest|GltfMaterialCookV1Test|ImportedMaterialStagingTest|ImportedOpaqueRuntimeTest|MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|TextureAssetSetOutputTest|ImportStaticIntegrationTest|CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedTransactionIntentTest|CookManagedStoreInitializationTest|CookManagedStoreObservationTest|CookManagedUpdateInventoryTest|CookDestinationLockTest|CookOwnerResolverTest|CookOwnerBindingTest|CookOutputSetGuardTest|CookOutputPlanTest|CookStateFileTest|CookOwnedStateTest|ModelNativePathTest|CookCacheDecisionTest|CookOutputPackageTest|CookDependencySnapshotTest|ImportSettingsFileTest|GltfBufferSetTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
+          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(SkeletalAnimationSamplingTest|CookedMeshTest|CookedMeshV1Test|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|StringEmptyTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest|TextureManagedCliTest|SkeletalJointIndexTest|BvhEvaluateTest|BvhDecodeTest|GltfMaterialCookV1Test|ImportedMaterialStagingTest|ImportedOpaqueRuntimeTest|MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|TextureAssetSetOutputTest|ImportStaticIntegrationTest|CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedTransactionIntentTest|CookManagedStoreInitializationTest|CookManagedStoreObservationTest|CookManagedUpdateInventoryTest|CookDestinationLockTest|CookOwnerResolverTest|CookOwnerBindingTest|CookOutputSetGuardTest|CookOutputPlanTest|CookStateFileTest|CookOwnedStateTest|ModelNativePathTest|CookCacheDecisionTest|CookOutputPackageTest|CookDependencySnapshotTest|ImportSettingsFileTest|GltfBufferSetTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
           if ($LASTEXITCODE -ne 0) { throw 'CPU contracts failed' }
       - name: 分割後の実CLI出力を採取する
         id: capture

@@ -900,3 +900,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 strict joint-name indexの検証準備: UTF8所有pool/完全一致/元番号、非空・重複・codec/上限/不正span検査、copy-and-swap/empty move、native minor2変換を接続。2round静的PASS、pure coreとgeneric test subsetのg++構文検査、既存NameCodecだけの通常/O2-NDEBUG/ASan・UBSan（LSan除外）、Python12+4+7 normal/-O、BOM/EOL検査PASS。native temporaryのmax_sizeをprepassへ追加し、misalignment/extent overflow/count/入力変更/失敗後設定保持も反証する。新index/NativeAdapter runtimeはhostで未実行で、次の実Windows44CPU/新marker/旧89byte/managed gateで検証する。
 
 - G2/GR84 厳密joint-name index受入: 585d7004505af6cbaf917b2e466b9061aee4853c / tree47a062166c1232ed1ba0b0f1fd01061ebab56cf9 / run37368810439 attempt1 job111960454749。44CPU/旧7＋新index marker、Bootstrap17/Update29、79+10byte、7smoke/5診断、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを照合し親readonly再実行exit0。旧604証拠file保全、最終641file inventory一致。source名から元番号への厳密対応だけを受入れ、階層/rest/target変換・Sampler共有・実Blender等は残す。次は現行Samplerの実Core出力をDebug/Release別に先に凍結し、bindだけの共有化前後で比較する。
+
+- G2/GR84 Sampler共有化前のbaseline固定開始。既存SkeletalAnimationSamplingTestを実CoreのDebug/Releaseへ接続し、現行の結果を先にbit列で記録する。Sampler/数学/Resourceを変えず、同じ構成内の反復一致と旧literalを併用する。shear/反射/極大bindは成功を先に約束せず旧boolと出力を保存し、falseならClear全項目を検証。次のbind抽出で同一fixture/toolchainの基準として使う。
+
+- G2/GR84 Sampler baseline検証準備: 実Samplerを呼ぶ30caseのlittle-endian float-bit採取を既存testへ追加。known成功/拒否とshear等5caseの観察を分け、Clear全項目を固定した。実CoreのDebug/Releaseを各2回実行するworkflowと、旧Library tree・fixture・compiler/vcxproj/SDK/Core.lib/exe/hashの出自検査を追加。Python snapshot/receipt 19件と旧12+4+7をnormal/-OでPASS、Library tree不変・BOM/EOL・YAML構文を確認。実MSVC/45CPUと構成別snapshotは次CIで未確認。
