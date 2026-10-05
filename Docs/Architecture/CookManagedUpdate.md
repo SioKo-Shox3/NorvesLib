@@ -56,3 +56,9 @@ Updateの復旧は変更対象だけを検査する。Bootstrapの新規root用t
 3資産の2Cook＋1Skipで、16公開境界・12rollback境界・abandonedの合計29実child終了とsource/spec不在復旧を検証する。NoChangeの無変更/世代上限、manifest-only、欠落/破損package/manifest、親不在、途中入力変更、別ID/未知entry/親置換/side document破損、Busy、解除故障、root/Skip/unlisted/sibling/orphanのID・bytes保持を確認する。
 
 既存Bootstrapの17実中断と34CPUを維持し、専用試験を追加した35CPU、7単体CLI、79＋10 frozen出力の直接byte一致、5診断を受入条件にする。本文作成時点では新しい実Windows gateは未実行。
+
+## 実行受入れ（2026-10-05）
+
+a7f29603de5928f64efde3a7989fef0b4c466e7f / run37297733138で35CPU、Updateの29実child終了/3条件flag全1、Bootstrapの17実child終了/5条件flag全1を確認した。raw LastTestはstrict UTF8で、両Busyのerrorは正しく空だった。既存79＋10出力の直接byte一致、texture2spec×2、16拒否、5診断、3 ZIP/API SHA/size/CRC/exact inventory、実MSVC/x64 binaryのBCryptHash/BCryptGenRandomを独立照合し、親側でも全verifierを再実行した。
+
+共有controllerへの移動を含む128 source検査と、旧証拠194fileの不変を確認。これでcontroller APIの固定inventory更新・条件付き復旧を受け入れる。production CLI統合は別単位であり、cross-session・最大規模性能・電源断保証の未確認事項は残る。

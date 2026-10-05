@@ -836,3 +836,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-MANAGED-UPDATE-EXECUTOR開始: fixed inventoryの既存rootを、共通cache判断とfile単位の条件付き公開へ接続する。NoChangeはstage作成/世代加算より先に判定し、allSkipでもmanifest差があればmanifest-only更新する。native transaction/controllerをprivate実装へ寄せ、Bootstrap/Updateは準備を分離する。復旧は固定control検証後だけ相対対象を解決し、未関係fileとroot IDを保持する。
 
 - G2-S6-MANAGED-UPDATE-EXECUTOR検証準備: native transactionをprivate controllerへ抽出し、NoChange/manifest-only/固定inventory更新とsource非依存復旧を接続。新試験は2Cook/1Skipで16公開＋12rollback＋abandonedの29実process終了、root/Skip/unlisted/sibling/orphan保持とbefore復元を反証する。静的レビュー2回はPASS、比較器12+4件×通常/最適化、391 literalの単独compile、BOM/CRLF差分検査が成功。35CPUと既存79+10byteの実Windows gateは未実行。
+
+- G2-S6-MANAGED-UPDATE-EXECUTOR受入: a7f29603/run37297733138で実Windows35CPU、更新29実child終了/3flag全1、新規17実child終了/5flag全1が成功。共通controller抽出31helperを含む128 source検査、strict UTF8/両Busy空診断、既存79+10直接byte/2spec×2/16拒否/5診断、3ZIP/API digest/CRC/exact inventory、MSVC/CNGを独立照合しrootで全verifier再実行。旧証拠194fileを保持。cross-session実測と最大inventory性能は未確認。次はmanaged texture v1 CLI接続と明示復旧で、spec v2/旧ModelCookCache移行は残る。

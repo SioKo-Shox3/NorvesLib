@@ -2514,7 +2514,7 @@
 - stop-when: iterator/operator[]の別契約やTStringViewを同時変更する、テストだけで不正なc_strを隠す。
 
 ## G2-S6-MANAGED-UPDATE-EXECUTOR: 既存rootの固定inventoryを増分更新し復旧する
-- status: doing
+- status: done
 - done-when: 共通DecideCookCacheだけでNoChange/Cookを決め、既存claim/root/Skip/unlistedを保持する。変更package・manifest・state・indexのexact before/afterを固定pendingで分類し、receipt最後のcommit/条件付きrollbackとsource不在復旧を接続する。
 - verify: 共通controller抽出後のbootstrap契約不変、変更なし世代上限、manifest-only更新、欠落/破損package、親置換/別ID/unknown slot拒否、28更新境界とabandonedの実中断、既存34CPU/17中断/89byte/5診断。
 - stop-when: 所有inventoryを追加除去する、親directoryを再作成する、root全体を交換/走査してunlistedを採用する、beforeを再serializeする、source不在復旧でsourceを読む、CLI統合やspec v2を同時に始める。
