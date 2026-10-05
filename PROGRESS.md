@@ -1107,3 +1107,9 @@
 - stop-when: 該当しない。ビジビリティバッファの深度は GBuffer.Depth へ LessEqual で重ね描きするだけで、2パスの遮蔽の HZB は今の経路（GBuffer の1パス目の深度）から作ったまま変えていない。
 - Notes: (1) 反復 7 が 150 ターンで止まり、未コミットだった新規 9 ファイルをこの反復で足した。 (2) 起動画面（スキニングを含まない）では `skinned_chunks=0`。スキニングの塊の描画は反復 7 のスキニング検証シーン（velocity の撮影）で実行して動作したが、ID の画素の目視は起動画面にスキニングが無いため行っていない。 (3) 新規ファイルは BOM+CRLF。
 - Next: VTG6-MATERIAL-CLASSIFY（`VisBuffer.Id` から 8×8 の画素タイルの材質を分類する）。
+
+## 反復 9（run 20261005-191130）: VTG6-VIS-RASTER 差し戻し対応（blocked。修正はコミット済み）
+- 指摘1（スキニングの記録の頂点の基点の二重加算）: 記録の `VertexBase` を0にした（`VertexAddress` が先頭まで加算済み）。描画の `VertexOffset` は変えない。
+- 指摘2（HZB をビジビリティの1パス目の深度から作る順序）: GBuffer の書き込みが残るこの項目では組んでも利得が無く、MegaGeometryPass の中へビジビリティの描画を差し込む大きな変更になるため、stop-when に従って止めた。理由・選択肢は `blocked/VTG6-VIS-RASTER.md`。推奨は VTG6-DEFAULT-ON で組む。
+- 指摘3（スキニングの ID 表示の撮影）: 未確認のまま記録した（撮影スクリプトにスキニング検証シーンの経路が無い）。
+- 検証: `verify-VTG6-VIS-RASTER-19-build.txt`（Debug、BUILD_EXIT_CODE=0）、`-20-ctest.txt`（4/4 passed）。

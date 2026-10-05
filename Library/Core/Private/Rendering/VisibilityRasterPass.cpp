@@ -595,7 +595,8 @@ namespace NorvesLib::Core::Rendering
                                                                       instance.MaterialIndex,
                                                                       chunk.IndexCount / 3u,
                                                                       chunk.FirstIndex,
-                                                                      instance.VertexBase);
+                                                                      0u);
+                // 頂点のアドレスはインスタンスの先頭まで加算済みなので、記録の頂点の基点は0にする（二重に加えない）
                 record.VertexAddress = instance.CurrentVertexAddress;
                 record.IndexAddress = indexAddress;
                 record.PreviousVertexAddress = instance.PreviousVertexAddress;
