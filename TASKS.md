@@ -459,15 +459,15 @@
 - notes: 危険地帯（描画パス・RT・寿命）。手続きの `ProceduralMeshGpuStore` はこの段では移さない。
 
 ## VTG5-BATCHED-CULL: MegaGeometryのインスタンスをまとめて1回のカリングと材質ごとの間接描画にする
-- status: blocked
-- done-when: MegaGeometry の全インスタンスの表（変換・前のフレームの変換・メッシュ・材質の番号）を1つの storage buffer に置き、カリング（2パスの遮蔽を含む）を1回の dispatch（1パスにつき）で全インスタンスに掛ける。描画は材質ごとの区間に分けた間接描画の列（材質の数だけ `DrawIndexedIndirectCount`）にし、インスタンスごとの 1.25 MB の IndirectDraw のバッファをやめる。`MEGA_OCCLUSION` の数と `-Deterministic` の撮影が移行前と一致する（PSNR を記録）。（CPU の記録の時間・GPU 時間の計測は VTG5-BATCHED-CULL-PERF へ分けた。）
+- status: todo
+- done-when: MegaGeometry の全インスタンスの表（変換・前のフレームの変換・メッシュ・材質の番号）を1つの storage buffer に置き、カリング（2パスの遮蔽を含む）を1回の dispatch（1パスにつき）で全インスタンスに掛ける。描画は材質ごとの区間に分けた間接描画の列（材質の数だけ `DrawIndexedIndirectCount`）にし、インスタンスごとの 1.25 MB の IndirectDraw のバッファをやめる。`-Deterministic` の撮影が移行前と一致する（PSNR を記録）。`MEGA_OCCLUSION` の行に描画フレームの番号と読み込み完了からの相対フレームの番号を足し、まとめた版を同じ条件で2回撮って全視点の同じ相対フレームの4つの数が一致すること（決定的であること）と、移行前のログ（フレームの番号が無い）との差が、移行前の同じ視点のサンプルの間の揺れ（TAA のジッタによる）の幅に収まることを記録する。（CPU の記録の時間・GPU 時間の計測は VTG5-BATCHED-CULL-PERF へ分けた。）
 - verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RenderGraphCompileTest ViewportSnapshotDebugWiringTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest|MegaGeometryFrameCommandDebugModeTest|HiZOcclusionTestVulkanTest)$"`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-BATCHED-CULL -Configuration RelWithDebInfo -Deterministic`
 - stop-when: 2パスの遮蔽の可視ビットの番号の付け方がインスタンスの表と両立しない場合は、理由を記録して止める。
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, Scripts/CaptureStartupScene.ps1, Game, TASKS.md, PROGRESS.md
-- notes: 計画書 4.3。危険地帯（描画パス）。材質の切り替えは段6のビジビリティバッファで不要になるが、それまでは材質ごとの区間で描く。 2026-10-05 親: run `20261005-094208` で反復6が40分の時間切れ、反復7が背景のビルドの完了待ちで終わり、2反復連続で進捗なしになった。途中の変更は `2267b9a6`（作業途中の保存）にあり、親が確かめた時点で Debug の Game・RenderGraphCompileTest・MegaGeometryResourcesTest のビルドと3本のテスト（MegaGeometryResourcesTest・RenderGraphCompileTest・MegaGeometryFrameCommandDebugModeTest）は通る。その上から続け、done-when の残り（`-Deterministic` の撮影と `MEGA_OCCLUSION` の一致）を確かめて閉じる。時間の計測はこの項目でしない。ビルド・撮影はフォアグラウンドで回して完了を待つ（背景で起動して返答を終えると反復がそこで終わる）。
+- notes: 計画書 4.3。危険地帯（描画パス）。材質の切り替えは段6のビジビリティバッファで不要になるが、それまでは材質ごとの区間で描く。 2026-10-05 親: run `20261005-094208` で反復6が40分の時間切れ、反復7が背景のビルドの完了待ちで終わり、2反復連続で進捗なしになった。途中の変更は `2267b9a6`（作業途中の保存）にあり、親が確かめた時点で Debug の Game・RenderGraphCompileTest・MegaGeometryResourcesTest のビルドと3本のテスト（MegaGeometryResourcesTest・RenderGraphCompileTest・MegaGeometryFrameCommandDebugModeTest）は通る。その上から続け、done-when の残り（`-Deterministic` の撮影と `MEGA_OCCLUSION` の一致）を確かめて閉じる。時間の計測はこの項目でしない。ビルド・撮影はフォアグラウンドで回して完了を待つ（背景で起動して返答を終えると反復がそこで終わる）。 2026-10-05 親（run `20261005-114343` の保留を解く）: 評価2周の残りは「`MEGA_OCCLUSION` の数が移行前と一致する」の証明だけ（画像は移行前と default 112.5・near 92.1 dB・low 完全一致）。移行前と移行後では読み込み完了のフレーム（150 と 104）が違い、30 フレームごとの標本の時点がずれるので、古い版を動かさない限り同じフレームでは比べられない。親が完了条件を、相対フレームの番号を付けて「まとめた版の2回が一致」と「移行前との差が移行前の揺れの幅の内」に直した。古い版を checkout して測ることはしない。
 
 
 ## VTG5-BATCHED-CULL-PERF: まとめたカリングのCPUの記録の時間とGPU時間を測る
