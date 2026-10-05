@@ -12,6 +12,13 @@
 //            1パス目で描かなかったクラスタのうち遮蔽されないものを描き、
 //            全クラスタの「見えた」ビットを更新する（次のフレームの1パス目が使う）。
 //   0: 従来の1回の判定（遮蔽の判定なし。--mega-occlusion=off）。
+//
+// LODの段の選び方は2通り（クラスタの bakedInfo.x のビットで決まる）:
+//   焼き込み済みの階層（NVMESH v1）: 自分の誤差を自分の球から画面へ投影した値がしきい値以下で、
+//            親のグループの誤差を親の球から投影した値がしきい値を超えるクラスタを描く。
+//            同じグループのクラスタは球と誤差が同じなので同じ判断になり、どの切り方も閉じたメッシュになる。
+//   それ以外（v0・実行時に構築した階層・手続きの球）: 従来の段の選び方（ShouldDrawCluster）。
+// 「見えた」ビットはクラスタの番号（全段を1組に並べた配列の添え字）ごとなので、どちらの選び方とも両立する。
 // ========================================
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -28,7 +35,12 @@ struct GPUClusterData
     vec4 normalCone;      // axis.xyz + cos(halfAngle)
     uvec4 indexInfo;      // indexOffset, indexCount, vertexOffset, materialIndex
     uvec4 lodInfo;        // lodLevel, lodError(asfloat), parentStart, parentCount
+    vec4 parentSphere;    // 焼き込み済みの階層: 親のグループの境界球 center.xyz + radius
+    uvec4 bakedInfo;      // flags, parentError(asfloat), groupId, pageId
 };
+
+const uint CLUSTER_FLAG_BAKED_LOD = 1u;
+const uint INVALID_GROUP_ID = 0xFFFFFFFFu;
 
 struct DrawIndexedIndirectCommand
 {
@@ -207,6 +219,81 @@ bool OcclusionCullSphere(vec3 center, float radius)
 }
 
 /**
+ * @brief 視線から外れた点で透視投影が横のずれを伸ばす倍率 1/cos²α の、球の描かれる点での上限
+ *
+ * 描かれる点は視錐台の中なので tan²α ≤ tan²(fovX/2) + tan²(fovY/2)。球が前方にあれば、
+ * α ≤ 中心の方向の角 β + 見かけの半径 asin(R/D) でもあるので、小さい方を使う
+ * （MegaGeometryLODSelection.h の ComputeLODSpherePerspectiveStretch と同じ式）。
+ */
+float ComputePerspectiveStretch(vec3 sphereCenter, float centerDistance, float sphereRadius)
+{
+    float tanHalfFovX = 1.0 / max(abs(cullData.projectionMatrix[0][0]), 1e-6);
+    float tanHalfFovY = 1.0 / max(abs(cullData.projectionMatrix[1][1]), 1e-6);
+    float stretch = 1.0 + tanHalfFovX * tanHalfFovX + tanHalfFovY * tanHalfFovY;
+    float depthScale = abs(cullData.projectionMatrix[2][3]);
+    float centerDepth = depthScale > 1e-6
+        ? (cullData.projectionMatrix * cullData.viewMatrix * vec4(sphereCenter, 1.0)).w / depthScale
+        : 0.0;
+    if (centerDistance > sphereRadius && centerDepth > 0.0)
+    {
+        float cosBeta = min(centerDepth / centerDistance, 1.0);
+        float sinBeta = sqrt(max(1.0 - cosBeta * cosBeta, 0.0));
+        float sinGamma = sphereRadius / centerDistance;
+        float cosGamma = sqrt(max(1.0 - sinGamma * sinGamma, 0.0));
+        float cosAlpha = cosBeta * cosGamma - sinBeta * sinGamma;
+        if (cosAlpha > 0.0)
+        {
+            stretch = min(stretch, 1.0 / (cosAlpha * cosAlpha));
+        }
+    }
+    return stretch;
+}
+
+/**
+ * @brief 焼き込み済みの階層で、球の中の誤差（ローカルの長さ）を画面へ投影した大きさ（画素）の上限
+ *
+ * 形のずれは球のどの点でも最も近い点までの距離 D−R より遠くで起きるので、画面で
+ * projectionFactor·e·stretch/(D−R) を超えない（親の球が子の球を包み、親の誤差が子以上なら、
+ * 親の値は子の値以上）。MegaGeometryLODSelection.h の ComputeBakedSphereErrorPixels と同じ式。
+ */
+float ProjectBakedError(vec3 localCenter, float localRadius, float localError)
+{
+    float worldScale = ComputeWorldRadiusScale();
+    vec3 center = TransformClusterCenterToWorld(localCenter);
+    float radius = localRadius * worldScale;
+    float centerDistance = distance(center, cullData.cameraPosition.xyz);
+    float nearest = max(centerDistance - radius, 1e-4);
+    float stretch = ComputePerspectiveStretch(center, centerDistance, radius);
+    return localError * worldScale * cullData.projectionFactor * stretch / nearest;
+}
+
+/**
+ * @brief 焼き込み済みの階層（NVMESH v1）のLOD DAGカット判定
+ *
+ * 自分の誤差の投影が許容以下で、親のグループの誤差の投影が許容を超えるときだけ描く。
+ * 根（親のグループが無い）は自分の誤差だけで決まる。
+ *
+ * @return true = このクラスタを描画すべき
+ */
+bool ShouldDrawBakedCluster(GPUClusterData cluster)
+{
+    float selfError = ProjectBakedError(cluster.boundsSphere.xyz, cluster.boundsSphere.w,
+                                        uintBitsToFloat(cluster.lodInfo.y));
+    if (selfError > cullData.lodBias)
+    {
+        return false; // 自分の誤差が大きすぎる → より詳細な段を使う
+    }
+    if (cluster.bakedInfo.z == INVALID_GROUP_ID)
+    {
+        return true; // 根
+    }
+    float parentError = ProjectBakedError(cluster.parentSphere.xyz, cluster.parentSphere.w,
+                                          uintBitsToFloat(cluster.bakedInfo.y));
+    // 親が粗すぎるときだけ自分を描く。NaN なら自分を描く側へ倒す
+    return !(parentError <= cullData.lodBias);
+}
+
+/**
  * @brief LOD DAGカット判定
  *
  * このクラスタを描画すべきかを判定します。
@@ -237,27 +324,7 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
         float denominator = max(centerDistance * centerDistance - lodRadius * lodRadius, 1e-6);
         float angularScale = cullData.projectionFactor * centerDistance / denominator;
 
-        // 描かれる点は視錐台の中なので tan²α ≤ tan²(fovX/2) + tan²(fovY/2)。球が前方にあれば
-        // α ≤ 中心の方向の角 β + 見かけの半径 asin(R/D) でもあるので、小さい方を使う。
-        float tanHalfFovX = 1.0 / max(abs(cullData.projectionMatrix[0][0]), 1e-6);
-        float tanHalfFovY = 1.0 / max(abs(cullData.projectionMatrix[1][1]), 1e-6);
-        float stretch = 1.0 + tanHalfFovX * tanHalfFovX + tanHalfFovY * tanHalfFovY;
-        float depthScale = abs(cullData.projectionMatrix[2][3]);
-        float centerDepth = depthScale > 1e-6
-            ? (cullData.projectionMatrix * cullData.viewMatrix * vec4(lodCenter, 1.0)).w / depthScale
-            : 0.0;
-        if (centerDistance > lodRadius && centerDepth > 0.0)
-        {
-            float cosBeta = min(centerDepth / centerDistance, 1.0);
-            float sinBeta = sqrt(max(1.0 - cosBeta * cosBeta, 0.0));
-            float sinGamma = lodRadius / centerDistance;
-            float cosGamma = sqrt(max(1.0 - sinGamma * sinGamma, 0.0));
-            float cosAlpha = cosBeta * cosGamma - sinBeta * sinGamma;
-            if (cosAlpha > 0.0)
-            {
-                stretch = min(stretch, 1.0 / (cosAlpha * cosAlpha));
-            }
-        }
+        float stretch = ComputePerspectiveStretch(lodCenter, centerDistance, lodRadius);
         errorScale = angularScale * stretch * worldScale;
     }
     else
@@ -386,7 +453,9 @@ void main()
     bool bPassesBasicTests =
         !FrustumCullSphere(center, radius) &&
         !NormalConeCull(cluster.normalCone.xyz, cluster.normalCone.w, localCenter, localRadius) &&
-        ShouldDrawCluster(cluster, center);
+        (((cluster.bakedInfo.x & CLUSTER_FLAG_BAKED_LOD) != 0u)
+             ? ShouldDrawBakedCluster(cluster)
+             : ShouldDrawCluster(cluster, center));
 
     if (cullData.cullPass == CULL_PASS_FIRST)
     {

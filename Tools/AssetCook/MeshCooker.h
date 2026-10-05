@@ -16,6 +16,13 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
         uint32_t ClusterCount = 0;
+        // 書き出した NVMESH の主版(0 か 1)。1 のときだけ下の LOD の階層の項目に値が入る。
+        uint32_t FormatMajor = 0;
+        uint32_t LODLevelCount = 1;
+        // LOD の階層の焼き込み(溶接・クラスタ化・簡略化・書き出し・自己検証)にかかった時間
+        uint32_t DagMilliseconds = 0;
+        // 安全な簡略化が見つからず、簡略化せずに残したグループの数(階層が粗くなりにくくなる。0 が望ましい)
+        uint32_t DagRejectedGroups = 0;
     };
 
     struct SkeletalCookResult
@@ -36,7 +43,19 @@ namespace NorvesLib::Tools::AssetCook
                                         Core::Container::AnsiStringView sourcePath,
                                         Core::Container::AnsiStringView logicalPath,
                                         MeshCookResult& outResult,
-                                        Core::Container::AnsiString& error);
+                                        Core::Container::AnsiString& error,
+                                        uint32_t fallbackMinTriangles = 0);
+
+    // 起動画面の大きな球（石畳の高さマップ cobblestone_floor_09_disp_4k.png で変位した緯度経度の球）を作り、
+    // NVMESH v1 に焼く（--generate displaced-sphere）。heightMapBytes は 16 ビットのグレーの PNG の中身。
+    // 球の仕様は Rendering/MegaGeometry/StartupBigSphereSpec.h（実行時の生成と共有）。
+    [[nodiscard]] bool CookDisplacedSphereToNvmesh(const uint8_t* heightMapBytes,
+                                                   size_t heightMapSize,
+                                                   Core::Container::AnsiStringView format,
+                                                   Core::Container::AnsiStringView logicalPath,
+                                                   MeshCookResult& outResult,
+                                                   Core::Container::AnsiString& error,
+                                                   uint32_t fallbackMinTriangles = 0);
 
     [[nodiscard]] bool IsSupportedSkeletalCookFormat(Core::Container::AnsiStringView format) noexcept;
 

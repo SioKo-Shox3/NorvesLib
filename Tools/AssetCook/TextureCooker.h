@@ -28,7 +28,7 @@ namespace NorvesLib::Tools::AssetCook
     {
         Albedo,   // BC7 sRGB。ミップは線形空間の平均
         Normal,   // BC5 linear。入力は DirectX の向き。ミップは非正規化ベクトルの平均を再正規化する
-        Orm,      // BC7 linear。AO・粗さ・メタリックを R・G・B に詰める
+        Orm,      // BC7 linear。AO・粗さ・メタリックを R・G・B に詰める（詰め済みの画像を source に渡してもよい）
         Single,   // BC4 linear。R の 1 チャンネル
         Height16, // R16 linear(非圧縮)。16bit の入力の精度を保つ
     };
@@ -62,9 +62,11 @@ namespace NorvesLib::Tools::AssetCook
         BlockQuality Quality = BlockQuality::Normal;
         // ブロック圧縮のスレッド数。0 はハードウェアの並列数。
         uint32_t ThreadCount = 0;
+        // Normal のとき、入力の法線の Y（緑）を反転する（OpenGL の向きの入力を DirectX の向きへ直す）。
+        bool bFlipNormalY = false;
     };
 
-    // 用途に応じて元画像を焼く。Orm は orm の 3 枠を、それ以外は source を読む。NVTEX v0.2(タイル配置)を書く。
+    // 用途に応じて元画像を焼く。Orm は source があればそれを詰め済みの ORM として、無ければ orm の 3 枠を読む。それ以外は source を読む。NVTEX v0.2(タイル配置)を書く。
     [[nodiscard]] bool CookTextureForUsage(const TextureSourceImage &source,
                                            const OrmSourceImages &orm,
                                            const TextureUsageCookParams &params,

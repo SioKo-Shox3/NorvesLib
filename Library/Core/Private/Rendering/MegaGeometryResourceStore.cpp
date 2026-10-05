@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -80,7 +81,51 @@ namespace NorvesLib::Core::Rendering
 
         MegaGeometry::LODHierarchy lodHierarchy;
 
-        if (createInfo.bBuildLODHierarchy && createInfo.Clusters.size() > 1)
+        // 焼き込み済みの階層（NVMESH v1）は全段のクラスタが揃っているので、実行時には構築しない
+        if (createInfo.bBakedLODHierarchy)
+        {
+            // クラスタの頂点・インデックスの範囲が、渡されたバッファの中に収まっていることを確かめる
+            // （範囲外を読むクラスタをGPUへ渡さない）。親の誤差は自分の誤差以上で、値が有限でなければならない
+            for (const MegaGeometry::MeshCluster &cluster : createInfo.Clusters)
+            {
+                const uint64_t indexEnd = static_cast<uint64_t>(cluster.IndexOffset) + cluster.IndexCount;
+                const uint64_t vertexEnd = static_cast<uint64_t>(cluster.VertexOffset) + cluster.VertexCount;
+                const bool bRoot = cluster.GroupId == MegaGeometry::INVALID_CLUSTER_GROUP_ID;
+                const bool bErrorValid = std::isfinite(cluster.LODError) && cluster.LODError >= 0.0f &&
+                                         (bRoot || (std::isfinite(cluster.ParentError) &&
+                                                    cluster.ParentError >= cluster.LODError));
+                if (cluster.VertexOffset < 0 || indexEnd > createInfo.IndexCount ||
+                    vertexEnd > createInfo.VertexCount || !bErrorValid)
+                {
+                    NORVES_LOG_ERROR("MegaGeometryResources", "焼き込み済みLOD階層のクラスタが不正です: %s",
+                                     createInfo.DebugName.c_str());
+                    return MegaGeometry::MegaMeshHandle::Invalid();
+                }
+            }
+
+            // フォールバックの段は、影とレイトレーシングが1回の範囲で描くので、範囲が三角形の単位で
+            // インデックスの中に収まり、全ての頂点の番号が頂点の数より小さいことを確かめる。
+            if (createInfo.FallbackIndexCount > 0u)
+            {
+                const uint64_t fallbackEnd =
+                    static_cast<uint64_t>(createInfo.FallbackIndexOffset) + createInfo.FallbackIndexCount;
+                bool bFallbackValid = createInfo.IndexData != nullptr && createInfo.FallbackIndexCount % 3u == 0u &&
+                                      createInfo.FallbackIndexOffset % 3u == 0u && fallbackEnd <= createInfo.IndexCount &&
+                                      std::isfinite(createInfo.FallbackError) && createInfo.FallbackError >= 0.0f;
+                for (uint32_t i = 0; bFallbackValid && i < createInfo.FallbackIndexCount; ++i)
+                {
+                    bFallbackValid = createInfo.IndexData[createInfo.FallbackIndexOffset + i] < createInfo.VertexCount;
+                }
+                if (!bFallbackValid)
+                {
+                    NORVES_LOG_ERROR("MegaGeometryResources", "焼き込み済みLOD階層のフォールバックの段が不正です: %s",
+                                     createInfo.DebugName.c_str());
+                    return MegaGeometry::MegaMeshHandle::Invalid();
+                }
+            }
+        }
+
+        if (createInfo.bBuildLODHierarchy && !createInfo.bBakedLODHierarchy && createInfo.Clusters.size() > 1)
         {
             MegaGeometry::LODBuildSettings lodSettings;
             lodSettings.SimplificationRatio = createInfo.LODSimplificationRatio;
@@ -190,6 +235,18 @@ namespace NorvesLib::Core::Rendering
             gpuCluster.LODError = cluster.LODError;
             gpuCluster.ParentStart = cluster.ParentStart;
             gpuCluster.ParentCount = cluster.ParentCount;
+            if (createInfo.bBakedLODHierarchy)
+            {
+                // 根は親のグループが無く、親の誤差は判定に使わない（シェーダーは GroupId で根を見分ける）
+                gpuCluster.Flags = MegaGeometry::GPU_CLUSTER_FLAG_BAKED_LOD;
+                gpuCluster.ParentCenterX = cluster.ParentBounds.CenterX;
+                gpuCluster.ParentCenterY = cluster.ParentBounds.CenterY;
+                gpuCluster.ParentCenterZ = cluster.ParentBounds.CenterZ;
+                gpuCluster.ParentRadius = cluster.ParentBounds.Radius;
+                gpuCluster.ParentError = cluster.ParentError;
+                gpuCluster.GroupId = cluster.GroupId;
+                gpuCluster.PageId = cluster.PageId;
+            }
             gpuClusters.push_back(gpuCluster);
         }
 
@@ -312,6 +369,21 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // 焼き込み済みの階層は、段のクラスタが全体の頂点の中に散らばるので1回の範囲では描けない。代わりに
+        // 常駐のフォールバックの段（頂点の基点が0の1つの範囲）を最も粗い段として足し、影とレイトレーシングは
+        // その範囲を使う（BLAS のキーは同じバッファの範囲なので、別のバッファは要らない）。
+        if (createInfo.bBakedLODHierarchy && createInfo.FallbackIndexCount > 0u)
+        {
+            MegaGeometry::MegaMeshLevelRange fallbackRange;
+            fallbackRange.FirstIndex = createInfo.FallbackIndexOffset;
+            fallbackRange.IndexCount = createInfo.FallbackIndexCount;
+            fallbackRange.Error = createInfo.FallbackError;
+            gpuData.ShadowLODLevel = static_cast<uint32_t>(gpuData.LevelRanges.size());
+            gpuData.ShadowFirstIndex = fallbackRange.FirstIndex;
+            gpuData.ShadowIndexCount = fallbackRange.IndexCount;
+            gpuData.LevelRanges.push_back(fallbackRange);
+        }
+
         // クラスタの大きさ（1クラスタあたりの三角形数）を段ごとに記録する。極端に小さいと
         // カリングと間接描画の1件あたりの手間に対して描く量が少なくなる。
         {
@@ -341,7 +413,7 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_INFO("MegaGeometryResources",
                             "stage=megamesh_cluster_stats debug_name=\"%s\" lod_levels=%u clusters=%u triangles=%llu "
                             "lod0_clusters=%llu lod0_triangles=%llu lod0_avg_triangles_per_cluster=%.2f "
-                            "lod0_clusters_under16=%llu shadow_lod=%u shadow_triangles=%u uniform_lod=%d",
+                            "lod0_clusters_under16=%llu shadow_lod=%u shadow_triangles=%u uniform_lod=%d baked_lod=%d groups=%u",
                             createInfo.DebugName.c_str(),
                             maxLevel + 1u,
                             static_cast<uint32_t>(uploadClusters->size()),
@@ -351,9 +423,11 @@ namespace NorvesLib::Core::Rendering
                             lod0Clusters > 0u ? static_cast<double>(lod0Triangles) / static_cast<double>(lod0Clusters)
                                               : 0.0,
                             static_cast<unsigned long long>(lod0SmallClusters),
-                            shadowLODLevel,
+                            gpuData.ShadowLODLevel,
                             gpuData.ShadowIndexCount / 3u,
-                            gpuData.LODBounds.IsValid() ? 1 : 0);
+                            gpuData.LODBounds.IsValid() ? 1 : 0,
+                            createInfo.bBakedLODHierarchy ? 1 : 0,
+                            static_cast<uint32_t>(createInfo.ClusterGroups.size()));
         }
 
         {

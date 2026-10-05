@@ -1,4 +1,5 @@
 ﻿#include "Asset/CookedMeshFormat.h"
+#include "Rendering/MegaGeometry/CookedMeshMegaMeshAdapter.h"
 
 #include <bit>
 #include <cassert>
@@ -435,6 +436,117 @@ namespace
         assert(result.Status == expectedStatus);
         assert(!result.Succeeded());
     }
+    namespace V1 = NorvesLib::Core::Asset::CookedMeshFormatV1;
+
+    static_assert(V1::ClusterRecordOffset::Reserved4 + sizeof(uint64_t) == V1::ClusterRecordSize);
+    static_assert(V1::GroupRecordOffset::Reserved1 + sizeof(uint64_t) == V1::GroupRecordSize);
+    static_assert(V1::HeaderOffset::FallbackError + sizeof(float) == V1::HeaderSize);
+
+    // 2段の小さな階層。頂点 5、クラスタ 3（段0 が2つ＝グループ0 のメンバ、段1 が根）、
+    // クラスタのインデックス 9 とフォールバックのインデックス 3。根は頂点の基点が 1。
+    CookedMeshV1WriteInput BuildV1Input(const char* albedoPath = "Textures/A.png")
+    {
+        CookedMeshV1WriteInput input;
+        input.TotalBoundsCenter = {0.5f, 0.5f, 0.0f};
+        input.TotalBoundsRadius = 2.0f;
+        input.LODLevelCount = 2;
+        input.FallbackError = 0.25f;
+        input.AlbedoTexture = AnsiStringView(albedoPath);
+
+        const CookedMeshFloat3 normal = {0.0f, 0.0f, 1.0f};
+        input.Vertices.push_back({{0.0f, 0.0f, 0.0f}, normal, {0.0f, 0.0f}});
+        input.Vertices.push_back({{1.0f, 0.0f, 0.0f}, normal, {1.0f, 0.0f}});
+        input.Vertices.push_back({{1.0f, 1.0f, 0.0f}, normal, {1.0f, 1.0f}});
+        input.Vertices.push_back({{0.0f, 1.0f, 0.0f}, normal, {0.0f, 1.0f}});
+        input.Vertices.push_back({{2.0f, 2.0f, 0.0f}, normal, {1.0f, 1.0f}});
+
+        const CookedMeshFloat3 center = {0.5f, 0.5f, 0.0f};
+        for (uint32_t clusterIndex = 0; clusterIndex < 3; ++clusterIndex)
+        {
+            CookedMeshCluster cluster;
+            cluster.BoundsCenter = center;
+            cluster.ConeAxis = {0.0f, 0.0f, 1.0f};
+            cluster.ConeCutoff = 0.5f;
+            cluster.IndexOffset = clusterIndex * 3;
+            cluster.IndexCount = 3;
+            cluster.VertexCount = 4;
+            if (clusterIndex < 2)
+            {
+                cluster.BoundsRadius = 0.8f;
+                cluster.LODError = 0.0f;
+                cluster.LODLevel = 0;
+                cluster.GroupId = 0;
+                cluster.ParentBoundsCenter = center;
+                cluster.ParentBoundsRadius = 1.0f;
+                cluster.ParentError = 0.25f;
+                cluster.bIsRoot = false;
+            }
+            else
+            {
+                cluster.BoundsRadius = 1.0f;
+                cluster.LODError = 0.25f;
+                cluster.LODLevel = 1;
+                cluster.VertexOffset = 1;
+                // 根: GroupId=InvalidGroupId、親の境界球は 0、ParentError は最大値（既定のまま）
+                cluster.bIsRoot = true;
+            }
+            input.Clusters.push_back(cluster);
+        }
+
+        CookedMeshClusterGroup group;
+        group.BoundsCenter = center;
+        group.BoundsRadius = 1.0f;
+        group.Error = 0.25f;
+        group.ClusterOffset = 0;
+        group.ClusterCount = 2;
+        group.LODLevel = 0;
+        input.Groups.push_back(group);
+
+        for (const uint32_t index : {0u, 1u, 2u, 0u, 2u, 3u, 0u, 1u, 3u})
+        {
+            input.ClusterIndices.push_back(index);
+        }
+        for (const uint32_t index : {1u, 2u, 4u})
+        {
+            input.FallbackIndices.push_back(index);
+        }
+        return input;
+    }
+
+    ByteArray SerializeV1(const CookedMeshV1WriteInput& input)
+    {
+        ByteArray bytes;
+        const bool serialized = SerializeCookedMeshV1(input, bytes);
+        assert(serialized);
+        return bytes;
+    }
+
+    size_t V1ClusterOffset(const ByteArray& bytes, size_t clusterIndex)
+    {
+        return static_cast<size_t>(ReadLe64(bytes, V1::HeaderOffset::ClusterTableOffset)) +
+               clusterIndex * V1::ClusterRecordSize;
+    }
+
+    size_t V1GroupOffset(const ByteArray& bytes, size_t groupIndex)
+    {
+        return static_cast<size_t>(ReadLe64(bytes, V1::HeaderOffset::GroupTableOffset)) +
+               groupIndex * V1::GroupRecordSize;
+    }
+
+    size_t V1IndexOffset(const ByteArray& bytes, size_t index)
+    {
+        return static_cast<size_t>(ReadLe64(bytes, V1::HeaderOffset::IndexPayloadOffset)) + index * sizeof(uint32_t);
+    }
+
+    // 組み立てたバイト列を壊して（hash は直して）拒否の理由を確かめる
+    template <typename Mutate>
+    void ExpectV1Mutation(Mutate&& mutate, CookedMeshParseStatus expectedStatus)
+    {
+        ByteArray bytes = SerializeV1(BuildV1Input());
+        mutate(bytes);
+        RefreshPayloadHash(bytes);
+        ExpectStatus(std::move(bytes), expectedStatus);
+    }
 } // namespace
 
 int main()
@@ -728,6 +840,357 @@ int main()
         WriteLe64(bytes, HeaderOffset::IndexPayloadOffset, std::numeric_limits<uint64_t>::max() - 1);
         ExpectStatus(std::move(bytes), CookedMeshParseStatus::IntegerOverflow);
     }
+
+    // ---- NVMESH v1 ----
+
+    {
+        // 書き出し → 読み込みの往復で、階層・グループ・フォールバック・材質が一致する
+        const CookedMeshV1WriteInput input = BuildV1Input();
+        const ByteArray bytes = SerializeV1(input);
+        assert(std::memcmp(bytes.data(), V1::Magic, V1::MagicSize) == 0);
+        assert(ReadLe64(bytes, V1::HeaderOffset::FileSize) == bytes.size());
+        assert(ReadLe32(bytes, V1::HeaderOffset::ClusterRecordSize) == 128);
+
+        const CookedMeshParseResult result = ParseCookedMesh(MakeBlob(bytes));
+        assert(result.Succeeded());
+        const CookedMeshData& mesh = result.Mesh;
+        assert(mesh.FormatMajor == 1);
+        assert(mesh.LODLevelCount == 2);
+        assert(mesh.Vertices.size() == 5);
+        assert(mesh.Clusters.size() == 3);
+        assert(mesh.Groups.size() == 1);
+        assert(mesh.Indices.size() == 12);
+        assert(mesh.Submeshes.size() == 1 && mesh.Submeshes[0].IndexCount == 9 && mesh.Submeshes[0].ClusterCount == 3);
+        assert(mesh.FallbackIndexOffset == 9 && mesh.FallbackIndexCount == 3 && mesh.FallbackError == 0.25f);
+        assert(mesh.Indices[9] == 1 && mesh.Indices[10] == 2 && mesh.Indices[11] == 4);
+        assert(mesh.Vertices[4].Position.X == 2.0f && mesh.Vertices[4].TexCoord.V == 1.0f);
+        assert(mesh.TotalBoundsRadius == 2.0f);
+
+        const CookedMeshCluster& leaf = mesh.Clusters[1];
+        assert(!leaf.bIsRoot && leaf.GroupId == 0 && leaf.LODLevel == 0 && leaf.LODError == 0.0f);
+        assert(leaf.BoundsRadius == 0.8f && leaf.ParentBoundsRadius == 1.0f && leaf.ParentError == 0.25f);
+        assert(leaf.ParentBoundsCenter.X == 0.5f && leaf.IndexOffset == 3 && leaf.IndexCount == 3);
+        assert(leaf.VertexOffset == 0 && leaf.VertexCount == 4 && leaf.PageId == 0);
+        assert(leaf.ConeAxis.Z == 1.0f && leaf.ConeCutoff == 0.5f);
+        const CookedMeshCluster& root = mesh.Clusters[2];
+        assert(root.bIsRoot && root.GroupId == V1::InvalidGroupId && root.ParentError == V1::RootParentError);
+        assert(root.LODLevel == 1 && root.LODError == 0.25f && root.VertexOffset == 1 &&
+               root.ParentBoundsRadius == 0.0f);
+        assert(mesh.Groups[0].ClusterOffset == 0 && mesh.Groups[0].ClusterCount == 2 && mesh.Groups[0].Error == 0.25f);
+        assert(mesh.Groups[0].BoundsRadius == 1.0f && mesh.Groups[0].LODLevel == 0);
+        assert(mesh.GetString(mesh.Materials[0].AlbedoTexture) == AnsiStringView("Textures/A.png"));
+        assert(mesh.GetString(mesh.Materials[0].NormalTexture).empty());
+
+        // 読んだ内容から組み直したバイト列は元と一致する
+        CookedMeshV1WriteInput rebuilt;
+        rebuilt.TotalBoundsCenter = mesh.TotalBoundsCenter;
+        rebuilt.TotalBoundsRadius = mesh.TotalBoundsRadius;
+        rebuilt.LODLevelCount = mesh.LODLevelCount;
+        rebuilt.FallbackError = mesh.FallbackError;
+        rebuilt.Vertices = mesh.Vertices;
+        rebuilt.Clusters = mesh.Clusters;
+        rebuilt.Groups = mesh.Groups;
+        for (size_t index = 0; index < mesh.FallbackIndexOffset; ++index)
+        {
+            rebuilt.ClusterIndices.push_back(mesh.Indices[index]);
+        }
+        for (size_t index = mesh.FallbackIndexOffset; index < mesh.Indices.size(); ++index)
+        {
+            rebuilt.FallbackIndices.push_back(mesh.Indices[index]);
+        }
+        rebuilt.AlbedoTexture = mesh.GetString(mesh.Materials[0].AlbedoTexture);
+        const ByteArray rebuiltBytes = SerializeV1(rebuilt);
+        assert(rebuiltBytes.size() == bytes.size());
+        assert(std::memcmp(rebuiltBytes.data(), bytes.data(), bytes.size()) == 0);
+    }
+
+    {
+        // 材質の3種の文字列を詰める。空の参照は (0, 0)
+        CookedMeshV1WriteInput input = BuildV1Input("Textures/A.png");
+        input.NormalTexture = AnsiStringView("Textures/N.png");
+        input.ArmTexture = AnsiStringView("Textures/R.png");
+        const CookedMeshParseResult result = ParseCookedMesh(MakeBlob(SerializeV1(input)));
+        assert(result.Succeeded());
+        assert(result.Mesh.GetString(result.Mesh.Materials[0].AlbedoTexture) == AnsiStringView("Textures/A.png"));
+        assert(result.Mesh.GetString(result.Mesh.Materials[0].NormalTexture) == AnsiStringView("Textures/N.png"));
+        assert(result.Mesh.GetString(result.Mesh.Materials[0].ArmTexture) == AnsiStringView("Textures/R.png"));
+
+        input = BuildV1Input("");
+        const CookedMeshParseResult noTexture = ParseCookedMesh(MakeBlob(SerializeV1(input)));
+        assert(noTexture.Succeeded());
+        assert(noTexture.Mesh.GetString(noTexture.Mesh.Materials[0].AlbedoTexture).empty());
+    }
+
+    {
+        // グループの無い1段の v1（全クラスタが根）も読める
+        CookedMeshV1WriteInput input = BuildV1Input();
+        input.LODLevelCount = 1;
+        input.Groups.clear();
+        input.Clusters.resize(1);
+        input.Clusters[0].BoundsRadius = 1.0f;
+        input.Clusters[0].LODError = 0.0f;
+        input.Clusters[0].LODLevel = 0;
+        input.Clusters[0].GroupId = V1::InvalidGroupId;
+        input.Clusters[0].ParentBoundsCenter = {};
+        input.Clusters[0].ParentBoundsRadius = 0.0f;
+        input.Clusters[0].ParentError = V1::RootParentError;
+        input.Clusters[0].bIsRoot = true;
+        input.ClusterIndices.resize(3);
+        const CookedMeshParseResult result = ParseCookedMesh(MakeBlob(SerializeV1(input)));
+        assert(result.Succeeded());
+        assert(result.Mesh.Groups.empty() && result.Mesh.Clusters.size() == 1 && result.Mesh.LODLevelCount == 1);
+        assert(result.Mesh.FallbackIndexOffset == 3 && result.Mesh.FallbackIndexCount == 3);
+    }
+
+    {
+        // v0 は従来の1段のメッシュとして読む（階層・グループ無し、全体の範囲が粗い段）
+        const CookedMeshParseResult result = ParseCookedMesh(MakeBlob(BuildMesh()));
+        assert(result.Succeeded());
+        assert(result.Mesh.FormatMajor == 0 && result.Mesh.LODLevelCount == 1 && result.Mesh.Groups.empty());
+        assert(result.Mesh.FallbackIndexOffset == 0 && result.Mesh.FallbackIndexCount == 12);
+        assert(result.Mesh.FallbackError == 0.0f);
+        for (const CookedMeshCluster& cluster : result.Mesh.Clusters)
+        {
+            assert(cluster.bIsRoot && cluster.GroupId == V1::InvalidGroupId && cluster.PageId == 0);
+            assert(cluster.ParentError == V1::RootParentError && cluster.LODLevel == 0);
+        }
+    }
+
+    {
+        // magic の判別: v1 の magic で短い入力は、短いヘッダとして拒否される
+        ByteArray bytes(100, 0);
+        std::memcpy(bytes.data(), V1::Magic, V1::MagicSize);
+        ExpectStatus(std::move(bytes), CookedMeshParseStatus::HeaderTooSmall);
+    }
+
+    {
+        // MegaMeshCreateInfo へ渡せる形（v1: 全段のクラスタ・グループ・フォールバック）
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+        const CookedMeshParseResult result = ParseCookedMesh(MakeBlob(SerializeV1(BuildV1Input())));
+        assert(result.Succeeded());
+        Mega::MegaMeshCreateInfo createInfo;
+        assert(Mega::BuildMegaMeshCreateInfoFromCookedMesh(result.Mesh, createInfo));
+        assert(createInfo.VertexCount == 5 && createInfo.VertexStride == 32 && createInfo.VertexDataSize == 5 * 32);
+        assert(createInfo.IndexCount == 12 && createInfo.IndexData == result.Mesh.Indices.data());
+        assert(!createInfo.bBuildLODHierarchy && createInfo.bBakedLODHierarchy && createInfo.BakedLODLevelCount == 2);
+        assert(createInfo.Clusters.size() == 3 && createInfo.ClusterGroups.size() == 1);
+        assert(createInfo.FallbackIndexOffset == 9 && createInfo.FallbackIndexCount == 3);
+        assert(createInfo.FallbackError == 0.25f);
+        assert(createInfo.Clusters[1].GroupId == 0 && createInfo.Clusters[1].ParentError == 0.25f);
+        assert(createInfo.Clusters[1].ParentBounds.Radius == 1.0f && createInfo.Clusters[1].Bounds.Radius == 0.8f);
+        assert(createInfo.Clusters[2].GroupId == Mega::INVALID_CLUSTER_GROUP_ID);
+        assert(createInfo.Clusters[2].VertexOffset == 1 && createInfo.Clusters[2].LODLevel == 1);
+        assert(createInfo.ClusterGroups[0].ClusterCount == 2 && createInfo.ClusterGroups[0].Error == 0.25f);
+        assert(createInfo.TotalBounds.Radius == 2.0f);
+
+        // v0 は従来の1段のメッシュのまま（焼き込みの階層・フォールバック無し）
+        const CookedMeshParseResult v0Result = ParseCookedMesh(MakeBlob(BuildMesh()));
+        assert(v0Result.Succeeded());
+        Mega::MegaMeshCreateInfo v0CreateInfo;
+        assert(Mega::BuildMegaMeshCreateInfoFromCookedMesh(v0Result.Mesh, v0CreateInfo));
+        assert(!v0CreateInfo.bBakedLODHierarchy && v0CreateInfo.ClusterGroups.empty());
+        assert(v0CreateInfo.FallbackIndexCount == 0 && v0CreateInfo.Clusters.size() == 3);
+        assert(v0CreateInfo.Clusters[2].IndexOffset == 6 && v0CreateInfo.Clusters[2].IndexCount == 6);
+    }
+
+    {
+        // 壊れた入力の拒否: ファイルの大きさ・hash・版・端数・パス・クラスタ無し
+        ByteArray bytes = SerializeV1(BuildV1Input());
+        bytes.resize(bytes.size() - sizeof(uint32_t));
+        ExpectStatus(std::move(bytes), CookedMeshParseStatus::FileSizeMismatch);
+
+        bytes = SerializeV1(BuildV1Input());
+        bytes[static_cast<size_t>(ReadLe64(bytes, V1::HeaderOffset::VertexPayloadOffset)) + 3] ^= 0x40u;
+        ExpectStatus(std::move(bytes), CookedMeshParseStatus::PayloadHashMismatch);
+
+        bytes = SerializeV1(BuildV1Input());
+        WriteLe16(bytes, V1::HeaderOffset::VersionMinor, 1);
+        ExpectStatus(std::move(bytes), CookedMeshParseStatus::UnsupportedVersion);
+
+        bytes = SerializeV1(BuildV1Input());
+        WriteLe16(bytes, V1::HeaderOffset::VersionMajor, 0);
+        ExpectStatus(std::move(bytes), CookedMeshParseStatus::UnsupportedVersion);
+
+        bytes = SerializeV1(BuildV1Input());
+        WriteLe32(bytes, V1::HeaderOffset::EndianMarker, 0x04030201u);
+        ExpectStatus(std::move(bytes), CookedMeshParseStatus::EndianMismatch);
+
+        ExpectStatus(SerializeV1(BuildV1Input("../a.png")), CookedMeshParseStatus::InvalidPath);
+
+        CookedMeshV1WriteInput noClusters = BuildV1Input();
+        noClusters.Clusters.clear();
+        noClusters.Groups.clear();
+        ExpectStatus(SerializeV1(noClusters), CookedMeshParseStatus::InvalidCounts);
+    }
+
+    // ヘッダ
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::ClusterRecordSize, 80); },
+                     CookedMeshParseStatus::RecordSizeMismatch);
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::GroupRecordSize, 40); },
+                     CookedMeshParseStatus::RecordSizeMismatch);
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::Flags, 1); },
+                     CookedMeshParseStatus::ReservedFieldNonZero);
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::GroupCount, 4); },
+                     CookedMeshParseStatus::InvalidCounts);
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::LODLevelCount, 0); },
+                     CookedMeshParseStatus::InvalidCounts);
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::LODLevelCount, V1::MaxLODLevels + 1); },
+                     CookedMeshParseStatus::InvalidCounts);
+    ExpectV1Mutation(
+        [](ByteArray& bytes)
+        { WriteLe64(bytes, V1::HeaderOffset::GroupTableSize, ReadLe64(bytes, V1::HeaderOffset::GroupTableSize) + 8); },
+        CookedMeshParseStatus::InvalidCounts);
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::ClusterAlgorithmId, 1); },
+                     CookedMeshParseStatus::UnsupportedV1Feature);
+    ExpectV1Mutation(
+        [](ByteArray& bytes)
+        {
+            // 文字列表の末尾と頂点の先頭の間の詰め物（0 であること）
+            const size_t paddingOffset = static_cast<size_t>(ReadLe64(bytes, V1::HeaderOffset::StringTableOffset)) +
+                                         static_cast<size_t>(ReadLe64(bytes, V1::HeaderOffset::StringTableSize));
+            bytes[paddingOffset] = 1;
+        },
+        CookedMeshParseStatus::PaddingByteNonZero);
+
+    // フォールバックの範囲
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::FallbackIndexCount, 0); },
+                     CookedMeshParseStatus::InvalidFallbackRange);
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::FallbackIndexCount, 2); },
+                     CookedMeshParseStatus::InvalidFallbackRange);
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::FallbackIndexOffset, 8); },
+                     CookedMeshParseStatus::InvalidFallbackRange);
+    ExpectV1Mutation(
+        [](ByteArray& bytes)
+        {
+            // 範囲は末尾まで届くが、クラスタのインデックスの範囲（サブメッシュ）と食い違う
+            WriteLe32(bytes, V1::HeaderOffset::FallbackIndexOffset, 6);
+            WriteLe32(bytes, V1::HeaderOffset::FallbackIndexCount, 6);
+        },
+        CookedMeshParseStatus::InvalidIndexRange);
+    ExpectV1Mutation([](ByteArray& bytes) { WriteFloat(bytes, V1::HeaderOffset::FallbackError, -1.0f); },
+                     CookedMeshParseStatus::InvalidFloatOrBounds);
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1IndexOffset(bytes, 11), 99); },
+                     CookedMeshParseStatus::InvalidIndexRange);
+    ExpectV1Mutation(
+        [](ByteArray& bytes)
+        {
+            WriteLe32(bytes,
+                      static_cast<size_t>(ReadLe64(bytes, V1::HeaderOffset::SubmeshTableOffset)) +
+                          V1::SubmeshRecordOffset::VertexCount,
+                      4);
+        },
+        CookedMeshParseStatus::InvalidIndexRange);
+
+    // クラスタの記録
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::IndexCount, 4); },
+        CookedMeshParseStatus::InvalidClusterRange);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 1) + V1::ClusterRecordOffset::IndexOffset, 4); },
+        CookedMeshParseStatus::InvalidClusterRange);
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1IndexOffset(bytes, 0), 4); },
+                     CookedMeshParseStatus::InvalidClusterRange);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::VertexCount, 129); },
+        CookedMeshParseStatus::InvalidClusterRange);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::VertexCount, 0); },
+        CookedMeshParseStatus::InvalidClusterRange);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 2) + V1::ClusterRecordOffset::VertexOffset, 2); },
+        CookedMeshParseStatus::InvalidClusterRange);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::PageId, 1); },
+        CookedMeshParseStatus::UnsupportedV1Feature);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::MaterialIndex, 1); },
+        CookedMeshParseStatus::UnsupportedV1Feature);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::Flags, 2); },
+        CookedMeshParseStatus::ReservedFieldNonZero);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::Reserved0, 1); },
+        CookedMeshParseStatus::ReservedFieldNonZero);
+    ExpectV1Mutation(
+        [](ByteArray& bytes)
+        {
+            WriteFloat(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::SelfRadius,
+                       std::numeric_limits<float>::quiet_NaN());
+        },
+        CookedMeshParseStatus::InvalidFloatOrBounds);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteFloat(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::SelfError, -1.0f); },
+        CookedMeshParseStatus::InvalidFloatOrBounds);
+
+    // LOD の階層（根・グループ・誤差の整合）
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::LODLevel, 2); },
+        CookedMeshParseStatus::InvalidLODGraph);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 2) + V1::ClusterRecordOffset::Flags, 0); },
+        CookedMeshParseStatus::InvalidLODGraph);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::GroupId, 5); },
+        CookedMeshParseStatus::InvalidLODGraph);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteFloat(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::SelfError, 0.5f); },
+        CookedMeshParseStatus::InvalidLODGraph);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteFloat(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::ParentError, 0.3f); },
+        CookedMeshParseStatus::InvalidLODGraph);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteFloat(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::SelfRadius, 5.0f); },
+        CookedMeshParseStatus::InvalidLODGraph);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteFloat(bytes, V1GroupOffset(bytes, 0) + V1::GroupRecordOffset::Error, 0.3f); },
+        CookedMeshParseStatus::InvalidLODGraph);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteFloat(bytes, V1ClusterOffset(bytes, 2) + V1::ClusterRecordOffset::ParentRadius, 1.0f); },
+        CookedMeshParseStatus::InvalidLODGraph);
+    // 段の構成: 非根のクラスタが最上位の段にある（親の段が無い）
+    ExpectV1Mutation(
+        [](ByteArray& bytes)
+        {
+            WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::LODLevel, 1);
+            WriteLe32(bytes, V1ClusterOffset(bytes, 1) + V1::ClusterRecordOffset::LODLevel, 1);
+            WriteLe32(bytes, V1GroupOffset(bytes, 0) + V1::GroupRecordOffset::LODLevel, 1);
+        },
+        CookedMeshParseStatus::InvalidLODGraph);
+    // 宣言した段数だけが増え、最上位に空の段ができる
+    ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::LODLevelCount, 3); },
+                     CookedMeshParseStatus::InvalidLODGraph);
+    // 根が最も粗い段にあり、途中の段（段1）が空
+    ExpectV1Mutation(
+        [](ByteArray& bytes)
+        {
+            WriteLe32(bytes, V1::HeaderOffset::LODLevelCount, 3);
+            WriteLe32(bytes, V1ClusterOffset(bytes, 2) + V1::ClusterRecordOffset::LODLevel, 2);
+        },
+        CookedMeshParseStatus::InvalidLODGraph);
+
+    // グループの表
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1GroupOffset(bytes, 0) + V1::GroupRecordOffset::ClusterCount, 0); },
+        CookedMeshParseStatus::InvalidGroupTable);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1GroupOffset(bytes, 0) + V1::GroupRecordOffset::ClusterOffset, 2); },
+        CookedMeshParseStatus::InvalidGroupTable);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1GroupOffset(bytes, 0) + V1::GroupRecordOffset::ClusterCount, 1); },
+        CookedMeshParseStatus::InvalidGroupTable);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1GroupOffset(bytes, 0) + V1::GroupRecordOffset::LODLevel, 2); },
+        CookedMeshParseStatus::InvalidGroupTable);
+    ExpectV1Mutation(
+        [](ByteArray& bytes) { WriteLe32(bytes, V1GroupOffset(bytes, 0) + V1::GroupRecordOffset::Flags, 1); },
+        CookedMeshParseStatus::ReservedFieldNonZero);
+    ExpectV1Mutation(
+        [](ByteArray& bytes)
+        {
+            WriteFloat(bytes, V1GroupOffset(bytes, 0) + V1::GroupRecordOffset::BoundsRadius,
+                       std::numeric_limits<float>::infinity());
+        },
+        CookedMeshParseStatus::InvalidFloatOrBounds);
 
     std::cout << "CookedMeshTest passed\n";
     return 0;

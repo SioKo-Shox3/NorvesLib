@@ -58,6 +58,11 @@
 # -OcclusionViews を足すと、遮蔽カリングの確認用の視点 occ-sphere（大きな球が岩を隠す）・occ-cottage（小屋が球と岩を隠す）・
 # occ-cottage-edge（小屋の端が球の一部を隠す）と、旋回の出発点 occ-sphere-orbit・occ-cottage-orbit を撮る視点へ加える（-ViewNames にこれらの名前を直接与えてもよい）。
 #
+# -ScanPropViews を足すと、地面の外周の高ポリのスキャン資産（Scripts/FetchPolyHavenModels.ps1 が落とし、CookAssets が焼く）を、
+# 近くから遠くへカメラを引く距離の列 scan-d08・d13・d18・d28・d38・d56・d78（資産との距離の目安 m）で撮る（名前を -ViewNames に直接与えてもよい）。
+# 各視点の描いたクラスタ数は metrics.json の mega_occlusion（pass1 + pass2_drawn）に入る。-ScanProps Off は資産を置かずに撮り、
+# 同じ視点で足した分を差し引く基準にする。
+#
 # -StressTextures でテクスチャの負荷モード（--stress-textures: 地面の外側へ、負荷用の材質 24 種を貼った板を格子に並べ、
 # カメラの軸を格子の中心へ移す）の default・low と、格子を見下ろす top（0,80,70）を撮る。負荷用のテクスチャは
 # Scripts/FetchPolyHavenTextures.ps1 -StressSet で落とし、CookAssets で焼く。-VramBudgetMb（--vram-budget-mb）で
@@ -117,12 +122,25 @@ param(
     [string[]]$ViewNames = @(),
     # クック済みのテクスチャを使わず、ばらの元画像を無圧縮で読んで撮る（--no-cooked-textures。比べる側の撮影用）。
     [switch]$LooseTextures,
+    # 岩・小屋の読み方（--rendering3dtest-model-source）。省略時は Game の既定（クック済みの NVMESH v1・BC・VT）。
+    # gltf は glTF の実行時の経路で読む（クック済みの経路との見た目・VRAM の比較用）。
+    [ValidateSet('', 'cooked', 'gltf')]
+    [string]$ModelSource = '',
+    # 大きな球の作り方（--rendering3dtest-big-sphere-source）。省略時は Game の既定（クック済みの NVMESH v1）。
+    # runtime は起動時に実行時の生成で作る（クック済みの球との見た目・起動時間の比較用）。
+    [ValidateSet('', 'cooked', 'runtime')]
+    [string]$BigSphereSource = '',
     # 決定的な撮影（--capture-deterministic）で撮る。同じコードを2回撮ると一致する（見た目の保全を数値で比べる用）。
     [switch]$Deterministic,
     # テクスチャの負荷モード（--stress-textures）で default・low・top の3視点を撮る。-ViewNames で絞れる。
     [switch]$StressTextures,
     # 遮蔽カリングの確認用の視点（occ-sphere・occ-cottage・occ-cottage-edge・旋回の出発点 occ-sphere-orbit・occ-cottage-orbit）を撮る視点へ加える。
     [switch]$OcclusionViews,
+    # 地面の外周のスキャン資産（Poly Haven）を、近くから遠くへカメラを引いて見る視点（scan-d08 から scan-d78 までの 7 視点）を撮る視点へ加える。
+    [switch]$ScanPropViews,
+    # 地面の外周のスキャン資産を置くか（--startup-scan-props。既定は On）。Off は、足した分を差し引く基準の撮影に使う。
+    [ValidateSet('On', 'Off')]
+    [string]$ScanProps = 'On',
     # VRAM の上限（MB。--vram-budget-mb）。0 は渡さない。
     [ValidateRange(0, 1048576)]
     [int]$VramBudgetMb = 0,
@@ -205,9 +223,25 @@ $occlusionViewList = @(
     # 旋回の途中で、球と岩が小屋の端の陰に入る向きから始める。
     [pscustomobject]@{ Name = 'occ-cottage-orbit'; Camera = '146,3,29'; NoiseRegions = @() }
 )
+# 地面の外周のスキャン資産の距離の列。カメラの軸は原点なので、資産 coast_rocks_05（17.5,-13）の延長の向き
+# （yaw 127°、地面すれすれの pitch 3°）で、資産の先（原点の反対側）から原点へ向けて見る。腕の長さを伸ばすほど資産は遠ざかる
+# （資産は原点から約 21.8 m。腕 30・35・40・50・60・78・100 で、カメラと資産の距離が約 8・13・18・28・38・56・78 m）。
+$scanPropViewList = @(
+    [pscustomobject]@{ Name = 'scan-d08'; Camera = '127,3,30'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d13'; Camera = '127,3,35'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d18'; Camera = '127,3,40'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d28'; Camera = '127,3,50'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d38'; Camera = '127,3,60'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d56'; Camera = '127,3,78'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d78'; Camera = '127,3,100'; NoiseRegions = @() }
+)
 if ($OcclusionViews)
 {
     $views = @($views) + $occlusionViewList
+}
+if ($ScanPropViews)
+{
+    $views = @($views) + $scanPropViewList
 }
 if ($StressTextures)
 {
@@ -220,10 +254,11 @@ if ($viewNameList.Count -gt 0)
 {
     # 遮蔽カリングの確認用の視点は名前を与えれば撮れる（-OcclusionViews を併せて与えなくてよい）。
     $views = @($views) + @($occlusionViewList | Where-Object { $_.Name -in $viewNameList -and $_.Name -notin @($views | ForEach-Object { $_.Name }) })
+    $views = @($views) + @($scanPropViewList | Where-Object { $_.Name -in $viewNameList -and $_.Name -notin @($views | ForEach-Object { $_.Name }) })
     $unknownViews = @($viewNameList | Where-Object { $_ -notin $views.Name })
     if ($unknownViews.Count -gt 0)
     {
-        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low・top・occ-sphere・occ-cottage・occ-cottage-edge・occ-sphere-orbit・occ-cottage-orbit）"
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low・top・occ-sphere・occ-cottage・occ-cottage-edge・occ-sphere-orbit・occ-cottage-orbit・scan-d08・scan-d13・scan-d18・scan-d28・scan-d38・scan-d56・scan-d78）"
         exit 1
     }
     $views = @($views | Where-Object { $_.Name -in $viewNameList })
@@ -686,9 +721,22 @@ foreach ($view in $shots)
     {
         $arguments += '--no-cooked-textures'
     }
+    if ($ModelSource -ne '')
+    {
+        $arguments += "--rendering3dtest-model-source=$ModelSource"
+    }
+    if ($BigSphereSource -ne '')
+    {
+        $arguments += "--rendering3dtest-big-sphere-source=$BigSphereSource"
+    }
     if ($Deterministic)
     {
         $arguments += '--capture-deterministic'
+    }
+    # スキャン資産は既定で置くので、Off のときだけ引数を渡す。
+    if ($ScanProps -eq 'Off')
+    {
+        $arguments += '--startup-scan-props=off'
     }
     if ($StressTextures)
     {

@@ -138,3 +138,6 @@ Docs/Plans/
 
 # Scripts/FetchPolyHavenTextures.ps1 が落とす Poly Haven のテクスチャ（git に入れない）
 /Assets/Textures/PolyHaven/
+
+# Scripts/FetchPolyHavenModels.ps1 が落とす Poly Haven のスキャン資産（git に入れない）
+/Assets/Models/PolyHaven/

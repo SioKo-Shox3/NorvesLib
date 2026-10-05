@@ -74,6 +74,13 @@ namespace
         std::filesystem::path OrmAoPath;
         std::filesystem::path OrmRoughnessPath;
         std::filesystem::path OrmMetallicPath;
+        // --usage normal で、入力の法線の Y を反転する（OpenGL の向きの入力を DirectX の向きへ直す）。
+        bool bFlipNormalY = false;
+        // --kind model（NVMESH v1）で、フォールバックの段の三角形数の目標の下限（0 は指定なし）。
+        uint32_t FallbackMinTriangles = 0;
+        // --generate displaced-sphere: --input の高さマップ（16 ビットのグレーの PNG）から、起動画面の大きな球を作って焼く。
+        // 空なら --input の glTF を焼く。
+        NorvesLib::Core::Container::AnsiString Generate;
     };
 
     std::string ToStdString(const NorvesLib::Core::Container::AnsiString &value)
@@ -835,7 +842,8 @@ namespace
                            const std::string &entryTypeText,
                            uint64_t cookedHash,
                            std::string &outJson,
-                           std::string &error)
+                           std::string &error,
+                           uint32_t cookedVersion = 0)
     {
         const std::pair<const char *, const std::string *> fields[] = {
             {"logical_path", &logicalPath},
@@ -878,7 +886,7 @@ namespace
         AppendJsonStringField(outJson, "entry_type", entryTypeText, true);
         outJson += "\n      ";
         AppendJsonStringField(outJson, "cooked_hash", ToStdString(FormatAssetHashHex(cookedHash)), true);
-        outJson += "\n      \"cooked_version\":0\n";
+        outJson += "\n      \"cooked_version\":" + std::to_string(cookedVersion) + "\n";
         outJson += "    }\n";
         outJson += "  ]\n";
         outJson += "}\n";
@@ -1568,14 +1576,16 @@ namespace
 
         if (usage == NorvesLib::Tools::AssetCook::TextureUsage::Orm)
         {
-            if (!options.InputPath.empty())
+            // 詰め済みの ORM（glTF の ARM など。R=AO・G=粗さ・B=メタリックの1枚）は --input で、
+            // 別々の元画像は --orm-* で渡す。両方は指定できない。
+            if (!options.InputPath.empty() && bHasOrmSource)
             {
-                error = "--usage orm は --input ではなく --orm-ao・--orm-roughness・--orm-metallic を読みます";
+                error = "--usage orm は --input（詰め済みの1枚）か --orm-ao・--orm-roughness・--orm-metallic のどちらか一方で指定してください";
                 return false;
             }
-            if (!bHasOrmSource)
+            if (options.InputPath.empty() && !bHasOrmSource)
             {
-                error = "--usage orm には --orm-ao・--orm-roughness・--orm-metallic のどれか 1 つが要ります";
+                error = "--usage orm には --input か --orm-ao・--orm-roughness・--orm-metallic のどれか 1 つが要ります";
                 return false;
             }
         }
@@ -1721,6 +1731,38 @@ namespace
                 }
                 outOptions.OrmRoughnessPath = value;
             }
+            else if (argument == "--fallback-min-triangles")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                char *end = nullptr;
+                const unsigned long parsed = std::strtoul(value.c_str(), &end, 10);
+                if (value.empty() || *end != '\0' || parsed > 1000000ul)
+                {
+                    error = "--fallback-min-triangles は 0〜1000000 の整数で指定してください";
+                    return false;
+                }
+                outOptions.FallbackMinTriangles = static_cast<uint32_t>(parsed);
+            }
+            else if (argument == "--generate")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                if (value != "displaced-sphere")
+                {
+                    error = "--generate は displaced-sphere だけを指定できます";
+                    return false;
+                }
+                outOptions.Generate = NorvesLib::Core::Container::AnsiString(value.c_str());
+            }
+            else if (argument == "--flip-normal-y")
+            {
+                outOptions.bFlipNormalY = true;
+            }
             else if (argument == "--orm-metallic")
             {
                 if (!readValue())
@@ -1741,6 +1783,24 @@ namespace
         if (!ResolveTextureUsageOptions(outOptions, usageError))
         {
             error = ToStdString(usageError);
+            return false;
+        }
+
+        if (outOptions.bFlipNormalY && outOptions.Usage != "normal")
+        {
+            error = "--flip-normal-y は --usage normal と一緒に指定してください";
+            return false;
+        }
+
+        if (!outOptions.Generate.empty() && outOptions.Kind != "model")
+        {
+            error = "--generate は --kind model と一緒に指定してください";
+            return false;
+        }
+
+        if (outOptions.FallbackMinTriangles != 0 && outOptions.Kind != "model")
+        {
+            error = "--fallback-min-triangles は --kind model と一緒に指定してください";
             return false;
         }
 
@@ -1838,8 +1898,13 @@ namespace
             << "--variant default\n"
             << "       AssetCook --input <image> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind texture --entry <entry.nvtex> --entry-type Tex0 "
-            << "--usage albedo|normal|single|height16 [--quality fast|normal|best] --variant default\n"
+            << "--usage albedo|normal|single|height16 [--quality fast|normal|best] "
+            << "[--flip-normal-y（normal のみ。OpenGL の向きの法線を DirectX の向きへ）] --variant default\n"
             << "       AssetCook --orm-ao <image> --orm-roughness <image> --orm-metallic <image> "
+            << "--out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind texture --entry <entry.nvtex> --entry-type Tex0 "
+            << "--usage orm [--quality fast|normal|best] --variant default\n"
+            << "       AssetCook --input <詰め済みの ORM 画像（R=AO・G=粗さ・B=メタリック）> "
             << "--out <package> --manifest <manifest.json> "
             << "--logical <path> --kind texture --entry <entry.nvtex> --entry-type Tex0 "
             << "--usage orm [--quality fast|normal|best] --variant default\n"
@@ -1847,6 +1912,9 @@ namespace
             << "--logical <path> --kind model --entry <entry.nvmesh> --entry-type Msh0 "
             << "--format nvmesh.v0.mesh3d.pnt.u32.clustered "
             << "--variant default\n"
+            << "       (--format nvmesh.v1.mesh3d.pnt.u32.lodgraph で LOD の階層を持つ NVMESH v1 を焼く)\n"
+            << "       (--generate displaced-sphere を足すと、--input の高さマップ（16 ビットのグレーの PNG）で変位した"
+               "起動画面の大きな球を作って v1 に焼く)\n"
             << "       AssetCook --input <model.gltf> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind model --entry <entry.nvskel> --entry-type Skl0 "
             << "--format nvskel.v0.skinned.pnujiw.u32 "
@@ -2024,7 +2092,8 @@ namespace
             OrmSourceImages ormSources;
             ByteArray ormBytes[3];
             ErrorString ormNames[3];
-            if (cookParams.Usage == TextureUsage::Orm)
+            cookParams.bFlipNormalY = options.bFlipNormalY;
+            if (cookParams.Usage == TextureUsage::Orm && options.InputPath.empty())
             {
                 const std::filesystem::path *ormPaths[3] = {&options.OrmAoPath, &options.OrmRoughnessPath, &options.OrmMetallicPath};
                 TextureSourceImage *ormSlots[3] = {&ormSources.Ao, &ormSources.Roughness, &ormSources.Metallic};
@@ -2191,13 +2260,24 @@ namespace
 
         NorvesLib::Tools::AssetCook::MeshCookResult meshResult;
         NorvesLib::Core::Container::AnsiString meshError;
-        if (!NorvesLib::Tools::AssetCook::CookGltfToNvmesh(inputBytes.data(),
-                                                           inputBytes.size(),
-                                                           options.Format,
-                                                           inputPath.generic_string(),
-                                                           logicalPath,
-                                                           meshResult,
-                                                           meshError))
+        const bool bCooked =
+            options.Generate == "displaced-sphere"
+                ? NorvesLib::Tools::AssetCook::CookDisplacedSphereToNvmesh(inputBytes.data(),
+                                                                          inputBytes.size(),
+                                                                          options.Format,
+                                                                          logicalPath,
+                                                                          meshResult,
+                                                                          meshError,
+                                                                          options.FallbackMinTriangles)
+                : NorvesLib::Tools::AssetCook::CookGltfToNvmesh(inputBytes.data(),
+                                                                inputBytes.size(),
+                                                                options.Format,
+                                                                inputPath.generic_string(),
+                                                                logicalPath,
+                                                                meshResult,
+                                                                meshError,
+                                                                options.FallbackMinTriangles);
+        if (!bCooked)
         {
             error = ToStdString(meshError);
             return false;
@@ -2244,7 +2324,8 @@ namespace
                                entryTypeText,
                                cookedHash,
                                manifestJson,
-                               error))
+                               error,
+                               meshResult.FormatMajor))
         {
             return false;
         }
@@ -2280,6 +2361,15 @@ namespace
                   << " indices=" << meshResult.IndexCount
                   << " clusters=" << meshResult.ClusterCount
                   << "\n";
+        if (meshResult.FormatMajor == 1)
+        {
+            // LOD の階層を焼いた時間(溶接・クラスタ化・簡略化の繰り返し・書き出し・自己検証)の記録
+            std::cerr << "MESH_COOK dag_levels=" << meshResult.LODLevelCount
+                      << " clusters=" << meshResult.ClusterCount
+                      << " ms=" << meshResult.DagMilliseconds
+                      << " rejected_groups=" << meshResult.DagRejectedGroups
+                      << "\n";
+        }
         return true;
     }
 

@@ -29,6 +29,12 @@
 
 namespace NorvesLib::Core
 {
+    namespace Asset
+    {
+        class AssetSystem;
+        struct CookedMeshData;
+    } // namespace Asset
+
     namespace Component
     {
         class MeshComponent;
@@ -90,6 +96,36 @@ namespace Game::GameModes
         NorvesLib::Thread::Atomic<bool> m_bCompleted{false}; ///< コールバック到着フラグ（Do が消費）
         NorvesLib::Core::Rendering::ModelHandle m_Handle;    ///< 結果ハンドル
         bool m_bLoaded = false;                              ///< 有効ハンドルが得られたか
+        float m_BoundsMinY = 0.0f; ///< クック済みのメッシュの最下点の Y（スキャン資産を地面に据えるのに使う。それ以外は 0）
+    };
+
+    /**
+     * @brief クック済み（NVMESH v1）で読む起動画面のモデル1つ分の読み込み状態
+     *
+     * メッシュは起動時に読み込んで解析し、材質のテクスチャ（VT）がそろってから MegaMesh を作る。
+     * 完了すると State を BoulderAsyncState と同じ手順で埋め、岩・小屋の組み立てが続きを受け持つ。
+     */
+    struct CookedStartupModelLoad
+    {
+        String DebugName;
+        String LogicalPath; ///< メッシュの論理パス（"Assets/Models/...gltf"）。テクスチャが読めないとき glTF の経路へ戻すのに使う
+        bool bBoulder = false; ///< 岩か（false なら小屋）。glTF の経路へ戻すとき、どちらの要求番号を更新するか決める
+        bool bAllowGltfFallback = true; ///< 材質のテクスチャが読めないとき glTF の経路へ戻すか（false なら失敗として State を埋める）
+        TSharedPtr<NorvesLib::Core::Asset::CookedMeshData> Mesh;
+        TSharedPtr<PendingMaterialUpdate> Material;
+        TSharedPtr<BoulderAsyncState> State;
+    };
+
+    /**
+     * @brief 起動画面の地面の外周に並べる、高ポリのスキャン資産1つ分の読み込み状態
+     *
+     * 資産は Rendering3DTestRoutine.cpp の kStartupScanProps の表の番号で引く。クック済み（NVMESH v1・BC・VT）が
+     * 無い資産は読み込みを始めず、glTF の経路へも戻さない（置かずに警告する）。
+     */
+    struct StartupScanPropLoad
+    {
+        uint32_t SpecIndex = 0;
+        TSharedPtr<BoulderAsyncState> State;
     };
 
     /**
@@ -227,6 +263,8 @@ namespace Game::GameModes
         float m_StartupRenderScale = 1.0f;
         // --debug-draw-test-lines の指定で true にする。大きな球を囲む箱をデバッグの線で毎フレーム描く。
         bool m_bDebugDrawTestLines = false;
+        // 地面の外周に高ポリのスキャン資産を置くか（--startup-scan-props=off で false。既定は true）。
+        bool m_bStartupScanProps = true;
         // 起動時のアンチエイリアシングが TAA なら true（既定は TAA、--anti-aliasing=fxaa の指定で false）。
         bool m_bStartupTemporalAA = true;
         // --night の指定で true にする。空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす
@@ -244,6 +282,22 @@ namespace Game::GameModes
         // クック済みのマニフェストに、論理パス（"Assets/..." から始まる）の項目があるか。起動画面の材質は、
         // クック済みの BC のテクスチャと ORM があればそれを、無ければばらの元画像を読む。未設定ならすべてばらで読む。
         NorvesLib::Core::Delegate<bool, const NorvesLib::Core::Container::String &> m_IsTextureCooked;
+
+        // 起動画面の岩・小屋をクック済み（NVMESH v1・BC・VT）で読むか。false が既定で、クック済みが無ければ glTF の実行時の経路へ戻して警告する。
+        // true（--rendering3dtest-model-source=gltf、--no-cooked-textures）は、最初から glTF の経路で読む（見た目・VRAM の比較用）。
+        bool m_bStartupModelsFromGltf = false;
+        // 起動画面の大きな球をクック済み（NVMESH v1。クッカーが変位した球の階層を焼いてある）で読むか。false が既定で、
+        // クック済みが無ければ実行時の生成（約3.6秒）へ戻して警告する。true（--rendering3dtest-big-sphere-source=runtime、
+        // --no-cooked-textures）は、最初から実行時に生成する（見た目・起動時間の比較用）。
+        bool m_bBigSphereFromRuntime = false;
+        // 読み込んだクック済みの大きな球（石畳の材質がそろって MegaMesh を作るまで持つ）
+        TSharedPtr<NorvesLib::Core::Asset::CookedMeshData> m_pBigSphereCooked;
+        // クック済みのメッシュ（NVMESH）を解決する AssetSystem（無ければ null。クック済みのマニフェストを読んでいないとき）。
+        NorvesLib::Core::Delegate<NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>> m_GetAssetSystem;
+        // クック済みで読んでいる岩・小屋の、材質（VT）がそろうのを待っている状態。そろったら MegaMesh を作って取り除く。
+        VariableArray<CookedStartupModelLoad> m_CookedStartupModelLoads;
+        // 地面の外周に並べるスキャン資産のうち、読み込み中のもの。完了したものから World へ置いて取り除く。
+        VariableArray<StartupScanPropLoad> m_ScanPropLoads;
 
         // 手動露出（EV100）。ImGui のスライダーが書き、Tick が絞り・ISO を保ったままシャッター速度へ写す。
         float m_ExposureEV100 = 0.0f;

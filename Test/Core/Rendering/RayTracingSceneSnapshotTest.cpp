@@ -217,6 +217,89 @@ namespace
             std::cout << "draw_snapshot_shadow_caster_masks=true\n";
         }
 
+        // 焼き込み済みのLOD階層（NVMESH v1）のメッシュは、光線にフォールバックの段の範囲を見せる。
+        // クラスタ（段0）の範囲（先頭の3インデックス）ではなく、その後ろに置かれたフォールバック（6インデックス）が
+        // 同じバッファの範囲としてBLASの入力になる。
+        {
+            Mesh3DVertex bakedVertices[7]{};
+            for (uint32_t i = 0; i < 7u; ++i)
+            {
+                bakedVertices[i].Position[0] = static_cast<float>(i);
+                bakedVertices[i].Position[1] = static_cast<float>(i % 2u);
+                bakedVertices[i].Normal[2] = 1.0f;
+            }
+            // クラスタのインデックス（頂点の基点からの相対）の後ろに、全体の頂点の番号で書いたフォールバック
+            constexpr uint32_t bakedIndices[9] = {0, 1, 2, 3, 4, 5, 3, 5, 6};
+            MegaGeometry::MegaMeshCreateInfo createInfo;
+            createInfo.VertexData = bakedVertices;
+            createInfo.VertexDataSize = sizeof(bakedVertices);
+            createInfo.VertexCount = 7;
+            createInfo.VertexStride = sizeof(Mesh3DVertex);
+            createInfo.IndexData = bakedIndices;
+            createInfo.IndexCount = 9;
+            createInfo.bBuildLODHierarchy = false;
+            createInfo.bBakedLODHierarchy = true;
+            createInfo.BakedLODLevelCount = 1;
+            createInfo.FallbackIndexOffset = 3;
+            createInfo.FallbackIndexCount = 6;
+            createInfo.FallbackError = 0.5f;
+            createInfo.TotalBounds = BoundingSphere{3.0f, 0.5f, 0.0f, 4.0f};
+            MegaGeometry::MeshCluster cluster;
+            cluster.IndexOffset = 0;
+            cluster.IndexCount = 3;
+            cluster.VertexOffset = 0;
+            cluster.VertexCount = 3;
+            cluster.Bounds = createInfo.TotalBounds;
+            createInfo.Clusters.push_back(cluster);
+            createInfo.DebugName = "BakedFallbackRT";
+
+            const MegaGeometry::MegaMeshHandle megaHandle = renderResources.MegaGeometry().CreateMegaMesh(createInfo);
+            const MegaGeometry::MegaMeshGPUData* megaData = renderResources.MegaGeometry().GetMegaMeshGPUData(megaHandle);
+            if (!megaHandle.IsValid() || !megaData || megaData->ShadowFirstIndex != 3u ||
+                megaData->ShadowIndexCount != 6u)
+            {
+                std::cerr << "焼き込み済みメッシュの影・RTの範囲がフォールバックの段になっていません\n";
+                return 1;
+            }
+
+            FramePacket megaPacket;
+            MegaGeometryProxy proxy;
+            proxy.ObjectId = 7;
+            proxy.MegaMeshHandle = megaHandle;
+            megaPacket.Scene.MegaGeometryProxies.push_back(proxy);
+            if (!subsystem.BuildFrameSnapshot(&renderResources.Meshes(),
+                                              megaPacket,
+                                              nullptr,
+                                              &renderResources.MegaGeometry()) ||
+                megaPacket.RayTracingScene.Instances.size() != 1)
+            {
+                std::cerr << "焼き込み済みメッシュのinstanceを構築できませんでした\n";
+                return 1;
+            }
+            const RayTracingSceneInstanceSnapshot& megaInstance = megaPacket.RayTracingScene.Instances[0];
+            if (megaInstance.IndexOffset != 3u || megaInstance.IndexCount != 6u ||
+                megaInstance.VertexOffset != 0u || megaInstance.VertexCount != 7u ||
+                megaInstance.SourceVertexBuffer != megaData->VertexBuffer ||
+                megaInstance.SourceIndexBuffer != megaData->IndexBuffer)
+            {
+                std::cerr << "焼き込み済みメッシュのinstanceがフォールバックの範囲を指していません\n";
+                return 1;
+            }
+
+            CommandListPtr megaCommandList = device->CreateCommandList();
+            if (!megaCommandList || !BuildAndSubmit(device, *megaCommandList, subsystem, 0, megaPacket) ||
+                !megaPacket.RayTracingScene.TopLevel || !megaPacket.RayTracingScene.Instances[0].BottomLevel)
+            {
+                std::cerr << "焼き込み済みメッシュのフォールバックの範囲でBLAS/TLASを構築できませんでした\n";
+                return 1;
+            }
+            std::cout << "baked_mesh_instance_uses_fallback_range=true\n";
+
+            megaPacket.Clear();
+            megaCommandList.reset();
+            renderResources.MegaGeometry().ReleaseMegaMesh(megaHandle);
+        }
+
         CommandListPtr commandList = device->CreateCommandList();
         if (!commandList || !BuildAndSubmit(device, *commandList, subsystem, 0, packet))
         {
