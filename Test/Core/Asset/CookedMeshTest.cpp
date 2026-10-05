@@ -1,5 +1,6 @@
 ﻿#include "Asset/CookedMeshFormat.h"
 #include "Rendering/MegaGeometry/CookedMeshMegaMeshAdapter.h"
+#include "Rendering/MegaGeometry/GeometryPageLinks.h"
 
 #include <algorithm>
 #include <bit>
@@ -622,6 +623,7 @@ namespace
                 cluster.BoundsRadius = born.BoundsRadius;
                 cluster.LODError = born.Error;
                 cluster.GroupId = 4 + (clusterIndex - 8) / 2;
+                cluster.SourceGroupId = clusterIndex - 8;
             }
             else if (clusterIndex < 14)
             {
@@ -631,6 +633,7 @@ namespace
                 cluster.BoundsRadius = born.BoundsRadius;
                 cluster.LODError = born.Error;
                 cluster.GroupId = 6;
+                cluster.SourceGroupId = 4 + (clusterIndex - 12);
             }
             else
             {
@@ -639,6 +642,7 @@ namespace
                 cluster.BoundsCenter = born.BoundsCenter;
                 cluster.BoundsRadius = born.BoundsRadius;
                 cluster.LODError = born.Error;
+                cluster.SourceGroupId = 6;
                 cluster.bIsRoot = true;
             }
 
@@ -1328,7 +1332,7 @@ int main()
         [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::Flags, 2); },
         CookedMeshParseStatus::ReservedFieldNonZero);
     ExpectV1Mutation(
-        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::Reserved0, 1); },
+        [](ByteArray& bytes) { WriteLe32(bytes, V1ClusterOffset(bytes, 0) + V1::ClusterRecordOffset::Reserved1, 1); },
         CookedMeshParseStatus::ReservedFieldNonZero);
     ExpectV1Mutation(
         [](ByteArray& bytes)
@@ -1479,7 +1483,8 @@ int main()
 
                 const CookedMeshCluster& source = input.Clusters[sourceIndex];
                 assert(cluster.LODLevel == source.LODLevel && cluster.bIsRoot == source.bIsRoot &&
-                       cluster.GroupId == source.GroupId && cluster.LODError == source.LODError &&
+                       cluster.GroupId == source.GroupId && cluster.SourceGroupId == source.SourceGroupId &&
+                       cluster.LODError == source.LODError &&
                        cluster.ParentError == source.ParentError && cluster.BoundsRadius == source.BoundsRadius);
                 assert(cluster.VertexOffset >= page.FirstVertex &&
                        cluster.VertexOffset + cluster.VertexCount <= page.FirstVertex + page.VertexCount);
@@ -1812,6 +1817,177 @@ int main()
         brokenInput.Groups[1].ClusterOffset = 1;
         assert(SerializeCookedMeshV1Paged(brokenInput, SmallPageOptions(), bytes, info) ==
                CookedMeshPagedWriteStatus::InvalidInput);
+    }
+
+    // 作ったグループの番号（クラスタの記録の +92）: 往復・旧い資産（番号なし）・壊れた番号の拒否・子のページの決まり方
+    {
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+        const CookedMeshV1WriteInput input = BuildPagedInput();
+        const CookedMeshPagedWriteOptions options = SmallPageOptions();
+
+        // 番号を持つ資産: 粗い段のクラスタが、自分を作った1つ細かい段のグループの番号を持つ
+        {
+            const CookedMeshParseResult result = ParseCookedMesh(MakeBlob(SerializePaged(input, options)));
+            assert(result.Succeeded() && result.Mesh.FormatMinor == 1);
+            uint32_t numbered = 0;
+            for (const CookedMeshCluster& cluster : result.Mesh.Clusters)
+            {
+                if (cluster.LODLevel == 0)
+                {
+                    assert(cluster.SourceGroupId == V1::InvalidGroupId);
+                    continue;
+                }
+                assert(cluster.SourceGroupId < result.Mesh.Groups.size());
+                const CookedMeshClusterGroup& source = result.Mesh.Groups[cluster.SourceGroupId];
+                assert(source.LODLevel + 1 == cluster.LODLevel && source.BoundsRadius == cluster.BoundsRadius &&
+                       source.Error == cluster.LODError);
+                ++numbered;
+            }
+            assert(numbered == 7);
+        }
+
+        // 旧い資産（番号の項目が 0）は、番号なしとして読める
+        CookedMeshV1WriteInput legacyInput = input;
+        for (CookedMeshCluster& cluster : legacyInput.Clusters)
+        {
+            cluster.SourceGroupId = V1::InvalidGroupId;
+        }
+        const CookedMeshParseResult legacy = ParseCookedMesh(MakeBlob(SerializePaged(legacyInput, options)));
+        assert(legacy.Succeeded() && legacy.Mesh.FormatMinor == 1);
+        for (const CookedMeshCluster& cluster : legacy.Mesh.Clusters)
+        {
+            assert(cluster.SourceGroupId == V1::InvalidGroupId);
+        }
+
+        // 範囲外の番号は書き出しが拒否する
+        {
+            CookedMeshV1WriteInput brokenInput = input;
+            brokenInput.Clusters[8].SourceGroupId = 7;
+            ByteArray bytes;
+            CookedMeshPagedWriteInfo info;
+            assert(SerializeCookedMeshV1Paged(brokenInput, options, bytes, info) == CookedMeshPagedWriteStatus::InvalidInput);
+        }
+
+        // 壊れた番号の拒否（ページの hash とファイルの hash は直す）。ページ 2 は最も細かい段、ページ 1 の先頭は段1 のクラスタ
+        const auto sourceGroupSlot = [](const ByteArray& bytes, size_t pageIndex)
+        {
+            return PagedPageOffset(bytes, pageIndex) + V1::PageHeaderSize + V1::ClusterRecordOffset::SourceGroupIdPlusOne;
+        };
+        // 最も細かい段のクラスタは、作られたものではないので番号を持てない
+        ExpectPagedMutation(
+            [&](ByteArray& bytes)
+            {
+                WriteLe32(bytes, sourceGroupSlot(bytes, 2), 1);
+                RefreshPageHash(bytes, 2);
+            },
+            CookedMeshParseStatus::InvalidLODGraph);
+        // グループの数以上の番号
+        ExpectPagedMutation(
+            [&](ByteArray& bytes)
+            {
+                WriteLe32(bytes, sourceGroupSlot(bytes, 1), 8);
+                RefreshPageHash(bytes, 1);
+            },
+            CookedMeshParseStatus::InvalidLODGraph);
+        // 同じ段のグループ（境界球が違う）・同じ段でないグループを指す
+        ExpectPagedMutation(
+            [&](ByteArray& bytes)
+            {
+                WriteLe32(bytes, sourceGroupSlot(bytes, 1), 2);
+                RefreshPageHash(bytes, 1);
+            },
+            CookedMeshParseStatus::InvalidLODGraph);
+        ExpectPagedMutation(
+            [&](ByteArray& bytes)
+            {
+                WriteLe32(bytes, sourceGroupSlot(bytes, 1), 5);
+                RefreshPageHash(bytes, 1);
+            },
+            CookedMeshParseStatus::InvalidLODGraph);
+
+        // 子のページ: 同じ境界球・誤差の別グループ（グループ 0 とグループ 2。別のページ）を持つメッシュでも、親ごとの子のページは
+        // 生成元のグループのページになる。値の照合なら決められないので、候補のページを全て固定する
+        const CookedMeshParseResult numberedResult = ParseCookedMesh(MakeBlob(SerializePaged(input, options)));
+        assert(numberedResult.Succeeded());
+        Mega::MegaMeshCreateInfo createInfo;
+        assert(Mega::BuildMegaMeshCreateInfoFromCookedMesh(numberedResult.Mesh, createInfo));
+        VariableArray<Mega::MeshCluster>& clusters = createInfo.Clusters;
+        VariableArray<Mega::MeshClusterGroup>& groups = createInfo.ClusterGroups;
+        assert(groups.size() == 7 && groups[0].LODLevel == 0 && groups[2].LODLevel == 0);
+        const uint32_t pageOfGroup0 = clusters[groups[0].ClusterOffset].PageId;
+        const uint32_t pageOfGroup2 = clusters[groups[2].ClusterOffset].PageId;
+        assert(pageOfGroup0 != pageOfGroup2);
+
+        groups[2].Bounds = groups[0].Bounds;
+        groups[2].Error = groups[0].Error;
+        uint32_t parentOfGroup0 = ~0u;
+        uint32_t parentOfGroup2 = ~0u;
+        for (uint32_t index = 0; index < clusters.size(); ++index)
+        {
+            Mega::MeshCluster& cluster = clusters[index];
+            if (cluster.SourceGroupId == 0 || cluster.SourceGroupId == 2)
+            {
+                (cluster.SourceGroupId == 0 ? parentOfGroup0 : parentOfGroup2) = index;
+                cluster.Bounds = groups[0].Bounds;
+                cluster.LODError = groups[0].Error;
+            }
+        }
+        assert(parentOfGroup0 != ~0u && parentOfGroup2 != ~0u);
+
+        {
+            VariableArray<uint32_t> childPages;
+            Mega::GeometryPageLinkResult links;
+            assert(Mega::ComputeGeometryPageLinks(clusters, groups, childPages, links));
+            assert(links.LinkedClusters == 7 && links.LinkedByIdClusters == 7);
+            assert(links.AmbiguousClusters == 0 && links.SplitGroups == 0 && links.PinnedPages.empty());
+            assert(childPages[parentOfGroup0] == pageOfGroup0 && childPages[parentOfGroup2] == pageOfGroup2);
+            // 段1 以上の全クラスタは、作ったグループのメンバのページを子のページに持つ
+            for (uint32_t index = 0; index < clusters.size(); ++index)
+            {
+                if (clusters[index].LODLevel == 0)
+                {
+                    assert(childPages[index] == Mega::INVALID_PAGE_ID);
+                    continue;
+                }
+                assert(childPages[index] == clusters[groups[clusters[index].SourceGroupId].ClusterOffset].PageId);
+            }
+        }
+
+        // 番号を外すと、値の照合（旧い資産）になる。同じ値の2つのグループが別のページなので、親は決められず、両方のページを固定する
+        {
+            VariableArray<Mega::MeshCluster> unnumbered = clusters;
+            for (Mega::MeshCluster& cluster : unnumbered)
+            {
+                cluster.SourceGroupId = Mega::INVALID_CLUSTER_GROUP_ID;
+            }
+            VariableArray<uint32_t> childPages;
+            Mega::GeometryPageLinkResult links;
+            assert(Mega::ComputeGeometryPageLinks(unnumbered, groups, childPages, links));
+            assert(links.LinkedByIdClusters == 0 && links.LinkedClusters == 7 && links.AmbiguousClusters == 2);
+            assert(links.PinnedPages.size() == 2 && links.PinnedPages[0] == std::min(pageOfGroup0, pageOfGroup2) &&
+                   links.PinnedPages[1] == std::max(pageOfGroup0, pageOfGroup2));
+        }
+
+        // 番号が一部のクラスタだけにあるときは、番号のあるクラスタは番号で、無いクラスタは値の照合で決める
+        {
+            VariableArray<Mega::MeshCluster> mixed = clusters;
+            mixed[parentOfGroup2].SourceGroupId = Mega::INVALID_CLUSTER_GROUP_ID;
+            VariableArray<uint32_t> childPages;
+            Mega::GeometryPageLinkResult links;
+            assert(Mega::ComputeGeometryPageLinks(mixed, groups, childPages, links));
+            assert(links.LinkedByIdClusters == 6 && links.LinkedClusters == 7 && links.AmbiguousClusters == 1);
+            assert(childPages[parentOfGroup0] == pageOfGroup0);
+        }
+
+        // 指す先のグループの段が合わない番号は使わず、値の照合へ戻る
+        {
+            VariableArray<Mega::MeshCluster> wrong = clusters;
+            wrong[parentOfGroup0].SourceGroupId = 5;
+            VariableArray<uint32_t> childPages;
+            Mega::GeometryPageLinkResult links;
+            assert(Mega::ComputeGeometryPageLinks(wrong, groups, childPages, links));
+            assert(links.LinkedByIdClusters == 6 && links.AmbiguousClusters == 1);
+        }
     }
 
     // v1.1 の壊れた表・壊れたページの拒否

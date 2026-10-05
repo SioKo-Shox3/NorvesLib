@@ -500,7 +500,7 @@
 - notes: 計画書 4.3。危険地帯（描画パス・アセットロード）。
 
 ## VTG5-PAGE-REQUEST: カリングが常駐していないページを要求し、親の段で描く
-- status: done
+- status: blocked
 - done-when: ページの表（ページの番号 → プールの区画、または非常駐）を GPU に置き、カリングが「もっと細かい子のグループを描きたいが、そのページが常駐していない」ときは、親のグループのクラスタを描き（穴を作らない）、子のページの要求を要求のバッファ（重複はハッシュで減らす）へ書く。要求は2フレーム遅れで GPU を待たずに読み戻す（VT の `VirtualTextureFeedbackRing` に倣う）。GPU のテスト `GeometryPageRequestVulkanTest`（`RHITextureUpdateVulkanTest` の束）か `MegaGeometryResourcesTest` の CPU で写した判定で、子のページが非常駐のときに親が選ばれ、要求が書かれることを確かめる。
 - verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest|GeometryPageRequestVulkanTest)$"`
@@ -509,7 +509,7 @@
 - notes: 計画書 4.3。危険地帯（描画パス・RenderThread）。
 
 ## VTG5-PAGE-LINK-ID: 親のクラスタが、作ったグループの番号を持つ
-- status: todo
+- status: done
 - done-when: クッカーが親のクラスタに「作ったグループの番号」を書き（NVMESH のクラスタの記録に項目を足す。v1.1 以前は読めて、番号が無いときは今の境界球・誤差の照合へ戻る）、`ComputeGeometryPageLinks` が値の照合の代わりに番号で子のページを決める。同じ値のグループが別のページにあっても固定するページが無くなる（`PinnedPages` は番号の無い旧資産のときだけ）。`CookedMeshTest` に、同じ境界球・誤差の別グループを持つ合成のメッシュで、親ごとの子のページが生成元のグループのページになることを足す。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest MegaGeometryResourcesTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedMeshTest|MegaGeometryResourcesTest|AssetCookMeshSmoke)$"`

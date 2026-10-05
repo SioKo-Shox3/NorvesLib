@@ -364,7 +364,9 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t MaterialIndex = 80;
             inline constexpr size_t PageId = 84;
             inline constexpr size_t Flags = 88;
-            inline constexpr size_t Reserved0 = 92;
+            // このクラスタを作ったグループ（1つ細かい段）の番号 + 1。0 は「番号なし」（最も細かい段のクラスタと、
+            // この項目の導入前に焼き込んだ v1.0・v1.1 は 0）。読み込みは CookedMeshCluster::SourceGroupId へ番号を直して渡す
+            inline constexpr size_t SourceGroupIdPlusOne = 92;
             inline constexpr size_t Reserved1 = 96;
             inline constexpr size_t Reserved2 = 104;
             inline constexpr size_t Reserved3 = 112;
@@ -496,6 +498,9 @@ namespace NorvesLib::Core::Asset
         float ParentBoundsRadius = 0.0f;
         float ParentError = CookedMeshFormatV1::RootParentError;
         uint32_t GroupId = CookedMeshFormatV1::InvalidGroupId;
+        // このクラスタを作ったグループ（1つ細かい段。Groups の添字）。そのグループの境界球と誤差が BoundsCenter・BoundsRadius・
+        // LODError と一致する。最も細かい段のクラスタと、番号を持たない旧い資産は InvalidGroupId（値の照合で代用する）
+        uint32_t SourceGroupId = CookedMeshFormatV1::InvalidGroupId;
         uint32_t PageId = 0;
         bool bIsRoot = true;
     };

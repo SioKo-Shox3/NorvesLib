@@ -568,6 +568,18 @@ namespace
     void CheckDagMesh(const CookedMeshData& mesh, const VertexMesh* source, size_t sourceTriangles)
     {
 
+        // (0) 作ったグループの番号: 最も細かい段以外の全クラスタが、1つ細かい段のグループの番号を持つ
+        //     （読み込みが、そのグループの境界球・誤差と自分の値の一致を検査済み）。最も細かい段は持たない
+        bool bSourceGroups = true;
+        for (const CookedMeshCluster& cluster : mesh.Clusters)
+        {
+            const bool bHasSource = cluster.SourceGroupId != NorvesLib::Core::Asset::CookedMeshFormatV1::InvalidGroupId;
+            bSourceGroups = bSourceGroups && bHasSource == (cluster.LODLevel != 0) &&
+                            (!bHasSource || (cluster.SourceGroupId < mesh.Groups.size() &&
+                                             mesh.Groups[cluster.SourceGroupId].LODLevel + 1 == cluster.LODLevel));
+        }
+        Check(bSourceGroups, "クラスタが作ったグループの番号を持たない、または指す先が1つ細かい段のグループではない");
+
         // (1) 誤差が子から親へ単調: 根でないクラスタの親の誤差は自分の誤差以上、グループの誤差はメンバの誤差以上。
         //     段が上がると誤差が増える(最も細かい段は 0、根は最大)ことも確かめる。
         bool bMonotone = true;

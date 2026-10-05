@@ -946,3 +946,10 @@
 - 試験: `MegaGeometryResourcesTest` に、範囲の割り当て版・要求の版の保持と合流・分割グループの固定・同じ値のグループの固定（同じページなら固定しない）・ストアの固定ページが非常駐の指定を拒否・解放して再利用した範囲を解放前の版の要求が引けないこと（メッシュ10→20の取り違えの再現）を追加。非機能の変更: `MegaGeometryResourceStore.cpp` の英語コメント2行を日本語へ。
 - 検証: `verify-VTG5-PAGE-REQUEST-6-build.txt`（Debug の Game・MegaGeometryResourcesTest・RHITextureUpdateVulkanTest・RenderGraphCompileTest、BUILD_EXIT_CODE=0）、`-7-ctest.txt`（3/3 passed、CTEST_EXIT_CODE=0。GeometryPageRequestVulkanTest は検証エラー0を含む）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。シェーダーは変えていない。
 - Notes: (1) Git Bash は `/m:1` を `m:1` に変換してビルドが失敗するので、ビルドは PowerShell で回す。 (2) 固定したページはストリーマが追い出せないので、VTG5-PAGE-STREAMER は `SetMegaMeshPageRegion` の拒否に従うこと。 (3) 次は TASKS.md の先頭の未完を参照（VTG5-BATCHED-CULL は `blocked` のまま）。
+
+## 反復 5（run 20261005-134836）: VTG5-PAGE-LINK-ID（done）
+- 実装: NVMESH のクラスタの記録の +92（旧 Reserved0）を `SourceGroupIdPlusOne`（作ったグループの番号 + 1。0 = 番号なし）にした。バージョンは v1.1 のまま。旧い資産は 0 で番号なしとして読め、`CookedMeshCluster::SourceGroupId`（既定 InvalidGroupId）→ `MeshCluster::SourceGroupId`（アダプタが受け渡す）。クッカー（`CookMeshDag.cpp`）は次の段のクラスタに生成元のグループの番号を付けて書く。読み込みは、番号が段 0 でない・グループの数未満・指すグループの段 + 1 が自分の段・自分の境界球と誤差がグループと一致、を検査し、違えば `InvalidLODGraph`。書き出しは範囲外の番号を `InvalidInput` にする。
+- `ComputeGeometryPageLinks`: 番号があり指す先が合うクラスタは、値を照合せず、そのグループのページを子のページにする（`LinkedByIdClusters`）。番号が無い（または指す先が合わない）クラスタだけ従来の値の照合で、同じ値で別ページのグループは固定する。番号だけの資産では `PinnedPages` が空。ページをまたぐグループは、番号が指すとき（または値の照合があるとき）だけメンバのページを固定する。`NVMESHv1.md` に「作ったグループの番号」の節を足した。
+- 試験: `CookedMeshTest` に、往復・旧い資産（番号なし）・壊れた番号の拒否 4 種・同じ境界球と誤差の別グループ（別ページ）の合成メッシュで子のページが生成元のページになること・番号を外すと値の照合で固定に戻ること・一部だけ番号があるとき・指す先が合わない番号を追加。`AssetCookMeshSimplifySmoke` に、焼いた全クラスタの番号の検査を追加。`CookedMeshTest` の v1.0 の予約項目の試験は Reserved1 へ移した。
+- 検証: `verify-VTG5-PAGE-LINK-ID-1-build.txt`（Debug の AssetCook・CookedMeshTest・MegaGeometryResourcesTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（AssetCookMeshSmoke・MegaGeometryResourcesTest・CookedMeshTest が 3/3 passed）。numstat は `--ignore-cr-at-eol` と一致。
+- Notes: (1) 形式のバージョンは上げず、予約項目を使った（旧い読み手は ReservedFieldNonZero で拒否する）。 (2) 既存の焼き込み済み資産は再クックするまで番号なしで、固定のページが残る。 (3) 次は VTG5-PAGE-STREAMER の前提が揃った（固定ページは番号の無い旧資産だけ）。

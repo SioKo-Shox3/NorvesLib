@@ -86,6 +86,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                 cluster.ParentError = cookedCluster.ParentError;
                 cluster.GroupId = cookedCluster.GroupId;
                 cluster.PageId = cookedCluster.PageId;
+                cluster.SourceGroupId = cookedCluster.SourceGroupId;
             }
             outCreateInfo.Clusters.push_back(cluster);
         }

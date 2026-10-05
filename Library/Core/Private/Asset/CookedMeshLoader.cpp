@@ -712,8 +712,10 @@ namespace NorvesLib::Core::Asset
             cluster.PageId = ReadLe32(data, recordOffset + ClusterRecordOffset::PageId);
             const uint32_t flags = ReadLe32(data, recordOffset + ClusterRecordOffset::Flags);
             cluster.bIsRoot = (flags & ClusterFlagRoot) != 0;
+            // 記録は「番号 + 1」で、0 が番号なし。符号なしの折り返しで 0 が InvalidGroupId になる
+            cluster.SourceGroupId = ReadLe32(data, recordOffset + ClusterRecordOffset::SourceGroupIdPlusOne) - 1u;
 
-            if ((flags & ~ClusterFlagRoot) != 0 || ReadLe32(data, recordOffset + ClusterRecordOffset::Reserved0) != 0 ||
+            if ((flags & ~ClusterFlagRoot) != 0 ||
                 ReadLe64(data, recordOffset + ClusterRecordOffset::Reserved1) != 0 ||
                 ReadLe64(data, recordOffset + ClusterRecordOffset::Reserved2) != 0 ||
                 ReadLe64(data, recordOffset + ClusterRecordOffset::Reserved3) != 0 ||
@@ -783,6 +785,13 @@ namespace NorvesLib::Core::Asset
 
             // 最も細かい段（元の形）の誤差は 0
             if (cluster.LODLevel == 0 && cluster.LODError != 0.0f)
+            {
+                return CookedMeshParseStatus::InvalidLODGraph;
+            }
+
+            // 作ったグループの番号は、1つ細かい段のグループを指す（最も細かい段のクラスタは作られたものではない）。
+            // グループの表との一致（段・境界球・誤差）は、グループの表を読む ReadV1Groups が検査する
+            if (cluster.SourceGroupId != InvalidGroupId && (cluster.LODLevel == 0 || cluster.SourceGroupId >= groupCount))
             {
                 return CookedMeshParseStatus::InvalidLODGraph;
             }
@@ -891,6 +900,21 @@ namespace NorvesLib::Core::Asset
             if (memberTotal != clusterCount - rootCount)
             {
                 return CookedMeshParseStatus::InvalidGroupTable;
+            }
+
+            // 作ったグループの番号を持つクラスタは、そのグループを簡略化した結果（1つ粗い段で、グループの境界球と誤差が自分の値）
+            for (const CookedMeshCluster& cluster : clusters)
+            {
+                if (cluster.SourceGroupId == InvalidGroupId)
+                {
+                    continue;
+                }
+                const CookedMeshClusterGroup& source = outGroups[cluster.SourceGroupId];
+                if (source.LODLevel + 1 != cluster.LODLevel || !IsSameFloat3(cluster.BoundsCenter, source.BoundsCenter) ||
+                    cluster.BoundsRadius != source.BoundsRadius || cluster.LODError != source.Error)
+                {
+                    return CookedMeshParseStatus::InvalidLODGraph;
+                }
             }
             return CookedMeshParseStatus::Success;
         }
@@ -1933,6 +1957,8 @@ namespace NorvesLib::Core::Asset
             WriteLe32(bytes, recordOffset + ClusterRecordOffset::MaterialIndex, cluster.MaterialIndex);
             WriteLe32(bytes, recordOffset + ClusterRecordOffset::PageId, cluster.PageId);
             WriteLe32(bytes, recordOffset + ClusterRecordOffset::Flags, cluster.bIsRoot ? ClusterFlagRoot : 0u);
+            // 番号 + 1 で書く（InvalidGroupId の + 1 は 0 に折り返し、番号なしになる）
+            WriteLe32(bytes, recordOffset + ClusterRecordOffset::SourceGroupIdPlusOne, cluster.SourceGroupId + 1u);
         }
 
         void WriteV1GroupRecord(WriteBuffer& bytes, size_t recordOffset, const CookedMeshClusterGroup& group)
@@ -2196,7 +2222,8 @@ namespace NorvesLib::Core::Asset
             if (cluster.IndexCount == 0 ||
                 static_cast<uint64_t>(cluster.IndexOffset) + cluster.IndexCount > clusterIndexCount ||
                 cluster.VertexCount == 0 || static_cast<uint64_t>(cluster.VertexOffset) + cluster.VertexCount > vertexCount ||
-                cluster.LODLevel >= input.LODLevelCount || !IsFiniteCluster(cluster))
+                cluster.LODLevel >= input.LODLevelCount || !IsFiniteCluster(cluster) ||
+                (cluster.SourceGroupId != InvalidGroupId && cluster.SourceGroupId >= groupCount))
             {
                 return CookedMeshPagedWriteStatus::InvalidInput;
             }

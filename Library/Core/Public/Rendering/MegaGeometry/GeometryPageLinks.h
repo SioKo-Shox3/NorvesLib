@@ -9,9 +9,12 @@
 // クラスタの配列は GPU に常駐したまま（ページごとに常駐するのは頂点とインデックスの中身）なので、
 // P からその子のページを引けるよう、ここで ChildPageId を埋める。
 //
-// 照合は境界球・誤差の値の一致で行うので、別のグループが同じ値を持つと（同じ形の部品の複製など）、P がどちらから
-// 作られたかを決められない。焼き込みの形式が P の生成元のグループを持たない間は、そのグループのページを
-// 「固定」して常駐のままにし（PinnedPages。ストアが非常駐への変更を拒否する）、穴と要求の漏れを作らない。
+// 焼き込みが P の生成元のグループの番号（MeshCluster::SourceGroupId）を持つときは、その番号のグループのページが
+// 子のページになる。値が同じ別のグループがあっても取り違えない。
+// 番号を持たない旧い資産（NVMESH の番号の項目の導入前）では、境界球・誤差の値の一致で照合する。
+// 別のグループが同じ値を持つと（同じ形の部品の複製など）、P がどちらから作られたかを決められないので、
+// そのグループのページを「固定」して常駐のままにし（PinnedPages。ストアが非常駐への変更を拒否する）、
+// 穴と要求の漏れを作らない。番号を持つクラスタだけの資産は固定するページを作らない。
 
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 
@@ -28,6 +31,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t PageCount = 1;
         /** @brief ChildPageId を埋めたクラスタの数 */
         uint32_t LinkedClusters = 0;
+        /** @brief LinkedClusters のうち、作ったグループの番号で決めたクラスタの数（残りは値の照合） */
+        uint32_t LinkedByIdClusters = 0;
         /** @brief グループのメンバが複数のページにまたがって、子のページを決められなかったグループの数 */
         uint32_t SplitGroups = 0;
         /** @brief 同じ段・同じ球・同じ誤差のグループが複数あり、そのページが食い違うために、生成元を決められなかったクラスタの数 */
@@ -35,6 +40,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         /**
          * @brief 常駐のまま固定するページ（昇順）。生成元を決められない子のページと、複数のページにまたがるグループのページ
          *
+         * 作ったグループの番号を持つクラスタだけで、グループがページをまたがない資産では空。
          * 固定したページは非常駐にしない。子が常駐しているなら親は描かれないので、取り違えても穴にならない。
          */
         VariableArray<uint32_t> PinnedPages;
@@ -113,9 +119,11 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      * @return クラスタの PageId が上限を超えるなど、ページの数を決められないとき false（outChildPages は全て INVALID_PAGE_ID）
      *
      * グループを持たないメッシュ（v1.0 以前・実行時に構築した階層）は子のページが無い（INVALID_PAGE_ID）。
+     * クラスタが作ったグループの番号（SourceGroupId）を持ち、その番号が1つ細かい段のグループを指すときは、
+     * そのグループのメンバのページが子のページ。番号を持たない（または指す先が合わない）クラスタは、値の照合で求める。
      * 1つのグループのメンバが複数のページにまたがるときは、そのグループから作られたクラスタの子のページを決められないので
      * INVALID_PAGE_ID のままにし、メンバのページを固定する。
-     * 同じ値のグループが複数あってページが食い違うときも、候補のページを全て固定する（ChildPageId は先頭の候補のページ）。
+     * 値の照合で、同じ値のグループが複数あってページが食い違うときも、候補のページを全て固定する（ChildPageId は先頭の候補のページ）。
      */
     inline bool ComputeGeometryPageLinks(const VariableArray<MeshCluster> &clusters,
                                          const VariableArray<MeshClusterGroup> &groups,
@@ -149,8 +157,17 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         VariableArray<uint8_t> pinned(outResult.PageCount, 0);
         // グループごとの子のページ（メンバが全て同じページのとき）。またがるグループは INVALID_PAGE_ID
         VariableArray<uint32_t> groupPage(groups.size(), INVALID_PAGE_ID);
-        VariableArray<GroupKey> keys;
-        keys.reserve(groups.size());
+        // 子のページを決められるグループ（メンバの範囲が正しく、空でない）と、メンバがページをまたぐグループ
+        VariableArray<uint8_t> groupUsable(groups.size(), 0);
+        VariableArray<uint8_t> groupSplit(groups.size(), 0);
+        const auto pinGroupMembers = [&](uint32_t groupIndex)
+        {
+            const MeshClusterGroup &group = groups[groupIndex];
+            for (uint32_t member = 0; member < group.ClusterCount; ++member)
+            {
+                pinned[clusters[group.ClusterOffset + member].PageId] = 1;
+            }
+        };
         for (uint32_t groupIndex = 0; groupIndex < groups.size(); ++groupIndex)
         {
             const MeshClusterGroup &group = groups[groupIndex];
@@ -159,6 +176,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             {
                 continue;
             }
+            groupUsable[groupIndex] = 1;
             const uint32_t page = clusters[group.ClusterOffset].PageId;
             bool bSamePage = true;
             for (uint32_t member = 1; member < group.ClusterCount; ++member)
@@ -168,26 +186,67 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             if (!bSamePage)
             {
                 ++outResult.SplitGroups;
-                for (uint32_t member = 0; member < group.ClusterCount; ++member)
-                {
-                    pinned[clusters[group.ClusterOffset + member].PageId] = 1;
-                }
+                groupSplit[groupIndex] = 1;
             }
             else
             {
                 groupPage[groupIndex] = page;
             }
-            // またがるグループも照合の候補に入れる（入れないと、同じ値の別のグループへ誤って結び付く）。
-            // このグループから作られたクラスタは1つ粗い段（LODLevel + 1）にある
-            keys.push_back(MakeKey(group.LODLevel + 1u, group.Bounds, group.Error, groupIndex));
         }
-        std::sort(keys.begin(), keys.end(), KeyLess);
+
+        // 作ったグループの番号が、1つ細かい段のグループを指しているクラスタ。指す先が合わなければ値の照合へ戻る
+        const auto hasSourceGroup = [&](const MeshCluster &cluster)
+        {
+            return cluster.LODLevel != 0 && cluster.SourceGroupId < groups.size() &&
+                   groupUsable[cluster.SourceGroupId] != 0 &&
+                   groups[cluster.SourceGroupId].LODLevel + 1u == cluster.LODLevel;
+        };
+
+        bool bNeedsValueMatch = false;
+        for (const MeshCluster &cluster : clusters)
+        {
+            bNeedsValueMatch = bNeedsValueMatch || (cluster.LODLevel != 0 && !hasSourceGroup(cluster));
+        }
+
+        VariableArray<GroupKey> keys;
+        if (bNeedsValueMatch)
+        {
+            keys.reserve(groups.size());
+            for (uint32_t groupIndex = 0; groupIndex < groups.size(); ++groupIndex)
+            {
+                if (groupUsable[groupIndex] == 0)
+                {
+                    continue;
+                }
+                // またがるグループも照合の候補に入れる（入れないと、同じ値の別のグループへ誤って結び付く）。
+                // このグループから作られたクラスタは1つ粗い段（LODLevel + 1）にある
+                const MeshClusterGroup &group = groups[groupIndex];
+                keys.push_back(MakeKey(group.LODLevel + 1u, group.Bounds, group.Error, groupIndex));
+                // 値の照合では、またがるグループの子のページは決められないので、メンバのページを固定する
+                if (groupSplit[groupIndex] != 0)
+                {
+                    pinGroupMembers(groupIndex);
+                }
+            }
+            std::sort(keys.begin(), keys.end(), KeyLess);
+        }
 
         for (size_t clusterIndex = 0; clusterIndex < clusters.size(); ++clusterIndex)
         {
             const MeshCluster &cluster = clusters[clusterIndex];
             if (cluster.LODLevel == 0)
             {
+                continue;
+            }
+            if (hasSourceGroup(cluster))
+            {
+                if (groupSplit[cluster.SourceGroupId] != 0)
+                {
+                    pinGroupMembers(cluster.SourceGroupId);
+                }
+                outChildPages[clusterIndex] = groupPage[cluster.SourceGroupId];
+                ++outResult.LinkedClusters;
+                ++outResult.LinkedByIdClusters;
                 continue;
             }
             const GroupKey probe = MakeKey(cluster.LODLevel, cluster.Bounds, cluster.LODError, 0);

@@ -96,8 +96,21 @@ v0 との違いは、(1) クラスタのレコードが 128B、(2) グループ�
 | 80 | `uint32` | `MaterialIndex` | 0 |
 | 84 | `uint32` | `PageId` | v1.0 は 0 固定。v1.1 は入っているページの番号（「v1.1」の節） |
 | 88 | `uint32` | `Flags` | bit0 = 根。他は 0 |
-| 92 | `uint32` | `Reserved0` | 0 |
+| 92 | `uint32` | `SourceGroupIdPlusOne` | このクラスタを作ったグループ（1 つ細かい段）の番号 + 1。0 は番号なし（段 0 と、この項目の導入前に焼いた資産）。下の「作ったグループの番号」 |
 | 96 | `uint64[4]` | `Reserved1..4` | 0 |
+
+#### 作ったグループの番号
+
+段 1 以上のクラスタ P は、グループ G（1 つ細かい段のクラスタの集まり）を簡略化して作られ、G の境界球と誤差を自分の値
+（`SelfCenter`・`SelfRadius`・`SelfError`）として持つ。クッカーは P の `SourceGroupIdPlusOne` に G の番号（グループの表の添字）+ 1 を書く。
+読み込みは `CookedMeshCluster::SourceGroupId`（番号。番号なしは `0xFFFFFFFF`）へ直して渡す。
+
+- 段 0 のクラスタは番号を持たない（0）。段 1 以上は番号を持てるが、持たなくてもよい（旧い資産は全て 0 で、そのまま読める）。
+- 番号があるとき、読み込みは次を検査し、違えば `InvalidLODGraph`: グループの数未満、段 0 でない、指すグループの段 + 1 が自分の段、
+  自分の境界球・誤差が指すグループの値と一致。
+- 同じ境界球・誤差を持つ別のグループ（同じ形の部品の複製など）があっても、番号は P の生成元を決める。
+  描画側（`ComputeGeometryPageLinks`）は、番号があれば値を照合せずにそのグループのページを子のページにし、番号が無い
+  クラスタだけを境界球・誤差の値の一致で照合する（同じ値で別のページのグループが複数あれば、そのページを常駐のまま固定する）。
 
 クラスタのインデックスは、**そのクラスタの頂点の範囲の先頭からの相対**（`< VertexCount`）。描くときの頂点は
 `VertexOffset + 相対`。
@@ -167,6 +180,7 @@ RT と影（VSM までのつなぎの CSM）は、階層を選ばずに **1 つ�
 - v0: 従来どおり（`bBakedLODHierarchy=false`、フォールバック無し、`bBuildLODHierarchy=false`）。
 - v1: `Clusters`（全段。`ParentBounds`・`ParentError`・`GroupId`・`PageId` つき）、`ClusterGroups`、
   `BakedLODLevelCount`、`FallbackIndexOffset`/`FallbackIndexCount`/`FallbackError` を渡し、`bBakedLODHierarchy=true`。
+  クラスタの `SourceGroupId`（作ったグループの番号）も渡す。
   `IndexData` はクラスタのインデックスにフォールバックのインデックスが続く並びのまま。
 
 GPU のカリングで階層を選ぶ処理と、影・RT でのフォールバックの使用は、それぞれ後続の項目

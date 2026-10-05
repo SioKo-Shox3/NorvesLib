@@ -184,6 +184,13 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t GroupId = 0xFFFFFFFFu;
         uint32_t PageId = 0; // このクラスタを持つページの番号（NVMESH v1.1 の Pages の添字。v1.0 以前は 0）
         /**
+         * @brief このクラスタを作ったグループ（1つ細かい段）の番号（ClusterGroups の添字）。無ければ 0xFFFFFFFF
+         *
+         * 焼き込み時に記録された番号。ある間は ComputeGeometryPageLinks が値の照合をせずに、そのグループのページを子のページにする。
+         * 最も細かい段のクラスタと、番号を持たない旧い資産は無し（境界球と誤差の値の照合へ戻る）。
+         */
+        uint32_t SourceGroupId = 0xFFFFFFFFu;
+        /**
          * @brief このクラスタを作ったグループ（もっと細かい子のクラスタ）を持つページの番号。無ければ INVALID_PAGE_ID
          *
          * CreateMegaMesh がグループの表から求める（ComputeGeometryPageLinks）。呼び出し側は設定しない。
