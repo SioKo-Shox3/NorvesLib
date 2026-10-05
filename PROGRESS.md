@@ -1091,3 +1091,9 @@
 - 検証: `verify-VTG6-VISBUFFER-RESOURCES-1.txt`（Debug の Game・RenderResourcesDomainContractTest・RenderGraphCompileTest、BUILD_EXIT_CODE=0）、`-2.txt`（ctest 2/2 passed、VisibilityBufferEncodingTest・RenderGraphCompileTest）。
 - Notes: (1) `RenderGraphResourceNames.h` は HEAD が行末混在なので、Edit ツールでなく HEAD のバイト列へ挿入して差分を 4 行に保った。 (2) 新規ファイルは BOM+CRLF。 (3) 次の VTG6-VIS-RASTER が、描画ごとに `RecordTable` へ記録を足し、`VisBufferDrawRecords` を書いて `VisBufferId` を宣言する。
 - Next: VTG6-VIS-RASTER（TEST-SKINNED で blocked の VTG6-RASTER-CHUNKS・VTG6-COMPUTE-SKINNING の実装は入っている）。
+
+## 反復 6（run 20261005-191130）: VTG6-VISBUFFER-RESOURCES 差し戻し対応（done）
+- 指摘: `IsValidRecord` が `FirstIndex % 3 == 0` を要求していたが、MegaGeometry の共有プールの区画の基点（`ComputePageRegionBases`）は 3 の倍数に整列しない。頂点 10・インデックス 30・区画位置 512 バイトで `IndexBase` = (512 + 512) / 4 = 256（256 % 3 = 1）となり、正当なクラスタの記録が断られて `Add` が 0 を返していた。
+- 修正: `VisibilityBuffer.h` の `IsValidRecord` から 3 の倍数の条件を外し、関連するコメント 2 か所を直した。三角形 t の頂点 k は `FirstIndex + 3t + k` で引くので、基点が 3 の倍数である必要はない。
+- テスト: `VisibilityBufferEncodingTest` の「3 の倍数でない記録は足せない」を「足せる」に直し、`TestRecordFromMegaGeometryPageRegion`（上の配置式から作った記録を `AddAndEncode`・`TryResolve` で往復できる）を足した。断った数の期待は 5 から 4 になった。
+- 検証: `verify-VTG6-VISBUFFER-RESOURCES-6.txt`（Debug の Game・RenderResourcesDomainContractTest・RenderGraphCompileTest、BUILD_EXIT_CODE=0）、`-7.txt`（ctest 2/2 passed）。行末は `git diff --numstat` と `--ignore-cr-at-eol` で一致。

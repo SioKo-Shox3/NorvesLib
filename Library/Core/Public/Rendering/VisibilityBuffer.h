@@ -128,7 +128,7 @@ namespace NorvesLib::Core::Rendering
             /** @brief この記録が覆う三角形の数（1 以上 MAX_TRIANGLES_PER_RECORD 以下） */
             uint32_t TriangleCount = 0;
 
-            /** @brief インデックスの並びの中の最初のインデックスの位置（3 の倍数） */
+            /** @brief インデックスの並びの中の最初のインデックスの位置（3 の倍数とは限らない。MegaGeometry の共有プールの区画の基点は 3 の倍数に整列しない） */
             uint32_t FirstIndex = 0;
             /** @brief インデックスから引いた値に足す頂点番号の基点 */
             uint32_t VertexBase = 0;
@@ -148,12 +148,12 @@ namespace NorvesLib::Core::Rendering
                           offsetof(DrawRecord, PreviousVertexAddress) == 48,
                       "VisibilityBuffer.glsl の uvec4 の並びと一致しなければならない");
 
-        /** @brief 記録が表の行として使える形か（種類が決まっていて、三角形が 1 以上 128 以下で、インデックスの位置が 3 の倍数） */
+        /** @brief 記録が表の行として使える形か（種類が決まっていて、三角形が 1 以上 128 以下） */
         constexpr bool IsValidRecord(const DrawRecord& record)
         {
             return record.Kind >= static_cast<uint32_t>(RecordKind::MegaGeometryCluster) &&
                    record.Kind <= static_cast<uint32_t>(RecordKind::SkinnedChunk) && record.TriangleCount != 0 &&
-                   record.TriangleCount <= MAX_TRIANGLES_PER_RECORD && record.FirstIndex % 3 == 0;
+                   record.TriangleCount <= MAX_TRIANGLES_PER_RECORD;
         }
 
         /**

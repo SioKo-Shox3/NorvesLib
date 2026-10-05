@@ -1,6 +1,7 @@
 ﻿// ビジビリティバッファの ID の符号化・描画の記録の表の契約テスト（GPU を使わない）。
 // ID = (記録の番号 << 7) | 三角形の番号 の往復、記録の数の上限（2^25）、空（0）の扱い、記録の表の追加・引き・容量、
 // RenderGraph の資源の記述、GLSL（Common/VisibilityBuffer.glsl）の定数が C++ と一致していることを確かめる。
+#include "Rendering/MegaGeometry/GeometryPageLayout.h"
 #include "Rendering/VisibilityBuffer.h"
 
 #include <cstdint>
@@ -203,15 +204,43 @@ void TestRecordTable()
     Expect(table.Add(MakeRecord(VB::RecordKind::None, 4, 6)) == 0, "種類が無い記録は足せない");
     Expect(table.Add(MakeRecord(VB::RecordKind::ProceduralChunk, 0, 6)) == 0, "三角形が 0 の記録は足せない");
     Expect(table.Add(MakeRecord(VB::RecordKind::ProceduralChunk, 129, 6)) == 0, "三角形が 129 の記録は足せない");
-    VB::DrawRecord badIndex = MakeRecord(VB::RecordKind::ProceduralChunk, 4, 6);
-    badIndex.FirstIndex = 4;
-    Expect(table.Add(badIndex) == 0, "最初のインデックスが 3 の倍数でない記録は足せない");
-    Expect(table.RecordCount() == countBefore && table.RejectedCount() == 5, "断った記録は表に入らず、断った数を数える");
+    Expect(table.RecordCount() == countBefore && table.RejectedCount() == 4, "断った記録は表に入らず、断った数を数える");
+
+    // 最初のインデックスの位置は 3 の倍数に限らない（共有プールの区画の基点は整列しない）。
+    VB::DrawRecord unalignedIndex = MakeRecord(VB::RecordKind::ProceduralChunk, 4, 6);
+    unalignedIndex.FirstIndex = 4;
+    Expect(table.Add(unalignedIndex) != 0 && table.RecordCount() == countBefore + 1,
+           "最初のインデックスが 3 の倍数でない記録も足せる");
 
     table.Clear();
     Expect(table.RecordCount() == 0 && table.SlotCount() == 1 && table.OverflowCount() == 0 &&
                table.RejectedCount() == 0,
            "Clear は記録と数えた数を戻す");
+}
+
+void TestRecordFromMegaGeometryPageRegion()
+{
+    // 頂点 10 個・インデックス 30 個のページを区画位置 512 バイトに置くと、インデックスの基点は 256（3 の倍数でない）。
+    namespace PageLayout = Core::Rendering::MegaGeometry::GeometryPageLayout;
+    const PageLayout::PageRegionLayout layout = PageLayout::ComputePageRegionLayout(10, 30);
+    const PageLayout::RegionBases bases = PageLayout::ComputePageRegionBases(512, layout);
+    Expect(layout.IndexOffsetBytes == 512 && bases.IndexBase == 256 && bases.VertexBase == 16,
+           "区画の配置式が想定どおりの基点を返す");
+    Expect(bases.IndexBase % 3 != 0, "この基点は 3 の倍数に整列しない");
+
+    VB::DrawRecord record = MakeRecord(VB::RecordKind::MegaGeometryCluster, 10, 1);
+    record.FirstIndex = PageLayout::ResolveFirstIndex(bases.IndexBase, 0);
+    record.VertexBase = static_cast<uint32_t>(PageLayout::ResolveVertexOffset(bases.VertexBase, 0));
+
+    VB::RecordTable table;
+    const uint32_t id = table.AddAndEncode(record, 9);
+    Expect(id != VB::EMPTY_ID && table.RejectedCount() == 0, "区画の基点から作った記録を足して符号化できる");
+
+    const VB::DrawRecord* resolved = nullptr;
+    uint32_t triangle = 0;
+    Expect(table.TryResolve(id, resolved, triangle) && resolved != nullptr && triangle == 9 &&
+               resolved->FirstIndex == 256 && resolved->VertexBase == 16 && resolved->TriangleCount == 10,
+           "足した ID から区画の基点を持つ記録と三角形を引ける");
 }
 
 void TestRecordTableCapacity()
@@ -364,6 +393,7 @@ int RunTest()
     TestRecordLimit();
     TestEmptyId();
     TestRecordTable();
+    TestRecordFromMegaGeometryPageRegion();
     TestRecordTableCapacity();
     TestRenderGraphDescriptions();
     TestGlslConstantsMatchCpp();
