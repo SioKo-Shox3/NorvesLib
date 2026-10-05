@@ -64,7 +64,7 @@ control fileはread共有だけで開き、単一linkのregular file、長名/�
 
 ## 検証と後続
 
-専用Windows試験は独立OS identityからschema fixtureを作り、sibling/disjoint、両順の入れ子、owner/spec/manifest変更とpending、欠落/置換claim、保存path罠、別store header、型/case/共有拒否/サイズ、4096件、alias/SUBST/Unicode親、case-sensitive/reparseの実条件を検査する。無変更確認はfixtureの全entry・file byte hash/size・write timeの前後比較。条件付きtestのflagが0なら未実測として記録する。
+専用Windows試験は独立OS identityからschema fixtureを作り、sibling/disjoint、両順の入れ子、owner/spec/manifest変更とpending、欠落/置換claim、保存path罠、別store header、型/case/共有拒否/サイズ、4096件、alias/SUBST/Unicode親、case-sensitive/reparseの実条件を検査する。無変更確認はfixtureの全entry・file byte hash/size・native handle由来write timeとvolume/file IDの前後比較。子を作成した直後のdirectory時刻は列挙cacheが古い場合があるため、directory_entryのcached timeを使わずFileBasicInfoを照合する。条件付きtestのflagが0なら未実測として記録する。
 
 未完はfresh store初期化、root claim登録、完全intentとreceipt、before/after image、条件付きrollback、root/state/indexの一体公開。既存production new-root-only経路は変更しない。新規store作成後には将来short aliasやtunnelingを予測せず、再観測が必須となる。
 

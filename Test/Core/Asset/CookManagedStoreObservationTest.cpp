@@ -202,8 +202,9 @@ namespace StoreObservationTest
     struct SnapshotEntry
     {
         std::filesystem::path Path;
-        std::filesystem::file_time_type Stamp;
-        uint64_t Hash = 0, Size = 0;
+        int64_t Stamp = 0;
+        uint64_t Hash = 0, Size = 0, VolumeSerial = 0;
+        NorvesLib::Core::Container::FixedArray<uint8_t, 16> FileId;
         bool bFile = false;
     };
     Array<SnapshotEntry> Snapshot(const std::filesystem::path& p)
@@ -213,8 +214,27 @@ namespace StoreObservationTest
         {
             SnapshotEntry a;
             a.Path = e.path();
-            a.bFile = e.is_regular_file();
-            a.Stamp = e.last_write_time();
+            // 列挙cacheのdirectory時刻は子の作成直後に古い場合がある。全entryをhandleで再観測する。
+            struct SnapshotHandle
+            {
+                HANDLE Value = INVALID_HANDLE_VALUE;
+                ~SnapshotHandle()
+                {
+                    if (Value != INVALID_HANDLE_VALUE)
+                    {
+                        CloseHandle(Value);
+                    }
+                }
+            } h;
+            h.Value = CreateFileW(e.path().c_str(), FILE_READ_ATTRIBUTES,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                  FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+            CHECK(h.Value != INVALID_HANDLE_VALUE);
+            FILE_ATTRIBUTE_TAG_INFO tag{};
+            CHECK(GetFileType(h.Value) == FILE_TYPE_DISK);
+            CHECK(GetFileInformationByHandleEx(h.Value, FileAttributeTagInfo, &tag, sizeof(tag)));
+            CHECK((tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0);
+            a.bFile = (tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
             if (a.bFile)
             {
                 auto bytes = Read(e.path());
@@ -225,6 +245,16 @@ namespace StoreObservationTest
                     a.Hash = (a.Hash ^ c) * 1099511628211ull;
                 }
             }
+            FILE_BASIC_INFO basic{};
+            FILE_ID_INFO identity{};
+            CHECK(GetFileInformationByHandleEx(h.Value, FileBasicInfo, &basic, sizeof(basic)));
+            CHECK(GetFileInformationByHandleEx(h.Value, FileIdInfo, &identity, sizeof(identity)));
+            a.Stamp = basic.LastWriteTime.QuadPart;
+            a.VolumeSerial = identity.VolumeSerialNumber;
+            std::memcpy(a.FileId.data(), identity.FileId.Identifier, 16);
+            const auto handle = h.Value;
+            h.Value = INVALID_HANDLE_VALUE;
+            CHECK(CloseHandle(handle));
             out.push_back(std::move(a));
         }
         std::sort(out.begin(), out.end(),
@@ -240,7 +270,9 @@ namespace StoreObservationTest
         for (size_t i = 0; i < a.size(); ++i)
         {
             const bool bSame = a[i].Path == b[i].Path && a[i].Stamp == b[i].Stamp && a[i].Hash == b[i].Hash &&
-                               a[i].Size == b[i].Size && a[i].bFile == b[i].bFile;
+                               a[i].Size == b[i].Size && a[i].bFile == b[i].bFile &&
+                               a[i].VolumeSerial == b[i].VolumeSerial &&
+                               std::memcmp(a[i].FileId.data(), b[i].FileId.data(), 16) == 0;
             if (!bSame)
             {
                 Text before, after;
@@ -248,12 +280,13 @@ namespace StoreObservationTest
                 CHECK(NorvesLib::Tools::AssetCook::Detail::EncodeCookPathUtf8(b[i].Path, after, false));
                 std::fprintf(
                     stderr,
-                    "store_snapshot_difference caller_line=%u entry=%zu before=%s after=%s file=%d/%d size=%llu/%llu hash=%016llx/%016llx stamp=%lld/%lld\n",
+                    "store_snapshot_difference caller_line=%u entry=%zu before=%s after=%s file=%d/%d size=%llu/%llu hash=%016llx/%016llx stamp=%lld/%lld identity_equal=%d\n",
                     static_cast<unsigned>(callerLine), i, before.c_str(), after.c_str(), a[i].bFile, b[i].bFile,
                     static_cast<unsigned long long>(a[i].Size), static_cast<unsigned long long>(b[i].Size),
                     static_cast<unsigned long long>(a[i].Hash), static_cast<unsigned long long>(b[i].Hash),
-                    static_cast<long long>(a[i].Stamp.time_since_epoch().count()),
-                    static_cast<long long>(b[i].Stamp.time_since_epoch().count()));
+                    static_cast<long long>(a[i].Stamp), static_cast<long long>(b[i].Stamp),
+                    a[i].VolumeSerial == b[i].VolumeSerial &&
+                        std::memcmp(a[i].FileId.data(), b[i].FileId.data(), 16) == 0);
             }
             CHECK(bSame);
         }
