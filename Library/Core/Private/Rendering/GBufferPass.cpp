@@ -11,6 +11,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SparseResidencyShading.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Debug/DebugConfig.h"
 #include "RHI/IDevice.h"
@@ -345,9 +346,20 @@ namespace NorvesLib::Core::Rendering
             height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
         }
 
+        // ビジビリティバッファの解決が書く 3 枚は、storage image としても使えるようにする
+        const bool bResolveWrites = context && context->Device && m_bVisibilityResolveActive &&
+                                    VisibilityResolveGeometry::IsSupported(context->Device->GetCapabilities());
+        const RHI::ResourceUsage resolveWriteUsage =
+            bResolveWrites ? RHI::ResourceUsage::ShaderWrite : RHI::ResourceUsage::None;
+
+        RGTextureDesc albedoDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo");
+        albedoDesc.Usage = albedoDesc.Usage | resolveWriteUsage;
+        RGTextureDesc normalDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal");
+        normalDesc.Usage = normalDesc.Usage | resolveWriteUsage;
+
         m_AlbedoHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferAlbedo,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo"),
+            albedoDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,
@@ -356,7 +368,7 @@ namespace NorvesLib::Core::Rendering
 
         m_NormalHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferNormal,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal"),
+            normalDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,
@@ -386,7 +398,7 @@ namespace NorvesLib::Core::Rendering
             height,
             m_Settings.VelocityFormat,
             "GBuffer_Velocity");
-        velocityDesc.Usage = velocityDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        velocityDesc.Usage = velocityDesc.Usage | RHI::ResourceUsage::TransferSrc | resolveWriteUsage;
         m_VelocityHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferVelocity,
             velocityDesc,
@@ -490,6 +502,13 @@ namespace NorvesLib::Core::Rendering
         auto *materials = context.Resources.Materials;
         auto *textures = context.Resources.Textures;
         auto *meshes = context.Resources.Meshes;
+        // ビジビリティバッファの解決が GBuffer を書くときは、描かずにクリアだけを行う
+        if (m_bVisibilityResolveActive && context.Device &&
+            VisibilityResolveGeometry::IsSupported(context.Device->GetCapabilities()))
+        {
+            TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
+            return;
+        }
         if (!m_SceneRenderer || !materials || !textures || (!meshes && !context.SkinnedMeshes))
         {
             TryEnqueueNativeClearPass(context, viewport, scissor, meshes);

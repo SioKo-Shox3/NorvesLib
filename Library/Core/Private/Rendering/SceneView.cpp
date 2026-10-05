@@ -8,6 +8,7 @@
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/VisibilityRasterPass.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/VolumetricsPass.h"
@@ -830,6 +831,9 @@ namespace NorvesLib::Core::Rendering
                                           VisibilityBufferMode visibilityBuffer)
     {
         const bool bVisibilityBuffer = IsVisibilityBufferActive(visibilityBuffer);
+        // On のときは、ビジビリティバッファの解決が GBuffer を書く（GBufferPass・MegaGeometryPass は GBuffer の描画を止める）。
+        // Debug は今の GBuffer の描画を残したまま、ID の検証表示だけを足す
+        const bool bVisibilityResolve = visibilityBuffer == VisibilityBufferMode::On;
         // 既存のパスをクリア
         while (GetPassCount() > 0)
         {
@@ -871,6 +875,7 @@ namespace NorvesLib::Core::Rendering
         gbufferPass->SetSceneView(this);
         gbufferPass->SetSceneRenderer(sceneRenderer);
         gbufferPass->SetRegisterLegacyBridge(false);
+        gbufferPass->SetVisibilityResolveActive(bVisibilityResolve);
         AddPass(std::move(gbufferPass));
 
         // MegaGeometryPass: GPU駆動クラスターカリング + GBufferへのIndirectDraw
@@ -879,11 +884,13 @@ namespace NorvesLib::Core::Rendering
         megaGeometryPass->SetSceneView(this);
         megaGeometryPass->SetSceneRenderer(sceneRenderer);
         megaGeometryPass->SetVisibilityDrawPlanEnabled(bVisibilityBuffer);
+        megaGeometryPass->SetSkipGBufferDraw(bVisibilityResolve);
         MegaGeometryPass *megaGeometryPassPtr = megaGeometryPass.get();
         AddPass(std::move(megaGeometryPass));
 
         // VisibilityRasterPass: 不透明の描画のすべて（MegaGeometry のクラスタ・手続きメッシュの塊・スキニングの塊）を、
-        // 今の GBuffer の描画に加えて VisBuffer.Id と GBuffer.Depth へ描く。--visibility-buffer=on|debug のときだけ足す。
+        // VisBuffer.Id と GBuffer.Depth へ描く（on では GBuffer の描画の代わりに、debug では今の GBuffer の描画に加えて）。
+        // --visibility-buffer=on|debug のときだけ足す。
         VisibilityRasterPass *visibilityRasterPassPtr = nullptr;
         if (bVisibilityBuffer)
         {
@@ -892,6 +899,16 @@ namespace NorvesLib::Core::Rendering
             visibilityRasterPass->SetSkinningComputePass(skinningComputePassPtr);
             visibilityRasterPassPtr = visibilityRasterPass.get();
             AddPass(std::move(visibilityRasterPass));
+        }
+
+        // VisibilityResolvePass: VisBuffer.Id から三角形を引いて、GBuffer の Albedo・Normal・Velocity を書く（--visibility-buffer=on）。
+        // 装置が対応しないときは何も宣言せず、GBufferPass・MegaGeometryPass も描画を止めない。
+        if (visibilityRasterPassPtr && bVisibilityResolve)
+        {
+            auto visibilityResolvePass = MakeUnique<VisibilityResolvePass>();
+            visibilityResolvePass->SetRasterPass(visibilityRasterPassPtr);
+            visibilityResolvePass->SetSkinningComputePass(skinningComputePassPtr);
+            AddPass(std::move(visibilityResolvePass));
         }
 
         // MaterialTileClassifyPass: VisBuffer.Id から、材質ごとのタイルの一覧と間接 dispatch の引数を作る。

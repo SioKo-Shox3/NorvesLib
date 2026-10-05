@@ -97,6 +97,15 @@ namespace NorvesLib::Core::Rendering
         /** @brief 材質の表の、使っている範囲の件数 */
         uint32_t GetMaterialTableCount() const { return m_LastMaterialTableCount; }
 
+        /**
+         * @brief 最後の Execute が描いた MegaGeometry のインスタンスの表（書かなかった・MegaGeometry を描かなかったフレームは null）
+         *
+         * 記録の InstanceIndex（MegaGeometry のクラスタ）がこの表の添え字。表の中身は MegaGeometryPass のフレームごとのバッファで、
+         * 幾何の解決が変換（今・前）を引くために読む。使っている範囲のバイト数も返す。
+         */
+        const RHI::BufferPtr& GetMegaInstanceBuffer() const { return m_LastMegaInstanceBuffer; }
+        uint64_t GetMegaInstanceBufferBytes() const { return m_LastMegaInstanceBytes; }
+
         RGResourceHandle GetIdHandle() const { return m_IdHandle.ToResourceHandle(); }
         RGResourceHandle GetDepthHandle() const { return m_DepthHandle; }
 
@@ -189,6 +198,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_LastRecordTableBytes = 0;
         RHI::BufferPtr m_LastMaterialTable;
         uint32_t m_LastMaterialTableCount = 0;
+        RHI::BufferPtr m_LastMegaInstanceBuffer;
+        uint64_t m_LastMegaInstanceBytes = 0;
         // そのフレームの材質の表の積み上げ（Execute のたびに空にする）
         VisibilityBuffer::MaterialTable m_MaterialTable;
         // 材質の表の件数を最後にログへ書いた値（変わったときだけ書く）

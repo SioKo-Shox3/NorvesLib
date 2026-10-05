@@ -696,6 +696,8 @@ namespace NorvesLib::Core::Rendering
         m_LastRecordTableBytes = 0;
         m_LastMaterialTable.reset();
         m_LastMaterialTableCount = 0;
+        m_LastMegaInstanceBuffer.reset();
+        m_LastMegaInstanceBytes = 0;
 
         // そのフレームの MegaGeometry の描画の写し。取り出すと、MegaGeometryPass が残したバッファの戻しはこのパスの責任になる
         MegaGeometryPass::VisibilityDrawPlan plan;
@@ -992,6 +994,11 @@ namespace NorvesLib::Core::Rendering
         m_LastRecordTableBytes = tableBytes;
         m_LastMaterialTable = slot.MaterialTable;
         m_LastMaterialTableCount = static_cast<uint32_t>(materialEntries.size());
+        if (bHasMegaDraw)
+        {
+            m_LastMegaInstanceBuffer = plan.InstanceBuffer;
+            m_LastMegaInstanceBytes = plan.InstanceBufferBytes;
+        }
 
         // 材質の数は、変わったときだけログへ書く。上限を超えたら、通知を一度だけ出す
         if (!m_bLoggedMaterials || m_LoggedMaterialUnique != m_Stats.MaterialUnique ||

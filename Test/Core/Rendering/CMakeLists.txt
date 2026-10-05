@@ -475,6 +475,19 @@ set_tests_properties(MaterialTileClassifyVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# ビジビリティバッファの幾何の解決（visbuffer_resolve.comp）を、合成した ID の画像・描画の記録の表・頂点とインデックスのバッファで動かし、
+# GBuffer の Albedo・Normal・Velocity と、画素ごとの重心座標・UV・解析的な微分・接線の基底・前のクリップ座標が、
+# ラスタライザと同じ式で作った CPU の参照（倍精度）と一致することを確かめる。手続き（32bit・16bit インデックス）・MegaGeometry・
+# スキニング 2 体（1 つのバッファの別の位置）の記録、空の画素・引けない ID は何も書かないこと、前のカメラが無いと速度 0 を含む。
+# 製品の版と検証用の版（書き出しつき）の両方で validation error 0 件。
+add_test(NAME VisibilityResolveVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VisibilityResolveVulkanTest)
+set_tests_properties(VisibilityResolveVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
@@ -495,6 +508,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER IntegerAttachmentVulkanTest IntegerAttachmentVulkanTest.cpp
     MEMBER ComputeSkinningVulkanTest ComputeSkinningVulkanTest.cpp
     MEMBER MaterialTileClassifyVulkanTest MaterialTileClassifyVulkanTest.cpp
+    MEMBER VisibilityResolveVulkanTest VisibilityResolveVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE
@@ -565,6 +579,37 @@ register_rendering_gpu_test(
     --scene=outdoor
     --capture-source=gbuffer-velocity
     --scenario=skinned-motion)
+
+# ビジビリティバッファ（--visibility-buffer=on）でも同じ速度の検証を通す。GBuffer.Velocity を幾何の解決（visbuffer_resolve.comp）が
+# 書くので、静止・カメラ・物体・スキニングの動きの符号と大きさが、ラスタの経路と同じ期待値を満たすこと。
+register_rendering_gpu_test(
+    RenderingVelocityStaticVisibilityBufferVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=indoor
+    --capture-source=gbuffer-velocity
+    --scenario=static
+    --visibility-buffer=on)
+register_rendering_gpu_test(
+    RenderingVelocityMotionVisibilityBufferVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=camera-object-motion
+    --visibility-buffer=on)
+register_rendering_gpu_test(
+    RenderingVelocityObjectVisibilityBufferVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=object-motion
+    --visibility-buffer=on)
+register_rendering_gpu_test(
+    RenderingVelocitySkinnedVisibilityBufferVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=skinned-motion
+    --visibility-buffer=on)
 
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp

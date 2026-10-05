@@ -157,6 +157,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkinningComputePass.cpp
     Private/Rendering/MaterialTileClassifyPass.cpp
     Private/Rendering/VisibilityRasterPass.cpp
+    Private/Rendering/VisibilityResolvePass.cpp
     Private/Rendering/VisibilityMaterialTable.cpp
     # Engine
     Private/Engine/AssetRegistry.cpp
@@ -403,6 +404,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SkinningComputePass.h
     Public/Rendering/MaterialTileClassifyPass.h
     Public/Rendering/VisibilityRasterPass.h
+    Public/Rendering/VisibilityResolvePass.h
     Public/Rendering/VisibilityMaterialTable.h
     Public/Rendering/VisibilityBufferMode.h
     # MegaGeometry types

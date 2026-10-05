@@ -132,6 +132,20 @@ namespace NorvesLib::Core::Rendering
             m_bRegisterLegacyBridge = bRegister;
         }
 
+        /**
+         * @brief ビジビリティバッファの幾何の解決が GBuffer を書くか（既定は false）
+         *
+         * true のとき（--visibility-buffer=on）、不透明の描画を GBuffer へ描かず、GBuffer のクリアだけを行う。
+         * Albedo・Normal・Velocity は解決のパス（VisibilityResolvePass）が storage image として書くので、Declare がこの 3 枚に
+         * 書き込みの使い道（ShaderWrite）を足す。装置が解決に対応しない（VisibilityResolveGeometry::IsSupported が false）ときは、
+         * true でも従来どおり描く。
+         */
+        void SetVisibilityResolveActive(bool bActive)
+        {
+            m_bVisibilityResolveActive = bActive;
+        }
+        bool IsVisibilityResolveActive() const { return m_bVisibilityResolveActive; }
+
         // ========================================
         // GBufferアクセス
         // ========================================
@@ -283,6 +297,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
         bool m_bRegisterLegacyBridge = true;
+        bool m_bVisibilityResolveActive = false;
         bool m_bUsingRenderGraphResources = false;
         bool m_bRenderPassUsesRenderGraphInitialStates = false;
         RHI::ITexture* m_FramebufferAlbedoTexture = nullptr;

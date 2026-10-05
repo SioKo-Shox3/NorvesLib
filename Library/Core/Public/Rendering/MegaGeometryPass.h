@@ -174,6 +174,19 @@ namespace NorvesLib::Core::Rendering
         bool IsVisibilityDrawPlanEnabled() const { return m_bVisibilityPlanEnabled; }
 
         /**
+         * @brief GBuffer への描画を止めるか（既定は止めない）
+         *
+         * ビジビリティバッファの幾何の解決が GBuffer を書くとき（--visibility-buffer=on）に true にする。止めても、
+         * カリング・遮蔽の判定・描画の写しの作成・render pass の開始と終了（GBuffer の添付の状態遷移）は行い、描画の呼び出しだけを省く。
+         * 装置が解決に対応しない（VisibilityResolveGeometry::IsSupported が false）ときは、true でも描く。
+         *
+         * 2 パスの遮蔽の HZB は GBuffer の深度から作るので、止めている間は 1 パス目のクラスタが深度に入らない。
+         * 判定は隠れていない側（描く側）に倒れるだけで、見える物は欠けない。
+         */
+        void SetSkipGBufferDraw(bool bSkip) { m_bSkipGBufferDraw = bSkip; }
+        bool IsSkipGBufferDraw() const { return m_bSkipGBufferDraw; }
+
+        /**
          * @brief 最後の RecordFrameCommand が作った描画の写しを取り出す（取り出すと空になる）
          * @return 写しがあれば true。そのフレームに描いたクラスタが無い・写しを作らない設定なら false
          */
@@ -525,6 +538,8 @@ namespace NorvesLib::Core::Rendering
 
         // ビジビリティバッファのラスタへ渡す描画の写し（TakeVisibilityDrawPlan が取り出す）
         bool m_bVisibilityPlanEnabled = false;
+        // GBuffer への描画を止めるか（ビジビリティバッファの解決が GBuffer を書くとき）
+        bool m_bSkipGBufferDraw = false;
         VisibilityDrawPlan m_VisibilityPlan;
         // 描画の写しを作ったフレームの IndirectDraw・カウンタ・描画情報のバッファが、Common へ戻されないまま残っているか
         bool m_bVisibilityBuffersHeld = false;

@@ -30,6 +30,7 @@
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/VisibilityRasterPass.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Test/Core/Rendering/GeometryUploadTestSupport.h"
 #include "Container/PointerTypes.h"
@@ -81,6 +82,10 @@ namespace
         _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
     }
+
+    // FakeBuffer が返す、スキニングの変形した頂点（今・前）のバッファのデバイスアドレス
+    constexpr uint64_t SkinningCurrentVerticesAddress = 0x200000000ull;
+    constexpr uint64_t SkinningPreviousVerticesAddress = 0x300000000ull;
 
     struct BarrierEvent
     {
@@ -319,6 +324,15 @@ namespace
             if (IsDebugName(m_Desc.DebugName, "GeometryPoolBlock"))
             {
                 return 0x100000000ull + (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(this)) & 0xFFFFFFF0ull);
+            }
+            // スキニングの変形した頂点（今・前）。インスタンスごとの先頭のアドレスの検査に使う固定の値
+            if (IsDebugName(m_Desc.DebugName, "Skinning_CurrentVertices"))
+            {
+                return SkinningCurrentVerticesAddress;
+            }
+            if (IsDebugName(m_Desc.DebugName, "Skinning_PreviousVertices"))
+            {
+                return SkinningPreviousVerticesAddress;
             }
             return 0;
         }
@@ -1012,6 +1026,14 @@ namespace
         {
             EnableMegaGeometryBatchCapabilities();
             m_Capabilities.bGeometryShader = true;
+        }
+
+        // ビジビリティバッファの幾何の解決（頂点のデバイスアドレス・RG16F などの storage image）が要る機能も表明する
+        void EnableVisibilityResolveCapabilities()
+        {
+            EnableVisibilityBufferCapabilities();
+            m_Capabilities.bBufferDeviceAddress = true;
+            m_Capabilities.bShaderStorageImageExtendedFormats = true;
         }
 
         Container::VariableArray<RHI::RenderPassDesc> CreatedRenderPassDescs;
@@ -1978,6 +2000,7 @@ namespace
         VisibilityRasterPass Raster;
         MaterialTileClassifyPass Classify;
         SkinningComputePass Skinning;
+        VisibilityResolvePass Resolve;
         FakeCommandList CommandList;
         Container::VariableArray<DrawCommand> OpaqueCommands;
         Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>> SkinnedLeases;
@@ -2003,6 +2026,17 @@ namespace
         AddedDisabled,
     };
 
+    // 幾何の解決（--visibility-buffer=on）の足し方
+    enum class ResolveMode
+    {
+        /** @brief 解決を使わない（GBuffer の描画が残る） */
+        None,
+        /** @brief SceneView の On と同じ配線（GBufferPass・MegaGeometryPass の描画を止め、解決のパスを足す）。装置は解決に対応する */
+        Supported,
+        /** @brief 配線は同じだが、装置が解決に対応しない（頂点のデバイスアドレス・拡張形式の storage image が無い） */
+        UnsupportedDevice,
+    };
+
     // bVisibilityPlan=false は --visibility-buffer=off（MegaGeometryPass が描画の写しを作らず、VisibilityRasterPass も足さない）
     // bSkinning=true は、スキニングの描画1件と貸し出しを渡して SkinningComputePass を足す。
     // SkinnedMeshes は渡さない（変形を1つも記録できないフレーム）ので、dispatch は増えない。
@@ -2014,10 +2048,19 @@ namespace
                                   bool bOcclusionCulling,
                                   ClassifyMode classifyMode = ClassifyMode::None,
                                   bool bSkinning = false,
-                                  bool bMaterialDraws = false)
+                                  bool bMaterialDraws = false,
+                                  ResolveMode resolveMode = ResolveMode::None,
+                                  uint32_t skinnedInstanceCount = 1)
     {
         scene.Device = RHI::MakeShared<FakeDevice>();
-        scene.Device->EnableVisibilityBufferCapabilities();
+        if (resolveMode == ResolveMode::Supported)
+        {
+            scene.Device->EnableVisibilityResolveCapabilities();
+        }
+        else
+        {
+            scene.Device->EnableVisibilityBufferCapabilities();
+        }
         assert(scene.ShaderMgr.Initialize(scene.Device.get(), TestShaderDirectory));
         assert(scene.Pool.Initialize(&scene.Allocator, 1));
         scene.Pool.BeginFrame(0);
@@ -2027,6 +2070,11 @@ namespace
         assert(scene.Graph.Initialize(&scene.Pool));
         scene.Graph.BeginFrame(0);
         scene.GBuffer.SetSceneRenderer(&scene.Renderer);
+        if (resolveMode != ResolveMode::None)
+        {
+            scene.GBuffer.SetVisibilityResolveActive(true);
+            scene.Mega.SetSkipGBufferDraw(true);
+        }
 
         float vertices[12] = {0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f};
         uint32_t indices[3] = {0, 1, 2};
@@ -2108,30 +2156,40 @@ namespace
 
         if (bSkinning)
         {
-            Container::VariableArray<SkinnedMeshVertex> skinVertices;
-            skinVertices.resize(3);
-            for (SkinnedMeshVertex& vertex : skinVertices)
+            // 2 体目以降は頂点数を変えて（3 + 3 * 体の番号）、出力の中の先頭の頂点番号（VertexBase）を 0 以外にする
+            for (uint32_t body = 0; body < skinnedInstanceCount; ++body)
             {
-                vertex.BoneWeights[0] = 1.0f;
-            }
-            Container::VariableArray<uint32_t> skinIndices;
-            skinIndices.push_back(0u);
-            skinIndices.push_back(1u);
-            skinIndices.push_back(2u);
-            auto assetLease = Container::MakeShared<SkinnedMeshAssetLease>(
-                SkinnedMeshHandle{1, 1}, std::move(skinVertices), std::move(skinIndices));
-            scene.SkinnedLeases.push_back(Container::MakeShared<SkinnedMeshFrameLease>(assetLease));
+                const uint32_t vertexCount = 3 + 3 * body;
+                Container::VariableArray<SkinnedMeshVertex> skinVertices;
+                skinVertices.resize(vertexCount);
+                for (SkinnedMeshVertex& vertex : skinVertices)
+                {
+                    vertex.BoneWeights[0] = 1.0f;
+                }
+                Container::VariableArray<uint32_t> skinIndices;
+                for (uint32_t index = 0; index < 3; ++index)
+                {
+                    skinIndices.push_back(index);
+                }
+                auto assetLease = Container::MakeShared<SkinnedMeshAssetLease>(
+                    SkinnedMeshHandle{1 + body, 1}, std::move(skinVertices), std::move(skinIndices));
+                scene.SkinnedLeases.push_back(Container::MakeShared<SkinnedMeshFrameLease>(assetLease));
 
-            DrawCommand skinnedCommand;
-            skinnedCommand.Draw.PayloadKind = DrawPayloadKind::Skinned;
-            skinnedCommand.Skinned.FrameLeaseIndex = 0;
-            skinnedCommand.Skinned.BonePalette.push_back(NorvesLib::Math::Matrix4x4::Identity);
-            if (bMaterialDraws)
-            {
-                skinnedCommand.Draw.MaterialHandle = scene.MaterialA;
-                skinnedCommand.Draw.MaterialIndex = 9;
+                DrawCommand skinnedCommand;
+                skinnedCommand.Draw.PayloadKind = DrawPayloadKind::Skinned;
+                if (body > 0)
+                {
+                    skinnedCommand.Draw.ObjectId = 200 + body;
+                }
+                skinnedCommand.Skinned.FrameLeaseIndex = body;
+                skinnedCommand.Skinned.BonePalette.push_back(NorvesLib::Math::Matrix4x4::Identity);
+                if (bMaterialDraws)
+                {
+                    skinnedCommand.Draw.MaterialHandle = scene.MaterialA;
+                    skinnedCommand.Draw.MaterialIndex = 9;
+                }
+                scene.OpaqueCommands.push_back(skinnedCommand);
             }
-            scene.OpaqueCommands.push_back(skinnedCommand);
         }
 
         scene.Camera.Viewport.Width = 128.0f;
@@ -2181,6 +2239,17 @@ namespace
             }
             assert(scene.Raster.Initialize(context));
             scene.Graph.AddPass(&scene.Raster);
+            if (resolveMode != ResolveMode::None)
+            {
+                // SceneView の On と同じく、描画のパスの後に足す
+                scene.Resolve.SetRasterPass(&scene.Raster);
+                if (bSkinning)
+                {
+                    scene.Resolve.SetSkinningComputePass(&scene.Skinning);
+                }
+                assert(scene.Resolve.Initialize(context));
+                scene.Graph.AddPass(&scene.Resolve);
+            }
             if (classifyMode != ClassifyMode::None)
             {
                 if (classifyMode != ClassifyMode::AddedDisabled)
@@ -2206,6 +2275,7 @@ namespace
 
     void ShutdownVisibilityRasterScene(VisibilityRasterScene& scene)
     {
+        scene.Resolve.Shutdown();
         scene.Classify.Shutdown();
         scene.Raster.Shutdown();
         scene.Skinning.Shutdown();
@@ -3160,6 +3230,193 @@ namespace
         assert(scene.Raster.GetLastFrameStats().TotalSlots == 3);
 
         ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 解決を使わない On（ID の描画に加えて GBuffer へも描く）の、描画・dispatch・レンダーパスの数。解決を使う構成と比べる基準。
+    // GBufferPass が積む描画のコマンドは、この構成（FakeDevice）では空なので数えない。GBufferPass の描画の抑制は
+    // SkinnedRenderPathContractTest（TestGBufferPassSkipsDrawsOnlyWhenVisibilityResolveIsActiveAndSupported）で確かめる
+    struct OnWithoutResolveBaseline
+    {
+        size_t IndirectDraws = 0;
+        uint32_t Dispatches = 0;
+        uint32_t RenderPasses = 0;
+        bool bGBufferVelocityHasShaderWrite = false;
+        size_t GBufferVelocityBarriers = 0;
+    };
+
+    // GBuffer.Velocity（RG16F）のバリアに現れるテクスチャが ShaderWrite の使い道を持つか。barrierCount にバリアの数を返す
+    bool VelocityTexturesHaveShaderWrite(const FakeCommandList& commandList, size_t& barrierCount)
+    {
+        bool bAllHaveShaderWrite = true;
+        barrierCount = 0;
+        for (const BarrierEvent& barrier : commandList.Barriers)
+        {
+            if (barrier.Kind == RGBarrierKind::Texture && barrier.Texture && barrier.Texture->GetFormat() == RHI::Format::R16G16_FLOAT)
+            {
+                ++barrierCount;
+                bAllHaveShaderWrite = bAllHaveShaderWrite && HasUsage(barrier.Texture->GetUsage(), RHI::ResourceUsage::ShaderWrite);
+            }
+        }
+        return barrierCount > 0 && bAllHaveShaderWrite;
+    }
+
+    OnWithoutResolveBaseline MeasureOnWithoutResolve()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true);
+        OnWithoutResolveBaseline baseline;
+        baseline.IndirectDraws = scene.CommandList.IndirectDraws.size();
+        baseline.Dispatches = scene.CommandList.DispatchCount;
+        baseline.RenderPasses = scene.CommandList.BeginRenderPassCount;
+        baseline.bGBufferVelocityHasShaderWrite = VelocityTexturesHaveShaderWrite(scene.CommandList, baseline.GBufferVelocityBarriers);
+        ShutdownVisibilityRasterScene(scene);
+        return baseline;
+    }
+
+    // --visibility-buffer=on: GBufferPass・MegaGeometryPass は GBuffer の描画を止め（クリアと添付の遷移だけ残す）、
+    // 幾何の解決のパスが GBuffer の Albedo・Normal・Velocity を storage image として書く。
+    // 止める配線（SetVisibilityResolveActive・SetSkipGBufferDraw）や、storage image の使い道・書き込みの状態を戻すと落ちる
+    void TestVisibilityResolveOnReplacesGBufferDrawsWithStorageImageWrites()
+    {
+        const OnWithoutResolveBaseline baseline = MeasureOnWithoutResolve();
+        // 解決を使わない On は、ID の描画 + MegaGeometry の GBuffer への描画の間接描画 4 回
+        assert(baseline.IndirectDraws == 4);
+        // 基準では GBuffer.Velocity は storage image として使われない
+        assert(baseline.GBufferVelocityBarriers > 0 && !baseline.bGBufferVelocityHasShaderWrite);
+
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, ResolveMode::Supported);
+        FakeCommandList& commandList = scene.CommandList;
+
+        // MegaGeometry の GBuffer への間接描画（1・2 パス目）は止まり、ID の描画の 2 回だけが残る。render pass の数は変わらない
+        assert(commandList.IndirectDraws.size() == baseline.IndirectDraws - 2);
+        assert(commandList.BeginRenderPassCount == baseline.RenderPasses);
+        assert(commandList.EndRenderPassCount == baseline.RenderPasses);
+
+        // 解決: 画面を 8x8 のタイルに分けた 1 回の dispatch（128x64 → 16x8 グループ）が最後に足される
+        assert(scene.Resolve.WasResolved());
+        assert(commandList.DispatchCount == baseline.Dispatches + 1);
+        const FakeCommandList::DispatchSize& resolveGroups = commandList.DispatchGroups.back();
+        assert(resolveGroups.X == 16 && resolveGroups.Y == 8 && resolveGroups.Z == 1);
+
+        // GBuffer の 3 枚が storage image の状態（UnorderedAccess）へ遷移し、書き込みの使い道（ShaderWrite）を持つ
+        uint32_t albedoWrites = 0;
+        uint32_t normalWrites = 0;
+        uint32_t velocityWrites = 0;
+        for (const BarrierEvent& barrier : commandList.Barriers)
+        {
+            if (barrier.Kind != RGBarrierKind::Texture || !barrier.Texture || barrier.AfterState != RHI::ResourceState::UnorderedAccess)
+            {
+                continue;
+            }
+            switch (barrier.Texture->GetFormat())
+            {
+            case RHI::Format::R8G8B8A8_UNORM:
+                albedoWrites += HasUsage(barrier.Texture->GetUsage(), RHI::ResourceUsage::ShaderWrite) ? 1 : 0;
+                break;
+            case RHI::Format::R16G16B16A16_FLOAT:
+                normalWrites += HasUsage(barrier.Texture->GetUsage(), RHI::ResourceUsage::ShaderWrite) ? 1 : 0;
+                break;
+            case RHI::Format::R16G16_FLOAT:
+                velocityWrites += HasUsage(barrier.Texture->GetUsage(), RHI::ResourceUsage::ShaderWrite) ? 1 : 0;
+                break;
+            default:
+                break;
+            }
+        }
+        assert(albedoWrites == 1 && normalWrites == 1 && velocityWrites == 1);
+        size_t velocityBarriers = 0;
+        assert(VelocityTexturesHaveShaderWrite(commandList, velocityBarriers));
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 装置が解決に対応しない（頂点のデバイスアドレス・拡張形式の storage image が無い）ときは、配線が On でも
+    // GBuffer の描画を止めず、解決のパスは何もしない（見える物が消えない）。
+    void TestVisibilityResolveUnsupportedDeviceKeepsGBufferDraws()
+    {
+        const OnWithoutResolveBaseline baseline = MeasureOnWithoutResolve();
+
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, ResolveMode::UnsupportedDevice);
+        FakeCommandList& commandList = scene.CommandList;
+        assert(commandList.IndirectDraws.size() == baseline.IndirectDraws);
+        assert(!scene.Resolve.WasResolved());
+        assert(commandList.DispatchCount == baseline.Dispatches);
+        size_t velocityBarriers = 0;
+        assert(!VelocityTexturesHaveShaderWrite(commandList, velocityBarriers) && velocityBarriers > 0);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // スキニングのインスタンスが 2 体のとき、2 体目の記録は、頂点のアドレスが 2 体目の先頭（変形した頂点の列の中の位置）を指し、
+    // 頂点の基点は 0（アドレスに加算済みなので二重に足さない）。1 体だけの場面では基点が 0 になり検出できないので 2 体で確かめる。
+    // 記録の頂点の基点へ出力の先頭の頂点番号を入れる（二重加算）形に戻すと、2 体目の解決が範囲外の頂点を読むので落ちる
+    void TestVisibilityRasterSkinnedRecordsAddressEachBodyOnce()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, ResolveMode::None, 2);
+
+        const VisibilityRasterFrameStats& stats = scene.Raster.GetLastFrameStats();
+        assert(stats.bRendered);
+        assert(stats.ProceduralRecords == 3 && stats.SkinnedRecords == 2);
+        const auto& instances = scene.Skinning.GetInstances();
+        assert(instances.size() == 2);
+        // 1 体目は列の先頭、2 体目は 1 体目の頂点数（3）の後ろから始まる
+        assert(instances[0].VertexBase == 0 && instances[0].VertexCount == 3);
+        assert(instances[1].VertexBase == 3 && instances[1].VertexCount == 6);
+
+        const auto* recordTable = static_cast<const FakeBuffer*>(scene.Raster.GetRecordTable().get());
+        assert(recordTable != nullptr);
+        constexpr size_t RecordCount = 5; // 手続き 3 件 → スキニング 2 件
+        assert(recordTable->LastUpdateBytes.size() == RecordCount * sizeof(VisibilityBuffer::DrawRecord));
+        VisibilityBuffer::DrawRecord records[RecordCount];
+        std::memcpy(records, recordTable->LastUpdateBytes.data(), sizeof(records));
+        constexpr uint64_t OutputVertexBytes = 32;
+        for (uint32_t body = 0; body < 2; ++body)
+        {
+            const VisibilityBuffer::DrawRecord& record = records[3 + body];
+            assert(record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::SkinnedChunk));
+            assert(record.InstanceIndex == body);
+            assert(record.VertexBase == 0);
+            assert(record.VertexAddress == SkinningCurrentVerticesAddress + instances[body].VertexBase * OutputVertexBytes);
+            assert(record.PreviousVertexAddress == SkinningPreviousVerticesAddress + instances[body].VertexBase * OutputVertexBytes);
+            assert(record.TriangleCount == 1);
+        }
+        // 2 体目は 1 体目と違う位置を指す（取り違えない）
+        assert(records[4].VertexAddress == records[3].VertexAddress + 3 * OutputVertexBytes);
+        assert(records[4].PreviousVertexAddress == records[3].PreviousVertexAddress + 3 * OutputVertexBytes);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // SceneView の配線: On だけが解決のパスを足し、GBufferPass・MegaGeometryPass の描画を止める。
+    // Off（既定）は従来のまま、Debug は今の GBuffer の描画を残して ID の検証表示だけを足す
+    void TestSceneViewWiresVisibilityResolveOnlyForOnMode()
+    {
+        struct ModeExpectation
+        {
+            VisibilityBufferMode Mode;
+            bool bResolve;
+        };
+        const ModeExpectation expectations[] = {
+            {VisibilityBufferMode::Off, false},
+            {VisibilityBufferMode::On, true},
+            {VisibilityBufferMode::Debug, false},
+        };
+        for (const ModeExpectation& expectation : expectations)
+        {
+            SceneRenderer renderer;
+            SceneView sceneView;
+            sceneView.SetupDeferredPipeline(&renderer, RasterDirectBrdf::Analytic, expectation.Mode);
+            const auto* gbuffer = static_cast<const GBufferPass*>(sceneView.FindPass("GBufferPass"));
+            const auto* mega = static_cast<const MegaGeometryPass*>(sceneView.FindPass("MegaGeometryPass"));
+            assert(gbuffer != nullptr && mega != nullptr);
+            assert(gbuffer->IsVisibilityResolveActive() == expectation.bResolve);
+            assert(mega->IsSkipGBufferDraw() == expectation.bResolve);
+            assert((sceneView.FindPass("VisibilityResolvePass") != nullptr) == expectation.bResolve);
+            assert((sceneView.FindPass("VisibilityRasterPass") != nullptr) == (expectation.Mode != VisibilityBufferMode::Off));
+        }
     }
 
     // --visibility-buffer=off: 描画の写しを作らず、MegaGeometry のバッファは今まで通りその場で Common へ戻る
@@ -8465,6 +8722,10 @@ int main()
     TestComputePassFrameResourcesAreNotReusedWithinAFrame();
     TestVisibilityRasterOnSinglePassMegaGeometry();
     TestVisibilityRasterRecordsFrameUniqueMaterialTableIndices();
+    TestVisibilityResolveOnReplacesGBufferDrawsWithStorageImageWrites();
+    TestVisibilityResolveUnsupportedDeviceKeepsGBufferDraws();
+    TestVisibilityRasterSkinnedRecordsAddressEachBodyOnce();
+    TestSceneViewWiresVisibilityResolveOnlyForOnMode();
     TestVisibilityRasterOffKeepsExistingMegaGeometryRecording();
     TestVisibilityRasterWithoutGBufferDepthDoesNothing();
     TestShadowMapNativeDeclareImportsDepthOutput();

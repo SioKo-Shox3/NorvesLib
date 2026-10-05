@@ -8,6 +8,7 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -1672,6 +1673,9 @@ namespace NorvesLib::Core::Rendering
             }
         };
 
+        // ビジビリティバッファの解決が GBuffer を書くときは、描画の呼び出しだけを省く
+        const bool bSkipGBufferDraw = m_bSkipGBufferDraw && VisibilityResolveGeometry::IsSupported(caps);
+
         // 描画（GBuffer render pass をパスごとに1回だけ開き、材質の区間ごとに1回の間接描画を発行する）
         auto recordDraws = [&](const RHI::RenderPassPtr &renderPass,
                                const RHI::FramebufferPtr &framebuffer,
@@ -1680,6 +1684,12 @@ namespace NorvesLib::Core::Rendering
             ScopedGpuTimestamp drawTimestamp(cmdList, passIndex == 0 ? "MegaGeometryDraw1" : "MegaGeometryDraw2");
 
             cmdList->BeginRenderPass(renderPass, framebuffer);
+            if (bSkipGBufferDraw)
+            {
+                // 添付の状態遷移（render pass の開始と終了）だけ行う
+                cmdList->EndRenderPass();
+                return;
+            }
             cmdList->SetViewport(command.Viewport);
             cmdList->SetScissor(command.Scissor);
             cmdList->SetPipeline(SelectDrawPipeline(command.DebugMode));
