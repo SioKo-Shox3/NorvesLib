@@ -2558,7 +2558,9 @@
 - result: codea0faaa01/tree9215c4ed/run37343440486 attempt1 job111875985370。実MSVCx64・41CPU/新旧4marker・17/29中断・79+10byte・25+15CLI/metadata12・Python12+4+7 normal/-O・3ZIP/CNGを受入し親もreadonly再実行exit0。5role/例外/途中失敗/通常caller/named cacheの有限検証。GPU/cross-sessionは未実行。
 
 ## G2-GR79-MULTI-PRIMITIVE-COOK: 複数primitiveと材質を明示v1へcookする
-- status: doing
+- status: done
 - done-when: 1 glTF mesh内のN primitiveを局所index検査後に連結し、primitive境界を越えずcluster化する。参照元材質を決定的に共有しimplicit defaultと番号0を区別、128B材質と派生画像inventoryをcook/fingerprint/cacheで一致させる。v0と単primitive v1の既存出力、N>1 runtime拒否は維持する。
 - verify: 2材質/材質再利用/逆順参照/default/8超primitive、後半不正index/属性と失敗時out保持、2種類ARMと共有画像/色空間衝突/反復byte、後半設定・画像変更と破損packageによるcache miss、readerの全range/材質対応、既存41CPU/79+10byte/managed復旧gate。
 - stop-when: 複数mesh/node変換/スキン/LOD階層/描画N>1/モデルasset-setまで拡張する、unsupported材質設定を落とす、GPU受入れと扱う。
+
+- result: code02ec0e14/treee9377b27/run37350305381 attempt1 job111899190790。実Windows41CPU/新multi＋旧4marker、17/29中断、79+10byte、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを受入。親readonly再実行exit0/全stderr空。9pathsの差分と旧304証拠fileを保全。N>1 runtime/GPU/cross-sessionは未受入れ。

@@ -7,7 +7,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR77/GR78: GLB/sidecar/変換をcook・loose・骨格へ接続済み。実物での最終受入れは残る。surface_centroidは承認済み保留。
 - GR86: 明示の影響数縮約/CUBICSPLINE焼込/morph dropと診断を接続済み。256関節はGR82 Stage Bと同時。
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
-- GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値stagingと1材質Opaque runtimeのCPU/FakeDevice接続まで実Windowsで受入済み。複数primitive/material cook、対応外材質の描画、実GPU/実物受入れは未完。
+- GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
 - GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
 - GR83/GR84: 分離骨格資産ローダとBVH取り込みはこれから。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
@@ -880,3 +880,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR79 複数primitive/material cook開始。材質表は参照元番号順（implicit defaultは独立の末尾）、primitive順は元のまま。doubleSided autoは材質境界を開口と誤認しないよう全meshの位置溶接で一度判定し、force指定は材質ごとに優先する。派生ARMのtool内IDを64bitへ拡げ、旧単primitiveのID/path/hashを保存しmultiだけ材質別namespaceへ分ける。
 
 - G2/GR79 複数primitive cook検証準備: 1mesh内Nprimitiveの局所index/全体transform/primitive別cluster、元材質順の共有表とimplicit default、64bit派生画像ID/pathと厳密共有を接続。既存testに2材質・再利用・逆順・default・9primitive・GLB・後半不正・別形状fit/pivot・全体閉鎖/force・2ARM/共有参照・cache miss・N>1 runtime拒否を追加。静的2roundでblockerなし、Python12+4+7 normal/-OとBOM/EOL差分検査PASS。Linuxのnative構文検査はWindows.h不在で未到達。実Windows41CPUと新marker/旧79+10byte/managed gateは次のCIで未確認。
+
+- G2/GR79 複数primitive/material cook受入: 02ec0e14cf3ceac95f0ea0fc26c4484ee9fb6499 / treee9377b2758027b2a4dc216e9a41c9c70d0e7ec34 / run37350305381 attempt1 job111899190790。41CPU/新multi＋旧4marker、Bootstrap17/Update29、79+10byte、7smoke/5診断、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを照合し親もreadonly再実行exit0。旧304証拠fileを保全、最新9pathsと累積27実装pathsを有限検証。GPU/cross-session/N>1描画は未受入れ。ロードマップ203の順序に従い、Stage A（済）後のGR84へ進み、まずraw BVH解析を独立した単位として接続する。
