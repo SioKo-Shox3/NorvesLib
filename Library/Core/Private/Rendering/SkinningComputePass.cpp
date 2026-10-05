@@ -45,9 +45,10 @@ namespace NorvesLib::Core::Rendering
             return desc;
         }
 
-        // 1 インスタンスの入力の束縛（SKINNING_MAX_BINDING_BYTES）に収まる頂点数の dispatch は、x のグループ数の上限に必ず収まる。
-        // y へ広げる経路（ComputeGroupCounts）は、グループ数の上限の小さい GPU とテストでだけ通る。
-        static_assert(SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedMeshVertex) / SkinningCompute::ThreadsPerGroup <=
+        // 1 インスタンスの入力の束縛（SKINNING_MAX_BINDING_BYTES）に収まる頂点数の dispatch は、x のグループ数の上限に必ず収まる
+        // （グループ数は dispatch と同じく切り上げで数える）。y へ広げる経路（ComputeGroupCounts）は、上限を明示するテストでだけ通る。
+        static_assert((SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedMeshVertex) + SkinningCompute::ThreadsPerGroup - 1) /
+                              SkinningCompute::ThreadsPerGroup <=
                           SKINNING_MAX_GROUP_COUNT,
                       "入力の束縛に収まる 1 インスタンスの dispatch が x のグループ数の上限を超える");
 

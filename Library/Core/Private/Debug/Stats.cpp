@@ -582,7 +582,7 @@ namespace NorvesLib::Debug
         WriteCsvString(m_TraceFile, name);
         m_TraceFile << ','
                     << durationMs
-                    << ",,,,,,,,,,,,,,,,,\n";
+                    << ",,,,,,,,,,,,,,,,,,\n";
 #else
         (void)frameNumber;
         (void)name;

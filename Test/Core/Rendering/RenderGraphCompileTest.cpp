@@ -52,9 +52,8 @@
 #include <cstddef>
 #include <algorithm>
 #include <cstring>
-#include <filesystem>
+#include <cstdio>
 #include <fstream>
-#include <string>
 #include <iostream>
 #include <utility>
 #ifdef _MSC_VER
@@ -2756,6 +2755,24 @@ namespace
         ShutdownSkinningPassScene(fitting);
     }
 
+#if NORVES_ENABLE_STATS
+    // テキストのファイルを丸ごと読み、終端に '\0' を付ける
+    bool ReadTextFile(const char* path, Container::VariableArray<char>& outText)
+    {
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        if (!file.is_open())
+        {
+            return false;
+        }
+        const std::streamoff size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        outText.resize(static_cast<size_t>(size) + 1);
+        file.read(outText.data(), size);
+        outText[static_cast<size_t>(size)] = '\0';
+        return true;
+    }
+#endif
+
 #if NORVES_ENABLE_LOGGING
     // 計算スキニングが出す警告（カテゴリ SkinningComputePass）の数を数える
     struct SkinningWarningCounter final : Logging::ILogSink
@@ -2813,7 +2830,7 @@ namespace
         // 統計: パスの数を欄へ設定して UpdateRenderingStats へ渡すと、フレームの後も欄が残り、ToString と CSV に出る
         DebugStats::StatsManager& stats = DebugStats::StatsManager::Get();
         const char* tracePath = "RenderGraphCompileTest.skinning.trace.csv";
-        std::filesystem::remove(tracePath);
+        std::remove(tracePath);
         stats.ResetAll();
         assert(stats.StartTrace(tracePath));
         stats.BeginFrame(7, 0.016f);
@@ -2821,30 +2838,37 @@ namespace
         frameStats.SkinningComputeDroppedInstances = scene.Skinning.GetDroppedInstanceCount();
         stats.UpdateRenderingStats(frameStats);
         assert(stats.GetRenderingStats().SkinningComputeDroppedInstances == 2);
-        const std::string text = frameStats.ToString().c_str();
-        assert(text.find("droppedInstances=2") != std::string::npos);
+        const auto text = frameStats.ToString();
+        assert(std::strstr(text.c_str(), "droppedInstances=2") != nullptr);
         stats.EndFrame();
         stats.StopTrace();
         assert(stats.GetRenderingStats().SkinningComputeDroppedInstances == 2);
 
-        std::ifstream traceFile(tracePath);
-        std::string header;
-        std::getline(traceFile, header);
-        assert(header.find(",SkinningComputeDroppedInstances") != std::string::npos);
-        bool bFoundFrameLine = false;
-        for (std::string line; std::getline(traceFile, line);)
+        Container::VariableArray<char> traceText;
+        assert(ReadTextFile(tracePath, traceText));
+        // 1 行目（ヘッダー）に欄がある
+        const char* const headerEnd = std::strchr(traceText.data(), '\n');
+        assert(headerEnd != nullptr);
+        const char* const headerColumn = std::strstr(traceText.data(), ",SkinningComputeDroppedInstances");
+        assert(headerColumn != nullptr && headerColumn < headerEnd);
+        // フレーム 7 の行の最後の欄が外したインスタンスの数
+        const char* frameLine = std::strstr(headerEnd, "\nFrame,7,");
+        assert(frameLine != nullptr);
+        ++frameLine;
+        const char* lineEnd = std::strchr(frameLine, '\n');
+        if (lineEnd == nullptr)
         {
-            if (line.rfind("Frame,7,", 0) == 0)
-            {
-                bFoundFrameLine = true;
-                // 最後の欄が外したインスタンスの数
-                assert(line.size() >= 2 && line.compare(line.size() - 2, 2, ",2") == 0);
-            }
+            lineEnd = frameLine + std::strlen(frameLine);
         }
-        assert(bFoundFrameLine);
-        traceFile.close();
+        if (lineEnd > frameLine && lineEnd[-1] == '\r')
+        {
+            --lineEnd;
+        }
+        assert(lineEnd - frameLine >= 2 && std::strncmp(lineEnd - 2, ",2", 2) == 0);
+        // フレーム 7 の行は 1 つだけ
+        assert(std::strstr(lineEnd, "\nFrame,7,") == nullptr);
         stats.ResetAll();
-        std::filesystem::remove(tracePath);
+        std::remove(tracePath);
 #endif
 
         // 3 フレーム目: 上限を上げれば全部収まり、数は 0 に戻る
