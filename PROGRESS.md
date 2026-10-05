@@ -1052,3 +1052,11 @@
 - 既知の限界: 近接の PSNR の揺れとストリーミングの影響の切り分け、全常駐との GPU 時間の比較、追い出し中の画素の再現性は未確認（節に記載）。
 - Notes: 次は TASKS.md の未完（VTG6 は backlog）。この段の後、親が main へマージしてプッシュする。
 - 差し戻し対応（反復 6）: 評価者の指摘に沿って受入れの記述を証拠に合わせた。(1) 1100 MB の低い視点の旋回の追い出しは「33 ページで落ち着く」ではなく、最後の予算の照会時点で 33・最終のページ統計（`GEOMETRY_PAGES`）で 36 で、撮影の終わりも `uploading=2 reading=1` のまま続いており、収束は未確認と訂正（元ログ `low-orbit.Game.log` の 1863・1876 行）。(2) 「連続フレームのちらつきは無い」は、撮影した 9 枚（60・75・90 フレーム）では欠けを認めない、連続フレームのちらつきは未確認に限定。(3) 平均輝度差の「下限 0.1」を「上限 0.1」に直した。コード・測定は変えていない。保存済みの verify-VTG5-ACCEPT-1〜7 を開き直し、ビルド 0・ctest 9/9・撮影 4 本 pass を確認した。
+
+## 反復 2（run 20261005-191130）: VTG6-RHI-INT-FORMATS（done）
+- 内容: `RHI::Format` に `R32_UINT`・`R32G32_UINT` を足し、Vulkan の形式対応表（`VulkanDevice.cpp`・`VulkanTexture.cpp`）とバイト数（`IGPUResourceAllocator.h`）を対応させた。整数の添付は `AttachmentDesc::clearColorUint`（uint32）で消す（`IsUnsignedIntegerFormat`、`VulkanCommandList.cpp` が `clearValue.color.uint32` へ書く）。カラー添付・storage image の用途は既存の `ResourceUsage::RenderTarget`・`UnorderedAccess` がそのまま使える。
+- 機能: `geometryShader`（フラグメントシェーダーの `gl_PrimitiveID` に要る。ジオメトリシェーダー自体は使わない）と `shaderStorageImageExtendedFormats`（RG16F などの storage image）を、対応するデバイスだけで有効化し、`DeviceCapabilities::bGeometryShader`・`bShaderStorageImageExtendedFormats` に載せた。開発機は両方とも 1。デバイス作成の失敗は無く、stop-when に該当しない。
+- テスト: `IntegerAttachmentVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER。24x8 の添付に 1 回 6 三角形の描画を 2 行ぶん、描画の番号を開始インスタンスで渡す）。R32_UINT は `(描画の番号 << 7) | gl_PrimitiveID`、R32G32_UINT は R に同じ ID・G に描画の番号を書き、12 個の三角形すべてが期待の値、覆われない画素が整数のクリア値（0xDEADBEEF / 0xCAFEF00D）のまま、validation error 0 件を確かめる。`geometryShader` が無い環境は理由を出して 125。
+- 検証: `verify-VTG6-RHI-INT-FORMATS-3.txt`（Debug の Game・RHITextureUpdateVulkanTest、BUILD_EXIT_CODE=0）、`-4.txt`（ctest 3/3 passed、IntegerAttachmentVulkanTest・RHIBlockCompressedTextureVulkanTest・SparseCapabilitiesVulkanTest）、`-5-direct.txt`（本体を直接実行: geometryShader=1、確認した三角形=12 を 2 形式、VUID_COUNT=0、RESULT=PASS）。`-1`・`-2` は失敗した試行（`-1` はビルド中の打ち切り、`-2` は Git Bash が `/m:1` を変換して MSBuild が拒否）。
+- Notes: (1) テストの `DeviceCapabilities` は Windows の `DeviceCapabilitiesA` マクロと衝突するため `const auto&` で受けた。 (2) ビルドは PowerShell で実行する（Git Bash は `/m:1` を壊す）。 (3) 整数の添付のブレンドは無効にする必要がある（テストで `blendEnable=false`）。パイプライン作成側で整数形式のブレンドを強制的に切る処理は足していない（呼び出し側の責任。VTG6 の本体で使うときに確かめる）。
+- Next: TASKS.md の次の未完（VTG6 の続き）。

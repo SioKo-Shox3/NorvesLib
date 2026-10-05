@@ -569,7 +569,7 @@
 - notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG6-RHI-INT-FORMATS: 整数の形式とgeometryShaderの機能をRHIに足す
-- status: todo
+- status: done
 - done-when: `RHI::Format` に R32_UINT と R32G32_UINT を足し、Vulkan の対応表・カラーの添付と storage image の用途・クリアの値（整数）を扱えるようにする。`geometryShader`（frag で `gl_PrimitiveID` を使うため）と `shaderStorageImageExtendedFormats`（RG16F などの storage image のため）を照会し、対応時に有効化して `DeviceCapabilities` に載せる。GPU のテスト `IntegerAttachmentVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）が、R32_UINT の添付へ frag が `gl_PrimitiveID` と描画の番号から作った値を書き、読み戻して三角形ごとに期待の値になることを確かめる（機能が無ければ理由を出して 125）。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(IntegerAttachmentVulkanTest|RHIBlockCompressedTextureVulkanTest|SparseCapabilitiesVulkanTest)$"`
