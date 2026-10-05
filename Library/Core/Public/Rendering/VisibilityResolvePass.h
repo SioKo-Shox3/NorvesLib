@@ -11,7 +11,9 @@
 //     ディスクリプタセットへ束ね、ラスタの材質シェーダーと同じ標本・復号・POM の関数を、画面微分の代わりに三角形から求めた
 //     解析的な微分（textureGrad）で呼んで Albedo（インスタンスの色 × アルベド、α はテクスチャの α）・Normal（法線マップ適用後）・
 //     Material（金属度・粗さ・AO）を書く。VT（sparse）の材質は非常駐のタイルを読まず粗いミップへ逃げる。
-//     画面全体の直接 dispatch はテクスチャを束ねられないので、材質の定数（基本色・スカラー値）だけで書く。
+//     VT の要求（フィードバック）も、ラスタの材質シェーダーと同じ規則で要求のバッファへ書く（4×4 の巡回の 1 画素と、
+//     非常駐へ逃げた画素。欲しいミップは textureQueryLOD の代わりに解析的な微分から求める）。
+//     画面全体の直接 dispatch はテクスチャを束ねられないので、材質の定数（基本色・スカラー値）だけで書き、要求も書かない。
 // GBuffer の形式・意味（Albedo.a、法線の格納、Velocity の式）は、ラスタの経路（gbuffer.frag）と同じ。
 //
 // 解決は 2 つの形で記録できる（VisibilityResolve::Record が dispatch の入力で選ぶ）。
@@ -160,6 +162,14 @@ namespace NorvesLib::Core::Rendering
         /** @brief 金属度・粗さのテクスチャの指定が無いときに使うスカラー値（1x1 のテクスチャにする）。負は未指定（既定の黒・中間灰） */
         float MetallicConstant = -1.0f;
         float RoughnessConstant = -1.0f;
+        /**
+         * @brief VT のフィードバックのパラメータ（ResolveVirtualTextureFeedbackParam の結果。0 は要求を書かない）。
+         *        そのテクスチャが VT（sparse）で、このフレームの要求のバッファがあるときだけ 0 でない。ORM は金属度の枠
+         */
+        uint32_t FeedbackAlbedo = 0;
+        uint32_t FeedbackNormal = 0;
+        uint32_t FeedbackORM = 0;
+        uint32_t FeedbackHeight = 0;
     };
 
     /** @brief 1 回の解決の入力と出力 */
@@ -186,6 +196,12 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr Velocity;
         /** @brief 検証用の版（Initialize の bDump）の出力。画素あたり DUMP_STRIDE_BYTES。製品の版では使わない */
         RHI::BufferPtr Dump;
+        /**
+         * @brief VT の要求のバッファ（TextureResources::GetVirtualTextureFeedbackTarget の Buffer）と、束ねるバイト数（0 なら全体）。
+         *        材質ごとの形が書く。無い・対応しないデバイスでは、書かれない小さな代替を束ねる（パラメータが 0 の材質は書かない）
+         */
+        RHI::BufferPtr Feedback;
+        uint64_t FeedbackBytes = 0;
         VisibilityResolveGeometry::ResolveParams Params;
 
         /**
@@ -284,6 +300,8 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_MaterialSampler;
         Container::UnorderedMap<uint32_t, RHI::TexturePtr> m_ConstantGrayTextures;
         bool m_bDump = false;
+        // 材質ごとの形のシェーダーが VT の要求のバッファの binding を持つか（デバイスが VT のフィードバックに対応するとき）
+        bool m_bFeedback = false;
         FrameUseRing<Use> m_Uses;
     };
 
@@ -291,7 +309,7 @@ namespace NorvesLib::Core::Rendering
      * @brief VisBuffer.Id から GBuffer の Albedo・Normal・Velocity を解決する RenderGraph のパス
      *
      * VisibilityRasterPass が書いた ID と、同じパスが持つ記録の表・材質の表・インスタンスの表を読み、GBuffer の
-     * Albedo・Normal・Material・Velocity の 4 枚を storage image として書く（発光は書かない）。GBufferPass・MegaGeometryPass はこのパスが有効なとき GBuffer の描画を止める
+     * Albedo・Normal・Material・Velocity の 4 枚を storage image として書く（発光は書かない）。材質ごとの形では VT の要求も書く。GBufferPass・MegaGeometryPass はこのパスが有効なとき GBuffer の描画を止める
      * （GBuffer のクリアだけを行う）ので、描かれなかった画素はクリア値のまま。
      *
      * 有効なのは --visibility-buffer=on のときだけ（SceneView が足す）。使えないとき（GetFallbackReason が None 以外。装置が

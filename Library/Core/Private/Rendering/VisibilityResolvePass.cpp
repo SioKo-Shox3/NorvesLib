@@ -11,6 +11,7 @@
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VisibilityBuffer.h"
+#include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/VisibilityRasterPass.h"
 #include "RHI/DeviceCapabilities.h"
 #include "RHI/IBuffer.h"
@@ -32,14 +33,16 @@ namespace NorvesLib::Core::Rendering
         // 空の表（読まれない）の大きさ。MegaInstance（192 バイト）・InstanceData（208 バイト）より大きい
         constexpr uint64_t PlaceholderBytes = 256;
 
-        // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 16 バイト）
-        constexpr uint32_t TileParamsBytes = 4u * sizeof(uint32_t);
+        // 材質ごとの形の 1 回の dispatch の定数（シェーダーの ResolveTileParams と同じ 32 バイト。
+        // tile = 横のタイル数・材質の番号・フラグ・予約、vt = VT のフィードバックのパラメータ（アルベド・法線・ORM・高さ））
+        constexpr uint32_t TileParamsBytes = 8u * sizeof(uint32_t);
 
         // 共通の束縛の数（0..8 と材質の GBuffer の 9。検証用の版はさらに 10 の書き出し）
         constexpr uint32_t CommonBindingCount = 10u;
         constexpr uint32_t DumpBindingIndex = 10u;
 
-        RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump, bool bTiles)
+        // bFeedback: 材質ごとの形の最後に VT の要求のバッファ（シェーダーの VT_FEEDBACK_BINDING）を足す（bTiles のときだけ）
+        RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump, bool bTiles, bool bFeedback)
         {
             RHI::DescriptorSetDesc desc;
             const RHI::ResourceBindType types[] = {
@@ -90,6 +93,14 @@ namespace NorvesLib::Core::Rendering
                     binding.stages = RHI::ShaderStage::Compute;
                     desc.bindings.push_back(binding);
                 }
+                if (bFeedback)
+                {
+                    RHI::DescriptorBinding binding;
+                    binding.binding = commonCount + 3u + VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT;
+                    binding.type = RHI::ResourceBindType::RWBuffer;
+                    binding.stages = RHI::ShaderStage::Compute;
+                    desc.bindings.push_back(binding);
+                }
             }
             return desc;
         }
@@ -129,7 +140,8 @@ namespace NorvesLib::Core::Rendering
 
         // 材質の表の 1 件から、GBufferPass の材質の descriptor が張るのと同じテクスチャを引く
         VisibilityResolveMaterial MakeResolveMaterial(const TextureResources* textures,
-                                                      const VisibilityBuffer::MaterialEntry& entry)
+                                                      const VisibilityBuffer::MaterialEntry& entry,
+                                                      const TextureResources::VirtualTextureFeedbackTarget& feedbackTarget)
         {
             const TextureHandle albedo = LoadTextureHandle(&entry.TexturesA[0]);
             const TextureHandle normal = LoadTextureHandle(&entry.TexturesA[2]);
@@ -156,6 +168,14 @@ namespace NorvesLib::Core::Rendering
             {
                 material.RoughnessConstant = entry.Scalars[1];
             }
+            // VT のフィードバックのパラメータ（GBufferPass の材質の descriptor と同じ。ORM は金属度の枠に張るテクスチャ）
+            material.FeedbackAlbedo =
+                ResolveVirtualTextureFeedbackParam(textures, albedo, material.Albedo.get(), feedbackTarget);
+            material.FeedbackNormal =
+                ResolveVirtualTextureFeedbackParam(textures, normal, material.Normal.get(), feedbackTarget);
+            material.FeedbackORM = ResolveVirtualTextureFeedbackParam(textures, orm, material.ORM.get(), feedbackTarget);
+            material.FeedbackHeight =
+                ResolveVirtualTextureFeedbackParam(textures, height, material.Height.get(), feedbackTarget);
             return material;
         }
     } // namespace
@@ -258,7 +278,7 @@ namespace NorvesLib::Core::Rendering
 
         RHI::ComputePipelineDesc pipelineDesc;
         pipelineDesc.computeShader = m_Shader;
-        pipelineDesc.descriptorSetLayouts.push_back(MakeDescriptorSetDesc(bDump, false));
+        pipelineDesc.descriptorSetLayouts.push_back(MakeDescriptorSetDesc(bDump, false, false));
         m_Pipeline = device->CreateComputePipeline(pipelineDesc);
         if (!m_Pipeline)
         {
@@ -275,7 +295,8 @@ namespace NorvesLib::Core::Rendering
             {
                 RHI::ComputePipelineDesc tilePipelineDesc;
                 tilePipelineDesc.computeShader = m_TileShader;
-                tilePipelineDesc.descriptorSetLayouts.push_back(MakeDescriptorSetDesc(bDump, true));
+                tilePipelineDesc.descriptorSetLayouts.push_back(
+                    MakeDescriptorSetDesc(bDump, true, UsesVirtualTextureFeedbackBinding(device)));
                 m_TilePipeline = device->CreateComputePipeline(tilePipelineDesc);
             }
             if (!m_TilePipeline)
@@ -288,6 +309,7 @@ namespace NorvesLib::Core::Rendering
 
         m_Device = device;
         m_bDump = bDump;
+        m_bFeedback = UsesVirtualTextureFeedbackBinding(device);
         return true;
     }
 
@@ -308,6 +330,7 @@ namespace NorvesLib::Core::Rendering
         m_Shader.reset();
         m_Device = nullptr;
         m_bDump = false;
+        m_bFeedback = false;
     }
 
     void VisibilityResolve::BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
@@ -467,7 +490,7 @@ namespace NorvesLib::Core::Rendering
         }
         if (!use.DescriptorSet)
         {
-            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(m_bDump, false));
+            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(m_bDump, false, false));
         }
         if (!use.Uniform || !use.DescriptorSet)
         {
@@ -548,6 +571,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::TexturePtr Textures[VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT];
             uint32_t Flags = 0;
+            uint32_t Feedback[4] = {};
         };
         Container::VariableArray<BoundMaterial> boundMaterials;
         Container::VariableArray<Use*> uses;
@@ -588,6 +612,10 @@ namespace NorvesLib::Core::Rendering
                 bound.Flags |= VisibilityResolveGeometry::TILE_FLAG_ORM;
             }
             bound.Textures[5] = input.Height ? input.Height : m_DefaultBlack;
+            bound.Feedback[0] = input.FeedbackAlbedo;
+            bound.Feedback[1] = input.FeedbackNormal;
+            bound.Feedback[2] = input.FeedbackORM;
+            bound.Feedback[3] = input.FeedbackHeight;
             for (uint32_t index = 0; index < VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT; ++index)
             {
                 if (!bound.Textures[index])
@@ -609,7 +637,7 @@ namespace NorvesLib::Core::Rendering
             }
             if (!use.TileDescriptorSet)
             {
-                use.TileDescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(m_bDump, true));
+                use.TileDescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(m_bDump, true, m_bFeedback));
             }
             if (!use.TileUniform || !use.TileDescriptorSet)
             {
@@ -636,7 +664,8 @@ namespace NorvesLib::Core::Rendering
         {
             Use& use = *uses[static_cast<size_t>(material)];
             const BoundMaterial& bound = boundMaterials[static_cast<size_t>(material)];
-            const uint32_t tileParams[4] = {tilesX, static_cast<uint32_t>(material), bound.Flags, 0u};
+            const uint32_t tileParams[8] = {tilesX, static_cast<uint32_t>(material), bound.Flags, 0u,
+                                            bound.Feedback[0], bound.Feedback[1], bound.Feedback[2], bound.Feedback[3]};
             use.TileUniform->Update(tileParams, TileParamsBytes);
             RHI::IDescriptorSet& set = *use.TileDescriptorSet;
             BindCommon(set, first.Uniform, dispatch);
@@ -647,6 +676,19 @@ namespace NorvesLib::Core::Rendering
             {
                 set.BindTexture(firstBinding + 3u + index, bound.Textures[index]);
                 set.BindSampler(firstBinding + 3u + index, m_MaterialSampler);
+            }
+            if (m_bFeedback)
+            {
+                // 要求のバッファ。無いときは小さな代替（パラメータが 0 の材質は書かない。シェーダーも容量が足りなければ書かない）
+                const uint32_t feedbackBinding = firstBinding + 3u + VisibilityResolveGeometry::MATERIAL_TEXTURE_COUNT;
+                if (dispatch.Feedback)
+                {
+                    set.BindStorageBuffer(feedbackBinding, dispatch.Feedback, 0, BindBytes(dispatch.Feedback, dispatch.FeedbackBytes));
+                }
+                else
+                {
+                    set.BindStorageBuffer(feedbackBinding, m_Placeholder, 0, ClampBindSize(PlaceholderBytes));
+                }
             }
             set.Update();
 
@@ -890,9 +932,14 @@ namespace NorvesLib::Core::Rendering
 
         // 材質ごとの形が束ねる、材質の表の 1 件ごとのテクスチャ（ハンドル → RHI のテクスチャ）
         const TextureResources* textures = context.Resources.Textures;
+        // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null）。GBufferPass・MegaGeometryPass と同じ
+        const TextureResources::VirtualTextureFeedbackTarget feedbackTarget =
+            textures ? textures->GetVirtualTextureFeedbackTarget() : TextureResources::VirtualTextureFeedbackTarget{};
+        dispatch.Feedback = feedbackTarget.Buffer;
+        dispatch.FeedbackBytes = feedbackTarget.Bytes;
         for (const VisibilityBuffer::MaterialEntry& entry : m_RasterPass->GetMaterialEntries())
         {
-            dispatch.Materials.push_back(MakeResolveMaterial(textures, entry));
+            dispatch.Materials.push_back(MakeResolveMaterial(textures, entry, feedbackTarget));
         }
 
         // ラスタ（GBufferPass）と同じカメラの定数。前のカメラが無いときは速度を 0 にする

@@ -21,12 +21,18 @@
 //   材質ごとの形が材質のテクスチャを束ねて Albedo（インスタンスの色 × アルベド。α はテクスチャの α）・Normal（法線マップ。2 チャンネルの
 //   法線の Z の復元を含む）・Material（ORM の 1 枚、別々の枠、スカラー値の 1x1、既定）を書くことは、1x1 の単色のテクスチャ
 //   （標本が微分・ミップに依らない）を材質ごとに変えて、CPU の期待値と照合する。
+//   VT の要求（フィードバック）は、材質 0 のアルベドを sparse の BC7 にして、リングの要求のバッファへ書かれる要求を読み戻し、
+//   CPU の参照（UV の微分から求めたミップ・タイル）と照合する。常駐のテクスチャは 4×4 の画素のうち位相の 1 画素だけが書き、
+//   非常駐（ミップテイルだけを結ぶ）の領域は全画素が書く。パラメータ 0（VT でない材質）は何も書かない。
 // Vulkan デバイスが無い環境、または解決に対応しない装置では 125（スキップ）を返す。
 #include "Container/Containers.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SparsePagePool.h"
+#include "Rendering/VirtualTextureFeedbackRing.h"
+#include "Rendering/VirtualTextureRequestSet.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityMaterialTable.h"
 #include "Rendering/VisibilityResolvePass.h"
@@ -887,6 +893,16 @@ namespace
         uint32_t GroupCountXLimit = MaterialTiles::MAX_GROUP_COUNT_X;
     };
 
+    // VT の要求（フィードバック）を書かせるときの入力（リング）と結果（読み戻した要求）
+    struct FeedbackRun
+    {
+        VirtualTextureFeedbackRing* Ring = nullptr;
+        uint64_t Serial = 0;
+        VirtualTextureRequestSet Requests;
+        bool bBuffer = false;  // このフレームの要求のバッファを獲得できた
+        bool bBarrier = false; // 読み戻し用のバリアを記録できた
+    };
+
     bool ReadTexture(const DevicePtr& device,
                      const TexturePtr& texture,
                      uint32_t bytesPerPixel,
@@ -1026,7 +1042,8 @@ namespace
                         const TileRunOptions* tiles = nullptr,
                         uint32_t width = ScreenWidth,
                         uint32_t height = ScreenHeight,
-                        const Container::VariableArray<VisibilityResolveMaterial>* materials = nullptr)
+                        const Container::VariableArray<VisibilityResolveMaterial>* materials = nullptr,
+                        FeedbackRun* feedback = nullptr)
     {
         Readback result;
         result.DumpPitch = width;
@@ -1119,6 +1136,13 @@ namespace
                                                                  static_cast<uint32_t>(gpu.MaterialTable->GetSize() / sizeof(VisibilityBuffer::MaterialEntry)));
         dispatch.TileArgs = tileArgs;
         dispatch.TileList = tileList;
+        if (feedback)
+        {
+            feedback->Ring->BeginFrame(feedback->Serial);
+            dispatch.Feedback = feedback->Ring->GetCurrentBuffer();
+            dispatch.FeedbackBytes = feedback->Ring->GetBufferBytes();
+            feedback->bBuffer = dispatch.Feedback != nullptr;
+        }
 
         resolve.BeginFrame(0, frameSerial);
         commandList->Begin();
@@ -1154,6 +1178,11 @@ namespace
             commandList->BufferBarrier(tileList, ResourceState::UnorderedAccess, ResourceState::GenericRead, 0u, tileList->GetSize());
         }
         result.bRecorded = resolve.Record(commandList.get(), dispatch);
+        if (feedback)
+        {
+            // 解決（計算シェーダー）の書き込みをホストの読み取りへ見せるバリア（フラグメント段と計算段の両方）
+            feedback->bBarrier = feedback->Ring->RecordHostReadBarrier(*commandList);
+        }
         if (bDump)
         {
             commandList->BufferBarrier(dump, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, dumpBytes);
@@ -1165,6 +1194,19 @@ namespace
         commandList->End();
         commandList->Submit(true);
         device->WaitIdle();
+
+        if (feedback)
+        {
+            // 書いたフレームから 2 フレーム以上経つと読み戻される。空回しのフレームは何も書かないので中止する
+            feedback->Ring->CommitFrame(++feedback->Serial);
+            for (int idle = 0; idle < 2; ++idle)
+            {
+                feedback->Ring->BeginFrame(feedback->Serial);
+                feedback->Ring->AbortFrame();
+            }
+            feedback->Requests.Clear();
+            feedback->Ring->TakeRequests(feedback->Requests);
+        }
 
         if (bDump)
         {
@@ -1938,6 +1980,323 @@ namespace
         Expect(badNormal == 0, "Normal は法線マップ（2 チャンネルの Z の復元を含む）を接線の基底で変換した値でなければならない");
     }
 
+    // ========================================
+    // VT の要求（フィードバック）
+    // ========================================
+
+    constexpr uint32_t FeedbackTextureIndex = 5u;
+    constexpr uint32_t FeedbackTextureSize = 1024u;
+    constexpr uint32_t FeedbackMipLevels = 11u;
+    // 要求のタイルの大きさ（texel）。sparse の実際のタイルは 256 だが、材質のパラメータが持つ大きさをシェーダーはそのまま使うので、
+    // 小さな値にして画素ごとのタイルの座標を散らす（この検査が確かめるのは、パラメータの詰め方・位相・ミップとタイルの式）
+    constexpr uint32_t FeedbackTileSize = 8u;
+    // 場面の UV を縮める倍率。材質 0 の画素の欲しいミップが 0〜2（ミップテイルはミップ 3 から）に収まり、
+    // ミップテイルだけを結んだテクスチャでは全画素が非常駐になる
+    constexpr double FeedbackUvScale = 1.0 / 40.0;
+
+    void ScaleVertexUv(Container::VariableArray<Vertex>& vertices, double factor)
+    {
+        for (Vertex& vertex : vertices)
+        {
+            vertex.Uv[0] = static_cast<float>(vertex.Uv[0] * factor);
+            vertex.Uv[1] = static_cast<float>(vertex.Uv[1] * factor);
+        }
+    }
+
+    struct ExpectedRequest
+    {
+        uint32_t Mip = 0;
+        uint32_t X = 0;
+        uint32_t Y = 0;
+    };
+
+    // 画素の欲しいミップとタイル。ミップはシェーダーの VisQueryLodFromGradient（異方性の標本の数は floor(Pmax / Pmin)）、タイルは
+    // WriteVirtualTextureFeedbackAtPixel の式。outLod にはミップを切り捨てる前の値を返す
+    ExpectedRequest ExpectedRequestForPixel(const PixelReference& ref, double& outLod)
+    {
+        const double lengthX = std::hypot(ref.DuvDx[0], ref.DuvDx[1]) * FeedbackTextureSize;
+        const double lengthY = std::hypot(ref.DuvDy[0], ref.DuvDy[1]) * FeedbackTextureSize;
+        const double pMax = std::max(lengthX, lengthY);
+        const double pMin = std::min(lengthX, lengthY);
+        double lod = 0.0;
+        if (pMax > 0.0)
+        {
+            const double ratio = pMin > 0.0 ? std::min(std::max(std::floor(pMax / pMin), 1.0), 4.0) : 4.0;
+            lod = std::min(std::max(std::log2(pMax / ratio), 0.0), static_cast<double>(FeedbackMipLevels - 1));
+        }
+        outLod = lod;
+        ExpectedRequest request;
+        request.Mip = static_cast<uint32_t>(std::floor(lod));
+        const uint32_t mipSize = std::max(FeedbackTextureSize >> request.Mip, 1u);
+        const double u = ref.Uv[0] - std::floor(ref.Uv[0]);
+        const double v = ref.Uv[1] - std::floor(ref.Uv[1]);
+        const uint32_t texelX = std::min(static_cast<uint32_t>(u * mipSize), mipSize - 1u);
+        const uint32_t texelY = std::min(static_cast<uint32_t>(v * mipSize), mipSize - 1u);
+        request.X = std::min(texelX / FeedbackTileSize, 255u);
+        request.Y = std::min(texelY / FeedbackTileSize, 255u);
+        return request;
+    }
+
+    // sparse の BC7（1024x1024、11 ミップ。タイルは 256 texel でミップ 0〜2 がタイル、ミップ 3 以降がミップテイル）。
+    // bResident ならミップ 0〜2 の全タイルとミップテイルを結び、そうでなければミップテイルだけを結ぶ（ミップ 0〜2 は非常駐）
+    TexturePtr CreateSparseFeedbackTexture(const DevicePtr& device,
+                                           SparsePagePool& pool,
+                                           Container::VariableArray<SparsePagePool::PageLease>& leases,
+                                           bool bResident,
+                                           const char* name)
+    {
+        TextureDesc desc;
+        desc.Width = FeedbackTextureSize;
+        desc.Height = FeedbackTextureSize;
+        desc.MipLevels = FeedbackMipLevels;
+        desc.TextureFormat = Format::BC7_UNORM;
+        desc.Usage = ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
+        desc.bSparse = true;
+        desc.DebugName = name;
+        TexturePtr texture = device->CreateTexture(desc);
+        SparseTextureInfo info;
+        if (!texture || !texture->GetSparseInfo(info) || info.TileWidth != 256 || info.TileHeight != 256 || info.MipTailFirstLevel != 3)
+        {
+            return nullptr;
+        }
+
+        SparseBindRequest bindRequest;
+        if (bResident)
+        {
+            for (uint32_t mip = 0; mip < 3u; ++mip)
+            {
+                for (uint32_t tileY = 0; tileY < info.TilesX[mip]; ++tileY)
+                {
+                    for (uint32_t tileX = 0; tileX < info.TilesX[mip]; ++tileX)
+                    {
+                        leases.push_back(pool.Acquire());
+                        if (!leases.back().IsValid())
+                        {
+                            return nullptr;
+                        }
+                        SparseTileBind tile;
+                        tile.Texture = texture.get();
+                        tile.MipLevel = mip;
+                        tile.TileX = tileX;
+                        tile.TileY = tileY;
+                        tile.Page = leases.back().GetPage();
+                        bindRequest.Tiles.push_back(tile);
+                    }
+                }
+            }
+        }
+        const uint32_t tailPages = static_cast<uint32_t>((info.MipTailSize + SparsePageSizeBytes - 1) / SparsePageSizeBytes);
+        for (uint32_t page = 0; page < tailPages; ++page)
+        {
+            leases.push_back(pool.Acquire());
+            if (!leases.back().IsValid())
+            {
+                return nullptr;
+            }
+            SparseMipTailBind tail;
+            tail.Texture = texture.get();
+            tail.PageIndex = page;
+            tail.Page = leases.back().GetPage();
+            bindRequest.MipTails.push_back(tail);
+        }
+        if (!device->BindSparse(bindRequest))
+        {
+            return nullptr;
+        }
+        CommandListPtr transition = device->CreateCommandList();
+        if (!transition)
+        {
+            return nullptr;
+        }
+        transition->Begin();
+        transition->TextureBarrier(texture, ResourceState::Undefined, ResourceState::ShaderResource);
+        transition->End();
+        transition->Submit(true);
+        device->WaitIdle();
+        return texture;
+    }
+
+    // 読み戻した要求が、期待の画素ごとの要求と合うことを確かめる。
+    // 件数の合計は厳密に一致（書いた画素の数 = 要求の件数の合計）、タイルは CPU の参照と一致する（浮動小数の境界で
+    // 隣のミップ・タイルに割れる画素を許して 9 割以上）
+    void CheckFeedbackRequests(const char* label,
+                               const VirtualTextureRequestSet& set,
+                               const Container::VariableArray<ExpectedRequest>& expected)
+    {
+        uint32_t totalHits = 0;
+        uint32_t matchedHits = 0;
+        bool bOtherTexture = false;
+        for (uint32_t textureIndex : set.GetTextureIndices())
+        {
+            if (textureIndex != FeedbackTextureIndex)
+            {
+                bOtherTexture = true;
+                continue;
+            }
+            for (const VirtualTextureTileRequest& request : set.GetRequests(textureIndex))
+            {
+                totalHits += request.HitCount;
+                uint32_t expectedCount = 0;
+                for (const ExpectedRequest& candidate : expected)
+                {
+                    if (candidate.Mip == request.Mip && candidate.X == request.X && candidate.Y == request.Y)
+                    {
+                        ++expectedCount;
+                    }
+                }
+                matchedHits += std::min(request.HitCount, expectedCount);
+            }
+        }
+        std::cout << TestName << " VT のフィードバック " << label << ": 期待の画素=" << expected.size() << " 要求の件数の合計=" << totalHits
+                  << " タイルが参照と一致した件数=" << matchedHits << " タイルの種類=" << set.GetRequestCount() << std::endl;
+        Expect(!bOtherTexture, "要求のテクスチャの番号は材質のパラメータの番号だけでなければならない");
+        Expect(totalHits == expected.size(), "要求の件数の合計は、書くべき画素の数と同じでなければならない");
+        Expect(matchedHits * 10u >= totalHits * 9u, "要求のミップ・タイルは UV の微分から求めた参照と一致しなければならない");
+        Expect(set.GetOverflowCount() == 0, "capacity に収まる要求で溢れてはならない");
+    }
+
+    // 材質ごとの形が VT の要求を書くことを確かめる（材質 0 のアルベドを sparse にする）:
+    //   常駐のテクスチャ: 4×4 の画素のうち位相の 1 画素だけが書く（位相 0・5・15 で、書く画素の数と位置が変わる）
+    //   非常駐（ミップテイルだけ）: 巡回によらず全画素が書く
+    //   パラメータ 0: 非常駐でも何も書かない
+    void RunVirtualTextureFeedbackCase(const DevicePtr& device,
+                                       ShaderManager& shaderManager,
+                                       const Scene& baseScene,
+                                       const Container::VariableArray<uint32_t>& idImage,
+                                       const Container::VariableArray<PixelReference>& baseReferences,
+                                       const CameraSet& cameras)
+    {
+        const auto& capabilities = device->GetCapabilities();
+        if (!capabilities.SupportsVirtualTextureFeedback() || !capabilities.Sparse.bSparseBinding ||
+            !capabilities.Sparse.bResidencyImage2D || !capabilities.bTextureCompressionBC)
+        {
+            std::cout << TestName << " VT のフィードバックの検査をスキップ: この装置は sparse の VT のフィードバックに対応しない" << std::endl;
+            return;
+        }
+
+        // UV を縮めた場面と、その画素ごとの参照
+        Scene scene = baseScene;
+        ScaleVertexUv(scene.ProceduralVertices1, FeedbackUvScale);
+        ScaleVertexUv(scene.ProceduralVertices2, FeedbackUvScale);
+        ScaleVertexUv(scene.MegaVertices, FeedbackUvScale);
+        ScaleVertexUv(scene.SkinnedCurrent, FeedbackUvScale);
+        ScaleVertexUv(scene.SkinnedPrevious, FeedbackUvScale);
+        for (ReferenceTriangle& triangle : scene.References)
+        {
+            for (int corner = 0; corner < 3; ++corner)
+            {
+                triangle.Uv[corner][0] *= FeedbackUvScale;
+                triangle.Uv[corner][1] *= FeedbackUvScale;
+            }
+        }
+        Container::VariableArray<PixelReference> references(baseReferences.size());
+        for (uint32_t y = 0; y < ScreenHeight; ++y)
+        {
+            for (uint32_t x = 0; x < ScreenWidth; ++x)
+            {
+                const size_t pixel = static_cast<size_t>(y) * ScreenWidth + x;
+                if (baseReferences[pixel].bCovered)
+                {
+                    ComputePixelReference(scene, cameras, baseReferences[pixel].ReferenceIndex, x, y, true, references[pixel]);
+                }
+            }
+        }
+
+        // 材質 0 の画素: 位相ごとの期待の要求。欲しいミップが 0〜2 に収まっていること（この検査が非常駐の領域を確かめる前提）
+        Container::VariableArray<ExpectedRequest> allPixels;
+        Container::VariableArray<ExpectedRequest> phasePixels[16];
+        double minLod = 1.0e9;
+        double maxLod = -1.0e9;
+        for (uint32_t y = 0; y < ScreenHeight; ++y)
+        {
+            for (uint32_t x = 0; x < ScreenWidth; ++x)
+            {
+                const PixelReference& ref = references[static_cast<size_t>(y) * ScreenWidth + x];
+                if (!ref.bCovered || scene.References[ref.ReferenceIndex].Material != 0)
+                {
+                    continue;
+                }
+                double lod = 0.0;
+                const ExpectedRequest request = ExpectedRequestForPixel(ref, lod);
+                minLod = std::min(minLod, lod);
+                maxLod = std::max(maxLod, lod);
+                allPixels.push_back(request);
+                phasePixels[(y & 3u) * 4u + (x & 3u)].push_back(request);
+            }
+        }
+        std::cout << TestName << " VT のフィードバック: 材質 0 の画素=" << allPixels.size() << " 欲しいミップの範囲=[" << minLod << ", "
+                  << maxLod << "]" << std::endl;
+        Expect(allPixels.size() >= 100, "VT の検査は、材質 0 の画素を十分に確かめなければならない");
+        Expect(maxLod < 2.8, "欲しいミップは、ミップテイル（ミップ 3 から）の外に収まらなければならない");
+        for (uint32_t phase : {0u, 5u, 15u})
+        {
+            Expect(phasePixels[phase].size() >= 3, "位相ごとに十分な画素がなければならない");
+        }
+
+        GpuScene gpu;
+        if (!BuildGpuScene(device, scene, idImage, gpu))
+        {
+            Expect(false, "VT の検査の GPU の資源を作れなければならない");
+            return;
+        }
+
+        // 先に宣言したものが後に破棄される（ページを返す前にテクスチャを破棄する）
+        SparsePagePool pool(device, 48 * SparsePageSizeBytes);
+        Container::VariableArray<SparsePagePool::PageLease> leases;
+        TexturePtr residentTexture = CreateSparseFeedbackTexture(device, pool, leases, true, "ResolveTestVtResident");
+        TexturePtr tailOnlyTexture = CreateSparseFeedbackTexture(device, pool, leases, false, "ResolveTestVtTailOnly");
+        if (!residentTexture || !tailOnlyTexture)
+        {
+            Expect(false, "sparse の BC7 テクスチャを作って結べなければならない");
+            return;
+        }
+
+        VirtualTextureFeedbackRing::Config ringConfig;
+        ringConfig.Capacity = 1024u;
+        VirtualTextureFeedbackRing ring(device, ringConfig);
+        Expect(ring.SetEnabled(true), "要求のバッファのリングを有効にできなければならない");
+        FeedbackRun feedback;
+        feedback.Ring = &ring;
+
+        uint64_t frameSerial = 40;
+        auto run = [&](const TexturePtr& texture, bool bParamEnabled, uint32_t phase) {
+            Container::VariableArray<VisibilityResolveMaterial> materials(1);
+            materials[0].Albedo = texture;
+            materials[0].FeedbackAlbedo =
+                bParamEnabled ? VirtualTextureFeedback::PackMaterialParam(FeedbackTextureIndex, FeedbackTileSize, FeedbackTileSize, phase)
+                              : 0u;
+            Expect(!bParamEnabled || materials[0].FeedbackAlbedo != 0u, "材質のパラメータを詰められなければならない");
+            TileRunOptions options;
+            const Readback readback = RunResolve(device, shaderManager, gpu, cameras, false, true, ++frameSerial, &options, ScreenWidth,
+                                                 ScreenHeight, &materials, &feedback);
+            Expect(readback.bOk && readback.bRecorded && readback.bClassified, "VT の材質つきの材質ごとの解決を記録して読み戻せなければならない");
+            Expect(feedback.bBuffer && feedback.bBarrier, "このフレームの要求のバッファを獲得して、読み戻し用のバリアを記録できなければならない");
+        };
+
+        // 常駐: 位相の 1 画素だけが書く
+        struct PhaseCase
+        {
+            uint32_t Phase;
+            const char* Label;
+        };
+        const PhaseCase phaseCases[] = {{0u, "常駐 位相=0"}, {5u, "常駐 位相=5"}, {15u, "常駐 位相=15"}};
+        for (const PhaseCase& phaseCase : phaseCases)
+        {
+            run(residentTexture, true, phaseCase.Phase);
+            CheckFeedbackRequests(phaseCase.Label, feedback.Requests, phasePixels[phaseCase.Phase]);
+        }
+
+        // 非常駐: 巡回によらず全画素が書く（位相 5 でも材質 0 の全画素）
+        run(tailOnlyTexture, true, 5u);
+        CheckFeedbackRequests("非常駐 位相=5", feedback.Requests, allPixels);
+
+        // パラメータ 0（VT でない材質）は、非常駐のテクスチャでも何も書かない
+        run(tailOnlyTexture, false, 5u);
+        CheckFeedbackRequests("パラメータ 0", feedback.Requests, Container::VariableArray<ExpectedRequest>());
+
+        device->WaitIdle();
+    }
+
     void RunTileEquivalence(const DevicePtr& device,
                             ShaderManager& shaderManager,
                             const GpuScene& baseGpu,
@@ -2230,6 +2589,9 @@ namespace
 
             // 材質ごとの形は、材質のテクスチャで Albedo・Normal・Material を書く
             RunMaterialTextureCase(device, shaderManager, scene, idImage, references, cameras);
+
+            // 材質ごとの形は、VT の要求（フィードバック）も要求のバッファへ書く
+            RunVirtualTextureFeedbackCase(device, shaderManager, scene, idImage, references, cameras);
 
             std::cout << TestName << " 覆われた画素=" << counters.CoveredPixels << " 記録ごと=[";
             for (uint32_t record = 1; record <= scene.Records.RecordCount(); ++record)
