@@ -52,3 +52,9 @@ runtimeのgolden payload比較は従来の有限一覧のまま。artifactはrun
 ownerは実spec/root canonical identityとmanifestから独立にSHA-256 tupleで算出する。strict JSON/有限shape、claim/stateの対応、golden manifestとのrecord対応、package全bytesのFNVとSHA/sizeを照合する。baseline2回分の各4file＋receipt、CLI receipt、summaryを有限の別inventoryとして受け入れる。79/10 fileの直接byte比較器は変更しない。
 
 この単位だけでG2-S6全体や全kindの増分統合完了とはしない。production callers、旧standalone ModelCookCache移行、model対応spec v2、glTF外部依存・sidecar、inventory追加除去、budget/jobs/reportsは後続。cross-session実測、最大規模性能、電源断保証も含めない。
+
+## 実行受入れ（2026-10-05）
+
+19128d41503a72784ad4703c4ce048e1310d3a9f / run37303534756で36CPUとadapter receipt、Update29/Bootstrap17の実child終了、全条件flagを確認。元25実CLIの9成功/16拒否、別15実CLIの8成功/7拒否、7単体smoke/79＋10直接byte/5診断が成功した。管理metadata12fileの有限一覧・raw SHA/size・原native ID・独立owner tuple・package/dependency record、3 ZIP/API digest/CRC/exact inventory、両実MSVC x64 binaryのCNGを独立照合し、親側でも全verifierを再実行した。
+
+旧証拠216fileを保持し、共通controller/cache/parser/serializerの不変を確認した。cross-session実測と広いGR96残件は未完了。次はロードマップのGR79モデル材質writer/cookを進め、spec v2/可変inventory拡張を先行させない。

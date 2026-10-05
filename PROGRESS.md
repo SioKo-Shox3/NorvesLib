@@ -842,3 +842,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-MANAGED-TEXTURE-CLI開始: texture v1通常経路を入力adapterと共通管理controller dispatchへ置き換える。normalはpendingで停止し、--recover --runtime-rootで親workspaceの固定pendingを明示復旧する。source/spec無しでも復旧できるが、新cookは別のnormal呼出しで独立検証する。frozen runtime payload比較は不変、外側の管理metadataは有限の別inventoryとして保存/検証する。
 
 - G2-S6-MANAGED-TEXTURE-CLI検証準備: --asset-setを共通initializer/bootstrap/updateへ接続し、明示workspace復旧と36番目のCPU試験を追加。既存25実CLIを維持し、管理CLI15呼出しを別群、baseline metadata各4file＋原ID/byte receiptを可視managed/に保存する。レビュー2回の指摘（SourceRootのdot/末尾separator、headerのvolume UUID36形式）を修正し、directory表記回帰とmetadata純値fixtureを追加。比較器12+4、新証拠7件を通常/最適化で確認。実Windows36CPU/79+10byteとmetadata受入は未実行。
+
+- G2-S6-MANAGED-TEXTURE-CLI受入: 19128d41/run37303534756で実Windows36CPU、既存Update29/Bootstrap17実中断と全条件flag、strict UTF8/Busy空診断、79+10直接byte/7smoke/5診断が成功。旧25実CLI（9成功/16拒否）に別15実CLI（8成功/7拒否）、管理metadata12fileのfinite inventory/schema/native ID/owner tuple/package hash、3ZIP/API digest/CRC、両MSVC/x64 binaryのCNGを独立照合しrootで全verifier再実行。旧証拠216file不変。texture v1のCLI接続をdoneとし、GR96全体完了とはしない。ロードマップGR79→GR82の依存に戻り、次は明示NVMESH v1のwriter/cook接続を優先する。

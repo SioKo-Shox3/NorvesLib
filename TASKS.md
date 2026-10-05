@@ -2520,7 +2520,7 @@
 - stop-when: 所有inventoryを追加除去する、親directoryを再作成する、root全体を交換/走査してunlistedを採用する、beforeを再serializeする、source不在復旧でsourceを読む、CLI統合やspec v2を同時に始める。
 
 ## G2-S6-MANAGED-TEXTURE-CLI: texture v1の通常コマンドを管理更新へ接続する
-- status: doing
+- status: done
 - done-when: --asset-setを共通initializer/bootstrap/updateの薄いadapterへ置換し、旧独立publication fallbackを実行しない。--recover --runtime-rootは親workspaceの固定pendingだけを明示復旧し、新cookを自動継続しない。
 - verify: Created/NoChange/Updated、未所有root/既存16拒否、manifest/inventory/owner変更、spec/source不在の明示復旧と引数拒否、既存35CPU/17+29中断/79+10byte/5診断、有限管理metadataの別inventory/原ID記録。
 - stop-when: 通常コマンドで兄弟pendingを黙って復旧する、未所有rootを採用する、診断substringでStoreMissingを推測する、比較対象の一括ignoreを追加する、spec v2/ModelCookCache移行まで同時に拡張する。
