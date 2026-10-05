@@ -2470,3 +2470,9 @@
 - done-when: existing specとexisting root/既存直親下の不在rootから物理UTF8 owner identityを導出し、ASCII drive-form保存bindingとnative I/O locatorを分けて返す。read-onlyで失敗時outを保持する。
 - verify: 既存/不在から作成後の再照合、Unicode・case・8.3・SUBST、同名spec置換、危険raw名/type/reparse拒否・shareなしspecの属性観測、独立state保存読戻し、Windowsと79+10byte gate。conditional試験の未実行を明記する。
 - stop-when: 不在名の将来canonicalを無条件に保証する、保存ownerを採用する、lexical binding差を黙認する、lock/journalなしでroot/stateをproduction公開する。
+
+## G2-S6-DESTINATION-LOCK: destination volume単位で協調writerを排他する
+- status: doing
+- done-when: FINALのcanonical volume GUIDだけでGlobal mutexを共有し、同期callbackの取得/再観測/解除を同一threadで閉じる。Busyは即時、abandonedを明示し、全取得で後段journal検査が必要とする。
+- verify: 実thread/process排他、同volume親子/sibling/case/作成前後、callback失敗/例外/再入、実process終了のabandonedとobject再作成、private故障注入、無書込、Windowsと79+10byte gate。cross-session実測は環境がある場合だけ。
+- stop-when: owner/spec/stateごとにlockを分ける、aliasや親子rootで同volume排他を回避する、永続crash印/transaction/認証を保証する、ACL/privilege変更やlockfile採用を始める。

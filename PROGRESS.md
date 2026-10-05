@@ -776,3 +776,6 @@
 - G2-S6-OWNER-RESOLVER検証準備: file observerを同じprivate coreへ寄せ、file入口の型判定が従来と同値であることを確認。比較器12件×通常/最適化が成功。SUBST fixtureは専用例外でunwindし、自分のmappingだけをexact cleanupする。未使用driveの二段確認、強制例外後のmapping消失確認を追加。27CPU登録済み、実Windows/79+10byteは未実行。
 
 - G2-S6-OWNER-RESOLVER受入: f9dc88ad/run37245964420で実Windows build・27CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。8.3/Unicode物理親へのASCII alias/SUBST/例外時mapping清掃/case-sensitiveの各flagは全て1。shareなしspecの属性観測も1であり、content-read/公開許可とは区別する。不在rootの通常作成前後照合、同名spec置換、lexical state不一致拒否、失敗保持を確認。3ZIPと79+10固定出力を独立確認しrootで再実行。read-only resolverをdone。lock/journal/production採用は未接続。
+
+- G2-S6-DESTINATION-LOCK開始: 初期profileは同volume全writerを直列化し、root名のcase/8.3/tunneling/親子包含によるlock抜けを避ける。volumeの複数GUID表記をmount managerのcanonical名へ統一し、Global mutex名へ使う。同期callback・待ち時間0・同thread再入拒否を採り、file/ACL/privilege変更は行わない。abandonedは永続印ではないためordinary取得でもjournal検査を省略しない。
+- G2-S6-DESTINATION-LOCK検証準備: 28CPUへ登録。Global名/volume GUIDの実C++literalを単独compileして区切りと長さを確認し、比較器12件×通常/最適化が成功。test bundleが--testを除去する実装に合わせてchild引数を調整。実thread/process、終了によるabandoned、全handle消滅後のordinary、例外/故障後の別thread再取得を試験化。実Windowsと79+10byteは未実行。
