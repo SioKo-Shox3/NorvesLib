@@ -187,6 +187,13 @@ namespace NorvesLib::Core::Rendering
          */
         void SetSkipGBufferDraw(bool bSkip) { m_bSkipGBufferDraw = bSkip; }
         bool IsSkipGBufferDraw() const { return m_bSkipGBufferDraw; }
+
+        /** @brief 記録したフレームの数（フレームの通し番号が変わるたびに 1 進む。通し番号が無い記録は記録ごとに 1 進む） */
+        uint64_t GetRenderFrameCount() const { return m_RenderFrameCount; }
+        /** @brief フレームごとの資源の組の数（選んだ飛行中のフレームの番号の枠。検査用） */
+        uint32_t GetFrameSlotCapacity() const { return m_FrameSlots.GetCapacity(); }
+        /** @brief 手放して GPU の使い終わりを待っているバッファの数（検査用） */
+        size_t GetRetiredBufferCount() const { return m_RetiredBuffers.size(); }
         /** @brief 解決が使えるかの問い合わせ先（同じ View の VisibilityResolvePass。null なら装置の機能だけで判定） */
         void SetVisibilityResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
 
@@ -558,6 +565,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bPreferRenderGraphGBufferResources = false;
         bool m_bGBufferRenderPassUsesRenderGraphAttachmentStates = false;
         bool m_bMegaGeometryDebugPayloadUnsupportedWarned = false;
+        // フレームの通し番号が無い記録の通知を一度だけ出すための印
+        bool m_bUnsetFrameSerialWarned = false;
 
         // メッシュ共通のLOD球を持つメッシュ（全クラスタが同じ段を選ぶ）の、最後に記録した段。
         // 段が変わったときだけ、選んだ段と三角形数を記録する。

@@ -3248,6 +3248,7 @@ namespace
 
         // 飛行中のフレームの番号が違う枠は別の資源。もう一方の枠の位置を戻さない
         ring.BeginFrame(1, 3);
+        assert(ring.GetActiveSlot() == 1);
         assert(ring.GetUsedCount() == 0);
         FrameUseRingProbe& other = ring.Acquire();
         assert(other.Id == 0);
@@ -3257,10 +3258,18 @@ namespace
             assert(other.Id != frame1[index]);
         }
         ring.BeginFrame(0, 4);
+        assert(ring.GetActiveSlot() == 0);
         assert(ring.GetUsedCount() == 0);
         assert(ring.Acquire().Id == frame1[0]);
         ring.BeginFrame(1, 3);
         assert(ring.GetUsedCount() == 1);
+
+        // 区別できる飛行中のフレームの番号の上限いっぱいまで、枠は互いに重ならない
+        for (uint32_t slot = 0; slot < FrameUseRing<FrameUseRingProbe>::MaxInFlightSlots; ++slot)
+        {
+            ring.BeginFrame(slot, 10);
+            assert(ring.GetActiveSlot() == slot);
+        }
 
         ring.Clear();
         ring.BeginFrame(0, 1);
@@ -3352,6 +3361,55 @@ namespace
             assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
         }
         assert(CountBufferCreations(device, debugUniform) == ViewportsPerFrame + 1);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // ID のラスタ（VisibilityRasterPass）の本体の資源（定数・記録の表・ディスクリプタセット）も同じ。1フレームに何回 Execute されても
+    // （複数のビューポート）、Execute ごとに別の組を作り、次のフレームでは使い回して増やさない。Execute の回数 % 2 で組を選ぶ作りに
+    // 戻すと、3 回目以降で増えず落ちる。塊の作業配列は最初の Execute で容量を取り、以降のフレームでは増やさない
+    // （毎フレームの確保をしない。呼ぶたびに作る作りに戻すと、容量が 0 のままで落ちる）
+    void TestVisibilityRasterFrameResourcesFollowFramesAndChunkScratchIsReused()
+    {
+        constexpr uint32_t ViewportsPerFrame = 7;
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true);
+        const FakeDevice& device = *scene.Device;
+        const char* const frameUniform = "VisBuffer_FrameUBO";
+
+        // 1回目の Execute: 手続き 3 件・スキニング 1 件の塊を集め、作業配列が容量を持つ
+        assert(scene.Raster.GetLastFrameStats().ProceduralRecords == 3);
+        assert(scene.Raster.GetLastFrameStats().SkinnedRecords == 1);
+        assert(CountBufferCreations(device, frameUniform) == 1);
+        const size_t scratchCapacity = scene.Raster.GetChunkScratchCapacity();
+        assert(scratchCapacity > 0);
+
+        // 同じフレーム（同じ通し番号）のあと 6 回のビューポート: 毎回別の組
+        for (uint32_t viewport = 1; viewport < ViewportsPerFrame; ++viewport)
+        {
+            assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
+            assert(CountBufferCreations(device, frameUniform) == viewport + 1);
+            assert(scene.Raster.GetChunkScratchCapacity() == scratchCapacity);
+        }
+
+        // 次のフレーム: 同じ回数の Execute でも組を作り足さず、作業配列の容量も増やさない
+        scene.Context.RenderFrameSerial = scene.Context.ResolveRenderFrameSerial() + 1;
+        for (uint32_t viewport = 0; viewport < ViewportsPerFrame; ++viewport)
+        {
+            assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
+            assert(scene.Raster.GetLastFrameStats().ProceduralRecords == 3);
+            assert(scene.Raster.GetChunkScratchCapacity() == scratchCapacity);
+        }
+        assert(CountBufferCreations(device, frameUniform) == ViewportsPerFrame);
+
+        // さらに次のフレームで 1 回多く Execute すると、その 1 回ぶんだけ増える
+        scene.Context.RenderFrameSerial += 1;
+        for (uint32_t viewport = 0; viewport <= ViewportsPerFrame; ++viewport)
+        {
+            assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
+        }
+        assert(CountBufferCreations(device, frameUniform) == ViewportsPerFrame + 1);
+        assert(scene.Raster.GetChunkScratchCapacity() == scratchCapacity);
 
         ShutdownVisibilityRasterScene(scene);
     }
@@ -4815,6 +4873,14 @@ namespace
         Container::VariableArray<FakeCommandList::VisibilityCopy> Copies;
     };
 
+    // 記録を終えたときの MegaGeometryPass のフレームごとの資源の状態（通し番号の扱いの検査用）
+    struct MegaFrameResourceProbe
+    {
+        uint64_t RenderFrameCount = 0;
+        uint32_t FrameSlotCapacity = 0;
+        size_t RetiredBufferCount = 0;
+    };
+
     // 2つのMegaMeshインスタンスを持つパスのフレームコマンドを記録する（bOcclusionCulling=false は --mega-occlusion=off）。
     // frameCount 回記録し、script があればフレームごとにプロキシを入れ替える。outVisibilityFrames にはフレームごとの
     // 見えたビットの0埋めとコピーを入れる。bSeparateMaterials なら2つ目のメッシュだけ別の材質（ベースカラー）にする。
@@ -4825,7 +4891,8 @@ namespace
                                         MegaProxyScript script = nullptr,
                                         Container::VariableArray<MegaVisibilityFrameRecord> *outVisibilityFrames = nullptr,
                                         bool bSeparateMaterials = false,
-                                        bool bSkipGBufferDraw = false)
+                                        bool bSkipGBufferDraw = false,
+                                        MegaFrameResourceProbe *outProbe = nullptr)
     {
         auto device = RHI::MakeShared<FakeDevice>();
         device->EnableMegaGeometryBatchCapabilities();
@@ -4979,6 +5046,12 @@ namespace
             }
         }
 
+        if (outProbe)
+        {
+            outProbe->RenderFrameCount = megaGeometryPass.GetRenderFrameCount();
+            outProbe->FrameSlotCapacity = megaGeometryPass.GetFrameSlotCapacity();
+            outProbe->RetiredBufferCount = megaGeometryPass.GetRetiredBufferCount();
+        }
         megaGeometryPass.Shutdown();
         renderResources.Shutdown();
         shaderManager.Shutdown();
@@ -5265,6 +5338,23 @@ namespace
         assert(frames[2].Fills[0].OffsetBytes == 0);
         assert(frames[2].Fills[0].SizeBytes == sizeof(uint32_t));
         assert(frames[2].Copies.empty());
+    }
+
+    // FrameCommand::CreateMegaGeometryPass で直接組んだコマンドは通し番号 0 のまま。0 を「同じフレーム」の印として扱うと、
+    // フレームごとの資源の組が記録ごとに増え続け、退避したバッファの寿命（記録したフレームの数）も進まず解放されない。
+    // 記録ごとに別のフレームとして扱うので、組は 1 つを使い回し、退避したバッファは一定のフレーム後に解放される
+    void TestMegaGeometryRecordWithoutFrameSerialTreatsEachRecordAsAFrame()
+    {
+        constexpr uint32_t RecordCount = 16;
+        FakeCommandList commandList;
+        MegaFrameResourceProbe probe;
+        RecordMegaGeometryTwoInstances(
+            true, commandList, 1.0f, RecordCount, &MegaVisibilityReaddScript, nullptr, false, false, &probe);
+
+        assert(probe.RenderFrameCount == RecordCount);
+        assert(probe.FrameSlotCapacity == 1);
+        // 配置が変わるフレーム（2・3・6・7）で 4 本が退避する。8 フレームより前に退避したものは、もう解放されている
+        assert(probe.RetiredBufferCount <= 2);
     }
 
     void TestMegaGeometryNativeExecuteSkipsWhenNoInstances()
@@ -9288,6 +9378,7 @@ int main()
     TestFrameUseRingGivesDistinctUsesWithinAFrameAndReusesNextFrame();
     TestComputePassFrameResourcesAreNotReusedWithinAFrame();
     TestVisibilityDebugPassFrameResourcesAreNotReusedWithinAFrame();
+    TestVisibilityRasterFrameResourcesFollowFramesAndChunkScratchIsReused();
     TestVisibilityRasterOnSinglePassMegaGeometry();
     TestVisibilityRasterRecordsFrameUniqueMaterialTableIndices();
     TestVisibilityResolveOnReplacesGBufferDrawsWithStorageImageWrites();
@@ -9319,6 +9410,7 @@ int main()
     TestMegaGeometryTwoPassFallsBackWhenDepthRangeIsNotUnit();
     TestMegaGeometryTwoPassDiscardsVisibilityOnReaddAndComponentChange();
     TestMegaGeometryTwoPassDiscardsVisibilityWhenAllInstancesVanish();
+    TestMegaGeometryRecordWithoutFrameSerialTreatsEachRecordAsAFrame();
     TestGBufferNativeDeclareCreatesTransientOutputs();
     TestGBufferSSAONativeDeclareDependencies();
     TestGBufferSSAOLightingNativeDeclareDependencies();

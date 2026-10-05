@@ -1,5 +1,6 @@
 ﻿#include "Rendering/RenderingCoordinator.h"
 #include "Rendering/CanvasView.h"
+#include "Rendering/FrameUseRing.h"
 #include "Rendering/RenderingCoordinatorDiagnostics.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/DepthOfFieldPass.h"
@@ -553,6 +554,8 @@ namespace NorvesLib::Core::Rendering
             [[maybe_unused]] const uint32_t maxFramesInFlight = swapChain.GetMaxFramesInFlight();
             assert(maxFramesInFlight > 0);
             assert(frameIndex < maxFramesInFlight);
+            // フレームごとの資源の枠（FrameUseRing）は、これ以上の番号を区別できない
+            assert(maxFramesInFlight <= FrameUseRingMaxInFlightSlots);
             return frameIndex;
         }
 
@@ -1622,6 +1625,17 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // 12. SceneRendererの初期化
         // ========================================
+        if (swapChain->GetMaxFramesInFlight() > FrameUseRingMaxInFlightSlots)
+        {
+            // 飛行中のフレームの番号が FrameUseRing の枠より多いと、別のフレームの資源を上書きする
+            NORVES_LOG_ERROR("RenderingCoordinator",
+                             "飛行中のフレーム数 %u がフレームごとの資源の枠の上限 %u を超えています",
+                             swapChain->GetMaxFramesInFlight(),
+                             FrameUseRingMaxInFlightSlots);
+            ReleaseInitializedResources();
+            return false;
+        }
+
         if (!m_TransientPool.Initialize(m_Device->GetResourceAllocator(), swapChain->GetMaxFramesInFlight()))
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize TransientResourcePool");

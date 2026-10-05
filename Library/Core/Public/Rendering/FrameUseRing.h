@@ -3,10 +3,14 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 
+#include <cassert>
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
 {
+    /** @brief FrameUseRing が区別できる飛行中のフレームの数の上限（スワップチェーンの飛行中のフレーム数はこれ以下でなければならない） */
+    inline constexpr uint32_t FrameUseRingMaxInFlightSlots = 4;
+
     /**
      * @brief 1フレームに何回でも資源を使える、フレームごとの使い捨て資源のリング
      *
@@ -20,6 +24,8 @@ namespace NorvesLib::Core::Rendering
      * 枠の資源を使い切ったら足す（上限は無い）。同じ枠の使用済みの位置を戻すのは、フレームの通し番号が変わった
      * 最初の BeginFrame だけで、その時点で同じ番号の前のフレームの GPU の仕事は終わっている。
      * 1 フレームの間（通し番号が同じ間）に BeginFrame を何回呼んでも位置は戻らない。
+     * 通し番号 0 は「未設定」の予約値で渡してはならない（フレームの境目が分からず、位置が戻らないまま資源が増え続ける）。
+     * 通し番号を持たない呼び出し側は、渡す前に自分で 0 以外の代わりの番号を決める。
      *
      * 渡した資源の参照は、リングを Clear するまで有効（資源は個別に確保する）。
      * RenderThread だけから使う（排他は持たない）。
@@ -28,16 +34,18 @@ namespace NorvesLib::Core::Rendering
     class FrameUseRing
     {
     public:
-        /** @brief 飛行中のフレームの番号を区別できる数。これ以上の番号は剰余で同じ枠に重なる（今の上限は 1） */
-        static constexpr uint32_t MaxInFlightSlots = 4;
+        /** @brief 飛行中のフレームの番号を区別できる数。これ以上の番号は枠が重なって別のフレームの資源を上書きするので渡せない */
+        static constexpr uint32_t MaxInFlightSlots = FrameUseRingMaxInFlightSlots;
 
         /**
          * @brief 枠を選ぶ。frameSerial が前回その枠を使ったときと違えば、使用済みの位置を戻す
-         * @param inFlightIndex 飛行中のフレームの番号（スワップチェーンの現在のフレームの番号）
-         * @param frameSerial フレームごとに必ず増える通し番号（同じフレームの間は同じ値）
+         * @param inFlightIndex 飛行中のフレームの番号（スワップチェーンの現在のフレームの番号。MaxInFlightSlots 未満）
+         * @param frameSerial フレームごとに必ず増える通し番号（同じフレームの間は同じ値。0 は渡せない）
          */
         void BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
         {
+            assert(inFlightIndex < MaxInFlightSlots && "飛行中のフレームの番号が FrameUseRing の枠の数を超えた");
+            assert(frameSerial != 0 && "FrameUseRing に未設定の通し番号 0 を渡した");
             m_ActiveSlot = inFlightIndex % MaxInFlightSlots;
             Slot& slot = m_Slots[m_ActiveSlot];
             if (!slot.bBegun || slot.FrameSerial != frameSerial)

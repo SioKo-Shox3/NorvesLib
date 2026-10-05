@@ -132,6 +132,9 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle GetIdHandle() const { return m_IdHandle.ToResourceHandle(); }
         RGResourceHandle GetDepthHandle() const { return m_DepthHandle; }
 
+        /** @brief 塊の作業配列が持っている容量（毎フレームの確保をしない確認用。最初の Execute の後は増えない） */
+        size_t GetChunkScratchCapacity() const { return m_ChunkScratch.capacity(); }
+
     private:
         /** @brief 1回の描画（塊 1 つ） */
         struct ChunkDraw
@@ -144,7 +147,10 @@ namespace NorvesLib::Core::Rendering
             uint32_t RecordNumber = 0;
         };
 
-        /** @brief フレームごとに交互に使う資源（GPU が前のフレームで読んでいるかもしれないため） */
+        /**
+         * @brief 1回の Execute が使う資源の組（GPU が前のフレームで読んでいるかもしれないため、Execute のたびに
+         *        FrameUseRing から別の組を受け取る）
+         */
         struct FrameSlot
         {
             RHI::BufferPtr RecordTable; // 記録の表（host-visible。MegaGeometry の範囲は GPU が、残りはホストが書く）
@@ -186,8 +192,6 @@ namespace NorvesLib::Core::Rendering
                                   Container::VariableArray<VisibilityBuffer::DrawRecord>& records,
                                   Container::VariableArray<ChunkDraw>& draws);
 
-        static constexpr uint32_t FrameSlotCount = 2;
-
         RHI::IDevice* m_Device = nullptr;
         MegaGeometryPass* m_MegaGeometryPass = nullptr;
         const SkinningComputePass* m_SkinningComputePass = nullptr;
@@ -212,8 +216,10 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_MeshWireframePipeline;
         RHI::PipelinePtr m_SkinnedWireframePipeline;
 
-        FrameSlot m_FrameSlots[FrameSlotCount];
-        uint64_t m_FrameCounter = 0;
+        // 資源は Execute の回数ではなくフレームの枠で決める（同じフレームに何回 Execute されても提出前の資源を上書きしない）
+        FrameUseRing<FrameSlot> m_FrameSlots;
+        // 手続き・スキニングの塊の作業配列（Collect*Chunks の間だけ使い、容量を毎フレーム使い回す）
+        Container::VariableArray<MeshIndexChunk> m_ChunkScratch;
 
         RGTextureHandle m_IdHandle;
         RGResourceHandle m_DepthHandle;

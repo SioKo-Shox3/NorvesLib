@@ -332,6 +332,39 @@ namespace
             assert(chunks.size() == 1 && chunks[0].IndexCount == 12);
         }
 
+        // 毎フレーム呼ぶ側が出力と作業配列を持ち回したとき、2 回目以降は確保しない。区切りが無い（nullptr・範囲外だけ）
+        // ときは区切りの作業配列に触らず、出力の容量も増やさない。区切りがあるときだけ作業配列を使い、その容量も増えない
+        {
+            NorvesLib::Core::Container::VariableArray<MeshIndexChunk> chunks;
+            NorvesLib::Core::Container::VariableArray<uint32_t> cutScratch;
+            assert(BuildMeshIndexChunks(300 * 3, nullptr, 0, chunks, cutScratch));
+            assert(chunks.size() == 3 && cutScratch.capacity() == 0);
+            const size_t chunkCapacity = chunks.capacity();
+            const MeshIndexChunk* chunkData = chunks.data();
+            const uint32_t outside[2] = {300 * 3, 99999};
+            for (int repeat = 0; repeat < 3; ++repeat)
+            {
+                assert(BuildMeshIndexChunks(300 * 3, nullptr, 0, chunks, cutScratch));
+                assert(chunks.size() == 3);
+                assert(BuildMeshIndexChunks(300 * 3, outside, 2, chunks, cutScratch));
+                assert(chunks.size() == 3);
+                assert(chunks.capacity() == chunkCapacity && chunks.data() == chunkData);
+                assert(cutScratch.capacity() == 0);
+            }
+
+            const uint32_t boundaries[2] = {150 * 3, 220 * 3};
+            assert(BuildMeshIndexChunks(300 * 3, boundaries, 2, chunks, cutScratch));
+            assert(chunks.size() == 4 && cutScratch.capacity() > 0);
+            const size_t cutCapacity = cutScratch.capacity();
+            const uint32_t* cutData = cutScratch.data();
+            for (int repeat = 0; repeat < 3; ++repeat)
+            {
+                assert(BuildMeshIndexChunks(300 * 3, boundaries, 2, chunks, cutScratch));
+                assert(chunks.size() == 4);
+                assert(cutScratch.capacity() == cutCapacity && cutScratch.data() == cutData);
+            }
+        }
+
         // 末尾まで届く大きさでも、先頭の位置の加算が桁あふれして終わらなくならない（4G-1 個 → 11184811 塊）
         {
             NorvesLib::Core::Container::VariableArray<MeshIndexChunk> chunks;

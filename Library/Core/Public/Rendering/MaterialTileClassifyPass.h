@@ -174,9 +174,6 @@ namespace NorvesLib::Core::Rendering
          */
         void BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial);
 
-        /** @brief 選んだ枠で、今のフレームにここまで使った資源（dispatch 1 回に 1 組）の数（観測用） */
-        uint32_t GetUsedCount() const { return m_Uses.GetUsedCount(); }
-
         /**
          * @brief 分類を記録する（引数・統計を 0 にしてから 3 回 dispatch する）
          * @return 記録できたら true。入力・出力が足りない、バッファが Layout に収まらないときは false で何も記録しない

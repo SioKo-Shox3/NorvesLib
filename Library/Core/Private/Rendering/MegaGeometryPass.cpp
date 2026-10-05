@@ -361,6 +361,7 @@ namespace NorvesLib::Core::Rendering
         m_FrameSlots.Clear();
         m_RenderFrameCount = 0;
         m_LastRenderFrameSerial = 0;
+        m_bUnsetFrameSerialWarned = false;
         m_DummyVisibilityBuffer.reset();
         m_DummyStatsBuffer.reset();
         m_VisibilityBuffer.reset();
@@ -946,13 +947,27 @@ namespace NorvesLib::Core::Rendering
         bool bTwoPass = CanUseTwoPassOcclusion(command);
         // 2パスでないフレームも数える（見えたビットは連続した2パスのフレームの間でだけ引き継ぐため）
         ++m_OcclusionFrameCount;
-        // フレームごとの資源の組を選ぶ。1フレームの複数のビューポートは同じ通し番号なので、組が別々に渡る
-        if (m_RenderFrameCount == 0 || command.RenderFrameSerial != m_LastRenderFrameSerial)
+        // フレームごとの資源の組を選ぶ。1フレームの複数のビューポートは同じ通し番号なので、組が別々に渡る。
+        // 通し番号 0（FrameCommand::CreateMegaGeometryPass で直接組んだコマンドなど）はフレームの境目が分からず、そのままだと
+        // 組が記録ごとに増え続け、退避したバッファの寿命も進まず解放されない。記録の回数を代わりの番号にして、
+        // 記録ごとに別のフレームとして扱う（1 フレームに複数回記録する呼び出し側は、通し番号を渡すこと）
+        uint64_t frameSerial = command.RenderFrameSerial;
+        if (frameSerial == 0)
+        {
+            if (!m_bUnsetFrameSerialWarned)
+            {
+                m_bUnsetFrameSerialWarned = true;
+                NORVES_LOG_WARNING("MegaGeometryPass",
+                                   "FRAME_SERIAL_UNSET フレームの通し番号が無いコマンドです。記録ごとに別のフレームとして扱います");
+            }
+            frameSerial = m_OcclusionFrameCount;
+        }
+        if (m_RenderFrameCount == 0 || frameSerial != m_LastRenderFrameSerial)
         {
             ++m_RenderFrameCount;
-            m_LastRenderFrameSerial = command.RenderFrameSerial;
+            m_LastRenderFrameSerial = frameSerial;
         }
-        m_FrameSlots.BeginFrame(command.InFlightIndex, command.RenderFrameSerial);
+        m_FrameSlots.BeginFrame(command.InFlightIndex, frameSerial);
         // 決定的な撮影のエポック（読み込み完了）の最初のフレームから、統計の行に相対フレームの番号を付ける
         // 見えたビットも時間的な状態なので、エポックの最初のフレームは引き継がずに0から始める（読み込み完了までの
         // フレーム数の違いが、エポックの最初のフレームの1パス目の数に出ないようにする）

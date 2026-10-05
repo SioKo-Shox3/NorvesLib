@@ -106,9 +106,6 @@ namespace NorvesLib::Core::Rendering
          */
         void BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial);
 
-        /** @brief 選んだ枠で、今のフレームにここまで使った資源の数（観測用） */
-        uint32_t GetUsedCount() const { return m_Uses.GetUsedCount(); }
-
         /**
          * @brief 頂点数から dispatch のグループ数（x, y）を求める
          *

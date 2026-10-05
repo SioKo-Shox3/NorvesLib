@@ -205,10 +205,8 @@ namespace NorvesLib::Core::Rendering
 
     void VisibilityRasterPass::Shutdown()
     {
-        for (FrameSlot& slot : m_FrameSlots)
-        {
-            slot = FrameSlot{};
-        }
+        m_FrameSlots.Clear();
+        m_ChunkScratch = Container::VariableArray<MeshIndexChunk>{};
         m_MegaPipeline.reset();
         m_MeshPipeline.reset();
         m_SkinnedPipeline.reset();
@@ -393,7 +391,8 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // 直前に使ったのは FrameSlotCount フレーム前で、そのGPUの仕事は終わっているので、作り直して置き換えてよい
+        // この組を最後に使ったのは、同じ飛行中のフレームの番号の前のフレーム（フェンスで GPU の完了を待ってある）なので、
+        // 作り直して置き換えてよい。同じフレームの別の Execute には別の組が渡る
         if (!slot.RecordTable || slot.RecordCapacity < recordCapacity)
         {
             const uint32_t capacity = std::max(64u, NextPowerOfTwo(recordCapacity));
@@ -574,7 +573,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         const DrawCommandView commands = context.GetActiveOpaqueCommands();
-        VariableArray<MeshIndexChunk> chunks;
+        VariableArray<MeshIndexChunk>& chunks = m_ChunkScratch;
         for (uint32_t commandIndex = 0; commandIndex < commands.Count; ++commandIndex)
         {
             const DrawCommand& command = commands.Data[commandIndex];
@@ -666,7 +665,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         const VariableArray<SkinningComputeInstance>& instances = m_SkinningComputePass->GetInstances();
-        VariableArray<MeshIndexChunk> chunks;
+        VariableArray<MeshIndexChunk>& chunks = m_ChunkScratch;
         for (uint32_t instanceIndex = 0; instanceIndex < instances.size(); ++instanceIndex)
         {
             const SkinningComputeInstance& instance = instances[instanceIndex];
@@ -822,8 +821,8 @@ namespace NorvesLib::Core::Rendering
         m_Stats.MegaCommandSlots = bHasMegaDraw ? megaSlots : 0u;
         m_Stats.TotalSlots = totalSlots;
 
-        FrameSlot& slot = m_FrameSlots[m_FrameCounter % FrameSlotCount];
-        ++m_FrameCounter;
+        m_FrameSlots.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+        FrameSlot& slot = m_FrameSlots.Acquire();
         const VariableArray<VisibilityBuffer::MaterialEntry> materialEntries = m_MaterialTable.BuildGpuEntries();
         m_Stats.MaterialUnique = m_MaterialTable.GetUniqueCount();
         m_Stats.MaterialLimit = m_MaterialTable.GetLimit();
