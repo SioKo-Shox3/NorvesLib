@@ -7,7 +7,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR77/GR78: GLB/sidecar/変換をcook・loose・骨格へ接続済み。実物での最終受入れは残る。surface_centroidは承認済み保留。
 - GR86: 明示の影響数縮約/CUBICSPLINE焼込/morph dropと診断を接続済み。256関節はGR82 Stage Bと同時。
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
-- GR79: 材質codec/reader/設定/source/ARM/selectorと明示v1 writer/cook/hash/cacheまで実Windowsで受入済み。runtime係数・packed ARM接続と実描画受入れは未完。
+- GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値stagingと1材質Opaque runtimeのCPU/FakeDevice接続まで実Windowsで受入済み。複数primitive/material cook、対応外材質の描画、実GPU/実物受入れは未完。
 - GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
 - GR83/GR84: 分離骨格資産ローダとBVH取り込みはこれから。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
@@ -867,3 +867,6 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR79 opaque runtime初回run37332093729はbuild失敗。ModelStaging.cppのR8直接UpdateでITextureの完全定義include不足（C2027/C2039）。RHI/ITexture.hを明示includeし修正する。41CPUとbyte/CLI検証は初回では未実行で、再CIへ送る。
 
 - G2/GR79 opaque runtime修正run37334004766はCore/AssetCook/CookedMeshTestのbuildを通過後、既存MegaGeometryResourcesTestでprivate headerの相対include不足C1083。ModelStaging.hとImportedOpaqueRuntime.hから同じdirectoryのModelMaterialStaging.hを相対参照する形に修正し、consumerへprivate root追加を強制しない。41CPUとparityはまだ未実行。
+
+- G2/GR79 opaque runtime受入: 17ce1e04b64e7ab943e489da270ac367c4193030 / tree d3680dce4ccae80060a3dbf5f7004b62390492b9 / run37336768659 attempt1 job111853407017。41CPU/3marker、Bootstrap17/Update29、79+10直接byte、7smoke/5診断、25native+15managed CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを独立照合し親再実行exit0。失敗run37332093729/37334004766の証拠も保持。GPU画像・cross-sessionは未実行のまま。
+- G2/GR79 次優先: 現行v0/looseのCreateTextureFromPixelsにも匿名handleのregistry所有残りを確認したため、小さい所有移管/例外cleanupを先に閉じる。その後ロードマップ173の複数primitive/material cookを進め、N>1 runtime拒否を維持する。GR82 StageBへは飛ばず、StageA（済）後の既定GR84/GR83順を尊重する。

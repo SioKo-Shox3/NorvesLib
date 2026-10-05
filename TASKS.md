@@ -2542,7 +2542,9 @@
 - result: codec669322b/treea7956787/run37321891650 attempt1 job111802776013で実MSVCx64・38CPU/新旧marker・17/29中断・79+10byte・25+15CLI/metadata12・Python12+4+7 normal/-O・3ZIP/CNGを独立受入。親readonly再実行exit0。Unicodeは手組みdataからの有限保証、GPU未受入れ/製品v1拒否は維持。
 
 ## G2-GR79-OPAQUE-RUNTIME: 1材質の不透明v1を既存描画経路へ接続する
-- status: doing
+- status: done
 - done-when: 1submesh/1material/LOD0の対応subsetを判定し、v1材質値をMegaMeshへ渡す。ARMは使用maskのR8だけ生成、scalarは既存同等の1x1 binding、shader/UBO/露出は不変。Opaqueのfactor alphaは保持して無視し、画像alphaの背景漏れを保守的に拒否する。Nits0のemissive参照はuploadを省略して通す。未対応normalScale/alpha/両面/正発光texture等はGPU作成前に理由付き拒否。v0互換維持。
 - verify: pure profile/texture検査/selected split/1x1 cache、FakeDeviceで値とupload選択/未対応時GPU作成ゼロ、v0とmodel sync/async/cache回帰。既存38CPU/79+10byte/managed復旧を維持。実GPU画像受入れはこのCPU接続taskと区別し未実行なら残件にする。
 - stop-when: shader/alpha-cull/透明/複数材質描画/packed GPU化まで拡大する、未対応設定を落とす、GPU合格を偽る。
+
+- result: code17ce1e04/tree d3680dce/run37336768659 attempt1 job111853407017。実MSVCx64・41CPU/新旧3marker・17/29中断・79+10byte・25+15CLI/metadata12・Python12+4+7 normal/-O・3ZIP/CNGを独立受入し親も再実行exit0。先行2runのinclude阻害を修正し失敗証拠保持。GPU描画は未受入れ。旧v0/loose匿名texture所有の漏れは次の小修正へ残す。
