@@ -1562,106 +1562,6 @@ namespace
         registry.Shutdown();
     }
 
-    // GBufferPass がスキニングの描画を積んだ数（GeometryPass の描画コマンドの合計）。
-    // bResolveActive は SetVisibilityResolveActive、bSupported は装置が幾何の解決に対応するか
-    size_t RunGBufferPassAndCountSkinnedDraws(bool bResolveActive, bool bSupported)
-    {
-        ResourceRegistry registry;
-        assert(registry.Initialize());
-        auto mesh = registry.CreateTransient<SkinnedMeshResource>("SkinnedResolveSkipMesh");
-        assert(mesh);
-        SeedMesh(mesh);
-
-        auto device = Container::MakeShared<FakeDevice>();
-        if (bSupported)
-        {
-            device->Capabilities.bGeometryShader = true;
-            device->Capabilities.bDrawIndirectFirstInstance = true;
-            device->Capabilities.bBufferDeviceAddress = true;
-            device->Capabilities.bShaderStorageImageExtendedFormats = true;
-        }
-        RenderResources resources;
-        assert(resources.Initialize(device));
-        resources.SkinnedMeshes().BeginFrame(0);
-
-        FramePacket packet;
-        packet.SkinnedMeshFrameLeases.push_back(
-            Container::MakeShared<SkinnedMeshFrameLease>(mesh->GetRenderAssetLease()));
-        DrawCommand source = DrawCommand::CreateDrawIndexed();
-        source.Draw.PayloadKind = DrawPayloadKind::Skinned;
-        source.Draw.InstanceCount = 1;
-        source.Draw.bInstanced = false;
-        source.Draw.WorldMatrix = Math::Matrix4x4::Identity;
-        source.Skinned.FrameLeaseIndex = 0;
-        source.Skinned.BonePalette = MakePalette();
-        packet.DrawCommands.push_back(source);
-
-        ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
-        SceneRenderer renderer;
-        assert(renderer.Initialize(device.get(), nullptr));
-        renderer.SetSkinnedMeshResources(&resources.SkinnedMeshes());
-        renderer.BeginFrame();
-        FakeCommandList commandList;
-        Container::VariableArray<FrameCommand> pending;
-
-        ViewRenderContext context;
-        context.CommandList = &commandList;
-        context.Device = device.get();
-        context.ShaderMgr = &shaderManager;
-        context.Renderer = &renderer;
-        context.PendingFrameCommands = &pending;
-        context.SkinnedMeshes = &resources.SkinnedMeshes();
-        context.Resources.Materials = &resources.Materials();
-        context.Resources.Textures = &resources.Textures();
-        context.Resources.Meshes = &resources.Meshes();
-        context.SnapshotSkinnedMeshFrameLeases = &packet.SkinnedMeshFrameLeases;
-        context.SnapshotDrawCommandSource = &packet.DrawCommands;
-        context.SnapshotDrawCommands = DrawCommandView::FromArray(packet.DrawCommands);
-        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(packet.DrawCommands);
-        context.RenderWidth = 64;
-        context.RenderHeight = 64;
-        context.ScreenWidth = 64;
-        context.ScreenHeight = 64;
-
-        GBufferPass gBuffer;
-        gBuffer.SetSceneRenderer(&renderer);
-        gBuffer.SetVisibilityResolveActive(bResolveActive);
-        assert(gBuffer.Initialize(context));
-        gBuffer.Setup(context);
-        gBuffer.Execute(context);
-
-        size_t drawCount = 0;
-        for (const FrameCommand& command : pending)
-        {
-            if (command.Type == FrameCommandType::GeometryPass && command.GeometryPass.DrawCommands)
-            {
-                drawCount += command.GeometryPass.DrawCommands->size();
-            }
-        }
-
-        gBuffer.Shutdown();
-        renderer.Shutdown();
-        shaderManager.Shutdown();
-        packet.Clear();
-        mesh->Unload();
-        resources.Shutdown();
-        mesh.reset();
-        registry.CollectGarbage();
-        registry.Shutdown();
-        return drawCount;
-    }
-
-    // ビジビリティバッファの幾何の解決が GBuffer を書くとき（SetVisibilityResolveActive）、GBufferPass は不透明の描画を積まない。
-    // 装置が解決に対応しない間は、フラグが立っていても今までどおり描く（見える物が消えない）。フラグが無ければ描く
-    void TestGBufferPassSkipsDrawsOnlyWhenVisibilityResolveIsActiveAndSupported()
-    {
-        assert(RunGBufferPassAndCountSkinnedDraws(false, true) == 1);
-        assert(RunGBufferPassAndCountSkinnedDraws(false, false) == 1);
-        assert(RunGBufferPassAndCountSkinnedDraws(true, false) == 1);
-        assert(RunGBufferPassAndCountSkinnedDraws(true, true) == 0);
-    }
-
     void TestDirectionalShadowFittingIncludesOnlySkinnedAnimatedWorldBounds()
     {
         DirectionalShadowMatrixSettings base;
@@ -1962,7 +1862,6 @@ int main()
     TestRecordCountersInstancingRejectAndThreeConditionRelease();
     TestExistingPassesPrepareSkinnedCommandsWithoutInstanceBuffer();
     TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer();
-    TestGBufferPassSkipsDrawsOnlyWhenVisibilityResolveIsActiveAndSupported();
     TestDirectionalShadowFittingIncludesOnlySkinnedAnimatedWorldBounds();
     TestCoordinatorPropagatesFramePacketStatsAndSubmissionSerials();
     TestCoordinatorDistinguishesRecoverableAndFatalBeginFrameStatuses();

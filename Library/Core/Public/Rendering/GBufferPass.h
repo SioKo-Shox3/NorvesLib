@@ -17,6 +17,7 @@ namespace NorvesLib::Core::Rendering
     struct SkinnedRenderPathContractTestAccess;
     // 前方宣言
     class SceneView;
+    class VisibilityResolvePass;
 
     /**
      * @brief GBufferパス設定
@@ -137,14 +138,17 @@ namespace NorvesLib::Core::Rendering
          *
          * true のとき（--visibility-buffer=on）、不透明の描画を GBuffer へ描かず、GBuffer のクリアだけを行う。
          * Albedo・Normal・Velocity は解決のパス（VisibilityResolvePass）が storage image として書くので、Declare がこの 3 枚に
-         * 書き込みの使い道（ShaderWrite）を足す。装置が解決に対応しない（VisibilityResolveGeometry::IsSupported が false）ときは、
-         * true でも従来どおり描く。
+         * 書き込みの使い道（ShaderWrite）を足す。解決が実際に使えないとき（SetVisibilityResolvePass の相手の
+         * GetFallbackReason が None 以外。装置の非対応・ID のラスタや解決のパイプラインが無い）は、true でも従来どおり描く。
+         * 相手を渡していないときは、装置の機能（VisibilityResolveGeometry::IsSupported）だけで判定する。
          */
         void SetVisibilityResolveActive(bool bActive)
         {
             m_bVisibilityResolveActive = bActive;
         }
         bool IsVisibilityResolveActive() const { return m_bVisibilityResolveActive; }
+        /** @brief 解決が使えるかの問い合わせ先（同じ View の VisibilityResolvePass。null なら装置の機能だけで判定） */
+        void SetVisibilityResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
 
         // ========================================
         // GBufferアクセス
@@ -255,6 +259,9 @@ namespace NorvesLib::Core::Rendering
                                                              const RHI::TexturePtr& depth,
                                                              bool bUseRenderGraphInitialStates) const;
 
+        // ビジビリティバッファの解決が GBuffer を書く構成で、このパスが描画を止めるか（解決が実際に使えるときだけ）
+        bool ShouldSkipDraws(const RHI::IDevice* device) const;
+
         // 設定
         GBufferPassSettings m_Settings;
 
@@ -298,6 +305,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_CurrentHeight = 0;
         bool m_bRegisterLegacyBridge = true;
         bool m_bVisibilityResolveActive = false;
+        const VisibilityResolvePass* m_ResolvePass = nullptr;
         bool m_bUsingRenderGraphResources = false;
         bool m_bRenderPassUsesRenderGraphInitialStates = false;
         RHI::ITexture* m_FramebufferAlbedoTexture = nullptr;

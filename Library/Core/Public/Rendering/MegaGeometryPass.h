@@ -15,6 +15,7 @@ namespace NorvesLib::Core::Rendering
 {
     class SceneView;
     class SceneRenderer;
+    class VisibilityResolvePass;
     struct MegaGeometryPassCommand;
     class MegaGeometryResources;
 
@@ -178,13 +179,16 @@ namespace NorvesLib::Core::Rendering
          *
          * ビジビリティバッファの幾何の解決が GBuffer を書くとき（--visibility-buffer=on）に true にする。止めても、
          * カリング・遮蔽の判定・描画の写しの作成・render pass の開始と終了（GBuffer の添付の状態遷移）は行い、描画の呼び出しだけを省く。
-         * 装置が解決に対応しない（VisibilityResolveGeometry::IsSupported が false）ときは、true でも描く。
+         * 解決が実際に使えないとき（SetVisibilityResolvePass の相手の GetFallbackReason が None 以外。相手を渡していないときは
+         * 装置が VisibilityResolveGeometry::IsSupported を満たさないとき）は、true でも描く。
          *
          * 2 パスの遮蔽の HZB は GBuffer の深度から作るので、止めている間は 1 パス目のクラスタが深度に入らない。
          * 判定は隠れていない側（描く側）に倒れるだけで、見える物は欠けない。
          */
         void SetSkipGBufferDraw(bool bSkip) { m_bSkipGBufferDraw = bSkip; }
         bool IsSkipGBufferDraw() const { return m_bSkipGBufferDraw; }
+        /** @brief 解決が使えるかの問い合わせ先（同じ View の VisibilityResolvePass。null なら装置の機能だけで判定） */
+        void SetVisibilityResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
 
         /**
          * @brief 最後の RecordFrameCommand が作った描画の写しを取り出す（取り出すと空になる）
@@ -540,6 +544,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bVisibilityPlanEnabled = false;
         // GBuffer への描画を止めるか（ビジビリティバッファの解決が GBuffer を書くとき）
         bool m_bSkipGBufferDraw = false;
+        const VisibilityResolvePass* m_ResolvePass = nullptr;
         VisibilityDrawPlan m_VisibilityPlan;
         // 描画の写しを作ったフレームの IndirectDraw・カウンタ・描画情報のバッファが、Common へ戻されないまま残っているか
         bool m_bVisibilityBuffersHeld = false;

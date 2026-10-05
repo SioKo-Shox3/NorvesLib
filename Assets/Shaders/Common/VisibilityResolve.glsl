@@ -159,9 +159,15 @@ struct VisTriangle
 {
     vec3 position[3];  // ワールド位置（カメラ相対にする前）
     vec3 previous[3];  // 前のフレームのワールド位置
-    vec3 normal[3];    // ワールド法線（正規化前）
+    vec3 normal[3];    // 頂点ごとに変換して正規化したワールド法線（ラスタの頂点シェーダーと同じ。補間は正規化しない）
     vec2 uv[3];
 };
+
+// 頂点の法線の正規化（ラスタの頂点シェーダーが、変換した頂点の法線を補間の前に正規化するのと同じ。退化した法線は 0）
+vec3 VisNormalizeVertexNormal(vec3 normal)
+{
+    return dot(normal, normal) > 0.000001 ? normalize(normal) : vec3(0.0);
+}
 
 // 記録から三角形 triangleIndex の 3 頂点を読む。アドレスが無い（BufferDeviceAddress が無い）・インスタンスが表の外なら false
 bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTriangle triangle)
@@ -224,16 +230,16 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
             const VisMegaInstance instance = megaInstances[instanceIndex];
             triangle.position[k] = (instance.world * vec4(local, 1.0)).xyz;
             triangle.previous[k] = (instance.previousWorld * vec4(local, 1.0)).xyz;
-            triangle.normal[k] = mat3(instance.world) * localNormal;
+            triangle.normal[k] = VisNormalizeVertexNormal(mat3(instance.world) * localNormal);
         }
         else if (kind == VIS_KIND_PROCEDURAL_CHUNK)
         {
             // gbuffer.vert と同じ式: 法線は法線行列の行から作る
             const VisDrawInstance instance = drawInstances[instanceIndex];
             triangle.position[k] = (instance.world * vec4(local, 1.0)).xyz;
-            triangle.normal[k] = instance.normalRows[0].xyz * localNormal.x +
-                                 instance.normalRows[1].xyz * localNormal.y +
-                                 instance.normalRows[2].xyz * localNormal.z;
+            triangle.normal[k] = VisNormalizeVertexNormal(instance.normalRows[0].xyz * localNormal.x +
+                                                          instance.normalRows[1].xyz * localNormal.y +
+                                                          instance.normalRows[2].xyz * localNormal.z);
             triangle.previous[k] = bHasPreviousTransform
                                        ? (drawInstances[previousTransformIndex].previousWorld * vec4(local, 1.0)).xyz
                                        : triangle.position[k];
@@ -242,7 +248,7 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
         {
             // スキニング: 頂点は変形済みのワールド空間。前のフレームの頂点は別の列から同じ頂点番号で読む
             triangle.position[k] = local;
-            triangle.normal[k] = localNormal;
+            triangle.normal[k] = VisNormalizeVertexNormal(localNormal);
             if (bHasPreviousVertices)
             {
                 const VisVertex previousVertex = VisVertexArray(previousAddress).vertices[vertexIndex];

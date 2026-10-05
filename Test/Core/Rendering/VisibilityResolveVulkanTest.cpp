@@ -349,7 +349,9 @@ namespace
                 const uint32_t corner = QuadIndices[triangle * 3 + k];
                 ref.Position[k] = pos[corner];
                 ref.Previous[k] = prev[corner];
-                ref.Normal[k] = nrm[corner];
+                // ラスタ（gbuffer.vert・megageometry.vert・skinned_gbuffer.vert）は、頂点ごとに変換した法線を
+                // 正規化してから補間する。補間してから正規化すると、非一様なスケールで向きがずれる
+                ref.Normal[k] = Normalize(nrm[corner]);
                 ref.Uv[k][0] = quad[corner].Uv[0];
                 ref.Uv[k][1] = quad[corner].Uv[1];
             }

@@ -1674,7 +1674,10 @@ namespace NorvesLib::Core::Rendering
         };
 
         // ビジビリティバッファの解決が GBuffer を書くときは、描画の呼び出しだけを省く
-        const bool bSkipGBufferDraw = m_bSkipGBufferDraw && VisibilityResolveGeometry::IsSupported(caps);
+        // 解決のパスが分かるときは、パイプラインの準備まで含めて判定する（使えないのに止めると画面が空になる）
+        const bool bSkipGBufferDraw =
+            m_bSkipGBufferDraw && (m_ResolvePass ? m_ResolvePass->CanResolve(m_Device)
+                                                 : VisibilityResolveGeometry::IsSupported(caps));
 
         // 描画（GBuffer render pass をパスごとに1回だけ開き、材質の区間ごとに1回の間接描画を発行する）
         auto recordDraws = [&](const RHI::RenderPassPtr &renderPass,

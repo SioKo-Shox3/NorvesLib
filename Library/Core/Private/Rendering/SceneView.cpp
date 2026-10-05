@@ -876,6 +876,7 @@ namespace NorvesLib::Core::Rendering
         gbufferPass->SetSceneRenderer(sceneRenderer);
         gbufferPass->SetRegisterLegacyBridge(false);
         gbufferPass->SetVisibilityResolveActive(bVisibilityResolve);
+        GBufferPass *gbufferPassPtr = gbufferPass.get();
         AddPass(std::move(gbufferPass));
 
         // MegaGeometryPass: GPU駆動クラスターカリング + GBufferへのIndirectDraw
@@ -902,12 +903,15 @@ namespace NorvesLib::Core::Rendering
         }
 
         // VisibilityResolvePass: VisBuffer.Id から三角形を引いて、GBuffer の Albedo・Normal・Velocity を書く（--visibility-buffer=on）。
-        // 装置が対応しないときは何も宣言せず、GBufferPass・MegaGeometryPass も描画を止めない。
+        // 使えないとき（装置の非対応・ID のラスタや解決のパイプラインが無い）は何も宣言せず、GBufferPass・MegaGeometryPass も
+        // 描画を止めない。判定はこのパスに問い合わせる（GBufferPass・MegaGeometryPass が持つ）。
         if (visibilityRasterPassPtr && bVisibilityResolve)
         {
             auto visibilityResolvePass = MakeUnique<VisibilityResolvePass>();
             visibilityResolvePass->SetRasterPass(visibilityRasterPassPtr);
             visibilityResolvePass->SetSkinningComputePass(skinningComputePassPtr);
+            gbufferPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
+            megaGeometryPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
             AddPass(std::move(visibilityResolvePass));
         }
 

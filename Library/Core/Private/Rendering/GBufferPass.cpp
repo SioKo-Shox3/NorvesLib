@@ -324,6 +324,20 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    bool GBufferPass::ShouldSkipDraws(const RHI::IDevice *device) const
+    {
+        if (!m_bVisibilityResolveActive || !device)
+        {
+            return false;
+        }
+        // 解決のパスが分かるときは、パイプラインの準備まで含めて判定する（使えないのに止めると画面が空になる）
+        if (m_ResolvePass)
+        {
+            return m_ResolvePass->CanResolve(device);
+        }
+        return VisibilityResolveGeometry::IsSupported(device->GetCapabilities());
+    }
+
     void GBufferPass::Declare(RenderGraphBuilder &builder)
     {
         const ViewRenderContext *context = builder.GetContext();
@@ -347,8 +361,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ビジビリティバッファの解決が書く 3 枚は、storage image としても使えるようにする
-        const bool bResolveWrites = context && context->Device && m_bVisibilityResolveActive &&
-                                    VisibilityResolveGeometry::IsSupported(context->Device->GetCapabilities());
+        const bool bResolveWrites = context && ShouldSkipDraws(context->Device);
         const RHI::ResourceUsage resolveWriteUsage =
             bResolveWrites ? RHI::ResourceUsage::ShaderWrite : RHI::ResourceUsage::None;
 
@@ -503,8 +516,7 @@ namespace NorvesLib::Core::Rendering
         auto *textures = context.Resources.Textures;
         auto *meshes = context.Resources.Meshes;
         // ビジビリティバッファの解決が GBuffer を書くときは、描かずにクリアだけを行う
-        if (m_bVisibilityResolveActive && context.Device &&
-            VisibilityResolveGeometry::IsSupported(context.Device->GetCapabilities()))
+        if (ShouldSkipDraws(context.Device))
         {
             TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
             return;

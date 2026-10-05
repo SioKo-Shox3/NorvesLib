@@ -184,6 +184,12 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool VisibilityRasterPass::IsDrawReady() const
+    {
+        return m_bInitialized && m_RenderPass && m_MegaPipeline && m_MeshPipeline && m_SkinnedPipeline &&
+               m_RecordsPipeline;
+    }
+
     void VisibilityRasterPass::Shutdown()
     {
         for (FrameSlot& slot : m_FrameSlots)

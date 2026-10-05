@@ -108,6 +108,23 @@ namespace NorvesLib::Core::Rendering
          * false の装置では、従来の GBuffer の描画のまま動かす。
          */
         bool IsSupported(const RHI::DeviceCapabilities& capabilities);
+
+        /** @brief 解決を使えない理由。None のとき使える（GBuffer の描画を止めてよい） */
+        enum class FallbackReason : uint8_t
+        {
+            None = 0,
+            /** @brief 解決のパスが無い、または無効（グラフに載らない） */
+            PassUnavailable,
+            /** @brief 装置の機能が足りない（IsSupported が false） */
+            DeviceUnsupported,
+            /** @brief ID のラスタが描けない（パスが無い・シェーダーやパイプラインが作れていない） */
+            RasterUnavailable,
+            /** @brief 解決の計算パイプラインが作れていない */
+            ResolveUnavailable,
+        };
+
+        /** @brief ログ（VISBUFFER_FALLBACK reason=...）に出す、機械が照合する理由の名前 */
+        const char* GetFallbackReasonName(FallbackReason reason);
     } // namespace VisibilityResolveGeometry
 
     /** @brief 1 回の解決の入力と出力 */
@@ -194,8 +211,9 @@ namespace NorvesLib::Core::Rendering
      * 3 枚を storage image として書く。GBufferPass・MegaGeometryPass はこのパスが有効なとき GBuffer の描画を止める
      * （GBuffer のクリアだけを行う）ので、描かれなかった画素はクリア値のまま。
      *
-     * 有効なのは --visibility-buffer=on のときだけ（SceneView が足す）。装置が対応しないとき（IsSupported が false）は、
-     * 何も宣言せず、GBufferPass・MegaGeometryPass も描画を止めない。
+     * 有効なのは --visibility-buffer=on のときだけ（SceneView が足す）。使えないとき（GetFallbackReason が None 以外。装置が
+     * 対応しない・ID のラスタや解決のパイプラインが作れていない）は、何も宣言せず、GBufferPass・MegaGeometryPass も描画を止めない
+     * （従来の GBuffer の描画のまま動く）。その旨を VISBUFFER_FALLBACK reason=<理由> で 1 回ログへ出す。
      */
     class VisibilityResolvePass final : public IViewPass, public IRenderGraphPass
     {
@@ -221,6 +239,18 @@ namespace NorvesLib::Core::Rendering
         /** @brief 最後の Execute が解決を記録したか */
         bool WasResolved() const { return m_bResolved; }
 
+        /**
+         * @brief この装置・今の初期化の状態で、解決が GBuffer を書けない理由（書けるなら None）
+         *
+         * GBufferPass・MegaGeometryPass は、これが None のときだけ GBuffer の描画を止める。ID のラスタのパイプラインや解決の
+         * パイプラインが作れていないのに描画を止めると、画面が空になるため。初期化（View が Declare の前に行う）の後に使う。
+         */
+        VisibilityResolveGeometry::FallbackReason GetFallbackReason(const RHI::IDevice* device) const;
+        bool CanResolve(const RHI::IDevice* device) const
+        {
+            return GetFallbackReason(device) == VisibilityResolveGeometry::FallbackReason::None;
+        }
+
     private:
         const VisibilityRasterPass* m_RasterPass = nullptr;
         const SkinningComputePass* m_SkinningComputePass = nullptr;
@@ -230,7 +260,7 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_NormalHandle;
         RGResourceHandle m_VelocityHandle;
         bool m_bResolved = false;
-        bool m_bLoggedUnsupported = false;
+        bool m_bLoggedFallback = false;
     };
 
 } // namespace NorvesLib::Core::Rendering

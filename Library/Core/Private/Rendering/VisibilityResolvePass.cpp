@@ -104,6 +104,24 @@ namespace NorvesLib::Core::Rendering
             return capabilities.bGeometryShader && capabilities.bDrawIndirectFirstInstance &&
                    capabilities.bBufferDeviceAddress && capabilities.bShaderStorageImageExtendedFormats;
         }
+
+        const char* GetFallbackReasonName(FallbackReason reason)
+        {
+            switch (reason)
+            {
+            case FallbackReason::None:
+                return "none";
+            case FallbackReason::PassUnavailable:
+                return "pass_unavailable";
+            case FallbackReason::DeviceUnsupported:
+                return "device_unsupported";
+            case FallbackReason::RasterUnavailable:
+                return "raster_unavailable";
+            case FallbackReason::ResolveUnavailable:
+                return "resolve_unavailable";
+            }
+            return "unknown";
+        }
     } // namespace VisibilityResolveGeometry
 
     // ========================================
@@ -307,6 +325,28 @@ namespace NorvesLib::Core::Rendering
         m_bInitialized = false;
     }
 
+    VisibilityResolveGeometry::FallbackReason VisibilityResolvePass::GetFallbackReason(const RHI::IDevice* device) const
+    {
+        using VisibilityResolveGeometry::FallbackReason;
+        if (!m_bEnabled || !m_bInitialized)
+        {
+            return FallbackReason::PassUnavailable;
+        }
+        if (!device || !VisibilityResolveGeometry::IsSupported(device->GetCapabilities()))
+        {
+            return FallbackReason::DeviceUnsupported;
+        }
+        if (!m_RasterPass || !m_RasterPass->IsDrawReady())
+        {
+            return FallbackReason::RasterUnavailable;
+        }
+        if (!m_Resolve.IsReady())
+        {
+            return FallbackReason::ResolveUnavailable;
+        }
+        return FallbackReason::None;
+    }
+
     void VisibilityResolvePass::Setup(ViewRenderContext& /*context*/)
     {
     }
@@ -329,13 +369,15 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         // 対応しない装置では、GBufferPass・MegaGeometryPass が描画を止めていない。何も宣言しない
-        if (!VisibilityResolveGeometry::IsSupported(context->Device->GetCapabilities()))
+        const VisibilityResolveGeometry::FallbackReason fallbackReason = GetFallbackReason(context->Device);
+        if (fallbackReason != VisibilityResolveGeometry::FallbackReason::None)
         {
-            if (!m_bLoggedUnsupported)
+            if (!m_bLoggedFallback)
             {
-                m_bLoggedUnsupported = true;
+                m_bLoggedFallback = true;
                 NORVES_LOG_WARNING("VisibilityResolvePass",
-                                   "VIS_RESOLVE_UNSUPPORTED ビジビリティバッファの解決に対応しない装置なので、従来の GBuffer の描画のまま動かします");
+                                   "VISBUFFER_FALLBACK reason=%s ビジビリティバッファの解決を使えないので、従来の GBuffer の描画のまま動かします",
+                                   VisibilityResolveGeometry::GetFallbackReasonName(fallbackReason));
             }
             return;
         }

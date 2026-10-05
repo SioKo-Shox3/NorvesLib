@@ -83,6 +83,14 @@ namespace NorvesLib::Core::Rendering
         /** @brief 最後の Execute の内訳 */
         const VisibilityRasterFrameStats& GetLastFrameStats() const { return m_Stats; }
 
+        /**
+         * @brief ID を描けるか（初期化を済ませ、render pass と 4 つのパイプラインが揃っている）
+         *
+         * false の間は Declare が ID を宣言せず、Execute も何も描かない。ID を読む解決は使えないので、
+         * 解決が GBuffer を書く構成でもこの間は GBuffer の描画を止めてはならない。
+         */
+        bool IsDrawReady() const;
+
         /** @brief 最後の Execute が書いた記録の表（GenericRead の状態。書かなかったフレームは null） */
         const RHI::BufferPtr& GetRecordTable() const { return m_LastRecordTable; }
         /** @brief 記録の表の、使っている範囲のバイト数 */

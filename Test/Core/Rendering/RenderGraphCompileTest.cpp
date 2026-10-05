@@ -971,6 +971,10 @@ namespace
 
         RHI::PipelinePtr CreateGraphicsPipeline(const RHI::GraphicsPipelineDesc& desc) override
         {
+            if (bFailGraphicsPipelines)
+            {
+                return nullptr;
+            }
             LastGraphicsPipelineDescriptorSetLayouts = desc.descriptorSetLayouts;
             return RHI::MakeShared<FakePipeline>(RHI::PipelineType::Graphics,
                                                 static_cast<uint32_t>(desc.descriptorSetLayouts.size()));
@@ -978,6 +982,10 @@ namespace
 
         RHI::PipelinePtr CreateComputePipeline(const RHI::ComputePipelineDesc& desc) override
         {
+            if (bFailComputePipelines)
+            {
+                return nullptr;
+            }
             return RHI::MakeShared<FakePipeline>(RHI::PipelineType::Compute,
                                                 static_cast<uint32_t>(desc.descriptorSetLayouts.size()));
         }
@@ -1044,6 +1052,9 @@ namespace
         Container::VariableArray<RHI::DescriptorSetDesc> LastGraphicsPipelineDescriptorSetLayouts;
         uint32_t LightArraySSBOCreateCount = 0;
         uint32_t FailLightArraySSBOCreateIndex = 0;
+        /** @brief true の間、グラフィックス・計算のパイプラインの作成が nullptr を返す（作れない装置の再現） */
+        bool bFailGraphicsPipelines = false;
+        bool bFailComputePipelines = false;
 
     private:
         RHI::DeviceCapabilities m_Capabilities;
@@ -2035,6 +2046,10 @@ namespace
         Supported,
         /** @brief 配線は同じだが、装置が解決に対応しない（頂点のデバイスアドレス・拡張形式の storage image が無い） */
         UnsupportedDevice,
+        /** @brief 配線は同じで装置も対応するが、ID のラスタのパイプラインが作れない */
+        RasterPipelineUnavailable,
+        /** @brief 配線は同じで装置も対応するが、解決の計算パイプラインが作れない */
+        ResolvePipelineUnavailable,
     };
 
     // bVisibilityPlan=false は --visibility-buffer=off（MegaGeometryPass が描画の写しを作らず、VisibilityRasterPass も足さない）
@@ -2053,7 +2068,8 @@ namespace
                                   uint32_t skinnedInstanceCount = 1)
     {
         scene.Device = RHI::MakeShared<FakeDevice>();
-        if (resolveMode == ResolveMode::Supported)
+        if (resolveMode == ResolveMode::Supported || resolveMode == ResolveMode::RasterPipelineUnavailable ||
+            resolveMode == ResolveMode::ResolvePipelineUnavailable)
         {
             scene.Device->EnableVisibilityResolveCapabilities();
         }
@@ -2237,17 +2253,23 @@ namespace
                 assert(scene.Skinning.Initialize(context));
                 scene.Graph.AddPass(&scene.Skinning);
             }
+            scene.Device->bFailGraphicsPipelines = resolveMode == ResolveMode::RasterPipelineUnavailable;
             assert(scene.Raster.Initialize(context));
+            scene.Device->bFailGraphicsPipelines = false;
             scene.Graph.AddPass(&scene.Raster);
             if (resolveMode != ResolveMode::None)
             {
-                // SceneView の On と同じく、描画のパスの後に足す
+                // SceneView の On と同じく、描画のパスの後に足し、GBufferPass・MegaGeometryPass から使えるかを問い合わせられるようにする
                 scene.Resolve.SetRasterPass(&scene.Raster);
                 if (bSkinning)
                 {
                     scene.Resolve.SetSkinningComputePass(&scene.Skinning);
                 }
+                scene.GBuffer.SetVisibilityResolvePass(&scene.Resolve);
+                scene.Mega.SetVisibilityResolvePass(&scene.Resolve);
+                scene.Device->bFailComputePipelines = resolveMode == ResolveMode::ResolvePipelineUnavailable;
                 assert(scene.Resolve.Initialize(context));
+                scene.Device->bFailComputePipelines = false;
                 scene.Graph.AddPass(&scene.Resolve);
             }
             if (classifyMode != ClassifyMode::None)
@@ -3232,11 +3254,23 @@ namespace
         ShutdownVisibilityRasterScene(scene);
     }
 
+    // 記録された直接の描画（間接描画を除く描画の呼び出し）の数。GeometryPass のコマンドは描画のパスの実行で消費されるので、
+    // GBufferPass が積んだ描画は、コマンドリストの描画の呼び出しから間接描画（MegaGeometry・ID の描画）を引いて数える。
+    // 解決を使わない On の場面（手続きメッシュ 3 件・スキニング 1 件）では、GBufferPass の描画 3 件（手続きメッシュ。この場面の
+    // スキニングは GBufferPass の描画として記録されない）と、ID の描画の直接の描画 4 件（手続きの塊 3・スキニングの塊 1）になる
+    constexpr size_t SceneGBufferDirectDraws = 3;
+    constexpr size_t SceneIdDirectDraws = 4;
+    size_t CountDirectDraws(const FakeCommandList& commandList)
+    {
+        assert(commandList.DrawCallCount >= commandList.IndirectDraws.size());
+        return commandList.DrawCallCount - commandList.IndirectDraws.size();
+    }
+
     // 解決を使わない On（ID の描画に加えて GBuffer へも描く）の、描画・dispatch・レンダーパスの数。解決を使う構成と比べる基準。
-    // GBufferPass が積む描画のコマンドは、この構成（FakeDevice）では空なので数えない。GBufferPass の描画の抑制は
-    // SkinnedRenderPathContractTest（TestGBufferPassSkipsDrawsOnlyWhenVisibilityResolveIsActiveAndSupported）で確かめる
+    // 直接の描画の数（DirectDraws）も数えるので、GBufferPass の描画の抑制は記録された描画で確かめられる
     struct OnWithoutResolveBaseline
     {
+        size_t DirectDraws = 0;
         size_t IndirectDraws = 0;
         uint32_t Dispatches = 0;
         uint32_t RenderPasses = 0;
@@ -3265,6 +3299,7 @@ namespace
         VisibilityRasterScene scene;
         RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true);
         OnWithoutResolveBaseline baseline;
+        baseline.DirectDraws = CountDirectDraws(scene.CommandList);
         baseline.IndirectDraws = scene.CommandList.IndirectDraws.size();
         baseline.Dispatches = scene.CommandList.DispatchCount;
         baseline.RenderPasses = scene.CommandList.BeginRenderPassCount;
@@ -3279,14 +3314,20 @@ namespace
     void TestVisibilityResolveOnReplacesGBufferDrawsWithStorageImageWrites()
     {
         const OnWithoutResolveBaseline baseline = MeasureOnWithoutResolve();
-        // 解決を使わない On は、ID の描画 + MegaGeometry の GBuffer への描画の間接描画 4 回
+        // 解決を使わない On は、ID の描画 + MegaGeometry の GBuffer への描画の間接描画 4 回。GBufferPass は手続きメッシュ 3 件を
+        // GBuffer へ描く
         assert(baseline.IndirectDraws == 4);
+        assert(baseline.DirectDraws == SceneGBufferDirectDraws + SceneIdDirectDraws);
         // 基準では GBuffer.Velocity は storage image として使われない
         assert(baseline.GBufferVelocityBarriers > 0 && !baseline.bGBufferVelocityHasShaderWrite);
 
         VisibilityRasterScene scene;
         RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, ResolveMode::Supported);
         FakeCommandList& commandList = scene.CommandList;
+
+        // GBufferPass は描画を 1 件も積まない（クリアの GeometryPass だけが残り、ID の描画の直接の描画だけが残る）
+        assert(CountDirectDraws(commandList) == SceneIdDirectDraws);
+        assert(scene.Resolve.CanResolve(scene.Device.get()));
 
         // MegaGeometry の GBuffer への間接描画（1・2 パス目）は止まり、ID の描画の 2 回だけが残る。render pass の数は変わらない
         assert(commandList.IndirectDraws.size() == baseline.IndirectDraws - 2);
@@ -3341,12 +3382,56 @@ namespace
         RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, ResolveMode::UnsupportedDevice);
         FakeCommandList& commandList = scene.CommandList;
         assert(commandList.IndirectDraws.size() == baseline.IndirectDraws);
+        assert(CountDirectDraws(commandList) == baseline.DirectDraws);
         assert(!scene.Resolve.WasResolved());
+        assert(scene.Resolve.GetFallbackReason(scene.Device.get()) ==
+               VisibilityResolveGeometry::FallbackReason::DeviceUnsupported);
         assert(commandList.DispatchCount == baseline.Dispatches);
         size_t velocityBarriers = 0;
         assert(!VelocityTexturesHaveShaderWrite(commandList, velocityBarriers) && velocityBarriers > 0);
 
         ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 装置が対応していても、ID のラスタのパイプラインや解決の計算パイプラインが作れていないときは、GBufferPass・MegaGeometryPass が
+    // 描画を止めない（止めると画面が空になる）。従来の GBuffer の描画が残り、解決は何も記録せず、理由が分かる。
+    // GBufferPass・MegaGeometryPass の判定を装置の機能だけに戻す（解決への問い合わせを外す）と落ちる
+    void TestVisibilityResolveFallsBackToGBufferDrawsWhenPipelinesAreUnavailable()
+    {
+        const OnWithoutResolveBaseline baseline = MeasureOnWithoutResolve();
+        assert(baseline.DirectDraws == SceneGBufferDirectDraws + SceneIdDirectDraws);
+
+        struct Case
+        {
+            ResolveMode Mode;
+            VisibilityResolveGeometry::FallbackReason Reason;
+            /** @brief ID の描画（間接描画 2 回）が行われるか。ラスタのパイプラインが無いと行われない */
+            bool bRasterDraws;
+        };
+        const Case cases[] = {
+            {ResolveMode::RasterPipelineUnavailable, VisibilityResolveGeometry::FallbackReason::RasterUnavailable, false},
+            {ResolveMode::ResolvePipelineUnavailable, VisibilityResolveGeometry::FallbackReason::ResolveUnavailable, true},
+        };
+        for (const Case& testCase : cases)
+        {
+            VisibilityRasterScene scene;
+            RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, testCase.Mode);
+            FakeCommandList& commandList = scene.CommandList;
+
+            assert(scene.Resolve.GetFallbackReason(scene.Device.get()) == testCase.Reason);
+            assert(!scene.Resolve.CanResolve(scene.Device.get()));
+            assert(!scene.Resolve.WasResolved());
+
+            // GBufferPass は従来どおり描画を積み、MegaGeometryPass も GBuffer への間接描画（1・2 パス目）を止めない
+            assert(CountDirectDraws(commandList) ==
+                   SceneGBufferDirectDraws + (testCase.bRasterDraws ? SceneIdDirectDraws : 0u));
+            assert(commandList.IndirectDraws.size() == baseline.IndirectDraws - (testCase.bRasterDraws ? 0u : 2u));
+            // GBuffer の 3 枚は storage image として使われない（解決が書かない）
+            size_t velocityBarriers = 0;
+            assert(!VelocityTexturesHaveShaderWrite(commandList, velocityBarriers) && velocityBarriers > 0);
+
+            ShutdownVisibilityRasterScene(scene);
+        }
     }
 
     // スキニングのインスタンスが 2 体のとき、2 体目の記録は、頂点のアドレスが 2 体目の先頭（変形した頂点の列の中の位置）を指し、
@@ -8757,6 +8842,7 @@ int main()
     TestVisibilityRasterRecordsFrameUniqueMaterialTableIndices();
     TestVisibilityResolveOnReplacesGBufferDrawsWithStorageImageWrites();
     TestVisibilityResolveUnsupportedDeviceKeepsGBufferDraws();
+    TestVisibilityResolveFallsBackToGBufferDrawsWhenPipelinesAreUnavailable();
     TestVisibilityRasterSkinnedRecordsAddressEachBodyOnce();
     TestSceneViewWiresVisibilityResolveOnlyForOnMode();
     TestVisibilityRasterOffKeepsExistingMegaGeometryRecording();
