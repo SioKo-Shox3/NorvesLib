@@ -1,5 +1,6 @@
 ﻿#include "Object/ResourceRegistry.h"
 #include "Animation/SkeletalAnimationSampler.h"
+#include "Logging/Logger.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/RenderResources.h"
@@ -1444,6 +1445,123 @@ namespace
         registry.Shutdown();
     }
 
+#if NORVES_ENABLE_LOGGING
+    // SkinnedMeshGpuStore が出す警告・エラーの数を数える
+    struct StoreLogCounter final : Logging::ILogSink
+    {
+        uint32_t Count = 0;
+
+        void OnLog(const Logging::LogEntry& entry) override
+        {
+            if ((entry.level == Logging::LogLevel::Warning || entry.level == Logging::LogLevel::Error) &&
+                entry.category == "SkinnedMeshGpuStore")
+            {
+                ++Count;
+            }
+        }
+    };
+#endif
+
+    uint32_t g_FailingChunkBuilderCalls = 0;
+
+    // 塊の作成を必ず失敗させる（呼ばれた回数も数える）
+    bool FailingChunkBuilder(uint32_t, Container::VariableArray<MeshIndexChunk>& outChunks)
+    {
+        ++g_FailingChunkBuilderCalls;
+        outChunks.clear();
+        return false;
+    }
+
+    // 塊に分けられなくても、GBuffer と影の経路はメッシュを描き続ける。
+    // 失敗はメッシュごとに登録した後は持ち越され（毎フレームやり直さない）、知らせるのは1回だけ。
+    // ビジビリティバッファが使う塊だけが無い（TryGetChunks が false）。
+    void TestChunkFailureKeepsGBufferAndShadowDrawAndLogsOnce()
+    {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        StoreLogCounter logCounter;
+        logger.AddSink(&logCounter);
+#endif
+
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+        auto mesh = registry.CreateTransient<SkinnedMeshResource>("SkinnedChunkFailureMesh");
+        assert(mesh);
+        SeedMesh(mesh);
+
+        auto frameLease = Container::MakeShared<SkinnedMeshFrameLease>(mesh->GetRenderAssetLease());
+        FramePacket packet;
+        packet.SkinnedMeshFrameLeases.push_back(frameLease);
+
+        auto device = Container::MakeShared<FakeDevice>();
+        RenderResources resources;
+        assert(resources.Initialize(device));
+        g_FailingChunkBuilderCalls = 0;
+        resources.SkinnedMeshes().SetChunkBuilderForTesting(&FailingChunkBuilder);
+
+        DrawCommand source = DrawCommand::CreateDrawIndexed();
+        source.Draw.PayloadKind = DrawPayloadKind::Skinned;
+        source.Draw.InstanceCount = 1;
+        source.Draw.bInstanced = false;
+        source.Skinned.FrameLeaseIndex = 0;
+        source.Skinned.BonePalette = MakePalette();
+
+        ViewRenderContext context;
+        context.SkinnedMeshes = &resources.SkinnedMeshes();
+        context.SnapshotSkinnedMeshFrameLeases = &packet.SkinnedMeshFrameLeases;
+
+        GBufferPass gBuffer;
+        ShadowMapPass shadow;
+        constexpr uint32_t frameCount = 3;
+        for (uint32_t frame = 0; frame < frameCount; ++frame)
+        {
+            resources.SkinnedMeshes().BeginFrame(0);
+
+            DrawCommand gBufferCommand;
+            assert(SkinnedRenderPathContractTestAccess::PrepareGBuffer(
+                gBuffer, context, source, gBufferCommand));
+            assert(gBufferCommand.Skinned.Prepared.IsValid());
+            assert(gBufferCommand.Skinned.Prepared.IndexCount == 3);
+
+            DrawCommand shadowCommand;
+            assert(SkinnedRenderPathContractTestAccess::PrepareShadow(
+                shadow, context, source, shadowCommand));
+            assert(shadowCommand.Skinned.Prepared.IsValid());
+
+            // 塊は無いが、メッシュは登録されたまま
+            Container::VariableArray<MeshIndexChunk> chunks;
+            assert(resources.SkinnedMeshes().IsResident(gBufferCommand.Skinned.Prepared.MeshHandle));
+            assert(!resources.SkinnedMeshes().TryGetChunks(gBufferCommand.Skinned.Prepared.MeshHandle, chunks));
+            assert(chunks.empty());
+
+            resources.SkinnedMeshes().AbortFrame();
+        }
+
+        // 登録の1回だけ作成を試みる（毎フレームやり直さない）。知らせるのも1回だけ
+        assert(g_FailingChunkBuilderCalls == 1);
+#if NORVES_ENABLE_LOGGING
+        assert(logCounter.Count == 1);
+        logger.RemoveSink(&logCounter);
+#endif
+
+        packet.Clear();
+        frameLease.reset();
+        mesh->Unload();
+        mesh.reset();
+        resources.SkinnedMeshes().BeginFrame(0);
+        resources.Shutdown();
+        registry.CollectGarbage();
+        registry.Shutdown();
+        std::cout << "Skinned chunk failure keeps GBuffer and shadow draw, logs once\n" << std::flush;
+    }
+
     void TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer()
     {
         ResourceRegistry registry;
@@ -1876,6 +1994,7 @@ int main()
     TestSameIdReloadUsesGenerationAndActualCompletionTokens();
     TestRecordCountersInstancingRejectAndThreeConditionRelease();
     TestExistingPassesPrepareSkinnedCommandsWithoutInstanceBuffer();
+    TestChunkFailureKeepsGBufferAndShadowDrawAndLogsOnce();
     TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer();
     TestDirectionalShadowFittingIncludesOnlySkinnedAnimatedWorldBounds();
     TestCoordinatorPropagatesFramePacketStatsAndSubmissionSerials();

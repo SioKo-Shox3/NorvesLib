@@ -992,6 +992,15 @@ namespace NorvesLib::Core::Rendering
         return impl && impl->SkinnedMeshes && impl->SkinnedMeshes->TryGetChunks(handle, out);
     }
 
+    void SkinnedMeshResources::SetChunkBuilderForTesting(MeshIndexChunkBuilder builder)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (impl && impl->SkinnedMeshes)
+        {
+            impl->SkinnedMeshes->SetChunkBuilderForTesting(builder);
+        }
+    }
+
     MegaGeometryResources::MegaGeometryResources(RenderResources *pOwner)
         : m_pOwner(pOwner)
     {

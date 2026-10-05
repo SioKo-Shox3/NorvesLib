@@ -253,6 +253,8 @@ namespace NorvesLib::Core::Rendering
         bool IsResident(SkinnedMeshHandle handle) const;
         // 登録時に分けた128三角形以下の塊（未登録は false）
         bool TryGetChunks(SkinnedMeshHandle handle, Container::VariableArray<MeshIndexChunk>& out) const;
+        // 塊の作り方を差し替える（テスト用）
+        void SetChunkBuilderForTesting(MeshIndexChunkBuilder builder);
 
     private:
         friend class RenderResources;

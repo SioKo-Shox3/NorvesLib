@@ -238,12 +238,17 @@ namespace NorvesLib::Core::Rendering
     {
         out.clear();
         const auto entryIt = m_Entries.find(handle);
-        if (entryIt == m_Entries.end())
+        if (entryIt == m_Entries.end() || !entryIt->second.bChunksValid)
         {
             return false;
         }
         out = entryIt->second.Chunks;
         return true;
+    }
+
+    void SkinnedMeshGpuStore::SetChunkBuilderForTesting(MeshIndexChunkBuilder builder)
+    {
+        m_ChunkBuilder = builder;
     }
 
     void SkinnedMeshGpuStore::CollectReleasedResources()
@@ -309,11 +314,21 @@ namespace NorvesLib::Core::Rendering
         entry.VertexBuffer = vertexBuffer;
         entry.IndexBuffer = indexBuffer;
         entry.IndexCount = static_cast<uint32_t>(indices.size());
-        // 区切りの位置を与えないので失敗しないが、戻り値は必ず確かめる
-        if (!BuildMeshIndexChunks(entry.IndexCount, nullptr, 0, entry.Chunks))
+        // 区切りの位置を与えないので失敗しないが、戻り値は必ず確かめる。
+        // 失敗しても GBuffer・影の経路は頂点とインデックスだけで描けるので、メッシュは登録して塊だけを持たない
+        // （登録しないと毎フレームやり直してエラーを出し、既定の GBuffer の経路からもメッシュが消える）。
+        // 塊を使うビジビリティバッファの側は、TryGetChunks が false のメッシュを自分で扱う。
+        entry.bChunksValid = m_ChunkBuilder ? m_ChunkBuilder(entry.IndexCount, entry.Chunks)
+                                            : BuildMeshIndexChunks(entry.IndexCount, nullptr, 0, entry.Chunks);
+        if (!entry.bChunksValid)
         {
-            NORVES_LOG_ERROR("SkinnedMeshGpuStore", "インデックスを塊に分けられませんでした");
-            return nullptr;
+            entry.Chunks.clear();
+            if (!m_bLoggedChunkFailure)
+            {
+                m_bLoggedChunkFailure = true;
+                NORVES_LOG_WARNING("SkinnedMeshGpuStore",
+                                   "インデックスを塊に分けられないメッシュがあります。ビジビリティバッファへは描かず、GBuffer と影では描きます");
+            }
         }
         entry.AssetLease = assetLease;
         m_Entries[handle] = std::move(entry);

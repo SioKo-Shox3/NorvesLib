@@ -29,6 +29,12 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief 塊の作り方（テストが失敗を注入するための差し替え用。通常は使わない）
+     * @return 失敗したら false。outChunks の中身は呼び出し側が捨てる
+     */
+    using MeshIndexChunkBuilder = bool (*)(uint32_t indexCount, Container::VariableArray<MeshIndexChunk>& outChunks);
+
+    /**
      * @brief 連続した範囲 [first, end) を、128三角形以下の塊に分けて outChunks の後ろへ足す
      *
      * 区間の終わりを超えて進めない形にして、4G 付近でも桁あふれで終わらなくならないようにする。

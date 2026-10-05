@@ -37,8 +37,11 @@ namespace NorvesLib::Core::Rendering
         void AbortFrame();
         bool GetLifetimeSnapshot(SkinnedMeshHandle handle, SkinnedMeshGpuLifetimeSnapshot& outSnapshot) const;
         bool IsResident(SkinnedMeshHandle handle) const;
-        // 登録時に分けた128三角形以下の塊（未登録は false）。全三角形をちょうど1回ずつ覆う。
+        // 登録時に分けた128三角形以下の塊。全三角形をちょうど1回ずつ覆う。
+        // 未登録のメッシュと、塊に分けられなかったメッシュ（GBuffer・影では描ける）は false で、出力は空。
         bool TryGetChunks(SkinnedMeshHandle handle, Container::VariableArray<MeshIndexChunk>& out) const;
+        // 塊の作り方を差し替える（テスト用。nullptr で既定へ戻す）。登録済みのメッシュには効かない。
+        void SetChunkBuilderForTesting(MeshIndexChunkBuilder builder);
         void CollectReleasedResources();
         void ForceClearAfterWaitIdle();
 
@@ -59,6 +62,8 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr IndexBuffer;
             uint32_t IndexCount = 0;
             Container::VariableArray<MeshIndexChunk> Chunks;
+            // 塊に分けられたか。false でもメッシュは登録され、GBuffer・影の経路は頂点とインデックスだけで描く
+            bool bChunksValid = false;
             Container::TWeakPtr<const SkinnedMeshAssetLease> AssetLease;
             Container::VariableArray<Container::TWeakPtr<const SkinnedMeshFrameLease>> FrameLeases;
             Container::VariableArray<PaletteUse> PaletteUses;
@@ -83,5 +88,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<PendingUse> m_PendingUses;
         uint64_t m_CompletedSubmissionSerial = 0;
         bool m_bFrameOpen = false;
+        MeshIndexChunkBuilder m_ChunkBuilder = nullptr;
+        bool m_bLoggedChunkFailure = false;
     };
 } // namespace NorvesLib::Core::Rendering

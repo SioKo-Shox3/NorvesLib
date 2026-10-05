@@ -826,7 +826,7 @@
 - notes: 2026-10-05 親が足した（VTG6-CHUNKS-HARDEN・VTG6-PASS-FRAME-SLOTS・VTG6-SKINNING-FINAL-BARRIER の評価の残課題。どれも評価は PASS）。危険地帯（描画パス・寿命）。スキニングの塊の失敗のケースの証拠は `SkinnedRenderPathContractTest.exe` の直接実行の出力でよい（TEST-SKINNED の既知の停止）。 2026-10-06 ランナーの反復で (1)(2)(4)(5)(9) を閉じ、残りを分けた。
 
 ## VTG6-HARDEN-SKIN-CHUNK-FAIL: スキニングの塊の失敗を毎フレームのエラーにせず、GBuffer の経路でメッシュを消さない
-- status: todo
+- status: done
 - done-when: `SkinnedMeshGpuStore.cpp`（313 行付近）の塊の失敗の分岐（`BuildMeshIndexChunks` が false）が、`FindOrUpload` のやり直しで毎フレーム `NORVES_LOG_ERROR` を出し、`nullptr` を返して既定の GBuffer の経路からもメッシュを消すのを、1回だけ知らせて GBuffer の経路は今のまま描く形にする。CPU のテスト（`SkinnedRenderPathContractTest` か `RenderGraphCompileTest`）が、塊の失敗でも GBuffer の経路のメッシュが残ること・ログが1回だけであることを確かめる。既定の描画は変えない（`-Deterministic` の起動画面の撮影が前と一致する）。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderResourcesDomainContractTest SkinnedRenderPathContractTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error --timeout 300 -R "^(RenderGraphCompileTest|MeshResourcesProceduralGpuTest|ComputeSkinningVulkanTest|MaterialTileClassifyVulkanTest|VisibilityResolveVulkanTest|SkinnedRenderPathContractTest)$"`
