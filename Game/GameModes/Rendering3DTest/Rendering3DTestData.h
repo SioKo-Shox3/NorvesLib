@@ -294,6 +294,8 @@ namespace Game::GameModes
         // --night の指定で true にする。空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす
         // （点光源の影を見る撮影用。既定は昼）。
         bool m_bStartupNight = false;
+        // --debug-view の指定（起動時のデバッグの表示。既定は Normal）。development ビルドだけが適用する。
+        NorvesLib::Core::Rendering::DebugViewMode m_StartupDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
         // 材質のアルベド・法線・ORM・高さを VT（sparse）で描くか（--virtual-texture=off で false）。sparse に対応しない GPU・クック済みに無い
         // テクスチャは、true でも全常駐で読む。
         bool m_bVirtualTexture = true;

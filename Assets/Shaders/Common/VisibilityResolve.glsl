@@ -65,6 +65,7 @@
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/PreExposedEmissive.glsl"
+#include "Common/MegaGeometryDebugColor.glsl"
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -76,11 +77,17 @@ layout(std140, set = 0, binding = 0) uniform ResolveParams
     vec4 cameraPosition;   // xyz = ワールドのカメラ位置
     vec4 viewport;         // x, y, 幅, 高さ（画素。ラスタの描画範囲）
     uvec4 screen;          // x = 画面の幅, y = 画面の高さ, z = フラグ, w = 材質の表の件数
-    vec4 frame;            // x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y と同じ値）
+    vec4 frame;            // x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y と同じ値）, y = MegaGeometry のデバッグの表示（RESOLVE_DEBUG_*）
 } params;
 
 // params.screen.z のビット
 const uint RESOLVE_FLAG_PREVIOUS_VALID = 1u;
+
+// params.frame.y の値（MegaGeometry のデバッグの表示。MegaGeometryPass の DEBUG_PAYLOAD_MODE_* と同じ並び）。
+// 0 でなければ、MegaGeometry のクラスタの画素は材質を引かず、描画の記録の payload（クラスタの番号・LOD の段）から色を作る
+const uint RESOLVE_DEBUG_NONE = 0u;
+const uint RESOLVE_DEBUG_CLUSTERS = 1u;
+const uint RESOLVE_DEBUG_LOD_LEVEL = 2u;
 
 // binding 1: 描画の記録の表（Common/VisibilityBuffer.glsl が宣言する）
 
@@ -777,22 +784,38 @@ void main()
     VisMaterialEntry materialEntry;
     const bool bHasMaterial = VisLoadMaterial(materialIndex, materialEntry);
     const vec3 objectColor = VisObjectColor(record, materialEntry, bHasMaterial);
+    // MegaGeometry のデバッグの表示（megageometry.frag の WriteDebugGBuffer と同じ面: 幾何の法線・金属度 0・粗さ 1・AO 1・発光 0）。
+    // ラスタと同じく、材質のテクスチャは引かず VT の要求も書かない
+    const uint debugView = uint(params.frame.y + 0.5);
+    const bool bDebugView = debugView != RESOLVE_DEBUG_NONE && VisRecordKind(record) == VIS_KIND_MEGA_CLUSTER;
+    VisMaterialSurface surface;
+    if (bDebugView)
+    {
+        const uint payload = VisRecordLodPayload(record);
+        surface.albedo = vec4(debugView == RESOLVE_DEBUG_CLUSTERS ? ClusterDebugColor(payload) : LODLevelDebugColor(payload), 1.0);
+        surface.normal = resolved.normal;
+        surface.material = vec3(0.0, 1.0, 1.0);
+    }
 #ifdef NORVES_VISRESOLVE_TILES
     // 表から引ける材質の dispatch だけがテクスチャを束ねている（引けない材質の番号は定数の面）
-    const VisMaterialSurface surface = bHasMaterial ? VisEvaluateMaterialSurface(objectColor, materialEntry, record, resolved, pixel)
-                                                    : VisFlatMaterialSurface(objectColor, materialEntry, bHasMaterial, resolved);
-#else
-    const VisMaterialSurface surface = VisFlatMaterialSurface(objectColor, materialEntry, bHasMaterial, resolved);
+    else if (bHasMaterial)
+    {
+        surface = VisEvaluateMaterialSurface(objectColor, materialEntry, record, resolved, pixel);
+    }
 #endif
+    else
+    {
+        surface = VisFlatMaterialSurface(objectColor, materialEntry, bHasMaterial, resolved);
+    }
 
     imageStore(albedoImage, ivec2(pixel), surface.albedo);
     imageStore(normalImage, ivec2(pixel), vec4(surface.normal, 0.0));
     imageStore(materialImage, ivec2(pixel), vec4(surface.material, 0.0));
     imageStore(velocityImage, ivec2(pixel), vec4(velocity, 0.0, 0.0));
     // 発光: 色度 × 輝度（nits）× プリエクスポージャ（ラスタの gbuffer.frag・megageometry.frag と同じ関数）。表から引けない材質は 0
-    const vec3 emissive = bHasMaterial ? ComputePreExposedEmissive(materialEntry.emissive.rgb, materialEntry.emissive.a,
-                                                                   params.frame.x)
-                                       : vec3(0.0);
+    const vec3 emissive = (bHasMaterial && !bDebugView)
+                              ? ComputePreExposedEmissive(materialEntry.emissive.rgb, materialEntry.emissive.a, params.frame.x)
+                              : vec3(0.0);
     imageStore(emissiveImage, ivec2(pixel), vec4(emissive, 1.0));
 
 #ifdef NORVES_VISRESOLVE_DUMP

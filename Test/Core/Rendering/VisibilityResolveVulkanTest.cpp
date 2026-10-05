@@ -79,6 +79,8 @@ namespace
     constexpr uint16_t HalfGuard = 0xC700; // -7.0
     // 発光に掛けるプリエクスポージャ（2 のべきなので、期待値の積も fp16 へ丸める前は厳密）と、fp16 の最大値（発光の頭打ち）
     constexpr float EmissivePreExposure = 0.25f;
+    // MegaGeometry の記録の payload（デバッグの表示ではクラスタの番号・LOD の段になる値）。LOD の段の色の表の範囲内（0〜7）にする
+    constexpr uint32_t MegaDebugPayload = 5;
     constexpr double EmissiveMax = 65504.0;
 
     int g_failures = 0;
@@ -596,6 +598,7 @@ namespace
             record.TriangleCount = 2;
             record.FirstIndex = 4;
             record.VertexBase = 3;
+            record.LodPayload = MegaDebugPayload;
             const uint32_t number = scene.Records.Add(record);
             AddReferences(scene, number, record.Kind, record.MaterialIndex, pos, prev, nrm, quad);
         }
@@ -1063,7 +1066,8 @@ namespace
                         uint32_t width = ScreenWidth,
                         uint32_t height = ScreenHeight,
                         const Container::VariableArray<VisibilityResolveMaterial>* materials = nullptr,
-                        FeedbackRun* feedback = nullptr)
+                        FeedbackRun* feedback = nullptr,
+                        float debugView = 0.0f)
     {
         Readback result;
         result.DumpPitch = width;
@@ -1157,6 +1161,7 @@ namespace
                                                                  height,
                                                                  static_cast<uint32_t>(gpu.MaterialTable->GetSize() / sizeof(VisibilityBuffer::MaterialEntry)));
         dispatch.Params.Frame[0] = EmissivePreExposure;
+        dispatch.Params.Frame[1] = debugView;
         dispatch.TileArgs = tileArgs;
         dispatch.TileList = tileList;
         if (feedback)
@@ -2214,6 +2219,167 @@ namespace
     //   (2) サンプラーは等方の Linear（maxAnisotropy 指定なし）。標本のミップは log2(Pmax) で、異方性 4 の log2(Pmax / N) より粗い
     // 材質 0・2 を MegaGeometry の材質、材質 1・3 を手続きの材質にして、アルベドだけを張る（材質 2・3 はミップごとに色を変えた
     // 256x256）。粗さ・金属度・AO・法線は指定しない
+    // megageometry.frag の ClusterDebugColor / LODLevelDebugColor と同じ色（Common/MegaGeometryDebugColor.glsl）の CPU の参照
+    uint32_t HashClusterIdReference(uint32_t value)
+    {
+        value ^= value >> 16;
+        value *= 0x7feb352du;
+        value ^= value >> 15;
+        value *= 0x846ca68bu;
+        value ^= value >> 16;
+        return value;
+    }
+
+    void ClusterDebugColorReference(uint32_t clusterId, double out[3])
+    {
+        const uint32_t hash = HashClusterIdReference(clusterId);
+        const double channels[3] = {static_cast<double>(hash & 255u) / 255.0, static_cast<double>((hash >> 8) & 255u) / 255.0,
+                                    static_cast<double>((hash >> 16) & 255u) / 255.0};
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            out[channel] = 0.18 + (channels[channel] - 0.18) * 0.82;
+        }
+    }
+
+    void LodLevelDebugColorReference(uint32_t lodLevel, double out[3])
+    {
+        static const double palette[8][3] = {{0.10, 0.72, 0.28}, {0.14, 0.78, 0.70}, {0.18, 0.42, 0.90}, {0.42, 0.24, 0.86},
+                                             {0.78, 0.22, 0.78}, {0.96, 0.72, 0.18}, {0.95, 0.42, 0.16}, {0.86, 0.12, 0.12}};
+        const uint32_t index = lodLevel < 7 ? lodLevel : 7;
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            out[channel] = palette[index][channel];
+        }
+    }
+
+    // MegaGeometry のデバッグの表示（クラスタの色・LOD の段）: MegaGeometry の画素は、材質を引かずに記録の payload から色を作り、
+    // ラスタの WriteDebugGBuffer と同じ面（幾何の法線・金属度 0・粗さ 1・AO 1・発光 0）を書く。他の種類の画素は通常のまま
+    void RunMegaGeometryDebugViewCase(const DevicePtr& device,
+                                      ShaderManager& shaderManager,
+                                      const Scene& scene,
+                                      const Container::VariableArray<uint32_t>& idImage,
+                                      const Container::VariableArray<PixelReference>& references,
+                                      const CameraSet& cameras)
+    {
+        Expect(VisibilityResolveGeometry::ResolveDebugViewCode(DebugViewMode::Normal) == 0.0f &&
+                   VisibilityResolveGeometry::ResolveDebugViewCode(DebugViewMode::Wireframe) == 0.0f &&
+                   VisibilityResolveGeometry::ResolveDebugViewCode(DebugViewMode::GBufferAlbedo) == 0.0f &&
+                   VisibilityResolveGeometry::ResolveDebugViewCode(DebugViewMode::MegaGeometryClusters) == 1.0f &&
+                   VisibilityResolveGeometry::ResolveDebugViewCode(DebugViewMode::LODLevel) == 2.0f,
+               "表示の選択は、クラスタの色 = 1・LOD の段 = 2・それ以外 = 0 へ直さなければならない");
+
+        GpuScene gpu;
+        if (!BuildGpuScene(device, scene, idImage, gpu))
+        {
+            Expect(false, "デバッグの表示の検査の GPU の資源を作れなければならない");
+            return;
+        }
+        Container::VariableArray<VisibilityResolveMaterial> materials(4);
+        for (size_t material = 0; material < 4; ++material)
+        {
+            materials[material].Albedo = Create1x1Texture(device, 40, 200, 120, 255, "ResolveTestDebugAlbedo");
+            if (!materials[material].Albedo)
+            {
+                Expect(false, "デバッグの表示の検査のテクスチャを作れなければならない");
+                return;
+            }
+        }
+        TileRunOptions options;
+
+        uint64_t serial = 70;
+        for (int mode = 1; mode <= 2; ++mode)
+        {
+            const float code = VisibilityResolveGeometry::ResolveDebugViewCode(mode == 1 ? DebugViewMode::MegaGeometryClusters
+                                                                                          : DebugViewMode::LODLevel);
+            double expectedColor[3];
+            if (mode == 1)
+            {
+                ClusterDebugColorReference(MegaDebugPayload, expectedColor);
+            }
+            else
+            {
+                LodLevelDebugColorReference(MegaDebugPayload, expectedColor);
+            }
+            for (int form = 0; form < 2; ++form)
+            {
+                const bool bTiled = form == 0;
+                const char* formName = bTiled ? "材質ごとの形" : "直接 dispatch";
+                const Readback baseline = bTiled ? RunResolve(device, shaderManager, gpu, cameras, false, true, ++serial, &options,
+                                                              ScreenWidth, ScreenHeight, &materials)
+                                                 : RunResolve(device, shaderManager, gpu, cameras, false, true, ++serial);
+                const Readback debug = bTiled ? RunResolve(device, shaderManager, gpu, cameras, false, true, ++serial, &options,
+                                                           ScreenWidth, ScreenHeight, &materials, nullptr, code)
+                                              : RunResolve(device, shaderManager, gpu, cameras, false, true, ++serial, nullptr,
+                                                           ScreenWidth, ScreenHeight, nullptr, nullptr, code);
+                Expect(baseline.bOk && baseline.bRecorded && debug.bOk && debug.bRecorded,
+                       "デバッグの表示の検査の解決を記録して読み戻せなければならない");
+                if (!baseline.bOk || !debug.bOk)
+                {
+                    return;
+                }
+
+                uint32_t megaPixels = 0;
+                uint32_t badColor = 0;
+                uint32_t badSurface = 0;
+                uint32_t otherPixels = 0;
+                uint32_t otherChanged = 0;
+                uint32_t megaSameAsBaseline = 0;
+                for (uint32_t y = 0; y < ScreenHeight; ++y)
+                {
+                    for (uint32_t x = 0; x < ScreenWidth; ++x)
+                    {
+                        const size_t pixel = static_cast<size_t>(y) * ScreenWidth + x;
+                        const PixelReference& ref = references[pixel];
+                        if (!ref.bCovered)
+                        {
+                            continue;
+                        }
+                        const ReferenceTriangle& triangle = scene.References[ref.ReferenceIndex];
+                        if (triangle.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::MegaGeometryCluster))
+                        {
+                            ++megaPixels;
+                            const uint8_t* albedo = debug.Albedo.data() + pixel * 4;
+                            bool bColorOk = albedo[3] == 255;
+                            for (int channel = 0; channel < 3; ++channel)
+                            {
+                                bColorOk = bColorOk && std::fabs(albedo[channel] / 255.0 - expectedColor[channel]) <= 1.0 / 255.0 + 1.0e-6;
+                            }
+                            badColor += bColorOk ? 0u : 1u;
+                            megaSameAsBaseline += std::memcmp(albedo, baseline.Albedo.data() + pixel * 4, 4) == 0 ? 1u : 0u;
+
+                            // 法線は幾何の法線（法線マップなし）、材質は (0, 1, 1)、発光は 0（α = 1）
+                            const uint16_t* normal = debug.Normal.data() + pixel * 4;
+                            const uint8_t* materialPixel = debug.Material.data() + pixel * 4;
+                            const uint16_t* emissive = debug.Emissive.data() + pixel * 4;
+                            const double normalError = std::max({std::fabs(HalfToFloat(normal[0]) - ref.Normal.X),
+                                                                 std::fabs(HalfToFloat(normal[1]) - ref.Normal.Y),
+                                                                 std::fabs(HalfToFloat(normal[2]) - ref.Normal.Z)});
+                            const bool bSurfaceOk = normalError <= 2.0e-3 && materialPixel[0] == 0 && materialPixel[1] == 255 &&
+                                                    materialPixel[2] == 255 && HalfToFloat(emissive[0]) == 0.0f &&
+                                                    HalfToFloat(emissive[1]) == 0.0f && HalfToFloat(emissive[2]) == 0.0f &&
+                                                    HalfToFloat(emissive[3]) == 1.0f;
+                            badSurface += bSurfaceOk ? 0u : 1u;
+                        }
+                        else
+                        {
+                            ++otherPixels;
+                            otherChanged += IsSamePixel(baseline, debug, x, y) ? 0u : 1u;
+                        }
+                    }
+                }
+                std::cout << TestName << " デバッグの表示 mode=" << mode << " " << formName << ": MegaGeometry の画素=" << megaPixels
+                          << " 色の不一致=" << badColor << " 面の不一致=" << badSurface << " 他の種類の画素=" << otherPixels
+                          << " 変わった=" << otherChanged << std::endl;
+                Expect(megaPixels >= 60, "デバッグの表示の検査に十分な MegaGeometry の画素が覆われなければならない");
+                Expect(otherPixels >= 300, "デバッグの表示の検査に他の種類の画素も十分に覆われなければならない");
+                Expect(badColor == 0, "MegaGeometry の画素は payload から作ったデバッグの色でなければならない（クラスタの色・LOD の段）");
+                Expect(badSurface == 0, "MegaGeometry の画素は幾何の法線・材質 (0,1,1)・発光 0 でなければならない");
+                Expect(megaSameAsBaseline == 0, "デバッグの表示は通常の解決と違う色にならなければならない（検査が空振りしない）");
+                Expect(otherChanged == 0, "MegaGeometry でない画素はデバッグの表示でも通常の解決のままでなければならない");
+            }
+        }
+    }
+
     void RunMegaGeometryMaterialCase(const DevicePtr& device,
                                      ShaderManager& shaderManager,
                                      const Scene& baseScene,
@@ -3004,6 +3170,9 @@ namespace
 
             // MegaGeometry の材質は、ラスタの MegaGeometryPass と同じ規則（等方のサンプラー・粗さの既定は白）で解決する
             RunMegaGeometryMaterialCase(device, shaderManager, scene, idImage, references, cameras);
+
+            // MegaGeometry のデバッグの表示（クラスタの色・LOD の段）は、記録の payload からラスタと同じ色を作る
+            RunMegaGeometryDebugViewCase(device, shaderManager, scene, idImage, references, cameras);
 
             // 材質の表の件 → 材質ごとの dispatch の入力（テクスチャの枠・スカラー値・印）
             RunMaterialSlotMappingCase(device);

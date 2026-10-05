@@ -28,6 +28,7 @@
 #include "Container/Containers.h"
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/RenderTypes.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
 #include "RHI/ICommandList.h"
@@ -102,7 +103,8 @@ namespace NorvesLib::Core::Rendering
             float Viewport[4] = {};
             /** @brief x = 画面の幅、y = 画面の高さ、z = FLAG_*、w = 材質の表の件数 */
             uint32_t Screen[4] = {};
-            /** @brief x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y と同じ値。既定は 1） */
+            /** @brief x = 発光に掛けるプリエクスポージャ（ラスタの frameParams.y と同じ値。既定は 1）、
+             *  y = MegaGeometry のデバッグの表示（ResolveDebugViewCode の値。0 は通常の解決） */
             float Frame[4] = {1.0f, 0.0f, 0.0f, 0.0f};
         };
         static_assert(sizeof(ResolveParams) == 256, "visbuffer_resolve の ResolveParams（std140）と一致しなければならない");
@@ -118,6 +120,19 @@ namespace NorvesLib::Core::Rendering
                                   uint32_t width,
                                   uint32_t height,
                                   uint32_t materialCount);
+
+        /**
+         * @brief 表示の選択を、解決のシェーダーが読む MegaGeometry のデバッグの表示の値へ直す
+         *
+         * 1 = クラスタの色（MegaGeometryClusters）、2 = LOD の段（LODLevel）、それ以外は 0（通常の解決）。
+         * 値は Common/VisibilityResolve.glsl の RESOLVE_DEBUG_*（MegaGeometryPass の DEBUG_PAYLOAD_MODE_*）と同じ。
+         * 描画の記録の payload がクラスタの番号・LOD の段になるのは、MegaGeometryPass が同じ表示の選択で
+         * カリングの payload の種別を切り替えるため。
+         */
+        constexpr float ResolveDebugViewCode(DebugViewMode mode)
+        {
+            return mode == DebugViewMode::MegaGeometryClusters ? 1.0f : (mode == DebugViewMode::LODLevel ? 2.0f : 0.0f);
+        }
 
         /**
          * @brief この装置でビジビリティバッファの GBuffer の解決を使えるか

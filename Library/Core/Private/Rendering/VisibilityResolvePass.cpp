@@ -983,6 +983,9 @@ namespace NorvesLib::Core::Rendering
                                                                  m_RasterPass->GetMaterialTableCount());
         // 発光はプリエクスポージャ後の値で GBuffer_Emissive へ書く（GBufferPass・MegaGeometryPass・LightingPass と同じ値）
         dispatch.Params.Frame[0] = ResolveSceneColorPreExposure(camera);
+        // MegaGeometry のデバッグの表示（クラスタの色・LOD の段）は、描画の記録の payload から色を作る（MegaGeometryPass が
+        // 同じ表示の選択でカリングの payload をクラスタの番号・LOD の段に切り替える）
+        dispatch.Params.Frame[1] = VisibilityResolveGeometry::ResolveDebugViewCode(context.GetActiveDebugMode());
 
         // 材質ごとの形で解決できるかを決める。使えない理由があれば、画面全体の直接 dispatch へ戻す（画面を空にしない）
         const uint32_t materialCount = m_RasterPass->GetMaterialTableCount();

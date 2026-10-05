@@ -2447,6 +2447,16 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(
                 data.m_bStartupNight ? kNightStaticEnvironmentIntensityScale : 1.0f);
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
+#if NORVES_BUILD_DEVELOPMENT
+            // --debug-view: F4・F5 と同じ経路で、起動時のデバッグの表示を選ぶ
+            if (data.m_StartupDebugViewMode != NorvesLib::Core::Rendering::DebugViewMode::Normal)
+            {
+                ctx.EngineRef.GetRenderWorld().SetDebugViewModeAll(data.m_StartupDebugViewMode);
+                LOG_INFO("Rendering3DTest DEBUG_VIEW 起動時のデバッグの表示=%s 反映=%s",
+                         NorvesLib::Core::Rendering::DebugViewModeToString(data.m_StartupDebugViewMode),
+                         NorvesLib::Core::Rendering::DebugViewModeToString(ctx.EngineRef.GetRenderWorld().GetMainViewportDebugViewMode()));
+            }
+#endif
             if (data.m_bStartupNight)
             {
                 LOG_INFO("Rendering3DTest night enabled static_environment_scale=%.3f",
