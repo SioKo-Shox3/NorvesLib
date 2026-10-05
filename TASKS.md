@@ -799,7 +799,7 @@
 - notes: 計画書 4.3。VTG6-RESOLVE-FEEDBACK-EMISSIVE から分けた。ラスタの GBufferPass は `m_GBufferWireframePipeline` と `m_SkinnedGBufferWireframePipeline`（`PolygonMode::Line`）で描いている。
 
 ## VTG6-PT-VT-TEXTURES: パストレーサーの材質のテクスチャの配列でVTのテクスチャを読めるようにする
-- status: todo
+- status: done
 - done-when: `PathTracingClosestHit.glsl` の `materialTextures[256]` の標本が、VT（sparse）のテクスチャでは非常駐のタイルを読まず粗いミップへ逃げる（VTG2-RESIDENCY-FALLBACK の共通の関数の明示 LOD の版を使う）。パストレーサーを有効にした起動画面の撮影で、VT と全常駐の差を記録する。
 - verify: `cmake --build build --config Debug --target PathTracingMaterialVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingMaterialVulkanTest$"`
