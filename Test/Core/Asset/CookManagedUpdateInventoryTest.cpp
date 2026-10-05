@@ -1,6 +1,7 @@
 ﻿// filesystemの不存在でも値対応だけを検査できることを明示する。実cookは共通cache試験でも接続する。
 #include "Tools/AssetCook/CookManagedUpdateInventory.h"
 #include "Tools/AssetCook/CookOutputSetGuard.h"
+#include "Asset/AssetPackageFormat.h"
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -35,7 +36,7 @@ namespace ManagedInventoryTest
         r.Format = "raw.v0";
         r.CookedPackage = package;
         r.EntryName = "__asset__";
-        r.EntryType = Asset::MakeAssetPackageFourCC('R', 'a', 'w', 0);
+        r.EntryType = Asset::AssetPackageFormatV1::RawEntryType;
         out.Package = {1024, 2};
         return out;
     }
