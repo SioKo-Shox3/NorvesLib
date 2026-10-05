@@ -10,8 +10,6 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
-#include <sstream>
-#include <string>
 
 namespace NorvesLib
 {
@@ -229,26 +227,37 @@ void TestOverflowFoldsIntoReservedIndex()
            "既定の上限を超えた分を数える");
 }
 
-std::string ReadShaderSource(const char* name)
+bool ReadWholeFile(const char* path, Container::VariableArray<char>& outText)
 {
-    std::ifstream file(std::string(NORVES_SOURCE_ROOT) + "/Assets/Shaders/" + name, std::ios::binary);
-    std::stringstream stream;
-    stream << file.rdbuf();
-    return stream.str();
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open())
+    {
+        return false;
+    }
+    const std::streamoff size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    outText.resize(static_cast<size_t>(size) + 1);
+    file.read(outText.data(), size);
+    outText[static_cast<size_t>(size)] = '\0';
+    return true;
 }
 
 void TestRecordShaderWritesTableIndex()
 {
     // MegaGeometry の記録を GPU で作る計算が、区間の番号ではなく、区間から表の番号への対応（binding 7）を引いて書く
-    const std::string source = ReadShaderSource("visbuffer_records.comp");
-    Expect(!source.empty(), "visbuffer_records.comp を読めること");
-    Expect(source.find("binding = 7") != std::string::npos && source.find("sectionMaterials[") != std::string::npos,
+    Container::VariableArray<char> text;
+    if (!ReadWholeFile(NORVES_SOURCE_ROOT "/Assets/Shaders/visbuffer_records.comp", text))
+    {
+        Expect(false, "visbuffer_records.comp を読めること");
+        return;
+    }
+    const char* source = text.data();
+    Expect(std::strstr(source, "binding = 7") != nullptr && std::strstr(source, "sectionMaterials[") != nullptr,
            "区間から表の番号への対応を binding 7 で受け取る");
-    const size_t headerPos = source.find("record.header = uvec4(");
-    Expect(headerPos != std::string::npos &&
-               source.find("sectionMaterials[sectionIndex]", headerPos) != std::string::npos &&
-               source.find("sectionMaterials[sectionIndex]", headerPos) < source.find(";", headerPos),
-           "記録の材質の番号に、表の番号を書く");
+    const char* headerPos = std::strstr(source, "record.header = uvec4(");
+    const char* usePos = headerPos != nullptr ? std::strstr(headerPos, "sectionMaterials[sectionIndex]") : nullptr;
+    const char* endPos = headerPos != nullptr ? std::strchr(headerPos, ';') : nullptr;
+    Expect(usePos != nullptr && endPos != nullptr && usePos < endPos, "記録の材質の番号に、表の番号を書く");
 }
 
 int RunTest()

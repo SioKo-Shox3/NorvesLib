@@ -911,7 +911,12 @@ namespace
                 }
             }
 
-            return RHI::MakeShared<FakeBuffer>(desc, record.Tracker);
+            RHI::BufferPtr buffer = RHI::MakeShared<FakeBuffer>(desc, record.Tracker);
+            if (IsDebugName(desc.DebugName, "VisBuffer_SectionMaterials"))
+            {
+                VisBufferSectionMaterials = buffer;
+            }
+            return buffer;
         }
 
         RHI::TexturePtr CreateTexture(const RHI::TextureDesc& desc) override
@@ -1012,6 +1017,8 @@ namespace
 
         Container::VariableArray<RHI::RenderPassDesc> CreatedRenderPassDescs;
         Container::VariableArray<BufferCreationRecord> CreatedBuffers;
+        /** @brief ビジビリティバッファの「区間から材質の表の番号への対応」のバッファ（最後に作られたもの） */
+        RHI::BufferPtr VisBufferSectionMaterials;
         RHI::DescriptorSetDesc LastDescriptorSetDesc;
         Container::VariableArray<RHI::DescriptorSetDesc> LastGraphicsPipelineDescriptorSetLayouts;
         uint32_t LightArraySSBOCreateCount = 0;
@@ -1977,6 +1984,10 @@ namespace
         Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>> SkinnedLeases;
         Container::VariableArray<FrameCommand> PendingFrameCommands;
         Container::VariableArray<MegaGeometryProxy> Proxies;
+        /** @brief 材質の違う描画を足した構成で、手続きメッシュの描画が引く描画のインスタンスの表 */
+        RHI::BufferPtr InstanceData;
+        MaterialHandle MaterialA;
+        MaterialHandle MaterialB;
         CameraProxy Camera;
         ViewRenderContext Context;
     };
@@ -1995,12 +2006,16 @@ namespace
 
     // bVisibilityPlan=false は --visibility-buffer=off（MegaGeometryPass が描画の写しを作らず、VisibilityRasterPass も足さない）
     // bSkinning=true は、スキニングの描画1件と貸し出しを渡して SkinningComputePass を足す。
-    // SkinnedMeshes は渡さない（変形を1つも記録できないフレーム）ので、dispatch は増えない
+    // SkinnedMeshes は渡さない（変形を1つも記録できないフレーム）ので、dispatch は増えない。
+    // bMaterialDraws=true（bSkinning も true）は、実物の材質 A・B を作り、手続きメッシュの描画 3 件（A・A・B）と
+    // 材質 A のスキニングの描画 1 件を足す。SkinnedMeshes を渡すので、スキニングの描画も記録になる。
+    // 描画のコマンドの元の MaterialIndex は、記録の番号と取り違えないよう描画ごとに違う値（5・6・7・9）にする
     void RunVisibilityRasterScene(VisibilityRasterScene& scene,
                                   bool bVisibilityPlan,
                                   bool bOcclusionCulling,
                                   ClassifyMode classifyMode = ClassifyMode::None,
-                                  bool bSkinning = false)
+                                  bool bSkinning = false,
+                                  bool bMaterialDraws = false)
     {
         scene.Device = RHI::MakeShared<FakeDevice>();
         scene.Device->EnableVisibilityBufferCapabilities();
@@ -2058,6 +2073,40 @@ namespace
         proxyB.MegaMeshHandle = megaMeshB;
         scene.Proxies.push_back(proxyB);
 
+        if (bMaterialDraws)
+        {
+            MaterialCreateData createA;
+            createA.BaseColor[0] = 0.2f;
+            createA.BaseColor[1] = 0.4f;
+            createA.BaseColor[2] = 0.6f;
+            createA.Roughness = 0.3f;
+            scene.MaterialA = scene.Resources.Materials().Create(createA);
+            MaterialCreateData createB;
+            createB.BaseColor[0] = 0.9f;
+            createB.BaseColor[1] = 0.1f;
+            createB.BaseColor[2] = 0.1f;
+            scene.MaterialB = scene.Resources.Materials().Create(createB);
+            assert(scene.MaterialA.IsValid() && scene.MaterialB.IsValid());
+
+            MeshDataHandle meshHandle;
+            meshHandle.Id = 7701;
+            assert(scene.Resources.Meshes().Register(meshHandle, vertices, sizeof(vertices), indices, 3));
+            const auto addMeshDraw = [&](MaterialHandle material, uint32_t legacyMaterialIndex, uint64_t objectId)
+            {
+                DrawCommand meshCommand;
+                meshCommand.Draw.PayloadKind = DrawPayloadKind::Mesh;
+                meshCommand.Draw.MeshHandle = meshHandle;
+                meshCommand.Draw.MaterialHandle = material;
+                meshCommand.Draw.MaterialIndex = legacyMaterialIndex;
+                meshCommand.Draw.ObjectId = objectId;
+                scene.OpaqueCommands.push_back(meshCommand);
+            };
+            addMeshDraw(scene.MaterialA, 5, 101);
+            addMeshDraw(scene.MaterialA, 6, 102);
+            addMeshDraw(scene.MaterialB, 7, 103);
+            scene.InstanceData = RHI::MakeShared<FakeBuffer>();
+        }
+
         if (bSkinning)
         {
             Container::VariableArray<SkinnedMeshVertex> skinVertices;
@@ -2078,6 +2127,11 @@ namespace
             skinnedCommand.Draw.PayloadKind = DrawPayloadKind::Skinned;
             skinnedCommand.Skinned.FrameLeaseIndex = 0;
             skinnedCommand.Skinned.BonePalette.push_back(NorvesLib::Math::Matrix4x4::Identity);
+            if (bMaterialDraws)
+            {
+                skinnedCommand.Draw.MaterialHandle = scene.MaterialA;
+                skinnedCommand.Draw.MaterialIndex = 9;
+            }
             scene.OpaqueCommands.push_back(skinnedCommand);
         }
 
@@ -2099,6 +2153,12 @@ namespace
         if (bSkinning)
         {
             context.SnapshotSkinnedMeshFrameLeases = &scene.SkinnedLeases;
+        }
+        if (bMaterialDraws)
+        {
+            scene.Resources.SkinnedMeshes().BeginFrame(0);
+            context.SkinnedMeshes = &scene.Resources.SkinnedMeshes();
+            context.InstanceDataBuffer = scene.InstanceData;
         }
         context.Resources.Textures = &scene.Resources.Textures();
         context.Resources.Materials = &scene.Resources.Materials();
@@ -2998,6 +3058,62 @@ namespace
         assert(CountBufferCreations(device, classifyUniform) ==
                MaterialTileClassify::DispatchesPerRecord * (ViewportsPerFrame + 1));
         assert(CountBufferCreations(device, megaFrameSlot) == ViewportsPerFrame + 1);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 記録の材質の番号は、フレームごとの材質の表の番号になる。MegaGeometry の区間・手続きメッシュ・スキニングの描画が
+    // 同じ表を引き、同じ材質は同じ番号・違う材質は違う番号・番号は 0 から詰まる。元の MaterialIndex（区間の番号・描画のコマンドの値）に
+    // 戻す配線の誤りを、パスを通して検出する
+    void TestVisibilityRasterRecordsFrameUniqueMaterialTableIndices()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true);
+
+        const VisibilityRasterFrameStats& stats = scene.Raster.GetLastFrameStats();
+        assert(stats.bRendered);
+        assert(stats.ProceduralRecords == 3 && stats.SkinnedRecords == 1);
+        // 材質は 3 件: MegaGeometry の既定の材質（区間はすべて同じ値）・A・B
+        assert(stats.MaterialUnique == 3 && stats.MaterialOverflowed == 0);
+
+        // ホストが書く記録（手続き 3 件 → スキニング 1 件の順）
+        const auto* recordTable = static_cast<const FakeBuffer*>(scene.Raster.GetRecordTable().get());
+        assert(recordTable != nullptr);
+        constexpr size_t RecordCount = 4;
+        assert(recordTable->LastUpdateBytes.size() == RecordCount * sizeof(VisibilityBuffer::DrawRecord));
+        VisibilityBuffer::DrawRecord records[RecordCount];
+        std::memcpy(records, recordTable->LastUpdateBytes.data(), sizeof(records));
+        const uint32_t indexA = records[0].MaterialIndex;
+        const uint32_t indexB = records[2].MaterialIndex;
+        assert(records[1].MaterialIndex == indexA);  // 別のコマンドでも同じ材質は同じ番号
+        assert(records[3].MaterialIndex == indexA);  // スキニングの描画でも同じ番号
+        assert(indexB != indexA);                    // 違う材質は違う番号
+        assert(indexA < 3 && indexB < 3);
+
+        // MegaGeometry の区間から表の番号への対応: 区間の材質はどれも既定の 1 件で、A・B とは違う番号
+        const auto* sectionMaterials = static_cast<const FakeBuffer*>(scene.Device->VisBufferSectionMaterials.get());
+        assert(sectionMaterials != nullptr);
+        const size_t sectionCount = sectionMaterials->LastUpdateBytes.size() / sizeof(uint32_t);
+        assert(sectionCount >= 1);
+        Container::VariableArray<uint32_t> sections;
+        sections.resize(sectionCount);
+        std::memcpy(sections.data(), sectionMaterials->LastUpdateBytes.data(), sectionCount * sizeof(uint32_t));
+        for (const uint32_t section : sections)
+        {
+            assert(section == sections[0]);
+            assert(section != indexA && section != indexB);
+        }
+        // 番号は 0 から詰まる（区間・A・B で {0, 1, 2} をちょうど使う）
+        assert(sections[0] < 3 && sections[0] + indexA + indexB == 3);
+
+        // 表の中身: その番号の件が、その材質の値（基本色）を持つ
+        const auto* materialTable = static_cast<const FakeBuffer*>(scene.Raster.GetMaterialTable().get());
+        assert(materialTable != nullptr && scene.Raster.GetMaterialTableCount() == 3);
+        assert(materialTable->LastUpdateBytes.size() == 3 * sizeof(VisibilityBuffer::MaterialEntry));
+        VisibilityBuffer::MaterialEntry entries[3];
+        std::memcpy(entries, materialTable->LastUpdateBytes.data(), sizeof(entries));
+        assert(entries[indexA].BaseColor[0] == 0.2f && entries[indexA].BaseColor[2] == 0.6f);
+        assert(entries[indexB].BaseColor[0] == 0.9f && entries[indexB].BaseColor[1] == 0.1f);
 
         ShutdownVisibilityRasterScene(scene);
     }
@@ -8324,6 +8440,7 @@ int main()
     TestFrameUseRingGivesDistinctUsesWithinAFrameAndReusesNextFrame();
     TestComputePassFrameResourcesAreNotReusedWithinAFrame();
     TestVisibilityRasterOnSinglePassMegaGeometry();
+    TestVisibilityRasterRecordsFrameUniqueMaterialTableIndices();
     TestVisibilityRasterOffKeepsExistingMegaGeometryRecording();
     TestVisibilityRasterWithoutGBufferDepthDoesNothing();
     TestShadowMapNativeDeclareImportsDepthOutput();
