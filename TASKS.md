@@ -489,7 +489,7 @@
 - notes: 計画書 4.3。危険地帯（アセットロード）。
 
 ## VTG5-GROUP-BVH: クラスタのグループのBVHでカリングをたどる
-- status: todo
+- status: done
 - done-when: クッカーがグループの BVH（節ごとに境界球と、子の中で最大の親の誤差）を NVMESH v1.1 に焼き、GPU のカリングが、平らなクラスタの列の代わりに BVH を段ごとの dispatch（または持続するスレッド）でたどってグループを選び、選んだグループのクラスタを判定する。BVH で枝を切る条件（視錐台・遮蔽・誤差）は、切った先のクラスタが選ばれないことが保証される保守的なもの。CPU で同じ判定を写した検査（`MegaGeometryResourcesTest`）で、BVH をたどった選択と平らな選択が一致することを確かめる。`-Deterministic` の撮影が移行前と一致する（PSNR を記録）。
 - verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest CookedMeshTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|CookedMeshTest|RenderGraphCompileTest)$"`
