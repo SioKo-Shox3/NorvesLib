@@ -9,7 +9,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
 - GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
-- GR83/GR84: GR84のBVH raw解析と明示位置規約のdouble source FKを実Windows CPUで受入済み。target対応づけ/cook、分離骨格資産ローダは未完。
+- GR83/GR84: GR84のBVH raw解析・明示位置規約のdouble source FK・厳密UTF8関節名索引を実Windows CPUで受入済み。target対応づけ/cook、分離骨格資産ローダは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
@@ -898,3 +898,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 厳密joint-name index開始。Core/AssetCook向け下準備としてPrivate/Animationへ置き、既存SkeletonResource::FindJointIndexのIdentity/hash・重複先頭勝ちは変更しない。UTF8 byte poolと元indexを所有し、target native名の変換は既存NameCodec minor2へ集約する。名前解決成功は階層/rest/retarget互換を保証しない。
 
 - G2/GR84 strict joint-name indexの検証準備: UTF8所有pool/完全一致/元番号、非空・重複・codec/上限/不正span検査、copy-and-swap/empty move、native minor2変換を接続。2round静的PASS、pure coreとgeneric test subsetのg++構文検査、既存NameCodecだけの通常/O2-NDEBUG/ASan・UBSan（LSan除外）、Python12+4+7 normal/-O、BOM/EOL検査PASS。native temporaryのmax_sizeをprepassへ追加し、misalignment/extent overflow/count/入力変更/失敗後設定保持も反証する。新index/NativeAdapter runtimeはhostで未実行で、次の実Windows44CPU/新marker/旧89byte/managed gateで検証する。
+
+- G2/GR84 厳密joint-name index受入: 585d7004505af6cbaf917b2e466b9061aee4853c / tree47a062166c1232ed1ba0b0f1fd01061ebab56cf9 / run37368810439 attempt1 job111960454749。44CPU/旧7＋新index marker、Bootstrap17/Update29、79+10byte、7smoke/5診断、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを照合し親readonly再実行exit0。旧604証拠file保全、最終641file inventory一致。source名から元番号への厳密対応だけを受入れ、階層/rest/target変換・Sampler共有・実Blender等は残す。次は現行Samplerの実Core出力をDebug/Release別に先に凍結し、bindだけの共有化前後で比較する。
