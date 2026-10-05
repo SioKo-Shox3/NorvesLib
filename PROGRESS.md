@@ -9,7 +9,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
 - GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
-- GR83/GR84: GR84のBVH raw解析を実Windows CPUで受入済み。姿勢評価/対応づけ/cook、分離骨格資産ローダは未完。
+- GR83/GR84: GR84のBVH raw解析と明示位置規約のdouble source FKを実Windows CPUで受入済み。target対応づけ/cook、分離骨格資産ローダは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
@@ -892,3 +892,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 double姿勢評価開始。OffsetPlusChannels/AbsoluteLocalChannelsを必須引数とし、どちらもroot/nonrootの完全3位置成分へ同じ数学規則で適用する。位置なしはOFFSET。完全3回転は宣言順右積（数学的列vector）とし、部分成分/交錯/回転後の位置は明示拒否する。BVH解説とBlender ARMATUREの位置処理には差があるため、一般規格/Blender互換の断定をせず、二つの明示解釈を独立した期待値で検証する。
 
 - G2/GR84 double姿勢評価の検証準備: 必須の位置規約、6順の右積、親FK/End Site、構造/selected frameの有限検査、未対応channel/overflow拒否、nothrow置換を接続。0初期化enumはUnspecifiedとして拒否する。2round静的PASS、実cpp+testのg++構文検査とPython12+4+7 normal/-O/BOM/EOLが成功。実sourceのprivate数学helperだけをallocator stubなしで通常/O2-NDEBUG/ASan・UBSan（LSan除外）実行し、6順とFK literalを確認。full Evaluate/Coreのhost実行ではない。実Windows43CPU/新marker/既存89byte/managed gateは次CIで未確認。
+
+- G2/GR84 source姿勢評価受入: 6fbbbe8b4bcfe7ccf592bc07d2a13be1652e6368 / tree7d5cab88c31be45955a7e34f2c9fbe9569d21bfc / run37362515658 attempt1 job111940266049。43CPU/旧6＋新FK marker、Bootstrap17/Update29、79+10byte、7smoke/5診断、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを照合し親readonly再実行exit0。旧572証拠file保全。synthetic6順1e-9と明示2位置規約source FK/末端まで受入れ、target/Sampler/Blender実測/変換clip/CLI/StageB等は残す。次は既存Identity索引の重複先頭勝ちを変えず、独立した厳密UTF8 joint-name indexを先に整える。
