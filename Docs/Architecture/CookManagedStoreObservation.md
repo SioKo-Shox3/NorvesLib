@@ -72,3 +72,9 @@ control fileはread共有だけで開き、単一linkのregular file、長名/�
 
 - [FindFirstFileExW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfileexw): 長短名を含む列挙、属性の再観測、FindCloseでの終了
 - [GetFinalPathNameByHandleW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew): handleからのnormalized/GUID path取得
+
+## 実Windows受入れ
+
+759267420b55b0acbaf0a0c98d6a08de01e997e9、[run 37260128285](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37260128285) attempt 1で実build、30CPU、既存7CLIの79出力byte一致、5診断byte一致、texture spec v1の2spec×2実行・固定10出力byte一致・16拒否が成功した。3成果物ZIPのAPI digest/size、CRC、安全な完全inventoryを照合し、独立比較を再実行した。2回目のtexture出力一致はrunner記録、独立比較は保存した初回10出力による。
+
+storeのshort alias、SUBST、Unicode物理親へのASCII alias、case-sensitive directory、reparseは各条件flagが1。専用testでは4096実root claim、固定pending、全active claimの欠落/置換、別owner・入れ子・unknown root/store拒否、snapshotと値寿命を確認した。古いdirectory列挙時刻で失敗した2runの証拠を残し、比較条件を減らさずnative handleのwrite timeとvolume/file IDへ切り替えた。production実装は初回公開から不変であり、store初期化・journal replay・実更新の受入れは含まない。

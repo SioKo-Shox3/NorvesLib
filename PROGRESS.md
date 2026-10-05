@@ -806,3 +806,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2-S6-MANAGED-STORE-OBSERVATION検証準備: 物理GUID祖先を列挙し、fixed long name/short alias・独立header ID・全root claimを照合する読み取り専用層を30CPUへ登録。共有lockが消す診断は独立値で保持し、列挙handleも例外時RAIIで閉じる。比較器12件×通常/最適化とGUID literalの単独compileが成功。実Windows/79+10byte gateは未実行。
 - G2-S6-MANAGED-STORE-OBSERVATION診断追加: a870601c/run37256953519は実build・5診断・29/30CPUが成功したが、専用testの前後snapshot集約assertが失敗した。既存logには対象entry/変化field/呼出箇所がないため原因は未確定。比較条件は維持し、caller行・path・file種別・size/hash/write timeを出す診断だけを追加して実Windowsで再現する。後続79+10byteは未到達。
 - G2-S6-MANAGED-STORE-OBSERVATION時刻観測修正: 1f0b6c42/run37258373173で差を特定。sub directory作成直後の試験で、親runtime directoryの列挙由来write timeだけが変わり、path/type/size/hashは同じだった。列挙cacheではなく全entryのnative handleからFileBasicInfoを読むようにし、directoryを含む時刻比較は維持する。加えてvolume/file IDの一致も検査し、productionは変更しない。
+
+- G2-S6-MANAGED-STORE-OBSERVATION受入: 75926742/run37260128285で実Windows build・30CPU・7CLI/79byte/5診断・native texture2spec×2/10byte/16拒否が成功。handle由来時刻とvolume/file IDを使うfixture修正後、入れ子/固定pending/全claim/未知root拒否/4096件/無変更を確認。storeの8.3/SUBST/Unicode alias/case-sensitive/reparseは全flag1。3ZIPと79+10固定出力を独立確認しrootで再実行。読み取り専用観測をdone、store作成・復旧・production公開は未接続。
