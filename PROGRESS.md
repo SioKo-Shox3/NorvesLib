@@ -1097,3 +1097,13 @@
 - 修正: `VisibilityBuffer.h` の `IsValidRecord` から 3 の倍数の条件を外し、関連するコメント 2 か所を直した。三角形 t の頂点 k は `FirstIndex + 3t + k` で引くので、基点が 3 の倍数である必要はない。
 - テスト: `VisibilityBufferEncodingTest` の「3 の倍数でない記録は足せない」を「足せる」に直し、`TestRecordFromMegaGeometryPageRegion`（上の配置式から作った記録を `AddAndEncode`・`TryResolve` で往復できる）を足した。断った数の期待は 5 から 4 になった。
 - 検証: `verify-VTG6-VISBUFFER-RESOURCES-6.txt`（Debug の Game・RenderResourcesDomainContractTest・RenderGraphCompileTest、BUILD_EXIT_CODE=0）、`-7.txt`（ctest 2/2 passed）。行末は `git diff --numstat` と `--ignore-cr-at-eol` で一致。
+
+## 反復 8（run 20261005-191130）: VTG6-VIS-RASTER（done）
+- 内容: `VisibilityRasterPass`（`Rendering/VisibilityRasterPass.h`・`.cpp`）と `VisibilityBufferMode.h`、シェーダー `visbuffer_mega.vert`・`visbuffer_mesh.vert`・`visbuffer_skinned.vert`（位置だけを読む）・`visbuffer.frag`（記録の番号は開始インスタンスから渡す描画ごとの値、三角形は `gl_PrimitiveID`）・`visbuffer_records.comp`（MegaGeometry のコマンドから記録を GPU が書く）を足した。`--visibility-buffer=on` で、MegaGeometry のクラスタ（2パスの遮蔽・BVH・ページの経路が積んだ IndirectDraw をそのまま描き直す）・手続きメッシュの塊・スキニングの塊（SkinningComputePass の変形済みの頂点）を `VisBuffer.Id` と `GBuffer.Depth` へ描く。記録の表は 0 番が空、1 番から MegaGeometry のコマンド、その後ろに手続き・スキニングの塊。GBuffer への書き込みは今の経路のまま（`on` でも GBufferPass・MegaGeometryPass の GBuffer の描画は動く）。
+- デバッグ表示: `--visibility-buffer=debug` で `VisibilityDebugPass`（`visbuffer_debug.frag`）が ID を色にして最後のシーンの色へ書く。種類ごとに色相の帯を分け、記録（描画）ごとに色相を散らす。撮影は `Scripts/CaptureStartupScene.ps1 -VisibilityBuffer On|Debug`。
+- テスト: `RenderGraphCompileTest` に `TestVisibilityRasterOnRecordsMegaDrawsAndIdPass`・`...OnSinglePassMegaGeometry`・`...OffKeepsExistingMegaGeometryRecording`・`...WithoutGBufferDepthDoesNothing` を足した（`on` の記録の宣言、`off` は既存の記録のまま）。
+- 目視確認: デバッグの撮影（`.harness/runs/startup-capture/VTG6-VIS-RASTER-debug/default.png`・`near.png`）を開いて、家・岩（MegaGeometry、橙〜赤で細かい塊に分かれる）・地面（手続き、緑〜シアンの三角形）・球の輪郭が欠けず出て、塊の境が見えることを確かめた。`on` の撮影は `off` と同一（default の PSNR 100、差の画素 4E-06）。
+- 検証: `verify-VTG6-VIS-RASTER-15-build.txt`（Debug の Game・RenderGraphCompileTest・MegaGeometryResourcesTest、BUILD_EXIT_CODE=0）、`-16-ctest.txt`（4/4 passed）、`-17-build-rwdi.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-18-capture.txt`（既定の撮影 pass、平均輝度 124.173 / 123.952 / 126.022 で反復 7 の `off` の撮影と同じ）。
+- stop-when: 該当しない。ビジビリティバッファの深度は GBuffer.Depth へ LessEqual で重ね描きするだけで、2パスの遮蔽の HZB は今の経路（GBuffer の1パス目の深度）から作ったまま変えていない。
+- Notes: (1) 反復 7 が 150 ターンで止まり、未コミットだった新規 9 ファイルをこの反復で足した。 (2) 起動画面（スキニングを含まない）では `skinned_chunks=0`。スキニングの塊の描画は反復 7 のスキニング検証シーン（velocity の撮影）で実行して動作したが、ID の画素の目視は起動画面にスキニングが無いため行っていない。 (3) 新規ファイルは BOM+CRLF。
+- Next: VTG6-MATERIAL-CLASSIFY（`VisBuffer.Id` から 8×8 の画素タイルの材質を分類する）。
