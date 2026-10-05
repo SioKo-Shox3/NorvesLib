@@ -896,11 +896,11 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            const uint64_t vertexOffsetBytes =
+            const uint64_t vertexOffsetBytes = snapshot.VertexBufferOffsetBytes +
                 static_cast<uint64_t>(snapshot.VertexOffset) * snapshot.VertexStride;
             const uint64_t vertexRangeBytes =
                 static_cast<uint64_t>(snapshot.VertexCount) * snapshot.VertexStride;
-            const uint64_t indexOffsetBytes =
+            const uint64_t indexOffsetBytes = snapshot.IndexBufferOffsetBytes +
                 static_cast<uint64_t>(snapshot.IndexOffset) * sizeof(uint32_t);
             const uint64_t indexRangeBytes =
                 static_cast<uint64_t>(snapshot.IndexCount) * sizeof(uint32_t);

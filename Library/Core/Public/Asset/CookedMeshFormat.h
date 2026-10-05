@@ -190,6 +190,52 @@ namespace NorvesLib::Core::Asset
         inline constexpr float RootParentError = 3.402823466e+38f;
         inline constexpr uint32_t ClusterFlagRoot = 1u;
 
+        // v1.1: クラスタのグループをページ（128 KiB）に詰めた形式（VersionMinor=1）。形式は NVMESHv1.md の「v1.1」を参照。
+        inline constexpr uint16_t VersionMinorPaged = 1;
+        // ページの大きさの上限。常駐する根のページ（粗い段とフォールバックの段を持つ）も同じ上限で、複数のページに分かれる
+        inline constexpr size_t PageSize = 128 * 1024;
+        inline constexpr size_t PageHeaderSize = 64;
+        inline constexpr size_t PageTableRecordSize = 48;
+        inline constexpr uint32_t RootPageId = 0;
+        inline constexpr uint32_t InvalidPageId = 0xffffffffu;
+        inline constexpr uint32_t PageFlagRoot = 1u;
+
+        // v1.1 のグループの BVH。ヘッダの Flags の bit0 が立つとき、グループの表の節の後ろに続く
+        // （節の大きさ = グループの記録 × 件数 + GroupBVHHeaderSize + 節の記録 × 節の数）。
+        // 頭（16B: 節の数・段の数・葉の数・予約 0）の後ろに、節（32B: 境界球・MaxParentError・First・Count・flags）が並ぶ。
+        // 節は幅優先の並び（根が 0 番。内部の節の子は連続し、段ごとに連続する）。葉はクラスタの連続した範囲で、
+        // 1つのグループの（または根のクラスタだけの）メンバだけを持つ。全クラスタがちょうど1つの葉に入る。
+        // 節の球は下のクラスタの球と親の球を包み、MaxParentError は下の最大以上（根のクラスタを持つ節は RootParentError）。
+        // カリングは節の球から投影した MaxParentError が許容以下なら枝ごと切る（下のクラスタは「親の誤差が許容を
+        // 超える」条件を満たさず描かれない）。視錐台・遮蔽は節の球で外れるなら下も外れる。読み込みはこれらの前提を検査する。
+        inline constexpr uint32_t HeaderFlagGroupBVH = 1u;
+        inline constexpr size_t GroupBVHHeaderSize = 16;
+        inline constexpr size_t GroupBVHNodeRecordSize = 32;
+        inline constexpr uint32_t GroupBVHMaxChildren = 8;
+        inline constexpr uint32_t GroupBVHMaxLeafClusters = 8;
+        inline constexpr uint32_t GroupBVHMaxLevels = 16;
+        inline constexpr uint32_t GroupBVHNodeFlagLeaf = 1u;
+
+        namespace GroupBVHHeaderOffset
+        {
+            inline constexpr size_t NodeCount = 0;
+            inline constexpr size_t LevelCount = 4;
+            inline constexpr size_t LeafCount = 8;
+            inline constexpr size_t Reserved0 = 12;
+        } // namespace GroupBVHHeaderOffset
+
+        namespace GroupBVHNodeOffset
+        {
+            inline constexpr size_t BoundsCenterX = 0;
+            inline constexpr size_t BoundsCenterY = 4;
+            inline constexpr size_t BoundsCenterZ = 8;
+            inline constexpr size_t BoundsRadius = 12;
+            inline constexpr size_t MaxParentError = 16;
+            inline constexpr size_t First = 20;
+            inline constexpr size_t Count = 24;
+            inline constexpr size_t Flags = 28;
+        } // namespace GroupBVHNodeOffset
+
         namespace HeaderOffset
         {
             inline constexpr size_t Magic = 0;
@@ -242,6 +288,51 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t FallbackError = 252;
         } // namespace HeaderOffset
 
+        // v1.1 のヘッダで意味が変わる項目（位置は v1.0 と同じ）。クラスタ・頂点・インデックスの節は無く、
+        // 代わりにページの表（ClusterTable の位置）とページの領域（VertexPayload の位置）を持つ。
+        // IndexPayload は大きさ 0 で、領域の末尾（ファイルの末尾）に置く。
+        namespace PagedHeaderOffset
+        {
+            inline constexpr size_t PageTableOffset = HeaderOffset::ClusterTableOffset;
+            inline constexpr size_t PageTableSize = HeaderOffset::ClusterTableSize;
+            inline constexpr size_t PageRegionOffset = HeaderOffset::VertexPayloadOffset;
+            inline constexpr size_t PageRegionSize = HeaderOffset::VertexPayloadSize;
+        } // namespace PagedHeaderOffset
+
+        // ページの表のレコード（48B）。ページはファイル内の自己完結した範囲で、範囲読みで1ページずつ読める。
+        namespace PageTableRecordOffset
+        {
+            inline constexpr size_t FileOffset = 0;
+            inline constexpr size_t Size = 8;
+            inline constexpr size_t ParentPageId = 12;
+            inline constexpr size_t Flags = 16;
+            inline constexpr size_t ClusterCount = 20;
+            inline constexpr size_t FirstClusterIndex = 24;
+            inline constexpr size_t VertexCount = 28;
+            inline constexpr size_t IndexCount = 32;
+            inline constexpr size_t Reserved0 = 36;
+            inline constexpr size_t PageHash = 40;
+        } // namespace PageTableRecordOffset
+
+        // ページの先頭（64B）。続けてクラスタのレコード・頂点・クラスタのインデックス・フォールバックのインデックスが並ぶ。
+        // オフセットはページの先頭からのバイト数。
+        namespace PageHeaderOffset
+        {
+            inline constexpr size_t ClusterCount = 0;
+            inline constexpr size_t VertexCount = 4;
+            inline constexpr size_t IndexCount = 8;
+            inline constexpr size_t FallbackIndexCount = 12;
+            inline constexpr size_t ClusterOffset = 16;
+            inline constexpr size_t VertexOffset = 20;
+            inline constexpr size_t IndexOffset = 24;
+            inline constexpr size_t FallbackIndexOffset = 28;
+            inline constexpr size_t PageId = 32;
+            inline constexpr size_t Flags = 36;
+            inline constexpr size_t Reserved0 = 40;
+            inline constexpr size_t Reserved1 = 48;
+            inline constexpr size_t Reserved2 = 56;
+        } // namespace PageHeaderOffset
+
         // 頂点・サブメッシュ・材質・文字列の参照レコードは v0 と同じ
         namespace VertexRecordOffset = CookedMeshFormatV0::VertexRecordOffset;
         namespace SubmeshRecordOffset = CookedMeshFormatV0::SubmeshRecordOffset;
@@ -273,7 +364,9 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t MaterialIndex = 80;
             inline constexpr size_t PageId = 84;
             inline constexpr size_t Flags = 88;
-            inline constexpr size_t Reserved0 = 92;
+            // このクラスタを作ったグループ（1つ細かい段）の番号 + 1。0 は「番号なし」（最も細かい段のクラスタと、
+            // この項目の導入前に焼き込んだ v1.0・v1.1 は 0）。読み込みは CookedMeshCluster::SourceGroupId へ番号を直して渡す
+            inline constexpr size_t SourceGroupIdPlusOne = 92;
             inline constexpr size_t Reserved1 = 96;
             inline constexpr size_t Reserved2 = 104;
             inline constexpr size_t Reserved3 = 112;
@@ -327,7 +420,13 @@ namespace NorvesLib::Core::Asset
         InvalidGroupTable,
         InvalidLODGraph,
         InvalidFallbackRange,
-        UnsupportedV1Feature
+        UnsupportedV1Feature,
+        // v1.1（ページ）で足した拒否理由
+        InvalidPageTable,
+        InvalidPageData,
+        PageHashMismatch,
+        // v1.1 のグループの BVH で足した拒否理由
+        InvalidGroupBVH
     };
 
     struct CookedMeshFloat2
@@ -399,6 +498,9 @@ namespace NorvesLib::Core::Asset
         float ParentBoundsRadius = 0.0f;
         float ParentError = CookedMeshFormatV1::RootParentError;
         uint32_t GroupId = CookedMeshFormatV1::InvalidGroupId;
+        // このクラスタを作ったグループ（1つ細かい段。Groups の添字）。そのグループの境界球と誤差が BoundsCenter・BoundsRadius・
+        // LODError と一致する。最も細かい段のクラスタと、番号を持たない旧い資産は InvalidGroupId（値の照合で代用する）
+        uint32_t SourceGroupId = CookedMeshFormatV1::InvalidGroupId;
         uint32_t PageId = 0;
         bool bIsRoot = true;
     };
@@ -415,11 +517,49 @@ namespace NorvesLib::Core::Asset
         uint32_t LODLevel = 0;
     };
 
+    // v1.1 のグループの BVH の1節。内部の節は子の節の連続した範囲（First から Count 個）を、葉はクラスタの連続した範囲
+    // （First から Count 個）を持つ。境界球は、下のクラスタの境界球と親の境界球をすべて包み、MaxParentError は
+    // 下のクラスタの親の誤差の最大（根のクラスタを含む葉は RootParentError）。
+    // GPU は、節の球から投影した MaxParentError が許容以下なら、下のどのクラスタも描かれない（親で足りる）ので枝を切る。
+    struct CookedMeshGroupBVHNode
+    {
+        CookedMeshFloat3 BoundsCenter;
+        float BoundsRadius = 0.0f;
+        float MaxParentError = 0.0f;
+        uint32_t First = 0;
+        uint32_t Count = 0;
+        bool bLeaf = false;
+    };
+
+    // v1.1 のページの表の1行。ページはクラスタのグループを詰めた128 KiB 以下の自己完結した範囲で、
+    // 頂点・インデックス・クラスタの記録を自分の中のオフセットで持つ。根のページ（bIsRoot）は、
+    // 粗い段のクラスタとフォールバックの段を持って常駐するページで、0 番から連続して並ぶ（1つ以上）。
+    struct CookedMeshPage
+    {
+        // ファイルの先頭からのバイト位置と大きさ（範囲読みの単位）
+        uint64_t FileOffset = 0;
+        uint32_t Size = 0;
+        // 親のクラスタを持つページのうち最も小さい番号（このページを描くには、先に親のページが要る）。根のページは InvalidPageId
+        uint32_t ParentPageId = CookedMeshFormatV1::InvalidPageId;
+        bool bIsRoot = false;
+        // Clusters の中の、このページのクラスタの範囲（ページの順に連続して並ぶ）
+        uint32_t FirstClusterIndex = 0;
+        uint32_t ClusterCount = 0;
+        // Vertices・Indices の中の、このページの頂点・クラスタのインデックスの範囲（フォールバックのインデックスは含まない）
+        uint32_t FirstVertex = 0;
+        uint32_t VertexCount = 0;
+        uint32_t FirstIndex = 0;
+        uint32_t IndexCount = 0;
+        uint64_t Hash = 0;
+    };
+
     struct CookedMeshData
     {
         AssetBlob SourceBlob;
         // 読んだ形式の主版（0 か 1）。0 は従来の1段のメッシュ（LODLevelCount=1、グループ無し）
         uint16_t FormatMajor = 0;
+        // 副版。v1.0 は 0、ページに詰めた v1.1 は 1（Pages が空でない）。v0 は 0
+        uint16_t FormatMinor = 0;
         CookedMeshFloat3 TotalBoundsCenter;
         float TotalBoundsRadius = 0.0f;
         uint64_t PayloadHash = 0;
@@ -436,6 +576,11 @@ namespace NorvesLib::Core::Asset
         Container::VariableArray<CookedMeshMaterial> Materials;
         Container::VariableArray<CookedMeshCluster> Clusters;
         Container::VariableArray<CookedMeshClusterGroup> Groups;
+        // v1.1 のページの表（v1.0・v0 は空）。クラスタの PageId はここへの添字
+        Container::VariableArray<CookedMeshPage> Pages;
+        // v1.1 のグループの BVH（幅優先の並び。無ければ空で、GPU は平らなクラスタの列を判定する）と、段ごとの節の数
+        Container::VariableArray<CookedMeshGroupBVHNode> GroupBVH;
+        Container::VariableArray<uint32_t> GroupBVHLevelNodeCounts;
         Container::VariableArray<uint32_t> Indices;
 
         [[nodiscard]] Container::AnsiStringView GetString(const CookedMeshStringRef& stringRef) const noexcept;
@@ -468,6 +613,20 @@ namespace NorvesLib::Core::Asset
         return ComputeCookedMeshPayloadHash(bytes.data(), bytes.size());
     }
 
+    // クラスタとグループの表（クラスタはグループのメンバが連続して並ぶ）から、グループの BVH を幅優先の並びで作る。
+    // 葉は1つのグループ（または連続した根のクラスタ）のメンバを最大 GroupBVHMaxLeafClusters 個ずつ持つ。
+    // 内部の節は最大 GroupBVHMaxChildren 個の子を持つ。段が GroupBVHMaxLevels を超えるときは false。
+    [[nodiscard]] bool BuildCookedMeshGroupBVH(const Container::VariableArray<CookedMeshCluster>& clusters,
+                                               const Container::VariableArray<CookedMeshClusterGroup>& groups,
+                                               Container::VariableArray<CookedMeshGroupBVHNode>& outNodes);
+
+    // グループの BVH の構造と、枝を切る条件が保守的であること（節の球が下の球を包む・MaxParentError が下の最大以上）、
+    // 全クラスタがちょうど1つの葉に入ることを検査し、段ごとの節の数を返す。
+    [[nodiscard]] CookedMeshParseStatus CheckCookedMeshGroupBVH(
+        const Container::VariableArray<CookedMeshGroupBVHNode>& nodes,
+        const Container::VariableArray<CookedMeshCluster>& clusters,
+        Container::VariableArray<uint32_t>& outLevelNodeCounts);
+
     // 先頭の magic で v0・v1 を判別して読む。v0 は従来の1段のメッシュとして返す。
     [[nodiscard]] CookedMeshParseResult ParseCookedMesh(AssetBlob sourceBlob);
 
@@ -493,4 +652,81 @@ namespace NorvesLib::Core::Asset
     // v1 のバイト列を組み立てる。件数が 32bit に収まらないときは false。
     [[nodiscard]] bool SerializeCookedMeshV1(const CookedMeshV1WriteInput& input,
                                              Container::VariableArray<uint8_t>& outBytes);
+
+    // 1ページの中身（ParseCookedMeshPage の出力）。クラスタの IndexOffset・VertexOffset はページの中での位置。
+    struct CookedMeshPageContent
+    {
+        Container::VariableArray<CookedMeshCluster> Clusters;
+        Container::VariableArray<CookedMeshVertex> Vertices;
+        // クラスタのインデックス（クラスタの頂点の範囲の先頭からの相対）
+        Container::VariableArray<uint32_t> Indices;
+        // フォールバックのインデックス（根のページだけ。ページの頂点への添字）。根のページは、フォールバックの三角形の
+        // 一部（0 個以上）をこのページの頂点だけで持ち、全部の根のページを合わせると粗い形が閉じる
+        Container::VariableArray<uint32_t> FallbackIndices;
+    };
+
+    // v1.1 のページのバイト列（ページの表の FileOffset・Size の範囲）を単独で読んで検査する。
+    // 他のページや表を見ずに、ページの中の範囲・インデックス・クラスタの記録だけで検査できる。
+    // lodLevelCount・groupCount は、ヘッダの値（クラスタの段・グループの番号の範囲の検査に使う）。
+    // bIsRoot は、ページの表の根の印（ページの先頭の flags と一致する）。
+    [[nodiscard]] CookedMeshParseStatus ParseCookedMeshPage(Container::Span<const uint8_t> pageBytes,
+                                                            uint32_t pageId,
+                                                            bool bIsRoot,
+                                                            uint32_t lodLevelCount,
+                                                            uint32_t groupCount,
+                                                            CookedMeshPageContent& outContent);
+
+    // ページに詰めて書くときの設定
+    struct CookedMeshPagedWriteOptions
+    {
+        // 通常のページの大きさの上限（バイト）。既定は PageSize（128 KiB）
+        uint32_t PageSizeBytes = static_cast<uint32_t>(CookedMeshFormatV1::PageSize);
+        // 根のページ（常駐）に入れる粗い段のクラスタの合計の目安（バイト）。最も粗い段（根）は常に入り、
+        // その下の段は、足して目安以内に収まる間だけ段ごとまとめて入る（フォールバックの段は別に、根のページへ追加する）
+        uint32_t RootClusterBudgetBytes = 512 * 1024;
+    };
+
+    enum class CookedMeshPagedWriteStatus : uint8_t
+    {
+        Success,
+        // 入力のクラスタ・グループ・インデックスの範囲が食い違う、または有限でない値がある
+        InvalidInput,
+        // 1つのグループがページの上限に収まらない（Info の LargestGroupBytes・LargestGroupIndex）
+        GroupExceedsPage,
+        // 件数が 32bit に収まらない
+        TooLarge
+    };
+
+    struct CookedMeshPagedWriteInfo
+    {
+        uint32_t PageCount = 0;
+        // 根のページ（常駐する、0 番から連続した全ページ）の数・大きさの合計・クラスタの数の合計
+        uint32_t RootPageCount = 0;
+        uint32_t RootPageBytes = 0;
+        uint32_t RootPageClusterCount = 0;
+        // 根のページに入った最も細かい段（これ以上の段が常駐する）
+        uint32_t RootPageMinLODLevel = 0;
+        // 全ページの大きさの最大と、根のページ以外のページの大きさの合計
+        uint32_t MaxPageBytes = 0;
+        uint64_t NonRootPageBytes = 0;
+        // 最も大きいグループが占めるページ内のバイト数と、そのグループの番号（グループを持たない根のクラスタは、クラスタの番号）。
+        // GroupExceedsPage のときは、収まらなかったグループ
+        uint32_t LargestGroupBytes = 0;
+        uint32_t LargestGroupIndex = 0;
+        // グループの BVH の節の数・葉の数・段の数
+        uint32_t GroupBVHNodeCount = 0;
+        uint32_t GroupBVHLeafCount = 0;
+        uint32_t GroupBVHLevelCount = 0;
+    };
+
+    // v1.1（ページに詰めた v1）のバイト列を組み立てる。入力は SerializeCookedMeshV1 と同じ（クラスタは段ごとに
+    // グループのメンバが連続して並ぶ平らな表）で、ここで次を行う。
+    //   - 根のページ（0 番から連続した常駐のページ）: 最も粗い段と、収まる限りの粗い段のクラスタ、フォールバックの段
+    //     （専用の頂点つき。ページの上限を超えるときはクラスタを持たない根のページへ続ける）
+    //   - 他のページ: 1つの段のグループを、1つのグループが1つのページに収まるように詰める（粗い段のページから順に）
+    // クラスタは、ページの順（根のページ → 粗い段 → 細かい段）に並べ替えて書く。検査は ParseCookedMesh が行う。
+    [[nodiscard]] CookedMeshPagedWriteStatus SerializeCookedMeshV1Paged(const CookedMeshV1WriteInput& input,
+                                                                        const CookedMeshPagedWriteOptions& options,
+                                                                        Container::VariableArray<uint8_t>& outBytes,
+                                                                        CookedMeshPagedWriteInfo& outInfo);
 } // namespace NorvesLib::Core::Asset

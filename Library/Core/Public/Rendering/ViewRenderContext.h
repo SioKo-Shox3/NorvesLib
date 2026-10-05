@@ -849,6 +849,10 @@ namespace NorvesLib::Core::Rendering
                                                                         GetActiveLocalScissor(),
                                                                         GetActiveDebugMode());
             command.MegaGeometry.Textures = Resources.Textures;
+            command.MegaGeometry.FrameNumber = FrameNumber;
+            command.MegaGeometry.TemporalFrameIndex = TemporalFrameIndex;
+            command.MegaGeometry.bDeterministicCapture = bDeterministicCapture;
+            command.MegaGeometry.bTemporalEpochStart = bTemporalEpochStart;
             if (const CameraProxy *previousCamera = GetPreviousCamera())
             {
                 command.MegaGeometry.PreviousCamera = *previousCamera;

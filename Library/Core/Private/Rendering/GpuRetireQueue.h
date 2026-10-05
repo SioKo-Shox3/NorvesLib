@@ -2,6 +2,7 @@
 
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Rendering/GeometryPool.h"
 #include "Rendering/SparsePagePool.h"
 #include "RHI/RHITypes.h"
 #include "Thread/Mutex.h"
@@ -68,6 +69,22 @@ namespace NorvesLib::Core::Rendering
             {
                 Entry entry;
                 entry.Page = std::move(page);
+                Enqueue(std::move(entry));
+            }
+        }
+
+        /**
+         * @brief ジオメトリのプールの区画の返却を頼む（無効な区画は無視）
+         *
+         * 区画は、解放を頼んだ時点で最後に提出した serial が完了してから空きへ戻る
+         * （その区画の頂点・インデックスを読む提出がまだ GPU で動いているかもしれない）。
+         */
+        void Retire(GeometryPool::RegionLease region)
+        {
+            if (region.IsValid())
+            {
+                Entry entry;
+                entry.Region = std::move(region);
                 Enqueue(std::move(entry));
             }
         }
@@ -147,6 +164,7 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr Buffer;
             RHI::TexturePtr Texture;
             SparsePagePool::PageLease Page;
+            GeometryPool::RegionLease Region;
             // この serial が完了するまで保持する。bAwaitingCommit のときは未確定。
             uint64_t Serial = 0;
             // 記録中のフレームの serial が決まるのを待っている。

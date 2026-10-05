@@ -149,6 +149,7 @@ set(PRIVATE_SOURCES
     # MegaGeometry
     Private/Rendering/MegaGeometry/MeshClusterizer.cpp
     Private/Rendering/MegaGeometry/MeshSimplifier.cpp
+    Private/Rendering/MegaGeometry/CookedMeshPageSource.cpp
     Private/Rendering/MegaGeometry/ClusterGroupBuilder.cpp
     Private/Rendering/MegaGeometry/LODHierarchyBuilder.cpp
     Private/Rendering/MegaGeometryPass.cpp

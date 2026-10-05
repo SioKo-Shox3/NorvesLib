@@ -1,4 +1,5 @@
 ﻿#include "Engine/NorvesEngine.h"
+#include "Rendering/GeometryPool.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RayTracingSceneSubsystem.h"
 #include "Rendering/RenderResources.h"
@@ -93,6 +94,28 @@ namespace
 
         commandList.Submit(true);
         return true;
+    }
+
+    // ジオメトリの区画への書き込みを、実デバイスのコマンドで完了させる（フレームごとに GPU の完了を待つ）
+    bool DrainGeometryUploads(const RHI::DevicePtr& device, RenderResources& resources, uint64_t& serial)
+    {
+        for (uint32_t frame = 0; frame < 64u && resources.MegaGeometry().HasPendingGpuUploads(); ++frame)
+        {
+            CommandListPtr uploadCommandList = device->CreateCommandList();
+            if (!uploadCommandList)
+            {
+                return false;
+            }
+            resources.BeginRetireFrame(serial);
+            uploadCommandList->Begin();
+            resources.RecordTileUploads(*uploadCommandList);
+            uploadCommandList->End();
+            uploadCommandList->Submit(true);
+            ++serial;
+            resources.CommitRetireFrame(serial);
+            resources.BeginRetireFrame(serial);
+        }
+        return !resources.MegaGeometry().HasPendingGpuUploads();
     }
 
     int RunTest()
@@ -267,6 +290,25 @@ namespace
             proxy.ObjectId = 7;
             proxy.MegaMeshHandle = megaHandle;
             megaPacket.Scene.MegaGeometryProxies.push_back(proxy);
+
+            // 区画への書き込みが GPU で完了するまでは、BLAS の入力にしない（同期の BLAS 構築が未書き込みの区画を読まない）
+            if (!subsystem.BuildFrameSnapshot(&renderResources.Meshes(),
+                                              megaPacket,
+                                              nullptr,
+                                              &renderResources.MegaGeometry()) ||
+                !megaPacket.RayTracingScene.Instances.empty())
+            {
+                std::cerr << "書き込み前のメッシュがinstanceになっています\n";
+                return 1;
+            }
+            uint64_t uploadSerial = 0;
+            if (!DrainGeometryUploads(device, renderResources, uploadSerial))
+            {
+                std::cerr << "メッシュの区画への書き込みが完了しませんでした\n";
+                return 1;
+            }
+            std::cout << "mega_instance_waits_for_upload=true\n";
+
             if (!subsystem.BuildFrameSnapshot(&renderResources.Meshes(),
                                               megaPacket,
                                               nullptr,
@@ -280,11 +322,15 @@ namespace
             if (megaInstance.IndexOffset != 3u || megaInstance.IndexCount != 6u ||
                 megaInstance.VertexOffset != 0u || megaInstance.VertexCount != 7u ||
                 megaInstance.SourceVertexBuffer != megaData->VertexBuffer ||
-                megaInstance.SourceIndexBuffer != megaData->IndexBuffer)
+                megaInstance.SourceIndexBuffer != megaData->IndexBuffer ||
+                megaInstance.VertexBufferOffsetBytes != megaData->VertexBufferOffsetBytes ||
+                megaInstance.IndexBufferOffsetBytes != megaData->IndexBufferOffsetBytes ||
+                megaInstance.MegaMeshId != megaHandle.Id)
             {
                 std::cerr << "焼き込み済みメッシュのinstanceがフォールバックの範囲を指していません\n";
                 return 1;
             }
+            std::cout << "mega_instance_points_into_pool_region=true\n";
 
             CommandListPtr megaCommandList = device->CreateCommandList();
             if (!megaCommandList || !BuildAndSubmit(device, *megaCommandList, subsystem, 0, megaPacket) ||
@@ -295,9 +341,23 @@ namespace
             }
             std::cout << "baked_mesh_instance_uses_fallback_range=true\n";
 
+            // スナップショットが区画の持ち主を持っている間は、元のメッシュを解放しても区画が空きへ戻らない
+            // （解放後に別のメッシュへ使い回されて、BLAS・RTGI が参照する頂点・インデックスが書き換わらない）
+            if (!megaInstance.GeometryRegionOwner || megaInstance.GeometryRegionOwner != megaData->RegionOwner)
+            {
+                std::cerr << "instanceが区画の持ち主を持っていません\n";
+                return 1;
+            }
+            renderResources.MegaGeometry().ReleaseMegaMesh(megaHandle);
+            if (renderResources.GetGeometryPool()->GetStats().AllocationCount != 1)
+            {
+                std::cerr << "スナップショットが持っている区画が、メッシュの解放で空きへ戻りました\n";
+                return 1;
+            }
+            std::cout << "snapshot_keeps_released_region=true\n";
+
             megaPacket.Clear();
             megaCommandList.reset();
-            renderResources.MegaGeometry().ReleaseMegaMesh(megaHandle);
         }
 
         CommandListPtr commandList = device->CreateCommandList();

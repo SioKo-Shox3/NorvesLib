@@ -120,6 +120,7 @@ add_executable(RayTracingSceneSnapshotTest
 target_link_libraries(RayTracingSceneSnapshotTest PRIVATE RenderingGpuTestSupport)
 target_include_directories(RayTracingSceneSnapshotTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
 )
 set_target_properties(RayTracingSceneSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
@@ -369,6 +370,18 @@ set_tests_properties(SparseTileUploadVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# ステージングのリング経由で、ジオメトリのプール（DeviceLocal の大きなバッファ）の区画へ GPU を待たずに書く（TileUploader::EnqueueBufferCopy）。
+# 連続フレームで区画の途中へ書き、計算シェーダーで読み戻して一致を確かめる。その間に WaitIdle を呼ばないこと、
+# テクスチャとバッファがリングと1フレームの上限を共有すること、重なるバイト範囲が次のフレームへ送られること、
+# 解放した区画宛てのコピーが無効になることを確かめる。
+add_test(NAME GpuUploadRingVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GpuUploadRingVulkanTest)
+set_tests_properties(GpuUploadRingVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # ミップ0のタイル1枚とミップテイルだけを結んだ sparse テクスチャを、材質のシェーダーの標本関数（常駐しなければ粗いミップへ逃げる）で
 # 引く。結んでいない領域が粗いミップの色になり、黒や未定義の値にならないこと、ミップ1を結ぶと1段だけ下げて止まることを確かめる。
 add_test(NAME VirtualTextureResidencyVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VirtualTextureResidencyVulkanTest)
@@ -418,6 +431,17 @@ set_tests_properties(HiZOcclusionTestVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# ジオメトリのページの要求（Common/MegaGeometryCull.glsl のページの常駐の判定と要求の書き込み）を、実際のカリング（cluster_cull.comp）で確かめる。
+# 合成したクラスタとページの表を置いて 1 回判定し、子のページが非常駐のとき穴を作らず親が描かれて要求が書かれること、同じページの要求が 1 件に減ること、
+# 容量 0 では書かないこと、容量を超えた件数が溢れに残ること、自分の誤差が許容に収まる親は要求を出さないこと、同じフレームの印で重ねて積まないことを確かめる。
+add_test(NAME GeometryPageRequestVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GeometryPageRequestVulkanTest)
+set_tests_properties(GeometryPageRequestVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
@@ -429,11 +453,13 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER SparseTextureVulkanTest SparseTextureVulkanTest.cpp
     MEMBER SparseBindVulkanTest SparseBindVulkanTest.cpp
     MEMBER SparseTileUploadVulkanTest SparseTileUploadVulkanTest.cpp
+    MEMBER GpuUploadRingVulkanTest GpuUploadRingVulkanTest.cpp
     MEMBER VirtualTextureResidencyVulkanTest VirtualTextureResidencyVulkanTest.cpp
     MEMBER VirtualTextureFeedbackVulkanTest VirtualTextureFeedbackVulkanTest.cpp
     MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
     MEMBER HiZPyramidVulkanTest HiZPyramidVulkanTest.cpp
     MEMBER HiZOcclusionTestVulkanTest HiZOcclusionTestVulkanTest.cpp
+    MEMBER GeometryPageRequestVulkanTest GeometryPageRequestVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE
@@ -1763,6 +1789,8 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
     MEMBER VideoMemoryBudgetManagerTest VideoMemoryBudgetManagerTest.cpp
     MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
+    MEMBER GeometryPoolAllocatorTest GeometryPoolAllocatorTest.cpp
+    MEMBER GeometryPageStreamerTest GeometryPageStreamerTest.cpp
     MEMBER VirtualTextureRequestSetTest VirtualTextureRequestSetTest.cpp
     MEMBER VirtualTextureStreamerTest VirtualTextureStreamerTest.cpp
     MEMBER RHIBlockCompressedFormatTest RHIBlockCompressedFormatTest.cpp
@@ -1778,6 +1806,12 @@ add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContra
 add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
 add_test(NAME VideoMemoryBudgetManagerTest COMMAND RenderResourcesDomainContractTest --test=VideoMemoryBudgetManagerTest)
 add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)
+# ジオメトリの共有プールの区画の確保・解放・結合・整列・断片化の統計、塊の追加と上限・失敗、遅延解放（GpuRetireQueue）の提出順。
+add_test(NAME GeometryPoolAllocatorTest COMMAND RenderResourcesDomainContractTest --test=GeometryPoolAllocatorTest)
+# ジオメトリのページのストリーマ（読み込み・書き込み・公開・追い出しは偽の窓口）。優先度・1 フレームの上限・根のページの常駐・
+# 書き終えてからの公開・親が先・追い出しの順（LRU・子から）と目標以下への収まり・外した区画の再利用の順序・失敗の再試行・
+# メッシュの解放と、ページの配置の計算（範囲の検査・親子の関係・クラスタの記録の位置の書き換え）。
+add_test(NAME GeometryPageStreamerTest COMMAND RenderResourcesDomainContractTest --test=GeometryPageStreamerTest)
 # 1語へ詰めた VT の要求の復号・重複の除去・溢れた件数と、3つのバッファのリングが完了したものだけを GPU を待たずに読み戻すこと。
 add_test(NAME VirtualTextureRequestSetTest COMMAND RenderResourcesDomainContractTest --test=VirtualTextureRequestSetTest)
 # 要求の集合から未常駐のタイルを優先度順に読み、ページを結び、コピーを積んで常駐させること。1 フレームの上限・同じタイルの二重の要求・読み込みの失敗・プールが尽きたときの扱い。
@@ -1800,6 +1834,7 @@ add_executable(MegaGeometryResourcesTest
 target_link_libraries(MegaGeometryResourcesTest PRIVATE Core)
 target_include_directories(MegaGeometryResourcesTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
 set_target_properties(MegaGeometryResourcesTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME MegaGeometryResourcesTest COMMAND MegaGeometryResourcesTest)

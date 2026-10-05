@@ -54,6 +54,8 @@ namespace NorvesLib::Tools::AssetCook
             float Error = 0.0f;
             CookedMeshFloat3 ConeAxis;
             float ConeCutoff = -1.0f;
+            // このクラスタを作ったグループ（1つ細かい段）の番号。最も細かい段は InvalidGroupId
+            uint32_t SourceGroup = Format::InvalidGroupId;
         };
 
         struct BuiltCluster
@@ -614,9 +616,12 @@ namespace NorvesLib::Tools::AssetCook
                                            scratch.LocalPositions.data(), localCount, scratch.LocalToGlobal.data(),
                                            output.Next);
             }
+            // この時点で output.Groups にはまだこのグループが入っていないので、段の中の通し番号は現在の件数になる
+            const uint32_t localGroupId = static_cast<uint32_t>(output.Groups.size());
             for (size_t i = firstNew; i < output.Next.size(); ++i)
             {
                 BuildCluster& cluster = output.Next[i];
+                cluster.SourceGroup = localGroupId;
                 cluster.Center = group.Center;
                 cluster.Radius = group.Radius;
                 cluster.Error = group.Error;
@@ -766,6 +771,16 @@ namespace NorvesLib::Tools::AssetCook
             // この段のクラスタを、グループごとの連続した範囲に並べて確定する
             permissiveGroups += output.PermissiveGroups;
             rejectedGroups += output.RejectedGroups;
+            // 次の段のクラスタに付いた作ったグループの番号は段の中の通し番号なので、全体の番号へ直す
+            // （下の確定は output.Groups の順に番号を振るので、全体の番号 = 確定前のグループ数 + 段の中の番号）
+            const uint32_t firstGroupId = static_cast<uint32_t>(groups.size());
+            for (BuildCluster& next : output.Next)
+            {
+                if (next.SourceGroup != Format::InvalidGroupId)
+                {
+                    next.SourceGroup += firstGroupId;
+                }
+            }
             for (LevelGroup& group : output.Groups)
             {
                 const uint32_t groupId = static_cast<uint32_t>(groups.size());
@@ -822,6 +837,7 @@ namespace NorvesLib::Tools::AssetCook
             record.BoundsRadius = source.Radius;
             record.LODError = source.Error;
             record.GroupId = entry.GroupId;
+            record.SourceGroupId = source.SourceGroup;
             record.ParentBoundsCenter = entry.ParentCenter;
             record.ParentBoundsRadius = entry.ParentRadius;
             record.ParentError = entry.ParentError;

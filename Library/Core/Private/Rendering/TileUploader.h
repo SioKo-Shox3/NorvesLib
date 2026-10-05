@@ -19,25 +19,31 @@
 namespace NorvesLib::Core::Rendering
 {
     /**
-     * @brief タイル・ミップテイルのデータを、GPU を待たずにテクスチャの領域へ書く経路
+     * @brief タイル・ミップテイル・バッファの区画のデータを、GPU を待たずに書く共通のアップロードのリング
      *
      * 毎フレームのステージングのリング（既定 32 MiB、host-visible で DeviceLocal でない）へ CPU がデータを
-     * 置き、描画のコマンドの先頭（RecordCopies）でバッファからイメージの領域へコピーする。
-     * `VulkanTexture::Update` の WaitIdle の経路は使わない。
+     * 置き、描画のコマンドの先頭（RecordCopies）でバッファからイメージの領域（EnqueueTile）、または
+     * バッファの区画（EnqueueBufferCopy。ジオメトリのプールなど）へコピーする。
+     * `VulkanTexture::Update` の WaitIdle の経路は使わない。リングとフレームのコピー量の上限は
+     * テクスチャとバッファで共有する。
      *
      * - リングの区画は、それをコピーしたフレームの提出 serial が完了するまで再利用しない
      *   （BeginFrame に完了済みの serial を渡すと、期限の来た区画が空く）。
      * - 1フレームにコピーする量には上限（既定 24 MiB）がある。超える分は次のフレームへ持ち越す。
      *   上限より大きい1件は Enqueue が拒否するので、どのフレームも上限を超えない。
-     * - 同じテクスチャの同じミップ・配列要素で矩形が重なるコピーは、同じフレームに積まず次のフレームへ送る
-     *   （コピー同士の書込み順をバリアなしに保証できないため。フレームをまたげば遷移のバリアが順序を作る）。
+     * - 同じテクスチャの同じミップ・配列要素で矩形が重なるコピー、同じバッファでバイト範囲が重なるコピーは、
+     *   同じフレームに積まず次のフレームへ送る（コピー同士の書込み順をバリアなしに保証できないため。
+     *   フレームをまたげば遷移のバリアが順序を作る）。
      * - コピーは Enqueue した順に記録する。フレームを提出できなかったとき（AbortFrame）は、記録した分を
      *   未記録へ戻して次のフレームで出し直す。
      * - 対象のテクスチャは、記録の前後とも ShaderResource の状態にあるものとして扱う。最初に
      *   EnqueueInitialize で一度だけ Undefined から ShaderResource へ遷移する（コピーより前に並べること）。
      *   コピーはテクスチャ全体を ShaderResource→CopyDest→ShaderResource へ遷移して挟む。
      *   RenderGraph が管理する資源ではない（材質のテクスチャなど）ことが前提。
-     * - 対象のテクスチャは、そのコピーを含む提出が完了するまでここが参照を持つ。
+     * - バッファの区画は、コピーの前後とも GenericRead（頂点・インデックス・storage・間接引数などの読み取り）の
+     *   状態にあるものとして扱い、バッファ全体を GenericRead→CopyDest→GenericRead のバリアで挟む。
+     *   コピー先は TransferDst の用途で作ること。区画を GPU が書く用途（UAV の書き込み）には使わない。
+     * - 対象のテクスチャ・バッファは、そのコピーを含む提出が完了するまでここが参照を持つ。
      *
      * 状態はすべて内部のミューテックスで守るので、Enqueue はどのスレッドからでも呼べる。
      * RecordCopies・BeginFrame・CommitFrame・AbortFrame は RenderThread から呼ぶ。
@@ -119,58 +125,44 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            Thread::ScopedLock lock(m_Mutex);
-            if (bytes > m_Config.RingBytes)
-            {
-                LOG_ERROR("TileUploader: データがリングより大きい bytes=%llu ring=%llu",
-                          static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(m_Config.RingBytes));
-                return false;
-            }
-            if (bytes > m_Config.FrameCopyLimitBytes)
-            {
-                LOG_ERROR("TileUploader: データがフレームのコピー量の上限より大きい bytes=%llu limit=%llu",
-                          static_cast<unsigned long long>(bytes),
-                          static_cast<unsigned long long>(m_Config.FrameCopyLimitBytes));
-                return false;
-            }
-            if (!EnsureRingLocked())
-            {
-                return false;
-            }
-
-            const uint64_t alignedBytes = AlignUp(bytes, RingAlignment);
-            if (m_UsedBytes == 0)
-            {
-                m_Head = 0;
-            }
-            uint64_t offset = AlignUp(m_Head, RingAlignment);
-            uint64_t skipBytes = offset - m_Head;
-            if (offset + alignedBytes > m_Config.RingBytes)
-            {
-                // 末尾に収まらないので、末尾の余りを使わずに先頭へ回す（余りはこの区画が持つ）
-                skipBytes = m_Config.RingBytes - m_Head;
-                offset = 0;
-            }
-            const uint64_t ringBytes = skipBytes + alignedBytes;
-            if (m_UsedBytes + ringBytes > m_Config.RingBytes)
-            {
-                return false;
-            }
-
-            std::memcpy(static_cast<uint8_t *>(m_Mapped) + offset, data, static_cast<size_t>(bytes));
-
             Op op;
             op.Texture = std::move(texture);
-            op.bCopy = true;
             op.Region = region;
-            op.Region.BufferOffset = offset;
-            op.DataBytes = bytes;
-            op.RingBytes = ringBytes;
-            op.HeadBefore = m_Head;
-            m_Ops.push_back(std::move(op));
-            m_Head = offset + alignedBytes;
-            m_UsedBytes += ringBytes;
-            return true;
+            return EnqueueCopyOp(std::move(op), data, bytes);
+        }
+
+        /**
+         * @brief バッファの区画（dstOffset から bytes バイト）へのコピーを、データをリングへ置いて積む
+         *
+         * データはここでリングへ複写するので、呼び出しの後で元のメモリは手放してよい。
+         * 記録は RecordCopies（描画のコマンドの先頭）で、GPU を待たない。
+         * @return 積めたら true。リングに空きが無い、バッファを作れない、引数が不正（バッファが null・
+         *         大きさ 0・範囲がバッファの外・TransferDst の用途が無い・リングまたはフレームのコピー量の上限より
+         *         大きい）のときは false（何も積まない）。空きが無いときは、フレームが進んだあとにもう一度呼ぶ。
+         */
+        bool EnqueueBufferCopy(RHI::BufferPtr buffer, uint64_t dstOffset, const void *data, uint64_t bytes)
+        {
+            if (!buffer || data == nullptr || bytes == 0)
+            {
+                return false;
+            }
+            if (dstOffset > buffer->GetSize() || bytes > buffer->GetSize() - dstOffset)
+            {
+                LOG_ERROR("TileUploader: バッファの区画が範囲外 offset=%llu bytes=%llu size=%llu",
+                          static_cast<unsigned long long>(dstOffset), static_cast<unsigned long long>(bytes),
+                          static_cast<unsigned long long>(buffer->GetSize()));
+                return false;
+            }
+            if ((buffer->GetUsage() & RHI::ResourceUsage::TransferDst) == RHI::ResourceUsage::None)
+            {
+                LOG_ERROR("TileUploader: コピー先のバッファに TransferDst の用途が無い");
+                return false;
+            }
+
+            Op op;
+            op.Buffer = std::move(buffer);
+            op.DstOffset = dstOffset;
+            return EnqueueCopyOp(std::move(op), data, bytes);
         }
 
         /**
@@ -224,6 +216,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t DiscardLastEnqueued(uint32_t count)
         {
             Container::VariableArray<RHI::TexturePtr> released;
+            Container::VariableArray<RHI::BufferPtr> releasedBuffers;
             uint32_t discarded = 0;
             {
                 Thread::ScopedLock lock(m_Mutex);
@@ -237,6 +230,7 @@ namespace NorvesLib::Core::Rendering
                         m_Head = back.HeadBefore;
                     }
                     released.push_back(std::move(back.Texture));
+                    releasedBuffers.push_back(std::move(back.Buffer));
                     m_Ops.pop_back();
                     ++discarded;
                 }
@@ -313,6 +307,43 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
+         * @brief あるバッファの範囲宛ての、まだ GPU へ出していないコピーを無効にする（区画の解放）
+         *
+         * 解放した区画は別の用途へ使い回されるので、古いコピーが後から書き込まないようにする。
+         * 未記録のコピーはその場で無効にし、記録中のフレームのコピーは、そのフレームを提出できなかったとき
+         * （AbortFrame）に無効にする。提出済みのコピーは、区画の返却が提出の完了まで待つので何もしない。
+         * @return 無効にした（または記録中のため印を付けた）コピーの数
+         */
+        uint32_t AbandonBufferRange(const RHI::BufferPtr &buffer, uint64_t offset, uint64_t bytes)
+        {
+            if (!buffer || bytes == 0)
+            {
+                return 0;
+            }
+            Thread::ScopedLock lock(m_Mutex);
+            uint32_t count = 0;
+            for (Op &op : m_Ops)
+            {
+                if (!op.bCopy || op.bCancelled || op.Buffer.get() != buffer.get() ||
+                    !(op.DstOffset < offset + bytes && offset < op.DstOffset + op.DataBytes))
+                {
+                    continue;
+                }
+                if (op.State == OpState::Pending)
+                {
+                    CancelLocked(op);
+                    ++count;
+                }
+                else if (op.State == OpState::Recorded)
+                {
+                    op.bAbandoned = true;
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        /**
          * @brief フレームの記録を始める（RenderThread。完了済みの serial を渡す）
          *
          * 提出が完了したコピーの区画とテクスチャの参照を手放し、フレームのコピー量を 0 に戻す。
@@ -320,6 +351,7 @@ namespace NorvesLib::Core::Rendering
         void BeginFrame(uint64_t completedSerial)
         {
             Container::VariableArray<RHI::TexturePtr> released;
+            Container::VariableArray<RHI::BufferPtr> releasedBuffers;
             {
                 Thread::ScopedLock lock(m_Mutex);
                 m_CompletedSerial = std::max(m_CompletedSerial, completedSerial);
@@ -333,6 +365,7 @@ namespace NorvesLib::Core::Rendering
                     m_UsedBytes -= front.RingBytes;
                     // テクスチャの破棄はロックの外で行う（RHI のデストラクタが他のロックを取っても詰まらないように）
                     released.push_back(std::move(front.Texture));
+                    releasedBuffers.push_back(std::move(front.Buffer));
                     m_Ops.pop_front();
                 }
                 m_FrameCopiedBytes = 0;
@@ -373,11 +406,11 @@ namespace NorvesLib::Core::Rendering
                     {
                         break;
                     }
-                    // 先に選んだコピーと領域が重なるものは次のフレームへ送る（後続も順序を保つため一緒に送る）
+                    // 先に選んだコピーと書込み先が重なるものは次のフレームへ送る（後続も順序を保つため一緒に送る）
                     bool bOverlaps = false;
                     for (const Op *selected : selectedCopies)
                     {
-                        if (OverlapsRegion(*selected, op))
+                        if (OverlapsOp(*selected, op))
                         {
                             bOverlaps = true;
                             break;
@@ -397,8 +430,10 @@ namespace NorvesLib::Core::Rendering
                 return 0;
             }
 
-            // 1) 初期化の遷移 2) コピー先のテクスチャを CopyDest へ 3) コピー 4) ShaderResource へ戻す
+            // 1) 初期化の遷移 2) コピー先のテクスチャを CopyDest へ・バッファを GenericRead→CopyDest へ
+            // 3) コピー 4) ShaderResource・GenericRead へ戻す
             Container::VariableArray<RHI::TexturePtr> copyTargets;
+            Container::VariableArray<RHI::BufferPtr> bufferTargets;
             for (size_t index = firstPending; index < endPending; ++index)
             {
                 const Op &op = m_Ops[index];
@@ -409,6 +444,23 @@ namespace NorvesLib::Core::Rendering
                 if (!op.bCopy)
                 {
                     commandList.TextureBarrier(op.Texture, RHI::ResourceState::Undefined, RHI::ResourceState::ShaderResource);
+                    continue;
+                }
+                if (op.Buffer)
+                {
+                    bool bKnownBuffer = false;
+                    for (const RHI::BufferPtr &target : bufferTargets)
+                    {
+                        if (target.get() == op.Buffer.get())
+                        {
+                            bKnownBuffer = true;
+                            break;
+                        }
+                    }
+                    if (!bKnownBuffer)
+                    {
+                        bufferTargets.push_back(op.Buffer);
+                    }
                     continue;
                 }
                 bool bKnown = false;
@@ -429,6 +481,10 @@ namespace NorvesLib::Core::Rendering
             {
                 commandList.TextureBarrier(target, RHI::ResourceState::ShaderResource, RHI::ResourceState::CopyDest);
             }
+            for (const RHI::BufferPtr &target : bufferTargets)
+            {
+                commandList.BufferBarrier(target, RHI::ResourceState::GenericRead, RHI::ResourceState::CopyDest);
+            }
 
             uint32_t recordedCopies = 0;
             for (size_t index = firstPending; index < endPending; ++index)
@@ -443,7 +499,12 @@ namespace NorvesLib::Core::Rendering
                 {
                     continue;
                 }
-                if (commandList.CopyBufferToTextureRegion(m_Ring, op.Texture, op.Region))
+                if (op.Buffer)
+                {
+                    commandList.CopyBuffer(m_Ring, op.Buffer, op.DataBytes, op.Region.BufferOffset, op.DstOffset);
+                    ++recordedCopies;
+                }
+                else if (commandList.CopyBufferToTextureRegion(m_Ring, op.Texture, op.Region))
                 {
                     ++recordedCopies;
                 }
@@ -457,6 +518,10 @@ namespace NorvesLib::Core::Rendering
             for (const RHI::TexturePtr &target : copyTargets)
             {
                 commandList.TextureBarrier(target, RHI::ResourceState::CopyDest, RHI::ResourceState::ShaderResource);
+            }
+            for (const RHI::BufferPtr &target : bufferTargets)
+            {
+                commandList.BufferBarrier(target, RHI::ResourceState::CopyDest, RHI::ResourceState::GenericRead);
             }
 
             m_FrameCopiedBytes = copiedBytes;
@@ -513,12 +578,14 @@ namespace NorvesLib::Core::Rendering
         void Clear()
         {
             Container::VariableArray<RHI::TexturePtr> releasedTextures;
+            Container::VariableArray<RHI::BufferPtr> releasedBuffers;
             RHI::BufferPtr releasedRing;
             {
                 Thread::ScopedLock lock(m_Mutex);
                 for (Op &op : m_Ops)
                 {
                     releasedTextures.push_back(std::move(op.Texture));
+                    releasedBuffers.push_back(std::move(op.Buffer));
                 }
                 m_Ops.clear();
                 if (m_Ring && m_Mapped != nullptr)
@@ -561,6 +628,31 @@ namespace NorvesLib::Core::Rendering
             return stats;
         }
 
+        /**
+         * @brief あるバッファの範囲宛てのコピーが、GPU で完了していないものを持っているか
+         *
+         * 積んだがまだ記録していない・記録した・提出して完了を待っているコピーのどれかが範囲に重なれば true。
+         * 無効にしたコピー（AbandonBufferRange）は数えない。範囲の中身が GPU から読める状態かを、
+         * BeginFrame に完了済みの serial を渡した後に確かめるのに使う（コピーを積んだ後 false になれば書き終わっている）。
+         */
+        bool HasUnfinishedBufferCopies(const RHI::BufferPtr &buffer, uint64_t offset, uint64_t bytes) const
+        {
+            if (!buffer || bytes == 0)
+            {
+                return false;
+            }
+            Thread::ScopedLock lock(m_Mutex);
+            for (const Op &op : m_Ops)
+            {
+                if (op.bCopy && !op.bCancelled && !op.bAbandoned && op.Buffer.get() == buffer.get() &&
+                    op.DstOffset < offset + bytes && offset < op.DstOffset + op.DataBytes)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         uint64_t GetFrameCopyLimitBytes() const { return m_Config.FrameCopyLimitBytes; }
         uint64_t GetRingBytes() const { return m_Config.RingBytes; }
 
@@ -581,9 +673,14 @@ namespace NorvesLib::Core::Rendering
 
         struct Op
         {
+            // コピー先がテクスチャの依頼ではこちら。初期化の遷移だけの依頼もこちらを使う
             RHI::TexturePtr Texture;
+            // コピー先がバッファの区画の依頼ではこちら（このとき Texture は null）
+            RHI::BufferPtr Buffer;
+            uint64_t DstOffset = 0;
             // false は初期化の遷移だけの依頼（リングを使わない）
             bool bCopy = false;
+            // テクスチャ宛てでは書込み先の矩形。BufferOffset はどちらの宛先でもリング内の位置
             RHI::TextureRegionCopy Region;
             uint64_t DataBytes = 0;
             // 位置合わせの余白と末尾の回り込みを含む、リングで占める量
@@ -605,6 +702,17 @@ namespace NorvesLib::Core::Rendering
             op.bAbandoned = false;
             op.State = OpState::InFlight;
             op.Serial = 0;
+        }
+
+        // 書込み先が重なるか（テクスチャは同じミップ・配列要素で矩形が重なる、バッファは同じバッファでバイト範囲が重なる）
+        static bool OverlapsOp(const Op &a, const Op &b)
+        {
+            if (a.Buffer || b.Buffer)
+            {
+                return a.Buffer.get() == b.Buffer.get() && a.DstOffset < b.DstOffset + b.DataBytes &&
+                       b.DstOffset < a.DstOffset + a.DataBytes;
+            }
+            return OverlapsRegion(a, b);
         }
 
         // 同じテクスチャの同じミップ・配列要素で、書込み先の矩形が重なるか
@@ -646,6 +754,60 @@ namespace NorvesLib::Core::Rendering
         static constexpr uint64_t AlignDown(uint64_t value, uint64_t alignment)
         {
             return value / alignment * alignment;
+        }
+
+        // リングへデータを置き、依頼を積む共通の処理。op は宛先（Texture+Region か Buffer+DstOffset）を埋めて渡す。
+        bool EnqueueCopyOp(Op op, const void *data, uint64_t bytes)
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            if (bytes > m_Config.RingBytes)
+            {
+                LOG_ERROR("TileUploader: データがリングより大きい bytes=%llu ring=%llu",
+                          static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(m_Config.RingBytes));
+                return false;
+            }
+            if (bytes > m_Config.FrameCopyLimitBytes)
+            {
+                LOG_ERROR("TileUploader: データがフレームのコピー量の上限より大きい bytes=%llu limit=%llu",
+                          static_cast<unsigned long long>(bytes),
+                          static_cast<unsigned long long>(m_Config.FrameCopyLimitBytes));
+                return false;
+            }
+            if (!EnsureRingLocked())
+            {
+                return false;
+            }
+
+            const uint64_t alignedBytes = AlignUp(bytes, RingAlignment);
+            if (m_UsedBytes == 0)
+            {
+                m_Head = 0;
+            }
+            uint64_t offset = AlignUp(m_Head, RingAlignment);
+            uint64_t skipBytes = offset - m_Head;
+            if (offset + alignedBytes > m_Config.RingBytes)
+            {
+                // 末尾に収まらないので、末尾の余りを使わずに先頭へ回す（余りはこの区画が持つ）
+                skipBytes = m_Config.RingBytes - m_Head;
+                offset = 0;
+            }
+            const uint64_t ringBytes = skipBytes + alignedBytes;
+            if (m_UsedBytes + ringBytes > m_Config.RingBytes)
+            {
+                return false;
+            }
+
+            std::memcpy(static_cast<uint8_t *>(m_Mapped) + offset, data, static_cast<size_t>(bytes));
+
+            op.bCopy = true;
+            op.Region.BufferOffset = offset;
+            op.DataBytes = bytes;
+            op.RingBytes = ringBytes;
+            op.HeadBefore = m_Head;
+            m_Ops.push_back(std::move(op));
+            m_Head = offset + alignedBytes;
+            m_UsedBytes += ringBytes;
+            return true;
         }
 
         // 最初の Enqueue でリングを作る（使われない起動では 32 MiB を確保しない）。ロックを持って呼ぶ。

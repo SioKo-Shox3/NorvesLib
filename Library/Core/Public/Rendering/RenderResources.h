@@ -3,6 +3,8 @@
 #include "Rendering/GpuResourceTypes.h"
 #include "Rendering/ITextureHandleRegistrar.h"
 #include "Rendering/MaterialTypes.h"
+#include "Rendering/MegaGeometry/GeometryPageRequestSet.h"
+#include "Rendering/MegaGeometry/GeometryPageTable.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/NeuralMaterialResource.h"
 #include "Rendering/ProceduralMeshGPUData.h"
@@ -41,6 +43,7 @@ namespace NorvesLib::Core::Rendering
     class ModelAssetRuntime;
     class TextureAssetRuntime;
     class RenderWorld;
+    class GeometryPool;
     class SparsePagePool;
     class TileUploader;
     class VirtualTextureFeedbackRing;
@@ -259,8 +262,44 @@ namespace NorvesLib::Core::Rendering
     {
     public:
         MegaGeometry::MegaMeshHandle CreateMegaMesh(const MegaGeometry::MegaMeshCreateInfo &createInfo);
+        // 登録済みのメッシュの GPU データ。頂点・インデックス・クラスタはジオメトリのプールの区画にあり、
+        // 書き込みが GPU で完了したとは限らない（描画・影・レイトレーシングは GetReadyMegaMeshGPUData を使う）。
         const MegaGeometry::MegaMeshGPUData *GetMegaMeshGPUData(MegaGeometry::MegaMeshHandle handle) const;
+        // 区画へのコピーが全て GPU で完了し、GPU から読めるメッシュだけの GPU データ。未完了・未登録は nullptr。
+        const MegaGeometry::MegaMeshGPUData *GetReadyMegaMeshGPUData(MegaGeometry::MegaMeshHandle handle) const;
+        // 登録済みで、まだ GPU から読める状態になっていないメッシュがあるか（読み込みの落ち着きの判定に使う）。
+        bool HasPendingGpuUploads() const;
         void ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle);
+
+        // ---- ジオメトリのページ（常駐の表と、カリングが書く要求） ----
+        // ページの表の写し。表の版が inOutVersion と違うときだけ out へ複製して true を返し、版を更新する
+        // （描画のパスが、フレームの前に GPU の表を書き直すのに使う）。
+        bool CopyPageTableIfChanged(uint64_t &inOutVersion,
+                                    Container::VariableArray<MegaGeometry::GeometryPageTable::Entry> &out) const;
+        // ページの表のグローバルな位置から、メッシュ（ハンドルの番号）とメッシュの中のページの番号を引く。
+        // tableVersion は要求を書いたフレームのシェーダーが見た表の版（GeometryPageRequestSet::Request::TableVersion）。
+        // その版より後に割り当てられた範囲（解放の後に別のメッシュが再利用したもの）は、要求の持ち主ではないので false。
+        bool ResolvePageTableIndex(uint32_t globalIndex, uint64_t tableVersion, uint64_t &outMeshId,
+                                   uint32_t &outPageId) const;
+        // メッシュのページを区画 region に常駐させる（PAGE_NON_RESIDENT なら非常駐にする）。ストリーマと試験が使う。
+        bool SetMegaMeshPageRegion(MegaGeometry::MegaMeshHandle handle, uint32_t pageId, uint32_t region);
+        // このフレームのカリングが要求を書くバッファと容量。獲得できなかったフレーム（無効・空きなし）は null と 0。
+        RHI::BufferPtr GetCurrentPageRequestBuffer() const;
+        uint32_t GetCurrentPageRequestCapacity() const;
+        // このフレームのシェーダーが見るページの表の版を、要求のバッファへ結び付ける（SyncPageTable の後に1回）。
+        void SetCurrentPageTableVersion(uint64_t tableVersion);
+        // 要求のバッファへのシェーダーの書き込みを、ホストの読み取りへ見せるバリアを記録する（最後の書き込みの後に1回）。
+        bool RecordPageRequestHostBarrier(RHI::ICommandList &commandList);
+        // 数フレーム遅れで読み戻して溜めた要求を out へ渡す（ストリーマが読む）。無ければ false。
+        bool TakePageRequests(MegaGeometry::GeometryPageRequestSet &out);
+
+        // ページを持つメッシュ（NVMESH v1.1）を、根のページだけ常駐させて、残りを要求から読み込むか。既定は有効。
+        // 起動引数 --geometry-streaming=off で無効にすると、全てのページを常駐させる（見た目・VRAM の比較用）。
+        // 起動時（メッシュを作る前）に設定する。
+        void SetPageStreamingEnabled(bool bEnabled);
+        bool IsPageStreamingEnabled() const;
+        // ページの読み込み・書き込みが進行中、または要求されたまま読み込んでいないページがあるか（読み込みの落ち着きの判定に使う）。
+        bool HasPendingPageStreaming() const;
 
         ModelHandle RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
                                   const Container::String &debugName = "",
@@ -334,11 +373,17 @@ namespace NorvesLib::Core::Rendering
         // sparse テクスチャへ結ぶ物理メモリのページのプール。sparse に対応しないデバイス・未初期化では nullptr。
         SparsePagePool *GetSparsePagePool() const;
 
-        // 積んであるタイル・ミップテイルのコピーを、フレームのコマンドの先頭へ記録する（RenderThread。
+        // ジオメトリ（頂点・インデックス・クラスタ）が共有する DeviceLocal の大きなバッファのプール。未初期化では nullptr。
+        // 塊のバッファは最初の確保で作るので、使わなければ VRAM を取らない。
+        GeometryPool *GetGeometryPool() const;
+        // プールの1つの塊の大きさ（バイト。既定 256 MiB）。Initialize の前に呼ぶ（デバイスを持たない試験が小さな塊で動かすため）。
+        void SetGeometryPoolBlockBytes(uint64_t blockBytes);
+
+        // 積んであるタイル・ミップテイル・ジオメトリの区画のコピーを、フレームのコマンドの先頭へ記録する（RenderThread。
         // render pass の外で、BeginRetireFrame の後・コマンドを開いた直後に呼ぶ）。記録したコピーの数を返す。
-        // sparse に対応しないデバイス・未初期化では何もせず 0。
+        // 書き込み待ちのジオメトリの中身は、フレームごとの上限の範囲でここでリングへ積んでから記録する。未初期化では何もせず 0。
         uint32_t RecordTileUploads(RHI::ICommandList &commandList);
-        // ステージングのリング経由でテクスチャの領域へ書く経路。sparse に対応しないデバイス・未初期化では nullptr。
+        // ステージングのリング経由でテクスチャの領域・バッファの区画へ書く経路。未初期化では nullptr。
         TileUploader *GetTileUploader() const;
 
         // VT の要求（材質のシェーダーが書くタイルの要求）を、3つのバッファのリングで数フレーム遅れて読み戻して集計する仕組み。
@@ -358,6 +403,10 @@ namespace NorvesLib::Core::Rendering
         // 溜まった要求を取り出して、ストリーマを1フレーム進める（RenderThread。BeginRetireFrame の後・コマンドを開く前に呼ぶ。
         // BindSparse はコマンドの送信と同じ直列化の下で呼ぶ必要がある）。VT が1枚も無いときは何もしない。
         void UpdateVirtualTextureStreaming();
+
+        // ジオメトリのページのストリーマを1フレーム進める（RenderThread。BeginRetireFrame の後・コマンドを開く前に呼ぶ）。
+        // カリングが書いて読み戻した要求を取り込み、ページの読み込み・区画への書き込み・ページの表への公開・追い出しを行う。
+        void UpdateGeometryPageStreaming();
 
         bool ReloadAssetRuntimeSnapshot(
             const Container::String& assetRoot,

@@ -125,6 +125,17 @@ namespace Game
         // off は、スキャン資産を足す前と同じ描画量を撮って、足した分を差し引くための基準に使う。
         constexpr const TCHAR *kStartupScanPropsOption = TEXT("--startup-scan-props=");
         bool s_bRendering3DTestScanProps = true;
+        // --stress-mega-instances=<N>: 置いたスキャン資産のメッシュを N 個、地面の奥へ格子に複製して置く（0 は置かない）。
+        // MegaGeometry のインスタンスを増やしたときの GPU・CPU の時間を測るための一時の負荷（ジオメトリの負荷モードの前段）。
+        constexpr const TCHAR *kStressMegaInstancesOption = TEXT("--stress-mega-instances=");
+        uint32_t s_Rendering3DTestStressMegaInstances = 0;
+        // --stress-geometry[=<N>]: ジオメトリの負荷モード。スキャン資産・岩・小屋・大きな球を、変換を変えて地面の外側へ
+        // N 個（既定 300）並べ、カメラの軸をその中心へ移す。ジオメトリのページのストリーミングと追い出しを、
+        // 絞った --vram-budget-mb で確かめるのに使う。0 は無効。
+        constexpr const TCHAR *kStressGeometryOption = TEXT("--stress-geometry");
+        constexpr const TCHAR *kStressGeometryValueOption = TEXT("--stress-geometry=");
+        constexpr uint32_t kStressGeometryDefaultCount = 300u;
+        uint32_t s_Rendering3DTestStressGeometryCount = 0;
         // --capture-sequence=<接頭辞> と --capture-sequence-rendered-frames=<n1,n2,...>: 1回の起動の中で、
         // アセットが落ち着いてから n 枚目の描画フレームの最終出力を <接頭辞><n>.png に保存する。
         constexpr const TCHAR *kCaptureSequenceOption = TEXT("--capture-sequence=");
@@ -149,6 +160,10 @@ namespace Game
         // off は遮蔽の判定なしの従来の1回の判定で描く（見た目・描画数の比較用）。
         constexpr const TCHAR *kMegaOcclusionOption = TEXT("--mega-occlusion=");
         bool s_bMegaOcclusion = true;
+        // --geometry-streaming=on|off: ページを持つメッシュ（NVMESH v1.1。岩・小屋・スキャン資産・大きな球）を、根のページだけ常駐させて
+        // 残りを要求から読み込むか。既定は on。off は全てのページを常駐させる（見た目・VRAM の比較用）。
+        constexpr const TCHAR *kGeometryStreamingOption = TEXT("--geometry-streaming=");
+        bool s_bGeometryStreaming = true;
         // --stress-textures: テクスチャの負荷モード。起動画面の地面の外側へ、負荷用の材質（4K、24 種）を貼った板を格子に並べ、
         // カメラの軸を格子の中心へ移す。--vram-budget-mb と併せて、VT が目標の中で描けることを確かめる。
         constexpr const TCHAR *kStressTexturesOption = TEXT("--stress-textures");
@@ -487,11 +502,14 @@ namespace Game
         s_VramBudgetCapMb = 0;
         s_bRendering3DTestDebugDrawTestLines = false;
         s_bRendering3DTestScanProps = true;
+        s_Rendering3DTestStressMegaInstances = 0;
+        s_Rendering3DTestStressGeometryCount = 0;
         s_bRendering3DTestNight = false;
         s_bRendering3DTestVirtualTexture = true;
         s_bRendering3DTestModelSourceGltf = false;
         s_bRendering3DTestBigSphereRuntime = false;
         s_bMegaOcclusion = true;
+        s_bGeometryStreaming = true;
         String captureSequencePrefix;
         VariableArray<uint64_t> captureSequenceRenderedFrames;
         bool bHasRendering3DTestBoardSmokeCount = false;
@@ -717,6 +735,25 @@ namespace Game
                 continue;
             }
 
+            String geometryStreamingValue;
+            if (TryStripPrefix(args[i], kGeometryStreamingOption, geometryStreamingValue))
+            {
+                if (geometryStreamingValue == String(TEXT("on")))
+                {
+                    s_bGeometryStreaming = true;
+                }
+                else if (geometryStreamingValue == String(TEXT("off")))
+                {
+                    s_bGeometryStreaming = false;
+                }
+                else
+                {
+                    LOG_ERROR("Game command line parse failed: --geometry-streaming は on か off で指定する");
+                    return false;
+                }
+                continue;
+            }
+
             String renderScaleValue;
             if (TryStripPrefix(args[i], kRenderScaleOption, renderScaleValue))
             {
@@ -748,6 +785,36 @@ namespace Game
             if (args[i] == kDebugDrawTestLinesOption)
             {
                 s_bRendering3DTestDebugDrawTestLines = true;
+                continue;
+            }
+
+            if (args[i] == kStressGeometryOption)
+            {
+                s_Rendering3DTestStressGeometryCount = kStressGeometryDefaultCount;
+                continue;
+            }
+
+            String stressGeometryValue;
+            if (TryStripPrefix(args[i], kStressGeometryValueOption, stressGeometryValue))
+            {
+                if (!TryParseUInt32(stressGeometryValue, s_Rendering3DTestStressGeometryCount) ||
+                    s_Rendering3DTestStressGeometryCount == 0u || s_Rendering3DTestStressGeometryCount > 4096u)
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --stress-geometry は個数を付けるなら 1〜4096 の整数で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String stressMegaInstancesValue;
+            if (TryStripPrefix(args[i], kStressMegaInstancesOption, stressMegaInstancesValue))
+            {
+                if (!TryParseUInt32(stressMegaInstancesValue, s_Rendering3DTestStressMegaInstances) ||
+                    s_Rendering3DTestStressMegaInstances > 4096u)
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --stress-mega-instances は 0〜4096 の整数で指定する");
+                    return false;
+                }
                 continue;
             }
 
@@ -1375,6 +1442,8 @@ namespace Game
             NorvesLib::Core::Engine::GEngine->GetRenderResources().SetVideoMemoryCapMb(s_VramBudgetCapMb);
             // --mega-occlusion の指定（既定は有効）を MegaGeometry へ渡す
             NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetOcclusionCullingEnabled(s_bMegaOcclusion);
+            // --geometry-streaming の指定（既定は有効）。メッシュを作る前に決める
+            NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetPageStreamingEnabled(s_bGeometryStreaming);
         }
 
         if (m_bHasTextureAssetRuntimeConfig && !ReloadConfiguredAssetManifest())
@@ -1897,6 +1966,12 @@ namespace Game
                 mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
                 mode->GetData().m_bStartupScanProps = s_bRendering3DTestScanProps;
+                mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressMegaInstances;
+                if (s_Rendering3DTestStressGeometryCount > 0u)
+                {
+                    mode->GetData().m_bStressGeometry = true;
+                    mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressGeometryCount;
+                }
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
                 mode->GetData().m_bVirtualTexture = s_bRendering3DTestVirtualTexture;

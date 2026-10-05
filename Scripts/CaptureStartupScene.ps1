@@ -36,6 +36,9 @@
 # 最後の (-GpuTimingFrames − 60) フレーム（撮影のフレームの直前2つを除く）の中央値・95 パーセンタイル・最大と、
 # パスごとの中央値を gpu_timing として metrics.json へ書く。予算を超えたフレームはパスごとの時間と
 # 中央値からの増分を over_budget_frames に書く。
+# 同じトレースの Type=Scope の行のうち MegaGeometryPass.RecordFrameCommand（MegaGeometryPass が描画フレームごとに
+# 記録するコマンドの CPU 時間）も、同じ窓の中央値・平均・95 パーセンタイル・最大を mega_record_cpu_ms として書く
+# （MegaGeometry のインスタンス数への依存を見る。インスタンスを増やすのは -ExtraGameArguments --stress-mega-instances=300）。
 # タイムスタンプは統計が有効な構成（Debug・RelWithDebInfo）だけで取れるため、Release とは併用しない。
 # 予算（-GpuFrameBudgetMs、既定 16.6 ms）を超えても失敗にはせず、窓のどれかのフレームが超えたら
 # within_budget=false と書く（95 パーセンタイルの判定は p95_within_budget）。
@@ -69,6 +72,14 @@
 # VRAM の上限を人工的に下げ、各撮影のログの VRAM_POOLS（cap_mb・vt_target_mb・vt_used_mb・vt_evicted_tiles）を
 # metrics.json へ書く。最後の VT の使用量（vt_used_mb_last）が目標（vt_target_mb）を超えたまま終わったか、負荷用の材質がそろっていなければ失敗にする
 # （目標が縮んだ直後の1回の確認の間だけ使用量が超えることがあるので、最大 vt_used_mb_max は失敗にせず書くだけ）。
+#
+# -StressGeometry でジオメトリの負荷モード（--stress-geometry=<-StressGeometryCount>。既定 300）で撮る。地面の外側（+Z 側）へ、
+# スキャン資産・岩・小屋・大きな球を、向きと拡大率を替えて格子に並べ、カメラの軸を格子の中心へ移す（資産が無ければ置かずに警告）。
+# 視点は default（0,25,45。格子の手前を斜めに見る）・low（20,-8,8。地面すれすれ）・top（0,70,200。格子の全体を見下ろす）。
+# 旋回の連続フレームは -OrbitDegreesPerSecond・-OrbitRenderedFrames と併せて撮る。-VramBudgetMb でジオメトリの枠（Geometry の目標）を
+# 絞ると、ページの追い出しが起きる。各撮影のログの STRESS_GEOMETRY_PLACED（並べた数・元の数）と VRAM_POOLS のジオメトリの枠
+# （geometry_target_mb・geometry_used_mb・geometry_evicted_pages）を metrics.json へ書き、並べた数が指定に満たない、または最後の
+# geometry_used_mb が目標を超えたまま終われば失敗にする。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -134,6 +145,11 @@ param(
     [switch]$Deterministic,
     # テクスチャの負荷モード（--stress-textures）で default・low・top の3視点を撮る。-ViewNames で絞れる。
     [switch]$StressTextures,
+    # ジオメトリの負荷モード（--stress-geometry）で default・low・top の3視点を撮る。-ViewNames で絞れる。
+    [switch]$StressGeometry,
+    # -StressGeometry で並べる個数。
+    [ValidateRange(1, 4096)]
+    [int]$StressGeometryCount = 300,
     # 遮蔽カリングの確認用の視点（occ-sphere・occ-cottage・occ-cottage-edge・旋回の出発点 occ-sphere-orbit・occ-cottage-orbit）を撮る視点へ加える。
     [switch]$OcclusionViews,
     # 地面の外周のスキャン資産（Poly Haven）を、近くから遠くへカメラを引いて見る視点（scan-d08 から scan-d78 までの 7 視点）を撮る視点へ加える。
@@ -148,6 +164,11 @@ param(
     # （--mega-occlusion=off。見た目の比較用）。各撮影のログの MEGA_OCCLUSION を metrics.json の mega_occlusion へ書く。
     [ValidateSet('On', 'Off')]
     [string]$MegaOcclusion = 'On',
+    # ジオメトリのページのストリーミング（既定は有効。根のページだけ常駐させて、残りを要求から読む）。Off は全てのページを常駐させて
+    # 撮る（--geometry-streaming=off。ストリーミングありの撮影との画素の比較用。-CompareDeterministicWith で比べる）。
+    # 各撮影のログの GEOMETRY_PAGES_STREAMED・GEOMETRY_PAGES を metrics.json の geometry_pages へ書く。
+    [ValidateSet('On', 'Off')]
+    [string]$GeometryStreaming = 'On',
     # 同じコードを -Deterministic で撮った別の出力先。各視点の平均輝度の差と PSNR を求めて metrics.json へ書き、
     # 平均輝度の差が -DeterministicMeanLuminanceLimit を超えるか PSNR が -DeterministicPsnrLimit を下回れば失敗にする。
     [string]$CompareDeterministicWith = '',
@@ -248,6 +269,23 @@ if ($StressTextures)
     # 負荷モードはカメラの軸が格子の中心なので、近接（球が無い）は撮らず、格子の全体を見下ろす視点を足す。
     $views = @($views | Where-Object { $_.Name -ne 'near' })
     $views += [pscustomobject]@{ Name = 'top'; Camera = '0,80,70'; NoiseRegions = @() }
+}
+if ($StressGeometry)
+{
+    # 負荷モードはカメラの軸が格子の中心なので、近接（球が無い）は撮らず、既定・低角度の視点を格子向けに替え、全体を見下ろす視点を足す。
+    $views = @($views | Where-Object { $_.Name -ne 'near' })
+    foreach ($stressView in $views)
+    {
+        if ($stressView.Name -eq 'default')
+        {
+            $stressView.Camera = '0,25,45'
+        }
+        elseif ($stressView.Name -eq 'low')
+        {
+            $stressView.Camera = '20,-8,8'
+        }
+    }
+    $views += [pscustomobject]@{ Name = 'top'; Camera = '0,70,200'; NoiseRegions = @() }
 }
 $viewNameList = @(($ViewNames -join ',').Split(',', [StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
 if ($viewNameList.Count -gt 0)
@@ -742,6 +780,10 @@ foreach ($view in $shots)
     {
         $arguments += '--stress-textures'
     }
+    if ($StressGeometry)
+    {
+        $arguments += "--stress-geometry=$StressGeometryCount"
+    }
     if ($VramBudgetMb -gt 0)
     {
         $arguments += "--vram-budget-mb=$VramBudgetMb"
@@ -750,6 +792,11 @@ foreach ($view in $shots)
     if ($MegaOcclusion -eq 'Off')
     {
         $arguments += '--mega-occlusion=off'
+    }
+    # ジオメトリのページのストリーミングも既定で有効なので、Off のときだけ引数を渡す。
+    if ($GeometryStreaming -eq 'Off')
+    {
+        $arguments += '--geometry-streaming=off'
     }
     foreach ($extraArgument in (($ExtraGameArguments -join ' ').Split(@(' ', ','), [StringSplitOptions]::RemoveEmptyEntries)))
     {
@@ -828,8 +875,10 @@ foreach ($view in $shots)
     $vramLedgerTextureMb = $null
     $cookedMissingCount = $null
     $vramPools = $null
+    $geometryPages = $null
     $occlusionStats = $null
     $stressMaterials = $null
+    $stressGeometryInfo = $null
     if (Test-Path -LiteralPath $viewLogPath)
     {
         # VRAM_POOLS（予算の割り振りと VT の使用量）。数値は "none"（上限なし）のこともある。使用量は最大と最後の値を残す。
@@ -848,10 +897,39 @@ foreach ($view in $shots)
                 vt_evicted_tiles = [uint64]$lastPool[5].Value
                 lines = $poolLines.Count
             }
+            # 同じ行の後ろに続くジオメトリの枠（目標・プールの使用量・追い出したページの数）。無い版のログでは書かない
+            $geometryPool = [regex]::Match($poolLines[$poolLines.Count - 1].Line, 'geometry_target_mb=(\w+) geometry_used_mb=(\d+) geometry_evicted_pages=(\d+)')
+            if ($geometryPool.Success)
+            {
+                $vramPools['geometry_target_mb'] = $geometryPool.Groups[1].Value
+                $vramPools['geometry_used_mb_last'] = [uint64]$geometryPool.Groups[2].Value
+                $vramPools['geometry_evicted_pages'] = [uint64]$geometryPool.Groups[3].Value
+            }
+        }
+        # GEOMETRY_PAGES_STREAMED（ストリーミングするメッシュの数と、根のページ・ストリーミングするページの大きさ）と、
+        # GEOMETRY_PAGES（常駐するページの数・量・追い出し。最後の行）
+        $streamedMeshLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'GEOMETRY_PAGES_STREAMED mesh=')
+        $pageStateLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'GEOMETRY_PAGES resident=(\d+) uploading=(\d+) ready=(\d+) reading=(\d+) wanted=(\d+) failed=(\d+) resident_mb=([\d.]+) evicted=(\d+)')
+        if ($streamedMeshLines.Count -gt 0 -or $pageStateLines.Count -gt 0)
+        {
+            $geometryPages = [ordered]@{ streamed_meshes = $streamedMeshLines.Count }
+            if ($pageStateLines.Count -gt 0)
+            {
+                $lastPages = $pageStateLines[$pageStateLines.Count - 1].Matches[0].Groups
+                $geometryPages['resident_pages'] = [uint64]$lastPages[1].Value
+                $geometryPages['uploading_pages'] = [uint64]$lastPages[2].Value
+                $geometryPages['ready_pages'] = [uint64]$lastPages[3].Value
+                $geometryPages['reading_pages'] = [uint64]$lastPages[4].Value
+                $geometryPages['wanted_pages'] = [uint64]$lastPages[5].Value
+                $geometryPages['failed_pages'] = [uint64]$lastPages[6].Value
+                $geometryPages['resident_mb'] = [double]::Parse($lastPages[7].Value, [Globalization.CultureInfo]::InvariantCulture)
+                $geometryPages['evicted_pages'] = [uint64]$lastPages[8].Value
+            }
         }
         # MEGA_OCCLUSION（遮蔽カリングの1フレームの数。1パス目で描いた数・2パス目で判定した数・描いた数・隠れていた数）。最後の値と、
         # 描いた数・隠れていた数の最大を残す。遮蔽カリングを使えない撮影（--mega-occlusion=off など）はログが無い。
-        $occlusionLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'MEGA_OCCLUSION pass1=(\d+) pass2_tested=(\d+) pass2_drawn=(\d+) occluded=(\d+)')
+        # 行は描画フレームと相対フレームの番号（frame=… epoch_frame=…）を持つ版と、持たない旧版の両方を読む。
+        $occlusionLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'MEGA_OCCLUSION (?:frame=\d+ epoch_frame=-?\d+ )?pass1=(\d+) pass2_tested=(\d+) pass2_drawn=(\d+) occluded=(\d+)')
         if ($occlusionLines.Count -gt 0)
         {
             $lastOcclusion = $occlusionLines[$occlusionLines.Count - 1].Matches[0].Groups
@@ -870,6 +948,20 @@ foreach ($view in $shots)
         {
             $stressGroups = $stressLine[$stressLine.Count - 1].Matches[0].Groups
             $stressMaterials = [ordered]@{ present = [int]$stressGroups[1].Value; total = [int]$stressGroups[2].Value }
+        }
+
+        # ジオメトリの負荷モードの配置（並べた数・元の数）と、元の資産が揃わなかった警告・何も並べなかった警告
+        $stressGeometryPlaced = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_GEOMETRY_PLACED count=(\d+) sources=(\d+)')
+        $stressGeometryWarnings = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_GEOMETRY_(SKIPPED|SOURCES_PARTIAL)')
+        if ($stressGeometryPlaced.Count -gt 0 -or $stressGeometryWarnings.Count -gt 0)
+        {
+            $stressGeometryInfo = [ordered]@{ placed = 0; sources = 0; warnings = $stressGeometryWarnings.Count }
+            if ($stressGeometryPlaced.Count -gt 0)
+            {
+                $placedGroups = $stressGeometryPlaced[$stressGeometryPlaced.Count - 1].Matches[0].Groups
+                $stressGeometryInfo.placed = [int]$placedGroups[1].Value
+                $stressGeometryInfo.sources = [int]$placedGroups[2].Value
+            }
         }
 
         # テクスチャの VRAM（最後の VRAM_LEDGER）と、クック済みが無くばらで読んだテクスチャの数。
@@ -903,6 +995,18 @@ foreach ($view in $shots)
                 $failures += "$($view.Name): VT の使用量が目標を超えたまま終わった（vt_used_mb_last=$($vramPools.vt_used_mb_last) vt_target_mb=$($vramPools.vt_target_mb)）"
             }
         }
+        if ($StressGeometry)
+        {
+            if ($null -eq $stressGeometryInfo -or $stressGeometryInfo.placed -ne $StressGeometryCount)
+            {
+                $failures += "$($view.Name): 負荷用のジオメトリが指定の数だけ並んでいない（STRESS_GEOMETRY_PLACED count=$(if ($null -eq $stressGeometryInfo) { 'なし' } else { $stressGeometryInfo.placed }) 指定=$StressGeometryCount）"
+            }
+            if ($null -ne $vramPools -and $vramPools.Contains('geometry_target_mb') -and $vramPools.geometry_target_mb -ne 'none' -and
+                $vramPools.geometry_used_mb_last -gt [uint64]$vramPools.geometry_target_mb)
+            {
+                $failures += "$($view.Name): ジオメトリの使用量が目標を超えたまま終わった（geometry_used_mb_last=$($vramPools.geometry_used_mb_last) geometry_target_mb=$($vramPools.geometry_target_mb)）"
+            }
+        }
         if ($images.Count -gt 1)
         {
             # 連続撮影の数え始め（アセットが落ち着いた描画フレーム）は --capture-png と同じでなければならない。
@@ -910,8 +1014,17 @@ foreach ($view in $shots)
                 ForEach-Object { $_.Matches[0].Groups[1].Value })
             $sequenceBaseline = @(Select-String -LiteralPath $viewLogPath -Pattern 'SEQUENCE_CAPTURE baseline rendered=(\d+)' |
                 ForEach-Object { $_.Matches[0].Groups[1].Value })
-            if ($processorBaseline.Count -eq 0 -or $sequenceBaseline.Count -eq 0 -or
-                $processorBaseline[$processorBaseline.Count - 1] -ne $sequenceBaseline[$sequenceBaseline.Count - 1])
+            # ページのストリーミングが続く負荷では、連続撮影が終わった後も落ち着いた判定が立ち直るので（--capture-png の側だけ
+            # 数え始めが増える）、連続撮影の並びが --capture-png の並びの先頭と一致することを確かめる。
+            $baselineMismatch = $processorBaseline.Count -eq 0 -or $sequenceBaseline.Count -eq 0 -or $sequenceBaseline.Count -gt $processorBaseline.Count
+            for ($baselineIndex = 0; -not $baselineMismatch -and $baselineIndex -lt $sequenceBaseline.Count; ++$baselineIndex)
+            {
+                if ($processorBaseline[$baselineIndex] -ne $sequenceBaseline[$baselineIndex])
+                {
+                    $baselineMismatch = $true
+                }
+            }
+            if ($baselineMismatch)
             {
                 $failures += "$($view.Name): 連続撮影の数え始めが --capture-png と食い違う（capture_png=$($processorBaseline -join '/') sequence=$($sequenceBaseline -join '/')）"
             }
@@ -950,8 +1063,10 @@ foreach ($view in $shots)
             vram_ledger_texture_mb = $vramLedgerTextureMb
             cooked_missing_count = $cookedMissingCount
             vram_pools = $vramPools
+            geometry_pages = $geometryPages
             mega_occlusion = $occlusionStats
             stress_materials = $stressMaterials
+            stress_geometry = $stressGeometryInfo
         }
         $results += [pscustomobject]$result
         Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5} indirect_lighting={6}" -f `
@@ -977,8 +1092,19 @@ foreach ($view in $shots)
             $durationColumn = [array]::IndexOf($header, 'DurationMs')
             $cpuRows = New-Object System.Collections.Generic.List[double]
             $gpuScopesByFrame = New-Object 'System.Collections.Generic.SortedDictionary[long,object]'
+            $megaRecordRows = New-Object System.Collections.Generic.List[double]
             foreach ($line in [IO.File]::ReadLines($tracePath))
             {
+                if ($line.StartsWith('Scope,'))
+                {
+                    # MegaGeometryPass の CPU の記録の時間（描画フレームごとに1行）
+                    if ($line.Contains('"MegaGeometryPass.RecordFrameCommand"'))
+                    {
+                        $scopeFields = $line -split ','
+                        $megaRecordRows.Add([double]::Parse($scopeFields[$durationColumn], $invariant))
+                    }
+                    continue
+                }
                 if ($line.StartsWith('Frame,'))
                 {
                     $fields = $line -split ','
@@ -1020,6 +1146,22 @@ foreach ($view in $shots)
                 }
             }
             $gpuSamples = @($gpuWindow | ForEach-Object { $gpuFrameMs[$_] } | Sort-Object)
+            # MegaGeometryPass の CPU の記録の時間も、撮影のフレームの直前2つを除いた最後の窓で集める。
+            $megaRecordArray = $megaRecordRows.ToArray()
+            $megaRecordUsable = if ($megaRecordArray.Count -gt 2) { @($megaRecordArray[0..($megaRecordArray.Count - 3)]) } else { @() }
+            $megaRecordWindow = if ($megaRecordUsable.Count -gt $windowCount) { @($megaRecordUsable[($megaRecordUsable.Count - $windowCount)..($megaRecordUsable.Count - 1)]) } else { $megaRecordUsable }
+            $megaRecordSamples = @($megaRecordWindow | Sort-Object)
+            $megaRecordCpu = $null
+            if ($megaRecordSamples.Count -gt 0)
+            {
+                $megaRecordCpu = [ordered]@{
+                    samples = $megaRecordSamples.Count
+                    median = [math]::Round($megaRecordSamples[[int][math]::Floor(($megaRecordSamples.Count - 1) * 0.5)], 4)
+                    mean = [math]::Round(($megaRecordSamples | Measure-Object -Average).Average, 4)
+                    p95 = [math]::Round($megaRecordSamples[[int][math]::Floor(($megaRecordSamples.Count - 1) * 0.95)], 4)
+                    max = [math]::Round($megaRecordSamples[$megaRecordSamples.Count - 1], 4)
+                }
+            }
             if ($gpuSamples.Count -lt [math]::Min(50, $windowCount))
             {
                 $failures += "$($view.Name): GPU のフレーム時間の標本が足りない（$($gpuSamples.Count) 件。統計が無効な構成か、GPU のタイムスタンプが使えない）"
@@ -1075,6 +1217,7 @@ foreach ($view in $shots)
                     gpu_frame_ms_p95 = [math]::Round($p95, 3)
                     gpu_frame_ms_max = [math]::Round($maximum, 3)
                     cpu_frame_ms_median = if ($null -ne $cpuMedian) { [math]::Round($cpuMedian, 3) } else { $null }
+                    mega_record_cpu_ms = $megaRecordCpu
                     budget_ms = $GpuFrameBudgetMs
                     # 窓のすべてのフレームが予算以内か（95 パーセンタイルだけで判定しない）。
                     within_budget = ($maximum -le $GpuFrameBudgetMs)
@@ -1087,6 +1230,11 @@ foreach ($view in $shots)
                 Write-Output ("CAPTURE_STARTUP_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} budget_ms={7} within_budget={8} over_budget_count={9}" -f `
                     $timing.view, $timing.frames, $timing.gpu_frame_ms_median, $timing.gpu_frame_ms_mean, $timing.gpu_frame_ms_p95,
                     $timing.gpu_frame_ms_max, $timing.cpu_frame_ms_median, $timing.budget_ms, $timing.within_budget, $timing.over_budget_count)
+                if ($null -ne $megaRecordCpu)
+                {
+                    Write-Output ("CAPTURE_STARTUP_SCENE mega_record_cpu view={0} samples={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5}" -f `
+                        $timing.view, $megaRecordCpu.samples, $megaRecordCpu.median, $megaRecordCpu.mean, $megaRecordCpu.p95, $megaRecordCpu.max)
+                }
                 Write-Output ("CAPTURE_STARTUP_SCENE gpu_pass_median view={0} {1}" -f $timing.view,
                     (($passMedianList | Select-Object -First 8 | ForEach-Object { "$($_.pass)=$($_.median_ms)" }) -join ' '))
                 foreach ($over in $overBudgetFrames)

@@ -112,6 +112,8 @@ namespace Game::GameModes
         bool bBoulder = false; ///< 岩か（false なら小屋）。glTF の経路へ戻すとき、どちらの要求番号を更新するか決める
         bool bAllowGltfFallback = true; ///< 材質のテクスチャが読めないとき glTF の経路へ戻すか（false なら失敗として State を埋める）
         TSharedPtr<NorvesLib::Core::Asset::CookedMeshData> Mesh;
+        /// ページ（NVMESH v1.1）の読み込み元。ページを 2 つ以上持つメッシュだけが持つ（無ければ全て常駐で作る）
+        TSharedPtr<NorvesLib::Core::Rendering::MegaGeometry::IGeometryPageSource> PageSource;
         TSharedPtr<PendingMaterialUpdate> Material;
         TSharedPtr<BoulderAsyncState> State;
     };
@@ -126,6 +128,21 @@ namespace Game::GameModes
     {
         uint32_t SpecIndex = 0;
         TSharedPtr<BoulderAsyncState> State;
+    };
+
+    /**
+     * @brief --stress-mega-instances で複製する元（置いたスキャン資産のメッシュと据え方）
+     */
+    struct StressMegaInstanceSource
+    {
+        NorvesLib::Core::Rendering::MegaGeometry::MegaMeshHandle Handle;
+        float PositionY = 0.0f; ///< 最下点を地面へ据えた Y
+        float Scale = 1.0f;
+        // --stress-geometry で、拡大率を変えて据え直すための値。拡大率 s のとき Y = -1 - BoundsMinY * s - SinkMeters。
+        float BoundsMinY = 0.0f; ///< メッシュの最下点の Y（拡大前）
+        float SinkMeters = 0.0f; ///< 地面へ埋める深さ
+        float ScaleMin = 1.0f;   ///< --stress-geometry で振る拡大率の範囲
+        float ScaleMax = 1.0f;
     };
 
     /**
@@ -265,6 +282,13 @@ namespace Game::GameModes
         bool m_bDebugDrawTestLines = false;
         // 地面の外周に高ポリのスキャン資産を置くか（--startup-scan-props=off で false。既定は true）。
         bool m_bStartupScanProps = true;
+        // --stress-mega-instances=<N> の個数（0 は置かない）。スキャン資産を置いた後、そのメッシュを N 個格子に複製する。
+        uint32_t m_StressMegaInstanceCount = 0;
+        bool m_bStressMegaInstancesPlaced = false;
+        // ジオメトリの負荷モード（--stress-geometry[=<N>]。N は既定 300）。スキャン資産・岩・小屋・大きな球を、変換を変えて
+        // 地面の外側の格子に N 個並べ、カメラの軸を格子の中心へ移す。個数は m_StressMegaInstanceCount に入る。
+        bool m_bStressGeometry = false;
+        VariableArray<StressMegaInstanceSource> m_StressMegaSources;
         // 起動時のアンチエイリアシングが TAA なら true（既定は TAA、--anti-aliasing=fxaa の指定で false）。
         bool m_bStartupTemporalAA = true;
         // --night の指定で true にする。空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす
@@ -292,6 +316,8 @@ namespace Game::GameModes
         bool m_bBigSphereFromRuntime = false;
         // 読み込んだクック済みの大きな球（石畳の材質がそろって MegaMesh を作るまで持つ）
         TSharedPtr<NorvesLib::Core::Asset::CookedMeshData> m_pBigSphereCooked;
+        // 大きな球のページの読み込み元（読み込みのジョブが埋める。ジョブの完了後に読む）
+        TSharedPtr<TSharedPtr<NorvesLib::Core::Rendering::MegaGeometry::IGeometryPageSource>> m_pBigSpherePageSource;
         // クック済みのメッシュ（NVMESH）を解決する AssetSystem（無ければ null。クック済みのマニフェストを読んでいないとき）。
         NorvesLib::Core::Delegate<NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>> m_GetAssetSystem;
         // クック済みで読んでいる岩・小屋の、材質（VT）がそろうのを待っている状態。そろったら MegaMesh を作って取り除く。

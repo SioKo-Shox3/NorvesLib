@@ -2,6 +2,9 @@
 
 #include "Asset/AssetSystem.h"
 #include "Rendering/CookedVirtualTexture.h"
+#include "Rendering/GeometryPageRequestRing.h"
+#include "Rendering/GeometryPageStreamer.h"
+#include "Rendering/GeometryPool.h"
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/GpuRetireQueue.h"
 #include "Rendering/SparsePagePool.h"
@@ -33,6 +36,10 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        // 1フレームにジオメトリの区画の中身をリングへ積む量の上限（バイト）。リング（32 MiB）に収まる提出中の
+        // 数フレーム分とテクスチャのタイルの分を残すため、フレームのコピー量の上限（24 MiB）より小さくする。
+        constexpr uint64_t MegaGeometryUploadBytesPerFrame = 8ull * 1024ull * 1024ull;
+
         bool IsPreparedTextureAssetLooseFallbackStatus(PreparedTextureAssetStatus status)
         {
             return status == PreparedTextureAssetStatus::ManifestMissingLooseFallback ||
@@ -95,11 +102,26 @@ namespace NorvesLib::Core::Rendering
         // sparse テクスチャへ結ぶ物理メモリのページ。sparse に対応しないデバイスでは作らない。
         // 期限の来た返却は RetireQueue を通ってここへ戻るので、Shutdown では RetireQueue を片付けてから手放す。
         Container::TUniquePtr<SparsePagePool> SparsePool;
-        // タイル・ミップテイルのデータをステージングのリング経由でテクスチャの領域へ書く経路。sparse に対応しないデバイスでは作らない。
-        // リングのバッファは GPU が止まってから手放す（Shutdown の WaitIdle の後）。
+        // ジオメトリが共有する DeviceLocal のバッファのプール。区画の期限の来た返却は RetireQueue を通ってここへ戻るので、
+        // SparsePool と同じく Shutdown では RetireQueue を片付けてから手放す。
+        Container::TUniquePtr<GeometryPool> GeometryBuffers;
+        // プールの1つの塊の大きさ（Initialize の前に SetGeometryPoolBlockBytes で替えられる）
+        uint64_t GeometryPoolBlockBytes = GeometryPool::DefaultBlockBytes;
+        // タイル・ミップテイルのデータと、ジオメトリの区画の中身を、ステージングのリング経由でテクスチャの領域・バッファへ書く経路。
+        // リングのバッファは最初の書き込みまで作らない。GPU が止まってから手放す（Shutdown の WaitIdle の後）。
         Container::TUniquePtr<TileUploader> TileUpload;
         // VT の要求のバッファ（3つ）の読み戻しと集計。sparse に対応しないデバイスでは作らない。GPU が止まってから手放す。
         Container::TUniquePtr<VirtualTextureFeedbackRing> VtFeedback;
+        // ジオメトリのページの要求のバッファ（3つ）の読み戻しと集計。GPU が止まってから手放す。
+        Container::TUniquePtr<GeometryPageRequestRing> GeometryPageFeedback;
+        // ジオメトリのページのストリーマ（窓口は MegaGeometryResources のストア）。ストアより先に手放す。
+        Container::TUniquePtr<GeometryPageStreamer> GeometryPageStreaming;
+        // ストリーマに渡すフレームの番号と、GEOMETRY_PAGES ログの間引き（RenderThread だけが進める）
+        uint64_t GeometryPageFrame = 0;
+        uint64_t GeometryPageLoggedFrame = 0;
+        uint64_t GeometryPageLoggedResident = 0;
+        // VRAM_POOLS に最後に出したジオメトリのページの追い出し数（変わったときにも出し直す）
+        uint64_t GeometryLoggedEvictedPages = 0;
         // VT のストリーマと、その結び付け・コピーの窓口。ページのプール・リング・RetireQueue より先に手放す。
         Container::TUniquePtr<DeviceVirtualTextureGpu> VtGpu;
         Container::TUniquePtr<VirtualTextureStreamer> VtStreamer;
@@ -975,7 +997,18 @@ namespace NorvesLib::Core::Rendering
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
 
-        return impl->MegaGeometryResources->CreateMegaMesh(createInfo);
+        const MegaGeometry::MegaMeshHandle handle = impl->MegaGeometryResources->CreateMegaMesh(createInfo);
+        // ページを2つ以上持つメッシュだけが、子のページを要求する。要求のバッファは最初のそのメッシュで確保する
+        // （作れなくても描画は続く。要求を取らないだけ）
+        if (handle.IsValid() && impl->GeometryPageFeedback)
+        {
+            const MegaGeometry::MegaMeshGPUData *gpuData = impl->MegaGeometryResources->GetMegaMeshGPUData(handle);
+            if (gpuData && gpuData->PageCount > 1)
+            {
+                impl->GeometryPageFeedback->SetEnabled(true);
+            }
+        }
+        return handle;
     }
 
     const MegaGeometry::MegaMeshGPUData *MegaGeometryResources::GetMegaMeshGPUData(
@@ -987,6 +1020,21 @@ namespace NorvesLib::Core::Rendering
                    : nullptr;
     }
 
+    const MegaGeometry::MegaMeshGPUData *MegaGeometryResources::GetReadyMegaMeshGPUData(
+        MegaGeometry::MegaMeshHandle handle) const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources
+                   ? impl->MegaGeometryResources->GetReadyMegaMeshGPUData(handle)
+                   : nullptr;
+    }
+
+    bool MegaGeometryResources::HasPendingGpuUploads() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources && impl->MegaGeometryResources->HasPendingGpuUploads();
+    }
+
     void MegaGeometryResources::ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle)
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
@@ -994,6 +1042,84 @@ namespace NorvesLib::Core::Rendering
         {
             impl->MegaGeometryResources->ReleaseMegaMesh(handle);
         }
+    }
+
+    bool MegaGeometryResources::CopyPageTableIfChanged(
+        uint64_t &inOutVersion, Container::VariableArray<MegaGeometry::GeometryPageTable::Entry> &out) const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources &&
+               impl->MegaGeometryResources->CopyPageTableIfChanged(inOutVersion, out);
+    }
+
+    bool MegaGeometryResources::ResolvePageTableIndex(uint32_t globalIndex, uint64_t tableVersion, uint64_t &outMeshId,
+                                                      uint32_t &outPageId) const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources &&
+               impl->MegaGeometryResources->ResolvePageTableIndex(globalIndex, tableVersion, outMeshId, outPageId);
+    }
+
+    bool MegaGeometryResources::SetMegaMeshPageRegion(MegaGeometry::MegaMeshHandle handle, uint32_t pageId,
+                                                      uint32_t region)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources &&
+               impl->MegaGeometryResources->SetMegaMeshPageRegion(handle, pageId, region);
+    }
+
+    RHI::BufferPtr MegaGeometryResources::GetCurrentPageRequestBuffer() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->GeometryPageFeedback ? impl->GeometryPageFeedback->GetCurrentBuffer() : RHI::BufferPtr{};
+    }
+
+    uint32_t MegaGeometryResources::GetCurrentPageRequestCapacity() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->GeometryPageFeedback ? impl->GeometryPageFeedback->GetCurrentCapacity() : 0u;
+    }
+
+    void MegaGeometryResources::SetCurrentPageTableVersion(uint64_t tableVersion)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (impl && impl->GeometryPageFeedback)
+        {
+            impl->GeometryPageFeedback->SetCurrentTableVersion(tableVersion);
+        }
+    }
+
+    bool MegaGeometryResources::RecordPageRequestHostBarrier(RHI::ICommandList &commandList)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->GeometryPageFeedback && impl->GeometryPageFeedback->RecordHostReadBarrier(commandList);
+    }
+
+    void MegaGeometryResources::SetPageStreamingEnabled(bool bEnabled)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (impl && impl->MegaGeometryResources)
+        {
+            impl->MegaGeometryResources->SetPageStreamingEnabled(bEnabled);
+        }
+    }
+
+    bool MegaGeometryResources::IsPageStreamingEnabled() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources && impl->MegaGeometryResources->IsPageStreamingEnabled();
+    }
+
+    bool MegaGeometryResources::HasPendingPageStreaming() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->GeometryPageStreaming && impl->GeometryPageStreaming->HasPendingWork();
+    }
+
+    bool MegaGeometryResources::TakePageRequests(MegaGeometry::GeometryPageRequestSet &out)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->GeometryPageFeedback && impl->GeometryPageFeedback->TakeRequests(out);
     }
 
     ModelHandle MegaGeometryResources::RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
@@ -1149,21 +1275,32 @@ namespace NorvesLib::Core::Rendering
 
         m_Impl->GpuResources = Container::MakeUnique<GpuResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
         m_Impl->GpuResources->SetRetireQueue(&m_Impl->RetireQueue);
+        // ステージングのリング。VT のタイルとジオメトリの区画の両方が使うので、sparse の対応に関わらず作る（リングのバッファは最初の書き込みまで作らない）
+        m_Impl->TileUpload = Container::MakeUnique<TileUploader>(m_Impl->Device);
         {
             const RHI::SparseCapabilities &sparse = m_Impl->Device->GetCapabilities().Sparse;
             if (sparse.bSparseBinding && sparse.bResidencyImage2D)
             {
                 m_Impl->SparsePool = Container::MakeUnique<SparsePagePool>(m_Impl->Device);
-                m_Impl->TileUpload = Container::MakeUnique<TileUploader>(m_Impl->Device);
                 m_Impl->VtFeedback = Container::MakeUnique<VirtualTextureFeedbackRing>(m_Impl->Device);
                 m_Impl->VtGpu = Container::MakeUnique<DeviceVirtualTextureGpu>(m_Impl->Device, *m_Impl->TileUpload);
                 m_Impl->VtStreamer = Container::MakeUnique<VirtualTextureStreamer>(
                     *m_Impl->SparsePool, *m_Impl->VtGpu, &m_Impl->RetireQueue);
             }
         }
+        m_Impl->GeometryBuffers = Container::MakeUnique<GeometryPool>(m_Impl->Device, m_Impl->GeometryPoolBlockBytes);
         m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
-        m_Impl->MegaGeometryResources =
-            Container::MakeUnique<MegaGeometryResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
+        m_Impl->MegaGeometryResources = Container::MakeUnique<MegaGeometryResourceStore>(
+            m_Impl->Device, m_Impl->NextHandleId, m_Impl->GeometryBuffers.get(), m_Impl->TileUpload.get(),
+            &m_Impl->RetireQueue);
+        // ページの要求のバッファ。バッファは、ページを2つ以上持つメッシュを作るまで確保しない（CreateMegaMesh が有効にする）
+        m_Impl->GeometryPageFeedback = Container::MakeUnique<GeometryPageRequestRing>(m_Impl->Device);
+        // ページを持つメッシュの、読み込み・書き込み・追い出し。窓口はストア（ストアより先に手放す）
+        m_Impl->GeometryPageStreaming = Container::MakeUnique<GeometryPageStreamer>(*m_Impl->MegaGeometryResources);
+        // 予算の取り分: ジオメトリは VT に比べて小さい（根のページと、要求されたページだけ）ので、VT : ジオメトリ = 3 : 1 にする。
+        // 上限が無いときは目標を持たない（外さない）
+        m_Impl->VideoMemoryBudget.SetPoolShare(VideoMemoryPool::VirtualTexture, 3);
+        m_Impl->VideoMemoryBudget.SetPoolShare(VideoMemoryPool::Geometry, 1);
         m_Impl->ProceduralMeshes = Container::MakeUnique<ProceduralMeshGpuStore>(m_Impl->Device);
         if (m_Impl->TextureAssets)
         {
@@ -1194,6 +1331,7 @@ namespace NorvesLib::Core::Rendering
             m_Impl->Device->WaitIdle();
         }
         // GPU が止まったので、ストリーマが持つページを RetireQueue へ渡して手放し、待っていた RHI 資源を期限を問わず全部破棄する。
+        m_Impl->GeometryPageStreaming.reset();
         m_Impl->VtStreamer.reset();
         m_Impl->VtGpu.reset();
         m_Impl->VtIndexByTexture.clear();
@@ -1201,7 +1339,9 @@ namespace NorvesLib::Core::Rendering
         m_Impl->RetireQueue.Clear();
         m_Impl->TileUpload.reset();
         m_Impl->VtFeedback.reset();
+        m_Impl->GeometryPageFeedback.reset();
         m_Impl->SparsePool.reset();
+        m_Impl->GeometryBuffers.reset();
         if (m_Impl->SkinnedMeshes)
         {
             m_Impl->SkinnedMeshes->ForceClearAfterWaitIdle();
@@ -1241,10 +1381,18 @@ namespace NorvesLib::Core::Rendering
         {
             m_Impl->VtFeedback->BeginFrame(completedSubmissionSerial);
         }
+        if (m_Impl->GeometryPageFeedback)
+        {
+            m_Impl->GeometryPageFeedback->BeginFrame(completedSubmissionSerial);
+        }
         // 期限の来たページがプールへ戻った後の使用量を、変わっていれば台帳へ出す
         if (m_Impl->SparsePool)
         {
             m_Impl->SparsePool->LogLedgerIfChanged();
+        }
+        if (m_Impl->GeometryBuffers)
+        {
+            m_Impl->GeometryBuffers->LogLedgerIfChanged();
         }
     }
 
@@ -1259,6 +1407,10 @@ namespace NorvesLib::Core::Rendering
         {
             m_Impl->VtFeedback->CommitFrame(submissionSerial);
         }
+        if (m_Impl->GeometryPageFeedback)
+        {
+            m_Impl->GeometryPageFeedback->CommitFrame(submissionSerial);
+        }
     }
 
     void RenderResources::AbortRetireFrame()
@@ -1272,10 +1424,19 @@ namespace NorvesLib::Core::Rendering
         {
             m_Impl->VtFeedback->AbortFrame();
         }
+        if (m_Impl->GeometryPageFeedback)
+        {
+            m_Impl->GeometryPageFeedback->AbortFrame();
+        }
     }
 
     uint32_t RenderResources::RecordTileUploads(RHI::ICommandList &commandList)
     {
+        // 書き込み待ちのジオメトリを、リングの空きとこのフレームの上限の範囲で積んでから、まとめて記録する
+        if (m_Impl->MegaGeometryResources)
+        {
+            m_Impl->MegaGeometryResources->PumpUploads(MegaGeometryUploadBytesPerFrame);
+        }
         return m_Impl->TileUpload ? m_Impl->TileUpload->RecordCopies(commandList) : 0u;
     }
 
@@ -1345,9 +1506,58 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void RenderResources::UpdateGeometryPageStreaming()
+    {
+        Impl &impl = *m_Impl;
+        if (!impl.bInitialized || !impl.GeometryPageStreaming || !impl.GeometryPageFeedback)
+        {
+            return;
+        }
+
+        MegaGeometry::GeometryPageRequestSet requests;
+        const bool bHasRequests = impl.GeometryPageFeedback->TakeRequests(requests);
+        // 要求の LastRequestedFrame と同じ時計（要求のリングのフレーム）で進める。要求の新旧が取り込んだ Update に依らず保たれる
+        impl.GeometryPageFrame = std::max(impl.GeometryPageFrame, impl.GeometryPageFeedback->GetFrameCounter());
+        impl.GeometryPageStreaming->Update(impl.GeometryPageFrame, bHasRequests ? &requests : nullptr);
+
+        // 常駐するページの数が変わったときだけ、約1秒（60フレーム）に1回までログへ出す。
+        // 読み込みが落ち着いたとき（待ちが無くなった）は、間隔を待たずに最終の数を出す
+        constexpr uint64_t LogIntervalFrames = 60;
+        const bool bLogDue = impl.GeometryPageFrame - impl.GeometryPageLoggedFrame >= LogIntervalFrames;
+        if (bLogDue || !impl.GeometryPageStreaming->HasPendingWork())
+        {
+            const GeometryPageStreamerStats stats = impl.GeometryPageStreaming->GetStats();
+            if (stats.ResidentPages != impl.GeometryPageLoggedResident)
+            {
+                constexpr double BytesPerMb = 1024.0 * 1024.0;
+                LOG_INFO("GEOMETRY_PAGES resident=%u uploading=%u ready=%u reading=%u wanted=%u failed=%u "
+                         "resident_mb=%.2f evicted=%llu budget_blocked=%llu parent_wait=%llu",
+                         static_cast<unsigned>(stats.ResidentPages), static_cast<unsigned>(stats.UploadingPages),
+                         static_cast<unsigned>(stats.ReadyPages), static_cast<unsigned>(stats.ReadingPages),
+                         static_cast<unsigned>(stats.WantedPages), static_cast<unsigned>(stats.FailedPages),
+                         static_cast<double>(stats.ResidentBytes) / BytesPerMb,
+                         static_cast<unsigned long long>(stats.EvictedPages),
+                         static_cast<unsigned long long>(stats.BudgetBlockedFrames),
+                         static_cast<unsigned long long>(stats.ParentWaitSkips));
+                impl.GeometryPageLoggedResident = stats.ResidentPages;
+            }
+            impl.GeometryPageLoggedFrame = impl.GeometryPageFrame;
+        }
+    }
+
     SparsePagePool *RenderResources::GetSparsePagePool() const
     {
         return m_Impl->SparsePool.get();
+    }
+
+    GeometryPool *RenderResources::GetGeometryPool() const
+    {
+        return m_Impl->GeometryBuffers.get();
+    }
+
+    void RenderResources::SetGeometryPoolBlockBytes(uint64_t blockBytes)
+    {
+        m_Impl->GeometryPoolBlockBytes = blockBytes;
     }
 
     size_t RenderResources::GetPendingRetireCount() const
@@ -1424,9 +1634,30 @@ namespace NorvesLib::Core::Rendering
             const SparsePagePool::Stats pool = impl->SparsePool->GetStats();
             input.PoolCapacityBytes[static_cast<uint32_t>(VideoMemoryPool::VirtualTexture)] = pool.CapacityBytes;
         }
+        if (impl->GeometryBuffers)
+        {
+            // ジオメトリのプールの塊も、ヒープの使用量に全部入っているので、プール以外から引くために渡す
+            input.PoolCapacityBytes[static_cast<uint32_t>(VideoMemoryPool::Geometry)] =
+                impl->GeometryBuffers->GetStats().CapacityBytes;
+        }
 
         const VideoMemoryBudgetResult result = impl->VideoMemoryBudget.Compute(input);
         impl->VideoMemoryBudgetLast = result;
+
+        // ジオメトリの枠の目標を、プールの台帳へ出す（取り分の決め方と、目標に合わせた確保・追い出しは後の段）。
+        if (impl->GeometryBuffers)
+        {
+            impl->GeometryBuffers->SetBudgetTarget(result.bLimited, result.GetTargetBytes(VideoMemoryPool::Geometry));
+        }
+        // ページのストリーマの目標: 枠から、外せないメッシュの区画（根のページなど）を引いた残りがページの取り分。
+        // 目標を超えたぶんは、ストリーマが次の Update で最後に要求されたフレームが古いページから外す。
+        if (impl->GeometryPageStreaming && impl->MegaGeometryResources)
+        {
+            const uint64_t geometryTarget = result.GetTargetBytes(VideoMemoryPool::Geometry);
+            const uint64_t fixedBytes = impl->MegaGeometryResources->GetMeshRegionBytes();
+            impl->GeometryPageStreaming->SetResidentBudget(result.bLimited,
+                                                           geometryTarget > fixedBytes ? geometryTarget - fixedBytes : 0);
+        }
 
         // VT のプールの上限へ反映する。プールの 0 は「上限なし」なので、割り振りが 0 のときは 1 バイトで塞ぐ。
         if (impl->SparsePool)
@@ -1445,31 +1676,43 @@ namespace NorvesLib::Core::Rendering
 
         // 予算の割り振りが変わったとき、または VT が新しくタイルを外したときに VRAM_POOLS を出す
         const uint64_t evictedTiles = impl->VtStreamer ? impl->VtStreamer->GetStats().EvictedTiles : 0;
+        const uint64_t evictedPages = impl->GeometryPageStreaming ? impl->GeometryPageStreaming->GetStats().EvictedPages : 0;
         const bool bBudgetChanged = impl->VideoMemoryBudget.CommitLogIfChanged(result);
-        if (bBudgetChanged || evictedTiles != impl->VtLoggedEvictedTiles)
+        if (bBudgetChanged || evictedTiles != impl->VtLoggedEvictedTiles ||
+            evictedPages != impl->GeometryLoggedEvictedPages)
         {
             impl->VtLoggedEvictedTiles = evictedTiles;
+            impl->GeometryLoggedEvictedPages = evictedPages;
             const uint64_t vtUsedBytes = impl->SparsePool ? impl->SparsePool->GetStats().UsedBytes : 0;
+            // ジオメトリの使用量は、プールの区画の合計（外して返却待ちの区画も、提出の完了までは数える）
+            const uint64_t geometryUsedBytes = impl->GeometryBuffers ? impl->GeometryBuffers->GetStats().UsedBytes : 0;
             if (result.bLimited)
             {
                 NORVES_LOG_INFO(
                     "RenderResources",
-                    "VRAM_POOLS cap_mb=%llu non_pool_mb=%llu vt_target_mb=%llu vt_used_mb=%llu vt_evicted_tiles=%llu source=%s",
+                    "VRAM_POOLS cap_mb=%llu non_pool_mb=%llu vt_target_mb=%llu vt_used_mb=%llu vt_evicted_tiles=%llu source=%s "
+                    "geometry_target_mb=%llu geometry_used_mb=%llu geometry_evicted_pages=%llu",
                     static_cast<unsigned long long>(result.CeilingBytes / kBytesPerMb),
                     static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb),
                     static_cast<unsigned long long>(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) / kBytesPerMb),
                     static_cast<unsigned long long>(vtUsedBytes / kBytesPerMb),
                     static_cast<unsigned long long>(evictedTiles),
-                    result.bNonPoolEstimated ? "estimate" : "heap");
+                    result.bNonPoolEstimated ? "estimate" : "heap",
+                    static_cast<unsigned long long>(result.GetTargetBytes(VideoMemoryPool::Geometry) / kBytesPerMb),
+                    static_cast<unsigned long long>(geometryUsedBytes / kBytesPerMb),
+                    static_cast<unsigned long long>(evictedPages));
             }
             else
             {
                 NORVES_LOG_INFO(
                     "RenderResources",
-                    "VRAM_POOLS cap_mb=none non_pool_mb=%llu vt_target_mb=none vt_used_mb=%llu vt_evicted_tiles=%llu",
+                    "VRAM_POOLS cap_mb=none non_pool_mb=%llu vt_target_mb=none vt_used_mb=%llu vt_evicted_tiles=%llu "
+                    "geometry_target_mb=none geometry_used_mb=%llu geometry_evicted_pages=%llu",
                     static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb),
                     static_cast<unsigned long long>(vtUsedBytes / kBytesPerMb),
-                    static_cast<unsigned long long>(evictedTiles));
+                    static_cast<unsigned long long>(evictedTiles),
+                    static_cast<unsigned long long>(geometryUsedBytes / kBytesPerMb),
+                    static_cast<unsigned long long>(evictedPages));
             }
         }
     }

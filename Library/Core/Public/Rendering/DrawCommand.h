@@ -52,6 +52,8 @@ namespace NorvesLib::Core::Rendering
     {
         RHI::BufferPtr VertexBuffer;                        // バインドする頂点バッファ
         RHI::BufferPtr IndexBuffer;                         // バインドするインデックスバッファ
+        uint64_t VertexBufferOffsetBytes = 0;               // 頂点バッファの中の頂点の先頭（バイト。共有バッファの区画用）
+        uint64_t IndexBufferOffsetBytes = 0;                // インデックスバッファの中のインデックスの先頭（バイト。共有バッファの区画用）
         uint32_t IndexCount = 0;                            // 描画するインデックス数
         uint32_t IndexOffset = 0;                           // 開始インデックス位置
         int32_t VertexOffset = 0;                           // ベース頂点位置

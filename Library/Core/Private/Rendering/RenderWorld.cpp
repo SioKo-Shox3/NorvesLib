@@ -205,7 +205,7 @@ namespace NorvesLib::Core::Rendering
             m_RenderingCoordinator.Resize(w, h);
         }
 
-        const bool bHasPendingAsyncAssets = HasPendingAsyncAssets();
+        const bool bHasPendingAsyncAssets = HasPendingAssetLoads();
         bool bAssetGpuFlushWindowAcquired = false;
         if (m_RenderThread.IsRunning() && !bRenderThreadQuiesced && bHasPendingAsyncAssets)
         {
@@ -380,11 +380,17 @@ namespace NorvesLib::Core::Rendering
 #endif
     }
 
-    bool RenderWorld::HasPendingAsyncAssets() const
+    bool RenderWorld::HasPendingAssetLoads() const
     {
         return m_RenderResources.Textures().GetPendingAsyncLoadCount() > 0 ||
                m_RenderResources.MegaGeometry().GetPendingAsyncModelLoadCount() > 0 ||
                Resource::GLTFAnalyzer::GetPendingAsyncModelLoadCount() > 0;
+    }
+
+    bool RenderWorld::HasPendingAsyncAssets() const
+    {
+        return HasPendingAssetLoads() || m_RenderResources.MegaGeometry().HasPendingGpuUploads() ||
+               m_RenderResources.MegaGeometry().HasPendingPageStreaming();
     }
 
     uint64_t RenderWorld::GetRenderedFrameCount() const

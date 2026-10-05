@@ -82,6 +82,11 @@ namespace NorvesLib::Core::Rendering
         RHI::Viewport Viewport;
         RHI::ScissorRect Scissor;
         DebugViewMode DebugMode = DebugViewMode::Normal;
+        // 統計（MEGA_OCCLUSION）の行に付けるフレームの番号。描画のフレームの番号と、決定的な撮影のエポックからの番号
+        uint64_t FrameNumber = 0;
+        uint64_t TemporalFrameIndex = 0;
+        bool bDeterministicCapture = false;
+        bool bTemporalEpochStart = false;
     };
 
     struct FrameCommand

@@ -10,6 +10,7 @@
 #include "Rendering/PointShadowSnapshot.h"
 #include "Debug/Stats.h"
 #include "Container/Containers.h"
+#include "Container/PointerTypes.h"
 #include "Thread/Atomic.h"
 #include "RHI/IAccelerationStructure.h"
 #include <algorithm>
@@ -78,6 +79,23 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr SourceIndexBuffer;
         RHI::BufferPtr AccelerationStructureVertexBuffer;
         RHI::BufferPtr AccelerationStructureIndexBuffer;
+        /**
+         * @brief 頂点・インデックスが共有バッファ（ジオメトリのプール）の区画にあるときの、区画の先頭（バイト）
+         *
+         * VertexOffset・IndexOffset はこの先頭からの位置。専用のバッファを持つメッシュでは 0。
+         * 加速構造・シェーダーが見るアドレスは、バッファのアドレス + この先頭 + VertexOffset・IndexOffset の位置になる。
+         */
+        uint64_t VertexBufferOffsetBytes = 0;
+        uint64_t IndexBufferOffsetBytes = 0;
+        /** @brief 共有バッファの区画を持つ MegaMesh の番号（0 は無し）。区画が別のメッシュに使い回されたときに BLAS を取り違えない */
+        uint64_t MegaMeshId = 0;
+        /**
+         * @brief 共有バッファの区画の共有の持ち主。このスナップショットが消えるまで区画を空きへ戻さない
+         *
+         * フレームの描画（BLAS の構築・RTGI/DDGI の頂点・インデックスの参照）が終わる前に、元のメッシュが解放されて
+         * 区画が別のメッシュへ使い回されないようにする。専用のバッファを持つメッシュでは null。
+         */
+        Container::TSharedPtr<void> GeometryRegionOwner;
         uint32_t IndexOffset = 0;
         uint32_t IndexCount = 0;
         uint32_t VertexOffset = 0;

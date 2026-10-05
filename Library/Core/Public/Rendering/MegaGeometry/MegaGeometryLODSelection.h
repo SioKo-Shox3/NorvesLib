@@ -200,6 +200,57 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                IsBakedParentTooCoarse(cluster, worldMatrix, view);
     }
 
+    /** @brief ページの常駐を考えた、焼き込み済みのクラスタの判定の結果 */
+    enum class BakedClusterDecision : uint8_t
+    {
+        /** @brief 描かない */
+        NotDrawn,
+        /** @brief 描く（自分の誤差が許容以下で、親が粗すぎる通常の判定） */
+        Drawn,
+        /** @brief もっと細かい子が欲しいが子のページが常駐していないので、穴を作らず自分で描く（子のページを要求する） */
+        DrawnForMissingChild
+    };
+
+    /**
+     * @brief ページの常駐を考えて、焼き込み済みのクラスタを描くか判定する（cluster_cull.comp の ShouldDrawBakedCluster と同じ）
+     *
+     * - 自分のページが常駐していなければ描かない（親が代わりに描く）。
+     * - 自分の誤差が許容を超えるとき（もっと細かい子が欲しいとき）は、子のページが常駐していなければ自分で描く
+     *   （子が無い最も細かい段は、誤差が 0 なのでこの場合に来ない）。
+     * - どちらの場合も、親のグループの誤差が許容を超える（親では粗すぎる）ときだけ描く。
+     *
+     * 同じグループのクラスタは同じページを持ち、子のページも同じなので、グループの全員が同じ判断になる。
+     * 子のページが非常駐なら子は1つも描かれないので、子と親が重なって描かれることは無い。
+     * 子のページが常駐しているのに親のページが非常駐という並びは、ストリーマが作らない（親を先に常駐させ、子から外す）。
+     *
+     * @param isPageResident メッシュの中のページの番号を受け取り、常駐しているかを返す
+     */
+    template <typename ResidentFn>
+    BakedClusterDecision DecideBakedCluster(const MeshCluster &cluster,
+                                            const float *worldMatrix,
+                                            const BakedLODView &view,
+                                            ResidentFn &&isPageResident)
+    {
+        if (cluster.PageId != INVALID_PAGE_ID && !isPageResident(cluster.PageId))
+        {
+            return BakedClusterDecision::NotDrawn;
+        }
+        bool bForMissingChild = false;
+        if (!IsBakedClusterWithinError(cluster, worldMatrix, view))
+        {
+            if (cluster.ChildPageId == INVALID_PAGE_ID || isPageResident(cluster.ChildPageId))
+            {
+                return BakedClusterDecision::NotDrawn;
+            }
+            bForMissingChild = true;
+        }
+        if (!IsBakedParentTooCoarse(cluster, worldMatrix, view))
+        {
+            return BakedClusterDecision::NotDrawn;
+        }
+        return bForMissingChild ? BakedClusterDecision::DrawnForMissingChild : BakedClusterDecision::Drawn;
+    }
+
     /**
      * @brief 誤差を投影した大きさが閾値以下になる最も粗い段（無ければ0）
      *

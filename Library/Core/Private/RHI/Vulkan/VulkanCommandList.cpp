@@ -132,6 +132,11 @@ namespace NorvesLib::RHI::Vulkan
             return vk::AccessFlagBits::eTransferWrite;
         case ResourceState::HostRead:
             return vk::AccessFlagBits::eHostRead;
+        case ResourceState::GenericRead:
+            // バッファの読み取り全般（頂点・インデックス・定数・storage・間接引数・コピー元）
+            return vk::AccessFlagBits::eVertexAttributeRead | vk::AccessFlagBits::eIndexRead |
+                   vk::AccessFlagBits::eUniformRead | vk::AccessFlagBits::eShaderRead |
+                   vk::AccessFlagBits::eIndirectCommandRead | vk::AccessFlagBits::eTransferRead;
         case ResourceState::Present:
             return {};
         default:
@@ -183,6 +188,19 @@ namespace NorvesLib::RHI::Vulkan
             return vk::PipelineStageFlagBits::eTransfer;
         case ResourceState::HostRead:
             return vk::PipelineStageFlagBits::eHost;
+        case ResourceState::GenericRead:
+        {
+            vk::PipelineStageFlags stageFlags =
+                vk::PipelineStageFlagBits::eDrawIndirect | vk::PipelineStageFlagBits::eVertexInput |
+                vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader |
+                vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eTransfer;
+            if (bRayTracingPipelineEnabled)
+            {
+                stageFlags |= vk::PipelineStageFlagBits::eRayTracingShaderKHR |
+                              vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR;
+            }
+            return stageFlags;
+        }
         case ResourceState::Present:
             return vk::PipelineStageFlagBits::eBottomOfPipe;
         default:
