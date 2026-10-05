@@ -13,6 +13,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "RHI/DeviceCapabilities.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -511,6 +512,11 @@ namespace NorvesLib::Core::Rendering
         // 初期化を済ませたのにパイプラインが無い（対応しないデバイス・シェーダーの失敗）ときは何も宣言しない。
         // ID の添付を宣言すると、描かないまま ShaderResource の状態を前提に読まれてしまうため
         if (m_bInitialized && !m_MegaPipeline)
+        {
+            return;
+        }
+        // 解決が使えず予備の GBuffer の描画へ戻るフレームは、ID を誰も読まない。描かない（分類も ID が無いので何もしない）
+        if (m_ResolvePass && !m_ResolvePass->CanResolve(context->Device, context->GetActiveDebugMode()))
         {
             return;
         }

@@ -105,8 +105,8 @@ namespace NorvesLib::Core::Rendering
         PathTracingDebugOutput PathTracingDebug = PathTracingDebugOutput::None;
         /** @brief ラスタの直接光のBRDF（既定は解析BRDF） */
         RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Analytic;
-        /** @brief ビジビリティバッファの使い方（既定は使わない） */
-        VisibilityBufferMode VisibilityBuffer = VisibilityBufferMode::Off;
+        /** @brief ビジビリティバッファの使い方（既定は On。装置が対応しないときは GBuffer の描画へ戻る） */
+        VisibilityBufferMode VisibilityBuffer = VisibilityBufferMode::On;
     };
 
     struct RenderingCoordinatorStatsSnapshot

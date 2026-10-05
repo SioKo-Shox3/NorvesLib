@@ -953,7 +953,7 @@ namespace NorvesLib::Core::Engine
         Rendering::PathTracingDebugOutput pathTracingDebugOutput =
             Rendering::PathTracingDebugOutput::None;
         Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Analytic;
-        Rendering::VisibilityBufferMode visibilityBufferMode = Rendering::VisibilityBufferMode::Off;
+        Rendering::VisibilityBufferMode visibilityBufferMode = Rendering::VisibilityBufferMode::On;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
         bool bToneMapOperatorRequested = false;
         float filmGrainStrength = 0.0f;

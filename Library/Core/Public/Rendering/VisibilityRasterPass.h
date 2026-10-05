@@ -18,6 +18,7 @@ namespace NorvesLib::Core::Rendering
 {
     class MegaGeometryPass;
     class SkinningComputePass;
+    class VisibilityResolvePass;
     struct ViewRenderContext;
 
     /**
@@ -81,6 +82,15 @@ namespace NorvesLib::Core::Rendering
         void SetMegaGeometryPass(MegaGeometryPass* pass) { m_MegaGeometryPass = pass; }
         /** @brief スキニングの変形結果の取り出し元（同じ View のパス。null ならスキニングは描かない） */
         void SetSkinningComputePass(const SkinningComputePass* pass) { m_SkinningComputePass = pass; }
+        /**
+         * @brief 解決が使えるかの問い合わせ先（同じ View の VisibilityResolvePass。null なら問い合わせない）
+         *
+         * 渡すと、解決が使えない（GetFallbackReason が None 以外）フレームは Declare が何も宣言しない。ID は解決と分類だけが読み、
+         * 予備の GBuffer の描画へ戻っている間は誰も読まないので、描いても GPU の時間を使うだけになる。
+         * 解決を持たない構成（検証表示の Debug）では渡さず、従来どおり描く。
+         */
+        void SetResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
+        const VisibilityResolvePass* GetResolvePass() const { return m_ResolvePass; }
 
         /** @brief 最後の Execute の内訳 */
         const VisibilityRasterFrameStats& GetLastFrameStats() const { return m_Stats; }
@@ -203,6 +213,7 @@ namespace NorvesLib::Core::Rendering
         RHI::IDevice* m_Device = nullptr;
         MegaGeometryPass* m_MegaGeometryPass = nullptr;
         const SkinningComputePass* m_SkinningComputePass = nullptr;
+        const VisibilityResolvePass* m_ResolvePass = nullptr;
 
         // ID と深度へ描くレンダーパス（ID は Clear、深度は Load。どちらもグラフの添付の状態で始まり ShaderResource で終わる）
         RHI::RenderPassPtr m_RenderPass;

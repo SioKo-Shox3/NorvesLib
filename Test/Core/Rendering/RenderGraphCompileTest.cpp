@@ -2403,6 +2403,7 @@ namespace
                 }
                 scene.GBuffer.SetVisibilityResolvePass(&scene.Resolve);
                 scene.Mega.SetVisibilityResolvePass(&scene.Resolve);
+                scene.Raster.SetResolvePass(&scene.Resolve);
                 scene.Device->bFailComputePipelines = resolveMode == ResolveMode::ResolvePipelineUnavailable;
                 if (classifyMode == ClassifyMode::BeforeResolveTilePipelineUnavailable)
                 {
@@ -2662,8 +2663,8 @@ namespace
         ShutdownVisibilityRasterScene(scene);
     }
 
-    // 実際の既定: SceneView は --visibility-buffer=on|debug でパスを View へ足すが、有効にしない。
-    // View::Render は無効なパスをグラフへ足さないので、有効にするまでは資源も dispatch も増えず、起動画面の描画を変えない。
+    // パスの生成時の既定は無効（SceneView は解決を使う --visibility-buffer=on のときだけ有効にする）。
+    // View::Render は無効なパスをグラフへ足さないので、有効にするまでは資源も dispatch も増えない。
     // パスの生成時の既定が無効でなくなると、グラフへ足されて 4 パスになりこのテストが落ちる
     void TestMaterialTileClassifyAddedButDisabledByDefault()
     {
@@ -3668,12 +3669,16 @@ namespace
         VisibilityRasterScene scene;
         RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, ResolveMode::UnsupportedDevice);
         FakeCommandList& commandList = scene.CommandList;
-        assert(commandList.IndirectDraws.size() == baseline.IndirectDraws);
-        assert(CountDirectDraws(commandList) == baseline.DirectDraws);
+        // 予備の GBuffer の描画へ戻るので、ID のラスタは何も描かない（MegaGeometry の描画の写しは、ラスタが取り出して捨てる）。
+        // GBuffer への間接描画（1・2 パス目）と手続きメッシュの直接描画だけが残る
+        assert(commandList.IndirectDraws.size() == baseline.IndirectDraws - 2);
+        assert(CountDirectDraws(commandList) == SceneGBufferDirectDraws);
+        assert(!scene.Raster.GetRecordTable());
         assert(!scene.Resolve.WasResolved());
         assert(scene.Resolve.GetFallbackReason(scene.Device.get()) ==
                VisibilityResolveGeometry::FallbackReason::DeviceUnsupported);
-        assert(commandList.DispatchCount == baseline.Dispatches);
+        // ID のラスタの記録の表を作る dispatch 1 回が、基準（解決を使わない On）より少ない
+        assert(commandList.DispatchCount + 1 == baseline.Dispatches);
         size_t velocityBarriers = 0;
         assert(!VelocityTexturesHaveShaderWrite(commandList, velocityBarriers) && velocityBarriers > 0);
 
@@ -3692,12 +3697,10 @@ namespace
         {
             ResolveMode Mode;
             VisibilityResolveGeometry::FallbackReason Reason;
-            /** @brief ID の描画（間接描画 2 回）が行われるか。ラスタのパイプラインが無いと行われない */
-            bool bRasterDraws;
         };
         const Case cases[] = {
-            {ResolveMode::RasterPipelineUnavailable, VisibilityResolveGeometry::FallbackReason::RasterUnavailable, false},
-            {ResolveMode::ResolvePipelineUnavailable, VisibilityResolveGeometry::FallbackReason::ResolveUnavailable, true},
+            {ResolveMode::RasterPipelineUnavailable, VisibilityResolveGeometry::FallbackReason::RasterUnavailable},
+            {ResolveMode::ResolvePipelineUnavailable, VisibilityResolveGeometry::FallbackReason::ResolveUnavailable},
         };
         for (const Case& testCase : cases)
         {
@@ -3709,10 +3712,11 @@ namespace
             assert(!scene.Resolve.CanResolve(scene.Device.get()));
             assert(!scene.Resolve.WasResolved());
 
-            // GBufferPass は従来どおり描画を積み、MegaGeometryPass も GBuffer への間接描画（1・2 パス目）を止めない
-            assert(CountDirectDraws(commandList) ==
-                   SceneGBufferDirectDraws + (testCase.bRasterDraws ? SceneIdDirectDraws : 0u));
-            assert(commandList.IndirectDraws.size() == baseline.IndirectDraws - (testCase.bRasterDraws ? 0u : 2u));
+            // GBufferPass は従来どおり描画を積み、MegaGeometryPass も GBuffer への間接描画（1・2 パス目）を止めない。
+            // 予備へ戻っている間は ID を誰も読まないので、ID のラスタは（パイプラインが揃っていても）何も描かない
+            assert(CountDirectDraws(commandList) == SceneGBufferDirectDraws);
+            assert(commandList.IndirectDraws.size() == baseline.IndirectDraws - 2);
+            assert(!scene.Raster.GetRecordTable());
             // GBuffer の 3 枚は storage image として使われない（解決が書かない）
             size_t velocityBarriers = 0;
             assert(!VelocityTexturesHaveShaderWrite(commandList, velocityBarriers) && velocityBarriers > 0);
@@ -3786,9 +3790,10 @@ namespace
         assert(!scene.Resolve.WasResolved());
 
         // GBufferPass は従来どおり描画を積み、MegaGeometryPass も GBuffer への間接描画を止めない（スキニングの物も GBuffer に描かれる）。
-        // ID のラスタはスキニングの頂点が無いので、スキニングの塊を描かない（解決を使う On より 1 回少ない）
-        assert(commandList.IndirectDraws.size() == baseline.IndirectDraws);
-        assert(CountDirectDraws(commandList) == SceneGBufferDirectDraws + SceneIdDirectDraws - 1);
+        // ID のラスタは予備へ戻っている間は何も描かない（スキニングの頂点が無いので、描いてもスキニングの塊は欠ける）
+        assert(commandList.IndirectDraws.size() == baseline.IndirectDraws - 2);
+        assert(CountDirectDraws(commandList) == SceneGBufferDirectDraws);
+        assert(!scene.Raster.GetRecordTable());
         size_t velocityBarriers = 0;
         assert(!VelocityTexturesHaveShaderWrite(commandList, velocityBarriers) && velocityBarriers > 0);
 #if NORVES_ENABLE_LOGGING
@@ -3863,8 +3868,8 @@ namespace
     }
 
     // 線のパイプラインが作れない装置では、ワイヤーフレームの表示だけ従来の GBuffer の描画（線）へ戻す。
-    // ID のラスタは塗りで描き続け、通常の表示では解決を使う。表示を解決へ問い合わせる配線を外す（表示を渡さない）と、
-    // GBuffer の描画が止まって線の画素を誰も書かなくなり、この検査が落ちる
+    // この表示のフレームは予備へ戻るので ID のラスタは描かず、通常の表示では解決を使う。表示を解決へ問い合わせる配線を外す
+    // （表示を渡さない）と、GBuffer の描画が止まって線の画素を誰も書かなくなり、この検査が落ちる
     void TestVisibilityRasterWireframeFallsBackToGBufferWhenLinePipelinesUnavailable()
     {
         const OnWithoutResolveBaseline baseline = MeasureOnWithoutResolve();
@@ -3882,12 +3887,13 @@ namespace
         assert(scene.Resolve.GetFallbackReason(scene.Device.get()) == VisibilityResolveGeometry::FallbackReason::None);
         assert(!scene.Resolve.WasResolved());
 
-        // GBufferPass・MegaGeometryPass は GBuffer へ描き続ける（解決を使わない On と同じ数の描画）
-        assert(CountDirectDraws(commandList) == baseline.DirectDraws);
-        assert(commandList.IndirectDraws.size() == baseline.IndirectDraws);
-        // GBuffer の描画は線のパイプライン。ID のラスタは塗りの 3 種のまま
+        // GBufferPass・MegaGeometryPass は GBuffer へ描き続ける。ID のラスタは何も描かない（解決を使わない On より ID の描画の分だけ少ない）
+        assert(CountDirectDraws(commandList) == SceneGBufferDirectDraws);
+        assert(commandList.IndirectDraws.size() == baseline.IndirectDraws - 2);
+        assert(!scene.Raster.GetRecordTable());
+        // GBuffer の描画は線のパイプライン。塗りのパイプラインは ID のラスタのものだけなので、使われない
         assert(CountGraphicsPipelineSets(commandList, RHI::PolygonMode::Line) > 0);
-        assert(CountGraphicsPipelineSets(commandList, RHI::PolygonMode::Fill) >= 3);
+        assert(CountGraphicsPipelineSets(commandList, RHI::PolygonMode::Fill) == 0);
 
         ShutdownVisibilityRasterScene(scene);
     }
@@ -4102,7 +4108,7 @@ namespace
     }
 
     // SceneView の配線: On だけが解決のパスを足し、GBufferPass・MegaGeometryPass の描画を止める。
-    // Off（既定）は従来のまま、Debug は今の GBuffer の描画を残して ID の検証表示だけを足す
+    // Off は従来の GBuffer の描画だけ（予備の経路と同じ）、Debug は今の GBuffer の描画を残して ID の検証表示だけを足す
     void TestSceneViewWiresVisibilityResolveOnlyForOnMode()
     {
         struct ModeExpectation
@@ -4134,6 +4140,9 @@ namespace
             assert(gbuffer->GetVisibilityResolvePass() == resolvePass);
             assert(mega->GetVisibilityResolvePass() == resolvePass);
             assert((sceneView.FindPass("VisibilityRasterPass") != nullptr) == (expectation.Mode != VisibilityBufferMode::Off));
+            // ID のラスタは、解決が使えず予備へ戻るフレームを描かないために解決へ問い合わせる（Debug は解決が無いので問い合わせない）
+            const auto* rasterPass = static_cast<const VisibilityRasterPass*>(sceneView.FindPass("VisibilityRasterPass"));
+            assert(rasterPass == nullptr || rasterPass->GetResolvePass() == resolvePass);
 
             // 材質のタイル分類: 解決を使う On だけ有効（debug は足しても無効のまま。既定の描画は変えない）。
             // 解決はこの分類を読むので、描画のパスの後・解決の前に並び、解決へ分類が渡される

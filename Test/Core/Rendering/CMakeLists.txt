@@ -593,36 +593,37 @@ register_rendering_gpu_test(
     --capture-source=gbuffer-velocity
     --scenario=skinned-motion)
 
-# ビジビリティバッファ（--visibility-buffer=on）でも同じ速度の検証を通す。GBuffer.Velocity を幾何の解決（visbuffer_resolve.comp）が
-# 書くので、静止・カメラ・物体・スキニングの動きの符号と大きさが、ラスタの経路と同じ期待値を満たすこと。
+# 上の既定（ビジビリティバッファの On。GBuffer.Velocity を幾何の解決 visbuffer_resolve.comp が書く）に加えて、予備の経路
+# （--visibility-buffer=off。装置が対応しないときに戻る GBuffer のラスタ）でも同じ速度の検証を通す。
+# 静止・カメラ・物体・スキニングの動きの符号と大きさが、どちらの経路でも同じ期待値を満たすこと。
 register_rendering_gpu_test(
-    RenderingVelocityStaticVisibilityBufferVulkanTest
+    RenderingVelocityStaticGBufferFallbackVulkanTest
     RenderingVelocityVulkanTest
     --scene=indoor
     --capture-source=gbuffer-velocity
     --scenario=static
-    --visibility-buffer=on)
+    --visibility-buffer=off)
 register_rendering_gpu_test(
-    RenderingVelocityMotionVisibilityBufferVulkanTest
+    RenderingVelocityMotionGBufferFallbackVulkanTest
     RenderingVelocityVulkanTest
     --scene=outdoor
     --capture-source=gbuffer-velocity
     --scenario=camera-object-motion
-    --visibility-buffer=on)
+    --visibility-buffer=off)
 register_rendering_gpu_test(
-    RenderingVelocityObjectVisibilityBufferVulkanTest
+    RenderingVelocityObjectGBufferFallbackVulkanTest
     RenderingVelocityVulkanTest
     --scene=outdoor
     --capture-source=gbuffer-velocity
     --scenario=object-motion
-    --visibility-buffer=on)
+    --visibility-buffer=off)
 register_rendering_gpu_test(
-    RenderingVelocitySkinnedVisibilityBufferVulkanTest
+    RenderingVelocitySkinnedGBufferFallbackVulkanTest
     RenderingVelocityVulkanTest
     --scene=outdoor
     --capture-source=gbuffer-velocity
     --scenario=skinned-motion
-    --visibility-buffer=on)
+    --visibility-buffer=off)
 
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp

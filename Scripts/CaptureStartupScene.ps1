@@ -177,10 +177,11 @@ param(
     # 各撮影のログの GEOMETRY_PAGES_STREAMED・GEOMETRY_PAGES を metrics.json の geometry_pages へ書く。
     [ValidateSet('On', 'Off')]
     [string]$GeometryStreaming = 'On',
-    # ビジビリティバッファ（既定は Off）。On は不透明の描画のすべてを、今の GBuffer の描画に加えて VisBuffer.Id と GBuffer.Depth へ描く
-    # （--visibility-buffer=on。見た目は変わらない）。Debug は On に加えて、ID を色にして画面へ表示する（--visibility-buffer=debug。検証用）。
+    # ビジビリティバッファ（既定は On）。On は不透明の描画のすべてを VisBuffer.Id と GBuffer.Depth へ描き、幾何の解決が GBuffer を書く
+    # （--visibility-buffer=on。装置が対応しないときは GBuffer の描画へ戻る）。Off は GBuffer の描画だけ（--visibility-buffer=off。予備の経路の確認用）。
+    # Debug は GBuffer の描画に加えて ID も描き、ID を色にして画面へ表示する（--visibility-buffer=debug。検証用）。
     [ValidateSet('Off', 'On', 'Debug')]
-    [string]$VisibilityBuffer = 'Off',
+    [string]$VisibilityBuffer = 'On',
     # GBuffer の検証表示（既定は Off）。Normal・Velocity・Depth・Albedo・Material は最後のシーンの色を GBuffer の法線・速度・深度・アルベド・材質の色で置き換える
     # （環境変数 NORVES_GBUFFER_DEBUG。統計が有効な Debug・RelWithDebInfo だけ）。-VisibilityBuffer On と Off で同じ値を撮り比べる用。
     [ValidateSet('Off', 'Normal', 'Velocity', 'Depth', 'Albedo', 'Material')]
@@ -819,11 +820,8 @@ foreach ($view in $shots)
     {
         $arguments += '--geometry-streaming=off'
     }
-    # ビジビリティバッファは既定で無効なので、On・Debug のときだけ引数を渡す。
-    if ($VisibilityBuffer -ne 'Off')
-    {
-        $arguments += "--visibility-buffer=$($VisibilityBuffer.ToLowerInvariant())"
-    }
+    # ビジビリティバッファは既定で有効だが、撮影の条件を明示するため、どのモードでも引数を渡す。
+    $arguments += "--visibility-buffer=$($VisibilityBuffer.ToLowerInvariant())"
     # デバッグの表示は既定が Normal なので、Clusters・Lod・Wireframe のときだけ引数を渡す。
     if ($DebugView -ne 'Normal')
     {
