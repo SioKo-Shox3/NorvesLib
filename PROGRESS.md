@@ -961,3 +961,10 @@
 - 画像（移行前 `VTG5-MEGA-POOL-MIGRATE` との画素比較）: default 100 dB（不一致 0 画素）、low 100 dB（0 画素）、near 60.7 dB（99,874 画素が差を持つが最大差 18・差が 8 を超えるのは 5 画素だけで、差は石畳の球の面全体の微小な揺れ）。near は段 5 の BVH（節の遮蔽）以降、移行前との差が前より大きい（以前は 83〜92 dB）。near.png を開いて欠け・穴・ちらつきが無いことを確認した。まとめた版の A と B の比較は default 105.6・near 103.5・low 104.8 dB。平均輝度は 124.173 / 123.952 / 126.022 で移行前と同じ。
 - 検証: `verify-VTG5-BATCHED-CULL-1.txt`（Debug の Game・3 テストのビルド BUILD_EXIT_CODE=0）、`-2.txt`（ctest 4/4 pass）、`-3-build-rwdi.txt`（RelWithDebInfo の Game 0）、`-4-capture.txt`・`-5-captureB.txt`（撮影 2 回 pass）、`-6-compare.txt`。
 - Notes: (1) near の移行前との PSNR の低下は、BVH 導入後のカリングの違い（節単位の遮蔽）と TAA・RTGI の揺れが重なったものと見る。最大差 18 で見た目の退行ではないと判断（既知の限界として記録）。 (2) 次は TASKS.md の先頭の未完を参照。
+
+## 反復 2（run 20261005-154938）: VTG5-PAGE-REQUEST 差し戻し対応（done）
+- 評価者の指摘（反復 4）: 複数のビューが同じフレームに要求を書くと、共有の要求のスロットの表の版を後のビューが上書きし、先のビューが解放前の表で書いた要求が、読み戻しで再利用後の別のメッシュへ解決される。
+- 修正: `GeometryPageRequestRing::SetCurrentTableVersion` を、スロットごとに呼ばれた版のうち最も古いものを残す形にした（`Slot::bTableVersionSet`。BeginFrame で初期化）。古い版ほど後の割り当ての範囲を棄却するので安全側で、棄却された要求は次のフレームで書き直される。
+- 試験: `MegaGeometryResourcesTest` に `TestRequestRingKeepsOldestTableVersionAcrossViews` を足した。RenderResources の公開経路（BeginRetireFrame → ビューAが版を渡して要求を書く → メッシュの解放と範囲の再割り当て → ビューBが新しい版を渡す → CommitRetireFrame → 2フレーム後の BeginRetireFrame で TakePageRequests）を通し、読み戻した要求の版がビューAの版のままで、`ResolvePageTableIndex` が再利用後のメッシュへ解決しないことを確かめる（ビューBの版で引き直すと再利用後のメッシュに当たることも確かめ、上書きが起きた場合の取り違えを示す）。
+- 検証: `verify-VTG5-PAGE-REQUEST-1-build.txt`（Debug の Game・MegaGeometryResourcesTest・RHITextureUpdateVulkanTest・RenderGraphCompileTest、BUILD_EXIT_CODE=0。最初の実行は Git Bash が `/m:1` を変換して失敗したので PowerShell で回し直した）、`-2-ctest.txt`（3/3 passed、CTEST_EXIT_CODE=0）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。シェーダーは変えていない。
+- Notes: 次は TASKS.md の先頭の未完（VTG5-PAGE-STREAMER の続き）。

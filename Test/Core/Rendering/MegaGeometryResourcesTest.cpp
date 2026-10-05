@@ -2539,6 +2539,77 @@ namespace
         assert(meshId == anotherHandle.Id && pageId == 0);
     }
 
+    // 同じフレームの複数のビューが共有の要求のバッファへ書き、その間にメッシュを解放して範囲が再利用されても、
+    // 2フレーム後の読み戻しで先のビューの要求が再利用後の別のメッシュへ解決されない（リングの版は最も古いものが残る）
+    void TestRequestRingKeepsOldestTableVersionAcrossViews()
+    {
+        namespace Mega = NorvesLib::Core::Rendering::MegaGeometry;
+        SyntheticBvhMesh mesh;
+        BuildSyntheticQuadtreeMesh(mesh);
+        AssignSyntheticPages(mesh.CreateInfo);
+
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(InitializeWithSmallPool(manager, device));
+        const auto handle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
+        assert(handle.IsValid());
+        const auto *gpuData = manager.MegaGeometry().GetMegaMeshGPUData(handle);
+        assert(gpuData != nullptr && gpuData->PageTableBase == 0 && gpuData->PageCount == 86);
+        const uint32_t requestedIndex = gpuData->PageTableBase;
+
+        uint64_t version = ~0ull;
+        Container::VariableArray<Mega::GeometryPageTable::Entry> entries;
+
+        // フレーム1: ビューAが解放前の表の版で、メッシュの 0 番のページを要求する
+        manager.BeginRetireFrame(0);
+        auto requestBuffer = manager.MegaGeometry().GetCurrentPageRequestBuffer();
+        assert(requestBuffer && manager.MegaGeometry().GetCurrentPageRequestCapacity() > 0);
+        assert(manager.MegaGeometry().CopyPageTableIfChanged(version, entries));
+        const uint64_t versionOfViewA = version;
+        manager.MegaGeometry().SetCurrentPageTableVersion(versionOfViewA);
+        auto *words = static_cast<uint32_t *>(requestBuffer->Map(0, 0));
+        assert(words != nullptr);
+        words[Mega::GeometryPageRequestBuffer::HeaderWords] = requestedIndex;
+        words[Mega::GeometryPageRequestBuffer::CountWord] = 1;
+
+        // 同じフレームの途中でメッシュを解放し、同じ範囲を別のメッシュへ割り当てる
+        manager.MegaGeometry().ReleaseMegaMesh(handle);
+        MeshFixture another("RequestRingReuse");
+        const auto anotherHandle = manager.MegaGeometry().CreateMegaMesh(another.CreateInfo);
+        assert(anotherHandle.IsValid());
+        const auto *anotherData = manager.MegaGeometry().GetMegaMeshGPUData(anotherHandle);
+        assert(anotherData != nullptr && anotherData->PageTableBase == 0);
+
+        // ビューBはその後の表を同期して版を渡す（共有のスロットの版を上書きしてはならない）
+        assert(manager.MegaGeometry().CopyPageTableIfChanged(version, entries));
+        const uint64_t versionOfViewB = version;
+        assert(versionOfViewB > versionOfViewA);
+        manager.MegaGeometry().SetCurrentPageTableVersion(versionOfViewB);
+        manager.CommitRetireFrame(1);
+
+        // フレーム2・3: 提出が完了し、書いたフレームから2フレーム経つと読み戻される
+        manager.BeginRetireFrame(1);
+        Mega::GeometryPageRequestSet early;
+        assert(!manager.MegaGeometry().TakePageRequests(early));
+        manager.CommitRetireFrame(2);
+        manager.BeginRetireFrame(2);
+        Mega::GeometryPageRequestSet taken;
+        assert(manager.MegaGeometry().TakePageRequests(taken));
+        assert(taken.GetRequests().size() == 1);
+        const auto &request = taken.GetRequests()[0];
+        assert(request.TableIndex == requestedIndex);
+        assert(request.TableVersion == versionOfViewA);
+
+        // 解放前の表を見て書かれた要求は、再利用後のメッシュへ解決されない
+        uint64_t meshId = 0;
+        uint32_t pageId = 0;
+        assert(!manager.MegaGeometry().ResolvePageTableIndex(request.TableIndex, request.TableVersion, meshId, pageId));
+        // ビューBの版で引き直すと、再利用後のメッシュに当たる（上書きされていれば起きた取り違え）
+        assert(manager.MegaGeometry().ResolvePageTableIndex(request.TableIndex, versionOfViewB, meshId, pageId));
+        assert(meshId == anotherHandle.Id);
+        manager.CommitRetireFrame(3);
+    }
+
     // 親子の関係を決められないグループのページは固定され、ストアが非常駐にしない（同じ値のグループが別のページにある場合）
     void TestStorePinsAmbiguousChildPages()
     {
@@ -3136,6 +3207,7 @@ int main()
     TestPageLinksAndMissingChildFallback();
     TestStorePinsAmbiguousChildPages();
     TestStoreAllocatesPageTableRangesAndUploadsPageLinks();
+    TestRequestRingKeepsOldestTableVersionAcrossViews();
     TestSharedHandleCounter();
     // バッファの作成はプールの塊の1回だけ（頂点・インデックス・クラスタのバッファは作らない）
     TestCreateFailureDoesNotRegister(1);

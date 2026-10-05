@@ -147,6 +147,7 @@ namespace NorvesLib::Core::Rendering
                     slot.State = SlotState::Recording;
                     slot.Frame = acquireFrame;
                     slot.TableVersion = 0;
+                    slot.bTableVersionSet = false;
                     m_CurrentSlot = i;
                     ++m_Stats.FramesRecorded;
                     return;
@@ -200,13 +201,20 @@ namespace NorvesLib::Core::Rendering
          *
          * 読み戻した要求は、この版の表の位置を指す。位置の範囲が後で別のメッシュに再利用されたかを、
          * 集計した要求の版と比べて見分けるのに使う。獲得できなかったフレームでは何もしない。
+         *
+         * 1 つのフレームで複数のビューが呼ぶと、バッファは共有なので、先のビューの要求も後のビューの要求も
+         * 同じスロットに混ざる。後の版で上書きすると、先のビューが古い表で書いた要求が、その間に解放・再割り当てされた
+         * 範囲の別のメッシュへ解決されてしまう。そこで呼ばれた版のうち最も古いものを残す
+         * （古い版ほど、その後に割り当てられた範囲の要求を多く棄却する。棄却された要求は次のフレームで書き直される）。
          */
         void SetCurrentTableVersion(uint64_t tableVersion)
         {
             Thread::ScopedLock lock(m_Mutex);
             if (m_CurrentSlot != InvalidSlot)
             {
-                m_Slots[m_CurrentSlot].TableVersion = tableVersion;
+                Slot &slot = m_Slots[m_CurrentSlot];
+                slot.TableVersion = slot.bTableVersionSet ? std::min(slot.TableVersion, tableVersion) : tableVersion;
+                slot.bTableVersionSet = true;
             }
         }
 
@@ -298,6 +306,8 @@ namespace NorvesLib::Core::Rendering
             uint64_t Serial = 0;
             // このフレームのシェーダーが見たページの表の版（0 は未設定。どの範囲の割り当ても 0 より後なので全て棄却される）
             uint64_t TableVersion = 0;
+            // このフレームで SetCurrentTableVersion が呼ばれたか（最初の呼び出しだけ、そのまま採る）
+            bool bTableVersionSet = false;
         };
 
         static constexpr uint32_t InvalidSlot = 0xFFFFFFFFu;
