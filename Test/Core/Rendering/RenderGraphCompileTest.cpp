@@ -4290,10 +4290,16 @@ namespace
                                         uint32_t frameCount = 1,
                                         MegaProxyScript script = nullptr,
                                         Container::VariableArray<MegaVisibilityFrameRecord> *outVisibilityFrames = nullptr,
-                                        bool bSeparateMaterials = false)
+                                        bool bSeparateMaterials = false,
+                                        bool bSkipGBufferDraw = false)
     {
         auto device = RHI::MakeShared<FakeDevice>();
         device->EnableMegaGeometryBatchCapabilities();
+        if (bSkipGBufferDraw)
+        {
+            // 幾何の解決に対応する装置（頂点のデバイスアドレス・拡張形式の storage image）
+            device->EnableVisibilityResolveCapabilities();
+        }
 
         ShaderManager shaderManager;
         assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
@@ -4391,6 +4397,7 @@ namespace
         context.SnapshotMegaGeometryProxies = &proxies;
 
         MegaGeometryPass megaGeometryPass;
+        megaGeometryPass.SetSkipGBufferDraw(bSkipGBufferDraw);
         assert(megaGeometryPass.Initialize(context));
         megaGeometryPass.Setup(context);
 
@@ -4572,6 +4579,32 @@ namespace
         assert(commandList.IndirectDraws[0].MaxDrawCount == 2);
         assert(commandList.IndirectDraws[1].OffsetBytes == 2 * 20);
         assert(commandList.IndirectDraws[1].MaxDrawCount == 2);
+    }
+
+    // 幾何の解決が GBuffer を書くとき（SetSkipGBufferDraw）、MegaGeometryPass は描画の呼び出しだけを省き、
+    // 2 パスの並び（1 パス目のカリング → render pass → HZB → 2 パス目のカリング → render pass）は保つ。
+    // 1 パス目の深度は GBuffer に入らないので HZB は空の深度（1.0 で消した値のまま）から作られ、2 パス目の遮蔽の判定は
+    // 何も隠さない（隠れていない側＝描く側に倒れる）。見える物は欠けず、判定が甘くなるだけ。
+    // 順序の組み直し（ID の深度を HZB の元にする）は VTG6-DEFAULT-ON
+    void TestMegaGeometrySkipGBufferDrawKeepsTwoPassOrderWithoutDraws()
+    {
+        FakeCommandList commandList;
+        RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 1, nullptr, nullptr, false, true);
+
+        // render pass は 2 回開き閉じるが、描画の呼び出し（間接描画・直接描画）は 0 回
+        assert(commandList.BeginRenderPassCount == 2);
+        assert(commandList.EndRenderPassCount == 2);
+        assert(commandList.IndirectDraws.empty());
+        assert(commandList.DrawCallCount == 0);
+
+        // 並び: [1パス目のカリング] [render pass: 空] [HZBの各ミップ（Dispatchだけ 7 段）] [2パス目のカリング] [render pass: 空]
+        const auto &sequence = commandList.CallSequence;
+        const char expected[] = {'D', 'B', 'E', 'D', 'D', 'D', 'D', 'D', 'D', 'D', 'D', 'B', 'E'};
+        assert(sequence.size() == sizeof(expected));
+        for (size_t i = 0; i < sizeof(expected); ++i)
+        {
+            assert(sequence[i] == expected[i]);
+        }
     }
 
     // 深度の範囲が 0〜1 でないと、保存される深度は NDC の深度と一致せず HZB の判定が成り立たないので、従来の経路で描く
@@ -8741,6 +8774,7 @@ int main()
     TestMegaGeometryRecordFrameCommandSplitsSectionsByMaterial();
     TestMegaGeometryRecordFrameCommandWritesInstanceTable();
     TestMegaGeometryRecordFrameCommandRecordsTwoPassOcclusion();
+    TestMegaGeometrySkipGBufferDrawKeepsTwoPassOrderWithoutDraws();
     TestMegaGeometryTwoPassFallsBackWhenDepthRangeIsNotUnit();
     TestMegaGeometryTwoPassDiscardsVisibilityOnReaddAndComponentChange();
     TestMegaGeometryTwoPassDiscardsVisibilityWhenAllInstancesVanish();
