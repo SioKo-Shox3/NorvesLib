@@ -867,3 +867,25 @@
 - 結果（pass1/pass2_tested/pass2_drawn/occluded）: (1) near・low は全サンプルが移行前と完全一致（near 2423/2525/5/98 … 2873/2979/18/89、low 1752/1793/7/34 … 1760/1793/0/37）。(2) default は先頭の 4 サンプル（0/416/416/0, 2315/2322/0/7, 2673/2680/0/7, 2673/2680/0/7）が移行前・新実装の全ランで一致し、`occluded=7` は全サンプル・全ランで不変。差は読み込みの落ち着き後の末尾 1〜2 サンプルだけで、新実装の 3 回の追加ランは `2673/2680/0/7 → 2672/2679/0/7`、`2673/2681/1/7 → 2672/2679/0/7`、`2671/2678/0/7 → 2671/2678/0/7`（最後は移行前と同じ）。つまり新実装のラン間でも ±1〜3 のばらつきがあり、移行前の実装も別ラン（VTG4-BIG-SPHERE-COOK の 2670/2677/0、VTG4-POLYHAVEN-MODELS の 2673/2681/1 ほか）で同じ範囲・同じ形（pass2_drawn が 0〜2）を示す。原因は特定していない（落ち着き後の可視ビットの引き継ぎが前フレームの結果に依存するためのタイミング差と推定）が、移行前の実装にも同じ幅があるので、この変更による退行とは言えない。
 - 画像（再掲）: default 107.776 dB・near 92.017 dB・low 完全一致（`verify-VTG5-BATCHED-CULL-5-compare.txt`）。
 - Notes: (1) 次は VTG5-BATCHED-CULL-PERF。 (2) near の新実装は中ほどの 1 サンプル（2895/2992/0/97）が出ていない（そのフレームでは統計の枠が保留状態でなかった）が、出ているサンプルは移行前の列と同じ値。
+
+
+## 反復 3（run 20261005-114343）: VTG5-BATCHED-CULL-PERF（done）
+- 測定: まとめたカリングの後の版（作業ツリー）を RelWithDebInfo で、`-ViewNames default -GpuTimingFrames 400`（窓 340 フレーム）で測った。300 個は `-ExtraGameArguments --stress-mega-instances=300`（ログに `STRESS_MEGA_INSTANCES_PLACED count=300 sources=3`、`MEGA_OCCLUSION` の pass2_tested が約 2.7 千 → 約 17 万クラスタ）。CPU の記録の時間はトレースの `MegaGeometryPass.RecordFrameCommand`（描画フレームごとに 1 行）。
+- 結果:
+
+| 項目 | 既定（起動画面の数個） | 300 個 | 比 |
+|---|---|---|---|
+| RecordFrameCommand の CPU 時間 中央値 | 0.072 ms | 0.104 ms | 1.44 倍 |
+| 同 平均 | 0.0726 ms | 0.1161 ms | 1.60 倍 |
+| 同 95 パーセンタイル | 0.092 ms | 0.204 ms | 2.22 倍 |
+| 同 最大 | 0.162 ms | 0.268 ms | 1.65 倍 |
+| MegaGeometryPass の GPU 時間 中央値 | 0.230 ms | 1.907 ms | 8.3 倍 |
+| 　うち Cull1 / Cull2 | 0.034 / 0.017 ms | 0.244 / 0.186 ms | |
+| 　うち Draw1 / Draw2 | 0.122 / 0.004 ms | 1.433 / 0.007 ms | |
+| FrameGPU 中央値 | 2.808 ms | 5.782 ms | |
+
+- 判定: CPU の記録の時間は 300 個でも既定の 1.44 倍（中央値・平均 1.6 倍以内）で、2 倍以内に収まる。インスタンスは 100 倍に増えているので、記録の時間は個数に比例しない（stop-when には当たらない）。95 パーセンタイルだけ 2.22 倍だが、絶対値は 0.2 ms で、判定の対象は中央値。
+- GPU 時間（記録のみ）: 既定の `MegaGeometryPass` は 0.230 ms で、段 3 の受入れの 0.223 ms と同程度（差 0.007 ms。まとめる前後の比較ではなく、段 3 の値との並置）。300 個は 1.907 ms で、描画（Draw1）が 1.433 ms を占める。300 個の岩・小屋を同じ格子で数万〜十数万クラスタとして描く負荷で、VTG5-STRESS-GEOMETRY の前の簡易な測定。
+- 変更: `Scripts/CaptureStartupScene.ps1` が、トレースの `MegaGeometryPass.RecordFrameCommand` の窓の統計を `mega_record_cpu_ms`（metrics.json）と `mega_record_cpu` 行（標準出力）へ書くようにした。Game は触っていない（`--stress-mega-instances` は前の反復で追加済み。既定の描画は変わらない）。
+- 検証: `verify-VTG5-BATCHED-CULL-PERF-1.txt`（RelWithDebInfo の Game ビルド BUILD_EXIT_CODE=0）、`-2.txt`（既定の撮影・GPU 計測 result=pass）、`-3-stress300.txt`（300 個。result=pass）。撮影の出力は `.harness/runs/startup-capture/VTG5-BATCHED-CULL-PERF{,-stress300}/`。numstat は `git diff` と `--ignore-cr-at-eol` で一致（Scripts は +36）。
+- Notes: (1) GPU 時間は RelWithDebInfo の計測（Release は統計が無効）。(2) 次は TASKS.md の先頭の未完を参照。VTG5-BATCHED-CULL は評価者の 2 周の差し戻しで `blocked`（`blocked/VTG5-BATCHED-CULL.md`。人の判断待ち）のまま。

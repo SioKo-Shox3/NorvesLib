@@ -36,6 +36,9 @@
 # 最後の (-GpuTimingFrames − 60) フレーム（撮影のフレームの直前2つを除く）の中央値・95 パーセンタイル・最大と、
 # パスごとの中央値を gpu_timing として metrics.json へ書く。予算を超えたフレームはパスごとの時間と
 # 中央値からの増分を over_budget_frames に書く。
+# 同じトレースの Type=Scope の行のうち MegaGeometryPass.RecordFrameCommand（MegaGeometryPass が描画フレームごとに
+# 記録するコマンドの CPU 時間）も、同じ窓の中央値・平均・95 パーセンタイル・最大を mega_record_cpu_ms として書く
+# （MegaGeometry のインスタンス数への依存を見る。インスタンスを増やすのは -ExtraGameArguments --stress-mega-instances=300）。
 # タイムスタンプは統計が有効な構成（Debug・RelWithDebInfo）だけで取れるため、Release とは併用しない。
 # 予算（-GpuFrameBudgetMs、既定 16.6 ms）を超えても失敗にはせず、窓のどれかのフレームが超えたら
 # within_budget=false と書く（95 パーセンタイルの判定は p95_within_budget）。
@@ -977,8 +980,19 @@ foreach ($view in $shots)
             $durationColumn = [array]::IndexOf($header, 'DurationMs')
             $cpuRows = New-Object System.Collections.Generic.List[double]
             $gpuScopesByFrame = New-Object 'System.Collections.Generic.SortedDictionary[long,object]'
+            $megaRecordRows = New-Object System.Collections.Generic.List[double]
             foreach ($line in [IO.File]::ReadLines($tracePath))
             {
+                if ($line.StartsWith('Scope,'))
+                {
+                    # MegaGeometryPass の CPU の記録の時間（描画フレームごとに1行）
+                    if ($line.Contains('"MegaGeometryPass.RecordFrameCommand"'))
+                    {
+                        $scopeFields = $line -split ','
+                        $megaRecordRows.Add([double]::Parse($scopeFields[$durationColumn], $invariant))
+                    }
+                    continue
+                }
                 if ($line.StartsWith('Frame,'))
                 {
                     $fields = $line -split ','
@@ -1020,6 +1034,22 @@ foreach ($view in $shots)
                 }
             }
             $gpuSamples = @($gpuWindow | ForEach-Object { $gpuFrameMs[$_] } | Sort-Object)
+            # MegaGeometryPass の CPU の記録の時間も、撮影のフレームの直前2つを除いた最後の窓で集める。
+            $megaRecordArray = $megaRecordRows.ToArray()
+            $megaRecordUsable = if ($megaRecordArray.Count -gt 2) { @($megaRecordArray[0..($megaRecordArray.Count - 3)]) } else { @() }
+            $megaRecordWindow = if ($megaRecordUsable.Count -gt $windowCount) { @($megaRecordUsable[($megaRecordUsable.Count - $windowCount)..($megaRecordUsable.Count - 1)]) } else { $megaRecordUsable }
+            $megaRecordSamples = @($megaRecordWindow | Sort-Object)
+            $megaRecordCpu = $null
+            if ($megaRecordSamples.Count -gt 0)
+            {
+                $megaRecordCpu = [ordered]@{
+                    samples = $megaRecordSamples.Count
+                    median = [math]::Round($megaRecordSamples[[int][math]::Floor(($megaRecordSamples.Count - 1) * 0.5)], 4)
+                    mean = [math]::Round(($megaRecordSamples | Measure-Object -Average).Average, 4)
+                    p95 = [math]::Round($megaRecordSamples[[int][math]::Floor(($megaRecordSamples.Count - 1) * 0.95)], 4)
+                    max = [math]::Round($megaRecordSamples[$megaRecordSamples.Count - 1], 4)
+                }
+            }
             if ($gpuSamples.Count -lt [math]::Min(50, $windowCount))
             {
                 $failures += "$($view.Name): GPU のフレーム時間の標本が足りない（$($gpuSamples.Count) 件。統計が無効な構成か、GPU のタイムスタンプが使えない）"
@@ -1075,6 +1105,7 @@ foreach ($view in $shots)
                     gpu_frame_ms_p95 = [math]::Round($p95, 3)
                     gpu_frame_ms_max = [math]::Round($maximum, 3)
                     cpu_frame_ms_median = if ($null -ne $cpuMedian) { [math]::Round($cpuMedian, 3) } else { $null }
+                    mega_record_cpu_ms = $megaRecordCpu
                     budget_ms = $GpuFrameBudgetMs
                     # 窓のすべてのフレームが予算以内か（95 パーセンタイルだけで判定しない）。
                     within_budget = ($maximum -le $GpuFrameBudgetMs)
@@ -1087,6 +1118,11 @@ foreach ($view in $shots)
                 Write-Output ("CAPTURE_STARTUP_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} budget_ms={7} within_budget={8} over_budget_count={9}" -f `
                     $timing.view, $timing.frames, $timing.gpu_frame_ms_median, $timing.gpu_frame_ms_mean, $timing.gpu_frame_ms_p95,
                     $timing.gpu_frame_ms_max, $timing.cpu_frame_ms_median, $timing.budget_ms, $timing.within_budget, $timing.over_budget_count)
+                if ($null -ne $megaRecordCpu)
+                {
+                    Write-Output ("CAPTURE_STARTUP_SCENE mega_record_cpu view={0} samples={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5}" -f `
+                        $timing.view, $megaRecordCpu.samples, $megaRecordCpu.median, $megaRecordCpu.mean, $megaRecordCpu.p95, $megaRecordCpu.max)
+                }
                 Write-Output ("CAPTURE_STARTUP_SCENE gpu_pass_median view={0} {1}" -f $timing.view,
                     (($passMedianList | Select-Object -First 8 | ForEach-Object { "$($_.pass)=$($_.median_ms)" }) -join ' '))
                 foreach ($over in $overBudgetFrames)

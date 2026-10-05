@@ -459,7 +459,7 @@
 - notes: 危険地帯（描画パス・RT・寿命）。手続きの `ProceduralMeshGpuStore` はこの段では移さない。
 
 ## VTG5-BATCHED-CULL: MegaGeometryのインスタンスをまとめて1回のカリングと材質ごとの間接描画にする
-- status: done
+- status: blocked
 - done-when: MegaGeometry の全インスタンスの表（変換・前のフレームの変換・メッシュ・材質の番号）を1つの storage buffer に置き、カリング（2パスの遮蔽を含む）を1回の dispatch（1パスにつき）で全インスタンスに掛ける。描画は材質ごとの区間に分けた間接描画の列（材質の数だけ `DrawIndexedIndirectCount`）にし、インスタンスごとの 1.25 MB の IndirectDraw のバッファをやめる。`MEGA_OCCLUSION` の数と `-Deterministic` の撮影が移行前と一致する（PSNR を記録）。（CPU の記録の時間・GPU 時間の計測は VTG5-BATCHED-CULL-PERF へ分けた。）
 - verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RenderGraphCompileTest ViewportSnapshotDebugWiringTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest|MegaGeometryFrameCommandDebugModeTest|HiZOcclusionTestVulkanTest)$"`
@@ -471,7 +471,7 @@
 
 
 ## VTG5-BATCHED-CULL-PERF: まとめたカリングのCPUの記録の時間とGPU時間を測る
-- status: todo
+- status: done
 - done-when: まとめたカリングの後の版で、`MegaGeometryPass` の CPU の記録の時間（RecordFrameCommand。開発ビルドの計測かログ）と GPU 時間（`-GpuTimingFrames`、RelWithDebInfo）を、MegaGeometry のインスタンスが既定（起動画面の数個）のときと 300 個のとき（撮影スクリプトの引数か一時の起動引数。VTG5-STRESS-GEOMETRY の前なので簡易なものでよい）で測り、`PROGRESS.md` に表で記録する。CPU の記録の時間が、300 個でも既定の2倍以内に収まる（インスタンスの数に比例しない）ことを確かめる。GPU 時間は記録するだけ。段3の受入れの GPU 時間（既定の視点の `MegaGeometryPass` 0.223 ms）と並べる。古い版を checkout して測ることはしない（作業ツリーの版を動かさない）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-BATCHED-CULL-PERF -Configuration RelWithDebInfo -ViewNames default -GpuTimingFrames 400`
