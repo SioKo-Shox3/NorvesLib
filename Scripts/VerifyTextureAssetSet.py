@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import runpy
 
 
 def digest(data: bytes) -> str:
@@ -80,6 +81,8 @@ def run(source: Path, exe: Path, reference: Path, output: Path) -> None:
         if (result.returncode == 0) != success:
             raise ValueError(f"想定と違う終了code: {label}={result.returncode}")
 
+    managed = runpy.run_path(str(Path(__file__).with_name("TextureManagedEvidence.py")))
+    metadata_receipts = {}
     for repeat in (1, 2):
         parent = output / ("native" + str(repeat))
         parent.mkdir()
@@ -90,6 +93,10 @@ def run(source: Path, exe: Path, reference: Path, output: Path) -> None:
             invoke(args, output, case + "-" + str(repeat), True)
             combined.update({case + "/" + name: data for name, data in files(runtime).items()})
         compare(expected, combined)
+        metadata_receipts["native" + str(repeat)] = managed["capture_store"](
+            parent, {case: source / "Assets/AssetSets" / (case + ".json") for case in
+                     ("Rendering3DTestSilverTextures", "Rendering3DTestSilverGltfTextures")},
+            output / "managed" / ("native" + str(repeat)))
 
     fixture = output / "fixture"
     fixture.mkdir()
@@ -190,6 +197,11 @@ $json=$value | ConvertTo-Json -Depth 16
         raise ValueError("検証中に入力または実行fileが変わりました")
     if any(digest((fixture / name).read_bytes()) != value for name, value in image_hashes.items()):
         raise ValueError("検証中にsource imageが変わりました")
+    managed_cli = runpy.run_path(str(Path(__file__).with_name("VerifyManagedTextureCli.py")))
+    managed_cli["run"](exe, output, logs)
+    (output / "managed/summary.json").write_text(json.dumps({"schema": "norves.managed-metadata-summary.v1",
+        "workspaces": {key: {"files": value["files"], "root_names": sorted(value["roots"])}
+                       for key, value in metadata_receipts.items()}}, indent=2) + "\n", encoding="utf-8")
     result = {"schema": "norves.texture-native-acceptance.v1", "asset_cook_sha256": exe_hash, "driver_sha256": digest(Path(__file__).read_bytes()), "feature_sha": os.environ.get("GITHUB_SHA"), "reference_snapshot_sha256": receipt["snapshot_sha256"],
               "reference_files": 10, "repeat_byte_equal": True, "ascii_ps51_equal": True, "runs": runs}
     (output / "verification.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

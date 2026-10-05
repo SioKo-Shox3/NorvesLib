@@ -7,6 +7,8 @@ on:
       - '.github/workflows/windows-assetcook.yml'
       - 'Scripts/AssetCookCliParity.py'
       - 'Scripts/VerifyTextureAssetSet.py'
+      - 'Scripts/TextureManagedEvidence.py'
+      - 'Scripts/VerifyManagedTextureCli.py'
       - 'Docs/AssetCookTextureFrozenBaseline.json'
       - 'Library/**'
       - 'Tools/**'
@@ -131,6 +133,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Texture comparator tests failed' }
           python -B -O Test/Tools/TextureAssetSetVerifyTest.py -q
           if ($LASTEXITCODE -ne 0) { throw 'Optimized texture comparator tests failed' }
+          python -B Test/Tools/TextureManagedEvidenceTest.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Managed metadata verifier tests failed' }
+          python -B -O Test/Tools/TextureManagedEvidenceTest.py -q
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized managed metadata verifier tests failed' }
       - name: 実Coreを含む構成を生成する
         run: |
           cmake -S . -B build/windows-cli -G 'Visual Studio 17 2022' -A x64 -DNORVES_BUILD_TESTS=ON 2>&1 | Tee-Object "$env:NORVES_CI_LOG/configure.log"
@@ -156,7 +162,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Diagnostic byte parity failed' }
       - name: CPU契約を実行する
         run: |
-          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(CookedMeshTest|CookedMeshV1Test|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|StringEmptyTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest|TextureAssetSetOutputTest|ImportStaticIntegrationTest|CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedTransactionIntentTest|CookManagedStoreInitializationTest|CookManagedStoreObservationTest|CookManagedUpdateInventoryTest|CookDestinationLockTest|CookOwnerResolverTest|CookOwnerBindingTest|CookOutputSetGuardTest|CookOutputPlanTest|CookStateFileTest|CookOwnedStateTest|ModelNativePathTest|CookCacheDecisionTest|CookOutputPackageTest|CookDependencySnapshotTest|ImportSettingsFileTest|GltfBufferSetTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
+          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(CookedMeshTest|CookedMeshV1Test|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|StringEmptyTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest|TextureManagedCliTest|TextureAssetSetOutputTest|ImportStaticIntegrationTest|CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedTransactionIntentTest|CookManagedStoreInitializationTest|CookManagedStoreObservationTest|CookManagedUpdateInventoryTest|CookDestinationLockTest|CookOwnerResolverTest|CookOwnerBindingTest|CookOutputSetGuardTest|CookOutputPlanTest|CookStateFileTest|CookOwnedStateTest|ModelNativePathTest|CookCacheDecisionTest|CookOutputPackageTest|CookDependencySnapshotTest|ImportSettingsFileTest|GltfBufferSetTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
           if ($LASTEXITCODE -ne 0) { throw 'CPU contracts failed' }
       - name: 分割後の実CLI出力を採取する
         id: capture
@@ -188,7 +194,9 @@ jobs:
           retention-days: 14
           if-no-files-found: error
           path: |
-            ${{ runner.temp }}/NorvesTextureNative/native1/
+            ${{ runner.temp }}/NorvesTextureNative/native1/Rendering3DTestSilverTextures/
+            ${{ runner.temp }}/NorvesTextureNative/native1/Rendering3DTestSilverGltfTextures/
+            ${{ runner.temp }}/NorvesTextureNative/managed/
             ${{ runner.temp }}/NorvesTextureNative/verification.json
             ${{ runner.temp }}/NorvesTextureNative/ascii-ps51.json
             ${{ runner.temp }}/NorvesTextureNative/ascii-probe/manifest.json

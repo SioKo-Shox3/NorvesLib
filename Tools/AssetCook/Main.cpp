@@ -165,7 +165,8 @@ namespace
     {
         std::cerr
             << "Usage: AssetCook --inspect <model.gltf|model.glb>\n"
-            << "       AssetCook --asset-set <spec.json> --runtime-root <new-directory> [--source-root <directory>] [--manifest <file>]\n"
+            << "       AssetCook --asset-set <spec.json> --runtime-root <new-or-managed-directory> [--source-root <directory>] [--manifest <file>]\n"
+            << "       AssetCook --recover --runtime-root <directory>  (recover fixed pending in parent workspace, including siblings)\n"
             << "       AssetCook --input <file> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind raw --entry <entry> --entry-type Raw "
             << "--format raw.v0 --variant default\n"
