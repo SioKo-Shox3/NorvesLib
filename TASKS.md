@@ -460,15 +460,24 @@
 
 ## VTG5-BATCHED-CULL: MegaGeometryのインスタンスをまとめて1回のカリングと材質ごとの間接描画にする
 - status: todo
-- done-when: MegaGeometry の全インスタンスの表（変換・前のフレームの変換・メッシュ・材質の番号）を1つの storage buffer に置き、カリング（2パスの遮蔽を含む）を1回の dispatch（1パスにつき）で全インスタンスに掛ける。描画は材質ごとの区間に分けた間接描画の列（材質の数だけ `DrawIndexedIndirectCount`）にし、インスタンスごとの 1.25 MB の IndirectDraw のバッファをやめる。`MEGA_OCCLUSION` の数と `-Deterministic` の撮影が移行前と一致する（PSNR を記録）。CPU のパスの記録の時間（`MegaGeometryPass` の RecordFrameCommand）と、インスタンスを 300 個にした負荷（VTG5-STRESS-GEOMETRY の前に、撮影スクリプトの引数か一時の起動引数で）での GPU 時間の前後を記録する。
+- done-when: MegaGeometry の全インスタンスの表（変換・前のフレームの変換・メッシュ・材質の番号）を1つの storage buffer に置き、カリング（2パスの遮蔽を含む）を1回の dispatch（1パスにつき）で全インスタンスに掛ける。描画は材質ごとの区間に分けた間接描画の列（材質の数だけ `DrawIndexedIndirectCount`）にし、インスタンスごとの 1.25 MB の IndirectDraw のバッファをやめる。`MEGA_OCCLUSION` の数と `-Deterministic` の撮影が移行前と一致する（PSNR を記録）。（CPU の記録の時間・GPU 時間の計測は VTG5-BATCHED-CULL-PERF へ分けた。）
 - verify: `cmake --build build --config Debug --target Game MegaGeometryResourcesTest RenderGraphCompileTest ViewportSnapshotDebugWiringTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MegaGeometryResourcesTest|RenderGraphCompileTest|MegaGeometryFrameCommandDebugModeTest|HiZOcclusionTestVulkanTest)$"`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-BATCHED-CULL -Configuration RelWithDebInfo -Deterministic`
 - stop-when: 2パスの遮蔽の可視ビットの番号の付け方がインスタンスの表と両立しない場合は、理由を記録して止める。
 - paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, Scripts/CaptureStartupScene.ps1, Game, TASKS.md, PROGRESS.md
-- notes: 計画書 4.3。危険地帯（描画パス）。材質の切り替えは段6のビジビリティバッファで不要になるが、それまでは材質ごとの区間で描く。
+- notes: 計画書 4.3。危険地帯（描画パス）。材質の切り替えは段6のビジビリティバッファで不要になるが、それまでは材質ごとの区間で描く。 2026-10-05 親: run `20261005-094208` で反復6が40分の時間切れ、反復7が背景のビルドの完了待ちで終わり、2反復連続で進捗なしになった。途中の変更は `2267b9a6`（作業途中の保存）にあり、親が確かめた時点で Debug の Game・RenderGraphCompileTest・MegaGeometryResourcesTest のビルドと3本のテスト（MegaGeometryResourcesTest・RenderGraphCompileTest・MegaGeometryFrameCommandDebugModeTest）は通る。その上から続け、done-when の残り（`-Deterministic` の撮影と `MEGA_OCCLUSION` の一致）を確かめて閉じる。時間の計測はこの項目でしない。ビルド・撮影はフォアグラウンドで回して完了を待つ（背景で起動して返答を終えると反復がそこで終わる）。
 
+
+## VTG5-BATCHED-CULL-PERF: まとめたカリングのCPUの記録の時間とGPU時間を測る
+- status: todo
+- done-when: まとめたカリングの後の版で、`MegaGeometryPass` の CPU の記録の時間（RecordFrameCommand。開発ビルドの計測かログ）と GPU 時間（`-GpuTimingFrames`、RelWithDebInfo）を、MegaGeometry のインスタンスが既定（起動画面の数個）のときと 300 個のとき（撮影スクリプトの引数か一時の起動引数。VTG5-STRESS-GEOMETRY の前なので簡易なものでよい）で測り、`PROGRESS.md` に表で記録する。CPU の記録の時間が、300 個でも既定の2倍以内に収まる（インスタンスの数に比例しない）ことを確かめる。GPU 時間は記録するだけ。段3の受入れの GPU 時間（既定の視点の `MegaGeometryPass` 0.223 ms）と並べる。古い版を checkout して測ることはしない（作業ツリーの版を動かさない）。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG5-BATCHED-CULL-PERF -Configuration RelWithDebInfo -ViewNames default -GpuTimingFrames 400`
+- stop-when: 300 個で CPU の記録の時間が既定の2倍を超え、原因がまとめ方の不足（インスタンスごとの処理が残っている）なら、測った値と残っている処理を記録して止める。
+- paths: Scripts/CaptureStartupScene.ps1, Game, PROGRESS.md, TASKS.md
+- notes: 2026-10-05 親が VTG5-BATCHED-CULL から分けた（1反復に収まらなかったため）。計測のための一時の起動引数を Game に足すなら、既定の描画は変えない。
 ## VTG5-PAGE-FORMAT: クラスタをページに詰めて焼き、根のページを決める
 - status: todo
 - done-when: クッカーが、階層のクラスタを 128 KiB のページに詰めて NVMESH v1.1 に書く（1つのグループは1つのページに収める。ページは頂点・インデックス・クラスタの記録を自分の中のオフセットで持つ）。ページの表（ファイル内のオフセット・大きさ・親のページの番号）と、常に常駐する根のページ（粗い段とフォールバックの段を含む）の印を持つ。cluster record のページの番号を埋める。v1.0 も読む。`CookedMeshTest` に、ページの表の往復、グループがページをまたがないこと、根のページだけで閉じたメッシュ（フォールバック）が描けること、壊れた表の拒否を足す。`Docs/Architecture/NVMESHv1.md` に追記する。
