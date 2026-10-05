@@ -968,3 +968,12 @@
 - 試験: `MegaGeometryResourcesTest` に `TestRequestRingKeepsOldestTableVersionAcrossViews` を足した。RenderResources の公開経路（BeginRetireFrame → ビューAが版を渡して要求を書く → メッシュの解放と範囲の再割り当て → ビューBが新しい版を渡す → CommitRetireFrame → 2フレーム後の BeginRetireFrame で TakePageRequests）を通し、読み戻した要求の版がビューAの版のままで、`ResolvePageTableIndex` が再利用後のメッシュへ解決しないことを確かめる（ビューBの版で引き直すと再利用後のメッシュに当たることも確かめ、上書きが起きた場合の取り違えを示す）。
 - 検証: `verify-VTG5-PAGE-REQUEST-1-build.txt`（Debug の Game・MegaGeometryResourcesTest・RHITextureUpdateVulkanTest・RenderGraphCompileTest、BUILD_EXIT_CODE=0。最初の実行は Git Bash が `/m:1` を変換して失敗したので PowerShell で回し直した）、`-2-ctest.txt`（3/3 passed、CTEST_EXIT_CODE=0）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。シェーダーは変えていない。
 - Notes: 次は TASKS.md の先頭の未完（VTG5-PAGE-STREAMER の続き）。
+
+## 反復 3（run 20261005-154938）: VTG5-PAGE-STREAMER（done）
+- 現状確認: 前の反復までの途中の変更（`GeometryPageStreamer`・`MegaGeometryResourceStore` の窓口・`CookedMeshPageSource`・`RenderResources` の配線・`--geometry-streaming`・`VRAM_POOLS` の geometry_* ・`GeometryPageStreamerTest` 14 ケース）がすでに HEAD にあり、コードの追加は無し。ビルド・試験・撮影で done-when を確かめた。
+- ストリーマ: 優先度（粗い段 → 要求の数 → 新しさ）、1 フレームの読み・コピーの上限、親が常駐してから子を公開（書き終えてから公開）、根のページは常駐のまま対象外、目標超過は最後に要求されたフレームが古いページから子→親の順に LRU で外す（区画は使っていた提出の完了後に再利用）。目標は `PollVideoMemoryBudget` が Geometry の枠から根の区画を引いて渡す。
+- 撮影（`-Deterministic`、RelWithDebInfo。既定の枠 geometry_target_mb=3649）: ストリーミングあり（既定）は 6 メッシュをページ化し、default で 316 ページ・near で 446 ページが常駐（resident_mb 34.05 / 48.63、evicted 0）。全常駐（`-GeometryStreaming Off` = `--geometry-streaming=off`）との PSNR は default 100 dB（最大差 1）、near 60.74 dB（最大差 18。移行前との比較で記録済みの near の揺れと同じ水準）、low 100 dB（最大差 1）。平均輝度は 3 視点とも 124.173 / 123.952 / 126.022 で一致（目安 45 dB 以上）。
+- 追い出しの実機の確認: `--vram-budget-mb 900`（geometry_target_mb=54）で `geometry_used_mb=54` が目標に収まったまま `geometry_evicted_pages` が増え続けた（`-7`）。800 MB（ページの枠が約 9 MB）は作業集合を大きく下回り入れ替わりが止まらなかった（`-6`）。どちらも撮影が落ち着かず完走しなかったため、追い出し中の画像は未確認（VTG5-STRESS-GEOMETRY で確認する）。
+- 既知の限界: ページの要求は「非常駐の子」にだけ出るので、常駐したページの最後に要求されたフレームは進まず、LRU が読み込んだ順になる。作業集合が目標を少し超えると、使われているページを外して読み直す入れ替わりが続く（既定の枠では起きない）。`TASKS.md` に VTG5-PAGE-TOUCH を積んだ（VTG5-STRESS-GEOMETRY の前）。
+- 検証: `verify-VTG5-PAGE-STREAMER-1-build.txt`（Debug の Game・RenderResourcesDomainContractTest・MegaGeometryResourcesTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（4/4 passed）、`-3-build-rwdi.txt`（RelWithDebInfo の Game 0）、`-4-capture.txt`（既定の撮影 pass）、`-5-capture-off-compare.txt`（全常駐との PSNR）。`-6`・`-7` は狭い予算の撮影（完走せず、上記の記録用）。numstat は `git diff` と `--ignore-cr-at-eol` で一致。
+- Notes: (1) 狭い予算の撮影は落ち着かないとき長くかかるので、Game.exe を止めて切り上げた。 (2) 次は TASKS.md の先頭の未完。
