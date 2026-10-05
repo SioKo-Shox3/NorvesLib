@@ -1,6 +1,6 @@
 ﻿# PROGRESS — NorvesLib
 
-## G2全体の進捗（2026-10-05）
+## G2全体の進捗（2026-10-06）
 
 G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・分離資産・安全な一括増分の実用経路を接続する中盤。小taskの完了数を全体の達成率には換算しない。
 
@@ -9,7 +9,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
 - GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
-- GR83/GR84: 分離骨格資産ローダとBVH取り込みはこれから。
+- GR83/GR84: GR84のBVH raw解析を実Windows CPUで受入済み。姿勢評価/対応づけ/cook、分離骨格資産ローダは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
@@ -886,3 +886,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 raw BVH解析開始。元データの順序/名前/秒/degree値を保持するpure parserから進める。NVSKEL128/256と独立したDecodeLimitsを設定し、変換の可否は後続へ分ける。失敗時は既存out保持、名前は厳密UTF8 byte所有で自動改名しない。root以外の位置channelも捨てず保持する。回転行列/retarget/Blender実測/CLIはこの単位の完了条件に含めない。
 
 - G2/GR84 raw BVH解析の検証準備: 宣言順/親/UTF8名/OFFSET/End Site/生double frame列、有限値・行幅・末尾・明示limit・失敗時out保持を実装。6回転順、混在channel、257関節/深いstack、非BMP/C1、空行、limit境界/不正入力をliteralで追加。2round静的PASS、実2fileのg++ C++23 -Wall -Wextra構文検査、Python12+4+7 normal/-O、BOM/EOL検査PASS。確保故障注入は未実施でnothrow moveをcompile時固定。実Windows42CPU/新markerと既存89byte/managed gateは未確認。raw順序保持を回転行列/retarget受入れとは扱わない。
+
+- G2/GR84 raw BVH解析受入: 9c62d3ba41093d7bfaa7c596bc95b2ac09247ab1 / tree4d6dc722031244dbb6c1f18290cb800629710cf2 / run37356979599 attempt1 job111921766216。42CPU/旧5＋新BVH marker、Bootstrap17/Update29、79+10byte、7smoke/5診断、25+15CLI/metadata12、Python12+4+7 normal/-O、MSVCx64/CNG/3ZIPを照合し親readonly再実行exit0。旧538証拠file保全。raw順序/値の所有だけを受入れ、回転行列/retarget/Blender/CLI/StageB/確保故障注入は未受入れ。次はdoubleのlocal/world FKを独立単位にする。位置channelはOFFSET加算と絶対local置換の解釈が異なるため、必須の明示enumで指定しAutoを設けない。
