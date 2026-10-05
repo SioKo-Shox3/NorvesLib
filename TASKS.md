@@ -568,43 +568,124 @@
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: この段の後、親が main へマージしてプッシュする。
 
-## VTG6-VISBUFFER-RESOURCES: ビジビリティバッファの資源とIDの符号を決める
-- status: backlog
-- done-when: RenderGraph の資源（ID と深度）と、インスタンス・クラスタ・三角形の ID の符号（クラスタ以外の描画の符号を含む）を足す。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RenderGraphCompileTest$"`
-- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 段6の開始時に親が詳しくする（計画書 4.3）。
+## VTG6-RHI-INT-FORMATS: 整数の形式とgeometryShaderの機能をRHIに足す
+- status: todo
+- done-when: `RHI::Format` に R32_UINT と R32G32_UINT を足し、Vulkan の対応表・カラーの添付と storage image の用途・クリアの値（整数）を扱えるようにする。`geometryShader`（frag で `gl_PrimitiveID` を使うため）と `shaderStorageImageExtendedFormats`（RG16F などの storage image のため）を照会し、対応時に有効化して `DeviceCapabilities` に載せる。GPU のテスト `IntegerAttachmentVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER）が、R32_UINT の添付へ frag が `gl_PrimitiveID` と描画の番号から作った値を書き、読み戻して三角形ごとに期待の値になることを確かめる（機能が無ければ理由を出して 125）。
+- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(IntegerAttachmentVulkanTest|RHIBlockCompressedTextureVulkanTest|SparseCapabilitiesVulkanTest)$"`
+- stop-when: 開発機で `geometryShader` を有効にするとデバイスの作成が失敗する場合は、理由を記録して止める。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3（2026-10-05 親が段6の設計を詳しくした: ID は 32bit で「描画の記録の番号 << 7 | 記録の中の三角形の番号」、材質の解決は計算シェーダー、スキニングは計算シェーダーで変形、`geometryShader` の無い GPU では今の GBuffer の経路を予備に残す）。危険地帯（RHI/Vulkan）。
 
-## VTG6-VIS-RASTER: MegaGeometry・手続きメッシュ・スキニングをビジビリティバッファへ描く
-- status: backlog
-- done-when: 不透明のすべての描画が ID と深度を書く。スキニングは計算シェーダーで変形した頂点（今と前フレーム）を描く。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RenderGraphCompileTest$"`
-- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+## VTG6-RASTER-CHUNKS: 手続きメッシュとスキニングを128三角形の塊に分け、頂点を計算シェーダーから読めるようにする
+- status: todo
+- done-when: 手続きメッシュ（`ProceduralMeshGpuStore`）とスキニングのメッシュ（`SkinnedMeshGpuStore`）が、登録時にインデックスを 128 三角形以下の連続した塊（最初のインデックス・数）に分けて持つ（MegaGeometry のクラスタと同じ大きさ。後のビジビリティバッファの ID の「記録の中の三角形の番号」が 7bit に収まる）。手続きメッシュの頂点・インデックスのバッファに storage と BDA の用途を足す（または `GeometryPool` に置く）。CPU のテスト（`MeshResourcesProceduralGpuTest` と `SkinnedRenderPathContractTest` にケースを足す）が、塊が全三角形をちょうど1回ずつ覆い、各塊が 128 以下であることを確かめる。今の描画は変えない（起動画面の撮影が一致する）。
+- verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest SkinnedRenderPathContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MeshResourcesProceduralGpuTest|SkinnedRenderPathContractTest|GeometryPoolAllocatorTest)$"`
+- stop-when: 手続きメッシュのバッファの用途を変えると今の描画の経路の契約が崩れる場合は、理由を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（メモリ・寿命）。
 
-## VTG6-MATERIAL-RESOLVE: 材質の解決パスでGBufferを書く
-- status: backlog
-- done-when: タイルを材質ごとに分類し、重心座標と解析的な微分から UV・法線・接線・ミップを求め、POM を含めて GBuffer（Albedo/Normal/Material/Emissive/Velocity）を書く。VT のフィードバックをここへまとめる。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
-- paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+## VTG6-COMPUTE-SKINNING: 計算シェーダーでスキニングした今と前のフレームの頂点を作る
+- status: todo
+- done-when: スキニングのインスタンスごとに、計算シェーダーが今のフレームのパレットと前のフレームのパレットで頂点（位置・法線・UV）を変形し、フレームごとのバッファ（今・前。storage・BDA）へ書くパスを足す（RenderGraph の資源として宣言し、後のビジビリティバッファのラスタと材質の解決が読む）。今の GBuffer の経路はまだ頂点シェーダーのスキニングのまま。GPU のテスト `ComputeSkinningVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、既知のボーンと重みの頂点で、計算シェーダーの結果が CPU で計算した値（今と前）と一致する（許容 1e-4）ことを確かめる。`RenderingVelocitySkinnedVulkanTest` が通る。
+- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderingVelocityVulkanTest SkinnedRenderPathContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(ComputeSkinningVulkanTest|RenderingVelocitySkinnedVulkanTest|SkinnedRenderPathContractTest)$"`
+- stop-when: 前のフレームのパレットを RenderThread で保持する経路が無く、FramePacket の契約を変える必要がある場合は、理由を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3（スキニングは計算シェーダーで変形してからビジビリティバッファへ描く）。危険地帯（RenderThread・寿命）。
+
+## VTG6-VISBUFFER-RESOURCES: ビジビリティバッファの資源と描画の記録の表を作る
+- status: todo
+- done-when: RenderGraph の資源 `VisBuffer.Id`（R32_UINT、画面の大きさ。深度は `GBuffer.Depth` を共有）と、フレームごとの描画の記録の表（storage buffer。1つの記録が、種類（MegaGeometry のクラスタ・手続きメッシュの塊・スキニングの塊）、インスタンスの番号、頂点・インデックスの基点とアドレス、材質の番号、前のフレームの変換か前のフレームの頂点のアドレスを持つ）を足す。ID は `(記録の番号 << 7) | 記録の中の三角形の番号`、0 は空（画素が何も描かれていない）。ID と記録を作る・読む関数を C++ と GLSL（`Common/VisibilityBuffer.glsl`）でそろえる。CPU のテスト `VisibilityBufferEncodingTest`（`RenderResourcesDomainContractTest` の束）が、符号化と復号の往復、記録の数の上限（2^25）、空の扱いを確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderResourcesDomainContractTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VisibilityBufferEncodingTest|RenderGraphCompileTest)$"`
+- stop-when: 記録の数がフレームあたり 2^25 を超えうる場面（負荷モード）がある場合は、測った値を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。
+
+## VTG6-VIS-RASTER: 不透明のすべてをビジビリティバッファへ描くパスを足す（既定は無効）
+- status: todo
+- done-when: `--visibility-buffer=on` のとき、MegaGeometry のクラスタ（2パスの遮蔽・BVH・ページの経路のまま）、手続きメッシュの塊、スキニングの塊（VTG6-COMPUTE-SKINNING の変形済みの頂点）を、位置だけを読む頂点シェーダーと、ID（記録の番号は描画ごとの値、三角形は `gl_PrimitiveID`）を書く frag で、`VisBuffer.Id` と `GBuffer.Depth` へ描くパスを足す。描画の記録の表をそのフレームの描画から作る。この項目では GBuffer への書き込みはまだ今の経路のまま（`on` でも GBufferPass・MegaGeometryPass の GBuffer の描画は動かす）。`RenderGraphCompileTest` に `on` の記録を足す。デバッグの撮影（`--visibility-buffer=on` に、ID を色にして表示するデバッグの表示を足してよい）を開いて、物の輪郭と三角形の塊が正しく出ることを確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MegaGeometryResourcesTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MegaGeometryResourcesTest|IntegerAttachmentVulkanTest|VisibilityBufferEncodingTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-VIS-RASTER -Configuration RelWithDebInfo -Deterministic`
+- stop-when: 2パスの遮蔽の HZB が、ビジビリティバッファの1パス目の深度で作れない場合は、理由を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（描画パス）。既定の描画（`off`）は変えない。
+
+## VTG6-MATERIAL-CLASSIFY: 画面のタイルを材質ごとに分ける
+- status: todo
+- done-when: `VisBuffer.Id` から 8×8 の画面のタイルごとに、そのタイルに出る材質の番号の集合を求め、材質ごとのタイルの一覧と、材質ごとの間接 dispatch の引数を作る計算シェーダーのパスを足す（空の画素だけのタイルはどの材質にも入れない）。GPU のテスト `MaterialTileClassifyVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、合成した ID の画像（3つの材質が混じるタイル、空のタイル）から、期待のタイルの一覧と引数を作ることを確かめる。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(MaterialTileClassifyVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: 1フレームの材質の数が間接 dispatch の引数の上限を超える場合は、測った値を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。
+
+## VTG6-RESOLVE-GEOMETRY: 材質の解決で三角形から重心座標・微分・法線・速度を求める
+- status: todo
+- done-when: 材質ごとのタイルを処理する計算シェーダーが、ID から記録と三角形を引き、3頂点（ワールドの位置・法線・UV。MegaGeometry はプール、手続きはバッファ、スキニングは変形済みの頂点）から、画素のカメラの光線と三角形の交点で透視の補正つきの重心座標と、隣の画素への微分（解析的な dUV/dx・dUV/dy、dPos/dx・dPos/dy）を求める。法線（補間）・接線の基底（三角形の辺と UV から。今の `CalculateCotangentFrame` と同じ向きの規約）・速度（前のフレームの変換か前のフレームの頂点から前のクリップ座標）を求め、`GBuffer.Normal`・`GBuffer.Velocity` へ書き、`GBuffer.Albedo` には材質の基本色（テクスチャなしの定数の色。α=1）を書く。`--visibility-buffer=on` のとき、GBufferPass・MegaGeometryPass の GBuffer の描画を止め、この解決の出力を使う。`-Deterministic` で on・off を撮り、`GBuffer.Normal`・`Velocity` の差（デバッグの表示か GBuffer の読み戻し）が小さいことを記録する（深度・法線の向き・速度の符号が合う）。`RenderingVelocity*VulkanTest` を on でも通す方法があれば足す。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderingVelocityVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|RenderingVelocityStaticVulkanTest|RenderingVelocityObjectVulkanTest|RenderingVelocitySkinnedVulkanTest|MaterialTileClassifyVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-RESOLVE-GEOMETRY -Configuration RelWithDebInfo -Deterministic`
+- stop-when: 解析的な微分が今の画面の微分（2×2 の画素の差）と大きく食い違い、ミップの選び方の規約を変える必要がある場合は、比べた値を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（描画パス）。GBuffer の形式・意味（Albedo.a、法線の格納、Velocity の式）は変えない（後段が読む）。
+
+## VTG6-RESOLVE-MATERIALS: 材質の解決で材質のテクスチャ・ORM・BC5の法線・POM・VTの逃げ道を求める
+- status: todo
+- done-when: 材質の解決が、今の `PbrMaterialTextureSampling.glsl`・`ParallaxOcclusionMapping.glsl`・`SparseResidencySampling.glsl` の式を、画面の微分の代わりに解析的な微分（`textureGrad`）で使う形にし（同じ関数を両方の経路で共有できる形に整える）、Albedo（テクスチャの α をそのまま α に）・Normal（法線マップ・BC5 の Z の復元）・Material（ORM・別々の枠）を `--visibility-buffer=on` で書く。POM は三角形の接線の基底と解析的な dUV で行う。VT の非常駐の逃げ道は明示勾配の版を使う。`-Deterministic` で on・off を撮って視点ごとの PSNR を記録し（目安 40 dB 以上。差は解析的な微分と 2×2 の微分の違いによるものとして出どころを記録する）、近接・低角度の PNG を開いて石畳の凹凸・視差・地面の見本の帯・金色の球の反射が同じに見えることを確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MaterialResourcesTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MaterialResourcesTest|GBufferMaterialDescriptorCacheTest|VirtualTextureResidencyVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-RESOLVE-MATERIALS -Configuration RelWithDebInfo -Deterministic`
+- stop-when: 材質ごとの descriptor（材質の UBO とテクスチャの枠）を計算シェーダーの材質の dispatch へ渡す手段が無く、材質の束ね方（bindless など）を変える必要がある場合は、理由と選択肢を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。危険地帯（描画パス）。
+
+## VTG6-RESOLVE-FEEDBACK-EMISSIVE: 材質の解決でVTのフィードバック・発光・デバッグの表示を扱う
+- status: todo
+- done-when: 材質の解決が、VT のフィードバック（4×4 の巡回の1画素と非常駐へ逃げた画素。`textureQueryLod` の代わりに解析的な微分から求めた LOD）を要求のバッファへ書き、発光（色度×輝度×プリエクスポージャ、65504 で頭打ち）を `GBuffer.Emissive` へ書く。デバッグの表示（MegaGeometry のクラスタの色・LOD の段・ワイヤーフレーム）を `--visibility-buffer=on` で出す（ワイヤーフレームはビジビリティバッファのラスタを線の描き方にする）。`-Deterministic` で on の VT の撮影（`vt_used_mb`・追い出し・フィードバックの要求の数）を off と比べて記録し、夜の撮影で発光の球のにじみが同じに見えることを確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest MegaGeometryFrameCommandDebugModeTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VirtualTextureFeedbackVulkanTest|MegaGeometryFrameCommandDebugModeTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-RESOLVE-FEEDBACK-EMISSIVE -Configuration RelWithDebInfo -Deterministic -Night`
+- stop-when: VT のフィードバックの要求が on で大きく増減し（2倍以上か半分以下）、原因が微分の違いで直せない場合は、測った値を記録して止める。
+- paths: Assets/Shaders, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 計画書 4.3。
 
 ## VTG6-PT-VT-TEXTURES: パストレーサーの材質のテクスチャの配列でVTのテクスチャを読めるようにする
-- status: backlog
-- done-when: `PathTracingClosestHit.glsl` の `materialTextures[256]` の標本が、VT（sparse）のテクスチャでは非常駐のタイルを読まず粗いミップへ逃げる（VTG2-RESIDENCY-FALLBACK の共通の関数を使う）。パストレーサーを有効にした起動画面の撮影で、VT と全常駐の差を記録する。
+- status: todo
+- done-when: `PathTracingClosestHit.glsl` の `materialTextures[256]` の標本が、VT（sparse）のテクスチャでは非常駐のタイルを読まず粗いミップへ逃げる（VTG2-RESIDENCY-FALLBACK の共通の関数の明示 LOD の版を使う）。パストレーサーを有効にした起動画面の撮影で、VT と全常駐の差を記録する。
+- verify: `cmake --build build --config Debug --target PathTracingMaterialVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingMaterialVulkanTest$"`
-- paths: Assets/Shaders/PathTracing, Assets/Shaders/Common, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-05 親が足した。段2の受入れの既知の限界（パストレーサーを有効にすると VT の非常駐のタイルを読みうる）。起動画面の既定（RTGI は GBuffer だけを読む）では使わない。段6の材質の解決パスと合わせて扱う。
+- paths: Assets/Shaders/PathTracing, Assets/Shaders/Common, Library/Core/Private/Rendering, Test/Core/Rendering, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 2026-10-05 親が足した。段2の受入れの既知の限界（パストレーサーを有効にすると VT の非常駐のタイルを読みうる）。起動画面の既定（RTGI は GBuffer だけを読む）では使わない。
 
-## VTG6-RETIRE-GBUFFER-RASTER: 不透明のGBufferのラスタの経路を外す
-- status: backlog
-- done-when: 不透明の描画を GBufferPass のラスタから外し、ビジビリティバッファの経路だけにする。golden の差を測って記録し、その変更だけによる差なら再承認する。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
-- paths: Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+## VTG6-DEFAULT-ON: ビジビリティバッファを既定にし、今のGBufferのラスタを予備にする
+- status: todo
+- done-when: `geometryShader` に対応する GPU では、ビジビリティバッファの経路を既定（`--visibility-buffer` の既定を on）にし、GBufferPass・MegaGeometryPass の GBuffer へのラスタは、`geometryShader` の無い GPU か `--visibility-buffer=off` のときの予備にだけ残す（`VISBUFFER_FALLBACK reason=<..>` を1回出す）。`RenderGraphCompileTest`・`SkinnedRenderPathContractTest`・`GBufferMaterialDescriptorCacheTest`・`MegaGeometryFrameCommandDebugModeTest`・`RenderingVelocity*`・`DebugViewModeStringTest` を新しい既定に合わせて通す（予備の経路の検査も残す）。Indoor/Outdoor の golden を回し、差が出たら差がこの変更（解析的な微分・三角形の接線の基底）だけによることを確かめて `Docs/RenderingValidation/GoldenBaselines.md` の手順で再承認し、根拠をコミットの本文に書く。起動画面の朝・昼・夕・夜の `-Deterministic` の撮影を開いて確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest SkinnedRenderPathContractTest MaterialResourcesTest MegaGeometryResourcesTest RenderingVelocityVulkanTest ViewportSnapshotDebugWiringTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest|GBufferMaterialDescriptorCacheTest|MegaGeometryFrameCommandDebugModeTest|MegaGeometryResourcesTest|RenderingVelocityStaticVulkanTest|RenderingVelocityMotionVulkanTest|RenderingVelocityCameraVulkanTest|RenderingVelocityObjectVulkanTest|RenderingVelocitySkinnedVulkanTest|DebugViewModeStringTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-DEFAULT-ON -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- stop-when: golden の差がこの変更だけでは説明できない場合は、測った値と分類を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Test/Core/Rendering, Baselines/RenderingValidation, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-05 親: 元の VTG6-RETIRE-GBUFFER-RASTER（今のラスタを外す）を、`geometryShader` の無い GPU の予備として残す形に変えた。危険地帯（描画パス）。起動画面の見た目を変えうる（絶対規則7）。
 
 ## VTG6-ACCEPT: 段6（ビジビリティバッファ）の受入れを記録する
-- status: backlog
-- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段6の節。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- status: todo
+- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段6の節に、ビジビリティバッファの既定と予備の経路の `-Deterministic` の撮影（朝・昼・夕・夜 × 3視点）の PSNR と差の出どころ、golden（再承認したならその根拠）、VT のフィードバックの要求の数・常駐量の前後、GPU 時間（RelWithDebInfo の `-GpuTimingFrames`、ビジビリティバッファのラスタ・分類・材質の解決の内訳と、予備の経路との比較。負荷モード 300 個も）、関係するテストの結果、既知の限界を書く。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest RenderingVelocityVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(IntegerAttachmentVulkanTest|VisibilityBufferEncodingTest|ComputeSkinningVulkanTest|MaterialTileClassifyVulkanTest|RenderGraphCompileTest|RenderingVelocitySkinnedVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-ACCEPT-night -Configuration RelWithDebInfo -Deterministic -Night`
+- stop-when: 受入れの数値が段6の受入れ（計画書 5）を満たさない場合は、測った値を記録して止める。
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: この段の後、親が main へマージしてプッシュする。
 
 ## VTG7-INT64-ATOMICS: 64bitアトミックのビジビリティバッファを作る
 - status: backlog
