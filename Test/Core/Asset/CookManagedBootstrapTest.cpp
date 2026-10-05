@@ -189,8 +189,13 @@ namespace BootstrapTest
         Boot Run(CookManagedBootstrapOutcome& out, TestText& error, const Probe* probe = nullptr) const
         {
             auto request = Request();
-            return probe ? Access::BootstrapCookManagedAssetSetForTest(request, *probe, out, error)
-                         : BootstrapCookManagedAssetSet(request, out, error);
+            const auto result = probe ? Access::BootstrapCookManagedAssetSetForTest(request, *probe, out, error)
+                                      : BootstrapCookManagedAssetSet(request, out, error);
+            if (result != Boot::Created)
+            {
+                std::fprintf(stderr, "BOOTSTRAP_RESULT result=%u error=%s\n", static_cast<unsigned>(result), error.c_str());
+            }
+            return result;
         }
     };
     CookManagedStoreIndex Index(const Fixture& f)

@@ -822,3 +822,4 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 
 - G2-S6-MANAGED-BOOTSTRAP-EXECUTOR開始: texture spec v1の共通prepare/captureと既知stageを、pending付きの実公開へ接続する。復旧はlive workspace/store/header/pendingで先に束縛し、固定after-index/stateのclaimを検証してから相対root/manifestを読む。元bindingをsource不在で独立再導出できるとは扱わない。receiptはpending内でcommitし、完全commit/rollback後だけpendingを退役。途中で必要なside原objectをdeleteせずrenameで保持する。
 - G2-S6-MANAGED-BOOTSTRAP-EXECUTOR検証準備: 共通texture cookからroot/state/indexを公開するcontrollerとstorage-bound recoveryを33CPUへ登録。17境界の実process終了、source/spec不在、原index ID/byte保持、未知entry/親/別IDの拒否、orphan保持、Busy、aliasと解除失敗の試験を追加した。native観測helperを共有し、claim照合はfold-name索引で全件再列挙を避ける。比較器12件×通常/最適化と347 literalの単独compileは成功、実Windows/79+10byteは未実行。
+- G2-S6-MANAGED-BOOTSTRAP-EXECUTOR診断追加: de680cd9/run37280393756は実build・5診断・既存32CPUが成功したが、新規bootstrap初回のCreated判定で停止した。返却result/errorがlogに無いため原因未確定。判定とproductionを変えず、fixtureのAPI結果/診断出力だけを追加する。17中断境界・後続79+10byteは未到達。
