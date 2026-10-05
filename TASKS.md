@@ -587,7 +587,7 @@
 - notes: 計画書 4.3。危険地帯（メモリ・寿命）。 2026-10-05 親（run `20261005-191130` の保留を解く）: `blocked/VTG6-RASTER-CHUNKS.md` の選択肢2を採った。verify の ctest から、既知の失敗（TEST-SKINNED。`gbuffer.vert` を読めず assert の後に終わらない）で完走しない `SkinnedRenderPathContractTest` を外した（ビルドは残す）。スキニングの塊の検証は、`SkinnedRenderPathContractTest.exe --test=` などで追加のケースだけを直接走らせた出力（「SkinnedMesh chunks cover every triangle once」）を証拠にする。TEST-SKINNED は段6の中で別に直す。
 
 ## VTG6-COMPUTE-SKINNING: 計算シェーダーでスキニングした今と前のフレームの頂点を作る
-- status: todo
+- status: done
 - done-when: スキニングのインスタンスごとに、計算シェーダーが今のフレームのパレットと前のフレームのパレットで頂点（位置・法線・UV）を変形し、フレームごとのバッファ（今・前。storage・BDA）へ書くパスを足す（RenderGraph の資源として宣言し、後のビジビリティバッファのラスタと材質の解決が読む）。今の GBuffer の経路はまだ頂点シェーダーのスキニングのまま。GPU のテスト `ComputeSkinningVulkanTest`（`RHITextureUpdateVulkanTest` の束）が、既知のボーンと重みの頂点で、計算シェーダーの結果が CPU で計算した値（今と前）と一致する（許容 1e-4）ことを確かめる。`RenderingVelocitySkinnedVulkanTest` が通る。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderingVelocityVulkanTest SkinnedRenderPathContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(ComputeSkinningVulkanTest|RenderingVelocitySkinnedVulkanTest)$"`

@@ -1144,3 +1144,9 @@
 - 検証: `verify-VTG6-RASTER-CHUNKS-1-build.txt`（Debug の Game・RenderResourcesDomainContractTest・SkinnedRenderPathContractTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（MeshResourcesProceduralGpuTest・GeometryPoolAllocatorTest 2/2 passed）、`-4-ctest-verbose.txt`（「MeshIndexChunks cover every triangle once」）、`-3-skinned-direct.txt`（スキニングの追加ケースの出力「SkinnedMesh chunks cover every triangle once」。その後は既知の TEST-SKINNED（`gbuffer.vert` を読めず assert）で落ちて exit 3。今回は終わらずに abort した）。
 - Notes: (1) `--test=` は絞り込みにならず、塊のケースが先頭で走って出力される。 (2) 描画経路は変えていない（バッファの用途ビットの追加のみ）ので起動画面の撮影は未実施。 (3) Git Bash は `/m:1` をパスに変換するため、ビルドは PowerShell で走らせる。
 - Next: VTG6-COMPUTE-SKINNING。
+
+## 反復 1（run 20261005-214752）: VTG6-COMPUTE-SKINNING（done）
+- 内容: 実装は 53a5448e でコミット済み（`SkinningComputePass`・`skinning_compute.comp`・`ComputeSkinningVulkanTest`。今と前のフレームのパレットで頂点を変形し、フレームごとの storage・BDA バッファへ書く）。この反復は、改訂された verify（`SkinnedRenderPathContractTest` を ctest から外した版）を新しい run で走らせ直して証拠を保存し、done にした。
+- 検証: `verify-VTG6-COMPUTE-SKINNING-1-build.txt`（Debug の Game・RHITextureUpdateVulkanTest・RenderingVelocityVulkanTest・SkinnedRenderPathContractTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（ComputeSkinningVulkanTest・RenderingVelocitySkinnedVulkanTest 2/2 passed）、`-3-ctest-verbose.txt`（RESULT=PASS、VUID_COUNT=0）。
+- Notes: (1) stop-when は該当しない（前のフレームのパレットは RenderThread 側で保持でき、FramePacket の契約は変えていない）。 (2) 描画経路は変えていない（パスは既定で無効）ので起動画面の撮影は未実施。 (3) `SkinnedRenderPathContractTest` の既知の失敗は TEST-SKINNED で別途。
+- Next: TASKS.md の残りの未完（VTG6-SKINNING-FINAL-BARRIER など）。
