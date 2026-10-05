@@ -368,6 +368,13 @@ namespace NorvesLib::Core::Asset
     {
         const AssetResolveResult resolved =
             ResolveAsset(logicalPath, kind, variant, AssetFallbackMode::FailOnCookedFailure);
+        return TryMakeCookedRange(resolved, outRange, pOutReason);
+    }
+
+    bool AssetSystem::TryMakeCookedRange(const AssetResolveResult &resolved,
+                                         AssetCookedRange &outRange,
+                                         Container::AnsiString *pOutReason)
+    {
         if (!resolved.UsedCooked())
         {
             if (pOutReason != nullptr)

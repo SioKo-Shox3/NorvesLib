@@ -112,6 +112,8 @@ namespace Game::GameModes
         bool bBoulder = false; ///< 岩か（false なら小屋）。glTF の経路へ戻すとき、どちらの要求番号を更新するか決める
         bool bAllowGltfFallback = true; ///< 材質のテクスチャが読めないとき glTF の経路へ戻すか（false なら失敗として State を埋める）
         TSharedPtr<NorvesLib::Core::Asset::CookedMeshData> Mesh;
+        /// ページ（NVMESH v1.1）の読み込み元。ページを 2 つ以上持つメッシュだけが持つ（無ければ全て常駐で作る）
+        TSharedPtr<NorvesLib::Core::Rendering::MegaGeometry::IGeometryPageSource> PageSource;
         TSharedPtr<PendingMaterialUpdate> Material;
         TSharedPtr<BoulderAsyncState> State;
     };
@@ -306,6 +308,8 @@ namespace Game::GameModes
         bool m_bBigSphereFromRuntime = false;
         // 読み込んだクック済みの大きな球（石畳の材質がそろって MegaMesh を作るまで持つ）
         TSharedPtr<NorvesLib::Core::Asset::CookedMeshData> m_pBigSphereCooked;
+        // 大きな球のページの読み込み元（読み込みのジョブが埋める。ジョブの完了後に読む）
+        TSharedPtr<TSharedPtr<NorvesLib::Core::Rendering::MegaGeometry::IGeometryPageSource>> m_pBigSpherePageSource;
         // クック済みのメッシュ（NVMESH）を解決する AssetSystem（無ければ null。クック済みのマニフェストを読んでいないとき）。
         NorvesLib::Core::Delegate<NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>> m_GetAssetSystem;
         // クック済みで読んでいる岩・小屋の、材質（VT）がそろうのを待っている状態。そろったら MegaMesh を作って取り除く。

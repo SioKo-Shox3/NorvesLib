@@ -2713,6 +2713,12 @@ namespace NorvesLib::Core::Rendering
         {
             m_RenderResources->UpdateVirtualTextureStreaming();
         }
+        // ジオメトリのページのストリーマを進める（カリングの要求の取り込み・ページの読み込み・区画への書き込みと公開・追い出し）。
+        // 区画へのコピーはステージングのリングへ積むだけで、コマンドの先頭（RecordTileUploads）で記録される。
+        if (m_RenderResources)
+        {
+            m_RenderResources->UpdateGeometryPageStreaming();
+        }
 
         // コマンド録画開始
         m_CommandList->BeginRecording();

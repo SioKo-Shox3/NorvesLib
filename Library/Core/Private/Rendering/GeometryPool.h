@@ -240,6 +240,29 @@ namespace NorvesLib::Core::Rendering
             return RegionLease(m_State, state.Blocks[allocation.BlockIndex], allocation);
         }
 
+        /**
+         * @brief 指定した塊の中から区画を1つ借りる（塊は増やさない）
+         *
+         * 同じバッファを引く資源（ページを区画へ分けたメッシュ）が、塊をまたがないようにするのに使う。
+         * @return 無効な RegionLease は、その塊に収まる空きが無い・塊が無い・要求が不正であることを表す
+         */
+        RegionLease AllocateInBlock(uint32_t blockIndex, uint64_t sizeBytes,
+                                    uint64_t alignmentBytes = DefaultAlignmentBytes)
+        {
+            Thread::ScopedLock lock(m_State->Mutex);
+            State &state = *m_State;
+            if (blockIndex >= state.Blocks.size())
+            {
+                return RegionLease();
+            }
+            const GeometryAllocation allocation = state.Allocator.Allocate(sizeBytes, alignmentBytes, blockIndex);
+            if (!allocation.IsValid())
+            {
+                return RegionLease();
+            }
+            return RegionLease(m_State, state.Blocks[allocation.BlockIndex], allocation);
+        }
+
         /** @brief プールが持てるバッファの上限を決める（バイト。0 は上限なし）。持っている分は減らさない */
         void SetCapacityLimitBytes(uint64_t limitBytes)
         {

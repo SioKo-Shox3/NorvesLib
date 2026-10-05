@@ -93,6 +93,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
         outCreateInfo.ClusterGroups.clear();
         outCreateInfo.GroupBVH.clear();
+        outCreateInfo.Pages.clear();
+        outCreateInfo.PageSource = nullptr;
         outCreateInfo.bBakedLODHierarchy = cooked.FormatMajor >= 1;
         outCreateInfo.BakedLODLevelCount = cooked.LODLevelCount;
         outCreateInfo.FallbackIndexOffset = 0;
@@ -129,6 +131,24 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                 node.Count = cookedNode.Count;
                 node.Flags = cookedNode.bLeaf ? GPU_GROUP_BVH_NODE_FLAG_LEAF : 0u;
                 outCreateInfo.GroupBVH.push_back(node);
+            }
+
+            // v1.1 のページの範囲（ページが 2 つ以上あるときだけ。読み込み元 PageSource は呼び出し側が足す）
+            if (cooked.Pages.size() >= 2)
+            {
+                outCreateInfo.Pages.reserve(cooked.Pages.size());
+                for (const Asset::CookedMeshPage &cookedPage : cooked.Pages)
+                {
+                    MeshPageInfo page;
+                    page.bRoot = cookedPage.bIsRoot;
+                    page.FirstCluster = cookedPage.FirstClusterIndex;
+                    page.ClusterCount = cookedPage.ClusterCount;
+                    page.FirstVertex = cookedPage.FirstVertex;
+                    page.VertexCount = cookedPage.VertexCount;
+                    page.FirstIndex = cookedPage.FirstIndex;
+                    page.IndexCount = cookedPage.IndexCount;
+                    outCreateInfo.Pages.push_back(page);
+                }
             }
         }
         return true;

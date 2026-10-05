@@ -58,6 +58,13 @@ namespace NorvesLib::Core::Asset
                                                  Container::AnsiString *pOutReason = nullptr,
                                                  Container::AnsiStringView variant = AssetManifest::DefaultVariant) const;
 
+        // 解決済みの結果（ResolveAsset の戻り値）から、クック済みのエントリのパッケージファイル内の位置を求める。
+        // 読み直さないので、解決した結果を持っている呼び出し側が、後で範囲読みするための位置だけを取れる。
+        // クック済みを使えない・圧縮したエントリのときは false。
+        [[nodiscard]] static bool TryMakeCookedRange(const AssetResolveResult &resolved,
+                                                     AssetCookedRange &outRange,
+                                                     Container::AnsiString *pOutReason = nullptr);
+
         // クック済みのパッケージを読むファイル読み込み（アセット root を持つ）。範囲読みはここから行う。
         [[nodiscard]] const AssetFileReader &GetCookedFileReader() const noexcept { return m_FileReader; }
 

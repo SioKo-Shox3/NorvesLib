@@ -389,7 +389,8 @@ namespace NorvesLib::Core::Rendering
 
     bool RenderWorld::HasPendingAsyncAssets() const
     {
-        return HasPendingAssetLoads() || m_RenderResources.MegaGeometry().HasPendingGpuUploads();
+        return HasPendingAssetLoads() || m_RenderResources.MegaGeometry().HasPendingGpuUploads() ||
+               m_RenderResources.MegaGeometry().HasPendingPageStreaming();
     }
 
     uint64_t RenderWorld::GetRenderedFrameCount() const

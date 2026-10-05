@@ -4,6 +4,7 @@
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Rendering/MegaGeometry/GeometryPageSource.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering::MegaGeometry
@@ -202,6 +203,25 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     constexpr uint32_t INVALID_CLUSTER_GROUP_ID = 0xFFFFFFFFu;
 
     /**
+     * @brief メッシュのページ 1 つ（NVMESH v1.1 のページの表の 1 行に対応する）
+     *
+     * 範囲は MegaMeshCreateInfo の全体の配列（Clusters・VertexData・IndexData）の中の位置。
+     * 根のページ（bRoot）は 0 番から連続して並び、メッシュを作るときに区画へ書いて常駐させる。
+     * それ以外のページは、頂点とインデックスをストリーマが要求から読んで区画へ書く。
+     * IndexData の範囲はクラスタのインデックスだけで、フォールバックのインデックスは含まない。
+     */
+    struct MeshPageInfo
+    {
+        bool bRoot = false;
+        uint32_t FirstCluster = 0;
+        uint32_t ClusterCount = 0;
+        uint32_t FirstVertex = 0;
+        uint32_t VertexCount = 0;
+        uint32_t FirstIndex = 0;
+        uint32_t IndexCount = 0;
+    };
+
+    /**
      * @brief 焼き込み済みの階層のクラスタのグループ
      *
      * 同じグループのクラスタは同じ親の境界球と誤差を持ち、同じ判断で描く・描かないが決まる。
@@ -363,6 +383,17 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         VariableArray<GPUGroupBVHNode> GroupBVH;
 
         /**
+         * @brief ページごとの範囲（NVMESH v1.1。焼き込み済みの階層だけ。空ならページに分けず全部を常駐させる）
+         *
+         * Pages と PageSource の両方があり、ページが 2 つ以上ある（かつ SetPageStreamingEnabled が有効な）ときだけ、
+         * 根のページの頂点・インデックスだけを区画へ書き、残りのページは PageSource から読んでストリーミングする。
+         * そうでなければ VertexData・IndexData の全体を書く。
+         */
+        VariableArray<MeshPageInfo> Pages;
+        /** @brief ページの中身の読み込み元。null ならストリーミングしない */
+        TSharedPtr<IGeometryPageSource> PageSource;
+
+        /**
          * @brief RTと影のための常駐の粗い段のインデックスの範囲（IndexData の要素の位置と数。基点の頂点は 0）
          *
          * Count が 0 なら無し（従来の段の選び方）。FallbackError はその段のローカル空間の誤差。
@@ -439,6 +470,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t PageCount = 0;
         /** @brief 常駐のまま固定したページの数（子のページの生成元を決められないグループのページ。GeometryPageLinks.h） */
         uint32_t PinnedPageCount = 0;
+        /** @brief 根のページだけを常駐させ、残りのページをストリーマが読み込むメッシュか */
+        bool bPagesStreamed = false;
 
         /**
          * @brief プールの区画の共有の持ち主（型を消した参照）

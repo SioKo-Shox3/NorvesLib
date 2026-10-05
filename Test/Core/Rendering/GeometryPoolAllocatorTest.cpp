@@ -243,6 +243,40 @@ void TestMultipleBlocks()
     Expect(stats.BlockCount == 2 && stats.CapacityBytes == 768, "塊の数と容量の合計");
 }
 
+void TestAllocateInSpecificBlock()
+{
+    GeometryPoolAllocator allocator;
+    Expect(allocator.AddBlock(1024) == 0 && allocator.AddBlock(1024) == 1, "塊を 2 つ作る");
+
+    // 塊 0 を埋めても、塊 1 を指定すれば塊 1 から取れ、塊 0 を指定すれば塊 0 の空きが無いので失敗する
+    const GeometryAllocation full = allocator.Allocate(1024, 1, 0);
+    Expect(full.IsValid() && full.BlockIndex == 0, "塊 0 を指定して全部を確保できる");
+    const GeometryAllocation none = allocator.Allocate(16, 1, 0);
+    Expect(!none.IsValid(), "塊 0 に空きが無ければ、他の塊に空きがあっても指定した塊だけを見て失敗する");
+    const GeometryAllocation other = allocator.Allocate(16, 1, 1);
+    Expect(other.IsValid() && other.BlockIndex == 1, "塊 1 を指定すれば塊 1 から取れる");
+    const GeometryAllocation missing = allocator.Allocate(16, 1, 7);
+    Expect(!missing.IsValid(), "存在しない塊の指定は失敗する");
+    const GeometryAllocation any = allocator.Allocate(16, 1);
+    Expect(any.IsValid() && any.BlockIndex == 1, "塊を指定しなければ空きのある塊から取る");
+
+    // プール: 塊を増やさず、指定した塊の中だけから借りる
+    TSharedPtr<FakeBlockFactory> factory = MakeShared<FakeBlockFactory>();
+    {
+        GeometryPool pool(TSharedPtr<IGeometryBlockFactory>(factory), 1024);
+        Expect(!pool.AllocateInBlock(0, 256).IsValid() && factory->CreatedCount == 0, "塊が無いプールでは塊を作らず失敗する");
+        GeometryPool::RegionLease first = pool.Allocate(768, 256);
+        Expect(first.IsValid() && first.GetBlockIndex() == 0 && factory->CreatedCount == 1, "最初の確保が塊 0 を作る");
+        GeometryPool::RegionLease inBlock = pool.AllocateInBlock(0, 256, 256);
+        Expect(inBlock.IsValid() && inBlock.GetBlockIndex() == 0 && inBlock.GetOffsetBytes() == 768,
+               "同じ塊の残りから借りられる（同じバッファ）");
+        Expect(inBlock.GetBuffer() == first.GetBuffer(), "同じ塊のバッファを指す");
+        GeometryPool::RegionLease overflow = pool.AllocateInBlock(0, 256, 256);
+        Expect(!overflow.IsValid() && factory->CreatedCount == 1, "塊が埋まっても、指定した確保は塊を増やさず失敗する");
+    }
+    Expect(g_liveBuffers == 0, "片付けたら塊のバッファは残らない");
+}
+
 void TestPoolGrowsLazilyAndFails()
 {
     TSharedPtr<FakeBlockFactory> factory = MakeShared<FakeBlockFactory>();
@@ -467,6 +501,7 @@ int RunTest()
     TestFragmentationBlocksLargeRequest();
     TestMultipleBlocks();
     TestPoolGrowsLazilyAndFails();
+    TestAllocateInSpecificBlock();
     TestDeferredReleaseOrder();
     TestLedgerLog();
     TestConcurrentAllocateAndFree();

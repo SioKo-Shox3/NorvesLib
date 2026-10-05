@@ -59,6 +59,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 区画の大きさの粒度。小さな端数の空きを作らないために、大きさをこの倍数へ切り上げる */
         static constexpr uint64_t GranularityBytes = 16;
 
+        /** @brief Allocate に渡す、塊を指定しない値 */
+        static constexpr uint32_t AnyBlock = GeometryAllocation::InvalidBlock;
+
         /** @brief 塊を足す（大きさは粒度の倍数へ切り捨てる）。大きさが粒度に満たなければ InvalidBlock */
         uint32_t AddBlock(uint64_t sizeBytes)
         {
@@ -78,11 +81,17 @@ namespace NorvesLib::Core::Rendering
          * @brief 区画を確保する
          * @param sizeBytes 大きさ（0 は失敗）
          * @param alignmentBytes 区画の先頭の整列（2 の累乗。0 は 1 と同じ。2 の累乗でなければ失敗）
+         * @param onlyBlockIndex この塊の中だけから選ぶ（AnyBlock なら全ての塊から選ぶ。存在しない塊は失敗）
          * @return 収まる空きが無ければ無効な区画（塊を足して呼び直せる）
          */
-        GeometryAllocation Allocate(uint64_t sizeBytes, uint64_t alignmentBytes)
+        GeometryAllocation Allocate(uint64_t sizeBytes, uint64_t alignmentBytes,
+                                    uint32_t onlyBlockIndex = GeometryAllocation::InvalidBlock)
         {
             GeometryAllocation result;
+            if (onlyBlockIndex != GeometryAllocation::InvalidBlock && onlyBlockIndex >= m_Blocks.size())
+            {
+                return result;
+            }
             if (alignmentBytes == 0)
             {
                 alignmentBytes = 1;
@@ -101,6 +110,10 @@ namespace NorvesLib::Core::Rendering
             uint64_t bestStart = 0;
             for (uint32_t blockIndex = 0; blockIndex < m_Blocks.size(); ++blockIndex)
             {
+                if (onlyBlockIndex != GeometryAllocation::InvalidBlock && blockIndex != onlyBlockIndex)
+                {
+                    continue;
+                }
                 const Block &block = m_Blocks[blockIndex];
                 for (size_t rangeIndex = 0; rangeIndex < block.Free.size(); ++rangeIndex)
                 {

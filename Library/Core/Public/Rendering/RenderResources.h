@@ -293,6 +293,14 @@ namespace NorvesLib::Core::Rendering
         // 数フレーム遅れで読み戻して溜めた要求を out へ渡す（ストリーマが読む）。無ければ false。
         bool TakePageRequests(MegaGeometry::GeometryPageRequestSet &out);
 
+        // ページを持つメッシュ（NVMESH v1.1）を、根のページだけ常駐させて、残りを要求から読み込むか。既定は有効。
+        // 起動引数 --geometry-streaming=off で無効にすると、全てのページを常駐させる（見た目・VRAM の比較用）。
+        // 起動時（メッシュを作る前）に設定する。
+        void SetPageStreamingEnabled(bool bEnabled);
+        bool IsPageStreamingEnabled() const;
+        // ページの読み込み・書き込みが進行中、または要求されたまま読み込んでいないページがあるか（読み込みの落ち着きの判定に使う）。
+        bool HasPendingPageStreaming() const;
+
         ModelHandle RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
                                   const Container::String &debugName = "",
                                   const Container::String &sourcePath = "");
@@ -395,6 +403,10 @@ namespace NorvesLib::Core::Rendering
         // 溜まった要求を取り出して、ストリーマを1フレーム進める（RenderThread。BeginRetireFrame の後・コマンドを開く前に呼ぶ。
         // BindSparse はコマンドの送信と同じ直列化の下で呼ぶ必要がある）。VT が1枚も無いときは何もしない。
         void UpdateVirtualTextureStreaming();
+
+        // ジオメトリのページのストリーマを1フレーム進める（RenderThread。BeginRetireFrame の後・コマンドを開く前に呼ぶ）。
+        // カリングが書いて読み戻した要求を取り込み、ページの読み込み・区画への書き込み・ページの表への公開・追い出しを行う。
+        void UpdateGeometryPageStreaming();
 
         bool ReloadAssetRuntimeSnapshot(
             const Container::String& assetRoot,

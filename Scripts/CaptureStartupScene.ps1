@@ -151,6 +151,11 @@ param(
     # （--mega-occlusion=off。見た目の比較用）。各撮影のログの MEGA_OCCLUSION を metrics.json の mega_occlusion へ書く。
     [ValidateSet('On', 'Off')]
     [string]$MegaOcclusion = 'On',
+    # ジオメトリのページのストリーミング（既定は有効。根のページだけ常駐させて、残りを要求から読む）。Off は全てのページを常駐させて
+    # 撮る（--geometry-streaming=off。ストリーミングありの撮影との画素の比較用。-CompareDeterministicWith で比べる）。
+    # 各撮影のログの GEOMETRY_PAGES_STREAMED・GEOMETRY_PAGES を metrics.json の geometry_pages へ書く。
+    [ValidateSet('On', 'Off')]
+    [string]$GeometryStreaming = 'On',
     # 同じコードを -Deterministic で撮った別の出力先。各視点の平均輝度の差と PSNR を求めて metrics.json へ書き、
     # 平均輝度の差が -DeterministicMeanLuminanceLimit を超えるか PSNR が -DeterministicPsnrLimit を下回れば失敗にする。
     [string]$CompareDeterministicWith = '',
@@ -754,6 +759,11 @@ foreach ($view in $shots)
     {
         $arguments += '--mega-occlusion=off'
     }
+    # ジオメトリのページのストリーミングも既定で有効なので、Off のときだけ引数を渡す。
+    if ($GeometryStreaming -eq 'Off')
+    {
+        $arguments += '--geometry-streaming=off'
+    }
     foreach ($extraArgument in (($ExtraGameArguments -join ' ').Split(@(' ', ','), [StringSplitOptions]::RemoveEmptyEntries)))
     {
         $arguments += $extraArgument
@@ -831,6 +841,7 @@ foreach ($view in $shots)
     $vramLedgerTextureMb = $null
     $cookedMissingCount = $null
     $vramPools = $null
+    $geometryPages = $null
     $occlusionStats = $null
     $stressMaterials = $null
     if (Test-Path -LiteralPath $viewLogPath)
@@ -850,6 +861,34 @@ foreach ($view in $shots)
                 vt_used_mb_max = [uint64]$maxUsed
                 vt_evicted_tiles = [uint64]$lastPool[5].Value
                 lines = $poolLines.Count
+            }
+            # 同じ行の後ろに続くジオメトリの枠（目標・プールの使用量・追い出したページの数）。無い版のログでは書かない
+            $geometryPool = [regex]::Match($poolLines[$poolLines.Count - 1].Line, 'geometry_target_mb=(\w+) geometry_used_mb=(\d+) geometry_evicted_pages=(\d+)')
+            if ($geometryPool.Success)
+            {
+                $vramPools['geometry_target_mb'] = $geometryPool.Groups[1].Value
+                $vramPools['geometry_used_mb_last'] = [uint64]$geometryPool.Groups[2].Value
+                $vramPools['geometry_evicted_pages'] = [uint64]$geometryPool.Groups[3].Value
+            }
+        }
+        # GEOMETRY_PAGES_STREAMED（ストリーミングするメッシュの数と、根のページ・ストリーミングするページの大きさ）と、
+        # GEOMETRY_PAGES（常駐するページの数・量・追い出し。最後の行）
+        $streamedMeshLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'GEOMETRY_PAGES_STREAMED mesh=')
+        $pageStateLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'GEOMETRY_PAGES resident=(\d+) uploading=(\d+) ready=(\d+) reading=(\d+) wanted=(\d+) failed=(\d+) resident_mb=([\d.]+) evicted=(\d+)')
+        if ($streamedMeshLines.Count -gt 0 -or $pageStateLines.Count -gt 0)
+        {
+            $geometryPages = [ordered]@{ streamed_meshes = $streamedMeshLines.Count }
+            if ($pageStateLines.Count -gt 0)
+            {
+                $lastPages = $pageStateLines[$pageStateLines.Count - 1].Matches[0].Groups
+                $geometryPages['resident_pages'] = [uint64]$lastPages[1].Value
+                $geometryPages['uploading_pages'] = [uint64]$lastPages[2].Value
+                $geometryPages['ready_pages'] = [uint64]$lastPages[3].Value
+                $geometryPages['reading_pages'] = [uint64]$lastPages[4].Value
+                $geometryPages['wanted_pages'] = [uint64]$lastPages[5].Value
+                $geometryPages['failed_pages'] = [uint64]$lastPages[6].Value
+                $geometryPages['resident_mb'] = [double]::Parse($lastPages[7].Value, [Globalization.CultureInfo]::InvariantCulture)
+                $geometryPages['evicted_pages'] = [uint64]$lastPages[8].Value
             }
         }
         # MEGA_OCCLUSION（遮蔽カリングの1フレームの数。1パス目で描いた数・2パス目で判定した数・描いた数・隠れていた数）。最後の値と、
@@ -954,6 +993,7 @@ foreach ($view in $shots)
             vram_ledger_texture_mb = $vramLedgerTextureMb
             cooked_missing_count = $cookedMissingCount
             vram_pools = $vramPools
+            geometry_pages = $geometryPages
             mega_occlusion = $occlusionStats
             stress_materials = $stressMaterials
         }

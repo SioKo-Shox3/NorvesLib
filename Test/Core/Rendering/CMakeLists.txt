@@ -1790,6 +1790,7 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER VideoMemoryBudgetManagerTest VideoMemoryBudgetManagerTest.cpp
     MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
     MEMBER GeometryPoolAllocatorTest GeometryPoolAllocatorTest.cpp
+    MEMBER GeometryPageStreamerTest GeometryPageStreamerTest.cpp
     MEMBER VirtualTextureRequestSetTest VirtualTextureRequestSetTest.cpp
     MEMBER VirtualTextureStreamerTest VirtualTextureStreamerTest.cpp
     MEMBER RHIBlockCompressedFormatTest RHIBlockCompressedFormatTest.cpp
@@ -1807,6 +1808,10 @@ add_test(NAME VideoMemoryBudgetManagerTest COMMAND RenderResourcesDomainContract
 add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)
 # ジオメトリの共有プールの区画の確保・解放・結合・整列・断片化の統計、塊の追加と上限・失敗、遅延解放（GpuRetireQueue）の提出順。
 add_test(NAME GeometryPoolAllocatorTest COMMAND RenderResourcesDomainContractTest --test=GeometryPoolAllocatorTest)
+# ジオメトリのページのストリーマ（読み込み・書き込み・公開・追い出しは偽の窓口）。優先度・1 フレームの上限・根のページの常駐・
+# 書き終えてからの公開・親が先・追い出しの順（LRU・子から）と目標以下への収まり・外した区画の再利用の順序・失敗の再試行・
+# メッシュの解放と、ページの配置の計算（範囲の検査・親子の関係・クラスタの記録の位置の書き換え）。
+add_test(NAME GeometryPageStreamerTest COMMAND RenderResourcesDomainContractTest --test=GeometryPageStreamerTest)
 # 1語へ詰めた VT の要求の復号・重複の除去・溢れた件数と、3つのバッファのリングが完了したものだけを GPU を待たずに読み戻すこと。
 add_test(NAME VirtualTextureRequestSetTest COMMAND RenderResourcesDomainContractTest --test=VirtualTextureRequestSetTest)
 # 要求の集合から未常駐のタイルを優先度順に読み、ページを結び、コピーを積んで常駐させること。1 フレームの上限・同じタイルの二重の要求・読み込みの失敗・プールが尽きたときの扱い。

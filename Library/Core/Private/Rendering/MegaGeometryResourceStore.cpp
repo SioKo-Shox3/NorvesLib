@@ -250,6 +250,72 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // ページの親子の関係(クラスタごとの子のページ)とメッシュのページの数を、グループの表から求める。
+        // 焼き込み済みの階層だけがページを持つ。それ以外は 1 ページで常駐のまま
+        Container::VariableArray<uint32_t> childPageIds;
+        MegaGeometry::GeometryPageLinkResult pageLinks;
+        if (createInfo.bBakedLODHierarchy)
+        {
+            if (!MegaGeometry::ComputeGeometryPageLinks(*uploadClusters, createInfo.ClusterGroups, childPageIds, pageLinks))
+            {
+                NORVES_LOG_ERROR("MegaGeometryResources", "クラスタのページの番号が不正です: %s", createInfo.DebugName.c_str());
+                return MegaGeometry::MegaMeshHandle::Invalid();
+            }
+            if (pageLinks.SplitGroups > 0 || pageLinks.AmbiguousClusters > 0)
+            {
+                NORVES_LOG_WARNING("MegaGeometryResources",
+                                   "ページの親子の関係を決められない箇所があります（該当のページは常駐のまま固定します）: %s split_groups=%u ambiguous_clusters=%u pinned_pages=%u",
+                                   createInfo.DebugName.c_str(), pageLinks.SplitGroups, pageLinks.AmbiguousClusters,
+                                   static_cast<uint32_t>(pageLinks.PinnedPages.size()));
+            }
+        }
+
+        // ページをストリーミングするか。根のページの頂点・インデックスだけを区画へ書き、残りは要求から読む。
+        // ページの範囲が整っていない・親子の関係を決められず固定するページがある（常駐のまま保つ必要がある）メッシュは、
+        // ストリーミングせず全てを常駐させる。
+        MegaGeometry::GeometryPageLayout::RootExtent rootExtent;
+        bool bStreamPages = false;
+        Container::VariableArray<uint32_t> residentIndices;
+        uint32_t residentFallbackOffset = createInfo.FallbackIndexOffset;
+        if (m_bPageStreamingEnabled && createInfo.bBakedLODHierarchy && createInfo.PageSource &&
+            createInfo.Pages.size() >= 2)
+        {
+            if (!pageLinks.PinnedPages.empty())
+            {
+                NORVES_LOG_WARNING("MegaGeometryResources",
+                                   "常駐のまま固定するページがあるため、全てのページを常駐させます: %s pinned_pages=%u",
+                                   createInfo.DebugName.c_str(), static_cast<uint32_t>(pageLinks.PinnedPages.size()));
+            }
+            else if (createInfo.VertexStride != MegaGeometry::GeometryPageLayout::VertexStrideBytes ||
+                     pageLinks.PageCount != createInfo.Pages.size() ||
+                     !MegaGeometry::GeometryPageLayout::ValidatePages(
+                         createInfo.Pages, createInfo.Clusters, createInfo.VertexCount, createInfo.IndexCount,
+                         createInfo.IndexData, createInfo.FallbackIndexOffset, createInfo.FallbackIndexCount, rootExtent) ||
+                     rootExtent.PageCount >= createInfo.Pages.size())
+            {
+                NORVES_LOG_WARNING("MegaGeometryResources",
+                                   "ページの範囲が整っていないため、全てのページを常駐させます: %s pages=%u",
+                                   createInfo.DebugName.c_str(), static_cast<uint32_t>(createInfo.Pages.size()));
+            }
+            else
+            {
+                bStreamPages = true;
+                // 区画へ書くのは、根のページの頂点（先頭から連続）と、根のページのインデックスに続けたフォールバック
+                residentIndices.reserve(static_cast<size_t>(rootExtent.IndexCount) + createInfo.FallbackIndexCount);
+                residentIndices.insert(residentIndices.end(), createInfo.IndexData,
+                                       createInfo.IndexData + rootExtent.IndexCount);
+                residentIndices.insert(residentIndices.end(), createInfo.IndexData + createInfo.FallbackIndexOffset,
+                                       createInfo.IndexData + createInfo.FallbackIndexOffset +
+                                           createInfo.FallbackIndexCount);
+                uploadVertexCount = rootExtent.VertexCount;
+                uploadVertexDataSize =
+                    static_cast<size_t>(rootExtent.VertexCount) * MegaGeometry::GeometryPageLayout::VertexStrideBytes;
+                uploadIndexData = residentIndices.data();
+                uploadIndexCount = static_cast<uint32_t>(residentIndices.size());
+                residentFallbackOffset = MegaGeometry::GeometryPageLayout::ComputeResidentFallbackOffset(rootExtent);
+            }
+        }
+
         // 区画の大きさを決める。クラスタ・頂点・インデックスの順に 256 バイト整列で1つの区画へ並べる
         // （クラスタは storage buffer の範囲として結ぶので、区画の先頭＝プールの整列の位置に置く）。
         const uint64_t vertexBytes = static_cast<uint64_t>(uploadVertexDataSize);
@@ -290,26 +356,6 @@ namespace NorvesLib::Core::Rendering
         }
         const double allocateMs = LoadProfileElapsedMs(stageStartTime);
 
-        // ページの親子の関係(クラスタごとの子のページ)とメッシュのページの数を、グループの表から求める。
-        // 焼き込み済みの階層だけがページを持つ。それ以外は 1 ページで常駐のまま
-        Container::VariableArray<uint32_t> childPageIds;
-        MegaGeometry::GeometryPageLinkResult pageLinks;
-        if (createInfo.bBakedLODHierarchy)
-        {
-            if (!MegaGeometry::ComputeGeometryPageLinks(*uploadClusters, createInfo.ClusterGroups, childPageIds, pageLinks))
-            {
-                NORVES_LOG_ERROR("MegaGeometryResources", "クラスタのページの番号が不正です: %s", createInfo.DebugName.c_str());
-                return MegaGeometry::MegaMeshHandle::Invalid();
-            }
-            if (pageLinks.SplitGroups > 0 || pageLinks.AmbiguousClusters > 0)
-            {
-                NORVES_LOG_WARNING("MegaGeometryResources",
-                                   "ページの親子の関係を決められない箇所があります（該当のページは常駐のまま固定します）: %s split_groups=%u ambiguous_clusters=%u pinned_pages=%u",
-                                   createInfo.DebugName.c_str(), pageLinks.SplitGroups, pageLinks.AmbiguousClusters,
-                                   static_cast<uint32_t>(pageLinks.PinnedPages.size()));
-            }
-        }
-
         // クラスタのデータの storage buffer を作る。
         // MeshCluster を GPUClusterData へ変換する。
         Container::VariableArray<MegaGeometry::GPUClusterData> gpuClusters;
@@ -349,6 +395,21 @@ namespace NorvesLib::Core::Rendering
                 gpuCluster.ChildPageId = childPageIds[clusterIndex];
             }
             gpuClusters.push_back(gpuCluster);
+        }
+        // ストリーミングするメッシュ: 全体の位置のままの記録を残し（ページを区画へ置くときに書き換えて写す）、
+        // 区画へ書く記録の、根のページ以外のクラスタの位置は空にする（ページが常駐するまで描かれない）
+        Container::VariableArray<MegaGeometry::GPUClusterData> streamedClusterRecords;
+        if (bStreamPages)
+        {
+            streamedClusterRecords = gpuClusters;
+            for (size_t clusterIndex = 0; clusterIndex < gpuClusters.size(); ++clusterIndex)
+            {
+                if ((*uploadClusters)[clusterIndex].PageId >= rootExtent.PageCount)
+                {
+                    gpuClusters[clusterIndex].IndexOffset = 0;
+                    gpuClusters[clusterIndex].VertexOffset = 0;
+                }
+            }
         }
 
         // 区画の中身を CPU 側に組み立てる（リングへ積むまで持つ。呼び出し側の頂点・インデックスは返った後に手放される）
@@ -413,7 +474,7 @@ namespace NorvesLib::Core::Rendering
             {
                 continue;
             }
-            if (cluster.VertexOffset != 0)
+            if (cluster.VertexOffset != 0 || (bStreamPages && cluster.PageId >= rootExtent.PageCount))
             {
                 bShadowLevelDrawableAsOneRange = false;
                 break;
@@ -454,7 +515,7 @@ namespace NorvesLib::Core::Rendering
                 LevelAccumulator &accumulator = accumulators[cluster.LODLevel];
                 MegaGeometry::MegaMeshLevelRange &range = gpuData.LevelRanges[cluster.LODLevel];
                 range.Error = std::max(range.Error, cluster.LODError);
-                if (cluster.VertexOffset != 0)
+                if (cluster.VertexOffset != 0 || (bStreamPages && cluster.PageId >= rootExtent.PageCount))
                 {
                     accumulator.bDrawableAsOneRange = false;
                     continue;
@@ -483,7 +544,7 @@ namespace NorvesLib::Core::Rendering
         if (createInfo.bBakedLODHierarchy && createInfo.FallbackIndexCount > 0u)
         {
             MegaGeometry::MegaMeshLevelRange fallbackRange;
-            fallbackRange.FirstIndex = createInfo.FallbackIndexOffset;
+            fallbackRange.FirstIndex = residentFallbackOffset;
             fallbackRange.IndexCount = createInfo.FallbackIndexCount;
             fallbackRange.Error = createInfo.FallbackError;
             gpuData.ShadowLODLevel = static_cast<uint32_t>(gpuData.LevelRanges.size());
@@ -551,6 +612,31 @@ namespace NorvesLib::Core::Rendering
                     entry.PinnedPages[page] = 1;
                 }
             }
+            if (bStreamPages)
+            {
+                // メッシュの区画の基点は、頂点・インデックスの単位。区画は 256 バイト整列なので割り切れる
+                Container::TUniquePtr<StreamedMesh> streamed = Container::MakeUnique<StreamedMesh>();
+                streamed->Source = createInfo.PageSource;
+                streamed->Pages = createInfo.Pages;
+                streamed->Clusters = std::move(streamedClusterRecords);
+                MegaGeometry::GeometryPageLayout::ComputePageRelations(
+                    *uploadClusters, childPageIds, static_cast<uint32_t>(createInfo.Pages.size()), streamed->Relations);
+                streamed->PageLevels.assign(createInfo.Pages.size(), 0);
+                for (size_t clusterIndex = 0; clusterIndex < uploadClusters->size(); ++clusterIndex)
+                {
+                    const MegaGeometry::MeshCluster &cluster = (*uploadClusters)[clusterIndex];
+                    streamed->PageLevels[cluster.PageId] = std::max(streamed->PageLevels[cluster.PageId], cluster.LODLevel);
+                }
+                streamed->PageStates.resize(createInfo.Pages.size());
+                streamed->BlockIndex = entry.Region->Lease.GetBlockIndex();
+                streamed->MeshBases.VertexBase = static_cast<int64_t>(
+                    entry.Data.VertexBufferOffsetBytes / MegaGeometry::GeometryPageLayout::VertexStrideBytes);
+                streamed->MeshBases.IndexBase =
+                    static_cast<int64_t>(entry.Data.IndexBufferOffsetBytes / sizeof(uint32_t));
+                streamed->RootPageCount = rootExtent.PageCount;
+                entry.Streamed = std::move(streamed);
+                entry.Data.bPagesStreamed = true;
+            }
             Thread::ScopedLock lock(m_Mutex);
             // ページの表の範囲。今は全ページが常駐の区画 0（ページごとの読み込みはストリーマが SetMegaMeshPageRegion で行う）
             uint32_t pageTableBase = 0;
@@ -564,8 +650,32 @@ namespace NorvesLib::Core::Rendering
             entry.Data.PageTableBase = pageTableBase;
             entry.Data.PageCount = pageLinks.PageCount;
             entry.Data.PinnedPageCount = static_cast<uint32_t>(pageLinks.PinnedPages.size());
+            if (bStreamPages)
+            {
+                // 根のページ以外は、ストリーマが書き終えて公開するまで非常駐（カリングは親の段で描いて子のページを要求する）
+                for (uint32_t pageId = rootExtent.PageCount; pageId < pageLinks.PageCount; ++pageId)
+                {
+                    m_PageTable.SetRegion(pageTableBase, pageId, MegaGeometry::PAGE_NON_RESIDENT);
+                }
+            }
+            m_MeshRegionBytes += entry.Region->Lease.GetSizeBytes();
             m_MegaMeshes[handle.Id] = std::move(entry);
             m_PendingUploadIds.push_back(handle.Id);
+        }
+        if (bStreamPages)
+        {
+            uint64_t streamedPageBytes = 0;
+            for (size_t pageId = rootExtent.PageCount; pageId < createInfo.Pages.size(); ++pageId)
+            {
+                streamedPageBytes += MegaGeometry::GeometryPageLayout::ComputePageRegionLayout(
+                                         createInfo.Pages[pageId].VertexCount, createInfo.Pages[pageId].IndexCount)
+                                         .RegionBytes;
+            }
+            NORVES_LOG_INFO("MegaGeometryResources",
+                            "GEOMETRY_PAGES_STREAMED mesh=\"%s\" pages=%u root_pages=%u root_region_bytes=%llu streamed_page_bytes=%llu",
+                            createInfo.DebugName.c_str(), static_cast<uint32_t>(createInfo.Pages.size()),
+                            rootExtent.PageCount, static_cast<unsigned long long>(regionBytes),
+                            static_cast<unsigned long long>(streamedPageBytes));
         }
 
         NORVES_LOG_INFO("MegaGeometryResources",
@@ -739,10 +849,26 @@ namespace NorvesLib::Core::Rendering
             entry.Data.PageCount = 0;
             entry.Data.PageTableBase = 0;
         }
+        // ページの区画: まだ GPU へ出していないコピーを無効にして、区画を手放す（GpuRetireQueue が提出の完了まで保つ）
+        if (entry.Streamed)
+        {
+            for (StreamedPageState &page : entry.Streamed->PageStates)
+            {
+                if (page.Region && m_Uploader)
+                {
+                    const GeometryPool::RegionLease &lease = page.Region->Lease;
+                    m_Uploader->AbandonBufferRange(lease.GetBufferHandle(), lease.GetOffsetBytes(), lease.GetSizeBytes());
+                }
+                page.Region.reset();
+                page.Value = StreamedPageState::Phase::NonResident;
+            }
+        }
         if (!entry.Region)
         {
             return;
         }
+        const uint64_t meshRegionBytes = entry.Region->Lease.GetSizeBytes();
+        m_MeshRegionBytes = m_MeshRegionBytes > meshRegionBytes ? m_MeshRegionBytes - meshRegionBytes : 0;
         // まだ GPU へ出していないコピーが、解放後に使い回される区画へ書き込まないようにする
         if (m_Uploader)
         {
@@ -883,6 +1009,288 @@ namespace NorvesLib::Core::Rendering
         return m_PageTable.SetRegion(it->second.Data.PageTableBase, pageId, region);
     }
 
+    void MegaGeometryResourceStore::SetPageStreamingEnabled(bool bEnabled)
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        m_bPageStreamingEnabled = bEnabled;
+    }
+
+    bool MegaGeometryResourceStore::IsPageStreamingEnabled() const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        return m_bPageStreamingEnabled;
+    }
+
+    uint64_t MegaGeometryResourceStore::GetMeshRegionBytes() const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        return m_MeshRegionBytes;
+    }
+
+    bool MegaGeometryResourceStore::ResolveRequest(uint32_t tableIndex, uint64_t tableVersion, uint64_t &outMeshId,
+                                                   uint32_t &outPageId) const
+    {
+        if (!ResolvePageTableIndex(tableIndex, tableVersion, outMeshId, outPageId))
+        {
+            return false;
+        }
+        Thread::ScopedLock lock(m_Mutex);
+        const auto it = m_MegaMeshes.find(outMeshId);
+        return it != m_MegaMeshes.end() && it->second.Streamed &&
+               outPageId < it->second.Streamed->Pages.size();
+    }
+
+    bool MegaGeometryResourceStore::IsMeshStreamed(uint64_t meshId) const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        const auto it = m_MegaMeshes.find(meshId);
+        return it != m_MegaMeshes.end() && it->second.Streamed != nullptr;
+    }
+
+    bool MegaGeometryResourceStore::GetPageDescriptor(uint64_t meshId, uint32_t pageId, GeometryPageDescriptor &out) const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        const auto it = m_MegaMeshes.find(meshId);
+        if (it == m_MegaMeshes.end() || !it->second.Streamed || pageId >= it->second.Streamed->Pages.size())
+        {
+            return false;
+        }
+        const StreamedMesh &streamed = *it->second.Streamed;
+        const MegaGeometry::MeshPageInfo &page = streamed.Pages[pageId];
+        out = GeometryPageDescriptor();
+        out.bRoot = pageId < streamed.RootPageCount;
+        out.Level = streamed.PageLevels[pageId];
+        const MegaGeometry::GeometryPageLayout::PageRegionLayout layout =
+            MegaGeometry::GeometryPageLayout::ComputePageRegionLayout(page.VertexCount, page.IndexCount);
+        // 区画の大きさはプールの粒度へ切り上がる（目標との比較は、実際に借りる量で数える）
+        out.RegionBytes = MegaGeometry::GeometryPageLayout::AlignUp(layout.RegionBytes, GeometryPoolAllocator::GranularityBytes);
+        out.ReadBytes = layout.VertexBytes + layout.IndexBytes;
+        out.CopyBytes = layout.RegionBytes +
+                        static_cast<uint64_t>(page.ClusterCount) * sizeof(MegaGeometry::GPUClusterData);
+        // 根のページは常駐のままなので、親子の関係には入れない
+        for (const uint32_t parent : streamed.Relations.Parents[pageId])
+        {
+            if (parent >= streamed.RootPageCount)
+            {
+                out.Parents.push_back(parent);
+            }
+        }
+        for (const uint32_t child : streamed.Relations.Children[pageId])
+        {
+            if (child >= streamed.RootPageCount)
+            {
+                out.Children.push_back(child);
+            }
+        }
+        return true;
+    }
+
+    bool MegaGeometryResourceStore::BeginRead(uint64_t meshId, uint32_t pageId)
+    {
+        Container::TSharedPtr<MegaGeometry::IGeometryPageSource> source;
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            const auto it = m_MegaMeshes.find(meshId);
+            if (it == m_MegaMeshes.end() || !it->second.Streamed || pageId >= it->second.Streamed->Pages.size() ||
+                pageId < it->second.Streamed->RootPageCount)
+            {
+                return false;
+            }
+            source = it->second.Streamed->Source;
+        }
+        // 読み込みのジョブを積むだけで、ストアのロックの外で行う
+        return source != nullptr && source->BeginRead(pageId);
+    }
+
+    void MegaGeometryResourceStore::CollectReads(Container::VariableArray<GeometryPageReadCompletion> &out)
+    {
+        struct SourceRef
+        {
+            uint64_t MeshId = 0;
+            Container::TSharedPtr<MegaGeometry::IGeometryPageSource> Source;
+        };
+        Container::VariableArray<SourceRef> sources;
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            for (const auto &pair : m_MegaMeshes)
+            {
+                if (pair.second.Streamed && pair.second.Streamed->Source)
+                {
+                    sources.push_back(SourceRef{pair.first, pair.second.Streamed->Source});
+                }
+            }
+        }
+        Container::VariableArray<MegaGeometry::GeometryPageReadResult> results;
+        for (const SourceRef &ref : sources)
+        {
+            results.clear();
+            ref.Source->CollectCompleted(results);
+            for (MegaGeometry::GeometryPageReadResult &result : results)
+            {
+                GeometryPageReadCompletion completion;
+                completion.MeshId = ref.MeshId;
+                completion.PageId = result.PageId;
+                completion.bSucceeded = result.bSucceeded;
+                completion.Data = std::move(result.Data);
+                out.push_back(std::move(completion));
+            }
+        }
+    }
+
+    GeometryPageUploadStart MegaGeometryResourceStore::BeginUpload(uint64_t meshId, uint32_t pageId,
+                                                                   const Container::VariableArray<uint8_t> &data)
+    {
+        if (!m_Pool || !m_Uploader)
+        {
+            return GeometryPageUploadStart::Rejected;
+        }
+        Thread::ScopedLock lock(m_Mutex);
+        const auto it = m_MegaMeshes.find(meshId);
+        if (it == m_MegaMeshes.end() || !it->second.Streamed || pageId >= it->second.Streamed->Pages.size() ||
+            pageId < it->second.Streamed->RootPageCount)
+        {
+            return GeometryPageUploadStart::Rejected;
+        }
+        MegaMeshEntry &entry = it->second;
+        StreamedMesh &streamed = *entry.Streamed;
+        StreamedPageState &state = streamed.PageStates[pageId];
+        const MegaGeometry::MeshPageInfo &page = streamed.Pages[pageId];
+        if (state.Value != StreamedPageState::Phase::NonResident)
+        {
+            return GeometryPageUploadStart::Rejected;
+        }
+        const MegaGeometry::GeometryPageLayout::PageRegionLayout layout =
+            MegaGeometry::GeometryPageLayout::ComputePageRegionLayout(page.VertexCount, page.IndexCount);
+        if (data.size() != layout.VertexBytes + layout.IndexBytes)
+        {
+            return GeometryPageUploadStart::Rejected;
+        }
+        // メッシュの区画の最初の書き込みが終わる前に、クラスタの記録を書き換えると、あとから最初の内容で上書きされる
+        if (!IsEntryGpuReadyLocked(entry))
+        {
+            return GeometryPageUploadStart::Blocked;
+        }
+
+        const uint64_t clusterPatchBytes = static_cast<uint64_t>(page.ClusterCount) * sizeof(MegaGeometry::GPUClusterData);
+        if (layout.RegionBytes + clusterPatchBytes > m_Uploader->GetRecordableCopyBytes())
+        {
+            return GeometryPageUploadStart::Blocked;
+        }
+        GeometryPool::RegionLease lease = m_Pool->AllocateInBlock(streamed.BlockIndex, layout.RegionBytes, RegionAlignmentBytes);
+        if (!lease.IsValid())
+        {
+            return GeometryPageUploadStart::Blocked;
+        }
+
+        // 区画の中身（頂点、整列して続くインデックス）
+        Container::VariableArray<uint8_t> regionBytes(static_cast<size_t>(layout.RegionBytes), 0);
+        std::memcpy(regionBytes.data(), data.data(), static_cast<size_t>(layout.VertexBytes));
+        std::memcpy(regionBytes.data() + layout.IndexOffsetBytes, data.data() + layout.VertexBytes,
+                    static_cast<size_t>(layout.IndexBytes));
+
+        // クラスタの記録の頂点・インデックスの位置を、ページの区画を指すように書き換える
+        const MegaGeometry::GeometryPageLayout::RegionBases pageBases =
+            MegaGeometry::GeometryPageLayout::ComputePageRegionBases(lease.GetOffsetBytes(), layout);
+        Container::VariableArray<MegaGeometry::GPUClusterData> patched(page.ClusterCount);
+        MegaGeometry::GeometryPageLayout::PatchClusterRecords(streamed.Clusters.data() + page.FirstCluster, page,
+                                                              pageBases, streamed.MeshBases, patched.data());
+
+        const RHI::BufferPtr &pageBuffer = lease.GetBufferHandle();
+        if (!m_Uploader->EnqueueBufferCopy(pageBuffer, lease.GetOffsetBytes(), regionBytes.data(), layout.RegionBytes))
+        {
+            return GeometryPageUploadStart::Blocked;
+        }
+        const uint64_t clusterPatchOffset =
+            entry.Data.ClusterBufferOffsetBytes + static_cast<uint64_t>(page.FirstCluster) * sizeof(MegaGeometry::GPUClusterData);
+        if (!m_Uploader->EnqueueBufferCopy(entry.Data.ClusterBuffer, clusterPatchOffset, patched.data(), clusterPatchBytes))
+        {
+            m_Uploader->DiscardLastEnqueued(1);
+            return GeometryPageUploadStart::Blocked;
+        }
+
+        state.RegionOffsetBytes = lease.GetOffsetBytes();
+        state.RegionBytes = layout.RegionBytes;
+        state.ClusterPatchOffsetBytes = clusterPatchOffset;
+        state.ClusterPatchBytes = clusterPatchBytes;
+        state.Region = Container::MakeShared<MegaGeometryRegionHolder>(std::move(lease), m_RetireSink);
+        state.Value = StreamedPageState::Phase::Uploading;
+        return GeometryPageUploadStart::Queued;
+    }
+
+    GeometryPageUploadState MegaGeometryResourceStore::PollUpload(uint64_t meshId, uint32_t pageId) const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        const auto it = m_MegaMeshes.find(meshId);
+        if (it == m_MegaMeshes.end() || !it->second.Streamed || pageId >= it->second.Streamed->Pages.size())
+        {
+            return GeometryPageUploadState::Lost;
+        }
+        const StreamedPageState &state = it->second.Streamed->PageStates[pageId];
+        if (state.Value != StreamedPageState::Phase::Uploading || !state.Region || !m_Uploader)
+        {
+            return GeometryPageUploadState::Lost;
+        }
+        // ページの区画と、書き換えたクラスタの記録の両方の書き込みが GPU で完了してから公開する
+        const RHI::BufferPtr &pageBuffer = state.Region->Lease.GetBufferHandle();
+        if (m_Uploader->HasUnfinishedBufferCopies(pageBuffer, state.RegionOffsetBytes, state.RegionBytes) ||
+            m_Uploader->HasUnfinishedBufferCopies(it->second.Data.ClusterBuffer, state.ClusterPatchOffsetBytes,
+                                                  state.ClusterPatchBytes))
+        {
+            return GeometryPageUploadState::Pending;
+        }
+        return GeometryPageUploadState::Complete;
+    }
+
+    bool MegaGeometryResourceStore::Publish(uint64_t meshId, uint32_t pageId)
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        const auto it = m_MegaMeshes.find(meshId);
+        if (it == m_MegaMeshes.end() || !it->second.Streamed || pageId >= it->second.Streamed->Pages.size())
+        {
+            return false;
+        }
+        StreamedPageState &state = it->second.Streamed->PageStates[pageId];
+        if (state.Value != StreamedPageState::Phase::Uploading)
+        {
+            return false;
+        }
+        // 区画の番号は、塊の中の位置（256 バイト単位）。描画は常駐かどうかだけを見る
+        const uint32_t regionToken = static_cast<uint32_t>(state.RegionOffsetBytes / RegionAlignmentBytes);
+        if (!m_PageTable.SetRegion(it->second.Data.PageTableBase, pageId, regionToken))
+        {
+            return false;
+        }
+        state.Value = StreamedPageState::Phase::Resident;
+        return true;
+    }
+
+    bool MegaGeometryResourceStore::Evict(uint64_t meshId, uint32_t pageId)
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        const auto it = m_MegaMeshes.find(meshId);
+        if (it == m_MegaMeshes.end() || !it->second.Streamed || pageId >= it->second.Streamed->Pages.size() ||
+            pageId < it->second.Streamed->RootPageCount)
+        {
+            return false;
+        }
+        StreamedPageState &state = it->second.Streamed->PageStates[pageId];
+        if (state.Value != StreamedPageState::Phase::Resident)
+        {
+            return false;
+        }
+        // 先に表を非常駐にする（以後のフレームは、このページを描かない）。区画の持ち主を手放すと GpuRetireQueue へ渡り、
+        // 使っていた提出が完了するまで再利用されない
+        m_PageTable.SetRegion(it->second.Data.PageTableBase, pageId, MegaGeometry::PAGE_NON_RESIDENT);
+        state.Region.reset();
+        state.Value = StreamedPageState::Phase::NonResident;
+        return true;
+    }
+
+    uint64_t MegaGeometryResourceStore::GetCopyBytesAvailable() const
+    {
+        return m_Uploader ? m_Uploader->GetRecordableCopyBytes() : 0;
+    }
+
     void MegaGeometryResourceStore::Clear()
     {
         Thread::ScopedLock lock(m_Mutex);
@@ -893,6 +1301,7 @@ namespace NorvesLib::Core::Rendering
         }
         m_MegaMeshes.clear();
         m_PendingUploadIds.clear();
+        m_MeshRegionBytes = 0;
     }
 
 } // namespace NorvesLib::Core::Rendering

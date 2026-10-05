@@ -1,6 +1,8 @@
 ﻿#pragma once
 
+#include "Rendering/GeometryPageStreamer.h"
 #include "Rendering/GeometryPool.h"
+#include "Rendering/MegaGeometry/GeometryPageLayout.h"
 #include "Rendering/MegaGeometry/GeometryPageTable.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/RenderTypes.h"
@@ -39,8 +41,13 @@ namespace NorvesLib::Core::Rendering
      * 書き込みは PumpUploads が毎フレーム上限の範囲でリングへ送る。GPU が読めるのは、全てのコピーの完了後
      * （IsMegaMeshGpuReady）で、描画・影・レイトレーシングはその状態になったメッシュだけを使う。
      * メッシュの解放は区画を GpuRetireQueue へ渡し、最後に使った提出の完了まで空きへ戻さない。
+     *
+     * ページを持つメッシュ（NVMESH v1.1）は、根のページの頂点・インデックスだけを自分の区画へ書いて常駐させ、残りのページは
+     * ストリーマ（GeometryPageStreamer。このストアがその窓口 IGeometryPageBackend を務める）が要求から読んで、ページごとの区画へ
+     * 書く。ページの区画はメッシュの区画と同じ塊の中にあり、書き終えたページのクラスタの記録（頂点・インデックスの位置）を
+     * ページの区画を指すように書き換えてから、ページの表へ公開する。外したページの区画は GpuRetireQueue へ渡す。
      */
-    class MegaGeometryResourceStore final
+    class MegaGeometryResourceStore final : public IGeometryPageBackend
     {
     public:
         /**
@@ -60,6 +67,18 @@ namespace NorvesLib::Core::Rendering
 
         MegaGeometryResourceStore(const MegaGeometryResourceStore &) = delete;
         MegaGeometryResourceStore &operator=(const MegaGeometryResourceStore &) = delete;
+
+        /**
+         * @brief ページを持つメッシュを、根のページだけ常駐させてストリーミングするか（既定は有効）
+         *
+         * 無効にすると、ページを持つメッシュも全てのページを区画へ書いて常駐させる（--geometry-streaming=off）。
+         * メッシュを作る前に決める。
+         */
+        void SetPageStreamingEnabled(bool bEnabled);
+        bool IsPageStreamingEnabled() const;
+
+        /** @brief メッシュの区画の大きさの合計（バイト）。ページの区画は含まない。ストリーミングの目標から引く外せない分 */
+        uint64_t GetMeshRegionBytes() const;
 
         MegaGeometry::MegaMeshHandle CreateMegaMesh(const MegaGeometry::MegaMeshCreateInfo &createInfo);
         /** @brief 登録済みのメッシュの GPU データ（書き込みの完了は問わない。GPU で読むときは GetReadyMegaMeshGPUData） */
@@ -109,12 +128,63 @@ namespace NorvesLib::Core::Rendering
          */
         bool SetMegaMeshPageRegion(MegaGeometry::MegaMeshHandle handle, uint32_t pageId, uint32_t region);
 
+        // ---- IGeometryPageBackend（ストリーマの窓口） ----
+        bool ResolveRequest(uint32_t tableIndex, uint64_t tableVersion, uint64_t &outMeshId,
+                            uint32_t &outPageId) const override;
+        bool GetPageDescriptor(uint64_t meshId, uint32_t pageId, GeometryPageDescriptor &out) const override;
+        bool IsMeshStreamed(uint64_t meshId) const override;
+        bool BeginRead(uint64_t meshId, uint32_t pageId) override;
+        void CollectReads(Container::VariableArray<GeometryPageReadCompletion> &out) override;
+        GeometryPageUploadStart BeginUpload(uint64_t meshId, uint32_t pageId,
+                                            const Container::VariableArray<uint8_t> &data) override;
+        GeometryPageUploadState PollUpload(uint64_t meshId, uint32_t pageId) const override;
+        bool Publish(uint64_t meshId, uint32_t pageId) override;
+        bool Evict(uint64_t meshId, uint32_t pageId) override;
+        uint64_t GetCopyBytesAvailable() const override;
+
         void Clear();
 
     private:
+        // ストリーミングするメッシュの、ページごとの状態
+        struct StreamedPageState
+        {
+            enum class Phase : uint8_t
+            {
+                NonResident,
+                Uploading,
+                Resident
+            };
+            Phase Value = Phase::NonResident;
+            // ページの区画の持ち主（NonResident では空）。手放すと GpuRetireQueue へ渡る
+            Container::TSharedPtr<MegaGeometryRegionHolder> Region;
+            // 区画の塊の先頭からのバイト位置と、書き込み先のクラスタの記録の範囲（書き終えたかの問い合わせに使う）
+            uint64_t RegionOffsetBytes = 0;
+            uint64_t RegionBytes = 0;
+            uint64_t ClusterPatchOffsetBytes = 0;
+            uint64_t ClusterPatchBytes = 0;
+        };
+
+        struct StreamedMesh
+        {
+            Container::TSharedPtr<MegaGeometry::IGeometryPageSource> Source;
+            Container::VariableArray<MegaGeometry::MeshPageInfo> Pages;
+            // クラスタの記録（頂点・インデックスの位置は全体の配列の位置のまま）。ページを区画へ置くときに書き換えて写す
+            Container::VariableArray<MegaGeometry::GPUClusterData> Clusters;
+            MegaGeometry::GeometryPageLayout::PageRelations Relations;
+            Container::VariableArray<uint32_t> PageLevels;
+            Container::VariableArray<StreamedPageState> PageStates;
+            // ページの区画を借りる塊（メッシュの区画と同じ塊でなければ、同じバッファから引けない）
+            uint32_t BlockIndex = 0;
+            // メッシュの区画の基点（描画がインスタンスの基点として足す値）
+            MegaGeometry::GeometryPageLayout::RegionBases MeshBases;
+            uint32_t RootPageCount = 0;
+        };
+
         struct MegaMeshEntry
         {
             MegaGeometry::MegaMeshGPUData Data;
+            // ページをストリーミングするメッシュだけが持つ
+            Container::TUniquePtr<StreamedMesh> Streamed;
             // 区画の持ち主。ストアとレイトレーシングのスナップショットが共有し、最後の参照が消えたときに区画を返却の待ち行列へ渡す
             Container::TSharedPtr<MegaGeometryRegionHolder> Region;
             // 区画の中身（クラスタ・頂点・インデックスを並べたもの）。リングへ積み終えるまで持つ
@@ -144,6 +214,9 @@ namespace NorvesLib::Core::Rendering
         Thread::Atomic<uint64_t> &m_NextHandleId;
         GeometryPool *m_Pool = nullptr;
         TileUploader *m_Uploader = nullptr;
+        // ページをストリーミングするか。メッシュの区画の大きさの合計（ページの区画は含まない）
+        bool m_bPageStreamingEnabled = true;
+        uint64_t m_MeshRegionBytes = 0;
         GpuRetireQueue *m_RetireQueue = nullptr;
         // 区画の持ち主が、ストアより長く生きても返却先の待ち行列を触らないようにする窓口（デストラクタで閉じる）
         Container::TSharedPtr<MegaGeometryRetireSink> m_RetireSink;

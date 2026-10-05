@@ -55,6 +55,7 @@
 #include "Core/Public/Asset/AssetSystem.h"
 #include "Core/Public/Asset/CookedMeshFormat.h"
 #include "Core/Public/Rendering/MegaGeometry/CookedMeshMegaMeshAdapter.h"
+#include "Core/Public/Rendering/MegaGeometry/CookedMeshPageSource.h"
 #include "Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h"
 #include "Core/Public/RHI/ITexture.h"
 #include "Core/Public/Thread/JobSystem.h"
@@ -606,6 +607,15 @@ namespace Game::GameModes
             load.LogicalPath = meshPath;
             load.bBoulder = bBoulder;
             load.bAllowGltfFallback = bAllowGltfFallback;
+            // ページ（NVMESH v1.1）の読み込み元。パッケージの範囲を求められないとき（圧縮など）は無しで、全て常駐で作る
+            {
+                Asset::AssetCookedRange pageRange;
+                if (parsed.Mesh.Pages.size() >= 2 && Asset::AssetSystem::TryMakeCookedRange(resolved, pageRange))
+                {
+                    load.PageSource = MegaGeometry::MakeCookedMeshPageSource(
+                        parsed.Mesh, assetSystem->GetCookedFileReader(), pageRange.Request, pageRange.BaseOffset);
+                }
+            }
             load.Mesh = MakeShared<Asset::CookedMeshData>(std::move(parsed.Mesh));
             load.State = state;
             if (state)
@@ -730,6 +740,7 @@ namespace Game::GameModes
                 MegaMeshCreateInfo createInfo;
                 if (BuildMegaMeshCreateInfoFromCookedMesh(*load.Mesh, createInfo))
                 {
+                    createInfo.PageSource = load.PageSource;
                     const MaterialCreateData &material = load.Material->CreateData;
                     createInfo.Material.AlbedoTexture = material.AlbedoTexture;
                     createInfo.Material.NormalTexture = material.NormalTexture;
@@ -905,7 +916,8 @@ namespace Game::GameModes
         // 別スレッドで走る（約 77 MB の読み込みと検証を、メインスレッドと石畳のテクスチャの読み込みから外すため）。
         // assetSystem はマニフェストの変更が走っていない読み取り専用のスナップショットなので、並行に引ける。
         bool TryLoadCookedBigSphere(const TSharedPtr<const Asset::AssetSystem> &assetSystem,
-                                    Asset::CookedMeshData &outCooked)
+                                    Asset::CookedMeshData &outCooked,
+                                    TSharedPtr<MegaGeometry::IGeometryPageSource> &outPageSource)
         {
             const auto loadStartTime = std::chrono::steady_clock::now();
             const char *meshPath = MegaGeometry::StartupBigSphere::kCookedMeshLogicalPath;
@@ -931,6 +943,15 @@ namespace Game::GameModes
                                    static_cast<unsigned int>(parsed.Status));
                 return false;
             }
+            // ページ（NVMESH v1.1）の読み込み元。パッケージの範囲を求められないとき（圧縮など）は無しで、全て常駐で作る
+            {
+                Asset::AssetCookedRange pageRange;
+                if (parsed.Mesh.Pages.size() >= 2 && Asset::AssetSystem::TryMakeCookedRange(resolved, pageRange))
+                {
+                    outPageSource = MegaGeometry::MakeCookedMeshPageSource(
+                        parsed.Mesh, assetSystem->GetCookedFileReader(), pageRange.Request, pageRange.BaseOffset);
+                }
+            }
             outCooked = std::move(parsed.Mesh);
             NORVES_LOG_INFO("AssetLoadProfile",
                             "stage=cooked_big_sphere_load load_ms=%.1f format_major=%u vertices=%u indices=%u clusters=%u "
@@ -950,9 +971,10 @@ namespace Game::GameModes
         void PrepareBigSphereMeshData(bool bTryCooked,
                                       const TSharedPtr<const Asset::AssetSystem> &assetSystem,
                                       Asset::CookedMeshData &outCooked,
+                                      TSharedPtr<MegaGeometry::IGeometryPageSource> &outPageSource,
                                       ProceduralMegaSphereData &outRuntime)
         {
-            if (bTryCooked && TryLoadCookedBigSphere(assetSystem, outCooked))
+            if (bTryCooked && TryLoadCookedBigSphere(assetSystem, outCooked, outPageSource))
             {
                 return;
             }
@@ -965,8 +987,11 @@ namespace Game::GameModes
         {
             TSharedPtr<ProceduralMegaSphereData> sphereData = data.m_pBigSphereMegaData;
             const TSharedPtr<Asset::CookedMeshData> cookedSphere = data.m_pBigSphereCooked;
+            const TSharedPtr<MegaGeometry::IGeometryPageSource> cookedSpherePageSource =
+                data.m_pBigSpherePageSource ? *data.m_pBigSpherePageSource : nullptr;
             data.m_pBigSphereMegaData.reset();
             data.m_pBigSphereCooked.reset();
+            data.m_pBigSpherePageSource.reset();
             const bool bCooked = cookedSphere && !cookedSphere->Clusters.empty();
             if (!data.m_CobbleStoneMaterialUpdate || (!bCooked && (!sphereData || sphereData->Vertices.empty())))
             {
@@ -989,6 +1014,7 @@ namespace Game::GameModes
                                      "クック済みの大きな球からMegaMeshの入力を作れませんでした（仮の球のまま）");
                     return;
                 }
+                createInfo.PageSource = cookedSpherePageSource;
                 displacementUVSpacing = MegaGeometry::StartupBigSphere::DisplacementUVSpacing();
             }
             else
@@ -1798,22 +1824,24 @@ namespace Game::GameModes
             {
                 auto sphereData = MakeShared<ProceduralMegaSphereData>();
                 auto cookedSphere = MakeShared<Asset::CookedMeshData>();
+                auto cookedSpherePageSource = MakeShared<TSharedPtr<MegaGeometry::IGeometryPageSource>>();
                 data.m_pBigSphereMegaData = sphereData;
                 data.m_pBigSphereCooked = cookedSphere;
+                data.m_pBigSpherePageSource = cookedSpherePageSource;
                 const bool bTryCooked = !data.m_bBigSphereFromRuntime;
                 const TSharedPtr<const Asset::AssetSystem> assetSystem =
                     bTryCooked && data.m_GetAssetSystem.IsBound() ? data.m_GetAssetSystem.Invoke()
                                                                   : TSharedPtr<const Asset::AssetSystem>();
                 NorvesLib::Thread::TaskPtr buildTask = NorvesLib::Thread::Task::Create(
-                    [sphereData, cookedSphere, assetSystem, bTryCooked]()
-                    { PrepareBigSphereMeshData(bTryCooked, assetSystem, *cookedSphere, *sphereData); });
+                    [sphereData, cookedSphere, cookedSpherePageSource, assetSystem, bTryCooked]()
+                    { PrepareBigSphereMeshData(bTryCooked, assetSystem, *cookedSphere, *cookedSpherePageSource, *sphereData); });
                 if (buildTask && NorvesLib::Thread::JobSystem::Get().SubmitTask(buildTask))
                 {
                     data.m_BigSphereBuildTask = buildTask;
                 }
                 else
                 {
-                    PrepareBigSphereMeshData(bTryCooked, assetSystem, *cookedSphere, *sphereData);
+                    PrepareBigSphereMeshData(bTryCooked, assetSystem, *cookedSphere, *cookedSpherePageSource, *sphereData);
                 }
             }
 
@@ -3601,6 +3629,7 @@ namespace Game::GameModes
         data.m_pSphereMegaGeometryComponent = nullptr;
         data.m_pBigSphereMegaData.reset();
         data.m_pBigSphereCooked.reset();
+        data.m_pBigSpherePageSource.reset();
         // 走行中のジョブは自分の参照で球のデータを持ち続けるので、ここでは待たずに手放す。
         data.m_BigSphereBuildTask.reset();
         data.m_CobbleStoneMaterialUpdate.reset();

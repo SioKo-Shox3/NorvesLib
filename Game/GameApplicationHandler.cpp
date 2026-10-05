@@ -153,6 +153,10 @@ namespace Game
         // off は遮蔽の判定なしの従来の1回の判定で描く（見た目・描画数の比較用）。
         constexpr const TCHAR *kMegaOcclusionOption = TEXT("--mega-occlusion=");
         bool s_bMegaOcclusion = true;
+        // --geometry-streaming=on|off: ページを持つメッシュ（NVMESH v1.1。岩・小屋・スキャン資産・大きな球）を、根のページだけ常駐させて
+        // 残りを要求から読み込むか。既定は on。off は全てのページを常駐させる（見た目・VRAM の比較用）。
+        constexpr const TCHAR *kGeometryStreamingOption = TEXT("--geometry-streaming=");
+        bool s_bGeometryStreaming = true;
         // --stress-textures: テクスチャの負荷モード。起動画面の地面の外側へ、負荷用の材質（4K、24 種）を貼った板を格子に並べ、
         // カメラの軸を格子の中心へ移す。--vram-budget-mb と併せて、VT が目標の中で描けることを確かめる。
         constexpr const TCHAR *kStressTexturesOption = TEXT("--stress-textures");
@@ -497,6 +501,7 @@ namespace Game
         s_bRendering3DTestModelSourceGltf = false;
         s_bRendering3DTestBigSphereRuntime = false;
         s_bMegaOcclusion = true;
+        s_bGeometryStreaming = true;
         String captureSequencePrefix;
         VariableArray<uint64_t> captureSequenceRenderedFrames;
         bool bHasRendering3DTestBoardSmokeCount = false;
@@ -717,6 +722,25 @@ namespace Game
                 else
                 {
                     LOG_ERROR("Game command line parse failed: --mega-occlusion は on か off で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String geometryStreamingValue;
+            if (TryStripPrefix(args[i], kGeometryStreamingOption, geometryStreamingValue))
+            {
+                if (geometryStreamingValue == String(TEXT("on")))
+                {
+                    s_bGeometryStreaming = true;
+                }
+                else if (geometryStreamingValue == String(TEXT("off")))
+                {
+                    s_bGeometryStreaming = false;
+                }
+                else
+                {
+                    LOG_ERROR("Game command line parse failed: --geometry-streaming は on か off で指定する");
                     return false;
                 }
                 continue;
@@ -1392,6 +1416,8 @@ namespace Game
             NorvesLib::Core::Engine::GEngine->GetRenderResources().SetVideoMemoryCapMb(s_VramBudgetCapMb);
             // --mega-occlusion の指定（既定は有効）を MegaGeometry へ渡す
             NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetOcclusionCullingEnabled(s_bMegaOcclusion);
+            // --geometry-streaming の指定（既定は有効）。メッシュを作る前に決める
+            NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetPageStreamingEnabled(s_bGeometryStreaming);
         }
 
         if (m_bHasTextureAssetRuntimeConfig && !ReloadConfiguredAssetManifest())
