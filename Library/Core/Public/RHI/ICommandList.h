@@ -377,7 +377,7 @@ namespace NorvesLib::RHI
          *
          * @param indirectBuffer 間接引数バッファ
          * @param offset バッファ内のオフセット（バイト。4 の倍数。引数 12 バイトがバッファに収まること）
-         * @return 記録したら true。引数が不正（バッファが無い・オフセットが 4 の倍数でない・範囲外）か未対応なら false で何も記録しない
+         * @return 記録したら true。引数が不正（バッファが無い・ResourceUsage::IndirectBuffer が無い・オフセットが 4 の倍数でない・範囲外）か未対応なら false で何も記録しない
          */
         virtual bool DispatchIndirect(BufferPtr indirectBuffer, uint64_t offset)
         {

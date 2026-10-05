@@ -1171,10 +1171,12 @@ namespace NorvesLib::RHI::Vulkan
 
     bool VulkanCommandList::DispatchIndirect(BufferPtr indirectBuffer, uint64_t offset)
     {
-        // VkDispatchIndirectCommand（uint32_t x 3）の大きさ。offset は 4 の倍数で、引数がバッファに収まること
+        // VkDispatchIndirectCommand（uint32_t x 3）の大きさ。offset は 4 の倍数で、引数がバッファに収まること。
+        // バッファは IndirectBuffer の用途で作られていること（VUID-vkCmdDispatchIndirect-buffer-02709）
         constexpr uint64_t DispatchIndirectCommandBytes = 3u * sizeof(uint32_t);
         auto vkBuffer = DynamicPointerCast<VulkanBuffer>(indirectBuffer);
-        if (!vkBuffer || (offset % 4u) != 0u || offset > vkBuffer->GetSize() ||
+        if (!vkBuffer || (vkBuffer->GetUsage() & ResourceUsage::IndirectBuffer) != ResourceUsage::IndirectBuffer ||
+            (offset % 4u) != 0u || offset > vkBuffer->GetSize() ||
             vkBuffer->GetSize() - offset < DispatchIndirectCommandBytes)
         {
             return false;

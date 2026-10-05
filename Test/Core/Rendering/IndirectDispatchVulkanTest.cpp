@@ -435,7 +435,17 @@ namespace
                     std::cerr << TestName << " ケース G のバッファかコマンドリストを作れませんでした" << std::endl;
                     return 1;
                 }
+                // IndirectBuffer の用途が無いバッファ（VUID-vkCmdDispatchIndirect-buffer-02709 に当たる）
+                BufferPtr noIndirectArgs = device->CreateBuffer(BufferDesc(
+                    static_cast<uint64_t>(EntryCount) * EntryWords * sizeof(uint32_t),
+                    ResourceUsage::StorageBuffer | ResourceUsage::TransferDst, true, "IndirectProbeNoIndirectUsage"));
+                if (!noIndirectArgs)
+                {
+                    std::cerr << TestName << " ケース G の用途違いのバッファを作れませんでした" << std::endl;
+                    return 1;
+                }
                 commandList->Begin();
+                Expect(!commandList->DispatchIndirect(noIndirectArgs, 0u), "IndirectBuffer の用途が無いバッファの間接 dispatch は false でなければならない");
                 Expect(!commandList->DispatchIndirect(BufferPtr{}, 0u), "バッファが無い間接 dispatch は false でなければならない");
                 Expect(!commandList->DispatchIndirect(args, 2u), "オフセットが 4 の倍数でない間接 dispatch は false でなければならない");
                 Expect(!commandList->DispatchIndirect(args, args->GetSize()), "引数がバッファの外にある間接 dispatch は false でなければならない");
