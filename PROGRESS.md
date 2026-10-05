@@ -7,7 +7,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR77/GR78: GLB/sidecar/変換をcook・loose・骨格へ接続済み。実物での最終受入れは残る。surface_centroidは承認済み保留。
 - GR86: 明示の影響数縮約/CUBICSPLINE焼込/morph dropと診断を接続済み。256関節はGR82 Stage Bと同時。
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
-- GR79: 材質codec・reader・設定・source・ARM画像処理・材質選択planまで。v1 writer/cook/hash/cache/runtime係数接続は未完。
+- GR79: 材質codec/reader/設定/source/ARM/selectorと明示v1 writer/cook/hash/cacheまで実Windowsで受入済み。runtime係数・packed ARM接続と実描画受入れは未完。
 - GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
 - GR83/GR84: 分離骨格資産ローダとBVH取り込みはこれから。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
@@ -850,3 +850,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR79 writer/cook検証中: 明示NVMESH v1の128B材質/cluster writer、共有材質plan、ARM/発光/外部画像、版付きmanifest/cache/output guardを接続。GltfMaterialCookV1Testを37番目のCPU gateへ追加。静的レビューround1のcluster幅指摘を修正しround2 PASS。host閉鎖判定の実コードsmokeとPython12+4+7 normal/-Oは合格。Windows nativeと旧79+10 byte互換はこのコミットのCIで未確認。runtime v1拒否とGPU未受入れを維持。
 
 - G2/GR79 native初回run37313863062はビルド失敗。ModelCookCache.cppの2か所でAnsiStringViewとliteralの比較がMSVC C2678。右辺を明示AnsiStringViewに修正。テスト37件・byte比較は初回では未実行。次commitのCIで改めて検証する。
+
+- G2/GR79 writer/cook受入: 5de8b9f539bb3a0ecfa5f7acb8f361c5135559f7 / tree7fb1789450844242dccc661f8ef63a031d6317a7 / run37315777388 attempt1 job111782027052。37CPUとv1実fixture、Bootstrap17/Update29、79standalone+10texture byte一致、7smoke/5診断、25native+15managed CLI/metadata12、Python12+4+7 normal/-O、実MSVCx64/CNG、3ZIPを独立照合。親のreadonly再実行もexit0。初回compile失敗は別証拠を保存。従来cross-session未試験を維持し、GPU/renderer/model asset-setは完了としない。

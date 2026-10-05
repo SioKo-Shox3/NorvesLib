@@ -2526,7 +2526,9 @@
 - stop-when: 通常コマンドで兄弟pendingを黙って復旧する、未所有rootを採用する、診断substringでStoreMissingを推測する、比較対象の一括ignoreを追加する、spec v2/ModelCookCache移行まで同時に拡張する。
 
 ## G2-GR79-MESH-V1-WRITER-COOK: 明示NVMESH v1の材質writerとcookを接続する
-- status: doing
+- status: done
 - done-when: 既存1primitive/1material profileで明示nvmesh.v1を出力し、共有128B材質、係数/alpha/両面/発光、role別texture、承認済みARM判定/焼込/全定数時省略、解決済み設定hashを実cook/fingerprintへ接続する。v0とruntime v1拒否は維持する。
 - verify: glTF/GLB実fixtureの反復byte/reader往復、AI既定/texture override/factor/別AO-MR/全定数、発光換算必須と診断、selector/sidecar拒否、設定差cache invalidation/版不整合miss、既存36CPU/17+29中断/79+10byte/managed CLI gate。
 - stop-when: DoubleSided autoをsource値へ黙って置換する、v0 hash/既定を変える、描画受入れを偽る、spec v2/可変inventory/骨格Stage B/多primitive runtimeまで同時に広げる。
+
+- result: code5de8b9f / tree7fb17894 / run37315777388 attempt1 job111782027052。37CPU、新v1実fixture、17/29中断、79+10byte、25+15CLI、metadata12、Python12+4+7 normal/-O、MSVCx64/CNG、3ZIPを独立検証し親も再実行PASS。初回run37313863062のC2678を修正。runtime/GPU・model asset-setは範囲外。
