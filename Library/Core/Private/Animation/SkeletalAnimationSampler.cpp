@@ -1,5 +1,6 @@
 ﻿#include "Animation/SkeletalAnimationSampler.h"
 #include "Animation/SkeletalSamplingMath.h"
+#include "Animation/SkeletalBindRowMath.h"
 
 #include "Animation/AnimationClipResource.h"
 #include "Animation/SkeletonResource.h"
@@ -15,44 +16,15 @@ namespace NorvesLib::Core::Animation
 {
     namespace
     {
-        struct JointTransform
-        {
-            Math::Vector3 Translation = Math::Vector3::Zero;
-            Math::Quaternion Rotation = Math::Quaternion::Identity;
-            Math::Vector3 Scale = Math::Vector3::One;
-        };
+        using Detail::DecomposeRowTransform;
+        using Detail::IsFiniteMatrix;
+        using Detail::JointTransform;
+        using Detail::TryInverseMatrix;
 
         bool IsFiniteValue(const Skeletal::SkeletalValue& value)
         {
             return std::isfinite(value.X) && std::isfinite(value.Y) &&
                    std::isfinite(value.Z) && std::isfinite(value.W);
-        }
-
-        bool IsFiniteMatrix(const Math::Matrix4x4& matrix)
-        {
-            for (const float value : matrix.values)
-            {
-                if (!std::isfinite(value))
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        bool TryInverseMatrix(const Math::Matrix4x4& matrix, Math::Matrix4x4& outInverse)
-        {
-            if (!IsFiniteMatrix(matrix))
-            {
-                return false;
-            }
-            const float determinant = Math::MatrixUtils::Determinant(matrix);
-            if (!std::isfinite(determinant) || std::abs(determinant) < Math::Constants::EPSILON)
-            {
-                return false;
-            }
-            outInverse = Math::MatrixUtils::Inverse(matrix);
-            return IsFiniteMatrix(outInverse);
         }
 
         Math::Matrix4x4 LoadMatrix(const Container::FixedArray<float, 16>& values)
@@ -151,17 +123,6 @@ namespace NorvesLib::Core::Animation
                     previous.Value.W + (next.Value.W - previous.Value.W) * alpha};
             }
             return samples.back().Value;
-        }
-
-        JointTransform DecomposeRowTransform(const Math::Matrix4x4& matrix)
-        {
-            JointTransform result;
-            result.Translation = matrix.GetTranslationRow();
-            result.Scale = Math::MatrixUtils::ExtractScale(matrix);
-            const Math::Matrix4x4 rotation =
-                Math::MatrixUtils::ExtractRotationRowVector(matrix, result.Scale);
-            result.Rotation = NormalizeQuaternion(Math::QuaternionUtils::FromRotationMatrix(rotation));
-            return result;
         }
 
         Math::Matrix4x4 ComposeSkeletalLocalRowTransform(const JointTransform& transform)
@@ -305,13 +266,8 @@ namespace NorvesLib::Core::Animation
         for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
         {
             inverseBindMatrices[jointIndex] = LoadMatrix(joints[jointIndex].InverseBindMatrix);
-            Math::Matrix4x4 bindGlobalInMeshSpace;
-            if (!TryInverseMatrix(inverseBindMatrices[jointIndex], bindGlobalInMeshSpace))
-            {
-                return false;
-            }
-            bindGlobals[jointIndex] = bindGlobalInMeshSpace * meshNodeGlobalRow;
-            if (!IsFiniteMatrix(bindGlobals[jointIndex]))
+            if (!Detail::TryBuildBindGlobalRow(inverseBindMatrices[jointIndex], meshNodeGlobalRow,
+                                               bindGlobals[jointIndex]))
             {
                 return false;
             }
@@ -319,20 +275,12 @@ namespace NorvesLib::Core::Animation
         for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
         {
             const int32_t parentIndex = joints[jointIndex].ParentIndex;
-            Math::Matrix4x4 bindLocal = bindGlobals[jointIndex];
-            if (parentIndex >= 0)
+            const Math::Matrix4x4* parentGlobal =
+                parentIndex >= 0 ? &bindGlobals[static_cast<size_t>(parentIndex)] : nullptr;
+            Math::Matrix4x4 bindLocal;
+            if (!Detail::TryBuildBindLocalRow(bindGlobals[jointIndex], parentGlobal, bindLocal))
             {
-                Math::Matrix4x4 inverseParentGlobal;
-                if (!TryInverseMatrix(
-                        bindGlobals[static_cast<size_t>(parentIndex)], inverseParentGlobal))
-                {
-                    return false;
-                }
-                bindLocal = bindGlobals[jointIndex] * inverseParentGlobal;
-                if (!IsFiniteMatrix(bindLocal))
-                {
-                    return false;
-                }
+                return false;
             }
             localTransforms[jointIndex] = DecomposeRowTransform(bindLocal);
         }

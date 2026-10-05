@@ -53,6 +53,7 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalJointIndexNative.cpp
     Private/Animation/SkeletalAnimationSampler.cpp
     Private/Animation/SkeletalSamplingMath.h
+    Private/Animation/SkeletalBindRowMath.h
     Private/Animation/SkeletalAssetResource.cpp
     Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
