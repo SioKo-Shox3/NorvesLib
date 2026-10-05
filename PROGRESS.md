@@ -1150,3 +1150,11 @@
 - 検証: `verify-VTG6-COMPUTE-SKINNING-1-build.txt`（Debug の Game・RHITextureUpdateVulkanTest・RenderingVelocityVulkanTest・SkinnedRenderPathContractTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（ComputeSkinningVulkanTest・RenderingVelocitySkinnedVulkanTest 2/2 passed）、`-3-ctest-verbose.txt`（RESULT=PASS、VUID_COUNT=0）。
 - Notes: (1) stop-when は該当しない（前のフレームのパレットは RenderThread 側で保持でき、FramePacket の契約は変えていない）。 (2) 描画経路は変えていない（パスは既定で無効）ので起動画面の撮影は未実施。 (3) `SkinnedRenderPathContractTest` の既知の失敗は TEST-SKINNED で別途。
 - Next: TASKS.md の残りの未完（VTG6-SKINNING-FINAL-BARRIER など）。
+
+## 反復 11（run 20261005-215042）: VTG6-VIS-RASTER（done）
+- 内容: コードの変更なし。`blocked/VTG6-VIS-RASTER.md` の選択肢1（親が採用）に従い、今の実装（MegaGeometryPass の後に両パスの間接描画を `VisBuffer.Id`・`GBuffer.Depth` へ重ね描き）で完了とした。指摘1（スキニングの記録の基点の二重加算）は `31877048` で直っている。
+- 持ち越し: 「ビジビリティの1パス目の深度で HZB を作る」順序と、スキニングを含む ID 表示の撮影は VTG6-DEFAULT-ON で行う（TASKS.md の notes に記載済み）。
+- 検証: `verify-VTG6-VIS-RASTER-1-build.txt`（Debug の Game・RenderGraphCompileTest・MegaGeometryResourcesTest、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（4/4 passed）、`-3-build-rwdi.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-4-capture.txt`（既定の撮影 pass、平均輝度 124.173 / 123.952 / 126.022）。
+- 目視確認: `startup-capture/VTG6-VIS-RASTER/default.png`（起動画面は変わらず、家・岩・球・地面が出る）と `VTG6-VIS-RASTER-debug/default.png`（ID の表示で物の輪郭と三角形の塊が出る）を開いた。
+- Notes: bash から cmake に `/m:1` を渡すと MSYS のパス変換で壊れる。`MSYS_NO_PATHCONV=1` を付ける。
+- Next: 次の未完の項目。
