@@ -479,7 +479,7 @@
 - paths: Scripts/CaptureStartupScene.ps1, Game, PROGRESS.md, TASKS.md
 - notes: 2026-10-05 親が VTG5-BATCHED-CULL から分けた（1反復に収まらなかったため）。計測のための一時の起動引数を Game に足すなら、既定の描画は変えない。
 ## VTG5-PAGE-FORMAT: クラスタをページに詰めて焼き、根のページを決める
-- status: todo
+- status: done
 - done-when: クッカーが、階層のクラスタを 128 KiB のページに詰めて NVMESH v1.1 に書く（1つのグループは1つのページに収める。ページは頂点・インデックス・クラスタの記録を自分の中のオフセットで持つ）。ページの表（ファイル内のオフセット・大きさ・親のページの番号）と、常に常駐する根のページ（粗い段とフォールバックの段を含む）の印を持つ。cluster record のページの番号を埋める。v1.0 も読む。`CookedMeshTest` に、ページの表の往復、グループがページをまたがないこと、根のページだけで閉じたメッシュ（フォールバック）が描けること、壊れた表の拒否を足す。`Docs/Architecture/NVMESHv1.md` に追記する。
 - verify: `cmake --build build --config Debug --target AssetCook CookedMeshTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(CookedMeshTest|AssetCookMeshSmoke|AssetCookMeshSimplifySmoke)$"`

@@ -23,6 +23,14 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t DagMilliseconds = 0;
         // 安全な簡略化が見つからず、簡略化せずに残したグループの数(階層が粗くなりにくくなる。0 が望ましい)
         uint32_t DagRejectedGroups = 0;
+        // NVMESH v1.1 のページの詰め方(FormatMajor が 1 のときだけ)。根のページ(常駐)の大きさと、
+        // 最も大きいグループがページの中で占めるバイト数(通常のページの上限は 128 KiB)
+        uint32_t PageCount = 0;
+        uint32_t RootPageBytes = 0;
+        uint32_t RootPageClusterCount = 0;
+        uint32_t RootPageMinLODLevel = 0;
+        uint32_t MaxPageBytes = 0;
+        uint32_t LargestGroupBytes = 0;
     };
 
     struct SkeletalCookResult

@@ -1625,10 +1625,25 @@ namespace NorvesLib::Tools::AssetCook
             dag.Output.NormalTexture = AnsiStringView(materialReferences.Normal);
             dag.Output.ArmTexture = AnsiStringView(materialReferences.Arm);
 
+            // クラスタのグループを 128 KiB のページに詰めて NVMESH v1.1 に書く(根のページに粗い段とフォールバックの段)
             MeshCookResult result;
-            if (!NorvesLib::Core::Asset::SerializeCookedMeshV1(dag.Output, result.NvmeshBytes))
+            NorvesLib::Core::Asset::CookedMeshPagedWriteInfo pageInfo;
+            const NorvesLib::Core::Asset::CookedMeshPagedWriteStatus pageStatus =
+                NorvesLib::Core::Asset::SerializeCookedMeshV1Paged(
+                    dag.Output, NorvesLib::Core::Asset::CookedMeshPagedWriteOptions{}, result.NvmeshBytes, pageInfo);
+            if (pageStatus == NorvesLib::Core::Asset::CookedMeshPagedWriteStatus::GroupExceedsPage)
             {
-                error = "NVMESH v1 の個数が 32bit の上限を超えました";
+                error = AnsiString("クラスタのグループがページに収まりません(グループ ") +
+                        FormatInteger(static_cast<int>(pageInfo.LargestGroupIndex)) + " が " +
+                        FormatInteger(static_cast<int>(pageInfo.LargestGroupBytes)) + " バイト、ページの上限 " +
+                        FormatInteger(static_cast<int>(NorvesLib::Core::Asset::CookedMeshFormatV1::PageSize)) +
+                        " バイト)";
+                return false;
+            }
+            if (pageStatus != NorvesLib::Core::Asset::CookedMeshPagedWriteStatus::Success)
+            {
+                error = AnsiString("NVMESH v1.1 の書き出しに失敗しました: status=") +
+                        FormatInteger(static_cast<int>(pageStatus));
                 return false;
             }
 
@@ -1649,6 +1664,12 @@ namespace NorvesLib::Tools::AssetCook
                 static_cast<uint32_t>(dag.Output.ClusterIndices.size() + dag.Output.FallbackIndices.size());
             result.ClusterCount = dag.Stats.ClusterCount;
             result.DagRejectedGroups = dag.Stats.RejectedGroupCount;
+            result.PageCount = pageInfo.PageCount;
+            result.RootPageBytes = pageInfo.RootPageBytes;
+            result.RootPageClusterCount = pageInfo.RootPageClusterCount;
+            result.RootPageMinLODLevel = pageInfo.RootPageMinLODLevel;
+            result.MaxPageBytes = pageInfo.MaxPageBytes;
+            result.LargestGroupBytes = pageInfo.LargestGroupBytes;
             result.DagMilliseconds = static_cast<uint32_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - bakeStart)
                     .count());
