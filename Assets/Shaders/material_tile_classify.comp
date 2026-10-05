@@ -17,7 +17,8 @@
 // 4 = その材質のタイルの数、5..7 = 0。先頭の 3 語は VkDispatchIndirectCommand と同じ並びで、3 語目以降は dispatch の引数としては読まれない。
 // x = min(タイルの数, params.limits.w)、y = ceil(タイルの数 / params.limits.w)（タイルが 0 個でも 1）。limits.w は実機では
 // 65535（Vulkan が保証する maxComputeWorkGroupCount[0] の最小値）で、超える分は y に広げる。
-// 消費側（材質の解決）は g = gl_WorkGroupID.y * 65535 + gl_WorkGroupID.x を求め、g >= タイルの数なら return し、
+// 消費側（材質の解決）は g = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x を求め（上限の値によらず正しい）、
+// g >= タイルの数なら return し、
 // そうでなければ tileList[先頭位置 + g] のタイルを処理する。
 // タイルの番号は tileY * tilesX + tileX。
 // ========================================

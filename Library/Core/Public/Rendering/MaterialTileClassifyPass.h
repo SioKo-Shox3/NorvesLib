@@ -4,17 +4,16 @@
 //
 // VisBuffer.Id と描画の記録の表（VisibilityBuffer.h）から、タイルごとに材質の番号の集合を求め、
 //   - 材質ごとのタイルの一覧（タイルの番号 = tileY * tilesX + tileX を並べたもの）
-//   - 材質ごとの間接 dispatch の引数（VkDispatchIndirectCommand と同じ並び: x = その材質のタイルの数、y = z = 1、
-//     w = 一覧の中の先頭位置）
+//   - 材質ごとの間接 dispatch の引数（先頭の 3 語は VkDispatchIndirectCommand と同じ並び。並びと値は下に書く）
 // を作る計算シェーダー（material_tile_classify.comp）のパス。空の画素（ID = 0）だけのタイルはどの材質にも入らない。
 //
 // 引数は材質の番号 m の分が ARGS_STRIDE_BYTES × m の位置から 8 語（ARG_* の添字）:
 //   x = min(タイルの数, MAX_GROUP_COUNT_X)、y = ceil(タイルの数 / MAX_GROUP_COUNT_X)（タイルが 0 個でも 1）、z = 1、
 //   一覧の先頭位置、タイルの数、残りは 0。x は Vulkan が保証する maxComputeWorkGroupCount[0] の最小値（65535）以下に抑え、
 //   超える分は y に広げる（4K のタイル数 129600 は 1 材質だけでも x に収まらない）。
-// 材質の解決はこの引数で材質ごとに 1 回ずつ間接 dispatch し、グループの番号 g = WorkGroupID.y * MAX_GROUP_COUNT_X +
+// 材質の解決はこの引数で材質ごとに 1 回ずつ間接 dispatch し、グループの番号 g = WorkGroupID.y * NumWorkGroups.x +
 // WorkGroupID.x を求め、g >= タイルの数のグループは何もせず return する。それ以外は一覧[一覧の先頭位置 + g] のタイルを処理する
-// （y > 1 のとき x は MAX_GROUP_COUNT_X に等しいので、g = WorkGroupID.y * 引数.x + WorkGroupID.x でもよい）。
+// （y > 1 のとき x は x の上限に等しいので、この式は上限の値によらず正しい。上限の定数を式に書かない）。
 
 #include "Container/Containers.h"
 #include "Rendering/IViewPass.h"
