@@ -17,7 +17,7 @@ Createdだけoutを更新する。StoreExists／NeedsRecovery／Conflict／Busy�
 5. header.jsonとroots.jsonをCREATE_NEW、共有0、read/write/delete handleで作る。headerにworkspaceとstageの実ID、StoreId、正規化volume GUIDを入れ、indexはgeneration1・空rootsにする
 6. 各fileをwrite（部分writeを処理、zero進捗拒否）→flush→seek→size/EOFを含むreadback→byte一致→共通Header/Index parserで検証する。regular/non-reparse/単一link、親/長名/IDも確認する
 7. stageを列挙し、既知のheader.jsonとroots.jsonだけであることを確認する。child/Find handleを閉じてから、StoreMissingとowner/root/workspaceの不変を再観測する
-8. stageの同じhandleへFileRenameInfoを渡す。ReplaceIfExists=FALSE、RootDirectoryは保持するworkspace handle、FileNameは固定leafのみ。同volumeのrename以外へfallbackしない
+8. stageの同じhandleへFileRenameInfoを渡す。ReplaceIfExists=FALSE、RootDirectoryはNULL、FileNameは今回のlive workspace identityと固定leafから導出した絶対native path。同じworkspace handleも保持し、保存されたpathは使わない。同volumeのrename以外へfallbackしない
 9. rename成功直後にpublishedを記録する。同じhandleでvolume/ID保持、新しい固定長名、同じ直親を照合する
 10. DELETE handleを閉じてから全観測を再実行し、Observed、今回のStoreId/両directory ID、generation1・空roots、元のroot/ownerが一致するときだけCreated候補にする。mutex解除まで成功して初めてoutへ渡す
 
@@ -46,3 +46,7 @@ stable namespaceと協調writerが前提。既定ACLの継承以外にACL/privil
 - [BCryptGenRandom](https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/nf-bcrypt-bcryptgenrandom)
 - [FILE_RENAME_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info)
 - [renameの権限・同volume・open childの制約](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)
+
+## Windows公開形式の調整
+
+初回f0989617/run37263862034ではbuild・5診断・既存30CPUが通ったが、initializerの相対FileName＋RootDirectory形式のrenameがERROR_INVALID_PARAMETER (0x57)で拒否された。失敗時はstageを保持し、固定storeは未公開だった。公開方式をRootDirectory=NULLの絶対native名へ統一し、bufferにもsizeof構造体と終端の余裕を持たせる。実行時に別の方式へfallbackする処理ではない。0x57だけでは拒否条件の細部を断定しない。

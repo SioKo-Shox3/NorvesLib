@@ -1256,17 +1256,24 @@ namespace NorvesLib::Tools::AssetCook
         }
         bool RenameStage(InitOwner& owner)
         {
-            constexpr wchar_t target[] = L".norves-assetcook";
-            constexpr size_t units = sizeof(target) / sizeof(wchar_t) - 1;
-            constexpr size_t bytes = offsetof(FILE_RENAME_INFO, FileName) + (units + 1) * sizeof(wchar_t);
+            // Windows runnerでrelative形式が拒否されたため、live workspaceからの絶対native名に統一する。
+            const auto destination = owner.WorkspaceId.Canonical / StoreLeaf;
+            const auto& target = destination.native();
+            const size_t units = target.size();
+            if (units > Detail::MaximumCookLocatorUnits)
+            {
+                SetLastError(ERROR_FILENAME_EXCED_RANGE);
+                return false;
+            }
+            const size_t bytes = sizeof(FILE_RENAME_INFO) + (units + 1) * sizeof(wchar_t);
             Core::Container::VariableArray<std::max_align_t> storage((bytes + sizeof(std::max_align_t) - 1) /
                                                                      sizeof(std::max_align_t));
             std::memset(storage.data(), 0, storage.size() * sizeof(std::max_align_t));
             auto* info = ::new (static_cast<void*>(storage.data())) FILE_RENAME_INFO{};
             info->ReplaceIfExists = FALSE;
-            info->RootDirectory = owner.Workspace.Value;
+            info->RootDirectory = nullptr;
             info->FileNameLength = static_cast<DWORD>(units * sizeof(wchar_t));
-            std::memcpy(reinterpret_cast<uint8_t*>(storage.data()) + offsetof(FILE_RENAME_INFO, FileName), target,
+            std::memcpy(reinterpret_cast<uint8_t*>(storage.data()) + offsetof(FILE_RENAME_INFO, FileName), target.data(),
                         units * sizeof(wchar_t));
             return SetFileInformationByHandle(owner.Stage.Value, FileRenameInfo, info, static_cast<DWORD>(bytes)) !=
                    FALSE;

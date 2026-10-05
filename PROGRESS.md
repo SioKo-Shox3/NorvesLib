@@ -811,3 +811,4 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 
 - G2-S6-MANAGED-STORE-INITIALIZATION開始: 共通のlocked観測を再利用し、fresh stageに完全headerと空indexを作ってからdirectory handleでno-replace公開する。公開後は元stageのID保持を同handleで確認し、DELETE handleを閉じてから全観測を再実行する。公開後の失敗はPublishedButErrorとして保持し、root/state/package公開は含めない。
 - G2-S6-MANAGED-STORE-INITIALIZATION検証準備: 初期化APIと31CPUを登録。共通観測をtyped private helperへ寄せ、root/ownerをstage作成後と公開後に再検査する。開いた既知handleだけをabort清掃し、閉じたchild/未知entryはorphanとして保持する。6境界の実process終了、公開前後の故障、ID維持と条件付きaliasを試験化。比較器12件×通常/最適化と差分衛生は成功、実Windows/79+10byteは未実行。
+- G2-S6-MANAGED-STORE-INITIALIZATION公開形式修正: f0989617/run37263862034はbuild・5診断・既存30CPUが成功したが、専用test初回の相対renameが0x57で拒否された。RootDirectory=NULLとlive workspace由来の絶対native名に方式を統一し、sizeofを満たすbufferへ変更する。copy/replace/実行時fallbackは増やさず、同handle/同volume/no-replace/公開後ID検査を維持する。31CPU/79+10byteは再実行待ち。
