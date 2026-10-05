@@ -237,6 +237,13 @@ namespace NorvesLib::Core::Rendering
         const MaterialTiles::Layout& GetLayout() const { return m_Layout; }
         /** @brief 最後の Execute が分類を記録したか（false なら引数を 0 にしただけ、または何もしていない） */
         bool WasClassified() const { return m_bClassified; }
+        /**
+         * @brief 最後の Execute が分類したときの横のタイル数（分類できなかった・まだ Execute していないときは 0）
+         *
+         * 一覧のタイルの番号（tileY * tilesX + tileX）はこの幅で作られる。一覧を読む側は、自分の画面の幅から求めた横のタイル数と
+         * 一致することを確かめてから読む。
+         */
+        uint32_t GetClassifiedTilesX() const { return m_ClassifiedTilesX; }
 
         RGResourceHandle GetArgsHandle() const { return m_ArgsHandle.ToResourceHandle(); }
         RGResourceHandle GetListHandle() const { return m_ListHandle.ToResourceHandle(); }
@@ -252,6 +259,7 @@ namespace NorvesLib::Core::Rendering
         RGBufferHandle m_CursorsHandle;
         RGBufferHandle m_StatsHandle;
         bool m_bClassified = false;
+        uint32_t m_ClassifiedTilesX = 0;
     };
 
 } // namespace NorvesLib::Core::Rendering

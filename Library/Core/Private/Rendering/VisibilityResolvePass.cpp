@@ -352,6 +352,11 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        // 引数は IndirectBuffer の用途で作られていること（間接 dispatch が断るので、何かを記録する前に確かめる）
+        if ((dispatch.TileArgs->GetUsage() & RHI::ResourceUsage::IndirectBuffer) != RHI::ResourceUsage::IndirectBuffer)
+        {
+            return false;
+        }
         // 引数の表に収まる材質の数（引数 1 つ = 材質 1 つ）
         const uint64_t argsCapacity = dispatch.TileArgs->GetSize() / MaterialTiles::ARGS_STRIDE_BYTES;
         const uint64_t materialCount =
@@ -365,8 +370,31 @@ namespace NorvesLib::Core::Rendering
         const uint32_t tilesX = (width + VisibilityResolveGeometry::TILE_SIZE - 1) / VisibilityResolveGeometry::TILE_SIZE;
         const uint32_t firstBinding = m_bDump ? 10u : 9u;
 
+        // 1 回の間接 dispatch ごとに、材質の番号を持つ別の UBO と別のディスクリプタセットを使う
+        // （提出前に上書きしない。1 フレームに何回 Record しても枠の次の資源へ進む）。
+        // コマンドリストへ記録する前に、全部の資源をそろえる（作れなければ何も記録せず false）
+        Container::VariableArray<Use*> uses;
+        for (uint64_t material = 0; material < materialCount; ++material)
+        {
+            Use& use = m_Uses.Acquire();
+            if (!use.TileUniform)
+            {
+                use.TileUniform = m_Device->CreateBuffer(
+                    RHI::BufferDesc(TileParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisibilityResolveTileParams"));
+            }
+            if (!use.TileDescriptorSet)
+            {
+                use.TileDescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(m_bDump, true));
+            }
+            if (!use.TileUniform || !use.TileDescriptorSet)
+            {
+                return false;
+            }
+            uses.push_back(&use);
+        }
+
         // 解決の定数（ResolveParams）は全部の dispatch で同じなので、最初の資源の UBO を共有して 1 回だけ書く
-        Use& first = m_Uses.Acquire();
+        Use& first = *uses[0];
         if (!first.Uniform)
         {
             first.Uniform = m_Device->CreateBuffer(
@@ -381,23 +409,7 @@ namespace NorvesLib::Core::Rendering
         commandList->SetPipeline(m_TilePipeline);
         for (uint64_t material = 0; material < materialCount; ++material)
         {
-            // 1 回の間接 dispatch ごとに、材質の番号を持つ別の UBO と別のディスクリプタセットを使う
-            // （提出前に上書きしない。1 フレームに何回 Record しても枠の次の資源へ進む）
-            Use& use = material == 0 ? first : m_Uses.Acquire();
-            if (!use.TileUniform)
-            {
-                use.TileUniform = m_Device->CreateBuffer(
-                    RHI::BufferDesc(TileParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisibilityResolveTileParams"));
-            }
-            if (!use.TileDescriptorSet)
-            {
-                use.TileDescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(m_bDump, true));
-            }
-            if (!use.TileUniform || !use.TileDescriptorSet)
-            {
-                return false;
-            }
-
+            Use& use = *uses[static_cast<size_t>(material)];
             const uint32_t tileParams[4] = {tilesX, static_cast<uint32_t>(material), 0u, 0u};
             use.TileUniform->Update(tileParams, TileParamsBytes);
             RHI::IDescriptorSet& set = *use.TileDescriptorSet;
@@ -429,8 +441,23 @@ namespace NorvesLib::Core::Rendering
 
     bool VisibilityResolvePass::Initialize(ViewRenderContext& context)
     {
-        // 計算パイプラインを作れなくても描画全体は止めない（Execute が何もしない）
-        if (!m_Resolve.Initialize(context.Device, context.ShaderMgr))
+        // 計算パイプラインを作れなくても描画全体は止めない（Execute が何もしない）。
+        // 分類のパスがあれば材質ごとの形のパイプラインも作る。それが作れないときは、画面全体の直接 dispatch の形だけで動かす
+        bool bReady = false;
+        if (m_ClassifyPass)
+        {
+            bReady = m_Resolve.Initialize(context.Device, context.ShaderMgr, false, true);
+            if (!bReady)
+            {
+                NORVES_LOG_WARNING("VisibilityResolvePass",
+                                   "VISBUFFER_RESOLVE_TILES used=0 reason=tile_pipeline_unavailable 材質ごとの解決を使えないので、画面全体の解決へ戻します");
+            }
+        }
+        if (!bReady)
+        {
+            bReady = m_Resolve.Initialize(context.Device, context.ShaderMgr);
+        }
+        if (!bReady)
         {
             NORVES_LOG_WARNING("VisibilityResolvePass", "ビジビリティバッファの幾何の解決を使えないので、このパスは何もしない");
         }
@@ -445,7 +472,12 @@ namespace NorvesLib::Core::Rendering
         m_AlbedoHandle = {};
         m_NormalHandle = {};
         m_VelocityHandle = {};
+        m_TileArgsHandle = {};
+        m_TileListHandle = {};
+        m_TileStatsHandle = {};
         m_bResolved = false;
+        m_bResolvedWithTiles = false;
+        m_LastTileDispatchCount = 0;
         m_bInitialized = false;
     }
 
@@ -486,6 +518,9 @@ namespace NorvesLib::Core::Rendering
         m_AlbedoHandle = {};
         m_NormalHandle = {};
         m_VelocityHandle = {};
+        m_TileArgsHandle = {};
+        m_TileListHandle = {};
+        m_TileStatsHandle = {};
 
         const ViewRenderContext* context = builder.GetContext();
         if (!context || !context->Device)
@@ -547,6 +582,24 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // 材質ごとの形: 分類の引数・一覧・統計を GenericRead で読む（分類のパスの最終のバリアの後に読まれる）。
+        // 分類のパスが無効・何も宣言しなかったフレーム（パイプラインが無い）は、ハンドルが無効なので直接 dispatch の形になる
+        if (m_ClassifyPass && m_ClassifyPass->IsEnabled() && m_Resolve.IsTileReady())
+        {
+            const RGResourceHandle args = m_ClassifyPass->GetArgsHandle();
+            const RGResourceHandle list = m_ClassifyPass->GetListHandle();
+            const RGResourceHandle stats = m_ClassifyPass->GetStatsHandle();
+            if (args.IsValid() && list.IsValid() && stats.IsValid())
+            {
+                builder.Read(args, RHI::ResourceState::GenericRead);
+                builder.Read(list, RHI::ResourceState::GenericRead);
+                builder.Read(stats, RHI::ResourceState::GenericRead);
+                m_TileArgsHandle = args;
+                m_TileListHandle = list;
+                m_TileStatsHandle = stats;
+            }
+        }
+
         m_IdHandle = idHandle;
         builder.PreserveInsertionOrder();
     }
@@ -554,6 +607,8 @@ namespace NorvesLib::Core::Rendering
     void VisibilityResolvePass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
         m_bResolved = false;
+        m_bResolvedWithTiles = false;
+        m_LastTileDispatchCount = 0;
         if (!m_IdHandle.IsValid() || !m_AlbedoHandle.IsValid() || !context.CommandList)
         {
             return;
@@ -611,8 +666,85 @@ namespace NorvesLib::Core::Rendering
                                                                  dispatch.IdTexture->GetHeight(),
                                                                  m_RasterPass->GetMaterialTableCount());
 
+        // 材質ごとの形で解決できるかを決める。使えない理由があれば、画面全体の直接 dispatch へ戻す（画面を空にしない）
+        const uint32_t materialCount = m_RasterPass->GetMaterialTableCount();
+        const char* tileReason = nullptr;
+        if (m_TileArgsHandle.IsValid() && m_TileListHandle.IsValid())
+        {
+            const uint32_t tilesX = (dispatch.Params.Screen[0] + VisibilityResolveGeometry::TILE_SIZE - 1) /
+                                    VisibilityResolveGeometry::TILE_SIZE;
+            if (!m_ClassifyPass->WasClassified())
+            {
+                tileReason = "classify_not_recorded";
+            }
+            else if (m_ClassifyPass->GetClassifiedTilesX() != tilesX)
+            {
+                // 一覧のタイルの番号は分類の横のタイル数で作られている。違う幅で読むと別のタイルを解決してしまう
+                tileReason = "tiles_x_mismatch";
+            }
+            else if (materialCount == 0 || materialCount > m_ClassifyPass->GetLayout().MaxMaterials)
+            {
+                // 0 は「引数の表の件数ぶん全部」の意味になり、上限以上の材質はどの一覧にも入らない
+                tileReason = "material_count_out_of_range";
+            }
+            else
+            {
+                dispatch.TileArgs = resources.GetBuffer(m_TileArgsHandle);
+                dispatch.TileList = resources.GetBuffer(m_TileListHandle);
+                if (!dispatch.TileArgs || !dispatch.TileList)
+                {
+                    dispatch.TileArgs = {};
+                    dispatch.TileList = {};
+                    tileReason = "tile_buffers_unavailable";
+                }
+                // 起動画面は 17〜24 材質。引数の表の件数ぶんではなく、そのフレームの材質の表の数だけ dispatch する
+                dispatch.TileMaterialCount = materialCount;
+            }
+        }
+        else
+        {
+            tileReason = m_ClassifyPass ? "classify_not_declared" : "no_classify_pass";
+        }
+
         m_Resolve.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
-        m_bResolved = m_Resolve.Record(context.CommandList, dispatch);
+        bool bRecorded = m_Resolve.Record(context.CommandList, dispatch);
+        if (!bRecorded && dispatch.TileArgs)
+        {
+            // Record は断ったとき何も記録しないので、直接 dispatch でやり直せる
+            dispatch.TileArgs = {};
+            dispatch.TileList = {};
+            dispatch.TileMaterialCount = 0;
+            tileReason = "tile_record_failed";
+            bRecorded = m_Resolve.Record(context.CommandList, dispatch);
+        }
+        m_bResolved = bRecorded;
+        m_bResolvedWithTiles = bRecorded && dispatch.TileArgs != nullptr;
+        m_LastTileDispatchCount = m_bResolvedWithTiles ? materialCount : 0u;
+
+        // 解決の形（材質ごと / 画面全体）と間接 dispatch の数は、変わったときだけログへ出す。
+        // 分類のパスを持たない構成（既定の直接 dispatch）では出さない
+        if (m_ClassifyPass && bRecorded &&
+            (!m_bLoggedTileState || m_bLoggedTileUsed != m_bResolvedWithTiles ||
+             m_LoggedTileMaterials != m_LastTileDispatchCount || m_LoggedTileReason != tileReason))
+        {
+            m_bLoggedTileState = true;
+            m_bLoggedTileUsed = m_bResolvedWithTiles;
+            m_LoggedTileMaterials = m_LastTileDispatchCount;
+            m_LoggedTileReason = tileReason;
+            if (m_bResolvedWithTiles)
+            {
+                NORVES_LOG_INFO("VisibilityResolvePass",
+                                "VISBUFFER_RESOLVE_TILES used=1 dispatches=%u materials=%u",
+                                m_LastTileDispatchCount,
+                                materialCount);
+            }
+            else
+            {
+                NORVES_LOG_WARNING("VisibilityResolvePass",
+                                   "VISBUFFER_RESOLVE_TILES used=0 reason=%s 画面全体の解決（直接 dispatch）で記録しました",
+                                   tileReason ? tileReason : "none");
+            }
+        }
     }
 
 } // namespace NorvesLib::Core::Rendering

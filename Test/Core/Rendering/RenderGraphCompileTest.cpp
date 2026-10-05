@@ -556,6 +556,32 @@ namespace
             ++DispatchCount;
             CallSequence.push_back('D');
         }
+        // 間接 dispatch の記録（引数のバッファの名前と先頭のバイト位置）。Dispatch とは別に数える（CallSequence では 'J'）
+        struct IndirectDispatchRecord
+        {
+            char BufferName[40] = {};
+            uint64_t OffsetBytes = 0;
+        };
+        Container::VariableArray<IndirectDispatchRecord> IndirectDispatches;
+        // true なら、間接 dispatch を何も記録せず false で断る（ICommandList の既定の実装と同じ）
+        bool bRejectDispatchIndirect = false;
+        bool DispatchIndirect(RHI::BufferPtr indirectBuffer, uint64_t offset) override
+        {
+            if (bRejectDispatchIndirect || !indirectBuffer)
+            {
+                return false;
+            }
+            IndirectDispatchRecord record;
+            const char* name = static_cast<const FakeBuffer*>(indirectBuffer.get())->GetDesc().DebugName;
+            if (name != nullptr)
+            {
+                std::memcpy(record.BufferName, name, std::min(std::strlen(name), sizeof(record.BufferName) - 1));
+            }
+            record.OffsetBytes = offset;
+            IndirectDispatches.push_back(record);
+            CallSequence.push_back('J');
+            return true;
+        }
         void CopyBuffer(RHI::BufferPtr src,
                         RHI::BufferPtr dst,
                         uint64_t size = 0,
@@ -986,6 +1012,10 @@ namespace
             {
                 return nullptr;
             }
+            if (FailComputePipelineCreationNumber != 0 && ++ComputePipelineCreations == FailComputePipelineCreationNumber)
+            {
+                return nullptr;
+            }
             return RHI::MakeShared<FakePipeline>(RHI::PipelineType::Compute,
                                                 static_cast<uint32_t>(desc.descriptorSetLayouts.size()));
         }
@@ -1055,6 +1085,9 @@ namespace
         /** @brief true の間、グラフィックス・計算のパイプラインの作成が nullptr を返す（作れない装置の再現） */
         bool bFailGraphicsPipelines = false;
         bool bFailComputePipelines = false;
+        // 0 でなければ、数え始めてから n 番目の計算パイプラインの作成だけを失敗させる（ほかは作れる）
+        uint32_t FailComputePipelineCreationNumber = 0;
+        uint32_t ComputePipelineCreations = 0;
 
     private:
         RHI::DeviceCapabilities m_Capabilities;
@@ -2062,6 +2095,14 @@ namespace
         WithoutRaster,
         /** @brief SceneView と同じく、記録の表の取り出し元を渡してグラフへ足すが、有効にしない（既定のまま） */
         AddedDisabled,
+        /** @brief SceneView の On と同じ配線: 有効にして解決より前に足し、解決のパスへ分類のパスを渡す（解決を使う構成で使う） */
+        BeforeResolve,
+        /** @brief BeforeResolve で、記録の表の取り出し元を分類へ渡さない（そのフレームの分類が記録できない） */
+        BeforeResolveWithoutRaster,
+        /** @brief BeforeResolve で、分類の計算パイプラインが作れない（分類は何も宣言しない） */
+        BeforeResolvePipelineUnavailable,
+        /** @brief BeforeResolve で、解決の材質ごとの形の計算パイプラインだけが作れない（直接 dispatch の形のパイプラインは作れる） */
+        BeforeResolveTilePipelineUnavailable,
     };
 
     // 幾何の解決（--visibility-buffer=on）の足し方
@@ -2287,6 +2328,39 @@ namespace
             assert(scene.Raster.Initialize(context));
             scene.Device->bFailGraphicsPipelines = false;
             scene.Graph.AddPass(&scene.Raster);
+
+            const bool bClassifyBeforeResolve = classifyMode == ClassifyMode::BeforeResolve ||
+                                                classifyMode == ClassifyMode::BeforeResolveWithoutRaster ||
+                                                classifyMode == ClassifyMode::BeforeResolvePipelineUnavailable ||
+                                                classifyMode == ClassifyMode::BeforeResolveTilePipelineUnavailable;
+            const auto addClassifyPass = [&]()
+            {
+                if (classifyMode == ClassifyMode::None)
+                {
+                    return;
+                }
+                if (classifyMode != ClassifyMode::AddedDisabled)
+                {
+                    scene.Classify.SetEnabled(true);
+                }
+                if (classifyMode != ClassifyMode::WithoutRaster && classifyMode != ClassifyMode::BeforeResolveWithoutRaster)
+                {
+                    scene.Classify.SetRasterPass(&scene.Raster);
+                }
+                scene.Device->bFailComputePipelines = classifyMode == ClassifyMode::BeforeResolvePipelineUnavailable;
+                assert(scene.Classify.Initialize(context));
+                scene.Device->bFailComputePipelines = false;
+                // View::Render と同じく、無効なパスはグラフへ足さない
+                if (scene.Classify.IsEnabled())
+                {
+                    scene.Graph.AddPass(&scene.Classify);
+                }
+            };
+            // SceneView の On は、分類を解決より前に足す（解決が分類の引数・一覧を読むため）
+            if (bClassifyBeforeResolve)
+            {
+                addClassifyPass();
+            }
             if (resolveMode != ResolveMode::None)
             {
                 // SceneView の On と同じく、描画のパスの後に足し、GBufferPass・MegaGeometryPass から使えるかを問い合わせられるようにする
@@ -2295,29 +2369,27 @@ namespace
                 {
                     scene.Resolve.SetSkinningComputePass(&scene.Skinning);
                 }
+                if (bClassifyBeforeResolve)
+                {
+                    scene.Resolve.SetClassifyPass(&scene.Classify);
+                }
                 scene.GBuffer.SetVisibilityResolvePass(&scene.Resolve);
                 scene.Mega.SetVisibilityResolvePass(&scene.Resolve);
                 scene.Device->bFailComputePipelines = resolveMode == ResolveMode::ResolvePipelineUnavailable;
+                if (classifyMode == ClassifyMode::BeforeResolveTilePipelineUnavailable)
+                {
+                    // 解決の初期化は直接 dispatch の形・材質ごとの形の順に 2 つ作る。2 つ目（材質ごとの形）だけが作れない
+                    scene.Device->ComputePipelineCreations = 0;
+                    scene.Device->FailComputePipelineCreationNumber = 2;
+                }
                 assert(scene.Resolve.Initialize(context));
                 scene.Device->bFailComputePipelines = false;
+                scene.Device->FailComputePipelineCreationNumber = 0;
                 scene.Graph.AddPass(&scene.Resolve);
             }
-            if (classifyMode != ClassifyMode::None)
+            if (!bClassifyBeforeResolve)
             {
-                if (classifyMode != ClassifyMode::AddedDisabled)
-                {
-                    scene.Classify.SetEnabled(true);
-                }
-                if (classifyMode == ClassifyMode::LinkedToRaster || classifyMode == ClassifyMode::AddedDisabled)
-                {
-                    scene.Classify.SetRasterPass(&scene.Raster);
-                }
-                assert(scene.Classify.Initialize(context));
-                // View::Render と同じく、無効なパスはグラフへ足さない
-                if (scene.Classify.IsEnabled())
-                {
-                    scene.Graph.AddPass(&scene.Classify);
-                }
+                addClassifyPass();
             }
             if (bDebugView)
             {
@@ -3515,6 +3587,172 @@ namespace
         }
     }
 
+    // 材質ごとの解決の構成（分類を解決より前に足す）の dispatch の並びの検査。CallSequence の末尾は、分類の 3 回の dispatch（D）の
+    // 後に、間接 dispatch（J）が材質の数だけ続く（解決は最後のパス）
+    void AssertTileResolveSequence(const FakeCommandList& commandList, size_t materialCount)
+    {
+        const auto& sequence = commandList.CallSequence;
+        assert(sequence.size() >= materialCount + MaterialTileClassify::DispatchesPerRecord);
+        const size_t firstIndirect = sequence.size() - materialCount;
+        for (size_t index = firstIndirect; index < sequence.size(); ++index)
+        {
+            assert(sequence[index] == 'J');
+        }
+        for (size_t index = firstIndirect - MaterialTileClassify::DispatchesPerRecord; index < firstIndirect; ++index)
+        {
+            assert(sequence[index] == 'D');
+        }
+    }
+
+    // --visibility-buffer=on の解決は、分類（MaterialTileClassifyPass）が作る材質ごとのタイルの引数・一覧で、材質ごとに
+    // 1 回ずつ間接 dispatch する。画面全体の直接 dispatch は記録しない。分類 → 解決の順で、引数は分類の最終のバリア
+    // （UnorderedAccess → GenericRead）の 1 回だけで、解決の読み取りのために足されるバリアは無い。
+    // SceneView の配線（分類を有効にして解決より前に足す・解決へ分類を渡す）、解決の dispatch の数（材質の表の数）、
+    // 解決が分類を読む宣言を戻す・外すと落ちる
+    void TestVisibilityResolveDispatchesPerMaterialFromClassification()
+    {
+        const OnWithoutResolveBaseline baseline = MeasureOnWithoutResolve();
+
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::BeforeResolve, true, true, ResolveMode::Supported);
+        FakeCommandList& commandList = scene.CommandList;
+
+        // GBuffer（空）・MegaGeometry・スキニング・ビジビリティ・材質の分類・解決の 6 パス
+        assert(scene.Graph.GetLastExecutedPassCount() == 6);
+        assert(scene.Classify.WasClassified());
+        assert(scene.Resolve.WasResolved());
+        assert(scene.Resolve.WasResolvedWithTiles());
+
+        // 材質ごとに 1 回ずつ。数はそのフレームの材質の表の数（引数の表の件数の 1024 ではない）
+        const uint32_t materialCount = scene.Raster.GetMaterialTableCount();
+        assert(materialCount >= 2 && materialCount < MaterialTiles::DEFAULT_MAX_MATERIALS);
+        assert(scene.Resolve.GetLastTileDispatchCount() == materialCount);
+        assert(commandList.IndirectDispatches.size() == materialCount);
+        for (uint32_t material = 0; material < materialCount; ++material)
+        {
+            const FakeCommandList::IndirectDispatchRecord& record = commandList.IndirectDispatches[material];
+            assert(IsDebugName(record.BufferName, "MaterialTile_Args"));
+            assert(record.OffsetBytes == static_cast<uint64_t>(material) * MaterialTiles::ARGS_STRIDE_BYTES);
+        }
+
+        // 直接 dispatch の解決（画面全体）は記録しない。増えた dispatch は分類の 3 回だけ
+        // （分類の dispatch もタイルごとに 16x8 グループなので、グループ数では区別せず、数で確かめる）
+        assert(commandList.DispatchCount == baseline.Dispatches + MaterialTileClassify::DispatchesPerRecord);
+        AssertTileResolveSequence(commandList, materialCount);
+
+        // 引数は分類が GenericRead へ遷移させた 1 回だけで、解決の読み取りのためのバリアは足されない
+        size_t argsToGenericRead = 0;
+        size_t argsFromGenericRead = 0;
+        for (const BarrierEvent& barrier : commandList.Barriers)
+        {
+            if (barrier.Kind != RGBarrierKind::Buffer ||
+                !IsDebugName(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName, "MaterialTile_Args"))
+            {
+                continue;
+            }
+            argsToGenericRead += barrier.AfterState == RHI::ResourceState::GenericRead ? 1 : 0;
+            argsFromGenericRead += barrier.BeforeState == RHI::ResourceState::GenericRead ? 1 : 0;
+        }
+        assert(argsToGenericRead == 1 && argsFromGenericRead == 0);
+
+        // 解決は分類の引数・一覧・統計を GenericRead で読むと宣言している（グラフの依存。書くのは分類のパスだけ）
+        for (const RGResourceHandle handle : {scene.Classify.GetArgsHandle(), scene.Classify.GetListHandle(), scene.Classify.GetStatsHandle()})
+        {
+            assert(handle.IsValid());
+            uint32_t readers = 0;
+            uint32_t writers = 0;
+            for (uint32_t pass = 0; pass < scene.Graph.GetPassCount(); ++pass)
+            {
+                for (uint32_t access = 0; access < scene.Graph.GetDeclaredPassAccessCount(pass); ++access)
+                {
+                    RGResourceHandle resource;
+                    RGAccessMode mode = RGAccessMode::Read;
+                    RHI::ResourceState state = RHI::ResourceState::Common;
+                    RHI::ResourceState finalState = RHI::ResourceState::Common;
+                    const bool bGotAccess = scene.Graph.TryGetDeclaredPassAccess(pass, access, resource, mode, state, finalState);
+                    assert(bGotAccess);
+                    if (!(resource == handle))
+                    {
+                        continue;
+                    }
+                    if (mode == RGAccessMode::Read)
+                    {
+                        assert(state == RHI::ResourceState::GenericRead);
+                        ++readers;
+                    }
+                    else
+                    {
+                        ++writers;
+                    }
+                }
+            }
+            assert(readers == 1 && writers == 1);
+        }
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 材質ごとの解決を使えないときは、画面全体の直接 dispatch に戻る（画面を空にしない）。間接 dispatch は 1 回も記録しない。
+    // 分類のパイプラインが無い（分類は何も宣言せず、解決は分類を読まない）・そのフレームの分類が記録できなかった
+    // （引数を 0 にして終えた。タイルの形では何も解決されない）・解決の材質ごとの形のパイプラインが作れない
+    void TestVisibilityResolveFallsBackToDirectDispatchWhenTilesUnavailable()
+    {
+        const OnWithoutResolveBaseline baseline = MeasureOnWithoutResolve();
+
+        struct Case
+        {
+            ClassifyMode Mode;
+            /** @brief 分類が記録する dispatch の数 */
+            uint32_t ClassifyDispatches;
+            bool bClassifyRecorded;
+        };
+        const Case cases[] = {
+            {ClassifyMode::BeforeResolvePipelineUnavailable, 0, false},
+            {ClassifyMode::BeforeResolveWithoutRaster, 0, false},
+            {ClassifyMode::BeforeResolveTilePipelineUnavailable, MaterialTileClassify::DispatchesPerRecord, true},
+        };
+        for (const Case& testCase : cases)
+        {
+            VisibilityRasterScene scene;
+            RunVisibilityRasterScene(scene, true, true, testCase.Mode, true, true, ResolveMode::Supported);
+            FakeCommandList& commandList = scene.CommandList;
+
+            assert(scene.Classify.WasClassified() == testCase.bClassifyRecorded);
+            assert(scene.Resolve.WasResolved());
+            assert(!scene.Resolve.WasResolvedWithTiles());
+            assert(scene.Resolve.GetLastTileDispatchCount() == 0);
+            assert(commandList.IndirectDispatches.empty());
+            // 直接 dispatch の解決 1 回（画面全体 = 16x8 グループ）が最後に記録される
+            assert(commandList.DispatchCount == baseline.Dispatches + testCase.ClassifyDispatches + 1);
+            const FakeCommandList::DispatchSize& resolveGroups = commandList.DispatchGroups.back();
+            assert(resolveGroups.X == 16 && resolveGroups.Y == 8 && resolveGroups.Z == 1);
+
+            ShutdownVisibilityRasterScene(scene);
+        }
+    }
+
+    // 材質ごとの間接 dispatch をコマンドリストが断ったとき（既定の ICommandList::DispatchIndirect は false を返す）も、
+    // 画面全体の直接 dispatch に戻る。断られた後に何も走らない画面にしない
+    void TestVisibilityResolveFallsBackToDirectDispatchWhenIndirectDispatchRejected()
+    {
+        const OnWithoutResolveBaseline baseline = MeasureOnWithoutResolve();
+
+        VisibilityRasterScene scene;
+        scene.CommandList.bRejectDispatchIndirect = true;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::BeforeResolve, true, true, ResolveMode::Supported);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(scene.Classify.WasClassified());
+        assert(scene.Resolve.WasResolved());
+        assert(!scene.Resolve.WasResolvedWithTiles());
+        assert(commandList.IndirectDispatches.empty());
+        assert(commandList.DispatchCount == baseline.Dispatches + MaterialTileClassify::DispatchesPerRecord + 1);
+        const FakeCommandList::DispatchSize& resolveGroups = commandList.DispatchGroups.back();
+        assert(resolveGroups.X == 16 && resolveGroups.Y == 8 && resolveGroups.Z == 1);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
     // スキニングのインスタンスが 2 体のとき、2 体目の記録は、頂点のアドレスが 2 体目の先頭（変形した頂点の列の中の位置）を指し、
     // 頂点の基点は 0（アドレスに加算済みなので二重に足さない）。1 体だけの場面では基点が 0 になり検出できないので 2 体で確かめる。
     // 記録の頂点の基点へ出力の先頭の頂点番号を入れる（二重加算）形に戻すと、2 体目の解決が範囲外の頂点を読むので落ちる
@@ -3564,11 +3802,13 @@ namespace
         {
             VisibilityBufferMode Mode;
             bool bResolve;
+            /** @brief 材質のタイル分類のパスがあるか（Off は無い。On・Debug は足し、有効なのは解決を使う On だけ） */
+            bool bClassify;
         };
         const ModeExpectation expectations[] = {
-            {VisibilityBufferMode::Off, false},
-            {VisibilityBufferMode::On, true},
-            {VisibilityBufferMode::Debug, false},
+            {VisibilityBufferMode::Off, false, false},
+            {VisibilityBufferMode::On, true, true},
+            {VisibilityBufferMode::Debug, false, true},
         };
         for (const ModeExpectation& expectation : expectations)
         {
@@ -3582,6 +3822,31 @@ namespace
             assert(mega->IsSkipGBufferDraw() == expectation.bResolve);
             assert((sceneView.FindPass("VisibilityResolvePass") != nullptr) == expectation.bResolve);
             assert((sceneView.FindPass("VisibilityRasterPass") != nullptr) == (expectation.Mode != VisibilityBufferMode::Off));
+
+            // 材質のタイル分類: 解決を使う On だけ有効（debug は足しても無効のまま。既定の描画は変えない）。
+            // 解決はこの分類を読むので、描画のパスの後・解決の前に並び、解決へ分類が渡される
+            const auto* classify = static_cast<const MaterialTileClassifyPass*>(sceneView.FindPass("MaterialTileClassifyPass"));
+            assert((classify != nullptr) == expectation.bClassify);
+            if (classify != nullptr)
+            {
+                assert(classify->IsEnabled() == expectation.bResolve);
+            }
+            if (expectation.bResolve)
+            {
+                const auto* resolve = static_cast<const VisibilityResolvePass*>(sceneView.FindPass("VisibilityResolvePass"));
+                assert(resolve->GetClassifyPass() == classify);
+                int rasterIndex = -1;
+                int classifyIndex = -1;
+                int resolveIndex = -1;
+                for (uint32_t index = 0; index < sceneView.GetPassCount(); ++index)
+                {
+                    const IViewPass* pass = sceneView.GetPassAt(index);
+                    rasterIndex = pass == sceneView.FindPass("VisibilityRasterPass") ? static_cast<int>(index) : rasterIndex;
+                    classifyIndex = pass == classify ? static_cast<int>(index) : classifyIndex;
+                    resolveIndex = pass == resolve ? static_cast<int>(index) : resolveIndex;
+                }
+                assert(rasterIndex >= 0 && rasterIndex < classifyIndex && classifyIndex < resolveIndex);
+            }
         }
     }
 
@@ -8923,6 +9188,9 @@ int main()
     TestVisibilityRasterOnSinglePassMegaGeometry();
     TestVisibilityRasterRecordsFrameUniqueMaterialTableIndices();
     TestVisibilityResolveOnReplacesGBufferDrawsWithStorageImageWrites();
+    TestVisibilityResolveDispatchesPerMaterialFromClassification();
+    TestVisibilityResolveFallsBackToDirectDispatchWhenTilesUnavailable();
+    TestVisibilityResolveFallsBackToDirectDispatchWhenIndirectDispatchRejected();
     TestVisibilityResolveUnsupportedDeviceKeepsGBufferDraws();
     TestVisibilityResolveFallsBackToGBufferDrawsWhenPipelinesAreUnavailable();
     TestVisibilityRasterSkinnedRecordsAddressEachBodyOnce();

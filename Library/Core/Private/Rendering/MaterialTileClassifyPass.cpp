@@ -297,6 +297,7 @@ namespace NorvesLib::Core::Rendering
         m_CursorsHandle = {};
         m_StatsHandle = {};
         m_bClassified = false;
+        m_ClassifiedTilesX = 0;
         m_bInitialized = false;
     }
 
@@ -387,6 +388,7 @@ namespace NorvesLib::Core::Rendering
     void MaterialTileClassifyPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
         m_bClassified = false;
+        m_ClassifiedTilesX = 0;
         if (!m_Layout.IsValid() || !m_ArgsHandle.IsValid() || !m_StatsHandle.IsValid() || !context.CommandList)
         {
             return;
@@ -427,6 +429,7 @@ namespace NorvesLib::Core::Rendering
         if (m_Classify.Record(context.CommandList, dispatch))
         {
             m_bClassified = true;
+            m_ClassifiedTilesX = dispatch.Layout.TilesX;
         }
         else
         {

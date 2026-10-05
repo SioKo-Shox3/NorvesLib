@@ -14,7 +14,9 @@
 //   - 画面全体の直接 dispatch（既定）: 画面のタイル（8x8）を 1 回の dispatch で処理する。
 //   - 材質ごとのタイルの一覧から走る形: 材質ごとのタイルの分類（MaterialTileClassifyPass）の引数と一覧で、材質ごとに 1 回ずつ
 //     間接 dispatch する（visbuffer_resolve_tiles.comp）。どの材質の一覧にも入らない画素（分類の上限以上の材質）は解決されない。
-// 2 つの形は同じ本体（Common/VisibilityResolve.glsl）なので、解決される画素の結果は画素ごとにビット単位で一致する。
+// 2 つの形は同じ本体（Common/VisibilityResolve.glsl）を取り込み、同じ式で画素を解決する。結果が画素ごとにビット単位で
+// 一致することは、別々のパイプラインについて Vulkan が保証するものではない。確かめたのは VisibilityResolveVulkanTest（この GPU・
+// このドライバ）の比較で、別の装置・ドライバでは一致を前提にしない（撮影の比較で一致の度合いを測る）。
 
 #include "Container/Containers.h"
 #include "Rendering/FrameUseRing.h"
@@ -34,6 +36,7 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    class MaterialTileClassifyPass;
     class ShaderManager;
     class SkinningComputePass;
     class VisibilityRasterPass;
@@ -203,8 +206,11 @@ namespace NorvesLib::Core::Rendering
          * あれば、材質 0..N-1 について 1 回ずつ DispatchIndirect する（N は TileMaterialCount か引数の表の件数。
          * 1 回の間接 dispatch が 1 組の資源を使うので、N が大きいと資源も N 組要る）。
          * 間接 dispatch の間には UAV のバリアを入れない（各 dispatch は別の画素にだけ書き、出力を読まない）。
+         * タイルの形では、コマンドリストへ何かを記録する前に、入力・出力・引数のバッファの用途・全部の資源の作成を確かめる。
          * @return 記録できたら true。入力・出力が足りない、出力が画面より小さい、タイルの形を使えない（IsTileReady が false）、
-         *         引数に 1 件も収まらないときは false で何も記録しない
+         *         引数に 1 件も収まらない、引数が IndirectBuffer の用途を持たない、資源を作れないときは、false で何も記録しない。
+         *         ただし最初の間接 dispatch をコマンドリストが断ったとき（既定の ICommandList::DispatchIndirect）は、
+         *         パイプラインとディスクリプタセットの設定だけが残り、dispatch は 1 回も記録されない
          */
         bool Record(RHI::ICommandList* commandList, const VisibilityResolveDispatch& dispatch);
 
@@ -266,9 +272,22 @@ namespace NorvesLib::Core::Rendering
         void SetRasterPass(const VisibilityRasterPass* pass) { m_RasterPass = pass; }
         /** @brief 変形した頂点（スキニング）の取り出し元（同じ View のパス）。頂点はデバイスアドレスで読むので、グラフの読み取りに足して書き込みを見せる */
         void SetSkinningComputePass(const SkinningComputePass* pass) { m_SkinningComputePass = pass; }
+        /**
+         * @brief 材質ごとのタイルの分類のパス（同じ View のパス。グラフでこのパスより前に足し、有効にしておく）
+         *
+         * 渡すと、分類の引数・一覧・統計を GenericRead で読み、材質ごとに 1 回ずつ間接 dispatch する形で解決する
+         * （Initialize が材質ごとの形のパイプラインも作る）。渡さない・分類が使えない・そのフレームの分類が食い違うときは、
+         * 画面全体の直接 dispatch で解決する（画面を空にしない）。Initialize の前に渡す
+         */
+        void SetClassifyPass(const MaterialTileClassifyPass* pass) { m_ClassifyPass = pass; }
+        const MaterialTileClassifyPass* GetClassifyPass() const { return m_ClassifyPass; }
 
         /** @brief 最後の Execute が解決を記録したか */
         bool WasResolved() const { return m_bResolved; }
+        /** @brief 最後の Execute が、材質ごとの間接 dispatch の形で解決したか（false なら画面全体の直接 dispatch、または解決していない） */
+        bool WasResolvedWithTiles() const { return m_bResolvedWithTiles; }
+        /** @brief 最後の Execute が記録した間接 dispatch の数（材質の数。タイルの形で解決しなかったときは 0） */
+        uint32_t GetLastTileDispatchCount() const { return m_LastTileDispatchCount; }
 
         /**
          * @brief この装置・今の初期化の状態で、解決が GBuffer を書けない理由（書けるなら None）
@@ -285,13 +304,25 @@ namespace NorvesLib::Core::Rendering
     private:
         const VisibilityRasterPass* m_RasterPass = nullptr;
         const SkinningComputePass* m_SkinningComputePass = nullptr;
+        const MaterialTileClassifyPass* m_ClassifyPass = nullptr;
         VisibilityResolve m_Resolve;
         RGTextureHandle m_IdHandle;
         RGResourceHandle m_AlbedoHandle;
         RGResourceHandle m_NormalHandle;
         RGResourceHandle m_VelocityHandle;
+        // 分類の出力の読み取り（Declare が読むと宣言したときだけ有効）
+        RGResourceHandle m_TileArgsHandle;
+        RGResourceHandle m_TileListHandle;
+        RGResourceHandle m_TileStatsHandle;
         bool m_bResolved = false;
+        bool m_bResolvedWithTiles = false;
+        uint32_t m_LastTileDispatchCount = 0;
         bool m_bLoggedFallback = false;
+        // 材質ごとの形の記録を、変わったときだけログへ出すための前回の値
+        bool m_bLoggedTileState = false;
+        bool m_bLoggedTileUsed = false;
+        uint32_t m_LoggedTileMaterials = 0;
+        const char* m_LoggedTileReason = nullptr;
     };
 
 } // namespace NorvesLib::Core::Rendering

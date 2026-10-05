@@ -903,7 +903,21 @@ namespace NorvesLib::Core::Rendering
             AddPass(std::move(visibilityRasterPass));
         }
 
+        // MaterialTileClassifyPass: VisBuffer.Id から、材質ごとのタイルの一覧と間接 dispatch の引数を作る。
+        // 材質の解決（次のパス）が読むので、解決より前に足す。解決を使う --visibility-buffer=on のときだけ有効にする
+        // （off は足さず、debug は足しても無効のまま。既定の描画は変えない）。
+        MaterialTileClassifyPass *materialTileClassifyPassPtr = nullptr;
+        if (visibilityRasterPassPtr)
+        {
+            auto materialTileClassifyPass = MakeUnique<MaterialTileClassifyPass>();
+            materialTileClassifyPass->SetRasterPass(visibilityRasterPassPtr);
+            materialTileClassifyPass->SetEnabled(bVisibilityResolve);
+            materialTileClassifyPassPtr = materialTileClassifyPass.get();
+            AddPass(std::move(materialTileClassifyPass));
+        }
+
         // VisibilityResolvePass: VisBuffer.Id から三角形を引いて、GBuffer の Albedo・Normal・Velocity を書く（--visibility-buffer=on）。
+        // 分類のパスの引数・一覧で、材質ごとに 1 回ずつ間接 dispatch する（分類を使えないフレームは画面全体の直接 dispatch）。
         // 使えないとき（装置の非対応・ID のラスタや解決のパイプラインが無い）は何も宣言せず、GBufferPass・MegaGeometryPass も
         // 描画を止めない。判定はこのパスに問い合わせる（GBufferPass・MegaGeometryPass が持つ）。
         if (visibilityRasterPassPtr && bVisibilityResolve)
@@ -911,18 +925,10 @@ namespace NorvesLib::Core::Rendering
             auto visibilityResolvePass = MakeUnique<VisibilityResolvePass>();
             visibilityResolvePass->SetRasterPass(visibilityRasterPassPtr);
             visibilityResolvePass->SetSkinningComputePass(skinningComputePassPtr);
+            visibilityResolvePass->SetClassifyPass(materialTileClassifyPassPtr);
             gbufferPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
             megaGeometryPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
             AddPass(std::move(visibilityResolvePass));
-        }
-
-        // MaterialTileClassifyPass: VisBuffer.Id から、材質ごとのタイルの一覧と間接 dispatch の引数を作る。
-        // 材質の解決が使うまで無効にしておく（既定の描画は変えない）。
-        if (visibilityRasterPassPtr)
-        {
-            auto materialTileClassifyPass = MakeUnique<MaterialTileClassifyPass>();
-            materialTileClassifyPass->SetRasterPass(visibilityRasterPassPtr);
-            AddPass(std::move(materialTileClassifyPass));
         }
 
         // SSAOPass: GBufferの深度・法線から画面空間AO（GTAO）を計算。半径は世界の長さ（m）で、
