@@ -80,6 +80,11 @@
 # 絞ると、ページの追い出しが起きる。各撮影のログの STRESS_GEOMETRY_PLACED（並べた数・元の数）と VRAM_POOLS のジオメトリの枠
 # （geometry_target_mb・geometry_used_mb・geometry_evicted_pages）を metrics.json へ書き、並べた数が指定に満たない、または最後の
 # geometry_used_mb が目標を超えたまま終われば失敗にする。
+#
+# 各撮影のログの GPU_DRIVER（GPU 名とドライバの版）を metrics.json の gpu_driver へ書く（ドライバの更新で画面微分・LOD の挙動が変わる実装があり、
+# 撮影の差の原因を版から引けるようにする）。VT の常駐量は、ログの VRAM_POOLS の vt_used_mb の最大を vram_pools.vt_used_mb_max へ書き、
+# -VtUsedLimitMb（既定 64）を超えたら失敗にする（フィードバックの LOD が壊れて全面でミップ 0 を要求すると数百 MB になる。
+# -StressTextures は VT を上限まで使うので検査しない。0 で検査しない）。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -160,6 +165,9 @@ param(
     # VRAM の上限（MB。--vram-budget-mb）。0 は渡さない。
     [ValidateRange(0, 1048576)]
     [int]$VramBudgetMb = 0,
+    # 撮影で許す VT の常駐量（MB。ログの VRAM_POOLS の vt_used_mb の最大）。超えたら失敗にする。0 は検査しない。-StressTextures では検査しない。
+    [ValidateRange(0, 1048576)]
+    [int]$VtUsedLimitMb = 64,
     # MegaGeometry（岩・小屋など）の遮蔽カリング（2パス。既定は有効）。Off は遮蔽の判定なしの従来の経路で撮る
     # （--mega-occlusion=off。見た目の比較用）。各撮影のログの MEGA_OCCLUSION を metrics.json の mega_occlusion へ書く。
     [ValidateSet('On', 'Off')]
@@ -899,12 +907,19 @@ foreach ($view in $shots)
     $vramLedgerTextureMb = $null
     $cookedMissingCount = $null
     $vramPools = $null
+    $gpuDriver = $null
     $geometryPages = $null
     $occlusionStats = $null
     $stressMaterials = $null
     $stressGeometryInfo = $null
     if (Test-Path -LiteralPath $viewLogPath)
     {
+        # GPU_DRIVER（GPU 名とドライバの版。起動時に1回）
+        $driverLine = @(Select-String -LiteralPath $viewLogPath -Pattern 'GPU_DRIVER (name=.+)')
+        if ($driverLine.Count -gt 0)
+        {
+            $gpuDriver = $driverLine[0].Matches[0].Groups[1].Value.Trim()
+        }
         # VRAM_POOLS（予算の割り振りと VT の使用量）。数値は "none"（上限なし）のこともある。使用量は最大と最後の値を残す。
         $poolLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'VRAM_POOLS cap_mb=(\w+) non_pool_mb=(\d+) vt_target_mb=(\w+) vt_used_mb=(\d+) vt_evicted_tiles=(\d+)')
         if ($poolLines.Count -gt 0)
@@ -1008,6 +1023,10 @@ foreach ($view in $shots)
         {
             $failures += "$($view.Name): $($line.Line.Trim())"
         }
+        if (-not $StressTextures -and $VtUsedLimitMb -gt 0 -and $null -ne $vramPools -and $vramPools.vt_used_mb_max -gt [uint64]$VtUsedLimitMb)
+        {
+            $failures += "$($view.Name): VT の常駐量が上限を超えた（vt_used_mb_max=$($vramPools.vt_used_mb_max) / 上限 $VtUsedLimitMb MB。フィードバックの LOD が壊れていないか確認する。GPU_DRIVER: $gpuDriver）"
+        }
         if ($StressTextures)
         {
             if ($null -eq $stressMaterials -or $stressMaterials.present -ne $stressMaterials.total)
@@ -1087,6 +1106,7 @@ foreach ($view in $shots)
             vram_ledger_texture_mb = $vramLedgerTextureMb
             cooked_missing_count = $cookedMissingCount
             vram_pools = $vramPools
+            gpu_driver = $gpuDriver
             geometry_pages = $geometryPages
             mega_occlusion = $occlusionStats
             stress_materials = $stressMaterials
@@ -1396,6 +1416,8 @@ if ($CompareDeterministicWith -ne '')
 $metricsPath = Join-Path $outRoot 'metrics.json'
 $metrics = [ordered]@{
     configuration = $Configuration
+    gpu_driver = if ($results.Count -gt 0) { $results[0].gpu_driver } else { $null }
+    vt_used_limit_mb = $VtUsedLimitMb
     deterministic = [bool]$Deterministic
     compare_deterministic_with = $CompareDeterministicWith
     deterministic_mean_luminance_limit = $DeterministicMeanLuminanceLimit

@@ -49,21 +49,21 @@ uint DecodeVirtualTextureFeedbackParam(float value)
 
 // 材質のテクスチャ 1 枚（tex。VT の表の番号が param に入っているテクスチャ）の uv（POM の後）から、
 // 欲しいミップのタイルの要求を書く。
-// param: 0 なら何もしない。描画（UBO）ごとに一様な値なので、画面微分（textureQueryLod）を壊さない。
+// param: 0 なら何もしない。描画（UBO）ごとに一様な値。
+// lod: tex の欲しいミップ（uv の textureQueryLOD(tex, uv).y）。画面微分は一様でない制御フローの中では未定義で、
+//      この関数の前には画素ごとに分かれる分岐・ループ・早期 return がありうるので、呼び出し側が main の一様な位置で
+//      先に取って渡す（この関数の中では画面微分を使わない）。
 //        下位から: タイル幅の log2（4bit）・タイル高さの log2（4bit）・フレームの巡回位相（4bit）・テクスチャの番号 + 1（12bit）
 // bEscaped: このテクスチャの標本が非常駐で粗いミップへ逃げたか
 // 法線・ORM・高さも、それぞれ自分の VT の表の番号を持つ param で同じ関数を呼ぶ（材質の UBO が 1 枚ごとに持つ）。
-// フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
-void WriteVirtualTextureFeedback(sampler2D tex, vec2 uv, uint param, bool bEscaped)
+// 画面微分を使わないので、分岐・ループの後でも呼べる。
+void WriteVirtualTextureFeedback(sampler2D tex, vec2 uv, uint param, bool bEscaped, float lod)
 {
 #ifdef NORVES_VT_FEEDBACK
     if (param == 0u)
     {
         return;
     }
-
-    // 欲しいミップ。textureQueryLod は画面微分を使うので、画素ごとに分かれる分岐より前に求める。
-    float lod = textureQueryLod(tex, uv).y;
 
     uvec2 phasePixel = uvec2(gl_FragCoord.xy) & uvec2(3u);
     bool bPhasePixel = (phasePixel.y * 4u + phasePixel.x) == ((param >> 8u) & 15u);
@@ -117,18 +117,22 @@ void WriteVirtualTextureFeedback(sampler2D tex, vec2 uv, uint param, bool bEscap
 // 視差（POM）の高さのテクスチャ（heightTex。VT の表の番号が param に入っているテクスチャ）の要求を書く。
 // uv は POM の前の元の uv（マーチは元の uv の近くを引くので、そのミップ・タイルを求める）。
 // 高さは標本が POM のループの中にあって逃げた印を残せないので、ここで元の uv を引いて常駐を調べ、巡回の画素でなくても要求を書くか決める。
-// param が 0 のときは何もしない（描画ごとに一様）。フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
-void WriteVirtualTextureHeightFeedback(sampler2D heightTex, vec2 uv, uint param)
+// lod は uv の textureQueryLOD(heightTex, uv).y（呼び出し側が main の先頭の一様な位置で取る。WriteVirtualTextureFeedback の lod と同じ）。
+// param が 0 のときは何もしない（描画ごとに一様）。画面微分を使わないので、分岐・ループの後でも呼べる。
+void WriteVirtualTextureHeightFeedback(sampler2D heightTex, vec2 uv, uint param, float lod)
 {
 #if defined(NORVES_VT_FEEDBACK) && defined(NORVES_SPARSE_RESIDENCY_SHADING)
     if (param == 0u)
     {
         return;
     }
+    // 常駐は、実際に標本されるミップ（lod）の段で調べる（暗黙の勾配の sparseTextureARB は一様でない制御フローで未定義）。
     vec4 unusedColor;
-    bool bEscaped = !sparseTexelsResidentARB(sparseTextureARB(heightTex, uv, unusedColor));
-    WriteVirtualTextureFeedback(heightTex, uv, param, bEscaped);
+    float maxLod = float(textureQueryLevels(heightTex) - 1);
+    float level = clamp(floor(max(lod, 0.0)), 0.0, maxLod);
+    bool bEscaped = !sparseTexelsResidentARB(sparseTextureLodARB(heightTex, uv, level, unusedColor));
+    WriteVirtualTextureFeedback(heightTex, uv, param, bEscaped, lod);
 #else
-    WriteVirtualTextureFeedback(heightTex, uv, param, false);
+    WriteVirtualTextureFeedback(heightTex, uv, param, false, lod);
 #endif
 }

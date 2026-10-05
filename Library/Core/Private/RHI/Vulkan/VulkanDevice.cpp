@@ -2759,6 +2759,24 @@ namespace NorvesLib::RHI::Vulkan
         m_Capabilities.bIsNvidia = (props.vendorID == 0x10DE);
         m_Capabilities.bIsDiscreteGPU = (props.deviceType == vk::PhysicalDeviceType::eDiscreteGpu);
 
+        // ドライバの版を1回だけ出す（ドライバの更新で画面微分・LOD の挙動が変わる実装があるため、撮影のログから版を引けるようにする）。
+        // NVIDIA の driverVersion は 10・8・8・6 bit に分かれる（610.88 なら major=610・minor=88）。他社は Vulkan の版の詰め方。
+        {
+            const uint32_t driverVersion = props.driverVersion;
+            if (props.vendorID == 0x10DE)
+            {
+                NORVES_LOG_INFO("VulkanDevice", "GPU_DRIVER name=%s vendor=nvidia version=%u.%u.%u.%u raw=0x%08x",
+                                props.deviceName.data(), (driverVersion >> 22) & 0x3FFu, (driverVersion >> 14) & 0xFFu,
+                                (driverVersion >> 6) & 0xFFu, driverVersion & 0x3Fu, driverVersion);
+            }
+            else
+            {
+                NORVES_LOG_INFO("VulkanDevice", "GPU_DRIVER name=%s vendor=0x%04x version=%u.%u.%u raw=0x%08x",
+                                props.deviceName.data(), static_cast<unsigned>(props.vendorID), driverVersion >> 22,
+                                (driverVersion >> 12) & 0x3FFu, driverVersion & 0xFFFu, driverVersion);
+            }
+        }
+
         // 利用可能な拡張を列挙
         auto extensionsResult = m_physicalDevice.enumerateDeviceExtensionProperties();
         Set<String> availableExtensions;

@@ -52,15 +52,15 @@ vec4 SampleSparseResidentGrad(sampler2D tex, vec2 uv, vec2 uvDx, vec2 uvDy, floa
     return SampleSparseResidentLod(tex, uv, floor(max(sampledLod, 0.0)));
 }
 
-// 暗黙の勾配（画面微分）で標本する。フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
-// 常駐していなければ、実際に標本したミップ（異方性・バイアス込みの textureQueryLOD）から1段ずつ粗いミップへ下げて読み直す。
-// textureQueryLOD も画面微分を使うので、分岐の外（一様な位置）で先に求める。
-// bEscaped には、常駐していなくて粗いミップへ逃げたかを返す。
-vec4 SampleSparseResidentTracked(sampler2D tex, vec2 uv, out bool bEscaped)
+// 勾配（画面微分）を明示して標本し、非常駐で粗いミップへ逃げたかを bEscaped へ返す（材質のシェーダーの標本の本体）。
+// uvDx・uvDy・sampledLod は、呼び出し側が main の分岐・早期 return・ループより前の一様な位置で、dFdx/dFdy と textureQueryLOD から取って渡す
+// （画面微分は一様でない制御フローの中では未定義で、分岐の後で呼ぶと NVIDIA 610.88 は textureQueryLOD に -inf 相当を返す）。
+// sampledLod は、その勾配で実際に標本されるミップ（異方性・バイアス・クランプ込みの textureQueryLOD(tex, uv).y）。
+// 常駐していなければ、sampledLod から1段ずつ粗いミップへ下げて読み直す。この関数の中では画面微分を使わない。
+vec4 SampleSparseResidentTracked(sampler2D tex, vec2 uv, vec2 uvDx, vec2 uvDy, float sampledLod, out bool bEscaped)
 {
-    float sampledLod = textureQueryLOD(tex, uv).y;
     vec4 color = vec4(0.0);
-    int code = sparseTextureARB(tex, uv, color);
+    int code = sparseTextureGradARB(tex, uv, uvDx, uvDy, color);
     if (sparseTexelsResidentARB(code))
     {
         bEscaped = false;
@@ -68,12 +68,6 @@ vec4 SampleSparseResidentTracked(sampler2D tex, vec2 uv, out bool bEscaped)
     }
     bEscaped = true;
     return SampleSparseResidentLod(tex, uv, floor(max(sampledLod, 0.0)));
-}
-
-vec4 SampleSparseResident(sampler2D tex, vec2 uv)
-{
-    bool bEscaped;
-    return SampleSparseResidentTracked(tex, uv, bEscaped);
 }
 
 #endif

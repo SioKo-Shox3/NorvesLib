@@ -56,6 +56,13 @@ void main()
     float hasHeightMap = mvp.pomParams.y;
     bool bVirtualTexture = mvp.frameParams.z > 0.5;
 
+    // 高さのフィードバックの標本ミップ。POM の前の元の UV で、画素ごとに分かれる分岐・ループより前に取る（画面微分は一様な位置でだけ有効）。
+    float heightLod = 0.0;
+    if (bVirtualTexture && hasHeightMap > 0.5)
+    {
+        heightLod = textureQueryLOD(heightTexture, fragTexCoord).y;
+    }
+
     // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
     mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
 
@@ -66,22 +73,27 @@ void main()
         texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, fragViewDir, heightScale, bVirtualTexture);
     }
 
+    // POM の直後の一様な位置で、POM の後の UV の勾配と各層の標本ミップを取る（標本・フィードバックはこれを使い、画面微分を取り直さない）。
+    MaterialTextureFootprint footprint = QueryMaterialTextureFootprint(
+        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
+        mvp.pomParams.z > 0.5, bVirtualTexture);
+
     // テクスチャサンプリング × オブジェクトカラー（POM補正済みUV使用）
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
-        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
+        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord, footprint,
         mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5, bVirtualTexture);
     // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
     // 高さだけは POM の前の元の UV で書く。
     WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.frameParams.w),
-                                g_VirtualTextureAlbedoEscaped);
+                                g_VirtualTextureAlbedoEscaped, footprint.AlbedoLod);
     WriteVirtualTextureFeedback(normalTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.x),
-                                g_VirtualTextureNormalEscaped);
+                                g_VirtualTextureNormalEscaped, footprint.NormalLod);
     WriteVirtualTextureFeedback(metallicTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.y),
-                                g_VirtualTextureOrmEscaped);
+                                g_VirtualTextureOrmEscaped, footprint.MetallicLod);
     if (hasHeightMap > 0.5)
     {
         WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord,
-                                          DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z));
+                                          DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z), heightLod);
     }
     outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
                      textureSamples.Albedo.a);
