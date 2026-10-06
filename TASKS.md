@@ -1010,6 +1010,14 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 親（段7の開始時に詳しくした。計画書 4.3 の「大きいクラスタも 64bit アトミックで書く」は採らない。ハードのラスタは今の深度の比較で ID と深度を書いて早期 Z を残し、ソフトウェアラスタの結果だけを 64bit のバッファから合流させる。画像の 64bit アトミックの拡張が要らず、手続きメッシュ・スキニングの経路も変わらない）。危険地帯（描画パス・メモリ）。HZB の前の合流が無いと、小さいクラスタが遮蔽の元に入らない。
 
+## VTG7-RECORDS-HARDEN: 記録の compute と 64bit アトミックの検査の穴を埋め、記録の表の VRAM を台帳に載せる
+- status: todo
+- done-when: (1) `VisibilityRasterPass::RecordMegaRecords` で `ICommandList::DispatchIndirect` が断られたら、上限のグループ数（区間の容量の合計から `ceil(/64)`、x は 65535 で y へ折り返す）の `Dispatch` に切り替え（シェーダーは引数の合計で余りのグループを捨てる）、`VIS_RASTER_RECORDS_DIRECT_FALLBACK` を 1 回ログへ出す。`RenderGraphCompileTest` の `bRejectDispatchIndirect` のケースで、記録の compute が直接の dispatch で走ることを確かめる（今は記録が書かれないまま通る）。(2) `RenderGraphCompileTest` で、記録の引数を書く compute の後の `VisBuffer_RecordArgs` の UnorderedAccess → GenericRead のバリアと、ホストの記録のコピーの前後のバリア（CopyDest へ、GenericRead へ）が記録されていることを確かめ、それぞれを外すと落ちる変異を記録する。(3) `IntegerAttachmentVulkanTest` で、`bShaderInt64` が有効な装置では `bShaderBufferInt64Atomics` が真であることを `Expect` で固定し（同じファイルの `bShaderStorageImageExtendedFormats` と同じ形）、`int64_atomic_min_probe.comp` の `atomicMin` を普通の代入にする変異で落ちることを記録する。(4) 記録の表（`VisBuffer_DrawRecords`。負荷モード 300 個で約 128 MiB、理論上の最大 2^25 × 64 B）を作るたびに `VRAM_LEDGER visbuffer_records mb=` を 1 行出す（`visbuffer64` と同じ書式）。負荷モードで VT・ジオメトリの目標が減る量（VTG7-RECORDS-INDIRECT の撮影で heap 1108 → 1236 MB、non_pool 788 → 916 MB、vt_target 10868 → 10772 MB、geometry_target 3622 → 3590 MB）を PROGRESS に既知の限界として書く。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|IntegerAttachmentVulkanTest|VisibilityResolveVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 親（VTG7-RECORDS-INDIRECT・VTG7-INT64-ATOMICS の評価はどちらも PASS。その non-blocking を集めた）。画は変えない。
+
 ## VTG7-SW-BIN: カリングで画面上の小さいクラスタをソフトウェアラスタの一覧へ振り分ける
 - status: todo
 - done-when: `MegaGeometryCull.glsl` の `EmitDrawCommand`（BVH の経路も同じ関数を通る）で、クラスタの画面上の半径（画素。`radius * projectionFactor / distance` 等）がしきい値以下で、近平面と交わらないクラスタを、パスごとのソフトの一覧（`commandIndex`）へ積み、計算シェーダーの間接 dispatch の引数を書く。コマンドの枠と記録の番号（`1 + commandIndex`）はハードと共有する（ソフトのクラスタの記録も記録の compute が書く）。起動引数 `--sw-raster=off|on`（`ApplicationProcessor`・`RenderingCoordinator::Settings`・`RenderWorld::Settings`・`SceneView`・`CaptureStartupScene.ps1` の `-SwRaster`）としきい値 `--sw-raster-max-px=<n>`（既定 8）を足す。この段階ではソフトのラスタがまだ無いので、on でもハードはすべてのクラスタを描き（`instanceCount` は 1 のまま）、ソフトの一覧の数だけを `SW_RASTER_BIN pass1=<n> pass2=<n> hw=<n>` としてログに出す。`64bit アトミックが無い・--visibility-buffer=off` では振り分けない（`SW_RASTER_FALLBACK reason=<理由>` を 1 回ログへ）。起動画面と負荷モード 300 個の撮影のログで、ソフトの一覧の数を視点ごとに PROGRESS に書く。
@@ -1019,7 +1027,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-BIN -Configuration RelWithDebInfo -Deterministic -SunElevations 45 -SwRaster On`
 - stop-when: 振り分けを足しただけで `MEGA_OCCLUSION` の数か画像が変わる場合は、差を記録して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Private/Engine, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-06 親（段7の開始時に詳しくした）。対象は MegaGeometry のクラスタだけ（手続きメッシュ・スキニングの塊はハードのまま）。
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。対象は MegaGeometry のクラスタだけ（手続きメッシュ・スキニングの塊はハードのまま）。 2026-10-06 親（VTG7-VISBUFFER64-MERGE の後）: `--sw-raster=off` のときは `VisibilityMerge` の資源（1280x720 で 7.03 MB）と埋め・合流のパス（毎フレーム約 0.026 ms）を作らない（`RenderGraphCompileTest` で off の構成に 64bit の埋め・合流が無いことを確かめる）。
 
 ## VTG7-SW-RASTER: 小さいクラスタを計算シェーダーでラスタし、64bit のバッファへ書く
 - status: todo
