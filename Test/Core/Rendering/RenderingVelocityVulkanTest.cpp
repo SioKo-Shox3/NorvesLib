@@ -362,6 +362,16 @@ namespace
                         return;
                     }
 
+                    // 既定（on）が実際に解決を通ったこと、予備（off）が解決を通っていないことをログで確かめる。
+                    // 装置が対応しないと既定も黙って予備へ落ち、速度の値だけでは区別できない
+                    Core::Container::String pathReason;
+                    if (!VerifyVisibilityBufferPath(pathReason))
+                    {
+                        std::cerr << "RenderingVelocityVulkanTest failed: " << pathReason.c_str() << "\n";
+                        Fail("visibility buffer path check failed");
+                        return;
+                    }
+
                     m_Stage = CaptureStage::Complete;
                     m_bExitRequested = true;
                     Core::Engine::GEngine->RequestExit(0);

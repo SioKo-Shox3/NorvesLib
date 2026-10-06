@@ -1179,6 +1179,8 @@ target_compile_definitions(RenderingGoldenImageTest PRIVATE
 )
 set_target_properties(RenderingGoldenImageTest PROPERTIES FOLDER "Test/Core/Rendering")
 
+# 既定（ビジビリティバッファの On。解決が GBuffer を書く）の基準画像は Indoor.png・Outdoor.png。
+# 実際に解決を通ったこと（VISBUFFER_FALLBACK が無く VISBUFFER_RESOLVE_TILES がある）も、画像の比較の後にログで確かめる。
 register_rendering_gpu_test(
     RenderingGoldenIndoorVulkanTest
     RenderingGoldenImageTest
@@ -1189,6 +1191,20 @@ register_rendering_gpu_test(
     RenderingGoldenImageTest
     --scene=outdoor
     --capture-source=back-buffer)
+# 予備の経路（--visibility-buffer=off。geometryShader の無い装置が使う GBuffer のラスタ）の基準画像は
+# IndoorGBufferFallback.png・OutdoorGBufferFallback.png。解決を通っていないこともログで確かめる。
+register_rendering_gpu_test(
+    RenderingGoldenIndoorGBufferFallbackVulkanTest
+    RenderingGoldenImageTest
+    --scene=indoor
+    --capture-source=back-buffer
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingGoldenOutdoorGBufferFallbackVulkanTest
+    RenderingGoldenImageTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --visibility-buffer=off)
 # GTAO: 部屋の大きさ（Cornell）の壁・床・天井が遮蔽で黒くならず、隅・接地部だけが暗くなること
 register_rendering_gpu_test(
     RenderingGTAOCornellRoomVulkanTest

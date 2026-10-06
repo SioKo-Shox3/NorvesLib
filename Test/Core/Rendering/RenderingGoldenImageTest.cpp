@@ -34,8 +34,14 @@ namespace
         return scene == SceneKind::Indoor ? "indoor" : "outdoor";
     }
 
-    const TCHAR* BaselineFileName(SceneKind scene)
+    // 予備の経路（--visibility-buffer=off。GBuffer をラスタで描く）は、解決が GBuffer を書く既定とは画素が少し違う
+    // （解析的な微分・三角形の接線の基底）ので、別の基準画像を持つ。しきい値は同じ表の同じシーンの行を使う。
+    const TCHAR* BaselineFileName(SceneKind scene, bool bGBufferFallback)
     {
+        if (bGBufferFallback)
+        {
+            return scene == SceneKind::Indoor ? TEXT("IndoorGBufferFallback.png") : TEXT("OutdoorGBufferFallback.png");
+        }
         return scene == SceneKind::Indoor ? TEXT("Indoor.png") : TEXT("Outdoor.png");
     }
 
@@ -65,19 +71,19 @@ namespace
         return "Unknown";
     }
 
-    Core::Container::String BaselinePath(SceneKind scene)
+    Core::Container::String BaselinePath(SceneKind scene, bool bGBufferFallback)
     {
         Core::Container::String path(NORVES_SOURCE_ROOT);
         path += TEXT("/Test/Core/Rendering/Baselines/RenderingValidation/");
-        path += BaselineFileName(scene);
+        path += BaselineFileName(scene, bGBufferFallback);
         return path;
     }
 
-    Core::Container::String StagingPath(SceneKind scene)
+    Core::Container::String StagingPath(SceneKind scene, bool bGBufferFallback)
     {
         Core::Container::String path(NORVES_BINARY_ROOT);
         path += TEXT("/RenderingValidation/BaselineStaging/");
-        path += BaselineFileName(scene);
+        path += BaselineFileName(scene, bGBufferFallback);
         path += TEXT(".tmp");
         return path;
     }
@@ -219,6 +225,8 @@ namespace
                 LOG_ERROR("RenderingGoldenImageTest は BackBuffer capture のみを受け付けます");
                 return false;
             }
+            // 既定は解決を通ったこと、--visibility-buffer=off は通っていないことを、画像の比較の後にログで確かめる
+            RequireVisibilityBufferPath();
             if (m_bR3DensityScenario && GetRunConfig().Scene != SceneKind::Outdoor)
             {
                 LOG_ERROR("R3 density-sweep には outdoor scene が必要です");
@@ -411,7 +419,7 @@ namespace
             if (m_bWriteBaselineStaging)
             {
                 const GoldenImageStatus saveStatus = SavePng(
-                    StagingPath(GetRunConfig().Scene),
+                    StagingPath(GetRunConfig().Scene, GetRunConfig().bVisibilityBufferOff),
                     Core::Container::Span<const uint8_t>(candidatePng));
                 if (saveStatus != GoldenImageStatus::Success)
                 {
@@ -433,7 +441,7 @@ namespace
             }
 
             Rgba8Image reference;
-            GoldenImageStatus status = LoadPng(BaselinePath(GetRunConfig().Scene), reference);
+            GoldenImageStatus status = LoadPng(BaselinePath(GetRunConfig().Scene, GetRunConfig().bVisibilityBufferOff), reference);
             if (status != GoldenImageStatus::Success)
             {
                 outFailureReason = TEXT("golden baseline PNG load failed");

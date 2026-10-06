@@ -126,6 +126,8 @@ namespace NorvesLib::Test::RenderingValidation
         uint32_t PathTracingSamples = 1;
         /** @brief パストレーサーの1フレームあたりの試料数（--path-tracing-samples-per-frame=N） */
         uint32_t PathTracingSamplesPerFrame = 1;
+        /** @brief 予備の経路（--visibility-buffer=off。GBuffer をラスタで描く）で走らせる。false は既定（解決が GBuffer を書く） */
+        bool bVisibilityBufferOff = false;
     };
 
     bool BuildSceneLayout(SceneKind kind, uint32_t seed, SceneLayout& outLayout);

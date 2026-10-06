@@ -917,7 +917,7 @@
 - notes: 2026-10-06 VTG6-DEFAULT-ON から分けた（持ち越しの (b)）。on の構成の分類は VRAM 約 5 MB・GPU 0.26〜0.29 ms（起動画面）。
 
 ## VTG6-OFF-PATH-TESTS: 予備の経路（GBufferのラスタ）を見る検査を戻す
-- status: todo
+- status: done
 - done-when: ビジビリティバッファを既定にしたことで、予備の経路（`--visibility-buffer=off`。`geometryShader` の無い装置が使う GBuffer のラスタ）で走る登録済みの検査が速度の 4 本だけになった（Indoor・Outdoor の golden、HDR・DDGI などの描画の検証は on だけ。`Test/Core/Rendering/CMakeLists.txt` の 596〜626 行付近）。予備の経路の Indoor・Outdoor の golden を足す（off の基準画像は再承認の前の旧 baseline と同じ値なので、それを off 用の基準として置く。`Docs/RenderingValidation/GoldenBaselines.md` の手順）。既定（on）の速度の検査が、実際に解決を通っていること（予備に落ちていないこと）をログか記録で確かめる形にする。
 - verify: `cmake --build build --config Debug --target RenderingGoldenImageTest RenderingVelocityVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGolden.*VulkanTest|RenderingVelocityStaticVulkanTest)$"`
