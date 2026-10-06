@@ -1571,6 +1571,7 @@ namespace NorvesLib::Core::Rendering
         inputs.KeyHeight = m_Merge.GetKeyHeight();
         inputs.List = plan.SwRasterBuffer;
         inputs.ListCapacity = plan.SwRasterCapacity;
+        inputs.SwRasterMaxPixels = plan.SwRasterMaxPixels;
         inputs.Stats = plan.StatsBuffer;
         inputs.bStatsEnabled = plan.bStatsEnabled;
         inputs.Viewport = m_Work.Viewport;

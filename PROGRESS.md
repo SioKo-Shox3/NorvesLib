@@ -1755,3 +1755,10 @@
 - 分けた項目: `VTG7-SW-HARDEN-TESTS`（(4)(5) と上限を超える三角形の GPU のテスト）、`VTG7-SW-HARDEN-VALIDATION`（(8) の Debug・検証レイヤーでの VUID 0 の確認と、(7) の on・off の GPU 時間の中央値）。
 - Notes: (1) `Edit` は混在行末のファイルを LF にするので、行末を保つ置換スクリプトで編集した。`git diff --numstat` と `--ignore-cr-at-eol` の一致を確認した。 (2) ソフトの dispatch のバインディング 6 は、統計を取らないフレームでもバッファが要るので、`MegaGeometryPass` が代わりのバッファ（`m_DummyStatsBuffer`）を `VisibilityDrawPlan::StatsBuffer` へ入れる。 (3) 統計の読み戻しは NORVES_ENABLE_STATS のビルドだけなので、`SW_RASTER_OVERSIZE`・`zeroed`・`sw_groups` はそのビルドのログにだけ出る。 (4) シェルの heredoc に書くときは、バッククォートを含む文を引用付き（`<<'EOF'`）にする。引用なしだとコマンド置換されて文が欠ける。
 - Next: 人が `blocked/VTG7-SW-HARDEN.md` の選択肢を決めて `status:` を `todo` に戻す。独立に進められるのは `VTG7-SW-HARDEN-TESTS`。
+
+## 反復 2（run 20261006-154710）: VTG7-SW-HARDEN（done）
+- 実装: 1 スレッドが走査する矩形の上限を `max(64, ceil(2 × しきい値) + 2)` 画素四方にした（`VisibilitySwRaster::ComputeMaxScanSpan`。下限 64、しきい値は 4096 画素で頭打ち）。`MegaGeometryPass` が `VisibilityDrawPlan::SwRasterMaxPixels` に振り分けのしきい値を入れ、`VisibilityRasterPass::RecordSwRaster` が `Inputs::SwRasterMaxPixels` で渡し、`visbuffer_sw_raster.comp` は `params.flags.y` で上限を判定する（固定の `SW_MAX_SPAN` は廃止）。`SW_RASTER_OVERSIZE` は振り分けの誤りの検出として残す。
+- 検証（`.harness/runs/20261006-154710/`）: `verify-VTG7-SW-HARDEN-1-build.txt`（Debug の 5 target、BUILD_EXIT_CODE=0）、`-1-ctest.txt`（5/5 Passed）、`-1-rwdi-build.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-1-capture-px64.txt`（しきい値 64 画素。result=pass）、`-1-capture-stress.txt`（負荷モード 300 個。result=pass）。
+- しきい値 64 画素の `SW_RASTER_OVERSIZE`: default 6 行・near 10 行・low 5 行のすべてが 0（前回は上限 64 画素四方で 4・28・32）。zeroed・sw_groups は pass1 + pass2 と一致、sw_dispatches は 2。負荷モード 300 個（しきい値 8 画素）も 3 視点・全行 0。
+- 残り: `VTG7-SW-HARDEN-TESTS`（(4)(5) と上限を超える三角形の GPU のテスト）、`VTG7-SW-HARDEN-VALIDATION`（(8) の VUID 0 と on・off の GPU 時間の中央値）。しきい値 64 画素の GPU 時間は `VTG7-SW-THRESHOLD` で測る（上限が 130 画素四方になり、1 スレッドの最悪の走査は 16900 画素）。
+- Notes: 矩形の上限の式は、半径 r のクラスタの三角形が直径 2r の円に収まり、画素の中心が最大 2r + 1 個並ぶことに丸めの余裕を足したもの。`MegaGeometryPass.cpp`・`.h` は行末が混在しているので、バイト単位で編集して numstat が一致することを確かめた。

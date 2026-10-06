@@ -8,6 +8,7 @@
 #include "RHI/IPipeline.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 
@@ -114,6 +115,15 @@ namespace NorvesLib::Core::Rendering
         m_Uses.BeginFrame(inFlightIndex, frameSerial);
     }
 
+    uint32_t VisibilitySwRaster::ComputeMaxScanSpan(float maxPixels)
+    {
+        // 負・NaN・巨大な値は下限へ・上限へ丸める（走査の暴走を防ぐ上限は、画面の大きさの範囲に収める）
+        constexpr float MaxRadius = 4096.0f;
+        const float radius = (maxPixels > 0.0f) ? std::min(maxPixels, MaxRadius) : 0.0f;
+        const uint32_t span = static_cast<uint32_t>(std::ceil(2.0f * radius)) + 2u;
+        return std::max(MinScanSpan, span);
+    }
+
     bool VisibilitySwRaster::RecordDispatch(RHI::ICommandList* commandList, uint32_t passIndex, const Inputs& inputs)
     {
         if (!IsReady() || !m_Device || !commandList || passIndex > 1u || !inputs.FrameUniform || !inputs.InstanceBuffer ||
@@ -162,6 +172,7 @@ namespace NorvesLib::Core::Rendering
         params.DepthRange[0] = inputs.Viewport.minDepth;
         params.DepthRange[1] = inputs.Viewport.maxDepth;
         params.Flags[0] = inputs.bStatsEnabled ? 1u : 0u;
+        params.Flags[1] = ComputeMaxScanSpan(inputs.SwRasterMaxPixels);
         use.Params->Update(&params, sizeof(params));
 
         use.DescriptorSet->BindConstantBuffer(0, inputs.FrameUniform, 0, FrameUniformBytes);

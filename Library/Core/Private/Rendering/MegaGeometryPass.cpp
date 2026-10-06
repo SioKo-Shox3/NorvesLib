@@ -1834,6 +1834,7 @@ namespace NorvesLib::Core::Rendering
             {
                 plan.SwRasterBuffer = m_SwRasterBuffer;
                 plan.SwRasterCapacity = swRasterCapacity;
+                plan.SwRasterMaxPixels = m_SwRasterMaxPixels;
             }
             plan.StatsBuffer = statsBuffer;
             plan.bStatsEnabled = statsSlot != nullptr;

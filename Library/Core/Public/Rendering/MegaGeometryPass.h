@@ -184,6 +184,7 @@ namespace NorvesLib::Core::Rendering
              */
             RHI::BufferPtr SwRasterBuffer;
             uint32_t SwRasterCapacity = 0; // 一覧のパスごとの容量（クラスタ数。パスごとのコマンド数まで）
+            float SwRasterMaxPixels = 0.0f; // 振り分けたしきい値（画面上の半径、画素）。ソフトの矩形の上限を決める
             /**
              * 統計のバッファ（UnorderedAccess の状態。bStatsEnabled が偽のときは代わりのバッファ）。ソフトのラスタが、描かなかった三角形・走ったワークグループを数える
              */

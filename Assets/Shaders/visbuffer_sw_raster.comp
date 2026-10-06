@@ -17,8 +17,9 @@
 //   - 深度（ビューポートの変換後の z）は画面空間で線形に補間する（ハードの補間と同じ。透視の補正はしない）。
 //   - 書くのは atomicMin（上位 32bit = 深度のビット、下位 32bit = ID）。手前の深度が残り、同じ深度なら小さい ID が残る。
 // 近平面と交わるクラスタはカリングが振り分けない。万一 w が 0 以下の頂点があれば、その三角形は描かない。
-// 1 スレッドが走査する画素の矩形（シザーと 64bit のバッファの大きさで切った後）は SW_MAX_SPAN 画素四方までで、超える三角形は
-// 描かずに数える（統計の STAT_SW_OVERSIZE。カリングの振り分けのしきい値が保守的なら 0 になる。1 スレッドが長く走って TDR になるのを防ぐ）。
+// 1 スレッドが走査する画素の矩形（シザーと 64bit のバッファの大きさで切った後）は一辺 params.flags.y 画素までで、超える三角形は
+// 描かずに数える（統計の STAT_SW_OVERSIZE。1 スレッドが長く走って TDR になるのを防ぐ）。上限は振り分けのしきい値（クラスタの境界球の
+// 画面上の半径）から max(64, ceil(2 × しきい値) + 2) で決めて渡すので、判定が保守的なら超える三角形は無く 0 になる。
 // ========================================
 
 #define VIS_ENABLE_KEY64
@@ -93,12 +94,10 @@ layout(std140, set = 0, binding = 5) uniform SwRasterParams
     vec4 viewport;
     // x = minDepth、y = maxDepth
     vec4 depthRange;
-    // x = 1 なら統計（binding 6）へ数える
+    // x = 1 なら統計（binding 6）へ数える、y = 1 スレッドが走査する矩形の一辺の上限（画素。超える三角形は描かずに数える）
     uvec4 flags;
 } params;
 
-// 1 スレッドが走査する画素の矩形の一辺の上限（画素）。超える三角形は描かない
-const int SW_MAX_SPAN = 64;
 // 統計の添え字（MegaGeometryCull.glsl の STAT_SW_OVERSIZE・STAT_SW_GROUPS と一致）
 const uint SW_STAT_OVERSIZE = 9u;
 const uint SW_STAT_GROUPS = 10u;
@@ -208,7 +207,7 @@ void main()
     const ivec2 maxPixel = min((maxFixed - halfPixel) >> SW_SUBPIXEL_BITS, params.rect.zw - 1);
 
     // 走査する矩形が上限を超える三角形は描かずに数える（矩形が空なら何もしない）
-    if (any(greaterThan(maxPixel - minPixel + 1, ivec2(SW_MAX_SPAN))))
+    if (any(greaterThan(maxPixel - minPixel + 1, ivec2(int(params.flags.y)))))
     {
         if (params.flags.x != 0u)
         {

@@ -29,6 +29,17 @@ namespace NorvesLib::Core::Rendering
     public:
         /** @brief ワークグループのスレッド数（1 クラスタの三角形の最大数。ID の三角形のビット幅と一致する） */
         static constexpr uint32_t ThreadsPerGroup = 128;
+        /** @brief 1 スレッドが走査する矩形の一辺の下限（画素。しきい値が小さくても、これ未満には切らない） */
+        static constexpr uint32_t MinScanSpan = 64;
+
+        /**
+         * @brief 振り分けのしきい値（クラスタの境界球の画面上の半径、画素）に対する、1 スレッドが走査する矩形の一辺の上限（画素）
+         *
+         * 半径 r のクラスタの三角形は直径 2r の円の中に収まるので、画素の中心の数は 2r + 1 以下。丸めの余裕を 1 足して max(64, ceil(2r) + 2)。
+         * これを超える三角形はソフトが描かずに数える（振り分けの誤りの検出と暴走の防御）。
+         */
+        static uint32_t ComputeMaxScanSpan(float maxPixels);
+
         /** @brief 間接 dispatch の x の上限（Vulkan の保証する最小値。一覧がこれを超えるクラスタ数を持つときは y へ折り返す） */
         static constexpr uint32_t MaxGroupsX = 65535;
 
@@ -68,6 +79,8 @@ namespace NorvesLib::Core::Rendering
             uint32_t ListCapacity = 0;
             /** @brief 統計のバッファ（MegaGeometryPass の統計。UnorderedAccess の状態で渡す）。bStatsEnabled が偽でも、結ぶ代わりのバッファが要る */
             RHI::BufferPtr Stats;
+            /** @brief 振り分けのしきい値（画素）。矩形の上限（ComputeMaxScanSpan）を決める */
+            float SwRasterMaxPixels = 0.0f;
             /** @brief 真なら、矩形の上限を超えて描かなかった三角形の数と、走ったワークグループの数を Stats へ数える */
             bool bStatsEnabled = false;
             /** @brief ハードのラスタと同じビューポートとシザー */
