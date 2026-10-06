@@ -132,6 +132,254 @@ namespace NorvesLib::Core::Rendering
     } // namespace
 
     // ========================================
+    // VisibilityMerge
+    // ========================================
+
+    namespace
+    {
+        // 合流のパスのディスクリプタセット（visbuffer_merge.frag の binding 0・1）
+        RHI::DescriptorSetDesc MakeMergeDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc desc;
+            AddBinding(desc, 0, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Pixel);
+            AddBinding(desc, 1, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Pixel);
+            return desc;
+        }
+
+        constexpr uint32_t MergeParamsBytes = 16; // uvec4（x = 幅、y = 高さ）
+        // 作り直しで手放した 64bit のバッファを持っておくフレーム数（飛行中のフレームの数より長く）
+        constexpr uint64_t MergeRetiredBufferFrames = FrameUseRingMaxInFlightSlots + 1;
+        constexpr double BytesPerMegabyte = 1024.0 * 1024.0;
+    } // namespace
+
+    VisibilityMerge::VisibilityMerge() = default;
+
+    VisibilityMerge::~VisibilityMerge()
+    {
+        Shutdown();
+    }
+
+    bool VisibilityMerge::IsSupported(const RHI::DeviceCapabilities& capabilities)
+    {
+        // bShaderBufferInt64Atomics は、64bit 整数（shaderInt64）が有効になったときだけ true になる
+        return capabilities.bShaderBufferInt64Atomics && capabilities.bShaderInt64;
+    }
+
+    RHI::RenderPassDesc VisibilityMerge::MakeLoadRenderPassDesc()
+    {
+        RHI::RenderPassDesc desc;
+
+        // ID: 前の描画の内容へ重ねる。ShaderResource の状態から始まり、ShaderResource で終わる
+        RHI::AttachmentDesc idAttachment;
+        idAttachment.format = RHI::Format::R32_UINT;
+        idAttachment.isDepthStencil = false;
+        idAttachment.clear = false;
+        idAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        idAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+        idAttachment.initialState = RHI::ResourceState::ShaderResource;
+        idAttachment.finalState = RHI::ResourceState::ShaderResource;
+        desc.colorAttachments.push_back(idAttachment);
+
+        desc.hasDepthStencil = true;
+        desc.depthStencilAttachment.format = RHI::Format::D32_FLOAT;
+        desc.depthStencilAttachment.isDepthStencil = true;
+        desc.depthStencilAttachment.clear = false;
+        desc.depthStencilAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        desc.depthStencilAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+        desc.depthStencilAttachment.initialState = RHI::ResourceState::ShaderResource;
+        desc.depthStencilAttachment.finalState = RHI::ResourceState::ShaderResource;
+        return desc;
+    }
+
+    bool VisibilityMerge::Initialize(RHI::IDevice* device,
+                                     ShaderManager* shaderManager,
+                                     const RHI::RenderPassPtr& loadRenderPass)
+    {
+        Shutdown();
+        if (!device || !shaderManager || !loadRenderPass || !IsSupported(device->GetCapabilities()))
+        {
+            return false;
+        }
+
+        m_VertexShader = shaderManager->LoadShader("fullscreen.vert", RHI::ShaderStage::Vertex);
+        m_FragmentShader = shaderManager->LoadShader("visbuffer_merge.frag", RHI::ShaderStage::Pixel);
+        if (!m_VertexShader || !m_FragmentShader)
+        {
+            NORVES_LOG_WARNING("VisibilityMerge", "64bit のバッファの合流のシェーダーの読み込みに失敗。合流は行いません");
+            Shutdown();
+            return false;
+        }
+
+        RHI::GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.vertexShader = m_VertexShader;
+        pipelineDesc.pixelShader = m_FragmentShader;
+        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+        pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
+        pipelineDesc.rasterState.lineWidth = 1.0f;
+        // ハードのラスタ（LessOrEqual）と同じ比較。同じ深度ならソフトウェアラスタの ID が残る
+        pipelineDesc.depthStencilState.depthTestEnable = true;
+        pipelineDesc.depthStencilState.depthWriteEnable = true;
+        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::LessOrEqual;
+        RHI::BlendAttachmentDesc blendAttachment;
+        blendAttachment.blendEnable = false;
+        blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+        pipelineDesc.blendState.attachments.push_back(blendAttachment);
+        pipelineDesc.renderPass = loadRenderPass;
+        pipelineDesc.descriptorSetLayouts.push_back(MakeMergeDescriptorSetDesc());
+        m_Pipeline = device->CreateGraphicsPipeline(pipelineDesc);
+        if (!m_Pipeline)
+        {
+            NORVES_LOG_WARNING("VisibilityMerge", "64bit のバッファの合流のパイプラインの作成に失敗。合流は行いません");
+            Shutdown();
+            return false;
+        }
+
+        m_Device = device;
+        return true;
+    }
+
+    void VisibilityMerge::Shutdown()
+    {
+        m_Uses.Clear();
+        m_RetiredBuffers.clear();
+        m_KeyBuffer.reset();
+        m_KeyWidth = 0;
+        m_KeyHeight = 0;
+        m_KeyBufferCreateCount = 0;
+        m_KeyState = RHI::ResourceState::Common;
+        m_FrameSerial = 0;
+        m_Pipeline.reset();
+        m_VertexShader.reset();
+        m_FragmentShader.reset();
+        m_Device = nullptr;
+    }
+
+    void VisibilityMerge::BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
+    {
+        m_Uses.BeginFrame(inFlightIndex, frameSerial);
+        m_FrameSerial = frameSerial;
+        ReleaseStaleBuffers();
+    }
+
+    void VisibilityMerge::ReleaseStaleBuffers()
+    {
+        for (size_t index = 0; index < m_RetiredBuffers.size();)
+        {
+            if (m_FrameSerial > m_RetiredBuffers[index].RetiredSerial &&
+                m_FrameSerial - m_RetiredBuffers[index].RetiredSerial > MergeRetiredBufferFrames)
+            {
+                m_RetiredBuffers[index] = m_RetiredBuffers.back();
+                m_RetiredBuffers.pop_back();
+            }
+            else
+            {
+                ++index;
+            }
+        }
+    }
+
+    bool VisibilityMerge::EnsureKeyBuffer(uint32_t width, uint32_t height)
+    {
+        if (!IsReady() || !m_Device || width == 0 || height == 0)
+        {
+            return false;
+        }
+        if (m_KeyBuffer && m_KeyWidth == width && m_KeyHeight == height)
+        {
+            return true;
+        }
+
+        // 大きさが変わったので作り直す。古いバッファは、GPU が前のフレームで使っているかもしれないので、数フレーム持っておく
+        const uint64_t bytes = static_cast<uint64_t>(width) * height * VisibilityBuffer::KEY_BYTES;
+        RHI::BufferDesc desc(bytes, RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst, false, "VisBuffer_Key64");
+        RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+        if (!buffer)
+        {
+            NORVES_LOG_ERROR("VisibilityMerge", "64bit のバッファ（%ux%u、%llu バイト）を作れませんでした",
+                             width, height, static_cast<unsigned long long>(bytes));
+            return false;
+        }
+        if (m_KeyBuffer)
+        {
+            m_RetiredBuffers.push_back(RetiredBuffer{m_KeyBuffer, m_FrameSerial});
+        }
+        m_KeyBuffer = buffer;
+        m_KeyWidth = width;
+        m_KeyHeight = height;
+        m_KeyState = RHI::ResourceState::Common;
+        ++m_KeyBufferCreateCount;
+        NORVES_LOG_INFO("VisibilityMerge",
+                        "VRAM_LEDGER visbuffer64 width=%u height=%u mb=%.2f",
+                        width,
+                        height,
+                        static_cast<double>(bytes) / BytesPerMegabyte);
+        return true;
+    }
+
+    bool VisibilityMerge::RecordClear(RHI::ICommandList* commandList)
+    {
+        if (!IsReady() || !commandList || !m_KeyBuffer)
+        {
+            return false;
+        }
+
+        // すべてのビットを 1 にする（32bit の語を 0xFFFFFFFF で埋める）。次の書き込み（転送）は前のフレームの読み取りの後に並ぶ
+        const uint64_t bytes = m_KeyBuffer->GetSize();
+        commandList->BufferBarrier(m_KeyBuffer, m_KeyState, RHI::ResourceState::CopyDest);
+        commandList->FillBuffer(m_KeyBuffer, 0, bytes, VisibilityBuffer::KEY_EMPTY_WORD);
+        commandList->BufferBarrier(m_KeyBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::GenericRead);
+        m_KeyState = RHI::ResourceState::GenericRead;
+        return true;
+    }
+
+    bool VisibilityMerge::RecordMerge(RHI::ICommandList* commandList,
+                                      const RHI::RenderPassPtr& renderPass,
+                                      const RHI::FramebufferPtr& framebuffer,
+                                      const RHI::Viewport& viewport,
+                                      const RHI::ScissorRect& scissor)
+    {
+        if (!IsReady() || !m_Device || !commandList || !renderPass || !framebuffer || !m_KeyBuffer ||
+            m_KeyState != RHI::ResourceState::GenericRead)
+        {
+            return false;
+        }
+
+        // 資源は呼び出しの回数ではなくフレームの枠で決める（提出前・GPU が読み終わる前の資源を上書きしない）
+        Use& use = m_Uses.Acquire();
+        if (!use.Params)
+        {
+            use.Params = m_Device->CreateBuffer(
+                RHI::BufferDesc(MergeParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisBuffer_MergeParams"));
+        }
+        if (!use.DescriptorSet)
+        {
+            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeMergeDescriptorSetDesc());
+        }
+        if (!use.Params || !use.DescriptorSet)
+        {
+            NORVES_LOG_WARNING("VisibilityMerge", "合流の資源の作成に失敗。この合流は何もしません");
+            return false;
+        }
+
+        const uint32_t params[4] = {m_KeyWidth, m_KeyHeight, 0u, 0u};
+        use.Params->Update(params, sizeof(params));
+        use.DescriptorSet->BindStorageBuffer(0, m_KeyBuffer, 0, ClampBindSize(m_KeyBuffer->GetSize()));
+        use.DescriptorSet->BindConstantBuffer(1, use.Params, 0, MergeParamsBytes);
+        use.DescriptorSet->Update();
+
+        commandList->BeginRenderPass(renderPass, framebuffer);
+        commandList->SetViewport(viewport);
+        commandList->SetScissor(scissor);
+        commandList->SetPipeline(m_Pipeline);
+        commandList->SetDescriptorSet(use.DescriptorSet, 0);
+        commandList->Draw(3, 0);
+        commandList->EndRenderPass();
+        return true;
+    }
+
+    // ========================================
     // VisibilityRasterPass
     // ========================================
 
@@ -192,6 +440,13 @@ namespace NorvesLib::Core::Rendering
             m_MeshWireframePipeline.reset();
             m_SkinnedWireframePipeline.reset();
             NORVES_LOG_WARNING("VisibilityRasterPass", "ビジビリティバッファのパイプラインの作成に失敗。このパスは何もしません");
+            return true;
+        }
+
+        // 64bit のバッファの合流は、対応する装置だけ作る。作れなくても ID の描画は使える（合流だけが無い）
+        if (VisibilityMerge::IsSupported(caps))
+        {
+            m_Merge.Initialize(m_Device, context.ShaderMgr, m_SecondRenderPass);
         }
         return true;
     }
@@ -214,6 +469,7 @@ namespace NorvesLib::Core::Rendering
 
     void VisibilityRasterPass::Shutdown()
     {
+        m_Merge.Shutdown();
         m_FrameSlots.Clear();
         m_ProceduralChunkScratch = Container::VariableArray<MeshIndexChunk>{};
         m_SkinnedChunkScratch = Container::VariableArray<MeshIndexChunk>{};
@@ -292,13 +548,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 2 回目の render pass: 1 回目の描画の後に続けて開くので、ID・深度とも ShaderResource の状態から始まり、内容を Load する
-        // （2 パスの遮蔽で、HZB を作った後に MegaGeometry の 2 パス目を描く）
-        RHI::RenderPassDesc secondDesc = desc;
-        secondDesc.colorAttachments[0].clear = false;
-        secondDesc.colorAttachments[0].loadOp = RHI::AttachmentLoadOp::Load;
-        secondDesc.colorAttachments[0].initialState = RHI::ResourceState::ShaderResource;
-        secondDesc.depthStencilAttachment.initialState = RHI::ResourceState::ShaderResource;
-        m_SecondRenderPass = m_Device->CreateRenderPass(secondDesc);
+        // （2 パスの遮蔽で、HZB を作った後に MegaGeometry の 2 パス目を描く。64bit のバッファの合流も同じ形で描く）
+        m_SecondRenderPass = m_Device->CreateRenderPass(VisibilityMerge::MakeLoadRenderPassDesc());
         return m_SecondRenderPass != nullptr;
     }
 
@@ -1151,6 +1402,9 @@ namespace NorvesLib::Core::Rendering
             slot.RecordState = RHI::ResourceState::GenericRead;
         }
 
+        // 64bit のバッファを空で埋める（ソフトウェアラスタが書く前。1 回目の合流が読む）
+        RecordMergeClear();
+
         // 1 回目: 手続き・スキニングの塊と MegaGeometry の 1 パス目。この深度から MegaGeometryPass が HZB を作る
         commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
         commandList->SetViewport(m_Work.Viewport);
@@ -1162,6 +1416,18 @@ namespace NorvesLib::Core::Rendering
         }
         commandList->EndRenderPass();
         m_Work.bStagedReady = true;
+    }
+
+    void VisibilityRasterPass::RecordMergeBeforeHiZ(RHI::ICommandList* /*commandList*/,
+                                                    const MegaGeometryPass::VisibilityDrawPlan& /*plan*/)
+    {
+        if (!m_Work.bStagedReady)
+        {
+            return;
+        }
+
+        // 1 回目の描画の後の深度（HZB の元）へ、64bit のバッファの値を合流させる
+        RecordMergePass("VisRasterMerge1");
     }
 
     void VisibilityRasterPass::RecordSecondPassDraws(RHI::ICommandList* /*commandList*/,
@@ -1180,6 +1446,33 @@ namespace NorvesLib::Core::Rendering
         commandList->SetScissor(m_Work.Scissor);
         RecordMegaDraws(plan, 1, 2);
         commandList->EndRenderPass();
+
+        // 2 パス目の後の ID・深度へ、64bit のバッファの値（1 パス目・2 パス目のぶん）を合流させる
+        RecordMergePass("VisRasterMerge2");
+    }
+
+    void VisibilityRasterPass::RecordMergeClear()
+    {
+        if (!m_Work.bMerge)
+        {
+            return;
+        }
+        ScopedGpuTimestamp gpuTimestamp(m_Work.CommandList, "VisRasterMergeClear");
+        m_Merge.RecordClear(m_Work.CommandList);
+    }
+
+    void VisibilityRasterPass::RecordMergePass(const char* timestampName)
+    {
+        if (!m_Work.bMerge)
+        {
+            return;
+        }
+
+        ScopedGpuTimestamp gpuTimestamp(m_Work.CommandList, timestampName);
+        if (m_Merge.RecordMerge(m_Work.CommandList, m_SecondRenderPass, m_SecondFramebuffer, m_Work.Viewport, m_Work.Scissor))
+        {
+            ++m_Stats.MergeCount;
+        }
     }
 
     void VisibilityRasterPass::FinishFrame()
@@ -1193,6 +1486,8 @@ namespace NorvesLib::Core::Rendering
         FrameSlot& slot = *m_Work.Slot;
         const VariableArray<VisibilityBuffer::MaterialEntry>& materialEntries = m_MaterialEntryScratch;
         m_Stats.bRendered = true;
+        m_Stats.bMerged = m_Stats.MergeCount > 0;
+        m_Stats.KeyBufferBytes = m_Work.bMerge ? m_Merge.GetKeyBufferBytes() : 0u;
         m_LastRecordTable = slot.RecordTable;
         m_LastRecordTableBytes = m_Work.TableBytes;
         m_LastMaterialTable = slot.MaterialTable;
@@ -1313,6 +1608,13 @@ namespace NorvesLib::Core::Rendering
         m_Work.MeshPipeline = bWireframe ? m_MeshWireframePipeline : m_MeshPipeline;
         m_Work.SkinnedPipeline = bWireframe ? m_SkinnedWireframePipeline : m_SkinnedPipeline;
 
+        // 64bit のバッファ: 対応する装置で、ワイヤーフレームの表示でないときだけ使う（ワイヤーフレームは誰も書かない）
+        if (m_Merge.IsReady() && !bWireframe)
+        {
+            m_Merge.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+            m_Work.bMerge = m_Merge.EnsureKeyBuffer(idTexture->GetWidth(), idTexture->GetHeight());
+        }
+
         if (bDeferred)
         {
             // 2 パスの遮蔽になるときは、MegaGeometryPass の記録の途中（IDrawSink）で ID・深度へ描く。
@@ -1365,6 +1667,9 @@ namespace NorvesLib::Core::Rendering
         }
         slot.RecordState = RHI::ResourceState::GenericRead;
 
+        // 64bit のバッファを空で埋める（ソフトウェアラスタが書く前。描画の後の合流が読む）
+        RecordMergeClear();
+
         // ID と深度へ、MegaGeometry の全パス → 手続き・スキニングの塊の順に 1 回の render pass で描く
         commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
         commandList->SetViewport(m_Work.Viewport);
@@ -1375,6 +1680,9 @@ namespace NorvesLib::Core::Rendering
         }
         RecordChunkDraws();
         commandList->EndRenderPass();
+
+        // 1 回の判定は HZB を作らないので、描画の後に 1 回だけ 64bit のバッファの値を合流させる
+        RecordMergePass("VisRasterMerge1");
 
         FinishFrame();
     }

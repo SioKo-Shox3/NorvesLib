@@ -185,7 +185,7 @@ namespace NorvesLib::Core::Rendering
          *
          * 幾何の解決が GBuffer を書くとき、2パスの遮蔽の HZB は GBuffer ではなく ID のラスタの深度から作る。そのため
          * RecordFrameCommand が次の順で呼び出す（sink を渡したときだけ）:
-         *   1パス目のカリング → RecordFirstPassDraws → HZB の生成 → 2パス目のカリング → RecordSecondPassDraws
+         *   1パス目のカリング → RecordFirstPassDraws → RecordMergeBeforeHiZ → HZB の生成 → 2パス目のカリング → RecordSecondPassDraws
          * 描画の写し plan は両方の呼び出しで同じ内容（1パス目のカリングの前に作る）。バッファの状態は、1回目の呼び出しの時点で
          * 1パス目の範囲が IndirectArgument（描画情報は GenericRead）、2回目の時点で2パス目の範囲まで書き終えている。
          * 呼び出しの間に sink が必要とする状態の遷移は sink が行い、RecordFrameCommand が戻った後の戻し
@@ -198,6 +198,13 @@ namespace NorvesLib::Core::Rendering
 
             /** @brief 1パス目のカリングの後。ID・深度へ手続き・スキニングの塊と1パス目を描く（深度は描いた後 ShaderResource になる） */
             virtual void RecordFirstPassDraws(RHI::ICommandList *commandList, const VisibilityDrawPlan &plan) = 0;
+            /**
+             * @brief 1回目の描画の後・HZB を作る前。ハードのラスタの外で書かれた ID・深度（ソフトウェアラスタの 64bit のバッファ）を、
+             *        HZB の元の深度へ合流させる。RecordFirstPassDraws が描画を記録できなかったフレームは呼ばれない
+             *
+             * 深度は呼ばれる時点と戻る時点のどちらも ShaderResource の状態（HZB がそのまま読む）。
+             */
+            virtual void RecordMergeBeforeHiZ(RHI::ICommandList *commandList, const VisibilityDrawPlan &plan) = 0;
             /** @brief 2パス目のカリングの後。ID・深度へ2パス目を描く */
             virtual void RecordSecondPassDraws(RHI::ICommandList *commandList, const VisibilityDrawPlan &plan) = 0;
         };

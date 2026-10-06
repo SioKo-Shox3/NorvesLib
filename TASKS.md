@@ -1000,7 +1000,7 @@
 - notes: 2026-10-06 親（段7の開始時に詳しくした）。調査では `shaderInt64` は有効化済み（`DeviceCapabilities::bShaderInt64`）で、64bit アトミックは Library/Core のどこにも無い。危険地帯（RHI/Vulkan）。
 
 ## VTG7-VISBUFFER64-MERGE: 64bit のビジビリティバッファ（深度＋ID）と、深度・ID への合流のパスを作る
-- status: todo
+- status: done
 - done-when: `Assets/Shaders/Common/VisibilityBuffer.glsl` に 64bit の詰め方の契約（上位 32bit = `floatBitsToUint(depth)`、下位 32bit = ID、`atomicMin` で書く、空 = すべてのビットが 1）を足し、C++ 側の定数と `VisibilityBufferEncodingTest` で照合する。`VisibilityRasterPass` が画面の画素数の uint64 の storage buffer を持ち（フレーム枠ごとに要るかを確かめ、要らなければ 1 つ。VRAM の台帳に載せる）、毎フレーム空で埋める。`MegaGeometryPass::IDrawSink` に HZB を作る前に呼ばれるフック（例 `RecordMergeBeforeHiZ`）を足し、全画面の合流のパス（FS がバッファを読み、空なら discard、そうでなければ `gl_FragDepth` と ID を出す。深度の比較 LessOrEqual で `GBuffer.Depth`・`VisBuffer.Id` へ書く）を、HZB の前と pass2 の後に走らせる。この段階ではまだ誰もバッファへ書かないので、起動画面・golden は変わらない。GPU のテスト（`VisibilityResolveVulkanTest` にケースを足す）で、バッファへ手で書いた値が深度・ID に合流し、ハードのラスタより手前の値は勝ち、奥の値は負けることを確かめる。`bShaderBufferInt64Atomics` が無い装置・予備の経路（`--visibility-buffer=off`）では、資源もパスも作らない。`RenderGraphCompileTest` に合流の順（pass1 → 合流 → HZB → pass2 → 合流）の検査を足す。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderResourcesDomainContractTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityBufferEncodingTest|VisibilityResolveVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`

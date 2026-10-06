@@ -1810,13 +1810,15 @@ namespace NorvesLib::Core::Rendering
             if (bStaged)
             {
                 sink->RecordFirstPassDraws(cmdList, stagedPlan);
+                // HZB の元の深度へ、ハードのラスタの外で書かれた深度（ソフトウェアラスタ）を合流させる
+                sink->RecordMergeBeforeHiZ(cmdList, stagedPlan);
             }
             else
             {
                 recordDraws(m_GBufferRenderPass, m_GBufferFramebuffer, 0);
             }
 
-            // 深度（GBufferPass の不透明＋1パス目。sink があるときは ID のラスタが描いた塊＋1パス目）から HZB を作る
+            // 深度（GBufferPass の不透明＋1パス目。sink があるときは ID のラスタが描いた塊＋1パス目＋合流した値）から HZB を作る
             // （深度は1パス目の終わりで ShaderResource）。
             // 作れなかったときは遮蔽の判定をしない（1パス目で描かなかったクラスタを全て描く）
             const bool bHiZBuilt = m_HiZ.Build(cmdList, m_DepthTexture);

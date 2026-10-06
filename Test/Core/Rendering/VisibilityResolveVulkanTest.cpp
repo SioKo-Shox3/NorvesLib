@@ -24,6 +24,10 @@
 //   VT の要求（フィードバック）は、材質 0 のアルベドを sparse の BC7 にして、リングの要求のバッファへ書かれる要求を読み戻し、
 //   CPU の参照（UV の微分から求めたミップ・タイル）と照合する。常駐のテクスチャは 4×4 の画素のうち位相の 1 画素だけが書き、
 //   非常駐（ミップテイルだけを結ぶ）の領域は全画素が書く。パラメータ 0（VT でない材質）は何も書かない。
+//   64bit のバッファ（深度 + ID）の合流（VisibilityMerge）は、手で書いた 64bit の値が ID・深度へ合流することを確かめる。
+//   ハードのラスタが書いた深度（画素ごとに違う値）より手前（同じ深度・1 ULP 手前を含む）の値は勝って深度と ID が書き換わり、
+//   奥（1 ULP 奥・1.0 を含む）の値は負けて何も変わらず、空の画素（すべてのビットが 1）は触らない。ID は 32bit 全域の値、
+//   深度は 0.0 から 1.0 まで。バッファはフレームの最初に空で埋められ、前のフレームの値が残らない（埋めを外すと落ちる）。
 // Vulkan デバイスが無い環境、または解決に対応しない装置では 125（スキップ）を返す。
 #include "Container/Containers.h"
 #include "Rendering/CameraViewConstants.h"
@@ -36,6 +40,7 @@
 #include "Rendering/VirtualTextureRequestSet.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityMaterialTable.h"
+#include "Rendering/VisibilityMerge.h"
 #include "Rendering/VisibilityResolveMaterialBuild.h"
 #include "Rendering/VisibilityResolvePass.h"
 
@@ -3036,6 +3041,437 @@ namespace
         }
     }
 
+    // ========================================
+    // 64bit のバッファ（深度 + ID）の合流
+    // ========================================
+
+    constexpr uint32_t MergeWidth = 64;
+    constexpr uint32_t MergeHeight = 32;
+    constexpr uint32_t MergePixels = MergeWidth * MergeHeight;
+
+    // ハードのラスタが書いた深度の代わりの、画素ごとに違う深度（0.02〜0.97）と ID（32bit の上位寄りの値）
+    float MergeHardDepth(uint32_t pixel)
+    {
+        const float t = static_cast<float>((pixel * 37u) % 1000u) / 1000.0f;
+        return 0.02f + 0.95f * t;
+    }
+
+    uint32_t MergeHardId(uint32_t pixel)
+    {
+        return 0x40000000u + pixel * 13u;
+    }
+
+    // 画素ごとの 64bit の値の種類（8 通りを画素の番号で回す）
+    constexpr uint32_t MergeCaseCount = 8;
+
+    // ソフトウェアラスタが書く値と、ハードの値に対して勝つか（LessOrEqual。同じ深度は勝つ）
+    uint64_t MergeSoftwareKey(uint32_t pixel, bool& outWins)
+    {
+        const float hard = MergeHardDepth(pixel);
+        const uint32_t id = 0x80000000u + pixel * 7u;
+        switch (pixel % MergeCaseCount)
+        {
+        case 0:
+            outWins = false;
+            return VisibilityBuffer::KEY_EMPTY; // 空は触らない
+        case 1:
+            outWins = true;
+            return VisibilityBuffer::PackKey(hard * 0.5f, id); // 手前
+        case 2:
+            outWins = false;
+            return VisibilityBuffer::PackKey(hard + (1.0f - hard) * 0.5f, id); // 奥
+        case 3:
+            outWins = true;
+            return VisibilityBuffer::PackKey(hard, id); // 同じ深度は勝つ（ハードと同じ LessOrEqual）
+        case 4:
+            outWins = true;
+            return VisibilityBuffer::PackKey(0.0f, 0xFFFFFFFEu); // 深度 0・ID は 32bit の最大に近い値
+        case 5:
+            outWins = false;
+            return VisibilityBuffer::PackKey(1.0f, 3u); // 深度 1.0 は 1 未満のハードに負ける
+        case 6:
+            outWins = true;
+            return VisibilityBuffer::PackKey(std::nextafter(hard, 0.0f), id); // 1 ULP 手前
+        default:
+            outWins = false;
+            return VisibilityBuffer::PackKey(std::nextafter(hard, 1.0f), id); // 1 ULP 奥
+        }
+    }
+
+    // float のビットが一致するか（深度は比較ではなく、書いた値がそのまま残ることを確かめる）
+    bool BitEqual(float a, float b)
+    {
+        return std::memcmp(&a, &b, sizeof(float)) == 0;
+    }
+
+    struct MergeReadback
+    {
+        Container::VariableArray<uint32_t> Ids;
+        Container::VariableArray<float> Depths;
+        bool bOk = false;
+    };
+
+    // 合流の GPU ケースの資源と読み戻し
+    struct MergeFixture
+    {
+        DevicePtr Device;
+        TexturePtr IdTexture;
+        TexturePtr DepthTexture;
+        RenderPassPtr ClearPass;
+        FramebufferPtr ClearFramebuffer;
+        RenderPassPtr LoadPass;
+        FramebufferPtr LoadFramebuffer;
+        ShaderPtr ProbeShader;
+        PipelinePtr ProbePipeline;
+        SamplerPtr ProbeSampler;
+        DescriptorSetDesc ProbeLayout;
+    };
+
+    bool BuildMergeFixture(const DevicePtr& device, ShaderManager& shaderManager, MergeFixture& fixture)
+    {
+        fixture.Device = device;
+
+        TextureDesc idDesc;
+        idDesc.Width = MergeWidth;
+        idDesc.Height = MergeHeight;
+        idDesc.MipLevels = 1;
+        idDesc.ArraySize = 1;
+        idDesc.TextureFormat = Format::R32_UINT;
+        idDesc.Dimension = TextureDimension::Texture2D;
+        idDesc.Usage = ResourceUsage::RenderTarget | ResourceUsage::ShaderRead | ResourceUsage::TransferSrc;
+        idDesc.DebugName = "VisibilityMergeTestId";
+        fixture.IdTexture = device->CreateTexture(idDesc);
+
+        TextureDesc depthDesc;
+        depthDesc.Width = MergeWidth;
+        depthDesc.Height = MergeHeight;
+        depthDesc.MipLevels = 1;
+        depthDesc.ArraySize = 1;
+        depthDesc.TextureFormat = Format::D32_FLOAT;
+        depthDesc.Dimension = TextureDimension::Texture2D;
+        depthDesc.Usage = ResourceUsage::DepthStencil | ResourceUsage::ShaderRead;
+        depthDesc.DebugName = "VisibilityMergeTestDepth";
+        fixture.DepthTexture = device->CreateTexture(depthDesc);
+        if (!fixture.IdTexture || !fixture.DepthTexture)
+        {
+            return false;
+        }
+
+        // 初期化の render pass: ID を空（0）、深度を 1.0 で消し、どちらも ShaderResource にして渡す
+        RenderPassDesc clearDesc = VisibilityMerge::MakeLoadRenderPassDesc();
+        clearDesc.colorAttachments[0].clear = true;
+        clearDesc.colorAttachments[0].clearColorUint[0] = VisibilityBuffer::EMPTY_ID;
+        clearDesc.colorAttachments[0].loadOp = AttachmentLoadOp::Clear;
+        clearDesc.colorAttachments[0].initialState = ResourceState::Undefined;
+        clearDesc.depthStencilAttachment.clear = true;
+        clearDesc.depthStencilAttachment.clearDepth = 1.0f;
+        clearDesc.depthStencilAttachment.loadOp = AttachmentLoadOp::Clear;
+        clearDesc.depthStencilAttachment.initialState = ResourceState::Undefined;
+        fixture.ClearPass = device->CreateRenderPass(clearDesc);
+        fixture.LoadPass = device->CreateRenderPass(VisibilityMerge::MakeLoadRenderPassDesc());
+        if (!fixture.ClearPass || !fixture.LoadPass)
+        {
+            return false;
+        }
+
+        FramebufferDesc framebufferDesc;
+        framebufferDesc.colorTargets.push_back(fixture.IdTexture);
+        framebufferDesc.depthStencilTarget = fixture.DepthTexture;
+        framebufferDesc.width = MergeWidth;
+        framebufferDesc.height = MergeHeight;
+        framebufferDesc.renderPass = fixture.ClearPass;
+        fixture.ClearFramebuffer = device->CreateFramebuffer(framebufferDesc);
+        framebufferDesc.renderPass = fixture.LoadPass;
+        fixture.LoadFramebuffer = device->CreateFramebuffer(framebufferDesc);
+        if (!fixture.ClearFramebuffer || !fixture.LoadFramebuffer)
+        {
+            return false;
+        }
+
+        // 深度の読み戻し用の計算パイプライン
+        fixture.ProbeShader = shaderManager.LoadShader("visbuffer_merge_depth_probe.comp", RHI::ShaderStage::Compute);
+        SamplerDesc samplerDesc;
+        samplerDesc.filterMin = FilterMode::Point;
+        samplerDesc.filterMag = FilterMode::Point;
+        samplerDesc.filterMip = FilterMode::Point;
+        samplerDesc.addressU = TextureAddressMode::Clamp;
+        samplerDesc.addressV = TextureAddressMode::Clamp;
+        samplerDesc.addressW = TextureAddressMode::Clamp;
+        fixture.ProbeSampler = device->CreateSampler(samplerDesc);
+        const ResourceBindType types[] = {ResourceBindType::CombinedImageSampler, ResourceBindType::RWBuffer,
+                                          ResourceBindType::ConstantBuffer};
+        for (uint32_t binding = 0; binding < 3; ++binding)
+        {
+            DescriptorBinding descriptorBinding;
+            descriptorBinding.binding = binding;
+            descriptorBinding.type = types[binding];
+            descriptorBinding.stages = RHI::ShaderStage::Compute;
+            fixture.ProbeLayout.bindings.push_back(descriptorBinding);
+        }
+        if (!fixture.ProbeShader || !fixture.ProbeSampler)
+        {
+            return false;
+        }
+        ComputePipelineDesc pipelineDesc;
+        pipelineDesc.computeShader = fixture.ProbeShader;
+        pipelineDesc.descriptorSetLayouts.push_back(fixture.ProbeLayout);
+        fixture.ProbePipeline = device->CreateComputePipeline(pipelineDesc);
+        return fixture.ProbePipeline != nullptr;
+    }
+
+    // ID・深度（どちらも ShaderResource の状態）をホストへ読み戻し、ShaderResource へ戻す
+    MergeReadback ReadMergeTargets(MergeFixture& fixture)
+    {
+        MergeReadback result;
+        const DevicePtr& device = fixture.Device;
+        const uint64_t idBytes = static_cast<uint64_t>(MergePixels) * sizeof(uint32_t);
+        BufferPtr idReadback = device->CreateBuffer(BufferDesc(idBytes, ResourceUsage::TransferDst, true, "VisibilityMergeIdReadback"));
+        BufferPtr depthReadback = device->CreateBuffer(
+            BufferDesc(idBytes, ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead, true, "VisibilityMergeDepthReadback"));
+        const uint32_t paramsValues[4] = {MergeWidth, MergeHeight, 0u, 0u};
+        BufferPtr params = CreateHostBuffer(device, paramsValues, sizeof(paramsValues), ResourceUsage::ConstantBuffer,
+                                            "VisibilityMergeProbeParams");
+        DescriptorSetPtr descriptorSet = device->CreateDescriptorSet(fixture.ProbeLayout);
+        CommandListPtr commandList = device->CreateCommandList();
+        if (!idReadback || !depthReadback || !params || !descriptorSet || !commandList)
+        {
+            return result;
+        }
+
+        descriptorSet->BindTexture(0, fixture.DepthTexture);
+        descriptorSet->BindSampler(0, fixture.ProbeSampler);
+        descriptorSet->BindStorageBuffer(1, depthReadback, 0, static_cast<uint32_t>(idBytes));
+        descriptorSet->BindConstantBuffer(2, params, 0, sizeof(paramsValues));
+        descriptorSet->Update();
+
+        commandList->Begin();
+        // ID: 転送で写す
+        commandList->TextureBarrier(fixture.IdTexture, ResourceState::ShaderResource, ResourceState::CopySource, 0u, 0u, 0u, 0u);
+        commandList->BufferBarrier(idReadback, ResourceState::Undefined, ResourceState::CopyDest, 0u, idBytes);
+        commandList->CopyTextureToBuffer(fixture.IdTexture, idReadback, MergeWidth, MergeHeight, 0u, 0u, 0u);
+        commandList->BufferBarrier(idReadback, ResourceState::CopyDest, ResourceState::HostRead, 0u, idBytes);
+        commandList->TextureBarrier(fixture.IdTexture, ResourceState::CopySource, ResourceState::ShaderResource, 0u, 0u, 0u, 0u);
+        // 深度: 計算で float の並びへ読み出す
+        commandList->BufferBarrier(depthReadback, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, idBytes);
+        commandList->SetPipeline(fixture.ProbePipeline);
+        commandList->SetDescriptorSet(descriptorSet, 0);
+        commandList->Dispatch((MergeWidth + 7u) / 8u, (MergeHeight + 7u) / 8u, 1u);
+        commandList->BufferBarrier(depthReadback, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, idBytes);
+        commandList->End();
+        commandList->Submit(true);
+        device->WaitIdle();
+
+        const uint32_t* mappedIds = static_cast<const uint32_t*>(idReadback->Map(0u, idBytes));
+        if (mappedIds == nullptr)
+        {
+            return result;
+        }
+        result.Ids.assign(mappedIds, mappedIds + MergePixels);
+        idReadback->Unmap();
+        const float* mappedDepths = static_cast<const float*>(depthReadback->Map(0u, idBytes));
+        if (mappedDepths == nullptr)
+        {
+            return result;
+        }
+        result.Depths.assign(mappedDepths, mappedDepths + MergePixels);
+        depthReadback->Unmap();
+        result.bOk = true;
+        return result;
+    }
+
+    // ホストが書いた 64bit の値の列を、64bit のバッファへ転送で写す（バッファは GenericRead の状態で渡され、GenericRead で戻る）
+    BufferPtr CreateMergeUpload(const DevicePtr& device, const Container::VariableArray<uint64_t>& keys)
+    {
+        return CreateHostBuffer(device, keys.data(), static_cast<uint64_t>(keys.size()) * sizeof(uint64_t),
+                                ResourceUsage::TransferSrc, "VisibilityMergeKeyUpload");
+    }
+
+    void RecordMergeUpload(ICommandList* commandList, const BufferPtr& keyBuffer, const BufferPtr& upload)
+    {
+        const uint64_t bytes = static_cast<uint64_t>(MergePixels) * sizeof(uint64_t);
+        commandList->BufferBarrier(keyBuffer, ResourceState::GenericRead, ResourceState::CopyDest, 0u, bytes);
+        commandList->CopyBuffer(upload, keyBuffer, bytes, 0u, 0u);
+        commandList->BufferBarrier(keyBuffer, ResourceState::CopyDest, ResourceState::GenericRead, 0u, bytes);
+    }
+
+    // 手で書いた 64bit の値が、ハードのラスタの値より手前のときだけ ID・深度へ合流する
+    void RunVisibilityMergeCase(const DevicePtr& device, ShaderManager& shaderManager)
+    {
+        if (!VisibilityMerge::IsSupported(device->GetCapabilities()))
+        {
+            std::cout << TestName << " 合流のケースをスキップ: 64bit のバッファへの atomicMin に対応しない装置です" << std::endl;
+            return;
+        }
+
+        MergeFixture fixture;
+        if (!BuildMergeFixture(device, shaderManager, fixture))
+        {
+            Expect(false, "合流のケースの資源（ID・深度・render pass・読み戻し）を作れなければならない");
+            return;
+        }
+        VisibilityMerge merge;
+        if (!merge.Initialize(device.get(), &shaderManager, fixture.LoadPass))
+        {
+            Expect(false, "合流のパイプラインを作れなければならない");
+            return;
+        }
+        uint64_t serial = 0;
+        const auto beginFrame = [&]() { merge.BeginFrame(0, ++serial); };
+        beginFrame();
+        Expect(merge.EnsureKeyBuffer(MergeWidth, MergeHeight), "64bit のバッファを作れなければならない");
+        const BufferPtr keyBuffer = merge.GetKeyBuffer();
+        if (!keyBuffer)
+        {
+            return;
+        }
+        Expect(keyBuffer->GetSize() == static_cast<uint64_t>(MergePixels) * sizeof(uint64_t),
+               "64bit のバッファは画素数 × 8 バイト");
+
+        Viewport viewport;
+        viewport.width = static_cast<float>(MergeWidth);
+        viewport.height = static_cast<float>(MergeHeight);
+        RHI::ScissorRect scissor;
+        scissor.right = static_cast<int32_t>(MergeWidth);
+        scissor.bottom = static_cast<int32_t>(MergeHeight);
+
+        // 段階 1: ハードのラスタの代わり。ID を空・深度を 1.0 で消した画像へ、画素ごとに違う深度・ID の 64bit の値をすべて合流させる
+        // （1.0 未満の深度なので、全画素が勝つ）。合流だけで「ハードの値」を作り、読み戻して全画素を確かめる
+        Container::VariableArray<uint64_t> hardKeys(MergePixels);
+        for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+        {
+            hardKeys[pixel] = VisibilityBuffer::PackKey(MergeHardDepth(pixel), MergeHardId(pixel));
+        }
+        const BufferPtr hardUpload = CreateMergeUpload(device, hardKeys);
+        CommandListPtr commandList = device->CreateCommandList();
+        if (!hardUpload || !commandList)
+        {
+            Expect(false, "合流のケースの転送元・コマンドリストを作れなければならない");
+            return;
+        }
+        commandList->Begin();
+        commandList->BeginRenderPass(fixture.ClearPass, fixture.ClearFramebuffer);
+        commandList->SetViewport(viewport);
+        commandList->SetScissor(scissor);
+        commandList->EndRenderPass();
+        Expect(merge.RecordClear(commandList.get()), "64bit のバッファを埋められなければならない");
+        RecordMergeUpload(commandList.get(), keyBuffer, hardUpload);
+        Expect(merge.RecordMerge(commandList.get(), fixture.LoadPass, fixture.LoadFramebuffer, viewport, scissor),
+               "合流を記録できなければならない");
+        commandList->End();
+        commandList->Submit(true);
+        device->WaitIdle();
+
+        const MergeReadback hard = ReadMergeTargets(fixture);
+        Expect(hard.bOk, "合流の結果を読み戻せなければならない");
+        if (!hard.bOk)
+        {
+            return;
+        }
+        uint32_t hardMismatches = 0;
+        for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+        {
+            // 深度は float のビットのまま（比較ではなくビットの一致）、ID は 32bit の値のまま
+            hardMismatches += (hard.Ids[pixel] != MergeHardId(pixel) || !BitEqual(hard.Depths[pixel], MergeHardDepth(pixel))) ? 1u : 0u;
+        }
+        Expect(hardMismatches == 0, "1.0 で消した深度へ、画素ごとの深度・ID がそのまま合流しなければならない");
+
+        // 段階 2: ソフトウェアラスタの値。手前（同じ深度・1 ULP 手前を含む）は勝ち、奥は負け、空は触らない
+        Container::VariableArray<uint64_t> softKeys(MergePixels);
+        Container::VariableArray<uint8_t> softWins(MergePixels);
+        uint32_t expectedWins = 0;
+        uint32_t expectedLosses = 0;
+        uint32_t emptyPixels = 0;
+        for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+        {
+            bool bWins = false;
+            softKeys[pixel] = MergeSoftwareKey(pixel, bWins);
+            softWins[pixel] = bWins ? 1 : 0;
+            emptyPixels += VisibilityBuffer::IsKeyEmpty(softKeys[pixel]) ? 1u : 0u;
+            expectedWins += bWins ? 1u : 0u;
+            expectedLosses += (!bWins && !VisibilityBuffer::IsKeyEmpty(softKeys[pixel])) ? 1u : 0u;
+        }
+        Expect(expectedWins >= MergePixels / 2 && expectedLosses >= MergePixels / 4 && emptyPixels >= MergePixels / 16,
+               "勝つ・負ける・空の画素が十分にある場面でなければならない");
+
+        const auto runMerge = [&](const Container::VariableArray<uint64_t>& keys, bool bClearAfterUpload) -> bool
+        {
+            beginFrame();
+            const BufferPtr upload = CreateMergeUpload(device, keys);
+            CommandListPtr list = device->CreateCommandList();
+            if (!upload || !list || !merge.EnsureKeyBuffer(MergeWidth, MergeHeight))
+            {
+                return false;
+            }
+            list->Begin();
+            // 通常はフレームの最初の埋めの後に値を写す。bClearAfterUpload は、値を写した後でフレームの最初の埋めを行う
+            // （前のフレームの値が残らないことの確認。埋めが効かなければ、写した値が合流してしまう）
+            merge.RecordClear(list.get());
+            RecordMergeUpload(list.get(), keyBuffer, upload);
+            if (bClearAfterUpload)
+            {
+                merge.RecordClear(list.get());
+            }
+            const bool bRecorded = merge.RecordMerge(list.get(), fixture.LoadPass, fixture.LoadFramebuffer, viewport, scissor);
+            list->End();
+            list->Submit(true);
+            device->WaitIdle();
+            return bRecorded;
+        };
+        Expect(runMerge(softKeys, false), "ソフトウェアラスタの値の合流を記録できなければならない");
+        const MergeReadback merged = ReadMergeTargets(fixture);
+        Expect(merged.bOk, "合流の結果を読み戻せなければならない");
+        if (!merged.bOk)
+        {
+            return;
+        }
+
+        uint32_t winnerMismatches = 0;
+        uint32_t loserMismatches = 0;
+        uint32_t winsSeen = 0;
+        uint32_t lossesSeen = 0;
+        for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+        {
+            const bool bEmpty = VisibilityBuffer::IsKeyEmpty(softKeys[pixel]);
+            const bool bWins = softWins[pixel] != 0;
+            const uint32_t expectedId = bWins ? VisibilityBuffer::KeyId(softKeys[pixel]) : MergeHardId(pixel);
+            const float expectedDepth = bWins ? VisibilityBuffer::KeyDepth(softKeys[pixel]) : MergeHardDepth(pixel);
+            const bool bSame = merged.Ids[pixel] == expectedId && BitEqual(merged.Depths[pixel], expectedDepth);
+            if (bWins)
+            {
+                ++winsSeen;
+                winnerMismatches += bSame ? 0u : 1u;
+            }
+            else
+            {
+                lossesSeen += bEmpty ? 0u : 1u;
+                loserMismatches += bSame ? 0u : 1u;
+            }
+        }
+        Expect(winnerMismatches == 0, "ハードより手前（同じ深度・1 ULP 手前を含む）の 64bit の値は、深度と ID を書き換えなければならない");
+        Expect(loserMismatches == 0, "ハードより奥（1 ULP 奥・1.0 を含む）の値と空の値は、深度も ID も変えてはならない");
+
+        // 段階 3: 前のフレームの値が残らない。深度 0 の値（どの画素でも勝つ）を写した後でフレームの最初の埋めを行うと、
+        // 空に戻るので合流は何も変えない（埋めを外すと、全画素が深度 0・ID 0xDEADBEEF になって落ちる）
+        Container::VariableArray<uint64_t> garbageKeys(MergePixels, VisibilityBuffer::PackKey(0.0f, 0xDEADBEEFu));
+        Expect(runMerge(garbageKeys, true), "埋めの確認の合流を記録できなければならない");
+        const MergeReadback afterClear = ReadMergeTargets(fixture);
+        Expect(afterClear.bOk, "埋めの確認の結果を読み戻せなければならない");
+        if (afterClear.bOk)
+        {
+            uint32_t changed = 0;
+            for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+            {
+                changed += (afterClear.Ids[pixel] != merged.Ids[pixel] || !BitEqual(afterClear.Depths[pixel], merged.Depths[pixel])) ? 1u : 0u;
+            }
+            Expect(changed == 0, "フレームの最初の埋めの後は前の値が残らず、合流は ID・深度を変えない");
+        }
+
+        std::cout << TestName << " 合流: 勝つ画素=" << winsSeen << " 負ける・空の画素=" << (MergePixels - winsSeen)
+                  << " 空=" << emptyPixels << std::endl;
+        device->WaitIdle();
+        merge.Shutdown();
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -3181,6 +3617,9 @@ namespace
             RunVirtualTextureFeedbackCase(device, shaderManager, scene, idImage, references, cameras);
             // MegaGeometry の材質の VT の要求は、等方の欲しいミップで書く
             RunVirtualTextureFeedbackCase(device, shaderManager, scene, idImage, references, cameras, true);
+
+            // 64bit のバッファ（深度 + ID）の合流は、手で書いた値がハードのラスタより手前のときだけ ID・深度へ入る
+            RunVisibilityMergeCase(device, shaderManager);
 
             std::cout << TestName << " 覆われた画素=" << counters.CoveredPixels << " 記録ごと=[";
             for (uint32_t record = 1; record <= scene.Records.RecordCount(); ++record)

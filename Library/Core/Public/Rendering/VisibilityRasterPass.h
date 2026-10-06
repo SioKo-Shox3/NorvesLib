@@ -10,6 +10,7 @@
 #include "Rendering/RenderTypes.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityMaterialTable.h"
+#include "Rendering/VisibilityMerge.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/RHITypes.h"
@@ -46,6 +47,12 @@ namespace NorvesLib::Core::Rendering
         uint32_t MaterialOverflowed = 0;
         /** @brief ID を書いたか（false なら何も描かずに戻った） */
         bool bRendered = false;
+        /** @brief 64bit のバッファ（深度 + ID）を空で埋め、ID・深度へ合流させたか（対応しない装置・予備の経路では false） */
+        bool bMerged = false;
+        /** @brief 64bit のバッファの ID・深度への合流を記録した回数（2 パスの遮蔽は HZB の前と 2 パス目の後の 2 回、1 回の判定は 1 回） */
+        uint32_t MergeCount = 0;
+        /** @brief 64bit のバッファのバイト数（画面の画素数 × 8。持たないときは 0） */
+        uint64_t KeyBufferBytes = 0;
     };
 
     /**
@@ -68,6 +75,12 @@ namespace NorvesLib::Core::Rendering
      *   1 パス目のカリング → [ID の render pass: 手続き・スキニングの塊 → MegaGeometry の 1 パス目] → HZB（深度から）
      *   → 2 パス目のカリング → 記録を書く計算 → [ID の render pass: MegaGeometry の 2 パス目]
      * 1 回の判定のとき・移さないとき（GBuffer が先に描く構成）は、MegaGeometry の全部と塊を 1 回の render pass で描く。
+     *
+     * 装置が 64bit のバッファへの atomicMin に対応するとき（bShaderBufferInt64Atomics）は、ソフトウェアラスタの結果を受ける
+     * 64bit のバッファ（画面の画素数 × uint64。深度 + ID）を 1 つ持ち、フレームの最初に空で埋め、合流のパス（VisibilityMerge。
+     * 全画面で、空でない画素だけ LessOrEqual で ID・深度へ書く）を「1 回目の render pass の後・HZB の前」と「2 回目の
+     * render pass の後」に走らせる（1 回の判定では描画の後に 1 回）。まだ誰もバッファへ書かないので、画は変わらない。
+     * 対応しない装置・予備の経路（ビジビリティバッファが無効）では、資源もパスも作らない。
      *
      * 既定は無効（SceneView::SetupDeferredPipeline の VisibilityBufferMode が Off）。
      */
@@ -100,6 +113,9 @@ namespace NorvesLib::Core::Rendering
          */
         void SetResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
         const VisibilityResolvePass* GetResolvePass() const { return m_ResolvePass; }
+
+        /** @brief 64bit のバッファの合流（対応しない装置・初期化に失敗したときは IsReady が false） */
+        const VisibilityMerge& GetMerge() const { return m_Merge; }
 
         /** @brief 最後の Execute の内訳 */
         const VisibilityRasterFrameStats& GetLastFrameStats() const { return m_Stats; }
@@ -258,6 +274,8 @@ namespace NorvesLib::Core::Rendering
             bool bSinkUsed = false;
             /** @brief 1 回目の呼び出しで描画の準備が済み、2 回目の呼び出しで MegaGeometry の 2 パス目を描けるか */
             bool bStagedReady = false;
+            /** @brief 64bit のバッファを使えるフレームか（合流が準備でき、画面の大きさのバッファを用意できた） */
+            bool bMerge = false;
         };
 
         bool CreateRenderPass();
@@ -281,11 +299,17 @@ namespace NorvesLib::Core::Rendering
         void RecordMegaDraws(const MegaGeometryPass::VisibilityDrawPlan& plan, uint32_t firstPass, uint32_t endPass);
         /** @brief 手続きメッシュとスキニングの塊を描く（render pass の中で呼ぶ） */
         void RecordChunkDraws();
+        /** @brief 64bit のバッファを空で埋める（render pass の外で呼ぶ。使えないフレームは何もしない） */
+        void RecordMergeClear();
+        /** @brief 64bit のバッファを ID・深度へ合流させる render pass を記録する（render pass の外で呼ぶ。2 回目の render pass の形） */
+        void RecordMergePass(const char* timestampName);
         /** @brief 描き終えた後の戻しと、最後の Execute の値・ログの更新 */
         void FinishFrame();
 
         // MegaGeometryPass::IDrawSink（記録を移されたフレームの、2 パスの遮蔽の途中の描画）
         void RecordFirstPassDraws(RHI::ICommandList* commandList,
+                                  const MegaGeometryPass::VisibilityDrawPlan& plan) override;
+        void RecordMergeBeforeHiZ(RHI::ICommandList* commandList,
                                   const MegaGeometryPass::VisibilityDrawPlan& plan) override;
         void RecordSecondPassDraws(RHI::ICommandList* commandList,
                                    const MegaGeometryPass::VisibilityDrawPlan& plan) override;
@@ -341,6 +365,8 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_SkinnedPipeline;
         RHI::PipelinePtr m_RecordsPipeline;
         RHI::PipelinePtr m_RecordArgsPipeline;
+        // 64bit のバッファ（深度 + ID）の ID・深度への合流（対応する装置だけ初期化する）
+        VisibilityMerge m_Merge;
         // ワイヤーフレーム（DebugViewMode::Wireframe）の線の描き方。3 種とも揃ったときだけ使う（development ビルドだけ作る）
         RHI::PipelinePtr m_MegaWireframePipeline;
         RHI::PipelinePtr m_MeshWireframePipeline;

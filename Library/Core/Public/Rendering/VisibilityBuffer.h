@@ -21,6 +21,7 @@
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
 #include "RHI/RHITypes.h"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 
@@ -40,6 +41,43 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t MAX_RECORD_COUNT = RECORD_SLOT_LIMIT - 1;
         /** @brief 画素が何も描かれていないことを表す ID */
         constexpr uint32_t EMPTY_ID = 0;
+
+        /**
+         * @brief ソフトウェアラスタの 64bit のバッファ（画素ごとに uint64 を 1 つ）の値の詰め方（GLSL の VIS_KEY_* と一致）
+         *
+         * 上位 32bit = float の深度のビット（std::bit_cast<uint32_t>）、下位 32bit = ID。深度は 0 以上の float なので
+         * ビットの整数の大小が深度の大小と一致し、atomicMin 1 回で「手前の深度、同じ深度なら小さい ID」が残る。
+         * 空（何も書かれていない）はすべてのビットが 1 で、深度が 1.0 以下の値より必ず大きい。
+         */
+        constexpr uint32_t KEY_DEPTH_SHIFT = 32;
+        constexpr uint32_t KEY_ID_BITS = 32;
+        constexpr uint32_t KEY_EMPTY_WORD = 0xFFFFFFFFu;
+        constexpr uint64_t KEY_EMPTY = 0xFFFFFFFFFFFFFFFFull;
+        /** @brief 画素ごとの 64bit の値のバイト数 */
+        constexpr uint32_t KEY_BYTES = sizeof(uint64_t);
+
+        static_assert(KEY_DEPTH_SHIFT + KEY_ID_BITS == 64, "深度と ID で 64bit を使い切る");
+
+        /** @brief 深度と ID から 64bit の値を作る（深度は 0 以上の float。負・NaN は詰められない値として呼び出し側が避ける） */
+        inline uint64_t PackKey(float depth, uint32_t id)
+        {
+            return (static_cast<uint64_t>(std::bit_cast<uint32_t>(depth)) << KEY_DEPTH_SHIFT) | static_cast<uint64_t>(id);
+        }
+
+        constexpr bool IsKeyEmpty(uint64_t key)
+        {
+            return key == KEY_EMPTY;
+        }
+
+        inline float KeyDepth(uint64_t key)
+        {
+            return std::bit_cast<float>(static_cast<uint32_t>(key >> KEY_DEPTH_SHIFT));
+        }
+
+        constexpr uint32_t KeyId(uint64_t key)
+        {
+            return static_cast<uint32_t>(key & KEY_EMPTY_WORD);
+        }
 
         static_assert(MAX_TRIANGLES_PER_RECORD == MESH_CHUNK_MAX_TRIANGLES,
                       "手続き・スキニングの塊の最大三角形数と ID の三角形のビット幅が一致しなければならない");

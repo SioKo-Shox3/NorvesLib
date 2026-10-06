@@ -9,6 +9,13 @@
 // 記録の表を読むシェーダーは、取り込む前に VIS_RECORD_TABLE_SET と VIS_RECORD_TABLE_BINDING を定義すると、
 // 表（visRecords）の宣言と VisLoadRecord が使える。表を別の方法（buffer_reference など）で引くシェーダーは定義しない。
 //
+// ソフトウェアラスタの 64bit のバッファ（画面の画素ごとに uint64 を 1 つ）は、上位 32bit = floatBitsToUint(深度)、
+// 下位 32bit = ID と詰め、atomicMin で書く。深度は 0 以上の float なのでビットの整数の大小が深度の大小と一致し、
+// 1 回のアトミックで「手前の深度、同じ深度なら小さい ID」が残る。空（何も書かれていない）はすべてのビットが 1。
+// uint64 を使う関数は、64bit 整数の拡張（GL_EXT_shader_explicit_arithmetic_types_int64）を有効にしたシェーダーが、
+// 取り込む前に VIS_ENABLE_KEY64 を定義したときだけ使える（拡張を有効にしていないシェーダーでも拡張のマクロは定義されるので、
+// マクロの有無では判定できない）。
+//
 // 定数は `const uint 名前 = 値u;` の1行で書く（VisibilityBufferEncodingTest が C++ の定数と照合する）。
 // ========================================
 
@@ -20,6 +27,12 @@ const uint VIS_MAX_TRIANGLES_PER_RECORD = 128u;
 const uint VIS_RECORD_BITS = 25u;
 const uint VIS_RECORD_SLOT_LIMIT = 33554432u;
 const uint VIS_EMPTY_ID = 0u;
+
+// 64bit のバッファの詰め方（VisibilityBuffer.h の KEY_* と一致）
+const uint VIS_KEY_DEPTH_SHIFT = 32u;
+const uint VIS_KEY_ID_BITS = 32u;
+// 空の 64bit の値の、上位・下位それぞれの 32bit（どちらもすべてのビットが 1）
+const uint VIS_KEY_EMPTY_WORD = 4294967295u;
 
 // 描画の種類（VisibilityBuffer.h の RecordKind と一致）
 const uint VIS_KIND_NONE = 0u;
@@ -82,6 +95,24 @@ uint VisEncodeId(uint recordNumber, uint triangleIndex)
 bool VisIsEmpty(uint id) { return id == VIS_EMPTY_ID; }
 uint VisRecordNumber(uint id) { return id >> VIS_TRIANGLE_BITS; }
 uint VisTriangleIndex(uint id) { return id & (VIS_MAX_TRIANGLES_PER_RECORD - 1u); }
+
+// ========================================
+// 64bit のバッファの値（深度 + ID）
+// ========================================
+
+#ifdef VIS_ENABLE_KEY64
+const uint64_t VIS_KEY_EMPTY = ~uint64_t(0);
+
+// 深度（0 以上の float）と ID から 64bit の値を作る。小さい値ほど手前（同じ深度なら小さい ID）
+uint64_t VisPackKey(float depth, uint id)
+{
+    return (uint64_t(floatBitsToUint(depth)) << VIS_KEY_DEPTH_SHIFT) | uint64_t(id);
+}
+
+bool VisKeyIsEmpty(uint64_t key) { return key == VIS_KEY_EMPTY; }
+float VisKeyDepth(uint64_t key) { return uintBitsToFloat(uint(key >> VIS_KEY_DEPTH_SHIFT)); }
+uint VisKeyId(uint64_t key) { return uint(key & uint64_t(VIS_KEY_EMPTY_WORD)); }
+#endif
 
 // 三角形 triangleIndex の k 番目（0..2）の頂点番号（インデックスに VertexBase を足した値）を求めるための、
 // インデックスの並びの中の位置

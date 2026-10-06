@@ -392,6 +392,16 @@ namespace
         Container::VariableArray<VisibilityCopy> VisibilityCopies;
         // 記録の表（VisBuffer_DrawRecords）へのコピー（ホストが書いた記録を GPU 専用の表へ渡す）
         Container::VariableArray<VisibilityCopy> RecordTableCopies;
+        // 64bit のバッファ（VisBuffer_Key64）の埋め。埋めた値・大きさと、その時点の CallSequence の長さ（render pass の外のどの位置か）
+        struct Key64Fill
+        {
+            uint64_t SizeBytes = 0;
+            uint32_t Value = 0;
+            size_t SequencePosition = 0;
+        };
+        Container::VariableArray<Key64Fill> Key64Fills;
+        // Draw（頂点だけの描画）が呼ばれた時点の CallSequence の長さ。全画面の合流が render pass（B と E の間）で描かれたかを確かめる
+        Container::VariableArray<size_t> DrawPositions;
         // 間接描画の記録（コマンドの先頭のバイト位置と、描画の最大数）。区間ごとに1回ずつ呼ばれる
         struct IndirectDrawRecord
         {
@@ -476,6 +486,7 @@ namespace
         {
             (void)vertexCount;
             (void)startVertexLocation;
+            DrawPositions.push_back(CallSequence.size());
             PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
         }
@@ -541,6 +552,10 @@ namespace
                             "MegaGeometry_VisibleLastFrame"))
             {
                 VisibilityFills.push_back(VisibilityFill{offset, size});
+            }
+            if (buffer && IsDebugName(static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName, "VisBuffer_Key64"))
+            {
+                Key64Fills.push_back(Key64Fill{size, value, CallSequence.size()});
             }
             if (buffer)
             {
@@ -1084,6 +1099,16 @@ namespace
         {
             EnableMegaGeometryBatchCapabilities();
             m_Capabilities.bGeometryShader = true;
+            // 64bit のバッファ（深度 + ID）への atomicMin。ソフトウェアラスタの結果の合流が使う
+            m_Capabilities.bShaderInt64 = true;
+            m_Capabilities.bShaderBufferInt64Atomics = true;
+        }
+
+        // 64bit のバッファへの atomicMin に対応しない装置にする（ソフトウェアラスタの合流が資源もパスも作らない）
+        void DisableInt64Atomics()
+        {
+            m_Capabilities.bShaderInt64 = false;
+            m_Capabilities.bShaderBufferInt64Atomics = false;
         }
 
         // ビジビリティバッファの幾何の解決（頂点のデバイスアドレス・RG16F などの storage image）が要る機能も表明する
@@ -2106,6 +2131,8 @@ namespace
         MaterialHandle MaterialA;
         MaterialHandle MaterialB;
         CameraProxy Camera;
+        /** @brief false なら、64bit のバッファへの atomicMin に対応しない装置で動かす */
+        bool bInt64Atomics = true;
         /** @brief Normal 以外のときは、ビューポートの計画（表示だけを持つ）を現在のビューポートにして、この表示で描く */
         DebugViewMode DebugMode = DebugViewMode::Normal;
         ViewportRenderPlan ViewportPlan;
@@ -2177,6 +2204,10 @@ namespace
         else
         {
             scene.Device->EnableVisibilityBufferCapabilities();
+        }
+        if (!scene.bInt64Atomics)
+        {
+            scene.Device->DisableInt64Atomics();
         }
         assert(scene.ShaderMgr.Initialize(scene.Device.get(), TestShaderDirectory));
         assert(scene.Pool.Initialize(&scene.Allocator, 1));
@@ -2478,10 +2509,11 @@ namespace
         RunVisibilityRasterScene(scene, true, true);
         FakeCommandList& commandList = scene.CommandList;
 
-        // GBuffer（空）・MegaGeometry（2パス）・ビジビリティバッファ（ID）の4つのレンダーパス
+        // GBuffer（空）・MegaGeometry（2パス）・ビジビリティバッファ（ID）の4つのレンダーパスと、64bit のバッファの合流の 1 つ
+        // （GBuffer が先に描く構成は 1 回の render pass なので、合流も描画の後の 1 回）
         assert(scene.Graph.GetLastExecutedPassCount() == 3);
-        assert(commandList.BeginRenderPassCount == 4);
-        assert(commandList.EndRenderPassCount == 4);
+        assert(commandList.BeginRenderPassCount == 5);
+        assert(commandList.EndRenderPassCount == 5);
 
         // 間接描画: MegaGeometry の 1・2 パス目（コマンドの範囲は 0 と 2 * 20 バイト）の後に、同じ範囲をもう一度
         assert(commandList.IndirectDraws.size() == 4);
@@ -2501,8 +2533,9 @@ namespace
         assert(commandList.IndirectDispatches[0].OffsetBytes == 0);
 
         // 並びの最後は、記録を書く計算の引数を作る計算（D）→ 記録を書く計算（J）→ ID のレンダーパス（B → 間接描画 2 回 → E）
+        // → 64bit のバッファの合流（B → E。全画面の描画 1 回）
         const auto& sequence = commandList.CallSequence;
-        const char tail[] = {'D', 'J', 'B', 'I', 'I', 'E'};
+        const char tail[] = {'D', 'J', 'B', 'I', 'I', 'E', 'B', 'E'};
         assert(sequence.size() > sizeof(tail));
         for (size_t i = 0; i < sizeof(tail); ++i)
         {
@@ -2517,6 +2550,13 @@ namespace
         assert(stats.TotalSlots == 1 + 4);
         assert(scene.Raster.GetRecordTable());
         assert(scene.Raster.GetRecordTableBytes() == 5 * sizeof(VisibilityBuffer::DrawRecord));
+
+        // 64bit のバッファ: 画面の画素数（128x64）× 8 バイトを、すべてのビットが 1 で 1 回埋め、1 回合流した
+        assert(stats.bMerged && stats.MergeCount == 1);
+        assert(stats.KeyBufferBytes == 128u * 64u * 8u);
+        assert(commandList.Key64Fills.size() == 1);
+        assert(commandList.Key64Fills[0].SizeBytes == 128u * 64u * 8u);
+        assert(commandList.Key64Fills[0].Value == 0xFFFFFFFFu);
 
         // ID は R32_UINT の1枚のカラー添付（空の ID で消す）と、GBuffer が書いた深度の Load。どちらも ShaderResource で終わる
         // もう 1 つは、2 パスの遮蔽の途中で続けて開く 2 回目の render pass（ID・深度とも Load で、ShaderResource から始まる）。
@@ -3461,11 +3501,16 @@ namespace
         RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true);
         const FakeDevice& device = *scene.Device;
         const char* const frameUniform = "VisBuffer_FrameUBO";
+        // 64bit のバッファの合流（ID のラスタの Execute ごとに 1 回）の定数。ディスクリプタセットと同じく Execute ごとの組
+        const char* const mergeParams = "VisBuffer_MergeParams";
+        const char* const keyBuffer = "VisBuffer_Key64";
 
         // 1回目の Execute: 手続き 3 件・スキニング 1 件の塊を集め、作業配列が容量を持つ
         assert(scene.Raster.GetLastFrameStats().ProceduralRecords == 3);
         assert(scene.Raster.GetLastFrameStats().SkinnedRecords == 1);
         assert(CountBufferCreations(device, frameUniform) == 1);
+        assert(CountBufferCreations(device, mergeParams) == 1);
+        assert(CountBufferCreations(device, keyBuffer) == 1);
         const size_t proceduralScratchCapacity = scene.Raster.GetProceduralChunkScratchCapacity();
         const size_t skinnedScratchCapacity = scene.Raster.GetSkinnedChunkScratchCapacity();
         assert(proceduralScratchCapacity > 0 && skinnedScratchCapacity > 0);
@@ -3488,6 +3533,9 @@ namespace
         {
             assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
             assert(CountBufferCreations(device, frameUniform) == viewport + 1);
+            // 64bit のバッファは同じ大きさの間は作り直さず、1 つを Execute 間で使い回す（バリアで順序づける）
+            assert(CountBufferCreations(device, mergeParams) == viewport + 1);
+            assert(CountBufferCreations(device, keyBuffer) == 1);
             expectMaterialScratchStable();
             assert(scene.Raster.GetProceduralChunkScratchCapacity() == proceduralScratchCapacity &&
                scene.Raster.GetSkinnedChunkScratchCapacity() == skinnedScratchCapacity);
@@ -3503,6 +3551,8 @@ namespace
                scene.Raster.GetSkinnedChunkScratchCapacity() == skinnedScratchCapacity);
         }
         assert(CountBufferCreations(device, frameUniform) == ViewportsPerFrame);
+        assert(CountBufferCreations(device, mergeParams) == ViewportsPerFrame);
+        assert(CountBufferCreations(device, keyBuffer) == 1);
         expectMaterialScratchStable();
 
         // さらに次のフレームで 1 回多く Execute すると、その 1 回ぶんだけ増える
@@ -3512,6 +3562,8 @@ namespace
             assert(scene.Graph.ExecuteWithResult(scene.Context).bSuccess);
         }
         assert(CountBufferCreations(device, frameUniform) == ViewportsPerFrame + 1);
+        assert(CountBufferCreations(device, mergeParams) == ViewportsPerFrame + 1);
+        assert(CountBufferCreations(device, keyBuffer) == 1);
         expectMaterialScratchStable();
         assert(scene.Raster.GetProceduralChunkScratchCapacity() == proceduralScratchCapacity &&
                scene.Raster.GetSkinnedChunkScratchCapacity() == skinnedScratchCapacity);
@@ -3591,8 +3643,8 @@ namespace
         RunVisibilityRasterScene(scene, true, false);
         FakeCommandList& commandList = scene.CommandList;
 
-        // GBuffer（空）・MegaGeometry（1パス）・ID
-        assert(commandList.BeginRenderPassCount == 3);
+        // GBuffer（空）・MegaGeometry（1パス）・ID・64bit のバッファの合流
+        assert(commandList.BeginRenderPassCount == 4);
         assert(commandList.IndirectDraws.size() == 2);
         assert(commandList.IndirectDraws[1].OffsetBytes == commandList.IndirectDraws[0].OffsetBytes);
         assert(commandList.IndirectDraws[1].MaxDrawCount == 2);
@@ -3610,6 +3662,10 @@ namespace
     // スキニングは GBufferPass の描画として記録されない）と、ID の描画の直接の描画 4 件（手続きの塊 3・スキニングの塊 1）になる
     constexpr size_t SceneGBufferDirectDraws = 3;
     constexpr size_t SceneIdDirectDraws = 4;
+    // 64bit のバッファの合流の全画面の描画（直接の描画）。1 回の render pass の構成は描画の後の 1 回、
+    // 2 パスの遮蔽で ID のラスタが記録を駆動する構成は「1 回目の描画の後・HZB の前」と「2 回目の描画の後」の 2 回
+    constexpr size_t SceneMergeDrawsOnePass = 1;
+    constexpr size_t SceneMergeDrawsStaged = 2;
     size_t CountDirectDraws(const FakeCommandList& commandList)
     {
         assert(commandList.DrawCallCount >= commandList.IndirectDraws.size());
@@ -3681,23 +3737,51 @@ namespace
             'D',                                        // 計算スキニング（この場面のスキニングの塊 1 体）
             'D',                                        // 1 パス目のカリング（ラスタの Execute の中）
             'B', 'I', 'E',                              // ID・深度の 1 回目: 塊（直接描画。並びには出ない）→ MegaGeometry の 1 パス目
-            'D', 'D', 'D', 'D', 'D', 'D', 'D',          // HZB の 7 段（128x64 の深度から。ID の 1 回目が書いた深度）
+            'B', 'E',                                   // 64bit のバッファの合流（HZB の前。全画面の描画 1 回）
+            'D', 'D', 'D', 'D', 'D', 'D', 'D',          // HZB の 7 段（128x64 の深度から。ID の 1 回目と合流が書いた深度）
             'D',                                        // 2 パス目のカリング
             'D', 'J',                                   // 記録を書く計算の引数を作る計算 → 記録を書く計算（間接 dispatch）
             'B', 'I', 'E',                              // ID・深度の 2 回目: MegaGeometry の 2 パス目
+            'B', 'E',                                   // 64bit のバッファの合流（2 パス目の後）
         };
         assert(sequence.size() >= sizeof(expected));
         for (size_t i = 0; i < sizeof(expected); ++i)
         {
             assert(sequence[i] == expected[i]);
         }
-        // 2 回目の render pass の後は、解決の dispatch だけ（描画も render pass も無い）
+        // 合流の後は、解決の dispatch だけ（描画も render pass も無い）
         for (size_t i = sizeof(expected); i < sequence.size(); ++i)
         {
             assert(sequence[i] == 'D');
         }
-        assert(commandList.BeginRenderPassCount == 4);
-        assert(commandList.EndRenderPassCount == 4);
+        assert(commandList.BeginRenderPassCount == 6);
+        assert(commandList.EndRenderPassCount == 6);
+
+        // 64bit のバッファは、ラスタの最初の render pass の前（GBuffer・MegaGeometry の遷移・計算スキニング・1 パス目のカリングの後）に、
+        // すべてのビットが 1 で 1 回だけ埋める。ソフトウェアラスタが書く前に空にするため、1 回目の描画より後ろへ動かすと落ちる
+        assert(commandList.Key64Fills.size() == 1);
+        assert(commandList.Key64Fills[0].SizeBytes == 128u * 64u * 8u);
+        assert(commandList.Key64Fills[0].Value == 0xFFFFFFFFu);
+        assert(commandList.Key64Fills[0].SequencePosition == 6);
+        assert(sequence[6] == 'B' && sequence[7] == 'I' && sequence[8] == 'E');
+
+        // 合流は全画面の描画が 1 回ずつ、「1 回目の render pass の直後・HZB の前」と「2 回目の render pass の直後」の
+        // 空の render pass（B と E の間に描画の呼び出しだけ）として記録される。HZB の後ろへ動かす・2 回目を外すと落ちる
+        Container::VariableArray<size_t> mergeDrawPositions;
+        for (const size_t position : commandList.DrawPositions)
+        {
+            if (position > 0 && position < sequence.size() && sequence[position - 1] == 'B' && sequence[position] == 'E')
+            {
+                mergeDrawPositions.push_back(position);
+            }
+        }
+        assert(mergeDrawPositions.size() == SceneMergeDrawsStaged);
+        assert(mergeDrawPositions[0] == 10); // 1 回目の B・I・E（6〜8）の直後の B（9）の中。この後に HZB の 7 段
+        assert(mergeDrawPositions[1] == 25); // 2 回目の B・I・E（21〜23）の直後の B（24）の中
+        for (size_t i = 11; i < 18; ++i)
+        {
+            assert(sequence[i] == 'D'); // 1 つ目の合流の後は HZB の 7 段
+        }
 
         // 間接描画は 1 パス目（範囲 0）・2 パス目（範囲は 1 パスのコマンド数ぶん後ろ）で 1 回ずつ。GBuffer へは描かない
         assert(commandList.IndirectDraws.size() == 2);
@@ -3758,6 +3842,7 @@ namespace
             'D',           // 1 回の判定のカリング（ラスタの Execute の中）
             'D', 'J',      // 記録を書く計算の引数を作る計算 → 記録を書く計算（間接 dispatch）
             'B', 'I', 'E', // ID・深度: MegaGeometry（1 パス）→ 塊
+            'B', 'E',      // 64bit のバッファの合流（HZB を作らないので、描画の後に 1 回）
         };
         assert(sequence.size() >= sizeof(expected));
         for (size_t i = 0; i < sizeof(expected); ++i)
@@ -3785,7 +3870,7 @@ namespace
         // 解決を使わない On は、ID の描画 + MegaGeometry の GBuffer への描画の間接描画 4 回。GBufferPass は手続きメッシュ 3 件を
         // GBuffer へ描く
         assert(baseline.IndirectDraws == 4);
-        assert(baseline.DirectDraws == SceneGBufferDirectDraws + SceneIdDirectDraws);
+        assert(baseline.DirectDraws == SceneGBufferDirectDraws + SceneIdDirectDraws + SceneMergeDrawsOnePass);
         // 基準では GBuffer.Velocity は storage image として使われない
         assert(baseline.GBufferVelocityBarriers > 0 && !baseline.bGBufferVelocityHasShaderWrite);
 
@@ -3794,13 +3879,14 @@ namespace
         FakeCommandList& commandList = scene.CommandList;
 
         // GBufferPass は描画を 1 件も積まない（クリアの GeometryPass だけが残り、ID の描画の直接の描画だけが残る）
-        assert(CountDirectDraws(commandList) == SceneIdDirectDraws);
+        assert(CountDirectDraws(commandList) == SceneIdDirectDraws + SceneMergeDrawsStaged);
         assert(scene.Resolve.CanResolve(scene.Device.get()));
 
-        // MegaGeometry の GBuffer への間接描画（1・2 パス目）は止まり、ID の描画の 2 回だけが残る。render pass の数は変わらない
+        // MegaGeometry の GBuffer への間接描画（1・2 パス目）は止まり、ID の描画の 2 回だけが残る。render pass の数は、
+        // 2 パスの遮蔽で ID のラスタが駆動する構成の合流が基準（描画の後の 1 回）より 1 回多いぶんだけ増える
         assert(commandList.IndirectDraws.size() == baseline.IndirectDraws - 2);
-        assert(commandList.BeginRenderPassCount == baseline.RenderPasses);
-        assert(commandList.EndRenderPassCount == baseline.RenderPasses);
+        assert(commandList.BeginRenderPassCount == baseline.RenderPasses + 1);
+        assert(commandList.EndRenderPassCount == baseline.RenderPasses + 1);
 
         // 解決: 画面を 8x8 のタイルに分けた 1 回の dispatch（128x64 → 16x8 グループ）が最後に足される
         assert(scene.Resolve.WasResolved());
@@ -3875,7 +3961,7 @@ namespace
     void TestVisibilityResolveFallsBackToGBufferDrawsWhenPipelinesAreUnavailable()
     {
         const OnWithoutResolveBaseline baseline = MeasureOnWithoutResolve();
-        assert(baseline.DirectDraws == SceneGBufferDirectDraws + SceneIdDirectDraws);
+        assert(baseline.DirectDraws == SceneGBufferDirectDraws + SceneIdDirectDraws + SceneMergeDrawsOnePass);
 
         struct Case
         {
@@ -4029,7 +4115,8 @@ namespace
             VisibilityRasterScene normalScene;
             RunVisibilityRasterScene(normalScene, true, true, ClassifyMode::None, true, true, ResolveMode::Supported);
             // 手続き・スキニング 1 回ずつと、MegaGeometry の 1 パス目・2 パス目（render pass が 2 回に分かれる）で 1 回ずつ
-            assert(CountGraphicsPipelineSets(normalScene.CommandList, RHI::PolygonMode::Fill) == 4);
+            // （64bit のバッファの合流の塗りのパイプラインも、1 回目・2 回目の後に 1 回ずつ使われる）
+            assert(CountGraphicsPipelineSets(normalScene.CommandList, RHI::PolygonMode::Fill) == 4 + SceneMergeDrawsStaged);
             assert(CountGraphicsPipelineSets(normalScene.CommandList, RHI::PolygonMode::Line) == 0);
             ShutdownVisibilityRasterScene(normalScene);
         }
@@ -4370,6 +4457,122 @@ namespace
         }
     }
 
+    // 64bit のバッファへの atomicMin（64bit 整数つき）に対応しない装置では、合流の資源（64bit のバッファ・定数・パイプライン）も
+    // パスも作らず、ID の描画は合流が無いときと同じ（render pass の数も直接の描画の数も増えない）。
+    // 能力の判定（VisibilityMerge::IsSupported）を外す、または能力が無くても合流を記録すると落ちる
+    void TestVisibilityMergeAbsentWithoutInt64Atomics()
+    {
+        VisibilityRasterScene scene;
+        scene.bInt64Atomics = false;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, ResolveMode::Supported);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(!VisibilityMerge::IsSupported(scene.Device->GetCapabilities()));
+        assert(!scene.Raster.GetMerge().IsReady());
+        assert(CountBufferCreations(*scene.Device, "VisBuffer_Key64") == 0);
+        assert(CountBufferCreations(*scene.Device, "VisBuffer_MergeParams") == 0);
+        assert(commandList.Key64Fills.empty());
+
+        const VisibilityRasterFrameStats& stats = scene.Raster.GetLastFrameStats();
+        assert(stats.bRendered);
+        assert(!stats.bMerged && stats.MergeCount == 0 && stats.KeyBufferBytes == 0);
+
+        // 解決は使え、2 パスの遮蔽の ID・深度の描画は従来どおり（GBuffer・MegaGeometry の遷移 + ID・深度の 2 回）
+        assert(scene.Resolve.WasResolved());
+        assert(commandList.BeginRenderPassCount == 4);
+        assert(commandList.EndRenderPassCount == 4);
+        assert(CountDirectDraws(commandList) == SceneIdDirectDraws);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 64bit のバッファは画面の画素数 × 8 バイトの 1 つで、同じ大きさの間は作り直さない。大きさが変わると新しく作り、
+    // 古いバッファは GPU が前のフレームで使っているかもしれないので、飛行中のフレームの数を超えるまで持つ。
+    // 埋めは render pass の外（転送の書き込み）で、状態を Common（初回）か GenericRead（2 回目以降）から CopyDest へ進め、埋めた後は GenericRead
+    void TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+        device->EnableVisibilityResolveCapabilities();
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
+        const RHI::RenderPassPtr renderPass = device->CreateRenderPass(VisibilityMerge::MakeLoadRenderPassDesc());
+        assert(renderPass);
+
+        // 合流の render pass は ID・深度とも Load で、ShaderResource から ShaderResource（直前・直後のパスの状態と同じ）
+        const RHI::RenderPassDesc loadDesc = VisibilityMerge::MakeLoadRenderPassDesc();
+        assert(loadDesc.colorAttachments.size() == 1 && loadDesc.hasDepthStencil);
+        assert(loadDesc.colorAttachments[0].format == RHI::Format::R32_UINT);
+        assert(loadDesc.colorAttachments[0].loadOp == RHI::AttachmentLoadOp::Load);
+        assert(loadDesc.colorAttachments[0].initialState == RHI::ResourceState::ShaderResource);
+        assert(loadDesc.colorAttachments[0].finalState == RHI::ResourceState::ShaderResource);
+        assert(loadDesc.depthStencilAttachment.format == RHI::Format::D32_FLOAT);
+        assert(loadDesc.depthStencilAttachment.loadOp == RHI::AttachmentLoadOp::Load);
+        assert(loadDesc.depthStencilAttachment.initialState == RHI::ResourceState::ShaderResource);
+        assert(loadDesc.depthStencilAttachment.finalState == RHI::ResourceState::ShaderResource);
+
+        VisibilityMerge merge;
+        assert(VisibilityMerge::IsSupported(device->GetCapabilities()));
+        assert(merge.Initialize(device.get(), &shaderManager, renderPass));
+        assert(merge.IsReady());
+        assert(!merge.GetKeyBuffer());
+
+        merge.BeginFrame(1, 1);
+        assert(merge.EnsureKeyBuffer(64, 32));
+        assert(merge.GetKeyBuffer() && merge.GetKeyWidth() == 64 && merge.GetKeyHeight() == 32);
+        assert(merge.GetKeyBufferBytes() == 64u * 32u * VisibilityBuffer::KEY_BYTES);
+        assert(CountBufferCreations(*device, "VisBuffer_Key64") == 1);
+        const RHI::BufferPtr firstBuffer = merge.GetKeyBuffer();
+
+        // 同じ大きさなら同じバッファのまま
+        assert(merge.EnsureKeyBuffer(64, 32));
+        assert(merge.GetKeyBuffer() == firstBuffer);
+        assert(CountBufferCreations(*device, "VisBuffer_Key64") == 1);
+
+        // 埋め: すべてのビットが 1（0xFFFFFFFF の語）、バッファ全体
+        FakeCommandList commandList;
+        assert(merge.RecordClear(&commandList));
+        assert(commandList.Key64Fills.size() == 1);
+        assert(commandList.Key64Fills[0].SizeBytes == 64u * 32u * 8u);
+        assert(commandList.Key64Fills[0].Value == VisibilityBuffer::KEY_EMPTY_WORD);
+        assert(commandList.Barriers.size() == 2);
+        assert(commandList.Barriers[0].BeforeState == RHI::ResourceState::Common &&
+               commandList.Barriers[0].AfterState == RHI::ResourceState::CopyDest);
+        assert(commandList.Barriers[1].BeforeState == RHI::ResourceState::CopyDest &&
+               commandList.Barriers[1].AfterState == RHI::ResourceState::GenericRead);
+        // 2 回目の埋めは、前のフレームの読み取り（GenericRead）の後に並ぶ
+        assert(merge.RecordClear(&commandList));
+        assert(commandList.Barriers.size() == 4);
+        assert(commandList.Barriers[2].BeforeState == RHI::ResourceState::GenericRead &&
+               commandList.Barriers[2].AfterState == RHI::ResourceState::CopyDest);
+
+        // 大きさが変わると新しく作り、古いバッファは持っておく。新しいバッファの最初の埋めは Common から
+        merge.BeginFrame(2, 2);
+        assert(merge.EnsureKeyBuffer(128, 64));
+        assert(merge.GetKeyBuffer() != firstBuffer);
+        assert(merge.GetKeyBufferBytes() == 128u * 64u * 8u);
+        assert(merge.GetRetiredBufferCount() == 1);
+        assert(CountBufferCreations(*device, "VisBuffer_Key64") == 2);
+        FakeCommandList resizedCommandList;
+        assert(merge.RecordClear(&resizedCommandList));
+        assert(resizedCommandList.Key64Fills.size() == 1 && resizedCommandList.Key64Fills[0].SizeBytes == 128u * 64u * 8u);
+        assert(resizedCommandList.Barriers[0].BeforeState == RHI::ResourceState::Common);
+
+        // 飛行中のフレームの数を超えるまで、古いバッファを手放さない
+        const uint64_t retiredFrame = 2;
+        for (uint64_t serial = retiredFrame + 1; serial <= retiredFrame + FrameUseRingMaxInFlightSlots + 1; ++serial)
+        {
+            merge.BeginFrame(static_cast<uint32_t>(serial % FrameUseRingMaxInFlightSlots), serial);
+            assert(merge.GetRetiredBufferCount() == 1);
+        }
+        const uint64_t releaseFrame = retiredFrame + FrameUseRingMaxInFlightSlots + 2;
+        merge.BeginFrame(static_cast<uint32_t>(releaseFrame % FrameUseRingMaxInFlightSlots), releaseFrame);
+        assert(merge.GetRetiredBufferCount() == 0);
+
+        merge.Shutdown();
+        assert(!merge.IsReady() && !merge.GetKeyBuffer());
+        shaderManager.Shutdown();
+    }
+
     // --visibility-buffer=off: 描画の写しを作らず、MegaGeometry のバッファは今まで通りその場で Common へ戻る
     void TestVisibilityRasterOffKeepsExistingMegaGeometryRecording()
     {
@@ -4378,6 +4581,10 @@ namespace
         FakeCommandList& commandList = scene.CommandList;
 
         assert(!scene.Mega.IsVisibilityDrawPlanEnabled());
+        // ID のラスタを足さない予備の経路では、64bit のバッファも合流のパスも作らない
+        assert(CountBufferCreations(*scene.Device, "VisBuffer_Key64") == 0);
+        assert(CountBufferCreations(*scene.Device, "VisBuffer_MergeParams") == 0);
+        assert(commandList.Key64Fills.empty());
         assert(commandList.BeginRenderPassCount == 3); // GBuffer（空）・MegaGeometry 2 パス
         assert(commandList.IndirectDraws.size() == 2);
         assert(commandList.DispatchCount == 9);        // カリング 2 回 + HZB 7 段
@@ -9727,6 +9934,8 @@ int main()
     TestVisibilityRasterOnRecordsMegaDrawsAndIdPass();
     TestVisibilityRasterOnBuildsHiZFromIdDepthBetweenTwoPasses();
     TestVisibilityRasterOnSinglePassCullingDrawsEverythingInOneRenderPass();
+    TestVisibilityMergeAbsentWithoutInt64Atomics();
+    TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();
     TestMaterialTileClassifyDispatchesAndPublishesArgs();
     TestMaterialTileClassifyWithoutRecordTableClearsArgs();
