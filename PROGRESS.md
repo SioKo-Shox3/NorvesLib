@@ -1020,3 +1020,11 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - code61f325fe / run37498380281 / job112388696429 はRelease build・固定Sampler・旧61CPUを通過したが、新runtime試験の最初のmanifest構築で失敗した。Debugと後続CLIは未実行。
 - 原因: 既存AssetManifest::TryReadStringMemberはIsAsciiJsonStringで非ASCIIを拒否する。新しい正例fixtureが非ASCII logical_pathを混ぜていた。正常4資産はActors/A〜Dへ修正し、UTF-8構文受理→未登録pathのResolveRejected、manifest側の既存拒否を別に確認する。診断にはparse status/error/JSONを追加する。
 - production・旧parser・固定基準は変更しない。非ASCII論理pathのcooked成功を受入範囲から区別し、GR84の物理Unicode locatorと混同しない。
+
+### GR83 統合event runtimeのCPU受入（2026-10-07 JST）
+
+- Done: 2d69f4652e0d695bfaaf74bb38f9124957ba907f / treeb7a6beea3f4a1c9bdf7ddac89b0b8d3590754739 / run37502233582 / job112401887301。Release62とDebug runtime、両構成28子process/36 subcase marker、既存loader/Profile/publication/Registry/finite/model3を確認。
+- 検証: 9比較器のnormal/-O計18回でreceipt/stdout一致・stderr空、親readonly replay exit0・672payload一致。summary SHA256 3e8fa06936d202ce5d8b5c5070811237c862565741e5d685b3c58fa146b5fa48、inventory SHA256 6837f8640825b3634333fb7410c8f541fc293f0cd3ab0daf0ae1d76e0bec14ca。
+- 旧証拠: 旧61cpp・固定Sampler4本・89出力・25+15CLI・12metadata・17/29 child退出・GR84別58process/125file・PE-CNG/SHELL32を維持。初回run37498380281のmanifest失敗は545payloadの別archive、親再実行exit0で失敗のまま保持する。
+- 範囲: 明示ownerの独立CPU runtimeまで。受理前拒否、早期worker完了、有限batch再入、実State→Registry gate、取消/Close、handoff ack/複数Drain/capture破棄、snapshot/domain/GCの契約を受入。consumer target寿命・借用依存のlifecycle排他はcallerの責任。
+- Notes: 既存manifest ASCII制約のため非ASCII論理pathはtyped拒否を確認し、読込成功とはしない。private境界注入とnative CHECK、保存済みbyte比較、未archive binaryのhash attestationを区別する。製品GameThread/実loop/M9/StageB/GPU/実キャラ品質は未接続。
