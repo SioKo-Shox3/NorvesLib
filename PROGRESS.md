@@ -1060,3 +1060,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 開始時検査: owner source8件はPASS。新v1型のLinux syntax-onlyは既存Containers.hのWindows.h依存で実行不能を確認した。ヘッダstubを用意せずWindows native CIで検査し、Linux成功として扱わない。
 - 実装候補: source rigの作者TRS、必須snapshot付きv1 ClipBank、名前/topology/rest束縛、実ownerの未登録ResourceとSampler既定pose分岐を接続。tiny/huge quaternionを旧SamplerのIdentity/zeroへ落とさないv1拒否と、animation Scale正値を追加した。v1 importのcount/累積sample/外部実bytes予算を確保前へ接続し、LINEAR/STEP/Bake・共有accessor・末尾増幅・累積2fileを反証する新CPU試験を追加。nativeは未実行。
 - 検証準備: 独立v1 oracle8件と既存owner source8件をnormal/-Oで各合格。新wireの独立literalは992 bytes/SHA256 43541886df2bce92e81697ed0b0d0ac6b1285201cf20470089ad3190761af106。legacy Sampler新分岐を除去するとbase dd24全文がwhitespace正規化で一致（11171428e0e187c5ecf15f3279d2f49c4ab6226842012008b9140b7ca06c63c6）。YAML・BOM/CRLF・行末比較も確認。Release65/新2束のDebug・実出力oracle・既存cook/CLIはCI待ち。LINEAR/STEPとBakeが同一assetで混在する専用の累積境界試験は残す（残量の実装は共通）。
+
+- 初回B1 Windows CI: code 53f17969 / run 37534505686 / job 112511925333はRelease buildで失敗。新CookedClipBankV1Testの変数smallがWindows macroと衝突しC2628等になった。fixture変数をlowLimitsへ変更し、production/旧test/goldenは不変。Sampler/CPU65/Debug/oracle/Game/旧CLI後段はskippedで未実行。失敗599 payloadは別保持し、親の失敗readonly replayもexit0/stderr0で確認した。

@@ -60,9 +60,9 @@ namespace
             RIG_CHECK(S::BuildRigTopology({broken.data(), broken.size()}, {}, first) != S::RigV1Status::Success &&
                       first.CanonicalBytes == old);
         }
-        S::RigV1Limits small;
-        small.MaxJoints = 1;
-        RIG_CHECK(S::BuildRigTopology({joints.data(), joints.size()}, small, second) == S::RigV1Status::LimitExceeded);
+        S::RigV1Limits lowLimits;
+        lowLimits.MaxJoints = 1;
+        RIG_CHECK(S::BuildRigTopology({joints.data(), joints.size()}, lowLimits, second) == S::RigV1Status::LimitExceeded);
     }
     F::Bytes Optional(F::Bytes bytes)
     {
