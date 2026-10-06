@@ -468,8 +468,13 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        // 64bit のバッファの合流は、ソフトウェアラスタが有効で、対応する装置のときだけ作る。作れなくても ID の描画は使える（合流だけが無い）
-        if (m_bSwRasterEnabled && VisibilityMerge::IsSupported(caps))
+        // 64bit のバッファの合流は、ソフトウェアラスタが有効で、ソフトウェアラスタを使える装置のときだけ作る（合流はソフトの結果を受けるためだけにある）。
+        // 作れなくても ID の描画は使える（合流だけが無い）
+        if (m_bSwRasterEnabled && VisibilityMerge::IsSupported(caps) && !caps.bBufferDeviceAddress)
+        {
+            NORVES_LOG_INFO("VisibilityRasterPass", "SW_RASTER_FALLBACK reason=bda_unsupported");
+        }
+        if (m_bSwRasterEnabled && VisibilitySwRaster::IsSupported(caps))
         {
             // ソフトウェアラスタの計算は、合流が作れたときだけ作る（書いた値を受ける合流が無ければ、ソフトに回さない）
             if (m_Merge.Initialize(m_Device, context.ShaderMgr, m_SecondRenderPass))

@@ -27,6 +27,13 @@ namespace NorvesLib::Core::Rendering
     class VisibilitySwRaster
     {
     public:
+        /**
+         * @brief この装置でソフトウェアラスタを使えるか（64bit のバッファへの atomicMin と、バッファのアドレス）
+         *
+         * ID のラスタの合流（64bit のバッファ・埋め・合流のパス）は、ソフトの結果を受けるためだけにあるので、この条件を満たす装置でだけ作る。
+         */
+        static bool IsSupported(const RHI::DeviceCapabilities& capabilities);
+
         /** @brief ワークグループのスレッド数（1 クラスタの三角形の最大数。ID の三角形のビット幅と一致する） */
         static constexpr uint32_t ThreadsPerGroup = 128;
         /** @brief 1 スレッドが走査する矩形の一辺の下限（画素。しきい値が小さくても、これ未満には切らない） */

@@ -1095,7 +1095,7 @@
 - notes: 2026-10-06 VTG7-SW-HARDEN から分けた。テストのコードでも標準ライブラリの型を使わない。変異は編集して測り、同じ編集で元へ戻す。 2026-10-06 親（VTG7-SW-HARDEN の評価は PASS。その non-blocking をここで扱う）: (a) 走査の矩形の上限がしきい値で変わることを確かめる場面を `VisibilityResolveVulkanTest` に足す（しきい値 64 なら約 100 画素の三角形を描き、しきい値 0 なら描かずに `SwStatOversize` に数える。今の `SwStatOversize == 0u` は落ちようがない）。 (b) `MegaGeometryPass.cpp` の振り分けない理由: On でも解決を使えないフレームは sink が無く `reason=debug_mode` になる（`m_bVisibilityPlanEnabled` は On・Debug とも真）。`m_bSkipGBufferDraw` で分け、On の場合は `resolve_unavailable` 等にする。 (c) `MegaGeometryPass.cpp` のコメント「矩形（64 画素四方）」を、しきい値から決める上限の説明に直す。 (d) バッファのアドレス（BDA）に対応しない装置では、合流だけが作られて埋めと合流が毎フレーム走り、振り分けは定数 1 で続く。`VisibilitySwRaster` が使えないときは合流も作らず、`SW_RASTER_FALLBACK reason=bda_unsupported` 等を出す。 (e) PROGRESS の VTG7-SW-HARDEN の「二重に描いても groups は pass1 + pass2 を超える」を直す（二重描きの検出は `zeroed=0`）。
 
 ## VTG7-SW-HARDEN-BDA: バッファのアドレス（BDA）に対応しない装置で、ソフトウェアラスタの合流も作らない
-- status: todo
+- status: done
 - done-when: バッファのアドレス（BDA）に対応しない装置では `VisibilitySwRaster` が使えない（`IsReady` が偽）ので、ID のラスタは 64bit のバッファの埋め・合流も作らず（`IsSwRasterAvailable()` と同じ条件で合流の資源の作成を絞る）、振り分けも行わない。`SW_RASTER_FALLBACK reason=bda_unsupported` を 1 回ログへ出す。`RenderGraphCompileTest` に、BDA に対応しない装置（`FakeDevice` の能力を落とす）で、合流のバッファ・埋め・合流のパスが無く、カリングの定数が無効（0）になることを確かめる場面を足し、判定を外す変異で落ちることを記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`

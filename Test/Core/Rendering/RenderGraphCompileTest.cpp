@@ -1126,6 +1126,12 @@ namespace
             m_Capabilities.bShaderBufferInt64Atomics = false;
         }
 
+        // バッファのアドレスに対応しない装置にする（ソフトウェアラスタの計算シェーダーが頂点を引けない）
+        void DisableBufferDeviceAddress()
+        {
+            m_Capabilities.bBufferDeviceAddress = false;
+        }
+
         // ビジビリティバッファの幾何の解決（頂点のデバイスアドレス・RG16F などの storage image）が要る機能も表明する
         void EnableVisibilityResolveCapabilities()
         {
@@ -2148,6 +2154,13 @@ namespace
         CameraProxy Camera;
         /** @brief false なら、64bit のバッファへの atomicMin に対応しない装置で動かす */
         bool bInt64Atomics = true;
+        /**
+         * @brief false なら、MegaGeometry の初期化の後・ID のラスタの初期化の前に、バッファのアドレスに対応しない装置へ落とす
+         *
+         * MegaGeometry の初期化はバッファのアドレスを要るので、初期化の前から落とすとパスごと無効になる。
+         * 落とした後は、ID のラスタの合流の作成と、MegaGeometry の振り分けの判定が、バッファのアドレスの有無だけを見る
+         */
+        bool bBufferDeviceAddress = true;
         /** @brief ID のラスタがソフトウェアラスタ（64bit のバッファの埋め・合流）を持つか。false は --sw-raster=off と同じ */
         bool bSwRasterMerge = true;
         /** @brief MegaGeometry がソフトウェアラスタへの振り分けを要求するか（--sw-raster=on のカリング） */
@@ -2413,6 +2426,10 @@ namespace
         scene.Raster.SetSwRasterEnabled(scene.bSwRasterMerge);
         scene.Raster.SetMegaGeometryPass(&scene.Mega);
         assert(scene.Mega.Initialize(context));
+        if (!scene.bBufferDeviceAddress)
+        {
+            scene.Device->DisableBufferDeviceAddress();
+        }
         scene.Graph.AddPass(&scene.GBuffer);
         scene.Graph.AddPass(&scene.Mega);
         if (bVisibilityPlan)
@@ -4977,6 +4994,52 @@ namespace
             }
             ShutdownVisibilityRasterScene(scene);
         }
+    }
+
+    // バッファのアドレス（BDA）に対応しない装置では、ソフトウェアラスタ（VisibilitySwRaster）が使えないので、--sw-raster=on でも
+    // 64bit のバッファ・定数・パイプライン・埋め・合流のパスを作らず、振り分けず（ソフトの一覧も作らない）、
+    // カリングの定数は無効（0）、ソフトの dispatch も記録しない。ID の描画は合流が無いときと同じ。
+    // 解決（頂点のアドレスを引く）も使えないので、ID のラスタは予備の GBuffer の描画へ戻って何も描かず、MegaGeometry も振り分けない
+    // （sink が無い）。ID のラスタの合流の作成を VisibilitySwRaster::IsSupported でなく VisibilityMerge::IsSupported のままにすると、
+    // 合流の資源が作られて落ちる
+    void TestSwRasterAbsentWithoutBufferDeviceAddress()
+    {
+        VisibilityRasterScene scene;
+        scene.bBufferDeviceAddress = false;
+        scene.bSwRasterBin = true;
+        GMegaCullUniformUpdates.clear();
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, false, true, ResolveMode::UnsupportedDevice);
+        FakeCommandList& commandList = scene.CommandList;
+
+        // 64bit のバッファへの atomicMin には対応しているのに、BDA が無いのでソフトウェアラスタも合流も作らない
+        assert(VisibilityMerge::IsSupported(scene.Device->GetCapabilities()));
+        assert(!VisibilitySwRaster::IsSupported(scene.Device->GetCapabilities()));
+        assert(scene.Raster.IsSwRasterEnabled());
+        assert(!scene.Raster.GetMerge().IsReady());
+        assert(!scene.Raster.GetSwRaster().IsReady());
+        assert(CountBufferCreations(*scene.Device, "VisBuffer_Key64") == 0);
+        assert(CountBufferCreations(*scene.Device, "VisBuffer_MergeParams") == 0);
+        assert(commandList.Key64Fills.empty());
+        const VisibilityRasterFrameStats& stats = scene.Raster.GetLastFrameStats();
+        assert(!stats.bMerged && stats.MergeCount == 0 && stats.KeyBufferBytes == 0);
+        assert(!scene.Resolve.WasResolved());
+
+        // 振り分けず、ソフトの一覧も頭の埋めも dispatch も無く、カリングの定数は無効（0）
+        assert(scene.Mega.IsSwRasterBinningRequested());
+        assert(!scene.Mega.DidSwRasterBin());
+        assert(scene.Mega.GetSwRasterListCapacity() == 0);
+        assert(CountBufferCreations(*scene.Device, "MegaGeometry_SwRaster") == 0);
+        assert(commandList.SwRasterFills.empty());
+        assert(stats.SwRasterDispatchCount == 0);
+        assert(FindSwRasterDispatchPositions(commandList).empty());
+        assert(!GMegaCullUniformUpdates.empty());
+        for (size_t update = 0; update < GMegaCullUniformUpdates.size(); ++update)
+        {
+            const SwRasterUniformWords words = ReadSwRasterUniformWords(update);
+            assert(words.bEnabled == 0u && words.Capacity == 0u);
+        }
+
+        ShutdownVisibilityRasterScene(scene);
     }
 
     // 一覧の容量はパスごとのコマンド数まで（65535 で頭打ちにしない）。間接 dispatch の x の上限（65535）を超えるクラスタ数でも一覧は
@@ -10576,6 +10639,7 @@ int main()
     TestSwRasterBinningFallsBackWhenUnavailable();
     TestSwRasterDispatchesBetweenRecordsAndMerges();
     TestSwRasterDispatchAbsentWhenUnavailable();
+    TestSwRasterAbsentWithoutBufferDeviceAddress();
     TestSwRasterListCapacityExceedsOneDimension();
     TestSceneViewWiresSwRasterMode();
     TestSceneViewThresholdReachesCullUniform();

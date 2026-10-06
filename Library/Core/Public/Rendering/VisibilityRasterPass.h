@@ -79,12 +79,12 @@ namespace NorvesLib::Core::Rendering
      *   → 2 パス目のカリング → 記録を書く計算 → [ID の render pass: MegaGeometry の 2 パス目]
      * 1 回の判定のとき・移さないとき（GBuffer が先に描く構成）は、MegaGeometry の全部と塊を 1 回の render pass で描く。
      *
-     * ソフトウェアラスタが有効（SetSwRasterEnabled。--sw-raster=on）で、装置が 64bit のバッファへの atomicMin に対応するとき
-     * （bShaderBufferInt64Atomics）は、ソフトウェアラスタの結果を受ける
+     * ソフトウェアラスタが有効（SetSwRasterEnabled。--sw-raster=on）で、装置がソフトウェアラスタを使えるとき
+     * （VisibilitySwRaster::IsSupported。64bit のバッファへの atomicMin とバッファのアドレス）は、ソフトウェアラスタの結果を受ける
      * 64bit のバッファ（画面の画素数 × uint64。深度 + ID）を 1 つ持ち、フレームの最初に空で埋め、合流のパス（VisibilityMerge。
      * 全画面で、空でない画素だけ LessOrEqual で ID・深度へ書く）を「1 回目の render pass の後・HZB の前」と「2 回目の
      * render pass の後」に走らせる（1 回の判定では描画の後に 1 回）。
-     * ソフトウェアラスタが無効（既定）・対応しない装置・予備の経路（ビジビリティバッファが無効）では、資源もパスも作らない。
+     * ソフトウェアラスタが無効（既定）・対応しない装置（バッファのアドレスが無い装置を含む）・予備の経路（ビジビリティバッファが無効）では、資源もパスも作らない。
      *
      * 2 パスの遮蔽で 64bit のバッファを使えるフレーム（IsSwRasterAvailable）は、MegaGeometryPass のカリングが画面上で小さいクラスタを
      * ソフトの一覧へ積み、そのハードのコマンドを空振りにする。ソフトの dispatch（VisibilitySwRaster。1 ワークグループ = 1 クラスタ）は

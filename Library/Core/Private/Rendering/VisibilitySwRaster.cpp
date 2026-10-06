@@ -67,12 +67,16 @@ namespace NorvesLib::Core::Rendering
         Shutdown();
     }
 
+    bool VisibilitySwRaster::IsSupported(const RHI::DeviceCapabilities& capabilities)
+    {
+        // 64bit のバッファへの atomicMin（合流と同じ条件）に加え、シェーダーが記録の表から頂点を引くための buffer_reference（バッファのアドレス）が要る
+        return VisibilityMerge::IsSupported(capabilities) && capabilities.bBufferDeviceAddress;
+    }
+
     bool VisibilitySwRaster::Initialize(RHI::IDevice* device, ShaderManager* shaderManager)
     {
         Shutdown();
-        // 64bit のバッファへの atomicMin（合流と同じ条件）に加え、シェーダーが記録の表から頂点を引くための buffer_reference（バッファのアドレス）が要る
-        if (!device || !shaderManager || !VisibilityMerge::IsSupported(device->GetCapabilities()) ||
-            !device->GetCapabilities().bBufferDeviceAddress)
+        if (!device || !shaderManager || !IsSupported(device->GetCapabilities()))
         {
             return false;
         }
