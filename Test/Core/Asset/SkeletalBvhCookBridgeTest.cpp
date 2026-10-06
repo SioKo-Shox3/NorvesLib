@@ -1,5 +1,6 @@
 ﻿// 実BVH→cook→package→AssetSystem→Resource→Samplerを有限fixtureで検証する。
 #include "Tools/AssetCook/SkeletalBvhCook.h"
+#include "Tools/AssetCook/SkeletalRoleProfileCook.h"
 #include "Tools/AssetCook/AssetCookOutput.h"
 #include "M9LooseFixture.h"
 #include "Resource/SkeletalGltfDecode.h"
@@ -236,14 +237,15 @@ namespace
         Text error;
         static unsigned invocation = 0;
         ++invocation;
-        const bool bCooked = Cook::CookGltfWithBvhToNvskelNativePath(
-            glb.data(), glb.size(), Format, {}, request, result, error, nullptr, options);
+        const bool bCooked = Cook::CookGltfWithBvhToNvskelNativePath(glb.data(), glb.size(), Format, {}, request,
+                                                                     result, error, nullptr, options);
         if (!bCooked)
         {
             B::BvhDocument diagnostic;
             const auto decoded = B::DecodeBvh(request.BvhBytes, request.DecodeLimits, diagnostic);
-            std::fprintf(stderr, "BVH cook invocation=%u error=%s raw_status=%u raw_offset=%zu frames=%u\n",
-                invocation, error.c_str(), static_cast<unsigned>(decoded.Status), decoded.ByteOffset, diagnostic.FrameCount);
+            std::fprintf(stderr, "BVH cook invocation=%u error=%s raw_status=%u raw_offset=%zu frames=%u\n", invocation,
+                         error.c_str(), static_cast<unsigned>(decoded.Status), decoded.ByteOffset,
+                         diagnostic.FrameCount);
         }
         CHECK(bCooked);
         CHECK(result.Report.bStoredKeysValidated && !result.Report.bContinuousCurveValidated);
@@ -600,11 +602,348 @@ namespace
             Near(scaled.Data.Joints[1].InverseBindMatrix[13], -2);
         }
     }
+    Text ProfileText()
+    {
+        return R"json({"version":1,"vocabulary":"quadruped_v1","axes":{"up":"+Y","forward":"+Z","handedness":"right"},"units":{"position_scale":1},"position_convention":"additive","time":{"mode":"header_frame_time"},"source_roles":{"root":["Source"]},"target_roles":{"root":[{"joint":"Root","C":[1,0,0,0,1,0,0,0,1]}]}})json";
+    }
+    C::Span<const uint8_t> TextView(const Text& text)
+    {
+        return {reinterpret_cast<const uint8_t*>(text.data()), text.size()};
+    }
+    Cook::SkeletalRoleProfileCookResult ProfileCook(
+        const Bytes& glb, const Text& text, C::Span<const uint8_t> bvh,
+        Cook::SkeletalBvhClipOperation operation = Cook::SkeletalBvhClipOperation::Add,
+        const C::String& clipName = C::String("Bvh"))
+    {
+        Cook::SkeletalRoleProfileCookRequest request;
+        request.BvhBytes = bvh;
+        request.ProfileBytes = TextView(text);
+        request.Operation = operation;
+        request.ClipName = clipName;
+        Cook::SkeletalRoleProfileCookResult out;
+        Text error;
+        const bool bCooked =
+            Cook::CookGltfWithRoleProfileToNvskelNativePath(glb.data(), glb.size(), Format, {}, request, out, error);
+        if (!bCooked)
+        {
+            std::fprintf(stderr, "Role Profile cook: %s\n", error.c_str());
+        }
+        CHECK(bCooked);
+        return out;
+    }
+    void ProfileReject(const Bytes& glb, const Text& text, C::Span<const uint8_t> bvh)
+    {
+        Request base;
+        auto out = ProfileCook(glb, ProfileText(), base.Value.BvhBytes);
+        const auto bytes = out.Cooked.Cook.NvskelBytes;
+        const auto hash = out.Cooked.Cook.SourceHash;
+        const auto names = out.Profile.Source[0][0];
+        const auto rawHash = out.RawProfileHash;
+        Cook::SkeletalRoleProfileCookRequest request;
+        request.BvhBytes = bvh;
+        request.ProfileBytes = TextView(text);
+        request.Operation = Cook::SkeletalBvhClipOperation::Add;
+        request.ClipName = "Bvh";
+        Text error;
+        CHECK(
+            !Cook::CookGltfWithRoleProfileToNvskelNativePath(glb.data(), glb.size(), Format, {}, request, out, error));
+        CHECK(!error.empty() && out.Cooked.Cook.NvskelBytes == bytes && out.Cooked.Cook.SourceHash == hash &&
+              out.Profile.Source[0][0] == names && out.RawProfileHash == rawHash);
+    }
+    void RoleParserContracts()
+    {
+        using Status = A::SkeletalRoleProfileStatus;
+        const auto base = ProfileText();
+        A::SkeletalRoleProfile original;
+        A::SkeletalRoleProfileLimits limits;
+        CHECK(A::ParseSkeletalRoleProfile(TextView(base), limits, original).Succeeded());
+        CHECK(original.ExpandedMappings == 1 && original.NameBytes == 10 && original.RequiredMask == 0);
+        CHECK(original.Settings.SourceReuse == A::SkeletalSourceReusePolicy::Reject);
+        CHECK(std::strcmp(A::SkeletalRoleName(A::SkeletalRole::FrontLPaw), "front_L_paw") == 0);
+        CHECK(std::strcmp(A::SkeletalRoleName(A::SkeletalRole::Count), "") == 0);
+        const auto reject = [&](const Text& value, const A::SkeletalRoleProfileLimits& budget)
+        {
+            auto out = original;
+            const auto result = A::ParseSkeletalRoleProfile(TextView(value), budget, out);
+            CHECK(!result.Succeeded() && !result.Field.empty());
+            CHECK(out.ExpandedMappings == original.ExpandedMappings && out.NameBytes == original.NameBytes &&
+                  out.Source[0][0] == original.Source[0][0] && out.Target[0][0].Name == original.Target[0][0].Name);
+        };
+        const auto mutate = [&](const char* from, const char* to)
+        {
+            auto changed = base;
+            Replace(changed, from, to);
+            reject(changed, limits);
+        };
+        mutate("\"version\":1", "\"version\":2");
+        mutate("\"version\":1", "\"version\":1.0");
+        mutate("\"version\":1", "\"version\":1,\"version\":1");
+        mutate("\"version\":1", "\"version\":1,\"vers\\u0069on\":1");
+        mutate("\"version\":1", "\"version\":1,\"bone_map\":[]");
+        mutate("quadruped_v1", "humanoid_v1");
+        mutate("\"up\":\"+Y\"", "\"up\":\"+Z\"");
+        mutate("\"up\":\"+Y\"", "\"up\":\"+Y\",\"auto\":true");
+        mutate("\"handedness\":\"right\"", "\"handedness\":\"auto\"");
+        mutate("\"position_scale\":1", "\"position_scale\":0");
+        mutate("\"position_scale\":1", "\"position_scale\":1e9999");
+        mutate("\"position_convention\":\"additive\"", "\"position_convention\":\"infer\"");
+        mutate("\"mode\":\"header_frame_time\"", "\"mode\":\"header_frame_time\",\"source_fps\":30");
+        mutate("\"mode\":\"header_frame_time\"", "\"mode\":\"override_fps\"");
+        mutate("\"source_roles\":{\"root\":[\"Source\"]}", "\"source_roles\":{}");
+        mutate("\"source_roles\":{\"root\":[\"Source\"]}", "\"source_roles\":{\"Root\":[\"Source\"]}");
+        mutate("\"source_roles\":{\"root\":[\"Source\"]}",
+               "\"source_roles\":{\"root\":[\"Source\"],\"root\":[\"Source\"]}");
+        mutate("[\"Source\"]", "[]");
+        mutate("[\"Source\"]", "[\"Source\",\"Other\"]");
+        mutate("[\"Source\"]", "[\"\"]");
+        mutate("[\"Source\"]", "[\"Source\\u0000tail\"]");
+        mutate("\"C\":[1,0,0,0,1,0,0,0,1]", "\"C\":[1,0,0,0,1,0,0,0]");
+        mutate("\"C\":[1,0,0,0,1,0,0,0,1]", "\"C\":[-1,0,0,0,1,0,0,0,1]");
+        mutate("\"C\":[1,0,0,0,1,0,0,0,1]", "\"C\":[2,0,0,0,1,0,0,0,1]");
+        mutate("\"C\":[1,0,0,0,1,0,0,0,1]", "\"auto_C\":true");
+        auto required = base;
+        Replace(required, "\"version\":1", "\"version\":1,\"required_roles\":[\"head\"]");
+        reject(required, limits);
+        required = base;
+        Replace(required, "\"version\":1", "\"version\":1,\"required_roles\":[\"root\",\"root\"]");
+        reject(required, limits);
+        auto invalidUtf8 = base;
+        invalidUtf8[invalidUtf8.find("Source")] = static_cast<char>(0xff);
+        reject(invalidUtf8, limits);
+        auto budget = limits;
+        budget.MaxInputBytes = base.size() - 1;
+        reject(base, budget);
+        budget = limits;
+        budget.MaxDepth = 3;
+        reject(base, budget);
+        budget = limits;
+        budget.MaxDepth = 65;
+        reject(base, budget);
+        budget = limits;
+        budget.MaxSyntaxTokens = 1;
+        reject(base, budget);
+        budget = limits;
+        budget.MaxNameBytes = 5;
+        reject(base, budget);
+        budget = limits;
+        budget.MaxTotalNameBytes = 9;
+        reject(base, budget);
+        budget = limits;
+        budget.MaxSourceElements = 0;
+        reject(base, budget);
+        budget = limits;
+        budget.MaxMappings = 0;
+        reject(base, budget);
+        budget = limits;
+        budget.MaxInputBytes = base.size();
+        budget.MaxTotalNameBytes = 10;
+        A::SkeletalRoleProfile exact;
+        CHECK(A::ParseSkeletalRoleProfile(TextView(base), budget, exact).Succeeded());
+        // この固定JSONは最大深さ5、構造token45。直前の予算は拒否する。
+        budget = limits;
+        budget.MaxDepth = 5;
+        budget.MaxSyntaxTokens = 45;
+        budget.MaxSourceElements = 1;
+        budget.MaxMappings = 1;
+        CHECK(A::ParseSkeletalRoleProfile(TextView(base), budget, exact).Succeeded());
+        budget.MaxSyntaxTokens = 44;
+        reject(base, budget);
+        budget = limits;
+        budget.MaxDepth = 4;
+        reject(base, budget);
+        auto requiredRoot = base;
+        Replace(requiredRoot, "\"version\":1", "\"version\":1,\"required_roles\":[\"root\"]");
+        CHECK(A::ParseSkeletalRoleProfile(TextView(requiredRoot), limits, exact).Succeeded() &&
+              exact.RequiredMask == 1);
+        Text deeplyNested;
+        for (size_t i = 0; i < 65; ++i)
+        {
+            deeplyNested += '[';
+        }
+        deeplyNested += '0';
+        for (size_t i = 0; i < 65; ++i)
+        {
+            deeplyNested += ']';
+        }
+        CHECK(A::ParseSkeletalRoleProfile(TextView(deeplyNested), limits, exact).Status == Status::LimitExceeded);
+        Text bom("\xef\xbb\xbf");
+        bom += base;
+        CHECK(A::ParseSkeletalRoleProfile(TextView(bom), limits, exact).Succeeded());
+        auto overrideTime = base;
+        Replace(overrideTime, "\"mode\":\"header_frame_time\"", "\"mode\":\"override_fps\",\"source_fps\":16");
+        CHECK(A::ParseSkeletalRoleProfile(TextView(overrideTime), limits, exact).Succeeded() &&
+              exact.Settings.SourceFps == 16);
+        // 任意の追加必須集合とchain同長は構造契約。解剖学的な妥当性は主張しない。
+        auto chain = base;
+        Replace(chain, "\"source_roles\":{\"root\":[\"Source\"]}",
+                "\"source_roles\":{\"root\":[\"Source\"],\"spine\":[\"A\",\"B\"]}");
+        Replace(
+            chain, "\"target_roles\":{",
+            "\"target_roles\":{\"spine\":[{\"joint\":\"A\",\"C\":[1,0,0,0,1,0,0,0,1]},{\"joint\":\"B\",\"C\":[1,0,0,0,1,0,0,0,1]}],");
+        CHECK(A::ParseSkeletalRoleProfile(TextView(chain), limits, exact).Succeeded() && exact.ExpandedMappings == 3);
+        Replace(chain, "[\"A\",\"B\"]", "[\"A\"]");
+        reject(chain, limits);
+        auto ownedText = base;
+        CHECK(A::ParseSkeletalRoleProfile(TextView(ownedText), limits, exact).Succeeded());
+        ownedText = "destroyed";
+        auto copy = exact;
+        auto moved = std::move(copy);
+        CHECK(moved.Source[0][0] == original.Source[0][0] && moved.Target[0][0].Name == original.Target[0][0].Name);
+    }
+    A::SkeletalPoseSnapshot SampleRoleCook(const Cook::SkeletalBvhCookResult& cooked, float time)
+    {
+        auto parsed = Parse(cooked.Cook.NvskelBytes);
+        auto& data = parsed.Data.Skeletal;
+        Core::SkeletonResource skeleton;
+        Core::AnimationClipResource clip;
+        Core::SkinnedMeshResource mesh;
+        skeleton.Initialize();
+        clip.Initialize();
+        mesh.Initialize();
+        const auto& v = data.MeshNodeGlobalTransform;
+        const M::Matrix4x4 matrix(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12],
+                                  v[13], v[14], v[15]);
+        mesh.SetVertices(std::move(data.Vertices));
+        mesh.SetIndices(std::move(data.Indices));
+        mesh.SetSubmeshTables(std::move(data.SubMeshes), std::move(data.MaterialSlots));
+        mesh.SetMeshNodeGlobalTransform(v);
+        skeleton.SetJoints(std::move(data.Joints));
+        clip.SetClip(std::move(data.Clips[cooked.ClipIndex]));
+        CHECK(skeleton.Load() && clip.Load() && mesh.Load());
+        A::SkeletalPoseSnapshot pose;
+        CHECK(A::SkeletalAnimationSampler::Sample(skeleton, clip, mesh, time, matrix, pose));
+        return pose;
+    }
+    void RoleCookContracts()
+    {
+        Request base;
+        const auto text = ProfileText();
+        const auto glb = Glb(Read("ValidU8Float.gltf"), Buffer());
+        const auto result = ProfileCook(glb, text, base.Value.BvhBytes);
+        const auto typed = CookIt(glb, base.Value);
+        CHECK(result.Cooked.Cook.NvskelBytes == typed.Cook.NvskelBytes &&
+              result.Cooked.Cook.SourceHash != typed.Cook.SourceHash);
+        CHECK(result.RawProfileBytes == text.size() && result.ExpandedRoles.size() == 1 &&
+              result.SourceOnlyRoles.empty());
+        CHECK(result.ExpandedRoles[0].Role == A::SkeletalRole::Root && result.ExpandedRoles[0].Ordinal == 0);
+        PackageAndSample(result.Cooked);
+        Cook::SkeletalRoleProfileCookRequest changedLimits;
+        changedLimits.BvhBytes = base.Value.BvhBytes;
+        changedLimits.ProfileBytes = TextView(text);
+        changedLimits.Operation = Cook::SkeletalBvhClipOperation::Add;
+        changedLimits.ClipName = "Bvh";
+        changedLimits.ProfileLimits.MaxNameBytes -= 1;
+        Cook::SkeletalRoleProfileCookResult budgetResult;
+        Text budgetError;
+        CHECK(Cook::CookGltfWithRoleProfileToNvskelNativePath(glb.data(), glb.size(), Format, {}, changedLimits,
+                                                              budgetResult, budgetError));
+        CHECK(budgetResult.Cooked.Cook.NvskelBytes == result.Cooked.Cook.NvskelBytes &&
+              budgetResult.Cooked.Cook.SourceHash != result.Cooked.Cook.SourceHash &&
+              budgetResult.RawProfileHash == result.RawProfileHash);
+        const auto repeated = ProfileCook(glb, text, base.Value.BvhBytes);
+        CHECK(repeated.Cooked.Cook.NvskelBytes == result.Cooked.Cook.NvskelBytes &&
+              repeated.Cooked.Cook.SourceHash == result.Cooked.Cook.SourceHash);
+        auto whitespace = text + " ";
+        const auto spaced = ProfileCook(glb, whitespace, base.Value.BvhBytes);
+        CHECK(spaced.Cooked.Cook.NvskelBytes == result.Cooked.Cook.NvskelBytes &&
+              spaced.Cooked.Cook.SourceHash != result.Cooked.Cook.SourceHash);
+        auto reordered = text;
+        Replace(reordered, "\"up\":\"+Y\",\"forward\":\"+Z\"", "\"forward\":\"+Z\",\"up\":\"+Y\"");
+        const auto reorderedResult = ProfileCook(glb, reordered, base.Value.BvhBytes);
+        CHECK(reorderedResult.Cooked.Cook.NvskelBytes == result.Cooked.Cook.NvskelBytes &&
+              reorderedResult.Cooked.Cook.SourceHash != result.Cooked.Cook.SourceHash);
+        auto empty = Read("ValidU8Float.gltf");
+        ArrayValue(empty, "animations", "[]");
+        const auto first = ProfileCook(Glb(empty, Buffer()), text, base.Value.BvhBytes);
+        CHECK(first.Cooked.Cook.ClipCount == 1);
+        PackageAndSample(first.Cooked);
+        CHECK(ProfileCook(glb, text, base.Value.BvhBytes, Cook::SkeletalBvhClipOperation::Replace, "Wave")
+                  .Cooked.Cook.ClipCount == 1);
+        auto corrected = text;
+        Replace(corrected, "[1,0,0,0,1,0,0,0,1]", "[1,0,0,0,0,-1,0,1,0]");
+        const auto rotated = Parse(ProfileCook(glb, corrected, base.Value.BvhBytes).Cooked.Cook.NvskelBytes);
+        const auto& keys = rotated.Data.Skeletal.Clips.back().Channels[0].Samples;
+        Near(keys[0].Value.X, 0);
+        Near(keys[0].Value.Y, 0);
+        Near(keys[0].Value.Z, 0);
+        Near(keys[0].Value.W, 1);
+        Near(keys.back().Value.X, 0);
+        Near(keys.back().Value.Y, -std::sqrt(.5));
+        Near(keys.back().Value.Z, 0);
+        Near(keys.back().Value.W, std::sqrt(.5));
+        // source-only aliasは活動pairではない。未写像roleとして所有報告する。
+        auto extra = text;
+        Replace(extra, "\"source_roles\":{", "\"source_roles\":{\"head\":[\"Source\"],");
+        const auto unused = ProfileCook(glb, extra, base.Value.BvhBytes);
+        CHECK(unused.SourceOnlyRoles.size() == 1 && unused.SourceOnlyRoles[0] == A::SkeletalRole::Head);
+        Replace(extra, "\"head\":[\"Source\"]", "\"head\":[\"Missing\"]");
+        ProfileReject(glb, extra, base.Value.BvhBytes);
+        extra = text;
+        Replace(extra, "\"source_roles\":{", "\"source_roles\":{\"head\":[\"Source\"],");
+        Replace(extra, "\"target_roles\":{",
+                "\"target_roles\":{\"head\":[{\"joint\":\"Child\",\"C\":[1,0,0,0,1,0,0,0,1]}],");
+        ProfileReject(glb, extra, base.Value.BvhBytes);
+        auto wrongRoot = text;
+        Replace(wrongRoot, "\"joint\":\"Root\"", "\"joint\":\"Child\"");
+        ProfileReject(glb, wrongRoot, base.Value.BvhBytes);
+        // 異なる実名の2jointを正準root/head順で展開し、object順で内部pair順を変えない。
+        const Text twoBvh =
+            "HIERARCHY ROOT Source { OFFSET 0 0 0 CHANNELS 3 Zrotation Xrotation Yrotation JOINT SourceChild { OFFSET 0 1 0 CHANNELS 3 Zrotation Xrotation Yrotation End Site { OFFSET 0 1 0 } } } MOTION Frames: 3 Frame Time: 0.5\n0 0 0 0 0 0\n45 0 0 0 0 0\n90 0 0 0 0 0\n";
+        Replace(extra, "\"head\":[\"Source\"]", "\"head\":[\"SourceChild\"]");
+        const auto two = ProfileCook(glb, extra, TextView(twoBvh));
+        CHECK(two.ExpandedRoles.size() == 2 && two.ExpandedRoles[0].Role == A::SkeletalRole::Root &&
+              two.ExpandedRoles[1].Role == A::SkeletalRole::Head);
+        PackageAndSample(two.Cooked);
+        auto distinctMotion = twoBvh;
+        Replace(distinctMotion, "45 0 0 0 0 0", "45 0 0 0 45 0");
+        Replace(distinctMotion, "90 0 0 0 0 0", "90 0 0 0 90 0");
+        auto distinctC = extra;
+        Replace(distinctC, "[1,0,0,0,1,0,0,0,1]", "[1,0,0,0,0,-1,0,1,0]");
+        const auto distinct = ProfileCook(glb, distinctC, TextView(distinctMotion));
+        const auto pose = SampleRoleCook(distinct.Cooked, 1);
+        CHECK(pose.JointModelMatrices.size() == 2 && pose.BonePalette.size() == 2);
+        // root=Rz90、head=Rx90*Rz90の列回転を、行行列の独立literalで検査する。
+        const float rootExpected[16] = {0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        const float headExpected[16] = {0, 0, 1, 0, -1, 0, 0, 0, 0, -1, 0, 0, -1, 0, 0, 1};
+        for (size_t i = 0; i < 16; ++i)
+        {
+            Near(pose.JointModelMatrices[0].values[i], rootExpected[i]);
+            Near(pose.JointModelMatrices[1].values[i], headExpected[i]);
+            Near(pose.BonePalette[0].values[i], rootExpected[i]);
+            Near(pose.BonePalette[1].values[i], i == 12 ? 0 : headExpected[i]);
+        }
+
+        auto roleOrder = text;
+        Replace(roleOrder, "\"source_roles\":{\"root\":[\"Source\"]}",
+                "\"source_roles\":{\"root\":[\"Source\"],\"head\":[\"SourceChild\"]}");
+        Replace(
+            roleOrder, "\"joint\":\"Root\",\"C\":[1,0,0,0,1,0,0,0,1]}]",
+            "\"joint\":\"Root\",\"C\":[1,0,0,0,1,0,0,0,1]}],\"head\":[{\"joint\":\"Child\",\"C\":[1,0,0,0,1,0,0,0,1]}]");
+        CHECK(ProfileCook(glb, roleOrder, TextView(twoBvh)).Cooked.Cook.NvskelBytes == two.Cooked.Cook.NvskelBytes);
+        auto sourceRoot = text;
+        Replace(sourceRoot, "[\"Source\"]", "[\"SourceChild\"]");
+        ProfileReject(glb, sourceRoot, TextView(twoBvh));
+        auto targetDuplicate = extra;
+        Replace(targetDuplicate, "\"joint\":\"Child\"", "\"joint\":\"Root\"");
+        ProfileReject(glb, targetDuplicate, TextView(twoBvh));
+        ProfileReject(glb, text, View("invalid BVH"));
+        auto wrongCase = text;
+        Replace(wrongCase, "\"joint\":\"Root\"", "\"joint\":\"root\"");
+        ProfileReject(glb, wrongCase, base.Value.BvhBytes);
+        auto unicodeMismatch = text;
+        Replace(unicodeMismatch, "\"joint\":\"Root\"", "\"joint\":\"Root\\u0301\"");
+        ProfileReject(glb, unicodeMismatch, base.Value.BvhBytes);
+        std::puts(
+            "SKELETAL_ROLE_PROFILE result=pass bounded_owned_quadruped_roles_explicit_c_required_root_chain_hash_actual_cook_package_sampler_no_file_cache");
+    }
+
 } // namespace
 int main()
 {
     BasicAndSelection();
     EmptyMorph();
+    RoleParserContracts();
+    RoleCookContracts();
     std::puts(
         "SKELETAL_BVH_COOK_BRIDGE result=pass explicit_add_replace_zero_clip_rig_morph_hash_package_asset_system_sampler_atomic_no_cli");
     return 0;

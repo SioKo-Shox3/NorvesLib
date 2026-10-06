@@ -69,6 +69,8 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalBvhClipTime.h
     Private/Animation/SkeletalBvhClipImport.h
     Private/Animation/SkeletalBvhClipImport.cpp
+    Private/Animation/SkeletalRoleProfile.h
+    Private/Animation/SkeletalRoleProfile.cpp
     Private/Animation/SkeletalAssetResource.cpp
     Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp

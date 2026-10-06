@@ -2652,3 +2652,9 @@
 - stop-when: 外部direct-pair JSONやCLIを追加する、従来fingerprintでBVH変更をskipする、writerの128関節/単一root/mesh必須を緩める、旧decodeを0clip許容へ変える、StageBの作者rest検査やGPU/実物の見た目まで完成扱いする。
 
 - result: codeafdd794/tree6e8b044e/run37425986849 attempt1 job112145637479。初回c81e178の新test失敗後、positive BVH2件の改行と失敗診断のみを修正。実54CPU/18marker/4固定capture/旧89出力/25+15CLI/12metadata/17+29child退出/Python全gate/3ZIP/PE-CNGを受入。親readonly再実行exit0・stderr空・387payload inventory一致。latest2paths/Library0、累積12paths/Library2を区別。失敗runは別332payload folderで保持。型付き名前Add/Replace・0clip target・NVSKEL/package/AssetSystem/実SamplerのCPU接続だけを受入れ、外部role/CLI/file依存cache/自動C/StageB/GPU/実物品質は未完。
+
+## G2-GR84-ROLE-PROFILE: ロール経由の設定bytesを明示補正cookへ接続する
+- status: doing
+- done-when: version付き自己完結Profile JSON bytesのquadruped_v1語彙、source_roles/target_roles（joint+C）、root必須、任意required_roles、明示軸/手系/単位/位置/timeを所有解析し、正準role順の具体名pairへ展開して既存typed BVH cookへ接続する。source-only名も実source存在を検査し報告する。名前/配列順を推測・正規化せず、単一roleは1、chainは同長。旧経路不変、raw Profile/算法版/limitsを新hashへ追加し、以前のoutを失敗時に保つ。
+- verify: 異なる骨名をroleで接続し実cook→package/Resource/Sampler、非可換C、未写像保持、0clip/Add/Replace、語彙/型/未知/重複/UTF8/必須/root/chain/alias/不正C拒否、JSON byte/depth/token/name/展開予算、入力破棄と失敗保持、object順変更で同一payload・raw変更でhash失効。既存54CPU/固定capture/旧出力/CLI/managed gateを維持。
+- stop-when: direct-pair外部JSONを復活する、欠落Cや軸/fpsを推測する、ゲーム用骨格共有や必須4脚を決定済み扱いする、file/CLIを依存snapshot/fingerprintなしに追加する、明示Cの検証を自動rest補正の完成とする。
