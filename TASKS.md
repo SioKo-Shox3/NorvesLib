@@ -2662,7 +2662,9 @@
 - result: code22220d56/treeff4a232b/run37435870572 attempt1 job112177403023。初回961d46ddのResourceId未登録fixtureをRegistry経由へ直し、production不変。実54CPU/旧18＋新role marker・4固定capture・旧89出力・25+15CLI・12metadata・17/29child退出・Python全gate・3ZIP/PE-CNGを受入。親readonly再実行exit0・stderr空・358payload inventory一致。latest2paths/Library0と累積10paths/Library3を区別、旧failed339payloadを別保全。role bytes→明示C→cook/package/実SamplerまでのCPU接続を受入れ、chain ordinal>0実cookは未網羅、file/CLI/cache・自動補正・StageB/GPU/実物品質は未完。
 
 ## G2-GR84-ROLE-FILE-CLI: BVHとProfileの単体CLIを安全なfile観測へ接続する
-- status: doing
+- status: done
 - done-when: 新mode専用のwide Windows argv→strict UTF8→native locatorで--bvh/--role-profile/--clip-operation/--clip-nameを解析し、既存target import指定と共に単体Skl0 package/manifestを作る。新要求は常時Cookで旧skipを使わず、正しいtyped SourceHashを共通inventory/captureへ接続。source/sidecar/全glTF外部buffer・image/BVH/Profileをsnapshotへ含め、出力alias guardと最終write直前再採取を行う。package/manifest/所有reportは全て構築後に公開し、実出力を再検証する。旧modeのargv/診断/出力bytesは維持。
 - verify: 実AssetCook.exeのUnicode（非BMP含む）4locator、空/重複/未知/混在/skip拒否、0clip/Add/Replace、BVH/Profileだけの変更・欠落・read failure・予算、hash/共通Forced判断/record、依存・出力alias/hardlink/reparse/prefix、公開直前入力変更時ゼロwrite、公開開始後失敗の明示Error、単体manifestの別key保護。新CLI smokeは旧frozen inventoryへ混ぜず別に記録。旧54CPU/4capture/89出力/25+15CLI/managed gateを維持。
 - stop-when: narrow argvをUTF8と推測する、新要求をglTF-only fingerprint/skipへ落とす、SchemaVersionを全体更新して旧stateを壊す、入力変化確認をcook後のcaptureだけで代用する、複数file transaction/敵対的ABA/電源断回復を保証済みとする、managed texture CLIをmodel/BVH対応済みと説明する。
+
+- result: code3c0fbe71/treeb7eb83a1/run37447482776 attempt1 job112215690482。CPU54/旧19＋新file marker、実Windows58CLI（成功12/拒否46）GetACP1252、4Unicode入力locator＋外部glTF、125file専用artifactの全case/独立raw Profile hash/最終NVPK1411byte・NVSKEL1235byteを確認。旧89出力/25+15CLI/12metadata/17+29child退出/4固定6095byte capture/Python全gate/PE-CNG＋SHELL32を維持。親readonly再実行exit0・stderr空・387payload inventory一致。latest29paths/Library0。常時Cook・共通全依存/同一read照合・write直前再観測・実出力recordまで受入。2file transaction/同時writer・自動C/StageB/GPU/Blenderは未受入。中間出力保持とrepeatはnative CIの検査証拠、未archive binaryはhash attestationと区別する。
