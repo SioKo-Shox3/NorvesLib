@@ -1085,18 +1085,6 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/RHI, Library/Core/Private/RHI, Assets/Shaders, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 親（VTG7-SW-RASTER の撮影の評価の差し戻し）。VTG7-SW-DEFAULT-ON の前に閉じる（原因の分からない差を既定にしない）。撮影の出力先は `.harness/runs/startup-capture/VTG7-SW-PATH-DIFF-*`。
 
-## VTG7-DETERMINISM-SEED: 決定的な撮影が同じ構成でも run 間で一致しない種を見つける
-- status: todo
-- done-when: 同じ構成（`-Deterministic -SunElevations 10 -ViewNames near -SwRaster Off`。TAA・RTGI・クック済みテクスチャ）で撮影を繰り返すと画像が一致する状態にする（4 回の PNG がすべて完全一致、または差が最大 1 の数画素以内）。直せない原因（ドライバ・ハードウェアの非決定性）と分かったときは、その証拠（どの資源・どのパスの出力が run 間で違うか）を PROGRESS に書く。VTG7-SW-PATH-DIFF の結果: 同じ構成を繰り返すと 2〜3 つの状態に分かれ、状態の間は 65.3 dB（8bit の ±1、不一致 4.9%、大きな球に集中）。FXAA（8 回）と `-LooseTextures`（6 回）は完全一致、`--virtual-texture=off`・`--geometry-streaming=off`・全バリア + 毎フレーム WaitIdle・エポックの遅延では消えない。RTGI のログの論理（フレーム・履歴・標本の列）は 8 回とも同一で、プリエクスポージャだけが float の 1 ULP ずれる。SceneColor を読み戻すと、種は小屋の軒先の数画素（x 388〜394・y 211〜215、最大 0.003）。切り分けの順: (1) クック済みの小屋のテクスチャだけをばらの元画像へ替える（小屋の材質・クック済みのアルベド・法線・ORM のどれが効くか）、(2) 軒先の画素の GBuffer（深度・法線・アルベド・材質）を run 間で RGBA の生で比べ、最初に違う段を探す、(3) 圧縮形式（BC7・BC5）のミップの末尾（4x4 より小さいミップ）・アップロード・サンプラーの設定を見る、(4) 種が RTGI のレイクエリ（小屋の薄い面の縁）なら、加速構造の構築・更新の決定性を確かめる。
-- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-2 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off -CompareDeterministicWith .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-3 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off -CompareDeterministicWith .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-4 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off -CompareDeterministicWith .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1`
-- stop-when: 原因がドライバ内（加速構造の構築など）でエンジン側から直せない場合は、証拠を記録して止める。直すのに 1 反復を超える場合は、切り分けの結果を記録して直す項目を足す。
-- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Private/Engine, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-06 VTG7-SW-PATH-DIFF から分けた（ソフトウェアラスタの経路が原因ではない）。判定は 4 回の完全一致。一時的な計装は同じ編集で戻し、作業ツリーを `git stash`・`git checkout --` で動かさない。VTG7-SW-DEFAULT-ON の on・off の比較は、この項目が閉じるまで「off 同士の繰り返しの最小 PSNR より下がらないこと」で判定する（PROGRESS の VTG7-SW-PATH-DIFF の節）。
-
 ## VTG7-SW-HARDEN-TESTS: ソフトウェアラスタの被覆の比較と配線のテストの穴を埋める
 - status: todo
 - done-when: (4) `VisibilityResolveVulkanTest` のソフトとハードの被覆の比較に、画素の中心を通る水平の辺（top-left の上の辺の向き）と、単位でない view 行列の場面を足し、top-left の `dx > 0` の向きを逆にする変異と、`projection * view` の順を入れ替える変異が落ちることを記録する。(5) `RenderGraphCompileTest` で `SceneView` に渡したしきい値が `MegaGeometryPass` のカリングの定数（`SwRasterMaxPixels`）まで届くことを確かめ、しきい値を渡さない変異で落ちることを記録する。あわせて、矩形の上限を超える三角形を 1 つ含む場面で、ソフトが描かず `SW_STAT_OVERSIZE`（統計の 9 番）が 1 になることを GPU のテストで確かめる。
@@ -1104,7 +1092,7 @@
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest)$"`
 - stop-when: 変異を入れても検査が落ちない場合は、場面を直して落ちることを確かめるまで done にしない。
 - paths: Test/Core/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
-- notes: 2026-10-06 VTG7-SW-HARDEN から分けた。テストのコードでも標準ライブラリの型を使わない。変異は編集して測り、同じ編集で元へ戻す。
+- notes: 2026-10-06 VTG7-SW-HARDEN から分けた。テストのコードでも標準ライブラリの型を使わない。変異は編集して測り、同じ編集で元へ戻す。 2026-10-06 親（VTG7-SW-HARDEN の評価は PASS。その non-blocking をここで扱う）: (a) 走査の矩形の上限がしきい値で変わることを確かめる場面を `VisibilityResolveVulkanTest` に足す（しきい値 64 なら約 100 画素の三角形を描き、しきい値 0 なら描かずに `SwStatOversize` に数える。今の `SwStatOversize == 0u` は落ちようがない）。 (b) `MegaGeometryPass.cpp` の振り分けない理由: On でも解決を使えないフレームは sink が無く `reason=debug_mode` になる（`m_bVisibilityPlanEnabled` は On・Debug とも真）。`m_bSkipGBufferDraw` で分け、On の場合は `resolve_unavailable` 等にする。 (c) `MegaGeometryPass.cpp` のコメント「矩形（64 画素四方）」を、しきい値から決める上限の説明に直す。 (d) バッファのアドレス（BDA）に対応しない装置では、合流だけが作られて埋めと合流が毎フレーム走り、振り分けは定数 1 で続く。`VisibilitySwRaster` が使えないときは合流も作らず、`SW_RASTER_FALLBACK reason=bda_unsupported` 等を出す。 (e) PROGRESS の VTG7-SW-HARDEN の「二重に描いても groups は pass1 + pass2 を超える」を直す（二重描きの検出は `zeroed=0`）。
 
 ## VTG7-SW-HARDEN-VALIDATION: ソフトウェアラスタを検証レイヤー付きで走らせ、on・off の GPU 時間を測る
 - status: todo
@@ -1127,6 +1115,18 @@
 - stop-when: どのしきい値でも on が off より遅い場合は、表を記録して止める（既定は off のまま。VTG7-SW-DEFAULT-ON は blocked にして理由を書く）。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Private/Engine, Game, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 親（段7の開始時に詳しくした）。撮影の出力先は `.harness/runs/startup-capture/VTG7-SW-THRESHOLD-*`。 2026-10-06 親（VTG7-RASTER-TIMING の評価）: `MegaGeometryDraw1/2` は on と off で同じ名前でも範囲が違う（off は `BeginRenderPass`／`EndRenderPass` をまたぎ、on は render pass の内側だけ）。on と off の比較はフレーム GPU と区間の合計で行い、`MegaGeometryDraw1` の比を「書く量の差」とは書かない。
+
+## VTG7-DETERMINISM-SEED: 決定的な撮影が同じ構成でも run 間で一致しない種を見つける
+- status: todo
+- done-when: 同じ構成（`-Deterministic -SunElevations 10 -ViewNames near -SwRaster Off`。TAA・RTGI・クック済みテクスチャ）で撮影を繰り返すと画像が一致する状態にする（4 回の PNG がすべて完全一致、または差が最大 1 の数画素以内）。直せない原因（ドライバ・ハードウェアの非決定性）と分かったときは、その証拠（どの資源・どのパスの出力が run 間で違うか）を PROGRESS に書く。VTG7-SW-PATH-DIFF の結果: 同じ構成を繰り返すと 2〜3 つの状態に分かれ、状態の間は 65.3 dB（8bit の ±1、不一致 4.9%、大きな球に集中）。FXAA（8 回）と `-LooseTextures`（6 回）は完全一致、`--virtual-texture=off`・`--geometry-streaming=off`・全バリア + 毎フレーム WaitIdle・エポックの遅延では消えない。RTGI のログの論理（フレーム・履歴・標本の列）は 8 回とも同一で、プリエクスポージャだけが float の 1 ULP ずれる。SceneColor を読み戻すと、種は小屋の軒先の数画素（x 388〜394・y 211〜215、最大 0.003）。切り分けの順: (1) クック済みの小屋のテクスチャだけをばらの元画像へ替える（小屋の材質・クック済みのアルベド・法線・ORM のどれが効くか）、(2) 軒先の画素の GBuffer（深度・法線・アルベド・材質）を run 間で RGBA の生で比べ、最初に違う段を探す、(3) 圧縮形式（BC7・BC5）のミップの末尾（4x4 より小さいミップ）・アップロード・サンプラーの設定を見る、(4) 種が RTGI のレイクエリ（小屋の薄い面の縁）なら、加速構造の構築・更新の決定性を確かめる。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-2 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off -CompareDeterministicWith .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-3 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off -CompareDeterministicWith .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-4 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off -CompareDeterministicWith .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1`
+- stop-when: 原因がドライバ内（加速構造の構築など）でエンジン側から直せない場合は、証拠を記録して止める。直すのに 1 反復を超える場合は、切り分けの結果を記録して直す項目を足す。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Private/Engine, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 VTG7-SW-PATH-DIFF から分けた（ソフトウェアラスタの経路が原因ではない）。判定は 4 回の完全一致。一時的な計装は同じ編集で戻し、作業ツリーを `git stash`・`git checkout --` で動かさない。VTG7-SW-DEFAULT-ON の on・off の比較は、この項目が閉じるまで「off 同士の繰り返しの最小 PSNR より下がらないこと」で判定する（PROGRESS の VTG7-SW-PATH-DIFF の節）。 2026-10-06 親: 段7のほかの項目（VTG7-SW-HARDEN-TESTS・VALIDATION・THRESHOLD）を先に回し、VTG7-SW-DEFAULT-ON の前に行う（off の経路にも元からある非決定性で、段7の変更が原因ではない）。
 
 ## VTG7-SW-DEFAULT-ON: ソフトウェアラスタを既定にする
 - status: todo
