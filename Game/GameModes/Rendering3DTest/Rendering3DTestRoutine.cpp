@@ -33,6 +33,7 @@
 #include "Core/Public/Module/ModuleRegistry.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "GameModes/Rendering3DTest/M9WorldSkeletal.h"
+#include "GameModes/Rendering3DTest/StartupSkinnedProbe.h"
 
 #if defined(NORVES_GAME_AUDIO)
 #include "Audio/IAudioModule.h"
@@ -1640,6 +1641,8 @@ namespace Game::GameModes
 
             data.m_pM9SkinnedObject = nullptr;
             data.m_pM9SkinnedMeshComponent = nullptr;
+            data.m_StartupSkinnedProbeAsset.reset();
+            data.m_pStartupSkinnedProbeComponent = nullptr;
             if (data.m_M9WorldAcceptance)
             {
                 data.m_M9WorldAcceptance->SkeletalAsset.reset();
@@ -2258,6 +2261,11 @@ namespace Game::GameModes
             data.m_pSphereMeshComponent->SetMaterial(0, data.m_CobbleStoneMaterial);
 
             LOG_INFO("Sphere Entity created and added to World");
+
+            if (data.m_bStartupSkinnedProbe)
+            {
+                SpawnStartupSkinnedProbe(ctx, data);
+            }
 
             if (data.m_InstancedMeshCount > 0u)
             {
@@ -3652,6 +3660,8 @@ namespace Game::GameModes
             NorvesLib::Math::Quaternion rotation(yAxis, angle);
             data.m_pSphereObject->SetRotation(rotation);
         }
+
+        UpdateStartupSkinnedProbe(ctx, data);
 
         // 決定的な撮影は、組み立てが終わった時点（この Tick の大きな球の生成まで含む）から数え直す。
         if (ctx.EngineRef.GetDeterministicCapture().IsEnabled())

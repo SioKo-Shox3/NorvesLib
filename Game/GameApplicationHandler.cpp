@@ -121,6 +121,10 @@ namespace Game
         // デバッグ描画が最終解像度でジッタ無しに描かれることを撮影で確かめるのに使う。
         constexpr const TCHAR *kDebugDrawTestLinesOption = TEXT("--debug-draw-test-lines");
         bool s_bRendering3DTestDebugDrawTestLines = false;
+        // --startup-skinned-probe: 検証用の骨付きのパネルを地面の上へ 1 枚置く（値を取らない。既定は置かない）。
+        // ビジビリティバッファの経路でスキニングの塊が描かれることの撮影（-SkinnedProbe）に使う。
+        constexpr const TCHAR *kStartupSkinnedProbeOption = TEXT("--startup-skinned-probe");
+        bool s_bRendering3DTestSkinnedProbe = false;
         // --startup-scan-props=on|off: 起動画面の地面の外周に並べる高ポリのスキャン資産（Poly Haven）を置くか（既定は on）。
         // off は、スキャン資産を足す前と同じ描画量を撮って、足した分を差し引くための基準に使う。
         constexpr const TCHAR *kStartupScanPropsOption = TEXT("--startup-scan-props=");
@@ -505,6 +509,7 @@ namespace Game
         s_Rendering3DTestRenderScale = 1.0f;
         s_VramBudgetCapMb = 0;
         s_bRendering3DTestDebugDrawTestLines = false;
+        s_bRendering3DTestSkinnedProbe = false;
         s_bRendering3DTestScanProps = true;
         s_Rendering3DTestStressMegaInstances = 0;
         s_Rendering3DTestStressGeometryCount = 0;
@@ -814,6 +819,11 @@ namespace Game
                 continue;
             }
 
+            if (args[i] == kStartupSkinnedProbeOption)
+            {
+                s_bRendering3DTestSkinnedProbe = true;
+                continue;
+            }
             if (args[i] == kDebugDrawTestLinesOption)
             {
                 s_bRendering3DTestDebugDrawTestLines = true;
@@ -1997,6 +2007,7 @@ namespace Game
                 mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
                 mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
+                mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe;
                 mode->GetData().m_bStartupScanProps = s_bRendering3DTestScanProps;
                 mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressMegaInstances;
                 if (s_Rendering3DTestStressGeometryCount > 0u)

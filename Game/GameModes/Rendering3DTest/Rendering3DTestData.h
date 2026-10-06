@@ -280,6 +280,10 @@ namespace Game::GameModes
         float m_StartupRenderScale = 1.0f;
         // --debug-draw-test-lines の指定で true にする。大きな球を囲む箱をデバッグの線で毎フレーム描く。
         bool m_bDebugDrawTestLines = false;
+        // --startup-skinned-probe の指定で true にする。検証用の骨付きのパネルを地面の上へ 1 枚置く（既定は置かない）。
+        bool m_bStartupSkinnedProbe = false;
+        NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::SkeletalAssetResource> m_StartupSkinnedProbeAsset;
+        NorvesLib::Core::Component::SkinnedMeshComponent *m_pStartupSkinnedProbeComponent = nullptr;
         // 地面の外周に高ポリのスキャン資産を置くか（--startup-scan-props=off で false。既定は true）。
         bool m_bStartupScanProps = true;
         // --stress-mega-instances=<N> の個数（0 は置かない）。スキャン資産を置いた後、そのメッシュを N 個格子に複製する。

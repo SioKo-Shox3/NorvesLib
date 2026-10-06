@@ -155,6 +155,9 @@ param(
     # -StressGeometry で並べる個数。
     [ValidateRange(1, 4096)]
     [int]$StressGeometryCount = 300,
+    # 検証用の骨付きのパネルを地面の上へ 1 枚置いて撮る（--startup-skinned-probe）。スキニングの塊がビジビリティバッファの経路で描かれることの確認用。
+    # 起動画面は変えない（既定は置かない）。-VisibilityBuffer On・Off・Debug と -GBufferDebug の撮り比べに使う。
+    [switch]$SkinnedProbe,
     # 遮蔽カリングの確認用の視点（occ-sphere・occ-cottage・occ-cottage-edge・旋回の出発点 occ-sphere-orbit・occ-cottage-orbit）を撮る視点へ加える。
     [switch]$OcclusionViews,
     # 地面の外周のスキャン資産（Poly Haven）を、近くから遠くへカメラを引いて見る視点（scan-d08 から scan-d78 までの 7 視点）を撮る視点へ加える。
@@ -801,6 +804,10 @@ foreach ($view in $shots)
     if ($StressTextures)
     {
         $arguments += '--stress-textures'
+    }
+    if ($SkinnedProbe)
+    {
+        $arguments += '--startup-skinned-probe'
     }
     if ($StressGeometry)
     {
