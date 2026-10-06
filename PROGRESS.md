@@ -981,3 +981,11 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 
 - code8e913414 / run37471551402 / job112296050946 は新しい SkeletalAssetPublicationTest の std::filesystem 宣言不足（C2079、temp_directory_path 等の未宣言）でRelease buildが失敗した。CPU60・Debug・後続CLIは未実行。
 - 新試験へ必要な <filesystem> を直接includeする。production、期待値、固定基準、既存試験本文は変更しない。修正後のWindows CIで再検証し、成功前に完了扱いしない。
+
+### GR83 骨格bundle一括公開のCPU受入（2026-10-06）
+
+- Done: 177c1b69924566568376987c18e7ea6b34b80d59 / tree780f3603ec5a5086ec81cadee5094b20b3e691b9 / run37474221718 / job112305303905。Release60件とDebugのpublication/loader/Profile/Registry4member、旧cook/CLI/固定Samplerを通過。修正は新試験includeだけでproduction不変。
+- 検証: 7比較器をnormal/-Oで計14回実行しreceipt/stdout一致・stderr空。保存済み証拠の親再実行もexit0、541payload一致。summary SHA256 8151ad7cc3a0c750cc13879a111aec33d15583d67fdc058bff30559664f7a129、inventory SHA256 4c68486b34223b98c8dfa749545c198631f029b15089ee6725ece3672bb89e5a。
+- 失敗run37471551402はReleaseコンパイル失敗のまま別保全し、親readonly replayは421payload/exit0/stderr空。成功と混同しない。
+- 範囲: Registry session付きprepared、子とaggregateの全部-or-zero登録、同key共有・typed handles・予算拒否・GC/lease保持をCPUで受入。shadow copyは追加ごとO(既存pool)、累積O(K²)。cold公開の正しさを保証する初期実装で高スループット/RSS上限を保証しない。
+- Notes: 実行中の内部状態・profile sink配送はsource固定CI検査、未archive compiler/Core/Debug試験binaryはhash attestation。Windows nativeをLinuxで再実行したとは扱わない。製品GameThread/async/delegate/M9/StageB/GPUは未接続。
