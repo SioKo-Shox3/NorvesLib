@@ -6,6 +6,7 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
+#include "Rendering/ScopedGpuTimestamp.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/VisibilityRasterPass.h"
@@ -72,35 +73,6 @@ namespace NorvesLib::Core::Rendering
         // 手放したバッファ（作り直した「見えた」ビット・IndirectDraw のバッファなど）を破棄するまでのフレーム数。
         // フレームの飛行数は2以下なので、GPUはこれより前に使い終わっている
         constexpr uint64_t RetiredBufferFrames = 8;
-
-        // コマンドリストの GPU タイムスタンプの区間（統計が有効な構成の trace の Type=GPU 行になる。それ以外では何もしない）
-        class ScopedGpuTimestamp
-        {
-        public:
-            ScopedGpuTimestamp(RHI::ICommandList *commandList, const char *scopeName)
-                : m_CommandList(commandList)
-            {
-                if (m_CommandList)
-                {
-                    m_Handle = m_CommandList->BeginGPUTimestampScope(scopeName);
-                }
-            }
-
-            ~ScopedGpuTimestamp()
-            {
-                if (m_CommandList && m_Handle.IsValid())
-                {
-                    m_CommandList->EndGPUTimestampScope(m_Handle);
-                }
-            }
-
-            ScopedGpuTimestamp(const ScopedGpuTimestamp &) = delete;
-            ScopedGpuTimestamp &operator=(const ScopedGpuTimestamp &) = delete;
-
-        private:
-            RHI::ICommandList *m_CommandList = nullptr;
-            RHI::GPUTimestampScopeHandle m_Handle;
-        };
 
         bool IsMegaGeometryDebugPayloadMode(DebugViewMode mode)
         {

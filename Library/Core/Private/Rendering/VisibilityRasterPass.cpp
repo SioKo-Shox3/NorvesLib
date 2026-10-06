@@ -11,6 +11,7 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/ScopedGpuTimestamp.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/ViewRenderContext.h"
@@ -937,6 +938,7 @@ namespace NorvesLib::Core::Rendering
     {
         RHI::ICommandList* commandList = m_Work.CommandList;
         FrameSlot& slot = *m_Work.Slot;
+        ScopedGpuTimestamp gpuTimestamp(commandList, "VisRasterRecords");
 
         // コマンド・カウンタを計算が読めるようにする（描画情報は GenericRead で渡される）
         commandList->BufferBarrier(plan.IndirectBuffer, m_Work.IndirectState, RHI::ResourceState::GenericRead);
@@ -967,6 +969,8 @@ namespace NorvesLib::Core::Rendering
         commandList->SetDescriptorSet(m_Work.Slot->MegaSet, 0);
         for (uint32_t passIndex = firstPass; passIndex < endPass; ++passIndex)
         {
+            // 区間の名前は MegaGeometryPass の予備の描画と同じ（off と比べられる）
+            ScopedGpuTimestamp drawTimestamp(commandList, passIndex == 0 ? "MegaGeometryDraw1" : "MegaGeometryDraw2");
             for (uint32_t sectionIndex = 0; sectionIndex < plan.Sections.size(); ++sectionIndex)
             {
                 const MegaGeometryPass::VisibilityDrawPlan::Section& section = plan.Sections[sectionIndex];
@@ -999,8 +1003,14 @@ namespace NorvesLib::Core::Rendering
 
     void VisibilityRasterPass::RecordChunkDraws()
     {
+        if (!m_Work.bDrawMesh && !m_Work.bDrawSkinned)
+        {
+            return;
+        }
+
         RHI::ICommandList* commandList = m_Work.CommandList;
         FrameSlot& slot = *m_Work.Slot;
+        ScopedGpuTimestamp gpuTimestamp(commandList, "VisRasterChunks");
 
         if (m_Work.bDrawMesh)
         {

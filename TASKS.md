@@ -970,7 +970,7 @@
 - notes: 2026-10-06 TEST-SKINNED の評価で見つけた（段6の外）。
 
 ## VTG7-RASTER-TIMING: ビジビリティバッファのラスタの GPU 時間の内訳を測り、負荷モードで増えた分の主因を切り分ける
-- status: todo
+- status: done
 - done-when: `MegaGeometryPass.cpp` の匿名名前空間の `ScopedGpuTimestamp` を Rendering の内部の共通ヘッダへ移し、`VisibilityRasterPass` に GPU の区間 `VisRasterChunks`（手続きメッシュ・スキニングの塊の描画）・`VisRasterRecords`（描画の記録の compute）・`MegaGeometryDraw1`・`MegaGeometryDraw2`（MegaGeometry の pass1・pass2 の描画。off と同じ名前）を足す。RelWithDebInfo の `-GpuTimingFrames 300` で、起動画面と `--stress-mega-instances=300` の on と off（`-VisibilityBuffer On／Off`）を測り、metrics.json の `pass_median_ms` に新しい区間が出ることと、on と off の `MegaGeometryDraw1` の比を PROGRESS に書く。続けて一時的な切り分け（コミットしない。終わったら手で元に戻し、`git diff` が区間の追加だけであることを確かめる）を負荷モードの既定の視点で測って PROGRESS に書き、増えた分（段6の受入れで既定の視点のフレーム GPU が 6.608 → 11.201 ms）の主因を順位づける: (i) `RecordMegaRecords` の dispatch を 1 グループにする（今は横 `min(ceil(区間の容量の最大/64), 65535)` × 縦 `区間の数 × パスの数` を立てる。`VisibilityRasterPass.cpp` の `RecordMegaRecords`）、(ii) `visbuffer.frag` の `gl_PrimitiveID` を外して記録の番号だけを書く、(iii) ID のラスタの深度の比較を Less にする。切り分けの間は画が壊れてよい（時間だけ見る）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderingGoldenImageTest -- /m:1`
