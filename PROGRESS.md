@@ -976,3 +976,8 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - GR83-P1受入: codee29a2d3337cb9c3564c794090858debd7e39c567/tree7005c3d9dcc365af061a5481dcfdf8cd39f62610/run37458778661 attempt1 job112252798210。Release55CPU/21marker、direct Debugのloader/Profile、3stage成功/失敗のsink検査、旧89出力/25+15CLI/12metadata/17+29child退出/4固定6095byte captureとGR84別58process/125fileを確認。12checkerのnormal/-O receipt/stdout一致・stderr空。親readonly再実行exit0・470payload inventory一致。summary SHAcb02a58733b5b110e271582aed84e4135518e18bc30f02c1742ef5af493dfa46、inventory 3a01a0c4a9773ab1fabc3cb974c98601d82760e180bfc573d56dbe1bf46b6fd0。latest2paths/Library0、累積11paths/Library4。初回compile失敗399payloadと第二fixture失敗415payloadは独立archiveを親も再検証済み。中間sink entryや未archiveのcompiler/Core/sampler binaryはsource付きCI検査証拠であり、独立byte再実行と混同しない。cold loaderの全clip・未登録所有bundleまで受入れた。次はRegistry部分登録を防ぐ狭い一括公開を先に閉じ、その後event-driven asyncとcacheへ接続する。現public Registerの例外安全性は仮定しない。製品の二つのGEngineと実ApplicationProcessor経路を区別し、製品配送・M9・StageB・GPUは後続とする。
 
 - GR83-P2a候補: P1を呼ぶopaque prepared値とRegistry session epoch、正確なkey/URI/child handlesを確認するcache Acquire、4型shadow poolの一括公開を実装中。既存public Registerは変更せず、欠損型placeholder準備後のnoexcept swapで全-or-zeroを閉じる。copied metadata件数と有限予算を持ち、cold公開O(既存pool)/累積O(K²)の費用を明示する。旧55＋新publication＋関連Registry4件でRelease60、Debugでも関連契約を実行する候補。現時点は静的確認済み・native未実行、async/製品loop/M9/StageB/GPUは未接続。
+
+### GR83 一括公開のWindowsコンパイル修正（2026-10-06）
+
+- code8e913414 / run37471551402 / job112296050946 は新しい SkeletalAssetPublicationTest の std::filesystem 宣言不足（C2079、temp_directory_path 等の未宣言）でRelease buildが失敗した。CPU60・Debug・後続CLIは未実行。
+- 新試験へ必要な <filesystem> を直接includeする。production、期待値、固定基準、既存試験本文は変更しない。修正後のWindows CIで再検証し、成功前に完了扱いしない。
