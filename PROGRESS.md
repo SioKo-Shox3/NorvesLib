@@ -1617,7 +1617,7 @@
 - 内容: 段6の受入れを `Docs/RenderingValidation/VirtualizationAcceptance.md` の「段6（ビジビリティバッファ）」の節に記録した（コードは変えていない）。
 - 検証（`.harness/runs/20261006-111432/`）: `verify-VTG6-ACCEPT-1-build.txt`（Debug の Game ほか 4 target、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（8/8 Passed。golden Indoor・Outdoor、速度のスキニング、RenderGraphCompileTest などを含む）、`-3-rwdi-build.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-4-capture-day.txt`（朝・昼・夕 result=pass）、`-5-capture-night.txt`（夜 pass）。予備の経路（off）の撮影・on との画素の比較・GPU 時間は `ev-6`〜`ev-11`。
 - 数値: on と off の PSNR は 12 視点で 48.86〜56.80 dB（下限 45）、平均輝度の差 0.0332 以下。`MEGA_OCCLUSION` は on と off で完全に一致。VT の常駐は on が off の 0.73・0.66・0.95 倍（`wanted=0`・`failed=0`）。ログに VUID・予備への戻り・資産の欠けは無い。PNG は既定・近接・夜を開いて確かめた。
-- GPU 時間（RelWithDebInfo、中央値）: 起動画面は on が off より +0.19〜+0.34 ms（既定 2.412 / 2.214）。300 個の負荷モードは on 11.201・9.192・8.732 ms、off 6.608・5.988・5.597 ms（1.54〜1.69 倍）。on の ID のラスタが off の `MegaGeometry` の 2.55〜2.79 倍。300 個・既定の視点の CPU のフレームは on が 16.99 ms（off 12.33）。
+- GPU 時間（RelWithDebInfo、中央値）: 起動画面は on が off より +0.19〜+0.34 ms（既定 2.412 / 2.214）。300 個の負荷モードは on 11.201・9.192・8.732 ms、off 6.608・5.988・5.597 ms（1.54〜1.70 倍）。on の ID のラスタが off の `MegaGeometry` の 2.55〜2.79 倍。300 個・既定の視点の CPU のフレームは on が 16.99 ms（off 12.33）。
 - stop-when の判断: 受入れの条件（起動画面と golden が移行前と同等）は満たすので止めない。GPU 時間の増加は条件に無く、既知の限界に測った値を記録した。
 - Notes: (1) 負荷モード・off の撮影はスクリプトの VT の上限（64 MB）の判定で fail（近接 84 MB）。GPU 時間は取れており記録した（on は同じ 300 個で 58 MB）。 (2) 最初の GPU 計測の呼び出しは作業ディレクトリがずれて何も走らなかったので、リポジトリ直下に戻して撮り直した。 (3) 追記は python でバイト単位（BOM・CRLF を保つ。`git diff --numstat` と `--ignore-cr-at-eol` は全ファイルで一致）。
 - Next: TASKS.md に未完なし（段6は完了。親が main へマージしてプッシュする）。
