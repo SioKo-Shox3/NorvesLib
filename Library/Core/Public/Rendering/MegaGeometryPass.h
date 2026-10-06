@@ -184,6 +184,11 @@ namespace NorvesLib::Core::Rendering
              */
             RHI::BufferPtr SwRasterBuffer;
             uint32_t SwRasterCapacity = 0; // 一覧のパスごとの容量（クラスタ数。パスごとのコマンド数まで）
+            /**
+             * 統計のバッファ（UnorderedAccess の状態。bStatsEnabled が偽のときは代わりのバッファ）。ソフトのラスタが、描かなかった三角形・走ったワークグループを数える
+             */
+            RHI::BufferPtr StatsBuffer;
+            bool bStatsEnabled = false;
             Container::VariableArray<Section> Sections;
         };
 
@@ -214,6 +219,9 @@ namespace NorvesLib::Core::Rendering
              * false なら、一覧へ積むだけでハードがすべてのクラスタを描く（振り分けの統計だけが取れる）。
              */
             virtual bool IsSwRasterAvailable() const = 0;
+
+            /** @brief これまでに記録したソフトウェアラスタの dispatch の累計（確認用。フレームの差を統計に載せる）。ソフトを持たない sink は 0 */
+            virtual uint32_t GetSwRasterDispatchCount() const { return 0; }
 
             /** @brief 1パス目のカリングの後。ID・深度へ手続き・スキニングの塊と1パス目を描く（深度は描いた後 ShaderResource になる） */
             virtual void RecordFirstPassDraws(RHI::ICommandList *commandList, const VisibilityDrawPlan &plan) = 0;
@@ -649,6 +657,7 @@ namespace NorvesLib::Core::Rendering
             int64_t EpochFrame = -1;   // 決定的な撮影のエポックからの相対フレーム。エポック前は -1
             bool bPending = false;
             bool bSwRasterBin = false; // このフレームがソフトウェアラスタの振り分けを行い、統計の 4〜7 が有効
+            uint32_t SwDispatches = 0; // このフレームで sink が記録したソフトの dispatch の数（GPU の統計ではなく CPU の記録の数）
         };
         static constexpr uint32_t StatsSlotCount = 4;
         bool m_bStatsEpochActive = false;

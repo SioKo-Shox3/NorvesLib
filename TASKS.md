@@ -1071,6 +1071,30 @@
 - stop-when: しきい値 64 画素で `SW_RASTER_OVERSIZE` が 0 にならない場合は、数と視点を記録して止める（振り分けの判定の見直しが要る）。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Private/Engine, Assets/Shaders, Test/Core/Rendering, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 親（VTG7-SW-BIN・VTG7-SW-RASTER-SHADER の評価はどちらも PASS。その non-blocking を集めた）。危険地帯（描画パス）。VTG7-SW-RASTER の撮影の後、VTG7-SW-THRESHOLD の前に行う。(7)〜(12) は VTG7-SW-RASTER-WIRE の評価（PASS）の non-blocking。1 反復で閉じなければ (1)(7)(8) を先に閉じ、残りを `VTG7-SW-HARDEN-` で始まる項目に分ける。
+- progress (2026-10-06 反復1): (1) の矩形の上限（64 画素四方）と計数（`SW_RASTER_OVERSIZE=<n>`。統計の 9 番）、(2)(3)(6)、(7) の GPU 計数（`SW_RASTER_BIN` に zeroed・sw_groups・sw_dispatches。負荷モードで pass1 + pass2 に一致）、(9)〜(12) を実装して Debug のビルド・ctest・RelWithDebInfo の撮影で確かめた。
+  stop-when に当たった: しきい値 64 画素の撮影で `SW_RASTER_OVERSIZE` が default 4・near 28・low 32（既定の 8 画素の負荷モードでは 0）。ソフトの判定は保守的（半径の上限）で、半径 64 画素のクラスタの直径は最大 128 画素なので、64 画素四方の上限と同じしきい値は両立しない。決めること・選択肢・推奨は `blocked/VTG7-SW-HARDEN.md`。
+  (4)(5) は `VTG7-SW-HARDEN-TESTS`、(8) と on・off の中央値は `VTG7-SW-HARDEN-VALIDATION` に分けた。
+
+## VTG7-SW-HARDEN-TESTS: ソフトウェアラスタの被覆の比較と配線のテストの穴を埋める
+- status: todo
+- done-when: (4) `VisibilityResolveVulkanTest` のソフトとハードの被覆の比較に、画素の中心を通る水平の辺（top-left の上の辺の向き）と、単位でない view 行列の場面を足し、top-left の `dx > 0` の向きを逆にする変異と、`projection * view` の順を入れ替える変異が落ちることを記録する。(5) `RenderGraphCompileTest` で `SceneView` に渡したしきい値が `MegaGeometryPass` のカリングの定数（`SwRasterMaxPixels`）まで届くことを確かめ、しきい値を渡さない変異で落ちることを記録する。あわせて、矩形の上限を超える三角形を 1 つ含む場面で、ソフトが描かず `SW_STAT_OVERSIZE`（統計の 9 番）が 1 になることを GPU のテストで確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest)$"`
+- stop-when: 変異を入れても検査が落ちない場合は、場面を直して落ちることを確かめるまで done にしない。
+- paths: Test/Core/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 VTG7-SW-HARDEN から分けた。テストのコードでも標準ライブラリの型を使わない。変異は編集して測り、同じ編集で元へ戻す。
+
+## VTG7-SW-HARDEN-VALIDATION: ソフトウェアラスタを検証レイヤー付きで走らせ、on・off の GPU 時間を測る
+- status: todo
+- done-when: (8) Debug の Game を `--sw-raster=on` で（Debug は検証レイヤーが既定で有効）、起動画面・負荷モード 300 個を数百フレーム走らせ、ログに `VUID` が 0 件であることを確かめる（RelWithDebInfo の撮影は検証レイヤーが切れているので VUID 0 は証拠にならない）。(7) の残り: RelWithDebInfo の `-GpuTimingFrames 300` で負荷モードの `VisRasterSw1`・`VisRasterSw2`・`MegaGeometryDraw1` の中央値を on・off で測って PROGRESS に書く。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-HARDEN-validation -Configuration Debug -Deterministic -SunElevations 45 -SwRaster On -ExtraGameArguments --stress-mega-instances=300`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-HARDEN-timing-on -Configuration RelWithDebInfo -Deterministic -SunElevations 45 -SwRaster On -GpuTimingFrames 300 -ExtraGameArguments --stress-mega-instances=300`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-HARDEN-timing-off -Configuration RelWithDebInfo -Deterministic -SunElevations 45 -SwRaster Off -GpuTimingFrames 300 -ExtraGameArguments --stress-mega-instances=300`
+- stop-when: ログに `VUID` が 1 件でもあれば、メッセージと再現の条件を記録して止める（同期か状態の誤りを直す項目を足す）。
+- paths: Scripts/CaptureStartupScene.ps1, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 VTG7-SW-HARDEN から分けた。Debug の撮影は遅いので -TimeoutSeconds を足してよい。重い処理（GPU の長時間取得）は build-and-verify.md の扱いに従う。
 
 ## VTG7-SW-THRESHOLD: ソフトウェアラスタのしきい値ごとの GPU 時間を測る
 - status: todo

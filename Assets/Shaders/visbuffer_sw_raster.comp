@@ -17,6 +17,8 @@
 //   - 深度（ビューポートの変換後の z）は画面空間で線形に補間する（ハードの補間と同じ。透視の補正はしない）。
 //   - 書くのは atomicMin（上位 32bit = 深度のビット、下位 32bit = ID）。手前の深度が残り、同じ深度なら小さい ID が残る。
 // 近平面と交わるクラスタはカリングが振り分けない。万一 w が 0 以下の頂点があれば、その三角形は描かない。
+// 1 スレッドが走査する画素の矩形（シザーと 64bit のバッファの大きさで切った後）は SW_MAX_SPAN 画素四方までで、超える三角形は
+// 描かずに数える（統計の STAT_SW_OVERSIZE。カリングの振り分けのしきい値が保守的なら 0 になる。1 スレッドが長く走って TDR になるのを防ぐ）。
 // ========================================
 
 #define VIS_ENABLE_KEY64
@@ -74,6 +76,12 @@ layout(std430, set = 0, binding = 4) readonly buffer SwRasterList
     uint swList[];
 };
 
+// binding 6: 統計（MegaGeometryCull.glsl の StatsBuffer と同じバッファ。9 = SW_STAT_OVERSIZE、10 = SW_STAT_GROUPS）。params.flags.x が 0 なら使わない
+layout(std430, set = 0, binding = 6) buffer SwStatsBuffer
+{
+    uint swStats[];
+};
+
 // binding 5: dispatch ごとの定数
 layout(std140, set = 0, binding = 5) uniform SwRasterParams
 {
@@ -85,7 +93,15 @@ layout(std140, set = 0, binding = 5) uniform SwRasterParams
     vec4 viewport;
     // x = minDepth、y = maxDepth
     vec4 depthRange;
+    // x = 1 なら統計（binding 6）へ数える
+    uvec4 flags;
 } params;
+
+// 1 スレッドが走査する画素の矩形の一辺の上限（画素）。超える三角形は描かない
+const int SW_MAX_SPAN = 64;
+// 統計の添え字（MegaGeometryCull.glsl の STAT_SW_OVERSIZE・STAT_SW_GROUPS と一致）
+const uint SW_STAT_OVERSIZE = 9u;
+const uint SW_STAT_GROUPS = 10u;
 
 // 固定小数点の 1 画素あたりの目盛り（1/256 画素。ハードのラスタの小数部の精度以上）
 const int SW_SUBPIXEL_BITS = 8;
@@ -117,6 +133,10 @@ void main()
     if (groupIndex >= min(swList[listHead + 3u], params.list.x))
     {
         return;
+    }
+    if (gl_LocalInvocationID.x == 0u && params.flags.x != 0u)
+    {
+        atomicAdd(swStats[SW_STAT_GROUPS], 1u);
     }
 
     const uint commandIndex = swList[SW_LIST_HEADER_WORDS + passIndex * params.list.x + groupIndex];
@@ -186,6 +206,16 @@ void main()
     const int pixelMask = (1 << SW_SUBPIXEL_BITS) - 1;
     const ivec2 minPixel = max((minFixed - halfPixel + pixelMask) >> SW_SUBPIXEL_BITS, params.rect.xy);
     const ivec2 maxPixel = min((maxFixed - halfPixel) >> SW_SUBPIXEL_BITS, params.rect.zw - 1);
+
+    // 走査する矩形が上限を超える三角形は描かずに数える（矩形が空なら何もしない）
+    if (any(greaterThan(maxPixel - minPixel + 1, ivec2(SW_MAX_SPAN))))
+    {
+        if (params.flags.x != 0u)
+        {
+            atomicAdd(swStats[SW_STAT_OVERSIZE], 1u);
+        }
+        return;
+    }
 
     const bool bTopLeft0 = SwIsTopLeft(fixedPosition[1], fixedPosition[2]);
     const bool bTopLeft1 = SwIsTopLeft(fixedPosition[2], fixedPosition[0]);

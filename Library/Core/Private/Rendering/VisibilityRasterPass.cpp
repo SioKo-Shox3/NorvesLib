@@ -1488,8 +1488,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ソフトウェアラスタ（1 パス目）: 1 パス目のコマンドの記録を書いて、小さいクラスタを 64bit のバッファへ描く。
-        // ハードのコマンドは空振りにしてあるので、ここで描かなければそのクラスタは HZB の元の深度にも入らない
-        if (m_Work.bHasMegaDraw && plan.SwRasterBuffer)
+        // ハードのコマンドは空振りにしてあるので、ここで描かなければそのクラスタは HZB の元の深度にも入らない。
+        // ソフトが走らないフレーム（ワイヤーフレーム・パイプラインの失敗など。カリングは振り分けるだけでハードがすべて描く）は、記録も戻しも要らない
+        if (m_Work.bHasMegaDraw && plan.SwRasterBuffer && IsSwRasterAvailable())
         {
             RHI::ICommandList* commandList = m_Work.CommandList;
             RecordMegaRecords(plan, "VisRasterRecords1");
@@ -1553,6 +1554,11 @@ namespace NorvesLib::Core::Rendering
         }
         // 一覧を、間接 dispatch の引数と読み取りに使う状態へ（カリングが書き終えた UnorderedAccess から）
         commandList->BufferBarrier(plan.SwRasterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+        // 統計を数えるフレームは、カリングが書いた統計の後にソフトの dispatch が続けて足す（UnorderedAccess のまま書き込みの順を並べる）
+        if (plan.bStatsEnabled && plan.StatsBuffer)
+        {
+            commandList->BufferBarrier(plan.StatsBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        }
 
         VisibilitySwRaster::Inputs inputs;
         inputs.FrameUniform = m_Work.Slot->FrameUniform;
@@ -1565,6 +1571,8 @@ namespace NorvesLib::Core::Rendering
         inputs.KeyHeight = m_Merge.GetKeyHeight();
         inputs.List = plan.SwRasterBuffer;
         inputs.ListCapacity = plan.SwRasterCapacity;
+        inputs.Stats = plan.StatsBuffer;
+        inputs.bStatsEnabled = plan.bStatsEnabled;
         inputs.Viewport = m_Work.Viewport;
         inputs.Scissor = m_Work.Scissor;
         const bool bRecorded = m_SwRaster.RecordDispatch(commandList, passIndex, inputs);
@@ -1572,6 +1580,10 @@ namespace NorvesLib::Core::Rendering
         // 一覧は次のカリング（2 パス目）・最後の Common への戻しが続けて扱うので UnorderedAccess へ戻す。
         // 64bit のバッファの書き込みは、合流の読み取りへ見せる
         commandList->BufferBarrier(plan.SwRasterBuffer, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+        if (plan.bStatsEnabled && plan.StatsBuffer)
+        {
+            commandList->BufferBarrier(plan.StatsBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        }
         m_Merge.RecordEndSoftwareWrite(commandList);
         if (bRecorded)
         {

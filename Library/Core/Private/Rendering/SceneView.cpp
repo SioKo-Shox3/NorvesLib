@@ -834,12 +834,13 @@ namespace NorvesLib::Core::Rendering
                                           float swRasterMaxPixels)
     {
         const bool bVisibilityBuffer = IsVisibilityBufferActive(visibilityBuffer);
-        // ソフトウェアラスタの振り分けは、ビジビリティバッファの ID のラスタが無いと意味が無いので、そのときだけ要求する。
-        // 要求しても使えない理由（64bit アトミックが無いなど）は MegaGeometryPass が SW_RASTER_FALLBACK として 1 回だけログへ出す
-        const bool bSwRaster = bVisibilityBuffer && swRaster == SwRasterMode::On;
         // On のときは、ビジビリティバッファの解決が GBuffer を書く（GBufferPass・MegaGeometryPass は GBuffer の描画を止める）。
         // Debug は今の GBuffer の描画を残したまま、ID の検証表示だけを足す
         const bool bVisibilityResolve = visibilityBuffer == VisibilityBufferMode::On;
+        // ソフトウェアラスタの 64bit のバッファ・埋め・合流は、材質の解決を使う On のときだけ作る（Debug は GBuffer が先に MegaGeometry を描くので、
+        // ソフトに回せない）。振り分けの要求は --sw-raster=on なら出し、使えない理由（Debug・64bit アトミックが無いなど）は
+        // MegaGeometryPass が SW_RASTER_FALLBACK として 1 回だけログへ出す
+        const bool bSwRaster = bVisibilityResolve && swRaster == SwRasterMode::On;
         // 既存のパスをクリア
         while (GetPassCount() > 0)
         {

@@ -89,7 +89,8 @@ namespace NorvesLib::Core::Rendering
      * 2 パスの遮蔽で 64bit のバッファを使えるフレーム（IsSwRasterAvailable）は、MegaGeometryPass のカリングが画面上で小さいクラスタを
      * ソフトの一覧へ積み、そのハードのコマンドを空振りにする。ソフトの dispatch（VisibilitySwRaster。1 ワークグループ = 1 クラスタ）は
      * 1 パス目: [記録を書く計算 → 64bit のバッファを書き込みへ → dispatch → 読み取りへ] → 合流（HZB の前）、
-     * 2 パス目: 記録を書く計算（全パス。1 パス目のぶんは同じ値で書き直される）→ [dispatch] → 合流 の順に記録する。
+     * 2 パス目: 記録を書く計算（全パス。1 パス目のぶんは同じ値で書き直される）→ [ID の render pass: 2 パス目のハードの描画]
+     * → [64bit のバッファを書き込みへ → dispatch → 読み取りへ] → 合流 の順に記録する（ソフトの dispatch は、記録とハードの描画の後ろに置く）。
      *
      * 既定は無効（SceneView::SetupDeferredPipeline の VisibilityBufferMode が Off）。
      */
@@ -335,6 +336,7 @@ namespace NorvesLib::Core::Rendering
 
         // MegaGeometryPass::IDrawSink（記録を移されたフレームの、2 パスの遮蔽の途中の描画）
         bool IsSwRasterAvailable() const override;
+        uint32_t GetSwRasterDispatchCount() const override { return m_Stats.SwRasterDispatchCount; }
         void RecordFirstPassDraws(RHI::ICommandList* commandList,
                                   const MegaGeometryPass::VisibilityDrawPlan& plan) override;
         void RecordMergeBeforeHiZ(RHI::ICommandList* commandList,

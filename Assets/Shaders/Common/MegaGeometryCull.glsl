@@ -153,6 +153,8 @@ const uint STAT_SW_PASS1 = 4u;     // 1パス目で一覧へ積んだクラス�
 const uint STAT_SW_PASS2 = 5u;     // 2パス目で一覧へ積んだクラスタ
 const uint STAT_SW_HARDWARE = 6u;  // 一覧へ積まず、ハードのラスタだけが描くクラスタ（両パスの合計。STAT_SW_OVERFLOW を含む）
 const uint STAT_SW_OVERFLOW = 7u;  // 小さいが一覧が満杯で積めなかったクラスタ（両パスの合計）
+const uint STAT_SW_ZEROED = 8u;    // ハードのコマンドを空振り（instanceCount = 0）にしたクラスタ（両パスの合計。swRasterEnabled=2 のときだけ）
+// 9・10 は visbuffer_sw_raster.comp が数える（9 = 矩形の上限を超えて描かなかった三角形、10 = 走ったワークグループ）
 
 const uint DEBUG_PAYLOAD_MODE_NONE = 0u;
 const uint DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
@@ -189,7 +191,7 @@ layout(std430, set = 0, binding = 5) buffer VisibleLastFrameBuffer
 // set 0, binding 6: 統計（STAT_*。1フレームの全インスタンスの合計）。bStatsEnabled=0 では使わない。
 layout(std430, set = 0, binding = 6) buffer StatsBuffer
 {
-    uint stats[8];
+    uint stats[12];
 };
 
 // set 0, binding 7: 材質の区間の表（x = コマンドの先頭の位置（全パス通しの添え字）, y = 区間のコマンドの最大数）。
@@ -699,6 +701,10 @@ void EmitDrawCommand(uint instanceIndex, MegaInstance instance, uint clusterInde
             {
                 // ソフトが描くので、ハードのコマンドは空振りにする（コマンドの位置と記録は残る。ソフトが記録を引く）
                 drawCommands[commandIndex].instanceCount = 0;
+                if (cullData.bStatsEnabled != 0u)
+                {
+                    atomicAdd(stats[STAT_SW_ZEROED], 1u);
+                }
             }
             if (cullData.bStatsEnabled != 0u)
             {

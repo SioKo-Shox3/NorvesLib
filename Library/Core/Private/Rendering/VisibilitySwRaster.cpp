@@ -15,15 +15,16 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        // visbuffer_sw_raster.comp の SwRasterParams（std140: uvec4 list、ivec4 rect、vec4 viewport、vec4 depthRange）
+        // visbuffer_sw_raster.comp の SwRasterParams（std140: uvec4 list、ivec4 rect、vec4 viewport、vec4 depthRange、uvec4 flags）
         struct SwRasterParams
         {
             uint32_t List[4];
             int32_t Rect[4];
             float Viewport[4];
             float DepthRange[4];
+            uint32_t Flags[4];
         };
-        static_assert(sizeof(SwRasterParams) == 64, "SwRasterParams は std140 の 4 つの 16 バイトの組");
+        static_assert(sizeof(SwRasterParams) == 80, "SwRasterParams は std140 の 5 つの 16 バイトの組");
 
         constexpr uint32_t FrameUniformBytes = sizeof(float) * 32; // view + projection
         // MegaGeometryPass のソフトの一覧の頭（パスごとに 4 語。間接 dispatch の引数の x・y・z と、積もうとした数）
@@ -35,7 +36,7 @@ namespace NorvesLib::Core::Rendering
                                                                : static_cast<uint32_t>(size);
         }
 
-        // visbuffer_sw_raster.comp の binding 0〜5
+        // visbuffer_sw_raster.comp の binding 0〜6
         RHI::DescriptorSetDesc MakeSwRasterDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
@@ -53,6 +54,7 @@ namespace NorvesLib::Core::Rendering
             add(3, RHI::ResourceBindType::RWBuffer);
             add(4, RHI::ResourceBindType::StructuredBuffer);
             add(5, RHI::ResourceBindType::ConstantBuffer);
+            add(6, RHI::ResourceBindType::RWBuffer);
             return desc;
         }
     } // namespace
@@ -67,7 +69,9 @@ namespace NorvesLib::Core::Rendering
     bool VisibilitySwRaster::Initialize(RHI::IDevice* device, ShaderManager* shaderManager)
     {
         Shutdown();
-        if (!device || !shaderManager || !VisibilityMerge::IsSupported(device->GetCapabilities()))
+        // 64bit のバッファへの atomicMin（合流と同じ条件）に加え、シェーダーが記録の表から頂点を引くための buffer_reference（バッファのアドレス）が要る
+        if (!device || !shaderManager || !VisibilityMerge::IsSupported(device->GetCapabilities()) ||
+            !device->GetCapabilities().bBufferDeviceAddress)
         {
             return false;
         }
@@ -102,6 +106,7 @@ namespace NorvesLib::Core::Rendering
         m_Shader.reset();
         m_Device = nullptr;
         m_DirectFallbackCount = 0;
+        m_bResourceFailureLogged = false;
     }
 
     void VisibilitySwRaster::BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
@@ -112,7 +117,7 @@ namespace NorvesLib::Core::Rendering
     bool VisibilitySwRaster::RecordDispatch(RHI::ICommandList* commandList, uint32_t passIndex, const Inputs& inputs)
     {
         if (!IsReady() || !m_Device || !commandList || passIndex > 1u || !inputs.FrameUniform || !inputs.InstanceBuffer ||
-            !inputs.RecordTable || !inputs.KeyBuffer || !inputs.List || inputs.ListCapacity == 0 || inputs.KeyWidth == 0 ||
+            !inputs.RecordTable || !inputs.KeyBuffer || !inputs.List || !inputs.Stats || inputs.ListCapacity == 0 || inputs.KeyWidth == 0 ||
             inputs.KeyHeight == 0)
         {
             return false;
@@ -131,7 +136,12 @@ namespace NorvesLib::Core::Rendering
         }
         if (!use.Params || !use.DescriptorSet)
         {
-            NORVES_LOG_WARNING("VisibilitySwRaster", "ソフトウェアラスタの資源の作成に失敗。この dispatch は何もしません");
+            // 毎フレーム同じ失敗を繰り返すので、警告は 1 回だけ出す
+            if (!m_bResourceFailureLogged)
+            {
+                m_bResourceFailureLogged = true;
+                NORVES_LOG_WARNING("VisibilitySwRaster", "ソフトウェアラスタの資源の作成に失敗。この dispatch は何もしません");
+            }
             return false;
         }
 
@@ -151,6 +161,7 @@ namespace NorvesLib::Core::Rendering
         params.Viewport[3] = inputs.Viewport.height;
         params.DepthRange[0] = inputs.Viewport.minDepth;
         params.DepthRange[1] = inputs.Viewport.maxDepth;
+        params.Flags[0] = inputs.bStatsEnabled ? 1u : 0u;
         use.Params->Update(&params, sizeof(params));
 
         use.DescriptorSet->BindConstantBuffer(0, inputs.FrameUniform, 0, FrameUniformBytes);
@@ -159,6 +170,7 @@ namespace NorvesLib::Core::Rendering
         use.DescriptorSet->BindStorageBuffer(3, inputs.KeyBuffer, 0, ClampBindSize(inputs.KeyBuffer->GetSize()));
         use.DescriptorSet->BindStorageBuffer(4, inputs.List, 0, ClampBindSize(inputs.List->GetSize()));
         use.DescriptorSet->BindConstantBuffer(5, use.Params, 0, sizeof(SwRasterParams));
+        use.DescriptorSet->BindStorageBuffer(6, inputs.Stats, 0, ClampBindSize(inputs.Stats->GetSize()));
         use.DescriptorSet->Update();
 
         commandList->SetPipeline(m_Pipeline);

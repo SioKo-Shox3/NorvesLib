@@ -3809,7 +3809,14 @@ namespace
         const BufferPtr listBuffer = CreateHostBuffer(
             device, list.data(), static_cast<uint64_t>(list.size()) * sizeof(uint32_t),
             ResourceUsage::StorageBuffer | ResourceUsage::IndirectBuffer | ResourceUsage::ShaderRead, "SwRasterTestList");
-        if (!vertexBuffer || !indexBuffer || !instanceBuffer || !recordTable || !drawInfoBuffer || !frameBuffer || !listBuffer)
+        // 統計（MegaGeometryPass の統計と同じ並び。9 = 矩形の上限を超えて描かなかった三角形、10 = 走ったワークグループ）
+        constexpr uint32_t SwStatsWords = 12u;
+        constexpr uint32_t SwStatOversize = 9u;
+        constexpr uint32_t SwStatGroups = 10u;
+        const Container::VariableArray<uint32_t> zeroStats(SwStatsWords, 0u);
+        const BufferPtr statsBuffer = CreateHostBuffer(
+            device, zeroStats.data(), static_cast<uint64_t>(zeroStats.size()) * sizeof(uint32_t), ResourceUsage::StorageBuffer, "SwRasterTestStats");
+        if (!vertexBuffer || !indexBuffer || !instanceBuffer || !recordTable || !drawInfoBuffer || !frameBuffer || !listBuffer || !statsBuffer)
         {
             Expect(false, "ソフトウェアラスタのケースのバッファを作れなければならない");
             return;
@@ -3907,6 +3914,8 @@ namespace
             inputs.KeyHeight = MergeHeight;
             inputs.List = listBuffer;
             inputs.ListCapacity = ListCapacity;
+            inputs.Stats = statsBuffer;
+            inputs.bStatsEnabled = true;
             inputs.Viewport = viewport;
             inputs.Scissor = scissor;
 
@@ -3936,6 +3945,16 @@ namespace
             return;
         }
         Expect(softwareRaster.GetDirectFallbackCount() == 0, "間接 dispatch が通る装置では直接 dispatch へ切り替えない");
+
+        // 統計: 両パスの一覧のクラスタすべてのワークグループが走り、64 画素四方の矩形を超える三角形は無い
+        const uint32_t* mappedStats = static_cast<const uint32_t*>(statsBuffer->Map(0u, SwStatsWords * sizeof(uint32_t)));
+        Expect(mappedStats != nullptr, "統計のバッファを読み戻せなければならない");
+        if (mappedStats != nullptr)
+        {
+            Expect(mappedStats[SwStatGroups] == firstPassCount + secondPassCount, "走ったワークグループの数は、両パスの一覧のクラスタの数に一致する");
+            Expect(mappedStats[SwStatOversize] == 0u, "この場面（64x32）には、矩形の上限を超える三角形は無い");
+            statsBuffer->Unmap();
+        }
 
         // --- 比較: 被覆（ID が空でない画素）・ID・深度
         uint32_t hardCovered = 0;

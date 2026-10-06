@@ -22,7 +22,7 @@ namespace NorvesLib::Core::Rendering
      * 深度を画面空間で線形に補間して、VisibilityMerge の 64bit のバッファへ 64bit の atomicMin で書く。
      * 書いた値は VisibilityMerge が ID・深度へ合流させる。
      *
-     * 64bit のバッファを使うので、VisibilityMerge::IsSupported の装置だけで作れる。
+     * 64bit のバッファを使うので VisibilityMerge::IsSupported の装置、頂点を buffer_reference で引くのでバッファのアドレスに対応する装置だけで作れる。
      */
     class VisibilitySwRaster
     {
@@ -66,6 +66,10 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr List;
             /** @brief 一覧のパスごとの容量（クラスタ数。パスごとのコマンド数まで。MegaGeometryPass の SwRasterCapacity） */
             uint32_t ListCapacity = 0;
+            /** @brief 統計のバッファ（MegaGeometryPass の統計。UnorderedAccess の状態で渡す）。bStatsEnabled が偽でも、結ぶ代わりのバッファが要る */
+            RHI::BufferPtr Stats;
+            /** @brief 真なら、矩形の上限を超えて描かなかった三角形の数と、走ったワークグループの数を Stats へ数える */
+            bool bStatsEnabled = false;
             /** @brief ハードのラスタと同じビューポートとシザー */
             RHI::Viewport Viewport;
             RHI::ScissorRect Scissor;
@@ -95,6 +99,7 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_Pipeline;
         FrameUseRing<Use> m_Uses;
         uint32_t m_DirectFallbackCount = 0;
+        bool m_bResourceFailureLogged = false;
     };
 
 } // namespace NorvesLib::Core::Rendering

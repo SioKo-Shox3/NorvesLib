@@ -59,9 +59,10 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t CULL_PASS_FIRST = 1u;  // 1パス目: 前のフレームで見えたクラスタだけ
         constexpr uint32_t CULL_PASS_SECOND = 2u; // 2パス目: HZB で判定して残りを描き、見えたビットを更新
 
-        // 統計（cluster_cull.comp の stats[8]）のバイト数。0〜3 は pass1・pass2_tested・pass2_drawn・occluded、
-        // 4〜7 はソフトウェアラスタの振り分け（pass1 の一覧・pass2 の一覧・ハードだけ・一覧が満杯で積めなかった数）
-        constexpr uint32_t StatsBufferWords = 8u;
+        // 統計（cluster_cull.comp の stats[12]）のバイト数。0〜3 は pass1・pass2_tested・pass2_drawn・occluded、
+        // 4〜7 はソフトウェアラスタの振り分け（pass1 の一覧・pass2 の一覧・ハードだけ・一覧が満杯で積めなかった数）、
+        // 8 はハードのコマンドを空振りにした数、9・10 は visbuffer_sw_raster.comp が数える（矩形の上限を超えた三角形・走ったワークグループ）。11 は予備
+        constexpr uint32_t StatsBufferWords = 12u;
         constexpr uint32_t StatsBufferBytes = StatsBufferWords * sizeof(uint32_t);
 
         // ソフトウェアラスタの一覧（cluster_cull.comp の SwRasterBuffer）。先頭はパスごとの間接 dispatch の引数（x・y・z）と
@@ -1232,7 +1233,8 @@ namespace NorvesLib::Core::Rendering
             const char *fallbackReason = nullptr;
             if (!sink)
             {
-                fallbackReason = "visibility_buffer_off";
+                // ID の描画の写しを作る構成（Debug）で sink が無いのは、GBuffer が先に MegaGeometry を描くため
+                fallbackReason = m_bVisibilityPlanEnabled ? "debug_mode" : "visibility_buffer_off";
             }
             else if (!VisibilityMerge::IsSupported(caps))
             {
@@ -1287,11 +1289,20 @@ namespace NorvesLib::Core::Rendering
                         {
                             // 振り分けの結果。ソフトのラスタが無い間は、ハードがすべてのクラスタを描く（hw は一覧へ積まなかった数）
                             NORVES_LOG_INFO("MegaGeometryPass",
-                                            "SW_RASTER_BIN pass1=%u pass2=%u hw=%u overflow=%u frame=%llu epoch_frame=%lld",
+                                            "SW_RASTER_BIN pass1=%u pass2=%u hw=%u overflow=%u zeroed=%u sw_groups=%u sw_dispatches=%u frame=%llu epoch_frame=%lld",
                                             slot.Mapped[4],
                                             slot.Mapped[5],
                                             slot.Mapped[6],
                                             slot.Mapped[7],
+                                            slot.Mapped[8],
+                                            slot.Mapped[10],
+                                            slot.SwDispatches,
+                                            static_cast<unsigned long long>(slot.RenderFrame),
+                                            static_cast<long long>(slot.EpochFrame));
+                            // ソフトが 1 スレッド 1 三角形で走査する矩形（64 画素四方）を超えて描かなかった三角形の数。振り分けのしきい値が保守的なら 0
+                            NORVES_LOG_INFO("MegaGeometryPass",
+                                            "SW_RASTER_OVERSIZE=%u frame=%llu epoch_frame=%lld",
+                                            slot.Mapped[9],
                                             static_cast<unsigned long long>(slot.RenderFrame),
                                             static_cast<long long>(slot.EpochFrame));
                         }
@@ -1551,6 +1562,7 @@ namespace NorvesLib::Core::Rendering
             statsSlot->EpochFrame = epochFrame;
             statsSlot->bPending = true;
             statsSlot->bSwRasterBin = bSwRasterBin;
+            statsSlot->SwDispatches = 0;
         }
 
         // 区間のカウンタ（全パス分）を0にし、コマンド・描画情報をカリングが書ける状態にする。
@@ -1823,6 +1835,8 @@ namespace NorvesLib::Core::Rendering
                 plan.SwRasterBuffer = m_SwRasterBuffer;
                 plan.SwRasterCapacity = swRasterCapacity;
             }
+            plan.StatsBuffer = statsBuffer;
+            plan.bStatsEnabled = statsSlot != nullptr;
             for (const Section &section : sections)
             {
                 VisibilityDrawPlan::Section planSection;
@@ -1902,6 +1916,7 @@ namespace NorvesLib::Core::Rendering
         // sink に描かせるのは2パスのときだけ（1回の判定は、描画の写しを残してラスタが全部を1回で描く）
         const bool bStaged = sink != nullptr && bTwoPass;
         VisibilityDrawPlan stagedPlan;
+        const uint32_t swDispatchesBefore = sink ? sink->GetSwRasterDispatchCount() : 0u;
 
         if (!bTwoPass)
         {
@@ -1954,6 +1969,11 @@ namespace NorvesLib::Core::Rendering
             else
             {
                 recordDraws(m_SecondGBufferRenderPass, m_SecondGBufferFramebuffer, 1);
+            }
+            if (statsSlot && sink)
+            {
+                // このフレームで sink が記録したソフトの dispatch の数（ログの sw_dispatches）
+                statsSlot->SwDispatches = sink->GetSwRasterDispatchCount() - swDispatchesBefore;
             }
 
             if (statsSlot)
@@ -2315,6 +2335,10 @@ namespace NorvesLib::Core::Rendering
         }
         m_SwRasterBuffer = buffer;
         m_SwRasterBufferCapacity = newCapacity;
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "VRAM_LEDGER sw_raster_list mb=%.2f capacity=%u",
+                        static_cast<double>(desc.Size) / (1024.0 * 1024.0),
+                        newCapacity);
         return true;
     }
 

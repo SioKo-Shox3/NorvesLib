@@ -5045,9 +5045,9 @@ namespace
         }
     }
 
-    // SceneView の配線: --sw-raster=on は、ビジビリティバッファが On・Debug のとき ID のラスタの 64bit の資源を有効にし、
+    // SceneView の配線: --sw-raster=on は、ビジビリティバッファが On（材質の解決を使う）のときだけ ID のラスタの 64bit の資源を有効にし、
     // どのモードでも MegaGeometry へ要求としきい値を渡す（使えない理由は MegaGeometry が SW_RASTER_FALLBACK へ出す）。
-    // Off（既定）は両方とも無効のまま
+    // Debug は GBuffer が先に MegaGeometry を描くのでソフトに回せず、64bit の資源・埋め・合流を作らない。Off（既定）は両方とも無効のまま
     void TestSceneViewWiresSwRasterMode()
     {
         struct Expectation
@@ -5060,7 +5060,7 @@ namespace
         const Expectation expectations[] = {
             {VisibilityBufferMode::On, SwRasterMode::Off, false, false},
             {VisibilityBufferMode::On, SwRasterMode::On, true, true},
-            {VisibilityBufferMode::Debug, SwRasterMode::On, true, true},
+            {VisibilityBufferMode::Debug, SwRasterMode::On, false, true},
             {VisibilityBufferMode::Off, SwRasterMode::On, false, true},
             {VisibilityBufferMode::Off, SwRasterMode::Off, false, false},
         };

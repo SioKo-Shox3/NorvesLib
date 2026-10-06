@@ -1159,7 +1159,7 @@ namespace NorvesLib::Core::Engine
             }
             else if (bMatchedSwRaster)
             {
-                LOG_WARNING("ApplicationProcessor runtime option --sw-raster ignored: value must be 'off' or 'on'");
+                LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster を無視します: 値は 'off' か 'on' にしてください");
             }
 
             bool bMatchedSwRasterMaxPixels = false;
@@ -1169,7 +1169,7 @@ namespace NorvesLib::Core::Engine
             }
             else if (bMatchedSwRasterMaxPixels)
             {
-                LOG_WARNING("ApplicationProcessor runtime option --sw-raster-max-px ignored: value must be a positive number");
+                LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster-max-px を無視します: 値は正の数にしてください");
             }
 
             bool bMatchedToneMap = false;

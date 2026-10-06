@@ -1017,7 +1017,10 @@ foreach ($view in $shots)
         }
         # SW_RASTER_BIN（ソフトウェアラスタへの振り分けの 1 フレームの数。1 パス目・2 パス目の一覧へ積んだ数・ハードだけの数・満杯で積めなかった数）。
         # 最後の値と、一覧へ積んだ数（1 パス目 + 2 パス目）の最大を残す。振り分けないときはログが無く、理由は SW_RASTER_FALLBACK に出る。
-        $swRasterLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_BIN pass1=(\d+) pass2=(\d+) hw=(\d+) overflow=(\d+)')
+        # あわせて、ハードのコマンドを空振りにした数（zeroed）・ソフトが走らせたワークグループの数（sw_groups）が pass1 + pass2 と一致すること、
+        # ソフトの dispatch の数（sw_dispatches。1 フレーム 2 回）、SW_RASTER_OVERSIZE（矩形の上限を超えて描かなかった三角形。0 であるべき）を残す。
+        $swRasterLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_BIN pass1=(\d+) pass2=(\d+) hw=(\d+) overflow=(\d+)(?: zeroed=(\d+) sw_groups=(\d+) sw_dispatches=(\d+))?')
+        $swRasterOversizeLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_OVERSIZE=(\d+)')
         $swRasterFallback = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_FALLBACK reason=(\S+)')
         if ($swRasterLines.Count -gt 0 -or $swRasterFallback.Count -gt 0)
         {
@@ -1035,6 +1038,22 @@ foreach ($view in $shots)
                 $swRasterStats.hw = [uint64]$lastSwRaster[3].Value
                 $swRasterStats.overflow = [uint64]$lastSwRaster[4].Value
                 $swRasterStats.binned_max = [uint64]$maxSwRaster
+                $positiveLines = @($swRasterLines | Where-Object { $_.Matches[0].Groups[5].Success })
+                if ($positiveLines.Count -gt 0)
+                {
+                    $binned = { param($line) [uint64]$line.Matches[0].Groups[1].Value + [uint64]$line.Matches[0].Groups[2].Value }
+                    $swRasterStats.positive_lines = $positiveLines.Count
+                    $swRasterStats.zeroed_mismatch_lines = @($positiveLines | Where-Object { [uint64]$_.Matches[0].Groups[5].Value -ne (& $binned $_) }).Count
+                    $swRasterStats.sw_groups_mismatch_lines = @($positiveLines | Where-Object { [uint64]$_.Matches[0].Groups[6].Value -ne (& $binned $_) }).Count
+                    $swRasterStats.zeroed_max = [uint64](($positiveLines | ForEach-Object { [uint64]$_.Matches[0].Groups[5].Value } | Measure-Object -Maximum).Maximum)
+                    $swRasterStats.sw_dispatches_min = [uint64](($positiveLines | ForEach-Object { [uint64]$_.Matches[0].Groups[7].Value } | Measure-Object -Minimum).Minimum)
+                    $swRasterStats.sw_dispatches_max = [uint64](($positiveLines | ForEach-Object { [uint64]$_.Matches[0].Groups[7].Value } | Measure-Object -Maximum).Maximum)
+                }
+            }
+            if ($swRasterOversizeLines.Count -gt 0)
+            {
+                $swRasterStats.oversize_lines = $swRasterOversizeLines.Count
+                $swRasterStats.oversize_max = [uint64](($swRasterOversizeLines | ForEach-Object { [uint64]$_.Matches[0].Groups[1].Value } | Measure-Object -Maximum).Maximum)
             }
         }
         $stressLine = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_TEXTURES materials=(\d+) of (\d+)')
