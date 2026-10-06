@@ -103,6 +103,15 @@ namespace NorvesLib::Core::Rendering
          */
         bool RecordDispatch(RHI::ICommandList* commandList, uint32_t passIndex, const Inputs& inputs);
 
+        /**
+         * @brief このフレームの dispatch に使う資源（定数バッファ・ディスクリプタセット）を count 回分、先に作って取っておく
+         *
+         * カリングがソフトに回したクラスタのハードの描画を空振りにするかは、この結果で決める（記録の途中で資源が作れず、
+         * ソフトにもハードにも描かれないクラスタが出ることを防ぐ）。RecordDispatch は取っておいた資源を順に使う。
+         * @return count 回分を作れたら true（作れなかったときは取っておいた分も使わない）
+         */
+        bool ReserveFrameResources(uint32_t count);
+
         /** @brief 間接 dispatch を断られて直接 dispatch に切り替えた回数（確認用） */
         uint32_t GetDirectFallbackCount() const { return m_DirectFallbackCount; }
 
@@ -114,10 +123,19 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr Params;
         };
 
+        /** @brief use の資源が無ければ作る。両方そろえば true */
+        bool PrepareUse(Use& use);
+
+        /** @brief 1 フレームに取っておける資源の数（1 パス目と 2 パス目の dispatch） */
+        static constexpr uint32_t MaxReservedUses = 2;
+
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_Shader;
         RHI::PipelinePtr m_Pipeline;
         FrameUseRing<Use> m_Uses;
+        Use* m_Reserved[MaxReservedUses] = {};
+        uint32_t m_ReservedCount = 0;
+        uint32_t m_ReservedNext = 0;
         uint32_t m_DirectFallbackCount = 0;
         bool m_bResourceFailureLogged = false;
     };

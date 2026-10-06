@@ -214,12 +214,16 @@ namespace NorvesLib::Core::Rendering
             virtual ~IDrawSink() = default;
 
             /**
-             * @brief このフレームで、ソフトウェアラスタ（一覧のクラスタを計算シェーダーで 64bit のバッファへ描く）が確実に走るか
+             * @brief このフレームのソフトウェアラスタ（一覧のクラスタを計算シェーダーで 64bit のバッファへ描く）を準備し、確実に走るかを返す
              *
-             * RecordFrameCommand がカリングの前に 1 回だけ問い合わせる。true を返したら、sink は 2 回の呼び出しの中で
-             * 一覧を dispatch する責任を負い、カリングは一覧へ積めたクラスタのハードのコマンドを空振り（instanceCount = 0）にする。
+             * RecordFrameCommand が振り分けるフレームのカリングの前に 1 回だけ呼ぶ。sink は dispatch と合流に要る資源を
+             * ここで作り、作れたときだけ true を返す。true を返したら、sink は 2 回の呼び出しの中で一覧を dispatch する責任を負い、
+             * カリングは一覧へ積めたクラスタのハードのコマンドを空振り（instanceCount = 0）にする。
              * false なら、一覧へ積むだけでハードがすべてのクラスタを描く（振り分けの統計だけが取れる）。
              */
+            virtual bool PrepareSwRaster() = 0;
+
+            /** @brief PrepareSwRaster が準備できたと答えたフレームか（記録の途中で何度でも問い合わせてよい） */
             virtual bool IsSwRasterAvailable() const = 0;
 
             /** @brief これまでに記録したソフトウェアラスタの dispatch の累計（確認用。フレームの差を統計に載せる）。ソフトを持たない sink は 0 */

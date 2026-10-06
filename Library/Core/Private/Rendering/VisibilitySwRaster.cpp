@@ -117,6 +117,53 @@ namespace NorvesLib::Core::Rendering
     void VisibilitySwRaster::BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
     {
         m_Uses.BeginFrame(inFlightIndex, frameSerial);
+        m_ReservedCount = 0;
+        m_ReservedNext = 0;
+    }
+
+    bool VisibilitySwRaster::PrepareUse(Use& use)
+    {
+        if (!use.Params)
+        {
+            use.Params = m_Device->CreateBuffer(
+                RHI::BufferDesc(sizeof(SwRasterParams), RHI::ResourceUsage::ConstantBuffer, true, "VisBuffer_SwRasterParams"));
+        }
+        if (!use.DescriptorSet)
+        {
+            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeSwRasterDescriptorSetDesc());
+        }
+        if (!use.Params || !use.DescriptorSet)
+        {
+            // 毎フレーム同じ失敗を繰り返すので、警告は 1 回だけ出す
+            if (!m_bResourceFailureLogged)
+            {
+                m_bResourceFailureLogged = true;
+                NORVES_LOG_WARNING("VisibilitySwRaster", "ソフトウェアラスタの資源の作成に失敗。このフレームはソフトへ回さず、ハードで描く");
+            }
+            return false;
+        }
+        return true;
+    }
+
+    bool VisibilitySwRaster::ReserveFrameResources(uint32_t count)
+    {
+        m_ReservedCount = 0;
+        m_ReservedNext = 0;
+        if (!IsReady() || !m_Device || count > MaxReservedUses)
+        {
+            return false;
+        }
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            Use& use = m_Uses.Acquire();
+            if (!PrepareUse(use))
+            {
+                m_ReservedCount = 0;
+                return false;
+            }
+            m_Reserved[m_ReservedCount++] = &use;
+        }
+        return true;
     }
 
     uint32_t VisibilitySwRaster::ComputeMaxScanSpan(float maxPixels)
@@ -137,27 +184,19 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // 資源は呼び出しの回数ではなくフレームの枠で決める（提出前・GPU が読み終わる前の資源を上書きしない）
-        Use& use = m_Uses.Acquire();
-        if (!use.Params)
+        // 資源は呼び出しの回数ではなくフレームの枠で決める（提出前・GPU が読み終わる前の資源を上書きしない）。
+        // カリングの前に取っておいた分を先に使い、無ければその場で作る
+        Use* reserved = (m_ReservedNext < m_ReservedCount) ? m_Reserved[m_ReservedNext++] : nullptr;
+        if (!reserved)
         {
-            use.Params = m_Device->CreateBuffer(
-                RHI::BufferDesc(sizeof(SwRasterParams), RHI::ResourceUsage::ConstantBuffer, true, "VisBuffer_SwRasterParams"));
-        }
-        if (!use.DescriptorSet)
-        {
-            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeSwRasterDescriptorSetDesc());
-        }
-        if (!use.Params || !use.DescriptorSet)
-        {
-            // 毎フレーム同じ失敗を繰り返すので、警告は 1 回だけ出す
-            if (!m_bResourceFailureLogged)
+            Use& acquired = m_Uses.Acquire();
+            if (!PrepareUse(acquired))
             {
-                m_bResourceFailureLogged = true;
-                NORVES_LOG_WARNING("VisibilitySwRaster", "ソフトウェアラスタの資源の作成に失敗。この dispatch は何もしません");
+                return false;
             }
-            return false;
+            reserved = &acquired;
         }
+        Use& use = *reserved;
 
         // 描いてよい画素の矩形: シザーと 64bit のバッファの大きさの共通部分
         SwRasterParams params = {};

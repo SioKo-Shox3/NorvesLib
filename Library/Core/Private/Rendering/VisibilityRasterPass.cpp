@@ -262,6 +262,8 @@ namespace NorvesLib::Core::Rendering
     void VisibilityMerge::BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
     {
         m_Uses.BeginFrame(inFlightIndex, frameSerial);
+        m_ReservedCount = 0;
+        m_ReservedNext = 0;
         m_FrameSerial = frameSerial;
         ReleaseStaleBuffers();
     }
@@ -359,6 +361,41 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool VisibilityMerge::PrepareUse(Use& use)
+    {
+        if (!use.Params)
+        {
+            use.Params = m_Device->CreateBuffer(
+                RHI::BufferDesc(MergeParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisBuffer_MergeParams"));
+        }
+        if (!use.DescriptorSet)
+        {
+            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeMergeDescriptorSetDesc());
+        }
+        return use.Params && use.DescriptorSet;
+    }
+
+    bool VisibilityMerge::ReserveFrameResources(uint32_t count)
+    {
+        m_ReservedCount = 0;
+        m_ReservedNext = 0;
+        if (!IsReady() || !m_Device || count > MaxReservedUses)
+        {
+            return false;
+        }
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            Use& use = m_Uses.Acquire();
+            if (!PrepareUse(use))
+            {
+                m_ReservedCount = 0;
+                return false;
+            }
+            m_Reserved[m_ReservedCount++] = &use;
+        }
+        return true;
+    }
+
     bool VisibilityMerge::RecordMerge(RHI::ICommandList* commandList,
                                       const RHI::RenderPassPtr& renderPass,
                                       const RHI::FramebufferPtr& framebuffer,
@@ -371,22 +408,20 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // 資源は呼び出しの回数ではなくフレームの枠で決める（提出前・GPU が読み終わる前の資源を上書きしない）
-        Use& use = m_Uses.Acquire();
-        if (!use.Params)
+        // 資源は呼び出しの回数ではなくフレームの枠で決める（提出前・GPU が読み終わる前の資源を上書きしない）。
+        // カリングの前に取っておいた分を先に使い、無ければその場で作る
+        Use* reserved = (m_ReservedNext < m_ReservedCount) ? m_Reserved[m_ReservedNext++] : nullptr;
+        if (!reserved)
         {
-            use.Params = m_Device->CreateBuffer(
-                RHI::BufferDesc(MergeParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisBuffer_MergeParams"));
+            Use& acquired = m_Uses.Acquire();
+            if (!PrepareUse(acquired))
+            {
+                NORVES_LOG_WARNING("VisibilityMerge", "合流の資源の作成に失敗。この合流は何もしません");
+                return false;
+            }
+            reserved = &acquired;
         }
-        if (!use.DescriptorSet)
-        {
-            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeMergeDescriptorSetDesc());
-        }
-        if (!use.Params || !use.DescriptorSet)
-        {
-            NORVES_LOG_WARNING("VisibilityMerge", "合流の資源の作成に失敗。この合流は何もしません");
-            return false;
-        }
+        Use& use = *reserved;
 
         const uint32_t params[4] = {m_KeyWidth, m_KeyHeight, 0u, 0u};
         use.Params->Update(params, sizeof(params));
@@ -1479,10 +1514,20 @@ namespace NorvesLib::Core::Rendering
         m_Work.bStagedReady = true;
     }
 
+    bool VisibilityRasterPass::PrepareSwRaster()
+    {
+        // ソフトに回したクラスタは、ソフトの dispatch と合流でしか ID・深度へ入らない。両方の資源（2 パス分）を
+        // カリングの前に作れたフレームだけ、カリングにハードの描画を空振りにさせる（2 パスの遮蔽で振り分けるフレームだけ呼ばれる）
+        m_Work.bSwRasterResources = m_Work.bMerge && m_SwRaster.IsReady() && m_Merge.ReserveFrameResources(2) &&
+                                    m_SwRaster.ReserveFrameResources(2);
+        return IsSwRasterAvailable();
+    }
+
     bool VisibilityRasterPass::IsSwRasterAvailable() const
     {
-        // m_Work.bMerge は Execute が MegaGeometryPass の記録を駆動する前に決める（ワイヤーフレーム・バッファを用意できないフレームは false）
-        return m_Work.bMerge && m_SwRaster.IsReady();
+        // m_Work.bMerge・bSwRasterResources は Execute が MegaGeometryPass の記録を駆動する前に決める（ワイヤーフレーム・
+        // バッファを用意できないフレーム、ソフトの dispatch と合流の資源を先に作れなかったフレームは false）
+        return m_Work.bMerge && m_Work.bSwRasterResources && m_SwRaster.IsReady();
     }
 
     void VisibilityRasterPass::RecordMergeBeforeHiZ(RHI::ICommandList* /*commandList*/,

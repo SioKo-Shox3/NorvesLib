@@ -296,6 +296,8 @@ namespace NorvesLib::Core::Rendering
             bool bStagedReady = false;
             /** @brief 64bit のバッファを使えるフレームか（合流が準備でき、画面の大きさのバッファを用意できた） */
             bool bMerge = false;
+            /** @brief ソフトの dispatch と合流の資源（2 パス分）をカリングの前（PrepareSwRaster）に作れたか（偽ならハードの描画を空振りにしない） */
+            bool bSwRasterResources = false;
         };
 
         bool CreateRenderPass();
@@ -335,6 +337,7 @@ namespace NorvesLib::Core::Rendering
         void FinishFrame();
 
         // MegaGeometryPass::IDrawSink（記録を移されたフレームの、2 パスの遮蔽の途中の描画）
+        bool PrepareSwRaster() override;
         bool IsSwRasterAvailable() const override;
         uint32_t GetSwRasterDispatchCount() const override { return m_Stats.SwRasterDispatchCount; }
         void RecordFirstPassDraws(RHI::ICommandList* commandList,

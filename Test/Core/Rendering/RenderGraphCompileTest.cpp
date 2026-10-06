@@ -986,6 +986,10 @@ namespace
     public:
         RHI::BufferPtr CreateBuffer(const RHI::BufferDesc& desc) override
         {
+            if (FailBufferDebugName && IsDebugName(desc.DebugName, FailBufferDebugName))
+            {
+                return nullptr;
+            }
             BufferCreationRecord record;
             record.Desc = desc;
             record.Tracker = RHI::MakeShared<FakeBufferLifetimeTracker>();
@@ -1157,6 +1161,8 @@ namespace
         Container::VariableArray<RHI::DescriptorSetDesc> LastGraphicsPipelineDescriptorSetLayouts;
         uint32_t LightArraySSBOCreateCount = 0;
         uint32_t FailLightArraySSBOCreateIndex = 0;
+        /** @brief nullptr でなければ、この DebugName のバッファの作成が nullptr を返す（資源を作れない装置の再現） */
+        const char* FailBufferDebugName = nullptr;
         /** @brief true の間、グラフィックス・計算のパイプラインの作成が nullptr を返す（作れない装置の再現） */
         bool bFailGraphicsPipelines = false;
         /** @brief true の間、線の描き方（PolygonMode::Line）のグラフィックスのパイプラインだけ作成が nullptr を返す */
@@ -2176,6 +2182,8 @@ namespace
         float SwRasterMaxPixels = 8.0f;
         /** @brief 0 でなければ、ID のラスタの初期化で、この番号（1 から数える）の計算パイプラインの作成を失敗させる（3 番がソフトウェアラスタ） */
         uint32_t FailRasterComputePipelineNumber = 0;
+        /** @brief nullptr でなければ、Execute の間この DebugName のバッファの作成を失敗させる（初期化の後の資源の作成の失敗） */
+        const char* FailBufferDebugName = nullptr;
         /** @brief MegaGeometry のメッシュ A が持つクラスタの数（B は 1 つ）。間接 dispatch の x の上限（65535）を超える一覧の検査に使う */
         uint32_t ClusterCountA = 1;
         /** @brief Normal 以外のときは、ビューポートの計画（表示だけを持つ）を現在のビューポートにして、この表示で描く */
@@ -2462,6 +2470,7 @@ namespace
             assert(scene.Raster.Initialize(context));
             scene.Device->bFailGraphicsPipelines = false;
             scene.Device->bFailLineGraphicsPipelines = false;
+            scene.Device->FailBufferDebugName = scene.FailBufferDebugName;
             scene.Device->FailComputePipelineCreationNumber = 0;
             scene.Graph.AddPass(&scene.Raster);
 
@@ -4964,8 +4973,8 @@ namespace
     // ソフトウェアラスタを使えない構成では、ソフトの dispatch を記録せず、カリングの定数は 1 以下（ソフトが走らないので、
     // ハードのコマンドを空振りにしない）。Debug（GBuffer が先に MegaGeometry を描くので ID のラスタが記録を駆動しない）・
     // 64bit アトミックが無い装置・合流が無い（--sw-raster の ID のラスタ側が無効）・ソフトの計算パイプラインが作れない・ワイヤーフレーム
-    // （64bit のバッファを誰も書かない表示）の 5 つ。使えるかの問い合わせ（IsSwRasterAvailable）を外す・定数を常に 2 にする
-    // と、その構成で空振りにして落ちる
+    // （64bit のバッファを誰も書かない表示）・ソフトの dispatch の定数バッファが作れない（初期化の後の資源の作成の失敗）の 6 つ。
+    // 使えるかの問い合わせ（IsSwRasterAvailable）を外す・定数を常に 2 にする・資源をカリングの前に確保しないと、その構成で空振りにして落ちる
     void TestSwRasterDispatchAbsentWhenUnavailable()
     {
         struct Case
@@ -4977,13 +4986,15 @@ namespace
             DebugViewMode DebugMode;
             ResolveMode Resolve;
             bool bExpectBinned;
+            const char* FailBufferDebugName;
         };
         const Case cases[] = {
-            {"debug", true, true, 0, DebugViewMode::Normal, ResolveMode::None, false},
-            {"int64_atomics_unsupported", false, true, 0, DebugViewMode::Normal, ResolveMode::Supported, false},
-            {"merge_unavailable", true, false, 0, DebugViewMode::Normal, ResolveMode::Supported, true},
-            {"sw_pipeline_unavailable", true, true, 3, DebugViewMode::Normal, ResolveMode::Supported, true},
-            {"wireframe", true, true, 0, DebugViewMode::Wireframe, ResolveMode::Supported, true},
+            {"debug", true, true, 0, DebugViewMode::Normal, ResolveMode::None, false, nullptr},
+            {"int64_atomics_unsupported", false, true, 0, DebugViewMode::Normal, ResolveMode::Supported, false, nullptr},
+            {"merge_unavailable", true, false, 0, DebugViewMode::Normal, ResolveMode::Supported, true, nullptr},
+            {"sw_pipeline_unavailable", true, true, 3, DebugViewMode::Normal, ResolveMode::Supported, true, nullptr},
+            {"wireframe", true, true, 0, DebugViewMode::Wireframe, ResolveMode::Supported, true, nullptr},
+            {"sw_resources_unavailable", true, true, 0, DebugViewMode::Normal, ResolveMode::Supported, true, "VisBuffer_SwRasterParams"},
         };
         for (const Case& testCase : cases)
         {
@@ -4992,6 +5003,7 @@ namespace
             scene.bInt64Atomics = testCase.bInt64Atomics;
             scene.bSwRasterMerge = testCase.bSwRasterMerge;
             scene.FailRasterComputePipelineNumber = testCase.FailComputePipelineNumber;
+            scene.FailBufferDebugName = testCase.FailBufferDebugName;
             scene.DebugMode = testCase.DebugMode;
             GMegaCullUniformUpdates.clear();
             RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, false, true, testCase.Resolve);

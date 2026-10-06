@@ -111,6 +111,15 @@ namespace NorvesLib::Core::Rendering
                          const RHI::Viewport& viewport,
                          const RHI::ScissorRect& scissor);
 
+        /**
+         * @brief このフレームの合流に使う資源（定数バッファ・ディスクリプタセット）を count 回分、先に作って取っておく
+         *
+         * ソフトウェアラスタに回したクラスタは合流でしか ID・深度へ入らないので、空振りにするかをカリングの前にこの結果で決める。
+         * RecordMerge は取っておいた資源を順に使う。
+         * @return count 回分を作れたら true
+         */
+        bool ReserveFrameResources(uint32_t count);
+
     private:
         /** @brief 1 フレームの枠の中の資源（GPU が読み終わる前に書き換えない） */
         struct Use
@@ -118,6 +127,15 @@ namespace NorvesLib::Core::Rendering
             RHI::DescriptorSetPtr DescriptorSet;
             RHI::BufferPtr Params;
         };
+
+        /** @brief use の資源が無ければ作る。両方そろえば true */
+        bool PrepareUse(Use& use);
+
+        /** @brief 1 フレームに取っておける資源の数（HZB の前と 2 パス目の後の合流） */
+        static constexpr uint32_t MaxReservedUses = 2;
+        Use* m_Reserved[MaxReservedUses] = {};
+        uint32_t m_ReservedCount = 0;
+        uint32_t m_ReservedNext = 0;
 
         struct RetiredBuffer
         {

@@ -1364,7 +1364,7 @@ namespace NorvesLib::Core::Rendering
         m_SwRasterCapacity = bSwRasterBin ? swRasterCapacity : 0u;
         // ソフトのラスタが走るフレームだけ、一覧へ積めたクラスタのハードのコマンドを空振りにする（走らないなら積むだけ）。
         // bSwRasterBin は sink と 2 パスの遮蔽の判定を前提にしている
-        const bool bSwRasterSkipHardware = bSwRasterBin && sink != nullptr && sink->IsSwRasterAvailable();
+        const bool bSwRasterSkipHardware = bSwRasterBin && sink != nullptr && sink->PrepareSwRaster();
 
         // ページの表（常駐の状態）をこのフレームのスロットへ写す。フレームの間は変わらないので、2パスの判定が食い違わない
         if (!SyncPageTable(frameSlot, *command.MegaGeometry))

@@ -663,8 +663,11 @@ bool AppendSwRasterList(uint commandIndex)
     uint count = slot + 1u;
     atomicMax(swRaster[header], min(count, SW_RASTER_MAX_GROUPS_X));
     atomicMax(swRaster[header + 1u], (count + SW_RASTER_MAX_GROUPS_X - 1u) / SW_RASTER_MAX_GROUPS_X);
-    // z は 1 以外の書き込みが無いので、複数のスレッドが同じ値を書いてよい
-    swRaster[header + 2u] = 1u;
+    // z は 1 で固定。同じ番地へ複数のスレッドが非アトミックに書くと（同じ値でも）競合になるので、最初に積んだスレッドだけが書く
+    if (slot == 0u)
+    {
+        swRaster[header + 2u] = 1u;
+    }
     return true;
 }
 
