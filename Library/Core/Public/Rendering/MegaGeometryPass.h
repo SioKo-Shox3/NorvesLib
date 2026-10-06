@@ -5,11 +5,13 @@
 #include "Rendering/IViewPass.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/RenderTypes.h"
+#include "Rendering/SwRasterMode.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include <cstddef>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -177,6 +179,18 @@ namespace NorvesLib::Core::Rendering
             uint64_t InstanceBufferBytes = 0;
             RHI::BufferPtr SectionBuffer;  // 区間の表（uvec2: コマンドの先頭・最大数。パス × 区間。ホストが書いたまま）
             uint64_t SectionBufferBytes = 0;
+            /**
+             * ソフトウェアラスタの一覧（振り分けを行ったフレームだけ。行わなければ null・容量 0）。UnorderedAccess の状態で渡す。
+             * パスごとの頭 4 語（間接 dispatch の引数）・8 語の余白の後に、パスごとにコマンドの位置の列が並ぶ（cluster_cull.comp の SwRasterBuffer）
+             */
+            RHI::BufferPtr SwRasterBuffer;
+            uint32_t SwRasterCapacity = 0; // 一覧のパスごとの容量（クラスタ数。パスごとのコマンド数まで）
+            float SwRasterMaxPixels = 0.0f; // 振り分けたしきい値（画面上の半径、画素）。ソフトの矩形の上限を決める
+            /**
+             * 統計のバッファ（UnorderedAccess の状態。bStatsEnabled が偽のときは代わりのバッファ）。ソフトのラスタが、描かなかった三角形・走ったワークグループを数える
+             */
+            RHI::BufferPtr StatsBuffer;
+            bool bStatsEnabled = false;
             Container::VariableArray<Section> Sections;
         };
 
@@ -185,19 +199,45 @@ namespace NorvesLib::Core::Rendering
          *
          * 幾何の解決が GBuffer を書くとき、2パスの遮蔽の HZB は GBuffer ではなく ID のラスタの深度から作る。そのため
          * RecordFrameCommand が次の順で呼び出す（sink を渡したときだけ）:
-         *   1パス目のカリング → RecordFirstPassDraws → HZB の生成 → 2パス目のカリング → RecordSecondPassDraws
+         *   1パス目のカリング → RecordFirstPassDraws → RecordMergeBeforeHiZ → HZB の生成 → 2パス目のカリング → RecordSecondPassDraws
          * 描画の写し plan は両方の呼び出しで同じ内容（1パス目のカリングの前に作る）。バッファの状態は、1回目の呼び出しの時点で
          * 1パス目の範囲が IndirectArgument（描画情報は GenericRead）、2回目の時点で2パス目の範囲まで書き終えている。
          * 呼び出しの間に sink が必要とする状態の遷移は sink が行い、RecordFrameCommand が戻った後の戻し
          * （ReleaseVisibilityDrawBuffers）も sink 側の責任になる。
+         *
+         * ソフトウェアラスタの一覧（plan.SwRasterBuffer）は、sink が読むとき（間接 dispatch の引数と一覧の読み取り）だけ GenericRead にし、
+         * 戻る時点では UnorderedAccess に戻す（次のカリングが続けて書き、最後に RecordFrameCommand が Common へ戻す）。
          */
         class IDrawSink
         {
         public:
             virtual ~IDrawSink() = default;
 
+            /**
+             * @brief このフレームのソフトウェアラスタ（一覧のクラスタを計算シェーダーで 64bit のバッファへ描く）を準備し、確実に走るかを返す
+             *
+             * RecordFrameCommand が振り分けるフレームのカリングの前に 1 回だけ呼ぶ。sink は dispatch と合流に要る資源を
+             * ここで作り、作れたときだけ true を返す。true を返したら、sink は 2 回の呼び出しの中で一覧を dispatch する責任を負い、
+             * カリングは一覧へ積めたクラスタのハードのコマンドを空振り（instanceCount = 0）にする。
+             * false なら、一覧へ積むだけでハードがすべてのクラスタを描く（振り分けの統計だけが取れる）。
+             */
+            virtual bool PrepareSwRaster() = 0;
+
+            /** @brief PrepareSwRaster が準備できたと答えたフレームか（記録の途中で何度でも問い合わせてよい） */
+            virtual bool IsSwRasterAvailable() const = 0;
+
+            /** @brief これまでに記録したソフトウェアラスタの dispatch の累計（確認用。フレームの差を統計に載せる）。ソフトを持たない sink は 0 */
+            virtual uint32_t GetSwRasterDispatchCount() const { return 0; }
+
             /** @brief 1パス目のカリングの後。ID・深度へ手続き・スキニングの塊と1パス目を描く（深度は描いた後 ShaderResource になる） */
             virtual void RecordFirstPassDraws(RHI::ICommandList *commandList, const VisibilityDrawPlan &plan) = 0;
+            /**
+             * @brief 1回目の描画の後・HZB を作る前。ハードのラスタの外で書かれた ID・深度（ソフトウェアラスタの 64bit のバッファ）を、
+             *        HZB の元の深度へ合流させる。2 パスの遮蔽の構成では毎フレーム呼ばれる（RecordFirstPassDraws が描画を記録できなかったフレームは、sink 側で何もしない）
+             *
+             * 深度は呼ばれる時点と戻る時点のどちらも ShaderResource の状態（HZB がそのまま読む）。
+             */
+            virtual void RecordMergeBeforeHiZ(RHI::ICommandList *commandList, const VisibilityDrawPlan &plan) = 0;
             /** @brief 2パス目のカリングの後。ID・深度へ2パス目を描く */
             virtual void RecordSecondPassDraws(RHI::ICommandList *commandList, const VisibilityDrawPlan &plan) = 0;
         };
@@ -210,6 +250,37 @@ namespace NorvesLib::Core::Rendering
          */
         void SetVisibilityDrawPlanEnabled(bool bEnabled) { m_bVisibilityPlanEnabled = bEnabled; }
         bool IsVisibilityDrawPlanEnabled() const { return m_bVisibilityPlanEnabled; }
+
+        /**
+         * @brief ソフトウェアラスタの振り分けを要求するか（--sw-raster=on。既定は要求しない）
+         *
+         * 要求しても、64bit アトミックが使えない・ビジビリティバッファのラスタが無い・2 パスの遮蔽の判定を使えないときは、
+         * 振り分けず SW_RASTER_FALLBACK reason=<理由> を 1 回ログへ出す。使えるとき、カリングは画面上の半径（画素）が
+         * maxPixels 以下で近平面と交わらないクラスタを、パスごとのソフトの一覧（コマンドの位置）へ積み、計算シェーダーの
+         * 間接 dispatch の引数（2 次元）を書く。sink（IDrawSink::IsSwRasterAvailable）がソフトのラスタを走らせると答えたフレームは、
+         * 一覧へ積めたクラスタのハードのコマンドを空振り（instanceCount = 0）にする。答えなかったフレームは、
+         * ハードがすべてのクラスタを描く（コマンドは減らさない）。
+         */
+        void SetSwRasterBinning(bool bRequested, float maxPixels)
+        {
+            m_bSwRasterRequested = bRequested;
+            m_SwRasterMaxPixels = maxPixels;
+        }
+        bool IsSwRasterBinningRequested() const { return m_bSwRasterRequested; }
+
+        /**
+         * @brief 設定されている振り分けのしきい値（画面上の半径、画素）
+         *
+         * 製品の経路はこの getter を通らない（カリングの定数と VisibilityDrawPlan へ内部の値を直接入れる）。
+         * SceneView が組んだ設定が MegaGeometryPass まで届いたことを、テストが読んで確かめるために置いている
+         */
+        float GetSwRasterMaxPixels() const { return m_SwRasterMaxPixels; }
+
+        /** @brief 最後の RecordFrameCommand がソフトウェアラスタの振り分けを行ったか */
+        bool DidSwRasterBin() const { return m_bSwRasterBinned; }
+
+        /** @brief ソフトの一覧のパスごとの容量（クラスタ数）。振り分けを行っていなければ 0 */
+        uint32_t GetSwRasterListCapacity() const { return m_SwRasterCapacity; }
 
         /**
          * @brief GBuffer への描画を止めるか（既定は止めない）
@@ -309,7 +380,14 @@ namespace NorvesLib::Core::Rendering
             uint32_t BvhLeafBase;   // 葉の列の先頭
             uint32_t BvhRootCount;  // BVH を持つインスタンスの数（インスタンスの表の先頭からその数。段0の入力の数）
             uint32_t PageRequestCapacity; // ページの要求の列の容量（0 ならこのフレームは要求を書かない）
+            uint32_t bSwRasterEnabled;    // 1 ならソフトウェアラスタの一覧へ積む（ハードも描く）。2 なら積めたクラスタのハードのコマンドを空振りにする
+            uint32_t SwRasterCapacity;    // パスごとのソフトの一覧の容量（クラスタ数）
+            float SwRasterMaxPixels;      // 振り分ける画面上の半径（画素）のしきい値
+            float SwRasterNearPlane;      // 近平面までの距離
         };
+        // ソフトウェアラスタの 4 語は、行列 2 つ・視点・平面 6 つ・語 21 個の後ろに並ぶ（cluster_cull.comp の CullUniforms と同じ std140 の位置）
+        static_assert(offsetof(CullUniformData, bSwRasterEnabled) == (16 + 16 + 4 + 24 + 21) * sizeof(uint32_t),
+                      "cluster_cull.comp の CullUniforms と並びが一致しません");
 
         /**
          * @brief インスタンスの表の1要素（GPU送信用。cluster_cull.comp・megageometry.vert の MegaInstance と一致）
@@ -353,7 +431,7 @@ namespace NorvesLib::Core::Rendering
          */
         bool CreateCullResources(RHI::IDevice *device);
 
-        /** @brief カリングのディスクリプタセットの形（cluster_cull.comp の binding 0〜8）。パイプラインとセットが同じ形を使う */
+        /** @brief カリングのディスクリプタセットの形（cluster_cull.comp の binding 0〜13）。パイプラインとセットが同じ形を使う */
         static RHI::DescriptorSetDesc BuildCullDescriptorSetDesc();
 
         /** @brief 描画のディスクリプタセットの形（megageometry.vert/frag の binding 0〜9）。パイプラインとセットが同じ形を使う */
@@ -431,6 +509,13 @@ namespace NorvesLib::Core::Rendering
          * @param queueEntries 列の要素数（uvec2）。段ごとの列と葉の列を1本に並べた合計
          */
         bool EnsureBvhBuffers(uint32_t queueEntries);
+
+        /**
+         * @brief ソフトウェアラスタの一覧のバッファを、パスごとに capacity 個のクラスタを収められる大きさで用意する
+         *
+         * 足りないときだけ作り直し、古いものは m_RetiredBuffers へ回す。
+         */
+        bool EnsureSwRasterBuffer(uint32_t capacity);
 
         /** @brief フレームスロットに、BVH のたどりの段 stageCount 個ぶんの UBO・ディスクリプタセットを用意する */
         bool EnsureBvhStageResources(FrameSlot &slot, uint32_t passIndex, uint32_t stageCount);
@@ -543,6 +628,16 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_DummyVisibilityBuffer;
         RHI::BufferPtr m_DummyStatsBuffer;
 
+        // ソフトウェアラスタの振り分け: パスごとの一覧と間接 dispatch の引数（binding 13）。振り分けないフレームは触らず、
+        // 代わりのバッファ（m_DummyStatsBuffer）を結ぶ
+        bool m_bSwRasterRequested = false;
+        float m_SwRasterMaxPixels = DefaultSwRasterMaxPixels;
+        RHI::BufferPtr m_SwRasterBuffer;
+        uint32_t m_SwRasterBufferCapacity = 0; // m_SwRasterBuffer がパスごとに収められるクラスタ数
+        uint32_t m_SwRasterCapacity = 0;       // 最後に振り分けたフレームの、パスごとの一覧の容量
+        bool m_bSwRasterBinned = false;
+        bool m_bSwRasterFallbackLogged = false;
+
         // 「前のフレームで見えた」ビット（全インスタンスで1本）と、その配置（インスタンスの並び順）
         struct VisibilityEntry
         {
@@ -575,6 +670,8 @@ namespace NorvesLib::Core::Rendering
             uint64_t RenderFrameCount = 0; // 書いたときの m_RenderFrameCount
             int64_t EpochFrame = -1;   // 決定的な撮影のエポックからの相対フレーム。エポック前は -1
             bool bPending = false;
+            bool bSwRasterBin = false; // このフレームがソフトウェアラスタの振り分けを行い、統計の 4〜7 が有効
+            uint32_t SwDispatches = 0; // このフレームで sink が記録したソフトの dispatch の数（GPU の統計ではなく CPU の記録の数）
         };
         static constexpr uint32_t StatsSlotCount = 4;
         bool m_bStatsEpochActive = false;

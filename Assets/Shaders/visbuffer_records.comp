@@ -6,7 +6,9 @@
 // MegaGeometryPass のカリングが積んだ IndirectDraw コマンド 1 つにつき、記録の表の「1 + コマンドの通しの位置」番へ
 // 記録を 1 行書く（visbuffer_mega.vert が同じ番号を ID に使う）。積まれたコマンドの数は区間ごとのカウンタ
 // （区間のコマンドの最大数で頭打ち）で、それより後ろの位置は書かない。
-// 1 スレッドが 1 コマンドを受け持ち、x がその区間の中の位置、y が区間の表の添え字（パス × 区間）。
+// 1 スレッドが 1 コマンドを受け持つ。ワークグループは積まれたコマンドの数だけを、全区間をまたいで 1 本の列に並べて走る
+// （visbuffer_records_args.comp が列の長さと区間ごとの先頭を書く）。グループの番号から区間の表の添え字（パス × 区間）
+// を二分探索で引き、区間の中の位置を求める。
 // ========================================
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -65,17 +67,44 @@ layout(std430, set = 0, binding = 7) readonly buffer SectionMaterialBuffer
     uint sectionMaterials[];
 };
 
+// 間接 dispatch の引数（visbuffer_records_args.comp が書く）。[3] = ワークグループの総数、
+// [4 + s] = 区間の表の添え字 s の先頭のワークグループの番号
+layout(std430, set = 0, binding = 8) readonly buffer RecordArgsBuffer
+{
+    uint recordArgs[];
+};
+
+// visbuffer_records_args.comp の MAX_GROUPS_X と一致させる（x を超える分は y へ折り返す）
+const uint MAX_GROUPS_X = 65535u;
+
 void main()
 {
-    const uint sectionSlot = gl_GlobalInvocationID.y;
-    if (sectionSlot >= params.counts.y)
+    const uint groupIndex = gl_WorkGroupID.y * MAX_GROUPS_X + gl_WorkGroupID.x;
+    if (groupIndex >= recordArgs[3])
     {
         return;
     }
 
+    // 先頭の番号が groupIndex 以下の最後の区間（空の区間は次の区間と先頭が同じなので、後ろの方が選ばれる）
+    uint low = 0u;
+    uint high = params.counts.y - 1u;
+    while (low < high)
+    {
+        const uint middle = (low + high + 1u) >> 1u;
+        if (recordArgs[4u + middle] <= groupIndex)
+        {
+            low = middle;
+        }
+        else
+        {
+            high = middle - 1u;
+        }
+    }
+    const uint sectionSlot = low;
+
     const uvec2 section = sections[sectionSlot];
     const uint drawnCount = min(sectionCounts[sectionSlot], section.y);
-    const uint localIndex = gl_GlobalInvocationID.x;
+    const uint localIndex = (groupIndex - recordArgs[4u + sectionSlot]) * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
     if (localIndex >= drawnCount)
     {
         return;

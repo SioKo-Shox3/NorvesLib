@@ -65,6 +65,7 @@
 #define VIS_RECORD_TABLE_SET 0
 #define VIS_RECORD_TABLE_BINDING 1
 #include "Common/VisibilityBuffer.glsl"
+#include "Common/VisibilityTriangleFetch.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 #include "Common/PreExposedEmissive.glsl"
 #include "Common/MegaGeometryDebugColor.glsl"
@@ -223,41 +224,8 @@ const uint VIS_MATERIAL_FLAG_HAS_HEIGHT = 2u;
 const uint VIS_MATERIAL_FLAG_MEGA_GEOMETRY = 4u;
 
 // ========================================
-// 頂点の読み出し（デバイスアドレスから）
+// 頂点の読み出し（デバイスアドレスから。頂点・インデックスの読み出しは Common/VisibilityTriangleFetch.glsl と共有）
 // ========================================
-
-// 手続きメッシュ・MegaGeometry・スキニングの出力はどれも 1 頂点 8 個の float（位置 3・法線 3・UV 2）
-struct VisVertex
-{
-    float px;
-    float py;
-    float pz;
-    float nx;
-    float ny;
-    float nz;
-    float u;
-    float v;
-};
-
-layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer VisVertexArray
-{
-    VisVertex vertices[];
-};
-
-layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer VisIndexWords
-{
-    uint words[];
-};
-
-uint VisLoadIndex(VisIndexWords indices, bool bIndex16, uint position)
-{
-    if (bIndex16)
-    {
-        const uint word = indices.words[position >> 1];
-        return (position & 1u) != 0u ? (word >> 16) : (word & 0xFFFFu);
-    }
-    return indices.words[position];
-}
 
 // 三角形の 3 頂点（ワールド空間）
 struct VisTriangle
@@ -290,9 +258,7 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
     triangle.uv[1] = vec2(0.0);
     triangle.uv[2] = vec2(0.0);
 
-    const uvec2 vertexAddress = VisRecordVertexAddress(record);
-    const uvec2 indexAddress = VisRecordIndexAddress(record);
-    if ((vertexAddress.x | vertexAddress.y) == 0u || (indexAddress.x | indexAddress.y) == 0u)
+    if (!VisRecordHasAddresses(record))
     {
         return false;
     }
@@ -315,16 +281,12 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
                                        previousTransformIndex < uint(drawInstances.length());
 
     // reference 型の変数には const を付けられない
-    VisIndexWords indices = VisIndexWords(indexAddress);
-    VisVertexArray vertices = VisVertexArray(vertexAddress);
-    const bool bIndex16 = VisRecordHasIndex16(record);
-    // 頂点の基点は符号つき（インデックスに足す）
-    const int vertexBase = int(VisRecordVertexBase(record));
+    VisIndexWords indices = VisIndexWords(VisRecordIndexAddress(record));
+    VisVertexArray vertices = VisVertexArray(VisRecordVertexAddress(record));
 
     for (uint k = 0u; k < 3u; ++k)
     {
-        const uint index = VisLoadIndex(indices, bIndex16, VisTriangleIndexPosition(record, triangleIndex, k));
-        const uint vertexIndex = uint(int(index) + vertexBase);
+        const uint vertexIndex = VisLoadTriangleVertexIndex(record, indices, triangleIndex, k);
         const VisVertex vertex = vertices.vertices[vertexIndex];
         const vec3 local = vec3(vertex.px, vertex.py, vertex.pz);
         const vec3 localNormal = vec3(vertex.nx, vertex.ny, vertex.nz);

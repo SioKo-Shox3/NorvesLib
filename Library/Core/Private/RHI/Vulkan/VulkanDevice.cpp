@@ -1144,6 +1144,13 @@ namespace NorvesLib::RHI::Vulkan
         // 配列sampled imageの非一様添字は、PTの材質texture配列が対応時だけ使う。
         m_vulkan12Features.shaderSampledImageArrayNonUniformIndexing =
             vulkan12Query.shaderSampledImageArrayNonUniformIndexing == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // storage buffer・shared memory の 64bit アトミック（ソフトウェアラスタの深度+IDの詰め込み用）。
+        // SPIR-V の Int64Atomics は Int64 が前提なので、shaderInt64 を有効にできるときだけ載せる。
+        const bool bInt64Enabled = features2.features.shaderInt64 == VK_TRUE;
+        m_vulkan12Features.shaderBufferInt64Atomics =
+            bInt64Enabled && vulkan12Query.shaderBufferInt64Atomics == VK_TRUE ? VK_TRUE : VK_FALSE;
+        m_vulkan12Features.shaderSharedInt64Atomics =
+            bInt64Enabled && vulkan12Query.shaderSharedInt64Atomics == VK_TRUE ? VK_TRUE : VK_FALSE;
         features2.pNext = &m_vulkan12Features;
 
         // 任意のデバイス拡張は機能照会より先に選定する。
@@ -2845,6 +2852,13 @@ namespace NorvesLib::RHI::Vulkan
                 m_vulkan12Features.bufferDeviceAddress == VK_TRUE;
             m_Capabilities.bShaderInt64 =
                 m_enabledDeviceFeatures.shaderInt64 == VK_TRUE;
+            m_Capabilities.bShaderBufferInt64Atomics =
+                m_vulkan12Features.shaderBufferInt64Atomics == VK_TRUE;
+            m_Capabilities.bShaderSharedInt64Atomics =
+                m_vulkan12Features.shaderSharedInt64Atomics == VK_TRUE;
+            NORVES_LOG_INFO("VulkanDevice", "DEVICE_CAPS int64_atomics buffer=%d shared=%d",
+                            m_Capabilities.bShaderBufferInt64Atomics ? 1 : 0,
+                            m_Capabilities.bShaderSharedInt64Atomics ? 1 : 0);
             m_Capabilities.bSampledImageArrayNonUniformIndexing =
                 m_vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE;
             m_Capabilities.bDrawIndirectFirstInstance =

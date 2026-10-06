@@ -6,6 +6,7 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
+#include "Rendering/ScopedGpuTimestamp.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/VisibilityRasterPass.h"
@@ -28,6 +29,7 @@
 #include "RHI/ISampler.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/DeviceCapabilities.h"
+#include "Rendering/VisibilityMerge.h"
 #include "Text/IdentityPool.h"
 #include "Logging/LogMacros.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
@@ -57,8 +59,16 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t CULL_PASS_FIRST = 1u;  // 1パス目: 前のフレームで見えたクラスタだけ
         constexpr uint32_t CULL_PASS_SECOND = 2u; // 2パス目: HZB で判定して残りを描き、見えたビットを更新
 
-        // 統計（cluster_cull.comp の stats[4]: pass1・pass2_tested・pass2_drawn・occluded）のバイト数
-        constexpr uint32_t StatsBufferBytes = 4u * sizeof(uint32_t);
+        // 統計（cluster_cull.comp の stats[12]）のバイト数。0〜3 は pass1・pass2_tested・pass2_drawn・occluded、
+        // 4〜7 はソフトウェアラスタの振り分け（pass1 の一覧・pass2 の一覧・ハードだけ・一覧が満杯で積めなかった数）、
+        // 8 はハードのコマンドを空振りにした数、9・10 は visbuffer_sw_raster.comp が数える（矩形の上限を超えた三角形・走ったワークグループ）。11 は予備
+        constexpr uint32_t StatsBufferWords = 12u;
+        constexpr uint32_t StatsBufferBytes = StatsBufferWords * sizeof(uint32_t);
+
+        // ソフトウェアラスタの一覧（cluster_cull.comp の SwRasterBuffer）。先頭はパスごとの間接 dispatch の引数（x・y・z）と
+        // 積もうとした数の 4 語ずつ（SW_RASTER_HEADER_WORDS = 8 語）で、その後にパスごとのコマンドの位置の列が続く。
+        // 一覧の容量はパスごとのコマンド数まで（間接 dispatch の引数は 2 次元なので、x の上限 65535 を超えても y へ折り返す）
+        constexpr uint32_t SwRasterHeaderWords = 8u;
 
         // グループの BVH のたどり（cluster_bvh_cull.comp）。BvhStageClusters は葉のクラスタの判定の段の印、
         // BvhLeafSlots は葉の列の1要素を受け持つスレッドの数（葉が持つクラスタの最大数）、
@@ -72,35 +82,6 @@ namespace NorvesLib::Core::Rendering
         // 手放したバッファ（作り直した「見えた」ビット・IndirectDraw のバッファなど）を破棄するまでのフレーム数。
         // フレームの飛行数は2以下なので、GPUはこれより前に使い終わっている
         constexpr uint64_t RetiredBufferFrames = 8;
-
-        // コマンドリストの GPU タイムスタンプの区間（統計が有効な構成の trace の Type=GPU 行になる。それ以外では何もしない）
-        class ScopedGpuTimestamp
-        {
-        public:
-            ScopedGpuTimestamp(RHI::ICommandList *commandList, const char *scopeName)
-                : m_CommandList(commandList)
-            {
-                if (m_CommandList)
-                {
-                    m_Handle = m_CommandList->BeginGPUTimestampScope(scopeName);
-                }
-            }
-
-            ~ScopedGpuTimestamp()
-            {
-                if (m_CommandList && m_Handle.IsValid())
-                {
-                    m_CommandList->EndGPUTimestampScope(m_Handle);
-                }
-            }
-
-            ScopedGpuTimestamp(const ScopedGpuTimestamp &) = delete;
-            ScopedGpuTimestamp &operator=(const ScopedGpuTimestamp &) = delete;
-
-        private:
-            RHI::ICommandList *m_CommandList = nullptr;
-            RHI::GPUTimestampScopeHandle m_Handle;
-        };
 
         bool IsMegaGeometryDebugPayloadMode(DebugViewMode mode)
         {
@@ -354,6 +335,10 @@ namespace NorvesLib::Core::Rendering
         m_IndirectDrawBuffer.reset();
         m_DrawCountBuffer.reset();
         m_DrawInfoBuffer.reset();
+        m_SwRasterBuffer.reset();
+        m_SwRasterBufferCapacity = 0;
+        m_SwRasterCapacity = 0;
+        m_bSwRasterBinned = false;
         m_CommandCapacity = 0;
         m_CounterCapacity = 0;
         m_IndirectDrawBufferHandle = {};
@@ -899,6 +884,8 @@ namespace NorvesLib::Core::Rendering
         // （ビジビリティバッファのラスタが取り出さなかったフレームの後始末）
         m_VisibilityPlan = VisibilityDrawPlan{};
         ReleaseVisibilityDrawBuffers(commandList);
+        m_bSwRasterBinned = false;
+        m_SwRasterCapacity = 0;
 
         if (m_Instances.empty() || !m_CullPipeline || !commandList || !command.MegaGeometry || !command.bHasMainCamera)
         {
@@ -1237,6 +1224,41 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // ソフトウェアラスタの振り分けを使えるか。要求されたときだけ判定し、使えない理由は 1 回だけログへ出す。
+        // 64bit のバッファ（深度 + ID）への書き込みが 64bit アトミックを使い、合流が ID のラスタ（sink）の後ろにあるので、
+        // どちらかが無ければ振り分けない。振り分けた一覧はパスごとなので、2 パスの遮蔽の判定のときだけ使う
+        bool bSwRasterBin = false;
+        if (m_bSwRasterRequested)
+        {
+            const char *fallbackReason = nullptr;
+            if (!sink)
+            {
+                // sink が無い理由: 材質の解決を使う On（GBuffer の描画を止める）なのに ID のラスタが使えないフレームは resolve_unavailable、
+                // Debug（GBuffer が先に MegaGeometry を描く）は debug_mode、描画の写しを作らない構成は visibility_buffer_off
+                fallbackReason = m_bSkipGBufferDraw ? "resolve_unavailable" : (m_bVisibilityPlanEnabled ? "debug_mode" : "visibility_buffer_off");
+            }
+            else if (!VisibilityMerge::IsSupported(caps))
+            {
+                fallbackReason = "int64_atomics_unsupported";
+            }
+            else if (!bTwoPass)
+            {
+                fallbackReason = "occlusion_off";
+            }
+            if (fallbackReason)
+            {
+                if (!m_bSwRasterFallbackLogged)
+                {
+                    NORVES_LOG_INFO("MegaGeometryPass", "SW_RASTER_FALLBACK reason=%s", fallbackReason);
+                    m_bSwRasterFallbackLogged = true;
+                }
+            }
+            else
+            {
+                bSwRasterBin = true;
+            }
+        }
+
         // 統計（MEGA_OCCLUSION）の書き込み先。読み戻しのあるビルド（開発）だけ取る
         StatsSlot *statsSlot = nullptr;
 #if NORVES_ENABLE_STATS
@@ -1264,6 +1286,27 @@ namespace NorvesLib::Core::Rendering
                                         slot.Mapped[1],
                                         slot.Mapped[2],
                                         slot.Mapped[3]);
+                        if (slot.bSwRasterBin)
+                        {
+                            // 振り分けの結果。ソフトのラスタが無い間は、ハードがすべてのクラスタを描く（hw は一覧へ積まなかった数）
+                            NORVES_LOG_INFO("MegaGeometryPass",
+                                            "SW_RASTER_BIN pass1=%u pass2=%u hw=%u overflow=%u zeroed=%u sw_groups=%u sw_dispatches=%u frame=%llu epoch_frame=%lld",
+                                            slot.Mapped[4],
+                                            slot.Mapped[5],
+                                            slot.Mapped[6],
+                                            slot.Mapped[7],
+                                            slot.Mapped[8],
+                                            slot.Mapped[10],
+                                            slot.SwDispatches,
+                                            static_cast<unsigned long long>(slot.RenderFrame),
+                                            static_cast<long long>(slot.EpochFrame));
+                            // ソフトが 1 スレッド 1 三角形で走査する矩形（一辺の上限は振り分けのしきい値から max(64, ceil(2 × しきい値) + 2) 画素で決める）を超えて描かなかった三角形の数。振り分けのしきい値が保守的なら 0
+                            NORVES_LOG_INFO("MegaGeometryPass",
+                                            "SW_RASTER_OVERSIZE=%u frame=%llu epoch_frame=%lld",
+                                            slot.Mapped[9],
+                                            static_cast<unsigned long long>(slot.RenderFrame),
+                                            static_cast<long long>(slot.EpochFrame));
+                        }
                         m_bStatsLoggedOnce = true;
                     }
                     slot.bPending = false;
@@ -1305,6 +1348,23 @@ namespace NorvesLib::Core::Rendering
             recordEmptyRenderPass();
             return;
         }
+
+        // ソフトウェアラスタの一覧。作れなければ振り分けずにハードだけで描く
+        const uint32_t swRasterCapacity = static_cast<uint32_t>(commandsPerPass);
+        if (bSwRasterBin && !EnsureSwRasterBuffer(swRasterCapacity))
+        {
+            if (!m_bSwRasterFallbackLogged)
+            {
+                NORVES_LOG_INFO("MegaGeometryPass", "SW_RASTER_FALLBACK reason=buffer_unavailable");
+                m_bSwRasterFallbackLogged = true;
+            }
+            bSwRasterBin = false;
+        }
+        m_bSwRasterBinned = bSwRasterBin;
+        m_SwRasterCapacity = bSwRasterBin ? swRasterCapacity : 0u;
+        // ソフトのラスタが走るフレームだけ、一覧へ積めたクラスタのハードのコマンドを空振りにする（走らないなら積むだけ）。
+        // bSwRasterBin は sink と 2 パスの遮蔽の判定を前提にしている
+        const bool bSwRasterSkipHardware = bSwRasterBin && sink != nullptr && sink->PrepareSwRaster();
 
         // ページの表（常駐の状態）をこのフレームのスロットへ写す。フレームの間は変わらないので、2パスの判定が食い違わない
         if (!SyncPageTable(frameSlot, *command.MegaGeometry))
@@ -1475,6 +1535,10 @@ namespace NorvesLib::Core::Rendering
         baseUniform.VisibleWriteStamp = static_cast<uint32_t>(m_OcclusionFrameCount) + 1u;
         baseUniform.BvhRootCount = bvhInstanceCount;
         baseUniform.PageRequestCapacity = pageRequestCapacity;
+        baseUniform.bSwRasterEnabled = bSwRasterSkipHardware ? 2u : (bSwRasterBin ? 1u : 0u);
+        baseUniform.SwRasterCapacity = bSwRasterBin ? swRasterCapacity : 0u;
+        baseUniform.SwRasterMaxPixels = m_SwRasterMaxPixels;
+        baseUniform.SwRasterNearPlane = cam.NearPlane;
 
         // メッシュ共通のLOD球を持つメッシュの選ばれる段を、変わったときに記録する
         for (const Drawable &drawable : drawables)
@@ -1498,6 +1562,8 @@ namespace NorvesLib::Core::Rendering
             statsSlot->RenderFrameCount = m_RenderFrameCount;
             statsSlot->EpochFrame = epochFrame;
             statsSlot->bPending = true;
+            statsSlot->bSwRasterBin = bSwRasterBin;
+            statsSlot->SwDispatches = 0;
         }
 
         // 区間のカウンタ（全パス分）を0にし、コマンド・描画情報をカリングが書ける状態にする。
@@ -1517,6 +1583,13 @@ namespace NorvesLib::Core::Rendering
             cmdList->BufferBarrier(m_IndirectDrawBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
         }
         cmdList->BufferBarrier(m_DrawInfoBuffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
+        if (bSwRasterBin)
+        {
+            // ソフトの一覧の頭（間接 dispatch の引数と積もうとした数）を 0 にする。一覧の中身は積んだ分だけが読まれるので消さない
+            cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
+            cmdList->FillBuffer(m_SwRasterBuffer, 0, SwRasterHeaderWords * sizeof(uint32_t), 0);
+            cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+        }
 
         // BVH のたどりの列・カウンタを、このフレームで使い始めたか（最初のパスの前に Common から使える状態にする）
         bool bBvhBuffersUsed = false;
@@ -1590,6 +1663,16 @@ namespace NorvesLib::Core::Rendering
                                                  static_cast<uint32_t>(frameSlot.PageTableBuffer->GetSize()));
                 descriptorSet->BindStorageBuffer(12, pageRequestBuffer, 0,
                                                  static_cast<uint32_t>(pageRequestBuffer->GetSize()));
+                // binding 13: ソフトウェアラスタの一覧（振り分けないフレームは触らないので代わりのバッファを結ぶ）
+                if (bSwRasterBin)
+                {
+                    descriptorSet->BindStorageBuffer(13, m_SwRasterBuffer, 0,
+                                                     static_cast<uint32_t>(m_SwRasterBuffer->GetSize()));
+                }
+                else
+                {
+                    descriptorSet->BindStorageBuffer(13, m_DummyStatsBuffer, 0, StatsBufferBytes);
+                }
                 descriptorSet->Update();
             };
 
@@ -1626,6 +1709,10 @@ namespace NorvesLib::Core::Rendering
                     cmdList->BufferBarrier(m_IndirectDrawBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
                     cmdList->BufferBarrier(m_DrawCountBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
                     cmdList->BufferBarrier(m_DrawInfoBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    if (bSwRasterBin)
+                    {
+                        cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    }
                     if (bTwoPass && cullPass != CULL_PASS_SINGLE)
                     {
                         cmdList->BufferBarrier(m_VisibilityBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
@@ -1701,6 +1788,13 @@ namespace NorvesLib::Core::Rendering
             cmdList->BufferBarrier(m_DrawInfoBuffer,
                                    RHI::ResourceState::UnorderedAccess,
                                    RHI::ResourceState::GenericRead);
+            if (bSwRasterBin)
+            {
+                // 次のパスのカリングが同じバッファの別の範囲へ続けて書く
+                cmdList->BufferBarrier(m_SwRasterBuffer,
+                                       RHI::ResourceState::UnorderedAccess,
+                                       RHI::ResourceState::UnorderedAccess);
+            }
             if (cullPass == CULL_PASS_FIRST)
             {
                 // 1パス目の読み取りを、2パス目の書き込みより前に済ませる
@@ -1737,6 +1831,14 @@ namespace NorvesLib::Core::Rendering
             plan.InstanceBufferBytes = static_cast<uint64_t>(instanceTable.size()) * sizeof(GPUMegaInstance);
             plan.SectionBuffer = frameSlot.SectionBuffer;
             plan.SectionBufferBytes = static_cast<uint64_t>(sectionCount) * passCount * 2u * sizeof(uint32_t);
+            if (bSwRasterBin)
+            {
+                plan.SwRasterBuffer = m_SwRasterBuffer;
+                plan.SwRasterCapacity = swRasterCapacity;
+                plan.SwRasterMaxPixels = m_SwRasterMaxPixels;
+            }
+            plan.StatsBuffer = statsBuffer;
+            plan.bStatsEnabled = statsSlot != nullptr;
             for (const Section &section : sections)
             {
                 VisibilityDrawPlan::Section planSection;
@@ -1816,6 +1918,7 @@ namespace NorvesLib::Core::Rendering
         // sink に描かせるのは2パスのときだけ（1回の判定は、描画の写しを残してラスタが全部を1回で描く）
         const bool bStaged = sink != nullptr && bTwoPass;
         VisibilityDrawPlan stagedPlan;
+        const uint32_t swDispatchesBefore = sink ? sink->GetSwRasterDispatchCount() : 0u;
 
         if (!bTwoPass)
         {
@@ -1838,13 +1941,15 @@ namespace NorvesLib::Core::Rendering
             if (bStaged)
             {
                 sink->RecordFirstPassDraws(cmdList, stagedPlan);
+                // HZB の元の深度へ、ハードのラスタの外で書かれた深度（ソフトウェアラスタ）を合流させる
+                sink->RecordMergeBeforeHiZ(cmdList, stagedPlan);
             }
             else
             {
                 recordDraws(m_GBufferRenderPass, m_GBufferFramebuffer, 0);
             }
 
-            // 深度（GBufferPass の不透明＋1パス目。sink があるときは ID のラスタが描いた塊＋1パス目）から HZB を作る
+            // 深度（GBufferPass の不透明＋1パス目。sink があるときは ID のラスタが描いた塊＋1パス目＋合流した値）から HZB を作る
             // （深度は1パス目の終わりで ShaderResource）。
             // 作れなかったときは遮蔽の判定をしない（1パス目で描かなかったクラスタを全て描く）
             const bool bHiZBuilt = m_HiZ.Build(cmdList, m_DepthTexture);
@@ -1867,6 +1972,11 @@ namespace NorvesLib::Core::Rendering
             {
                 recordDraws(m_SecondGBufferRenderPass, m_SecondGBufferFramebuffer, 1);
             }
+            if (statsSlot && sink)
+            {
+                // このフレームで sink が記録したソフトの dispatch の数（ログの sw_dispatches）
+                statsSlot->SwDispatches = sink->GetSwRasterDispatchCount() - swDispatchesBefore;
+            }
 
             if (statsSlot)
             {
@@ -1881,6 +1991,12 @@ namespace NorvesLib::Core::Rendering
         if (pageRequestCapacity != 0)
         {
             command.MegaGeometry->RecordPageRequestHostBarrier(*cmdList);
+        }
+
+        // ソフトの一覧を次のフレーム用に戻す
+        if (bSwRasterBin)
+        {
+            cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
         }
 
         // BVH のたどりの列・カウンタを次のフレーム用に戻す
@@ -2190,6 +2306,44 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool MegaGeometryPass::EnsureSwRasterBuffer(uint32_t capacity)
+    {
+        if (!m_Device || capacity == 0)
+        {
+            return false;
+        }
+        if (m_SwRasterBuffer && capacity <= m_SwRasterBufferCapacity)
+        {
+            return true;
+        }
+
+        const uint32_t newCapacity = NextPowerOfTwo(std::max(capacity, m_SwRasterBufferCapacity));
+        const uint64_t words = static_cast<uint64_t>(SwRasterHeaderWords) + 2ull * newCapacity;
+        // 頭は間接 dispatch の引数になるので IndirectBuffer も持つ。頭は FillBuffer で 0 にする
+        RHI::BufferDesc desc(words * sizeof(uint32_t),
+                             RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer | RHI::ResourceUsage::TransferDst,
+                             false,
+                             "MegaGeometry_SwRaster");
+        RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+        if (!buffer)
+        {
+            return false;
+        }
+
+        // 古いバッファは、直前のフレームのGPUがまだ使っているかもしれないので、しばらく保持してから破棄する
+        if (m_SwRasterBuffer)
+        {
+            m_RetiredBuffers.push_back(RetiredBuffer{m_SwRasterBuffer, m_RenderFrameCount});
+        }
+        m_SwRasterBuffer = buffer;
+        m_SwRasterBufferCapacity = newCapacity;
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "VRAM_LEDGER sw_raster_list mb=%.2f capacity=%u",
+                        static_cast<double>(desc.Size) / (1024.0 * 1024.0),
+                        newCapacity);
+        return true;
+    }
+
     bool MegaGeometryPass::EnsureBvhStageResources(FrameSlot &slot, uint32_t passIndex, uint32_t stageCount)
     {
         if (!m_Device)
@@ -2301,6 +2455,7 @@ namespace NorvesLib::Core::Rendering
         addBinding(10, RHI::ResourceBindType::RWBuffer);             // BVH のたどりのカウンタ
         addBinding(11, RHI::ResourceBindType::RWBuffer);             // ページの表（常駐 + 要求の印）
         addBinding(12, RHI::ResourceBindType::RWBuffer);             // ページの要求の列
+        addBinding(13, RHI::ResourceBindType::RWBuffer);             // ソフトウェアラスタの一覧と間接 dispatch の引数
         return desc;
     }
 

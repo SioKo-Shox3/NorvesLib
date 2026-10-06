@@ -1,0 +1,33 @@
+﻿#version 450
+
+// ========================================
+// 64bit のバッファの合流（visbuffer_merge.frag）の GPU テスト用: 深度の画像を float の並びとして読み出す確認用コンピュートシェーダー
+//
+// D32_FLOAT の深度は転送でバッファへ写せないので、サンプラー付きの画像として texelFetch で読み、storage buffer へ書く。
+// VisibilityResolveVulkanTest が、合流の後の深度をホストへ読み戻すために使う。製品のパスは使わない。
+// ========================================
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D u_Depth;
+
+layout(std430, set = 0, binding = 1) writeonly buffer DepthOut
+{
+    float depthOut[];
+};
+
+layout(std140, set = 0, binding = 2) uniform ProbeParams
+{
+    // x: 幅、y: 高さ
+    uvec4 size;
+} params;
+
+void main()
+{
+    const uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= params.size.x || pixel.y >= params.size.y)
+    {
+        return;
+    }
+    depthOut[pixel.y * params.size.x + pixel.x] = texelFetch(u_Depth, ivec2(pixel), 0).r;
+}

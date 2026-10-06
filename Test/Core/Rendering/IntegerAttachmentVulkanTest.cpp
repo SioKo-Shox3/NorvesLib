@@ -6,6 +6,9 @@
 //     クリア値は 0xDEADBEEF（G は 0xCAFEF00D）で、浮動小数の値として渡すと壊れる整数の値を使う。
 //   - R32G32_UINT は、R に同じ ID、G に描画の番号だけを書く。
 //   - Vulkan の validation error が 0 件であること。
+//   - storage buffer の uint64 へ複数のスレッドが atomicMin で「上位 32bit = 深度のビット、下位 32bit = ID」を書き、
+//     手前の深度が勝ち、同じ深度なら ID の小さい方が残ること（ソフトウェアラスタの画素の選択）。
+//     shaderBufferInt64Atomics が使えない環境ではこのケースだけをスキップする。
 // Vulkan デバイスが無い、または geometryShader が使えない環境では 125（スキップ）を返す。
 #include "Rendering/ShaderManager.h"
 
@@ -251,6 +254,183 @@ namespace
         std::cout << TestName << " " << formatName << " 確認した三角形=" << checked << std::endl;
     }
 
+    // storage buffer の uint64 への atomicMin（上位 32bit = 深度のビット、下位 32bit = ID）の確認。
+    // 画素 0: 同じ深度の 3 個が競合し、ID が最小のものが残る。画素 1: 手前の深度で ID の大きい物が、奥の深度で ID の小さい物に勝つ。
+    // 画素 2〜6: 乱数の (深度, ID) を大量に競合させる。画素 7: 書かれないのでクリア値のまま。
+    constexpr uint32_t Int64PixelCount = 8u;
+    constexpr uint32_t Int64RandomItemCount = 4096u;
+    constexpr uint32_t Int64ItemCount = 6u + Int64RandomItemCount;
+    constexpr uint64_t Int64ClearKey = ~0ull;
+
+    uint32_t FloatBits(float value)
+    {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        return bits;
+    }
+
+    DescriptorSetDesc MakeInt64ProbeDescriptorSetDesc()
+    {
+        DescriptorSetDesc desc;
+        for (uint32_t bindingIndex = 0; bindingIndex < 2u; ++bindingIndex)
+        {
+            DescriptorBinding binding;
+            binding.binding = bindingIndex;
+            binding.type = ResourceBindType::RWBuffer;
+            binding.stages = ShaderStage::Compute;
+            desc.bindings.push_back(binding);
+        }
+        return desc;
+    }
+
+    void TestInt64AtomicMin(const DevicePtr& device, ShaderManager& shaderManager)
+    {
+        const auto& capabilities = device->GetCapabilities();
+        std::cout << TestName << " shaderBufferInt64Atomics=" << capabilities.bShaderBufferInt64Atomics
+                  << " shaderSharedInt64Atomics=" << capabilities.bShaderSharedInt64Atomics << std::endl;
+        // 開発機（RTX 4080）では shaderInt64 が有効なので、64bit のバッファのアトミックも有効でなければならない。
+        // 有効化の配線が外れて偽のままになると、非対応の装置として下で黙ってスキップされるので、ここで固定する
+        if (capabilities.bShaderInt64)
+        {
+            Expect(capabilities.bShaderBufferInt64Atomics,
+                   "shaderInt64 が有効な開発機では shaderBufferInt64Atomics も有効でなければならない");
+        }
+        if (!capabilities.bShaderBufferInt64Atomics)
+        {
+            std::cout << TestName << " スキップ: shaderBufferInt64Atomics が使えないデバイス（int64 アトミックのケースのみ）" << std::endl;
+            return;
+        }
+
+        // 入力: (画素, 深度のビット, ID, 未使用)。深度は正の float なので、ビットの整数の大小が深度の大小と一致する。
+        uint32_t items[Int64ItemCount * 4u] = {};
+        uint32_t itemCount = 0;
+        auto addItem = [&](uint32_t pixel, float depth, uint32_t id)
+        {
+            items[itemCount * 4u + 0u] = pixel;
+            items[itemCount * 4u + 1u] = FloatBits(depth);
+            items[itemCount * 4u + 2u] = id;
+            ++itemCount;
+        };
+        addItem(0u, 0.5f, 900u);
+        addItem(0u, 0.5f, 5u);
+        addItem(0u, 0.5f, 300u);
+        addItem(1u, 0.25f, 0x00FFFFFFu);
+        addItem(1u, 0.75f, 1u);
+        addItem(1u, 0.30f, 0u);
+        uint32_t state = 0x12345678u;
+        auto nextRandom = [&state]()
+        {
+            state = state * 1664525u + 1013904223u;
+            return state >> 8;
+        };
+        for (uint32_t i = 0; i < Int64RandomItemCount; ++i)
+        {
+            // 深度は 16 段階にして、同じ深度の競合が多く起きるようにする
+            const uint32_t pixel = 2u + nextRandom() % 5u;
+            const float depth = 0.1f + 0.05f * static_cast<float>(nextRandom() % 16u);
+            addItem(pixel, depth, nextRandom() % 100000u);
+        }
+        Expect(itemCount == Int64ItemCount, "入力の個数が合わない");
+
+        // 期待値は CPU で同じ詰め方の最小値を取る
+        uint64_t expected[Int64PixelCount];
+        for (uint64_t& key : expected)
+        {
+            key = Int64ClearKey;
+        }
+        for (uint32_t i = 0; i < itemCount; ++i)
+        {
+            const uint64_t key = (static_cast<uint64_t>(items[i * 4u + 1u]) << 32) | items[i * 4u + 2u];
+            if (key < expected[items[i * 4u]])
+            {
+                expected[items[i * 4u]] = key;
+            }
+        }
+        // 構成した競合が期待どおりの勝者になる前提（検査の弱体化を防ぐ）
+        Expect(expected[0] == ((static_cast<uint64_t>(FloatBits(0.5f)) << 32) | 5u), "画素 0 の期待値は同じ深度で ID 最小のもの");
+        Expect(expected[1] == ((static_cast<uint64_t>(FloatBits(0.25f)) << 32) | 0x00FFFFFFu), "画素 1 の期待値は最も手前の深度のもの");
+        Expect(expected[7] == Int64ClearKey, "画素 7 は書かれない");
+
+        ShaderPtr shader = shaderManager.LoadShader("int64_atomic_min_probe.comp", ShaderStage::Compute);
+        if (!shader)
+        {
+            std::cerr << TestName << " int64_atomic_min_probe.comp をコンパイルできませんでした" << std::endl;
+            ++g_failures;
+            return;
+        }
+        ComputePipelineDesc pipelineDesc;
+        pipelineDesc.computeShader = shader;
+        pipelineDesc.descriptorSetLayouts.push_back(MakeInt64ProbeDescriptorSetDesc());
+        PipelinePtr pipeline = device->CreateComputePipeline(pipelineDesc);
+        DescriptorSetPtr descriptorSet = device->CreateDescriptorSet(MakeInt64ProbeDescriptorSetDesc());
+
+        const uint64_t itemBytes = sizeof(items);
+        const uint64_t keyBytes = sizeof(expected);
+        BufferPtr itemBuffer = device->CreateBuffer(
+            BufferDesc(itemBytes, ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead, true, "Int64ProbeItems"));
+        BufferPtr keyBuffer = device->CreateBuffer(
+            BufferDesc(keyBytes, ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead, true, "Int64ProbeKeys"));
+        CommandListPtr commandList = pipeline && descriptorSet && itemBuffer && keyBuffer ? device->CreateCommandList() : nullptr;
+        if (!commandList)
+        {
+            std::cerr << TestName << " int64 アトミックの確認用の資源を作れませんでした" << std::endl;
+            ++g_failures;
+            return;
+        }
+
+        void* mappedItems = itemBuffer->Map(0, itemBytes);
+        void* mappedKeys = keyBuffer->Map(0, keyBytes);
+        if (mappedItems == nullptr || mappedKeys == nullptr)
+        {
+            std::cerr << TestName << " int64 アトミックの確認用のバッファを map できませんでした" << std::endl;
+            ++g_failures;
+            return;
+        }
+        std::memcpy(mappedItems, items, static_cast<size_t>(itemBytes));
+        for (uint32_t pixel = 0; pixel < Int64PixelCount; ++pixel)
+        {
+            std::memcpy(static_cast<uint8_t*>(mappedKeys) + pixel * sizeof(uint64_t), &Int64ClearKey, sizeof(uint64_t));
+        }
+        itemBuffer->Unmap();
+        keyBuffer->Unmap();
+
+        descriptorSet->BindStorageBuffer(0u, itemBuffer, 0u, static_cast<uint32_t>(itemBytes));
+        descriptorSet->BindStorageBuffer(1u, keyBuffer, 0u, static_cast<uint32_t>(keyBytes));
+        descriptorSet->Update();
+
+        commandList->Begin();
+        commandList->BufferBarrier(itemBuffer, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, itemBytes);
+        commandList->BufferBarrier(keyBuffer, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, keyBytes);
+        commandList->SetPipeline(pipeline);
+        commandList->SetDescriptorSet(descriptorSet);
+        commandList->Dispatch((itemCount + 63u) / 64u, 1u, 1u);
+        commandList->BufferBarrier(keyBuffer, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, keyBytes);
+        commandList->End();
+        commandList->Submit(true);
+        device->WaitIdle();
+
+        const uint8_t* resultBytes = static_cast<const uint8_t*>(keyBuffer->Map(0, keyBytes));
+        if (resultBytes == nullptr)
+        {
+            std::cerr << TestName << " int64 アトミックの結果を map できませんでした" << std::endl;
+            ++g_failures;
+            return;
+        }
+        for (uint32_t pixel = 0; pixel < Int64PixelCount; ++pixel)
+        {
+            uint64_t actual = 0;
+            std::memcpy(&actual, resultBytes + pixel * sizeof(uint64_t), sizeof(actual));
+            if (actual != expected[pixel])
+            {
+                std::cerr << TestName << " int64 atomicMin の結果が違う 画素=" << pixel << " 期待=0x" << std::hex << expected[pixel]
+                          << " 実際=0x" << actual << std::dec << std::endl;
+            }
+            Expect(actual == expected[pixel], "atomicMin は手前の深度を残し、同じ深度なら ID の小さい方を残さなければならない");
+        }
+        keyBuffer->Unmap();
+        std::cout << TestName << " int64 atomicMin 確認した画素=" << Int64PixelCount << " 競合した入力=" << itemCount << std::endl;
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -307,6 +487,8 @@ namespace
         {
             ++g_failures;
         }
+
+        TestInt64AtomicMin(device, shaderManager);
 
         device->WaitIdle();
         shaderManager.Shutdown();

@@ -1,0 +1,58 @@
+﻿#version 450
+
+// ========================================
+// ビジビリティバッファ: 描画の記録を書く計算（visbuffer_records.comp）の間接 dispatch の引数を作るコンピュートシェーダー
+//
+// MegaGeometryPass のカリングが区間ごとに積んだコマンドの数（区間のコマンドの最大数で頭打ち）から、区間ごとに
+// ceil(数 / 64) 個のワークグループを数え、全区間を 1 本のワークグループの列に並べる。
+// 出力（visbuffer_records.comp の binding 8 と同じバッファ。語単位）:
+//   [0..2] = VkDispatchIndirectCommand（x = min(総数, 65535)、y = ceil(総数 / 65535)、z = 1）
+//   [3]    = ワークグループの総数
+//   [4 + s] = 区間の表の添え字 s の先頭のワークグループの番号（s = 区間の数 まで。最後の要素は総数）
+// 区間の表は高々 数十件なので、1 スレッドで直列に数える。
+// ========================================
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(std140, set = 0, binding = 0) uniform RecordParams
+{
+    // x: 区間の数（パスによらない）, y: 区間の表の要素数（パスの数 × 区間の数）
+    uvec4 counts;
+} params;
+
+layout(std430, set = 0, binding = 2) readonly buffer DrawCountBuffer
+{
+    uint sectionCounts[];
+};
+
+layout(std430, set = 0, binding = 3) readonly buffer SectionBuffer
+{
+    uvec2 sections[];
+};
+
+layout(std430, set = 0, binding = 8) writeonly buffer RecordArgsOut
+{
+    uint args[];
+};
+
+// visbuffer_records.comp の local_size_x と一致させる
+const uint RECORD_THREADS_PER_GROUP = 64u;
+// 間接 dispatch の 1 次元の上限（どの装置でも保証される値）。超える分は y に折り返す
+const uint MAX_GROUPS_X = 65535u;
+
+void main()
+{
+    uint total = 0u;
+    for (uint slot = 0u; slot < params.counts.y; ++slot)
+    {
+        args[4u + slot] = total;
+        const uint drawnCount = min(sectionCounts[slot], sections[slot].y);
+        total += (drawnCount + RECORD_THREADS_PER_GROUP - 1u) / RECORD_THREADS_PER_GROUP;
+    }
+    args[4u + params.counts.y] = total;
+
+    args[0] = min(total, MAX_GROUPS_X);
+    args[1] = (total + MAX_GROUPS_X - 1u) / MAX_GROUPS_X;
+    args[2] = 1u;
+    args[3] = total;
+}

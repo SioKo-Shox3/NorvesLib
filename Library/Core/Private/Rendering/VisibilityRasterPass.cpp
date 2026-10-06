@@ -11,6 +11,7 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/ScopedGpuTimestamp.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/ViewRenderContext.h"
@@ -41,7 +42,12 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DebugParamsBytes = 16;                  // vec4 params
         constexpr uint32_t IndirectCommandBytes = static_cast<uint32_t>(sizeof(MegaGeometry::DrawIndexedIndirectCommand));
         constexpr uint32_t RecordBytes = static_cast<uint32_t>(sizeof(VisibilityBuffer::DrawRecord));
+        // 間接 dispatch の引数（VkDispatchIndirectCommand 3 語 + ワークグループの総数 1 語）の後ろに、区間の表の添え字ごとの
+        // 先頭のワークグループの番号が続く（最後の 1 語は総数）。visbuffer_records_args.comp が書く
+        constexpr uint32_t RecordArgsHeaderWords = 4;
+        // 記録を書く計算の 1 ワークグループのスレッド数と、間接 dispatch の x の上限（visbuffer_records*.comp と一致させる）
         constexpr uint32_t RecordThreadsPerGroup = 64;
+        constexpr uint32_t RecordMaxGroupsX = 65535;
 
         uint32_t ClampBindSize(uint64_t size)
         {
@@ -84,7 +90,8 @@ namespace NorvesLib::Core::Rendering
             return desc;
         }
 
-        // 記録を書く計算のディスクリプタセット（visbuffer_records.comp の binding 0〜7）
+        // 記録を書く計算のディスクリプタセット（visbuffer_records.comp の binding 0〜8。引数を作る計算
+        // visbuffer_records_args.comp も同じ組を使う。binding 8 は引数を書く側が RW、記録を書く側が読み取り）
         RHI::DescriptorSetDesc MakeRecordDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
@@ -95,6 +102,7 @@ namespace NorvesLib::Core::Rendering
             }
             AddBinding(desc, 6, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute);
             AddBinding(desc, 7, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute);
+            AddBinding(desc, 8, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute);
             return desc;
         }
 
@@ -125,6 +133,311 @@ namespace NorvesLib::Core::Rendering
             return record;
         }
     } // namespace
+
+    // ========================================
+    // VisibilityMerge
+    // ========================================
+
+    namespace
+    {
+        // 合流のパスのディスクリプタセット（visbuffer_merge.frag の binding 0・1）
+        RHI::DescriptorSetDesc MakeMergeDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc desc;
+            AddBinding(desc, 0, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Pixel);
+            AddBinding(desc, 1, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Pixel);
+            return desc;
+        }
+
+        constexpr uint32_t MergeParamsBytes = 16; // uvec4（x = 幅、y = 高さ）
+        // 作り直しで手放した 64bit のバッファを持っておくフレーム数（飛行中のフレームの数より長く）
+        constexpr uint64_t MergeRetiredBufferFrames = FrameUseRingMaxInFlightSlots + 1;
+        constexpr double BytesPerMegabyte = 1024.0 * 1024.0;
+    } // namespace
+
+    VisibilityMerge::VisibilityMerge() = default;
+
+    VisibilityMerge::~VisibilityMerge()
+    {
+        Shutdown();
+    }
+
+    bool VisibilityMerge::IsSupported(const RHI::DeviceCapabilities& capabilities)
+    {
+        // bShaderBufferInt64Atomics は、64bit 整数（shaderInt64）が有効になったときだけ true になる
+        return capabilities.bShaderBufferInt64Atomics && capabilities.bShaderInt64;
+    }
+
+    RHI::RenderPassDesc VisibilityMerge::MakeLoadRenderPassDesc()
+    {
+        RHI::RenderPassDesc desc;
+
+        // ID: 前の描画の内容へ重ねる。ShaderResource の状態から始まり、ShaderResource で終わる
+        RHI::AttachmentDesc idAttachment;
+        idAttachment.format = RHI::Format::R32_UINT;
+        idAttachment.isDepthStencil = false;
+        idAttachment.clear = false;
+        idAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        idAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+        idAttachment.initialState = RHI::ResourceState::ShaderResource;
+        idAttachment.finalState = RHI::ResourceState::ShaderResource;
+        desc.colorAttachments.push_back(idAttachment);
+
+        desc.hasDepthStencil = true;
+        desc.depthStencilAttachment.format = RHI::Format::D32_FLOAT;
+        desc.depthStencilAttachment.isDepthStencil = true;
+        desc.depthStencilAttachment.clear = false;
+        desc.depthStencilAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        desc.depthStencilAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+        desc.depthStencilAttachment.initialState = RHI::ResourceState::ShaderResource;
+        desc.depthStencilAttachment.finalState = RHI::ResourceState::ShaderResource;
+        return desc;
+    }
+
+    bool VisibilityMerge::Initialize(RHI::IDevice* device,
+                                     ShaderManager* shaderManager,
+                                     const RHI::RenderPassPtr& loadRenderPass)
+    {
+        Shutdown();
+        if (!device || !shaderManager || !loadRenderPass || !IsSupported(device->GetCapabilities()))
+        {
+            return false;
+        }
+
+        m_VertexShader = shaderManager->LoadShader("fullscreen.vert", RHI::ShaderStage::Vertex);
+        m_FragmentShader = shaderManager->LoadShader("visbuffer_merge.frag", RHI::ShaderStage::Pixel);
+        if (!m_VertexShader || !m_FragmentShader)
+        {
+            NORVES_LOG_WARNING("VisibilityMerge", "64bit のバッファの合流のシェーダーの読み込みに失敗。合流は行いません");
+            Shutdown();
+            return false;
+        }
+
+        RHI::GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.vertexShader = m_VertexShader;
+        pipelineDesc.pixelShader = m_FragmentShader;
+        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+        pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
+        pipelineDesc.rasterState.lineWidth = 1.0f;
+        // ハードのラスタ（LessOrEqual）と同じ比較。同じ深度ならソフトウェアラスタの ID が残る
+        pipelineDesc.depthStencilState.depthTestEnable = true;
+        pipelineDesc.depthStencilState.depthWriteEnable = true;
+        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::LessOrEqual;
+        RHI::BlendAttachmentDesc blendAttachment;
+        blendAttachment.blendEnable = false;
+        blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+        pipelineDesc.blendState.attachments.push_back(blendAttachment);
+        pipelineDesc.renderPass = loadRenderPass;
+        pipelineDesc.descriptorSetLayouts.push_back(MakeMergeDescriptorSetDesc());
+        m_Pipeline = device->CreateGraphicsPipeline(pipelineDesc);
+        if (!m_Pipeline)
+        {
+            NORVES_LOG_WARNING("VisibilityMerge", "64bit のバッファの合流のパイプラインの作成に失敗。合流は行いません");
+            Shutdown();
+            return false;
+        }
+
+        m_Device = device;
+        return true;
+    }
+
+    void VisibilityMerge::Shutdown()
+    {
+        m_Uses.Clear();
+        m_RetiredBuffers.clear();
+        m_KeyBuffer.reset();
+        m_KeyWidth = 0;
+        m_KeyHeight = 0;
+        m_KeyBufferCreateCount = 0;
+        m_KeyState = RHI::ResourceState::Common;
+        m_FrameSerial = 0;
+        m_Pipeline.reset();
+        m_VertexShader.reset();
+        m_FragmentShader.reset();
+        m_Device = nullptr;
+    }
+
+    void VisibilityMerge::BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
+    {
+        m_Uses.BeginFrame(inFlightIndex, frameSerial);
+        m_ReservedCount = 0;
+        m_ReservedNext = 0;
+        m_FrameSerial = frameSerial;
+        ReleaseStaleBuffers();
+    }
+
+    void VisibilityMerge::ReleaseStaleBuffers()
+    {
+        for (size_t index = 0; index < m_RetiredBuffers.size();)
+        {
+            if (m_FrameSerial > m_RetiredBuffers[index].RetiredSerial &&
+                m_FrameSerial - m_RetiredBuffers[index].RetiredSerial > MergeRetiredBufferFrames)
+            {
+                m_RetiredBuffers[index] = m_RetiredBuffers.back();
+                m_RetiredBuffers.pop_back();
+            }
+            else
+            {
+                ++index;
+            }
+        }
+    }
+
+    bool VisibilityMerge::EnsureKeyBuffer(uint32_t width, uint32_t height)
+    {
+        if (!IsReady() || !m_Device || width == 0 || height == 0)
+        {
+            return false;
+        }
+        if (m_KeyBuffer && m_KeyWidth == width && m_KeyHeight == height)
+        {
+            return true;
+        }
+
+        // 大きさが変わったので作り直す。古いバッファは、GPU が前のフレームで使っているかもしれないので、数フレーム持っておく
+        const uint64_t bytes = static_cast<uint64_t>(width) * height * VisibilityBuffer::KEY_BYTES;
+        RHI::BufferDesc desc(bytes, RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst, false, "VisBuffer_Key64");
+        RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+        if (!buffer)
+        {
+            NORVES_LOG_ERROR("VisibilityMerge", "64bit のバッファ（%ux%u、%llu バイト）を作れませんでした",
+                             width, height, static_cast<unsigned long long>(bytes));
+            return false;
+        }
+        if (m_KeyBuffer)
+        {
+            m_RetiredBuffers.push_back(RetiredBuffer{m_KeyBuffer, m_FrameSerial});
+        }
+        m_KeyBuffer = buffer;
+        m_KeyWidth = width;
+        m_KeyHeight = height;
+        m_KeyState = RHI::ResourceState::Common;
+        ++m_KeyBufferCreateCount;
+        NORVES_LOG_INFO("VisibilityMerge",
+                        "VRAM_LEDGER visbuffer64 width=%u height=%u mb=%.2f",
+                        width,
+                        height,
+                        static_cast<double>(bytes) / BytesPerMegabyte);
+        return true;
+    }
+
+    bool VisibilityMerge::RecordClear(RHI::ICommandList* commandList)
+    {
+        if (!IsReady() || !commandList || !m_KeyBuffer)
+        {
+            return false;
+        }
+
+        // すべてのビットを 1 にする（32bit の語を 0xFFFFFFFF で埋める）。次の書き込み（転送）は前のフレームの読み取りの後に並ぶ
+        const uint64_t bytes = m_KeyBuffer->GetSize();
+        commandList->BufferBarrier(m_KeyBuffer, m_KeyState, RHI::ResourceState::CopyDest);
+        commandList->FillBuffer(m_KeyBuffer, 0, bytes, VisibilityBuffer::KEY_EMPTY_WORD);
+        commandList->BufferBarrier(m_KeyBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::GenericRead);
+        m_KeyState = RHI::ResourceState::GenericRead;
+        return true;
+    }
+
+    bool VisibilityMerge::RecordBeginSoftwareWrite(RHI::ICommandList* commandList)
+    {
+        if (!IsReady() || !commandList || !m_KeyBuffer || m_KeyState != RHI::ResourceState::GenericRead)
+        {
+            return false;
+        }
+        commandList->BufferBarrier(m_KeyBuffer, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+        m_KeyState = RHI::ResourceState::UnorderedAccess;
+        return true;
+    }
+
+    bool VisibilityMerge::RecordEndSoftwareWrite(RHI::ICommandList* commandList)
+    {
+        if (!IsReady() || !commandList || !m_KeyBuffer || m_KeyState != RHI::ResourceState::UnorderedAccess)
+        {
+            return false;
+        }
+        commandList->BufferBarrier(m_KeyBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+        m_KeyState = RHI::ResourceState::GenericRead;
+        return true;
+    }
+
+    bool VisibilityMerge::PrepareUse(Use& use)
+    {
+        if (!use.Params)
+        {
+            use.Params = m_Device->CreateBuffer(
+                RHI::BufferDesc(MergeParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisBuffer_MergeParams"));
+        }
+        if (!use.DescriptorSet)
+        {
+            use.DescriptorSet = m_Device->CreateDescriptorSet(MakeMergeDescriptorSetDesc());
+        }
+        return use.Params && use.DescriptorSet;
+    }
+
+    bool VisibilityMerge::ReserveFrameResources(uint32_t count)
+    {
+        m_ReservedCount = 0;
+        m_ReservedNext = 0;
+        if (!IsReady() || !m_Device || count > MaxReservedUses)
+        {
+            return false;
+        }
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            Use& use = m_Uses.Acquire();
+            if (!PrepareUse(use))
+            {
+                m_ReservedCount = 0;
+                return false;
+            }
+            m_Reserved[m_ReservedCount++] = &use;
+        }
+        return true;
+    }
+
+    bool VisibilityMerge::RecordMerge(RHI::ICommandList* commandList,
+                                      const RHI::RenderPassPtr& renderPass,
+                                      const RHI::FramebufferPtr& framebuffer,
+                                      const RHI::Viewport& viewport,
+                                      const RHI::ScissorRect& scissor)
+    {
+        if (!IsReady() || !m_Device || !commandList || !renderPass || !framebuffer || !m_KeyBuffer ||
+            m_KeyState != RHI::ResourceState::GenericRead)
+        {
+            return false;
+        }
+
+        // 資源は呼び出しの回数ではなくフレームの枠で決める（提出前・GPU が読み終わる前の資源を上書きしない）。
+        // カリングの前に取っておいた分を先に使い、無ければその場で作る
+        Use* reserved = (m_ReservedNext < m_ReservedCount) ? m_Reserved[m_ReservedNext++] : nullptr;
+        if (!reserved)
+        {
+            Use& acquired = m_Uses.Acquire();
+            if (!PrepareUse(acquired))
+            {
+                NORVES_LOG_WARNING("VisibilityMerge", "合流の資源の作成に失敗。この合流は何もしません");
+                return false;
+            }
+            reserved = &acquired;
+        }
+        Use& use = *reserved;
+
+        const uint32_t params[4] = {m_KeyWidth, m_KeyHeight, 0u, 0u};
+        use.Params->Update(params, sizeof(params));
+        use.DescriptorSet->BindStorageBuffer(0, m_KeyBuffer, 0, ClampBindSize(m_KeyBuffer->GetSize()));
+        use.DescriptorSet->BindConstantBuffer(1, use.Params, 0, MergeParamsBytes);
+        use.DescriptorSet->Update();
+
+        commandList->BeginRenderPass(renderPass, framebuffer);
+        commandList->SetViewport(viewport);
+        commandList->SetScissor(scissor);
+        commandList->SetPipeline(m_Pipeline);
+        commandList->SetDescriptorSet(use.DescriptorSet, 0);
+        commandList->Draw(3, 0);
+        commandList->EndRenderPass();
+        return true;
+    }
 
     // ========================================
     // VisibilityRasterPass
@@ -168,8 +481,9 @@ namespace NorvesLib::Core::Rendering
         m_SkinnedVertexShader = context.ShaderMgr->LoadShader("visbuffer_skinned.vert", RHI::ShaderStage::Vertex);
         m_FragmentShader = context.ShaderMgr->LoadShader("visbuffer.frag", RHI::ShaderStage::Pixel);
         m_RecordsShader = context.ShaderMgr->LoadShader("visbuffer_records.comp", RHI::ShaderStage::Compute);
+        m_RecordArgsShader = context.ShaderMgr->LoadShader("visbuffer_records_args.comp", RHI::ShaderStage::Compute);
         if (!m_MegaVertexShader || !m_MeshVertexShader || !m_SkinnedVertexShader || !m_FragmentShader ||
-            !m_RecordsShader)
+            !m_RecordsShader || !m_RecordArgsShader)
         {
             NORVES_LOG_WARNING("VisibilityRasterPass", "ビジビリティバッファのシェーダーの読み込みに失敗。このパスは何もしません");
             return true;
@@ -181,10 +495,28 @@ namespace NorvesLib::Core::Rendering
             m_MeshPipeline.reset();
             m_SkinnedPipeline.reset();
             m_RecordsPipeline.reset();
+            m_RecordArgsPipeline.reset();
             m_MegaWireframePipeline.reset();
             m_MeshWireframePipeline.reset();
             m_SkinnedWireframePipeline.reset();
             NORVES_LOG_WARNING("VisibilityRasterPass", "ビジビリティバッファのパイプラインの作成に失敗。このパスは何もしません");
+            return true;
+        }
+
+        // 64bit のバッファの合流は、ソフトウェアラスタが有効で、ソフトウェアラスタを使える装置のときだけ作る（合流はソフトの結果を受けるためだけにある）。
+        // 作れなくても ID の描画は使える（合流だけが無い）
+        // BDA が無い装置は、64bit のアトミックの有無によらず理由を 1 回だけ残す（MegaGeometryPass の理由は sink が無いので別の文言になる）
+        if (m_bSwRasterEnabled && !caps.bBufferDeviceAddress)
+        {
+            NORVES_LOG_INFO("VisibilityRasterPass", "SW_RASTER_FALLBACK reason=bda_unsupported");
+        }
+        if (m_bSwRasterEnabled && VisibilitySwRaster::IsSupported(caps))
+        {
+            // ソフトウェアラスタの計算は、合流が作れたときだけ作る（書いた値を受ける合流が無ければ、ソフトに回さない）
+            if (m_Merge.Initialize(m_Device, context.ShaderMgr, m_SecondRenderPass))
+            {
+                m_SwRaster.Initialize(m_Device, context.ShaderMgr);
+            }
         }
         return true;
     }
@@ -192,7 +524,7 @@ namespace NorvesLib::Core::Rendering
     bool VisibilityRasterPass::IsDrawReady(DebugViewMode mode) const
     {
         const bool bFillReady = m_bInitialized && m_RenderPass && m_MegaPipeline && m_MeshPipeline &&
-                                m_SkinnedPipeline && m_RecordsPipeline;
+                                m_SkinnedPipeline && m_RecordsPipeline && m_RecordArgsPipeline;
         return bFillReady && (mode != DebugViewMode::Wireframe || HasWireframePipelines());
     }
 
@@ -207,6 +539,8 @@ namespace NorvesLib::Core::Rendering
 
     void VisibilityRasterPass::Shutdown()
     {
+        m_SwRaster.Shutdown();
+        m_Merge.Shutdown();
         m_FrameSlots.Clear();
         m_ProceduralChunkScratch = Container::VariableArray<MeshIndexChunk>{};
         m_SkinnedChunkScratch = Container::VariableArray<MeshIndexChunk>{};
@@ -216,6 +550,7 @@ namespace NorvesLib::Core::Rendering
         m_MeshPipeline.reset();
         m_SkinnedPipeline.reset();
         m_RecordsPipeline.reset();
+        m_RecordArgsPipeline.reset();
         m_MegaWireframePipeline.reset();
         m_MeshWireframePipeline.reset();
         m_SkinnedWireframePipeline.reset();
@@ -224,6 +559,7 @@ namespace NorvesLib::Core::Rendering
         m_SkinnedVertexShader.reset();
         m_FragmentShader.reset();
         m_RecordsShader.reset();
+        m_RecordArgsShader.reset();
         m_Framebuffer.reset();
         m_SecondFramebuffer.reset();
         m_SecondRenderPass.reset();
@@ -283,13 +619,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 2 回目の render pass: 1 回目の描画の後に続けて開くので、ID・深度とも ShaderResource の状態から始まり、内容を Load する
-        // （2 パスの遮蔽で、HZB を作った後に MegaGeometry の 2 パス目を描く）
-        RHI::RenderPassDesc secondDesc = desc;
-        secondDesc.colorAttachments[0].clear = false;
-        secondDesc.colorAttachments[0].loadOp = RHI::AttachmentLoadOp::Load;
-        secondDesc.colorAttachments[0].initialState = RHI::ResourceState::ShaderResource;
-        secondDesc.depthStencilAttachment.initialState = RHI::ResourceState::ShaderResource;
-        m_SecondRenderPass = m_Device->CreateRenderPass(secondDesc);
+        // （2 パスの遮蔽で、HZB を作った後に MegaGeometry の 2 パス目を描く。64bit のバッファの合流も同じ形で描く）
+        m_SecondRenderPass = m_Device->CreateRenderPass(VisibilityMerge::MakeLoadRenderPassDesc());
         return m_SecondRenderPass != nullptr;
     }
 
@@ -386,7 +717,15 @@ namespace NorvesLib::Core::Rendering
         computeDesc.computeShader = m_RecordsShader;
         computeDesc.descriptorSetLayouts.push_back(MakeRecordDescriptorSetDesc());
         m_RecordsPipeline = m_Device->CreateComputePipeline(computeDesc);
-        return m_RecordsPipeline != nullptr;
+        if (!m_RecordsPipeline)
+        {
+            return false;
+        }
+
+        // 引数を作る計算は、記録を書く計算と同じディスクリプタセットの形を使う
+        computeDesc.computeShader = m_RecordArgsShader;
+        m_RecordArgsPipeline = m_Device->CreateComputePipeline(computeDesc);
+        return m_RecordArgsPipeline != nullptr;
     }
 
     bool VisibilityRasterPass::EnsureFramebuffer(const RHI::TexturePtr& idTexture, const RHI::TexturePtr& depthTexture)
@@ -420,6 +759,8 @@ namespace NorvesLib::Core::Rendering
     bool VisibilityRasterPass::EnsureFrameSlot(FrameSlot& slot,
                                                uint32_t recordCapacity,
                                                uint32_t sectionCount,
+                                               uint32_t sectionSlotCount,
+                                               uint32_t cpuRecordCount,
                                                uint32_t materialCount)
     {
         if (!m_Device)
@@ -432,9 +773,10 @@ namespace NorvesLib::Core::Rendering
         if (!slot.RecordTable || slot.RecordCapacity < recordCapacity)
         {
             const uint32_t capacity = std::max(64u, NextPowerOfTwo(recordCapacity));
+            // GPU 専用のメモリ（ホストが書く記録は RecordUpload からのコピーで入れる）
             RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * RecordBytes,
-                                 RHI::ResourceUsage::StorageBuffer,
-                                 true,
+                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                 false,
                                  "VisBuffer_DrawRecords");
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
             if (!buffer)
@@ -444,6 +786,25 @@ namespace NorvesLib::Core::Rendering
             slot.RecordTable = buffer;
             slot.RecordCapacity = capacity;
             slot.RecordState = RHI::ResourceState::Common;
+            NORVES_LOG_INFO("VisibilityRasterPass",
+                            "VRAM_LEDGER visbuffer_records mb=%.2f",
+                            static_cast<double>(desc.Size) / BytesPerMegabyte);
+        }
+
+        if (cpuRecordCount > 0 && (!slot.RecordUpload || slot.RecordUploadCapacity < cpuRecordCount))
+        {
+            const uint32_t capacity = std::max(16u, NextPowerOfTwo(cpuRecordCount));
+            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * RecordBytes,
+                                 RHI::ResourceUsage::TransferSrc,
+                                 true,
+                                 "VisBuffer_RecordUpload");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.RecordUpload = buffer;
+            slot.RecordUploadCapacity = capacity;
         }
 
         if (!slot.SectionAddresses || slot.SectionAddressCapacity < sectionCount)
@@ -476,6 +837,24 @@ namespace NorvesLib::Core::Rendering
             }
             slot.SectionMaterials = buffer;
             slot.SectionMaterialCapacity = capacity;
+        }
+
+        if (!slot.RecordArgs || slot.RecordArgsCapacity < sectionSlotCount)
+        {
+            const uint32_t capacity = std::max(16u, NextPowerOfTwo(sectionSlotCount));
+            // GPU だけが書き、記録を書く計算の間接 dispatch の引数として読む
+            RHI::BufferDesc desc(static_cast<uint64_t>(RecordArgsHeaderWords + capacity + 1u) * sizeof(uint32_t),
+                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
+                                 false,
+                                 "VisBuffer_RecordArgs");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.RecordArgs = buffer;
+            slot.RecordArgsCapacity = capacity;
+            slot.RecordArgsState = RHI::ResourceState::Common;
         }
 
         if (!slot.MaterialTable || slot.MaterialTableCapacity < materialCount)
@@ -521,7 +900,7 @@ namespace NorvesLib::Core::Rendering
             slot.RecordSet = m_Device->CreateDescriptorSet(MakeRecordDescriptorSetDesc());
         }
         return slot.FrameUniform && slot.RecordParams && slot.MegaSet && slot.MeshSet && slot.SkinnedSet &&
-               slot.RecordSet;
+               slot.RecordSet && slot.RecordArgs;
     }
 
     void VisibilityRasterPass::Declare(RenderGraphBuilder& builder)
@@ -824,6 +1203,8 @@ namespace NorvesLib::Core::Rendering
         if (!EnsureFrameSlot(slot,
                              totalSlots,
                              bHasMegaDraw ? plan->SectionCount : 1u,
+                             bHasMegaDraw ? plan->SectionCount * plan->PassCount : 1u,
+                             static_cast<uint32_t>(cpuRecords.size()),
                              static_cast<uint32_t>(materialEntries.size())))
         {
             NORVES_LOG_ERROR("VisibilityRasterPass", "ビジビリティバッファの資源を用意できませんでした");
@@ -840,12 +1221,16 @@ namespace NorvesLib::Core::Rendering
             slot.FrameUniform->Update(frameData, sizeof(frameData));
         }
 
-        // ホストが書く記録（手続き・スキニング）。MegaGeometry の範囲の後ろに置く
+        // ホストが書く記録（手続き・スキニング）。MegaGeometry の範囲の後ろに置く。ホスト可視の置き場へ書き、
+        // 記録の表（GPU 専用）へは GPU がコピーする（RecordCpuRecordUpload）
+        m_Work.UploadBytes = 0;
+        m_Work.UploadDstOffset = 0;
         if (!cpuRecords.empty())
         {
-            slot.RecordTable->Update(cpuRecords.data(),
-                                     static_cast<uint64_t>(cpuRecords.size()) * RecordBytes,
-                                     static_cast<uint64_t>(recordBase) * RecordBytes);
+            const uint64_t uploadBytes = static_cast<uint64_t>(cpuRecords.size()) * RecordBytes;
+            slot.RecordUpload->Update(cpuRecords.data(), uploadBytes, 0);
+            m_Work.UploadBytes = uploadBytes;
+            m_Work.UploadDstOffset = static_cast<uint64_t>(recordBase) * RecordBytes;
         }
         const uint64_t tableBytes = static_cast<uint64_t>(totalSlots) * RecordBytes;
         m_Work.TableBytes = tableBytes;
@@ -889,6 +1274,7 @@ namespace NorvesLib::Core::Rendering
             slot.RecordSet->BindStorageBuffer(5, slot.SectionAddresses, 0, ClampBindSize(addresses.size() * sizeof(uint32_t)));
             slot.RecordSet->BindStorageBuffer(6, slot.RecordTable, 0, ClampBindSize(tableBytes));
             slot.RecordSet->BindStorageBuffer(7, slot.SectionMaterials, 0, ClampBindSize(sectionMaterials.size() * sizeof(uint32_t)));
+            slot.RecordSet->BindStorageBuffer(8, slot.RecordArgs, 0, ClampBindSize(slot.RecordArgs->GetSize()));
             slot.RecordSet->Update();
 
             m_Work.MegaInstanceBuffer = plan->InstanceBuffer;
@@ -933,27 +1319,68 @@ namespace NorvesLib::Core::Rendering
         commandList->EndRenderPass();
     }
 
-    void VisibilityRasterPass::RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan& plan)
+    bool VisibilityRasterPass::RecordCpuRecordUpload()
+    {
+        if (m_Work.UploadBytes == 0)
+        {
+            return false;
+        }
+
+        RHI::ICommandList* commandList = m_Work.CommandList;
+        FrameSlot& slot = *m_Work.Slot;
+        commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::CopyDest);
+        commandList->CopyBuffer(slot.RecordUpload, slot.RecordTable, m_Work.UploadBytes, 0, m_Work.UploadDstOffset);
+        commandList->BufferBarrier(slot.RecordTable, RHI::ResourceState::CopyDest, RHI::ResourceState::GenericRead);
+        slot.RecordState = RHI::ResourceState::GenericRead;
+        return true;
+    }
+
+    void VisibilityRasterPass::RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan& plan, const char* timestampName)
     {
         RHI::ICommandList* commandList = m_Work.CommandList;
         FrameSlot& slot = *m_Work.Slot;
+        ScopedGpuTimestamp gpuTimestamp(commandList, timestampName);
 
         // コマンド・カウンタを計算が読めるようにする（描画情報は GenericRead で渡される）
         commandList->BufferBarrier(plan.IndirectBuffer, m_Work.IndirectState, RHI::ResourceState::GenericRead);
         commandList->BufferBarrier(plan.CountBuffer, m_Work.IndirectState, RHI::ResourceState::GenericRead);
         m_Work.IndirectState = RHI::ResourceState::GenericRead;
 
-        uint32_t maxCapacity = 0;
-        for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan.Sections)
-        {
-            maxCapacity = std::max(maxCapacity, section.Capacity);
-        }
+        // 区間ごとに積まれたコマンドの数から、記録を書く計算の dispatch の引数を作る（1 スレッドの小さな計算）
+        commandList->BufferBarrier(slot.RecordArgs, slot.RecordArgsState, RHI::ResourceState::UnorderedAccess);
+        commandList->SetPipeline(m_RecordArgsPipeline);
+        commandList->SetDescriptorSet(slot.RecordSet, 0);
+        commandList->Dispatch(1u, 1u, 1u);
+        commandList->BufferBarrier(slot.RecordArgs, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+        slot.RecordArgsState = RHI::ResourceState::GenericRead;
 
+        // 積まれたコマンドの数だけのワークグループで記録を書く
         commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::UnorderedAccess);
         commandList->SetPipeline(m_RecordsPipeline);
         commandList->SetDescriptorSet(slot.RecordSet, 0);
-        const uint32_t groupsX = std::max(1u, std::min((maxCapacity + RecordThreadsPerGroup - 1u) / RecordThreadsPerGroup, 65535u));
-        commandList->Dispatch(groupsX, std::max(1u, plan.SectionCount * plan.PassCount), 1u);
+        if (!commandList->DispatchIndirect(slot.RecordArgs, 0))
+        {
+            // 間接 dispatch を断るコマンドリスト: 区間の容量から数えた上限のグループ数で直接 dispatch する。
+            // 余りのグループはシェーダーが引数の合計（[3]）で捨てる
+            uint64_t groupLimit = 0;
+            for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan.Sections)
+            {
+                groupLimit += (static_cast<uint64_t>(section.Capacity) + RecordThreadsPerGroup - 1u) / RecordThreadsPerGroup;
+            }
+            groupLimit *= std::max(plan.PassCount, 1u);
+            groupLimit = std::max<uint64_t>(groupLimit, 1u);
+            const uint32_t groupsX = static_cast<uint32_t>(std::min<uint64_t>(groupLimit, RecordMaxGroupsX));
+            const uint32_t groupsY = static_cast<uint32_t>((groupLimit + RecordMaxGroupsX - 1u) / RecordMaxGroupsX);
+            commandList->Dispatch(groupsX, groupsY, 1u);
+            if (!m_bLoggedRecordsDirectFallback)
+            {
+                m_bLoggedRecordsDirectFallback = true;
+                NORVES_LOG_WARNING("VisibilityRasterPass",
+                                   "VIS_RASTER_RECORDS_DIRECT_FALLBACK groups=%llu "
+                                   "間接 dispatch を断られたため、記録の計算を直接の dispatch で走らせます",
+                                   static_cast<unsigned long long>(groupLimit));
+            }
+        }
         commandList->BufferBarrier(slot.RecordTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
         slot.RecordState = RHI::ResourceState::GenericRead;
     }
@@ -967,6 +1394,8 @@ namespace NorvesLib::Core::Rendering
         commandList->SetDescriptorSet(m_Work.Slot->MegaSet, 0);
         for (uint32_t passIndex = firstPass; passIndex < endPass; ++passIndex)
         {
+            // 区間の名前は MegaGeometryPass の予備の描画と同じ（off と比べられる）
+            ScopedGpuTimestamp drawTimestamp(commandList, passIndex == 0 ? "MegaGeometryDraw1" : "MegaGeometryDraw2");
             for (uint32_t sectionIndex = 0; sectionIndex < plan.Sections.size(); ++sectionIndex)
             {
                 const MegaGeometryPass::VisibilityDrawPlan::Section& section = plan.Sections[sectionIndex];
@@ -999,8 +1428,14 @@ namespace NorvesLib::Core::Rendering
 
     void VisibilityRasterPass::RecordChunkDraws()
     {
+        if (!m_Work.bDrawMesh && !m_Work.bDrawSkinned)
+        {
+            return;
+        }
+
         RHI::ICommandList* commandList = m_Work.CommandList;
         FrameSlot& slot = *m_Work.Slot;
+        ScopedGpuTimestamp gpuTimestamp(commandList, "VisRasterChunks");
 
         if (m_Work.bDrawMesh)
         {
@@ -1055,9 +1490,16 @@ namespace NorvesLib::Core::Rendering
         RHI::ICommandList* commandList = m_Work.CommandList;
         FrameSlot& slot = *m_Work.Slot;
 
-        // ホストが書いた記録（手続き・スキニング）を頂点シェーダーが読む。MegaGeometry の範囲は 2 パス目の後に計算が書く
-        commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::GenericRead);
-        slot.RecordState = RHI::ResourceState::GenericRead;
+        // ホストが書いた記録（手続き・スキニング）を表へコピーし、頂点シェーダーが読めるようにする。
+        // MegaGeometry の範囲は 2 パス目の後に計算が書く
+        if (!RecordCpuRecordUpload())
+        {
+            commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::GenericRead);
+            slot.RecordState = RHI::ResourceState::GenericRead;
+        }
+
+        // 64bit のバッファを空で埋める（ソフトウェアラスタが書く前。1 回目の合流が読む）
+        RecordMergeClear();
 
         // 1 回目: 手続き・スキニングの塊と MegaGeometry の 1 パス目。この深度から MegaGeometryPass が HZB を作る
         commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
@@ -1070,6 +1512,51 @@ namespace NorvesLib::Core::Rendering
         }
         commandList->EndRenderPass();
         m_Work.bStagedReady = true;
+    }
+
+    bool VisibilityRasterPass::PrepareSwRaster()
+    {
+        // ソフトに回したクラスタは、ソフトの dispatch と合流でしか ID・深度へ入らない。両方の資源（2 パス分）を
+        // カリングの前に作れたフレームだけ、カリングにハードの描画を空振りにさせる（2 パスの遮蔽で振り分けるフレームだけ呼ばれる）
+        m_Work.bSwRasterResources = m_Work.bMerge && m_SwRaster.IsReady() && m_Merge.ReserveFrameResources(2) &&
+                                    m_SwRaster.ReserveFrameResources(2);
+        return IsSwRasterAvailable();
+    }
+
+    bool VisibilityRasterPass::IsSwRasterAvailable() const
+    {
+        // m_Work.bMerge・bSwRasterResources は Execute が MegaGeometryPass の記録を駆動する前に決める（ワイヤーフレーム・
+        // バッファを用意できないフレーム、ソフトの dispatch と合流の資源を先に作れなかったフレームは false）
+        return m_Work.bMerge && m_Work.bSwRasterResources && m_SwRaster.IsReady();
+    }
+
+    void VisibilityRasterPass::RecordMergeBeforeHiZ(RHI::ICommandList* /*commandList*/,
+                                                    const MegaGeometryPass::VisibilityDrawPlan& plan)
+    {
+        if (!m_Work.bStagedReady)
+        {
+            return;
+        }
+
+        // ソフトウェアラスタ（1 パス目）: 1 パス目のコマンドの記録を書いて、小さいクラスタを 64bit のバッファへ描く。
+        // ハードのコマンドは空振りにしてあるので、ここで描かなければそのクラスタは HZB の元の深度にも入らない。
+        // ソフトが走らないフレーム（ワイヤーフレーム・パイプラインの失敗など。カリングは振り分けるだけでハードがすべて描く）は、記録も戻しも要らない
+        if (m_Work.bHasMegaDraw && plan.SwRasterBuffer && IsSwRasterAvailable())
+        {
+            RHI::ICommandList* commandList = m_Work.CommandList;
+            RecordMegaRecords(plan, "VisRasterRecords1");
+            RecordSwRaster(plan, 0, "VisRasterSw1");
+
+            // 2 パス目のカリングが、コマンド・カウンタ・描画情報へ続けて書く（読み取りの後に書き込みを並べる）。
+            // カリングは書いた後 IndirectArgument（描画情報は GenericRead）へ進めるので、次の記録の元の状態は IndirectArgument
+            commandList->BufferBarrier(plan.IndirectBuffer, m_Work.IndirectState, RHI::ResourceState::UnorderedAccess);
+            commandList->BufferBarrier(plan.CountBuffer, m_Work.IndirectState, RHI::ResourceState::UnorderedAccess);
+            commandList->BufferBarrier(plan.DrawInfoBuffer, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+            m_Work.IndirectState = RHI::ResourceState::IndirectArgument;
+        }
+
+        // 1 回目の描画の後の深度（HZB の元）へ、64bit のバッファの値を合流させる
+        RecordMergePass("VisRasterMerge1");
     }
 
     void VisibilityRasterPass::RecordSecondPassDraws(RHI::ICommandList* /*commandList*/,
@@ -1088,6 +1575,97 @@ namespace NorvesLib::Core::Rendering
         commandList->SetScissor(m_Work.Scissor);
         RecordMegaDraws(plan, 1, 2);
         commandList->EndRenderPass();
+
+        // ソフトウェアラスタ（2 パス目）。記録は RecordMegaRecords が全パスぶん書き直した後（1 パス目のぶんは同じ値）
+        if (plan.SwRasterBuffer)
+        {
+            RecordSwRaster(plan, 1, "VisRasterSw2");
+        }
+
+        // 2 パス目の後の ID・深度へ、64bit のバッファの値（1 パス目・2 パス目のぶん）を合流させる
+        RecordMergePass("VisRasterMerge2");
+    }
+
+    bool VisibilityRasterPass::RecordSwRaster(const MegaGeometryPass::VisibilityDrawPlan& plan,
+                                              uint32_t passIndex,
+                                              const char* timestampName)
+    {
+        if (!IsSwRasterAvailable() || !m_Work.bHasMegaDraw || !plan.SwRasterBuffer || plan.SwRasterCapacity == 0)
+        {
+            return false;
+        }
+
+        RHI::ICommandList* commandList = m_Work.CommandList;
+        ScopedGpuTimestamp gpuTimestamp(commandList, timestampName);
+
+        // 64bit のバッファを atomicMin で書ける状態へ（合流が読み終えた GenericRead から）
+        if (!m_Merge.RecordBeginSoftwareWrite(commandList))
+        {
+            return false;
+        }
+        // 一覧を、間接 dispatch の引数と読み取りに使う状態へ（カリングが書き終えた UnorderedAccess から）
+        commandList->BufferBarrier(plan.SwRasterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+        // 統計を数えるフレームは、カリングが書いた統計の後にソフトの dispatch が続けて足す（UnorderedAccess のまま書き込みの順を並べる）
+        if (plan.bStatsEnabled && plan.StatsBuffer)
+        {
+            commandList->BufferBarrier(plan.StatsBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        }
+
+        VisibilitySwRaster::Inputs inputs;
+        inputs.FrameUniform = m_Work.Slot->FrameUniform;
+        inputs.InstanceBuffer = plan.InstanceBuffer;
+        inputs.InstanceBufferBytes = plan.InstanceBufferBytes;
+        inputs.RecordTable = m_Work.Slot->RecordTable;
+        inputs.RecordTableBytes = m_Work.TableBytes;
+        inputs.KeyBuffer = m_Merge.GetKeyBuffer();
+        inputs.KeyWidth = m_Merge.GetKeyWidth();
+        inputs.KeyHeight = m_Merge.GetKeyHeight();
+        inputs.List = plan.SwRasterBuffer;
+        inputs.ListCapacity = plan.SwRasterCapacity;
+        inputs.SwRasterMaxPixels = plan.SwRasterMaxPixels;
+        inputs.Stats = plan.StatsBuffer;
+        inputs.bStatsEnabled = plan.bStatsEnabled;
+        inputs.Viewport = m_Work.Viewport;
+        inputs.Scissor = m_Work.Scissor;
+        const bool bRecorded = m_SwRaster.RecordDispatch(commandList, passIndex, inputs);
+
+        // 一覧は次のカリング（2 パス目）・最後の Common への戻しが続けて扱うので UnorderedAccess へ戻す。
+        // 64bit のバッファの書き込みは、合流の読み取りへ見せる
+        commandList->BufferBarrier(plan.SwRasterBuffer, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+        if (plan.bStatsEnabled && plan.StatsBuffer)
+        {
+            commandList->BufferBarrier(plan.StatsBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        }
+        m_Merge.RecordEndSoftwareWrite(commandList);
+        if (bRecorded)
+        {
+            ++m_Stats.SwRasterDispatchCount;
+        }
+        return bRecorded;
+    }
+
+    void VisibilityRasterPass::RecordMergeClear()
+    {
+        if (!m_Work.bMerge)
+        {
+            return;
+        }
+        ScopedGpuTimestamp gpuTimestamp(m_Work.CommandList, "VisRasterMergeClear");
+        m_Merge.RecordClear(m_Work.CommandList);
+    }
+
+    void VisibilityRasterPass::RecordMergePass(const char* timestampName)
+    {
+        if (!m_Work.bMerge)
+        {
+            return;
+        }
+
+        ScopedGpuTimestamp gpuTimestamp(m_Work.CommandList, timestampName);
+        if (m_Merge.RecordMerge(m_Work.CommandList, m_SecondRenderPass, m_SecondFramebuffer, m_Work.Viewport, m_Work.Scissor))
+        {
+            ++m_Stats.MergeCount;
+        }
     }
 
     void VisibilityRasterPass::FinishFrame()
@@ -1101,6 +1679,8 @@ namespace NorvesLib::Core::Rendering
         FrameSlot& slot = *m_Work.Slot;
         const VariableArray<VisibilityBuffer::MaterialEntry>& materialEntries = m_MaterialEntryScratch;
         m_Stats.bRendered = true;
+        m_Stats.bMerged = m_Stats.MergeCount > 0;
+        m_Stats.KeyBufferBytes = m_Work.bMerge ? m_Merge.GetKeyBufferBytes() : 0u;
         m_LastRecordTable = slot.RecordTable;
         m_LastRecordTableBytes = m_Work.TableBytes;
         m_LastMaterialTable = slot.MaterialTable;
@@ -1191,7 +1771,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         if (!commandList || !m_RenderPass || !m_SecondRenderPass || !m_MegaPipeline || !m_MeshPipeline ||
-            !m_SkinnedPipeline || !m_RecordsPipeline || !m_IdHandle.IsValid() || !m_DepthHandle.IsValid())
+            !m_SkinnedPipeline || !m_RecordsPipeline || !m_RecordArgsPipeline || !m_IdHandle.IsValid() || !m_DepthHandle.IsValid())
         {
             bail();
             return;
@@ -1220,6 +1800,17 @@ namespace NorvesLib::Core::Rendering
         m_Work.MegaPipeline = bWireframe ? m_MegaWireframePipeline : m_MegaPipeline;
         m_Work.MeshPipeline = bWireframe ? m_MeshWireframePipeline : m_MeshPipeline;
         m_Work.SkinnedPipeline = bWireframe ? m_SkinnedWireframePipeline : m_SkinnedPipeline;
+
+        // 64bit のバッファ: 対応する装置で、ワイヤーフレームの表示でないときだけ使う（ワイヤーフレームは誰も書かない）
+        if (m_Merge.IsReady() && !bWireframe)
+        {
+            m_Merge.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+            m_Work.bMerge = m_Merge.EnsureKeyBuffer(idTexture->GetWidth(), idTexture->GetHeight());
+            if (m_SwRaster.IsReady())
+            {
+                m_SwRaster.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+            }
+        }
 
         if (bDeferred)
         {
@@ -1262,15 +1853,19 @@ namespace NorvesLib::Core::Rendering
 
         // MegaGeometry の記録は、そのフレームに積まれたコマンドから GPU が書く
         FrameSlot& slot = *m_Work.Slot;
+        const bool bUploaded = RecordCpuRecordUpload();
         if (m_Work.bHasMegaDraw)
         {
             RecordMegaRecords(plan);
         }
-        else
+        else if (!bUploaded)
         {
             commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::GenericRead);
         }
         slot.RecordState = RHI::ResourceState::GenericRead;
+
+        // 64bit のバッファを空で埋める（ソフトウェアラスタが書く前。描画の後の合流が読む）
+        RecordMergeClear();
 
         // ID と深度へ、MegaGeometry の全パス → 手続き・スキニングの塊の順に 1 回の render pass で描く
         commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
@@ -1282,6 +1877,9 @@ namespace NorvesLib::Core::Rendering
         }
         RecordChunkDraws();
         commandList->EndRenderPass();
+
+        // 1 回の判定は HZB を作らないので、描画の後に 1 回だけ 64bit のバッファの値を合流させる
+        RecordMergePass("VisRasterMerge1");
 
         FinishFrame();
     }

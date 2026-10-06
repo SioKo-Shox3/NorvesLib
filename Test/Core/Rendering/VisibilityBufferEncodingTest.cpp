@@ -1,9 +1,12 @@
 ﻿// ビジビリティバッファの ID の符号化・描画の記録の表の契約テスト（GPU を使わない）。
 // ID = (記録の番号 << 7) | 三角形の番号 の往復、記録の数の上限（2^25）、空（0）の扱い、記録の表の追加・引き・容量、
 // RenderGraph の資源の記述、GLSL（Common/VisibilityBuffer.glsl）の定数が C++ と一致していることを確かめる。
+// ソフトウェアラスタの 64bit のバッファの値（上位 32bit = 深度のビット、下位 32bit = ID、空 = すべてのビットが 1）の詰め方と、
+// 小さい値ほど手前（同じ深度なら小さい ID）になる順序も確かめる。
 #include "Rendering/MegaGeometry/GeometryPageLayout.h"
 #include "Rendering/VisibilityBuffer.h"
 
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -363,12 +366,28 @@ void TestGlslConstantsMatchCpp()
     ExpectGlslConstant(text, "VIS_RECORD_BITS", VB::RECORD_BITS);
     ExpectGlslConstant(text, "VIS_RECORD_SLOT_LIMIT", VB::RECORD_SLOT_LIMIT);
     ExpectGlslConstant(text, "VIS_EMPTY_ID", VB::EMPTY_ID);
+    ExpectGlslConstant(text, "VIS_KEY_DEPTH_SHIFT", VB::KEY_DEPTH_SHIFT);
+    ExpectGlslConstant(text, "VIS_KEY_ID_BITS", VB::KEY_ID_BITS);
+    ExpectGlslConstant(text, "VIS_KEY_EMPTY_WORD", VB::KEY_EMPTY_WORD);
     ExpectGlslConstant(text, "VIS_KIND_NONE", static_cast<uint32_t>(VB::RecordKind::None));
     ExpectGlslConstant(text, "VIS_KIND_MEGA_CLUSTER", static_cast<uint32_t>(VB::RecordKind::MegaGeometryCluster));
     ExpectGlslConstant(text, "VIS_KIND_PROCEDURAL_CHUNK", static_cast<uint32_t>(VB::RecordKind::ProceduralChunk));
     ExpectGlslConstant(text, "VIS_KIND_SKINNED_CHUNK", static_cast<uint32_t>(VB::RecordKind::SkinnedChunk));
     ExpectGlslConstant(text, "VIS_RECORD_FLAG_INDEX16", VB::RECORD_FLAG_INDEX16);
     ExpectGlslConstant(text, "VIS_NO_PREVIOUS_TRANSFORM", VB::NO_PREVIOUS_TRANSFORM);
+
+    // 64bit の値の詰め方（上位 = 深度のビット、下位 = ID、空 = すべてのビットが 1）が、GLSL の関数の本体にも書かれている
+    Expect(std::strstr(text.data(), "const uint64_t VIS_KEY_EMPTY = ~uint64_t(0);") != nullptr,
+           "GLSL の空の 64bit の値はすべてのビットが 1（~uint64_t(0)）");
+    Expect(std::strstr(text.data(), "(uint64_t(VisDepthBits(depth)) << VIS_KEY_DEPTH_SHIFT) | uint64_t(id)") != nullptr,
+           "GLSL の VisPackKey は 上位 = 深度のビット（VisDepthBits）、下位 = ID");
+    Expect(std::strstr(text.data(), "return bits == 0x80000000u ? 0u : bits;") != nullptr &&
+               std::strstr(text.data(), "const uint bits = floatBitsToUint(depth);") != nullptr,
+           "GLSL の VisDepthBits は floatBitsToUint(深度) の -0.0（0x80000000）を 0 にそろえる");
+    Expect(std::strstr(text.data(), "uintBitsToFloat(uint(key >> VIS_KEY_DEPTH_SHIFT))") != nullptr,
+           "GLSL の VisKeyDepth は上位 32bit を float に戻す");
+    Expect(std::strstr(text.data(), "uint(key & uint64_t(VIS_KEY_EMPTY_WORD))") != nullptr,
+           "GLSL の VisKeyId は下位 32bit を取り出す");
 
     // 記録の構造体は 4 つの uvec4（64 バイト）
     const char* structStart = std::strstr(text.data(), "struct VisibilityDrawRecord");
@@ -387,8 +406,58 @@ void TestGlslConstantsMatchCpp()
     }
 }
 
+// 64bit の値の詰め方（上位 = 深度のビット、下位 = ID）と、atomicMin で選ばれる順序
+void TestKeyPacking()
+{
+    Expect(VB::KEY_DEPTH_SHIFT == 32 && VB::KEY_ID_BITS == 32, "64bit の値は上位 32bit が深度、下位 32bit が ID");
+    Expect(VB::KEY_BYTES == 8, "画素ごとの 64bit の値は 8 バイト");
+    Expect(VB::KEY_EMPTY == 0xFFFFFFFFFFFFFFFFull && VB::KEY_EMPTY_WORD == 0xFFFFFFFFu,
+           "空の 64bit の値はすべてのビットが 1");
+    Expect(VB::IsKeyEmpty(VB::KEY_EMPTY) && !VB::IsKeyEmpty(VB::PackKey(1.0f, 0xFFFFFFFEu)), "空の判定");
+
+    // 並び: 深度のビットが上位、ID が下位
+    const uint64_t key = VB::PackKey(0.5f, 0x12345678u);
+    Expect((key >> 32) == 0x3F000000ull, "深度 0.5 のビットは 0x3F000000 で上位 32bit に入る");
+    Expect((key & 0xFFFFFFFFull) == 0x12345678ull, "ID は下位 32bit に入る");
+    Expect(VB::KeyId(key) == 0x12345678u && VB::KeyDepth(key) == 0.5f, "取り出しは詰めた値に戻る");
+
+    // 0 以上の float の深度は、ビットの整数の大小が深度の大小と一致する（atomicMin が手前を選ぶ）。刻みで 0〜1 を掃く
+    bool orderOk = true;
+    bool belowEmptyOk = true;
+    float previous = 0.0f;
+    for (uint32_t step = 1; step <= 4096; ++step)
+    {
+        const float depth = static_cast<float>(step) / 4096.0f;
+        orderOk = orderOk && VB::PackKey(previous, 0xFFFFFFFFu) < VB::PackKey(depth, 0u);
+        belowEmptyOk = belowEmptyOk && VB::PackKey(depth, 0xFFFFFFFFu) < VB::KEY_EMPTY;
+        previous = depth;
+    }
+    Expect(orderOk, "手前の深度の値は、ID に関係なく奥の深度の値より小さい");
+    Expect(belowEmptyOk, "深度 1.0 以下の値は、ID が最大でも空より小さい（空は何にも勝たれる）");
+    Expect(VB::PackKey(0.0f, 0u) == 0ull, "深度 0・ID 0 は 0");
+
+    // -0.0 は +0.0 にそろえて詰める（そろえないと floatBitsToUint(-0.0) = 0x80000000 が atomicMin では最も奥になり、
+    // 深度の比較では最も手前になって食い違う）
+    Expect(std::bit_cast<uint32_t>(-0.0f) == 0x80000000u, "前提: -0.0 のビットは 0x80000000");
+    Expect(VB::DepthBits(-0.0f) == 0u && VB::DepthBits(0.0f) == 0u, "-0.0 の深度のビットは +0.0 と同じ 0");
+    Expect(VB::PackKey(-0.0f, 5u) == VB::PackKey(0.0f, 5u) && VB::PackKey(-0.0f, 5u) == 5ull,
+           "深度 -0.0 は +0.0 と同じ値に詰まる");
+    Expect(VB::PackKey(-0.0f, 0xFFFFFFFFu) < VB::PackKey(0.25f, 0u), "深度 -0.0 は最も手前（任意の正の深度より小さい値）");
+    Expect(VB::DepthBits(0.5f) == 0x3F000000u, "ほかの深度のビットはそのまま");
+
+    // 同じ深度は小さい ID が選ばれる
+    Expect(VB::PackKey(0.25f, 7u) < VB::PackKey(0.25f, 8u), "同じ深度なら小さい ID が小さい値");
+
+    // 取り出した ID は、空の ID（0）と区別できる ID の符号化と往復する
+    uint32_t id = 0;
+    Expect(VB::TryEncode(123, 45, id), "符号化できる");
+    Expect(VB::KeyId(VB::PackKey(0.75f, id)) == id && VB::KeyDepth(VB::PackKey(0.75f, id)) == 0.75f,
+           "ID と深度は 64bit の値を通しても変わらない");
+}
+
 int RunTest()
 {
+    TestKeyPacking();
     TestRoundTripAndBitLayout();
     TestRecordLimit();
     TestEmptyId();

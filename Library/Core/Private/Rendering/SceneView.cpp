@@ -829,12 +829,18 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer,
                                           RasterDirectBrdf directBrdf,
-                                          VisibilityBufferMode visibilityBuffer)
+                                          VisibilityBufferMode visibilityBuffer,
+                                          SwRasterMode swRaster,
+                                          float swRasterMaxPixels)
     {
         const bool bVisibilityBuffer = IsVisibilityBufferActive(visibilityBuffer);
         // On のときは、ビジビリティバッファの解決が GBuffer を書く（GBufferPass・MegaGeometryPass は GBuffer の描画を止める）。
         // Debug は今の GBuffer の描画を残したまま、ID の検証表示だけを足す
         const bool bVisibilityResolve = visibilityBuffer == VisibilityBufferMode::On;
+        // ソフトウェアラスタの 64bit のバッファ・埋め・合流は、材質の解決を使う On のときだけ作る（Debug は GBuffer が先に MegaGeometry を描くので、
+        // ソフトに回せない）。振り分けの要求は --sw-raster=on なら出し、使えない理由（Debug・64bit アトミックが無いなど）は
+        // MegaGeometryPass が SW_RASTER_FALLBACK として 1 回だけログへ出す
+        const bool bSwRaster = bVisibilityResolve && swRaster == SwRasterMode::On;
         // 既存のパスをクリア
         while (GetPassCount() > 0)
         {
@@ -887,6 +893,7 @@ namespace NorvesLib::Core::Rendering
         megaGeometryPass->SetSceneRenderer(sceneRenderer);
         megaGeometryPass->SetVisibilityDrawPlanEnabled(bVisibilityBuffer);
         megaGeometryPass->SetSkipGBufferDraw(bVisibilityResolve);
+        megaGeometryPass->SetSwRasterBinning(swRaster == SwRasterMode::On, swRasterMaxPixels);
         MegaGeometryPass *megaGeometryPassPtr = megaGeometryPass.get();
         AddPass(std::move(megaGeometryPass));
 
@@ -899,6 +906,7 @@ namespace NorvesLib::Core::Rendering
             auto visibilityRasterPass = MakeUnique<VisibilityRasterPass>();
             visibilityRasterPass->SetMegaGeometryPass(megaGeometryPassPtr);
             visibilityRasterPass->SetSkinningComputePass(skinningComputePassPtr);
+            visibilityRasterPass->SetSwRasterEnabled(bSwRaster);
             visibilityRasterPassPtr = visibilityRasterPass.get();
             AddPass(std::move(visibilityRasterPass));
         }

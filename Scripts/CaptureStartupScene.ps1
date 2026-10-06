@@ -55,6 +55,9 @@
 # （既定 0.1 以下）と PSNR（既定 45 dB 以上）を deterministic_comparison として metrics.json へ書く。
 # 撮り直さず既存の2つの出力先だけを比べるときは -CompareOnly を足す。
 # -StillRenderedFrames・-GpuTimingFrames（連続撮影・計測）とは併用しない。
+#
+# -Configuration Debug では検証レイヤーのログを視点ごとの <視点>.Validation.log へ取り（Debug の Game は標準エラーをコンソールへ張り替えるのでリダイレクトでは取れない）、
+# エラー（見出しの行）・警告・VUID の件数を metrics.json の vulkan_validation へ書く。エラーが 1 件でもあるか、ログのファイルが無ければ失敗にする。
 # -OrbitDegreesPerSecond とは併用できる: 旋回の角度は読み込み完了（エポック）からの固定刻みの時間で決まるので、
 # -OrbitRenderedFrames の各時点を同じ画像で撮り直せ、-MegaOcclusion Off の撮影と画素で比べられる（-CompareDeterministicWith）。
 #
@@ -187,6 +190,14 @@ param(
     # Debug は GBuffer の描画に加えて ID も描き、ID を色にして画面へ表示する（--visibility-buffer=debug。検証用）。
     [ValidateSet('Off', 'On', 'Debug')]
     [string]$VisibilityBuffer = 'On',
+    # ソフトウェアラスタ（既定は On）。On は画面上で小さい MegaGeometry のクラスタをソフトの一覧へ振り分ける（--sw-raster=on。
+    # 64bit アトミックが無い・-VisibilityBuffer Off のときは振り分けず SW_RASTER_FALLBACK をログへ出す）。Off は今のハードのラスタだけ
+    # （--sw-raster=off。on・off の比較は -SwRaster Off を明示する）。各撮影のログの SW_RASTER_BIN・SW_RASTER_FALLBACK を metrics.json の sw_raster へ書く。
+    [ValidateSet('Off', 'On')]
+    [string]$SwRaster = 'On',
+    # ソフトウェアラスタへ振り分けるクラスタの画面上の半径（画素）のしきい値（--sw-raster-max-px。0 は渡さず、ゲームの既定の 32 画素を使う）。
+    [ValidateRange(0.0, 4096.0)]
+    [double]$SwRasterMaxPx = 0.0,
     # GBuffer の検証表示（既定は Off）。Normal・Velocity・Depth・Albedo・Material は最後のシーンの色を GBuffer の法線・速度・深度・アルベド・材質の色で置き換える
     # （環境変数 NORVES_GBUFFER_DEBUG。統計が有効な Debug・RelWithDebInfo だけ）。-VisibilityBuffer On と Off で同じ値を撮り比べる用。
     [ValidateSet('Off', 'Normal', 'Velocity', 'Depth', 'Albedo', 'Material')]
@@ -831,6 +842,12 @@ foreach ($view in $shots)
     }
     # ビジビリティバッファは既定で有効だが、撮影の条件を明示するため、どのモードでも引数を渡す。
     $arguments += "--visibility-buffer=$($VisibilityBuffer.ToLowerInvariant())"
+    # ソフトウェアラスタは既定が Off だが、撮影の条件を明示するため、どちらでも引数を渡す。しきい値は指定したときだけ渡す
+    $arguments += "--sw-raster=$($SwRaster.ToLowerInvariant())"
+    if ($SwRasterMaxPx -gt 0.0)
+    {
+        $arguments += ('--sw-raster-max-px=' + $SwRasterMaxPx.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))
+    }
     # デバッグの表示は既定が Normal なので、Clusters・Lod・Wireframe のときだけ引数を渡す。
     if ($DebugView -ne 'Normal')
     {
@@ -858,6 +875,10 @@ foreach ($view in $shots)
         $arguments += '--debug-draw-test-lines'
     }
     $tracePath = Join-Path $outRoot "$($view.Name).trace.csv"
+    # Vulkan の検証レイヤーのメッセージ（VUID）は Game.log に入らず、Debug の Game はコンソールへ張り替えた標準エラーへ出す（
+    # リダイレクトでは取れない）。検証レイヤー自身のログ出力を視点ごとのファイルへ向け、VUID を数える（Debug だけ。他は検証レイヤーが無効）。
+    $viewValidationLogPath = Join-Path $outRoot "$($view.Name).Validation.log"
+    Remove-Item -LiteralPath $viewValidationLogPath -Force -ErrorAction SilentlyContinue
     if ($GpuTimingFrames -gt 0)
     {
         Remove-Item -LiteralPath $tracePath -Force -ErrorAction SilentlyContinue
@@ -868,6 +889,17 @@ foreach ($view in $shots)
     # RTGI を切るときは環境変数で起動画面へ伝える（起動した Game だけが受け継ぐよう、起動の直後に戻す）。
     $previousRtgiSetting = $env:NORVES_STARTUP_RTGI
     $previousGBufferDebugSetting = $env:NORVES_GBUFFER_DEBUG
+    $previousValidationSettings = @{}
+    foreach ($validationVariable in @('VK_KHRONOS_VALIDATION_DEBUG_ACTION', 'VK_KHRONOS_VALIDATION_LOG_FILENAME', 'VK_KHRONOS_VALIDATION_REPORT_FLAGS'))
+    {
+        $previousValidationSettings[$validationVariable] = [Environment]::GetEnvironmentVariable($validationVariable)
+    }
+    if ($Configuration -eq 'Debug')
+    {
+        $env:VK_KHRONOS_VALIDATION_DEBUG_ACTION = 'VK_DBG_LAYER_ACTION_LOG_MSG'
+        $env:VK_KHRONOS_VALIDATION_LOG_FILENAME = $viewValidationLogPath
+        $env:VK_KHRONOS_VALIDATION_REPORT_FLAGS = 'error,warn'
+    }
     if ($GBufferDebug -ne 'Off')
     {
         $env:NORVES_GBUFFER_DEBUG = $GBufferDebug.ToLowerInvariant()
@@ -895,6 +927,10 @@ foreach ($view in $shots)
         else { $env:NORVES_STARTUP_RTGI = $previousRtgiSetting }
         if ($null -eq $previousGBufferDebugSetting) { Remove-Item Env:NORVES_GBUFFER_DEBUG -ErrorAction SilentlyContinue }
         else { $env:NORVES_GBUFFER_DEBUG = $previousGBufferDebugSetting }
+        foreach ($validationVariable in $previousValidationSettings.Keys)
+        {
+            [Environment]::SetEnvironmentVariable($validationVariable, $previousValidationSettings[$validationVariable])
+        }
     }
     [void]$process.Handle
     $exitCode = $null
@@ -927,6 +963,7 @@ foreach ($view in $shots)
     $gpuDriver = $null
     $geometryPages = $null
     $occlusionStats = $null
+    $swRasterStats = $null
     $stressMaterials = $null
     $stressGeometryInfo = $null
     $skinnedProbeInfo = $null
@@ -998,6 +1035,47 @@ foreach ($view in $shots)
                 occluded = [uint64]$lastOcclusion[4].Value
                 occluded_max = [uint64]$maxOccluded
                 lines = $occlusionLines.Count
+            }
+        }
+        # SW_RASTER_BIN（ソフトウェアラスタへの振り分けの 1 フレームの数。1 パス目・2 パス目の一覧へ積んだ数・ハードだけの数・満杯で積めなかった数）。
+        # 最後の値と、一覧へ積んだ数（1 パス目 + 2 パス目）の最大を残す。振り分けないときはログが無く、理由は SW_RASTER_FALLBACK に出る。
+        # あわせて、ハードのコマンドを空振りにした数（zeroed）・ソフトが走らせたワークグループの数（sw_groups）が pass1 + pass2 と一致すること、
+        # ソフトの dispatch の数（sw_dispatches。1 フレーム 2 回）、SW_RASTER_OVERSIZE（矩形の上限を超えて描かなかった三角形。0 であるべき）を残す。
+        $swRasterLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_BIN pass1=(\d+) pass2=(\d+) hw=(\d+) overflow=(\d+)(?: zeroed=(\d+) sw_groups=(\d+) sw_dispatches=(\d+))?')
+        $swRasterOversizeLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_OVERSIZE=(\d+)')
+        $swRasterFallback = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_FALLBACK reason=(\S+)')
+        if ($swRasterLines.Count -gt 0 -or $swRasterFallback.Count -gt 0)
+        {
+            $swRasterStats = [ordered]@{ lines = $swRasterLines.Count; fallback_reason = $null }
+            if ($swRasterFallback.Count -gt 0)
+            {
+                $swRasterStats.fallback_reason = $swRasterFallback[0].Matches[0].Groups[1].Value
+            }
+            if ($swRasterLines.Count -gt 0)
+            {
+                $lastSwRaster = $swRasterLines[$swRasterLines.Count - 1].Matches[0].Groups
+                $maxSwRaster = ($swRasterLines | ForEach-Object { [uint64]$_.Matches[0].Groups[1].Value + [uint64]$_.Matches[0].Groups[2].Value } | Measure-Object -Maximum).Maximum
+                $swRasterStats.pass1 = [uint64]$lastSwRaster[1].Value
+                $swRasterStats.pass2 = [uint64]$lastSwRaster[2].Value
+                $swRasterStats.hw = [uint64]$lastSwRaster[3].Value
+                $swRasterStats.overflow = [uint64]$lastSwRaster[4].Value
+                $swRasterStats.binned_max = [uint64]$maxSwRaster
+                $positiveLines = @($swRasterLines | Where-Object { $_.Matches[0].Groups[5].Success })
+                if ($positiveLines.Count -gt 0)
+                {
+                    $binned = { param($line) [uint64]$line.Matches[0].Groups[1].Value + [uint64]$line.Matches[0].Groups[2].Value }
+                    $swRasterStats.positive_lines = $positiveLines.Count
+                    $swRasterStats.zeroed_mismatch_lines = @($positiveLines | Where-Object { [uint64]$_.Matches[0].Groups[5].Value -ne (& $binned $_) }).Count
+                    $swRasterStats.sw_groups_mismatch_lines = @($positiveLines | Where-Object { [uint64]$_.Matches[0].Groups[6].Value -ne (& $binned $_) }).Count
+                    $swRasterStats.zeroed_max = [uint64](($positiveLines | ForEach-Object { [uint64]$_.Matches[0].Groups[5].Value } | Measure-Object -Maximum).Maximum)
+                    $swRasterStats.sw_dispatches_min = [uint64](($positiveLines | ForEach-Object { [uint64]$_.Matches[0].Groups[7].Value } | Measure-Object -Minimum).Minimum)
+                    $swRasterStats.sw_dispatches_max = [uint64](($positiveLines | ForEach-Object { [uint64]$_.Matches[0].Groups[7].Value } | Measure-Object -Maximum).Maximum)
+                }
+            }
+            if ($swRasterOversizeLines.Count -gt 0)
+            {
+                $swRasterStats.oversize_lines = $swRasterOversizeLines.Count
+                $swRasterStats.oversize_max = [uint64](($swRasterOversizeLines | ForEach-Object { [uint64]$_.Matches[0].Groups[1].Value } | Measure-Object -Maximum).Maximum)
             }
         }
         $stressLine = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_TEXTURES materials=(\d+) of (\d+)')
@@ -1141,6 +1219,32 @@ foreach ($view in $shots)
     }
     # Release はログが無効（NORVES_ENABLE_LOGGING=0）で Game.log を書かないため、ログの検査を飛ばす。
 
+    # 検証レイヤーのログ。エラーが 1 件でもあれば失敗にする。数えるのはメッセージの見出しの行（"Validation Error:"）で、
+    # VUID を持たないエラー（UNASSIGNED-Threading-* など）も含み、本文の "#VUID-" の行を二重に数えない。
+    # Debug でログのファイルが無いときは、検証レイヤーがログの設定を読んでいない（落ちようのない合格になる）ので失敗にする。
+    $validationInfo = $null
+    if (Test-Path -LiteralPath $viewValidationLogPath)
+    {
+        $validationLines = @(Get-Content -LiteralPath $viewValidationLogPath -Encoding Default | Where-Object { $_ -match '\S' })
+        $errorLines = @($validationLines | Where-Object { $_ -match 'Validation Error:' })
+        $warningLines = @($validationLines | Where-Object { $_ -match 'Validation Warning:' })
+        $validationInfo = [ordered]@{
+            log = "$($view.Name).Validation.log"
+            log_lines = $validationLines.Count
+            error_count = $errorLines.Count
+            warning_count = $warningLines.Count
+            vuid_count = @($errorLines | Where-Object { $_ -match 'VUID-' }).Count
+        }
+        if ($errorLines.Count -gt 0)
+        {
+            $failures += "$($view.Name): 検証レイヤーのエラーが $($errorLines.Count) 件ある（$($view.Name).Validation.log。先頭: $($errorLines[0]))"
+        }
+    }
+    elseif ($Configuration -eq 'Debug')
+    {
+        $failures += "$($view.Name): 検証レイヤーのログ（$($view.Name).Validation.log）が無い（検証レイヤーがログの設定を読んでいない）"
+    }
+
     foreach ($image in $images)
     {
         $imagePath = Join-Path $outRoot "$($image.Name).png"
@@ -1171,6 +1275,8 @@ foreach ($view in $shots)
             gpu_driver = $gpuDriver
             geometry_pages = $geometryPages
             mega_occlusion = $occlusionStats
+            sw_raster = $swRasterStats
+            vulkan_validation = $validationInfo
             stress_materials = $stressMaterials
             stress_geometry = $stressGeometryInfo
             skinned_probe = $skinnedProbeInfo

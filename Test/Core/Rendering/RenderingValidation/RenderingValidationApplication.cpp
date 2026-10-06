@@ -179,11 +179,14 @@ namespace NorvesLib::Test::RenderingValidation
                 StartsWith(argument, TEXT("--path-tracing-aperture=")) ||
                 StartsWith(argument, TEXT("--path-tracing-focus-distance=")) ||
                 StartsWith(argument, TEXT("--raster-direct-brdf=")) ||
-                StartsWith(argument, TEXT("--visibility-buffer=")))
+                StartsWith(argument, TEXT("--visibility-buffer=")) ||
+                StartsWith(argument, TEXT("--sw-raster=")) ||
+                StartsWith(argument, TEXT("--sw-raster-max-px=")))
             {
                 // 連番の1フレームのPTの経路（R8-P3）の絞り・ピント距離・シャッターもエンジンが読む。
                 // エンジンが同じ引数で輸送範囲・画素内の標本位置・PTの検証出力・ラスタの直接光の
                 // BRDFを設定する。--visibility-buffer も同じく、エンジンがビジビリティバッファの使い方を設定する。
+                // --sw-raster・--sw-raster-max-px も同じく、エンジンがソフトウェアラスタの使い方としきい値を設定する。
                 continue;
             }
             if (StartsWith(argument, TEXT("--path-tracing-samples=")))

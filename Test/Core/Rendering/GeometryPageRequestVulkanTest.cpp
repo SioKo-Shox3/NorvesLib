@@ -112,6 +112,10 @@ namespace
         uint32_t BvhLeafBase;
         uint32_t BvhRootCount;
         uint32_t PageRequestCapacity;
+        uint32_t bSwRasterEnabled;
+        uint32_t SwRasterCapacity;
+        float SwRasterMaxPixels;
+        float SwRasterNearPlane;
     };
 
     // MegaInstance（192 バイト）と同じ並び
@@ -174,8 +178,9 @@ namespace
             ResourceBindType::RWBuffer,             // 10 BVH のカウンタ
             ResourceBindType::RWBuffer,             // 11 ページの表
             ResourceBindType::RWBuffer,             // 12 ページの要求
+            ResourceBindType::RWBuffer,             // 13 ソフトウェアラスタの一覧（このテストは振り分けない）
         };
-        for (uint32_t bindingIndex = 0; bindingIndex < 13u; ++bindingIndex)
+        for (uint32_t bindingIndex = 0; bindingIndex < 14u; ++bindingIndex)
         {
             DescriptorBinding binding;
             binding.binding = bindingIndex;
@@ -330,7 +335,7 @@ namespace
         descriptorSet->BindTexture(4u, fixture.HiZ);
         descriptorSet->BindSampler(4u, fixture.Sampler);
         descriptorSet->BindStorageBuffer(5u, fixture.Visible, 0u, ClusterCount * 4u);
-        descriptorSet->BindStorageBuffer(6u, fixture.Stats, 0u, 16u);
+        descriptorSet->BindStorageBuffer(6u, fixture.Stats, 0u, 48u);
         descriptorSet->BindStorageBuffer(7u, fixture.Sections, 0u, 8u);
         descriptorSet->BindStorageBuffer(8u, fixture.DrawInfos, 0u, CommandCapacity * 8u);
         descriptorSet->BindStorageBuffer(9u, fixture.BvhQueue, 0u, BvhQueueBytes);
@@ -339,6 +344,7 @@ namespace
         descriptorSet->BindStorageBuffer(12u, fixture.PageRequests,
                                          0u,
                                          static_cast<uint32_t>(Mega::GeometryPageRequestBuffer::GetBufferBytes(RequestCapacity)));
+        descriptorSet->BindStorageBuffer(13u, fixture.Stats, 0u, 48u);
         descriptorSet->Update();
 
         CommandListPtr commandList = fixture.Device->CreateCommandList();
@@ -599,7 +605,7 @@ namespace
             fixture.Commands = CreateHostBuffer(device, CommandCapacity * 5u * 4u, storage, "GeometryPageRequestCommands");
             fixture.Counts = CreateHostBuffer(device, 16u, storage, "GeometryPageRequestCounts");
             fixture.Visible = CreateHostBuffer(device, ClusterCount * 4u, storage, "GeometryPageRequestVisible");
-            fixture.Stats = CreateHostBuffer(device, 16u, storage, "GeometryPageRequestStats");
+            fixture.Stats = CreateHostBuffer(device, 48u, storage, "GeometryPageRequestStats");
             fixture.Sections = CreateHostBuffer(device, 8u, storage, "GeometryPageRequestSections");
             fixture.DrawInfos = CreateHostBuffer(device, CommandCapacity * 8u, storage, "GeometryPageRequestDrawInfos");
             fixture.BvhQueue = CreateHostBuffer(device, BvhQueueBytes, storage, "GeometryPageRequestBvhQueue");

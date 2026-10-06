@@ -24,6 +24,10 @@
 //   VT の要求（フィードバック）は、材質 0 のアルベドを sparse の BC7 にして、リングの要求のバッファへ書かれる要求を読み戻し、
 //   CPU の参照（UV の微分から求めたミップ・タイル）と照合する。常駐のテクスチャは 4×4 の画素のうち位相の 1 画素だけが書き、
 //   非常駐（ミップテイルだけを結ぶ）の領域は全画素が書く。パラメータ 0（VT でない材質）は何も書かない。
+//   64bit のバッファ（深度 + ID）の合流（VisibilityMerge）は、手で書いた 64bit の値が ID・深度へ合流することを確かめる。
+//   ハードのラスタが書いた深度（画素ごとに違う値）より手前（同じ深度・1 ULP 手前を含む）の値は勝って深度と ID が書き換わり、
+//   奥（1 ULP 奥・1.0 を含む）の値は負けて何も変わらず、空の画素（すべてのビットが 1）は触らない。ID は 32bit 全域の値、
+//   深度は 0.0 から 1.0 まで。バッファはフレームの最初に空で埋められ、前のフレームの値が残らない（埋めを外すと落ちる）。
 // Vulkan デバイスが無い環境、または解決に対応しない装置では 125（スキップ）を返す。
 #include "Container/Containers.h"
 #include "Rendering/CameraViewConstants.h"
@@ -36,8 +40,10 @@
 #include "Rendering/VirtualTextureRequestSet.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityMaterialTable.h"
+#include "Rendering/VisibilityMerge.h"
 #include "Rendering/VisibilityResolveMaterialBuild.h"
 #include "Rendering/VisibilityResolvePass.h"
+#include "Rendering/VisibilitySwRaster.h"
 
 #include "RHI/DeviceCapabilities.h"
 #include "RHI/IBuffer.h"
@@ -3036,6 +3042,1199 @@ namespace
         }
     }
 
+    // ========================================
+    // 64bit のバッファ（深度 + ID）の合流
+    // ========================================
+
+    // 幅 128: ソフトの矩形の上限は最小でも 64 画素なので、上限を超える三角形（SW_STAT_OVERSIZE）を置くには 64 を超える幅が要る
+    constexpr uint32_t MergeWidth = 128;
+    constexpr uint32_t MergeHeight = 32;
+    constexpr uint32_t MergePixels = MergeWidth * MergeHeight;
+
+    // ハードのラスタが書いた深度の代わりの、画素ごとに違う深度（0.02〜0.97）と ID（32bit の上位寄りの値）
+    float MergeHardDepth(uint32_t pixel)
+    {
+        const float t = static_cast<float>((pixel * 37u) % 1000u) / 1000.0f;
+        return 0.02f + 0.95f * t;
+    }
+
+    uint32_t MergeHardId(uint32_t pixel)
+    {
+        return 0x40000000u + pixel * 13u;
+    }
+
+    // 画素ごとの 64bit の値の種類（8 通りを画素の番号で回す）
+    constexpr uint32_t MergeCaseCount = 8;
+
+    // ソフトウェアラスタが書く値と、ハードの値に対して勝つか（LessOrEqual。同じ深度は勝つ）
+    uint64_t MergeSoftwareKey(uint32_t pixel, bool& outWins)
+    {
+        const float hard = MergeHardDepth(pixel);
+        const uint32_t id = 0x80000000u + pixel * 7u;
+        switch (pixel % MergeCaseCount)
+        {
+        case 0:
+            outWins = false;
+            return VisibilityBuffer::KEY_EMPTY; // 空は触らない
+        case 1:
+            outWins = true;
+            return VisibilityBuffer::PackKey(hard * 0.5f, id); // 手前
+        case 2:
+            outWins = false;
+            return VisibilityBuffer::PackKey(hard + (1.0f - hard) * 0.5f, id); // 奥
+        case 3:
+            outWins = true;
+            return VisibilityBuffer::PackKey(hard, id); // 同じ深度は勝つ（ハードと同じ LessOrEqual）
+        case 4:
+            outWins = true;
+            return VisibilityBuffer::PackKey(0.0f, 0xFFFFFFFEu); // 深度 0・ID は 32bit の最大に近い値
+        case 5:
+            outWins = false;
+            return VisibilityBuffer::PackKey(1.0f, 3u); // 深度 1.0 は 1 未満のハードに負ける
+        case 6:
+            outWins = true;
+            return VisibilityBuffer::PackKey(std::nextafter(hard, 0.0f), id); // 1 ULP 手前
+        default:
+            outWins = false;
+            return VisibilityBuffer::PackKey(std::nextafter(hard, 1.0f), id); // 1 ULP 奥
+        }
+    }
+
+    // float のビットが一致するか（深度は比較ではなく、書いた値がそのまま残ることを確かめる）
+    bool BitEqual(float a, float b)
+    {
+        return std::memcmp(&a, &b, sizeof(float)) == 0;
+    }
+
+    struct MergeReadback
+    {
+        Container::VariableArray<uint32_t> Ids;
+        Container::VariableArray<float> Depths;
+        bool bOk = false;
+    };
+
+    // 合流の GPU ケースの資源と読み戻し
+    struct MergeFixture
+    {
+        DevicePtr Device;
+        TexturePtr IdTexture;
+        TexturePtr DepthTexture;
+        RenderPassPtr ClearPass;
+        FramebufferPtr ClearFramebuffer;
+        RenderPassPtr LoadPass;
+        FramebufferPtr LoadFramebuffer;
+        ShaderPtr ProbeShader;
+        PipelinePtr ProbePipeline;
+        SamplerPtr ProbeSampler;
+        DescriptorSetDesc ProbeLayout;
+    };
+
+    bool BuildMergeFixture(const DevicePtr& device, ShaderManager& shaderManager, MergeFixture& fixture)
+    {
+        fixture.Device = device;
+
+        TextureDesc idDesc;
+        idDesc.Width = MergeWidth;
+        idDesc.Height = MergeHeight;
+        idDesc.MipLevels = 1;
+        idDesc.ArraySize = 1;
+        idDesc.TextureFormat = Format::R32_UINT;
+        idDesc.Dimension = TextureDimension::Texture2D;
+        idDesc.Usage = ResourceUsage::RenderTarget | ResourceUsage::ShaderRead | ResourceUsage::TransferSrc;
+        idDesc.DebugName = "VisibilityMergeTestId";
+        fixture.IdTexture = device->CreateTexture(idDesc);
+
+        TextureDesc depthDesc;
+        depthDesc.Width = MergeWidth;
+        depthDesc.Height = MergeHeight;
+        depthDesc.MipLevels = 1;
+        depthDesc.ArraySize = 1;
+        depthDesc.TextureFormat = Format::D32_FLOAT;
+        depthDesc.Dimension = TextureDimension::Texture2D;
+        depthDesc.Usage = ResourceUsage::DepthStencil | ResourceUsage::ShaderRead;
+        depthDesc.DebugName = "VisibilityMergeTestDepth";
+        fixture.DepthTexture = device->CreateTexture(depthDesc);
+        if (!fixture.IdTexture || !fixture.DepthTexture)
+        {
+            return false;
+        }
+
+        // 初期化の render pass: ID を空（0）、深度を 1.0 で消し、どちらも ShaderResource にして渡す
+        RenderPassDesc clearDesc = VisibilityMerge::MakeLoadRenderPassDesc();
+        clearDesc.colorAttachments[0].clear = true;
+        clearDesc.colorAttachments[0].clearColorUint[0] = VisibilityBuffer::EMPTY_ID;
+        clearDesc.colorAttachments[0].loadOp = AttachmentLoadOp::Clear;
+        clearDesc.colorAttachments[0].initialState = ResourceState::Undefined;
+        clearDesc.depthStencilAttachment.clear = true;
+        clearDesc.depthStencilAttachment.clearDepth = 1.0f;
+        clearDesc.depthStencilAttachment.loadOp = AttachmentLoadOp::Clear;
+        clearDesc.depthStencilAttachment.initialState = ResourceState::Undefined;
+        fixture.ClearPass = device->CreateRenderPass(clearDesc);
+        fixture.LoadPass = device->CreateRenderPass(VisibilityMerge::MakeLoadRenderPassDesc());
+        if (!fixture.ClearPass || !fixture.LoadPass)
+        {
+            return false;
+        }
+
+        FramebufferDesc framebufferDesc;
+        framebufferDesc.colorTargets.push_back(fixture.IdTexture);
+        framebufferDesc.depthStencilTarget = fixture.DepthTexture;
+        framebufferDesc.width = MergeWidth;
+        framebufferDesc.height = MergeHeight;
+        framebufferDesc.renderPass = fixture.ClearPass;
+        fixture.ClearFramebuffer = device->CreateFramebuffer(framebufferDesc);
+        framebufferDesc.renderPass = fixture.LoadPass;
+        fixture.LoadFramebuffer = device->CreateFramebuffer(framebufferDesc);
+        if (!fixture.ClearFramebuffer || !fixture.LoadFramebuffer)
+        {
+            return false;
+        }
+
+        // 深度の読み戻し用の計算パイプライン
+        fixture.ProbeShader = shaderManager.LoadShader("visbuffer_merge_depth_probe.comp", RHI::ShaderStage::Compute);
+        SamplerDesc samplerDesc;
+        samplerDesc.filterMin = FilterMode::Point;
+        samplerDesc.filterMag = FilterMode::Point;
+        samplerDesc.filterMip = FilterMode::Point;
+        samplerDesc.addressU = TextureAddressMode::Clamp;
+        samplerDesc.addressV = TextureAddressMode::Clamp;
+        samplerDesc.addressW = TextureAddressMode::Clamp;
+        fixture.ProbeSampler = device->CreateSampler(samplerDesc);
+        const ResourceBindType types[] = {ResourceBindType::CombinedImageSampler, ResourceBindType::RWBuffer,
+                                          ResourceBindType::ConstantBuffer};
+        for (uint32_t binding = 0; binding < 3; ++binding)
+        {
+            DescriptorBinding descriptorBinding;
+            descriptorBinding.binding = binding;
+            descriptorBinding.type = types[binding];
+            descriptorBinding.stages = RHI::ShaderStage::Compute;
+            fixture.ProbeLayout.bindings.push_back(descriptorBinding);
+        }
+        if (!fixture.ProbeShader || !fixture.ProbeSampler)
+        {
+            return false;
+        }
+        ComputePipelineDesc pipelineDesc;
+        pipelineDesc.computeShader = fixture.ProbeShader;
+        pipelineDesc.descriptorSetLayouts.push_back(fixture.ProbeLayout);
+        fixture.ProbePipeline = device->CreateComputePipeline(pipelineDesc);
+        return fixture.ProbePipeline != nullptr;
+    }
+
+    // ID・深度（どちらも ShaderResource の状態）をホストへ読み戻し、ShaderResource へ戻す
+    MergeReadback ReadMergeTargets(MergeFixture& fixture)
+    {
+        MergeReadback result;
+        const DevicePtr& device = fixture.Device;
+        const uint64_t idBytes = static_cast<uint64_t>(MergePixels) * sizeof(uint32_t);
+        BufferPtr idReadback = device->CreateBuffer(BufferDesc(idBytes, ResourceUsage::TransferDst, true, "VisibilityMergeIdReadback"));
+        BufferPtr depthReadback = device->CreateBuffer(
+            BufferDesc(idBytes, ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead, true, "VisibilityMergeDepthReadback"));
+        const uint32_t paramsValues[4] = {MergeWidth, MergeHeight, 0u, 0u};
+        BufferPtr params = CreateHostBuffer(device, paramsValues, sizeof(paramsValues), ResourceUsage::ConstantBuffer,
+                                            "VisibilityMergeProbeParams");
+        DescriptorSetPtr descriptorSet = device->CreateDescriptorSet(fixture.ProbeLayout);
+        CommandListPtr commandList = device->CreateCommandList();
+        if (!idReadback || !depthReadback || !params || !descriptorSet || !commandList)
+        {
+            return result;
+        }
+
+        descriptorSet->BindTexture(0, fixture.DepthTexture);
+        descriptorSet->BindSampler(0, fixture.ProbeSampler);
+        descriptorSet->BindStorageBuffer(1, depthReadback, 0, static_cast<uint32_t>(idBytes));
+        descriptorSet->BindConstantBuffer(2, params, 0, sizeof(paramsValues));
+        descriptorSet->Update();
+
+        commandList->Begin();
+        // ID: 転送で写す
+        commandList->TextureBarrier(fixture.IdTexture, ResourceState::ShaderResource, ResourceState::CopySource, 0u, 0u, 0u, 0u);
+        commandList->BufferBarrier(idReadback, ResourceState::Undefined, ResourceState::CopyDest, 0u, idBytes);
+        commandList->CopyTextureToBuffer(fixture.IdTexture, idReadback, MergeWidth, MergeHeight, 0u, 0u, 0u);
+        commandList->BufferBarrier(idReadback, ResourceState::CopyDest, ResourceState::HostRead, 0u, idBytes);
+        commandList->TextureBarrier(fixture.IdTexture, ResourceState::CopySource, ResourceState::ShaderResource, 0u, 0u, 0u, 0u);
+        // 深度: 計算で float の並びへ読み出す
+        commandList->BufferBarrier(depthReadback, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, idBytes);
+        commandList->SetPipeline(fixture.ProbePipeline);
+        commandList->SetDescriptorSet(descriptorSet, 0);
+        commandList->Dispatch((MergeWidth + 7u) / 8u, (MergeHeight + 7u) / 8u, 1u);
+        commandList->BufferBarrier(depthReadback, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, idBytes);
+        commandList->End();
+        commandList->Submit(true);
+        device->WaitIdle();
+
+        const uint32_t* mappedIds = static_cast<const uint32_t*>(idReadback->Map(0u, idBytes));
+        if (mappedIds == nullptr)
+        {
+            return result;
+        }
+        result.Ids.assign(mappedIds, mappedIds + MergePixels);
+        idReadback->Unmap();
+        const float* mappedDepths = static_cast<const float*>(depthReadback->Map(0u, idBytes));
+        if (mappedDepths == nullptr)
+        {
+            return result;
+        }
+        result.Depths.assign(mappedDepths, mappedDepths + MergePixels);
+        depthReadback->Unmap();
+        result.bOk = true;
+        return result;
+    }
+
+    // ホストが書いた 64bit の値の列を、64bit のバッファへ転送で写す（バッファは GenericRead の状態で渡され、GenericRead で戻る）
+    BufferPtr CreateMergeUpload(const DevicePtr& device, const Container::VariableArray<uint64_t>& keys)
+    {
+        return CreateHostBuffer(device, keys.data(), static_cast<uint64_t>(keys.size()) * sizeof(uint64_t),
+                                ResourceUsage::TransferSrc, "VisibilityMergeKeyUpload");
+    }
+
+    void RecordMergeUpload(ICommandList* commandList, const BufferPtr& keyBuffer, const BufferPtr& upload)
+    {
+        const uint64_t bytes = static_cast<uint64_t>(MergePixels) * sizeof(uint64_t);
+        commandList->BufferBarrier(keyBuffer, ResourceState::GenericRead, ResourceState::CopyDest, 0u, bytes);
+        commandList->CopyBuffer(upload, keyBuffer, bytes, 0u, 0u);
+        commandList->BufferBarrier(keyBuffer, ResourceState::CopyDest, ResourceState::GenericRead, 0u, bytes);
+    }
+
+    // 手で書いた 64bit の値が、ハードのラスタの値より手前のときだけ ID・深度へ合流する
+    void RunVisibilityMergeCase(const DevicePtr& device, ShaderManager& shaderManager)
+    {
+        if (!VisibilityMerge::IsSupported(device->GetCapabilities()))
+        {
+            std::cout << TestName << " 合流のケースをスキップ: 64bit のバッファへの atomicMin に対応しない装置です" << std::endl;
+            return;
+        }
+
+        MergeFixture fixture;
+        if (!BuildMergeFixture(device, shaderManager, fixture))
+        {
+            Expect(false, "合流のケースの資源（ID・深度・render pass・読み戻し）を作れなければならない");
+            return;
+        }
+        VisibilityMerge merge;
+        if (!merge.Initialize(device.get(), &shaderManager, fixture.LoadPass))
+        {
+            Expect(false, "合流のパイプラインを作れなければならない");
+            return;
+        }
+        uint64_t serial = 0;
+        const auto beginFrame = [&]() { merge.BeginFrame(0, ++serial); };
+        beginFrame();
+        Expect(merge.EnsureKeyBuffer(MergeWidth, MergeHeight), "64bit のバッファを作れなければならない");
+        const BufferPtr keyBuffer = merge.GetKeyBuffer();
+        if (!keyBuffer)
+        {
+            return;
+        }
+        Expect(keyBuffer->GetSize() == static_cast<uint64_t>(MergePixels) * sizeof(uint64_t),
+               "64bit のバッファは画素数 × 8 バイト");
+
+        Viewport viewport;
+        viewport.width = static_cast<float>(MergeWidth);
+        viewport.height = static_cast<float>(MergeHeight);
+        RHI::ScissorRect scissor;
+        scissor.right = static_cast<int32_t>(MergeWidth);
+        scissor.bottom = static_cast<int32_t>(MergeHeight);
+
+        // 段階 1: ハードのラスタの代わり。ID を空・深度を 1.0 で消した画像へ、画素ごとに違う深度・ID の 64bit の値をすべて合流させる
+        // （1.0 未満の深度なので、全画素が勝つ）。合流だけで「ハードの値」を作り、読み戻して全画素を確かめる
+        Container::VariableArray<uint64_t> hardKeys(MergePixels);
+        for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+        {
+            hardKeys[pixel] = VisibilityBuffer::PackKey(MergeHardDepth(pixel), MergeHardId(pixel));
+        }
+        const BufferPtr hardUpload = CreateMergeUpload(device, hardKeys);
+        CommandListPtr commandList = device->CreateCommandList();
+        if (!hardUpload || !commandList)
+        {
+            Expect(false, "合流のケースの転送元・コマンドリストを作れなければならない");
+            return;
+        }
+        commandList->Begin();
+        commandList->BeginRenderPass(fixture.ClearPass, fixture.ClearFramebuffer);
+        commandList->SetViewport(viewport);
+        commandList->SetScissor(scissor);
+        commandList->EndRenderPass();
+        Expect(merge.RecordClear(commandList.get()), "64bit のバッファを埋められなければならない");
+        RecordMergeUpload(commandList.get(), keyBuffer, hardUpload);
+        Expect(merge.RecordMerge(commandList.get(), fixture.LoadPass, fixture.LoadFramebuffer, viewport, scissor),
+               "合流を記録できなければならない");
+        commandList->End();
+        commandList->Submit(true);
+        device->WaitIdle();
+
+        const MergeReadback hard = ReadMergeTargets(fixture);
+        Expect(hard.bOk, "合流の結果を読み戻せなければならない");
+        if (!hard.bOk)
+        {
+            return;
+        }
+        uint32_t hardMismatches = 0;
+        for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+        {
+            // 深度は float のビットのまま（比較ではなくビットの一致）、ID は 32bit の値のまま
+            hardMismatches += (hard.Ids[pixel] != MergeHardId(pixel) || !BitEqual(hard.Depths[pixel], MergeHardDepth(pixel))) ? 1u : 0u;
+        }
+        Expect(hardMismatches == 0, "1.0 で消した深度へ、画素ごとの深度・ID がそのまま合流しなければならない");
+
+        // 段階 2: ソフトウェアラスタの値。手前（同じ深度・1 ULP 手前を含む）は勝ち、奥は負け、空は触らない
+        Container::VariableArray<uint64_t> softKeys(MergePixels);
+        Container::VariableArray<uint8_t> softWins(MergePixels);
+        uint32_t expectedWins = 0;
+        uint32_t expectedLosses = 0;
+        uint32_t emptyPixels = 0;
+        for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+        {
+            bool bWins = false;
+            softKeys[pixel] = MergeSoftwareKey(pixel, bWins);
+            softWins[pixel] = bWins ? 1 : 0;
+            emptyPixels += VisibilityBuffer::IsKeyEmpty(softKeys[pixel]) ? 1u : 0u;
+            expectedWins += bWins ? 1u : 0u;
+            expectedLosses += (!bWins && !VisibilityBuffer::IsKeyEmpty(softKeys[pixel])) ? 1u : 0u;
+        }
+        Expect(expectedWins >= MergePixels / 2 && expectedLosses >= MergePixels / 4 && emptyPixels >= MergePixels / 16,
+               "勝つ・負ける・空の画素が十分にある場面でなければならない");
+
+        const auto runMerge = [&](const Container::VariableArray<uint64_t>& keys, bool bClearAfterUpload) -> bool
+        {
+            beginFrame();
+            const BufferPtr upload = CreateMergeUpload(device, keys);
+            CommandListPtr list = device->CreateCommandList();
+            if (!upload || !list || !merge.EnsureKeyBuffer(MergeWidth, MergeHeight))
+            {
+                return false;
+            }
+            list->Begin();
+            // 通常はフレームの最初の埋めの後に値を写す。bClearAfterUpload は、値を写した後でフレームの最初の埋めを行う
+            // （前のフレームの値が残らないことの確認。埋めが効かなければ、写した値が合流してしまう）
+            merge.RecordClear(list.get());
+            RecordMergeUpload(list.get(), keyBuffer, upload);
+            if (bClearAfterUpload)
+            {
+                merge.RecordClear(list.get());
+            }
+            const bool bRecorded = merge.RecordMerge(list.get(), fixture.LoadPass, fixture.LoadFramebuffer, viewport, scissor);
+            list->End();
+            list->Submit(true);
+            device->WaitIdle();
+            return bRecorded;
+        };
+        Expect(runMerge(softKeys, false), "ソフトウェアラスタの値の合流を記録できなければならない");
+        const MergeReadback merged = ReadMergeTargets(fixture);
+        Expect(merged.bOk, "合流の結果を読み戻せなければならない");
+        if (!merged.bOk)
+        {
+            return;
+        }
+
+        uint32_t winnerMismatches = 0;
+        uint32_t loserMismatches = 0;
+        uint32_t winsSeen = 0;
+        uint32_t lossesSeen = 0;
+        for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+        {
+            const bool bEmpty = VisibilityBuffer::IsKeyEmpty(softKeys[pixel]);
+            const bool bWins = softWins[pixel] != 0;
+            const uint32_t expectedId = bWins ? VisibilityBuffer::KeyId(softKeys[pixel]) : MergeHardId(pixel);
+            const float expectedDepth = bWins ? VisibilityBuffer::KeyDepth(softKeys[pixel]) : MergeHardDepth(pixel);
+            const bool bSame = merged.Ids[pixel] == expectedId && BitEqual(merged.Depths[pixel], expectedDepth);
+            if (bWins)
+            {
+                ++winsSeen;
+                winnerMismatches += bSame ? 0u : 1u;
+            }
+            else
+            {
+                lossesSeen += bEmpty ? 0u : 1u;
+                loserMismatches += bSame ? 0u : 1u;
+            }
+        }
+        Expect(winnerMismatches == 0, "ハードより手前（同じ深度・1 ULP 手前を含む）の 64bit の値は、深度と ID を書き換えなければならない");
+        Expect(loserMismatches == 0, "ハードより奥（1 ULP 奥・1.0 を含む）の値と空の値は、深度も ID も変えてはならない");
+
+        // 段階 3: 前のフレームの値が残らない。深度 0 の値（どの画素でも勝つ）を写した後でフレームの最初の埋めを行うと、
+        // 空に戻るので合流は何も変えない（埋めを外すと、全画素が深度 0・ID 0xDEADBEEF になって落ちる）
+        Container::VariableArray<uint64_t> garbageKeys(MergePixels, VisibilityBuffer::PackKey(0.0f, 0xDEADBEEFu));
+        Expect(runMerge(garbageKeys, true), "埋めの確認の合流を記録できなければならない");
+        const MergeReadback afterClear = ReadMergeTargets(fixture);
+        Expect(afterClear.bOk, "埋めの確認の結果を読み戻せなければならない");
+        if (afterClear.bOk)
+        {
+            uint32_t changed = 0;
+            for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+            {
+                changed += (afterClear.Ids[pixel] != merged.Ids[pixel] || !BitEqual(afterClear.Depths[pixel], merged.Depths[pixel])) ? 1u : 0u;
+            }
+            Expect(changed == 0, "フレームの最初の埋めの後は前の値が残らず、合流は ID・深度を変えない");
+        }
+
+        std::cout << TestName << " 合流: 勝つ画素=" << winsSeen << " 負ける・空の画素=" << (MergePixels - winsSeen)
+                  << " 空=" << emptyPixels << std::endl;
+        device->WaitIdle();
+        merge.Shutdown();
+    }
+
+    // ========================================
+    // ソフトウェアラスタ（visbuffer_sw_raster.comp）とハードのラスタの被覆の一致
+    // ========================================
+
+    // 手で作ったクラスタの場面。1 クラスタ = 1 コマンド（記録の番号 = 1 + クラスタの番号）で、三角形は 128 以下。
+    // 画面は MergeWidth x MergeHeight で、カメラは原点から -Z を見る（視野 f = 2、アスペクト 2。z = -4 の面で 1 ワールド単位 = 16 画素）
+    struct SwCluster
+    {
+        uint32_t FirstIndex = 0;
+        uint32_t TriangleCount = 0;
+        uint32_t InstanceIndex = 0;
+        const char* Name = "";
+    };
+
+    struct SwScene
+    {
+        Container::VariableArray<Vertex> Vertices;
+        Container::VariableArray<uint32_t> Indices;
+        Container::VariableArray<SwCluster> Clusters;
+        Container::VariableArray<MegaInstanceData> Instances;
+        uint32_t SecondPassFirstCluster = 0; // この番号以降のクラスタは 2 パス目の一覧へ入れる
+        bool bRotatedView = false;           // true なら view 行列は単位でなく、頂点はそれを打ち消す位置に置く（SwFillFrame）
+    };
+
+    // 場面の種類。Identity = view が単位、RotatedView = 同じ場面を回転・並進つきの view で描く、
+    // Oversize = 走査する矩形の上限を超える三角形を含む場面（しきい値で描く・描かないが変わる）
+    enum class SwCaseKind
+    {
+        Identity,
+        RotatedView,
+        Oversize,
+    };
+
+    // ハードの深度の補間（面の方程式）とソフトの重みの和の差の許容。測った最大は約 5.5e-6（深度の 24bit の刻みの数十倍）
+    constexpr float SwDepthTolerance = 1.0e-5f;
+    // 回転・並進つきの view では、頂点を float でビュー空間から戻す丸めが加わるので、許容を倍にする（測った最大は約 1.2e-5。順を入れ替えると桁違いに外れる）
+    constexpr float SwRotatedViewDepthTolerance = 2.0e-5f;
+    constexpr float SwNear = 0.5f;
+    constexpr float SwFar = 10.0f;
+    constexpr double SwFocal = 2.0;
+    constexpr double SwAspect = 2.0;
+    // 回転つきの view 行列（列優先）: ビュー空間の位置 = R * 位置 + t。R は z 軸まわり 90 度（(x, y) → (-y, x)）、t は下の値。
+    // 2 のべきの値だけなので float で厳密に扱え、水平な辺・画素の角の位置が丸めでずれない
+    constexpr float SwViewTranslation[3] = {0.25f, -0.5f, -0.5f};
+
+    // 画面の位置（画素。小数も）と手前からの距離 depth（正）から、そのワールド位置（instance 0 の変換が単位のとき画面へ戻る位置）を求める
+    void SwScreenToWorld(double screenX, double screenY, double depth, float out[3])
+    {
+        const double ndcX = (screenX - 0.0) / MergeWidth * 2.0 - 1.0;
+        const double ndcY = (screenY - 0.0) / MergeHeight * 2.0 - 1.0;
+        out[0] = static_cast<float>(ndcX * depth * SwAspect / SwFocal);
+        out[1] = static_cast<float>(-ndcY * depth / SwFocal);
+        out[2] = static_cast<float>(-depth);
+    }
+
+    // ビュー空間の位置から、view 行列（SwFillFrame）を掛けるとその位置へ戻るモデルの位置を求める（回転つきの view のとき）。
+    // p = R^T * (v - t)、R^T は (x, y) → (y, -x)
+    void SwViewToModel(const float view[3], float out[3])
+    {
+        const float x = view[0] - SwViewTranslation[0];
+        const float y = view[1] - SwViewTranslation[1];
+        const float z = view[2] - SwViewTranslation[2];
+        out[0] = y;
+        out[1] = -x;
+        out[2] = z;
+    }
+
+    void SwBeginCluster(SwScene& scene, const char* name, uint32_t instanceIndex)
+    {
+        SwCluster cluster;
+        cluster.FirstIndex = static_cast<uint32_t>(scene.Indices.size());
+        cluster.InstanceIndex = instanceIndex;
+        cluster.Name = name;
+        scene.Clusters.push_back(cluster);
+    }
+
+    // 三角形を足す。頂点は画面の位置と距離で渡す（反時計・時計のどちらにもなりうる）
+    void SwAddTriangle(SwScene& scene, const double screen[3][2], const double depth[3])
+    {
+        SwCluster& cluster = scene.Clusters.back();
+        Expect(cluster.TriangleCount < VisibilityBuffer::MAX_TRIANGLES_PER_RECORD, "クラスタの三角形は 128 以下");
+        for (int k = 0; k < 3; ++k)
+        {
+            Vertex vertex = {};
+            float viewPosition[3];
+            SwScreenToWorld(screen[k][0], screen[k][1], depth[k], viewPosition);
+            if (scene.bRotatedView)
+            {
+                SwViewToModel(viewPosition, vertex.Position);
+            }
+            else
+            {
+                std::memcpy(vertex.Position, viewPosition, sizeof(viewPosition));
+            }
+            vertex.Normal[1] = 1.0f;
+            scene.Indices.push_back(static_cast<uint32_t>(scene.Vertices.size()));
+            scene.Vertices.push_back(vertex);
+        }
+        ++cluster.TriangleCount;
+    }
+
+    void SwAddTriangleAt(SwScene& scene, double x0, double y0, double x1, double y1, double x2, double y2, double depth)
+    {
+        const double screen[3][2] = {{x0, y0}, {x1, y1}, {x2, y2}};
+        const double depths[3] = {depth, depth, depth};
+        SwAddTriangle(scene, screen, depths);
+    }
+
+    uint32_t SwNextRandom(uint32_t& state)
+    {
+        state = state * 1664525u + 1013904223u;
+        return state >> 8;
+    }
+
+    double SwRandom(uint32_t& state, double low, double high)
+    {
+        return low + (high - low) * static_cast<double>(SwNextRandom(state) % 100000u) / 100000.0;
+    }
+
+    void SwAddInstances(SwScene& scene)
+    {
+        MegaInstanceData identity = {};
+        MegaInstanceData moved = {};
+        for (int i = 0; i < 4; ++i)
+        {
+            identity.World[i * 4 + i] = 1.0f;
+            identity.PreviousWorld[i * 4 + i] = 1.0f;
+            moved.World[i * 4 + i] = 1.0f;
+            moved.PreviousWorld[i * 4 + i] = 1.0f;
+        }
+        // 列優先の並進（x・y を少しずらし、奥へ寄せる）
+        moved.World[12] = 0.05f;
+        moved.World[13] = -0.03f;
+        moved.World[14] = -0.3f;
+        scene.Instances.push_back(identity);
+        scene.Instances.push_back(moved);
+    }
+
+    // 上限を超える三角形の場面。しきい値 0 の上限は 64 画素四方（ComputeMaxScanSpan の下限）、しきい値 64 の上限は 130 画素四方。
+    // 小さい三角形（上限の内側）と、走査する矩形の幅がちょうど 64 画素の三角形（上限に等しいので描く）と、幅が 65 画素の三角形
+    // （上限を 1 画素だけ超える。描かずに数える）と、幅 100 画素の三角形（描かずに数える）。幅 100 画素の三角形は 2 パス目の一覧へ入れる
+    SwScene BuildSwOversizeScene()
+    {
+        SwScene scene;
+        SwAddInstances(scene);
+        SwBeginCluster(scene, "oversize_small", 0);
+        SwAddTriangleAt(scene, 20.0, 18.0, 50.0, 18.0, 20.0, 30.0, 4.0);
+        SwBeginCluster(scene, "oversize_edge", 0);
+        SwAddTriangleAt(scene, 60.0, 18.0, 124.0, 18.0, 60.0, 30.0, 4.0);
+        // 画素の中心が 10.5 〜 74.5 の 65 個に入る（幅 64 画素の上限を 1 つだけ超える）。走査する矩形の上限の比較を 65 まで許す変異（上限 + 1）を捕まえる
+        SwBeginCluster(scene, "oversize_65", 0);
+        SwAddTriangleAt(scene, 10.0, 0.0, 75.0, 0.0, 10.0, 3.0, 4.0);
+        scene.SecondPassFirstCluster = static_cast<uint32_t>(scene.Clusters.size());
+        SwBeginCluster(scene, "oversize_big", 0);
+        SwAddTriangleAt(scene, 10.0, 4.0, 110.0, 4.0, 10.0, 14.0, 4.0);
+        return scene;
+    }
+
+    SwScene BuildSwScene(bool bRotatedView)
+    {
+        SwScene scene;
+        scene.bRotatedView = bRotatedView;
+        SwAddInstances(scene);
+
+        // 1. 格子: 4 画素ごとの頂点で、傾いた面（奥行きが画面の x で変わる）。共有の辺と、画素の中心を通る対角線がある。
+        //    同じ格子の巻き方を反対にした 2. は、全部が裏面になる（どちらか一方だけがハードに描かれる）
+        for (int variant = 0; variant < 2; ++variant)
+        {
+            SwBeginCluster(scene, variant == 0 ? "lattice" : "lattice_reversed", 0);
+            const double originX = variant == 0 ? 3.0 : 33.0;
+            const double originY = 3.0;
+            for (int cellY = 0; cellY < 3; ++cellY)
+            {
+                for (int cellX = 0; cellX < 6; ++cellX)
+                {
+                    const double x0 = originX + cellX * 4.0;
+                    const double y0 = originY + cellY * 4.0;
+                    const double x1 = x0 + 4.0;
+                    const double y1 = y0 + 4.0;
+                    const auto depthAt = [&](double sx) { return 4.0 + 0.02 * (sx - originX); };
+                    const double d0 = depthAt(x0);
+                    const double d1 = depthAt(x1);
+                    const double a[3][2] = {{x0, y0}, {x1, y0}, {x0, y1}};
+                    const double da[3] = {d0, d1, d0};
+                    const double b[3][2] = {{x1, y0}, {x1, y1}, {x0, y1}};
+                    const double db[3] = {d1, d1, d0};
+                    if (variant == 0)
+                    {
+                        SwAddTriangle(scene, a, da);
+                        SwAddTriangle(scene, b, db);
+                    }
+                    else
+                    {
+                        const double ar[3][2] = {{a[0][0], a[0][1]}, {a[2][0], a[2][1]}, {a[1][0], a[1][1]}};
+                        const double dar[3] = {da[0], da[2], da[1]};
+                        const double br[3][2] = {{b[0][0], b[0][1]}, {b[2][0], b[2][1]}, {b[1][0], b[1][1]}};
+                        const double dbr[3] = {db[0], db[2], db[1]};
+                        SwAddTriangle(scene, ar, dar);
+                        SwAddTriangle(scene, br, dbr);
+                    }
+                }
+            }
+        }
+
+        // 3. 小さい三角形（画面の外へはみ出すものを含む）。位置・大きさ・奥行き・巻き方がばらばら。インスタンス 1（並進つき）
+        SwBeginCluster(scene, "random_small", 1);
+        uint32_t state = 0x2468ACE1u;
+        for (int i = 0; i < 100; ++i)
+        {
+            const double centerX = SwRandom(state, -4.0, 68.0);
+            const double centerY = SwRandom(state, -4.0, 36.0);
+            double screen[3][2];
+            double depth[3];
+            for (int k = 0; k < 3; ++k)
+            {
+                screen[k][0] = centerX + SwRandom(state, -5.0, 5.0);
+                screen[k][1] = centerY + SwRandom(state, -5.0, 5.0);
+                depth[k] = SwRandom(state, 3.0, 8.0);
+            }
+            SwAddTriangle(scene, screen, depth);
+        }
+
+        // 4. 細い・退化した三角形（1 画素に満たない幅の細長いもの・3 点が一直線・同じ点が重なる）。
+        //    5. の三角形（z = 4）と同じ平面に重ねない（同じ深度では、ハードは後に描いた側、ソフトは小さい ID が勝つので、違う画素が出る）
+        SwBeginCluster(scene, "slivers", 0);
+        for (int i = 0; i < 12; ++i)
+        {
+            const double x = 4.0 + 4.7 * i;
+            const double y = 20.0 + 0.37 * i;
+            SwAddTriangleAt(scene, x, y, x + 10.3, y + 0.15 * i, x + 0.2, y + 0.8, 3.5);
+        }
+        SwAddTriangleAt(scene, 5.0, 28.0, 9.0, 28.0, 13.0, 28.0, 3.5);   // 一直線（面積 0）
+        SwAddTriangleAt(scene, 20.0, 28.0, 20.0, 28.0, 25.0, 30.0, 3.5); // 同じ点が重なる
+        SwAddTriangleAt(scene, 30.5, 28.5, 30.5, 28.5, 30.5, 28.5, 3.5); // 3 点が同じ
+
+        // 5. 辺の上の画素（top-left 規則）。頂点が画素の角にある直角三角形の両方の巻き方と、対角線が画素の中心を通る四角形
+        SwBeginCluster(scene, "ties", 0);
+        SwAddTriangleAt(scene, 36.0, 18.0, 44.0, 18.0, 36.0, 26.0, 4.0);
+        SwAddTriangleAt(scene, 36.0, 18.0, 36.0, 26.0, 44.0, 18.0, 4.0);
+        SwAddTriangleAt(scene, 48.0, 18.0, 56.0, 18.0, 56.0, 26.0, 4.0);
+        SwAddTriangleAt(scene, 48.0, 18.0, 56.0, 26.0, 48.0, 26.0, 4.0);
+        SwAddTriangleAt(scene, 58.0, 18.0, 62.0, 18.0, 60.0, 22.0, 4.0);
+        SwAddTriangleAt(scene, 58.0, 18.0, 60.0, 22.0, 62.0, 18.0, 4.0);
+
+        // 5b. 水平な辺が画素の中心の行（y = 10.5・20.5）を通る三角形。上の辺（右向き）の上の画素は含み、下の辺（左向き）の上の画素は含まない。
+        //     top-left の「水平な辺は右向きだけ含む」の向きを逆にすると、上の辺の行（約 16 画素）が欠け、下の辺の行（約 15 画素）が増えて被覆が食い違う
+        SwBeginCluster(scene, "horizontal_ties", 0);
+        SwAddTriangleAt(scene, 68.0, 10.5, 84.0, 10.5, 68.0, 20.5, 4.0);
+        SwAddTriangleAt(scene, 96.0, 10.5, 104.0, 20.5, 88.0, 20.5, 4.0);
+
+        // 6. 奥行き。重なる大きな三角形（手前・奥・交差して貫き合うもの）で、深度の比較と補間を確かめる。2 パス目の一覧へ入れる
+        scene.SecondPassFirstCluster = static_cast<uint32_t>(scene.Clusters.size());
+        SwBeginCluster(scene, "depth", 0);
+        SwAddTriangleAt(scene, 8.0, 6.0, 30.0, 8.0, 14.0, 26.0, 6.0);
+        SwAddTriangleAt(scene, 10.0, 10.0, 34.0, 12.0, 20.0, 28.0, 4.5);
+        {
+            // 傾いた 2 枚が画面の途中で交差する
+            const double screenA[3][2] = {{36.0, 4.0}, {62.0, 6.0}, {40.0, 16.0}};
+            const double depthA[3] = {3.5, 6.0, 3.5};
+            const double screenB[3][2] = {{38.0, 5.0}, {60.0, 4.0}, {50.0, 17.0}};
+            const double depthB[3] = {6.0, 3.5, 4.5};
+            SwAddTriangle(scene, screenA, depthA);
+            SwAddTriangle(scene, screenB, depthB);
+        }
+
+        // 7. 画面の端と奥行きのクリップ。左上・下へはみ出す三角形、右端（x = 128）をまたぐ三角形（右へだけ出るものと、右と下の両方へ出るもの）、
+        //    遠くの平面（far = 10 より先）へ伸びる三角形。右端の三角形は、矩形の x の上限（rect.zw - 1）が無いと隣の行の左端へ書く
+        SwBeginCluster(scene, "clip", 1);
+        SwAddTriangleAt(scene, -6.0, -4.0, 12.0, 2.0, 2.0, 14.0, 5.0);
+        SwAddTriangleAt(scene, 56.0, 24.0, 70.0, 30.0, 58.0, 40.0, 5.0);
+        SwAddTriangleAt(scene, 112.0, 2.0, 140.0, 8.0, 114.0, 22.0, 3.0); // 右へだけはみ出す。手前（3）なので、隣の行へ書くと格子（4）に勝つ
+        SwAddTriangleAt(scene, 120.0, 24.0, 134.0, 30.0, 122.0, 40.0, 5.0); // 右と下へはみ出す
+        {
+            const double screen[3][2] = {{24.0, 1.0}, {44.0, 1.0}, {34.0, 14.0}};
+            const double depth[3] = {5.0, 5.0, 30.0}; // 頂点 3 つ目は far を越える（途中から奥行きのクリップで切れる）
+            SwAddTriangle(scene, screen, depth);
+        }
+        return scene;
+    }
+
+    // 列優先の 4x4（GLSL の mat4 と同じ並び）: view は単位（bRotatedView なら、z 軸まわり 90 度の回転 + SwViewTranslation）、
+    // projection は Vulkan の深度 [0, 1]・Y 反転
+    void SwFillFrame(float out[32], bool bRotatedView)
+    {
+        std::memset(out, 0, sizeof(float) * 32);
+        if (bRotatedView)
+        {
+            // 列 0 = R * (1, 0, 0) = (0, 1, 0)、列 1 = R * (0, 1, 0) = (-1, 0, 0)、列 2 = (0, 0, 1)、列 3 = (t, 1)
+            out[1] = 1.0f;
+            out[4] = -1.0f;
+            out[10] = 1.0f;
+            out[12] = SwViewTranslation[0];
+            out[13] = SwViewTranslation[1];
+            out[14] = SwViewTranslation[2];
+            out[15] = 1.0f;
+        }
+        else
+        {
+            out[0] = out[5] = out[10] = out[15] = 1.0f; // view
+        }
+        float* projection = out + 16;
+        projection[0] = static_cast<float>(SwFocal / SwAspect);
+        projection[5] = -static_cast<float>(SwFocal);
+        projection[10] = SwFar / (SwNear - SwFar);
+        projection[11] = -1.0f;
+        projection[14] = SwNear * SwFar / (SwNear - SwFar);
+    }
+
+    RHI::DescriptorSetDesc MakeSwHardDrawDescriptorSetDesc()
+    {
+        RHI::DescriptorSetDesc desc;
+        const ResourceBindType types[] = {ResourceBindType::ConstantBuffer, ResourceBindType::StructuredBuffer,
+                                          ResourceBindType::StructuredBuffer};
+        for (uint32_t binding = 0; binding < 3; ++binding)
+        {
+            DescriptorBinding descriptorBinding;
+            descriptorBinding.binding = binding;
+            descriptorBinding.type = types[binding];
+            descriptorBinding.stages = RHI::ShaderStage::Vertex;
+            desc.bindings.push_back(descriptorBinding);
+        }
+        return desc;
+    }
+
+    void RunSoftwareRasterCase(const DevicePtr& device, ShaderManager& shaderManager, SwCaseKind kind)
+    {
+        const RHI::DeviceCapabilities& caps = device->GetCapabilities();
+        if (!VisibilityMerge::IsSupported(caps) || !caps.bGeometryShader || !caps.bDrawIndirectFirstInstance)
+        {
+            std::cout << TestName << " ソフトウェアラスタのケースをスキップ: 64bit のバッファへの atomicMin・geometryShader・firstInstance の間接描画のいずれかに対応しない装置です"
+                      << std::endl;
+            return;
+        }
+
+        MergeFixture fixture;
+        if (!BuildMergeFixture(device, shaderManager, fixture))
+        {
+            Expect(false, "ソフトウェアラスタのケースの資源（ID・深度・render pass）を作れなければならない");
+            return;
+        }
+        VisibilityMerge merge;
+        VisibilitySwRaster softwareRaster;
+        Expect(merge.Initialize(device.get(), &shaderManager, fixture.LoadPass), "合流のパイプラインを作れなければならない");
+        Expect(softwareRaster.Initialize(device.get(), &shaderManager), "ソフトウェアラスタのパイプラインを作れなければならない");
+        if (!merge.IsReady() || !softwareRaster.IsReady())
+        {
+            return;
+        }
+        merge.BeginFrame(0, 1);
+        softwareRaster.BeginFrame(0, 1);
+        Expect(merge.EnsureKeyBuffer(MergeWidth, MergeHeight), "64bit のバッファを作れなければならない");
+        const BufferPtr keyBuffer = merge.GetKeyBuffer();
+        if (!keyBuffer)
+        {
+            return;
+        }
+
+        const char* const kindLabel = kind == SwCaseKind::Identity ? "view=単位" : (kind == SwCaseKind::RotatedView ? "view=回転・並進" : "上限を超える三角形");
+        const SwScene scene = kind == SwCaseKind::Oversize ? BuildSwOversizeScene() : BuildSwScene(kind == SwCaseKind::RotatedView);
+        const uint32_t clusterCount = static_cast<uint32_t>(scene.Clusters.size());
+
+        // 頂点・インデックス（記録のアドレスが指し、ハードの描画も同じバッファを読む）
+        const ResourceUsage addressUsage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead |
+                                           ResourceUsage::BufferDeviceAddress;
+        const BufferPtr vertexBuffer = CreateHostBuffer(
+            device, scene.Vertices.data(), static_cast<uint64_t>(scene.Vertices.size()) * sizeof(Vertex),
+            addressUsage | ResourceUsage::VertexBuffer, "SwRasterTestVertices");
+        const BufferPtr indexBuffer = CreateHostBuffer(
+            device, scene.Indices.data(), static_cast<uint64_t>(scene.Indices.size()) * sizeof(uint32_t),
+            addressUsage | ResourceUsage::IndexBuffer, "SwRasterTestIndices");
+        const BufferPtr instanceBuffer = CreateArrayBuffer(device, scene.Instances, ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead,
+                                                           "SwRasterTestInstances");
+
+        // 記録の表と、コマンドごとの描画情報（x = インスタンスの番号、y = payload）
+        VisibilityBuffer::RecordTable records;
+        Container::VariableArray<uint32_t> drawInfos;
+        for (uint32_t clusterIndex = 0; clusterIndex < clusterCount; ++clusterIndex)
+        {
+            const SwCluster& cluster = scene.Clusters[clusterIndex];
+            VisibilityBuffer::DrawRecord record;
+            record.Kind = static_cast<uint32_t>(VisibilityBuffer::RecordKind::MegaGeometryCluster);
+            record.InstanceIndex = cluster.InstanceIndex;
+            record.TriangleCount = cluster.TriangleCount;
+            record.FirstIndex = cluster.FirstIndex;
+            record.VertexBase = 0;
+            record.VertexAddress = vertexBuffer ? vertexBuffer->GetDeviceAddress() : 0;
+            record.IndexAddress = indexBuffer ? indexBuffer->GetDeviceAddress() : 0;
+            Expect(records.Add(record) == clusterIndex + 1u, "記録の番号は 1 + クラスタの番号");
+            drawInfos.push_back(cluster.InstanceIndex);
+            drawInfos.push_back(0u);
+        }
+        const BufferPtr recordTable = CreateHostBuffer(device, records.Data(), records.SizeInBytes(), ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead,
+                                                       "SwRasterTestRecords");
+        const BufferPtr drawInfoBuffer = CreateArrayBuffer(device, drawInfos, ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead,
+                                                           "SwRasterTestDrawInfos");
+        float frameData[32];
+        SwFillFrame(frameData, scene.bRotatedView);
+        const BufferPtr frameBuffer = CreateHostBuffer(device, frameData, sizeof(frameData), ResourceUsage::ConstantBuffer, "SwRasterTestFrame");
+
+        // ソフトの一覧: 1 パス目 = 前半のクラスタ、2 パス目 = 後半のクラスタ（容量 16。頭 4 語 × 2 + 8 語の余白の形は MegaGeometryCull.glsl と同じ）
+        constexpr uint32_t ListCapacity = 16;
+        Container::VariableArray<uint32_t> list(8u + 2u * ListCapacity, 0u);
+        const uint32_t firstPassCount = scene.SecondPassFirstCluster;
+        const uint32_t secondPassCount = clusterCount - scene.SecondPassFirstCluster;
+        for (uint32_t i = 0; i < firstPassCount; ++i)
+        {
+            list[8u + i] = i;
+        }
+        for (uint32_t i = 0; i < secondPassCount; ++i)
+        {
+            list[8u + ListCapacity + i] = scene.SecondPassFirstCluster + i;
+        }
+        list[0] = firstPassCount;
+        list[1] = 1;
+        list[2] = 1;
+        list[3] = firstPassCount;
+        list[4] = secondPassCount;
+        list[5] = 1;
+        list[6] = 1;
+        list[7] = secondPassCount;
+        const BufferPtr listBuffer = CreateHostBuffer(
+            device, list.data(), static_cast<uint64_t>(list.size()) * sizeof(uint32_t),
+            ResourceUsage::StorageBuffer | ResourceUsage::IndirectBuffer | ResourceUsage::ShaderRead, "SwRasterTestList");
+        // 統計（MegaGeometryPass の統計と同じ並び。9 = 矩形の上限を超えて描かなかった三角形、10 = 走ったワークグループ）
+        constexpr uint32_t SwStatsWords = 12u;
+        constexpr uint32_t SwStatOversize = 9u;
+        constexpr uint32_t SwStatGroups = 10u;
+        if (!vertexBuffer || !indexBuffer || !instanceBuffer || !recordTable || !drawInfoBuffer || !frameBuffer || !listBuffer)
+        {
+            Expect(false, "ソフトウェアラスタのケースのバッファを作れなければならない");
+            return;
+        }
+
+        Viewport viewport;
+        viewport.width = static_cast<float>(MergeWidth);
+        viewport.height = static_cast<float>(MergeHeight);
+        RHI::ScissorRect scissor;
+        scissor.right = static_cast<int32_t>(MergeWidth);
+        scissor.bottom = static_cast<int32_t>(MergeHeight);
+
+        // ハードのラスタ: 製品の頂点シェーダー（visbuffer_mega.vert）・フラグメントシェーダー（visbuffer.frag）・ラスタの状態と同じ
+        const ShaderPtr vertexShader = shaderManager.LoadShader("visbuffer_mega.vert", RHI::ShaderStage::Vertex);
+        const ShaderPtr fragmentShader = shaderManager.LoadShader("visbuffer.frag", RHI::ShaderStage::Pixel);
+        if (!vertexShader || !fragmentShader)
+        {
+            Expect(false, "ハードのラスタのシェーダーを読み込めなければならない");
+            return;
+        }
+        GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.vertexShader = vertexShader;
+        pipelineDesc.pixelShader = fragmentShader;
+        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+        VertexBindingDesc vertexBinding;
+        vertexBinding.binding = 0;
+        vertexBinding.stride = sizeof(Vertex);
+        vertexBinding.inputRate = VertexInputRate::Vertex;
+        pipelineDesc.vertexBindings.push_back(vertexBinding);
+        VertexAttributeDesc positionAttribute;
+        positionAttribute.location = 0;
+        positionAttribute.binding = 0;
+        positionAttribute.format = Format::R32G32B32_FLOAT;
+        positionAttribute.offset = 0;
+        pipelineDesc.vertexAttributes.push_back(positionAttribute);
+        pipelineDesc.rasterState.polygonMode = PolygonMode::Fill;
+        pipelineDesc.rasterState.cullMode = CullMode::Back;
+        pipelineDesc.rasterState.frontFace = FrontFace::Clockwise;
+        pipelineDesc.rasterState.lineWidth = 1.0f;
+        pipelineDesc.depthStencilState.depthTestEnable = true;
+        pipelineDesc.depthStencilState.depthWriteEnable = true;
+        pipelineDesc.depthStencilState.depthCompareOp = CompareOp::LessOrEqual;
+        BlendAttachmentDesc blendAttachment;
+        blendAttachment.blendEnable = false;
+        blendAttachment.colorWriteMask = ColorWriteMask::All;
+        pipelineDesc.blendState.attachments.push_back(blendAttachment);
+        pipelineDesc.renderPass = fixture.ClearPass;
+        pipelineDesc.descriptorSetLayouts.push_back(MakeSwHardDrawDescriptorSetDesc());
+        const PipelinePtr hardPipeline = device->CreateGraphicsPipeline(pipelineDesc);
+        const DescriptorSetPtr hardSet = device->CreateDescriptorSet(MakeSwHardDrawDescriptorSetDesc());
+        if (!hardPipeline || !hardSet)
+        {
+            Expect(false, "ハードのラスタのパイプラインを作れなければならない");
+            return;
+        }
+        hardSet->BindConstantBuffer(0, frameBuffer, 0, sizeof(frameData));
+        hardSet->BindStorageBuffer(1, instanceBuffer, 0, static_cast<uint32_t>(scene.Instances.size() * sizeof(MegaInstanceData)));
+        hardSet->BindStorageBuffer(2, drawInfoBuffer, 0, static_cast<uint32_t>(drawInfos.size() * sizeof(uint32_t)));
+        hardSet->Update();
+
+        // --- ハード: 全クラスタを 1 回の render pass で描いて読み戻す
+        {
+            CommandListPtr commandList = device->CreateCommandList();
+            commandList->Begin();
+            commandList->BeginRenderPass(fixture.ClearPass, fixture.ClearFramebuffer);
+            commandList->SetViewport(viewport);
+            commandList->SetScissor(scissor);
+            commandList->SetPipeline(hardPipeline);
+            commandList->SetDescriptorSet(hardSet, 0);
+            commandList->SetVertexBuffer(vertexBuffer, 0, 0);
+            commandList->SetIndexBuffer(indexBuffer, 0);
+            for (uint32_t clusterIndex = 0; clusterIndex < clusterCount; ++clusterIndex)
+            {
+                const SwCluster& cluster = scene.Clusters[clusterIndex];
+                commandList->DrawIndexedInstanced(cluster.TriangleCount * 3u, 1, cluster.FirstIndex, 0, clusterIndex);
+            }
+            commandList->EndRenderPass();
+            commandList->End();
+            commandList->Submit(true);
+            device->WaitIdle();
+        }
+        const MergeReadback hard = ReadMergeTargets(fixture);
+        Expect(hard.bOk, "ハードのラスタの結果を読み戻せなければならない");
+
+        // --- ソフト: ID・深度を空に消し、64bit のバッファを埋めて、パスごとに間接 dispatch で書き、合流して読み戻す。
+        // maxPixels は振り分けのしきい値で、走査する矩形の上限（ComputeMaxScanSpan）を決める。統計は呼び出しごとに 0 から数え直す
+        uint32_t softwareRuns = 0;
+        uint32_t stats[SwStatsWords] = {};
+        const auto runSoftware = [&](float maxPixels, MergeReadback& outReadback) -> bool
+        {
+            if (softwareRuns > 0)
+            {
+                // 同じ場面を続けて描くときは、フレームを進めて dispatch ごとの定数の使用を分ける
+                merge.BeginFrame(softwareRuns % 2u, softwareRuns + 1u);
+                softwareRaster.BeginFrame(softwareRuns % 2u, softwareRuns + 1u);
+            }
+            ++softwareRuns;
+            const Container::VariableArray<uint32_t> zeroStats(SwStatsWords, 0u);
+            const BufferPtr statsBuffer = CreateHostBuffer(
+                device, zeroStats.data(), static_cast<uint64_t>(zeroStats.size()) * sizeof(uint32_t), ResourceUsage::StorageBuffer, "SwRasterTestStats");
+            if (!statsBuffer)
+            {
+                Expect(false, "統計のバッファを作れなければならない");
+                return false;
+            }
+            VisibilitySwRaster::Inputs inputs;
+            inputs.FrameUniform = frameBuffer;
+            inputs.InstanceBuffer = instanceBuffer;
+            inputs.InstanceBufferBytes = static_cast<uint64_t>(scene.Instances.size()) * sizeof(MegaInstanceData);
+            inputs.RecordTable = recordTable;
+            inputs.RecordTableBytes = records.SizeInBytes();
+            inputs.KeyBuffer = keyBuffer;
+            inputs.KeyWidth = MergeWidth;
+            inputs.KeyHeight = MergeHeight;
+            inputs.List = listBuffer;
+            inputs.ListCapacity = ListCapacity;
+            inputs.Stats = statsBuffer;
+            inputs.bStatsEnabled = true;
+            inputs.SwRasterMaxPixels = maxPixels;
+            inputs.Viewport = viewport;
+            inputs.Scissor = scissor;
+
+            CommandListPtr commandList = device->CreateCommandList();
+            commandList->Begin();
+            commandList->BeginRenderPass(fixture.ClearPass, fixture.ClearFramebuffer);
+            commandList->SetViewport(viewport);
+            commandList->SetScissor(scissor);
+            commandList->EndRenderPass();
+            Expect(merge.RecordClear(commandList.get()), "64bit のバッファを埋められなければならない");
+            commandList->BufferBarrier(listBuffer, ResourceState::Undefined, ResourceState::GenericRead);
+            Expect(merge.RecordBeginSoftwareWrite(commandList.get()), "64bit のバッファを書き込みの状態へ進められなければならない");
+            Expect(softwareRaster.RecordDispatch(commandList.get(), 0, inputs), "1 パス目のソフトウェアラスタを記録できなければならない");
+            commandList->BufferBarrier(keyBuffer, ResourceState::UnorderedAccess, ResourceState::UnorderedAccess);
+            Expect(softwareRaster.RecordDispatch(commandList.get(), 1, inputs), "2 パス目のソフトウェアラスタを記録できなければならない");
+            Expect(merge.RecordEndSoftwareWrite(commandList.get()), "64bit のバッファを読み取りの状態へ戻せなければならない");
+            Expect(merge.RecordMerge(commandList.get(), fixture.LoadPass, fixture.LoadFramebuffer, viewport, scissor),
+                   "合流を記録できなければならない");
+            commandList->End();
+            commandList->Submit(true);
+            device->WaitIdle();
+
+            outReadback = ReadMergeTargets(fixture);
+            Expect(outReadback.bOk, "ソフトウェアラスタの結果を読み戻せなければならない");
+            const uint32_t* mappedStats = static_cast<const uint32_t*>(statsBuffer->Map(0u, SwStatsWords * sizeof(uint32_t)));
+            Expect(mappedStats != nullptr, "統計のバッファを読み戻せなければならない");
+            if (mappedStats == nullptr)
+            {
+                return false;
+            }
+            std::memcpy(stats, mappedStats, sizeof(stats));
+            statsBuffer->Unmap();
+            return outReadback.bOk;
+        };
+        const auto countClusterPixels = [&](const MergeReadback& readback)
+        {
+            Container::VariableArray<uint32_t> counts(clusterCount, 0u);
+            for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+            {
+                const uint32_t id = readback.Ids[pixel];
+                if (id != VisibilityBuffer::EMPTY_ID)
+                {
+                    const uint32_t recordNumber = id >> VisibilityBuffer::TRIANGLE_BITS;
+                    if (recordNumber >= 1 && recordNumber <= clusterCount)
+                    {
+                        counts[recordNumber - 1u] += 1u;
+                    }
+                }
+            }
+            return counts;
+        };
+
+        if (kind == SwCaseKind::Oversize)
+        {
+            // しきい値 0 の上限（64 画素四方）では、幅 100 画素の三角形は描かずに数える。幅がちょうど 64 画素の三角形は描く
+            MergeReadback limited;
+            Expect(runSoftware(0.0f, limited), "しきい値 0 のソフトウェアラスタを実行して読み戻せなければならない");
+            if (!limited.bOk || !hard.bOk)
+            {
+                return;
+            }
+            const Container::VariableArray<uint32_t> limitedPixels = countClusterPixels(limited);
+            const Container::VariableArray<uint32_t> hardPixelsForLimit = countClusterPixels(hard);
+            Expect(stats[SwStatOversize] == 2u, "上限を超える三角形は幅 65 画素と幅 100 画素の 2 つで、しきい値 0 では描かずに数える");
+            Expect(stats[SwStatGroups] == clusterCount, "上限を超える三角形があっても、ワークグループはすべて走る");
+            for (uint32_t clusterIndex = 0; clusterIndex < clusterCount; ++clusterIndex)
+            {
+                const char* name = scene.Clusters[clusterIndex].Name;
+                if (std::strcmp(name, "oversize_big") == 0)
+                {
+                    Expect(hardPixelsForLimit[clusterIndex] >= 400, "ハードは幅 100 画素の三角形を描く（場面が検査になっている）");
+                    Expect(limitedPixels[clusterIndex] == 0, "上限を超える三角形は、ソフトは 1 画素も描かない");
+                }
+                else if (std::strcmp(name, "oversize_65") == 0)
+                {
+                    Expect(hardPixelsForLimit[clusterIndex] >= 60, "ハードは幅 65 画素の三角形を描く（場面が検査になっている）");
+                    Expect(limitedPixels[clusterIndex] == 0, "上限を 1 画素だけ超える幅 65 画素の三角形も、ソフトは 1 画素も描かない");
+                }
+                else
+                {
+                    Expect(hardPixelsForLimit[clusterIndex] >= 100, "上限の内側の三角形はハードが十分な画素を描く");
+                    Expect(limitedPixels[clusterIndex] == hardPixelsForLimit[clusterIndex],
+                           "上限の内側（幅がちょうど上限を含む）の三角形は、ソフトもハードと同じ画素数を描く");
+                }
+            }
+            std::cout << TestName << " ソフトウェアラスタ(" << kindLabel << "): しきい値 0 の上限 " << VisibilitySwRaster::ComputeMaxScanSpan(0.0f)
+                      << " 画素四方 上限超え=" << stats[SwStatOversize] << " 大きい三角形のソフト=" << limitedPixels[clusterCount - 1u]
+                      << " ハード=" << hardPixelsForLimit[clusterCount - 1u] << std::endl;
+        }
+
+        // 比較に使う実行: 上限を超える場面は、上限が三角形を含むしきい値 64（130 画素四方）で描き直して、ハードと同じ被覆になることを確かめる
+        MergeReadback soft;
+        Expect(runSoftware(kind == SwCaseKind::Oversize ? 64.0f : 8.0f, soft), "ソフトウェアラスタを実行して読み戻せなければならない");
+        if (!hard.bOk || !soft.bOk)
+        {
+            return;
+        }
+        Expect(softwareRaster.GetDirectFallbackCount() == 0, "間接 dispatch が通る装置では直接 dispatch へ切り替えない");
+
+        // 統計: 両パスの一覧のクラスタすべてのワークグループが走り、比較に使う実行では矩形の上限を超える三角形は無い
+        Expect(stats[SwStatGroups] == firstPassCount + secondPassCount, "走ったワークグループの数は、両パスの一覧のクラスタの数に一致する");
+        Expect(stats[SwStatOversize] == 0u, "比較に使う実行には、矩形の上限を超える三角形は無い");
+
+        // --- 比較: 被覆（ID が空でない画素）・ID・深度
+        uint32_t hardCovered = 0;
+        uint32_t softCovered = 0;
+        uint32_t bothCovered = 0;
+        uint32_t hardOnly = 0;
+        uint32_t softOnly = 0;
+        uint32_t idMismatch = 0;
+        uint32_t depthMismatch = 0;
+        float maxDepthDifference = 0.0f;
+        const float depthTolerance = scene.bRotatedView ? SwRotatedViewDepthTolerance : SwDepthTolerance;
+        Container::VariableArray<uint32_t> clusterHardPixels(clusterCount, 0u);
+        Container::VariableArray<uint32_t> clusterSoftPixels(clusterCount, 0u);
+        for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+        {
+            const bool bHard = hard.Ids[pixel] != VisibilityBuffer::EMPTY_ID;
+            const bool bSoft = soft.Ids[pixel] != VisibilityBuffer::EMPTY_ID;
+            hardCovered += bHard ? 1u : 0u;
+            softCovered += bSoft ? 1u : 0u;
+            for (int side = 0; side < 2; ++side)
+            {
+                const uint32_t id = side == 0 ? hard.Ids[pixel] : soft.Ids[pixel];
+                if (id != VisibilityBuffer::EMPTY_ID)
+                {
+                    const uint32_t recordNumber = id >> VisibilityBuffer::TRIANGLE_BITS;
+                    if (recordNumber >= 1 && recordNumber <= clusterCount)
+                    {
+                        (side == 0 ? clusterHardPixels : clusterSoftPixels)[recordNumber - 1u] += 1u;
+                    }
+                }
+            }
+            if (bHard && bSoft)
+            {
+                ++bothCovered;
+                idMismatch += hard.Ids[pixel] != soft.Ids[pixel] ? 1u : 0u;
+                const float difference = std::fabs(hard.Depths[pixel] - soft.Depths[pixel]);
+                maxDepthDifference = std::max(maxDepthDifference, difference);
+                depthMismatch += difference > depthTolerance ? 1u : 0u;
+            }
+            else if (bHard)
+            {
+                ++hardOnly;
+            }
+            else if (bSoft)
+            {
+                ++softOnly;
+            }
+        }
+
+        // この検査が何も確かめていない状態にならない: ハードが十分な画素を描き、裏面の格子はどちらも描かない
+        Expect(hardCovered >= 600, "ハードが描く画素が少なすぎる（場面が検査になっていない）");
+        for (uint32_t clusterIndex = 0; clusterIndex < clusterCount; ++clusterIndex)
+        {
+            const char* name = scene.Clusters[clusterIndex].Name;
+            if (std::strcmp(name, "lattice_reversed") == 0)
+            {
+                Expect(clusterHardPixels[clusterIndex] == 0 && clusterSoftPixels[clusterIndex] == 0,
+                       "巻き方を反対にした格子（裏面）は、ハードもソフトも描かない");
+            }
+            else if (std::strcmp(name, "lattice") == 0 || std::strcmp(name, "random_small") == 0 || std::strcmp(name, "ties") == 0 ||
+                     std::strcmp(name, "depth") == 0 || std::strcmp(name, "horizontal_ties") == 0 || std::strcmp(name, "oversize_small") == 0 ||
+                     std::strcmp(name, "oversize_edge") == 0 || std::strcmp(name, "oversize_big") == 0 ||
+                     std::strcmp(name, "oversize_65") == 0 || std::strcmp(name, "clip") == 0)
+            {
+                Expect(clusterHardPixels[clusterIndex] >= 30, "このクラスタはハードが十分な画素を描く");
+            }
+        }
+
+        // 被覆は一致しなければならない（辺の上の画素の規則も、固定小数点の丸めも同じ。開発機で測った違いは 0 画素）。
+        // ID の違いは、深度がほぼ等しい画素（交差する 2 枚の交線。ハードとソフトの深度の差が 1e-5 未満で勝者が入れ替わる）だけで、
+        // 開発機では 3 画素。違う画素の数は結果の行へ記録する
+        if (kind != SwCaseKind::Oversize)
+        {
+            // 水平な辺が画素の中心を通る行: 上の辺の行（y = 10）は含み、下の辺の行（y = 20）は含まない（ハード・ソフトとも）
+            constexpr uint32_t TopEdgeRow = 10;
+            constexpr uint32_t BottomEdgeRow = 20;
+            Expect(hard.Ids[TopEdgeRow * MergeWidth + 72] != VisibilityBuffer::EMPTY_ID, "ハードは、水平な上の辺が通る画素の行を描く");
+            Expect(soft.Ids[TopEdgeRow * MergeWidth + 72] != VisibilityBuffer::EMPTY_ID, "ソフトは、水平な上の辺が通る画素の行を描く");
+            Expect(hard.Ids[BottomEdgeRow * MergeWidth + 96] == VisibilityBuffer::EMPTY_ID, "ハードは、水平な下の辺が通る画素の行を描かない");
+            Expect(soft.Ids[BottomEdgeRow * MergeWidth + 96] == VisibilityBuffer::EMPTY_ID, "ソフトは、水平な下の辺が通る画素の行を描かない");
+
+            // 右端（x = 127）の列: 右端をまたぐ三角形（clip）の画素をハードもソフトも描く。矩形の x の上限が無いと、ソフトは右端より先を隣の行の左端へ書く
+            uint32_t hardRightEdge = 0;
+            uint32_t softRightEdge = 0;
+            for (uint32_t row = 0; row < MergeHeight; ++row)
+            {
+                hardRightEdge += hard.Ids[row * MergeWidth + (MergeWidth - 1u)] != VisibilityBuffer::EMPTY_ID ? 1u : 0u;
+                softRightEdge += soft.Ids[row * MergeWidth + (MergeWidth - 1u)] != VisibilityBuffer::EMPTY_ID ? 1u : 0u;
+            }
+            std::cout << TestName << " ソフトウェアラスタ(" << kindLabel << "): 右端の列の画素 ハード=" << hardRightEdge << " ソフト=" << softRightEdge << std::endl;
+            Expect(hardRightEdge >= 8, "ハードは、右端をまたぐ三角形の画素を右端の列へ描く（場面が検査になっている）");
+            Expect(softRightEdge == hardRightEdge, "ソフトも、右端の列の画素数がハードと同じ（右端のクリップ）");
+        }
+        const uint32_t coverageMismatch = hardOnly + softOnly;
+        Expect(coverageMismatch == 0, "ソフトとハードの被覆（ID が空でない画素）は一致する（辺の画素の規則を含む）");
+        Expect(idMismatch <= 8, "ソフトとハードの ID の違いは、交差する 2 枚の交線の数画素だけ");
+        Expect(depthMismatch == 0, "両方が描いた画素の深度は許容（view が単位なら 1e-5、回転・並進つきなら 2e-5）以内で一致する");
+
+        std::cout << TestName << " ソフトウェアラスタ(" << kindLabel << "): クラスタ=" << clusterCount << " ハードの被覆=" << hardCovered
+                  << " ソフトの被覆=" << softCovered << " 両方=" << bothCovered << " ハードだけ=" << hardOnly
+                  << " ソフトだけ=" << softOnly << " IDの違い=" << idMismatch << " 深度の違い(>1e-5)=" << depthMismatch
+                  << " 最大の深度差=" << maxDepthDifference << std::endl;
+        for (uint32_t clusterIndex = 0; clusterIndex < clusterCount; ++clusterIndex)
+        {
+            std::cout << TestName << "   クラスタ " << scene.Clusters[clusterIndex].Name << ": ハード=" << clusterHardPixels[clusterIndex]
+                      << " ソフト=" << clusterSoftPixels[clusterIndex] << std::endl;
+        }
+        device->WaitIdle();
+        softwareRaster.Shutdown();
+        merge.Shutdown();
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -3181,6 +4380,16 @@ namespace
             RunVirtualTextureFeedbackCase(device, shaderManager, scene, idImage, references, cameras);
             // MegaGeometry の材質の VT の要求は、等方の欲しいミップで書く
             RunVirtualTextureFeedbackCase(device, shaderManager, scene, idImage, references, cameras, true);
+
+            // 64bit のバッファ（深度 + ID）の合流は、手で書いた値がハードのラスタより手前のときだけ ID・深度へ入る
+            RunVisibilityMergeCase(device, shaderManager);
+
+            // 小さいクラスタの計算シェーダーのラスタは、同じ三角形をハードのラスタで描いた ID・深度と画素の被覆で一致する
+            RunSoftwareRasterCase(device, shaderManager, SwCaseKind::Identity);
+            // 同じ場面を、単位でない view 行列（回転・並進）で描く。projection * view の順を入れ替えると、ハードとソフトが食い違う
+            RunSoftwareRasterCase(device, shaderManager, SwCaseKind::RotatedView);
+            // 走査する矩形の上限を超える三角形は、しきい値が小さいと描かずに数え、しきい値が大きいと描く
+            RunSoftwareRasterCase(device, shaderManager, SwCaseKind::Oversize);
 
             std::cout << TestName << " 覆われた画素=" << counters.CoveredPixels << " 記録ごと=[";
             for (uint32_t record = 1; record <= scene.Records.RecordCount(); ++record)
