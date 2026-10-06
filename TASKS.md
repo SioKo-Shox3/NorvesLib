@@ -2670,7 +2670,9 @@
 - result: code3c0fbe71/treeb7eb83a1/run37447482776 attempt1 job112215690482。CPU54/旧19＋新file marker、実Windows58CLI（成功12/拒否46）GetACP1252、4Unicode入力locator＋外部glTF、125file専用artifactの全case/独立raw Profile hash/最終NVPK1411byte・NVSKEL1235byteを確認。旧89出力/25+15CLI/12metadata/17+29child退出/4固定6095byte capture/Python全gate/PE-CNG＋SHELL32を維持。親readonly再実行exit0・stderr空・387payload inventory一致。latest29paths/Library0。常時Cook・共通全依存/同一read照合・write直前再観測・実出力recordまで受入。2file transaction/同時writer・自動C/StageB/GPU/Blenderは未受入。中間出力保持とrepeatはnative CIの検査証拠、未archive binaryはhash attestationと区別する。
 
 ## G2-GR83-COOKED-LOADER-CORE: 統合骨格資産を所有CPU解析から安全に組み立てる
-- status: doing
+- status: done
 - done-when: 任意論理pathとimmutable AssetSystemからUsedCooked/Model/Skl0/既存formatを明示検査し、現在のNVSKEL全clipを所有解析する。事前指定owner threadと初期化Registryで、CreateResourceによる未登録mesh/skeleton/全clip/aggregateを完成時だけ返す。失敗時の旧out/Registry pool・path・handle保持、名前引きと実Samplerを確認する。
 - verify: 旧minorと0.2複数clip/順序・submesh/slot/transform保持、空/重複名の既存曖昧拒否、cooked限定・format/外側hash/有効外側内の破損payload拒否、owner不一致/default/未初期化Registry拒否、作成途中の候補破棄と非0 ID・所有寿命/lease、3段階profileログ。独立MEMBERを追加し、旧54CPU/固定capture/旧CLI/GR84実CLIを維持する。
 - stop-when: GR84の回帰を新変更で隠す、旧parser/writer/128profileを緩める、clip0 fallback、自動Cや作者rest/split/256を混ぜる、未登録bundleをasync/cache/GC済みと扱う、M9/Game/GPU配線まで完了とする。CPU owner-thread契約と未実装の製品GameThread接続を区別する。
+
+- result: codee29a2d33/tree7005c3d9/run37458778661 attempt1 job112252798210。初回768e247aのtest C2678と、f78b9ec7の合成manifest必須項目漏れをtest/PROGRESSだけで修正し、productionは初回から不変。Release CPU55/旧20＋loader marker、Debugのloader/Profile markerと3stage成功/失敗sink配送を確認。旧54source・4固定6095byte capture・89出力・25+15CLI・12metadata・17/29child退出・GR84別58process/125fileartifact・MSVC/PE-CNG/SHELL32を維持。12checker normal/-Oのreceipt/stdout一致・stderr空、親readonly replay exit0・470payload inventory一致。latest2paths/Library0と累積11paths/Library4を区別する。2失敗runは別々の有限archiveで保全。受入れは統合cooked-only所有CPU解析と明示owner上の未登録全clip組立まで。製品GameThread/Registry一括公開/async/cache/M9/StageB/GPUは未接続。
