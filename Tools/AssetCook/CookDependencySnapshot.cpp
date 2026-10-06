@@ -1,4 +1,5 @@
 ﻿#include "CookDependencySnapshot.h"
+#include "SkeletalRoleFileInput.h"
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include "Resource/GltfBufferFile.h"
@@ -80,6 +81,8 @@ namespace NorvesLib::Tools::AssetCook
         bool Capture(const SingleAssetCookRequest& request,uint64_t revision,CookDependencySnapshot& out,AnsiString& error)
         {
             const bool model=Equal(request.Kind,"model");
+            const bool bRole = HasSkeletalRoleFileRequest(request.RoleProfile);
+            if (bRole && !ValidateSkeletalRoleFileRequest(request, error)) return false;
             if (revision==0 || request.InputPath.empty() || (!model && !Equal(request.Kind,"raw") && !Equal(request.Kind,"texture") && !Equal(request.Kind,"audio")))
                 return Fail(error,"invalid source, kind, or cooker revision");
             if (!model && (request.bNoSidecar || request.bRequireSidecar || !request.ImportSettingsOverridePath.empty()))
@@ -162,6 +165,19 @@ namespace NorvesLib::Tools::AssetCook
                             return Fail(error,"glTF image dependency read failed");
                     }
                 }
+            }
+            if (bRole)
+            {
+                SkeletalRoleFileInputs inputs;
+                if (!LoadSkeletalRoleFileInputs(request.RoleProfile, inputs, error)) return false;
+                const auto bvh = std::filesystem::absolute(request.RoleProfile.BvhPath).lexically_normal();
+                const auto profile = std::filesystem::absolute(request.RoleProfile.ProfilePath).lexically_normal();
+                if (!hash.Path(bvh) || !hash.Path(profile) ||
+                    !AppendSkeletalRoleFileSettingsHash(hash.Value, request.RoleProfile, hash.Value, error)) return false;
+                Add(candidate, std::filesystem::weakly_canonical(bvh), CookDependencyRole::Bvh,
+                    {inputs.BvhBytes.data(), inputs.BvhBytes.size()});
+                Add(candidate, std::filesystem::weakly_canonical(profile), CookDependencyRole::RoleProfile,
+                    {inputs.ProfileBytes.data(), inputs.ProfileBytes.size()});
             }
             hash.Integer(candidate.Files.size());
             for (const auto& file:candidate.Files)

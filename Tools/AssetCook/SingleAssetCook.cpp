@@ -1,5 +1,7 @@
 ﻿// 再利用可能な単体cook。入力bufferを出力完了まで同じ呼出し内で保持する。
 #include "SingleAssetCook.h"
+#include "SkeletalRoleFileInput.h"
+#include "SkeletalRoleFileCook.h"
 #include "MeshMaterialV1Plan.h"
 #include "CookOutputSetGuard.h"
 #include "NativeCookPath.h"
@@ -1103,11 +1105,16 @@ namespace NorvesLib::Tools::AssetCook
             options.ImportSettings.bRequired = request.bRequireSidecar;
             options.bSkipIfUnchanged = request.bSkipIfUnchanged;
             options.SkeletalImport.Decode = request.SkeletalDecode;
+            options.RoleProfile = request.RoleProfile;
             return options;
         }
         bool NormalizeCacheCookRequest(const SingleAssetCookRequest& request, SingleAssetCookRequest& out,
                                        Core::Container::AnsiString& outError)
         {
+            if (HasSkeletalRoleFileRequest(request.RoleProfile) && !ValidateSkeletalRoleFileRequest(request, outError))
+            {
+                return false;
+            }
             auto options = MakeLegacyCookOptions(request);
             options.bSkipIfUnchanged = false;
             std::string error, logical, entry, type;
@@ -1138,6 +1145,14 @@ namespace NorvesLib::Tools::AssetCook
             if (!IsSupportedSkeletalCookFormat(options.Format))
             {
                 options.SkeletalImport.Decode = {};
+            }
+            if (options.RoleProfile.bEnabled)
+            {
+                if (!MakeAbsolutePath(options.RoleProfile.BvhPath, options.RoleProfile.BvhPath, error) ||
+                    !MakeAbsolutePath(options.RoleProfile.ProfilePath, options.RoleProfile.ProfilePath, error))
+                {
+                    return finish(false);
+                }
             }
             out = MakeSingleCookRequest(options);
             return finish(true);
@@ -1258,12 +1273,18 @@ namespace NorvesLib::Tools::AssetCook
             request.bRequireSidecar = options.ImportSettings.bRequired;
             request.bSkipIfUnchanged = options.bSkipIfUnchanged;
             request.SkeletalDecode = options.SkeletalImport.Decode;
+            request.RoleProfile = options.RoleProfile;
             return request;
         }
 
     }
     bool CookSingleAsset(const SingleAssetCookRequest& request, Core::Container::AnsiString& outError)
     {
+        if (HasSkeletalRoleFileRequest(request.RoleProfile))
+        {
+            SkeletalRoleFileCookResult result;
+            return CookSkeletalRoleFile(request, result, outError);
+        }
         auto options=Detail::MakeLegacyCookOptions(request);
         std::string error;
         if (!Detail::ValidateCookOptions(options, error))

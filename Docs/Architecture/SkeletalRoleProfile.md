@@ -2,6 +2,8 @@
 
 ## 設定と語彙
 
+ファイルから実行する場合は[SkeletalRoleFileCli.md](SkeletalRoleFileCli.md)を参照する。
+
 自己完結のUTF-8 JSON bytesをCookGltfWithRoleProfileToNvskelNativePathへ渡す。先頭UTF-8 BOMは許容する。versionは整数1、vocabularyはquadruped_v1。未知field/role、重複key、型違い、未対応の自動指定は拒否する。
 
 語彙と正準展開順は次の23role。rootは実階層rootを指す技術的なroleであり、pelvisと同じという仮定ではない。

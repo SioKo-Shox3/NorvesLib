@@ -2,6 +2,7 @@
 #include "AssetCookOutput.h"
 #include "SingleAssetCook.h"
 #include "TextureAssetSetCook.h"
+#include "SkeletalRoleFileCli.h"
 
 namespace
 {
@@ -280,6 +281,8 @@ namespace
 
 int main(int argc, char **argv)
 {
+    int roleExitCode = 0;
+    if (NorvesLib::Tools::AssetCook::RunSkeletalRoleFileCommand(argc, argv, roleExitCode)) return roleExitCode;
     int assetSetExitCode=0;
     if (NorvesLib::Tools::AssetCook::RunTextureAssetSetCommand(argc,argv,assetSetExitCode)) return assetSetExitCode;
     std::filesystem::path inspectPath;

@@ -66,6 +66,18 @@ add_library(AssetCookLib STATIC
     MeshCooker.cpp
     SkeletalBvhCook.cpp
     SkeletalRoleProfileCook.cpp
+    SkeletalRoleFileInput.cpp
+    SkeletalRoleFileCook.cpp
+    SkeletalRoleFileCook.h
+    SkeletalRoleFileCookTestAccess.h
+    SkeletalRoleFileReport.cpp
+    SkeletalRoleFileReport.h
+    SkeletalRoleFileCli.cpp
+    SkeletalRoleFileCli.h
+    SkeletalRoleFileCliTestAccess.h
+    SkeletalRoleFileInputTestAccess.h
+    SkeletalRoleFileInput.h
+    SkeletalRoleFileRequest.h
     SkeletalRoleProfileCook.h
     SkeletalBvhCook.h
     MeshMaterialV1Plan.cpp
@@ -88,7 +100,7 @@ add_library(AssetCookLib STATIC
 
 target_link_libraries(AssetCookLib PUBLIC Core)
 if(WIN32)
-    target_link_libraries(AssetCookLib PRIVATE bcrypt)
+    target_link_libraries(AssetCookLib PRIVATE bcrypt shell32)
 endif()
 target_include_directories(AssetCookLib
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}

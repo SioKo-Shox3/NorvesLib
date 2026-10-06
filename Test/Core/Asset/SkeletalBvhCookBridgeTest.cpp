@@ -1,6 +1,12 @@
 ﻿// 実BVH→cook→package→AssetSystem→Resource→Samplerを有限fixtureで検証する。
 #include "Tools/AssetCook/SkeletalBvhCook.h"
 #include "Tools/AssetCook/SkeletalRoleProfileCook.h"
+#include "Tools/AssetCook/SkeletalRoleFileCook.h"
+#include "Tools/AssetCook/SkeletalRoleFileCookTestAccess.h"
+#include "Tools/AssetCook/SkeletalRoleFileInput.h"
+#include "Tools/AssetCook/SkeletalRoleFileInputTestAccess.h"
+#include "Tools/AssetCook/SkeletalRoleFileCliTestAccess.h"
+#include "Tools/AssetCook/AssetCookLegacyOptions.h"
 #include "Tools/AssetCook/AssetCookOutput.h"
 #include "M9LooseFixture.h"
 #include "Resource/SkeletalGltfDecode.h"
@@ -939,6 +945,393 @@ namespace
             "SKELETAL_ROLE_PROFILE result=pass bounded_owned_quadruped_roles_explicit_c_required_root_chain_hash_actual_cook_package_sampler_no_file_cache");
     }
 
+
+    void RoleArgumentContracts()
+    {
+        const char* operand[] = {"AssetCook", "--input", "--bvh"};
+        CHECK(!Cook::Detail::HasSkeletalRoleCliArguments(3, operand));
+        const char* active[] = {"AssetCook", "--input=--bvh", "--clip-name=x"};
+        CHECK(Cook::Detail::HasSkeletalRoleCliArguments(3, active));
+        C::VariableArray<Text> wide = {"AssetCook", "--input", "--bvh"};
+        Text error;
+        CHECK(Cook::Detail::ValidateSkeletalRoleModeAgreement(3, operand, wide, error));
+        CHECK(!Cook::Detail::ValidateSkeletalRoleModeAgreement(3, active, wide, error));
+        wide = {"AssetCook", "--bvh=x"};
+        CHECK(!Cook::Detail::ValidateSkeletalRoleModeAgreement(3, operand, wide, error));
+        Text decoded = "sentinel";
+        const wchar_t high[] = {static_cast<wchar_t>(0xd800)};
+        const wchar_t low[] = {static_cast<wchar_t>(0xdc00)};
+        CHECK(!Cook::Detail::DecodeSkeletalRoleWideArgument({high, 1}, decoded, error) && decoded == "sentinel");
+        CHECK(!Cook::Detail::DecodeSkeletalRoleWideArgument({low, 1}, decoded, error) && decoded == "sentinel");
+        const wchar_t wolf[] = {static_cast<wchar_t>(0xd83d), static_cast<wchar_t>(0xdc3a)};
+        CHECK(Cook::Detail::DecodeSkeletalRoleWideArgument({wolf, 2}, decoded, error));
+        CHECK(decoded == "\xf0\x9f\x90\xba");
+        Cook::SingleAssetCookRequest out;
+        out.LogicalPath = "sentinel";
+        for (const char* invalid : {"\xc0\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe3\x81"})
+        {
+            C::VariableArray<Text> tokens = {"AssetCook", "--clip-name", invalid};
+            CHECK(!Cook::Detail::ParseSkeletalRoleUtf8Arguments(tokens, out, error));
+            CHECK(out.LogicalPath == "sentinel" && error.find("unicode") != Text::npos);
+        }
+        const char nul[] = {'a', 0, 'b'};
+        C::VariableArray<Text> tokens = {"AssetCook", "--clip-name", Text(C::AnsiStringView(nul, 3))};
+        CHECK(!Cook::Detail::ParseSkeletalRoleUtf8Arguments(tokens, out, error) && out.LogicalPath == "sentinel");
+    }
+
+    void RoleFileContracts()
+    {
+        char name[80];
+        std::snprintf(name, sizeof(name), "norves-role-%lld",
+                      static_cast<long long>(std::chrono::steady_clock::now().time_since_epoch().count()));
+        const auto root = std::filesystem::temp_directory_path() / name;
+        CHECK(std::filesystem::create_directory(root));
+        struct Cleanup
+        {
+            std::filesystem::path Path;
+            ~Cleanup()
+            {
+                std::error_code e;
+                std::filesystem::remove_all(Path, e);
+            }
+        } cleanup{root};
+        const auto write = [](const std::filesystem::path& path, C::Span<const uint8_t> bytes)
+        {
+            std::ofstream file(path, std::ios::binary | std::ios::trunc);
+            CHECK(file);
+            file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+            file.close();
+            CHECK(!file.fail());
+        };
+        const auto read = [](const std::filesystem::path& path)
+        {
+            Bytes bytes;
+            std::string error;
+            CHECK(Cook::Detail::ReadSkeletalBinaryFile(path, bytes, error));
+            return bytes;
+        };
+        Request fixture;
+        const auto profile = ProfileText();
+        auto gltf = Read("ValidU8Float.gltf");
+        ArrayValue(gltf, "animations", "[]");
+        const auto binary = Buffer();
+        const auto glb = Glb(gltf, binary);
+        Cook::SingleAssetCookRequest request;
+        request.InputPath = root / "rig.glb";
+        request.PackagePath = root / "rig.nvpkg";
+        request.ManifestPath = root / "rig.json";
+        request.LogicalPath = "Models/rig";
+        request.Kind = "model";
+        request.EntryName = "rig.nvskel";
+        request.EntryTypeText = "Skl0";
+        request.Format = Text(Format);
+        request.Variant = "default";
+        request.RoleProfile.bEnabled = true;
+        request.RoleProfile.BvhPath = root / "walk.bvh";
+        request.RoleProfile.ProfilePath = root / "roles.json";
+        request.RoleProfile.Operation = Cook::SkeletalBvhClipOperation::Add;
+        request.RoleProfile.ClipName = "Bvh";
+        write(request.InputPath, {glb.data(), glb.size()});
+        write(request.RoleProfile.BvhPath, TextView(fixture.Bvh));
+        write(request.RoleProfile.ProfilePath, TextView(profile));
+        Text error;
+        Cook::SkeletalRoleFileCookResult result;
+        const auto cook = [&](const Cook::SingleAssetCookRequest& value)
+        {
+            const bool success = Cook::CookSkeletalRoleFile(value, result, error);
+            if (!success)
+            {
+                std::fprintf(stderr, "Role file cook: %s\n", error.c_str());
+            }
+            CHECK(success);
+        };
+
+        Cook::SkeletalRoleFileInputs owned;
+        CHECK(Cook::LoadSkeletalRoleFileInputs(request.RoleProfile, owned, error));
+        const auto oldBvh = owned.BvhBytes, oldProfile = owned.ProfileBytes;
+        struct ReadMutation
+        {
+            std::filesystem::path Path;
+            bool bGrow = false;
+            bool bCalled = false;
+        };
+        const auto readMutation = +[](const std::filesystem::path& path, void* context)
+        {
+            auto& m = *static_cast<ReadMutation*>(context);
+            if (path != m.Path)
+            {
+                return;
+            }
+            m.bCalled = true;
+            std::ofstream file(path, std::ios::binary | (m.bGrow ? std::ios::app : std::ios::trunc));
+            CHECK(file);
+            file << ' ';
+            file.close();
+            CHECK(!file.fail());
+        };
+        for (const auto& path : {request.RoleProfile.BvhPath, request.RoleProfile.ProfilePath})
+        {
+            const auto original = read(path);
+            for (bool grow : {false, true})
+            {
+                ReadMutation mutation{path, grow};
+                CHECK(!Cook::Detail::LoadSkeletalRoleFileInputsWithProbe(request.RoleProfile, owned, error,
+                                                                         readMutation, &mutation));
+                CHECK(mutation.bCalled && owned.BvhBytes == oldBvh && owned.ProfileBytes == oldProfile);
+                CHECK(!std::filesystem::exists(request.PackagePath) && !std::filesystem::exists(request.ManifestPath));
+                write(path, {original.data(), original.size()});
+            }
+            const auto handle =
+                CreateFileW(path.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            CHECK(handle != INVALID_HANDLE_VALUE);
+            CHECK(!Cook::LoadSkeletalRoleFileInputs(request.RoleProfile, owned, error));
+            CHECK(owned.BvhBytes == oldBvh && owned.ProfileBytes == oldProfile);
+            CHECK(!Cook::CookSkeletalRoleFile(request, result, error));
+            CHECK(!std::filesystem::exists(request.PackagePath) && !std::filesystem::exists(request.ManifestPath));
+            CHECK(CloseHandle(handle));
+        }
+        cook(request);
+        CHECK(result.Value.Cooked.Cook.ClipCount == 1 && result.Value.Cooked.ClipIndex == 0 &&
+              result.Record.Outputs.size() == 1);
+        CHECK(result.ReportJson.find("\"stored_keys_validated\":true") != Text::npos);
+        CHECK(result.ReportJson.find("\"continuous_curve_validated\":false") != Text::npos);
+        const auto firstPackage = read(request.PackagePath), firstManifest = read(request.ManifestPath);
+        const auto firstHash = result.Value.Cooked.Cook.SourceHash;
+        Cook::ModelCookFingerprint fingerprint;
+        CHECK(Cook::FingerprintSkeletalRoleFileSource(glb.data(), glb.size(), request, fingerprint, error));
+        CHECK(fingerprint.SourceHash == firstHash);
+        const auto converted = Cook::Detail::MakeSingleCookRequest(Cook::Detail::MakeLegacyCookOptions(request));
+        CHECK(converted.RoleProfile.bEnabled && converted.RoleProfile.BvhPath == request.RoleProfile.BvhPath &&
+              converted.RoleProfile.ProfilePath == request.RoleProfile.ProfilePath &&
+              converted.RoleProfile.ClipName == request.RoleProfile.ClipName);
+        Cook::CookDependencySnapshot snapshot;
+        CHECK(Cook::CaptureCookDependencySnapshot(request, Cook::SkeletalRoleFileCookerRevision, snapshot, error));
+        CHECK(snapshot.SchemaVersion == 1 && snapshot.Files.size() == 4);
+        CHECK(snapshot.Files[snapshot.Files.size() - 2].Role == Cook::CookDependencyRole::Bvh);
+        CHECK(snapshot.Files.back().Role == Cook::CookDependencyRole::RoleProfile);
+        Asset::AssetManifest manifest;
+        C::String manifestText;
+        CHECK(Cook::DecodeSkeletalRoleUtf8Text(
+            {reinterpret_cast<const char*>(firstManifest.data()), firstManifest.size()}, manifestText));
+        CHECK(manifest.LoadFromJsonText(manifestText));
+        Cook::CookDecisionContext decision;
+        CHECK(Cook::DecideCookCache(request, Cook::SkeletalRoleFileCookerRevision, true, &result.Record, &manifest,
+                                    decision, error) == Cook::CookDecision::Cook);
+        CHECK(decision.Reason == Cook::CookDecisionReason::Forced);
+        cook(request);
+        CHECK(read(request.PackagePath) == firstPackage && read(request.ManifestPath) == firstManifest);
+        PackageAndSample(result.Value.Cooked);
+        const auto reject = [&](const Cook::SingleAssetCookRequest& value)
+        {
+            const auto oldBytes = result.Value.Cooked.Cook.NvskelBytes;
+            const auto oldReport = result.ReportJson;
+            CHECK(!Cook::CookSkeletalRoleFile(value, result, error) && !error.empty());
+            CHECK(result.Value.Cooked.Cook.NvskelBytes == oldBytes && result.ReportJson == oldReport);
+            CHECK(read(request.PackagePath) == firstPackage && read(request.ManifestPath) == firstManifest);
+        };
+        auto bad = request;
+        bad.bSkipIfUnchanged = true;
+        reject(bad);
+        bad = request;
+        bad.RoleProfile.Operation = Cook::SkeletalBvhClipOperation::Unspecified;
+        reject(bad);
+        bad = request;
+        bad.RoleProfile.ProfileLimits.MaxInputBytes = profile.size() - 1;
+        reject(bad);
+        bad = request;
+        bad.RoleProfile.DecodeLimits.MaxInputBytes = fixture.Bvh.size() - 1;
+        reject(bad);
+        bad = request;
+        bad.RoleProfile.MaxNvskelBytes = 1;
+        reject(bad);
+        bad = request;
+        bad.LogicalPath = "Models/other";
+        reject(bad);
+        for (const auto& input : {request.InputPath, request.RoleProfile.BvhPath, request.RoleProfile.ProfilePath})
+        {
+            const auto before = read(input);
+            bad = request;
+            bad.PackagePath = input;
+            reject(bad);
+            CHECK(read(input) == before);
+            bad = request;
+            bad.ManifestPath = input;
+            reject(bad);
+            CHECK(read(input) == before);
+            const auto alias = root / "alias.nvpkg";
+            std::filesystem::create_hard_link(input, alias);
+            bad = request;
+            bad.PackagePath = alias;
+            reject(bad);
+            CHECK(read(input) == before);
+            CHECK(std::filesystem::remove(alias));
+        }
+        // write直前の入力変更を決定的に注入する。拒否では既存出力pairを保持する。
+        struct Mutation
+        {
+            std::filesystem::path Path;
+            Cook::Detail::SkeletalRoleFilePoint Point;
+            bool bDelete = false;
+            bool bCalled = false;
+        };
+        const auto mutate = +[](Cook::Detail::SkeletalRoleFilePoint point, void* context)
+        {
+            auto& m = *static_cast<Mutation*>(context);
+            if (point != m.Point)
+            {
+                return;
+            }
+            m.bCalled = true;
+            if (m.bDelete)
+            {
+                CHECK(std::filesystem::remove(m.Path));
+            }
+            else
+            {
+                std::ofstream f(m.Path, std::ios::binary | std::ios::app);
+                f << ' ';
+                f.close();
+                CHECK(!f.fail());
+            }
+        };
+        for (const auto& input : {request.InputPath, request.RoleProfile.BvhPath, request.RoleProfile.ProfilePath})
+        {
+            const auto original = read(input);
+            for (bool remove : {false, true})
+            {
+                Mutation mutation{input, Cook::Detail::SkeletalRoleFilePoint::BeforeFirstWrite, remove};
+                const auto previous = result.ReportJson;
+                CHECK(!Cook::Detail::CookSkeletalRoleFileWithProbe(request, result, error, mutate, &mutation));
+                CHECK(mutation.bCalled && result.ReportJson == previous);
+                CHECK(read(request.PackagePath) == firstPackage && read(request.ManifestPath) == firstManifest);
+                write(input, {original.data(), original.size()});
+            }
+        }
+        // 2回目write前およびrecord採取前もfreshチェックを通す。ここでは同一packageの再生成。
+        for (auto point : {Cook::Detail::SkeletalRoleFilePoint::BeforeManifestWrite,
+                           Cook::Detail::SkeletalRoleFilePoint::BeforeRecord})
+        {
+            Mutation mutation{request.RoleProfile.ProfilePath, point};
+            CHECK(!Cook::Detail::CookSkeletalRoleFileWithProbe(request, result, error, mutate, &mutation));
+            CHECK(mutation.bCalled);
+            CHECK(read(request.ManifestPath) == firstManifest);
+            write(request.RoleProfile.ProfilePath, TextView(profile));
+        }
+
+        auto changedBvh = fixture.Bvh;
+        Replace(changedBvh, "45 0 0", "30 0 0");
+        for (auto point : {Cook::Detail::SkeletalRoleFilePoint::BeforeManifestWrite,
+                           Cook::Detail::SkeletalRoleFilePoint::BeforeRecord})
+        {
+            write(request.RoleProfile.BvhPath, TextView(changedBvh));
+            Mutation mutation{request.RoleProfile.ProfilePath, point};
+            const auto oldResult = result.Value.Cooked.Cook.NvskelBytes;
+            const auto oldRecord = result.Record.DependencyFingerprint;
+            const auto oldReport = result.ReportJson;
+            CHECK(!Cook::Detail::CookSkeletalRoleFileWithProbe(request, result, error, mutate, &mutation) &&
+                  mutation.bCalled);
+            CHECK(read(request.PackagePath) != firstPackage);
+            if (point == Cook::Detail::SkeletalRoleFilePoint::BeforeManifestWrite)
+            {
+                CHECK(read(request.ManifestPath) == firstManifest);
+            }
+            else
+            {
+                CHECK(read(request.ManifestPath) != firstManifest);
+            }
+            CHECK(result.Value.Cooked.Cook.NvskelBytes == oldResult && result.ReportJson == oldReport &&
+                  result.Record.DependencyFingerprint == oldRecord);
+            write(request.RoleProfile.ProfilePath, TextView(profile));
+            write(request.RoleProfile.BvhPath, TextView(fixture.Bvh));
+            write(request.PackagePath, {firstPackage.data(), firstPackage.size()});
+            write(request.ManifestPath, {firstManifest.data(), firstManifest.size()});
+        }
+        // 全外部buffer/imageとsidecarも同じsnapshotに含める。未使用imageでも依存を省かない。
+        auto loose = gltf;
+        Replace(loose, "\"buffers\":", "\"images\":[{\"uri\":\"unused.bin\"}],\"buffers\":");
+        request.InputPath = root / "rig.gltf";
+        write(request.InputPath, TextView(loose));
+        write(root / "fixture.bin", {binary.data(), binary.size()});
+        write(root / "unused.bin", View("unused image bytes"));
+        request.ImportSettingsOverridePath = root / "settings.json";
+        const Text settings =
+            R"({"version":1,"units":{"scale":1},"axes":{"up":"+Y","forward":"+Z"},"origin":{"mode":"keep"}})";
+        write(request.ImportSettingsOverridePath, TextView(settings));
+        // 同じidentityの既存pairはSourceHash更新を許す。
+        cook(request);
+        const auto loosePackage = read(request.PackagePath), looseManifest = read(request.ManifestPath);
+        CHECK(Cook::CaptureCookDependencySnapshot(request, Cook::SkeletalRoleFileCookerRevision, snapshot, error));
+        CHECK(snapshot.Files.size() == 6);
+        for (const auto& input : {root / "fixture.bin", root / "unused.bin", request.ImportSettingsOverridePath})
+        {
+            const auto original = read(input);
+            for (bool remove : {false, true})
+            {
+                Mutation mutation{input, Cook::Detail::SkeletalRoleFilePoint::BeforeFirstWrite, remove};
+                CHECK(!Cook::Detail::CookSkeletalRoleFileWithProbe(request, result, error, mutate, &mutation));
+                CHECK(mutation.bCalled);
+                CHECK(read(request.PackagePath) == loosePackage && read(request.ManifestPath) == looseManifest);
+                write(input, {original.data(), original.size()});
+            }
+        }
+
+        // 全てASCIIのlocatorで、ASCII出力制約より奥の依存aliasを反証する。
+        for (const auto& input : {root / "fixture.bin", root / "unused.bin", request.ImportSettingsOverridePath})
+        {
+            const auto original = read(input);
+            for (bool manifestTarget : {false, true})
+            {
+                auto aliased = request;
+                if (manifestTarget)
+                {
+                    aliased.ManifestPath = input;
+                }
+                else
+                {
+                    aliased.PackagePath = input;
+                }
+                CHECK(!Cook::CookSkeletalRoleFile(aliased, result, error));
+                CHECK(read(input) == original && read(request.PackagePath) == loosePackage &&
+                      read(request.ManifestPath) == looseManifest);
+                const auto link = root / "external-alias.bin";
+                std::filesystem::create_hard_link(input, link);
+                if (manifestTarget)
+                {
+                    aliased.ManifestPath = link;
+                }
+                else
+                {
+                    aliased.PackagePath = link;
+                }
+                CHECK(!Cook::CookSkeletalRoleFile(aliased, result, error));
+                CHECK(read(input) == original);
+                CHECK(std::filesystem::remove(link));
+            }
+        }
+        auto automatic = request;
+        automatic.ImportSettingsOverridePath.clear();
+        auto reserved = automatic.InputPath;
+        reserved += ".import.json";
+        CHECK(!std::filesystem::exists(reserved));
+        for (bool manifestTarget : {false, true})
+        {
+            auto aliased = automatic;
+            if (manifestTarget)
+            {
+                aliased.ManifestPath = reserved;
+            }
+            else
+            {
+                aliased.PackagePath = reserved;
+            }
+            CHECK(!Cook::CookSkeletalRoleFile(aliased, result, error));
+            CHECK(!std::filesystem::exists(reserved) && read(request.PackagePath) == loosePackage &&
+                  read(request.ManifestPath) == looseManifest);
+        }
+        std::puts(
+            "SKELETAL_ROLE_FILE result=pass typed_hash_forced_cook_owned_request_dependencies_alias_mutation_publication_record_actual_sampler");
+    }
+
 } // namespace
 int main()
 {
@@ -946,6 +1339,8 @@ int main()
     EmptyMorph();
     RoleParserContracts();
     RoleCookContracts();
+    RoleArgumentContracts();
+    RoleFileContracts();
     std::puts(
         "SKELETAL_BVH_COOK_BRIDGE result=pass explicit_add_replace_zero_clip_rig_morph_hash_package_asset_system_sampler_atomic_no_cli");
     return 0;

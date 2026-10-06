@@ -1,4 +1,5 @@
 ﻿#include "CookCacheDecision.h"
+#include "SkeletalRoleFileInput.h"
 #include "CookOutputPlan.h"
 #include "CookReferenceValues.h"
 #include "CookOutputSetGuardTestAccess.h"
@@ -204,8 +205,11 @@ namespace NorvesLib::Tools::AssetCook
                 settings.bDisabled = r.bNoSidecar;
                 settings.bRequired = r.bRequireSidecar;
                 const auto* decode = IsSupportedSkeletalCookFormat(r.Format) ? &r.SkeletalDecode : nullptr;
-                if (!FingerprintModelCookSourceNativePath(bytes.data(), bytes.size(), r.Format, r.InputPath, r.LogicalPath,
-                                                fingerprint, error, &settings, decode))
+                const bool bFingerprint = HasSkeletalRoleFileRequest(r.RoleProfile)
+                    ? FingerprintSkeletalRoleFileSource(bytes.data(), bytes.size(), r, fingerprint, error)
+                    : FingerprintModelCookSourceNativePath(bytes.data(), bytes.size(), r.Format, r.InputPath, r.LogicalPath,
+                        fingerprint, error, &settings, decode);
+                if (!bFingerprint)
                 {
                     return false;
                 }
@@ -428,7 +432,7 @@ namespace NorvesLib::Tools::AssetCook
                 afterPrepare(probeContext);
             }
             auto reason = CookDecisionReason::Current;
-            if (!bAllowSkip)
+            if (!bAllowSkip || HasSkeletalRoleFileRequest(plan.Context.Request.RoleProfile))
             {
                 reason = CookDecisionReason::Forced;
             }

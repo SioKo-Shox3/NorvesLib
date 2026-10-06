@@ -187,6 +187,18 @@ jobs:
         run: |
           ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(SkeletalAnimationSamplingTest|CookedMeshTest|CookedMeshV1Test|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|StringEmptyTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest|TextureManagedCliTest|SkeletalJointIndexTest|SkeletalBindRowMathTest|SkeletalJointGlobalRowMathTest|SkeletalJointMappingTest|SkeletalCoordinateConversionTest|SkeletalRotationRetargetTest|SkeletalRotationRetargetNativeTest|SkeletalBvhClipTimeTest|SkeletalBvhClipImportTest|SkeletalBvhCookBridgeTest|BvhEvaluateTest|BvhDecodeTest|GltfMaterialCookV1Test|ImportedMaterialStagingTest|ImportedOpaqueRuntimeTest|MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|TextureAssetSetOutputTest|ImportStaticIntegrationTest|CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedTransactionIntentTest|CookManagedStoreInitializationTest|CookManagedStoreObservationTest|CookManagedUpdateInventoryTest|CookDestinationLockTest|CookOwnerResolverTest|CookOwnerBindingTest|CookOutputSetGuardTest|CookOutputPlanTest|CookStateFileTest|CookOwnedStateTest|ModelNativePathTest|CookCacheDecisionTest|CookOutputPackageTest|CookDependencySnapshotTest|ImportSettingsFileTest|GltfBufferSetTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
           if ($LASTEXITCODE -ne 0) { throw 'CPU contracts failed' }
+      - name: Role Profileの実Windows CLIを検証する
+        run: |
+          python -B Scripts/AssetCookRoleProfileSmoke.py --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --output "$env:RUNNER_TEMP/NorvesRoleProfileCli" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/role-profile-cli.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Role Profile real CLI contracts failed' }
+      - name: Role Profileの専用出力と記録を保存する
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: role-profile-cli-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/NorvesRoleProfileCli/
       - name: 分割後の実CLI出力を採取する
         id: capture
         run: |
