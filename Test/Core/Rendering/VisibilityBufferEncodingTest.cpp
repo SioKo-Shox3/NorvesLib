@@ -6,6 +6,7 @@
 #include "Rendering/MegaGeometry/GeometryPageLayout.h"
 #include "Rendering/VisibilityBuffer.h"
 
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -378,8 +379,11 @@ void TestGlslConstantsMatchCpp()
     // 64bit の値の詰め方（上位 = 深度のビット、下位 = ID、空 = すべてのビットが 1）が、GLSL の関数の本体にも書かれている
     Expect(std::strstr(text.data(), "const uint64_t VIS_KEY_EMPTY = ~uint64_t(0);") != nullptr,
            "GLSL の空の 64bit の値はすべてのビットが 1（~uint64_t(0)）");
-    Expect(std::strstr(text.data(), "(uint64_t(floatBitsToUint(depth)) << VIS_KEY_DEPTH_SHIFT) | uint64_t(id)") != nullptr,
-           "GLSL の VisPackKey は 上位 = floatBitsToUint(深度)、下位 = ID");
+    Expect(std::strstr(text.data(), "(uint64_t(VisDepthBits(depth)) << VIS_KEY_DEPTH_SHIFT) | uint64_t(id)") != nullptr,
+           "GLSL の VisPackKey は 上位 = 深度のビット（VisDepthBits）、下位 = ID");
+    Expect(std::strstr(text.data(), "return bits == 0x80000000u ? 0u : bits;") != nullptr &&
+               std::strstr(text.data(), "const uint bits = floatBitsToUint(depth);") != nullptr,
+           "GLSL の VisDepthBits は floatBitsToUint(深度) の -0.0（0x80000000）を 0 にそろえる");
     Expect(std::strstr(text.data(), "uintBitsToFloat(uint(key >> VIS_KEY_DEPTH_SHIFT))") != nullptr,
            "GLSL の VisKeyDepth は上位 32bit を float に戻す");
     Expect(std::strstr(text.data(), "uint(key & uint64_t(VIS_KEY_EMPTY_WORD))") != nullptr,
@@ -431,6 +435,15 @@ void TestKeyPacking()
     Expect(orderOk, "手前の深度の値は、ID に関係なく奥の深度の値より小さい");
     Expect(belowEmptyOk, "深度 1.0 以下の値は、ID が最大でも空より小さい（空は何にも勝たれる）");
     Expect(VB::PackKey(0.0f, 0u) == 0ull, "深度 0・ID 0 は 0");
+
+    // -0.0 は +0.0 にそろえて詰める（そろえないと floatBitsToUint(-0.0) = 0x80000000 が atomicMin では最も奥になり、
+    // 深度の比較では最も手前になって食い違う）
+    Expect(std::bit_cast<uint32_t>(-0.0f) == 0x80000000u, "前提: -0.0 のビットは 0x80000000");
+    Expect(VB::DepthBits(-0.0f) == 0u && VB::DepthBits(0.0f) == 0u, "-0.0 の深度のビットは +0.0 と同じ 0");
+    Expect(VB::PackKey(-0.0f, 5u) == VB::PackKey(0.0f, 5u) && VB::PackKey(-0.0f, 5u) == 5ull,
+           "深度 -0.0 は +0.0 と同じ値に詰まる");
+    Expect(VB::PackKey(-0.0f, 0xFFFFFFFFu) < VB::PackKey(0.25f, 0u), "深度 -0.0 は最も手前（任意の正の深度より小さい値）");
+    Expect(VB::DepthBits(0.5f) == 0x3F000000u, "ほかの深度のビットはそのまま");
 
     // 同じ深度は小さい ID が選ばれる
     Expect(VB::PackKey(0.25f, 7u) < VB::PackKey(0.25f, 8u), "同じ深度なら小さい ID が小さい値");

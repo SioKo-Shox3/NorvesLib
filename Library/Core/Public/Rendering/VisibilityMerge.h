@@ -87,6 +87,19 @@ namespace NorvesLib::Core::Rendering
         bool RecordClear(RHI::ICommandList* commandList);
 
         /**
+         * @brief ソフトウェアラスタ（計算シェーダー）が atomicMin で書けるよう、バッファを UnorderedAccess へ進める。render pass の外で呼ぶ。
+         *        バッファが GenericRead の状態（RecordClear の後・合流の後）であること
+         * @return 記録できたら true
+         */
+        bool RecordBeginSoftwareWrite(RHI::ICommandList* commandList);
+
+        /**
+         * @brief ソフトウェアラスタの書き込みを、合流の読み取りへ見せる（UnorderedAccess → GenericRead）。render pass の外で呼ぶ
+         * @return 記録できたら true
+         */
+        bool RecordEndSoftwareWrite(RHI::ICommandList* commandList);
+
+        /**
          * @brief 合流の render pass を記録する。バッファが GenericRead の状態で、ID・深度が ShaderResource の状態であること
          * @param renderPass loadRenderPass と互換の render pass
          * @param framebuffer ID（R32_UINT）と深度（D32_FLOAT）を添付とする、renderPass と互換のフレームバッファ

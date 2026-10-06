@@ -1,0 +1,221 @@
+﻿#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_atomic_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+// ========================================
+// ビジビリティバッファ: 画面上で小さい MegaGeometry のクラスタを、計算シェーダーでラスタして 64bit のバッファへ書く
+//
+// 1 ワークグループ = 1 クラスタ、1 スレッド = 1 三角形（クラスタは 128 三角形以下）。
+// MegaGeometryPass のカリングが積んだソフトの一覧（コマンドの位置）から、ワークグループの番号でクラスタを引き、
+// 記録の表の「1 + コマンドの位置」番の記録から 3 頂点の位置を読む。ハードのラスタ（visbuffer_mega.vert・visbuffer.frag）と合わせる規則:
+//   - 位置は visbuffer_mega.vert と同じ式（projection * view * (world * 位置)）。ID は VisEncodeId(1 + コマンドの位置, 三角形の番号)。
+//   - 画面の位置は、ビューポートの変換のあと 1/256 画素の固定小数点へ丸め、辺の関数は整数（64bit）で厳密に求める。
+//   - 背面（裏面を捨て、時計回りが表）を省く。画素の中心が三角形の内側にあるかを辺の関数で判定し、
+//     辺の上の画素は top-left 規則（上の辺と左の辺だけが含む）で、隣り合う三角形に二重に塗られず、隙間もできない。
+//   - 深度（ビューポートの変換後の z）は画面空間で線形に補間する（ハードの補間と同じ。透視の補正はしない）。
+//   - 書くのは atomicMin（上位 32bit = 深度のビット、下位 32bit = ID）。手前の深度が残り、同じ深度なら小さい ID が残る。
+// 近平面と交わるクラスタはカリングが振り分けない。万一 w が 0 以下の頂点があれば、その三角形は描かない。
+// ========================================
+
+#define VIS_ENABLE_KEY64
+#define VIS_RECORD_TABLE_SET 0
+#define VIS_RECORD_TABLE_BINDING 2
+#include "Common/VisibilityBuffer.glsl"
+#include "Common/VisibilityTriangleFetch.glsl"
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+// 1 クラスタの三角形の最大数（ID の三角形のビット幅）とワークグループのスレッド数が一致していること
+const uint SW_THREADS = 128u;
+
+// 間接 dispatch の x の上限（MegaGeometryCull.glsl の SW_RASTER_MAX_GROUPS_X と一致。x を超える分は y へ折り返す）
+const uint SW_MAX_GROUPS_X = 65535u;
+// MegaGeometryCull.glsl のソフトの一覧の頭（パスごとに 4 語 + 先頭の余白。SW_RASTER_HEADER_WORDS・SW_RASTER_HEADER_STRIDE と一致）
+const uint SW_LIST_HEADER_WORDS = 8u;
+const uint SW_LIST_HEADER_STRIDE = 4u;
+
+// binding 0: ハードのラスタ（visbuffer_mega.vert の VisFrame）と同じカメラの行列
+layout(std140, set = 0, binding = 0) uniform VisFrame
+{
+    mat4 view;
+    mat4 projection;
+} frame;
+
+// binding 1: インスタンスの表（cluster_cull.comp の MegaInstance と一致）。ここで引くのは変換だけ
+struct MegaInstance
+{
+    mat4 world;
+    mat4 previousWorld;
+    vec4 lodSphere;
+    uvec4 clusterInfo;
+    uvec4 drawInfo;
+    uvec4 bvhInfo;
+};
+
+layout(std430, set = 0, binding = 1) readonly buffer InstanceBuffer
+{
+    MegaInstance instances[];
+};
+
+// binding 2: 描画の記録の表（Common/VisibilityBuffer.glsl が visRecords を宣言する）
+
+// binding 3: 画面の画素ごとの 64bit の値（上位 = 深度のビット、下位 = ID）。すべてのビットが 1 の空から、atomicMin で小さくなる
+layout(std430, set = 0, binding = 3) buffer KeyBuffer
+{
+    uint64_t keys[];
+};
+
+// binding 4: ソフトの一覧（MegaGeometryCull.glsl の SwRasterBuffer）。パスごとの頭 4 語（x, y = 間接 dispatch の引数、z, w）の後に、
+// [SW_LIST_HEADER_WORDS + パス * 容量 + n] = n 番目のクラスタのコマンドの位置
+layout(std430, set = 0, binding = 4) readonly buffer SwRasterList
+{
+    uint swList[];
+};
+
+// binding 5: dispatch ごとの定数
+layout(std140, set = 0, binding = 5) uniform SwRasterParams
+{
+    // x = 一覧のパスごとの容量、y = パスの番号（0 = 1 パス目、1 = 2 パス目）、z = 64bit のバッファの幅、w = 高さ
+    uvec4 list;
+    // 描いてよい画素の矩形（x0, y0, x1, y1。x1・y1 は含まない。シザーと 64bit のバッファの大きさの共通部分）
+    ivec4 rect;
+    // ラスタのビューポート（x, y, 幅, 高さ）
+    vec4 viewport;
+    // x = minDepth、y = maxDepth
+    vec4 depthRange;
+} params;
+
+// 固定小数点の 1 画素あたりの目盛り（1/256 画素。ハードのラスタの小数部の精度以上）
+const int SW_SUBPIXEL_BITS = 8;
+const float SW_SUBPIXEL_SCALE = 256.0;
+// 画面の位置の絶対値の上限（画素）。固定小数点の座標が 32bit に収まり、float でも厳密に扱える範囲
+const float SW_SCREEN_LIMIT = 30000.0;
+
+// 辺 a→b に対する点 p の辺の関数（整数で厳密）。三角形が表向き（時計回り）なら、内側で正になる
+int64_t SwEdge(ivec2 a, ivec2 b, ivec2 p)
+{
+    return int64_t(p.y - a.y) * int64_t(b.x - a.x) - int64_t(p.x - a.x) * int64_t(b.y - a.y);
+}
+
+// 辺の上の画素を含めるか（top-left 規則。表向きの三角形で、辺 a→b が上の辺（水平で右向き）か左の辺（上向き）のとき）
+bool SwIsTopLeft(ivec2 a, ivec2 b)
+{
+    const int dx = b.x - a.x;
+    const int dy = b.y - a.y;
+    return dy < 0 || (dy == 0 && dx > 0);
+}
+
+void main()
+{
+    const uint groupIndex = gl_WorkGroupID.y * SW_MAX_GROUPS_X + gl_WorkGroupID.x;
+    const uint passIndex = params.list.y;
+    const uint listHead = passIndex * SW_LIST_HEADER_STRIDE;
+    const uint triangleIndex = gl_LocalInvocationID.x;
+    // 一覧へ積めた数（頭の w は積もうとした数なので容量で頭打ちにする）を超えるワークグループ（2 次元の dispatch の余り）は捨てる
+    if (groupIndex >= min(swList[listHead + 3u], params.list.x))
+    {
+        return;
+    }
+
+    const uint commandIndex = swList[SW_LIST_HEADER_WORDS + passIndex * params.list.x + groupIndex];
+    const uint recordNumber = commandIndex + 1u;
+    if (recordNumber >= uint(visRecords.length()))
+    {
+        return;
+    }
+    const VisibilityDrawRecord record = visRecords[recordNumber];
+    if (VisRecordKind(record) != VIS_KIND_MEGA_CLUSTER || triangleIndex >= VisRecordTriangleCount(record))
+    {
+        return;
+    }
+    const uint instanceIndex = VisRecordInstanceIndex(record);
+    if (instanceIndex >= uint(instances.length()))
+    {
+        return;
+    }
+    const uint id = VisEncodeId(recordNumber, triangleIndex);
+    if (VisIsEmpty(id))
+    {
+        return;
+    }
+
+    vec3 localPosition[3];
+    if (!VisLoadTrianglePositions(record, triangleIndex, localPosition))
+    {
+        return;
+    }
+
+    // クリップ空間（visbuffer_mega.vert と同じ式・同じ順序）から画面の位置と深度へ
+    const mat4 world = instances[instanceIndex].world;
+    ivec2 fixedPosition[3];
+    float depth[3];
+    for (uint k = 0u; k < 3u; ++k)
+    {
+        const vec4 worldPosition = world * vec4(localPosition[k], 1.0);
+        const vec4 clip = frame.projection * frame.view * worldPosition;
+        if (!(clip.w > 0.0))
+        {
+            return;
+        }
+        const vec3 ndc = clip.xyz / clip.w;
+        const vec2 screen = vec2(params.viewport.x + (ndc.x * 0.5 + 0.5) * params.viewport.z,
+                                 params.viewport.y + (ndc.y * 0.5 + 0.5) * params.viewport.w);
+        const float z = params.depthRange.x + ndc.z * (params.depthRange.y - params.depthRange.x);
+        if (!(abs(screen.x) <= SW_SCREEN_LIMIT) || !(abs(screen.y) <= SW_SCREEN_LIMIT) || !(abs(z) < 1.0e30))
+        {
+            return;
+        }
+        fixedPosition[k] = ivec2(floor(screen * SW_SUBPIXEL_SCALE + 0.5));
+        depth[k] = z;
+    }
+
+    // 表向き（時計回り）だけを描く。面積 0 の三角形は描かない
+    const int64_t area = SwEdge(fixedPosition[0], fixedPosition[1], fixedPosition[2]);
+    if (area <= 0)
+    {
+        return;
+    }
+    const float inverseArea = 1.0 / float(area);
+
+    // 画素の中心（整数の画素 p の中心 = p + 0.5）が入る範囲。中心の固定小数点の座標は p * 256 + 128
+    const ivec2 minFixed = min(fixedPosition[0], min(fixedPosition[1], fixedPosition[2]));
+    const ivec2 maxFixed = max(fixedPosition[0], max(fixedPosition[1], fixedPosition[2]));
+    const int halfPixel = 1 << (SW_SUBPIXEL_BITS - 1);
+    const int pixelMask = (1 << SW_SUBPIXEL_BITS) - 1;
+    const ivec2 minPixel = max((minFixed - halfPixel + pixelMask) >> SW_SUBPIXEL_BITS, params.rect.xy);
+    const ivec2 maxPixel = min((maxFixed - halfPixel) >> SW_SUBPIXEL_BITS, params.rect.zw - 1);
+
+    const bool bTopLeft0 = SwIsTopLeft(fixedPosition[1], fixedPosition[2]);
+    const bool bTopLeft1 = SwIsTopLeft(fixedPosition[2], fixedPosition[0]);
+    const bool bTopLeft2 = SwIsTopLeft(fixedPosition[0], fixedPosition[1]);
+    const float depthMin = min(params.depthRange.x, params.depthRange.y);
+    const float depthMax = max(params.depthRange.x, params.depthRange.y);
+
+    for (int y = minPixel.y; y <= maxPixel.y; ++y)
+    {
+        for (int x = minPixel.x; x <= maxPixel.x; ++x)
+        {
+            const ivec2 center = ivec2((x << SW_SUBPIXEL_BITS) + halfPixel, (y << SW_SUBPIXEL_BITS) + halfPixel);
+            const int64_t edge0 = SwEdge(fixedPosition[1], fixedPosition[2], center);
+            const int64_t edge1 = SwEdge(fixedPosition[2], fixedPosition[0], center);
+            const int64_t edge2 = SwEdge(fixedPosition[0], fixedPosition[1], center);
+            if (!(edge0 > 0 || (edge0 == 0 && bTopLeft0)) ||
+                !(edge1 > 0 || (edge1 == 0 && bTopLeft1)) ||
+                !(edge2 > 0 || (edge2 == 0 && bTopLeft2)))
+            {
+                continue;
+            }
+
+            const float pixelDepth = (float(edge0) * depth[0] + float(edge1) * depth[1] + float(edge2) * depth[2]) * inverseArea;
+            // 奥行きのクリップ（ハードは [0, 1] の外を描かない）
+            if (!(pixelDepth >= depthMin && pixelDepth <= depthMax))
+            {
+                continue;
+            }
+
+            atomicMin(keys[uint(y) * params.list.z + uint(x)], VisPackKey(pixelDepth, id));
+        }
+    }
+}

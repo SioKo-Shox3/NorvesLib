@@ -103,10 +103,18 @@ uint VisTriangleIndex(uint id) { return id & (VIS_MAX_TRIANGLES_PER_RECORD - 1u)
 #ifdef VIS_ENABLE_KEY64
 const uint64_t VIS_KEY_EMPTY = ~uint64_t(0);
 
-// 深度（符号ビットが 0 の有限な float。-0.0 は +0.0 にそろえてから渡す）と ID から 64bit の値を作る。小さい値ほど手前（同じ深度なら小さい ID）
+// 深度のビット。-0.0（0x80000000）は +0.0 にそろえる（floatBitsToUint(-0.0) は atomicMin では最も奥の値になるが、
+// 深度の比較では +0.0 と等しく最も手前なので、食い違わないように詰める前に直す）
+uint VisDepthBits(float depth)
+{
+    const uint bits = floatBitsToUint(depth);
+    return bits == 0x80000000u ? 0u : bits;
+}
+
+// 深度（符号ビットが 0 の有限な float。-0.0 は VisDepthBits が +0.0 にそろえる）と ID から 64bit の値を作る。小さい値ほど手前（同じ深度なら小さい ID）
 uint64_t VisPackKey(float depth, uint id)
 {
-    return (uint64_t(floatBitsToUint(depth)) << VIS_KEY_DEPTH_SHIFT) | uint64_t(id);
+    return (uint64_t(VisDepthBits(depth)) << VIS_KEY_DEPTH_SHIFT) | uint64_t(id);
 }
 
 bool VisKeyIsEmpty(uint64_t key) { return key == VIS_KEY_EMPTY; }

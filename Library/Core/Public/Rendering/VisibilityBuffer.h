@@ -58,10 +58,17 @@ namespace NorvesLib::Core::Rendering
 
         static_assert(KEY_DEPTH_SHIFT + KEY_ID_BITS == 64, "深度と ID で 64bit を使い切る");
 
-        /** @brief 深度と ID から 64bit の値を作る（深度は符号ビットが 0 の有限な float。負・-0.0・NaN は詰められない値として呼び出し側が避けるか +0.0 にそろえる） */
+        /** @brief 深度のビット。-0.0（0x80000000）は +0.0 にそろえる（符号つきでない整数の atomicMin では最も奥になり、深度の比較では最も手前になって食い違うため） */
+        inline uint32_t DepthBits(float depth)
+        {
+            const uint32_t bits = std::bit_cast<uint32_t>(depth);
+            return bits == 0x80000000u ? 0u : bits;
+        }
+
+        /** @brief 深度と ID から 64bit の値を作る（深度は符号ビットが 0 の有限な float。-0.0 は +0.0 にそろえる。負・NaN は詰められない値として呼び出し側が避ける） */
         inline uint64_t PackKey(float depth, uint32_t id)
         {
-            return (static_cast<uint64_t>(std::bit_cast<uint32_t>(depth)) << KEY_DEPTH_SHIFT) | static_cast<uint64_t>(id);
+            return (static_cast<uint64_t>(DepthBits(depth)) << KEY_DEPTH_SHIFT) | static_cast<uint64_t>(id);
         }
 
         constexpr bool IsKeyEmpty(uint64_t key)

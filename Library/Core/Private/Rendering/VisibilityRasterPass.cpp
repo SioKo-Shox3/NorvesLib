@@ -337,6 +337,28 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool VisibilityMerge::RecordBeginSoftwareWrite(RHI::ICommandList* commandList)
+    {
+        if (!IsReady() || !commandList || !m_KeyBuffer || m_KeyState != RHI::ResourceState::GenericRead)
+        {
+            return false;
+        }
+        commandList->BufferBarrier(m_KeyBuffer, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+        m_KeyState = RHI::ResourceState::UnorderedAccess;
+        return true;
+    }
+
+    bool VisibilityMerge::RecordEndSoftwareWrite(RHI::ICommandList* commandList)
+    {
+        if (!IsReady() || !commandList || !m_KeyBuffer || m_KeyState != RHI::ResourceState::UnorderedAccess)
+        {
+            return false;
+        }
+        commandList->BufferBarrier(m_KeyBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+        m_KeyState = RHI::ResourceState::GenericRead;
+        return true;
+    }
+
     bool VisibilityMerge::RecordMerge(RHI::ICommandList* commandList,
                                       const RHI::RenderPassPtr& renderPass,
                                       const RHI::FramebufferPtr& framebuffer,
