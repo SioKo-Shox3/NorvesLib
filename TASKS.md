@@ -2622,7 +2622,9 @@
 - result: code75ccc722/tree05afdd4e/run37392452079 attempt1 job112040470502。実Windows48CPU/新mapping＋旧11marker、4実capture旧6095byte一致、旧89byte/managed/CLI/metadata/Python/MSVC/CNG/3ZIP全gateを受入。親readonly再実行exit0/最終918file inventory一致、旧受入775file/失敗650file保全。準備checkerの失敗記録は保持。有限のschema非依存対応解決だけを受入れ、JSON/role語彙/階層rest/retarget/CLI/StageB/GPU/Blender/確保故障注入は未受入れ。
 
 ## G2-GR84-COORDINATE-CONVERSION: 明示された軸と単位をdoubleで変換する
-- status: doing
+- status: done
 - done-when: 既存SignedAxisと必須handedness/positive scaleからcanonical +Y上/+Z前/right-handedへのsigned permutationを構築し、t'=sAt、M'=AMA^Tをdoubleのindex/sign置換で評価する。default値は未設定、非finite/overflow/非zeroのzero underflowを拒否しout保持、aliasを許可する。
 - verify: 独立proper/improper literal、全48basisのup/forward/determinant/roundtrip、finite非回転行列、行列のscale非依存、軸衝突/未知enum/不正scale/非finite/overflow/subnormal、alias/late failureのatomic。実helperをstubなしhost通常/O2-NDEBUG/ASan-UBSan、実49CPU/固定4capture/旧89byte・managed gate。
 - stop-when: modelの正面/軸/単位を推測する、反射をquaternionとして扱う、非回転有限行列を正規化/拒否する、root OFFSET処理/nonroot無視/fps/rest/JSON/CLI/StageBを同時実装する。
+
+- result: code67cb7620/tree75d8b4f9/run37398784660 attempt1 job112060978186。実Windows49CPU/新coordinate＋旧12marker、4実capture旧6095byte一致、旧89byte/managed/CLI/metadata/Python/MSVC/CNG/3ZIP全gateを受入。親readonly再実行exit0/最終1320payload inventory一致、旧受入919file/失敗650file保全。実double helperのhost通常/O2-NDEBUG/ASan-UBSan成功とfast-math拒否も別途確認。有限の明示座標変換だけを受入れ、SO3/rest補正/root処理/retarget/JSON/CLI/StageB/GPU/Blenderは未受入れ。

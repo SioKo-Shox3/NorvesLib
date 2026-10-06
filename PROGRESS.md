@@ -9,7 +9,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
 - GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
-- GR83/GR84: GR84のBVH raw/source FK・厳密名前索引・target bind/FK共有・schema非依存joint対応を実Windows CPUで受入済み。座標/rest補正・role入力・clip cookと分離資産ローダは未完。
+- GR83/GR84: GR84のBVH raw/source FK・厳密名前索引・target bind/FK共有・schema非依存joint対応・明示座標変換を実Windows CPUで受入済み。rest補正・role入力・clip cookと分離資産ローダは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
@@ -930,3 +930,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 double座標変換開始。既存AssetImport::SignedAxisとBvhのdouble値型を再利用し、float rowのtarget評価とは分ける。軸/手系/単位は必須引数で明示し、privateな変換値はBuild成功後だけ有効とする。translationのscaleは1回だけ、行列はsigned permutation共役で全finite 3x3を扱い、SO3検査/正規化は後続consumerに残す。モデルの実際の正面やBVHのroot位置規約をこの層で決めない。
 
 - G2/GR84 座標変換の検証準備: 明示signed basis/handednessとpositive scaleによるdouble index/sign変換、全finite行列、alias/atomic、非finite/overflow/zero-underflow拒否を実装。静的2roundで非nearest飽和overflowの指摘を解消し、IEEE binary64/nearest/gradual-underflow・fast-math拒否を追加。round2後の限定追加として、親がMXCSRだけの丸め変更も直接拒否するguardと3mode試験を追加し、guard除去の負例はexit134で検出した。callerのFP設定は変更しない。最終実cpp/testはhost通常/O2-NDEBUG/ASan-UBSan（LSan除外）で全48基底/FP環境反証PASS、fast-math実probeは拒否PASS。stubやCoreはリンクしていない。Python17+19+12+4+7 normal/-O、BOM/EOL/YAML/凍結harness不変を確認。実Windows49CPU/旧4capture/旧全gateは次CIで未確認。
+
+- G2/GR84 明示座標変換受入: code67cb7620/tree75d8b4f9/run37398784660 attempt1 job112060978186。実Windows49CPU/新coordinate＋旧12marker、4実capture旧6095byte一致、旧89byte/managed/CLI/metadata/Python/MSVC/CNG/3ZIP全gateを受入。親readonly再実行exit0/最終1320payload inventory一致、旧受入919file/失敗650file保全。実double helperのhost通常/O2-NDEBUG/ASan-UBSan成功とfast-math拒否も別途確認。有限の明示座標変換だけを受入れ、SO3/rest補正/root処理/retarget/JSON/CLI/StageB/GPU/Blenderは未受入れ。 summary SHA572b7a034132d4414577125a20e202b2388167c01f78651b4b0b94370b91a532、inventory SHA8858e1a4ebd1a3f7c136c89c892ac8c1e115656d63d62d820bd63ca649432f39。cl/Core/Sampler.exeの実byteは非保存でCI hash receiptのみ。次は明示C行列・heading保持・target平行移動保持に限定した1frame回転retargetを、現Samplerで実際に評価できる値へつなぐ。
