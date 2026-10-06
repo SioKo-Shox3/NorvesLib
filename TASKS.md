@@ -926,7 +926,7 @@
 - notes: 2026-10-06 親が足した（VTG6-DEFAULT-ON-SWITCH の評価の残課題）。
 
 ## VTG6-DEFAULT-ON: ビジビリティバッファを既定にし、今のGBufferのラスタを予備にする
-- status: todo
+- status: done
 - done-when: VTG6-DEFAULT-ON-SWITCH・VTG6-DEFAULT-ON-HZB・VTG6-DEFAULT-ON-SKIN-CAPTURE・VTG6-DEFAULT-ON-TILE-VRAM がすべて done になった後の最終確認。Indoor/Outdoor の golden を回し、差が出たら差がこの変更（解析的な微分・三角形の接線の基底）だけによることを確かめて `Docs/RenderingValidation/GoldenBaselines.md` の手順で再承認し、根拠をコミットの本文に書く。起動画面の朝・昼・夕・夜の `-Deterministic` の撮影を開いて確かめ、2パスの遮蔽の統計（`mega_occlusion.occluded`）が戻っていることと、`--visibility-buffer=off`（予備）の撮影が従来どおりであることを `PROGRESS.md` に記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest SkinnedRenderPathContractTest MaterialResourcesTest MegaGeometryResourcesTest RenderingVelocityVulkanTest ViewportSnapshotDebugWiringTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest|GBufferMaterialDescriptorCacheTest|MegaGeometryFrameCommandDebugModeTest|MegaGeometryResourcesTest|RenderingVelocityStaticVulkanTest|RenderingVelocityMotionVulkanTest|RenderingVelocityCameraVulkanTest|RenderingVelocityObjectVulkanTest|RenderingVelocitySkinnedVulkanTest|DebugViewModeStringTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`

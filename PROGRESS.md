@@ -1601,3 +1601,14 @@
 - 持ち越しの (d)（計算スキニングのパイプラインだけが作れない装置）: 前の記録のとおり。`GetFallbackReason` が `SkinningComputeUnavailable` を返し、スキニングの無い場面でも予備（GBuffer の描画）になる（`TestVisibilityResolveFallsBackToGBufferDrawsWhenSkinningComputeUnavailable` が検査済み）。
 - Notes: (1) 編集は python でバイト単位に差し込んだ（BOM・CRLF を保つ。`git diff --numstat` と `--ignore-cr-at-eol` は全ファイルで一致）。 (2) 骨付きのパネルは検証用の置き物で、既定の起動画面・描画の経路は変えていない（`--startup-skinned-probe` が無ければ何も置かない）。 (3) 比較の数値は `scratchpad` の python（PIL・numpy）で、矩形の切り出しは default 視点の目視で決めた。
 - Next: TASKS.md の次の todo。
+
+## 反復 1（run 20261006-105613）: VTG6-DEFAULT-ON（最終確認・done）
+- 結論: ビジビリティバッファ既定（on）の最終確認を通した。コードは変えていない（確認と記録だけ）。golden は Indoor・Outdoor とも基準画像のまま合格（差なし）なので再承認は要らない（Outdoor の再承認は `83134c09` で済み）。
+- 検証（`.harness/runs/20261006-105613/`）: `verify-VTG6-DEFAULT-ON-1-build.txt`（Debug の Game ほか 7 target、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（13/13 Passed。golden Indoor・Outdoor、速度 5 種、RenderGraphCompileTest、SkinnedRenderPathContractTest、MegaGeometryResourcesTest などを含む）、`-3-rwdi-build.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-4-capture.txt`（朝・昼・夕 `-SunElevations 10,45,3` の撮影 result=pass）、`-5-capture-night.txt`（夜 `-Night`、pass）、`-6-capture-off.txt`（予備 `-VisibilityBuffer Off`、pass）。撮影は `.harness/runs/startup-capture/VTG6-DEFAULT-ON`・`-night2`・`-off2`。
+- 2パスの遮蔽（`mega_occlusion`、RelWithDebInfo・-Deterministic の最後の値 pass1 / pass2_tested / pass2_drawn / occluded）: on の default 2672 / 2679 / 0 / 7、near 2888 / 2966 / 10 / 69、low 1755 / 1793 / 3 / 41 で、off（予備）と完全に一致（夜の 3 視点も同じ）。on で `occluded` が戻っている。
+- 起動画面（コンタクトシート `contact-sheet.png`。上段 on の朝・昼・夕・夜、下段 off の朝・昼・夕と low の夜）: 天球・地面・球・岩・小屋・見本の帯・金色の球の反射・発光の球が見え、欠けやずれは無い。on の `VISBUFFER_RESOLVE_TILES` は撮影ごとに出て `VISBUFFER_FALLBACK` は 0（予備にならずビジビリティバッファで描いている）。
+- 予備（`--visibility-buffer=off`）が従来どおりであること: 今回の off の撮影 9 枚は、前の off の撮影（`VTG6-DEFAULT-ON-off`）と PSNR 96.98〜112.55 dB・最大差 4 以下で一致し、`VISBUFFER_RESOLVE_TILES`・`VISBUFFER_FALLBACK` はどちらも 0（ID のラスタ・解決が走らない）。夜の on も前の記録（`VTG6-DEFAULT-ON-night`）と PSNR 81.74〜105.56 dB・最大差 1 以下。
+- on と off の差（今回の撮影）: 朝・昼・夕の 9 枚で PSNR 48.86〜56.80 dB・最大チャンネル差 17〜49。解析的な微分・三角形の接線の基底による手前の石畳の差で、`VTG6-DEFAULT-ON-SWITCH` の記録と同じ場所・同じ程度。golden の閾値の内側。
+- 持ち越し (a)〜(f) の扱い: (a)(c)(e) は `VTG6-DEFAULT-ON-SWITCH`、(b) は `VTG6-DEFAULT-ON-TILE-VRAM`（最悪の大きさのまま使う。上限を記録）、(d) は `VTG6-DEFAULT-ON-SKIN-CAPTURE`（保守側の挙動として記録）で処理済み。
+- Notes: (1) Git Bash は `/m:1` をパスに変換して MSB1008 になるので、ビルドは PowerShell から走らせた（`-1-build.txt` は PowerShell で取り直した）。 (2) TASKS.md は CRLF を保って status だけ書き換えた。
+- Next: TASKS.md の次の todo（VTG6-ACCEPT）。
