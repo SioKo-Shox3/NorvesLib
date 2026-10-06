@@ -257,6 +257,7 @@ set(PRIVATE_SOURCES
     Private/Resource/FontAtlas.cpp
     Private/Resource/ModelAssetLoader.cpp
     Private/Resource/SkeletalAssetLoader.cpp
+    Private/Resource/SkeletalAssetPublication.cpp
     Private/Resource/ModelAssetRuntime.cpp
     Private/Resource/ModelAsyncLoadQueue.cpp
     Private/Resource/ModelHandleCache.cpp

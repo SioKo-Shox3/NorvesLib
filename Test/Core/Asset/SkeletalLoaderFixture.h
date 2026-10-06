@@ -28,16 +28,16 @@ namespace NorvesLib::Tests::SkeletalLoaderFixture
         constexpr size_t StringOffset = 848;
         constexpr size_t StringSize = 13;
         constexpr size_t FileSize = 861;
-        constexpr uint8_t Magic[8] = {'N', 'V', 'S', 'K', 'E', 'L', 'v', '0'};
+        inline constexpr uint8_t Magic[8] = {'N', 'V', 'S', 'K', 'E', 'L', 'v', '0'};
     } // namespace GoldenWire
 
-    void WriteLe16(ByteArray& bytes, size_t offset, uint16_t value)
+    inline void WriteLe16(ByteArray& bytes, size_t offset, uint16_t value)
     {
         bytes[offset + 0] = static_cast<uint8_t>(value & 0xffu);
         bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
     }
 
-    void WriteLe32(ByteArray& bytes, size_t offset, uint32_t value)
+    inline void WriteLe32(ByteArray& bytes, size_t offset, uint32_t value)
     {
         bytes[offset + 0] = static_cast<uint8_t>(value & 0xffu);
         bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
@@ -45,18 +45,18 @@ namespace NorvesLib::Tests::SkeletalLoaderFixture
         bytes[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xffu);
     }
 
-    void WriteLe64(ByteArray& bytes, size_t offset, uint64_t value)
+    inline void WriteLe64(ByteArray& bytes, size_t offset, uint64_t value)
     {
         WriteLe32(bytes, offset, static_cast<uint32_t>(value & 0xffffffffull));
         WriteLe32(bytes, offset + 4, static_cast<uint32_t>((value >> 32) & 0xffffffffull));
     }
 
-    void WriteFloat(ByteArray& bytes, size_t offset, float value)
+    inline void WriteFloat(ByteArray& bytes, size_t offset, float value)
     {
         WriteLe32(bytes, offset, std::bit_cast<uint32_t>(value));
     }
 
-    void WriteVertex(ByteArray& bytes, size_t offset, float x, float y, float u, float v, uint32_t joint0,
+    inline void WriteVertex(ByteArray& bytes, size_t offset, float x, float y, float u, float v, uint32_t joint0,
                      uint32_t joint1, float weight0, float weight1)
     {
         WriteFloat(bytes, offset + 0, x);
@@ -77,7 +77,7 @@ namespace NorvesLib::Tests::SkeletalLoaderFixture
         WriteFloat(bytes, offset + 60, 0.0f);
     }
 
-    void WriteMatrix(ByteArray& bytes, size_t offset, float inverseY)
+    inline void WriteMatrix(ByteArray& bytes, size_t offset, float inverseY)
     {
         WriteFloat(bytes, offset + 0 * sizeof(float), 1.0f);
         WriteFloat(bytes, offset + 5 * sizeof(float), 1.0f);
@@ -86,7 +86,7 @@ namespace NorvesLib::Tests::SkeletalLoaderFixture
         WriteFloat(bytes, offset + 15 * sizeof(float), 1.0f);
     }
 
-    void WriteSample(ByteArray& bytes, size_t offset, float time, float x, float y, float z, float w)
+    inline void WriteSample(ByteArray& bytes, size_t offset, float time, float x, float y, float z, float w)
     {
         WriteFloat(bytes, offset + 0, time);
         WriteFloat(bytes, offset + 4, x);
@@ -95,7 +95,7 @@ namespace NorvesLib::Tests::SkeletalLoaderFixture
         WriteFloat(bytes, offset + 16, w);
     }
 
-    ByteArray BuildGoldenSkeletal()
+    inline ByteArray BuildGoldenSkeletal()
     {
         ByteArray bytes(GoldenWire::FileSize, 0);
         std::memcpy(bytes.data(), GoldenWire::Magic, sizeof(GoldenWire::Magic));
@@ -175,7 +175,7 @@ namespace NorvesLib::Tests::SkeletalLoaderFixture
         return bytes;
     }
 
-    void RecomputeSkeletalHash(ByteArray& bytes)
+    inline void RecomputeSkeletalHash(ByteArray& bytes)
     {
         const uint64_t hash =
             bytes[14] == 0 ? Asset::ComputeCookedSkeletalPayloadHash(bytes.data() + 256, bytes.size() - 256)
@@ -186,13 +186,13 @@ namespace NorvesLib::Tests::SkeletalLoaderFixture
         WriteLe64(bytes, 160, hash);
     }
 
-    Asset::AssetBlob MakeBlob(const ByteArray& bytes)
+    inline Asset::AssetBlob MakeBlob(const ByteArray& bytes)
     {
         return Asset::AssetBlob::CopyBytes(Container::Span<const uint8_t>(bytes.data(), bytes.size()), "memory.nvskel");
     }
 
     // writerと独立した0.2配置。2clipは同joint/pathを別々に所有する。
-    ByteArray BuildGoldenSkeletalV02()
+    inline ByteArray BuildGoldenSkeletalV02()
     {
         const auto old = BuildGoldenSkeletal();
         ByteArray bytes(1436, 0);
@@ -257,7 +257,7 @@ namespace NorvesLib::Tests::SkeletalLoaderFixture
         return bytes;
     }
 
-    ByteArray BuildThreeClips()
+    inline ByteArray BuildThreeClips()
     {
         const auto old = BuildGoldenSkeletalV02();
         ByteArray bytes(1664, 0);
@@ -297,7 +297,7 @@ namespace NorvesLib::Tests::SkeletalLoaderFixture
         return bytes;
     }
 
-    ByteArray Package(const ByteArray& payload, uint32_t type, uint64_t& hash)
+    inline ByteArray Package(const ByteArray& payload, uint32_t type, uint64_t& hash)
     {
         namespace W = Asset::AssetPackageFormatV1;
         ByteArray bytes(168 + payload.size(), 0);
@@ -329,7 +329,7 @@ namespace NorvesLib::Tests::SkeletalLoaderFixture
         }
         return bytes;
     }
-    Container::String CoreText(Container::AnsiStringView text)
+    inline Container::String CoreText(Container::AnsiStringView text)
     {
         using Char = Container::String::value_type;
         const Container::Span<const uint8_t> bytes{reinterpret_cast<const uint8_t*>(text.data()), text.size()};

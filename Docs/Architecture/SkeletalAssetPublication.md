@@ -1,0 +1,33 @@
+# 骨格bundleの一括公開（GR83-P2a）
+
+P1の統合cooked loaderをRegistryの共有寿命へつなぐ、owner-thread専用のprivate境界。非同期queue、完了delegate、製品GameThread配線、M9、GPU、Stage Bは追加しない。
+
+## Prepare / Commit / Find
+
+PrepareSkeletalPublicationはP1組立を呼び、Registry pointer・session epoch・事前owner ID・元論理URI・未登録の完成bundleをmove-only prepared値で所有する。外部の裸asset pointerを任意のRegistryへ持ち込む入口ではない。作成途中と失敗では旧preparedを保持する。
+
+Registryは初期化し直すたびにprivate epochを進める。元のResourceId counterを1へ戻す挙動は維持し、旧sessionのpreparedをCommit前に拒否する。epoch overflow時は新Initializeを拒否する。Registryそのものの借用寿命とInitialize/Shutdownの排他はcallerの責任で、任意の並行破棄・dangling pointerを救済する仕組みではない。
+
+CommitSkeletalPublicationは完成bundleのmesh・skeleton・全clip・aggregateを同時に登録する。N clipなら登録数はN+3、cache pathはaggregateだけに1件。子はID/typed handleで登録し、全Resourceの元URIをcache keyへ書き換えない。旧GetMemorySizeの和で各Resourceを一度ずつ計上する。完全なRSS会計ではない。
+
+FindPublishedSkeletalAssetはcache keyと元論理URIを別に照合し、同一aggregateと全child typed handlesを返す。clip名はcache keyに含めず、GetClip(name)で選ぶ。空/不在/重複clip名の旧意味は維持する。keyが同じでもURIや実child対応が異なる場合は拒否し、既存を上書きしない。Identityはhashだけで等値比較するため、internされたGetViewと要求の実文字列も検査する。cacheの別snapshot/domain/世代keyの発行は後続runtimeが担う。
+
+## 全部またはゼロの公開
+
+既存public Registerを逐次呼ばず、4型のpoolをshadowへcopyする。既存slot index・generation・free-list・ID/path map・Resource参照を保持し、shadowだけへ新bundleを登録する。名前、結果handle配列、全欠損型の外側map nodeを準備してから、mutex内で4つのunique pointerをnoexcept swapする。このswap列に確保、callback、fault probe、Resource::Unloadを置かない。計測scopeもlive変更前に終了する。
+
+unordered_mapのrehash後も有効なmapped値へのpointerを保持する。準備失敗は今回追加したnull placeholderだけを除き、既存poolを戻すcopyやRegistry全体のGCを使わない。旧poolの破棄にもUnloadAllを呼ばない。失敗時は旧out、件数、path、records、会計、既存handleとResource状態を保持する。intern文字列、container容量、発行IDの欠番まで巻き戻すとは表現しない。
+
+同keyに有効なbundleがあればAcquireし、件数を増やさない。利用者は返されたaggregate/必要な子を強参照で保持する。aggregateの利用者が消えても、外部が保持するclipだけはRegistryのhandle/記録/会計に残る。pool順が不定なので、全解放後のGCは2sweepでfixpointを確認する。旧slot再利用ではgenerationとResourceIdにより旧handleを拒否する。
+
+## 費用と有限予算
+
+cold公開ごとに既存4型poolのメタデータをcopyする。頂点/keyframe本文を複製するわけではないが、追加1件あたりO(既存pool規模)、K件の連続追加は累積O(K²)になり得る。これは正しさを先に固定する初期実装であり、高スループットの完成形とは扱わない。
+
+既定上限はbundle1024clip、key4096 UTF8 bytes、最終slot合計65536、最終ID/path entry合計262144、copy元map bucket合計1048576。空slot/free-listを含めて計算し、copied slot/ID/path/free-index/bucket件数をreportする。Callerが調整できるCPU metadata予算であり、RSSや時間の厳密な上限ではない。既存pool本体以外の一時配列やintern pool、標準containerの増設規則もある。
+
+## 検証境界
+
+独立MEMBERで、3clipの+6/+1登録と全handle/会計、空/既存/free-list/混在pool、各clone/register/placeholder/commit直前の通常失敗・標準例外と再試行、外側map rehash、owner/session/予算/cache対応、読取threadの全-or-zero観測、外部clip保持・GC・stale handle・mesh lease寿命を検証する。故障probeで投げた例外の確認は、実allocator全域のOOM走査とは別である。
+
+旧public Register/CollectGarbageの一般例外安全性を改善済みとは主張しない。初期化や寿命を守らないcaller、IdentityPoolの利用中clear、一般Resource DAG transaction、別path SkeletonId共有は対象外。async runtimeではPrepare後にCancel/Closeを確認してからCommitし、consumerへの完了delegateをowner側で配送する作業が残る。

@@ -2676,3 +2676,9 @@
 - stop-when: GR84の回帰を新変更で隠す、旧parser/writer/128profileを緩める、clip0 fallback、自動Cや作者rest/split/256を混ぜる、未登録bundleをasync/cache/GC済みと扱う、M9/Game/GPU配線まで完了とする。CPU owner-thread契約と未実装の製品GameThread接続を区別する。
 
 - result: codee29a2d33/tree7005c3d9/run37458778661 attempt1 job112252798210。初回768e247aのtest C2678と、f78b9ec7の合成manifest必須項目漏れをtest/PROGRESSだけで修正し、productionは初回から不変。Release CPU55/旧20＋loader marker、Debugのloader/Profile markerと3stage成功/失敗sink配送を確認。旧54source・4固定6095byte capture・89出力・25+15CLI・12metadata・17/29child退出・GR84別58process/125fileartifact・MSVC/PE-CNG/SHELL32を維持。12checker normal/-Oのreceipt/stdout一致・stderr空、親readonly replay exit0・470payload inventory一致。latest2paths/Library0と累積11paths/Library4を区別する。2失敗runは別々の有限archiveで保全。受入れは統合cooked-only所有CPU解析と明示owner上の未登録全clip組立まで。製品GameThread/Registry一括公開/async/cache/M9/StageB/GPUは未接続。
+
+## G2-GR83-SKELETAL-BUNDLE-PUBLICATION: 骨格bundleをRegistryへ一括公開する
+- status: doing
+- done-when: P1組立を呼ぶmove-only prepared値にRegistry session/ownerと完成bundleを所有し、4型shadow poolを経由して子＋aggregateを全部またはゼロで登録する。子はIDのみ、cache pathはaggregateのみ。成功までoutと既存slot/世代/path/handle/count/recordsを保持する。正規key＋元URI・実child handlesを検査するcache Acquireを用意する。
+- verify: 3clipでresource+6/path+1/各typed handle/既存memory和、空/既存pool/free-list/欠損型placeholder各段の拒否・例外と再試行、読取側の全-or-zero観測、session再初期化/owner/default/invalid/key衝突拒否、同key同一参照、外部clip保持と2sweep GC/stale handle、lease保持。有限clone予算とO(既存pool)費用を明示。旧Registry/Metadata/SkeletalResourceLifetime/SkeletalAssetResource/P1と既存CLI・固定captureを検証する。
+- stop-when: public Registerの例外安全を仮定する、GCで失敗rollbackする、子handle/会計を黙って捨てる、commit列で確保/callback/Unloadする、snapshot cloneを高スループット実装と称する、async配送/製品loop/M9/StageB/GPUへ広げる。Registry寿命・Initialize/Shutdownの排他はcaller契約とし任意並行破棄を保証しない。
