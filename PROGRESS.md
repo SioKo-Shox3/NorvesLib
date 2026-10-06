@@ -1640,3 +1640,20 @@
 - 検証（`.harness/runs/20261006-120952/`）: `verify-VTG7-RASTER-TIMING-1-rwdi-build.txt`・`-5-final-rwdi-build.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-6-debug-build.txt`（Debug の Game・RenderGraphCompileTest・RenderingGoldenImageTest、BUILD_EXIT_CODE=0）、`-7-ctest.txt`（RenderGraphCompileTest・RenderingGoldenIndoorVulkanTest・RenderingGoldenOutdoorVulkanTest が 3/3 Passed）。
 - Notes: (1) `CaptureStartupScene.ps1` は PowerShell 7 では `System.Drawing` の型が解決できず（`Add-Type` の CS1069）、`powershell.exe`（Windows PowerShell 5）から走らせた。 (2) シェーダーは実行時にソースからコンパイルされるので、(ii) は再ビルドなしで測れた。 (3) 新規ファイルは UTF-8 + BOM + CRLF、`git diff --numstat` と `--ignore-cr-at-eol` は一致。
 - Next: TASKS.md の次の todo（VTG7-RECORDS-INDIRECT）。
+
+## 反復 1（run 20261006-122235）: VTG7-RECORDS-INDIRECT（done）
+- 内容: (1) 描画の記録の compute の dispatch を間接にした。`visbuffer_records_args.comp`（1 スレッド）が、カリングが積んだ区間ごとのコマンドの数（`CountBuffer`、区間の最大数で頭打ち）から `ceil(数/64)` を数え、全区間をまたぐ 1 本のワークグループの列の長さ（x は 65535 で折り返し y へ）と区間ごとの先頭の番号を `VisBuffer_RecordArgs`（`StorageBuffer | IndirectBuffer`）へ書く。`visbuffer_records.comp` はグループの番号から区間を二分探索で引き、`ICommandList::DispatchIndirect` で走る。書く記録の内容・番号（`1 + commandIndex`）は変えていない。ディスクリプタセットは両方で同じ（binding 8 を足した）。
+  (2) 間接 dispatch だけでは縮まなかった（下の測定）ので、本当の主因である記録の表のメモリを直した。記録の表（`VisBuffer_DrawRecords`）はホスト可視（host-visible + coherent）で作られ、NVIDIA ではシステムメモリに置かれて、計算の書き込みが PCIe 越しになっていた（1 フレームに約 100 万件 × 64 B）。表を GPU 専用メモリ（`StorageBuffer | TransferDst`）にし、ホストが書く記録（手続き・スキニング）はホスト可視の置き場 `VisBuffer_RecordUpload`（`TransferSrc`）へ書いて、`RecordCpuRecordUpload` が GPU のコピー（CopyDest → GenericRead のバリア付き）で表へ渡す。コピーは render pass の外（2 パスの遮蔽では 1 回目の描画の前、1 回の判定では記録を書く計算の前）。
+- 測定（RelWithDebInfo、`-GpuTimingFrames 300`、窓 240 フレームの中央値 ms。`.harness/runs/startup-capture/VTG7-RECORDS-INDIRECT-{stress-on,start-on}`、`VTG7-RASTER-TIMING-stress-on`。`verify-VTG7-RECORDS-INDIRECT-10/12/17/18-*.txt`）。負荷モード 300 個（`--stress-mega-instances=300`）:
+  - 既定: 元（RASTER-TIMING）`VisRasterRecords` 3.601・フレーム 10.449 → 間接 dispatch だけ 3.63・10.592（変化なし）→ 表を GPU 専用にして **0.024・6.805**（`VisibilityRasterPass` 6.167 → 2.582、`MegaGeometryDraw1` 1.652 → 1.667 で変わらず）。off のフレームは 6.314 なので、on の増加分（約 4.1 ms）はほぼ消えた。
+  - 近接: 間接 dispatch だけ 2.621・8.648 → **0.020・6.008**。低角度: 間接 dispatch だけ 2.585・8.392 → **0.020・5.818**。（近接・低角度の元のコードでの値は取っていない。間接 dispatch だけの値は既定で元と同じだったので、元もほぼ同じとみなせる）
+  - 起動画面（負荷なし）: `VisRasterRecords` 0.033 → 0.014（既定）・0.015（近接）・0.016（低角度）、フレーム GPU 3.051 → 3.073 / 3.696 / 3.485（誤差の範囲）。
+  - 一時的な切り分け（記録の表だけ GPU 専用にして画は壊れてよい形）で、間接 dispatch の有無と無関係に同じ縮み方を確かめてから、コピー付きの正式な形にした。
+- 起動画面の撮影（`-Deterministic`、朝・昼・夕 × 3 視点、直前の受入れの `VTG6-ACCEPT` と `-CompareDeterministicWith`。`verify-VTG7-RECORDS-INDIRECT-16-capture.txt`）: 9 枚とも PSNR 80.03 dB 以上（7 枚は 100 dB・最大差 1、low-sun10 が 80.03 dB・最大差 2、low-sun45 が 97.50 dB・最大差 3）。`default-sun45.png` を開いて、天球・地面・球・岩・小屋が起動画面どおりに見えることを確かめた。間接 dispatch だけの版の撮影は near-sun10 が 65.3 dB（最大差 5）で、表を GPU 専用にした後は 100 dB で、どちらも 45 dB 以上。`VISBUFFER_FALLBACK`・`VIS_RASTER_UNSUPPORTED` のログなし（負荷モードのログも）。
+- テスト: `RenderGraphCompileTest` を、記録の計算が「引数を作る dispatch（D）→ 間接 dispatch（J）」になった並び・間接 dispatch の引数（`VisBuffer_RecordArgs` の先頭）・間接 dispatch の数（材質ごとの解決の前に 1 回増える）・ホストが書く記録が置き場へ書かれ、表（GPU 専用）へコピーされる範囲（先頭 0・大きさ・書き込み先 `(1 + MegaCommandSlots) × 64 B`）に合わせて直した。`VisibilityResolveVulkanTest`・`MaterialTileClassifyVulkanTest`・golden 2 本は変更なしで通る。
+- 検証（`.harness/runs/20261006-122235/`）: `verify-VTG7-RECORDS-INDIRECT-13-debug-build.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest・RenderingGoldenImageTest、BUILD_EXIT_CODE=0）、`-14-ctest.txt`（RenderGraphCompileTest・VisibilityResolveVulkanTest・MaterialTileClassifyVulkanTest・RenderingGoldenIndoorVulkanTest・RenderingGoldenOutdoorVulkanTest が 5/5 Passed）、`-15-rwdi-build.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-16-capture.txt`（result=pass）。
+- Notes:
+  - 負荷モードで記録の表は `NextPowerOfTwo(約 160 万)` × 64 B ≈ 134 MB を飛行中のフレーム枠の数だけ GPU 専用メモリに取る（前はホストのメモリ）。起動画面では小さい。
+  - `DispatchIndirect` をコマンドリストが断ると（既定の実装。Vulkan は実装済み）記録が書かれない。Vulkan 以外のコマンドリストを足すときは間接 dispatch の実装が要る。
+  - 残る on の増加分の主因は、`gl_PrimitiveID` を読む ID のフラグメント（`MegaGeometryDraw1` で約 0.66 ms。VTG7-RASTER-TIMING の記録）。
+  - Next: TASKS.md の次の todo（VTG7-INT64-ATOMICS）。

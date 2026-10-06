@@ -42,7 +42,9 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DebugParamsBytes = 16;                  // vec4 params
         constexpr uint32_t IndirectCommandBytes = static_cast<uint32_t>(sizeof(MegaGeometry::DrawIndexedIndirectCommand));
         constexpr uint32_t RecordBytes = static_cast<uint32_t>(sizeof(VisibilityBuffer::DrawRecord));
-        constexpr uint32_t RecordThreadsPerGroup = 64;
+        // 間接 dispatch の引数（VkDispatchIndirectCommand 3 語 + ワークグループの総数 1 語）の後ろに、区間の表の添え字ごとの
+        // 先頭のワークグループの番号が続く（最後の 1 語は総数）。visbuffer_records_args.comp が書く
+        constexpr uint32_t RecordArgsHeaderWords = 4;
 
         uint32_t ClampBindSize(uint64_t size)
         {
@@ -85,7 +87,8 @@ namespace NorvesLib::Core::Rendering
             return desc;
         }
 
-        // 記録を書く計算のディスクリプタセット（visbuffer_records.comp の binding 0〜7）
+        // 記録を書く計算のディスクリプタセット（visbuffer_records.comp の binding 0〜8。引数を作る計算
+        // visbuffer_records_args.comp も同じ組を使う。binding 8 は引数を書く側が RW、記録を書く側が読み取り）
         RHI::DescriptorSetDesc MakeRecordDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
@@ -96,6 +99,7 @@ namespace NorvesLib::Core::Rendering
             }
             AddBinding(desc, 6, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute);
             AddBinding(desc, 7, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute);
+            AddBinding(desc, 8, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute);
             return desc;
         }
 
@@ -169,8 +173,9 @@ namespace NorvesLib::Core::Rendering
         m_SkinnedVertexShader = context.ShaderMgr->LoadShader("visbuffer_skinned.vert", RHI::ShaderStage::Vertex);
         m_FragmentShader = context.ShaderMgr->LoadShader("visbuffer.frag", RHI::ShaderStage::Pixel);
         m_RecordsShader = context.ShaderMgr->LoadShader("visbuffer_records.comp", RHI::ShaderStage::Compute);
+        m_RecordArgsShader = context.ShaderMgr->LoadShader("visbuffer_records_args.comp", RHI::ShaderStage::Compute);
         if (!m_MegaVertexShader || !m_MeshVertexShader || !m_SkinnedVertexShader || !m_FragmentShader ||
-            !m_RecordsShader)
+            !m_RecordsShader || !m_RecordArgsShader)
         {
             NORVES_LOG_WARNING("VisibilityRasterPass", "ビジビリティバッファのシェーダーの読み込みに失敗。このパスは何もしません");
             return true;
@@ -182,6 +187,7 @@ namespace NorvesLib::Core::Rendering
             m_MeshPipeline.reset();
             m_SkinnedPipeline.reset();
             m_RecordsPipeline.reset();
+            m_RecordArgsPipeline.reset();
             m_MegaWireframePipeline.reset();
             m_MeshWireframePipeline.reset();
             m_SkinnedWireframePipeline.reset();
@@ -193,7 +199,7 @@ namespace NorvesLib::Core::Rendering
     bool VisibilityRasterPass::IsDrawReady(DebugViewMode mode) const
     {
         const bool bFillReady = m_bInitialized && m_RenderPass && m_MegaPipeline && m_MeshPipeline &&
-                                m_SkinnedPipeline && m_RecordsPipeline;
+                                m_SkinnedPipeline && m_RecordsPipeline && m_RecordArgsPipeline;
         return bFillReady && (mode != DebugViewMode::Wireframe || HasWireframePipelines());
     }
 
@@ -217,6 +223,7 @@ namespace NorvesLib::Core::Rendering
         m_MeshPipeline.reset();
         m_SkinnedPipeline.reset();
         m_RecordsPipeline.reset();
+        m_RecordArgsPipeline.reset();
         m_MegaWireframePipeline.reset();
         m_MeshWireframePipeline.reset();
         m_SkinnedWireframePipeline.reset();
@@ -225,6 +232,7 @@ namespace NorvesLib::Core::Rendering
         m_SkinnedVertexShader.reset();
         m_FragmentShader.reset();
         m_RecordsShader.reset();
+        m_RecordArgsShader.reset();
         m_Framebuffer.reset();
         m_SecondFramebuffer.reset();
         m_SecondRenderPass.reset();
@@ -387,7 +395,15 @@ namespace NorvesLib::Core::Rendering
         computeDesc.computeShader = m_RecordsShader;
         computeDesc.descriptorSetLayouts.push_back(MakeRecordDescriptorSetDesc());
         m_RecordsPipeline = m_Device->CreateComputePipeline(computeDesc);
-        return m_RecordsPipeline != nullptr;
+        if (!m_RecordsPipeline)
+        {
+            return false;
+        }
+
+        // 引数を作る計算は、記録を書く計算と同じディスクリプタセットの形を使う
+        computeDesc.computeShader = m_RecordArgsShader;
+        m_RecordArgsPipeline = m_Device->CreateComputePipeline(computeDesc);
+        return m_RecordArgsPipeline != nullptr;
     }
 
     bool VisibilityRasterPass::EnsureFramebuffer(const RHI::TexturePtr& idTexture, const RHI::TexturePtr& depthTexture)
@@ -421,6 +437,8 @@ namespace NorvesLib::Core::Rendering
     bool VisibilityRasterPass::EnsureFrameSlot(FrameSlot& slot,
                                                uint32_t recordCapacity,
                                                uint32_t sectionCount,
+                                               uint32_t sectionSlotCount,
+                                               uint32_t cpuRecordCount,
                                                uint32_t materialCount)
     {
         if (!m_Device)
@@ -433,9 +451,10 @@ namespace NorvesLib::Core::Rendering
         if (!slot.RecordTable || slot.RecordCapacity < recordCapacity)
         {
             const uint32_t capacity = std::max(64u, NextPowerOfTwo(recordCapacity));
+            // GPU 専用のメモリ（ホストが書く記録は RecordUpload からのコピーで入れる）
             RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * RecordBytes,
-                                 RHI::ResourceUsage::StorageBuffer,
-                                 true,
+                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                 false,
                                  "VisBuffer_DrawRecords");
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
             if (!buffer)
@@ -445,6 +464,22 @@ namespace NorvesLib::Core::Rendering
             slot.RecordTable = buffer;
             slot.RecordCapacity = capacity;
             slot.RecordState = RHI::ResourceState::Common;
+        }
+
+        if (cpuRecordCount > 0 && (!slot.RecordUpload || slot.RecordUploadCapacity < cpuRecordCount))
+        {
+            const uint32_t capacity = std::max(16u, NextPowerOfTwo(cpuRecordCount));
+            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * RecordBytes,
+                                 RHI::ResourceUsage::TransferSrc,
+                                 true,
+                                 "VisBuffer_RecordUpload");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.RecordUpload = buffer;
+            slot.RecordUploadCapacity = capacity;
         }
 
         if (!slot.SectionAddresses || slot.SectionAddressCapacity < sectionCount)
@@ -477,6 +512,24 @@ namespace NorvesLib::Core::Rendering
             }
             slot.SectionMaterials = buffer;
             slot.SectionMaterialCapacity = capacity;
+        }
+
+        if (!slot.RecordArgs || slot.RecordArgsCapacity < sectionSlotCount)
+        {
+            const uint32_t capacity = std::max(16u, NextPowerOfTwo(sectionSlotCount));
+            // GPU だけが書き、記録を書く計算の間接 dispatch の引数として読む
+            RHI::BufferDesc desc(static_cast<uint64_t>(RecordArgsHeaderWords + capacity + 1u) * sizeof(uint32_t),
+                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
+                                 false,
+                                 "VisBuffer_RecordArgs");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.RecordArgs = buffer;
+            slot.RecordArgsCapacity = capacity;
+            slot.RecordArgsState = RHI::ResourceState::Common;
         }
 
         if (!slot.MaterialTable || slot.MaterialTableCapacity < materialCount)
@@ -522,7 +575,7 @@ namespace NorvesLib::Core::Rendering
             slot.RecordSet = m_Device->CreateDescriptorSet(MakeRecordDescriptorSetDesc());
         }
         return slot.FrameUniform && slot.RecordParams && slot.MegaSet && slot.MeshSet && slot.SkinnedSet &&
-               slot.RecordSet;
+               slot.RecordSet && slot.RecordArgs;
     }
 
     void VisibilityRasterPass::Declare(RenderGraphBuilder& builder)
@@ -825,6 +878,8 @@ namespace NorvesLib::Core::Rendering
         if (!EnsureFrameSlot(slot,
                              totalSlots,
                              bHasMegaDraw ? plan->SectionCount : 1u,
+                             bHasMegaDraw ? plan->SectionCount * plan->PassCount : 1u,
+                             static_cast<uint32_t>(cpuRecords.size()),
                              static_cast<uint32_t>(materialEntries.size())))
         {
             NORVES_LOG_ERROR("VisibilityRasterPass", "ビジビリティバッファの資源を用意できませんでした");
@@ -841,12 +896,16 @@ namespace NorvesLib::Core::Rendering
             slot.FrameUniform->Update(frameData, sizeof(frameData));
         }
 
-        // ホストが書く記録（手続き・スキニング）。MegaGeometry の範囲の後ろに置く
+        // ホストが書く記録（手続き・スキニング）。MegaGeometry の範囲の後ろに置く。ホスト可視の置き場へ書き、
+        // 記録の表（GPU 専用）へは GPU がコピーする（RecordCpuRecordUpload）
+        m_Work.UploadBytes = 0;
+        m_Work.UploadDstOffset = 0;
         if (!cpuRecords.empty())
         {
-            slot.RecordTable->Update(cpuRecords.data(),
-                                     static_cast<uint64_t>(cpuRecords.size()) * RecordBytes,
-                                     static_cast<uint64_t>(recordBase) * RecordBytes);
+            const uint64_t uploadBytes = static_cast<uint64_t>(cpuRecords.size()) * RecordBytes;
+            slot.RecordUpload->Update(cpuRecords.data(), uploadBytes, 0);
+            m_Work.UploadBytes = uploadBytes;
+            m_Work.UploadDstOffset = static_cast<uint64_t>(recordBase) * RecordBytes;
         }
         const uint64_t tableBytes = static_cast<uint64_t>(totalSlots) * RecordBytes;
         m_Work.TableBytes = tableBytes;
@@ -890,6 +949,7 @@ namespace NorvesLib::Core::Rendering
             slot.RecordSet->BindStorageBuffer(5, slot.SectionAddresses, 0, ClampBindSize(addresses.size() * sizeof(uint32_t)));
             slot.RecordSet->BindStorageBuffer(6, slot.RecordTable, 0, ClampBindSize(tableBytes));
             slot.RecordSet->BindStorageBuffer(7, slot.SectionMaterials, 0, ClampBindSize(sectionMaterials.size() * sizeof(uint32_t)));
+            slot.RecordSet->BindStorageBuffer(8, slot.RecordArgs, 0, ClampBindSize(slot.RecordArgs->GetSize()));
             slot.RecordSet->Update();
 
             m_Work.MegaInstanceBuffer = plan->InstanceBuffer;
@@ -934,6 +994,22 @@ namespace NorvesLib::Core::Rendering
         commandList->EndRenderPass();
     }
 
+    bool VisibilityRasterPass::RecordCpuRecordUpload()
+    {
+        if (m_Work.UploadBytes == 0)
+        {
+            return false;
+        }
+
+        RHI::ICommandList* commandList = m_Work.CommandList;
+        FrameSlot& slot = *m_Work.Slot;
+        commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::CopyDest);
+        commandList->CopyBuffer(slot.RecordUpload, slot.RecordTable, m_Work.UploadBytes, 0, m_Work.UploadDstOffset);
+        commandList->BufferBarrier(slot.RecordTable, RHI::ResourceState::CopyDest, RHI::ResourceState::GenericRead);
+        slot.RecordState = RHI::ResourceState::GenericRead;
+        return true;
+    }
+
     void VisibilityRasterPass::RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan& plan)
     {
         RHI::ICommandList* commandList = m_Work.CommandList;
@@ -945,17 +1021,19 @@ namespace NorvesLib::Core::Rendering
         commandList->BufferBarrier(plan.CountBuffer, m_Work.IndirectState, RHI::ResourceState::GenericRead);
         m_Work.IndirectState = RHI::ResourceState::GenericRead;
 
-        uint32_t maxCapacity = 0;
-        for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan.Sections)
-        {
-            maxCapacity = std::max(maxCapacity, section.Capacity);
-        }
+        // 区間ごとに積まれたコマンドの数から、記録を書く計算の dispatch の引数を作る（1 スレッドの小さな計算）
+        commandList->BufferBarrier(slot.RecordArgs, slot.RecordArgsState, RHI::ResourceState::UnorderedAccess);
+        commandList->SetPipeline(m_RecordArgsPipeline);
+        commandList->SetDescriptorSet(slot.RecordSet, 0);
+        commandList->Dispatch(1u, 1u, 1u);
+        commandList->BufferBarrier(slot.RecordArgs, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+        slot.RecordArgsState = RHI::ResourceState::GenericRead;
 
+        // 積まれたコマンドの数だけのワークグループで記録を書く
         commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::UnorderedAccess);
         commandList->SetPipeline(m_RecordsPipeline);
         commandList->SetDescriptorSet(slot.RecordSet, 0);
-        const uint32_t groupsX = std::max(1u, std::min((maxCapacity + RecordThreadsPerGroup - 1u) / RecordThreadsPerGroup, 65535u));
-        commandList->Dispatch(groupsX, std::max(1u, plan.SectionCount * plan.PassCount), 1u);
+        commandList->DispatchIndirect(slot.RecordArgs, 0);
         commandList->BufferBarrier(slot.RecordTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
         slot.RecordState = RHI::ResourceState::GenericRead;
     }
@@ -1065,9 +1143,13 @@ namespace NorvesLib::Core::Rendering
         RHI::ICommandList* commandList = m_Work.CommandList;
         FrameSlot& slot = *m_Work.Slot;
 
-        // ホストが書いた記録（手続き・スキニング）を頂点シェーダーが読む。MegaGeometry の範囲は 2 パス目の後に計算が書く
-        commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::GenericRead);
-        slot.RecordState = RHI::ResourceState::GenericRead;
+        // ホストが書いた記録（手続き・スキニング）を表へコピーし、頂点シェーダーが読めるようにする。
+        // MegaGeometry の範囲は 2 パス目の後に計算が書く
+        if (!RecordCpuRecordUpload())
+        {
+            commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::GenericRead);
+            slot.RecordState = RHI::ResourceState::GenericRead;
+        }
 
         // 1 回目: 手続き・スキニングの塊と MegaGeometry の 1 パス目。この深度から MegaGeometryPass が HZB を作る
         commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
@@ -1201,7 +1283,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         if (!commandList || !m_RenderPass || !m_SecondRenderPass || !m_MegaPipeline || !m_MeshPipeline ||
-            !m_SkinnedPipeline || !m_RecordsPipeline || !m_IdHandle.IsValid() || !m_DepthHandle.IsValid())
+            !m_SkinnedPipeline || !m_RecordsPipeline || !m_RecordArgsPipeline || !m_IdHandle.IsValid() || !m_DepthHandle.IsValid())
         {
             bail();
             return;
@@ -1272,11 +1354,12 @@ namespace NorvesLib::Core::Rendering
 
         // MegaGeometry の記録は、そのフレームに積まれたコマンドから GPU が書く
         FrameSlot& slot = *m_Work.Slot;
+        const bool bUploaded = RecordCpuRecordUpload();
         if (m_Work.bHasMegaDraw)
         {
             RecordMegaRecords(plan);
         }
-        else
+        else if (!bUploaded)
         {
             commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::GenericRead);
         }

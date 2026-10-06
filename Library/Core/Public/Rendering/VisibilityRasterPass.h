@@ -187,9 +187,16 @@ namespace NorvesLib::Core::Rendering
          */
         struct FrameSlot
         {
-            RHI::BufferPtr RecordTable; // 記録の表（host-visible。MegaGeometry の範囲は GPU が、残りはホストが書く）
+            /**
+             * 記録の表。GPU 専用のメモリに置く（MegaGeometry の範囲を計算が書くので、ホスト可視のメモリだと
+             * PCIe 越しの書き込みが時間の大半になる）。MegaGeometry の範囲は GPU が、残りはホストが
+             * RecordUpload へ書いたものをコピーして作る
+             */
+            RHI::BufferPtr RecordTable;
             uint32_t RecordCapacity = 0; // 要素数
             RHI::ResourceState RecordState = RHI::ResourceState::Common;
+            RHI::BufferPtr RecordUpload; // ホストが書く記録（手続き・スキニング）の置き場。host-visible で、コピーの元になる
+            uint32_t RecordUploadCapacity = 0; // 要素数
             RHI::BufferPtr FrameUniform;                 // view・projection
             RHI::DescriptorSetPtr MegaSet;               // 描画: UBO・インスタンスの表・描画情報
             RHI::DescriptorSetPtr MeshSet;               // 描画: UBO・描画のインスタンスの表・記録の表
@@ -201,7 +208,10 @@ namespace NorvesLib::Core::Rendering
             uint32_t SectionMaterialCapacity = 0;        // 要素数（uint）
             RHI::BufferPtr MaterialTable;                // フレームの材質の表（MaterialEntry。ホストが書く）
             uint32_t MaterialTableCapacity = 0;          // 要素数（MaterialEntry）
-            RHI::DescriptorSetPtr RecordSet;             // 記録を書く計算
+            RHI::DescriptorSetPtr RecordSet;             // 記録を書く計算（引数を作る計算も同じ組を使う）
+            RHI::BufferPtr RecordArgs;                   // 記録を書く計算の間接 dispatch の引数と、区間ごとのグループの先頭の番号
+            uint32_t RecordArgsCapacity = 0;             // 区間の表の要素数（パス × 区間）の上限
+            RHI::ResourceState RecordArgsState = RHI::ResourceState::Common;
         };
 
         /** @brief 描画の準備の結果 */
@@ -226,6 +236,9 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr SkinnedVertices;
             FrameSlot* Slot = nullptr;
             uint64_t TableBytes = 0;
+            /** @brief RecordUpload から記録の表へコピーするバイト数（0 ならコピーしない）と、表の中の書き込み先の位置 */
+            uint64_t UploadBytes = 0;
+            uint64_t UploadDstOffset = 0;
             bool bHasMegaDraw = false;
             bool bDrawMesh = false;
             bool bDrawSkinned = false;
@@ -257,6 +270,11 @@ namespace NorvesLib::Core::Rendering
         PrepareResult PrepareFrame(const MegaGeometryPass::VisibilityDrawPlan* plan);
         /** @brief ID を空で消すだけの render pass（描くものが無い・準備できなかったフレーム） */
         void RecordClearOnlyRenderPass();
+        /**
+         * @brief ホストが書いた記録（手続き・スキニング）を、記録の表へコピーして読める状態にする（render pass の外で呼ぶ）
+         * @return コピーを記録して GenericRead まで進めたか（コピーが無いときは何もせず false）
+         */
+        bool RecordCpuRecordUpload();
         /** @brief MegaGeometry のコマンド・カウンタを読める状態にし、記録を書く計算を dispatch する */
         void RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan& plan);
         /** @brief MegaGeometry のクラスタを、パスの番号 firstPass から endPass の手前まで描く（render pass の中で呼ぶ） */
@@ -275,7 +293,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief 3 種の線のパイプラインが揃っているか（development ビルド以外では常に false） */
         bool HasWireframePipelines() const;
         bool EnsureFramebuffer(const RHI::TexturePtr& idTexture, const RHI::TexturePtr& depthTexture);
-        bool EnsureFrameSlot(FrameSlot& slot, uint32_t recordCapacity, uint32_t sectionCount, uint32_t materialCount);
+        bool EnsureFrameSlot(FrameSlot& slot,
+                             uint32_t recordCapacity,
+                             uint32_t sectionCount,
+                             uint32_t sectionSlotCount,
+                             uint32_t cpuRecordCount,
+                             uint32_t materialCount);
 
         /** @brief 塊に分けられなかった通知を、パスの寿命の中で一度だけ出す */
         void LogChunkFailureOnce();
@@ -312,10 +335,12 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_SkinnedVertexShader;
         RHI::ShaderPtr m_FragmentShader;
         RHI::ShaderPtr m_RecordsShader;
+        RHI::ShaderPtr m_RecordArgsShader;
         RHI::PipelinePtr m_MegaPipeline;
         RHI::PipelinePtr m_MeshPipeline;
         RHI::PipelinePtr m_SkinnedPipeline;
         RHI::PipelinePtr m_RecordsPipeline;
+        RHI::PipelinePtr m_RecordArgsPipeline;
         // ワイヤーフレーム（DebugViewMode::Wireframe）の線の描き方。3 種とも揃ったときだけ使う（development ビルドだけ作る）
         RHI::PipelinePtr m_MegaWireframePipeline;
         RHI::PipelinePtr m_MeshWireframePipeline;

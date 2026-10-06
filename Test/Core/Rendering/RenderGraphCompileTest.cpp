@@ -390,6 +390,8 @@ namespace
         };
         Container::VariableArray<VisibilityFill> VisibilityFills;
         Container::VariableArray<VisibilityCopy> VisibilityCopies;
+        // 記録の表（VisBuffer_DrawRecords）へのコピー（ホストが書いた記録を GPU 専用の表へ渡す）
+        Container::VariableArray<VisibilityCopy> RecordTableCopies;
         // 間接描画の記録（コマンドの先頭のバイト位置と、描画の最大数）。区間ごとに1回ずつ呼ばれる
         struct IndirectDrawRecord
         {
@@ -599,6 +601,10 @@ namespace
                             "MegaGeometry_VisibleLastFrame"))
             {
                 VisibilityCopies.push_back(VisibilityCopy{srcOffset, dstOffset, size});
+            }
+            if (dst && IsDebugName(static_cast<const FakeBuffer*>(dst.get())->GetDesc().DebugName, "VisBuffer_DrawRecords"))
+            {
+                RecordTableCopies.push_back(VisibilityCopy{srcOffset, dstOffset, size});
             }
         }
         void CopyBufferToTexture(RHI::BufferPtr src,
@@ -963,6 +969,10 @@ namespace
             {
                 VisBufferSectionMaterials = buffer;
             }
+            if (IsDebugName(desc.DebugName, "VisBuffer_RecordUpload"))
+            {
+                VisBufferRecordUpload = buffer;
+            }
             return buffer;
         }
 
@@ -1088,6 +1098,8 @@ namespace
         Container::VariableArray<BufferCreationRecord> CreatedBuffers;
         /** @brief ビジビリティバッファの「区間から材質の表の番号への対応」のバッファ（最後に作られたもの） */
         RHI::BufferPtr VisBufferSectionMaterials;
+        /** @brief ビジビリティバッファのホストが書く記録の置き場（最後に作られたもの。記録の表へコピーされる元） */
+        RHI::BufferPtr VisBufferRecordUpload;
         RHI::DescriptorSetDesc LastDescriptorSetDesc;
         Container::VariableArray<RHI::DescriptorSetDesc> LastGraphicsPipelineDescriptorSetLayouts;
         uint32_t LightArraySSBOCreateCount = 0;
@@ -2480,12 +2492,17 @@ namespace
         }
         assert(commandList.IndirectDraws[3].OffsetBytes == 2 * 20);
 
-        // dispatch: カリング 2 回 + HZB 7 段 + 記録を書く計算 1 回
+        // dispatch: カリング 2 回 + HZB 7 段 + 記録を書く計算の引数を作る計算 1 回（記録を書く計算は間接 dispatch）
         assert(commandList.DispatchCount == 10);
 
-        // 並びの最後は、記録を書く計算（D）→ ID のレンダーパス（B → 間接描画 2 回 → E）
+        // 記録を書く計算は、引数を作る計算が書いたバッファの先頭から間接 dispatch で走る（固定の大きさの dispatch ではない）
+        assert(commandList.IndirectDispatches.size() == 1);
+        assert(std::strcmp(commandList.IndirectDispatches[0].BufferName, "VisBuffer_RecordArgs") == 0);
+        assert(commandList.IndirectDispatches[0].OffsetBytes == 0);
+
+        // 並びの最後は、記録を書く計算の引数を作る計算（D）→ 記録を書く計算（J）→ ID のレンダーパス（B → 間接描画 2 回 → E）
         const auto& sequence = commandList.CallSequence;
-        const char tail[] = {'D', 'B', 'I', 'I', 'E'};
+        const char tail[] = {'D', 'J', 'B', 'I', 'I', 'E'};
         assert(sequence.size() > sizeof(tail));
         for (size_t i = 0; i < sizeof(tail); ++i)
         {
@@ -3516,13 +3533,22 @@ namespace
         // 材質は 3 件: MegaGeometry の既定の材質（区間はすべて同じ値）・A・B
         assert(stats.MaterialUnique == 3 && stats.MaterialOverflowed == 0);
 
-        // ホストが書く記録（手続き 3 件 → スキニング 1 件の順）
+        // ホストが書く記録（手続き 3 件 → スキニング 1 件の順）。GPU 専用の記録の表へは、置き場からのコピーで入る
         const auto* recordTable = static_cast<const FakeBuffer*>(scene.Raster.GetRecordTable().get());
         assert(recordTable != nullptr);
+        assert(!recordTable->GetDesc().CPUAccessible);
+        const auto* recordUpload = static_cast<const FakeBuffer*>(scene.Device->VisBufferRecordUpload.get());
+        assert(recordUpload != nullptr && recordUpload->GetDesc().CPUAccessible);
         constexpr size_t RecordCount = 4;
-        assert(recordTable->LastUpdateBytes.size() == RecordCount * sizeof(VisibilityBuffer::DrawRecord));
+        assert(recordUpload->LastUpdateBytes.size() == RecordCount * sizeof(VisibilityBuffer::DrawRecord));
+        assert(scene.CommandList.RecordTableCopies.size() == 1);
+        assert(scene.CommandList.RecordTableCopies[0].SourceOffsetBytes == 0);
+        assert(scene.CommandList.RecordTableCopies[0].SizeBytes == RecordCount * sizeof(VisibilityBuffer::DrawRecord));
+        // 書き込み先は MegaGeometry の範囲（0 番の空 + コマンドの枠）の後ろ
+        assert(scene.CommandList.RecordTableCopies[0].DestinationOffsetBytes ==
+               (1 + stats.MegaCommandSlots) * sizeof(VisibilityBuffer::DrawRecord));
         VisibilityBuffer::DrawRecord records[RecordCount];
-        std::memcpy(records, recordTable->LastUpdateBytes.data(), sizeof(records));
+        std::memcpy(records, recordUpload->LastUpdateBytes.data(), sizeof(records));
         const uint32_t indexA = records[0].MaterialIndex;
         const uint32_t indexB = records[2].MaterialIndex;
         assert(records[1].MaterialIndex == indexA);  // 別のコマンドでも同じ材質は同じ番号
@@ -3657,7 +3683,7 @@ namespace
             'B', 'I', 'E',                              // ID・深度の 1 回目: 塊（直接描画。並びには出ない）→ MegaGeometry の 1 パス目
             'D', 'D', 'D', 'D', 'D', 'D', 'D',          // HZB の 7 段（128x64 の深度から。ID の 1 回目が書いた深度）
             'D',                                        // 2 パス目のカリング
-            'D',                                        // 記録を書く計算
+            'D', 'J',                                   // 記録を書く計算の引数を作る計算 → 記録を書く計算（間接 dispatch）
             'B', 'I', 'E',                              // ID・深度の 2 回目: MegaGeometry の 2 パス目
         };
         assert(sequence.size() >= sizeof(expected));
@@ -3730,7 +3756,7 @@ namespace
             'B', 'E',      // MegaGeometryPass: GBuffer の添付の遷移だけ
             'D',           // 計算スキニング
             'D',           // 1 回の判定のカリング（ラスタの Execute の中）
-            'D',           // 記録を書く計算
+            'D', 'J',      // 記録を書く計算の引数を作る計算 → 記録を書く計算（間接 dispatch）
             'B', 'I', 'E', // ID・深度: MegaGeometry（1 パス）→ 塊
         };
         assert(sequence.size() >= sizeof(expected));
@@ -3742,7 +3768,7 @@ namespace
         assert(commandList.InstancedDrawSequencePositions.size() == SceneIdDirectDraws);
         for (const size_t position : commandList.InstancedDrawSequencePositions)
         {
-            assert(position == 9); // 間接描画 'I' の後（塊は MegaGeometry の後）
+            assert(position == 10); // 間接描画 'I' の後（塊は MegaGeometry の後）
         }
         // 1 パスぶんのコマンド（同じ材質の 2 インスタンスは 1 つの区間でクラスタ数の合計 2）だけ
         assert(scene.Raster.GetLastFrameStats().MegaCommandSlots == 2);
@@ -4099,10 +4125,12 @@ namespace
         assert(scene.Resolve.GetLastTileDispatchCount() == materialCount);
         // 資源の並べ替えの作業配列は Record の外のメンバで、材質の数ぶんの容量を持つ（Record のたびに作り直す形へ戻すと 0 になる）
         assert(scene.Resolve.GetTileUseScratchCapacity() >= materialCount);
-        assert(commandList.IndirectDispatches.size() == materialCount);
+        // 先頭の 1 回は記録を書く計算（ラスタの Execute の中）の間接 dispatch。その後ろが材質ごとの解決
+        assert(commandList.IndirectDispatches.size() == materialCount + 1);
+        assert(IsDebugName(commandList.IndirectDispatches[0].BufferName, "VisBuffer_RecordArgs"));
         for (uint32_t material = 0; material < materialCount; ++material)
         {
-            const FakeCommandList::IndirectDispatchRecord& record = commandList.IndirectDispatches[material];
+            const FakeCommandList::IndirectDispatchRecord& record = commandList.IndirectDispatches[1 + material];
             assert(IsDebugName(record.BufferName, "MaterialTile_Args"));
             assert(record.OffsetBytes == static_cast<uint64_t>(material) * MaterialTiles::ARGS_STRIDE_BYTES);
         }
@@ -4193,7 +4221,9 @@ namespace
             assert(scene.Resolve.WasResolved());
             assert(!scene.Resolve.WasResolvedWithTiles());
             assert(scene.Resolve.GetLastTileDispatchCount() == 0);
-            assert(commandList.IndirectDispatches.empty());
+            // 間接 dispatch は記録を書く計算の 1 回だけ（材質ごとの解決は無い）
+            assert(commandList.IndirectDispatches.size() == 1);
+            assert(IsDebugName(commandList.IndirectDispatches[0].BufferName, "VisBuffer_RecordArgs"));
             // 直接 dispatch の解決 1 回（画面全体 = 16x8 グループ）が最後に記録される
             assert(commandList.DispatchCount == baseline.Dispatches + testCase.ClassifyDispatches + 1);
             const FakeCommandList::DispatchSize& resolveGroups = commandList.DispatchGroups.back();
@@ -4242,12 +4272,12 @@ namespace
         assert(instances[0].VertexBase == 0 && instances[0].VertexCount == 3);
         assert(instances[1].VertexBase == 3 && instances[1].VertexCount == 6);
 
-        const auto* recordTable = static_cast<const FakeBuffer*>(scene.Raster.GetRecordTable().get());
-        assert(recordTable != nullptr);
+        const auto* recordUpload = static_cast<const FakeBuffer*>(scene.Device->VisBufferRecordUpload.get());
+        assert(recordUpload != nullptr);
         constexpr size_t RecordCount = 5; // 手続き 3 件 → スキニング 2 件
-        assert(recordTable->LastUpdateBytes.size() == RecordCount * sizeof(VisibilityBuffer::DrawRecord));
+        assert(recordUpload->LastUpdateBytes.size() == RecordCount * sizeof(VisibilityBuffer::DrawRecord));
         VisibilityBuffer::DrawRecord records[RecordCount];
-        std::memcpy(records, recordTable->LastUpdateBytes.data(), sizeof(records));
+        std::memcpy(records, recordUpload->LastUpdateBytes.data(), sizeof(records));
         constexpr uint64_t OutputVertexBytes = 32;
         for (uint32_t body = 0; body < 2; ++body)
         {

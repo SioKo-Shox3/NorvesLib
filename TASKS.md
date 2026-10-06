@@ -980,7 +980,7 @@
 - notes: 2026-10-06 親（段7の開始時に詳しくした。計画書 4.3）。段6の受入れの調査で、on の GPU の区間 `VisibilityRasterPass`／`MegaGeometry`（`MegaGeometryPass.cpp` の `RecordFrameCommand` 全体）は、cull1・手続きメッシュの塊の描画・pass1 の描画・HZB・cull2・描画の記録の compute・pass2 の描画を含み、off の `MegaGeometry` と中身が違う（off の内訳は `MegaGeometryDraw1` 1.469・`MegaGeometryCull1/2` 0.419/0.419 ms）。負荷モードの `mega_command_slots` は約 109〜161 万、材質の区間は 24。ソフトウェアラスタで解決するかを決める前に、この内訳を取る。撮影の出力先は `.harness/runs/startup-capture/VTG7-RASTER-TIMING*`。
 
 ## VTG7-RECORDS-INDIRECT: 描画の記録の compute を、積まれたコマンドの数だけのワークグループで走らせる
-- status: todo
+- status: done
 - done-when: `visbuffer_records.comp` の dispatch を、カリングが書いた区間ごとのコマンドの数（`CountBuffer`）から作る間接 dispatch（小さい compute が `ceil(数/64)` を引数に書く、または区間をまたいで 1 次元に並べる）にし、`ICommandList::DispatchIndirect` で走らせる（`IndirectBuffer` の用途が要る）。書く記録の内容・番号（`1 + commandIndex`）は変えない。`VisibilityResolveVulkanTest`・golden 2 本が通る。負荷モード 300 個の既定・近接・低角度で `VisRasterRecords` とフレーム GPU の前後を RelWithDebInfo で測って PROGRESS に書く。起動画面の `-Deterministic` の撮影（朝・昼・夕 × 3 視点）が直前と PSNR 45 dB 以上で一致することを開いて確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest|MaterialTileClassifyVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
@@ -988,7 +988,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-RECORDS-INDIRECT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
 - stop-when: VTG7-RASTER-TIMING の切り分けで、記録の compute の時間が 0.1 ms 未満と分かった場合は、変更せずに測った値を記録して done にする。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-06 親（段7の開始時に詳しくした）。VTG7-RASTER-TIMING の後に行う。
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。VTG7-RASTER-TIMING の後に行う。 2026-10-06 反復の結果: 間接 dispatch だけでは `VisRasterRecords` が縮まなかった（既定 3.601 → 3.63 ms）。主因は、記録の表がホスト可視メモリ（PCIe 越し）にあり計算の書き込みがその帯域で頭打ちだったこと。表を GPU 専用メモリへ移し、ホストが書く記録（手続き・スキニング）は置き場（`VisBuffer_RecordUpload`）から GPU がコピーする形にして縮んだ（既定 0.024 ms、フレーム GPU 10.59 → 6.81 ms）。
 
 ## VTG7-INT64-ATOMICS: 64bit アトミックの能力を照会・有効化して公開する
 - status: todo
