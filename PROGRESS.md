@@ -924,3 +924,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 joint mapping所有解決開始。role adapterが展開した具体的source/target名pairを受ける低層として作り、外部JSON version/role語彙/軸fps/restは含めない。root pairの番号はcaller必須指定であり、この層では階層rootかどうかを証明しない。source再利用は明示Reject/Allow、targetは一意、未写像targetはbind保持という後続契約のため一覧を返す。ゲーム固有必須role setは後続profileで定義する。
 
 - G2/GR84 joint mapping検証準備: strict indexを再利用したschema非依存の名前pair解決、明示source再利用policy/root pair、target一意性、入力順pair/元順unmappedの所有、copy-and-swap/空move/最終nothrow置換を実装。catalog/mapping/byte上限と元lookup診断を保持。独立静的1round PASS、実cpp+testのg++ C++23 -Wall/-Wextra構文PASS、Python17+19+12+4+7 normal/-O、旧harness/6095byte不変・BOM/EOL/YAMLを確認。runtime/確保故障注入はhost未実施。実Windows48CPU/固定4capture/旧全gateは次CIで未確認。
+
+- G2/GR84 joint mapping受入: 75ccc7225c3c995b510e033438fbe9ea51c2646c / tree05afdd4e4d50b692638618f6df6d67acb4a3257b / run37392452079 attempt1 job112040470502。48CPU/新mapping＋旧11marker、4実capture旧6095byte一致、旧89byte/managed/CLI/metadata/Python/MSVC/CNG/3ZIPを受入。親readonly再実行exit0/最終918payload inventory一致、旧受入775file/失敗650fileを保持。最終verifierは成功し、過去のpreaudit3失敗とpoll整形エラーは証拠として残す。次は既存SignedAxisとBvh double値型による明示基底/単位変換。canonical +Y上/+Z前/right-handedは変換規約であり、モデルの実際の正面を保証しない。
