@@ -57,7 +57,7 @@
 # -StillRenderedFrames・-GpuTimingFrames（連続撮影・計測）とは併用しない。
 #
 # -Configuration Debug では検証レイヤーのログを視点ごとの <視点>.Validation.log へ取り（Debug の Game は標準エラーをコンソールへ張り替えるのでリダイレクトでは取れない）、
-# VUID の件数を metrics.json の vulkan_validation へ書く。1 件でもあれば失敗にする。
+# エラー（見出しの行）・警告・VUID の件数を metrics.json の vulkan_validation へ書く。エラーが 1 件でもあるか、ログのファイルが無ければ失敗にする。
 # -OrbitDegreesPerSecond とは併用できる: 旋回の角度は読み込み完了（エポック）からの固定刻みの時間で決まるので、
 # -OrbitRenderedFrames の各時点を同じ画像で撮り直せ、-MegaOcclusion Off の撮影と画素で比べられる（-CompareDeterministicWith）。
 #
@@ -1219,21 +1219,30 @@ foreach ($view in $shots)
     }
     # Release はログが無効（NORVES_ENABLE_LOGGING=0）で Game.log を書かないため、ログの検査を飛ばす。
 
-    # 検証レイヤーのログ。VUID が 1 件でもあれば失敗にする。
+    # 検証レイヤーのログ。エラーが 1 件でもあれば失敗にする。数えるのはメッセージの見出しの行（"Validation Error:"）で、
+    # VUID を持たないエラー（UNASSIGNED-Threading-* など）も含み、本文の "#VUID-" の行を二重に数えない。
+    # Debug でログのファイルが無いときは、検証レイヤーがログの設定を読んでいない（落ちようのない合格になる）ので失敗にする。
     $validationInfo = $null
     if (Test-Path -LiteralPath $viewValidationLogPath)
     {
         $validationLines = @(Get-Content -LiteralPath $viewValidationLogPath -Encoding Default | Where-Object { $_ -match '\S' })
-        $vuidLines = @($validationLines | Where-Object { $_ -match 'VUID-' })
+        $errorLines = @($validationLines | Where-Object { $_ -match 'Validation Error:' })
+        $warningLines = @($validationLines | Where-Object { $_ -match 'Validation Warning:' })
         $validationInfo = [ordered]@{
             log = "$($view.Name).Validation.log"
             log_lines = $validationLines.Count
-            vuid_count = $vuidLines.Count
+            error_count = $errorLines.Count
+            warning_count = $warningLines.Count
+            vuid_count = @($errorLines | Where-Object { $_ -match 'VUID-' }).Count
         }
-        if ($vuidLines.Count -gt 0)
+        if ($errorLines.Count -gt 0)
         {
-            $failures += "$($view.Name): 検証レイヤーの VUID が $($vuidLines.Count) 件ある（$($view.Name).Validation.log。先頭: $($vuidLines[0]))"
+            $failures += "$($view.Name): 検証レイヤーのエラーが $($errorLines.Count) 件ある（$($view.Name).Validation.log。先頭: $($errorLines[0]))"
         }
+    }
+    elseif ($Configuration -eq 'Debug')
+    {
+        $failures += "$($view.Name): 検証レイヤーのログ（$($view.Name).Validation.log）が無い（検証レイヤーがログの設定を読んでいない）"
     }
 
     foreach ($image in $images)
