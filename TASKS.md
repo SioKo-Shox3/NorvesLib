@@ -969,24 +969,99 @@
 - paths: Test, Library/Core/CMakeLists.txt, CMakeLists.txt, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 TEST-SKINNED の評価で見つけた（段6の外）。
 
-## VTG7-INT64-ATOMICS: 64bitアトミックのビジビリティバッファを作る
-- status: backlog
-- done-when: 64bit アトミックを照会・有効化し、深度の上位32bit＋ID のビジビリティバッファへハードのラスタが書く経路を足す（非対応なら深度テストの経路）。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RenderGraphCompileTest$"`
-- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Assets/Shaders, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 段7の開始時に親が詳しくする（計画書 4.3）。
+## VTG7-RASTER-TIMING: ビジビリティバッファのラスタの GPU 時間の内訳を測り、負荷モードで増えた分の主因を切り分ける
+- status: todo
+- done-when: `MegaGeometryPass.cpp` の匿名名前空間の `ScopedGpuTimestamp` を Rendering の内部の共通ヘッダへ移し、`VisibilityRasterPass` に GPU の区間 `VisRasterChunks`（手続きメッシュ・スキニングの塊の描画）・`VisRasterRecords`（描画の記録の compute）・`MegaGeometryDraw1`・`MegaGeometryDraw2`（MegaGeometry の pass1・pass2 の描画。off と同じ名前）を足す。RelWithDebInfo の `-GpuTimingFrames 300` で、起動画面と `--stress-mega-instances=300` の on と off（`-VisibilityBuffer On／Off`）を測り、metrics.json の `pass_median_ms` に新しい区間が出ることと、on と off の `MegaGeometryDraw1` の比を PROGRESS に書く。続けて一時的な切り分け（コミットしない。終わったら手で元に戻し、`git diff` が区間の追加だけであることを確かめる）を負荷モードの既定の視点で測って PROGRESS に書き、増えた分（段6の受入れで既定の視点のフレーム GPU が 6.608 → 11.201 ms）の主因を順位づける: (i) `RecordMegaRecords` の dispatch を 1 グループにする（今は横 `min(ceil(区間の容量の最大/64), 65535)` × 縦 `区間の数 × パスの数` を立てる。`VisibilityRasterPass.cpp` の `RecordMegaRecords`）、(ii) `visbuffer.frag` の `gl_PrimitiveID` を外して記録の番号だけを書く、(iii) ID のラスタの深度の比較を Less にする。切り分けの間は画が壊れてよい（時間だけ見る）。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- stop-when: GPU の区間の数がフレームあたりの上限（`GPUTimestamp.h` の 128）を超える場合は、足す区間を減らして記録する。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 親（段7の開始時に詳しくした。計画書 4.3）。段6の受入れの調査で、on の GPU の区間 `VisibilityRasterPass`／`MegaGeometry`（`MegaGeometryPass.cpp` の `RecordFrameCommand` 全体）は、cull1・手続きメッシュの塊の描画・pass1 の描画・HZB・cull2・描画の記録の compute・pass2 の描画を含み、off の `MegaGeometry` と中身が違う（off の内訳は `MegaGeometryDraw1` 1.469・`MegaGeometryCull1/2` 0.419/0.419 ms）。負荷モードの `mega_command_slots` は約 109〜161 万、材質の区間は 24。ソフトウェアラスタで解決するかを決める前に、この内訳を取る。撮影の出力先は `.harness/runs/startup-capture/VTG7-RASTER-TIMING*`。
 
-## VTG7-SW-RASTER: 小さいクラスタを計算シェーダーでラスタする
-- status: backlog
-- done-when: 画面上で小さいクラスタを計算シェーダーでラスタし、大きいクラスタはハードのラスタへ振り分ける。小さい三角形の多い視点で GPU 時間が下がる（RelWithDebInfo で測る）。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-RASTER -Configuration RelWithDebInfo`
-- paths: Assets/Shaders, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+## VTG7-RECORDS-INDIRECT: 描画の記録の compute を、積まれたコマンドの数だけのワークグループで走らせる
+- status: todo
+- done-when: `visbuffer_records.comp` の dispatch を、カリングが書いた区間ごとのコマンドの数（`CountBuffer`）から作る間接 dispatch（小さい compute が `ceil(数/64)` を引数に書く、または区間をまたいで 1 次元に並べる）にし、`ICommandList::DispatchIndirect` で走らせる（`IndirectBuffer` の用途が要る）。書く記録の内容・番号（`1 + commandIndex`）は変えない。`VisibilityResolveVulkanTest`・golden 2 本が通る。負荷モード 300 個の既定・近接・低角度で `VisRasterRecords` とフレーム GPU の前後を RelWithDebInfo で測って PROGRESS に書く。起動画面の `-Deterministic` の撮影（朝・昼・夕 × 3 視点）が直前と PSNR 45 dB 以上で一致することを開いて確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest|MaterialTileClassifyVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-RECORDS-INDIRECT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- stop-when: VTG7-RASTER-TIMING の切り分けで、記録の compute の時間が 0.1 ms 未満と分かった場合は、変更せずに測った値を記録して done にする。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。VTG7-RASTER-TIMING の後に行う。
+
+## VTG7-INT64-ATOMICS: 64bit アトミックの能力を照会・有効化して公開する
+- status: todo
+- done-when: `VkPhysicalDeviceVulkan12Features` の `shaderBufferInt64Atomics`・`shaderSharedInt64Atomics` を照会し、対応していれば有効化して `DeviceCapabilities` の `bShaderBufferInt64Atomics`・`bShaderSharedInt64Atomics` で公開する（`VulkanDevice.cpp` の `m_vulkan12Features` と能力の設定のブロック。`bShaderInt64` と同じ書式）。起動ログに `DEVICE_CAPS int64_atomics buffer=<0|1> shared=<0|1>` を 1 行出す。GPU のテスト（既存の `IntegerAttachmentVulkanTest` にケースを足す。新しい実行ファイルは作らない）で、storage buffer の uint64 へ複数のスレッドが `atomicMin` で「上位 32bit = 深度のビット、下位 32bit = ID」を書き、手前の深度が勝ち、同じ深度なら ID の小さい方が残ることを確かめる。非対応の装置ではそのケースを skip（終了コード 125 の扱いに合わせる）。画像の 64bit アトミック（`VK_EXT_shader_image_atomic_int64`）は使わない。
+- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(IntegerAttachmentVulkanTest)$"`
+- stop-when: 開発機（RTX 4080）で `shaderBufferInt64Atomics` が非対応と出た場合は、照会の値を記録して止める。
+- paths: Library/Core/Public/RHI, Library/Core/Private/RHI, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。調査では `shaderInt64` は有効化済み（`DeviceCapabilities::bShaderInt64`）で、64bit アトミックは Library/Core のどこにも無い。危険地帯（RHI/Vulkan）。
+
+## VTG7-VISBUFFER64-MERGE: 64bit のビジビリティバッファ（深度＋ID）と、深度・ID への合流のパスを作る
+- status: todo
+- done-when: `Assets/Shaders/Common/VisibilityBuffer.glsl` に 64bit の詰め方の契約（上位 32bit = `floatBitsToUint(depth)`、下位 32bit = ID、`atomicMin` で書く、空 = すべてのビットが 1）を足し、C++ 側の定数と `VisibilityBufferEncodingTest` で照合する。`VisibilityRasterPass` が画面の画素数の uint64 の storage buffer を持ち（フレーム枠ごとに要るかを確かめ、要らなければ 1 つ。VRAM の台帳に載せる）、毎フレーム空で埋める。`MegaGeometryPass::IDrawSink` に HZB を作る前に呼ばれるフック（例 `RecordMergeBeforeHiZ`）を足し、全画面の合流のパス（FS がバッファを読み、空なら discard、そうでなければ `gl_FragDepth` と ID を出す。深度の比較 LessOrEqual で `GBuffer.Depth`・`VisBuffer.Id` へ書く）を、HZB の前と pass2 の後に走らせる。この段階ではまだ誰もバッファへ書かないので、起動画面・golden は変わらない。GPU のテスト（`VisibilityResolveVulkanTest` にケースを足す）で、バッファへ手で書いた値が深度・ID に合流し、ハードのラスタより手前の値は勝ち、奥の値は負けることを確かめる。`bShaderBufferInt64Atomics` が無い装置・予備の経路（`--visibility-buffer=off`）では、資源もパスも作らない。`RenderGraphCompileTest` に合流の順（pass1 → 合流 → HZB → pass2 → 合流）の検査を足す。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderResourcesDomainContractTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityBufferEncodingTest|VisibilityResolveVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-VISBUFFER64-MERGE -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- stop-when: 合流のパスを足しただけで起動画面か golden が変わる場合は、差の撮影を残して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 親（段7の開始時に詳しくした。計画書 4.3 の「大きいクラスタも 64bit アトミックで書く」は採らない。ハードのラスタは今の深度の比較で ID と深度を書いて早期 Z を残し、ソフトウェアラスタの結果だけを 64bit のバッファから合流させる。画像の 64bit アトミックの拡張が要らず、手続きメッシュ・スキニングの経路も変わらない）。危険地帯（描画パス・メモリ）。HZB の前の合流が無いと、小さいクラスタが遮蔽の元に入らない。
+
+## VTG7-SW-BIN: カリングで画面上の小さいクラスタをソフトウェアラスタの一覧へ振り分ける
+- status: todo
+- done-when: `MegaGeometryCull.glsl` の `EmitDrawCommand`（BVH の経路も同じ関数を通る）で、クラスタの画面上の半径（画素。`radius * projectionFactor / distance` 等）がしきい値以下で、近平面と交わらないクラスタを、パスごとのソフトの一覧（`commandIndex`）へ積み、計算シェーダーの間接 dispatch の引数を書く。コマンドの枠と記録の番号（`1 + commandIndex`）はハードと共有する（ソフトのクラスタの記録も記録の compute が書く）。起動引数 `--sw-raster=off|on`（`ApplicationProcessor`・`RenderingCoordinator::Settings`・`RenderWorld::Settings`・`SceneView`・`CaptureStartupScene.ps1` の `-SwRaster`）としきい値 `--sw-raster-max-px=<n>`（既定 8）を足す。この段階ではソフトのラスタがまだ無いので、on でもハードはすべてのクラスタを描き（`instanceCount` は 1 のまま）、ソフトの一覧の数だけを `SW_RASTER_BIN pass1=<n> pass2=<n> hw=<n>` としてログに出す。`64bit アトミックが無い・--visibility-buffer=off` では振り分けない（`SW_RASTER_FALLBACK reason=<理由>` を 1 回ログへ）。起動画面と負荷モード 300 個の撮影のログで、ソフトの一覧の数を視点ごとに PROGRESS に書く。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest|HiZOcclusionTestVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-BIN -Configuration RelWithDebInfo -Deterministic -SunElevations 45 -SwRaster On`
+- stop-when: 振り分けを足しただけで `MEGA_OCCLUSION` の数か画像が変わる場合は、差を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Private/Engine, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。対象は MegaGeometry のクラスタだけ（手続きメッシュ・スキニングの塊はハードのまま）。
+
+## VTG7-SW-RASTER: 小さいクラスタを計算シェーダーでラスタし、64bit のバッファへ書く
+- status: todo
+- done-when: `Assets/Shaders/visbuffer_sw_raster.comp`（1 ワークグループ = 1 クラスタ、1 スレッド = 1 三角形、最大 128）が、`VisibilityResolve.glsl` から切り出した位置だけを読む関数（例 `VisLoadTrianglePositions`。`VisLoadTriangle` もそれを使う）で 3 頂点をクリップ空間へ移し、ハードと同じ規則で背面を省き、画面の矩形の画素の中心を辺の関数（top-left 規則）で判定し、深度（z/w）を画面空間で線形に補間して、VTG7-VISBUFFER64-MERGE のバッファへ 64bit の `atomicMin` で書く。`--sw-raster=on` で pass1・pass2 のソフトの一覧を間接 dispatch し、ソフトに回したクラスタのハードのコマンドは `instanceCount = 0` にする。合流は HZB の前と pass2 の後。`--sw-raster=on` の起動画面の `-Deterministic` の撮影（朝・昼・夕・夜 × 既定・近接・低角度）を `--sw-raster=off` と比べて PSNR 45 dB 以上、穴・欠け・ちらつきが無いことを開いて確かめ、`MEGA_OCCLUSION` の数を比べて PROGRESS に書く。golden 2 本は既定（off）で変わらない。`--sw-raster=on` の golden の差（`mean_flip`・最大差）も測って記録する。GPU のテスト（`VisibilityResolveVulkanTest` にケースを足す）で、既知の三角形をソフトで描いた ID・深度が、同じ三角形をハードで描いたものと画素の被覆で一致する（辺の画素の規則の違いは数を記録）ことを確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest|MaterialTileClassifyVulkanTest|HiZOcclusionTestVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-RASTER -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3 -SwRaster On`
+- stop-when: ソフトとハードの被覆の違いで、起動画面に穴か継ぎ目が見える場合は、再現の撮影を残して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md, Scripts/CaptureStartupScene.ps1
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。危険地帯（描画パス）。1 反復で閉じない場合は、pass1 だけ（pass2 のソフトの一覧はハードへ戻す）で一度コミットして WIP を続ける。
+
+## VTG7-SW-THRESHOLD: ソフトウェアラスタのしきい値ごとの GPU 時間を測る
+- status: todo
+- done-when: RelWithDebInfo の `-GpuTimingFrames 300` で、負荷モード 300 個（既定・近接・低角度）と起動画面について、`--sw-raster=off` と、`--sw-raster=on` × しきい値 4・8・16 画素を測り、フレーム GPU・`MegaGeometryDraw1/2`・ソフトのラスタの区間（`VisRasterSoftware1/2` を足す）・合流の区間（`VisRasterMerge1/2`）の中央値と、ソフトの一覧の数を表にして PROGRESS に書く。最も速いしきい値を選び、`--sw-raster-max-px` の既定をその値にする（変えるのは既定の値だけ）。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest)$"`
+- stop-when: どのしきい値でも on が off より遅い場合は、表を記録して止める（既定は off のまま。VTG7-SW-DEFAULT-ON は blocked にして理由を書く）。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Private/Engine, Game, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。撮影の出力先は `.harness/runs/startup-capture/VTG7-SW-THRESHOLD-*`。
+
+## VTG7-SW-DEFAULT-ON: ソフトウェアラスタを既定にする
+- status: todo
+- done-when: `--sw-raster` の既定を on にする（ApplicationProcessor・Settings・SceneView・`CaptureStartupScene.ps1` の `-SwRaster` の既定）。`--sw-raster=off` は残す。golden が変わる場合は、差がソフトのラスタの辺の規則・深度の補間だけによることを `--sw-raster=off` での一致で確かめて再承認し（`Docs/RenderingValidation/GoldenBaselines.md` の手順、根拠は `R1Acceptance.md`）、閾値は変えない。起動画面の朝・昼・夕・夜 × 既定・近接・低角度の `-Deterministic` の撮影を開き、天球・地面・球・岩・小屋・見本の帯・発光の球が欠けなく見えることと、`--sw-raster=off` との PSNR を確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest SkinnedRenderPathContractTest RenderingVelocityVulkanTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest|RenderingVelocityStaticVulkanTest|RenderingVelocityMotionVulkanTest|RenderingVelocityCameraVulkanTest|RenderingVelocityObjectVulkanTest|RenderingVelocitySkinnedVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-DEFAULT-ON -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- stop-when: golden の差がソフトのラスタだけでは説明できない場合は、測った値と分類を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Private/Engine, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, Test/Core/Rendering/Baselines/RenderingValidation, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。VTG7-SW-THRESHOLD で on が off より速い場合だけ行う。
 
 ## VTG7-ACCEPT: 段7（ソフトウェアラスタ）の受入れを記録する
-- status: backlog
-- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段7の節（GPU 時間の前後）。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- status: todo
+- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` に段7の節を足す。小さい三角形の多い視点（負荷モード 300 個の既定・近接・低角度）と起動画面の GPU 時間を、段6の受入れの値（on・off）と、今の `--sw-raster=off`・`on` で並べる（RelWithDebInfo の `-GpuTimingFrames 300`。フレーム GPU・`MegaGeometryDraw1/2`・ソフトのラスタ・合流・記録の compute の区間）。起動画面の朝・昼・夕・夜 × 3 視点の撮影（既定の経路）を開いて確かめ、`--sw-raster=off` との PSNR、`MEGA_OCCLUSION`、VT の常駐、golden（再承認の有無と根拠）、関係する ctest の結果、既知の限界（MegaGeometry だけが対象、64bit アトミックの無い装置ではハードだけ、負荷モードの影の描画の省略など）を書く。判定の行は、計画の受入れ「小さい三角形の多い視点で GPU 時間が下がる」に対して数値で書く。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderResourcesDomainContractTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest|IntegerAttachmentVulkanTest|VisibilityBufferEncodingTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。段の区切りの評価にかける。
 
 ## VTG8-VSM-POOL: VSMの物理ページのプールとページの表を作る
 - status: backlog
