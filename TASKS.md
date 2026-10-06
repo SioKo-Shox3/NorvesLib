@@ -1040,7 +1040,7 @@
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest)$"`
 - stop-when: どのしきい値でも on が off より遅い場合は、表を記録して止める（既定は off のまま。VTG7-SW-DEFAULT-ON は blocked にして理由を書く）。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Private/Engine, Game, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
-- notes: 2026-10-06 親（段7の開始時に詳しくした）。撮影の出力先は `.harness/runs/startup-capture/VTG7-SW-THRESHOLD-*`。
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。撮影の出力先は `.harness/runs/startup-capture/VTG7-SW-THRESHOLD-*`。 2026-10-06 親（VTG7-RASTER-TIMING の評価）: `MegaGeometryDraw1/2` は on と off で同じ名前でも範囲が違う（off は `BeginRenderPass`／`EndRenderPass` をまたぎ、on は render pass の内側だけ）。on と off の比較はフレーム GPU と区間の合計で行い、`MegaGeometryDraw1` の比を「書く量の差」とは書かない。
 
 ## VTG7-SW-DEFAULT-ON: ソフトウェアラスタを既定にする
 - status: todo
@@ -1061,7 +1061,7 @@
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-06 親（段7の開始時に詳しくした）。段の区切りの評価にかける。
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。段の区切りの評価にかける。 2026-10-06 親（VTG7-RASTER-TIMING の評価）: `MegaGeometryDraw1/2` は on と off で同じ名前でも範囲が違う（off は `BeginRenderPass`／`EndRenderPass` をまたぎ、on は render pass の内側だけ）。on と off の比較はフレーム GPU と区間の合計で行い、`MegaGeometryDraw1` の比を「書く量の差」とは書かない。
 
 ## VTG8-VSM-POOL: VSMの物理ページのプールとページの表を作る
 - status: backlog
