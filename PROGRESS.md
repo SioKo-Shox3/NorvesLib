@@ -1828,3 +1828,19 @@
 - 測った値: 被覆（ハード = ソフト、違い 0）は `view=単位` 1508、回転・並進 1519、Oversize 1161。`oversize_65` は 97 画素。
 - Notes: (1) テストの標準出力・標準エラーは cp932。PowerShell の `2>&1` や `2> file` を通すと標準エラーが読めなくなるので、失敗した検査の文言は bash でテストの実行ファイルを直接走らせ、`2>` で別ファイルへ取って cp932 で読む（`mut-*.txt` はそうして UTF-8 に直した）。 (2) シェーダーは実行時にソースから読まれるので、変異 (a)(b) は再ビルドが要らない。
 - Next: 独立に進められるのは VTG7-SW-HARDEN-VALIDATION・VTG7-DETERMINISM-SEED。
+
+## 反復 1（run 20261006-174545）: VTG7-SW-HARDEN-VALIDATION（done。検証レイヤー付きで VUID 0 件、ソフトの on・off の GPU 時間は差が 0.07〜0.09 ms）
+- (8) 検証レイヤー: Debug の Game を `--sw-raster=on --stress-mega-instances=300 -Deterministic` で起動画面の 3 視点（default・near・low。描画 171・248・180 フレーム）走らせ、検証レイヤーのログの **VUID は 3 視点とも 0 件**（`Validation.log` は 0 行）。ソフトは稼働していた（`SW_RASTER_BIN` の最大が default pass1=587・pass2=1787、near pass1=45・pass2=910、low pass1=24・pass2=1297、`sw_dispatches=2`、`SW_RASTER_OVERSIZE=0`）。
+- 取り方の修正: 検証レイヤーのメッセージは `DebugCallback` が `std::cerr` へ出すだけで Game.log に入らない。Debug の Game は `OpenDebugConsole` が標準エラーを `CONOUT$` へ張り替えるので、`Start-Process -RedirectStandardError` では空になる（最初に取った標準エラーの 0 バイトは証拠にならなかった）。`CaptureStartupScene.ps1` を、Debug のとき検証レイヤー自身のログ出力（`VK_KHRONOS_VALIDATION_DEBUG_ACTION=VK_DBG_LAYER_ACTION_LOG_MSG`・`_LOG_FILENAME`・`_REPORT_FLAGS=error,warn`）を視点ごとの `<視点>.Validation.log` へ向ける形に直し、VUID の件数を metrics.json の `vulkan_validation`（`log_lines`・`vuid_count`）へ書き、1 件でもあれば失敗にする。陽性対照: `VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT` を足して同じ経路で撮ると `Validation Warning: [ BestPractices-specialuse-extension ]` などが 22420 バイト取れた（レイヤーは有効で、ログの経路は生きている）。
+- (7) GPU 時間（RelWithDebInfo、`-GpuTimingFrames 300`、負荷モード 300 個、窓 240 フレームの中央値。`-Deterministic` は `-GpuTimingFrames` と併用できないので、タスクの verify から外した。`verify-…-8-timing-table.txt`）:
+
+  | 視点 | FrameGPU on / off | VisRasterSw1 | VisRasterSw2 | MegaGeometryDraw1 on / off | VisibilityRasterPass on / off |
+  |---|---|---|---|---|---|
+  | default | 6.861 / 6.794 ms | 0.009 | 0.009 | 1.654 / 1.660 | 2.659 / 2.571 |
+  | near | 6.091 / 6.008 ms | 0.008 | 0.009 | 1.181 / 1.181 | 2.048 / 1.956 |
+  | low | 5.910 / 5.838 ms | 0.008 | 0.008 | 1.157 / 1.156 | 2.007 / 1.920 |
+
+  on だけに出る合流の `VisRasterMerge1`・`VisRasterMerge2`・`VisRasterMergeClear` は各 0.006〜0.008 ms。on の追加分は FrameGPU で +0.07〜0.09 ms（約 1%）、`VisibilityRasterPass` で +0.09 ms 前後。ソフトの dispatch 自体は 0.01 ms 未満で、このシーンでは `MegaGeometryDraw1`（ハードの描画）はソフトへ回したクラスタ分（default で pass1=568・pass2=39）が減っても変わらない（1.654 / 1.660）。on でハードの描画の時間は縮まず（原因は未調査）、合流と dispatch の分だけ微増する。予算（16.6 ms）超えは on・off とも 0 フレーム。
+- 検証（`.harness/runs/20261006-174545/`）: `verify-VTG7-SW-HARDEN-VALIDATION-1-build-debug.txt`（Debug の Game、BUILD_EXIT_CODE=0）、`-5-capture-debug.txt`（Debug の撮影、result=pass・CAPTURE_EXIT_CODE=0。出力先 `.harness/runs/startup-capture/VTG7-SW-HARDEN-validation`）、`-4-positive-control.txt`（陽性対照）、`-6-build-rwdi.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-7-timing-on.txt`・`-7-timing-off.txt`（result=pass）、`-8-timing-table.txt`（中央値の表）。`-2-`・`-3-` は標準エラーのリダイレクトで取った最初の 2 回（0 バイト。証拠にしない）。
+- Notes: (1) `CaptureStartupScene.ps1` は CRLF と LF の混在（元から）。numstat の 2 通りは一致（40 行追加）。 (2) 検証レイヤーのログ出力の環境変数はレイヤーが読む設定の別名（`VK_KHRONOS_VALIDATION_<設定名>`）。他の構成（RelWithDebInfo・Release）は検証レイヤーが無効なので設定せず、`vulkan_validation` は null になる。
+- Next: 独立に進められるのは VTG7-DETERMINISM-SEED。

@@ -55,6 +55,9 @@
 # （既定 0.1 以下）と PSNR（既定 45 dB 以上）を deterministic_comparison として metrics.json へ書く。
 # 撮り直さず既存の2つの出力先だけを比べるときは -CompareOnly を足す。
 # -StillRenderedFrames・-GpuTimingFrames（連続撮影・計測）とは併用しない。
+#
+# -Configuration Debug では検証レイヤーのログを視点ごとの <視点>.Validation.log へ取り（Debug の Game は標準エラーをコンソールへ張り替えるのでリダイレクトでは取れない）、
+# VUID の件数を metrics.json の vulkan_validation へ書く。1 件でもあれば失敗にする。
 # -OrbitDegreesPerSecond とは併用できる: 旋回の角度は読み込み完了（エポック）からの固定刻みの時間で決まるので、
 # -OrbitRenderedFrames の各時点を同じ画像で撮り直せ、-MegaOcclusion Off の撮影と画素で比べられる（-CompareDeterministicWith）。
 #
@@ -872,6 +875,10 @@ foreach ($view in $shots)
         $arguments += '--debug-draw-test-lines'
     }
     $tracePath = Join-Path $outRoot "$($view.Name).trace.csv"
+    # Vulkan の検証レイヤーのメッセージ（VUID）は Game.log に入らず、Debug の Game はコンソールへ張り替えた標準エラーへ出す（
+    # リダイレクトでは取れない）。検証レイヤー自身のログ出力を視点ごとのファイルへ向け、VUID を数える（Debug だけ。他は検証レイヤーが無効）。
+    $viewValidationLogPath = Join-Path $outRoot "$($view.Name).Validation.log"
+    Remove-Item -LiteralPath $viewValidationLogPath -Force -ErrorAction SilentlyContinue
     if ($GpuTimingFrames -gt 0)
     {
         Remove-Item -LiteralPath $tracePath -Force -ErrorAction SilentlyContinue
@@ -882,6 +889,17 @@ foreach ($view in $shots)
     # RTGI を切るときは環境変数で起動画面へ伝える（起動した Game だけが受け継ぐよう、起動の直後に戻す）。
     $previousRtgiSetting = $env:NORVES_STARTUP_RTGI
     $previousGBufferDebugSetting = $env:NORVES_GBUFFER_DEBUG
+    $previousValidationSettings = @{}
+    foreach ($validationVariable in @('VK_KHRONOS_VALIDATION_DEBUG_ACTION', 'VK_KHRONOS_VALIDATION_LOG_FILENAME', 'VK_KHRONOS_VALIDATION_REPORT_FLAGS'))
+    {
+        $previousValidationSettings[$validationVariable] = [Environment]::GetEnvironmentVariable($validationVariable)
+    }
+    if ($Configuration -eq 'Debug')
+    {
+        $env:VK_KHRONOS_VALIDATION_DEBUG_ACTION = 'VK_DBG_LAYER_ACTION_LOG_MSG'
+        $env:VK_KHRONOS_VALIDATION_LOG_FILENAME = $viewValidationLogPath
+        $env:VK_KHRONOS_VALIDATION_REPORT_FLAGS = 'error,warn'
+    }
     if ($GBufferDebug -ne 'Off')
     {
         $env:NORVES_GBUFFER_DEBUG = $GBufferDebug.ToLowerInvariant()
@@ -909,6 +927,10 @@ foreach ($view in $shots)
         else { $env:NORVES_STARTUP_RTGI = $previousRtgiSetting }
         if ($null -eq $previousGBufferDebugSetting) { Remove-Item Env:NORVES_GBUFFER_DEBUG -ErrorAction SilentlyContinue }
         else { $env:NORVES_GBUFFER_DEBUG = $previousGBufferDebugSetting }
+        foreach ($validationVariable in $previousValidationSettings.Keys)
+        {
+            [Environment]::SetEnvironmentVariable($validationVariable, $previousValidationSettings[$validationVariable])
+        }
     }
     [void]$process.Handle
     $exitCode = $null
@@ -1197,6 +1219,23 @@ foreach ($view in $shots)
     }
     # Release はログが無効（NORVES_ENABLE_LOGGING=0）で Game.log を書かないため、ログの検査を飛ばす。
 
+    # 検証レイヤーのログ。VUID が 1 件でもあれば失敗にする。
+    $validationInfo = $null
+    if (Test-Path -LiteralPath $viewValidationLogPath)
+    {
+        $validationLines = @(Get-Content -LiteralPath $viewValidationLogPath -Encoding Default | Where-Object { $_ -match '\S' })
+        $vuidLines = @($validationLines | Where-Object { $_ -match 'VUID-' })
+        $validationInfo = [ordered]@{
+            log = "$($view.Name).Validation.log"
+            log_lines = $validationLines.Count
+            vuid_count = $vuidLines.Count
+        }
+        if ($vuidLines.Count -gt 0)
+        {
+            $failures += "$($view.Name): 検証レイヤーの VUID が $($vuidLines.Count) 件ある（$($view.Name).Validation.log。先頭: $($vuidLines[0]))"
+        }
+    }
+
     foreach ($image in $images)
     {
         $imagePath = Join-Path $outRoot "$($image.Name).png"
@@ -1228,6 +1267,7 @@ foreach ($view in $shots)
             geometry_pages = $geometryPages
             mega_occlusion = $occlusionStats
             sw_raster = $swRasterStats
+            vulkan_validation = $validationInfo
             stress_materials = $stressMaterials
             stress_geometry = $stressGeometryInfo
             skinned_probe = $skinnedProbeInfo

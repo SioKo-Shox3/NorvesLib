@@ -1124,7 +1124,7 @@
 - notes: 2026-10-06 親（VTG7-SW-HARDEN-TESTS の評価は PASS。その non-blocking を集めた）。テストのコードでも標準ライブラリの型を使わない。変異は編集して測り、同じ編集で元へ戻す。 2026-10-06 親（VTG7-SW-HARDEN-BDA の評価は PASS。その non-blocking）: (5) `RenderGraphCompileTest.cpp` の BDA の場面のコメント「合流の資源が作られて落ちる」と PROGRESS の記述を事実に合わせる（FakeDevice は `bShaderStorageImageExtendedFormats` を持たず解決が使えないので、変異で落ちうるのは合流の `IsReady` の assert だけ。フレームの資源・埋め・合流はこの場面では元から生じない）。(6) `SW_RASTER_FALLBACK reason=bda_unsupported` を `ResolveFallbackCounter` と同じ形のログの受け手で数え、1 回だけ出ることを確かめる。(7) 64bit アトミックと BDA の両方が無い装置でも `SW_RASTER_FALLBACK` が 1 回出るようにする（今はどこからも出ない）。親の notes (d) の「埋め・合流が毎フレーム走る」は誤りで、変更前の実害は合流のシェーダー・パイプラインの作成だけだった。
 
 ## VTG7-SW-HARDEN-VALIDATION: ソフトウェアラスタを検証レイヤー付きで走らせ、on・off の GPU 時間を測る
-- status: todo
+- status: done
 - done-when: (8) Debug の Game を `--sw-raster=on` で（Debug は検証レイヤーが既定で有効）、起動画面・負荷モード 300 個を数百フレーム走らせ、ログに `VUID` が 0 件であることを確かめる（RelWithDebInfo の撮影は検証レイヤーが切れているので VUID 0 は証拠にならない）。(7) の残り: RelWithDebInfo の `-GpuTimingFrames 300` で負荷モードの `VisRasterSw1`・`VisRasterSw2`・`MegaGeometryDraw1` の中央値を on・off で測って PROGRESS に書く。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-HARDEN-validation -Configuration Debug -Deterministic -SunElevations 45 -SwRaster On -ExtraGameArguments --stress-mega-instances=300`
@@ -1135,6 +1135,7 @@
 - paths: Scripts/CaptureStartupScene.ps1, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 VTG7-SW-HARDEN から分けた。Debug の撮影は遅いので -TimeoutSeconds を足してよい。重い処理（GPU の長時間取得）は build-and-verify.md の扱いに従う。
 
+- progress (2026-10-06 反復1): (8) Debug の Game（`--sw-raster=on`・負荷モード 300 個・Deterministic）を起動画面の 3 視点で走らせ（描画 171・248・180 フレーム）、検証レイヤーのログの VUID は 3 視点とも 0 件。検証レイヤーのメッセージは Game.log に入らず、Debug の Game は標準エラーをコンソールへ張り替える（`OpenDebugConsole` の `freopen_s`）ので、プロセスのリダイレクトでは取れない。そのため `CaptureStartupScene.ps1` が Debug のとき検証レイヤー自身のログ出力（`VK_KHRONOS_VALIDATION_DEBUG_ACTION`・`_LOG_FILENAME`・`_REPORT_FLAGS=error,warn`）を視点ごとの `<視点>.Validation.log` へ向け、VUID を数えて metrics.json の `vulkan_validation` に書き、1 件でもあれば失敗にする。`VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT` を足した陽性対照で同じ経路が警告を取る（22420 バイト）ことを確かめた。(7) の残り: RelWithDebInfo の `-GpuTimingFrames 300`（`-Deterministic` は `-GpuTimingFrames` と併用できないので外した）。測った値は PROGRESS の反復 1（run 20261006-174545）。
 ## VTG7-SW-THRESHOLD: ソフトウェアラスタのしきい値ごとの GPU 時間を測る
 - status: todo
 - done-when: RelWithDebInfo の `-GpuTimingFrames 300` で、負荷モード 300 個（既定・近接・低角度）と起動画面について、`--sw-raster=off` と、`--sw-raster=on` × しきい値 8・16・32・64 画素（`--sw-raster-max-px`。画面上の半径。VTG7-SW-BIN で 8 画素では負荷モードでも一覧が描くクラスタの 1% 未満だった）を測り、フレーム GPU・`MegaGeometryDraw1/2`・ソフトのラスタの区間（`VisRasterSoftware1/2` を足す）・合流の区間（`VisRasterMerge1/2`）の中央値と、ソフトの一覧の数（`SW_RASTER_BIN` の pass1・pass2・overflow）を表にして PROGRESS に書く。最も速いしきい値を選び、`--sw-raster-max-px` の既定をその値にする（変えるのは既定の値だけ）。
