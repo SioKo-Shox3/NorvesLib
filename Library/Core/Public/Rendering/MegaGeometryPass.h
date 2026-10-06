@@ -626,7 +626,7 @@ namespace NorvesLib::Core::Rendering
         // ソフトウェアラスタの振り分け: パスごとの一覧と間接 dispatch の引数（binding 13）。振り分けないフレームは触らず、
         // 代わりのバッファ（m_DummyStatsBuffer）を結ぶ
         bool m_bSwRasterRequested = false;
-        float m_SwRasterMaxPixels = 8.0f;
+        float m_SwRasterMaxPixels = 32.0f;
         RHI::BufferPtr m_SwRasterBuffer;
         uint32_t m_SwRasterBufferCapacity = 0; // m_SwRasterBuffer がパスごとに収められるクラスタ数
         uint32_t m_SwRasterCapacity = 0;       // 最後に振り分けたフレームの、パスごとの一覧の容量

@@ -1137,7 +1137,7 @@
 
 - progress (2026-10-06 反復1): (8) Debug の Game（`--sw-raster=on`・負荷モード 300 個・Deterministic）を起動画面の 3 視点で走らせ（描画 171・248・180 フレーム）、検証レイヤーのログの VUID は 3 視点とも 0 件。検証レイヤーのメッセージは Game.log に入らず、Debug の Game は標準エラーをコンソールへ張り替える（`OpenDebugConsole` の `freopen_s`）ので、プロセスのリダイレクトでは取れない。そのため `CaptureStartupScene.ps1` が Debug のとき検証レイヤー自身のログ出力（`VK_KHRONOS_VALIDATION_DEBUG_ACTION`・`_LOG_FILENAME`・`_REPORT_FLAGS=error,warn`）を視点ごとの `<視点>.Validation.log` へ向け、VUID を数えて metrics.json の `vulkan_validation` に書き、1 件でもあれば失敗にする。`VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT` を足した陽性対照で同じ経路が警告を取る（22420 バイト）ことを確かめた。(7) の残り: RelWithDebInfo の `-GpuTimingFrames 300`（`-Deterministic` は `-GpuTimingFrames` と併用できないので外した）。測った値は PROGRESS の反復 1（run 20261006-174545）。
 ## VTG7-SW-THRESHOLD: ソフトウェアラスタのしきい値ごとの GPU 時間を測る
-- status: todo
+- status: done
 - done-when: RelWithDebInfo の `-GpuTimingFrames 300` で、負荷モード 300 個（既定・近接・低角度）と起動画面について、`--sw-raster=off` と、`--sw-raster=on` × しきい値 8・16・32・64 画素（`--sw-raster-max-px`。画面上の半径。VTG7-SW-BIN で 8 画素では負荷モードでも一覧が描くクラスタの 1% 未満だった）を測り、フレーム GPU・`VisibilityRasterPass`・`MegaGeometryDraw1/2`・`MegaGeometryCull1/2`・ソフトのラスタの区間（`VisRasterSw1/2`）・合流の区間（`VisRasterMergeClear`・`VisRasterMerge1/2`）・on だけの 1 パス目の記録（`VisRasterRecords1`）の中央値と、ソフトの一覧の数（`SW_RASTER_BIN` の pass1・pass2・overflow）を表にして PROGRESS に書く。最も速いしきい値を選び、`--sw-raster-max-px` の既定をその値にする（変えるのは既定の値だけ）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest -- /m:1`

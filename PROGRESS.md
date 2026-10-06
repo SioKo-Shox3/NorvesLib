@@ -1864,3 +1864,54 @@
 - verify（`.harness/runs/20261006-180645/`。タスクの verify の撮影は計装を戻した後にやり直した）: `verify-VTG7-SW-FXAA-COMPARE-1-build.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-2-capture-stress-off.txt`（result=pass）、`-3-capture-stress-off2.txt`（off と off2。default 89.472 dB・127 画素、near・low 100 dB。result=pass。限度は既定 45 dB）、`-4-capture-stress-on.txt`（on と off。default 83.243 dB、near 100 dB（2 画素）、low 100 dB。result=pass）。解析は `analysis-aexp-hex.txt`・`analysis-*-stress-nortgi-*.txt`、撮影のログは `exp-aexp-start-*`・`exp-aexpq-start-*`・`exp-q-stress-nortgi-*`・`exp-u-stress-nortgi-*`。比較の script は `ana_diff.py`・`ana_matrix.py`・`ana_jitter.py`（同じ場所）。
 - Notes: (1) 計装は編集して測り、バックアップから戻した。`SceneView.cpp`・`AutoExposurePass.inl` の `git diff` は空で、戻した状態で Game を再ビルドして verify を撮った。 (2) Game のログは Shift-JIS（`cp932`）。python の出力は `PYTHONIOENCODING=utf-8` を付ける。 (3) 負荷モードの揺れの種は `VTG7-DETERMINISM-SEED`（ハードだけの off 同士で出る。露出の最後の桁の揺れも材料）。 (4) 評価者は起動していない。
 - Next: 独立に進められるのは VTG7-DETERMINISM-SEED。
+
+## 反復 1（run 20261006-183643）: VTG7-SW-THRESHOLD（done。既定のしきい値を 8 → 32 画素へ。32 画素の on は負荷モードで off より 0.26〜0.62 ms 速く、起動画面では off と同じ）
+- 結論: ソフトウェアラスタ on のしきい値（`--sw-raster-max-px`）は 32 画素を採る。負荷モード 300 個の FrameGPU（中央値、窓 240 フレーム）は default 6.821 → 6.202 ms（−0.62）、near 6.000 → 5.739（−0.26）、low 5.915 → 5.471（−0.44）。起動画面は default 3.052 → 3.062、near 3.693 → 3.697、low 3.371 → 3.275 で off と同じ水準（±0.1 ms の揺れの中）。64 画素は負荷モードで 32 画素と同等（default 6.214・near 5.656・low 5.485）だが、起動画面で `VisibilityRasterPass` が増える（default 0.292 → 0.392、near 0.355 → 0.645、low 0.357 → 0.558 ms）ので採らない。8 画素は on が off より遅い（負荷モードで +0.04〜0.11 ms）。stop-when（どのしきい値でも on が off より遅い）には当たらない。
+- 既定の変更: `DefaultSwRasterMaxPixels`（`SwRasterMode.h`）と `MegaGeometryPass::m_SwRasterMaxPixels` の初期値を 8 → 32 画素。`CaptureStartupScene.ps1` のコメントの「既定の 8 画素」を直した。`--sw-raster` の既定（off）は変えていない。`--sw-raster=on` だけで撮ると 32 画素の値になることを確かめた（`verify-…-16-stress-default-on.txt`。FrameGPU 6.128 / 5.683 / 5.728 ms、`SW_RASTER_BIN` pass1=120256・60578・73119 でしきい値 32 の撮影と同じ振り分け）。
+- 表（RelWithDebInfo、`-GpuTimingFrames 300`、窓 240 フレームの中央値 ms。負荷モードは `-ExtraGameArguments --stress-mega-instances=300`。`VRP`=VisibilityRasterPass、`Draw1/2`=MegaGeometryDraw1/2、`Cull1/2`=MegaGeometryCull1/2、`Sw1/2`=VisRasterSw1/2、`MClr/M1/M2`=VisRasterMergeClear/Merge1/Merge2、`Rec1`=VisRasterRecords1。一覧は `SW_RASTER_BIN` の pass1 / pass2。overflow は全条件で 0。Draw1/2 は off と on で範囲が違う（off は render pass をまたぎ、on は内側だけ）ので、on と off の比較は FrameGPU と区間の合計で行う）:
+
+  負荷モード 300 個
+
+  | 視点 | 条件 | FrameGPU | VRP | Draw1 | Draw2 | Cull1 | Cull2 | Sw1 | Sw2 | MClr | M1 | M2 | Rec1 | 一覧 pass1 / pass2 |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | default | off | 6.821 | 2.568 | 1.655 | 0.006 | 0.420 | 0.416 | - | - | - | - | - | - | - |
+  | default | on 8 | 6.902 | 2.659 | 1.656 | 0.006 | 0.449 | 0.415 | 0.009 | 0.009 | 0.008 | 0.007 | 0.006 | 0.027 | 568 / 39 |
+  | default | on 16 | 6.776 | 2.499 | 1.388 | 0.003 | 0.475 | 0.416 | 0.087 | 0.009 | 0.008 | 0.007 | 0.007 | 0.027 | 26756 / 363 |
+  | default | on 32 | **6.202** | 1.930 | 0.490 | 0.002 | 0.487 | 0.416 | 0.403 | 0.010 | 0.008 | 0.009 | 0.008 | 0.027 | 120254 / 468 |
+  | default | on 64 | 6.214 | 2.003 | 0.454 | 0.002 | 0.478 | 0.415 | 0.521 | 0.010 | 0.008 | 0.009 | 0.008 | 0.028 | 146321 / 506 |
+  | near | off | 6.000 | 1.954 | 1.176 | 0.006 | 0.346 | 0.353 | - | - | - | - | - | - | - |
+  | near | on 8 | 6.108 | 2.056 | 1.190 | 0.006 | 0.371 | 0.355 | 0.008 | 0.009 | 0.008 | 0.008 | 0.006 | 0.023 | 41 / 4 |
+  | near | on 16 | 6.070 | 2.012 | 1.116 | 0.005 | 0.380 | 0.357 | 0.029 | 0.010 | 0.008 | 0.008 | 0.006 | 0.023 | 7052 / 53 |
+  | near | on 32 | 5.739 | 1.632 | 0.522 | 0.003 | 0.405 | 0.357 | 0.218 | 0.012 | 0.008 | 0.009 | 0.007 | 0.023 | 60578 / 234 |
+  | near | on 64 | **5.656** | 1.603 | 0.319 | 0.002 | 0.400 | 0.357 | 0.390 | 0.015 | 0.008 | 0.010 | 0.008 | 0.023 | 96183 / 295 |
+  | low | off | 5.915 | 1.925 | 1.157 | 0.012 | 0.341 | 0.341 | - | - | - | - | - | - | - |
+  | low | on 8 | 5.953 | 2.005 | 1.164 | 0.019 | 0.362 | 0.341 | 0.008 | 0.008 | 0.008 | 0.007 | 0.006 | 0.023 | 22 / 4 |
+  | low | on 16 | 5.894 | 1.939 | 1.046 | 0.008 | 0.377 | 0.342 | 0.041 | 0.010 | 0.008 | 0.007 | 0.006 | 0.023 | 10952 / 376 |
+  | low | on 32 | **5.471** | 1.531 | 0.376 | 0.004 | 0.394 | 0.344 | 0.279 | 0.014 | 0.008 | 0.008 | 0.007 | 0.023 | 73120 / 1808 |
+  | low | on 64 | 5.485 | 1.549 | 0.307 | 0.004 | 0.389 | 0.344 | 0.369 | 0.015 | 0.008 | 0.008 | 0.007 | 0.023 | 98685 / 755 |
+
+  起動画面
+
+  | 視点 | 条件 | FrameGPU | VRP | Draw1 | Draw2 | Cull1 | Cull2 | Sw1 | Sw2 | MClr | M1 | M2 | Rec1 | 一覧 pass1 / pass2 |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | default | off | 3.052 | 0.222 | 0.046 | 0.001 | 0.049 | 0.052 | - | - | - | - | - | - | - |
+  | default | on 8 | 3.073 | 0.282 | 0.047 | 0 | 0.050 | 0.051 | 0.009 | 0.006 | 0.010 | 0.009 | 0.009 | 0.017 | 13 / 0 |
+  | default | on 16 | 3.222 | 0.284 | 0.042 | 0.001 | 0.050 | 0.052 | 0.013 | 0.006 | 0.010 | 0.009 | 0.009 | 0.017 | 335 / 0 |
+  | default | on 32 | 3.062 | 0.292 | 0.016 | 0 | 0.051 | 0.051 | 0.050 | 0.006 | 0.010 | 0.009 | 0.009 | 0.017 | 1854 / 0 |
+  | default | on 64 | 3.147 | 0.392 | 0.005 | 0 | 0.051 | 0.051 | 0.158 | 0.006 | 0.010 | 0.009 | 0.009 | 0.017 | 2616 / 0 |
+  | near | off | 3.693 | 0.279 | 0.069 | 0.003 | 0.060 | 0.062 | - | - | - | - | - | - | - |
+  | near | on 8 | 3.706 | 0.349 | 0.074 | 0.003 | 0.059 | 0.062 | 0.004 | 0.007 | 0.013 | 0.011 | 0.011 | 0.019 | 0 / 0 |
+  | near | on 16 | 3.681 | 0.353 | 0.074 | 0.003 | 0.059 | 0.061 | 0.012 | 0.007 | 0.013 | 0.011 | 0.011 | 0.019 | 24 / 0 |
+  | near | on 32 | 3.697 | 0.355 | 0.053 | 0.003 | 0.060 | 0.060 | 0.032 | 0.007 | 0.013 | 0.011 | 0.011 | 0.019 | 902 / 0 |
+  | near | on 64 | 3.767 | 0.645 | 0.030 | 0.002 | 0.058 | 0.057 | 0.349 | 0.013 | 0.012 | 0.011 | 0.011 | 0.019 | 1978 / 8 |
+  | low | off | 3.371 | 0.238 | 0.040 | 0.002 | 0.053 | 0.059 | - | - | - | - | - | - | - |
+  | low | on 8 | 3.369 | 0.306 | 0.044 | 0.003 | 0.053 | 0.058 | 0.004 | 0.006 | 0.013 | 0.011 | 0.010 | 0.019 | 0 / 0 |
+  | low | on 16 | 3.262 | 0.311 | 0.042 | 0.001 | 0.052 | 0.057 | 0.012 | 0.013 | 0.013 | 0.011 | 0.010 | 0.019 | 75 / 2 |
+  | low | on 32 | 3.275 | 0.357 | 0.024 | 0.001 | 0.052 | 0.055 | 0.081 | 0.013 | 0.013 | 0.010 | 0.010 | 0.019 | 923 / 3 |
+  | low | on 64 | 3.261 | 0.558 | 0.007 | 0 | 0.051 | 0.052 | 0.309 | 0.012 | 0.012 | 0.010 | 0.010 | 0.018 | 1607 / 3 |
+
+- on の固定の費用としきい値で増減する分: 固定は、合流 `MClr+M1+M2` が 0.021〜0.035 ms、`Rec1` が 0.017〜0.027 ms、`Cull1` の増加（起動画面は +0.00〜0.01、負荷モードは off 0.42 → on 0.45〜0.49 でしきい値が大きいほど増える）。これで `VRP` は ソフトへ回るクラスタがほぼ無い on 8 でも +0.07〜0.10 ms になる。しきい値で増減する分は、ハードの描画 `Draw1`（負荷モード default で 1.655 → 0.490（32 画素）→ 0.454（64 画素））と、ソフトのラスタ `Sw1`（0.009 → 0.403 → 0.521）で、32 画素では `Draw1` の減り（−1.17 ms）が `Sw1` の増え（+0.39 ms）を大きく上回る。64 画素では `Draw1` の減りが −0.04 に縮み、`Sw1` の増え（+0.12）が上回り始める。起動画面は `Draw1` の元の値が 0.04〜0.07 ms と小さいので、減る分が固定の費用に届かず、64 画素では `Sw1` と `VRP` の増えだけが見える。
+- 判断: 負荷モードの 3 視点の FrameGPU の合計は 32 画素 17.412 ms・64 画素 17.355 ms で差 0.06 ms は揺れの内（同じ条件の別撮影で ±0.1 ms 程度）、起動画面の 3 視点の合計は 32 画素 10.034 ms・64 画素 10.175 ms。負荷モードで同等なら起動画面で `VRP` が増えず、ソフトの走査の幅の上限（`ComputeMaxScanSpan`: 32 画素 → 66、64 画素 → 130）も狭い 32 画素を採る。
+- 検証（`.harness/runs/20261006-183643/`）: `verify-VTG7-SW-THRESHOLD-1-build-rwdi.txt`（BUILD_EXIT_CODE=0）、`-2〜-6-stress-{off,on8,on16,on32,on64}.txt`・`-7〜-11-start-{…}.txt`（各 result=pass・CAPTURE_EXIT_CODE=0。出力先 `.harness/runs/startup-capture/VTG7-SW-THRESHOLD-{stress,start}-*`）、`-12-table.txt`（表の元。`analysis-threshold-table.py`）、`-13-build-rwdi.txt`（既定の変更後の RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-14-build-debug.txt`（Debug の Game・RenderGraphCompileTest、BUILD_EXIT_CODE=0）、`-15-ctest.txt`（RenderGraphCompileTest 1/1 Passed、CTEST_EXIT_CODE=0）、`-16-stress-default-on.txt`（既定の値の確認。result=pass）。
+- Notes: (1) `Test/Core/Rendering/RenderGraphCompileTest.cpp` の `TestSceneViewThresholdReachesCullUniform` のコメントに「既定の値（8）」が残る（paths の外なので触らない。テストは `DefaultSwRasterMaxPixels` と 12 を比べる形で、32 でも通る）。 (2) 検証レイヤー付きの Debug の撮影（VUID 0 件）はしきい値 8 画素で取った。32 画素の構成での検証レイヤーの撮影は VTG7-SW-DEFAULT-ON で取り直す。 (3) 負荷モードの `Cull1` の増加（off 0.42 → on 32・64 で 0.48〜0.49 ms）は一覧への振り分けの費用と見ているが、要因は切り分けていない。
+- Next: 独立に進められるのは VTG7-DETERMINISM-SEED。VTG7-SW-DEFAULT-ON は、しきい値 32 画素の on を既定として撮影の比較・検証を行う。

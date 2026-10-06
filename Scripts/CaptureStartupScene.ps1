@@ -195,7 +195,7 @@ param(
     # （--sw-raster=off）。各撮影のログの SW_RASTER_BIN・SW_RASTER_FALLBACK を metrics.json の sw_raster へ書く。
     [ValidateSet('Off', 'On')]
     [string]$SwRaster = 'Off',
-    # ソフトウェアラスタへ振り分けるクラスタの画面上の半径（画素）のしきい値（--sw-raster-max-px。0 は渡さず、ゲームの既定の 8 画素を使う）。
+    # ソフトウェアラスタへ振り分けるクラスタの画面上の半径（画素）のしきい値（--sw-raster-max-px。0 は渡さず、ゲームの既定の 32 画素を使う）。
     [ValidateRange(0.0, 4096.0)]
     [double]$SwRasterMaxPx = 0.0,
     # GBuffer の検証表示（既定は Off）。Normal・Velocity・Depth・Albedo・Material は最後のシーンの色を GBuffer の法線・速度・深度・アルベド・材質の色で置き換える
