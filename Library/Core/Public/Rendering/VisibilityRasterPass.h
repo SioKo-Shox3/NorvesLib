@@ -407,6 +407,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bLoggedUnsupported = false;
         // 塊に分けられなかった通知を一度だけ出すための印
         bool m_bLoggedChunkFailure = false;
+        // 記録の計算を間接 dispatch できず、直接の dispatch に切り替えた通知を一度だけ出すための印
+        bool m_bLoggedRecordsDirectFallback = false;
     };
 
     /**

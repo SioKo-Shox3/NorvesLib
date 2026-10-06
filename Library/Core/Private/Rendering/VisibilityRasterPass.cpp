@@ -45,6 +45,9 @@ namespace NorvesLib::Core::Rendering
         // 間接 dispatch の引数（VkDispatchIndirectCommand 3 語 + ワークグループの総数 1 語）の後ろに、区間の表の添え字ごとの
         // 先頭のワークグループの番号が続く（最後の 1 語は総数）。visbuffer_records_args.comp が書く
         constexpr uint32_t RecordArgsHeaderWords = 4;
+        // 記録を書く計算の 1 ワークグループのスレッド数と、間接 dispatch の x の上限（visbuffer_records*.comp と一致させる）
+        constexpr uint32_t RecordThreadsPerGroup = 64;
+        constexpr uint32_t RecordMaxGroupsX = 65535;
 
         uint32_t ClampBindSize(uint64_t size)
         {
@@ -715,6 +718,9 @@ namespace NorvesLib::Core::Rendering
             slot.RecordTable = buffer;
             slot.RecordCapacity = capacity;
             slot.RecordState = RHI::ResourceState::Common;
+            NORVES_LOG_INFO("VisibilityRasterPass",
+                            "VRAM_LEDGER visbuffer_records mb=%.2f",
+                            static_cast<double>(desc.Size) / BytesPerMegabyte);
         }
 
         if (cpuRecordCount > 0 && (!slot.RecordUpload || slot.RecordUploadCapacity < cpuRecordCount))
@@ -1284,7 +1290,29 @@ namespace NorvesLib::Core::Rendering
         commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::UnorderedAccess);
         commandList->SetPipeline(m_RecordsPipeline);
         commandList->SetDescriptorSet(slot.RecordSet, 0);
-        commandList->DispatchIndirect(slot.RecordArgs, 0);
+        if (!commandList->DispatchIndirect(slot.RecordArgs, 0))
+        {
+            // 間接 dispatch を断るコマンドリスト: 区間の容量から数えた上限のグループ数で直接 dispatch する。
+            // 余りのグループはシェーダーが引数の合計（[3]）で捨てる
+            uint64_t groupLimit = 0;
+            for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan.Sections)
+            {
+                groupLimit += (static_cast<uint64_t>(section.Capacity) + RecordThreadsPerGroup - 1u) / RecordThreadsPerGroup;
+            }
+            groupLimit *= std::max(plan.PassCount, 1u);
+            groupLimit = std::max<uint64_t>(groupLimit, 1u);
+            const uint32_t groupsX = static_cast<uint32_t>(std::min<uint64_t>(groupLimit, RecordMaxGroupsX));
+            const uint32_t groupsY = static_cast<uint32_t>((groupLimit + RecordMaxGroupsX - 1u) / RecordMaxGroupsX);
+            commandList->Dispatch(groupsX, groupsY, 1u);
+            if (!m_bLoggedRecordsDirectFallback)
+            {
+                m_bLoggedRecordsDirectFallback = true;
+                NORVES_LOG_WARNING("VisibilityRasterPass",
+                                   "VIS_RASTER_RECORDS_DIRECT_FALLBACK groups=%llu "
+                                   "間接 dispatch を断られたため、記録の計算を直接の dispatch で走らせます",
+                                   static_cast<unsigned long long>(groupLimit));
+            }
+        }
         commandList->BufferBarrier(slot.RecordTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
         slot.RecordState = RHI::ResourceState::GenericRead;
     }

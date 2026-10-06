@@ -4335,9 +4335,90 @@ namespace
         assert(scene.Resolve.WasResolved());
         assert(!scene.Resolve.WasResolvedWithTiles());
         assert(commandList.IndirectDispatches.empty());
-        assert(commandList.DispatchCount == baseline.Dispatches + MaterialTileClassify::DispatchesPerRecord + 1);
+        // 記録を書く計算も直接の dispatch に切り替わる（+ 1）
+        assert(commandList.DispatchCount == baseline.Dispatches + MaterialTileClassify::DispatchesPerRecord + 1 + 1);
         const FakeCommandList::DispatchSize& resolveGroups = commandList.DispatchGroups.back();
         assert(resolveGroups.X == 16 && resolveGroups.Y == 8 && resolveGroups.Z == 1);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 記録を書く計算が間接 dispatch を断られたとき（既定の ICommandList::DispatchIndirect）も、直接の dispatch で記録を書く。
+    // 断られた後に記録が書かれない画面にしない。グループ数は区間の容量から数えた上限（余りはシェーダーが引数の合計で捨てる）で、
+    // 積まれうる全コマンドを覆う。DispatchIndirect の失敗を無視する形に戻すと、直接の dispatch が記録されず落ちる
+    void TestVisibilityRasterRecordsFallBackToDirectDispatchWhenIndirectDispatchRejected()
+    {
+        VisibilityRasterScene scene;
+        scene.CommandList.bRejectDispatchIndirect = true;
+        RunVisibilityRasterScene(scene, true, true);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(scene.Raster.GetLastFrameStats().bRendered);
+        assert(commandList.IndirectDispatches.empty());
+        // dispatch: カリング 2 回 + HZB 7 段 + 記録の引数を作る計算 1 回 + 記録を書く計算（直接）1 回
+        assert(commandList.DispatchCount == 11);
+
+        // 並びの最後は、引数を作る計算（D）→ 記録を書く計算（D）→ ID のレンダーパス → 64bit のバッファの合流
+        const auto& sequence = commandList.CallSequence;
+        const char tail[] = {'D', 'D', 'B', 'I', 'I', 'E', 'B', 'E'};
+        assert(sequence.size() > sizeof(tail));
+        for (size_t i = 0; i < sizeof(tail); ++i)
+        {
+            assert(sequence[sequence.size() - sizeof(tail) + i] == tail[i]);
+        }
+
+        // 記録を書く計算のグループ数: x は 65535 までで y へ折り返し、積まれうる全コマンド（1 グループ 64 スレッド）を覆う
+        const FakeCommandList::DispatchSize& groups = commandList.DispatchGroups.back();
+        assert(groups.X >= 1 && groups.X <= 65535 && groups.Y >= 1 && groups.Z == 1);
+        const uint64_t totalGroups = static_cast<uint64_t>(groups.X) * groups.Y;
+        assert(totalGroups * 64u >= scene.Raster.GetLastFrameStats().MegaCommandSlots);
+        // この場面は区間が 1 つ（容量 2）の 2 パスなので、上限は 2 グループ
+        assert(groups.X == 2 && groups.Y == 1);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 記録の表（VisBuffer_DrawRecords）と記録の引数（VisBuffer_RecordArgs）のバリア。
+    //   引数: 作る計算が書く前（→ UnorderedAccess）と、間接 dispatch が読む前（UnorderedAccess → GenericRead）
+    //   表: ホストが書いた記録のコピーの前後（→ CopyDest、CopyDest → GenericRead）、記録を書く計算の前後（→ UnorderedAccess、
+    //       UnorderedAccess → GenericRead）。どれかを外すと、GPU が書き終える前に読む・コピーと書き込みが競合する
+    void TestVisibilityRasterRecordsBarriers()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true);
+        FakeCommandList& commandList = scene.CommandList;
+        assert(scene.CommandList.RecordTableCopies.size() == 1);
+
+        struct Transition
+        {
+            RHI::ResourceState Before;
+            RHI::ResourceState After;
+        };
+        const auto collect = [&](const char* name)
+        {
+            Container::VariableArray<Transition> transitions;
+            for (const BarrierEvent& event : commandList.Barriers)
+            {
+                if (event.Kind == RGBarrierKind::Buffer && event.Buffer != nullptr &&
+                    IsDebugName(static_cast<const FakeBuffer*>(event.Buffer)->GetDesc().DebugName, name))
+                {
+                    transitions.push_back(Transition{event.BeforeState, event.AfterState});
+                }
+            }
+            return transitions;
+        };
+
+        const Container::VariableArray<Transition> args = collect("VisBuffer_RecordArgs");
+        assert(args.size() == 2);
+        assert(args[0].After == RHI::ResourceState::UnorderedAccess);
+        assert(args[1].Before == RHI::ResourceState::UnorderedAccess && args[1].After == RHI::ResourceState::GenericRead);
+
+        const Container::VariableArray<Transition> table = collect("VisBuffer_DrawRecords");
+        assert(table.size() == 4);
+        assert(table[0].After == RHI::ResourceState::CopyDest);
+        assert(table[1].Before == RHI::ResourceState::CopyDest && table[1].After == RHI::ResourceState::GenericRead);
+        assert(table[2].Before == RHI::ResourceState::GenericRead && table[2].After == RHI::ResourceState::UnorderedAccess);
+        assert(table[3].Before == RHI::ResourceState::UnorderedAccess && table[3].After == RHI::ResourceState::GenericRead);
 
         ShutdownVisibilityRasterScene(scene);
     }
@@ -9956,6 +10037,8 @@ int main()
     TestVisibilityResolveDispatchesPerMaterialFromClassification();
     TestVisibilityResolveFallsBackToDirectDispatchWhenTilesUnavailable();
     TestVisibilityResolveFallsBackToDirectDispatchWhenIndirectDispatchRejected();
+    TestVisibilityRasterRecordsFallBackToDirectDispatchWhenIndirectDispatchRejected();
+    TestVisibilityRasterRecordsBarriers();
     TestVisibilityResolveUnsupportedDeviceKeepsGBufferDraws();
     TestVisibilityResolveFallsBackToGBufferDrawsWhenPipelinesAreUnavailable();
     TestVisibilityResolveFallsBackToGBufferDrawsWhenSkinningComputeUnavailable();

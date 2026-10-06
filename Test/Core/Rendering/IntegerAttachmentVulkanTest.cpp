@@ -288,6 +288,13 @@ namespace
         const auto& capabilities = device->GetCapabilities();
         std::cout << TestName << " shaderBufferInt64Atomics=" << capabilities.bShaderBufferInt64Atomics
                   << " shaderSharedInt64Atomics=" << capabilities.bShaderSharedInt64Atomics << std::endl;
+        // 開発機（RTX 4080）では shaderInt64 が有効なので、64bit のバッファのアトミックも有効でなければならない。
+        // 有効化の配線が外れて偽のままになると、非対応の装置として下で黙ってスキップされるので、ここで固定する
+        if (capabilities.bShaderInt64)
+        {
+            Expect(capabilities.bShaderBufferInt64Atomics,
+                   "shaderInt64 が有効な開発機では shaderBufferInt64Atomics も有効でなければならない");
+        }
         if (!capabilities.bShaderBufferInt64Atomics)
         {
             std::cout << TestName << " スキップ: shaderBufferInt64Atomics が使えないデバイス（int64 アトミックのケースのみ）" << std::endl;
