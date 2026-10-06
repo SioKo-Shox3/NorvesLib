@@ -989,3 +989,13 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 失敗run37471551402はReleaseコンパイル失敗のまま別保全し、親readonly replayは421payload/exit0/stderr空。成功と混同しない。
 - 範囲: Registry session付きprepared、子とaggregateの全部-or-zero登録、同key共有・typed handles・予算拒否・GC/lease保持をCPUで受入。shadow copyは追加ごとO(既存pool)、累積O(K²)。cold公開の正しさを保証する初期実装で高スループット/RSS上限を保証しない。
 - Notes: 実行中の内部状態・profile sink配送はsource固定CI検査、未archive compiler/Core/Debug試験binaryはhash attestation。Windows nativeをLinuxで再実行したとは扱わない。製品GameThread/async/delegate/M9/StageB/GPUは未接続。
+
+### GR83 有限ジョブ投入の事前契約（2026-10-06）
+
+- In progress: G2-GR83-FINITE-SUBMIT-SAFETY。P2aの受入れ後、event-drivenロードに必要なJobSystemの狭いaccounting例外安全を修正する。
+- 方針: finite countを増やす前に専用ticketとhandlerを準備し、queue公開成功後に同じgate内でarmする。完了観測とcounted印は同じfinite State mutexで管理する。登録済み失敗handlerは未armのまま残ってもcountに作用しない。
+- 検証予定: JobSystemShutdownTestのDebug/Release、既存model非同期3束、境界注入と重複/同期完了/Drain fence/世代。一般Taskの例外隔離は変更せず、後続の骨格worker/ready通知には外側catchと事前確保slot/ackを別途必要とする。
+
+- 検証範囲補足: 既存SnapshotReloadはassert内でInitialize/manifest読込を実行し、ModelAsyncLoadQueueもCloseにside effectがある。これらを新規Releaseゲートへ足さず、Debugの関連回帰3束で確認する。Releaseは旧60＋JobSystemの61件とし、有限ticketの常時有効検査はDebug/Releaseで実行する。
+
+- 反証追加: AfterHandlerで止めた投入にStop/Shutdownを競合させ、成功/例外とclose先行拒否を3経路で確認する。Drain/closeがresize lock内へ到達した通知を使い、呼出前signalだけに依存しない。

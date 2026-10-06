@@ -6,6 +6,9 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <new>
+#include <cstdlib>
+#include <type_traits>
 #include <process.h>
 #include <thread>
 #include <windows.h>
@@ -344,6 +347,40 @@ namespace NorvesLib::Thread
         {
             jobSystem.m_finiteDrainWaitHook = hook;
             jobSystem.m_finiteDrainWaitHookContext = context;
+        }
+
+        using Point = JobSystem::SubmitPreparationPoint;
+        static JobSystem* Create()
+        {
+            return new JobSystem();
+        }
+        static void Destroy(JobSystem* system)
+        {
+            delete system;
+        }
+        static void SetSubmitHook(JobSystem& system, void (*hook)(Point, void*), void* context)
+        {
+            system.m_submitPreparationHook = hook;
+            system.m_submitPreparationContext = context;
+        }
+        static void SetArmHook(JobSystem& system, void (*hook)(void*) noexcept, void* context)
+        {
+            system.m_submitBeforeArmHook = hook;
+            system.m_submitBeforeArmContext = context;
+        }
+        static void SetFenceHook(JobSystem& system, void (*hook)(void*) noexcept, void* context)
+        {
+            system.m_admissionFenceHook = hook;
+            system.m_admissionFenceContext = context;
+        }
+        static size_t Outstanding(JobSystem& system)
+        {
+            ScopedLock lock(system.m_currentFiniteDrainState->Mutex);
+            return system.m_currentFiniteDrainState->OutstandingFiniteTasks;
+        }
+        static NorvesLib::Core::Container::TWeakPtr<void> WeakState(JobSystem& system)
+        {
+            return system.m_currentFiniteDrainState;
         }
 
         static bool IsShutdownRequested(JobSystem& jobSystem)
@@ -716,6 +753,461 @@ bool TestShutdownDropsQueuedFiniteTasks(JobSystem::ExecutionMode mode)
            CheckJobSystemCondition(!bFiniteTaskExecuted.Load(), "shutdown dropped finite task was not executed");
 }
 
+// 常時有効な検査と子process watchdogで、ReleaseでもDrainの停止を見逃さない。
+#define FINITE_CHECK(value)                                                                                            \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (!CheckJobSystemCondition((value), #value))                                                                 \
+        {                                                                                                              \
+            std::abort();                                                                                              \
+        }                                                                                                              \
+    } while (false)
+namespace
+{
+    using SubmitPoint = JobSystemTestAccess::Point;
+    struct SubmissionMarker
+    {
+    };
+    struct SubmitFault
+    {
+        SubmitPoint Point;
+        bool bBadAlloc;
+        bool bHit = false;
+    };
+    void ThrowSubmitFault(SubmitPoint point, void* context)
+    {
+        auto& fault = *static_cast<SubmitFault*>(context);
+        if (fault.Point == point)
+        {
+            fault.bHit = true;
+            if (fault.bBadAlloc)
+            {
+                throw std::bad_alloc();
+            }
+            throw SubmissionMarker{};
+        }
+    }
+    struct SubmitEnvironment
+    {
+        JobSystem* System = JobSystemTestAccess::Create();
+        TestLatch WorkerEntered, WorkerGate;
+        explicit SubmitEnvironment(int route)
+        {
+            const auto mode = route == 0 ? JobSystem::ExecutionMode::EXECUTION_SIMPLE
+                                         : JobSystem::ExecutionMode::EXECUTION_WORK_STEALING;
+            System->SetExecutionMode(mode);
+            if (route == 2)
+            {
+                System->Initialize(1, mode);
+                FINITE_CHECK(System->SubmitPersistentTask(Task::Create(
+                    [this]()
+                    {
+                        WorkerEntered.Signal();
+                        FINITE_CHECK(WorkerGate.WaitFor("persistent gate"));
+                    })));
+                FINITE_CHECK(WorkerEntered.WaitFor("persistent entry"));
+            }
+        }
+        ~SubmitEnvironment()
+        {
+            JobSystemTestAccess::SetSubmitHook(*System, nullptr, nullptr);
+            JobSystemTestAccess::SetArmHook(*System, nullptr, nullptr);
+            JobSystemTestAccess::SetFenceHook(*System, nullptr, nullptr);
+            WorkerGate.Signal();
+            JobSystemTestAccess::Destroy(System);
+        }
+    };
+    void ExpectSubmitException(JobSystem& system, const TaskPtr& task, SubmitFault& fault)
+    {
+        JobSystemTestAccess::SetSubmitHook(system, ThrowSubmitFault, &fault);
+        bool bCaught = false;
+        try
+        {
+            (void)system.SubmitTask(task);
+        }
+        catch (const std::bad_alloc&)
+        {
+            FINITE_CHECK(fault.bBadAlloc);
+            bCaught = true;
+        }
+        catch (const SubmissionMarker&)
+        {
+            FINITE_CHECK(!fault.bBadAlloc);
+            bCaught = true;
+        }
+        JobSystemTestAccess::SetSubmitHook(system, nullptr, nullptr);
+        FINITE_CHECK(bCaught && fault.bHit);
+    }
+    void CheckPreparationFailures(int route)
+    {
+        const SubmitPoint points[] = {SubmitPoint::BeforeTicket, SubmitPoint::BeforeHandler, SubmitPoint::AfterHandler,
+                                      route == 2 ? SubmitPoint::BeforeLocalPush : SubmitPoint::BeforeGlobalPush};
+        for (const auto point : points)
+        {
+            for (const bool bBadAlloc : {false, true})
+            {
+                SubmitEnvironment env(route);
+                auto& system = *env.System;
+                int calls = 0;
+                auto other = Task::Create([&calls]() { ++calls; });
+                auto failed = Task::Create([&calls]() { ++calls; });
+                FINITE_CHECK(system.SubmitTask(other));
+                const size_t queued = system.GetQueuedTaskCount();
+                SubmitFault fault{point, bBadAlloc};
+                ExpectSubmitException(system, failed, fault);
+                FINITE_CHECK(system.GetQueuedTaskCount() == queued);
+                FINITE_CHECK(JobSystemTestAccess::Outstanding(system) == 1 && calls == 0);
+                FINITE_CHECK(failed->GetState() == Task::State::PENDING);
+                // 遅い失敗handlerは他の受理仕事を減算しない。
+                failed->Cancel();
+                FINITE_CHECK(JobSystemTestAccess::Outstanding(system) == 1);
+                TestLatch drainWaiting;
+                Atomic<bool> drained(false);
+                JobSystemTestAccess::SetFiniteDrainWaitHook(system, SignalDrainWait, &drainWaiting);
+                std::thread drain(
+                    [&]()
+                    {
+                        system.DrainAcceptedFiniteTasks();
+                        drained = true;
+                    });
+                FINITE_CHECK(drainWaiting.WaitFor("unrelated finite remains"));
+                FINITE_CHECK(!drained.Load());
+                other->Execute();
+                drain.join();
+                JobSystemTestAccess::SetFiniteDrainWaitHook(system, nullptr, nullptr);
+                FINITE_CHECK(drained.Load() && calls == 1 && JobSystemTestAccess::Outstanding(system) == 0);
+                // 同じ失敗経路から、新しいpending taskで通常受理へ戻れる。
+                auto retry = Task::Create([&calls]() { ++calls; });
+                FINITE_CHECK(system.SubmitTask(retry));
+                retry->Execute();
+                system.DrainAcceptedFiniteTasks();
+                FINITE_CHECK(calls == 2 && JobSystemTestAccess::Outstanding(system) == 0);
+            }
+        }
+    }
+    void CheckDuplicateSubmissions(int route)
+    {
+        SubmitEnvironment env(route);
+        auto& system = *env.System;
+        int calls = 0;
+        auto task = Task::Create([&calls]() { ++calls; });
+        FINITE_CHECK(system.SubmitTask(task));
+        SubmitFault fault{SubmitPoint::AfterHandler, true};
+        ExpectSubmitException(system, task, fault);
+        FINITE_CHECK(task->GetState() == Task::State::PENDING);
+        FINITE_CHECK(JobSystemTestAccess::Outstanding(system) == 1);
+        FINITE_CHECK(system.SubmitTask(task));
+        FINITE_CHECK(JobSystemTestAccess::Outstanding(system) == 2);
+        task->Execute();
+        task->Execute();
+        FINITE_CHECK(calls == 1 && JobSystemTestAccess::Outstanding(system) == 0);
+        FINITE_CHECK(system.SubmitTask(task)); // 登録時に同期完了。
+        auto canceled = Task::Create([&calls]() { ++calls; });
+        canceled->Cancel();
+        FINITE_CHECK(system.SubmitTask(canceled));
+        FINITE_CHECK(JobSystemTestAccess::Outstanding(system) == 0);
+        system.DrainAcceptedFiniteTasks();
+
+        TestLatch entered, gate;
+        auto running = Task::Create(
+            [&]()
+            {
+                entered.Signal();
+                FINITE_CHECK(gate.WaitFor("duplicate running gate"));
+                ++calls;
+            });
+        FINITE_CHECK(system.SubmitTask(running));
+        std::thread executor([&]() { running->Execute(); });
+        FINITE_CHECK(entered.WaitFor("duplicate running entry"));
+        FINITE_CHECK(system.SubmitTask(running));
+        FINITE_CHECK(JobSystemTestAccess::Outstanding(system) == 2);
+        gate.Signal();
+        executor.join();
+        system.DrainAcceptedFiniteTasks();
+        FINITE_CHECK(calls == 2 && JobSystemTestAccess::Outstanding(system) == 0);
+    }
+    struct TerminalHook
+    {
+        TaskPtr Task;
+        bool bExecute;
+        SubmitPoint At;
+        bool bHit = false;
+    };
+    void CompleteTask(TerminalHook& hook)
+    {
+        hook.bHit = true;
+        if (hook.bExecute)
+        {
+            hook.Task->Execute();
+        }
+        else
+        {
+            hook.Task->Cancel();
+        }
+    }
+    void TerminalDuringPreparation(SubmitPoint point, void* context)
+    {
+        auto& hook = *static_cast<TerminalHook*>(context);
+        if (point == hook.At)
+        {
+            CompleteTask(hook);
+        }
+    }
+    void TerminalBeforeArm(void* context) noexcept
+    {
+        CompleteTask(*static_cast<TerminalHook*>(context));
+    }
+    void CheckTerminalOrdering(int route)
+    {
+        for (const bool execute : {false, true})
+        {
+            for (int phase = 0; phase != 4; ++phase)
+            {
+                SubmitEnvironment env(route);
+                int calls = 0;
+                auto task = Task::Create([&calls]() { ++calls; });
+                TerminalHook hook{task, execute, phase == 0 ? SubmitPoint::BeforeHandler : SubmitPoint::AfterHandler};
+                if (phase < 2)
+                {
+                    JobSystemTestAccess::SetSubmitHook(*env.System, TerminalDuringPreparation, &hook);
+                }
+                if (phase == 2)
+                {
+                    JobSystemTestAccess::SetArmHook(*env.System, TerminalBeforeArm, &hook);
+                }
+                FINITE_CHECK(env.System->SubmitTask(task));
+                JobSystemTestAccess::SetSubmitHook(*env.System, nullptr, nullptr);
+                JobSystemTestAccess::SetArmHook(*env.System, nullptr, nullptr);
+                if (phase == 3)
+                {
+                    FINITE_CHECK(JobSystemTestAccess::Outstanding(*env.System) == 1);
+                    CompleteTask(hook);
+                }
+                FINITE_CHECK(hook.bHit && calls == (execute ? 1 : 0));
+                FINITE_CHECK(JobSystemTestAccess::Outstanding(*env.System) == 0);
+                env.System->DrainAcceptedFiniteTasks();
+            }
+        }
+    }
+    void SignalAdmissionFence(void* context) noexcept
+    {
+        static_cast<TestLatch*>(context)->Signal();
+    }
+    struct ArmBarrier
+    {
+        TestLatch Entered, Gate;
+    };
+    void HoldBeforeArm(void* context) noexcept
+    {
+        auto& barrier = *static_cast<ArmBarrier*>(context);
+        barrier.Entered.Signal();
+        FINITE_CHECK(barrier.Gate.WaitFor("arm gate"));
+    }
+    void CheckAdmissionFence(int route)
+    {
+        SubmitEnvironment env(route);
+        auto& system = *env.System;
+        ArmBarrier barrier;
+        TestLatch attempting, waiting;
+        Atomic<bool> accepted(false), drained(false);
+        auto task = Task::Create([]() {});
+        JobSystemTestAccess::SetArmHook(system, HoldBeforeArm, &barrier);
+        std::thread submit([&]() { accepted = system.SubmitTask(task); });
+        FINITE_CHECK(barrier.Entered.WaitFor("arm entry"));
+        FINITE_CHECK(JobSystemTestAccess::Outstanding(system) == 0);
+        JobSystemTestAccess::SetFiniteDrainWaitHook(system, SignalDrainWait, &waiting);
+        JobSystemTestAccess::SetFenceHook(system, SignalAdmissionFence, &attempting);
+        std::thread drain(
+            [&]()
+            {
+                system.DrainAcceptedFiniteTasks();
+                drained = true;
+            });
+        FINITE_CHECK(attempting.WaitFor("drain reached resize fence before arm"));
+        barrier.Gate.Signal();
+        submit.join();
+        JobSystemTestAccess::SetArmHook(system, nullptr, nullptr);
+        FINITE_CHECK(accepted.Load() && waiting.WaitFor("armed drain predicate") && !drained.Load());
+        task->Execute();
+        drain.join();
+        JobSystemTestAccess::SetFiniteDrainWaitHook(system, nullptr, nullptr);
+        FINITE_CHECK(drained.Load());
+        JobSystemTestAccess::SetFenceHook(system, nullptr, nullptr);
+        system.StopAcceptingTasks();
+        bool reentered = false;
+        auto rejected = Task::Create([]() {});
+        rejected->OnComplete(
+            [&](const TaskPtr&)
+            {
+                system.StopAcceptingTasks();
+                reentered = true;
+            });
+        FINITE_CHECK(!system.SubmitTask(rejected));
+        FINITE_CHECK(reentered && rejected->GetState() == Task::State::CANCELED);
+    }
+    struct PreparationBarrier
+    {
+        TestLatch Entered, Gate;
+        bool bThrow = false;
+    };
+    void HoldAfterHandler(SubmitPoint point, void* context)
+    {
+        if (point != SubmitPoint::AfterHandler)
+        {
+            return;
+        }
+        auto& barrier = *static_cast<PreparationBarrier*>(context);
+        barrier.Entered.Signal();
+        FINITE_CHECK(barrier.Gate.WaitFor("preparation gate"));
+        if (barrier.bThrow)
+        {
+            throw SubmissionMarker{};
+        }
+    }
+    void CheckCloseDuringPreparation(int route)
+    {
+        for (const bool shutdown : {false, true})
+        {
+            for (const bool fail : {false, true})
+            {
+                SubmitEnvironment env(route);
+                auto& system = *env.System;
+                PreparationBarrier barrier;
+                barrier.bThrow = fail;
+                TestLatch closeAtFence;
+                Atomic<bool> accepted(false), caught(false), closed(false);
+                Atomic<int> calls(0);
+                auto task = Task::Create([&]() { calls++; });
+                const size_t queued = system.GetQueuedTaskCount();
+                JobSystemTestAccess::SetSubmitHook(system, HoldAfterHandler, &barrier);
+                JobSystemTestAccess::SetFenceHook(system, SignalAdmissionFence, &closeAtFence);
+                std::thread submit(
+                    [&]()
+                    {
+                        try
+                        {
+                            accepted = system.SubmitTask(task);
+                        }
+                        catch (const SubmissionMarker&)
+                        {
+                            caught = true;
+                        }
+                    });
+                FINITE_CHECK(barrier.Entered.WaitFor("handler registered before close"));
+                std::thread closer(
+                    [&]()
+                    {
+                        if (shutdown)
+                        {
+                            system.Shutdown();
+                        }
+                        else
+                        {
+                            system.StopAcceptingTasks();
+                        }
+                        closed = true;
+                    });
+                // 呼出前のsignalではなく、close実装がresize lock内へ到達した通知を待つ。
+                FINITE_CHECK(closeAtFence.WaitFor("close reached resize fence"));
+                FINITE_CHECK(!closed.Load() && JobSystemTestAccess::Outstanding(system) == 0);
+                FINITE_CHECK(system.GetQueuedTaskCount() == queued && calls.Load() == 0);
+                barrier.Gate.Signal();
+                submit.join();
+                JobSystemTestAccess::SetSubmitHook(system, nullptr, nullptr);
+                FINITE_CHECK(accepted.Load() == !fail && caught.Load() == fail);
+                if (shutdown)
+                {
+                    FINITE_CHECK(WaitForShutdownRequest(system));
+                    env.WorkerGate.Signal();
+                }
+                closer.join();
+                JobSystemTestAccess::SetFenceHook(system, nullptr, nullptr);
+                FINITE_CHECK(closed.Load());
+                if (shutdown)
+                {
+                    FINITE_CHECK(system.GetQueuedTaskCount() == 0);
+                    FINITE_CHECK(JobSystemTestAccess::Outstanding(system) == 0);
+                    FINITE_CHECK(task->GetState() == (fail ? Task::State::PENDING : Task::State::CANCELED));
+                }
+                else
+                {
+                    FINITE_CHECK(system.GetQueuedTaskCount() == queued + (fail ? 0 : 1));
+                    FINITE_CHECK(JobSystemTestAccess::Outstanding(system) == (fail ? 0 : 1));
+                    FINITE_CHECK(task->GetState() == Task::State::PENDING);
+                }
+                task->Cancel();
+                system.DrainAcceptedFiniteTasks();
+                FINITE_CHECK(calls.Load() == 0 && JobSystemTestAccess::Outstanding(system) == 0);
+
+                // close先行なら拒否してgate外でCancelする。handlerの同じclose再入を許す。
+                bool reentered = false;
+                auto rejected = Task::Create([&]() { calls++; });
+                rejected->OnComplete(
+                    [&](const TaskPtr&)
+                    {
+                        if (shutdown)
+                        {
+                            system.Shutdown();
+                        }
+                        else
+                        {
+                            system.StopAcceptingTasks();
+                        }
+                        reentered = true;
+                    });
+                FINITE_CHECK(!system.SubmitTask(rejected));
+                FINITE_CHECK(reentered && rejected->GetState() == Task::State::CANCELED);
+                system.DrainAcceptedFiniteTasks();
+                FINITE_CHECK(calls.Load() == 0 && JobSystemTestAccess::Outstanding(system) == 0);
+            }
+        }
+    }
+    void CheckLateGeneration(int route)
+    {
+        SubmitEnvironment env(route);
+        auto& system = *env.System;
+        auto old = Task::Create([]() {});
+        SubmitFault fault{SubmitPoint::AfterHandler, true};
+        ExpectSubmitException(system, old, fault);
+        auto weak = JobSystemTestAccess::WeakState(system);
+        env.WorkerGate.Signal();
+        system.Shutdown();
+        TestLatch entered, gate;
+        system.Initialize(1, route == 0 ? JobSystem::ExecutionMode::EXECUTION_SIMPLE
+                                        : JobSystem::ExecutionMode::EXECUTION_WORK_STEALING);
+        auto live = Task::Create(
+            [&]()
+            {
+                entered.Signal();
+                FINITE_CHECK(gate.WaitFor("new generation gate"));
+            });
+        FINITE_CHECK(system.SubmitTask(live));
+        FINITE_CHECK(entered.WaitFor("new generation entry"));
+        FINITE_CHECK(!weak.expired());
+        old->Cancel();
+        old.reset();
+        FINITE_CHECK(weak.expired());
+        FINITE_CHECK(JobSystemTestAccess::Outstanding(system) == 1);
+        gate.Signal();
+        system.DrainAcceptedFiniteTasks();
+    }
+    bool RunFiniteSubmissionSafety(int route)
+    {
+        static_assert(std::is_nothrow_copy_constructible_v<TaskPtr>);
+        static_assert(std::is_nothrow_move_constructible_v<TaskPtr>);
+        static_assert(std::is_nothrow_destructible_v<TaskPtr>);
+        static_assert(std::is_nothrow_destructible_v<Task>);
+        CheckPreparationFailures(route);
+        CheckDuplicateSubmissions(route);
+        CheckTerminalOrdering(route);
+        CheckAdmissionFence(route);
+        CheckCloseDuringPreparation(route);
+        CheckLateGeneration(route);
+        return true;
+    }
+} // namespace
+#undef FINITE_CHECK
+
 bool RunChildScenario(const char* executablePath, const char* childMode)
 {
     const char* childArguments[] =
@@ -762,6 +1254,18 @@ int main(int argc, char** argv)
 {
     if (argc == 2)
     {
+        if (std::strcmp(argv[1], "--submit-simple") == 0)
+        {
+            return RunFiniteSubmissionSafety(0) ? 0 : 1;
+        }
+        if (std::strcmp(argv[1], "--submit-global-fallback") == 0)
+        {
+            return RunFiniteSubmissionSafety(1) ? 0 : 1;
+        }
+        if (std::strcmp(argv[1], "--submit-local") == 0)
+        {
+            return RunFiniteSubmissionSafety(2) ? 0 : 1;
+        }
         if (std::strcmp(argv[1], "--pre-initialize-simple") == 0)
         {
             return TestPreInitializeFiniteDrain(JobSystem::ExecutionMode::EXECUTION_SIMPLE) ? 0 : 1;
@@ -799,6 +1303,15 @@ int main(int argc, char** argv)
     {
         return 1;
     }
+
+    if (!RunChildScenario(argv[0], "--submit-simple") || !RunChildScenario(argv[0], "--submit-global-fallback") ||
+        !RunChildScenario(argv[0], "--submit-local"))
+    {
+        return 1;
+    }
+    std::cout
+        << "FINITE_SUBMISSION_SAFETY result=pass unarmed_ticket_exception_duplicate_terminal_admission_generation_no_general_handler_guarantee"
+        << std::endl;
 
     TestRepeatedShutdown();
     TestDynamicResize();

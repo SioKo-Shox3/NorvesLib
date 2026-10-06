@@ -2684,3 +2684,9 @@
 - stop-when: public Registerの例外安全を仮定する、GCで失敗rollbackする、子handle/会計を黙って捨てる、commit列で確保/callback/Unloadする、snapshot cloneを高スループット実装と称する、async配送/製品loop/M9/StageB/GPUへ広げる。Registry寿命・Initialize/Shutdownの排他はcaller契約とし任意並行破棄を保証しない。
 
 - result: code177c1b69/tree780f3603/run37474221718 attempt1 job112305303905。初回8e913414の新試験filesystem include不足をtest/PROGRESSだけで修正しproduction不変。Release CPU60/22marker、Debugのpublication・loader/Profile・既存Registry4memberを確認。旧55cppは不変、共有fixtureは14関数とMagicのinlineだけ。4固定6095byte capture・旧89出力・25+15CLI・12metadata・17/29child退出・GR84別58process/125file・MSVC/PE-CNG/SHELL32を維持。14checker normal/-Oのreceipt/stdout一致・stderr空、親readonly replay exit0・541payload inventory一致。初回失敗421payloadは別保持。preparedのsession/owner、4型shadow一括公開、typed child handle、厳密cache取得とGC/leaseのCPU契約を受入。既存4memberのassert契約はDebugで検証しRelease件数だけを根拠にしない。clone累積O(K²)、RSS/時間/汎用Register例外安全/任意並行破棄/async/製品loop/M9/StageB/GPUは対象外。
+
+## G2-GR83-FINITE-SUBMIT-SAFETY: 非同期ロードの有限ジョブ投入を例外時にも計上整合させる
+- status: doing
+- done-when: submission専用の未計上ticketでOnCompleteを先に登録し、enqueue成功後に同じadmission gate内でarmする。同期完了・重複submit・遅い失敗handlerで別仕事のcountを減らさず、登録/queueの確保例外でDrainを残さない。公開bool、closed Cancel、persistent、世代と既存schedulerを維持する。
+- verify: simple/global fallback/localの境界例外と再試行、他task保持中の遅いCancel、同Taskの成功/失敗重複・terminal同期・arm前後、Stop/Drain fenceと再初期化世代、weak寿命、既存JobSystemShutdownTestをDebug/Releaseで実行。ModelAsyncLoadQueue/ModelResourcesAssetRuntime/AssetRuntimeSnapshotReloadの関連回帰を含める。境界注入と実allocator OOMの全域検証を区別する。
+- stop-when: push後にallocating/throwing callbackを置く、例外cleanupで以前受理した同Taskを取消す、一般worker/handler例外・Shutdown/Initialize全体OOM・scheduler再設計を含める、persistentへ逃げる、GR83 async/製品loop/GPUまで完了とする。

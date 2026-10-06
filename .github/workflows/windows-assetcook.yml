@@ -145,7 +145,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
       - name: AssetCookとテストbundleをビルドする
         run: |
-          cmake --build build/windows-cli --config Release --target AssetCook CookedMeshTest ResourceRegistryTest MegaGeometryResourcesTest ModelResourcesAssetRuntimeTest SkeletalAnimationSamplingTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
+          cmake --build build/windows-cli --config Release --target AssetCook JobSystemShutdownTest CookedMeshTest ResourceRegistryTest MegaGeometryResourcesTest ModelResourcesAssetRuntimeTest SkeletalAnimationSamplingTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
           if ($LASTEXITCODE -ne 0) { throw 'Native build failed' }
       - name: SamplerのDebugとReleaseを固定した旧出力と比較する
         run: |
@@ -185,7 +185,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Diagnostic byte parity failed' }
       - name: CPU契約を実行する
         run: |
-          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(SkeletalAnimationSamplingTest|CookedMeshTest|CookedMeshV1Test|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|StringEmptyTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest|TextureManagedCliTest|SkeletalJointIndexTest|SkeletalBindRowMathTest|SkeletalJointGlobalRowMathTest|SkeletalJointMappingTest|SkeletalCoordinateConversionTest|SkeletalRotationRetargetTest|SkeletalRotationRetargetNativeTest|SkeletalBvhClipTimeTest|SkeletalBvhClipImportTest|SkeletalBvhCookBridgeTest|SkeletalAssetLoaderTest|SkeletalAssetPublicationTest|ResourceRegistryTest|ResourceMetadataTest|SkeletalResourceLifetimeTest|SkeletalAssetResourceTest|BvhEvaluateTest|BvhDecodeTest|GltfMaterialCookV1Test|ImportedMaterialStagingTest|ImportedOpaqueRuntimeTest|MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|TextureAssetSetOutputTest|ImportStaticIntegrationTest|CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedTransactionIntentTest|CookManagedStoreInitializationTest|CookManagedStoreObservationTest|CookManagedUpdateInventoryTest|CookDestinationLockTest|CookOwnerResolverTest|CookOwnerBindingTest|CookOutputSetGuardTest|CookOutputPlanTest|CookStateFileTest|CookOwnedStateTest|ModelNativePathTest|CookCacheDecisionTest|CookOutputPackageTest|CookDependencySnapshotTest|ImportSettingsFileTest|GltfBufferSetTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
+          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(JobSystemShutdownTest|SkeletalAnimationSamplingTest|CookedMeshTest|CookedMeshV1Test|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|StringEmptyTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest|TextureManagedCliTest|SkeletalJointIndexTest|SkeletalBindRowMathTest|SkeletalJointGlobalRowMathTest|SkeletalJointMappingTest|SkeletalCoordinateConversionTest|SkeletalRotationRetargetTest|SkeletalRotationRetargetNativeTest|SkeletalBvhClipTimeTest|SkeletalBvhClipImportTest|SkeletalBvhCookBridgeTest|SkeletalAssetLoaderTest|SkeletalAssetPublicationTest|ResourceRegistryTest|ResourceMetadataTest|SkeletalResourceLifetimeTest|SkeletalAssetResourceTest|BvhEvaluateTest|BvhDecodeTest|GltfMaterialCookV1Test|ImportedMaterialStagingTest|ImportedOpaqueRuntimeTest|MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|TextureAssetSetOutputTest|ImportStaticIntegrationTest|CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedTransactionIntentTest|CookManagedStoreInitializationTest|CookManagedStoreObservationTest|CookManagedUpdateInventoryTest|CookDestinationLockTest|CookOwnerResolverTest|CookOwnerBindingTest|CookOutputSetGuardTest|CookOutputPlanTest|CookStateFileTest|CookOwnedStateTest|ModelNativePathTest|CookCacheDecisionTest|CookOutputPackageTest|CookDependencySnapshotTest|ImportSettingsFileTest|GltfBufferSetTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
           if ($LASTEXITCODE -ne 0) { throw 'CPU contracts failed' }
       - name: 骨格ローダのDebug契約とprofileログを検証する
         run: |
@@ -199,6 +199,18 @@ jobs:
             & build/windows-cli/Test/Core/Object/Debug/ResourceRegistryTest.exe "--test=$test" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/$test-Debug.log"
             if ($LASTEXITCODE -ne 0) { throw "Registry Debug contract failed: $test" }
           }
+      - name: 有限ジョブ投入と既存非同期経路をDebugで検証する
+        run: |
+          cmake --build build/windows-cli --config Debug --target JobSystemShutdownTest ModelResourcesAssetRuntimeTest AssetRuntimeSnapshotReloadTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/finite-submit-build-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Finite submission Debug build failed' }
+          & build/windows-cli/Test/Thread/Debug/JobSystemShutdownTest.exe 2>&1 | Tee-Object "$env:NORVES_CI_LOG/finite-submit-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Finite submission Debug contracts failed' }
+          foreach ($test in @('ModelResourcesAssetRuntimeTest','ModelAsyncLoadQueueTest')) {
+            & build/windows-cli/Test/Core/Rendering/Debug/ModelResourcesAssetRuntimeTest.exe "--test=$test" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/$test-Debug.log"
+            if ($LASTEXITCODE -ne 0) { throw "Model async Debug contract failed: $test" }
+          }
+          & build/windows-cli/Test/Core/Rendering/Debug/AssetRuntimeSnapshotReloadTest.exe 2>&1 | Tee-Object "$env:NORVES_CI_LOG/AssetRuntimeSnapshotReloadTest-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Snapshot reload Debug contracts failed' }
       - name: Role Profileの実Windows CLIを検証する
         run: |
           python -B Scripts/AssetCookRoleProfileSmoke.py --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --output "$env:RUNNER_TEMP/NorvesRoleProfileCli" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/role-profile-cli.log"

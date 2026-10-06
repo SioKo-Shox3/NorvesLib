@@ -212,6 +212,36 @@ namespace NorvesLib::Thread
             ConditionVariable Condition;
         };
 
+        // submissionごとに別ticketを持ち、失敗した登録の遅い完了が別仕事を減算しない。
+        struct FiniteSubmissionTicket
+        {
+            Core::Container::TSharedPtr<FiniteDrainState> State;
+            bool bCompletionObserved = false;
+            bool bCounted = false;
+        };
+        using FiniteTicketPtr = Core::Container::TSharedPtr<FiniteSubmissionTicket>;
+        FiniteTicketPtr PrepareFiniteSubmission(const TaskPtr& task);
+        static void ArmFiniteSubmission(const FiniteTicketPtr& ticket);
+
+        // 単体試験専用。設定変更はsubmitとの排他をcallerが保証する。
+        enum class SubmitPreparationPoint
+        {
+            BeforeTicket,
+            BeforeHandler,
+            AfterHandler,
+            BeforeGlobalPush,
+            BeforeLocalPush
+        };
+        void ProbeSubmitPreparation(SubmitPreparationPoint point);
+        void (*m_submitPreparationHook)(SubmitPreparationPoint, void*) = nullptr;
+        void* m_submitPreparationContext = nullptr;
+        // queue公開後の列にはthrowing hookを置かない。
+        void (*m_submitBeforeArmHook)(void*) noexcept = nullptr;
+        void* m_submitBeforeArmContext = nullptr;
+        // lifecycle/Drainがresize fence内へ到達したことを観測する非throwing試験通知。
+        void (*m_admissionFenceHook)(void*) noexcept = nullptr;
+        void* m_admissionFenceContext = nullptr;
+
         enum class LifecycleState
         {
             Constructed,
