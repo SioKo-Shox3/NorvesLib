@@ -234,8 +234,18 @@ namespace
     {
         Cook::SkeletalBvhCookResult result;
         Text error;
-        CHECK(Cook::CookGltfWithBvhToNvskelNativePath(glb.data(), glb.size(), Format, {}, request, result, error,
-                                                      nullptr, options));
+        static unsigned invocation = 0;
+        ++invocation;
+        const bool bCooked = Cook::CookGltfWithBvhToNvskelNativePath(
+            glb.data(), glb.size(), Format, {}, request, result, error, nullptr, options);
+        if (!bCooked)
+        {
+            B::BvhDocument diagnostic;
+            const auto decoded = B::DecodeBvh(request.BvhBytes, request.DecodeLimits, diagnostic);
+            std::fprintf(stderr, "BVH cook invocation=%u error=%s raw_status=%u raw_offset=%zu frames=%u\n",
+                invocation, error.c_str(), static_cast<unsigned>(decoded.Status), decoded.ByteOffset, diagnostic.FrameCount);
+        }
+        CHECK(bCooked);
         CHECK(result.Report.bStoredKeysValidated && !result.Report.bContinuousCurveValidated);
         return result;
     }
@@ -527,12 +537,12 @@ namespace
         changed.BvhBytes = {reinterpret_cast<const uint8_t*>(whitespace.data()), whitespace.size()};
         CHECK(CookIt(original, changed).Cook.SourceHash != added.Cook.SourceHash);
         const char* single =
-            "HIERARCHY ROOT Source { OFFSET 0 0 0 CHANNELS 3 Zrotation Xrotation Yrotation } MOTION Frames: 1 Frame Time: 0.5 0 0 0";
+            "HIERARCHY ROOT Source { OFFSET 0 0 0 CHANNELS 3 Zrotation Xrotation Yrotation } MOTION Frames: 1 Frame Time: 0.5\n0 0 0\n";
         changed = request.Value;
         changed.BvhBytes = View(single);
         CHECK(CookIt(original, changed).Report.SourceFrames == 1);
         const char* positions =
-            "HIERARCHY ROOT Source { OFFSET 0 0 0 CHANNELS 3 Xposition Yposition Zposition } MOTION Frames: 2 Frame Time: 0.5 1e300 0 0 1e300 0 0";
+            "HIERARCHY ROOT Source { OFFSET 0 0 0 CHANNELS 3 Xposition Yposition Zposition } MOTION Frames: 2 Frame Time: 0.5\n1e300 0 0\n1e300 0 0\n";
         changed.BvhBytes = View(positions);
         CHECK(CookIt(original, changed).Report.SourceFrames == 2);
         const char* zero =
