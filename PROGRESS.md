@@ -1762,3 +1762,23 @@
 - しきい値 64 画素の `SW_RASTER_OVERSIZE`: default 6 行・near 10 行・low 5 行のすべてが 0（前回は上限 64 画素四方で 4・28・32）。zeroed・sw_groups は pass1 + pass2 と一致、sw_dispatches は 2。負荷モード 300 個（しきい値 8 画素）も 3 視点・全行 0。
 - 残り: `VTG7-SW-HARDEN-TESTS`（(4)(5) と上限を超える三角形の GPU のテスト）、`VTG7-SW-HARDEN-VALIDATION`（(8) の VUID 0 と on・off の GPU 時間の中央値）。しきい値 64 画素の GPU 時間は `VTG7-SW-THRESHOLD` で測る（上限が 130 画素四方になり、1 スレッドの最悪の走査は 16900 画素）。
 - Notes: 矩形の上限の式は、半径 r のクラスタの三角形が直径 2r の円に収まり、画素の中心が最大 2r + 1 個並ぶことに丸めの余裕を足したもの。`MegaGeometryPass.cpp`・`.h` は行末が混在しているので、バイト単位で編集して numstat が一致することを確かめた。
+
+## 反復 1（run 20261006-155553）: VTG7-SW-PATH-DIFF（done。64bit の経路は原因ではなく、同じ構成でも run 間で一致しない非決定性だった）
+- 結論: near-sun10 の on と off の 65.31 dB は、ソフトウェアラスタの 64bit のバッファ・埋め・合流の経路が作る差ではない。**同じ構成（off も on も）を同じバイナリで繰り返すと、画像が 2〜3 つの状態に分かれ、状態の間は同じ 65.3 dB になる**。on と off はたまたま別の状態に入っていただけ。前の反復の「on 同士・off 同士が 100 dB」は 2 回ずつの撮影で、同じ状態に入った偶然だった。コードは変えていない（一時的な計装はすべて戻し、`git diff` は空）。
+- 切り分け（near-sun10、`-Deterministic`、RelWithDebInfo。出力先は `.harness/runs/startup-capture/VTG7-SW-PATH-DIFF-*`）:
+  (a) off に 7.4 MB の未使用バッファを 1 つ確保しただけ（`a1-dummy`）で、on と同じ 65.316 dB・不一致 0.049098 が出る。毎フレーム埋めまで足すと（`a2-dummyfill`）96.98 dB。64bit の経路の中身に依らず、確保の増減だけで状態が変わる。
+  (b) on で合流のパスを記録しない: 65.309 dB。(c) on で埋め（と、それに依存するソフトの dispatch・合流）を記録しない: 84.37 dB。どれも「別の状態」へ動くだけで、特定の部品を外すと 100 dB になる、ということは無かった。
+  (d) RTGI を切る: 1 組では on・off が完全一致（100 dB）だったが、3 回ずつ足すと 8 回中 4 回が一致し、残りは 93〜112 dB に散る（RTGI を切っても run 間の揺れは残る。小さくなるだけ）。**FXAA（TAA なし）は off 4 回・on 4 回の 8 回がすべて完全一致**。ソフトウェアラスタの経路が GBuffer・照明・RTGI の結果を変えていないことの直接の証拠。
+  (e) 中間のターゲット: `-GBufferDebug` の Normal・Depth・Albedo・Material は on と off で 100 dB（Normal だけ 4 画素が ±1）。SceneColor（HDR）と RTGI のデノイズ後を RGBA16F のまま読み戻して比べると、差は小さな領域に集まる（SceneColor 17 画素、x 388〜394・y 211〜215、小屋の軒先。最大 0.003）。SceneColor を同じ構成（off）で 8 回読むと 2 グループに分かれ、グループ間は 23.4% の画素が違い（大きな球の画素の約 80%、fp16 の 1〜2 ULP、最大の相対差 6.8%）、グループ内は小屋の軒先の 16 画素だけが違う。
+  (f) 描画グラフの一時資源の別名割り当て: 差が on 固有でないので掘っていない。
+- 非決定性の性質（同じ構成の繰り返し）:
+  - 同じ off を 4 回（`rep-off1〜4`）撮ると、最初に撮った off と 4 回とも 65.316 dB（それらの間は 103〜107 dB）。on を 4 回（`rep-on1〜4`）撮ると、最初の off との PSNR は 96.64・65.31・100・100 dB。off と on の両方に同じ状態が現れる。
+  - RTGI のログ（8 回）: フレーム番号・エポック内の番号・instance 数・履歴の有効・年齢・静止フレーム数・標本の番号の列は 8 回とも完全に同一で、**プリエクスポージャだけが float の最下位 1 ULP ずれる**。自動露出の入力（シーンの輝度のヒストグラム）の 1 画素が別の bin へ移っただけで起きる大きさ。TAA の履歴の判定（reused 227・rejected 0）も全 run で同じ。CPU 側の論理は分岐していない。
+  - 種は小さく局所的（小屋の軒先の数画素）で、自動露出・TAA・RTGI の時間方向の履歴のフィードバックを通って、大きな球の fp16 の 1〜2 ULP の差へ広がる。
+- 除外できたもの: GPU の同期の欠け（全パスの後に `ALL_COMMANDS` の全メモリバリアを入れ、毎フレーム `WaitIdle` しても、8 回で 2 グループ・65.31 dB のまま。`wi-off*`・`fb-off*`）、VT（`--virtual-texture=off` でも 6 回中 1 回が 71.4 dB の別状態）、ジオメトリのストリーミング（`--geometry-streaming=off` でも 6 回中 1 回が 65.3 dB）、読み込みの完了からエポックまでの時間（エポックを描画 500 フレームまで遅らせても 6 回が 2 グループ）。
+- 決定的になる条件: `-LooseTextures`（クック済みを使わない。6 回が完全一致）と FXAA（8 回が完全一致）。**クック済みテクスチャ × TAA × RTGI** で再現する。種の場所はクック済みテクスチャを貼った小屋の軒先で、クック済みテクスチャの経路（ミップの末尾・圧縮形式・アップロードの経路）の非決定性が最有力（未確認）。ここから先は `VTG7-DETERMINISM-SEED` に分けた。
+- 影響の大きさ: on と off の差は 8bit で ±1 が約 4.9%（最大差 4〜7 が数画素）、穴・継ぎ目は無い。同じ構成の run 間の差と区別できず、45 dB の限度は大きく超える。負荷モード 300 個（default・昼。ソフトが pass1=587・pass2=17 を描く）は、off 4 回の間が 80.2〜88.7 dB、on 4 回のうち 2 回が off と 80〜88 dB（off 同士と同じ水準）、残り 2 回が off の 4 回すべてと 65.5〜66.9 dB（on 同士は 67.3 dB）。ソフトが描いたクラスタ由来の差が混ざるかは、非決定性が残っている今の撮影では判別できない（`VTG7-DETERMINISM-SEED` の後に on・off を比べ直す）。
+- `VTG7-SW-DEFAULT-ON` への示唆: on と off の PSNR は 100 dB を期待せず、**同じ構成の繰り返し（off 同士）で出る最小の PSNR より下がらないこと**で判定する（起動画面の near-sun10 で 65.3 dB、負荷モードで 65.5 dB まで下がる）。45 dB の限度は据え置き。off 同士の繰り返しは各視点 4 回以上撮る。
+- 検証（`.harness/runs/20261006-155553/`）: `verify-VTG7-SW-PATH-DIFF-1-build.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-2-capture.txt`（指定の撮影。default・near・low の 3 視点、result=pass、CAPTURE_EXIT_CODE=0）。切り分けの撮影は上の出力先に残してある（一時的な計装は `EXP_*` の環境変数で切り替える形で入れ、全部戻した）。
+- Notes: (1) bash で `cd` するとツールの作業ディレクトリが PowerShell 側にも移るので、撮影の出力先の相対パスがずれる（`Set-Location` でリポジトリの根へ戻してから撮る）。 (2) SceneColor・RTGI の生の読み戻しは `ApplicationProcessor` の `--capture-png` の取得元を一時的に替えて RGBA16F をそのまま書き出す形で行った（戻した）。 (3) 経過の要約は `.harness/runs/startup-capture/VTG7-SW-PATH-DIFF-*` の PNG・ログ。
+- Next: VTG7-DETERMINISM-SEED（非決定性の種）。独立に進められるのは VTG7-SW-HARDEN-TESTS・VTG7-SW-HARDEN-VALIDATION。

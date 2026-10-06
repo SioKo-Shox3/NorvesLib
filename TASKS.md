@@ -1077,13 +1077,25 @@
 - progress (2026-10-06 反復2): 選択肢 1 を実装した。1 スレッドが走査する矩形の上限を `max(64, ceil(2 × しきい値) + 2)` 画素四方にし（`VisibilitySwRaster::ComputeMaxScanSpan`）、`MegaGeometryPass` の `VisibilityDrawPlan::SwRasterMaxPixels` から dispatch の定数（`flags.y`）でシェーダーへ渡す。しきい値 64 画素の撮影（`VTG7-SW-HARDEN-px64`）は 3 視点とも `SW_RASTER_OVERSIZE=0`（default 6 行・near 10 行・low 5 行すべて 0）、負荷モード 300 個（`VTG7-SW-HARDEN-stress`）も 3 視点 0。
 
 ## VTG7-SW-PATH-DIFF: 64bit の経路を有効にしただけで出る決定的な差の原因を切り分ける
-- status: todo
+- status: done
 - done-when: `--sw-raster=on` でソフトへの振り分けが 0 でも（`--sw-raster-max-px=0.001`）、`--sw-raster=off` と決定的に違う画素が出る原因を特定し、直すか、原因と影響を PROGRESS に書く。現象（VTG7-SW-RASTER の撮影と評価）: near-sun10 で PSNR 65.31 dB（不一致 4.9%、ほぼ ±1、中央の大きな球に集中。on 同士・off 同士は 100 dB）、low-sun10 で 9 視点をまとめた撮影のとき約 80 dB、負荷モード 300 個の default で差の画素が中央の大きな球の矩形に 26.6%（それ以外 1.9%）。同じ near の near-sun45・near-sun3 は 100 dB。VT・ジオメトリの常駐・`MEGA_OCCLUSION`・正規化したログは on と off で同一で、「VRAM の配分（`vt_target_mb`）」の説明は否定済み。合流のパスは空なら discard。切り分け（それぞれ near-sun10 の `-Deterministic` 撮影を off と比べる。一時的な変更はコミットせず、同じ編集で元へ戻す）: (a) off に 64bit のバッファと同じ大きさの使わないバッファを確保する、(b) on で合流のパスだけを記録しない、(c) on で埋めだけを記録しない、(d) RTGI を切って on と off を比べる（既存の起動引数・設定があれば。無ければ一時的に切る）、(e) GBuffer・照明の中間のターゲット（デバッグ表示）で差が最初に出るパスを探す、(f) 描画グラフの一時資源の別名割り当ての配置が on と off で変わるかを比べる。原因が不具合（未初期化の読み・同期の欠け）なら直し、near-sun10・low-sun10・負荷モード default の on と off が他の視点と同じ水準（100 dB 前後）になることを確かめる。不具合でない（例 RTGI の時間方向の履歴の順序依存）なら、その根拠と影響の大きさを PROGRESS に書く。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-PATH-DIFF -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -SwRaster On`
 - stop-when: 原因が描画グラフ・RHI の同期にあり、直すのに 1 反復を超える場合は、切り分けの結果を記録して止める（直す項目を足す）。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/RHI, Library/Core/Private/RHI, Assets/Shaders, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 親（VTG7-SW-RASTER の撮影の評価の差し戻し）。VTG7-SW-DEFAULT-ON の前に閉じる（原因の分からない差を既定にしない）。撮影の出力先は `.harness/runs/startup-capture/VTG7-SW-PATH-DIFF-*`。
+
+## VTG7-DETERMINISM-SEED: 決定的な撮影が同じ構成でも run 間で一致しない種を見つける
+- status: todo
+- done-when: 同じ構成（`-Deterministic -SunElevations 10 -ViewNames near -SwRaster Off`。TAA・RTGI・クック済みテクスチャ）で撮影を繰り返すと画像が一致する状態にする（4 回の PNG がすべて完全一致、または差が最大 1 の数画素以内）。直せない原因（ドライバ・ハードウェアの非決定性）と分かったときは、その証拠（どの資源・どのパスの出力が run 間で違うか）を PROGRESS に書く。VTG7-SW-PATH-DIFF の結果: 同じ構成を繰り返すと 2〜3 つの状態に分かれ、状態の間は 65.3 dB（8bit の ±1、不一致 4.9%、大きな球に集中）。FXAA（8 回）と `-LooseTextures`（6 回）は完全一致、`--virtual-texture=off`・`--geometry-streaming=off`・全バリア + 毎フレーム WaitIdle・エポックの遅延では消えない。RTGI のログの論理（フレーム・履歴・標本の列）は 8 回とも同一で、プリエクスポージャだけが float の 1 ULP ずれる。SceneColor を読み戻すと、種は小屋の軒先の数画素（x 388〜394・y 211〜215、最大 0.003）。切り分けの順: (1) クック済みの小屋のテクスチャだけをばらの元画像へ替える（小屋の材質・クック済みのアルベド・法線・ORM のどれが効くか）、(2) 軒先の画素の GBuffer（深度・法線・アルベド・材質）を run 間で RGBA の生で比べ、最初に違う段を探す、(3) 圧縮形式（BC7・BC5）のミップの末尾（4x4 より小さいミップ）・アップロード・サンプラーの設定を見る、(4) 種が RTGI のレイクエリ（小屋の薄い面の縁）なら、加速構造の構築・更新の決定性を確かめる。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-2 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off -CompareDeterministicWith .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-3 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off -CompareDeterministicWith .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-4 -Configuration RelWithDebInfo -Deterministic -SunElevations 10 -ViewNames near -SwRaster Off -CompareDeterministicWith .harness/runs/startup-capture/VTG7-DETERMINISM-SEED-1`
+- stop-when: 原因がドライバ内（加速構造の構築など）でエンジン側から直せない場合は、証拠を記録して止める。直すのに 1 反復を超える場合は、切り分けの結果を記録して直す項目を足す。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Private/Engine, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 VTG7-SW-PATH-DIFF から分けた（ソフトウェアラスタの経路が原因ではない）。判定は 4 回の完全一致。一時的な計装は同じ編集で戻し、作業ツリーを `git stash`・`git checkout --` で動かさない。VTG7-SW-DEFAULT-ON の on・off の比較は、この項目が閉じるまで「off 同士の繰り返しの最小 PSNR より下がらないこと」で判定する（PROGRESS の VTG7-SW-PATH-DIFF の節）。
 
 ## VTG7-SW-HARDEN-TESTS: ソフトウェアラスタの被覆の比較と配線のテストの穴を埋める
 - status: todo
@@ -1125,7 +1137,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-DEFAULT-ON -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
 - stop-when: golden の差がソフトのラスタだけでは説明できない場合は、測った値と分類を記録して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Private/Engine, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, Test/Core/Rendering/Baselines/RenderingValidation, Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-06 親（段7の開始時に詳しくした）。VTG7-SW-THRESHOLD で on が off より速い場合だけ行う。 2026-10-06 親: VTG7-SW-PATH-DIFF が done になってから行う（`--sw-raster=on` の経路だけで出る原因の分からない差を残したまま既定にしない）。
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。VTG7-SW-THRESHOLD で on が off より速い場合だけ行う。 2026-10-06 親: VTG7-SW-PATH-DIFF が done になってから行う（`--sw-raster=on` の経路だけで出る原因の分からない差を残したまま既定にしない）。 2026-10-06 VTG7-SW-PATH-DIFF の結果: その差は 64bit の経路が原因ではなく、同じ構成の run 間の非決定性（VTG7-DETERMINISM-SEED）だった。on と off の PSNR は 100 dB を期待せず、off 同士の繰り返し（各視点 4 回以上）の最小 PSNR より下がらないことで判定する。
 
 ## VTG7-ACCEPT: 段7（ソフトウェアラスタ）の受入れを記録する
 - status: todo
