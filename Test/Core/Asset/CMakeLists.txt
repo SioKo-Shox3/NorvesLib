@@ -49,6 +49,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SkeletalJointIndexTest SkeletalJointIndexTest.cpp
     MEMBER SkeletalBindRowMathTest SkeletalBindRowMathTest.cpp
     MEMBER SkeletalJointGlobalRowMathTest SkeletalJointGlobalRowMathTest.cpp
+    MEMBER SkeletalJointMappingTest SkeletalJointMappingTest.cpp
     MEMBER BvhEvaluateTest BvhEvaluateTest.cpp
     MEMBER BvhDecodeTest BvhDecodeTest.cpp
     MEMBER GltfMaterialCookV1Test GltfMaterialCookV1Test.cpp
@@ -284,3 +285,4 @@ add_test(NAME BvhEvaluateTest COMMAND CookedMeshTest --test=BvhEvaluateTest)
 add_test(NAME SkeletalJointIndexTest COMMAND CookedMeshTest --test=SkeletalJointIndexTest)
 add_test(NAME SkeletalBindRowMathTest COMMAND CookedMeshTest --test=SkeletalBindRowMathTest)
 add_test(NAME SkeletalJointGlobalRowMathTest COMMAND CookedMeshTest --test=SkeletalJointGlobalRowMathTest)
+add_test(NAME SkeletalJointMappingTest COMMAND CookedMeshTest --test=SkeletalJointMappingTest)

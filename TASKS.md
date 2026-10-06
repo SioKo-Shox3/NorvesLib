@@ -2612,3 +2612,9 @@
 - stop-when: source BVHのdouble列FKへ統合する、helper失敗時の内部出力不変を約束する、毎回の親配列抽出を追加する、clip/Compose/Palette/Resource/GR12/StageB/retargetへ拡張する。
 
 - result: code0225e17f/tree62fe3239/run37387162803 attempt1 job112023133952。実Windows47CPU/旧marker＋FK marker、4実captureが旧6095byteと完全一致、旧89byte/managed/CLI/metadata/Python/MSVC/CNG/3ZIP全gateを受入。親readonly再実行exit0/最終774file inventory一致。旧受入783fileと初回失敗650file保全、累積9paths/runtime3/修正commit2pathsを区別。public Zero定数は別件保留、host runtime/retarget/GPU/Blenderは未受入れ。
+
+## G2-GR84-JOINT-MAPPING-RESOLVE: schema非依存で関節対応を所有解決する
+- status: doing
+- done-when: strict UTF8索引2個と名前pairから元joint番号を解決し、入力順pair/明示root pair位置/元番号順unmappedを所有する。source再利用は必須policyで選び、target重複とroot不在/矛盾を拒否する。成功時だけout置換、失敗/確保例外はout保持。JSON/role語彙を固定しない。
+- verify: 元番号/順序/UTF8、未発見/不正名/重複、source policy両種/未指定、root不在/矛盾/範囲、明示catalog/mapping/name-byte上限・不正span、入力/index破棄・copy/move/self代入・失敗out保持。実48CPU/固定4capture/旧89byte・managed全gate。
+- stop-when: 旧direct BoneMap v1 JSONを外部契約化する、role経由要件をv2へ先送りする、rootやゲーム必須関節を推測する、名前対応を階層/rest互換と扱う、座標変換/retarget/CLI/StageBを同時実装する。
