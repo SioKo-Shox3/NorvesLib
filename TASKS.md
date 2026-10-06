@@ -1050,7 +1050,7 @@
 - notes: 2026-10-06 実装担当（VTG7-SW-RASTER を分けた単位）。危険地帯（描画パス）。VTG7-SW-RASTER の notes の (2)(3)(4) がここの範囲。1 パス目のソフトの dispatch は、2 パス目のカリングが同じ一覧のバッファの別の範囲へ書く前に終わらせる（dispatch の後に UnorderedAccess へ戻すバリア）。1 パス目の記録は 2 パス目の後にも書き直されるが、同じ値になる。
 
 ## VTG7-SW-RASTER: 小さいクラスタを計算シェーダーでラスタし、64bit のバッファへ書く
-- status: todo
+- status: done
 - done-when: `Assets/Shaders/visbuffer_sw_raster.comp`（1 ワークグループ = 1 クラスタ、1 スレッド = 1 三角形、最大 128）が、`VisibilityResolve.glsl` から切り出した位置だけを読む関数（例 `VisLoadTrianglePositions`。`VisLoadTriangle` もそれを使う）で 3 頂点をクリップ空間へ移し、ハードと同じ規則で背面を省き、画面の矩形の画素の中心を辺の関数（top-left 規則）で判定し、深度（z/w）を画面空間で線形に補間して、VTG7-VISBUFFER64-MERGE のバッファへ 64bit の `atomicMin` で書く。`--sw-raster=on` で pass1・pass2 のソフトの一覧を間接 dispatch し、ソフトに回したクラスタのハードのコマンドは `instanceCount = 0` にする。合流は HZB の前と pass2 の後。`--sw-raster=on` の起動画面の `-Deterministic` の撮影（朝・昼・夕・夜 × 既定・近接・低角度）を `--sw-raster=off` と比べて PSNR 45 dB 以上、穴・欠け・ちらつきが無いことを開いて確かめ、`MEGA_OCCLUSION` の数を比べて PROGRESS に書く。golden 2 本は既定（off）で変わらない。`--sw-raster=on` の golden の差（`mean_flip`・最大差）も測って記録する。GPU のテスト（`VisibilityResolveVulkanTest` にケースを足す）で、既知の三角形をソフトで描いた ID・深度が、同じ三角形をハードで描いたものと画素の被覆で一致する（辺の画素の規則の違いは数を記録）ことを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest|MaterialTileClassifyVulkanTest|HiZOcclusionTestVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
