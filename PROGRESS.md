@@ -1539,6 +1539,12 @@
 - Notes: (1) `RenderResources.h` は LF だけのファイルなので LF のまま編集した（他は CRLF。`git diff --numstat` と `--ignore-cr-at-eol` は全ファイルで一致）。 (2) `VisibilityMaterialTableTest` は TASKS.md の verify の ctest の正規表現に無いので、確認のため追加して走らせた。 (3) `BuildGpuEntries()` は既存のテストが使うので、中身を `BuildGpuEntriesInto` に寄せて残した。
 - Next: TASKS.md の次の todo。
 
+## 反復 1（run 20261006-075952）: VTG6-DEFAULT-ON-SWITCH（done。反復は 60 分の上限で切れ、記録は後から足した）
+- 内容: `--visibility-buffer` の既定を on にした（`ApplicationProcessor`・`RenderingCoordinator::Settings`・`RenderWorld::Settings`・`SceneView`・`CaptureStartupScene.ps1` の `-VisibilityBuffer`）。予備（`GetFallbackReason` が予備を選んだとき、`geometryShader` の無い装置、`--visibility-buffer=off`）では GBufferPass・MegaGeometryPass の GBuffer へのラスタを残し、ID のラスタと計算スキニングは何も宣言しない（`cea1f1ee`）。Outdoor の golden を再承認した（`83134c09`。差は球の縁の 57 画素、最大 3/255。off では旧 baseline と完全一致。Indoor は on でも一致）。
+- 検証（`.harness/runs/20261006-075952/`）: ctest 17/17 Passed（golden 2 本を含む）。変異 m1・m2・m4・m5 は狙った検査で落ちる。
+- 起動画面（`.harness/runs/startup-capture/VTG6-DEFAULT-ON-final`・`-night`・`-off`）: 朝・昼・夕・夜で天球・地面・球・岩・小屋・見本の帯・金色の球の反射・発光の球が見える。on と off の差は PSNR 48.9〜56.8 dB・最大チャンネル差 23〜49 で、手前の石畳に集まる（鮮明さ、ラプラシアンの分散は on と off で同じ）。VT の常駐は on 13・30・24 MB、off 16〜17・45・25 MB（撮影の VT の上限 64 MB は on・off とも下回るので変えない）。
+- 既知の限界（記録）: (a) この時点の on は 2 パスの遮蔽が効かない（`mega_occlusion.occluded` が on 0、off 7・69・41。起動画面では最大 2.3% のクラスタが余分に描かれる。GPU の時間は測っていない）→ VTG6-DEFAULT-ON-HZB で直す。(b) 予備の経路（off）で走る登録済みの検査は速度の 4 本だけになった（golden・HDR・DDGI などは on だけ）→ VTG6-OFF-PATH-TESTS。(c) 計算スキニングのパイプラインだけが作れない装置では、スキニングの無い場面でも予備になる（保守的）。
+
 ## 反復 1（run 20261006-090132）: VTG6-DEFAULT-ON-HZB（done）
 - 内容: 解決が GBuffer を書く構成（`--visibility-buffer=on`）で、2 パスの遮蔽の HZB を ID のラスタの深度から作るようにした。設計は「ラスタが MegaGeometry の記録を駆動する」を採った（描画のコマンド・バリアが増えず、MegaGeometryPass に ID のパイプライン・ID の添付の宣言を持たせずに済む）。
   (a) `MegaGeometryPass::IDrawSink`（`RecordFirstPassDraws`・`RecordSecondPassDraws`）を足し、`RecordFrameCommand(command, cmdList, sink)` が 2 パスのとき `1 パス目のカリング → sink の 1 回目 → HZB → 2 パス目のカリング → sink の 2 回目` の順に呼ぶ（sink を渡すと GBuffer の render pass は開かない）。描画の写し（`VisibilityDrawPlan`）は 1 パス目のカリングの前に作って両方の呼び出しへ渡す。1 回の判定（`--mega-occlusion=off` など 2 パスにならないとき）は sink を呼ばず、従来どおり写しを残してラスタが全部を 1 回で描く。

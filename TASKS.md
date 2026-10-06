@@ -916,6 +916,15 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 VTG6-DEFAULT-ON から分けた（持ち越しの (b)）。on の構成の分類は VRAM 約 5 MB・GPU 0.26〜0.29 ms（起動画面）。
 
+## VTG6-OFF-PATH-TESTS: 予備の経路（GBufferのラスタ）を見る検査を戻す
+- status: todo
+- done-when: ビジビリティバッファを既定にしたことで、予備の経路（`--visibility-buffer=off`。`geometryShader` の無い装置が使う GBuffer のラスタ）で走る登録済みの検査が速度の 4 本だけになった（Indoor・Outdoor の golden、HDR・DDGI などの描画の検証は on だけ。`Test/Core/Rendering/CMakeLists.txt` の 596〜626 行付近）。予備の経路の Indoor・Outdoor の golden を足す（off の基準画像は再承認の前の旧 baseline と同じ値なので、それを off 用の基準として置く。`Docs/RenderingValidation/GoldenBaselines.md` の手順）。既定（on）の速度の検査が、実際に解決を通っていること（予備に落ちていないこと）をログか記録で確かめる形にする。
+- verify: `cmake --build build --config Debug --target RenderingGoldenImageTest RenderingVelocityVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGolden.*VulkanTest|RenderingVelocityStaticVulkanTest)$"`
+- stop-when: off の golden を足すのに基準画像の仕組み（baseline のファイル名・閾値の表）を大きく変える必要がある場合は、案を記録して止める。
+- paths: Test/Core/Rendering, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 親が足した（VTG6-DEFAULT-ON-SWITCH の評価の残課題）。
+
 ## VTG6-DEFAULT-ON: ビジビリティバッファを既定にし、今のGBufferのラスタを予備にする
 - status: todo
 - done-when: VTG6-DEFAULT-ON-SWITCH・VTG6-DEFAULT-ON-HZB・VTG6-DEFAULT-ON-SKIN-CAPTURE・VTG6-DEFAULT-ON-TILE-VRAM がすべて done になった後の最終確認。Indoor/Outdoor の golden を回し、差が出たら差がこの変更（解析的な微分・三角形の接線の基底）だけによることを確かめて `Docs/RenderingValidation/GoldenBaselines.md` の手順で再承認し、根拠をコミットの本文に書く。起動画面の朝・昼・夕・夜の `-Deterministic` の撮影を開いて確かめ、2パスの遮蔽の統計（`mega_occlusion.occluded`）が戻っていることと、`--visibility-buffer=off`（予備）の撮影が従来どおりであることを `PROGRESS.md` に記録する。
