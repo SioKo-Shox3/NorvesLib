@@ -1115,7 +1115,7 @@
 - notes: 2026-10-06 親（VTG7-SW-PATH-DIFF の評価の差し戻し）。FXAA の撮影は near-sun10 で off 4 回・on 4 回の 8 回がビット一致した（ソフトに回すクラスタが 0 の視点）。一時的な計装は同じ編集で戻す。VTG7-SW-DEFAULT-ON の on・off の比較の判定はこの項目の結果に従う。 2026-10-06 親: 負荷モードの FXAA の off 同士は default が 74.245 dB で一致しなかった（done-when (1) の「一致しなければ記録する」側）。verify の off2 の比較に付けていた `-DeterministicPsnrLimit 100` は done-when と食い違うので既定（45）に戻した。
 
 ## VTG7-SW-HARDEN-TESTS2: ソフトウェアラスタの右端のクリップ・走査の上限の境界・しきい値から上限への経路を検査で押さえる
-- status: todo
+- status: done
 - done-when: (1) `VisibilityResolveVulkanTest` のソフトとハードの被覆の比較に、画面の右端（x = 128）をまたぐ三角形を足す（例 clip の場面を (120,24)-(134,30)-(122,40) へ。画面の幅を 128 にしてから右端をまたぐ三角形が無く、ソフトの矩形の `rect.zw - 1` の x 成分と右端のシザーが検査されていない）。古くなったコメント（1 ワールド単位の画素数・「右へはみ出す」）を直す。矩形の x の上限を外す変異で落ちることを記録する。(2) `VisibilitySwRaster::ComputeMaxScanSpan` を CPU のテスト（既存のテストの束に足す。新しい実行ファイルは作らない）で、しきい値 0 → 64、31.5 → 65、64 → 130 を確かめる。GPU の場面に、しきい値 0 で幅 65 画素の三角形を描かずに数える場面を足す（今は 64 を含む側しか押さえておらず、比較を 65 まで許す変異が通る）。(3) しきい値がソフトの矩形の上限まで届く経路（`MegaGeometryPass` が `VisibilityDrawPlan` に入れ、`VisibilityRasterPass` が `VisibilitySwRaster` の定数へ渡す）を `RenderGraphCompileTest` で確かめ、`MegaGeometryPass` が plan にしきい値を入れる行を外す変異で落ちることを記録する（今はその行を消すと上限が 64 に戻るのに、単体テストは落ちない）。(4) `MegaGeometryPass` のしきい値の getter のヘッダーのコメントを実際の用途に合わせる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest|VisibilityBufferEncodingTest)$"`

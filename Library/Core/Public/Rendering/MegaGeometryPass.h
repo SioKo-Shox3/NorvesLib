@@ -263,7 +263,12 @@ namespace NorvesLib::Core::Rendering
         }
         bool IsSwRasterBinningRequested() const { return m_bSwRasterRequested; }
 
-        /** @brief 振り分けのしきい値（画面上の半径、画素）。カリングの定数とソフトの矩形の上限へ渡す値 */
+        /**
+         * @brief 設定されている振り分けのしきい値（画面上の半径、画素）
+         *
+         * 製品の経路はこの getter を通らない（カリングの定数と VisibilityDrawPlan へ内部の値を直接入れる）。
+         * SceneView が組んだ設定が MegaGeometryPass まで届いたことを、テストが読んで確かめるために置いている
+         */
         float GetSwRasterMaxPixels() const { return m_SwRasterMaxPixels; }
 
         /** @brief 最後の RecordFrameCommand がソフトウェアラスタの振り分けを行ったか */

@@ -3479,7 +3479,7 @@ namespace
     // ========================================
 
     // 手で作ったクラスタの場面。1 クラスタ = 1 コマンド（記録の番号 = 1 + クラスタの番号）で、三角形は 128 以下。
-    // 画面は MergeWidth x MergeHeight で、カメラは原点から -Z を見る（視野 f = 2、アスペクト 2。z = -4 の面で 1 ワールド単位 = 8 画素）
+    // 画面は MergeWidth x MergeHeight で、カメラは原点から -Z を見る（視野 f = 2、アスペクト 2。z = -4 の面で 1 ワールド単位 = 16 画素）
     struct SwCluster
     {
         uint32_t FirstIndex = 0;
@@ -3613,8 +3613,8 @@ namespace
     }
 
     // 上限を超える三角形の場面。しきい値 0 の上限は 64 画素四方（ComputeMaxScanSpan の下限）、しきい値 64 の上限は 130 画素四方。
-    // 小さい三角形（上限の内側）と、走査する矩形の幅がちょうど 64 画素の三角形（上限に等しいので描く）と、幅 100 画素の三角形
-    // （しきい値 0 の上限を超える。描かずに数える）。大きい三角形は 2 パス目の一覧へ入れる
+    // 小さい三角形（上限の内側）と、走査する矩形の幅がちょうど 64 画素の三角形（上限に等しいので描く）と、幅が 65 画素の三角形
+    // （上限を 1 画素だけ超える。描かずに数える）と、幅 100 画素の三角形（描かずに数える）。幅 100 画素の三角形は 2 パス目の一覧へ入れる
     SwScene BuildSwOversizeScene()
     {
         SwScene scene;
@@ -3623,6 +3623,9 @@ namespace
         SwAddTriangleAt(scene, 20.0, 18.0, 50.0, 18.0, 20.0, 30.0, 4.0);
         SwBeginCluster(scene, "oversize_edge", 0);
         SwAddTriangleAt(scene, 60.0, 18.0, 124.0, 18.0, 60.0, 30.0, 4.0);
+        // 画素の中心が 10.5 〜 74.5 の 65 個に入る（幅 64 画素の上限を 1 つだけ超える）。走査する矩形の上限の比較を 65 まで許す変異（上限 + 1）を捕まえる
+        SwBeginCluster(scene, "oversize_65", 0);
+        SwAddTriangleAt(scene, 10.0, 0.0, 75.0, 0.0, 10.0, 3.0, 4.0);
         scene.SecondPassFirstCluster = static_cast<uint32_t>(scene.Clusters.size());
         SwBeginCluster(scene, "oversize_big", 0);
         SwAddTriangleAt(scene, 10.0, 4.0, 110.0, 4.0, 10.0, 14.0, 4.0);
@@ -3736,10 +3739,13 @@ namespace
             SwAddTriangle(scene, screenB, depthB);
         }
 
-        // 7. 画面の端と奥行きのクリップ。左上・右下へはみ出す三角形と、遠くの平面（far = 10 より先）へ伸びる三角形
+        // 7. 画面の端と奥行きのクリップ。左上・下へはみ出す三角形、右端（x = 128）をまたぐ三角形（右へだけ出るものと、右と下の両方へ出るもの）、
+        //    遠くの平面（far = 10 より先）へ伸びる三角形。右端の三角形は、矩形の x の上限（rect.zw - 1）が無いと隣の行の左端へ書く
         SwBeginCluster(scene, "clip", 1);
         SwAddTriangleAt(scene, -6.0, -4.0, 12.0, 2.0, 2.0, 14.0, 5.0);
         SwAddTriangleAt(scene, 56.0, 24.0, 70.0, 30.0, 58.0, 40.0, 5.0);
+        SwAddTriangleAt(scene, 112.0, 2.0, 140.0, 8.0, 114.0, 22.0, 3.0); // 右へだけはみ出す。手前（3）なので、隣の行へ書くと格子（4）に勝つ
+        SwAddTriangleAt(scene, 120.0, 24.0, 134.0, 30.0, 122.0, 40.0, 5.0); // 右と下へはみ出す
         {
             const double screen[3][2] = {{24.0, 1.0}, {44.0, 1.0}, {34.0, 14.0}};
             const double depth[3] = {5.0, 5.0, 30.0}; // 頂点 3 つ目は far を越える（途中から奥行きのクリップで切れる）
@@ -4078,7 +4084,7 @@ namespace
             }
             const Container::VariableArray<uint32_t> limitedPixels = countClusterPixels(limited);
             const Container::VariableArray<uint32_t> hardPixelsForLimit = countClusterPixels(hard);
-            Expect(stats[SwStatOversize] == 1u, "上限を超える三角形は 1 つだけで、しきい値 0 では描かずに数える");
+            Expect(stats[SwStatOversize] == 2u, "上限を超える三角形は幅 65 画素と幅 100 画素の 2 つで、しきい値 0 では描かずに数える");
             Expect(stats[SwStatGroups] == clusterCount, "上限を超える三角形があっても、ワークグループはすべて走る");
             for (uint32_t clusterIndex = 0; clusterIndex < clusterCount; ++clusterIndex)
             {
@@ -4087,6 +4093,11 @@ namespace
                 {
                     Expect(hardPixelsForLimit[clusterIndex] >= 400, "ハードは幅 100 画素の三角形を描く（場面が検査になっている）");
                     Expect(limitedPixels[clusterIndex] == 0, "上限を超える三角形は、ソフトは 1 画素も描かない");
+                }
+                else if (std::strcmp(name, "oversize_65") == 0)
+                {
+                    Expect(hardPixelsForLimit[clusterIndex] >= 60, "ハードは幅 65 画素の三角形を描く（場面が検査になっている）");
+                    Expect(limitedPixels[clusterIndex] == 0, "上限を 1 画素だけ超える幅 65 画素の三角形も、ソフトは 1 画素も描かない");
                 }
                 else
                 {
@@ -4173,7 +4184,8 @@ namespace
             }
             else if (std::strcmp(name, "lattice") == 0 || std::strcmp(name, "random_small") == 0 || std::strcmp(name, "ties") == 0 ||
                      std::strcmp(name, "depth") == 0 || std::strcmp(name, "horizontal_ties") == 0 || std::strcmp(name, "oversize_small") == 0 ||
-                     std::strcmp(name, "oversize_edge") == 0 || std::strcmp(name, "oversize_big") == 0)
+                     std::strcmp(name, "oversize_edge") == 0 || std::strcmp(name, "oversize_big") == 0 ||
+                     std::strcmp(name, "oversize_65") == 0 || std::strcmp(name, "clip") == 0)
             {
                 Expect(clusterHardPixels[clusterIndex] >= 30, "このクラスタはハードが十分な画素を描く");
             }
@@ -4191,6 +4203,18 @@ namespace
             Expect(soft.Ids[TopEdgeRow * MergeWidth + 72] != VisibilityBuffer::EMPTY_ID, "ソフトは、水平な上の辺が通る画素の行を描く");
             Expect(hard.Ids[BottomEdgeRow * MergeWidth + 96] == VisibilityBuffer::EMPTY_ID, "ハードは、水平な下の辺が通る画素の行を描かない");
             Expect(soft.Ids[BottomEdgeRow * MergeWidth + 96] == VisibilityBuffer::EMPTY_ID, "ソフトは、水平な下の辺が通る画素の行を描かない");
+
+            // 右端（x = 127）の列: 右端をまたぐ三角形（clip）の画素をハードもソフトも描く。矩形の x の上限が無いと、ソフトは右端より先を隣の行の左端へ書く
+            uint32_t hardRightEdge = 0;
+            uint32_t softRightEdge = 0;
+            for (uint32_t row = 0; row < MergeHeight; ++row)
+            {
+                hardRightEdge += hard.Ids[row * MergeWidth + (MergeWidth - 1u)] != VisibilityBuffer::EMPTY_ID ? 1u : 0u;
+                softRightEdge += soft.Ids[row * MergeWidth + (MergeWidth - 1u)] != VisibilityBuffer::EMPTY_ID ? 1u : 0u;
+            }
+            std::cout << TestName << " ソフトウェアラスタ(" << kindLabel << "): 右端の列の画素 ハード=" << hardRightEdge << " ソフト=" << softRightEdge << std::endl;
+            Expect(hardRightEdge >= 8, "ハードは、右端をまたぐ三角形の画素を右端の列へ描く（場面が検査になっている）");
+            Expect(softRightEdge == hardRightEdge, "ソフトも、右端の列の画素数がハードと同じ（右端のクリップ）");
         }
         const uint32_t coverageMismatch = hardOnly + softOnly;
         Expect(coverageMismatch == 0, "ソフトとハードの被覆（ID が空でない画素）は一致する（辺の画素の規則を含む）");

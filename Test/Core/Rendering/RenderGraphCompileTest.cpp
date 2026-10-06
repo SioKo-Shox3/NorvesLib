@@ -56,6 +56,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <utility>
 #ifdef _MSC_VER
 #include <crtdbg.h>
@@ -131,6 +132,8 @@ namespace
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaInstanceTableUpdates;
     // MegaGeometryPass のカリングの定数バッファ（"MegaGeometry_CullUBO"。パスごとに 1 つ）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaCullUniformUpdates;
+    // VisibilitySwRaster が dispatch ごとに書く定数バッファ（"VisBuffer_SwRasterParams"）の更新の記録（更新ごとの中身）
+    Container::VariableArray<Container::VariableArray<uint8_t>> GSwRasterParamsUpdates;
     Container::VariableArray<uint8_t> GLastDescriptorBinding4UpdateBytes;
     Container::VariableArray<uint8_t> GLastDescriptorBinding5UpdateBytes;
     RHI::IBuffer* GLastDescriptorBinding4Buffer = nullptr;
@@ -306,6 +309,10 @@ namespace
             if (IsDebugName(m_Desc.DebugName, "MegaGeometry_CullUBO"))
             {
                 GMegaCullUniformUpdates.push_back(LastUpdateBytes);
+            }
+            if (IsDebugName(m_Desc.DebugName, "VisBuffer_SwRasterParams"))
+            {
+                GSwRasterParamsUpdates.push_back(LastUpdateBytes);
             }
             const bool bSkinnedPalette = IsDebugName(m_Desc.DebugName, "SkinnedPalette");
             const bool bSkinnedPreviousPalette = IsDebugName(m_Desc.DebugName, "SkinnedPreviousPalette");
@@ -4051,6 +4058,21 @@ namespace
     }
 
 #if NORVES_ENABLE_LOGGING
+    // ソフトウェアラスタが BDA に対応しない装置で使えないときのログ（カテゴリ VisibilityRasterPass の SW_RASTER_FALLBACK reason=bda_unsupported）の数を数える
+    struct SwRasterBdaFallbackCounter final : Logging::ILogSink
+    {
+        uint32_t Count = 0;
+
+        void OnLog(const Logging::LogEntry& entry) override
+        {
+            if (entry.category == "VisibilityRasterPass" &&
+                std::strstr(entry.message.c_str(), "SW_RASTER_FALLBACK reason=bda_unsupported") != nullptr)
+            {
+                ++Count;
+            }
+        }
+    };
+
     // 幾何の解決のフォールバックのログ（カテゴリ VisibilityResolvePass の VISBUFFER_FALLBACK）の数を数える
     struct ResolveFallbackCounter final : Logging::ILogSink
     {
@@ -4996,23 +5018,32 @@ namespace
         }
     }
 
-    // バッファのアドレス（BDA）に対応しない装置では、ソフトウェアラスタ（VisibilitySwRaster）が使えないので、--sw-raster=on でも
-    // 64bit のバッファ・定数・パイプライン・埋め・合流のパスを作らず、振り分けず（ソフトの一覧も作らない）、
-    // カリングの定数は無効（0）、ソフトの dispatch も記録しない。ID の描画は合流が無いときと同じ。
-    // 解決（頂点のアドレスを引く）も使えないので、ID のラスタは予備の GBuffer の描画へ戻って何も描かず、MegaGeometry も振り分けない
-    // （sink が無い）。ID のラスタの合流の作成を VisibilitySwRaster::IsSupported でなく VisibilityMerge::IsSupported のままにすると、
-    // 合流の資源が作られて落ちる
-    void TestSwRasterAbsentWithoutBufferDeviceAddress()
+    // bInt64Atomics は、64bit のバッファへの atomicMin に対応する装置か（BDA は常に無い）
+    void RunSwRasterAbsentWithoutBufferDeviceAddress(bool bInt64Atomics)
     {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        SwRasterBdaFallbackCounter fallbackLogs;
+        logger.AddSink(&fallbackLogs);
+#endif
+
         VisibilityRasterScene scene;
+        scene.bInt64Atomics = bInt64Atomics;
         scene.bBufferDeviceAddress = false;
         scene.bSwRasterBin = true;
         GMegaCullUniformUpdates.clear();
         RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, false, true, ResolveMode::UnsupportedDevice);
         FakeCommandList& commandList = scene.CommandList;
 
-        // 64bit のバッファへの atomicMin には対応しているのに、BDA が無いのでソフトウェアラスタも合流も作らない
-        assert(VisibilityMerge::IsSupported(scene.Device->GetCapabilities()));
+        // BDA が無いのでソフトウェアラスタも合流も作らない（64bit のバッファへの atomicMin に対応していても）
+        assert(VisibilityMerge::IsSupported(scene.Device->GetCapabilities()) == bInt64Atomics);
         assert(!VisibilitySwRaster::IsSupported(scene.Device->GetCapabilities()));
         assert(scene.Raster.IsSwRasterEnabled());
         assert(!scene.Raster.GetMerge().IsReady());
@@ -5040,6 +5071,92 @@ namespace
         }
 
         ShutdownVisibilityRasterScene(scene);
+
+#if NORVES_ENABLE_LOGGING
+        // 出す側は ID のラスタ（初期化で 1 回）だけで、フレームを描いても増えない
+        assert(fallbackLogs.Count == 1);
+        logger.RemoveSink(&fallbackLogs);
+        logger.Shutdown();
+#endif
+    }
+
+    // バッファのアドレス（BDA）に対応しない装置では、ソフトウェアラスタ（VisibilitySwRaster）が使えないので、--sw-raster=on でも
+    // 64bit のバッファ・定数・パイプライン・埋め・合流のパスを作らず、振り分けず（ソフトの一覧も作らない）、
+    // カリングの定数は無効（0）、ソフトの dispatch も記録しない。ID の描画は合流が無いときと同じ。
+    // 解決（頂点のアドレスを引く）も使えないので、ID のラスタは予備の GBuffer の描画へ戻って何も描かず、MegaGeometry も振り分けない
+    // （sink が無い）。この場面の FakeDevice は bShaderStorageImageExtendedFormats を持たず解決が使えないので、フレームの資源・埋め・
+    // 合流のパスは BDA の有無によらず元から生じない。ID のラスタの合流の作成を VisibilitySwRaster::IsSupported でなく
+    // VisibilityMerge::IsSupported のままにしたときに落ちうるのは、合流の IsReady の assert だけ。
+    // 理由 bda_unsupported のログ（SW_RASTER_FALLBACK）は、64bit アトミックの有無によらず 1 回だけ出る
+    // （どちらも無い装置でも出る。出す条件から VisibilityMerge::IsSupported を外した形が正しい）
+    void TestSwRasterAbsentWithoutBufferDeviceAddress()
+    {
+        for (int variant = 0; variant < 2; ++variant)
+        {
+            RunSwRasterAbsentWithoutBufferDeviceAddress(variant == 0);
+        }
+    }
+
+    // 振り分けのしきい値（画素）から、1 スレッドが走査する矩形の一辺の上限（画素）を決める式 max(64, ceil(2r) + 2)。
+    // 下限（64）に張り付く範囲（しきい値 0・31 以下）、下限を 1 つ超える最初の値（31.5 → 65）、既定より大きい値（64 → 130）、
+    // 負・NaN（下限）、巨大な値（4096 で頭打ち。8194）を確かめる。係数や下限を変える・丸め方を変えると落ちる
+    void TestSwRasterMaxScanSpanFollowsThreshold()
+    {
+        struct Case
+        {
+            float MaxPixels;
+            uint32_t Expected;
+        };
+        const Case cases[] = {
+            {0.0f, 64u},
+            {8.0f, 64u},
+            {31.0f, 64u},
+            {31.5f, 65u},
+            {32.0f, 66u},
+            {64.0f, 130u},
+            {-5.0f, 64u},
+            {std::numeric_limits<float>::quiet_NaN(), 64u},
+            {4096.0f, 8194u},
+            {1.0e9f, 8194u},
+        };
+        for (const Case& testCase : cases)
+        {
+            assert(VisibilitySwRaster::ComputeMaxScanSpan(testCase.MaxPixels) == testCase.Expected);
+        }
+        static_assert(VisibilitySwRaster::MinScanSpan == 64u, "下限は 64 画素");
+    }
+
+    // 振り分けのしきい値がソフトの矩形の上限まで届く: MegaGeometryPass が VisibilityDrawPlan へしきい値を入れ、VisibilityRasterPass が
+    // それを VisibilitySwRaster の定数（SwRasterParams の flags.y = 5 組目の 2 語目 = 68 バイト目）へ渡す。
+    // 既定の 8 は下限（64）に張り付いて値が見えないので、下限を超える 40（82）と 100（202）で確かめる。
+    // MegaGeometryPass が plan へしきい値を入れる行を外す・VisibilityRasterPass が plan の値を入力へ渡さないと、上限が 64 に戻って落ちる
+    void TestSwRasterThresholdReachesScanSpanConstant()
+    {
+        constexpr size_t ScanSpanOffset = (4 + 4 + 4 + 4 + 1) * sizeof(uint32_t);
+        const float thresholds[] = {40.0f, 100.0f};
+        for (const float threshold : thresholds)
+        {
+            const uint32_t expectedSpan = VisibilitySwRaster::ComputeMaxScanSpan(threshold);
+            assert(expectedSpan > VisibilitySwRaster::MinScanSpan);
+
+            VisibilityRasterScene scene;
+            scene.bSwRasterBin = true;
+            scene.SwRasterMaxPixels = threshold;
+            GSwRasterParamsUpdates.clear();
+            RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, false, true, ResolveMode::Supported);
+
+            assert(scene.Mega.DidSwRasterBin());
+            assert(scene.Raster.GetLastFrameStats().SwRasterDispatchCount == 2);
+            assert(GSwRasterParamsUpdates.size() == 2);
+            for (const Container::VariableArray<uint8_t>& bytes : GSwRasterParamsUpdates)
+            {
+                assert(bytes.size() >= ScanSpanOffset + sizeof(uint32_t));
+                uint32_t span = 0;
+                std::memcpy(&span, bytes.data() + ScanSpanOffset, sizeof(uint32_t));
+                assert(span == expectedSpan);
+            }
+            ShutdownVisibilityRasterScene(scene);
+        }
     }
 
     // 一覧の容量はパスごとのコマンド数まで（65535 で頭打ちにしない）。間接 dispatch の x の上限（65535）を超えるクラスタ数でも一覧は
@@ -10640,6 +10757,8 @@ int main()
     TestSwRasterDispatchesBetweenRecordsAndMerges();
     TestSwRasterDispatchAbsentWhenUnavailable();
     TestSwRasterAbsentWithoutBufferDeviceAddress();
+    TestSwRasterMaxScanSpanFollowsThreshold();
+    TestSwRasterThresholdReachesScanSpanConstant();
     TestSwRasterListCapacityExceedsOneDimension();
     TestSceneViewWiresSwRasterMode();
     TestSceneViewThresholdReachesCullUniform();

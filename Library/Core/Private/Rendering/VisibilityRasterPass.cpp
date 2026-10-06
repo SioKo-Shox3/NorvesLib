@@ -470,7 +470,8 @@ namespace NorvesLib::Core::Rendering
 
         // 64bit のバッファの合流は、ソフトウェアラスタが有効で、ソフトウェアラスタを使える装置のときだけ作る（合流はソフトの結果を受けるためだけにある）。
         // 作れなくても ID の描画は使える（合流だけが無い）
-        if (m_bSwRasterEnabled && VisibilityMerge::IsSupported(caps) && !caps.bBufferDeviceAddress)
+        // BDA が無い装置は、64bit のアトミックの有無によらず理由を 1 回だけ残す（MegaGeometryPass の理由は sink が無いので別の文言になる）
+        if (m_bSwRasterEnabled && !caps.bBufferDeviceAddress)
         {
             NORVES_LOG_INFO("VisibilityRasterPass", "SW_RASTER_FALLBACK reason=bda_unsupported");
         }
