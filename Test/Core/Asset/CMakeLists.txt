@@ -59,6 +59,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SkeletalAssetLoaderTest SkeletalAssetLoaderTest.cpp
     MEMBER SkeletalAssetPublicationTest SkeletalAssetPublicationTest.cpp
     MEMBER SkeletalAssetRuntimeTest SkeletalAssetRuntimeTest.cpp
+    MEMBER SkeletalAssetSessionTest SkeletalAssetSessionTest.cpp
     MEMBER BvhEvaluateTest BvhEvaluateTest.cpp
     MEMBER BvhDecodeTest BvhDecodeTest.cpp
     MEMBER GltfMaterialCookV1Test GltfMaterialCookV1Test.cpp
@@ -304,3 +305,12 @@ add_test(NAME SkeletalBvhCookBridgeTest COMMAND CookedMeshTest --test=SkeletalBv
 add_test(NAME SkeletalAssetLoaderTest COMMAND CookedMeshTest --test=SkeletalAssetLoaderTest)
 add_test(NAME SkeletalAssetPublicationTest COMMAND CookedMeshTest --test=SkeletalAssetPublicationTest)
 add_test(NAME SkeletalAssetRuntimeTest COMMAND CookedMeshTest --test=SkeletalAssetRuntimeTest)
+add_test(NAME SkeletalAssetSessionTest COMMAND CookedMeshTest --test=SkeletalAssetSessionTest)
+
+# M9の実consumer helperをCPU owner試験でも使う。
+target_sources(CookedMeshTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/M9SkeletalPreparation.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/M9WorldSkeletal.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/M9WorldAcceptance.cpp
+)
+target_include_directories(CookedMeshTest PRIVATE ${CMAKE_SOURCE_DIR}/Game)

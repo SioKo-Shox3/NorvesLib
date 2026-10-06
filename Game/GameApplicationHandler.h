@@ -96,6 +96,7 @@ namespace Game
         bool ReloadConfiguredAssetManifest();
 
         bool PrepareM9WorldAssets();
+        bool HasPendingAssetConsumers() const override;
         Game::Input::GameInputSettings& GetInputSettings() { return m_InputSettings; }
         const Game::Input::GameInputSettings& GetInputSettings() const { return m_InputSettings; }
 

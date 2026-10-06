@@ -8,8 +8,8 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR86: 明示の影響数縮約/CUBICSPLINE焼込/morph dropと診断を接続済み。256関節はGR82 Stage Bと同時。
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
-- GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
-- GR83/GR84: GR84のBVH raw/source FK・厳密名前索引・target bind/FK共有・schema非依存joint対応・明示座標変換・明示Cの1frame回転対応・全sample保持clip/report生成と型付きNVSKEL cook/package/実Sampler接続とrole Profile bytes入力を実Windows CPUで受入済み。自動rest補正・BVHのCLI/file依存接続と分離資産ローダは未完。
+- GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。GR83の実owner接続でM9を明示clip選択へ移行中。
+- GR83/GR84: GR84のBVH source/target FK・名前/座標/回転対応・全sample clip/report・NVSKEL cook/package/実Sampler・Role Profile bytesと実CLI/file依存を実Windows CPUで受入済み。GR83は所有CPUローダ・原子的な一括公開・実workerからownerへのdelegate配送まで受入済みで、実ApplicationProcessor/M9へ接続中。自動rest補正・Stage Bの分離資産ローダ・GPU/実物受入れは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
@@ -1028,3 +1028,13 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 旧証拠: 旧61cpp・固定Sampler4本・89出力・25+15CLI・12metadata・17/29 child退出・GR84別58process/125file・PE-CNG/SHELL32を維持。初回run37498380281のmanifest失敗は545payloadの別archive、親再実行exit0で失敗のまま保持する。
 - 範囲: 明示ownerの独立CPU runtimeまで。受理前拒否、早期worker完了、有限batch再入、実State→Registry gate、取消/Close、handoff ack/複数Drain/capture破棄、snapshot/domain/GCの契約を受入。consumer target寿命・借用依存のlifecycle排他はcallerの責任。
 - Notes: 既存manifest ASCII制約のため非ASCII論理pathはtyped拒否を確認し、読込成功とはしない。private境界注入とnative CHECK、保存済みbyte比較、未archive binaryのhash attestationを区別する。製品GameThread/実loop/M9/StageB/GPU/実キャラ品質は未接続。
+
+### GR83 製品owner/M9接続の事前契約（2026-10-07 JST）
+
+- In progress: G2-GR83-OWNER-LIFECYCLE-M9-DELEGATE。event runtimeのrun37502233582受入と文書6ad01237を前提に、実ApplicationProcessorから通常GEngine所有sessionを駆動する。
+- 方針: NorvesEngineの別renderer lifecycleは丸ごと動かさない。Registry所有/借用、明示owner、初回immutable snapshot pin、Close/Drain/consumer解体後Endを小さいproduction helperにまとめる。M9だけがsnapshotをBindし、通常起動の既存reloadを保つ。
+- M9: 現CreateTransientは未登録でなく逐次登録。runtimeの全clip一括公開と名前指定Waveへ置換し、弱いcompletion eventをowner更新で一度consumeしてattachする。pause/failed Enter/Leave/再初期化の寿命を反証する。
+- 限界: M9中の別snapshot reloadはrenderer更新前に拒否し、一部世代更新を避ける。Registry typed handleはsession epochを含まないため、所有session終了時にconsumer参照/handleを破棄する。実描画/XAudio2/実犬/DCCは別証拠のまま。
+
+- activation境界: 消費済み/attach済みの再Prepareはaudio/config変更前に拒否する。Leave後はfresh Prepareが必要で、無準備/消費済みの再EnterをFailedへ流す。実productionのCanPrepare/CanEnterをCPU常時検査とsource配線検査で反証する。native検証は未実行。
+- 実装候補: owner sessionと実loop、M9の弱参照一回event・明示clip・activation境界、実World/Scope attach helperを接続。Python source8件をnormal/-Oで各合格、workflow YAML parse・新規C++ BOM/CRLF・既存行末比較・diff whitespaceを確認。固定Sampler2原本6095bytes/SHAを保持。Release63とDebugのCPU契約、Game両構成compile、既存cook/CLI比較はCI待ち。

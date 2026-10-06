@@ -220,6 +220,7 @@ namespace Game::GameModes
         TSharedPtr<M9WorldAcceptanceConfig> m_M9WorldAcceptance;
         NorvesLib::Core::Entity *m_pM9SkinnedObject = nullptr;
         NorvesLib::Core::Component::SkinnedMeshComponent *m_pM9SkinnedMeshComponent = nullptr;
+        bool m_bM9Attached = false;
         uint32_t m_M9TickCount = 0;
         uint32_t m_M9CapturePhase = 0;
         uint32_t m_M9StatsWaitTicks = 0;

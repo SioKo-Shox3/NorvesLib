@@ -88,6 +88,7 @@ namespace
         NorvesLib::Core::Engine::ApplicationProcessor* Processor = nullptr;
         bool bJobSystem = false;
         bool bEngine = false;
+        bool bSkeletalSession = false;
         bool bHandler = false;
         bool bPlatform = false;
         bool bWindow = false;
@@ -849,6 +850,12 @@ namespace NorvesLib::Core::Engine
     bool ApplicationProcessor::Initialize(const Boot::BootConfig &config) try
     {
         LOG_INFO("ApplicationProcessor::Initialize() - Starting initialization");
+        // active sessionを初期化receiptの上書きで失わない。
+        if (NorvesLib::Core::GEngine.GetSkeletalAssetSession().IsActive())
+        {
+            NORVES_LOG_ERROR("SkeletalAssets", "実行中の骨格sessionがあるため再初期化を拒否します");
+            return false;
+        }
         GApplicationLifecycleState = {};
         GApplicationLifecycleState.Processor = this;
         ApplicationInitializeTransaction transaction(*this);
@@ -865,6 +872,14 @@ namespace NorvesLib::Core::Engine
             return false;
         }
         GApplicationLifecycleState.bEngine = true;
+        GApplicationLifecycleState.bSkeletalSession = true;
+        if (NorvesLib::Core::GEngine.GetSkeletalAssetSession().Begin(
+                NorvesLib::Core::GEngine.GetResourceRegistry(), Thread::JobSystem::Get(),
+                Thread::Thread::GetCurrentThreadId()) != SkeletalRuntimeStatus::Success)
+        {
+            NORVES_LOG_ERROR("SkeletalAssets", "owner骨格sessionの開始に失敗しました");
+            return false;
+        }
 
         // ターゲットフレームレートを設定
         if (config.TargetFrameRate > 0.0f)
@@ -1432,13 +1447,33 @@ namespace NorvesLib::Core::Engine
     void ApplicationProcessor::Shutdown()
     {
         LOG_INFO("ApplicationProcessor::Shutdown() - Starting shutdown");
-        DisconnectInputWindow();
 
         ApplicationLifecycleState& lifecycle = GApplicationLifecycleState;
         if (lifecycle.Processor != this)
         {
             return;
         }
+        if (lifecycle.bSkeletalSession)
+        {
+            auto& skeletal = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
+            const auto closed = skeletal.Close();
+            const auto drained = skeletal.Drain();
+            if (drained == SkeletalRuntimeStatus::Deferred)
+            {
+                // callback内では依存をまだ解体しない。Run外側のShutdownで完了する。
+                if (GEngine)
+                {
+                    GEngine->RequestExit();
+                }
+                return;
+            }
+            if (closed != SkeletalRuntimeStatus::Success || drained != SkeletalRuntimeStatus::Drained)
+            {
+                NORVES_LOG_ERROR("SkeletalAssets", "owner骨格sessionの終了境界に到達できませんでした");
+                std::abort();
+            }
+        }
+        DisconnectInputWindow();
 
         if (GEngine && lifecycle.bEngine)
         {
@@ -1585,6 +1620,17 @@ namespace NorvesLib::Core::Engine
             }
         }
 
+        // 全consumer・renderer解体後、取得したRegistryだけを最後に終了する。
+        if (lifecycle.bSkeletalSession)
+        {
+            if (!NorvesLib::Core::GEngine.GetSkeletalAssetSession().End())
+            {
+                NORVES_LOG_ERROR("SkeletalAssets", "骨格sessionの所有を終了できませんでした");
+                std::abort();
+            }
+            lifecycle.bSkeletalSession = false;
+        }
+
         // GEngineを破棄
         if (lifecycle.bEngine)
         {
@@ -1641,9 +1687,17 @@ namespace NorvesLib::Core::Engine
         // OnUpdate呼び出し
         // 注: OnUpdate はシミュレーション進行ゲートの影響を受けない。Bridge ポーズ中も
         // 受信フレーム処理（DrainInbound）を回し続ける必要があるため、ここはガードしない。
-        if (handler)
+        auto& skeletalSession = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
+        if (m_bWaitForAssetSettle)
         {
-            handler->OnUpdate(deltaTime);
+            Detail::ObservePendingAssets(HasPendingSkeletalConsumers(skeletalSession, handler),
+                                         m_bObservedPendingAssets, m_bAssetSettleBaselineLatched);
+        }
+        const auto skeletalTick = TickSkeletalOwnerAssetsAndHandler(skeletalSession, handler, deltaTime);
+        if (skeletalTick.Status != SkeletalRuntimeStatus::Success)
+        {
+            GEngine->RequestExit(skeletalTick.Status == SkeletalRuntimeStatus::Closed ? 0 : 1);
+            return;
         }
 
         if (NorvesLib::Core::GEngine.GetScriptRuntime().BeginFrameMaintenance(deltaTime) !=
@@ -1708,10 +1762,9 @@ namespace NorvesLib::Core::Engine
             {
                 if (m_bWaitForAssetSettle)
                 {
-                    Detail::ObservePendingAssets(
-                        renderWorld.HasPendingAsyncAssets(),
-                        m_bObservedPendingAssets,
-                        m_bAssetSettleBaselineLatched);
+                    Detail::ObservePendingAssets(renderWorld.HasPendingAsyncAssets() ||
+                                                     HasPendingSkeletalConsumers(skeletalSession, handler),
+                                                 m_bObservedPendingAssets, m_bAssetSettleBaselineLatched);
                 }
                 renderWorld.BeginFrame();
                 // BeginFrame で書き込み中パケットが確保された後に overlay 集合を載せる
@@ -1728,12 +1781,10 @@ namespace NorvesLib::Core::Engine
                         const bool bWasLatched = m_bAssetSettleBaselineLatched;
                         const uint64_t previousBaseline = m_AssetSettleRenderedBaseline;
                         bRenderedExitReached = Detail::EvaluateSettledRenderedExit(
-                            renderWorld.HasPendingAsyncAssets(),
-                            renderedFrameCount,
-                            m_ExitAfterRenderedFrames,
-                            m_bObservedPendingAssets,
-                            m_bAssetSettleBaselineLatched,
-                            m_AssetSettleRenderedBaseline);
+                            renderWorld.HasPendingAsyncAssets() ||
+                                HasPendingSkeletalConsumers(skeletalSession, handler),
+                            renderedFrameCount, m_ExitAfterRenderedFrames, m_bObservedPendingAssets,
+                            m_bAssetSettleBaselineLatched, m_AssetSettleRenderedBaseline);
                         if (m_bAssetSettleBaselineLatched &&
                             (!bWasLatched || previousBaseline != m_AssetSettleRenderedBaseline))
                         {

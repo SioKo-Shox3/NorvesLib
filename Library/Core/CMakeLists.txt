@@ -102,6 +102,7 @@ set(PRIVATE_SOURCES
     Private/Boot/AppLauncher.cpp
     Private/Engine/Engine.cpp
     Private/Engine/NorvesEngine.cpp
+    Private/Engine/SkeletalAssetSession.cpp
     Private/Engine/FixedStepScheduler.cpp
     Private/Scripting/AngelScriptEngineOwner.cpp
     Private/Scripting/ScriptSourceTracker.h
@@ -537,6 +538,7 @@ set(PUBLIC_HEADERS
     Public/Component/SpringArmTypes.h
     # Engine
     Public/Engine/NorvesEngine.h
+    Public/Engine/SkeletalAssetSession.h
     Public/Scripting/ScriptRuntime.h
     Public/Component/ScriptComponent.h
     Public/Engine/IEngine.h

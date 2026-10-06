@@ -235,6 +235,12 @@ namespace Game::GameModes
 
         void CleanupM9WorldAcceptance(GameModeContext& ctx, Rendering3DTestData& data)
         {
+            // 未配送weak eventを最初に失効させる。runtimeはapplication Endまで生存する。
+            if (data.m_M9WorldAcceptance)
+            {
+                data.m_M9WorldAcceptance->Preparation.Cancel();
+            }
+            data.m_bM9Attached = false;
             auto& inputRouter = ctx.EngineRef.GetInputRouter();
             inputRouter.UnregisterController(&data.m_CameraController);
             inputRouter.UnregisterController(&data.m_CameraInputCollector);
@@ -292,6 +298,7 @@ namespace Game::GameModes
             data.m_pM9SkinnedMeshComponent = nullptr;
             if (data.m_M9WorldAcceptance)
             {
+                data.m_M9WorldAcceptance->SelectedClip.reset();
                 data.m_M9WorldAcceptance->SkeletalAsset.reset();
 #if defined(NORVES_GAME_AUDIO)
                 data.m_M9WorldAcceptance->EffectClip.reset();
@@ -319,6 +326,84 @@ namespace Game::GameModes
             data.m_bM9AudioComplete = false;
             data.m_bM9Completed = false;
         }
+
+#if defined(NORVES_GAME_AUDIO)
+        bool ConsumeM9WorldCompletion(GameModeContext& ctx, Rendering3DTestData& data)
+        {
+            if (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested || data.m_bM9Attached)
+            {
+                return true;
+            }
+            M9SkeletalEvent event;
+            if (!data.m_M9WorldAcceptance->Preparation.TakeEvent(event))
+            {
+                return true;
+            }
+            if (event.bClipSelectionFailed)
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "skeletal_clip_selection_failed");
+                return false;
+            }
+            if (!event.bReady)
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "skeletal_load_failed");
+                return false;
+            }
+            data.m_M9WorldAcceptance->SkeletalAsset = std::move(event.Asset);
+            data.m_M9WorldAcceptance->SelectedClip = std::move(event.Clip);
+            data.m_M9WorldAcceptance->bAssetsReady = true;
+            auto* audioModule =
+                NorvesLib::Modules::Audio::FindAudioModule(NorvesLib::Core::Module::GetModuleRegistry());
+            if (audioModule == nullptr || !data.m_M9WorldAcceptance->EffectClip || !data.m_M9WorldAcceptance->LoopClip)
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "xaudio2_module_or_clip_unavailable");
+                return false;
+            }
+            LOG_INFO("M9_WORLD_SMOKE stage=assets_ready prepared=3 snapshot=1");
+            EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=assets_ready prepared=3 snapshot=1");
+            if (!InitializeM9WorldSkeletal(ctx, data))
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "skeletal_attach_failed");
+                return false;
+            }
+            auto& audio = audioModule->GetAudioService();
+            if (audio.CreateVoice(data.m_M9WorldAcceptance->EffectClip, data.m_M9EffectVoice) !=
+                    NorvesLib::Modules::Audio::AudioResult::Success ||
+                audio.CreateVoice(data.m_M9WorldAcceptance->LoopClip, data.m_M9LoopVoice) !=
+                    NorvesLib::Modules::Audio::AudioResult::Success ||
+                audio.StartVoice(data.m_M9EffectVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
+                audio.StartVoice(data.m_M9LoopVoice) != NorvesLib::Modules::Audio::AudioResult::Success)
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "xaudio2_play_failed");
+                return false;
+            }
+            data.m_bM9AudioStarted = true;
+            LOG_INFO("M9_WORLD_SMOKE stage=audio_play effect=1 loop=1 backend=XAudio2");
+            EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=audio_play effect=1 loop=1 backend=XAudio2");
+            data.m_bM9Attached = true;
+            data.m_M9TickCount = 0;
+            return true;
+        }
+#endif
+        struct M9EnterFailureGuard
+        {
+            GameModeContext& Context;
+            Rendering3DTestData& Data;
+            bool bCommitted = false;
+            ~M9EnterFailureGuard()
+            {
+                if (!bCommitted && Data.m_M9WorldAcceptance && Data.m_M9WorldAcceptance->bRequested)
+                {
+                    CleanupM9WorldAcceptance(Context, Data);
+                    FailM9WorldSmoke(Context, "enter_failed");
+                }
+            }
+        };
 
         bool EvaluateM9PixelDelta(const NorvesLib::Core::Rendering::CapturedFrame& first,
                                   const NorvesLib::Core::Rendering::CapturedFrame& second,
@@ -388,6 +473,12 @@ namespace Game::GameModes
 
     GameModeEnterResult Rendering3DTestRoutine::Enter(GameModeContext &ctx, Rendering3DTestData &data)
     {
+        M9EnterFailureGuard m9FailureGuard{ctx, data};
+        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested &&
+            !data.m_M9WorldAcceptance->Preparation.CanEnter())
+        {
+            return GameModeEnterResult::Failed;
+        }
         if (data.m_bPhysicsSmoke && !data.m_M8MinimalPhysicsSmoke.Enter(ctx))
         {
             return GameModeEnterResult::Failed;
@@ -1439,38 +1530,6 @@ namespace Game::GameModes
             }
         }
 
-#if defined(NORVES_GAME_AUDIO)
-        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested)
-        {
-            if (!InitializeM9WorldSkeletal(ctx, data))
-            {
-                CleanupM9WorldAcceptance(ctx, data);
-                FailM9WorldSmoke(ctx, "skeletal_assets_not_ready");
-                return GameModeEnterResult::Failed;
-            }
-            auto* audioModule = NorvesLib::Modules::Audio::FindAudioModule(
-                NorvesLib::Core::Module::GetModuleRegistry());
-            if (audioModule == nullptr || !data.m_M9WorldAcceptance->EffectClip || !data.m_M9WorldAcceptance->LoopClip)
-            {
-                CleanupM9WorldAcceptance(ctx, data);
-                FailM9WorldSmoke(ctx, "xaudio2_module_or_clip_unavailable");
-                return GameModeEnterResult::Failed;
-            }
-            auto& audio = audioModule->GetAudioService();
-            if (audio.CreateVoice(data.m_M9WorldAcceptance->EffectClip, data.m_M9EffectVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
-                audio.CreateVoice(data.m_M9WorldAcceptance->LoopClip, data.m_M9LoopVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
-                audio.StartVoice(data.m_M9EffectVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
-                audio.StartVoice(data.m_M9LoopVoice) != NorvesLib::Modules::Audio::AudioResult::Success)
-            {
-                CleanupM9WorldAcceptance(ctx, data);
-                FailM9WorldSmoke(ctx, "xaudio2_play_failed");
-                return GameModeEnterResult::Failed;
-            }
-            data.m_bM9AudioStarted = true;
-            LOG_INFO("M9_WORLD_SMOKE stage=audio_play effect=1 loop=1 backend=XAudio2");
-            EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=audio_play effect=1 loop=1 backend=XAudio2");
-        }
-#endif
 
         data.m_LateCameraState = MakeShared<Game::CameraLateUpdateState>();
         data.m_LateCameraState->OwnerId = data.m_pCameraObject->GetObjectId();
@@ -1494,11 +1553,22 @@ namespace Game::GameModes
                 state->bSmokeSyncEmitted = true;
             }
         });
+        m9FailureGuard.bCommitted = true;
         return GameModeEnterResult::Succeeded;
     }
 
     void Rendering3DTestRoutine::Tick(GameModeContext &ctx, Rendering3DTestData &data, float deltaTime)
     {
+#if defined(NORVES_GAME_AUDIO)
+        if (!ConsumeM9WorldCompletion(ctx, data))
+        {
+            return;
+        }
+        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested && !data.m_bM9Attached)
+        {
+            return;
+        }
+#endif
         // Bridge等による通常Tick前の削除にも、IDから再解決して対応する。
         data.m_pCameraObject = nullptr;
         data.m_pSpringArmComponent = nullptr;

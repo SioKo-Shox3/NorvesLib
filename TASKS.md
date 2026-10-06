@@ -2702,3 +2702,9 @@
 - known-limit: 既存AssetManifestのJSON文字列はASCII限定。新runtimeのUTF-8構文検証は非ASCII論理pathのcooked成功を意味しない。現在の正常fixtureはASCIIで、合法UTF-8未登録pathはtyped拒否として検証する。manifest UTF-8化は別変更。
 
 - result: code2d69f465/treeb7a6beea/run37502233582 attempt1 job112401887301。初回61f325feの新manifest fixture失敗をtest/docsだけで修正、production不変。Release62/24marker、runtime両構成の28 child process・36 subcase marker、従来Debug/旧61cpp・4固定6095byte capture・旧89出力・25+15CLI・12metadata・17/29child退出・GR84別58process/125file・PE-CNG/SHELL32を確認。18checker normal/-Oのreceipt/stdout一致・stderr空、親readonly replay exit0・672payload一致。latest4paths/Library0、累積15paths/Library9。初回failed545payloadは別保持。実worker→ready/ack→明示owner一括公開→遅延delegate、合流/cache/session/domain/snapshot、取消/close/drain/弱参照のCPU契約を受入。非ASCII論理pathのcooked成功・一般OOM/Task例外・製品loop/M9/StageB/GPUは未受入。
+
+## G2-GR83-OWNER-LIFECYCLE-M9-DELEGATE: 実owner lifecycleとM9消費者を骨格runtimeへ接続する
+- status: doing
+- done-when: Core::GEngineの通常メンバとして骨格sessionを所有し、実ApplicationProcessorのBegin/owner更新/Close/Drain/終了から駆動する。Registryの所有/借用を区別し、M9の逐次CreateTransient組立を弱参照delegateと一回completion eventからのowner attachへ置換する。Waveを明示選択し、通常Rendering3DTestを既定のまま保つ。
+- verify: 実production helperのCPU lifecycle/受理済snapshot/早期・遅延通知/一回attach/Leave・failed Enter/再初期化、pause中配送とconsumer待ち、borrowed Registry保持・owned空終了、明示clip選択/古いmembership拒否/既存先頭互換。実App call siteをGameビルドとsource接続検査で確認し、描画/XAudio2/実キャラ未実行を分離する。旧CPU/Debug/cook/CLIを維持する。
+- stop-when: 未使用NorvesEngine::Updateだけへ配線する、2つのGEngine/rendererを統合する、3系統hot reload transactionへ拡大する、Task状態pollやrawcallback target、borrowed Registry全体のshutdown、旧handle全session無効を保証する、GPU/実物品質をCPU検証から推測する。callback内同期Shutdownは依存解体前に外側へ延期する。

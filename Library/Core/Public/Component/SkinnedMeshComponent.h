@@ -26,6 +26,10 @@ namespace NorvesLib::Core::Component
 
         void SetSkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset);
         const Container::TSharedPtr<SkeletalAssetResource>& GetSkeletalAsset() const;
+        // 同aggregateに属する明示clipだけを受理する。失敗時は旧選択を保持する。
+        [[nodiscard]] bool SetAnimationClip(const Container::TSharedPtr<AnimationClipResource>& clip);
+        // 明示選択が無い場合だけ旧先頭別名を使う。membership喪失時は空でfallbackしない。
+        Container::TSharedPtr<AnimationClipResource> GetAnimationClip() const;
 
         void SetMeshNodeGlobalTransform(const Math::Matrix4x4& transform);
         const Math::Matrix4x4& GetMeshNodeGlobalTransform() const;
@@ -75,6 +79,7 @@ namespace NorvesLib::Core::Component
         Math::Matrix4x4 BuildOwnerWorldTransform() const;
 
         Container::TSharedPtr<SkeletalAssetResource> m_SkeletalAsset;
+        Container::TSharedPtr<AnimationClipResource> m_SelectedClip;
         Math::Matrix4x4 m_MeshNodeGlobalTransform;
         bool m_bMeshNodeTransformOverridden = false;
         Animation::SkeletalPoseSnapshot m_Pose;

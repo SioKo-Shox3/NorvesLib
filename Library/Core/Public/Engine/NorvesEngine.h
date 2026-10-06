@@ -2,6 +2,7 @@
 #pragma once
 
 #include "IEngine.h"
+#include "Engine/SkeletalAssetSession.h"
 #include "Container/Containers.h"
 #include "Thread/Atomic.h"
 #include "Object/ResourceRegistry.h"
@@ -182,6 +183,15 @@ namespace NorvesLib::Core
          */
         const ComponentDataRegistry &GetComponentDataRegistry() const { return m_ComponentDataRegistry; }
 
+        SkeletalAssetSession& GetSkeletalAssetSession()
+        {
+            return m_SkeletalAssetSession;
+        }
+        const SkeletalAssetSession& GetSkeletalAssetSession() const
+        {
+            return m_SkeletalAssetSession;
+        }
+
         ScriptRuntime& GetScriptRuntime();
         const ScriptRuntime& GetScriptRuntime() const;
 
@@ -192,6 +202,7 @@ namespace NorvesLib::Core
 
         // サブシステム（GEngineと寿命が一致）
         ResourceRegistry m_ResourceRegistry;                    ///< リソース管理
+        SkeletalAssetSession m_SkeletalAssetSession;            ///< application ownerの骨格session
         AssetRegistry m_AssetRegistry;                          ///< アセット（ファイル）管理
         ComponentDataRegistry m_ComponentDataRegistry;           ///< Component data scratch registry
         ScriptRuntime m_ScriptRuntime;                            ///< AngelScript runtime

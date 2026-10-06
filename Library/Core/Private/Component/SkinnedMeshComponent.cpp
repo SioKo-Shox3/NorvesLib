@@ -56,6 +56,7 @@ namespace NorvesLib::Core::Component
     {
         m_Pose.Clear();
         m_SkeletalAsset.reset();
+        m_SelectedClip.reset();
         Component::Finalize();
     }
 
@@ -73,13 +74,13 @@ namespace NorvesLib::Core::Component
 
     void SkinnedMeshComponent::Tick(float deltaTime)
     {
-        if (!m_bPlaying || !std::isfinite(deltaTime) || !std::isfinite(m_PlaybackRate) ||
-            !m_SkeletalAsset || !m_SkeletalAsset->GetAnimationClip())
+        if (!m_bPlaying || !std::isfinite(deltaTime) || !std::isfinite(m_PlaybackRate) || !m_SkeletalAsset ||
+            !GetAnimationClip())
         {
             return;
         }
 
-        const float duration = m_SkeletalAsset->GetAnimationClip()->GetClip().DurationSeconds;
+        const float duration = GetAnimationClip()->GetClip().DurationSeconds;
         if (!std::isfinite(duration) || duration <= Math::Constants::EPSILON)
         {
             return;
@@ -108,6 +109,7 @@ namespace NorvesLib::Core::Component
             m_SlotMaterials.Clear();
         }
         m_SkeletalAsset = asset;
+        m_SelectedClip.reset();
         m_bMeshNodeTransformOverridden = false;
         m_Pose.Clear();
         m_MeshNodeGlobalTransform = asset && asset->GetMesh()
@@ -120,6 +122,57 @@ namespace NorvesLib::Core::Component
     const Container::TSharedPtr<SkeletalAssetResource>& SkinnedMeshComponent::GetSkeletalAsset() const
     {
         return m_SkeletalAsset;
+    }
+
+    bool SkinnedMeshComponent::SetAnimationClip(const Container::TSharedPtr<AnimationClipResource>& clip)
+    {
+        if (!m_SkeletalAsset || !m_SkeletalAsset->IsLoaded() || !m_SkeletalAsset->IsValid() || !clip ||
+            !clip->IsLoaded() || !clip->IsValid())
+        {
+            return false;
+        }
+        bool bMember = false;
+        for (size_t i = 0; i < m_SkeletalAsset->GetClipCount(); ++i)
+        {
+            if (m_SkeletalAsset->GetClip(i) == clip)
+            {
+                bMember = true;
+                break;
+            }
+        }
+        if (!bMember)
+        {
+            return false;
+        }
+        m_SelectedClip = clip;
+        m_Pose.Clear();
+        m_bPoseDirty = true;
+        MarkRenderStateDirty();
+        return true;
+    }
+
+    Container::TSharedPtr<AnimationClipResource> SkinnedMeshComponent::GetAnimationClip() const
+    {
+        if (!m_SkeletalAsset)
+        {
+            return {};
+        }
+        if (!m_SelectedClip)
+        {
+            return m_SkeletalAsset->GetAnimationClip();
+        }
+        if (!m_SelectedClip->IsLoaded() || !m_SelectedClip->IsValid())
+        {
+            return {};
+        }
+        for (size_t i = 0; i < m_SkeletalAsset->GetClipCount(); ++i)
+        {
+            if (m_SkeletalAsset->GetClip(i) == m_SelectedClip)
+            {
+                return m_SelectedClip;
+            }
+        }
+        return {};
     }
 
     void SkinnedMeshComponent::SetMeshNodeGlobalTransform(const Math::Matrix4x4& transform)
@@ -402,18 +455,14 @@ namespace NorvesLib::Core::Component
             m_MeshNodeGlobalTransform = LoadMeshNodeGlobalTransform(m_SkeletalAsset->GetMesh()->GetMeshNodeGlobalTransform());
         }
         const bool bSampled = Animation::SkeletalAnimationSampler::Sample(
-            *m_SkeletalAsset->GetSkeleton(),
-            *m_SkeletalAsset->GetAnimationClip(),
-            *m_SkeletalAsset->GetMesh(),
-            m_AnimationTimeSeconds,
-            m_MeshNodeGlobalTransform,
-            m_Pose);
+            *m_SkeletalAsset->GetSkeleton(), *GetAnimationClip(), *m_SkeletalAsset->GetMesh(), m_AnimationTimeSeconds,
+            m_MeshNodeGlobalTransform, m_Pose);
         if (bSampled)
         {
             m_bPoseDirty = false;
             m_EvaluatedMesh = m_SkeletalAsset->GetMesh();
             m_EvaluatedSkeleton = m_SkeletalAsset->GetSkeleton();
-            m_EvaluatedClip = m_SkeletalAsset->GetAnimationClip();
+            m_EvaluatedClip = GetAnimationClip();
             ++m_PoseSerial;
         }
         return bSampled;
@@ -424,7 +473,7 @@ namespace NorvesLib::Core::Component
         if (!m_SkeletalAsset || !m_SkeletalAsset->IsLoaded() || !m_SkeletalAsset->IsValid()) return false;
         const auto& mesh = m_SkeletalAsset->GetMesh();
         const auto& skeleton = m_SkeletalAsset->GetSkeleton();
-        const auto& clip = m_SkeletalAsset->GetAnimationClip();
+        const auto& clip = GetAnimationClip();
         return mesh && mesh->IsLoaded() && mesh->IsValid() && skeleton && skeleton->IsLoaded() &&
             skeleton->IsValid() && clip && clip->IsLoaded() && clip->IsValid();
     }
@@ -432,9 +481,9 @@ namespace NorvesLib::Core::Component
     bool SkinnedMeshComponent::HasCurrentPose() const
     {
         return !m_bPoseDirty && HasValidPoseResources() && !m_Pose.JointModelMatrices.empty() &&
-            m_EvaluatedMesh.lock() == m_SkeletalAsset->GetMesh() &&
-            m_EvaluatedSkeleton.lock() == m_SkeletalAsset->GetSkeleton() &&
-            m_EvaluatedClip.lock() == m_SkeletalAsset->GetAnimationClip();
+               m_EvaluatedMesh.lock() == m_SkeletalAsset->GetMesh() &&
+               m_EvaluatedSkeleton.lock() == m_SkeletalAsset->GetSkeleton() &&
+               m_EvaluatedClip.lock() == GetAnimationClip();
     }
 
     int32_t SkinnedMeshComponent::FindJointIndex(Identity name) const

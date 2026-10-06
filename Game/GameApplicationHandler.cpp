@@ -1152,6 +1152,12 @@ namespace Game
             return false;
         }
 
+        if (NorvesLib::Core::GEngine.GetSkeletalAssetSession().HasPinnedSnapshot())
+        {
+            NORVES_LOG_WARNING("SkeletalAssets", "snapshotの変更を拒否します reason=skeletal_snapshot_pinned");
+            return false;
+        }
+
         const std::filesystem::path rootPath = ToFilesystemPath(m_TextureAssetRoot);
         const std::filesystem::path manifestPath = ToFilesystemPath(m_TextureAssetManifestPath);
 
@@ -1241,7 +1247,7 @@ namespace Game
     bool GameApplicationHandler::PrepareM9WorldAssets()
     {
         if (!m_M9WorldAcceptance || !m_M9WorldAcceptance->bRequested || !m_AssetSystemSnapshot ||
-            !NorvesLib::Core::Engine::GEngine)
+            !NorvesLib::Core::Engine::GEngine || !m_M9WorldAcceptance->Preparation.CanPrepare())
         {
             return false;
         }
@@ -1249,56 +1255,21 @@ namespace Game
 #if !defined(NORVES_GAME_AUDIO)
         return false;
 #else
-        const Asset::AssetResolveResult skeletalResult = m_AssetSystemSnapshot->ResolveAsset(
-            "Models/M9Skinned/ValidU8Float.gltf", Asset::AssetKind::Model);
         const Asset::AssetResolveResult effectResult = m_AssetSystemSnapshot->ResolveAsset(
             "Audio/M9/effect.wav", Asset::AssetKind::Audio);
         const Asset::AssetResolveResult loopResult = m_AssetSystemSnapshot->ResolveAsset(
             "Audio/M9/loop.wav", Asset::AssetKind::Audio);
-        if (!skeletalResult.UsedCooked() || !effectResult.UsedCooked() || !loopResult.UsedCooked())
+        if (!effectResult.UsedCooked() || !loopResult.UsedCooked())
         {
-            LOG_ERROR("M9_WORLD_SMOKE asset resolution requires all three cooked assets");
+            LOG_ERROR("M9_WORLD_SMOKE audio resolution requires both cooked assets");
             return false;
         }
 
-        Asset::CookedSkeletalParseResult skeletal = Asset::ParseCookedSkeletal(skeletalResult.Blob);
         Asset::CookedAudioParseResult effect = Asset::ParseCookedAudio(effectResult.Blob);
         Asset::CookedAudioParseResult loop = Asset::ParseCookedAudio(loopResult.Blob);
-        if (!skeletal.Succeeded() || !effect.Succeeded() || !loop.Succeeded() || skeletal.Data.Skeletal.Clips.empty())
+        if (!effect.Succeeded() || !loop.Succeeded())
         {
             LOG_ERROR("M9_WORLD_SMOKE cooked asset parsing failed");
-            return false;
-        }
-
-        // 複数clipの選択はGR82で接続する。
-        if (skeletal.Data.Skeletal.Clips.size() != 1)
-        {
-            LOG_ERROR("M9_WORLD_SMOKE: 複数clipの選択は未対応です");
-            return false;
-        }
-
-        auto& resources = NorvesLib::Core::GEngine.GetResourceRegistry();
-        auto mesh = resources.CreateTransient<SkinnedMeshResource>("M9WorldSkinnedMesh");
-        auto skeleton = resources.CreateTransient<SkeletonResource>("M9WorldSkeleton");
-        auto clip = resources.CreateTransient<AnimationClipResource>("M9WorldClip");
-        auto skeletalAsset = resources.CreateTransient<SkeletalAssetResource>("M9WorldAsset");
-        if (!mesh || !skeleton || !clip || !skeletalAsset)
-        {
-            return false;
-        }
-        mesh->SetMeshNodeGlobalTransform(skeletal.Data.Skeletal.MeshNodeGlobalTransform);
-        mesh->SetVertices(std::move(skeletal.Data.Skeletal.Vertices));
-        mesh->SetIndices(std::move(skeletal.Data.Skeletal.Indices));
-        mesh->SetSubmeshTables(std::move(skeletal.Data.Skeletal.SubMeshes),std::move(skeletal.Data.Skeletal.MaterialSlots));
-        skeleton->SetJoints(std::move(skeletal.Data.Skeletal.Joints));
-        clip->SetClip(std::move(skeletal.Data.Skeletal.Clips[0]));
-        if (!mesh->Load() || !skeleton->Load() || !clip->Load())
-        {
-            return false;
-        }
-        skeletalAsset->SetResources(mesh, skeleton, clip);
-        if (!skeletalAsset->IsLoaded())
-        {
             return false;
         }
 
@@ -1323,13 +1294,23 @@ namespace Game
             return false;
         }
 
-        m_M9WorldAcceptance->SkeletalAsset = skeletalAsset;
         m_M9WorldAcceptance->EffectClip = effectClip;
         m_M9WorldAcceptance->LoopClip = loopClip;
-        m_M9WorldAcceptance->bAssetsReady = true;
-        LOG_INFO("M9_WORLD_SMOKE stage=assets_ready prepared=3 snapshot=1");
-        Game::GameModes::EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=assets_ready prepared=3 snapshot=1");
-        return true;
+        m_M9WorldAcceptance->bAssetsReady = false;
+        auto& session = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
+        const auto bound = session.BindSnapshot(m_AssetSystemSnapshot);
+        if (bound != SkeletalRuntimeStatus::Success && bound != SkeletalRuntimeStatus::Unchanged)
+        {
+            return false;
+        }
+        auto* runtime = session.GetRuntime();
+        if (!runtime)
+        {
+            return false;
+        }
+        const auto admitted = m_M9WorldAcceptance->Preparation.Start(
+            *runtime, m_M9WorldAcceptance->SkeletalPath, Container::StringView(m_M9WorldAcceptance->ClipName));
+        return admitted.Status == SkeletalRuntimeStatus::Accepted;
 #endif
     }
 
@@ -1449,9 +1430,20 @@ namespace Game
         // - 設定の保存
     }
 
+    bool GameApplicationHandler::HasPendingAssetConsumers() const
+    {
+        return m_M9WorldAcceptance && m_M9WorldAcceptance->bRequested &&
+               m_M9WorldAcceptance->Preparation.HasPendingWork();
+    }
+
     void GameApplicationHandler::OnShutdown()
     {
         LOG_INFO("GameApplicationHandler::OnShutdown()");
+        // Enter前の失敗でも、runtime終了より先に借用取消先とeventを解放する。
+        if (m_M9WorldAcceptance)
+        {
+            m_M9WorldAcceptance->Preparation.Cancel();
+        }
 
         // ゲーム固有の終了処理
         // - リソースの解放
