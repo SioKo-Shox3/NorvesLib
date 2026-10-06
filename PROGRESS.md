@@ -999,3 +999,10 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 検証範囲補足: 既存SnapshotReloadはassert内でInitialize/manifest読込を実行し、ModelAsyncLoadQueueもCloseにside effectがある。これらを新規Releaseゲートへ足さず、Debugの関連回帰3束で確認する。Releaseは旧60＋JobSystemの61件とし、有限ticketの常時有効検査はDebug/Releaseで実行する。
 
 - 反証追加: AfterHandlerで止めた投入にStop/Shutdownを競合させ、成功/例外とclose先行拒否を3経路で確認する。Drain/closeがresize lock内へ到達した通知を使い、呼出前signalだけに依存しない。
+
+### GR83 有限ジョブ投入のCPU受入（2026-10-07 JST）
+
+- Done: 6a2d9815cc6840b9d03c91c87bd5bd3848c2b661 / tree4e4ec3c54d3c3bc98ccfad087002bec0b6f8e22c / run37483939116 / job112339002242。Release61とDebugのfinite試験・model非同期3束、既存loader/publication/Registry/Profileを確認した。旧60cpp・cook/CLI/固定Samplerは維持。
+- 検証: 8比較器のnormal/-O計16回でreceipt/stdout一致・stderr空、親readonly replay exit0・629payload一致。summary SHA256 15910b58ed23720e63723c2fc6665921292461d653733f2c77dea8301f454881、inventory SHA256 76c41a0033eb875c77d30d9a0805f8e7921e605ed72d4e3e069aa056a92511e7。
+- 範囲: submission別の未arm ticket、準備例外、遅い失敗handler、同期/重複、実resize fenceでのStop/Shutdown/Drain競合、旧世代参照を受入。一般Task worker/handler例外や全allocator OOMは保証しない。Drainのterminal計上と、consumerへの完了配送は異なる境界のまま。
+- Notes: Runtime内部状態は固定sourceとnative CHECKの証拠。保存済みbyte比較と未archive binaryのhash attestationを区別する。製品loop/骨格event-ready/delegate/M9/StageB/GPUは未接続。

@@ -2686,7 +2686,9 @@
 - result: code177c1b69/tree780f3603/run37474221718 attempt1 job112305303905。初回8e913414の新試験filesystem include不足をtest/PROGRESSだけで修正しproduction不変。Release CPU60/22marker、Debugのpublication・loader/Profile・既存Registry4memberを確認。旧55cppは不変、共有fixtureは14関数とMagicのinlineだけ。4固定6095byte capture・旧89出力・25+15CLI・12metadata・17/29child退出・GR84別58process/125file・MSVC/PE-CNG/SHELL32を維持。14checker normal/-Oのreceipt/stdout一致・stderr空、親readonly replay exit0・541payload inventory一致。初回失敗421payloadは別保持。preparedのsession/owner、4型shadow一括公開、typed child handle、厳密cache取得とGC/leaseのCPU契約を受入。既存4memberのassert契約はDebugで検証しRelease件数だけを根拠にしない。clone累積O(K²)、RSS/時間/汎用Register例外安全/任意並行破棄/async/製品loop/M9/StageB/GPUは対象外。
 
 ## G2-GR83-FINITE-SUBMIT-SAFETY: 非同期ロードの有限ジョブ投入を例外時にも計上整合させる
-- status: doing
+- status: done
 - done-when: submission専用の未計上ticketでOnCompleteを先に登録し、enqueue成功後に同じadmission gate内でarmする。同期完了・重複submit・遅い失敗handlerで別仕事のcountを減らさず、登録/queueの確保例外でDrainを残さない。公開bool、closed Cancel、persistent、世代と既存schedulerを維持する。
 - verify: simple/global fallback/localの境界例外と再試行、他task保持中の遅いCancel、同Taskの成功/失敗重複・terminal同期・arm前後、Stop/Drain fenceと再初期化世代、weak寿命、既存JobSystemShutdownTestをDebug/Releaseで実行。ModelAsyncLoadQueue/ModelResourcesAssetRuntime/AssetRuntimeSnapshotReloadの関連回帰を含める。境界注入と実allocator OOMの全域検証を区別する。
 - stop-when: push後にallocating/throwing callbackを置く、例外cleanupで以前受理した同Taskを取消す、一般worker/handler例外・Shutdown/Initialize全体OOM・scheduler再設計を含める、persistentへ逃げる、GR83 async/製品loop/GPUまで完了とする。
+
+- result: code6a2d9815/tree4e4ec3c5/run37483939116 attempt1 job112339002242。Release61/旧22＋finite marker、Debugのfinite常時検査とmodel非同期3束を確認。旧60cppとloader/publication/Registry/Profile、4固定6095byte capture・旧89出力・25+15CLI・12metadata・17/29child退出・GR84別58process/125file・PE-CNG/SHELL32を維持。16checker normal/-Oのreceipt/stdout一致・stderr空、親readonly replay exit0・629payload一致。7paths/Library2。未arm ticketの準備例外・同期/重複・close/fence・旧世代の有限計上を受入。境界注入は実allocator全OOMの証明ではなく、一般worker/handler例外、全handler復帰、consumer配送、製品asyncは未受入。関連modelのassert契約はDebug限定で実証する。
