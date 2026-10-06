@@ -5,6 +5,12 @@
 namespace NorvesLib::Core::ResourceIO
 {
     class SkeletalBundlePublisherAccess;
+    // Registry session内で一度だけ発行するcache名前空間。ResourceIdを消費しない。
+    struct SkeletalCacheDomain
+    {
+        uint64_t Session = 0;
+        uint64_t Ordinal = 0;
+    };
     struct SkeletalPublicationLimits
     {
         size_t MaxBundleClips = 1024;
@@ -68,6 +74,11 @@ namespace NorvesLib::Core::ResourceIO
     [[nodiscard]] bool PrepareSkeletalPublication(const CookedSkeletalCpuAsset& cpu,
                                                   const SkeletalAssetCreateContext& context,
                                                   SkeletalPreparedPublication& out, SkeletalPublicationReport& report);
+    [[nodiscard]] bool AllocateSkeletalCacheDomain(const SkeletalAssetCreateContext& context, SkeletalCacheDomain& out,
+                                                   SkeletalPublicationReport& report);
+    [[nodiscard]] bool ValidateSkeletalCacheDomain(const SkeletalAssetCreateContext& context,
+                                                   const SkeletalCacheDomain& domain,
+                                                   SkeletalPublicationReport& report);
     // cacheKeyは世代/domain識別、logicalPathは元URI。両方を実文字列として検査する。
     [[nodiscard]] bool FindPublishedSkeletalAsset(const SkeletalAssetCreateContext& context,
                                                   const Container::String& cacheKey,

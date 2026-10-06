@@ -2692,3 +2692,9 @@
 - stop-when: push後にallocating/throwing callbackを置く、例外cleanupで以前受理した同Taskを取消す、一般worker/handler例外・Shutdown/Initialize全体OOM・scheduler再設計を含める、persistentへ逃げる、GR83 async/製品loop/GPUまで完了とする。
 
 - result: code6a2d9815/tree4e4ec3c5/run37483939116 attempt1 job112339002242。Release61/旧22＋finite marker、Debugのfinite常時検査とmodel非同期3束を確認。旧60cppとloader/publication/Registry/Profile、4固定6095byte capture・旧89出力・25+15CLI・12metadata・17/29child退出・GR84別58process/125file・PE-CNG/SHELL32を維持。16checker normal/-Oのreceipt/stdout一致・stderr空、親readonly replay exit0・629payload一致。7paths/Library2。未arm ticketの準備例外・同期/重複・close/fence・旧世代の有限計上を受入。境界注入は実allocator全OOMの証明ではなく、一般worker/handler例外、全handler復帰、consumer配送、製品asyncは未受入。関連modelのassert契約はDebug限定で実証する。
+
+## G2-GR83-SKELETAL-EVENT-RUNTIME: 骨格の非同期読込から一括公開とdelegate配送まで接続する
+- status: doing
+- done-when: explicit ownerと借用JobSystem/RegistryでBindするinstanceから、実finite TaskのP1所有CPU解析、事前確保intrusive ready、owner P2a一括公開、遅延delegateを一つにつなぐ。同snapshot/正規pathのgroup合流とRegistry session/domain/generation cacheを持ち、永続strong cacheを作らない。
+- verify: 実simple/work-stealing＋3clip fixture、所有/typed failureとcache/GC、wrong owner、有限Flushと再入追加の次Flush配送、submit拒否/例外/earlyterminal、Cancel/Closeの準備/worker/ready/assembly/precommit/通知各窓、TaskWaitとhandoff ackの差、callback例外/DrainDeferred、session/domain/snapshot/上限/weak解放。新試験はDebug/Releaseの常時検査、旧61と関連Debug/CLI/固定captureを維持する。
+- stop-when: worker/eventでResource/consumerを扱う、全Pending polling、State lock下のSubmit/Cancel/consumer、handoffやCloseに新確保必須、precommitとの取消競合窓、TaskWaitだけでDrain完了、自己callback内同期破棄、架空ResourceId/token推測、製品loop/M9/StageB/GPUまで完成とする。

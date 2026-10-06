@@ -28,5 +28,6 @@ namespace NorvesLib::Core::ResourceIO::Detail
     [[nodiscard]] Container::TSharedPtr<SkeletalAssetResource> GetPreparedSkeletalAsset(
         const SkeletalPreparedPublication& prepared);
     [[nodiscard]] size_t SkeletalRegistryPoolCountForTest(ResourceRegistry& registry);
+    void SetSkeletalCacheDomainCounterForTest(ResourceRegistry& registry, uint64_t next);
     void StressSkeletalOuterRehashForTest(ResourceRegistry& registry);
 } // namespace NorvesLib::Core::ResourceIO::Detail

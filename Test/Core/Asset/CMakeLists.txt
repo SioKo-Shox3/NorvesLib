@@ -58,6 +58,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SkeletalBvhCookBridgeTest SkeletalBvhCookBridgeTest.cpp
     MEMBER SkeletalAssetLoaderTest SkeletalAssetLoaderTest.cpp
     MEMBER SkeletalAssetPublicationTest SkeletalAssetPublicationTest.cpp
+    MEMBER SkeletalAssetRuntimeTest SkeletalAssetRuntimeTest.cpp
     MEMBER BvhEvaluateTest BvhEvaluateTest.cpp
     MEMBER BvhDecodeTest BvhDecodeTest.cpp
     MEMBER GltfMaterialCookV1Test GltfMaterialCookV1Test.cpp
@@ -302,3 +303,4 @@ add_test(NAME SkeletalBvhClipImportTest COMMAND CookedMeshTest --test=SkeletalBv
 add_test(NAME SkeletalBvhCookBridgeTest COMMAND CookedMeshTest --test=SkeletalBvhCookBridgeTest)
 add_test(NAME SkeletalAssetLoaderTest COMMAND CookedMeshTest --test=SkeletalAssetLoaderTest)
 add_test(NAME SkeletalAssetPublicationTest COMMAND CookedMeshTest --test=SkeletalAssetPublicationTest)
+add_test(NAME SkeletalAssetRuntimeTest COMMAND CookedMeshTest --test=SkeletalAssetRuntimeTest)

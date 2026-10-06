@@ -264,6 +264,44 @@ namespace NorvesLib::Core::ResourceIO
         };
 
       public:
+        static void SetDomainCounter(ResourceRegistry& registry, uint64_t next)
+        {
+            NorvesLib::Thread::ScopedLock lock(registry.m_Mutex);
+            registry.m_NextSkeletalCacheDomain = next;
+        }
+        static bool Domain(const SkeletalAssetCreateContext& context, SkeletalCacheDomain& domain,
+                           SkeletalPublicationReport& report, bool allocate)
+        {
+            report = {};
+            if (!Owner(context.OwnerThread))
+            {
+                return Fail(report, Status::WrongOwnerThread);
+            }
+            if (!context.Registry)
+            {
+                return Fail(report, Status::RegistryNotReady);
+            }
+            auto& r = *context.Registry;
+            NorvesLib::Thread::ScopedLock lock(r.m_Mutex);
+            if (!SessionLocked(r, allocate ? 0 : domain.Session, report))
+            {
+                return false;
+            }
+            if (allocate)
+            {
+                if (r.m_NextSkeletalCacheDomain == UINT64_MAX)
+                {
+                    return Fail(report, Status::BudgetExceeded);
+                }
+                domain = {r.m_SessionEpoch, r.m_NextSkeletalCacheDomain++};
+            }
+            else if (domain.Session == 0 || domain.Ordinal == 0 || domain.Ordinal >= r.m_NextSkeletalCacheDomain)
+            {
+                return Fail(report, Status::InvalidRequest);
+            }
+            report.Status = Status::Success;
+            return true;
+        }
         static size_t PoolCount(ResourceRegistry& r)
         {
             NorvesLib::Thread::ScopedLock lock(r.m_Mutex);
@@ -553,6 +591,21 @@ namespace NorvesLib::Core::ResourceIO
             }
         }
     };
+    void Detail::SetSkeletalCacheDomainCounterForTest(ResourceRegistry& registry, uint64_t next)
+    {
+        SkeletalBundlePublisherAccess::SetDomainCounter(registry, next);
+    }
+    bool AllocateSkeletalCacheDomain(const SkeletalAssetCreateContext& context, SkeletalCacheDomain& out,
+                                     SkeletalPublicationReport& report)
+    {
+        return SkeletalBundlePublisherAccess::Domain(context, out, report, true);
+    }
+    bool ValidateSkeletalCacheDomain(const SkeletalAssetCreateContext& context, const SkeletalCacheDomain& domain,
+                                     SkeletalPublicationReport& report)
+    {
+        auto copy = domain;
+        return SkeletalBundlePublisherAccess::Domain(context, copy, report, false);
+    }
     bool PrepareSkeletalPublication(const CookedSkeletalCpuAsset& cpu, const SkeletalAssetCreateContext& context,
                                     SkeletalPreparedPublication& out, SkeletalPublicationReport& report)
     {

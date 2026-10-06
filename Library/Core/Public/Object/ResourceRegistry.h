@@ -534,6 +534,7 @@ namespace NorvesLib::Core
         bool m_bInitialized = false;
         // 再初期化後のID再利用と、以前の未登録候補を区別する。
         uint64_t m_SessionEpoch = 0;
+        uint64_t m_NextSkeletalCacheDomain = 1;
         Thread::Atomic<uint64_t> m_NextResourceId{1};
         Container::UnorderedMap<std::type_index, Container::TUniquePtr<IResourcePool>> m_TypePools;
         mutable Thread::Mutex m_Mutex;

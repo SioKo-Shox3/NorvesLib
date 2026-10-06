@@ -258,6 +258,7 @@ set(PRIVATE_SOURCES
     Private/Resource/ModelAssetLoader.cpp
     Private/Resource/SkeletalAssetLoader.cpp
     Private/Resource/SkeletalAssetPublication.cpp
+    Private/Resource/SkeletalAssetRuntime.cpp
     Private/Resource/ModelAssetRuntime.cpp
     Private/Resource/ModelAsyncLoadQueue.cpp
     Private/Resource/ModelHandleCache.cpp
@@ -404,6 +405,7 @@ set(PUBLIC_HEADERS
     Public/Animation/AnimationClipResource.h
     Public/Animation/SkeletalAnimationSampler.h
     Public/Animation/SkeletalAssetResource.h
+    Public/Animation/SkeletalAssetRuntime.h
     Public/Animation/SkeletonResource.h
     # Scene
     Public/Scene/SceneQuery.h

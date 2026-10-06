@@ -1006,3 +1006,11 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 検証: 8比較器のnormal/-O計16回でreceipt/stdout一致・stderr空、親readonly replay exit0・629payload一致。summary SHA256 15910b58ed23720e63723c2fc6665921292461d653733f2c77dea8301f454881、inventory SHA256 76c41a0033eb875c77d30d9a0805f8e7921e605ed72d4e3e069aa056a92511e7。
 - 範囲: submission別の未arm ticket、準備例外、遅い失敗handler、同期/重複、実resize fenceでのStop/Shutdown/Drain競合、旧世代参照を受入。一般Task worker/handler例外や全allocator OOMは保証しない。Drainのterminal計上と、consumerへの完了配送は異なる境界のまま。
 - Notes: Runtime内部状態は固定sourceとnative CHECKの証拠。保存済みbyte比較と未archive binaryのhash attestationを区別する。製品loop/骨格event-ready/delegate/M9/StageB/GPUは未接続。
+
+### GR83 統合event runtimeの事前契約（2026-10-07 JST）
+
+- In progress: G2-GR83-SKELETAL-EVENT-RUNTIME。P1/P2a/finite-submit受入を土台に、骨格専用instanceでworker→ready→owner公開→delegateを接続する。queueだけの別完了にはしない。
+- 方針: Bind/Load/Flush/SetSnapshotは明示owner限定、Cancel/Close/Drainはmutex管理。private Taskのworkerを外側catchで包み、eventは事前slotのlinkとhandoff ackのみ。Flush開始時のbatchとcallback配列を固定し、再入Loadは次Flushへ送る。
+- 寿命: Registry sessionの専用単調domainでcacheを隔離し、登録はState→Registryの最終gateで行う。Closeは未開始配送を抑止し、Drainはsubmission/handoff/active配送/取消pinの終了後に確保なしで所有を解放する。一般並行Registry破棄・製品loop・M9・StageB・GPUは対象外。
+
+- 反証補強: in-flight索引をIdentityへ合わせ、保持view/Request完全keyを照合して衝突を拒否する。early-terminalの正常受理→ready→公開/通知各1、commit内State mutexの別thread取得不能/外側取得可能を明示検査する。

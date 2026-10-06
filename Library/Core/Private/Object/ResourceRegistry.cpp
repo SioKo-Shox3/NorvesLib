@@ -24,6 +24,7 @@ namespace NorvesLib::Core
                 return false;
             }
             ++m_SessionEpoch;
+            m_NextSkeletalCacheDomain = 1;
             m_NextResourceId.Store(1);
             m_bInitialized = true;
         }
