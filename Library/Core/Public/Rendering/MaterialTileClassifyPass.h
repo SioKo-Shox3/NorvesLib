@@ -66,7 +66,16 @@ namespace NorvesLib::Core::Rendering
             uint32_t TilesY = 0;
             uint32_t TileCount = 0;
             uint32_t MaxMaterials = 0;
-            /** @brief 一覧に置けるタイルの番号の数（材質をまたいだ合計） */
+            /**
+             * @brief 一覧に置けるタイルの番号の数（材質をまたいだ合計）
+             *
+             * 既定では 1 タイル MAX_MATERIALS_PER_TILE（= タイルの画素数）ぶん取り、どの画面でも溢れない
+             * （一覧の数は画素の数を超えない）。1080p で約 8.3 MB・4K で約 33 MB・8K で約 133 MB。
+             * 材質の表の上限（DEFAULT_MAX_MATERIALS = 1024）は 1 タイルの画素数（64）より大きいので、表の上限からは
+             * 1 タイルの見込みを 64 より小さくできない。小さく見積もると、溢れたタイルは一覧から落ちて材質の解決が
+             * dispatch せず、その画素の GBuffer が書かれずに物が欠ける。このため見込みは小さくしない
+             * （小さくするときは、溢れたタイルを予備の番号へ畳む経路を解決側に足してから）。
+             */
             uint32_t ListCapacity = 0;
             /** @brief 引数の x の上限（実機では MAX_GROUP_COUNT_X。小さくして、y へ広げる動きを試せる） */
             uint32_t GroupCountXLimit = MAX_GROUP_COUNT_X;

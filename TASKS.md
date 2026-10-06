@@ -908,9 +908,9 @@
 - notes: 2026-10-06 VTG6-DEFAULT-ON から分けた。起動画面にはスキニングの物が無いので、速度の検査（`RenderingVelocitySkinnedVulkanTest`）の場面か、検証用の撮影の入口で撮る。 2026-10-06 実装: Game に検証用の骨付きのパネルを置く `--startup-skinned-probe`（撮影の入口は `CaptureStartupScene.ps1 -SkinnedProbe`。既定は置かない）。ビルドの verify は、`ComputeSkinningVulkanTest` が独立ターゲットではなく `RHITextureUpdateVulkanTest` のバンドルの一部なので、そちらへ直した。
 
 ## VTG6-DEFAULT-ON-TILE-VRAM: 材質の分類の一覧の大きさを、材質の表の上限・画面の大きさから求め直す
-- status: todo
+- status: done
 - done-when: 材質の分類の一覧（`MaterialTileClassifyPass.h` の `ListCapacity`）が最悪（1タイル 64 材質）で取ってあり、1080p で約 8.3 MB・4K で約 33 MB になっている。VRAM の予算（8GB 級）と照らし、材質の表の上限（`VisibilityMaterialTable` の上限）・画面の大きさから求め直す（実際に出る最大の材質の数で足りることを保証する形）か、現状のまま使う理由と上限を `PROGRESS.md` に記録する。求め直すときは、溢れたときの扱い（材質の数が上限を超えたタイルは予備の番号に畳む等）を検査で確かめる。
-- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MaterialTileClassifyVulkanTest -- /m:1`
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MaterialTileClassifyVulkanTest|VisibilityResolveVulkanTest)$"`
 - stop-when: 一覧が溢れたときに見える物が欠ける場合は、再現を残して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md

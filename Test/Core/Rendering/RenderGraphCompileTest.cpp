@@ -2555,6 +2555,27 @@ namespace
         ShutdownVisibilityRasterScene(scene);
     }
 
+    // 材質のタイルの一覧の大きさ: 既定の見込み（1 タイル MAX_MATERIALS_PER_TILE）は、どの画面の大きさでも
+    // 一覧が溢れない（タイルごとの材質の数は画素の数を超えない）。溢れると落ちたタイルの物が欠けるので、
+    // 既定の見込みを小さくすると落ちる。1080p・4K の大きさ（VRAM の予算の記録）も固定する
+    void TestMaterialTileListCapacityNeverOverflowsAtDefault()
+    {
+        const uint32_t sizes[][2] = {{1, 1}, {7, 9}, {128, 64}, {1280, 720}, {1920, 1080}, {3840, 2160}, {7680, 4320}};
+        for (const auto& size : sizes)
+        {
+            const MaterialTiles::Layout layout = MaterialTiles::ComputeLayout(size[0], size[1]);
+            assert(layout.IsValid());
+            assert(layout.ListCapacity == layout.TileCount * MaterialTiles::MAX_MATERIALS_PER_TILE);
+            // タイルは画面を覆う最小の数。タイルの外の画素も数えた画素数以上なら、全画素が別の材質でも収まる
+            assert(static_cast<uint64_t>(layout.ListCapacity) >= static_cast<uint64_t>(size[0]) * size[1]);
+        }
+
+        assert(MaterialTiles::ComputeLayout(1920, 1080).ListBytes() == 8294400ull);
+        assert(MaterialTiles::ComputeLayout(3840, 2160).ListBytes() == 33177600ull);
+        // 材質の表の上限は 1 タイルの画素数より大きいので、表の上限からは見込みを小さくできない
+        assert(MaterialTiles::DEFAULT_MAX_MATERIALS >= MaterialTiles::MAX_MATERIALS_PER_TILE);
+    }
+
     // 材質のタイル分類のパス: VisBuffer.Id を読み、引数・一覧・カーソル・統計を書く。3 回の dispatch で分類し、
     // 引数は間接 dispatch の引数として読める用途と状態（GenericRead）で後のパスへ渡す
     void TestMaterialTileClassifyDispatchesAndPublishesArgs()
@@ -9676,6 +9697,7 @@ int main()
     TestVisibilityRasterOnRecordsMegaDrawsAndIdPass();
     TestVisibilityRasterOnBuildsHiZFromIdDepthBetweenTwoPasses();
     TestVisibilityRasterOnSinglePassCullingDrawsEverythingInOneRenderPass();
+    TestMaterialTileListCapacityNeverOverflowsAtDefault();
     TestMaterialTileClassifyDispatchesAndPublishesArgs();
     TestMaterialTileClassifyWithoutRecordTableClearsArgs();
     TestMaterialTileClassifyAbsentWhenNotAdded();
