@@ -970,3 +970,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - GR83-P1候補: 統合cooked資産の任意論理path→所有CPU解析→事前owner thread上の未登録CreateResource bundleを実装中。UsedCooked/Skl0/format/metadata照合、全clip/表/transform保持、失敗時の旧CPU/out/Registry登録状態保持を独立試験へ追加。Releaseのlogging無効を前提にDebugで3段階profile配送を別検証する計画。現時点は静的確認済み・native未実行であり、async/cache/M9/製品GameThread/GPUは未接続。
 
 - GR83-P1初回CI: code768e247a/run37454499346 job112238665215のRelease buildで、新testのAnsiStringViewと文字列literalの直接比較がMSVC C2678となった。期待側も明示AnsiStringViewにする1行だけを修正する。productionは不変。CPU55/Debug profile/後続CLIはこのrunでは未実行であり成功扱いしない。
+
+- GR83-P1再試行CI: codef78b9ec7/run37456223654 job112244396945はRelease buildと固定4capture/診断比較を通過。CPUは旧54成功・新loader1失敗で、合成manifestの必須cooked_version欠落によりfixture構築で拒否された。fixtureへ明示0と失敗時JSON診断を追加する。productionは初回候補から不変。Debug/後続CLIは未実行。

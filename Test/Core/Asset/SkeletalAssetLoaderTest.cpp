@@ -71,7 +71,7 @@ namespace
                 "\",\"kind\":\"model\",\"source_hash\":\"0000000000000001\",\"variant\":\"default\",\"format\":\"" +
                 format + "\",\"cooked_package\":\"asset.nvpkg\",\"entry_name\":\"a\",\"entry_type\":\"" +
                 (wrongType ? "Msh0" : "Skl0") + "\",\"cooked_hash\":\"" +
-                A::FormatAssetHashHex(badOuterHash ? hash ^ 1 : hash) + "\"" +
+                A::FormatAssetHashHex(badOuterHash ? hash ^ 1 : hash) + "\",\"cooked_version\":0" +
                 (metadataMode
                      ? (C::AnsiString(",\"metadata\":{\"vertex_count\":") + (metadataMode == 1 ? "4" : "3") +
                         ",\"index_count\":6,\"joint_count\":2,\"clip_count\":2" +
@@ -81,7 +81,12 @@ namespace
                         "}")
                      : C::AnsiString{}) +
                 "}]}";
-            CHECK(assets->LoadManifestFromJsonText(F::CoreText(manifest)));
+            const bool loaded = assets->LoadManifestFromJsonText(F::CoreText(manifest));
+            if (!loaded)
+            {
+                std::fprintf(stderr, "Loader fixture manifest: %s\n", manifest.c_str());
+            }
+            CHECK(loaded);
             return assets;
         }
     };
@@ -168,6 +173,18 @@ namespace
         CHECK(std::abs(pose.JointModelMatrices[1].values[13] - (rotated ? -3.f : 2.f)) < 1e-5f);
         CHECK(std::abs(pose.BonePalette[1].values[13] - (rotated ? -2.f : 1.f)) < 1e-5f);
     }
+    bool LoadSuccess(const R::CookedSkeletalLoadPlan& plan, R::CookedSkeletalCpuAsset& out,
+                     R::SkeletalAssetLoadReport& report)
+    {
+        const bool loaded = R::LoadCookedSkeletalForWorker(plan, out, report);
+        if (!loaded)
+        {
+            std::fprintf(stderr, "Loader positive failure: status=%u resolve=%u parse=%u path=%s\n",
+                         static_cast<unsigned>(report.Status), static_cast<unsigned>(report.ResolveStatus),
+                         static_cast<unsigned>(report.ParseStatus), plan.LogicalPath.c_str());
+        }
+        return loaded;
+    }
     void Run()
     {
         Fixture fixture;
@@ -184,8 +201,9 @@ namespace
         C::TSharedPtr<Core::SkeletalAssetResource> asset;
         const auto current = F::BuildGoldenSkeletalV02();
         auto snapshot = fixture.Assets(current);
-        CHECK(R::LoadCookedSkeletalForWorker({snapshot, "Actors/./Animal"}, cpu, report));
-        CHECK(cpu.GetLogicalPath() == C::AnsiStringView("Actors/Animal") && report.Status == R::SkeletalAssetLoadStatus::Success);
+        CHECK(LoadSuccess({snapshot, "Actors/./Animal"}, cpu, report));
+        CHECK(cpu.GetLogicalPath() == C::AnsiStringView("Actors/Animal") &&
+              report.Status == R::SkeletalAssetLoadStatus::Success);
         const auto parsed = cpu.GetData();
         CHECK(parsed && parsed->VersionMinor == 2);
         CHECK(R::AssembleCookedSkeletalAsset(cpu, context, asset, report));
@@ -296,7 +314,7 @@ namespace
         reject(fixture.Assets(current, "Actors/Animal", "nvskel.v0.skinned.pnujiw.u32", false, false, true));
         R::CookedSkeletalCpuAsset known;
         auto knownSnapshot = fixture.Assets(current, "Actors/Animal", "nvskel.v0.skinned.pnujiw.u32", false, false, 2);
-        CHECK(R::LoadCookedSkeletalForWorker({knownSnapshot, "Actors/Animal"}, known, report));
+        CHECK(LoadSuccess({knownSnapshot, "Actors/Animal"}, known, report));
         CHECK(known.GetData() && known.GetData()->Skeletal.SubMeshes.size() == 2);
         for (int mode : {3, 4})
         {
@@ -326,7 +344,7 @@ namespace
             }
             R::CookedSkeletalCpuAsset legacy;
             auto legacySnapshot = fixture.Assets(bytes, "Other/Legacy");
-            CHECK(R::LoadCookedSkeletalForWorker({legacySnapshot, "Other/Legacy"}, legacy, report));
+            CHECK(LoadSuccess({legacySnapshot, "Other/Legacy"}, legacy, report));
             CHECK(legacy.GetData()->VersionMinor == minor);
             C::TSharedPtr<Core::SkeletalAssetResource> loadedAsset;
             CHECK(R::AssembleCookedSkeletalAsset(legacy, context, loadedAsset, report));
@@ -336,7 +354,7 @@ namespace
         const auto triple = F::BuildThreeClips();
         auto tripleSnapshot = fixture.Assets(triple, "Actors/Three");
         R::CookedSkeletalCpuAsset tripleCpu;
-        CHECK(R::LoadCookedSkeletalForWorker({tripleSnapshot, "Actors/Three"}, tripleCpu, report));
+        CHECK(LoadSuccess({tripleSnapshot, "Actors/Three"}, tripleCpu, report));
         C::TSharedPtr<Core::SkeletalAssetResource> tripleAsset;
         CHECK(R::AssembleCookedSkeletalAsset(tripleCpu, context, tripleAsset, report));
         CHECK(tripleAsset->GetClipCount() == 3 && report.CreatedResources == 6);
@@ -365,7 +383,7 @@ namespace
         F::RecomputeSkeletalHash(reordered);
         R::CookedSkeletalCpuAsset ordered;
         auto orderSnapshot = fixture.Assets(reordered);
-        CHECK(R::LoadCookedSkeletalForWorker({orderSnapshot, "Actors/Animal"}, ordered, report));
+        CHECK(LoadSuccess({orderSnapshot, "Actors/Animal"}, ordered, report));
         C::TSharedPtr<Core::SkeletalAssetResource> orderedAsset;
         CHECK(R::AssembleCookedSkeletalAsset(ordered, context, orderedAsset, report));
         SampleLiteral(*orderedAsset, C::StringView(_T("Wave")), 1.f, false);
@@ -379,7 +397,7 @@ namespace
             F::RecomputeSkeletalHash(names);
             R::CookedSkeletalCpuAsset named;
             auto namedSnapshot = fixture.Assets(names);
-            CHECK(R::LoadCookedSkeletalForWorker({namedSnapshot, "Actors/Animal"}, named, report));
+            CHECK(LoadSuccess({namedSnapshot, "Actors/Animal"}, named, report));
             C::TSharedPtr<Core::SkeletalAssetResource> namedAsset;
             CHECK(R::AssembleCookedSkeletalAsset(named, context, namedAsset, report));
             CHECK(!namedAsset->GetClip(C::StringView{}));
