@@ -1657,3 +1657,12 @@
   - `DispatchIndirect` をコマンドリストが断ると（既定の実装。Vulkan は実装済み）記録が書かれない。Vulkan 以外のコマンドリストを足すときは間接 dispatch の実装が要る。
   - 残る on の増加分の主因は、`gl_PrimitiveID` を読む ID のフラグメント（`MegaGeometryDraw1` で約 0.66 ms。VTG7-RASTER-TIMING の記録）。
   - Next: TASKS.md の次の todo（VTG7-INT64-ATOMICS）。
+
+## 反復 1（run 20261006-125038）: VTG7-INT64-ATOMICS（done）
+- 内容: `VkPhysicalDeviceVulkan12Features` の `shaderBufferInt64Atomics`・`shaderSharedInt64Atomics` を照会し、`shaderInt64` が有効になるときに限って有効化した（SPIR-V の Int64Atomics は Int64 が前提）。`DeviceCapabilities` に `bShaderBufferInt64Atomics`・`bShaderSharedInt64Atomics` を足し、`DetectCapabilities` で有効にできた値を載せて、起動ログに `DEVICE_CAPS int64_atomics buffer=<0|1> shared=<0|1>` を 1 行出す。画像の 64bit アトミックは使っていない。
+- テスト: `IntegerAttachmentVulkanTest` に `TestInt64AtomicMin` を足した（新しい実行ファイルなし。確認用シェーダー `Test/Core/Rendering/Shaders/int64_atomic_min_probe.comp` を 1 本追加）。host 可視の storage buffer の uint64 8 個（~0 で初期化）へ 4102 個のスレッドが `atomicMin((uint64(深度のビット) << 32) | ID)` を書く。画素 0 は同じ深度 3 個で ID 最小（5）が残る、画素 1 は手前の深度で ID が大きい（0x00FFFFFF）ものが奥の深度で ID 1 のものに勝つ、画素 2〜6 は 16 段階の深度・乱数の ID を 4096 個競合させて CPU の最小値と一致、画素 7 は書かれずクリア値のまま。非対応の装置ではこのケースだけをスキップ（メッセージを出して続行。ほかのケースは従来どおり、geometryShader 非対応は 125）。
+- 開発機（RTX 4080）の照会値: `shaderBufferInt64Atomics=1`・`shaderSharedInt64Atomics=1`（stop-when の非対応には当たらない）。
+- 変異の確認: シェーダーの `atomicMin` を `atomicMax` にすると全画素（0〜6）で期待と不一致になり `Failed`（`verify-VTG7-INT64-ATOMICS-3-mutation.txt`）。変更は同じ編集で元へ戻し、`fc /b` で差なしを確認した。
+- 検証（`.harness/runs/20261006-125038/`）: `verify-VTG7-INT64-ATOMICS-1.txt`（Debug の Game・RHITextureUpdateVulkanTest、BUILD_EXIT_CODE=0）、`-2.txt`（IntegerAttachmentVulkanTest 1/1 Passed、`VUID_COUNT=0`・`RESULT=PASS`、int64 atomicMin の確認 画素=8・入力=4102）、`-4-startup-log.txt`（Game を 12 秒起動して `Game.log` の `DEVICE_CAPS int64_atomics buffer=1 shared=1` を確認）。
+- Notes: (1) Git Bash は `/m:1` をパスに変換してビルドが失敗するので、ビルドは PowerShell から走らせる。 (2) `DeviceCapabilities` は Windows の `DeviceCapabilitiesA` マクロと衝突するので、テストでは型名を書かず `const auto&` で受ける。 (3) `VulkanDevice.cpp` は CRLF 主体で LF の行が混在するため、Edit ツールではなくバイト単位で編集し、`git diff --numstat` と `--ignore-cr-at-eol` の一致を確認した。
+- Next: TASKS.md の次の todo。

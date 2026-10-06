@@ -991,7 +991,7 @@
 - notes: 2026-10-06 親（段7の開始時に詳しくした）。VTG7-RASTER-TIMING の後に行う。 2026-10-06 反復の結果: 間接 dispatch だけでは `VisRasterRecords` が縮まなかった（既定 3.601 → 3.63 ms）。主因は、記録の表がホスト可視メモリ（PCIe 越し）にあり計算の書き込みがその帯域で頭打ちだったこと。表を GPU 専用メモリへ移し、ホストが書く記録（手続き・スキニング）は置き場（`VisBuffer_RecordUpload`）から GPU がコピーする形にして縮んだ（既定 0.024 ms、フレーム GPU 10.59 → 6.81 ms）。
 
 ## VTG7-INT64-ATOMICS: 64bit アトミックの能力を照会・有効化して公開する
-- status: todo
+- status: done
 - done-when: `VkPhysicalDeviceVulkan12Features` の `shaderBufferInt64Atomics`・`shaderSharedInt64Atomics` を照会し、対応していれば有効化して `DeviceCapabilities` の `bShaderBufferInt64Atomics`・`bShaderSharedInt64Atomics` で公開する（`VulkanDevice.cpp` の `m_vulkan12Features` と能力の設定のブロック。`bShaderInt64` と同じ書式）。起動ログに `DEVICE_CAPS int64_atomics buffer=<0|1> shared=<0|1>` を 1 行出す。GPU のテスト（既存の `IntegerAttachmentVulkanTest` にケースを足す。新しい実行ファイルは作らない）で、storage buffer の uint64 へ複数のスレッドが `atomicMin` で「上位 32bit = 深度のビット、下位 32bit = ID」を書き、手前の深度が勝ち、同じ深度なら ID の小さい方が残ることを確かめる。非対応の装置ではそのケースを skip（終了コード 125 の扱いに合わせる）。画像の 64bit アトミック（`VK_EXT_shader_image_atomic_int64`）は使わない。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(IntegerAttachmentVulkanTest)$"`
