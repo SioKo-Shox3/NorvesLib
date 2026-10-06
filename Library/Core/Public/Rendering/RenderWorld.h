@@ -67,7 +67,7 @@ namespace NorvesLib::Core::Rendering
         PathTracingDebugOutput PathTracingDebug = PathTracingDebugOutput::None;
         RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Analytic;
         VisibilityBufferMode VisibilityBuffer = VisibilityBufferMode::On;
-        SwRasterMode SwRaster = SwRasterMode::Off;
+        SwRasterMode SwRaster = SwRasterMode::On;
         float SwRasterMaxPixels = DefaultSwRasterMaxPixels;
     };
 

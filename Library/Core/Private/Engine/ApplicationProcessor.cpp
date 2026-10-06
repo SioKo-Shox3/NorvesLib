@@ -1001,7 +1001,7 @@ namespace NorvesLib::Core::Engine
             Rendering::PathTracingDebugOutput::None;
         Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Analytic;
         Rendering::VisibilityBufferMode visibilityBufferMode = Rendering::VisibilityBufferMode::On;
-        Rendering::SwRasterMode swRasterMode = Rendering::SwRasterMode::Off;
+        Rendering::SwRasterMode swRasterMode = Rendering::SwRasterMode::On;
         float swRasterMaxPixels = Rendering::DefaultSwRasterMaxPixels;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
         bool bToneMapOperatorRequested = false;

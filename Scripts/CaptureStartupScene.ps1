@@ -190,11 +190,11 @@ param(
     # Debug は GBuffer の描画に加えて ID も描き、ID を色にして画面へ表示する（--visibility-buffer=debug。検証用）。
     [ValidateSet('Off', 'On', 'Debug')]
     [string]$VisibilityBuffer = 'On',
-    # ソフトウェアラスタ（既定は Off）。On は画面上で小さい MegaGeometry のクラスタをソフトの一覧へ振り分ける（--sw-raster=on。
+    # ソフトウェアラスタ（既定は On）。On は画面上で小さい MegaGeometry のクラスタをソフトの一覧へ振り分ける（--sw-raster=on。
     # 64bit アトミックが無い・-VisibilityBuffer Off のときは振り分けず SW_RASTER_FALLBACK をログへ出す）。Off は今のハードのラスタだけ
-    # （--sw-raster=off）。各撮影のログの SW_RASTER_BIN・SW_RASTER_FALLBACK を metrics.json の sw_raster へ書く。
+    # （--sw-raster=off。on・off の比較は -SwRaster Off を明示する）。各撮影のログの SW_RASTER_BIN・SW_RASTER_FALLBACK を metrics.json の sw_raster へ書く。
     [ValidateSet('Off', 'On')]
-    [string]$SwRaster = 'Off',
+    [string]$SwRaster = 'On',
     # ソフトウェアラスタへ振り分けるクラスタの画面上の半径（画素）のしきい値（--sw-raster-max-px。0 は渡さず、ゲームの既定の 32 画素を使う）。
     [ValidateRange(0.0, 4096.0)]
     [double]$SwRasterMaxPx = 0.0,

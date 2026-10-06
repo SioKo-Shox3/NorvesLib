@@ -4644,7 +4644,7 @@ namespace
         ShutdownVisibilityRasterScene(scene);
     }
 
-    // --sw-raster=off（既定）では、64bit のバッファ・定数・パイプラインも、その埋めと合流のパスも作らず、
+    // --sw-raster=off では、64bit のバッファ・定数・パイプラインも、その埋めと合流のパスも作らず、
     // ID の描画は合流が無いときと同じ（render pass の数も直接の描画の数も増えない）。装置が 64bit に対応していても同じ。
     // SetSwRasterEnabled(false) の判定を外して合流を作ると落ちる
     void TestVisibilityMergeAbsentWhenSwRasterOff()
@@ -5227,7 +5227,7 @@ namespace
 
     // SceneView の配線: --sw-raster=on は、ビジビリティバッファが On（材質の解決を使う）のときだけ ID のラスタの 64bit の資源を有効にし、
     // どのモードでも MegaGeometry へ要求としきい値を渡す（使えない理由は MegaGeometry が SW_RASTER_FALLBACK へ出す）。
-    // Debug は GBuffer が先に MegaGeometry を描くのでソフトに回せず、64bit の資源・埋め・合流を作らない。Off（既定）は両方とも無効のまま
+    // Debug は GBuffer が先に MegaGeometry を描くのでソフトに回せず、64bit の資源・埋め・合流を作らない。Off は両方とも無効のまま
     void TestSceneViewWiresSwRasterMode()
     {
         struct Expectation
@@ -5256,14 +5256,14 @@ namespace
             assert((raster != nullptr && raster->IsSwRasterEnabled()) == expectation.bRasterEnabled);
         }
 
-        // 引数を渡さない呼び出し（既存の呼び出しと同じ）は Off
+        // 引数を渡さない呼び出し（既存の呼び出しと同じ）は On（既定）。--sw-raster=off だけが両方を無効にする
         SceneRenderer renderer;
         SceneView sceneView;
         sceneView.SetupDeferredPipeline(&renderer);
         const auto* mega = static_cast<const MegaGeometryPass*>(sceneView.FindPass("MegaGeometryPass"));
         const auto* raster = static_cast<const VisibilityRasterPass*>(sceneView.FindPass("VisibilityRasterPass"));
-        assert(mega != nullptr && !mega->IsSwRasterBinningRequested());
-        assert(raster != nullptr && !raster->IsSwRasterEnabled());
+        assert(mega != nullptr && mega->IsSwRasterBinningRequested());
+        assert(raster != nullptr && raster->IsSwRasterEnabled());
     }
 
     // SceneView に渡した振り分けのしきい値は、MegaGeometryPass が持ち、カリングの定数バッファ（SwRasterMaxPixels）へ届く。
