@@ -57,6 +57,8 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalJointGlobalRowMath.h
     Private/Animation/SkeletalJointMapping.h
     Private/Animation/SkeletalJointMapping.cpp
+    Private/Animation/SkeletalCoordinateConversion.h
+    Private/Animation/SkeletalCoordinateConversion.cpp
     Private/Animation/SkeletalAssetResource.cpp
     Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
