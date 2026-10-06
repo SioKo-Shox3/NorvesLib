@@ -263,6 +263,9 @@ namespace NorvesLib::Core::Rendering
         }
         bool IsSwRasterBinningRequested() const { return m_bSwRasterRequested; }
 
+        /** @brief 振り分けのしきい値（画面上の半径、画素）。カリングの定数とソフトの矩形の上限へ渡す値 */
+        float GetSwRasterMaxPixels() const { return m_SwRasterMaxPixels; }
+
         /** @brief 最後の RecordFrameCommand がソフトウェアラスタの振り分けを行ったか */
         bool DidSwRasterBin() const { return m_bSwRasterBinned; }
 

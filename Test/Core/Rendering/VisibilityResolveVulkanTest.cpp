@@ -3046,7 +3046,8 @@ namespace
     // 64bit のバッファ（深度 + ID）の合流
     // ========================================
 
-    constexpr uint32_t MergeWidth = 64;
+    // 幅 128: ソフトの矩形の上限は最小でも 64 画素なので、上限を超える三角形（SW_STAT_OVERSIZE）を置くには 64 を超える幅が要る
+    constexpr uint32_t MergeWidth = 128;
     constexpr uint32_t MergeHeight = 32;
     constexpr uint32_t MergePixels = MergeWidth * MergeHeight;
 
@@ -3494,14 +3495,29 @@ namespace
         Container::VariableArray<SwCluster> Clusters;
         Container::VariableArray<MegaInstanceData> Instances;
         uint32_t SecondPassFirstCluster = 0; // この番号以降のクラスタは 2 パス目の一覧へ入れる
+        bool bRotatedView = false;           // true なら view 行列は単位でなく、頂点はそれを打ち消す位置に置く（SwFillFrame）
+    };
+
+    // 場面の種類。Identity = view が単位、RotatedView = 同じ場面を回転・並進つきの view で描く、
+    // Oversize = 走査する矩形の上限を超える三角形を含む場面（しきい値で描く・描かないが変わる）
+    enum class SwCaseKind
+    {
+        Identity,
+        RotatedView,
+        Oversize,
     };
 
     // ハードの深度の補間（面の方程式）とソフトの重みの和の差の許容。測った最大は約 5.5e-6（深度の 24bit の刻みの数十倍）
     constexpr float SwDepthTolerance = 1.0e-5f;
+    // 回転・並進つきの view では、頂点を float でビュー空間から戻す丸めが加わるので、許容を倍にする（測った最大は約 1.2e-5。順を入れ替えると桁違いに外れる）
+    constexpr float SwRotatedViewDepthTolerance = 2.0e-5f;
     constexpr float SwNear = 0.5f;
     constexpr float SwFar = 10.0f;
     constexpr double SwFocal = 2.0;
     constexpr double SwAspect = 2.0;
+    // 回転つきの view 行列（列優先）: ビュー空間の位置 = R * 位置 + t。R は z 軸まわり 90 度（(x, y) → (-y, x)）、t は下の値。
+    // 2 のべきの値だけなので float で厳密に扱え、水平な辺・画素の角の位置が丸めでずれない
+    constexpr float SwViewTranslation[3] = {0.25f, -0.5f, -0.5f};
 
     // 画面の位置（画素。小数も）と手前からの距離 depth（正）から、そのワールド位置（instance 0 の変換が単位のとき画面へ戻る位置）を求める
     void SwScreenToWorld(double screenX, double screenY, double depth, float out[3])
@@ -3511,6 +3527,18 @@ namespace
         out[0] = static_cast<float>(ndcX * depth * SwAspect / SwFocal);
         out[1] = static_cast<float>(-ndcY * depth / SwFocal);
         out[2] = static_cast<float>(-depth);
+    }
+
+    // ビュー空間の位置から、view 行列（SwFillFrame）を掛けるとその位置へ戻るモデルの位置を求める（回転つきの view のとき）。
+    // p = R^T * (v - t)、R^T は (x, y) → (y, -x)
+    void SwViewToModel(const float view[3], float out[3])
+    {
+        const float x = view[0] - SwViewTranslation[0];
+        const float y = view[1] - SwViewTranslation[1];
+        const float z = view[2] - SwViewTranslation[2];
+        out[0] = y;
+        out[1] = -x;
+        out[2] = z;
     }
 
     void SwBeginCluster(SwScene& scene, const char* name, uint32_t instanceIndex)
@@ -3530,7 +3558,16 @@ namespace
         for (int k = 0; k < 3; ++k)
         {
             Vertex vertex = {};
-            SwScreenToWorld(screen[k][0], screen[k][1], depth[k], vertex.Position);
+            float viewPosition[3];
+            SwScreenToWorld(screen[k][0], screen[k][1], depth[k], viewPosition);
+            if (scene.bRotatedView)
+            {
+                SwViewToModel(viewPosition, vertex.Position);
+            }
+            else
+            {
+                std::memcpy(vertex.Position, viewPosition, sizeof(viewPosition));
+            }
             vertex.Normal[1] = 1.0f;
             scene.Indices.push_back(static_cast<uint32_t>(scene.Vertices.size()));
             scene.Vertices.push_back(vertex);
@@ -3556,9 +3593,8 @@ namespace
         return low + (high - low) * static_cast<double>(SwNextRandom(state) % 100000u) / 100000.0;
     }
 
-    SwScene BuildSwScene()
+    void SwAddInstances(SwScene& scene)
     {
-        SwScene scene;
         MegaInstanceData identity = {};
         MegaInstanceData moved = {};
         for (int i = 0; i < 4; ++i)
@@ -3574,6 +3610,30 @@ namespace
         moved.World[14] = -0.3f;
         scene.Instances.push_back(identity);
         scene.Instances.push_back(moved);
+    }
+
+    // 上限を超える三角形の場面。しきい値 0 の上限は 64 画素四方（ComputeMaxScanSpan の下限）、しきい値 64 の上限は 130 画素四方。
+    // 小さい三角形（上限の内側）と、走査する矩形の幅がちょうど 64 画素の三角形（上限に等しいので描く）と、幅 100 画素の三角形
+    // （しきい値 0 の上限を超える。描かずに数える）。大きい三角形は 2 パス目の一覧へ入れる
+    SwScene BuildSwOversizeScene()
+    {
+        SwScene scene;
+        SwAddInstances(scene);
+        SwBeginCluster(scene, "oversize_small", 0);
+        SwAddTriangleAt(scene, 20.0, 18.0, 50.0, 18.0, 20.0, 30.0, 4.0);
+        SwBeginCluster(scene, "oversize_edge", 0);
+        SwAddTriangleAt(scene, 60.0, 18.0, 124.0, 18.0, 60.0, 30.0, 4.0);
+        scene.SecondPassFirstCluster = static_cast<uint32_t>(scene.Clusters.size());
+        SwBeginCluster(scene, "oversize_big", 0);
+        SwAddTriangleAt(scene, 10.0, 4.0, 110.0, 4.0, 10.0, 14.0, 4.0);
+        return scene;
+    }
+
+    SwScene BuildSwScene(bool bRotatedView)
+    {
+        SwScene scene;
+        scene.bRotatedView = bRotatedView;
+        SwAddInstances(scene);
 
         // 1. 格子: 4 画素ごとの頂点で、傾いた面（奥行きが画面の x で変わる）。共有の辺と、画素の中心を通る対角線がある。
         //    同じ格子の巻き方を反対にした 2. は、全部が裏面になる（どちらか一方だけがハードに描かれる）
@@ -3655,6 +3715,12 @@ namespace
         SwAddTriangleAt(scene, 58.0, 18.0, 62.0, 18.0, 60.0, 22.0, 4.0);
         SwAddTriangleAt(scene, 58.0, 18.0, 60.0, 22.0, 62.0, 18.0, 4.0);
 
+        // 5b. 水平な辺が画素の中心の行（y = 10.5・20.5）を通る三角形。上の辺（右向き）の上の画素は含み、下の辺（左向き）の上の画素は含まない。
+        //     top-left の「水平な辺は右向きだけ含む」の向きを逆にすると、上の辺の行（約 16 画素）が欠け、下の辺の行（約 15 画素）が増えて被覆が食い違う
+        SwBeginCluster(scene, "horizontal_ties", 0);
+        SwAddTriangleAt(scene, 68.0, 10.5, 84.0, 10.5, 68.0, 20.5, 4.0);
+        SwAddTriangleAt(scene, 96.0, 10.5, 104.0, 20.5, 88.0, 20.5, 4.0);
+
         // 6. 奥行き。重なる大きな三角形（手前・奥・交差して貫き合うもの）で、深度の比較と補間を確かめる。2 パス目の一覧へ入れる
         scene.SecondPassFirstCluster = static_cast<uint32_t>(scene.Clusters.size());
         SwBeginCluster(scene, "depth", 0);
@@ -3682,11 +3748,26 @@ namespace
         return scene;
     }
 
-    // 列優先の 4x4（GLSL の mat4 と同じ並び）: view は単位、projection は Vulkan の深度 [0, 1]・Y 反転
-    void SwFillFrame(float out[32])
+    // 列優先の 4x4（GLSL の mat4 と同じ並び）: view は単位（bRotatedView なら、z 軸まわり 90 度の回転 + SwViewTranslation）、
+    // projection は Vulkan の深度 [0, 1]・Y 反転
+    void SwFillFrame(float out[32], bool bRotatedView)
     {
         std::memset(out, 0, sizeof(float) * 32);
-        out[0] = out[5] = out[10] = out[15] = 1.0f; // view
+        if (bRotatedView)
+        {
+            // 列 0 = R * (1, 0, 0) = (0, 1, 0)、列 1 = R * (0, 1, 0) = (-1, 0, 0)、列 2 = (0, 0, 1)、列 3 = (t, 1)
+            out[1] = 1.0f;
+            out[4] = -1.0f;
+            out[10] = 1.0f;
+            out[12] = SwViewTranslation[0];
+            out[13] = SwViewTranslation[1];
+            out[14] = SwViewTranslation[2];
+            out[15] = 1.0f;
+        }
+        else
+        {
+            out[0] = out[5] = out[10] = out[15] = 1.0f; // view
+        }
         float* projection = out + 16;
         projection[0] = static_cast<float>(SwFocal / SwAspect);
         projection[5] = -static_cast<float>(SwFocal);
@@ -3711,7 +3792,7 @@ namespace
         return desc;
     }
 
-    void RunSoftwareRasterCase(const DevicePtr& device, ShaderManager& shaderManager)
+    void RunSoftwareRasterCase(const DevicePtr& device, ShaderManager& shaderManager, SwCaseKind kind)
     {
         const RHI::DeviceCapabilities& caps = device->GetCapabilities();
         if (!VisibilityMerge::IsSupported(caps) || !caps.bGeometryShader || !caps.bDrawIndirectFirstInstance)
@@ -3744,7 +3825,8 @@ namespace
             return;
         }
 
-        const SwScene scene = BuildSwScene();
+        const char* const kindLabel = kind == SwCaseKind::Identity ? "view=単位" : (kind == SwCaseKind::RotatedView ? "view=回転・並進" : "上限を超える三角形");
+        const SwScene scene = kind == SwCaseKind::Oversize ? BuildSwOversizeScene() : BuildSwScene(kind == SwCaseKind::RotatedView);
         const uint32_t clusterCount = static_cast<uint32_t>(scene.Clusters.size());
 
         // 頂点・インデックス（記録のアドレスが指し、ハードの描画も同じバッファを読む）
@@ -3782,7 +3864,7 @@ namespace
         const BufferPtr drawInfoBuffer = CreateArrayBuffer(device, drawInfos, ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead,
                                                            "SwRasterTestDrawInfos");
         float frameData[32];
-        SwFillFrame(frameData);
+        SwFillFrame(frameData, scene.bRotatedView);
         const BufferPtr frameBuffer = CreateHostBuffer(device, frameData, sizeof(frameData), ResourceUsage::ConstantBuffer, "SwRasterTestFrame");
 
         // ソフトの一覧: 1 パス目 = 前半のクラスタ、2 パス目 = 後半のクラスタ（容量 16。頭 4 語 × 2 + 8 語の余白の形は MegaGeometryCull.glsl と同じ）
@@ -3813,10 +3895,7 @@ namespace
         constexpr uint32_t SwStatsWords = 12u;
         constexpr uint32_t SwStatOversize = 9u;
         constexpr uint32_t SwStatGroups = 10u;
-        const Container::VariableArray<uint32_t> zeroStats(SwStatsWords, 0u);
-        const BufferPtr statsBuffer = CreateHostBuffer(
-            device, zeroStats.data(), static_cast<uint64_t>(zeroStats.size()) * sizeof(uint32_t), ResourceUsage::StorageBuffer, "SwRasterTestStats");
-        if (!vertexBuffer || !indexBuffer || !instanceBuffer || !recordTable || !drawInfoBuffer || !frameBuffer || !listBuffer || !statsBuffer)
+        if (!vertexBuffer || !indexBuffer || !instanceBuffer || !recordTable || !drawInfoBuffer || !frameBuffer || !listBuffer)
         {
             Expect(false, "ソフトウェアラスタのケースのバッファを作れなければならない");
             return;
@@ -3901,8 +3980,27 @@ namespace
         const MergeReadback hard = ReadMergeTargets(fixture);
         Expect(hard.bOk, "ハードのラスタの結果を読み戻せなければならない");
 
-        // --- ソフト: ID・深度を空に消し、64bit のバッファを埋めて、パスごとに間接 dispatch で書き、合流して読み戻す
+        // --- ソフト: ID・深度を空に消し、64bit のバッファを埋めて、パスごとに間接 dispatch で書き、合流して読み戻す。
+        // maxPixels は振り分けのしきい値で、走査する矩形の上限（ComputeMaxScanSpan）を決める。統計は呼び出しごとに 0 から数え直す
+        uint32_t softwareRuns = 0;
+        uint32_t stats[SwStatsWords] = {};
+        const auto runSoftware = [&](float maxPixels, MergeReadback& outReadback) -> bool
         {
+            if (softwareRuns > 0)
+            {
+                // 同じ場面を続けて描くときは、フレームを進めて dispatch ごとの定数の使用を分ける
+                merge.BeginFrame(softwareRuns % 2u, softwareRuns + 1u);
+                softwareRaster.BeginFrame(softwareRuns % 2u, softwareRuns + 1u);
+            }
+            ++softwareRuns;
+            const Container::VariableArray<uint32_t> zeroStats(SwStatsWords, 0u);
+            const BufferPtr statsBuffer = CreateHostBuffer(
+                device, zeroStats.data(), static_cast<uint64_t>(zeroStats.size()) * sizeof(uint32_t), ResourceUsage::StorageBuffer, "SwRasterTestStats");
+            if (!statsBuffer)
+            {
+                Expect(false, "統計のバッファを作れなければならない");
+                return false;
+            }
             VisibilitySwRaster::Inputs inputs;
             inputs.FrameUniform = frameBuffer;
             inputs.InstanceBuffer = instanceBuffer;
@@ -3916,6 +4014,7 @@ namespace
             inputs.ListCapacity = ListCapacity;
             inputs.Stats = statsBuffer;
             inputs.bStatsEnabled = true;
+            inputs.SwRasterMaxPixels = maxPixels;
             inputs.Viewport = viewport;
             inputs.Scissor = scissor;
 
@@ -3937,24 +4036,82 @@ namespace
             commandList->End();
             commandList->Submit(true);
             device->WaitIdle();
+
+            outReadback = ReadMergeTargets(fixture);
+            Expect(outReadback.bOk, "ソフトウェアラスタの結果を読み戻せなければならない");
+            const uint32_t* mappedStats = static_cast<const uint32_t*>(statsBuffer->Map(0u, SwStatsWords * sizeof(uint32_t)));
+            Expect(mappedStats != nullptr, "統計のバッファを読み戻せなければならない");
+            if (mappedStats == nullptr)
+            {
+                return false;
+            }
+            std::memcpy(stats, mappedStats, sizeof(stats));
+            statsBuffer->Unmap();
+            return outReadback.bOk;
+        };
+        const auto countClusterPixels = [&](const MergeReadback& readback)
+        {
+            Container::VariableArray<uint32_t> counts(clusterCount, 0u);
+            for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
+            {
+                const uint32_t id = readback.Ids[pixel];
+                if (id != VisibilityBuffer::EMPTY_ID)
+                {
+                    const uint32_t recordNumber = id >> VisibilityBuffer::TRIANGLE_BITS;
+                    if (recordNumber >= 1 && recordNumber <= clusterCount)
+                    {
+                        counts[recordNumber - 1u] += 1u;
+                    }
+                }
+            }
+            return counts;
+        };
+
+        if (kind == SwCaseKind::Oversize)
+        {
+            // しきい値 0 の上限（64 画素四方）では、幅 100 画素の三角形は描かずに数える。幅がちょうど 64 画素の三角形は描く
+            MergeReadback limited;
+            Expect(runSoftware(0.0f, limited), "しきい値 0 のソフトウェアラスタを実行して読み戻せなければならない");
+            if (!limited.bOk || !hard.bOk)
+            {
+                return;
+            }
+            const Container::VariableArray<uint32_t> limitedPixels = countClusterPixels(limited);
+            const Container::VariableArray<uint32_t> hardPixelsForLimit = countClusterPixels(hard);
+            Expect(stats[SwStatOversize] == 1u, "上限を超える三角形は 1 つだけで、しきい値 0 では描かずに数える");
+            Expect(stats[SwStatGroups] == clusterCount, "上限を超える三角形があっても、ワークグループはすべて走る");
+            for (uint32_t clusterIndex = 0; clusterIndex < clusterCount; ++clusterIndex)
+            {
+                const char* name = scene.Clusters[clusterIndex].Name;
+                if (std::strcmp(name, "oversize_big") == 0)
+                {
+                    Expect(hardPixelsForLimit[clusterIndex] >= 400, "ハードは幅 100 画素の三角形を描く（場面が検査になっている）");
+                    Expect(limitedPixels[clusterIndex] == 0, "上限を超える三角形は、ソフトは 1 画素も描かない");
+                }
+                else
+                {
+                    Expect(hardPixelsForLimit[clusterIndex] >= 100, "上限の内側の三角形はハードが十分な画素を描く");
+                    Expect(limitedPixels[clusterIndex] == hardPixelsForLimit[clusterIndex],
+                           "上限の内側（幅がちょうど上限を含む）の三角形は、ソフトもハードと同じ画素数を描く");
+                }
+            }
+            std::cout << TestName << " ソフトウェアラスタ(" << kindLabel << "): しきい値 0 の上限 " << VisibilitySwRaster::ComputeMaxScanSpan(0.0f)
+                      << " 画素四方 上限超え=" << stats[SwStatOversize] << " 大きい三角形のソフト=" << limitedPixels[clusterCount - 1u]
+                      << " ハード=" << hardPixelsForLimit[clusterCount - 1u] << std::endl;
         }
-        const MergeReadback soft = ReadMergeTargets(fixture);
-        Expect(soft.bOk, "ソフトウェアラスタの結果を読み戻せなければならない");
+
+        // 比較に使う実行: 上限を超える場面は、上限が三角形を含むしきい値 64（130 画素四方）で描き直して、ハードと同じ被覆になることを確かめる
+        MergeReadback soft;
+        Expect(runSoftware(kind == SwCaseKind::Oversize ? 64.0f : 8.0f, soft), "ソフトウェアラスタを実行して読み戻せなければならない");
         if (!hard.bOk || !soft.bOk)
         {
             return;
         }
         Expect(softwareRaster.GetDirectFallbackCount() == 0, "間接 dispatch が通る装置では直接 dispatch へ切り替えない");
 
-        // 統計: 両パスの一覧のクラスタすべてのワークグループが走り、64 画素四方の矩形を超える三角形は無い
-        const uint32_t* mappedStats = static_cast<const uint32_t*>(statsBuffer->Map(0u, SwStatsWords * sizeof(uint32_t)));
-        Expect(mappedStats != nullptr, "統計のバッファを読み戻せなければならない");
-        if (mappedStats != nullptr)
-        {
-            Expect(mappedStats[SwStatGroups] == firstPassCount + secondPassCount, "走ったワークグループの数は、両パスの一覧のクラスタの数に一致する");
-            Expect(mappedStats[SwStatOversize] == 0u, "この場面（64x32）には、矩形の上限を超える三角形は無い");
-            statsBuffer->Unmap();
-        }
+        // 統計: 両パスの一覧のクラスタすべてのワークグループが走り、比較に使う実行では矩形の上限を超える三角形は無い
+        Expect(stats[SwStatGroups] == firstPassCount + secondPassCount, "走ったワークグループの数は、両パスの一覧のクラスタの数に一致する");
+        Expect(stats[SwStatOversize] == 0u, "比較に使う実行には、矩形の上限を超える三角形は無い");
 
         // --- 比較: 被覆（ID が空でない画素）・ID・深度
         uint32_t hardCovered = 0;
@@ -3965,6 +4122,7 @@ namespace
         uint32_t idMismatch = 0;
         uint32_t depthMismatch = 0;
         float maxDepthDifference = 0.0f;
+        const float depthTolerance = scene.bRotatedView ? SwRotatedViewDepthTolerance : SwDepthTolerance;
         Container::VariableArray<uint32_t> clusterHardPixels(clusterCount, 0u);
         Container::VariableArray<uint32_t> clusterSoftPixels(clusterCount, 0u);
         for (uint32_t pixel = 0; pixel < MergePixels; ++pixel)
@@ -3991,7 +4149,7 @@ namespace
                 idMismatch += hard.Ids[pixel] != soft.Ids[pixel] ? 1u : 0u;
                 const float difference = std::fabs(hard.Depths[pixel] - soft.Depths[pixel]);
                 maxDepthDifference = std::max(maxDepthDifference, difference);
-                depthMismatch += difference > SwDepthTolerance ? 1u : 0u;
+                depthMismatch += difference > depthTolerance ? 1u : 0u;
             }
             else if (bHard)
             {
@@ -4014,7 +4172,8 @@ namespace
                        "巻き方を反対にした格子（裏面）は、ハードもソフトも描かない");
             }
             else if (std::strcmp(name, "lattice") == 0 || std::strcmp(name, "random_small") == 0 || std::strcmp(name, "ties") == 0 ||
-                     std::strcmp(name, "depth") == 0)
+                     std::strcmp(name, "depth") == 0 || std::strcmp(name, "horizontal_ties") == 0 || std::strcmp(name, "oversize_small") == 0 ||
+                     std::strcmp(name, "oversize_edge") == 0 || std::strcmp(name, "oversize_big") == 0)
             {
                 Expect(clusterHardPixels[clusterIndex] >= 30, "このクラスタはハードが十分な画素を描く");
             }
@@ -4023,12 +4182,22 @@ namespace
         // 被覆は一致しなければならない（辺の上の画素の規則も、固定小数点の丸めも同じ。開発機で測った違いは 0 画素）。
         // ID の違いは、深度がほぼ等しい画素（交差する 2 枚の交線。ハードとソフトの深度の差が 1e-5 未満で勝者が入れ替わる）だけで、
         // 開発機では 3 画素。違う画素の数は結果の行へ記録する
+        if (kind != SwCaseKind::Oversize)
+        {
+            // 水平な辺が画素の中心を通る行: 上の辺の行（y = 10）は含み、下の辺の行（y = 20）は含まない（ハード・ソフトとも）
+            constexpr uint32_t TopEdgeRow = 10;
+            constexpr uint32_t BottomEdgeRow = 20;
+            Expect(hard.Ids[TopEdgeRow * MergeWidth + 72] != VisibilityBuffer::EMPTY_ID, "ハードは、水平な上の辺が通る画素の行を描く");
+            Expect(soft.Ids[TopEdgeRow * MergeWidth + 72] != VisibilityBuffer::EMPTY_ID, "ソフトは、水平な上の辺が通る画素の行を描く");
+            Expect(hard.Ids[BottomEdgeRow * MergeWidth + 96] == VisibilityBuffer::EMPTY_ID, "ハードは、水平な下の辺が通る画素の行を描かない");
+            Expect(soft.Ids[BottomEdgeRow * MergeWidth + 96] == VisibilityBuffer::EMPTY_ID, "ソフトは、水平な下の辺が通る画素の行を描かない");
+        }
         const uint32_t coverageMismatch = hardOnly + softOnly;
         Expect(coverageMismatch == 0, "ソフトとハードの被覆（ID が空でない画素）は一致する（辺の画素の規則を含む）");
         Expect(idMismatch <= 8, "ソフトとハードの ID の違いは、交差する 2 枚の交線の数画素だけ");
-        Expect(depthMismatch == 0, "両方が描いた画素の深度は 1e-5 以内で一致する");
+        Expect(depthMismatch == 0, "両方が描いた画素の深度は許容（view が単位なら 1e-5、回転・並進つきなら 2e-5）以内で一致する");
 
-        std::cout << TestName << " ソフトウェアラスタ: クラスタ=" << clusterCount << " ハードの被覆=" << hardCovered
+        std::cout << TestName << " ソフトウェアラスタ(" << kindLabel << "): クラスタ=" << clusterCount << " ハードの被覆=" << hardCovered
                   << " ソフトの被覆=" << softCovered << " 両方=" << bothCovered << " ハードだけ=" << hardOnly
                   << " ソフトだけ=" << softOnly << " IDの違い=" << idMismatch << " 深度の違い(>1e-5)=" << depthMismatch
                   << " 最大の深度差=" << maxDepthDifference << std::endl;
@@ -4192,7 +4361,11 @@ namespace
             RunVisibilityMergeCase(device, shaderManager);
 
             // 小さいクラスタの計算シェーダーのラスタは、同じ三角形をハードのラスタで描いた ID・深度と画素の被覆で一致する
-            RunSoftwareRasterCase(device, shaderManager);
+            RunSoftwareRasterCase(device, shaderManager, SwCaseKind::Identity);
+            // 同じ場面を、単位でない view 行列（回転・並進）で描く。projection * view の順を入れ替えると、ハードとソフトが食い違う
+            RunSoftwareRasterCase(device, shaderManager, SwCaseKind::RotatedView);
+            // 走査する矩形の上限を超える三角形は、しきい値が小さいと描かずに数え、しきい値が大きいと描く
+            RunSoftwareRasterCase(device, shaderManager, SwCaseKind::Oversize);
 
             std::cout << TestName << " 覆われた画素=" << counters.CoveredPixels << " 記録ごと=[";
             for (uint32_t record = 1; record <= scene.Records.RecordCount(); ++record)

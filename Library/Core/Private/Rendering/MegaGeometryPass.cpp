@@ -1233,8 +1233,9 @@ namespace NorvesLib::Core::Rendering
             const char *fallbackReason = nullptr;
             if (!sink)
             {
-                // ID の描画の写しを作る構成（Debug）で sink が無いのは、GBuffer が先に MegaGeometry を描くため
-                fallbackReason = m_bVisibilityPlanEnabled ? "debug_mode" : "visibility_buffer_off";
+                // sink が無い理由: 材質の解決を使う On（GBuffer の描画を止める）なのに ID のラスタが使えないフレームは resolve_unavailable、
+                // Debug（GBuffer が先に MegaGeometry を描く）は debug_mode、描画の写しを作らない構成は visibility_buffer_off
+                fallbackReason = m_bSkipGBufferDraw ? "resolve_unavailable" : (m_bVisibilityPlanEnabled ? "debug_mode" : "visibility_buffer_off");
             }
             else if (!VisibilityMerge::IsSupported(caps))
             {
@@ -1299,7 +1300,7 @@ namespace NorvesLib::Core::Rendering
                                             slot.SwDispatches,
                                             static_cast<unsigned long long>(slot.RenderFrame),
                                             static_cast<long long>(slot.EpochFrame));
-                            // ソフトが 1 スレッド 1 三角形で走査する矩形（64 画素四方）を超えて描かなかった三角形の数。振り分けのしきい値が保守的なら 0
+                            // ソフトが 1 スレッド 1 三角形で走査する矩形（一辺の上限は振り分けのしきい値から max(64, ceil(2 × しきい値) + 2) 画素で決める）を超えて描かなかった三角形の数。振り分けのしきい値が保守的なら 0
                             NORVES_LOG_INFO("MegaGeometryPass",
                                             "SW_RASTER_OVERSIZE=%u frame=%llu epoch_frame=%lld",
                                             slot.Mapped[9],

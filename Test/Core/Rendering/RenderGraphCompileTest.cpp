@@ -5086,6 +5086,42 @@ namespace
         assert(raster != nullptr && !raster->IsSwRasterEnabled());
     }
 
+    // SceneView に渡した振り分けのしきい値は、MegaGeometryPass が持ち、カリングの定数バッファ（SwRasterMaxPixels）へ届く。
+    // SceneView が既定の値（8）やしきい値を渡さない呼び出しにすると、MegaGeometryPass の値が 12 にならず、定数も 12 にならず落ちる。
+    // SceneView が組んだ MegaGeometryPass の設定（要求・しきい値）を、カリングを実際に記録する場面へ移して、定数の語を読む
+    void TestSceneViewThresholdReachesCullUniform()
+    {
+        constexpr float Threshold = 12.0f;
+        static_assert(Threshold != DefaultSwRasterMaxPixels, "既定の値と違うしきい値で確かめる");
+        SceneRenderer renderer;
+        SceneView sceneView;
+        sceneView.SetupDeferredPipeline(&renderer, RasterDirectBrdf::Analytic, VisibilityBufferMode::On, SwRasterMode::On, Threshold);
+        const auto* viewMega = static_cast<const MegaGeometryPass*>(sceneView.FindPass("MegaGeometryPass"));
+        assert(viewMega != nullptr);
+        assert(viewMega->IsSwRasterBinningRequested());
+        assert(viewMega->GetSwRasterMaxPixels() == Threshold);
+
+        VisibilityRasterScene scene;
+        scene.bSwRasterBin = viewMega->IsSwRasterBinningRequested();
+        scene.SwRasterMaxPixels = viewMega->GetSwRasterMaxPixels();
+        GMegaCullUniformUpdates.clear();
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, false, true, ResolveMode::Supported);
+        assert(scene.Mega.DidSwRasterBin());
+        assert(GMegaCullUniformUpdates.size() >= 2);
+        for (size_t pass = 0; pass < 2; ++pass)
+        {
+            assert(ReadSwRasterUniformWords(pass).MaxPixels == Threshold);
+        }
+        ShutdownVisibilityRasterScene(scene);
+
+        // 引数を渡さない呼び出しは既定のしきい値（8）
+        SceneRenderer defaultRenderer;
+        SceneView defaultView;
+        defaultView.SetupDeferredPipeline(&defaultRenderer, RasterDirectBrdf::Analytic, VisibilityBufferMode::On, SwRasterMode::On);
+        const auto* defaultMega = static_cast<const MegaGeometryPass*>(defaultView.FindPass("MegaGeometryPass"));
+        assert(defaultMega != nullptr && defaultMega->GetSwRasterMaxPixels() == DefaultSwRasterMaxPixels);
+    }
+
     // 64bit のバッファは画面の画素数 × 8 バイトの 1 つで、同じ大きさの間は作り直さない。大きさが変わると新しく作り、
     // 古いバッファは GPU が前のフレームで使っているかもしれないので、飛行中のフレームの数を超えるまで持つ。
     // 埋めは render pass の外（転送の書き込み）で、状態を Common（初回）か GenericRead（2 回目以降）から CopyDest へ進め、埋めた後は GenericRead
@@ -10542,6 +10578,7 @@ int main()
     TestSwRasterDispatchAbsentWhenUnavailable();
     TestSwRasterListCapacityExceedsOneDimension();
     TestSceneViewWiresSwRasterMode();
+    TestSceneViewThresholdReachesCullUniform();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();
     TestMaterialTileClassifyDispatchesAndPublishesArgs();
