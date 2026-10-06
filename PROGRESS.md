@@ -9,7 +9,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
 - GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
-- GR83/GR84: GR84のBVH raw/source FK・厳密名前索引・target bind/FK共有・schema非依存joint対応・明示座標変換・明示Cの1frame回転対応・全sample保持clip/report生成を実Windows CPUで受入済み。自動rest補正・role入力・clipのcook接続と分離資産ローダは未完。
+- GR83/GR84: GR84のBVH raw/source FK・厳密名前索引・target bind/FK共有・schema非依存joint対応・明示座標変換・明示Cの1frame回転対応・全sample保持clip/report生成と型付きNVSKEL cook/package/実Sampler接続を実Windows CPUで受入済み。自動rest補正・role入力・BVHのCLI/file依存接続と分離資産ローダは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
@@ -954,3 +954,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 typed cook検証準備: Add/Replace/0clip専用decode、旧clip保持、raw/settings hash、所有結果、実package→AssetSystem→resolved内側parse→Resource/Sampler試験を追加。静的round1の指摘（payload/key保持、palette値、外側正常hashでの内側不正）を補いround2 PASS。既存Python17+19+12+4+7をnormal/-Oで確認、固定6095byteとreceipt不変、YAML/BOM/CRLFを確認。native host構文は既存Windows.hで停止、stubなし。実Windows54CPUと固定capture/旧出力/managed gateは次CIで未確認。forest/129joint/mesh無しのbridge専用拒否fixture、late failure時report全体、複数pair/rootのhash反証は未網羅。
 
 - G2/GR84 cook bridge初回run37424129373（c81e178、54CPU）は新SkeletalBvhCookBridgeTestの共通CookIt CHECKで失敗し、旧53CPUとRelease build/4固定capture/診断byte検査は成功。後続CLI/旧出力比較/native asset-setは実行されていない。共通helperがerrorを出しておらず失敗caseは現ログだけでは特定できないが、positiveの1frame/位置のみBVH fixtureがFrame Timeとsampleを同じ行へ置き、既存parserのFinishLine契約に違反していることを確認。2fixtureの改行を修正し、失敗時にcook error/raw decode status/offset/呼出番号を出す。productionと期待値は変更しない。
+
+- G2/GR84 typed BVH cook受入: codeafdd794f692da30bb930e7c77f1e522b74744cc0/tree6e8b044eb9bdb2542e5222d4dc61ad5e988d8ced/run37425986849 attempt1 job112145637479。実54CPU/18marker、4固定6095byte capture、旧89出力、25+15CLI・12metadata・17/29child退出、Python全group normal/-O、3ZIP/PE-CNGを確認。親readonly再実行exit0・stderr空、387payload inventory一致。summary SHA095a71e2d547e85590c4a4a610140629cb2f5848edda694caff2a8c0ce7f0cdd、inventory cdddf77c1b6fba02f7e15d8c1047986d254dbf3d1c36aa006a654fe186bd1e1f。初回失敗c81e178は別332payload inventoryで親再照合し、最新結果へ置換して隠さない。productionは初回から不変、修正は新test2入力の改行と診断のみ。現runと固定参照の独立受入で、環境消失以前の累積証拠の再現、未archiveバイナリ・native2全payloadの再hashは主張しない。既存128関節/単一root/mesh必須を維持し、型付きcookの生成から実package/AssetSystem解決・実Resource/SamplerまでのCPU経路を受入れた。次はrole-mediated Profile bytesを明示Cの入口へ接続し、外部direct-pair JSONを作らない。

@@ -2646,7 +2646,9 @@
 - result: code6e514704/tree7d9b9ac6/run37418209451 attempt1 job112121471665。実Windows53CPU・旧15＋新2marker・4固定capture6095byte一致・旧89出力・17/29 child退出・25+15CLI・12metadata・Python全gate・3ZIP・archived PE/CNG importを確認。親readonly再実行exit0、240payload inventory一致。環境消失後の現在runと固定参照による独立再受入であり、失われた旧累積証拠の保全・再現は主張しない。有限のsample保持回転clip/reportと実key評価を受入。自動C/role/rootMotion/resampling/CLI/cook/StageB/GPU/Blenderと補間全域は未完。
 
 ## G2-GR84-BVH-COOK-BRIDGE: 型付きBVH要求をNVSKEL packageと実再生へ接続する
-- status: doing
+- status: done
 - done-when: 明示Add/Replace-by-name、BVH bytes・具体名pair・root・C・設定から既存NVSKEL0.2 writerへ接続する。専用target decodeだけanimation欠落/空配列を許し、mesh morph検査を漏らさない。旧入口の1本以上契約と旧hash/byteは保持。clipと所有reportは成功時だけ公開し、実package/manifest→AssetSystem→resolved blob parser→Resource/Samplerまで合成fixtureで通す。
 - verify: Add初回/既存保持/重複拒否、Replace一意名/順序変更/無関係clip保持、null/不正animation拒否、0clip Morph Drop/Reject/scale、明示time/Cと全key/選択midpoint、失敗時旧out保持、決定的hashと入力変更失効、package破損拒否。新bundle入口は明示return 0。既存53CPU/4凍結capture/旧89出力/CLI/managed全gateを維持する。
 - stop-when: 外部direct-pair JSONやCLIを追加する、従来fingerprintでBVH変更をskipする、writerの128関節/単一root/mesh必須を緩める、旧decodeを0clip許容へ変える、StageBの作者rest検査やGPU/実物の見た目まで完成扱いする。
+
+- result: codeafdd794/tree6e8b044e/run37425986849 attempt1 job112145637479。初回c81e178の新test失敗後、positive BVH2件の改行と失敗診断のみを修正。実54CPU/18marker/4固定capture/旧89出力/25+15CLI/12metadata/17+29child退出/Python全gate/3ZIP/PE-CNGを受入。親readonly再実行exit0・stderr空・387payload inventory一致。latest2paths/Library0、累積12paths/Library2を区別。失敗runは別332payload folderで保持。型付き名前Add/Replace・0clip target・NVSKEL/package/AssetSystem/実SamplerのCPU接続だけを受入れ、外部role/CLI/file依存cache/自動C/StageB/GPU/実物品質は未完。
