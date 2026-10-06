@@ -876,9 +876,49 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 VTG6-PRE-DEFAULT-HARDEN から分けた（元の項目の評価の残課題）。危険地帯（描画パス・寿命）。テストは標準ライブラリの型を使わず、配線を戻すと落ちる変異を確かめる。 2026-10-06 親（VTG6-HARDEN-SKIN-CHUNK-FAIL の評価の残課題。あわせて直す）: `SkinnedMeshGpuStore.cpp`（329〜330 行付近）の警告文「ビジビリティバッファへは描かず」は事実と違う（`VisibilityRasterPass.cpp` 682 行付近が塊を分け直して描く。描画の集合が食い違うのは分け直しも失敗したときだけ）ので、文言と PROGRESS の Notes を事実に合わせる。`SkinnedRenderPathContractTest.cpp`（1483〜1488・1551 行付近）が共有の Logger を出力 None のまま戻さないのを直す。`RenderResources.h`（254 行付近）の `TryGetChunks` のコメントに、塊の失敗でも false になることを書く。
 
+## VTG6-DEFAULT-ON-SWITCH: ビジビリティバッファを既定にし、予備へ戻っている間は ID のラスタを描かない
+- status: done
+- done-when: `--visibility-buffer` の既定を on にする（ApplicationProcessor・RenderingCoordinator::Settings・RenderWorld::Settings・SceneView::SetupDeferredPipeline・CaptureStartupScene.ps1 の `-VisibilityBuffer`）。予備（`geometryShader` の無い装置・パイプラインが作れない装置・線のパイプラインが作れないワイヤーフレーム）に戻るフレームは、ID のラスタ（と ID を読む分類）が何も宣言せず GPU の時間を使わない。`RenderGraphCompileTest`・`SkinnedRenderPathContractTest`・`GBufferMaterialDescriptorCacheTest`・`MegaGeometryFrameCommandDebugModeTest`・`RenderingVelocity*`・`DebugViewModeStringTest` を新しい既定に合わせて通し、予備の経路の速度の検査（`RenderingVelocity*GBufferFallbackVulkanTest`、`--visibility-buffer=off`）を残す。Outdoor の golden を、差が on の解決の微分・接線の基底だけによることを `--visibility-buffer=off` での完全一致で確かめて再承認する。起動画面の朝・昼・夕・夜の `-Deterministic` の撮影を開いて確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest SkinnedRenderPathContractTest MaterialResourcesTest MegaGeometryResourcesTest RenderingVelocityVulkanTest ViewportSnapshotDebugWiringTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest|GBufferMaterialDescriptorCacheTest|MegaGeometryFrameCommandDebugModeTest|MegaGeometryResourcesTest|RenderingVelocityStaticVulkanTest|RenderingVelocityMotionVulkanTest|RenderingVelocityCameraVulkanTest|RenderingVelocityObjectVulkanTest|RenderingVelocitySkinnedVulkanTest|DebugViewModeStringTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-DEFAULT-ON -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- stop-when: golden の差がこの変更だけでは説明できない場合は、測った値と分類を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, Baselines/RenderingValidation, Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 VTG6-DEFAULT-ON から分けた（既定の切り替えと予備の判定）。危険地帯（描画パス）。持ち越しの (a)（予備のときは ID のラスタを足さない）・(c)（予備で GBuffer を描かないときはパレットのアップロードが 1 回）・(e)（撮影の既定と off の撮影・VT の常駐の上限）はこの単位で扱った。残りは VTG6-DEFAULT-ON-HZB・VTG6-DEFAULT-ON-SKIN-CAPTURE・VTG6-DEFAULT-ON-TILE-VRAM と VTG6-DEFAULT-ON。
+
+## VTG6-DEFAULT-ON-HZB: 2パスの遮蔽の HZB をビジビリティの1パス目の深度から作る
+- status: todo
+- done-when: on の構成で MegaGeometry の2パスの遮蔽が効く（撮影の `mega_occlusion.occluded` が off の構成と同程度になる。切り替え直後は on が 0 で、off の default 7・near 69・low 41）。`ID・深度の1パス目 → HZB → 2パス目` の順で、MegaGeometryPass の1パス目・2パス目の描画先をビジビリティバッファ（VisBuffer.Id と GBuffer.Depth）にし、HZB をその1パス目の深度から作る。手続きメッシュ・スキニングの塊の描画は、この深度に重ねて描く（HZB の元に入らなくてよいが、遮蔽の判定が隠れていない側に倒れること）。予備の経路（GBuffer へのラスタ）では従来どおり GBuffer の深度から HZB を作る。`RenderGraphCompileTest` に、on の2パスの順（ID の1パス目 → HZB → 2パス目）と、予備の経路の順を確かめる検査を足し、配線を戻すと落ちる変異を確かめる。起動画面の撮影（`-Deterministic`、default・near・low）で `occluded` が戻り、画像が直前の撮影と PSNR 45 dB 以上で一致することを開いて確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest SkinnedRenderPathContractTest MegaGeometryResourcesTest RenderingVelocityVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest|HiZPyramidVulkanTest|HiZOcclusionTestVulkanTest|VisibilityResolveVulkanTest|RenderingVelocityStaticVulkanTest|RenderingVelocitySkinnedVulkanTest|RenderingVelocitySkinnedGBufferFallbackVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-DEFAULT-ON-HZB -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- stop-when: 遮蔽の判定が隠れていない側に倒れず、見える物が欠ける場合は、再現の撮影を残して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 VTG6-DEFAULT-ON から分けた（VTG6-VIS-RASTER から回した項目）。危険地帯（描画パス）。今の on は MegaGeometryPass が GBuffer の描画を止めるので、HZB の元の GBuffer.Depth が空のままで、2パス目の遮蔽の判定が何も省かない（`MegaGeometryPass.h` の SetSkipGBufferDraw の doc）。ID のラスタ（VisibilityRasterPass）は MegaGeometryPass の後で、描画の写し（VisibilityDrawPlan）を取り出して 1・2 パス目をまとめて描くため、HZB の元に入る深度が無い。設計の選び方（MegaGeometryPass が ID のパイプラインで 1・2 パス目を描く / ラスタが 1 パス目の後に HZB と 2 パス目のカリングを呼ぶ）は、描画のコマンドの数・バリアが少ない方を採る。
+
+## VTG6-DEFAULT-ON-SKIN-CAPTURE: スキニングを含む検証シーンをビジビリティバッファで撮る
+- status: todo
+- done-when: スキニングを含む検証シーン（`RenderingVelocitySkinnedVulkanTest` の場面など）を、ビジビリティバッファで撮る経路を足す（検証用の撮影の入口。起動画面は変えない）。ID の表示（`--visibility-buffer=debug` と同じ色分け）と解決の結果（Albedo・Normal・Velocity）を撮り、開いて確かめる。スキニングの塊が ID に描かれ（`VIS_RASTER` の `skinned_chunks` が 0 でない）、GBuffer の経路との画素の比較（Albedo・Normal・Velocity）が説明できる範囲に収まる。計算スキニングのパイプラインだけが作れない装置では、スキニングの無い場面でも予備（GBuffer の描画）になることを `PROGRESS.md` に記録する（持ち越しの (d)）。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest SkinnedRenderPathContractTest RenderingVelocityVulkanTest ComputeSkinningVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest|ComputeSkinningVulkanTest|RenderingVelocitySkinnedVulkanTest|RenderingVelocitySkinnedGBufferFallbackVulkanTest)$"`
+- stop-when: スキニングの物がビジビリティバッファの経路で欠ける・ずれる場合は、撮影と測った値を残して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 VTG6-DEFAULT-ON から分けた。起動画面にはスキニングの物が無いので、速度の検査（`RenderingVelocitySkinnedVulkanTest`）の場面か、検証用の撮影の入口で撮る。
+
+## VTG6-DEFAULT-ON-TILE-VRAM: 材質の分類の一覧の大きさを、材質の表の上限・画面の大きさから求め直す
+- status: todo
+- done-when: 材質の分類の一覧（`MaterialTileClassifyPass.h` の `ListCapacity`）が最悪（1タイル 64 材質）で取ってあり、1080p で約 8.3 MB・4K で約 33 MB になっている。VRAM の予算（8GB 級）と照らし、材質の表の上限（`VisibilityMaterialTable` の上限）・画面の大きさから求め直す（実際に出る最大の材質の数で足りることを保証する形）か、現状のまま使う理由と上限を `PROGRESS.md` に記録する。求め直すときは、溢れたときの扱い（材質の数が上限を超えたタイルは予備の番号に畳む等）を検査で確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MaterialTileClassifyVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MaterialTileClassifyVulkanTest|VisibilityResolveVulkanTest)$"`
+- stop-when: 一覧が溢れたときに見える物が欠ける場合は、再現を残して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-06 VTG6-DEFAULT-ON から分けた（持ち越しの (b)）。on の構成の分類は VRAM 約 5 MB・GPU 0.26〜0.29 ms（起動画面）。
+
 ## VTG6-DEFAULT-ON: ビジビリティバッファを既定にし、今のGBufferのラスタを予備にする
 - status: todo
-- done-when: `geometryShader` に対応する GPU では、ビジビリティバッファの経路を既定（`--visibility-buffer` の既定を on）にし、GBufferPass・MegaGeometryPass の GBuffer へのラスタは、`geometryShader` の無い GPU か `--visibility-buffer=off` のときの予備にだけ残す（`VISBUFFER_FALLBACK reason=<..>` を1回出す）。`RenderGraphCompileTest`・`SkinnedRenderPathContractTest`・`GBufferMaterialDescriptorCacheTest`・`MegaGeometryFrameCommandDebugModeTest`・`RenderingVelocity*`・`DebugViewModeStringTest` を新しい既定に合わせて通す（予備の経路の検査も残す）。MegaGeometryPass の1パス目・2パス目の描画先をビジビリティバッファへ切り替え、2パスの遮蔽の HZB をビジビリティの1パス目の深度から作る（`ID・深度の1パス目 → HZB → 2パス目`。VTG6-VIS-RASTER から回した）。スキニングを含む検証シーン（`RenderingVelocitySkinnedVulkanTest` の場面など）をビジビリティバッファで撮る経路を足し、ID の表示と解決の結果を開いて確かめる。Indoor/Outdoor の golden を回し、差が出たら差がこの変更（解析的な微分・三角形の接線の基底）だけによることを確かめて `Docs/RenderingValidation/GoldenBaselines.md` の手順で再承認し、根拠をコミットの本文に書く。起動画面の朝・昼・夕・夜の `-Deterministic` の撮影を開いて確かめる。
+- done-when: VTG6-DEFAULT-ON-SWITCH・VTG6-DEFAULT-ON-HZB・VTG6-DEFAULT-ON-SKIN-CAPTURE・VTG6-DEFAULT-ON-TILE-VRAM がすべて done になった後の最終確認。Indoor/Outdoor の golden を回し、差が出たら差がこの変更（解析的な微分・三角形の接線の基底）だけによることを確かめて `Docs/RenderingValidation/GoldenBaselines.md` の手順で再承認し、根拠をコミットの本文に書く。起動画面の朝・昼・夕・夜の `-Deterministic` の撮影を開いて確かめ、2パスの遮蔽の統計（`mega_occlusion.occluded`）が戻っていることと、`--visibility-buffer=off`（予備）の撮影が従来どおりであることを `PROGRESS.md` に記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest SkinnedRenderPathContractTest MaterialResourcesTest MegaGeometryResourcesTest RenderingVelocityVulkanTest ViewportSnapshotDebugWiringTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest|GBufferMaterialDescriptorCacheTest|MegaGeometryFrameCommandDebugModeTest|MegaGeometryResourcesTest|RenderingVelocityStaticVulkanTest|RenderingVelocityMotionVulkanTest|RenderingVelocityCameraVulkanTest|RenderingVelocityObjectVulkanTest|RenderingVelocitySkinnedVulkanTest|DebugViewModeStringTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
