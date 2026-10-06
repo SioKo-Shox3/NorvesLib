@@ -1104,7 +1104,7 @@
 - notes: 2026-10-06 VTG7-SW-HARDEN-TESTS から分けた（その notes (d)）。今は BDA に対応しない装置で、合流だけが作られて埋めと合流が毎フレーム走り、振り分けは定数 1 で続く。危険地帯（描画パス）。テストのコードでも標準ライブラリの型を使わない。
 
 ## VTG7-SW-FXAA-COMPARE: ソフトウェアラスタの on・off を FXAA の撮影で比べ、差がソフトに回したクラスタに限られることを確かめる
-- status: todo
+- status: done
 - done-when: TAA・RTGI の時間方向の履歴による run 間の状態の揺れ（VTG7-SW-PATH-DIFF）を外して、ソフトウェアラスタが描くこと自体の差を測る。`-AntiAliasing FXAA -Deterministic` で、負荷モード 300 個（`-ExtraGameArguments --stress-mega-instances=300`、昼 45°、default・near・low）と起動画面（昼 45°、3 視点）を `-SwRaster Off` で 2 回・`-SwRaster On` で 2 回撮る。(1) off 同士・on 同士がビット一致（PSNR 100 dB）することを確かめる（一致しなければ、その視点の FXAA の撮影も非決定であることを記録し、差の位置で判断する）。(2) on と off の差の画素を数え、差のある画素がソフトへ回したクラスタの画面上の位置に限られるか（ソフトに回したクラスタの ID の集合をログか一時的な計装で出し、差の画素の ID と照合する。または差の画素の連結成分の大きさ・位置が小さいクラスタの像の大きさと合うか）、最大差と差の画素の数を PROGRESS に書く。(3) 中央の大きな球など、ソフトに回していない大きなクラスタの上に差が出るなら、その原因（露出・ヒストグラムの入力の変化など）を記録する。負荷モードの TAA の撮影で on1・on2 だけに現れた状態（off の 4 回のどれにも無い、off と 65.5〜66.9 dB）が、ソフトが描いたことによる露出の入力の変化で説明できるかを、この結果から判断して書く。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-FXAA-COMPARE-stress-off -Configuration RelWithDebInfo -Deterministic -AntiAliasing FXAA -SunElevations 45 -SwRaster Off -ExtraGameArguments --stress-mega-instances=300`
