@@ -134,7 +134,7 @@ layout(set = 0, binding = 0) uniform CullUniforms
     uint bvhLeafBase;        // 葉の列の先頭
     uint bvhRootCount;       // BVH を持つインスタンスの数（段0の入力の数。インスタンスの表の先頭からその数）
     uint pageRequestCapacity; // ページの要求の列の容量（0 ならこのフレームは要求を書かない）
-    uint swRasterEnabled;    // 1 なら、画面上の小さいクラスタをソフトウェアラスタの一覧へ振り分ける（0 なら触らない）
+    uint swRasterEnabled;    // 1 なら、画面上の小さいクラスタをソフトウェアラスタの一覧へ積む（ハードも描く）。2 なら積めたクラスタのハードのコマンドを空振りにする。0 なら触らない
     uint swRasterCapacity;   // パスごとのソフトの一覧の容量（クラスタ数）
     float swRasterMaxPixels; // 振り分ける画面上の半径（画素）のしきい値（以下ならソフト）
     float swRasterNearPlane; // 近平面までの距離（視点から視線方向に測る）。これと交わるクラスタは振り分けない
@@ -240,7 +240,8 @@ layout(std430, set = 0, binding = 12) buffer PageRequestBuffer
 const uint PAGE_REQUEST_HEADER_WORDS = 4u;
 
 // set 0, binding 13: ソフトウェアラスタの一覧（swRasterEnabled=0 では使わない）。
-// [パス p の頭 = p * 4] x = 一覧のクラスタ数（計算シェーダーの間接 dispatch の x。1 ワークグループ = 1 クラスタ）, y = 1, z = 1,
+// [パス p の頭 = p * 4] x = min(積めた数, 65535), y = ceil(積めた数 / 65535), z = 1（計算シェーダーの間接 dispatch の引数。
+//                       1 ワークグループ = 1 クラスタ。積めた数がなければ 0, 0, 0）,
 //                       w = 一覧へ積もうとした数（容量を超えた分も数える）
 // [SW_RASTER_HEADER_WORDS + p * swRasterCapacity + n] = n 番目のクラスタのコマンドの位置（commandIndex。
 //   記録の番号は 1 + commandIndex でハードと共有する）
@@ -250,6 +251,8 @@ layout(std430, set = 0, binding = 13) buffer SwRasterBuffer
 };
 const uint SW_RASTER_HEADER_WORDS = 8u;
 const uint SW_RASTER_HEADER_STRIDE = 4u;
+// 間接 dispatch の x の上限（Vulkan の保証する最小値。visbuffer_sw_raster.comp の SW_MAX_GROUPS_X と一致。超える分は y へ折り返す）
+const uint SW_RASTER_MAX_GROUPS_X = 65535u;
 
 const uint BVH_LEAF_COUNTER = 16u;
 const uint BVH_STAGE_CLUSTERS = 0xFFFFFFFFu;
@@ -642,7 +645,8 @@ bool IsSwRasterSmallCluster(GPUClusterData cluster)
 /**
  * @brief コマンドをこのパスのソフトの一覧へ積む。一覧が満杯なら積まず false（ハードのラスタだけが描く）
  *
- * 間接 dispatch の x（クラスタ数）は一覧へ積めた数だけを数えるので、容量を超えることは無い。
+ * 間接 dispatch の引数は 2 次元（1 ワークグループ = 1 クラスタ）: 積めた数 n に対し、x = min(n, 65535)、y = ceil(n / 65535)、z = 1。
+ * 積めた数は slot + 1 の最大値なので、atomicMax で書けば、スレッドの順序によらず最後は n に対する値になる。
  */
 bool AppendSwRasterList(uint commandIndex)
 {
@@ -654,10 +658,11 @@ bool AppendSwRasterList(uint commandIndex)
         return false;
     }
     swRaster[SW_RASTER_HEADER_WORDS + passIndex * cullData.swRasterCapacity + slot] = commandIndex;
-    // 間接 dispatch の y・z（1 以外の書き込みは無いので、複数のスレッドが同じ値を書いてよい）
-    swRaster[header + 1u] = 1u;
+    uint count = slot + 1u;
+    atomicMax(swRaster[header], min(count, SW_RASTER_MAX_GROUPS_X));
+    atomicMax(swRaster[header + 1u], (count + SW_RASTER_MAX_GROUPS_X - 1u) / SW_RASTER_MAX_GROUPS_X);
+    // z は 1 以外の書き込みが無いので、複数のスレッドが同じ値を書いてよい
     swRaster[header + 2u] = 1u;
-    atomicAdd(swRaster[header], 1u);
     return true;
 }
 
@@ -666,6 +671,8 @@ bool AppendSwRasterList(uint commandIndex)
  *
  * swRasterEnabled=1 なら、画面上で小さいクラスタをパスごとのソフトウェアラスタの一覧へも積む。
  * コマンドはハードのラスタのために必ず積む（一覧への振り分けは描画を減らさない）。
+ * swRasterEnabled=2 は、ソフトウェアラスタが実際に走るフレーム: 一覧へ積めたクラスタは、ハードのコマンドの
+ * instanceCount を 0 にして描かない（ソフトが代わりに描く）。一覧が満杯で積めなかったクラスタは、ハードが描く。
  */
 void EmitDrawCommand(uint instanceIndex, MegaInstance instance, uint clusterIndex, GPUClusterData cluster)
 {
@@ -688,6 +695,11 @@ void EmitDrawCommand(uint instanceIndex, MegaInstance instance, uint clusterInde
         {
             bool bSmall = IsSwRasterSmallCluster(cluster);
             bool bBinned = bSmall && AppendSwRasterList(commandIndex);
+            if (bBinned && cullData.swRasterEnabled == 2u)
+            {
+                // ソフトが描くので、ハードのコマンドは空振りにする（コマンドの位置と記録は残る。ソフトが記録を引く）
+                drawCommands[commandIndex].instanceCount = 0;
+            }
             if (cullData.bStatsEnabled != 0u)
             {
                 if (bBinned)

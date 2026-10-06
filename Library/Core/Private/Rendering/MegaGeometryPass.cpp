@@ -66,9 +66,8 @@ namespace NorvesLib::Core::Rendering
 
         // ソフトウェアラスタの一覧（cluster_cull.comp の SwRasterBuffer）。先頭はパスごとの間接 dispatch の引数（x・y・z）と
         // 積もうとした数の 4 語ずつ（SW_RASTER_HEADER_WORDS = 8 語）で、その後にパスごとのコマンドの位置の列が続く。
-        // 一覧の容量は、間接 dispatch の x（1 ワークグループ = 1 クラスタ）が Vulkan の保証する上限（65535）を超えないよう抑える
+        // 一覧の容量はパスごとのコマンド数まで（間接 dispatch の引数は 2 次元なので、x の上限 65535 を超えても y へ折り返す）
         constexpr uint32_t SwRasterHeaderWords = 8u;
-        constexpr uint32_t SwRasterMaxListCapacity = 65535u;
 
         // グループの BVH のたどり（cluster_bvh_cull.comp）。BvhStageClusters は葉のクラスタの判定の段の印、
         // BvhLeafSlots は葉の列の1要素を受け持つスレッドの数（葉が持つクラスタの最大数）、
@@ -1339,8 +1338,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ソフトウェアラスタの一覧。作れなければ振り分けずにハードだけで描く
-        const uint32_t swRasterCapacity =
-            static_cast<uint32_t>(std::min<uint64_t>(commandsPerPass, SwRasterMaxListCapacity));
+        const uint32_t swRasterCapacity = static_cast<uint32_t>(commandsPerPass);
         if (bSwRasterBin && !EnsureSwRasterBuffer(swRasterCapacity))
         {
             if (!m_bSwRasterFallbackLogged)
@@ -1352,6 +1350,9 @@ namespace NorvesLib::Core::Rendering
         }
         m_bSwRasterBinned = bSwRasterBin;
         m_SwRasterCapacity = bSwRasterBin ? swRasterCapacity : 0u;
+        // ソフトのラスタが走るフレームだけ、一覧へ積めたクラスタのハードのコマンドを空振りにする（走らないなら積むだけ）。
+        // bSwRasterBin は sink と 2 パスの遮蔽の判定を前提にしている
+        const bool bSwRasterSkipHardware = bSwRasterBin && sink != nullptr && sink->IsSwRasterAvailable();
 
         // ページの表（常駐の状態）をこのフレームのスロットへ写す。フレームの間は変わらないので、2パスの判定が食い違わない
         if (!SyncPageTable(frameSlot, *command.MegaGeometry))
@@ -1522,7 +1523,7 @@ namespace NorvesLib::Core::Rendering
         baseUniform.VisibleWriteStamp = static_cast<uint32_t>(m_OcclusionFrameCount) + 1u;
         baseUniform.BvhRootCount = bvhInstanceCount;
         baseUniform.PageRequestCapacity = pageRequestCapacity;
-        baseUniform.bSwRasterEnabled = bSwRasterBin ? 1u : 0u;
+        baseUniform.bSwRasterEnabled = bSwRasterSkipHardware ? 2u : (bSwRasterBin ? 1u : 0u);
         baseUniform.SwRasterCapacity = bSwRasterBin ? swRasterCapacity : 0u;
         baseUniform.SwRasterMaxPixels = m_SwRasterMaxPixels;
         baseUniform.SwRasterNearPlane = cam.NearPlane;
@@ -1817,6 +1818,11 @@ namespace NorvesLib::Core::Rendering
             plan.InstanceBufferBytes = static_cast<uint64_t>(instanceTable.size()) * sizeof(GPUMegaInstance);
             plan.SectionBuffer = frameSlot.SectionBuffer;
             plan.SectionBufferBytes = static_cast<uint64_t>(sectionCount) * passCount * 2u * sizeof(uint32_t);
+            if (bSwRasterBin)
+            {
+                plan.SwRasterBuffer = m_SwRasterBuffer;
+                plan.SwRasterCapacity = swRasterCapacity;
+            }
             for (const Section &section : sections)
             {
                 VisibilityDrawPlan::Section planSection;
@@ -2289,7 +2295,7 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        const uint32_t newCapacity = std::min(NextPowerOfTwo(std::max(capacity, m_SwRasterBufferCapacity)), SwRasterMaxListCapacity);
+        const uint32_t newCapacity = NextPowerOfTwo(std::max(capacity, m_SwRasterBufferCapacity));
         const uint64_t words = static_cast<uint64_t>(SwRasterHeaderWords) + 2ull * newCapacity;
         // 頭は間接 dispatch の引数になるので IndirectBuffer も持つ。頭は FillBuffer で 0 にする
         RHI::BufferDesc desc(words * sizeof(uint32_t),

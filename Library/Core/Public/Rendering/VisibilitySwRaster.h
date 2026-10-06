@@ -29,7 +29,7 @@ namespace NorvesLib::Core::Rendering
     public:
         /** @brief ワークグループのスレッド数（1 クラスタの三角形の最大数。ID の三角形のビット幅と一致する） */
         static constexpr uint32_t ThreadsPerGroup = 128;
-        /** @brief 間接 dispatch の x の上限（Vulkan の保証する最小値。MegaGeometryPass のソフトの一覧の容量の上限と同じ） */
+        /** @brief 間接 dispatch の x の上限（Vulkan の保証する最小値。一覧がこれを超えるクラスタ数を持つときは y へ折り返す） */
         static constexpr uint32_t MaxGroupsX = 65535;
 
         VisibilitySwRaster();
@@ -64,7 +64,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t KeyHeight = 0;
             /** @brief ソフトの一覧（GenericRead の状態で渡す。パスごとの頭 4 語 + 8 語の余白の後に、パスごとの列が並ぶ） */
             RHI::BufferPtr List;
-            /** @brief 一覧のパスごとの容量（クラスタ数。MegaGeometryPass の SwRasterCapacity） */
+            /** @brief 一覧のパスごとの容量（クラスタ数。パスごとのコマンド数まで。MegaGeometryPass の SwRasterCapacity） */
             uint32_t ListCapacity = 0;
             /** @brief ハードのラスタと同じビューポートとシザー */
             RHI::Viewport Viewport;

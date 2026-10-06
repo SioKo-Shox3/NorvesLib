@@ -178,6 +178,12 @@ namespace NorvesLib::Core::Rendering
             uint64_t InstanceBufferBytes = 0;
             RHI::BufferPtr SectionBuffer;  // 区間の表（uvec2: コマンドの先頭・最大数。パス × 区間。ホストが書いたまま）
             uint64_t SectionBufferBytes = 0;
+            /**
+             * ソフトウェアラスタの一覧（振り分けを行ったフレームだけ。行わなければ null・容量 0）。UnorderedAccess の状態で渡す。
+             * パスごとの頭 4 語（間接 dispatch の引数）・8 語の余白の後に、パスごとにコマンドの位置の列が並ぶ（cluster_cull.comp の SwRasterBuffer）
+             */
+            RHI::BufferPtr SwRasterBuffer;
+            uint32_t SwRasterCapacity = 0; // 一覧のパスごとの容量（クラスタ数。パスごとのコマンド数まで）
             Container::VariableArray<Section> Sections;
         };
 
@@ -191,11 +197,23 @@ namespace NorvesLib::Core::Rendering
          * 1パス目の範囲が IndirectArgument（描画情報は GenericRead）、2回目の時点で2パス目の範囲まで書き終えている。
          * 呼び出しの間に sink が必要とする状態の遷移は sink が行い、RecordFrameCommand が戻った後の戻し
          * （ReleaseVisibilityDrawBuffers）も sink 側の責任になる。
+         *
+         * ソフトウェアラスタの一覧（plan.SwRasterBuffer）は、sink が読むとき（間接 dispatch の引数と一覧の読み取り）だけ GenericRead にし、
+         * 戻る時点では UnorderedAccess に戻す（次のカリングが続けて書き、最後に RecordFrameCommand が Common へ戻す）。
          */
         class IDrawSink
         {
         public:
             virtual ~IDrawSink() = default;
+
+            /**
+             * @brief このフレームで、ソフトウェアラスタ（一覧のクラスタを計算シェーダーで 64bit のバッファへ描く）が確実に走るか
+             *
+             * RecordFrameCommand がカリングの前に 1 回だけ問い合わせる。true を返したら、sink は 2 回の呼び出しの中で
+             * 一覧を dispatch する責任を負い、カリングは一覧へ積めたクラスタのハードのコマンドを空振り（instanceCount = 0）にする。
+             * false なら、一覧へ積むだけでハードがすべてのクラスタを描く（振り分けの統計だけが取れる）。
+             */
+            virtual bool IsSwRasterAvailable() const = 0;
 
             /** @brief 1パス目のカリングの後。ID・深度へ手続き・スキニングの塊と1パス目を描く（深度は描いた後 ShaderResource になる） */
             virtual void RecordFirstPassDraws(RHI::ICommandList *commandList, const VisibilityDrawPlan &plan) = 0;
@@ -225,7 +243,9 @@ namespace NorvesLib::Core::Rendering
          * 要求しても、64bit アトミックが使えない・ビジビリティバッファのラスタが無い・2 パスの遮蔽の判定を使えないときは、
          * 振り分けず SW_RASTER_FALLBACK reason=<理由> を 1 回ログへ出す。使えるとき、カリングは画面上の半径（画素）が
          * maxPixels 以下で近平面と交わらないクラスタを、パスごとのソフトの一覧（コマンドの位置）へ積み、計算シェーダーの
-         * 間接 dispatch の引数を書く。ソフトのラスタが無い間は、ハードがすべてのクラスタを描く（コマンドは減らさない）。
+         * 間接 dispatch の引数（2 次元）を書く。sink（IDrawSink::IsSwRasterAvailable）がソフトのラスタを走らせると答えたフレームは、
+         * 一覧へ積めたクラスタのハードのコマンドを空振り（instanceCount = 0）にする。答えなかったフレームは、
+         * ハードがすべてのクラスタを描く（コマンドは減らさない）。
          */
         void SetSwRasterBinning(bool bRequested, float maxPixels)
         {
@@ -338,7 +358,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t BvhLeafBase;   // 葉の列の先頭
             uint32_t BvhRootCount;  // BVH を持つインスタンスの数（インスタンスの表の先頭からその数。段0の入力の数）
             uint32_t PageRequestCapacity; // ページの要求の列の容量（0 ならこのフレームは要求を書かない）
-            uint32_t bSwRasterEnabled;    // 1 ならソフトウェアラスタの一覧へ振り分ける
+            uint32_t bSwRasterEnabled;    // 1 ならソフトウェアラスタの一覧へ積む（ハードも描く）。2 なら積めたクラスタのハードのコマンドを空振りにする
             uint32_t SwRasterCapacity;    // パスごとのソフトの一覧の容量（クラスタ数）
             float SwRasterMaxPixels;      // 振り分ける画面上の半径（画素）のしきい値
             float SwRasterNearPlane;      // 近平面までの距離

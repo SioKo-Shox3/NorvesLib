@@ -11,6 +11,7 @@
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityMaterialTable.h"
 #include "Rendering/VisibilityMerge.h"
+#include "Rendering/VisibilitySwRaster.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/RHITypes.h"
@@ -53,6 +54,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t MergeCount = 0;
         /** @brief 64bit のバッファのバイト数（画面の画素数 × 8。持たないときは 0） */
         uint64_t KeyBufferBytes = 0;
+        /** @brief ソフトウェアラスタの dispatch を記録した回数（1 パス目・2 パス目で 1 回ずつ。走らないフレームは 0） */
+        uint32_t SwRasterDispatchCount = 0;
     };
 
     /**
@@ -80,8 +83,13 @@ namespace NorvesLib::Core::Rendering
      * （bShaderBufferInt64Atomics）は、ソフトウェアラスタの結果を受ける
      * 64bit のバッファ（画面の画素数 × uint64。深度 + ID）を 1 つ持ち、フレームの最初に空で埋め、合流のパス（VisibilityMerge。
      * 全画面で、空でない画素だけ LessOrEqual で ID・深度へ書く）を「1 回目の render pass の後・HZB の前」と「2 回目の
-     * render pass の後」に走らせる（1 回の判定では描画の後に 1 回）。まだ誰もバッファへ書かないので、画は変わらない。
+     * render pass の後」に走らせる（1 回の判定では描画の後に 1 回）。
      * ソフトウェアラスタが無効（既定）・対応しない装置・予備の経路（ビジビリティバッファが無効）では、資源もパスも作らない。
+     *
+     * 2 パスの遮蔽で 64bit のバッファを使えるフレーム（IsSwRasterAvailable）は、MegaGeometryPass のカリングが画面上で小さいクラスタを
+     * ソフトの一覧へ積み、そのハードのコマンドを空振りにする。ソフトの dispatch（VisibilitySwRaster。1 ワークグループ = 1 クラスタ）は
+     * 1 パス目: [記録を書く計算 → 64bit のバッファを書き込みへ → dispatch → 読み取りへ] → 合流（HZB の前）、
+     * 2 パス目: 記録を書く計算（全パス。1 パス目のぶんは同じ値で書き直される）→ [dispatch] → 合流 の順に記録する。
      *
      * 既定は無効（SceneView::SetupDeferredPipeline の VisibilityBufferMode が Off）。
      */
@@ -125,6 +133,8 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 64bit のバッファの合流（無効・対応しない装置・初期化に失敗したときは IsReady が false） */
         const VisibilityMerge& GetMerge() const { return m_Merge; }
+        /** @brief ソフトウェアラスタの計算（無効・対応しない装置・初期化に失敗したときは IsReady が false） */
+        const VisibilitySwRaster& GetSwRaster() const { return m_SwRaster; }
 
         /** @brief 最後の Execute の内訳 */
         const VisibilityRasterFrameStats& GetLastFrameStats() const { return m_Stats; }
@@ -303,7 +313,7 @@ namespace NorvesLib::Core::Rendering
          */
         bool RecordCpuRecordUpload();
         /** @brief MegaGeometry のコマンド・カウンタを読める状態にし、記録を書く計算を dispatch する */
-        void RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan& plan);
+        void RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan& plan, const char* timestampName = "VisRasterRecords");
         /** @brief MegaGeometry のクラスタを、パスの番号 firstPass から endPass の手前まで描く（render pass の中で呼ぶ） */
         void RecordMegaDraws(const MegaGeometryPass::VisibilityDrawPlan& plan, uint32_t firstPass, uint32_t endPass);
         /** @brief 手続きメッシュとスキニングの塊を描く（render pass の中で呼ぶ） */
@@ -312,10 +322,19 @@ namespace NorvesLib::Core::Rendering
         void RecordMergeClear();
         /** @brief 64bit のバッファを ID・深度へ合流させる render pass を記録する（render pass の外で呼ぶ。2 回目の render pass の形） */
         void RecordMergePass(const char* timestampName);
+        /**
+         * @brief ソフトの一覧のパス passIndex を、計算シェーダーで 64bit のバッファへ描く（render pass の外で呼ぶ）
+         *
+         * 64bit のバッファは GenericRead から UnorderedAccess を経て GenericRead へ戻る。一覧は UnorderedAccess から GenericRead
+         * （間接 dispatch の引数と読み取り）を経て UnorderedAccess へ戻る。記録の表は GenericRead のまま読む。
+         * @return 記録したら true（この呼び出しが使えないフレームは何もせず false）
+         */
+        bool RecordSwRaster(const MegaGeometryPass::VisibilityDrawPlan& plan, uint32_t passIndex, const char* timestampName);
         /** @brief 描き終えた後の戻しと、最後の Execute の値・ログの更新 */
         void FinishFrame();
 
         // MegaGeometryPass::IDrawSink（記録を移されたフレームの、2 パスの遮蔽の途中の描画）
+        bool IsSwRasterAvailable() const override;
         void RecordFirstPassDraws(RHI::ICommandList* commandList,
                                   const MegaGeometryPass::VisibilityDrawPlan& plan) override;
         void RecordMergeBeforeHiZ(RHI::ICommandList* commandList,
@@ -376,6 +395,8 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_RecordArgsPipeline;
         // 64bit のバッファ（深度 + ID）の ID・深度への合流（対応する装置だけ初期化する）
         VisibilityMerge m_Merge;
+        // 画面上で小さいクラスタを、計算シェーダーで 64bit のバッファへ描く（合流と同じ条件で初期化する）
+        VisibilitySwRaster m_SwRaster;
         bool m_bSwRasterEnabled = false;
         // ワイヤーフレーム（DebugViewMode::Wireframe）の線の描き方。3 種とも揃ったときだけ使う（development ビルドだけ作る）
         RHI::PipelinePtr m_MegaWireframePipeline;

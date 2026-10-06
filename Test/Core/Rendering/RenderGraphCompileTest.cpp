@@ -95,6 +95,8 @@ namespace
         RHI::ResourceState BeforeState = RHI::ResourceState::Undefined;
         RHI::ResourceState AfterState = RHI::ResourceState::Undefined;
         uint64_t BufferSize = 0;
+        /** @brief バリアを記録した時点の CallSequence の長さ（直後に記録された B・E・D・I・J の位置と同じ） */
+        size_t SequencePosition = 0;
     };
 
     enum class FakeRenderEvent
@@ -698,6 +700,7 @@ namespace
             event.BeforeState = beforeState;
             event.AfterState = afterState;
             event.BufferSize = size;
+            event.SequencePosition = CallSequence.size();
             Barriers.push_back(event);
         }
         void TextureBarrier(RHI::TexturePtr texture,
@@ -2151,6 +2154,10 @@ namespace
         bool bSwRasterBin = false;
         /** @brief 振り分けるクラスタの画面上の半径（画素）のしきい値 */
         float SwRasterMaxPixels = 8.0f;
+        /** @brief 0 でなければ、ID のラスタの初期化で、この番号（1 から数える）の計算パイプラインの作成を失敗させる（3 番がソフトウェアラスタ） */
+        uint32_t FailRasterComputePipelineNumber = 0;
+        /** @brief MegaGeometry のメッシュ A が持つクラスタの数（B は 1 つ）。間接 dispatch の x の上限（65535）を超える一覧の検査に使う */
+        uint32_t ClusterCountA = 1;
         /** @brief Normal 以外のときは、ビューポートの計画（表示だけを持つ）を現在のビューポートにして、この表示で描く */
         DebugViewMode DebugMode = DebugViewMode::Normal;
         ViewportRenderPlan ViewportPlan;
@@ -2261,13 +2268,18 @@ namespace
         createInfo.VertexStride = 4 * sizeof(float);
         createInfo.IndexData = indices;
         createInfo.IndexCount = 3;
-        createInfo.Clusters.push_back(cluster);
+        for (uint32_t clusterIndex = 0; clusterIndex < scene.ClusterCountA; ++clusterIndex)
+        {
+            createInfo.Clusters.push_back(cluster);
+        }
         createInfo.TotalBounds.CenterX = 0.5f;
         createInfo.TotalBounds.CenterY = 0.5f;
         createInfo.TotalBounds.Radius = 1.25f;
         createInfo.bBuildLODHierarchy = false;
         createInfo.DebugName = "VisRasterMegaA";
         const auto megaMeshA = scene.Resources.MegaGeometry().CreateMegaMesh(createInfo);
+        createInfo.Clusters.clear();
+        createInfo.Clusters.push_back(cluster);
         createInfo.DebugName = "VisRasterMegaB";
         const auto megaMeshB = scene.Resources.MegaGeometry().CreateMegaMesh(createInfo);
         assert(megaMeshA.IsValid() && megaMeshB.IsValid());
@@ -2418,9 +2430,15 @@ namespace
             }
             scene.Device->bFailGraphicsPipelines = resolveMode == ResolveMode::RasterPipelineUnavailable;
             scene.Device->bFailLineGraphicsPipelines = resolveMode == ResolveMode::RasterWireframePipelineUnavailable;
+            if (scene.FailRasterComputePipelineNumber != 0)
+            {
+                scene.Device->ComputePipelineCreations = 0;
+                scene.Device->FailComputePipelineCreationNumber = scene.FailRasterComputePipelineNumber;
+            }
             assert(scene.Raster.Initialize(context));
             scene.Device->bFailGraphicsPipelines = false;
             scene.Device->bFailLineGraphicsPipelines = false;
+            scene.Device->FailComputePipelineCreationNumber = 0;
             scene.Graph.AddPass(&scene.Raster);
 
             const bool bClassifyBeforeResolve = classifyMode == ClassifyMode::BeforeResolve ||
@@ -4684,7 +4702,8 @@ namespace
         for (size_t pass = 0; pass < 2; ++pass)
         {
             const SwRasterUniformWords words = ReadSwRasterUniformWords(pass);
-            assert(words.bEnabled == 1u);
+            // ID のラスタがソフトウェアラスタを走らせる構成（既定の場面）なので、積めたクラスタのハードのコマンドを空振りにする（2）
+            assert(words.bEnabled == 2u);
             assert(words.Capacity == capacity);
             assert(words.MaxPixels == 6.5f);
             assert(words.NearPlane == scene.Camera.NearPlane);
@@ -4729,6 +4748,298 @@ namespace
             {
                 const SwRasterUniformWords words = ReadSwRasterUniformWords(update);
                 assert(words.bEnabled == 0u && words.Capacity == 0u);
+            }
+            ShutdownVisibilityRasterScene(scene);
+        }
+    }
+
+    // 間接 dispatch の x の上限（Vulkan の保証する最小値。一覧がこれを超えると y へ折り返す）
+    constexpr uint32_t SwRasterOneDimensionLimit = 65535u;
+
+    // ソフトの一覧（MegaGeometry_SwRaster）を引数にする間接 dispatch（ソフトウェアラスタの dispatch）の、CallSequence での位置（呼ばれた順）
+    Container::VariableArray<size_t> FindSwRasterDispatchPositions(const FakeCommandList& commandList)
+    {
+        Container::VariableArray<size_t> positions;
+        size_t indirectIndex = 0;
+        for (size_t index = 0; index < commandList.CallSequence.size(); ++index)
+        {
+            if (commandList.CallSequence[index] != 'J')
+            {
+                continue;
+            }
+            assert(indirectIndex < commandList.IndirectDispatches.size());
+            if (IsDebugName(commandList.IndirectDispatches[indirectIndex].BufferName, "MegaGeometry_SwRaster"))
+            {
+                positions.push_back(index);
+            }
+            ++indirectIndex;
+        }
+        return positions;
+    }
+
+    // 名前のバッファへのバリアを、記録した順に集める
+    Container::VariableArray<BarrierEvent> CollectBufferBarriers(const FakeCommandList& commandList, const char* debugName)
+    {
+        Container::VariableArray<BarrierEvent> barriers;
+        for (const BarrierEvent& barrier : commandList.Barriers)
+        {
+            if (barrier.Kind == RGBarrierKind::Buffer && barrier.Buffer != nullptr &&
+                IsDebugName(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName, debugName))
+            {
+                barriers.push_back(barrier);
+            }
+        }
+        return barriers;
+    }
+
+    // --sw-raster=on で ID のラスタがソフトウェアラスタを走らせる構成（2 パスの遮蔽・解決あり・64bit のバッファあり）の記録:
+    //  - カリングの定数は両パスとも 2（積めたクラスタのハードのコマンドを空振りにする）で、容量を渡す。
+    //  - ソフトの間接 dispatch は 1 パス目・2 パス目に 1 回ずつ（引数は一覧のパスごとの頭）。1 パス目は、記録を書く計算の直後・
+    //    HZB の前の合流の直前、2 パス目は、2 パス目の描画（render pass）の後・合流の直前。
+    //  - 64bit のバッファは dispatch の直前に UnorderedAccess、直後に GenericRead（合流が読む）。一覧は直前に GenericRead、直後に
+    //    UnorderedAccess（次のカリング・最後の Common への戻しが続く）。1 パス目の後は、2 パス目のカリングが書くコマンド・カウンタ・
+    //    描画情報を UnorderedAccess へ戻す。
+    // dispatch を外す・バリアを外す・定数を 1 にする・記録を書く計算の前へ dispatch を移す（順序の入れ替え）のどれでも落ちる
+    void TestSwRasterDispatchesBetweenRecordsAndMerges()
+    {
+        VisibilityRasterScene scene;
+        scene.bSwRasterBin = true;
+        GMegaCullUniformUpdates.clear();
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, false, true, ResolveMode::Supported);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(scene.Mega.DidSwRasterBin());
+        assert(scene.Raster.GetSwRaster().IsReady());
+        const VisibilityRasterFrameStats& stats = scene.Raster.GetLastFrameStats();
+        assert(stats.SwRasterDispatchCount == 2);
+        assert(stats.MergeCount == 2);
+
+        // 両パスのカリングの定数: 2（ソフトが走る）と一覧の容量
+        const uint32_t capacity = scene.Mega.GetSwRasterListCapacity();
+        assert(capacity > 0);
+        assert(GMegaCullUniformUpdates.size() >= 2);
+        for (size_t pass = 0; pass < 2; ++pass)
+        {
+            const SwRasterUniformWords words = ReadSwRasterUniformWords(pass);
+            assert(words.bEnabled == 2u);
+            assert(words.Capacity == capacity);
+        }
+
+        // ソフトの間接 dispatch は 1 パスにつき 1 回で、引数は一覧のパスごとの頭（1 パス 4 語 = 16 バイト）
+        const Container::VariableArray<size_t> swPositions = FindSwRasterDispatchPositions(commandList);
+        assert(swPositions.size() == 2);
+        uint32_t swIndirectCount = 0;
+        for (const FakeCommandList::IndirectDispatchRecord& record : commandList.IndirectDispatches)
+        {
+            if (IsDebugName(record.BufferName, "MegaGeometry_SwRaster"))
+            {
+                assert(record.OffsetBytes == static_cast<uint64_t>(swIndirectCount) * 4u * sizeof(uint32_t));
+                ++swIndirectCount;
+            }
+        }
+        assert(swIndirectCount == 2);
+
+        // 並び（D = 直接 dispatch、J = 間接 dispatch、B・E = render pass の開始・終了）:
+        //   1 パス目: D（記録の引数）→ J（記録）→ J（ソフト）→ B・E（HZB の前の合流）
+        //   2 パス目: J（記録。1 パス目と 2 パス目の間にこの 1 回だけ）→ B … E（2 パス目の描画）→ J（ソフト）→ B・E（合流）
+        const Container::VariableArray<char>& sequence = commandList.CallSequence;
+        const size_t sw0 = swPositions[0];
+        const size_t sw1 = swPositions[1];
+        assert(sw0 >= 2 && sequence[sw0 - 1] == 'J' && sequence[sw0 - 2] == 'D');
+        assert(sw0 + 2 < sequence.size() && sequence[sw0 + 1] == 'B' && sequence[sw0 + 2] == 'E');
+        assert(sw1 > sw0 + 2 && sequence[sw1 - 1] == 'E');
+        assert(sw1 + 2 < sequence.size() && sequence[sw1 + 1] == 'B' && sequence[sw1 + 2] == 'E');
+        uint32_t indirectBetween = 0;
+        for (size_t index = sw0 + 1; index < sw1; ++index)
+        {
+            if (sequence[index] == 'J')
+            {
+                ++indirectBetween;
+            }
+        }
+        assert(indirectBetween == 1);
+
+        // 64bit のバッファ: 埋め（Common → CopyDest → GenericRead）の後、dispatch ごとに GenericRead → UnorderedAccess → GenericRead
+        const Container::VariableArray<BarrierEvent> keyBarriers = CollectBufferBarriers(commandList, "VisBuffer_Key64");
+        assert(keyBarriers.size() == 6);
+        assert(keyBarriers[0].BeforeState == RHI::ResourceState::Common && keyBarriers[0].AfterState == RHI::ResourceState::CopyDest);
+        assert(keyBarriers[1].BeforeState == RHI::ResourceState::CopyDest && keyBarriers[1].AfterState == RHI::ResourceState::GenericRead);
+        for (size_t pass = 0; pass < 2; ++pass)
+        {
+            const BarrierEvent& begin = keyBarriers[2 + pass * 2];
+            const BarrierEvent& end = keyBarriers[3 + pass * 2];
+            assert(begin.BeforeState == RHI::ResourceState::GenericRead && begin.AfterState == RHI::ResourceState::UnorderedAccess);
+            assert(begin.SequencePosition == swPositions[pass]);
+            assert(end.BeforeState == RHI::ResourceState::UnorderedAccess && end.AfterState == RHI::ResourceState::GenericRead);
+            assert(end.SequencePosition == swPositions[pass] + 1);
+        }
+
+        // 一覧: dispatch ごとに UnorderedAccess → GenericRead → UnorderedAccess（GenericRead を含むバリアはこの 4 つだけ）。
+        // 最後は次のフレーム用の Common への戻し（MegaGeometryPass が持つ形のまま）
+        const Container::VariableArray<BarrierEvent> listBarriers = CollectBufferBarriers(commandList, "MegaGeometry_SwRaster");
+        Container::VariableArray<BarrierEvent> listReadBarriers;
+        for (const BarrierEvent& barrier : listBarriers)
+        {
+            if (barrier.BeforeState == RHI::ResourceState::GenericRead || barrier.AfterState == RHI::ResourceState::GenericRead)
+            {
+                listReadBarriers.push_back(barrier);
+            }
+        }
+        assert(listReadBarriers.size() == 4);
+        for (size_t pass = 0; pass < 2; ++pass)
+        {
+            const BarrierEvent& toRead = listReadBarriers[pass * 2];
+            const BarrierEvent& toWrite = listReadBarriers[pass * 2 + 1];
+            assert(toRead.BeforeState == RHI::ResourceState::UnorderedAccess && toRead.AfterState == RHI::ResourceState::GenericRead);
+            assert(toRead.SequencePosition == swPositions[pass]);
+            assert(toWrite.BeforeState == RHI::ResourceState::GenericRead && toWrite.AfterState == RHI::ResourceState::UnorderedAccess);
+            assert(toWrite.SequencePosition == swPositions[pass] + 1);
+        }
+        assert(!listBarriers.empty());
+        assert(listBarriers[listBarriers.size() - 1].BeforeState == RHI::ResourceState::UnorderedAccess);
+        assert(listBarriers[listBarriers.size() - 1].AfterState == RHI::ResourceState::Common);
+        assert(listBarriers[listBarriers.size() - 1].SequencePosition > sw1 + 1);
+
+        // 1 パス目の記録が読んだコマンド・カウンタ・描画情報を、2 パス目のカリングが書く前に UnorderedAccess へ戻す（1 回ずつ。1 パス目と 2 パス目の間）
+        const char* const cullOutputs[] = {"MegaGeometry_IndirectDraw", "MegaGeometry_DrawCount", "MegaGeometry_DrawInfo"};
+        for (const char* name : cullOutputs)
+        {
+            uint32_t restoreCount = 0;
+            for (const BarrierEvent& barrier : CollectBufferBarriers(commandList, name))
+            {
+                if (barrier.BeforeState == RHI::ResourceState::GenericRead && barrier.AfterState == RHI::ResourceState::UnorderedAccess)
+                {
+                    assert(barrier.SequencePosition > sw0 && barrier.SequencePosition < sw1);
+                    ++restoreCount;
+                }
+            }
+            assert(restoreCount == 1);
+        }
+
+        // ハードの描画は従来どおり記録する（空振りにするのは GPU のカリングが書くコマンドの instanceCount で、描画の呼び出しの数は変わらない）
+        assert(commandList.IndirectDraws.size() == 2);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // ソフトウェアラスタを使えない構成では、ソフトの dispatch を記録せず、カリングの定数は 1 以下（ソフトが走らないので、
+    // ハードのコマンドを空振りにしない）。Debug（GBuffer が先に MegaGeometry を描くので ID のラスタが記録を駆動しない）・
+    // 64bit アトミックが無い装置・合流が無い（--sw-raster の ID のラスタ側が無効）・ソフトの計算パイプラインが作れない・ワイヤーフレーム
+    // （64bit のバッファを誰も書かない表示）の 5 つ。使えるかの問い合わせ（IsSwRasterAvailable）を外す・定数を常に 2 にする
+    // と、その構成で空振りにして落ちる
+    void TestSwRasterDispatchAbsentWhenUnavailable()
+    {
+        struct Case
+        {
+            const char* Name;
+            bool bInt64Atomics;
+            bool bSwRasterMerge;
+            uint32_t FailComputePipelineNumber;
+            DebugViewMode DebugMode;
+            ResolveMode Resolve;
+            bool bExpectBinned;
+        };
+        const Case cases[] = {
+            {"debug", true, true, 0, DebugViewMode::Normal, ResolveMode::None, false},
+            {"int64_atomics_unsupported", false, true, 0, DebugViewMode::Normal, ResolveMode::Supported, false},
+            {"merge_unavailable", true, false, 0, DebugViewMode::Normal, ResolveMode::Supported, true},
+            {"sw_pipeline_unavailable", true, true, 3, DebugViewMode::Normal, ResolveMode::Supported, true},
+            {"wireframe", true, true, 0, DebugViewMode::Wireframe, ResolveMode::Supported, true},
+        };
+        for (const Case& testCase : cases)
+        {
+            VisibilityRasterScene scene;
+            scene.bSwRasterBin = true;
+            scene.bInt64Atomics = testCase.bInt64Atomics;
+            scene.bSwRasterMerge = testCase.bSwRasterMerge;
+            scene.FailRasterComputePipelineNumber = testCase.FailComputePipelineNumber;
+            scene.DebugMode = testCase.DebugMode;
+            GMegaCullUniformUpdates.clear();
+            RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, false, true, testCase.Resolve);
+
+            assert(scene.Mega.DidSwRasterBin() == testCase.bExpectBinned);
+            assert(scene.Raster.GetLastFrameStats().SwRasterDispatchCount == 0);
+            assert(FindSwRasterDispatchPositions(scene.CommandList).empty());
+            assert(!GMegaCullUniformUpdates.empty());
+            for (size_t update = 0; update < GMegaCullUniformUpdates.size(); ++update)
+            {
+                assert(ReadSwRasterUniformWords(update).bEnabled <= 1u);
+            }
+            if (testCase.bExpectBinned)
+            {
+                // 一覧へ積むだけ（統計用）で、ハードがすべてのクラスタを描く
+                assert(ReadSwRasterUniformWords(0).bEnabled == 1u);
+            }
+            if (testCase.FailComputePipelineNumber == 3)
+            {
+                // 失敗したのがソフトの計算だけであること（合流は作れている）
+                assert(scene.Raster.GetMerge().IsReady() && !scene.Raster.GetSwRaster().IsReady());
+            }
+            ShutdownVisibilityRasterScene(scene);
+        }
+    }
+
+    // 一覧の容量はパスごとのコマンド数まで（65535 で頭打ちにしない）。間接 dispatch の x の上限（65535）を超えるクラスタ数でも一覧は
+    // 全部収まり、間接 dispatch を断るコマンドリストでは (65535, ceil(容量 / 65535), 1) の直接 dispatch で走らせる
+    // （GPU のカリングは間接 dispatch の引数を同じ 2 次元の形で書く）。容量を 65535 に抑える・直接 dispatch の y を 1 にすると落ちる
+    void TestSwRasterListCapacityExceedsOneDimension()
+    {
+        constexpr uint32_t clusterCountA = 70000;
+        for (int variant = 0; variant < 2; ++variant)
+        {
+            const bool bRejectIndirect = variant == 1;
+            VisibilityRasterScene scene;
+            scene.bSwRasterBin = true;
+            scene.ClusterCountA = clusterCountA;
+            scene.CommandList.bRejectDispatchIndirect = bRejectIndirect;
+            GMegaCullUniformUpdates.clear();
+            RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, false, true, ResolveMode::Supported);
+            FakeCommandList& commandList = scene.CommandList;
+
+            // メッシュ A（70000）と B（1）のクラスタ数の合計がパスごとのコマンド数（MaxDrawCount の範囲内）
+            const uint32_t capacity = scene.Mega.GetSwRasterListCapacity();
+            assert(scene.Mega.DidSwRasterBin());
+            assert(capacity == clusterCountA + 1u);
+            assert(capacity > SwRasterOneDimensionLimit);
+            assert(GMegaCullUniformUpdates.size() >= 2);
+            for (size_t pass = 0; pass < 2; ++pass)
+            {
+                const SwRasterUniformWords words = ReadSwRasterUniformWords(pass);
+                assert(words.bEnabled == 2u && words.Capacity == capacity);
+            }
+
+            // 一覧のバッファは、頭（8 語）とパスごとの容量 2 つぶんの語を収める
+            uint64_t listBytes = 0;
+            for (const BufferCreationRecord& record : scene.Device->CreatedBuffers)
+            {
+                if (IsDebugName(record.Desc.DebugName, "MegaGeometry_SwRaster"))
+                {
+                    listBytes = record.Desc.Size;
+                }
+            }
+            assert(listBytes >= (8u + 2ull * capacity) * sizeof(uint32_t));
+
+            assert(scene.Raster.GetLastFrameStats().SwRasterDispatchCount == 2);
+            const Container::VariableArray<size_t> swPositions = FindSwRasterDispatchPositions(commandList);
+            if (bRejectIndirect)
+            {
+                assert(swPositions.empty());
+                assert(scene.Raster.GetSwRaster().GetDirectFallbackCount() == 2);
+                uint32_t twoDimensional = 0;
+                for (const FakeCommandList::DispatchSize& size : commandList.DispatchGroups)
+                {
+                    if (size.X == SwRasterOneDimensionLimit && size.Y == (capacity + SwRasterOneDimensionLimit - 1u) / SwRasterOneDimensionLimit &&
+                        size.Z == 1u)
+                    {
+                        ++twoDimensional;
+                    }
+                }
+                assert(twoDimensional == 2);
+            }
+            else
+            {
+                assert(swPositions.size() == 2);
+                assert(scene.Raster.GetSwRaster().GetDirectFallbackCount() == 0);
             }
             ShutdownVisibilityRasterScene(scene);
         }
@@ -10227,6 +10538,9 @@ int main()
     TestVisibilityMergeAbsentWhenSwRasterOff();
     TestSwRasterBinningWritesListAndUniforms();
     TestSwRasterBinningFallsBackWhenUnavailable();
+    TestSwRasterDispatchesBetweenRecordsAndMerges();
+    TestSwRasterDispatchAbsentWhenUnavailable();
+    TestSwRasterListCapacityExceedsOneDimension();
     TestSceneViewWiresSwRasterMode();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();

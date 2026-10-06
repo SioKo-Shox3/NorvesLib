@@ -471,7 +471,11 @@ namespace NorvesLib::Core::Rendering
         // 64bit のバッファの合流は、ソフトウェアラスタが有効で、対応する装置のときだけ作る。作れなくても ID の描画は使える（合流だけが無い）
         if (m_bSwRasterEnabled && VisibilityMerge::IsSupported(caps))
         {
-            m_Merge.Initialize(m_Device, context.ShaderMgr, m_SecondRenderPass);
+            // ソフトウェアラスタの計算は、合流が作れたときだけ作る（書いた値を受ける合流が無ければ、ソフトに回さない）
+            if (m_Merge.Initialize(m_Device, context.ShaderMgr, m_SecondRenderPass))
+            {
+                m_SwRaster.Initialize(m_Device, context.ShaderMgr);
+            }
         }
         return true;
     }
@@ -494,6 +498,7 @@ namespace NorvesLib::Core::Rendering
 
     void VisibilityRasterPass::Shutdown()
     {
+        m_SwRaster.Shutdown();
         m_Merge.Shutdown();
         m_FrameSlots.Clear();
         m_ProceduralChunkScratch = Container::VariableArray<MeshIndexChunk>{};
@@ -1289,11 +1294,11 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    void VisibilityRasterPass::RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan& plan)
+    void VisibilityRasterPass::RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan& plan, const char* timestampName)
     {
         RHI::ICommandList* commandList = m_Work.CommandList;
         FrameSlot& slot = *m_Work.Slot;
-        ScopedGpuTimestamp gpuTimestamp(commandList, "VisRasterRecords");
+        ScopedGpuTimestamp gpuTimestamp(commandList, timestampName);
 
         // コマンド・カウンタを計算が読めるようにする（描画情報は GenericRead で渡される）
         commandList->BufferBarrier(plan.IndirectBuffer, m_Work.IndirectState, RHI::ResourceState::GenericRead);
@@ -1468,12 +1473,34 @@ namespace NorvesLib::Core::Rendering
         m_Work.bStagedReady = true;
     }
 
+    bool VisibilityRasterPass::IsSwRasterAvailable() const
+    {
+        // m_Work.bMerge は Execute が MegaGeometryPass の記録を駆動する前に決める（ワイヤーフレーム・バッファを用意できないフレームは false）
+        return m_Work.bMerge && m_SwRaster.IsReady();
+    }
+
     void VisibilityRasterPass::RecordMergeBeforeHiZ(RHI::ICommandList* /*commandList*/,
-                                                    const MegaGeometryPass::VisibilityDrawPlan& /*plan*/)
+                                                    const MegaGeometryPass::VisibilityDrawPlan& plan)
     {
         if (!m_Work.bStagedReady)
         {
             return;
+        }
+
+        // ソフトウェアラスタ（1 パス目）: 1 パス目のコマンドの記録を書いて、小さいクラスタを 64bit のバッファへ描く。
+        // ハードのコマンドは空振りにしてあるので、ここで描かなければそのクラスタは HZB の元の深度にも入らない
+        if (m_Work.bHasMegaDraw && plan.SwRasterBuffer)
+        {
+            RHI::ICommandList* commandList = m_Work.CommandList;
+            RecordMegaRecords(plan, "VisRasterRecords1");
+            RecordSwRaster(plan, 0, "VisRasterSw1");
+
+            // 2 パス目のカリングが、コマンド・カウンタ・描画情報へ続けて書く（読み取りの後に書き込みを並べる）。
+            // カリングは書いた後 IndirectArgument（描画情報は GenericRead）へ進めるので、次の記録の元の状態は IndirectArgument
+            commandList->BufferBarrier(plan.IndirectBuffer, m_Work.IndirectState, RHI::ResourceState::UnorderedAccess);
+            commandList->BufferBarrier(plan.CountBuffer, m_Work.IndirectState, RHI::ResourceState::UnorderedAccess);
+            commandList->BufferBarrier(plan.DrawInfoBuffer, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+            m_Work.IndirectState = RHI::ResourceState::IndirectArgument;
         }
 
         // 1 回目の描画の後の深度（HZB の元）へ、64bit のバッファの値を合流させる
@@ -1497,8 +1524,60 @@ namespace NorvesLib::Core::Rendering
         RecordMegaDraws(plan, 1, 2);
         commandList->EndRenderPass();
 
+        // ソフトウェアラスタ（2 パス目）。記録は RecordMegaRecords が全パスぶん書き直した後（1 パス目のぶんは同じ値）
+        if (plan.SwRasterBuffer)
+        {
+            RecordSwRaster(plan, 1, "VisRasterSw2");
+        }
+
         // 2 パス目の後の ID・深度へ、64bit のバッファの値（1 パス目・2 パス目のぶん）を合流させる
         RecordMergePass("VisRasterMerge2");
+    }
+
+    bool VisibilityRasterPass::RecordSwRaster(const MegaGeometryPass::VisibilityDrawPlan& plan,
+                                              uint32_t passIndex,
+                                              const char* timestampName)
+    {
+        if (!IsSwRasterAvailable() || !m_Work.bHasMegaDraw || !plan.SwRasterBuffer || plan.SwRasterCapacity == 0)
+        {
+            return false;
+        }
+
+        RHI::ICommandList* commandList = m_Work.CommandList;
+        ScopedGpuTimestamp gpuTimestamp(commandList, timestampName);
+
+        // 64bit のバッファを atomicMin で書ける状態へ（合流が読み終えた GenericRead から）
+        if (!m_Merge.RecordBeginSoftwareWrite(commandList))
+        {
+            return false;
+        }
+        // 一覧を、間接 dispatch の引数と読み取りに使う状態へ（カリングが書き終えた UnorderedAccess から）
+        commandList->BufferBarrier(plan.SwRasterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+
+        VisibilitySwRaster::Inputs inputs;
+        inputs.FrameUniform = m_Work.Slot->FrameUniform;
+        inputs.InstanceBuffer = plan.InstanceBuffer;
+        inputs.InstanceBufferBytes = plan.InstanceBufferBytes;
+        inputs.RecordTable = m_Work.Slot->RecordTable;
+        inputs.RecordTableBytes = m_Work.TableBytes;
+        inputs.KeyBuffer = m_Merge.GetKeyBuffer();
+        inputs.KeyWidth = m_Merge.GetKeyWidth();
+        inputs.KeyHeight = m_Merge.GetKeyHeight();
+        inputs.List = plan.SwRasterBuffer;
+        inputs.ListCapacity = plan.SwRasterCapacity;
+        inputs.Viewport = m_Work.Viewport;
+        inputs.Scissor = m_Work.Scissor;
+        const bool bRecorded = m_SwRaster.RecordDispatch(commandList, passIndex, inputs);
+
+        // 一覧は次のカリング（2 パス目）・最後の Common への戻しが続けて扱うので UnorderedAccess へ戻す。
+        // 64bit のバッファの書き込みは、合流の読み取りへ見せる
+        commandList->BufferBarrier(plan.SwRasterBuffer, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+        m_Merge.RecordEndSoftwareWrite(commandList);
+        if (bRecorded)
+        {
+            ++m_Stats.SwRasterDispatchCount;
+        }
+        return bRecorded;
     }
 
     void VisibilityRasterPass::RecordMergeClear()
@@ -1663,6 +1742,10 @@ namespace NorvesLib::Core::Rendering
         {
             m_Merge.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
             m_Work.bMerge = m_Merge.EnsureKeyBuffer(idTexture->GetWidth(), idTexture->GetHeight());
+            if (m_SwRaster.IsReady())
+            {
+                m_SwRaster.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+            }
         }
 
         if (bDeferred)
