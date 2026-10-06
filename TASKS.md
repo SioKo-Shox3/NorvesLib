@@ -1098,7 +1098,7 @@
 - status: todo
 - done-when: バッファのアドレス（BDA）に対応しない装置では `VisibilitySwRaster` が使えない（`IsReady` が偽）ので、ID のラスタは 64bit のバッファの埋め・合流も作らず（`IsSwRasterAvailable()` と同じ条件で合流の資源の作成を絞る）、振り分けも行わない。`SW_RASTER_FALLBACK reason=bda_unsupported` を 1 回ログへ出す。`RenderGraphCompileTest` に、BDA に対応しない装置（`FakeDevice` の能力を落とす）で、合流のバッファ・埋め・合流のパスが無く、カリングの定数が無効（0）になることを確かめる場面を足し、判定を外す変異で落ちることを記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest RenderResourcesDomainContractTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest|RenderingGoldenImageTest.*)$"`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VisibilityResolveVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
 - stop-when: 変異を入れても検査が落ちない場合は、場面を直して落ちることを確かめるまで done にしない。
 - paths: Test/Core/Rendering, Library/Core/Public/Rendering, Library/Core/Private/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 VTG7-SW-HARDEN-TESTS から分けた（その notes (d)）。今は BDA に対応しない装置で、合流だけが作られて埋めと合流が毎フレーム走り、振り分けは定数 1 で続く。危険地帯（描画パス）。テストのコードでも標準ライブラリの型を使わない。
