@@ -201,7 +201,7 @@ namespace NorvesLib::Core::Rendering
             virtual void RecordFirstPassDraws(RHI::ICommandList *commandList, const VisibilityDrawPlan &plan) = 0;
             /**
              * @brief 1回目の描画の後・HZB を作る前。ハードのラスタの外で書かれた ID・深度（ソフトウェアラスタの 64bit のバッファ）を、
-             *        HZB の元の深度へ合流させる。RecordFirstPassDraws が描画を記録できなかったフレームは呼ばれない
+             *        HZB の元の深度へ合流させる。2 パスの遮蔽の構成では毎フレーム呼ばれる（RecordFirstPassDraws が描画を記録できなかったフレームは、sink 側で何もしない）
              *
              * 深度は呼ばれる時点と戻る時点のどちらも ShaderResource の状態（HZB がそのまま読む）。
              */

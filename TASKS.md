@@ -1038,11 +1038,11 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG7-SW-RASTER -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3 -SwRaster On`
 - stop-when: ソフトとハードの被覆の違いで、起動画面に穴か継ぎ目が見える場合は、再現の撮影を残して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md, Scripts/CaptureStartupScene.ps1
-- notes: 2026-10-06 親（段7の開始時に詳しくした）。危険地帯（描画パス）。1 反復で閉じない場合は、pass1 だけ（pass2 のソフトの一覧はハードへ戻す）で一度コミットして WIP を続ける。
+- notes: 2026-10-06 親（段7の開始時に詳しくした）。危険地帯（描画パス）。1 反復で閉じない場合は、pass1 だけ（pass2 のソフトの一覧はハードへ戻す）で一度コミットして WIP を続ける。 2026-10-06 親（VTG7-VISBUFFER64-MERGE の評価・VTG7-SW-BIN の結果）: (1) 64bit の値へ詰める深度は符号ビットが 0 の有限な float にそろえる（-0.0 は +0.0 に。`floatBitsToUint(-0.0)` = 0x80000000 は atomicMin では最も奥、深度の比較では最も手前で食い違う）。`VisibilityBufferEncodingTest` に -0.0 の照合を足す。 (2) ソフトのラスタ（`instanceCount = 0` にすること）は `VisibilityBufferMode::On` で材質の解決を使う構成だけに限る。Debug（GBuffer が先に MegaGeometry を描き、HZB を GBuffer の深度から先に作る）では、ソフトに回したクラスタが GBuffer から消え、合流の値が HZB にも入らないので、振り分けない（`SW_RASTER_FALLBACK reason=debug_mode` 等）。 (3) VTG7-SW-BIN の一覧の容量は 65535（間接 dispatch の x の保証の上限）で、しきい値 8 画素では負荷モードでも一覧は描くクラスタの 1% 未満（default 587/148560）。VTG7-SW-THRESHOLD で 16・32・64 画素を測るので、間接 dispatch の引数を 2 次元（x = min(数, 65535)、y = ceil(数 / 65535)、シェーダーは `gl_WorkGroupID.y * 65535 + gl_WorkGroupID.x` で一覧の数を超える分を捨てる）にし、一覧の容量をパスごとのコマンド数まで広げる。 (4) 合流の「空なら discard」を外す変異が GPU のケースで落ちることを確かめる（NaN の深度の扱いは装置しだい）。
 
 ## VTG7-SW-THRESHOLD: ソフトウェアラスタのしきい値ごとの GPU 時間を測る
 - status: todo
-- done-when: RelWithDebInfo の `-GpuTimingFrames 300` で、負荷モード 300 個（既定・近接・低角度）と起動画面について、`--sw-raster=off` と、`--sw-raster=on` × しきい値 4・8・16 画素を測り、フレーム GPU・`MegaGeometryDraw1/2`・ソフトのラスタの区間（`VisRasterSoftware1/2` を足す）・合流の区間（`VisRasterMerge1/2`）の中央値と、ソフトの一覧の数を表にして PROGRESS に書く。最も速いしきい値を選び、`--sw-raster-max-px` の既定をその値にする（変えるのは既定の値だけ）。
+- done-when: RelWithDebInfo の `-GpuTimingFrames 300` で、負荷モード 300 個（既定・近接・低角度）と起動画面について、`--sw-raster=off` と、`--sw-raster=on` × しきい値 8・16・32・64 画素（`--sw-raster-max-px`。画面上の半径。VTG7-SW-BIN で 8 画素では負荷モードでも一覧が描くクラスタの 1% 未満だった）を測り、フレーム GPU・`MegaGeometryDraw1/2`・ソフトのラスタの区間（`VisRasterSoftware1/2` を足す）・合流の区間（`VisRasterMerge1/2`）の中央値と、ソフトの一覧の数（`SW_RASTER_BIN` の pass1・pass2・overflow）を表にして PROGRESS に書く。最も速いしきい値を選び、`--sw-raster-max-px` の既定をその値にする（変えるのは既定の値だけ）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest)$"`

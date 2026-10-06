@@ -10,7 +10,7 @@
 // 表（visRecords）の宣言と VisLoadRecord が使える。表を別の方法（buffer_reference など）で引くシェーダーは定義しない。
 //
 // ソフトウェアラスタの 64bit のバッファ（画面の画素ごとに uint64 を 1 つ）は、上位 32bit = floatBitsToUint(深度)、
-// 下位 32bit = ID と詰め、atomicMin で書く。深度は 0 以上の float なのでビットの整数の大小が深度の大小と一致し、
+// 下位 32bit = ID と詰め、atomicMin で書く。深度は符号ビットが 0 の有限な float（+0.0 以上。-0.0 は +0.0 にそろえてから詰める）なのでビットの整数の大小が深度の大小と一致し、
 // 1 回のアトミックで「手前の深度、同じ深度なら小さい ID」が残る。空（何も書かれていない）はすべてのビットが 1。
 // uint64 を使う関数は、64bit 整数の拡張（GL_EXT_shader_explicit_arithmetic_types_int64）を有効にしたシェーダーが、
 // 取り込む前に VIS_ENABLE_KEY64 を定義したときだけ使える（拡張を有効にしていないシェーダーでも拡張のマクロは定義されるので、
@@ -103,7 +103,7 @@ uint VisTriangleIndex(uint id) { return id & (VIS_MAX_TRIANGLES_PER_RECORD - 1u)
 #ifdef VIS_ENABLE_KEY64
 const uint64_t VIS_KEY_EMPTY = ~uint64_t(0);
 
-// 深度（0 以上の float）と ID から 64bit の値を作る。小さい値ほど手前（同じ深度なら小さい ID）
+// 深度（符号ビットが 0 の有限な float。-0.0 は +0.0 にそろえてから渡す）と ID から 64bit の値を作る。小さい値ほど手前（同じ深度なら小さい ID）
 uint64_t VisPackKey(float depth, uint id)
 {
     return (uint64_t(floatBitsToUint(depth)) << VIS_KEY_DEPTH_SHIFT) | uint64_t(id);
