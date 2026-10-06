@@ -107,7 +107,7 @@ namespace
             CHECK(!file.fail());
             Snapshot = C::MakeShared<A::AssetSystem>(C::AnsiString(Root.generic_string().c_str()));
             C::AnsiString manifest = "{\"version\":1,\"assets\":[";
-            const char* paths[] = {"Actors/A", "Actors/B", "Actors/C", Unicode};
+            const char* paths[] = {"Actors/A", "Actors/B", "Actors/C", "Actors/D"};
             bool first = true;
             for (const auto* path : paths)
             {
@@ -133,6 +133,15 @@ namespace
                 manifest += "}";
             }
             manifest += "]}";
+            A::AssetManifest parsedManifest;
+            const bool parsed = parsedManifest.LoadFromJsonText(F::CoreText(manifest));
+            if (!parsed)
+            {
+                std::fprintf(stderr, "Runtime fixture manifest: status=%u error=%s json=%s\n",
+                             static_cast<unsigned>(parsedManifest.GetParseStatus()),
+                             parsedManifest.GetParseError().c_str(), manifest.c_str());
+            }
+            CHECK(parsed);
             CHECK(Snapshot->LoadManifestFromJsonText(F::CoreText(manifest)));
         }
         ~Fixture()
@@ -269,11 +278,21 @@ namespace
         env.Registry.CollectGarbage();
         CHECK(env.Registry.GetResourceCount() == 0);
         auto unicode = LoadOne(env, Unicode);
-        CHECK(unicode.Failure == Failure::None && unicode.Asset->GetResourcePath() == F::CoreText(Unicode));
+        CHECK(unicode.Failure == Failure::ResolveRejected && !unicode.Asset);
+        CHECK(env.Registry.GetResourceCount() == 0);
+        // 既存manifest入口はASCII限定。UTF-8の入力検証と非ASCII資産の読込成功を混同しない。
+        const auto nonAsciiManifest =
+            C::AnsiString("{\"version\":1,\"assets\":[{\"logical_path\":\"") + Unicode +
+            "\",\"kind\":\"model\",\"source_hash\":\"0000000000000001\",\"variant\":\"default\",\"format\":\"nvskel.v0.skinned.pnujiw.u32\",\"cooked_package\":\"asset.nvpkg\",\"entry_name\":\"a\",\"entry_type\":\"Skl0\",\"cooked_hash\":\"0000000000000001\",\"cooked_version\":0}]}";
+        A::AssetManifest rejected;
+        CHECK(!rejected.LoadFromJsonText(F::CoreText(nonAsciiManifest)));
+        CHECK(rejected.GetParseStatus() == A::AssetManifestParseStatus::RequiredFieldMissing);
+        const auto retained = LoadOne(env, "Actors/D");
+        CHECK(retained.Failure == Failure::None && retained.Asset);
         env.Value.Close();
         CHECK(env.Value.Drain() == S::Drained);
-        CHECK(unicode.Asset->IsLoaded());
-        std::printf("SKELETAL_RUNTIME_CASE result=pass sharing_gc_unicode\n");
+        CHECK(retained.Asset->IsLoaded());
+        std::printf("SKELETAL_RUNTIME_CASE result=pass sharing_gc_utf8_input_ascii_manifest_boundary\n");
     }
     void ReentrantBatch(T::JobSystem::ExecutionMode mode)
     {
@@ -294,7 +313,7 @@ namespace
                                       ++a;
                                   }) == idA);
                        CHECK(Load(env.Value, "Actors/B", [&](const Completion&) { ++b; }) == idB);
-                       Load(env.Value, Unicode, [&](const Completion&) { ++newCalls; });
+                       Load(env.Value, "Actors/D", [&](const Completion&) { ++newCalls; });
                    });
         CHECK(Access::WaitReady(env.Value, 1));
         idB = Load(env.Value, "Actors/B", [&](const Completion&) { ++b; });

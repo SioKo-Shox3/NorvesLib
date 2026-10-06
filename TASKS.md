@@ -2698,3 +2698,5 @@
 - done-when: explicit ownerと借用JobSystem/RegistryでBindするinstanceから、実finite TaskのP1所有CPU解析、事前確保intrusive ready、owner P2a一括公開、遅延delegateを一つにつなぐ。同snapshot/正規pathのgroup合流とRegistry session/domain/generation cacheを持ち、永続strong cacheを作らない。
 - verify: 実simple/work-stealing＋3clip fixture、所有/typed failureとcache/GC、wrong owner、有限Flushと再入追加の次Flush配送、submit拒否/例外/earlyterminal、Cancel/Closeの準備/worker/ready/assembly/precommit/通知各窓、TaskWaitとhandoff ackの差、callback例外/DrainDeferred、session/domain/snapshot/上限/weak解放。新試験はDebug/Releaseの常時検査、旧61と関連Debug/CLI/固定captureを維持する。
 - stop-when: worker/eventでResource/consumerを扱う、全Pending polling、State lock下のSubmit/Cancel/consumer、handoffやCloseに新確保必須、precommitとの取消競合窓、TaskWaitだけでDrain完了、自己callback内同期破棄、架空ResourceId/token推測、製品loop/M9/StageB/GPUまで完成とする。
+
+- known-limit: 既存AssetManifestのJSON文字列はASCII限定。新runtimeのUTF-8構文検証は非ASCII論理pathのcooked成功を意味しない。現在の正常fixtureはASCIIで、合法UTF-8未登録pathはtyped拒否として検証する。manifest UTF-8化は別変更。

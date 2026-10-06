@@ -1014,3 +1014,9 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 寿命: Registry sessionの専用単調domainでcacheを隔離し、登録はState→Registryの最終gateで行う。Closeは未開始配送を抑止し、Drainはsubmission/handoff/active配送/取消pinの終了後に確保なしで所有を解放する。一般並行Registry破棄・製品loop・M9・StageB・GPUは対象外。
 
 - 反証補強: in-flight索引をIdentityへ合わせ、保持view/Request完全keyを照合して衝突を拒否する。early-terminalの正常受理→ready→公開/通知各1、commit内State mutexの別thread取得不能/外側取得可能を明示検査する。
+
+### GR83 統合fixtureのmanifest境界修正（2026-10-07 JST）
+
+- code61f325fe / run37498380281 / job112388696429 はRelease build・固定Sampler・旧61CPUを通過したが、新runtime試験の最初のmanifest構築で失敗した。Debugと後続CLIは未実行。
+- 原因: 既存AssetManifest::TryReadStringMemberはIsAsciiJsonStringで非ASCIIを拒否する。新しい正例fixtureが非ASCII logical_pathを混ぜていた。正常4資産はActors/A〜Dへ修正し、UTF-8構文受理→未登録pathのResolveRejected、manifest側の既存拒否を別に確認する。診断にはparse status/error/JSONを追加する。
+- production・旧parser・固定基準は変更しない。非ASCII論理pathのcooked成功を受入範囲から区別し、GR84の物理Unicode locatorと混同しない。
