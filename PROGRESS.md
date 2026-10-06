@@ -1038,3 +1038,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 
 - activation境界: 消費済み/attach済みの再Prepareはaudio/config変更前に拒否する。Leave後はfresh Prepareが必要で、無準備/消費済みの再EnterをFailedへ流す。実productionのCanPrepare/CanEnterをCPU常時検査とsource配線検査で反証する。native検証は未実行。
 - 実装候補: owner sessionと実loop、M9の弱参照一回event・明示clip・activation境界、実World/Scope attach helperを接続。Python source8件をnormal/-Oで各合格、workflow YAML parse・新規C++ BOM/CRLF・既存行末比較・diff whitespaceを確認。固定Sampler2原本6095bytes/SHAを保持。Release63とDebugのCPU契約、Game両構成compile、既存cook/CLI比較はCI待ち。
+
+- 初回Windows CI: e02bd284 / run37516423509 / job112450358893はRelease bundle buildで失敗。新SkeletalAssetSessionTestの3箇所がconst lvalueをSetClip(rvalue専用)へ渡しMSVC C2664になった。所有copyを明示生成するfixtureだけを修正し、productionは変更しない。CPU63/Debug/Gameと後段CLIはskippedで未検証。失敗run原本は別archiveとして保持する。

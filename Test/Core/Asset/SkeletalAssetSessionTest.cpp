@@ -344,14 +344,14 @@ namespace
         CHECK(std::abs(selected.BonePalette[1].values[13] - (-2.f)) < 1e-5f);
         auto foreign = registry.CreateTransient<Core::AnimationClipResource>("foreign");
         CHECK(foreign);
-        foreign->SetClip(second->GetClip());
+        foreign->SetClip(Core::Skeletal::SkeletalAnimationClip(second->GetClip()));
         CHECK(foreign->Load());
         CHECK(!component->SetAnimationClip(foreign) && !component->SetAnimationClip({}) &&
               component->GetAnimationClip() == second);
         const auto savedClip = second->GetClip();
         second->Unload();
         CHECK(!component->EvaluatePose());
-        second->SetClip(savedClip);
+        second->SetClip(Core::Skeletal::SkeletalAnimationClip(savedClip));
         CHECK(second->Load() && component->EvaluatePose());
         auto mesh = event.Asset->GetMesh();
         auto skeleton = event.Asset->GetSkeleton();
@@ -369,7 +369,7 @@ namespace
         Core::Component::SkinnedMeshComponent* failedComponent = nullptr;
         auto other = registry.CreateTransient<Core::AnimationClipResource>("not-member");
         CHECK(other);
-        other->SetClip(savedClip);
+        other->SetClip(Core::Skeletal::SkeletalAnimationClip(savedClip));
         CHECK(other->Load());
         CHECK(!M9::AttachM9SkeletalAsset(world, failedScope, event.Asset, other, failedObject, failedComponent));
         CHECK(!failedObject && !failedComponent && world.GetObjectCount() == 1);
