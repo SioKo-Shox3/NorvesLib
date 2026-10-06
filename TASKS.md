@@ -899,7 +899,7 @@
 - notes: 2026-10-06 VTG6-DEFAULT-ON から分けた（VTG6-VIS-RASTER から回した項目）。危険地帯（描画パス）。今の on は MegaGeometryPass が GBuffer の描画を止めるので、HZB の元の GBuffer.Depth が空のままで、2パス目の遮蔽の判定が何も省かない（`MegaGeometryPass.h` の SetSkipGBufferDraw の doc）。ID のラスタ（VisibilityRasterPass）は MegaGeometryPass の後で、描画の写し（VisibilityDrawPlan）を取り出して 1・2 パス目をまとめて描くため、HZB の元に入る深度が無い。設計の選び方（MegaGeometryPass が ID のパイプラインで 1・2 パス目を描く / ラスタが 1 パス目の後に HZB と 2 パス目のカリングを呼ぶ）は、描画のコマンドの数・バリアが少ない方を採る。
 
 ## VTG6-DEFAULT-ON-SKIN-CAPTURE: スキニングを含む検証シーンをビジビリティバッファで撮る
-- status: doing
+- status: done
 - done-when: スキニングを含む検証シーン（`RenderingVelocitySkinnedVulkanTest` の場面など）を、ビジビリティバッファで撮る経路を足す（検証用の撮影の入口。起動画面は変えない）。ID の表示（`--visibility-buffer=debug` と同じ色分け）と解決の結果（Albedo・Normal・Velocity）を撮り、開いて確かめる。スキニングの塊が ID に描かれ（`VIS_RASTER` の `skinned_chunks` が 0 でない）、GBuffer の経路との画素の比較（Albedo・Normal・Velocity）が説明できる範囲に収まる。計算スキニングのパイプラインだけが作れない装置では、スキニングの無い場面でも予備（GBuffer の描画）になることを `PROGRESS.md` に記録する（持ち越しの (d)）。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest SkinnedRenderPathContractTest RenderingVelocityVulkanTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest|ComputeSkinningVulkanTest|RenderingVelocitySkinnedVulkanTest|RenderingVelocitySkinnedGBufferFallbackVulkanTest)$"`

@@ -16,6 +16,7 @@
 #include "Core/Public/Resource/SkinnedMeshResource.h"
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 
@@ -26,9 +27,23 @@ namespace Game::GameModes
         // パネルの格子の分割数（辺あたり）と大きさ（m）。置く位置は地面（Y=-1）に下の辺が着く高さ。
         constexpr uint32_t kGridCells = 8u;
         constexpr float kPanelHalfSize = 1.0f;
-        constexpr float kPanelPositionX = 2.8f;
-        constexpr float kPanelPositionY = 0.0f;
-        constexpr float kPanelPositionZ = 1.5f;
+
+        // 置く体の位置と、揺れの位相（秒。周期のずらし）。同じ資産を 2 体置く。
+        // 計算スキニングの割り当ては体ごとに頂点・骨の基点が後ろへ進むので、1 体目の基点は必ず 0 になる。
+        // 2 体目は基点が 0 にならない体で、記録の頂点の基点の二重加算のような取り違えは 2 体目の描画だけに出る。
+        // 位相は体ごとに変え、2 体の姿勢（と速度）を別にする。
+        struct PanelPlacement
+        {
+            float X;
+            float Y;
+            float Z;
+            float PhaseSeconds;
+        };
+        constexpr PanelPlacement kPanelPlacements[] = {
+            {2.8f, 0.0f, 1.5f, 0.0f},
+            {-2.6f, 0.0f, 2.5f, 0.5f},
+        };
+        constexpr size_t kPanelCount = sizeof(kPanelPlacements) / sizeof(kPanelPlacements[0]);
         // 揺れの振れ幅（Y 軸まわり。度）と周期（秒）。
         constexpr float kSwayDegrees = 35.0f;
         constexpr float kSwayPeriodSeconds = 2.0f;
@@ -183,35 +198,43 @@ namespace Game::GameModes
             return false;
         }
 
-        NorvesLib::Core::Entity* entity = ctx.WorldRef.SpawnObject<NorvesLib::Core::Entity>();
-        if (entity == nullptr)
-        {
-            return false;
-        }
-        ctx.ScopeRef.TrackObject(entity);
-        entity->SetPosition(kPanelPositionX, kPanelPositionY, kPanelPositionZ);
-        auto* skinned = ctx.WorldRef.CreateComponent<NorvesLib::Core::Component::SkinnedMeshComponent>(entity);
-        if (skinned == nullptr)
-        {
-            return false;
-        }
-        skinned->SetSkeletalAsset(asset);
-        skinned->SetMaterial(data.m_CobbleStoneMaterial);
-        // 再生はせず、UpdateStartupSkinnedProbe が時刻から姿勢を決める（撮影の時刻をそろえるため）。
-        skinned->SetPlaying(false);
-        skinned->SetLooping(true);
-        skinned->SetAnimationTimeSeconds(0.0f);
-        skinned->SetCastShadow(true);
-        skinned->SetVisible(true);
         data.m_StartupSkinnedProbeAsset = asset;
-        data.m_pStartupSkinnedProbeComponent = skinned;
-        LOG_INFO("STARTUP_SKINNED_PROBE placed x=%.2f y=%.2f z=%.2f", kPanelPositionX, kPanelPositionY, kPanelPositionZ);
+        for (size_t index = 0u; index < kPanelCount; ++index)
+        {
+            const PanelPlacement& placement = kPanelPlacements[index];
+            NorvesLib::Core::Entity* entity = ctx.WorldRef.SpawnObject<NorvesLib::Core::Entity>();
+            if (entity == nullptr)
+            {
+                LOG_ERROR("STARTUP_SKINNED_PROBE_SKIPPED 骨付きのパネルの実体を作れない index=%zu", index);
+                return false;
+            }
+            ctx.ScopeRef.TrackObject(entity);
+            entity->SetPosition(placement.X, placement.Y, placement.Z);
+            auto* skinned = ctx.WorldRef.CreateComponent<NorvesLib::Core::Component::SkinnedMeshComponent>(entity);
+            if (skinned == nullptr)
+            {
+                LOG_ERROR("STARTUP_SKINNED_PROBE_SKIPPED 骨付きのパネルの部品を作れない index=%zu", index);
+                return false;
+            }
+            skinned->SetSkeletalAsset(asset);
+            skinned->SetMaterial(data.m_CobbleStoneMaterial);
+            // 再生はせず、UpdateStartupSkinnedProbe が時刻から姿勢を決める（撮影の時刻をそろえるため）。
+            skinned->SetPlaying(false);
+            skinned->SetLooping(true);
+            skinned->SetAnimationTimeSeconds(placement.PhaseSeconds);
+            skinned->SetCastShadow(true);
+            skinned->SetVisible(true);
+            data.m_StartupSkinnedProbeComponents.push_back(skinned);
+            LOG_INFO("STARTUP_SKINNED_PROBE placed index=%zu x=%.2f y=%.2f z=%.2f phase=%.2f",
+                     index, placement.X, placement.Y, placement.Z, placement.PhaseSeconds);
+        }
+        LOG_INFO("STARTUP_SKINNED_PROBE bodies=%zu", kPanelCount);
         return true;
     }
 
     void UpdateStartupSkinnedProbe(NorvesLib::Core::GameMode::GameModeContext& ctx, Rendering3DTestData& data)
     {
-        if (data.m_pStartupSkinnedProbeComponent == nullptr)
+        if (data.m_StartupSkinnedProbeComponents.empty())
         {
             return;
         }
@@ -219,11 +242,14 @@ namespace Game::GameModes
         const float seconds = deterministicCapture.IsEnabled()
                                   ? static_cast<float>(deterministicCapture.GetEpochSeconds())
                                   : data.m_ElapsedTime;
-        float poseSeconds = std::fmod(seconds, kSwayPeriodSeconds);
-        if (!std::isfinite(poseSeconds) || poseSeconds < 0.0f)
+        for (size_t index = 0u; index < data.m_StartupSkinnedProbeComponents.size() && index < kPanelCount; ++index)
         {
-            poseSeconds = 0.0f;
+            float poseSeconds = std::fmod(seconds + kPanelPlacements[index].PhaseSeconds, kSwayPeriodSeconds);
+            if (!std::isfinite(poseSeconds) || poseSeconds < 0.0f)
+            {
+                poseSeconds = 0.0f;
+            }
+            data.m_StartupSkinnedProbeComponents[index]->SetAnimationTimeSeconds(poseSeconds);
         }
-        data.m_pStartupSkinnedProbeComponent->SetAnimationTimeSeconds(poseSeconds);
     }
 } // namespace Game::GameModes

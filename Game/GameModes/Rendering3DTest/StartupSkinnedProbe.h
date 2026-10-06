@@ -10,7 +10,7 @@ namespace Game::GameModes
     struct Rendering3DTestData;
 
     /**
-     * @brief 検証用の骨付きのパネルを、石畳の材質で地面の上へ 1 枚置く（--startup-skinned-probe）。
+     * @brief 検証用の骨付きのパネルを、石畳の材質で地面の上へ 2 体置く（--startup-skinned-probe）。
      *
      * 起動画面にはスキニングの物が無いので、ビジビリティバッファの ID のラスタ・幾何の解決がスキニングの塊を
      * 描けること（VIS_RASTER の skinned_chunks が 0 でない）と、GBuffer の経路との Albedo・Normal・Velocity の
@@ -18,7 +18,9 @@ namespace Game::GameModes
      * 既定は置かない（起動画面は変えない）。
      *
      * 骨 1 本が Y 軸まわりに ±35° 揺れる（周期 2 秒・ループ）。パネルは 8x8 の格子で、表と裏の両方を張る。
-     * @return 置けたら true。資源を作れない・材質が無いときは false（ログを出し、何も置かない）
+     * 2 体は同じ資産で、位置と揺れの位相が違う。2 体目は計算スキニングの割り当ての基点が 0 にならない体で、
+     * 基点の取り違えを撮影で見つけるために置く。置けたら STARTUP_SKINNED_PROBE bodies=<数> を出す。
+     * @return 全部置けたら true。資源を作れない・材質が無いときは false（ログを出し、何も置かない）
      */
     bool SpawnStartupSkinnedProbe(NorvesLib::Core::GameMode::GameModeContext& ctx, Rendering3DTestData& data);
 

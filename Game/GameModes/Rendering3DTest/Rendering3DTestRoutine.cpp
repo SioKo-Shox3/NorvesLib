@@ -1642,7 +1642,7 @@ namespace Game::GameModes
             data.m_pM9SkinnedObject = nullptr;
             data.m_pM9SkinnedMeshComponent = nullptr;
             data.m_StartupSkinnedProbeAsset.reset();
-            data.m_pStartupSkinnedProbeComponent = nullptr;
+            data.m_StartupSkinnedProbeComponents.clear();
             if (data.m_M9WorldAcceptance)
             {
                 data.m_M9WorldAcceptance->SkeletalAsset.reset();
