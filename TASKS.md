@@ -2630,7 +2630,9 @@
 - result: code67cb7620/tree75d8b4f9/run37398784660 attempt1 job112060978186。実Windows49CPU/新coordinate＋旧12marker、4実capture旧6095byte一致、旧89byte/managed/CLI/metadata/Python/MSVC/CNG/3ZIP全gateを受入。親readonly再実行exit0/最終1320payload inventory一致、旧受入919file/失敗650file保全。実double helperのhost通常/O2-NDEBUG/ASan-UBSan成功とfast-math拒否も別途確認。有限の明示座標変換だけを受入れ、SO3/rest補正/root処理/retarget/JSON/CLI/StageB/GPU/Blenderは未受入れ。
 
 ## G2-GR84-ROTATION-FRAME: 明示補正で1frameの回転を実Samplerへ渡す
-- status: doing
+- status: done
 - done-when: canonical source world回転・既存joint対応・明示proper CからW=C D C^T Bを評価し、実際に生成した親worldで絶対local回転へ戻す。未写像はbind local、複数rootは維持。heading保持/全target平行移動scale保持を必須policyとし、既存float Samplerと同じCompose/共役正規化/FKで生成値を検査した後だけ公開する。
 - verify: private純粋kernelの実host通常/O2-NDEBUG/ASan-UBSan、非可換C/D/B・180度・parent/mapping順・未写像親子・forest・source再利用・root/cycle/不正span/late failure。native正uniform非unit scale/nonidentity mesh/IBM、実BVH FK→明示座標→1key clip→実Samplerの回転/末端literal、非uniform/shear/反射/非finite拒否。凍結4capture/旧6095byteと旧全gateを維持。
 - stop-when: Cの推測/align_bones・heading補正・root位置・時間補間・loop・JSON/role語彙・CLI/StageBを同時実装する、非uniform/shearのworld回転の意味を黙って決める、旧Samplerへ新しい拒否を加える、float実現値を確認せずdouble結果だけで受入れる。
+
+- result: codec3f7530d/treed4783ad5/run37405962755 attempt1 job112083481089。初回e467b378のC4716を2か所の明示return 0で直し、実Windows51CPU/新2＋旧13marker、4実capture旧6095byte一致、旧89byte/managed/CLI/metadata/Python/MSVC/CNG/3ZIP全gateを受入。親readonly再実行exit0/最終1999payload inventory一致、旧coordinate1321file/失敗rotation1765file/失敗FK650file保全。latest3pathsと累積18paths/11Libraryを区別し、productionは初回候補から不変。明示C・heading/T/scale保持・正uniform targetの1frame回転と実Sampler接続だけを受入れ、自動C/role/clip時間列/root/CLI/StageB/GPU/Blenderは未完。

@@ -9,7 +9,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
 - GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
-- GR83/GR84: GR84のBVH raw/source FK・厳密名前索引・target bind/FK共有・schema非依存joint対応・明示座標変換を実Windows CPUで受入済み。rest補正・role入力・clip cookと分離資産ローダは未完。
+- GR83/GR84: GR84のBVH raw/source FK・厳密名前索引・target bind/FK共有・schema非依存joint対応・明示座標変換・明示Cの1frame回転対応を実Windows CPUで受入済み。自動rest補正・role入力・複数frameのclip生成/cookと分離資産ローダは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
@@ -938,3 +938,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 1frame回転retargetの検証準備。schema非依存pair/明示Cからdouble列回転を作る有界・確保なしkernelと、現在bind/旧Compose/共役正規化/FKを再利用したnative実現値検査を接続した。正uniformの限定profile、forest、未写像親子、非可換/半回転、atomic拒否を固定。native fixtureは実BVH→明示左右basis→1key→実Sampler、非恒等mesh/scale2、独立末端literal、late位置overflowを含む。静的round1は全体PASS、round2は追加left-basis fixture差分PASS。最終実kernelはhost通常/O2-NDEBUG/ASan-UBSan（LSan除外）でPASS、同じ3構成の旧coordinate試験と両fast-math拒否probeもPASS。旧Python17+19+12+4+7 normal/-OとBOM/EOL/YAML/凍結harnessは不変。native hostは既存Containers.hのWindows.h依存でcompile不能、stubなし・native実行なし。実Windows51CPU/4capture旧6095byte/旧全gateは次CIで未確認。回転角度の専用閾値超過fixtureと全alias組合せ・確保故障注入は未網羅。
 
 - G2/GR84 rotation初回native run37404174494（e467b378、job112077901826）はMSVC Release bundle buildで失敗。新規2testのmainが束ねる構成でNorvesTestMain_*へ改名され、暗黙のmain returnが適用されずC4716となった。2か所へ明示return 0だけを追加する。hostでも元ソースを同じ名前へ改名し-Werror=return-typeで失敗を再現し、修正後は改名済み関数を呼ぶ実exeの終了0とmarkerを確認。production実装/fixture期待値は変更しない。51CPU/4capture/旧gateは未実行、初回失敗証拠を保持し新commitで再検証する。
+
+- G2/GR84 1frame回転retarget受入: codec3f7530d/treed4783ad5/run37405962755 attempt1 job112083481089。初回e467b378のC4716を2か所の明示return 0で直し、実Windows51CPU/新2＋旧13marker、4実capture旧6095byte一致、旧89byte/managed/CLI/metadata/Python/MSVC/CNG/3ZIP全gateを受入。親readonly再実行exit0/最終1999payload inventory一致、旧coordinate1321file/失敗rotation1765file/失敗FK650file保全。latest3pathsと累積18paths/11Libraryを区別し、productionは初回候補から不変。明示C・heading/T/scale保持・正uniform targetの1frame回転と実Sampler接続だけを受入れ、自動C/role/clip時間列/root/CLI/StageB/GPU/Blenderは未完。 summary SHAe11433d7b58761cffefd834cfc8eefec72d083402543122979d7ace83c74b21b、inventory SHA54835e90c3310aee8c85a8aed1185493f3fc96bd5bf1f5d7a61b0f6ea0dd4482。stale jobs payload/REST commit shapeのchecker拒否は元資料ごと保存。cl/Core/Sampler.exeはCI hash receiptのみで実byte非保存。次は明示補正・sample保持のBVH→複数frame clipを実Samplerへ接続する。
