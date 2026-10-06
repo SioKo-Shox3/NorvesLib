@@ -185,7 +185,7 @@ namespace
         const auto current = F::BuildGoldenSkeletalV02();
         auto snapshot = fixture.Assets(current);
         CHECK(R::LoadCookedSkeletalForWorker({snapshot, "Actors/./Animal"}, cpu, report));
-        CHECK(cpu.GetLogicalPath() == "Actors/Animal" && report.Status == R::SkeletalAssetLoadStatus::Success);
+        CHECK(cpu.GetLogicalPath() == C::AnsiStringView("Actors/Animal") && report.Status == R::SkeletalAssetLoadStatus::Success);
         const auto parsed = cpu.GetData();
         CHECK(parsed && parsed->VersionMinor == 2);
         CHECK(R::AssembleCookedSkeletalAsset(cpu, context, asset, report));
