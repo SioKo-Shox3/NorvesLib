@@ -20,4 +20,9 @@ namespace NorvesLib::Core::Animation
     [[nodiscard]] SkeletalRetargetResult RetargetSkeletalRotationFrame(
         const SkeletalRetargetNativeInput& input, Container::Span<const Skeletal::SkeletalJoint> joints,
         const Math::Matrix4x4& meshGlobal, Container::Span<SkeletalRetargetRotationValue> out);
+    // 生成済みclipを実Samplerと同じ方法でsampleした列値を、元frameの目標Wへ照合する。
+    // mapping順/target一致と近似単位quaternionを要求し、生成入口と同じ実float経路を使う。
+    [[nodiscard]] SkeletalRetargetResult ValidateSkeletalRotationFrameValues(
+        const SkeletalRetargetNativeInput& input, Container::Span<const Skeletal::SkeletalJoint> joints,
+        const Math::Matrix4x4& meshGlobal, Container::Span<const SkeletalRetargetRotationValue> values);
 } // namespace NorvesLib::Core::Animation

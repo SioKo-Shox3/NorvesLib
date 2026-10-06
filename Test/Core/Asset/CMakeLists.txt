@@ -53,6 +53,8 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SkeletalCoordinateConversionTest SkeletalCoordinateConversionTest.cpp
     MEMBER SkeletalRotationRetargetTest SkeletalRotationRetargetTest.cpp
     MEMBER SkeletalRotationRetargetNativeTest SkeletalRotationRetargetNativeTest.cpp
+    MEMBER SkeletalBvhClipTimeTest SkeletalBvhClipTimeTest.cpp
+    MEMBER SkeletalBvhClipImportTest SkeletalBvhClipImportTest.cpp
     MEMBER BvhEvaluateTest BvhEvaluateTest.cpp
     MEMBER BvhDecodeTest BvhDecodeTest.cpp
     MEMBER GltfMaterialCookV1Test GltfMaterialCookV1Test.cpp
@@ -292,3 +294,5 @@ add_test(NAME SkeletalJointMappingTest COMMAND CookedMeshTest --test=SkeletalJoi
 add_test(NAME SkeletalCoordinateConversionTest COMMAND CookedMeshTest --test=SkeletalCoordinateConversionTest)
 add_test(NAME SkeletalRotationRetargetTest COMMAND CookedMeshTest --test=SkeletalRotationRetargetTest)
 add_test(NAME SkeletalRotationRetargetNativeTest COMMAND CookedMeshTest --test=SkeletalRotationRetargetNativeTest)
+add_test(NAME SkeletalBvhClipTimeTest COMMAND CookedMeshTest --test=SkeletalBvhClipTimeTest)
+add_test(NAME SkeletalBvhClipImportTest COMMAND CookedMeshTest --test=SkeletalBvhClipImportTest)

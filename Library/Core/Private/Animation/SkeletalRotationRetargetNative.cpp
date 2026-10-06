@@ -83,17 +83,19 @@ namespace NorvesLib::Core::Animation
             return {status, Side::Target, joint, SIZE_MAX, angle};
         }
     } // namespace
-    SkeletalRetargetResult RetargetSkeletalRotationFrame(const SkeletalRetargetNativeInput& input,
-                                                         Container::Span<const Skeletal::SkeletalJoint> joints,
-                                                         const Math::Matrix4x4& meshGlobal,
-                                                         Container::Span<SkeletalRetargetRotationValue> out)
+    static SkeletalRetargetResult EvaluateNativeRotationValues(
+        const SkeletalRetargetNativeInput& input, Container::Span<const Skeletal::SkeletalJoint> joints,
+        const Math::Matrix4x4& meshGlobal, Container::Span<SkeletalRetargetRotationValue> out,
+        Container::Span<const SkeletalRetargetRotationValue> supplied, bool bValidateOnly)
     {
         if (!Detail::SupportedSkeletalFloatEnvironment())
         {
             return Failure(Status::UnsupportedFloatEnvironment);
         }
         if (joints.empty() || input.Source.empty() || input.Mappings.empty() ||
-            input.Corrections.size() != input.Mappings.size() || out.size() != input.Mappings.size())
+            input.Corrections.size() != input.Mappings.size() ||
+            (bValidateOnly ? (!out.empty() || supplied.size() != input.Mappings.size())
+                           : (out.size() != input.Mappings.size() || !supplied.empty())))
         {
             return Failure(Status::InvalidInput);
         }
@@ -103,7 +105,7 @@ namespace NorvesLib::Core::Animation
             return Failure(Status::LimitExceeded);
         }
         if (!Valid(joints) || !Valid(input.Source) || !Valid(input.Mappings) || !Valid(input.Corrections) ||
-            !Valid(out))
+            !Valid(out) || !Valid(supplied))
         {
             return Failure(Status::InvalidInput);
         }
@@ -250,6 +252,25 @@ namespace NorvesLib::Core::Animation
         {
             return evaluated;
         }
+        if (bValidateOnly)
+        {
+            for (size_t i = 0; i < supplied.size(); ++i)
+            {
+                const auto& value = supplied[i];
+                if (value.TargetIndex != candidate[i].TargetIndex)
+                {
+                    return {Status::InvalidMapping, Side::Target, value.TargetIndex, i};
+                }
+                const double lengthSquared =
+                    static_cast<double>(value.X) * value.X + static_cast<double>(value.Y) * value.Y +
+                    static_cast<double>(value.Z) * value.Z + static_cast<double>(value.W) * value.W;
+                if (!std::isfinite(lengthSquared) || std::abs(lengthSquared - 1.0) > 1e-4)
+                {
+                    return {Status::InvalidRotation, Side::Target, value.TargetIndex, i};
+                }
+                candidate[i] = value;
+            }
+        }
         for (const auto& value : candidate)
         {
             transforms[value.TargetIndex].Rotation =
@@ -291,10 +312,26 @@ namespace NorvesLib::Core::Animation
                 return Failure(Status::NonFiniteTransform, static_cast<uint32_t>(i));
             }
         }
-        for (size_t i = 0; i < candidate.size(); ++i)
+        if (!bValidateOnly)
         {
-            out[i] = candidate[i];
+            for (size_t i = 0; i < candidate.size(); ++i)
+            {
+                out[i] = candidate[i];
+            }
         }
         return {Status::Success, Side::None, UINT32_MAX, SIZE_MAX, maximumError, true};
+    }
+    SkeletalRetargetResult RetargetSkeletalRotationFrame(const SkeletalRetargetNativeInput& input,
+                                                         Container::Span<const Skeletal::SkeletalJoint> joints,
+                                                         const Math::Matrix4x4& meshGlobal,
+                                                         Container::Span<SkeletalRetargetRotationValue> out)
+    {
+        return EvaluateNativeRotationValues(input, joints, meshGlobal, out, {}, false);
+    }
+    SkeletalRetargetResult ValidateSkeletalRotationFrameValues(
+        const SkeletalRetargetNativeInput& input, Container::Span<const Skeletal::SkeletalJoint> joints,
+        const Math::Matrix4x4& meshGlobal, Container::Span<const SkeletalRetargetRotationValue> values)
+    {
+        return EvaluateNativeRotationValues(input, joints, meshGlobal, {}, values, true);
     }
 } // namespace NorvesLib::Core::Animation

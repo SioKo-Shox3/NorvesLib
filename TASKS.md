@@ -2636,3 +2636,9 @@
 - stop-when: Cの推測/align_bones・heading補正・root位置・時間補間・loop・JSON/role語彙・CLI/StageBを同時実装する、非uniform/shearのworld回転の意味を黙って決める、旧Samplerへ新しい拒否を加える、float実現値を確認せずdouble結果だけで受入れる。
 
 - result: codec3f7530d/treed4783ad5/run37405962755 attempt1 job112083481089。初回e467b378のC4716を2か所の明示return 0で直し、実Windows51CPU/新2＋旧13marker、4実capture旧6095byte一致、旧89byte/managed/CLI/metadata/Python/MSVC/CNG/3ZIP全gateを受入。親readonly再実行exit0/最終1999payload inventory一致、旧coordinate1321file/失敗rotation1765file/失敗FK650file保全。latest3pathsと累積18paths/11Libraryを区別し、productionは初回候補から不変。明示C・heading/T/scale保持・正uniform targetの1frame回転と実Sampler接続だけを受入れ、自動C/role/clip時間列/root/CLI/StageB/GPU/Blenderは未完。
+
+## G2-GR84-BVH-CLIP-IMPORT: BVHの全sampleを再生可能な回転clipへ接続する
+- status: doing
+- done-when: 明示axes/handedness/scale・C・root対応・source位置規約・HeaderFrameTime/OverrideFpsから、全frame/全mapped targetのLINEAR回転clipと所有reportを生成する。元document全体を検証してから位置を計算しない専用source回転planでFKし、既存native1frame検証を共用する。timeは独立double計算→検査付きfloat、Durationは最終格納timeそのもの、隣接quaternionは半球連続。clip/reportは最後に一括公開。
+- verify: 位置のみsource/静止関節、全元値と名前・階層・channel検証、未使用の巨大position/OFFSETでも回転不変、root規約別の有限/計算不能diagnostics、明示時間・underflow/overflow/float衝突、符号境界、実Sampler全key/選択midpoint、nonidentity mesh/scale2/forest、所有/late failure atomic、checked keys/bytes/work予算。新testはbundle改名入口でも明示return。旧51CPU/4固定capture/旧全gateを維持。
+- stop-when: role経由を省いた外部JSONを作る、C/軸/fps/正面を推測する、sourceの無視する位置を評価して回転まで失敗させる、key検証を全補間曲線の保証と扱う、rootMotion/loop/resampling/CLI/cooker/StageBを同時完成とする。

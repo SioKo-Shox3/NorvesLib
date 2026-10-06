@@ -53,6 +53,7 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalJointIndexNative.cpp
     Private/Animation/SkeletalAnimationSampler.cpp
     Private/Animation/SkeletalSamplingMath.h
+    Private/Animation/SkeletalClipSampling.h
     Private/Animation/SkeletalBindRowMath.h
     Private/Animation/SkeletalJointGlobalRowMath.h
     Private/Animation/SkeletalJointMapping.h
@@ -65,6 +66,9 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalRotationRetargetMath.h
     Private/Animation/SkeletalRotationRetargetNative.h
     Private/Animation/SkeletalRotationRetargetNative.cpp
+    Private/Animation/SkeletalBvhClipTime.h
+    Private/Animation/SkeletalBvhClipImport.h
+    Private/Animation/SkeletalBvhClipImport.cpp
     Private/Animation/SkeletalAssetResource.cpp
     Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
@@ -235,6 +239,7 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfBufferSource.cpp
     Private/Resource/BvhDecode.h
     Private/Resource/BvhEvaluate.h
+    Private/Resource/BvhRotationSource.h
     Private/Resource/BvhEvaluate.cpp
     Private/Resource/BvhDecode.cpp
     Private/Resource/GltfBufferSet.h

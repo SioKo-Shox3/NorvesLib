@@ -1,5 +1,6 @@
 ﻿#include "Animation/SkeletalAnimationSampler.h"
 #include "Animation/SkeletalSamplingMath.h"
+#include "Animation/SkeletalClipSampling.h"
 #include "Animation/SkeletalBindRowMath.h"
 #include "Animation/SkeletalJointGlobalRowMath.h"
 
@@ -76,9 +77,6 @@ namespace NorvesLib::Core::Animation
             return true;
         }
 
-        using Detail::NormalizeQuaternion;
-        using Detail::Slerp;
-
         Skeletal::SkeletalValue SampleChannelValue(const Skeletal::SkeletalAnimationChannel& channel,
                                                    float timeSeconds)
         {
@@ -105,24 +103,7 @@ namespace NorvesLib::Core::Animation
                 }
 
                 const auto& previous = samples[sampleIndex - 1];
-                if (channel.Interpolation == Skeletal::SkeletalAnimationInterpolation::Step)
-                {
-                    return timeSeconds == next.TimeSeconds ? next.Value : previous.Value;
-                }
-                const float alpha = Detail::ComputeLinearAlpha(previous.TimeSeconds, next.TimeSeconds, timeSeconds);
-                if (channel.Path == Skeletal::SkeletalAnimationPath::Rotation)
-                {
-                    const Math::Quaternion rotation = Slerp(
-                        Math::Quaternion(previous.Value.X, previous.Value.Y, previous.Value.Z, previous.Value.W),
-                        Math::Quaternion(next.Value.X, next.Value.Y, next.Value.Z, next.Value.W),
-                        alpha);
-                    return {rotation.x, rotation.y, rotation.z, rotation.w};
-                }
-                return {
-                    previous.Value.X + (next.Value.X - previous.Value.X) * alpha,
-                    previous.Value.Y + (next.Value.Y - previous.Value.Y) * alpha,
-                    previous.Value.Z + (next.Value.Z - previous.Value.Z) * alpha,
-                    previous.Value.W + (next.Value.W - previous.Value.W) * alpha};
+                return Detail::SampleSkeletalChannelInterval(channel, previous, next, timeSeconds);
             }
             return samples.back().Value;
         }
