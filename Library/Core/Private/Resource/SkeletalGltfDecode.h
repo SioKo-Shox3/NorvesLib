@@ -39,6 +39,13 @@ namespace NorvesLib::Core::Skeletal
         const AssetImport::LoadedImportSettings* importSettings = nullptr,
         const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
 
+    // BVH clipを同じcookで追加するtarget専用。欠落/空animationsだけを0本として受ける。
+    // null/不正型/壊れた既存clipは拒否し、旧1本以上入口やwriterの契約は変更しない。
+    [[nodiscard]] SkeletalGltfDecodeResult DecodeBvhTargetRigGltfNativePath(Container::Span<const uint8_t> sourceBytes,
+        const std::filesystem::path& sourcePath, Gltf::BufferSet* outSourceBuffers = nullptr,
+        const AssetImport::LoadedImportSettings* importSettings = nullptr,
+        const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+
     // 旧String入口の互換用。出力buffer配列を求めた場合は全source bytesを所有コピーする。
     using SkeletalGltfSourceBuffers = Container::VariableArray<Container::VariableArray<uint8_t>>;
 

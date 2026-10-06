@@ -1,4 +1,5 @@
 ﻿#include "MeshCooker.h"
+#include "SkeletalBvhCook.h"
 #include "MeshMaterialV1Plan.h"
 #include "Resource/GltfNativePath.h"
 #include "ModelInspection.h"
@@ -32,6 +33,7 @@
 #include <filesystem>
 #include <limits>
 #include <utility>
+#include <type_traits>
 
 namespace NorvesLib::Tools::AssetCook
 {
@@ -2628,7 +2630,7 @@ namespace NorvesLib::Tools::AssetCook
 
         bool BuildNvskelBytes(const NorvesLib::Core::Skeletal::SkeletalGltfData& skeletal,
                               MeshByteArray& outBytes,
-                              AnsiString& error)
+                              AnsiString& error, uint64_t maxBytes = UINT64_MAX)
         {
             namespace SkeletalFormat = NorvesLib::Core::Asset::CookedSkeletalFormatV0;
             namespace SkeletalHeader = SkeletalFormat::HeaderOffset;
@@ -2773,6 +2775,11 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
+            if (fileSize > maxBytes)
+            {
+                error = "BVH cookのNVSKEL出力byte予算を超えました";
+                return false;
+            }
             outBytes.assign(fileSize, 0);
             std::memcpy(outBytes.data() + SkeletalHeader::Magic, SkeletalFormat::Magic, SkeletalFormat::MagicSize);
             WriteLe32(outBytes, SkeletalHeader::HeaderSize, static_cast<uint32_t>(V02::HeaderSize));
@@ -2948,7 +2955,8 @@ namespace NorvesLib::Tools::AssetCook
                                       SkeletalCookResult& outResult,
                                       AnsiString& error,
                           const Core::AssetImport::ImportSettingsFileOptions* importOptions,
-                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions, SkeletalCookDiagnostics& diagnostics)
+                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions, SkeletalCookDiagnostics& diagnostics,
+                          const SkeletalBvhCookRequest* bvhRequest = nullptr, SkeletalBvhCookResult* bvhResult = nullptr)
         {
             if (format != SupportedSkeletalFormat)
             {
@@ -2977,8 +2985,11 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             Gltf::BufferSet sourceBuffers;
-            const auto decoded = NorvesLib::Core::Skeletal::DecodeRigGltfNativePath(
-                {sourceBytes, sourceSize}, sourcePath, &sourceBuffers, &loadedImport, &options);
+            auto decoded = bvhRequest != nullptr
+                ? Core::Skeletal::DecodeBvhTargetRigGltfNativePath(
+                    {sourceBytes, sourceSize}, sourcePath, &sourceBuffers, &loadedImport, &options)
+                : Core::Skeletal::DecodeRigGltfNativePath(
+                    {sourceBytes, sourceSize}, sourcePath, &sourceBuffers, &loadedImport, &options);
             diagnostics.bDecodeAttempted = true;
             diagnostics.DecodeStatus = static_cast<uint32_t>(decoded.Status);
             diagnostics.Report = decoded.Report;
@@ -3021,8 +3032,14 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
+            if (bvhRequest != nullptr &&
+                !Detail::ApplyBvhCookRequest(*bvhRequest, decoded.Data, bvhResult->Report, bvhResult->ClipIndex, error))
+            {
+                return false;
+            }
             SkeletalCookResult result;
-            if (!BuildNvskelBytes(decoded.Data, result.NvskelBytes, error))
+            if (!BuildNvskelBytes(decoded.Data, result.NvskelBytes, error,
+                    bvhRequest != nullptr ? bvhRequest->MaxNvskelBytes : UINT64_MAX))
             {
                 return false;
             }
@@ -3098,6 +3115,23 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             result.SourceHash = policyHash.Value;
+            if (bvhRequest != nullptr)
+            {
+                if (!Detail::AppendBvhCookHash(result.SourceHash, *bvhRequest, result.SourceHash))
+                {
+                    error = "BVH cook要求のhashを生成できません";
+                    return false;
+                }
+                // 新旧全clipの値を再読込後も保持する。構造paddingは比較しない。
+                for (size_t index = 0; index < decoded.Data.Clips.size(); ++index)
+                {
+                    if (!Detail::EqualBvhCookClip(decoded.Data.Clips[index], roundtrip.Clips[index]))
+                    {
+                        error = "BVH cookのclip値がNVSKEL再読込後に一致しません";
+                        return false;
+                    }
+                }
+            }
             result.DecodeReport = decoded.Report;
             result.bHasImportSettings = loadedImport.bPresent;
             result.ImportSettingsPath = loadedImport.Path;
@@ -3269,6 +3303,28 @@ namespace NorvesLib::Tools::AssetCook
         {
             *outDiagnostics = diagnostics;
         }
+        return true;
+    }
+
+    bool CookGltfWithBvhToNvskelNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+        Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
+        const SkeletalBvhCookRequest& request, SkeletalBvhCookResult& outResult,
+        Core::Container::AnsiString& error, const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+    {
+        if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
+        {
+            return false;
+        }
+        SkeletalBvhCookResult candidate;
+        SkeletalCookDiagnostics diagnostics;
+        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, candidate.Cook, error,
+                importOptions, decodeOptions, diagnostics, &request, &candidate))
+        {
+            return false;
+        }
+        static_assert(std::is_nothrow_move_assignable_v<SkeletalBvhCookResult>);
+        outResult = std::move(candidate);
         return true;
     }
 
