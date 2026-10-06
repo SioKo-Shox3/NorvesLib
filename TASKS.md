@@ -888,7 +888,7 @@
 - notes: 2026-10-06 VTG6-DEFAULT-ON から分けた（既定の切り替えと予備の判定）。危険地帯（描画パス）。持ち越しの (a)（予備のときは ID のラスタを足さない）・(c)（予備で GBuffer を描かないときはパレットのアップロードが 1 回）・(e)（撮影の既定と off の撮影・VT の常駐の上限）はこの単位で扱った。残りは VTG6-DEFAULT-ON-HZB・VTG6-DEFAULT-ON-SKIN-CAPTURE・VTG6-DEFAULT-ON-TILE-VRAM と VTG6-DEFAULT-ON。
 
 ## VTG6-DEFAULT-ON-HZB: 2パスの遮蔽の HZB をビジビリティの1パス目の深度から作る
-- status: todo
+- status: done
 - done-when: on の構成で MegaGeometry の2パスの遮蔽が効く（撮影の `mega_occlusion.occluded` が off の構成と同程度になる。切り替え直後は on が 0 で、off の default 7・near 69・low 41）。`ID・深度の1パス目 → HZB → 2パス目` の順で、MegaGeometryPass の1パス目・2パス目の描画先をビジビリティバッファ（VisBuffer.Id と GBuffer.Depth）にし、HZB をその1パス目の深度から作る。手続きメッシュ・スキニングの塊の描画は、この深度に重ねて描く（HZB の元に入らなくてよいが、遮蔽の判定が隠れていない側に倒れること）。予備の経路（GBuffer へのラスタ）では従来どおり GBuffer の深度から HZB を作る。`RenderGraphCompileTest` に、on の2パスの順（ID の1パス目 → HZB → 2パス目）と、予備の経路の順を確かめる検査を足し、配線を戻すと落ちる変異を確かめる。起動画面の撮影（`-Deterministic`、default・near・low）で `occluded` が戻り、画像が直前の撮影と PSNR 45 dB 以上で一致することを開いて確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest SkinnedRenderPathContractTest MegaGeometryResourcesTest RenderingVelocityVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest|HiZPyramidVulkanTest|HiZOcclusionTestVulkanTest|VisibilityResolveVulkanTest|RenderingVelocityStaticVulkanTest|RenderingVelocitySkinnedVulkanTest|RenderingVelocitySkinnedGBufferFallbackVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`

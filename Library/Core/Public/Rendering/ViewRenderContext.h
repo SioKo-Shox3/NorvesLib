@@ -838,7 +838,13 @@ namespace NorvesLib::Core::Rendering
                                                                   arrayCount));
         }
 
-        void EnqueueMegaGeometryPass(MegaGeometryPass* pass)
+        /**
+         * @brief MegaGeometryPass の記録コマンド（今のビューポートのカメラ・描画範囲・表示・フレームの通し番号）を作る
+         *
+         * 通常は EnqueueMegaGeometryPass がキューへ積む。ビジビリティバッファの ID のラスタが記録を自分の Execute へ移す経路
+         * （MegaGeometryPass::IsFrameRecordDeferred）では、ラスタがこのコマンドを作って記録を呼ぶ。
+         */
+        FrameCommand BuildMegaGeometryPassCommand(MegaGeometryPass* pass)
         {
             const CameraProxy *activeCamera = GetActiveCamera();
             FrameCommand command = FrameCommand::CreateMegaGeometryPass(pass,
@@ -860,7 +866,12 @@ namespace NorvesLib::Core::Rendering
                 command.MegaGeometry.PreviousCamera = *previousCamera;
                 command.MegaGeometry.bHasPreviousCamera = true;
             }
-            EnqueueFrameCommand(command);
+            return command;
+        }
+
+        void EnqueueMegaGeometryPass(MegaGeometryPass* pass)
+        {
+            EnqueueFrameCommand(BuildMegaGeometryPassCommand(pass));
         }
 
         // ========================================

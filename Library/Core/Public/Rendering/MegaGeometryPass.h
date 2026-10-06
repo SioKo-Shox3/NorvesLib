@@ -15,6 +15,7 @@ namespace NorvesLib::Core::Rendering
 {
     class SceneView;
     class SceneRenderer;
+    class VisibilityRasterPass;
     class VisibilityResolvePass;
     struct MegaGeometryPassCommand;
     class MegaGeometryResources;
@@ -77,7 +78,9 @@ namespace NorvesLib::Core::Rendering
      *
      * 遮蔽カリング（既定で有効。--mega-occlusion=off で上の従来の1回の判定に戻る）は2パスで行う:
      * 1. 1パス目: 視錐台・法線のコーン・LODの判定を通り、前のフレームで見えたクラスタだけを描く（遮蔽の判定はしない）。
-     * 2. その時点の深度（GBufferPassの不透明＋1パス目）からHZBを作る。
+     * 2. その時点の深度（GBufferPassの不透明＋1パス目）からHZBを作る。ビジビリティバッファの幾何の解決が GBuffer を書くとき
+     *    （--visibility-buffer=on）は GBuffer の描画を止めるので、ID のラスタ（VisibilityRasterPass）が記録を駆動し、
+     *    ID・深度へ描いた手続き・スキニングの塊と1パス目の深度から HZB を作る（IDrawSink）。
      * 3. 2パス目: 判定を通った全クラスタをHZBで判定し直し、1パス目で描かなかったもののうち遮蔽されないものを描く。
      *    全クラスタの「見えた」ビット（インスタンスごとに持続する）を更新し、次のフレームの1パス目が使う。
      * 影（CSM・点光源）はこのパスを通らず、カメラの深度で省かない。
@@ -102,7 +105,19 @@ namespace NorvesLib::Core::Rendering
         void Execute(ViewRenderContext &context) override;
         void Declare(RenderGraphBuilder &builder) override;
         void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
-        void RecordFrameCommand(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList);
+
+        class IDrawSink;
+
+        /**
+         * @brief フレームの記録（クラスタカリングと描画）
+         * @param sink null なら従来どおり GBuffer の render pass へ描く。null でないとき、GBuffer の添付の状態遷移
+         *        （render pass の開始と終了）は呼び出し側が済ませてあるものとして、このパスは GBuffer の render pass を開かず、
+         *        2パスの遮蔽のときの描画を sink が行う。1回の判定（2パスにならなかったとき）は sink を呼ばず、
+         *        描画の写し（TakeVisibilityDrawPlan）を残して終える
+         */
+        void RecordFrameCommand(const MegaGeometryPassCommand &command,
+                                RHI::ICommandList *commandList,
+                                IDrawSink *sink = nullptr);
 
         // ========================================
         // SceneView連携
@@ -166,6 +181,28 @@ namespace NorvesLib::Core::Rendering
         };
 
         /**
+         * @brief 2パスの遮蔽の途中で、ID・深度へ描く側（VisibilityRasterPass）が呼ばれる受け口
+         *
+         * 幾何の解決が GBuffer を書くとき、2パスの遮蔽の HZB は GBuffer ではなく ID のラスタの深度から作る。そのため
+         * RecordFrameCommand が次の順で呼び出す（sink を渡したときだけ）:
+         *   1パス目のカリング → RecordFirstPassDraws → HZB の生成 → 2パス目のカリング → RecordSecondPassDraws
+         * 描画の写し plan は両方の呼び出しで同じ内容（1パス目のカリングの前に作る）。バッファの状態は、1回目の呼び出しの時点で
+         * 1パス目の範囲が IndirectArgument（描画情報は GenericRead）、2回目の時点で2パス目の範囲まで書き終えている。
+         * 呼び出しの間に sink が必要とする状態の遷移は sink が行い、RecordFrameCommand が戻った後の戻し
+         * （ReleaseVisibilityDrawBuffers）も sink 側の責任になる。
+         */
+        class IDrawSink
+        {
+        public:
+            virtual ~IDrawSink() = default;
+
+            /** @brief 1パス目のカリングの後。ID・深度へ手続き・スキニングの塊と1パス目を描く（深度は描いた後 ShaderResource になる） */
+            virtual void RecordFirstPassDraws(RHI::ICommandList *commandList, const VisibilityDrawPlan &plan) = 0;
+            /** @brief 2パス目のカリングの後。ID・深度へ2パス目を描く */
+            virtual void RecordSecondPassDraws(RHI::ICommandList *commandList, const VisibilityDrawPlan &plan) = 0;
+        };
+
+        /**
          * @brief ビジビリティバッファの描画の写しを作るか（既定は作らない）
          *
          * 作るとき、RecordFrameCommand は IndirectDraw・カウンタ・描画情報のバッファを次のフレーム用に戻さず、
@@ -182,8 +219,9 @@ namespace NorvesLib::Core::Rendering
          * 解決が実際に使えないとき（SetVisibilityResolvePass の相手の GetFallbackReason が None 以外。相手を渡していないときは
          * 装置が VisibilityResolveGeometry::IsSupported を満たさないとき）は、true でも描く。
          *
-         * 2 パスの遮蔽の HZB は GBuffer の深度から作るので、止めている間は 1 パス目のクラスタが深度に入らない。
-         * 判定は隠れていない側（描く側）に倒れるだけで、見える物は欠けない。
+         * 2 パスの遮蔽の HZB は、止めている間は ID のラスタの深度から作る（SetVisibilityRasterPass で渡した相手が描くとき。
+         * IsFrameRecordDeferred）。渡していない・相手が描けないときは GBuffer の深度から作るので、1 パス目のクラスタが
+         * 深度に入らず、判定は隠れていない側（描く側）に倒れるだけで、見える物は欠けない。
          */
         void SetSkipGBufferDraw(bool bSkip) { m_bSkipGBufferDraw = bSkip; }
         bool IsSkipGBufferDraw() const { return m_bSkipGBufferDraw; }
@@ -194,6 +232,26 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetFrameSlotCapacity() const { return m_FrameSlots.GetCapacity(); }
         /** @brief 手放して GPU の使い終わりを待っているバッファの数（検査用） */
         size_t GetRetiredBufferCount() const { return m_RetiredBuffers.size(); }
+        /**
+         * @brief ID・深度へ描く相手（同じ View の VisibilityRasterPass）。渡すと、解決が GBuffer を書くフレームは、
+         *        相手の Execute が記録を駆動する（Execute(context) は記録をキューへ積まず、GBuffer の添付の状態遷移だけを行う）
+         */
+        void SetVisibilityRasterPass(const VisibilityRasterPass *pass) { m_VisibilityRaster = pass; }
+        const VisibilityRasterPass *GetVisibilityRasterPass() const { return m_VisibilityRaster; }
+
+        /**
+         * @brief このフレームの記録を ID のラスタへ移したか（Execute(context) が決める。取り出すと false に戻る）
+         *
+         * true のとき、ラスタが BuildMegaGeometryPassCommand で作ったコマンドを RecordFrameCommand（sink 付き）へ渡す。
+         */
+        bool TakeFrameRecordDeferred()
+        {
+            const bool bDeferred = m_bFrameRecordDeferred;
+            m_bFrameRecordDeferred = false;
+            return bDeferred;
+        }
+        bool IsFrameRecordDeferred() const { return m_bFrameRecordDeferred; }
+
         /** @brief 解決が使えるかの問い合わせ先（同じ View の VisibilityResolvePass。null なら装置の機能だけで判定） */
         void SetVisibilityResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
         const VisibilityResolvePass* GetVisibilityResolvePass() const { return m_ResolvePass; }
@@ -385,6 +443,9 @@ namespace NorvesLib::Core::Rendering
          */
         bool CanUseTwoPassOcclusion(const MegaGeometryPassCommand &command);
 
+        /** @brief GBuffer の描画を止めるか（止める設定で、解決が実際に使えるとき） */
+        bool ShouldSkipGBufferDraw(DebugViewMode mode) const;
+
         /** @brief 「見えた」ビットの区画を要求するインスタンス1つ分 */
         struct VisibilityRequest
         {
@@ -553,6 +614,9 @@ namespace NorvesLib::Core::Rendering
         // GBuffer への描画を止めるか（ビジビリティバッファの解決が GBuffer を書くとき）
         bool m_bSkipGBufferDraw = false;
         const VisibilityResolvePass* m_ResolvePass = nullptr;
+        const VisibilityRasterPass* m_VisibilityRaster = nullptr;
+        // このフレームの記録を ID のラスタへ移したか（Execute(context) が決め、ラスタが TakeFrameRecordDeferred で取り出す）
+        bool m_bFrameRecordDeferred = false;
         VisibilityDrawPlan m_VisibilityPlan;
         // 描画の写しを作ったフレームの IndirectDraw・カウンタ・描画情報のバッファが、Common へ戻されないまま残っているか
         bool m_bVisibilityBuffersHeld = false;

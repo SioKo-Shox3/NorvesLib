@@ -401,6 +401,8 @@ namespace
         Container::VariableArray<RHI::PipelinePtr> SetPipelines;
         // 呼ばれた順の記録（B=BeginRenderPass、E=EndRenderPass、D=Dispatch、I=間接描画）。パスの並びの検査用
         Container::VariableArray<char> CallSequence;
+        // DrawIndexedInstanced（手続き・スキニングの塊の描画）が呼ばれた時点の CallSequence の長さ。render pass の中のどの位置かを確かめる
+        Container::VariableArray<size_t> InstancedDrawSequencePositions;
         uint32_t LastDrawIndexedInstancedIndexCount = 0;
         uint32_t LastDrawIndexedInstancedStartIndexLocation = 0;
         int32_t LastDrawIndexedInstancedBaseVertexLocation = 0;
@@ -486,6 +488,7 @@ namespace
             LastDrawIndexedInstancedIndexCount = indexCount;
             LastDrawIndexedInstancedStartIndexLocation = startIndexLocation;
             LastDrawIndexedInstancedBaseVertexLocation = baseVertexLocation;
+            InstancedDrawSequencePositions.push_back(CallSequence.size());
             PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
         }
@@ -2404,6 +2407,8 @@ namespace
                 }
                 scene.GBuffer.SetVisibilityResolvePass(&scene.Resolve);
                 scene.Mega.SetVisibilityResolvePass(&scene.Resolve);
+                // 2パスの遮蔽の HZB を ID のラスタの深度から作るため、MegaGeometryPass の記録をラスタの Execute へ移す
+                scene.Mega.SetVisibilityRasterPass(&scene.Raster);
                 scene.Raster.SetResolvePass(&scene.Resolve);
                 scene.Device->bFailComputePipelines = resolveMode == ResolveMode::ResolvePipelineUnavailable;
                 if (classifyMode == ClassifyMode::BeforeResolveTilePipelineUnavailable)
@@ -2497,7 +2502,10 @@ namespace
         assert(scene.Raster.GetRecordTableBytes() == 5 * sizeof(VisibilityBuffer::DrawRecord));
 
         // ID は R32_UINT の1枚のカラー添付（空の ID で消す）と、GBuffer が書いた深度の Load。どちらも ShaderResource で終わる
+        // もう 1 つは、2 パスの遮蔽の途中で続けて開く 2 回目の render pass（ID・深度とも Load で、ShaderResource から始まる）。
+        // この構成（GBuffer が先に描く）は 1 回目の render pass だけを使う
         bool bFoundIdRenderPass = false;
+        bool bFoundSecondIdRenderPass = false;
         for (const RHI::RenderPassDesc& desc : scene.Device->CreatedRenderPassDescs)
         {
             if (desc.colorAttachments.size() != 1 || desc.colorAttachments[0].format != RHI::Format::R32_UINT)
@@ -2505,17 +2513,25 @@ namespace
                 continue;
             }
             const RHI::AttachmentDesc& id = desc.colorAttachments[0];
-            assert(id.loadOp == RHI::AttachmentLoadOp::Clear);
-            assert(id.clearColorUint[0] == VisibilityBuffer::EMPTY_ID);
-            assert(id.initialState == RHI::ResourceState::RenderTarget);
             assert(id.finalState == RHI::ResourceState::ShaderResource);
             assert(desc.hasDepthStencil);
             assert(desc.depthStencilAttachment.loadOp == RHI::AttachmentLoadOp::Load);
-            assert(desc.depthStencilAttachment.initialState == RHI::ResourceState::DepthWrite);
             assert(desc.depthStencilAttachment.finalState == RHI::ResourceState::ShaderResource);
+            if (id.initialState == RHI::ResourceState::ShaderResource)
+            {
+                assert(id.loadOp == RHI::AttachmentLoadOp::Load);
+                assert(desc.depthStencilAttachment.initialState == RHI::ResourceState::ShaderResource);
+                bFoundSecondIdRenderPass = true;
+                continue;
+            }
+            assert(id.loadOp == RHI::AttachmentLoadOp::Clear);
+            assert(id.clearColorUint[0] == VisibilityBuffer::EMPTY_ID);
+            assert(id.initialState == RHI::ResourceState::RenderTarget);
+            assert(desc.depthStencilAttachment.initialState == RHI::ResourceState::DepthWrite);
             bFoundIdRenderPass = true;
         }
         assert(bFoundIdRenderPass);
+        assert(bFoundSecondIdRenderPass);
 
         // MegaGeometryPass が残した IndirectDraw・カウンタ・描画情報は、ID の描画の後に Common へ戻る（記録を書く計算のために
         // コマンド・カウンタは GenericRead へ渡され、そこから戻る）。ID の描画より前には戻らない
@@ -3595,6 +3611,124 @@ namespace
         return baseline;
     }
 
+    // --visibility-buffer=on（解決が GBuffer を書く）: GBuffer の描画を止めるので、2 パスの遮蔽の HZB は ID のラスタの深度から作る。
+    // MegaGeometryPass は記録を ID のラスタの Execute へ移し、順は
+    //   1 パス目のカリング → ID・深度の 1 回目の render pass（手続き・スキニングの塊 → MegaGeometry の 1 パス目）
+    //   → HZB（その深度から）→ 2 パス目のカリング → 記録を書く計算 → ID・深度の 2 回目の render pass（2 パス目）
+    // MegaGeometryPass の記録をラスタへ移す配線（Execute の判定・IDrawSink）や、2 つの呼び出しの順を戻すと落ちる
+    void TestVisibilityRasterOnBuildsHiZFromIdDepthBetweenTwoPasses()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, ResolveMode::Supported);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(scene.Resolve.CanResolve(scene.Device.get()));
+        assert(scene.Resolve.WasResolved());
+        // 移したフレームの記録は、ラスタの Execute が取り出して済んでいる
+        assert(!scene.Mega.IsFrameRecordDeferred());
+
+        const auto& sequence = commandList.CallSequence;
+        const char expected[] = {
+            'B', 'E',                                   // GBufferPass: 描画を止めてクリアと添付の遷移だけ
+            'B', 'E',                                   // MegaGeometryPass: GBuffer の添付の遷移だけ（描画も記録もラスタへ移した）
+            'D',                                        // 計算スキニング（この場面のスキニングの塊 1 体）
+            'D',                                        // 1 パス目のカリング（ラスタの Execute の中）
+            'B', 'I', 'E',                              // ID・深度の 1 回目: 塊（直接描画。並びには出ない）→ MegaGeometry の 1 パス目
+            'D', 'D', 'D', 'D', 'D', 'D', 'D',          // HZB の 7 段（128x64 の深度から。ID の 1 回目が書いた深度）
+            'D',                                        // 2 パス目のカリング
+            'D',                                        // 記録を書く計算
+            'B', 'I', 'E',                              // ID・深度の 2 回目: MegaGeometry の 2 パス目
+        };
+        assert(sequence.size() >= sizeof(expected));
+        for (size_t i = 0; i < sizeof(expected); ++i)
+        {
+            assert(sequence[i] == expected[i]);
+        }
+        // 2 回目の render pass の後は、解決の dispatch だけ（描画も render pass も無い）
+        for (size_t i = sizeof(expected); i < sequence.size(); ++i)
+        {
+            assert(sequence[i] == 'D');
+        }
+        assert(commandList.BeginRenderPassCount == 4);
+        assert(commandList.EndRenderPassCount == 4);
+
+        // 間接描画は 1 パス目（範囲 0）・2 パス目（範囲は 1 パスのコマンド数ぶん後ろ）で 1 回ずつ。GBuffer へは描かない
+        assert(commandList.IndirectDraws.size() == 2);
+        assert(commandList.IndirectDraws[0].OffsetBytes == 0);
+        assert(commandList.IndirectDraws[1].OffsetBytes == 2 * 20);
+
+        // 手続き・スキニングの塊は、すべて 1 回目の render pass の中で、MegaGeometry の 1 パス目より前（HZB の元の深度に入る）
+        assert(commandList.InstancedDrawSequencePositions.size() == SceneIdDirectDraws);
+        for (const size_t position : commandList.InstancedDrawSequencePositions)
+        {
+            assert(position == 7); // 'B' の直後（1 パス目の間接描画 'I' より前）
+        }
+
+        // 記録の表は MegaGeometry の 2 パスぶんのコマンド（4）と塊（手続き 3・スキニング 1）の記録を持つ
+        const VisibilityRasterFrameStats& stats = scene.Raster.GetLastFrameStats();
+        assert(stats.bRendered);
+        assert(stats.MegaCommandSlots == 4);
+        assert(stats.ProceduralRecords == 3 && stats.SkinnedRecords == 1);
+        assert(stats.TotalSlots == 1 + 4 + 4);
+        assert(scene.Raster.GetRecordTable());
+        assert(scene.Raster.GetMegaInstanceBuffer());
+
+        // MegaGeometryPass が残したコマンド・カウンタ・描画情報は、記録を移した後も ID の描画の後に Common へ戻る
+        size_t commonBarriers = 0;
+        for (const BarrierEvent& barrier : commandList.Barriers)
+        {
+            if (barrier.Kind == RGBarrierKind::Buffer && barrier.AfterState == RHI::ResourceState::Common &&
+                barrier.BeforeState == RHI::ResourceState::GenericRead)
+            {
+                const auto* fakeBuffer = static_cast<const FakeBuffer*>(barrier.Buffer);
+                const char* name = fakeBuffer->GetDesc().DebugName;
+                if (IsDebugName(name, "MegaGeometry_IndirectDraw") || IsDebugName(name, "MegaGeometry_DrawCount") ||
+                    IsDebugName(name, "MegaGeometry_DrawInfo"))
+                {
+                    ++commonBarriers;
+                }
+            }
+        }
+        assert(commonBarriers == 3);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 遮蔽カリングを使わない（1 回の判定）構成では、HZB が要らないので記録を移しても 2 回に分けず、描画の写しを残して
+    // ラスタが MegaGeometry の全部と塊を 1 回の render pass で描く（記録を書く計算は描画の前に 1 回）
+    void TestVisibilityRasterOnSinglePassCullingDrawsEverythingInOneRenderPass()
+    {
+        VisibilityRasterScene scene;
+        RunVisibilityRasterScene(scene, true, false, ClassifyMode::None, true, true, ResolveMode::Supported);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(scene.Resolve.WasResolved());
+        const auto& sequence = commandList.CallSequence;
+        const char expected[] = {
+            'B', 'E',      // GBufferPass
+            'B', 'E',      // MegaGeometryPass: GBuffer の添付の遷移だけ
+            'D',           // 計算スキニング
+            'D',           // 1 回の判定のカリング（ラスタの Execute の中）
+            'D',           // 記録を書く計算
+            'B', 'I', 'E', // ID・深度: MegaGeometry（1 パス）→ 塊
+        };
+        assert(sequence.size() >= sizeof(expected));
+        for (size_t i = 0; i < sizeof(expected); ++i)
+        {
+            assert(sequence[i] == expected[i]);
+        }
+        assert(commandList.IndirectDraws.size() == 1);
+        assert(commandList.InstancedDrawSequencePositions.size() == SceneIdDirectDraws);
+        for (const size_t position : commandList.InstancedDrawSequencePositions)
+        {
+            assert(position == 9); // 間接描画 'I' の後（塊は MegaGeometry の後）
+        }
+        // 1 パスぶんのコマンド（同じ材質の 2 インスタンスは 1 つの区間でクラスタ数の合計 2）だけ
+        assert(scene.Raster.GetLastFrameStats().MegaCommandSlots == 2);
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
     // --visibility-buffer=on: GBufferPass・MegaGeometryPass は GBuffer の描画を止め（クリアと添付の遷移だけ残す）、
     // 幾何の解決のパスが GBuffer の Albedo・Normal・Material・Velocity・Emissive を storage image として書く。
     // 止める配線（SetVisibilityResolveActive・SetSkipGBufferDraw）や、storage image の使い道・書き込みの状態を戻すと落ちる
@@ -3847,7 +3981,8 @@ namespace
         {
             VisibilityRasterScene normalScene;
             RunVisibilityRasterScene(normalScene, true, true, ClassifyMode::None, true, true, ResolveMode::Supported);
-            assert(CountGraphicsPipelineSets(normalScene.CommandList, RHI::PolygonMode::Fill) == 3);
+            // 手続き・スキニング 1 回ずつと、MegaGeometry の 1 パス目・2 パス目（render pass が 2 回に分かれる）で 1 回ずつ
+            assert(CountGraphicsPipelineSets(normalScene.CommandList, RHI::PolygonMode::Fill) == 4);
             assert(CountGraphicsPipelineSets(normalScene.CommandList, RHI::PolygonMode::Line) == 0);
             ShutdownVisibilityRasterScene(normalScene);
         }
@@ -3859,7 +3994,7 @@ namespace
 
         assert(scene.Raster.IsDrawReady(DebugViewMode::Wireframe));
         assert(scene.Resolve.CanResolve(scene.Device.get(), DebugViewMode::Wireframe));
-        assert(CountGraphicsPipelineSets(commandList, RHI::PolygonMode::Line) == 3);
+        assert(CountGraphicsPipelineSets(commandList, RHI::PolygonMode::Line) == 4);
         assert(CountGraphicsPipelineSets(commandList, RHI::PolygonMode::Fill) == 0);
 
         // GBuffer の描画は止まったまま（ID の描画だけが残り）、解決が GBuffer を書く
@@ -4146,6 +4281,9 @@ namespace
             // ID のラスタは、解決が使えず予備へ戻るフレームを描かないために解決へ問い合わせる（Debug は解決が無いので問い合わせない）
             const auto* rasterPass = static_cast<const VisibilityRasterPass*>(sceneView.FindPass("VisibilityRasterPass"));
             assert(rasterPass == nullptr || rasterPass->GetResolvePass() == resolvePass);
+            // 解決が GBuffer を書く On だけ、MegaGeometry は記録を ID のラスタへ移す（2 パスの遮蔽の HZB を ID の深度から作る）。
+            // Off・Debug は GBuffer へ描くので、GBuffer の深度から作る従来の経路のまま
+            assert(mega->GetVisibilityRasterPass() == (expectation.bResolve ? rasterPass : nullptr));
             // 計算スキニングも同じ問い合わせで、予備のフレームは変形しない（Off・Debug は解決が無いので問い合わせない）
             const auto* skinningPass = static_cast<const SkinningComputePass*>(sceneView.FindPass("SkinningComputePass"));
             assert(skinningPass != nullptr && skinningPass->GetResolvePass() == resolvePass);
@@ -5358,11 +5496,11 @@ namespace
         assert(commandList.IndirectDraws[1].MaxDrawCount == 2);
     }
 
-    // 幾何の解決が GBuffer を書くとき（SetSkipGBufferDraw）、MegaGeometryPass は描画の呼び出しだけを省き、
-    // 2 パスの並び（1 パス目のカリング → render pass → HZB → 2 パス目のカリング → render pass）は保つ。
-    // 1 パス目の深度は GBuffer に入らないので HZB は空の深度（1.0 で消した値のまま）から作られ、2 パス目の遮蔽の判定は
-    // 何も隠さない（隠れていない側＝描く側に倒れる）。見える物は欠けず、判定が甘くなるだけ。
-    // 順序の組み直し（ID の深度を HZB の元にする）は VTG6-DEFAULT-ON
+    // 幾何の解決が GBuffer を書くとき（SetSkipGBufferDraw）で、記録を移す相手（ID のラスタ）を渡していない構成。
+    // MegaGeometryPass は描画の呼び出しだけを省き、2 パスの並び（1 パス目のカリング → render pass → HZB → 2 パス目のカリング →
+    // render pass）は保つ。1 パス目の深度は GBuffer に入らないので HZB は空の深度（1.0 で消した値のまま）から作られ、2 パス目の
+    // 遮蔽の判定は何も隠さない（隠れていない側＝描く側に倒れる）。見える物は欠けず、判定が甘くなるだけ。
+    // ID のラスタを渡した構成（SceneView の On）は、HZB を ID の深度から作る（TestVisibilityRasterOnBuildsHiZFromIdDepthBetweenTwoPasses）
     void TestMegaGeometrySkipGBufferDrawKeepsTwoPassOrderWithoutDraws()
     {
         FakeCommandList commandList;
@@ -9536,6 +9674,8 @@ int main()
     TestWriteFinalStateSuppressesFollowupReadBarrier();
     TestVisibilityBufferResourcesDeclareAndRead();
     TestVisibilityRasterOnRecordsMegaDrawsAndIdPass();
+    TestVisibilityRasterOnBuildsHiZFromIdDepthBetweenTwoPasses();
+    TestVisibilityRasterOnSinglePassCullingDrawsEverythingInOneRenderPass();
     TestMaterialTileClassifyDispatchesAndPublishesArgs();
     TestMaterialTileClassifyWithoutRecordTableClearsArgs();
     TestMaterialTileClassifyAbsentWhenNotAdded();

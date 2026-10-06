@@ -930,6 +930,8 @@ namespace NorvesLib::Core::Rendering
             skinningComputePassPtr->SetResolvePass(visibilityResolvePass.get());
             gbufferPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
             megaGeometryPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
+            // 2パスの遮蔽の HZB は、GBuffer の描画を止めている間は ID のラスタの深度から作る（記録をラスタの Execute へ移す）
+            megaGeometryPassPtr->SetVisibilityRasterPass(visibilityRasterPassPtr);
             AddPass(std::move(visibilityResolvePass));
         }
 

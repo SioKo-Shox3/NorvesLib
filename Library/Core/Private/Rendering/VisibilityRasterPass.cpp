@@ -2,6 +2,7 @@
 
 #include "Logging/LogMacros.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/FrameCommand.h"
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -224,6 +225,9 @@ namespace NorvesLib::Core::Rendering
         m_FragmentShader.reset();
         m_RecordsShader.reset();
         m_Framebuffer.reset();
+        m_SecondFramebuffer.reset();
+        m_SecondRenderPass.reset();
+        m_Work = FrameWork{};
         m_FramebufferId = nullptr;
         m_FramebufferDepth = nullptr;
         m_RenderPass.reset();
@@ -273,7 +277,20 @@ namespace NorvesLib::Core::Rendering
         desc.depthStencilAttachment.finalState = RHI::ResourceState::ShaderResource;
 
         m_RenderPass = m_Device->CreateRenderPass(desc);
-        return m_RenderPass != nullptr;
+        if (!m_RenderPass)
+        {
+            return false;
+        }
+
+        // 2 回目の render pass: 1 回目の描画の後に続けて開くので、ID・深度とも ShaderResource の状態から始まり、内容を Load する
+        // （2 パスの遮蔽で、HZB を作った後に MegaGeometry の 2 パス目を描く）
+        RHI::RenderPassDesc secondDesc = desc;
+        secondDesc.colorAttachments[0].clear = false;
+        secondDesc.colorAttachments[0].loadOp = RHI::AttachmentLoadOp::Load;
+        secondDesc.colorAttachments[0].initialState = RHI::ResourceState::ShaderResource;
+        secondDesc.depthStencilAttachment.initialState = RHI::ResourceState::ShaderResource;
+        m_SecondRenderPass = m_Device->CreateRenderPass(secondDesc);
+        return m_SecondRenderPass != nullptr;
     }
 
     bool VisibilityRasterPass::CreatePipelines(ViewRenderContext& /*context*/)
@@ -374,7 +391,8 @@ namespace NorvesLib::Core::Rendering
 
     bool VisibilityRasterPass::EnsureFramebuffer(const RHI::TexturePtr& idTexture, const RHI::TexturePtr& depthTexture)
     {
-        if (m_Framebuffer && m_FramebufferId == idTexture.get() && m_FramebufferDepth == depthTexture.get())
+        if (m_Framebuffer && m_SecondFramebuffer && m_FramebufferId == idTexture.get() &&
+            m_FramebufferDepth == depthTexture.get())
         {
             return true;
         }
@@ -386,9 +404,17 @@ namespace NorvesLib::Core::Rendering
         desc.width = idTexture->GetWidth();
         desc.height = idTexture->GetHeight();
         m_Framebuffer = m_Device->CreateFramebuffer(desc);
-        m_FramebufferId = m_Framebuffer ? idTexture.get() : nullptr;
-        m_FramebufferDepth = m_Framebuffer ? depthTexture.get() : nullptr;
-        return m_Framebuffer != nullptr;
+        m_SecondFramebuffer.reset();
+        if (m_Framebuffer)
+        {
+            RHI::FramebufferDesc secondDesc = desc;
+            secondDesc.renderPass = m_SecondRenderPass;
+            m_SecondFramebuffer = m_Device->CreateFramebuffer(secondDesc);
+        }
+        const bool bCreated = m_Framebuffer && m_SecondFramebuffer;
+        m_FramebufferId = bCreated ? idTexture.get() : nullptr;
+        m_FramebufferDepth = bCreated ? depthTexture.get() : nullptr;
+        return bCreated;
     }
 
     bool VisibilityRasterPass::EnsureFrameSlot(FrameSlot& slot,
@@ -744,62 +770,18 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void VisibilityRasterPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
+    VisibilityRasterPass::PrepareResult VisibilityRasterPass::PrepareFrame(const MegaGeometryPass::VisibilityDrawPlan* plan)
     {
-        m_Stats = VisibilityRasterFrameStats{};
-        m_LastRecordTable.reset();
-        m_LastRecordTableBytes = 0;
-        m_LastMaterialTable.reset();
-        m_LastMaterialTableCount = 0;
-        m_LastMaterialEntries.clear();
-        m_LastMegaInstanceBuffer.reset();
-        m_LastMegaInstanceBytes = 0;
-
-        // そのフレームの MegaGeometry の描画の写し。取り出すと、MegaGeometryPass が残したバッファの戻しはこのパスの責任になる
-        MegaGeometryPass::VisibilityDrawPlan plan;
-        const bool bHasPlan = m_MegaGeometryPass && m_MegaGeometryPass->TakeVisibilityDrawPlan(plan);
-        RHI::ICommandList* commandList = context.CommandList;
-
-        // 描けないときは、残してあったバッファをそのまま戻して終える
-        const auto bail = [&]() -> void
-        {
-            if (m_MegaGeometryPass)
-            {
-                m_MegaGeometryPass->ReleaseVisibilityDrawBuffers(commandList);
-            }
-        };
-
-        if (!m_bInitialized && !Initialize(context))
-        {
-            bail();
-            return;
-        }
-        if (!commandList || !m_RenderPass || !m_MegaPipeline || !m_MeshPipeline || !m_SkinnedPipeline ||
-            !m_RecordsPipeline || !m_IdHandle.IsValid() || !m_DepthHandle.IsValid())
-        {
-            bail();
-            return;
-        }
-
-        const RHI::TexturePtr idTexture = resources.GetTexture(m_IdHandle);
-        const RHI::TexturePtr depthTexture = resources.GetTexture(m_DepthHandle);
-        if (!idTexture || !depthTexture || idTexture->GetWidth() != depthTexture->GetWidth() ||
-            idTexture->GetHeight() != depthTexture->GetHeight() || !EnsureFramebuffer(idTexture, depthTexture))
-        {
-            bail();
-            return;
-        }
-
-        const RHI::Viewport viewport = context.GetActiveLocalViewport();
-        const RHI::ScissorRect scissor = context.GetActiveLocalScissor();
-        const CameraProxy* camera = context.GetActiveCamera();
+        ViewRenderContext& context = *m_Work.Context;
+        const CameraProxy* camera = m_Work.Camera;
+        const bool bHasPlan = plan != nullptr;
 
         // 描くものの記録と描画を集める（MegaGeometry の記録の枠 → 手続き → スキニングの順に番号を振る）
-        const uint32_t megaSlots = bHasPlan ? plan.CommandsTotal : 0u;
+        const uint32_t megaSlots = bHasPlan ? plan->CommandsTotal : 0u;
         const uint32_t recordBase = 1u + megaSlots;
-        VariableArray<VisibilityBuffer::DrawRecord> cpuRecords;
-        VariableArray<ChunkDraw> meshDraws;
-        VariableArray<ChunkDraw> skinnedDraws;
+        VariableArray<VisibilityBuffer::DrawRecord>& cpuRecords = m_Work.CpuRecords;
+        VariableArray<ChunkDraw>& meshDraws = m_Work.MeshDraws;
+        VariableArray<ChunkDraw>& skinnedDraws = m_Work.SkinnedDraws;
 
         // フレームの材質の表: MegaGeometry の区間 → 手続き → スキニングの順に、実物の材質を 0 から詰めた番号にする
         m_MaterialTable.Clear();
@@ -807,8 +789,8 @@ namespace NorvesLib::Core::Rendering
         sectionMaterials.clear();
         if (bHasPlan && camera)
         {
-            sectionMaterials.reserve(plan.Sections.size());
-            for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan.Sections)
+            sectionMaterials.reserve(plan->Sections.size());
+            for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan->Sections)
             {
                 sectionMaterials.push_back(m_MaterialTable.Add(VisibilityBuffer::MakeMaterialEntry(section.Material)));
             }
@@ -818,19 +800,13 @@ namespace NorvesLib::Core::Rendering
             CollectProceduralChunks(context, recordBase, m_MaterialTable, cpuRecords, meshDraws);
             CollectSkinnedChunks(context, recordBase, m_MaterialTable, cpuRecords, skinnedDraws);
         }
-        const bool bHasMegaDraw = bHasPlan && camera && megaSlots > 0 && VisibilityBuffer::IsValidRecordNumber(megaSlots) &&
-                                  plan.InstanceBuffer && plan.DrawInfoBuffer && plan.IndirectBuffer &&
-                                  plan.CountBuffer && plan.SectionBuffer;
+        m_Work.bHasMegaDraw = bHasPlan && camera && megaSlots > 0 && VisibilityBuffer::IsValidRecordNumber(megaSlots) &&
+                              plan->InstanceBuffer && plan->DrawInfoBuffer && plan->IndirectBuffer &&
+                              plan->CountBuffer && plan->SectionBuffer;
+        const bool bHasMegaDraw = m_Work.bHasMegaDraw;
         if (!camera || (!bHasMegaDraw && cpuRecords.empty()))
         {
-            // 描くものが無いフレームも、ID を空で消して ShaderResource へ渡す
-            commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
-            commandList->SetViewport(viewport);
-            commandList->SetScissor(scissor);
-            commandList->EndRenderPass();
-            m_Stats.bRendered = true;
-            bail();
-            return;
+            return PrepareResult::ClearOnly;
         }
 
         const uint32_t totalSlots = recordBase + static_cast<uint32_t>(cpuRecords.size());
@@ -839,6 +815,7 @@ namespace NorvesLib::Core::Rendering
 
         m_FrameSlots.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
         FrameSlot& slot = m_FrameSlots.Acquire();
+        m_Work.Slot = &slot;
         m_MaterialTable.BuildGpuEntriesInto(m_MaterialEntryScratch);
         const VariableArray<VisibilityBuffer::MaterialEntry>& materialEntries = m_MaterialEntryScratch;
         m_Stats.MaterialUnique = m_MaterialTable.GetUniqueCount();
@@ -846,12 +823,11 @@ namespace NorvesLib::Core::Rendering
         m_Stats.MaterialOverflowed = m_MaterialTable.GetOverflowedCount();
         if (!EnsureFrameSlot(slot,
                              totalSlots,
-                             bHasMegaDraw ? plan.SectionCount : 1u,
+                             bHasMegaDraw ? plan->SectionCount : 1u,
                              static_cast<uint32_t>(materialEntries.size())))
         {
             NORVES_LOG_ERROR("VisibilityRasterPass", "ビジビリティバッファの資源を用意できませんでした");
-            bail();
-            return;
+            return PrepareResult::Failed;
         }
 
         // view・projection（GBuffer・MegaGeometry と同じカメラの定数）
@@ -872,6 +848,7 @@ namespace NorvesLib::Core::Rendering
                                      static_cast<uint64_t>(recordBase) * RecordBytes);
         }
         const uint64_t tableBytes = static_cast<uint64_t>(totalSlots) * RecordBytes;
+        m_Work.TableBytes = tableBytes;
 
         // 材質の表（ホストが書く。材質の解決が記録の MaterialIndex で引く）
         if (!materialEntries.empty())
@@ -880,19 +857,14 @@ namespace NorvesLib::Core::Rendering
                                        static_cast<uint64_t>(materialEntries.size()) * sizeof(VisibilityBuffer::MaterialEntry));
         }
 
-        // MegaGeometry の記録は、そのフレームに積まれたコマンドから GPU が書く
-        RHI::ResourceState indirectState = RHI::ResourceState::IndirectArgument;
+        // MegaGeometry の記録は、そのフレームに積まれたコマンドから GPU が書く（計算は RecordMegaRecords）。
+        // ここでは、計算が読む区間のアドレス・材質の番号・パラメータと、ディスクリプタセットをホストで書く
         if (bHasMegaDraw)
         {
-            // コマンド・カウンタを計算が読めるようにする（描画情報は GenericRead で渡される）
-            commandList->BufferBarrier(plan.IndirectBuffer, indirectState, RHI::ResourceState::GenericRead);
-            commandList->BufferBarrier(plan.CountBuffer, indirectState, RHI::ResourceState::GenericRead);
-            indirectState = RHI::ResourceState::GenericRead;
-
-            VariableArray<uint32_t> addresses;
-            addresses.reserve(static_cast<size_t>(plan.SectionCount) * 4u);
-            uint32_t maxCapacity = 0;
-            for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan.Sections)
+            VariableArray<uint32_t>& addresses = m_Work.SectionAddresses;
+            addresses.clear();
+            addresses.reserve(static_cast<size_t>(plan->SectionCount) * 4u);
+            for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan->Sections)
             {
                 const uint64_t vertexAddress = section.VertexBuffer ? section.VertexBuffer->GetDeviceAddress() : 0ull;
                 const uint64_t indexAddress = section.IndexBuffer ? section.IndexBuffer->GetDeviceAddress() : 0ull;
@@ -900,121 +872,143 @@ namespace NorvesLib::Core::Rendering
                 addresses.push_back(static_cast<uint32_t>(vertexAddress >> 32));
                 addresses.push_back(static_cast<uint32_t>(indexAddress & 0xFFFFFFFFull));
                 addresses.push_back(static_cast<uint32_t>(indexAddress >> 32));
-                maxCapacity = std::max(maxCapacity, section.Capacity);
             }
             slot.SectionAddresses->Update(addresses.data(), addresses.size() * sizeof(uint32_t));
 
             // 区間ごとの材質の表の番号（plan.Sections と同じ並び）
             slot.SectionMaterials->Update(sectionMaterials.data(), sectionMaterials.size() * sizeof(uint32_t));
 
-            const uint32_t params[4] = {plan.SectionCount, plan.SectionCount * plan.PassCount, 0u, 0u};
+            const uint32_t params[4] = {plan->SectionCount, plan->SectionCount * plan->PassCount, 0u, 0u};
             slot.RecordParams->Update(params, sizeof(params));
 
             slot.RecordSet->BindConstantBuffer(0, slot.RecordParams, 0, RecordParamsBytes);
-            slot.RecordSet->BindStorageBuffer(1, plan.IndirectBuffer, 0, ClampBindSize(plan.IndirectBuffer->GetSize()));
-            slot.RecordSet->BindStorageBuffer(2, plan.CountBuffer, 0, ClampBindSize(plan.CountBuffer->GetSize()));
-            slot.RecordSet->BindStorageBuffer(3, plan.SectionBuffer, 0, ClampBindSize(plan.SectionBufferBytes));
-            slot.RecordSet->BindStorageBuffer(4, plan.DrawInfoBuffer, 0, ClampBindSize(plan.DrawInfoBuffer->GetSize()));
+            slot.RecordSet->BindStorageBuffer(1, plan->IndirectBuffer, 0, ClampBindSize(plan->IndirectBuffer->GetSize()));
+            slot.RecordSet->BindStorageBuffer(2, plan->CountBuffer, 0, ClampBindSize(plan->CountBuffer->GetSize()));
+            slot.RecordSet->BindStorageBuffer(3, plan->SectionBuffer, 0, ClampBindSize(plan->SectionBufferBytes));
+            slot.RecordSet->BindStorageBuffer(4, plan->DrawInfoBuffer, 0, ClampBindSize(plan->DrawInfoBuffer->GetSize()));
             slot.RecordSet->BindStorageBuffer(5, slot.SectionAddresses, 0, ClampBindSize(addresses.size() * sizeof(uint32_t)));
             slot.RecordSet->BindStorageBuffer(6, slot.RecordTable, 0, ClampBindSize(tableBytes));
             slot.RecordSet->BindStorageBuffer(7, slot.SectionMaterials, 0, ClampBindSize(sectionMaterials.size() * sizeof(uint32_t)));
             slot.RecordSet->Update();
 
-            commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::UnorderedAccess);
-            commandList->SetPipeline(m_RecordsPipeline);
-            commandList->SetDescriptorSet(slot.RecordSet, 0);
-            const uint32_t groupsX = std::max(1u, std::min((maxCapacity + RecordThreadsPerGroup - 1u) / RecordThreadsPerGroup, 65535u));
-            commandList->Dispatch(groupsX, std::max(1u, plan.SectionCount * plan.PassCount), 1u);
-            commandList->BufferBarrier(slot.RecordTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+            m_Work.MegaInstanceBuffer = plan->InstanceBuffer;
+            m_Work.MegaInstanceBytes = plan->InstanceBufferBytes;
         }
-        else
-        {
-            commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::GenericRead);
-        }
-        slot.RecordState = RHI::ResourceState::GenericRead;
 
         // 描画のディスクリプタセット
         if (bHasMegaDraw)
         {
             slot.MegaSet->BindConstantBuffer(0, slot.FrameUniform, 0, FrameUniformBytes);
-            slot.MegaSet->BindStorageBuffer(1, plan.InstanceBuffer, 0, ClampBindSize(plan.InstanceBufferBytes));
-            slot.MegaSet->BindStorageBuffer(2, plan.DrawInfoBuffer, 0, ClampBindSize(plan.DrawInfoBuffer->GetSize()));
+            slot.MegaSet->BindStorageBuffer(1, plan->InstanceBuffer, 0, ClampBindSize(plan->InstanceBufferBytes));
+            slot.MegaSet->BindStorageBuffer(2, plan->DrawInfoBuffer, 0, ClampBindSize(plan->DrawInfoBuffer->GetSize()));
             slot.MegaSet->Update();
         }
-        const bool bDrawMesh = !meshDraws.empty();
-        if (bDrawMesh)
+        m_Work.bDrawMesh = !meshDraws.empty();
+        if (m_Work.bDrawMesh)
         {
             slot.MeshSet->BindConstantBuffer(0, slot.FrameUniform, 0, FrameUniformBytes);
             slot.MeshSet->BindStorageBuffer(1, context.InstanceDataBuffer, 0, ClampBindSize(context.InstanceDataBuffer->GetSize()));
             slot.MeshSet->BindStorageBuffer(2, slot.RecordTable, 0, ClampBindSize(tableBytes));
             slot.MeshSet->Update();
         }
-        const RHI::BufferPtr skinnedVertices =
-            m_SkinnedVerticesHandle.IsValid() ? resources.GetBuffer(m_SkinnedVerticesHandle) : RHI::BufferPtr{};
-        const bool bDrawSkinned = !skinnedDraws.empty() && skinnedVertices;
-        if (bDrawSkinned)
+        const RHI::BufferPtr& skinnedVertices = m_Work.SkinnedVertices;
+        m_Work.bDrawSkinned = !skinnedDraws.empty() && skinnedVertices;
+        if (m_Work.bDrawSkinned)
         {
             slot.SkinnedSet->BindConstantBuffer(0, slot.FrameUniform, 0, FrameUniformBytes);
             slot.SkinnedSet->BindStorageBuffer(1, skinnedVertices, 0, ClampBindSize(skinnedVertices->GetSize()));
             slot.SkinnedSet->BindStorageBuffer(2, slot.RecordTable, 0, ClampBindSize(tableBytes));
             slot.SkinnedSet->Update();
         }
+        return PrepareResult::Ready;
+    }
 
-        // ワイヤーフレームの表示では、塗りの代わりに線のパイプラインで描く（GBuffer のワイヤーフレームと同じ線になる。
-        // 解決が線の画素を GBuffer へ書く）。線のパイプラインが揃わないときは、解決のパスが従来の GBuffer の描画へ戻している
-        const bool bWireframe = context.GetActiveDebugMode() == DebugViewMode::Wireframe && HasWireframePipelines();
-        const RHI::PipelinePtr& megaPipeline = bWireframe ? m_MegaWireframePipeline : m_MegaPipeline;
-        const RHI::PipelinePtr& meshPipeline = bWireframe ? m_MeshWireframePipeline : m_MeshPipeline;
-        const RHI::PipelinePtr& skinnedPipeline = bWireframe ? m_SkinnedWireframePipeline : m_SkinnedPipeline;
-
-        // ID と深度へ描く
+    void VisibilityRasterPass::RecordClearOnlyRenderPass()
+    {
+        // 描くものが無いフレームも、ID を空で消して ShaderResource へ渡す
+        RHI::ICommandList* commandList = m_Work.CommandList;
         commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
-        commandList->SetViewport(viewport);
-        commandList->SetScissor(scissor);
+        commandList->SetViewport(m_Work.Viewport);
+        commandList->SetScissor(m_Work.Scissor);
+        commandList->EndRenderPass();
+    }
 
-        if (bHasMegaDraw)
+    void VisibilityRasterPass::RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan& plan)
+    {
+        RHI::ICommandList* commandList = m_Work.CommandList;
+        FrameSlot& slot = *m_Work.Slot;
+
+        // コマンド・カウンタを計算が読めるようにする（描画情報は GenericRead で渡される）
+        commandList->BufferBarrier(plan.IndirectBuffer, m_Work.IndirectState, RHI::ResourceState::GenericRead);
+        commandList->BufferBarrier(plan.CountBuffer, m_Work.IndirectState, RHI::ResourceState::GenericRead);
+        m_Work.IndirectState = RHI::ResourceState::GenericRead;
+
+        uint32_t maxCapacity = 0;
+        for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan.Sections)
         {
-            commandList->SetPipeline(megaPipeline);
-            commandList->SetDescriptorSet(slot.MegaSet, 0);
-            for (uint32_t passIndex = 0; passIndex < plan.PassCount; ++passIndex)
-            {
-                for (uint32_t sectionIndex = 0; sectionIndex < plan.Sections.size(); ++sectionIndex)
-                {
-                    const MegaGeometryPass::VisibilityDrawPlan::Section& section = plan.Sections[sectionIndex];
-                    if (section.Capacity == 0 || !section.VertexBuffer || !section.IndexBuffer)
-                    {
-                        continue;
-                    }
-                    commandList->SetVertexBuffer(section.VertexBuffer, 0, 0);
-                    commandList->SetIndexBuffer(section.IndexBuffer, 0);
+            maxCapacity = std::max(maxCapacity, section.Capacity);
+        }
 
-                    const uint64_t commandOffsetBytes =
-                        (static_cast<uint64_t>(passIndex) * plan.CommandsPerPass + section.CommandBase) * IndirectCommandBytes;
-                    if (plan.bUseIndirectCount)
-                    {
-                        commandList->DrawIndexedIndirectCount(
-                            plan.IndirectBuffer, commandOffsetBytes,
-                            plan.CountBuffer,
-                            static_cast<uint64_t>(passIndex * plan.SectionCount + sectionIndex) * sizeof(uint32_t),
-                            section.Capacity,
-                            IndirectCommandBytes);
-                    }
-                    else
-                    {
-                        commandList->DrawIndexedIndirect(plan.IndirectBuffer, commandOffsetBytes, section.Capacity,
-                                                         IndirectCommandBytes);
-                    }
+        commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::UnorderedAccess);
+        commandList->SetPipeline(m_RecordsPipeline);
+        commandList->SetDescriptorSet(slot.RecordSet, 0);
+        const uint32_t groupsX = std::max(1u, std::min((maxCapacity + RecordThreadsPerGroup - 1u) / RecordThreadsPerGroup, 65535u));
+        commandList->Dispatch(groupsX, std::max(1u, plan.SectionCount * plan.PassCount), 1u);
+        commandList->BufferBarrier(slot.RecordTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+        slot.RecordState = RHI::ResourceState::GenericRead;
+    }
+
+    void VisibilityRasterPass::RecordMegaDraws(const MegaGeometryPass::VisibilityDrawPlan& plan,
+                                               uint32_t firstPass,
+                                               uint32_t endPass)
+    {
+        RHI::ICommandList* commandList = m_Work.CommandList;
+        commandList->SetPipeline(m_Work.MegaPipeline);
+        commandList->SetDescriptorSet(m_Work.Slot->MegaSet, 0);
+        for (uint32_t passIndex = firstPass; passIndex < endPass; ++passIndex)
+        {
+            for (uint32_t sectionIndex = 0; sectionIndex < plan.Sections.size(); ++sectionIndex)
+            {
+                const MegaGeometryPass::VisibilityDrawPlan::Section& section = plan.Sections[sectionIndex];
+                if (section.Capacity == 0 || !section.VertexBuffer || !section.IndexBuffer)
+                {
+                    continue;
+                }
+                commandList->SetVertexBuffer(section.VertexBuffer, 0, 0);
+                commandList->SetIndexBuffer(section.IndexBuffer, 0);
+
+                const uint64_t commandOffsetBytes =
+                    (static_cast<uint64_t>(passIndex) * plan.CommandsPerPass + section.CommandBase) * IndirectCommandBytes;
+                if (plan.bUseIndirectCount)
+                {
+                    commandList->DrawIndexedIndirectCount(
+                        plan.IndirectBuffer, commandOffsetBytes,
+                        plan.CountBuffer,
+                        static_cast<uint64_t>(passIndex * plan.SectionCount + sectionIndex) * sizeof(uint32_t),
+                        section.Capacity,
+                        IndirectCommandBytes);
+                }
+                else
+                {
+                    commandList->DrawIndexedIndirect(plan.IndirectBuffer, commandOffsetBytes, section.Capacity,
+                                                     IndirectCommandBytes);
                 }
             }
         }
+    }
 
-        if (bDrawMesh)
+    void VisibilityRasterPass::RecordChunkDraws()
+    {
+        RHI::ICommandList* commandList = m_Work.CommandList;
+        FrameSlot& slot = *m_Work.Slot;
+
+        if (m_Work.bDrawMesh)
         {
-            commandList->SetPipeline(meshPipeline);
+            commandList->SetPipeline(m_Work.MeshPipeline);
             commandList->SetDescriptorSet(slot.MeshSet, 0);
             const RHI::IBuffer* boundVertex = nullptr;
             const RHI::IBuffer* boundIndex = nullptr;
-            for (const ChunkDraw& draw : meshDraws)
+            for (const ChunkDraw& draw : m_Work.MeshDraws)
             {
                 if (draw.VertexBuffer.get() != boundVertex)
                 {
@@ -1030,12 +1024,12 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        if (bDrawSkinned)
+        if (m_Work.bDrawSkinned)
         {
-            commandList->SetPipeline(skinnedPipeline);
+            commandList->SetPipeline(m_Work.SkinnedPipeline);
             commandList->SetDescriptorSet(slot.SkinnedSet, 0);
             const RHI::IBuffer* boundIndex = nullptr;
-            for (const ChunkDraw& draw : skinnedDraws)
+            for (const ChunkDraw& draw : m_Work.SkinnedDraws)
             {
                 if (draw.IndexBuffer.get() != boundIndex)
                 {
@@ -1045,25 +1039,77 @@ namespace NorvesLib::Core::Rendering
                 commandList->DrawIndexedInstanced(draw.IndexCount, 1, draw.FirstIndex, draw.VertexOffset, draw.RecordNumber);
             }
         }
+    }
 
+    void VisibilityRasterPass::RecordFirstPassDraws(RHI::ICommandList* /*commandList*/,
+                                                    const MegaGeometryPass::VisibilityDrawPlan& plan)
+    {
+        m_Work.bSinkUsed = true;
+        if (PrepareFrame(&plan) != PrepareResult::Ready)
+        {
+            // 描くものが無い・準備できない: ID を空で消すだけ（MegaGeometryPass の HZB は空の深度から作られ、判定は描く側に倒れる）
+            RecordClearOnlyRenderPass();
+            return;
+        }
+
+        RHI::ICommandList* commandList = m_Work.CommandList;
+        FrameSlot& slot = *m_Work.Slot;
+
+        // ホストが書いた記録（手続き・スキニング）を頂点シェーダーが読む。MegaGeometry の範囲は 2 パス目の後に計算が書く
+        commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::GenericRead);
+        slot.RecordState = RHI::ResourceState::GenericRead;
+
+        // 1 回目: 手続き・スキニングの塊と MegaGeometry の 1 パス目。この深度から MegaGeometryPass が HZB を作る
+        commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
+        commandList->SetViewport(m_Work.Viewport);
+        commandList->SetScissor(m_Work.Scissor);
+        RecordChunkDraws();
+        if (m_Work.bHasMegaDraw)
+        {
+            RecordMegaDraws(plan, 0, 1);
+        }
         commandList->EndRenderPass();
+        m_Work.bStagedReady = true;
+    }
 
+    void VisibilityRasterPass::RecordSecondPassDraws(RHI::ICommandList* /*commandList*/,
+                                                     const MegaGeometryPass::VisibilityDrawPlan& plan)
+    {
+        if (!m_Work.bStagedReady || !m_Work.bHasMegaDraw)
+        {
+            return;
+        }
+
+        // 2 パス目のカリングの結果から MegaGeometry の記録を書き、2 回目の render pass で 2 パス目を描く
+        RecordMegaRecords(plan);
+        RHI::ICommandList* commandList = m_Work.CommandList;
+        commandList->BeginRenderPass(m_SecondRenderPass, m_SecondFramebuffer);
+        commandList->SetViewport(m_Work.Viewport);
+        commandList->SetScissor(m_Work.Scissor);
+        RecordMegaDraws(plan, 1, 2);
+        commandList->EndRenderPass();
+    }
+
+    void VisibilityRasterPass::FinishFrame()
+    {
         // MegaGeometryPass が残したバッファを次のフレーム用に戻す
         if (m_MegaGeometryPass)
         {
-            m_MegaGeometryPass->ReleaseVisibilityDrawBuffers(commandList, indirectState);
+            m_MegaGeometryPass->ReleaseVisibilityDrawBuffers(m_Work.CommandList, m_Work.IndirectState);
         }
 
+        FrameSlot& slot = *m_Work.Slot;
+        const VariableArray<VisibilityBuffer::MaterialEntry>& materialEntries = m_MaterialEntryScratch;
         m_Stats.bRendered = true;
         m_LastRecordTable = slot.RecordTable;
-        m_LastRecordTableBytes = tableBytes;
+        m_LastRecordTableBytes = m_Work.TableBytes;
         m_LastMaterialTable = slot.MaterialTable;
         m_LastMaterialTableCount = static_cast<uint32_t>(materialEntries.size());
         m_LastMaterialEntries.assign(materialEntries.begin(), materialEntries.end());
-        if (bHasMegaDraw)
+        if (m_Work.bHasMegaDraw)
         {
-            m_LastMegaInstanceBuffer = plan.InstanceBuffer;
-            m_LastMegaInstanceBytes = plan.InstanceBufferBytes;
+            m_LastMegaInstanceBuffer = m_Work.MegaInstanceBuffer;
+            m_LastMegaInstanceBytes = m_Work.MegaInstanceBytes;
         }
 
         // 材質の数は、変わったときだけログへ書く。上限を超えたら、通知を一度だけ出す
@@ -1107,6 +1153,137 @@ namespace NorvesLib::Core::Rendering
                             m_Stats.DroppedChunks,
                             m_Stats.TotalSlots);
         }
+    }
+
+    void VisibilityRasterPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        m_Stats = VisibilityRasterFrameStats{};
+        m_LastRecordTable.reset();
+        m_LastRecordTableBytes = 0;
+        m_LastMaterialTable.reset();
+        m_LastMaterialTableCount = 0;
+        m_LastMaterialEntries.clear();
+        m_LastMegaInstanceBuffer.reset();
+        m_LastMegaInstanceBytes = 0;
+        m_Work = FrameWork{};
+
+        RHI::ICommandList* commandList = context.CommandList;
+
+        // GBuffer の描画を止める構成は、MegaGeometryPass が記録をこのパスへ移す。必要なものを確かめた後、下でここから記録を駆動する。
+        // 移さないフレームは、MegaGeometryPass が先に記録して残した描画の写しを取り出す。
+        // 取り出すと、MegaGeometryPass が残したバッファの戻しはこのパスの責任になる
+        const bool bDeferred = m_MegaGeometryPass && m_MegaGeometryPass->TakeFrameRecordDeferred();
+        MegaGeometryPass::VisibilityDrawPlan plan;
+        bool bHasPlan = !bDeferred && m_MegaGeometryPass && m_MegaGeometryPass->TakeVisibilityDrawPlan(plan);
+
+        // 描けないときは、残してあったバッファをそのまま戻して終える
+        const auto bail = [&]() -> void
+        {
+            if (m_MegaGeometryPass)
+            {
+                m_MegaGeometryPass->ReleaseVisibilityDrawBuffers(commandList);
+            }
+        };
+
+        if (!m_bInitialized && !Initialize(context))
+        {
+            bail();
+            return;
+        }
+        if (!commandList || !m_RenderPass || !m_SecondRenderPass || !m_MegaPipeline || !m_MeshPipeline ||
+            !m_SkinnedPipeline || !m_RecordsPipeline || !m_IdHandle.IsValid() || !m_DepthHandle.IsValid())
+        {
+            bail();
+            return;
+        }
+
+        const RHI::TexturePtr idTexture = resources.GetTexture(m_IdHandle);
+        const RHI::TexturePtr depthTexture = resources.GetTexture(m_DepthHandle);
+        if (!idTexture || !depthTexture || idTexture->GetWidth() != depthTexture->GetWidth() ||
+            idTexture->GetHeight() != depthTexture->GetHeight() || !EnsureFramebuffer(idTexture, depthTexture))
+        {
+            bail();
+            return;
+        }
+
+        m_Work.Context = &context;
+        m_Work.CommandList = commandList;
+        m_Work.Viewport = context.GetActiveLocalViewport();
+        m_Work.Scissor = context.GetActiveLocalScissor();
+        m_Work.Camera = context.GetActiveCamera();
+        m_Work.SkinnedVertices =
+            m_SkinnedVerticesHandle.IsValid() ? resources.GetBuffer(m_SkinnedVerticesHandle) : RHI::BufferPtr{};
+
+        // ワイヤーフレームの表示では、塗りの代わりに線のパイプラインで描く（GBuffer のワイヤーフレームと同じ線になる。
+        // 解決が線の画素を GBuffer へ書く）。線のパイプラインが揃わないときは、解決のパスが従来の GBuffer の描画へ戻している
+        const bool bWireframe = context.GetActiveDebugMode() == DebugViewMode::Wireframe && HasWireframePipelines();
+        m_Work.MegaPipeline = bWireframe ? m_MegaWireframePipeline : m_MegaPipeline;
+        m_Work.MeshPipeline = bWireframe ? m_MeshWireframePipeline : m_MeshPipeline;
+        m_Work.SkinnedPipeline = bWireframe ? m_SkinnedWireframePipeline : m_SkinnedPipeline;
+
+        if (bDeferred)
+        {
+            // 2 パスの遮蔽になるときは、MegaGeometryPass の記録の途中（IDrawSink）で ID・深度へ描く。
+            // 1 回の判定になったとき・記録できなかったときは呼ばれないので、残った描画の写しを下で取り出して全部を 1 回で描く
+            FrameCommand command = context.BuildMegaGeometryPassCommand(m_MegaGeometryPass);
+            m_MegaGeometryPass->RecordFrameCommand(command.MegaGeometry, commandList, this);
+            if (!m_Work.bSinkUsed)
+            {
+                bHasPlan = m_MegaGeometryPass->TakeVisibilityDrawPlan(plan);
+            }
+        }
+
+        if (m_Work.bSinkUsed)
+        {
+            if (!m_Work.bStagedReady)
+            {
+                // 1 回目の呼び出しで描くものが無かった・準備できなかった（ID は空で消してある）
+                m_Stats.bRendered = true;
+                bail();
+                return;
+            }
+            FinishFrame();
+            return;
+        }
+
+        const PrepareResult prepared = PrepareFrame(bHasPlan ? &plan : nullptr);
+        if (prepared == PrepareResult::ClearOnly)
+        {
+            RecordClearOnlyRenderPass();
+            m_Stats.bRendered = true;
+            bail();
+            return;
+        }
+        if (prepared == PrepareResult::Failed)
+        {
+            bail();
+            return;
+        }
+
+        // MegaGeometry の記録は、そのフレームに積まれたコマンドから GPU が書く
+        FrameSlot& slot = *m_Work.Slot;
+        if (m_Work.bHasMegaDraw)
+        {
+            RecordMegaRecords(plan);
+        }
+        else
+        {
+            commandList->BufferBarrier(slot.RecordTable, slot.RecordState, RHI::ResourceState::GenericRead);
+        }
+        slot.RecordState = RHI::ResourceState::GenericRead;
+
+        // ID と深度へ、MegaGeometry の全パス → 手続き・スキニングの塊の順に 1 回の render pass で描く
+        commandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
+        commandList->SetViewport(m_Work.Viewport);
+        commandList->SetScissor(m_Work.Scissor);
+        if (m_Work.bHasMegaDraw)
+        {
+            RecordMegaDraws(plan, 0, plan.PassCount);
+        }
+        RecordChunkDraws();
+        commandList->EndRenderPass();
+
+        FinishFrame();
     }
 
     // ========================================

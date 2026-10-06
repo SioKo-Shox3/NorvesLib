@@ -8,6 +8,7 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -762,8 +763,18 @@ namespace NorvesLib::Core::Rendering
     // Execute
     // ========================================
 
+    bool MegaGeometryPass::ShouldSkipGBufferDraw(DebugViewMode mode) const
+    {
+        // 解決のパスが分かるときは、パイプラインの準備まで含めて判定する（使えないのに止めると画面が空になる）
+        return m_bSkipGBufferDraw && m_Device &&
+               (m_ResolvePass ? m_ResolvePass->CanResolve(m_Device, mode)
+                              : VisibilityResolveGeometry::IsSupported(m_Device->GetCapabilities()));
+    }
+
     void MegaGeometryPass::Execute(ViewRenderContext &context)
     {
+        m_bFrameRecordDeferred = false;
+
         const bool bCanEnqueueEmptyTransitionPass =
             m_bPreferRenderGraphGBufferResources &&
             m_GBufferRenderPass &&
@@ -804,6 +815,17 @@ namespace NorvesLib::Core::Rendering
 
         if (!context.GetActiveCamera())
         {
+            enqueueEmptyTransitionPass();
+            return;
+        }
+
+        // 解決が GBuffer を書くフレームは GBuffer の描画を止めるので、2パスの遮蔽の HZB の元になる深度が GBuffer に入らない。
+        // ID のラスタがその Execute の中で記録を駆動して（ID・深度の1パス目 → HZB → 2パス目）、HZB を ID の深度から作る。
+        // GBuffer の添付の状態遷移（render pass の開始と終了）は、ここで済ませる
+        if (m_bVisibilityPlanEnabled && m_VisibilityRaster && m_VisibilityRaster->IsExecutionPlanned() &&
+            ShouldSkipGBufferDraw(context.GetActiveDebugMode()))
+        {
+            m_bFrameRecordDeferred = true;
             enqueueEmptyTransitionPass();
             return;
         }
@@ -865,7 +887,9 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t IndirectCommandBytes = static_cast<uint32_t>(sizeof(MegaGeometry::DrawIndexedIndirectCommand));
     } // namespace
 
-    void MegaGeometryPass::RecordFrameCommand(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList)
+    void MegaGeometryPass::RecordFrameCommand(const MegaGeometryPassCommand &command,
+                                              RHI::ICommandList *commandList,
+                                              IDrawSink *sink)
     {
         // CPU の記録時間（trace の Type=Scope 行）と、記録した区間の GPU 時間（Type=GPU 行 "MegaGeometry"）
         NORVES_PROFILE_SCOPE("MegaGeometryPass.RecordFrameCommand");
@@ -893,8 +917,13 @@ namespace NorvesLib::Core::Rendering
 
         auto *cmdList = commandList;
 
-        auto recordEmptyRenderPass = [this, &command, cmdList]() -> void
+        auto recordEmptyRenderPass = [this, &command, cmdList, sink]() -> void
         {
+            if (sink)
+            {
+                // GBuffer の添付の状態遷移は、呼び出し側が済ませてある
+                return;
+            }
             cmdList->BeginRenderPass(m_GBufferRenderPass, m_GBufferFramebuffer);
             cmdList->SetViewport(command.Viewport);
             cmdList->SetScissor(command.Scissor);
@@ -1690,15 +1719,46 @@ namespace NorvesLib::Core::Rendering
 
         // ビジビリティバッファの解決が GBuffer を書くときは、描画の呼び出しだけを省く
         // 解決のパスが分かるときは、パイプラインの準備まで含めて判定する（使えないのに止めると画面が空になる）
-        const bool bSkipGBufferDraw =
-            m_bSkipGBufferDraw && (m_ResolvePass ? m_ResolvePass->CanResolve(m_Device, command.DebugMode)
-                                                 : VisibilityResolveGeometry::IsSupported(caps));
+        const bool bSkipGBufferDraw = ShouldSkipGBufferDraw(command.DebugMode);
+
+        // ビジビリティバッファのラスタが引く、このフレームの描画の写し（カリングの結果のバッファと区間の表）
+        const auto buildVisibilityPlan = [&](VisibilityDrawPlan &plan) -> void
+        {
+            plan.bValid = true;
+            plan.PassCount = passCount;
+            plan.SectionCount = sectionCount;
+            plan.CommandsPerPass = static_cast<uint32_t>(commandsPerPass);
+            plan.CommandsTotal = static_cast<uint32_t>(commandsTotal);
+            plan.bUseIndirectCount = caps.bDrawIndirectCount;
+            plan.IndirectBuffer = m_IndirectDrawBuffer;
+            plan.CountBuffer = m_DrawCountBuffer;
+            plan.DrawInfoBuffer = m_DrawInfoBuffer;
+            plan.InstanceBuffer = frameSlot.InstanceBuffer;
+            plan.InstanceBufferBytes = static_cast<uint64_t>(instanceTable.size()) * sizeof(GPUMegaInstance);
+            plan.SectionBuffer = frameSlot.SectionBuffer;
+            plan.SectionBufferBytes = static_cast<uint64_t>(sectionCount) * passCount * 2u * sizeof(uint32_t);
+            for (const Section &section : sections)
+            {
+                VisibilityDrawPlan::Section planSection;
+                planSection.VertexBuffer = section.Representative->VertexBuffer;
+                planSection.IndexBuffer = section.Representative->IndexBuffer;
+                planSection.Capacity = section.Capacity;
+                planSection.CommandBase = section.CommandBase;
+                planSection.Material = section.Representative->Material;
+                plan.Sections.push_back(planSection);
+            }
+        };
 
         // 描画（GBuffer render pass をパスごとに1回だけ開き、材質の区間ごとに1回の間接描画を発行する）
         auto recordDraws = [&](const RHI::RenderPassPtr &renderPass,
                                const RHI::FramebufferPtr &framebuffer,
                                uint32_t passIndex) -> void
         {
+            if (sink)
+            {
+                // GBuffer の描画は止めている。添付の状態遷移は呼び出し側が済ませ、2パスの描画は sink が行う
+                return;
+            }
             ScopedGpuTimestamp drawTimestamp(cmdList, passIndex == 0 ? "MegaGeometryDraw1" : "MegaGeometryDraw2");
 
             cmdList->BeginRenderPass(renderPass, framebuffer);
@@ -1753,6 +1813,10 @@ namespace NorvesLib::Core::Rendering
             cmdList->EndRenderPass();
         };
 
+        // sink に描かせるのは2パスのときだけ（1回の判定は、描画の写しを残してラスタが全部を1回で描く）
+        const bool bStaged = sink != nullptr && bTwoPass;
+        VisibilityDrawPlan stagedPlan;
+
         if (!bTwoPass)
         {
             // 従来の経路: 全インスタンスを1回の判定（遮蔽の判定なし）で選び、1回の render pass で描く
@@ -1761,14 +1825,27 @@ namespace NorvesLib::Core::Rendering
         }
         else
         {
+            if (bStaged)
+            {
+                buildVisibilityPlan(stagedPlan);
+            }
+
             // 1パス目: 前のフレームで見えたクラスタだけを描く。前のフレームの2パス目の書き込みを見せる
             cmdList->BufferBarrier(m_VisibilityBuffer,
                                    RHI::ResourceState::UnorderedAccess,
                                    RHI::ResourceState::UnorderedAccess);
             recordCull(CULL_PASS_FIRST, nullptr);
-            recordDraws(m_GBufferRenderPass, m_GBufferFramebuffer, 0);
+            if (bStaged)
+            {
+                sink->RecordFirstPassDraws(cmdList, stagedPlan);
+            }
+            else
+            {
+                recordDraws(m_GBufferRenderPass, m_GBufferFramebuffer, 0);
+            }
 
-            // GBufferPass の不透明＋1パス目の深度から HZB を作る（深度は1パス目の終わりで ShaderResource）。
+            // 深度（GBufferPass の不透明＋1パス目。sink があるときは ID のラスタが描いた塊＋1パス目）から HZB を作る
+            // （深度は1パス目の終わりで ShaderResource）。
             // 作れなかったときは遮蔽の判定をしない（1パス目で描かなかったクラスタを全て描く）
             const bool bHiZBuilt = m_HiZ.Build(cmdList, m_DepthTexture);
 
@@ -1782,7 +1859,14 @@ namespace NorvesLib::Core::Rendering
 
             // 2パス目: 判定を通った全クラスタを HZB で判定し、1パス目で描かなかった見えるものを描く
             recordCull(CULL_PASS_SECOND, bHiZBuilt ? m_HiZ.GetTexture() : RHI::TexturePtr{});
-            recordDraws(m_SecondGBufferRenderPass, m_SecondGBufferFramebuffer, 1);
+            if (bStaged)
+            {
+                sink->RecordSecondPassDraws(cmdList, stagedPlan);
+            }
+            else
+            {
+                recordDraws(m_SecondGBufferRenderPass, m_SecondGBufferFramebuffer, 1);
+            }
 
             if (statsSlot)
             {
@@ -1806,33 +1890,14 @@ namespace NorvesLib::Core::Rendering
             cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
         }
 
-        if (m_bVisibilityPlanEnabled)
+        if (m_bVisibilityPlanEnabled || bStaged)
         {
             // ビジビリティバッファのラスタが同じコマンドをもう一度描くので、バッファは戻さず、描画の写しを渡す
-            // （ラスタが使い終わった後に ReleaseVisibilityDrawBuffers で Common へ戻す）
-            VisibilityDrawPlan &plan = m_VisibilityPlan;
-            plan.bValid = true;
-            plan.PassCount = passCount;
-            plan.SectionCount = sectionCount;
-            plan.CommandsPerPass = static_cast<uint32_t>(commandsPerPass);
-            plan.CommandsTotal = static_cast<uint32_t>(commandsTotal);
-            plan.bUseIndirectCount = caps.bDrawIndirectCount;
-            plan.IndirectBuffer = m_IndirectDrawBuffer;
-            plan.CountBuffer = m_DrawCountBuffer;
-            plan.DrawInfoBuffer = m_DrawInfoBuffer;
-            plan.InstanceBuffer = frameSlot.InstanceBuffer;
-            plan.InstanceBufferBytes = static_cast<uint64_t>(instanceTable.size()) * sizeof(GPUMegaInstance);
-            plan.SectionBuffer = frameSlot.SectionBuffer;
-            plan.SectionBufferBytes = static_cast<uint64_t>(sectionCount) * passCount * 2u * sizeof(uint32_t);
-            for (const Section &section : sections)
+            // （ラスタが使い終わった後に ReleaseVisibilityDrawBuffers で Common へ戻す）。
+            // sink に描かせたフレームは、写しを sink へ渡し済みなので残さない
+            if (!bStaged)
             {
-                VisibilityDrawPlan::Section planSection;
-                planSection.VertexBuffer = section.Representative->VertexBuffer;
-                planSection.IndexBuffer = section.Representative->IndexBuffer;
-                planSection.Capacity = section.Capacity;
-                planSection.CommandBase = section.CommandBase;
-                planSection.Material = section.Representative->Material;
-                plan.Sections.push_back(planSection);
+                buildVisibilityPlan(m_VisibilityPlan);
             }
             m_bVisibilityBuffersHeld = true;
             m_HeldIndirectDrawBuffer = m_IndirectDrawBuffer;

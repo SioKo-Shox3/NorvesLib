@@ -3,12 +3,14 @@
 #include "Container/Containers.h"
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/MegaGeometryPass.h"
 #include "Rendering/MeshIndexChunks.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/VisibilityMaterialTable.h"
+#include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/RHITypes.h"
 
@@ -16,9 +18,9 @@
 
 namespace NorvesLib::Core::Rendering
 {
-    class MegaGeometryPass;
     class SkinningComputePass;
     class VisibilityResolvePass;
+    struct CameraProxy;
     struct ViewRenderContext;
 
     /**
@@ -60,9 +62,16 @@ namespace NorvesLib::Core::Rendering
      * 記録の表（storage buffer）は、0 番が空、1 番から MegaGeometry のコマンド、その後ろに手続き・スキニングの塊を置く。
      * 表はこのパスが持つフレームごとのバッファで、書いた後は GenericRead のまま残る（検証表示が読む）。
      *
+     * MegaGeometry の 2 パスの遮蔽は、HZB を ID・深度の 1 パス目から作る。幾何の解決が GBuffer を書くとき（GBuffer の描画を止めるので、
+     * 深度は ID のラスタだけが書く）、MegaGeometryPass は記録をこのパスの Execute へ移し（MegaGeometryPass::IsFrameRecordDeferred）、
+     * 次の順で互いを呼ぶ（MegaGeometryPass::IDrawSink）:
+     *   1 パス目のカリング → [ID の render pass: 手続き・スキニングの塊 → MegaGeometry の 1 パス目] → HZB（深度から）
+     *   → 2 パス目のカリング → 記録を書く計算 → [ID の render pass: MegaGeometry の 2 パス目]
+     * 1 回の判定のとき・移さないとき（GBuffer が先に描く構成）は、MegaGeometry の全部と塊を 1 回の render pass で描く。
+     *
      * 既定は無効（SceneView::SetupDeferredPipeline の VisibilityBufferMode が Off）。
      */
-    class VisibilityRasterPass final : public IViewPass, public IRenderGraphPass
+    class VisibilityRasterPass final : public IViewPass, public IRenderGraphPass, private MegaGeometryPass::IDrawSink
     {
     public:
         VisibilityRasterPass();
@@ -142,6 +151,13 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle GetIdHandle() const { return m_IdHandle.ToResourceHandle(); }
         RGResourceHandle GetDepthHandle() const { return m_DepthHandle; }
 
+        /**
+         * @brief このフレームに Execute で ID・深度を描く見込みか（Declare が ID と深度を宣言した）
+         *
+         * MegaGeometryPass が、記録をこのパスの Execute へ移してよいかの判定に使う（Declare は全パスの Execute より前に済む）。
+         */
+        bool IsExecutionPlanned() const { return m_IdHandle.IsValid() && m_DepthHandle.IsValid(); }
+
         /** @brief 手続きメッシュの塊の作業配列が持っている容量（毎フレームの確保をしない確認用。最初の Execute の後は増えない） */
         size_t GetProceduralChunkScratchCapacity() const { return m_ProceduralChunkScratch.capacity(); }
         /** @brief スキニングのメッシュの塊の作業配列が持っている容量（同上） */
@@ -188,8 +204,74 @@ namespace NorvesLib::Core::Rendering
             RHI::DescriptorSetPtr RecordSet;             // 記録を書く計算
         };
 
+        /** @brief 描画の準備の結果 */
+        enum class PrepareResult
+        {
+            /** @brief 描ける */
+            Ready,
+            /** @brief 描くものが無い（ID を空で消すだけ） */
+            ClearOnly,
+            /** @brief 資源を用意できなかった */
+            Failed,
+        };
+
+        /** @brief 1 回の Execute の描画の準備と状態（Execute の間だけ使う。Execute のたびに作り直す） */
+        struct FrameWork
+        {
+            ViewRenderContext* Context = nullptr;
+            RHI::ICommandList* CommandList = nullptr;
+            RHI::Viewport Viewport;
+            RHI::ScissorRect Scissor;
+            const CameraProxy* Camera = nullptr;
+            RHI::BufferPtr SkinnedVertices;
+            FrameSlot* Slot = nullptr;
+            uint64_t TableBytes = 0;
+            bool bHasMegaDraw = false;
+            bool bDrawMesh = false;
+            bool bDrawSkinned = false;
+            RHI::PipelinePtr MegaPipeline;
+            RHI::PipelinePtr MeshPipeline;
+            RHI::PipelinePtr SkinnedPipeline;
+            Container::VariableArray<VisibilityBuffer::DrawRecord> CpuRecords;
+            Container::VariableArray<ChunkDraw> MeshDraws;
+            Container::VariableArray<ChunkDraw> SkinnedDraws;
+            Container::VariableArray<uint32_t> SectionAddresses;
+            /** @brief MegaGeometry のコマンド・カウンタの今の状態（描画の写しがあるときの戻しに渡す） */
+            RHI::ResourceState IndirectState = RHI::ResourceState::IndirectArgument;
+            /** @brief 描画の写しのインスタンスの表（FinishFrame が最後の Execute の値として公開する） */
+            RHI::BufferPtr MegaInstanceBuffer;
+            uint64_t MegaInstanceBytes = 0;
+            /** @brief MegaGeometryPass の記録が、2 パスの途中で呼び出し（IDrawSink）を使ったか */
+            bool bSinkUsed = false;
+            /** @brief 1 回目の呼び出しで描画の準備が済み、2 回目の呼び出しで MegaGeometry の 2 パス目を描けるか */
+            bool bStagedReady = false;
+        };
+
         bool CreateRenderPass();
         bool CreatePipelines(ViewRenderContext& context);
+
+        /**
+         * @brief 描画の準備（記録・材質の表・描画のディスクリプタセットを作り、ホストが書く資源を書く）
+         * @param plan MegaGeometry の描画の写し（null なら MegaGeometry は描かない）
+         */
+        PrepareResult PrepareFrame(const MegaGeometryPass::VisibilityDrawPlan* plan);
+        /** @brief ID を空で消すだけの render pass（描くものが無い・準備できなかったフレーム） */
+        void RecordClearOnlyRenderPass();
+        /** @brief MegaGeometry のコマンド・カウンタを読める状態にし、記録を書く計算を dispatch する */
+        void RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan& plan);
+        /** @brief MegaGeometry のクラスタを、パスの番号 firstPass から endPass の手前まで描く（render pass の中で呼ぶ） */
+        void RecordMegaDraws(const MegaGeometryPass::VisibilityDrawPlan& plan, uint32_t firstPass, uint32_t endPass);
+        /** @brief 手続きメッシュとスキニングの塊を描く（render pass の中で呼ぶ） */
+        void RecordChunkDraws();
+        /** @brief 描き終えた後の戻しと、最後の Execute の値・ログの更新 */
+        void FinishFrame();
+
+        // MegaGeometryPass::IDrawSink（記録を移されたフレームの、2 パスの遮蔽の途中の描画）
+        void RecordFirstPassDraws(RHI::ICommandList* commandList,
+                                  const MegaGeometryPass::VisibilityDrawPlan& plan) override;
+        void RecordSecondPassDraws(RHI::ICommandList* commandList,
+                                   const MegaGeometryPass::VisibilityDrawPlan& plan) override;
+
         /** @brief 3 種の線のパイプラインが揃っているか（development ビルド以外では常に false） */
         bool HasWireframePipelines() const;
         bool EnsureFramebuffer(const RHI::TexturePtr& idTexture, const RHI::TexturePtr& depthTexture);
@@ -218,8 +300,12 @@ namespace NorvesLib::Core::Rendering
         // ID と深度へ描くレンダーパス（ID は Clear、深度は Load。どちらもグラフの添付の状態で始まり ShaderResource で終わる）
         RHI::RenderPassPtr m_RenderPass;
         RHI::FramebufferPtr m_Framebuffer;
+        // 2 回目の render pass（1 回目の描画の後に続けて開く。ID・深度とも Load で、ShaderResource の状態から始まる）
+        RHI::RenderPassPtr m_SecondRenderPass;
+        RHI::FramebufferPtr m_SecondFramebuffer;
         RHI::ITexture* m_FramebufferId = nullptr;
         RHI::ITexture* m_FramebufferDepth = nullptr;
+        FrameWork m_Work;
 
         RHI::ShaderPtr m_MegaVertexShader;
         RHI::ShaderPtr m_MeshVertexShader;
