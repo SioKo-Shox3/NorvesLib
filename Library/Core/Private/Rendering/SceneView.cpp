@@ -927,6 +927,7 @@ namespace NorvesLib::Core::Rendering
             visibilityResolvePass->SetSkinningComputePass(skinningComputePassPtr);
             visibilityResolvePass->SetClassifyPass(materialTileClassifyPassPtr);
             visibilityRasterPassPtr->SetResolvePass(visibilityResolvePass.get());
+            skinningComputePassPtr->SetResolvePass(visibilityResolvePass.get());
             gbufferPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
             megaGeometryPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
             AddPass(std::move(visibilityResolvePass));

@@ -7,6 +7,7 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -302,6 +303,11 @@ namespace NorvesLib::Core::Rendering
 
         const ViewRenderContext* context = builder.GetContext();
         if (!context || !m_Compute.IsReady() || !context->SnapshotSkinnedMeshFrameLeases)
+        {
+            return;
+        }
+        // 解決が使えず予備の GBuffer の描画へ戻るフレームは、スキニングの頂点を誰も読まない（GBuffer は頂点シェーダーでスキニングする）
+        if (m_ResolvePass && !m_ResolvePass->CanResolve(context->Device, context->GetActiveDebugMode()))
         {
             return;
         }

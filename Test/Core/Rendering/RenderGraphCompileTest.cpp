@@ -2396,6 +2396,7 @@ namespace
                 if (bSkinning)
                 {
                     scene.Resolve.SetSkinningComputePass(&scene.Skinning);
+                    scene.Skinning.SetResolvePass(&scene.Resolve);
                 }
                 if (bClassifyBeforeResolve)
                 {
@@ -3677,8 +3678,10 @@ namespace
         assert(!scene.Resolve.WasResolved());
         assert(scene.Resolve.GetFallbackReason(scene.Device.get()) ==
                VisibilityResolveGeometry::FallbackReason::DeviceUnsupported);
-        // ID のラスタの記録の表を作る dispatch 1 回が、基準（解決を使わない On）より少ない
-        assert(commandList.DispatchCount + 1 == baseline.Dispatches);
+        // ID のラスタの記録の表を作る dispatch 1 回と、計算スキニングの dispatch 1 回が、基準（解決を使わない On）より少ない
+        // （予備の GBuffer の描画は頂点シェーダーでスキニングするので、計算スキニングの結果は誰も読まない）
+        assert(scene.Skinning.GetInstances().empty());
+        assert(commandList.DispatchCount + 2 == baseline.Dispatches);
         size_t velocityBarriers = 0;
         assert(!VelocityTexturesHaveShaderWrite(commandList, velocityBarriers) && velocityBarriers > 0);
 
@@ -4143,6 +4146,9 @@ namespace
             // ID のラスタは、解決が使えず予備へ戻るフレームを描かないために解決へ問い合わせる（Debug は解決が無いので問い合わせない）
             const auto* rasterPass = static_cast<const VisibilityRasterPass*>(sceneView.FindPass("VisibilityRasterPass"));
             assert(rasterPass == nullptr || rasterPass->GetResolvePass() == resolvePass);
+            // 計算スキニングも同じ問い合わせで、予備のフレームは変形しない（Off・Debug は解決が無いので問い合わせない）
+            const auto* skinningPass = static_cast<const SkinningComputePass*>(sceneView.FindPass("SkinningComputePass"));
+            assert(skinningPass != nullptr && skinningPass->GetResolvePass() == resolvePass);
 
             // 材質のタイル分類: 解決を使う On だけ有効（debug は足しても無効のまま。既定の描画は変えない）。
             // 解決はこの分類を読むので、描画のパスの後・解決の前に並び、解決へ分類が渡される

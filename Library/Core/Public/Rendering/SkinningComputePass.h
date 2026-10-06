@@ -19,6 +19,7 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     class ShaderManager;
+    class VisibilityResolvePass;
     struct ViewRenderContext;
 
     /**
@@ -224,6 +225,15 @@ namespace NorvesLib::Core::Rendering
         const Container::VariableArray<SkinningComputeInstance>& GetInstances() const { return m_Instances; }
         /** @brief 計算スキニングのパイプラインが作れているか（false のとき Declare は何も宣言せず、スキニングの頂点は作られない） */
         bool IsComputeReady() const { return m_Compute.IsReady(); }
+        /**
+         * @brief 解決が使えるかの問い合わせ先（同じ View の VisibilityResolvePass。null なら問い合わせない）
+         *
+         * 渡すと、解決が使えず予備の GBuffer の描画へ戻るフレームは Declare が何も宣言しない。予備の GBuffer の描画は頂点シェーダーで
+         * スキニングし、この結果の頂点を誰も読まないので、変形の dispatch とパレットのアップロードを省く。
+         * （解決の「使えるか」の判定は IsComputeReady() だけを見るので、Declare の結果に依らず循環しない）
+         */
+        void SetResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
+        const VisibilityResolvePass* GetResolvePass() const { return m_ResolvePass; }
         RGResourceHandle GetCurrentVerticesHandle() const { return m_CurrentHandle.ToResourceHandle(); }
         RGResourceHandle GetPreviousVerticesHandle() const { return m_PreviousHandle.ToResourceHandle(); }
 
@@ -241,6 +251,7 @@ namespace NorvesLib::Core::Rendering
         };
 
         SkinningCompute m_Compute;
+        const VisibilityResolvePass* m_ResolvePass = nullptr;
         uint32_t m_MaxOutputVertices = SKINNING_MAX_OUTPUT_VERTICES;
         uint32_t m_DroppedInstanceCount = 0;
         uint64_t m_FrameDroppedSerial = 0;
